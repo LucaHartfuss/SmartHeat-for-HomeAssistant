@@ -1,0 +1,23 @@
+name: "Cloudflared Access TCP-Bridge"
+version: "1.0.0"
+slug: "cloudflared_access_mqtt"
+description: "Cloudflare Access TCP-Forwarder: macht einen privaten, per Cloudflare Access geschuetzten TCP-Dienst (z. B. einen MQTT-Broker) fuer Home Assistant OS unter 127.0.0.1 erreichbar."
+url: "https://github.com/LucaHartfuss/SmartHeat-for-HomeAssistant"
+arch:
+  - aarch64
+  - armhf
+  - armv7
+  - amd64
+startup: services
+boot: auto
+host_network: true
+options:
+  hostname: ""
+  local_port: 18830
+  service_token_id: ""
+  service_token_secret: ""
+schema:
+  hostname: str
+  local_port: port
+  service_token_id: str
+  service_token_secret: password
