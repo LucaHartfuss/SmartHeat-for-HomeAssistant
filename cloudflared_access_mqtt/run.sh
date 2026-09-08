@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-OPTIONS_FILE="/data/options.json"
+OPTIONS_FILE="${OPTIONS_FILE_OVERRIDE:-/data/options.json}"
 
 HOSTNAME=$(jq -r '.hostname' "$OPTIONS_FILE")
 LOCAL_PORT=$(jq -r '.local_port' "$OPTIONS_FILE")
