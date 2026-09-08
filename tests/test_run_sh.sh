@@ -45,5 +45,40 @@ fake-secret"
   rm -rf "$TMPDIR"
 }
 
+test_missing_hostname_fails_cleanly() {
+  TMPDIR="$(mktemp -d)"
+  DATA_DIR="$TMPDIR/data"
+  STUB_DIR="$TMPDIR/bin"
+  mkdir -p "$DATA_DIR" "$STUB_DIR"
+  cp "$HERE/stub_cloudflared.sh" "$STUB_DIR/cloudflared"
+  chmod +x "$STUB_DIR/cloudflared"
+
+  cat > "$DATA_DIR/options.json" <<JSON
+{"hostname":"","local_port":18830,"service_token_id":"fake-id","service_token_secret":"fake-secret"}
+JSON
+
+  export STUB_LOG="$TMPDIR/stub.log"
+  PATH="$STUB_DIR:$PATH" OPTIONS_FILE_OVERRIDE="$DATA_DIR/options.json" sh "$RUN_SH" \
+    >"$TMPDIR/stdout.log" 2>"$TMPDIR/stderr.log"
+  EXIT_CODE=$?
+
+  assert_eq "$EXIT_CODE" "1" "fehlender hostname -> Exit-Code 1"
+  if grep -q "muessen in der Add-on-Konfiguration gesetzt sein" "$TMPDIR/stderr.log"; then
+    echo "PASS: Fehlermeldung auf stderr vorhanden"
+  else
+    echo "FAIL: Fehlermeldung auf stderr fehlt"
+    FAIL=1
+  fi
+  if [ -s "$STUB_LOG" ]; then
+    echo "FAIL: cloudflared-Stub wurde trotz fehlender Option aufgerufen"
+    FAIL=1
+  else
+    echo "PASS: cloudflared-Stub wurde korrekt NICHT aufgerufen"
+  fi
+
+  rm -rf "$TMPDIR"
+}
+
 test_full_options_invokes_cloudflared_correctly
+test_missing_hostname_fails_cleanly
 exit $FAIL
