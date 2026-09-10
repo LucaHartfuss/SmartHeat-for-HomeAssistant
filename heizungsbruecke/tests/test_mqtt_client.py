@@ -29,3 +29,46 @@ def test_subscribe_down_subscribes_correct_topic():
     mock_client.message_callback_add.assert_called_once_with(
         "smartheat/kunde2/down/curve_current", callback
     )
+
+
+def test_on_connect_resubscribes_previously_registered_roles():
+    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+
+        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2")
+        curve_callback = MagicMock()
+        offset_callback = MagicMock()
+        client.subscribe_down(role="curve_current", on_message=curve_callback)
+        client.subscribe_down(role="offset_current", on_message=offset_callback)
+
+        mock_client.subscribe.reset_mock()
+        mock_client.message_callback_add.reset_mock()
+
+        # Simulate paho invoking on_connect again after a reconnect.
+        on_connect = mock_client.on_connect
+        on_connect(mock_client, None, {}, 0)
+
+    mock_client.subscribe.assert_any_call("smartheat/kunde2/down/curve_current")
+    mock_client.subscribe.assert_any_call("smartheat/kunde2/down/offset_current")
+    mock_client.message_callback_add.assert_any_call(
+        "smartheat/kunde2/down/curve_current", curve_callback
+    )
+    mock_client.message_callback_add.assert_any_call(
+        "smartheat/kunde2/down/offset_current", offset_callback
+    )
+    assert mock_client.subscribe.call_count == 2
+    assert mock_client.message_callback_add.call_count == 2
+
+
+def test_on_connect_before_any_subscription_does_not_error():
+    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+
+        BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2")
+
+        on_connect = mock_client.on_connect
+        on_connect(mock_client, None, {}, 0)  # must not raise
+
+    mock_client.subscribe.assert_not_called()
