@@ -5,12 +5,11 @@ description: "Generische Bruecken-Logik: liest konfigurierte HA-Entities, meldet
 url: "https://github.com/LucaHartfuss/SmartHeat-for-HomeAssistant"
 arch:
   - aarch64
-  - armhf
-  - armv7
   - amd64
 startup: services
 boot: auto
-hassio_api: true
+host_network: true
+homeassistant_api: true
 options:
   tenant_id: ""
   mqtt_host: "127.0.0.1"
