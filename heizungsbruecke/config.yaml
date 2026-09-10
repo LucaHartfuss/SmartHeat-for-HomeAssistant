@@ -1,0 +1,57 @@
+name: "Heizungsbruecke"
+version: "0.1.0"
+slug: "heizungsbruecke"
+description: "Generische Bruecken-Logik: liest konfigurierte HA-Entities, meldet sie an den SmartHeat-Server, schreibt Sollwerte zurueck, mit lokalem Boost-Failsafe und Sicherheits-Clamps."
+url: "https://github.com/LucaHartfuss/SmartHeat-for-HomeAssistant"
+arch:
+  - aarch64
+  - armhf
+  - armv7
+  - amd64
+startup: services
+boot: auto
+hassio_api: true
+options:
+  tenant_id: ""
+  mqtt_host: "127.0.0.1"
+  mqtt_port: 18830
+  entity_room_actual: ""
+  entity_room_target: ""
+  entity_curve_current: ""
+  entity_offset_current: ""
+  entity_outdoor_temp: ""
+  entity_room_day_avg: ""
+  entity_room_night_avg: ""
+  entity_heat_limit: ""
+  entity_dat: ""
+  entity_dart: ""
+  curve_min: 0.0
+  curve_max: 0.0
+  offset_min: 0.0
+  offset_max: 0.0
+  boost_threshold_k: 0.5
+  boost_curve_value: 0.0
+  boost_offset_value: 0.0
+  poll_interval_seconds: 3600
+schema:
+  tenant_id: str
+  mqtt_host: str
+  mqtt_port: port
+  entity_room_actual: str
+  entity_room_target: str
+  entity_curve_current: str
+  entity_offset_current: str
+  entity_outdoor_temp: str?
+  entity_room_day_avg: str?
+  entity_room_night_avg: str?
+  entity_heat_limit: str?
+  entity_dat: str?
+  entity_dart: str?
+  curve_min: float
+  curve_max: float
+  offset_min: float
+  offset_max: float
+  boost_threshold_k: float
+  boost_curve_value: float
+  boost_offset_value: float
+  poll_interval_seconds: int
