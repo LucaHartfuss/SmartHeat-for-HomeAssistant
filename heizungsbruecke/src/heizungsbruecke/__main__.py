@@ -12,11 +12,29 @@ from heizungsbruecke.bridge import apply_boost_decision, handle_down_message, pu
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.manifest import ManifestError, build_manifest
 from heizungsbruecke.mqtt_client import BridgeMqttClient
+from heizungsbruecke.profiles import UnknownProfileError, resolve_local_clamps
 
 OPTIONS_PATH = Path("/data/options.json")
 BACKUP_PATH = Path("/data/backup.json")
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_effective_options(options: dict) -> dict:
+    """Returns a copy of `options` with curve_min/curve_max/offset_min/offset_max
+    guaranteed present, resolved from the configured profile's local clamp
+    defaults with any explicitly-set option value taking precedence. Raises
+    UnknownProfileError if the profile has no local defaults and one of the
+    four fields is still missing after that.
+    """
+    clamps = resolve_local_clamps(options["profile"], options)
+    return {
+        **options,
+        "curve_min": clamps.curve_min,
+        "curve_max": clamps.curve_max,
+        "offset_min": clamps.offset_min,
+        "offset_max": clamps.offset_max,
+    }
 
 
 def _validate_boost_config(options: dict) -> str | None:
@@ -116,6 +134,12 @@ def main() -> None:
     try:
         manifest = build_manifest(options)
     except ManifestError as error:
+        print(f"FEHLER: {error}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        options = _resolve_effective_options(options)
+    except UnknownProfileError as error:
         print(f"FEHLER: {error}", file=sys.stderr)
         sys.exit(1)
 

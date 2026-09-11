@@ -3,7 +3,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from heizungsbruecke.__main__ import _run_tick, _validate_boost_config
+from heizungsbruecke.__main__ import _resolve_effective_options, _run_tick, _validate_boost_config
+from heizungsbruecke.profiles import UnknownProfileError
 from heizungsbruecke.manifest import ChannelManifest
 
 
@@ -140,3 +141,31 @@ def test_run_tick_propagates_exceptions_for_caller_to_handle():
     # (I2) is what's responsible for catching, logging and continuing to the next tick.
     with pytest.raises(RuntimeError):
         _run_tick(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active=False)
+
+
+def test_resolve_effective_options_uses_profile_defaults_when_clamps_absent():
+    options = {"profile": "vaillant_gastherme_heizkoerper"}
+
+    effective = _resolve_effective_options(options)
+
+    assert effective["curve_min"] == 0.4
+    assert effective["curve_max"] == 1.5
+    assert effective["offset_min"] == 20.0
+    assert effective["offset_max"] == 30.0
+    assert effective["profile"] == "vaillant_gastherme_heizkoerper"
+
+
+def test_resolve_effective_options_keeps_explicit_override():
+    options = {"profile": "vaillant_gastherme_heizkoerper", "offset_max": 28.0}
+
+    effective = _resolve_effective_options(options)
+
+    assert effective["offset_max"] == 28.0
+    assert effective["curve_min"] == 0.4
+
+
+def test_resolve_effective_options_raises_for_inactive_profile_without_full_override():
+    options = {"profile": "weishaupt_waermepumpe_fussbodenheizung"}
+
+    with pytest.raises(UnknownProfileError):
+        _resolve_effective_options(options)
