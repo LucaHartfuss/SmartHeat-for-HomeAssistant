@@ -32,6 +32,17 @@ gewollter Wert), wird das ab dieser Version wie "nicht gesetzt" behandelt und
 durch den Profil-Standardwert ersetzt — bitte in diesem Fall die Konfiguration
 nach dem Update pruefen.
 
+## Update von 0.3.0 auf 0.4.0
+
+Neu: `failsafe_stale_after_hours` (optional, Standard `26.0`). Das Add-on
+veroeffentlicht jetzt einen `binary_sensor` ueber MQTT Discovery
+(`heizungsbruecke_<tenant_id>_failsafe`), der aktiv wird, sobald seit mehr als
+dieser Anzahl Stunden kein gueltiger Sollwert vom Server mehr angewendet wurde
+-- kein `configuration.yaml`-Helper noetig, die Entity entsteht automatisch ueber
+Home Assistants MQTT-Integration. Die Rueckschaltung auf Normal erfolgt erst nach
+zwei aufeinanderfolgenden gueltigen Nachrichten (Anti-Flatter), unabhaengig von
+dieser Schwelle.
+
 ## Voraussetzungen
 
 - Das Add-on **Cloudflared Access TCP-Bridge** (`cloudflared_access_mqtt`, aus
@@ -99,6 +110,12 @@ nach dem Update pruefen.
   = keine Benachrichtigungen; der Ausfall wird dann nur ins Add-on-Log
   geschrieben. Der Versand ist "best effort": schlaegt er fehl, laeuft der
   Zyklus normal weiter.
+- `failsafe_stale_after_hours`: optional, Standard `26`. Stunden ohne einen
+  gueltigen, tatsaechlich angewendeten Sollwert vom Server, nach denen der
+  `binary_sensor` (siehe oben) auf "Problem" springt. Rein informativ -- die
+  Steuerung selbst braucht keine aktive Fail-Safe-Regel, da bei ausbleibenden
+  Werten ohnehin nichts mehr geschrieben wird und der zuletzt gesetzte Wert
+  automatisch stehen bleibt.
 
 Ein Sensorausfall betrifft immer nur die betroffene Rolle: deren Wert entfaellt
 fuer diesen Zyklus, alle anderen Rollen werden weiterhin gemeldet und die lokale
