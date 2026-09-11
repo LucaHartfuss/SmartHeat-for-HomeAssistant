@@ -5,10 +5,12 @@ import pytest
 
 from heizungsbruecke.manifest import ALL_ROLES
 from heizungsbruecke.profiles import (
+    LOCAL_CLAMP_DEFAULTS,
     PROFILE_LABELS,
     REQUIRED_ROLES_BY_PROFILE,
     UnknownProfileError,
     required_roles_for,
+    resolve_local_clamps,
 )
 
 CONFIG_YAML = Path(__file__).resolve().parents[1] / "config.yaml"
@@ -61,3 +63,39 @@ def test_every_required_role_is_a_known_manifest_role():
     for profile_id, roles in REQUIRED_ROLES_BY_PROFILE.items():
         unknown = set(roles) - set(ALL_ROLES)
         assert not unknown, f"Profil '{profile_id}' fordert unbekannte Rollen: {sorted(unknown)}"
+
+
+def test_resolve_local_clamps_uses_defaults_when_options_empty():
+    clamps = resolve_local_clamps("vaillant_gastherme_heizkoerper", {})
+
+    assert clamps == LOCAL_CLAMP_DEFAULTS["vaillant_gastherme_heizkoerper"]
+
+
+def test_resolve_local_clamps_applies_partial_override():
+    clamps = resolve_local_clamps("vaillant_gastherme_heizkoerper", {"offset_max": 28.0})
+
+    assert clamps.offset_max == 28.0
+    assert clamps.curve_min == LOCAL_CLAMP_DEFAULTS["vaillant_gastherme_heizkoerper"].curve_min
+
+
+def test_resolve_local_clamps_ignores_falsy_option_values():
+    # 0.0 ist fuer keinen dieser vier Werte ein plausibler echter Wert -- config.yaml
+    # nutzt 0.0 konsistent mit dem bestehenden Muster (z.B. entity_outdoor_temp: "")
+    # als Sentinel fuer "nicht gesetzt".
+    clamps = resolve_local_clamps("vaillant_gastherme_heizkoerper", {"curve_min": 0.0})
+
+    assert clamps.curve_min == LOCAL_CLAMP_DEFAULTS["vaillant_gastherme_heizkoerper"].curve_min
+
+
+def test_resolve_local_clamps_raises_for_profile_without_defaults_and_missing_fields():
+    with pytest.raises(UnknownProfileError):
+        resolve_local_clamps("weishaupt_waermepumpe_fussbodenheizung", {})
+
+
+def test_resolve_local_clamps_succeeds_for_profile_without_defaults_when_fully_overridden():
+    options = {"curve_min": 0.2, "curve_max": 0.8, "offset_min": 0.0, "offset_max": 5.0}
+
+    clamps = resolve_local_clamps("weishaupt_waermepumpe_fussbodenheizung", options)
+
+    assert clamps.curve_min == 0.2
+    assert clamps.offset_max == 5.0
