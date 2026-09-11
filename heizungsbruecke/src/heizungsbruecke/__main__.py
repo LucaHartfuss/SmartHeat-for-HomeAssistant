@@ -231,7 +231,8 @@ def main() -> None:
     while True:
         try:
             boost_was_active = _run_tick(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active)
-            _check_failsafe_staleness(failsafe_ctx, stale_after_seconds, mqtt_client, FAILSAFE_PATH)
+            with write_lock:
+                _check_failsafe_staleness(failsafe_ctx, stale_after_seconds, mqtt_client, FAILSAFE_PATH)
         except Exception:
             logger.exception("Fehler im Poll-Loop, wird beim naechsten Tick erneut versucht")
 

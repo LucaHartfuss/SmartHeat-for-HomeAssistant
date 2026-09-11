@@ -1,11 +1,14 @@
+import json
 import threading
 from unittest.mock import MagicMock
 
 import pytest
 
 from heizungsbruecke.__main__ import (
+    FAILSAFE_PATH,
     _check_failsafe_staleness,
     _load_failsafe_ctx,
+    _make_down_callback,
     _record_valid_message,
     _resolve_effective_options,
     _run_tick,
@@ -246,3 +249,57 @@ def test_check_failsafe_staleness_noop_when_fresh(tmp_path, monkeypatch):
 
     assert ctx["state"] == FailsafeState(active=False, recovery_count=0)
     mqtt_client.publish_status.assert_not_called()
+
+
+def test_make_down_callback_records_valid_message_after_successful_handling(tmp_path, monkeypatch):
+    # This is the wiring itself: a successful handle_down_message must be followed,
+    # inside the same write_lock, by _record_valid_message(failsafe_ctx, mqtt_client, FAILSAFE_PATH).
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    manifest = ChannelManifest(entity_ids={"curve_current": "number.curve"})
+    ha_api = MagicMock()
+    options = _base_options()
+    write_lock = threading.Lock()
+    failsafe_ctx = {"last_valid_update": None, "state": FailsafeState(active=False, recovery_count=0)}
+    mqtt_client = MagicMock()
+
+    recorded_calls = []
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__._record_valid_message",
+        lambda ctx, client, path: recorded_calls.append((ctx, client, path)),
+    )
+
+    callback = _make_down_callback("curve_current", manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
+    message = MagicMock()
+    message.payload = json.dumps({"v": 0.5})
+
+    callback(client=MagicMock(), userdata=None, message=message)
+
+    assert ha_api.set_number_value.call_count == 1  # handle_down_message did succeed
+    assert recorded_calls == [(failsafe_ctx, mqtt_client, FAILSAFE_PATH)]
+
+
+def test_make_down_callback_does_not_record_valid_message_when_handling_fails(tmp_path, monkeypatch):
+    # Mirror image of the above: if handle_down_message raises (e.g. HA unreachable),
+    # a bad/failed message must not be mistaken for a valid live update.
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    manifest = ChannelManifest(entity_ids={"curve_current": "number.curve"})
+    ha_api = MagicMock()
+    ha_api.set_number_value.side_effect = RuntimeError("HA nicht erreichbar")
+    options = _base_options()
+    write_lock = threading.Lock()
+    failsafe_ctx = {"last_valid_update": None, "state": FailsafeState(active=False, recovery_count=0)}
+    mqtt_client = MagicMock()
+
+    recorded_calls = []
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__._record_valid_message",
+        lambda ctx, client, path: recorded_calls.append((ctx, client, path)),
+    )
+
+    callback = _make_down_callback("curve_current", manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
+    message = MagicMock()
+    message.payload = json.dumps({"v": 0.5})
+
+    callback(client=MagicMock(), userdata=None, message=message)  # must not raise -- caught and logged
+
+    assert recorded_calls == []
