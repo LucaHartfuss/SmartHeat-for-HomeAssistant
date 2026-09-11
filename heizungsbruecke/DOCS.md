@@ -7,6 +7,15 @@ konfigurierten Sicherheitsgrenzen. Enthaelt eine lokale Boost-Hysterese,
 die unabhaengig vom Server eingreift, wenn der Referenzraum mehr als
 `boost_threshold_k` unter der Zieltemperatur liegt.
 
+## Update von 0.1.0 auf 0.2.0 (Breaking Change)
+
+Das Feld `profile` ist neu und **Pflicht** — bestehende Installationen muessen es
+nach dem Update einmalig in der Add-on-Konfiguration setzen, sonst startet das
+Add-on nicht (`FEHLER: Pflichtfeld 'profile' fehlt in der Add-on-Konfiguration`).
+Ebenfalls neu: `entity_room_day_avg`, `entity_room_night_avg`,
+`entity_heat_limit`, `entity_dat` und `entity_dart` sind jetzt Pflichtfelder
+(vorher optional), und `notify_service` ist als optionales Feld hinzugekommen.
+
 ## Voraussetzungen
 
 - Das Add-on **Cloudflared Access TCP-Bridge** (`cloudflared_access_mqtt`, aus
