@@ -81,6 +81,7 @@ def test_build_discovery_config_returns_expected_shape():
 
     assert config["unique_id"] == "heizungsbruecke_client1_failsafe"
     assert config["state_topic"] == "smartheat/client1/status/failsafe"
+    assert config["availability_topic"] == "smartheat/client1/status/availability"
     assert config["payload_on"] == "ON"
     assert config["payload_off"] == "OFF"
     assert config["device_class"] == "problem"

@@ -59,4 +59,4 @@ schema:
   boost_offset_value: float
   poll_interval_seconds: int
   notify_service: str?
-  failsafe_stale_after_hours: float
+  failsafe_stale_after_hours: float(0.1,)

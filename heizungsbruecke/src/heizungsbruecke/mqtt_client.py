@@ -11,9 +11,14 @@ class BridgeMqttClient:
         self._tenant_id = tenant_id
         self._subscriptions = {}  # role -> on_message
         self._discovery_configs = {}  # (component, object_id) -> config dict
+        self._last_status = {}  # object_id -> payload
         self._client = mqtt.Client()
         self._client.on_connect = self._on_connect
+        self._client.will_set(self._availability_topic(), payload="offline", retain=True)
         self._client.connect(host, port)
+
+    def _availability_topic(self) -> str:
+        return f"smartheat/{self._tenant_id}/status/availability"
 
     def _on_connect(self, client, userdata, flags, rc) -> None:
         if self._subscriptions:
@@ -24,6 +29,11 @@ class BridgeMqttClient:
             logger.info("MQTT (re-)verbunden, %d Discovery-Config(s) werden (erneut) veroeffentlicht", len(self._discovery_configs))
         for (component, object_id), config in self._discovery_configs.items():
             self._publish_discovery(component=component, object_id=object_id, config=config)
+        if self._last_status:
+            logger.info("MQTT (re-)verbunden, %d Status-Payload(s) werden (erneut) veroeffentlicht", len(self._last_status))
+        for object_id, payload in self._last_status.items():
+            self._publish_status(object_id=object_id, payload=payload)
+        self._client.publish(self._availability_topic(), "online", retain=True)
 
     def _subscribe(self, role: str, on_message) -> None:
         topic = f"smartheat/{self._tenant_id}/down/{role}"
@@ -33,6 +43,10 @@ class BridgeMqttClient:
     def _publish_discovery(self, component: str, object_id: str, config: dict) -> None:
         topic = f"homeassistant/{component}/heizungsbruecke_{self._tenant_id}/{object_id}/config"
         self._client.publish(topic, json.dumps(config), retain=True)
+
+    def _publish_status(self, object_id: str, payload: str) -> None:
+        topic = f"smartheat/{self._tenant_id}/status/{object_id}"
+        self._client.publish(topic, payload, retain=True)
 
     def publish_value(self, role: str, value: float, seq: str) -> None:
         topic = f"smartheat/{self._tenant_id}/up/{role}"
@@ -49,8 +63,8 @@ class BridgeMqttClient:
         self._publish_discovery(component=component, object_id=object_id, config=config)
 
     def publish_status(self, object_id: str, payload: str) -> None:
-        topic = f"smartheat/{self._tenant_id}/status/{object_id}"
-        self._client.publish(topic, payload, retain=True)
+        self._last_status[object_id] = payload
+        self._publish_status(object_id=object_id, payload=payload)
 
     def subscribe_down(self, role: str, on_message) -> None:
         self._subscriptions[role] = on_message

@@ -120,8 +120,55 @@ def test_on_connect_republishes_discovery_configs():
         on_connect = mock_client.on_connect
         on_connect(mock_client, None, {}, 0)
 
-    mock_client.publish.assert_called_once_with(
+    mock_client.publish.assert_any_call(
         "homeassistant/binary_sensor/heizungsbruecke_kunde2/failsafe/config",
         '{"name": "Fail-Safe"}',
         retain=True,
+    )
+
+
+def test_on_connect_republishes_last_status_payloads():
+    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+
+        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2")
+        client.publish_status(object_id="failsafe", payload="ON")
+
+        mock_client.publish.reset_mock()
+
+        # Simulate paho invoking on_connect again after a reconnect (e.g. broker lost
+        # retained messages across a restart without persistence).
+        on_connect = mock_client.on_connect
+        on_connect(mock_client, None, {}, 0)
+
+    mock_client.publish.assert_any_call("smartheat/kunde2/status/failsafe", "ON", retain=True)
+
+
+def test_init_registers_last_will_for_availability_topic():
+    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+
+        BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2")
+
+    mock_client.will_set.assert_called_once_with(
+        "smartheat/kunde2/status/availability", payload="offline", retain=True
+    )
+
+
+def test_on_connect_publishes_online_to_availability_topic():
+    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+
+        BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2")
+
+        mock_client.publish.reset_mock()
+
+        on_connect = mock_client.on_connect
+        on_connect(mock_client, None, {}, 0)
+
+    mock_client.publish.assert_any_call(
+        "smartheat/kunde2/status/availability", "online", retain=True
     )

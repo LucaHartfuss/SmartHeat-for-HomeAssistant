@@ -5,9 +5,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from heizungsbruecke.__main__ import (
-    FAILSAFE_PATH,
     _check_failsafe_staleness,
     _load_failsafe_ctx,
+    _load_failsafe_ctx_safe,
     _make_down_callback,
     _record_valid_message,
     _resolve_effective_options,
@@ -200,6 +200,35 @@ def test_save_and_load_failsafe_ctx_round_trip(tmp_path):
     assert loaded == ctx
 
 
+def test_load_failsafe_ctx_safe_defaults_when_no_file(tmp_path):
+    ctx = _load_failsafe_ctx_safe(tmp_path / "does_not_exist.json")
+
+    assert ctx["last_valid_update"] is None
+    assert ctx["state"] == FailsafeState(active=False, recovery_count=0)
+
+
+def test_load_failsafe_ctx_safe_falls_back_on_corrupt_file(tmp_path):
+    # Simulates power loss on the Pi's SD card mid-write: a truncated/corrupt state
+    # file must not crash the whole add-on at startup.
+    path = tmp_path / "failsafe_state.json"
+    path.write_bytes(b"{not valid json..")
+
+    ctx = _load_failsafe_ctx_safe(path)
+
+    assert ctx["last_valid_update"] is None
+    assert ctx["state"] == FailsafeState(active=False, recovery_count=0)
+
+
+def test_load_failsafe_ctx_safe_passes_through_valid_file(tmp_path):
+    path = tmp_path / "failsafe_state.json"
+    ctx = {"last_valid_update": 12345.0, "state": FailsafeState(active=True, recovery_count=1)}
+    _save_failsafe_ctx(ctx, path)
+
+    loaded = _load_failsafe_ctx_safe(path)
+
+    assert loaded == ctx
+
+
 def test_record_valid_message_updates_timestamp_and_persists(tmp_path, monkeypatch):
     monkeypatch.setattr("time.time", lambda: 5000.0)
     path = tmp_path / "failsafe_state.json"
@@ -255,6 +284,8 @@ def test_make_down_callback_records_valid_message_after_successful_handling(tmp_
     # This is the wiring itself: a successful handle_down_message must be followed,
     # inside the same write_lock, by _record_valid_message(failsafe_ctx, mqtt_client, FAILSAFE_PATH).
     monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    failsafe_path = tmp_path / "failsafe_state.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.FAILSAFE_PATH", failsafe_path)
     manifest = ChannelManifest(entity_ids={"curve_current": "number.curve"})
     ha_api = MagicMock()
     options = _base_options()
@@ -275,13 +306,14 @@ def test_make_down_callback_records_valid_message_after_successful_handling(tmp_
     callback(client=MagicMock(), userdata=None, message=message)
 
     assert ha_api.set_number_value.call_count == 1  # handle_down_message did succeed
-    assert recorded_calls == [(failsafe_ctx, mqtt_client, FAILSAFE_PATH)]
+    assert recorded_calls == [(failsafe_ctx, mqtt_client, failsafe_path)]
 
 
 def test_make_down_callback_does_not_record_valid_message_when_handling_fails(tmp_path, monkeypatch):
     # Mirror image of the above: if handle_down_message raises (e.g. HA unreachable),
     # a bad/failed message must not be mistaken for a valid live update.
     monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    monkeypatch.setattr("heizungsbruecke.__main__.FAILSAFE_PATH", tmp_path / "failsafe_state.json")
     manifest = ChannelManifest(entity_ids={"curve_current": "number.curve"})
     ha_api = MagicMock()
     ha_api.set_number_value.side_effect = RuntimeError("HA nicht erreichbar")

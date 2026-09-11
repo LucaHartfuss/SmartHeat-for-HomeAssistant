@@ -103,6 +103,27 @@ def _load_failsafe_ctx(path: Path) -> dict:
     }
 
 
+def _load_failsafe_ctx_safe(path: Path) -> dict:
+    """Wraps `_load_failsafe_ctx` so a corrupt/truncated state file (e.g. after power
+    loss on the Pi's SD card) cannot crash the whole add-on at startup -- every other
+    `load_backup` call site in this codebase runs inside a caller-provided try/except
+    (see bridge.py's handle_down_message/apply_boost_decision), this is that guard for
+    the fail-safe state file. Falls back to the same default context a missing file
+    would produce.
+    """
+    try:
+        return _load_failsafe_ctx(path)
+    except Exception as error:
+        logger.warning(
+            "Fail-Safe-Zustandsdatei konnte nicht gelesen werden (%s), starte mit Standardzustand: %s",
+            path, error,
+        )
+        return {
+            "last_valid_update": None,
+            "state": FailsafeState(active=False, recovery_count=0),
+        }
+
+
 def _save_failsafe_ctx(ctx: dict, path: Path) -> None:
     save_backup(path, {
         "last_valid_update": ctx["last_valid_update"],
@@ -131,8 +152,8 @@ def _check_failsafe_staleness(failsafe_ctx: dict, stale_after_seconds: float, mq
                 "Fail-Safe aktiviert - seit ueber %s Sekunden kein gueltiger Live-Wert empfangen.",
                 stale_after_seconds,
             )
-    failsafe_ctx["state"] = new_state
-    _save_failsafe_ctx(failsafe_ctx, failsafe_path)
+        failsafe_ctx["state"] = new_state
+        _save_failsafe_ctx(failsafe_ctx, failsafe_path)
 
 
 def _run_tick(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active: bool) -> bool:
@@ -210,7 +231,12 @@ def main() -> None:
 
     write_lock = threading.Lock()
 
-    failsafe_ctx = _load_failsafe_ctx(FAILSAFE_PATH)
+    failsafe_ctx = _load_failsafe_ctx_safe(FAILSAFE_PATH)
+    if failsafe_ctx["last_valid_update"] is None:
+        # Fresh install / no prior record: measure staleness from process start, so a
+        # server that never sends a single valid value still trips fail-safe eventually
+        # instead of reading "OK" forever.
+        failsafe_ctx["last_valid_update"] = time.time()
     stale_after_seconds = options.get("failsafe_stale_after_hours", 26.0) * 3600
     mqtt_client.publish_discovery(
         component="binary_sensor", object_id="failsafe",
@@ -231,10 +257,14 @@ def main() -> None:
     while True:
         try:
             boost_was_active = _run_tick(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active)
+        except Exception:
+            logger.exception("Fehler im Poll-Loop, wird beim naechsten Tick erneut versucht")
+
+        try:
             with write_lock:
                 _check_failsafe_staleness(failsafe_ctx, stale_after_seconds, mqtt_client, FAILSAFE_PATH)
         except Exception:
-            logger.exception("Fehler im Poll-Loop, wird beim naechsten Tick erneut versucht")
+            logger.exception("Fehler bei der Fail-Safe-Staleness-Pruefung, wird beim naechsten Tick erneut versucht")
 
         time.sleep(options.get("poll_interval_seconds", 3600))
 

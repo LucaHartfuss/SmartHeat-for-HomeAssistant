@@ -50,6 +50,7 @@ def build_discovery_config(tenant_id: str) -> dict:
         "name": "Fail-Safe",
         "unique_id": f"heizungsbruecke_{tenant_id}_failsafe",
         "state_topic": f"smartheat/{tenant_id}/status/failsafe",
+        "availability_topic": f"smartheat/{tenant_id}/status/availability",
         "payload_on": "ON",
         "payload_off": "OFF",
         "device_class": "problem",
