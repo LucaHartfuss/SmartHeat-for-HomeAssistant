@@ -55,8 +55,11 @@ def test_profile_labels_and_required_roles_cover_the_same_profiles():
     assert PROFILE_LABELS.keys() == REQUIRED_ROLES_BY_PROFILE.keys()
 
 
-def test_config_yaml_dropdown_matches_profile_registry():
-    assert _profile_ids_from_config_yaml() == set(REQUIRED_ROLES_BY_PROFILE)
+def test_config_yaml_dropdown_matches_active_profiles_only():
+    # Nur Profile mit lokalen Clamp-Defaults sind fuer Kunden waehlbar --
+    # weishaupt_waermepumpe_fussbodenheizung ist bewusst (noch) nicht in
+    # LOCAL_CLAMP_DEFAULTS, solange keine echten Werte vorliegen.
+    assert _profile_ids_from_config_yaml() == set(LOCAL_CLAMP_DEFAULTS)
 
 
 def test_every_required_role_is_a_known_manifest_role():

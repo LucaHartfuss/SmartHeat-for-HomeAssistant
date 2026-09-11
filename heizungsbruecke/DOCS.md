@@ -16,6 +16,16 @@ Ebenfalls neu: `entity_room_day_avg`, `entity_room_night_avg`,
 `entity_heat_limit`, `entity_dat` und `entity_dart` sind jetzt Pflichtfelder
 (vorher optional), und `notify_service` ist als optionales Feld hinzugekommen.
 
+## Update von 0.2.0 auf 0.3.0
+
+`curve_min`, `curve_max`, `offset_min` und `offset_max` sind ab jetzt optional.
+Werden sie leer gelassen (bzw. auf `0.0` belassen), verwendet das Add-on die
+zum gewaehlten `profile` hinterlegten Server-validierten Standardwerte. Ein
+weiterhin gesetzter Wert wirkt wie bisher als expliziter Override und hat
+Vorrang. Die `profile`-Auswahl ist ausserdem auf Profile beschraenkt, fuer die
+solche Standardwerte bereits hinterlegt sind — `vaillant_gastherme_heizkoerper`
+aktuell, weitere folgen mit den jeweils verifizierten Werten.
+
 ## Voraussetzungen
 
 - Das Add-on **Cloudflared Access TCP-Bridge** (`cloudflared_access_mqtt`, aus
@@ -35,9 +45,11 @@ Ebenfalls neu: `entity_room_day_avg`, `entity_room_night_avg`,
 - `tenant_id`: eindeutige Kennung dieser Anlage (bestimmt das MQTT-Topic-Praefix
   `smartheat/<tenant_id>/...`).
 - `profile`: Profil dieser Anlage (Pflicht). Bestimmt, welche `entity_*`-Felder
-  erforderlich sind. Aktuell unterstützte Profile:
-  - `weishaupt_waermepumpe_fussbodenheizung`: Wärmepumpe mit Fußbodenheizung
+  erforderlich sind und welche `curve_min`/`curve_max`/`offset_min`/`offset_max`-
+  Standardwerte gelten (siehe unten). Aktuell waehlbar:
   - `vaillant_gastherme_heizkoerper`: Vaillant-Gastherme mit Heizkörpern
+  - Weitere Profile (z. B. Wärmepumpen) folgen, sobald fuer sie verifizierte
+    Standardwerte vorliegen — bis dahin sind sie im Dropdown nicht sichtbar.
 - `mqtt_host`: Hostname/IP des MQTT-Brokers, wie er aus diesem Add-on heraus
   erreichbar ist. Standard `127.0.0.1` (der von `cloudflared_access_mqtt`
   bereitgestellte lokale Broker-Zugang).
@@ -55,9 +67,10 @@ Ebenfalls neu: `entity_room_day_avg`, `entity_room_night_avg`,
   anlagenspezifische Kanaele, die an den Server gemeldet werden (fuer
   profilspezifische Anforderungen erforderlich).
 - `curve_min`/`curve_max`/`offset_min`/`offset_max`: Sicherheitsgrenzen —
-  **muessen** pro Anlage explizit gesetzt werden, es gibt keine sinnvollen
-  Standardwerte. Jeder vom Server empfangene und jeder lokal geschriebene
-  Boost-Wert wird vor dem Schreiben gegen diese Grenzen geclamped.
+  optional. Leer gelassen gilt der zum `profile` hinterlegte Standardwert;
+  explizit gesetzt wirkt der Wert als Override. Jeder vom Server empfangene
+  und jeder lokal geschriebene Boost-Wert wird vor dem Schreiben gegen diese
+  (aufgeloesten) Grenzen geclamped.
 - `boost_threshold_k`: Schwelle in Kelvin, ab der die lokale Boost-Hysterese
   eingreift (Ist-Temperatur mehr als `boost_threshold_k` unter der
   Soll-Temperatur). Standard `0.5`.

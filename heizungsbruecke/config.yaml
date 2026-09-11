@@ -1,5 +1,5 @@
 name: "Heizungsbruecke"
-version: "0.2.0"
+version: "0.3.0"
 slug: "heizungsbruecke"
 description: "Generische Bruecken-Logik: liest konfigurierte HA-Entities, meldet sie an den SmartHeat-Server, schreibt Sollwerte zurueck, mit lokalem Boost-Failsafe und Sicherheits-Clamps."
 url: "https://github.com/LucaHartfuss/SmartHeat-for-HomeAssistant"
@@ -36,7 +36,7 @@ options:
   notify_service: ""
 schema:
   tenant_id: str
-  profile: "list(weishaupt_waermepumpe_fussbodenheizung|vaillant_gastherme_heizkoerper)"
+  profile: "list(vaillant_gastherme_heizkoerper)"
   mqtt_host: str
   mqtt_port: port
   entity_room_actual: str
@@ -49,10 +49,10 @@ schema:
   entity_heat_limit: str
   entity_dat: str
   entity_dart: str
-  curve_min: float
-  curve_max: float
-  offset_min: float
-  offset_max: float
+  curve_min: float?
+  curve_max: float?
+  offset_min: float?
+  offset_max: float?
   boost_threshold_k: float
   boost_curve_value: float
   boost_offset_value: float
