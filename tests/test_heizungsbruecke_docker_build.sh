@@ -14,7 +14,7 @@ DATA_DIR="$TMPDIR/data"
 mkdir -p "$DATA_DIR"
 
 cat > "$DATA_DIR/options.json" <<JSON
-{"tenant_id":"test","mqtt_host":"127.0.0.1","mqtt_port":18830,"entity_room_actual":"climate.test"}
+{"tenant_id":"test","profile":"weishaupt_waermepumpe_fussbodenheizung","mqtt_host":"127.0.0.1","mqtt_port":18830,"entity_room_actual":"climate.test"}
 JSON
 
 if command -v cygpath >/dev/null 2>&1; then

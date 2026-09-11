@@ -90,7 +90,7 @@ EOF
 # (like the real climate.wohnzimmer_thermostat setup) so this test also exercises that
 # read path end-to-end, not just the plain-state path.
 cat > "$DATA_DIR/options.json" <<JSON
-{"tenant_id":"happytest","mqtt_host":"${MOSQUITTO_NAME}","mqtt_port":1883,"entity_room_actual":"climate.testroom::current_temperature","entity_room_target":"climate.testroom::temperature","entity_curve_current":"number.curve","entity_offset_current":"number.offset","curve_min":0.2,"curve_max":0.8,"offset_min":0.0,"offset_max":5.0,"boost_threshold_k":0.5,"boost_curve_value":0.5,"boost_offset_value":2.0,"poll_interval_seconds":2}
+{"tenant_id":"happytest","profile":"weishaupt_waermepumpe_fussbodenheizung","mqtt_host":"${MOSQUITTO_NAME}","mqtt_port":1883,"entity_room_actual":"climate.testroom::current_temperature","entity_room_target":"climate.testroom::temperature","entity_curve_current":"number.curve","entity_offset_current":"number.offset","entity_room_day_avg":"sensor.day_avg","entity_room_night_avg":"sensor.night_avg","entity_heat_limit":"number.heat_limit","entity_dat":"sensor.dat","entity_dart":"sensor.dart","curve_min":0.2,"curve_max":0.8,"offset_min":0.0,"offset_max":5.0,"boost_threshold_k":0.5,"boost_curve_value":0.5,"boost_offset_value":2.0,"poll_interval_seconds":2}
 JSON
 
 docker network rm "$NET_NAME" >/dev/null 2>&1

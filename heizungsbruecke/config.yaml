@@ -12,6 +12,7 @@ host_network: true
 homeassistant_api: true
 options:
   tenant_id: ""
+  profile: ""
   mqtt_host: "127.0.0.1"
   mqtt_port: 18830
   entity_room_actual: ""
@@ -34,6 +35,7 @@ options:
   poll_interval_seconds: 3600
 schema:
   tenant_id: str
+  profile: "list(weishaupt_waermepumpe_fussbodenheizung|vaillant_gastherme_heizkoerper)"
   mqtt_host: str
   mqtt_port: port
   entity_room_actual: str
@@ -41,11 +43,11 @@ schema:
   entity_curve_current: str
   entity_offset_current: str
   entity_outdoor_temp: str?
-  entity_room_day_avg: str?
-  entity_room_night_avg: str?
-  entity_heat_limit: str?
-  entity_dat: str?
-  entity_dart: str?
+  entity_room_day_avg: str
+  entity_room_night_avg: str
+  entity_heat_limit: str
+  entity_dat: str
+  entity_dart: str
   curve_min: float
   curve_max: float
   offset_min: float

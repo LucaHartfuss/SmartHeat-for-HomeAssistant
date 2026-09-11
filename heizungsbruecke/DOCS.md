@@ -25,6 +25,10 @@ die unabhaengig vom Server eingreift, wenn der Referenzraum mehr als
 
 - `tenant_id`: eindeutige Kennung dieser Anlage (bestimmt das MQTT-Topic-Praefix
   `smartheat/<tenant_id>/...`).
+- `profile`: Profil dieser Anlage (Pflicht). Bestimmt, welche `entity_*`-Felder
+  erforderlich sind. Aktuell unterstützte Profile:
+  - `weishaupt_waermepumpe_fussbodenheizung`: Wärmepumpe mit Fußbodenheizung
+  - `vaillant_gastherme_heizkoerper`: Vaillant-Gastherme mit Heizkörpern
 - `mqtt_host`: Hostname/IP des MQTT-Brokers, wie er aus diesem Add-on heraus
   erreichbar ist. Standard `127.0.0.1` (der von `cloudflared_access_mqtt`
   bereitgestellte lokale Broker-Zugang).
@@ -36,11 +40,11 @@ die unabhaengig vom Server eingreift, wenn der Referenzraum mehr als
   Heizkurve/Niveau (Pflicht) — dorthin schreibt das Add-on sowohl vom Server
   empfangene Sollwerte als auch (im Boost-Fall) die lokalen Boost-Werte.
 - `entity_outdoor_temp`: optional, Aussentemperatur-Sensor.
-- `entity_room_day_avg` / `entity_room_night_avg`: optional, Tag-/Nacht-Mittelwerte
-  des Referenzraums, sofern in der Anlage vorhanden.
-- `entity_heat_limit` / `entity_dat` / `entity_dart`: optional, weitere
-  anlagenspezifische Kanaele, die (falls konfiguriert) unveraendert an den
-  Server gemeldet werden.
+- `entity_room_day_avg` / `entity_room_night_avg`: Pflicht, Tag-/Nacht-Mittelwerte
+  des Referenzraums (fuer profilspezifische Anforderungen erforderlich).
+- `entity_heat_limit` / `entity_dat` / `entity_dart`: Pflicht, weitere
+  anlagenspezifische Kanaele, die an den Server gemeldet werden (fuer
+  profilspezifische Anforderungen erforderlich).
 - `curve_min`/`curve_max`/`offset_min`/`offset_max`: Sicherheitsgrenzen —
   **muessen** pro Anlage explizit gesetzt werden, es gibt keine sinnvollen
   Standardwerte. Jeder vom Server empfangene und jeder lokal geschriebene
