@@ -102,3 +102,17 @@ def test_resolve_local_clamps_succeeds_for_profile_without_defaults_when_fully_o
 
     assert clamps.curve_min == 0.2
     assert clamps.offset_max == 5.0
+
+
+def test_resolve_local_clamps_rejects_partial_override_that_inverts_curve_range():
+    # curve_max bleibt beim Profil-Default 1.5 -- der Override allein macht curve_min
+    # > curve_max, obwohl weder Default noch Override fuer sich unplausibel wirken.
+    with pytest.raises(UnknownProfileError):
+        resolve_local_clamps("vaillant_gastherme_heizkoerper", {"curve_min": 2.0})
+
+
+def test_resolve_local_clamps_rejects_partial_override_that_inverts_offset_range():
+    # offset_min bleibt beim Profil-Default 20.0 -- der Override allein macht
+    # offset_min > offset_max.
+    with pytest.raises(UnknownProfileError):
+        resolve_local_clamps("vaillant_gastherme_heizkoerper", {"offset_max": 10.0})

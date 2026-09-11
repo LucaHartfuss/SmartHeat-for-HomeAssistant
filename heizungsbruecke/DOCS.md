@@ -26,6 +26,12 @@ Vorrang. Die `profile`-Auswahl ist ausserdem auf Profile beschraenkt, fuer die
 solche Standardwerte bereits hinterlegt sind — `vaillant_gastherme_heizkoerper`
 aktuell, weitere folgen mit den jeweils verifizierten Werten.
 
+**Achtung bei bestehenden Installationen:** War eines dieser vier Felder bisher
+bewusst explizit auf `0.0` gesetzt (nicht als Platzhalter, sondern als
+gewollter Wert), wird das ab dieser Version wie "nicht gesetzt" behandelt und
+durch den Profil-Standardwert ersetzt — bitte in diesem Fall die Konfiguration
+nach dem Update pruefen.
+
 ## Voraussetzungen
 
 - Das Add-on **Cloudflared Access TCP-Bridge** (`cloudflared_access_mqtt`, aus

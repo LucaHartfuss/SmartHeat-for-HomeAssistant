@@ -37,7 +37,10 @@ LOCAL_CLAMP_DEFAULTS: dict[str, LocalClamps] = {
 
 
 class UnknownProfileError(ValueError):
-    pass
+    """Deckt jeden Fehlschlag der Profil-/Clamp-Aufloesung ab: unbekannte profile_id,
+    fehlende Pflichtfelder ohne Profil-Default, oder ein aufgeloestes Clamp-Ergebnis
+    mit invertiertem Bereich (curve_min > curve_max bzw. offset_min > offset_max).
+    """
 
 
 def required_roles_for(profile_id: str) -> tuple[str, ...]:
@@ -47,11 +50,38 @@ def required_roles_for(profile_id: str) -> tuple[str, ...]:
         raise UnknownProfileError(f"Unbekanntes profile: {profile_id}") from None
 
 
+def _check_clamp_invariants(clamps: LocalClamps, profile_id: str) -> None:
+    """Prueft die aufgeloesten (gemergten) Clamps, nicht die rohen Einzelwerte -- ein
+    Teil-Override kann diese Invarianten allein brechen, auch wenn Profil-Default und
+    Override jeweils fuer sich plausibel aussehen (z.B. curve_min per Override auf 2.0
+    bei unveraendertem Default curve_max=1.5).
+    """
+    if clamps.curve_min > clamps.curve_max:
+        raise UnknownProfileError(
+            f"Profil '{profile_id}': aufgeloester curve_min ({clamps.curve_min}) ist "
+            f"groesser als curve_max ({clamps.curve_max})"
+        )
+    if clamps.offset_min > clamps.offset_max:
+        raise UnknownProfileError(
+            f"Profil '{profile_id}': aufgeloester offset_min ({clamps.offset_min}) ist "
+            f"groesser als offset_max ({clamps.offset_max})"
+        )
+
+
 def resolve_local_clamps(profile_id: str, options: dict) -> LocalClamps:
-    """Loest die vier lokalen Sicherheits-Clamps auf: ein in `options` explizit
-    gesetzter (nicht-falsy) Wert gewinnt immer als Override, sonst greift der
-    Profil-Default. Ohne Profil-Default (Profil noch nicht aktiviert, siehe
-    LOCAL_CLAMP_DEFAULTS) muessen alle vier Felder explizit gesetzt sein.
+    """Loest die vier lokalen Sicherheits-Clamps auf.
+
+    Mit Profil-Default (siehe LOCAL_CLAMP_DEFAULTS): ein in `options` explizit
+    gesetzter *nicht-falsy* Wert gewinnt als Override, sonst greift der Profil-Default
+    -- 0.0 zaehlt dabei als "nicht gesetzt" (config.yaml-Sentinel-Konvention).
+
+    Ohne Profil-Default (Profil noch nicht aktiviert): es gibt keinen Default, auf den
+    ein falsy Wert zurueckfallen koennte, also zaehlt allein die *Anwesenheit* in
+    `options` -- 0.0 wird hier als echter, vom Betreiber gemeinter Wert uebernommen.
+    Alle vier Felder muessen dabei explizit gesetzt sein.
+
+    In beiden Faellen wird das aufgeloeste (gemergte) Ergebnis auf curve_min <=
+    curve_max und offset_min <= offset_max geprueft, bevor es zurueckgegeben wird.
     """
     defaults = LOCAL_CLAMP_DEFAULTS.get(profile_id)
 
@@ -69,12 +99,21 @@ def resolve_local_clamps(profile_id: str, options: dict) -> LocalClamps:
                 f"Profil '{profile_id}' hat keine lokalen Clamp-Defaults, und folgende "
                 f"Pflichtfelder fehlen in der Add-on-Konfiguration: {', '.join(sorted(missing))}"
             )
-        return LocalClamps(**overrides)
+        clamps = LocalClamps(**overrides)
+        _check_clamp_invariants(clamps, profile_id)
+        return clamps
 
-    # Mit Profil-Default: ignoriere falsy Werte (0.0 ist Sentinel fuer "nicht gesetzt")
+    # Mit Profil-Default: ignoriere falsy Werte (0.0 ist Sentinel fuer "nicht gesetzt").
+    # Anders als im Zweig ohne Default ist hier ein Default vorhanden, auf den 0.0
+    # eindeutig zurueckfallen kann -- die Praesenz-Pruefung dort ist daher absichtlich
+    # keine "Vereinfachung", die man hier uebernehmen sollte: ohne Default gibt es
+    # nichts, worauf 0.0 zurueckfallen koennte, also muss die Praesenz in `options`
+    # allein entscheiden und 0.0 als echter Wert durchgereicht werden.
     overrides = {
         field: options[field]
         for field in ("curve_min", "curve_max", "offset_min", "offset_max")
         if options.get(field)
     }
-    return replace(defaults, **overrides)
+    clamps = replace(defaults, **overrides)
+    _check_clamp_invariants(clamps, profile_id)
+    return clamps
