@@ -3,7 +3,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from heizungsbruecke.__main__ import _resolve_effective_options, _run_tick, _validate_boost_config
+from heizungsbruecke.__main__ import (
+    _check_failsafe_staleness,
+    _load_failsafe_ctx,
+    _record_valid_message,
+    _resolve_effective_options,
+    _run_tick,
+    _save_failsafe_ctx,
+    _validate_boost_config,
+)
+from heizungsbruecke.failsafe import FailsafeState
 from heizungsbruecke.profiles import UnknownProfileError
 from heizungsbruecke.manifest import ChannelManifest
 
@@ -169,3 +178,71 @@ def test_resolve_effective_options_raises_for_inactive_profile_without_full_over
 
     with pytest.raises(UnknownProfileError):
         _resolve_effective_options(options)
+
+
+def test_load_failsafe_ctx_defaults_when_no_file(tmp_path):
+    ctx = _load_failsafe_ctx(tmp_path / "does_not_exist.json")
+
+    assert ctx["last_valid_update"] is None
+    assert ctx["state"] == FailsafeState(active=False, recovery_count=0)
+
+
+def test_save_and_load_failsafe_ctx_round_trip(tmp_path):
+    path = tmp_path / "failsafe_state.json"
+    ctx = {"last_valid_update": 12345.0, "state": FailsafeState(active=True, recovery_count=1)}
+
+    _save_failsafe_ctx(ctx, path)
+    loaded = _load_failsafe_ctx(path)
+
+    assert loaded == ctx
+
+
+def test_record_valid_message_updates_timestamp_and_persists(tmp_path, monkeypatch):
+    monkeypatch.setattr("time.time", lambda: 5000.0)
+    path = tmp_path / "failsafe_state.json"
+    ctx = {"last_valid_update": None, "state": FailsafeState(active=False, recovery_count=0)}
+    mqtt_client = MagicMock()
+
+    _record_valid_message(ctx, mqtt_client, path)
+
+    assert ctx["last_valid_update"] == 5000.0
+    assert ctx["state"] == FailsafeState(active=False, recovery_count=0)
+    assert _load_failsafe_ctx(path) == ctx
+    mqtt_client.publish_status.assert_not_called()  # state didn't change (was already inactive)
+
+
+def test_record_valid_message_publishes_status_when_failsafe_exits(tmp_path, monkeypatch):
+    monkeypatch.setattr("time.time", lambda: 5000.0)
+    path = tmp_path / "failsafe_state.json"
+    ctx = {"last_valid_update": 1.0, "state": FailsafeState(active=True, recovery_count=1)}
+    mqtt_client = MagicMock()
+
+    _record_valid_message(ctx, mqtt_client, path)
+
+    assert ctx["state"] == FailsafeState(active=False, recovery_count=0)
+    mqtt_client.publish_status.assert_called_once_with("failsafe", "OFF")
+
+
+def test_check_failsafe_staleness_activates_and_publishes_status_when_stale(tmp_path, monkeypatch):
+    monkeypatch.setattr("time.time", lambda: 5000.0)
+    path = tmp_path / "failsafe_state.json"
+    ctx = {"last_valid_update": 100.0, "state": FailsafeState(active=False, recovery_count=0)}
+    mqtt_client = MagicMock()
+
+    _check_failsafe_staleness(ctx, stale_after_seconds=3600.0, mqtt_client=mqtt_client, failsafe_path=path)
+
+    assert ctx["state"] == FailsafeState(active=True, recovery_count=0)
+    mqtt_client.publish_status.assert_called_once_with("failsafe", "ON")
+    assert _load_failsafe_ctx(path) == ctx
+
+
+def test_check_failsafe_staleness_noop_when_fresh(tmp_path, monkeypatch):
+    monkeypatch.setattr("time.time", lambda: 5000.0)
+    path = tmp_path / "failsafe_state.json"
+    ctx = {"last_valid_update": 4999.0, "state": FailsafeState(active=False, recovery_count=0)}
+    mqtt_client = MagicMock()
+
+    _check_failsafe_staleness(ctx, stale_after_seconds=3600.0, mqtt_client=mqtt_client, failsafe_path=path)
+
+    assert ctx["state"] == FailsafeState(active=False, recovery_count=0)
+    mqtt_client.publish_status.assert_not_called()

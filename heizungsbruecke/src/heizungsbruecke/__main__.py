@@ -7,8 +7,16 @@ import time
 import uuid
 from pathlib import Path
 
+from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.boost import decide_boost
 from heizungsbruecke.bridge import apply_boost_decision, handle_down_message, publish_snapshot
+from heizungsbruecke.failsafe import (
+    FailsafeState,
+    build_discovery_config,
+    build_state_payload,
+    enter_failsafe_if_stale,
+    record_valid_message,
+)
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.manifest import ManifestError, build_manifest
 from heizungsbruecke.mqtt_client import BridgeMqttClient
@@ -16,6 +24,7 @@ from heizungsbruecke.profiles import UnknownProfileError, resolve_local_clamps
 
 OPTIONS_PATH = Path("/data/options.json")
 BACKUP_PATH = Path("/data/backup.json")
+FAILSAFE_PATH = Path("/data/failsafe_state.json")
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +70,7 @@ def _validate_boost_config(options: dict) -> str | None:
     return None
 
 
-def _make_down_callback(role, manifest, ha_api, options, write_lock):
+def _make_down_callback(role, manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client):
     def _callback(client, userdata, message):
         try:
             payload = json.loads(message.payload)
@@ -77,9 +86,53 @@ def _make_down_callback(role, manifest, ha_api, options, write_lock):
                     offset_max=options["offset_max"],
                     backup_path=BACKUP_PATH,
                 )
+                _record_valid_message(failsafe_ctx, mqtt_client, FAILSAFE_PATH)
         except Exception:
             logger.exception("Fehler bei der Verarbeitung einer Down-Nachricht fuer Rolle '%s'", role)
     return _callback
+
+
+def _load_failsafe_ctx(path: Path) -> dict:
+    raw = load_backup(path)
+    return {
+        "last_valid_update": raw.get("last_valid_update"),
+        "state": FailsafeState(
+            active=raw.get("failsafe_active", False),
+            recovery_count=raw.get("recovery_count", 0),
+        ),
+    }
+
+
+def _save_failsafe_ctx(ctx: dict, path: Path) -> None:
+    save_backup(path, {
+        "last_valid_update": ctx["last_valid_update"],
+        "failsafe_active": ctx["state"].active,
+        "recovery_count": ctx["state"].recovery_count,
+    })
+
+
+def _record_valid_message(failsafe_ctx: dict, mqtt_client, failsafe_path: Path) -> None:
+    failsafe_ctx["last_valid_update"] = time.time()
+    new_state = record_valid_message(failsafe_ctx["state"])
+    if new_state != failsafe_ctx["state"]:
+        mqtt_client.publish_status("failsafe", build_state_payload(new_state.active))
+    failsafe_ctx["state"] = new_state
+    _save_failsafe_ctx(failsafe_ctx, failsafe_path)
+
+
+def _check_failsafe_staleness(failsafe_ctx: dict, stale_after_seconds: float, mqtt_client, failsafe_path: Path) -> None:
+    last = failsafe_ctx["last_valid_update"]
+    seconds_since = (time.time() - last) if last is not None else None
+    new_state = enter_failsafe_if_stale(failsafe_ctx["state"], seconds_since, stale_after_seconds)
+    if new_state != failsafe_ctx["state"]:
+        mqtt_client.publish_status("failsafe", build_state_payload(new_state.active))
+        if new_state.active:
+            logger.warning(
+                "Fail-Safe aktiviert - seit ueber %s Sekunden kein gueltiger Live-Wert empfangen.",
+                stale_after_seconds,
+            )
+    failsafe_ctx["state"] = new_state
+    _save_failsafe_ctx(failsafe_ctx, failsafe_path)
 
 
 def _run_tick(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active: bool) -> bool:
@@ -157,10 +210,19 @@ def main() -> None:
 
     write_lock = threading.Lock()
 
+    failsafe_ctx = _load_failsafe_ctx(FAILSAFE_PATH)
+    stale_after_seconds = options.get("failsafe_stale_after_hours", 26.0) * 3600
+    mqtt_client.publish_discovery(
+        component="binary_sensor", object_id="failsafe",
+        config=build_discovery_config(options["tenant_id"]),
+    )
+    mqtt_client.publish_status("failsafe", build_state_payload(failsafe_ctx["state"].active))
+
     for role in ("curve_current", "offset_current"):
         if role in manifest.entity_ids:
             mqtt_client.subscribe_down(
-                role=role, on_message=_make_down_callback(role, manifest, ha_api, options, write_lock)
+                role=role,
+                on_message=_make_down_callback(role, manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client),
             )
     mqtt_client.loop_start()
 
@@ -169,6 +231,7 @@ def main() -> None:
     while True:
         try:
             boost_was_active = _run_tick(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active)
+            _check_failsafe_staleness(failsafe_ctx, stale_after_seconds, mqtt_client, FAILSAFE_PATH)
         except Exception:
             logger.exception("Fehler im Poll-Loop, wird beim naechsten Tick erneut versucht")
 
