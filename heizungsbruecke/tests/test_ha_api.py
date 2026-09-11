@@ -1,5 +1,7 @@
 from unittest.mock import patch, Mock
 
+import pytest
+
 from heizungsbruecke.ha_api import HomeAssistantApi
 
 
@@ -69,3 +71,29 @@ def test_set_number_value_posts_correct_payload():
         json={"entity_id": "number.weishaupt_heizkurve_steigung", "value": 0.72},
         timeout=10,
     )
+
+
+def test_send_notification_posts_to_the_split_notify_service():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    mock_response = Mock()
+    mock_response.raise_for_status.return_value = None
+
+    with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response) as mock_post:
+        api.send_notification("notify.mobile_app_lucas_iphone", "Sensor defekt")
+
+    mock_post.assert_called_once_with(
+        "http://supervisor/core/api/services/notify/mobile_app_lucas_iphone",
+        headers={"Authorization": "Bearer test-token"},
+        json={"message": "Sensor defekt"},
+        timeout=10,
+    )
+
+
+def test_send_notification_raises_on_http_error():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    mock_response = Mock()
+    mock_response.raise_for_status.side_effect = RuntimeError("500")
+
+    with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response):
+        with pytest.raises(RuntimeError):
+            api.send_notification("notify.mobile_app_lucas_iphone", "Sensor defekt")

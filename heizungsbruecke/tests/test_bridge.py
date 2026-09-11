@@ -24,6 +24,78 @@ def test_publish_snapshot_reads_each_entity_and_publishes():
     mqtt_client.publish_value.assert_any_call(role="outdoor_temp", value=3.2, seq="tick-1")
 
 
+def _manifest_with_one_broken_sensor():
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "climate.wohnzimmer_thermostat",
+        "dat": "sensor.kaputt",
+        "outdoor_temp": "sensor.aussentemperatur",
+    })
+    ha_api = MagicMock()
+
+    def _get_state(entity_id):
+        if entity_id == "sensor.kaputt":
+            raise ValueError("could not convert string to float: 'unavailable'")
+        return {"climate.wohnzimmer_thermostat": 19.5, "sensor.aussentemperatur": 3.2}[entity_id]
+
+    ha_api.get_state.side_effect = _get_state
+    return manifest, ha_api
+
+
+def test_publish_snapshot_skips_broken_role_and_publishes_the_others():
+    manifest, ha_api = _manifest_with_one_broken_sensor()
+    mqtt_client = MagicMock()
+
+    publish_snapshot(manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq="tick-1")
+
+    published_roles = {call.kwargs["role"] for call in mqtt_client.publish_value.call_args_list}
+    assert published_roles == {"room_actual", "outdoor_temp"}
+
+
+def test_publish_snapshot_notifies_when_notify_service_is_configured():
+    manifest, ha_api = _manifest_with_one_broken_sensor()
+    mqtt_client = MagicMock()
+
+    publish_snapshot(
+        manifest=manifest,
+        ha_api=ha_api,
+        mqtt_client=mqtt_client,
+        seq="tick-1",
+        notify_service="notify.mobile_app_lucas_iphone",
+    )
+
+    ha_api.send_notification.assert_called_once()
+    service, message = ha_api.send_notification.call_args.args
+    assert service == "notify.mobile_app_lucas_iphone"
+    assert "dat" in message
+    assert "sensor.kaputt" in message
+
+
+def test_publish_snapshot_does_not_notify_when_notify_service_is_empty():
+    manifest, ha_api = _manifest_with_one_broken_sensor()
+    mqtt_client = MagicMock()
+
+    publish_snapshot(manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq="tick-1")
+
+    ha_api.send_notification.assert_not_called()
+
+
+def test_publish_snapshot_survives_a_failing_notification():
+    manifest, ha_api = _manifest_with_one_broken_sensor()
+    ha_api.send_notification.side_effect = RuntimeError("notify service nicht erreichbar")
+    mqtt_client = MagicMock()
+
+    publish_snapshot(
+        manifest=manifest,
+        ha_api=ha_api,
+        mqtt_client=mqtt_client,
+        seq="tick-1",
+        notify_service="notify.mobile_app_lucas_iphone",
+    )
+
+    published_roles = {call.kwargs["role"] for call in mqtt_client.publish_value.call_args_list}
+    assert published_roles == {"room_actual", "outdoor_temp"}
+
+
 def test_handle_down_message_clamps_curve_value_before_writing(tmp_path):
     manifest = ChannelManifest(entity_ids={"curve_current": "number.weishaupt_heizkurve_steigung"})
     ha_api = MagicMock()

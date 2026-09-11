@@ -29,3 +29,19 @@ class HomeAssistantApi:
             timeout=10,
         )
         response.raise_for_status()
+
+    def send_notification(self, notify_service: str, message: str) -> None:
+        """Calls a Home Assistant notify service, e.g. `notify.mobile_app_lucas_iphone`.
+
+        Raises like every other method here; catching is the caller's job, since a
+        failed push notification must never take down the path that triggered it.
+        """
+        domain, _, service = notify_service.partition(".")
+
+        response = requests.post(
+            f"{self._base_url}/core/api/services/{domain}/{service}",
+            headers=self._headers,
+            json={"message": message},
+            timeout=10,
+        )
+        response.raise_for_status()

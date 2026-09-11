@@ -11,9 +11,40 @@ _CLAMPED_ROLES = ("curve_current", "offset_current")
 logger = logging.getLogger(__name__)
 
 
-def publish_snapshot(manifest: ChannelManifest, ha_api, mqtt_client, seq: str) -> None:
+def publish_snapshot(
+    manifest: ChannelManifest, ha_api, mqtt_client, seq: str, notify_service: str = ""
+) -> None:
+    """Publishes one snapshot of all configured roles. A role whose entity cannot be
+    read (dead sensor -> HA reports 'unavailable', or an HTTP failure) is skipped for
+    this tick instead of aborting the whole snapshot -- otherwise a single dead battery
+    would also skip the boost-failsafe evaluation that runs after this call (I3).
+
+    If `notify_service` is configured, a push notification is sent per broken role and
+    tick. This is deliberately not deduplicated: a broken sensor should keep nagging
+    until somebody fixes it. Notifying is best effort -- a failing notify service must
+    not break the read path.
+    """
     for role, entity_id in manifest.entity_ids.items():
-        value = ha_api.get_state(entity_id)
+        try:
+            value = ha_api.get_state(entity_id)
+        except Exception:
+            logger.warning(
+                "Sensor fuer Rolle '%s' (%s) liefert keinen gueltigen Wert, "
+                "wird fuer diesen Tick uebersprungen",
+                role, entity_id,
+            )
+            if notify_service:
+                try:
+                    ha_api.send_notification(
+                        notify_service,
+                        f"Heizungsbruecke: Sensor fuer '{role}' ({entity_id}) liefert keinen "
+                        f"gueltigen Wert - bitte pruefen (z.B. Batterie).",
+                    )
+                except Exception:
+                    logger.warning(
+                        "Push-Benachrichtigung fuer Rolle '%s' konnte nicht gesendet werden", role
+                    )
+            continue
         mqtt_client.publish_value(role=role, value=value, seq=seq)
 
 

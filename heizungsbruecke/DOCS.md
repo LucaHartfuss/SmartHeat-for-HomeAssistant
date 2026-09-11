@@ -61,6 +61,20 @@ die unabhaengig vom Server eingreift, wenn der Referenzraum mehr als
   der ohne Server-Beteiligung auf die Anlage schreibt.
 - `poll_interval_seconds`: Intervall zwischen zwei Zyklen (Snapshot
   veroeffentlichen, Boost-Entscheidung treffen). Standard `3600`.
+- `notify_service`: optional. HA-Notify-Dienst im Format
+  `notify.mobile_app_<geraet>` (z.B. `notify.mobile_app_lucas_iphone`). Ist er
+  gesetzt, schickt das Add-on eine Push-Benachrichtigung, sobald ein
+  konfigurierter Sensor keinen gueltigen Wert mehr liefert (typischer Fall:
+  leere Batterie -> HA meldet `unavailable`). Die Meldung wird in **jedem**
+  Zyklus erneut geschickt, solange der Sensor defekt ist — bewusst ohne
+  Entprellung, damit ein ausgefallener Sensor nicht untergeht. Leer (Standard)
+  = keine Benachrichtigungen; der Ausfall wird dann nur ins Add-on-Log
+  geschrieben. Der Versand ist "best effort": schlaegt er fehl, laeuft der
+  Zyklus normal weiter.
+
+Ein Sensorausfall betrifft immer nur die betroffene Rolle: deren Wert entfaellt
+fuer diesen Zyklus, alle anderen Rollen werden weiterhin gemeldet und die lokale
+Boost-Hysterese wird weiterhin ausgewertet.
 
 ### `entity_id::attribute`-Konvention
 

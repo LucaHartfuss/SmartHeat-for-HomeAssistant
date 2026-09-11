@@ -68,9 +68,69 @@ def test_run_tick_publishes_snapshot_and_returns_boost_state():
     assert published_roles == {"room_actual", "room_target"}
 
 
-def test_run_tick_propagates_exceptions_for_caller_to_handle():
-    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual"})
+def _broken_sensor_setup():
+    """A manifest whose `dat` sensor is dead (HA reports 'unavailable' -> float() raises),
+    while the room roles the boost failsafe needs still read fine.
+    """
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual",
+        "room_target": "sensor.room_target",
+        "curve_current": "number.curve",
+        "offset_current": "number.offset",
+        "dat": "sensor.kaputt",
+    })
     ha_api = MagicMock()
+
+    def _get_state(entity_id):
+        if entity_id == "sensor.kaputt":
+            raise ValueError("could not convert string to float: 'unavailable'")
+        return {"sensor.room_actual": 18.0, "sensor.room_target": 21.0,
+                "number.curve": 0.5, "number.offset": 2.0}[entity_id]
+
+    ha_api.get_state.side_effect = _get_state
+    return manifest, ha_api
+
+
+def test_run_tick_still_evaluates_boost_when_one_sensor_is_broken(tmp_path, monkeypatch):
+    # I3: a single dead sensor must not abort the whole tick before the boost failsafe runs.
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    manifest, ha_api = _broken_sensor_setup()
+
+    new_state = _run_tick(manifest, ha_api, MagicMock(), _base_options(), threading.Lock(),
+                          boost_was_active=False)
+
+    assert new_state is True
+    ha_api.set_number_value.assert_any_call("number.curve", 0.5)
+
+
+def test_run_tick_passes_configured_notify_service_through(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    manifest, ha_api = _broken_sensor_setup()
+    options = _base_options(notify_service="notify.mobile_app_lucas_iphone")
+
+    _run_tick(manifest, ha_api, MagicMock(), options, threading.Lock(), boost_was_active=False)
+
+    ha_api.send_notification.assert_called_once()
+    assert ha_api.send_notification.call_args.args[0] == "notify.mobile_app_lucas_iphone"
+
+
+def test_run_tick_sends_no_notification_when_option_is_absent(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    manifest, ha_api = _broken_sensor_setup()
+
+    _run_tick(manifest, ha_api, MagicMock(), _base_options(), threading.Lock(), boost_was_active=False)
+
+    ha_api.send_notification.assert_not_called()
+
+
+def test_run_tick_propagates_exceptions_for_caller_to_handle():
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual",
+        "room_target": "sensor.room_target",
+    })
+    ha_api = MagicMock()
+    # HA completely unreachable: publish_snapshot skips every role (I3), but the boost
+    # failsafe's own reads still fail -- and that error must reach the caller.
     ha_api.get_state.side_effect = RuntimeError("HA nicht erreichbar")
     mqtt_client = MagicMock()
     options = _base_options()

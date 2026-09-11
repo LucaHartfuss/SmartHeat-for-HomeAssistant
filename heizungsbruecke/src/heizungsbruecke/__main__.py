@@ -67,12 +67,19 @@ def _make_down_callback(role, manifest, ha_api, options, write_lock):
 def _run_tick(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active: bool) -> bool:
     """Runs one poll cycle: publish the snapshot, then (if room roles are configured)
     evaluate and apply the local boost decision. Returns the boost-active state to
-    carry into the next tick. Raises on any I/O failure -- the caller (main's loop)
-    is responsible for catching and logging so a single bad tick doesn't kill the
-    whole process (see I2).
+    carry into the next tick. An individual unreadable sensor only costs that role its
+    snapshot value (handled inside publish_snapshot, see I3); any remaining I/O failure
+    propagates -- the caller (main's loop) is responsible for catching and logging so a
+    single bad tick doesn't kill the whole process (see I2).
     """
     seq = str(uuid.uuid4())
-    publish_snapshot(manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq=seq)
+    publish_snapshot(
+        manifest=manifest,
+        ha_api=ha_api,
+        mqtt_client=mqtt_client,
+        seq=seq,
+        notify_service=options.get("notify_service", ""),
+    )
     logger.info("Snapshot veroeffentlicht, seq=%s", seq)
 
     if "room_actual" in manifest.entity_ids and "room_target" in manifest.entity_ids:

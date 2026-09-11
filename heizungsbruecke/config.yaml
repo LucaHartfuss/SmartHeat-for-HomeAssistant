@@ -33,6 +33,7 @@ options:
   boost_curve_value: 0.0
   boost_offset_value: 0.0
   poll_interval_seconds: 3600
+  notify_service: ""
 schema:
   tenant_id: str
   profile: "list(weishaupt_waermepumpe_fussbodenheizung|vaillant_gastherme_heizkoerper)"
@@ -56,3 +57,4 @@ schema:
   boost_curve_value: float
   boost_offset_value: float
   poll_interval_seconds: int
+  notify_service: str?
