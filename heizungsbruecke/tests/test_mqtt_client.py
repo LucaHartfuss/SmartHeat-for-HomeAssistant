@@ -72,3 +72,56 @@ def test_on_connect_before_any_subscription_does_not_error():
         on_connect(mock_client, None, {}, 0)  # must not raise
 
     mock_client.subscribe.assert_not_called()
+
+
+def test_publish_discovery_publishes_retained_config_to_correct_topic():
+    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+
+        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2")
+        client.publish_discovery(
+            component="binary_sensor", object_id="failsafe", config={"name": "Fail-Safe"}
+        )
+
+    mock_client.publish.assert_called_once_with(
+        "homeassistant/binary_sensor/heizungsbruecke_kunde2/failsafe/config",
+        '{"name": "Fail-Safe"}',
+        retain=True,
+    )
+
+
+def test_publish_status_publishes_retained_payload_to_correct_topic():
+    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+
+        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2")
+        client.publish_status(object_id="failsafe", payload="ON")
+
+    mock_client.publish.assert_called_once_with(
+        "smartheat/kunde2/status/failsafe", "ON", retain=True
+    )
+
+
+def test_on_connect_republishes_discovery_configs():
+    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+
+        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2")
+        client.publish_discovery(
+            component="binary_sensor", object_id="failsafe", config={"name": "Fail-Safe"}
+        )
+
+        mock_client.publish.reset_mock()
+
+        # Simulate paho invoking on_connect again after a reconnect.
+        on_connect = mock_client.on_connect
+        on_connect(mock_client, None, {}, 0)
+
+    mock_client.publish.assert_called_once_with(
+        "homeassistant/binary_sensor/heizungsbruecke_kunde2/failsafe/config",
+        '{"name": "Fail-Safe"}',
+        retain=True,
+    )
