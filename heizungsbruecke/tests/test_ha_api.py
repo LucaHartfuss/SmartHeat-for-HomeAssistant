@@ -378,7 +378,8 @@ def test_create_statistics_sensor_orchestrates_flow_and_registry_lookup():
     mock_advance.assert_called_once_with(flow_start_response, {
         "name": "SmartHeat t1 DART",
         "entity_id": "sensor.room",
-        "state_characteristic": "mean",
+        "state_characteristic": "average_step",
+        "keep_last_sample": True,
         "max_age": {"hours": 24},
         "sampling_size": 255,
         "precision": 2,

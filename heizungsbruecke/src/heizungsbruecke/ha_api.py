@@ -131,6 +131,17 @@ class HomeAssistantApi:
     def create_statistics_sensor(self, name: str, source_entity_id: str, max_age_hours: float) -> str:
         """Legt einen `statistics`-Sensor (gleitender Mittelwert) per Config-Entry-Flow an.
 
+        `state_characteristic="average_step"` (zeitgewichteter Mittelwert -- gewichtet
+        jeden Messwert mit der Dauer bis zum naechsten Update) statt des naheliegenderen
+        `"mean"` (einfacher arithmetischer Mittelwert der Samples), plus
+        `keep_last_sample=True`: auf dem Live-Pi von Kunde 1 bereits vorhandene,
+        offenbar mit der aktuellen Heizkurve kalibrierte DAT/DART-Helfer (angelegt
+        2026-09-08, per `.storage/core.config_entries` verifiziert) nutzen exakt diese
+        beiden Werte. Ein Wechsel auf `"mean"` wuerde bei unregelmaessig aktualisierenden
+        Temperatursensoren einen anderen DAT/DART-Wert liefern und damit lautlos die
+        Eingabedaten der proprietaeren Heizkurve verschieben -- deshalb hier bewusst an
+        die live-kalibrierten Werte angeglichen statt einer Neu-Definition.
+
         ZWEI GETRENNTE VERIFIKATIONSERGEBNISSE gegen einen echten HA-Core-
         Container (2026.9.2, siehe tests/test_ha_api_real_ha_integration.py):
 
@@ -162,7 +173,8 @@ class HomeAssistantApi:
         fields = {
             "name": name,
             "entity_id": source_entity_id,
-            "state_characteristic": "mean",
+            "state_characteristic": "average_step",
+            "keep_last_sample": True,
             "max_age": {"hours": max_age_hours},
             "sampling_size": 255,
             "precision": 2,
