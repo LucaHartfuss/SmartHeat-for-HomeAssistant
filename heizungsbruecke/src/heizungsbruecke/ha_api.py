@@ -2,15 +2,16 @@ import requests
 
 
 class HomeAssistantApi:
-    def __init__(self, base_url: str, token: str):
+    def __init__(self, base_url: str, token: str, api_prefix: str = "/core/api"):
         self._base_url = base_url
+        self._api_prefix = api_prefix
         self._headers = {"Authorization": f"Bearer {token}"}
 
     def get_state(self, entity_id: str) -> float:
         real_entity_id, _, attribute = entity_id.partition("::")
 
         response = requests.get(
-            f"{self._base_url}/core/api/states/{real_entity_id}",
+            f"{self._base_url}{self._api_prefix}/states/{real_entity_id}",
             headers=self._headers,
             timeout=10,
         )
@@ -23,7 +24,7 @@ class HomeAssistantApi:
 
     def set_number_value(self, entity_id: str, value: float) -> None:
         response = requests.post(
-            f"{self._base_url}/core/api/services/number/set_value",
+            f"{self._base_url}{self._api_prefix}/services/number/set_value",
             headers=self._headers,
             json={"entity_id": entity_id, "value": value},
             timeout=10,
@@ -39,7 +40,7 @@ class HomeAssistantApi:
         domain, _, service = notify_service.partition(".")
 
         response = requests.post(
-            f"{self._base_url}/core/api/services/{domain}/{service}",
+            f"{self._base_url}{self._api_prefix}/services/{domain}/{service}",
             headers=self._headers,
             json={"message": message},
             timeout=10,

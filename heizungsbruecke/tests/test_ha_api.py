@@ -97,3 +97,20 @@ def test_send_notification_raises_on_http_error():
     with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response):
         with pytest.raises(RuntimeError):
             api.send_notification("notify.mobile_app_lucas_iphone", "Sensor defekt")
+
+
+def test_get_state_respects_custom_api_prefix():
+    api = HomeAssistantApi(base_url="http://localhost:18213", token="test-token", api_prefix="/api")
+    mock_response = Mock()
+    mock_response.json.return_value = {"state": "21.5"}
+    mock_response.raise_for_status.return_value = None
+
+    with patch("heizungsbruecke.ha_api.requests.get", return_value=mock_response) as mock_get:
+        result = api.get_state("sensor.test")
+
+    assert result == 21.5
+    mock_get.assert_called_once_with(
+        "http://localhost:18213/api/states/sensor.test",
+        headers={"Authorization": "Bearer test-token"},
+        timeout=10,
+    )
