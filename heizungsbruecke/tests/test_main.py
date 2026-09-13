@@ -164,19 +164,22 @@ def test_resolve_effective_options_uses_profile_defaults_when_clamps_absent():
     assert effective["curve_max"] == 1.5
     assert effective["offset_min"] == 20.0
     assert effective["offset_max"] == 30.0
+    assert effective["boost_threshold_k"] == 0.5
+    assert effective["boost_curve_value"] == 1.5
+    assert effective["boost_offset_value"] == 30.0
     assert effective["profile"] == "vaillant_gastherme_heizkoerper"
 
 
-def test_resolve_effective_options_keeps_explicit_override():
-    options = {"profile": "vaillant_gastherme_heizkoerper", "offset_max": 28.0}
+def test_resolve_effective_options_ignores_explicit_override():
+    options = {"profile": "vaillant_gastherme_heizkoerper", "offset_max": 28.0, "boost_curve_value": 0.1}
 
     effective = _resolve_effective_options(options)
 
-    assert effective["offset_max"] == 28.0
-    assert effective["curve_min"] == 0.4
+    assert effective["offset_max"] == 30.0  # Profil-Default gewinnt, Override wird ignoriert
+    assert effective["boost_curve_value"] == 1.5
 
 
-def test_resolve_effective_options_raises_for_inactive_profile_without_full_override():
+def test_resolve_effective_options_raises_for_profile_without_defaults():
     options = {"profile": "weishaupt_waermepumpe_fussbodenheizung"}
 
     with pytest.raises(UnknownProfileError):

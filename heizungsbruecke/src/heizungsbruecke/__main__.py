@@ -20,7 +20,7 @@ from heizungsbruecke.failsafe import (
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.manifest import ManifestError, build_manifest
 from heizungsbruecke.mqtt_client import BridgeMqttClient
-from heizungsbruecke.profiles import UnknownProfileError, resolve_local_clamps
+from heizungsbruecke.profiles import UnknownProfileError, resolve_boost_defaults, resolve_local_clamps
 
 OPTIONS_PATH = Path("/data/options.json")
 BACKUP_PATH = Path("/data/backup.json")
@@ -30,19 +30,17 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_effective_options(options: dict) -> dict:
-    """Returns a copy of `options` with curve_min/curve_max/offset_min/offset_max
-    guaranteed present, resolved from the configured profile's local clamp
-    defaults with any explicitly-set option value taking precedence. Raises
-    UnknownProfileError if the profile has no local defaults and one of the
-    four fields is still missing after that.
-    """
     clamps = resolve_local_clamps(options["profile"])
+    boost = resolve_boost_defaults(options["profile"])
     return {
         **options,
-        "curve_min": options.get("curve_min", clamps.curve_min),
-        "curve_max": options.get("curve_max", clamps.curve_max),
-        "offset_min": options.get("offset_min", clamps.offset_min),
-        "offset_max": options.get("offset_max", clamps.offset_max),
+        "curve_min": clamps.curve_min,
+        "curve_max": clamps.curve_max,
+        "offset_min": clamps.offset_min,
+        "offset_max": clamps.offset_max,
+        "boost_threshold_k": boost.threshold_k,
+        "boost_curve_value": boost.curve_value,
+        "boost_offset_value": boost.offset_value,
     }
 
 
