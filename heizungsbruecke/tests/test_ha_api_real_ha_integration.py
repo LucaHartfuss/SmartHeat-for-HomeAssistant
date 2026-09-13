@@ -298,3 +298,84 @@ def test_entity_exists_true_for_created_entity_false_for_unknown(real_ha):
 
     assert api.entity_exists(STATIC_INPUT_NUMBER_ENTITY_ID) is True
     assert api.entity_exists("input_number.does_not_exist_at_all") is False
+
+
+def test_create_statistics_sensor_config_flow_creates_a_loaded_config_entry(real_ha):
+    """Verifiziert eigenstaendig NUR den Config-Entry-Flow-Teil von create_statistics_sensor().
+
+    HINTERGRUND: der `statistics`-Integrationsflow verlangt eine reale, in der
+    Domain "sensor" oder "binary_sensor" liegende Quell-Entity (per Selector im
+    ersten Formular-Schritt serverseitig erzwungen -- ein input_number wird mit
+    "Entity ... belongs to domain input_number, expected ['binary_sensor',
+    'sensor']" abgelehnt). Der in real_ha statisch angelegte
+    STATIC_INPUT_NUMBER_ENTITY_ID (siehe oben) eignet sich dafuer also NICHT,
+    unabhaengig vom unten dokumentierten Entity-Registry-Befund. Statt die
+    gemeinsame real_ha-Fixture fuer diesen einen Test zu erweitern, wird hier
+    sensor.sun_next_dawn verwendet -- eine von HAs `sun`-Integration (Teil von
+    `default_config`, siehe real_ha-Fixture) immer automatisch angelegte, damit
+    garantiert vorhandene Sensor-Entity. Ihr nicht-numerischer Zustand
+    (ISO-8601-Zeitstempel) ist fuer diesen Test unerheblich: geprueft wird hier
+    nur, dass der Config-Entry-Flow selbst durchlaeuft und einen geladenen
+    Config-Entry erzeugt -- nicht die korrekte Berechnung des Mittelwerts.
+
+    Dieser Test verwendet absichtlich NICHT api.create_statistics_sensor()
+    direkt, da diese Methode wegen des in
+    test_create_statistics_sensor_entity_lookup_has_no_rest_equivalent_in_this_ha_version()
+    dokumentierten Befunds (Entity-Registry-Aufloesung ist websocket-only)
+    immer eine HTTPError wirft, bevor sie einen Rueckgabewert liefern kann.
+    """
+    base_url, token = real_ha
+    api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
+
+    flow_response = api._start_config_flow("statistics")
+    result = api._advance_config_flow(flow_response, {
+        "name": "Test Mean",
+        "entity_id": "sensor.sun_next_dawn",
+        "state_characteristic": "mean",
+        "max_age": {"hours": 12},
+        "sampling_size": 255,
+        "precision": 2,
+    })
+
+    assert result["type"] == "create_entry"
+    entry_id = result["result"]["entry_id"]
+
+    config_entries_response = requests.get(
+        f"{base_url}/api/config/config_entries/entry",
+        headers={"Authorization": f"Bearer {token}"},
+        params={"domain": "statistics"},
+        timeout=10,
+    )
+    config_entries_response.raise_for_status()
+    matching_entries = [entry for entry in config_entries_response.json() if entry["entry_id"] == entry_id]
+
+    assert len(matching_entries) == 1
+    assert matching_entries[0]["state"] == "loaded"
+
+
+def test_create_statistics_sensor_entity_lookup_has_no_rest_equivalent_in_this_ha_version(real_ha):
+    """Dokumentiert einen zweiten, vom Config-Entry-Flow unabhaengigen Negativbefund.
+
+    Analog zu test_create_input_number_has_no_rest_equivalent_in_this_ha_version()
+    oben, aber fuer eine andere API-Flaeche: der Config-Entry-Flow-Teil von
+    create_statistics_sensor() FUNKTIONIERT per REST (siehe Test oberhalb) --
+    aber die anschliessende Aufloesung "Config-Entry-ID -> Entity-ID" ueber
+    `GET /api/config/entity_registry/list` liefert einen 404. Quellcode-Pruefung
+    im Container (homeassistant/components/config/entity_registry.py) bestaetigt:
+    diese Datei registriert ausschliesslich Websocket-Kommandos
+    (`websocket_api.async_register_command`), keine einzige `HomeAssistantView`
+    -- also ueberhaupt keine REST-Route fuer die Entity-Registry in dieser
+    HA-Version. create_statistics_sensor() legt den Sensor also serverseitig
+    tatsaechlich an (siehe Test oberhalb: ein echter, geladener Config-Entry
+    entsteht), kann die entstandene Entity-ID aber nicht per REST zurueckgeben.
+    """
+    base_url, token = real_ha
+    api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
+
+    with pytest.raises(requests.exceptions.HTTPError) as exc_info:
+        api.create_statistics_sensor(
+            name="Test Mean 2", source_entity_id="sensor.sun_next_dusk", max_age_hours=12,
+        )
+
+    assert exc_info.value.response.status_code == 404
+    assert "entity_registry/list" in exc_info.value.response.url
