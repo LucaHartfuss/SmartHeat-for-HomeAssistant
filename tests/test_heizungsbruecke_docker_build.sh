@@ -14,7 +14,7 @@ DATA_DIR="$TMPDIR/data"
 mkdir -p "$DATA_DIR"
 
 cat > "$DATA_DIR/options.json" <<JSON
-{"tenant_id":"test","profile":"weishaupt_waermepumpe_fussbodenheizung","mqtt_host":"127.0.0.1","mqtt_port":18830,"entity_room_actual":"climate.test"}
+{"tenant_id":"test","profile":"vaillant_gastherme_heizkoerper","entity_room_actual":"climate.test"}
 JSON
 
 if command -v cygpath >/dev/null 2>&1; then
@@ -24,7 +24,7 @@ else
 fi
 
 echo "--- container run mit unvollstaendiger Config (fehlende Pflicht-Rollen) ---"
-MSYS_NO_PATHCONV=1 docker run --rm -v "$DATA_DIR_HOST:/data" "$IMAGE_TAG" \
+MSYS_NO_PATHCONV=1 docker run --rm -e SUPERVISOR_TOKEN=test-token -v "$DATA_DIR_HOST:/data" "$IMAGE_TAG" \
   >"$TMPDIR/stdout.log" 2>"$TMPDIR/stderr.log"
 CONTAINER_EXIT=$?
 
@@ -35,7 +35,7 @@ else
   echo "PASS: Container beendet sich mit Exit-Code 1 bei fehlenden Pflicht-Rollen"
 fi
 
-if grep -q "FEHLER: Pflicht-Rollen fehlen" "$TMPDIR/stderr.log"; then
+if grep -q "FEHLER: Folgende Pflichtfelder fehlen" "$TMPDIR/stderr.log"; then
   echo "PASS: Fehlermeldung auf stderr vorhanden"
 else
   echo "FAIL: erwartete Fehlermeldung fehlt auf stderr"

@@ -43,14 +43,39 @@ Home Assistants MQTT-Integration. Die Rueckschaltung auf Normal erfolgt erst nac
 zwei aufeinanderfolgenden gueltigen Nachrichten (Anti-Flatter), unabhaengig von
 dieser Schwelle.
 
+## Update von 0.4.0 auf 0.5.0 (Breaking Change)
+
+`mqtt_host`, `mqtt_port`, `curve_min`, `curve_max`, `offset_min`, `offset_max`,
+`boost_threshold_k`, `boost_curve_value`, `boost_offset_value`,
+`entity_room_day_avg`, `entity_room_night_avg`, `entity_dat` und `entity_dart`
+entfallen ersatzlos aus der Konfiguration:
+
+- MQTT-Host/Port sind jetzt fest auf `127.0.0.1:18830` verdrahtet (identisch zum
+  bisherigen Standardwert und zu `cloudflared_access_mqtt`s `local_port`).
+- Clamp- und Boost-Werte kommen jetzt ausschliesslich aus dem gewaehlten `profile`
+  (siehe Konfiguration unten) -- kein Override mehr moeglich.
+- DAT, DART sowie Tag-/Nachtmittel der Raumtemperatur werden ab jetzt vom Add-on
+  selbst automatisch berechnet (ueber beim ersten Start automatisch angelegte
+  Home-Assistant-Helfer: drei `statistics`-Sensoren, zwei `input_number`-Helfer,
+  alle mit Praefix `smartheat_<tenant_id>_`) statt vom Kunden manuell angelegte
+  Entities zu erwarten.
+- `entity_outdoor_temp` ist jetzt **Pflicht** (vorher optional) -- wird fuer die
+  automatische DAT-Berechnung gebraucht.
+
+**Achtung bei bestehenden Installationen:** nach dem Update auf 0.5.0 die
+Konfiguration einmal pruefen -- die entfallenen Felder werden ignoriert, aber
+`entity_outdoor_temp` muss gesetzt sein, sonst startet das Add-on nicht.
+
 ## Voraussetzungen
 
 - Das Add-on **Cloudflared Access TCP-Bridge** (`cloudflared_access_mqtt`, aus
   demselben Repository) muss installiert, konfiguriert und **gestartet** sein,
   bevor dieses Add-on gestartet wird — es stellt den MQTT-Broker unter
   `127.0.0.1:<local_port>` bereit.
-- Der `mqtt_port` dieses Add-ons **muss** exakt dem `local_port` von
-  `cloudflared_access_mqtt` entsprechen (Standard fuer beide: `18830`).
+- Dieses Add-on ist fest auf `127.0.0.1:18830` verdrahtet (kein Config-Feld
+  mehr, siehe Changelog 0.5.0) -- `cloudflared_access_mqtt`s `local_port`
+  **muss** deshalb auf dessen Standardwert `18830` bleiben, sonst findet das
+  Add-on den Broker nicht.
 - Dieses Add-on benoetigt `homeassistant_api: true` (Zugriff auf die
   Home-Assistant-Core-API, um Entity-Zustaende zu lesen/Sollwerte zu setzen)
   und `host_network: true` (um `cloudflared_access_mqtt`s Broker unter
@@ -67,37 +92,15 @@ dieser Schwelle.
   - `vaillant_gastherme_heizkoerper`: Vaillant-Gastherme mit Heizkörpern
   - Weitere Profile (z. B. Wärmepumpen) folgen, sobald fuer sie verifizierte
     Standardwerte vorliegen — bis dahin sind sie im Dropdown nicht sichtbar.
-- `mqtt_host`: Hostname/IP des MQTT-Brokers, wie er aus diesem Add-on heraus
-  erreichbar ist. Standard `127.0.0.1` (der von `cloudflared_access_mqtt`
-  bereitgestellte lokale Broker-Zugang).
-- `mqtt_port`: Port des MQTT-Brokers. **Muss** mit `cloudflared_access_mqtt`s
-  `local_port` uebereinstimmen. Standard `18830`.
 - `entity_room_actual` / `entity_room_target`: Ist-/Soll-Temperatur des
   Referenzraums (Pflicht).
 - `entity_curve_current` / `entity_offset_current`: Ziel-Entities fuer
   Heizkurve/Niveau (Pflicht) — dorthin schreibt das Add-on sowohl vom Server
   empfangene Sollwerte als auch (im Boost-Fall) die lokalen Boost-Werte.
-- `entity_outdoor_temp`: optional, Aussentemperatur-Sensor.
-- `entity_room_day_avg` / `entity_room_night_avg`: Pflicht, Tag-/Nacht-Mittelwerte
-  des Referenzraums (fuer profilspezifische Anforderungen erforderlich).
-- `entity_heat_limit` / `entity_dat` / `entity_dart`: Pflicht, weitere
-  anlagenspezifische Kanaele, die an den Server gemeldet werden (fuer
-  profilspezifische Anforderungen erforderlich).
-- `curve_min`/`curve_max`/`offset_min`/`offset_max`: Sicherheitsgrenzen —
-  optional. Leer gelassen gilt der zum `profile` hinterlegte Standardwert;
-  explizit gesetzt wirkt der Wert als Override. Jeder vom Server empfangene
-  und jeder lokal geschriebene Boost-Wert wird vor dem Schreiben gegen diese
-  (aufgeloesten) Grenzen geclamped.
-- `boost_threshold_k`: Schwelle in Kelvin, ab der die lokale Boost-Hysterese
-  eingreift (Ist-Temperatur mehr als `boost_threshold_k` unter der
-  Soll-Temperatur). Standard `0.5`.
-- `boost_curve_value` / `boost_offset_value`: die Werte, die die lokale
-  Boost-Hysterese auf `entity_curve_current`/`entity_offset_current` schreibt,
-  solange sie aktiv ist. **Muessen** innerhalb von
-  `[curve_min, curve_max]` bzw. `[offset_min, offset_max]` liegen — das
-  Add-on verweigert sonst den Start (Fehlermeldung auf stderr, Exit-Code 1),
-  statt den Wert stillschweigend zu clampen, da dieser Pfad der einzige ist,
-  der ohne Server-Beteiligung auf die Anlage schreibt.
+- `entity_outdoor_temp`: Pflicht, Aussentemperatur-Sensor (wird fuer die
+  automatische DAT-Berechnung gebraucht).
+- `entity_heat_limit`: Pflicht, weiterer anlagenspezifischer Kanal, der an den
+  Server gemeldet wird (fuer profilspezifische Anforderungen erforderlich).
 - `poll_interval_seconds`: Intervall zwischen zwei Zyklen (Snapshot
   veroeffentlichen, Boost-Entscheidung treffen). Standard `3600`.
 - `notify_service`: optional. HA-Notify-Dienst im Format

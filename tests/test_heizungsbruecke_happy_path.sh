@@ -3,13 +3,13 @@
 # stub MQTT broker (real eclipse-mosquitto) and a stub HA Supervisor Core API (a tiny
 # Python HTTP server), and asserts that a real MQTT publish reaches the up-channel.
 #
-# This is the test that would have caught C1 (missing host_network -- not exercised here
-# since we don't go through the real Supervisor network path, but it does exercise the
-# actual mqtt_host/mqtt_port config plumbing), C2/C3 (wrong Core API permission flag /
-# get_state attribute handling -- exercised here via a real HTTP round trip to a
-# "supervisor"-named container, exactly like the real Supervisor proxy), and C4 (boost
-# config validation at startup, since the options file below sets consistent clamp and
-# boost values).
+# This is the test that would have caught C1 (missing host_network -- approximated here
+# via --network container:<mosquitto>, sharing a network namespace the same way
+# host_network:true makes this add-on and cloudflared_access_mqtt share the real Pi's
+# network stack), C2/C3 (wrong Core API permission flag / get_state attribute handling --
+# exercised via a real HTTP round trip to a "supervisor"-named container), and the
+# automatic DAT/DART/day-night-avg helper provisioning against the stub's config-entry-flow
+# (REST) and input_number/entity-registry (hand-rolled WebSocket handshake) endpoints.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ADDON_DIR="$HERE/../heizungsbruecke"
@@ -45,8 +45,39 @@ echo "PASS: docker build erfolgreich"
 # state + attribute set (covers both the plain-state and the C3 entity_id::attribute
 # read paths); any POST to the number/set_value service is accepted. ---
 cat > "$TMPDIR/stub_supervisor.py" <<'PYEOF'
+import base64
+import hashlib
 import json
+import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+_FLOW_COUNTER = {"n": 0}
+_ENTITY_REGISTRY = []
+_WS_MAGIC = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+
+def _recv_ws_frame(rfile) -> dict:
+    header = rfile.read(2)
+    length = header[1] & 0x7F
+    if length == 126:
+        length = int.from_bytes(rfile.read(2), "big")
+    elif length == 127:
+        length = int.from_bytes(rfile.read(8), "big")
+    mask = rfile.read(4)
+    payload = rfile.read(length)
+    payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+    return json.loads(payload.decode())
+
+
+def _send_ws_frame(wfile, obj) -> None:
+    payload = json.dumps(obj).encode()
+    length = len(payload)
+    if length < 126:
+        header = bytes([0x81, length])
+    else:
+        header = bytes([0x81, 126]) + length.to_bytes(2, "big")
+    wfile.write(header + payload)
+    wfile.flush()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -59,6 +90,21 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if self.headers.get("Upgrade", "").lower() == "websocket":
+            key = self.headers["Sec-WebSocket-Key"]
+            accept = base64.b64encode(hashlib.sha1((key + _WS_MAGIC).encode()).digest()).decode()
+            self.send_response(101, "Switching Protocols")
+            self.send_header("Upgrade", "websocket")
+            self.send_header("Connection", "Upgrade")
+            self.send_header("Sec-WebSocket-Accept", accept)
+            self.end_headers()
+            _send_ws_frame(self.wfile, {"type": "auth_required"})
+            _recv_ws_frame(self.rfile)  # auth message, not checked -- stub trusts everyone
+            _send_ws_frame(self.wfile, {"type": "auth_ok"})
+            command = _recv_ws_frame(self.rfile)
+            result = self._fake_ws_result(command)
+            _send_ws_frame(self.wfile, {"id": command.get("id", 1), "type": "result", "success": True, "result": result})
+            return
         if self.path.startswith("/core/api/states/"):
             self._send_json({
                 "state": "20.0",
@@ -67,9 +113,35 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._send_json({"error": "not found"}, code=404)
 
+    def _fake_ws_result(self, command):
+        cmd_type = command.get("type")
+        if cmd_type == "input_number/create":
+            return {"id": "stub_input_number"}
+        if cmd_type in ("config/entity_registry/list", "config/entity_registry/list_for_display"):
+            return list(_ENTITY_REGISTRY)
+        return {}
+
     def do_POST(self):
         if self.path == "/core/api/services/number/set_value":
             self._send_json({})
+        elif self.path == "/core/api/services/input_number/set_value":
+            self._send_json({})
+        elif self.path == "/core/api/config/config_entries/flow":
+            _FLOW_COUNTER["n"] += 1
+            self._send_json({
+                "flow_id": f"flow-{_FLOW_COUNTER['n']}",
+                "type": "form",
+                "step_id": "user",
+                "data_schema": [
+                    {"name": "name"}, {"name": "entity_id"}, {"name": "state_characteristic"},
+                    {"name": "max_age"}, {"name": "sampling_size"}, {"name": "precision"},
+                ],
+            })
+        elif re.match(r"^/core/api/config/config_entries/flow/flow-\d+$", self.path):
+            entry_id = f"entry-{self.path.rsplit('-', 1)[1]}"
+            entity_id = f"sensor.stub_derived_{entry_id}"
+            _ENTITY_REGISTRY.append({"entity_id": entity_id, "config_entry_id": entry_id})
+            self._send_json({"type": "create_entry", "result": {"entry_id": entry_id}})
         else:
             self._send_json({"error": "not found"}, code=404)
 
@@ -82,7 +154,7 @@ if __name__ == "__main__":
 PYEOF
 
 cat > "$TMPDIR/mosquitto.conf" <<'EOF'
-listener 1883
+listener 18830
 allow_anonymous true
 EOF
 
@@ -90,7 +162,7 @@ EOF
 # (like the real climate.wohnzimmer_thermostat setup) so this test also exercises that
 # read path end-to-end, not just the plain-state path.
 cat > "$DATA_DIR/options.json" <<JSON
-{"tenant_id":"happytest","profile":"weishaupt_waermepumpe_fussbodenheizung","mqtt_host":"${MOSQUITTO_NAME}","mqtt_port":1883,"entity_room_actual":"climate.testroom::current_temperature","entity_room_target":"climate.testroom::temperature","entity_curve_current":"number.curve","entity_offset_current":"number.offset","entity_room_day_avg":"sensor.day_avg","entity_room_night_avg":"sensor.night_avg","entity_heat_limit":"number.heat_limit","entity_dat":"sensor.dat","entity_dart":"sensor.dart","curve_min":0.2,"curve_max":0.8,"offset_min":0.0,"offset_max":5.0,"boost_threshold_k":0.5,"boost_curve_value":0.5,"boost_offset_value":2.0,"poll_interval_seconds":2}
+{"tenant_id":"happytest","profile":"vaillant_gastherme_heizkoerper","entity_room_actual":"climate.testroom::current_temperature","entity_room_target":"climate.testroom::temperature","entity_curve_current":"number.curve","entity_offset_current":"number.offset","entity_heat_limit":"number.heat_limit","entity_outdoor_temp":"sensor.outdoor","poll_interval_seconds":2}
 JSON
 
 docker network rm "$NET_NAME" >/dev/null 2>&1
@@ -107,14 +179,14 @@ MSYS_NO_PATHCONV=1 docker run -d --name "$SUPERVISOR_NAME" --network "$NET_NAME"
   python:3.11-slim python /stub_supervisor.py >/dev/null || { echo "FAIL: supervisor stub start"; exit 1; }
 
 DATA_DIR_HOST="$(path_for_docker "$DATA_DIR")"
-MSYS_NO_PATHCONV=1 docker run -d --name "$BRIDGE_NAME" --network "$NET_NAME" \
+MSYS_NO_PATHCONV=1 docker run -d --name "$BRIDGE_NAME" --network "container:$MOSQUITTO_NAME" \
   -e SUPERVISOR_TOKEN=test-token \
   -v "${DATA_DIR_HOST}:/data" \
   "$IMAGE_TAG" >/dev/null || { echo "FAIL: bridge container start"; exit 1; }
 
 echo "--- warte auf Publish auf smartheat/happytest/up/# ---"
 docker run --rm --network "$NET_NAME" eclipse-mosquitto:2 sh -c \
-  "mosquitto_sub -h '$MOSQUITTO_NAME' -t 'smartheat/+/up/#' -v -C 1 -W 20"
+  "mosquitto_sub -h '$MOSQUITTO_NAME' -p 18830 -t 'smartheat/+/up/#' -v -C 1 -W 20"
 SUB_EXIT=$?
 
 if [ "$SUB_EXIT" = "0" ]; then
