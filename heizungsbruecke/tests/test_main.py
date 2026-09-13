@@ -14,6 +14,7 @@ from heizungsbruecke.__main__ import (
     _run_tick,
     _save_failsafe_ctx,
     _validate_boost_config,
+    _validate_derived_sensor_prerequisites,
 )
 from heizungsbruecke.failsafe import FailsafeState
 from heizungsbruecke.profiles import UnknownProfileError
@@ -184,6 +185,30 @@ def test_resolve_effective_options_raises_for_profile_without_defaults():
 
     with pytest.raises(UnknownProfileError):
         _resolve_effective_options(options)
+
+
+def test_validate_derived_sensor_prerequisites_returns_none_when_present():
+    options = {"entity_room_actual": "sensor.rt", "entity_outdoor_temp": "sensor.outdoor"}
+
+    assert _validate_derived_sensor_prerequisites(options) is None
+
+
+def test_validate_derived_sensor_prerequisites_flags_missing_outdoor_temp():
+    options = {"entity_room_actual": "sensor.rt"}
+
+    error = _validate_derived_sensor_prerequisites(options)
+
+    assert error is not None
+    assert "entity_outdoor_temp" in error
+
+
+def test_validate_derived_sensor_prerequisites_flags_missing_room_actual():
+    options = {"entity_outdoor_temp": "sensor.outdoor"}
+
+    error = _validate_derived_sensor_prerequisites(options)
+
+    assert error is not None
+    assert "entity_room_actual" in error
 
 
 def test_load_failsafe_ctx_defaults_when_no_file(tmp_path):

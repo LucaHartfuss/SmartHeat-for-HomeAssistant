@@ -5,11 +5,13 @@ import sys
 import threading
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.boost import decide_boost
 from heizungsbruecke.bridge import apply_boost_decision, handle_down_message, publish_snapshot
+from heizungsbruecke import daynight_snapshot, derived_sensors
 from heizungsbruecke.failsafe import (
     FailsafeState,
     build_discovery_config,
@@ -25,6 +27,11 @@ from heizungsbruecke.profiles import UnknownProfileError, resolve_boost_defaults
 OPTIONS_PATH = Path("/data/options.json")
 BACKUP_PATH = Path("/data/backup.json")
 FAILSAFE_PATH = Path("/data/failsafe_state.json")
+DERIVED_SENSORS_PATH = Path("/data/derived_sensors.json")
+DAYNIGHT_SNAPSHOT_PATH = Path("/data/daynight_snapshot_state.json")
+
+MQTT_HOST = "127.0.0.1"
+MQTT_PORT = 18830
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +71,24 @@ def _validate_boost_config(options: dict) -> str | None:
         return (
             f"boost_offset_value ({boost_offset_value}) liegt ausserhalb des konfigurierten "
             f"Bereichs [offset_min={offset_min}, offset_max={offset_max}]"
+        )
+    return None
+
+
+def _validate_derived_sensor_prerequisites(options: dict) -> str | None:
+    """Returns a German error message if a field the automatic DAT/DART/day-night-avg
+    provisioning needs (derived_sensors.ensure_all) is missing, or None if both are
+    present. Checked explicitly, before ensure_all() runs, so a customer who forgot
+    entity_outdoor_temp gets a clean startup error instead of a raw KeyError.
+    """
+    missing = [
+        field for field in ("entity_room_actual", "entity_outdoor_temp")
+        if not options.get(field)
+    ]
+    if missing:
+        return (
+            "Folgende Pflichtfelder fehlen in der Add-on-Konfiguration (werden fuer "
+            f"automatisch berechnete Sensoren gebraucht): {', '.join(missing)}"
         )
     return None
 
@@ -204,12 +229,6 @@ def main() -> None:
     options = json.loads(OPTIONS_PATH.read_text())
 
     try:
-        manifest = build_manifest(options)
-    except ManifestError as error:
-        print(f"FEHLER: {error}", file=sys.stderr)
-        sys.exit(1)
-
-    try:
         options = _resolve_effective_options(options)
     except UnknownProfileError as error:
         print(f"FEHLER: {error}", file=sys.stderr)
@@ -221,11 +240,27 @@ def main() -> None:
         sys.exit(1)
 
     ha_api = HomeAssistantApi(base_url="http://supervisor", token=os.environ["SUPERVISOR_TOKEN"])
-    mqtt_client = BridgeMqttClient(
-        host=options.get("mqtt_host", "127.0.0.1"),
-        port=options["mqtt_port"],
+
+    prerequisite_error = _validate_derived_sensor_prerequisites(options)
+    if prerequisite_error:
+        print(f"FEHLER: {prerequisite_error}", file=sys.stderr)
+        sys.exit(1)
+
+    derived_entity_ids = derived_sensors.ensure_all(
+        ha_api=ha_api,
         tenant_id=options["tenant_id"],
+        room_actual_entity_id=options["entity_room_actual"],
+        outdoor_temp_entity_id=options["entity_outdoor_temp"],
+        state_path=DERIVED_SENSORS_PATH,
     )
+
+    try:
+        manifest = build_manifest(options, derived_entity_ids)
+    except ManifestError as error:
+        print(f"FEHLER: {error}", file=sys.stderr)
+        sys.exit(1)
+
+    mqtt_client = BridgeMqttClient(host=MQTT_HOST, port=MQTT_PORT, tenant_id=options["tenant_id"])
 
     write_lock = threading.Lock()
 
@@ -263,6 +298,18 @@ def main() -> None:
                 _check_failsafe_staleness(failsafe_ctx, stale_after_seconds, mqtt_client, FAILSAFE_PATH)
         except Exception:
             logger.exception("Fehler bei der Fail-Safe-Staleness-Pruefung, wird beim naechsten Tick erneut versucht")
+
+        try:
+            daynight_snapshot.maybe_snapshot(
+                ha_api=ha_api,
+                room_12h_avg_entity_id=derived_entity_ids["_room_12h_avg"],
+                day_avg_entity_id=derived_entity_ids["room_day_avg"],
+                night_avg_entity_id=derived_entity_ids["room_night_avg"],
+                state_path=DAYNIGHT_SNAPSHOT_PATH,
+                now=datetime.now(),
+            )
+        except Exception:
+            logger.exception("Fehler beim Tag-/Nachtmittel-Snapshot, wird beim naechsten Tick erneut versucht")
 
         time.sleep(options.get("poll_interval_seconds", 3600))
 
