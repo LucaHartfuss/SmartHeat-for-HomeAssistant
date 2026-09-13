@@ -13,7 +13,6 @@ mit RUN_REAL_HA_TESTS=1 aktivieren, z.B.:
 """
 import os
 import subprocess
-import tempfile
 import time
 import uuid
 
@@ -30,28 +29,16 @@ pytestmark = pytest.mark.skipif(
 HA_IMAGE = "ghcr.io/home-assistant/home-assistant:stable"
 HA_PORT = 18213
 
-# Statisch per YAML angelegter input_number-Helper, siehe _seed_static_input_number().
-STATIC_INPUT_NUMBER_OBJECT_ID = "smartheat_test_static_helper"
-STATIC_INPUT_NUMBER_ENTITY_ID = f"input_number.{STATIC_INPUT_NUMBER_OBJECT_ID}"
-STATIC_INPUT_NUMBER_INITIAL = 20.0
-
 
 @pytest.fixture(scope="module")
 def real_ha():
     container_name = f"heizungsbruecke-real-ha-test-{uuid.uuid4().hex[:8]}"
-    # Container per `create` statt `run` anlegen: so kann die Konfiguration (inkl.
-    # des statischen input_number-Helpers, siehe _seed_static_input_number()) per
-    # `docker cp` VOR dem ersten Start hineingelegt werden. Vermeidet einen
-    # zusaetzlichen `docker restart`-Zyklus, der sich beim Entwickeln dieser
-    # Fixture als unzuverlaessig erwiesen hat (siehe Kommentar dort).
     subprocess.run(
-        ["docker", "create", "--rm", "--name", container_name, "-p", f"{HA_PORT}:8123", HA_IMAGE],
+        ["docker", "run", "-d", "--rm", "--name", container_name, "-p", f"{HA_PORT}:8123", HA_IMAGE],
         check=True,
     )
     base_url = f"http://localhost:{HA_PORT}"
     try:
-        _seed_static_input_number(container_name)
-        subprocess.run(["docker", "start", container_name], check=True)
         _wait_for_ha_ready(base_url)
         token = _complete_onboarding(base_url)
         yield base_url, token
@@ -71,85 +58,6 @@ def _wait_for_ha_ready(base_url: str, timeout: float = 90.0) -> None:
             last_error = error
         time.sleep(2)
     raise TimeoutError(f"HA unter {base_url} wurde nicht rechtzeitig bereit: {last_error}")
-
-
-def _seed_static_input_number(container_name: str) -> None:
-    """Legt einen input_number-Helper per YAML an, BEVOR der Container zum ersten Mal startet.
-
-    HINTERGRUND (Ergebnis der Verifikation fuer Task 2, siehe auch der Docstring
-    von HomeAssistantApi.create_input_number()): der im Task-Brief vorgesehene
-    Entwurf fuer create_input_number() -- `POST /api/config/input_number/config/
-    <object_id>` -- liefert gegen einen echten HA-Core-Container (2026.9.2) einen
-    404. Quellcode-Pruefung im Container bestaetigt, dass es dafuer in dieser
-    Version *keine* REST-Route mehr gibt: `homeassistant/components/config/
-    __init__.py` registriert keine input_number-Sektion (die frueher existierende
-    `config/input_number.py` ist entfernt), und `homeassistant/components/
-    input_number/__init__.py` legt Helfer ausschliesslich ueber
-    `DictStorageCollectionWebsocket` an -- also per Websocket-Kommando
-    (`input_number/create`), nicht per REST.
-
-    Um set_input_number_value() und entity_exists() trotzdem gegen einen echten,
-    tatsaechlich existierenden input_number-Entity verifizieren zu koennen (statt
-    diese Tests aufzugeben oder abzuschwaechen), wird hier -- NUR fuer diese
-    Testfixture, nicht als Ersatz fuer create_input_number() selbst -- ein Helfer
-    ganz regulaer per YAML angelegt.
-
-    Ein erster Versuch hat configuration.yaml per `docker exec` NACH dem ersten
-    Start erweitert und dann per `docker restart` neu geladen -- das erwies sich
-    als unzuverlaessig (in wiederholten Laeufen kam die REST-API nach dem
-    Neustart teils erst nach >150s wieder hoch, teils gar nicht, mit
-    "RemoteDisconnected"-Fehlern; vermutlich ein Windows/Docker-Desktop-Problem
-    beim erneuten Binden desselben Host-Ports). Stattdessen wird die komplette
-    Konfiguration (inkl. des input_number-Blocks) VOR dem allerersten Start per
-    `docker cp` in den noch nicht gestarteten Container kopiert -- dadurch gibt es
-    nur einen einzigen, bereits erprobt zuverlaessigen Boot-Zyklus (wie in
-    _wait_for_ha_ready() fuer Task 1 bereits verifiziert).
-
-    Wichtig dabei: configuration.yaml verweist per `!include` auf automations.yaml/
-    scripts.yaml/scenes.yaml. Diese existieren NICHT als leeres Skeleton im
-    Docker-Image -- HA legt sie normalerweise beim allerersten Boot selbst an.
-    Wird configuration.yaml vorab hineinkopiert, ohne dass diese drei Dateien
-    existieren, scheitert das Parsen beim Erststart
-    ("Unable to read file /config/automations.yaml") und HA faellt in den
-    Recovery-Modus (dort laeuft zwar die Onboarding-API, aber ohne den
-    input_number-Helper) -- deshalb werden hier alle vier Dateien vorab angelegt.
-    Das wurde an einem echten Container gegenpruft.
-    """
-    static_input_number_yaml = (
-        "# Loads default set of integrations. Do not remove.\n"
-        "default_config:\n"
-        "\n"
-        "# Load frontend themes from the themes folder\n"
-        "frontend:\n"
-        "  themes: !include_dir_merge_named themes\n"
-        "\n"
-        "automation: !include automations.yaml\n"
-        "script: !include scripts.yaml\n"
-        "scene: !include scenes.yaml\n"
-        "\n"
-        "input_number:\n"
-        f"  {STATIC_INPUT_NUMBER_OBJECT_ID}:\n"
-        "    name: SmartHeat Test Static\n"
-        "    min: 0\n"
-        "    max: 35\n"
-        "    step: 0.01\n"
-        f"    initial: {STATIC_INPUT_NUMBER_INITIAL}\n"
-    )
-    files_to_seed = {
-        "configuration.yaml": static_input_number_yaml,
-        "automations.yaml": "[]\n",
-        "scripts.yaml": "{}\n",
-        "scenes.yaml": "[]\n",
-    }
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        for filename, content in files_to_seed.items():
-            local_path = os.path.join(tmp_dir, filename)
-            with open(local_path, "w", encoding="utf-8") as file:
-                file.write(content)
-            subprocess.run(
-                ["docker", "cp", local_path, f"{container_name}:/config/{filename}"],
-                check=True,
-            )
 
 
 def _complete_onboarding(base_url: str) -> str:
@@ -250,53 +158,59 @@ def test_get_state_reads_zone_home_radius_from_real_ha(real_ha):
     assert radius == 100.0
 
 
-def test_create_input_number_has_no_rest_equivalent_in_this_ha_version(real_ha):
-    """Dokumentiert einen verifizierten Negativbefund, statt ihn zu verschweigen.
+def test_create_input_number_creates_a_real_working_helper(real_ha):
+    """Verifiziert create_input_number() end-to-end gegen echte HA (Task 4: per Websocket).
 
-    Der im Task-Brief vorgesehene Entwurf fuer create_input_number() --
-    `POST /api/config/input_number/config/<object_id>` -- liefert gegen den
-    echten HA-Core-Container (2026.9.2) einen 404. Das ist keine falsche
-    Payload/URL-Variante, die sich reparieren liesse: Quellcode-Pruefung im
-    Container zeigt, dass diese REST-Route in dieser Version ueberhaupt nicht
-    mehr registriert wird (siehe Docstring von create_input_number() in ha_api.py
-    fuer die Details). Der Task-Brief instruiert fuer genau diesen Fall,
-    zu stoppen und zurueckzumelden statt stillschweigend auf einen
-    Websocket-Client umzusteigen -- das ist eine groessere Architektur-
-    entscheidung mit eigener Brainstorming-Runde. Dieser Test haelt das
-    verifizierte Verhalten fest, damit eine kuenftige HA-Version, die die Route
-    wieder einfuehrt (oder ein Fix von create_input_number), hier sichtbar
-    auffallen wuerde.
+    Der REST-Versuch aus Task 2 (`POST /api/config/input_number/config/<object_id>`)
+    scheiterte mit 404 -- siehe Git-Historie und der Docstring von
+    create_input_number() in ha_api.py fuer die Details. Seit Task 4 nutzt die
+    Methode das Websocket-Kommando `input_number/create`
+    (`homeassistant.helpers.collection.StorageCollectionWebsocket`), verifiziert
+    hier per echtem Roundtrip: der Helfer entsteht tatsaechlich in HA und sein
+    Zustand ist ueber die normale REST-States-API lesbar.
+
+    Der zurueckgegebene entity_id-String wird nur auf das `input_number.`-Praefix
+    geprueft, nicht auf einen exakten Wert: das WS-Create-Schema akzeptiert kein
+    `id`/`object_id`-Feld (siehe Docstring von create_input_number()), HA leitet
+    den Objekt-Teil stattdessen per `slugify(name)` her -- `object_id` beeinflusst
+    das Ergebnis also nicht.
     """
     base_url, token = real_ha
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
 
-    with pytest.raises(requests.exceptions.HTTPError) as exc_info:
-        api.create_input_number(
-            object_id="smartheat_test_room_day_avg", name="Test Tagesmittel",
-            minimum=0.0, maximum=35.0, step=0.01, initial=20.0,
-        )
+    entity_id = api.create_input_number(
+        object_id="smartheat_test_room_day_avg", name="Test Tagesmittel",
+        minimum=0.0, maximum=35.0, step=0.01, initial=20.0,
+    )
 
-    assert exc_info.value.response.status_code == 404
+    assert entity_id.startswith("input_number.")
+    assert api.get_state(entity_id) == 20.0
 
 
 def test_set_input_number_value_updates_real_state(real_ha):
-    """Nutzt den YAML-provisionierten Helfer aus real_ha (STATIC_INPUT_NUMBER_ENTITY_ID),
-    da api.create_input_number() -- siehe Test oben -- in dieser HA-Version nicht
-    funktioniert.
-    """
+    """Nutzt einen per api.create_input_number() frisch angelegten Helfer als reale Entity
+    (statt, wie vor Task 4, einen statisch per YAML in real_ha vorprovisionierten)."""
     base_url, token = real_ha
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
+    entity_id = api.create_input_number(
+        object_id="smartheat_test_set_value", name="Test Set Value",
+        minimum=0.0, maximum=35.0, step=0.01, initial=18.0,
+    )
 
-    api.set_input_number_value(STATIC_INPUT_NUMBER_ENTITY_ID, 23.5)
+    api.set_input_number_value(entity_id, 23.5)
 
-    assert api.get_state(STATIC_INPUT_NUMBER_ENTITY_ID) == 23.5
+    assert api.get_state(entity_id) == 23.5
 
 
 def test_entity_exists_true_for_created_entity_false_for_unknown(real_ha):
     base_url, token = real_ha
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
+    entity_id = api.create_input_number(
+        object_id="smartheat_test_entity_exists", name="Test Entity Exists",
+        minimum=0.0, maximum=35.0, step=0.01, initial=18.0,
+    )
 
-    assert api.entity_exists(STATIC_INPUT_NUMBER_ENTITY_ID) is True
+    assert api.entity_exists(entity_id) is True
     assert api.entity_exists("input_number.does_not_exist_at_all") is False
 
 
@@ -307,22 +221,21 @@ def test_create_statistics_sensor_config_flow_creates_a_loaded_config_entry(real
     Domain "sensor" oder "binary_sensor" liegende Quell-Entity (per Selector im
     ersten Formular-Schritt serverseitig erzwungen -- ein input_number wird mit
     "Entity ... belongs to domain input_number, expected ['binary_sensor',
-    'sensor']" abgelehnt). Der in real_ha statisch angelegte
-    STATIC_INPUT_NUMBER_ENTITY_ID (siehe oben) eignet sich dafuer also NICHT,
-    unabhaengig vom unten dokumentierten Entity-Registry-Befund. Statt die
-    gemeinsame real_ha-Fixture fuer diesen einen Test zu erweitern, wird hier
-    sensor.sun_next_dawn verwendet -- eine von HAs `sun`-Integration (Teil von
-    `default_config`, siehe real_ha-Fixture) immer automatisch angelegte, damit
-    garantiert vorhandene Sensor-Entity. Ihr nicht-numerischer Zustand
-    (ISO-8601-Zeitstempel) ist fuer diesen Test unerheblich: geprueft wird hier
-    nur, dass der Config-Entry-Flow selbst durchlaeuft und einen geladenen
-    Config-Entry erzeugt -- nicht die korrekte Berechnung des Mittelwerts.
+    'sensor']" abgelehnt). Ein per api.create_input_number() angelegter Helfer
+    eignet sich dafuer also NICHT. Statt die gemeinsame real_ha-Fixture fuer
+    diesen einen Test zu erweitern, wird hier sensor.sun_next_dawn verwendet --
+    eine von HAs `sun`-Integration (Teil von `default_config`, siehe
+    real_ha-Fixture) immer automatisch angelegte, damit garantiert vorhandene
+    Sensor-Entity. Ihr nicht-numerischer Zustand (ISO-8601-Zeitstempel) ist fuer
+    diesen Test unerheblich: geprueft wird hier nur, dass der Config-Entry-Flow
+    selbst durchlaeuft und einen geladenen Config-Entry erzeugt -- nicht die
+    korrekte Berechnung des Mittelwerts.
 
     Dieser Test verwendet absichtlich NICHT api.create_statistics_sensor()
-    direkt, da diese Methode wegen des in
-    test_create_statistics_sensor_entity_lookup_has_no_rest_equivalent_in_this_ha_version()
-    dokumentierten Befunds (Entity-Registry-Aufloesung ist websocket-only)
-    immer eine HTTPError wirft, bevor sie einen Rueckgabewert liefern kann.
+    direkt, sondern ruft _start_config_flow()/_advance_config_flow() einzeln
+    auf: so bleibt er unabhaengig von test_create_statistics_sensor_creates_a_real_working_helper()
+    unten (das den vollen End-to-End-Pfad inkl. Entity-Lookup abdeckt) und
+    verifiziert eigenstaendig nur den Flow-Teil.
     """
     base_url, token = real_ha
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
@@ -353,29 +266,29 @@ def test_create_statistics_sensor_config_flow_creates_a_loaded_config_entry(real
     assert matching_entries[0]["state"] == "loaded"
 
 
-def test_create_statistics_sensor_entity_lookup_has_no_rest_equivalent_in_this_ha_version(real_ha):
-    """Dokumentiert einen zweiten, vom Config-Entry-Flow unabhaengigen Negativbefund.
+def test_create_statistics_sensor_creates_a_real_working_helper(real_ha):
+    """Verifiziert create_statistics_sensor() end-to-end gegen echte HA (Task 4: Entity-Lookup per Websocket).
 
-    Analog zu test_create_input_number_has_no_rest_equivalent_in_this_ha_version()
-    oben, aber fuer eine andere API-Flaeche: der Config-Entry-Flow-Teil von
-    create_statistics_sensor() FUNKTIONIERT per REST (siehe Test oberhalb) --
-    aber die anschliessende Aufloesung "Config-Entry-ID -> Entity-ID" ueber
-    `GET /api/config/entity_registry/list` liefert einen 404. Quellcode-Pruefung
-    im Container (homeassistant/components/config/entity_registry.py) bestaetigt:
-    diese Datei registriert ausschliesslich Websocket-Kommandos
-    (`websocket_api.async_register_command`), keine einzige `HomeAssistantView`
-    -- also ueberhaupt keine REST-Route fuer die Entity-Registry in dieser
-    HA-Version. create_statistics_sensor() legt den Sensor also serverseitig
-    tatsaechlich an (siehe Test oberhalb: ein echter, geladener Config-Entry
-    entsteht), kann die entstandene Entity-ID aber nicht per REST zurueckgeben.
+    Analog zu test_create_input_number_creates_a_real_working_helper() oben, aber
+    fuer eine andere API-Flaeche: der Config-Entry-Flow-Teil von
+    create_statistics_sensor() funktionierte bereits per REST (siehe Test
+    oberhalb) -- aber die anschliessende Aufloesung "Config-Entry-ID ->
+    Entity-ID" ueber `GET /api/config/entity_registry/list` schlug mit 404 fehl
+    (Quellcode-Pruefung: homeassistant/components/config/entity_registry.py
+    registriert dafuer ausschliesslich Websocket-Kommandos, keine REST-Route).
+    Seit Task 4 nutzt _find_entity_by_config_entry() dafuer das WS-Kommando
+    `config/entity_registry/list` -- verifiziert hier per echtem Roundtrip: die
+    Methode liefert jetzt tatsaechlich eine nutzbare, existierende Entity-ID.
+
+    Nutzt sensor.sun_next_dusk (statt sun_next_dawn im Test oberhalb), damit
+    beide Tests unabhaengige Config-Entries anlegen.
     """
     base_url, token = real_ha
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
 
-    with pytest.raises(requests.exceptions.HTTPError) as exc_info:
-        api.create_statistics_sensor(
-            name="Test Mean 2", source_entity_id="sensor.sun_next_dusk", max_age_hours=12,
-        )
+    entity_id = api.create_statistics_sensor(
+        name="Test Mean 2", source_entity_id="sensor.sun_next_dusk", max_age_hours=12,
+    )
 
-    assert exc_info.value.response.status_code == 404
-    assert "entity_registry/list" in exc_info.value.response.url
+    assert entity_id.startswith("sensor.")
+    assert api.entity_exists(entity_id)
