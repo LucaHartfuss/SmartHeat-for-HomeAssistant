@@ -36,13 +36,13 @@ def _resolve_effective_options(options: dict) -> dict:
     UnknownProfileError if the profile has no local defaults and one of the
     four fields is still missing after that.
     """
-    clamps = resolve_local_clamps(options["profile"], options)
+    clamps = resolve_local_clamps(options["profile"])
     return {
         **options,
-        "curve_min": clamps.curve_min,
-        "curve_max": clamps.curve_max,
-        "offset_min": clamps.offset_min,
-        "offset_max": clamps.offset_max,
+        "curve_min": options.get("curve_min", clamps.curve_min),
+        "curve_max": options.get("curve_max", clamps.curve_max),
+        "offset_min": options.get("offset_min", clamps.offset_min),
+        "offset_max": options.get("offset_max", clamps.offset_max),
     }
 
 

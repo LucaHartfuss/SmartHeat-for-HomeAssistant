@@ -5,11 +5,13 @@ import pytest
 
 from heizungsbruecke.manifest import ALL_ROLES
 from heizungsbruecke.profiles import (
+    LOCAL_BOOST_DEFAULTS,
     LOCAL_CLAMP_DEFAULTS,
     PROFILE_LABELS,
     REQUIRED_ROLES_BY_PROFILE,
     UnknownProfileError,
     required_roles_for,
+    resolve_boost_defaults,
     resolve_local_clamps,
 )
 
@@ -68,51 +70,25 @@ def test_every_required_role_is_a_known_manifest_role():
         assert not unknown, f"Profil '{profile_id}' fordert unbekannte Rollen: {sorted(unknown)}"
 
 
-def test_resolve_local_clamps_uses_defaults_when_options_empty():
-    clamps = resolve_local_clamps("vaillant_gastherme_heizkoerper", {})
+def test_resolve_local_clamps_returns_profile_defaults():
+    clamps = resolve_local_clamps("vaillant_gastherme_heizkoerper")
 
     assert clamps == LOCAL_CLAMP_DEFAULTS["vaillant_gastherme_heizkoerper"]
 
 
-def test_resolve_local_clamps_applies_partial_override():
-    clamps = resolve_local_clamps("vaillant_gastherme_heizkoerper", {"offset_max": 28.0})
-
-    assert clamps.offset_max == 28.0
-    assert clamps.curve_min == LOCAL_CLAMP_DEFAULTS["vaillant_gastherme_heizkoerper"].curve_min
-
-
-def test_resolve_local_clamps_ignores_falsy_option_values():
-    # 0.0 ist fuer keinen dieser vier Werte ein plausibler echter Wert -- config.yaml
-    # nutzt 0.0 konsistent mit dem bestehenden Muster (z.B. entity_outdoor_temp: "")
-    # als Sentinel fuer "nicht gesetzt".
-    clamps = resolve_local_clamps("vaillant_gastherme_heizkoerper", {"curve_min": 0.0})
-
-    assert clamps.curve_min == LOCAL_CLAMP_DEFAULTS["vaillant_gastherme_heizkoerper"].curve_min
-
-
-def test_resolve_local_clamps_raises_for_profile_without_defaults_and_missing_fields():
+def test_resolve_local_clamps_raises_for_profile_without_defaults():
     with pytest.raises(UnknownProfileError):
-        resolve_local_clamps("weishaupt_waermepumpe_fussbodenheizung", {})
+        resolve_local_clamps("weishaupt_waermepumpe_fussbodenheizung")
 
 
-def test_resolve_local_clamps_succeeds_for_profile_without_defaults_when_fully_overridden():
-    options = {"curve_min": 0.2, "curve_max": 0.8, "offset_min": 0.0, "offset_max": 5.0}
+def test_resolve_boost_defaults_returns_profile_values():
+    defaults = resolve_boost_defaults("vaillant_gastherme_heizkoerper")
 
-    clamps = resolve_local_clamps("weishaupt_waermepumpe_fussbodenheizung", options)
+    assert defaults.threshold_k == 0.5
+    assert defaults.curve_value == 1.5
+    assert defaults.offset_value == 30.0
 
-    assert clamps.curve_min == 0.2
-    assert clamps.offset_max == 5.0
 
-
-def test_resolve_local_clamps_rejects_partial_override_that_inverts_curve_range():
-    # curve_max bleibt beim Profil-Default 1.5 -- der Override allein macht curve_min
-    # > curve_max, obwohl weder Default noch Override fuer sich unplausibel wirken.
+def test_resolve_boost_defaults_raises_for_profile_without_defaults():
     with pytest.raises(UnknownProfileError):
-        resolve_local_clamps("vaillant_gastherme_heizkoerper", {"curve_min": 2.0})
-
-
-def test_resolve_local_clamps_rejects_partial_override_that_inverts_offset_range():
-    # offset_min bleibt beim Profil-Default 20.0 -- der Override allein macht
-    # offset_min > offset_max.
-    with pytest.raises(UnknownProfileError):
-        resolve_local_clamps("vaillant_gastherme_heizkoerper", {"offset_max": 10.0})
+        resolve_boost_defaults("weishaupt_waermepumpe_fussbodenheizung")
