@@ -6,6 +6,7 @@ import pytest
 
 from heizungsbruecke.__main__ import (
     _check_failsafe_staleness,
+    _ensure_derived_sensors_with_retry,
     _load_failsafe_ctx,
     _load_failsafe_ctx_safe,
     _make_down_callback,
@@ -209,6 +210,56 @@ def test_validate_derived_sensor_prerequisites_flags_missing_room_actual():
 
     assert error is not None
     assert "entity_room_actual" in error
+
+
+def test_ensure_derived_sensors_with_retry_returns_result_on_first_success(monkeypatch):
+    expected = {"dat": "sensor.dat"}
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: expected
+    )
+    sleeps = []
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", sleeps.append)
+
+    options = {"tenant_id": "t1", "entity_room_actual": "sensor.rt", "entity_outdoor_temp": "sensor.outdoor"}
+    result = _ensure_derived_sensors_with_retry(MagicMock(), options)
+
+    assert result == expected
+    assert sleeps == []
+
+
+def test_ensure_derived_sensors_with_retry_recovers_after_transient_failures(monkeypatch):
+    expected = {"dat": "sensor.dat"}
+    attempts = {"count": 0}
+
+    def flaky_ensure_all(**kwargs):
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            raise ConnectionError("HA Core noch nicht erreichbar")
+        return expected
+
+    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", flaky_ensure_all)
+    sleeps = []
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", sleeps.append)
+
+    options = {"tenant_id": "t1", "entity_room_actual": "sensor.rt", "entity_outdoor_temp": "sensor.outdoor"}
+    result = _ensure_derived_sensors_with_retry(MagicMock(), options)
+
+    assert result == expected
+    assert attempts["count"] == 3
+    assert sleeps == [5, 10]
+
+
+def test_ensure_derived_sensors_with_retry_raises_last_error_after_exhausting_retries(monkeypatch):
+    def always_fails(**kwargs):
+        raise ConnectionError("HA Core dauerhaft nicht erreichbar")
+
+    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", always_fails)
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", lambda seconds: None)
+
+    options = {"tenant_id": "t1", "entity_room_actual": "sensor.rt", "entity_outdoor_temp": "sensor.outdoor"}
+
+    with pytest.raises(ConnectionError, match="HA Core dauerhaft nicht erreichbar"):
+        _ensure_derived_sensors_with_retry(MagicMock(), options)
 
 
 def test_load_failsafe_ctx_defaults_when_no_file(tmp_path):

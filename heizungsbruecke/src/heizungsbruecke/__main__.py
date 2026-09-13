@@ -33,6 +33,13 @@ DAYNIGHT_SNAPSHOT_PATH = Path("/data/daynight_snapshot_state.json")
 MQTT_HOST = "127.0.0.1"
 MQTT_PORT = 18830
 
+# The add-on runs with `startup: services`, i.e. it can be started before HA Core has
+# finished booting. A transient failure here (HA API not answering yet) must not be fatal
+# on the first attempt -- retry with backoff before giving up. No config.yaml `watchdog`
+# is set on purpose: once retries are exhausted the failure is treated as a genuine
+# misconfiguration, and main() exits cleanly rather than crash-looping forever.
+DERIVED_SENSORS_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60, 60, 60)
+
 logger = logging.getLogger(__name__)
 
 
@@ -91,6 +98,35 @@ def _validate_derived_sensor_prerequisites(options: dict) -> str | None:
             f"automatisch berechnete Sensoren gebraucht): {', '.join(missing)}"
         )
     return None
+
+
+def _ensure_derived_sensors_with_retry(ha_api, options: dict) -> dict[str, str]:
+    """Wraps `derived_sensors.ensure_all` with retry-with-backoff (see
+    DERIVED_SENSORS_RETRY_DELAYS_SECONDS above for the rationale) so a transient failure
+    while HA Core is still starting up doesn't crash the whole add-on on the first try.
+    """
+    delays = DERIVED_SENSORS_RETRY_DELAYS_SECONDS
+    last_error: Exception | None = None
+    for attempt in range(len(delays) + 1):
+        try:
+            return derived_sensors.ensure_all(
+                ha_api=ha_api,
+                tenant_id=options["tenant_id"],
+                room_actual_entity_id=options["entity_room_actual"],
+                outdoor_temp_entity_id=options["entity_outdoor_temp"],
+                state_path=DERIVED_SENSORS_PATH,
+            )
+        except Exception as error:
+            last_error = error
+            if attempt == len(delays):
+                break
+            logger.warning(
+                "Anlegen der abgeleiteten Sensoren fehlgeschlagen (Versuch %s/%s, evtl. ist "
+                "HA Core beim Start des Add-ons noch nicht bereit): %s",
+                attempt + 1, len(delays) + 1, error,
+            )
+            time.sleep(delays[attempt])
+    raise last_error
 
 
 def _make_down_callback(role, manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client):
@@ -246,13 +282,15 @@ def main() -> None:
         print(f"FEHLER: {prerequisite_error}", file=sys.stderr)
         sys.exit(1)
 
-    derived_entity_ids = derived_sensors.ensure_all(
-        ha_api=ha_api,
-        tenant_id=options["tenant_id"],
-        room_actual_entity_id=options["entity_room_actual"],
-        outdoor_temp_entity_id=options["entity_outdoor_temp"],
-        state_path=DERIVED_SENSORS_PATH,
-    )
+    try:
+        derived_entity_ids = _ensure_derived_sensors_with_retry(ha_api, options)
+    except Exception as error:
+        print(
+            f"FEHLER: Anlegen der abgeleiteten Sensoren fehlgeschlagen nach "
+            f"{len(DERIVED_SENSORS_RETRY_DELAYS_SECONDS) + 1} Versuchen: {error}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     try:
         manifest = build_manifest(options, derived_entity_ids)
