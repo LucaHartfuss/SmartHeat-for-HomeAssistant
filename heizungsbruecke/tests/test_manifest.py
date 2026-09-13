@@ -118,3 +118,25 @@ def test_build_manifest_succeeds_with_all_profile_roles():
     manifest = build_manifest(options)
 
     assert manifest.entity_ids["dat"] == "sensor.dat"
+
+
+def test_build_manifest_prefers_derived_entity_ids_over_options():
+    options = {
+        "profile": "vaillant_gastherme_heizkoerper",
+        "entity_room_actual": "climate.wz",
+        "entity_room_target": "climate.wz",
+        "entity_curve_current": "number.curve",
+        "entity_offset_current": "number.offset",
+        "entity_heat_limit": "sensor.heat_limit",
+        "entity_dat": "sensor.dat_from_options_should_be_ignored",
+    }
+    derived_entity_ids = {
+        "dat": "sensor.smartheat_client1_dat",
+        "dart": "sensor.smartheat_client1_dart",
+        "room_day_avg": "input_number.smartheat_client1_room_day_avg",
+        "room_night_avg": "input_number.smartheat_client1_room_night_avg",
+    }
+
+    manifest = build_manifest(options, derived_entity_ids)
+
+    assert manifest.entity_ids["dat"] == "sensor.smartheat_client1_dat"

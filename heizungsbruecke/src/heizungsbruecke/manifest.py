@@ -17,7 +17,7 @@ class ChannelManifest:
     entity_ids: dict[str, str]
 
 
-def build_manifest(options: dict) -> ChannelManifest:
+def build_manifest(options: dict, derived_entity_ids: dict[str, str] | None = None) -> ChannelManifest:
     profile_id = options.get("profile")
     if not profile_id:
         raise ManifestError("Pflichtfeld 'profile' fehlt in der Add-on-Konfiguration")
@@ -27,8 +27,12 @@ def build_manifest(options: dict) -> ChannelManifest:
     except UnknownProfileError as exc:
         raise ManifestError(str(exc)) from exc
 
+    derived_entity_ids = derived_entity_ids or {}
     entity_ids = {}
     for role in ALL_ROLES:
+        if role in derived_entity_ids:
+            entity_ids[role] = derived_entity_ids[role]
+            continue
         value = options.get(f"entity_{role}")
         if value:
             entity_ids[role] = value
