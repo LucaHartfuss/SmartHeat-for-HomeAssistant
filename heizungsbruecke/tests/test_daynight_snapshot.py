@@ -52,9 +52,9 @@ def test_maybe_snapshot_does_nothing_before_8h(tmp_path):
     ha_api.get_state.assert_not_called()
 
 
-def test_maybe_snapshot_writes_both_when_first_run_is_late_in_the_day(tmp_path):
-    # Erster Start des Add-ons z.B. um 21 Uhr: beide Fenster (>=8 und >=20) sind
-    # fuer heute noch nicht dokumentiert -> beide werden im selben Tick nachgeholt.
+def test_maybe_snapshot_only_fires_day_when_first_run_is_late_in_the_day(tmp_path):
+    # Late first boot at 21:00: day window (>=20) applies, but night window (8-20) does not.
+    # Night snapshot must wait until the next 08:00 to be valid (rolling average still contains daytime data at 21:00).
     ha_api = MagicMock()
     ha_api.get_state.return_value = 21.0
     state_path = tmp_path / "daynight_snapshot_state.json"
@@ -62,4 +62,4 @@ def test_maybe_snapshot_writes_both_when_first_run_is_late_in_the_day(tmp_path):
     maybe_snapshot(ha_api, "sensor.room_12h_avg", "input_number.day_avg", "input_number.night_avg",
                    state_path, now=datetime(2026, 9, 13, 21, 0))
 
-    assert ha_api.set_input_number_value.call_count == 2
+    ha_api.set_input_number_value.assert_called_once_with("input_number.day_avg", 21.0)
