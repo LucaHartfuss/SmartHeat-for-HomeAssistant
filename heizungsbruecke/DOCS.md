@@ -5,10 +5,12 @@ aktuelle Heizkurve/Niveau) und meldet sie generisch an den SmartHeat-Server.
 Schreibt vom Server empfangene Sollwerte zurueck, geclamped gegen die
 konfigurierten Sicherheitsgrenzen. Enthaelt eine lokale Boost-Hysterese,
 die unabhaengig vom Server eingreift, wenn der Referenzraum mehr als
-`boost_threshold_k` unter der Zieltemperatur liegt. Konfiguriert wird
-ausschliesslich ueber den in Home Assistant per Ingress eingebetteten
-Einrichtungs-Assistenten (Add-on-Panel "SmartHeat Einrichtung"), nicht mehr
-ueber Felder im Configuration-Tab.
+`boost_threshold_k` unter der Zieltemperatur liegt. Dieses Add-on hat keine
+eigene Konfigurationsoberflaeche (weder im Configuration-Tab noch als
+Ingress-Panel) -- eingerichtet wird es ueber die separate **SmartHeat**
+Home-Assistant-Integration: installieren, dann Einstellungen → Geraete &
+Dienste → Integration hinzufuegen → "SmartHeat". Die Integration schreibt die
+noetige Konfiguration automatisch in dieses Add-on.
 
 ## Update von 0.1.0 auf 0.2.0 (Breaking Change)
 
@@ -91,6 +93,30 @@ starten. `poll_interval_seconds`, `notify_service` und
 optionalen Werte vorerst `options.json` auf dem Pi direkt anpassen (kein
 UI-Schritt dafuer in dieser Version).
 
+## Update von 0.6.0 auf 0.7.0 (Breaking Change)
+
+Der in 0.6.0 eingefuehrte Ingress-Einrichtungs-Assistent (Add-on-Panel
+"SmartHeat Einrichtung") entfaellt vollstaendig -- kein Flask-Server, kein
+Ingress-Panel, kein Login-Dialog mehr in diesem Add-on. Das Add-on ist ab
+jetzt ein reiner synchroner Hintergrunddienst, der beim Start die vorhandene
+`options.json` liest und bei fehlender/unvollstaendiger Konfiguration sauber
+mit Exit 0 wieder beendet, statt eine eigene Einrichtungs-UI anzubieten.
+
+Die Einrichtung laeuft stattdessen ueber die neue, separate **SmartHeat**
+Home-Assistant-Integration (kein Add-on, sondern eine ueber HACS zu
+installierende Integration): HACS-Custom-Repository hinzufuegen, "SmartHeat"
+installieren, danach Einstellungen → Geraete & Dienste → Integration
+hinzufuegen → "SmartHeat" und den gefuehrten Dialog dort durchlaufen. Die
+Integration schreibt Anlage/Profil/Sensoren direkt per Supervisor-API in
+dieses Add-on und startet es danach selbst.
+
+**Achtung bei bestehenden Installationen:** Wer noch auf dem 0.6.0-Wizard-Flow
+ist, muss vor dem Update auf 0.7.0 zuerst die SmartHeat-Integration ueber HACS
+installieren -- der bisherige Assistent (Add-on-Panel) ist nach dem Update
+nicht mehr erreichbar. Eine bereits ueber den 0.6.0-Wizard geschriebene
+`options.json` bleibt gueltig und wird von 0.7.0 weiterhin gelesen; nur der
+Weg, sie zu *erstellen* oder zu *aendern*, aendert sich.
+
 ## Voraussetzungen
 
 - Das Add-on **Cloudflared Access TCP-Bridge** (`cloudflared_access_mqtt`, aus
@@ -114,6 +140,11 @@ gesamte Einrichtung (Login, Anlagenauswahl, Profil, Entity-Zuordnung) laeuft ueb
 **SmartHeat**-Integration (Einstellungen → Geraete & Dienste → Integration hinzufuegen →
 "SmartHeat"). Die Integration schreibt die noetigen Werte automatisch in dieses Add-on und
 startet es danach selbst neu.
+
+**Erwartetes Verhalten direkt nach der Installation:** Ein frisch installiertes, noch nicht
+konfiguriertes Add-on startet sichtbar und beendet sich kurz danach wieder von selbst (Exit 0,
+kein Absturz) -- das ist beabsichtigt und kein Fehler. Sobald die SmartHeat-Integration die
+Einrichtung abgeschlossen hat, startet das Add-on von selbst wieder und bleibt dauerhaft laufen.
 
 ## Verifizierte Architekturen
 
