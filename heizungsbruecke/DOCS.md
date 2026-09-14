@@ -109,61 +109,11 @@ UI-Schritt dafuer in dieser Version).
 
 ## Konfiguration
 
-- `tenant_id`: eindeutige Kennung dieser Anlage (bestimmt das MQTT-Topic-Praefix
-  `smartheat/<tenant_id>/...`).
-- `profile`: Profil dieser Anlage (Pflicht). Bestimmt, welche `entity_*`-Felder
-  erforderlich sind und welche `curve_min`/`curve_max`/`offset_min`/`offset_max`-
-  Standardwerte gelten (siehe unten). Aktuell waehlbar:
-  - `vaillant_gastherme_heizkoerper`: Vaillant-Gastherme mit Heizkörpern
-  - Weitere Profile (z. B. Wärmepumpen) folgen, sobald fuer sie verifizierte
-    Standardwerte vorliegen — bis dahin sind sie im Dropdown nicht sichtbar.
-- `entity_room_actual` / `entity_room_target`: Ist-/Soll-Temperatur des
-  Referenzraums (Pflicht).
-- `entity_curve_current` / `entity_offset_current`: Ziel-Entities fuer
-  Heizkurve/Niveau (Pflicht) — dorthin schreibt das Add-on sowohl vom Server
-  empfangene Sollwerte als auch (im Boost-Fall) die lokalen Boost-Werte.
-- `entity_outdoor_temp`: Pflicht, Aussentemperatur-Sensor (wird fuer die
-  automatische DAT-Berechnung gebraucht).
-- `entity_heat_limit`: Pflicht, weiterer anlagenspezifischer Kanal, der an den
-  Server gemeldet wird (fuer profilspezifische Anforderungen erforderlich).
-- `poll_interval_seconds`: Intervall zwischen zwei Zyklen (Snapshot
-  veroeffentlichen, Boost-Entscheidung treffen). Standard `3600`.
-- `notify_service`: optional. HA-Notify-Dienst im Format
-  `notify.mobile_app_<geraet>` (z.B. `notify.mobile_app_lucas_iphone`). Ist er
-  gesetzt, schickt das Add-on eine Push-Benachrichtigung, sobald ein
-  konfigurierter Sensor keinen gueltigen Wert mehr liefert (typischer Fall:
-  leere Batterie -> HA meldet `unavailable`). Die Meldung wird in **jedem**
-  Zyklus erneut geschickt, solange der Sensor defekt ist — bewusst ohne
-  Entprellung, damit ein ausgefallener Sensor nicht untergeht. Leer (Standard)
-  = keine Benachrichtigungen; der Ausfall wird dann nur ins Add-on-Log
-  geschrieben. Der Versand ist "best effort": schlaegt er fehl, laeuft der
-  Zyklus normal weiter.
-- `failsafe_stale_after_hours`: optional, Standard `26`. Stunden ohne einen
-  gueltigen, tatsaechlich angewendeten Sollwert vom Server, nach denen der
-  `binary_sensor` (siehe oben) auf "Problem" springt. Rein informativ -- die
-  Steuerung selbst braucht keine aktive Fail-Safe-Regel, da bei ausbleibenden
-  Werten ohnehin nichts mehr geschrieben wird und der zuletzt gesetzte Wert
-  automatisch stehen bleibt.
-
-Ein Sensorausfall betrifft immer nur die betroffene Rolle: deren Wert entfaellt
-fuer diesen Zyklus, alle anderen Rollen werden weiterhin gemeldet und die lokale
-Boost-Hysterese wird weiterhin ausgewertet.
-
-### `entity_id::attribute`-Konvention
-
-Fuer `climate.*`-Entities ist der HA-`state` der Betriebsmodus
-(`heat`/`off`/...), nicht die Temperatur — die eigentlichen Temperaturwerte
-stehen in den Attributen `current_temperature`/`temperature`. Jede
-`entity_*`-Option kann daher statt einer reinen Entity-ID auch
-`entity_id::attribute_name` sein; das Add-on liest dann `attributes.<attribute_name>`
-statt `state`. Ohne `::` bleibt das Verhalten unveraendert (liest `state`).
-
-Konkretes Beispiel fuer den Referenzraum:
-
-```yaml
-entity_room_actual: "sensor.wohnzimmer_thermostat_temperatur"
-entity_room_target: "climate.wohnzimmer_thermostat::temperature"
-```
+Dieses Add-on hat keine eigene Konfigurationsseite. Installiere und starte es einfach — die
+gesamte Einrichtung (Login, Anlagenauswahl, Profil, Entity-Zuordnung) laeuft ueber die separate
+**SmartHeat**-Integration (Einstellungen → Geraete & Dienste → Integration hinzufuegen →
+"SmartHeat"). Die Integration schreibt die noetigen Werte automatisch in dieses Add-on und
+startet es danach selbst neu.
 
 ## Verifizierte Architekturen
 
