@@ -145,10 +145,21 @@ def test_login_returns_400_when_request_body_is_non_object_json():
     assert response.get_json()["error"] == "E-Mail und Passwort sind erforderlich"
 
 
+def test_profiles_endpoint_requires_login():
+    app = _app()
+    app.testing = True
+    client = app.test_client()
+
+    response = client.get("/api/profiles")
+
+    assert response.status_code == 401
+
+
 def test_profiles_endpoint_lists_catalog_with_verified_flag():
     app = _app()
     app.testing = True
     client = app.test_client()
+    _login(client)
 
     response = client.get("/api/profiles")
 
@@ -160,6 +171,16 @@ def test_profiles_endpoint_lists_catalog_with_verified_flag():
     assert weishaupt_entry["verified"] is False
 
 
+def test_entities_endpoint_requires_login():
+    app = _app()
+    app.testing = True
+    client = app.test_client()
+
+    response = client.get("/api/entities?domain=sensor")
+
+    assert response.status_code == 401
+
+
 def test_entities_endpoint_filters_by_domain():
     ha_api = Mock()
     ha_api.list_states.return_value = [
@@ -169,6 +190,7 @@ def test_entities_endpoint_filters_by_domain():
     app = _app(ha_api=ha_api)
     app.testing = True
     client = app.test_client()
+    _login(client)
 
     response = client.get("/api/entities?domain=sensor")
 
@@ -182,6 +204,7 @@ def test_entities_endpoint_requires_domain_param():
     app = _app()
     app.testing = True
     client = app.test_client()
+    _login(client)
 
     response = client.get("/api/entities")
 

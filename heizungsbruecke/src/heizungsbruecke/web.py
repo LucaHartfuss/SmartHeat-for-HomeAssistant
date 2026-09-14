@@ -84,6 +84,10 @@ def create_app(
 
     @app.get("/api/profiles")
     def profile_catalog():
+        token = session.get("heizungsserver_token")
+        if not token:
+            return jsonify(error="Nicht eingeloggt"), 401
+
         return jsonify([
             {
                 "hersteller": entry.hersteller,
@@ -97,6 +101,10 @@ def create_app(
 
     @app.get("/api/entities")
     def entities():
+        token = session.get("heizungsserver_token")
+        if not token:
+            return jsonify(error="Nicht eingeloggt"), 401
+
         domain = request.args.get("domain")
         if not domain:
             return jsonify(error="domain-Parameter ist erforderlich"), 400

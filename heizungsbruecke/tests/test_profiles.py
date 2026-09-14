@@ -77,6 +77,14 @@ def test_profile_catalog_entries_have_known_profile_ids():
         assert entry.profile_id in REQUIRED_ROLES_BY_PROFILE
 
 
+def test_every_profile_with_local_clamp_defaults_is_in_the_catalog():
+    # Mirror-image drift guard of the test above: a profile that gains local clamp
+    # defaults (making it selectable/verified in the wizard, see is_verified) but is
+    # never added to PROFILE_CATALOG would otherwise be silently unreachable through
+    # the wizard's /api/profiles listing forever.
+    assert {entry.profile_id for entry in PROFILE_CATALOG} >= set(LOCAL_CLAMP_DEFAULTS)
+
+
 def test_is_verified_true_for_profile_with_full_defaults():
     assert is_verified("vaillant_gastherme_heizkoerper") is True
 
