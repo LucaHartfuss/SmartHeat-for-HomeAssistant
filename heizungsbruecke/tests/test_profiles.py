@@ -7,9 +7,11 @@ from heizungsbruecke.manifest import ALL_ROLES
 from heizungsbruecke.profiles import (
     LOCAL_BOOST_DEFAULTS,
     LOCAL_CLAMP_DEFAULTS,
+    PROFILE_CATALOG,
     PROFILE_LABELS,
     REQUIRED_ROLES_BY_PROFILE,
     UnknownProfileError,
+    is_verified,
     required_roles_for,
     resolve_boost_defaults,
     resolve_local_clamps,
@@ -92,3 +94,20 @@ def test_resolve_boost_defaults_returns_profile_values():
 def test_resolve_boost_defaults_raises_for_profile_without_defaults():
     with pytest.raises(UnknownProfileError):
         resolve_boost_defaults("weishaupt_waermepumpe_fussbodenheizung")
+
+
+def test_profile_catalog_entries_have_known_profile_ids():
+    for entry in PROFILE_CATALOG:
+        assert entry.profile_id in REQUIRED_ROLES_BY_PROFILE
+
+
+def test_is_verified_true_for_profile_with_full_defaults():
+    assert is_verified("vaillant_gastherme_heizkoerper") is True
+
+
+def test_is_verified_false_for_profile_without_defaults():
+    assert is_verified("weishaupt_waermepumpe_fussbodenheizung") is False
+
+
+def test_is_verified_false_for_unknown_profile():
+    assert is_verified("nicht_vorhanden") is False
