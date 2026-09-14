@@ -1,5 +1,5 @@
 const ROLE_LABELS = {
-  entity_room_actual: "Ist-Temperatur Referenzraum",
+  entity_room_actual: "Ist-Temperatur Referenzraum (Sensor, nicht Thermostat)",
   entity_room_target: "Soll-Temperatur Referenzraum",
   entity_outdoor_temp: "Aussentemperatur",
   entity_curve_current: "Heizkurve (aktuell)",
@@ -7,24 +7,35 @@ const ROLE_LABELS = {
   entity_heat_limit: "Heizgrenze",
 };
 const ROLE_DOMAINS = {
-  entity_room_actual: ["sensor", "climate"],
+  entity_room_actual: ["sensor"],
   entity_room_target: ["sensor", "climate"],
   entity_outdoor_temp: ["sensor"],
   entity_curve_current: ["number"],
   entity_offset_current: ["number"],
   entity_heat_limit: ["number", "sensor"],
 };
-// A climate.* entity has no single numeric state -- room_actual/room_target must
-// reference one of its temperature attributes, matching ha_api.get_state()'s
-// existing "entity_id::attribute" convention. Flattened directly into the option
-// value here instead of a second dependent dropdown -- one fewer moving part for
-// the same outcome. HA's climate entities report in the install's global unit
-// (°C for this customer base), so the unit check for these two roles trusts that
-// rather than reading a per-attribute unit_of_measurement HA doesn't expose here.
+// A climate.* entity has no single numeric state -- room_target must reference one
+// of its temperature attributes, matching ha_api.get_state()'s existing
+// "entity_id::attribute" convention. Flattened directly into the option value here
+// instead of a second dependent dropdown -- one fewer moving part for the same
+// outcome. HA's climate entities report in the install's global unit (°C for this
+// customer base), so the unit check for this role trusts that rather than reading a
+// per-attribute unit_of_measurement HA doesn't expose here.
+// entity_room_actual deliberately has NO climate entry (and no "climate" domain
+// above): that value flows into derived_sensors.ensure_all() -> HA's statistics
+// config-flow, which rejects both climate-domain sources and the "::attribute"
+// suffix -- pick the room's plain temperature sensor entity instead (e.g.
+// sensor.wohnzimmer_thermostat_temperatur, not climate.wohnzimmer_thermostat).
 const CLIMATE_ATTRIBUTE_BY_ROLE = {
-  entity_room_actual: "current_temperature",
   entity_room_target: "temperature",
 };
+
+// Home Assistant serves add-on Ingress panels at a path prefix
+// (/api/hassio_ingress/<token>/...) and does not rewrite this page's own
+// requests to account for that -- a root-absolute "/api/..." fetch would resolve
+// against the HA origin itself, not this add-on. Every API call below must be
+// relative to this page's own served location instead.
+const BASE = window.location.pathname.replace(/[^/]*$/, "");
 
 let profileCatalog = [];
 
@@ -51,7 +62,7 @@ async function apiFetch(url, options) {
 document.getElementById("login-submit").addEventListener("click", async () => {
   showError("");
   try {
-    await apiFetch("/api/login", {
+    await apiFetch(BASE + "api/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -59,7 +70,7 @@ document.getElementById("login-submit").addEventListener("click", async () => {
         password: document.getElementById("login-password").value,
       }),
     });
-    const tenants = await apiFetch("/api/tenants");
+    const tenants = await apiFetch(BASE + "api/tenants");
     const select = document.getElementById("tenant-select");
     select.innerHTML = tenants.map((t) => `<option value="${t.tenant_id}">${t.tenant_id}</option>`).join("");
     showStep("step-tenant");
@@ -71,7 +82,7 @@ document.getElementById("login-submit").addEventListener("click", async () => {
 document.getElementById("tenant-next").addEventListener("click", async () => {
   showError("");
   try {
-    profileCatalog = await apiFetch("/api/profiles");
+    profileCatalog = await apiFetch(BASE + "api/profiles");
     populateHersteller();
     showStep("step-profile");
   } catch (error) {
@@ -133,7 +144,7 @@ document.getElementById("profile-next").addEventListener("click", async () => {
     for (const [role, label] of Object.entries(ROLE_LABELS)) {
       let rawEntities = [];
       for (const domain of ROLE_DOMAINS[role]) {
-        rawEntities = rawEntities.concat(await apiFetch(`/api/entities?domain=${domain}`));
+        rawEntities = rawEntities.concat(await apiFetch(`${BASE}api/entities?domain=${domain}`));
       }
       if (rawEntities.length === 0) {
         showError(`Keine passenden Entities gefunden fuer '${label}' (Domain(n): ${ROLE_DOMAINS[role].join(", ")})`);
@@ -175,7 +186,7 @@ document.getElementById("sensors-next").addEventListener("click", async () => {
 
   const entry = currentProfileEntry();
   try {
-    const result = await apiFetch("/api/complete", {
+    const result = await apiFetch(BASE + "api/complete", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
