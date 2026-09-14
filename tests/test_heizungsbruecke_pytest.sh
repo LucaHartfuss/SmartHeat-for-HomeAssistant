@@ -4,6 +4,12 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ADDON_DIR="$HERE/../heizungsbruecke"
 
 echo "--- heizungsbruecke: pytest ---"
+# PYTEST_DISABLE_PLUGIN_AUTOLOAD verhindert, dass pytest global installierte Plugins aus
+# anderen, voellig unabhaengigen Repos dieses Multi-Repo-Projekts automatisch laedt (z.B.
+# pytest-homeassistant-custom-component, das unter Windows mit
+# "ModuleNotFoundError: No module named 'fcntl'" crasht) -- diese Suite braucht keine
+# Autoload-Plugins.
+export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
 if command -v pytest >/dev/null 2>&1; then
   (cd "$ADDON_DIR" && pytest)
 else

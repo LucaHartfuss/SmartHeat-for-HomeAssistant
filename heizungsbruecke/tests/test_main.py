@@ -69,8 +69,7 @@ def test_load_options_safe_defaults_when_no_file(tmp_path):
 
 def test_load_options_safe_falls_back_on_corrupt_file(tmp_path):
     # Simulates power loss on the Pi's SD card mid-write: a truncated/corrupt options
-    # file must not crash the whole add-on before Flask (and therefore the wizard that
-    # would let the customer fix it) even starts.
+    # file must not crash the whole add-on before it can even report its state.
     path = tmp_path / "options.json"
     path.write_bytes(b"{not valid json..")
 

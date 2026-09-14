@@ -29,7 +29,6 @@ CONTAINER_NAME="heizungsbruecke-docker-build-test"
 # "docker logs" danach noch greifen kann (Cleanup passiert explizit am Skriptende).
 MSYS_NO_PATHCONV=1 docker run -d --name "$CONTAINER_NAME" \
   -e SUPERVISOR_TOKEN=test-token \
-  -e HEIZUNGSSERVER_BASE_URL=http://heizungsserver.invalid \
   -v "$DATA_DIR_HOST:/data" "$IMAGE_TAG" >/dev/null \
   || { echo "FAIL: container start"; exit 1; }
 
@@ -40,8 +39,13 @@ MSYS_NO_PATHCONV=1 docker run -d --name "$CONTAINER_NAME" \
 # jetzt ausschliesslich durch die separate SmartHeat-Integration in Home Assistant,
 # die options.json per Supervisor-API schreibt -- nicht mehr durch dieses Add-on selbst.
 # "docker wait" blockiert bis der Container stoppt und liefert dann den Exit-Code --
-# robuster als ein fixes "sleep" gefolgt von einer Running-Pruefung.
-EXIT_CODE="$(docker wait "$CONTAINER_NAME" 2>/dev/null)"
+# robuster als ein fixes "sleep" gefolgt von einer Running-Pruefung. "timeout 30" davor
+# verhindert, dass eine kuenftige Regression (Prozess beendet sich nicht mehr) das Skript
+# ewig haengen laesst statt schnell fehlzuschlagen -- ein Timeout liefert eine leere
+# Ausgabe, die unten in den bestehenden FAIL-Zweig faellt (kein numerischer Vergleich
+# noetig, der bei leerem/nicht-numerischem Wert sonst einen verwirrenden Fehler werfen
+# wuerde).
+EXIT_CODE="$(timeout 30 docker wait "$CONTAINER_NAME" 2>/dev/null)"
 
 if [ "$EXIT_CODE" = "0" ]; then
   echo "PASS: Container mit unvollstaendiger Config hat sauber mit Exit 0 beendet (kein Wizard-Modus mehr)"

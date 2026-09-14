@@ -181,7 +181,6 @@ MSYS_NO_PATHCONV=1 docker run -d --name "$SUPERVISOR_NAME" --network "$NET_NAME"
 DATA_DIR_HOST="$(path_for_docker "$DATA_DIR")"
 MSYS_NO_PATHCONV=1 docker run -d --name "$BRIDGE_NAME" --network "container:$MOSQUITTO_NAME" \
   -e SUPERVISOR_TOKEN=test-token \
-  -e HEIZUNGSSERVER_BASE_URL=http://heizungsserver.invalid \
   -v "${DATA_DIR_HOST}:/data" \
   "$IMAGE_TAG" >/dev/null || { echo "FAIL: bridge container start"; exit 1; }
 
