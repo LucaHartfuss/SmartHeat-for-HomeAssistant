@@ -49,10 +49,12 @@ logger = logging.getLogger(__name__)
 
 
 def _is_configured(options: dict) -> bool:
-    """Ab 0.6.0 hat config.yaml keine Pflichtfelder mehr -- der Einrichtungs-Assistent
-    (Ingress-Panel) ist der einzige Konfigurationsweg. Ein frisch installiertes, noch
-    nicht eingerichtetes Add-on hat also ein leeres oder unvollstaendiges options.json;
-    das ist ab jetzt ein normaler Zustand, kein Fehler.
+    """Ab 0.6.0 hat config.yaml keine Pflichtfelder mehr -- konfiguriert wird das
+    Add-on nicht mehr ueber eine eigene UI, sondern ausschliesslich dadurch, dass die
+    separate SmartHeat-Integration in Home Assistant die Werte per Supervisor-API in
+    options.json schreibt. Ein frisch installiertes, noch nicht ueber die Integration
+    konfiguriertes Add-on hat also ein leeres oder unvollstaendiges options.json; das
+    ist ein normaler Zustand, kein Fehler.
     """
     return all(options.get(field) for field in _REQUIRED_OPTIONS)
 
@@ -274,18 +276,21 @@ def _run_tick(manifest, ha_api, mqtt_client, options, write_lock, boost_was_acti
 
 
 def _run_bridge(options: dict, ha_api) -> None:
-    """Laeuft im Hintergrund-Thread (siehe main()); validiert/loest Optionen selbst auf
-    und startet die Poll-Loop nur, wenn der Einrichtungs-Assistent das Add-on schon
-    konfiguriert hat. Ein noch nicht eingerichtetes Add-on ist ab 0.6.0 ein normaler
-    Zustand (siehe _is_configured) -- deshalb hier `return` statt `sys.exit(1)` bei
-    jedem Validierungsfehler: ein `sys.exit` wuerde den ganzen Prozess beenden und damit
-    auch den Ingress-Wizard unerreichbar machen, der genau dieses Problem beheben soll.
+    """Laeuft synchron im Hauptthread (siehe main()); validiert/loest Optionen selbst
+    auf und startet die Poll-Loop nur, wenn die SmartHeat-Integration das Add-on schon
+    (per Supervisor-API in options.json) konfiguriert hat. Ein noch nicht konfiguriertes
+    Add-on ist ab 0.6.0 ein normaler Zustand (siehe _is_configured) -- deshalb hier
+    `return` statt `sys.exit(1)` bei jedem Validierungsfehler: ein sauberer Return laesst
+    main() regulaer durchlaufen und den Prozess mit Exit 0 beenden, statt mit einem
+    Fehlercode abzubrechen, obwohl "noch nicht konfiguriert" kein Fehlerzustand ist.
     """
     if not _is_configured(options):
         logger.info(
-            "Add-on ist noch nicht eingerichtet -- bitte den Einrichtungs-Assistenten "
-            "(Add-on-Panel 'SmartHeat Einrichtung') oeffnen. Die Poll-Loop startet erst "
-            "nach abgeschlossener Einrichtung und einem manuellen Neustart des Add-ons."
+            "Add-on ist noch nicht eingerichtet -- bitte die SmartHeat-Integration in "
+            "Home Assistant installieren und dort die Verbindung zu diesem Add-on "
+            "einrichten (sie schreibt die Konfiguration automatisch per Supervisor-API). "
+            "Die Poll-Loop startet erst, sobald options.json vollstaendig ist, und "
+            "danach automatisch beim naechsten Neustart des Add-ons."
         )
         return
 

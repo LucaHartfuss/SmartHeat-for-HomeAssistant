@@ -25,51 +25,40 @@ fi
 
 echo "--- container run mit unvollstaendiger Config (fehlende Pflicht-Rollen) ---"
 CONTAINER_NAME="heizungsbruecke-docker-build-test"
-MSYS_NO_PATHCONV=1 docker run -d --rm --name "$CONTAINER_NAME" \
+# Kein --rm hier: der Container soll nach dem Beenden absichtlich noch existieren, damit
+# "docker logs" danach noch greifen kann (Cleanup passiert explizit am Skriptende).
+MSYS_NO_PATHCONV=1 docker run -d --name "$CONTAINER_NAME" \
   -e SUPERVISOR_TOKEN=test-token \
   -e HEIZUNGSSERVER_BASE_URL=http://heizungsserver.invalid \
   -v "$DATA_DIR_HOST:/data" "$IMAGE_TAG" >/dev/null \
   || { echo "FAIL: container start"; exit 1; }
 
-sleep 3
+# Ab dieser Version gibt es keinen Wizard/Flask-Server mehr, der den Prozess am Leben
+# haelt: main() ruft _run_bridge() jetzt synchron im Hauptthread auf. Bei unvollstaendiger
+# Config kehrt _run_bridge() sofort zurueck, main() laeuft durch und der Prozess (und
+# damit der Container) beendet sich sauber mit Exit 0. Konfiguriert wird das Add-on ab
+# jetzt ausschliesslich durch die separate SmartHeat-Integration in Home Assistant,
+# die options.json per Supervisor-API schreibt -- nicht mehr durch dieses Add-on selbst.
+# "docker wait" blockiert bis der Container stoppt und liefert dann den Exit-Code --
+# robuster als ein fixes "sleep" gefolgt von einer Running-Pruefung.
+EXIT_CODE="$(docker wait "$CONTAINER_NAME" 2>/dev/null)"
 
-if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null)" != "true" ]; then
-  echo "FAIL: Container mit unvollstaendiger Config sollte weiterlaufen (Wizard-Modus), ist aber beendet"
-  FAIL=1
+if [ "$EXIT_CODE" = "0" ]; then
+  echo "PASS: Container mit unvollstaendiger Config hat sauber mit Exit 0 beendet (kein Wizard-Modus mehr)"
 else
-  echo "PASS: Container laeuft weiter (Wizard-Modus) statt bei unvollstaendiger Config abzustuerzen"
+  echo "FAIL: Container mit unvollstaendiger Config sollte sauber mit Exit 0 beenden, Exit-Code war '$EXIT_CODE'"
+  FAIL=1
 fi
 
 if docker logs "$CONTAINER_NAME" 2>&1 | grep -q "Add-on ist noch nicht eingerichtet"; then
-  echo "PASS: Hinweis auf den Einrichtungs-Assistenten im Log vorhanden"
+  echo "PASS: Hinweis auf die SmartHeat-Integration im Log vorhanden"
 else
-  echo "FAIL: erwarteter Hinweis auf den Einrichtungs-Assistenten fehlt im Log"
+  echo "FAIL: erwarteter Hinweis auf die SmartHeat-Integration fehlt im Log"
   FAIL=1
 fi
 
-echo "--- pruefe GET / (Wizard-Startseite) im laufenden Container ---"
-# Guards against the static/ wizard assets (index.html, wizard.js) silently not being
-# packaged into the installed wheel -- in that case Flask is up and the container stays
-# running (the two checks above would still PASS), but "/" 404s and the add-on is
-# unconfigurable in practice. No curl in the python:3.12-alpine base image, so use the
-# python interpreter that's already there (same one the Dockerfile's ENTRYPOINT uses).
-WIZARD_STATUS="$(docker exec "$CONTAINER_NAME" python -c '
-import urllib.request, urllib.error
-try:
-    resp = urllib.request.urlopen("http://localhost:8099/", timeout=5)
-    print(resp.status)
-except urllib.error.HTTPError as e:
-    print(e.code)
-except Exception as e:
-    print("ERROR:", e)
-' 2>/dev/null)"
-
-if [ "$WIZARD_STATUS" = "200" ]; then
-  echo "PASS: GET / liefert 200 (Wizard-Startseite wird ausgeliefert)"
-else
-  echo "FAIL: GET / liefert '$WIZARD_STATUS' statt 200 (fehlt static/ im installierten Wheel?)"
-  FAIL=1
-fi
+# Es gibt keinen Ingress-Wizard und keinen Flask-Server mehr, also auch nichts mehr auf
+# Port 8099 zu erreichen -- der fruehere "GET / liefert 200"-Check entfaellt ersatzlos.
 
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1
 rm -rf "$TMPDIR"
