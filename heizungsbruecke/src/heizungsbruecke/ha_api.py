@@ -67,6 +67,15 @@ class HomeAssistantApi:
             return float(body["attributes"][attribute])
         return float(body["state"])
 
+    def list_states(self) -> list[dict]:
+        response = requests.get(
+            f"{self._base_url}{self._api_prefix}/states",
+            headers=self._headers,
+            timeout=10,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def set_number_value(self, entity_id: str, value: float) -> None:
         response = requests.post(
             f"{self._base_url}{self._api_prefix}/services/number/set_value",
