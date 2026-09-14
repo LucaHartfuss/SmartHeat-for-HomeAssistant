@@ -89,3 +89,67 @@ def test_maybe_snapshot_skips_night_avg_when_boot_is_past_the_catchup_window(tmp
 
     ha_api.set_input_number_value.assert_not_called()
     assert "last_night_snapshot_date" not in load_backup(state_path)
+
+
+def test_maybe_snapshot_catches_up_day_avg_outside_the_narrow_window_when_continuity_is_known(tmp_path):
+    # A long poll_interval_seconds can mean the tick after 20:00 lands at, say, 23:30 --
+    # outside the old fixed 20-22 window. Since last_checked (19:00) proves the 20:00
+    # boundary was not already snapshotted before this run started, it must still fire
+    # instead of permanently losing today's day average.
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 21.5
+    state_path = tmp_path / "daynight_snapshot_state.json"
+    save_backup(state_path, {"last_checked": datetime(2026, 9, 13, 19, 0).isoformat()})
+
+    maybe_snapshot(ha_api, "sensor.room_12h_avg", "input_number.day_avg", "input_number.night_avg",
+                   state_path, now=datetime(2026, 9, 13, 23, 30))
+
+    ha_api.set_input_number_value.assert_called_once_with("input_number.day_avg", 21.5)
+    assert load_backup(state_path)["last_day_snapshot_date"] == "2026-09-13"
+
+
+def test_maybe_snapshot_catches_up_night_avg_outside_the_narrow_window_when_continuity_is_known(tmp_path):
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 18.2
+    state_path = tmp_path / "daynight_snapshot_state.json"
+    save_backup(state_path, {"last_checked": datetime(2026, 9, 13, 7, 0).isoformat()})
+
+    maybe_snapshot(ha_api, "sensor.room_12h_avg", "input_number.day_avg", "input_number.night_avg",
+                   state_path, now=datetime(2026, 9, 13, 12, 0))
+
+    ha_api.set_input_number_value.assert_called_once_with("input_number.night_avg", 18.2)
+    assert load_backup(state_path)["last_night_snapshot_date"] == "2026-09-13"
+
+
+def test_maybe_snapshot_does_not_refire_once_caught_up_same_day(tmp_path):
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 21.5
+    state_path = tmp_path / "daynight_snapshot_state.json"
+    save_backup(state_path, {"last_checked": datetime(2026, 9, 13, 19, 0).isoformat()})
+
+    maybe_snapshot(ha_api, "sensor.room_12h_avg", "input_number.day_avg", "input_number.night_avg",
+                   state_path, now=datetime(2026, 9, 13, 23, 30))
+    maybe_snapshot(ha_api, "sensor.room_12h_avg", "input_number.day_avg", "input_number.night_avg",
+                   state_path, now=datetime(2026, 9, 14, 1, 0))
+
+    ha_api.set_input_number_value.assert_called_once_with("input_number.day_avg", 21.5)
+
+
+def test_maybe_snapshot_does_not_fire_day_avg_exactly_at_the_cold_start_window_upper_boundary(tmp_path):
+    ha_api = MagicMock()
+    state_path = tmp_path / "daynight_snapshot_state.json"
+
+    maybe_snapshot(ha_api, "sensor.room_12h_avg", "input_number.day_avg", "input_number.night_avg",
+                   state_path, now=datetime(2026, 9, 13, 22, 0))
+
+    ha_api.set_input_number_value.assert_not_called()
+
+
+def test_maybe_snapshot_does_not_fire_night_avg_exactly_at_the_cold_start_window_upper_boundary(tmp_path):
+    ha_api = MagicMock()
+    state_path = tmp_path / "daynight_snapshot_state.json"
+
+    maybe_snapshot(ha_api, "sensor.room_12h_avg", "input_number.day_avg", "input_number.night_avg",
+                   state_path, now=datetime(2026, 9, 13, 10, 0))
+
+    ha_api.set_input_number_value.assert_not_called()
