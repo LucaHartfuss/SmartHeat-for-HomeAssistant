@@ -308,3 +308,52 @@ def test_complete_relays_provisioning_failure():
         })
 
     assert response.status_code == 403
+
+
+def test_complete_preserves_credentials_on_options_write_failure():
+    app = _app()
+    app.testing = True
+    client = app.test_client()
+    _login(client)
+
+    provision_response = Mock(status_code=200)
+    provision_response.json.return_value = {
+        "username": "wohnung1_a1b2",
+        "password": "testsecret",
+        "mosquitto_passwd_command": "mosquitto_passwd -b /etc/mosquitto/passwd wohnung1_a1b2 testsecret",
+        "acl_snippet": "user wohnung1_a1b2\ntopic write smartheat/wohnung1/up/#\n",
+    }
+
+    with patch("heizungsbruecke.web.requests.post", return_value=provision_response), \
+         patch("heizungsbruecke.web.supervisor_api.set_own_options", side_effect=requests.RequestException("down")):
+        response = client.post("/api/complete", json={
+            "tenant_id": "wohnung1",
+            "profile_id": "vaillant_gastherme_heizkoerper",
+            "entities": _VALID_ENTITIES,
+        })
+
+    assert response.status_code == 502
+    body = response.get_json()
+    assert body["mqtt_username"] == "wohnung1_a1b2"
+    assert body["mqtt_password"] == "testsecret"
+    assert body["mosquitto_passwd_command"] == "mosquitto_passwd -b /etc/mosquitto/passwd wohnung1_a1b2 testsecret"
+    assert body["acl_snippet"] == "user wohnung1_a1b2\ntopic write smartheat/wohnung1/up/#\n"
+
+
+def test_complete_returns_502_when_provisioning_response_is_non_dict_json():
+    app = _app()
+    app.testing = True
+    client = app.test_client()
+    _login(client)
+
+    provision_response = Mock(status_code=200)
+    provision_response.json.return_value = None  # non-dict JSON response
+
+    with patch("heizungsbruecke.web.requests.post", return_value=provision_response):
+        response = client.post("/api/complete", json={
+            "tenant_id": "wohnung1",
+            "profile_id": "vaillant_gastherme_heizkoerper",
+            "entities": _VALID_ENTITIES,
+        })
+
+    assert response.status_code == 502

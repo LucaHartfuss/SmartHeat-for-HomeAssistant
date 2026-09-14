@@ -160,7 +160,7 @@ def create_app(
             mqtt_password = provisioning["password"]
             mosquitto_passwd_command = provisioning["mosquitto_passwd_command"]
             acl_snippet = provisioning["acl_snippet"]
-        except (ValueError, KeyError):
+        except (ValueError, KeyError, TypeError):
             return jsonify(error="Antwort des Abo-Service beim Provisioning war unvollstaendig"), 502
 
         options = {
@@ -173,7 +173,13 @@ def create_app(
                 app.config["SUPERVISOR_BASE_URL"], app.config["SUPERVISOR_TOKEN"], options,
             )
         except requests.RequestException:
-            return jsonify(error="Speichern der Add-on-Optionen fehlgeschlagen"), 502
+            return jsonify(
+                error="Speichern der Add-on-Optionen fehlgeschlagen",
+                mqtt_username=mqtt_username,
+                mqtt_password=mqtt_password,
+                mosquitto_passwd_command=mosquitto_passwd_command,
+                acl_snippet=acl_snippet,
+            ), 502
 
         return jsonify(
             ok=True,
