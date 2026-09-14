@@ -678,11 +678,58 @@ def _append_tenant_to_registry(path: str, tenant_id: str, profile_id: str) -> No
 Run: `python -m pytest tests/test_accounts_api.py -v`
 Expected: PASS (10 tests)
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Add a runnable entrypoint**
+
+Verified gap: nothing in this plan actually starts `accounts_api`'s Flask app as a
+process — `create_app()` is only ever exercised via Flask's test client in
+`tests/test_accounts_api.py`. Without an entrypoint, there is no way to run this
+service at all once Part 2's wizard tries to call it. Add (imports `os` and `sys`
+at the top of `src/heizungsserver/accounts_api.py`, alongside the existing
+`import sqlite3`; the `_main` function and its guard go at the very end of the
+file):
+```python
+def _main() -> None:
+    """Startet accounts_api als eigenstaendigen Flask-Prozess. Env-Var-Konfiguration,
+    analog zum bestehenden Legacy-Daemon-Entrypoint in heizungsserver/__main__.py --
+    kein WSGI-Produktionsserver noetig, gleiche Begruendung wie fuer heizungsbruecke/web.py
+    (siehe Design-Spec): geringes Volumen, kein Multi-Worker-Bedarf fuer diesen Dummy-Stub.
+    """
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logger = logging.getLogger("heizungsserver.accounts_api")
+
+    db_path = os.environ.get("ACCOUNTS_DB_PATH")
+    tenants_json_path = os.environ.get("TENANTS_JSON_PATH")
+    if not db_path or not tenants_json_path:
+        logger.error("ACCOUNTS_DB_PATH und TENANTS_JSON_PATH muessen gesetzt sein")
+        sys.exit(1)
+
+    port = int(os.environ.get("ACCOUNTS_API_PORT", "5001"))
+    app = create_app(db_path=db_path, tenants_json_path=tenants_json_path)
+    app.run(host="0.0.0.0", port=port)
+
+
+if __name__ == "__main__":
+    _main()
+```
+Also add `import logging` at the top of the file. No new test needed — this
+mirrors the untested `if __name__ == "__main__":` glue already accepted elsewhere
+in both repos (e.g. `heizungsbruecke/__main__.py`, this plan's own Task 12).
+This still leaves the actual production wiring (which host, which process
+manager, the Cloudflare tunnel hostname) as a live-deployment decision for the
+rollout step, same as the two items already listed under "Offene Punkte" in the
+design spec — this step only ensures the code is runnable at all, locally or
+otherwise.
+
+- [ ] **Step 6: Run tests to verify nothing broke**
+
+Run: `python -m pytest tests/test_accounts_api.py -v`
+Expected: PASS (10 tests, unchanged — Step 5 only adds code below the last route)
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add src/heizungsserver/accounts_api.py tests/test_accounts_api.py
-git commit -m "feat(accounts): add tenant provisioning route, append to tenants.json registry"
+git commit -m "feat(accounts): add tenant provisioning route, append to tenants.json registry, add runnable entrypoint"
 ```
 
 *(End of Part 1. Push the branch when this plan's execution reaches the end — see "Wrap-up" below.)*
@@ -691,7 +738,11 @@ git commit -m "feat(accounts): add tenant provisioning route, append to tenants.
 
 ## Part 2: heizungsbruecke (Ingress-Wizard)
 
-All Part 2 tasks continue on the current worktree branch (`worktree-heizungsbruecke-config-vereinfachung`), working directory `C:\Users\Luca\Documents\HomeAssistant Dev\SmartHeat-for-HomeAssistant\.claude\worktrees\heizungsbruecke-config-vereinfachung\heizungsbruecke`.
+Teil 1's worktree/branch (`worktree-heizungsbruecke-config-vereinfachung`) was already merged into `SmartHeat-for-HomeAssistant/main` and its worktree removed — verified via `git log`/`git worktree list` on 2026-09-14, after this plan was first drafted. Part 2 needs its own fresh worktree/branch, forked from the current `main` (which already contains all of Teil 1). Before Task 5, create it:
+```bash
+git -C "C:\Users\Luca\Documents\HomeAssistant Dev\SmartHeat-for-HomeAssistant" worktree add ".claude/worktrees/heizungsbruecke-ingress-wizard" -b worktree-heizungsbruecke-ingress-wizard main
+```
+All Part 2 tasks run in working directory `C:\Users\Luca\Documents\HomeAssistant Dev\SmartHeat-for-HomeAssistant\.claude\worktrees\heizungsbruecke-ingress-wizard\heizungsbruecke`.
 
 ### Task 5: `ha_api.py` — `list_states()`
 
@@ -1312,7 +1363,12 @@ def test_complete_provisions_and_writes_options_on_success():
     _login(client)
 
     provision_response = Mock(status_code=200)
-    provision_response.json.return_value = {"username": "wohnung1_a1b2", "password": "geheim"}
+    provision_response.json.return_value = {
+        "username": "wohnung1_a1b2",
+        "password": "geheim",
+        "mosquitto_passwd_command": "mosquitto_passwd -b /etc/mosquitto/passwd wohnung1_a1b2 geheim",
+        "acl_snippet": "user wohnung1_a1b2\ntopic write smartheat/wohnung1/up/#\n",
+    }
 
     with patch("heizungsbruecke.web.requests.post", return_value=provision_response), \
          patch("heizungsbruecke.web.supervisor_api.set_own_options") as mock_set_options:
@@ -1323,11 +1379,35 @@ def test_complete_provisions_and_writes_options_on_success():
         })
 
     assert response.status_code == 200
+    body = response.get_json()
+    assert body["mqtt_username"] == "wohnung1_a1b2"
+    assert body["mqtt_password"] == "geheim"
+    assert body["mosquitto_passwd_command"] == "mosquitto_passwd -b /etc/mosquitto/passwd wohnung1_a1b2 geheim"
+    assert body["acl_snippet"] == "user wohnung1_a1b2\ntopic write smartheat/wohnung1/up/#\n"
     mock_set_options.assert_called_once()
     written_options = mock_set_options.call_args.args[2]
     assert written_options["tenant_id"] == "wohnung1"
     assert written_options["profile"] == "vaillant_gastherme_heizkoerper"
     assert written_options["entity_room_actual"] == "sensor.rt"
+
+
+def test_complete_returns_502_when_provisioning_response_is_missing_fields():
+    app = _app()
+    app.testing = True
+    client = app.test_client()
+    _login(client)
+
+    provision_response = Mock(status_code=200)
+    provision_response.json.return_value = {"username": "wohnung1_a1b2"}  # missing password/commands/acl
+
+    with patch("heizungsbruecke.web.requests.post", return_value=provision_response):
+        response = client.post("/api/complete", json={
+            "tenant_id": "wohnung1",
+            "profile_id": "vaillant_gastherme_heizkoerper",
+            "entities": _VALID_ENTITIES,
+        })
+
+    assert response.status_code == 502
 
 
 def test_complete_relays_provisioning_failure():
@@ -1352,6 +1432,8 @@ def test_complete_relays_provisioning_failure():
 
 Run: `python -m pytest tests/test_web.py -k complete -v`
 Expected: FAIL with 404 (route doesn't exist yet)
+
+**Plan correction (2026-09-14, made during Part 1's final whole-branch review):** the heizungsserver `/tenants/<tenant_id>/provision` route (Part 1, Task 4) returns `{username, password, mosquitto_passwd_command, acl_snippet}` on success — these are the exact MQTT broker credentials/commands the operator must apply manually (per this plan's Global Constraints: "the provisioning endpoint never mutates the live Mosquitto broker directly ... it returns the exact manual commands"). The version of Step 3 below that shipped in this plan's earlier draft discarded that entire response body and only returned a generic success message — leaving the operator with no way to ever see the credentials the whole provisioning step exists to produce. Step 3 below is corrected to read and relay that response; Task 11's wizard page is corrected to display it (see that task's own correction note).
 
 - [ ] **Step 3: Implement `/api/complete`**
 
@@ -1409,6 +1491,15 @@ Add inside `create_app`, before `return app`:
         if provision_response.status_code != 200:
             return jsonify(error="Provisioning fehlgeschlagen"), provision_response.status_code
 
+        try:
+            provisioning = provision_response.json()
+            mqtt_username = provisioning["username"]
+            mqtt_password = provisioning["password"]
+            mosquitto_passwd_command = provisioning["mosquitto_passwd_command"]
+            acl_snippet = provisioning["acl_snippet"]
+        except (ValueError, KeyError):
+            return jsonify(error="Antwort des Abo-Service beim Provisioning war unvollstaendig"), 502
+
         options = {
             "tenant_id": tenant_id,
             "profile": profile_id,
@@ -1421,13 +1512,20 @@ Add inside `create_app`, before `return app`:
         except requests.RequestException:
             return jsonify(error="Speichern der Add-on-Optionen fehlgeschlagen"), 502
 
-        return jsonify(ok=True, message="Konfiguration gespeichert - Add-on bitte manuell neu starten"), 200
+        return jsonify(
+            ok=True,
+            message="Konfiguration gespeichert - Add-on bitte manuell neu starten",
+            mqtt_username=mqtt_username,
+            mqtt_password=mqtt_password,
+            mosquitto_passwd_command=mosquitto_passwd_command,
+            acl_snippet=acl_snippet,
+        ), 200
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `python -m pytest tests/test_web.py -v`
-Expected: PASS (13 tests)
+Expected: PASS (14 tests — 13 from the plan's original count plus the corrected fix wave's new malformed-provisioning-response test)
 
 - [ ] **Step 5: Commit**
 
@@ -1439,6 +1537,8 @@ git commit -m "feat(web): add /api/complete -- validate, provision, write add-on
 ---
 
 ### Task 11: static wizard page + `GET /`
+
+**Plan correction (2026-09-14, same correction as Task 10 above):** the `step-done` section and its `sensors-next` success handler below now include and display the MQTT provisioning credentials (`mqtt_username`, `mqtt_password`, `mosquitto_passwd_command`, `acl_snippet`) that Task 10's corrected `/api/complete` returns — the operator needs these to manually configure the broker (this add-on's design deliberately never mutates the broker itself, see Global Constraints). No new automated test for this — matches this plan's "Kein Browser-/E2E-Test in dieser Iteration" (Nicht-Ziele); the manual click-through at the live-test step will exercise it.
 
 **Files:**
 - Create: `src/heizungsbruecke/static/index.html`
@@ -1531,6 +1631,13 @@ Create `src/heizungsbruecke/static/index.html`:
 <section class="step" id="step-done">
   <h2>Fertig</h2>
   <p id="done-message"></p>
+  <h3>MQTT-Zugangsdaten (manuell auf dem Broker einrichten)</h3>
+  <p>Benutzername: <code id="done-mqtt-username"></code></p>
+  <p>Passwort: <code id="done-mqtt-password"></code></p>
+  <p>Befehl zum Anlegen des Passworts:</p>
+  <pre id="done-mosquitto-command"></pre>
+  <p>ACL-Eintrag:</p>
+  <pre id="done-acl-snippet"></pre>
 </section>
 
 <script src="wizard.js"></script>
@@ -1719,6 +1826,10 @@ document.getElementById("sensors-next").addEventListener("click", async () => {
       }),
     });
     document.getElementById("done-message").textContent = result.message;
+    document.getElementById("done-mqtt-username").textContent = result.mqtt_username;
+    document.getElementById("done-mqtt-password").textContent = result.mqtt_password;
+    document.getElementById("done-mosquitto-command").textContent = result.mosquitto_passwd_command;
+    document.getElementById("done-acl-snippet").textContent = result.acl_snippet;
     showStep("step-done");
   } catch (error) {
     showError(error.message);
@@ -2251,15 +2362,86 @@ UI-Schritt dafuer in dieser Version).
 ```
 Also update the top-of-file summary paragraph (first ~8 lines of `DOCS.md`) if it still describes configuration as happening via `config.yaml` fields — adjust the wording to mention the Ingress-Wizard instead, keeping the rest of the paragraph intact.
 
-- [ ] **Step 8: Run the full suite one more time**
+- [ ] **Step 8: Fix the two Docker shell-script integration tests broken by this restructure**
+
+These are plain bash scripts living one level up from this task's working
+directory, at the worktree root (`../tests/test_heizungsbruecke_happy_path.sh`,
+`../tests/test_heizungsbruecke_docker_build.sh` relative to `heizungsbruecke/`)
+— not pytest files, so Step 4's and Step 10's `pytest tests/ -v` runs never
+exercise them and nothing above would have caught this. Verified against both
+scripts' current content (2026-09-14): both break under this task's changes,
+for two different reasons.
+
+**8a. `test_heizungsbruecke_happy_path.sh`** starts the bridge container with only
+`-e SUPERVISOR_TOKEN=test-token` (see its `docker run -d --name "$BRIDGE_NAME"`
+block). `main()` now reads `os.environ["HEIZUNGSSERVER_BASE_URL"]` unconditionally
+before `app.run()` — without it, the container crashes with an uncaught
+`KeyError` before the bridge thread's MQTT publish (the thing this test actually
+waits for) ever gets a chance to run. Add the missing env var to that same
+`docker run` invocation:
+```bash
+MSYS_NO_PATHCONV=1 docker run -d --name "$BRIDGE_NAME" --network "container:$MOSQUITTO_NAME" \
+  -e SUPERVISOR_TOKEN=test-token \
+  -e HEIZUNGSSERVER_BASE_URL=http://heizungsserver.invalid \
+  -v "${DATA_DIR_HOST}:/data" \
+  "$IMAGE_TAG" >/dev/null || { echo "FAIL: bridge container start"; exit 1; }
+```
+(The dummy value is never actually contacted in this test — no code path here
+calls the wizard's `/api/*` routes — it only needs to exist so `main()` doesn't
+crash on startup.)
+
+**8b. `test_heizungsbruecke_docker_build.sh`** asserts the *opposite* of this
+task's design: it currently expects a container with incomplete options
+(missing `entity_outdoor_temp` etc.) to exit with code 1 and print "FEHLER:
+Folgende Pflichtfelder fehlen" to stderr. As of `_is_configured()`/`_run_bridge`
+(this task), an unconfigured add-on is a normal, permanent-until-restart state,
+not a startup error — the container now stays up forever, serving the Ingress
+wizard, logging an info line instead of exiting. Replace the script's container
+section (from `echo "--- container run mit unvollstaendiger Config"` to the
+`rm -rf "$TMPDIR"` line) with:
+```bash
+echo "--- container run mit unvollstaendiger Config (fehlende Pflicht-Rollen) ---"
+CONTAINER_NAME="heizungsbruecke-docker-build-test"
+MSYS_NO_PATHCONV=1 docker run -d --rm --name "$CONTAINER_NAME" \
+  -e SUPERVISOR_TOKEN=test-token \
+  -e HEIZUNGSSERVER_BASE_URL=http://heizungsserver.invalid \
+  -v "$DATA_DIR_HOST:/data" "$IMAGE_TAG" >/dev/null \
+  || { echo "FAIL: container start"; exit 1; }
+
+sleep 3
+
+if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null)" != "true" ]; then
+  echo "FAIL: Container mit unvollstaendiger Config sollte weiterlaufen (Wizard-Modus), ist aber beendet"
+  FAIL=1
+else
+  echo "PASS: Container laeuft weiter (Wizard-Modus) statt bei unvollstaendiger Config abzustuerzen"
+fi
+
+if docker logs "$CONTAINER_NAME" 2>&1 | grep -q "Add-on ist noch nicht eingerichtet"; then
+  echo "PASS: Hinweis auf den Einrichtungs-Assistenten im Log vorhanden"
+else
+  echo "FAIL: erwarteter Hinweis auf den Einrichtungs-Assistenten fehlt im Log"
+  FAIL=1
+fi
+
+docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1
+rm -rf "$TMPDIR"
+```
+
+- [ ] **Step 9: Run both Docker scripts to verify they pass**
+
+Run (from the worktree root, one level up from `heizungsbruecke/`): `cd .. && bash tests/test_heizungsbruecke_docker_build.sh && bash tests/test_heizungsbruecke_happy_path.sh && cd heizungsbruecke`
+Expected: both print PASS for every check, exit 0. (Requires Docker running locally.)
+
+- [ ] **Step 10: Run the full suite one more time**
 
 Run: `python -m pytest tests/ -v`
 Expected: PASS (all tests)
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
-git add src/heizungsbruecke/__main__.py config.yaml pyproject.toml DOCS.md tests/test_main.py
+git add src/heizungsbruecke/__main__.py config.yaml pyproject.toml DOCS.md tests/test_main.py ../tests/test_heizungsbruecke_happy_path.sh ../tests/test_heizungsbruecke_docker_build.sh
 git commit -m "feat: make the Ingress-Wizard the sole configuration path (0.6.0)"
 ```
 
@@ -2268,6 +2450,6 @@ git commit -m "feat: make the Ingress-Wizard the sole configuration path (0.6.0)
 ## Wrap-up (not a task — do this after Task 12)
 
 - Part 1 (heizungsserver) is on its own branch (`ingress-wizard-accounts-stub`) in a separate repository from Part 2. It is **not** part of this worktree's branch and won't be touched by `finishing-a-development-branch` for `heizungsbruecke`. Push it and open a PR (or merge locally) separately, following the same integration-decision process as any other branch — ask the user which they want, same as was done for Teil 1.
-- Part 2 (heizungsbruecke) stays on `worktree-heizungsbruecke-config-vereinfachung` and goes through the normal whole-branch review before merging, same as Teil 1.
+- Part 2 (heizungsbruecke) stays on `worktree-heizungsbruecke-ingress-wizard` and goes through the normal whole-branch review before merging, same as Teil 1.
 - After both are merged: run `superpowers:requesting-code-review` (or the whole-branch review this session already used for Teil 1) on **both** repos before declaring Teil 2 done, then verify the built features against the original Teil-2 description (Ingress-Wizard mit Auth, Tenant-Dropdown, Profil-Dreifach-Dropdown mit Kombinationspruefung, Sensor-Auswahl-Dropdowns mit Einheiten-Validierung) before moving to the live end-to-end test.
 - Two spec-flagged open items remain genuinely unresolved and need a live decision, not more code: the Cloudflare tunnel hostname for `HEIZUNGSSERVER_BASE_URL` (`https://accounts.hartfussha.org` is written into `config.yaml` but not yet provisioned in Cloudflare), and whether the live Mosquitto broker's ACL actually has `smartheat/#` rights for the server user yet.
