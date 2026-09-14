@@ -56,11 +56,29 @@ def test_is_configured_false_for_empty_options():
     assert _is_configured({}) is False
 
 
-def test_run_bridge_returns_early_without_raising_when_not_configured(caplog):
+def test_run_bridge_returns_true_when_not_configured(caplog):
     with caplog.at_level("INFO"):
-        _run_bridge({}, MagicMock())
+        result = _run_bridge({}, MagicMock())
 
+    assert result is True
     assert "Add-on ist noch nicht eingerichtet" in caplog.text
+
+
+def test_run_bridge_returns_false_on_genuine_validation_error(caplog):
+    # Unlike the "not configured" case above, an add-on that IS configured but fails
+    # validation (here: an unknown profile) is a genuine startup error -- main() must
+    # be able to tell the two apart to give the Supervisor a non-zero exit code.
+    options = {
+        "tenant_id": "wohnung1", "profile": "does-not-exist",
+        "entity_room_actual": "sensor.rt", "entity_room_target": "sensor.target_rt",
+        "entity_curve_current": "number.curve", "entity_offset_current": "number.offset",
+        "entity_outdoor_temp": "sensor.outdoor", "entity_heat_limit": "number.heat_limit",
+    }
+    with caplog.at_level("ERROR"):
+        result = _run_bridge(options, MagicMock())
+
+    assert result is False
+    assert "FEHLER" in caplog.text
 
 
 def test_load_options_safe_defaults_when_no_file(tmp_path):
@@ -447,7 +465,7 @@ def test_main_runs_bridge_synchronously_without_flask(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(
         "heizungsbruecke.__main__._run_bridge",
-        lambda options, ha_api: calls.append((options, ha_api)),
+        lambda options, ha_api: calls.append((options, ha_api)) or True,
     )
 
     from heizungsbruecke.__main__ import main
@@ -455,6 +473,24 @@ def test_main_runs_bridge_synchronously_without_flask(tmp_path, monkeypatch):
 
     assert len(calls) == 1
     assert calls[0][0] == {}
+
+
+def test_main_exits_nonzero_when_run_bridge_reports_a_genuine_error(tmp_path, monkeypatch):
+    # main() must be able to tell "not configured" (exit 0, see test above) apart from
+    # a genuine startup error, so the Supervisor sees the latter as a crash rather than
+    # a quiet, expected stop.
+    options_path = tmp_path / "options.json"
+    options_path.write_text("{}")
+    monkeypatch.setattr("heizungsbruecke.__main__.OPTIONS_PATH", options_path)
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "test-token")
+    monkeypatch.setattr("heizungsbruecke.__main__._run_bridge", lambda options, ha_api: False)
+
+    from heizungsbruecke.__main__ import main
+
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+
+    assert exc_info.value.code != 0
 
 
 def test_make_down_callback_does_not_record_valid_message_when_handling_fails(tmp_path, monkeypatch):

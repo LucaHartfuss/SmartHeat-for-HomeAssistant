@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import sys
 import threading
 import time
 import uuid
@@ -275,14 +276,15 @@ def _run_tick(manifest, ha_api, mqtt_client, options, write_lock, boost_was_acti
     return boost_was_active
 
 
-def _run_bridge(options: dict, ha_api) -> None:
+def _run_bridge(options: dict, ha_api) -> bool:
     """Laeuft synchron im Hauptthread (siehe main()); validiert/loest Optionen selbst
     auf und startet die Poll-Loop nur, wenn die SmartHeat-Integration das Add-on schon
     (per Supervisor-API in options.json) konfiguriert hat. Ein noch nicht konfiguriertes
-    Add-on ist ab 0.6.0 ein normaler Zustand (siehe _is_configured) -- deshalb hier
-    `return` statt `sys.exit(1)` bei jedem Validierungsfehler: ein sauberer Return laesst
-    main() regulaer durchlaufen und den Prozess mit Exit 0 beenden, statt mit einem
-    Fehlercode abzubrechen, obwohl "noch nicht konfiguriert" kein Fehlerzustand ist.
+    Add-on ist ab 0.6.0 ein normaler Zustand (siehe _is_configured), deshalb gibt genau
+    dieser Fall `True` zurueck (main() beendet den Prozess dann mit Exit 0). Jeder andere
+    fruehe Return ist ein echter Validierungs-/Startfehler und gibt `False` zurueck, damit
+    main() mit einem Fehlercode abbricht und der Supervisor den Absturz sieht, statt ihn
+    mit "noch nicht konfiguriert" zu verwechseln.
     """
     if not _is_configured(options):
         logger.info(
@@ -292,23 +294,23 @@ def _run_bridge(options: dict, ha_api) -> None:
             "Die Poll-Loop startet erst, sobald options.json vollstaendig ist, und "
             "danach automatisch beim naechsten Neustart des Add-ons."
         )
-        return
+        return True
 
     try:
         options = _resolve_effective_options(options)
     except UnknownProfileError as error:
         logger.error("FEHLER: %s", error)
-        return
+        return False
 
     boost_config_error = _validate_boost_config(options)
     if boost_config_error:
         logger.error("FEHLER: %s", boost_config_error)
-        return
+        return False
 
     prerequisite_error = _validate_derived_sensor_prerequisites(options)
     if prerequisite_error:
         logger.error("FEHLER: %s", prerequisite_error)
-        return
+        return False
 
     try:
         derived_entity_ids = _ensure_derived_sensors_with_retry(ha_api, options)
@@ -317,13 +319,13 @@ def _run_bridge(options: dict, ha_api) -> None:
             "FEHLER: Anlegen der abgeleiteten Sensoren fehlgeschlagen nach %d Versuchen: %s",
             len(DERIVED_SENSORS_RETRY_DELAYS_SECONDS) + 1, error,
         )
-        return
+        return False
 
     try:
         manifest = build_manifest(options, derived_entity_ids)
     except ManifestError as error:
         logger.error("FEHLER: %s", error)
-        return
+        return False
 
     write_lock = threading.Lock()
 
@@ -356,7 +358,7 @@ def _run_bridge(options: dict, ha_api) -> None:
         mqtt_client.loop_start()
     except Exception as error:
         logger.error("FEHLER: MQTT-Verbindung zum Broker fehlgeschlagen: %s", error)
-        return
+        return False
 
     boost_was_active = False
 
@@ -412,7 +414,8 @@ def main() -> None:
     options = _load_options_safe(OPTIONS_PATH)
     ha_api = HomeAssistantApi(base_url="http://supervisor", token=os.environ["SUPERVISOR_TOKEN"])
 
-    _run_bridge(options, ha_api)
+    if not _run_bridge(options, ha_api):
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -10,5 +10,4 @@ startup: services
 boot: auto
 host_network: true
 homeassistant_api: true
-hassio_api: true
 schema: false
