@@ -8,7 +8,17 @@ import secrets
 import requests
 from flask import Flask, jsonify, request, session
 
-from heizungsbruecke import profiles
+from heizungsbruecke import profiles, supervisor_api
+
+
+_ROLE_UNIT_EXPECTATIONS = {
+    "entity_room_actual": "°C",
+    "entity_room_target": "°C",
+    "entity_outdoor_temp": "°C",
+    "entity_offset_current": "°C",
+    "entity_heat_limit": "°C",
+}
+_REQUIRED_ENTITY_ROLES = (*_ROLE_UNIT_EXPECTATIONS, "entity_curve_current")
 
 
 def create_app(
@@ -102,5 +112,60 @@ def create_app(
             if state["entity_id"].split(".", 1)[0] == domain
         ]
         return jsonify(matching), 200
+
+    @app.post("/api/complete")
+    def complete():
+        token = session.get("heizungsserver_token")
+        if not token:
+            return jsonify(error="Nicht eingeloggt"), 401
+
+        body = request.get_json(silent=True) or {}
+        tenant_id = body.get("tenant_id")
+        profile_id = body.get("profile_id")
+        entities = body.get("entities", {})
+
+        if not tenant_id or not profile_id:
+            return jsonify(error="tenant_id und profile_id sind erforderlich"), 400
+
+        if not profiles.is_verified(profile_id):
+            return jsonify(error=f"Profil '{profile_id}' hat noch keine verifizierten Standardwerte"), 400
+
+        for role in _REQUIRED_ENTITY_ROLES:
+            entity = entities.get(role)
+            if not entity or not entity.get("entity_id"):
+                return jsonify(error=f"Feld '{role}' ist erforderlich"), 400
+            expected_unit = _ROLE_UNIT_EXPECTATIONS.get(role)
+            if expected_unit is not None and entity.get("unit_of_measurement") != expected_unit:
+                return jsonify(
+                    error=f"'{role}': erwartete Einheit '{expected_unit}', gefunden "
+                          f"'{entity.get('unit_of_measurement')}'"
+                ), 400
+
+        try:
+            provision_response = requests.post(
+                f"{app.config['HEIZUNGSSERVER_BASE_URL']}/tenants/{tenant_id}/provision",
+                json={"profile_id": profile_id},
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=10,
+            )
+        except requests.RequestException:
+            return jsonify(error="Abo-Service nicht erreichbar"), 502
+
+        if provision_response.status_code != 200:
+            return jsonify(error="Provisioning fehlgeschlagen"), provision_response.status_code
+
+        options = {
+            "tenant_id": tenant_id,
+            "profile": profile_id,
+            **{role: entity["entity_id"] for role, entity in entities.items()},
+        }
+        try:
+            supervisor_api.set_own_options(
+                app.config["SUPERVISOR_BASE_URL"], app.config["SUPERVISOR_TOKEN"], options,
+            )
+        except requests.RequestException:
+            return jsonify(error="Speichern der Add-on-Optionen fehlgeschlagen"), 502
+
+        return jsonify(ok=True, message="Konfiguration gespeichert - Add-on bitte manuell neu starten"), 200
 
     return app

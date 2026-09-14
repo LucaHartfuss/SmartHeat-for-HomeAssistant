@@ -186,3 +186,96 @@ def test_entities_endpoint_requires_domain_param():
     response = client.get("/api/entities")
 
     assert response.status_code == 400
+
+
+def _login(client):
+    login_response = Mock(status_code=200)
+    login_response.json.return_value = {"token": "abc123"}
+    with patch("heizungsbruecke.web.requests.post", return_value=login_response):
+        client.post("/api/login", json={"email": "luca@example.com", "password": "geheim123"})
+
+
+_VALID_ENTITIES = {
+    "entity_room_actual": {"entity_id": "sensor.rt", "unit_of_measurement": "°C"},
+    "entity_room_target": {"entity_id": "sensor.target_rt", "unit_of_measurement": "°C"},
+    "entity_outdoor_temp": {"entity_id": "sensor.outdoor", "unit_of_measurement": "°C"},
+    "entity_offset_current": {"entity_id": "number.offset", "unit_of_measurement": "°C"},
+    "entity_heat_limit": {"entity_id": "number.heat_limit", "unit_of_measurement": "°C"},
+    "entity_curve_current": {"entity_id": "number.curve", "unit_of_measurement": None},
+}
+
+
+def test_complete_rejects_unverified_profile():
+    app = _app()
+    app.testing = True
+    client = app.test_client()
+    _login(client)
+
+    response = client.post("/api/complete", json={
+        "tenant_id": "wohnung1",
+        "profile_id": "weishaupt_waermepumpe_fussbodenheizung",
+        "entities": _VALID_ENTITIES,
+    })
+
+    assert response.status_code == 400
+
+
+def test_complete_rejects_wrong_unit():
+    app = _app()
+    app.testing = True
+    client = app.test_client()
+    _login(client)
+
+    bad_entities = dict(_VALID_ENTITIES)
+    bad_entities["entity_room_actual"] = {"entity_id": "sensor.wrong", "unit_of_measurement": "%"}
+
+    response = client.post("/api/complete", json={
+        "tenant_id": "wohnung1",
+        "profile_id": "vaillant_gastherme_heizkoerper",
+        "entities": bad_entities,
+    })
+
+    assert response.status_code == 400
+
+
+def test_complete_provisions_and_writes_options_on_success():
+    app = _app()
+    app.testing = True
+    client = app.test_client()
+    _login(client)
+
+    provision_response = Mock(status_code=200)
+    provision_response.json.return_value = {"username": "wohnung1_a1b2", "password": "geheim"}
+
+    with patch("heizungsbruecke.web.requests.post", return_value=provision_response), \
+         patch("heizungsbruecke.web.supervisor_api.set_own_options") as mock_set_options:
+        response = client.post("/api/complete", json={
+            "tenant_id": "wohnung1",
+            "profile_id": "vaillant_gastherme_heizkoerper",
+            "entities": _VALID_ENTITIES,
+        })
+
+    assert response.status_code == 200
+    mock_set_options.assert_called_once()
+    written_options = mock_set_options.call_args.args[2]
+    assert written_options["tenant_id"] == "wohnung1"
+    assert written_options["profile"] == "vaillant_gastherme_heizkoerper"
+    assert written_options["entity_room_actual"] == "sensor.rt"
+
+
+def test_complete_relays_provisioning_failure():
+    app = _app()
+    app.testing = True
+    client = app.test_client()
+    _login(client)
+
+    provision_response = Mock(status_code=403)
+
+    with patch("heizungsbruecke.web.requests.post", return_value=provision_response):
+        response = client.post("/api/complete", json={
+            "tenant_id": "wohnung-fremd",
+            "profile_id": "vaillant_gastherme_heizkoerper",
+            "entities": _VALID_ENTITIES,
+        })
+
+    assert response.status_code == 403
