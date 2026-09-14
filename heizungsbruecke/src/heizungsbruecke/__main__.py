@@ -11,7 +11,7 @@ from pathlib import Path
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.boost import decide_boost
 from heizungsbruecke.bridge import apply_boost_decision, handle_down_message, publish_snapshot
-from heizungsbruecke import daynight_snapshot, derived_sensors
+from heizungsbruecke import daynight_snapshot, derived_sensors, web
 from heizungsbruecke.failsafe import (
     FailsafeState,
     build_discovery_config,
@@ -32,15 +32,31 @@ DAYNIGHT_SNAPSHOT_PATH = Path("/data/daynight_snapshot_state.json")
 
 MQTT_HOST = "127.0.0.1"
 MQTT_PORT = 18830
+INGRESS_PORT = 8099
+
+_REQUIRED_OPTIONS = (
+    "tenant_id", "profile", "entity_room_actual", "entity_room_target",
+    "entity_curve_current", "entity_offset_current", "entity_outdoor_temp", "entity_heat_limit",
+)
 
 # The add-on runs with `startup: services`, i.e. it can be started before HA Core has
 # finished booting. A transient failure here (HA API not answering yet) must not be fatal
 # on the first attempt -- retry with backoff before giving up. No config.yaml `watchdog`
 # is set on purpose: once retries are exhausted the failure is treated as a genuine
-# misconfiguration, and main() exits cleanly rather than crash-looping forever.
+# misconfiguration, and _run_bridge() returns (logs, doesn't crash the whole process)
+# rather than crash-looping forever.
 DERIVED_SENSORS_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60, 60, 60)
 
 logger = logging.getLogger(__name__)
+
+
+def _is_configured(options: dict) -> bool:
+    """Ab 0.6.0 hat config.yaml keine Pflichtfelder mehr -- der Einrichtungs-Assistent
+    (Ingress-Panel) ist der einzige Konfigurationsweg. Ein frisch installiertes, noch
+    nicht eingerichtetes Add-on hat also ein leeres oder unvollstaendiges options.json;
+    das ist ab jetzt ein normaler Zustand, kein Fehler.
+    """
+    return all(options.get(field) for field in _REQUIRED_OPTIONS)
 
 
 def _resolve_effective_options(options: dict) -> dict:
@@ -219,9 +235,9 @@ def _run_tick(manifest, ha_api, mqtt_client, options, write_lock, boost_was_acti
     """Runs one poll cycle: publish the snapshot, then (if room roles are configured)
     evaluate and apply the local boost decision. Returns the boost-active state to
     carry into the next tick. An individual unreadable sensor only costs that role its
-    snapshot value (handled inside publish_snapshot, see I3); any remaining I/O failure
-    propagates -- the caller (main's loop) is responsible for catching and logging so a
-    single bad tick doesn't kill the whole process (see I2).
+    snapshot value (handled inside publish_snapshot); any remaining I/O failure
+    propagates -- the caller (_run_bridge's loop) is responsible for catching and
+    logging so a single bad tick doesn't kill the whole process.
     """
     seq = str(uuid.uuid4())
     publish_snapshot(
@@ -259,47 +275,54 @@ def _run_tick(manifest, ha_api, mqtt_client, options, write_lock, boost_was_acti
     return boost_was_active
 
 
-def main() -> None:
-    logging.basicConfig(level=logging.INFO)
-
-    options = json.loads(OPTIONS_PATH.read_text())
+def _run_bridge(options: dict, ha_api) -> None:
+    """Laeuft im Hintergrund-Thread (siehe main()); validiert/loest Optionen selbst auf
+    und startet die Poll-Loop nur, wenn der Einrichtungs-Assistent das Add-on schon
+    konfiguriert hat. Ein noch nicht eingerichtetes Add-on ist ab 0.6.0 ein normaler
+    Zustand (siehe _is_configured) -- deshalb hier `return` statt `sys.exit(1)` bei
+    jedem Validierungsfehler: ein `sys.exit` wuerde den ganzen Prozess beenden und damit
+    auch den Ingress-Wizard unerreichbar machen, der genau dieses Problem beheben soll.
+    """
+    if not _is_configured(options):
+        logger.info(
+            "Add-on ist noch nicht eingerichtet -- bitte den Einrichtungs-Assistenten "
+            "(Add-on-Panel 'SmartHeat Einrichtung') oeffnen. Die Poll-Loop startet erst "
+            "nach abgeschlossener Einrichtung und einem manuellen Neustart des Add-ons."
+        )
+        return
 
     try:
         options = _resolve_effective_options(options)
     except UnknownProfileError as error:
-        print(f"FEHLER: {error}", file=sys.stderr)
-        sys.exit(1)
+        logger.error("FEHLER: %s", error)
+        return
 
     boost_config_error = _validate_boost_config(options)
     if boost_config_error:
-        print(f"FEHLER: {boost_config_error}", file=sys.stderr)
-        sys.exit(1)
-
-    ha_api = HomeAssistantApi(base_url="http://supervisor", token=os.environ["SUPERVISOR_TOKEN"])
+        logger.error("FEHLER: %s", boost_config_error)
+        return
 
     prerequisite_error = _validate_derived_sensor_prerequisites(options)
     if prerequisite_error:
-        print(f"FEHLER: {prerequisite_error}", file=sys.stderr)
-        sys.exit(1)
+        logger.error("FEHLER: %s", prerequisite_error)
+        return
 
     try:
         derived_entity_ids = _ensure_derived_sensors_with_retry(ha_api, options)
     except Exception as error:
-        print(
-            f"FEHLER: Anlegen der abgeleiteten Sensoren fehlgeschlagen nach "
-            f"{len(DERIVED_SENSORS_RETRY_DELAYS_SECONDS) + 1} Versuchen: {error}",
-            file=sys.stderr,
+        logger.error(
+            "FEHLER: Anlegen der abgeleiteten Sensoren fehlgeschlagen nach %d Versuchen: %s",
+            len(DERIVED_SENSORS_RETRY_DELAYS_SECONDS) + 1, error,
         )
-        sys.exit(1)
+        return
 
     try:
         manifest = build_manifest(options, derived_entity_ids)
     except ManifestError as error:
-        print(f"FEHLER: {error}", file=sys.stderr)
-        sys.exit(1)
+        logger.error("FEHLER: %s", error)
+        return
 
     mqtt_client = BridgeMqttClient(host=MQTT_HOST, port=MQTT_PORT, tenant_id=options["tenant_id"])
-
     write_lock = threading.Lock()
 
     failsafe_ctx = _load_failsafe_ctx_safe(FAILSAFE_PATH)
@@ -350,6 +373,24 @@ def main() -> None:
             logger.exception("Fehler beim Tag-/Nachtmittel-Snapshot, wird beim naechsten Tick erneut versucht")
 
         time.sleep(options.get("poll_interval_seconds", 3600))
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO)
+
+    options = json.loads(OPTIONS_PATH.read_text()) if OPTIONS_PATH.exists() else {}
+    ha_api = HomeAssistantApi(base_url="http://supervisor", token=os.environ["SUPERVISOR_TOKEN"])
+
+    bridge_thread = threading.Thread(target=_run_bridge, args=(options, ha_api), daemon=True)
+    bridge_thread.start()
+
+    app = web.create_app(
+        heizungsserver_base_url=os.environ["HEIZUNGSSERVER_BASE_URL"],
+        ha_api=ha_api,
+        supervisor_base_url="http://supervisor",
+        supervisor_token=os.environ["SUPERVISOR_TOKEN"],
+    )
+    app.run(host="0.0.0.0", port=INGRESS_PORT)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 name: "Heizungsbruecke"
-version: "0.5.0"
+version: "0.6.0"
 slug: "heizungsbruecke"
 description: "Generische Bruecken-Logik: liest konfigurierte HA-Entities, meldet sie an den SmartHeat-Server, schreibt Sollwerte zurueck, mit lokalem Boost-Failsafe und Sicherheits-Clamps."
 url: "https://github.com/LucaHartfuss/SmartHeat-for-HomeAssistant"
@@ -10,27 +10,10 @@ startup: services
 boot: auto
 host_network: true
 homeassistant_api: true
-options:
-  tenant_id: ""
-  profile: ""
-  entity_room_actual: ""
-  entity_room_target: ""
-  entity_curve_current: ""
-  entity_offset_current: ""
-  entity_outdoor_temp: ""
-  entity_heat_limit: ""
-  poll_interval_seconds: 3600
-  notify_service: ""
-  failsafe_stale_after_hours: 26.0
-schema:
-  tenant_id: str
-  profile: "list(vaillant_gastherme_heizkoerper)"
-  entity_room_actual: str
-  entity_room_target: str
-  entity_curve_current: str
-  entity_offset_current: str
-  entity_outdoor_temp: str
-  entity_heat_limit: str
-  poll_interval_seconds: int
-  notify_service: str?
-  failsafe_stale_after_hours: float(0.1,)
+hassio_api: true
+ingress: true
+ingress_port: 8099
+panel_icon: "mdi:thermometer-lines"
+panel_title: "SmartHeat Einrichtung"
+environment:
+  HEIZUNGSSERVER_BASE_URL: "https://accounts.hartfussha.org"

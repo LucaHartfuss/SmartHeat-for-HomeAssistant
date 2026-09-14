@@ -24,23 +24,29 @@ else
 fi
 
 echo "--- container run mit unvollstaendiger Config (fehlende Pflicht-Rollen) ---"
-MSYS_NO_PATHCONV=1 docker run --rm -e SUPERVISOR_TOKEN=test-token -v "$DATA_DIR_HOST:/data" "$IMAGE_TAG" \
-  >"$TMPDIR/stdout.log" 2>"$TMPDIR/stderr.log"
-CONTAINER_EXIT=$?
+CONTAINER_NAME="heizungsbruecke-docker-build-test"
+MSYS_NO_PATHCONV=1 docker run -d --rm --name "$CONTAINER_NAME" \
+  -e SUPERVISOR_TOKEN=test-token \
+  -e HEIZUNGSSERVER_BASE_URL=http://heizungsserver.invalid \
+  -v "$DATA_DIR_HOST:/data" "$IMAGE_TAG" >/dev/null \
+  || { echo "FAIL: container start"; exit 1; }
 
-if [ "$CONTAINER_EXIT" != "1" ]; then
-  echo "FAIL: erwarteter Exit-Code 1 bei unvollstaendiger Config, bekommen: $CONTAINER_EXIT"
+sleep 3
+
+if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null)" != "true" ]; then
+  echo "FAIL: Container mit unvollstaendiger Config sollte weiterlaufen (Wizard-Modus), ist aber beendet"
   FAIL=1
 else
-  echo "PASS: Container beendet sich mit Exit-Code 1 bei fehlenden Pflicht-Rollen"
+  echo "PASS: Container laeuft weiter (Wizard-Modus) statt bei unvollstaendiger Config abzustuerzen"
 fi
 
-if grep -q "FEHLER: Folgende Pflichtfelder fehlen" "$TMPDIR/stderr.log"; then
-  echo "PASS: Fehlermeldung auf stderr vorhanden"
+if docker logs "$CONTAINER_NAME" 2>&1 | grep -q "Add-on ist noch nicht eingerichtet"; then
+  echo "PASS: Hinweis auf den Einrichtungs-Assistenten im Log vorhanden"
 else
-  echo "FAIL: erwartete Fehlermeldung fehlt auf stderr"
+  echo "FAIL: erwarteter Hinweis auf den Einrichtungs-Assistenten fehlt im Log"
   FAIL=1
 fi
 
+docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1
 rm -rf "$TMPDIR"
 exit $FAIL

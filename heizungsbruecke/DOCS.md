@@ -5,7 +5,10 @@ aktuelle Heizkurve/Niveau) und meldet sie generisch an den SmartHeat-Server.
 Schreibt vom Server empfangene Sollwerte zurueck, geclamped gegen die
 konfigurierten Sicherheitsgrenzen. Enthaelt eine lokale Boost-Hysterese,
 die unabhaengig vom Server eingreift, wenn der Referenzraum mehr als
-`boost_threshold_k` unter der Zieltemperatur liegt.
+`boost_threshold_k` unter der Zieltemperatur liegt. Konfiguriert wird
+ausschliesslich ueber den in Home Assistant per Ingress eingebetteten
+Einrichtungs-Assistenten (Add-on-Panel "SmartHeat Einrichtung"), nicht mehr
+ueber Felder im Configuration-Tab.
 
 ## Update von 0.1.0 auf 0.2.0 (Breaking Change)
 
@@ -65,6 +68,26 @@ entfallen ersatzlos aus der Konfiguration:
 **Achtung bei bestehenden Installationen:** nach dem Update auf 0.5.0 die
 Konfiguration einmal pruefen -- die entfallenen Felder werden ignoriert, aber
 `entity_outdoor_temp` muss gesetzt sein, sonst startet das Add-on nicht.
+
+## Update von 0.5.0 auf 0.6.0 (Breaking Change)
+
+`tenant_id`, `profile`, `entity_room_actual`, `entity_room_target`,
+`entity_curve_current`, `entity_offset_current`, `entity_outdoor_temp`,
+`entity_heat_limit`, `poll_interval_seconds`, `notify_service` und
+`failsafe_stale_after_hours` entfallen als Supervisor-Configuration-Tab-Felder
+(`options`/`schema` komplett entfernt). Die Konfiguration laeuft ab jetzt
+ausschliesslich ueber den neuen Einrichtungs-Assistenten: Add-on-Panel
+("SmartHeat Einrichtung") oeffnen, mit dem SmartHeat-Account einloggen,
+Anlage/Profil/Sensoren im gefuehrten Dialog waehlen, bestaetigen.
+
+**Achtung bei bestehenden Installationen:** nach dem Update auf 0.6.0 sind die
+bisherigen Configuration-Tab-Werte wirkungslos -- die Einrichtung muss einmal
+ueber den neuen Assistenten wiederholt werden, danach das Add-on manuell neu
+starten. `poll_interval_seconds`, `notify_service` und
+`failsafe_stale_after_hours` behalten ihre bisherigen Defaults (3600s / leer /
+26.0h), wenn der Assistent sie nicht abfragt -- fuer eine Aenderung dieser drei
+optionalen Werte vorerst `options.json` auf dem Pi direkt anpassen (kein
+UI-Schritt dafuer in dieser Version).
 
 ## Voraussetzungen
 

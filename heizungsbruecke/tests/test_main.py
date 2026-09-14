@@ -7,11 +7,13 @@ import pytest
 from heizungsbruecke.__main__ import (
     _check_failsafe_staleness,
     _ensure_derived_sensors_with_retry,
+    _is_configured,
     _load_failsafe_ctx,
     _load_failsafe_ctx_safe,
     _make_down_callback,
     _record_valid_message,
     _resolve_effective_options,
+    _run_bridge,
     _run_tick,
     _save_failsafe_ctx,
     _validate_boost_config,
@@ -33,6 +35,28 @@ def _base_options(**overrides):
     }
     options.update(overrides)
     return options
+
+
+def test_is_configured_true_when_all_required_fields_present():
+    options = {
+        "tenant_id": "wohnung1", "profile": "vaillant_gastherme_heizkoerper",
+        "entity_room_actual": "sensor.rt", "entity_room_target": "sensor.target_rt",
+        "entity_curve_current": "number.curve", "entity_offset_current": "number.offset",
+        "entity_outdoor_temp": "sensor.outdoor", "entity_heat_limit": "number.heat_limit",
+    }
+    assert _is_configured(options) is True
+
+
+def test_is_configured_false_when_a_required_field_is_missing():
+    assert _is_configured({"tenant_id": "wohnung1"}) is False
+
+
+def test_is_configured_false_for_empty_options():
+    assert _is_configured({}) is False
+
+
+def test_run_bridge_returns_early_without_raising_when_not_configured():
+    _run_bridge({}, MagicMock())
 
 
 def test_validate_boost_config_returns_none_when_within_range():
