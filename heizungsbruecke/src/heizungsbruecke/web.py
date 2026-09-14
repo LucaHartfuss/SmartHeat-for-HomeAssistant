@@ -154,6 +154,15 @@ def create_app(
         if provision_response.status_code != 200:
             return jsonify(error="Provisioning fehlgeschlagen"), provision_response.status_code
 
+        try:
+            provisioning = provision_response.json()
+            mqtt_username = provisioning["username"]
+            mqtt_password = provisioning["password"]
+            mosquitto_passwd_command = provisioning["mosquitto_passwd_command"]
+            acl_snippet = provisioning["acl_snippet"]
+        except (ValueError, KeyError):
+            return jsonify(error="Antwort des Abo-Service beim Provisioning war unvollstaendig"), 502
+
         options = {
             "tenant_id": tenant_id,
             "profile": profile_id,
@@ -166,6 +175,13 @@ def create_app(
         except requests.RequestException:
             return jsonify(error="Speichern der Add-on-Optionen fehlgeschlagen"), 502
 
-        return jsonify(ok=True, message="Konfiguration gespeichert - Add-on bitte manuell neu starten"), 200
+        return jsonify(
+            ok=True,
+            message="Konfiguration gespeichert - Add-on bitte manuell neu starten",
+            mqtt_username=mqtt_username,
+            mqtt_password=mqtt_password,
+            mosquitto_passwd_command=mosquitto_passwd_command,
+            acl_snippet=acl_snippet,
+        ), 200
 
     return app

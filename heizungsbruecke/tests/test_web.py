@@ -245,7 +245,12 @@ def test_complete_provisions_and_writes_options_on_success():
     _login(client)
 
     provision_response = Mock(status_code=200)
-    provision_response.json.return_value = {"username": "wohnung1_a1b2", "password": "geheim"}
+    provision_response.json.return_value = {
+        "username": "wohnung1_a1b2",
+        "password": "geheim",
+        "mosquitto_passwd_command": "mosquitto_passwd -b /etc/mosquitto/passwd wohnung1_a1b2 geheim",
+        "acl_snippet": "user wohnung1_a1b2\ntopic write smartheat/wohnung1/up/#\n",
+    }
 
     with patch("heizungsbruecke.web.requests.post", return_value=provision_response), \
          patch("heizungsbruecke.web.supervisor_api.set_own_options") as mock_set_options:
@@ -256,11 +261,35 @@ def test_complete_provisions_and_writes_options_on_success():
         })
 
     assert response.status_code == 200
+    body = response.get_json()
+    assert body["mqtt_username"] == "wohnung1_a1b2"
+    assert body["mqtt_password"] == "geheim"
+    assert body["mosquitto_passwd_command"] == "mosquitto_passwd -b /etc/mosquitto/passwd wohnung1_a1b2 geheim"
+    assert body["acl_snippet"] == "user wohnung1_a1b2\ntopic write smartheat/wohnung1/up/#\n"
     mock_set_options.assert_called_once()
     written_options = mock_set_options.call_args.args[2]
     assert written_options["tenant_id"] == "wohnung1"
     assert written_options["profile"] == "vaillant_gastherme_heizkoerper"
     assert written_options["entity_room_actual"] == "sensor.rt"
+
+
+def test_complete_returns_502_when_provisioning_response_is_missing_fields():
+    app = _app()
+    app.testing = True
+    client = app.test_client()
+    _login(client)
+
+    provision_response = Mock(status_code=200)
+    provision_response.json.return_value = {"username": "wohnung1_a1b2"}  # missing password/commands/acl
+
+    with patch("heizungsbruecke.web.requests.post", return_value=provision_response):
+        response = client.post("/api/complete", json={
+            "tenant_id": "wohnung1",
+            "profile_id": "vaillant_gastherme_heizkoerper",
+            "entities": _VALID_ENTITIES,
+        })
+
+    assert response.status_code == 502
 
 
 def test_complete_relays_provisioning_failure():
