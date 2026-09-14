@@ -4,10 +4,8 @@ from heizungsbruecke.manifest import ALL_ROLES
 from heizungsbruecke.profiles import (
     LOCAL_BOOST_DEFAULTS,
     LOCAL_CLAMP_DEFAULTS,
-    PROFILE_LABELS,
     REQUIRED_ROLES_BY_PROFILE,
     UnknownProfileError,
-    is_verified,
     required_roles_for,
     resolve_boost_defaults,
     resolve_local_clamps,
@@ -35,10 +33,6 @@ def test_required_roles_for_vaillant_profile():
 def test_required_roles_for_unknown_profile_raises():
     with pytest.raises(UnknownProfileError):
         required_roles_for("does_not_exist")
-
-
-def test_profile_labels_and_required_roles_cover_the_same_profiles():
-    assert PROFILE_LABELS.keys() == REQUIRED_ROLES_BY_PROFILE.keys()
 
 
 def test_every_required_role_is_a_known_manifest_role():
@@ -69,15 +63,3 @@ def test_resolve_boost_defaults_returns_profile_values():
 def test_resolve_boost_defaults_raises_for_profile_without_defaults():
     with pytest.raises(UnknownProfileError):
         resolve_boost_defaults("weishaupt_waermepumpe_fussbodenheizung")
-
-
-def test_is_verified_true_for_profile_with_full_defaults():
-    assert is_verified("vaillant_gastherme_heizkoerper") is True
-
-
-def test_is_verified_false_for_profile_without_defaults():
-    assert is_verified("weishaupt_waermepumpe_fussbodenheizung") is False
-
-
-def test_is_verified_false_for_unknown_profile():
-    assert is_verified("nicht_vorhanden") is False

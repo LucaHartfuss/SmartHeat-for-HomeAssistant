@@ -5,19 +5,10 @@ _COMMON_REQUIRED_ROLES = (
     "room_day_avg", "room_night_avg", "heat_limit", "dat", "dart",
 )
 
-PROFILE_LABELS: dict[str, str] = {
-    "weishaupt_waermepumpe_fussbodenheizung": "Weishaupt Waermepumpe (Fussbodenheizung)",
-    "vaillant_gastherme_heizkoerper": "Vaillant Gastherme (Heizkoerper)",
-}
-
 REQUIRED_ROLES_BY_PROFILE: dict[str, tuple[str, ...]] = {
     "weishaupt_waermepumpe_fussbodenheizung": _COMMON_REQUIRED_ROLES,
     "vaillant_gastherme_heizkoerper": _COMMON_REQUIRED_ROLES,
 }
-
-
-def is_verified(profile_id: str) -> bool:
-    return profile_id in LOCAL_CLAMP_DEFAULTS and profile_id in LOCAL_BOOST_DEFAULTS
 
 
 @dataclass(frozen=True)
