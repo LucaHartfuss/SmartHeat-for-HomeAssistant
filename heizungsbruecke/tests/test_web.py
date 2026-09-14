@@ -99,3 +99,47 @@ def test_tenants_returns_list_from_heizungsserver():
         headers={"Authorization": "Bearer abc123"},
         timeout=10,
     )
+
+
+def test_login_returns_502_when_heizungsserver_response_missing_token():
+    app = _app()
+    app.testing = True
+    mock_response = Mock(status_code=200)
+    mock_response.json.return_value = {"error": "no token here"}
+
+    with patch("heizungsbruecke.web.requests.post", return_value=mock_response):
+        client = app.test_client()
+        response = client.post("/api/login", json={"email": "luca@example.com", "password": "geheim123"})
+
+    assert response.status_code == 502
+    assert response.get_json()["error"] == "Abo-Service nicht erreichbar"
+
+
+def test_login_returns_502_when_heizungsserver_response_non_json():
+    app = _app()
+    app.testing = True
+    mock_response = Mock(status_code=200)
+    mock_response.json.side_effect = ValueError("Invalid JSON")
+
+    with patch("heizungsbruecke.web.requests.post", return_value=mock_response):
+        client = app.test_client()
+        response = client.post("/api/login", json={"email": "luca@example.com", "password": "geheim123"})
+
+    assert response.status_code == 502
+    assert response.get_json()["error"] == "Abo-Service nicht erreichbar"
+
+
+def test_login_returns_400_when_request_body_is_non_object_json():
+    app = _app()
+    app.testing = True
+    client = app.test_client()
+
+    # Send a JSON list instead of a JSON object
+    response = client.post(
+        "/api/login",
+        data='["not", "a", "dict"]',
+        content_type="application/json",
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "E-Mail und Passwort sind erforderlich"

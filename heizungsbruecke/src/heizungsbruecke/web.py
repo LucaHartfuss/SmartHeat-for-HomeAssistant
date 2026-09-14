@@ -25,6 +25,8 @@ def create_app(
     @app.post("/api/login")
     def login():
         body = request.get_json(silent=True) or {}
+        if not isinstance(body, dict):
+            body = {}
         email = body.get("email")
         password = body.get("password")
         if not email or not password:
@@ -42,7 +44,10 @@ def create_app(
         if response.status_code != 200:
             return jsonify(error="Ungueltige Zugangsdaten"), 401
 
-        session["heizungsserver_token"] = response.json()["token"]
+        try:
+            session["heizungsserver_token"] = response.json()["token"]
+        except (ValueError, KeyError):
+            return jsonify(error="Abo-Service nicht erreichbar"), 502
         return jsonify(ok=True), 200
 
     @app.get("/api/tenants")
