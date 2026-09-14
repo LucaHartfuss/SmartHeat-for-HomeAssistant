@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import sys
 import threading
 import time
 import uuid
@@ -322,7 +321,6 @@ def _run_bridge(options: dict, ha_api) -> None:
         logger.error("FEHLER: %s", error)
         return
 
-    mqtt_client = BridgeMqttClient(host=MQTT_HOST, port=MQTT_PORT, tenant_id=options["tenant_id"])
     write_lock = threading.Lock()
 
     failsafe_ctx = _load_failsafe_ctx_safe(FAILSAFE_PATH)
@@ -332,19 +330,31 @@ def _run_bridge(options: dict, ha_api) -> None:
         # instead of reading "OK" forever.
         failsafe_ctx["last_valid_update"] = time.time()
     stale_after_seconds = options.get("failsafe_stale_after_hours", 26.0) * 3600
-    mqtt_client.publish_discovery(
-        component="binary_sensor", object_id="failsafe",
-        config=build_discovery_config(options["tenant_id"]),
-    )
-    mqtt_client.publish_status("failsafe", build_state_payload(failsafe_ctx["state"].active))
 
-    for role in ("curve_current", "offset_current"):
-        if role in manifest.entity_ids:
-            mqtt_client.subscribe_down(
-                role=role,
-                on_message=_make_down_callback(role, manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client),
-            )
-    mqtt_client.loop_start()
+    try:
+        # BridgeMqttClient's constructor blocks on .connect() -- if the broker isn't
+        # reachable yet (e.g. cloudflared_access_mqtt hasn't started, see DOCS.md
+        # "Voraussetzungen"), this whole block can raise. Unguarded, that would kill
+        # only this background thread while Flask keeps serving happily -- the add-on
+        # would show green/healthy with the heating bridge silently dead. Treated the
+        # same as every other startup precondition in this function: log and return.
+        mqtt_client = BridgeMqttClient(host=MQTT_HOST, port=MQTT_PORT, tenant_id=options["tenant_id"])
+        mqtt_client.publish_discovery(
+            component="binary_sensor", object_id="failsafe",
+            config=build_discovery_config(options["tenant_id"]),
+        )
+        mqtt_client.publish_status("failsafe", build_state_payload(failsafe_ctx["state"].active))
+
+        for role in ("curve_current", "offset_current"):
+            if role in manifest.entity_ids:
+                mqtt_client.subscribe_down(
+                    role=role,
+                    on_message=_make_down_callback(role, manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client),
+                )
+        mqtt_client.loop_start()
+    except Exception as error:
+        logger.error("FEHLER: MQTT-Verbindung zum Broker fehlgeschlagen: %s", error)
+        return
 
     boost_was_active = False
 
@@ -375,10 +385,30 @@ def _run_bridge(options: dict, ha_api) -> None:
         time.sleep(options.get("poll_interval_seconds", 3600))
 
 
+def _load_options_safe(path: Path) -> dict:
+    """Loads options.json, defaulting to `{}` both when the file is missing (fresh
+    install, not yet configured by the wizard -- see _is_configured) and when it is
+    present but corrupt/truncated (e.g. after power loss on the Pi's SD card, the same
+    failure mode _load_failsafe_ctx_safe already guards against). The wizard existing
+    at all is the one thing that must survive any failure mode here, so a bad options
+    file must not crash the process before Flask even starts.
+    """
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        logger.warning(
+            "options.json konnte nicht gelesen werden (%s), starte mit leerer Konfiguration: %s",
+            path, error,
+        )
+        return {}
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
 
-    options = json.loads(OPTIONS_PATH.read_text()) if OPTIONS_PATH.exists() else {}
+    options = _load_options_safe(OPTIONS_PATH)
     ha_api = HomeAssistantApi(base_url="http://supervisor", token=os.environ["SUPERVISOR_TOKEN"])
 
     bridge_thread = threading.Thread(target=_run_bridge, args=(options, ha_api), daemon=True)

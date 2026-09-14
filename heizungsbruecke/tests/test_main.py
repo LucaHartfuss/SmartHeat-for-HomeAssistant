@@ -10,6 +10,7 @@ from heizungsbruecke.__main__ import (
     _is_configured,
     _load_failsafe_ctx,
     _load_failsafe_ctx_safe,
+    _load_options_safe,
     _make_down_callback,
     _record_valid_message,
     _resolve_effective_options,
@@ -55,8 +56,32 @@ def test_is_configured_false_for_empty_options():
     assert _is_configured({}) is False
 
 
-def test_run_bridge_returns_early_without_raising_when_not_configured():
-    _run_bridge({}, MagicMock())
+def test_run_bridge_returns_early_without_raising_when_not_configured(caplog):
+    with caplog.at_level("INFO"):
+        _run_bridge({}, MagicMock())
+
+    assert "Add-on ist noch nicht eingerichtet" in caplog.text
+
+
+def test_load_options_safe_defaults_when_no_file(tmp_path):
+    assert _load_options_safe(tmp_path / "does_not_exist.json") == {}
+
+
+def test_load_options_safe_falls_back_on_corrupt_file(tmp_path):
+    # Simulates power loss on the Pi's SD card mid-write: a truncated/corrupt options
+    # file must not crash the whole add-on before Flask (and therefore the wizard that
+    # would let the customer fix it) even starts.
+    path = tmp_path / "options.json"
+    path.write_bytes(b"{not valid json..")
+
+    assert _load_options_safe(path) == {}
+
+
+def test_load_options_safe_passes_through_valid_file(tmp_path):
+    path = tmp_path / "options.json"
+    path.write_text(json.dumps({"tenant_id": "wohnung1"}))
+
+    assert _load_options_safe(path) == {"tenant_id": "wohnung1"}
 
 
 def test_validate_boost_config_returns_none_when_within_range():
