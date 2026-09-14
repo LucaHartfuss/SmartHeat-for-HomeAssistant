@@ -16,23 +16,6 @@ REQUIRED_ROLES_BY_PROFILE: dict[str, tuple[str, ...]] = {
 }
 
 
-@dataclass(frozen=True)
-class ProfileCatalogEntry:
-    hersteller: str
-    erzeuger_typ: str
-    verteilsystem: str
-    profile_id: str
-
-
-# Wizard-Katalog fuer die drei gekoppelten Dropdowns (Hersteller x Typ x
-# Verteilsystem). Jeder Eintrag muss einen Schluessel in REQUIRED_ROLES_BY_PROFILE
-# haben; ob er "verified" ist (also waehlbar ohne Warnung), entscheidet is_verified().
-PROFILE_CATALOG: tuple[ProfileCatalogEntry, ...] = (
-    ProfileCatalogEntry("Vaillant", "Gastherme", "Heizkoerper", "vaillant_gastherme_heizkoerper"),
-    ProfileCatalogEntry("Weishaupt", "Waermepumpe", "Fussbodenheizung", "weishaupt_waermepumpe_fussbodenheizung"),
-)
-
-
 def is_verified(profile_id: str) -> bool:
     return profile_id in LOCAL_CLAMP_DEFAULTS and profile_id in LOCAL_BOOST_DEFAULTS
 
