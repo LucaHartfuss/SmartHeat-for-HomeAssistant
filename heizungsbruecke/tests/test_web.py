@@ -143,3 +143,46 @@ def test_login_returns_400_when_request_body_is_non_object_json():
 
     assert response.status_code == 400
     assert response.get_json()["error"] == "E-Mail und Passwort sind erforderlich"
+
+
+def test_profiles_endpoint_lists_catalog_with_verified_flag():
+    app = _app()
+    app.testing = True
+    client = app.test_client()
+
+    response = client.get("/api/profiles")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    vaillant_entry = next(e for e in body if e["profile_id"] == "vaillant_gastherme_heizkoerper")
+    weishaupt_entry = next(e for e in body if e["profile_id"] == "weishaupt_waermepumpe_fussbodenheizung")
+    assert vaillant_entry["verified"] is True
+    assert weishaupt_entry["verified"] is False
+
+
+def test_entities_endpoint_filters_by_domain():
+    ha_api = Mock()
+    ha_api.list_states.return_value = [
+        {"entity_id": "sensor.outdoor", "attributes": {"friendly_name": "Aussen", "unit_of_measurement": "°C"}},
+        {"entity_id": "number.curve", "attributes": {"friendly_name": "Kurve"}},
+    ]
+    app = _app(ha_api=ha_api)
+    app.testing = True
+    client = app.test_client()
+
+    response = client.get("/api/entities?domain=sensor")
+
+    assert response.status_code == 200
+    assert response.get_json() == [
+        {"entity_id": "sensor.outdoor", "friendly_name": "Aussen", "unit_of_measurement": "°C"},
+    ]
+
+
+def test_entities_endpoint_requires_domain_param():
+    app = _app()
+    app.testing = True
+    client = app.test_client()
+
+    response = client.get("/api/entities")
+
+    assert response.status_code == 400

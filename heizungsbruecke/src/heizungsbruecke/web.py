@@ -8,6 +8,8 @@ import secrets
 import requests
 from flask import Flask, jsonify, request, session
 
+from heizungsbruecke import profiles
+
 
 def create_app(
     heizungsserver_base_url: str,
@@ -69,5 +71,36 @@ def create_app(
             return jsonify(error="Sitzung abgelaufen, bitte erneut einloggen"), 401
 
         return jsonify(response.json()), 200
+
+    @app.get("/api/profiles")
+    def profile_catalog():
+        return jsonify([
+            {
+                "hersteller": entry.hersteller,
+                "erzeuger_typ": entry.erzeuger_typ,
+                "verteilsystem": entry.verteilsystem,
+                "profile_id": entry.profile_id,
+                "verified": profiles.is_verified(entry.profile_id),
+            }
+            for entry in profiles.PROFILE_CATALOG
+        ]), 200
+
+    @app.get("/api/entities")
+    def entities():
+        domain = request.args.get("domain")
+        if not domain:
+            return jsonify(error="domain-Parameter ist erforderlich"), 400
+
+        states = app.config["HA_API"].list_states()
+        matching = [
+            {
+                "entity_id": state["entity_id"],
+                "friendly_name": state.get("attributes", {}).get("friendly_name", state["entity_id"]),
+                "unit_of_measurement": state.get("attributes", {}).get("unit_of_measurement"),
+            }
+            for state in states
+            if state["entity_id"].split(".", 1)[0] == domain
+        ]
+        return jsonify(matching), 200
 
     return app
