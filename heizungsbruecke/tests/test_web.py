@@ -357,3 +357,14 @@ def test_complete_returns_502_when_provisioning_response_is_non_dict_json():
         })
 
     assert response.status_code == 502
+
+
+def test_index_serves_wizard_page():
+    app = _app()
+    app.testing = True
+    client = app.test_client()
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert b"SmartHeat Einrichtung" in response.data

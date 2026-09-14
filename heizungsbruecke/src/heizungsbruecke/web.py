@@ -190,4 +190,8 @@ def create_app(
             acl_snippet=acl_snippet,
         ), 200
 
+    @app.get("/")
+    def index():
+        return app.send_static_file("index.html")
+
     return app
