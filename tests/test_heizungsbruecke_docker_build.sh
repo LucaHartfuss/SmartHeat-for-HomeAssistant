@@ -47,6 +47,30 @@ else
   FAIL=1
 fi
 
+echo "--- pruefe GET / (Wizard-Startseite) im laufenden Container ---"
+# Guards against the static/ wizard assets (index.html, wizard.js) silently not being
+# packaged into the installed wheel -- in that case Flask is up and the container stays
+# running (the two checks above would still PASS), but "/" 404s and the add-on is
+# unconfigurable in practice. No curl in the python:3.12-alpine base image, so use the
+# python interpreter that's already there (same one the Dockerfile's ENTRYPOINT uses).
+WIZARD_STATUS="$(docker exec "$CONTAINER_NAME" python -c '
+import urllib.request, urllib.error
+try:
+    resp = urllib.request.urlopen("http://localhost:8099/", timeout=5)
+    print(resp.status)
+except urllib.error.HTTPError as e:
+    print(e.code)
+except Exception as e:
+    print("ERROR:", e)
+' 2>/dev/null)"
+
+if [ "$WIZARD_STATUS" = "200" ]; then
+  echo "PASS: GET / liefert 200 (Wizard-Startseite wird ausgeliefert)"
+else
+  echo "FAIL: GET / liefert '$WIZARD_STATUS' statt 200 (fehlt static/ im installierten Wheel?)"
+  FAIL=1
+fi
+
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1
 rm -rf "$TMPDIR"
 exit $FAIL
