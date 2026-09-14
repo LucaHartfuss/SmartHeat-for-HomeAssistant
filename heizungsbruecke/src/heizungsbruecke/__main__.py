@@ -397,7 +397,7 @@ def _load_options_safe(path: Path) -> dict:
         return {}
     try:
         return json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError) as error:
+    except (OSError, ValueError) as error:
         logger.warning(
             "options.json konnte nicht gelesen werden (%s), starte mit leerer Konfiguration: %s",
             path, error,

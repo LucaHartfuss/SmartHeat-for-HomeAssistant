@@ -74,8 +74,10 @@ Konfiguration einmal pruefen -- die entfallenen Felder werden ignoriert, aber
 `tenant_id`, `profile`, `entity_room_actual`, `entity_room_target`,
 `entity_curve_current`, `entity_offset_current`, `entity_outdoor_temp`,
 `entity_heat_limit`, `poll_interval_seconds`, `notify_service` und
-`failsafe_stale_after_hours` entfallen als Supervisor-Configuration-Tab-Felder
-(`options`/`schema` komplett entfernt). Die Konfiguration laeuft ab jetzt
+`failsafe_stale_after_hours` entfallen als Supervisor-Configuration-Tab-Felder;
+`schema: false` bleibt in `config.yaml` bestehen, damit der Assistent selbst
+per `POST /addons/self/options` schreiben kann, ohne von Supervisors
+Schema-Validierung abgelehnt zu werden. Die Konfiguration laeuft ab jetzt
 ausschliesslich ueber den neuen Einrichtungs-Assistenten: Add-on-Panel
 ("SmartHeat Einrichtung") oeffnen, mit dem SmartHeat-Account einloggen,
 Anlage/Profil/Sensoren im gefuehrten Dialog waehlen, bestaetigen.

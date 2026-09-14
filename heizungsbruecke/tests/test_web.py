@@ -101,6 +101,26 @@ def test_tenants_returns_list_from_heizungsserver():
     )
 
 
+def test_tenants_returns_502_json_when_heizungsserver_response_non_json():
+    # I2(2): mirrors /api/login's existing guard -- a 200 response whose body isn't
+    # valid JSON must become a clean JSON 502, not a raw HTML 500 traceback page.
+    app = _app()
+    app.testing = True
+    client = app.test_client()
+    _login(client)
+
+    tenants_response = Mock(status_code=200)
+    tenants_response.json.side_effect = ValueError("Invalid JSON")
+
+    with patch("heizungsbruecke.web.requests.get", return_value=tenants_response):
+        response = client.get("/api/tenants")
+
+    assert response.status_code == 502
+    body = response.get_json()
+    assert isinstance(body, dict)
+    assert "error" in body
+
+
 def test_login_returns_502_when_heizungsserver_response_missing_token():
     app = _app()
     app.testing = True
@@ -211,6 +231,24 @@ def test_entities_endpoint_requires_domain_param():
     assert response.status_code == 400
 
 
+def test_entities_endpoint_returns_502_json_when_ha_api_raises():
+    # I2(1): a raised exception from list_states() must become a clean JSON 502, not
+    # a raw HTML 500 traceback page.
+    ha_api = Mock()
+    ha_api.list_states.side_effect = RuntimeError("HA nicht erreichbar")
+    app = _app(ha_api=ha_api)
+    app.testing = True
+    client = app.test_client()
+    _login(client)
+
+    response = client.get("/api/entities?domain=sensor")
+
+    assert response.status_code == 502
+    body = response.get_json()
+    assert isinstance(body, dict)
+    assert "error" in body
+
+
 def _login(client):
     login_response = Mock(status_code=200)
     login_response.json.return_value = {"token": "abc123"}
@@ -227,9 +265,29 @@ _VALID_ENTITIES = {
     "entity_curve_current": {"entity_id": "number.curve", "unit_of_measurement": None},
 }
 
+# /api/complete now revalidates every role's unit against real HA states instead of
+# trusting the client-supplied unit_of_measurement (I1) -- these are the "real" states
+# behind _VALID_ENTITIES's entity_ids, matching what a real ha_api.list_states() would
+# report. Note the client-claimed unit_of_measurement values in _VALID_ENTITIES above
+# are now irrelevant to validation; kept only because the wizard still sends them.
+_VALID_STATES = [
+    {"entity_id": "sensor.rt", "attributes": {"unit_of_measurement": "°C"}},
+    {"entity_id": "sensor.target_rt", "attributes": {"unit_of_measurement": "°C"}},
+    {"entity_id": "sensor.outdoor", "attributes": {"unit_of_measurement": "°C"}},
+    {"entity_id": "number.offset", "attributes": {"unit_of_measurement": "°C"}},
+    {"entity_id": "number.heat_limit", "attributes": {"unit_of_measurement": "°C"}},
+    {"entity_id": "number.curve", "attributes": {}},
+]
+
+
+def _complete_app(states=None):
+    ha_api = Mock()
+    ha_api.list_states.return_value = _VALID_STATES if states is None else states
+    return _app(ha_api=ha_api)
+
 
 def test_complete_rejects_unverified_profile():
-    app = _app()
+    app = _complete_app()
     app.testing = True
     client = app.test_client()
     _login(client)
@@ -244,13 +302,37 @@ def test_complete_rejects_unverified_profile():
 
 
 def test_complete_rejects_wrong_unit():
-    app = _app()
+    # I1: the server must revalidate against the REAL entity unit, not the client's
+    # claim -- entities still claims "°C" for entity_room_actual (matching what a
+    # cooperative wizard would send), but the real HA state (list_states(), mocked
+    # here) reports "%". A client-trusted implementation would wrongly accept this.
+    states = [dict(s) for s in _VALID_STATES]
+    sensor_rt = next(s for s in states if s["entity_id"] == "sensor.rt")
+    sensor_rt["attributes"] = {"unit_of_measurement": "%"}
+    app = _complete_app(states=states)
     app.testing = True
     client = app.test_client()
     _login(client)
 
+    response = client.post("/api/complete", json={
+        "tenant_id": "wohnung1",
+        "profile_id": "vaillant_gastherme_heizkoerper",
+        "entities": _VALID_ENTITIES,
+    })
+
+    assert response.status_code == 400
+    assert "erwartete Einheit" in response.get_json()["error"]
+
+
+def test_complete_rejects_entity_id_that_does_not_exist_in_real_states():
+    # I1(b): an entity_id the client sends must actually exist in HA's real states --
+    # not merely be well-formed and unit-tagged by the client.
     bad_entities = dict(_VALID_ENTITIES)
-    bad_entities["entity_room_actual"] = {"entity_id": "sensor.wrong", "unit_of_measurement": "%"}
+    bad_entities["entity_room_actual"] = {"entity_id": "sensor.does_not_exist", "unit_of_measurement": "°C"}
+    app = _complete_app()
+    app.testing = True
+    client = app.test_client()
+    _login(client)
 
     response = client.post("/api/complete", json={
         "tenant_id": "wohnung1",
@@ -259,10 +341,82 @@ def test_complete_rejects_wrong_unit():
     })
 
     assert response.status_code == 400
+    assert "existiert nicht" in response.get_json()["error"]
+
+
+def test_complete_rejects_non_dict_entities():
+    # I2(3): a non-dict `entities` value must not raise (AttributeError on .get())
+    # before being validated -- it must be rejected with a clean 400.
+    app = _complete_app()
+    app.testing = True
+    client = app.test_client()
+    _login(client)
+
+    response = client.post("/api/complete", json={
+        "tenant_id": "wohnung1",
+        "profile_id": "vaillant_gastherme_heizkoerper",
+        "entities": ["not", "a", "dict"],
+    })
+
+    assert response.status_code == 400
+    body = response.get_json()
+    assert isinstance(body, dict)
+    assert "error" in body
+
+
+def test_complete_returns_400_not_500_for_non_object_json_body():
+    # I2(3): a JSON list as the whole request body (not just `entities`) must also not
+    # crash -- `body.get(...)` would otherwise raise AttributeError on a list.
+    app = _complete_app()
+    app.testing = True
+    client = app.test_client()
+    _login(client)
+
+    response = client.post(
+        "/api/complete",
+        data='["not", "a", "dict"]',
+        content_type="application/json",
+    )
+
+    assert response.status_code == 400
+    body = response.get_json()
+    assert isinstance(body, dict)
+    assert "error" in body
+
+
+def test_complete_writes_only_validated_roles_ignoring_extra_entities_keys():
+    # I3: with schema: false, Supervisor accepts unvalidated extra option keys -- an
+    # extra `entities` key must never reach set_own_options verbatim.
+    app = _complete_app()
+    app.testing = True
+    client = app.test_client()
+    _login(client)
+
+    provision_response = Mock(status_code=200)
+    provision_response.json.return_value = {
+        "username": "wohnung1_a1b2",
+        "password": "geheim",
+        "mosquitto_passwd_command": "mosquitto_passwd -b /etc/mosquitto/passwd wohnung1_a1b2 geheim",
+        "acl_snippet": "user wohnung1_a1b2\ntopic write smartheat/wohnung1/up/#\n",
+    }
+    entities_with_extra_key = dict(_VALID_ENTITIES)
+    entities_with_extra_key["poll_interval_seconds"] = "not-a-number"
+
+    with patch("heizungsbruecke.web.requests.post", return_value=provision_response), \
+         patch("heizungsbruecke.web.supervisor_api.set_own_options") as mock_set_options:
+        response = client.post("/api/complete", json={
+            "tenant_id": "wohnung1",
+            "profile_id": "vaillant_gastherme_heizkoerper",
+            "entities": entities_with_extra_key,
+        })
+
+    assert response.status_code == 200
+    written_options = mock_set_options.call_args.args[2]
+    assert "poll_interval_seconds" not in written_options
 
 
 def test_complete_provisions_and_writes_options_on_success():
-    app = _app()
+    app = _complete_app()
     app.testing = True
     client = app.test_client()
     _login(client)
@@ -297,7 +451,7 @@ def test_complete_provisions_and_writes_options_on_success():
 
 
 def test_complete_returns_502_when_provisioning_response_is_missing_fields():
-    app = _app()
+    app = _complete_app()
     app.testing = True
     client = app.test_client()
     _login(client)
@@ -316,7 +470,7 @@ def test_complete_returns_502_when_provisioning_response_is_missing_fields():
 
 
 def test_complete_relays_provisioning_failure():
-    app = _app()
+    app = _complete_app()
     app.testing = True
     client = app.test_client()
     _login(client)
@@ -334,7 +488,7 @@ def test_complete_relays_provisioning_failure():
 
 
 def test_complete_preserves_credentials_on_options_write_failure():
-    app = _app()
+    app = _complete_app()
     app.testing = True
     client = app.test_client()
     _login(client)
@@ -364,7 +518,7 @@ def test_complete_preserves_credentials_on_options_write_failure():
 
 
 def test_complete_returns_502_when_provisioning_response_is_non_dict_json():
-    app = _app()
+    app = _complete_app()
     app.testing = True
     client = app.test_client()
     _login(client)
@@ -391,3 +545,49 @@ def test_index_serves_wizard_page():
 
     assert response.status_code == 200
     assert b"SmartHeat Einrichtung" in response.data
+
+
+def test_wizard_js_uses_ingress_relative_api_paths():
+    # C1: Home Assistant serves add-on Ingress panels at a path prefix
+    # (/api/hassio_ingress/<token>/...) and does not rewrite the add-on's own HTML/JS
+    # for it -- a root-absolute "/api/..." fetch would resolve against the HA origin,
+    # not this add-on. Every apiFetch(...) call must be prefixed with the page-relative
+    # BASE constant instead. This is invisible to a Flask-test-client/Docker-script
+    # check hitting the app at root, which is exactly why it slipped through before.
+    app = _app()
+    app.testing = True
+    client = app.test_client()
+
+    response = client.get("/wizard.js")
+
+    assert response.status_code == 200
+    body = response.data.decode()
+    assert "const BASE = window.location.pathname" in body
+    assert 'apiFetch("/api/' not in body
+    assert "apiFetch(`/api/" not in body
+    assert 'fetch("/api/' not in body
+
+
+def test_wizard_js_never_offers_climate_domain_for_entity_room_actual():
+    # C2: entity_room_actual feeds derived_sensors.ensure_all() -> HA's statistics
+    # config-flow, which rejects both climate-domain sources and the "::attribute"
+    # suffix -- the heating bridge then dies silently after ~4 minutes of retries.
+    # entity_room_target is unaffected (it only ever goes through ha_api.get_state())
+    # and must keep offering climate.
+    app = _app()
+    app.testing = True
+    client = app.test_client()
+
+    response = client.get("/wizard.js")
+    body = response.data.decode()
+
+    role_domains_block = body[body.index("ROLE_DOMAINS"):body.index("CLIMATE_ATTRIBUTE_BY_ROLE")]
+    room_actual_line = next(
+        line for line in role_domains_block.splitlines() if "entity_room_actual" in line
+    )
+    room_target_line = next(
+        line for line in role_domains_block.splitlines() if "entity_room_target" in line
+    )
+    assert "climate" not in room_actual_line
+    assert "climate" in room_target_line
+    assert "entity_room_actual" not in body[body.index("CLIMATE_ATTRIBUTE_BY_ROLE"):]
