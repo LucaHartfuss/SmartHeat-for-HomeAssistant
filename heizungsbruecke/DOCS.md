@@ -161,7 +161,7 @@ statt `state`. Ohne `::` bleibt das Verhalten unveraendert (liest `state`).
 Konkretes Beispiel fuer den Referenzraum:
 
 ```yaml
-entity_room_actual: "climate.wohnzimmer_thermostat::current_temperature"
+entity_room_actual: "sensor.wohnzimmer_thermostat_temperatur"
 entity_room_target: "climate.wohnzimmer_thermostat::temperature"
 ```
 

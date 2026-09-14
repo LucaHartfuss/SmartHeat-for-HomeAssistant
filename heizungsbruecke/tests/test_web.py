@@ -547,6 +547,46 @@ def test_index_serves_wizard_page():
     assert b"SmartHeat Einrichtung" in response.data
 
 
+def test_unmapped_route_returns_normal_404_not_generic_500():
+    # Regression guard: the generic @app.errorhandler(Exception) backstop must NOT
+    # swallow HTTPException (Flask's _find_error_handler walks the MRO, so a bare
+    # Exception handler catches 404s too unless it explicitly lets them through).
+    # This matters in practice: static_url_path="" makes the static route a
+    # catch-all, so every browser page load fires GET <base>/favicon.ico, which
+    # would otherwise log a full ERROR-level traceback on every single wizard open.
+    app = _app()
+    app.testing = True
+    client = app.test_client()
+
+    response = client.get("/does-not-exist")
+
+    assert response.status_code == 404
+    body = response.get_json(silent=True)
+    assert body is None or body.get("error") != "Unerwarteter Fehler"
+
+
+def test_unexpected_exception_still_gets_generic_json_500_backstop():
+    # Mirror image of the above: a genuine, unnamed exception must still be caught
+    # and turned into the generic JSON 500 -- the HTTPException passthrough must not
+    # accidentally disable the backstop entirely.
+    app = _complete_app()
+    app.testing = True
+    client = app.test_client()
+    _login(client)
+
+    with patch("heizungsbruecke.web.profiles.is_verified", side_effect=RuntimeError("boom")):
+        response = client.post("/api/complete", json={
+            "tenant_id": "wohnung1",
+            "profile_id": "vaillant_gastherme_heizkoerper",
+            "entities": _VALID_ENTITIES,
+        })
+
+    assert response.status_code == 500
+    body = response.get_json()
+    assert isinstance(body, dict)
+    assert body["error"] == "Unerwarteter Fehler"
+
+
 def test_wizard_js_uses_ingress_relative_api_paths():
     # C1: Home Assistant serves add-on Ingress panels at a path prefix
     # (/api/hassio_ingress/<token>/...) and does not rewrite the add-on's own HTML/JS

@@ -7,6 +7,7 @@ import secrets
 
 import requests
 from flask import Flask, jsonify, request, session
+from werkzeug.exceptions import HTTPException
 
 from heizungsbruecke import profiles, supervisor_api
 
@@ -44,6 +45,15 @@ def create_app(
 
     @app.errorhandler(Exception)
     def _handle_unexpected_error(error):
+        # Registering a handler for the bare Exception class also catches
+        # HTTPException (Flask's _find_error_handler walks the MRO: NotFound ->
+        # HTTPException -> Exception) -- without this check, every normal 404 (and
+        # notably every browser's automatic GET /favicon.ico against the catch-all
+        # static route, static_url_path="") would become a logged 500, training the
+        # add-on's operator to ignore ERROR-level log lines. Let HTTPException through
+        # to Flask's own default handling; only swallow genuine unexpected exceptions.
+        if isinstance(error, HTTPException):
+            return error
         # Backstop for anything the specific handlers below don't name explicitly --
         # nothing should ever hand the wizard a raw HTML traceback page.
         app.logger.exception("Unerwarteter Fehler in der Wizard-API")
