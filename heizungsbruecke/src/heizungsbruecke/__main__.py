@@ -10,7 +10,7 @@ from pathlib import Path
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.boost import decide_boost
 from heizungsbruecke.bridge import apply_boost_decision, handle_down_message, publish_snapshot
-from heizungsbruecke import daynight_snapshot, derived_sensors, web
+from heizungsbruecke import daynight_snapshot, derived_sensors
 from heizungsbruecke.failsafe import (
     FailsafeState,
     build_discovery_config,
@@ -31,7 +31,6 @@ DAYNIGHT_SNAPSHOT_PATH = Path("/data/daynight_snapshot_state.json")
 
 MQTT_HOST = "127.0.0.1"
 MQTT_PORT = 18830
-INGRESS_PORT = 8099
 
 _REQUIRED_OPTIONS = (
     "tenant_id", "profile", "entity_room_actual", "entity_room_target",
@@ -334,10 +333,8 @@ def _run_bridge(options: dict, ha_api) -> None:
     try:
         # BridgeMqttClient's constructor blocks on .connect() -- if the broker isn't
         # reachable yet (e.g. cloudflared_access_mqtt hasn't started, see DOCS.md
-        # "Voraussetzungen"), this whole block can raise. Unguarded, that would kill
-        # only this background thread while Flask keeps serving happily -- the add-on
-        # would show green/healthy with the heating bridge silently dead. Treated the
-        # same as every other startup precondition in this function: log and return.
+        # "Voraussetzungen"), this whole block can raise. Treated the same as every
+        # other startup precondition in this function: log and return.
         mqtt_client = BridgeMqttClient(host=MQTT_HOST, port=MQTT_PORT, tenant_id=options["tenant_id"])
         mqtt_client.publish_discovery(
             component="binary_sensor", object_id="failsafe",
@@ -387,11 +384,10 @@ def _run_bridge(options: dict, ha_api) -> None:
 
 def _load_options_safe(path: Path) -> dict:
     """Loads options.json, defaulting to `{}` both when the file is missing (fresh
-    install, not yet configured by the wizard -- see _is_configured) and when it is
-    present but corrupt/truncated (e.g. after power loss on the Pi's SD card, the same
-    failure mode _load_failsafe_ctx_safe already guards against). The wizard existing
-    at all is the one thing that must survive any failure mode here, so a bad options
-    file must not crash the process before Flask even starts.
+    install, not yet configured -- see _is_configured) and when it is present but
+    corrupt/truncated (e.g. after power loss on the Pi's SD card, the same failure
+    mode _load_failsafe_ctx_safe already guards against). A bad options file must
+    not crash the process before _run_bridge can log a clean startup error.
     """
     if not path.exists():
         return {}
@@ -411,16 +407,7 @@ def main() -> None:
     options = _load_options_safe(OPTIONS_PATH)
     ha_api = HomeAssistantApi(base_url="http://supervisor", token=os.environ["SUPERVISOR_TOKEN"])
 
-    bridge_thread = threading.Thread(target=_run_bridge, args=(options, ha_api), daemon=True)
-    bridge_thread.start()
-
-    app = web.create_app(
-        heizungsserver_base_url=os.environ["HEIZUNGSSERVER_BASE_URL"],
-        ha_api=ha_api,
-        supervisor_base_url="http://supervisor",
-        supervisor_token=os.environ["SUPERVISOR_TOKEN"],
-    )
-    app.run(host="0.0.0.0", port=INGRESS_PORT)
+    _run_bridge(options, ha_api)
 
 
 if __name__ == "__main__":

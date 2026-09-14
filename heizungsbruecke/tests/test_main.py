@@ -437,6 +437,27 @@ def test_make_down_callback_records_valid_message_after_successful_handling(tmp_
     assert recorded_calls == [(failsafe_ctx, mqtt_client, failsafe_path)]
 
 
+def test_main_runs_bridge_synchronously_without_flask(tmp_path, monkeypatch):
+    # Ab dieser Aenderung gibt es keinen Flask-Server und keinen Hintergrund-Thread mehr --
+    # main() ruft _run_bridge() direkt im Hauptthread auf und kehrt zurueck, sobald
+    # _run_bridge() zurueckkehrt (z.B. weil das Add-on noch nicht konfiguriert ist).
+    options_path = tmp_path / "options.json"
+    options_path.write_text("{}")
+    monkeypatch.setattr("heizungsbruecke.__main__.OPTIONS_PATH", options_path)
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "test-token")
+    calls = []
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__._run_bridge",
+        lambda options, ha_api: calls.append((options, ha_api)),
+    )
+
+    from heizungsbruecke.__main__ import main
+    main()
+
+    assert len(calls) == 1
+    assert calls[0][0] == {}
+
+
 def test_make_down_callback_does_not_record_valid_message_when_handling_fails(tmp_path, monkeypatch):
     # Mirror image of the above: if handle_down_message raises (e.g. HA unreachable),
     # a bad/failed message must not be mistaken for a valid live update.
