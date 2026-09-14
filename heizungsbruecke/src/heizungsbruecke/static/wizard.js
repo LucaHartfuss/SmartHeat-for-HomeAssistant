@@ -127,31 +127,39 @@ document.getElementById("profile-verteilsystem").addEventListener("change", upda
 
 document.getElementById("profile-next").addEventListener("click", async () => {
   showError("");
-  const container = document.getElementById("sensor-fields");
-  container.innerHTML = "";
-  for (const [role, label] of Object.entries(ROLE_LABELS)) {
-    let rawEntities = [];
-    for (const domain of ROLE_DOMAINS[role]) {
-      rawEntities = rawEntities.concat(await apiFetch(`/api/entities?domain=${domain}`));
-    }
-    const climateAttribute = CLIMATE_ATTRIBUTE_BY_ROLE[role];
-    const options = rawEntities.map((e) => {
-      if (e.entity_id.startsWith("climate.") && climateAttribute) {
-        return { value: `${e.entity_id}::${climateAttribute}`, label: e.friendly_name, unit: "°C" };
+  try {
+    const container = document.getElementById("sensor-fields");
+    container.innerHTML = "";
+    for (const [role, label] of Object.entries(ROLE_LABELS)) {
+      let rawEntities = [];
+      for (const domain of ROLE_DOMAINS[role]) {
+        rawEntities = rawEntities.concat(await apiFetch(`/api/entities?domain=${domain}`));
       }
-      return { value: e.entity_id, label: e.friendly_name, unit: e.unit_of_measurement || "" };
-    });
-    const wrapper = document.createElement("label");
-    wrapper.textContent = label;
-    const select = document.createElement("select");
-    select.dataset.role = role;
-    select.innerHTML = options
-      .map((o) => `<option value="${o.value}" data-unit="${o.unit}">${o.label}</option>`)
-      .join("");
-    wrapper.appendChild(select);
-    container.appendChild(wrapper);
+      if (rawEntities.length === 0) {
+        showError(`Keine passenden Entities gefunden fuer '${label}' (Domain(n): ${ROLE_DOMAINS[role].join(", ")})`);
+        return;
+      }
+      const climateAttribute = CLIMATE_ATTRIBUTE_BY_ROLE[role];
+      const options = rawEntities.map((e) => {
+        if (e.entity_id.startsWith("climate.") && climateAttribute) {
+          return { value: `${e.entity_id}::${climateAttribute}`, label: e.friendly_name, unit: "°C" };
+        }
+        return { value: e.entity_id, label: e.friendly_name, unit: e.unit_of_measurement || "" };
+      });
+      const wrapper = document.createElement("label");
+      wrapper.textContent = label;
+      const select = document.createElement("select");
+      select.dataset.role = role;
+      select.innerHTML = options
+        .map((o) => `<option value="${o.value}" data-unit="${o.unit}">${o.label}</option>`)
+        .join("");
+      wrapper.appendChild(select);
+      container.appendChild(wrapper);
+    }
+    showStep("step-sensors");
+  } catch (error) {
+    showError(error.message);
   }
-  showStep("step-sensors");
 });
 
 document.getElementById("sensors-next").addEventListener("click", async () => {
