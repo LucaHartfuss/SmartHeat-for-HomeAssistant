@@ -12,7 +12,7 @@ class BridgeMqttClient:
         self._subscriptions = {}  # role -> on_message
         self._discovery_configs = {}  # (component, object_id) -> config dict
         self._last_status = {}  # object_id -> payload
-        self._client = mqtt.Client()
+        self._client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
         self._client.username_pw_set(username, password)
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
@@ -22,8 +22,8 @@ class BridgeMqttClient:
     def _availability_topic(self) -> str:
         return f"smartheat/{self._tenant_id}/status/availability"
 
-    def _on_connect(self, client, userdata, flags, rc) -> None:
-        logger.info("MQTT verbunden (rc=%s)", rc)
+    def _on_connect(self, client, userdata, flags, reason_code, properties) -> None:
+        logger.info("MQTT verbunden (reason_code=%s)", reason_code)
         if self._subscriptions:
             logger.info("MQTT (re-)verbunden, %d Down-Subscription(s) werden (erneut) angemeldet", len(self._subscriptions))
         for role, on_message in self._subscriptions.items():
@@ -38,8 +38,8 @@ class BridgeMqttClient:
             self._publish_status(object_id=object_id, payload=payload)
         self._client.publish(self._availability_topic(), "online", retain=True)
 
-    def _on_disconnect(self, client, userdata, rc) -> None:
-        logger.warning("MQTT-Verbindung getrennt (rc=%s) - Reconnect laeuft ueber paho automatisch", rc)
+    def _on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties) -> None:
+        logger.warning("MQTT-Verbindung getrennt (reason_code=%s) - Reconnect laeuft ueber paho automatisch", reason_code)
 
     def _subscribe(self, role: str, on_message) -> None:
         topic = f"smartheat/{self._tenant_id}/down/{role}"

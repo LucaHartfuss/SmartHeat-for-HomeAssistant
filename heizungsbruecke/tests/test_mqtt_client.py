@@ -58,7 +58,7 @@ def test_on_connect_resubscribes_previously_registered_roles():
 
         # Simulate paho invoking on_connect again after a reconnect.
         on_connect = mock_client.on_connect
-        on_connect(mock_client, None, {}, 0)
+        on_connect(mock_client, None, {}, 0, None)
 
     mock_client.subscribe.assert_any_call("smartheat/kunde2/down/curve_current", 1)
     mock_client.subscribe.assert_any_call("smartheat/kunde2/down/offset_current", 1)
@@ -80,7 +80,7 @@ def test_on_connect_before_any_subscription_does_not_error():
         BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
 
         on_connect = mock_client.on_connect
-        on_connect(mock_client, None, {}, 0)  # must not raise
+        on_connect(mock_client, None, {}, 0, None)  # must not raise
 
     mock_client.subscribe.assert_not_called()
 
@@ -129,7 +129,7 @@ def test_on_connect_republishes_discovery_configs():
 
         # Simulate paho invoking on_connect again after a reconnect.
         on_connect = mock_client.on_connect
-        on_connect(mock_client, None, {}, 0)
+        on_connect(mock_client, None, {}, 0, None)
 
     mock_client.publish.assert_any_call(
         "homeassistant/binary_sensor/heizungsbruecke_kunde2/failsafe/config",
@@ -151,7 +151,7 @@ def test_on_connect_republishes_last_status_payloads():
         # Simulate paho invoking on_connect again after a reconnect (e.g. broker lost
         # retained messages across a restart without persistence).
         on_connect = mock_client.on_connect
-        on_connect(mock_client, None, {}, 0)
+        on_connect(mock_client, None, {}, 0, None)
 
     mock_client.publish.assert_any_call("smartheat/kunde2/status/failsafe", "ON", retain=True)
 
@@ -178,7 +178,7 @@ def test_on_connect_publishes_online_to_availability_topic():
         mock_client.publish.reset_mock()
 
         on_connect = mock_client.on_connect
-        on_connect(mock_client, None, {}, 0)
+        on_connect(mock_client, None, {}, 0, None)
 
     mock_client.publish.assert_any_call(
         "smartheat/kunde2/status/availability", "online", retain=True
@@ -216,7 +216,7 @@ def test_on_disconnect_logs_warning_with_reason_code(monkeypatch, caplog):
     client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="t1", username="u", password="p")
 
     with caplog.at_level(logging.WARNING):
-        client._on_disconnect(fake_paho_client, None, 7)
+        client._on_disconnect(fake_paho_client, None, None, 7, None)
 
     assert "getrennt" in caplog.text.lower() or "disconnect" in caplog.text.lower()
     assert "7" in caplog.text
