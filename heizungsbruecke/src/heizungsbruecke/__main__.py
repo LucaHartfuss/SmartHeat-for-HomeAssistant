@@ -34,7 +34,8 @@ MQTT_HOST = "127.0.0.1"
 MQTT_PORT = 18830
 
 _REQUIRED_OPTIONS = (
-    "tenant_id", "profile", "entity_room_actual", "entity_room_target",
+    "tenant_id", "profile", "mqtt_username", "mqtt_password",
+    "entity_room_actual", "entity_room_target",
     "entity_curve_current", "entity_offset_current", "entity_outdoor_temp", "entity_heat_limit",
 )
 
@@ -342,7 +343,10 @@ def _run_bridge(options: dict, ha_api) -> bool:
         # reachable yet (e.g. cloudflared_access_mqtt hasn't started, see DOCS.md
         # "Voraussetzungen"), this whole block can raise. Treated the same as every
         # other startup precondition in this function: log and return.
-        mqtt_client = BridgeMqttClient(host=MQTT_HOST, port=MQTT_PORT, tenant_id=options["tenant_id"])
+        mqtt_client = BridgeMqttClient(
+            host=MQTT_HOST, port=MQTT_PORT, tenant_id=options["tenant_id"],
+            username=options["mqtt_username"], password=options["mqtt_password"],
+        )
         mqtt_client.publish_discovery(
             component="binary_sensor", object_id="failsafe",
             config=build_discovery_config(options["tenant_id"]),

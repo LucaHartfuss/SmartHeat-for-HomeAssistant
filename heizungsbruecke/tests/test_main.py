@@ -41,6 +41,7 @@ def _base_options(**overrides):
 def test_is_configured_true_when_all_required_fields_present():
     options = {
         "tenant_id": "wohnung1", "profile": "vaillant_gastherme_heizkoerper",
+        "mqtt_username": "wohnung1_a1b2c3d4", "mqtt_password": "geheim",
         "entity_room_actual": "sensor.rt", "entity_room_target": "sensor.target_rt",
         "entity_curve_current": "number.curve", "entity_offset_current": "number.offset",
         "entity_outdoor_temp": "sensor.outdoor", "entity_heat_limit": "number.heat_limit",
@@ -70,6 +71,7 @@ def test_run_bridge_returns_false_on_genuine_validation_error(caplog):
     # be able to tell the two apart to give the Supervisor a non-zero exit code.
     options = {
         "tenant_id": "wohnung1", "profile": "does-not-exist",
+        "mqtt_username": "wohnung1_a1b2c3d4", "mqtt_password": "geheim",
         "entity_room_actual": "sensor.rt", "entity_room_target": "sensor.target_rt",
         "entity_curve_current": "number.curve", "entity_offset_current": "number.offset",
         "entity_outdoor_temp": "sensor.outdoor", "entity_heat_limit": "number.heat_limit",

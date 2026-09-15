@@ -7,12 +7,13 @@ logger = logging.getLogger(__name__)
 
 
 class BridgeMqttClient:
-    def __init__(self, host: str, port: int, tenant_id: str):
+    def __init__(self, host: str, port: int, tenant_id: str, username: str, password: str):
         self._tenant_id = tenant_id
         self._subscriptions = {}  # role -> on_message
         self._discovery_configs = {}  # (component, object_id) -> config dict
         self._last_status = {}  # object_id -> payload
         self._client = mqtt.Client()
+        self._client.username_pw_set(username, password)
         self._client.on_connect = self._on_connect
         self._client.will_set(self._availability_topic(), payload="offline", retain=True)
         self._client.connect(host, port)

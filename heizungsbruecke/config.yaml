@@ -1,5 +1,5 @@
 name: "Heizungsbruecke"
-version: "0.7.2"
+version: "0.7.3"
 slug: "heizungsbruecke"
 description: "Generische Bruecken-Logik: liest konfigurierte HA-Entities, meldet sie an den SmartHeat-Server, schreibt Sollwerte zurueck, mit lokalem Boost-Failsafe und Sicherheits-Clamps."
 url: "https://github.com/LucaHartfuss/SmartHeat-for-HomeAssistant"
@@ -13,6 +13,8 @@ homeassistant_api: true
 options:
   tenant_id: ""
   profile: ""
+  mqtt_username: ""
+  mqtt_password: ""
   entity_room_actual: ""
   entity_room_target: ""
   entity_curve_current: ""
@@ -32,6 +34,8 @@ options:
 schema:
   tenant_id: str
   profile: str
+  mqtt_username: str
+  mqtt_password: password
   entity_room_actual: str
   entity_room_target: str
   entity_curve_current: str

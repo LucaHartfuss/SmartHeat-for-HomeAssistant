@@ -3,12 +3,22 @@ from unittest.mock import patch, MagicMock
 from heizungsbruecke.mqtt_client import BridgeMqttClient
 
 
+def test_init_authenticates_with_given_credentials():
+    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+
+        BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
+
+    mock_client.username_pw_set.assert_called_once_with("u", "p")
+
+
 def test_publish_value_publishes_correct_topic_and_payload():
     with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
 
-        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2")
+        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
         client.publish_value(role="room_actual", value=19.5, seq="abc123")
 
     mock_client.publish.assert_called_once_with(
@@ -21,7 +31,7 @@ def test_subscribe_down_subscribes_correct_topic():
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
 
-        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2")
+        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
         callback = MagicMock()
         client.subscribe_down(role="curve_current", on_message=callback)
 
@@ -36,7 +46,7 @@ def test_on_connect_resubscribes_previously_registered_roles():
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
 
-        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2")
+        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
         curve_callback = MagicMock()
         offset_callback = MagicMock()
         client.subscribe_down(role="curve_current", on_message=curve_callback)
@@ -66,7 +76,7 @@ def test_on_connect_before_any_subscription_does_not_error():
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
 
-        BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2")
+        BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
 
         on_connect = mock_client.on_connect
         on_connect(mock_client, None, {}, 0)  # must not raise
@@ -79,7 +89,7 @@ def test_publish_discovery_publishes_retained_config_to_correct_topic():
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
 
-        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2")
+        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
         client.publish_discovery(
             component="binary_sensor", object_id="failsafe", config={"name": "Fail-Safe"}
         )
@@ -96,7 +106,7 @@ def test_publish_status_publishes_retained_payload_to_correct_topic():
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
 
-        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2")
+        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
         client.publish_status(object_id="failsafe", payload="ON")
 
     mock_client.publish.assert_called_once_with(
@@ -109,7 +119,7 @@ def test_on_connect_republishes_discovery_configs():
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
 
-        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2")
+        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
         client.publish_discovery(
             component="binary_sensor", object_id="failsafe", config={"name": "Fail-Safe"}
         )
@@ -132,7 +142,7 @@ def test_on_connect_republishes_last_status_payloads():
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
 
-        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2")
+        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
         client.publish_status(object_id="failsafe", payload="ON")
 
         mock_client.publish.reset_mock()
@@ -150,7 +160,7 @@ def test_init_registers_last_will_for_availability_topic():
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
 
-        BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2")
+        BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
 
     mock_client.will_set.assert_called_once_with(
         "smartheat/kunde2/status/availability", payload="offline", retain=True
@@ -162,7 +172,7 @@ def test_on_connect_publishes_online_to_availability_topic():
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
 
-        BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2")
+        BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
 
         mock_client.publish.reset_mock()
 
