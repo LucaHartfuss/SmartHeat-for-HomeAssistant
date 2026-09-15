@@ -8,6 +8,8 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+import requests
+
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.boost import decide_boost
 from heizungsbruecke.bridge import apply_boost_decision, handle_down_message, publish_snapshot
@@ -53,7 +55,46 @@ DERIVED_SENSORS_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60, 60, 60)
 # DERIVED_SENSORS_RETRY_DELAYS_SECONDS oben (Design-Spec Phase 1, Punkt 2).
 MQTT_CONNECT_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60)
 
+# Gleicher Hostname fuer jeden Tenant (kein Tenant-spezifischer Wert) -- siehe
+# SmartHeat-HomeAssistant-Integration/custom_components/smartheat/api_client.py,
+# DEFAULT_HEIZUNGSSERVER_BASE_URL. Hartkodiert wie MQTT_HOST/MQTT_PORT oben, aus
+# demselben Grund: ein einzelner geteilter Wert, keine Pro-Tenant-Konfiguration.
+ACCOUNTS_API_BASE_URL = "https://accounts.hartfussha.org"
+
 logger = logging.getLogger(__name__)
+
+
+class TenantNotEntitledError(Exception):
+    """Raised when accounts-api meldet, dass dieser Tenant aktuell nicht berechtigt ist
+    (Abo abgelaufen/pausiert, siehe Design-Spec Phase 3, Punkt 10)."""
+
+
+def _check_entitlement(tenant_id: str, base_url: str = ACCOUNTS_API_BASE_URL) -> None:
+    """Fragt vor jedem MQTT-Connect/HA-Zugriff bei accounts-api nach, ob dieser Tenant
+    aktuell berechtigt ist. Ein Netzwerk-/Serverfehler wird bewusst NICHT als "nicht
+    berechtigt" gewertet ("fail open") -- ein kurzer accounts-api-Ausfall soll die
+    Heizungssteuerung eines zahlenden Kunden nicht stoppen. Nur eine explizite
+    'active: false'-Antwort loest TenantNotEntitledError aus. Diese Abwaegung ist eine
+    Plan-Entscheidung (nicht explizit von der Design-Spec vorgegeben) -- siehe Hinweis
+    in den Global Constraints des Implementierungsplans.
+    """
+    try:
+        response = requests.get(f"{base_url}/tenants/{tenant_id}/status", timeout=10)
+        response.raise_for_status()
+        body = response.json()
+    except Exception as error:
+        logger.warning(
+            "Berechtigungspruefung bei accounts-api fehlgeschlagen (wird als "
+            "berechtigt behandelt, um einen kurzen accounts-api-Ausfall nicht mit "
+            "einem abgelaufenen Abo zu verwechseln): %s",
+            error,
+        )
+        return
+    if not body.get("active", True):
+        raise TenantNotEntitledError(
+            "Diese Anlage ist derzeit nicht aktiv (Abo abgelaufen/pausiert) - bitte Abo "
+            "verlaengern und Add-on danach manuell neu starten."
+        )
 
 
 def _is_configured(options: dict) -> bool:
@@ -329,6 +370,12 @@ def _run_bridge(options: dict, ha_api) -> bool:
             "danach automatisch beim naechsten Neustart des Add-ons."
         )
         return True
+
+    try:
+        _check_entitlement(options["tenant_id"])
+    except TenantNotEntitledError as error:
+        logger.error("FEHLER: %s", error)
+        return False
 
     try:
         options = _resolve_effective_options(options)

@@ -1,10 +1,14 @@
 import json
+import logging
 import threading
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 
 from heizungsbruecke.__main__ import (
+    TenantNotEntitledError,
+    _check_entitlement,
     _check_failsafe_staleness,
     _connect_mqtt_with_retry,
     _ensure_derived_sensors_with_retry,
@@ -570,3 +574,61 @@ def test_make_down_callback_does_not_record_valid_message_when_handling_fails(tm
     callback(client=MagicMock(), userdata=None, message=message)  # must not raise -- caught and logged
 
     assert recorded_calls == []
+
+
+# Entitlement check tests (Task 13)
+
+
+class _FakeResponse:
+    def __init__(self, json_body, status_code=200):
+        self._json_body = json_body
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code}")
+
+    def json(self):
+        return self._json_body
+
+
+def test_check_entitlement_passes_silently_when_active(monkeypatch):
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get",
+        lambda url, timeout: _FakeResponse({"active": True}),
+    )
+    _check_entitlement("client1")  # muss nicht werfen
+
+
+def test_check_entitlement_raises_when_inactive(monkeypatch):
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get",
+        lambda url, timeout: _FakeResponse({"active": False}),
+    )
+    with pytest.raises(TenantNotEntitledError, match="Abo"):
+        _check_entitlement("client1")
+
+
+def test_check_entitlement_fails_open_on_network_error(monkeypatch, caplog):
+    def _raise(url, timeout):
+        raise requests.ConnectionError("accounts-api nicht erreichbar")
+    monkeypatch.setattr("heizungsbruecke.__main__.requests.get", _raise)
+
+    with caplog.at_level(logging.WARNING):
+        _check_entitlement("client1")  # darf NICHT werfen -- fail open (siehe Docstring/Plan-Hinweis)
+
+    assert "accounts-api" in caplog.text.lower() or "berechtigungspruefung" in caplog.text.lower()
+
+
+def test_check_entitlement_queries_correct_url(monkeypatch):
+    called_with = {}
+    def _get(url, timeout):
+        called_with["url"] = url
+        called_with["timeout"] = timeout
+        return _FakeResponse({"active": True})
+    monkeypatch.setattr("heizungsbruecke.__main__.requests.get", _get)
+
+    _check_entitlement("client1", base_url="https://accounts.hartfussha.org")
+
+    assert called_with["url"] == "https://accounts.hartfussha.org/tenants/client1/status"
+    assert called_with["timeout"] == 10
