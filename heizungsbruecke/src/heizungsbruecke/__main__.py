@@ -47,6 +47,12 @@ _REQUIRED_OPTIONS = (
 # rather than crash-looping forever.
 DERIVED_SENSORS_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60, 60, 60)
 
+# Boot-Reihenfolge-Rennen zwischen den beiden Add-ons (cloudflared_access_mqtt startet
+# eventuell noch) oder ein kurzer Broker-Restart duerfen nicht sofort als dauerhafte
+# Fehlkonfiguration gewertet werden -- gleiche Begruendung/Muster wie
+# DERIVED_SENSORS_RETRY_DELAYS_SECONDS oben (Design-Spec Phase 1, Punkt 2).
+MQTT_CONNECT_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60)
+
 logger = logging.getLogger(__name__)
 
 
@@ -141,6 +147,33 @@ def _ensure_derived_sensors_with_retry(ha_api, options: dict) -> dict[str, str]:
             logger.warning(
                 "Anlegen der abgeleiteten Sensoren fehlgeschlagen (Versuch %s/%s, evtl. ist "
                 "HA Core beim Start des Add-ons noch nicht bereit): %s",
+                attempt + 1, len(delays) + 1, error,
+            )
+            time.sleep(delays[attempt])
+    raise last_error
+
+
+def _connect_mqtt_with_retry(options: dict) -> BridgeMqttClient:
+    """Wraps `BridgeMqttClient` constructor with retry-with-backoff (see
+    MQTT_CONNECT_RETRY_DELAYS_SECONDS above for the rationale) so a transient failure
+    during add-on startup (e.g. cloudflared_access_mqtt hasn't started yet) doesn't
+    crash the whole add-on on the first try.
+    """
+    delays = MQTT_CONNECT_RETRY_DELAYS_SECONDS
+    last_error: Exception | None = None
+    for attempt in range(len(delays) + 1):
+        try:
+            return BridgeMqttClient(
+                host=MQTT_HOST, port=MQTT_PORT, tenant_id=options["tenant_id"],
+                username=options["mqtt_username"], password=options["mqtt_password"],
+            )
+        except Exception as error:
+            last_error = error
+            if attempt == len(delays):
+                break
+            logger.warning(
+                "MQTT-Verbindungsaufbau fehlgeschlagen (Versuch %s/%s, evtl. ist "
+                "cloudflared_access_mqtt noch nicht bereit): %s",
                 attempt + 1, len(delays) + 1, error,
             )
             time.sleep(delays[attempt])
@@ -339,14 +372,7 @@ def _run_bridge(options: dict, ha_api) -> bool:
     stale_after_seconds = options.get("failsafe_stale_after_hours", 26.0) * 3600
 
     try:
-        # BridgeMqttClient's constructor blocks on .connect() -- if the broker isn't
-        # reachable yet (e.g. cloudflared_access_mqtt hasn't started, see DOCS.md
-        # "Voraussetzungen"), this whole block can raise. Treated the same as every
-        # other startup precondition in this function: log and return.
-        mqtt_client = BridgeMqttClient(
-            host=MQTT_HOST, port=MQTT_PORT, tenant_id=options["tenant_id"],
-            username=options["mqtt_username"], password=options["mqtt_password"],
-        )
+        mqtt_client = _connect_mqtt_with_retry(options)
         mqtt_client.publish_discovery(
             component="binary_sensor", object_id="failsafe",
             config=build_discovery_config(options["tenant_id"]),

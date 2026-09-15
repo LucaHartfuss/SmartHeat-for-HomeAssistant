@@ -6,6 +6,7 @@ import pytest
 
 from heizungsbruecke.__main__ import (
     _check_failsafe_staleness,
+    _connect_mqtt_with_retry,
     _ensure_derived_sensors_with_retry,
     _is_configured,
     _load_failsafe_ctx,
@@ -328,6 +329,54 @@ def test_ensure_derived_sensors_with_retry_raises_last_error_after_exhausting_re
 
     with pytest.raises(ConnectionError, match="HA Core dauerhaft nicht erreichbar"):
         _ensure_derived_sensors_with_retry(MagicMock(), options)
+
+
+def test_connect_mqtt_with_retry_returns_client_on_first_success(monkeypatch):
+    fake_client = MagicMock()
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: fake_client)
+    sleeps = []
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", sleeps.append)
+
+    options = {"tenant_id": "t1", "mqtt_username": "u", "mqtt_password": "p"}
+    result = _connect_mqtt_with_retry(options)
+
+    assert result is fake_client
+    assert sleeps == []
+
+
+def test_connect_mqtt_with_retry_recovers_after_transient_failures(monkeypatch):
+    fake_client = MagicMock()
+    attempts = {"count": 0}
+
+    def flaky_client(**kwargs):
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            raise ConnectionRefusedError("cloudflared_access_mqtt noch nicht bereit")
+        return fake_client
+
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", flaky_client)
+    sleeps = []
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", sleeps.append)
+
+    options = {"tenant_id": "t1", "mqtt_username": "u", "mqtt_password": "p"}
+    result = _connect_mqtt_with_retry(options)
+
+    assert result is fake_client
+    assert attempts["count"] == 3
+    assert sleeps == [5, 10]
+
+
+def test_connect_mqtt_with_retry_raises_last_error_after_exhausting_retries(monkeypatch):
+    def always_fails(**kwargs):
+        raise ConnectionRefusedError("Broker dauerhaft nicht erreichbar")
+
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", always_fails)
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", lambda seconds: None)
+
+    options = {"tenant_id": "t1", "mqtt_username": "u", "mqtt_password": "p"}
+
+    with pytest.raises(ConnectionRefusedError, match="Broker dauerhaft nicht erreichbar"):
+        _connect_mqtt_with_retry(options)
 
 
 def test_load_failsafe_ctx_defaults_when_no_file(tmp_path):
