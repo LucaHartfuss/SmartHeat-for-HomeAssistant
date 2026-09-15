@@ -1,3 +1,4 @@
+import logging
 from unittest.mock import patch, MagicMock
 
 from heizungsbruecke.mqtt_client import BridgeMqttClient
@@ -206,3 +207,16 @@ def test_subscribe_down_uses_qos_1():
         client.subscribe_down(role="curve_current", on_message=lambda *a: None)
 
         mock_client.subscribe.assert_called_once_with("smartheat/kunde2/down/curve_current", 1)
+
+
+def test_on_disconnect_logs_warning_with_reason_code(monkeypatch, caplog):
+    fake_paho_client = MagicMock()
+    monkeypatch.setattr("heizungsbruecke.mqtt_client.mqtt.Client", lambda *a, **kw: fake_paho_client)
+
+    client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="t1", username="u", password="p")
+
+    with caplog.at_level(logging.WARNING):
+        client._on_disconnect(fake_paho_client, None, 7)
+
+    assert "getrennt" in caplog.text.lower() or "disconnect" in caplog.text.lower()
+    assert "7" in caplog.text
