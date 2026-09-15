@@ -13,6 +13,9 @@ boot: auto
 host_network: true
 options:
   hostname: ""
+  # Muss mit heizungsbruecke/src/heizungsbruecke/__main__.py's MQTT_PORT
+  # uebereinstimmen (siehe Kommentar dort) -- kein geteilter Konfigurationswert
+  # zwischen den beiden Add-ons, nur Konvention.
   local_port: 18830
   service_token_id: ""
   service_token_secret: ""

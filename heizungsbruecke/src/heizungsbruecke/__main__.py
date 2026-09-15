@@ -33,6 +33,9 @@ DERIVED_SENSORS_PATH = Path("/data/derived_sensors.json")
 DAYNIGHT_SNAPSHOT_PATH = Path("/data/daynight_snapshot_state.json")
 
 MQTT_HOST = "127.0.0.1"
+# Muss mit cloudflared_access_mqtt/config.yaml's `local_port`-Default
+# uebereinstimmen (siehe Kommentar dort) -- kein geteilter Konfigurationswert
+# zwischen den beiden Add-ons, nur Konvention.
 MQTT_PORT = 18830
 
 _REQUIRED_OPTIONS = (
@@ -435,6 +438,14 @@ def _run_bridge(options: dict, ha_api) -> bool:
                     on_message=_make_down_callback(role, manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client),
                 )
         mqtt_client.loop_start()
+    except ConnectionRefusedError as error:
+        logger.error(
+            "FEHLER: MQTT-Verbindung zum Broker fehlgeschlagen (Connection refused): %s. "
+            "Pruefen, ob das Add-on 'cloudflared_access_mqtt' laeuft und auf demselben "
+            "Port (%s) lauscht wie hier konfiguriert (MQTT_PORT in __main__.py).",
+            error, MQTT_PORT,
+        )
+        return False
     except Exception as error:
         logger.error("FEHLER: MQTT-Verbindung zum Broker fehlgeschlagen: %s", error)
         return False

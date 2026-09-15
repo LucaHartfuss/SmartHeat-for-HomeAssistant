@@ -592,6 +592,59 @@ class _FakeResponse:
         return self._json_body
 
 
+def _full_valid_options(**overrides):
+    """Helper: returns a complete, valid options dict with all required fields for _run_bridge tests."""
+    options = {
+        "tenant_id": "test_tenant",
+        "profile": "vaillant_gastherme_heizkoerper",
+        "mqtt_username": "test_mqtt_user",
+        "mqtt_password": "test_mqtt_pass",
+        "entity_room_actual": "sensor.room_actual",
+        "entity_room_target": "sensor.room_target",
+        "entity_curve_current": "number.curve_current",
+        "entity_offset_current": "number.offset_current",
+        "entity_outdoor_temp": "sensor.outdoor_temp",
+        "entity_heat_limit": "number.heat_limit",
+        "entity_room_day_avg": "sensor.room_day_avg",
+        "entity_room_night_avg": "sensor.room_night_avg",
+        "entity_dat": "sensor.dat",
+        "entity_dart": "sensor.dart",
+        "curve_min": 0.2,
+        "curve_max": 0.8,
+        "offset_min": 0.0,
+        "offset_max": 5.0,
+        "boost_curve_value": 0.5,
+        "boost_offset_value": 2.0,
+    }
+    options.update(overrides)
+    return options
+
+
+def test_run_bridge_gives_actionable_error_on_connection_refused(monkeypatch, caplog):
+    def always_refused(**kwargs):
+        raise ConnectionRefusedError("[Errno 111] Connection refused")
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", always_refused)
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", lambda seconds: None)
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get",
+        lambda url, timeout: _FakeResponse({"active": True}),
+    )
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {}
+    )
+
+    options = _full_valid_options()
+
+    with caplog.at_level(logging.ERROR):
+        result = _run_bridge(options, MagicMock())
+
+    assert result is False
+    assert "cloudflared_access_mqtt" in caplog.text
+
+
+# Entitlement check tests (Task 13)
+
+
 def test_check_entitlement_passes_silently_when_active(monkeypatch):
     monkeypatch.setattr(
         "heizungsbruecke.__main__.requests.get",
