@@ -632,3 +632,31 @@ def test_check_entitlement_queries_correct_url(monkeypatch):
 
     assert called_with["url"] == "https://accounts.hartfussha.org/tenants/client1/status"
     assert called_with["timeout"] == 10
+
+
+def test_check_entitlement_fails_open_on_http_error_status(monkeypatch, caplog):
+    # A 5xx response triggers raise_for_status() to raise HTTPError, which should fail open
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get",
+        lambda url, timeout: _FakeResponse({"active": True}, status_code=500),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        _check_entitlement("client1")  # darf NICHT werfen
+
+    assert "berechtigungspruefung" in caplog.text.lower() or "accounts-api" in caplog.text.lower()
+
+
+def test_check_entitlement_fails_open_on_malformed_response_body(monkeypatch, caplog):
+    # If accounts-api returns valid JSON but not a dict (e.g., a list or null),
+    # the body.get("active", True) would raise AttributeError if not caught.
+    # This should also fail open, not crash.
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get",
+        lambda url, timeout: _FakeResponse([]),  # valid JSON, but not a dict
+    )
+
+    with caplog.at_level(logging.WARNING):
+        _check_entitlement("client1")  # darf NICHT werfen
+
+    assert "berechtigungspruefung" in caplog.text.lower() or "accounts-api" in caplog.text.lower()

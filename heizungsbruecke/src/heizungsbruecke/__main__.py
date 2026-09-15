@@ -82,6 +82,13 @@ def _check_entitlement(tenant_id: str, base_url: str = ACCOUNTS_API_BASE_URL) ->
         response = requests.get(f"{base_url}/tenants/{tenant_id}/status", timeout=10)
         response.raise_for_status()
         body = response.json()
+        if not body.get("active", True):
+            raise TenantNotEntitledError(
+                "Diese Anlage ist derzeit nicht aktiv (Abo abgelaufen/pausiert) - bitte Abo "
+                "verlaengern und Add-on danach manuell neu starten."
+            )
+    except TenantNotEntitledError:
+        raise
     except Exception as error:
         logger.warning(
             "Berechtigungspruefung bei accounts-api fehlgeschlagen (wird als "
@@ -90,11 +97,6 @@ def _check_entitlement(tenant_id: str, base_url: str = ACCOUNTS_API_BASE_URL) ->
             error,
         )
         return
-    if not body.get("active", True):
-        raise TenantNotEntitledError(
-            "Diese Anlage ist derzeit nicht aktiv (Abo abgelaufen/pausiert) - bitte Abo "
-            "verlaengern und Add-on danach manuell neu starten."
-        )
 
 
 def _is_configured(options: dict) -> bool:
