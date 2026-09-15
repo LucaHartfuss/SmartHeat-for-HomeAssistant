@@ -32,3 +32,27 @@ def test_schema_declares_every_option_the_integration_writes():
     )
     missing = [field for field in _REQUIRED_OPTIONS if field not in schema]
     assert not missing, f"schema is missing required option(s): {missing}"
+
+
+def test_schema_fields_the_integration_never_sends_are_optional():
+    """The integration's config_flow.py only ever submits the fields in
+    _REQUIRED_OPTIONS (tenant_id, profile, entity_*) -- Supervisor validates a
+    set-options call against the *whole* schema, so any additional field left
+    non-optional (no trailing `?`) makes every push fail the same way a missing
+    field does: silently, straight into AddonError, with no log line to explain
+    why (this bit us right after fixing the sibling test above, in the same
+    debugging session -- verified end-to-end against a real Supervisor on
+    2026-09-15, client1 rollout test).
+    """
+    config = _load_config_yaml()
+    schema = config["schema"]
+
+    non_optional_extra = [
+        field
+        for field, type_spec in schema.items()
+        if field not in _REQUIRED_OPTIONS and not str(type_spec).endswith("?")
+    ]
+    assert not non_optional_extra, (
+        f"schema field(s) the integration never sends must be optional (`?`): "
+        f"{non_optional_extra}"
+    )
