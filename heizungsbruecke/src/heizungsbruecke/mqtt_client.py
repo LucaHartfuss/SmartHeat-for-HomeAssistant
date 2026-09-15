@@ -39,7 +39,7 @@ class BridgeMqttClient:
     def _subscribe(self, role: str, on_message) -> None:
         topic = f"smartheat/{self._tenant_id}/down/{role}"
         self._client.message_callback_add(topic, on_message)
-        self._client.subscribe(topic)
+        self._client.subscribe(topic, 1)
 
     def _publish_discovery(self, component: str, object_id: str, config: dict) -> None:
         topic = f"homeassistant/{component}/heizungsbruecke_{self._tenant_id}/{object_id}/config"
@@ -52,7 +52,7 @@ class BridgeMqttClient:
     def publish_value(self, role: str, value: float, seq: str) -> None:
         topic = f"smartheat/{self._tenant_id}/up/{role}"
         payload = json.dumps({"v": value, "seq": seq})
-        self._client.publish(topic, payload)
+        self._client.publish(topic, payload, qos=1)
 
     def publish_discovery(self, component: str, object_id: str, config: dict) -> None:
         """Publishes a retained MQTT Discovery config so Home Assistant's MQTT
