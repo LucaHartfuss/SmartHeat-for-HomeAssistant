@@ -19,6 +19,33 @@ Home-Assistant-Integration: installieren, dann Einstellungen → Geraete &
 Dienste → Integration hinzufuegen → "SmartHeat". Die Integration schreibt die
 noetige Konfiguration automatisch in dieses Add-on.
 
+## Update von 0.7.3 auf 0.8.0 (Breaking Change)
+
+**Boost aktiviert nicht mehr bei kaltem Raum aus beliebiger Ursache.** Boost
+reagiert ab dieser Version ausschliesslich, wenn die Wunschtemperatur erhoeht
+wird (Komfort-Beschleunigung) -- nicht mehr, wenn der Raum aus anderer Ursache
+(Aussentemperatur-Einbruch, offene Tuer, Server laengere Zeit nicht erreichbar)
+kalt ist. Das bisherige Sicherheitsnetz-Verhalten entfaellt bewusst. Einziges
+verbleibendes Signal fuer eine tote/veraltete Serververbindung ist ab jetzt der
+Fail-Safe-Alarm (siehe unten).
+
+`failsafe_stale_after_hours`s Standardwert sinkt von `26.0` auf `4.0` -- ein
+mehrstuendiger Ausfall wird jetzt noch am selben Tag gemeldet statt erst nach
+ueber einem Tag.
+
+Neu: das Add-on prueft beim Start, ob der Tenant aktuell berechtigt ist (Abo
+aktiv). Bei einem explizit als nicht aktiv gemeldeten Tenant startet das Add-on
+nicht (klare Fehlermeldung im Log). Ein Netzwerk-/Serverfehler bei dieser
+Pruefung selbst wird NICHT als "nicht berechtigt" gewertet (Fail-Open) --
+ein kurzer accounts-api-Ausfall soll die Heizungssteuerung nicht stoppen.
+
+MQTT-Nachrichten auf den `up`/`down`-Topics dieses Add-ons verwenden jetzt QoS 1
+statt QoS 0 (zuverlaessigere Zustellung).
+
+**Achtung bei bestehenden Installationen:** kein manueller Schritt noetig --
+alle Aenderungen wirken automatisch nach dem Update. Wer sich auf Boost als
+Reaktion auf einen kalten Raum verlassen hat, sollte das beruecksichtigen.
+
 ## Update von 0.1.0 auf 0.2.0 (Breaking Change)
 
 Das Feld `profile` ist neu und **Pflicht** — bestehende Installationen muessen es
@@ -46,7 +73,7 @@ nach dem Update pruefen.
 
 ## Update von 0.3.0 auf 0.4.0
 
-Neu: `failsafe_stale_after_hours` (optional, Standard `4.0`). Das Add-on
+Neu: `failsafe_stale_after_hours` (optional, Standard `26.0`). Das Add-on
 veroeffentlicht jetzt einen `binary_sensor` ueber MQTT Discovery
 (`heizungsbruecke_<tenant_id>_failsafe`), der aktiv wird, sobald seit mehr als
 dieser Anzahl Stunden kein gueltiger Sollwert vom Server mehr angewendet wurde
@@ -96,7 +123,7 @@ bisherigen Configuration-Tab-Werte wirkungslos -- die Einrichtung muss einmal
 ueber den neuen Assistenten wiederholt werden, danach das Add-on manuell neu
 starten. `poll_interval_seconds`, `notify_service` und
 `failsafe_stale_after_hours` behalten ihre bisherigen Defaults (3600s / leer /
-4.0h), wenn der Assistent sie nicht abfragt -- fuer eine Aenderung dieser drei
+26.0h), wenn der Assistent sie nicht abfragt -- fuer eine Aenderung dieser drei
 optionalen Werte vorerst `options.json` auf dem Pi direkt anpassen (kein
 UI-Schritt dafuer in dieser Version).
 

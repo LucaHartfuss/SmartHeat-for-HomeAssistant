@@ -71,10 +71,14 @@ def test_run_bridge_returns_true_when_not_configured(caplog):
     assert "Add-on ist noch nicht eingerichtet" in caplog.text
 
 
-def test_run_bridge_returns_false_on_genuine_validation_error(caplog):
+def test_run_bridge_returns_false_on_genuine_validation_error(monkeypatch, caplog):
     # Unlike the "not configured" case above, an add-on that IS configured but fails
     # validation (here: an unknown profile) is a genuine startup error -- main() must
     # be able to tell the two apart to give the Supervisor a non-zero exit code.
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get",
+        lambda url, timeout: _FakeResponse({"active": True}),
+    )
     options = {
         "tenant_id": "wohnung1", "profile": "does-not-exist",
         "mqtt_username": "wohnung1_a1b2c3d4", "mqtt_password": "geheim",
