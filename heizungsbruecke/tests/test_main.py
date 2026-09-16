@@ -770,3 +770,8 @@ def test_check_entitlement_fails_open_on_malformed_response_body(monkeypatch, ca
         _check_entitlement("client1")  # darf NICHT werfen
 
     assert "berechtigungspruefung" in caplog.text.lower() or "accounts-api" in caplog.text.lower()
+
+
+def test_default_failsafe_stale_after_hours_is_four():
+    from heizungsbruecke.__main__ import DEFAULT_FAILSAFE_STALE_AFTER_HOURS
+    assert DEFAULT_FAILSAFE_STALE_AFTER_HOURS == 4.0

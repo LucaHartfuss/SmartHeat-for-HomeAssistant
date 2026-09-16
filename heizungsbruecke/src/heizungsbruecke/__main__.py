@@ -58,6 +58,13 @@ DERIVED_SENSORS_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60, 60, 60)
 # DERIVED_SENSORS_RETRY_DELAYS_SECONDS oben (Design-Spec Phase 1, Punkt 2).
 MQTT_CONNECT_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60)
 
+# Bei Default-poll_interval_seconds=3600 (1h) toleriert das einen verpassten Tick plus
+# Retries/einen kurzen Netzwerk-Blip, meldet einen echten Mehrstunden-Ausfall aber noch
+# am selben Tag statt erst nach ueber einem Tag (Design-Spec Phase 5, Punkt 16). Seit der
+# Boost-Neudefinition (Task 17) ist dies das EINZIGE verbleibende Signal fuer eine
+# tote/veraltete Serververbindung.
+DEFAULT_FAILSAFE_STALE_AFTER_HOURS = 4.0
+
 # Gleicher Hostname fuer jeden Tenant (kein Tenant-spezifischer Wert) -- siehe
 # SmartHeat-HomeAssistant-Integration/custom_components/smartheat/api_client.py,
 # DEFAULT_HEIZUNGSSERVER_BASE_URL. Hartkodiert wie MQTT_HOST/MQTT_PORT oben, aus
@@ -431,7 +438,7 @@ def _run_bridge(options: dict, ha_api) -> bool:
         # server that never sends a single valid value still trips fail-safe eventually
         # instead of reading "OK" forever.
         failsafe_ctx["last_valid_update"] = time.time()
-    stale_after_seconds = options.get("failsafe_stale_after_hours", 26.0) * 3600
+    stale_after_seconds = options.get("failsafe_stale_after_hours", DEFAULT_FAILSAFE_STALE_AFTER_HOURS) * 3600
 
     try:
         mqtt_client = _connect_mqtt_with_retry(options)

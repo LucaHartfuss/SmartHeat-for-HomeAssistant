@@ -46,7 +46,7 @@ nach dem Update pruefen.
 
 ## Update von 0.3.0 auf 0.4.0
 
-Neu: `failsafe_stale_after_hours` (optional, Standard `26.0`). Das Add-on
+Neu: `failsafe_stale_after_hours` (optional, Standard `4.0`). Das Add-on
 veroeffentlicht jetzt einen `binary_sensor` ueber MQTT Discovery
 (`heizungsbruecke_<tenant_id>_failsafe`), der aktiv wird, sobald seit mehr als
 dieser Anzahl Stunden kein gueltiger Sollwert vom Server mehr angewendet wurde
@@ -96,7 +96,7 @@ bisherigen Configuration-Tab-Werte wirkungslos -- die Einrichtung muss einmal
 ueber den neuen Assistenten wiederholt werden, danach das Add-on manuell neu
 starten. `poll_interval_seconds`, `notify_service` und
 `failsafe_stale_after_hours` behalten ihre bisherigen Defaults (3600s / leer /
-26.0h), wenn der Assistent sie nicht abfragt -- fuer eine Aenderung dieser drei
+4.0h), wenn der Assistent sie nicht abfragt -- fuer eine Aenderung dieser drei
 optionalen Werte vorerst `options.json` auf dem Pi direkt anpassen (kein
 UI-Schritt dafuer in dieser Version).
 
