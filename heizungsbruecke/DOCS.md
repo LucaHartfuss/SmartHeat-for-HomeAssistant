@@ -3,14 +3,48 @@
 Liest konfigurierte Home-Assistant-Entities (Referenzraum, Aussentemperatur,
 aktuelle Heizkurve/Niveau) und meldet sie generisch an den SmartHeat-Server.
 Schreibt vom Server empfangene Sollwerte zurueck, geclamped gegen die
-konfigurierten Sicherheitsgrenzen. Enthaelt eine lokale Boost-Hysterese,
-die unabhaengig vom Server eingreift, wenn der Referenzraum mehr als
-`boost_threshold_k` unter der Zieltemperatur liegt. Dieses Add-on hat keine
+konfigurierten Sicherheitsgrenzen. **Boost** aktiviert ausschliesslich, wenn die
+Wunschtemperatur erhoeht wird (Komfort-Beschleunigung): das Add-on schaltet
+kurzzeitig auf eine hohe Heizkurve, bis der Raum innerhalb von
+`boost_threshold_k` (Default 0.5 K) an die neue Wunschtemperatur herangekommen
+ist, und schaltet danach zur zuletzt vom Server empfangenen Heizkurve zurueck.
+Boost reagiert NICHT mehr auf einen kalten Raum aus anderer Ursache
+(Aussentemperatur-Einbruch, offene Tuer, Server laengere Zeit nicht erreichbar)
+-- diese Faelle werden nur noch vom naechsten regulaeren Heizkurven-Tick sowie
+vom Fail-Safe-Alarm (rein informativ, siehe `failsafe_stale_after_hours` weiter
+unten) abgedeckt. Dieses Add-on hat keine
 eigene Konfigurationsoberflaeche (weder im Configuration-Tab noch als
 Ingress-Panel) -- eingerichtet wird es ueber die separate **SmartHeat**
 Home-Assistant-Integration: installieren, dann Einstellungen → Geraete &
 Dienste → Integration hinzufuegen → "SmartHeat". Die Integration schreibt die
 noetige Konfiguration automatisch in dieses Add-on.
+
+## Update von 0.7.3 auf 0.8.0 (Breaking Change)
+
+**Boost aktiviert nicht mehr bei kaltem Raum aus beliebiger Ursache.** Boost
+reagiert ab dieser Version ausschliesslich, wenn die Wunschtemperatur erhoeht
+wird (Komfort-Beschleunigung) -- nicht mehr, wenn der Raum aus anderer Ursache
+(Aussentemperatur-Einbruch, offene Tuer, Server laengere Zeit nicht erreichbar)
+kalt ist. Das bisherige Sicherheitsnetz-Verhalten entfaellt bewusst. Einziges
+verbleibendes Signal fuer eine tote/veraltete Serververbindung ist ab jetzt der
+Fail-Safe-Alarm (siehe unten).
+
+`failsafe_stale_after_hours`s Standardwert sinkt von `26.0` auf `4.0` -- ein
+mehrstuendiger Ausfall wird jetzt noch am selben Tag gemeldet statt erst nach
+ueber einem Tag.
+
+Neu: das Add-on prueft beim Start, ob der Tenant aktuell berechtigt ist (Abo
+aktiv). Bei einem explizit als nicht aktiv gemeldeten Tenant startet das Add-on
+nicht (klare Fehlermeldung im Log). Ein Netzwerk-/Serverfehler bei dieser
+Pruefung selbst wird NICHT als "nicht berechtigt" gewertet (Fail-Open) --
+ein kurzer accounts-api-Ausfall soll die Heizungssteuerung nicht stoppen.
+
+MQTT-Nachrichten auf den `up`/`down`-Topics dieses Add-ons verwenden jetzt QoS 1
+statt QoS 0 (zuverlaessigere Zustellung).
+
+**Achtung bei bestehenden Installationen:** kein manueller Schritt noetig --
+alle Aenderungen wirken automatisch nach dem Update. Wer sich auf Boost als
+Reaktion auf einen kalten Raum verlassen hat, sollte das beruecksichtigen.
 
 ## Update von 0.1.0 auf 0.2.0 (Breaking Change)
 

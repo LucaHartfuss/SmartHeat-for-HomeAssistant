@@ -8,6 +8,8 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+import requests
+
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.boost import decide_boost
 from heizungsbruecke.bridge import apply_boost_decision, handle_down_message, publish_snapshot
@@ -31,6 +33,9 @@ DERIVED_SENSORS_PATH = Path("/data/derived_sensors.json")
 DAYNIGHT_SNAPSHOT_PATH = Path("/data/daynight_snapshot_state.json")
 
 MQTT_HOST = "127.0.0.1"
+# Muss mit cloudflared_access_mqtt/config.yaml's `local_port`-Default
+# uebereinstimmen (siehe Kommentar dort) -- kein geteilter Konfigurationswert
+# zwischen den beiden Add-ons, nur Konvention.
 MQTT_PORT = 18830
 
 _REQUIRED_OPTIONS = (
@@ -47,7 +52,61 @@ _REQUIRED_OPTIONS = (
 # rather than crash-looping forever.
 DERIVED_SENSORS_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60, 60, 60)
 
+# Boot-Reihenfolge-Rennen zwischen den beiden Add-ons (cloudflared_access_mqtt startet
+# eventuell noch) oder ein kurzer Broker-Restart duerfen nicht sofort als dauerhafte
+# Fehlkonfiguration gewertet werden -- gleiche Begruendung/Muster wie
+# DERIVED_SENSORS_RETRY_DELAYS_SECONDS oben (Design-Spec Phase 1, Punkt 2).
+MQTT_CONNECT_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60)
+
+# Bei Default-poll_interval_seconds=3600 (1h) toleriert das einen verpassten Tick plus
+# Retries/einen kurzen Netzwerk-Blip, meldet einen echten Mehrstunden-Ausfall aber noch
+# am selben Tag statt erst nach ueber einem Tag (Design-Spec Phase 5, Punkt 16). Seit der
+# Boost-Neudefinition (Task 17) ist dies das EINZIGE verbleibende Signal fuer eine
+# tote/veraltete Serververbindung.
+DEFAULT_FAILSAFE_STALE_AFTER_HOURS = 4.0
+
+# Gleicher Hostname fuer jeden Tenant (kein Tenant-spezifischer Wert) -- siehe
+# SmartHeat-HomeAssistant-Integration/custom_components/smartheat/api_client.py,
+# DEFAULT_HEIZUNGSSERVER_BASE_URL. Hartkodiert wie MQTT_HOST/MQTT_PORT oben, aus
+# demselben Grund: ein einzelner geteilter Wert, keine Pro-Tenant-Konfiguration.
+ACCOUNTS_API_BASE_URL = "https://accounts.hartfussha.org"
+
 logger = logging.getLogger(__name__)
+
+
+class TenantNotEntitledError(Exception):
+    """Raised when accounts-api meldet, dass dieser Tenant aktuell nicht berechtigt ist
+    (Abo abgelaufen/pausiert, siehe Design-Spec Phase 3, Punkt 10)."""
+
+
+def _check_entitlement(tenant_id: str, base_url: str = ACCOUNTS_API_BASE_URL) -> None:
+    """Fragt vor jedem MQTT-Connect/HA-Zugriff bei accounts-api nach, ob dieser Tenant
+    aktuell berechtigt ist. Ein Netzwerk-/Serverfehler wird bewusst NICHT als "nicht
+    berechtigt" gewertet ("fail open") -- ein kurzer accounts-api-Ausfall soll die
+    Heizungssteuerung eines zahlenden Kunden nicht stoppen. Nur eine explizite
+    'active: false'-Antwort loest TenantNotEntitledError aus. Diese Abwaegung ist eine
+    Plan-Entscheidung (nicht explizit von der Design-Spec vorgegeben) -- siehe Hinweis
+    in den Global Constraints des Implementierungsplans.
+    """
+    try:
+        response = requests.get(f"{base_url}/tenants/{tenant_id}/status", timeout=10)
+        response.raise_for_status()
+        body = response.json()
+        if not body.get("active", True):
+            raise TenantNotEntitledError(
+                "Diese Anlage ist derzeit nicht aktiv (Abo abgelaufen/pausiert) - bitte Abo "
+                "verlaengern und Add-on danach manuell neu starten."
+            )
+    except TenantNotEntitledError:
+        raise
+    except Exception as error:
+        logger.warning(
+            "Berechtigungspruefung bei accounts-api fehlgeschlagen (wird als "
+            "berechtigt behandelt, um einen kurzen accounts-api-Ausfall nicht mit "
+            "einem abgelaufenen Abo zu verwechseln): %s",
+            error,
+        )
+        return
 
 
 def _is_configured(options: dict) -> bool:
@@ -147,6 +206,33 @@ def _ensure_derived_sensors_with_retry(ha_api, options: dict) -> dict[str, str]:
     raise last_error
 
 
+def _connect_mqtt_with_retry(options: dict) -> BridgeMqttClient:
+    """Wraps `BridgeMqttClient` constructor with retry-with-backoff (see
+    MQTT_CONNECT_RETRY_DELAYS_SECONDS above for the rationale) so a transient failure
+    during add-on startup (e.g. cloudflared_access_mqtt hasn't started yet) doesn't
+    crash the whole add-on on the first try.
+    """
+    delays = MQTT_CONNECT_RETRY_DELAYS_SECONDS
+    last_error: Exception | None = None
+    for attempt in range(len(delays) + 1):
+        try:
+            return BridgeMqttClient(
+                host=MQTT_HOST, port=MQTT_PORT, tenant_id=options["tenant_id"],
+                username=options["mqtt_username"], password=options["mqtt_password"],
+            )
+        except Exception as error:
+            last_error = error
+            if attempt == len(delays):
+                break
+            logger.warning(
+                "MQTT-Verbindungsaufbau fehlgeschlagen (Versuch %s/%s, evtl. ist "
+                "cloudflared_access_mqtt noch nicht bereit): %s",
+                attempt + 1, len(delays) + 1, error,
+            )
+            time.sleep(delays[attempt])
+    raise last_error
+
+
 def _make_down_callback(role, manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client):
     def _callback(client, userdata, message):
         try:
@@ -218,7 +304,10 @@ def _record_valid_message(failsafe_ctx: dict, mqtt_client, failsafe_path: Path) 
     _save_failsafe_ctx(failsafe_ctx, failsafe_path)
 
 
-def _check_failsafe_staleness(failsafe_ctx: dict, stale_after_seconds: float, mqtt_client, failsafe_path: Path) -> None:
+def _check_failsafe_staleness(
+    failsafe_ctx: dict, stale_after_seconds: float, mqtt_client, failsafe_path: Path,
+    ha_api, notify_service: str = "",
+) -> None:
     last = failsafe_ctx["last_valid_update"]
     seconds_since = (time.time() - last) if last is not None else None
     new_state = enter_failsafe_if_stale(failsafe_ctx["state"], seconds_since, stale_after_seconds)
@@ -229,6 +318,20 @@ def _check_failsafe_staleness(failsafe_ctx: dict, stale_after_seconds: float, mq
                 "Fail-Safe aktiviert - seit ueber %s Sekunden kein gueltiger Live-Wert empfangen.",
                 stale_after_seconds,
             )
+            # Seit der Boost-Neudefinition (Task 17) ist dies das EINZIGE verbleibende
+            # Signal fuer eine tote/veraltete Serververbindung -- Push-Benachrichtigung
+            # analog zu publish_snapshot()s Broken-Sensor-Nachricht (best effort, eine
+            # fehlschlagende Notify-Aktion darf die Fail-Safe-Erkennung selbst nicht stoeren).
+            if notify_service:
+                try:
+                    ha_api.send_notification(
+                        notify_service,
+                        f"Heizungsbruecke: Fail-Safe aktiviert - seit ueber "
+                        f"{stale_after_seconds / 3600:.1f}h kein gueltiger Live-Wert vom "
+                        f"Server empfangen. Bitte Serververbindung pruefen.",
+                    )
+                except Exception:
+                    logger.warning("Push-Benachrichtigung fuer Fail-Safe-Alarm konnte nicht gesendet werden")
         failsafe_ctx["state"] = new_state
         _save_failsafe_ctx(failsafe_ctx, failsafe_path)
 
@@ -254,14 +357,24 @@ def _run_tick(manifest, ha_api, mqtt_client, options, write_lock, boost_was_acti
     if "room_actual" in manifest.entity_ids and "room_target" in manifest.entity_ids:
         room_actual = ha_api.get_state(manifest.entity_ids["room_actual"])
         room_target = ha_api.get_state(manifest.entity_ids["room_target"])
-        decision = decide_boost(
-            room_actual=room_actual,
-            room_target=room_target,
-            threshold_k=options.get("boost_threshold_k", 0.5),
-            boost_curve_value=options["boost_curve_value"],
-            boost_offset_value=options["boost_offset_value"],
-        )
+        # backup.json is also written from the MQTT down-message callback thread (see
+        # _make_down_callback/handle_down_message), so every read-modify-write of it --
+        # including last_room_target below -- must happen under write_lock like every
+        # other backup.json access in this module, not just the apply_boost_decision call.
         with write_lock:
+            backup = load_backup(BACKUP_PATH)
+            previous_room_target = backup.get("last_room_target")
+            decision = decide_boost(
+                room_actual=room_actual,
+                room_target=room_target,
+                previous_room_target=previous_room_target,
+                boost_was_active=boost_was_active,
+                arrival_threshold_k=options.get("boost_threshold_k", 0.5),
+                boost_curve_value=options["boost_curve_value"],
+                boost_offset_value=options["boost_offset_value"],
+            )
+            backup["last_room_target"] = room_target
+            save_backup(BACKUP_PATH, backup)
             boost_was_active = apply_boost_decision(
                 decision=decision,
                 boost_was_active=boost_was_active,
@@ -296,6 +409,12 @@ def _run_bridge(options: dict, ha_api) -> bool:
             "danach automatisch beim naechsten Neustart des Add-ons."
         )
         return True
+
+    try:
+        _check_entitlement(options["tenant_id"])
+    except TenantNotEntitledError as error:
+        logger.error("FEHLER: %s", error)
+        return False
 
     try:
         options = _resolve_effective_options(options)
@@ -336,17 +455,10 @@ def _run_bridge(options: dict, ha_api) -> bool:
         # server that never sends a single valid value still trips fail-safe eventually
         # instead of reading "OK" forever.
         failsafe_ctx["last_valid_update"] = time.time()
-    stale_after_seconds = options.get("failsafe_stale_after_hours", 26.0) * 3600
+    stale_after_seconds = options.get("failsafe_stale_after_hours", DEFAULT_FAILSAFE_STALE_AFTER_HOURS) * 3600
 
     try:
-        # BridgeMqttClient's constructor blocks on .connect() -- if the broker isn't
-        # reachable yet (e.g. cloudflared_access_mqtt hasn't started, see DOCS.md
-        # "Voraussetzungen"), this whole block can raise. Treated the same as every
-        # other startup precondition in this function: log and return.
-        mqtt_client = BridgeMqttClient(
-            host=MQTT_HOST, port=MQTT_PORT, tenant_id=options["tenant_id"],
-            username=options["mqtt_username"], password=options["mqtt_password"],
-        )
+        mqtt_client = _connect_mqtt_with_retry(options)
         mqtt_client.publish_discovery(
             component="binary_sensor", object_id="failsafe",
             config=build_discovery_config(options["tenant_id"]),
@@ -360,6 +472,14 @@ def _run_bridge(options: dict, ha_api) -> bool:
                     on_message=_make_down_callback(role, manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client),
                 )
         mqtt_client.loop_start()
+    except ConnectionRefusedError as error:
+        logger.error(
+            "FEHLER: MQTT-Verbindung zum Broker fehlgeschlagen (Connection refused): %s. "
+            "Pruefen, ob das Add-on 'cloudflared_access_mqtt' laeuft und auf demselben "
+            "Port (%s) lauscht wie hier konfiguriert (MQTT_PORT in __main__.py).",
+            error, MQTT_PORT,
+        )
+        return False
     except Exception as error:
         logger.error("FEHLER: MQTT-Verbindung zum Broker fehlgeschlagen: %s", error)
         return False
@@ -374,7 +494,10 @@ def _run_bridge(options: dict, ha_api) -> bool:
 
         try:
             with write_lock:
-                _check_failsafe_staleness(failsafe_ctx, stale_after_seconds, mqtt_client, FAILSAFE_PATH)
+                _check_failsafe_staleness(
+                    failsafe_ctx, stale_after_seconds, mqtt_client, FAILSAFE_PATH,
+                    ha_api=ha_api, notify_service=options.get("notify_service", ""),
+                )
         except Exception:
             logger.exception("Fehler bei der Fail-Safe-Staleness-Pruefung, wird beim naechsten Tick erneut versucht")
 

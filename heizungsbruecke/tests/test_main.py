@@ -1,11 +1,16 @@
 import json
+import logging
 import threading
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 
 from heizungsbruecke.__main__ import (
+    TenantNotEntitledError,
+    _check_entitlement,
     _check_failsafe_staleness,
+    _connect_mqtt_with_retry,
     _ensure_derived_sensors_with_retry,
     _is_configured,
     _load_failsafe_ctx,
@@ -20,6 +25,7 @@ from heizungsbruecke.__main__ import (
     _validate_boost_config,
     _validate_derived_sensor_prerequisites,
 )
+from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.failsafe import FailsafeState
 from heizungsbruecke.profiles import UnknownProfileError
 from heizungsbruecke.manifest import ChannelManifest
@@ -65,10 +71,14 @@ def test_run_bridge_returns_true_when_not_configured(caplog):
     assert "Add-on ist noch nicht eingerichtet" in caplog.text
 
 
-def test_run_bridge_returns_false_on_genuine_validation_error(caplog):
+def test_run_bridge_returns_false_on_genuine_validation_error(monkeypatch, caplog):
     # Unlike the "not configured" case above, an add-on that IS configured but fails
     # validation (here: an unknown profile) is a genuine startup error -- main() must
     # be able to tell the two apart to give the Supervisor a non-zero exit code.
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get",
+        lambda url, timeout: _FakeResponse({"active": True}),
+    )
     options = {
         "tenant_id": "wohnung1", "profile": "does-not-exist",
         "mqtt_username": "wohnung1_a1b2c3d4", "mqtt_password": "geheim",
@@ -132,13 +142,14 @@ def test_validate_boost_config_accepts_boundary_values():
     assert _validate_boost_config(_base_options(boost_offset_value=5.0)) is None
 
 
-def test_run_tick_publishes_snapshot_and_returns_boost_state():
+def test_run_tick_publishes_snapshot_and_returns_boost_state(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
     manifest = ChannelManifest(entity_ids={
         "room_actual": "sensor.room_actual",
         "room_target": "sensor.room_target",
     })
     ha_api = MagicMock()
-    ha_api.get_state.return_value = 20.0  # actual == target -> boost stays inactive
+    ha_api.get_state.return_value = 20.0  # actual == target, no previous target -> boost stays inactive
     mqtt_client = MagicMock()
     options = _base_options()
     write_lock = threading.Lock()
@@ -175,8 +186,14 @@ def _broken_sensor_setup():
 
 
 def test_run_tick_still_evaluates_boost_when_one_sensor_is_broken(tmp_path, monkeypatch):
-    # I3: a single dead sensor must not abort the whole tick before the boost failsafe runs.
-    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    # I3: a single dead sensor must not abort the whole tick before the boost decision
+    # runs. Boost is setpoint-triggered now (see boost.py), so a previously stored
+    # room_target lower than the current one is seeded here to produce a trigger --
+    # room coldness alone (as in the pre-redefinition version of this test) no longer
+    # activates boost.
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    save_backup(backup_path, {"last_room_target": 20.0})
     manifest, ha_api = _broken_sensor_setup()
 
     new_state = _run_tick(manifest, ha_api, MagicMock(), _base_options(), threading.Lock(),
@@ -223,6 +240,55 @@ def test_run_tick_propagates_exceptions_for_caller_to_handle():
     # (I2) is what's responsible for catching, logging and continuing to the next tick.
     with pytest.raises(RuntimeError):
         _run_tick(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active=False)
+
+
+def test_run_tick_persists_room_target_for_next_ticks_comparison(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "climate.wohnzimmer_thermostat::current_temperature",
+        "room_target": "climate.wohnzimmer_thermostat::temperature",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = lambda entity_id: {
+        "climate.wohnzimmer_thermostat::current_temperature": 19.5,
+        "climate.wohnzimmer_thermostat::temperature": 21.0,
+    }[entity_id]
+    mqtt_client = MagicMock()
+    options = {
+        "boost_threshold_k": 0.5, "boost_curve_value": 1.5, "boost_offset_value": 30.0,
+        "curve_min": 0.4, "curve_max": 1.5, "offset_min": 20.0, "offset_max": 30.0,
+    }
+
+    _run_tick(manifest, ha_api, mqtt_client, options, threading.Lock(), boost_was_active=False)
+
+    assert load_backup(tmp_path / "backup.json")["last_room_target"] == 21.0
+
+
+def test_run_tick_triggers_boost_on_target_raise_between_ticks(tmp_path, monkeypatch):
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    save_backup(backup_path, {"last_room_target": 20.0})
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual",
+        "room_target": "sensor.room_target",
+        "curve_current": "number.curve",
+        "offset_current": "number.offset",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = lambda entity_id: {
+        "sensor.room_actual": 19.0, "sensor.room_target": 21.0,
+    }[entity_id]
+    mqtt_client = MagicMock()
+    options = {
+        "boost_threshold_k": 0.5, "boost_curve_value": 1.5, "boost_offset_value": 30.0,
+        "curve_min": 0.4, "curve_max": 1.5, "offset_min": 20.0, "offset_max": 30.0,
+    }
+
+    boost_was_active = _run_tick(manifest, ha_api, mqtt_client, options, threading.Lock(), boost_was_active=False)
+
+    assert boost_was_active is True
+    ha_api.set_number_value.assert_any_call("number.curve", 1.5)
+    ha_api.set_number_value.assert_any_call("number.offset", 30.0)
 
 
 def test_resolve_effective_options_uses_profile_defaults_when_clamps_absent():
@@ -330,6 +396,54 @@ def test_ensure_derived_sensors_with_retry_raises_last_error_after_exhausting_re
         _ensure_derived_sensors_with_retry(MagicMock(), options)
 
 
+def test_connect_mqtt_with_retry_returns_client_on_first_success(monkeypatch):
+    fake_client = MagicMock()
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: fake_client)
+    sleeps = []
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", sleeps.append)
+
+    options = {"tenant_id": "t1", "mqtt_username": "u", "mqtt_password": "p"}
+    result = _connect_mqtt_with_retry(options)
+
+    assert result is fake_client
+    assert sleeps == []
+
+
+def test_connect_mqtt_with_retry_recovers_after_transient_failures(monkeypatch):
+    fake_client = MagicMock()
+    attempts = {"count": 0}
+
+    def flaky_client(**kwargs):
+        attempts["count"] += 1
+        if attempts["count"] < 3:
+            raise ConnectionRefusedError("cloudflared_access_mqtt noch nicht bereit")
+        return fake_client
+
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", flaky_client)
+    sleeps = []
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", sleeps.append)
+
+    options = {"tenant_id": "t1", "mqtt_username": "u", "mqtt_password": "p"}
+    result = _connect_mqtt_with_retry(options)
+
+    assert result is fake_client
+    assert attempts["count"] == 3
+    assert sleeps == [5, 10]
+
+
+def test_connect_mqtt_with_retry_raises_last_error_after_exhausting_retries(monkeypatch):
+    def always_fails(**kwargs):
+        raise ConnectionRefusedError("Broker dauerhaft nicht erreichbar")
+
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", always_fails)
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", lambda seconds: None)
+
+    options = {"tenant_id": "t1", "mqtt_username": "u", "mqtt_password": "p"}
+
+    with pytest.raises(ConnectionRefusedError, match="Broker dauerhaft nicht erreichbar"):
+        _connect_mqtt_with_retry(options)
+
+
 def test_load_failsafe_ctx_defaults_when_no_file(tmp_path):
     ctx = _load_failsafe_ctx(tmp_path / "does_not_exist.json")
 
@@ -407,8 +521,11 @@ def test_check_failsafe_staleness_activates_and_publishes_status_when_stale(tmp_
     path = tmp_path / "failsafe_state.json"
     ctx = {"last_valid_update": 100.0, "state": FailsafeState(active=False, recovery_count=0)}
     mqtt_client = MagicMock()
+    ha_api = MagicMock()
 
-    _check_failsafe_staleness(ctx, stale_after_seconds=3600.0, mqtt_client=mqtt_client, failsafe_path=path)
+    _check_failsafe_staleness(
+        ctx, stale_after_seconds=3600.0, mqtt_client=mqtt_client, failsafe_path=path, ha_api=ha_api
+    )
 
     assert ctx["state"] == FailsafeState(active=True, recovery_count=0)
     mqtt_client.publish_status.assert_called_once_with("failsafe", "ON")
@@ -420,11 +537,64 @@ def test_check_failsafe_staleness_noop_when_fresh(tmp_path, monkeypatch):
     path = tmp_path / "failsafe_state.json"
     ctx = {"last_valid_update": 4999.0, "state": FailsafeState(active=False, recovery_count=0)}
     mqtt_client = MagicMock()
+    ha_api = MagicMock()
 
-    _check_failsafe_staleness(ctx, stale_after_seconds=3600.0, mqtt_client=mqtt_client, failsafe_path=path)
+    _check_failsafe_staleness(
+        ctx, stale_after_seconds=3600.0, mqtt_client=mqtt_client, failsafe_path=path, ha_api=ha_api
+    )
 
     assert ctx["state"] == FailsafeState(active=False, recovery_count=0)
     mqtt_client.publish_status.assert_not_called()
+
+
+def test_check_failsafe_staleness_sends_notification_when_configured(tmp_path, monkeypatch):
+    monkeypatch.setattr("time.time", lambda: 5000.0)
+    path = tmp_path / "failsafe_state.json"
+    ctx = {"last_valid_update": 100.0, "state": FailsafeState(active=False, recovery_count=0)}
+    mqtt_client = MagicMock()
+    ha_api = MagicMock()
+
+    _check_failsafe_staleness(
+        ctx, stale_after_seconds=3600.0, mqtt_client=mqtt_client, failsafe_path=path,
+        ha_api=ha_api, notify_service="notify.mobile_app",
+    )
+
+    ha_api.send_notification.assert_called_once()
+    args, _ = ha_api.send_notification.call_args
+    assert args[0] == "notify.mobile_app"
+    assert "Fail-Safe" in args[1]
+
+
+def test_check_failsafe_staleness_skips_notification_when_not_configured(tmp_path, monkeypatch):
+    monkeypatch.setattr("time.time", lambda: 5000.0)
+    path = tmp_path / "failsafe_state.json"
+    ctx = {"last_valid_update": 100.0, "state": FailsafeState(active=False, recovery_count=0)}
+    mqtt_client = MagicMock()
+    ha_api = MagicMock()
+
+    _check_failsafe_staleness(
+        ctx, stale_after_seconds=3600.0, mqtt_client=mqtt_client, failsafe_path=path, ha_api=ha_api,
+    )
+
+    ha_api.send_notification.assert_not_called()
+
+
+def test_check_failsafe_staleness_notification_failure_does_not_propagate(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr("time.time", lambda: 5000.0)
+    path = tmp_path / "failsafe_state.json"
+    ctx = {"last_valid_update": 100.0, "state": FailsafeState(active=False, recovery_count=0)}
+    mqtt_client = MagicMock()
+    ha_api = MagicMock()
+    ha_api.send_notification.side_effect = Exception("HA nicht erreichbar")
+
+    with caplog.at_level(logging.WARNING):
+        _check_failsafe_staleness(
+            ctx, stale_after_seconds=3600.0, mqtt_client=mqtt_client, failsafe_path=path,
+            ha_api=ha_api, notify_service="notify.mobile_app",
+        )  # muss nicht werfen
+
+    assert ctx["state"] == FailsafeState(active=True, recovery_count=0)
+    assert "Push-Benachrichtigung" in caplog.text
 
 
 def test_make_down_callback_records_valid_message_after_successful_handling(tmp_path, monkeypatch):
@@ -521,3 +691,147 @@ def test_make_down_callback_does_not_record_valid_message_when_handling_fails(tm
     callback(client=MagicMock(), userdata=None, message=message)  # must not raise -- caught and logged
 
     assert recorded_calls == []
+
+
+# Entitlement check tests (Task 13)
+
+
+class _FakeResponse:
+    def __init__(self, json_body, status_code=200):
+        self._json_body = json_body
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code}")
+
+    def json(self):
+        return self._json_body
+
+
+def _full_valid_options(**overrides):
+    """Helper: returns a complete, valid options dict with all required fields for _run_bridge tests."""
+    options = {
+        "tenant_id": "test_tenant",
+        "profile": "vaillant_gastherme_heizkoerper",
+        "mqtt_username": "test_mqtt_user",
+        "mqtt_password": "test_mqtt_pass",
+        "entity_room_actual": "sensor.room_actual",
+        "entity_room_target": "sensor.room_target",
+        "entity_curve_current": "number.curve_current",
+        "entity_offset_current": "number.offset_current",
+        "entity_outdoor_temp": "sensor.outdoor_temp",
+        "entity_heat_limit": "number.heat_limit",
+        "entity_room_day_avg": "sensor.room_day_avg",
+        "entity_room_night_avg": "sensor.room_night_avg",
+        "entity_dat": "sensor.dat",
+        "entity_dart": "sensor.dart",
+        "curve_min": 0.2,
+        "curve_max": 0.8,
+        "offset_min": 0.0,
+        "offset_max": 5.0,
+        "boost_curve_value": 0.5,
+        "boost_offset_value": 2.0,
+    }
+    options.update(overrides)
+    return options
+
+
+def test_run_bridge_gives_actionable_error_on_connection_refused(monkeypatch, caplog):
+    def always_refused(**kwargs):
+        raise ConnectionRefusedError("[Errno 111] Connection refused")
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", always_refused)
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", lambda seconds: None)
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get",
+        lambda url, timeout: _FakeResponse({"active": True}),
+    )
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {}
+    )
+
+    options = _full_valid_options()
+
+    with caplog.at_level(logging.ERROR):
+        result = _run_bridge(options, MagicMock())
+
+    assert result is False
+    assert "cloudflared_access_mqtt" in caplog.text
+
+
+# Entitlement check tests (Task 13)
+
+
+def test_check_entitlement_passes_silently_when_active(monkeypatch):
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get",
+        lambda url, timeout: _FakeResponse({"active": True}),
+    )
+    _check_entitlement("client1")  # muss nicht werfen
+
+
+def test_check_entitlement_raises_when_inactive(monkeypatch):
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get",
+        lambda url, timeout: _FakeResponse({"active": False}),
+    )
+    with pytest.raises(TenantNotEntitledError, match="Abo"):
+        _check_entitlement("client1")
+
+
+def test_check_entitlement_fails_open_on_network_error(monkeypatch, caplog):
+    def _raise(url, timeout):
+        raise requests.ConnectionError("accounts-api nicht erreichbar")
+    monkeypatch.setattr("heizungsbruecke.__main__.requests.get", _raise)
+
+    with caplog.at_level(logging.WARNING):
+        _check_entitlement("client1")  # darf NICHT werfen -- fail open (siehe Docstring/Plan-Hinweis)
+
+    assert "accounts-api" in caplog.text.lower() or "berechtigungspruefung" in caplog.text.lower()
+
+
+def test_check_entitlement_queries_correct_url(monkeypatch):
+    called_with = {}
+    def _get(url, timeout):
+        called_with["url"] = url
+        called_with["timeout"] = timeout
+        return _FakeResponse({"active": True})
+    monkeypatch.setattr("heizungsbruecke.__main__.requests.get", _get)
+
+    _check_entitlement("client1", base_url="https://accounts.hartfussha.org")
+
+    assert called_with["url"] == "https://accounts.hartfussha.org/tenants/client1/status"
+    assert called_with["timeout"] == 10
+
+
+def test_check_entitlement_fails_open_on_http_error_status(monkeypatch, caplog):
+    # A 5xx response triggers raise_for_status() to raise HTTPError, which should fail open
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get",
+        lambda url, timeout: _FakeResponse({"active": True}, status_code=500),
+    )
+
+    with caplog.at_level(logging.WARNING):
+        _check_entitlement("client1")  # darf NICHT werfen
+
+    assert "berechtigungspruefung" in caplog.text.lower() or "accounts-api" in caplog.text.lower()
+
+
+def test_check_entitlement_fails_open_on_malformed_response_body(monkeypatch, caplog):
+    # If accounts-api returns valid JSON but not a dict (e.g., a list or null),
+    # the body.get("active", True) would raise AttributeError if not caught.
+    # This should also fail open, not crash.
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get",
+        lambda url, timeout: _FakeResponse([]),  # valid JSON, but not a dict
+    )
+
+    with caplog.at_level(logging.WARNING):
+        _check_entitlement("client1")  # darf NICHT werfen
+
+    assert "berechtigungspruefung" in caplog.text.lower() or "accounts-api" in caplog.text.lower()
+
+
+def test_default_failsafe_stale_after_hours_is_four():
+    from heizungsbruecke.__main__ import DEFAULT_FAILSAFE_STALE_AFTER_HOURS
+    assert DEFAULT_FAILSAFE_STALE_AFTER_HOURS == 4.0
