@@ -521,8 +521,11 @@ def test_check_failsafe_staleness_activates_and_publishes_status_when_stale(tmp_
     path = tmp_path / "failsafe_state.json"
     ctx = {"last_valid_update": 100.0, "state": FailsafeState(active=False, recovery_count=0)}
     mqtt_client = MagicMock()
+    ha_api = MagicMock()
 
-    _check_failsafe_staleness(ctx, stale_after_seconds=3600.0, mqtt_client=mqtt_client, failsafe_path=path)
+    _check_failsafe_staleness(
+        ctx, stale_after_seconds=3600.0, mqtt_client=mqtt_client, failsafe_path=path, ha_api=ha_api
+    )
 
     assert ctx["state"] == FailsafeState(active=True, recovery_count=0)
     mqtt_client.publish_status.assert_called_once_with("failsafe", "ON")
@@ -534,11 +537,64 @@ def test_check_failsafe_staleness_noop_when_fresh(tmp_path, monkeypatch):
     path = tmp_path / "failsafe_state.json"
     ctx = {"last_valid_update": 4999.0, "state": FailsafeState(active=False, recovery_count=0)}
     mqtt_client = MagicMock()
+    ha_api = MagicMock()
 
-    _check_failsafe_staleness(ctx, stale_after_seconds=3600.0, mqtt_client=mqtt_client, failsafe_path=path)
+    _check_failsafe_staleness(
+        ctx, stale_after_seconds=3600.0, mqtt_client=mqtt_client, failsafe_path=path, ha_api=ha_api
+    )
 
     assert ctx["state"] == FailsafeState(active=False, recovery_count=0)
     mqtt_client.publish_status.assert_not_called()
+
+
+def test_check_failsafe_staleness_sends_notification_when_configured(tmp_path, monkeypatch):
+    monkeypatch.setattr("time.time", lambda: 5000.0)
+    path = tmp_path / "failsafe_state.json"
+    ctx = {"last_valid_update": 100.0, "state": FailsafeState(active=False, recovery_count=0)}
+    mqtt_client = MagicMock()
+    ha_api = MagicMock()
+
+    _check_failsafe_staleness(
+        ctx, stale_after_seconds=3600.0, mqtt_client=mqtt_client, failsafe_path=path,
+        ha_api=ha_api, notify_service="notify.mobile_app",
+    )
+
+    ha_api.send_notification.assert_called_once()
+    args, _ = ha_api.send_notification.call_args
+    assert args[0] == "notify.mobile_app"
+    assert "Fail-Safe" in args[1]
+
+
+def test_check_failsafe_staleness_skips_notification_when_not_configured(tmp_path, monkeypatch):
+    monkeypatch.setattr("time.time", lambda: 5000.0)
+    path = tmp_path / "failsafe_state.json"
+    ctx = {"last_valid_update": 100.0, "state": FailsafeState(active=False, recovery_count=0)}
+    mqtt_client = MagicMock()
+    ha_api = MagicMock()
+
+    _check_failsafe_staleness(
+        ctx, stale_after_seconds=3600.0, mqtt_client=mqtt_client, failsafe_path=path, ha_api=ha_api,
+    )
+
+    ha_api.send_notification.assert_not_called()
+
+
+def test_check_failsafe_staleness_notification_failure_does_not_propagate(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr("time.time", lambda: 5000.0)
+    path = tmp_path / "failsafe_state.json"
+    ctx = {"last_valid_update": 100.0, "state": FailsafeState(active=False, recovery_count=0)}
+    mqtt_client = MagicMock()
+    ha_api = MagicMock()
+    ha_api.send_notification.side_effect = Exception("HA nicht erreichbar")
+
+    with caplog.at_level(logging.WARNING):
+        _check_failsafe_staleness(
+            ctx, stale_after_seconds=3600.0, mqtt_client=mqtt_client, failsafe_path=path,
+            ha_api=ha_api, notify_service="notify.mobile_app",
+        )  # muss nicht werfen
+
+    assert ctx["state"] == FailsafeState(active=True, recovery_count=0)
+    assert "Push-Benachrichtigung" in caplog.text
 
 
 def test_make_down_callback_records_valid_message_after_successful_handling(tmp_path, monkeypatch):

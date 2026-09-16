@@ -304,7 +304,10 @@ def _record_valid_message(failsafe_ctx: dict, mqtt_client, failsafe_path: Path) 
     _save_failsafe_ctx(failsafe_ctx, failsafe_path)
 
 
-def _check_failsafe_staleness(failsafe_ctx: dict, stale_after_seconds: float, mqtt_client, failsafe_path: Path) -> None:
+def _check_failsafe_staleness(
+    failsafe_ctx: dict, stale_after_seconds: float, mqtt_client, failsafe_path: Path,
+    ha_api, notify_service: str = "",
+) -> None:
     last = failsafe_ctx["last_valid_update"]
     seconds_since = (time.time() - last) if last is not None else None
     new_state = enter_failsafe_if_stale(failsafe_ctx["state"], seconds_since, stale_after_seconds)
@@ -315,6 +318,20 @@ def _check_failsafe_staleness(failsafe_ctx: dict, stale_after_seconds: float, mq
                 "Fail-Safe aktiviert - seit ueber %s Sekunden kein gueltiger Live-Wert empfangen.",
                 stale_after_seconds,
             )
+            # Seit der Boost-Neudefinition (Task 17) ist dies das EINZIGE verbleibende
+            # Signal fuer eine tote/veraltete Serververbindung -- Push-Benachrichtigung
+            # analog zu publish_snapshot()s Broken-Sensor-Nachricht (best effort, eine
+            # fehlschlagende Notify-Aktion darf die Fail-Safe-Erkennung selbst nicht stoeren).
+            if notify_service:
+                try:
+                    ha_api.send_notification(
+                        notify_service,
+                        f"Heizungsbruecke: Fail-Safe aktiviert - seit ueber "
+                        f"{stale_after_seconds / 3600:.1f}h kein gueltiger Live-Wert vom "
+                        f"Server empfangen. Bitte Serververbindung pruefen.",
+                    )
+                except Exception:
+                    logger.warning("Push-Benachrichtigung fuer Fail-Safe-Alarm konnte nicht gesendet werden")
         failsafe_ctx["state"] = new_state
         _save_failsafe_ctx(failsafe_ctx, failsafe_path)
 
@@ -477,7 +494,10 @@ def _run_bridge(options: dict, ha_api) -> bool:
 
         try:
             with write_lock:
-                _check_failsafe_staleness(failsafe_ctx, stale_after_seconds, mqtt_client, FAILSAFE_PATH)
+                _check_failsafe_staleness(
+                    failsafe_ctx, stale_after_seconds, mqtt_client, FAILSAFE_PATH,
+                    ha_api=ha_api, notify_service=options.get("notify_service", ""),
+                )
         except Exception:
             logger.exception("Fehler bei der Fail-Safe-Staleness-Pruefung, wird beim naechsten Tick erneut versucht")
 
