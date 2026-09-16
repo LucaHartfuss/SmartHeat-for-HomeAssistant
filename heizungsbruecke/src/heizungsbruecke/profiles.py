@@ -21,6 +21,12 @@ class LocalClamps:
 
 @dataclass(frozen=True)
 class BoostDefaults:
+    """`threshold_k` ist seit der Boost-Neudefinition (Design-Spec Phase 5, Punkt 15)
+    die ANKUNFTS-Schwelle (wie nah am -- ggf. neuen -- Zielwert Boost sich selbst
+    beendet), NICHT mehr die Ausloese-Schwelle. Ausgeloest wird Boost jetzt
+    ausschliesslich durch eine Erhoehung von room_target zwischen zwei Ticks, siehe
+    heizungsbruecke.boost.decide_boost.
+    """
     threshold_k: float
     curve_value: float
     offset_value: float

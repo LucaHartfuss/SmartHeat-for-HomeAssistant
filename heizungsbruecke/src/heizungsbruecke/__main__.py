@@ -333,14 +333,24 @@ def _run_tick(manifest, ha_api, mqtt_client, options, write_lock, boost_was_acti
     if "room_actual" in manifest.entity_ids and "room_target" in manifest.entity_ids:
         room_actual = ha_api.get_state(manifest.entity_ids["room_actual"])
         room_target = ha_api.get_state(manifest.entity_ids["room_target"])
-        decision = decide_boost(
-            room_actual=room_actual,
-            room_target=room_target,
-            threshold_k=options.get("boost_threshold_k", 0.5),
-            boost_curve_value=options["boost_curve_value"],
-            boost_offset_value=options["boost_offset_value"],
-        )
+        # backup.json is also written from the MQTT down-message callback thread (see
+        # _make_down_callback/handle_down_message), so every read-modify-write of it --
+        # including last_room_target below -- must happen under write_lock like every
+        # other backup.json access in this module, not just the apply_boost_decision call.
         with write_lock:
+            backup = load_backup(BACKUP_PATH)
+            previous_room_target = backup.get("last_room_target")
+            decision = decide_boost(
+                room_actual=room_actual,
+                room_target=room_target,
+                previous_room_target=previous_room_target,
+                boost_was_active=boost_was_active,
+                arrival_threshold_k=options.get("boost_threshold_k", 0.5),
+                boost_curve_value=options["boost_curve_value"],
+                boost_offset_value=options["boost_offset_value"],
+            )
+            backup["last_room_target"] = room_target
+            save_backup(BACKUP_PATH, backup)
             boost_was_active = apply_boost_decision(
                 decision=decision,
                 boost_was_active=boost_was_active,

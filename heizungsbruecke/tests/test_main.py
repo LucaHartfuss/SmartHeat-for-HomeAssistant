@@ -25,6 +25,7 @@ from heizungsbruecke.__main__ import (
     _validate_boost_config,
     _validate_derived_sensor_prerequisites,
 )
+from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.failsafe import FailsafeState
 from heizungsbruecke.profiles import UnknownProfileError
 from heizungsbruecke.manifest import ChannelManifest
@@ -137,13 +138,14 @@ def test_validate_boost_config_accepts_boundary_values():
     assert _validate_boost_config(_base_options(boost_offset_value=5.0)) is None
 
 
-def test_run_tick_publishes_snapshot_and_returns_boost_state():
+def test_run_tick_publishes_snapshot_and_returns_boost_state(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
     manifest = ChannelManifest(entity_ids={
         "room_actual": "sensor.room_actual",
         "room_target": "sensor.room_target",
     })
     ha_api = MagicMock()
-    ha_api.get_state.return_value = 20.0  # actual == target -> boost stays inactive
+    ha_api.get_state.return_value = 20.0  # actual == target, no previous target -> boost stays inactive
     mqtt_client = MagicMock()
     options = _base_options()
     write_lock = threading.Lock()
@@ -180,8 +182,14 @@ def _broken_sensor_setup():
 
 
 def test_run_tick_still_evaluates_boost_when_one_sensor_is_broken(tmp_path, monkeypatch):
-    # I3: a single dead sensor must not abort the whole tick before the boost failsafe runs.
-    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    # I3: a single dead sensor must not abort the whole tick before the boost decision
+    # runs. Boost is setpoint-triggered now (see boost.py), so a previously stored
+    # room_target lower than the current one is seeded here to produce a trigger --
+    # room coldness alone (as in the pre-redefinition version of this test) no longer
+    # activates boost.
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    save_backup(backup_path, {"last_room_target": 20.0})
     manifest, ha_api = _broken_sensor_setup()
 
     new_state = _run_tick(manifest, ha_api, MagicMock(), _base_options(), threading.Lock(),
@@ -228,6 +236,55 @@ def test_run_tick_propagates_exceptions_for_caller_to_handle():
     # (I2) is what's responsible for catching, logging and continuing to the next tick.
     with pytest.raises(RuntimeError):
         _run_tick(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active=False)
+
+
+def test_run_tick_persists_room_target_for_next_ticks_comparison(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "climate.wohnzimmer_thermostat::current_temperature",
+        "room_target": "climate.wohnzimmer_thermostat::temperature",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = lambda entity_id: {
+        "climate.wohnzimmer_thermostat::current_temperature": 19.5,
+        "climate.wohnzimmer_thermostat::temperature": 21.0,
+    }[entity_id]
+    mqtt_client = MagicMock()
+    options = {
+        "boost_threshold_k": 0.5, "boost_curve_value": 1.5, "boost_offset_value": 30.0,
+        "curve_min": 0.4, "curve_max": 1.5, "offset_min": 20.0, "offset_max": 30.0,
+    }
+
+    _run_tick(manifest, ha_api, mqtt_client, options, threading.Lock(), boost_was_active=False)
+
+    assert load_backup(tmp_path / "backup.json")["last_room_target"] == 21.0
+
+
+def test_run_tick_triggers_boost_on_target_raise_between_ticks(tmp_path, monkeypatch):
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    save_backup(backup_path, {"last_room_target": 20.0})
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual",
+        "room_target": "sensor.room_target",
+        "curve_current": "number.curve",
+        "offset_current": "number.offset",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = lambda entity_id: {
+        "sensor.room_actual": 19.0, "sensor.room_target": 21.0,
+    }[entity_id]
+    mqtt_client = MagicMock()
+    options = {
+        "boost_threshold_k": 0.5, "boost_curve_value": 1.5, "boost_offset_value": 30.0,
+        "curve_min": 0.4, "curve_max": 1.5, "offset_min": 20.0, "offset_max": 30.0,
+    }
+
+    boost_was_active = _run_tick(manifest, ha_api, mqtt_client, options, threading.Lock(), boost_was_active=False)
+
+    assert boost_was_active is True
+    ha_api.set_number_value.assert_any_call("number.curve", 1.5)
+    ha_api.set_number_value.assert_any_call("number.offset", 30.0)
 
 
 def test_resolve_effective_options_uses_profile_defaults_when_clamps_absent():

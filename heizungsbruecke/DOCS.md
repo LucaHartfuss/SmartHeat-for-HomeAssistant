@@ -3,9 +3,16 @@
 Liest konfigurierte Home-Assistant-Entities (Referenzraum, Aussentemperatur,
 aktuelle Heizkurve/Niveau) und meldet sie generisch an den SmartHeat-Server.
 Schreibt vom Server empfangene Sollwerte zurueck, geclamped gegen die
-konfigurierten Sicherheitsgrenzen. Enthaelt eine lokale Boost-Hysterese,
-die unabhaengig vom Server eingreift, wenn der Referenzraum mehr als
-`boost_threshold_k` unter der Zieltemperatur liegt. Dieses Add-on hat keine
+konfigurierten Sicherheitsgrenzen. **Boost** aktiviert ausschliesslich, wenn die
+Wunschtemperatur erhoeht wird (Komfort-Beschleunigung): das Add-on schaltet
+kurzzeitig auf eine hohe Heizkurve, bis der Raum innerhalb von
+`boost_threshold_k` (Default 0.5 K) an die neue Wunschtemperatur herangekommen
+ist, und schaltet danach zur zuletzt vom Server empfangenen Heizkurve zurueck.
+Boost reagiert NICHT mehr auf einen kalten Raum aus anderer Ursache
+(Aussentemperatur-Einbruch, offene Tuer, Server laengere Zeit nicht erreichbar)
+-- diese Faelle werden nur noch vom naechsten regulaeren Heizkurven-Tick sowie
+vom Fail-Safe-Alarm (rein informativ, siehe `failsafe_stale_after_hours` weiter
+unten) abgedeckt. Dieses Add-on hat keine
 eigene Konfigurationsoberflaeche (weder im Configuration-Tab noch als
 Ingress-Panel) -- eingerichtet wird es ueber die separate **SmartHeat**
 Home-Assistant-Integration: installieren, dann Einstellungen → Geraete &
