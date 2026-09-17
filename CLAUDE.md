@@ -5,9 +5,9 @@ HA-Add-on-Repository mit zwei Add-ons: `heizungsbruecke` (Client-seitige Bridge-
 ## Struktur
 
 - `heizungsbruecke/src/heizungsbruecke/`:
-  - `__main__.py` — Regelschleife (aktuell einzelne synchrone Schleife, Default 1h-Poll — der in `docs/superpowers/specs/2026-09-16-heizungsbruecke-trigger-kadenz-entkopplung-design.md` entworfene Split ist **noch nicht implementiert**, siehe `../docs/architecture.md` §8).
+  - `__main__.py` — Regelschleife: entkoppelte Kadenzen (`docs/superpowers/specs/2026-09-16-heizungsbruecke-trigger-kadenz-entkopplung-design.md`, implementiert 2026-09-17) — lokaler Boost-/Aenderungs-Check alle `local_check_interval_seconds` (Default 30s, max 60s, kein Server-/MQTT-Kontakt), voller Snapshot-Publish an den Server nur taeglich (`daily_trigger_time`, profilabhaengig) oder bei `target_rt`-Aenderung seit der letzten Veroeffentlichung. Siehe `../docs/architecture.md` §8.
   - `boost.py` — aktiviert nur bei Sollwerterhöhung (nicht bei Kälte aus anderer Ursache).
-  - `failsafe.py` — Staleness-Watchdog, Default 4h.
+  - `failsafe.py` — Staleness-Watchdog, Default 24h (seit 2026-09-17 wieder gelockert, siehe Trigger-Kadenz-Entkopplung-Spec Abschnitt C).
   - `profiles.py` — lokale Sicherheits-Clamps je `profile_id` (dupliziert zum Server, kein gemeinsamer Code).
   - `mqtt_client.py` — Verbindung fest auf `127.0.0.1:18830` codiert.
   - `manifest.py` — Rollen-Definitionen (`ALL_ROLES`).
