@@ -1016,9 +1016,9 @@ def test_validate_local_check_interval_flags_value_above_sixty():
     assert "local_check_interval_seconds" in error
 
 
-def test_default_failsafe_stale_after_hours_is_24():
+def test_default_failsafe_stale_after_hours_is_26():
     from heizungsbruecke.__main__ import DEFAULT_FAILSAFE_STALE_AFTER_HOURS
-    assert DEFAULT_FAILSAFE_STALE_AFTER_HOURS == 24.0
+    assert DEFAULT_FAILSAFE_STALE_AFTER_HOURS == 26.0
 
 
 def test_default_local_check_interval_seconds_is_30():

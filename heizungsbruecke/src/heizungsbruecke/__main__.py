@@ -64,15 +64,19 @@ DERIVED_SENSORS_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60, 60, 60)
 # DERIVED_SENSORS_RETRY_DELAYS_SECONDS oben (Design-Spec Phase 1, Punkt 2).
 MQTT_CONNECT_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60)
 
-# Bei local_check_interval_seconds<=60 (siehe _validate_local_check_interval) toleriert
-# das ein Vielfaches an verpassten Checks plus Retries/einen kurzen Netzwerk-Blip,
-# meldet einen echten Ausfall aber noch am selben Tag statt erst nach ueber einem Tag.
-# Bewusst wieder auf 24h gelockert (Design-Spec 2026-09-16, Abschnitt C) -- der Nutzer
-# haelt einen zusaetzlichen, von der Kurvenberechnung unabhaengigen Heartbeat aktuell
-# nicht fuer noetig und akzeptiert die vergroeberte Erkennungsgeschwindigkeit, gekoppelt
-# an die jetzt seltenere Down-Nachrichten-Kadenz (voller Snapshot-Publish ist jetzt
-# taeglich + event-driven statt stuendlich).
-DEFAULT_FAILSAFE_STALE_AFTER_HOURS = 24.0
+# Staleness wird ab der letzten GUELTIGEN DOWN-NACHRICHT gemessen, nicht ab dem lokalen
+# Check-Takt (local_check_interval_seconds) -- der laeuft nur alle 30-60s und aktualisiert
+# den Failsafe-Timer nicht selbst. Massgeblich ist die Down-Nachrichten-Kadenz: der volle
+# Snapshot-Publish laeuft jetzt taeglich + event-driven statt stuendlich, d.h. im Normalfall
+# vergehen zwischen zwei gueltigen Down-Nachrichten bereits ~24h. Der Schwellwert braucht
+# also Luft gegen diese ~24h-Kadenz, nicht gegen den 30-60s-Check-Takt -- sonst schlaegt
+# der Failsafe durch reines Timing-Jitter bei rund der Haelfte aller Tage faelschlich an.
+# 26h = 24h Kadenz + ~2h Puffer, deckungsgleich mit dem historischen Vor-Haertungs-Default
+# dieses Add-ons (vor der Verschaerfung auf 4h am 2026-09-15). Bewusst wieder gelockert
+# (Design-Spec 2026-09-16, Abschnitt C) -- der Nutzer haelt einen zusaetzlichen, von der
+# Kurvenberechnung unabhaengigen Heartbeat aktuell nicht fuer noetig und akzeptiert die
+# vergroeberte Erkennungsgeschwindigkeit, gekoppelt an die seltenere Down-Nachrichten-Kadenz.
+DEFAULT_FAILSAFE_STALE_AFTER_HOURS = 26.0
 
 # Nutzer-Vorgabe: lokaler Check-Takt darf 60s nicht ueberschreiten (siehe
 # _validate_local_check_interval). 30s als Standard laesst noch Luft fuer einen

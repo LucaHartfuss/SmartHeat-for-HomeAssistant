@@ -31,11 +31,15 @@ Heizkurven-Neuberechnung aus) laeuft jetzt unabhaengig davon: einmal taeglich
 zu einem festen, profilabhaengigen Zeitpunkt, oder sofort wenn sich die
 Wunschtemperatur seit der letzten Veroeffentlichung geaendert hat.
 
-`failsafe_stale_after_hours`s Standardwert steigt von `4.0` zurueck auf `24.0`
+`failsafe_stale_after_hours`s Standardwert steigt von `4.0` zurueck auf `26.0`
 -- eine bewusste, im Rahmen dieser Aenderung erneut abgewogene Entscheidung
 (nicht ein Widerruf der 4.0-Haertung vom letzten Update), siehe Design-Spec
 `docs/superpowers/specs/2026-09-16-heizungsbruecke-trigger-kadenz-entkopplung-design.md`,
-Abschnitt C.
+Abschnitt C. Der Wert entspricht dem historischen Vor-Haertungs-Default dieses
+Add-ons, der bereits Puffer gegen die jetzt wieder eingefuehrte taegliche
+Down-Nachrichten-Kadenz vorsah -- nicht der im Design-Spec urspruenglich
+diskutierten Zahl: die Zahl hat sich erst waehrend der finalen Umsetzung von
+`24.0` auf `26.0` verschoben, um genuegend Abstand zur ~24h-Kadenz zu behalten.
 
 **Boost/Down-Message-Fix:** waehrend ein Boost aktiv ist, wird eine vom Server
 eingehende Down-Nachricht nur noch in der internen Sicherung (`backup.json`)
