@@ -24,7 +24,13 @@ from heizungsbruecke.failsafe import (
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.manifest import ManifestError, build_manifest
 from heizungsbruecke.mqtt_client import BridgeMqttClient
-from heizungsbruecke.profiles import UnknownProfileError, resolve_boost_defaults, resolve_local_clamps
+from heizungsbruecke.profiles import (
+    UnknownProfileError,
+    resolve_boost_defaults,
+    resolve_local_clamps,
+    resolve_window_defaults,
+    window_size_hours,
+)
 
 OPTIONS_PATH = Path("/data/options.json")
 BACKUP_PATH = Path("/data/backup.json")
@@ -123,6 +129,7 @@ def _is_configured(options: dict) -> bool:
 def _resolve_effective_options(options: dict) -> dict:
     clamps = resolve_local_clamps(options["profile"])
     boost = resolve_boost_defaults(options["profile"])
+    windows = resolve_window_defaults(options["profile"])
     return {
         **options,
         "curve_min": clamps.curve_min,
@@ -132,6 +139,12 @@ def _resolve_effective_options(options: dict) -> dict:
         "boost_threshold_k": boost.threshold_k,
         "boost_curve_value": boost.curve_value,
         "boost_offset_value": boost.offset_value,
+        "daily_trigger_time": windows.daily_trigger_time,
+        "day_avg_window_start": windows.day_avg_window_start,
+        "day_avg_window_end": windows.day_avg_window_end,
+        "night_avg_window_start": windows.night_avg_window_start,
+        "night_avg_window_end": windows.night_avg_window_end,
+        "avg_window_hours": window_size_hours(windows.day_avg_window_start, windows.day_avg_window_end),
     }
 
 
@@ -191,6 +204,7 @@ def _ensure_derived_sensors_with_retry(ha_api, options: dict) -> dict[str, str]:
                 tenant_id=options["tenant_id"],
                 room_actual_entity_id=options["entity_room_actual"],
                 outdoor_temp_entity_id=options["entity_outdoor_temp"],
+                avg_window_hours=options["avg_window_hours"],
                 state_path=DERIVED_SENSORS_PATH,
             )
         except Exception as error:
@@ -336,56 +350,63 @@ def _check_failsafe_staleness(
         _save_failsafe_ctx(failsafe_ctx, failsafe_path)
 
 
-def _run_tick(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active: bool) -> bool:
-    """Runs one poll cycle: publish the snapshot, then (if room roles are configured)
-    evaluate and apply the local boost decision. Returns the boost-active state to
-    carry into the next tick. An individual unreadable sensor only costs that role its
-    snapshot value (handled inside publish_snapshot); any remaining I/O failure
-    propagates -- the caller (_run_bridge's loop) is responsible for catching and
-    logging so a single bad tick doesn't kill the whole process.
-    """
-    seq = str(uuid.uuid4())
-    publish_snapshot(
-        manifest=manifest,
-        ha_api=ha_api,
-        mqtt_client=mqtt_client,
-        seq=seq,
-        notify_service=options.get("notify_service", ""),
-    )
-    logger.info("Snapshot veroeffentlicht, seq=%s", seq)
+def _save_boost_active_if_changed(boost_active: bool, path: Path) -> None:
+    backup = load_backup(path)
+    if backup.get("boost_active", False) != boost_active:
+        backup["boost_active"] = boost_active
+        save_backup(path, backup)
 
-    if "room_actual" in manifest.entity_ids and "room_target" in manifest.entity_ids:
-        room_actual = ha_api.get_state(manifest.entity_ids["room_actual"])
-        room_target = ha_api.get_state(manifest.entity_ids["room_target"])
-        # backup.json is also written from the MQTT down-message callback thread (see
-        # _make_down_callback/handle_down_message), so every read-modify-write of it --
-        # including last_room_target below -- must happen under write_lock like every
-        # other backup.json access in this module, not just the apply_boost_decision call.
-        with write_lock:
-            backup = load_backup(BACKUP_PATH)
-            previous_room_target = backup.get("last_room_target")
-            decision = decide_boost(
-                room_actual=room_actual,
-                room_target=room_target,
-                previous_room_target=previous_room_target,
-                boost_was_active=boost_was_active,
-                arrival_threshold_k=options.get("boost_threshold_k", 0.5),
-                boost_curve_value=options["boost_curve_value"],
-                boost_offset_value=options["boost_offset_value"],
-            )
+
+def _run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active: bool) -> bool:
+    """Runs one local check cycle (Design-Spec 2026-09-16, Abschnitt A): reads
+    room_actual/room_target locally from Home Assistant (no server/MQTT contact),
+    evaluates and applies the boost decision, and persists boost_active for
+    bridge.py::handle_down_message to read (Abschnitt D). Does NOT publish a full
+    snapshot itself -- see _maybe_publish_full_snapshot, called at the end of this
+    function once Task 8 wires it in. Returns the boost-active state to carry into
+    the next check. Propagates any I/O error to the caller (_run_bridge's loop),
+    which is responsible for catching and logging so a single bad check doesn't kill
+    the whole process.
+    """
+    if "room_actual" not in manifest.entity_ids or "room_target" not in manifest.entity_ids:
+        return boost_was_active
+
+    room_actual = ha_api.get_state(manifest.entity_ids["room_actual"])
+    room_target = ha_api.get_state(manifest.entity_ids["room_target"])
+
+    with write_lock:
+        backup = load_backup(BACKUP_PATH)
+        previous_room_target = backup.get("last_room_target")
+
+        decision = decide_boost(
+            room_actual=room_actual,
+            room_target=room_target,
+            previous_room_target=previous_room_target,
+            boost_was_active=boost_was_active,
+            arrival_threshold_k=options.get("boost_threshold_k", 0.5),
+            boost_curve_value=options["boost_curve_value"],
+            boost_offset_value=options["boost_offset_value"],
+        )
+
+        # I/O-Fix (Abschnitt A.2): nur schreiben, wenn sich der Wert tatsaechlich
+        # geaendert hat -- bei local_check_interval_seconds=30 sonst bis zu 2.880
+        # SD-Karten-Schreibvorgaenge/Tag statt vorher 24.
+        if room_target != previous_room_target:
             backup["last_room_target"] = room_target
             save_backup(BACKUP_PATH, backup)
-            boost_was_active = apply_boost_decision(
-                decision=decision,
-                boost_was_active=boost_was_active,
-                manifest=manifest,
-                ha_api=ha_api,
-                curve_min=options["curve_min"],
-                curve_max=options["curve_max"],
-                offset_min=options["offset_min"],
-                offset_max=options["offset_max"],
-                backup_path=BACKUP_PATH,
-            )
+
+        boost_was_active = apply_boost_decision(
+            decision=decision,
+            boost_was_active=boost_was_active,
+            manifest=manifest,
+            ha_api=ha_api,
+            curve_min=options["curve_min"],
+            curve_max=options["curve_max"],
+            offset_min=options["offset_min"],
+            offset_max=options["offset_max"],
+            backup_path=BACKUP_PATH,
+        )
+        _save_boost_active_if_changed(boost_was_active, BACKUP_PATH)
 
     return boost_was_active
 

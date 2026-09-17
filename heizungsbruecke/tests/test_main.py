@@ -20,7 +20,7 @@ from heizungsbruecke.__main__ import (
     _record_valid_message,
     _resolve_effective_options,
     _run_bridge,
-    _run_tick,
+    _run_local_check,
     _save_failsafe_ctx,
     _validate_boost_config,
     _validate_derived_sensor_prerequisites,
@@ -142,8 +142,14 @@ def test_validate_boost_config_accepts_boundary_values():
     assert _validate_boost_config(_base_options(boost_offset_value=5.0)) is None
 
 
-def test_run_tick_publishes_snapshot_and_returns_boost_state(tmp_path, monkeypatch):
-    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+def test_run_local_check_evaluates_boost_without_publishing_when_nothing_changed(tmp_path, monkeypatch):
+    # Publishing becomes conditional once Task 8 wires _maybe_publish_full_snapshot into
+    # the end of this same function -- pre-seed last_published_target_rt to match the
+    # read room_target so this test stays valid after that (it isolates the boost-only
+    # path from the deliberately separate publish trigger, tested on its own in Task 8).
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    save_backup(backup_path, {"last_published_target_rt": 20.0})
     manifest = ChannelManifest(entity_ids={
         "room_actual": "sensor.room_actual",
         "room_target": "sensor.room_target",
@@ -154,12 +160,10 @@ def test_run_tick_publishes_snapshot_and_returns_boost_state(tmp_path, monkeypat
     options = _base_options()
     write_lock = threading.Lock()
 
-    new_state = _run_tick(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active=False)
+    new_state = _run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active=False)
 
     assert new_state is False
-    assert mqtt_client.publish_value.call_count == 2
-    published_roles = {call.kwargs["role"] for call in mqtt_client.publish_value.call_args_list}
-    assert published_roles == {"room_actual", "room_target"}
+    mqtt_client.publish_value.assert_not_called()
 
 
 def _broken_sensor_setup():
@@ -185,45 +189,7 @@ def _broken_sensor_setup():
     return manifest, ha_api
 
 
-def test_run_tick_still_evaluates_boost_when_one_sensor_is_broken(tmp_path, monkeypatch):
-    # I3: a single dead sensor must not abort the whole tick before the boost decision
-    # runs. Boost is setpoint-triggered now (see boost.py), so a previously stored
-    # room_target lower than the current one is seeded here to produce a trigger --
-    # room coldness alone (as in the pre-redefinition version of this test) no longer
-    # activates boost.
-    backup_path = tmp_path / "backup.json"
-    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
-    save_backup(backup_path, {"last_room_target": 20.0})
-    manifest, ha_api = _broken_sensor_setup()
-
-    new_state = _run_tick(manifest, ha_api, MagicMock(), _base_options(), threading.Lock(),
-                          boost_was_active=False)
-
-    assert new_state is True
-    ha_api.set_number_value.assert_any_call("number.curve", 0.5)
-
-
-def test_run_tick_passes_configured_notify_service_through(tmp_path, monkeypatch):
-    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
-    manifest, ha_api = _broken_sensor_setup()
-    options = _base_options(notify_service="notify.mobile_app_lucas_iphone")
-
-    _run_tick(manifest, ha_api, MagicMock(), options, threading.Lock(), boost_was_active=False)
-
-    ha_api.send_notification.assert_called_once()
-    assert ha_api.send_notification.call_args.args[0] == "notify.mobile_app_lucas_iphone"
-
-
-def test_run_tick_sends_no_notification_when_option_is_absent(tmp_path, monkeypatch):
-    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
-    manifest, ha_api = _broken_sensor_setup()
-
-    _run_tick(manifest, ha_api, MagicMock(), _base_options(), threading.Lock(), boost_was_active=False)
-
-    ha_api.send_notification.assert_not_called()
-
-
-def test_run_tick_propagates_exceptions_for_caller_to_handle():
+def test_run_local_check_propagates_exceptions_for_caller_to_handle():
     manifest = ChannelManifest(entity_ids={
         "room_actual": "sensor.room_actual",
         "room_target": "sensor.room_target",
@@ -239,10 +205,10 @@ def test_run_tick_propagates_exceptions_for_caller_to_handle():
     # _run_tick itself must not swallow the error -- main()'s while-loop try/except
     # (I2) is what's responsible for catching, logging and continuing to the next tick.
     with pytest.raises(RuntimeError):
-        _run_tick(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active=False)
+        _run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active=False)
 
 
-def test_run_tick_persists_room_target_for_next_ticks_comparison(tmp_path, monkeypatch):
+def test_run_local_check_persists_room_target_for_next_checks_comparison(tmp_path, monkeypatch):
     monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
     manifest = ChannelManifest(entity_ids={
         "room_actual": "climate.wohnzimmer_thermostat::current_temperature",
@@ -259,12 +225,12 @@ def test_run_tick_persists_room_target_for_next_ticks_comparison(tmp_path, monke
         "curve_min": 0.4, "curve_max": 1.5, "offset_min": 20.0, "offset_max": 30.0,
     }
 
-    _run_tick(manifest, ha_api, mqtt_client, options, threading.Lock(), boost_was_active=False)
+    _run_local_check(manifest, ha_api, mqtt_client, options, threading.Lock(), boost_was_active=False)
 
     assert load_backup(tmp_path / "backup.json")["last_room_target"] == 21.0
 
 
-def test_run_tick_triggers_boost_on_target_raise_between_ticks(tmp_path, monkeypatch):
+def test_run_local_check_triggers_boost_on_target_raise_between_checks(tmp_path, monkeypatch):
     backup_path = tmp_path / "backup.json"
     monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
     save_backup(backup_path, {"last_room_target": 20.0})
@@ -284,7 +250,7 @@ def test_run_tick_triggers_boost_on_target_raise_between_ticks(tmp_path, monkeyp
         "curve_min": 0.4, "curve_max": 1.5, "offset_min": 20.0, "offset_max": 30.0,
     }
 
-    boost_was_active = _run_tick(manifest, ha_api, mqtt_client, options, threading.Lock(), boost_was_active=False)
+    boost_was_active = _run_local_check(manifest, ha_api, mqtt_client, options, threading.Lock(), boost_was_active=False)
 
     assert boost_was_active is True
     ha_api.set_number_value.assert_any_call("number.curve", 1.5)
@@ -304,6 +270,12 @@ def test_resolve_effective_options_uses_profile_defaults_when_clamps_absent():
     assert effective["boost_curve_value"] == 1.5
     assert effective["boost_offset_value"] == 30.0
     assert effective["profile"] == "vaillant_gastherme_heizkoerper"
+    assert effective["daily_trigger_time"] == "12:00"
+    assert effective["day_avg_window_start"] == "14:00"
+    assert effective["day_avg_window_end"] == "17:00"
+    assert effective["night_avg_window_start"] == "04:00"
+    assert effective["night_avg_window_end"] == "07:00"
+    assert effective["avg_window_hours"] == 3.0
 
 
 def test_resolve_effective_options_ignores_explicit_override():
@@ -354,7 +326,10 @@ def test_ensure_derived_sensors_with_retry_returns_result_on_first_success(monke
     sleeps = []
     monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", sleeps.append)
 
-    options = {"tenant_id": "t1", "entity_room_actual": "sensor.rt", "entity_outdoor_temp": "sensor.outdoor"}
+    options = {
+        "tenant_id": "t1", "entity_room_actual": "sensor.rt", "entity_outdoor_temp": "sensor.outdoor",
+        "avg_window_hours": 3.0,
+    }
     result = _ensure_derived_sensors_with_retry(MagicMock(), options)
 
     assert result == expected
@@ -375,7 +350,10 @@ def test_ensure_derived_sensors_with_retry_recovers_after_transient_failures(mon
     sleeps = []
     monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", sleeps.append)
 
-    options = {"tenant_id": "t1", "entity_room_actual": "sensor.rt", "entity_outdoor_temp": "sensor.outdoor"}
+    options = {
+        "tenant_id": "t1", "entity_room_actual": "sensor.rt", "entity_outdoor_temp": "sensor.outdoor",
+        "avg_window_hours": 3.0,
+    }
     result = _ensure_derived_sensors_with_retry(MagicMock(), options)
 
     assert result == expected
@@ -390,7 +368,10 @@ def test_ensure_derived_sensors_with_retry_raises_last_error_after_exhausting_re
     monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", always_fails)
     monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", lambda seconds: None)
 
-    options = {"tenant_id": "t1", "entity_room_actual": "sensor.rt", "entity_outdoor_temp": "sensor.outdoor"}
+    options = {
+        "tenant_id": "t1", "entity_room_actual": "sensor.rt", "entity_outdoor_temp": "sensor.outdoor",
+        "avg_window_hours": 3.0,
+    }
 
     with pytest.raises(ConnectionError, match="HA Core dauerhaft nicht erreichbar"):
         _ensure_derived_sensors_with_retry(MagicMock(), options)
@@ -835,3 +816,85 @@ def test_check_entitlement_fails_open_on_malformed_response_body(monkeypatch, ca
 def test_default_failsafe_stale_after_hours_is_four():
     from heizungsbruecke.__main__ import DEFAULT_FAILSAFE_STALE_AFTER_HOURS
     assert DEFAULT_FAILSAFE_STALE_AFTER_HOURS == 4.0
+
+
+def test_run_local_check_persists_boost_active_true_on_transition_to_active(tmp_path, monkeypatch):
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    save_backup(backup_path, {"last_room_target": 20.0})
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual",
+        "room_target": "sensor.room_target",
+        "curve_current": "number.curve",
+        "offset_current": "number.offset",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = lambda entity_id: {
+        "sensor.room_actual": 19.0, "sensor.room_target": 21.0,
+    }[entity_id]
+    options = {
+        "boost_threshold_k": 0.5, "boost_curve_value": 1.5, "boost_offset_value": 30.0,
+        "curve_min": 0.4, "curve_max": 1.5, "offset_min": 20.0, "offset_max": 30.0,
+    }
+
+    new_state = _run_local_check(manifest, ha_api, MagicMock(), options, threading.Lock(), boost_was_active=False)
+
+    assert new_state is True
+    assert load_backup(backup_path)["boost_active"] is True
+
+
+def test_run_local_check_persists_boost_active_false_on_transition_to_inactive(tmp_path, monkeypatch):
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    save_backup(backup_path, {"last_room_target": 21.0, "boost_active": True, "curve_current": 0.6})
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual",
+        "room_target": "sensor.room_target",
+        "curve_current": "number.curve",
+        "offset_current": "number.offset",
+    })
+    ha_api = MagicMock()
+    # room_actual has arrived within threshold of room_target -> boost ends
+    ha_api.get_state.side_effect = lambda entity_id: {
+        "sensor.room_actual": 20.8, "sensor.room_target": 21.0,
+    }[entity_id]
+    options = {
+        "boost_threshold_k": 0.5, "boost_curve_value": 1.5, "boost_offset_value": 30.0,
+        "curve_min": 0.4, "curve_max": 1.5, "offset_min": 20.0, "offset_max": 30.0,
+    }
+
+    new_state = _run_local_check(manifest, ha_api, MagicMock(), options, threading.Lock(), boost_was_active=True)
+
+    assert new_state is False
+    assert load_backup(backup_path)["boost_active"] is False
+
+
+def test_run_local_check_skips_all_writes_when_nothing_changed(tmp_path, monkeypatch):
+    # SD-wear regression guard (Design-Spec 2026-09-16, Abschnitt A.2): with the local
+    # check now running as often as every 30s, a steady-state call (same room_target,
+    # boost stays inactive) must not touch backup.json at all.
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    # last_published_target_rt is pre-seeded too (matching room_target) so this stays a
+    # true no-op once Task 8 wires _maybe_publish_full_snapshot into the same function --
+    # without it, target_changed would trivially fire (None != 20.0) and this assertion
+    # would break for reasons unrelated to what this test actually guards.
+    save_backup(backup_path, {
+        "last_room_target": 20.0, "boost_active": False, "last_published_target_rt": 20.0,
+    })
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual",
+        "room_target": "sensor.room_target",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = lambda entity_id: {
+        "sensor.room_actual": 20.0, "sensor.room_target": 20.0,
+    }[entity_id]
+    save_calls = []
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.save_backup", lambda path, values: save_calls.append((path, values)),
+    )
+
+    _run_local_check(manifest, ha_api, MagicMock(), _base_options(), threading.Lock(), boost_was_active=False)
+
+    assert save_calls == []
