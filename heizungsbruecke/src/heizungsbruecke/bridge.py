@@ -81,12 +81,25 @@ def handle_down_message(
             role, value, clamped, minimum, maximum,
         )
 
-    ha_api.set_number_value(entity_id, clamped)
-
+    boost_active = False
     if role in _CLAMPED_ROLES:
         backup = load_backup(backup_path)
+        boost_active = backup.get("boost_active", False)
         backup[role] = clamped
         save_backup(backup_path, backup)
+
+    if boost_active:
+        # Design-Spec 2026-09-16, Abschnitt D: der boost-erzwungene Live-Wert bleibt
+        # unberuehrt -- backup.json ist bereits aktuell (siehe oben) und wird beim
+        # Boost-Ende von apply_boost_decision automatisch wiederhergestellt.
+        logger.info(
+            "Down-Nachricht fuer Rolle '%s' waehrend aktivem Boost nur in backup.json "
+            "gespeichert, Live-Entity bleibt auf dem Boost-Wert.",
+            role,
+        )
+        return
+
+    ha_api.set_number_value(entity_id, clamped)
 
 
 def apply_boost_decision(

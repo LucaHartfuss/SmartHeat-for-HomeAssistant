@@ -157,6 +157,70 @@ def test_handle_down_message_refuses_unrecognized_role(tmp_path):
     assert load_backup(backup_path) == {}
 
 
+def test_handle_down_message_writes_live_entity_when_boost_inactive(tmp_path):
+    manifest = ChannelManifest(entity_ids={"curve_current": "number.curve"})
+    ha_api = MagicMock()
+    backup_path = tmp_path / "backup.json"
+    save_backup(backup_path, {"boost_active": False})
+
+    handle_down_message(
+        role="curve_current", value=0.5, manifest=manifest, ha_api=ha_api,
+        curve_min=0.3, curve_max=0.8, offset_min=2.0, offset_max=4.0, backup_path=backup_path,
+    )
+
+    ha_api.set_number_value.assert_called_once_with("number.curve", 0.5)
+    assert load_backup(backup_path)["curve_current"] == 0.5
+
+
+def test_handle_down_message_skips_live_write_when_boost_active(tmp_path):
+    # Design-Spec 2026-09-16, Abschnitt D: waehrend eines aktiven Boosts darf eine
+    # eingehende Down-Nachricht den boost-erzwungenen Live-Wert nicht ueberschreiben --
+    # der Wert wird trotzdem in backup.json gehalten, damit apply_boost_decision beim
+    # Boost-Ende den zuletzt tatsaechlich vom Server berechneten Wert findet.
+    manifest = ChannelManifest(entity_ids={"curve_current": "number.curve"})
+    ha_api = MagicMock()
+    backup_path = tmp_path / "backup.json"
+    save_backup(backup_path, {"boost_active": True})
+
+    handle_down_message(
+        role="curve_current", value=0.5, manifest=manifest, ha_api=ha_api,
+        curve_min=0.3, curve_max=0.8, offset_min=2.0, offset_max=4.0, backup_path=backup_path,
+    )
+
+    ha_api.set_number_value.assert_not_called()
+    assert load_backup(backup_path)["curve_current"] == 0.5
+
+
+def test_handle_down_message_treats_missing_boost_active_as_inactive(tmp_path):
+    # backup.json ohne 'boost_active'-Feld (z.B. allererste Down-Nachricht ueberhaupt)
+    # darf nicht faelschlich als aktiver Boost interpretiert werden.
+    manifest = ChannelManifest(entity_ids={"curve_current": "number.curve"})
+    ha_api = MagicMock()
+    backup_path = tmp_path / "backup.json"  # nie angelegt
+
+    handle_down_message(
+        role="curve_current", value=0.5, manifest=manifest, ha_api=ha_api,
+        curve_min=0.3, curve_max=0.8, offset_min=2.0, offset_max=4.0, backup_path=backup_path,
+    )
+
+    ha_api.set_number_value.assert_called_once_with("number.curve", 0.5)
+
+
+def test_handle_down_message_still_clamps_before_persisting_during_boost(tmp_path):
+    manifest = ChannelManifest(entity_ids={"curve_current": "number.curve"})
+    ha_api = MagicMock()
+    backup_path = tmp_path / "backup.json"
+    save_backup(backup_path, {"boost_active": True})
+
+    handle_down_message(
+        role="curve_current", value=99.0, manifest=manifest, ha_api=ha_api,
+        curve_min=0.3, curve_max=0.5, offset_min=2.0, offset_max=4.0, backup_path=backup_path,
+    )
+
+    ha_api.set_number_value.assert_not_called()
+    assert load_backup(backup_path)["curve_current"] == 0.5
+
+
 def test_apply_boost_decision_clamps_before_writing_when_active(tmp_path):
     manifest = ChannelManifest(entity_ids={
         "curve_current": "number.weishaupt_heizkurve_steigung",
