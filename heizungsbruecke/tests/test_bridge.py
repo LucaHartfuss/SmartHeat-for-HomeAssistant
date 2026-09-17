@@ -247,6 +247,37 @@ def test_apply_boost_decision_clamps_before_writing_when_active(tmp_path):
     ha_api.set_number_value.assert_any_call("number.weishaupt_heizkurve_niveau", 2.0)
 
 
+def test_apply_boost_decision_no_write_when_already_active(tmp_path):
+    # Rate-of-execution fix: this function used to run once per hour, now runs as
+    # often as every 30s (local_check_interval_seconds). Re-writing the same boost
+    # values on every steady-state call while boost stays active would turn a single
+    # boost episode into 120-480 live writes instead of 1 (curve_current/offset_current
+    # are cloud-backed on client1 -- mypyllant) and spam the log every 30s. Only the
+    # inactive -> active TRANSITION (boost_was_active=False) should write.
+    manifest = ChannelManifest(entity_ids={
+        "curve_current": "number.weishaupt_heizkurve_steigung",
+        "offset_current": "number.weishaupt_heizkurve_niveau",
+    })
+    ha_api = MagicMock()
+    decision = BoostDecision(active=True, curve_value=0.5, offset_value=3.0)
+    backup_path = tmp_path / "backup.json"
+
+    new_state = apply_boost_decision(
+        decision=decision,
+        boost_was_active=True,
+        manifest=manifest,
+        ha_api=ha_api,
+        curve_min=0.3,
+        curve_max=0.5,
+        offset_min=2.0,
+        offset_max=4.0,
+        backup_path=backup_path,
+    )
+
+    assert new_state is True
+    ha_api.set_number_value.assert_not_called()
+
+
 def test_apply_boost_decision_restores_backup_on_transition_to_inactive(tmp_path):
     manifest = ChannelManifest(entity_ids={
         "curve_current": "number.weishaupt_heizkurve_steigung",

@@ -599,6 +599,13 @@ def _run_bridge(options: dict, ha_api) -> bool:
         logger.exception(
             "Fehler beim initialen lokalen Check vor MQTT-Start, wird im regulaeren Loop erneut versucht"
         )
+        # Fail-open (whole-branch review finding): backup.json["boost_active"] must not
+        # be left at a stale pre-restart value here -- that defeats the boot-sync fix in
+        # exactly the failure case it needs to handle (a transient HA-API hiccup at boot).
+        # A missed live-write during a genuine boost costs a little comfort for one cycle;
+        # a stuck stale-True value can gate out a down-message and leave the live device
+        # pinned at a boost value for up to a day under the new publish cadence.
+        _save_boost_active_if_changed(False, BACKUP_PATH)
 
     try:
         mqtt_client.loop_start()

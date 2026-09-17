@@ -113,20 +113,31 @@ def apply_boost_decision(
     offset_max: float,
     backup_path: Path,
 ) -> bool:
-    """Writes the (clamped) boost values while boost is active, and restores the
-    last known-good (backed-up) values, also clamped, on the active -> inactive
-    transition. Returns the boost-active state to carry into the next tick.
+    """Writes the (clamped) boost values on the inactive -> active TRANSITION only, and
+    restores the last known-good (backed-up) values, also clamped, on the active ->
+    inactive transition. Returns the boost-active state to carry into the next tick.
+
+    Rate-of-execution fix (whole-branch review finding): this function used to run once
+    per hour (the old poll_interval_seconds cadence); it now runs as often as every 30s
+    (local_check_interval_seconds, inside _run_local_check). decide_boost always returns
+    the same boost_curve_value/boost_offset_value for the whole duration of an active
+    boost, so re-asserting them on every steady-state call (boost_was_active already
+    True) serves no purpose -- the live device already holds them from the transition
+    write -- and would turn a single boost episode into 120-480 live writes instead of
+    1-4. curve_current/offset_current are cloud-backed on client1 (mypyllant), so each
+    superfluous write is a real third-party API call, risking rate-limiting/lockout.
     """
     if decision.active:
-        if "curve_current" in manifest.entity_ids:
-            ha_api.set_number_value(
-                manifest.entity_ids["curve_current"], clamp(decision.curve_value, curve_min, curve_max)
-            )
-        if "offset_current" in manifest.entity_ids:
-            ha_api.set_number_value(
-                manifest.entity_ids["offset_current"], clamp(decision.offset_value, offset_min, offset_max)
-            )
-        logger.warning("Boost aktiv: Sollwerte auf Boost-Werte gesetzt")
+        if not boost_was_active:
+            if "curve_current" in manifest.entity_ids:
+                ha_api.set_number_value(
+                    manifest.entity_ids["curve_current"], clamp(decision.curve_value, curve_min, curve_max)
+                )
+            if "offset_current" in manifest.entity_ids:
+                ha_api.set_number_value(
+                    manifest.entity_ids["offset_current"], clamp(decision.offset_value, offset_min, offset_max)
+                )
+            logger.warning("Boost aktiv: Sollwerte auf Boost-Werte gesetzt")
         return True
 
     if boost_was_active:

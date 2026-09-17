@@ -1069,3 +1069,43 @@ def test_run_bridge_primes_local_check_before_mqtt_loop_start(monkeypatch):
     # The priming call (first entry) must precede loop_start -- proves the fix, not just
     # that both got called at some point.
     assert call_order.index("_run_local_check") < call_order.index("loop_start")
+
+
+def test_run_bridge_resets_stale_boost_active_when_priming_check_raises(monkeypatch, tmp_path):
+    # Whole-branch review finding: if the priming _run_local_check() call itself raises,
+    # backup.json["boost_active"] must not be left at a stale pre-restart value (which
+    # could be True) -- that would defeat the whole point of the boot-sync fix (gating
+    # a genuine down-message against a value never freshly re-derived after restart).
+    # Fail-open toward "not boosting" is the safer direction (see finding writeup).
+    backup_path = tmp_path / "backup.json"
+    save_backup(backup_path, {"boost_active": True})
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+
+    fake_mqtt_client = MagicMock()
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: fake_mqtt_client)
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get",
+        lambda url, timeout: _FakeResponse({"active": True}),
+    )
+    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
+
+    def raising_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active):
+        raise RuntimeError("simulated HA-API hiccup at boot")
+
+    monkeypatch.setattr("heizungsbruecke.__main__._run_local_check", raising_run_local_check)
+
+    # Stop the loop from spinning forever, same pattern as the priming-order test above.
+    def stop_after_first_sleep(seconds):
+        raise SystemExit("stop test loop")
+
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", stop_after_first_sleep)
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.daynight_snapshot.maybe_snapshot", lambda **kwargs: None,
+    )
+
+    options = _full_valid_options()
+
+    with pytest.raises(SystemExit):
+        _run_bridge(options, MagicMock())
+
+    assert load_backup(backup_path)["boost_active"] is False
