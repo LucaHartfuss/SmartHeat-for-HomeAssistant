@@ -19,6 +19,39 @@ Home-Assistant-Integration: installieren, dann Einstellungen → Geraete &
 Dienste → Integration hinzufuegen → "SmartHeat". Die Integration schreibt die
 noetige Konfiguration automatisch in dieses Add-on.
 
+## Update von 0.8.0 auf 0.9.0 (Breaking Change)
+
+**Die eine `poll_interval_seconds`-Kadenz wird durch zwei getrennte Konzepte
+ersetzt.** `poll_interval_seconds` (Standard 3600s) entfaellt ersatzlos.
+`local_check_interval_seconds` (neu, Standard 30s, **hart begrenzt auf maximal
+60s**) steuert ab jetzt nur noch den lokalen Boost-/Aenderungs-Check (liest
+`target_rt`/Raumtemperatur direkt von Home Assistant, kein Server-/MQTT-Kontakt).
+Der volle Snapshot-Publish an den Server (loest die serverseitige
+Heizkurven-Neuberechnung aus) laeuft jetzt unabhaengig davon: einmal taeglich
+zu einem festen, profilabhaengigen Zeitpunkt, oder sofort wenn sich die
+Wunschtemperatur seit der letzten Veroeffentlichung geaendert hat.
+
+`failsafe_stale_after_hours`s Standardwert steigt von `4.0` zurueck auf `24.0`
+-- eine bewusste, im Rahmen dieser Aenderung erneut abgewogene Entscheidung
+(nicht ein Widerruf der 4.0-Haertung vom letzten Update), siehe Design-Spec
+`docs/superpowers/specs/2026-09-16-heizungsbruecke-trigger-kadenz-entkopplung-design.md`,
+Abschnitt C.
+
+**Boost/Down-Message-Fix:** waehrend ein Boost aktiv ist, wird eine vom Server
+eingehende Down-Nachricht nur noch in der internen Sicherung (`backup.json`)
+gehalten, nicht mehr auf die Live-Entity geschrieben -- sie wurde sonst kurz
+nach jedem Boost-Start durch die (vor-Boost) Server-Antwort ueberschrieben.
+Beim Boost-Ende wird weiterhin automatisch der zuletzt gesicherte Wert
+wiederhergestellt.
+
+**Achtung bei bestehenden Installationen:** ein zuvor gesetztes
+`poll_interval_seconds` wird ab dieser Version ignoriert (kein Fehler, das
+Add-on verwendet einfach `local_check_interval_seconds`s Standardwert 30s).
+Wer den lokalen Check-Takt aendern will, muss `local_check_interval_seconds`
+direkt in `options.json` auf dem Pi setzen (kein UI-Schritt dafuer in dieser
+Version, wie schon bei den anderen drei optionalen Werten) -- Werte ueber 60
+werden beim Start mit einer klaren Fehlermeldung abgelehnt.
+
 ## Update von 0.7.3 auf 0.8.0 (Breaking Change)
 
 **Boost aktiviert nicht mehr bei kaltem Raum aus beliebiger Ursache.** Boost

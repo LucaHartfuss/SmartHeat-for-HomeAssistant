@@ -1,5 +1,5 @@
 name: "Heizungsbruecke"
-version: "0.8.0"
+version: "0.9.0"
 slug: "heizungsbruecke"
 description: "Generische Bruecken-Logik: liest konfigurierte HA-Entities, meldet sie an den SmartHeat-Server, schreibt Sollwerte zurueck, mit lokalem Boost-Failsafe und Sicherheits-Clamps."
 url: "https://github.com/LucaHartfuss/SmartHeat-for-HomeAssistant"
@@ -21,10 +21,10 @@ options:
   entity_offset_current: ""
   entity_outdoor_temp: ""
   entity_heat_limit: ""
-  poll_interval_seconds: 3600
+  local_check_interval_seconds: 30
   notify_service: ""
-  failsafe_stale_after_hours: 4.0
-# poll_interval_seconds/notify_service/failsafe_stale_after_hours must stay optional (`?`):
+  failsafe_stale_after_hours: 24.0
+# local_check_interval_seconds/notify_service/failsafe_stale_after_hours must stay optional (`?`):
 # the smartheat integration's config_flow.py only ever sends the 8 fields above (tenant_id,
 # profile, entity_*) -- Supervisor validates a set-options call against the whole schema, and
 # a missing required field fails the call the same way an unknown one does, just silently
@@ -42,6 +42,6 @@ schema:
   entity_offset_current: str
   entity_outdoor_temp: str
   entity_heat_limit: str
-  poll_interval_seconds: int?
+  local_check_interval_seconds: int(1,60)?
   notify_service: str?
   failsafe_stale_after_hours: float(0.1,)?
