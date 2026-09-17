@@ -1,6 +1,7 @@
 import json
 import logging
 import threading
+from datetime import datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -17,6 +18,7 @@ from heizungsbruecke.__main__ import (
     _load_failsafe_ctx_safe,
     _load_options_safe,
     _make_down_callback,
+    _maybe_publish_full_snapshot,
     _record_valid_message,
     _resolve_effective_options,
     _run_bridge,
@@ -24,6 +26,7 @@ from heizungsbruecke.__main__ import (
     _save_failsafe_ctx,
     _validate_boost_config,
     _validate_derived_sensor_prerequisites,
+    _validate_local_check_interval,
 )
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.failsafe import FailsafeState
@@ -813,11 +816,6 @@ def test_check_entitlement_fails_open_on_malformed_response_body(monkeypatch, ca
     assert "berechtigungspruefung" in caplog.text.lower() or "accounts-api" in caplog.text.lower()
 
 
-def test_default_failsafe_stale_after_hours_is_four():
-    from heizungsbruecke.__main__ import DEFAULT_FAILSAFE_STALE_AFTER_HOURS
-    assert DEFAULT_FAILSAFE_STALE_AFTER_HOURS == 4.0
-
-
 def test_run_local_check_persists_boost_active_true_on_transition_to_active(tmp_path, monkeypatch):
     backup_path = tmp_path / "backup.json"
     monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
@@ -898,3 +896,176 @@ def test_run_local_check_skips_all_writes_when_nothing_changed(tmp_path, monkeyp
     _run_local_check(manifest, ha_api, MagicMock(), _base_options(), threading.Lock(), boost_was_active=False)
 
     assert save_calls == []
+
+
+def test_maybe_publish_full_snapshot_publishes_when_target_changed(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual", "room_target": "sensor.room_target"})
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 20.0
+    mqtt_client = MagicMock()
+
+    _maybe_publish_full_snapshot(
+        manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options={},
+        room_target=21.0, notify_service="", now=datetime(2026, 9, 17, 9, 0),
+    )
+
+    assert mqtt_client.publish_value.call_count == 2
+    assert load_backup(tmp_path / "backup.json")["last_published_target_rt"] == 21.0
+
+
+def test_maybe_publish_full_snapshot_does_not_republish_unchanged_target(tmp_path, monkeypatch):
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    save_backup(backup_path, {"last_published_target_rt": 21.0})
+    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual", "room_target": "sensor.room_target"})
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 20.0
+    mqtt_client = MagicMock()
+
+    _maybe_publish_full_snapshot(
+        manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options={},
+        room_target=21.0, notify_service="", now=datetime(2026, 9, 17, 9, 0),
+    )
+
+    mqtt_client.publish_value.assert_not_called()
+
+
+def test_maybe_publish_full_snapshot_publishes_when_daily_trigger_time_reached(tmp_path, monkeypatch):
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    save_backup(backup_path, {"last_published_target_rt": 21.0})  # unchanged target
+    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual", "room_target": "sensor.room_target"})
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 20.0
+    mqtt_client = MagicMock()
+
+    _maybe_publish_full_snapshot(
+        manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options={"daily_trigger_time": "12:00"},
+        room_target=21.0, notify_service="", now=datetime(2026, 9, 17, 12, 5),
+    )
+
+    assert mqtt_client.publish_value.call_count == 2
+    assert load_backup(backup_path)["last_daily_trigger_date"] == "2026-09-17"
+
+
+def test_maybe_publish_full_snapshot_does_not_refire_daily_trigger_same_day(tmp_path, monkeypatch):
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    save_backup(backup_path, {"last_published_target_rt": 21.0, "last_daily_trigger_date": "2026-09-17"})
+    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual", "room_target": "sensor.room_target"})
+    ha_api = MagicMock()
+    mqtt_client = MagicMock()
+
+    _maybe_publish_full_snapshot(
+        manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options={"daily_trigger_time": "12:00"},
+        room_target=21.0, notify_service="", now=datetime(2026, 9, 17, 15, 0),
+    )
+
+    mqtt_client.publish_value.assert_not_called()
+
+
+def test_maybe_publish_full_snapshot_skips_when_nothing_triggers(tmp_path, monkeypatch):
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    save_backup(backup_path, {"last_published_target_rt": 21.0})
+    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual", "room_target": "sensor.room_target"})
+    ha_api = MagicMock()
+    mqtt_client = MagicMock()
+
+    _maybe_publish_full_snapshot(
+        manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options={"daily_trigger_time": "12:00"},
+        room_target=21.0, notify_service="", now=datetime(2026, 9, 17, 9, 0),
+    )
+
+    mqtt_client.publish_value.assert_not_called()
+    assert load_backup(backup_path) == {"last_published_target_rt": 21.0}  # unchanged, no gratuitous write
+
+
+def test_maybe_publish_full_snapshot_passes_notify_service_through(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual", "dat": "sensor.kaputt"})
+    ha_api = MagicMock()
+
+    def _get_state(entity_id):
+        if entity_id == "sensor.kaputt":
+            raise ValueError("could not convert string to float: 'unavailable'")
+        return 20.0
+
+    ha_api.get_state.side_effect = _get_state
+    mqtt_client = MagicMock()
+
+    _maybe_publish_full_snapshot(
+        manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options={},
+        room_target=21.0, notify_service="notify.mobile_app_lucas_iphone", now=datetime(2026, 9, 17, 9, 0),
+    )
+
+    ha_api.send_notification.assert_called_once()
+    assert ha_api.send_notification.call_args.args[0] == "notify.mobile_app_lucas_iphone"
+
+
+def test_validate_local_check_interval_accepts_absent_and_valid_values():
+    assert _validate_local_check_interval({}) is None
+    assert _validate_local_check_interval({"local_check_interval_seconds": 30}) is None
+    assert _validate_local_check_interval({"local_check_interval_seconds": 60}) is None
+
+
+def test_validate_local_check_interval_flags_value_above_sixty():
+    error = _validate_local_check_interval({"local_check_interval_seconds": 61})
+    assert error is not None
+    assert "local_check_interval_seconds" in error
+
+
+def test_default_failsafe_stale_after_hours_is_24():
+    from heizungsbruecke.__main__ import DEFAULT_FAILSAFE_STALE_AFTER_HOURS
+    assert DEFAULT_FAILSAFE_STALE_AFTER_HOURS == 24.0
+
+
+def test_default_local_check_interval_seconds_is_30():
+    from heizungsbruecke.__main__ import DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS
+    assert DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS == 30
+
+
+def test_run_bridge_primes_local_check_before_mqtt_loop_start(monkeypatch):
+    # Boot-Sync-Fix (Sicherheits-Review-Fund, siehe task-8-brief.md Zusatzanforderung):
+    # backup.json["boost_active"] darf nach einem Neustart nicht veraltet sein, bevor
+    # MQTT-Down-Nachrichten verarbeitet werden koennen. subscribe_down() allein liefert
+    # noch keine Nachrichten aus -- erst loop_start() startet die Verarbeitung. Also muss
+    # der allererste _run_local_check()-Aufruf synchron VOR loop_start() abgeschlossen sein.
+    call_order = []
+
+    fake_mqtt_client = MagicMock()
+    fake_mqtt_client.loop_start.side_effect = lambda: call_order.append("loop_start")
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: fake_mqtt_client)
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get",
+        lambda url, timeout: _FakeResponse({"active": True}),
+    )
+    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
+
+    def fake_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active):
+        call_order.append("_run_local_check")
+        return boost_was_active
+
+    monkeypatch.setattr("heizungsbruecke.__main__._run_local_check", fake_run_local_check)
+
+    # Stop the loop from spinning forever: raise after the first sleep() call, which is
+    # the last thing that happens inside one loop iteration.
+    def stop_after_first_sleep(seconds):
+        raise SystemExit("stop test loop")
+
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", stop_after_first_sleep)
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.daynight_snapshot.maybe_snapshot", lambda **kwargs: None,
+    )
+
+    options = _full_valid_options()
+
+    with pytest.raises(SystemExit):
+        _run_bridge(options, MagicMock())
+
+    assert "_run_local_check" in call_order
+    assert "loop_start" in call_order
+    # The priming call (first entry) must precede loop_start -- proves the fix, not just
+    # that both got called at some point.
+    assert call_order.index("_run_local_check") < call_order.index("loop_start")

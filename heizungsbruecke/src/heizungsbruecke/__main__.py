@@ -64,12 +64,20 @@ DERIVED_SENSORS_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60, 60, 60)
 # DERIVED_SENSORS_RETRY_DELAYS_SECONDS oben (Design-Spec Phase 1, Punkt 2).
 MQTT_CONNECT_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60)
 
-# Bei Default-poll_interval_seconds=3600 (1h) toleriert das einen verpassten Tick plus
-# Retries/einen kurzen Netzwerk-Blip, meldet einen echten Mehrstunden-Ausfall aber noch
-# am selben Tag statt erst nach ueber einem Tag (Design-Spec Phase 5, Punkt 16). Seit der
-# Boost-Neudefinition (Task 17) ist dies das EINZIGE verbleibende Signal fuer eine
-# tote/veraltete Serververbindung.
-DEFAULT_FAILSAFE_STALE_AFTER_HOURS = 4.0
+# Bei local_check_interval_seconds<=60 (siehe _validate_local_check_interval) toleriert
+# das ein Vielfaches an verpassten Checks plus Retries/einen kurzen Netzwerk-Blip,
+# meldet einen echten Ausfall aber noch am selben Tag statt erst nach ueber einem Tag.
+# Bewusst wieder auf 24h gelockert (Design-Spec 2026-09-16, Abschnitt C) -- der Nutzer
+# haelt einen zusaetzlichen, von der Kurvenberechnung unabhaengigen Heartbeat aktuell
+# nicht fuer noetig und akzeptiert die vergroeberte Erkennungsgeschwindigkeit, gekoppelt
+# an die jetzt seltenere Down-Nachrichten-Kadenz (voller Snapshot-Publish ist jetzt
+# taeglich + event-driven statt stuendlich).
+DEFAULT_FAILSAFE_STALE_AFTER_HOURS = 24.0
+
+# Nutzer-Vorgabe: lokaler Check-Takt darf 60s nicht ueberschreiten (siehe
+# _validate_local_check_interval). 30s als Standard laesst noch Luft fuer einen
+# kuerzeren Wert, falls je gebraucht.
+DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS = 30
 
 # Gleicher Hostname fuer jeden Tenant (kein Tenant-spezifischer Wert) -- siehe
 # SmartHeat-HomeAssistant-Integration/custom_components/smartheat/api_client.py,
@@ -168,6 +176,22 @@ def _validate_boost_config(options: dict) -> str | None:
         return (
             f"boost_offset_value ({boost_offset_value}) liegt ausserhalb des konfigurierten "
             f"Bereichs [offset_min={offset_min}, offset_max={offset_max}]"
+        )
+    return None
+
+
+def _validate_local_check_interval(options: dict) -> str | None:
+    """Returns a German error message if local_check_interval_seconds is set but
+    exceeds the user-mandated maximum of 60s (Design-Spec 2026-09-16, Abschnitt A.1),
+    or None if absent/valid. Guards against a manually edited options.json on the Pi
+    bypassing config.yaml's schema cap and reintroducing the SD-wear problem this
+    design fixes.
+    """
+    value = options.get("local_check_interval_seconds")
+    if value is not None and value > 60:
+        return (
+            f"local_check_interval_seconds ({value}) liegt ueber dem zulaessigen Maximum "
+            f"von 60 Sekunden (haeufigere lokale Checks verschleissen die SD-Karte unnoetig)"
         )
     return None
 
@@ -408,7 +432,56 @@ def _run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_w
         )
         _save_boost_active_if_changed(boost_was_active, BACKUP_PATH)
 
+        _maybe_publish_full_snapshot(
+            manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options=options,
+            room_target=room_target, notify_service=options.get("notify_service", ""), now=datetime.now(),
+        )
+
     return boost_was_active
+
+
+def _maybe_publish_full_snapshot(
+    manifest, ha_api, mqtt_client, options: dict, room_target: float, notify_service: str, now: datetime,
+) -> None:
+    """Triggers a full snapshot publish (curve.py recompute server-side) when target_rt
+    has changed since the last publish, or the profile's daily_trigger_time has been
+    reached for the first time today -- Design-Spec 2026-09-16, Abschnitt A.3/B. Called
+    from inside _run_local_check's write_lock block, after the boost decision, so a
+    triggered snapshot always carries the just-updated boost_active state (Abschnitt D).
+
+    Unlike daynight_snapshot.maybe_snapshot's boundary-crossing-since-last-check
+    algorithm, a simple "time of day already past, not yet fired today" check is
+    correct here: local_check_interval_seconds is hard-capped at 60s (see
+    _validate_local_check_interval), so the daily boundary can never be missed by more
+    than one check -- no narrow-window/cold-start handling needed.
+    """
+    backup = load_backup(BACKUP_PATH)
+    today = now.date().isoformat()
+
+    daily_trigger_time = options.get("daily_trigger_time")
+    daily_due = False
+    if daily_trigger_time:
+        trigger_time = datetime.strptime(daily_trigger_time, "%H:%M").time()
+        daily_due = now.time() >= trigger_time and backup.get("last_daily_trigger_date") != today
+
+    target_changed = room_target != backup.get("last_published_target_rt")
+
+    if not (daily_due or target_changed):
+        return
+
+    seq = str(uuid.uuid4())
+    publish_snapshot(
+        manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq=seq, notify_service=notify_service,
+    )
+    logger.info(
+        "Voller Snapshot veroeffentlicht (seq=%s, Grund=%s)",
+        seq, "taeglicher Zeitpunkt" if daily_due else "target_rt geaendert",
+    )
+
+    backup["last_published_target_rt"] = room_target
+    if daily_due:
+        backup["last_daily_trigger_date"] = today
+    save_backup(BACKUP_PATH, backup)
 
 
 def _run_bridge(options: dict, ha_api) -> bool:
@@ -446,6 +519,11 @@ def _run_bridge(options: dict, ha_api) -> bool:
     boost_config_error = _validate_boost_config(options)
     if boost_config_error:
         logger.error("FEHLER: %s", boost_config_error)
+        return False
+
+    local_check_interval_error = _validate_local_check_interval(options)
+    if local_check_interval_error:
+        logger.error("FEHLER: %s", local_check_interval_error)
         return False
 
     prerequisite_error = _validate_derived_sensor_prerequisites(options)
@@ -492,7 +570,6 @@ def _run_bridge(options: dict, ha_api) -> bool:
                     role=role,
                     on_message=_make_down_callback(role, manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client),
                 )
-        mqtt_client.loop_start()
     except ConnectionRefusedError as error:
         logger.error(
             "FEHLER: MQTT-Verbindung zum Broker fehlgeschlagen (Connection refused): %s. "
@@ -505,13 +582,35 @@ def _run_bridge(options: dict, ha_api) -> bool:
         logger.error("FEHLER: MQTT-Verbindung zum Broker fehlgeschlagen: %s", error)
         return False
 
+    # Boost-Active-Bootstrap-Fix (Sicherheits-Review-Fund, siehe SDD-Ledger dieses Plans):
+    # mindestens ein lokaler Check MUSS abgeschlossen sein, bevor MQTT-Down-Nachrichten
+    # verarbeitet werden koennen -- sonst kann backup.json["boost_active"] nach einem
+    # Neustart waehrend eines aktiven Boosts fuer ein kurzes Fenster veraltet sein (siehe
+    # handle_down_message, Design-Spec Abschnitt D), und eine in diesem Fenster eintreffende
+    # Down-Nachricht wuerde gegen einen Wert behandelt, der seit dem Neustart nie frisch aus
+    # echten Sensor-Werten neu bestimmt wurde. subscribe_down() liefert allein noch keine
+    # Nachrichten aus -- erst loop_start() startet die Hintergrund-Verarbeitung -- daher
+    # genuegt es, den allerersten _run_local_check()-Aufruf synchron VOR loop_start()
+    # abzuschliessen, statt einen "sichereren" statischen Default zu waehlen.
     boost_was_active = False
+    try:
+        boost_was_active = _run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active)
+    except Exception:
+        logger.exception(
+            "Fehler beim initialen lokalen Check vor MQTT-Start, wird im regulaeren Loop erneut versucht"
+        )
+
+    try:
+        mqtt_client.loop_start()
+    except Exception as error:
+        logger.error("FEHLER: MQTT-Verbindung zum Broker fehlgeschlagen: %s", error)
+        return False
 
     while True:
         try:
-            boost_was_active = _run_tick(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active)
+            boost_was_active = _run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active)
         except Exception:
-            logger.exception("Fehler im Poll-Loop, wird beim naechsten Tick erneut versucht")
+            logger.exception("Fehler im lokalen Check, wird beim naechsten Check erneut versucht")
 
         try:
             with write_lock:
@@ -520,7 +619,7 @@ def _run_bridge(options: dict, ha_api) -> bool:
                     ha_api=ha_api, notify_service=options.get("notify_service", ""),
                 )
         except Exception:
-            logger.exception("Fehler bei der Fail-Safe-Staleness-Pruefung, wird beim naechsten Tick erneut versucht")
+            logger.exception("Fehler bei der Fail-Safe-Staleness-Pruefung, wird beim naechsten Check erneut versucht")
 
         try:
             daynight_snapshot.maybe_snapshot(
@@ -528,13 +627,15 @@ def _run_bridge(options: dict, ha_api) -> bool:
                 room_12h_avg_entity_id=derived_entity_ids["_room_12h_avg"],
                 day_avg_entity_id=derived_entity_ids["room_day_avg"],
                 night_avg_entity_id=derived_entity_ids["room_night_avg"],
+                day_avg_window_end=options["day_avg_window_end"],
+                night_avg_window_end=options["night_avg_window_end"],
                 state_path=DAYNIGHT_SNAPSHOT_PATH,
                 now=datetime.now(),
             )
         except Exception:
-            logger.exception("Fehler beim Tag-/Nachtmittel-Snapshot, wird beim naechsten Tick erneut versucht")
+            logger.exception("Fehler beim Tag-/Nachtmittel-Snapshot, wird beim naechsten Check erneut versucht")
 
-        time.sleep(options.get("poll_interval_seconds", 3600))
+        time.sleep(options.get("local_check_interval_seconds", DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS))
 
 
 def _load_options_safe(path: Path) -> dict:
