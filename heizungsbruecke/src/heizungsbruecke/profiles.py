@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 
 _COMMON_REQUIRED_ROLES = (
     "room_actual", "room_target", "curve_current", "offset_current",
@@ -51,6 +52,25 @@ LOCAL_BOOST_DEFAULTS: dict[str, BoostDefaults] = {
 }
 
 
+@dataclass(frozen=True)
+class WindowDefaults:
+    """Fenstergrenzen fuer den taeglichen vollen Snapshot-Publish sowie die Tag-/
+    Nachtmittel-Berechnung des Referenzraums (Design-Spec 2026-09-16, Abschnitt B).
+    Werte identisch zu den serverseitigen TriggerWindows in heizungsserver/src/
+    heizungsserver/generic/profiles.py -- kein geteilter Code zwischen den Repos,
+    gleiches Muster wie LOCAL_CLAMP_DEFAULTS/LOCAL_BOOST_DEFAULTS oben. Tag- und
+    Nachtfenster muessen gleich gross sein (siehe _check_window_invariants): beide
+    werden vom selben rollierenden statistics-Sensor gelesen (derived_sensors.py),
+    ein einzelner max_age_hours-Wert bedient beide Ablesungen.
+    """
+
+    daily_trigger_time: str
+    day_avg_window_start: str
+    day_avg_window_end: str
+    night_avg_window_start: str
+    night_avg_window_end: str
+
+
 class UnknownProfileError(ValueError):
     """Deckt jeden Fehlschlag der Profil-/Clamp-Aufloesung ab: unbekannte profile_id,
     fehlende Pflichtfelder ohne Profil-Default, oder ein aufgeloestes Clamp-Ergebnis
@@ -70,6 +90,53 @@ def resolve_boost_defaults(profile_id: str) -> BoostDefaults:
         return LOCAL_BOOST_DEFAULTS[profile_id]
     except KeyError:
         raise UnknownProfileError(f"Profil '{profile_id}' hat keine Boost-Defaults hinterlegt") from None
+
+
+LOCAL_WINDOW_DEFAULTS: dict[str, WindowDefaults] = {
+    "vaillant_gastherme_heizkoerper": WindowDefaults(
+        daily_trigger_time="12:00",
+        day_avg_window_start="14:00", day_avg_window_end="17:00",
+        night_avg_window_start="04:00", night_avg_window_end="07:00",
+    ),
+}
+
+
+def _parse_hhmm_minutes(value: str) -> int:
+    parsed = datetime.strptime(value, "%H:%M")
+    return parsed.hour * 60 + parsed.minute
+
+
+def window_size_hours(start: str, end: str) -> float:
+    return (_parse_hhmm_minutes(end) - _parse_hhmm_minutes(start)) / 60.0
+
+
+def _check_window_invariants(windows: WindowDefaults, profile_id: str) -> None:
+    day_size = window_size_hours(windows.day_avg_window_start, windows.day_avg_window_end)
+    night_size = window_size_hours(windows.night_avg_window_start, windows.night_avg_window_end)
+    if day_size <= 0:
+        raise UnknownProfileError(
+            f"Profil '{profile_id}': Tagesfenster ({windows.day_avg_window_start}-"
+            f"{windows.day_avg_window_end}) ist nicht positiv"
+        )
+    if night_size <= 0:
+        raise UnknownProfileError(
+            f"Profil '{profile_id}': Nachtfenster ({windows.night_avg_window_start}-"
+            f"{windows.night_avg_window_end}) ist nicht positiv"
+        )
+    if day_size != night_size:
+        raise UnknownProfileError(
+            f"Profil '{profile_id}': Tagesfenster ({day_size}h) und Nachtfenster "
+            f"({night_size}h) muessen gleich gross sein (gemeinsamer statistics-Sensor)"
+        )
+
+
+def resolve_window_defaults(profile_id: str) -> WindowDefaults:
+    try:
+        windows = LOCAL_WINDOW_DEFAULTS[profile_id]
+    except KeyError:
+        raise UnknownProfileError(f"Profil '{profile_id}' hat keine Fenster-Defaults hinterlegt") from None
+    _check_window_invariants(windows, profile_id)
+    return windows
 
 
 def _check_clamp_invariants(clamps: LocalClamps, profile_id: str) -> None:
