@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 import requests
 
+import heizungsbruecke.__main__ as main_module
 from heizungsbruecke.__main__ import (
     TenantNotEntitledError,
     _check_entitlement,
@@ -33,6 +34,14 @@ from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.failsafe import FailsafeState
 from heizungsbruecke.profiles import UnknownProfileError
 from heizungsbruecke.manifest import ChannelManifest
+
+
+@pytest.fixture(autouse=True)
+def _reset_telemetry_marker(monkeypatch):
+    # _last_telemetry_publish_ts is in-memory/module-level (not per-tmp_path like
+    # backup.json), so without this reset it leaks across tests and makes
+    # publish_telemetry calls order-dependent.
+    monkeypatch.setattr("heizungsbruecke.__main__._last_telemetry_publish_ts", None)
 
 
 def _base_options(**overrides):
@@ -880,11 +889,11 @@ def test_run_local_check_skips_all_writes_when_nothing_changed(tmp_path, monkeyp
     # would break for reasons unrelated to what this test actually guards.
     save_backup(backup_path, {
         "last_room_target": 20.0, "boost_active": False, "last_published_target_rt": 20.0,
-        # Also pre-seed the telemetry cadence guard (own interval, unrelated to this
-        # test's SD-wear concern) far in the future, so its own once-per-interval write
-        # doesn't fire here and break the "zero writes" assertion below.
-        "last_telemetry_publish_ts": 9_999_999_999.0,
     })
+    # Telemetry cadence marker is in-memory only now, not part of backup.json --
+    # pre-seed it far in the future so its own publish doesn't fire here and confuse
+    # this test's unrelated "zero writes" assertion below.
+    monkeypatch.setattr("heizungsbruecke.__main__._last_telemetry_publish_ts", 9_999_999_999.0)
     manifest = ChannelManifest(entity_ids={
         "room_actual": "sensor.room_actual",
         "room_target": "sensor.room_target",
@@ -1131,12 +1140,10 @@ def test_maybe_publish_telemetry_publishes_on_first_call(tmp_path, monkeypatch):
     assert payload["boost_active"] is False
     assert payload["failsafe_active"] is False
     assert "ts" in payload
-    assert load_backup(tmp_path / "backup.json")["last_telemetry_publish_ts"] == 1000.0
 
 
-def test_maybe_publish_telemetry_skips_within_interval(tmp_path, monkeypatch):
-    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
-    save_backup(tmp_path / "backup.json", {"last_telemetry_publish_ts": 1000.0})
+def test_maybe_publish_telemetry_skips_within_interval(monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__._last_telemetry_publish_ts", 1000.0)
     mqtt_client = MagicMock()
 
     _maybe_publish_telemetry(
@@ -1147,9 +1154,8 @@ def test_maybe_publish_telemetry_skips_within_interval(tmp_path, monkeypatch):
     mqtt_client.publish_telemetry.assert_not_called()
 
 
-def test_maybe_publish_telemetry_publishes_again_after_interval_elapsed(tmp_path, monkeypatch):
-    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
-    save_backup(tmp_path / "backup.json", {"last_telemetry_publish_ts": 1000.0})
+def test_maybe_publish_telemetry_publishes_again_after_interval_elapsed(monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__._last_telemetry_publish_ts", 1000.0)
     mqtt_client = MagicMock()
 
     _maybe_publish_telemetry(
@@ -1158,7 +1164,25 @@ def test_maybe_publish_telemetry_publishes_again_after_interval_elapsed(tmp_path
     )
 
     mqtt_client.publish_telemetry.assert_called_once()
-    assert load_backup(tmp_path / "backup.json")["last_telemetry_publish_ts"] == 1301.0
+    assert main_module._last_telemetry_publish_ts == 1301.0
+
+
+def test_maybe_publish_telemetry_does_not_touch_backup_json(tmp_path, monkeypatch):
+    # SD-wear regression guard: the telemetry cadence marker must live in memory only
+    # (module-level, reset by the autouse fixture above) -- persisting it to
+    # backup.json on every publish would reintroduce ~288 writes/day, exactly what
+    # A.2 eliminated for the other backup.json fields.
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    mqtt_client = MagicMock()
+
+    _maybe_publish_telemetry(
+        mqtt_client=mqtt_client, options={}, room_actual=20.5,
+        boost_active=False, failsafe_active=False, now=1000.0,
+    )
+
+    mqtt_client.publish_telemetry.assert_called_once()
+    assert not backup_path.exists()
 
 
 def test_run_local_check_publishes_telemetry_with_current_boost_and_failsafe_state(tmp_path, monkeypatch):

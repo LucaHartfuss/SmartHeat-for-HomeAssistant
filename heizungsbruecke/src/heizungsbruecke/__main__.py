@@ -88,6 +88,12 @@ DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS = 30
 # entkoppeltes Intervall, damit Komfort-/Boost-KPIs nicht zu grobkoernig werden.
 DEFAULT_TELEMETRY_INTERVAL_SECONDS = 300
 
+# In-memory only (not persisted to backup.json) -- persisting it would reintroduce
+# ~288 SD-card writes/day, exactly what A.2 eliminated for the other backup.json
+# fields. Losing this marker on an add-on restart just causes one extra early
+# telemetry publish, which is harmless for a purely observational KPI feed.
+_last_telemetry_publish_ts: float | None = None
+
 # Gleicher Hostname fuer jeden Tenant (kein Tenant-spezifischer Wert) -- siehe
 # SmartHeat-HomeAssistant-Integration/custom_components/smartheat/api_client.py,
 # DEFAULT_HEIZUNGSSERVER_BASE_URL. Hartkodiert wie MQTT_HOST/MQTT_PORT oben, aus
@@ -528,12 +534,12 @@ def _maybe_publish_telemetry(
     every 30-60s again) and from the now-daily/event-driven full snapshot (would make
     comfort/boost KPIs too coarse-grained). Not retained, QoS 1 only (see
     BridgeMqttClient.publish_telemetry): this topic feeds only observational KPI
-    reporting and has no influence on curve.py or any control decision.
+    reporting and has no influence on curve.py or any control decision. The cadence
+    marker is in-memory only (see `_last_telemetry_publish_ts`), not persisted.
     """
+    global _last_telemetry_publish_ts
     interval = options.get("telemetry_interval_seconds", DEFAULT_TELEMETRY_INTERVAL_SECONDS)
-    backup = load_backup(BACKUP_PATH)
-    last_publish = backup.get("last_telemetry_publish_ts")
-    if last_publish is not None and (now - last_publish) < interval:
+    if _last_telemetry_publish_ts is not None and (now - _last_telemetry_publish_ts) < interval:
         return
 
     mqtt_client.publish_telemetry({
@@ -543,8 +549,7 @@ def _maybe_publish_telemetry(
         "ts": datetime.now().isoformat(),
     })
 
-    backup["last_telemetry_publish_ts"] = now
-    save_backup(BACKUP_PATH, backup)
+    _last_telemetry_publish_ts = now
 
 
 def _run_bridge(options: dict, ha_api) -> bool:
