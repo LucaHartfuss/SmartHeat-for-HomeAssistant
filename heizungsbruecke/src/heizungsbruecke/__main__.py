@@ -83,6 +83,11 @@ DEFAULT_FAILSAFE_STALE_AFTER_HOURS = 26.0
 # kuerzeren Wert, falls je gebraucht.
 DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS = 30
 
+# Design-Spec 2026-09-16 (KPI-Erfassung), Abschnitt 1: eigenes, von
+# local_check_interval_seconds UND vom (jetzt seltenen) vollen Snapshot-Publish
+# entkoppeltes Intervall, damit Komfort-/Boost-KPIs nicht zu grobkoernig werden.
+DEFAULT_TELEMETRY_INTERVAL_SECONDS = 300
+
 # Gleicher Hostname fuer jeden Tenant (kein Tenant-spezifischer Wert) -- siehe
 # SmartHeat-HomeAssistant-Integration/custom_components/smartheat/api_client.py,
 # DEFAULT_HEIZUNGSSERVER_BASE_URL. Hartkodiert wie MQTT_HOST/MQTT_PORT oben, aus
@@ -385,7 +390,10 @@ def _save_boost_active_if_changed(boost_active: bool, path: Path) -> None:
         save_backup(path, backup)
 
 
-def _run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active: bool) -> bool:
+def _run_local_check(
+    manifest, ha_api, mqtt_client, options, write_lock, boost_was_active: bool,
+    failsafe_ctx: dict | None = None,
+) -> bool:
     """Runs one local check cycle (Design-Spec 2026-09-16, Abschnitt A): reads
     room_actual/room_target locally from Home Assistant (no server/MQTT contact),
     evaluates and applies the boost decision, and persists boost_active for
@@ -394,7 +402,10 @@ def _run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_w
     function once Task 8 wires it in. Returns the boost-active state to carry into
     the next check. Propagates any I/O error to the caller (_run_bridge's loop),
     which is responsible for catching and logging so a single bad check doesn't kill
-    the whole process.
+    the whole process. Also publishes the KPI telemetry snapshot (Design-Spec
+    2026-09-16 KPI-Erfassung) once `telemetry_interval_seconds` has elapsed;
+    `failsafe_ctx=None` (e.g. from a caller that predates this feature) reports
+    `failsafe_active=False`.
     """
     if "room_actual" not in manifest.entity_ids or "room_target" not in manifest.entity_ids:
         return boost_was_active
@@ -441,6 +452,13 @@ def _run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_w
             room_target=room_target, notify_service=options.get("notify_service", ""), now=datetime.now(),
         )
 
+        _maybe_publish_telemetry(
+            mqtt_client=mqtt_client, options=options, room_actual=room_actual,
+            boost_active=boost_was_active,
+            failsafe_active=(failsafe_ctx["state"].active if failsafe_ctx is not None else False),
+            now=time.time(),
+        )
+
     return boost_was_active
 
 
@@ -485,6 +503,35 @@ def _maybe_publish_full_snapshot(
     backup["last_published_target_rt"] = room_target
     if daily_due:
         backup["last_daily_trigger_date"] = today
+    save_backup(BACKUP_PATH, backup)
+
+
+def _maybe_publish_telemetry(
+    mqtt_client, options: dict, room_actual: float, boost_active: bool,
+    failsafe_active: bool, now: float,
+) -> None:
+    """Publishes the KPI telemetry snapshot (Design-Spec 2026-09-16 KPI-Erfassung,
+    Abschnitt 1) on its own interval (telemetry_interval_seconds, default 300s) --
+    decoupled from local_check_interval_seconds (would flood the server with a write
+    every 30-60s again) and from the now-daily/event-driven full snapshot (would make
+    comfort/boost KPIs too coarse-grained). Not retained, QoS 1 only (see
+    BridgeMqttClient.publish_telemetry): this topic feeds only observational KPI
+    reporting and has no influence on curve.py or any control decision.
+    """
+    interval = options.get("telemetry_interval_seconds", DEFAULT_TELEMETRY_INTERVAL_SECONDS)
+    backup = load_backup(BACKUP_PATH)
+    last_publish = backup.get("last_telemetry_publish_ts")
+    if last_publish is not None and (now - last_publish) < interval:
+        return
+
+    mqtt_client.publish_telemetry({
+        "room_actual": room_actual,
+        "boost_active": boost_active,
+        "failsafe_active": failsafe_active,
+        "ts": datetime.now().isoformat(),
+    })
+
+    backup["last_telemetry_publish_ts"] = now
     save_backup(BACKUP_PATH, backup)
 
 
@@ -598,7 +645,9 @@ def _run_bridge(options: dict, ha_api) -> bool:
     # abzuschliessen, statt einen "sichereren" statischen Default zu waehlen.
     boost_was_active = False
     try:
-        boost_was_active = _run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active)
+        boost_was_active = _run_local_check(
+            manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, failsafe_ctx=failsafe_ctx,
+        )
     except Exception:
         logger.exception(
             "Fehler beim initialen lokalen Check vor MQTT-Start, wird im regulaeren Loop erneut versucht"
@@ -619,7 +668,9 @@ def _run_bridge(options: dict, ha_api) -> bool:
 
     while True:
         try:
-            boost_was_active = _run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active)
+            boost_was_active = _run_local_check(
+                manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, failsafe_ctx=failsafe_ctx,
+            )
         except Exception:
             logger.exception("Fehler im lokalen Check, wird beim naechsten Check erneut versucht")
 

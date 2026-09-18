@@ -19,6 +19,7 @@ from heizungsbruecke.__main__ import (
     _load_options_safe,
     _make_down_callback,
     _maybe_publish_full_snapshot,
+    _maybe_publish_telemetry,
     _record_valid_message,
     _resolve_effective_options,
     _run_bridge,
@@ -879,6 +880,10 @@ def test_run_local_check_skips_all_writes_when_nothing_changed(tmp_path, monkeyp
     # would break for reasons unrelated to what this test actually guards.
     save_backup(backup_path, {
         "last_room_target": 20.0, "boost_active": False, "last_published_target_rt": 20.0,
+        # Also pre-seed the telemetry cadence guard (own interval, unrelated to this
+        # test's SD-wear concern) far in the future, so its own once-per-interval write
+        # doesn't fire here and break the "zero writes" assertion below.
+        "last_telemetry_publish_ts": 9_999_999_999.0,
     })
     manifest = ChannelManifest(entity_ids={
         "room_actual": "sensor.room_actual",
@@ -1043,7 +1048,7 @@ def test_run_bridge_primes_local_check_before_mqtt_loop_start(monkeypatch):
     )
     monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
 
-    def fake_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active):
+    def fake_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, failsafe_ctx=None):
         call_order.append("_run_local_check")
         return boost_was_active
 
@@ -1089,7 +1094,7 @@ def test_run_bridge_resets_stale_boost_active_when_priming_check_raises(monkeypa
     )
     monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
 
-    def raising_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active):
+    def raising_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, failsafe_ctx=None):
         raise RuntimeError("simulated HA-API hiccup at boot")
 
     monkeypatch.setattr("heizungsbruecke.__main__._run_local_check", raising_run_local_check)
@@ -1109,3 +1114,94 @@ def test_run_bridge_resets_stale_boost_active_when_priming_check_raises(monkeypa
         _run_bridge(options, MagicMock())
 
     assert load_backup(backup_path)["boost_active"] is False
+
+
+def test_maybe_publish_telemetry_publishes_on_first_call(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    mqtt_client = MagicMock()
+
+    _maybe_publish_telemetry(
+        mqtt_client=mqtt_client, options={}, room_actual=20.5,
+        boost_active=False, failsafe_active=False, now=1000.0,
+    )
+
+    mqtt_client.publish_telemetry.assert_called_once()
+    payload = mqtt_client.publish_telemetry.call_args.args[0]
+    assert payload["room_actual"] == 20.5
+    assert payload["boost_active"] is False
+    assert payload["failsafe_active"] is False
+    assert "ts" in payload
+    assert load_backup(tmp_path / "backup.json")["last_telemetry_publish_ts"] == 1000.0
+
+
+def test_maybe_publish_telemetry_skips_within_interval(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    save_backup(tmp_path / "backup.json", {"last_telemetry_publish_ts": 1000.0})
+    mqtt_client = MagicMock()
+
+    _maybe_publish_telemetry(
+        mqtt_client=mqtt_client, options={"telemetry_interval_seconds": 300}, room_actual=20.5,
+        boost_active=False, failsafe_active=False, now=1200.0,  # nur 200s vergangen
+    )
+
+    mqtt_client.publish_telemetry.assert_not_called()
+
+
+def test_maybe_publish_telemetry_publishes_again_after_interval_elapsed(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    save_backup(tmp_path / "backup.json", {"last_telemetry_publish_ts": 1000.0})
+    mqtt_client = MagicMock()
+
+    _maybe_publish_telemetry(
+        mqtt_client=mqtt_client, options={"telemetry_interval_seconds": 300}, room_actual=20.5,
+        boost_active=True, failsafe_active=False, now=1301.0,  # 301s vergangen > 300s
+    )
+
+    mqtt_client.publish_telemetry.assert_called_once()
+    assert load_backup(tmp_path / "backup.json")["last_telemetry_publish_ts"] == 1301.0
+
+
+def test_run_local_check_publishes_telemetry_with_current_boost_and_failsafe_state(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual",
+        "room_target": "sensor.room_target",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = lambda entity_id: {
+        "sensor.room_actual": 19.0, "sensor.room_target": 21.0,
+    }[entity_id]
+    mqtt_client = MagicMock()
+    options = _base_options()
+    failsafe_ctx = {"state": FailsafeState(active=True, recovery_count=0), "last_valid_update": None}
+
+    _run_local_check(
+        manifest, ha_api, mqtt_client, options, threading.Lock(),
+        boost_was_active=False, failsafe_ctx=failsafe_ctx,
+    )
+
+    mqtt_client.publish_telemetry.assert_called_once()
+    payload = mqtt_client.publish_telemetry.call_args.args[0]
+    assert payload["room_actual"] == 19.0
+    assert payload["failsafe_active"] is True
+    assert payload["boost_active"] is False
+
+
+def test_run_local_check_without_failsafe_ctx_publishes_telemetry_with_failsafe_active_false(tmp_path, monkeypatch):
+    """Rueckwaertskompatibilitaet: alle bestehenden Aufrufer/Tests, die failsafe_ctx
+    nicht kennen, duerfen nicht brechen -- Default ist failsafe_active=False."""
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual",
+        "room_target": "sensor.room_target",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = lambda entity_id: {
+        "sensor.room_actual": 19.0, "sensor.room_target": 21.0,
+    }[entity_id]
+    mqtt_client = MagicMock()
+
+    _run_local_check(manifest, ha_api, mqtt_client, _base_options(), threading.Lock(), boost_was_active=False)
+
+    payload = mqtt_client.publish_telemetry.call_args.args[0]
+    assert payload["failsafe_active"] is False
