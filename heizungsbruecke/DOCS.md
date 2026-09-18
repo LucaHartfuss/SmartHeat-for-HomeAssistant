@@ -19,6 +19,16 @@ Home-Assistant-Integration: installieren, dann Einstellungen → Geraete &
 Dienste → Integration hinzufuegen → "SmartHeat". Die Integration schreibt die
 noetige Konfiguration automatisch in dieses Add-on.
 
+## Update von 0.10.0 auf 0.10.1
+
+Internes Bugfix-Release, keine Konfigurationsaenderung: die Telemetrie-Kadenz-Markierung
+(`last_telemetry_publish_ts`) wird nicht mehr in `backup.json` persistiert (das haette
+bei Standard-Intervall 300s ca. 288 zusaetzliche SD-Karten-Schreibvorgaenge/Tag verursacht
+-- genau die Art SD-Verschleiss, die A.2 fuer die anderen `backup.json`-Felder bereits
+eliminiert hat). Die Markierung lebt jetzt nur noch im Add-on-Prozessspeicher; ein
+Add-on-Neustart verliert sie, was hoechstens eine harmlose zusaetzliche fruehe
+Telemetrie-Veroeffentlichung verursacht.
+
 ## Update von 0.9.0 auf 0.10.0
 
 Neu: `telemetry_interval_seconds` (optional, Standard `300`). Das Add-on
