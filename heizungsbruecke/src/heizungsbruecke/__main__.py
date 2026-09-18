@@ -452,12 +452,24 @@ def _run_local_check(
             room_target=room_target, notify_service=options.get("notify_service", ""), now=datetime.now(),
         )
 
-        _maybe_publish_telemetry(
-            mqtt_client=mqtt_client, options=options, room_actual=room_actual,
-            boost_active=boost_was_active,
-            failsafe_active=(failsafe_ctx["state"].active if failsafe_ctx is not None else False),
-            now=time.time(),
-        )
+        # Rein beobachtender Pfad -- eine hier auftretende Ausnahme (z.B. save_backup()
+        # bei voller/schreibgeschuetzter SD-Karte, oder ein von Hand in options.json
+        # editiertes, nicht-numerisches telemetry_interval_seconds) darf NICHT aus
+        # _run_local_check herauspropagieren: das wuerde den return-Wert unterhalb
+        # dieses with-Blocks verhindern, und boost_was_active waere hier oben zwar
+        # schon aktuell (apply_boost_decision hat das Live-Geraet bereits geschrieben),
+        # aber der Aufrufer (_run_bridge) wuerde seine Kopie nie auf den neuen Wert
+        # aktualisieren -- ein rein beobachtender Pfad wuerde damit Kontroll-Zustand
+        # verfaelschen (Whole-Branch-Review-Fund).
+        try:
+            _maybe_publish_telemetry(
+                mqtt_client=mqtt_client, options=options, room_actual=room_actual,
+                boost_active=boost_was_active,
+                failsafe_active=(failsafe_ctx["state"].active if failsafe_ctx is not None else False),
+                now=time.time(),
+            )
+        except Exception:
+            logger.exception("Fehler beim Veroeffentlichen der KPI-Telemetrie, wird beim naechsten Check erneut versucht")
 
     return boost_was_active
 

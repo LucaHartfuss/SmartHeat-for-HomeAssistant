@@ -1205,3 +1205,50 @@ def test_run_local_check_without_failsafe_ctx_publishes_telemetry_with_failsafe_
 
     payload = mqtt_client.publish_telemetry.call_args.args[0]
     assert payload["failsafe_active"] is False
+
+
+def test_run_local_check_survives_telemetry_publish_exception_and_returns_new_boost_state(tmp_path, monkeypatch):
+    """Whole-branch-review-Fund: _maybe_publish_telemetry() ist rein beobachtend und
+    darf, wenn sie intern ausnahmslos scheitert (z.B. save_backup() bei voller SD-Karte),
+    weder die Ausnahme aus _run_local_check herauspropagieren lassen noch den bereits
+    aktualisierten boost_was_active-Rueckgabewert verschlucken -- sonst wuerde der
+    Aufrufer (_run_bridge) seine Kopie von boost_was_active nie auf den neuen Wert
+    aktualisieren, obwohl apply_boost_decision() das Live-Geraet schon geschrieben hat.
+
+    boost_was_active=True wird hier bewusst als Startzustand uebergeben (statt False):
+    decide_boost() aktiviert Boost bei einem frischen previous_room_target=None (erster
+    Tick, kein Vorwert bekannt) nie -- der Test braucht aber einen Durchlauf, der
+    tatsaechlich einen von apply_boost_decision() bereits aktualisierten Rueckgabewert
+    liefert (hier: Boost bleibt aktiv, da room_actual=19.0 < room_target=21.0 -
+    arrival_threshold_k), um zu belegen, dass genau dieser Wert trotz der
+    Telemetrie-Ausnahme unveraendert an den Aufrufer durchgereicht wird."""
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual",
+        "room_target": "sensor.room_target",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = lambda entity_id: {
+        "sensor.room_actual": 19.0, "sensor.room_target": 21.0,
+    }[entity_id]
+    mqtt_client = MagicMock()
+    options = _base_options()
+
+    def _raise(*args, **kwargs):
+        raise OSError("SD-Karte voll")
+
+    monkeypatch.setattr("heizungsbruecke.__main__._maybe_publish_telemetry", _raise)
+
+    result = _run_local_check(
+        manifest, ha_api, mqtt_client, options, threading.Lock(),
+        boost_was_active=True, failsafe_ctx=None,
+    )
+
+    # Boost bleibt aktiv (room_actual liegt weiterhin mehr als arrival_threshold_k unter
+    # room_target) -- apply_boost_decision() hat diesen Wert bereits VOR dem Telemetrie-
+    # Aufruf bestimmt und in backup.json["boost_active"] persistiert. Beide Werte muessen
+    # trotz der Ausnahme im Telemetrie-Pfad uebereinstimmen und die Ausnahme darf nicht
+    # aus diesem Aufruf herauspropagieren (kein pytest.raises noetig -- ein Escape wuerde
+    # den Test ohnehin mit einer unbehandelten Exception abbrechen lassen).
+    assert result is True
+    assert load_backup(tmp_path / "backup.json")["boost_active"] is True

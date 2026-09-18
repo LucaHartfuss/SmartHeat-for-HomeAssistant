@@ -19,6 +19,23 @@ Home-Assistant-Integration: installieren, dann Einstellungen → Geraete &
 Dienste → Integration hinzufuegen → "SmartHeat". Die Integration schreibt die
 noetige Konfiguration automatisch in dieses Add-on.
 
+## Update von 0.9.0 auf 0.10.0
+
+Neu: `telemetry_interval_seconds` (optional, Standard `300`). Das Add-on
+veroeffentlicht jetzt zusaetzlich in diesem Intervall eine rein beobachtende
+KPI-Telemetrie-Nachricht ueber MQTT (`smartheat/<tenant_id>/telemetry`, nicht
+retained) mit aktueller Raumtemperatur, Boost-Zustand und Fail-Safe-Zustand --
+fuer serverseitiges KPI-/Qualitaets-Tracking. Dieser Pfad hat keinerlei
+Einfluss auf die Heizungssteuerung (Heizkurve, Boost, Fail-Safe); ein Fehler
+beim Veroeffentlichen wird geloggt und im naechsten Zyklus erneut versucht,
+ohne den lokalen Check selbst zu stoeren.
+
+**Achtung bei bestehenden Installationen:** kein manueller Schritt noetig --
+die Integration setzt `telemetry_interval_seconds` derzeit nicht, das Add-on
+verwendet einfach den Standardwert 300s. Fuer eine Aenderung dieses Werts
+vorerst `options.json` auf dem Pi direkt anpassen (kein UI-Schritt dafuer in
+dieser Version, wie schon bei den anderen optionalen Werten).
+
 ## Update von 0.8.0 auf 0.9.0 (Breaking Change)
 
 **Die eine `poll_interval_seconds`-Kadenz wird durch zwei getrennte Konzepte
