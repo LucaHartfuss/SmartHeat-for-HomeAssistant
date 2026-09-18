@@ -220,3 +220,21 @@ def test_on_disconnect_logs_warning_with_reason_code(monkeypatch, caplog):
 
     assert "getrennt" in caplog.text.lower() or "disconnect" in caplog.text.lower()
     assert "7" in caplog.text
+
+
+def test_publish_telemetry_publishes_correct_topic_payload_and_not_retained():
+    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+
+        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
+        client.publish_telemetry({
+            "room_actual": 20.5, "boost_active": False, "failsafe_active": False,
+            "ts": "2026-09-18T08:00:00Z",
+        })
+
+    mock_client.publish.assert_called_once_with(
+        "smartheat/kunde2/telemetry",
+        '{"room_actual": 20.5, "boost_active": false, "failsafe_active": false, "ts": "2026-09-18T08:00:00Z"}',
+        qos=1,
+    )

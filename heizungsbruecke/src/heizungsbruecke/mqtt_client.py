@@ -59,6 +59,10 @@ class BridgeMqttClient:
         payload = json.dumps({"v": value, "seq": seq})
         self._client.publish(topic, payload, qos=1)
 
+    def publish_telemetry(self, payload: dict) -> None:
+        topic = f"smartheat/{self._tenant_id}/telemetry"
+        self._client.publish(topic, json.dumps(payload), qos=1)
+
     def publish_discovery(self, component: str, object_id: str, config: dict) -> None:
         """Publishes a retained MQTT Discovery config so Home Assistant's MQTT
         integration creates the entity automatically -- no configuration.yaml needed
