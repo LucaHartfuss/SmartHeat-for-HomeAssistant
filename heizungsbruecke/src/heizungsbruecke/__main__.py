@@ -211,6 +211,24 @@ def _validate_local_check_interval(options: dict) -> str | None:
     return None
 
 
+def _validate_telemetry_interval(options: dict) -> str | None:
+    """Returns a German error message if telemetry_interval_seconds is set but falls
+    below config.yaml's schema floor of 10s, or None if absent/valid. Guards against a
+    manually edited options.json on the Pi bypassing that floor (Korrektheit-Review-
+    Fund sh-1, same rationale as _validate_local_check_interval above): without this,
+    the cadence gate in _maybe_publish_telemetry effectively never throttles, and every
+    local check (every 30-60s) publishes telemetry instead of every 300s -- 5-10x more
+    MQTT traffic with no startup error to surface the misconfiguration.
+    """
+    value = options.get("telemetry_interval_seconds")
+    if value is not None and value < 10:
+        return (
+            f"telemetry_interval_seconds ({value}) liegt unter dem zulaessigen Minimum "
+            f"von 10 Sekunden"
+        )
+    return None
+
+
 def _validate_derived_sensor_prerequisites(options: dict) -> str | None:
     """Returns a German error message if a field the automatic DAT/DART/day-night-avg
     provisioning needs (derived_sensors.ensure_all) is missing, or None if both are
@@ -592,6 +610,11 @@ def _run_bridge(options: dict, ha_api) -> bool:
     local_check_interval_error = _validate_local_check_interval(options)
     if local_check_interval_error:
         logger.error("FEHLER: %s", local_check_interval_error)
+        return False
+
+    telemetry_interval_error = _validate_telemetry_interval(options)
+    if telemetry_interval_error:
+        logger.error("FEHLER: %s", telemetry_interval_error)
         return False
 
     prerequisite_error = _validate_derived_sensor_prerequisites(options)

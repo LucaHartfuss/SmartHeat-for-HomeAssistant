@@ -29,6 +29,7 @@ from heizungsbruecke.__main__ import (
     _validate_boost_config,
     _validate_derived_sensor_prerequisites,
     _validate_local_check_interval,
+    _validate_telemetry_interval,
 )
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.failsafe import FailsafeState
@@ -731,6 +732,21 @@ def _full_valid_options(**overrides):
     return options
 
 
+def test_run_bridge_returns_false_for_invalid_telemetry_interval(monkeypatch, caplog):
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get",
+        lambda url, timeout: _FakeResponse({"active": True}),
+    )
+    options = _full_valid_options(telemetry_interval_seconds=5)
+    ha_api = MagicMock()
+
+    with caplog.at_level(logging.ERROR):
+        result = _run_bridge(options, ha_api)
+
+    assert result is False
+    assert "telemetry_interval_seconds" in caplog.text
+
+
 def test_run_bridge_gives_actionable_error_on_connection_refused(monkeypatch, caplog):
     def always_refused(**kwargs):
         raise ConnectionRefusedError("[Errno 111] Connection refused")
@@ -1028,6 +1044,18 @@ def test_validate_local_check_interval_flags_value_above_sixty():
     error = _validate_local_check_interval({"local_check_interval_seconds": 61})
     assert error is not None
     assert "local_check_interval_seconds" in error
+
+
+def test_validate_telemetry_interval_accepts_absent_and_valid_values():
+    assert _validate_telemetry_interval({}) is None
+    assert _validate_telemetry_interval({"telemetry_interval_seconds": 10}) is None
+    assert _validate_telemetry_interval({"telemetry_interval_seconds": 300}) is None
+
+
+def test_validate_telemetry_interval_flags_value_below_ten():
+    error = _validate_telemetry_interval({"telemetry_interval_seconds": 0})
+    assert error is not None
+    assert "telemetry_interval_seconds" in error
 
 
 def test_default_failsafe_stale_after_hours_is_26():
