@@ -1084,6 +1084,22 @@ def test_validate_telemetry_interval_flags_infinity():
     assert "telemetry_interval_seconds" in error
 
 
+def test_validate_local_check_interval_flags_non_numeric_string_without_raising():
+    # M1 (final whole-branch review, 2026-09-20): math.isnan()/math.isinf() raise
+    # TypeError on a non-numeric value (e.g. a hand-edited
+    # "local_check_interval_seconds": "30s" in options.json) instead of returning the
+    # clean German validation error this function exists to produce.
+    error = _validate_local_check_interval({"local_check_interval_seconds": "not-a-number"})
+    assert error is not None
+    assert "local_check_interval_seconds" in error
+
+
+def test_validate_telemetry_interval_flags_non_numeric_string_without_raising():
+    error = _validate_telemetry_interval({"telemetry_interval_seconds": "300s"})
+    assert error is not None
+    assert "telemetry_interval_seconds" in error
+
+
 def test_default_failsafe_stale_after_hours_is_26():
     from heizungsbruecke.__main__ import DEFAULT_FAILSAFE_STALE_AFTER_HOURS
     assert DEFAULT_FAILSAFE_STALE_AFTER_HOURS == 26.0
@@ -1247,6 +1263,73 @@ def test_run_bridge_checks_failsafe_staleness_before_priming_local_check(tmp_pat
     # failsafe_active=True -- not the False value that was on disk at load time, before
     # any staleness check had run.
     assert observed_active_at_priming[0] is True
+
+
+def test_run_bridge_priming_staleness_check_does_not_notify_publish_or_persist_state(tmp_path, monkeypatch):
+    # I1 (final whole-branch review, 2026-09-20): the pre-priming staleness check must
+    # be read-only telemetry priming, not a full _check_failsafe_staleness() call --
+    # that function COMMITS a transition (MQTT publish, failsafe_state.json write, and
+    # a push notification), and it did so here BEFORE mqtt_client.loop_start() had a
+    # chance to redeliver the retained down-messages that would prove the server is
+    # actually still alive. On a real restart ~26-30h after the last down-message
+    # (normal daily-snapshot cadence, only ~2h margin against the 26h threshold), this
+    # fired a false "Fail-Safe aktiviert" push notification to the customer's phone even
+    # though the server was healthy throughout -- a cry-wolf regression on what this
+    # add-on's own comments call the one remaining dead-server alarm. The real
+    # transition (with its side effects) must only ever happen from the main loop's own
+    # staleness check, after loop_start() has run.
+    failsafe_path = tmp_path / "failsafe_state.json"
+    save_backup(failsafe_path, {"last_valid_update": 100.0, "failsafe_active": False, "recovery_count": 0})
+    monkeypatch.setattr("heizungsbruecke.__main__.FAILSAFE_PATH", failsafe_path)
+    monkeypatch.setattr("time.time", lambda: 5000.0)
+
+    fake_mqtt_client = MagicMock()
+    # Stop the test right after loop_start() is called -- i.e. exactly at the boundary
+    # between "priming path" and "main loop". In the real add-on, loop_start() is what
+    # redelivers the retained down-messages that would prove the server is alive before
+    # the main loop's own staleness check runs; here it's a no-op mock, so we must not
+    # let the test continue into the main loop's own (legitimate) first staleness check
+    # -- that one running against still-stale data and notifying would be CORRECT
+    # behavior in this harness (no real redelivery happens), not the regression under
+    # test. This test isolates the priming path alone, before loop_start().
+    fake_mqtt_client.loop_start.side_effect = lambda: (_ for _ in ()).throw(SystemExit("stop test loop"))
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: fake_mqtt_client)
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get",
+        lambda url, timeout: _FakeResponse({"active": True}),
+    )
+    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
+
+    def fake_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, failsafe_ctx=None):
+        return boost_was_active
+
+    monkeypatch.setattr("heizungsbruecke.__main__._run_local_check", fake_run_local_check)
+
+    ha_api = MagicMock()
+    # stale_after_seconds = 0.001h * 3600 = 3.6s; last_valid_update=100.0 vs.
+    # time.time()=5000.0 is 4900s stale -- comfortably past that threshold, i.e. this
+    # reproduces exactly the "on-disk timestamp looks stale at cold start" situation.
+    options = _full_valid_options(failsafe_stale_after_hours=0.001, notify_service="notify.mobile_app")
+
+    with pytest.raises(SystemExit):
+        _run_bridge(options, ha_api)
+
+    # No push notification may originate from the priming path.
+    ha_api.send_notification.assert_not_called()
+    # Only the one initial (load-time) publish_status("failsafe", ...) call at connect
+    # time is allowed -- the priming path itself must not publish a second, transitioned
+    # state.
+    failsafe_status_calls = [
+        call for call in fake_mqtt_client.publish_status.call_args_list
+        if call.args[0] == "failsafe"
+    ]
+    assert len(failsafe_status_calls) == 1
+    assert failsafe_status_calls[0].args[1] == "OFF"
+    # failsafe_state.json on disk must be untouched by the priming path -- only the main
+    # loop's own (post-loop_start()) staleness check may ever commit a real transition.
+    persisted = load_backup(failsafe_path)
+    assert persisted["failsafe_active"] is False
+    assert persisted["last_valid_update"] == 100.0
 
 
 def test_run_bridge_resets_stale_boost_active_when_priming_check_raises(monkeypatch, tmp_path):

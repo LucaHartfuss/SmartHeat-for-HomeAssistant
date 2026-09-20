@@ -31,13 +31,21 @@ dem finalen Whole-Branch-Review:
   unbemerkt, weil `NaN < 10`/`NaN > 60` in Python immer `False` ist, und hoehlte damit
   genau den Kadenz-Schutz aus, den diese Validierung eigentlich garantieren soll.
 - Der allererste, synchrone Telemetrie-Check beim Add-on-Start (vor dem eigentlichen
-  MQTT-Loop-Start) prueft jetzt ebenfalls zuerst den Fail-Safe-Status, genau wie
-  danach jeder Durchlauf der regulaeren Schleife. Vorher konnte dieser erste,
-  veroeffentlichte Telemetrie-Datenpunkt bei einem Kaltstart mit bereits abgelaufenem
-  Fail-Safe-Fenster (der In-Memory-Kadenz-Marker uebersteht einen Neustart nicht,
-  siehe 0.10.1-Note oben) noch den beim Laden gesetzten, veralteten
-  `failsafe_active`-Wert tragen statt eines frisch ausgewerteten. Rein beobachtendes
-  KPI-Feld, kein Einfluss auf Heizkurve, Boost oder Fail-Safe-Regelung selbst.
+  MQTT-Loop-Start) berechnet jetzt eine rein lesende Vorschau des Fail-Safe-Status
+  (`_preview_failsafe_ctx`), damit dieser erste, veroeffentlichte Telemetrie-Datenpunkt
+  bei einem Kaltstart einen frisch ausgewerteten `failsafe_active`-Wert traegt statt des
+  beim Laden gesetzten, moeglicherweise veralteten Werts (der In-Memory-Kadenz-Marker
+  uebersteht einen Neustart nicht, siehe 0.10.1-Note oben). Diese Vorschau liest nur:
+  sie veroeffentlicht keinen MQTT-Status, schreibt `failsafe_state.json` nicht und
+  loest keine Push-Benachrichtigung aus. Die eigentliche Fail-Safe-Zustandsaenderung
+  (mit genau diesen drei Nebenwirkungen) entscheidet weiterhin ausschliesslich der
+  erste Durchlauf der regulaeren Schleife, NACH dem MQTT-Loop-Start -- erst der liefert
+  die retained Down-Nachrichten zu, die belegen, ob der Server tatsaechlich noch lebt.
+  (Korrektur eines Entwurfsfehlers innerhalb dieses Releases, siehe
+  Whole-Branch-Review-Fund I1: eine fruehere Fassung dieser Zeile rief hierfuer
+  versehentlich die volle, zustandsaendernde Pruefung auf und konnte dadurch bei einem
+  Neustart kurz vor Ablauf des 26h-Fensters eine falsche "Fail-Safe aktiviert"-Push-
+  Benachrichtigung ausloesen, obwohl der Server durchgehend erreichbar war.)
 
 ## Update von 0.10.0 auf 0.10.1
 

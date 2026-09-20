@@ -204,9 +204,11 @@ def _validate_local_check_interval(options: dict) -> str | None:
     design fixes.
     """
     value = options.get("local_check_interval_seconds")
-    if value is not None and (math.isnan(value) or math.isinf(value)):
+    if value is not None and (
+        not isinstance(value, (int, float)) or math.isnan(value) or math.isinf(value)
+    ):
         return (
-            f"local_check_interval_seconds ({value}) ist kein gueltiger endlicher Zahlenwert"
+            f"local_check_interval_seconds ({value!r}) ist kein gueltiger endlicher Zahlenwert"
         )
     if value is not None and value > 60:
         return (
@@ -226,9 +228,11 @@ def _validate_telemetry_interval(options: dict) -> str | None:
     MQTT traffic with no startup error to surface the misconfiguration.
     """
     value = options.get("telemetry_interval_seconds")
-    if value is not None and (math.isnan(value) or math.isinf(value)):
+    if value is not None and (
+        not isinstance(value, (int, float)) or math.isnan(value) or math.isinf(value)
+    ):
         return (
-            f"telemetry_interval_seconds ({value}) ist kein gueltiger endlicher Zahlenwert"
+            f"telemetry_interval_seconds ({value!r}) ist kein gueltiger endlicher Zahlenwert"
         )
     if value is not None and value < 10:
         return (
@@ -414,6 +418,36 @@ def _check_failsafe_staleness(
                     logger.warning("Push-Benachrichtigung fuer Fail-Safe-Alarm konnte nicht gesendet werden")
         failsafe_ctx["state"] = new_state
         _save_failsafe_ctx(failsafe_ctx, failsafe_path)
+
+
+def _preview_failsafe_ctx(failsafe_ctx: dict, stale_after_seconds: float) -> dict:
+    """Read-only preview of `failsafe_ctx` with `state.active` freshly evaluated
+    against the current on-disk staleness -- used ONLY to give the very first,
+    pre-`loop_start()` telemetry publish (see the priming `_run_local_check` call in
+    `_run_bridge`) a freshly-evaluated `failsafe_active` value instead of the stale
+    value that was on disk at process start.
+
+    Deliberately does NOT call `_check_failsafe_staleness`: that function COMMITS a
+    transition (MQTT publish, `failsafe_state.json` write, and a push notification).
+    Calling it here, before `mqtt_client.loop_start()` has had a chance to redeliver
+    the retained down-messages that prove the server is actually still alive, produced
+    a real regression (Whole-Branch-Review-Fund I1, final-review-fixes-plan,
+    2026-09-20): on an add-on restart ~26-30h after the last down-message (normal
+    daily-snapshot cadence, only ~2h margin against the 26h threshold), it fired a
+    false "Fail-Safe aktiviert" push notification to the customer's phone, then flipped
+    back OFF milliseconds later once `loop_start()` delivered the retained messages.
+
+    `enter_failsafe_if_stale` is a pure function (see failsafe.py) with no I/O and no
+    side effects, so calling it here to compute a *preview* state -- without ever
+    assigning the result back into the real `failsafe_ctx`, publishing it, persisting
+    it, or notifying about it -- is safe. The real transition (and its side effects)
+    is decided later, once `loop_start()` has run, by the main loop's own
+    `_check_failsafe_staleness()` call.
+    """
+    last = failsafe_ctx["last_valid_update"]
+    seconds_since = (time.time() - last) if last is not None else None
+    previewed_state = enter_failsafe_if_stale(failsafe_ctx["state"], seconds_since, stale_after_seconds)
+    return {**failsafe_ctx, "state": previewed_state}
 
 
 def _save_boost_active_if_changed(boost_active: bool, path: Path) -> None:
@@ -695,24 +729,31 @@ def _run_bridge(options: dict, ha_api) -> bool:
     # sh-2-Folgefund (Task 3b, final-review-fixes-plan): _run_local_check liest
     # failsafe_active aus failsafe_ctx["state"] (siehe dessen Docstring), aber nur der
     # Hauptloop-Aufruf unten liess _check_failsafe_staleness vorher laufen (Task 11 des
-    # Vorgaenger-Plans). Ohne diesen Aufruf hier published der allererste, synchrone
-    # Telemetrie-Call (Kaltstart, in-memory-Marker daher zurueckgesetzt, siehe DOCS.md
-    # 0.10.1-Note) den beim Laden von FAILSAFE_PATH gesetzten Startwert statt eines frisch
-    # evaluierten -- derselbe Aufruf, dieselben Argumente, derselbe Exception-Stil wie im
-    # Hauptloop unten.
-    try:
-        with write_lock:
-            _check_failsafe_staleness(
-                failsafe_ctx, stale_after_seconds, mqtt_client, FAILSAFE_PATH,
-                ha_api=ha_api, notify_service=options.get("notify_service", ""),
-            )
-    except Exception:
-        logger.exception("Fehler bei der Fail-Safe-Staleness-Pruefung, wird beim naechsten Check erneut versucht")
+    # Vorgaenger-Plans). Ohne eine Vorab-Bewertung hier published der allererste,
+    # synchrone Telemetrie-Call (Kaltstart, in-memory-Marker daher zurueckgesetzt,
+    # siehe DOCS.md 0.10.2-Note) den beim Laden von FAILSAFE_PATH gesetzten Startwert
+    # statt eines frisch evaluierten.
+    #
+    # I1-Fix (Whole-Branch-Review-Fund, final-review-fixes-plan, 2026-09-20): hierfuer
+    # NICHT _check_failsafe_staleness() aufrufen -- das committet eine echte
+    # Zustandsaenderung (MQTT-Publish, failsafe_state.json-Schreibvorgang, Push-
+    # Benachrichtigung), noch bevor loop_start() unten die retained Down-Nachrichten
+    # zugestellt hat, die belegen wuerden, dass der Server tatsaechlich noch lebt. Das
+    # fuehrte bei einem Neustart ~26-30h nach der letzten Down-Nachricht (normale
+    # taegliche Snapshot-Kadenz, nur ~2h Puffer gegen die 26h-Schwelle) zu einer
+    # falschen "Fail-Safe aktiviert"-Push-Benachrichtigung, die Millisekunden spaeter
+    # durch loop_start() wieder zurueckgenommen wurde. Stattdessen rein lesend eine
+    # Vorschau bilden (_preview_failsafe_ctx, reine Funktion, keine Nebenwirkungen) und
+    # nur fuer DIESEN einen priming-Aufruf verwenden -- der echte failsafe_ctx bleibt
+    # unveraendert, die echte Zustandsaenderung entscheidet weiterhin ausschliesslich
+    # der Hauptloop-Aufruf unten, nach loop_start().
+    priming_failsafe_ctx = _preview_failsafe_ctx(failsafe_ctx, stale_after_seconds)
 
     boost_was_active = False
     try:
         boost_was_active = _run_local_check(
-            manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, failsafe_ctx=failsafe_ctx,
+            manifest, ha_api, mqtt_client, options, write_lock, boost_was_active,
+            failsafe_ctx=priming_failsafe_ctx,
         )
     except Exception:
         logger.exception(
