@@ -1058,6 +1058,32 @@ def test_validate_telemetry_interval_flags_value_below_ten():
     assert "telemetry_interval_seconds" in error
 
 
+def test_validate_local_check_interval_flags_nan():
+    # Task 3a (final-review-fixes-plan): value < 10/> 60 is False for NaN, so a hand-
+    # edited options.json with NaN used to sail through validation unnoticed.
+    error = _validate_local_check_interval({"local_check_interval_seconds": float("nan")})
+    assert error is not None
+    assert "local_check_interval_seconds" in error
+
+
+def test_validate_local_check_interval_flags_infinity():
+    error = _validate_local_check_interval({"local_check_interval_seconds": float("inf")})
+    assert error is not None
+    assert "local_check_interval_seconds" in error
+
+
+def test_validate_telemetry_interval_flags_nan():
+    error = _validate_telemetry_interval({"telemetry_interval_seconds": float("nan")})
+    assert error is not None
+    assert "telemetry_interval_seconds" in error
+
+
+def test_validate_telemetry_interval_flags_infinity():
+    error = _validate_telemetry_interval({"telemetry_interval_seconds": float("inf")})
+    assert error is not None
+    assert "telemetry_interval_seconds" in error
+
+
 def test_default_failsafe_stale_after_hours_is_26():
     from heizungsbruecke.__main__ import DEFAULT_FAILSAFE_STALE_AFTER_HOURS
     assert DEFAULT_FAILSAFE_STALE_AFTER_HOURS == 26.0
@@ -1167,6 +1193,60 @@ def test_run_bridge_checks_failsafe_staleness_before_local_check_in_loop(monkeyp
     first_loop_index = call_order.index("_run_local_check") + 1
     in_loop_local_check_index = call_order.index("_run_local_check", first_loop_index)
     assert call_order.index("_check_failsafe_staleness") < in_loop_local_check_index
+
+
+def test_run_bridge_checks_failsafe_staleness_before_priming_local_check(tmp_path, monkeypatch):
+    # Task 3b (final-review-fixes-plan): _run_local_check builds its telemetry payload's
+    # failsafe_active from failsafe_ctx["state"] (see _run_local_check docstring/line
+    # ~492), but before this fix, nothing re-evaluated staleness before the synchronous
+    # priming call (see test_run_bridge_primes_local_check_before_mqtt_loop_start above)
+    # ran -- only the in-loop call did (Task 11 of the predecessor plan, see
+    # test_run_bridge_checks_failsafe_staleness_before_local_check_in_loop above). So if
+    # the on-disk fail-safe state was already stale-but-not-yet-flagged at a cold start
+    # (the in-memory telemetry marker resets on restart, DOCS.md 0.10.1 note), the very
+    # first published telemetry point carried the load-time failsafe_active, not a
+    # freshly evaluated one.
+    failsafe_path = tmp_path / "failsafe_state.json"
+    save_backup(failsafe_path, {"last_valid_update": 100.0, "failsafe_active": False, "recovery_count": 0})
+    monkeypatch.setattr("heizungsbruecke.__main__.FAILSAFE_PATH", failsafe_path)
+    monkeypatch.setattr("time.time", lambda: 5000.0)
+
+    fake_mqtt_client = MagicMock()
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: fake_mqtt_client)
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get",
+        lambda url, timeout: _FakeResponse({"active": True}),
+    )
+    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
+
+    observed_active_at_priming = []
+
+    def fake_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, failsafe_ctx=None):
+        observed_active_at_priming.append(failsafe_ctx["state"].active)
+        return boost_was_active
+
+    monkeypatch.setattr("heizungsbruecke.__main__._run_local_check", fake_run_local_check)
+
+    # Stop the loop from spinning forever, same pattern as the priming-order test above.
+    def stop_after_first_sleep(seconds):
+        raise SystemExit("stop test loop")
+
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", stop_after_first_sleep)
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.daynight_snapshot.maybe_snapshot", lambda **kwargs: None,
+    )
+
+    # stale_after_seconds = 0.001h * 3600 = 3.6s; last_valid_update=100.0 vs. time.time()=
+    # 5000.0 is 4900s stale -- comfortably past that threshold.
+    options = _full_valid_options(failsafe_stale_after_hours=0.001)
+
+    with pytest.raises(SystemExit):
+        _run_bridge(options, MagicMock())
+
+    # The priming call (first entry) must already see the freshly-evaluated
+    # failsafe_active=True -- not the False value that was on disk at load time, before
+    # any staleness check had run.
+    assert observed_active_at_priming[0] is True
 
 
 def test_run_bridge_resets_stale_boost_active_when_priming_check_raises(monkeypatch, tmp_path):

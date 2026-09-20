@@ -19,6 +19,26 @@ Home-Assistant-Integration: installieren, dann Einstellungen → Geraete &
 Dienste → Integration hinzufuegen → "SmartHeat". Die Integration schreibt die
 noetige Konfiguration automatisch in dieses Add-on.
 
+## Update von 0.10.1 auf 0.10.2
+
+Internes Bugfix-Release, keine Konfigurationsaenderung, zwei kleine Haertungen aus
+dem finalen Whole-Branch-Review:
+
+- `telemetry_interval_seconds` und `local_check_interval_seconds` lehnen jetzt auch
+  `NaN`/`Infinity` als ungueltig ab, nicht mehr nur zu kleine bzw. zu grosse
+  Zahlenwerte. Eine von Hand editierte `options.json` mit z.B.
+  `"telemetry_interval_seconds": NaN` (gueltiges JSON) bestand die bisherige Pruefung
+  unbemerkt, weil `NaN < 10`/`NaN > 60` in Python immer `False` ist, und hoehlte damit
+  genau den Kadenz-Schutz aus, den diese Validierung eigentlich garantieren soll.
+- Der allererste, synchrone Telemetrie-Check beim Add-on-Start (vor dem eigentlichen
+  MQTT-Loop-Start) prueft jetzt ebenfalls zuerst den Fail-Safe-Status, genau wie
+  danach jeder Durchlauf der regulaeren Schleife. Vorher konnte dieser erste,
+  veroeffentlichte Telemetrie-Datenpunkt bei einem Kaltstart mit bereits abgelaufenem
+  Fail-Safe-Fenster (der In-Memory-Kadenz-Marker uebersteht einen Neustart nicht,
+  siehe 0.10.1-Note oben) noch den beim Laden gesetzten, veralteten
+  `failsafe_active`-Wert tragen statt eines frisch ausgewerteten. Rein beobachtendes
+  KPI-Feld, kein Einfluss auf Heizkurve, Boost oder Fail-Safe-Regelung selbst.
+
 ## Update von 0.10.0 auf 0.10.1
 
 Internes Bugfix-Release, keine Konfigurationsaenderung: die Telemetrie-Kadenz-Markierung

@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import os
 import sys
 import threading
@@ -203,6 +204,10 @@ def _validate_local_check_interval(options: dict) -> str | None:
     design fixes.
     """
     value = options.get("local_check_interval_seconds")
+    if value is not None and (math.isnan(value) or math.isinf(value)):
+        return (
+            f"local_check_interval_seconds ({value}) ist kein gueltiger endlicher Zahlenwert"
+        )
     if value is not None and value > 60:
         return (
             f"local_check_interval_seconds ({value}) liegt ueber dem zulaessigen Maximum "
@@ -221,6 +226,10 @@ def _validate_telemetry_interval(options: dict) -> str | None:
     MQTT traffic with no startup error to surface the misconfiguration.
     """
     value = options.get("telemetry_interval_seconds")
+    if value is not None and (math.isnan(value) or math.isinf(value)):
+        return (
+            f"telemetry_interval_seconds ({value}) ist kein gueltiger endlicher Zahlenwert"
+        )
     if value is not None and value < 10:
         return (
             f"telemetry_interval_seconds ({value}) liegt unter dem zulaessigen Minimum "
@@ -683,6 +692,23 @@ def _run_bridge(options: dict, ha_api) -> bool:
     # Nachrichten aus -- erst loop_start() startet die Hintergrund-Verarbeitung -- daher
     # genuegt es, den allerersten _run_local_check()-Aufruf synchron VOR loop_start()
     # abzuschliessen, statt einen "sichereren" statischen Default zu waehlen.
+    # sh-2-Folgefund (Task 3b, final-review-fixes-plan): _run_local_check liest
+    # failsafe_active aus failsafe_ctx["state"] (siehe dessen Docstring), aber nur der
+    # Hauptloop-Aufruf unten liess _check_failsafe_staleness vorher laufen (Task 11 des
+    # Vorgaenger-Plans). Ohne diesen Aufruf hier published der allererste, synchrone
+    # Telemetrie-Call (Kaltstart, in-memory-Marker daher zurueckgesetzt, siehe DOCS.md
+    # 0.10.1-Note) den beim Laden von FAILSAFE_PATH gesetzten Startwert statt eines frisch
+    # evaluierten -- derselbe Aufruf, dieselben Argumente, derselbe Exception-Stil wie im
+    # Hauptloop unten.
+    try:
+        with write_lock:
+            _check_failsafe_staleness(
+                failsafe_ctx, stale_after_seconds, mqtt_client, FAILSAFE_PATH,
+                ha_api=ha_api, notify_service=options.get("notify_service", ""),
+            )
+    except Exception:
+        logger.exception("Fehler bei der Fail-Safe-Staleness-Pruefung, wird beim naechsten Check erneut versucht")
+
     boost_was_active = False
     try:
         boost_was_active = _run_local_check(
