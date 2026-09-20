@@ -708,13 +708,6 @@ def _run_bridge(options: dict, ha_api) -> bool:
 
     while True:
         try:
-            boost_was_active = _run_local_check(
-                manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, failsafe_ctx=failsafe_ctx,
-            )
-        except Exception:
-            logger.exception("Fehler im lokalen Check, wird beim naechsten Check erneut versucht")
-
-        try:
             with write_lock:
                 _check_failsafe_staleness(
                     failsafe_ctx, stale_after_seconds, mqtt_client, FAILSAFE_PATH,
@@ -722,6 +715,13 @@ def _run_bridge(options: dict, ha_api) -> bool:
                 )
         except Exception:
             logger.exception("Fehler bei der Fail-Safe-Staleness-Pruefung, wird beim naechsten Check erneut versucht")
+
+        try:
+            boost_was_active = _run_local_check(
+                manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, failsafe_ctx=failsafe_ctx,
+            )
+        except Exception:
+            logger.exception("Fehler im lokalen Check, wird beim naechsten Check erneut versucht")
 
         try:
             daynight_snapshot.maybe_snapshot(

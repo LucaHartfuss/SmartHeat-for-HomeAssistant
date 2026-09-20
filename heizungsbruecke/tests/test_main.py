@@ -1113,6 +1113,62 @@ def test_run_bridge_primes_local_check_before_mqtt_loop_start(monkeypatch):
     assert call_order.index("_run_local_check") < call_order.index("loop_start")
 
 
+def test_run_bridge_checks_failsafe_staleness_before_local_check_in_loop(monkeypatch):
+    # sh-2 (whole-branch review finding): _run_local_check builds the telemetry payload
+    # (including failsafe_active) from failsafe_ctx["state"], but _check_failsafe_staleness
+    # is the call that updates failsafe_ctx["state"]. If the loop runs _run_local_check
+    # first, the published telemetry is stale by exactly one loop tick. Fixed by checking
+    # staleness before running the local check inside the while-True loop.
+    call_order = []
+
+    fake_mqtt_client = MagicMock()
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: fake_mqtt_client)
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get",
+        lambda url, timeout: _FakeResponse({"active": True}),
+    )
+    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
+
+    def fake_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, failsafe_ctx=None):
+        call_order.append("_run_local_check")
+        return boost_was_active
+
+    monkeypatch.setattr("heizungsbruecke.__main__._run_local_check", fake_run_local_check)
+
+    def fake_check_failsafe_staleness(*args, **kwargs):
+        call_order.append("_check_failsafe_staleness")
+
+    monkeypatch.setattr("heizungsbruecke.__main__._check_failsafe_staleness", fake_check_failsafe_staleness)
+
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.daynight_snapshot.maybe_snapshot", lambda **kwargs: None,
+    )
+
+    # Stop the loop from spinning forever: raise after the first sleep() call, which is
+    # the last thing that happens inside one loop iteration (same pattern as the
+    # priming-order test above).
+    def stop_after_first_sleep(seconds):
+        raise SystemExit("stop test loop")
+
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", stop_after_first_sleep)
+
+    options = _full_valid_options()
+
+    with pytest.raises(SystemExit):
+        _run_bridge(options, MagicMock())
+
+    # The pre-loop priming call (Task-8 boot-sync fix) puts one "_run_local_check" entry
+    # in call_order before the loop even starts, with no matching staleness call before
+    # it -- so we must look at the SECOND "_run_local_check" occurrence (the one from
+    # inside the while-True loop) to prove the in-loop ordering, not just that both
+    # functions get called somewhere in the loop.
+    assert call_order.count("_run_local_check") >= 2
+    assert "_check_failsafe_staleness" in call_order
+    first_loop_index = call_order.index("_run_local_check") + 1
+    in_loop_local_check_index = call_order.index("_run_local_check", first_loop_index)
+    assert call_order.index("_check_failsafe_staleness") < in_loop_local_check_index
+
+
 def test_run_bridge_resets_stale_boost_active_when_priming_check_raises(monkeypatch, tmp_path):
     # Whole-branch review finding: if the priming _run_local_check() call itself raises,
     # backup.json["boost_active"] must not be left at a stale pre-restart value (which
