@@ -28,6 +28,7 @@ from heizungsbruecke.__main__ import (
     _save_failsafe_ctx,
     _validate_boost_config,
     _validate_derived_sensor_prerequisites,
+    _validate_failsafe_stale_after_hours,
     _validate_local_check_interval,
     _validate_telemetry_interval,
 )
@@ -621,6 +622,77 @@ def test_make_down_callback_records_valid_message_after_successful_handling(tmp_
     assert recorded_calls == [(failsafe_ctx, mqtt_client, failsafe_path)]
 
 
+def test_make_down_callback_rejects_nan_without_crashing_or_poisoning_backup(tmp_path, monkeypatch):
+    # I2 failure-chain closure (whole-branch review): a NaN down-message value (e.g.
+    # an HA entity whose state string parses via float() to nan) must not crash the
+    # MQTT callback (which would kill message delivery for this role) and must not
+    # get persisted into backup.json (that specific poisoning was the previously-
+    # identified path to a permanently-stuck boost with no automatic recovery, since
+    # a later boost-restore would then try to write that NaN to the live device).
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    monkeypatch.setattr("heizungsbruecke.__main__.FAILSAFE_PATH", tmp_path / "failsafe_state.json")
+    manifest = ChannelManifest(entity_ids={"curve_current": "number.curve"})
+    ha_api = MagicMock()
+    options = _base_options()
+    write_lock = threading.Lock()
+    failsafe_ctx = {"last_valid_update": None, "state": FailsafeState(active=False, recovery_count=0)}
+    mqtt_client = MagicMock()
+
+    recorded_calls = []
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__._record_valid_message",
+        lambda ctx, client, path: recorded_calls.append((ctx, client, path)),
+    )
+
+    callback = _make_down_callback("curve_current", manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
+    message = MagicMock()
+    message.payload = json.dumps({"v": float("nan")})
+
+    callback(client=MagicMock(), userdata=None, message=message)  # must not raise
+
+    ha_api.set_number_value.assert_not_called()
+    assert load_backup(backup_path) == {}
+    assert recorded_calls == []  # a rejected message is not a valid live update
+
+
+def test_run_bridge_loop_survives_clamp_rejecting_a_non_finite_boost_value(monkeypatch):
+    # I2 failure-chain closure: if clamp() raises inside apply_boost_decision (e.g. a
+    # NaN backed-up curve_current during a boost-restore), _run_bridge's main loop
+    # must survive -- this is the loop's own try/except Exception boundary around
+    # _run_local_check that must catch it, not crash the whole add-on process.
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get",
+        lambda url, timeout: _FakeResponse({"active": True}),
+    )
+    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
+    fake_mqtt_client = MagicMock()
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: fake_mqtt_client)
+
+    call_count = {"n": 0}
+
+    def fake_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, failsafe_ctx=None):
+        call_count["n"] += 1
+        raise ValueError("clamp() erhielt einen nicht-endlichen Wert (NaN): nan")
+
+    monkeypatch.setattr("heizungsbruecke.__main__._run_local_check", fake_run_local_check)
+
+    def stop_after_first_sleep(seconds):
+        raise SystemExit("stop test loop")
+
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", stop_after_first_sleep)
+    monkeypatch.setattr("heizungsbruecke.__main__.daynight_snapshot.maybe_snapshot", lambda **kwargs: None)
+
+    options = _full_valid_options()
+
+    with pytest.raises(SystemExit):
+        _run_bridge(options, MagicMock())
+
+    # Reached the main loop's time.sleep() (our SystemExit trigger) despite
+    # _run_local_check raising -- proves the loop caught it and kept going.
+    assert call_count["n"] >= 1
+
+
 def test_main_runs_bridge_synchronously_without_flask(tmp_path, monkeypatch):
     # Ab dieser Aenderung gibt es keinen Flask-Server und keinen Hintergrund-Thread mehr --
     # main() ruft _run_bridge() direkt im Hauptthread auf und kehrt zurueck, sobald
@@ -1098,6 +1170,60 @@ def test_validate_telemetry_interval_flags_non_numeric_string_without_raising():
     error = _validate_telemetry_interval({"telemetry_interval_seconds": "300s"})
     assert error is not None
     assert "telemetry_interval_seconds" in error
+
+
+def test_validate_failsafe_stale_after_hours_accepts_absent_and_valid_values():
+    assert _validate_failsafe_stale_after_hours({}) is None
+    assert _validate_failsafe_stale_after_hours({"failsafe_stale_after_hours": 26.0}) is None
+    assert _validate_failsafe_stale_after_hours({"failsafe_stale_after_hours": 4.0}) is None
+
+
+def test_validate_failsafe_stale_after_hours_flags_nan():
+    # I3 (whole-branch review finding): seconds_since >= NaN is always False, so a
+    # hand-edited options.json with NaN here used to silently and permanently disable
+    # dead-server detection with no startup error.
+    error = _validate_failsafe_stale_after_hours({"failsafe_stale_after_hours": float("nan")})
+    assert error is not None
+    assert "failsafe_stale_after_hours" in error
+
+
+def test_validate_failsafe_stale_after_hours_flags_infinity():
+    error = _validate_failsafe_stale_after_hours({"failsafe_stale_after_hours": float("inf")})
+    assert error is not None
+    assert "failsafe_stale_after_hours" in error
+
+
+def test_validate_failsafe_stale_after_hours_flags_non_numeric_string_without_raising():
+    error = _validate_failsafe_stale_after_hours({"failsafe_stale_after_hours": "26h"})
+    assert error is not None
+    assert "failsafe_stale_after_hours" in error
+
+
+def test_validate_failsafe_stale_after_hours_flags_non_positive_value():
+    # A non-positive stale-after threshold is unambiguously nonsensical for this field:
+    # 0 or negative would mean "always stale" (or stale before any time has passed).
+    error = _validate_failsafe_stale_after_hours({"failsafe_stale_after_hours": 0})
+    assert error is not None
+    assert "failsafe_stale_after_hours" in error
+
+    error = _validate_failsafe_stale_after_hours({"failsafe_stale_after_hours": -1.0})
+    assert error is not None
+    assert "failsafe_stale_after_hours" in error
+
+
+def test_run_bridge_returns_false_for_invalid_failsafe_stale_after_hours(monkeypatch, caplog):
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get",
+        lambda url, timeout: _FakeResponse({"active": True}),
+    )
+    options = _full_valid_options(failsafe_stale_after_hours=float("nan"))
+    ha_api = MagicMock()
+
+    with caplog.at_level(logging.ERROR):
+        result = _run_bridge(options, ha_api)
+
+    assert result is False
+    assert "failsafe_stale_after_hours" in caplog.text
 
 
 def test_default_failsafe_stale_after_hours_is_26():

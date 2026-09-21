@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock
 
+import pytest
+
 from heizungsbruecke.bridge import publish_snapshot, handle_down_message, apply_boost_decision
 from heizungsbruecke.boost import BoostDecision
 from heizungsbruecke.manifest import ChannelManifest
@@ -221,6 +223,25 @@ def test_handle_down_message_still_clamps_before_persisting_during_boost(tmp_pat
     assert load_backup(backup_path)["curve_current"] == 0.5
 
 
+def test_handle_down_message_rejects_nan_without_writing_or_persisting(tmp_path):
+    # I2 failure-chain closure (whole-branch review): before the clamp() NaN guard, a
+    # NaN down-message value would sail through clamp() unchanged and get persisted
+    # into backup.json (backup[role] = clamped) AND written to the live device. Both
+    # must now be prevented -- clamp() raises before either of those lines runs.
+    manifest = ChannelManifest(entity_ids={"curve_current": "number.curve"})
+    ha_api = MagicMock()
+    backup_path = tmp_path / "backup.json"
+
+    with pytest.raises(ValueError):
+        handle_down_message(
+            role="curve_current", value=float("nan"), manifest=manifest, ha_api=ha_api,
+            curve_min=0.3, curve_max=0.8, offset_min=2.0, offset_max=4.0, backup_path=backup_path,
+        )
+
+    ha_api.set_number_value.assert_not_called()
+    assert load_backup(backup_path) == {}
+
+
 def test_apply_boost_decision_clamps_before_writing_when_active(tmp_path):
     manifest = ChannelManifest(entity_ids={
         "curve_current": "number.weishaupt_heizkurve_steigung",
@@ -325,6 +346,57 @@ def test_apply_boost_decision_restore_is_clamped_defense_in_depth(tmp_path):
     )
 
     ha_api.set_number_value.assert_called_once_with("number.weishaupt_heizkurve_steigung", 0.5)
+
+
+def test_apply_boost_decision_rejects_nan_curve_value_on_transition_to_active(tmp_path):
+    # I2 failure-chain closure: a NaN decision.curve_value (e.g. propagated from a
+    # sensor read that produced NaN) must not reach the live device via clamp().
+    manifest = ChannelManifest(entity_ids={"curve_current": "number.weishaupt_heizkurve_steigung"})
+    ha_api = MagicMock()
+    decision = BoostDecision(active=True, curve_value=float("nan"), offset_value=None)
+    backup_path = tmp_path / "backup.json"
+
+    with pytest.raises(ValueError):
+        apply_boost_decision(
+            decision=decision,
+            boost_was_active=False,
+            manifest=manifest,
+            ha_api=ha_api,
+            curve_min=0.3,
+            curve_max=0.5,
+            offset_min=2.0,
+            offset_max=4.0,
+            backup_path=backup_path,
+        )
+
+    ha_api.set_number_value.assert_not_called()
+
+
+def test_apply_boost_decision_rejects_nan_from_backup_on_restore(tmp_path):
+    # I2 failure-chain closure (the specific chain from the whole-branch review): if
+    # backup.json ever ended up holding a NaN for curve_current (e.g. written before
+    # this fix existed), the restore path must reject it via clamp() instead of
+    # writing NaN to the live, cloud-backed (mypyllant) device.
+    manifest = ChannelManifest(entity_ids={"curve_current": "number.weishaupt_heizkurve_steigung"})
+    ha_api = MagicMock()
+    backup_path = tmp_path / "backup.json"
+    save_backup(backup_path, {"curve_current": float("nan")})
+    decision = BoostDecision(active=False, curve_value=None, offset_value=None)
+
+    with pytest.raises(ValueError):
+        apply_boost_decision(
+            decision=decision,
+            boost_was_active=True,
+            manifest=manifest,
+            ha_api=ha_api,
+            curve_min=0.3,
+            curve_max=0.5,
+            offset_min=2.0,
+            offset_max=4.0,
+            backup_path=backup_path,
+        )
+
+    ha_api.set_number_value.assert_not_called()
 
 
 def test_apply_boost_decision_no_write_when_backup_missing_on_transition(tmp_path):

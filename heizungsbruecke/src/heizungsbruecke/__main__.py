@@ -242,6 +242,32 @@ def _validate_telemetry_interval(options: dict) -> str | None:
     return None
 
 
+def _validate_failsafe_stale_after_hours(options: dict) -> str | None:
+    """Returns a German error message if failsafe_stale_after_hours is set but is not
+    a finite, positive number, or None if absent/valid. Same NaN/Infinity guard as
+    _validate_local_check_interval/_validate_telemetry_interval above (whole-branch
+    review finding I3, same rationale/pattern as those two): without it, a hand-edited
+    options.json with NaN for this value silently and permanently disables dead-server
+    detection (the fail-safe threshold itself), since `seconds_since >= NaN` is always
+    False in `enter_failsafe_if_stale`/`_check_failsafe_staleness`, with no startup
+    error to surface the misconfiguration. A non-positive value is rejected too --
+    unambiguously nonsensical for this field regardless of the current default (0 or
+    negative would mean "always stale" or "stale before any time has passed").
+    """
+    value = options.get("failsafe_stale_after_hours")
+    if value is not None and (
+        not isinstance(value, (int, float)) or math.isnan(value) or math.isinf(value)
+    ):
+        return (
+            f"failsafe_stale_after_hours ({value!r}) ist kein gueltiger endlicher Zahlenwert"
+        )
+    if value is not None and value <= 0:
+        return (
+            f"failsafe_stale_after_hours ({value}) muss groesser als 0 sein"
+        )
+    return None
+
+
 def _validate_derived_sensor_prerequisites(options: dict) -> str | None:
     """Returns a German error message if a field the automatic DAT/DART/day-night-avg
     provisioning needs (derived_sensors.ensure_all) is missing, or None if both are
@@ -658,6 +684,11 @@ def _run_bridge(options: dict, ha_api) -> bool:
     telemetry_interval_error = _validate_telemetry_interval(options)
     if telemetry_interval_error:
         logger.error("FEHLER: %s", telemetry_interval_error)
+        return False
+
+    failsafe_stale_after_hours_error = _validate_failsafe_stale_after_hours(options)
+    if failsafe_stale_after_hours_error:
+        logger.error("FEHLER: %s", failsafe_stale_after_hours_error)
         return False
 
     prerequisite_error = _validate_derived_sensor_prerequisites(options)
