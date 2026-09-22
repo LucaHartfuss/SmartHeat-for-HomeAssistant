@@ -19,6 +19,15 @@ Home-Assistant-Integration: installieren, dann Einstellungen → Geraete &
 Dienste → Integration hinzufuegen → "SmartHeat". Die Integration schreibt die
 noetige Konfiguration automatisch in dieses Add-on.
 
+## Update von 0.11.0 auf 0.11.1
+
+**Eine schnelle Korrektur einer Solltemperatur-Eingabe loest jetzt keinen sichtbaren
+Boost-Blip und keine unnoetige Server-Anfrage mehr fuer den zwischenzeitlich falschen
+Wert aus.** Eine Solltemperatur-Aenderung gilt erst nach 10 Sekunden Stabilitaet als
+final; erst dann wird geprueft, ob Boost noetig ist, und die Heizkurvenanpassung
+angestossen. Betrifft sowohl Boost-Start als auch Boost-Ende. Keine
+Konfigurationsaenderung noetig (das 10s-Fenster ist fest im Code).
+
 ## Update von 0.10.2 auf 0.11.0
 
 **Boost und der volle Snapshot-Publish (Regelanpassung) reagieren jetzt sofort auf
