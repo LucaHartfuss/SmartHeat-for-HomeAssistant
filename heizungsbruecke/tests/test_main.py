@@ -1558,94 +1558,47 @@ def test_maybe_publish_telemetry_does_not_touch_backup_json(tmp_path, monkeypatc
     assert not backup_path.exists()
 
 
-def test_run_local_check_publishes_telemetry_with_current_boost_and_failsafe_state(tmp_path, monkeypatch):
+def test_run_telemetry_tick_reads_room_actual_and_publishes(tmp_path, monkeypatch):
     monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
-    manifest = ChannelManifest(entity_ids={
-        "room_actual": "sensor.room_actual",
-        "room_target": "sensor.room_target",
-    })
+    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual"})
     ha_api = MagicMock()
-    ha_api.get_state.side_effect = lambda entity_id: {
-        "sensor.room_actual": 19.0, "sensor.room_target": 21.0,
-    }[entity_id]
+    ha_api.get_state.return_value = 20.5
     mqtt_client = MagicMock()
-    options = _base_options()
-    failsafe_ctx = {"state": FailsafeState(active=True, recovery_count=0), "last_valid_update": None}
 
-    _run_local_check(
-        manifest, ha_api, mqtt_client, options, threading.Lock(),
-        boost_was_active=False, failsafe_ctx=failsafe_ctx,
+    main_module._run_telemetry_tick(
+        manifest, ha_api, mqtt_client, options={}, boost_active=True, failsafe_active=False,
     )
 
+    ha_api.get_state.assert_called_once_with("sensor.room_actual")
     mqtt_client.publish_telemetry.assert_called_once()
     payload = mqtt_client.publish_telemetry.call_args.args[0]
-    assert payload["room_actual"] == 19.0
-    assert payload["failsafe_active"] is True
-    assert payload["boost_active"] is False
-
-
-def test_run_local_check_without_failsafe_ctx_publishes_telemetry_with_failsafe_active_false(tmp_path, monkeypatch):
-    """Rueckwaertskompatibilitaet: alle bestehenden Aufrufer/Tests, die failsafe_ctx
-    nicht kennen, duerfen nicht brechen -- Default ist failsafe_active=False."""
-    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
-    manifest = ChannelManifest(entity_ids={
-        "room_actual": "sensor.room_actual",
-        "room_target": "sensor.room_target",
-    })
-    ha_api = MagicMock()
-    ha_api.get_state.side_effect = lambda entity_id: {
-        "sensor.room_actual": 19.0, "sensor.room_target": 21.0,
-    }[entity_id]
-    mqtt_client = MagicMock()
-
-    _run_local_check(manifest, ha_api, mqtt_client, _base_options(), threading.Lock(), boost_was_active=False)
-
-    payload = mqtt_client.publish_telemetry.call_args.args[0]
+    assert payload["room_actual"] == 20.5
+    assert payload["boost_active"] is True
     assert payload["failsafe_active"] is False
 
 
-def test_run_local_check_survives_telemetry_publish_exception_and_returns_new_boost_state(tmp_path, monkeypatch):
-    """Whole-branch-review-Fund: _maybe_publish_telemetry() ist rein beobachtend und
-    darf, wenn sie intern ausnahmslos scheitert (z.B. save_backup() bei voller SD-Karte),
-    weder die Ausnahme aus _run_local_check herauspropagieren lassen noch den bereits
-    aktualisierten boost_was_active-Rueckgabewert verschlucken -- sonst wuerde der
-    Aufrufer (_run_bridge) seine Kopie von boost_was_active nie auf den neuen Wert
-    aktualisieren, obwohl apply_boost_decision() das Live-Geraet schon geschrieben hat.
-
-    boost_was_active=True wird hier bewusst als Startzustand uebergeben (statt False):
-    decide_boost() aktiviert Boost bei einem frischen previous_room_target=None (erster
-    Tick, kein Vorwert bekannt) nie -- der Test braucht aber einen Durchlauf, der
-    tatsaechlich einen von apply_boost_decision() bereits aktualisierten Rueckgabewert
-    liefert (hier: Boost bleibt aktiv, da room_actual=19.0 < room_target=21.0 -
-    arrival_threshold_k), um zu belegen, dass genau dieser Wert trotz der
-    Telemetrie-Ausnahme unveraendert an den Aufrufer durchgereicht wird."""
-    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
-    manifest = ChannelManifest(entity_ids={
-        "room_actual": "sensor.room_actual",
-        "room_target": "sensor.room_target",
-    })
+def test_run_telemetry_tick_skips_when_room_actual_not_mapped():
+    manifest = ChannelManifest(entity_ids={})
     ha_api = MagicMock()
-    ha_api.get_state.side_effect = lambda entity_id: {
-        "sensor.room_actual": 19.0, "sensor.room_target": 21.0,
-    }[entity_id]
     mqtt_client = MagicMock()
-    options = _base_options()
 
-    def _raise(*args, **kwargs):
-        raise OSError("SD-Karte voll")
-
-    monkeypatch.setattr("heizungsbruecke.__main__._maybe_publish_telemetry", _raise)
-
-    result = _run_local_check(
-        manifest, ha_api, mqtt_client, options, threading.Lock(),
-        boost_was_active=True, failsafe_ctx=None,
+    main_module._run_telemetry_tick(
+        manifest, ha_api, mqtt_client, options={}, boost_active=False, failsafe_active=False,
     )
 
-    # Boost bleibt aktiv (room_actual liegt weiterhin mehr als arrival_threshold_k unter
-    # room_target) -- apply_boost_decision() hat diesen Wert bereits VOR dem Telemetrie-
-    # Aufruf bestimmt und in backup.json["boost_active"] persistiert. Beide Werte muessen
-    # trotz der Ausnahme im Telemetrie-Pfad uebereinstimmen und die Ausnahme darf nicht
-    # aus diesem Aufruf herauspropagieren (kein pytest.raises noetig -- ein Escape wuerde
-    # den Test ohnehin mit einer unbehandelten Exception abbrechen lassen).
-    assert result is True
-    assert load_backup(tmp_path / "backup.json")["boost_active"] is True
+    ha_api.get_state.assert_not_called()
+    mqtt_client.publish_telemetry.assert_not_called()
+
+
+def test_run_telemetry_tick_survives_exception_without_propagating(monkeypatch, caplog):
+    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual"})
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = OSError("SD-Karte voll")
+    mqtt_client = MagicMock()
+
+    with caplog.at_level("ERROR"):
+        main_module._run_telemetry_tick(
+            manifest, ha_api, mqtt_client, options={}, boost_active=False, failsafe_active=False,
+        )  # must not raise
+
+    assert "Telemetrie" in caplog.text

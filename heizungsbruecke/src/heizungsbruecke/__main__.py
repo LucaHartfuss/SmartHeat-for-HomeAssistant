@@ -495,10 +495,7 @@ def _run_local_check(
     function once Task 8 wires it in. Returns the boost-active state to carry into
     the next check. Propagates any I/O error to the caller (_run_bridge's loop),
     which is responsible for catching and logging so a single bad check doesn't kill
-    the whole process. Also publishes the KPI telemetry snapshot (Design-Spec
-    2026-09-16 KPI-Erfassung) once `telemetry_interval_seconds` has elapsed;
-    `failsafe_ctx=None` (e.g. from a caller that predates this feature) reports
-    `failsafe_active=False`.
+    the whole process.
     """
     if "room_actual" not in manifest.entity_ids or "room_target" not in manifest.entity_ids:
         return boost_was_active
@@ -545,26 +542,33 @@ def _run_local_check(
             room_target=room_target, notify_service=options.get("notify_service", ""), now=datetime.now(),
         )
 
-        # Rein beobachtender Pfad -- eine hier auftretende Ausnahme (z.B. save_backup()
-        # bei voller/schreibgeschuetzter SD-Karte, oder ein von Hand in options.json
-        # editiertes, nicht-numerisches telemetry_interval_seconds) darf NICHT aus
-        # _run_local_check herauspropagieren: das wuerde den return-Wert unterhalb
-        # dieses with-Blocks verhindern, und boost_was_active waere hier oben zwar
-        # schon aktuell (apply_boost_decision hat das Live-Geraet bereits geschrieben),
-        # aber der Aufrufer (_run_bridge) wuerde seine Kopie nie auf den neuen Wert
-        # aktualisieren -- ein rein beobachtender Pfad wuerde damit Kontroll-Zustand
-        # verfaelschen (Whole-Branch-Review-Fund).
-        try:
-            _maybe_publish_telemetry(
-                mqtt_client=mqtt_client, options=options, room_actual=room_actual,
-                boost_active=boost_was_active,
-                failsafe_active=(failsafe_ctx["state"].active if failsafe_ctx is not None else False),
-                now=time.time(),
-            )
-        except Exception:
-            logger.exception("Fehler beim Veroeffentlichen der KPI-Telemetrie, wird beim naechsten Check erneut versucht")
-
     return boost_was_active
+
+
+def _run_telemetry_tick(
+    manifest, ha_api, mqtt_client, options: dict, boost_active: bool, failsafe_active: bool,
+) -> None:
+    """Publishes the KPI telemetry snapshot on its own cadence, independent of whether
+    `_run_local_check` ran this tick (Design-Spec 2026-09-21: telemetry stays a
+    periodic, non-eventified watchdog-loop concern -- see spec's Watchdog-Loop
+    section -- now that `_run_local_check` itself only runs on trigger events or the
+    disconnected-fallback, not on every watchdog tick). Reads room_actual itself: a
+    plain local HA REST call, not a cloud roundtrip, so doing it unconditionally here
+    is cheap. `_maybe_publish_telemetry` still self-throttles via its own interval
+    marker, so most calls to this function are no-ops.
+    """
+    if "room_actual" not in manifest.entity_ids:
+        return
+    try:
+        room_actual = ha_api.get_state(manifest.entity_ids["room_actual"])
+        _maybe_publish_telemetry(
+            mqtt_client=mqtt_client, options=options, room_actual=room_actual,
+            boost_active=boost_active, failsafe_active=failsafe_active, now=time.time(),
+        )
+    except Exception:
+        logger.exception(
+            "Fehler beim Veroeffentlichen der KPI-Telemetrie, wird beim naechsten Tick erneut versucht"
+        )
 
 
 def _maybe_publish_full_snapshot(
