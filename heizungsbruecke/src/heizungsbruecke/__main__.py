@@ -364,6 +364,18 @@ def _connect_mqtt_with_retry(options: dict) -> BridgeMqttClient:
 def _make_down_callback(role, manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client):
     def _callback(client, userdata, message):
         try:
+            if message.retain:
+                # paho-mqtt sets .retain only on the broker's initial post-(re)subscribe
+                # replay of the last retained value, never on a genuine live publish --
+                # see docs/superpowers/specs/2026-09-22-heizungsbruecke-retained-down-replay-fix-design.md.
+                # Skipping the whole body (not just the staleness reset) avoids overwriting
+                # a manual correction with the stale replayed value.
+                logger.info(
+                    "Retained Down-Nachricht fuer Rolle '%s' beim (Re-)Subscribe uebersprungen "
+                    "(Broker-Replay, kein frisches Server-Signal)",
+                    role,
+                )
+                return
             payload = json.loads(message.payload)
             with write_lock:
                 handle_down_message(

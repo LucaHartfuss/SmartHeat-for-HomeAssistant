@@ -665,6 +665,7 @@ def test_make_down_callback_records_valid_message_after_successful_handling(tmp_
     callback = _make_down_callback("curve_current", manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
     message = MagicMock()
     message.payload = json.dumps({"v": 0.5})
+    message.retain = False
 
     callback(client=MagicMock(), userdata=None, message=message)
 
@@ -698,6 +699,7 @@ def test_make_down_callback_rejects_nan_without_crashing_or_poisoning_backup(tmp
     callback = _make_down_callback("curve_current", manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
     message = MagicMock()
     message.payload = json.dumps({"v": float("nan")})
+    message.retain = False
 
     callback(client=MagicMock(), userdata=None, message=message)  # must not raise
 
@@ -805,10 +807,46 @@ def test_make_down_callback_does_not_record_valid_message_when_handling_fails(tm
     callback = _make_down_callback("curve_current", manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
     message = MagicMock()
     message.payload = json.dumps({"v": 0.5})
+    message.retain = False
 
     callback(client=MagicMock(), userdata=None, message=message)  # must not raise -- caught and logged
 
     assert recorded_calls == []
+
+
+def test_make_down_callback_skips_retained_replay_without_recording_or_handling(tmp_path, monkeypatch, caplog):
+    # A retained MQTT message is the broker replaying the last-published value on every
+    # (re)subscribe (e.g. after a brief Cloudflare-tunnel hiccup), not a fresh signal from
+    # the server. Treating it as a live message would reset the fail-safe staleness timer
+    # on every harmless reconnect (defeating the only remaining dead-server detector since
+    # the boost redefinition) and could overwrite a manual correction the user just made on
+    # the live entity with a stale replayed value.
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    monkeypatch.setattr("heizungsbruecke.__main__.FAILSAFE_PATH", tmp_path / "failsafe_state.json")
+    manifest = ChannelManifest(entity_ids={"curve_current": "number.curve"})
+    ha_api = MagicMock()
+    options = _base_options()
+    write_lock = threading.Lock()
+    failsafe_ctx = {"last_valid_update": None, "state": FailsafeState(active=False, recovery_count=0)}
+    mqtt_client = MagicMock()
+
+    recorded_calls = []
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__._record_valid_message",
+        lambda ctx, client, path: recorded_calls.append((ctx, client, path)),
+    )
+
+    callback = _make_down_callback("curve_current", manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
+    message = MagicMock()
+    message.payload = json.dumps({"v": 0.5})
+    message.retain = True
+
+    with caplog.at_level(logging.INFO):
+        callback(client=MagicMock(), userdata=None, message=message)
+
+    ha_api.set_number_value.assert_not_called()  # handle_down_message must not run
+    assert recorded_calls == []  # _record_valid_message must not run -- no staleness-timer reset
+    assert "retain" in caplog.text.lower()  # live-verification grep target (spec Tests #3)
 
 
 # Entitlement check tests (Task 13)
