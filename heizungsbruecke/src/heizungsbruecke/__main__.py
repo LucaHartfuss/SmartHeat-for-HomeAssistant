@@ -501,25 +501,47 @@ def _save_boost_active_if_changed(boost_active: bool, path: Path) -> None:
         save_backup(path, backup)
 
 
+def _read_room_target_live(manifest, ha_api) -> float | None:
+    """Reads room_target directly from Home Assistant, bypassing the stable-target
+    cache (Design-Spec 2026-09-22) -- used only by the call sites that must see a
+    fresh value themselves (boot-priming, the debounced room_target trigger's own
+    callback, and the undebounced watchdog fallback), never for a plain cache read.
+    Returns None if the role isn't mapped, mirroring _run_local_check's own manifest
+    guard, so callers can (re-)seed the cache unconditionally without checking the
+    role first.
+    """
+    if "room_target" not in manifest.entity_ids:
+        return None
+    return ha_api.get_state(manifest.entity_ids["room_target"])
+
+
 def _run_local_check(
     manifest, ha_api, mqtt_client, options, write_lock, boost_was_active: bool,
-    failsafe_ctx: dict | None = None,
+    room_target: float | None, failsafe_ctx: dict | None = None,
 ) -> bool:
     """Runs one local check cycle (Design-Spec 2026-09-16, Abschnitt A): reads
-    room_actual/room_target locally from Home Assistant (no server/MQTT contact),
-    evaluates and applies the boost decision, and persists boost_active for
+    room_actual locally from Home Assistant (no server/MQTT contact), evaluates and
+    applies the boost decision, and persists boost_active for
     bridge.py::handle_down_message to read (Abschnitt D). Does NOT publish a full
     snapshot itself -- see _maybe_publish_full_snapshot, called at the end of this
     function once Task 8 wires it in. Returns the boost-active state to carry into
     the next check. Propagates any I/O error to the caller (_run_bridge's loop),
     which is responsible for catching and logging so a single bad check doesn't kill
     the whole process.
+
+    `room_target` is an explicit PARAMETER, not read live here (Design-Spec
+    2026-09-22, Stable-Target-Cache): every caller resolves it themselves, either from
+    a fresh live read (boot-priming, the room_target trigger's own callback, the
+    watchdog fallback) or from the shared cache (every other trigger). `None` means
+    the cache hasn't been populated yet (accepted boot-priming edge case, see
+    _StableTargetBox) -- treated the same as the role being unmapped, a no-op.
     """
     if "room_actual" not in manifest.entity_ids or "room_target" not in manifest.entity_ids:
         return boost_was_active
+    if room_target is None:
+        return boost_was_active
 
     room_actual = ha_api.get_state(manifest.entity_ids["room_actual"])
-    room_target = ha_api.get_state(manifest.entity_ids["room_target"])
 
     with write_lock:
         backup = load_backup(BACKUP_PATH)
@@ -703,6 +725,7 @@ def _make_trigger_event_callback(manifest, ha_api, mqtt_client, options, write_l
             with write_lock:
                 boost_state.active = _run_local_check(
                     manifest, ha_api, mqtt_client, options, write_lock, boost_state.active,
+                    room_target=_read_room_target_live(manifest, ha_api),
                     failsafe_ctx=failsafe_ctx,
                 )
         except Exception:
@@ -888,6 +911,7 @@ def _run_bridge(options: dict, ha_api) -> bool:
     try:
         boost_state.active = _run_local_check(
             manifest, ha_api, mqtt_client, options, write_lock, boost_state.active,
+            room_target=_read_room_target_live(manifest, ha_api),
             failsafe_ctx=priming_failsafe_ctx,
         )
     except Exception:
@@ -930,6 +954,7 @@ def _run_bridge(options: dict, ha_api) -> bool:
                 with write_lock:
                     boost_state.active = _run_local_check(
                         manifest, ha_api, mqtt_client, options, write_lock, boost_state.active,
+                        room_target=_read_room_target_live(manifest, ha_api),
                         failsafe_ctx=failsafe_ctx,
                     )
         except Exception:

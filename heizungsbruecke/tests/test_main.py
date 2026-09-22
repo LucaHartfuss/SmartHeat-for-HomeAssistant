@@ -176,7 +176,7 @@ def test_run_local_check_evaluates_boost_without_publishing_when_nothing_changed
     options = _base_options()
     write_lock = threading.Lock()
 
-    new_state = _run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active=False)
+    new_state = _run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active=False, room_target=20.0)
 
     assert new_state is False
     mqtt_client.publish_value.assert_not_called()
@@ -221,7 +221,7 @@ def test_run_local_check_propagates_exceptions_for_caller_to_handle():
     # _run_tick itself must not swallow the error -- main()'s while-loop try/except
     # (I2) is what's responsible for catching, logging and continuing to the next tick.
     with pytest.raises(RuntimeError):
-        _run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active=False)
+        _run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active=False, room_target=21.0)
 
 
 def test_run_local_check_persists_room_target_for_next_checks_comparison(tmp_path, monkeypatch):
@@ -241,7 +241,7 @@ def test_run_local_check_persists_room_target_for_next_checks_comparison(tmp_pat
         "curve_min": 0.4, "curve_max": 1.5, "offset_min": 20.0, "offset_max": 30.0,
     }
 
-    _run_local_check(manifest, ha_api, mqtt_client, options, threading.Lock(), boost_was_active=False)
+    _run_local_check(manifest, ha_api, mqtt_client, options, threading.Lock(), boost_was_active=False, room_target=21.0)
 
     assert load_backup(tmp_path / "backup.json")["last_room_target"] == 21.0
 
@@ -266,11 +266,56 @@ def test_run_local_check_triggers_boost_on_target_raise_between_checks(tmp_path,
         "curve_min": 0.4, "curve_max": 1.5, "offset_min": 20.0, "offset_max": 30.0,
     }
 
-    boost_was_active = _run_local_check(manifest, ha_api, mqtt_client, options, threading.Lock(), boost_was_active=False)
+    boost_was_active = _run_local_check(manifest, ha_api, mqtt_client, options, threading.Lock(), boost_was_active=False, room_target=21.0)
 
     assert boost_was_active is True
     ha_api.set_number_value.assert_any_call("number.curve", 1.5)
     ha_api.set_number_value.assert_any_call("number.offset", 30.0)
+
+
+def test_run_local_check_uses_room_target_parameter_without_reading_it_live(tmp_path, monkeypatch):
+    # Design-Spec 2026-09-22 (Stable-Target-Cache): room_target must come in as an
+    # explicit parameter -- _run_local_check itself must no longer read it live via
+    # ha_api.get_state, only room_actual. Wired to raise for the room_target entity_id
+    # specifically, so this test fails loudly if that read still happens.
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual", "room_target": "sensor.room_target",
+    })
+    ha_api = MagicMock()
+
+    def _get_state(entity_id):
+        if entity_id == "sensor.room_target":
+            raise AssertionError("_run_local_check must not read room_target live anymore")
+        return {"sensor.room_actual": 19.0}[entity_id]
+
+    ha_api.get_state.side_effect = _get_state
+    options = _base_options()
+
+    new_state = _run_local_check(
+        manifest, ha_api, MagicMock(), options, threading.Lock(), boost_was_active=False, room_target=21.0,
+    )
+
+    assert new_state is False  # no previous_room_target recorded yet -> boost stays inactive
+
+
+def test_run_local_check_returns_unchanged_state_when_room_target_parameter_is_none(tmp_path, monkeypatch):
+    # Boot-priming edge case (Design-Spec 2026-09-22, Abschnitt 2): the stable-target
+    # cache can still be unpopulated (e.g. a failed boot-time live read) even though
+    # both roles are mapped -- must no-op instead of crashing on a None comparison
+    # inside decide_boost/_maybe_publish_full_snapshot.
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual", "room_target": "sensor.room_target",
+    })
+    ha_api = MagicMock()
+
+    new_state = _run_local_check(
+        manifest, ha_api, MagicMock(), _base_options(), threading.Lock(), boost_was_active=True, room_target=None,
+    )
+
+    assert new_state is True  # unchanged, no decision made
+    ha_api.get_state.assert_not_called()
 
 
 def test_resolve_effective_options_uses_profile_defaults_when_clamps_absent():
@@ -673,7 +718,7 @@ def test_run_bridge_loop_survives_clamp_rejecting_a_non_finite_boost_value(monke
 
     call_count = {"n": 0}
 
-    def fake_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, failsafe_ctx=None):
+    def fake_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, room_target=None, failsafe_ctx=None):
         call_count["n"] += 1
         raise ValueError("clamp() erhielt einen nicht-endlichen Wert (NaN): nan")
 
@@ -935,7 +980,7 @@ def test_run_local_check_persists_boost_active_true_on_transition_to_active(tmp_
         "curve_min": 0.4, "curve_max": 1.5, "offset_min": 20.0, "offset_max": 30.0,
     }
 
-    new_state = _run_local_check(manifest, ha_api, MagicMock(), options, threading.Lock(), boost_was_active=False)
+    new_state = _run_local_check(manifest, ha_api, MagicMock(), options, threading.Lock(), boost_was_active=False, room_target=21.0)
 
     assert new_state is True
     assert load_backup(backup_path)["boost_active"] is True
@@ -961,7 +1006,7 @@ def test_run_local_check_persists_boost_active_false_on_transition_to_inactive(t
         "curve_min": 0.4, "curve_max": 1.5, "offset_min": 20.0, "offset_max": 30.0,
     }
 
-    new_state = _run_local_check(manifest, ha_api, MagicMock(), options, threading.Lock(), boost_was_active=True)
+    new_state = _run_local_check(manifest, ha_api, MagicMock(), options, threading.Lock(), boost_was_active=True, room_target=21.0)
 
     assert new_state is False
     assert load_backup(backup_path)["boost_active"] is False
@@ -997,7 +1042,7 @@ def test_run_local_check_skips_all_writes_when_nothing_changed(tmp_path, monkeyp
         "heizungsbruecke.__main__.save_backup", lambda path, values: save_calls.append((path, values)),
     )
 
-    _run_local_check(manifest, ha_api, MagicMock(), _base_options(), threading.Lock(), boost_was_active=False)
+    _run_local_check(manifest, ha_api, MagicMock(), _base_options(), threading.Lock(), boost_was_active=False, room_target=20.0)
 
     assert save_calls == []
 
@@ -1260,7 +1305,7 @@ def test_run_bridge_primes_local_check_before_mqtt_loop_start(monkeypatch):
     )
     monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
 
-    def fake_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, failsafe_ctx=None):
+    def fake_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, room_target=None, failsafe_ctx=None):
         call_order.append("_run_local_check")
         return boost_was_active
 
@@ -1305,7 +1350,7 @@ def test_run_bridge_checks_failsafe_staleness_before_local_check_in_loop(monkeyp
     )
     monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
 
-    def fake_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, failsafe_ctx=None):
+    def fake_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, room_target=None, failsafe_ctx=None):
         call_order.append("_run_local_check")
         return boost_was_active
 
@@ -1372,7 +1417,7 @@ def test_run_bridge_checks_failsafe_staleness_before_priming_local_check(tmp_pat
 
     observed_active_at_priming = []
 
-    def fake_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, failsafe_ctx=None):
+    def fake_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, room_target=None, failsafe_ctx=None):
         observed_active_at_priming.append(failsafe_ctx["state"].active)
         return boost_was_active
 
@@ -1435,7 +1480,7 @@ def test_run_bridge_priming_staleness_check_does_not_notify_publish_or_persist_s
     )
     monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
 
-    def fake_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, failsafe_ctx=None):
+    def fake_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, room_target=None, failsafe_ctx=None):
         return boost_was_active
 
     monkeypatch.setattr("heizungsbruecke.__main__._run_local_check", fake_run_local_check)
@@ -1486,7 +1531,7 @@ def test_run_bridge_resets_stale_boost_active_when_priming_check_raises(monkeypa
     )
     monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
 
-    def raising_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, failsafe_ctx=None):
+    def raising_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, room_target=None, failsafe_ctx=None):
         raise RuntimeError("simulated HA-API hiccup at boot")
 
     monkeypatch.setattr("heizungsbruecke.__main__._run_local_check", raising_run_local_check)
