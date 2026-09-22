@@ -67,8 +67,9 @@ DERIVED_SENSORS_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60, 60, 60)
 MQTT_CONNECT_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60)
 
 # Staleness wird ab der letzten GUELTIGEN DOWN-NACHRICHT gemessen, nicht ab dem lokalen
-# Check-Takt (local_check_interval_seconds) -- der laeuft nur alle 30-60s und aktualisiert
-# den Failsafe-Timer nicht selbst. Massgeblich ist die Down-Nachrichten-Kadenz: der volle
+# Check-Takt (local_check_interval_seconds) -- der laeuft (als Fallback, wenn
+# HaTriggerClient nicht verbunden ist) alle 30s bis 3600s und aktualisiert den
+# Failsafe-Timer nicht selbst. Massgeblich ist die Down-Nachrichten-Kadenz: der volle
 # Snapshot-Publish laeuft jetzt taeglich + event-driven statt stuendlich, d.h. im Normalfall
 # vergehen zwischen zwei gueltigen Down-Nachrichten bereits ~24h. Der Schwellwert braucht
 # also Luft gegen diese ~24h-Kadenz, nicht gegen den 30-60s-Check-Takt -- sonst schlaegt
@@ -80,10 +81,11 @@ MQTT_CONNECT_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60)
 # vergroeberte Erkennungsgeschwindigkeit, gekoppelt an die seltenere Down-Nachrichten-Kadenz.
 DEFAULT_FAILSAFE_STALE_AFTER_HOURS = 26.0
 
-# Nutzer-Vorgabe: lokaler Check-Takt darf 60s nicht ueberschreiten (siehe
-# _validate_local_check_interval). 30s als Standard laesst noch Luft fuer einen
-# kuerzeren Wert, falls je gebraucht.
-DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS = 30
+# Design-Spec 2026-09-21: seit der Umstellung auf HaTriggerClient steuert dieser Wert
+# nur noch den Watchdog-/Fallback-Takt (Boost-/target_changed-Check nur, wenn die
+# WS-Verbindung down ist), nicht mehr routinemaessiges Polling -- 300s deckt sich mit
+# telemetry_interval_seconds' bestehendem Default.
+DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS = 300
 
 # Design-Spec 2026-09-16 (KPI-Erfassung), Abschnitt 1: eigenes, von
 # local_check_interval_seconds UND vom (jetzt seltenen) vollen Snapshot-Publish
@@ -199,10 +201,14 @@ def _validate_boost_config(options: dict) -> str | None:
 
 def _validate_local_check_interval(options: dict) -> str | None:
     """Returns a German error message if local_check_interval_seconds is set but
-    exceeds the user-mandated maximum of 60s (Design-Spec 2026-09-16, Abschnitt A.1),
-    or None if absent/valid. Guards against a manually edited options.json on the Pi
-    bypassing config.yaml's schema cap and reintroducing the SD-wear problem this
-    design fixes.
+    exceeds the maximum of 3600s, or None if absent/valid. The previous 60s hard cap
+    (Design-Spec 2026-09-16, Abschnitt A.1) existed to bound SD-card wear from the then
+    poll-driven boost/change-check; since Design-Spec 2026-09-21 that check only still
+    runs on this cadence as a FALLBACK while HaTriggerClient's WS connection is down --
+    the interval now bounds worst-case fallback staleness, not routine polling
+    frequency, so a much larger ceiling is appropriate. 3600s (1h) keeps that worst case
+    in the same order of magnitude as the fail-safe's own hour-scale staleness
+    threshold (failsafe_stale_after_hours).
     """
     value = options.get("local_check_interval_seconds")
     if value is not None and (
@@ -211,10 +217,12 @@ def _validate_local_check_interval(options: dict) -> str | None:
         return (
             f"local_check_interval_seconds ({value!r}) ist kein gueltiger endlicher Zahlenwert"
         )
-    if value is not None and value > 60:
+    if value is not None and value > 3600:
         return (
             f"local_check_interval_seconds ({value}) liegt ueber dem zulaessigen Maximum "
-            f"von 60 Sekunden (haeufigere lokale Checks verschleissen die SD-Karte unnoetig)"
+            f"von 3600 Sekunden (1h) - seit der Umstellung auf eventgetriebene Trigger "
+            f"steuert dieser Wert nur noch den Watchdog-/Fallback-Takt, nicht mehr "
+            f"routinemaessiges Polling"
         )
     return None
 

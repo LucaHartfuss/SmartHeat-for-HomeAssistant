@@ -1114,10 +1114,14 @@ def test_validate_local_check_interval_accepts_absent_and_valid_values():
     assert _validate_local_check_interval({"local_check_interval_seconds": 60}) is None
 
 
-def test_validate_local_check_interval_flags_value_above_sixty():
-    error = _validate_local_check_interval({"local_check_interval_seconds": 61})
+def test_validate_local_check_interval_flags_value_above_thirty_six_hundred():
+    error = _validate_local_check_interval({"local_check_interval_seconds": 3601})
     assert error is not None
     assert "local_check_interval_seconds" in error
+
+
+def test_validate_local_check_interval_accepts_thirty_six_hundred():
+    assert _validate_local_check_interval({"local_check_interval_seconds": 3600}) is None
 
 
 def test_validate_telemetry_interval_accepts_absent_and_valid_values():
@@ -1233,9 +1237,9 @@ def test_default_failsafe_stale_after_hours_is_26():
     assert DEFAULT_FAILSAFE_STALE_AFTER_HOURS == 26.0
 
 
-def test_default_local_check_interval_seconds_is_30():
+def test_default_local_check_interval_seconds_is_300():
     from heizungsbruecke.__main__ import DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS
-    assert DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS == 30
+    assert DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS == 300
 
 
 def test_run_bridge_primes_local_check_before_mqtt_loop_start(monkeypatch):

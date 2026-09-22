@@ -19,6 +19,19 @@ Home-Assistant-Integration: installieren, dann Einstellungen → Geraete &
 Dienste → Integration hinzufuegen → "SmartHeat". Die Integration schreibt die
 noetige Konfiguration automatisch in dieses Add-on.
 
+## Update von 0.10.2 auf 0.11.0
+
+**Boost und der volle Snapshot-Publish (Regelanpassung) reagieren jetzt sofort auf
+Ereignisse statt auf den naechsten Poll zu warten.** Home Assistants interne
+`subscribe_trigger`-Schnittstelle (dieselbe, die YAML-Automationen nutzen) liefert
+Aenderungen an Raum-Ist-/Sollwert sowie den taeglichen Zeitpunkt jetzt direkt, ohne
+Wartezeit. `local_check_interval_seconds` (Default jetzt 300s, Bereich 1-3600s) steuert
+nur noch den Watchdog-/Fallback-Takt fuer den seltenen Fall, dass die
+Websocket-Verbindung zu Home Assistant Core gerade unterbrochen ist -- dann poll't das
+Add-on automatisch wieder wie bisher, bis die Verbindung zurueckkehrt. Wer diesen Wert
+bereits manuell in `options.json` gesetzt hatte, muss nichts aendern: Werte bis 60s
+(der alte Maximalwert) bleiben weiterhin gueltig.
+
 ## Update von 0.10.1 auf 0.10.2
 
 Internes Bugfix-Release, keine Konfigurationsaenderung, zwei kleine Haertungen aus
