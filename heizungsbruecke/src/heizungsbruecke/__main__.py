@@ -92,6 +92,15 @@ DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS = 300
 # entkoppeltes Intervall, damit Komfort-/Boost-KPIs nicht zu grobkoernig werden.
 DEFAULT_TELEMETRY_INTERVAL_SECONDS = 300
 
+# Design-Spec 2026-09-22 (Zieltemperatur-Debounce): 10s Stabilitaetsfenster, bevor eine
+# room_target-Aenderung als "final" gilt (Boost-Start/-Ende und Heizkurvenanpassung
+# reagieren erst danach, siehe _make_trigger_event_callback/_StableTargetBox weiter
+# unten). Bewusst fest im Code (kein Add-on-Options-Feld) -- kein bestehender
+# Plumbing-Mechanismus fuer Boost-aehnliche Parameter (auch boost_threshold_k ist
+# profilbasiert, nicht per Config-Flow einstellbar), nur client1 als realer Nutzer
+# aktuell. YAGNI, spaeter bei Bedarf nachruestbar.
+ROOM_TARGET_DEBOUNCE_SECONDS = 10
+
 # In-memory only (not persisted to backup.json) -- persisting it would reintroduce
 # ~288 SD-card writes/day, exactly what A.2 eliminated for the other backup.json
 # fields. Losing this marker on an add-on restart just causes one extra early
@@ -677,6 +686,17 @@ def _strip_attribute_suffix(entity_id: str) -> str:
     return real_entity_id
 
 
+def _extract_attribute_suffix(entity_id: str) -> str | None:
+    """Gegenstueck zu `_strip_attribute_suffix`: liefert den `::attribute`-Suffix (z.B.
+    `climate.wohnzimmer::temperature` -> `"temperature"`), oder `None` wenn die
+    Entity-ID keinen Suffix hat. Wird gebraucht, um den `attribute`-Filter des
+    `room_target`-subscribe_trigger-Triggers aufzubauen (Design-Spec 2026-09-22,
+    Abschnitt 1).
+    """
+    _, _, attribute = entity_id.partition("::")
+    return attribute or None
+
+
 def _make_trigger_event_callback(manifest, ha_api, mqtt_client, options, write_lock, boost_state, failsafe_ctx):
     def _on_trigger_event(trigger: dict) -> None:
         try:
@@ -696,9 +716,16 @@ def _make_trigger_event_callback(manifest, ha_api, mqtt_client, options, write_l
 def _build_ha_trigger_client(manifest, ha_api, options: dict, mqtt_client, write_lock, boost_state, failsafe_ctx):
     triggers = []
     if "room_target" in manifest.entity_ids:
-        triggers.append({
-            "platform": "state", "entity_id": _strip_attribute_suffix(manifest.entity_ids["room_target"]),
-        })
+        room_target_raw = manifest.entity_ids["room_target"]
+        room_target_trigger = {
+            "platform": "state",
+            "entity_id": _strip_attribute_suffix(room_target_raw),
+            "for": {"seconds": ROOM_TARGET_DEBOUNCE_SECONDS},
+        }
+        room_target_attribute = _extract_attribute_suffix(room_target_raw)
+        if room_target_attribute:
+            room_target_trigger["attribute"] = room_target_attribute
+        triggers.append(room_target_trigger)
     if "room_actual" in manifest.entity_ids:
         triggers.append({
             "platform": "state", "entity_id": _strip_attribute_suffix(manifest.entity_ids["room_actual"]),

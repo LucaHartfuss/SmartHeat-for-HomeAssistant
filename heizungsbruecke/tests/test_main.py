@@ -1641,9 +1641,41 @@ def test_build_ha_trigger_client_includes_room_roles_and_daily_time():
     _, kwargs = fake_cls.call_args
     assert kwargs["ws_url"] == "ws://x/api/websocket"
     assert kwargs["token"] == "tok"
-    assert {"platform": "state", "entity_id": "climate.wohnzimmer"} in kwargs["triggers"]
+    assert {
+        "platform": "state", "entity_id": "climate.wohnzimmer",
+        "attribute": "temperature", "for": {"seconds": 10},
+    } in kwargs["triggers"]
     assert {"platform": "state", "entity_id": "sensor.rt"} in kwargs["triggers"]
     assert {"platform": "time", "at": "12:00"} in kwargs["triggers"]
+
+
+def test_build_ha_trigger_client_omits_attribute_for_plain_room_target_entity():
+    # Design-Spec 2026-09-22: the attribute filter is derived from the `::`-suffix
+    # convention, not hardcoded to "temperature" -- a room_target mapped to a plain
+    # entity (no climate-attribute syntax) still gets the 10s `for:` debounce, but no
+    # `attribute` key (there is no secondary attribute to filter on).
+    manifest = ChannelManifest(entity_ids={"room_target": "sensor.target_rt"})
+    ha_api = MagicMock()
+    ha_api.websocket_url.return_value = "ws://x/api/websocket"
+    ha_api.token = "tok"
+    boost_state = main_module._BoostStateBox(active=False)
+
+    with patch("heizungsbruecke.__main__.HaTriggerClient") as fake_cls:
+        main_module._build_ha_trigger_client(
+            manifest=manifest, ha_api=ha_api, options={}, mqtt_client=MagicMock(),
+            write_lock=threading.RLock(), boost_state=boost_state, failsafe_ctx=None,
+        )
+
+    _, kwargs = fake_cls.call_args
+    assert kwargs["triggers"] == [{"platform": "state", "entity_id": "sensor.target_rt", "for": {"seconds": 10}}]
+
+
+def test_extract_attribute_suffix_returns_attribute_name():
+    assert main_module._extract_attribute_suffix("climate.wohnzimmer::temperature") == "temperature"
+
+
+def test_extract_attribute_suffix_returns_none_for_plain_entity_id():
+    assert main_module._extract_attribute_suffix("sensor.target_rt") is None
 
 
 def test_trigger_event_callback_invokes_run_local_check_and_updates_shared_box(tmp_path, monkeypatch):
