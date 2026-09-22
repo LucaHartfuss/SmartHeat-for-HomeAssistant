@@ -19,6 +19,17 @@ Home-Assistant-Integration: installieren, dann Einstellungen → Geraete &
 Dienste → Integration hinzufuegen → "SmartHeat". Die Integration schreibt die
 noetige Konfiguration automatisch in dieses Add-on.
 
+## Update von 0.11.1 auf 0.11.2
+
+**Der Fail-Safe-Alarm (Stunden ohne Server-Antwort) konnte bisher durch einen
+harmlosen MQTT-Reconnect (z.B. kurzer Haenger am Cloudflare-Tunnel) faelschlich
+zurueckgesetzt werden und loeste dadurch praktisch nie aus.** Der Broker liefert
+beim (Wieder-)Verbinden automatisch die zuletzt gesendete Down-Nachricht erneut
+aus (MQTT "retained message") -- das wurde bisher wie eine frische Antwort des
+Servers behandelt. Diese Wiederholungen werden jetzt erkannt und ignoriert;
+echte Server-Antworten sind unveraendert sofort wirksam. Keine Konfigurations-
+aenderung noetig.
+
 ## Update von 0.11.0 auf 0.11.1
 
 **Eine schnelle Korrektur einer Solltemperatur-Eingabe loest jetzt keinen sichtbaren
