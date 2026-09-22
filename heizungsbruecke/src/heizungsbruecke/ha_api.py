@@ -11,7 +11,7 @@ class HomeAssistantApi:
         self._token = token
         self._headers = {"Authorization": f"Bearer {token}"}
 
-    def _websocket_url(self) -> str:
+    def websocket_url(self) -> str:
         """Baut die Websocket-URL aus `_base_url`/`_api_prefix`.
 
         Der Task-Brief-Entwurf hierfuer (`_api_prefix.rsplit("/api", 1)[0] +
@@ -27,13 +27,17 @@ class HomeAssistantApi:
         ws_base = self._base_url.replace("https://", "wss://").replace("http://", "ws://")
         return f"{ws_base}{self._api_prefix}/websocket"
 
+    @property
+    def token(self) -> str:
+        return self._token
+
     def _call_ws_command(self, command: dict) -> dict:
         """Oeffnet eine kurzlebige WebSocket-Verbindung, authentifiziert sich und
         fuehrt genau ein Kommando aus, dann schliesst die Verbindung wieder --
         kein Verbindungs-Pooling, kein Dauerbetrieb. Wird nur ein paar Mal beim
         Start aufgerufen (derived_sensors.ensure_all), nicht im Tick-Loop.
         """
-        ws = websocket.create_connection(self._websocket_url(), timeout=10)
+        ws = websocket.create_connection(self.websocket_url(), timeout=10)
         try:
             auth_required = json.loads(ws.recv())
             if auth_required.get("type") != "auth_required":

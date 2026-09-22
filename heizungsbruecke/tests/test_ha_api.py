@@ -120,19 +120,25 @@ def test_get_state_respects_custom_api_prefix():
 def test_websocket_url_appends_websocket_path_to_http_base_url():
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
 
-    assert api._websocket_url() == "ws://supervisor/core/api/websocket"
+    assert api.websocket_url() == "ws://supervisor/core/api/websocket"
 
 
 def test_websocket_url_uses_wss_scheme_for_https_base_url():
     api = HomeAssistantApi(base_url="https://ha.example.com", token="test-token")
 
-    assert api._websocket_url() == "wss://ha.example.com/core/api/websocket"
+    assert api.websocket_url() == "wss://ha.example.com/core/api/websocket"
 
 
 def test_websocket_url_respects_custom_api_prefix():
     api = HomeAssistantApi(base_url="http://localhost:18213", token="test-token", api_prefix="/api")
 
-    assert api._websocket_url() == "ws://localhost:18213/api/websocket"
+    assert api.websocket_url() == "ws://localhost:18213/api/websocket"
+
+
+def test_token_property_returns_configured_token():
+    api = HomeAssistantApi(base_url="http://supervisor", token="secret-tok-123")
+
+    assert api.token == "secret-tok-123"
 
 
 def test_call_ws_command_completes_auth_handshake_and_returns_result():
