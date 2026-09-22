@@ -1,4 +1,5 @@
 import json
+import threading
 import time
 from unittest.mock import MagicMock, patch
 
@@ -6,11 +7,18 @@ from heizungsbruecke.ha_trigger_client import HaTriggerClient
 
 
 def _wait_until(predicate, timeout=2.0):
+    # Polls via a private Event's wait(), not time.sleep(): several tests in this file
+    # monkeypatch heizungsbruecke.ha_trigger_client.time.sleep, which -- since `time` is
+    # one shared module object -- patches time.sleep globally, not just inside that
+    # module. Using time.sleep here too used to let this helper's own polling ticks leak
+    # into e.g. test_reconnect_uses_increasing_backoff_and_resubscribes's captured
+    # sleep_calls list, making that test's outcome depend on GIL scheduling luck.
     deadline = time.time() + timeout
+    poll_gate = threading.Event()
     while time.time() < deadline:
         if predicate():
             return
-        time.sleep(0.01)
+        poll_gate.wait(0.01)
     raise AssertionError("condition not met within timeout")
 
 
@@ -175,6 +183,41 @@ def test_callback_exception_does_not_crash_the_dispatch_thread():
 
         on_trigger_event.assert_called_once()
         client.stop()
+
+
+def test_stop_closes_the_current_websocket_connection():
+    """Regression test for the real-HA-Core finding (Task 4, 2026-09-22): stop() must
+    not just set an internal flag -- it must actively close the current connection, or
+    `connected` can stay True indefinitely against a real, healthy socket that only
+    unblocks run_forever() on an actual disconnect. The fake `run_forever()` here
+    deliberately does NOT return on its own (unlike the other fakes in this file, which
+    return immediately), so this test only passes if stop() itself triggers the close.
+    """
+    captured = {}
+    blocked = threading.Event()
+
+    def _factory(url, on_message=None, on_close=None, on_error=None):
+        fake_app = MagicMock()
+        fake_app.close.side_effect = lambda: blocked.set()
+        fake_app.run_forever.side_effect = lambda: blocked.wait(timeout=2.0)
+        captured["app"] = fake_app
+        captured["on_message"] = on_message
+        return fake_app
+
+    with patch("heizungsbruecke.ha_trigger_client.websocket.WebSocketApp", side_effect=_factory):
+        client = HaTriggerClient(
+            ws_url="ws://x", token="t", triggers=[{"platform": "time", "at": "12:00"}],
+            on_trigger_event=MagicMock(),
+        )
+        client.start()
+        _wait_until(lambda: "app" in captured)
+
+        client.stop()
+
+        captured["app"].close.assert_called_once()
+        assert blocked.wait(timeout=2.0)  # proves run_forever() actually unblocked
+        client._thread.join(timeout=2.0)  # don't leak this thread into later tests' timing
+        assert not client._thread.is_alive()
 
 
 def test_reconnect_uses_increasing_backoff_and_resubscribes(monkeypatch):

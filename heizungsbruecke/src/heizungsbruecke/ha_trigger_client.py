@@ -34,17 +34,35 @@ class HaTriggerClient:
         self._stop = threading.Event()
         self._authed = False
         self._subscribed = False
+        self._ws_app: websocket.WebSocketApp | None = None
+        self._thread: threading.Thread | None = None
 
     @property
     def connected(self) -> bool:
         return self._connected.is_set()
 
     def start(self) -> None:
-        thread = threading.Thread(target=self._run_forever_with_reconnect, daemon=True)
-        thread.start()
+        self._thread = threading.Thread(target=self._run_forever_with_reconnect, daemon=True)
+        self._thread.start()
 
     def stop(self) -> None:
+        """Sets the stop flag AND proactively closes the current connection.
+
+        Real-HA-Core integration test finding (Task 4, 2026-09-22): setting only the
+        stop flag left `connected` True for an unbounded time after `stop()` returned,
+        because the background thread only re-checks the flag once `ws_app.run_forever()`
+        itself returns -- and nothing was telling that blocking call to return. Against a
+        real, healthy HA Core connection that can take arbitrarily long (it only returns
+        on an actual disconnect). The fake-`WebSocketApp` unit tests (Task 3) never
+        caught this since their fake `run_forever()` returns immediately by construction.
+        """
         self._stop.set()
+        ws_app = self._ws_app
+        if ws_app is not None:
+            try:
+                ws_app.close()
+            except Exception:
+                logger.exception("HaTriggerClient: Fehler beim Schliessen der WS-Verbindung in stop()")
 
     def _run_forever_with_reconnect(self) -> None:
         attempt = 0
@@ -58,6 +76,7 @@ class HaTriggerClient:
                     on_close=self._on_close,
                     on_error=self._on_error,
                 )
+                self._ws_app = ws_app
                 ws_app.run_forever()
             except Exception:
                 logger.exception("HaTriggerClient: unerwarteter Fehler in run_forever")
