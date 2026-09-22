@@ -25,11 +25,13 @@ class HaTriggerClient:
     def __init__(
         self, ws_url: str, token: str, triggers: list[dict],
         on_trigger_event: Callable[[dict], None],
+        on_connected: Callable[[], None] | None = None,
     ):
         self._ws_url = ws_url
         self._token = token
         self._triggers = triggers
         self._on_trigger_event = on_trigger_event
+        self._on_connected = on_connected
         self._connected = threading.Event()
         self._stop = threading.Event()
         self._authed = False
@@ -114,6 +116,18 @@ class HaTriggerClient:
             self._subscribed = True
             self._connected.set()
             logger.info("HaTriggerClient: subscribe_trigger erfolgreich fuer %d Trigger", len(self._triggers))
+            if self._on_connected is not None:
+                # Feuert bei JEDER erfolgreichen (Re-)Verbindung -- erster Connect nach
+                # start() genauso wie jeder spaetere Reconnect -- und das ohne die
+                # Sampling-Luecke, die ein rein aus dem Watchdog-Loop heraus periodisch
+                # abgefragtes `connected` zwangslaeufig hat (Re-Review final-review-
+                # report.md: ein 30-90s-HA-Core-Neustart kann komplett zwischen zwei
+                # 300s-Ticks durchlaufen). Wie `_dispatch_event` unten: darf niemals aus
+                # diesem WS-Callback-Thread herausplatzen (Klassendocstring).
+                try:
+                    self._on_connected()
+                except Exception:
+                    logger.exception("HaTriggerClient: on_connected-Callback hat eine Ausnahme geworfen")
         else:
             logger.error("HaTriggerClient: subscribe_trigger fehlgeschlagen: %s", payload.get("error"))
             ws.close()

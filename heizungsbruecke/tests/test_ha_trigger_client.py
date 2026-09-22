@@ -220,6 +220,129 @@ def test_stop_closes_the_current_websocket_connection():
         assert not client._thread.is_alive()
 
 
+def test_on_connected_callback_fires_when_subscribe_result_succeeds():
+    """Re-Review final-review-report.md: der einzig verlaessliche Hook-Punkt fuer einen
+    Reconnect/Erstverbindung ist `_handle_subscribe_result`, nicht ein von aussen per
+    Watchdog-Takt abgefragtes `connected` -- das haette bei einem kurzen Ausfall
+    zwischen zwei Ticks nie einen Uebergang gesehen. Dieser Test prueft direkt an der
+    Quelle: `on_connected` feuert exakt dann, wenn `subscribe_trigger` erfolgreich war
+    (also `connected` von False auf True wechselt) -- nicht davor.
+    """
+    captured = {}
+    on_connected = MagicMock()
+    with _patch_ws_app(captured):
+        client = HaTriggerClient(
+            ws_url="ws://x", token="t", triggers=[{"platform": "time", "at": "12:00"}],
+            on_trigger_event=MagicMock(), on_connected=on_connected,
+        )
+        client.start()
+        _wait_until(lambda: "on_message" in captured)
+        on_message = captured["on_message"]
+        fake_app = captured["app"]
+
+        on_message(fake_app, json.dumps({"type": "auth_required"}))
+        on_message(fake_app, json.dumps({"type": "auth_ok"}))
+        on_connected.assert_not_called()  # subscribe result not received yet
+
+        on_message(fake_app, json.dumps({"id": 1, "type": "result", "success": True, "result": None}))
+        assert client.connected is True
+        on_connected.assert_called_once()
+
+        client.stop()
+
+
+def test_on_connected_callback_fires_again_on_a_second_successful_subscribe():
+    """Direct unit test of the hook point itself (`_handle_subscribe_result`), bypassing
+    both the WS message-parsing plumbing and the real background reconnect thread (the
+    fake `run_forever` in `_patch_ws_app` returns immediately, so driving a *second*
+    connection deterministically through the full on_message/on_close plumbing would
+    race the background thread's own reconnect loop). The design's single correct hook
+    point is "runs every time `subscribe_trigger` succeeds -- both on the very first
+    connect after `start()` and on every reconnect after a disconnect" -- this test
+    calls that hook point twice, exactly as `_run_forever_with_reconnect` would after a
+    real disconnect (it resets `_subscribed = False` before each new attempt), and
+    asserts `on_connected` fires once per success, matching `_connected`'s own
+    set/clear/set cycle.
+    """
+    on_connected = MagicMock()
+    client = HaTriggerClient(
+        ws_url="ws://x", token="t", triggers=[{"platform": "time", "at": "12:00"}],
+        on_trigger_event=MagicMock(), on_connected=on_connected,
+    )
+    fake_ws = MagicMock()
+
+    client._handle_subscribe_result(fake_ws, {"success": True})
+    assert client.connected is True
+    on_connected.assert_called_once()
+
+    # Simulate a disconnect followed by a reconnect, mirroring what
+    # _run_forever_with_reconnect does around each new connection attempt.
+    client._connected.clear()
+    client._subscribed = False
+    client._handle_subscribe_result(fake_ws, {"success": True})
+    assert client.connected is True
+    assert on_connected.call_count == 2
+
+
+def test_on_connected_callback_not_called_when_subscribe_fails():
+    captured = {}
+    on_connected = MagicMock()
+    with _patch_ws_app(captured):
+        client = HaTriggerClient(
+            ws_url="ws://x", token="t", triggers=[{"platform": "time", "at": "12:00"}],
+            on_trigger_event=MagicMock(), on_connected=on_connected,
+        )
+        client.start()
+        _wait_until(lambda: "on_message" in captured)
+        on_message = captured["on_message"]
+        fake_app = captured["app"]
+
+        on_message(fake_app, json.dumps({"type": "auth_required"}))
+        on_message(fake_app, json.dumps({"type": "auth_ok"}))
+        on_message(fake_app, json.dumps({"id": 1, "type": "result", "success": False, "error": "boom"}))
+
+        assert client.connected is False
+        on_connected.assert_not_called()
+
+        client.stop()
+
+
+def test_on_connected_callback_exception_does_not_crash_the_ws_thread():
+    """Mirrors test_callback_exception_does_not_crash_the_dispatch_thread above --
+    `on_connected` is invoked from the same background WS-callback thread as
+    `on_trigger_event`, and the class docstring's "must never raise out of its
+    background thread" guarantee applies to it just the same.
+    """
+    captured = {}
+    on_connected = MagicMock(side_effect=ValueError("boom"))
+    on_trigger_event = MagicMock()
+    with _patch_ws_app(captured):
+        client = HaTriggerClient(
+            ws_url="ws://x", token="t", triggers=[{"platform": "time", "at": "12:00"}],
+            on_trigger_event=on_trigger_event, on_connected=on_connected,
+        )
+        client.start()
+        _wait_until(lambda: "on_message" in captured)
+        on_message = captured["on_message"]
+        fake_app = captured["app"]
+
+        on_message(fake_app, json.dumps({"type": "auth_required"}))
+        on_message(fake_app, json.dumps({"type": "auth_ok"}))
+        on_message(fake_app, json.dumps({"id": 1, "type": "result", "success": True, "result": None}))  # must not raise
+
+        on_connected.assert_called_once()
+        assert client.connected is True  # _connected.set() ran before the callback raised
+
+        # Thread survived the exception and can still dispatch a subsequent event.
+        trigger_payload = {"platform": "time", "now": "x"}
+        on_message(fake_app, json.dumps({
+            "id": 1, "type": "event", "event": {"variables": {"trigger": trigger_payload}, "context": {}},
+        }))
+        on_trigger_event.assert_called_once_with(trigger_payload)
+
+        client.stop()
+
+
 def test_reconnect_uses_increasing_backoff_and_resubscribes(monkeypatch):
     sleep_calls = []
     monkeypatch.setattr("heizungsbruecke.ha_trigger_client.time.sleep", lambda s: sleep_calls.append(s))

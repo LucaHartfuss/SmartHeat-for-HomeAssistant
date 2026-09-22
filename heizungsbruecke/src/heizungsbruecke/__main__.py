@@ -787,6 +787,29 @@ def _make_trigger_event_callback(
     return _on_trigger_event
 
 
+def _make_on_connected_callback(manifest, ha_api, write_lock, stable_target):
+    """Baut den `on_connected`-Callback fuer `HaTriggerClient` (Re-Review final-
+    review-report.md, Nachfolger des `was_connected`-Watchdog-Sampling-Ansatzes aus
+    d8176c2): `HaTriggerClient` ruft diesen Callback synchron aus
+    `_handle_subscribe_result` heraus auf, exakt einmal pro erfolgreicher
+    (Re-)Verbindung -- erster Connect nach `start()` ebenso wie jeder spaetere
+    Reconnect, mit garantiert null Sampling-Luecke, unabhaengig davon, wie kurz ein
+    Ausfall war oder ob der Watchdog-Loop ihn ueberhaupt als "getrennt" beobachtet
+    haette. Deckt damit sowohl den alten Reconnect-Fall (Important #1) als auch den
+    alten "Cache nach fehlgeschlagenem Boot-Priming nie befuellt"-Fall (Important #2)
+    mit demselben einen Mechanismus ab, ohne auf den 300s-Takt des Watchdog-Loops
+    angewiesen zu sein.
+    """
+    def _on_connected() -> None:
+        with write_lock:
+            stable_target.value = _read_room_target_live(manifest, ha_api)
+            logger.info(
+                "Stable-Target-Cache aktualisiert (On-Connect-Hook, (Re-)Verbindung "
+                "hergestellt): room_target=%s", stable_target.value,
+            )
+    return _on_connected
+
+
 def _build_ha_trigger_client(
     manifest, ha_api, options: dict, mqtt_client, write_lock, boost_state, failsafe_ctx, stable_target,
 ):
@@ -815,8 +838,12 @@ def _build_ha_trigger_client(
         write_lock=write_lock, boost_state=boost_state, failsafe_ctx=failsafe_ctx,
         stable_target=stable_target,
     )
+    on_connected = _make_on_connected_callback(
+        manifest=manifest, ha_api=ha_api, write_lock=write_lock, stable_target=stable_target,
+    )
     return HaTriggerClient(
-        ws_url=ha_api.websocket_url(), token=ha_api.token, triggers=triggers, on_trigger_event=on_trigger_event,
+        ws_url=ha_api.websocket_url(), token=ha_api.token, triggers=triggers,
+        on_trigger_event=on_trigger_event, on_connected=on_connected,
     )
 
 
@@ -1001,15 +1028,6 @@ def _run_bridge(options: dict, ha_api) -> bool:
         stable_target=stable_target,
     )
     ha_trigger_client.start()
-    # Whole-Branch-Review Important #1 (final-review-report.md): der reine
-    # "not connected"-Fallback unten aktualisiert den Cache nur, WAEHREND die
-    # WS-Verbindung weg ist. Ein typischer HA-Core-Neustart (30-90s Ausfall) laeuft bei
-    # local_check_interval_seconds=300 (Default) oft komplett zwischen zwei Ticks durch,
-    # sodass "connected" beim naechsten Tick schon wieder True ist und der Fallback nie
-    # greift -- ein waehrend des Ausfalls geaenderter room_target bliebe dann beliebig
-    # lange im Cache stehen. Deshalb den vorherigen "connected"-Zustand mitfuehren, um
-    # einen False->True-Uebergang (Reconnect) explizit zu erkennen, s.u.
-    was_connected = ha_trigger_client.connected
 
     while True:
         try:
@@ -1021,13 +1039,17 @@ def _run_bridge(options: dict, ha_api) -> bool:
         except Exception:
             logger.exception("Fehler bei der Fail-Safe-Staleness-Pruefung, wird beim naechsten Check erneut versucht")
 
-        currently_connected = ha_trigger_client.connected
         try:
-            if not currently_connected:
+            if not ha_trigger_client.connected:
                 with write_lock:
                     # Undebounced mit Absicht (Design-Spec 2026-09-22, Punkt 2): hier
                     # existiert keine subscribe_trigger-Debounce-Garantie, konsistent
-                    # mit "degradiert automatisch auf reinen Poll-Betrieb".
+                    # mit "degradiert automatisch auf reinen Poll-Betrieb". Dies ist der
+                    # urspruengliche, unveraenderte Watchdog-Fallback fuer echtes,
+                    # andauerndes Getrenntsein -- der Reconnect-/Erstverbindungs-Fall
+                    # wird seit dem On-Connect-Hook (_make_on_connected_callback) direkt
+                    # von HaTriggerClient selbst abgedeckt, ohne auf diesen Tick zu
+                    # warten.
                     stable_target.value = _read_room_target_live(manifest, ha_api)
                     logger.info(
                         "Stable-Target-Cache aktualisiert (Watchdog-Fallback, WS getrennt): room_target=%s",
@@ -1037,27 +1059,8 @@ def _run_bridge(options: dict, ha_api) -> bool:
                         manifest, ha_api, mqtt_client, options, write_lock, boost_state.active,
                         room_target=stable_target.value, failsafe_ctx=failsafe_ctx,
                     )
-            elif not was_connected or stable_target.value is None:
-                # Re-Seed-Pfad (Whole-Branch-Review Important #1/#2): entweder ist die
-                # WS-Verbindung gerade (seit dem letzten Tick) wieder da -- dann kann der
-                # Cache noch den Vor-Ausfall-Wert tragen, falls der Ausfall komplett
-                # zwischen zwei Ticks lag und der obige "not connected"-Zweig deshalb nie
-                # griff -- oder der Cache ist trotz bestehender Verbindung noch nie
-                # befuellt worden (z.B. ein fehlgeschlagener Boot-Priming-Live-Read).
-                # Beides schliesst derselbe einmalige frische Live-Read; kein
-                # _run_local_check hier -- der naechste ohnehin faellige Trigger (in der
-                # Praxis meist der haeufig feuernde room_actual-Trigger) uebernimmt mit
-                # dem jetzt frischen Cache-Wert.
-                with write_lock:
-                    reason = "Reconnect" if not was_connected else "Cache war unbefuellt"
-                    stable_target.value = _read_room_target_live(manifest, ha_api)
-                    logger.info(
-                        "Stable-Target-Cache aktualisiert (%s): room_target=%s", reason, stable_target.value,
-                    )
         except Exception:
             logger.exception("Fehler im lokalen Check (Watchdog-Fallback), wird beim naechsten Tick erneut versucht")
-        finally:
-            was_connected = currently_connected
 
         _run_telemetry_tick(
             manifest, ha_api, mqtt_client, options,
