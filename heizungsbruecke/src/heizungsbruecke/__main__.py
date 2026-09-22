@@ -370,6 +370,10 @@ def _make_down_callback(role, manifest, ha_api, options, write_lock, failsafe_ct
                 # see docs/superpowers/specs/2026-09-22-heizungsbruecke-retained-down-replay-fix-design.md.
                 # Skipping the whole body (not just the staleness reset) avoids overwriting
                 # a manual correction with the stale replayed value.
+                # Assumes MQTT 3.1.1 semantics (this client's default): under MQTT v5 with
+                # the Retain-As-Published subscribe option, a genuine live publish could also
+                # arrive with retain=1 and would be wrongly skipped here -- do not enable RAP
+                # for this subscription without revisiting this check.
                 logger.info(
                     "Retained Down-Nachricht fuer Rolle '%s' beim (Re-)Subscribe uebersprungen "
                     "(Broker-Replay, kein frisches Server-Signal)",
@@ -485,13 +489,25 @@ def _preview_failsafe_ctx(failsafe_ctx: dict, stale_after_seconds: float) -> dic
 
     Deliberately does NOT call `_check_failsafe_staleness`: that function COMMITS a
     transition (MQTT publish, `failsafe_state.json` write, and a push notification).
-    Calling it here, before `mqtt_client.loop_start()` has had a chance to redeliver
-    the retained down-messages that prove the server is actually still alive, produced
-    a real regression (Whole-Branch-Review-Fund I1, final-review-fixes-plan,
-    2026-09-20): on an add-on restart ~26-30h after the last down-message (normal
-    daily-snapshot cadence, only ~2h margin against the 26h threshold), it fired a
-    false "Fail-Safe aktiviert" push notification to the customer's phone, then flipped
-    back OFF milliseconds later once `loop_start()` delivered the retained messages.
+    Calling it here, before the main loop's own `_check_failsafe_staleness()` call
+    (which only runs after `mqtt_client.loop_start()`), produced a real regression
+    (Whole-Branch-Review-Fund I1, final-review-fixes-plan, 2026-09-20): on an add-on
+    restart ~26-30h after the last down-message (normal daily-snapshot cadence, only
+    ~2h margin against the 26h threshold), it fired a false "Fail-Safe aktiviert" push
+    notification to the customer's phone, then flipped back OFF milliseconds later
+    once `loop_start()` redelivered the retained down-messages -- which were, at the
+    time, still trusted as proof the server was alive.
+
+    Since v0.11.2 (retained-down-replay-fix, see
+    `docs/superpowers/specs/2026-09-22-heizungsbruecke-retained-down-replay-fix-design.md`),
+    `_make_down_callback` ignores those retained replays entirely, so they no longer
+    reset the staleness timer or "prove the server is alive" -- the false-alarm-then-
+    flip-back sequence described above can no longer happen the same way; a restart
+    after the threshold now correctly stays in fail-safe until a genuine live down-
+    message arrives. This function's own purpose is unchanged: it still avoids
+    committing any transition (false or now-correct) from this early priming call --
+    the main loop's `_check_failsafe_staleness()` below remains the sole place a real
+    state change, publish, or notification happens.
 
     `enter_failsafe_if_stale` is a pure function (see failsafe.py) with no I/O and no
     side effects, so calling it here to compute a *preview* state -- without ever
@@ -988,16 +1004,25 @@ def _run_bridge(options: dict, ha_api) -> bool:
     # I1-Fix (Whole-Branch-Review-Fund, final-review-fixes-plan, 2026-09-20): hierfuer
     # NICHT _check_failsafe_staleness() aufrufen -- das committet eine echte
     # Zustandsaenderung (MQTT-Publish, failsafe_state.json-Schreibvorgang, Push-
-    # Benachrichtigung), noch bevor loop_start() unten die retained Down-Nachrichten
-    # zugestellt hat, die belegen wuerden, dass der Server tatsaechlich noch lebt. Das
-    # fuehrte bei einem Neustart ~26-30h nach der letzten Down-Nachricht (normale
-    # taegliche Snapshot-Kadenz, nur ~2h Puffer gegen die 26h-Schwelle) zu einer
-    # falschen "Fail-Safe aktiviert"-Push-Benachrichtigung, die Millisekunden spaeter
-    # durch loop_start() wieder zurueckgenommen wurde. Stattdessen rein lesend eine
-    # Vorschau bilden (_preview_failsafe_ctx, reine Funktion, keine Nebenwirkungen) und
-    # nur fuer DIESEN einen priming-Aufruf verwenden -- der echte failsafe_ctx bleibt
-    # unveraendert, die echte Zustandsaenderung entscheidet weiterhin ausschliesslich
-    # der Hauptloop-Aufruf unten, nach loop_start().
+    # Benachrichtigung), noch bevor der Hauptloop-Aufruf unten (nach loop_start())
+    # _check_failsafe_staleness() selbst ausfuehrt. Das fuehrte bei einem Neustart
+    # ~26-30h nach der letzten Down-Nachricht (normale taegliche Snapshot-Kadenz, nur
+    # ~2h Puffer gegen die 26h-Schwelle) zu einer falschen "Fail-Safe aktiviert"-Push-
+    # Benachrichtigung, die Millisekunden spaeter durch loop_start() wieder
+    # zurueckgenommen wurde -- damals, weil die dabei zugestellten retained Down-
+    # Nachrichten noch als Beleg fuer einen lebenden Server galten. Stattdessen rein
+    # lesend eine Vorschau bilden (_preview_failsafe_ctx, reine Funktion, keine
+    # Nebenwirkungen) und nur fuer DIESEN einen priming-Aufruf verwenden -- der echte
+    # failsafe_ctx bleibt unveraendert, die echte Zustandsaenderung entscheidet
+    # weiterhin ausschliesslich der Hauptloop-Aufruf unten, nach loop_start().
+    #
+    # Seit v0.11.2 (docs/superpowers/specs/2026-09-22-heizungsbruecke-retained-down-
+    # replay-fix-design.md) ignoriert _make_down_callback retained Replays vollstaendig
+    # -- sie zaehlen nicht mehr als Lebenszeichen, und obiger Flip-back-Effekt tritt so
+    # nicht mehr auf: ein Neustart nach der Schwelle bleibt jetzt korrekt im Fail-Safe,
+    # bis eine echte, live empfangene Down-Nachricht eintrifft. Am Zweck DIESER
+    # Vorab-Vorschau aendert das nichts -- sie vermeidet weiterhin jede Festschreibung
+    # (falsch oder jetzt korrekt) aus diesem fruehen priming-Aufruf.
     priming_failsafe_ctx = _preview_failsafe_ctx(failsafe_ctx, stale_after_seconds)
 
     boost_state = _BoostStateBox(active=False)

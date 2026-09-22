@@ -27,8 +27,10 @@ zurueckgesetzt werden und loeste dadurch praktisch nie aus.** Der Broker liefert
 beim (Wieder-)Verbinden automatisch die zuletzt gesendete Down-Nachricht erneut
 aus (MQTT "retained message") -- das wurde bisher wie eine frische Antwort des
 Servers behandelt. Diese Wiederholungen werden jetzt erkannt und ignoriert;
-echte Server-Antworten sind unveraendert sofort wirksam. Keine Konfigurations-
-aenderung noetig.
+echte Server-Antworten sind unveraendert sofort wirksam. Als Nebeneffekt bleibt
+jetzt auch eine manuelle Korrektur des Sollwerts direkt am Pi zwischen zwei
+Server-Antworten erhalten -- ein Reconnect ueberschreibt sie nicht mehr mit dem
+veralteten wiederholten Wert. Keine Konfigurationsaenderung noetig.
 
 ## Update von 0.11.0 auf 0.11.1
 
