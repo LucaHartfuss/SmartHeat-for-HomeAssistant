@@ -539,6 +539,11 @@ def _run_local_check(
     if "room_actual" not in manifest.entity_ids or "room_target" not in manifest.entity_ids:
         return boost_was_active
     if room_target is None:
+        # Whole-Branch-Review Important #2 (final-review-report.md): sichtbar machen,
+        # falls der Stable-Target-Cache noch nie befuellt wurde -- ohne dieses Log sieht
+        # ein leerer Check (kein Boost-Eval, kein Snapshot) im Log genauso aus wie ein
+        # regulaerer No-Op.
+        logger.warning("Lokaler Check uebersprungen: Stable-Target-Cache noch nicht befuellt (room_target=None)")
         return boost_was_active
 
     room_actual = ha_api.get_state(manifest.entity_ids["room_actual"])
@@ -766,6 +771,10 @@ def _make_trigger_event_callback(
                     # das attribute-Feld unterscheidet dann, welcher der beiden
                     # Trigger tatsaechlich gefeuert hat.
                     stable_target.value = _read_room_target_live(manifest, ha_api)
+                    logger.info(
+                        "Stable-Target-Cache aktualisiert (room_target-Trigger): room_target=%s",
+                        stable_target.value,
+                    )
                 boost_state.active = _run_local_check(
                     manifest, ha_api, mqtt_client, options, write_lock, boost_state.active,
                     room_target=stable_target.value, failsafe_ctx=failsafe_ctx,
@@ -962,6 +971,7 @@ def _run_bridge(options: dict, ha_api) -> bool:
     stable_target = _StableTargetBox(value=None)
     try:
         stable_target.value = _read_room_target_live(manifest, ha_api)
+        logger.info("Stable-Target-Cache initial befuellt (Boot-Priming): room_target=%s", stable_target.value)
         boost_state.active = _run_local_check(
             manifest, ha_api, mqtt_client, options, write_lock, boost_state.active,
             room_target=stable_target.value, failsafe_ctx=priming_failsafe_ctx,
@@ -991,6 +1001,15 @@ def _run_bridge(options: dict, ha_api) -> bool:
         stable_target=stable_target,
     )
     ha_trigger_client.start()
+    # Whole-Branch-Review Important #1 (final-review-report.md): der reine
+    # "not connected"-Fallback unten aktualisiert den Cache nur, WAEHREND die
+    # WS-Verbindung weg ist. Ein typischer HA-Core-Neustart (30-90s Ausfall) laeuft bei
+    # local_check_interval_seconds=300 (Default) oft komplett zwischen zwei Ticks durch,
+    # sodass "connected" beim naechsten Tick schon wieder True ist und der Fallback nie
+    # greift -- ein waehrend des Ausfalls geaenderter room_target bliebe dann beliebig
+    # lange im Cache stehen. Deshalb den vorherigen "connected"-Zustand mitfuehren, um
+    # einen False->True-Uebergang (Reconnect) explizit zu erkennen, s.u.
+    was_connected = ha_trigger_client.connected
 
     while True:
         try:
@@ -1002,21 +1021,43 @@ def _run_bridge(options: dict, ha_api) -> bool:
         except Exception:
             logger.exception("Fehler bei der Fail-Safe-Staleness-Pruefung, wird beim naechsten Check erneut versucht")
 
+        currently_connected = ha_trigger_client.connected
         try:
-            if not ha_trigger_client.connected:
+            if not currently_connected:
                 with write_lock:
                     # Undebounced mit Absicht (Design-Spec 2026-09-22, Punkt 2): hier
                     # existiert keine subscribe_trigger-Debounce-Garantie, konsistent
-                    # mit "degradiert automatisch auf reinen Poll-Betrieb". Aktualisiert
-                    # den Cache trotzdem nach dem eigenen Live-Read, damit nach einem
-                    # WS-Reconnect kein veralteter Vor-Ausfall-Wert uebrig bleibt.
+                    # mit "degradiert automatisch auf reinen Poll-Betrieb".
                     stable_target.value = _read_room_target_live(manifest, ha_api)
+                    logger.info(
+                        "Stable-Target-Cache aktualisiert (Watchdog-Fallback, WS getrennt): room_target=%s",
+                        stable_target.value,
+                    )
                     boost_state.active = _run_local_check(
                         manifest, ha_api, mqtt_client, options, write_lock, boost_state.active,
                         room_target=stable_target.value, failsafe_ctx=failsafe_ctx,
                     )
+            elif not was_connected or stable_target.value is None:
+                # Re-Seed-Pfad (Whole-Branch-Review Important #1/#2): entweder ist die
+                # WS-Verbindung gerade (seit dem letzten Tick) wieder da -- dann kann der
+                # Cache noch den Vor-Ausfall-Wert tragen, falls der Ausfall komplett
+                # zwischen zwei Ticks lag und der obige "not connected"-Zweig deshalb nie
+                # griff -- oder der Cache ist trotz bestehender Verbindung noch nie
+                # befuellt worden (z.B. ein fehlgeschlagener Boot-Priming-Live-Read).
+                # Beides schliesst derselbe einmalige frische Live-Read; kein
+                # _run_local_check hier -- der naechste ohnehin faellige Trigger (in der
+                # Praxis meist der haeufig feuernde room_actual-Trigger) uebernimmt mit
+                # dem jetzt frischen Cache-Wert.
+                with write_lock:
+                    reason = "Reconnect" if not was_connected else "Cache war unbefuellt"
+                    stable_target.value = _read_room_target_live(manifest, ha_api)
+                    logger.info(
+                        "Stable-Target-Cache aktualisiert (%s): room_target=%s", reason, stable_target.value,
+                    )
         except Exception:
             logger.exception("Fehler im lokalen Check (Watchdog-Fallback), wird beim naechsten Tick erneut versucht")
+        finally:
+            was_connected = currently_connected
 
         _run_telemetry_tick(
             manifest, ha_api, mqtt_client, options,

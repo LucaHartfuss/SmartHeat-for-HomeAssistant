@@ -299,7 +299,7 @@ def test_run_local_check_uses_room_target_parameter_without_reading_it_live(tmp_
     assert new_state is False  # no previous_room_target recorded yet -> boost stays inactive
 
 
-def test_run_local_check_returns_unchanged_state_when_room_target_parameter_is_none(tmp_path, monkeypatch):
+def test_run_local_check_returns_unchanged_state_when_room_target_parameter_is_none(tmp_path, monkeypatch, caplog):
     # Boot-priming edge case (Design-Spec 2026-09-22, Abschnitt 2): the stable-target
     # cache can still be unpopulated (e.g. a failed boot-time live read) even though
     # both roles are mapped -- must no-op instead of crashing on a None comparison
@@ -310,12 +310,16 @@ def test_run_local_check_returns_unchanged_state_when_room_target_parameter_is_n
     })
     ha_api = MagicMock()
 
-    new_state = _run_local_check(
-        manifest, ha_api, MagicMock(), _base_options(), threading.Lock(), boost_was_active=True, room_target=None,
-    )
+    with caplog.at_level(logging.WARNING):
+        new_state = _run_local_check(
+            manifest, ha_api, MagicMock(), _base_options(), threading.Lock(), boost_was_active=True, room_target=None,
+        )
 
     assert new_state is True  # unchanged, no decision made
     ha_api.get_state.assert_not_called()
+    # Whole-Branch-Review Minor #5 (final-review-report.md): this no-op must be visible
+    # in the log -- otherwise it is indistinguishable from a regular skip once deployed.
+    assert "room_target=None" in caplog.text
 
 
 def test_resolve_effective_options_uses_profile_defaults_when_clamps_absent():
@@ -1802,7 +1806,7 @@ def test_trigger_event_callback_survives_exception_without_propagating(tmp_path,
     assert "lokalen Check" in caplog.text
 
 
-def test_trigger_event_callback_refreshes_stable_target_when_room_target_trigger_fires(tmp_path, monkeypatch):
+def test_trigger_event_callback_refreshes_stable_target_when_room_target_trigger_fires(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
     manifest = ChannelManifest(entity_ids={
         "room_actual": "sensor.room_actual", "room_target": "sensor.room_target",
@@ -1819,9 +1823,13 @@ def test_trigger_event_callback_refreshes_stable_target_when_room_target_trigger
         manifest=manifest, ha_api=ha_api, mqtt_client=MagicMock(), options=_base_options(),
         write_lock=write_lock, boost_state=boost_state, failsafe_ctx=None, stable_target=stable_target,
     )
-    callback({"platform": "state", "entity_id": "sensor.room_target"})
+    with caplog.at_level(logging.INFO):
+        callback({"platform": "state", "entity_id": "sensor.room_target"})
 
     assert stable_target.value == 21.0  # refreshed from the live read
+    # Whole-Branch-Review Minor #5 (final-review-report.md): make the refresh and its
+    # source visible in the log.
+    assert "room_target=21.0" in caplog.text
 
 
 def test_trigger_event_callback_reuses_cached_value_for_room_actual_trigger_without_live_read(tmp_path, monkeypatch):
@@ -2102,3 +2110,134 @@ def test_run_bridge_watchdog_fallback_refreshes_stable_target_cache_from_a_live_
     # -- proving it re-reads live on every fallback tick rather than reusing the
     # priming value forever.
     assert observed_room_target == [19.5, 22.0]
+
+
+class _SequencedConnectedTriggerClient:
+    """Test double for HaTriggerClient whose `.connected` attribute walks through a
+    fixed sequence of values, one per read, then holds the last value forever. Used to
+    simulate a WS reconnect (False -> True) across watchdog-loop iterations, which a
+    single static `MagicMock(connected=...)` (the pattern every other _run_bridge test
+    uses) cannot express.
+    """
+    def __init__(self, connected_sequence):
+        self._values = list(connected_sequence)
+        self._index = 0
+        self.start = MagicMock()
+
+    @property
+    def connected(self):
+        value = self._values[min(self._index, len(self._values) - 1)]
+        self._index += 1
+        return value
+
+
+def test_run_bridge_reseeds_stable_target_cache_on_reconnect_transition(monkeypatch, caplog):
+    # Whole-Branch-Review Important #1 (final-review-report.md): a WS outage that fits
+    # entirely between two watchdog ticks (typical HA Core restart, 30-90s, vs. the
+    # 300s default local_check_interval_seconds) never observes `connected == False`,
+    # so the old "only refresh while disconnected" fallback never fires and a
+    # room_target change made during the outage is lost. This test drives `connected`
+    # through False (tick 1) -> True (tick 2, the reconnect) and asserts the cache gets
+    # one fresh live read on that transition -- without also re-running
+    # _run_local_check a second time for the same tick (the next real trigger does
+    # that with the now-fresh cache value).
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
+    )
+    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: MagicMock())
+    # connected reads, in order: init-before-loop, tick 1, tick 2.
+    fake_trigger_client = _SequencedConnectedTriggerClient([False, False, True])
+    monkeypatch.setattr("heizungsbruecke.__main__.HaTriggerClient", lambda **kwargs: fake_trigger_client)
+    monkeypatch.setattr("heizungsbruecke.__main__._run_telemetry_tick", lambda *a, **kw: None)
+    monkeypatch.setattr("heizungsbruecke.__main__.daynight_snapshot.maybe_snapshot", lambda **kwargs: None)
+
+    sleep_calls = {"n": 0}
+
+    def stop_after_second_sleep(seconds):
+        sleep_calls["n"] += 1
+        if sleep_calls["n"] >= 2:
+            raise SystemExit("stop test loop")
+
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", stop_after_second_sleep)
+
+    run_local_check_room_targets = []
+
+    def fake_run_local_check(
+        manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, room_target=None, failsafe_ctx=None,
+    ):
+        run_local_check_room_targets.append(room_target)
+        return boost_was_active
+
+    monkeypatch.setattr("heizungsbruecke.__main__._run_local_check", fake_run_local_check)
+
+    ha_api = MagicMock()
+    # priming read, tick 1's disconnected-fallback read, tick 2's reconnect-reseed read
+    room_target_values = iter([15.0, 16.0, 17.0])
+    ha_api.get_state.side_effect = lambda entity_id: next(room_target_values)
+
+    options = _full_valid_options()
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(SystemExit):
+            _run_bridge(options, ha_api)
+
+    # _run_local_check ran exactly twice: the boot-priming call and tick 1's
+    # disconnected-fallback call. Tick 2's reconnect re-seed must NOT trigger a third
+    # call -- it only refreshes the cache, the next real trigger consumes it.
+    assert run_local_check_room_targets == [15.0, 16.0]
+    # All three live reads happened (priming, tick 1 fallback, tick 2 reconnect-reseed)
+    # -- proving the reconnect transition alone caused one extra live read beyond what
+    # the disconnected-fallback branch already accounts for.
+    assert ha_api.get_state.call_count == 3
+    assert "Reconnect" in caplog.text
+    assert "17.0" in caplog.text
+
+
+def test_run_bridge_recovers_stable_target_cache_after_failed_boot_priming(monkeypatch, caplog):
+    # Whole-Branch-Review Important #2 (final-review-report.md): if the boot-priming
+    # live read raises (e.g. a transient HA-API hiccup while HA Core is still coming
+    # up) but the WS then connects fine, the old code left stable_target.value at None
+    # forever -- every trigger-driven _run_local_check silently no-ops (no boost eval,
+    # no snapshot) with only a ~24h fail-safe notification as a symptom. This test
+    # fails the priming read, keeps the trigger client connected throughout (so the
+    # disconnected-fallback branch never fires either), and asserts the very next
+    # watchdog tick recovers the cache via the None-regardless-of-transition re-seed.
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
+    )
+    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: MagicMock())
+    monkeypatch.setattr("heizungsbruecke.__main__.HaTriggerClient", lambda **kwargs: MagicMock(connected=True))
+    monkeypatch.setattr("heizungsbruecke.__main__._run_telemetry_tick", lambda *a, **kw: None)
+    monkeypatch.setattr("heizungsbruecke.__main__.daynight_snapshot.maybe_snapshot", lambda **kwargs: None)
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.time.sleep", lambda s: (_ for _ in ()).throw(SystemExit("stop")),
+    )
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("_run_local_check must not run while the cache has never been seeded")
+
+    monkeypatch.setattr("heizungsbruecke.__main__._run_local_check", fail_if_called)
+
+    ha_api = MagicMock()
+
+    def flaky_then_recovers(entity_id):
+        if flaky_then_recovers.calls == 0:
+            flaky_then_recovers.calls += 1
+            raise requests.ConnectionError("transient HA-API hiccup during boot")
+        return 20.0
+
+    flaky_then_recovers.calls = 0
+    ha_api.get_state.side_effect = flaky_then_recovers
+
+    options = _full_valid_options()
+    with caplog.at_level(logging.INFO):
+        with pytest.raises(SystemExit):
+            _run_bridge(options, ha_api)
+
+    # The failed priming read left the cache at None; the first watchdog tick (still
+    # connected the whole time) must have retried the live read and recovered it,
+    # without ever invoking _run_local_check itself (that's the next real trigger's job).
+    assert ha_api.get_state.call_count == 2
+    assert "Cache war unbefuellt" in caplog.text
+    assert "20.0" in caplog.text
