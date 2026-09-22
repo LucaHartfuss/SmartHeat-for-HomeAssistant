@@ -2,12 +2,13 @@ import json
 import logging
 import threading
 from datetime import datetime
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 
 import heizungsbruecke.__main__ as main_module
+from heizungsbruecke.ha_trigger_client import HaTriggerClient
 from heizungsbruecke.__main__ import (
     TenantNotEntitledError,
     _check_entitlement,
@@ -668,6 +669,7 @@ def test_run_bridge_loop_survives_clamp_rejecting_a_non_finite_boost_value(monke
     monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
     fake_mqtt_client = MagicMock()
     monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: fake_mqtt_client)
+    monkeypatch.setattr("heizungsbruecke.__main__.HaTriggerClient", lambda **kwargs: MagicMock(connected=False))
 
     call_count = {"n": 0}
 
@@ -1247,6 +1249,7 @@ def test_run_bridge_primes_local_check_before_mqtt_loop_start(monkeypatch):
     fake_mqtt_client = MagicMock()
     fake_mqtt_client.loop_start.side_effect = lambda: call_order.append("loop_start")
     monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: fake_mqtt_client)
+    monkeypatch.setattr("heizungsbruecke.__main__.HaTriggerClient", lambda **kwargs: MagicMock(connected=False))
     monkeypatch.setattr(
         "heizungsbruecke.__main__.requests.get",
         lambda url, timeout: _FakeResponse({"active": True}),
@@ -1291,6 +1294,7 @@ def test_run_bridge_checks_failsafe_staleness_before_local_check_in_loop(monkeyp
 
     fake_mqtt_client = MagicMock()
     monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: fake_mqtt_client)
+    monkeypatch.setattr("heizungsbruecke.__main__.HaTriggerClient", lambda **kwargs: MagicMock(connected=False))
     monkeypatch.setattr(
         "heizungsbruecke.__main__.requests.get",
         lambda url, timeout: _FakeResponse({"active": True}),
@@ -1355,6 +1359,7 @@ def test_run_bridge_checks_failsafe_staleness_before_priming_local_check(tmp_pat
 
     fake_mqtt_client = MagicMock()
     monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: fake_mqtt_client)
+    monkeypatch.setattr("heizungsbruecke.__main__.HaTriggerClient", lambda **kwargs: MagicMock(connected=False))
     monkeypatch.setattr(
         "heizungsbruecke.__main__.requests.get",
         lambda url, timeout: _FakeResponse({"active": True}),
@@ -1470,6 +1475,7 @@ def test_run_bridge_resets_stale_boost_active_when_priming_check_raises(monkeypa
 
     fake_mqtt_client = MagicMock()
     monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: fake_mqtt_client)
+    monkeypatch.setattr("heizungsbruecke.__main__.HaTriggerClient", lambda **kwargs: MagicMock(connected=False))
     monkeypatch.setattr(
         "heizungsbruecke.__main__.requests.get",
         lambda url, timeout: _FakeResponse({"active": True}),
@@ -1602,3 +1608,199 @@ def test_run_telemetry_tick_survives_exception_without_propagating(monkeypatch, 
         )  # must not raise
 
     assert "Telemetrie" in caplog.text
+
+
+def test_strip_attribute_suffix_removes_climate_attribute_syntax():
+    assert main_module._strip_attribute_suffix("climate.wohnzimmer::temperature") == "climate.wohnzimmer"
+
+
+def test_strip_attribute_suffix_passes_through_plain_entity_id():
+    assert main_module._strip_attribute_suffix("sensor.target_rt") == "sensor.target_rt"
+
+
+def test_build_ha_trigger_client_includes_room_roles_and_daily_time():
+    manifest = ChannelManifest(entity_ids={
+        "room_target": "climate.wohnzimmer::temperature", "room_actual": "sensor.rt",
+    })
+    ha_api = MagicMock()
+    ha_api.websocket_url.return_value = "ws://x/api/websocket"
+    ha_api.token = "tok"
+    options = {"daily_trigger_time": "12:00"}
+    boost_state = main_module._BoostStateBox(active=False)
+
+    with patch("heizungsbruecke.__main__.HaTriggerClient") as fake_cls:
+        main_module._build_ha_trigger_client(
+            manifest=manifest, ha_api=ha_api, options=options, mqtt_client=MagicMock(),
+            write_lock=threading.RLock(), boost_state=boost_state, failsafe_ctx=None,
+        )
+
+    _, kwargs = fake_cls.call_args
+    assert kwargs["ws_url"] == "ws://x/api/websocket"
+    assert kwargs["token"] == "tok"
+    assert {"platform": "state", "entity_id": "climate.wohnzimmer"} in kwargs["triggers"]
+    assert {"platform": "state", "entity_id": "sensor.rt"} in kwargs["triggers"]
+    assert {"platform": "time", "at": "12:00"} in kwargs["triggers"]
+
+
+def test_trigger_event_callback_invokes_run_local_check_and_updates_shared_box(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual", "room_target": "sensor.room_target",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = lambda entity_id: {
+        "sensor.room_actual": 19.0, "sensor.room_target": 21.0,
+    }[entity_id]
+    mqtt_client = MagicMock()
+    write_lock = threading.RLock()
+    boost_state = main_module._BoostStateBox(active=False)
+
+    callback = main_module._make_trigger_event_callback(
+        manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options=_base_options(),
+        write_lock=write_lock, boost_state=boost_state, failsafe_ctx=None,
+    )
+    callback({"platform": "state", "entity_id": "sensor.room_target"})
+
+    assert boost_state.active is False  # no previous_room_target -> decide_boost never triggers on first tick
+
+
+def test_trigger_event_callback_and_watchdog_fallback_share_lock_without_deadlock(tmp_path, monkeypatch):
+    """Regression test for the concurrency fix: both call sites wrap their
+    `_run_local_check` call in `with write_lock:`, while `_run_local_check` itself ALSO
+    acquires the same `write_lock` internally -- only safe because write_lock is now an
+    RLock. Simulates the watchdog loop already holding write_lock (its own wrapping)
+    while the trigger callback fires -- exactly the reentrant-acquisition scenario a
+    plain Lock would deadlock on.
+    """
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual", "room_target": "sensor.room_target",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = lambda entity_id: {
+        "sensor.room_actual": 19.0, "sensor.room_target": 21.0,
+    }[entity_id]
+    mqtt_client = MagicMock()
+    write_lock = threading.RLock()
+    boost_state = main_module._BoostStateBox(active=False)
+
+    callback = main_module._make_trigger_event_callback(
+        manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options=_base_options(),
+        write_lock=write_lock, boost_state=boost_state, failsafe_ctx=None,
+    )
+
+    with write_lock:
+        callback({"platform": "state", "entity_id": "sensor.room_target"})  # must not deadlock
+
+    assert boost_state.active is False
+
+
+def test_trigger_event_callback_survives_exception_without_propagating(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual", "room_target": "sensor.room_target",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = OSError("HA nicht erreichbar")
+    write_lock = threading.RLock()
+    boost_state = main_module._BoostStateBox(active=False)
+
+    callback = main_module._make_trigger_event_callback(
+        manifest=manifest, ha_api=ha_api, mqtt_client=MagicMock(), options=_base_options(),
+        write_lock=write_lock, boost_state=boost_state, failsafe_ctx=None,
+    )
+
+    with caplog.at_level("ERROR"):
+        callback({"platform": "state", "entity_id": "sensor.room_target"})  # must not raise
+
+    assert "lokalen Check" in caplog.text
+
+
+def test_run_bridge_skips_local_check_fallback_when_trigger_client_connected(monkeypatch):
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
+    )
+    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: MagicMock())
+    fake_trigger_client = MagicMock()
+    fake_trigger_client.connected = True
+    monkeypatch.setattr("heizungsbruecke.__main__.HaTriggerClient", lambda **kwargs: fake_trigger_client)
+
+    call_count = {"n": 0}
+
+    def fake_run_local_check(*args, **kwargs):
+        call_count["n"] += 1
+        return False
+
+    monkeypatch.setattr("heizungsbruecke.__main__._run_local_check", fake_run_local_check)
+    monkeypatch.setattr("heizungsbruecke.__main__._run_telemetry_tick", lambda *a, **kw: None)
+    monkeypatch.setattr("heizungsbruecke.__main__.daynight_snapshot.maybe_snapshot", lambda **kwargs: None)
+
+    def stop_after_first_sleep(seconds):
+        raise SystemExit("stop test loop")
+
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", stop_after_first_sleep)
+
+    options = _full_valid_options()
+    with pytest.raises(SystemExit):
+        _run_bridge(options, MagicMock())
+
+    # Exactly 1 call: the synchronous priming call before loop_start(). The main loop's
+    # own conditional call must NOT have fired, since fake_trigger_client.connected=True.
+    assert call_count["n"] == 1
+
+
+def test_run_bridge_runs_local_check_fallback_when_trigger_client_disconnected(monkeypatch):
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
+    )
+    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: MagicMock())
+    fake_trigger_client = MagicMock()
+    fake_trigger_client.connected = False
+    monkeypatch.setattr("heizungsbruecke.__main__.HaTriggerClient", lambda **kwargs: fake_trigger_client)
+
+    call_count = {"n": 0}
+
+    def fake_run_local_check(*args, **kwargs):
+        call_count["n"] += 1
+        return False
+
+    monkeypatch.setattr("heizungsbruecke.__main__._run_local_check", fake_run_local_check)
+    monkeypatch.setattr("heizungsbruecke.__main__._run_telemetry_tick", lambda *a, **kw: None)
+    monkeypatch.setattr("heizungsbruecke.__main__.daynight_snapshot.maybe_snapshot", lambda **kwargs: None)
+
+    def stop_after_first_sleep(seconds):
+        raise SystemExit("stop test loop")
+
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", stop_after_first_sleep)
+
+    options = _full_valid_options()
+    with pytest.raises(SystemExit):
+        _run_bridge(options, MagicMock())
+
+    # Priming call + the main loop's own conditional call, since connected=False.
+    assert call_count["n"] == 2
+
+
+def test_run_bridge_starts_the_trigger_client(monkeypatch):
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
+    )
+    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: MagicMock())
+    fake_trigger_client = MagicMock()
+    fake_trigger_client.connected = True
+    monkeypatch.setattr("heizungsbruecke.__main__.HaTriggerClient", lambda **kwargs: fake_trigger_client)
+    monkeypatch.setattr("heizungsbruecke.__main__._run_local_check", lambda *a, **kw: False)
+    monkeypatch.setattr("heizungsbruecke.__main__._run_telemetry_tick", lambda *a, **kw: None)
+    monkeypatch.setattr("heizungsbruecke.__main__.daynight_snapshot.maybe_snapshot", lambda **kwargs: None)
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.time.sleep", lambda s: (_ for _ in ()).throw(SystemExit("stop")),
+    )
+
+    options = _full_valid_options()
+    with pytest.raises(SystemExit):
+        _run_bridge(options, MagicMock())
+
+    fake_trigger_client.start.assert_called_once()

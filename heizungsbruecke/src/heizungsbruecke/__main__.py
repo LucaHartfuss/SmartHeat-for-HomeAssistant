@@ -23,6 +23,7 @@ from heizungsbruecke.failsafe import (
     record_valid_message,
 )
 from heizungsbruecke.ha_api import HomeAssistantApi
+from heizungsbruecke.ha_trigger_client import HaTriggerClient
 from heizungsbruecke.manifest import ManifestError, build_manifest
 from heizungsbruecke.mqtt_client import BridgeMqttClient
 from heizungsbruecke.profiles import (
@@ -582,9 +583,12 @@ def _maybe_publish_full_snapshot(
 
     Unlike daynight_snapshot.maybe_snapshot's boundary-crossing-since-last-check
     algorithm, a simple "time of day already past, not yet fired today" check is
-    correct here: local_check_interval_seconds is hard-capped at 60s (see
-    _validate_local_check_interval), so the daily boundary can never be missed by more
-    than one check -- no narrow-window/cold-start handling needed.
+    correct here for a different reason since Design-Spec 2026-09-21: while
+    HaTriggerClient is connected, its own `time`-platform trigger fires this path
+    exactly once at daily_trigger_time, regardless of local_check_interval_seconds.
+    While disconnected, the watchdog loop's fallback still calls this at least every
+    local_check_interval_seconds (now up to 3600s, see _validate_local_check_interval),
+    so the daily boundary is still caught within one fallback tick even in that case.
     """
     backup = load_backup(BACKUP_PATH)
     today = now.date().isoformat()
@@ -641,6 +645,67 @@ def _maybe_publish_telemetry(
     })
 
     _last_telemetry_publish_ts = now
+
+
+class _BoostStateBox:
+    """Mutable box for the shared `boost_was_active` flag, so the main watchdog-loop
+    thread and HaTriggerClient's callback thread can read-modify-write it while both
+    hold the same (now reentrant) `write_lock`, instead of each tracking its own local
+    copy -- which raced once more than one thread could call `_run_local_check`
+    (Design-Spec 2026-09-21, Risiko 2). `_run_local_check` itself is unchanged; only
+    the call sites coordinate through this box.
+    """
+    def __init__(self, active: bool) -> None:
+        self.active = active
+
+
+def _strip_attribute_suffix(entity_id: str) -> str:
+    """Strips the `::attribute` suffix `ha_api.get_state()` uses for climate-attribute
+    roles (e.g. `climate.wohnzimmer::temperature`) -- a `subscribe_trigger` state
+    trigger's `entity_id` filter needs the real HA entity_id, not this add-on-internal
+    convention.
+    """
+    real_entity_id, _, _ = entity_id.partition("::")
+    return real_entity_id
+
+
+def _make_trigger_event_callback(manifest, ha_api, mqtt_client, options, write_lock, boost_state, failsafe_ctx):
+    def _on_trigger_event(trigger: dict) -> None:
+        try:
+            with write_lock:
+                boost_state.active = _run_local_check(
+                    manifest, ha_api, mqtt_client, options, write_lock, boost_state.active,
+                    failsafe_ctx=failsafe_ctx,
+                )
+        except Exception:
+            logger.exception(
+                "Fehler im lokalen Check (ausgeloest durch Trigger-Event, platform=%s), wird beim "
+                "naechsten Trigger/Fallback erneut versucht", trigger.get("platform"),
+            )
+    return _on_trigger_event
+
+
+def _build_ha_trigger_client(manifest, ha_api, options: dict, mqtt_client, write_lock, boost_state, failsafe_ctx):
+    triggers = []
+    if "room_target" in manifest.entity_ids:
+        triggers.append({
+            "platform": "state", "entity_id": _strip_attribute_suffix(manifest.entity_ids["room_target"]),
+        })
+    if "room_actual" in manifest.entity_ids:
+        triggers.append({
+            "platform": "state", "entity_id": _strip_attribute_suffix(manifest.entity_ids["room_actual"]),
+        })
+    daily_trigger_time = options.get("daily_trigger_time")
+    if daily_trigger_time:
+        triggers.append({"platform": "time", "at": daily_trigger_time})
+
+    on_trigger_event = _make_trigger_event_callback(
+        manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options=options,
+        write_lock=write_lock, boost_state=boost_state, failsafe_ctx=failsafe_ctx,
+    )
+    return HaTriggerClient(
+        ws_url=ha_api.websocket_url(), token=ha_api.token, triggers=triggers, on_trigger_event=on_trigger_event,
+    )
 
 
 def _run_bridge(options: dict, ha_api) -> bool:
@@ -715,7 +780,7 @@ def _run_bridge(options: dict, ha_api) -> bool:
         logger.error("FEHLER: %s", error)
         return False
 
-    write_lock = threading.Lock()
+    write_lock = threading.RLock()
 
     failsafe_ctx = _load_failsafe_ctx_safe(FAILSAFE_PATH)
     if failsafe_ctx["last_valid_update"] is None:
@@ -784,10 +849,10 @@ def _run_bridge(options: dict, ha_api) -> bool:
     # der Hauptloop-Aufruf unten, nach loop_start().
     priming_failsafe_ctx = _preview_failsafe_ctx(failsafe_ctx, stale_after_seconds)
 
-    boost_was_active = False
+    boost_state = _BoostStateBox(active=False)
     try:
-        boost_was_active = _run_local_check(
-            manifest, ha_api, mqtt_client, options, write_lock, boost_was_active,
+        boost_state.active = _run_local_check(
+            manifest, ha_api, mqtt_client, options, write_lock, boost_state.active,
             failsafe_ctx=priming_failsafe_ctx,
         )
     except Exception:
@@ -801,12 +866,19 @@ def _run_bridge(options: dict, ha_api) -> bool:
         # a stuck stale-True value can gate out a down-message and leave the live device
         # pinned at a boost value for up to a day under the new publish cadence.
         _save_boost_active_if_changed(False, BACKUP_PATH)
+        boost_state.active = False
 
     try:
         mqtt_client.loop_start()
     except Exception as error:
         logger.error("FEHLER: MQTT-Verbindung zum Broker fehlgeschlagen: %s", error)
         return False
+
+    ha_trigger_client = _build_ha_trigger_client(
+        manifest=manifest, ha_api=ha_api, options=options, mqtt_client=mqtt_client,
+        write_lock=write_lock, boost_state=boost_state, failsafe_ctx=failsafe_ctx,
+    )
+    ha_trigger_client.start()
 
     while True:
         try:
@@ -819,11 +891,19 @@ def _run_bridge(options: dict, ha_api) -> bool:
             logger.exception("Fehler bei der Fail-Safe-Staleness-Pruefung, wird beim naechsten Check erneut versucht")
 
         try:
-            boost_was_active = _run_local_check(
-                manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, failsafe_ctx=failsafe_ctx,
-            )
+            if not ha_trigger_client.connected:
+                with write_lock:
+                    boost_state.active = _run_local_check(
+                        manifest, ha_api, mqtt_client, options, write_lock, boost_state.active,
+                        failsafe_ctx=failsafe_ctx,
+                    )
         except Exception:
-            logger.exception("Fehler im lokalen Check, wird beim naechsten Check erneut versucht")
+            logger.exception("Fehler im lokalen Check (Watchdog-Fallback), wird beim naechsten Tick erneut versucht")
+
+        _run_telemetry_tick(
+            manifest, ha_api, mqtt_client, options,
+            boost_active=boost_state.active, failsafe_active=failsafe_ctx["state"].active,
+        )
 
         try:
             daynight_snapshot.maybe_snapshot(
