@@ -698,6 +698,23 @@ class _BoostStateBox:
         self.active = active
 
 
+class _StableTargetBox:
+    """Mutable box for the in-memory `room_target` stable-value cache (Design-Spec
+    2026-09-22, "Stable-Target-Cache"). Shared, like `_BoostStateBox` above, between
+    the main watchdog-loop thread and HaTriggerClient's callback thread under the same
+    `write_lock`. Holds the last room_target value confirmed stable for
+    ROOM_TARGET_DEBOUNCE_SECONDS -- refreshed only when the debounced room_target
+    trigger itself fires (_make_trigger_event_callback), or by the deliberately
+    undebounced watchdog fallback/boot-priming live reads. Every other
+    _run_local_check call (room_actual trigger, daily_trigger_time trigger) reuses
+    this cached value instead of re-reading room_target live, closing the gap where a
+    stray event during the 10s stabilization window could otherwise still act on a
+    non-final value for both boost start/end and the curve snapshot.
+    """
+    def __init__(self, value: float | None) -> None:
+        self.value = value
+
+
 def _strip_attribute_suffix(entity_id: str) -> str:
     """Strips the `::attribute` suffix `ha_api.get_state()` uses for climate-attribute
     roles (e.g. `climate.wohnzimmer::temperature`) -- a `subscribe_trigger` state
@@ -719,14 +736,39 @@ def _extract_attribute_suffix(entity_id: str) -> str | None:
     return attribute or None
 
 
-def _make_trigger_event_callback(manifest, ha_api, mqtt_client, options, write_lock, boost_state, failsafe_ctx):
+def _make_trigger_event_callback(
+    manifest, ha_api, mqtt_client, options, write_lock, boost_state, failsafe_ctx, stable_target,
+):
+    room_target_entity_id = None
+    room_target_attribute = None
+    if "room_target" in manifest.entity_ids:
+        room_target_entity_id = _strip_attribute_suffix(manifest.entity_ids["room_target"])
+        room_target_attribute = _extract_attribute_suffix(manifest.entity_ids["room_target"])
+
     def _on_trigger_event(trigger: dict) -> None:
         try:
             with write_lock:
+                if (
+                    room_target_entity_id is not None
+                    and trigger.get("platform") == "state"
+                    and trigger.get("entity_id") == room_target_entity_id
+                    and trigger.get("attribute") == room_target_attribute
+                ):
+                    # Der (debounced) room_target-Trigger selbst ist gefeuert -- der
+                    # Wert ist jetzt garantiert seit ROOM_TARGET_DEBOUNCE_SECONDS
+                    # stabil (Design-Spec 2026-09-22, Abschnitt 2). Frisch lesen
+                    # (nicht aus trigger["to_state"] uebernehmen -- einfacher/robuster
+                    # gegen Payload-Formvarianten) und den Cache aktualisieren, den
+                    # jeder andere Trigger unten mitbenutzt. Matching ueber entity_id
+                    # UND attribute (nicht nur entity_id): room_actual und room_target
+                    # koennen dieselbe physische Entity referenzieren (z.B. ein
+                    # einzelnes Thermostat mit current_temperature/temperature), nur
+                    # das attribute-Feld unterscheidet dann, welcher der beiden
+                    # Trigger tatsaechlich gefeuert hat.
+                    stable_target.value = _read_room_target_live(manifest, ha_api)
                 boost_state.active = _run_local_check(
                     manifest, ha_api, mqtt_client, options, write_lock, boost_state.active,
-                    room_target=_read_room_target_live(manifest, ha_api),
-                    failsafe_ctx=failsafe_ctx,
+                    room_target=stable_target.value, failsafe_ctx=failsafe_ctx,
                 )
         except Exception:
             logger.exception(
@@ -736,7 +778,9 @@ def _make_trigger_event_callback(manifest, ha_api, mqtt_client, options, write_l
     return _on_trigger_event
 
 
-def _build_ha_trigger_client(manifest, ha_api, options: dict, mqtt_client, write_lock, boost_state, failsafe_ctx):
+def _build_ha_trigger_client(
+    manifest, ha_api, options: dict, mqtt_client, write_lock, boost_state, failsafe_ctx, stable_target,
+):
     triggers = []
     if "room_target" in manifest.entity_ids:
         room_target_raw = manifest.entity_ids["room_target"]
@@ -760,6 +804,7 @@ def _build_ha_trigger_client(manifest, ha_api, options: dict, mqtt_client, write
     on_trigger_event = _make_trigger_event_callback(
         manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options=options,
         write_lock=write_lock, boost_state=boost_state, failsafe_ctx=failsafe_ctx,
+        stable_target=stable_target,
     )
     return HaTriggerClient(
         ws_url=ha_api.websocket_url(), token=ha_api.token, triggers=triggers, on_trigger_event=on_trigger_event,
@@ -908,11 +953,18 @@ def _run_bridge(options: dict, ha_api) -> bool:
     priming_failsafe_ctx = _preview_failsafe_ctx(failsafe_ctx, stale_after_seconds)
 
     boost_state = _BoostStateBox(active=False)
+    # Stable-Target-Cache-Bootstrap (Design-Spec 2026-09-22): ein einmaliger Live-Read
+    # vor loop_start() initialisiert den Cache, analog zum Boost-Active-Bootstrap-Fix
+    # oben. Bewusst INNERHALB desselben try/except wie der priming _run_local_check()-
+    # Aufruf -- ein HA-API-Hickup beim Booten soll boost_active gleich behandeln,
+    # unabhaengig davon, ob es beim room_target-Read oder erst im lokalen Check selbst
+    # auftritt (gleiche Fail-Open-Begruendung wie dort).
+    stable_target = _StableTargetBox(value=None)
     try:
+        stable_target.value = _read_room_target_live(manifest, ha_api)
         boost_state.active = _run_local_check(
             manifest, ha_api, mqtt_client, options, write_lock, boost_state.active,
-            room_target=_read_room_target_live(manifest, ha_api),
-            failsafe_ctx=priming_failsafe_ctx,
+            room_target=stable_target.value, failsafe_ctx=priming_failsafe_ctx,
         )
     except Exception:
         logger.exception(
@@ -936,6 +988,7 @@ def _run_bridge(options: dict, ha_api) -> bool:
     ha_trigger_client = _build_ha_trigger_client(
         manifest=manifest, ha_api=ha_api, options=options, mqtt_client=mqtt_client,
         write_lock=write_lock, boost_state=boost_state, failsafe_ctx=failsafe_ctx,
+        stable_target=stable_target,
     )
     ha_trigger_client.start()
 
@@ -952,10 +1005,15 @@ def _run_bridge(options: dict, ha_api) -> bool:
         try:
             if not ha_trigger_client.connected:
                 with write_lock:
+                    # Undebounced mit Absicht (Design-Spec 2026-09-22, Punkt 2): hier
+                    # existiert keine subscribe_trigger-Debounce-Garantie, konsistent
+                    # mit "degradiert automatisch auf reinen Poll-Betrieb". Aktualisiert
+                    # den Cache trotzdem nach dem eigenen Live-Read, damit nach einem
+                    # WS-Reconnect kein veralteter Vor-Ausfall-Wert uebrig bleibt.
+                    stable_target.value = _read_room_target_live(manifest, ha_api)
                     boost_state.active = _run_local_check(
                         manifest, ha_api, mqtt_client, options, write_lock, boost_state.active,
-                        room_target=_read_room_target_live(manifest, ha_api),
-                        failsafe_ctx=failsafe_ctx,
+                        room_target=stable_target.value, failsafe_ctx=failsafe_ctx,
                     )
         except Exception:
             logger.exception("Fehler im lokalen Check (Watchdog-Fallback), wird beim naechsten Tick erneut versucht")

@@ -1681,6 +1681,7 @@ def test_build_ha_trigger_client_includes_room_roles_and_daily_time():
         main_module._build_ha_trigger_client(
             manifest=manifest, ha_api=ha_api, options=options, mqtt_client=MagicMock(),
             write_lock=threading.RLock(), boost_state=boost_state, failsafe_ctx=None,
+            stable_target=main_module._StableTargetBox(value=None),
         )
 
     _, kwargs = fake_cls.call_args
@@ -1709,6 +1710,7 @@ def test_build_ha_trigger_client_omits_attribute_for_plain_room_target_entity():
         main_module._build_ha_trigger_client(
             manifest=manifest, ha_api=ha_api, options={}, mqtt_client=MagicMock(),
             write_lock=threading.RLock(), boost_state=boost_state, failsafe_ctx=None,
+            stable_target=main_module._StableTargetBox(value=None),
         )
 
     _, kwargs = fake_cls.call_args
@@ -1739,6 +1741,7 @@ def test_trigger_event_callback_invokes_run_local_check_and_updates_shared_box(t
     callback = main_module._make_trigger_event_callback(
         manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options=_base_options(),
         write_lock=write_lock, boost_state=boost_state, failsafe_ctx=None,
+        stable_target=main_module._StableTargetBox(value=None),
     )
     callback({"platform": "state", "entity_id": "sensor.room_target"})
 
@@ -1768,6 +1771,7 @@ def test_trigger_event_callback_and_watchdog_fallback_share_lock_without_deadloc
     callback = main_module._make_trigger_event_callback(
         manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options=_base_options(),
         write_lock=write_lock, boost_state=boost_state, failsafe_ctx=None,
+        stable_target=main_module._StableTargetBox(value=None),
     )
 
     with write_lock:
@@ -1789,12 +1793,152 @@ def test_trigger_event_callback_survives_exception_without_propagating(tmp_path,
     callback = main_module._make_trigger_event_callback(
         manifest=manifest, ha_api=ha_api, mqtt_client=MagicMock(), options=_base_options(),
         write_lock=write_lock, boost_state=boost_state, failsafe_ctx=None,
+        stable_target=main_module._StableTargetBox(value=None),
     )
 
     with caplog.at_level("ERROR"):
         callback({"platform": "state", "entity_id": "sensor.room_target"})  # must not raise
 
     assert "lokalen Check" in caplog.text
+
+
+def test_trigger_event_callback_refreshes_stable_target_when_room_target_trigger_fires(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual", "room_target": "sensor.room_target",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = lambda entity_id: {
+        "sensor.room_actual": 19.0, "sensor.room_target": 21.0,
+    }[entity_id]
+    write_lock = threading.RLock()
+    boost_state = main_module._BoostStateBox(active=False)
+    stable_target = main_module._StableTargetBox(value=18.0)  # stale pre-event cache value
+
+    callback = main_module._make_trigger_event_callback(
+        manifest=manifest, ha_api=ha_api, mqtt_client=MagicMock(), options=_base_options(),
+        write_lock=write_lock, boost_state=boost_state, failsafe_ctx=None, stable_target=stable_target,
+    )
+    callback({"platform": "state", "entity_id": "sensor.room_target"})
+
+    assert stable_target.value == 21.0  # refreshed from the live read
+
+
+def test_trigger_event_callback_reuses_cached_value_for_room_actual_trigger_without_live_read(tmp_path, monkeypatch):
+    # The gap this closes (Design-Spec 2026-09-22): a room_actual event during a
+    # room_target debounce window must act on the last CONFIRMED-stable value, not a
+    # fresh (possibly non-final) live read.
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual", "room_target": "sensor.room_target",
+    })
+    ha_api = MagicMock()
+
+    def _get_state(entity_id):
+        if entity_id == "sensor.room_target":
+            raise AssertionError("room_actual-triggered call must reuse the cache, not read room_target live")
+        return {"sensor.room_actual": 19.0}[entity_id]
+
+    ha_api.get_state.side_effect = _get_state
+    write_lock = threading.RLock()
+    boost_state = main_module._BoostStateBox(active=False)
+    stable_target = main_module._StableTargetBox(value=21.0)
+
+    callback = main_module._make_trigger_event_callback(
+        manifest=manifest, ha_api=ha_api, mqtt_client=MagicMock(), options=_base_options(),
+        write_lock=write_lock, boost_state=boost_state, failsafe_ctx=None, stable_target=stable_target,
+    )
+    callback({"platform": "state", "entity_id": "sensor.room_actual"})
+
+    assert stable_target.value == 21.0  # untouched
+
+
+def test_trigger_event_callback_reuses_cached_value_for_daily_time_trigger_without_live_read(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual", "room_target": "sensor.room_target",
+    })
+    ha_api = MagicMock()
+
+    def _get_state(entity_id):
+        if entity_id == "sensor.room_target":
+            raise AssertionError("time-triggered call must reuse the cache, not read room_target live")
+        return {"sensor.room_actual": 19.0}[entity_id]
+
+    ha_api.get_state.side_effect = _get_state
+    write_lock = threading.RLock()
+    boost_state = main_module._BoostStateBox(active=False)
+    stable_target = main_module._StableTargetBox(value=21.0)
+
+    callback = main_module._make_trigger_event_callback(
+        manifest=manifest, ha_api=ha_api, mqtt_client=MagicMock(), options=_base_options(),
+        write_lock=write_lock, boost_state=boost_state, failsafe_ctx=None, stable_target=stable_target,
+    )
+    callback({"platform": "time"})
+
+    assert stable_target.value == 21.0  # untouched
+
+
+def test_trigger_event_callback_matches_room_target_trigger_by_attribute_not_just_entity_id(tmp_path, monkeypatch):
+    # Regression guard for the shared-entity case (room_actual and room_target mapped
+    # to the SAME entity's different attributes -- see
+    # test_run_local_check_persists_room_target_for_next_checks_comparison. Today's
+    # SmartHeat-Integration wizard only ever maps entity_room_actual to a plain
+    # `sensor`, never a `climate::attribute`, but _run_local_check's own
+    # entity_id::attribute handling in ha_api.py is generic and doesn't enforce that
+    # restriction, so this guards the general contract). Matching on entity_id alone
+    # would misidentify a room_actual-triggered event on the shared entity as the
+    # room_target trigger and refresh the cache from a non-final value.
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "climate.wohnzimmer_thermostat::current_temperature",
+        "room_target": "climate.wohnzimmer_thermostat::temperature",
+    })
+    ha_api = MagicMock()
+
+    def _get_state(entity_id):
+        if entity_id == "climate.wohnzimmer_thermostat::temperature":
+            raise AssertionError("must not treat this as the room_target trigger firing")
+        return {"climate.wohnzimmer_thermostat::current_temperature": 19.0}[entity_id]
+
+    ha_api.get_state.side_effect = _get_state
+    write_lock = threading.RLock()
+    boost_state = main_module._BoostStateBox(active=False)
+    stable_target = main_module._StableTargetBox(value=21.0)
+
+    callback = main_module._make_trigger_event_callback(
+        manifest=manifest, ha_api=ha_api, mqtt_client=MagicMock(), options=_base_options(),
+        write_lock=write_lock, boost_state=boost_state, failsafe_ctx=None, stable_target=stable_target,
+    )
+    # Same entity_id as room_target, but no "attribute" key (mirrors the plain
+    # room_actual trigger's own config, which has no attribute filter) -- must NOT match.
+    callback({"platform": "state", "entity_id": "climate.wohnzimmer_thermostat"})
+
+    assert stable_target.value == 21.0  # untouched
+
+
+def test_trigger_event_callback_matches_room_target_trigger_with_attribute_field_set(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "climate.wohnzimmer_thermostat::current_temperature",
+        "room_target": "climate.wohnzimmer_thermostat::temperature",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = lambda entity_id: {
+        "climate.wohnzimmer_thermostat::current_temperature": 19.0,
+        "climate.wohnzimmer_thermostat::temperature": 21.5,
+    }[entity_id]
+    write_lock = threading.RLock()
+    boost_state = main_module._BoostStateBox(active=False)
+    stable_target = main_module._StableTargetBox(value=21.0)
+
+    callback = main_module._make_trigger_event_callback(
+        manifest=manifest, ha_api=ha_api, mqtt_client=MagicMock(), options=_base_options(),
+        write_lock=write_lock, boost_state=boost_state, failsafe_ctx=None, stable_target=stable_target,
+    )
+    callback({"platform": "state", "entity_id": "climate.wohnzimmer_thermostat", "attribute": "temperature"})
+
+    assert stable_target.value == 21.5  # refreshed -- this IS the room_target trigger
 
 
 def test_run_bridge_skips_local_check_fallback_when_trigger_client_connected(monkeypatch):
@@ -1885,3 +2029,76 @@ def test_run_bridge_starts_the_trigger_client(monkeypatch):
         _run_bridge(options, MagicMock())
 
     fake_trigger_client.start.assert_called_once()
+
+
+def test_run_bridge_seeds_stable_target_cache_from_a_live_read_before_loop_start(monkeypatch):
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
+    )
+    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: MagicMock())
+    monkeypatch.setattr("heizungsbruecke.__main__.HaTriggerClient", lambda **kwargs: MagicMock(connected=True))
+    monkeypatch.setattr("heizungsbruecke.__main__._run_telemetry_tick", lambda *a, **kw: None)
+    monkeypatch.setattr("heizungsbruecke.__main__.daynight_snapshot.maybe_snapshot", lambda **kwargs: None)
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.time.sleep", lambda s: (_ for _ in ()).throw(SystemExit("stop")),
+    )
+
+    observed_room_target = []
+
+    def fake_run_local_check(
+        manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, room_target=None, failsafe_ctx=None,
+    ):
+        observed_room_target.append(room_target)
+        return boost_was_active
+
+    monkeypatch.setattr("heizungsbruecke.__main__._run_local_check", fake_run_local_check)
+
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 19.5  # single stand-in value, whichever entity is read
+
+    options = _full_valid_options()
+    with pytest.raises(SystemExit):
+        _run_bridge(options, ha_api)
+
+    # The synchronous priming call (before loop_start()) must receive a room_target
+    # already resolved from a live read, not None.
+    assert observed_room_target[0] == 19.5
+
+
+def test_run_bridge_watchdog_fallback_refreshes_stable_target_cache_from_a_live_read(monkeypatch):
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
+    )
+    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: MagicMock())
+    monkeypatch.setattr("heizungsbruecke.__main__.HaTriggerClient", lambda **kwargs: MagicMock(connected=False))
+    monkeypatch.setattr("heizungsbruecke.__main__._run_telemetry_tick", lambda *a, **kw: None)
+    monkeypatch.setattr("heizungsbruecke.__main__.daynight_snapshot.maybe_snapshot", lambda **kwargs: None)
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.time.sleep", lambda s: (_ for _ in ()).throw(SystemExit("stop")),
+    )
+
+    observed_room_target = []
+
+    def fake_run_local_check(
+        manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, room_target=None, failsafe_ctx=None,
+    ):
+        observed_room_target.append(room_target)
+        return boost_was_active
+
+    monkeypatch.setattr("heizungsbruecke.__main__._run_local_check", fake_run_local_check)
+
+    ha_api = MagicMock()
+    room_target_values = iter([19.5, 22.0])  # priming read, then the watchdog fallback's own live read
+    ha_api.get_state.side_effect = lambda entity_id: next(room_target_values)
+
+    options = _full_valid_options()
+    with pytest.raises(SystemExit):
+        _run_bridge(options, ha_api)
+
+    # Priming call saw the first live read; the watchdog fallback's own live read
+    # (HaTriggerClient.connected=False here) produced a second, different room_target
+    # -- proving it re-reads live on every fallback tick rather than reusing the
+    # priming value forever.
+    assert observed_room_target == [19.5, 22.0]
