@@ -20,7 +20,9 @@ from heizungsbruecke.failsafe import (
     FailsafeState,
     build_discovery_config,
     build_state_payload,
+    enter_notbetrieb_on_ack_timeout,
     exit_notbetrieb_on_ack,
+    register_publish_attempt,
 )
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_trigger_client import HaTriggerClient
@@ -76,6 +78,13 @@ DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS = 300
 # local_check_interval_seconds UND vom (jetzt seltenen) vollen Snapshot-Publish
 # entkoppeltes Intervall, damit Komfort-/Boost-KPIs nicht zu grobkoernig werden.
 DEFAULT_TELEMETRY_INTERVAL_SECONDS = 300
+
+# Design-Spec 2026-09-23: wie lange nach einem vollen Snapshot-Publish auf eine
+# seq-passende Down-Antwort gewartet wird, bevor Notbetrieb ausgeloest wird. Normale
+# Serververarbeitung laeuft synchron im on_message-Handler des Servers (Sekundenbereich)
+# -- 30s deckt ueblichen Broker-/Tunnel-Jitter ab, ohne einen echten Ausfall lange zu
+# verschleppen. Nutzer-bestaetigter Wert, siehe Design-Spec, Abschnitt 1.
+ACK_TIMEOUT_SECONDS = 30
 
 # Design-Spec 2026-09-22 (Zieltemperatur-Debounce): 10s Stabilitaetsfenster, bevor eine
 # room_target-Aenderung als "final" gilt (Boost-Start/-Ende und Heizkurvenanpassung
@@ -434,6 +443,49 @@ def _handle_ack(
             logger.warning("Push-Benachrichtigung fuer Notbetrieb-Ende konnte nicht gesendet werden")
 
 
+def _handle_ack_timeout(
+    seq: str, failsafe_ctx: dict, mqtt_client, failsafe_path: Path, write_lock,
+    ha_api, notify_service: str,
+) -> None:
+    with write_lock:
+        new_state = enter_notbetrieb_on_ack_timeout(failsafe_ctx["state"], seq)
+        if new_state == failsafe_ctx["state"]:
+            return
+        failsafe_ctx["state"] = new_state
+        mqtt_client.publish_status("failsafe", build_state_payload(new_state.active))
+        _save_failsafe_ctx(failsafe_ctx, failsafe_path)
+        logger.warning(
+            "Notbetrieb aktiviert - keine Antwort vom Server auf Up-Snapshot (seq=%s) "
+            "innerhalb von %s Sekunden.", seq, ACK_TIMEOUT_SECONDS,
+        )
+        if notify_service:
+            try:
+                ha_api.send_notification(
+                    notify_service,
+                    "Heizungsbruecke: Server antwortet nicht auf Up-Snapshot, Notbetrieb "
+                    "aktiviert. Bitte Serververbindung pruefen.",
+                )
+            except Exception:
+                logger.warning("Push-Benachrichtigung fuer Notbetrieb-Alarm konnte nicht gesendet werden")
+
+
+def _schedule_ack_timeout(
+    seq: str, failsafe_ctx: dict, mqtt_client, failsafe_path: Path, write_lock,
+    ha_api, notify_service: str,
+) -> threading.Timer:
+    timer = threading.Timer(
+        ACK_TIMEOUT_SECONDS, _handle_ack_timeout,
+        kwargs=dict(
+            seq=seq, failsafe_ctx=failsafe_ctx, mqtt_client=mqtt_client,
+            failsafe_path=failsafe_path, write_lock=write_lock,
+            ha_api=ha_api, notify_service=notify_service,
+        ),
+    )
+    timer.daemon = True
+    timer.start()
+    return timer
+
+
 def _end_emergency_boost_if_active(failsafe_ctx: dict, manifest, ha_api, options: dict) -> None:
     """Beendet eine laufende Notfall-Boost-Exkursion sofort, wenn Notbetrieb selbst
     gerade beendet wurde -- statt auf deren eigene temperaturbasierte Exit-Bedingung zu
@@ -544,10 +596,17 @@ def _run_local_check(
         )
         _save_boost_active_if_changed(boost_was_active, BACKUP_PATH)
 
-        _maybe_publish_full_snapshot(
+        seq = _maybe_publish_full_snapshot(
             manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options=options,
             room_target=room_target, notify_service=options.get("notify_service", ""), now=datetime.now(),
         )
+        if seq is not None and failsafe_ctx is not None:
+            failsafe_ctx["state"] = register_publish_attempt(failsafe_ctx["state"], seq)
+            _schedule_ack_timeout(
+                seq=seq, failsafe_ctx=failsafe_ctx, mqtt_client=mqtt_client,
+                failsafe_path=FAILSAFE_PATH, write_lock=write_lock,
+                ha_api=ha_api, notify_service=options.get("notify_service", ""),
+            )
 
     return boost_was_active
 

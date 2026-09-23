@@ -16,6 +16,7 @@ from heizungsbruecke.__main__ import (
     _end_emergency_boost_if_active,
     _ensure_derived_sensors_with_retry,
     _handle_ack,
+    _handle_ack_timeout,
     _is_configured,
     _load_failsafe_ctx,
     _load_failsafe_ctx_safe,
@@ -1161,6 +1162,128 @@ def test_maybe_publish_full_snapshot_passes_notify_service_through(tmp_path, mon
 
     ha_api.send_notification.assert_called_once()
     assert ha_api.send_notification.call_args.args[0] == "notify.mobile_app_lucas_iphone"
+
+
+class _FakeTimer:
+    """Test double for threading.Timer -- captures scheduling instead of actually
+    waiting, so ack-timeout tests can fire the callback synchronously."""
+    instances: list = []
+
+    def __init__(self, interval, function, args=None, kwargs=None):
+        self.interval = interval
+        self.function = function
+        self.args = args or ()
+        self.kwargs = kwargs or {}
+        self.daemon = False
+        self.started = False
+        _FakeTimer.instances.append(self)
+
+    def start(self):
+        self.started = True
+
+    def fire(self):
+        self.function(*self.args, **self.kwargs)
+
+
+@pytest.fixture(autouse=True)
+def _reset_fake_timer_instances():
+    _FakeTimer.instances = []
+
+
+def test_run_local_check_schedules_ack_timeout_after_publishing(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    monkeypatch.setattr("heizungsbruecke.__main__.threading.Timer", _FakeTimer)
+    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual", "room_target": "sensor.room_target"})
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 20.0
+    mqtt_client = MagicMock()
+    options = _base_options()
+    failsafe_ctx = {"state": FailsafeState(active=False, awaiting_seq=None), "emergency_boost_active": False}
+
+    _run_local_check(
+        manifest, ha_api, mqtt_client, options, threading.Lock(), boost_was_active=False,
+        room_target=21.0, failsafe_ctx=failsafe_ctx,
+    )
+
+    assert len(_FakeTimer.instances) == 1
+    timer = _FakeTimer.instances[0]
+    assert timer.interval == 30
+    assert timer.started is True
+    assert failsafe_ctx["state"].awaiting_seq is not None
+
+
+def test_run_local_check_ack_timeout_activates_notbetrieb_when_unanswered(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    monkeypatch.setattr("heizungsbruecke.__main__.FAILSAFE_PATH", tmp_path / "failsafe_state.json")
+    monkeypatch.setattr("heizungsbruecke.__main__.threading.Timer", _FakeTimer)
+    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual", "room_target": "sensor.room_target"})
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 20.0
+    mqtt_client = MagicMock()
+    options = _base_options()
+    failsafe_ctx = {"state": FailsafeState(active=False, awaiting_seq=None), "emergency_boost_active": False}
+
+    _run_local_check(
+        manifest, ha_api, mqtt_client, options, threading.Lock(), boost_was_active=False,
+        room_target=21.0, failsafe_ctx=failsafe_ctx,
+    )
+    _FakeTimer.instances[0].fire()
+
+    assert failsafe_ctx["state"].active is True
+    mqtt_client.publish_status.assert_any_call("failsafe", "ON")
+
+
+def test_run_local_check_does_not_schedule_ack_timeout_when_nothing_publishes(tmp_path, monkeypatch):
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    save_backup(backup_path, {"last_published_target_rt": 20.0})
+    monkeypatch.setattr("heizungsbruecke.__main__.threading.Timer", _FakeTimer)
+    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual", "room_target": "sensor.room_target"})
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 20.0
+    mqtt_client = MagicMock()
+    options = _base_options()
+    failsafe_ctx = {"state": FailsafeState(active=False, awaiting_seq=None), "emergency_boost_active": False}
+
+    _run_local_check(
+        manifest, ha_api, mqtt_client, options, threading.Lock(), boost_was_active=False,
+        room_target=20.0, failsafe_ctx=failsafe_ctx,
+    )
+
+    assert _FakeTimer.instances == []
+
+
+def test_handle_ack_timeout_noop_when_seq_already_acked(tmp_path):
+    failsafe_path = tmp_path / "failsafe_state.json"
+    failsafe_ctx = {"state": FailsafeState(active=False, awaiting_seq=None), "emergency_boost_active": False}
+    mqtt_client = MagicMock()
+    ha_api = MagicMock()
+
+    _handle_ack_timeout(
+        seq="seq-1", failsafe_ctx=failsafe_ctx, mqtt_client=mqtt_client, failsafe_path=failsafe_path,
+        write_lock=threading.Lock(), ha_api=ha_api, notify_service="",
+    )
+
+    assert failsafe_ctx["state"] == FailsafeState(active=False, awaiting_seq=None)
+    mqtt_client.publish_status.assert_not_called()
+
+
+def test_handle_ack_timeout_sends_notification_when_configured(tmp_path):
+    failsafe_path = tmp_path / "failsafe_state.json"
+    failsafe_ctx = {"state": FailsafeState(active=False, awaiting_seq="seq-1"), "emergency_boost_active": False}
+    mqtt_client = MagicMock()
+    ha_api = MagicMock()
+
+    _handle_ack_timeout(
+        seq="seq-1", failsafe_ctx=failsafe_ctx, mqtt_client=mqtt_client, failsafe_path=failsafe_path,
+        write_lock=threading.Lock(), ha_api=ha_api, notify_service="notify.mobile_app",
+    )
+
+    assert failsafe_ctx["state"] == FailsafeState(active=True, awaiting_seq=None)
+    ha_api.send_notification.assert_called_once()
+    args, _ = ha_api.send_notification.call_args
+    assert args[0] == "notify.mobile_app"
+    assert "Notbetrieb" in args[1]
 
 
 def test_validate_local_check_interval_accepts_absent_and_valid_values():
