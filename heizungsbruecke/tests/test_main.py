@@ -1448,6 +1448,126 @@ def test_run_bridge_resets_stale_boost_active_when_priming_check_raises(monkeypa
     assert load_backup(backup_path)["boost_active"] is False
 
 
+def test_run_local_check_activates_emergency_boost_when_notbetrieb_active_and_room_cold(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    # No last_published_target_rt seeded -> _maybe_publish_full_snapshot will see
+    # target_changed=True and publish, which schedules an ack-timeout Timer (Task 6) --
+    # fake it out so the test doesn't leave a real 30s background timer running.
+    monkeypatch.setattr("heizungsbruecke.__main__.threading.Timer", _FakeTimer)
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual", "room_target": "sensor.room_target",
+        "curve_current": "number.curve", "offset_current": "number.offset",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = lambda entity_id: {
+        "sensor.room_actual": 18.5, "sensor.room_target": 20.0,
+    }[entity_id]
+    mqtt_client = MagicMock()
+    options = _base_options()
+    failsafe_ctx = {"state": FailsafeState(active=True, awaiting_seq=None), "emergency_boost_active": False}
+
+    _run_local_check(
+        manifest, ha_api, mqtt_client, options, threading.Lock(), boost_was_active=False,
+        room_target=20.0, failsafe_ctx=failsafe_ctx,
+    )
+
+    assert failsafe_ctx["emergency_boost_active"] is True
+    ha_api.set_number_value.assert_any_call("number.curve", options["curve_max"])
+    ha_api.set_number_value.assert_any_call("number.offset", options["offset_max"])
+
+
+def test_run_local_check_does_not_activate_emergency_boost_when_notbetrieb_inactive(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    # See the comment in the previous test -- avoids a real 30s background timer.
+    monkeypatch.setattr("heizungsbruecke.__main__.threading.Timer", _FakeTimer)
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual", "room_target": "sensor.room_target",
+        "curve_current": "number.curve", "offset_current": "number.offset",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = lambda entity_id: {
+        "sensor.room_actual": 18.5, "sensor.room_target": 20.0,
+    }[entity_id]
+    mqtt_client = MagicMock()
+    options = _base_options()
+    failsafe_ctx = {"state": FailsafeState(active=False, awaiting_seq=None), "emergency_boost_active": False}
+
+    _run_local_check(
+        manifest, ha_api, mqtt_client, options, threading.Lock(), boost_was_active=False,
+        room_target=20.0, failsafe_ctx=failsafe_ctx,
+    )
+
+    assert failsafe_ctx["emergency_boost_active"] is False
+    ha_api.set_number_value.assert_not_called()
+
+
+def test_run_local_check_ends_emergency_boost_once_notbetrieb_state_is_inactive(tmp_path, monkeypatch):
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    save_backup(backup_path, {"emergency_boost_active": True, "curve_current": 0.5})
+    # See the comment in test_run_local_check_activates_emergency_boost_...  above --
+    # avoids a real 30s background timer (no last_published_target_rt seeded here either).
+    monkeypatch.setattr("heizungsbruecke.__main__.threading.Timer", _FakeTimer)
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual", "room_target": "sensor.room_target",
+        "curve_current": "number.curve",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = lambda entity_id: {
+        "sensor.room_actual": 18.5, "sensor.room_target": 20.0,
+    }[entity_id]
+    mqtt_client = MagicMock()
+    options = _base_options()
+    # Notbetrieb ist bereits (z.B. durch einen erfolgreichen Ack) beendet, aber die
+    # Notfall-Exkursion selbst lief noch -- _run_local_check muss sie beenden, statt auf
+    # ihre eigene Exit-Schwelle zu warten (Review Focus #3, Rueckfallebene zu Task 4).
+    failsafe_ctx = {"state": FailsafeState(active=False, awaiting_seq=None), "emergency_boost_active": True}
+
+    _run_local_check(
+        manifest, ha_api, mqtt_client, options, threading.Lock(), boost_was_active=False,
+        room_target=20.0, failsafe_ctx=failsafe_ctx,
+    )
+
+    assert failsafe_ctx["emergency_boost_active"] is False
+    ha_api.set_number_value.assert_any_call("number.curve", 0.5)
+
+
+def test_run_bridge_resets_stale_emergency_boost_active_when_priming_check_raises(monkeypatch, tmp_path):
+    # Fail-open, same rationale as test_run_bridge_resets_stale_boost_active_when_priming_check_raises:
+    # a stuck emergency_boost_active=True would permanently gate out down-messages
+    # (handle_down_message's skip-live-write check) with no automatic recovery.
+    backup_path = tmp_path / "backup.json"
+    save_backup(backup_path, {"boost_active": False, "emergency_boost_active": True})
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+
+    fake_mqtt_client = MagicMock()
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: fake_mqtt_client)
+    monkeypatch.setattr("heizungsbruecke.__main__.HaTriggerClient", lambda **kwargs: MagicMock(connected=False))
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get",
+        lambda url, timeout: _FakeResponse({"active": True}),
+    )
+    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
+
+    def raising_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, room_target=None, failsafe_ctx=None):
+        raise RuntimeError("simulated HA-API hiccup at boot")
+
+    monkeypatch.setattr("heizungsbruecke.__main__._run_local_check", raising_run_local_check)
+
+    def stop_after_first_sleep(seconds):
+        raise SystemExit("stop test loop")
+
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", stop_after_first_sleep)
+    monkeypatch.setattr("heizungsbruecke.__main__.daynight_snapshot.maybe_snapshot", lambda **kwargs: None)
+
+    options = _full_valid_options()
+
+    with pytest.raises(SystemExit):
+        _run_bridge(options, MagicMock())
+
+    assert load_backup(backup_path)["emergency_boost_active"] is False
+
+
 def test_maybe_publish_telemetry_publishes_on_first_call(tmp_path, monkeypatch):
     monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
     mqtt_client = MagicMock()

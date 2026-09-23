@@ -14,7 +14,7 @@ import requests
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.boost import decide_boost
 from heizungsbruecke.bridge import apply_boost_decision, apply_emergency_decision, handle_down_message, publish_snapshot
-from heizungsbruecke.emergency_boost import EmergencyBoostDecision
+from heizungsbruecke.emergency_boost import EmergencyBoostDecision, decide_emergency_boost
 from heizungsbruecke import daynight_snapshot, derived_sensors
 from heizungsbruecke.failsafe import (
     FailsafeState,
@@ -596,6 +596,26 @@ def _run_local_check(
         )
         _save_boost_active_if_changed(boost_was_active, BACKUP_PATH)
 
+        if failsafe_ctx is not None:
+            if failsafe_ctx["state"].active:
+                emergency_decision = decide_emergency_boost(
+                    room_actual=room_actual, room_target=room_target,
+                    emergency_was_active=failsafe_ctx["emergency_boost_active"],
+                    exit_threshold_k=options.get("boost_threshold_k", 0.5),
+                    max_curve_value=options["curve_max"], max_offset_value=options["offset_max"],
+                )
+                failsafe_ctx["emergency_boost_active"] = apply_emergency_decision(
+                    decision=emergency_decision,
+                    emergency_was_active=failsafe_ctx["emergency_boost_active"],
+                    manifest=manifest, ha_api=ha_api,
+                    curve_min=options["curve_min"], curve_max=options["curve_max"],
+                    offset_min=options["offset_min"], offset_max=options["offset_max"],
+                    backup_path=BACKUP_PATH,
+                )
+                _save_emergency_active_if_changed(failsafe_ctx["emergency_boost_active"], BACKUP_PATH)
+            else:
+                _end_emergency_boost_if_active(failsafe_ctx, manifest, ha_api, options)
+
         seq = _maybe_publish_full_snapshot(
             manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options=options,
             room_target=room_target, notify_service=options.get("notify_service", ""), now=datetime.now(),
@@ -1003,6 +1023,8 @@ def _run_bridge(options: dict, ha_api) -> bool:
         # pinned at a boost value for up to a day under the new publish cadence.
         _save_boost_active_if_changed(False, BACKUP_PATH)
         boost_state.active = False
+        failsafe_ctx["emergency_boost_active"] = False
+        _save_emergency_active_if_changed(False, BACKUP_PATH)
 
     try:
         mqtt_client.loop_start()
