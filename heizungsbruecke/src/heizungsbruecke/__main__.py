@@ -369,41 +369,68 @@ def _make_down_callback(role, manifest, ha_api, options, write_lock, failsafe_ct
     return _callback
 
 
-def _load_failsafe_ctx(path: Path) -> dict:
+def _load_failsafe_ctx(path: Path, backup_path: Path) -> dict:
+    """Stellt den Fail-Safe-Kontext nach einem Neustart wieder her (Design-Spec
+    2026-09-23, Abschnitt 4): `state.active` aus `path` (failsafe_state.json) und
+    `emergency_boost_active` aus `backup_path` (backup.json, dort von
+    `_save_emergency_active_if_changed` gepflegt). Beide MUESSEN den Neustart
+    ueberleben: das Boot-Priming-`_run_local_check` braucht den echten Vorher-Wert von
+    `emergency_boost_active`, um eine noch laufende Notfall-Exkursion korrekt
+    fortzusetzen (Hysterese aus dem "war aktiv"-Zweig) bzw. -- falls Notbetrieb vor dem
+    Neustart schon beendet war -- das Live-Geraet von den Maximalwerten zurueckzusetzen.
+    Mit einem hart auf False gesetzten Startwert blieb das Geraet in beiden Faellen auf
+    curve_max/offset_max haengen (Final-Review-Fund C1). Nur `awaiting_seq` startet
+    frisch (siehe _save_failsafe_ctx).
+    """
     raw = load_backup(path)
+    backup = load_backup(backup_path)
     return {
         "state": FailsafeState(active=raw.get("failsafe_active", False), awaiting_seq=None),
-        "emergency_boost_active": False,
+        "emergency_boost_active": backup.get("emergency_boost_active", False),
     }
 
 
-def _load_failsafe_ctx_safe(path: Path) -> dict:
+def _load_failsafe_ctx_safe(path: Path, backup_path: Path) -> dict:
     """Wraps `_load_failsafe_ctx` so a corrupt/truncated state file (e.g. after power
     loss on the Pi's SD card) cannot crash the whole add-on at startup -- every other
     `load_backup` call site in this codebase runs inside a caller-provided try/except
     (see bridge.py's handle_down_message/apply_boost_decision), this is that guard for
-    the fail-safe state file. Falls back to the same default context a missing file
-    would produce.
+    the fail-safe state. Falls back to the same default a missing file would produce,
+    but per file: a corrupt failsafe_state.json must not also discard a still-valid
+    persisted `emergency_boost_active=True` from backup.json -- boot-priming (which then
+    sees Notbetrieb inactive) relies on that flag to restore the live device from its
+    max-heat values.
     """
     try:
-        return _load_failsafe_ctx(path)
+        return _load_failsafe_ctx(path, backup_path)
     except Exception as error:
         logger.warning(
-            "Fail-Safe-Zustandsdatei konnte nicht gelesen werden (%s), starte mit Standardzustand: %s",
-            path, error,
+            "Fail-Safe-Zustand konnte nicht vollstaendig gelesen werden (%s, %s), starte "
+            "mit Standardzustand fuer die nicht lesbare Datei: %s",
+            path, backup_path, error,
         )
-        return {
-            "state": FailsafeState(active=False, awaiting_seq=None),
-            "emergency_boost_active": False,
-        }
+    try:
+        failsafe_active = load_backup(path).get("failsafe_active", False)
+    except Exception:
+        failsafe_active = False
+    try:
+        emergency_boost_active = load_backup(backup_path).get("emergency_boost_active", False)
+    except Exception:
+        emergency_boost_active = False
+    return {
+        "state": FailsafeState(active=failsafe_active, awaiting_seq=None),
+        "emergency_boost_active": emergency_boost_active,
+    }
 
 
 def _save_failsafe_ctx(ctx: dict, path: Path) -> None:
-    """Persistiert nur `state.active` -- `awaiting_seq` (in-Prozess-Timer-Bezug, ohne
-    laufenden Timer nach einem Neustart bedeutungslos) und `emergency_boost_active`
-    (wird vom naechsten Boot-Priming-`_run_local_check` frisch neu bestimmt, analog zu
-    `boost_active`) werden bewusst NICHT persistiert (Design-Spec 2026-09-23,
-    Abschnitt 4).
+    """Persistiert `state.active` nach failsafe_state.json. `emergency_boost_active` wird
+    separat in backup.json persistiert (`_save_emergency_active_if_changed`, dort liest
+    auch handle_down_message's Live-Write-Sperre mit) und von `_load_failsafe_ctx` beim
+    Boot wieder eingelesen -- beide ueberleben einen Neustart (Design-Spec 2026-09-23,
+    Abschnitt 4). Einzig `awaiting_seq` wird bewusst NICHT persistiert: es bezieht sich
+    auf einen in-Prozess-`threading.Timer`, der nach einem Neustart nicht mehr existiert
+    und den Ack-/Timeout-Vergleich daher nie mehr aufloesen koennte.
     """
     save_backup(path, {"failsafe_active": ctx["state"].active})
 
@@ -959,7 +986,7 @@ def _run_bridge(options: dict, ha_api) -> bool:
 
     write_lock = threading.RLock()
 
-    failsafe_ctx = _load_failsafe_ctx_safe(FAILSAFE_PATH)
+    failsafe_ctx = _load_failsafe_ctx_safe(FAILSAFE_PATH, BACKUP_PATH)
 
     try:
         mqtt_client = _connect_mqtt_with_retry(options)

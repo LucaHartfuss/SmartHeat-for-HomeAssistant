@@ -27,6 +27,7 @@ from heizungsbruecke.__main__ import (
     _resolve_effective_options,
     _run_bridge,
     _run_local_check,
+    _save_emergency_active_if_changed,
     _save_failsafe_ctx,
     _validate_boost_config,
     _validate_derived_sensor_prerequisites,
@@ -491,28 +492,31 @@ def test_connect_mqtt_with_retry_raises_last_error_after_exhausting_retries(monk
 
 
 def test_load_failsafe_ctx_defaults_when_no_file(tmp_path):
-    ctx = _load_failsafe_ctx(tmp_path / "does_not_exist.json")
+    ctx = _load_failsafe_ctx(tmp_path / "does_not_exist.json", tmp_path / "no_backup.json")
 
     assert ctx["state"] == FailsafeState(active=False, awaiting_seq=None)
     assert ctx["emergency_boost_active"] is False
 
 
 def test_save_and_load_failsafe_ctx_round_trip(tmp_path):
-    # Nur `state.active` wird persistiert -- `awaiting_seq` (in-Prozess-Timer-Bezug) und
-    # `emergency_boost_active` (wird beim naechsten Boot frisch neu bestimmt) ueberleben
-    # einen Neustart absichtlich nicht (siehe _save_failsafe_ctx-Docstring).
+    # Design-Spec 2026-09-23, Abschnitt 4: `state.active` (failsafe_state.json) UND
+    # `emergency_boost_active` (backup.json) ueberleben einen Neustart. Nur
+    # `awaiting_seq` (in-Prozess-Timer-Bezug) startet bewusst frisch (siehe
+    # _save_failsafe_ctx-Docstring).
     path = tmp_path / "failsafe_state.json"
+    backup_path = tmp_path / "backup.json"
     ctx = {"state": FailsafeState(active=True, awaiting_seq="seq-1"), "emergency_boost_active": True}
 
     _save_failsafe_ctx(ctx, path)
-    loaded = _load_failsafe_ctx(path)
+    _save_emergency_active_if_changed(ctx["emergency_boost_active"], backup_path)
+    loaded = _load_failsafe_ctx(path, backup_path)
 
     assert loaded["state"] == FailsafeState(active=True, awaiting_seq=None)
-    assert loaded["emergency_boost_active"] is False
+    assert loaded["emergency_boost_active"] is True
 
 
 def test_load_failsafe_ctx_safe_defaults_when_no_file(tmp_path):
-    ctx = _load_failsafe_ctx_safe(tmp_path / "does_not_exist.json")
+    ctx = _load_failsafe_ctx_safe(tmp_path / "does_not_exist.json", tmp_path / "no_backup.json")
 
     assert ctx["state"] == FailsafeState(active=False, awaiting_seq=None)
     assert ctx["emergency_boost_active"] is False
@@ -524,21 +528,51 @@ def test_load_failsafe_ctx_safe_falls_back_on_corrupt_file(tmp_path):
     path = tmp_path / "failsafe_state.json"
     path.write_bytes(b"{not valid json..")
 
-    ctx = _load_failsafe_ctx_safe(path)
+    ctx = _load_failsafe_ctx_safe(path, tmp_path / "no_backup.json")
 
     assert ctx["state"] == FailsafeState(active=False, awaiting_seq=None)
     assert ctx["emergency_boost_active"] is False
 
 
+def test_load_failsafe_ctx_safe_still_reads_emergency_flag_when_failsafe_file_corrupt(tmp_path):
+    # A corrupt failsafe_state.json must not also discard a valid, persisted
+    # emergency_boost_active=True from backup.json -- otherwise boot-priming (which then
+    # sees Notbetrieb inactive) could never restore the device from its max-heat values
+    # (same stranding as final-review finding C1, Scenario A).
+    path = tmp_path / "failsafe_state.json"
+    path.write_bytes(b"{not valid json..")
+    backup_path = tmp_path / "backup.json"
+    save_backup(backup_path, {"emergency_boost_active": True})
+
+    ctx = _load_failsafe_ctx_safe(path, backup_path)
+
+    assert ctx["state"] == FailsafeState(active=False, awaiting_seq=None)
+    assert ctx["emergency_boost_active"] is True
+
+
+def test_load_failsafe_ctx_safe_falls_back_on_corrupt_backup_file(tmp_path):
+    path = tmp_path / "failsafe_state.json"
+    save_backup(path, {"failsafe_active": True})
+    backup_path = tmp_path / "backup.json"
+    backup_path.write_bytes(b"{not valid json..")
+
+    ctx = _load_failsafe_ctx_safe(path, backup_path)
+
+    assert ctx["state"] == FailsafeState(active=True, awaiting_seq=None)
+    assert ctx["emergency_boost_active"] is False
+
+
 def test_load_failsafe_ctx_safe_passes_through_valid_file(tmp_path):
     path = tmp_path / "failsafe_state.json"
+    backup_path = tmp_path / "backup.json"
     ctx = {"state": FailsafeState(active=True, awaiting_seq="seq-1"), "emergency_boost_active": True}
     _save_failsafe_ctx(ctx, path)
+    _save_emergency_active_if_changed(ctx["emergency_boost_active"], backup_path)
 
-    loaded = _load_failsafe_ctx_safe(path)
+    loaded = _load_failsafe_ctx_safe(path, backup_path)
 
     assert loaded["state"] == FailsafeState(active=True, awaiting_seq=None)
-    assert loaded["emergency_boost_active"] is False
+    assert loaded["emergency_boost_active"] is True
 
 
 def test_make_down_callback_acks_matching_seq_after_successful_handling(tmp_path, monkeypatch):
@@ -1565,6 +1599,108 @@ def test_run_bridge_resets_stale_emergency_boost_active_when_priming_check_raise
     with pytest.raises(SystemExit):
         _run_bridge(options, MagicMock())
 
+    assert load_backup(backup_path)["emergency_boost_active"] is False
+
+
+def _setup_restart_scenario(monkeypatch, tmp_path, failsafe_active, room_actual, trigger_client_connected):
+    """Harness for the final-review C1 restart tests: runs the REAL _run_bridge boot path
+    (real _load_failsafe_ctx_safe, real boot-priming _run_local_check) against persisted
+    state files as they would be on disk right after an add-on restart during/after an
+    emergency excursion. The live device (vaillant profile: curve_max=1.5,
+    offset_max=30.0) is still physically at the emergency max values from before the
+    restart; `device` tracks every live write so the test can assert where it ends up.
+    """
+    backup_path = tmp_path / "backup.json"
+    failsafe_path = tmp_path / "failsafe_state.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    monkeypatch.setattr("heizungsbruecke.__main__.FAILSAFE_PATH", failsafe_path)
+    monkeypatch.setattr("heizungsbruecke.__main__.threading.Timer", _FakeTimer)
+    save_backup(failsafe_path, {"failsafe_active": failsafe_active})
+    save_backup(backup_path, {
+        "emergency_boost_active": True,
+        "boost_active": False,
+        # Last server-confirmed values (restore target).
+        "curve_current": 0.9,
+        "offset_current": 22.0,
+        # Nothing else should trigger during boot: no target rise, no snapshot publish.
+        "last_room_target": 20.0,
+        "last_published_target_rt": 20.0,
+        "last_daily_trigger_date": datetime.now().date().isoformat(),
+    })
+
+    device = {"number.curve_current": 1.5, "number.offset_current": 30.0}
+    room = {"actual": room_actual}
+
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = lambda entity_id: {
+        "sensor.room_actual": room["actual"], "sensor.room_target": 20.0,
+    }.get(entity_id, device.get(entity_id, 5.0))
+    ha_api.set_number_value.side_effect = lambda entity_id, value: device.__setitem__(entity_id, value)
+
+    fake_mqtt_client = MagicMock()
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: fake_mqtt_client)
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.HaTriggerClient", lambda **kwargs: MagicMock(connected=trigger_client_connected),
+    )
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.requests.get",
+        lambda url, timeout: _FakeResponse({"active": True}),
+    )
+    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
+    monkeypatch.setattr("heizungsbruecke.__main__.daynight_snapshot.maybe_snapshot", lambda **kwargs: None)
+
+    def stop_after_first_sleep(seconds):
+        raise SystemExit("stop test loop")
+
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", stop_after_first_sleep)
+    return ha_api, fake_mqtt_client, device, room, backup_path
+
+
+def test_restart_after_notbetrieb_ended_restores_device_during_boot_priming(monkeypatch, tmp_path):
+    # Final-review C1, Scenario A: restart in the window between _handle_ack ending
+    # Notbetrieb (failsafe_active=False already persisted) and _end_emergency_boost_if_active
+    # finishing its restore (emergency_boost_active=True still on disk). Boot-priming must
+    # restore the live device and clear the disk flag -- otherwise every future
+    # down-message stays diverted into backup.json forever (handle_down_message's gate).
+    ha_api, _, device, _, backup_path = _setup_restart_scenario(
+        monkeypatch, tmp_path, failsafe_active=False, room_actual=19.8, trigger_client_connected=True,
+    )
+
+    with pytest.raises(SystemExit):
+        _run_bridge(_full_valid_options(), ha_api)
+
+    assert device == {"number.curve_current": 0.9, "number.offset_current": 22.0}
+    assert load_backup(backup_path)["emergency_boost_active"] is False
+
+
+def test_restart_during_notbetrieb_continues_emergency_hysteresis_between_thresholds(monkeypatch, tmp_path):
+    # Final-review C1, Scenario B/C: restart while Notbetrieb is still active and an
+    # emergency excursion is underway, room currently 0.8 K below target -- between the
+    # exit threshold (0.5 K) and the wider entry threshold (1.0 K). The excursion must
+    # continue from the "was active" branch (device stays at max, flag stays True), and
+    # once the room reaches the exit threshold, the device must be restored -- not left
+    # stranded at max heat for the rest of the outage.
+    ha_api, fake_mqtt_client, device, room, backup_path = _setup_restart_scenario(
+        monkeypatch, tmp_path, failsafe_active=True, room_actual=19.2, trigger_client_connected=False,
+    )
+    after_priming = {}
+
+    def on_loop_start():
+        # Runs right after boot-priming, before the watchdog-fallback tick.
+        after_priming["device"] = dict(device)
+        after_priming["emergency_on_disk"] = load_backup(backup_path)["emergency_boost_active"]
+        room["actual"] = 19.6  # room has warmed up to within exit_threshold_k (0.5 K)
+
+    fake_mqtt_client.loop_start.side_effect = on_loop_start
+
+    with pytest.raises(SystemExit):
+        _run_bridge(_full_valid_options(), ha_api)
+
+    # Boot-priming: excursion continued, no write, flag still set.
+    assert after_priming["device"] == {"number.curve_current": 1.5, "number.offset_current": 30.0}
+    assert after_priming["emergency_on_disk"] is True
+    # Watchdog-fallback tick: exit threshold reached -> restored to the server-confirmed values.
+    assert device == {"number.curve_current": 0.9, "number.offset_current": 22.0}
     assert load_backup(backup_path)["emergency_boost_active"] is False
 
 
