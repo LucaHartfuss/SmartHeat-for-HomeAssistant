@@ -8,16 +8,42 @@ Wunschtemperatur erhoeht wird (Komfort-Beschleunigung): das Add-on schaltet
 kurzzeitig auf eine hohe Heizkurve, bis der Raum innerhalb von
 `boost_threshold_k` (Default 0.5 K) an die neue Wunschtemperatur herangekommen
 ist, und schaltet danach zur zuletzt vom Server empfangenen Heizkurve zurueck.
-Boost reagiert NICHT mehr auf einen kalten Raum aus anderer Ursache
-(Aussentemperatur-Einbruch, offene Tuer, Server laengere Zeit nicht erreichbar)
--- diese Faelle werden nur noch vom naechsten regulaeren Heizkurven-Tick sowie
-vom Fail-Safe-Alarm (rein informativ, siehe `failsafe_stale_after_hours` weiter
-unten) abgedeckt. Dieses Add-on hat keine
+Boost reagiert NICHT auf einen kalten Raum aus anderer Ursache
+(Aussentemperatur-Einbruch, offene Tuer) -- diese Faelle werden vom naechsten
+regulaeren Heizkurven-Tick abgedeckt. Ist der Server laengere Zeit nicht
+erreichbar, uebernimmt stattdessen der separate **Notbetrieb** (siehe
+Changelog unten): eine hartcodierte Temperatur-Hysterese, die nur waehrend
+einer erkannten Server-Downtime aktiv ist. Dieses Add-on hat keine
 eigene Konfigurationsoberflaeche (weder im Configuration-Tab noch als
 Ingress-Panel) -- eingerichtet wird es ueber die separate **SmartHeat**
 Home-Assistant-Integration: installieren, dann Einstellungen → Geraete &
 Dienste → Integration hinzufuegen → "SmartHeat". Die Integration schreibt die
 noetige Konfiguration automatisch in dieses Add-on.
+
+## Update von 0.11.2 auf 0.12.0 (Breaking Change)
+
+**Der Fail-Safe-Alarm wird nicht mehr per fester Zeitschwelle ausgeloest, sondern
+sofort, wenn ein vollstaendiger Snapshot-Publish innerhalb von 30 Sekunden keine
+passende Antwort vom Server erhaelt** -- statt frueher erst nach
+`failsafe_stale_after_hours` (Default 26h) ohne jede gueltige Server-Antwort. Das Feld
+`failsafe_stale_after_hours` entfaellt ersatzlos.
+
+Waehrend dieses "Notbetriebs" ueberwacht das Add-on den Raum weiterhin lokal: faellt
+die Raumtemperatur mehr als 1 K unter die Solltemperatur, faehrt die Heizkurve
+kurzzeitig auf die konfigurierten Maximalwerte (`curve_max`/`offset_max`), bis der
+Raum wieder auf `boost_threshold_k` (Default 0.5 K) an die Solltemperatur
+herangekommen ist -- danach zurueck zur zuletzt vom Server bestaetigten Heizkurve.
+Dieser Zyklus kann sich beliebig oft wiederholen, solange Notbetrieb laeuft, und ist
+unabhaengig vom bestehenden Comfort-Boost (Ausloeser: Sollwerterhoehung). Notbetrieb
+endet automatisch, sobald der naechste regulaere Up-Snapshot-Versuch (taeglich oder
+bei Solltemperatur-Aenderung, keine Aenderung der Kadenz) wieder eine passende Antwort
+erhaelt.
+
+**Achtung bei bestehenden Installationen:** ein zuvor gesetztes
+`failsafe_stale_after_hours` in `options.json` wird ab dieser Version ignoriert (kein
+Fehler). Kein manueller Schritt noetig -- der `binary_sensor.failsafe` bleibt
+derselbe, zeigt jetzt nur den neuen Notbetrieb-Zustand statt des alten
+Zeit-Watchdogs.
 
 ## Update von 0.11.1 auf 0.11.2
 
