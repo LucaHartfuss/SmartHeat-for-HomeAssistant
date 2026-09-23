@@ -12,7 +12,7 @@ from pathlib import Path
 import requests
 
 from heizungsbruecke.backup_store import load_backup, save_backup
-from heizungsbruecke.boost import decide_boost
+from heizungsbruecke.boost import BoostDecision, decide_boost
 from heizungsbruecke.bridge import apply_boost_decision, apply_emergency_decision, handle_down_message, publish_snapshot
 from heizungsbruecke.emergency_boost import EmergencyBoostDecision, decide_emergency_boost
 from heizungsbruecke import daynight_snapshot, derived_sensors
@@ -525,15 +525,49 @@ def _end_emergency_boost_if_active(failsafe_ctx: dict, manifest, ha_api, options
     """
     if not failsafe_ctx["emergency_boost_active"]:
         return
-    failsafe_ctx["emergency_boost_active"] = apply_emergency_decision(
-        decision=EmergencyBoostDecision(active=False, curve_value=None, offset_value=None),
-        emergency_was_active=True,
-        manifest=manifest, ha_api=ha_api,
+    failsafe_ctx["emergency_boost_active"] = _exit_emergency_boost(manifest, ha_api, options)
+    _save_emergency_active_if_changed(failsafe_ctx["emergency_boost_active"], BACKUP_PATH)
+
+
+def _exit_emergency_boost(manifest, ha_api, options: dict) -> bool:
+    """Einziger Ausstiegspfad einer Notfall-Boost-Exkursion (Hysterese-Exit in
+    _run_local_check ebenso wie Notbetrieb-Ende via _end_emergency_boost_if_active).
+    Gibt das Live-Geraet an den Zustand zurueck, der OHNE Notfall-Boost gelten wuerde:
+    laeuft der Comfort-Boost laut backup.json noch (`boost_active`), dessen Werte --
+    sonst die zuletzt vom Server bestaetigten Werte (apply_emergency_decision's
+    Standard-Restore). Ohne diese Unterscheidung wuerde ein noch laufender Comfort-Boost
+    beim Notfall-Boost-Ende stillschweigend ueberschrieben, waehrend `boost_active`
+    weiter True bleibt (Design-Spec 2026-09-23, Abschnitt 3: "Der Comfort-Boost laeuft
+    mit seinem eigenen State unbeeinflusst weiter ... endet Notbetrieb, arbeitet er
+    normal weiter"; Final-Review-Fund I2 b). Liest `boost_active` aus backup.json statt
+    aus dem In-Memory-_BoostStateBox, weil auch der Down-Callback-Thread hierher kommt;
+    _run_local_check persistiert den aktuellen Tick-Wert vor dem Notfall-Block.
+    Gibt immer False zurueck (neuer Wert fuer `emergency_boost_active`).
+    """
+    clamp_kwargs = dict(
         curve_min=options["curve_min"], curve_max=options["curve_max"],
         offset_min=options["offset_min"], offset_max=options["offset_max"],
         backup_path=BACKUP_PATH,
     )
-    _save_emergency_active_if_changed(failsafe_ctx["emergency_boost_active"], BACKUP_PATH)
+    if load_backup(BACKUP_PATH).get("boost_active", False):
+        # Schreibt die Comfort-Boost-Werte ueber denselben (geclampten) Transition-Write
+        # wie ein frisch startender Comfort-Boost.
+        apply_boost_decision(
+            decision=BoostDecision(
+                active=True,
+                curve_value=options["boost_curve_value"],
+                offset_value=options["boost_offset_value"],
+            ),
+            boost_was_active=False,
+            manifest=manifest, ha_api=ha_api, **clamp_kwargs,
+        )
+        logger.warning("Notfall-Boost beendet: Comfort-Boost laeuft noch, dessen Werte wiederhergestellt")
+        return False
+    return apply_emergency_decision(
+        decision=EmergencyBoostDecision(active=False, curve_value=None, offset_value=None),
+        emergency_was_active=True,
+        manifest=manifest, ha_api=ha_api, **clamp_kwargs,
+    )
 
 
 def _save_boost_active_if_changed(boost_active: bool, path: Path) -> None:
@@ -611,17 +645,30 @@ def _run_local_check(
             backup["last_room_target"] = room_target
             save_backup(BACKUP_PATH, backup)
 
-        boost_was_active = apply_boost_decision(
-            decision=decision,
-            boost_was_active=boost_was_active,
-            manifest=manifest,
-            ha_api=ha_api,
-            curve_min=options["curve_min"],
-            curve_max=options["curve_max"],
-            offset_min=options["offset_min"],
-            offset_max=options["offset_max"],
-            backup_path=BACKUP_PATH,
-        )
+        if failsafe_ctx is not None and failsafe_ctx["emergency_boost_active"]:
+            # Praezedenz Notfall- vor Comfort-Boost (Design-Spec 2026-09-23, Abschnitt 3;
+            # Final-Review-Fund I2 a): haelt der Notfall-Boost das Geraet bereits (aus
+            # einem frueheren Tick), fuehrt der Comfort-Boost nur seinen eigenen State
+            # weiter und schreibt NICHT live -- apply_boost_decision schreibt nur bei
+            # einem Zustandswechsel, und der Notfall-Block unten schreibt im
+            # Dauerzustand gar nicht, ein Comfort-Transition-Write wuerde die Maximalwerte
+            # also sonst unbemerkt ueberschreiben. Endet der Notfall-Boost (in diesem
+            # oder einem spaeteren Tick), setzt _exit_emergency_boost das Geraet anhand
+            # des dann aktuellen `boost_active` korrekt. `decision.active` ist exakt der
+            # Rueckgabewert, den apply_boost_decision geliefert haette.
+            boost_was_active = decision.active
+        else:
+            boost_was_active = apply_boost_decision(
+                decision=decision,
+                boost_was_active=boost_was_active,
+                manifest=manifest,
+                ha_api=ha_api,
+                curve_min=options["curve_min"],
+                curve_max=options["curve_max"],
+                offset_min=options["offset_min"],
+                offset_max=options["offset_max"],
+                backup_path=BACKUP_PATH,
+            )
         _save_boost_active_if_changed(boost_was_active, BACKUP_PATH)
 
         if failsafe_ctx is not None:
@@ -632,14 +679,17 @@ def _run_local_check(
                     exit_threshold_k=options.get("boost_threshold_k", 0.5),
                     max_curve_value=options["curve_max"], max_offset_value=options["offset_max"],
                 )
-                failsafe_ctx["emergency_boost_active"] = apply_emergency_decision(
-                    decision=emergency_decision,
-                    emergency_was_active=failsafe_ctx["emergency_boost_active"],
-                    manifest=manifest, ha_api=ha_api,
-                    curve_min=options["curve_min"], curve_max=options["curve_max"],
-                    offset_min=options["offset_min"], offset_max=options["offset_max"],
-                    backup_path=BACKUP_PATH,
-                )
+                if failsafe_ctx["emergency_boost_active"] and not emergency_decision.active:
+                    failsafe_ctx["emergency_boost_active"] = _exit_emergency_boost(manifest, ha_api, options)
+                else:
+                    failsafe_ctx["emergency_boost_active"] = apply_emergency_decision(
+                        decision=emergency_decision,
+                        emergency_was_active=failsafe_ctx["emergency_boost_active"],
+                        manifest=manifest, ha_api=ha_api,
+                        curve_min=options["curve_min"], curve_max=options["curve_max"],
+                        offset_min=options["offset_min"], offset_max=options["offset_max"],
+                        backup_path=BACKUP_PATH,
+                    )
                 _save_emergency_active_if_changed(failsafe_ctx["emergency_boost_active"], BACKUP_PATH)
             else:
                 _end_emergency_boost_if_active(failsafe_ctx, manifest, ha_api, options)

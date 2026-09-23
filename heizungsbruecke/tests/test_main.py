@@ -770,6 +770,134 @@ def test_make_down_callback_ends_emergency_boost_when_notbetrieb_ends(tmp_path, 
     ha_api.set_number_value.assert_called_once_with("number.curve", 0.5)
 
 
+def _precedence_setup(tmp_path, monkeypatch, backup: dict, room_actual: float):
+    """Harness for the Notfall- vs. Comfort-Boost precedence tests (Design-Spec
+    2026-09-23, Abschnitt 3; final-review finding I2). `_base_options` gives distinct
+    values for emergency max (curve_max=0.8/offset_max=5.0), comfort boost (0.5/2.0)
+    and the server-confirmed backup (0.3/1.0), so the test can tell which one ends up
+    live. `device` records every live write.
+    """
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    monkeypatch.setattr("heizungsbruecke.__main__.FAILSAFE_PATH", tmp_path / "failsafe_state.json")
+    monkeypatch.setattr("heizungsbruecke.__main__.threading.Timer", _FakeTimer)
+    save_backup(backup_path, {"curve_current": 0.3, "offset_current": 1.0, **backup})
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual", "room_target": "sensor.room_target",
+        "curve_current": "number.curve", "offset_current": "number.offset",
+    })
+    device = {}
+    room = {"actual": room_actual}
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = lambda entity_id: room["actual"] if entity_id == "sensor.room_actual" else 21.0
+    ha_api.set_number_value.side_effect = lambda entity_id, value: device.__setitem__(entity_id, value)
+    return backup_path, manifest, ha_api, device, room
+
+
+def test_precedence_comfort_boost_activating_while_emergency_boost_steady_active(tmp_path, monkeypatch):
+    # I2 (a): Comfort-Boost transitions on (target raised 20 -> 21) in a tick where
+    # Notfall-Boost is already steady-active (no emergency write this tick). The live
+    # device must end the tick at the emergency max values, not the comfort values --
+    # while Comfort-Boost's own state still becomes active in the background.
+    backup_path, manifest, ha_api, device, _ = _precedence_setup(
+        tmp_path, monkeypatch,
+        backup={"emergency_boost_active": True, "boost_active": False, "last_room_target": 20.0},
+        room_actual=19.0,
+    )
+    device.update({"number.curve": 0.8, "number.offset": 5.0})  # live from the earlier emergency write
+    failsafe_ctx = {"state": FailsafeState(active=True, awaiting_seq=None), "emergency_boost_active": True}
+
+    boost_active = _run_local_check(
+        manifest, ha_api, MagicMock(), _base_options(), threading.RLock(), boost_was_active=False,
+        room_target=21.0, failsafe_ctx=failsafe_ctx,
+    )
+
+    assert device == {"number.curve": 0.8, "number.offset": 5.0}
+    assert boost_active is True
+    assert load_backup(backup_path)["boost_active"] is True
+    assert failsafe_ctx["emergency_boost_active"] is True
+
+
+def test_precedence_emergency_exit_via_ack_restores_comfort_values_while_comfort_still_active(tmp_path, monkeypatch):
+    # I2 (b): Notbetrieb ends (matching ack) while Comfort-Boost is still logically
+    # active. The emergency exit must hand the device over to the comfort-boost values,
+    # not the plain server value -- and Comfort-Boost's own later exit must still work.
+    backup_path, manifest, ha_api, device, room = _precedence_setup(
+        tmp_path, monkeypatch,
+        backup={"emergency_boost_active": True, "boost_active": True, "last_room_target": 21.0},
+        room_actual=19.0,
+    )
+    device.update({"number.curve": 0.8, "number.offset": 5.0})
+    failsafe_ctx = {"state": FailsafeState(active=True, awaiting_seq="seq-1"), "emergency_boost_active": True}
+    options = _base_options()
+    write_lock = threading.RLock()
+    callback = _make_down_callback("curve_current", manifest, ha_api, options, write_lock, failsafe_ctx, MagicMock())
+    message = MagicMock()
+    message.payload = json.dumps({"v": 0.4, "seq": "seq-1"})
+    message.retain = False
+
+    callback(client=MagicMock(), userdata=None, message=message)
+
+    assert failsafe_ctx["state"].active is False
+    assert failsafe_ctx["emergency_boost_active"] is False
+    assert device == {"number.curve": 0.5, "number.offset": 2.0}
+    backup = load_backup(backup_path)
+    assert backup["boost_active"] is True
+    assert backup["emergency_boost_active"] is False
+    assert backup["curve_current"] == 0.4  # fresh server value recorded, not yet live
+
+    # Comfort-Boost's own exit still works normally once the room arrives.
+    room["actual"] = 20.8
+    boost_active = _run_local_check(
+        manifest, ha_api, MagicMock(), options, write_lock, boost_was_active=True,
+        room_target=21.0, failsafe_ctx=failsafe_ctx,
+    )
+
+    assert boost_active is False
+    assert device == {"number.curve": 0.4, "number.offset": 1.0}
+    assert load_backup(backup_path)["boost_active"] is False
+
+
+def test_precedence_emergency_exit_via_local_check_fallback_restores_comfort_values(tmp_path, monkeypatch):
+    # I2 (b), via _run_local_check's fallback branch (Notbetrieb already inactive,
+    # emergency flag still set): same hand-over to the comfort values.
+    backup_path, manifest, ha_api, device, _ = _precedence_setup(
+        tmp_path, monkeypatch,
+        backup={"emergency_boost_active": True, "boost_active": True, "last_room_target": 21.0},
+        room_actual=19.0,
+    )
+    device.update({"number.curve": 0.8, "number.offset": 5.0})
+    failsafe_ctx = {"state": FailsafeState(active=False, awaiting_seq=None), "emergency_boost_active": True}
+
+    boost_active = _run_local_check(
+        manifest, ha_api, MagicMock(), _base_options(), threading.RLock(), boost_was_active=True,
+        room_target=21.0, failsafe_ctx=failsafe_ctx,
+    )
+
+    assert boost_active is True
+    assert failsafe_ctx["emergency_boost_active"] is False
+    assert device == {"number.curve": 0.5, "number.offset": 2.0}
+    assert load_backup(backup_path)["emergency_boost_active"] is False
+
+
+def test_precedence_emergency_exit_without_comfort_boost_restores_backup_values(tmp_path, monkeypatch):
+    # Control case for the above: no Comfort-Boost running -> plain server value.
+    backup_path, manifest, ha_api, device, _ = _precedence_setup(
+        tmp_path, monkeypatch,
+        backup={"emergency_boost_active": True, "boost_active": False, "last_room_target": 21.0},
+        room_actual=19.0,
+    )
+    device.update({"number.curve": 0.8, "number.offset": 5.0})
+    failsafe_ctx = {"state": FailsafeState(active=False, awaiting_seq=None), "emergency_boost_active": True}
+
+    _run_local_check(
+        manifest, ha_api, MagicMock(), _base_options(), threading.RLock(), boost_was_active=False,
+        room_target=21.0, failsafe_ctx=failsafe_ctx,
+    )
+
+    assert device == {"number.curve": 0.3, "number.offset": 1.0}
+
+
 def test_run_bridge_loop_survives_clamp_rejecting_a_non_finite_boost_value(monkeypatch):
     # I2 failure-chain closure: if clamp() raises inside apply_boost_decision (e.g. a
     # NaN backed-up curve_current during a boost-restore), _run_bridge's main loop
