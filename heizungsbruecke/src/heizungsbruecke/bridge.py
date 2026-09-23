@@ -4,6 +4,7 @@ from pathlib import Path
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.boost import BoostDecision
 from heizungsbruecke.clamping import clamp
+from heizungsbruecke.emergency_boost import EmergencyBoostDecision
 from heizungsbruecke.manifest import ChannelManifest
 
 _CLAMPED_ROLES = ("curve_current", "offset_current")
@@ -81,20 +82,21 @@ def handle_down_message(
             role, value, clamped, minimum, maximum,
         )
 
-    boost_active = False
+    skip_live_write = False
     if role in _CLAMPED_ROLES:
         backup = load_backup(backup_path)
-        boost_active = backup.get("boost_active", False)
+        skip_live_write = backup.get("boost_active", False) or backup.get("emergency_boost_active", False)
         backup[role] = clamped
         save_backup(backup_path, backup)
 
-    if boost_active:
-        # Design-Spec 2026-09-16, Abschnitt D: der boost-erzwungene Live-Wert bleibt
-        # unberuehrt -- backup.json ist bereits aktuell (siehe oben) und wird beim
-        # Boost-Ende von apply_boost_decision automatisch wiederhergestellt.
+    if skip_live_write:
+        # Design-Spec 2026-09-16 Abschnitt D / 2026-09-23 Abschnitt 3: der boost- oder
+        # notfall-boost-erzwungene Live-Wert bleibt unberuehrt -- backup.json ist bereits
+        # aktuell (siehe oben) und wird beim Boost-/Notfall-Boost-Ende automatisch
+        # wiederhergestellt.
         logger.info(
-            "Down-Nachricht fuer Rolle '%s' waehrend aktivem Boost nur in backup.json "
-            "gespeichert, Live-Entity bleibt auf dem Boost-Wert.",
+            "Down-Nachricht fuer Rolle '%s' waehrend aktivem (Notfall-)Boost nur in "
+            "backup.json gespeichert, Live-Entity bleibt auf dem Boost-Wert.",
             role,
         )
         return
@@ -151,6 +153,55 @@ def apply_boost_decision(
                 manifest.entity_ids["offset_current"], clamp(backup["offset_current"], offset_min, offset_max)
             )
         logger.warning("Boost beendet: Werte aus Backup wiederhergestellt (sofern vorhanden)")
+        return False
+
+    return False
+
+
+def apply_emergency_decision(
+    decision: EmergencyBoostDecision,
+    emergency_was_active: bool,
+    manifest: ChannelManifest,
+    ha_api,
+    curve_min: float,
+    curve_max: float,
+    offset_min: float,
+    offset_max: float,
+    backup_path: Path,
+) -> bool:
+    """Gleicher Schreib-/Wiederherstellungs-Mechanismus wie apply_boost_decision, aber
+    mit eigenem Notfall-Boost-Zustand (siehe __main__.py's `emergency_boost_active` in
+    backup.json) -- kollidiert dadurch nie mit dem Comfort-Boost-Zustand (`boost_active`).
+    Die Wiederherstellung beim Beenden liest DIESELBEN backup.json-Felder
+    (curve_current/offset_current) wie apply_boost_decision -- beide bedeuten "der
+    zuletzt vom Server tatsaechlich bestaetigte Wert", von handle_down_message bei jeder
+    echten Down-Nachricht aktuell gehalten, unabhaengig davon, welcher Boost (falls
+    ueberhaupt einer) das Live-Geraet gerade ueberschreibt.
+    """
+    if decision.active:
+        if not emergency_was_active:
+            if "curve_current" in manifest.entity_ids:
+                ha_api.set_number_value(
+                    manifest.entity_ids["curve_current"], clamp(decision.curve_value, curve_min, curve_max)
+                )
+            if "offset_current" in manifest.entity_ids:
+                ha_api.set_number_value(
+                    manifest.entity_ids["offset_current"], clamp(decision.offset_value, offset_min, offset_max)
+                )
+            logger.warning("Notfall-Boost aktiv: Sollwerte auf Maximalwerte gesetzt")
+        return True
+
+    if emergency_was_active:
+        backup = load_backup(backup_path)
+        if "curve_current" in backup and "curve_current" in manifest.entity_ids:
+            ha_api.set_number_value(
+                manifest.entity_ids["curve_current"], clamp(backup["curve_current"], curve_min, curve_max)
+            )
+        if "offset_current" in backup and "offset_current" in manifest.entity_ids:
+            ha_api.set_number_value(
+                manifest.entity_ids["offset_current"], clamp(backup["offset_current"], offset_min, offset_max)
+            )
+        logger.warning("Notfall-Boost beendet: Werte aus Backup wiederhergestellt (sofern vorhanden)")
         return False
 
     return False
