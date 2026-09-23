@@ -4,41 +4,35 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class FailsafeState:
     active: bool
-    recovery_count: int
+    awaiting_seq: str | None
 
 
-def enter_failsafe_if_stale(
-    current: FailsafeState,
-    seconds_since_last_valid: float | None,
-    stale_after_seconds: float,
-) -> FailsafeState:
-    """Evaluates whether to enter fail-safe due to staleness. Only ever transitions
-    inactive -> active; never touches an already-active state (recovery only happens
-    via `record_valid_message`) -- mirrors the old watchdog automation's split between
-    an hourly staleness check and a message-triggered recovery counter.
-
-    `seconds_since_last_valid=None` (no valid message ever received yet) never trips
-    fail-safe on its own -- there is nothing "stale" to detect yet.
+def register_publish_attempt(current: FailsafeState, seq: str) -> FailsafeState:
+    """Records a fresh full-snapshot publish attempt as the one whose ack-timeout
+    matters now -- supersedes any earlier still-open attempt (only the latest attempt's
+    resolution, ack or timeout, can still change `active`; see Design-Spec 2026-09-23).
     """
-    if current.active:
-        return current
-    if seconds_since_last_valid is not None and seconds_since_last_valid >= stale_after_seconds:
-        return FailsafeState(active=True, recovery_count=0)
-    return current
+    return FailsafeState(active=current.active, awaiting_seq=seq)
 
 
-def record_valid_message(current: FailsafeState) -> FailsafeState:
-    """Evaluates the effect of one valid down-message on the fail-safe state. Only
-    relevant while active: requires two consecutive calls (anti-flap) before flipping
-    back to inactive, mirroring the old counter.reset()/counter.increment() pattern.
-    A valid message while already inactive is a no-op.
+def enter_notbetrieb_on_ack_timeout(current: FailsafeState, timed_out_seq: str) -> FailsafeState:
+    """The ack-timeout for `timed_out_seq` elapsed with no matching down-message.
+    Only acts if `timed_out_seq` is still the attempt being awaited -- a no-op if it was
+    already resolved (acked) or superseded by a newer publish attempt in the meantime.
     """
-    if not current.active:
+    if current.awaiting_seq != timed_out_seq:
         return current
-    new_count = current.recovery_count + 1
-    if new_count > 1:
-        return FailsafeState(active=False, recovery_count=0)
-    return FailsafeState(active=True, recovery_count=new_count)
+    return FailsafeState(active=True, awaiting_seq=None)
+
+
+def exit_notbetrieb_on_ack(current: FailsafeState, acked_seq: str) -> FailsafeState:
+    """A down-message with `acked_seq` arrived. Only acts if `acked_seq` is still the
+    attempt being awaited -- a stale ack for an already-resolved or superseded attempt
+    is ignored (see Design-Spec 2026-09-23 Edge Cases).
+    """
+    if current.awaiting_seq != acked_seq:
+        return current
+    return FailsafeState(active=False, awaiting_seq=None)
 
 
 def build_discovery_config(tenant_id: str) -> dict:

@@ -2,78 +2,77 @@ from heizungsbruecke.failsafe import (
     FailsafeState,
     build_discovery_config,
     build_state_payload,
-    enter_failsafe_if_stale,
-    record_valid_message,
+    enter_notbetrieb_on_ack_timeout,
+    exit_notbetrieb_on_ack,
+    register_publish_attempt,
 )
 
 
-def test_enter_failsafe_if_stale_activates_when_stale():
-    current = FailsafeState(active=False, recovery_count=0)
+def test_register_publish_attempt_sets_awaiting_seq():
+    current = FailsafeState(active=False, awaiting_seq=None)
 
-    new_state = enter_failsafe_if_stale(current, seconds_since_last_valid=100.0, stale_after_seconds=90.0)
+    new_state = register_publish_attempt(current, "seq-1")
 
-    assert new_state.active is True
-    assert new_state.recovery_count == 0
-
-
-def test_enter_failsafe_if_stale_activates_exactly_at_threshold():
-    current = FailsafeState(active=False, recovery_count=0)
-
-    new_state = enter_failsafe_if_stale(current, seconds_since_last_valid=90.0, stale_after_seconds=90.0)
-
-    assert new_state.active is True
+    assert new_state == FailsafeState(active=False, awaiting_seq="seq-1")
 
 
-def test_enter_failsafe_if_stale_stays_inactive_when_fresh():
-    current = FailsafeState(active=False, recovery_count=0)
+def test_register_publish_attempt_supersedes_an_earlier_still_open_seq():
+    current = FailsafeState(active=False, awaiting_seq="seq-1")
 
-    new_state = enter_failsafe_if_stale(current, seconds_since_last_valid=10.0, stale_after_seconds=90.0)
+    new_state = register_publish_attempt(current, "seq-2")
 
-    assert new_state == current
-
-
-def test_enter_failsafe_if_stale_stays_inactive_when_never_received():
-    # No valid message ever received yet -- nothing to consider "stale".
-    current = FailsafeState(active=False, recovery_count=0)
-
-    new_state = enter_failsafe_if_stale(current, seconds_since_last_valid=None, stale_after_seconds=90.0)
-
-    assert new_state == current
+    assert new_state.awaiting_seq == "seq-2"
 
 
-def test_enter_failsafe_if_stale_does_not_change_already_active_state():
-    # Recovery only happens via record_valid_message, never here.
-    current = FailsafeState(active=True, recovery_count=1)
+def test_enter_notbetrieb_on_ack_timeout_activates_for_matching_seq():
+    current = FailsafeState(active=False, awaiting_seq="seq-1")
 
-    new_state = enter_failsafe_if_stale(current, seconds_since_last_valid=99999.0, stale_after_seconds=90.0)
+    new_state = enter_notbetrieb_on_ack_timeout(current, "seq-1")
+
+    assert new_state == FailsafeState(active=True, awaiting_seq=None)
+
+
+def test_enter_notbetrieb_on_ack_timeout_noop_when_seq_already_acked():
+    # awaiting_seq was already cleared by exit_notbetrieb_on_ack before the timer fired.
+    current = FailsafeState(active=False, awaiting_seq=None)
+
+    new_state = enter_notbetrieb_on_ack_timeout(current, "seq-1")
 
     assert new_state == current
 
 
-def test_record_valid_message_increments_recovery_count_on_first_message():
-    current = FailsafeState(active=True, recovery_count=0)
+def test_enter_notbetrieb_on_ack_timeout_noop_when_superseded_by_newer_publish():
+    current = FailsafeState(active=False, awaiting_seq="seq-2")
 
-    new_state = record_valid_message(current)
-
-    assert new_state.active is True
-    assert new_state.recovery_count == 1
-
-
-def test_record_valid_message_exits_failsafe_after_two_consecutive_messages():
-    current = FailsafeState(active=True, recovery_count=1)
-
-    new_state = record_valid_message(current)
-
-    assert new_state.active is False
-    assert new_state.recovery_count == 0
-
-
-def test_record_valid_message_is_noop_when_already_inactive():
-    current = FailsafeState(active=False, recovery_count=0)
-
-    new_state = record_valid_message(current)
+    new_state = enter_notbetrieb_on_ack_timeout(current, "seq-1")
 
     assert new_state == current
+
+
+def test_exit_notbetrieb_on_ack_deactivates_for_matching_seq():
+    current = FailsafeState(active=True, awaiting_seq="seq-1")
+
+    new_state = exit_notbetrieb_on_ack(current, "seq-1")
+
+    assert new_state == FailsafeState(active=False, awaiting_seq=None)
+
+
+def test_exit_notbetrieb_on_ack_noop_for_mismatched_seq():
+    # A late ack for a superseded/old attempt must not resurrect or otherwise touch an
+    # expectation that has already moved on to a newer seq.
+    current = FailsafeState(active=True, awaiting_seq="seq-2")
+
+    new_state = exit_notbetrieb_on_ack(current, "seq-1")
+
+    assert new_state == current
+
+
+def test_exit_notbetrieb_on_ack_still_clears_awaiting_seq_when_already_inactive():
+    current = FailsafeState(active=False, awaiting_seq="seq-1")
+
+    new_state = exit_notbetrieb_on_ack(current, "seq-1")
+
+    assert new_state == FailsafeState(active=False, awaiting_seq=None)
 
 
 def test_build_discovery_config_returns_expected_shape():
