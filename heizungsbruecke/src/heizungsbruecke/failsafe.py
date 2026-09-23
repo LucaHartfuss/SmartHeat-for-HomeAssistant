@@ -19,10 +19,18 @@ def enter_notbetrieb_on_ack_timeout(current: FailsafeState, timed_out_seq: str) 
     """The ack-timeout for `timed_out_seq` elapsed with no matching down-message.
     Only acts if `timed_out_seq` is still the attempt being awaited -- a no-op if it was
     already resolved (acked) or superseded by a newer publish attempt in the meantime.
+
+    `awaiting_seq` deliberately stays set to `timed_out_seq` (final-review finding I1):
+    a LATE ack for exactly this attempt (e.g. an MQTT/tunnel stall just over the
+    timeout) must still be recognized by `exit_notbetrieb_on_ack` and end Notbetrieb
+    right away, instead of being discarded as a mismatched seq and leaving a false
+    Notbetrieb up until the next scheduled publish (up to ~24h later). The opposite
+    order stays safe: a successful ack clears `awaiting_seq` to None first, so a timer
+    firing afterwards for that same seq no-ops via the check above.
     """
     if current.awaiting_seq != timed_out_seq:
         return current
-    return FailsafeState(active=True, awaiting_seq=None)
+    return FailsafeState(active=True, awaiting_seq=timed_out_seq)
 
 
 def exit_notbetrieb_on_ack(current: FailsafeState, acked_seq: str) -> FailsafeState:

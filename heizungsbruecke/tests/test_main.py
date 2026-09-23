@@ -1313,11 +1313,50 @@ def test_handle_ack_timeout_sends_notification_when_configured(tmp_path):
         write_lock=threading.Lock(), ha_api=ha_api, notify_service="notify.mobile_app",
     )
 
-    assert failsafe_ctx["state"] == FailsafeState(active=True, awaiting_seq=None)
+    assert failsafe_ctx["state"] == FailsafeState(active=True, awaiting_seq="seq-1")
     ha_api.send_notification.assert_called_once()
     args, _ = ha_api.send_notification.call_args
     assert args[0] == "notify.mobile_app"
     assert "Notbetrieb" in args[1]
+
+
+def test_late_down_message_after_ack_timeout_ends_notbetrieb(tmp_path, monkeypatch):
+    # Final-review finding I1, end-to-end through the real timer callback and the real
+    # down-callback: publish -> 30s timeout fires (Notbetrieb ON) -> the server's answer
+    # for that same seq arrives late -> Notbetrieb must end right away.
+    backup_path = tmp_path / "backup.json"
+    failsafe_path = tmp_path / "failsafe_state.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    monkeypatch.setattr("heizungsbruecke.__main__.FAILSAFE_PATH", failsafe_path)
+    monkeypatch.setattr("heizungsbruecke.__main__.threading.Timer", _FakeTimer)
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual", "room_target": "sensor.room_target",
+        "curve_current": "number.curve",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 20.0
+    mqtt_client = MagicMock()
+    options = _base_options()
+    write_lock = threading.RLock()
+    failsafe_ctx = {"state": FailsafeState(active=False, awaiting_seq=None), "emergency_boost_active": False}
+
+    _run_local_check(
+        manifest, ha_api, mqtt_client, options, write_lock, boost_was_active=False,
+        room_target=21.0, failsafe_ctx=failsafe_ctx,
+    )
+    seq = failsafe_ctx["state"].awaiting_seq
+    _FakeTimer.instances[0].fire()
+    assert failsafe_ctx["state"].active is True
+
+    callback = _make_down_callback("curve_current", manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
+    message = MagicMock()
+    message.payload = json.dumps({"v": 0.5, "seq": seq})
+    message.retain = False
+    callback(client=MagicMock(), userdata=None, message=message)
+
+    assert failsafe_ctx["state"] == FailsafeState(active=False, awaiting_seq=None)
+    assert load_backup(failsafe_path)["failsafe_active"] is False
+    mqtt_client.publish_status.assert_called_with("failsafe", "OFF")
 
 
 def test_validate_local_check_interval_accepts_absent_and_valid_values():

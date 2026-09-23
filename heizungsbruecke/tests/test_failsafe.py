@@ -29,7 +29,44 @@ def test_enter_notbetrieb_on_ack_timeout_activates_for_matching_seq():
 
     new_state = enter_notbetrieb_on_ack_timeout(current, "seq-1")
 
-    assert new_state == FailsafeState(active=True, awaiting_seq=None)
+    # awaiting_seq stays populated so a late ack for this exact attempt still ends
+    # Notbetrieb (final-review finding I1).
+    assert new_state == FailsafeState(active=True, awaiting_seq="seq-1")
+
+
+def test_late_ack_after_timeout_still_ends_notbetrieb():
+    # Final-review finding I1: a transient stall just over the ack-timeout must not
+    # leave a false Notbetrieb up until the next scheduled publish (up to ~24h).
+    state = register_publish_attempt(FailsafeState(active=False, awaiting_seq=None), "seq-1")
+    state = enter_notbetrieb_on_ack_timeout(state, "seq-1")
+    assert state.active is True
+
+    state = exit_notbetrieb_on_ack(state, "seq-1")
+
+    assert state == FailsafeState(active=False, awaiting_seq=None)
+
+
+def test_timer_firing_after_successful_ack_stays_noop():
+    # Opposite race of the above: the ack resolved the attempt first (clearing
+    # awaiting_seq), the timer for that same seq fires afterwards -- must not activate.
+    state = register_publish_attempt(FailsafeState(active=False, awaiting_seq=None), "seq-1")
+    state = exit_notbetrieb_on_ack(state, "seq-1")
+
+    state = enter_notbetrieb_on_ack_timeout(state, "seq-1")
+
+    assert state == FailsafeState(active=False, awaiting_seq=None)
+
+
+def test_late_ack_for_superseded_attempt_after_timeout_is_ignored():
+    # Only the latest attempt counts: once a newer publish replaced the timed-out seq,
+    # a late ack for the old seq must not end Notbetrieb.
+    state = register_publish_attempt(FailsafeState(active=False, awaiting_seq=None), "seq-1")
+    state = enter_notbetrieb_on_ack_timeout(state, "seq-1")
+    state = register_publish_attempt(state, "seq-2")
+
+    state = exit_notbetrieb_on_ack(state, "seq-1")
+
+    assert state == FailsafeState(active=True, awaiting_seq="seq-2")
 
 
 def test_enter_notbetrieb_on_ack_timeout_noop_when_seq_already_acked():
