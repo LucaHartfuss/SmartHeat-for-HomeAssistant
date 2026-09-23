@@ -209,9 +209,10 @@ def _validate_local_check_interval(options: dict) -> str | None:
     poll-driven boost/change-check; since Design-Spec 2026-09-21 that check only still
     runs on this cadence as a FALLBACK while HaTriggerClient's WS connection is down --
     the interval now bounds worst-case fallback staleness, not routine polling
-    frequency, so a much larger ceiling is appropriate. 3600s (1h) keeps that worst case
-    in the same order of magnitude as the fail-safe's own hour-scale staleness
-    threshold (failsafe_stale_after_hours).
+    frequency, so a much larger ceiling is appropriate. 3600s (1h) is an independent
+    outer bound on that fallback staleness, unrelated to the fail-safe's own detection
+    speed (an ack-timeout on the next full snapshot publish, seconds-scale -- see
+    Design-Spec 2026-09-23 -- not tied to this interval at all).
     """
     value = options.get("local_check_interval_seconds")
     if value is not None and (
