@@ -337,6 +337,11 @@ def _make_down_callback(role, manifest, ha_api, options, write_lock, failsafe_ct
                 # paho-mqtt sets .retain only on the broker's initial post-(re)subscribe
                 # replay of the last retained value, never on a genuine live publish --
                 # see docs/superpowers/specs/2026-09-22-heizungsbruecke-retained-down-replay-fix-design.md.
+                # Assumes MQTT 3.1.1 semantics (this client's default): under MQTT v5 with
+                # the Retain-As-Published subscribe option, a genuine live publish could also
+                # arrive with retain=1 and would be wrongly skipped here -- including its
+                # ack, so a real server answer could no longer end Notbetrieb. Do not enable
+                # RAP for this subscription without revisiting this check.
                 logger.info(
                     "Retained Down-Nachricht fuer Rolle '%s' beim (Re-)Subscribe uebersprungen "
                     "(Broker-Replay, kein frisches Server-Signal)",
@@ -520,7 +525,7 @@ def _end_emergency_boost_if_active(failsafe_ctx: dict, manifest, ha_api, options
     warten, die evtl. eine Weile nicht erneut greift, falls room_actual genau dann
     stabil ist. No-op, wenn Notfall-Boost ohnehin nicht aktiv ist. Wird sowohl direkt
     im Down-Callback (sofortige Reaktion auf einen erfolgreichen Ack) als auch als
-    Rueckfallebene im naechsten _run_local_check-Tick aufgerufen (Task 7, Design-Spec
+    Rueckfallebene im naechsten _run_local_check-Tick aufgerufen (Design-Spec
     2026-09-23 Abschnitt 3 + Edge Cases).
     """
     if not failsafe_ctx["emergency_boost_active"]:
