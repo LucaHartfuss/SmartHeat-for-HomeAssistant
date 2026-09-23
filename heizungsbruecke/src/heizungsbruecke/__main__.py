@@ -13,14 +13,14 @@ import requests
 
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.boost import decide_boost
-from heizungsbruecke.bridge import apply_boost_decision, handle_down_message, publish_snapshot
+from heizungsbruecke.bridge import apply_boost_decision, apply_emergency_decision, handle_down_message, publish_snapshot
+from heizungsbruecke.emergency_boost import EmergencyBoostDecision
 from heizungsbruecke import daynight_snapshot, derived_sensors
 from heizungsbruecke.failsafe import (
     FailsafeState,
     build_discovery_config,
     build_state_payload,
-    enter_failsafe_if_stale,
-    record_valid_message,
+    exit_notbetrieb_on_ack,
 )
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_trigger_client import HaTriggerClient
@@ -65,21 +65,6 @@ DERIVED_SENSORS_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60, 60, 60)
 # Fehlkonfiguration gewertet werden -- gleiche Begruendung/Muster wie
 # DERIVED_SENSORS_RETRY_DELAYS_SECONDS oben (Design-Spec Phase 1, Punkt 2).
 MQTT_CONNECT_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60)
-
-# Staleness wird ab der letzten GUELTIGEN DOWN-NACHRICHT gemessen, nicht ab dem lokalen
-# Check-Takt (local_check_interval_seconds) -- der laeuft (als Fallback, wenn
-# HaTriggerClient nicht verbunden ist) alle 30s bis 3600s und aktualisiert den
-# Failsafe-Timer nicht selbst. Massgeblich ist die Down-Nachrichten-Kadenz: der volle
-# Snapshot-Publish laeuft jetzt taeglich + event-driven statt stuendlich, d.h. im Normalfall
-# vergehen zwischen zwei gueltigen Down-Nachrichten bereits ~24h. Der Schwellwert braucht
-# also Luft gegen diese ~24h-Kadenz, nicht gegen den 30-60s-Check-Takt -- sonst schlaegt
-# der Failsafe durch reines Timing-Jitter bei rund der Haelfte aller Tage faelschlich an.
-# 26h = 24h Kadenz + ~2h Puffer, deckungsgleich mit dem historischen Vor-Haertungs-Default
-# dieses Add-ons (vor der Verschaerfung auf 4h am 2026-09-15). Bewusst wieder gelockert
-# (Design-Spec 2026-09-16, Abschnitt C) -- der Nutzer haelt einen zusaetzlichen, von der
-# Kurvenberechnung unabhaengigen Heartbeat aktuell nicht fuer noetig und akzeptiert die
-# vergroeberte Erkennungsgeschwindigkeit, gekoppelt an die seltenere Down-Nachrichten-Kadenz.
-DEFAULT_FAILSAFE_STALE_AFTER_HOURS = 26.0
 
 # Design-Spec 2026-09-21: seit der Umstellung auf HaTriggerClient steuert dieser Wert
 # nur noch den Watchdog-/Fallback-Takt (Boost-/target_changed-Check nur, wenn die
@@ -260,32 +245,6 @@ def _validate_telemetry_interval(options: dict) -> str | None:
     return None
 
 
-def _validate_failsafe_stale_after_hours(options: dict) -> str | None:
-    """Returns a German error message if failsafe_stale_after_hours is set but is not
-    a finite, positive number, or None if absent/valid. Same NaN/Infinity guard as
-    _validate_local_check_interval/_validate_telemetry_interval above (whole-branch
-    review finding I3, same rationale/pattern as those two): without it, a hand-edited
-    options.json with NaN for this value silently and permanently disables dead-server
-    detection (the fail-safe threshold itself), since `seconds_since >= NaN` is always
-    False in `enter_failsafe_if_stale`/`_check_failsafe_staleness`, with no startup
-    error to surface the misconfiguration. A non-positive value is rejected too --
-    unambiguously nonsensical for this field regardless of the current default (0 or
-    negative would mean "always stale" or "stale before any time has passed").
-    """
-    value = options.get("failsafe_stale_after_hours")
-    if value is not None and (
-        not isinstance(value, (int, float)) or math.isnan(value) or math.isinf(value)
-    ):
-        return (
-            f"failsafe_stale_after_hours ({value!r}) ist kein gueltiger endlicher Zahlenwert"
-        )
-    if value is not None and value <= 0:
-        return (
-            f"failsafe_stale_after_hours ({value}) muss groesser als 0 sein"
-        )
-    return None
-
-
 def _validate_derived_sensor_prerequisites(options: dict) -> str | None:
     """Returns a German error message if a field the automatic DAT/DART/day-night-avg
     provisioning needs (derived_sensors.ensure_all) is missing, or None if both are
@@ -368,12 +327,6 @@ def _make_down_callback(role, manifest, ha_api, options, write_lock, failsafe_ct
                 # paho-mqtt sets .retain only on the broker's initial post-(re)subscribe
                 # replay of the last retained value, never on a genuine live publish --
                 # see docs/superpowers/specs/2026-09-22-heizungsbruecke-retained-down-replay-fix-design.md.
-                # Skipping the whole body (not just the staleness reset) avoids overwriting
-                # a manual correction with the stale replayed value.
-                # Assumes MQTT 3.1.1 semantics (this client's default): under MQTT v5 with
-                # the Retain-As-Published subscribe option, a genuine live publish could also
-                # arrive with retain=1 and would be wrongly skipped here -- do not enable RAP
-                # for this subscription without revisiting this check.
                 logger.info(
                     "Retained Down-Nachricht fuer Rolle '%s' beim (Re-)Subscribe uebersprungen "
                     "(Broker-Replay, kein frisches Server-Signal)",
@@ -393,7 +346,14 @@ def _make_down_callback(role, manifest, ha_api, options, write_lock, failsafe_ct
                     offset_max=options["offset_max"],
                     backup_path=BACKUP_PATH,
                 )
-                _record_valid_message(failsafe_ctx, mqtt_client, FAILSAFE_PATH)
+                was_active = failsafe_ctx["state"].active
+                _handle_ack(
+                    failsafe_ctx=failsafe_ctx, mqtt_client=mqtt_client, failsafe_path=FAILSAFE_PATH,
+                    acked_seq=payload.get("seq"), ha_api=ha_api,
+                    notify_service=options.get("notify_service", ""),
+                )
+                if was_active and not failsafe_ctx["state"].active:
+                    _end_emergency_boost_if_active(failsafe_ctx, manifest, ha_api, options)
         except Exception:
             logger.exception("Fehler bei der Verarbeitung einer Down-Nachricht fuer Rolle '%s'", role)
     return _callback
@@ -402,11 +362,8 @@ def _make_down_callback(role, manifest, ha_api, options, write_lock, failsafe_ct
 def _load_failsafe_ctx(path: Path) -> dict:
     raw = load_backup(path)
     return {
-        "last_valid_update": raw.get("last_valid_update"),
-        "state": FailsafeState(
-            active=raw.get("failsafe_active", False),
-            recovery_count=raw.get("recovery_count", 0),
-        ),
+        "state": FailsafeState(active=raw.get("failsafe_active", False), awaiting_seq=None),
+        "emergency_boost_active": False,
     }
 
 
@@ -426,100 +383,77 @@ def _load_failsafe_ctx_safe(path: Path) -> dict:
             path, error,
         )
         return {
-            "last_valid_update": None,
-            "state": FailsafeState(active=False, recovery_count=0),
+            "state": FailsafeState(active=False, awaiting_seq=None),
+            "emergency_boost_active": False,
         }
 
 
 def _save_failsafe_ctx(ctx: dict, path: Path) -> None:
-    save_backup(path, {
-        "last_valid_update": ctx["last_valid_update"],
-        "failsafe_active": ctx["state"].active,
-        "recovery_count": ctx["state"].recovery_count,
-    })
+    """Persistiert nur `state.active` -- `awaiting_seq` (in-Prozess-Timer-Bezug, ohne
+    laufenden Timer nach einem Neustart bedeutungslos) und `emergency_boost_active`
+    (wird vom naechsten Boot-Priming-`_run_local_check` frisch neu bestimmt, analog zu
+    `boost_active`) werden bewusst NICHT persistiert (Design-Spec 2026-09-23,
+    Abschnitt 4).
+    """
+    save_backup(path, {"failsafe_active": ctx["state"].active})
 
 
-def _record_valid_message(failsafe_ctx: dict, mqtt_client, failsafe_path: Path) -> None:
-    failsafe_ctx["last_valid_update"] = time.time()
-    new_state = record_valid_message(failsafe_ctx["state"])
-    if new_state != failsafe_ctx["state"]:
-        mqtt_client.publish_status("failsafe", build_state_payload(new_state.active))
-    failsafe_ctx["state"] = new_state
-    _save_failsafe_ctx(failsafe_ctx, failsafe_path)
+def _save_emergency_active_if_changed(emergency_boost_active: bool, path: Path) -> None:
+    backup = load_backup(path)
+    if backup.get("emergency_boost_active", False) != emergency_boost_active:
+        backup["emergency_boost_active"] = emergency_boost_active
+        save_backup(path, backup)
 
 
-def _check_failsafe_staleness(
-    failsafe_ctx: dict, stale_after_seconds: float, mqtt_client, failsafe_path: Path,
+def _handle_ack(
+    failsafe_ctx: dict, mqtt_client, failsafe_path: Path, acked_seq: str | None,
     ha_api, notify_service: str = "",
 ) -> None:
-    last = failsafe_ctx["last_valid_update"]
-    seconds_since = (time.time() - last) if last is not None else None
-    new_state = enter_failsafe_if_stale(failsafe_ctx["state"], seconds_since, stale_after_seconds)
-    if new_state != failsafe_ctx["state"]:
-        mqtt_client.publish_status("failsafe", build_state_payload(new_state.active))
-        if new_state.active:
-            logger.warning(
-                "Fail-Safe aktiviert - seit ueber %s Sekunden kein gueltiger Live-Wert empfangen.",
-                stale_after_seconds,
-            )
-            # Seit der Boost-Neudefinition (Task 17) ist dies das EINZIGE verbleibende
-            # Signal fuer eine tote/veraltete Serververbindung -- Push-Benachrichtigung
-            # analog zu publish_snapshot()s Broken-Sensor-Nachricht (best effort, eine
-            # fehlschlagende Notify-Aktion darf die Fail-Safe-Erkennung selbst nicht stoeren).
-            if notify_service:
-                try:
-                    ha_api.send_notification(
-                        notify_service,
-                        f"Heizungsbruecke: Fail-Safe aktiviert - seit ueber "
-                        f"{stale_after_seconds / 3600:.1f}h kein gueltiger Live-Wert vom "
-                        f"Server empfangen. Bitte Serververbindung pruefen.",
-                    )
-                except Exception:
-                    logger.warning("Push-Benachrichtigung fuer Fail-Safe-Alarm konnte nicht gesendet werden")
-        failsafe_ctx["state"] = new_state
-        _save_failsafe_ctx(failsafe_ctx, failsafe_path)
-
-
-def _preview_failsafe_ctx(failsafe_ctx: dict, stale_after_seconds: float) -> dict:
-    """Read-only preview of `failsafe_ctx` with `state.active` freshly evaluated
-    against the current on-disk staleness -- used ONLY to give the very first,
-    pre-`loop_start()` telemetry publish (see the priming `_run_local_check` call in
-    `_run_bridge`) a freshly-evaluated `failsafe_active` value instead of the stale
-    value that was on disk at process start.
-
-    Deliberately does NOT call `_check_failsafe_staleness`: that function COMMITS a
-    transition (MQTT publish, `failsafe_state.json` write, and a push notification).
-    Calling it here, before the main loop's own `_check_failsafe_staleness()` call
-    (which only runs after `mqtt_client.loop_start()`), produced a real regression
-    (Whole-Branch-Review-Fund I1, final-review-fixes-plan, 2026-09-20): on an add-on
-    restart ~26-30h after the last down-message (normal daily-snapshot cadence, only
-    ~2h margin against the 26h threshold), it fired a false "Fail-Safe aktiviert" push
-    notification to the customer's phone, then flipped back OFF milliseconds later
-    once `loop_start()` redelivered the retained down-messages -- which were, at the
-    time, still trusted as proof the server was alive.
-
-    Since v0.11.2 (retained-down-replay-fix, see
-    `docs/superpowers/specs/2026-09-22-heizungsbruecke-retained-down-replay-fix-design.md`),
-    `_make_down_callback` ignores those retained replays entirely, so they no longer
-    reset the staleness timer or "prove the server is alive" -- the false-alarm-then-
-    flip-back sequence described above can no longer happen the same way; a restart
-    after the threshold now correctly stays in fail-safe until a genuine live down-
-    message arrives. This function's own purpose is unchanged: it still avoids
-    committing any transition (false or now-correct) from this early priming call --
-    the main loop's `_check_failsafe_staleness()` below remains the sole place a real
-    state change, publish, or notification happens.
-
-    `enter_failsafe_if_stale` is a pure function (see failsafe.py) with no I/O and no
-    side effects, so calling it here to compute a *preview* state -- without ever
-    assigning the result back into the real `failsafe_ctx`, publishing it, persisting
-    it, or notifying about it -- is safe. The real transition (and its side effects)
-    is decided later, once `loop_start()` has run, by the main loop's own
-    `_check_failsafe_staleness()` call.
+    """Verarbeitet eine eingehende Down-Nachricht als moeglichen Ack fuer den zuletzt
+    erwarteten Up-Snapshot-Publish. Beendet Notbetrieb, wenn `acked_seq` zum aktuell
+    erwarteten `awaiting_seq` passt -- ein einzelner passender Ack genuegt (kein
+    Anti-Flap-Zaehler mehr, siehe Design-Spec 2026-09-23, Abschnitt 1).
     """
-    last = failsafe_ctx["last_valid_update"]
-    seconds_since = (time.time() - last) if last is not None else None
-    previewed_state = enter_failsafe_if_stale(failsafe_ctx["state"], seconds_since, stale_after_seconds)
-    return {**failsafe_ctx, "state": previewed_state}
+    if acked_seq is None:
+        return
+    previous_state = failsafe_ctx["state"]
+    new_state = exit_notbetrieb_on_ack(previous_state, acked_seq)
+    failsafe_ctx["state"] = new_state
+    if new_state.active == previous_state.active:
+        return
+    mqtt_client.publish_status("failsafe", build_state_payload(new_state.active))
+    _save_failsafe_ctx(failsafe_ctx, failsafe_path)
+    logger.warning("Notbetrieb beendet - Server hat Up-Snapshot (seq=%s) beantwortet.", acked_seq)
+    if notify_service:
+        try:
+            ha_api.send_notification(
+                notify_service,
+                "Heizungsbruecke: Notbetrieb beendet, Serververbindung wiederhergestellt.",
+            )
+        except Exception:
+            logger.warning("Push-Benachrichtigung fuer Notbetrieb-Ende konnte nicht gesendet werden")
+
+
+def _end_emergency_boost_if_active(failsafe_ctx: dict, manifest, ha_api, options: dict) -> None:
+    """Beendet eine laufende Notfall-Boost-Exkursion sofort, wenn Notbetrieb selbst
+    gerade beendet wurde -- statt auf deren eigene temperaturbasierte Exit-Bedingung zu
+    warten, die evtl. eine Weile nicht erneut greift, falls room_actual genau dann
+    stabil ist. No-op, wenn Notfall-Boost ohnehin nicht aktiv ist. Wird sowohl direkt
+    im Down-Callback (sofortige Reaktion auf einen erfolgreichen Ack) als auch als
+    Rueckfallebene im naechsten _run_local_check-Tick aufgerufen (Task 7, Design-Spec
+    2026-09-23 Abschnitt 3 + Edge Cases).
+    """
+    if not failsafe_ctx["emergency_boost_active"]:
+        return
+    failsafe_ctx["emergency_boost_active"] = apply_emergency_decision(
+        decision=EmergencyBoostDecision(active=False, curve_value=None, offset_value=None),
+        emergency_was_active=True,
+        manifest=manifest, ha_api=ha_api,
+        curve_min=options["curve_min"], curve_max=options["curve_max"],
+        offset_min=options["offset_min"], offset_max=options["offset_max"],
+        backup_path=BACKUP_PATH,
+    )
+    _save_emergency_active_if_changed(failsafe_ctx["emergency_boost_active"], BACKUP_PATH)
 
 
 def _save_boost_active_if_changed(boost_active: bool, path: Path) -> None:
@@ -922,11 +856,6 @@ def _run_bridge(options: dict, ha_api) -> bool:
         logger.error("FEHLER: %s", telemetry_interval_error)
         return False
 
-    failsafe_stale_after_hours_error = _validate_failsafe_stale_after_hours(options)
-    if failsafe_stale_after_hours_error:
-        logger.error("FEHLER: %s", failsafe_stale_after_hours_error)
-        return False
-
     prerequisite_error = _validate_derived_sensor_prerequisites(options)
     if prerequisite_error:
         logger.error("FEHLER: %s", prerequisite_error)
@@ -950,12 +879,6 @@ def _run_bridge(options: dict, ha_api) -> bool:
     write_lock = threading.RLock()
 
     failsafe_ctx = _load_failsafe_ctx_safe(FAILSAFE_PATH)
-    if failsafe_ctx["last_valid_update"] is None:
-        # Fresh install / no prior record: measure staleness from process start, so a
-        # server that never sends a single valid value still trips fail-safe eventually
-        # instead of reading "OK" forever.
-        failsafe_ctx["last_valid_update"] = time.time()
-    stale_after_seconds = options.get("failsafe_stale_after_hours", DEFAULT_FAILSAFE_STALE_AFTER_HOURS) * 3600
 
     try:
         mqtt_client = _connect_mqtt_with_retry(options)
@@ -993,38 +916,6 @@ def _run_bridge(options: dict, ha_api) -> bool:
     # Nachrichten aus -- erst loop_start() startet die Hintergrund-Verarbeitung -- daher
     # genuegt es, den allerersten _run_local_check()-Aufruf synchron VOR loop_start()
     # abzuschliessen, statt einen "sichereren" statischen Default zu waehlen.
-    # sh-2-Folgefund (Task 3b, final-review-fixes-plan): _run_local_check liest
-    # failsafe_active aus failsafe_ctx["state"] (siehe dessen Docstring), aber nur der
-    # Hauptloop-Aufruf unten liess _check_failsafe_staleness vorher laufen (Task 11 des
-    # Vorgaenger-Plans). Ohne eine Vorab-Bewertung hier published der allererste,
-    # synchrone Telemetrie-Call (Kaltstart, in-memory-Marker daher zurueckgesetzt,
-    # siehe DOCS.md 0.10.2-Note) den beim Laden von FAILSAFE_PATH gesetzten Startwert
-    # statt eines frisch evaluierten.
-    #
-    # I1-Fix (Whole-Branch-Review-Fund, final-review-fixes-plan, 2026-09-20): hierfuer
-    # NICHT _check_failsafe_staleness() aufrufen -- das committet eine echte
-    # Zustandsaenderung (MQTT-Publish, failsafe_state.json-Schreibvorgang, Push-
-    # Benachrichtigung), noch bevor der Hauptloop-Aufruf unten (nach loop_start())
-    # _check_failsafe_staleness() selbst ausfuehrt. Das fuehrte bei einem Neustart
-    # ~26-30h nach der letzten Down-Nachricht (normale taegliche Snapshot-Kadenz, nur
-    # ~2h Puffer gegen die 26h-Schwelle) zu einer falschen "Fail-Safe aktiviert"-Push-
-    # Benachrichtigung, die Millisekunden spaeter durch loop_start() wieder
-    # zurueckgenommen wurde -- damals, weil die dabei zugestellten retained Down-
-    # Nachrichten noch als Beleg fuer einen lebenden Server galten. Stattdessen rein
-    # lesend eine Vorschau bilden (_preview_failsafe_ctx, reine Funktion, keine
-    # Nebenwirkungen) und nur fuer DIESEN einen priming-Aufruf verwenden -- der echte
-    # failsafe_ctx bleibt unveraendert, die echte Zustandsaenderung entscheidet
-    # weiterhin ausschliesslich der Hauptloop-Aufruf unten, nach loop_start().
-    #
-    # Seit v0.11.2 (docs/superpowers/specs/2026-09-22-heizungsbruecke-retained-down-
-    # replay-fix-design.md) ignoriert _make_down_callback retained Replays vollstaendig
-    # -- sie zaehlen nicht mehr als Lebenszeichen, und obiger Flip-back-Effekt tritt so
-    # nicht mehr auf: ein Neustart nach der Schwelle bleibt jetzt korrekt im Fail-Safe,
-    # bis eine echte, live empfangene Down-Nachricht eintrifft. Am Zweck DIESER
-    # Vorab-Vorschau aendert das nichts -- sie vermeidet weiterhin jede Festschreibung
-    # (falsch oder jetzt korrekt) aus diesem fruehen priming-Aufruf.
-    priming_failsafe_ctx = _preview_failsafe_ctx(failsafe_ctx, stale_after_seconds)
-
     boost_state = _BoostStateBox(active=False)
     # Stable-Target-Cache-Bootstrap (Design-Spec 2026-09-22): ein einmaliger Live-Read
     # vor loop_start() initialisiert den Cache, analog zum Boost-Active-Bootstrap-Fix
@@ -1038,7 +929,7 @@ def _run_bridge(options: dict, ha_api) -> bool:
         logger.info("Stable-Target-Cache initial befuellt (Boot-Priming): room_target=%s", stable_target.value)
         boost_state.active = _run_local_check(
             manifest, ha_api, mqtt_client, options, write_lock, boost_state.active,
-            room_target=stable_target.value, failsafe_ctx=priming_failsafe_ctx,
+            room_target=stable_target.value, failsafe_ctx=failsafe_ctx,
         )
     except Exception:
         logger.exception(
@@ -1067,15 +958,6 @@ def _run_bridge(options: dict, ha_api) -> bool:
     ha_trigger_client.start()
 
     while True:
-        try:
-            with write_lock:
-                _check_failsafe_staleness(
-                    failsafe_ctx, stale_after_seconds, mqtt_client, FAILSAFE_PATH,
-                    ha_api=ha_api, notify_service=options.get("notify_service", ""),
-                )
-        except Exception:
-            logger.exception("Fehler bei der Fail-Safe-Staleness-Pruefung, wird beim naechsten Check erneut versucht")
-
         try:
             if not ha_trigger_client.connected:
                 with write_lock:

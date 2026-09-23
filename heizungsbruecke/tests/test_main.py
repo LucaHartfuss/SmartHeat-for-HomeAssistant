@@ -12,9 +12,10 @@ from heizungsbruecke.ha_trigger_client import HaTriggerClient
 from heizungsbruecke.__main__ import (
     TenantNotEntitledError,
     _check_entitlement,
-    _check_failsafe_staleness,
     _connect_mqtt_with_retry,
+    _end_emergency_boost_if_active,
     _ensure_derived_sensors_with_retry,
+    _handle_ack,
     _is_configured,
     _load_failsafe_ctx,
     _load_failsafe_ctx_safe,
@@ -22,14 +23,12 @@ from heizungsbruecke.__main__ import (
     _make_down_callback,
     _maybe_publish_full_snapshot,
     _maybe_publish_telemetry,
-    _record_valid_message,
     _resolve_effective_options,
     _run_bridge,
     _run_local_check,
     _save_failsafe_ctx,
     _validate_boost_config,
     _validate_derived_sensor_prerequisites,
-    _validate_failsafe_stale_after_hours,
     _validate_local_check_interval,
     _validate_telemetry_interval,
 )
@@ -493,25 +492,29 @@ def test_connect_mqtt_with_retry_raises_last_error_after_exhausting_retries(monk
 def test_load_failsafe_ctx_defaults_when_no_file(tmp_path):
     ctx = _load_failsafe_ctx(tmp_path / "does_not_exist.json")
 
-    assert ctx["last_valid_update"] is None
-    assert ctx["state"] == FailsafeState(active=False, recovery_count=0)
+    assert ctx["state"] == FailsafeState(active=False, awaiting_seq=None)
+    assert ctx["emergency_boost_active"] is False
 
 
 def test_save_and_load_failsafe_ctx_round_trip(tmp_path):
+    # Nur `state.active` wird persistiert -- `awaiting_seq` (in-Prozess-Timer-Bezug) und
+    # `emergency_boost_active` (wird beim naechsten Boot frisch neu bestimmt) ueberleben
+    # einen Neustart absichtlich nicht (siehe _save_failsafe_ctx-Docstring).
     path = tmp_path / "failsafe_state.json"
-    ctx = {"last_valid_update": 12345.0, "state": FailsafeState(active=True, recovery_count=1)}
+    ctx = {"state": FailsafeState(active=True, awaiting_seq="seq-1"), "emergency_boost_active": True}
 
     _save_failsafe_ctx(ctx, path)
     loaded = _load_failsafe_ctx(path)
 
-    assert loaded == ctx
+    assert loaded["state"] == FailsafeState(active=True, awaiting_seq=None)
+    assert loaded["emergency_boost_active"] is False
 
 
 def test_load_failsafe_ctx_safe_defaults_when_no_file(tmp_path):
     ctx = _load_failsafe_ctx_safe(tmp_path / "does_not_exist.json")
 
-    assert ctx["last_valid_update"] is None
-    assert ctx["state"] == FailsafeState(active=False, recovery_count=0)
+    assert ctx["state"] == FailsafeState(active=False, awaiting_seq=None)
+    assert ctx["emergency_boost_active"] is False
 
 
 def test_load_failsafe_ctx_safe_falls_back_on_corrupt_file(tmp_path):
@@ -522,130 +525,24 @@ def test_load_failsafe_ctx_safe_falls_back_on_corrupt_file(tmp_path):
 
     ctx = _load_failsafe_ctx_safe(path)
 
-    assert ctx["last_valid_update"] is None
-    assert ctx["state"] == FailsafeState(active=False, recovery_count=0)
+    assert ctx["state"] == FailsafeState(active=False, awaiting_seq=None)
+    assert ctx["emergency_boost_active"] is False
 
 
 def test_load_failsafe_ctx_safe_passes_through_valid_file(tmp_path):
     path = tmp_path / "failsafe_state.json"
-    ctx = {"last_valid_update": 12345.0, "state": FailsafeState(active=True, recovery_count=1)}
+    ctx = {"state": FailsafeState(active=True, awaiting_seq="seq-1"), "emergency_boost_active": True}
     _save_failsafe_ctx(ctx, path)
 
     loaded = _load_failsafe_ctx_safe(path)
 
-    assert loaded == ctx
+    assert loaded["state"] == FailsafeState(active=True, awaiting_seq=None)
+    assert loaded["emergency_boost_active"] is False
 
 
-def test_record_valid_message_updates_timestamp_and_persists(tmp_path, monkeypatch):
-    monkeypatch.setattr("time.time", lambda: 5000.0)
-    path = tmp_path / "failsafe_state.json"
-    ctx = {"last_valid_update": None, "state": FailsafeState(active=False, recovery_count=0)}
-    mqtt_client = MagicMock()
-
-    _record_valid_message(ctx, mqtt_client, path)
-
-    assert ctx["last_valid_update"] == 5000.0
-    assert ctx["state"] == FailsafeState(active=False, recovery_count=0)
-    assert _load_failsafe_ctx(path) == ctx
-    mqtt_client.publish_status.assert_not_called()  # state didn't change (was already inactive)
-
-
-def test_record_valid_message_publishes_status_when_failsafe_exits(tmp_path, monkeypatch):
-    monkeypatch.setattr("time.time", lambda: 5000.0)
-    path = tmp_path / "failsafe_state.json"
-    ctx = {"last_valid_update": 1.0, "state": FailsafeState(active=True, recovery_count=1)}
-    mqtt_client = MagicMock()
-
-    _record_valid_message(ctx, mqtt_client, path)
-
-    assert ctx["state"] == FailsafeState(active=False, recovery_count=0)
-    mqtt_client.publish_status.assert_called_once_with("failsafe", "OFF")
-
-
-def test_check_failsafe_staleness_activates_and_publishes_status_when_stale(tmp_path, monkeypatch):
-    monkeypatch.setattr("time.time", lambda: 5000.0)
-    path = tmp_path / "failsafe_state.json"
-    ctx = {"last_valid_update": 100.0, "state": FailsafeState(active=False, recovery_count=0)}
-    mqtt_client = MagicMock()
-    ha_api = MagicMock()
-
-    _check_failsafe_staleness(
-        ctx, stale_after_seconds=3600.0, mqtt_client=mqtt_client, failsafe_path=path, ha_api=ha_api
-    )
-
-    assert ctx["state"] == FailsafeState(active=True, recovery_count=0)
-    mqtt_client.publish_status.assert_called_once_with("failsafe", "ON")
-    assert _load_failsafe_ctx(path) == ctx
-
-
-def test_check_failsafe_staleness_noop_when_fresh(tmp_path, monkeypatch):
-    monkeypatch.setattr("time.time", lambda: 5000.0)
-    path = tmp_path / "failsafe_state.json"
-    ctx = {"last_valid_update": 4999.0, "state": FailsafeState(active=False, recovery_count=0)}
-    mqtt_client = MagicMock()
-    ha_api = MagicMock()
-
-    _check_failsafe_staleness(
-        ctx, stale_after_seconds=3600.0, mqtt_client=mqtt_client, failsafe_path=path, ha_api=ha_api
-    )
-
-    assert ctx["state"] == FailsafeState(active=False, recovery_count=0)
-    mqtt_client.publish_status.assert_not_called()
-
-
-def test_check_failsafe_staleness_sends_notification_when_configured(tmp_path, monkeypatch):
-    monkeypatch.setattr("time.time", lambda: 5000.0)
-    path = tmp_path / "failsafe_state.json"
-    ctx = {"last_valid_update": 100.0, "state": FailsafeState(active=False, recovery_count=0)}
-    mqtt_client = MagicMock()
-    ha_api = MagicMock()
-
-    _check_failsafe_staleness(
-        ctx, stale_after_seconds=3600.0, mqtt_client=mqtt_client, failsafe_path=path,
-        ha_api=ha_api, notify_service="notify.mobile_app",
-    )
-
-    ha_api.send_notification.assert_called_once()
-    args, _ = ha_api.send_notification.call_args
-    assert args[0] == "notify.mobile_app"
-    assert "Fail-Safe" in args[1]
-
-
-def test_check_failsafe_staleness_skips_notification_when_not_configured(tmp_path, monkeypatch):
-    monkeypatch.setattr("time.time", lambda: 5000.0)
-    path = tmp_path / "failsafe_state.json"
-    ctx = {"last_valid_update": 100.0, "state": FailsafeState(active=False, recovery_count=0)}
-    mqtt_client = MagicMock()
-    ha_api = MagicMock()
-
-    _check_failsafe_staleness(
-        ctx, stale_after_seconds=3600.0, mqtt_client=mqtt_client, failsafe_path=path, ha_api=ha_api,
-    )
-
-    ha_api.send_notification.assert_not_called()
-
-
-def test_check_failsafe_staleness_notification_failure_does_not_propagate(tmp_path, monkeypatch, caplog):
-    monkeypatch.setattr("time.time", lambda: 5000.0)
-    path = tmp_path / "failsafe_state.json"
-    ctx = {"last_valid_update": 100.0, "state": FailsafeState(active=False, recovery_count=0)}
-    mqtt_client = MagicMock()
-    ha_api = MagicMock()
-    ha_api.send_notification.side_effect = Exception("HA nicht erreichbar")
-
-    with caplog.at_level(logging.WARNING):
-        _check_failsafe_staleness(
-            ctx, stale_after_seconds=3600.0, mqtt_client=mqtt_client, failsafe_path=path,
-            ha_api=ha_api, notify_service="notify.mobile_app",
-        )  # muss nicht werfen
-
-    assert ctx["state"] == FailsafeState(active=True, recovery_count=0)
-    assert "Push-Benachrichtigung" in caplog.text
-
-
-def test_make_down_callback_records_valid_message_after_successful_handling(tmp_path, monkeypatch):
+def test_make_down_callback_acks_matching_seq_after_successful_handling(tmp_path, monkeypatch):
     # This is the wiring itself: a successful handle_down_message must be followed,
-    # inside the same write_lock, by _record_valid_message(failsafe_ctx, mqtt_client, FAILSAFE_PATH).
+    # inside the same write_lock, by _handle_ack(...) with the payload's seq.
     monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
     failsafe_path = tmp_path / "failsafe_state.json"
     monkeypatch.setattr("heizungsbruecke.__main__.FAILSAFE_PATH", failsafe_path)
@@ -653,33 +550,24 @@ def test_make_down_callback_records_valid_message_after_successful_handling(tmp_
     ha_api = MagicMock()
     options = _base_options()
     write_lock = threading.Lock()
-    failsafe_ctx = {"last_valid_update": None, "state": FailsafeState(active=False, recovery_count=0)}
+    failsafe_ctx = {"state": FailsafeState(active=True, awaiting_seq="seq-1"), "emergency_boost_active": False}
     mqtt_client = MagicMock()
-
-    recorded_calls = []
-    monkeypatch.setattr(
-        "heizungsbruecke.__main__._record_valid_message",
-        lambda ctx, client, path: recorded_calls.append((ctx, client, path)),
-    )
 
     callback = _make_down_callback("curve_current", manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
     message = MagicMock()
-    message.payload = json.dumps({"v": 0.5})
+    message.payload = json.dumps({"v": 0.5, "seq": "seq-1"})
     message.retain = False
 
     callback(client=MagicMock(), userdata=None, message=message)
 
     assert ha_api.set_number_value.call_count == 1  # handle_down_message did succeed
-    assert recorded_calls == [(failsafe_ctx, mqtt_client, failsafe_path)]
+    assert failsafe_ctx["state"] == FailsafeState(active=False, awaiting_seq=None)
+    mqtt_client.publish_status.assert_any_call("failsafe", "OFF")
 
 
 def test_make_down_callback_rejects_nan_without_crashing_or_poisoning_backup(tmp_path, monkeypatch):
-    # I2 failure-chain closure (whole-branch review): a NaN down-message value (e.g.
-    # an HA entity whose state string parses via float() to nan) must not crash the
-    # MQTT callback (which would kill message delivery for this role) and must not
-    # get persisted into backup.json (that specific poisoning was the previously-
-    # identified path to a permanently-stuck boost with no automatic recovery, since
-    # a later boost-restore would then try to write that NaN to the live device).
+    # I2 failure-chain closure (whole-branch review): a NaN down-message value must not
+    # crash the MQTT callback and must not get persisted into backup.json.
     backup_path = tmp_path / "backup.json"
     monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
     monkeypatch.setattr("heizungsbruecke.__main__.FAILSAFE_PATH", tmp_path / "failsafe_state.json")
@@ -687,25 +575,164 @@ def test_make_down_callback_rejects_nan_without_crashing_or_poisoning_backup(tmp
     ha_api = MagicMock()
     options = _base_options()
     write_lock = threading.Lock()
-    failsafe_ctx = {"last_valid_update": None, "state": FailsafeState(active=False, recovery_count=0)}
+    failsafe_ctx = {"state": FailsafeState(active=True, awaiting_seq="seq-1"), "emergency_boost_active": False}
     mqtt_client = MagicMock()
-
-    recorded_calls = []
-    monkeypatch.setattr(
-        "heizungsbruecke.__main__._record_valid_message",
-        lambda ctx, client, path: recorded_calls.append((ctx, client, path)),
-    )
 
     callback = _make_down_callback("curve_current", manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
     message = MagicMock()
-    message.payload = json.dumps({"v": float("nan")})
+    message.payload = json.dumps({"v": float("nan"), "seq": "seq-1"})
     message.retain = False
 
     callback(client=MagicMock(), userdata=None, message=message)  # must not raise
 
     ha_api.set_number_value.assert_not_called()
     assert load_backup(backup_path) == {}
-    assert recorded_calls == []  # a rejected message is not a valid live update
+    # handle_down_message raised before _handle_ack ever ran -- a rejected message must
+    # not be mistaken for a valid live update.
+    assert failsafe_ctx["state"] == FailsafeState(active=True, awaiting_seq="seq-1")
+
+
+def test_make_down_callback_does_not_ack_when_handling_fails(tmp_path, monkeypatch):
+    # Mirror image of the above: if handle_down_message raises (e.g. HA unreachable), a
+    # bad/failed message must not be mistaken for a valid live update.
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    monkeypatch.setattr("heizungsbruecke.__main__.FAILSAFE_PATH", tmp_path / "failsafe_state.json")
+    manifest = ChannelManifest(entity_ids={"curve_current": "number.curve"})
+    ha_api = MagicMock()
+    ha_api.set_number_value.side_effect = RuntimeError("HA nicht erreichbar")
+    options = _base_options()
+    write_lock = threading.Lock()
+    failsafe_ctx = {"state": FailsafeState(active=True, awaiting_seq="seq-1"), "emergency_boost_active": False}
+    mqtt_client = MagicMock()
+
+    callback = _make_down_callback("curve_current", manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
+    message = MagicMock()
+    message.payload = json.dumps({"v": 0.5, "seq": "seq-1"})
+    message.retain = False
+
+    callback(client=MagicMock(), userdata=None, message=message)  # must not raise -- caught and logged
+
+    assert failsafe_ctx["state"] == FailsafeState(active=True, awaiting_seq="seq-1")
+
+
+def test_make_down_callback_skips_retained_replay_without_acking(tmp_path, monkeypatch, caplog):
+    # A retained MQTT message is the broker replaying the last-published value on every
+    # (re)subscribe, not a fresh signal from the server -- must not be mistaken for an ack.
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    monkeypatch.setattr("heizungsbruecke.__main__.FAILSAFE_PATH", tmp_path / "failsafe_state.json")
+    manifest = ChannelManifest(entity_ids={"curve_current": "number.curve"})
+    ha_api = MagicMock()
+    options = _base_options()
+    write_lock = threading.Lock()
+    failsafe_ctx = {"state": FailsafeState(active=True, awaiting_seq="seq-1"), "emergency_boost_active": False}
+    mqtt_client = MagicMock()
+
+    callback = _make_down_callback("curve_current", manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
+    message = MagicMock()
+    message.payload = json.dumps({"v": 0.5, "seq": "seq-1"})
+    message.retain = True
+
+    with caplog.at_level(logging.INFO):
+        callback(client=MagicMock(), userdata=None, message=message)
+
+    ha_api.set_number_value.assert_not_called()  # handle_down_message must not run
+    assert failsafe_ctx["state"] == FailsafeState(active=True, awaiting_seq="seq-1")  # no ack recorded
+    assert "retain" in caplog.text.lower()
+
+
+def test_handle_ack_ignores_mismatched_seq(tmp_path):
+    failsafe_path = tmp_path / "failsafe_state.json"
+    failsafe_ctx = {"state": FailsafeState(active=True, awaiting_seq="seq-2"), "emergency_boost_active": False}
+    mqtt_client = MagicMock()
+    ha_api = MagicMock()
+
+    _handle_ack(
+        failsafe_ctx=failsafe_ctx, mqtt_client=mqtt_client, failsafe_path=failsafe_path,
+        acked_seq="seq-1", ha_api=ha_api, notify_service="",
+    )
+
+    assert failsafe_ctx["state"] == FailsafeState(active=True, awaiting_seq="seq-2")
+    mqtt_client.publish_status.assert_not_called()
+
+
+def test_handle_ack_sends_notification_on_recovery(tmp_path):
+    failsafe_path = tmp_path / "failsafe_state.json"
+    failsafe_ctx = {"state": FailsafeState(active=True, awaiting_seq="seq-1"), "emergency_boost_active": False}
+    mqtt_client = MagicMock()
+    ha_api = MagicMock()
+
+    _handle_ack(
+        failsafe_ctx=failsafe_ctx, mqtt_client=mqtt_client, failsafe_path=failsafe_path,
+        acked_seq="seq-1", ha_api=ha_api, notify_service="notify.mobile_app",
+    )
+
+    ha_api.send_notification.assert_called_once()
+    args, _ = ha_api.send_notification.call_args
+    assert args[0] == "notify.mobile_app"
+    assert "Notbetrieb beendet" in args[1]
+
+
+def test_end_emergency_boost_if_active_restores_backup_values(tmp_path, monkeypatch):
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    save_backup(backup_path, {
+        "emergency_boost_active": True, "curve_current": 0.6, "offset_current": 3.0,
+    })
+    manifest = ChannelManifest(entity_ids={
+        "curve_current": "number.curve", "offset_current": "number.offset",
+    })
+    ha_api = MagicMock()
+    options = _base_options()
+    failsafe_ctx = {"state": FailsafeState(active=False, awaiting_seq=None), "emergency_boost_active": True}
+
+    _end_emergency_boost_if_active(failsafe_ctx, manifest, ha_api, options)
+
+    assert failsafe_ctx["emergency_boost_active"] is False
+    ha_api.set_number_value.assert_any_call("number.curve", 0.6)
+    ha_api.set_number_value.assert_any_call("number.offset", 3.0)
+    assert load_backup(backup_path)["emergency_boost_active"] is False
+
+
+def test_end_emergency_boost_if_active_is_noop_when_not_active(tmp_path, monkeypatch):
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    manifest = ChannelManifest(entity_ids={"curve_current": "number.curve"})
+    ha_api = MagicMock()
+    options = _base_options()
+    failsafe_ctx = {"state": FailsafeState(active=False, awaiting_seq=None), "emergency_boost_active": False}
+
+    _end_emergency_boost_if_active(failsafe_ctx, manifest, ha_api, options)
+
+    ha_api.set_number_value.assert_not_called()
+
+
+def test_make_down_callback_ends_emergency_boost_when_notbetrieb_ends(tmp_path, monkeypatch):
+    # Review Focus #3: Notbetrieb ending via a successful ack must immediately restore
+    # a still-active emergency excursion, not leave the device pinned at the max value
+    # until some future room_actual change happens to trigger another local check.
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    save_backup(backup_path, {"emergency_boost_active": True})
+    monkeypatch.setattr("heizungsbruecke.__main__.FAILSAFE_PATH", tmp_path / "failsafe_state.json")
+    manifest = ChannelManifest(entity_ids={"curve_current": "number.curve"})
+    ha_api = MagicMock()
+    options = _base_options()
+    write_lock = threading.Lock()
+    failsafe_ctx = {"state": FailsafeState(active=True, awaiting_seq="seq-1"), "emergency_boost_active": True}
+    mqtt_client = MagicMock()
+
+    callback = _make_down_callback("curve_current", manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
+    message = MagicMock()
+    message.payload = json.dumps({"v": 0.5, "seq": "seq-1"})
+    message.retain = False
+
+    callback(client=MagicMock(), userdata=None, message=message)
+
+    assert failsafe_ctx["emergency_boost_active"] is False
+    # handle_down_message skipped the live write (emergency was still active at that
+    # point) but recorded 0.5 into backup.json; _end_emergency_boost_if_active then
+    # restores exactly that freshly-confirmed value once Notbetrieb itself ends.
+    ha_api.set_number_value.assert_called_once_with("number.curve", 0.5)
 
 
 def test_run_bridge_loop_survives_clamp_rejecting_a_non_finite_boost_value(monkeypatch):
@@ -783,70 +810,6 @@ def test_main_exits_nonzero_when_run_bridge_reports_a_genuine_error(tmp_path, mo
         main()
 
     assert exc_info.value.code != 0
-
-
-def test_make_down_callback_does_not_record_valid_message_when_handling_fails(tmp_path, monkeypatch):
-    # Mirror image of the above: if handle_down_message raises (e.g. HA unreachable),
-    # a bad/failed message must not be mistaken for a valid live update.
-    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
-    monkeypatch.setattr("heizungsbruecke.__main__.FAILSAFE_PATH", tmp_path / "failsafe_state.json")
-    manifest = ChannelManifest(entity_ids={"curve_current": "number.curve"})
-    ha_api = MagicMock()
-    ha_api.set_number_value.side_effect = RuntimeError("HA nicht erreichbar")
-    options = _base_options()
-    write_lock = threading.Lock()
-    failsafe_ctx = {"last_valid_update": None, "state": FailsafeState(active=False, recovery_count=0)}
-    mqtt_client = MagicMock()
-
-    recorded_calls = []
-    monkeypatch.setattr(
-        "heizungsbruecke.__main__._record_valid_message",
-        lambda ctx, client, path: recorded_calls.append((ctx, client, path)),
-    )
-
-    callback = _make_down_callback("curve_current", manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
-    message = MagicMock()
-    message.payload = json.dumps({"v": 0.5})
-    message.retain = False
-
-    callback(client=MagicMock(), userdata=None, message=message)  # must not raise -- caught and logged
-
-    assert recorded_calls == []
-
-
-def test_make_down_callback_skips_retained_replay_without_recording_or_handling(tmp_path, monkeypatch, caplog):
-    # A retained MQTT message is the broker replaying the last-published value on every
-    # (re)subscribe (e.g. after a brief Cloudflare-tunnel hiccup), not a fresh signal from
-    # the server. Treating it as a live message would reset the fail-safe staleness timer
-    # on every harmless reconnect (defeating the only remaining dead-server detector since
-    # the boost redefinition) and could overwrite a manual correction the user just made on
-    # the live entity with a stale replayed value.
-    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
-    monkeypatch.setattr("heizungsbruecke.__main__.FAILSAFE_PATH", tmp_path / "failsafe_state.json")
-    manifest = ChannelManifest(entity_ids={"curve_current": "number.curve"})
-    ha_api = MagicMock()
-    options = _base_options()
-    write_lock = threading.Lock()
-    failsafe_ctx = {"last_valid_update": None, "state": FailsafeState(active=False, recovery_count=0)}
-    mqtt_client = MagicMock()
-
-    recorded_calls = []
-    monkeypatch.setattr(
-        "heizungsbruecke.__main__._record_valid_message",
-        lambda ctx, client, path: recorded_calls.append((ctx, client, path)),
-    )
-
-    callback = _make_down_callback("curve_current", manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
-    message = MagicMock()
-    message.payload = json.dumps({"v": 0.5})
-    message.retain = True
-
-    with caplog.at_level(logging.INFO):
-        callback(client=MagicMock(), userdata=None, message=message)
-
-    ha_api.set_number_value.assert_not_called()  # handle_down_message must not run
-    assert recorded_calls == []  # _record_valid_message must not run -- no staleness-timer reset
-    assert "retain" in caplog.text.lower()  # live-verification grep target (spec Tests #3)
 
 
 # Entitlement check tests (Task 13)
@@ -1265,65 +1228,6 @@ def test_validate_telemetry_interval_flags_non_numeric_string_without_raising():
     assert "telemetry_interval_seconds" in error
 
 
-def test_validate_failsafe_stale_after_hours_accepts_absent_and_valid_values():
-    assert _validate_failsafe_stale_after_hours({}) is None
-    assert _validate_failsafe_stale_after_hours({"failsafe_stale_after_hours": 26.0}) is None
-    assert _validate_failsafe_stale_after_hours({"failsafe_stale_after_hours": 4.0}) is None
-
-
-def test_validate_failsafe_stale_after_hours_flags_nan():
-    # I3 (whole-branch review finding): seconds_since >= NaN is always False, so a
-    # hand-edited options.json with NaN here used to silently and permanently disable
-    # dead-server detection with no startup error.
-    error = _validate_failsafe_stale_after_hours({"failsafe_stale_after_hours": float("nan")})
-    assert error is not None
-    assert "failsafe_stale_after_hours" in error
-
-
-def test_validate_failsafe_stale_after_hours_flags_infinity():
-    error = _validate_failsafe_stale_after_hours({"failsafe_stale_after_hours": float("inf")})
-    assert error is not None
-    assert "failsafe_stale_after_hours" in error
-
-
-def test_validate_failsafe_stale_after_hours_flags_non_numeric_string_without_raising():
-    error = _validate_failsafe_stale_after_hours({"failsafe_stale_after_hours": "26h"})
-    assert error is not None
-    assert "failsafe_stale_after_hours" in error
-
-
-def test_validate_failsafe_stale_after_hours_flags_non_positive_value():
-    # A non-positive stale-after threshold is unambiguously nonsensical for this field:
-    # 0 or negative would mean "always stale" (or stale before any time has passed).
-    error = _validate_failsafe_stale_after_hours({"failsafe_stale_after_hours": 0})
-    assert error is not None
-    assert "failsafe_stale_after_hours" in error
-
-    error = _validate_failsafe_stale_after_hours({"failsafe_stale_after_hours": -1.0})
-    assert error is not None
-    assert "failsafe_stale_after_hours" in error
-
-
-def test_run_bridge_returns_false_for_invalid_failsafe_stale_after_hours(monkeypatch, caplog):
-    monkeypatch.setattr(
-        "heizungsbruecke.__main__.requests.get",
-        lambda url, timeout: _FakeResponse({"active": True}),
-    )
-    options = _full_valid_options(failsafe_stale_after_hours=float("nan"))
-    ha_api = MagicMock()
-
-    with caplog.at_level(logging.ERROR):
-        result = _run_bridge(options, ha_api)
-
-    assert result is False
-    assert "failsafe_stale_after_hours" in caplog.text
-
-
-def test_default_failsafe_stale_after_hours_is_26():
-    from heizungsbruecke.__main__ import DEFAULT_FAILSAFE_STALE_AFTER_HOURS
-    assert DEFAULT_FAILSAFE_STALE_AFTER_HOURS == 26.0
-
-
 def test_default_local_check_interval_seconds_is_300():
     from heizungsbruecke.__main__ import DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS
     assert DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS == 300
@@ -1373,185 +1277,6 @@ def test_run_bridge_primes_local_check_before_mqtt_loop_start(monkeypatch):
     # The priming call (first entry) must precede loop_start -- proves the fix, not just
     # that both got called at some point.
     assert call_order.index("_run_local_check") < call_order.index("loop_start")
-
-
-def test_run_bridge_checks_failsafe_staleness_before_local_check_in_loop(monkeypatch):
-    # sh-2 (whole-branch review finding): _run_local_check builds the telemetry payload
-    # (including failsafe_active) from failsafe_ctx["state"], but _check_failsafe_staleness
-    # is the call that updates failsafe_ctx["state"]. If the loop runs _run_local_check
-    # first, the published telemetry is stale by exactly one loop tick. Fixed by checking
-    # staleness before running the local check inside the while-True loop.
-    call_order = []
-
-    fake_mqtt_client = MagicMock()
-    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: fake_mqtt_client)
-    monkeypatch.setattr("heizungsbruecke.__main__.HaTriggerClient", lambda **kwargs: MagicMock(connected=False))
-    monkeypatch.setattr(
-        "heizungsbruecke.__main__.requests.get",
-        lambda url, timeout: _FakeResponse({"active": True}),
-    )
-    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
-
-    def fake_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, room_target=None, failsafe_ctx=None):
-        call_order.append("_run_local_check")
-        return boost_was_active
-
-    monkeypatch.setattr("heizungsbruecke.__main__._run_local_check", fake_run_local_check)
-
-    def fake_check_failsafe_staleness(*args, **kwargs):
-        call_order.append("_check_failsafe_staleness")
-
-    monkeypatch.setattr("heizungsbruecke.__main__._check_failsafe_staleness", fake_check_failsafe_staleness)
-
-    monkeypatch.setattr(
-        "heizungsbruecke.__main__.daynight_snapshot.maybe_snapshot", lambda **kwargs: None,
-    )
-
-    # Stop the loop from spinning forever: raise after the first sleep() call, which is
-    # the last thing that happens inside one loop iteration (same pattern as the
-    # priming-order test above).
-    def stop_after_first_sleep(seconds):
-        raise SystemExit("stop test loop")
-
-    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", stop_after_first_sleep)
-
-    options = _full_valid_options()
-
-    with pytest.raises(SystemExit):
-        _run_bridge(options, MagicMock())
-
-    # The pre-loop priming call (Task-8 boot-sync fix) puts one "_run_local_check" entry
-    # in call_order before the loop even starts, with no matching staleness call before
-    # it -- so we must look at the SECOND "_run_local_check" occurrence (the one from
-    # inside the while-True loop) to prove the in-loop ordering, not just that both
-    # functions get called somewhere in the loop.
-    assert call_order.count("_run_local_check") >= 2
-    assert "_check_failsafe_staleness" in call_order
-    first_loop_index = call_order.index("_run_local_check") + 1
-    in_loop_local_check_index = call_order.index("_run_local_check", first_loop_index)
-    assert call_order.index("_check_failsafe_staleness") < in_loop_local_check_index
-
-
-def test_run_bridge_checks_failsafe_staleness_before_priming_local_check(tmp_path, monkeypatch):
-    # Task 3b (final-review-fixes-plan): _run_local_check builds its telemetry payload's
-    # failsafe_active from failsafe_ctx["state"] (see _run_local_check docstring/line
-    # ~492), but before this fix, nothing re-evaluated staleness before the synchronous
-    # priming call (see test_run_bridge_primes_local_check_before_mqtt_loop_start above)
-    # ran -- only the in-loop call did (Task 11 of the predecessor plan, see
-    # test_run_bridge_checks_failsafe_staleness_before_local_check_in_loop above). So if
-    # the on-disk fail-safe state was already stale-but-not-yet-flagged at a cold start
-    # (the in-memory telemetry marker resets on restart, DOCS.md 0.10.1 note), the very
-    # first published telemetry point carried the load-time failsafe_active, not a
-    # freshly evaluated one.
-    failsafe_path = tmp_path / "failsafe_state.json"
-    save_backup(failsafe_path, {"last_valid_update": 100.0, "failsafe_active": False, "recovery_count": 0})
-    monkeypatch.setattr("heizungsbruecke.__main__.FAILSAFE_PATH", failsafe_path)
-    monkeypatch.setattr("time.time", lambda: 5000.0)
-
-    fake_mqtt_client = MagicMock()
-    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: fake_mqtt_client)
-    monkeypatch.setattr("heizungsbruecke.__main__.HaTriggerClient", lambda **kwargs: MagicMock(connected=False))
-    monkeypatch.setattr(
-        "heizungsbruecke.__main__.requests.get",
-        lambda url, timeout: _FakeResponse({"active": True}),
-    )
-    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
-
-    observed_active_at_priming = []
-
-    def fake_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, room_target=None, failsafe_ctx=None):
-        observed_active_at_priming.append(failsafe_ctx["state"].active)
-        return boost_was_active
-
-    monkeypatch.setattr("heizungsbruecke.__main__._run_local_check", fake_run_local_check)
-
-    # Stop the loop from spinning forever, same pattern as the priming-order test above.
-    def stop_after_first_sleep(seconds):
-        raise SystemExit("stop test loop")
-
-    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", stop_after_first_sleep)
-    monkeypatch.setattr(
-        "heizungsbruecke.__main__.daynight_snapshot.maybe_snapshot", lambda **kwargs: None,
-    )
-
-    # stale_after_seconds = 0.001h * 3600 = 3.6s; last_valid_update=100.0 vs. time.time()=
-    # 5000.0 is 4900s stale -- comfortably past that threshold.
-    options = _full_valid_options(failsafe_stale_after_hours=0.001)
-
-    with pytest.raises(SystemExit):
-        _run_bridge(options, MagicMock())
-
-    # The priming call (first entry) must already see the freshly-evaluated
-    # failsafe_active=True -- not the False value that was on disk at load time, before
-    # any staleness check had run.
-    assert observed_active_at_priming[0] is True
-
-
-def test_run_bridge_priming_staleness_check_does_not_notify_publish_or_persist_state(tmp_path, monkeypatch):
-    # I1 (final whole-branch review, 2026-09-20): the pre-priming staleness check must
-    # be read-only telemetry priming, not a full _check_failsafe_staleness() call --
-    # that function COMMITS a transition (MQTT publish, failsafe_state.json write, and
-    # a push notification), and it did so here BEFORE mqtt_client.loop_start() had a
-    # chance to redeliver the retained down-messages that would prove the server is
-    # actually still alive. On a real restart ~26-30h after the last down-message
-    # (normal daily-snapshot cadence, only ~2h margin against the 26h threshold), this
-    # fired a false "Fail-Safe aktiviert" push notification to the customer's phone even
-    # though the server was healthy throughout -- a cry-wolf regression on what this
-    # add-on's own comments call the one remaining dead-server alarm. The real
-    # transition (with its side effects) must only ever happen from the main loop's own
-    # staleness check, after loop_start() has run.
-    failsafe_path = tmp_path / "failsafe_state.json"
-    save_backup(failsafe_path, {"last_valid_update": 100.0, "failsafe_active": False, "recovery_count": 0})
-    monkeypatch.setattr("heizungsbruecke.__main__.FAILSAFE_PATH", failsafe_path)
-    monkeypatch.setattr("time.time", lambda: 5000.0)
-
-    fake_mqtt_client = MagicMock()
-    # Stop the test right after loop_start() is called -- i.e. exactly at the boundary
-    # between "priming path" and "main loop". In the real add-on, loop_start() is what
-    # redelivers the retained down-messages that would prove the server is alive before
-    # the main loop's own staleness check runs; here it's a no-op mock, so we must not
-    # let the test continue into the main loop's own (legitimate) first staleness check
-    # -- that one running against still-stale data and notifying would be CORRECT
-    # behavior in this harness (no real redelivery happens), not the regression under
-    # test. This test isolates the priming path alone, before loop_start().
-    fake_mqtt_client.loop_start.side_effect = lambda: (_ for _ in ()).throw(SystemExit("stop test loop"))
-    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: fake_mqtt_client)
-    monkeypatch.setattr(
-        "heizungsbruecke.__main__.requests.get",
-        lambda url, timeout: _FakeResponse({"active": True}),
-    )
-    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
-
-    def fake_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, room_target=None, failsafe_ctx=None):
-        return boost_was_active
-
-    monkeypatch.setattr("heizungsbruecke.__main__._run_local_check", fake_run_local_check)
-
-    ha_api = MagicMock()
-    # stale_after_seconds = 0.001h * 3600 = 3.6s; last_valid_update=100.0 vs.
-    # time.time()=5000.0 is 4900s stale -- comfortably past that threshold, i.e. this
-    # reproduces exactly the "on-disk timestamp looks stale at cold start" situation.
-    options = _full_valid_options(failsafe_stale_after_hours=0.001, notify_service="notify.mobile_app")
-
-    with pytest.raises(SystemExit):
-        _run_bridge(options, ha_api)
-
-    # No push notification may originate from the priming path.
-    ha_api.send_notification.assert_not_called()
-    # Only the one initial (load-time) publish_status("failsafe", ...) call at connect
-    # time is allowed -- the priming path itself must not publish a second, transitioned
-    # state.
-    failsafe_status_calls = [
-        call for call in fake_mqtt_client.publish_status.call_args_list
-        if call.args[0] == "failsafe"
-    ]
-    assert len(failsafe_status_calls) == 1
-    assert failsafe_status_calls[0].args[1] == "OFF"
-    # failsafe_state.json on disk must be untouched by the priming path -- only the main
-    # loop's own (post-loop_start()) staleness check may ever commit a real transition.
-    persisted = load_backup(failsafe_path)
-    assert persisted["failsafe_active"] is False
-    assert persisted["last_valid_update"] == 100.0
 
 
 def test_run_bridge_resets_stale_boost_active_when_priming_check_raises(monkeypatch, tmp_path):
