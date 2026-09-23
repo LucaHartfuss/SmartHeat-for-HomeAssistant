@@ -580,7 +580,7 @@ def _run_telemetry_tick(
 
 def _maybe_publish_full_snapshot(
     manifest, ha_api, mqtt_client, options: dict, room_target: float, notify_service: str, now: datetime,
-) -> None:
+) -> str | None:
     """Triggers a full snapshot publish (curve.py recompute server-side) when target_rt
     has changed since the last publish, or the profile's daily_trigger_time has been
     reached for the first time today -- Design-Spec 2026-09-16, Abschnitt A.3/B. Called
@@ -608,7 +608,7 @@ def _maybe_publish_full_snapshot(
     target_changed = room_target != backup.get("last_published_target_rt")
 
     if not (daily_due or target_changed):
-        return
+        return None
 
     seq = str(uuid.uuid4())
     publish_snapshot(
@@ -623,6 +623,7 @@ def _maybe_publish_full_snapshot(
     if daily_due:
         backup["last_daily_trigger_date"] = today
     save_backup(BACKUP_PATH, backup)
+    return seq
 
 
 def _maybe_publish_telemetry(

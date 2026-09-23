@@ -1059,11 +1059,12 @@ def test_maybe_publish_full_snapshot_publishes_when_target_changed(tmp_path, mon
     ha_api.get_state.return_value = 20.0
     mqtt_client = MagicMock()
 
-    _maybe_publish_full_snapshot(
+    result = _maybe_publish_full_snapshot(
         manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options={},
         room_target=21.0, notify_service="", now=datetime(2026, 9, 17, 9, 0),
     )
 
+    assert result is not None
     assert mqtt_client.publish_value.call_count == 2
     assert load_backup(tmp_path / "backup.json")["last_published_target_rt"] == 21.0
 
@@ -1077,11 +1078,12 @@ def test_maybe_publish_full_snapshot_does_not_republish_unchanged_target(tmp_pat
     ha_api.get_state.return_value = 20.0
     mqtt_client = MagicMock()
 
-    _maybe_publish_full_snapshot(
+    result = _maybe_publish_full_snapshot(
         manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options={},
         room_target=21.0, notify_service="", now=datetime(2026, 9, 17, 9, 0),
     )
 
+    assert result is None
     mqtt_client.publish_value.assert_not_called()
 
 
@@ -1094,11 +1096,12 @@ def test_maybe_publish_full_snapshot_publishes_when_daily_trigger_time_reached(t
     ha_api.get_state.return_value = 20.0
     mqtt_client = MagicMock()
 
-    _maybe_publish_full_snapshot(
+    result = _maybe_publish_full_snapshot(
         manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options={"daily_trigger_time": "12:00"},
         room_target=21.0, notify_service="", now=datetime(2026, 9, 17, 12, 5),
     )
 
+    assert result is not None
     assert mqtt_client.publish_value.call_count == 2
     assert load_backup(backup_path)["last_daily_trigger_date"] == "2026-09-17"
 
@@ -1111,11 +1114,12 @@ def test_maybe_publish_full_snapshot_does_not_refire_daily_trigger_same_day(tmp_
     ha_api = MagicMock()
     mqtt_client = MagicMock()
 
-    _maybe_publish_full_snapshot(
+    result = _maybe_publish_full_snapshot(
         manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options={"daily_trigger_time": "12:00"},
         room_target=21.0, notify_service="", now=datetime(2026, 9, 17, 15, 0),
     )
 
+    assert result is None
     mqtt_client.publish_value.assert_not_called()
 
 
@@ -1127,11 +1131,12 @@ def test_maybe_publish_full_snapshot_skips_when_nothing_triggers(tmp_path, monke
     ha_api = MagicMock()
     mqtt_client = MagicMock()
 
-    _maybe_publish_full_snapshot(
+    result = _maybe_publish_full_snapshot(
         manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options={"daily_trigger_time": "12:00"},
         room_target=21.0, notify_service="", now=datetime(2026, 9, 17, 9, 0),
     )
 
+    assert result is None
     mqtt_client.publish_value.assert_not_called()
     assert load_backup(backup_path) == {"last_published_target_rt": 21.0}  # unchanged, no gratuitous write
 
