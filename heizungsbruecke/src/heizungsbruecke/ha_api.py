@@ -73,15 +73,22 @@ class HomeAssistantApi:
 
     def get_raw_state(self, entity_id: str) -> str:
         """Returns the entity's state string as-is (no float cast), for text sensors
-        such as operating_mode."""
-        real_entity_id, _, _ = entity_id.partition("::")
+        such as operating_mode. HA's failure states ("unavailable", "unknown", "") are
+        raised as errors so callers omit the field instead of storing them as data;
+        "::attr" references are not supported here and raise ValueError."""
+        if "::" in entity_id:
+            raise ValueError(f"get_raw_state unterstuetzt keine Attribut-Referenz: {entity_id!r}")
+        real_entity_id = entity_id
         response = requests.get(
             f"{self._base_url}{self._api_prefix}/states/{real_entity_id}",
             headers=self._headers,
             timeout=10,
         )
         response.raise_for_status()
-        return response.json()["state"]
+        state = response.json()["state"]
+        if state in ("unavailable", "unknown", ""):
+            raise ValueError(f"Entity {real_entity_id} hat keinen gueltigen Zustand: {state!r}")
+        return state
 
     def list_states(self) -> list[dict]:
         response = requests.get(

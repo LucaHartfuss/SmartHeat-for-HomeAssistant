@@ -22,8 +22,9 @@ noetige Konfiguration automatisch in dieses Add-on.
 
 ## Update von 0.12.0 auf 0.13.0
 
-Neu: optionale KPI-Entity-Mappings fuer die erweiterte Datenerhebungsphase. Die
-folgenden Felder koennen nun in der SmartHeat-Integration optional zugeordnet werden:
+Neu: das Add-on ist fuer optionale KPI-Entity-Mappings der erweiterten
+Datenerhebungsphase vorbereitet. Die Zuordnung ueber die SmartHeat-Integration folgt
+in einem spaeteren Integrations-Release. Vorbereitete optionale Felder:
 
 - `entity_flow_temperature` (Vorlauftemperatur)
 - `entity_return_temperature` (Ruecklauftemperatur)

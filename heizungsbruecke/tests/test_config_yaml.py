@@ -70,3 +70,17 @@ def test_config_yaml_has_new_optional_kpi_entity_options():
     ):
         assert config["options"][key] == ""
         assert config["schema"][key] == "str?"
+
+
+def test_every_optional_kpi_role_has_matching_config_option_and_schema():
+    """Drift guard: the KPI roles registered in manifest.ALL_ROLES must each have an
+    `entity_<role>` option (default "") and an optional `str?` schema entry."""
+    from heizungsbruecke.manifest import ALL_ROLES
+
+    kpi_roles = ALL_ROLES[ALL_ROLES.index("flow_temperature"):]
+    assert len(kpi_roles) == 11
+    config = _load_config_yaml()
+    for role in kpi_roles:
+        key = f"entity_{role}"
+        assert config["options"].get(key) == "", f"options[{key}] must default to empty string"
+        assert config["schema"].get(key) == "str?", f"schema[{key}] must be `str?`"

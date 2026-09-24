@@ -767,7 +767,12 @@ def _read_kpi_fields(manifest, ha_api) -> dict:
 
     def _read(role, reader):
         try:
-            return True, reader(manifest.entity_ids[role])
+            value = reader(manifest.entity_ids[role])
+            # "nan"/"inf" pass float() but the server rejects non-finite JSON numbers
+            # for the whole message.
+            if isinstance(value, float) and not math.isfinite(value):
+                raise ValueError(f"nicht-endlicher Wert {value!r}")
+            return True, value
         except Exception as exc:
             logger.warning("KPI-Sensor '%s' nicht lesbar, Feld wird weggelassen: %s", role, exc)
             return False, None

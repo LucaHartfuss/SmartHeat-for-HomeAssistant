@@ -2066,6 +2066,51 @@ def test_run_telemetry_tick_omits_failing_optional_sensor_but_publishes_rest():
     assert "flow_temperature" not in payload
 
 
+def test_run_telemetry_tick_omits_operating_mode_when_sensor_unavailable():
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual",
+        "operating_mode": "sensor.mode",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 20.5
+    ha_api.get_raw_state.side_effect = ValueError("unavailable")
+    mqtt_client = MagicMock()
+
+    main_module._run_telemetry_tick(
+        manifest, ha_api, mqtt_client, options={}, boost_active=False, failsafe_active=False,
+    )
+
+    payload = mqtt_client.publish_telemetry.call_args.args[0]
+    assert payload["room_actual"] == 20.5
+    assert "operating_mode" not in payload
+
+
+def test_run_telemetry_tick_omits_non_finite_kpi_values():
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual",
+        "flow_temperature": "sensor.flow",
+        "return_temperature": "sensor.ret",
+        "energy_thermal_heating": "sensor.e1",
+        "energy_thermal_dhw": "sensor.e2",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = lambda entity_id: {
+        "sensor.room_actual": 20.5, "sensor.flow": float("nan"), "sensor.ret": 30.0,
+        "sensor.e1": float("inf"), "sensor.e2": 12.0,
+    }[entity_id]
+    mqtt_client = MagicMock()
+
+    main_module._run_telemetry_tick(
+        manifest, ha_api, mqtt_client, options={}, boost_active=False, failsafe_active=False,
+    )
+
+    payload = mqtt_client.publish_telemetry.call_args.args[0]
+    assert payload["room_actual"] == 20.5
+    assert "flow_temperature" not in payload
+    assert payload["return_temperature"] == 30.0
+    assert payload["energy"] == {"thermal_dhw": 12.0}
+
+
 def test_run_telemetry_tick_omits_energy_key_when_all_channels_fail():
     manifest = ChannelManifest(entity_ids={
         "room_actual": "sensor.room_actual",
