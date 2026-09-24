@@ -2,6 +2,7 @@ import pytest
 
 from heizungsbruecke.manifest import ALL_ROLES
 from heizungsbruecke.profiles import (
+    KPI_ENERGY_CHANNELS_BY_PROFILE,
     LOCAL_BOOST_DEFAULTS,
     LOCAL_CLAMP_DEFAULTS,
     LOCAL_WINDOW_DEFAULTS,
@@ -119,3 +120,11 @@ def test_resolve_window_defaults_rejects_non_positive_window(monkeypatch):
 
     with pytest.raises(UnknownProfileError):
         resolve_window_defaults("vaillant_gastherme_heizkoerper")
+
+
+def test_vaillant_gastherme_has_kpi_energy_channels():
+    assert KPI_ENERGY_CHANNELS_BY_PROFILE["vaillant_gastherme_heizkoerper"] == (
+        "electrical_heating", "electrical_dhw",
+        "primary_heating", "primary_dhw",
+        "thermal_heating", "thermal_dhw",
+    )

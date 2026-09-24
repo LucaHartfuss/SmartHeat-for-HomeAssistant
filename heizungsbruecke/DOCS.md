@@ -20,6 +20,25 @@ Home-Assistant-Integration: installieren, dann Einstellungen → Geraete &
 Dienste → Integration hinzufuegen → "SmartHeat". Die Integration schreibt die
 noetige Konfiguration automatisch in dieses Add-on.
 
+## Update von 0.12.0 auf 0.13.0
+
+Neu: optionale KPI-Entity-Mappings fuer die erweiterte Datenerhebungsphase. Die
+folgenden Felder koennen nun in der SmartHeat-Integration optional zugeordnet werden:
+
+- `entity_flow_temperature` (Vorlauftemperatur)
+- `entity_return_temperature` (Ruecklauftemperatur)
+- `entity_operating_mode` (Betriebsmodus)
+- `entity_system_water_pressure` (Wasserdruck)
+- `entity_efficiency_ratio` (Effizienzquote)
+- `entity_energy_electrical_heating` (Elektrische Heizenergie)
+- `entity_energy_electrical_dhw` (Elektrische Warmwasserenergie)
+- `entity_energy_primary_heating` (Primaere Heizenergie)
+- `entity_energy_primary_dhw` (Primaere Warmwasserenergie)
+- `entity_energy_thermal_heating` (Thermische Heizenergie)
+- `entity_energy_thermal_dhw` (Thermische Warmwasserenergie)
+
+Alle diese Felder sind optional; fehlen sie, funktioniert das Add-on weiterhin wie zuvor.
+
 ## Update von 0.11.2 auf 0.12.0 (Breaking Change)
 
 **Der Fail-Safe-Alarm wird nicht mehr per fester Zeitschwelle ausgeloest, sondern

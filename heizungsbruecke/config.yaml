@@ -1,5 +1,5 @@
 name: "Heizungsbruecke"
-version: "0.12.0"
+version: "0.13.0"
 slug: "heizungsbruecke"
 description: "Generische Bruecken-Logik: liest konfigurierte HA-Entities, meldet sie an den SmartHeat-Server, schreibt Sollwerte zurueck, mit lokalem Boost-Failsafe und Sicherheits-Clamps."
 url: "https://github.com/LucaHartfuss/SmartHeat-for-HomeAssistant"
@@ -24,6 +24,17 @@ options:
   local_check_interval_seconds: 300
   notify_service: ""
   telemetry_interval_seconds: 300
+  entity_flow_temperature: ""
+  entity_return_temperature: ""
+  entity_operating_mode: ""
+  entity_system_water_pressure: ""
+  entity_efficiency_ratio: ""
+  entity_energy_electrical_heating: ""
+  entity_energy_electrical_dhw: ""
+  entity_energy_primary_heating: ""
+  entity_energy_primary_dhw: ""
+  entity_energy_thermal_heating: ""
+  entity_energy_thermal_dhw: ""
 # local_check_interval_seconds/notify_service/telemetry_interval_seconds must stay optional (`?`):
 # the smartheat integration's config_flow.py only ever sends the 8 fields above (tenant_id,
 # profile, entity_*) -- Supervisor validates a set-options call against the whole schema, and
@@ -45,3 +56,14 @@ schema:
   local_check_interval_seconds: int(1,3600)?
   notify_service: str?
   telemetry_interval_seconds: int(10,)?
+  entity_flow_temperature: str?
+  entity_return_temperature: str?
+  entity_operating_mode: str?
+  entity_system_water_pressure: str?
+  entity_efficiency_ratio: str?
+  entity_energy_electrical_heating: str?
+  entity_energy_electrical_dhw: str?
+  entity_energy_primary_heating: str?
+  entity_energy_primary_dhw: str?
+  entity_energy_thermal_heating: str?
+  entity_energy_thermal_dhw: str?

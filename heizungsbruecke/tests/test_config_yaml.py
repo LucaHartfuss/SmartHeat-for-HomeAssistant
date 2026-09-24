@@ -56,3 +56,17 @@ def test_schema_fields_the_integration_never_sends_are_optional():
         f"schema field(s) the integration never sends must be optional (`?`): "
         f"{non_optional_extra}"
     )
+
+
+def test_config_yaml_has_new_optional_kpi_entity_options():
+    config = _load_config_yaml()
+
+    for key in (
+        "entity_flow_temperature", "entity_return_temperature", "entity_operating_mode",
+        "entity_system_water_pressure", "entity_efficiency_ratio",
+        "entity_energy_electrical_heating", "entity_energy_electrical_dhw",
+        "entity_energy_primary_heating", "entity_energy_primary_dhw",
+        "entity_energy_thermal_heating", "entity_energy_thermal_dhw",
+    ):
+        assert config["options"][key] == ""
+        assert config["schema"][key] == "str?"

@@ -101,6 +101,18 @@ LOCAL_WINDOW_DEFAULTS: dict[str, WindowDefaults] = {
 }
 
 
+# Dupliziertes lokales Gegenstueck zu Profile.telemetry_capabilities.energy_channels
+# in heizungsserver/generic/profiles.py -- kein geteilter Code zwischen den Repos,
+# gleiches Muster wie LOCAL_CLAMP_DEFAULTS (Design-Spec 2026-09-24, Abschnitt 1).
+KPI_ENERGY_CHANNELS_BY_PROFILE: dict[str, tuple[str, ...]] = {
+    "vaillant_gastherme_heizkoerper": (
+        "electrical_heating", "electrical_dhw",
+        "primary_heating", "primary_dhw",
+        "thermal_heating", "thermal_dhw",
+    ),
+}
+
+
 def _parse_hhmm_minutes(value: str) -> int:
     parsed = datetime.strptime(value, "%H:%M")
     return parsed.hour * 60 + parsed.minute
