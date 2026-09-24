@@ -140,3 +140,62 @@ def test_build_manifest_prefers_derived_entity_ids_over_options():
     manifest = build_manifest(options, derived_entity_ids)
 
     assert manifest.entity_ids["dat"] == "sensor.smartheat_client1_dat"
+
+
+def test_build_manifest_picks_up_optional_kpi_entity_when_configured():
+    options = {
+        "profile": "vaillant_gastherme_heizkoerper",
+        "entity_room_actual": "climate.wz",
+        "entity_room_target": "climate.wz",
+        "entity_curve_current": "number.curve",
+        "entity_offset_current": "number.offset",
+        "entity_room_day_avg": "sensor.day_avg",
+        "entity_room_night_avg": "sensor.night_avg",
+        "entity_heat_limit": "sensor.heat_limit",
+        "entity_dat": "sensor.dat",
+        "entity_dart": "sensor.dart",
+        "entity_flow_temperature": "sensor.flow",
+    }
+
+    manifest = build_manifest(options)
+
+    assert manifest.entity_ids["flow_temperature"] == "sensor.flow"
+
+
+def test_build_manifest_omits_unconfigured_kpi_entity():
+    options = {
+        "profile": "vaillant_gastherme_heizkoerper",
+        "entity_room_actual": "climate.wz",
+        "entity_room_target": "climate.wz",
+        "entity_curve_current": "number.curve",
+        "entity_offset_current": "number.offset",
+        "entity_room_day_avg": "sensor.day_avg",
+        "entity_room_night_avg": "sensor.night_avg",
+        "entity_heat_limit": "sensor.heat_limit",
+        "entity_dat": "sensor.dat",
+        "entity_dart": "sensor.dart",
+    }
+
+    manifest = build_manifest(options)
+
+    assert "flow_temperature" not in manifest.entity_ids
+
+
+def test_build_manifest_treats_empty_string_kpi_entity_as_unconfigured():
+    options = {
+        "profile": "vaillant_gastherme_heizkoerper",
+        "entity_room_actual": "climate.wz",
+        "entity_room_target": "climate.wz",
+        "entity_curve_current": "number.curve",
+        "entity_offset_current": "number.offset",
+        "entity_room_day_avg": "sensor.day_avg",
+        "entity_room_night_avg": "sensor.night_avg",
+        "entity_heat_limit": "sensor.heat_limit",
+        "entity_dat": "sensor.dat",
+        "entity_dart": "sensor.dart",
+        "entity_flow_temperature": "",
+    }
+
+    manifest = build_manifest(options)
+
+    assert "flow_temperature" not in manifest.entity_ids

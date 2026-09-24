@@ -5,6 +5,9 @@ from heizungsbruecke.profiles import UnknownProfileError, required_roles_for
 ALL_ROLES = (
     "room_actual", "room_target", "curve_current", "offset_current",
     "outdoor_temp", "room_day_avg", "room_night_avg", "heat_limit", "dat", "dart",
+    "flow_temperature", "return_temperature", "operating_mode", "system_water_pressure",
+    "efficiency_ratio", "energy_electrical_heating", "energy_electrical_dhw",
+    "energy_primary_heating", "energy_primary_dhw", "energy_thermal_heating", "energy_thermal_dhw",
 )
 
 
