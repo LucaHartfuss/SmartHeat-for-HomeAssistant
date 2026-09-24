@@ -1218,7 +1218,7 @@ def test_run_local_check_skips_all_writes_when_nothing_changed(tmp_path, monkeyp
 
 def test_maybe_publish_full_snapshot_publishes_when_target_changed(tmp_path, monkeypatch):
     monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
-    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual", "room_target": "sensor.room_target"})
+    manifest = ChannelManifest(entity_ids={"heat_limit": "sensor.heat_limit", "room_target": "sensor.room_target"})
     ha_api = MagicMock()
     ha_api.get_state.return_value = 20.0
     mqtt_client = MagicMock()
@@ -1255,7 +1255,7 @@ def test_maybe_publish_full_snapshot_publishes_when_daily_trigger_time_reached(t
     backup_path = tmp_path / "backup.json"
     monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
     save_backup(backup_path, {"last_published_target_rt": 21.0})  # unchanged target
-    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual", "room_target": "sensor.room_target"})
+    manifest = ChannelManifest(entity_ids={"heat_limit": "sensor.heat_limit", "room_target": "sensor.room_target"})
     ha_api = MagicMock()
     ha_api.get_state.return_value = 20.0
     mqtt_client = MagicMock()

@@ -10,6 +10,14 @@ ALL_ROLES = (
     "energy_primary_heating", "energy_primary_dhw", "energy_thermal_heating", "energy_thermal_dhw",
 )
 
+# Rollen, die der volle Snapshot an den Server schickt -- muss mit REQUIRED_ROLES in
+# heizungsserver/generic/messages.py uebereinstimmen. room_actual/outdoor_temp und die
+# optionalen KPI-Rollen sind rein lokal bzw. laufen ueber die Telemetrie.
+SNAPSHOT_ROLES = (
+    "heat_limit", "dat", "room_target", "dart",
+    "room_day_avg", "room_night_avg", "curve_current", "offset_current",
+)
+
 
 class ManifestError(ValueError):
     pass

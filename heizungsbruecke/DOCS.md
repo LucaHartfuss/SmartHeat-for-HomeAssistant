@@ -20,6 +20,16 @@ Home-Assistant-Integration: installieren, dann Einstellungen → Geraete &
 Dienste → Integration hinzufuegen → "SmartHeat". Die Integration schreibt die
 noetige Konfiguration automatisch in dieses Add-on.
 
+## Update von 0.13.0 auf 0.13.1
+
+Fehlerbehebung: Der volle Snapshot an den Server enthielt seit 0.13.0 auch die
+optionalen KPI-Sensoren. Der Sensor `operating_mode` (Text) scheiterte dabei an der
+Zahlen-Umwandlung. Mit gesetztem `notify_service` kam dadurch bei jedem Snapshot eine
+falsche Push-Meldung "Sensor liefert keinen gueltigen Wert", und der Server loggte je
+KPI-Sensor eine Warnung. Der Snapshot enthaelt jetzt nur noch die 8 Rollen, die der
+Server fuer die Heizkurvenberechnung braucht. `room_actual` und die KPI-Werte laufen
+weiterhin ueber die Telemetrie. Keine Konfigurationsaenderung noetig.
+
 ## Update von 0.12.0 auf 0.13.0
 
 Neu: das Add-on ist fuer optionale KPI-Entity-Mappings der erweiterten

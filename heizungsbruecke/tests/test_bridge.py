@@ -5,40 +5,66 @@ import pytest
 from heizungsbruecke.bridge import apply_boost_decision, apply_emergency_decision, publish_snapshot, handle_down_message
 from heizungsbruecke.boost import BoostDecision
 from heizungsbruecke.emergency_boost import EmergencyBoostDecision
-from heizungsbruecke.manifest import ChannelManifest
+from heizungsbruecke.manifest import SNAPSHOT_ROLES, ChannelManifest
 from heizungsbruecke.backup_store import load_backup, save_backup
 
 
 def test_publish_snapshot_reads_each_entity_and_publishes():
     manifest = ChannelManifest(entity_ids={
-        "room_actual": "climate.wohnzimmer_thermostat",
-        "outdoor_temp": "sensor.aussentemperatur",
+        "room_target": "climate.wohnzimmer_thermostat::temperature",
+        "heat_limit": "number.heizgrenze",
     })
     ha_api = MagicMock()
     ha_api.get_state.side_effect = lambda entity_id: {
-        "climate.wohnzimmer_thermostat": 19.5,
-        "sensor.aussentemperatur": 3.2,
+        "climate.wohnzimmer_thermostat::temperature": 21.0,
+        "number.heizgrenze": 16.0,
     }[entity_id]
     mqtt_client = MagicMock()
 
     publish_snapshot(manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq="tick-1")
 
-    mqtt_client.publish_value.assert_any_call(role="room_actual", value=19.5, seq="tick-1")
-    mqtt_client.publish_value.assert_any_call(role="outdoor_temp", value=3.2, seq="tick-1")
+    mqtt_client.publish_value.assert_any_call(role="room_target", value=21.0, seq="tick-1")
+    mqtt_client.publish_value.assert_any_call(role="heat_limit", value=16.0, seq="tick-1")
+
+
+def test_publish_snapshot_publishes_only_server_snapshot_roles():
+    snapshot_entities = {role: f"sensor.{role}" for role in SNAPSHOT_ROLES}
+    manifest = ChannelManifest(entity_ids={
+        **snapshot_entities,
+        "room_actual": "sensor.room_actual",
+        "outdoor_temp": "sensor.outdoor_temp",
+        "flow_temperature": "sensor.flow_temperature",
+        "operating_mode": "sensor.operating_mode",
+        "energy_electrical_heating": "sensor.energy_electrical_heating",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 20.0
+    mqtt_client = MagicMock()
+
+    publish_snapshot(
+        manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq="tick-1",
+        notify_service="notify.mobile_app_lucas_iphone",
+    )
+
+    published_roles = {call.kwargs["role"] for call in mqtt_client.publish_value.call_args_list}
+    assert published_roles == set(SNAPSHOT_ROLES)
+    read_entities = {call.args[0] for call in ha_api.get_state.call_args_list}
+    assert read_entities == set(snapshot_entities.values())
+    ha_api.send_notification.assert_not_called()
 
 
 def _manifest_with_one_broken_sensor():
     manifest = ChannelManifest(entity_ids={
-        "room_actual": "climate.wohnzimmer_thermostat",
+        "room_target": "climate.wohnzimmer_thermostat::temperature",
         "dat": "sensor.kaputt",
-        "outdoor_temp": "sensor.aussentemperatur",
+        "heat_limit": "number.heizgrenze",
     })
     ha_api = MagicMock()
 
     def _get_state(entity_id):
         if entity_id == "sensor.kaputt":
             raise ValueError("could not convert string to float: 'unavailable'")
-        return {"climate.wohnzimmer_thermostat": 19.5, "sensor.aussentemperatur": 3.2}[entity_id]
+        return {"climate.wohnzimmer_thermostat::temperature": 21.0, "number.heizgrenze": 16.0}[entity_id]
 
     ha_api.get_state.side_effect = _get_state
     return manifest, ha_api
@@ -51,7 +77,7 @@ def test_publish_snapshot_skips_broken_role_and_publishes_the_others():
     publish_snapshot(manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq="tick-1")
 
     published_roles = {call.kwargs["role"] for call in mqtt_client.publish_value.call_args_list}
-    assert published_roles == {"room_actual", "outdoor_temp"}
+    assert published_roles == {"room_target", "heat_limit"}
 
 
 def test_publish_snapshot_notifies_when_notify_service_is_configured():
@@ -96,7 +122,7 @@ def test_publish_snapshot_survives_a_failing_notification():
     )
 
     published_roles = {call.kwargs["role"] for call in mqtt_client.publish_value.call_args_list}
-    assert published_roles == {"room_actual", "outdoor_temp"}
+    assert published_roles == {"room_target", "heat_limit"}
 
 
 def test_handle_down_message_clamps_curve_value_before_writing(tmp_path):

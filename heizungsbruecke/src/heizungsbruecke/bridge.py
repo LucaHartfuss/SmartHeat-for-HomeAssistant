@@ -5,7 +5,7 @@ from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.boost import BoostDecision
 from heizungsbruecke.clamping import clamp
 from heizungsbruecke.emergency_boost import EmergencyBoostDecision
-from heizungsbruecke.manifest import ChannelManifest
+from heizungsbruecke.manifest import SNAPSHOT_ROLES, ChannelManifest
 
 _CLAMPED_ROLES = ("curve_current", "offset_current")
 
@@ -25,7 +25,10 @@ def publish_snapshot(
     until somebody fixes it. Notifying is best effort -- a failing notify service must
     not break the read path.
     """
-    for role, entity_id in manifest.entity_ids.items():
+    for role in SNAPSHOT_ROLES:
+        entity_id = manifest.entity_ids.get(role)
+        if entity_id is None:
+            continue
         try:
             value = ha_api.get_state(entity_id)
         except Exception:
