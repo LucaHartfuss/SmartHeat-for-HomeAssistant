@@ -5,7 +5,7 @@ from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.boost import BoostDecision
 from heizungsbruecke.clamping import clamp
 from heizungsbruecke.emergency_boost import EmergencyBoostDecision
-from heizungsbruecke.manifest import SNAPSHOT_ROLES, ChannelManifest
+from heizungsbruecke.manifest import SNAPSHOT_ROLES, OPTIONAL_SNAPSHOT_ROLES, ChannelManifest
 
 _CLAMPED_ROLES = ("curve_current", "offset_current")
 
@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
 
 
 def publish_snapshot(
-    manifest: ChannelManifest, ha_api, mqtt_client, seq: str, notify_service: str = ""
+    manifest: ChannelManifest, ha_api, mqtt_client, seq: str, notify_service: str = "",
+    trigger: str | None = None, computed_values: dict[str, float | None] | None = None,
 ) -> None:
     """Publishes one snapshot of all configured roles. A role whose entity cannot be
     read (dead sensor -> HA reports 'unavailable', or an HTTP failure) is skipped for
@@ -24,7 +25,27 @@ def publish_snapshot(
     tick. This is deliberately not deduplicated: a broken sensor should keep nagging
     until somebody fixes it. Notifying is best effort -- a failing notify service must
     not break the read path.
+
+    Optional roles go out first (the server buffers them and completes the tick on the
+    last required role) and never trigger a notification -- a missing optional value
+    just means the server falls back to its old behaviour.
     """
+    computed_values = computed_values or {}
+    for role in OPTIONAL_SNAPSHOT_ROLES:
+        if role in computed_values:
+            value = computed_values[role]
+        elif role in manifest.entity_ids:
+            try:
+                value = ha_api.get_state(manifest.entity_ids[role])
+            except Exception:
+                logger.warning("Optionale Rolle '%s' nicht lesbar, wird weggelassen", role)
+                continue
+        else:
+            continue
+        if value is None:
+            continue
+        mqtt_client.publish_value(role=role, value=value, seq=seq, trigger=trigger)
+
     for role in SNAPSHOT_ROLES:
         entity_id = manifest.entity_ids.get(role)
         if entity_id is None:
@@ -49,7 +70,7 @@ def publish_snapshot(
                         "Push-Benachrichtigung fuer Rolle '%s' konnte nicht gesendet werden", role
                     )
             continue
-        mqtt_client.publish_value(role=role, value=value, seq=seq)
+        mqtt_client.publish_value(role=role, value=value, seq=seq, trigger=trigger)
 
 
 def handle_down_message(

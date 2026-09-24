@@ -238,3 +238,14 @@ def test_publish_telemetry_publishes_correct_topic_payload_and_not_retained():
         '{"room_actual": 20.5, "boost_active": false, "failsafe_active": false, "ts": "2026-09-18T08:00:00Z"}',
         qos=1,
     )
+
+
+def test_publish_value_includes_trigger_when_given():
+    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
+        client.publish_value(role="heat_limit", value=16.0, seq="s1", trigger="daily")
+    mock_client.publish.assert_called_once_with(
+        "smartheat/kunde2/up/heat_limit", '{"v": 16.0, "seq": "s1", "trigger": "daily"}', qos=1
+    )

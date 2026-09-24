@@ -54,9 +54,12 @@ class BridgeMqttClient:
         topic = f"smartheat/{self._tenant_id}/status/{object_id}"
         self._client.publish(topic, payload, retain=True)
 
-    def publish_value(self, role: str, value: float, seq: str) -> None:
+    def publish_value(self, role: str, value: float, seq: str, trigger: str | None = None) -> None:
         topic = f"smartheat/{self._tenant_id}/up/{role}"
-        payload = json.dumps({"v": value, "seq": seq})
+        message = {"v": value, "seq": seq}
+        if trigger is not None:
+            message["trigger"] = trigger
+        payload = json.dumps(message)
         self._client.publish(topic, payload, qos=1)
 
     def publish_telemetry(self, payload: dict) -> None:

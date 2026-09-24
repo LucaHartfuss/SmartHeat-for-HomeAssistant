@@ -5,7 +5,7 @@ import pytest
 from heizungsbruecke.bridge import apply_boost_decision, apply_emergency_decision, publish_snapshot, handle_down_message
 from heizungsbruecke.boost import BoostDecision
 from heizungsbruecke.emergency_boost import EmergencyBoostDecision
-from heizungsbruecke.manifest import SNAPSHOT_ROLES, ChannelManifest
+from heizungsbruecke.manifest import SNAPSHOT_ROLES, OPTIONAL_SNAPSHOT_ROLES, ChannelManifest
 from heizungsbruecke.backup_store import load_backup, save_backup
 
 
@@ -23,8 +23,8 @@ def test_publish_snapshot_reads_each_entity_and_publishes():
 
     publish_snapshot(manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq="tick-1")
 
-    mqtt_client.publish_value.assert_any_call(role="room_target", value=21.0, seq="tick-1")
-    mqtt_client.publish_value.assert_any_call(role="heat_limit", value=16.0, seq="tick-1")
+    mqtt_client.publish_value.assert_any_call(role="room_target", value=21.0, seq="tick-1", trigger=None)
+    mqtt_client.publish_value.assert_any_call(role="heat_limit", value=16.0, seq="tick-1", trigger=None)
 
 
 def test_publish_snapshot_publishes_only_server_snapshot_roles():
@@ -599,3 +599,62 @@ def test_apply_emergency_decision_steady_state_inactive_does_nothing(tmp_path):
 
     assert new_state is False
     ha_api.set_number_value.assert_not_called()
+
+
+def test_publish_snapshot_sends_optional_roles_first_with_trigger():
+    manifest = ChannelManifest(entity_ids={
+        **{role: f"sensor.{role}" for role in SNAPSHOT_ROLES},
+        "outdoor_min_24h": "sensor.omin",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 12.0
+    mqtt_client = MagicMock()
+
+    publish_snapshot(
+        manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq="s1",
+        trigger="daily", computed_values={"room_target_avg_24h": 20.4},
+    )
+
+    calls = mqtt_client.publish_value.call_args_list
+    roles = [call.kwargs["role"] for call in calls]
+    assert roles[:2] == ["outdoor_min_24h", "room_target_avg_24h"]
+    assert roles[2:] == list(SNAPSHOT_ROLES)
+    assert calls[1].kwargs["value"] == 20.4
+    assert all(call.kwargs["trigger"] == "daily" for call in calls)
+
+
+def test_publish_snapshot_omits_unreadable_optional_role_silently():
+    manifest = ChannelManifest(entity_ids={"heat_limit": "number.h", "outdoor_min_24h": "sensor.omin"})
+    ha_api = MagicMock()
+
+    def _get_state(entity_id):
+        if entity_id == "sensor.omin":
+            raise ValueError("could not convert string to float: 'unknown'")
+        return 16.0
+
+    ha_api.get_state.side_effect = _get_state
+    mqtt_client = MagicMock()
+
+    publish_snapshot(
+        manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq="s1",
+        notify_service="notify.mobile_app_lucas_iphone",
+    )
+
+    roles = [call.kwargs["role"] for call in mqtt_client.publish_value.call_args_list]
+    assert roles == ["heat_limit"]
+    ha_api.send_notification.assert_not_called()
+
+
+def test_publish_snapshot_skips_computed_role_when_value_is_none():
+    manifest = ChannelManifest(entity_ids={"heat_limit": "number.h"})
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 16.0
+    mqtt_client = MagicMock()
+
+    publish_snapshot(
+        manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq="s1",
+        computed_values={"room_target_avg_24h": None},
+    )
+
+    roles = [call.kwargs["role"] for call in mqtt_client.publish_value.call_args_list]
+    assert roles == ["heat_limit"]
