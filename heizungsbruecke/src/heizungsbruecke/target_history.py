@@ -20,6 +20,8 @@ def time_weighted_mean(history: list[list[float]], now: float, window_s: float =
     for index, (ts, value) in enumerate(history):
         segment_end = history[index + 1][0] if index + 1 < len(history) else now
         segment_start = max(ts, window_start)
+        segment_start = min(segment_start, now)
+        segment_end = min(segment_end, now)
         duration = segment_end - segment_start
         if duration > 0:
             weighted_sum += value * duration

@@ -49,3 +49,18 @@ def test_record_change_seeds_empty_history():
 
 def test_window_constant():
     assert WINDOW_SECONDS == 86400
+
+
+def test_mean_ignores_part_of_future_dated_entry():
+    # Clock jump backwards: entry recorded after boot has "future" timestamp
+    # history: [[NOW-10H,20.0],[NOW-5H,25.0],[NOW+5H,30.0]]
+    # Entry 3 hasn't happened yet from now's perspective; entry 2 runs until now
+    # Correct mean: 20.0 for 5h + 25.0 for 5h = (20*5 + 25*5) / 10 = 22.5
+    history = [[NOW - 10 * H, 20.0], [NOW - 5 * H, 25.0], [NOW + 5 * H, 30.0]]
+    assert time_weighted_mean(history, NOW) == pytest.approx(22.5)
+
+
+def test_mean_with_entry_exactly_at_window_start():
+    # Entry exactly at window boundary
+    history = [[NOW - 24 * H, 20.0], [NOW - 12 * H, 22.0]]
+    assert time_weighted_mean(history, NOW) == pytest.approx(21.0)
