@@ -160,7 +160,10 @@ class HomeAssistantApi:
         )
         response.raise_for_status()
 
-    def create_statistics_sensor(self, name: str, source_entity_id: str, max_age_hours: float) -> str:
+    def create_statistics_sensor(
+        self, name: str, source_entity_id: str, max_age_hours: float,
+        state_characteristic: str = "average_step",
+    ) -> str:
         """Legt einen `statistics`-Sensor (gleitender Mittelwert) per Config-Entry-Flow an.
 
         `state_characteristic="average_step"` (zeitgewichteter Mittelwert -- gewichtet
@@ -201,11 +204,14 @@ class HomeAssistantApi:
            `config/entity_registry/list` (registriert in derselben Datei,
            siehe dortiger Docstring) -- verifiziert per echtem WS-Roundtrip
            gegen denselben Container.
+
+        `state_characteristic` default `average_step` keeps DAT/DART unchanged;
+        `outdoor_min_24h` uses the minimum characteristic.
         """
         fields = {
             "name": name,
             "entity_id": source_entity_id,
-            "state_characteristic": "average_step",
+            "state_characteristic": state_characteristic,
             "keep_last_sample": True,
             "max_age": {"hours": max_age_hours},
             "sampling_size": 255,

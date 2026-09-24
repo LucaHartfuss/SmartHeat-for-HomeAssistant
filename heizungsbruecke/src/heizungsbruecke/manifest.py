@@ -5,6 +5,7 @@ from heizungsbruecke.profiles import UnknownProfileError, required_roles_for
 ALL_ROLES = (
     "room_actual", "room_target", "curve_current", "offset_current",
     "outdoor_temp", "room_day_avg", "room_night_avg", "heat_limit", "dat", "dart",
+    "outdoor_min_24h",
     "flow_temperature", "return_temperature", "operating_mode", "system_water_pressure",
     "efficiency_ratio", "energy_electrical_heating", "energy_electrical_dhw",
     "energy_primary_heating", "energy_primary_dhw", "energy_thermal_heating", "energy_thermal_dhw",
@@ -17,6 +18,10 @@ SNAPSHOT_ROLES = (
     "heat_limit", "dat", "room_target", "dart",
     "room_day_avg", "room_night_avg", "curve_current", "offset_current",
 )
+
+# Optionale Snapshot-Rollen (Server: OPTIONAL_ROLES in heizungsserver/generic/messages.py).
+# room_target_avg_24h ist keine Entity, sondern wird im Add-on berechnet (target_history.py).
+OPTIONAL_SNAPSHOT_ROLES = ("outdoor_min_24h", "room_target_avg_24h")
 
 
 class ManifestError(ValueError):

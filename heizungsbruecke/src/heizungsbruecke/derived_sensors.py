@@ -60,12 +60,21 @@ def ensure_all(
         ),
     )
 
+    outdoor_min_24h = _ensure_entity(
+        ha_api, tracking, "outdoor_min_24h", state_path,
+        lambda: ha_api.create_statistics_sensor(
+            name=f"SmartHeat {tenant_id} Aussentemp. 24h-Minimum", source_entity_id=outdoor_temp_entity_id,
+            max_age_hours=24, state_characteristic="value_min",
+        ),
+    )
+
     return {
         "dat": dat,
         "dart": dart,
         "room_day_avg": room_day_avg,
         "room_night_avg": room_night_avg,
         "_room_12h_avg": room_12h_avg,
+        "outdoor_min_24h": outdoor_min_24h,
     }
 
 

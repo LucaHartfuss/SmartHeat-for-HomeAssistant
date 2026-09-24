@@ -199,3 +199,16 @@ def test_build_manifest_treats_empty_string_kpi_entity_as_unconfigured():
     manifest = build_manifest(options)
 
     assert "flow_temperature" not in manifest.entity_ids
+
+
+def test_outdoor_min_is_taken_from_derived_entities():
+    from heizungsbruecke.manifest import OPTIONAL_SNAPSHOT_ROLES, build_manifest
+    assert OPTIONAL_SNAPSHOT_ROLES == ("outdoor_min_24h", "room_target_avg_24h")
+    options = {
+        "profile": "vaillant_gastherme_heizkoerper",
+        "entity_room_actual": "sensor.rt", "entity_room_target": "climate.x::temperature",
+        "entity_curve_current": "number.c", "entity_offset_current": "number.o", "entity_heat_limit": "number.h",
+    }
+    derived = {"dat": "sensor.dat", "dart": "sensor.dart", "room_day_avg": "input_number.d",
+               "room_night_avg": "input_number.n", "outdoor_min_24h": "sensor.omin"}
+    assert build_manifest(options, derived).entity_ids["outdoor_min_24h"] == "sensor.omin"

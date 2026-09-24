@@ -450,3 +450,16 @@ def test_list_states_returns_full_states_list():
         headers={"Authorization": "Bearer test-token"},
         timeout=10,
     )
+
+
+def test_create_statistics_sensor_passes_custom_state_characteristic():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    flow_start_response = {"type": "form", "flow_id": "f1", "data_schema": []}
+    with patch.object(api, "_start_config_flow", return_value=flow_start_response), \
+         patch.object(api, "_advance_config_flow", return_value={"type": "create_entry", "result": {"entry_id": "e1"}}) as mock_advance, \
+         patch.object(api, "_find_entity_by_config_entry", return_value="sensor.outdoor_min"):
+        api.create_statistics_sensor(
+            name="SmartHeat t1 Aussentemp. 24h-Minimum", source_entity_id="sensor.out",
+            max_age_hours=24, state_characteristic="value_min",
+        )
+    assert mock_advance.call_args.args[1]["state_characteristic"] == "value_min"
