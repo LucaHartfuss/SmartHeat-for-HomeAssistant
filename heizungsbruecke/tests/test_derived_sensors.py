@@ -4,7 +4,7 @@ from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.derived_sensors import ensure_all
 
 
-def test_ensure_all_creates_all_five_helpers_when_none_exist(tmp_path):
+def test_ensure_all_creates_all_helpers_when_none_exist(tmp_path):
     ha_api = MagicMock()
     ha_api.entity_exists.return_value = False
     ha_api.create_statistics_sensor.side_effect = [
@@ -140,3 +140,31 @@ def test_ensure_all_adds_outdoor_min_sensor_to_existing_installation(tmp_path):
     assert result["outdoor_min_24h"] == "sensor.smartheat_client1_outdoor_min_24h"
     ha_api.create_statistics_sensor.assert_called_once()
     assert load_backup(state_path)["outdoor_min_24h"] == {"entity_id": "sensor.smartheat_client1_outdoor_min_24h"}
+
+
+def test_ensure_all_survives_failing_outdoor_min_creation(tmp_path):
+    ha_api = MagicMock()
+    ha_api.entity_exists.return_value = False
+    ha_api.create_statistics_sensor.side_effect = [
+        "sensor.smartheat_client1_room_12h_avg",
+        "sensor.smartheat_client1_dart",
+        "sensor.smartheat_client1_dat",
+        RuntimeError("config flow rejected"),
+    ]
+    ha_api.create_input_number.side_effect = [
+        "input_number.smartheat_client1_room_day_avg",
+        "input_number.smartheat_client1_room_night_avg",
+    ]
+    state_path = tmp_path / "derived_sensors.json"
+
+    result = ensure_all(ha_api, "client1", "sensor.rt", "sensor.aussentemperatur", 3.0, state_path)
+
+    assert result == {
+        "dat": "sensor.smartheat_client1_dat",
+        "dart": "sensor.smartheat_client1_dart",
+        "room_day_avg": "input_number.smartheat_client1_room_day_avg",
+        "room_night_avg": "input_number.smartheat_client1_room_night_avg",
+        "_room_12h_avg": "sensor.smartheat_client1_room_12h_avg",
+    }
+    assert "outdoor_min_24h" not in result
+    assert "outdoor_min_24h" not in load_backup(state_path)

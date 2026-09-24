@@ -1,6 +1,9 @@
+import logging
 from pathlib import Path
 
 from heizungsbruecke.backup_store import load_backup, save_backup
+
+logger = logging.getLogger(__name__)
 
 
 def ensure_all(
@@ -60,22 +63,29 @@ def ensure_all(
         ),
     )
 
-    outdoor_min_24h = _ensure_entity(
-        ha_api, tracking, "outdoor_min_24h", state_path,
-        lambda: ha_api.create_statistics_sensor(
-            name=f"SmartHeat {tenant_id} Aussentemp. 24h-Minimum", source_entity_id=outdoor_temp_entity_id,
-            max_age_hours=24, state_characteristic="value_min",
-        ),
-    )
-
-    return {
+    result = {
         "dat": dat,
         "dart": dart,
         "room_day_avg": room_day_avg,
         "room_night_avg": room_night_avg,
         "_room_12h_avg": room_12h_avg,
-        "outdoor_min_24h": outdoor_min_24h,
     }
+
+    try:
+        result["outdoor_min_24h"] = _ensure_entity(
+            ha_api, tracking, "outdoor_min_24h", state_path,
+            lambda: ha_api.create_statistics_sensor(
+                name=f"SmartHeat {tenant_id} Aussentemp. 24h-Minimum", source_entity_id=outdoor_temp_entity_id,
+                max_age_hours=24, state_characteristic="value_min",
+            ),
+        )
+    except Exception as exc:
+        logger.warning(
+            "Optionaler Hilfssensor outdoor_min_24h konnte nicht angelegt werden, "
+            "Sommersperre bleibt inaktiv: %s", exc,
+        )
+
+    return result
 
 
 def _ensure_entity(ha_api, tracking: dict, key: str, state_path: Path, create_fn) -> str:
