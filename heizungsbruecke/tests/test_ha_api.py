@@ -23,6 +23,23 @@ def test_get_state_returns_parsed_float():
     )
 
 
+def test_get_raw_state_returns_string_state_without_float_cast():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    mock_response = Mock()
+    mock_response.json.return_value = {"state": "heating"}
+    mock_response.raise_for_status.return_value = None
+
+    with patch("heizungsbruecke.ha_api.requests.get", return_value=mock_response) as mock_get:
+        result = api.get_raw_state("sensor.mode")
+
+    assert result == "heating"
+    mock_get.assert_called_once_with(
+        "http://supervisor/core/api/states/sensor.mode",
+        headers={"Authorization": "Bearer test-token"},
+        timeout=10,
+    )
+
+
 def test_get_state_with_attribute_reference_reads_named_attribute():
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
     mock_response = Mock()

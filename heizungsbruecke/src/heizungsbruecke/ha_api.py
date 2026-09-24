@@ -71,6 +71,18 @@ class HomeAssistantApi:
             return float(body["attributes"][attribute])
         return float(body["state"])
 
+    def get_raw_state(self, entity_id: str) -> str:
+        """Returns the entity's state string as-is (no float cast), for text sensors
+        such as operating_mode."""
+        real_entity_id, _, _ = entity_id.partition("::")
+        response = requests.get(
+            f"{self._base_url}{self._api_prefix}/states/{real_entity_id}",
+            headers=self._headers,
+            timeout=10,
+        )
+        response.raise_for_status()
+        return response.json()["state"]
+
     def list_states(self) -> list[dict]:
         response = requests.get(
             f"{self._base_url}{self._api_prefix}/states",

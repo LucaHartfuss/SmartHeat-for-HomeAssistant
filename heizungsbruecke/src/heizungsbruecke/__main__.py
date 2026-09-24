@@ -101,6 +101,18 @@ ROOM_TARGET_DEBOUNCE_SECONDS = 10
 # telemetry publish, which is harmless for a purely observational KPI feed.
 _last_telemetry_publish_ts: float | None = None
 
+# Optionale KPI-Rollen (Design-Spec KPI-Logging-Rework): nur vorhanden, wenn in
+# manifest.entity_ids konfiguriert; fehlende/ausgefallene Sensoren werden im Payload
+# weggelassen (nie null/0 senden -- der Server speichert NULL fuer fehlende Felder).
+_KPI_NUMERIC_ROLES = (
+    "flow_temperature", "return_temperature", "system_water_pressure", "efficiency_ratio",
+)
+_KPI_ENERGY_ROLES = (
+    "energy_electrical_heating", "energy_electrical_dhw",
+    "energy_primary_heating", "energy_primary_dhw",
+    "energy_thermal_heating", "energy_thermal_dhw",
+)
+
 # Gleicher Hostname fuer jeden Tenant (kein Tenant-spezifischer Wert) -- siehe
 # SmartHeat-HomeAssistant-Integration/custom_components/smartheat/api_client.py,
 # DEFAULT_HEIZUNGSSERVER_BASE_URL. Hartkodiert wie MQTT_HOST/MQTT_PORT oben, aus
@@ -730,14 +742,55 @@ def _run_telemetry_tick(
         return
     try:
         room_actual = ha_api.get_state(manifest.entity_ids["room_actual"])
+        now = time.time()
+        if not _telemetry_publish_due(options, now):
+            return
+        # Optional KPI entities are read only when a publish is actually due, so
+        # throttled ticks stay cheap.
         _maybe_publish_telemetry(
             mqtt_client=mqtt_client, options=options, room_actual=room_actual,
-            boost_active=boost_active, failsafe_active=failsafe_active, now=time.time(),
+            boost_active=boost_active, failsafe_active=failsafe_active, now=now,
+            kpi_fields=_read_kpi_fields(manifest, ha_api),
         )
     except Exception:
         logger.exception(
             "Fehler beim Veroeffentlichen der KPI-Telemetrie, wird beim naechsten Tick erneut versucht"
         )
+
+
+def _read_kpi_fields(manifest, ha_api) -> dict:
+    """Reads the configured optional KPI sensors, each in isolation: an unavailable/
+    unknown/non-numeric sensor is omitted (with a warning naming the role) and never
+    blocks the core telemetry or the other sensors. `energy` is only set if at least
+    one channel could be read."""
+    kpi_fields: dict = {}
+
+    def _read(role, reader):
+        try:
+            return True, reader(manifest.entity_ids[role])
+        except Exception as exc:
+            logger.warning("KPI-Sensor '%s' nicht lesbar, Feld wird weggelassen: %s", role, exc)
+            return False, None
+
+    for role in _KPI_NUMERIC_ROLES:
+        if role in manifest.entity_ids:
+            ok, value = _read(role, ha_api.get_state)
+            if ok:
+                kpi_fields[role] = value
+    if "operating_mode" in manifest.entity_ids:
+        ok, value = _read("operating_mode", ha_api.get_raw_state)
+        if ok:
+            kpi_fields["operating_mode"] = value
+
+    energy: dict = {}
+    for role in _KPI_ENERGY_ROLES:
+        if role in manifest.entity_ids:
+            ok, value = _read(role, ha_api.get_state)
+            if ok:
+                energy[role.removeprefix("energy_")] = value
+    if energy:
+        kpi_fields["energy"] = energy
+    return kpi_fields
 
 
 def _maybe_publish_full_snapshot(
@@ -788,9 +841,14 @@ def _maybe_publish_full_snapshot(
     return seq
 
 
+def _telemetry_publish_due(options: dict, now: float) -> bool:
+    interval = options.get("telemetry_interval_seconds", DEFAULT_TELEMETRY_INTERVAL_SECONDS)
+    return _last_telemetry_publish_ts is None or (now - _last_telemetry_publish_ts) >= interval
+
+
 def _maybe_publish_telemetry(
     mqtt_client, options: dict, room_actual: float, boost_active: bool,
-    failsafe_active: bool, now: float,
+    failsafe_active: bool, now: float, kpi_fields: dict | None = None,
 ) -> None:
     """Publishes the KPI telemetry snapshot (Design-Spec 2026-09-16 KPI-Erfassung,
     Abschnitt 1) on its own interval (telemetry_interval_seconds, default 300s) --
@@ -802,8 +860,7 @@ def _maybe_publish_telemetry(
     marker is in-memory only (see `_last_telemetry_publish_ts`), not persisted.
     """
     global _last_telemetry_publish_ts
-    interval = options.get("telemetry_interval_seconds", DEFAULT_TELEMETRY_INTERVAL_SECONDS)
-    if _last_telemetry_publish_ts is not None and (now - _last_telemetry_publish_ts) < interval:
+    if not _telemetry_publish_due(options, now):
         return
 
     mqtt_client.publish_telemetry({
@@ -811,6 +868,7 @@ def _maybe_publish_telemetry(
         "boost_active": boost_active,
         "failsafe_active": failsafe_active,
         "ts": datetime.now().isoformat(),
+        **(kpi_fields or {}),
     })
 
     _last_telemetry_publish_ts = now
