@@ -2982,6 +2982,7 @@ def test_setpoints_callback_during_boost_only_updates_backup(tmp_path, monkeypat
     ha_api.set_number_value.assert_not_called()
     backup = load_backup(tmp_path / "backup.json")
     assert (backup["curve_current"], backup["offset_current"]) == (0.6, 3.0)
+    assert failsafe_ctx["state"].awaiting_seq is None
 
 
 ABO_NOW = datetime(2026, 9, 25, 12, 0, tzinfo=timezone(timedelta(hours=2)))
@@ -3142,4 +3143,3 @@ def test_finish_abo_grace_without_forced_restore_and_without_flags_writes_nothin
     ha_api.send_notification.assert_not_called()
     ha_api.create_persistent_notification.assert_not_called()
     assert "Frist" in caplog.text
-    assert failsafe_ctx["state"].awaiting_seq is None
