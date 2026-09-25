@@ -343,47 +343,78 @@ def _connect_mqtt_with_retry(options: dict) -> BridgeMqttClient:
     raise last_error
 
 
-def _make_down_callback(role, manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client):
+_SETPOINT_STATUSES_WITH_VALUES = ("ok", "skipped_summer")
+
+
+def _is_finite_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _make_setpoints_callback(manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client):
+    """Verarbeitet die Server-Antwort auf down/setpoints (Schema 2, Design-Spec
+    2026-09-25, Abschnitt 3). Nur eine Antwort mit der gerade erwarteten seq schreibt
+    Werte und zaehlt als Ack -- auch `rejected` und formal kaputte Antworten sind ein
+    Ack (der Server lebt und hat geantwortet). Scheitert das Schreiben selbst (HA nicht
+    erreichbar), gibt es wie bisher keinen Ack."""
+    notify_service = options.get("notify_service", "")
+
     def _callback(client, userdata, message):
         try:
             if message.retain:
-                # paho-mqtt sets .retain only on the broker's initial post-(re)subscribe
-                # replay of the last retained value, never on a genuine live publish --
-                # see docs/superpowers/specs/2026-09-22-heizungsbruecke-retained-down-replay-fix-design.md.
-                # Assumes MQTT 3.1.1 semantics (this client's default): under MQTT v5 with
-                # the Retain-As-Published subscribe option, a genuine live publish could also
-                # arrive with retain=1 and would be wrongly skipped here -- including its
-                # ack, so a real server answer could no longer end Notbetrieb. Do not enable
-                # RAP for this subscription without revisiting this check.
-                logger.info(
-                    "Retained Down-Nachricht fuer Rolle '%s' beim (Re-)Subscribe uebersprungen "
-                    "(Broker-Replay, kein frisches Server-Signal)",
-                    role,
-                )
+                # paho setzt .retain nur beim Broker-Replay nach (Re-)Subscribe (MQTT
+                # 3.1.1) -- siehe 2026-09-22-heizungsbruecke-retained-down-replay-fix-design.md.
+                # Der Server publiziert seit Schema 2 ohnehin nicht mehr retained.
+                logger.info("Retained Setpoints-Nachricht beim (Re-)Subscribe uebersprungen (Broker-Replay)")
                 return
             payload = json.loads(message.payload)
+            if not isinstance(payload, dict):
+                logger.warning("Setpoints-Nachricht ist kein JSON-Objekt, verworfen: %r", payload)
+                return
+            seq = payload.get("seq")
             with write_lock:
-                handle_down_message(
-                    role=role,
-                    value=payload["v"],
-                    manifest=manifest,
-                    ha_api=ha_api,
-                    curve_min=options["curve_min"],
-                    curve_max=options["curve_max"],
-                    offset_min=options["offset_min"],
-                    offset_max=options["offset_max"],
-                    backup_path=BACKUP_PATH,
-                )
+                awaiting_seq = failsafe_ctx["state"].awaiting_seq
+                if seq is None or seq != awaiting_seq:
+                    logger.info("Setpoints-Antwort mit seq=%r ignoriert (erwartet: %r)", seq, awaiting_seq)
+                    return
+
+                status = payload.get("status")
+                curve, offset = payload.get("curve"), payload.get("offset")
+                if status in _SETPOINT_STATUSES_WITH_VALUES and _is_finite_number(curve) and _is_finite_number(offset):
+                    for role, value in (("curve_current", curve), ("offset_current", offset)):
+                        if role in manifest.entity_ids:
+                            handle_down_message(
+                                role=role, value=value, manifest=manifest, ha_api=ha_api,
+                                curve_min=options["curve_min"], curve_max=options["curve_max"],
+                                offset_min=options["offset_min"], offset_max=options["offset_max"],
+                                backup_path=BACKUP_PATH,
+                            )
+                elif status == "rejected":
+                    reason = payload.get("reason") or "ohne Begruendung"
+                    logger.warning("Server hat Snapshot (seq=%s) abgelehnt: %s", seq, reason)
+                    if notify_service:
+                        try:
+                            ha_api.send_notification(
+                                notify_service,
+                                f"Heizungsbruecke: Server hat die Messwerte abgelehnt ({reason}). "
+                                f"Die Heizkurve bleibt unveraendert.",
+                            )
+                        except Exception:
+                            logger.warning("Push-Benachrichtigung fuer abgelehnten Snapshot konnte nicht gesendet werden")
+                else:
+                    logger.warning(
+                        "Setpoints-Antwort (seq=%s) mit unbekanntem Status %r oder ungueltigen Werten "
+                        "(curve=%r, offset=%r) - nichts geschrieben", seq, status, curve, offset,
+                    )
+
                 was_active = failsafe_ctx["state"].active
                 _handle_ack(
                     failsafe_ctx=failsafe_ctx, mqtt_client=mqtt_client, failsafe_path=FAILSAFE_PATH,
-                    acked_seq=payload.get("seq"), ha_api=ha_api,
-                    notify_service=options.get("notify_service", ""),
+                    acked_seq=seq, ha_api=ha_api, notify_service=notify_service,
                 )
                 if was_active and not failsafe_ctx["state"].active:
                     _end_emergency_boost_if_active(failsafe_ctx, manifest, ha_api, options)
         except Exception:
-            logger.exception("Fehler bei der Verarbeitung einer Down-Nachricht fuer Rolle '%s'", role)
+            logger.exception("Fehler bei der Verarbeitung einer Setpoints-Nachricht")
     return _callback
 
 
@@ -1130,12 +1161,9 @@ def _run_bridge(options: dict, ha_api) -> bool:
         )
         mqtt_client.publish_status("failsafe", build_state_payload(failsafe_ctx["state"].active))
 
-        for role in ("curve_current", "offset_current"):
-            if role in manifest.entity_ids:
-                mqtt_client.subscribe_down(
-                    role=role,
-                    on_message=_make_down_callback(role, manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client),
-                )
+        mqtt_client.subscribe_setpoints(
+            on_message=_make_setpoints_callback(manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client),
+        )
     except ConnectionRefusedError as error:
         logger.error(
             "FEHLER: MQTT-Verbindung zum Broker fehlgeschlagen (Connection refused): %s. "
@@ -1154,7 +1182,7 @@ def _run_bridge(options: dict, ha_api) -> bool:
     # Neustart waehrend eines aktiven Boosts fuer ein kurzes Fenster veraltet sein (siehe
     # handle_down_message, Design-Spec Abschnitt D), und eine in diesem Fenster eintreffende
     # Down-Nachricht wuerde gegen einen Wert behandelt, der seit dem Neustart nie frisch aus
-    # echten Sensor-Werten neu bestimmt wurde. subscribe_down() liefert allein noch keine
+    # echten Sensor-Werten neu bestimmt wurde. subscribe_setpoints() liefert allein noch keine
     # Nachrichten aus -- erst loop_start() startet die Hintergrund-Verarbeitung -- daher
     # genuegt es, den allerersten _run_local_check()-Aufruf synchron VOR loop_start()
     # abzuschliessen, statt einen "sichereren" statischen Default zu waehlen.

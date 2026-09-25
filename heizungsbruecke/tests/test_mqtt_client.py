@@ -18,64 +18,6 @@ def test_init_authenticates_with_given_credentials():
     mock_client.username_pw_set.assert_called_once_with("u", "p")
 
 
-def test_publish_value_publishes_correct_topic_and_payload():
-    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
-        mock_client = MagicMock()
-        mock_client_cls.return_value = mock_client
-
-        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
-        client.publish_value(role="room_actual", value=19.5, seq="abc123")
-
-    mock_client.publish.assert_called_once_with(
-        "smartheat/kunde2/up/room_actual", '{"v": 19.5, "seq": "abc123"}', qos=1
-    )
-
-
-def test_subscribe_down_subscribes_correct_topic():
-    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
-        mock_client = MagicMock()
-        mock_client_cls.return_value = mock_client
-
-        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
-        callback = MagicMock()
-        client.subscribe_down(role="curve_current", on_message=callback)
-
-    mock_client.subscribe.assert_called_once_with("smartheat/kunde2/down/curve_current", 1)
-    mock_client.message_callback_add.assert_called_once_with(
-        "smartheat/kunde2/down/curve_current", callback
-    )
-
-
-def test_on_connect_resubscribes_previously_registered_roles():
-    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
-        mock_client = MagicMock()
-        mock_client_cls.return_value = mock_client
-
-        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
-        curve_callback = MagicMock()
-        offset_callback = MagicMock()
-        client.subscribe_down(role="curve_current", on_message=curve_callback)
-        client.subscribe_down(role="offset_current", on_message=offset_callback)
-
-        mock_client.subscribe.reset_mock()
-        mock_client.message_callback_add.reset_mock()
-
-        # Simulate paho invoking on_connect again after a reconnect.
-        on_connect = mock_client.on_connect
-        on_connect(mock_client, None, {}, 0, None)
-
-    mock_client.subscribe.assert_any_call("smartheat/kunde2/down/curve_current", 1)
-    mock_client.subscribe.assert_any_call("smartheat/kunde2/down/offset_current", 1)
-    mock_client.message_callback_add.assert_any_call(
-        "smartheat/kunde2/down/curve_current", curve_callback
-    )
-    mock_client.message_callback_add.assert_any_call(
-        "smartheat/kunde2/down/offset_current", offset_callback
-    )
-    assert mock_client.subscribe.call_count == 2
-    assert mock_client.message_callback_add.call_count == 2
-
-
 def test_on_connect_before_any_subscription_does_not_error():
     with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
         mock_client = MagicMock()
@@ -189,30 +131,6 @@ def test_on_connect_publishes_online_to_availability_topic():
     )
 
 
-def test_publish_value_uses_qos_1():
-    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
-        mock_client = MagicMock()
-        mock_client_cls.return_value = mock_client
-
-        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
-        client.publish_value(role="curve_current", value=0.8, seq="tick-1")
-
-        mock_client.publish.assert_called_once_with(
-            "smartheat/kunde2/up/curve_current", '{"v": 0.8, "seq": "tick-1"}', qos=1
-        )
-
-
-def test_subscribe_down_uses_qos_1():
-    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
-        mock_client = MagicMock()
-        mock_client_cls.return_value = mock_client
-
-        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
-        client.subscribe_down(role="curve_current", on_message=lambda *a: None)
-
-        mock_client.subscribe.assert_called_once_with("smartheat/kunde2/down/curve_current", 1)
-
-
 def test_on_disconnect_logs_warning_with_reason_code(monkeypatch, caplog):
     fake_paho_client = MagicMock()
     monkeypatch.setattr("heizungsbruecke.mqtt_client.mqtt.Client", lambda *a, **kw: fake_paho_client)
@@ -241,17 +159,6 @@ def test_publish_telemetry_publishes_correct_topic_payload_and_not_retained():
         "smartheat/kunde2/telemetry",
         '{"room_actual": 20.5, "boost_active": false, "failsafe_active": false, "ts": "2026-09-18T08:00:00Z"}',
         qos=1,
-    )
-
-
-def test_publish_value_includes_trigger_when_given():
-    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
-        mock_client = MagicMock()
-        mock_client_cls.return_value = mock_client
-        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
-        client.publish_value(role="heat_limit", value=16.0, seq="s1", trigger="daily")
-    mock_client.publish.assert_called_once_with(
-        "smartheat/kunde2/up/heat_limit", '{"v": 16.0, "seq": "s1", "trigger": "daily"}', qos=1
     )
 
 

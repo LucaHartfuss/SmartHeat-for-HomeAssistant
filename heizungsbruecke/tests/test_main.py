@@ -22,7 +22,7 @@ from heizungsbruecke.__main__ import (
     _load_failsafe_ctx,
     _load_failsafe_ctx_safe,
     _load_options_safe,
-    _make_down_callback,
+    _make_setpoints_callback,
     _maybe_publish_full_snapshot,
     _maybe_publish_telemetry,
     _resolve_effective_options,
@@ -60,6 +60,16 @@ def _base_options(**overrides):
     }
     options.update(overrides)
     return options
+
+
+def _setpoints_message(seq, status="ok", curve=0.5, offset=2.0, reason=None, retain=False):
+    message = MagicMock()
+    message.payload = json.dumps({
+        "schema": 2, "seq": seq, "ts": "2026-09-25T12:00:05+02:00",
+        "status": status, "curve": curve, "offset": offset, "reason": reason,
+    })
+    message.retain = retain
+    return message
 
 
 def test_is_configured_true_when_all_required_fields_present():
@@ -576,7 +586,7 @@ def test_load_failsafe_ctx_safe_passes_through_valid_file(tmp_path):
     assert loaded["emergency_boost_active"] is True
 
 
-def test_make_down_callback_acks_matching_seq_after_successful_handling(tmp_path, monkeypatch):
+def test_setpoints_callback_acks_matching_seq_after_successful_handling(tmp_path, monkeypatch):
     # This is the wiring itself: a successful handle_down_message must be followed,
     # inside the same write_lock, by _handle_ack(...) with the payload's seq.
     monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
@@ -589,10 +599,8 @@ def test_make_down_callback_acks_matching_seq_after_successful_handling(tmp_path
     failsafe_ctx = {"state": FailsafeState(active=True, awaiting_seq="seq-1"), "emergency_boost_active": False}
     mqtt_client = MagicMock()
 
-    callback = _make_down_callback("curve_current", manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
-    message = MagicMock()
-    message.payload = json.dumps({"v": 0.5, "seq": "seq-1"})
-    message.retain = False
+    callback = _make_setpoints_callback(manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
+    message = _setpoints_message("seq-1", curve=0.5)
 
     callback(client=MagicMock(), userdata=None, message=message)
 
@@ -601,9 +609,11 @@ def test_make_down_callback_acks_matching_seq_after_successful_handling(tmp_path
     mqtt_client.publish_status.assert_any_call("failsafe", "OFF")
 
 
-def test_make_down_callback_rejects_nan_without_crashing_or_poisoning_backup(tmp_path, monkeypatch):
-    # I2 failure-chain closure (whole-branch review): a NaN down-message value must not
-    # crash the MQTT callback and must not get persisted into backup.json.
+def test_setpoints_callback_ok_with_nan_writes_nothing_but_acks(tmp_path, monkeypatch):
+    # New semantics (Spec Sec. 3): an ok/skipped_summer answer with invalid (non-finite)
+    # values must not crash the MQTT callback, must not get persisted into backup.json --
+    # but, unlike the old down-topic semantics, still counts as an ack (the server is
+    # alive and answered), so Notbetrieb ends.
     backup_path = tmp_path / "backup.json"
     monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
     monkeypatch.setattr("heizungsbruecke.__main__.FAILSAFE_PATH", tmp_path / "failsafe_state.json")
@@ -614,21 +624,17 @@ def test_make_down_callback_rejects_nan_without_crashing_or_poisoning_backup(tmp
     failsafe_ctx = {"state": FailsafeState(active=True, awaiting_seq="seq-1"), "emergency_boost_active": False}
     mqtt_client = MagicMock()
 
-    callback = _make_down_callback("curve_current", manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
-    message = MagicMock()
-    message.payload = json.dumps({"v": float("nan"), "seq": "seq-1"})
-    message.retain = False
+    callback = _make_setpoints_callback(manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
+    message = _setpoints_message("seq-1", curve=float("nan"))
 
     callback(client=MagicMock(), userdata=None, message=message)  # must not raise
 
     ha_api.set_number_value.assert_not_called()
     assert load_backup(backup_path) == {}
-    # handle_down_message raised before _handle_ack ever ran -- a rejected message must
-    # not be mistaken for a valid live update.
-    assert failsafe_ctx["state"] == FailsafeState(active=True, awaiting_seq="seq-1")
+    assert failsafe_ctx["state"] == FailsafeState(active=False, awaiting_seq=None)
 
 
-def test_make_down_callback_does_not_ack_when_handling_fails(tmp_path, monkeypatch):
+def test_setpoints_callback_does_not_ack_when_handling_fails(tmp_path, monkeypatch):
     # Mirror image of the above: if handle_down_message raises (e.g. HA unreachable), a
     # bad/failed message must not be mistaken for a valid live update.
     monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
@@ -641,17 +647,15 @@ def test_make_down_callback_does_not_ack_when_handling_fails(tmp_path, monkeypat
     failsafe_ctx = {"state": FailsafeState(active=True, awaiting_seq="seq-1"), "emergency_boost_active": False}
     mqtt_client = MagicMock()
 
-    callback = _make_down_callback("curve_current", manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
-    message = MagicMock()
-    message.payload = json.dumps({"v": 0.5, "seq": "seq-1"})
-    message.retain = False
+    callback = _make_setpoints_callback(manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
+    message = _setpoints_message("seq-1", curve=0.5)
 
     callback(client=MagicMock(), userdata=None, message=message)  # must not raise -- caught and logged
 
     assert failsafe_ctx["state"] == FailsafeState(active=True, awaiting_seq="seq-1")
 
 
-def test_make_down_callback_skips_retained_replay_without_acking(tmp_path, monkeypatch, caplog):
+def test_setpoints_callback_skips_retained_replay_without_acking(tmp_path, monkeypatch, caplog):
     # A retained MQTT message is the broker replaying the last-published value on every
     # (re)subscribe, not a fresh signal from the server -- must not be mistaken for an ack.
     monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
@@ -663,10 +667,8 @@ def test_make_down_callback_skips_retained_replay_without_acking(tmp_path, monke
     failsafe_ctx = {"state": FailsafeState(active=True, awaiting_seq="seq-1"), "emergency_boost_active": False}
     mqtt_client = MagicMock()
 
-    callback = _make_down_callback("curve_current", manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
-    message = MagicMock()
-    message.payload = json.dumps({"v": 0.5, "seq": "seq-1"})
-    message.retain = True
+    callback = _make_setpoints_callback(manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
+    message = _setpoints_message("seq-1", curve=0.5, retain=True)
 
     with caplog.at_level(logging.INFO):
         callback(client=MagicMock(), userdata=None, message=message)
@@ -742,7 +744,7 @@ def test_end_emergency_boost_if_active_is_noop_when_not_active(tmp_path, monkeyp
     ha_api.set_number_value.assert_not_called()
 
 
-def test_make_down_callback_ends_emergency_boost_when_notbetrieb_ends(tmp_path, monkeypatch):
+def test_setpoints_callback_ends_emergency_boost_when_notbetrieb_ends(tmp_path, monkeypatch):
     # Review Focus #3: Notbetrieb ending via a successful ack must immediately restore
     # a still-active emergency excursion, not leave the device pinned at the max value
     # until some future room_actual change happens to trigger another local check.
@@ -757,10 +759,8 @@ def test_make_down_callback_ends_emergency_boost_when_notbetrieb_ends(tmp_path, 
     failsafe_ctx = {"state": FailsafeState(active=True, awaiting_seq="seq-1"), "emergency_boost_active": True}
     mqtt_client = MagicMock()
 
-    callback = _make_down_callback("curve_current", manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
-    message = MagicMock()
-    message.payload = json.dumps({"v": 0.5, "seq": "seq-1"})
-    message.retain = False
+    callback = _make_setpoints_callback(manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
+    message = _setpoints_message("seq-1", curve=0.5)
 
     callback(client=MagicMock(), userdata=None, message=message)
 
@@ -832,10 +832,8 @@ def test_precedence_emergency_exit_via_ack_restores_comfort_values_while_comfort
     failsafe_ctx = {"state": FailsafeState(active=True, awaiting_seq="seq-1"), "emergency_boost_active": True}
     options = _base_options()
     write_lock = threading.RLock()
-    callback = _make_down_callback("curve_current", manifest, ha_api, options, write_lock, failsafe_ctx, MagicMock())
-    message = MagicMock()
-    message.payload = json.dumps({"v": 0.4, "seq": "seq-1"})
-    message.retain = False
+    callback = _make_setpoints_callback(manifest, ha_api, options, write_lock, failsafe_ctx, MagicMock())
+    message = _setpoints_message("seq-1", curve=0.4, offset=1.0)
 
     callback(client=MagicMock(), userdata=None, message=message)
 
@@ -1480,10 +1478,8 @@ def test_late_down_message_after_ack_timeout_ends_notbetrieb(tmp_path, monkeypat
     _FakeTimer.instances[0].fire()
     assert failsafe_ctx["state"].active is True
 
-    callback = _make_down_callback("curve_current", manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
-    message = MagicMock()
-    message.payload = json.dumps({"v": 0.5, "seq": seq})
-    message.retain = False
+    callback = _make_setpoints_callback(manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client)
+    message = _setpoints_message(seq, curve=0.5)
     callback(client=MagicMock(), userdata=None, message=message)
 
     assert failsafe_ctx["state"] == FailsafeState(active=False, awaiting_seq=None)
@@ -1569,9 +1565,10 @@ def test_default_local_check_interval_seconds_is_300():
 def test_run_bridge_primes_local_check_before_mqtt_loop_start(monkeypatch):
     # Boot-Sync-Fix (Sicherheits-Review-Fund, siehe task-8-brief.md Zusatzanforderung):
     # backup.json["boost_active"] darf nach einem Neustart nicht veraltet sein, bevor
-    # MQTT-Down-Nachrichten verarbeitet werden koennen. subscribe_down() allein liefert
-    # noch keine Nachrichten aus -- erst loop_start() startet die Verarbeitung. Also muss
-    # der allererste _run_local_check()-Aufruf synchron VOR loop_start() abgeschlossen sein.
+    # MQTT-Setpoints-Nachrichten verarbeitet werden koennen. subscribe_setpoints() allein
+    # liefert noch keine Nachrichten aus -- erst loop_start() startet die Verarbeitung.
+    # Also muss der allererste _run_local_check()-Aufruf synchron VOR loop_start()
+    # abgeschlossen sein.
     call_order = []
 
     fake_mqtt_client = MagicMock()
@@ -1610,6 +1607,8 @@ def test_run_bridge_primes_local_check_before_mqtt_loop_start(monkeypatch):
     # The priming call (first entry) must precede loop_start -- proves the fix, not just
     # that both got called at some point.
     assert call_order.index("_run_local_check") < call_order.index("loop_start")
+    fake_mqtt_client.subscribe_setpoints.assert_called_once()
+    fake_mqtt_client.subscribe_down.assert_not_called()
 
 
 def test_run_bridge_resets_stale_boost_active_when_priming_check_raises(monkeypatch, tmp_path):
@@ -2848,3 +2847,135 @@ def test_run_local_check_passes_target_mean_to_snapshot(tmp_path, monkeypatch):
     _run_local_check(manifest, ha_api, MagicMock(), _base_options(), threading.Lock(), boost_was_active=False, room_target=20.0)
 
     assert maybe_publish.call_args.kwargs["target_avg"] == pytest.approx(20.0)
+
+
+def _setpoints_setup(tmp_path, monkeypatch, awaiting_seq="seq-1", active=False):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    monkeypatch.setattr("heizungsbruecke.__main__.FAILSAFE_PATH", tmp_path / "failsafe_state.json")
+    manifest = ChannelManifest(entity_ids={"curve_current": "number.curve", "offset_current": "number.offset"})
+    ha_api = MagicMock()
+    failsafe_ctx = {"state": FailsafeState(active=active, awaiting_seq=awaiting_seq), "emergency_boost_active": False}
+    mqtt_client = MagicMock()
+    callback = _make_setpoints_callback(
+        manifest, ha_api, _base_options(notify_service="notify.handy"), threading.RLock(), failsafe_ctx, mqtt_client,
+    )
+    return callback, ha_api, failsafe_ctx, mqtt_client
+
+
+def test_setpoints_callback_ok_writes_both_roles_and_acks(tmp_path, monkeypatch):
+    callback, ha_api, failsafe_ctx, _ = _setpoints_setup(tmp_path, monkeypatch, active=True)
+
+    callback(client=MagicMock(), userdata=None, message=_setpoints_message("seq-1", curve=0.6, offset=3.0))
+
+    ha_api.set_number_value.assert_any_call("number.curve", 0.6)
+    ha_api.set_number_value.assert_any_call("number.offset", 3.0)
+    assert failsafe_ctx["state"] == FailsafeState(active=False, awaiting_seq=None)
+    assert load_backup(tmp_path / "backup.json")["curve_current"] == 0.6
+
+
+def test_setpoints_callback_skipped_summer_writes_values_and_acks(tmp_path, monkeypatch):
+    callback, ha_api, failsafe_ctx, _ = _setpoints_setup(tmp_path, monkeypatch)
+
+    callback(client=MagicMock(), userdata=None, message=_setpoints_message("seq-1", status="skipped_summer"))
+
+    assert ha_api.set_number_value.call_count == 2
+    assert failsafe_ctx["state"].awaiting_seq is None
+
+
+def test_setpoints_callback_clamps_values_locally(tmp_path, monkeypatch):
+    callback, ha_api, _, _ = _setpoints_setup(tmp_path, monkeypatch)
+
+    callback(client=MagicMock(), userdata=None, message=_setpoints_message("seq-1", curve=9.9, offset=-3.0))
+
+    ha_api.set_number_value.assert_any_call("number.curve", 0.8)
+    ha_api.set_number_value.assert_any_call("number.offset", 0.0)
+
+
+def test_setpoints_callback_rejected_writes_nothing_notifies_and_acks(tmp_path, monkeypatch, caplog):
+    callback, ha_api, failsafe_ctx, _ = _setpoints_setup(tmp_path, monkeypatch, active=True)
+
+    with caplog.at_level(logging.WARNING):
+        callback(client=MagicMock(), userdata=None, message=_setpoints_message(
+            "seq-1", status="rejected", curve=None, offset=None, reason="fehlende Rolle: dat",
+        ))
+
+    ha_api.set_number_value.assert_not_called()
+    assert failsafe_ctx["state"] == FailsafeState(active=False, awaiting_seq=None)  # rejected beendet Notbetrieb
+    assert "fehlende Rolle: dat" in caplog.text
+    notify_messages = [call.args[1] for call in ha_api.send_notification.call_args_list]
+    assert any("fehlende Rolle: dat" in text for text in notify_messages)
+
+
+def test_setpoints_callback_ignores_foreign_seq(tmp_path, monkeypatch):
+    callback, ha_api, failsafe_ctx, _ = _setpoints_setup(tmp_path, monkeypatch, awaiting_seq="seq-2", active=True)
+
+    callback(client=MagicMock(), userdata=None, message=_setpoints_message("seq-1"))
+
+    ha_api.set_number_value.assert_not_called()
+    assert failsafe_ctx["state"] == FailsafeState(active=True, awaiting_seq="seq-2")
+
+
+def test_setpoints_callback_ignores_answer_when_nothing_awaited(tmp_path, monkeypatch):
+    # Nach Add-on-Neustart ist awaiting_seq None: spaete Antworten verfallen bewusst.
+    callback, ha_api, failsafe_ctx, _ = _setpoints_setup(tmp_path, monkeypatch, awaiting_seq=None)
+
+    callback(client=MagicMock(), userdata=None, message=_setpoints_message("seq-1"))
+
+    ha_api.set_number_value.assert_not_called()
+
+
+def test_setpoints_callback_second_delivery_of_same_answer_is_ignored(tmp_path, monkeypatch):
+    # Review Focus 5: QoS-1-Doppelzustellung darf keinen zweiten Cloud-Schreibzugriff ausloesen.
+    callback, ha_api, _, _ = _setpoints_setup(tmp_path, monkeypatch)
+    message = _setpoints_message("seq-1")
+
+    callback(client=MagicMock(), userdata=None, message=message)
+    callback(client=MagicMock(), userdata=None, message=message)
+
+    assert ha_api.set_number_value.call_count == 2  # nur die erste Zustellung (2 Rollen)
+
+
+def test_setpoints_callback_unknown_status_writes_nothing_but_acks(tmp_path, monkeypatch, caplog):
+    callback, ha_api, failsafe_ctx, _ = _setpoints_setup(tmp_path, monkeypatch, active=True)
+
+    with caplog.at_level(logging.WARNING):
+        callback(client=MagicMock(), userdata=None, message=_setpoints_message("seq-1", status="maybe"))
+
+    ha_api.set_number_value.assert_not_called()
+    assert failsafe_ctx["state"].active is False
+    assert "maybe" in caplog.text
+
+
+@pytest.mark.parametrize("curve,offset", [(None, 2.0), ("0.5", 2.0), (True, 2.0), (0.5, float("inf"))])
+def test_setpoints_callback_ok_with_invalid_values_writes_nothing_but_acks(tmp_path, monkeypatch, curve, offset):
+    callback, ha_api, failsafe_ctx, _ = _setpoints_setup(tmp_path, monkeypatch, active=True)
+
+    callback(client=MagicMock(), userdata=None, message=_setpoints_message("seq-1", curve=curve, offset=offset))
+
+    ha_api.set_number_value.assert_not_called()
+    assert failsafe_ctx["state"].active is False
+
+
+@pytest.mark.parametrize("raw", [b"[]", b"\"x\"", b"{kaputt", b""])
+def test_setpoints_callback_survives_non_object_payload_without_ack(tmp_path, monkeypatch, raw):
+    callback, ha_api, failsafe_ctx, _ = _setpoints_setup(tmp_path, monkeypatch, active=True)
+    message = MagicMock()
+    message.payload = raw
+    message.retain = False
+
+    callback(client=MagicMock(), userdata=None, message=message)  # darf nicht werfen
+
+    ha_api.set_number_value.assert_not_called()
+    assert failsafe_ctx["state"] == FailsafeState(active=True, awaiting_seq="seq-1")
+
+
+def test_setpoints_callback_during_boost_only_updates_backup(tmp_path, monkeypatch):
+    callback, ha_api, failsafe_ctx, _ = _setpoints_setup(tmp_path, monkeypatch)
+    save_backup(tmp_path / "backup.json", {"boost_active": True})
+
+    callback(client=MagicMock(), userdata=None, message=_setpoints_message("seq-1", curve=0.6, offset=3.0))
+
+    ha_api.set_number_value.assert_not_called()
+    backup = load_backup(tmp_path / "backup.json")
+    assert (backup["curve_current"], backup["offset_current"]) == (0.6, 3.0)
+    assert failsafe_ctx["state"].awaiting_seq is None

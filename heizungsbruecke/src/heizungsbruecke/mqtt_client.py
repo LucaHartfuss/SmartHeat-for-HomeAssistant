@@ -14,7 +14,6 @@ _AUTH_REJECTED_REASON_CODES = frozenset({134, 135})
 class BridgeMqttClient:
     def __init__(self, host: str, port: int, tenant_id: str, username: str, password: str, on_auth_rejected=None):
         self._tenant_id = tenant_id
-        self._subscriptions = {}  # role -> on_message
         self._discovery_configs = {}  # (component, object_id) -> config dict
         self._last_status = {}  # object_id -> payload
         self._setpoints_callback = None
@@ -42,10 +41,6 @@ class BridgeMqttClient:
         logger.info("MQTT verbunden (reason_code=%s)", reason_code)
         if self._setpoints_callback is not None:
             self._subscribe_setpoints()
-        if self._subscriptions:
-            logger.info("MQTT (re-)verbunden, %d Down-Subscription(s) werden (erneut) angemeldet", len(self._subscriptions))
-        for role, on_message in self._subscriptions.items():
-            self._subscribe(role=role, on_message=on_message)
         if self._discovery_configs:
             logger.info("MQTT (re-)verbunden, %d Discovery-Config(s) werden (erneut) veroeffentlicht", len(self._discovery_configs))
         for (component, object_id), config in self._discovery_configs.items():
@@ -58,11 +53,6 @@ class BridgeMqttClient:
 
     def _on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties) -> None:
         logger.warning("MQTT-Verbindung getrennt (reason_code=%s) - Reconnect laeuft ueber paho automatisch", reason_code)
-
-    def _subscribe(self, role: str, on_message) -> None:
-        topic = f"smartheat/{self._tenant_id}/down/{role}"
-        self._client.message_callback_add(topic, on_message)
-        self._client.subscribe(topic, 1)
 
     def _setpoints_topic(self) -> str:
         return f"smartheat/{self._tenant_id}/down/setpoints"
@@ -80,14 +70,6 @@ class BridgeMqttClient:
         topic = f"smartheat/{self._tenant_id}/status/{object_id}"
         self._client.publish(topic, payload, retain=True)
 
-    def publish_value(self, role: str, value: float, seq: str, trigger: str | None = None) -> None:
-        topic = f"smartheat/{self._tenant_id}/up/{role}"
-        message = {"v": value, "seq": seq}
-        if trigger is not None:
-            message["trigger"] = trigger
-        payload = json.dumps(message)
-        self._client.publish(topic, payload, qos=1)
-
     def publish_telemetry(self, payload: dict) -> None:
         topic = f"smartheat/{self._tenant_id}/telemetry"
         self._client.publish(topic, json.dumps(payload), qos=1)
@@ -99,7 +81,7 @@ class BridgeMqttClient:
         """Publishes a retained MQTT Discovery config so Home Assistant's MQTT
         integration creates the entity automatically -- no configuration.yaml needed
         on the customer side. Stored so it is replayed on every reconnect (see
-        _on_connect), the same way down-subscriptions already are.
+        _on_connect), the same way the setpoints subscription already is.
         """
         self._discovery_configs[(component, object_id)] = config
         self._publish_discovery(component=component, object_id=object_id, config=config)
@@ -107,10 +89,6 @@ class BridgeMqttClient:
     def publish_status(self, object_id: str, payload: str) -> None:
         self._last_status[object_id] = payload
         self._publish_status(object_id=object_id, payload=payload)
-
-    def subscribe_down(self, role: str, on_message) -> None:
-        self._subscriptions[role] = on_message
-        self._subscribe(role=role, on_message=on_message)
 
     def subscribe_setpoints(self, on_message) -> None:
         self._setpoints_callback = on_message
