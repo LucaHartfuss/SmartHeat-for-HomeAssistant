@@ -320,3 +320,15 @@ class HomeAssistantApi:
             timeout=10,
         )
         response.raise_for_status()
+
+    def create_persistent_notification(self, title: str, message: str, notification_id: str) -> None:
+        """Legt eine Benachrichtigung in der HA-Oberflaeche an. Eine gleiche
+        `notification_id` ersetzt die vorige, statt sie zu stapeln. Wirft wie
+        send_notification; abfangen ist Sache des Aufrufers."""
+        response = requests.post(
+            f"{self._base_url}{self._api_prefix}/services/persistent_notification/create",
+            headers=self._headers,
+            json={"title": title, "message": message, "notification_id": notification_id},
+            timeout=10,
+        )
+        response.raise_for_status()

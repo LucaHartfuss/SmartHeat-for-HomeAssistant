@@ -488,3 +488,29 @@ def test_create_statistics_sensor_passes_custom_sampling_size():
             max_age_hours=24, state_characteristic="value_min", sampling_size=10000,
         )
     assert mock_advance.call_args.args[1]["sampling_size"] == 10000
+
+
+def test_create_persistent_notification_posts_to_service():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    mock_response = Mock()
+    mock_response.raise_for_status.return_value = None
+
+    with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response) as mock_post:
+        api.create_persistent_notification("SmartHeat", "Abo inaktiv", "smartheat_abo_inaktiv")
+
+    mock_post.assert_called_once_with(
+        "http://supervisor/core/api/services/persistent_notification/create",
+        headers={"Authorization": "Bearer test-token"},
+        json={"title": "SmartHeat", "message": "Abo inaktiv", "notification_id": "smartheat_abo_inaktiv"},
+        timeout=10,
+    )
+
+
+def test_create_persistent_notification_raises_on_http_error():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    mock_response = Mock()
+    mock_response.raise_for_status.side_effect = RuntimeError("500")
+
+    with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response):
+        with pytest.raises(RuntimeError):
+            api.create_persistent_notification("SmartHeat", "x", "smartheat_abo_inaktiv")
