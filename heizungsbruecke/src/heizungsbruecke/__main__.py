@@ -290,7 +290,7 @@ def _ensure_derived_sensors_with_retry(ha_api, options: dict) -> dict[str, str]:
     raise last_error
 
 
-def _connect_mqtt_with_retry(options: dict) -> BridgeMqttClient:
+def _connect_mqtt_with_retry(options: dict, on_auth_rejected=None) -> BridgeMqttClient:
     """Wraps `BridgeMqttClient` constructor with retry-with-backoff (see
     MQTT_CONNECT_RETRY_DELAYS_SECONDS above for the rationale) so a transient failure
     during add-on startup (e.g. cloudflared_access_mqtt hasn't started yet) doesn't
@@ -303,6 +303,7 @@ def _connect_mqtt_with_retry(options: dict) -> BridgeMqttClient:
             return BridgeMqttClient(
                 host=MQTT_HOST, port=MQTT_PORT, tenant_id=options["tenant_id"],
                 username=options["mqtt_username"], password=options["mqtt_password"],
+                on_auth_rejected=on_auth_rejected,
             )
         except Exception as error:
             last_error = error
@@ -496,8 +497,22 @@ def _handle_ack(
 
 def _handle_ack_timeout(
     seq: str, failsafe_ctx: dict, mqtt_client, failsafe_path: Path, write_lock,
-    ha_api, notify_service: str,
+    ha_api, notify_service: str, tenant_id: str | None = None,
 ) -> None:
+    if tenant_id is not None:
+        with write_lock:
+            if enter_notbetrieb_on_ack_timeout(failsafe_ctx["state"], seq) == failsafe_ctx["state"]:
+                return  # bereits beantwortet oder durch neueren Publish ersetzt
+        # Bewusst AUSSERHALB des write_lock (Design-Spec 2026-09-25, Abschnitt 4): die
+        # HTTP-Abfrage darf den Timer-Thread blockieren, nicht die Setpoints-Verarbeitung.
+        if entitlement.query_status(tenant_id, ACCOUNTS_API_BASE_URL) == entitlement.INACTIVE:
+            with write_lock:
+                still_pending = enter_notbetrieb_on_ack_timeout(failsafe_ctx["state"], seq) != failsafe_ctx["state"]
+            if still_pending:
+                _enter_abo_inactive(
+                    failsafe_ctx, write_lock, mqtt_client, ha_api, notify_service, datetime.now().astimezone(),
+                )
+            return
     with write_lock:
         new_state = enter_notbetrieb_on_ack_timeout(failsafe_ctx["state"], seq)
         if new_state == failsafe_ctx["state"]:
@@ -522,14 +537,14 @@ def _handle_ack_timeout(
 
 def _schedule_ack_timeout(
     seq: str, failsafe_ctx: dict, mqtt_client, failsafe_path: Path, write_lock,
-    ha_api, notify_service: str,
+    ha_api, notify_service: str, tenant_id: str | None = None,
 ) -> threading.Timer:
     timer = threading.Timer(
         ACK_TIMEOUT_SECONDS, _handle_ack_timeout,
         kwargs=dict(
             seq=seq, failsafe_ctx=failsafe_ctx, mqtt_client=mqtt_client,
             failsafe_path=failsafe_path, write_lock=write_lock,
-            ha_api=ha_api, notify_service=notify_service,
+            ha_api=ha_api, notify_service=notify_service, tenant_id=tenant_id,
         ),
     )
     timer.daemon = True
@@ -671,6 +686,23 @@ def _enter_abo_inactive(failsafe_ctx: dict, write_lock, mqtt_client, ha_api, not
             "Abo weiterhin inaktiv (seit %s) - Notbetrieb laeuft bis %s.",
             since.strftime("%d.%m.%Y"), entitlement.grace_end(since).strftime("%d.%m.%Y"),
         )
+
+
+def _make_auth_rejected_callback(tenant_id: str, failsafe_ctx: dict, write_lock, ha_api, notify_service: str):
+    """Wird von BridgeMqttClient im paho-Netzwerk-Thread aufgerufen, wenn der Broker die
+    Zugangsdaten ablehnt (Credentials beim Suspend widerrufen, hs-2). Nur ein eindeutiges
+    "inactive" wechselt in den Abo-inaktiv-Modus; sonst bleibt es beim Log und paho
+    versucht weiter zu verbinden."""
+    def _on_auth_rejected(mqtt_client) -> None:
+        status = entitlement.query_status(tenant_id, ACCOUNTS_API_BASE_URL)
+        if status != entitlement.INACTIVE:
+            logger.error(
+                "MQTT-Anmeldung vom Broker abgelehnt, Abo-Status ist aber '%s' - Zugangsdaten "
+                "pruefen (ggf. SmartHeat-Integration neu einrichten).", status,
+            )
+            return
+        _enter_abo_inactive(failsafe_ctx, write_lock, mqtt_client, ha_api, notify_service, datetime.now().astimezone())
+    return _on_auth_rejected
 
 
 def _finish_abo_grace(
@@ -837,6 +869,7 @@ def _run_local_check(
                 seq=seq, failsafe_ctx=failsafe_ctx, mqtt_client=mqtt_client,
                 failsafe_path=FAILSAFE_PATH, write_lock=write_lock,
                 ha_api=ha_api, notify_service=options.get("notify_service", ""),
+                tenant_id=options.get("tenant_id"),
             )
 
     return boost_was_active
@@ -1242,7 +1275,12 @@ def _run_bridge(options: dict, ha_api) -> bool:
     mqtt_client = None
     if not _abo_inactive(failsafe_ctx):
         try:
-            mqtt_client = _connect_mqtt_with_retry(options)
+            mqtt_client = _connect_mqtt_with_retry(
+                options,
+                on_auth_rejected=_make_auth_rejected_callback(
+                    options["tenant_id"], failsafe_ctx, write_lock, ha_api, notify_service,
+                ),
+            )
             mqtt_client.publish_discovery(
                 component="binary_sensor", object_id="failsafe",
                 config=build_discovery_config(options["tenant_id"]),

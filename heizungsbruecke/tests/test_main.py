@@ -24,6 +24,7 @@ from heizungsbruecke.__main__ import (
     _load_failsafe_ctx,
     _load_failsafe_ctx_safe,
     _load_options_safe,
+    _make_auth_rejected_callback,
     _make_setpoints_callback,
     _maybe_publish_full_snapshot,
     _maybe_publish_telemetry,
@@ -3206,3 +3207,141 @@ def test_run_bridge_grace_end_during_runtime_restores_notifies_and_returns_true(
     ha_api.set_number_value.assert_any_call("number.curve_current", 0.9)
     ha_api.create_persistent_notification.assert_called_with("SmartHeat", ABO_ENDED_MESSAGE, "smartheat_abo_inaktiv")
     assert load_backup(tmp_path / "backup.json")["emergency_boost_active"] is False
+
+
+def _timeout_setup(tmp_path, monkeypatch, status):
+    _abo_paths(tmp_path, monkeypatch)
+    queried = []
+
+    def fake_query(tenant_id, base_url):
+        queried.append(tenant_id)
+        return status
+
+    monkeypatch.setattr("heizungsbruecke.__main__.entitlement.query_status", fake_query)
+    failsafe_ctx = {"state": FailsafeState(active=False, awaiting_seq="seq-1"), "emergency_boost_active": False}
+    return failsafe_ctx, MagicMock(), MagicMock(), queried
+
+
+def test_ack_timeout_with_inactive_abo_enters_abo_mode_instead_of_server_alarm(tmp_path, monkeypatch):
+    failsafe_ctx, mqtt_client, ha_api, queried = _timeout_setup(tmp_path, monkeypatch, "inactive")
+
+    _handle_ack_timeout(
+        seq="seq-1", failsafe_ctx=failsafe_ctx, mqtt_client=mqtt_client,
+        failsafe_path=tmp_path / "failsafe_state.json", write_lock=threading.RLock(),
+        ha_api=ha_api, notify_service="notify.handy", tenant_id="t1",
+    )
+
+    assert queried == ["t1"]
+    assert failsafe_ctx["state"].active is True
+    assert failsafe_ctx["abo_inactive_since"] is not None
+    mqtt_client.stop.assert_called_once()
+    texts = [call.args[1] for call in ha_api.send_notification.call_args_list]
+    assert any("Abo inaktiv" in text for text in texts)
+    assert not any("antwortet nicht" in text for text in texts)
+
+
+@pytest.mark.parametrize("status", ["active", "unknown"])
+def test_ack_timeout_with_active_or_unknown_abo_keeps_server_alarm(tmp_path, monkeypatch, status):
+    failsafe_ctx, mqtt_client, ha_api, _ = _timeout_setup(tmp_path, monkeypatch, status)
+
+    _handle_ack_timeout(
+        seq="seq-1", failsafe_ctx=failsafe_ctx, mqtt_client=mqtt_client,
+        failsafe_path=tmp_path / "failsafe_state.json", write_lock=threading.RLock(),
+        ha_api=ha_api, notify_service="notify.handy", tenant_id="t1",
+    )
+
+    assert failsafe_ctx["state"].active is True
+    assert failsafe_ctx.get("abo_inactive_since") is None
+    mqtt_client.stop.assert_not_called()
+    assert "antwortet nicht" in ha_api.send_notification.call_args.args[1]
+
+
+def test_ack_timeout_already_acked_does_not_query_status(tmp_path, monkeypatch):
+    failsafe_ctx, mqtt_client, ha_api, queried = _timeout_setup(tmp_path, monkeypatch, "inactive")
+    failsafe_ctx["state"] = FailsafeState(active=False, awaiting_seq=None)
+
+    _handle_ack_timeout(
+        seq="seq-1", failsafe_ctx=failsafe_ctx, mqtt_client=mqtt_client,
+        failsafe_path=tmp_path / "failsafe_state.json", write_lock=threading.RLock(),
+        ha_api=ha_api, notify_service="", tenant_id="t1",
+    )
+
+    assert queried == []
+
+
+def test_ack_arriving_during_status_query_prevents_notbetrieb(tmp_path, monkeypatch):
+    _abo_paths(tmp_path, monkeypatch)
+    failsafe_ctx = {"state": FailsafeState(active=False, awaiting_seq="seq-1"), "emergency_boost_active": False}
+
+    def query_while_ack_arrives(tenant_id, base_url):
+        failsafe_ctx["state"] = FailsafeState(active=False, awaiting_seq=None)  # Ack kam dazwischen
+        return "inactive"
+
+    monkeypatch.setattr("heizungsbruecke.__main__.entitlement.query_status", query_while_ack_arrives)
+    mqtt_client = MagicMock()
+
+    _handle_ack_timeout(
+        seq="seq-1", failsafe_ctx=failsafe_ctx, mqtt_client=mqtt_client,
+        failsafe_path=tmp_path / "failsafe_state.json", write_lock=threading.RLock(),
+        ha_api=MagicMock(), notify_service="", tenant_id="t1",
+    )
+
+    assert failsafe_ctx["state"] == FailsafeState(active=False, awaiting_seq=None)
+    mqtt_client.stop.assert_not_called()
+
+
+def test_run_local_check_passes_tenant_id_to_ack_timer(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    monkeypatch.setattr("heizungsbruecke.__main__.threading.Timer", _FakeTimer)
+    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual", "room_target": "sensor.room_target"})
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 20.0
+    failsafe_ctx = {"state": FailsafeState(active=False, awaiting_seq=None), "emergency_boost_active": False}
+
+    _run_local_check(
+        manifest, ha_api, MagicMock(), _base_options(tenant_id="t1"), threading.Lock(), boost_was_active=False,
+        room_target=21.0, failsafe_ctx=failsafe_ctx,
+    )
+
+    assert _FakeTimer.instances[0].kwargs["tenant_id"] == "t1"
+
+
+def test_auth_rejected_with_inactive_abo_enters_abo_mode(tmp_path, monkeypatch):
+    _abo_paths(tmp_path, monkeypatch)
+    monkeypatch.setattr("heizungsbruecke.__main__.entitlement.query_status", lambda tenant_id, base_url: "inactive")
+    failsafe_ctx = {"state": FailsafeState(active=False, awaiting_seq=None), "emergency_boost_active": False}
+    ha_api = MagicMock()
+    mqtt_client = MagicMock()
+
+    callback = _make_auth_rejected_callback("t1", failsafe_ctx, threading.RLock(), ha_api, "notify.handy")
+    callback(mqtt_client)
+
+    assert failsafe_ctx["abo_inactive_since"] is not None
+    assert failsafe_ctx["state"].active is True
+    mqtt_client.stop.assert_called_once()
+    ha_api.create_persistent_notification.assert_called_once()
+
+
+@pytest.mark.parametrize("status", ["active", "unknown"])
+def test_auth_rejected_with_active_or_unknown_abo_only_logs(tmp_path, monkeypatch, caplog, status):
+    _abo_paths(tmp_path, monkeypatch)
+    monkeypatch.setattr("heizungsbruecke.__main__.entitlement.query_status", lambda tenant_id, base_url: status)
+    failsafe_ctx = {"state": FailsafeState(active=False, awaiting_seq=None), "emergency_boost_active": False}
+    mqtt_client = MagicMock()
+
+    with caplog.at_level(logging.ERROR):
+        _make_auth_rejected_callback("t1", failsafe_ctx, threading.RLock(), MagicMock(), "")(mqtt_client)
+
+    assert failsafe_ctx.get("abo_inactive_since") is None
+    mqtt_client.stop.assert_not_called()
+    assert "abgelehnt" in caplog.text
+
+
+def test_connect_mqtt_with_retry_passes_auth_rejected_hook(monkeypatch):
+    received = {}
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: received.update(kwargs) or MagicMock())
+    hook = MagicMock()
+
+    _connect_mqtt_with_retry(_full_valid_options(), on_auth_rejected=hook)
+
+    assert received["on_auth_rejected"] is hook
