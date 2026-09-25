@@ -10,6 +10,10 @@ logger = logging.getLogger(__name__)
 # Suspend des Tenants widerrufen (hs-2), siehe Abo-inaktiv-Modus in __main__.py.
 _AUTH_REJECTED_REASON_CODES = frozenset({134, 135})
 
+# Payload des Last Will auf dem Availability-Topic; stop() veroeffentlicht ihn selbst,
+# weil ein sauberes disconnect() den Last Will nicht ausloest.
+_AVAILABILITY_OFFLINE = "offline"
+
 
 class BridgeMqttClient:
     def __init__(self, host: str, port: int, tenant_id: str, username: str, password: str, on_auth_rejected=None):
@@ -22,7 +26,7 @@ class BridgeMqttClient:
         self._client.username_pw_set(username, password)
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
-        self._client.will_set(self._availability_topic(), payload="offline", retain=True)
+        self._client.will_set(self._availability_topic(), payload=_AVAILABILITY_OFFLINE, retain=True)
         self._client.connect(host, port)
 
     def _availability_topic(self) -> str:
@@ -102,7 +106,14 @@ class BridgeMqttClient:
 
     def stop(self) -> None:
         """Beendet die Verbindung dauerhaft (kein Auto-Reconnect mehr). Auch aus dem
-        paho-Netzwerk-Thread selbst aufrufbar: loop_stop() joint dann nicht."""
+        paho-Netzwerk-Thread selbst aufrufbar: loop_stop() joint dann nicht.
+        Veroeffentlicht vorher best effort den Last-Will-Payload, da ein sauberes
+        disconnect() den LWT nicht ausloest und HA die Entities sonst weiter als
+        "online" anzeigen wuerde (Final-Review Minor 2)."""
+        try:
+            self._client.publish(self._availability_topic(), _AVAILABILITY_OFFLINE, retain=True)
+        except Exception:
+            logger.warning("Availability 'offline' konnte vor dem Trennen nicht veroeffentlicht werden")
         try:
             self._client.disconnect()
         finally:

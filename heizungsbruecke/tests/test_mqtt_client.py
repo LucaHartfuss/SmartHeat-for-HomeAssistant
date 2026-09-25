@@ -258,3 +258,29 @@ def test_stop_disconnects_and_stops_loop():
 
     mock_client.disconnect.assert_called_once()
     mock_client.loop_stop.assert_called_once()
+
+
+def test_stop_publishes_offline_availability_before_disconnect():
+    # Final-Review Minor 2: ein sauberes disconnect() loest den Last Will nicht aus --
+    # stop() muss "offline" selbst veroeffentlichen (gleiches Topic/Payload/Retain wie LWT).
+    client, mock_client = _client_with_mock()
+    will_args = mock_client.will_set.call_args
+    mock_client.reset_mock()
+
+    client.stop()
+
+    assert will_args.args[0] == "smartheat/kunde2/status/availability"
+    assert will_args.kwargs == {"payload": "offline", "retain": True}
+    names = [name for name, _, _ in mock_client.mock_calls]
+    assert names == ["publish", "disconnect", "loop_stop"]
+    mock_client.publish.assert_called_once_with("smartheat/kunde2/status/availability", "offline", retain=True)
+
+
+def test_stop_still_disconnects_when_offline_publish_fails():
+    client, mock_client = _client_with_mock()
+    mock_client.publish.side_effect = RuntimeError("nicht verbunden")
+
+    client.stop()  # darf nicht werfen
+
+    mock_client.disconnect.assert_called_once()
+    mock_client.loop_stop.assert_called_once()
