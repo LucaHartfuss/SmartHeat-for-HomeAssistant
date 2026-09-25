@@ -35,7 +35,7 @@ from heizungsbruecke.profiles import (
     resolve_window_defaults,
     window_size_hours,
 )
-from heizungsbruecke.target_history import record_change, time_weighted_mean
+from heizungsbruecke.target_history import record_change, sanitize_history, time_weighted_mean
 
 OPTIONS_PATH = Path("/data/options.json")
 BACKUP_PATH = Path("/data/backup.json")
@@ -660,7 +660,13 @@ def _run_local_check(
         # geaendert hat -- bei local_check_interval_seconds=30 sonst bis zu 2.880
         # SD-Karten-Schreibvorgaenge/Tag statt vorher 24.
         now_epoch = time.time()
-        history = backup.get("target_history", [])
+        raw_history = backup.get("target_history", [])
+        history = sanitize_history(raw_history)
+        if history != raw_history:
+            logger.warning(
+                "target_history in Backup war ungueltig (%r) - wird als leer behandelt und neu aufgebaut.",
+                raw_history,
+            )
         updated_history = record_change(history, now_epoch, room_target)
         if room_target != previous_room_target or updated_history != history:
             backup["last_room_target"] = room_target

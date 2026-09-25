@@ -2796,6 +2796,44 @@ def test_run_local_check_seeds_and_records_target_history(tmp_path, monkeypatch)
     assert load_backup(backup_path)["target_history"] == [[1_000_000.0, 21.0], [1_003_600.0, 22.0]]
 
 
+def test_run_local_check_sanitizes_null_target_history(tmp_path, monkeypatch, caplog):
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    save_backup(backup_path, {"target_history": None, "last_room_target": 20.0})
+    monkeypatch.setattr("heizungsbruecke.__main__.time.time", lambda: 1_000_000.0)
+    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual", "room_target": "sensor.room_target"})
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 20.0
+
+    with caplog.at_level(logging.WARNING):
+        _run_local_check(
+            manifest, ha_api, MagicMock(), _base_options(), threading.Lock(),
+            boost_was_active=False, room_target=21.0,
+        )
+
+    assert load_backup(backup_path)["target_history"] == [[1_000_000.0, 21.0]]
+    assert "target_history" in caplog.text
+
+
+def test_run_local_check_sanitizes_malformed_target_history_entries(tmp_path, monkeypatch, caplog):
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    save_backup(backup_path, {"target_history": [["x", 1]], "last_room_target": 20.0})
+    monkeypatch.setattr("heizungsbruecke.__main__.time.time", lambda: 1_000_000.0)
+    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual", "room_target": "sensor.room_target"})
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 20.0
+
+    with caplog.at_level(logging.WARNING):
+        _run_local_check(
+            manifest, ha_api, MagicMock(), _base_options(), threading.Lock(),
+            boost_was_active=False, room_target=21.0,
+        )
+
+    assert load_backup(backup_path)["target_history"] == [[1_000_000.0, 21.0]]
+    assert "target_history" in caplog.text
+
+
 def test_run_local_check_passes_target_mean_to_snapshot(tmp_path, monkeypatch):
     backup_path = tmp_path / "backup.json"
     monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
