@@ -34,7 +34,7 @@ def test_ensure_all_creates_all_helpers_when_none_exist(tmp_path):
     )
     ha_api.create_statistics_sensor.assert_any_call(
         name="SmartHeat client1 Aussentemp. 24h-Minimum", source_entity_id="sensor.aussentemperatur",
-        max_age_hours=24, state_characteristic="value_min",
+        max_age_hours=24, state_characteristic="value_min", sampling_size=10000,
     )
     assert ha_api.create_statistics_sensor.call_count == 4
     assert ha_api.create_input_number.call_count == 2

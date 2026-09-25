@@ -162,7 +162,7 @@ class HomeAssistantApi:
 
     def create_statistics_sensor(
         self, name: str, source_entity_id: str, max_age_hours: float,
-        state_characteristic: str = "average_step",
+        state_characteristic: str = "average_step", sampling_size: int = 255,
     ) -> str:
         """Legt einen `statistics`-Sensor (gleitender Mittelwert) per Config-Entry-Flow an.
 
@@ -207,6 +207,13 @@ class HomeAssistantApi:
 
         `state_characteristic` default `average_step` keeps DAT/DART unchanged;
         `outdoor_min_24h` uses the minimum characteristic.
+
+        `sampling_size` default 255 matches the live-calibrated DAT/DART helpers
+        (see above); HA's statistics sensor keeps a `deque(maxlen=sampling_size)`
+        sampled on every state_reported event, so at ~60s polling 255 samples
+        covers only ~4h, not `max_age_hours` -- callers that need the full
+        window (e.g. a 24h characteristic) must pass a larger `sampling_size`
+        explicitly (see derived_sensors.py's OUTDOOR_MIN_24H_SAMPLING_SIZE).
         """
         fields = {
             "name": name,
@@ -214,7 +221,7 @@ class HomeAssistantApi:
             "state_characteristic": state_characteristic,
             "keep_last_sample": True,
             "max_age": {"hours": max_age_hours},
-            "sampling_size": 255,
+            "sampling_size": sampling_size,
             "precision": 2,
         }
         flow_response = self._start_config_flow("statistics")
