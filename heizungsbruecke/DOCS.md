@@ -20,6 +20,17 @@ Home-Assistant-Integration: installieren, dann Einstellungen → Geraete &
 Dienste → Integration hinzufuegen → "SmartHeat". Die Integration schreibt die
 noetige Konfiguration automatisch in dieses Add-on.
 
+## Update von 0.13.1 auf 0.14.0
+
+Neu: Sommersperre und genauerer Tagesabgleich. Das Add-on legt beim Start automatisch
+einen weiteren Hilfssensor an ("SmartHeat <tenant> Aussentemp. 24h-Minimum") und merkt
+sich die Solltemperatur-Aenderungen der letzten 24 h. Beides geht zusammen mit der Art
+des Anlasses (taeglich / Solltemperatur geaendert) an den Server: War die Heizung die
+ganzen letzten 24 h durch die Abschaltgrenze gesperrt, passt der Server die Heizkurve
+nicht an. Beim taeglichen Abgleich vergleicht er die Raumtemperatur mit dem Mittel der
+Solltemperatur statt mit dem aktuellen Wert. Keine Konfigurationsaenderung noetig; gegen
+einen aelteren Server verhaelt sich das Add-on wie 0.13.1.
+
 ## Update von 0.13.0 auf 0.13.1
 
 Fehlerbehebung: Der volle Snapshot an den Server enthielt seit 0.13.0 auch die

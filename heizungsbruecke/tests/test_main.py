@@ -1191,8 +1191,11 @@ def test_run_local_check_skips_all_writes_when_nothing_changed(tmp_path, monkeyp
     # true no-op once Task 8 wires _maybe_publish_full_snapshot into the same function --
     # without it, target_changed would trivially fire (None != 20.0) and this assertion
     # would break for reasons unrelated to what this test actually guards.
+    # target_history is also pre-seeded (Task 9) so that record_change returns unchanged
+    # and no backup write happens for steady-state (same target value).
     save_backup(backup_path, {
         "last_room_target": 20.0, "boost_active": False, "last_published_target_rt": 20.0,
+        "target_history": [[0, 20.0]],
     })
     # Telemetry cadence marker is in-memory only now, not part of backup.json --
     # pre-seed it far in the future so its own publish doesn't fire here and confuse
@@ -2744,3 +2747,66 @@ def test_on_connect_hook_reseeds_stable_target_cache_without_watchdog_ever_obser
     # local check (the next real trigger, in practice usually room_actual, does that
     # with the now-fresh cache value).
     assert run_local_check_room_targets == [15.0]
+
+
+def test_maybe_publish_full_snapshot_tags_target_change(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    publish = MagicMock()
+    monkeypatch.setattr("heizungsbruecke.__main__.publish_snapshot", publish)
+
+    _maybe_publish_full_snapshot(
+        manifest=ChannelManifest(entity_ids={}), ha_api=MagicMock(), mqtt_client=MagicMock(),
+        options={"daily_trigger_time": "12:00"}, room_target=21.0, notify_service="",
+        now=datetime(2026, 9, 17, 12, 5), target_avg=20.5,
+    )
+
+    assert publish.call_args.kwargs["trigger"] == "target_change"
+    assert publish.call_args.kwargs["computed_values"] == {"room_target_avg_24h": 20.5}
+
+
+def test_maybe_publish_full_snapshot_tags_daily(tmp_path, monkeypatch):
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    save_backup(backup_path, {"last_published_target_rt": 21.0})
+    publish = MagicMock()
+    monkeypatch.setattr("heizungsbruecke.__main__.publish_snapshot", publish)
+
+    _maybe_publish_full_snapshot(
+        manifest=ChannelManifest(entity_ids={}), ha_api=MagicMock(), mqtt_client=MagicMock(),
+        options={"daily_trigger_time": "12:00"}, room_target=21.0, notify_service="",
+        now=datetime(2026, 9, 17, 12, 5), target_avg=20.5,
+    )
+
+    assert publish.call_args.kwargs["trigger"] == "daily"
+
+
+def test_run_local_check_seeds_and_records_target_history(tmp_path, monkeypatch):
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    monkeypatch.setattr("heizungsbruecke.__main__.time.time", lambda: 1_000_000.0)
+    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual", "room_target": "sensor.room_target"})
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 20.0
+
+    _run_local_check(manifest, ha_api, MagicMock(), _base_options(), threading.Lock(), boost_was_active=False, room_target=21.0)
+    assert load_backup(backup_path)["target_history"] == [[1_000_000.0, 21.0]]
+
+    monkeypatch.setattr("heizungsbruecke.__main__.time.time", lambda: 1_003_600.0)
+    _run_local_check(manifest, ha_api, MagicMock(), _base_options(), threading.Lock(), boost_was_active=False, room_target=22.0)
+    assert load_backup(backup_path)["target_history"] == [[1_000_000.0, 21.0], [1_003_600.0, 22.0]]
+
+
+def test_run_local_check_passes_target_mean_to_snapshot(tmp_path, monkeypatch):
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    save_backup(backup_path, {"target_history": [[1_000_000.0 - 86400 * 2, 20.0]], "last_room_target": 20.0})
+    monkeypatch.setattr("heizungsbruecke.__main__.time.time", lambda: 1_000_000.0)
+    maybe_publish = MagicMock(return_value=None)
+    monkeypatch.setattr("heizungsbruecke.__main__._maybe_publish_full_snapshot", maybe_publish)
+    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual", "room_target": "sensor.room_target"})
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 19.0
+
+    _run_local_check(manifest, ha_api, MagicMock(), _base_options(), threading.Lock(), boost_was_active=False, room_target=20.0)
+
+    assert maybe_publish.call_args.kwargs["target_avg"] == pytest.approx(20.0)

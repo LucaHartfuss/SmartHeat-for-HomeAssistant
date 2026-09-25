@@ -35,6 +35,7 @@ from heizungsbruecke.profiles import (
     resolve_window_defaults,
     window_size_hours,
 )
+from heizungsbruecke.target_history import record_change, time_weighted_mean
 
 OPTIONS_PATH = Path("/data/options.json")
 BACKUP_PATH = Path("/data/backup.json")
@@ -658,9 +659,14 @@ def _run_local_check(
         # I/O-Fix (Abschnitt A.2): nur schreiben, wenn sich der Wert tatsaechlich
         # geaendert hat -- bei local_check_interval_seconds=30 sonst bis zu 2.880
         # SD-Karten-Schreibvorgaenge/Tag statt vorher 24.
-        if room_target != previous_room_target:
+        now_epoch = time.time()
+        history = backup.get("target_history", [])
+        updated_history = record_change(history, now_epoch, room_target)
+        if room_target != previous_room_target or updated_history != history:
             backup["last_room_target"] = room_target
+            backup["target_history"] = updated_history
             save_backup(BACKUP_PATH, backup)
+        target_avg = time_weighted_mean(updated_history, now_epoch)
 
         if failsafe_ctx is not None and failsafe_ctx["emergency_boost_active"]:
             # Praezedenz Notfall- vor Comfort-Boost (Design-Spec 2026-09-23, Abschnitt 3;
@@ -714,6 +720,7 @@ def _run_local_check(
         seq = _maybe_publish_full_snapshot(
             manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options=options,
             room_target=room_target, notify_service=options.get("notify_service", ""), now=datetime.now(),
+            target_avg=target_avg,
         )
         if seq is not None and failsafe_ctx is not None:
             failsafe_ctx["state"] = register_publish_attempt(failsafe_ctx["state"], seq)
@@ -800,6 +807,7 @@ def _read_kpi_fields(manifest, ha_api) -> dict:
 
 def _maybe_publish_full_snapshot(
     manifest, ha_api, mqtt_client, options: dict, room_target: float, notify_service: str, now: datetime,
+    target_avg: float | None = None,
 ) -> str | None:
     """Triggers a full snapshot publish (curve.py recompute server-side) when target_rt
     has changed since the last publish, or the profile's daily_trigger_time has been
@@ -830,13 +838,15 @@ def _maybe_publish_full_snapshot(
     if not (daily_due or target_changed):
         return None
 
+    trigger = "target_change" if target_changed else "daily"
     seq = str(uuid.uuid4())
     publish_snapshot(
         manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq=seq, notify_service=notify_service,
+        trigger=trigger, computed_values={"room_target_avg_24h": target_avg},
     )
     logger.info(
-        "Voller Snapshot veroeffentlicht (seq=%s, Grund=%s)",
-        seq, "taeglicher Zeitpunkt" if daily_due else "target_rt geaendert",
+        "Voller Snapshot veroeffentlicht (seq=%s, trigger=%s)",
+        seq, trigger,
     )
 
     backup["last_published_target_rt"] = room_target
