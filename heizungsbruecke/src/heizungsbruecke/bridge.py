@@ -1,4 +1,6 @@
 import logging
+import math
+from datetime import datetime
 from pathlib import Path
 
 from heizungsbruecke.backup_store import load_backup, save_backup
@@ -11,26 +13,32 @@ _CLAMPED_ROLES = ("curve_current", "offset_current")
 
 logger = logging.getLogger(__name__)
 
+SNAPSHOT_SCHEMA_VERSION = 2
+
+
+def _is_finite_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
 
 def publish_snapshot(
     manifest: ChannelManifest, ha_api, mqtt_client, seq: str, notify_service: str = "",
     trigger: str | None = None, computed_values: dict[str, float | None] | None = None,
 ) -> None:
-    """Publishes one snapshot of all configured roles. A role whose entity cannot be
-    read (dead sensor -> HA reports 'unavailable', or an HTTP failure) is skipped for
-    this tick instead of aborting the whole snapshot -- otherwise a single dead battery
-    would also skip the boost-failsafe evaluation that runs after this call (I3).
+    """Publishes one snapshot as ONE message on up/snapshot (Schema 2, Design-Spec
+    2026-09-25). A required role whose entity cannot be read (dead sensor -> HA reports
+    'unavailable', or an HTTP failure) is left out of `roles` instead of aborting the
+    snapshot -- the server then answers `rejected` ("fehlende Rolle: ..."), which still
+    counts as an ack, so a dead sensor no longer causes a false Notbetrieb (B3). The
+    boost-failsafe evaluation after this call is unaffected either way (I3).
 
-    If `notify_service` is configured, a push notification is sent per broken role and
-    tick. This is deliberately not deduplicated: a broken sensor should keep nagging
-    until somebody fixes it. Notifying is best effort -- a failing notify service must
-    not break the read path.
-
-    Optional roles go out first (the server buffers them and completes the tick on the
-    last required role) and never trigger a notification -- a missing optional value
-    just means the server falls back to its old behaviour.
+    If `notify_service` is configured, a push notification is sent per broken required
+    role and tick -- deliberately not deduplicated, a broken sensor should keep nagging.
+    Notifying is best effort. Optional roles never notify; a missing or non-finite
+    optional value is simply left out.
     """
     computed_values = computed_values or {}
+    roles: dict[str, float] = {}
+
     for role in OPTIONAL_SNAPSHOT_ROLES:
         if role in computed_values:
             value = computed_values[role]
@@ -42,20 +50,19 @@ def publish_snapshot(
                 continue
         else:
             continue
-        if value is None:
-            continue
-        mqtt_client.publish_value(role=role, value=value, seq=seq, trigger=trigger)
+        if _is_finite_number(value):
+            roles[role] = value
 
     for role in SNAPSHOT_ROLES:
         entity_id = manifest.entity_ids.get(role)
         if entity_id is None:
             continue
         try:
-            value = ha_api.get_state(entity_id)
+            roles[role] = ha_api.get_state(entity_id)
         except Exception:
             logger.warning(
                 "Sensor fuer Rolle '%s' (%s) liefert keinen gueltigen Wert, "
-                "wird fuer diesen Tick uebersprungen",
+                "fehlt in diesem Snapshot",
                 role, entity_id,
             )
             if notify_service:
@@ -69,8 +76,14 @@ def publish_snapshot(
                     logger.warning(
                         "Push-Benachrichtigung fuer Rolle '%s' konnte nicht gesendet werden", role
                     )
-            continue
-        mqtt_client.publish_value(role=role, value=value, seq=seq, trigger=trigger)
+
+    mqtt_client.publish_snapshot({
+        "schema": SNAPSHOT_SCHEMA_VERSION,
+        "seq": seq,
+        "trigger": trigger,
+        "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "roles": roles,
+    })
 
 
 def handle_down_message(

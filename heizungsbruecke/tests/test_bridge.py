@@ -1,3 +1,4 @@
+from datetime import datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -7,6 +8,11 @@ from heizungsbruecke.boost import BoostDecision
 from heizungsbruecke.emergency_boost import EmergencyBoostDecision
 from heizungsbruecke.manifest import SNAPSHOT_ROLES, OPTIONAL_SNAPSHOT_ROLES, ChannelManifest
 from heizungsbruecke.backup_store import load_backup, save_backup
+
+
+def _published_snapshot(mqtt_client):
+    mqtt_client.publish_snapshot.assert_called_once()
+    return mqtt_client.publish_snapshot.call_args.args[0]
 
 
 def test_publish_snapshot_reads_each_entity_and_publishes():
@@ -23,8 +29,12 @@ def test_publish_snapshot_reads_each_entity_and_publishes():
 
     publish_snapshot(manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq="tick-1")
 
-    mqtt_client.publish_value.assert_any_call(role="room_target", value=21.0, seq="tick-1", trigger=None)
-    mqtt_client.publish_value.assert_any_call(role="heat_limit", value=16.0, seq="tick-1", trigger=None)
+    payload = _published_snapshot(mqtt_client)
+    assert payload["schema"] == 2
+    assert payload["seq"] == "tick-1"
+    assert payload["trigger"] is None
+    assert datetime.fromisoformat(payload["ts"]).tzinfo is not None
+    assert payload["roles"] == {"room_target": 21.0, "heat_limit": 16.0}
 
 
 def test_publish_snapshot_publishes_only_server_snapshot_roles():
@@ -46,7 +56,7 @@ def test_publish_snapshot_publishes_only_server_snapshot_roles():
         notify_service="notify.mobile_app_lucas_iphone",
     )
 
-    published_roles = {call.kwargs["role"] for call in mqtt_client.publish_value.call_args_list}
+    published_roles = set(_published_snapshot(mqtt_client)["roles"])
     assert published_roles == set(SNAPSHOT_ROLES)
     read_entities = {call.args[0] for call in ha_api.get_state.call_args_list}
     assert read_entities == set(snapshot_entities.values())
@@ -76,7 +86,7 @@ def test_publish_snapshot_skips_broken_role_and_publishes_the_others():
 
     publish_snapshot(manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq="tick-1")
 
-    published_roles = {call.kwargs["role"] for call in mqtt_client.publish_value.call_args_list}
+    published_roles = set(_published_snapshot(mqtt_client)["roles"])
     assert published_roles == {"room_target", "heat_limit"}
 
 
@@ -121,7 +131,7 @@ def test_publish_snapshot_survives_a_failing_notification():
         notify_service="notify.mobile_app_lucas_iphone",
     )
 
-    published_roles = {call.kwargs["role"] for call in mqtt_client.publish_value.call_args_list}
+    published_roles = set(_published_snapshot(mqtt_client)["roles"])
     assert published_roles == {"room_target", "heat_limit"}
 
 
@@ -601,7 +611,7 @@ def test_apply_emergency_decision_steady_state_inactive_does_nothing(tmp_path):
     ha_api.set_number_value.assert_not_called()
 
 
-def test_publish_snapshot_sends_optional_roles_first_with_trigger():
+def test_publish_snapshot_includes_optional_roles_and_trigger():
     manifest = ChannelManifest(entity_ids={
         **{role: f"sensor.{role}" for role in SNAPSHOT_ROLES},
         "outdoor_min_24h": "sensor.omin",
@@ -615,12 +625,11 @@ def test_publish_snapshot_sends_optional_roles_first_with_trigger():
         trigger="daily", computed_values={"room_target_avg_24h": 20.4},
     )
 
-    calls = mqtt_client.publish_value.call_args_list
-    roles = [call.kwargs["role"] for call in calls]
-    assert roles[:2] == ["outdoor_min_24h", "room_target_avg_24h"]
-    assert roles[2:] == list(SNAPSHOT_ROLES)
-    assert calls[1].kwargs["value"] == 20.4
-    assert all(call.kwargs["trigger"] == "daily" for call in calls)
+    payload = _published_snapshot(mqtt_client)
+    assert payload["trigger"] == "daily"
+    assert payload["roles"]["outdoor_min_24h"] == 12.0
+    assert payload["roles"]["room_target_avg_24h"] == 20.4
+    assert set(payload["roles"]) == set(SNAPSHOT_ROLES) | {"outdoor_min_24h", "room_target_avg_24h"}
 
 
 def test_publish_snapshot_omits_unreadable_optional_role_silently():
@@ -640,7 +649,7 @@ def test_publish_snapshot_omits_unreadable_optional_role_silently():
         notify_service="notify.mobile_app_lucas_iphone",
     )
 
-    roles = [call.kwargs["role"] for call in mqtt_client.publish_value.call_args_list]
+    roles = list(_published_snapshot(mqtt_client)["roles"])
     assert roles == ["heat_limit"]
     ha_api.send_notification.assert_not_called()
 
@@ -656,5 +665,32 @@ def test_publish_snapshot_skips_computed_role_when_value_is_none():
         computed_values={"room_target_avg_24h": None},
     )
 
-    roles = [call.kwargs["role"] for call in mqtt_client.publish_value.call_args_list]
+    roles = list(_published_snapshot(mqtt_client)["roles"])
     assert roles == ["heat_limit"]
+
+
+def test_publish_snapshot_publishes_even_when_every_required_role_fails():
+    # Server antwortet dann "rejected" (fehlende Rolle) -- das ist ein Ack, kein
+    # falscher Notbetrieb (B3).
+    manifest = ChannelManifest(entity_ids={"dat": "sensor.kaputt"})
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = ValueError("unavailable")
+    mqtt_client = MagicMock()
+
+    publish_snapshot(manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq="s1")
+
+    assert _published_snapshot(mqtt_client)["roles"] == {}
+
+
+def test_publish_snapshot_omits_non_finite_optional_value():
+    manifest = ChannelManifest(entity_ids={"heat_limit": "number.h"})
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 16.0
+    mqtt_client = MagicMock()
+
+    publish_snapshot(
+        manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq="s1",
+        computed_values={"room_target_avg_24h": float("nan")},
+    )
+
+    assert _published_snapshot(mqtt_client)["roles"] == {"heat_limit": 16.0}

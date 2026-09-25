@@ -181,7 +181,7 @@ def test_run_local_check_evaluates_boost_without_publishing_when_nothing_changed
     new_state = _run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active=False, room_target=20.0)
 
     assert new_state is False
-    mqtt_client.publish_value.assert_not_called()
+    mqtt_client.publish_snapshot.assert_not_called()
 
 
 def _broken_sensor_setup():
@@ -1232,7 +1232,7 @@ def test_maybe_publish_full_snapshot_publishes_when_target_changed(tmp_path, mon
     )
 
     assert result is not None
-    assert mqtt_client.publish_value.call_count == 2
+    assert mqtt_client.publish_snapshot.call_count == 1
     assert load_backup(tmp_path / "backup.json")["last_published_target_rt"] == 21.0
 
 
@@ -1251,7 +1251,7 @@ def test_maybe_publish_full_snapshot_does_not_republish_unchanged_target(tmp_pat
     )
 
     assert result is None
-    mqtt_client.publish_value.assert_not_called()
+    mqtt_client.publish_snapshot.assert_not_called()
 
 
 def test_maybe_publish_full_snapshot_publishes_when_daily_trigger_time_reached(tmp_path, monkeypatch):
@@ -1269,7 +1269,7 @@ def test_maybe_publish_full_snapshot_publishes_when_daily_trigger_time_reached(t
     )
 
     assert result is not None
-    assert mqtt_client.publish_value.call_count == 2
+    assert mqtt_client.publish_snapshot.call_count == 1
     assert load_backup(backup_path)["last_daily_trigger_date"] == "2026-09-17"
 
 
@@ -1287,7 +1287,7 @@ def test_maybe_publish_full_snapshot_does_not_refire_daily_trigger_same_day(tmp_
     )
 
     assert result is None
-    mqtt_client.publish_value.assert_not_called()
+    mqtt_client.publish_snapshot.assert_not_called()
 
 
 def test_maybe_publish_full_snapshot_skips_when_nothing_triggers(tmp_path, monkeypatch):
@@ -1304,7 +1304,7 @@ def test_maybe_publish_full_snapshot_skips_when_nothing_triggers(tmp_path, monke
     )
 
     assert result is None
-    mqtt_client.publish_value.assert_not_called()
+    mqtt_client.publish_snapshot.assert_not_called()
     assert load_backup(backup_path) == {"last_published_target_rt": 21.0}  # unchanged, no gratuitous write
 
 
