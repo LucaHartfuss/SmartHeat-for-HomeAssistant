@@ -633,6 +633,12 @@ def _abo_inactive(failsafe_ctx: dict | None) -> bool:
     return failsafe_ctx is not None and failsafe_ctx.get("abo_inactive_since") is not None
 
 
+def _abo_finished(failsafe_ctx: dict | None) -> bool:
+    """True, sobald _finish_abo_grace die zuletzt gelernten Werte erfolgreich
+    wiederhergestellt hat -- danach darf kein lokaler Check mehr schreiben."""
+    return failsafe_ctx is not None and bool(failsafe_ctx.get("abo_finished"))
+
+
 def _abo_grace_expired(failsafe_ctx: dict) -> bool:
     since = failsafe_ctx.get("abo_inactive_since")
     return since is not None and entitlement.grace_expired(since, datetime.now().astimezone())
@@ -707,12 +713,18 @@ def _make_auth_rejected_callback(tenant_id: str, failsafe_ctx: dict, write_lock,
 
 def _finish_abo_grace(
     manifest, ha_api, options: dict, failsafe_ctx: dict, write_lock, *, always_restore: bool, final_notice: bool,
-) -> None:
+) -> bool:
     """Fristende (always_restore=True, final_notice=True) bzw. Abschluss-Start
     (always_restore=False, final_notice=False): laufende Boosts beenden und die zuletzt
     vom Server bestaetigten Werte aus backup.json geclampt auf das Geraet schreiben.
-    Scheitert das Schreiben, bleiben die Boost-Flags gesetzt -- der naechste Start
-    versucht es erneut (sonst bliebe das Geraet dauerhaft auf Boost-Werten)."""
+
+    Gibt True zurueck, wenn die Wiederherstellung geklappt hat (oder nichts
+    wiederherzustellen war); dann -- noch unter dem write_lock -- wird
+    failsafe_ctx["abo_finished"] gesetzt, damit ein bereits auf den Lock wartender
+    Trigger-Callback/lokaler Check danach nichts mehr schreibt (Final-Review I-1).
+    Scheitert das Schreiben, bleiben die Boost-Flags gesetzt, es gibt keine
+    Abschlussmeldung und der Aufrufer versucht es erneut (Final-Review I-2) -- sonst
+    bliebe das Geraet dauerhaft auf Boost-Werten."""
     with write_lock:
         backup = load_backup(BACKUP_PATH)
         boosting = bool(backup.get("boost_active")) or bool(backup.get("emergency_boost_active"))
@@ -727,17 +739,19 @@ def _finish_abo_grace(
             except Exception:
                 logger.exception(
                     "Zuletzt gelernte Werte konnten nicht wiederhergestellt werden - Boost-Flags "
-                    "bleiben gesetzt, der naechste Start versucht es erneut"
+                    "bleiben gesetzt, es wird erneut versucht"
                 )
-            else:
-                backup["boost_active"] = False
-                backup["emergency_boost_active"] = False
-                save_backup(BACKUP_PATH, backup)
-                failsafe_ctx["emergency_boost_active"] = False
+                return False
+            backup["boost_active"] = False
+            backup["emergency_boost_active"] = False
+            save_backup(BACKUP_PATH, backup)
+            failsafe_ctx["emergency_boost_active"] = False
+        failsafe_ctx["abo_finished"] = True
     if final_notice:
         _notify_abo(ha_api, options.get("notify_service", ""), ABO_ENDED_MESSAGE)
     else:
         logger.info("Abo-inaktiv-Frist ist bereits abgelaufen - Add-on beendet sich ohne weitere Eingriffe.")
+    return True
 
 
 def _run_local_check(
@@ -774,6 +788,11 @@ def _run_local_check(
     room_actual = ha_api.get_state(manifest.entity_ids["room_actual"])
 
     with write_lock:
+        if _abo_finished(failsafe_ctx):
+            # Final-Review I-1: ein Check, der schon vor dem Fristende-Abschluss auf den
+            # Lock gewartet hat, darf die gerade wiederhergestellten Werte nicht wieder
+            # mit einem Notfall-/Comfort-Boost ueberschreiben.
+            return boost_was_active
         backup = load_backup(BACKUP_PATH)
         previous_room_target = backup.get("last_room_target")
 
@@ -1093,6 +1112,10 @@ def _make_trigger_event_callback(
     def _on_trigger_event(trigger: dict) -> None:
         try:
             with write_lock:
+                if _abo_finished(failsafe_ctx):
+                    # Final-Review I-1: Abo-Frist abgeschlossen, Callback lief nur noch
+                    # nach (ha_trigger_client.stop() joint nicht) -- nichts mehr tun.
+                    return
                 if (
                     room_target_entity_id is not None
                     and trigger.get("platform") == "state"
@@ -1266,9 +1289,18 @@ def _run_bridge(options: dict, ha_api) -> bool:
     elif abo_status == entitlement.INACTIVE:
         inactive_since = entitlement.load_inactive_since(ENTITLEMENT_PATH)
         if inactive_since is not None and entitlement.grace_expired(inactive_since, now):
-            _finish_abo_grace(
+            # Final-Review I-2: scheitert die Wiederherstellung (HA/Cloud beim Booten noch
+            # nicht erreichbar), nicht mit liegengebliebenen Boost-Werten beenden, sondern
+            # im Watchdog-Takt erneut versuchen, bis es klappt.
+            while not _finish_abo_grace(
                 manifest, ha_api, options, failsafe_ctx, write_lock, always_restore=False, final_notice=False,
-            )
+            ):
+                retry_seconds = options.get("local_check_interval_seconds", DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS)
+                logger.error(
+                    "Abo-inaktiv-Frist abgelaufen, Boost-Werte konnten nicht zurueckgesetzt werden - "
+                    "erneuter Versuch in %s s", retry_seconds,
+                )
+                time.sleep(retry_seconds)
             return True
         _enter_abo_inactive(failsafe_ctx, write_lock, None, ha_api, notify_service, now)
 
@@ -1358,11 +1390,20 @@ def _run_bridge(options: dict, ha_api) -> bool:
 
     while True:
         if _abo_grace_expired(failsafe_ctx):
-            ha_trigger_client.stop()
-            _finish_abo_grace(
+            # Final-Review I-1/I-2: erst wiederherstellen, dann den Trigger-Client
+            # stoppen. Nach Erfolg sperrt failsafe_ctx["abo_finished"] (unter dem
+            # write_lock gesetzt) jeden nachlaufenden Trigger-Callback; scheitert die
+            # Wiederherstellung, laeuft die lokale Regelung (Trigger + Watchdog-Fallback
+            # unten) unveraendert weiter und der naechste Tick versucht es erneut.
+            if _finish_abo_grace(
                 manifest, ha_api, options, failsafe_ctx, write_lock, always_restore=True, final_notice=True,
+            ):
+                ha_trigger_client.stop()
+                return True
+            logger.error(
+                "Abo-inaktiv-Frist abgelaufen, zuletzt gelernte Werte konnten nicht wiederhergestellt "
+                "werden - Notbetrieb laeuft weiter, erneuter Versuch beim naechsten Watchdog-Tick"
             )
-            return True
 
         try:
             if not ha_trigger_client.connected:

@@ -3053,10 +3053,15 @@ def test_finish_abo_grace_keeps_flags_when_restore_write_fails(tmp_path, monkeyp
     ha_api.set_number_value.side_effect = RuntimeError("HA nicht erreichbar")
     failsafe_ctx = {"state": FailsafeState(active=True, awaiting_seq=None), "emergency_boost_active": True}
 
-    _finish_abo_grace(manifest, ha_api, _base_options(), failsafe_ctx, threading.RLock(),
-                      always_restore=True, final_notice=True)  # darf nicht werfen
+    result = _finish_abo_grace(manifest, ha_api, _base_options(notify_service="notify.handy"), failsafe_ctx,
+                               threading.RLock(), always_restore=True, final_notice=True)  # darf nicht werfen
 
+    assert result is False
     assert load_backup(tmp_path / "backup.json")["emergency_boost_active"] is True
+    assert failsafe_ctx["emergency_boost_active"] is True
+    assert not failsafe_ctx.get("abo_finished")
+    ha_api.send_notification.assert_not_called()
+    ha_api.create_persistent_notification.assert_not_called()
 
 
 def test_finish_abo_grace_without_forced_restore_and_without_flags_writes_nothing(tmp_path, monkeypatch, caplog):
@@ -3345,3 +3350,141 @@ def test_connect_mqtt_with_retry_passes_auth_rejected_hook(monkeypatch):
     _connect_mqtt_with_retry(_full_valid_options(), on_auth_rejected=hook)
 
     assert received["on_auth_rejected"] is hook
+
+
+def _abo_finish_race_setup(tmp_path, monkeypatch):
+    """Fristende erfolgreich abgeschlossen, danach laeuft ein noch auf den write_lock
+    wartender Trigger-Callback/lokaler Check (Final-Review I-1). Raum deutlich unter
+    Soll, Notbetrieb noch aktiv -> ohne Sperre wuerde der Notfall-Boost erneut starten."""
+    _abo_paths(tmp_path, monkeypatch)
+    monkeypatch.setattr("heizungsbruecke.__main__.threading.Timer", _FakeTimer)
+    save_backup(tmp_path / "backup.json", {
+        "curve_current": 0.4, "offset_current": 2.0, "emergency_boost_active": True,
+    })
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual", "room_target": "sensor.room_target",
+        "curve_current": "number.curve", "offset_current": "number.offset",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 18.0
+    failsafe_ctx = {
+        "state": FailsafeState(active=True, awaiting_seq=None), "emergency_boost_active": True,
+        "abo_inactive_since": ABO_NOW,
+    }
+    write_lock = threading.RLock()
+    assert _finish_abo_grace(
+        manifest, ha_api, _base_options(), failsafe_ctx, write_lock, always_restore=True, final_notice=True,
+    ) is True
+    assert failsafe_ctx["abo_finished"] is True
+    ha_api.reset_mock()
+    return manifest, ha_api, failsafe_ctx, write_lock
+
+
+def test_run_local_check_after_abo_grace_finished_writes_nothing(tmp_path, monkeypatch):
+    manifest, ha_api, failsafe_ctx, write_lock = _abo_finish_race_setup(tmp_path, monkeypatch)
+    backup_before = load_backup(tmp_path / "backup.json")
+
+    result = _run_local_check(
+        manifest, ha_api, None, _base_options(), write_lock, boost_was_active=False,
+        room_target=21.0, failsafe_ctx=failsafe_ctx,
+    )
+
+    assert result is False
+    ha_api.set_number_value.assert_not_called()
+    assert failsafe_ctx["emergency_boost_active"] is False
+    assert load_backup(tmp_path / "backup.json") == backup_before
+    assert load_backup(tmp_path / "backup.json")["emergency_boost_active"] is False
+
+
+def test_queued_trigger_callback_after_abo_grace_finished_writes_nothing(tmp_path, monkeypatch):
+    manifest, ha_api, failsafe_ctx, write_lock = _abo_finish_race_setup(tmp_path, monkeypatch)
+    backup_before = load_backup(tmp_path / "backup.json")
+    boost_state = main_module._BoostStateBox(active=False)
+    callback = main_module._make_trigger_event_callback(
+        manifest=manifest, ha_api=ha_api, mqtt_client=None, options=_base_options(),
+        write_lock=write_lock, boost_state=boost_state, failsafe_ctx=failsafe_ctx,
+        stable_target=main_module._StableTargetBox(value=21.0),
+    )
+
+    callback({"platform": "state", "entity_id": "sensor.room_actual"})
+    callback({"platform": "state", "entity_id": "sensor.room_target", "attribute": None})
+
+    ha_api.set_number_value.assert_not_called()
+    ha_api.get_state.assert_not_called()
+    assert failsafe_ctx["emergency_boost_active"] is False
+    assert load_backup(tmp_path / "backup.json") == backup_before
+
+
+def _counting_sleep(monkeypatch, limit):
+    """sleep()-Ersatz: zaehlt Aufrufe und bricht die Watchdog-Schleife erst nach `limit`
+    Aufrufen ab (Schutz gegen Endlosschleifen im Test)."""
+    sleeps = []
+
+    def fake_sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) > limit:
+            raise SystemExit("stop test loop")
+
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", fake_sleep)
+    return sleeps
+
+
+def test_run_bridge_grace_end_with_failing_restore_keeps_running_and_retries(monkeypatch, tmp_path):
+    # Final-Review I-2: scheitert die Wiederherstellung am Fristende, darf das Add-on
+    # nicht mit Exit 0 beenden -- lokale Regelung laeuft weiter, naechster Tick versucht es erneut.
+    ha_api, _, local_checks, _, trigger_client = _setup_abo_start(
+        monkeypatch, tmp_path, "inactive", inactive_since=datetime.now().astimezone() - timedelta(days=29),
+        backup={"curve_current": 0.9, "offset_current": 22.0, "emergency_boost_active": True},
+    )
+    grace_checks = []
+
+    def fake_grace_expired(since, now):
+        grace_checks.append(now)
+        return len(grace_checks) > 1  # 1. Aufruf: Startpruefung, danach: Frist abgelaufen
+
+    monkeypatch.setattr("heizungsbruecke.__main__.entitlement.grace_expired", fake_grace_expired)
+    sleeps = []
+    stop_calls_at_sleep = []
+
+    def fake_sleep(seconds):
+        sleeps.append(seconds)
+        stop_calls_at_sleep.append(trigger_client.stop.call_count)
+        if len(sleeps) > 5:
+            raise SystemExit("stop test loop")
+
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", fake_sleep)
+    ha_api.set_number_value.side_effect = [RuntimeError("HA nicht erreichbar"), None, None]
+
+    assert _run_bridge(_full_valid_options(notify_service="notify.handy"), ha_api) is True
+
+    assert len(sleeps) == 1                       # erster Watchdog-Durchlauf lief normal weiter
+    assert stop_calls_at_sleep == [0]             # Trigger-Client lief waehrend des Fehlschlags weiter
+    assert len(local_checks) == 2                 # Boot-Priming + Watchdog-Fallback im Fehlschlag-Durchlauf
+    trigger_client.stop.assert_called_once()
+    ha_api.set_number_value.assert_any_call("number.curve_current", 0.9)
+    ha_api.set_number_value.assert_any_call("number.offset_current", 22.0)
+    assert load_backup(tmp_path / "backup.json")["emergency_boost_active"] is False
+    ha_api.create_persistent_notification.assert_called_with("SmartHeat", ABO_ENDED_MESSAGE, "smartheat_abo_inaktiv")
+    ended = [c for c in ha_api.create_persistent_notification.call_args_list if c.args[1] == ABO_ENDED_MESSAGE]
+    assert len(ended) == 1
+
+
+def test_run_bridge_closing_start_with_failing_restore_retries_until_success(monkeypatch, tmp_path):
+    # Final-Review I-2, Abschluss-Start: Boost-Werte duerfen nicht still stehen bleiben.
+    ha_api, constructed, local_checks, _, trigger_client = _setup_abo_start(
+        monkeypatch, tmp_path, "inactive", inactive_since=datetime.now().astimezone() - timedelta(days=31),
+        backup={"curve_current": 0.9, "offset_current": 22.0, "emergency_boost_active": True},
+    )
+    sleeps = _counting_sleep(monkeypatch, limit=5)
+    ha_api.set_number_value.side_effect = [RuntimeError("HA nicht erreichbar"), None, None]
+
+    assert _run_bridge(_full_valid_options(notify_service="notify.handy"), ha_api) is True
+
+    assert len(sleeps) == 1
+    assert constructed == []
+    assert local_checks == []
+    trigger_client.start.assert_not_called()
+    ha_api.set_number_value.assert_any_call("number.offset_current", 22.0)
+    assert load_backup(tmp_path / "backup.json")["emergency_boost_active"] is False
+    ha_api.send_notification.assert_not_called()
+    ha_api.create_persistent_notification.assert_not_called()
