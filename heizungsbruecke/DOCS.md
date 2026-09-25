@@ -20,6 +20,23 @@ Home-Assistant-Integration: installieren, dann Einstellungen → Geraete &
 Dienste → Integration hinzufuegen → "SmartHeat". Die Integration schreibt die
 noetige Konfiguration automatisch in dieses Add-on.
 
+## Update von 0.14.0 auf 0.15.0
+
+**Server-Update zuerst:** 0.15.0 spricht nur noch das neue Nachrichtenformat. Der
+SmartHeat-Server muss vorher aktualisiert sein, sonst geht das Add-on nach dem ersten
+Abgleich in den Notbetrieb.
+
+Neu: Die Messwerte gehen als eine einzige Nachricht an den Server, die Antwort kommt als
+eine Nachricht mit Status. Lehnt der Server die Werte ab (z.B. weil ein Sensor ausgefallen
+ist), meldet das Add-on den Grund und behält die Heizkurve bei, geht aber nicht mehr
+in den Notbetrieb.
+
+Neu: Ist das SmartHeat-Abo inaktiv, zeigt Home Assistant eine Meldung "Abo inaktiv" an.
+Die Heizung läuft dann noch 30 Tage im Notbetrieb weiter (Notfall-Boost bei kaltem Raum,
+Komfort-Boost bei erhöhter Wunschtemperatur). Danach beendet sich das Add-on, die zuletzt
+gelernten Heizkurvenwerte bleiben eingestellt. Nach Reaktivierung des Abos die
+SmartHeat-Integration neu einrichten.
+
 ## Update von 0.13.1 auf 0.14.0
 
 Neu: Sommersperre und genauerer Tagesabgleich. Das Add-on legt beim Start automatisch
