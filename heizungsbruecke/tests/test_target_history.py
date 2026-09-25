@@ -1,6 +1,6 @@
 import pytest
 
-from heizungsbruecke.target_history import WINDOW_SECONDS, record_change, time_weighted_mean
+from heizungsbruecke.target_history import WINDOW_SECONDS, record_change, sanitize_history, time_weighted_mean
 
 NOW = 1_000_000.0
 H = 3600.0
@@ -64,3 +64,28 @@ def test_mean_with_entry_exactly_at_window_start():
     # Entry exactly at window boundary
     history = [[NOW - 24 * H, 20.0], [NOW - 12 * H, 22.0]]
     assert time_weighted_mean(history, NOW) == pytest.approx(21.0)
+
+
+def test_record_change_clamps_backward_clock_jump_to_last_ts():
+    # Backward wall-clock jump: `now` is before the last recorded timestamp.
+    # Without clamping, appending [now, 23.0] would leave history unsorted.
+    history = [[NOW, 22.0]]
+    result = record_change(history, NOW - 7200, 23.0)
+    assert result == [[NOW, 22.0], [NOW, 23.0]]
+    assert result[-1][0] >= result[-2][0]
+
+
+def test_sanitize_history_keeps_a_well_formed_list():
+    history = [[NOW - H, 20.0], [NOW, 21.0]]
+    assert sanitize_history(history) == history
+
+
+def test_sanitize_history_treats_non_list_as_empty():
+    assert sanitize_history(None) == []
+    assert sanitize_history("not a list") == []
+
+
+def test_sanitize_history_treats_malformed_entries_as_empty():
+    assert sanitize_history([["x", 1]]) == []
+    assert sanitize_history([[1.0]]) == []
+    assert sanitize_history([[1.0, 20.0, 3.0]]) == []
