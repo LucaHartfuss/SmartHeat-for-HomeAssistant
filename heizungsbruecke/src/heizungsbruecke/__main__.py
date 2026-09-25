@@ -676,7 +676,16 @@ def _enter_abo_inactive(failsafe_ctx: dict, write_lock, mqtt_client, ha_api, not
     with write_lock:
         if _abo_inactive(failsafe_ctx):
             return
-        since, newly_set = entitlement.mark_inactive(ENTITLEMENT_PATH, now)
+        try:
+            since, newly_set = entitlement.mark_inactive(ENTITLEMENT_PATH, now)
+        except Exception:
+            # Final-Review Minor 4: ein Schreibfehler (z.B. defekte SD-Karte) darf den
+            # Notbetrieb nicht verhindern -- Modus nur im Speicher, Frist ab jetzt.
+            logger.exception(
+                "Abo-inaktiv-Zeitpunkt konnte nicht gespeichert werden - Abo-inaktiv-Modus "
+                "gilt nur bis zum naechsten Neustart, Frist ab jetzt"
+            )
+            since, newly_set = now, True
         failsafe_ctx["abo_inactive_since"] = since
         failsafe_ctx["state"] = FailsafeState(active=True, awaiting_seq=None)
         _save_failsafe_ctx(failsafe_ctx, FAILSAFE_PATH)

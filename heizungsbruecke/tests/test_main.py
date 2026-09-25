@@ -3488,3 +3488,44 @@ def test_run_bridge_closing_start_with_failing_restore_retries_until_success(mon
     assert load_backup(tmp_path / "backup.json")["emergency_boost_active"] is False
     ha_api.send_notification.assert_not_called()
     ha_api.create_persistent_notification.assert_not_called()
+
+
+def _failing_mark_inactive(path, now):
+    raise OSError("SD-Karte kaputt")
+
+
+def test_enter_abo_inactive_with_failing_entitlement_persist_still_enters_mode(tmp_path, monkeypatch, caplog):
+    # Final-Review Minor 4: ein Schreibfehler beim Persistieren von inactive_since darf
+    # weder werfen noch den Notbetrieb verhindern.
+    _abo_paths(tmp_path, monkeypatch)
+    monkeypatch.setattr("heizungsbruecke.__main__.entitlement.mark_inactive", _failing_mark_inactive)
+    failsafe_ctx = {"state": FailsafeState(active=False, awaiting_seq="seq-1"), "emergency_boost_active": False}
+    ha_api = MagicMock()
+    mqtt_client = MagicMock()
+
+    with caplog.at_level(logging.ERROR):
+        _enter_abo_inactive(failsafe_ctx, threading.RLock(), mqtt_client, ha_api, "notify.handy", ABO_NOW)
+
+    assert failsafe_ctx["abo_inactive_since"] == ABO_NOW
+    assert failsafe_ctx["state"] == FailsafeState(active=True, awaiting_seq=None)
+    assert load_backup(tmp_path / "failsafe_state.json")["failsafe_active"] is True
+    mqtt_client.stop.assert_called_once()
+    ha_api.create_persistent_notification.assert_called_once_with(
+        "SmartHeat", _abo_inactive_message(ABO_NOW), "smartheat_abo_inaktiv",
+    )
+    assert "SD-Karte kaputt" in caplog.text
+
+
+def test_ack_timeout_with_failing_entitlement_persist_still_runs_notbetrieb(tmp_path, monkeypatch):
+    failsafe_ctx, mqtt_client, ha_api, _ = _timeout_setup(tmp_path, monkeypatch, "inactive")
+    monkeypatch.setattr("heizungsbruecke.__main__.entitlement.mark_inactive", _failing_mark_inactive)
+
+    _handle_ack_timeout(
+        seq="seq-1", failsafe_ctx=failsafe_ctx, mqtt_client=mqtt_client,
+        failsafe_path=tmp_path / "failsafe_state.json", write_lock=threading.RLock(),
+        ha_api=ha_api, notify_service="", tenant_id="t1",
+    )
+
+    assert failsafe_ctx["state"].active is True
+    assert failsafe_ctx["abo_inactive_since"] is not None
+    mqtt_client.stop.assert_called_once()
