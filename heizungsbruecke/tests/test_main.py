@@ -2,7 +2,7 @@ import json
 import logging
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,11 +11,15 @@ import requests
 import heizungsbruecke.__main__ as main_module
 from heizungsbruecke.ha_trigger_client import HaTriggerClient
 from heizungsbruecke.__main__ import (
+    ABO_ENDED_MESSAGE,
     TenantNotEntitledError,
+    _abo_inactive_message,
     _check_entitlement,
     _connect_mqtt_with_retry,
     _end_emergency_boost_if_active,
     _ensure_derived_sensors_with_retry,
+    _enter_abo_inactive,
+    _finish_abo_grace,
     _handle_ack,
     _handle_ack_timeout,
     _is_configured,
@@ -2978,4 +2982,164 @@ def test_setpoints_callback_during_boost_only_updates_backup(tmp_path, monkeypat
     ha_api.set_number_value.assert_not_called()
     backup = load_backup(tmp_path / "backup.json")
     assert (backup["curve_current"], backup["offset_current"]) == (0.6, 3.0)
+
+
+ABO_NOW = datetime(2026, 9, 25, 12, 0, tzinfo=timezone(timedelta(hours=2)))
+
+
+def _abo_paths(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    monkeypatch.setattr("heizungsbruecke.__main__.FAILSAFE_PATH", tmp_path / "failsafe_state.json")
+    monkeypatch.setattr("heizungsbruecke.__main__.ENTITLEMENT_PATH", tmp_path / "entitlement_state.json")
+
+
+def test_abo_inactive_message_contains_grace_end_date():
+    assert _abo_inactive_message(ABO_NOW) == (
+        "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 25.10.2026 im Notbetrieb weiter, "
+        "danach bleiben die zuletzt gelernten Werte fest eingestellt."
+    )
+
+
+def test_enter_abo_inactive_activates_notbetrieb_stops_mqtt_and_notifies_all_channels(tmp_path, monkeypatch):
+    _abo_paths(tmp_path, monkeypatch)
+    failsafe_ctx = {"state": FailsafeState(active=False, awaiting_seq="seq-1"), "emergency_boost_active": False}
+    ha_api = MagicMock()
+    mqtt_client = MagicMock()
+
+    _enter_abo_inactive(failsafe_ctx, threading.RLock(), mqtt_client, ha_api, "notify.handy", ABO_NOW)
+
+    assert failsafe_ctx["abo_inactive_since"] == ABO_NOW
+    assert failsafe_ctx["state"] == FailsafeState(active=True, awaiting_seq=None)
+    assert load_backup(tmp_path / "failsafe_state.json")["failsafe_active"] is True
+    mqtt_client.stop.assert_called_once()
+    expected = _abo_inactive_message(ABO_NOW)
+    ha_api.send_notification.assert_called_once_with("notify.handy", expected)
+    ha_api.create_persistent_notification.assert_called_once_with("SmartHeat", expected, "smartheat_abo_inaktiv")
+
+
+def test_enter_abo_inactive_does_not_repeat_notification_when_already_marked(tmp_path, monkeypatch, caplog):
+    _abo_paths(tmp_path, monkeypatch)
+    from heizungsbruecke import entitlement
+    entitlement.mark_inactive(tmp_path / "entitlement_state.json", ABO_NOW - timedelta(days=5))
+    failsafe_ctx = {"state": FailsafeState(active=False, awaiting_seq=None), "emergency_boost_active": False}
+    ha_api = MagicMock()
+
+    with caplog.at_level(logging.WARNING):
+        _enter_abo_inactive(failsafe_ctx, threading.RLock(), None, ha_api, "notify.handy", ABO_NOW)
+
+    assert failsafe_ctx["abo_inactive_since"] == ABO_NOW - timedelta(days=5)
+    ha_api.send_notification.assert_not_called()
+    ha_api.create_persistent_notification.assert_not_called()
+    assert "20.10.2026" in caplog.text  # Fristende weiterhin im Log sichtbar
+
+
+def test_enter_abo_inactive_is_noop_when_already_in_mode(tmp_path, monkeypatch):
+    _abo_paths(tmp_path, monkeypatch)
+    failsafe_ctx = {
+        "state": FailsafeState(active=True, awaiting_seq=None), "emergency_boost_active": False,
+        "abo_inactive_since": ABO_NOW,
+    }
+    mqtt_client = MagicMock()
+
+    _enter_abo_inactive(failsafe_ctx, threading.RLock(), mqtt_client, MagicMock(), "", ABO_NOW)
+
+    mqtt_client.stop.assert_not_called()
+
+
+def test_enter_abo_inactive_survives_failing_notification_channels(tmp_path, monkeypatch):
+    _abo_paths(tmp_path, monkeypatch)
+    failsafe_ctx = {"state": FailsafeState(active=False, awaiting_seq=None), "emergency_boost_active": False}
+    ha_api = MagicMock()
+    ha_api.send_notification.side_effect = RuntimeError("push kaputt")
+    ha_api.create_persistent_notification.side_effect = RuntimeError("ha kaputt")
+    mqtt_client = MagicMock()
+    mqtt_client.stop.side_effect = RuntimeError("paho kaputt")
+
+    _enter_abo_inactive(failsafe_ctx, threading.RLock(), mqtt_client, ha_api, "notify.handy", ABO_NOW)  # darf nicht werfen
+
+    assert failsafe_ctx["state"].active is True
+
+
+def test_run_local_check_in_abo_inactive_mode_skips_snapshot_but_runs_emergency_boost(tmp_path, monkeypatch):
+    _abo_paths(tmp_path, monkeypatch)
+    monkeypatch.setattr("heizungsbruecke.__main__.threading.Timer", _FakeTimer)
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual", "room_target": "sensor.room_target",
+        "curve_current": "number.curve", "offset_current": "number.offset",
+    })
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 18.0  # deutlich unter Soll -> Notfall-Boost
+    mqtt_client = MagicMock()
+    failsafe_ctx = {
+        "state": FailsafeState(active=True, awaiting_seq=None), "emergency_boost_active": False,
+        "abo_inactive_since": ABO_NOW,
+    }
+
+    _run_local_check(
+        manifest, ha_api, mqtt_client, _base_options(), threading.RLock(), boost_was_active=False,
+        room_target=21.0, failsafe_ctx=failsafe_ctx,
+    )
+
+    mqtt_client.publish_snapshot.assert_not_called()
+    assert _FakeTimer.instances == []
+    assert failsafe_ctx["emergency_boost_active"] is True
+    ha_api.set_number_value.assert_any_call("number.curve", 0.8)
+
+
+def test_finish_abo_grace_mid_emergency_boost_restores_learned_values(tmp_path, monkeypatch):
+    _abo_paths(tmp_path, monkeypatch)
+    save_backup(tmp_path / "backup.json", {
+        "curve_current": 0.4, "offset_current": 9.0,  # offset liegt ueber offset_max=5.0 -> geclampt
+        "emergency_boost_active": True, "boost_active": True,
+    })
+    manifest = ChannelManifest(entity_ids={"curve_current": "number.curve", "offset_current": "number.offset"})
+    ha_api = MagicMock()
+    failsafe_ctx = {"state": FailsafeState(active=True, awaiting_seq=None), "emergency_boost_active": True,
+                    "abo_inactive_since": ABO_NOW}
+
+    _finish_abo_grace(
+        manifest, ha_api, _base_options(notify_service="notify.handy"), failsafe_ctx, threading.RLock(),
+        always_restore=True, final_notice=True,
+    )
+
+    ha_api.set_number_value.assert_any_call("number.curve", 0.4)
+    ha_api.set_number_value.assert_any_call("number.offset", 5.0)
+    backup = load_backup(tmp_path / "backup.json")
+    assert backup["boost_active"] is False
+    assert backup["emergency_boost_active"] is False
+    assert failsafe_ctx["emergency_boost_active"] is False
+    ha_api.send_notification.assert_called_once_with("notify.handy", ABO_ENDED_MESSAGE)
+    ha_api.create_persistent_notification.assert_called_once_with("SmartHeat", ABO_ENDED_MESSAGE, "smartheat_abo_inaktiv")
+
+
+def test_finish_abo_grace_keeps_flags_when_restore_write_fails(tmp_path, monkeypatch):
+    # Review Focus 3: scheitert die Wiederherstellung, muss der naechste Start es erneut versuchen.
+    _abo_paths(tmp_path, monkeypatch)
+    save_backup(tmp_path / "backup.json", {"curve_current": 0.4, "emergency_boost_active": True})
+    manifest = ChannelManifest(entity_ids={"curve_current": "number.curve"})
+    ha_api = MagicMock()
+    ha_api.set_number_value.side_effect = RuntimeError("HA nicht erreichbar")
+    failsafe_ctx = {"state": FailsafeState(active=True, awaiting_seq=None), "emergency_boost_active": True}
+
+    _finish_abo_grace(manifest, ha_api, _base_options(), failsafe_ctx, threading.RLock(),
+                      always_restore=True, final_notice=True)  # darf nicht werfen
+
+    assert load_backup(tmp_path / "backup.json")["emergency_boost_active"] is True
+
+
+def test_finish_abo_grace_without_forced_restore_and_without_flags_writes_nothing(tmp_path, monkeypatch, caplog):
+    _abo_paths(tmp_path, monkeypatch)
+    save_backup(tmp_path / "backup.json", {"curve_current": 0.4, "boost_active": False})
+    manifest = ChannelManifest(entity_ids={"curve_current": "number.curve"})
+    ha_api = MagicMock()
+    failsafe_ctx = {"state": FailsafeState(active=True, awaiting_seq=None), "emergency_boost_active": False}
+
+    with caplog.at_level(logging.INFO):
+        _finish_abo_grace(manifest, ha_api, _base_options(notify_service="notify.handy"), failsafe_ctx,
+                          threading.RLock(), always_restore=False, final_notice=False)
+
+    ha_api.set_number_value.assert_not_called()
+    ha_api.send_notification.assert_not_called()
+    ha_api.create_persistent_notification.assert_not_called()
+    assert "Frist" in caplog.text
     assert failsafe_ctx["state"].awaiting_seq is None

@@ -14,8 +14,9 @@ import requests
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.boost import BoostDecision, decide_boost
 from heizungsbruecke.bridge import apply_boost_decision, apply_emergency_decision, handle_down_message, publish_snapshot
+from heizungsbruecke.clamping import clamp
 from heizungsbruecke.emergency_boost import EmergencyBoostDecision, decide_emergency_boost
-from heizungsbruecke import daynight_snapshot, derived_sensors
+from heizungsbruecke import daynight_snapshot, derived_sensors, entitlement
 from heizungsbruecke.failsafe import (
     FailsafeState,
     build_discovery_config,
@@ -42,6 +43,16 @@ BACKUP_PATH = Path("/data/backup.json")
 FAILSAFE_PATH = Path("/data/failsafe_state.json")
 DERIVED_SENSORS_PATH = Path("/data/derived_sensors.json")
 DAYNIGHT_SNAPSHOT_PATH = Path("/data/daynight_snapshot_state.json")
+ENTITLEMENT_PATH = Path("/data/entitlement_state.json")
+
+# Abo-inaktiv-Modus (B8, Design-Spec 2026-09-25, Abschnitt 4). Stabile notification_id,
+# damit wiederholte Meldungen in HA ersetzen statt stapeln.
+ABO_NOTIFICATION_ID = "smartheat_abo_inaktiv"
+ABO_NOTIFICATION_TITLE = "SmartHeat"
+ABO_ENDED_MESSAGE = (
+    "SmartHeat: Abo seit 30 Tagen inaktiv. Die Heizungssteuerung ist beendet, "
+    "die zuletzt gelernten Werte bleiben eingestellt."
+)
 
 MQTT_HOST = "127.0.0.1"
 # Muss mit cloudflared_access_mqtt/config.yaml's `local_port`-Default
@@ -640,6 +651,95 @@ def _read_room_target_live(manifest, ha_api) -> float | None:
     return ha_api.get_state(manifest.entity_ids["room_target"])
 
 
+def _abo_inactive(failsafe_ctx: dict | None) -> bool:
+    return failsafe_ctx is not None and failsafe_ctx.get("abo_inactive_since") is not None
+
+
+def _abo_inactive_message(inactive_since: datetime) -> str:
+    end = entitlement.grace_end(inactive_since).strftime("%d.%m.%Y")
+    return (
+        f"SmartHeat: Abo inaktiv. Die Heizung läuft noch bis {end} im Notbetrieb weiter, "
+        f"danach bleiben die zuletzt gelernten Werte fest eingestellt."
+    )
+
+
+def _notify_abo(ha_api, notify_service: str, message: str) -> None:
+    """Log (WARNING), Push (falls konfiguriert) und HA-persistent_notification -- jeder
+    Kanal best effort, ein kaputter Kanal blockiert die anderen nicht."""
+    logger.warning(message)
+    if notify_service:
+        try:
+            ha_api.send_notification(notify_service, message)
+        except Exception:
+            logger.warning("Push-Benachrichtigung zum Abo-Status konnte nicht gesendet werden")
+    try:
+        ha_api.create_persistent_notification(ABO_NOTIFICATION_TITLE, message, ABO_NOTIFICATION_ID)
+    except Exception:
+        logger.warning("HA-Benachrichtigung zum Abo-Status konnte nicht angelegt werden")
+
+
+def _enter_abo_inactive(failsafe_ctx: dict, write_lock, mqtt_client, ha_api, notify_service: str, now: datetime) -> None:
+    """Wechsel in den lokalen Abo-inaktiv-Modus: Notbetrieb an (persistiert), MQTT
+    beendet, kein Snapshot/Telemetrie mehr. Meldung nur beim erstmaligen Setzen von
+    inactive_since, nicht bei jedem Neustart. mqtt_client.stop() laeuft bewusst
+    AUSSERHALB des write_lock: ein paho-Callback, der gerade auf den Lock wartet, darf
+    das Join in loop_stop() nicht blockieren."""
+    with write_lock:
+        if _abo_inactive(failsafe_ctx):
+            return
+        since, newly_set = entitlement.mark_inactive(ENTITLEMENT_PATH, now)
+        failsafe_ctx["abo_inactive_since"] = since
+        failsafe_ctx["state"] = FailsafeState(active=True, awaiting_seq=None)
+        _save_failsafe_ctx(failsafe_ctx, FAILSAFE_PATH)
+    if mqtt_client is not None:
+        try:
+            mqtt_client.stop()
+        except Exception:
+            logger.exception("MQTT-Verbindung konnte nicht sauber beendet werden")
+    if newly_set:
+        _notify_abo(ha_api, notify_service, _abo_inactive_message(since))
+    else:
+        logger.warning(
+            "Abo weiterhin inaktiv (seit %s) - Notbetrieb laeuft bis %s.",
+            since.strftime("%d.%m.%Y"), entitlement.grace_end(since).strftime("%d.%m.%Y"),
+        )
+
+
+def _finish_abo_grace(
+    manifest, ha_api, options: dict, failsafe_ctx: dict, write_lock, *, always_restore: bool, final_notice: bool,
+) -> None:
+    """Fristende (always_restore=True, final_notice=True) bzw. Abschluss-Start
+    (always_restore=False, final_notice=False): laufende Boosts beenden und die zuletzt
+    vom Server bestaetigten Werte aus backup.json geclampt auf das Geraet schreiben.
+    Scheitert das Schreiben, bleiben die Boost-Flags gesetzt -- der naechste Start
+    versucht es erneut (sonst bliebe das Geraet dauerhaft auf Boost-Werten)."""
+    with write_lock:
+        backup = load_backup(BACKUP_PATH)
+        boosting = bool(backup.get("boost_active")) or bool(backup.get("emergency_boost_active"))
+        if always_restore or boosting:
+            try:
+                for role, minimum, maximum in (
+                    ("curve_current", options["curve_min"], options["curve_max"]),
+                    ("offset_current", options["offset_min"], options["offset_max"]),
+                ):
+                    if role in backup and role in manifest.entity_ids:
+                        ha_api.set_number_value(manifest.entity_ids[role], clamp(backup[role], minimum, maximum))
+            except Exception:
+                logger.exception(
+                    "Zuletzt gelernte Werte konnten nicht wiederhergestellt werden - Boost-Flags "
+                    "bleiben gesetzt, der naechste Start versucht es erneut"
+                )
+            else:
+                backup["boost_active"] = False
+                backup["emergency_boost_active"] = False
+                save_backup(BACKUP_PATH, backup)
+                failsafe_ctx["emergency_boost_active"] = False
+    if final_notice:
+        _notify_abo(ha_api, options.get("notify_service", ""), ABO_ENDED_MESSAGE)
+    else:
+        logger.info("Abo-inaktiv-Frist ist bereits abgelaufen - Add-on beendet sich ohne weitere Eingriffe.")
+
+
 def _run_local_check(
     manifest, ha_api, mqtt_client, options, write_lock, boost_was_active: bool,
     room_target: float | None, failsafe_ctx: dict | None = None,
@@ -753,6 +853,10 @@ def _run_local_check(
                 _save_emergency_active_if_changed(failsafe_ctx["emergency_boost_active"], BACKUP_PATH)
             else:
                 _end_emergency_boost_if_active(failsafe_ctx, manifest, ha_api, options)
+
+        if _abo_inactive(failsafe_ctx):
+            # Abo-inaktiv-Modus: nur lokale Boost-/Notfall-Logik, kein Server-Kontakt.
+            return boost_was_active
 
         seq = _maybe_publish_full_snapshot(
             manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options=options,
