@@ -1,6 +1,10 @@
 import logging
 from unittest.mock import patch, MagicMock
 
+import pytest
+from paho.mqtt.packettypes import PacketTypes
+from paho.mqtt.reasoncodes import ReasonCode
+
 from heizungsbruecke.mqtt_client import BridgeMqttClient
 
 
@@ -249,3 +253,101 @@ def test_publish_value_includes_trigger_when_given():
     mock_client.publish.assert_called_once_with(
         "smartheat/kunde2/up/heat_limit", '{"v": 16.0, "seq": "s1", "trigger": "daily"}', qos=1
     )
+
+
+def _client_with_mock(**kwargs):
+    patcher = patch("heizungsbruecke.mqtt_client.mqtt.Client")
+    mock_client_cls = patcher.start()
+    mock_client = MagicMock()
+    mock_client_cls.return_value = mock_client
+    client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p", **kwargs)
+    patcher.stop()
+    return client, mock_client
+
+
+def test_publish_snapshot_publishes_one_message_with_qos_1():
+    client, mock_client = _client_with_mock()
+
+    client.publish_snapshot({"schema": 2, "seq": "s1", "roles": {"dat": 8.2}})
+
+    mock_client.publish.assert_called_once_with(
+        "smartheat/kunde2/up/snapshot", '{"schema": 2, "seq": "s1", "roles": {"dat": 8.2}}', qos=1,
+    )
+
+
+def test_subscribe_setpoints_subscribes_single_topic_with_qos_1():
+    client, mock_client = _client_with_mock()
+    callback = MagicMock()
+
+    client.subscribe_setpoints(on_message=callback)
+
+    mock_client.message_callback_add.assert_called_once_with("smartheat/kunde2/down/setpoints", callback)
+    mock_client.subscribe.assert_called_once_with("smartheat/kunde2/down/setpoints", 1)
+
+
+def test_on_connect_resubscribes_setpoints():
+    client, mock_client = _client_with_mock()
+    callback = MagicMock()
+    client.subscribe_setpoints(on_message=callback)
+    mock_client.subscribe.reset_mock()
+    mock_client.message_callback_add.reset_mock()
+
+    client._on_connect(mock_client, None, {}, 0, None)
+
+    mock_client.subscribe.assert_called_once_with("smartheat/kunde2/down/setpoints", 1)
+    mock_client.message_callback_add.assert_called_once_with("smartheat/kunde2/down/setpoints", callback)
+
+
+def test_on_connect_success_reason_code_object_subscribes_normally():
+    client, mock_client = _client_with_mock()
+    client.subscribe_setpoints(on_message=MagicMock())
+    mock_client.subscribe.reset_mock()
+
+    client._on_connect(mock_client, None, {}, ReasonCode(PacketTypes.CONNACK, identifier=0), None)
+
+    mock_client.subscribe.assert_called_once()
+
+
+@pytest.mark.parametrize("identifier", [134, 135])
+def test_on_connect_auth_rejection_calls_hook_and_skips_subscribe(identifier):
+    hook = MagicMock()
+    client, mock_client = _client_with_mock(on_auth_rejected=hook)
+    client.subscribe_setpoints(on_message=MagicMock())
+    mock_client.subscribe.reset_mock()
+    mock_client.publish.reset_mock()
+
+    client._on_connect(mock_client, None, {}, ReasonCode(PacketTypes.CONNACK, identifier=identifier), None)
+
+    hook.assert_called_once_with(client)
+    mock_client.subscribe.assert_not_called()
+    mock_client.publish.assert_not_called()
+
+
+def test_on_connect_other_failure_does_not_call_auth_hook():
+    hook = MagicMock()
+    client, mock_client = _client_with_mock(on_auth_rejected=hook)
+
+    client._on_connect(mock_client, None, {}, ReasonCode(PacketTypes.CONNACK, identifier=136), None)
+
+    hook.assert_not_called()
+
+
+def test_on_connect_auth_hook_exception_does_not_escape_network_thread(caplog):
+    # Review Focus 4: paho 2.x unterdrueckt Callback-Exceptions nicht -- eine Exception
+    # hier wuerde den Netzwerk-Thread beenden.
+    hook = MagicMock(side_effect=RuntimeError("status-api kaputt"))
+    client, mock_client = _client_with_mock(on_auth_rejected=hook)
+
+    with caplog.at_level(logging.ERROR):
+        client._on_connect(mock_client, None, {}, ReasonCode(PacketTypes.CONNACK, identifier=135), None)
+
+    assert "status-api kaputt" in caplog.text
+
+
+def test_stop_disconnects_and_stops_loop():
+    client, mock_client = _client_with_mock()
+
+    client.stop()
+
+    mock_client.disconnect.assert_called_once()
+    mock_client.loop_stop.assert_called_once()
