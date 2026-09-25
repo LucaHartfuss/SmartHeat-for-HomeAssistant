@@ -12,9 +12,7 @@ import heizungsbruecke.__main__ as main_module
 from heizungsbruecke.ha_trigger_client import HaTriggerClient
 from heizungsbruecke.__main__ import (
     ABO_ENDED_MESSAGE,
-    TenantNotEntitledError,
     _abo_inactive_message,
-    _check_entitlement,
     _connect_mqtt_with_retry,
     _end_emergency_boost_if_active,
     _ensure_derived_sensors_with_retry,
@@ -51,6 +49,11 @@ def _reset_telemetry_marker(monkeypatch):
     # backup.json), so without this reset it leaks across tests and makes
     # publish_telemetry calls order-dependent.
     monkeypatch.setattr("heizungsbruecke.__main__._last_telemetry_publish_ts", None)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_entitlement_path(tmp_path, monkeypatch):
+    monkeypatch.setattr("heizungsbruecke.__main__.ENTITLEMENT_PATH", tmp_path / "entitlement_state.json")
 
 
 def _base_options(**overrides):
@@ -108,7 +111,7 @@ def test_run_bridge_returns_false_on_genuine_validation_error(monkeypatch, caplo
     # validation (here: an unknown profile) is a genuine startup error -- main() must
     # be able to tell the two apart to give the Supervisor a non-zero exit code.
     monkeypatch.setattr(
-        "heizungsbruecke.__main__.requests.get",
+        "heizungsbruecke.entitlement.requests.get",
         lambda url, timeout: _FakeResponse({"active": True}),
     )
     options = {
@@ -907,7 +910,7 @@ def test_run_bridge_loop_survives_clamp_rejecting_a_non_finite_boost_value(monke
     # must survive -- this is the loop's own try/except Exception boundary around
     # _run_local_check that must catch it, not crash the whole add-on process.
     monkeypatch.setattr(
-        "heizungsbruecke.__main__.requests.get",
+        "heizungsbruecke.entitlement.requests.get",
         lambda url, timeout: _FakeResponse({"active": True}),
     )
     monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
@@ -1024,7 +1027,7 @@ def _full_valid_options(**overrides):
 
 def test_run_bridge_returns_false_for_invalid_telemetry_interval(monkeypatch, caplog):
     monkeypatch.setattr(
-        "heizungsbruecke.__main__.requests.get",
+        "heizungsbruecke.entitlement.requests.get",
         lambda url, timeout: _FakeResponse({"active": True}),
     )
     options = _full_valid_options(telemetry_interval_seconds=5)
@@ -1043,7 +1046,7 @@ def test_run_bridge_gives_actionable_error_on_connection_refused(monkeypatch, ca
     monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", always_refused)
     monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", lambda seconds: None)
     monkeypatch.setattr(
-        "heizungsbruecke.__main__.requests.get",
+        "heizungsbruecke.entitlement.requests.get",
         lambda url, timeout: _FakeResponse({"active": True}),
     )
     monkeypatch.setattr(
@@ -1057,79 +1060,6 @@ def test_run_bridge_gives_actionable_error_on_connection_refused(monkeypatch, ca
 
     assert result is False
     assert "cloudflared_access_mqtt" in caplog.text
-
-
-# Entitlement check tests (Task 13)
-
-
-def test_check_entitlement_passes_silently_when_active(monkeypatch):
-    monkeypatch.setattr(
-        "heizungsbruecke.__main__.requests.get",
-        lambda url, timeout: _FakeResponse({"active": True}),
-    )
-    _check_entitlement("client1")  # muss nicht werfen
-
-
-def test_check_entitlement_raises_when_inactive(monkeypatch):
-    monkeypatch.setattr(
-        "heizungsbruecke.__main__.requests.get",
-        lambda url, timeout: _FakeResponse({"active": False}),
-    )
-    with pytest.raises(TenantNotEntitledError, match="Abo"):
-        _check_entitlement("client1")
-
-
-def test_check_entitlement_fails_open_on_network_error(monkeypatch, caplog):
-    def _raise(url, timeout):
-        raise requests.ConnectionError("accounts-api nicht erreichbar")
-    monkeypatch.setattr("heizungsbruecke.__main__.requests.get", _raise)
-
-    with caplog.at_level(logging.WARNING):
-        _check_entitlement("client1")  # darf NICHT werfen -- fail open (siehe Docstring/Plan-Hinweis)
-
-    assert "accounts-api" in caplog.text.lower() or "berechtigungspruefung" in caplog.text.lower()
-
-
-def test_check_entitlement_queries_correct_url(monkeypatch):
-    called_with = {}
-    def _get(url, timeout):
-        called_with["url"] = url
-        called_with["timeout"] = timeout
-        return _FakeResponse({"active": True})
-    monkeypatch.setattr("heizungsbruecke.__main__.requests.get", _get)
-
-    _check_entitlement("client1", base_url="https://accounts.hartfussha.org")
-
-    assert called_with["url"] == "https://accounts.hartfussha.org/tenants/client1/status"
-    assert called_with["timeout"] == 10
-
-
-def test_check_entitlement_fails_open_on_http_error_status(monkeypatch, caplog):
-    # A 5xx response triggers raise_for_status() to raise HTTPError, which should fail open
-    monkeypatch.setattr(
-        "heizungsbruecke.__main__.requests.get",
-        lambda url, timeout: _FakeResponse({"active": True}, status_code=500),
-    )
-
-    with caplog.at_level(logging.WARNING):
-        _check_entitlement("client1")  # darf NICHT werfen
-
-    assert "berechtigungspruefung" in caplog.text.lower() or "accounts-api" in caplog.text.lower()
-
-
-def test_check_entitlement_fails_open_on_malformed_response_body(monkeypatch, caplog):
-    # If accounts-api returns valid JSON but not a dict (e.g., a list or null),
-    # the body.get("active", True) would raise AttributeError if not caught.
-    # This should also fail open, not crash.
-    monkeypatch.setattr(
-        "heizungsbruecke.__main__.requests.get",
-        lambda url, timeout: _FakeResponse([]),  # valid JSON, but not a dict
-    )
-
-    with caplog.at_level(logging.WARNING):
-        _check_entitlement("client1")  # darf NICHT werfen
-
-    assert "berechtigungspruefung" in caplog.text.lower() or "accounts-api" in caplog.text.lower()
 
 
 def test_run_local_check_persists_boost_active_true_on_transition_to_active(tmp_path, monkeypatch):
@@ -1580,7 +1510,7 @@ def test_run_bridge_primes_local_check_before_mqtt_loop_start(monkeypatch):
     monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: fake_mqtt_client)
     monkeypatch.setattr("heizungsbruecke.__main__.HaTriggerClient", lambda **kwargs: MagicMock(connected=False))
     monkeypatch.setattr(
-        "heizungsbruecke.__main__.requests.get",
+        "heizungsbruecke.entitlement.requests.get",
         lambda url, timeout: _FakeResponse({"active": True}),
     )
     monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
@@ -1629,7 +1559,7 @@ def test_run_bridge_resets_stale_boost_active_when_priming_check_raises(monkeypa
     monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: fake_mqtt_client)
     monkeypatch.setattr("heizungsbruecke.__main__.HaTriggerClient", lambda **kwargs: MagicMock(connected=False))
     monkeypatch.setattr(
-        "heizungsbruecke.__main__.requests.get",
+        "heizungsbruecke.entitlement.requests.get",
         lambda url, timeout: _FakeResponse({"active": True}),
     )
     monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
@@ -1752,7 +1682,7 @@ def test_run_bridge_resets_stale_emergency_boost_active_when_priming_check_raise
     monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: fake_mqtt_client)
     monkeypatch.setattr("heizungsbruecke.__main__.HaTriggerClient", lambda **kwargs: MagicMock(connected=False))
     monkeypatch.setattr(
-        "heizungsbruecke.__main__.requests.get",
+        "heizungsbruecke.entitlement.requests.get",
         lambda url, timeout: _FakeResponse({"active": True}),
     )
     monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
@@ -1817,7 +1747,7 @@ def _setup_restart_scenario(monkeypatch, tmp_path, failsafe_active, room_actual,
         "heizungsbruecke.__main__.HaTriggerClient", lambda **kwargs: MagicMock(connected=trigger_client_connected),
     )
     monkeypatch.setattr(
-        "heizungsbruecke.__main__.requests.get",
+        "heizungsbruecke.entitlement.requests.get",
         lambda url, timeout: _FakeResponse({"active": True}),
     )
     monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
@@ -2457,7 +2387,7 @@ def test_trigger_event_callback_matches_room_target_trigger_with_attribute_field
 
 def test_run_bridge_skips_local_check_fallback_when_trigger_client_connected(monkeypatch):
     monkeypatch.setattr(
-        "heizungsbruecke.__main__.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
+        "heizungsbruecke.entitlement.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
     )
     monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
     monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: MagicMock())
@@ -2491,7 +2421,7 @@ def test_run_bridge_skips_local_check_fallback_when_trigger_client_connected(mon
 
 def test_run_bridge_runs_local_check_fallback_when_trigger_client_disconnected(monkeypatch):
     monkeypatch.setattr(
-        "heizungsbruecke.__main__.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
+        "heizungsbruecke.entitlement.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
     )
     monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
     monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: MagicMock())
@@ -2524,7 +2454,7 @@ def test_run_bridge_runs_local_check_fallback_when_trigger_client_disconnected(m
 
 def test_run_bridge_starts_the_trigger_client(monkeypatch):
     monkeypatch.setattr(
-        "heizungsbruecke.__main__.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
+        "heizungsbruecke.entitlement.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
     )
     monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
     monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: MagicMock())
@@ -2547,7 +2477,7 @@ def test_run_bridge_starts_the_trigger_client(monkeypatch):
 
 def test_run_bridge_seeds_stable_target_cache_from_a_live_read_before_loop_start(monkeypatch):
     monkeypatch.setattr(
-        "heizungsbruecke.__main__.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
+        "heizungsbruecke.entitlement.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
     )
     monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
     monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: MagicMock())
@@ -2582,7 +2512,7 @@ def test_run_bridge_seeds_stable_target_cache_from_a_live_read_before_loop_start
 
 def test_run_bridge_watchdog_fallback_refreshes_stable_target_cache_from_a_live_read(monkeypatch):
     monkeypatch.setattr(
-        "heizungsbruecke.__main__.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
+        "heizungsbruecke.entitlement.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
     )
     monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
     monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: MagicMock())
@@ -2693,7 +2623,7 @@ def test_on_connect_hook_reseeds_stable_target_cache_without_watchdog_ever_obser
     monkeypatch, caplog,
 ):
     monkeypatch.setattr(
-        "heizungsbruecke.__main__.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
+        "heizungsbruecke.entitlement.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
     )
     monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
     monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", lambda **kwargs: MagicMock())
@@ -3143,3 +3073,136 @@ def test_finish_abo_grace_without_forced_restore_and_without_flags_writes_nothin
     ha_api.send_notification.assert_not_called()
     ha_api.create_persistent_notification.assert_not_called()
     assert "Frist" in caplog.text
+
+
+def _setup_abo_start(monkeypatch, tmp_path, status, inactive_since=None, backup=None):
+    """Echter _run_bridge-Bootpfad bis in den Watchdog-Loop; der erste sleep() beendet den Test."""
+    _abo_paths(tmp_path, monkeypatch)
+    monkeypatch.setattr("heizungsbruecke.__main__.threading.Timer", _FakeTimer)
+    if inactive_since is not None:
+        from heizungsbruecke import entitlement
+        entitlement.mark_inactive(tmp_path / "entitlement_state.json", inactive_since)
+    if backup is not None:
+        save_backup(tmp_path / "backup.json", backup)
+    monkeypatch.setattr("heizungsbruecke.__main__.entitlement.query_status", lambda tenant_id, base_url: status)
+    constructed = []
+
+    def fake_bridge_client(**kwargs):
+        client = MagicMock()
+        constructed.append(client)
+        return client
+
+    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", fake_bridge_client)
+    trigger_client = MagicMock(connected=False)
+    monkeypatch.setattr("heizungsbruecke.__main__.HaTriggerClient", lambda **kwargs: trigger_client)
+    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", lambda **kwargs: {})
+    monkeypatch.setattr("heizungsbruecke.__main__.daynight_snapshot.maybe_snapshot", lambda **kwargs: None)
+    local_checks = []
+
+    def fake_run_local_check(manifest, ha_api, mqtt_client, options, write_lock, boost_was_active, room_target=None, failsafe_ctx=None):
+        local_checks.append(mqtt_client)
+        return boost_was_active
+
+    monkeypatch.setattr("heizungsbruecke.__main__._run_local_check", fake_run_local_check)
+    telemetry_calls = []
+    monkeypatch.setattr("heizungsbruecke.__main__._run_telemetry_tick", lambda *a, **kw: telemetry_calls.append(1))
+
+    def stop_after_first_sleep(seconds):
+        raise SystemExit("stop test loop")
+
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", stop_after_first_sleep)
+    ha_api = MagicMock()
+    return ha_api, constructed, local_checks, telemetry_calls, trigger_client
+
+
+def test_run_bridge_active_status_clears_stale_inactive_state(monkeypatch, tmp_path):
+    ha_api, constructed, _, _, _ = _setup_abo_start(monkeypatch, tmp_path, "active", inactive_since=ABO_NOW)
+
+    with pytest.raises(SystemExit):
+        _run_bridge(_full_valid_options(), ha_api)
+
+    assert not (tmp_path / "entitlement_state.json").exists()
+    assert len(constructed) == 1
+
+
+def test_run_bridge_unknown_status_starts_normally_and_keeps_state(monkeypatch, tmp_path):
+    ha_api, constructed, _, telemetry_calls, _ = _setup_abo_start(monkeypatch, tmp_path, "unknown", inactive_since=ABO_NOW)
+    before = (tmp_path / "entitlement_state.json").read_text()
+
+    with pytest.raises(SystemExit):
+        _run_bridge(_full_valid_options(), ha_api)
+
+    assert (tmp_path / "entitlement_state.json").read_text() == before
+    assert len(constructed) == 1
+    assert telemetry_calls == [1]
+
+
+def test_run_bridge_inactive_in_grace_runs_locally_without_mqtt(monkeypatch, tmp_path):
+    ha_api, constructed, local_checks, telemetry_calls, _ = _setup_abo_start(monkeypatch, tmp_path, "inactive")
+
+    with pytest.raises(SystemExit):
+        _run_bridge(_full_valid_options(notify_service="notify.handy"), ha_api)
+
+    assert constructed == []                      # kein MQTT
+    assert local_checks and all(client is None for client in local_checks)
+    assert telemetry_calls == []                  # keine Telemetrie
+    assert load_backup(tmp_path / "failsafe_state.json")["failsafe_active"] is True
+    ha_api.create_persistent_notification.assert_called_once()
+    assert "Abo inaktiv" in ha_api.send_notification.call_args.args[1]
+
+
+def test_run_bridge_inactive_restart_within_grace_does_not_notify_again(monkeypatch, tmp_path):
+    ha_api, constructed, _, _, _ = _setup_abo_start(
+        monkeypatch, tmp_path, "inactive", inactive_since=datetime.now().astimezone() - timedelta(days=5),
+    )
+
+    with pytest.raises(SystemExit):
+        _run_bridge(_full_valid_options(notify_service="notify.handy"), ha_api)
+
+    assert constructed == []
+    ha_api.send_notification.assert_not_called()
+    ha_api.create_persistent_notification.assert_not_called()
+
+
+def test_run_bridge_inactive_after_grace_exits_cleanly_without_writes(monkeypatch, tmp_path):
+    ha_api, constructed, local_checks, _, _ = _setup_abo_start(
+        monkeypatch, tmp_path, "inactive", inactive_since=datetime.now().astimezone() - timedelta(days=31),
+        backup={"curve_current": 0.9, "boost_active": False, "emergency_boost_active": False},
+    )
+
+    assert _run_bridge(_full_valid_options(notify_service="notify.handy"), ha_api) is True
+
+    assert constructed == []
+    assert local_checks == []
+    ha_api.set_number_value.assert_not_called()
+    ha_api.send_notification.assert_not_called()
+    ha_api.create_persistent_notification.assert_not_called()
+
+
+def test_run_bridge_inactive_after_grace_restores_leftover_boost_once(monkeypatch, tmp_path):
+    ha_api, _, _, _, _ = _setup_abo_start(
+        monkeypatch, tmp_path, "inactive", inactive_since=datetime.now().astimezone() - timedelta(days=31),
+        backup={"curve_current": 0.9, "offset_current": 22.0, "emergency_boost_active": True},
+    )
+
+    assert _run_bridge(_full_valid_options(), ha_api) is True
+
+    ha_api.set_number_value.assert_any_call("number.curve_current", 0.9)
+    ha_api.set_number_value.assert_any_call("number.offset_current", 22.0)
+    assert load_backup(tmp_path / "backup.json")["emergency_boost_active"] is False
+
+
+def test_run_bridge_grace_end_during_runtime_restores_notifies_and_returns_true(monkeypatch, tmp_path):
+    ha_api, _, _, _, trigger_client = _setup_abo_start(
+        monkeypatch, tmp_path, "inactive", inactive_since=datetime.now().astimezone() - timedelta(days=29),
+        backup={"curve_current": 0.9, "offset_current": 22.0, "emergency_boost_active": True},
+    )
+    answers = iter([False, True])  # 1. Aufruf: Startpruefung, 2. Aufruf: Watchdog-Loop
+    monkeypatch.setattr("heizungsbruecke.__main__.entitlement.grace_expired", lambda since, now: next(answers))
+
+    assert _run_bridge(_full_valid_options(notify_service="notify.handy"), ha_api) is True
+
+    trigger_client.stop.assert_called_once()
+    ha_api.set_number_value.assert_any_call("number.curve_current", 0.9)
+    ha_api.create_persistent_notification.assert_called_with("SmartHeat", ABO_ENDED_MESSAGE, "smartheat_abo_inaktiv")
+    assert load_backup(tmp_path / "backup.json")["emergency_boost_active"] is False

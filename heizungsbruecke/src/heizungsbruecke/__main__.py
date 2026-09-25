@@ -9,8 +9,6 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
-import requests
-
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.boost import BoostDecision, decide_boost
 from heizungsbruecke.bridge import apply_boost_decision, apply_emergency_decision, handle_down_message, publish_snapshot
@@ -132,41 +130,6 @@ _KPI_ENERGY_ROLES = (
 ACCOUNTS_API_BASE_URL = "https://accounts.hartfussha.org"
 
 logger = logging.getLogger(__name__)
-
-
-class TenantNotEntitledError(Exception):
-    """Raised when accounts-api meldet, dass dieser Tenant aktuell nicht berechtigt ist
-    (Abo abgelaufen/pausiert, siehe Design-Spec Phase 3, Punkt 10)."""
-
-
-def _check_entitlement(tenant_id: str, base_url: str = ACCOUNTS_API_BASE_URL) -> None:
-    """Fragt vor jedem MQTT-Connect/HA-Zugriff bei accounts-api nach, ob dieser Tenant
-    aktuell berechtigt ist. Ein Netzwerk-/Serverfehler wird bewusst NICHT als "nicht
-    berechtigt" gewertet ("fail open") -- ein kurzer accounts-api-Ausfall soll die
-    Heizungssteuerung eines zahlenden Kunden nicht stoppen. Nur eine explizite
-    'active: false'-Antwort loest TenantNotEntitledError aus. Diese Abwaegung ist eine
-    Plan-Entscheidung (nicht explizit von der Design-Spec vorgegeben) -- siehe Hinweis
-    in den Global Constraints des Implementierungsplans.
-    """
-    try:
-        response = requests.get(f"{base_url}/tenants/{tenant_id}/status", timeout=10)
-        response.raise_for_status()
-        body = response.json()
-        if not body.get("active", True):
-            raise TenantNotEntitledError(
-                "Diese Anlage ist derzeit nicht aktiv (Abo abgelaufen/pausiert) - bitte Abo "
-                "verlaengern und Add-on danach manuell neu starten."
-            )
-    except TenantNotEntitledError:
-        raise
-    except Exception as error:
-        logger.warning(
-            "Berechtigungspruefung bei accounts-api fehlgeschlagen (wird als "
-            "berechtigt behandelt, um einen kurzen accounts-api-Ausfall nicht mit "
-            "einem abgelaufenen Abo zu verwechseln): %s",
-            error,
-        )
-        return
 
 
 def _is_configured(options: dict) -> bool:
@@ -653,6 +616,11 @@ def _read_room_target_live(manifest, ha_api) -> float | None:
 
 def _abo_inactive(failsafe_ctx: dict | None) -> bool:
     return failsafe_ctx is not None and failsafe_ctx.get("abo_inactive_since") is not None
+
+
+def _abo_grace_expired(failsafe_ctx: dict) -> bool:
+    since = failsafe_ctx.get("abo_inactive_since")
+    return since is not None and entitlement.grace_expired(since, datetime.now().astimezone())
 
 
 def _abo_inactive_message(inactive_since: datetime) -> str:
@@ -1194,7 +1162,10 @@ def _run_bridge(options: dict, ha_api) -> bool:
     dieser Fall `True` zurueck (main() beendet den Prozess dann mit Exit 0). Jeder andere
     fruehe Return ist ein echter Validierungs-/Startfehler und gibt `False` zurueck, damit
     main() mit einem Fehlercode abbricht und der Supervisor den Absturz sieht, statt ihn
-    mit "noch nicht konfiguriert" zu verwechseln.
+    mit "noch nicht konfiguriert" zu verwechseln. Gibt `True` ausserdem beim Abschluss-Start
+    (Abo bereits laenger als 30 Tage inaktiv) und am Fristende waehrend der Laufzeit zurueck
+    (Exit 0 in beiden Faellen) -- ohne `watchdog` in config.yaml bleibt das Add-on danach
+    gestoppt, bis es manuell neu gestartet wird.
     """
     if not _is_configured(options):
         logger.info(
@@ -1205,12 +1176,6 @@ def _run_bridge(options: dict, ha_api) -> bool:
             "danach automatisch beim naechsten Neustart des Add-ons."
         )
         return True
-
-    try:
-        _check_entitlement(options["tenant_id"])
-    except TenantNotEntitledError as error:
-        logger.error("FEHLER: %s", error)
-        return False
 
     try:
         options = _resolve_effective_options(options)
@@ -1257,28 +1222,47 @@ def _run_bridge(options: dict, ha_api) -> bool:
 
     failsafe_ctx = _load_failsafe_ctx_safe(FAILSAFE_PATH, BACKUP_PATH)
 
-    try:
-        mqtt_client = _connect_mqtt_with_retry(options)
-        mqtt_client.publish_discovery(
-            component="binary_sensor", object_id="failsafe",
-            config=build_discovery_config(options["tenant_id"]),
-        )
-        mqtt_client.publish_status("failsafe", build_state_payload(failsafe_ctx["state"].active))
+    notify_service = options.get("notify_service", "")
+    # Abo-Status (B8, Design-Spec 2026-09-25, Abschnitt 4): bewusst erst hier, weil
+    # Abschluss-Start und lokaler Modus Manifest und Clamps brauchen. "unknown"
+    # (accounts-api nicht erreichbar) startet normal -- fail-open.
+    now = datetime.now().astimezone()
+    abo_status = entitlement.query_status(options["tenant_id"], ACCOUNTS_API_BASE_URL)
+    if abo_status == entitlement.ACTIVE:
+        entitlement.clear(ENTITLEMENT_PATH)
+    elif abo_status == entitlement.INACTIVE:
+        inactive_since = entitlement.load_inactive_since(ENTITLEMENT_PATH)
+        if inactive_since is not None and entitlement.grace_expired(inactive_since, now):
+            _finish_abo_grace(
+                manifest, ha_api, options, failsafe_ctx, write_lock, always_restore=False, final_notice=False,
+            )
+            return True
+        _enter_abo_inactive(failsafe_ctx, write_lock, None, ha_api, notify_service, now)
 
-        mqtt_client.subscribe_setpoints(
-            on_message=_make_setpoints_callback(manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client),
-        )
-    except ConnectionRefusedError as error:
-        logger.error(
-            "FEHLER: MQTT-Verbindung zum Broker fehlgeschlagen (Connection refused): %s. "
-            "Pruefen, ob das Add-on 'cloudflared_access_mqtt' laeuft und auf demselben "
-            "Port (%s) lauscht wie hier konfiguriert (MQTT_PORT in __main__.py).",
-            error, MQTT_PORT,
-        )
-        return False
-    except Exception as error:
-        logger.error("FEHLER: MQTT-Verbindung zum Broker fehlgeschlagen: %s", error)
-        return False
+    mqtt_client = None
+    if not _abo_inactive(failsafe_ctx):
+        try:
+            mqtt_client = _connect_mqtt_with_retry(options)
+            mqtt_client.publish_discovery(
+                component="binary_sensor", object_id="failsafe",
+                config=build_discovery_config(options["tenant_id"]),
+            )
+            mqtt_client.publish_status("failsafe", build_state_payload(failsafe_ctx["state"].active))
+
+            mqtt_client.subscribe_setpoints(
+                on_message=_make_setpoints_callback(manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client),
+            )
+        except ConnectionRefusedError as error:
+            logger.error(
+                "FEHLER: MQTT-Verbindung zum Broker fehlgeschlagen (Connection refused): %s. "
+                "Pruefen, ob das Add-on 'cloudflared_access_mqtt' laeuft und auf demselben "
+                "Port (%s) lauscht wie hier konfiguriert (MQTT_PORT in __main__.py).",
+                error, MQTT_PORT,
+            )
+            return False
+        except Exception as error:
+            logger.error("FEHLER: MQTT-Verbindung zum Broker fehlgeschlagen: %s", error)
+            return False
 
     # Boost-Active-Bootstrap-Fix (Sicherheits-Review-Fund, siehe SDD-Ledger dieses Plans):
     # mindestens ein lokaler Check MUSS abgeschlossen sein, bevor MQTT-Down-Nachrichten
@@ -1320,11 +1304,12 @@ def _run_bridge(options: dict, ha_api) -> bool:
         failsafe_ctx["emergency_boost_active"] = False
         _save_emergency_active_if_changed(False, BACKUP_PATH)
 
-    try:
-        mqtt_client.loop_start()
-    except Exception as error:
-        logger.error("FEHLER: MQTT-Verbindung zum Broker fehlgeschlagen: %s", error)
-        return False
+    if mqtt_client is not None:
+        try:
+            mqtt_client.loop_start()
+        except Exception as error:
+            logger.error("FEHLER: MQTT-Verbindung zum Broker fehlgeschlagen: %s", error)
+            return False
 
     ha_trigger_client = _build_ha_trigger_client(
         manifest=manifest, ha_api=ha_api, options=options, mqtt_client=mqtt_client,
@@ -1334,6 +1319,13 @@ def _run_bridge(options: dict, ha_api) -> bool:
     ha_trigger_client.start()
 
     while True:
+        if _abo_grace_expired(failsafe_ctx):
+            ha_trigger_client.stop()
+            _finish_abo_grace(
+                manifest, ha_api, options, failsafe_ctx, write_lock, always_restore=True, final_notice=True,
+            )
+            return True
+
         try:
             if not ha_trigger_client.connected:
                 with write_lock:
@@ -1357,10 +1349,11 @@ def _run_bridge(options: dict, ha_api) -> bool:
         except Exception:
             logger.exception("Fehler im lokalen Check (Watchdog-Fallback), wird beim naechsten Tick erneut versucht")
 
-        _run_telemetry_tick(
-            manifest, ha_api, mqtt_client, options,
-            boost_active=boost_state.active, failsafe_active=failsafe_ctx["state"].active,
-        )
+        if not _abo_inactive(failsafe_ctx):
+            _run_telemetry_tick(
+                manifest, ha_api, mqtt_client, options,
+                boost_active=boost_state.active, failsafe_active=failsafe_ctx["state"].active,
+            )
 
         try:
             daynight_snapshot.maybe_snapshot(
