@@ -554,9 +554,12 @@ def _finish_abo_grace(
     Gibt True zurueck, wenn die Wiederherstellung geklappt hat (oder nichts
     wiederherzustellen war); dann wird failsafe_ctx["abo_finished"] gesetzt, damit ein
     danach noch verarbeiteter lokaler Check nichts mehr schreibt (Final-Review I-1).
-    Scheitert das Schreiben, bleiben die Boost-Flags gesetzt, es gibt keine
-    Abschlussmeldung und der Aufrufer versucht es erneut (Final-Review I-2) -- sonst
-    bliebe das Geraet dauerhaft auf Boost-Werten."""
+    Scheitert das Schreiben aufs Geraet, bleiben die Boost-Flags gesetzt, es gibt keine
+    Abschlussmeldung, es wird False zurueckgegeben und der Aufrufer versucht es erneut
+    (Final-Review I-2) -- sonst bliebe das Geraet dauerhaft auf Boost-Werten. Scheitert
+    danach nur das Speichern der geloeschten Boost-Flags (save_backup), gilt die
+    Wiederherstellung trotzdem als erfolgt (T2-8): Flags im Speicher geloescht, Rueckgabe
+    True -- die Werte stehen ja bereits auf dem Geraet."""
     backup = load_backup(BACKUP_PATH)
     boosting = bool(backup.get("boost_active")) or bool(backup.get("emergency_boost_active"))
     if always_restore or boosting:
@@ -944,7 +947,11 @@ def _on_auth_rejected(bridge: _Bridge, event: Event) -> None:
     """Der Broker hat die Zugangsdaten abgelehnt (Credentials beim Suspend widerrufen,
     hs-2). Nur ein eindeutiges "inactive" wechselt in den Abo-inaktiv-Modus; sonst bleibt
     es beim Log und paho versucht weiter zu verbinden. Die Abfrage blockiert den Worker
-    bis zu 10 s -- akzeptiert (Design-Spec 2026-09-26, Abschnitt 1)."""
+    bis zu 10 s -- akzeptiert (Design-Spec 2026-09-26, Abschnitt 1). Damit sich das
+    waehrend des paho-Backoffs nicht aufstaut, stellt der paho-Hook gebuendelt ein
+    (post_coalesced), und im Abo-inaktiv-Modus wird gar nicht mehr gefragt."""
+    if _abo_inactive(bridge.failsafe_ctx):
+        return
     status = entitlement.query_status(bridge.options["tenant_id"], ACCOUNTS_API_BASE_URL)
     if status != entitlement.INACTIVE:
         logger.error(
@@ -999,10 +1006,12 @@ def _restart_process() -> None:
 
 
 def _on_grace_check(bridge: _Bridge, event: Event) -> None:
-    """Abo-Fristende waehrend der Laufzeit (Final-Review I-1/I-2): erst wiederherstellen,
-    dann den Trigger-Client stoppen und den Worker mit Exit 0 beenden. Scheitert die
-    Wiederherstellung, laeuft die lokale Regelung weiter und der naechste Check versucht
-    es erneut."""
+    """Abo-Fristende waehrend der Laufzeit (Final-Review I-1/I-2). Vorher wird der
+    Abo-Status erneut abgefragt (T2-5): ist das Abo inzwischen wieder aktiv, wird der
+    Abo-inaktiv-Zustand geloescht und der Prozess im Normalbetrieb neu gestartet, statt
+    wiederherzustellen. Sonst erst wiederherstellen, dann den Trigger-Client stoppen und
+    den Worker mit Exit 0 beenden. Scheitert die Wiederherstellung, laeuft die lokale
+    Regelung weiter und der naechste Check versucht es erneut."""
     bridge.worker.schedule(_local_check_interval(bridge.options), Event(EV_GRACE_CHECK))
     if not _abo_grace_expired(bridge.failsafe_ctx):
         return
@@ -1219,11 +1228,12 @@ def _make_setpoints_callback(worker: RegulationWorker):
 def _create_mqtt_client(options: dict, worker: RegulationWorker, notbetrieb: bool) -> BridgeMqttClient:
     """Baut den MQTT-Client (B10: verbindet asynchron, kein Retry-Budget, kein Exit).
     Discovery, Status und Subscription werden gespeichert und bei jedem (Re-)Connect
-    erneut gesendet; die Auth-Ablehnung aus dem paho-Thread wird nur eingestellt."""
+    erneut gesendet; die Auth-Ablehnung aus dem paho-Thread wird nur (gebuendelt)
+    eingestellt."""
     client = BridgeMqttClient(
         host=MQTT_HOST, port=MQTT_PORT, tenant_id=options["tenant_id"],
         username=options["mqtt_username"], password=options["mqtt_password"],
-        on_auth_rejected=lambda _client: worker.post(Event(EV_AUTH_REJECTED)),
+        on_auth_rejected=lambda _client: worker.post_coalesced(EV_AUTH_REJECTED),
     )
     client.publish_discovery(
         component="binary_sensor", object_id="failsafe",

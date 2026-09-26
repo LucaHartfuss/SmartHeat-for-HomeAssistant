@@ -826,6 +826,61 @@ def test_auth_rejected_with_active_or_unknown_abo_only_logs(env, caplog, status)
     assert "abgelehnt" in caplog.text
 
 
+def test_repeated_auth_rejections_are_coalesced_into_one_entitlement_query(env):
+    # T10c: paho meldet waehrend seines Backoffs mehrfach; jede Abfrage blockiert den
+    # Worker bis zu 10 s -- noch nicht verarbeitete Meldungen ergeben nur eine Abfrage.
+    _quiet_backup(env)
+    bridge = _start(env)
+    queries_before = env.abo["queries"]
+
+    for _ in range(3):
+        _mqtt(env).kwargs["on_auth_rejected"](_mqtt(env))
+    bridge.worker.run_pending()
+
+    assert env.abo["queries"] == queries_before + 1
+
+
+def test_auth_rejected_in_abo_inactive_mode_does_not_query_again(env):
+    # T10c: nach dem Wechsel in den Abo-inaktiv-Modus ist jede weitere Abfrage sinnlos.
+    _quiet_backup(env)
+    bridge = _start(env)
+    env.abo["status"] = entitlement.INACTIVE
+    _mqtt(env).kwargs["on_auth_rejected"](_mqtt(env))
+    bridge.worker.run_pending()
+    queries_before = env.abo["queries"]
+
+    _mqtt(env).kwargs["on_auth_rejected"](_mqtt(env))
+    bridge.worker.run_pending()
+
+    assert env.abo["queries"] == queries_before
+
+
+def test_unexpected_entitlement_query_error_counts_as_unknown(env, monkeypatch):
+    # T10b: eine unerwartet werfende Abo-Abfrage nach dem zweiten Timeout laeuft ueber
+    # _fallback_follow_up als "unbekannt" -- Notbetrieb mit Retry, kein Abo-inaktiv-Modus.
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[0]["seq"]
+
+    def _broken_query(tenant_id, base_url):
+        raise RuntimeError("unerwartet")
+
+    monkeypatch.setattr("heizungsbruecke.__main__.entitlement.query_status", _broken_query)
+    _advance(env, bridge, 30)
+    _advance(env, bridge, 30)
+
+    assert bridge.failsafe_ctx["delivery"].notbetrieb is True
+    assert bridge.failsafe_ctx.get("abo_inactive_since") is None
+    assert _mqtt(env).stopped is False
+    assert _mqtt(env).status["failsafe"] == "ON"
+    assert env.ha.pushes == [NOTBETRIEB_ON]
+
+    _advance(env, bridge, 300)
+
+    assert [s["seq"] for s in _mqtt(env).snapshots] == [seq, seq, seq]
+
+
 def test_second_timeout_with_inactive_abo_enters_abo_mode_instead_of_alarm(env):
     _quiet_backup(env)
     bridge = _start(env)
