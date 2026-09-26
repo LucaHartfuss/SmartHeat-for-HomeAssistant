@@ -99,6 +99,17 @@ class HomeAssistantApi:
         response.raise_for_status()
         return response.json()
 
+    def get_config(self) -> dict:
+        """GET /api/config -- u.a. `time_zone` der HA-Instanz (B6-Startpruefung der
+        Container-Zeitzone, Design-Spec 2026-09-26, Abschnitt 3)."""
+        response = requests.get(
+            f"{self._base_url}{self._api_prefix}/config",
+            headers=self._headers,
+            timeout=10,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def set_number_value(self, entity_id: str, value: float) -> None:
         response = requests.post(
             f"{self._base_url}{self._api_prefix}/services/number/set_value",
@@ -162,7 +173,7 @@ class HomeAssistantApi:
 
     def create_statistics_sensor(
         self, name: str, source_entity_id: str, max_age_hours: float,
-        state_characteristic: str = "average_step", sampling_size: int = 255,
+        state_characteristic: str = "average_step", sampling_size: int = 10000,
     ) -> str:
         """Legt einen `statistics`-Sensor (gleitender Mittelwert) per Config-Entry-Flow an.
 
@@ -208,12 +219,12 @@ class HomeAssistantApi:
         `state_characteristic` default `average_step` keeps DAT/DART unchanged;
         `outdoor_min_24h` uses the minimum characteristic.
 
-        `sampling_size` default 255 matches the live-calibrated DAT/DART helpers
-        (see above); HA's statistics sensor keeps a `deque(maxlen=sampling_size)`
-        sampled on every state_reported event, so at ~60s polling 255 samples
-        covers only ~4h, not `max_age_hours` -- callers that need the full
-        window (e.g. a 24h characteristic) must pass a larger `sampling_size`
-        explicitly (see derived_sensors.py's OUTDOOR_MIN_24H_SAMPLING_SIZE).
+        `sampling_size` Default 10.000 (Design-Spec 2026-09-26): HA's statistics sensor
+        keeps a `deque(maxlen=sampling_size)`, sampled on every state_reported event --
+        bei schnell meldenden Fuehlern deckt ein kleiner Puffer nicht das ganze
+        `max_age_hours`-Fenster ab. Messung auf client1 (2026-09-26): DAT-Puffer 20 %,
+        DART 8 %, 12-h-Raummittel 3 % belegt -- 255 wurde dort nie voll; 10.000 schuetzt
+        kuenftige Kunden und aendert bei client1 keinen Wert.
         """
         fields = {
             "name": name,

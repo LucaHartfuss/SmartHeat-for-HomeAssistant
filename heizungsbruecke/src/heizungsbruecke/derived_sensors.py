@@ -5,11 +5,6 @@ from heizungsbruecke.backup_store import load_backup, save_backup
 
 logger = logging.getLogger(__name__)
 
-# HA's statistics sensor keeps only the last `sampling_size` samples (deque(maxlen=...)),
-# sampled on every state_reported event -- the default 255 covers just ~4h at typical
-# ~60s outdoor-temp polling, far short of the 24h window the summer-lock minimum needs.
-OUTDOOR_MIN_24H_SAMPLING_SIZE = 10000
-
 
 def ensure_all(
     ha_api, tenant_id: str, room_actual_entity_id: str, outdoor_temp_entity_id: str,
@@ -82,7 +77,6 @@ def ensure_all(
             lambda: ha_api.create_statistics_sensor(
                 name=f"SmartHeat {tenant_id} Aussentemp. 24h-Minimum", source_entity_id=outdoor_temp_entity_id,
                 max_age_hours=24, state_characteristic="value_min",
-                sampling_size=OUTDOOR_MIN_24H_SAMPLING_SIZE,
             ),
         )
     except Exception as exc:

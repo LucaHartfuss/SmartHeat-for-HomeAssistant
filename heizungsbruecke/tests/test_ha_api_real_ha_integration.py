@@ -158,6 +158,18 @@ def test_get_state_reads_zone_home_radius_from_real_ha(real_ha):
     assert radius == 100.0
 
 
+def test_get_config_returns_time_zone_from_real_ha(real_ha):
+    """B6: GET /api/config liefert die HA-Zeitzone, gegen die das Add-on beim Start
+    seine Container-Zeitzone prueft."""
+    base_url, token = real_ha
+    api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
+
+    time_zone = api.get_config()["time_zone"]
+
+    assert isinstance(time_zone, str)
+    assert time_zone
+
+
 def test_create_input_number_creates_a_real_working_helper(real_ha):
     """Verifiziert create_input_number() end-to-end gegen echte HA (Task 4: per Websocket).
 

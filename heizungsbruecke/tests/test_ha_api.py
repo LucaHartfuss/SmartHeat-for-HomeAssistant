@@ -2,6 +2,7 @@ import json
 from unittest.mock import patch, Mock, MagicMock
 
 import pytest
+import requests
 
 from heizungsbruecke.ha_api import HomeAssistantApi
 
@@ -426,7 +427,7 @@ def test_create_statistics_sensor_orchestrates_flow_and_registry_lookup():
         "state_characteristic": "average_step",
         "keep_last_sample": True,
         "max_age": {"hours": 24},
-        "sampling_size": 255,
+        "sampling_size": 10000,
         "precision": 2,
     })
     mock_find.assert_called_once_with("e1")
@@ -465,7 +466,7 @@ def test_create_statistics_sensor_passes_custom_state_characteristic():
     assert mock_advance.call_args.args[1]["state_characteristic"] == "value_min"
 
 
-def test_create_statistics_sensor_defaults_sampling_size_to_255():
+def test_create_statistics_sensor_defaults_sampling_size_to_10000():
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
     flow_start_response = {"type": "form", "flow_id": "f1", "data_schema": []}
     with patch.object(api, "_start_config_flow", return_value=flow_start_response), \
@@ -474,7 +475,7 @@ def test_create_statistics_sensor_defaults_sampling_size_to_255():
         api.create_statistics_sensor(
             name="SmartHeat t1 DART", source_entity_id="sensor.room", max_age_hours=24,
         )
-    assert mock_advance.call_args.args[1]["sampling_size"] == 255
+    assert mock_advance.call_args.args[1]["sampling_size"] == 10000
 
 
 def test_create_statistics_sensor_passes_custom_sampling_size():
@@ -514,3 +515,28 @@ def test_create_persistent_notification_raises_on_http_error():
     with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response):
         with pytest.raises(RuntimeError):
             api.create_persistent_notification("SmartHeat", "x", "smartheat_abo_inaktiv")
+
+
+def test_get_config_returns_parsed_json():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    mock_response = Mock()
+    mock_response.json.return_value = {"time_zone": "Europe/Berlin"}
+    mock_response.raise_for_status.return_value = None
+
+    with patch("heizungsbruecke.ha_api.requests.get", return_value=mock_response) as mock_get:
+        result = api.get_config()
+
+    assert result == {"time_zone": "Europe/Berlin"}
+    mock_get.assert_called_once_with(
+        "http://supervisor/core/api/config", headers={"Authorization": "Bearer test-token"}, timeout=10,
+    )
+
+
+def test_get_config_raises_on_http_error():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    mock_response = Mock()
+    mock_response.raise_for_status.side_effect = requests.HTTPError("502")
+
+    with patch("heizungsbruecke.ha_api.requests.get", return_value=mock_response):
+        with pytest.raises(requests.HTTPError):
+            api.get_config()
