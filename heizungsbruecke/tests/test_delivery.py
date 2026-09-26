@@ -348,6 +348,45 @@ def test_rejected_with_same_reason_does_not_notify_again():
     assert actions == [ScheduleRetry("s1", 4, 300)]
 
 
+def test_rejected_with_only_the_value_changed_does_not_notify_or_change_state_again():
+    """Der R4-Grund des Servers enthaelt den Messwert; ein driftender Wert ist dieselbe
+    Stoerung. Keine zweite Meldung, und der gespeicherte Fehler (erste Begruendung)
+    bleibt unveraendert -- sonst wuerde failsafe_state.json bei jedem Retry neu
+    geschrieben."""
+    first = "unplausibler Wert für dat: 99 (erlaubt -40–45)"
+    state, _ = _published("s1")
+    state, first_actions = step(state, Ack("s1", "rejected", first))
+    persisted = to_persisted(state)
+
+    state, actions = _run(
+        state, RetryDue("s1", 2), Published("s1"), Ack("s1", "rejected", "unplausibler Wert für dat: 99.5 (erlaubt -40–45)"),
+    )
+
+    assert first_actions[0] == Notify(NOTIFY_DATENFEHLER_SERVER, (first,))
+    assert actions == [ScheduleRetry("s1", 4, 300)]
+    assert state.datenfehler == DataFault(SOURCE_SERVER, (first,))
+    assert to_persisted(state) == persisted
+
+
+def test_rejected_for_another_role_notifies_with_full_reason():
+    state, _ = _published("s1")
+    state, _ = step(state, Ack("s1", "rejected", "unplausibler Wert für dat: 99 (erlaubt -40–45)"))
+    other = "unplausibler Wert für dart: 60 (erlaubt 5–35)"
+
+    state, actions = _run(state, RetryDue("s1", 2), Published("s1"), Ack("s1", "rejected", other))
+
+    assert actions == [Notify(NOTIFY_DATENFEHLER_SERVER, (other,)), ScheduleRetry("s1", 4, 300)]
+    assert state.datenfehler == DataFault(SOURCE_SERVER, (other,))
+
+
+def test_rejected_after_local_fault_with_same_text_is_a_new_fault():
+    state, _ = _run(DeliveryState(), TickDue("s1", "daily"), ReadInvalid("s1", ("dat",)))
+
+    state, actions = _run(state, RetryDue("s1", 1), Published("s1"), Ack("s1", "rejected", "dat"))
+
+    assert actions[0] == Notify(NOTIFY_DATENFEHLER_SERVER, ("dat",))
+
+
 def test_rejected_without_reason_uses_placeholder():
     state, _ = _published("s1")
 

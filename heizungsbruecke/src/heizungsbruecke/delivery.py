@@ -54,6 +54,15 @@ class DataFault:
     source: str  # SOURCE_LOCAL | SOURCE_SERVER
     detail: tuple[str, ...]  # lokal: betroffene Rollen (sortiert); Server: (Ablehnungsgrund,)
 
+    def key(self) -> tuple:
+        """Identitaet der Stoerung fuer "gleicher Fehler wie zuletzt?". Der Server-Grund
+        traegt bei R4 den Messwert ("unplausibler Wert für dat: 99 (erlaubt ...)"); ein
+        driftender Wert ist dieselbe Stoerung, zaehlt also nur der Teil vor dem ersten
+        Doppelpunkt."""
+        if self.source == SOURCE_SERVER:
+            return (self.source, self.detail[0].split(":", 1)[0] if self.detail else "")
+        return (self.source, self.detail)
+
 
 @dataclass(frozen=True)
 class DeliveryState:
@@ -241,7 +250,11 @@ def _ack(state, event):
     answered = replace(state, server_failures=0, notbetrieb=False)
     if event.status == STATUS_REJECTED:
         fault = DataFault(SOURCE_SERVER, (event.reason or _NO_REASON,))
-        if fault != state.datenfehler:
+        if state.datenfehler is not None and fault.key() == state.datenfehler.key():
+            # Gleiche Stoerung, evtl. mit anderem Messwert: erste Begruendung behalten,
+            # damit weder eine Meldung noch ein Schreiben von failsafe_state.json folgt.
+            fault = state.datenfehler
+        else:
             actions.append(Notify(NOTIFY_DATENFEHLER_SERVER, fault.detail))
         new_state, retry = _retry(replace(answered, datenfehler=fault), DATA_RETRY_DELAYS_SECONDS)
         return new_state, actions + [retry]
