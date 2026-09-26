@@ -12,6 +12,8 @@ import heizungsbruecke.__main__ as main_module
 from heizungsbruecke.ha_trigger_client import HaTriggerClient
 from heizungsbruecke.__main__ import (
     ABO_ENDED_MESSAGE,
+    HELPER_NOTIFICATION_MESSAGE,
+    _check_timezone,
     _abo_inactive_message,
     _connect_mqtt_with_retry,
     _end_emergency_boost_if_active,
@@ -444,22 +446,6 @@ def test_ensure_derived_sensors_with_retry_recovers_after_transient_failures(mon
     assert result == expected
     assert attempts["count"] == 3
     assert sleeps == [5, 10]
-
-
-def test_ensure_derived_sensors_with_retry_raises_last_error_after_exhausting_retries(monkeypatch):
-    def always_fails(**kwargs):
-        raise ConnectionError("HA Core dauerhaft nicht erreichbar")
-
-    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", always_fails)
-    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", lambda seconds: None)
-
-    options = {
-        "tenant_id": "t1", "entity_room_actual": "sensor.rt", "entity_outdoor_temp": "sensor.outdoor",
-        "avg_window_hours": 3.0,
-    }
-
-    with pytest.raises(ConnectionError, match="HA Core dauerhaft nicht erreichbar"):
-        _ensure_derived_sensors_with_retry(MagicMock(), options)
 
 
 def test_connect_mqtt_with_retry_returns_client_on_first_success(monkeypatch):
@@ -3547,3 +3533,85 @@ def test_run_local_check_keeps_target_rise_pending_when_boost_has_no_restore_poi
     assert second is True
     assert load_backup(backup_path)["last_room_target"] == 21.0
     ha_api.set_number_value.assert_any_call("number.curve", 1.5)
+
+
+_DERIVED_OPTIONS = {
+    "tenant_id": "t1", "entity_room_actual": "sensor.rt", "entity_outdoor_temp": "sensor.outdoor",
+    "avg_window_hours": 3.0,
+}
+
+
+def test_ensure_derived_sensors_with_retry_keeps_retrying_every_five_minutes_after_budget(monkeypatch, caplog):
+    expected = {"dat": "sensor.dat"}
+    attempts = {"count": 0}
+
+    def flaky_ensure_all(**kwargs):
+        attempts["count"] += 1
+        if attempts["count"] <= 9:
+            raise ConnectionError("HA Core noch nicht bereit")
+        return expected
+
+    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", flaky_ensure_all)
+    sleeps = []
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", sleeps.append)
+    ha_api = MagicMock()
+
+    with caplog.at_level(logging.ERROR):
+        result = _ensure_derived_sensors_with_retry(ha_api, _DERIVED_OPTIONS)
+
+    assert result == expected
+    assert sleeps == [5, 10, 20, 40, 60, 60, 60, 300, 300]
+    ha_api.create_persistent_notification.assert_called_once_with(
+        "SmartHeat", HELPER_NOTIFICATION_MESSAGE, "smartheat_hilfssensoren",
+    )
+    assert len([record for record in caplog.records if record.levelno == logging.ERROR]) == 1
+
+
+def test_ensure_derived_sensors_with_retry_survives_failing_notification(monkeypatch):
+    attempts = {"count": 0}
+
+    def flaky_ensure_all(**kwargs):
+        attempts["count"] += 1
+        if attempts["count"] <= 8:
+            raise ConnectionError("HA Core noch nicht bereit")
+        return {}
+
+    monkeypatch.setattr("heizungsbruecke.__main__.derived_sensors.ensure_all", flaky_ensure_all)
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", lambda seconds: None)
+    ha_api = MagicMock()
+    ha_api.create_persistent_notification.side_effect = RuntimeError("HA kaputt")
+
+    assert _ensure_derived_sensors_with_retry(ha_api, _DERIVED_OPTIONS) == {}
+
+
+def test_check_timezone_warns_on_mismatch(monkeypatch, caplog):
+    monkeypatch.setenv("TZ", "UTC")
+    ha_api = MagicMock()
+    ha_api.get_config.return_value = {"time_zone": "Europe/Berlin"}
+
+    with caplog.at_level(logging.WARNING):
+        _check_timezone(ha_api)
+
+    assert "Europe/Berlin" in caplog.text
+    assert "UTC" in caplog.text
+
+
+def test_check_timezone_is_quiet_when_matching(monkeypatch, caplog):
+    monkeypatch.setenv("TZ", "Europe/Berlin")
+    ha_api = MagicMock()
+    ha_api.get_config.return_value = {"time_zone": "Europe/Berlin"}
+
+    with caplog.at_level(logging.WARNING):
+        _check_timezone(ha_api)
+
+    assert caplog.records == []
+
+
+def test_check_timezone_survives_failing_config_query(caplog):
+    ha_api = MagicMock()
+    ha_api.get_config.side_effect = requests.ConnectionError("HA nicht erreichbar")
+
+    with caplog.at_level(logging.WARNING):
+        _check_timezone(ha_api)  # darf nicht werfen
+
+    assert "Zeitzone" in caplog.text

@@ -65,12 +65,15 @@ _REQUIRED_OPTIONS = (
 )
 
 # The add-on runs with `startup: services`, i.e. it can be started before HA Core has
-# finished booting. A transient failure here (HA API not answering yet) must not be fatal
-# on the first attempt -- retry with backoff before giving up. No config.yaml `watchdog`
-# is set on purpose: once retries are exhausted the failure is treated as a genuine
-# misconfiguration, and _run_bridge() returns (logs, doesn't crash the whole process)
-# rather than crash-looping forever.
+# finished booting. Erst das bisherige Budget mit Backoff, danach (B10, Design-Spec
+# 2026-09-26) unbegrenzt alle DERIVED_SENSORS_UNBOUNDED_RETRY_SECONDS weiter -- ein
+# spaet startendes HA ist kein Konfigurationsfehler, das Add-on beendet sich deshalb nie.
 DERIVED_SENSORS_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60, 60, 60)
+DERIVED_SENSORS_UNBOUNDED_RETRY_SECONDS = 300
+HELPER_NOTIFICATION_ID = "smartheat_hilfssensoren"
+HELPER_NOTIFICATION_MESSAGE = (
+    "SmartHeat: Hilfssensoren konnten nicht angelegt werden – Home Assistant noch nicht bereit?"
+)
 
 # Boot-Reihenfolge-Rennen zwischen den beiden Add-ons (cloudflared_access_mqtt startet
 # eventuell noch) oder ein kurzer Broker-Restart duerfen nicht sofort als dauerhafte
@@ -261,13 +264,13 @@ def _validate_derived_sensor_prerequisites(options: dict) -> str | None:
 
 
 def _ensure_derived_sensors_with_retry(ha_api, options: dict) -> dict[str, str]:
-    """Wraps `derived_sensors.ensure_all` with retry-with-backoff (see
-    DERIVED_SENSORS_RETRY_DELAYS_SECONDS above for the rationale) so a transient failure
-    while HA Core is still starting up doesn't crash the whole add-on on the first try.
-    """
+    """Wraps `derived_sensors.ensure_all` with retry (see
+    DERIVED_SENSORS_RETRY_DELAYS_SECONDS above): first the backoff budget, then forever
+    every DERIVED_SENSORS_UNBOUNDED_RETRY_SECONDS. Beim Uebergang in die unbegrenzte
+    Phase einmal ERROR-Log und best effort eine HA-Benachrichtigung. Wirft nie."""
     delays = DERIVED_SENSORS_RETRY_DELAYS_SECONDS
-    last_error: Exception | None = None
-    for attempt in range(len(delays) + 1):
+    attempt = 0
+    while True:
         try:
             return derived_sensors.ensure_all(
                 ha_api=ha_api,
@@ -278,16 +281,49 @@ def _ensure_derived_sensors_with_retry(ha_api, options: dict) -> dict[str, str]:
                 state_path=DERIVED_SENSORS_PATH,
             )
         except Exception as error:
-            last_error = error
-            if attempt == len(delays):
-                break
-            logger.warning(
-                "Anlegen der abgeleiteten Sensoren fehlgeschlagen (Versuch %s/%s, evtl. ist "
-                "HA Core beim Start des Add-ons noch nicht bereit): %s",
-                attempt + 1, len(delays) + 1, error,
-            )
-            time.sleep(delays[attempt])
-    raise last_error
+            if attempt < len(delays):
+                logger.warning(
+                    "Anlegen der abgeleiteten Sensoren fehlgeschlagen (Versuch %s/%s, evtl. ist "
+                    "HA Core beim Start des Add-ons noch nicht bereit): %s",
+                    attempt + 1, len(delays) + 1, error,
+                )
+                delay = delays[attempt]
+            else:
+                if attempt == len(delays):
+                    logger.error(
+                        "Abgeleitete Sensoren nach %s Versuchen nicht angelegt, weiter alle %s s: %s",
+                        attempt + 1, DERIVED_SENSORS_UNBOUNDED_RETRY_SECONDS, error,
+                    )
+                    try:
+                        ha_api.create_persistent_notification(
+                            ABO_NOTIFICATION_TITLE, HELPER_NOTIFICATION_MESSAGE, HELPER_NOTIFICATION_ID,
+                        )
+                    except Exception:
+                        logger.warning("HA-Benachrichtigung zu den Hilfssensoren konnte nicht angelegt werden")
+                else:
+                    logger.warning("Anlegen der abgeleiteten Sensoren weiter fehlgeschlagen (Versuch %s): %s", attempt + 1, error)
+                delay = DERIVED_SENSORS_UNBOUNDED_RETRY_SECONDS
+            attempt += 1
+            time.sleep(delay)
+
+
+def _check_timezone(ha_api) -> None:
+    """B6 (Design-Spec 2026-09-26, Abschnitt 3): taegliche Zeitpunkte (Tagestick,
+    Tag-/Nachtmittel) rechnet das Add-on in der Container-Zeitzone. Weicht sie von der
+    HA-Zeitzone ab, nur warnen -- keine Aenderung an der Zeitrechnung, kein Abbruch."""
+    try:
+        ha_time_zone = ha_api.get_config().get("time_zone")
+    except Exception as error:
+        logger.warning("Zeitzone von Home Assistant konnte nicht abgefragt werden: %s", error)
+        return
+    container_time_zone = os.environ.get("TZ") or str(datetime.now().astimezone().tzinfo)
+    if ha_time_zone and ha_time_zone != container_time_zone:
+        logger.warning(
+            "Zeitzone weicht ab: Home Assistant '%s', Add-on-Container '%s' - taegliche "
+            "Zeitpunkte laufen in der Container-Zeit.", ha_time_zone, container_time_zone,
+        )
+    else:
+        logger.info("Zeitzone: %s", container_time_zone)
 
 
 def _connect_mqtt_with_retry(options: dict, on_auth_rejected=None) -> BridgeMqttClient:
@@ -1275,14 +1311,8 @@ def _run_bridge(options: dict, ha_api) -> bool:
         logger.error("FEHLER: %s", prerequisite_error)
         return False
 
-    try:
-        derived_entity_ids = _ensure_derived_sensors_with_retry(ha_api, options)
-    except Exception as error:
-        logger.error(
-            "FEHLER: Anlegen der abgeleiteten Sensoren fehlgeschlagen nach %d Versuchen: %s",
-            len(DERIVED_SENSORS_RETRY_DELAYS_SECONDS) + 1, error,
-        )
-        return False
+    derived_entity_ids = _ensure_derived_sensors_with_retry(ha_api, options)
+    _check_timezone(ha_api)
 
     try:
         manifest = build_manifest(options, derived_entity_ids)
