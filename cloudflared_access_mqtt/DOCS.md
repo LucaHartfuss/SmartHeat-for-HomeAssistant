@@ -21,3 +21,9 @@ All four fields are required — the add-on refuses to start without them.
 Point any client that supports host/port configuration (e.g. Home Assistant's MQTT integration)
 at `127.0.0.1:<local_port>`. Because this add-on runs with `host_network: true`, that address is
 the same `127.0.0.1` Home Assistant Core itself sees.
+
+## Architectures
+
+This add-on is declared for `aarch64`, `amd64`, `armhf` and `armv7`. The `heizungsbruecke`
+add-on it is paired with in SmartHeat is only built for `aarch64` and `amd64`, so a SmartHeat
+installation needs a 64-bit system.

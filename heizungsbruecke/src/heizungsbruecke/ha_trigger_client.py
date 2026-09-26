@@ -51,13 +51,13 @@ class HaTriggerClient:
     def stop(self) -> None:
         """Sets the stop flag AND proactively closes the current connection.
 
-        Real-HA-Core integration test finding (Task 4, 2026-09-22): setting only the
-        stop flag left `connected` True for an unbounded time after `stop()` returned,
-        because the background thread only re-checks the flag once `ws_app.run_forever()`
-        itself returns -- and nothing was telling that blocking call to return. Against a
-        real, healthy HA Core connection that can take arbitrarily long (it only returns
-        on an actual disconnect). The fake-`WebSocketApp` unit tests (Task 3) never
-        caught this since their fake `run_forever()` returns immediately by construction.
+        Setting only the stop flag left `connected` True for an unbounded time after
+        `stop()` returned, because the background thread only re-checks the flag once
+        `ws_app.run_forever()` itself returns -- and nothing was telling that blocking
+        call to return. Against a real, healthy HA Core connection that can take
+        arbitrarily long (it only returns on an actual disconnect). The
+        fake-`WebSocketApp` unit tests never caught this since their fake
+        `run_forever()` returns immediately by construction.
         """
         self._stop.set()
         ws_app = self._ws_app
@@ -114,9 +114,9 @@ class HaTriggerClient:
     def _handle_subscribe_result(self, ws, payload: dict) -> None:
         if payload.get("success"):
             self._subscribed = True
-            # B7 (Design-Spec 2026-09-26): nach einer erfolgreichen Verbindung beginnt der
-            # Backoff wieder bei 1 s, statt nach dem ersten laengeren Ausfall dauerhaft bei
-            # 30 s zu bleiben. Laeuft im selben Thread wie die Reconnect-Schleife.
+            # Nach einer erfolgreichen Verbindung beginnt der Backoff wieder bei 1 s, statt
+            # nach dem ersten laengeren Ausfall dauerhaft bei 30 s zu bleiben. Laeuft im
+            # selben Thread wie die Reconnect-Schleife.
             self._attempt = 0
             self._connected.set()
             logger.info("HaTriggerClient: subscribe_trigger erfolgreich fuer %d Trigger", len(self._triggers))
@@ -124,9 +124,9 @@ class HaTriggerClient:
                 # Feuert bei JEDER erfolgreichen (Re-)Verbindung -- erster Connect nach
                 # start() genauso wie jeder spaetere Reconnect -- und das ohne die
                 # Sampling-Luecke, die ein rein aus dem Watchdog-Loop heraus periodisch
-                # abgefragtes `connected` zwangslaeufig hat (Re-Review final-review-
-                # report.md: ein 30-90s-HA-Core-Neustart kann komplett zwischen zwei
-                # 300s-Ticks durchlaufen). Wie `_dispatch_event` unten: darf niemals aus
+                # abgefragtes `connected` zwangslaeufig hat (ein 30-90s-HA-Core-Neustart
+                # kann komplett zwischen zwei 300s-Ticks durchlaufen). Wie
+                # `_dispatch_event` unten: darf niemals aus
                 # diesem WS-Callback-Thread herausplatzen (Klassendocstring).
                 try:
                     self._on_connected()

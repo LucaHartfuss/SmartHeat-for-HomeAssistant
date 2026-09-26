@@ -1,5 +1,5 @@
-"""Abo-Status des Tenants und die 30-Tage-Frist des Abo-inaktiv-Modus (B8, Design-Spec
-2026-09-25, Abschnitt 4). Status kommt vom unauthentifizierten accounts-api-Endpunkt
+"""Abo-Status des Tenants und die 30-Tage-Frist des Abo-inaktiv-Modus. Status kommt vom
+unauthentifizierten accounts-api-Endpunkt
 GET /tenants/<id>/status; die Frist wird in /data/entitlement_state.json persistiert,
 damit sie Add-on-Neustarts ueberlebt."""
 import json

@@ -5,13 +5,18 @@ HA-Add-on-Repository mit zwei Add-ons: `heizungsbruecke` (Client-seitige Bridge-
 ## Struktur
 
 - `heizungsbruecke/src/heizungsbruecke/`:
-  - `__main__.py` — Regelschleife: seit 2026-09-21/22 event-getrieben (`docs/superpowers/specs/2026-09-21-heizungsbruecke-eventgetriebene-trigger-design.md`, live auf `client1` seit v0.11.0) — lokaler Boost-/Aenderungs-Check (`_run_local_check`) laeuft primaer ueber `HaTriggerClient`/HA-Core-`subscribe_trigger` (State-Trigger auf `room_target`/`room_actual`, Zeit-Trigger auf `daily_trigger_time`), `local_check_interval_seconds` (Default 300s, 1-3600s) ist nur noch der Watchdog-Fallback-Takt bei getrennter WS-Verbindung, nicht mehr die primaere Kadenz. Voller Snapshot-Publish an den Server weiterhin nur taeglich oder bei `target_rt`-Aenderung seit der letzten Veroeffentlichung, zusaetzlich alle `telemetry_interval_seconds` (Default 300s) ein reines KPI-Beobachtungssignal auf `smartheat/{tenant}/telemetry` — unabhaengig von curve.py/der Steuerung. Seit v0.11.1 (Design-Spec `docs/superpowers/specs/2026-09-22-heizungsbruecke-zieltemperatur-debounce-design.md`): `room_target` wird als Parameter uebergeben statt live gelesen, gespeist aus einem In-Memory-Stable-Target-Cache (`_StableTargetBox`), der nur aktualisiert wird, wenn der `room_target`-Trigger selbst (jetzt mit `attribute:`+`for: 10s`-Debounce) feuert — `room_actual`/`daily_trigger_time`-Trigger nutzen den Cache-Wert mit, statt selbst live zu lesen. Damit koennen weder Boost-Start/-Ende noch die Heizkurvenanpassung mehr auf einer waehrend der 10s-Stabilisierung noch nicht finalen Solltemperatur reagieren. Siehe `../docs/architecture.md` §4.1. Seit 0.16.0 sind alle Trigger-, MQTT- und Zeitplan-Ereignisse Handler des `RegulationWorker`; `_start_bridge` ist der Boot-Ablauf, `_run_bridge` gibt den Exit-Code zurueck (1 nur bei Konfigurationsfehlern).
-  - `boost.py` — Start aktiviert nur bei Sollwerterhöhung (`room_target`-Trigger), Ende erst wenn `room_actual` die Solltemperatur erreicht (`room_actual`-Trigger noetig, kein Start-Ausloeser bei Kälte aus anderer Ursache). Vor jedem Boost-Start wird ein Wiederherstellungspunkt in `backup.json` sichergestellt (B5).
-  - `worker.py` — zentraler Regel-Worker (Event-Queue + Zeitplan), ersetzt seit 0.16.0 `write_lock`, `threading.Timer` und die Watchdog-Schleife; alle Regelungsereignisse laufen nacheinander im Hauptthread (`docs/superpowers/specs/2026-09-26-regelbetrieb-robust-design.md`, Abschnitt 1).
-  - `delivery.py` — reine Zustandsmaschine der Tick-Zustellung (Retry mit derselben `seq`, Notbetrieb nach 2 Ack-Timeouts in Folge, Datenfehler lokal/Server, Persistenz in `failsafe_state.json`), ersetzt `failsafe.py`.
-  - `profiles.py` — lokale Sicherheits-Clamps je `profile_id` (dupliziert zum Server, kein gemeinsamer Code).
-  - `mqtt_client.py` — Verbindung fest auf `127.0.0.1:18830` codiert.
-  - `manifest.py` — Rollen-Definitionen (`ALL_ROLES`).
+  - `__main__.py` — Boot (`_start_bridge`, `_prime`), dünne Handler des `RegulationWorker` (`_on_*`), `_run_bridge` (Exit-Code: 1 nur bei Konfigurationsfehlern), `main`.
+  - `runtime.py` — `Runtime` (Laufzeit-Kontext) und die Ereignisarten `EV_*`.
+  - `config.py` — Pflichtfelder, Profilwerte, Startprüfungen, Dateipfade, feste Adressen (MQTT `127.0.0.1:18830`, accounts-api).
+  - `state.py` — `BridgeState` + `StateStore`: der gesamte Zustand, `backup.json`/`failsafe_state.json` einmal geladen und nur bei Änderung geschrieben.
+  - `override.py` — einzige Stelle, die Kurve/Offset auf die Anlage schreibt: Sollwert-Regel Notfall-Boost > Comfort-Boost > Wiederherstellungspunkt, Schreiben nur beim Wechsel, immer geclampt.
+  - `regulation.py` — lokaler Check (Comfort-Boost nur bei Sollwerterhöhung, Notfall-Boost nur im Notbetrieb, Stable-Target-Cache mit 10-s-Entprellung) und „Tick fällig?“.
+  - `ticks.py` — führt die Aktionen von `delivery.py` aus, verarbeitet Server-Antworten.
+  - `delivery.py` — reine Zustandsmaschine der Tick-Zustellung (Phasen, Retry mit derselben `seq`, Notbetrieb nach 2 Ack-Timeouts, Datenfehler lokal/Server/Anlage).
+  - `abo.py` — Abo-inaktiv-Modus und Fristende.
+  - `triggers.py` — HA-Trigger-Client (WebSocket) und MQTT-Client-Aufbau; Callbacks stellen nur in den Worker ein.
+  - `worker.py` — Regel-Worker (Event-Queue + Zeitplan), alle Regelungsereignisse nacheinander im Hauptthread.
+  - `snapshot.py`, `telemetry.py`, `boost.py`, `emergency_boost.py`, `profiles.py` (lokale Clamps je `profile_id`, dupliziert zum Server), `mqtt_client.py`, `manifest.py`, `ha_api.py`, `ha_trigger_client.py`, `entitlement.py`, `derived_sensors.py`, `daynight_snapshot.py`, `target_history.py`, `clamping.py`, `backup_store.py`.
 - `heizungsbruecke/config.yaml` — hat einen echten `schema:`-Block, wird aber **ausschließlich** von der SmartHeat-Integration befüllt, nie manuell in der Add-on-UI.
 - `cloudflared_access_mqtt/` — nur `run.sh`-Wrapper um `cloudflared access tcp`, keine eigene Logik.
 
@@ -22,11 +27,11 @@ cd heizungsbruecke
 pip install -e ".[dev]"
 pytest
 ```
-(`pyproject.toml`: `testpaths = ["tests"]`, `pythonpath = ["src"]`.) 480 Testfunktionen in 22 Dateien (`pytest -q --collect-only`). Zusätzlich Shell-Integrationstests im Repo-Root unter `tests/` (`run_all.sh`, Docker-Build/Happy-Path).
+(`pyproject.toml`: `testpaths = ["tests"]`, `pythonpath = ["src"]`.) 550 Testfunktionen in 28 Dateien (`pytest -q --collect-only`). Zusätzlich Shell-Integrationstests im Repo-Root unter `tests/` (`run_all.sh`, Docker-Build/Happy-Path).
 
 ## Besonderheiten
 
 - MQTT-Lokalport `18830` ist in `heizungsbruecke` hart codiert — muss zum `local_port`-Default von `cloudflared_access_mqtt` passen (Cross-Repo-Invariante, siehe `../docs/architecture.md` §9).
 - Lokale Clamps (`profiles.py`) sind bewusst dupliziert zum Server (`heizungsserver/src/heizungsserver/generic/profiles.py`) — bei jeder Profiländerung beide Seiten prüfen.
-- Versionierung/Changelog lebt in `DOCS.md` je Add-on (aktuell `heizungsbruecke` v0.16.0, `cloudflared_access_mqtt` v1.0.0), kein separates `CHANGELOG.md`.
+- Versionierung/Changelog lebt in `DOCS.md` je Add-on (aktuell `heizungsbruecke` v0.17.0, `cloudflared_access_mqtt` v1.0.0), kein separates `CHANGELOG.md`.
 - Ein uncommitteter Worktree/Branch zu einem Ingress-Wizard (`docs/superpowers/{plans,specs}/2026-09-14-heizungsbruecke-ingress-wizard-*.md`) existierte zuletzt als Entwurf, nicht gemerged — vor Arbeit an `web.py`/Ingress-UI prüfen, ob das noch aktuell ist.

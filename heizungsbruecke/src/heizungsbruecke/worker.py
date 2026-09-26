@@ -1,4 +1,4 @@
-"""Zentraler Regel-Worker (Design-Spec 2026-09-26, Abschnitt 1).
+"""Zentraler Regel-Worker.
 
 Alle Regelungsereignisse laufen nacheinander in genau einem Thread (dem Hauptthread).
 WS- und paho-Thread stellen nur ein (`post`/`post_coalesced`), Zeitplan-Eintraege

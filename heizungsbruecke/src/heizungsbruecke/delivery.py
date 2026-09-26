@@ -1,7 +1,7 @@
-"""Tick-Zustellung (Design-Spec 2026-09-26, Abschnitt 2), ersetzt failsafe.py.
+"""Tick-Zustellung.
 
 Reine Zustandsmaschine ohne I/O: `step(state, event) -> (neuer_zustand, aktionen)`.
-Der Regel-Worker (__main__) fuehrt die Aktionen aus und speist deren Ergebnisse
+`ticks.py` fuehrt die Aktionen aus und speist deren Ergebnisse
 (`Published`, `ReadInvalid`, `EntitlementChecked`) als neue Ereignisse zurueck.
 
 Ein Tick behaelt ueber alle Wiederholungen dieselbe `seq`: der Server beantwortet eine

@@ -20,6 +20,24 @@ Home-Assistant-Integration: installieren, dann Einstellungen → Geraete &
 Dienste → Integration hinzufuegen → "SmartHeat". Die Integration schreibt die
 noetige Konfiguration automatisch in dieses Add-on.
 
+## Update von 0.16.0 auf 0.17.0
+
+Kein Server-Update nötig.
+
+Neu: Kann die Anlage eine neue Heizkurve nicht übernehmen (z. B. weil die myVAILLANT-Cloud
+gestört ist), meldet das Add-on das einmal als eigene Störung und versucht es automatisch
+erneut. Bisher führte das nach etwa einer Minute fälschlich zur Meldung „Server antwortet
+nicht“ und in den Notbetrieb.
+
+Neu: Ist die Verbindung zum Server unterbrochen, sammelt das Add-on keine Messwerte mehr zum
+späteren Nachsenden. Sobald die Verbindung wieder steht, schickt es sofort frische Werte.
+
+Verbessert: Doppelt zugestellte Serverantworten verlängern die Wartezeit bis zum nächsten
+Versuch nicht mehr.
+
+Intern neu gegliedert. Die Dateien in `/data` bleiben kompatibel; ein Wechsel zurück auf
+0.16.0 ist ohne Weiteres möglich.
+
 ## Update von 0.15.0 auf 0.16.0
 
 **Server-Update zuerst:** Der SmartHeat-Server sollte vor dem Add-on aktualisiert sein
@@ -425,3 +443,6 @@ Aktuell werden nur `aarch64` (Raspberry Pi 4/5, 64-bit — das reale
 Deployment-Ziel) und `amd64` (das in den Tests gebaute Ziel) tatsaechlich
 gebaut und getestet. `armhf`/`armv7` sind bewusst nicht Teil der `arch`-Liste,
 solange sie nicht real gebraucht/getestet werden.
+
+Das Hilfs-Add-on `cloudflared_access_mqtt` ist zusätzlich für `armhf`/`armv7` deklariert.
+Für SmartHeat insgesamt ist damit ein 64-Bit-System (`aarch64` oder `amd64`) nötig.

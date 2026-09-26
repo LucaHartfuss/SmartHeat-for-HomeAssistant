@@ -16,9 +16,8 @@ def ensure_all(
     keine Manifest-Rolle, sondern die Quelle, die daynight_snapshot.maybe_snapshot()
     fuer die taeglichen Snapshots braucht.
 
-    `avg_window_hours` kommt seit Design-Spec 2026-09-16 (Abschnitt B) aus dem
-    gewaehlten Profil (siehe profiles.py::resolve_window_defaults) statt eines
-    hartcodierten 12h-Werts. Der Tracking-/Rueckgabeschluessel bleibt bewusst
+    `avg_window_hours` kommt aus dem Profil (siehe profiles.py::resolve_window_defaults)
+    statt eines hartcodierten 12h-Werts. Der Tracking-/Rueckgabeschluessel bleibt bewusst
     'room_12h_avg'/'_room_12h_avg' fuer Kontinuitaet mit bereits provisionierten
     Installationen (client1): eine Umbenennung wuerde _ensure_entity den
     bestehenden Eintrag nicht mehr finden lassen und einen doppelten HA-Helfer

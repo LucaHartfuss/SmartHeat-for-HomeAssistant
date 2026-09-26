@@ -22,8 +22,8 @@ class LocalClamps:
 
 @dataclass(frozen=True)
 class BoostDefaults:
-    """`threshold_k` ist seit der Boost-Neudefinition (Design-Spec Phase 5, Punkt 15)
-    die ANKUNFTS-Schwelle (wie nah am -- ggf. neuen -- Zielwert Boost sich selbst
+    """`threshold_k` ist seit der Boost-Neudefinition die ANKUNFTS-Schwelle (wie nah
+    am -- ggf. neuen -- Zielwert Boost sich selbst
     beendet), NICHT mehr die Ausloese-Schwelle. Ausgeloest wird Boost jetzt
     ausschliesslich durch eine Erhoehung von room_target zwischen zwei Ticks, siehe
     heizungsbruecke.boost.decide_boost.
@@ -55,7 +55,7 @@ LOCAL_BOOST_DEFAULTS: dict[str, BoostDefaults] = {
 @dataclass(frozen=True)
 class WindowDefaults:
     """Fenstergrenzen fuer den taeglichen vollen Snapshot-Publish sowie die Tag-/
-    Nachtmittel-Berechnung des Referenzraums (Design-Spec 2026-09-16, Abschnitt B).
+    Nachtmittel-Berechnung des Referenzraums.
     Werte identisch zu den serverseitigen TriggerWindows in heizungsserver/src/
     heizungsserver/generic/profiles.py -- kein geteilter Code zwischen den Repos,
     gleiches Muster wie LOCAL_CLAMP_DEFAULTS/LOCAL_BOOST_DEFAULTS oben. Tag- und
@@ -103,7 +103,7 @@ LOCAL_WINDOW_DEFAULTS: dict[str, WindowDefaults] = {
 
 # Dupliziertes lokales Gegenstueck zu Profile.telemetry_capabilities.energy_channels
 # in heizungsserver/generic/profiles.py -- kein geteilter Code zwischen den Repos,
-# gleiches Muster wie LOCAL_CLAMP_DEFAULTS (Design-Spec 2026-09-24, Abschnitt 1).
+# gleiches Muster wie LOCAL_CLAMP_DEFAULTS.
 KPI_ENERGY_CHANNELS_BY_PROFILE: dict[str, tuple[str, ...]] = {
     "vaillant_gastherme_heizkoerper": (
         "electrical_heating", "electrical_dhw",

@@ -100,8 +100,8 @@ class HomeAssistantApi:
         return response.json()
 
     def get_config(self) -> dict:
-        """GET /api/config -- u.a. `time_zone` der HA-Instanz (B6-Startpruefung der
-        Container-Zeitzone, Design-Spec 2026-09-26, Abschnitt 3)."""
+        """GET /api/config -- u.a. `time_zone` der HA-Instanz (Startpruefung der
+        Container-Zeitzone)."""
         response = requests.get(
             f"{self._base_url}{self._api_prefix}/config",
             headers=self._headers,
@@ -124,8 +124,8 @@ class HomeAssistantApi:
     ) -> str:
         """Legt einen input_number-Helper per Websocket an und liefert seine Entity-ID.
 
-        Ersetzt seit Task 4 den REST-Versuch aus Task 2, der an einem echten
-        HA-Core-Container (2026.9.2) mit 404 scheiterte: `POST .../config/
+        Nutzt Websocket statt REST: der REST-Versuch scheiterte an einem echten
+        HA-Core-Container (2026.9.2) mit 404: `POST .../config/
         input_number/config/<object_id>` existiert in dieser HA-Version nicht
         mehr als REST-Route (Quellcode-Pruefung: `homeassistant/components/
         input_number/__init__.py` registriert Helfer-Erzeugung ausschliesslich
@@ -210,8 +210,8 @@ class HomeAssistantApi:
            im Container (homeassistant/components/config/entity_registry.py)
            zeigte, dass diese Datei ausschliesslich `websocket_api.
            async_register_command(...)` registriert, keine einzige
-           `HomeAssistantView`-Klasse. Seit Task 4 nutzt
-           _find_entity_by_config_entry() dafuer das Websocket-Kommando
+           `HomeAssistantView`-Klasse. _find_entity_by_config_entry() nutzt
+           dafuer das Websocket-Kommando
            `config/entity_registry/list` (registriert in derselben Datei,
            siehe dortiger Docstring) -- verifiziert per echtem WS-Roundtrip
            gegen denselben Container.
@@ -219,7 +219,7 @@ class HomeAssistantApi:
         `state_characteristic` default `average_step` keeps DAT/DART unchanged;
         `outdoor_min_24h` uses the minimum characteristic.
 
-        `sampling_size` Default 10.000 (Design-Spec 2026-09-26): HA's statistics sensor
+        `sampling_size` Default 10.000: HA's statistics sensor
         keeps a `deque(maxlen=sampling_size)`, sampled on every state_reported event --
         bei schnell meldenden Fuehlern deckt ein kleiner Puffer nicht das ganze
         `max_age_hours`-Fenster ab. Messung auf client1 (2026-09-26): DAT-Puffer 20 %,

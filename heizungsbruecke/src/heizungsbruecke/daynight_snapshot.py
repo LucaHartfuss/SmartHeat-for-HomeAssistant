@@ -20,18 +20,14 @@ def maybe_snapshot(
 ) -> None:
     """Snapshots the rolling room average into the day/night input_numbers once per day.
 
-    `day_avg_window_end`/`night_avg_window_end` ("HH:MM") come from the tenant's profile
-    (Design-Spec 2026-09-16, Abschnitt B) instead of the previously hardcoded 20:00/08:00
-    -- the mechanism below (boundary-crossing-since-last-check, narrow cold-start
-    catch-up) is unchanged, only the concrete times are parameters now.
+    `day_avg_window_end`/`night_avg_window_end` ("HH:MM") come from the tenant's profile.
 
-    `local_check_interval_seconds` (config.yaml) is a customer-configurable, but now
-    HARD-CAPPED-AT-60s interval -- a narrow fixed clock-hour window (e.g. "only between
-    20:00 and 22:00") can permanently miss the snapshot every single day if the tick
-    phase never lands inside it. So once there is a recorded `last_checked` from a
-    previous call, "due" is decided by whether the window-end boundary was crossed
-    *since that last call* -- this fires on the very next call after the boundary no
-    matter how long the check interval is, guaranteeing exactly one snapshot per day.
+    The daynight check runs on a configurable interval (`local_check_interval_seconds`, up
+    to 3600 s), so a narrow fixed clock window could be missed every day if the check never
+    lands inside it. Once a `last_checked` from a previous call exists, "due" is therefore
+    decided by whether the window-end boundary was crossed *since that last call*: this
+    fires on the first call after the boundary, however long the interval, and exactly once
+    per day.
 
     Without a recorded `last_checked` (state file missing/fresh, e.g. first-ever run),
     there is no continuity to reason from -- falling back to unconditional "boundary
@@ -41,7 +37,7 @@ def maybe_snapshot(
     past it.
 
     Unlike the pre-decoupling version, this function is now called from a fast local
-    loop (as low as every 30s, see Design-Spec Abschnitt A) -- an unconditional write
+    loop (as often as every check) -- an unconditional write
     on every call would wear the SD card the same way the old backup.json
     write-every-tick behaviour did. The state file is therefore only written when a
     snapshot actually fires, or on the very first call ever (to escape cold-start

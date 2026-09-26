@@ -1,5 +1,5 @@
 name: "Heizungsbruecke"
-version: "0.16.0"
+version: "0.17.0"
 slug: "heizungsbruecke"
 description: "Generische Bruecken-Logik: liest konfigurierte HA-Entities, meldet sie an den SmartHeat-Server, schreibt Sollwerte zurueck, mit lokalem Boost-Failsafe und Sicherheits-Clamps."
 url: "https://github.com/LucaHartfuss/SmartHeat-for-HomeAssistant"
@@ -36,12 +36,11 @@ options:
   entity_energy_thermal_heating: ""
   entity_energy_thermal_dhw: ""
 # local_check_interval_seconds/notify_service/telemetry_interval_seconds must stay optional (`?`):
-# the smartheat integration's config_flow.py only ever sends the 8 fields above (tenant_id,
-# profile, entity_*) -- Supervisor validates a set-options call against the whole schema, and
-# a missing required field fails the call the same way an unknown one does, just silently
-# (no "does not exist" warning, straight into AddonError). __main__.py already falls back to
-# its own Python-level defaults for these via options.get(...), so making them optional
-# here changes nothing at runtime.
+# the SmartHeat integration never sends them (it sends tenant_id, profile, the MQTT
+# credentials and the entity_* mappings). Supervisor validates a set-options call against the
+# whole schema, and a missing required field fails the call silently (straight into
+# AddonError). The add-on falls back to its own defaults for these (config.py), so making
+# them optional here changes nothing at runtime.
 schema:
   tenant_id: str
   profile: str

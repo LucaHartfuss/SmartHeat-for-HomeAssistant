@@ -7,14 +7,14 @@ logger = logging.getLogger(__name__)
 
 # CONNACK-Reason-Codes, bei denen der Broker die Zugangsdaten abgelehnt hat (MQTT 3.1.1
 # rc 4/5 werden von paho 2.x auf 134/135 abgebildet) -- typischer Fall: Credentials beim
-# Suspend des Tenants widerrufen (hs-2), siehe Abo-inaktiv-Modus in __main__.py.
+# Suspend des Tenants widerrufen, siehe Abo-inaktiv-Modus in abo.py.
 _AUTH_REJECTED_REASON_CODES = frozenset({134, 135})
 
 # Payload des Last Will auf dem Availability-Topic; stop() veroeffentlicht ihn selbst,
 # weil ein sauberes disconnect() den Last Will nicht ausloest.
 _AVAILABILITY_OFFLINE = "offline"
 
-# Obergrenze fuer paho's Reconnect-Backoff (B10, Design-Spec 2026-09-26): der Broker ist
+# Obergrenze fuer paho's Reconnect-Backoff: der Broker ist
 # nur ueber cloudflared_access_mqtt erreichbar, das beim Booten evtl. noch nicht laeuft --
 # das Add-on wartet darauf, statt sich zu beenden.
 _RECONNECT_MAX_DELAY_SECONDS = 120
@@ -139,7 +139,7 @@ class BridgeMqttClient:
         paho-Netzwerk-Thread selbst aufrufbar: loop_stop() joint dann nicht.
         Veroeffentlicht vorher best effort den Last-Will-Payload, da ein sauberes
         disconnect() den LWT nicht ausloest und HA die Entities sonst weiter als
-        "online" anzeigen wuerde (Final-Review Minor 2)."""
+        "online" anzeigen wuerde."""
         try:
             self._client.publish(self._availability_topic(), _AVAILABILITY_OFFLINE, retain=True)
         except Exception:

@@ -19,9 +19,8 @@ def decide_emergency_boost(
     max_offset_value: float,
 ) -> EmergencyBoostDecision:
     """Reine Hysterese-Logik (die des Comfort-Boosts VOR dessen funktionaler
-    Neudefinition am 2026-09-15, siehe docs/superpowers/specs/2026-09-15-addon-server-
-    haertung-design.md Phase 5 Punkt 15) -- bewusst nur ausgewertet, waehrend Notbetrieb
-    aktiv ist (siehe __main__._run_local_check), nicht mehr generell wie damals.
+    Neudefinition am 2026-09-15) -- bewusst nur ausgewertet, waehrend Notbetrieb
+    aktiv ist (regulation.run_local_check), nicht mehr generell wie damals.
 
     Trigger (inaktiv -> aktiv): der Raum ist mehr als EMERGENCY_TRIGGER_K (1.0 K) unter
     dem Sollwert. Exit (aktiv -> inaktiv): der Raum hat sich bis auf `exit_threshold_k`
@@ -29,8 +28,7 @@ def decide_emergency_boost(
     `boost_threshold_k`-Option des Comfort-Boosts, kein eigenes Config-Feld.
 
     `max_curve_value`/`max_offset_value` sind die Profil-Clamp-Obergrenzen
-    (curve_max/offset_max), keine neuen, vom Profil unabhaengigen Werte (Design-Spec
-    2026-09-23, Abschnitt 2).
+    (curve_max/offset_max), keine neuen, vom Profil unabhaengigen Werte.
     """
     if emergency_was_active:
         active = room_actual < room_target - exit_threshold_k

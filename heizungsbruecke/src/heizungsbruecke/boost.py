@@ -21,9 +21,8 @@ def decide_boost(
 ) -> BoostDecision:
     """Boost aktiviert ausschliesslich als Reaktion auf eine Erhoehung der
     Wunschtemperatur (Komfort-Beschleunigung), nicht mehr bei Kaelte aus anderer
-    Ursache -- bewusste funktionale Neudefinition, siehe Design-Spec Phase 5, Punkt 15
-    (inkl. dokumentiertem Tradeoff: Boost ist damit kein serverunabhaengiges
-    Sicherheitsnetz mehr).
+    Ursache -- bewusste funktionale Neudefinition (inkl. dokumentiertem Tradeoff: Boost
+    ist damit kein serverunabhaengiges Sicherheitsnetz mehr).
 
     `previous_room_target=None` (erster Tick ueberhaupt, kein Vorwert bekannt) loest nie
     einen Trigger aus -- es gibt keine "Erhoehung" ohne Vorwert.
