@@ -29,7 +29,8 @@ Neu: Antwortet der Server nicht, versucht das Add-on es sofort ein zweites Mal. 
 auch dieser Versuch unbeantwortet bleibt, beginnt der Notbetrieb. Danach versucht das
 Add-on es nach 5, 15 und 60 Minuten und anschließend stündlich erneut. Sobald der Server
 wieder antwortet, endet der Notbetrieb von selbst, auch über einen Neustart des Add-ons
-hinweg.
+hinweg, sofern beim Neustart noch ein Abgleich offen war (ein noch unter 0.15.0
+begonnener Notbetrieb endet erst mit dem nächsten regulären Abgleich).
 
 Neu: Liefert ein Sensor keinen gültigen Wert (z. B. leere Batterie), schickt das Add-on
 keine Messwerte an den Server, meldet den betroffenen Sensor einmal und versucht es
