@@ -3,136 +3,18 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from heizungsbruecke.bridge import apply_boost_decision, apply_emergency_decision, publish_snapshot, handle_down_message
+from heizungsbruecke.bridge import (
+    SnapshotRead,
+    apply_boost_decision,
+    apply_emergency_decision,
+    handle_down_message,
+    publish_snapshot,
+    read_snapshot_roles,
+)
 from heizungsbruecke.boost import BoostDecision
 from heizungsbruecke.emergency_boost import EmergencyBoostDecision
 from heizungsbruecke.manifest import SNAPSHOT_ROLES, OPTIONAL_SNAPSHOT_ROLES, ChannelManifest
 from heizungsbruecke.backup_store import load_backup, save_backup
-
-
-def _published_snapshot(mqtt_client):
-    mqtt_client.publish_snapshot.assert_called_once()
-    return mqtt_client.publish_snapshot.call_args.args[0]
-
-
-def test_publish_snapshot_reads_each_entity_and_publishes():
-    manifest = ChannelManifest(entity_ids={
-        "room_target": "climate.wohnzimmer_thermostat::temperature",
-        "heat_limit": "number.heizgrenze",
-    })
-    ha_api = MagicMock()
-    ha_api.get_state.side_effect = lambda entity_id: {
-        "climate.wohnzimmer_thermostat::temperature": 21.0,
-        "number.heizgrenze": 16.0,
-    }[entity_id]
-    mqtt_client = MagicMock()
-
-    publish_snapshot(manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq="tick-1")
-
-    payload = _published_snapshot(mqtt_client)
-    assert payload["schema"] == 2
-    assert payload["seq"] == "tick-1"
-    assert payload["trigger"] is None
-    assert datetime.fromisoformat(payload["ts"]).tzinfo is not None
-    assert payload["roles"] == {"room_target": 21.0, "heat_limit": 16.0}
-
-
-def test_publish_snapshot_publishes_only_server_snapshot_roles():
-    snapshot_entities = {role: f"sensor.{role}" for role in SNAPSHOT_ROLES}
-    manifest = ChannelManifest(entity_ids={
-        **snapshot_entities,
-        "room_actual": "sensor.room_actual",
-        "outdoor_temp": "sensor.outdoor_temp",
-        "flow_temperature": "sensor.flow_temperature",
-        "operating_mode": "sensor.operating_mode",
-        "energy_electrical_heating": "sensor.energy_electrical_heating",
-    })
-    ha_api = MagicMock()
-    ha_api.get_state.return_value = 20.0
-    mqtt_client = MagicMock()
-
-    publish_snapshot(
-        manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq="tick-1",
-        notify_service="notify.mobile_app_lucas_iphone",
-    )
-
-    published_roles = set(_published_snapshot(mqtt_client)["roles"])
-    assert published_roles == set(SNAPSHOT_ROLES)
-    read_entities = {call.args[0] for call in ha_api.get_state.call_args_list}
-    assert read_entities == set(snapshot_entities.values())
-    ha_api.send_notification.assert_not_called()
-
-
-def _manifest_with_one_broken_sensor():
-    manifest = ChannelManifest(entity_ids={
-        "room_target": "climate.wohnzimmer_thermostat::temperature",
-        "dat": "sensor.kaputt",
-        "heat_limit": "number.heizgrenze",
-    })
-    ha_api = MagicMock()
-
-    def _get_state(entity_id):
-        if entity_id == "sensor.kaputt":
-            raise ValueError("could not convert string to float: 'unavailable'")
-        return {"climate.wohnzimmer_thermostat::temperature": 21.0, "number.heizgrenze": 16.0}[entity_id]
-
-    ha_api.get_state.side_effect = _get_state
-    return manifest, ha_api
-
-
-def test_publish_snapshot_skips_broken_role_and_publishes_the_others():
-    manifest, ha_api = _manifest_with_one_broken_sensor()
-    mqtt_client = MagicMock()
-
-    publish_snapshot(manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq="tick-1")
-
-    published_roles = set(_published_snapshot(mqtt_client)["roles"])
-    assert published_roles == {"room_target", "heat_limit"}
-
-
-def test_publish_snapshot_notifies_when_notify_service_is_configured():
-    manifest, ha_api = _manifest_with_one_broken_sensor()
-    mqtt_client = MagicMock()
-
-    publish_snapshot(
-        manifest=manifest,
-        ha_api=ha_api,
-        mqtt_client=mqtt_client,
-        seq="tick-1",
-        notify_service="notify.mobile_app_lucas_iphone",
-    )
-
-    ha_api.send_notification.assert_called_once()
-    service, message = ha_api.send_notification.call_args.args
-    assert service == "notify.mobile_app_lucas_iphone"
-    assert "dat" in message
-    assert "sensor.kaputt" in message
-
-
-def test_publish_snapshot_does_not_notify_when_notify_service_is_empty():
-    manifest, ha_api = _manifest_with_one_broken_sensor()
-    mqtt_client = MagicMock()
-
-    publish_snapshot(manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq="tick-1")
-
-    ha_api.send_notification.assert_not_called()
-
-
-def test_publish_snapshot_survives_a_failing_notification():
-    manifest, ha_api = _manifest_with_one_broken_sensor()
-    ha_api.send_notification.side_effect = RuntimeError("notify service nicht erreichbar")
-    mqtt_client = MagicMock()
-
-    publish_snapshot(
-        manifest=manifest,
-        ha_api=ha_api,
-        mqtt_client=mqtt_client,
-        seq="tick-1",
-        notify_service="notify.mobile_app_lucas_iphone",
-    )
-
-    published_roles = set(_published_snapshot(mqtt_client)["roles"])
-    assert published_roles == {"room_target", "heat_limit"}
 
 
 def test_handle_down_message_clamps_curve_value_before_writing(tmp_path):
@@ -611,86 +493,117 @@ def test_apply_emergency_decision_steady_state_inactive_does_nothing(tmp_path):
     ha_api.set_number_value.assert_not_called()
 
 
-def test_publish_snapshot_includes_optional_roles_and_trigger():
-    manifest = ChannelManifest(entity_ids={
+def _all_roles_manifest(**extra):
+    return ChannelManifest(entity_ids={
         **{role: f"sensor.{role}" for role in SNAPSHOT_ROLES},
-        "outdoor_min_24h": "sensor.omin",
+        "room_actual": "sensor.room_actual",
+        **extra,
     })
-    ha_api = MagicMock()
-    ha_api.get_state.return_value = 12.0
-    mqtt_client = MagicMock()
-
-    publish_snapshot(
-        manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq="s1",
-        trigger="daily", computed_values={"room_target_avg_24h": 20.4},
-    )
-
-    payload = _published_snapshot(mqtt_client)
-    assert payload["trigger"] == "daily"
-    assert payload["roles"]["outdoor_min_24h"] == 12.0
-    assert payload["roles"]["room_target_avg_24h"] == 20.4
-    assert set(payload["roles"]) == set(SNAPSHOT_ROLES) | {"outdoor_min_24h", "room_target_avg_24h"}
 
 
-def test_publish_snapshot_omits_unreadable_optional_role_silently():
-    manifest = ChannelManifest(entity_ids={"heat_limit": "number.h", "outdoor_min_24h": "sensor.omin"})
-    ha_api = MagicMock()
-
+def _states_with(broken: dict):
+    """get_state-Ersatz: Entities aus `broken` werfen bzw. liefern den dort hinterlegten
+    Wert, alle anderen 20.0."""
     def _get_state(entity_id):
-        if entity_id == "sensor.omin":
-            raise ValueError("could not convert string to float: 'unknown'")
-        return 16.0
+        value = broken.get(entity_id, 20.0)
+        if isinstance(value, Exception):
+            raise value
+        return value
+    return _get_state
 
-    ha_api.get_state.side_effect = _get_state
-    mqtt_client = MagicMock()
 
-    publish_snapshot(
-        manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq="s1",
-        notify_service="notify.mobile_app_lucas_iphone",
-    )
+def test_read_snapshot_roles_reads_required_roles_and_checks_room_actual():
+    manifest = _all_roles_manifest(outdoor_temp="sensor.outdoor_temp", flow_temperature="sensor.flow")
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 20.0
 
-    roles = list(_published_snapshot(mqtt_client)["roles"])
-    assert roles == ["heat_limit"]
+    read = read_snapshot_roles(manifest, ha_api)
+
+    assert read == SnapshotRead(roles={role: 20.0 for role in SNAPSHOT_ROLES}, invalid_roles=())
+    read_entities = {call.args[0] for call in ha_api.get_state.call_args_list}
+    assert read_entities == {f"sensor.{role}" for role in SNAPSHOT_ROLES} | {"sensor.room_actual"}
+
+
+def test_read_snapshot_roles_marks_unreadable_role_invalid_and_reads_the_others():
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = _states_with({"sensor.dat": ValueError("unavailable")})
+
+    read = read_snapshot_roles(_all_roles_manifest(), ha_api)
+
+    assert read.invalid_roles == ("dat",)
+    assert set(read.roles) == set(SNAPSHOT_ROLES) - {"dat"}
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+def test_read_snapshot_roles_marks_non_finite_value_invalid(bad):
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = _states_with({"sensor.dart": bad})
+
+    assert read_snapshot_roles(_all_roles_manifest(), ha_api).invalid_roles == ("dart",)
+
+
+def test_read_snapshot_roles_checks_room_actual_but_never_sends_it():
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = _states_with({"sensor.room_actual": ValueError("unavailable")})
+
+    read = read_snapshot_roles(_all_roles_manifest(), ha_api)
+
+    assert read.invalid_roles == ("room_actual",)
+    assert "room_actual" not in read.roles
+
+
+def test_read_snapshot_roles_skips_unmapped_roles_without_marking_them_invalid():
+    manifest = ChannelManifest(entity_ids={"heat_limit": "number.h"})
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 16.0
+
+    assert read_snapshot_roles(manifest, ha_api) == SnapshotRead(roles={"heat_limit": 16.0}, invalid_roles=())
+
+
+def test_read_snapshot_roles_never_sends_notifications():
+    # T2-13: Meldungen kommen nur noch aus der Zustellung (einmal pro Fehlerbeginn).
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = ValueError("unavailable")
+
+    read = read_snapshot_roles(_all_roles_manifest(), ha_api)
+
+    assert read.invalid_roles == tuple(SNAPSHOT_ROLES) + ("room_actual",)
     ha_api.send_notification.assert_not_called()
 
 
-def test_publish_snapshot_skips_computed_role_when_value_is_none():
-    manifest = ChannelManifest(entity_ids={"heat_limit": "number.h"})
+def test_read_snapshot_roles_includes_valid_optional_and_computed_roles():
+    manifest = _all_roles_manifest(outdoor_min_24h="sensor.omin")
     ha_api = MagicMock()
-    ha_api.get_state.return_value = 16.0
+    ha_api.get_state.side_effect = _states_with({"sensor.omin": 12.0})
+
+    read = read_snapshot_roles(manifest, ha_api, computed_values={"room_target_avg_24h": 20.4})
+
+    assert read.roles["outdoor_min_24h"] == 12.0
+    assert read.roles["room_target_avg_24h"] == 20.4
+    assert set(read.roles) == set(SNAPSHOT_ROLES) | set(OPTIONAL_SNAPSHOT_ROLES)
+
+
+@pytest.mark.parametrize("computed", [None, float("nan")])
+def test_read_snapshot_roles_omits_unusable_optional_roles_silently(computed):
+    manifest = _all_roles_manifest(outdoor_min_24h="sensor.omin")
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = _states_with({"sensor.omin": ValueError("unknown")})
+
+    read = read_snapshot_roles(manifest, ha_api, computed_values={"room_target_avg_24h": computed})
+
+    assert set(read.roles) == set(SNAPSHOT_ROLES)
+    assert read.invalid_roles == ()
+
+
+def test_publish_snapshot_sends_one_schema_2_message():
     mqtt_client = MagicMock()
 
-    publish_snapshot(
-        manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq="s1",
-        computed_values={"room_target_avg_24h": None},
-    )
+    publish_snapshot(mqtt_client, seq="s1", trigger="daily", roles={"dat": 4.0})
 
-    roles = list(_published_snapshot(mqtt_client)["roles"])
-    assert roles == ["heat_limit"]
-
-
-def test_publish_snapshot_publishes_even_when_every_required_role_fails():
-    # Server antwortet dann "rejected" (fehlende Rolle) -- das ist ein Ack, kein
-    # falscher Notbetrieb (B3).
-    manifest = ChannelManifest(entity_ids={"dat": "sensor.kaputt"})
-    ha_api = MagicMock()
-    ha_api.get_state.side_effect = ValueError("unavailable")
-    mqtt_client = MagicMock()
-
-    publish_snapshot(manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq="s1")
-
-    assert _published_snapshot(mqtt_client)["roles"] == {}
-
-
-def test_publish_snapshot_omits_non_finite_optional_value():
-    manifest = ChannelManifest(entity_ids={"heat_limit": "number.h"})
-    ha_api = MagicMock()
-    ha_api.get_state.return_value = 16.0
-    mqtt_client = MagicMock()
-
-    publish_snapshot(
-        manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq="s1",
-        computed_values={"room_target_avg_24h": float("nan")},
-    )
-
-    assert _published_snapshot(mqtt_client)["roles"] == {"heat_limit": 16.0}
+    mqtt_client.publish_snapshot.assert_called_once()
+    payload = mqtt_client.publish_snapshot.call_args.args[0]
+    assert payload["schema"] == 2
+    assert payload["seq"] == "s1"
+    assert payload["trigger"] == "daily"
+    assert payload["roles"] == {"dat": 4.0}
+    assert datetime.fromisoformat(payload["ts"]).tzinfo is not None

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.boost import BoostDecision, decide_boost
-from heizungsbruecke.bridge import apply_boost_decision, apply_emergency_decision, handle_down_message, publish_snapshot
+from heizungsbruecke.bridge import apply_boost_decision, apply_emergency_decision, handle_down_message, publish_snapshot, read_snapshot_roles
 from heizungsbruecke.clamping import clamp
 from heizungsbruecke.emergency_boost import EmergencyBoostDecision, decide_emergency_boost
 from heizungsbruecke import daynight_snapshot, derived_sensors, entitlement
@@ -1010,10 +1010,8 @@ def _maybe_publish_full_snapshot(
 
     trigger = "target_change" if target_changed else "daily"
     seq = str(uuid.uuid4())
-    publish_snapshot(
-        manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, seq=seq, notify_service=notify_service,
-        trigger=trigger, computed_values={"room_target_avg_24h": target_avg},
-    )
+    read = read_snapshot_roles(manifest, ha_api, computed_values={"room_target_avg_24h": target_avg})
+    publish_snapshot(mqtt_client, seq=seq, trigger=trigger, roles=read.roles)
     logger.info(
         "Voller Snapshot veroeffentlicht (seq=%s, trigger=%s)",
         seq, trigger,

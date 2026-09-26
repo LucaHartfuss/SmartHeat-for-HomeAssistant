@@ -1241,28 +1241,6 @@ def test_maybe_publish_full_snapshot_skips_when_nothing_triggers(tmp_path, monke
     assert load_backup(backup_path) == {"last_published_target_rt": 21.0}  # unchanged, no gratuitous write
 
 
-def test_maybe_publish_full_snapshot_passes_notify_service_through(tmp_path, monkeypatch):
-    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
-    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual", "dat": "sensor.kaputt"})
-    ha_api = MagicMock()
-
-    def _get_state(entity_id):
-        if entity_id == "sensor.kaputt":
-            raise ValueError("could not convert string to float: 'unavailable'")
-        return 20.0
-
-    ha_api.get_state.side_effect = _get_state
-    mqtt_client = MagicMock()
-
-    _maybe_publish_full_snapshot(
-        manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options={},
-        room_target=21.0, notify_service="notify.mobile_app_lucas_iphone", now=datetime(2026, 9, 17, 9, 0),
-    )
-
-    ha_api.send_notification.assert_called_once()
-    assert ha_api.send_notification.call_args.args[0] == "notify.mobile_app_lucas_iphone"
-
-
 class _FakeTimer:
     """Test double for threading.Timer -- captures scheduling instead of actually
     waiting, so ack-timeout tests can fire the callback synchronously."""
@@ -2695,7 +2673,7 @@ def test_maybe_publish_full_snapshot_tags_target_change(tmp_path, monkeypatch):
     )
 
     assert publish.call_args.kwargs["trigger"] == "target_change"
-    assert publish.call_args.kwargs["computed_values"] == {"room_target_avg_24h": 20.5}
+    assert publish.call_args.kwargs["roles"] == {"room_target_avg_24h": 20.5}
 
 
 def test_maybe_publish_full_snapshot_tags_daily(tmp_path, monkeypatch):

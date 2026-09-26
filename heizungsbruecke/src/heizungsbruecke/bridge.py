@@ -1,5 +1,6 @@
 import logging
 import math
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -20,22 +21,27 @@ def _is_finite_number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
-def publish_snapshot(
-    manifest: ChannelManifest, ha_api, mqtt_client, seq: str, notify_service: str = "",
-    trigger: str | None = None, computed_values: dict[str, float | None] | None = None,
-) -> None:
-    """Publishes one snapshot as ONE message on up/snapshot (Schema 2, Design-Spec
-    2026-09-25). A required role whose entity cannot be read (dead sensor -> HA reports
-    'unavailable', or an HTTP failure) is left out of `roles` instead of aborting the
-    snapshot -- the server then answers `rejected` ("fehlende Rolle: ..."), which still
-    counts as an ack, so a dead sensor no longer causes a false Notbetrieb (B3). The
-    boost-failsafe evaluation after this call is unaffected either way (I3).
+# Rollen, die vor jedem Snapshot nur auf Gueltigkeit geprueft, aber nicht an den Server
+# geschickt werden (Design-Spec 2026-09-26, Abschnitt 2 "attempt"): ohne gueltiges
+# room_actual scheitern Comfort- und Notfall-Boost still.
+VALIDITY_ONLY_ROLES = ("room_actual",)
 
-    If `notify_service` is configured, a push notification is sent per broken required
-    role and tick -- deliberately not deduplicated, a broken sensor should keep nagging.
-    Notifying is best effort. Optional roles never notify; a missing or non-finite
-    optional value is simply left out.
-    """
+
+@dataclass(frozen=True)
+class SnapshotRead:
+    roles: dict[str, float]
+    invalid_roles: tuple[str, ...]
+
+
+def read_snapshot_roles(
+    manifest: ChannelManifest, ha_api, computed_values: dict[str, float | None] | None = None,
+) -> SnapshotRead:
+    """Liest alle gemappten Server-Pflichtrollen plus room_actual (Design-Spec
+    2026-09-26, Abschnitt 2). Ungueltig heisst: get_state wirft (Entity unavailable/
+    unknown, nicht numerisch, HTTP-Fehler) oder der Wert ist nicht endlich. Der Aufrufer
+    publiziert nur, wenn `invalid_roles` leer ist. Optionale Rollen werden wie bisher
+    still weggelassen, wenn sie fehlen oder ungueltig sind. Sendet selbst keine
+    Meldungen (T2-13) -- das macht die Zustellung einmal pro Fehlerbeginn."""
     computed_values = computed_values or {}
     roles: dict[str, float] = {}
 
@@ -53,30 +59,29 @@ def publish_snapshot(
         if _is_finite_number(value):
             roles[role] = value
 
-    for role in SNAPSHOT_ROLES:
+    invalid: list[str] = []
+    for role in SNAPSHOT_ROLES + VALIDITY_ONLY_ROLES:
         entity_id = manifest.entity_ids.get(role)
         if entity_id is None:
             continue
         try:
-            roles[role] = ha_api.get_state(entity_id)
-        except Exception:
-            logger.warning(
-                "Sensor fuer Rolle '%s' (%s) liefert keinen gueltigen Wert, "
-                "fehlt in diesem Snapshot",
-                role, entity_id,
-            )
-            if notify_service:
-                try:
-                    ha_api.send_notification(
-                        notify_service,
-                        f"Heizungsbruecke: Sensor fuer '{role}' ({entity_id}) liefert keinen "
-                        f"gueltigen Wert - bitte pruefen (z.B. Batterie).",
-                    )
-                except Exception:
-                    logger.warning(
-                        "Push-Benachrichtigung fuer Rolle '%s' konnte nicht gesendet werden", role
-                    )
+            value = ha_api.get_state(entity_id)
+        except Exception as error:
+            logger.warning("Sensor fuer Rolle '%s' (%s) liefert keinen gueltigen Wert: %s", role, entity_id, error)
+            invalid.append(role)
+            continue
+        if not _is_finite_number(value):
+            logger.warning("Sensor fuer Rolle '%s' (%s) liefert keinen endlichen Wert: %r", role, entity_id, value)
+            invalid.append(role)
+            continue
+        if role in SNAPSHOT_ROLES:
+            roles[role] = value
 
+    return SnapshotRead(roles=roles, invalid_roles=tuple(invalid))
+
+
+def publish_snapshot(mqtt_client, seq: str, trigger: str | None, roles: dict[str, float]) -> None:
+    """Publiziert einen Snapshot als EINE Nachricht auf up/snapshot (Schema 2)."""
     mqtt_client.publish_snapshot({
         "schema": SNAPSHOT_SCHEMA_VERSION,
         "seq": seq,
