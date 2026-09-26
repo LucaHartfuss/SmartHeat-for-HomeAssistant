@@ -575,8 +575,15 @@ def _finish_abo_grace(
             return False
         backup["boost_active"] = False
         backup["emergency_boost_active"] = False
-        save_backup(BACKUP_PATH, backup)
         failsafe_ctx["emergency_boost_active"] = False
+        try:
+            save_backup(BACKUP_PATH, backup)
+        except Exception:
+            # T2-8: die Werte stehen bereits auf dem Geraet -- die Wiederherstellung gilt als
+            # erfolgt, sonst liefe der Notbetrieb nach dem Fristende endlos weiter.
+            logger.exception(
+                "Zuletzt gelernte Werte wiederhergestellt, Boost-Flags konnten aber nicht gespeichert werden"
+            )
     failsafe_ctx["abo_finished"] = True
     if final_notice:
         _notify_abo(ha_api, options.get("notify_service", ""), ABO_ENDED_MESSAGE)
@@ -985,6 +992,12 @@ def _on_daynight(bridge: _Bridge, event: Event) -> None:
     )
 
 
+def _restart_process() -> None:
+    """T2-5: ersetzt den laufenden Prozess durch einen frischen Start im Normalbetrieb,
+    unabhaengig vom Supervisor-Watchdog (config.yaml setzt bewusst keinen)."""
+    os.execv(sys.executable, [sys.executable, "-m", "heizungsbruecke"])
+
+
 def _on_grace_check(bridge: _Bridge, event: Event) -> None:
     """Abo-Fristende waehrend der Laufzeit (Final-Review I-1/I-2): erst wiederherstellen,
     dann den Trigger-Client stoppen und den Worker mit Exit 0 beenden. Scheitert die
@@ -992,6 +1005,15 @@ def _on_grace_check(bridge: _Bridge, event: Event) -> None:
     es erneut."""
     bridge.worker.schedule(_local_check_interval(bridge.options), Event(EV_GRACE_CHECK))
     if not _abo_grace_expired(bridge.failsafe_ctx):
+        return
+    # T2-5 (Design-Spec 2026-09-26, Abschnitt 3): vor dem Fristende erneut fragen -- ein
+    # inzwischen reaktiviertes Abo darf nicht zurueckgesetzt und beendet werden. Hinweis:
+    # set-status active stellt widerrufene MQTT-Zugangsdaten nicht wieder her, eine echte
+    # Reaktivierung braucht weiterhin das Neu-Einrichten der Integration.
+    if entitlement.query_status(bridge.options["tenant_id"], ACCOUNTS_API_BASE_URL) == entitlement.ACTIVE:
+        entitlement.clear(ENTITLEMENT_PATH)
+        logger.warning("Abo wieder aktiv, Neustart im Normalbetrieb")
+        _restart_process()
         return
     if _finish_abo_grace(
         bridge.manifest, bridge.ha_api, bridge.options, bridge.failsafe_ctx, always_restore=True, final_notice=True,

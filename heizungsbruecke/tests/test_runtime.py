@@ -3,6 +3,7 @@ Tick-Zustellung, Datenfehler, Notbetrieb, lokale Checks und Abo-Pfade. Getrieben
 _start_bridge mit Fake-Uhr (tests/conftest.py), Fake-HA, Fake-MQTT und Fake-Trigger-Client."""
 import json
 import logging
+import sys
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -901,3 +902,52 @@ def test_inactive_after_grace_restores_leftover_boost_once(env, monkeypatch):
 
     assert (env.ha.states["number.curve_current"], env.ha.states["number.offset_current"]) == (0.9, 22.0)
     assert _backup(env)["emergency_boost_active"] is False
+
+
+def _start_just_before_grace_end(env, monkeypatch):
+    _quiet_backup(env, emergency_boost_active=True)
+    env.ha.states.update({"number.curve_current": 1.5, "number.offset_current": 30.0})
+    env.abo["status"] = entitlement.INACTIVE
+    entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
+    answers = iter([False])  # Startpruefung, danach ist die Frist abgelaufen
+    monkeypatch.setattr("heizungsbruecke.__main__.entitlement.grace_expired", lambda since, now: next(answers, True))
+    exec_calls = []
+    monkeypatch.setattr("heizungsbruecke.__main__.os.execv", lambda path, args: exec_calls.append((path, args)))
+    bridge = main_module._start_bridge(OPTIONS, env.ha, clock=env.clock)
+    return bridge, exec_calls
+
+
+def test_grace_end_with_reactivated_abo_restarts_instead_of_restoring(env, monkeypatch):
+    # T2-5: kein faelschliches Zuruecksetzen am Fristende, wenn das Abo wieder aktiv ist.
+    bridge, exec_calls = _start_just_before_grace_end(env, monkeypatch)
+    env.abo["status"] = entitlement.ACTIVE
+
+    bridge.worker.run_pending()
+
+    assert exec_calls == [(sys.executable, [sys.executable, "-m", "heizungsbruecke"])]
+    assert not env.paths["ENTITLEMENT_PATH"].exists()
+    assert (env.ha.states["number.curve_current"], env.ha.states["number.offset_current"]) == (1.5, 30.0)
+    assert all(message != main_module.ABO_ENDED_MESSAGE for _, message in env.ha.persistent)
+
+
+@pytest.mark.parametrize("status", [entitlement.INACTIVE, entitlement.UNKNOWN])
+def test_grace_end_finishes_when_abo_not_active(env, monkeypatch, status):
+    bridge, exec_calls = _start_just_before_grace_end(env, monkeypatch)
+    env.abo["status"] = status
+
+    assert bridge.worker.run_pending() == 0
+    assert exec_calls == []
+    assert (env.ha.states["number.curve_current"], env.ha.states["number.offset_current"]) == (0.9, 22.0)
+
+
+def test_grace_end_exits_even_if_saving_flags_fails(env, monkeypatch):
+    # T2-8: Werte stehen schon auf dem Geraet -> Wiederherstellung gilt als erfolgt, Exit 0.
+    bridge, _ = _start_just_before_grace_end(env, monkeypatch)
+
+    def _broken_save(path, values):
+        raise OSError("SD-Karte kaputt")
+
+    monkeypatch.setattr("heizungsbruecke.__main__.save_backup", _broken_save)
+
+    assert bridge.worker.run_pending() == 0
+    assert (env.ha.states["number.curve_current"], env.ha.states["number.offset_current"]) == (0.9, 22.0)

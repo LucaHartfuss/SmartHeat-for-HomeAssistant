@@ -1375,6 +1375,30 @@ def test_finish_abo_grace_mid_emergency_boost_restores_learned_values(tmp_path, 
     ha_api.create_persistent_notification.assert_called_once_with("SmartHeat", ABO_ENDED_MESSAGE, "smartheat_abo_inaktiv")
 
 
+def test_finish_abo_grace_counts_restore_as_done_when_saving_flags_fails(tmp_path, monkeypatch, caplog):
+    _abo_paths(tmp_path, monkeypatch)
+    save_backup(tmp_path / "backup.json", {"curve_current": 0.4, "offset_current": 2.0, "emergency_boost_active": True})
+    manifest = ChannelManifest(entity_ids={"curve_current": "number.curve", "offset_current": "number.offset"})
+    ha_api = MagicMock()
+    failsafe_ctx = {"delivery": DeliveryState(notbetrieb=True), "emergency_boost_active": True}
+
+    def _broken_save(path, values):
+        raise OSError("SD-Karte kaputt")
+
+    monkeypatch.setattr("heizungsbruecke.__main__.save_backup", _broken_save)
+
+    with caplog.at_level(logging.ERROR):
+        result = _finish_abo_grace(
+            manifest, ha_api, _base_options(), failsafe_ctx, always_restore=True, final_notice=True,
+        )
+
+    assert result is True
+    assert failsafe_ctx["abo_finished"] is True
+    assert failsafe_ctx["emergency_boost_active"] is False
+    ha_api.set_number_value.assert_any_call("number.curve", 0.4)
+    assert "SD-Karte kaputt" in caplog.text
+
+
 def test_finish_abo_grace_keeps_flags_when_restore_write_fails(tmp_path, monkeypatch):
     # Review Focus 3: scheitert die Wiederherstellung, muss der naechste Start es erneut versuchen.
     _abo_paths(tmp_path, monkeypatch)
