@@ -146,6 +146,30 @@ def handle_down_message(
     ha_api.set_number_value(entity_id, clamped)
 
 
+def _ensure_restore_point(manifest: ChannelManifest, ha_api, backup_path: Path) -> bool:
+    """B5/T2-9 (Design-Spec 2026-09-26, Abschnitt 3): vor dem ersten Boost-Schreiben muss
+    backup.json die Werte enthalten, auf die das Boost-Ende zuruecksetzt. Fehlen sie (z.B.
+    erster Boost vor der ersten Server-Antwort), werden die Live-Werte der gemappten
+    Entities gesichert. False, wenn das nicht moeglich ist -- dann darf der Boost nicht
+    schreiben, sonst bliebe die Anlage ohne Rueckweg auf Boost-Werten stehen."""
+    backup = load_backup(backup_path)
+    missing = [role for role in _CLAMPED_ROLES if role in manifest.entity_ids and role not in backup]
+    if not missing:
+        return True
+    try:
+        live = {role: ha_api.get_state(manifest.entity_ids[role]) for role in missing}
+    except Exception as error:
+        logger.warning("Wiederherstellungspunkt nicht lesbar (%s): %s", ", ".join(missing), error)
+        return False
+    if not all(_is_finite_number(value) for value in live.values()):
+        logger.warning("Wiederherstellungspunkt ungueltig: %r", live)
+        return False
+    backup.update(live)
+    save_backup(backup_path, backup)
+    logger.info("Wiederherstellungspunkt vor Boost gesichert: %s", live)
+    return True
+
+
 def apply_boost_decision(
     decision: BoostDecision,
     boost_was_active: bool,
@@ -170,9 +194,16 @@ def apply_boost_decision(
     write -- and would turn a single boost episode into 120-480 live writes instead of
     1-4. curve_current/offset_current are cloud-backed on client1 (mypyllant), so each
     superfluous write is a real third-party API call, risking rate-limiting/lockout.
+
+    Beim Uebergang inaktiv -> aktiv wird vorher ein Wiederherstellungspunkt sichergestellt
+    (`_ensure_restore_point`); fehlt er und ist nicht lesbar, wird nichts geschrieben und
+    `False` zurueckgegeben.
     """
     if decision.active:
         if not boost_was_active:
+            if not _ensure_restore_point(manifest, ha_api, backup_path):
+                logger.warning("Kein Wiederherstellungspunkt, Boost ausgesetzt - naechster Check versucht es erneut")
+                return False
             if "curve_current" in manifest.entity_ids:
                 ha_api.set_number_value(
                     manifest.entity_ids["curve_current"], clamp(decision.curve_value, curve_min, curve_max)
@@ -222,6 +253,11 @@ def apply_emergency_decision(
     """
     if decision.active:
         if not emergency_was_active:
+            if not _ensure_restore_point(manifest, ha_api, backup_path):
+                logger.warning(
+                    "Kein Wiederherstellungspunkt, Notfall-Boost ausgesetzt - naechster Check versucht es erneut"
+                )
+                return False
             if "curve_current" in manifest.entity_ids:
                 ha_api.set_number_value(
                     manifest.entity_ids["curve_current"], clamp(decision.curve_value, curve_min, curve_max)

@@ -169,6 +169,7 @@ def test_apply_boost_decision_clamps_before_writing_when_active(tmp_path):
     ha_api = MagicMock()
     decision = BoostDecision(active=True, curve_value=99.0, offset_value=-50.0)
     backup_path = tmp_path / "backup.json"
+    save_backup(backup_path, {"curve_current": 0.4, "offset_current": 3.0})
 
     new_state = apply_boost_decision(
         decision=decision,
@@ -274,6 +275,7 @@ def test_apply_boost_decision_rejects_nan_curve_value_on_transition_to_active(tm
     ha_api = MagicMock()
     decision = BoostDecision(active=True, curve_value=float("nan"), offset_value=None)
     backup_path = tmp_path / "backup.json"
+    save_backup(backup_path, {"curve_current": 0.4})
 
     with pytest.raises(ValueError):
         apply_boost_decision(
@@ -386,6 +388,7 @@ def test_apply_emergency_decision_clamps_before_writing_when_active(tmp_path):
     ha_api = MagicMock()
     decision = EmergencyBoostDecision(active=True, curve_value=99.0, offset_value=-50.0)
     backup_path = tmp_path / "backup.json"
+    save_backup(backup_path, {"curve_current": 0.4, "offset_current": 3.0})
 
     new_state = apply_emergency_decision(
         decision=decision, emergency_was_active=False, manifest=manifest, ha_api=ha_api,
@@ -452,6 +455,7 @@ def test_apply_emergency_decision_rejects_nan_curve_value_on_transition_to_activ
     ha_api = MagicMock()
     decision = EmergencyBoostDecision(active=True, curve_value=float("nan"), offset_value=None)
     backup_path = tmp_path / "backup.json"
+    save_backup(backup_path, {"curve_current": 0.4})
 
     with pytest.raises(ValueError):
         apply_emergency_decision(
@@ -607,3 +611,115 @@ def test_publish_snapshot_sends_one_schema_2_message():
     assert payload["trigger"] == "daily"
     assert payload["roles"] == {"dat": 4.0}
     assert datetime.fromisoformat(payload["ts"]).tzinfo is not None
+
+
+def _boost_manifest():
+    return ChannelManifest(entity_ids={"curve_current": "number.curve", "offset_current": "number.offset"})
+
+
+_VAILLANT_CLAMPS = dict(curve_min=0.4, curve_max=1.5, offset_min=20.0, offset_max=30.0)
+
+
+def _recording_ha(states: dict):
+    events = []
+    ha_api = MagicMock()
+
+    def _get_state(entity_id):
+        events.append(("read", entity_id))
+        value = states[entity_id]
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    ha_api.get_state.side_effect = _get_state
+    ha_api.set_number_value.side_effect = lambda entity_id, value: events.append(("write", entity_id))
+    return ha_api, events
+
+
+def test_apply_boost_decision_saves_live_values_as_restore_point_before_first_write(tmp_path):
+    backup_path = tmp_path / "backup.json"
+    ha_api, events = _recording_ha({"number.curve": 0.9, "number.offset": 22.0})
+
+    active = apply_boost_decision(
+        decision=BoostDecision(active=True, curve_value=1.5, offset_value=30.0), boost_was_active=False,
+        manifest=_boost_manifest(), ha_api=ha_api, backup_path=backup_path, **_VAILLANT_CLAMPS,
+    )
+
+    assert active is True
+    assert load_backup(backup_path) == {"curve_current": 0.9, "offset_current": 22.0}
+    assert events[:2] == [("read", "number.curve"), ("read", "number.offset")]
+    assert events[2:] == [("write", "number.curve"), ("write", "number.offset")]
+
+
+def test_apply_boost_decision_reads_nothing_live_when_restore_point_exists(tmp_path):
+    backup_path = tmp_path / "backup.json"
+    save_backup(backup_path, {"curve_current": 0.9, "offset_current": 22.0})
+    ha_api, events = _recording_ha({})
+
+    apply_boost_decision(
+        decision=BoostDecision(active=True, curve_value=1.5, offset_value=30.0), boost_was_active=False,
+        manifest=_boost_manifest(), ha_api=ha_api, backup_path=backup_path, **_VAILLANT_CLAMPS,
+    )
+
+    assert [event for event in events if event[0] == "read"] == []
+
+
+def test_apply_boost_decision_reads_only_the_missing_role(tmp_path):
+    backup_path = tmp_path / "backup.json"
+    save_backup(backup_path, {"curve_current": 0.9})
+    ha_api, events = _recording_ha({"number.offset": 22.0})
+
+    apply_boost_decision(
+        decision=BoostDecision(active=True, curve_value=1.5, offset_value=30.0), boost_was_active=False,
+        manifest=_boost_manifest(), ha_api=ha_api, backup_path=backup_path, **_VAILLANT_CLAMPS,
+    )
+
+    assert [event for event in events if event[0] == "read"] == [("read", "number.offset")]
+    assert load_backup(backup_path) == {"curve_current": 0.9, "offset_current": 22.0}
+
+
+@pytest.mark.parametrize("curve_state", [RuntimeError("Cloud nicht erreichbar"), float("nan")])
+def test_apply_boost_decision_skips_boost_without_restore_point(tmp_path, caplog, curve_state):
+    backup_path = tmp_path / "backup.json"
+    ha_api, events = _recording_ha({"number.curve": curve_state, "number.offset": 22.0})
+
+    with caplog.at_level("WARNING"):
+        active = apply_boost_decision(
+            decision=BoostDecision(active=True, curve_value=1.5, offset_value=30.0), boost_was_active=False,
+            manifest=_boost_manifest(), ha_api=ha_api, backup_path=backup_path, **_VAILLANT_CLAMPS,
+        )
+
+    assert active is False
+    assert [event for event in events if event[0] == "write"] == []
+    assert load_backup(backup_path) == {}
+    assert "Boost ausgesetzt" in caplog.text
+
+
+def test_apply_emergency_decision_saves_live_values_as_restore_point_before_first_write(tmp_path):
+    backup_path = tmp_path / "backup.json"
+    ha_api, events = _recording_ha({"number.curve": 0.9, "number.offset": 22.0})
+
+    active = apply_emergency_decision(
+        decision=EmergencyBoostDecision(active=True, curve_value=1.5, offset_value=30.0), emergency_was_active=False,
+        manifest=_boost_manifest(), ha_api=ha_api, backup_path=backup_path, **_VAILLANT_CLAMPS,
+    )
+
+    assert active is True
+    assert load_backup(backup_path) == {"curve_current": 0.9, "offset_current": 22.0}
+    assert events[2:] == [("write", "number.curve"), ("write", "number.offset")]
+
+
+def test_apply_emergency_decision_skips_boost_without_restore_point(tmp_path, caplog):
+    backup_path = tmp_path / "backup.json"
+    ha_api, events = _recording_ha({"number.curve": RuntimeError("Cloud nicht erreichbar"), "number.offset": 22.0})
+
+    with caplog.at_level("WARNING"):
+        active = apply_emergency_decision(
+            decision=EmergencyBoostDecision(active=True, curve_value=1.5, offset_value=30.0),
+            emergency_was_active=False,
+            manifest=_boost_manifest(), ha_api=ha_api, backup_path=backup_path, **_VAILLANT_CLAMPS,
+        )
+
+    assert active is False
+    assert [event for event in events if event[0] == "write"] == []
+    assert "Notfall-Boost ausgesetzt" in caplog.text

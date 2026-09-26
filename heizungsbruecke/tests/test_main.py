@@ -269,7 +269,7 @@ def test_run_local_check_persists_room_target_for_next_checks_comparison(tmp_pat
 def test_run_local_check_triggers_boost_on_target_raise_between_checks(tmp_path, monkeypatch):
     backup_path = tmp_path / "backup.json"
     monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
-    save_backup(backup_path, {"last_room_target": 20.0})
+    save_backup(backup_path, {"last_room_target": 20.0, "curve_current": 0.9, "offset_current": 22.0})
     manifest = ChannelManifest(entity_ids={
         "room_actual": "sensor.room_actual",
         "room_target": "sensor.room_target",
@@ -1066,7 +1066,7 @@ def test_run_bridge_gives_actionable_error_on_connection_refused(monkeypatch, ca
 def test_run_local_check_persists_boost_active_true_on_transition_to_active(tmp_path, monkeypatch):
     backup_path = tmp_path / "backup.json"
     monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
-    save_backup(backup_path, {"last_room_target": 20.0})
+    save_backup(backup_path, {"last_room_target": 20.0, "curve_current": 0.9, "offset_current": 22.0})
     manifest = ChannelManifest(entity_ids={
         "room_actual": "sensor.room_actual",
         "room_target": "sensor.room_target",
@@ -1567,6 +1567,7 @@ def test_run_bridge_resets_stale_boost_active_when_priming_check_raises(monkeypa
 
 def test_run_local_check_activates_emergency_boost_when_notbetrieb_active_and_room_cold(tmp_path, monkeypatch):
     monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", tmp_path / "backup.json")
+    save_backup(tmp_path / "backup.json", {"curve_current": 0.5, "offset_current": 2.0})
     # No last_published_target_rt seeded -> _maybe_publish_full_snapshot will see
     # target_changed=True and publish, which schedules an ack-timeout Timer (Task 6) --
     # fake it out so the test doesn't leave a real 30s background timer running.
@@ -3507,3 +3508,42 @@ def test_ack_timeout_with_failing_entitlement_persist_still_runs_notbetrieb(tmp_
     assert failsafe_ctx["state"].active is True
     assert failsafe_ctx["abo_inactive_since"] is not None
     mqtt_client.stop.assert_called_once()
+
+
+def test_run_local_check_keeps_target_rise_pending_when_boost_has_no_restore_point(tmp_path, monkeypatch):
+    # B5 (Bewusste Abweichung 11): ein mangels Wiederherstellungspunkt ausgesetzter
+    # Comfort-Boost muss beim naechsten Check erneut starten koennen.
+    backup_path = tmp_path / "backup.json"
+    monkeypatch.setattr("heizungsbruecke.__main__.BACKUP_PATH", backup_path)
+    save_backup(backup_path, {"last_room_target": 20.0})
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room_actual", "room_target": "sensor.room_target",
+        "curve_current": "number.curve", "offset_current": "number.offset",
+    })
+    states = {"sensor.room_actual": 19.0, "number.curve": RuntimeError("Cloud nicht erreichbar"), "number.offset": 22.0}
+
+    def _get_state(entity_id):
+        value = states[entity_id]
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = _get_state
+    options = {
+        "boost_threshold_k": 0.5, "boost_curve_value": 1.5, "boost_offset_value": 30.0,
+        "curve_min": 0.4, "curve_max": 1.5, "offset_min": 20.0, "offset_max": 30.0,
+    }
+
+    first = _run_local_check(manifest, ha_api, MagicMock(), options, threading.Lock(), boost_was_active=False, room_target=21.0)
+
+    assert first is False
+    assert load_backup(backup_path)["last_room_target"] == 20.0
+    ha_api.set_number_value.assert_not_called()
+
+    states["number.curve"] = 0.9
+    second = _run_local_check(manifest, ha_api, MagicMock(), options, threading.Lock(), boost_was_active=False, room_target=21.0)
+
+    assert second is True
+    assert load_backup(backup_path)["last_room_target"] == 21.0
+    ha_api.set_number_value.assert_any_call("number.curve", 1.5)

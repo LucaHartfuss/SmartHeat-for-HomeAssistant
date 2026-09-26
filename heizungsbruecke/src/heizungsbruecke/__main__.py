@@ -815,9 +815,6 @@ def _run_local_check(
             boost_offset_value=options["boost_offset_value"],
         )
 
-        # I/O-Fix (Abschnitt A.2): nur schreiben, wenn sich der Wert tatsaechlich
-        # geaendert hat -- bei local_check_interval_seconds=30 sonst bis zu 2.880
-        # SD-Karten-Schreibvorgaenge/Tag statt vorher 24.
         now_epoch = time.time()
         raw_history = backup.get("target_history", [])
         history = sanitize_history(raw_history)
@@ -827,10 +824,6 @@ def _run_local_check(
                 raw_history,
             )
         updated_history = record_change(history, now_epoch, room_target)
-        if room_target != previous_room_target or updated_history != history:
-            backup["last_room_target"] = room_target
-            backup["target_history"] = updated_history
-            save_backup(BACKUP_PATH, backup)
         target_avg = time_weighted_mean(updated_history, now_epoch)
 
         if failsafe_ctx is not None and failsafe_ctx["emergency_boost_active"]:
@@ -857,6 +850,22 @@ def _run_local_check(
                 offset_max=options["offset_max"],
                 backup_path=BACKUP_PATH,
             )
+
+        # B5 (Design-Spec 2026-09-26, Abschnitt 3): wurde ein Comfort-Boost mangels
+        # Wiederherstellungspunkt ausgesetzt, bleibt der alte Sollwert gemerkt, damit der
+        # naechste Check die Erhoehung erneut sieht und es noch einmal versucht.
+        boost_refused = decision.active and not boost_was_active
+        remembered_target = previous_room_target if boost_refused else room_target
+        # I/O-Fix (Abschnitt A.2): nur schreiben, wenn sich der Wert tatsaechlich
+        # geaendert hat -- bei local_check_interval_seconds=30 sonst bis zu 2.880
+        # SD-Karten-Schreibvorgaenge/Tag statt vorher 24. Frisch laden:
+        # apply_boost_decision kann gerade einen Wiederherstellungspunkt in backup.json
+        # gesichert haben.
+        if remembered_target != previous_room_target or updated_history != history:
+            backup = load_backup(BACKUP_PATH)
+            backup["last_room_target"] = remembered_target
+            backup["target_history"] = updated_history
+            save_backup(BACKUP_PATH, backup)
         _save_boost_active_if_changed(boost_was_active, BACKUP_PATH)
 
         if failsafe_ctx is not None:
