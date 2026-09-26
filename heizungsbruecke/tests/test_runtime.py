@@ -203,7 +203,7 @@ def _delivery(bridge):
 
 
 def _awaiting_ack(bridge) -> bool:
-    return _delivery(bridge).pending.awaiting_ack
+    return _delivery(bridge).pending.phase == "awaiting_ack"
 
 
 def _boost_active(bridge) -> bool:
@@ -1134,3 +1134,19 @@ def test_answer_during_boost_with_unwritable_device_is_acked(env):
 
     assert _delivery(bridge).pending is None
     assert env.ha.pushes == []
+
+
+# --- F2: doppelte oder verspaetete Antworten ---
+
+def test_duplicate_rejected_answer_does_not_skip_a_retry_stage(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[0]["seq"]
+
+    _mqtt(env).answer(seq, status="rejected", curve=None, offset=None, reason="x")
+    _mqtt(env).answer(seq, status="rejected", curve=None, offset=None, reason="x")  # QoS-1-Doppelzustellung
+    bridge.worker.run_pending()
+    _advance(env, bridge, 30)  # erste Datenfehler-Stufe
+
+    assert [s["seq"] for s in _mqtt(env).snapshots] == [seq, seq]

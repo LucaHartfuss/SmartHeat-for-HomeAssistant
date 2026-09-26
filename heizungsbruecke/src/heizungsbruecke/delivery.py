@@ -36,16 +36,22 @@ NOTIFY_DATENFEHLER_RESOLVED = "datenfehler_resolved"
 
 _NO_REASON = "ohne Begründung"
 
+# Phase des offenen Ticks (nur im Speicher): sending -> awaiting_ack -> (querying_entitlement ->)
+# waiting_retry -> sending ...
+PHASE_SENDING = "sending"
+PHASE_AWAITING_ACK = "awaiting_ack"
+PHASE_QUERYING_ENTITLEMENT = "querying_entitlement"
+PHASE_WAITING_RETRY = "waiting_retry"
+
 
 @dataclass(frozen=True)
 class PendingTick:
     seq: str
     trigger: str
     stage: int = 0
-    awaiting_ack: bool = False
-    # Generationszaehler: jeder geplante ack_timeout/retry_due traegt die Generation, bei
-    # der er geplant wurde; nur die aktuelle zaehlt. Verhindert doppelte Versuche, wenn
-    # eine verspaetete Antwort einen neuen Retry plant, waehrend der alte noch aussteht.
+    phase: str = PHASE_SENDING
+    # Jeder geplante ack_timeout/retry_due traegt die Generation, bei der er geplant wurde; nur
+    # die aktuelle zaehlt. Sonst erzeugte eine verspaetete Antwort doppelte Versuche.
     gen: int = 0
 
 
@@ -204,7 +210,7 @@ def _retry(state: DeliveryState, delays: tuple[int, ...]) -> tuple[DeliveryState
     pending = state.pending
     gen = pending.gen + 1
     delay = delays[min(pending.stage, len(delays) - 1)]
-    new_pending = replace(pending, stage=pending.stage + 1, awaiting_ack=False, gen=gen)
+    new_pending = replace(pending, stage=pending.stage + 1, phase=PHASE_WAITING_RETRY, gen=gen)
     return replace(state, pending=new_pending), ScheduleRetry(pending.seq, gen, delay)
 
 
@@ -237,56 +243,76 @@ def _published(state, event):
     if pending is None or pending.seq != event.seq:
         return state, []
     gen = pending.gen + 1
-    new_pending = replace(pending, awaiting_ack=True, gen=gen)
+    new_pending = replace(pending, phase=PHASE_AWAITING_ACK, gen=gen)
     return replace(state, pending=new_pending), [ScheduleAckTimeout(pending.seq, gen, ACK_TIMEOUT_SECONDS)]
+
+
+def _notbetrieb_end(state) -> list:
+    if not state.notbetrieb:
+        return []
+    return [PublishFailsafe(False), EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF)]
+
+
+def _answered_with_fault(state, fault: DataFault, notify_kind: str):
+    """Antwort ohne neue Werte: der Server lebt (Zaehler zurueck, Notbetrieb endet), der
+    Datenfehler wird gemeldet, wenn er neu ist. Bei gleicher Stoerung bleibt die erste
+    Begruendung, damit weder eine Meldung noch ein Schreiben von failsafe_state.json folgt.
+    Einen Retry plant nur die Antwort auf den laufenden Versuch (awaiting_ack); eine doppelte
+    oder verspaetete Antwort laesst den geplanten Retry bzw. die Abo-Abfrage unveraendert,
+    sonst uebersprange sie Stufen."""
+    actions = _notbetrieb_end(state)
+    if state.datenfehler is not None and fault.key() == state.datenfehler.key():
+        fault = state.datenfehler
+    else:
+        actions.append(Notify(notify_kind, fault.detail))
+    answered = replace(state, server_failures=0, notbetrieb=False, datenfehler=fault)
+    if state.pending.phase != PHASE_AWAITING_ACK:
+        return answered, actions
+    new_state, retry = _retry(answered, DATA_RETRY_DELAYS_SECONDS)
+    return new_state, actions + [retry]
 
 
 def _ack(state, event):
     if not accepts_ack(state, event.seq):
         return state, []
-    actions = []
-    if state.notbetrieb:
-        actions += [PublishFailsafe(False), EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF)]
-    answered = replace(state, server_failures=0, notbetrieb=False)
     if event.status == STATUS_REJECTED:
         fault = DataFault(SOURCE_SERVER, (event.reason or _NO_REASON,))
-        if state.datenfehler is not None and fault.key() == state.datenfehler.key():
-            # Gleiche Stoerung, evtl. mit anderem Messwert: erste Begruendung behalten,
-            # damit weder eine Meldung noch ein Schreiben von failsafe_state.json folgt.
-            fault = state.datenfehler
-        else:
-            actions.append(Notify(NOTIFY_DATENFEHLER_SERVER, fault.detail))
-        new_state, retry = _retry(replace(answered, datenfehler=fault), DATA_RETRY_DELAYS_SECONDS)
-        return new_state, actions + [retry]
+        return _answered_with_fault(state, fault, NOTIFY_DATENFEHLER_SERVER)
+    actions = _notbetrieb_end(state)
     if state.datenfehler is not None:
         actions.append(Notify(NOTIFY_DATENFEHLER_RESOLVED))
-    return replace(answered, pending=None, datenfehler=None), actions
+    return replace(state, pending=None, server_failures=0, notbetrieb=False, datenfehler=None), actions
 
 
 def _ack_timeout(state, event):
     pending = state.pending
-    if not _is_current(pending, event.seq, event.gen) or not pending.awaiting_ack:
+    if not _is_current(pending, event.seq, event.gen) or pending.phase != PHASE_AWAITING_ACK:
         return state, []
-    state = replace(
-        state, server_failures=state.server_failures + 1, pending=replace(pending, awaiting_ack=False),
-    )
+    state = replace(state, server_failures=state.server_failures + 1)
     if state.server_failures >= NOTBETRIEB_AFTER_SERVER_FAILURES and not state.notbetrieb:
         # Erst klaeren, ob das Abo inaktiv ist (dann Abo-inaktiv-Modus statt Alarm).
-        return state, [QueryEntitlement(pending.seq)]
+        querying = replace(pending, phase=PHASE_QUERYING_ENTITLEMENT)
+        return replace(state, pending=querying), [QueryEntitlement(pending.seq)]
     new_state, retry = _retry(state, SERVER_RETRY_DELAYS_SECONDS)
     return new_state, [retry]
 
 
 def _retry_due(state, event):
     pending = state.pending
-    if not _is_current(pending, event.seq, event.gen) or pending.awaiting_ack:
+    if not _is_current(pending, event.seq, event.gen) or pending.phase != PHASE_WAITING_RETRY:
         return state, []
-    return state, [Attempt(pending.seq, pending.trigger)]
+    return replace(state, pending=replace(pending, phase=PHASE_SENDING)), [Attempt(pending.seq, pending.trigger)]
 
 
 def _entitlement_checked(state, event):
-    if state.pending is None or state.pending.seq != event.seq:
+    pending = state.pending
+    if pending is None or pending.seq != event.seq or pending.phase != PHASE_QUERYING_ENTITLEMENT:
         return state, []
+    if state.server_failures < NOTBETRIEB_AFTER_SERVER_FAILURES:
+        # Waehrend der Abfrage kam eine Antwort ohne Werte: der Server lebt, das Abo-Ergebnis
+        # zaehlt nicht mehr.
+        new_state, retry = _retry(state, DATA_RETRY_DELAYS_SECONDS)
+        return new_state, [retry]
     if event.status == INACTIVE:
         return replace(state, pending=None, notbetrieb=True), [EnterAboInactive()]
     new_state, retry = _retry(replace(state, notbetrieb=True), SERVER_RETRY_DELAYS_SECONDS)
@@ -294,7 +320,7 @@ def _entitlement_checked(state, event):
 
 
 def to_persisted(state: DeliveryState) -> dict:
-    """Inhalt von failsafe_state.json. stage/awaiting_ack/gen/server_failures sind
+    """Inhalt von failsafe_state.json. stage/phase/gen/server_failures sind
     fluechtig -- der Aufrufer schreibt nur, wenn sich dieses Dict aendert."""
     fault, pending = state.datenfehler, state.pending
     return {

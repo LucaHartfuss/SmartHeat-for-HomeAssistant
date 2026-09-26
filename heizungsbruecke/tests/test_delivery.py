@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 
 from heizungsbruecke.delivery import (
@@ -6,6 +8,10 @@ from heizungsbruecke.delivery import (
     NOTIFY_DATENFEHLER_SERVER,
     NOTIFY_NOTBETRIEB_OFF,
     NOTIFY_NOTBETRIEB_ON,
+    PHASE_AWAITING_ACK,
+    PHASE_QUERYING_ENTITLEMENT,
+    PHASE_SENDING,
+    PHASE_WAITING_RETRY,
     SOURCE_LOCAL,
     SOURCE_SERVER,
     Ack,
@@ -73,7 +79,7 @@ def test_tick_due_creates_pending_and_attempts():
 def test_tick_due_replaces_open_tick_but_keeps_failures_notbetrieb_and_fault():
     fault = DataFault(SOURCE_LOCAL, ("dat",))
     old = DeliveryState(
-        pending=PendingTick("s1", "daily", stage=3, awaiting_ack=True, gen=7),
+        pending=PendingTick("s1", "daily", stage=3, phase=PHASE_AWAITING_ACK, gen=7),
         server_failures=4, notbetrieb=True, datenfehler=fault,
     )
 
@@ -99,7 +105,7 @@ def test_replaced_tick_makes_old_timeouts_retries_and_acks_ineffective():
 def test_published_arms_ack_timeout():
     state, actions = _published("s1")
 
-    assert state.pending == PendingTick("s1", "daily", stage=0, awaiting_ack=True, gen=1)
+    assert state.pending == PendingTick("s1", "daily", stage=0, phase=PHASE_AWAITING_ACK, gen=1)
     assert actions == [ScheduleAckTimeout("s1", 1, 30)]
 
 
@@ -143,7 +149,7 @@ def test_first_ack_timeout_retries_immediately_without_notbetrieb():
 
     assert state.server_failures == 1
     assert state.notbetrieb is False
-    assert state.pending == PendingTick("s1", "daily", stage=1, awaiting_ack=False, gen=2)
+    assert state.pending == PendingTick("s1", "daily", stage=1, phase=PHASE_WAITING_RETRY, gen=2)
     assert actions == [ScheduleRetry("s1", 2, 0)]
 
 
@@ -159,7 +165,7 @@ def test_retry_due_attempts_same_seq():
 
     new_state, actions = step(state, RetryDue("s1", 2))
 
-    assert new_state == state
+    assert new_state.pending == replace(state.pending, phase=PHASE_SENDING)
     assert actions == [Attempt("s1", "daily")]
 
 
@@ -404,6 +410,91 @@ def test_rejected_retry_first_waits_thirty_seconds():
     assert actions[-1] == ScheduleRetry("s1", 2, 30)
 
 
+# --- Phasen und doppelte/verspaetete Antworten (F2) ---
+
+def _querying_entitlement(seq="s1"):
+    """Zwei Ack-Timeouts in Folge: die Abo-Abfrage laeuft."""
+    state, _ = _published(seq)
+    return _run(state, AckTimeout(seq, 1), RetryDue(seq, 2), Published(seq), AckTimeout(seq, 3))
+
+
+def test_pending_tick_moves_through_phases():
+    state, _ = step(DeliveryState(), TickDue("s1", "daily"))
+    assert state.pending.phase == PHASE_SENDING
+
+    state, _ = step(state, Published("s1"))
+    assert state.pending.phase == PHASE_AWAITING_ACK
+
+    state, _ = step(state, AckTimeout("s1", 1))
+    assert state.pending.phase == PHASE_WAITING_RETRY
+
+    state, _ = step(state, RetryDue("s1", 2))
+    assert state.pending.phase == PHASE_SENDING
+
+
+def test_second_timeout_waits_for_entitlement_in_its_own_phase():
+    state, actions = _querying_entitlement()
+
+    assert state.pending.phase == PHASE_QUERYING_ENTITLEMENT
+    assert actions == [QueryEntitlement("s1")]
+
+
+def test_duplicate_rejected_answer_plans_no_second_retry():
+    state, _ = _published("s1")
+    state, _ = step(state, Ack("s1", "rejected", "x"))
+
+    assert step(state, Ack("s1", "rejected", "x")) == (state, [])
+
+
+def test_late_rejected_answer_during_server_retry_wait_keeps_the_planned_retry():
+    state, _ = _published("s1")
+    state, _ = step(state, AckTimeout("s1", 1))  # Retry geplant, server_failures = 1
+
+    new_state, actions = step(state, Ack("s1", "rejected", "x"))
+
+    assert actions == [Notify(NOTIFY_DATENFEHLER_SERVER, ("x",))]
+    assert new_state.pending == state.pending
+    assert new_state.server_failures == 0
+
+
+def test_late_rejected_answer_after_notbetrieb_start_ends_notbetrieb_without_new_retry():
+    state, _ = _in_notbetrieb("s1")
+
+    new_state, actions = step(state, Ack("s1", "rejected", "x"))
+
+    assert new_state.notbetrieb is False
+    assert actions == [
+        PublishFailsafe(False), EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF),
+        Notify(NOTIFY_DATENFEHLER_SERVER, ("x",)),
+    ]
+    assert new_state.pending == state.pending
+
+
+@pytest.mark.parametrize("status", ["active", "unknown", "inactive"])
+def test_answer_during_entitlement_query_discards_the_query_result(status):
+    state, _ = _querying_entitlement()
+    state, actions = step(state, Ack("s1", "rejected", "x"))
+
+    assert actions == [Notify(NOTIFY_DATENFEHLER_SERVER, ("x",))]
+    assert state.pending.phase == PHASE_QUERYING_ENTITLEMENT
+
+    state, actions = step(state, EntitlementChecked("s1", status))
+
+    assert state.notbetrieb is False
+    assert state.pending is not None
+    assert actions == [ScheduleRetry("s1", 4, 300)]
+
+
+@pytest.mark.parametrize("events", [
+    (TickDue("s1", "daily"),),                                   # sending
+    (TickDue("s1", "daily"), Published("s1")),                   # awaiting_ack
+])
+def test_retry_due_outside_waiting_retry_is_ignored(events):
+    state, _ = _run(DeliveryState(), *events)
+
+    assert step(state, RetryDue("s1", state.pending.gen)) == (state, [])
+
+
 # --- Neustart ---
 
 def test_boot_with_persisted_pending_attempts_same_seq_from_stage_zero():
@@ -428,7 +519,7 @@ def test_unknown_event_raises_type_error():
 
 def test_persisted_view_contains_only_durable_fields():
     state = DeliveryState(
-        pending=PendingTick("s1", "target_change", stage=3, awaiting_ack=True, gen=9),
+        pending=PendingTick("s1", "target_change", stage=3, phase=PHASE_AWAITING_ACK, gen=9),
         server_failures=5, notbetrieb=True, datenfehler=DataFault(SOURCE_LOCAL, ("dat", "dart")),
     )
 
@@ -441,7 +532,7 @@ def test_persisted_view_contains_only_durable_fields():
 
 def test_persisted_round_trip_resets_volatile_fields():
     state = DeliveryState(
-        pending=PendingTick("s1", "daily", stage=2, awaiting_ack=True, gen=4),
+        pending=PendingTick("s1", "daily", stage=2, phase=PHASE_AWAITING_ACK, gen=4),
         server_failures=3, notbetrieb=True, datenfehler=DataFault(SOURCE_SERVER, ("grund",)),
     )
 
