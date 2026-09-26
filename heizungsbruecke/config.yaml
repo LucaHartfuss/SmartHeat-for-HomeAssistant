@@ -41,9 +41,9 @@ options:
 # AddonError). The add-on falls back to its own defaults for these (config.py), so making
 # them optional here changes nothing at runtime.
 # verteilsystem and the five window times come from the server (profile_params, written by
-# the integration). They are optional here and have no entry under options: (an empty
-# default would be invalid for list(...)); the add-on checks them at startup and exits with a
-# configuration error if they are missing.
+# the integration) and accounts_api_base_url (written by the integration). They are optional
+# here and have no entry under options: (an empty default would be invalid for list(...)); the
+# add-on checks them at startup and exits with a configuration error if they are missing.
 schema:
   tenant_id: str
   mqtt_username: str
@@ -74,3 +74,4 @@ schema:
   day_avg_window_end: str?
   night_avg_window_start: str?
   night_avg_window_end: str?
+  accounts_api_base_url: url?

@@ -2,6 +2,7 @@
 import json
 import logging
 import math
+import urllib.parse
 from pathlib import Path
 
 from heizungsbruecke.safety import resolve_local_safety
@@ -11,8 +12,6 @@ MQTT_HOST = "127.0.0.1"
 # Muss zum `local_port`-Default von cloudflared_access_mqtt passen: Konvention, kein
 # geteilter Konfigurationswert zwischen den beiden Add-ons.
 MQTT_PORT = 18830
-# Gleicher Host fuer jeden Tenant (siehe DEFAULT_HEIZUNGSSERVER_BASE_URL in der Integration).
-ACCOUNTS_API_BASE_URL = "https://accounts.hartfussha.org"
 
 # Dateien im Add-on-Datenverzeichnis. Nutzer lesen sie zur Laufzeit als `config.<NAME>`, damit
 # Tests sie umbiegen koennen.
@@ -67,6 +66,7 @@ def resolve_effective_options(options: dict) -> dict:
         windows = windows_from_options(options)
     except ValueError as error:
         raise ConfigError(str(error)) from None
+    base_url = resolve_accounts_api_base_url(options.get("accounts_api_base_url"))
     return {
         **options,
         "curve_min": safety.curve_min,
@@ -82,7 +82,23 @@ def resolve_effective_options(options: dict) -> dict:
         "night_avg_window_start": windows.night_avg_window_start,
         "night_avg_window_end": windows.night_avg_window_end,
         "avg_window_hours": window_size_hours(windows.day_avg_window_start, windows.day_avg_window_end),
+        "accounts_api_base_url": base_url,
     }
+
+
+def resolve_accounts_api_base_url(value) -> str:
+    """Basis-URL der accounts-api (Abo-Status). Setzt die Integration; https-Pflicht, weil
+    der Status ueber das Internet abgefragt wird."""
+    if not isinstance(value, str) or not value:
+        raise ConfigError(
+            "Option 'accounts_api_base_url' fehlt - bitte die SmartHeat-Integration neu einrichten"
+        )
+    parsed = urllib.parse.urlsplit(value)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ConfigError(
+            f"Option 'accounts_api_base_url' ({value!r}) muss mit https:// beginnen und einen Host haben"
+        )
+    return value.rstrip("/")
 
 
 def validate_boost_config(options: dict) -> str | None:

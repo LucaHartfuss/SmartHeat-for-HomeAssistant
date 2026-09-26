@@ -50,6 +50,7 @@ def _full_valid_options(**overrides):
         "entity_room_night_avg": "sensor.room_night_avg",
         "entity_dat": "sensor.dat",
         "entity_dart": "sensor.dart",
+        "accounts_api_base_url": "https://accounts.example.test",
     }
     options.update(overrides)
     return options

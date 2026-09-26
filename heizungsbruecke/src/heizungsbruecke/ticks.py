@@ -6,7 +6,7 @@ import time
 import uuid
 from datetime import datetime
 
-from heizungsbruecke import abo, config, delivery, entitlement
+from heizungsbruecke import abo, delivery, entitlement
 from heizungsbruecke.override import DeviceWriteError
 from heizungsbruecke.runtime import EV_ACK_TIMEOUT, EV_RETRY_DUE, Runtime
 from heizungsbruecke.snapshot import publish_snapshot, read_snapshot_roles
@@ -59,7 +59,7 @@ def _execute(rt: Runtime, action):
     if isinstance(action, delivery.Attempt):
         return _attempt(rt, action.seq, action.trigger)
     if isinstance(action, delivery.QueryEntitlement):
-        status = entitlement.query_status(rt.options["tenant_id"], config.ACCOUNTS_API_BASE_URL)
+        status = entitlement.query_status(rt.options["tenant_id"], rt.options["accounts_api_base_url"])
         return delivery.EntitlementChecked(seq=action.seq, status=status)
     if isinstance(action, delivery.ScheduleAckTimeout):
         rt.worker.schedule(action.delay_s, Event(EV_ACK_TIMEOUT, {"seq": action.seq, "gen": action.gen}))

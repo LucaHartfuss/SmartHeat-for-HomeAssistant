@@ -33,6 +33,7 @@ OPTIONS = {
     "entity_dat": "sensor.dat",
     "entity_dart": "sensor.dart",
     "notify_service": "notify.handy",
+    "accounts_api_base_url": "https://accounts.example.test",
 }
 
 DERIVED = {
@@ -161,6 +162,9 @@ def env(tmp_path, monkeypatch, clock):
     abo = {"status": entitlement.ACTIVE, "queries": 0}
 
     def _query_status(tenant_id, base_url):
+        # Jede Abo-Abfrage (Boot, Tick-Zustellung, abgelehnte Anmeldung, Fristende) nutzt die
+        # Basis-URL aus den Optionen (Spec TP3, 2.5).
+        assert base_url == OPTIONS["accounts_api_base_url"]
         abo["queries"] += 1
         return abo["status"]
 

@@ -96,7 +96,7 @@ def handle_auth_rejected(rt: Runtime) -> None:
     und im Abo-inaktiv-Modus wird nicht mehr gefragt."""
     if rt.store.state.abo_inactive_since is not None:
         return
-    status = entitlement.query_status(rt.options["tenant_id"], config.ACCOUNTS_API_BASE_URL)
+    status = entitlement.query_status(rt.options["tenant_id"], rt.options["accounts_api_base_url"])
     if status != entitlement.INACTIVE:
         logger.error(
             "MQTT-Anmeldung vom Broker abgelehnt, Abo-Status ist aber '%s' - Zugangsdaten "
@@ -115,7 +115,7 @@ def check_grace_end(rt: Runtime) -> None:
     since = rt.store.state.abo_inactive_since
     if since is None or not entitlement.grace_expired(since, datetime.now().astimezone()):
         return
-    if entitlement.query_status(rt.options["tenant_id"], config.ACCOUNTS_API_BASE_URL) == entitlement.ACTIVE:
+    if entitlement.query_status(rt.options["tenant_id"], rt.options["accounts_api_base_url"]) == entitlement.ACTIVE:
         entitlement.clear(config.ENTITLEMENT_PATH)
         logger.warning("Abo wieder aktiv, Neustart im Normalbetrieb")
         _restart_process()

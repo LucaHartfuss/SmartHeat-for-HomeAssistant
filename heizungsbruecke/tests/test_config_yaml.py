@@ -93,6 +93,7 @@ NEW_OPTIONAL_SCHEMA = {
     "day_avg_window_end": "str?",
     "night_avg_window_start": "str?",
     "night_avg_window_end": "str?",
+    "accounts_api_base_url": "url?",
 }
 
 

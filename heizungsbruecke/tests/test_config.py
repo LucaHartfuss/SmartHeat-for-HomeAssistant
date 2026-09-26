@@ -46,6 +46,8 @@ REQUIRED = {
     "entity_outdoor_temp": "sensor.outdoor", "entity_heat_limit": "number.heat_limit",
 }
 
+BASE_URL = {"accounts_api_base_url": "https://accounts.example.test"}
+
 
 def test_is_configured_true_when_all_required_fields_present():
     assert is_configured(dict(REQUIRED)) is True
@@ -122,7 +124,7 @@ def test_required_options_do_not_contain_new_values():
 
 
 def test_resolve_effective_options_uses_local_safety_and_option_windows():
-    effective = resolve_effective_options({**REQUIRED, **PROFILE_PARAMS})
+    effective = resolve_effective_options({**REQUIRED, **PROFILE_PARAMS, **BASE_URL})
 
     assert effective["curve_min"] == 0.4
     assert effective["curve_max"] == 1.5
@@ -142,7 +144,7 @@ def test_resolve_effective_options_uses_local_safety_and_option_windows():
 
 def test_resolve_effective_options_ignores_safety_values_in_options():
     effective = resolve_effective_options(
-        {**REQUIRED, **PROFILE_PARAMS, "offset_max": 28.0, "boost_curve_value": 0.1}
+        {**REQUIRED, **PROFILE_PARAMS, **BASE_URL, "offset_max": 28.0, "boost_curve_value": 0.1}
     )
 
     assert effective["offset_max"] == 30.0  # lokale Sicherheitswerte gewinnen
@@ -151,7 +153,7 @@ def test_resolve_effective_options_ignores_safety_values_in_options():
 
 def test_resolve_effective_options_takes_windows_from_options():
     effective = resolve_effective_options({
-        **REQUIRED, **PROFILE_PARAMS,
+        **REQUIRED, **PROFILE_PARAMS, **BASE_URL,
         "daily_trigger_time": "11:30",
         "day_avg_window_start": "13:00", "day_avg_window_end": "17:00",
         "night_avg_window_start": "03:00", "night_avg_window_end": "07:00",
@@ -163,7 +165,7 @@ def test_resolve_effective_options_takes_windows_from_options():
 
 @pytest.mark.parametrize("verteilsystem", [None, "", "Fussbodenheizung", "Unbekannt"])
 def test_resolve_effective_options_rejects_verteilsystem(verteilsystem):
-    options = {**REQUIRED, **PROFILE_PARAMS, "verteilsystem": verteilsystem}
+    options = {**REQUIRED, **PROFILE_PARAMS, **BASE_URL, "verteilsystem": verteilsystem}
     if verteilsystem is None:
         del options["verteilsystem"]
 
@@ -172,7 +174,7 @@ def test_resolve_effective_options_rejects_verteilsystem(verteilsystem):
 
 
 def test_resolve_effective_options_names_missing_window_option():
-    options = {**REQUIRED, **PROFILE_PARAMS}
+    options = {**REQUIRED, **PROFILE_PARAMS, **BASE_URL}
     del options["night_avg_window_end"]
 
     with pytest.raises(ConfigError, match="night_avg_window_end"):
@@ -181,12 +183,45 @@ def test_resolve_effective_options_names_missing_window_option():
 
 def test_resolve_effective_options_rejects_unequal_windows():
     with pytest.raises(ConfigError, match="gleich gross"):
-        resolve_effective_options({**REQUIRED, **PROFILE_PARAMS, "day_avg_window_end": "18:00"})
+        resolve_effective_options({**REQUIRED, **PROFILE_PARAMS, **BASE_URL, "day_avg_window_end": "18:00"})
 
 
 def test_resolve_effective_options_0_17_0_config_names_verteilsystem():
     with pytest.raises(ConfigError, match="verteilsystem"):
         resolve_effective_options({**REQUIRED, "profile": "vaillant_gastherme_heizkoerper"})
+
+
+def test_resolve_effective_options_passes_base_url():
+    effective = resolve_effective_options({**REQUIRED, **PROFILE_PARAMS, **BASE_URL})
+
+    assert effective["accounts_api_base_url"] == "https://accounts.example.test"
+
+
+def test_accounts_api_base_url_strips_trailing_slash():
+    from heizungsbruecke.config import resolve_accounts_api_base_url
+    assert resolve_accounts_api_base_url("https://accounts.example.test/") == "https://accounts.example.test"
+
+
+def test_accounts_api_base_url_keeps_path_and_strips_trailing_slash():
+    from heizungsbruecke.config import resolve_accounts_api_base_url
+    assert resolve_accounts_api_base_url("https://example.test/api/") == "https://example.test/api"
+
+
+@pytest.mark.parametrize("value", [None, "", "http://accounts.example.test", "https://", "accounts.example.test", 42])
+def test_accounts_api_base_url_rejects(value):
+    from heizungsbruecke.config import resolve_accounts_api_base_url
+    with pytest.raises(ConfigError, match="accounts_api_base_url"):
+        resolve_accounts_api_base_url(value)
+
+
+def test_resolve_effective_options_requires_base_url():
+    with pytest.raises(ConfigError, match="accounts_api_base_url"):
+        resolve_effective_options({**REQUIRED, **PROFILE_PARAMS})
+
+
+def test_accounts_api_base_url_constant_is_gone():
+    import heizungsbruecke.config as config_module
+    assert not hasattr(config_module, "ACCOUNTS_API_BASE_URL")
 
 
 def test_validate_derived_sensor_prerequisites_returns_none_when_present():
