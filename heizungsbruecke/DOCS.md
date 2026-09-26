@@ -20,6 +20,23 @@ Home-Assistant-Integration: installieren, dann Einstellungen → Geraete &
 Dienste → Integration hinzufuegen → "SmartHeat". Die Integration schreibt die
 noetige Konfiguration automatisch in dieses Add-on.
 
+## Update von 0.17.0 auf 0.18.0
+
+Server-Update nötig, und zwar vorher. Danach die SmartHeat-Integration (ab Version 0.4.0) neu
+einrichten: 0.18.0 startet mit der Konfiguration von 0.17.0 bewusst nicht und meldet im Log,
+dass die Option `verteilsystem` fehlt.
+
+Neu: Die Zeitfenster für Tag- und Nachtmittel und die Uhrzeit der täglichen Heizkurven-Anpassung
+kommen vom SmartHeat-Server. Die Integration überträgt sie bei der Einrichtung.
+
+Neu: Die lokalen Sicherheitsgrenzen (Heizkurve, Mindestvorlauf, Boost) richten sich nach dem
+Verteilsystem statt nach dem Herstellerprofil. Für Heizkörper sind die Werte unverändert. Für
+Fußbodenheizung gibt es noch keine Werte; das Add-on startet dann nicht.
+
+Neu: Die Adresse des Abo-Service kommt aus der Konfiguration statt fest aus dem Add-on.
+
+Entfällt: die Option `profile`.
+
 ## Update von 0.16.0 auf 0.17.0
 
 Kein Server-Update nötig.
