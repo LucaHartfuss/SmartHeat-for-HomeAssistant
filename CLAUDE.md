@@ -22,7 +22,7 @@ cd heizungsbruecke
 pip install -e ".[dev]"
 pytest
 ```
-(`pyproject.toml`: `testpaths = ["tests"]`, `pythonpath = ["src"]`.) 474 Testfunktionen in 22 Dateien (`pytest -q --collect-only`). Zusätzlich Shell-Integrationstests im Repo-Root unter `tests/` (`run_all.sh`, Docker-Build/Happy-Path).
+(`pyproject.toml`: `testpaths = ["tests"]`, `pythonpath = ["src"]`.) 480 Testfunktionen in 22 Dateien (`pytest -q --collect-only`). Zusätzlich Shell-Integrationstests im Repo-Root unter `tests/` (`run_all.sh`, Docker-Build/Happy-Path).
 
 ## Besonderheiten
 
