@@ -531,7 +531,7 @@ def test_invalid_answer_counts_as_server_fault_without_writing(env, answer):
     assert "ungültige Serverantwort" in env.ha.pushes[-1]
 
 
-def test_failed_value_write_is_not_acked_and_retried_with_same_seq(env):
+def test_failed_value_write_is_retried_with_same_seq(env):
     _quiet_backup(env)
     bridge = _start(env)
     _set_room_target(env, bridge, 20.5)

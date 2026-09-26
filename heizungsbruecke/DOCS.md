@@ -29,11 +29,16 @@ gestört ist), meldet das Add-on das einmal als eigene Störung und versucht es 
 erneut. Bisher führte das nach etwa einer Minute fälschlich zur Meldung „Server antwortet
 nicht“ und in den Notbetrieb.
 
-Neu: Ist die Verbindung zum Server unterbrochen, sammelt das Add-on keine Messwerte mehr zum
-späteren Nachsenden. Sobald die Verbindung wieder steht, schickt es sofort frische Werte.
+Neu: Ist die Verbindung zum Server unterbrochen, sammelt das Add-on keine Messwerte für die
+Heizkurven-Berechnung mehr zum späteren Nachsenden. Sobald die Verbindung wieder steht,
+schickt es sofort frische Werte.
 
 Verbessert: Doppelt zugestellte Serverantworten verlängern die Wartezeit bis zum nächsten
 Versuch nicht mehr.
+
+Verbessert: Ein Boost startet erst, wenn die Werte für die Rückkehr nach dem Boost sicher
+gespeichert sind. Startet ein Boost, während schon einer läuft, übernimmt das Add-on die
+Boost-Werte der Anlage nicht mehr fälschlich als Rückkehrwerte.
 
 Intern neu gegliedert. Die Dateien in `/data` bleiben kompatibel; ein Wechsel zurück auf
 0.16.0 ist ohne Weiteres möglich.
