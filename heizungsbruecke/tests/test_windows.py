@@ -43,7 +43,7 @@ def test_windows_from_options_treats_empty_as_missing(key):
         windows_from_options({**VALID, key: ""})
 
 
-@pytest.mark.parametrize("value", ["4:00", " 04:00", "24:00", "12.00", "12:60", "1200", 1200])
+@pytest.mark.parametrize("value", ["4:00", " 04:00", "24:00", "12.00", "12:60", "1200", 1200, "12:00\n"])
 def test_windows_from_options_rejects_bad_time(value):
     with pytest.raises(ValueError, match="day_avg_window_start"):
         windows_from_options({**VALID, "day_avg_window_start": value})

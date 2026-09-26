@@ -26,7 +26,7 @@ class WindowDefaults:
 
 
 def parse_hhmm_minutes(value) -> int:
-    if not isinstance(value, str) or not _HHMM_RE.match(value):
+    if not isinstance(value, str) or not _HHMM_RE.fullmatch(value):
         raise ValueError(f"{value!r} ist keine Uhrzeit im Format HH:MM")
     hours, minutes = value.split(":")
     return int(hours) * 60 + int(minutes)

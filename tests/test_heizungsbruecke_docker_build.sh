@@ -14,7 +14,7 @@ DATA_DIR="$TMPDIR/data"
 mkdir -p "$DATA_DIR"
 
 cat > "$DATA_DIR/options.json" <<JSON
-{"tenant_id":"test","profile":"vaillant_gastherme_heizkoerper","entity_room_actual":"climate.test"}
+{"tenant_id":"test","verteilsystem":"Heizkoerper","daily_trigger_time":"12:00","day_avg_window_start":"14:00","day_avg_window_end":"17:00","night_avg_window_start":"04:00","night_avg_window_end":"07:00","accounts_api_base_url":"https://accounts.example.test","entity_room_actual":"climate.test"}
 JSON
 
 if command -v cygpath >/dev/null 2>&1; then

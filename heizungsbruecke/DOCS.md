@@ -24,7 +24,10 @@ noetige Konfiguration automatisch in dieses Add-on.
 
 Server-Update nötig, und zwar vorher. Danach die SmartHeat-Integration (ab Version 0.4.0) neu
 einrichten: 0.18.0 startet mit der Konfiguration von 0.17.0 bewusst nicht und meldet im Log,
-dass die Option `verteilsystem` fehlt.
+dass die Option `verteilsystem` fehlt. Dazu erst den bestehenden SmartHeat-Integrationseintrag
+entfernen und danach die Integration neu hinzufügen — die Einrichtung erneut über den
+bestehenden Eintrag laufen zu lassen, bricht wegen der Single-Instance-Sperre mit
+`already_configured` ab.
 
 Neu: Die Zeitfenster für Tag- und Nachtmittel und die Uhrzeit der täglichen Heizkurven-Anpassung
 kommen vom SmartHeat-Server. Die Integration überträgt sie bei der Einrichtung.

@@ -162,7 +162,7 @@ EOF
 # (like the real climate.wohnzimmer_thermostat setup) so this test also exercises that
 # read path end-to-end, not just the plain-state path.
 cat > "$DATA_DIR/options.json" <<JSON
-{"tenant_id":"happytest","profile":"vaillant_gastherme_heizkoerper","entity_room_actual":"climate.testroom::current_temperature","entity_room_target":"climate.testroom::temperature","entity_curve_current":"number.curve","entity_offset_current":"number.offset","entity_heat_limit":"number.heat_limit","entity_outdoor_temp":"sensor.outdoor","local_check_interval_seconds":2}
+{"tenant_id":"happytest","verteilsystem":"Heizkoerper","daily_trigger_time":"12:00","day_avg_window_start":"14:00","day_avg_window_end":"17:00","night_avg_window_start":"04:00","night_avg_window_end":"07:00","accounts_api_base_url":"https://accounts.example.test","entity_room_actual":"climate.testroom::current_temperature","entity_room_target":"climate.testroom::temperature","entity_curve_current":"number.curve","entity_offset_current":"number.offset","entity_heat_limit":"number.heat_limit","entity_outdoor_temp":"sensor.outdoor","local_check_interval_seconds":2}
 JSON
 
 docker network rm "$NET_NAME" >/dev/null 2>&1
