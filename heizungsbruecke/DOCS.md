@@ -20,6 +20,33 @@ Home-Assistant-Integration: installieren, dann Einstellungen → Geraete &
 Dienste → Integration hinzufuegen → "SmartHeat". Die Integration schreibt die
 noetige Konfiguration automatisch in dieses Add-on.
 
+## Update von 0.15.0 auf 0.16.0
+
+**Server-Update zuerst:** Der SmartHeat-Server sollte vor dem Add-on aktualisiert sein
+(Plausibilitätsprüfung der Messwerte).
+
+Neu: Antwortet der Server nicht, versucht das Add-on es sofort ein zweites Mal. Erst wenn
+auch dieser Versuch unbeantwortet bleibt, beginnt der Notbetrieb. Danach versucht das
+Add-on es nach 5, 15 und 60 Minuten und anschließend stündlich erneut. Sobald der Server
+wieder antwortet, endet der Notbetrieb von selbst, auch über einen Neustart des Add-ons
+hinweg.
+
+Neu: Liefert ein Sensor keinen gültigen Wert (z. B. leere Batterie), schickt das Add-on
+keine Messwerte an den Server, meldet den betroffenen Sensor einmal und versucht es
+regelmäßig erneut. Die Heizkurve bleibt so lange unverändert, ein Notbetrieb entsteht
+dadurch nicht. Sind die Werte wieder da, kommt eine Entwarnung. Dasselbe gilt, wenn der
+Server die Messwerte als unplausibel ablehnt.
+
+Neu: Das Add-on beendet sich nicht mehr, wenn Home Assistant oder die Verbindung zum
+Server beim Start noch nicht bereit sind. Es wartet und verbindet sich selbst.
+
+Neu: Vor jedem Boost merkt sich das Add-on die aktuellen Heizkurvenwerte, damit es danach
+sicher dorthin zurückkehrt.
+
+Hinweis für bestehende Installationen: Die automatisch angelegten Statistik-Helfer (DAT,
+DART, Raumtemperatur-Mittel) lassen sich in den Helfer-Einstellungen auf eine
+Stichprobengröße von 10.000 stellen. Neue Installationen erhalten diesen Wert automatisch.
+
 ## Update von 0.14.0 auf 0.15.0
 
 **Server-Update zuerst:** 0.15.0 spricht nur noch das neue Nachrichtenformat. Der
