@@ -27,12 +27,15 @@ STATUS_SKIPPED_SUMMER = "skipped_summer"
 STATUS_REJECTED = "rejected"
 SOURCE_LOCAL = "local"
 SOURCE_SERVER = "server"
+SOURCE_WRITE = "write"
 
 NOTIFY_NOTBETRIEB_ON = "notbetrieb_on"
 NOTIFY_NOTBETRIEB_OFF = "notbetrieb_off"
 NOTIFY_DATENFEHLER_LOCAL = "datenfehler_local"
 NOTIFY_DATENFEHLER_SERVER = "datenfehler_server"
 NOTIFY_DATENFEHLER_RESOLVED = "datenfehler_resolved"
+NOTIFY_DATENFEHLER_WRITE = "datenfehler_write"
+NOTIFY_WRITE_RESOLVED = "write_resolved"
 
 _NO_REASON = "ohne Begründung"
 
@@ -57,16 +60,19 @@ class PendingTick:
 
 @dataclass(frozen=True)
 class DataFault:
-    source: str  # SOURCE_LOCAL | SOURCE_SERVER
-    detail: tuple[str, ...]  # lokal: betroffene Rollen (sortiert); Server: (Ablehnungsgrund,)
+    source: str  # SOURCE_LOCAL | SOURCE_SERVER | SOURCE_WRITE
+    # lokal: betroffene Rollen (sortiert); Server: (Ablehnungsgrund,); Anlage: (Rolle, Entity, Ursache,)
+    detail: tuple[str, ...]
 
     def key(self) -> tuple:
-        """Identitaet der Stoerung fuer "gleicher Fehler wie zuletzt?". Der Server-Grund
-        traegt bei R4 den Messwert ("unplausibler Wert für dat: 99 (erlaubt ...)"); ein
-        driftender Wert ist dieselbe Stoerung, zaehlt also nur der Teil vor dem ersten
-        Doppelpunkt."""
+        """Identitaet der Stoerung fuer "gleicher Fehler wie zuletzt?". Der Server-Grund traegt
+        den Messwert ("unplausibler Wert für dat: 99 (...)"), ein driftender Wert ist dieselbe
+        Stoerung: es zaehlt nur der Teil vor dem ersten Doppelpunkt. Eine gestoerte Anlage ist
+        eine Stoerung, egal wie sich die Fehlermeldung aendert."""
         if self.source == SOURCE_SERVER:
             return (self.source, self.detail[0].split(":", 1)[0] if self.detail else "")
+        if self.source == SOURCE_WRITE:
+            return (self.source,)
         return (self.source, self.detail)
 
 
@@ -125,6 +131,13 @@ class RetryDue:
 class EntitlementChecked:
     seq: str
     status: str
+
+
+@dataclass(frozen=True)
+class WriteFailed:
+    """Die Serverwerte kamen an, konnten aber nicht auf die Anlage geschrieben werden."""
+    seq: str
+    detail: str
 
 
 # --- Aktionen ---
@@ -198,6 +211,8 @@ def step(state: DeliveryState, event) -> tuple[DeliveryState, list]:
         return _retry_due(state, event)
     if isinstance(event, EntitlementChecked):
         return _entitlement_checked(state, event)
+    if isinstance(event, WriteFailed):
+        return _write_failed(state, event)
     raise TypeError(f"Unbekanntes Zustell-Ereignis: {event!r}")
 
 
@@ -280,8 +295,17 @@ def _ack(state, event):
         return _answered_with_fault(state, fault, NOTIFY_DATENFEHLER_SERVER)
     actions = _notbetrieb_end(state)
     if state.datenfehler is not None:
-        actions.append(Notify(NOTIFY_DATENFEHLER_RESOLVED))
+        resolved = NOTIFY_WRITE_RESOLVED if state.datenfehler.source == SOURCE_WRITE else NOTIFY_DATENFEHLER_RESOLVED
+        actions.append(Notify(resolved))
     return replace(state, pending=None, server_failures=0, notbetrieb=False, datenfehler=None), actions
+
+
+def _write_failed(state, event):
+    """Zaehlt wie eine Antwort: der Server lebt, also kein Notbetrieb; eigener Datenfehler,
+    Retry mit derselben seq holt die Werte erneut (der Server antwortet idempotent)."""
+    if not accepts_ack(state, event.seq):
+        return state, []
+    return _answered_with_fault(state, DataFault(SOURCE_WRITE, (event.detail,)), NOTIFY_DATENFEHLER_WRITE)
 
 
 def _ack_timeout(state, event):
@@ -355,7 +379,7 @@ def _parse_fault(raw) -> DataFault | None:
     if not isinstance(raw, dict):
         return None
     source, detail = raw.get("source"), raw.get("detail")
-    if source not in (SOURCE_LOCAL, SOURCE_SERVER):
+    if source not in (SOURCE_LOCAL, SOURCE_SERVER, SOURCE_WRITE):
         return None
     if not isinstance(detail, list) or not all(isinstance(item, str) for item in detail):
         return None
@@ -378,6 +402,14 @@ def notification_text(kind: str, detail: tuple[str, ...], entity_ids: dict[str, 
         return f"Heizungsbrücke: Server hat die Messwerte abgelehnt ({reason}). Die Heizkurve bleibt unverändert."
     if kind == NOTIFY_DATENFEHLER_RESOLVED:
         return "Heizungsbrücke: Messwerte wieder gültig, Heizkurve wird wieder angepasst."
+    if kind == NOTIFY_DATENFEHLER_WRITE:
+        detail_text = detail[0] if detail else "unbekannt"
+        return (
+            f"Heizungsbrücke: Neue Heizkurve konnte nicht an die Anlage übertragen werden ({detail_text}). "
+            f"Wird automatisch erneut versucht."
+        )
+    if kind == NOTIFY_WRITE_RESOLVED:
+        return "Heizungsbrücke: Anlage wieder erreichbar, Heizkurve übertragen."
     raise ValueError(f"Unbekannte Meldungsart: {kind!r}")
 
 

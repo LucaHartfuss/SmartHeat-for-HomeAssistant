@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime
 
 from heizungsbruecke import abo, config, delivery, entitlement
+from heizungsbruecke.override import DeviceWriteError
 from heizungsbruecke.runtime import EV_ACK_TIMEOUT, EV_RETRY_DUE, Runtime
 from heizungsbruecke.snapshot import publish_snapshot, read_snapshot_roles
 from heizungsbruecke.target_history import time_weighted_mean
@@ -117,7 +118,8 @@ def _notify(rt: Runtime, action) -> None:
 def handle_setpoints(rt: Runtime, payload: dict) -> None:
     """Server-Antwort (Schema 2), zaehlt nur fuer den offenen Tick (auch verspaetet). Gueltige
     Werte gehen vor dem Ack auf die Anlage. Ein unbekannter Status oder ungueltige Werte zaehlen
-    als Datenfehler vom Server."""
+    als Datenfehler vom Server. Kann die Anlage die Werte nicht uebernehmen, ist das eine
+    Antwort mit eigenem Datenfehler (`WriteFailed`), kein Serverausfall."""
     seq = payload.get("seq")
     state = rt.store.state.delivery
     if not delivery.accepts_ack(state, seq):
@@ -128,7 +130,12 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
     status = payload.get("status")
     curve, offset = payload.get("curve"), payload.get("offset")
     if status in _SETPOINT_STATUSES_WITH_VALUES and _is_finite_number(curve) and _is_finite_number(offset):
-        rt.override.apply_server_values(curve, offset)
+        try:
+            rt.override.apply_server_values(curve, offset)
+        except DeviceWriteError as error:
+            logger.warning("Serverwerte (seq=%s) konnten nicht auf die Anlage geschrieben werden: %s", seq, error)
+            deliver(rt, delivery.WriteFailed(seq=seq, detail=str(error)))
+            return
         deliver(rt, delivery.Ack(seq=seq, status=status))
     elif status == delivery.STATUS_REJECTED:
         reason = payload.get("reason")

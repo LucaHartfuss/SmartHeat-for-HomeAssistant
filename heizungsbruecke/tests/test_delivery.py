@@ -6,14 +6,17 @@ from heizungsbruecke.delivery import (
     NOTIFY_DATENFEHLER_LOCAL,
     NOTIFY_DATENFEHLER_RESOLVED,
     NOTIFY_DATENFEHLER_SERVER,
+    NOTIFY_DATENFEHLER_WRITE,
     NOTIFY_NOTBETRIEB_OFF,
     NOTIFY_NOTBETRIEB_ON,
+    NOTIFY_WRITE_RESOLVED,
     PHASE_AWAITING_ACK,
     PHASE_QUERYING_ENTITLEMENT,
     PHASE_SENDING,
     PHASE_WAITING_RETRY,
     SOURCE_LOCAL,
     SOURCE_SERVER,
+    SOURCE_WRITE,
     Ack,
     AckTimeout,
     Attempt,
@@ -33,6 +36,7 @@ from heizungsbruecke.delivery import (
     ScheduleAckTimeout,
     ScheduleRetry,
     TickDue,
+    WriteFailed,
     accepts_ack,
     build_discovery_config,
     build_state_payload,
@@ -493,6 +497,88 @@ def test_retry_due_outside_waiting_retry_is_ignored(events):
     state, _ = _run(DeliveryState(), *events)
 
     assert step(state, RetryDue("s1", state.pending.gen)) == (state, [])
+
+
+# --- Anlage nicht beschreibbar (F1) ---
+
+def test_write_failed_is_an_answer_with_its_own_fault_and_data_retry():
+    state, _ = _published("s1", server_failures=1)
+    detail = "curve_current (number.c): Cloud weg"
+
+    state, actions = step(state, WriteFailed("s1", detail))
+
+    assert state.server_failures == 0
+    assert state.datenfehler == DataFault(SOURCE_WRITE, (detail,))
+    assert actions == [Notify(NOTIFY_DATENFEHLER_WRITE, (detail,)), ScheduleRetry("s1", 2, 30)]
+
+
+def test_write_failed_ends_notbetrieb():
+    state, _ = _in_notbetrieb("s1")
+    state, _ = _run(state, RetryDue("s1", state.pending.gen), Published("s1"))
+
+    state, actions = step(state, WriteFailed("s1", "x"))
+
+    assert state.notbetrieb is False
+    assert actions[:3] == [PublishFailsafe(False), EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF)]
+
+
+def test_repeated_write_failure_with_other_text_is_the_same_fault():
+    state, _ = _published("s1")
+    state, _ = step(state, WriteFailed("s1", "curve_current (number.c): Timeout"))
+    persisted = to_persisted(state)
+
+    state, actions = _run(state, RetryDue("s1", 2), Published("s1"), WriteFailed("s1", "offset_current (number.o): HTTP 500"))
+
+    assert actions == [ScheduleRetry("s1", 4, 300)]
+    assert to_persisted(state) == persisted
+
+
+def test_duplicate_write_failed_plans_no_second_retry():
+    state, _ = _published("s1")
+    state, _ = step(state, WriteFailed("s1", "x"))
+
+    assert step(state, WriteFailed("s1", "x")) == (state, [])
+
+
+def test_write_failed_for_foreign_seq_is_ignored():
+    state, _ = _published("s1")
+
+    assert step(state, WriteFailed("fremd", "x")) == (state, [])
+
+
+def test_successful_ack_after_write_fault_reports_device_reachable():
+    state, _ = _run(DeliveryState(), TickDue("s1", "daily"), Published("s1"), WriteFailed("s1", "x"))
+
+    state, actions = _run(state, RetryDue("s1", 2), Published("s1"), Ack("s1", "ok"))
+
+    assert state == DeliveryState()
+    assert actions == [Notify(NOTIFY_WRITE_RESOLVED)]
+
+
+def test_rejected_after_write_fault_is_a_new_server_fault():
+    state, _ = _run(DeliveryState(), TickDue("s1", "daily"), Published("s1"), WriteFailed("s1", "x"))
+
+    state, actions = _run(state, RetryDue("s1", 2), Published("s1"), Ack("s1", "rejected", "grund"))
+
+    assert actions[0] == Notify(NOTIFY_DATENFEHLER_SERVER, ("grund",))
+    assert state.datenfehler == DataFault(SOURCE_SERVER, ("grund",))
+
+
+def test_write_fault_is_persisted_and_read_back():
+    state = DeliveryState(pending=PendingTick("s1", "daily"), datenfehler=DataFault(SOURCE_WRITE, ("x",)))
+
+    assert to_persisted(state)["datenfehler"] == {"source": "write", "detail": ["x"]}
+    assert from_persisted(to_persisted(state)) == state
+
+
+def test_notification_texts_for_write_fault():
+    assert notification_text(NOTIFY_DATENFEHLER_WRITE, ("curve_current (number.c): Cloud weg",), {}) == (
+        "Heizungsbrücke: Neue Heizkurve konnte nicht an die Anlage übertragen werden "
+        "(curve_current (number.c): Cloud weg). Wird automatisch erneut versucht."
+    )
+    assert notification_text(NOTIFY_WRITE_RESOLVED, (), {}) == (
+        "Heizungsbrücke: Anlage wieder erreichbar, Heizkurve übertragen."
+    )
 
 
 # --- Neustart ---

@@ -1150,3 +1150,38 @@ def test_duplicate_rejected_answer_does_not_skip_a_retry_stage(env):
     _advance(env, bridge, 30)  # erste Datenfehler-Stufe
 
     assert [s["seq"] for s in _mqtt(env).snapshots] == [seq, seq]
+
+
+# --- F1: Anlage nicht beschreibbar ---
+
+WRITE_DETAIL = "curve_current (number.curve_current): myVAILLANT-Cloud nicht erreichbar"
+WRITE_FAULT = (
+    f"Heizungsbrücke: Neue Heizkurve konnte nicht an die Anlage übertragen werden ({WRITE_DETAIL}). "
+    "Wird automatisch erneut versucht."
+)
+
+
+def test_unwritable_device_is_reported_once_and_retried_without_notbetrieb(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[0]["seq"]
+    env.ha.write_error = RuntimeError("myVAILLANT-Cloud nicht erreichbar")
+
+    _answer(env, bridge, seq)
+    _advance(env, bridge, 30)  # Retry nach 30 s, gleiche seq
+    _answer(env, bridge, seq)  # Anlage weiter nicht beschreibbar
+    _advance(env, bridge, 30)  # frueher: zweiter Ack-Timeout -> Notbetrieb
+
+    assert _delivery(bridge).notbetrieb is False
+    assert env.ha.pushes == [WRITE_FAULT]
+    assert _failsafe_file(env)["datenfehler"] == {"source": "write", "detail": [WRITE_DETAIL]}
+
+    env.ha.write_error = None
+    _advance(env, bridge, 270)  # dritter Versuch 300 s nach dem zweiten
+    _answer(env, bridge, seq)
+
+    assert [s["seq"] for s in _mqtt(env).snapshots] == [seq, seq, seq]
+    assert env.ha.writes[-2:] == [("number.curve_current", 0.95), ("number.offset_current", 23.0)]
+    assert env.ha.pushes[-1] == "Heizungsbrücke: Anlage wieder erreichbar, Heizkurve übertragen."
+    assert _failsafe_file(env)["datenfehler"] is None
