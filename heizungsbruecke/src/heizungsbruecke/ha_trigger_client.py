@@ -36,6 +36,7 @@ class HaTriggerClient:
         self._stop = threading.Event()
         self._authed = False
         self._subscribed = False
+        self._attempt = 0
         self._ws_app: websocket.WebSocketApp | None = None
         self._thread: threading.Thread | None = None
 
@@ -67,7 +68,6 @@ class HaTriggerClient:
                 logger.exception("HaTriggerClient: Fehler beim Schliessen der WS-Verbindung in stop()")
 
     def _run_forever_with_reconnect(self) -> None:
-        attempt = 0
         while not self._stop.is_set():
             self._authed = False
             self._subscribed = False
@@ -85,9 +85,9 @@ class HaTriggerClient:
             self._connected.clear()
             if self._stop.is_set():
                 return
-            delay = _RECONNECT_DELAYS_SECONDS[min(attempt, len(_RECONNECT_DELAYS_SECONDS) - 1)]
+            delay = _RECONNECT_DELAYS_SECONDS[min(self._attempt, len(_RECONNECT_DELAYS_SECONDS) - 1)]
             logger.warning("HaTriggerClient: Verbindung getrennt/fehlgeschlagen, Reconnect in %ss", delay)
-            attempt += 1
+            self._attempt += 1
             time.sleep(delay)
 
     def _on_message(self, ws, message: str) -> None:
@@ -114,6 +114,10 @@ class HaTriggerClient:
     def _handle_subscribe_result(self, ws, payload: dict) -> None:
         if payload.get("success"):
             self._subscribed = True
+            # B7 (Design-Spec 2026-09-26): nach einer erfolgreichen Verbindung beginnt der
+            # Backoff wieder bei 1 s, statt nach dem ersten laengeren Ausfall dauerhaft bei
+            # 30 s zu bleiben. Laeuft im selben Thread wie die Reconnect-Schleife.
+            self._attempt = 0
             self._connected.set()
             logger.info("HaTriggerClient: subscribe_trigger erfolgreich fuer %d Trigger", len(self._triggers))
             if self._on_connected is not None:

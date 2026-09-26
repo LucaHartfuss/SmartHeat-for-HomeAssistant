@@ -14,10 +14,16 @@ _AUTH_REJECTED_REASON_CODES = frozenset({134, 135})
 # weil ein sauberes disconnect() den Last Will nicht ausloest.
 _AVAILABILITY_OFFLINE = "offline"
 
+# Obergrenze fuer paho's Reconnect-Backoff (B10, Design-Spec 2026-09-26): der Broker ist
+# nur ueber cloudflared_access_mqtt erreichbar, das beim Booten evtl. noch nicht laeuft --
+# das Add-on wartet darauf, statt sich zu beenden.
+_RECONNECT_MAX_DELAY_SECONDS = 120
+
 
 class BridgeMqttClient:
     def __init__(self, host: str, port: int, tenant_id: str, username: str, password: str, on_auth_rejected=None):
         self._tenant_id = tenant_id
+        self._host, self._port = host, port
         self._discovery_configs = {}  # (component, object_id) -> config dict
         self._last_status = {}  # object_id -> payload
         self._setpoints_callback = None
@@ -26,8 +32,13 @@ class BridgeMqttClient:
         self._client.username_pw_set(username, password)
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
+        self._client.on_connect_fail = self._on_connect_fail
         self._client.will_set(self._availability_topic(), payload=_AVAILABILITY_OFFLINE, retain=True)
-        self._client.connect(host, port)
+        self._client.reconnect_delay_set(min_delay=1, max_delay=_RECONNECT_MAX_DELAY_SECONDS)
+        # Kein blockierender Connect (B10): paho verbindet nach loop_start() selbst und
+        # versucht es bei Fehlschlag dauerhaft weiter (loop_forever mit
+        # retry_first_connection=True) -- kein Retry-Budget, kein Exit.
+        self._client.connect_async(host, port)
 
     def _availability_topic(self) -> str:
         return f"smartheat/{self._tenant_id}/status/availability"
@@ -57,6 +68,13 @@ class BridgeMqttClient:
 
     def _on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties) -> None:
         logger.warning("MQTT-Verbindung getrennt (reason_code=%s) - Reconnect laeuft ueber paho automatisch", reason_code)
+
+    def _on_connect_fail(self, client, userdata) -> None:
+        logger.error(
+            "MQTT-Verbindung zu %s:%s fehlgeschlagen - laeuft das Add-on 'cloudflared_access_mqtt' "
+            "und lauscht es auf Port %s? paho versucht es automatisch weiter.",
+            self._host, self._port, self._port,
+        )
 
     def _setpoints_topic(self) -> str:
         return f"smartheat/{self._tenant_id}/down/setpoints"

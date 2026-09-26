@@ -358,3 +358,40 @@ def test_reconnect_uses_increasing_backoff_and_resubscribes(monkeypatch):
 
     assert sleep_calls[:3] == [1, 2, 5]
     assert captured["calls"] >= 4  # initial connect + at least 3 reconnects
+
+
+def test_backoff_restarts_at_one_second_after_successful_subscribe(monkeypatch):
+    # B7: nach einer erfolgreichen Verbindung darf der Backoff nicht auf 30 s stehen bleiben.
+    sleep_calls = []
+    monkeypatch.setattr("heizungsbruecke.ha_trigger_client.time.sleep", lambda s: sleep_calls.append(s))
+
+    def _factory(url, on_message=None, on_close=None, on_error=None):
+        fake_app = MagicMock()
+
+        def _connect_subscribe_and_drop():
+            on_message(fake_app, json.dumps({"type": "auth_required"}))
+            on_message(fake_app, json.dumps({"type": "auth_ok"}))
+            on_message(fake_app, json.dumps({"id": 1, "type": "result", "success": True, "result": None}))
+
+        fake_app.run_forever = MagicMock(side_effect=_connect_subscribe_and_drop)
+        return fake_app
+
+    with patch("heizungsbruecke.ha_trigger_client.websocket.WebSocketApp", side_effect=_factory):
+        client = HaTriggerClient(
+            ws_url="ws://x", token="t", triggers=[{"platform": "time", "at": "12:00"}],
+            on_trigger_event=MagicMock(),
+        )
+        client.start()
+        _wait_until(lambda: len(sleep_calls) >= 3)
+        client.stop()
+
+    assert sleep_calls[:3] == [1, 1, 1]
+
+
+def test_successful_subscribe_resets_attempt_counter():
+    client = HaTriggerClient(ws_url="ws://x", token="t", triggers=[], on_trigger_event=MagicMock())
+    client._attempt = 4
+
+    client._handle_subscribe_result(MagicMock(), {"success": True})
+
+    assert client._attempt == 0

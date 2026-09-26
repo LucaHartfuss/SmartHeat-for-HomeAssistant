@@ -284,3 +284,22 @@ def test_stop_still_disconnects_when_offline_publish_fails():
 
     mock_client.disconnect.assert_called_once()
     mock_client.loop_stop.assert_called_once()
+
+
+def test_init_connects_asynchronously_with_bounded_reconnect_backoff():
+    _, mock_client = _client_with_mock()
+
+    mock_client.connect_async.assert_called_once_with("127.0.0.1", 18830)
+    mock_client.connect.assert_not_called()
+    mock_client.reconnect_delay_set.assert_called_once_with(min_delay=1, max_delay=120)
+
+
+def test_on_connect_fail_is_registered_and_logs_tunnel_hint(caplog):
+    client, mock_client = _client_with_mock()
+
+    assert mock_client.on_connect_fail == client._on_connect_fail
+    with caplog.at_level(logging.ERROR):
+        client._on_connect_fail(mock_client, None)
+
+    assert "cloudflared_access_mqtt" in caplog.text
+    assert "18830" in caplog.text
