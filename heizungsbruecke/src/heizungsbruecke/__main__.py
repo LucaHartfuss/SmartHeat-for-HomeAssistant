@@ -17,8 +17,8 @@ from heizungsbruecke.manifest import ManifestError, build_manifest
 from heizungsbruecke.override import Override
 from heizungsbruecke.profiles import UnknownProfileError
 from heizungsbruecke.runtime import (
-    EV_ACK_TIMEOUT, EV_AUTH_REJECTED, EV_DAYNIGHT, EV_GRACE_CHECK, EV_LOCAL_CHECK, EV_RETRY_DUE,
-    EV_SETPOINTS, EV_TELEMETRY, EV_WATCHDOG, Runtime,
+    EV_ACK_TIMEOUT, EV_AUTH_REJECTED, EV_DAYNIGHT, EV_GRACE_CHECK, EV_LOCAL_CHECK, EV_MQTT_CONNECTED,
+    EV_RETRY_DUE, EV_SETPOINTS, EV_TELEMETRY, EV_WATCHDOG, Runtime,
 )
 from heizungsbruecke.state import StateStore
 from heizungsbruecke.worker import Event, RegulationWorker
@@ -128,6 +128,10 @@ def _on_retry_due(rt: Runtime, event: Event) -> None:
     ticks.deliver(rt, delivery.RetryDue(seq=event.data["seq"], gen=event.data["gen"]))
 
 
+def _on_mqtt_connected(rt: Runtime, event: Event) -> None:
+    ticks.deliver(rt, delivery.MqttConnected())
+
+
 def _on_auth_rejected(rt: Runtime, event: Event) -> None:
     abo.handle_auth_rejected(rt)
 
@@ -177,6 +181,7 @@ def _register_handlers(rt: Runtime) -> None:
         EV_AUTH_REJECTED: _on_auth_rejected,
         EV_ACK_TIMEOUT: _on_ack_timeout,
         EV_RETRY_DUE: _on_retry_due,
+        EV_MQTT_CONNECTED: _on_mqtt_connected,
         EV_WATCHDOG: _on_watchdog,
         EV_TELEMETRY: _on_telemetry,
         EV_DAYNIGHT: _on_daynight,

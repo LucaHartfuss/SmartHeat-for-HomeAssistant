@@ -26,6 +26,7 @@ from heizungsbruecke.delivery import (
     EndEmergencyBoost,
     EnterAboInactive,
     EntitlementChecked,
+    MqttConnected,
     Notify,
     PendingTick,
     PublishFailsafe,
@@ -695,3 +696,29 @@ def test_build_discovery_config_describes_problem_binary_sensor():
 def test_build_state_payload_maps_bool_to_on_off():
     assert build_state_payload(True) == "ON"
     assert build_state_payload(False) == "OFF"
+
+
+# --- Broker wieder verbunden (F3) ---
+
+def test_mqtt_connected_while_waiting_for_retry_attempts_at_once():
+    state, _ = _in_notbetrieb("s1")
+    waiting = state.pending
+
+    state, actions = step(state, MqttConnected())
+
+    assert actions == [Attempt("s1", "daily")]
+    assert state.pending == replace(waiting, phase=PHASE_SENDING, gen=waiting.gen + 1)
+    assert step(state, RetryDue("s1", waiting.gen)) == (state, [])  # geplanter Retry laeuft ins Leere
+
+
+@pytest.mark.parametrize("events", [
+    (),                                                                   # kein offener Tick
+    (TickDue("s1", "daily"), Published("s1")),                           # awaiting_ack
+    (TickDue("s1", "daily"), Published("s1"), AckTimeout("s1", 1), RetryDue("s1", 2), Published("s1"),
+     AckTimeout("s1", 3)),                                                # querying_entitlement
+])
+def test_mqtt_connected_is_ignored_unless_waiting_for_retry(events):
+    # Review Focus 5.
+    state, _ = _run(DeliveryState(), *events)
+
+    assert step(state, MqttConnected()) == (state, [])

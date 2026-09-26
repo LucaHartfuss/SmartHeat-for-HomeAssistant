@@ -21,13 +21,17 @@ _RECONNECT_MAX_DELAY_SECONDS = 120
 
 
 class BridgeMqttClient:
-    def __init__(self, host: str, port: int, tenant_id: str, username: str, password: str, on_auth_rejected=None):
+    def __init__(
+        self, host: str, port: int, tenant_id: str, username: str, password: str,
+        on_auth_rejected=None, on_connected=None,
+    ):
         self._tenant_id = tenant_id
         self._host, self._port = host, port
         self._discovery_configs = {}  # (component, object_id) -> config dict
         self._last_status = {}  # object_id -> payload
         self._setpoints_callback = None
         self._on_auth_rejected = on_auth_rejected
+        self._on_connected = on_connected
         self._client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
         self._client.username_pw_set(username, password)
         self._client.on_connect = self._on_connect
@@ -65,6 +69,11 @@ class BridgeMqttClient:
         for object_id, payload in self._last_status.items():
             self._publish_status(object_id=object_id, payload=payload)
         self._client.publish(self._availability_topic(), "online", retain=True)
+        if self._on_connected is not None:
+            try:
+                self._on_connected(self)
+            except Exception:
+                logger.exception("Fehler bei der Behandlung der MQTT-Verbindung")
 
     def _on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties) -> None:
         logger.warning("MQTT-Verbindung getrennt (reason_code=%s) - Reconnect laeuft ueber paho automatisch", reason_code)
@@ -98,6 +107,9 @@ class BridgeMqttClient:
 
     def publish_snapshot(self, payload: dict) -> None:
         self._client.publish(f"smartheat/{self._tenant_id}/up/snapshot", json.dumps(payload), qos=1)
+
+    def is_connected(self) -> bool:
+        return self._client.is_connected()
 
     def publish_discovery(self, component: str, object_id: str, config: dict) -> None:
         """Publishes a retained MQTT Discovery config so Home Assistant's MQTT

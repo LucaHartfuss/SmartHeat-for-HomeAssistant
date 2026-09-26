@@ -8,7 +8,7 @@ import logging
 from heizungsbruecke import config, delivery
 from heizungsbruecke.ha_trigger_client import HaTriggerClient
 from heizungsbruecke.mqtt_client import BridgeMqttClient
-from heizungsbruecke.runtime import EV_AUTH_REJECTED, EV_LOCAL_CHECK, EV_SETPOINTS
+from heizungsbruecke.runtime import EV_AUTH_REJECTED, EV_LOCAL_CHECK, EV_MQTT_CONNECTED, EV_SETPOINTS
 from heizungsbruecke.worker import Event, RegulationWorker
 
 logger = logging.getLogger(__name__)
@@ -107,6 +107,7 @@ def create_mqtt_client(options: dict, worker: RegulationWorker, notbetrieb: bool
         host=config.MQTT_HOST, port=config.MQTT_PORT, tenant_id=options["tenant_id"],
         username=options["mqtt_username"], password=options["mqtt_password"],
         on_auth_rejected=lambda _client: worker.post_coalesced(EV_AUTH_REJECTED),
+        on_connected=lambda _client: worker.post_coalesced(EV_MQTT_CONNECTED),
     )
     client.publish_discovery(
         component="binary_sensor", object_id="failsafe",

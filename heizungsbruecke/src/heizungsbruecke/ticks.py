@@ -87,6 +87,12 @@ def _attempt(rt: Runtime, seq: str, trigger: str):
     if read.invalid_roles:
         logger.warning("Snapshot (seq=%s) zurueckgehalten, ungueltige Werte: %s", seq, ", ".join(read.invalid_roles))
         return delivery.ReadInvalid(seq=seq, roles=read.invalid_roles)
+    if rt.mqtt_client is None or not rt.mqtt_client.is_connected():
+        # Ohne Verbindung nicht publizieren: paho wuerde QoS-1-Nachrichten stauen und nach einem
+        # langen Ausfall einen Stunden alten Messwertsatz nachliefern. Der Ack-Timeout plant den
+        # naechsten Versuch, das (Wieder-)Verbinden startet ihn sofort.
+        logger.warning("Snapshot (seq=%s) nicht gesendet, keine MQTT-Verbindung", seq)
+        return delivery.Published(seq=seq)
     try:
         publish_snapshot(rt.mqtt_client, seq=seq, trigger=trigger, roles=read.roles)
         logger.info("Voller Snapshot veroeffentlicht (seq=%s, trigger=%s)", seq, trigger)

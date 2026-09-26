@@ -95,6 +95,10 @@ class FakeMqtt:
         self.publish_error = None
         self.loop_started = False
         self.stopped = False
+        self.connected = True
+
+    def is_connected(self):
+        return self.connected
 
     def publish_discovery(self, component, object_id, config):
         pass
@@ -1185,3 +1189,42 @@ def test_unwritable_device_is_reported_once_and_retried_without_notbetrieb(env):
     assert env.ha.writes[-2:] == [("number.curve_current", 0.95), ("number.offset_current", 23.0)]
     assert env.ha.pushes[-1] == "Heizungsbrücke: Anlage wieder erreichbar, Heizkurve übertragen."
     assert _failsafe_file(env)["datenfehler"] is None
+
+
+# --- F3: Broker-Ausfall ---
+
+def test_no_snapshot_is_queued_without_broker_and_connect_retries_at_once(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _mqtt(env).connected = False
+
+    _set_room_target(env, bridge, 20.5)
+    _advance(env, bridge, 30)
+    _advance(env, bridge, 30)  # zwei unbeantwortete Versuche -> Notbetrieb, naechster Versuch in 5 min
+
+    assert _mqtt(env).snapshots == []
+    assert _delivery(bridge).notbetrieb is True
+
+    _mqtt(env).connected = True
+    _mqtt(env).kwargs["on_connected"](_mqtt(env))  # aus dem paho-Thread
+    bridge.worker.run_pending()
+
+    assert len(_mqtt(env).snapshots) == 1
+
+    _answer(env, bridge, _mqtt(env).snapshots[0]["seq"])
+    _advance(env, bridge, 300)  # der vorher geplante 5-min-Retry laeuft ins Leere
+
+    assert _delivery(bridge).notbetrieb is False
+    assert len(_mqtt(env).snapshots) == 1
+
+
+def test_mqtt_connect_while_awaiting_answer_does_not_send_again(env):
+    # Review Focus 5.
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+
+    _mqtt(env).kwargs["on_connected"](_mqtt(env))
+    bridge.worker.run_pending()
+
+    assert len(_mqtt(env).snapshots) == 1

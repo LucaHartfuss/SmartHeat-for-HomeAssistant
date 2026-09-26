@@ -303,3 +303,41 @@ def test_on_connect_fail_is_registered_and_logs_tunnel_hint(caplog):
 
     assert "cloudflared_access_mqtt" in caplog.text
     assert "18830" in caplog.text
+
+
+def test_is_connected_asks_paho():
+    client, mock_client = _client_with_mock()
+
+    mock_client.is_connected.return_value = False
+    assert client.is_connected() is False
+    mock_client.is_connected.return_value = True
+    assert client.is_connected() is True
+
+
+def test_on_connect_calls_connected_hook_after_resubscribe():
+    events = []
+    client, mock_client = _client_with_mock(on_connected=lambda c: events.append(("hook", c)))
+    client.subscribe_setpoints(on_message=MagicMock())
+    mock_client.subscribe.side_effect = lambda *args: events.append(("subscribe", None))
+
+    client._on_connect(mock_client, None, {}, 0, None)
+
+    assert events == [("subscribe", None), ("hook", client)]
+
+
+def test_on_connect_failure_does_not_call_connected_hook():
+    hook = MagicMock()
+    client, mock_client = _client_with_mock(on_connected=hook)
+
+    client._on_connect(mock_client, None, {}, ReasonCode(PacketTypes.CONNACK, identifier=135), None)
+
+    hook.assert_not_called()
+
+
+def test_connected_hook_exception_does_not_escape_network_thread(caplog):
+    client, mock_client = _client_with_mock(on_connected=MagicMock(side_effect=RuntimeError("worker kaputt")))
+
+    with caplog.at_level(logging.ERROR):
+        client._on_connect(mock_client, None, {}, 0, None)  # darf nicht werfen
+
+    assert "worker kaputt" in caplog.text

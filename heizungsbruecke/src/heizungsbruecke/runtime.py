@@ -25,6 +25,7 @@ EV_WATCHDOG = "watchdog"
 EV_TELEMETRY = "telemetry"
 EV_DAYNIGHT = "daynight"
 EV_GRACE_CHECK = "grace_check"
+EV_MQTT_CONNECTED = "mqtt_connected"
 
 
 @dataclass

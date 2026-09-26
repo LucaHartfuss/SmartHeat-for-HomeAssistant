@@ -140,6 +140,11 @@ class WriteFailed:
     detail: str
 
 
+@dataclass(frozen=True)
+class MqttConnected:
+    """Die Verbindung zum Broker steht (wieder)."""
+
+
 # --- Aktionen ---
 
 @dataclass(frozen=True)
@@ -213,6 +218,8 @@ def step(state: DeliveryState, event) -> tuple[DeliveryState, list]:
         return _entitlement_checked(state, event)
     if isinstance(event, WriteFailed):
         return _write_failed(state, event)
+    if isinstance(event, MqttConnected):
+        return _mqtt_connected(state)
     raise TypeError(f"Unbekanntes Zustell-Ereignis: {event!r}")
 
 
@@ -306,6 +313,17 @@ def _write_failed(state, event):
     if not accepts_ack(state, event.seq):
         return state, []
     return _answered_with_fault(state, DataFault(SOURCE_WRITE, (event.detail,)), NOTIFY_DATENFEHLER_WRITE)
+
+
+def _mqtt_connected(state):
+    """Wartet der offene Tick auf seinen naechsten Versuch, startet er sofort (neue Generation,
+    damit der geplante Retry ins Leere laeuft; Stufe unveraendert). Laeuft gerade ein Versuch
+    oder die Abo-Abfrage, bleibt es dabei."""
+    pending = state.pending
+    if pending is None or pending.phase != PHASE_WAITING_RETRY:
+        return state, []
+    new_pending = replace(pending, phase=PHASE_SENDING, gen=pending.gen + 1)
+    return replace(state, pending=new_pending), [Attempt(pending.seq, pending.trigger)]
 
 
 def _ack_timeout(state, event):
