@@ -1,7 +1,5 @@
 from dataclasses import dataclass
 
-from heizungsbruecke.profiles import UnknownProfileError, required_roles_for
-
 ALL_ROLES = (
     "room_actual", "room_target", "curve_current", "offset_current",
     "outdoor_temp", "room_day_avg", "room_night_avg", "heat_limit", "dat", "dart",
@@ -9,6 +7,13 @@ ALL_ROLES = (
     "flow_temperature", "return_temperature", "operating_mode", "system_water_pressure",
     "efficiency_ratio", "energy_electrical_heating", "energy_electrical_dhw",
     "energy_primary_heating", "energy_primary_dhw", "energy_thermal_heating", "energy_thermal_dhw",
+)
+
+# Pflicht-Entities der Bruecke (fuer alle Profile gleich). Nicht zu verwechseln mit
+# SNAPSHOT_ROLES: room_actual ist lokal, dat/dart/room_*_avg koennen abgeleitete Sensoren sein.
+REQUIRED_ROLES = (
+    "room_actual", "room_target", "curve_current", "offset_current",
+    "room_day_avg", "room_night_avg", "heat_limit", "dat", "dart",
 )
 
 # Rollen, die der volle Snapshot an den Server schickt -- muss mit REQUIRED_ROLES in
@@ -34,15 +39,6 @@ class ChannelManifest:
 
 
 def build_manifest(options: dict, derived_entity_ids: dict[str, str] | None = None) -> ChannelManifest:
-    profile_id = options.get("profile")
-    if not profile_id:
-        raise ManifestError("Pflichtfeld 'profile' fehlt in der Add-on-Konfiguration")
-
-    try:
-        required_roles = required_roles_for(profile_id)
-    except UnknownProfileError as exc:
-        raise ManifestError(str(exc)) from exc
-
     derived_entity_ids = derived_entity_ids or {}
     entity_ids = {}
     for role in ALL_ROLES:
@@ -53,7 +49,7 @@ def build_manifest(options: dict, derived_entity_ids: dict[str, str] | None = No
         if value:
             entity_ids[role] = value
 
-    missing = [role for role in required_roles if role not in entity_ids]
+    missing = [role for role in REQUIRED_ROLES if role not in entity_ids]
     if missing:
         raise ManifestError(f"Pflicht-Rollen fehlen in der Add-on-Konfiguration: {', '.join(missing)}")
 

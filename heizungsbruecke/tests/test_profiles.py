@@ -1,49 +1,17 @@
 import pytest
 
-from heizungsbruecke.manifest import ALL_ROLES
 from heizungsbruecke.profiles import (
     KPI_ENERGY_CHANNELS_BY_PROFILE,
     LOCAL_BOOST_DEFAULTS,
     LOCAL_CLAMP_DEFAULTS,
     LOCAL_WINDOW_DEFAULTS,
-    REQUIRED_ROLES_BY_PROFILE,
     UnknownProfileError,
     WindowDefaults,
-    required_roles_for,
     resolve_boost_defaults,
     resolve_local_clamps,
     resolve_window_defaults,
     window_size_hours,
 )
-
-
-def test_required_roles_for_weishaupt_profile():
-    roles = required_roles_for("weishaupt_waermepumpe_fussbodenheizung")
-
-    assert set(roles) == {
-        "room_actual", "room_target", "curve_current", "offset_current",
-        "room_day_avg", "room_night_avg", "heat_limit", "dat", "dart",
-    }
-
-
-def test_required_roles_for_vaillant_profile():
-    roles = required_roles_for("vaillant_gastherme_heizkoerper")
-
-    assert set(roles) == {
-        "room_actual", "room_target", "curve_current", "offset_current",
-        "room_day_avg", "room_night_avg", "heat_limit", "dat", "dart",
-    }
-
-
-def test_required_roles_for_unknown_profile_raises():
-    with pytest.raises(UnknownProfileError):
-        required_roles_for("does_not_exist")
-
-
-def test_every_required_role_is_a_known_manifest_role():
-    for profile_id, roles in REQUIRED_ROLES_BY_PROFILE.items():
-        unknown = set(roles) - set(ALL_ROLES)
-        assert not unknown, f"Profil '{profile_id}' fordert unbekannte Rollen: {sorted(unknown)}"
 
 
 def test_resolve_local_clamps_returns_profile_defaults():

@@ -5,7 +5,6 @@ from heizungsbruecke.manifest import build_manifest, ManifestError
 
 def test_build_manifest_with_all_required_roles_succeeds():
     options = {
-        "profile": "weishaupt_waermepumpe_fussbodenheizung",
         "entity_room_actual": "climate.wohnzimmer_thermostat",
         "entity_room_target": "climate.wohnzimmer_thermostat",
         "entity_curve_current": "number.weishaupt_heizkurve_steigung",
@@ -23,7 +22,6 @@ def test_build_manifest_with_all_required_roles_succeeds():
 
 def test_build_manifest_missing_required_role_raises():
     options = {
-        "profile": "weishaupt_waermepumpe_fussbodenheizung",
         "entity_room_actual": "climate.wohnzimmer_thermostat",
     }
     with pytest.raises(ManifestError):
@@ -32,7 +30,6 @@ def test_build_manifest_missing_required_role_raises():
 
 def test_build_manifest_includes_optional_role_when_present():
     options = {
-        "profile": "weishaupt_waermepumpe_fussbodenheizung",
         "entity_room_actual": "climate.wohnzimmer_thermostat",
         "entity_room_target": "climate.wohnzimmer_thermostat",
         "entity_curve_current": "number.steigung",
@@ -48,49 +45,13 @@ def test_build_manifest_includes_optional_role_when_present():
     assert manifest.entity_ids["outdoor_temp"] == "sensor.aussentemperatur"
 
 
-def test_build_manifest_missing_profile_raises():
-    options = {
-        "entity_room_actual": "climate.wz",
-        "entity_room_target": "climate.wz",
-        "entity_curve_current": "number.curve",
-        "entity_offset_current": "number.offset",
-        "entity_room_day_avg": "sensor.day_avg",
-        "entity_room_night_avg": "sensor.night_avg",
-        "entity_heat_limit": "sensor.heat_limit",
-        "entity_dat": "sensor.dat",
-        "entity_dart": "sensor.dart",
-    }
-
-    with pytest.raises(ManifestError):
-        build_manifest(options)
-
-
-def test_build_manifest_unknown_profile_raises_manifest_error():
-    options = {
-        "profile": "does_not_exist",
-        "entity_room_actual": "climate.wz",
-        "entity_room_target": "climate.wz",
-        "entity_curve_current": "number.curve",
-        "entity_offset_current": "number.offset",
-        "entity_room_day_avg": "sensor.day_avg",
-        "entity_room_night_avg": "sensor.night_avg",
-        "entity_heat_limit": "sensor.heat_limit",
-        "entity_dat": "sensor.dat",
-        "entity_dart": "sensor.dart",
-    }
-
-    with pytest.raises(ManifestError):
-        build_manifest(options)
-
-
 def test_build_manifest_missing_profile_required_role_raises():
     options = {
-        "profile": "weishaupt_waermepumpe_fussbodenheizung",
         "entity_room_actual": "climate.wz",
         "entity_room_target": "climate.wz",
         "entity_curve_current": "number.curve",
         "entity_offset_current": "number.offset",
-        # entity_dat fehlt -- ist Pflicht fuer dieses Profil
+        # entity_dat fehlt -- ist Pflicht
         "entity_room_day_avg": "sensor.day_avg",
         "entity_room_night_avg": "sensor.night_avg",
         "entity_heat_limit": "sensor.heat_limit",
@@ -103,7 +64,6 @@ def test_build_manifest_missing_profile_required_role_raises():
 
 def test_build_manifest_succeeds_with_all_profile_roles():
     options = {
-        "profile": "vaillant_gastherme_heizkoerper",
         "entity_room_actual": "climate.wz",
         "entity_room_target": "climate.wz",
         "entity_curve_current": "number.curve",
@@ -122,7 +82,6 @@ def test_build_manifest_succeeds_with_all_profile_roles():
 
 def test_build_manifest_prefers_derived_entity_ids_over_options():
     options = {
-        "profile": "vaillant_gastherme_heizkoerper",
         "entity_room_actual": "climate.wz",
         "entity_room_target": "climate.wz",
         "entity_curve_current": "number.curve",
@@ -144,7 +103,6 @@ def test_build_manifest_prefers_derived_entity_ids_over_options():
 
 def test_build_manifest_picks_up_optional_kpi_entity_when_configured():
     options = {
-        "profile": "vaillant_gastherme_heizkoerper",
         "entity_room_actual": "climate.wz",
         "entity_room_target": "climate.wz",
         "entity_curve_current": "number.curve",
@@ -164,7 +122,6 @@ def test_build_manifest_picks_up_optional_kpi_entity_when_configured():
 
 def test_build_manifest_omits_unconfigured_kpi_entity():
     options = {
-        "profile": "vaillant_gastherme_heizkoerper",
         "entity_room_actual": "climate.wz",
         "entity_room_target": "climate.wz",
         "entity_curve_current": "number.curve",
@@ -183,7 +140,6 @@ def test_build_manifest_omits_unconfigured_kpi_entity():
 
 def test_build_manifest_treats_empty_string_kpi_entity_as_unconfigured():
     options = {
-        "profile": "vaillant_gastherme_heizkoerper",
         "entity_room_actual": "climate.wz",
         "entity_room_target": "climate.wz",
         "entity_curve_current": "number.curve",
@@ -205,10 +161,30 @@ def test_outdoor_min_is_taken_from_derived_entities():
     from heizungsbruecke.manifest import OPTIONAL_SNAPSHOT_ROLES, build_manifest
     assert OPTIONAL_SNAPSHOT_ROLES == ("outdoor_min_24h", "room_target_avg_24h")
     options = {
-        "profile": "vaillant_gastherme_heizkoerper",
         "entity_room_actual": "sensor.rt", "entity_room_target": "climate.x::temperature",
         "entity_curve_current": "number.c", "entity_offset_current": "number.o", "entity_heat_limit": "number.h",
     }
     derived = {"dat": "sensor.dat", "dart": "sensor.dart", "room_day_avg": "input_number.d",
                "room_night_avg": "input_number.n", "outdoor_min_24h": "sensor.omin"}
     assert build_manifest(options, derived).entity_ids["outdoor_min_24h"] == "sensor.omin"
+
+
+def test_required_roles_are_known_manifest_roles():
+    from heizungsbruecke.manifest import ALL_ROLES, REQUIRED_ROLES
+
+    assert REQUIRED_ROLES == (
+        "room_actual", "room_target", "curve_current", "offset_current",
+        "room_day_avg", "room_night_avg", "heat_limit", "dat", "dart",
+    )
+    assert set(REQUIRED_ROLES) <= set(ALL_ROLES)
+
+
+def test_build_manifest_ignores_profile_option():
+    options = {
+        "entity_room_actual": "sensor.rt", "entity_room_target": "sensor.target",
+        "entity_curve_current": "number.curve", "entity_offset_current": "number.offset",
+        "entity_room_day_avg": "sensor.day", "entity_room_night_avg": "sensor.night",
+        "entity_heat_limit": "number.limit", "entity_dat": "sensor.dat", "entity_dart": "sensor.dart",
+    }
+
+    assert build_manifest(options) == build_manifest({**options, "profile": "does_not_exist"})

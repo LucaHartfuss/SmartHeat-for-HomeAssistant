@@ -1,16 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
 
-_COMMON_REQUIRED_ROLES = (
-    "room_actual", "room_target", "curve_current", "offset_current",
-    "room_day_avg", "room_night_avg", "heat_limit", "dat", "dart",
-)
-
-REQUIRED_ROLES_BY_PROFILE: dict[str, tuple[str, ...]] = {
-    "weishaupt_waermepumpe_fussbodenheizung": _COMMON_REQUIRED_ROLES,
-    "vaillant_gastherme_heizkoerper": _COMMON_REQUIRED_ROLES,
-}
-
 
 @dataclass(frozen=True)
 class LocalClamps:
@@ -36,8 +26,7 @@ class BoostDefaults:
 # Nur Profile mit einem Eintrag hier sind fuer Kunden im config.yaml-Dropdown
 # waehlbar (siehe schema.profile). Gleiche Werte wie serverseitig in
 # heizungsserver/src/heizungsserver/generic/profiles.py -- kein geteilter Code
-# zwischen den Repos, gleiche profile_id-Namenskonvention (bestehendes Muster,
-# siehe REQUIRED_ROLES_BY_PROFILE oben).
+# zwischen den Repos, gleiche profile_id-Namenskonvention.
 LOCAL_CLAMP_DEFAULTS: dict[str, LocalClamps] = {
     "vaillant_gastherme_heizkoerper": LocalClamps(
         curve_min=0.4, curve_max=1.5, offset_min=20.0, offset_max=30.0,
@@ -76,13 +65,6 @@ class UnknownProfileError(ValueError):
     fehlende Pflichtfelder ohne Profil-Default, oder ein aufgeloestes Clamp-Ergebnis
     mit invertiertem Bereich (curve_min > curve_max bzw. offset_min > offset_max).
     """
-
-
-def required_roles_for(profile_id: str) -> tuple[str, ...]:
-    try:
-        return REQUIRED_ROLES_BY_PROFILE[profile_id]
-    except KeyError:
-        raise UnknownProfileError(f"Unbekanntes profile: {profile_id}") from None
 
 
 def resolve_boost_defaults(profile_id: str) -> BoostDefaults:
