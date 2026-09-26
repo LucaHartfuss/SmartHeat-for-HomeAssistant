@@ -1,0 +1,11 @@
+"""Ereignisarten des Regel-Workers (der Laufzeit-Kontext folgt mit dem Zustandsumbau)."""
+
+EV_LOCAL_CHECK = "local_check"
+EV_SETPOINTS = "setpoints"
+EV_AUTH_REJECTED = "auth_rejected"
+EV_ACK_TIMEOUT = "ack_timeout"
+EV_RETRY_DUE = "retry_due"
+EV_WATCHDOG = "watchdog"
+EV_TELEMETRY = "telemetry"
+EV_DAYNIGHT = "daynight"
+EV_GRACE_CHECK = "grace_check"

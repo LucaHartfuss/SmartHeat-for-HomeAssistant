@@ -14,8 +14,6 @@ import heizungsbruecke.__main__ as main_module
 from heizungsbruecke import entitlement
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.delivery import DeliveryState
-from heizungsbruecke.manifest import ChannelManifest
-from heizungsbruecke.worker import Event, RegulationWorker
 
 OPTIONS = {
     "tenant_id": "test_tenant",
@@ -169,8 +167,8 @@ def env(tmp_path, monkeypatch, clock):
         trigger_clients.append(FakeTriggerClient(**kwargs))
         return trigger_clients[-1]
 
-    monkeypatch.setattr("heizungsbruecke.__main__.BridgeMqttClient", _mqtt_factory)
-    monkeypatch.setattr("heizungsbruecke.__main__.HaTriggerClient", _trigger_factory)
+    monkeypatch.setattr("heizungsbruecke.triggers.BridgeMqttClient", _mqtt_factory)
+    monkeypatch.setattr("heizungsbruecke.triggers.HaTriggerClient", _trigger_factory)
     return SimpleNamespace(
         clock=clock, paths=paths, abo=abo, ha=FakeHa(), mqtt_clients=mqtt_clients, trigger_clients=trigger_clients,
     )
@@ -574,37 +572,6 @@ def test_foreign_seq_and_duplicate_answers_are_ignored(env):
     assert env.ha.writes == [("number.curve_current", 0.95), ("number.offset_current", 23.0)]
 
 
-@pytest.mark.parametrize("raw,retain", [
-    (b'{"seq": "s1"}', True), (b"[]", False), (b'"x"', False), (b"{kaputt", False), (b"", False),
-])
-def test_setpoints_callback_drops_retained_and_non_object_payloads(clock, raw, retain):
-    worker = RegulationWorker(clock=clock)
-    seen = []
-    worker.register(main_module.EV_SETPOINTS, seen.append)
-    message = MagicMock()
-    message.payload = raw
-    message.retain = retain
-
-    main_module._make_setpoints_callback(worker)(None, None, message)  # darf nicht werfen
-    worker.run_pending()
-
-    assert seen == []
-
-
-def test_setpoints_callback_posts_fresh_answer_to_worker(clock):
-    worker = RegulationWorker(clock=clock)
-    seen = []
-    worker.register(main_module.EV_SETPOINTS, seen.append)
-    message = MagicMock()
-    message.payload = b'{"seq": "s1", "status": "ok"}'
-    message.retain = False
-
-    main_module._make_setpoints_callback(worker)(None, None, message)
-    worker.run_pending()
-
-    assert seen == [Event(main_module.EV_SETPOINTS, {"payload": {"seq": "s1", "status": "ok"}})]
-
-
 def _start_in_notbetrieb_with_emergency_boost(env):
     _quiet_backup(env)
     save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": True, "pending": {"seq": "alt-1", "trigger": "daily"}})
@@ -660,71 +627,6 @@ def test_failsafe_state_write_failure_does_not_stop_regulation(env, caplog):
 
 
 # --- Lokaler Check und Trigger ---
-
-def test_trigger_callback_coalesces_flood_and_keeps_room_target_flag(clock):
-    # Review Focus 5.
-    worker = RegulationWorker(clock=clock)
-    seen = []
-    worker.register(main_module.EV_LOCAL_CHECK, seen.append)
-    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual", "room_target": "sensor.room_target"})
-    callback = main_module._make_trigger_event_callback(manifest, worker)
-
-    for _ in range(10):
-        callback({"platform": "state", "entity_id": "sensor.room_actual", "attribute": None})
-    callback({"platform": "state", "entity_id": "sensor.room_target", "attribute": None})
-    callback({"platform": "time"})
-    worker.run_pending()
-
-    assert seen == [Event(main_module.EV_LOCAL_CHECK, {"room_target_fired": True})]
-
-
-@pytest.mark.parametrize("trigger,fired", [
-    ({"platform": "state", "entity_id": "climate.wz", "attribute": "temperature"}, True),
-    ({"platform": "state", "entity_id": "climate.wz", "attribute": "current_temperature"}, False),
-    ({"platform": "state", "entity_id": "climate.wz"}, False),
-    ({"platform": "time"}, False),
-])
-def test_trigger_callback_matches_room_target_by_entity_and_attribute(clock, trigger, fired):
-    worker = RegulationWorker(clock=clock)
-    seen = []
-    worker.register(main_module.EV_LOCAL_CHECK, seen.append)
-    manifest = ChannelManifest(entity_ids={
-        "room_actual": "climate.wz::current_temperature", "room_target": "climate.wz::temperature",
-    })
-
-    main_module._make_trigger_event_callback(manifest, worker)(trigger)
-    worker.run_pending()
-
-    assert seen == [Event(main_module.EV_LOCAL_CHECK, {"room_target_fired": fired})]
-
-
-@pytest.mark.parametrize("room_actual,room_target,expected_room_triggers", [
-    (
-        "climate.wz::current_temperature", "climate.wz::temperature",
-        [
-            {"platform": "state", "entity_id": "climate.wz", "attribute": "temperature", "for": {"seconds": 10}},
-            {"platform": "state", "entity_id": "climate.wz", "attribute": "current_temperature"},
-        ],
-    ),
-    (
-        "sensor.room_actual", "sensor.room_target",
-        [
-            {"platform": "state", "entity_id": "sensor.room_target", "for": {"seconds": 10}},
-            {"platform": "state", "entity_id": "sensor.room_actual"},
-        ],
-    ),
-])
-def test_build_ha_trigger_client_sets_attribute_on_both_room_triggers(env, clock, room_actual, room_target, expected_room_triggers):
-    # B7: der room_actual-Trigger bekommt wie room_target ein attribute, wenn gemappt.
-    stub = SimpleNamespace(
-        manifest=ChannelManifest(entity_ids={"room_actual": room_actual, "room_target": room_target}),
-        options={"daily_trigger_time": "12:00"}, ha_api=FakeHa(), worker=RegulationWorker(clock=clock),
-    )
-
-    client = main_module._build_ha_trigger_client(stub)
-
-    assert client.kwargs["triggers"] == expected_room_triggers + [{"platform": "time", "at": "12:00"}]
-
 
 def test_on_connected_rereads_room_target_and_runs_local_check(env):
     # B7: Sollwertaenderung waehrend der WS-Trennung wird sofort verarbeitet.

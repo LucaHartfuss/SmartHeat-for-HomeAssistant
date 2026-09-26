@@ -1,94 +1,20 @@
 import logging
 import math
-from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.boost import BoostDecision
 from heizungsbruecke.clamping import clamp
 from heizungsbruecke.emergency_boost import EmergencyBoostDecision
-from heizungsbruecke.manifest import SNAPSHOT_ROLES, OPTIONAL_SNAPSHOT_ROLES, ChannelManifest
+from heizungsbruecke.manifest import ChannelManifest
 
 _CLAMPED_ROLES = ("curve_current", "offset_current")
 
 logger = logging.getLogger(__name__)
 
-SNAPSHOT_SCHEMA_VERSION = 2
-
 
 def _is_finite_number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
-
-
-# Rollen, die vor jedem Snapshot nur auf Gueltigkeit geprueft, aber nicht an den Server
-# geschickt werden (Design-Spec 2026-09-26, Abschnitt 2 "attempt"): ohne gueltiges
-# room_actual scheitern Comfort- und Notfall-Boost still.
-VALIDITY_ONLY_ROLES = ("room_actual",)
-
-
-@dataclass(frozen=True)
-class SnapshotRead:
-    roles: dict[str, float]
-    invalid_roles: tuple[str, ...]
-
-
-def read_snapshot_roles(
-    manifest: ChannelManifest, ha_api, computed_values: dict[str, float | None] | None = None,
-) -> SnapshotRead:
-    """Liest alle gemappten Server-Pflichtrollen plus room_actual (Design-Spec
-    2026-09-26, Abschnitt 2). Ungueltig heisst: get_state wirft (Entity unavailable/
-    unknown, nicht numerisch, HTTP-Fehler) oder der Wert ist nicht endlich. Der Aufrufer
-    publiziert nur, wenn `invalid_roles` leer ist. Optionale Rollen werden wie bisher
-    still weggelassen, wenn sie fehlen oder ungueltig sind. Sendet selbst keine
-    Meldungen (T2-13) -- das macht die Zustellung einmal pro Fehlerbeginn."""
-    computed_values = computed_values or {}
-    roles: dict[str, float] = {}
-
-    for role in OPTIONAL_SNAPSHOT_ROLES:
-        if role in computed_values:
-            value = computed_values[role]
-        elif role in manifest.entity_ids:
-            try:
-                value = ha_api.get_state(manifest.entity_ids[role])
-            except Exception:
-                logger.warning("Optionale Rolle '%s' nicht lesbar, wird weggelassen", role)
-                continue
-        else:
-            continue
-        if _is_finite_number(value):
-            roles[role] = value
-
-    invalid: list[str] = []
-    for role in SNAPSHOT_ROLES + VALIDITY_ONLY_ROLES:
-        entity_id = manifest.entity_ids.get(role)
-        if entity_id is None:
-            continue
-        try:
-            value = ha_api.get_state(entity_id)
-        except Exception as error:
-            logger.warning("Sensor fuer Rolle '%s' (%s) liefert keinen gueltigen Wert: %s", role, entity_id, error)
-            invalid.append(role)
-            continue
-        if not _is_finite_number(value):
-            logger.warning("Sensor fuer Rolle '%s' (%s) liefert keinen endlichen Wert: %r", role, entity_id, value)
-            invalid.append(role)
-            continue
-        if role in SNAPSHOT_ROLES:
-            roles[role] = value
-
-    return SnapshotRead(roles=roles, invalid_roles=tuple(invalid))
-
-
-def publish_snapshot(mqtt_client, seq: str, trigger: str | None, roles: dict[str, float]) -> None:
-    """Publiziert einen Snapshot als EINE Nachricht auf up/snapshot (Schema 2)."""
-    mqtt_client.publish_snapshot({
-        "schema": SNAPSHOT_SCHEMA_VERSION,
-        "seq": seq,
-        "trigger": trigger,
-        "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "roles": roles,
-    })
 
 
 def handle_down_message(

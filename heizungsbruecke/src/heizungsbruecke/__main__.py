@@ -1,5 +1,4 @@
 import functools
-import json
 import logging
 import math
 import os
@@ -10,29 +9,22 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
+from heizungsbruecke import config, daynight_snapshot, delivery, derived_sensors, entitlement, telemetry, triggers
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.boost import BoostDecision, decide_boost
-from heizungsbruecke.bridge import (
-    apply_boost_decision,
-    apply_emergency_decision,
-    handle_down_message,
-    publish_snapshot,
-    read_snapshot_roles,
-)
+from heizungsbruecke.bridge import apply_boost_decision, apply_emergency_decision, handle_down_message
 from heizungsbruecke.clamping import clamp
 from heizungsbruecke.emergency_boost import EmergencyBoostDecision, decide_emergency_boost
-from heizungsbruecke import daynight_snapshot, delivery, derived_sensors, entitlement
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_trigger_client import HaTriggerClient
 from heizungsbruecke.manifest import ChannelManifest, ManifestError, build_manifest
 from heizungsbruecke.mqtt_client import BridgeMqttClient
-from heizungsbruecke.profiles import (
-    UnknownProfileError,
-    resolve_boost_defaults,
-    resolve_local_clamps,
-    resolve_window_defaults,
-    window_size_hours,
+from heizungsbruecke.profiles import UnknownProfileError
+from heizungsbruecke.runtime import (
+    EV_ACK_TIMEOUT, EV_AUTH_REJECTED, EV_DAYNIGHT, EV_GRACE_CHECK, EV_LOCAL_CHECK, EV_RETRY_DUE,
+    EV_SETPOINTS, EV_TELEMETRY, EV_WATCHDOG,
 )
+from heizungsbruecke.snapshot import publish_snapshot, read_snapshot_roles
 from heizungsbruecke.target_history import record_change, sanitize_history, time_weighted_mean
 from heizungsbruecke.worker import Event, RegulationWorker
 
@@ -52,18 +44,6 @@ ABO_ENDED_MESSAGE = (
     "die zuletzt gelernten Werte bleiben eingestellt."
 )
 
-MQTT_HOST = "127.0.0.1"
-# Muss mit cloudflared_access_mqtt/config.yaml's `local_port`-Default
-# uebereinstimmen (siehe Kommentar dort) -- kein geteilter Konfigurationswert
-# zwischen den beiden Add-ons, nur Konvention.
-MQTT_PORT = 18830
-
-_REQUIRED_OPTIONS = (
-    "tenant_id", "profile", "mqtt_username", "mqtt_password",
-    "entity_room_actual", "entity_room_target",
-    "entity_curve_current", "entity_offset_current", "entity_outdoor_temp", "entity_heat_limit",
-)
-
 # The add-on runs with `startup: services`, i.e. it can be started before HA Core has
 # finished booting. Erst das bisherige Budget mit Backoff, danach (B10, Design-Spec
 # 2026-09-26) unbegrenzt alle DERIVED_SENSORS_UNBOUNDED_RETRY_SECONDS weiter -- ein
@@ -75,182 +55,7 @@ HELPER_NOTIFICATION_MESSAGE = (
     "SmartHeat: Hilfssensoren konnten nicht angelegt werden – Home Assistant noch nicht bereit?"
 )
 
-# Design-Spec 2026-09-21: seit der Umstellung auf HaTriggerClient steuert dieser Wert
-# nur noch den Watchdog-/Fallback-Takt (Boost-/target_changed-Check nur, wenn die
-# WS-Verbindung down ist), nicht mehr routinemaessiges Polling -- 300s deckt sich mit
-# telemetry_interval_seconds' bestehendem Default.
-DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS = 300
-
-# Design-Spec 2026-09-16 (KPI-Erfassung), Abschnitt 1: eigenes, von
-# local_check_interval_seconds UND vom (jetzt seltenen) vollen Snapshot-Publish
-# entkoppeltes Intervall, damit Komfort-/Boost-KPIs nicht zu grobkoernig werden.
-DEFAULT_TELEMETRY_INTERVAL_SECONDS = 300
-
-# Design-Spec 2026-09-22 (Zieltemperatur-Debounce): 10s Stabilitaetsfenster, bevor eine
-# room_target-Aenderung als "final" gilt (Boost-Start/-Ende und Heizkurvenanpassung
-# reagieren erst danach, siehe _make_trigger_event_callback/_Bridge.stable_target weiter
-# unten). Bewusst fest im Code (kein Add-on-Options-Feld) -- kein bestehender
-# Plumbing-Mechanismus fuer Boost-aehnliche Parameter (auch boost_threshold_k ist
-# profilbasiert, nicht per Config-Flow einstellbar), nur client1 als realer Nutzer
-# aktuell. YAGNI, spaeter bei Bedarf nachruestbar.
-ROOM_TARGET_DEBOUNCE_SECONDS = 10
-
-# Ereignisarten des Regel-Workers (Design-Spec 2026-09-26, Abschnitt 1).
-EV_LOCAL_CHECK = "local_check"
-EV_SETPOINTS = "setpoints"
-EV_AUTH_REJECTED = "auth_rejected"
-EV_ACK_TIMEOUT = "ack_timeout"
-EV_RETRY_DUE = "retry_due"
-EV_WATCHDOG = "watchdog"
-EV_TELEMETRY = "telemetry"
-EV_DAYNIGHT = "daynight"
-EV_GRACE_CHECK = "grace_check"
-
-# Optionale KPI-Rollen (Design-Spec KPI-Logging-Rework): nur vorhanden, wenn in
-# manifest.entity_ids konfiguriert; fehlende/ausgefallene Sensoren werden im Payload
-# weggelassen (nie null/0 senden -- der Server speichert NULL fuer fehlende Felder).
-_KPI_NUMERIC_ROLES = (
-    "flow_temperature", "return_temperature", "system_water_pressure", "efficiency_ratio",
-)
-_KPI_ENERGY_ROLES = (
-    "energy_electrical_heating", "energy_electrical_dhw",
-    "energy_primary_heating", "energy_primary_dhw",
-    "energy_thermal_heating", "energy_thermal_dhw",
-)
-
-# Gleicher Hostname fuer jeden Tenant (kein Tenant-spezifischer Wert) -- siehe
-# SmartHeat-HomeAssistant-Integration/custom_components/smartheat/api_client.py,
-# DEFAULT_HEIZUNGSSERVER_BASE_URL. Hartkodiert wie MQTT_HOST/MQTT_PORT oben, aus
-# demselben Grund: ein einzelner geteilter Wert, keine Pro-Tenant-Konfiguration.
-ACCOUNTS_API_BASE_URL = "https://accounts.hartfussha.org"
-
 logger = logging.getLogger(__name__)
-
-
-def _is_configured(options: dict) -> bool:
-    """Ab 0.6.0 hat config.yaml keine Pflichtfelder mehr -- konfiguriert wird das
-    Add-on nicht mehr ueber eine eigene UI, sondern ausschliesslich dadurch, dass die
-    separate SmartHeat-Integration in Home Assistant die Werte per Supervisor-API in
-    options.json schreibt. Ein frisch installiertes, noch nicht ueber die Integration
-    konfiguriertes Add-on hat also ein leeres oder unvollstaendiges options.json; das
-    ist ein normaler Zustand, kein Fehler.
-    """
-    return all(options.get(field) for field in _REQUIRED_OPTIONS)
-
-
-def _resolve_effective_options(options: dict) -> dict:
-    clamps = resolve_local_clamps(options["profile"])
-    boost = resolve_boost_defaults(options["profile"])
-    windows = resolve_window_defaults(options["profile"])
-    return {
-        **options,
-        "curve_min": clamps.curve_min,
-        "curve_max": clamps.curve_max,
-        "offset_min": clamps.offset_min,
-        "offset_max": clamps.offset_max,
-        "boost_threshold_k": boost.threshold_k,
-        "boost_curve_value": boost.curve_value,
-        "boost_offset_value": boost.offset_value,
-        "daily_trigger_time": windows.daily_trigger_time,
-        "day_avg_window_start": windows.day_avg_window_start,
-        "day_avg_window_end": windows.day_avg_window_end,
-        "night_avg_window_start": windows.night_avg_window_start,
-        "night_avg_window_end": windows.night_avg_window_end,
-        "avg_window_hours": window_size_hours(windows.day_avg_window_start, windows.day_avg_window_end),
-    }
-
-
-def _validate_boost_config(options: dict) -> str | None:
-    """Returns a German error message if the configured boost values fall outside
-    the configured safety clamps, or None if the config is valid. A misconfigured
-    boost value is a startup-time error, not something to silently clamp, since the
-    boost path is the one write path that runs with no server oversight.
-    """
-    curve_min, curve_max = options["curve_min"], options["curve_max"]
-    offset_min, offset_max = options["offset_min"], options["offset_max"]
-    boost_curve_value = options["boost_curve_value"]
-    boost_offset_value = options["boost_offset_value"]
-
-    if not (curve_min <= boost_curve_value <= curve_max):
-        return (
-            f"boost_curve_value ({boost_curve_value}) liegt ausserhalb des konfigurierten "
-            f"Bereichs [curve_min={curve_min}, curve_max={curve_max}]"
-        )
-    if not (offset_min <= boost_offset_value <= offset_max):
-        return (
-            f"boost_offset_value ({boost_offset_value}) liegt ausserhalb des konfigurierten "
-            f"Bereichs [offset_min={offset_min}, offset_max={offset_max}]"
-        )
-    return None
-
-
-def _validate_local_check_interval(options: dict) -> str | None:
-    """Returns a German error message if local_check_interval_seconds is set but
-    exceeds the maximum of 3600s, or None if absent/valid. The previous 60s hard cap
-    (Design-Spec 2026-09-16, Abschnitt A.1) existed to bound SD-card wear from the then
-    poll-driven boost/change-check; since Design-Spec 2026-09-21 that check only still
-    runs on this cadence as a FALLBACK while HaTriggerClient's WS connection is down --
-    the interval now bounds worst-case fallback staleness, not routine polling
-    frequency, so a much larger ceiling is appropriate. 3600s (1h) is an independent
-    outer bound on that fallback staleness, unrelated to the fail-safe's own detection
-    speed (an ack-timeout on the next full snapshot publish, seconds-scale -- see
-    Design-Spec 2026-09-23 -- not tied to this interval at all).
-    """
-    value = options.get("local_check_interval_seconds")
-    if value is not None and (
-        not isinstance(value, (int, float)) or math.isnan(value) or math.isinf(value)
-    ):
-        return (
-            f"local_check_interval_seconds ({value!r}) ist kein gueltiger endlicher Zahlenwert"
-        )
-    if value is not None and value > 3600:
-        return (
-            f"local_check_interval_seconds ({value}) liegt ueber dem zulaessigen Maximum "
-            f"von 3600 Sekunden (1h) - seit der Umstellung auf eventgetriebene Trigger "
-            f"steuert dieser Wert nur noch den Watchdog-/Fallback-Takt, nicht mehr "
-            f"routinemaessiges Polling"
-        )
-    return None
-
-
-def _validate_telemetry_interval(options: dict) -> str | None:
-    """Returns a German error message if telemetry_interval_seconds is set but falls
-    below config.yaml's schema floor of 10s, or None if absent/valid. Guards against a
-    manually edited options.json on the Pi bypassing that floor (Korrektheit-Review-
-    Fund sh-1, same rationale as _validate_local_check_interval above): without this,
-    the telemetry schedule entry would fire as often as every second and flood the server.
-    """
-    value = options.get("telemetry_interval_seconds")
-    if value is not None and (
-        not isinstance(value, (int, float)) or math.isnan(value) or math.isinf(value)
-    ):
-        return (
-            f"telemetry_interval_seconds ({value!r}) ist kein gueltiger endlicher Zahlenwert"
-        )
-    if value is not None and value < 10:
-        return (
-            f"telemetry_interval_seconds ({value}) liegt unter dem zulaessigen Minimum "
-            f"von 10 Sekunden"
-        )
-    return None
-
-
-def _validate_derived_sensor_prerequisites(options: dict) -> str | None:
-    """Returns a German error message if a field the automatic DAT/DART/day-night-avg
-    provisioning needs (derived_sensors.ensure_all) is missing, or None if both are
-    present. Checked explicitly, before ensure_all() runs, so a customer who forgot
-    entity_outdoor_temp gets a clean startup error instead of a raw KeyError.
-    """
-    missing = [
-        field for field in ("entity_room_actual", "entity_outdoor_temp")
-        if not options.get(field)
-    ]
-    if missing:
-        return (
-            "Folgende Pflichtfelder fehlen in der Add-on-Konfiguration (werden fuer "
-            f"automatisch berechnete Sensoren gebraucht): {', '.join(missing)}"
-        )
-    return None
 
 
 def _ensure_derived_sensors_with_retry(ha_api, options: dict) -> dict[str, str]:
@@ -612,10 +417,6 @@ class _Bridge:
     trigger_client: HaTriggerClient | None = None
 
 
-def _local_check_interval(options: dict) -> float:
-    return options.get("local_check_interval_seconds", DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS)
-
-
 def _run_local_check(
     manifest, ha_api, options, boost_was_active: bool, room_target: float | None, failsafe_ctx: dict | None = None,
 ) -> bool:
@@ -809,7 +610,7 @@ def _execute_delivery_action(bridge: _Bridge, action):
     if isinstance(action, delivery.Attempt):
         return _attempt(bridge, action.seq, action.trigger)
     if isinstance(action, delivery.QueryEntitlement):
-        status = entitlement.query_status(bridge.options["tenant_id"], ACCOUNTS_API_BASE_URL)
+        status = entitlement.query_status(bridge.options["tenant_id"], config.ACCOUNTS_API_BASE_URL)
         return delivery.EntitlementChecked(seq=action.seq, status=status)
     if isinstance(action, delivery.ScheduleAckTimeout):
         bridge.worker.schedule(action.delay_s, Event(EV_ACK_TIMEOUT, {"seq": action.seq, "gen": action.gen}))
@@ -952,7 +753,7 @@ def _on_auth_rejected(bridge: _Bridge, event: Event) -> None:
     (post_coalesced), und im Abo-inaktiv-Modus wird gar nicht mehr gefragt."""
     if _abo_inactive(bridge.failsafe_ctx):
         return
-    status = entitlement.query_status(bridge.options["tenant_id"], ACCOUNTS_API_BASE_URL)
+    status = entitlement.query_status(bridge.options["tenant_id"], config.ACCOUNTS_API_BASE_URL)
     if status != entitlement.INACTIVE:
         logger.error(
             "MQTT-Anmeldung vom Broker abgelehnt, Abo-Status ist aber '%s' - Zugangsdaten "
@@ -968,25 +769,23 @@ def _on_auth_rejected(bridge: _Bridge, event: Event) -> None:
 def _on_watchdog(bridge: _Bridge, event: Event) -> None:
     """Fallback bei getrennter WS-Verbindung (Design-Spec 2026-09-21/22): Cache frisch und
     undebounced lesen, dann lokaler Check. Bei verbundenem Client tut er nichts."""
-    bridge.worker.schedule(_local_check_interval(bridge.options), Event(EV_WATCHDOG))
+    bridge.worker.schedule(config.local_check_interval(bridge.options), Event(EV_WATCHDOG))
     if bridge.trigger_client is None or not bridge.trigger_client.connected:
         bridge.worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=True)
 
 
 def _on_telemetry(bridge: _Bridge, event: Event) -> None:
-    bridge.worker.schedule(
-        bridge.options.get("telemetry_interval_seconds", DEFAULT_TELEMETRY_INTERVAL_SECONDS), Event(EV_TELEMETRY),
-    )
+    bridge.worker.schedule(config.telemetry_interval(bridge.options), Event(EV_TELEMETRY))
     if _abo_inactive(bridge.failsafe_ctx) or bridge.mqtt_client is None:
         return
-    _run_telemetry_tick(
+    telemetry.run_telemetry_tick(
         bridge.manifest, bridge.ha_api, bridge.mqtt_client,
         boost_active=bridge.boost_active, failsafe_active=bridge.failsafe_ctx["delivery"].notbetrieb,
     )
 
 
 def _on_daynight(bridge: _Bridge, event: Event) -> None:
-    bridge.worker.schedule(_local_check_interval(bridge.options), Event(EV_DAYNIGHT))
+    bridge.worker.schedule(config.local_check_interval(bridge.options), Event(EV_DAYNIGHT))
     daynight_snapshot.maybe_snapshot(
         ha_api=bridge.ha_api,
         room_12h_avg_entity_id=bridge.derived_entity_ids["_room_12h_avg"],
@@ -1012,14 +811,14 @@ def _on_grace_check(bridge: _Bridge, event: Event) -> None:
     wiederherzustellen. Sonst erst wiederherstellen, dann den Trigger-Client stoppen und
     den Worker mit Exit 0 beenden. Scheitert die Wiederherstellung, laeuft die lokale
     Regelung weiter und der naechste Check versucht es erneut."""
-    bridge.worker.schedule(_local_check_interval(bridge.options), Event(EV_GRACE_CHECK))
+    bridge.worker.schedule(config.local_check_interval(bridge.options), Event(EV_GRACE_CHECK))
     if not _abo_grace_expired(bridge.failsafe_ctx):
         return
     # T2-5 (Design-Spec 2026-09-26, Abschnitt 3): vor dem Fristende erneut fragen -- ein
     # inzwischen reaktiviertes Abo darf nicht zurueckgesetzt und beendet werden. Hinweis:
     # set-status active stellt widerrufene MQTT-Zugangsdaten nicht wieder her, eine echte
     # Reaktivierung braucht weiterhin das Neu-Einrichten der Integration.
-    if entitlement.query_status(bridge.options["tenant_id"], ACCOUNTS_API_BASE_URL) == entitlement.ACTIVE:
+    if entitlement.query_status(bridge.options["tenant_id"], config.ACCOUNTS_API_BASE_URL) == entitlement.ACTIVE:
         entitlement.clear(ENTITLEMENT_PATH)
         logger.warning("Abo wieder aktiv, Neustart im Normalbetrieb")
         _restart_process()
@@ -1053,197 +852,6 @@ def _register_handlers(bridge: _Bridge) -> None:
         bridge.worker.register(kind, functools.partial(handler, bridge))
 
 
-def _run_telemetry_tick(manifest, ha_api, mqtt_client, boost_active: bool, failsafe_active: bool) -> None:
-    """Publiziert den KPI-Telemetrie-Snapshot (Design-Spec 2026-09-16 KPI-Erfassung). Den
-    Takt (telemetry_interval_seconds) gibt der Planeintrag EV_TELEMETRY vor (Design-Spec
-    2026-09-26); eine eigene Drosselung gibt es nicht mehr (Bewusste Abweichung 15).
-    Liest room_actual selbst -- ein lokaler HA-REST-Aufruf, kein Cloud-Roundtrip."""
-    if "room_actual" not in manifest.entity_ids:
-        return
-    try:
-        room_actual = ha_api.get_state(manifest.entity_ids["room_actual"])
-        _publish_telemetry(
-            mqtt_client=mqtt_client, room_actual=room_actual,
-            boost_active=boost_active, failsafe_active=failsafe_active,
-            kpi_fields=_read_kpi_fields(manifest, ha_api),
-        )
-    except Exception:
-        logger.exception(
-            "Fehler beim Veroeffentlichen der KPI-Telemetrie, wird beim naechsten Tick erneut versucht"
-        )
-
-
-def _publish_telemetry(
-    mqtt_client, room_actual: float, boost_active: bool, failsafe_active: bool, kpi_fields: dict | None = None,
-) -> None:
-    """Nicht retained, nur QoS 1 (siehe BridgeMqttClient.publish_telemetry): reine
-    KPI-Beobachtung ohne Einfluss auf curve.py oder eine Regelentscheidung."""
-    mqtt_client.publish_telemetry({
-        "room_actual": room_actual,
-        "boost_active": boost_active,
-        "failsafe_active": failsafe_active,
-        "ts": datetime.now().isoformat(),
-        **(kpi_fields or {}),
-    })
-
-
-def _read_kpi_fields(manifest, ha_api) -> dict:
-    """Reads the configured optional KPI sensors, each in isolation: an unavailable/
-    unknown/non-numeric sensor is omitted (with a warning naming the role) and never
-    blocks the core telemetry or the other sensors. `energy` is only set if at least
-    one channel could be read."""
-    kpi_fields: dict = {}
-
-    def _read(role, reader):
-        try:
-            value = reader(manifest.entity_ids[role])
-            # "nan"/"inf" pass float() but the server rejects non-finite JSON numbers
-            # for the whole message.
-            if isinstance(value, float) and not math.isfinite(value):
-                raise ValueError(f"nicht-endlicher Wert {value!r}")
-            return True, value
-        except Exception as exc:
-            logger.warning("KPI-Sensor '%s' nicht lesbar, Feld wird weggelassen: %s", role, exc)
-            return False, None
-
-    for role in _KPI_NUMERIC_ROLES:
-        if role in manifest.entity_ids:
-            ok, value = _read(role, ha_api.get_state)
-            if ok:
-                kpi_fields[role] = value
-    if "operating_mode" in manifest.entity_ids:
-        ok, value = _read("operating_mode", ha_api.get_raw_state)
-        if ok:
-            kpi_fields["operating_mode"] = value
-
-    energy: dict = {}
-    for role in _KPI_ENERGY_ROLES:
-        if role in manifest.entity_ids:
-            ok, value = _read(role, ha_api.get_state)
-            if ok:
-                energy[role.removeprefix("energy_")] = value
-    if energy:
-        kpi_fields["energy"] = energy
-    return kpi_fields
-
-
-def _strip_attribute_suffix(entity_id: str) -> str:
-    """Strips the `::attribute` suffix `ha_api.get_state()` uses for climate-attribute
-    roles (e.g. `climate.wohnzimmer::temperature`) -- a `subscribe_trigger` state
-    trigger's `entity_id` filter needs the real HA entity_id, not this add-on-internal
-    convention.
-    """
-    real_entity_id, _, _ = entity_id.partition("::")
-    return real_entity_id
-
-
-def _extract_attribute_suffix(entity_id: str) -> str | None:
-    """Gegenstueck zu `_strip_attribute_suffix`: liefert den `::attribute`-Suffix (z.B.
-    `climate.wohnzimmer::temperature` -> `"temperature"`), oder `None` wenn die
-    Entity-ID keinen Suffix hat. Wird gebraucht, um den `attribute`-Filter des
-    `room_target`-subscribe_trigger-Triggers aufzubauen (Design-Spec 2026-09-22,
-    Abschnitt 1).
-    """
-    _, _, attribute = entity_id.partition("::")
-    return attribute or None
-
-
-def _make_trigger_event_callback(manifest, worker: RegulationWorker):
-    """WS-Thread-Callback: stellt nur einen (koaleszierten) lokalen Check ein. Ob der
-    (debounced) room_target-Trigger selbst gefeuert hat, wird ueber entity_id UND attribute
-    erkannt: room_actual und room_target koennen dieselbe physische Entity referenzieren
-    (z.B. ein Thermostat mit current_temperature/temperature), nur das attribute-Feld
-    unterscheidet dann die beiden Trigger (Design-Spec 2026-09-22)."""
-    room_target_entity_id = None
-    room_target_attribute = None
-    if "room_target" in manifest.entity_ids:
-        room_target_entity_id = _strip_attribute_suffix(manifest.entity_ids["room_target"])
-        room_target_attribute = _extract_attribute_suffix(manifest.entity_ids["room_target"])
-
-    def _on_trigger_event(trigger: dict) -> None:
-        room_target_fired = (
-            room_target_entity_id is not None
-            and trigger.get("platform") == "state"
-            and trigger.get("entity_id") == room_target_entity_id
-            and trigger.get("attribute") == room_target_attribute
-        )
-        worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=room_target_fired)
-    return _on_trigger_event
-
-
-def _state_trigger(raw_entity_id: str) -> dict:
-    """State-Trigger fuer eine gemappte Rolle; mit `attribute`, wenn die Rolle als
-    `<entity>::<attribut>` gemappt ist (B7: gilt jetzt auch fuer room_actual)."""
-    trigger = {"platform": "state", "entity_id": _strip_attribute_suffix(raw_entity_id)}
-    attribute = _extract_attribute_suffix(raw_entity_id)
-    if attribute:
-        trigger["attribute"] = attribute
-    return trigger
-
-
-def _build_ha_trigger_client(bridge) -> HaTriggerClient:
-    manifest = bridge.manifest
-    triggers = []
-    if "room_target" in manifest.entity_ids:
-        triggers.append({
-            **_state_trigger(manifest.entity_ids["room_target"]),
-            "for": {"seconds": ROOM_TARGET_DEBOUNCE_SECONDS},
-        })
-    if "room_actual" in manifest.entity_ids:
-        triggers.append(_state_trigger(manifest.entity_ids["room_actual"]))
-    daily_trigger_time = bridge.options.get("daily_trigger_time")
-    if daily_trigger_time:
-        triggers.append({"platform": "time", "at": daily_trigger_time})
-
-    worker = bridge.worker
-    return HaTriggerClient(
-        ws_url=bridge.ha_api.websocket_url(), token=bridge.ha_api.token, triggers=triggers,
-        on_trigger_event=_make_trigger_event_callback(manifest, worker),
-        # B7: bei jeder (Re-)Verbindung Cache frisch lesen UND lokal pruefen -- eine
-        # Sollwertaenderung waehrend der Trennung wird so sofort verarbeitet.
-        on_connected=lambda: worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=True),
-    )
-
-
-def _make_setpoints_callback(worker: RegulationWorker):
-    """paho-Callback fuer down/setpoints: parst nur und stellt die Antwort in den
-    Regel-Worker ein. Retained Nachrichten (Broker-Replay beim (Re-)Subscribe, siehe
-    2026-09-22-heizungsbruecke-retained-down-replay-fix-design.md) und Nicht-JSON-Objekte
-    werden hier verworfen."""
-    def _callback(client, userdata, message):
-        try:
-            if message.retain:
-                logger.info("Retained Setpoints-Nachricht beim (Re-)Subscribe uebersprungen (Broker-Replay)")
-                return
-            payload = json.loads(message.payload)
-            if not isinstance(payload, dict):
-                logger.warning("Setpoints-Nachricht ist kein JSON-Objekt, verworfen: %r", payload)
-                return
-            worker.post(Event(EV_SETPOINTS, {"payload": payload}))
-        except Exception:
-            logger.exception("Setpoints-Nachricht nicht lesbar, verworfen")
-    return _callback
-
-
-def _create_mqtt_client(options: dict, worker: RegulationWorker, notbetrieb: bool) -> BridgeMqttClient:
-    """Baut den MQTT-Client (B10: verbindet asynchron, kein Retry-Budget, kein Exit).
-    Discovery, Status und Subscription werden gespeichert und bei jedem (Re-)Connect
-    erneut gesendet; die Auth-Ablehnung aus dem paho-Thread wird nur (gebuendelt)
-    eingestellt."""
-    client = BridgeMqttClient(
-        host=MQTT_HOST, port=MQTT_PORT, tenant_id=options["tenant_id"],
-        username=options["mqtt_username"], password=options["mqtt_password"],
-        on_auth_rejected=lambda _client: worker.post_coalesced(EV_AUTH_REJECTED),
-    )
-    client.publish_discovery(
-        component="binary_sensor", object_id="failsafe",
-        config=delivery.build_discovery_config(options["tenant_id"]),
-    )
-    client.publish_status("failsafe", delivery.build_state_payload(notbetrieb))
-    client.subscribe_setpoints(on_message=_make_setpoints_callback(worker))
-    return client
-
-
 def _prime(bridge: _Bridge) -> None:
     """Boost-Active-Bootstrap-Fix (Sicherheits-Review-Fund): der erste lokale Check laeuft
     synchron VOR mqtt.loop_start(), damit backup.json["boost_active"] nach einem Neustart
@@ -1270,9 +878,9 @@ def _prime(bridge: _Bridge) -> None:
 def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> "_Bridge | int":
     """Boot-Ablauf (Design-Spec 2026-09-26, Abschnitt 1). Gibt den gestarteten `_Bridge`
     zurueck oder einen Exit-Code, wenn gar nicht erst geregelt wird: 0 = nicht
-    konfiguriert (ab 0.6.0 ein normaler Zustand, siehe _is_configured) oder Abo-Frist
+    konfiguriert (ab 0.6.0 ein normaler Zustand, siehe config.is_configured) oder Abo-Frist
     bereits abgeschlossen, 1 = Konfigurationsfehler."""
-    if not _is_configured(options):
+    if not config.is_configured(options):
         logger.info(
             "Add-on ist noch nicht eingerichtet -- bitte die SmartHeat-Integration in "
             "Home Assistant installieren und dort die Verbindung zu diesem Add-on "
@@ -1283,19 +891,15 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> "_Bridge | int
         return 0
 
     try:
-        options = _resolve_effective_options(options)
+        options = config.resolve_effective_options(options)
     except UnknownProfileError as error:
         logger.error("FEHLER: %s", error)
         return 1
 
-    for validate in (
-        _validate_boost_config, _validate_local_check_interval,
-        _validate_telemetry_interval, _validate_derived_sensor_prerequisites,
-    ):
-        error = validate(options)
-        if error:
-            logger.error("FEHLER: %s", error)
-            return 1
+    error = config.validate(options)
+    if error:
+        logger.error("FEHLER: %s", error)
+        return 1
 
     derived_entity_ids = _ensure_derived_sensors_with_retry(ha_api, options)
     _check_timezone(ha_api)
@@ -1312,7 +916,7 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> "_Bridge | int
     # Abschluss-Start und lokaler Modus Manifest und Clamps brauchen. "unknown"
     # (accounts-api nicht erreichbar) startet normal -- fail-open.
     now = datetime.now().astimezone()
-    abo_status = entitlement.query_status(options["tenant_id"], ACCOUNTS_API_BASE_URL)
+    abo_status = entitlement.query_status(options["tenant_id"], config.ACCOUNTS_API_BASE_URL)
     if abo_status == entitlement.ACTIVE:
         entitlement.clear(ENTITLEMENT_PATH)
     elif abo_status == entitlement.INACTIVE:
@@ -1323,7 +927,7 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> "_Bridge | int
             while not _finish_abo_grace(
                 manifest, ha_api, options, failsafe_ctx, always_restore=False, final_notice=False,
             ):
-                retry_seconds = _local_check_interval(options)
+                retry_seconds = config.local_check_interval(options)
                 logger.error(
                     "Abo-inaktiv-Frist abgelaufen, Boost-Werte konnten nicht zurueckgesetzt werden - "
                     "erneuter Versuch in %s s", retry_seconds,
@@ -1338,13 +942,13 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> "_Bridge | int
     )
     _register_handlers(bridge)
     if not _abo_inactive(failsafe_ctx):
-        bridge.mqtt_client = _create_mqtt_client(options, bridge.worker, failsafe_ctx["delivery"].notbetrieb)
+        bridge.mqtt_client = triggers.create_mqtt_client(options, bridge.worker, failsafe_ctx["delivery"].notbetrieb)
 
     _prime(bridge)
     if bridge.mqtt_client is not None:
         bridge.mqtt_client.loop_start()
 
-    bridge.trigger_client = _build_ha_trigger_client(bridge)
+    bridge.trigger_client = triggers.build_ha_trigger_client(bridge.manifest, bridge.options, bridge.ha_api, bridge.worker)
     bridge.trigger_client.start()
     for kind in (EV_WATCHDOG, EV_TELEMETRY, EV_DAYNIGHT, EV_GRACE_CHECK):
         bridge.worker.schedule(0, Event(kind))
@@ -1366,29 +970,10 @@ def _run_bridge(options: dict, ha_api) -> int:
     return started.worker.run()
 
 
-def _load_options_safe(path: Path) -> dict:
-    """Loads options.json, defaulting to `{}` both when the file is missing (fresh
-    install, not yet configured -- see _is_configured) and when it is present but
-    corrupt/truncated (e.g. after power loss on the Pi's SD card, the same failure
-    mode _load_failsafe_ctx_safe already guards against). A bad options file must
-    not crash the process before _run_bridge can log a clean startup error.
-    """
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text())
-    except (OSError, ValueError) as error:
-        logger.warning(
-            "options.json konnte nicht gelesen werden (%s), starte mit leerer Konfiguration: %s",
-            path, error,
-        )
-        return {}
-
-
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
 
-    options = _load_options_safe(OPTIONS_PATH)
+    options = config.load_options_safe(OPTIONS_PATH)
     ha_api = HomeAssistantApi(base_url="http://supervisor", token=os.environ["SUPERVISOR_TOKEN"])
 
     exit_code = _run_bridge(options, ha_api)

@@ -2,7 +2,7 @@ from pathlib import Path
 
 import yaml
 
-from heizungsbruecke.__main__ import _REQUIRED_OPTIONS
+from heizungsbruecke.config import REQUIRED_OPTIONS as _REQUIRED_OPTIONS
 
 CONFIG_YAML_PATH = Path(__file__).resolve().parents[1] / "config.yaml"
 
