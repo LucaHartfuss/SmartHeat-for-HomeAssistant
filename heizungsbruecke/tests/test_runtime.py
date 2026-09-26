@@ -18,7 +18,10 @@ from heizungsbruecke.runtime import Runtime
 
 OPTIONS = {
     "tenant_id": "test_tenant",
-    "profile": "vaillant_gastherme_heizkoerper",  # Clamps 0.4-1.5 / 20-30, Boost 1.5/30, Tagestick 12:00
+    "verteilsystem": "Heizkoerper",  # Clamps 0.4-1.5 / 20-30, Boost 1.5/30
+    "daily_trigger_time": "12:00",  # Tagestick 12:00
+    "day_avg_window_start": "14:00", "day_avg_window_end": "17:00",
+    "night_avg_window_start": "04:00", "night_avg_window_end": "07:00",
     "mqtt_username": "u",
     "mqtt_password": "p",
     "entity_room_actual": "sensor.room_actual",

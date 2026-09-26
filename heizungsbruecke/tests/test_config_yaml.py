@@ -84,3 +84,27 @@ def test_every_optional_kpi_role_has_matching_config_option_and_schema():
         key = f"entity_{role}"
         assert config["options"].get(key) == "", f"options[{key}] must default to empty string"
         assert config["schema"].get(key) == "str?", f"schema[{key}] must be `str?`"
+
+
+NEW_OPTIONAL_SCHEMA = {
+    "verteilsystem": "list(Heizkoerper|Fussbodenheizung)?",
+    "daily_trigger_time": "str?",
+    "day_avg_window_start": "str?",
+    "day_avg_window_end": "str?",
+    "night_avg_window_start": "str?",
+    "night_avg_window_end": "str?",
+}
+
+
+def test_profile_option_is_gone():
+    config = _load_config_yaml()
+    assert "profile" not in config["options"]
+    assert "profile" not in config["schema"]
+
+
+def test_profile_params_options_are_optional_schema_entries_without_defaults():
+    # Leere Defaults waeren fuer list(...) ungueltig; die Werte kommen von der Integration.
+    config = _load_config_yaml()
+    for key, spec in NEW_OPTIONAL_SCHEMA.items():
+        assert config["schema"].get(key) == spec, key
+        assert key not in config["options"], key

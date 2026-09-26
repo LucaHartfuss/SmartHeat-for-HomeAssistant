@@ -12,7 +12,6 @@ host_network: true
 homeassistant_api: true
 options:
   tenant_id: ""
-  profile: ""
   mqtt_username: ""
   mqtt_password: ""
   entity_room_actual: ""
@@ -36,14 +35,17 @@ options:
   entity_energy_thermal_heating: ""
   entity_energy_thermal_dhw: ""
 # local_check_interval_seconds/notify_service/telemetry_interval_seconds must stay optional (`?`):
-# the SmartHeat integration never sends them (it sends tenant_id, profile, the MQTT
+# the SmartHeat integration never sends them (it sends tenant_id, profile_params, the MQTT
 # credentials and the entity_* mappings). Supervisor validates a set-options call against the
 # whole schema, and a missing required field fails the call silently (straight into
 # AddonError). The add-on falls back to its own defaults for these (config.py), so making
 # them optional here changes nothing at runtime.
+# verteilsystem and the five window times come from the server (profile_params, written by
+# the integration). They are optional here and have no entry under options: (an empty
+# default would be invalid for list(...)); the add-on checks them at startup and exits with a
+# configuration error if they are missing.
 schema:
   tenant_id: str
-  profile: str
   mqtt_username: str
   mqtt_password: password
   entity_room_actual: str
@@ -66,3 +68,9 @@ schema:
   entity_energy_primary_dhw: str?
   entity_energy_thermal_heating: str?
   entity_energy_thermal_dhw: str?
+  verteilsystem: list(Heizkoerper|Fussbodenheizung)?
+  daily_trigger_time: str?
+  day_avg_window_start: str?
+  day_avg_window_end: str?
+  night_avg_window_start: str?
+  night_avg_window_end: str?

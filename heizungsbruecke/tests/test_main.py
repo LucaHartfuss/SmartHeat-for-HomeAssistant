@@ -34,7 +34,10 @@ class _FakeResponse:
 def _full_valid_options(**overrides):
     options = {
         "tenant_id": "test_tenant",
-        "profile": "vaillant_gastherme_heizkoerper",
+        "verteilsystem": "Heizkoerper",
+        "daily_trigger_time": "12:00",
+        "day_avg_window_start": "14:00", "day_avg_window_end": "17:00",
+        "night_avg_window_start": "04:00", "night_avg_window_end": "07:00",
         "mqtt_username": "test_mqtt_user",
         "mqtt_password": "test_mqtt_pass",
         "entity_room_actual": "sensor.room_actual",
@@ -60,7 +63,7 @@ def test_run_bridge_returns_zero_when_not_configured(caplog):
     assert "Add-on ist noch nicht eingerichtet" in caplog.text
 
 
-def test_run_bridge_returns_one_for_unknown_profile(monkeypatch, caplog):
+def test_run_bridge_returns_one_for_verteilsystem_without_safety_values(monkeypatch, caplog):
     # Konfiguriert, aber ungueltig: ein echter Startfehler, main() muss ihn von "nicht
     # konfiguriert" unterscheiden koennen.
     monkeypatch.setattr(
@@ -68,10 +71,26 @@ def test_run_bridge_returns_one_for_unknown_profile(monkeypatch, caplog):
     )
 
     with caplog.at_level("ERROR"):
-        result = _run_bridge(_full_valid_options(profile="does-not-exist"), MagicMock())
+        result = _run_bridge(_full_valid_options(verteilsystem="Fussbodenheizung"), MagicMock())
 
     assert result == 1
     assert "FEHLER" in caplog.text
+    assert "Fussbodenheizung" in caplog.text
+
+
+def test_run_bridge_with_0_17_0_options_fails_loudly_naming_verteilsystem(caplog):
+    old = {k: v for k, v in _full_valid_options().items() if k not in (
+        "verteilsystem", "daily_trigger_time", "day_avg_window_start", "day_avg_window_end",
+        "night_avg_window_start", "night_avg_window_end",
+    )}
+    old["profile"] = "vaillant_gastherme_heizkoerper"
+
+    with caplog.at_level("INFO"):
+        result = _run_bridge(old, MagicMock())
+
+    assert result == 1
+    assert "verteilsystem" in caplog.text
+    assert "noch nicht eingerichtet" not in caplog.text
 
 
 def test_run_bridge_returns_one_for_invalid_telemetry_interval(monkeypatch, caplog):

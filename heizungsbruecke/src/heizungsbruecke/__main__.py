@@ -15,7 +15,6 @@ from heizungsbruecke import (
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.manifest import ManifestError, build_manifest
 from heizungsbruecke.override import Override
-from heizungsbruecke.profiles import UnknownProfileError
 from heizungsbruecke.runtime import (
     EV_ACK_TIMEOUT, EV_AUTH_REJECTED, EV_DAYNIGHT, EV_GRACE_CHECK, EV_LOCAL_CHECK, EV_MQTT_CONNECTED,
     EV_RETRY_DUE, EV_SETPOINTS, EV_TELEMETRY, EV_WATCHDOG, Runtime,
@@ -229,7 +228,7 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | int:
         return 0
     try:
         options = config.resolve_effective_options(options)
-    except UnknownProfileError as error:
+    except config.ConfigError as error:
         logger.error("FEHLER: %s", error)
         return 1
     error = config.validate(options)

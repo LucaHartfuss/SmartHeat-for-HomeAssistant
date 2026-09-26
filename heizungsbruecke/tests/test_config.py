@@ -3,6 +3,7 @@ import json
 import pytest
 
 from heizungsbruecke.config import (
+    ConfigError,
     DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS,
     is_configured,
     load_options_safe,
@@ -15,7 +16,6 @@ from heizungsbruecke.config import (
     validate_local_check_interval,
     validate_telemetry_interval,
 )
-from heizungsbruecke.profiles import UnknownProfileError
 
 
 def _base_options(**overrides):
@@ -31,15 +31,24 @@ def _base_options(**overrides):
     return options
 
 
+PROFILE_PARAMS = {
+    "verteilsystem": "Heizkoerper",
+    "daily_trigger_time": "12:00",
+    "day_avg_window_start": "14:00", "day_avg_window_end": "17:00",
+    "night_avg_window_start": "04:00", "night_avg_window_end": "07:00",
+}
+
+REQUIRED = {
+    "tenant_id": "wohnung1",
+    "mqtt_username": "wohnung1_a1b2c3d4", "mqtt_password": "geheim",
+    "entity_room_actual": "sensor.rt", "entity_room_target": "sensor.target_rt",
+    "entity_curve_current": "number.curve", "entity_offset_current": "number.offset",
+    "entity_outdoor_temp": "sensor.outdoor", "entity_heat_limit": "number.heat_limit",
+}
+
+
 def test_is_configured_true_when_all_required_fields_present():
-    options = {
-        "tenant_id": "wohnung1", "profile": "vaillant_gastherme_heizkoerper",
-        "mqtt_username": "wohnung1_a1b2c3d4", "mqtt_password": "geheim",
-        "entity_room_actual": "sensor.rt", "entity_room_target": "sensor.target_rt",
-        "entity_curve_current": "number.curve", "entity_offset_current": "number.offset",
-        "entity_outdoor_temp": "sensor.outdoor", "entity_heat_limit": "number.heat_limit",
-    }
-    assert is_configured(options) is True
+    assert is_configured(dict(REQUIRED)) is True
 
 
 def test_is_configured_false_when_a_required_field_is_missing():
@@ -99,10 +108,21 @@ def test_validate_boost_config_accepts_boundary_values():
     assert validate_boost_config(_base_options(boost_offset_value=5.0)) is None
 
 
-def test_resolve_effective_options_uses_profile_defaults_when_clamps_absent():
-    options = {"profile": "vaillant_gastherme_heizkoerper"}
+def test_is_configured_true_for_0_17_0_options_without_new_values():
+    # Alte Konfiguration: "profile" gesetzt, neue Werte fehlen. Muss als "eingerichtet"
+    # gelten, damit der Start laut abbricht statt still zu warten (Spec TP3, 2.1).
+    assert is_configured({**REQUIRED, "profile": "vaillant_gastherme_heizkoerper"}) is True
 
-    effective = resolve_effective_options(options)
+
+def test_required_options_do_not_contain_new_values():
+    from heizungsbruecke.config import REQUIRED_OPTIONS
+    assert "profile" not in REQUIRED_OPTIONS
+    assert not set(PROFILE_PARAMS) & set(REQUIRED_OPTIONS)
+    assert "accounts_api_base_url" not in REQUIRED_OPTIONS
+
+
+def test_resolve_effective_options_uses_local_safety_and_option_windows():
+    effective = resolve_effective_options({**REQUIRED, **PROFILE_PARAMS})
 
     assert effective["curve_min"] == 0.4
     assert effective["curve_max"] == 1.5
@@ -111,29 +131,62 @@ def test_resolve_effective_options_uses_profile_defaults_when_clamps_absent():
     assert effective["boost_threshold_k"] == 0.5
     assert effective["boost_curve_value"] == 1.5
     assert effective["boost_offset_value"] == 30.0
-    assert effective["profile"] == "vaillant_gastherme_heizkoerper"
     assert effective["daily_trigger_time"] == "12:00"
     assert effective["day_avg_window_start"] == "14:00"
     assert effective["day_avg_window_end"] == "17:00"
     assert effective["night_avg_window_start"] == "04:00"
     assert effective["night_avg_window_end"] == "07:00"
     assert effective["avg_window_hours"] == 3.0
+    assert effective["tenant_id"] == "wohnung1"
 
 
-def test_resolve_effective_options_ignores_explicit_override():
-    options = {"profile": "vaillant_gastherme_heizkoerper", "offset_max": 28.0, "boost_curve_value": 0.1}
+def test_resolve_effective_options_ignores_safety_values_in_options():
+    effective = resolve_effective_options(
+        {**REQUIRED, **PROFILE_PARAMS, "offset_max": 28.0, "boost_curve_value": 0.1}
+    )
 
-    effective = resolve_effective_options(options)
-
-    assert effective["offset_max"] == 30.0  # Profil-Default gewinnt, Override wird ignoriert
+    assert effective["offset_max"] == 30.0  # lokale Sicherheitswerte gewinnen
     assert effective["boost_curve_value"] == 1.5
 
 
-def test_resolve_effective_options_raises_for_profile_without_defaults():
-    options = {"profile": "weishaupt_waermepumpe_fussbodenheizung"}
+def test_resolve_effective_options_takes_windows_from_options():
+    effective = resolve_effective_options({
+        **REQUIRED, **PROFILE_PARAMS,
+        "daily_trigger_time": "11:30",
+        "day_avg_window_start": "13:00", "day_avg_window_end": "17:00",
+        "night_avg_window_start": "03:00", "night_avg_window_end": "07:00",
+    })
 
-    with pytest.raises(UnknownProfileError):
+    assert effective["daily_trigger_time"] == "11:30"
+    assert effective["avg_window_hours"] == 4.0
+
+
+@pytest.mark.parametrize("verteilsystem", [None, "", "Fussbodenheizung", "Unbekannt"])
+def test_resolve_effective_options_rejects_verteilsystem(verteilsystem):
+    options = {**REQUIRED, **PROFILE_PARAMS, "verteilsystem": verteilsystem}
+    if verteilsystem is None:
+        del options["verteilsystem"]
+
+    with pytest.raises(ConfigError, match="verteilsystem"):
         resolve_effective_options(options)
+
+
+def test_resolve_effective_options_names_missing_window_option():
+    options = {**REQUIRED, **PROFILE_PARAMS}
+    del options["night_avg_window_end"]
+
+    with pytest.raises(ConfigError, match="night_avg_window_end"):
+        resolve_effective_options(options)
+
+
+def test_resolve_effective_options_rejects_unequal_windows():
+    with pytest.raises(ConfigError, match="gleich gross"):
+        resolve_effective_options({**REQUIRED, **PROFILE_PARAMS, "day_avg_window_end": "18:00"})
+
+
+def test_resolve_effective_options_0_17_0_config_names_verteilsystem():
+    with pytest.raises(ConfigError, match="verteilsystem"):
+        resolve_effective_options({**REQUIRED, "profile": "vaillant_gastherme_heizkoerper"})
 
 
 def test_validate_derived_sensor_prerequisites_returns_none_when_present():

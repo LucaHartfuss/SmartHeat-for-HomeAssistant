@@ -20,7 +20,8 @@ def maybe_snapshot(
 ) -> None:
     """Snapshots the rolling room average into the day/night input_numbers once per day.
 
-    `day_avg_window_end`/`night_avg_window_end` ("HH:MM") come from the tenant's profile.
+    `day_avg_window_end`/`night_avg_window_end` ("HH:MM") come from the add-on options
+    (see windows.py).
 
     The daynight check runs on a configurable interval (`local_check_interval_seconds`, up
     to 3600 s), so a narrow fixed clock window could be missed every day if the check never

@@ -1,15 +1,11 @@
-"""Add-on-Optionen: Pflichtfelder, Profilwerte, Startpruefungen und feste Adressen."""
+"""Add-on-Optionen: Pflichtfelder, aufgeloeste Sicherheitswerte und Fenster, Startpruefungen und feste Adressen."""
 import json
 import logging
 import math
 from pathlib import Path
 
-from heizungsbruecke.profiles import (
-    resolve_boost_defaults,
-    resolve_local_clamps,
-    resolve_window_defaults,
-    window_size_hours,
-)
+from heizungsbruecke.safety import resolve_local_safety
+from heizungsbruecke.windows import window_size_hours, windows_from_options
 
 MQTT_HOST = "127.0.0.1"
 # Muss zum `local_port`-Default von cloudflared_access_mqtt passen: Konvention, kein
@@ -33,8 +29,16 @@ ENTITLEMENT_PATH = DATA_DIR / "entitlement_state.json"
 DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS = 300
 DEFAULT_TELEMETRY_INTERVAL_SECONDS = 300
 
+
+class ConfigError(ValueError):
+    """Konfiguriert, aber ungueltig: Startabbruch mit Exit-Code 1. Die Meldung nennt die
+    fehlende oder ungueltige Option."""
+
+
+# Bewusst ohne verteilsystem/Fenster/accounts_api_base_url: eine alte Konfiguration (0.17.0)
+# soll als "eingerichtet" gelten und laut abbrechen, statt still auf die Integration zu warten.
 REQUIRED_OPTIONS = (
-    "tenant_id", "profile", "mqtt_username", "mqtt_password",
+    "tenant_id", "mqtt_username", "mqtt_password",
     "entity_room_actual", "entity_room_target",
     "entity_curve_current", "entity_offset_current", "entity_outdoor_temp", "entity_heat_limit",
 )
@@ -50,18 +54,28 @@ def is_configured(options: dict) -> bool:
 
 
 def resolve_effective_options(options: dict) -> dict:
-    clamps = resolve_local_clamps(options["profile"])
-    boost = resolve_boost_defaults(options["profile"])
-    windows = resolve_window_defaults(options["profile"])
+    verteilsystem = options.get("verteilsystem")
+    if not verteilsystem:
+        raise ConfigError(
+            "Option 'verteilsystem' fehlt - bitte die SmartHeat-Integration neu einrichten"
+        )
+    try:
+        safety = resolve_local_safety(verteilsystem)
+    except ValueError as error:
+        raise ConfigError(f"Option 'verteilsystem': {error}") from None
+    try:
+        windows = windows_from_options(options)
+    except ValueError as error:
+        raise ConfigError(str(error)) from None
     return {
         **options,
-        "curve_min": clamps.curve_min,
-        "curve_max": clamps.curve_max,
-        "offset_min": clamps.offset_min,
-        "offset_max": clamps.offset_max,
-        "boost_threshold_k": boost.threshold_k,
-        "boost_curve_value": boost.curve_value,
-        "boost_offset_value": boost.offset_value,
+        "curve_min": safety.curve_min,
+        "curve_max": safety.curve_max,
+        "offset_min": safety.offset_min,
+        "offset_max": safety.offset_max,
+        "boost_threshold_k": safety.boost_threshold_k,
+        "boost_curve_value": safety.boost_curve_value,
+        "boost_offset_value": safety.boost_offset_value,
         "daily_trigger_time": windows.daily_trigger_time,
         "day_avg_window_start": windows.day_avg_window_start,
         "day_avg_window_end": windows.day_avg_window_end,
