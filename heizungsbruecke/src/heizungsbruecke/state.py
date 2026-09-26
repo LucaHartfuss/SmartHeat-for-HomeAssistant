@@ -128,6 +128,12 @@ class StateStore:
             raise
         self._backup_saved, self._backup_dirty = content, False
 
+    def is_saved(self, *keys: str) -> bool:
+        """True, wenn die genannten backup.json-Felder so auf der Karte stehen wie im Speicher
+        (False nach einem gescheiterten Schreibversuch, bis er nachgeholt ist)."""
+        content = _backup_content(self._state, self._extra)
+        return all(content.get(key) == self._backup_saved.get(key) for key in keys)
+
     def set_delivery(self, delivery_state: DeliveryState) -> None:
         """Best effort: ein Schreibfehler wird geloggt, der Zustand gilt dann bis zum
         naechsten erfolgreichen Schreiben bzw. Neustart."""

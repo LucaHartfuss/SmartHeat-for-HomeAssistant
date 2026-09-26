@@ -135,6 +135,67 @@ def test_running_boost_is_never_refused(make_store):
     assert ha.reads == []
 
 
+def test_restore_point_not_yet_on_the_card_blocks_a_new_boost(make_store, tmp_path, monkeypatch, caplog):
+    # M1: der von der Anlage gelesene Wiederherstellungspunkt steht nur im Speicher, weil
+    # backup.json nicht geschrieben werden konnte. Der naechste Check darf den Boost dann
+    # nicht schreiben, sondern holt zuerst das Speichern nach.
+    override, store, ha = _setup(make_store)
+    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+
+    with pytest.raises(OSError):
+        override.set_boosts(comfort=True, emergency=False)  # Check 1: gelesen, Speichern scheitert
+    assert ha.writes == []
+
+    with caplog.at_level(logging.WARNING), pytest.raises(OSError):
+        override.set_boosts(comfort=True, emergency=False)  # Check 2: Karte weiter kaputt
+
+    assert ha.writes == []
+    assert store.state.boost_active is False
+    assert "Boost ausgesetzt" in caplog.text
+    assert not (tmp_path / "backup.json").exists()
+
+    monkeypatch.undo()
+    assert override.set_boosts(comfort=True, emergency=False) == (True, False)  # Karte wieder ok
+
+    assert ha.reads == ["number.curve", "number.offset"]  # nur beim ersten Check gelesen
+    assert ha.writes == _written("comfort")
+    backup = load_backup(tmp_path / "backup.json")
+    assert (backup["curve_current"], backup["offset_current"], backup["boost_active"]) == (0.7, 21.0, True)
+
+
+def test_unsaved_boost_flag_alone_does_not_block_a_new_boost(make_store, monkeypatch):
+    # Steht der Wiederherstellungspunkt auf der Karte, blockiert ein nur im Speicher
+    # stehendes Boost-Flag (Karte kaputt) keinen neuen Boost.
+    override, _, ha = _setup(make_store, backup=dict(RESTORE_POINT))
+    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    for comfort in (True, False):
+        with pytest.raises(OSError):
+            override.set_boosts(comfort=comfort, emergency=False)
+
+    with pytest.raises(OSError):
+        override.set_boosts(comfort=True, emergency=False)
+
+    assert ha.writes == _written("comfort") + _written("restore") + _written("comfort")
+    assert ha.reads == []
+
+
+@pytest.mark.parametrize("before", [(True, False), (False, True)])
+def test_second_boost_never_reads_the_device_for_a_restore_point(make_store, before):
+    # M2: laeuft schon ein Boost, steht die Anlage auf Boost-Werten, nicht auf gelernten.
+    # Fehlt der Wiederherstellungspunkt, wird er dann nicht gelesen; der zweite Boost startet
+    # trotzdem, und das Boost-Ende schreibt nur bekannte Werte.
+    override, store, ha = _setup(
+        make_store, backup={"boost_active": before[0], "emergency_boost_active": before[1]},
+        states={"number.curve": 1.0, "number.offset": 25.0},
+    )
+
+    assert override.set_boosts(comfort=True, emergency=True) == (True, True)
+
+    assert ha.reads == []
+    assert ha.writes == ([] if before == (False, True) else _written("emergency"))
+    assert (store.state.curve_current, store.state.offset_current) == (None, None)
+
+
 def test_write_failure_leaves_flags_unchanged(make_store, tmp_path):
     override, store, ha = _setup(make_store, backup=dict(RESTORE_POINT))
     ha.write_error = RuntimeError("myVAILLANT-Cloud nicht erreichbar")

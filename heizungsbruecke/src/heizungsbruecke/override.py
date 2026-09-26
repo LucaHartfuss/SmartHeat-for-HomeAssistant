@@ -56,8 +56,9 @@ class Override:
 
     def set_boosts(self, comfort: bool, emergency: bool) -> tuple[bool, bool]:
         """Setzt die Boost-Flags und schreibt die Werte der neuen Sollwert-Zeile, falls sie
-        sich aendert. Ein neu startender Boost braucht vorher einen Wiederherstellungspunkt,
-        sonst wird er abgelehnt; ein laufender Boost wird nie abgelehnt. Wirft das Schreiben,
+        sich aendert. Ein neu startender Boost braucht vorher einen in backup.json
+        gespeicherten Wiederherstellungspunkt, sonst wird er abgelehnt; ein laufender Boost
+        wird nie abgelehnt. Wirft das Schreiben,
         bleiben die Flags unveraendert und der naechste Check versucht es erneut. Gibt die
         tatsaechlich gesetzten Flags zurueck."""
         state = self._store.state
@@ -153,10 +154,26 @@ class Override:
     def _ensure_restore_point(self) -> bool:
         """Fehlende Werte des Wiederherstellungspunkts (z. B. erster Boost vor der ersten
         Serverantwort) einmalig von der Anlage lesen und speichern. False, wenn das nicht
-        geht: ohne Rueckweg darf kein Boost schreiben."""
+        geht oder der Wiederherstellungspunkt noch nicht in backup.json steht: ohne Rueckweg
+        auf der Karte darf kein Boost schreiben. Laeuft schon ein Boost, steht die Anlage auf
+        Boost-Werten: dann wird nichts gelesen und der zweite Boost darf starten."""
         state = self._store.state
         missing = [role for role in ROLES if role in self._manifest.entity_ids and getattr(state, role) is None]
+        if state.boost_active or state.emergency_boost_active:
+            if missing:
+                logger.info(
+                    "Wiederherstellungspunkt fehlt (%s), die Anlage steht schon auf Boost-Werten - "
+                    "nicht von der Anlage gelesen", ", ".join(missing),
+                )
+            return True
         if not missing:
+            if self._store.is_saved(*ROLES):
+                return True
+            try:
+                self._store.update(curve_current=state.curve_current, offset_current=state.offset_current)
+            except Exception as error:
+                logger.warning("Wiederherstellungspunkt nicht gespeichert (backup.json): %s", error)
+                return False
             return True
         try:
             live = {role: self._ha_api.get_state(self._manifest.entity_ids[role]) for role in missing}

@@ -182,6 +182,28 @@ def test_backup_write_failure_keeps_memory_raises_and_is_retried(make_store, tmp
     assert load_backup(tmp_path / "backup.json")["curve_current"] == 1.1
 
 
+def test_is_saved_reports_only_fields_whose_save_is_still_missing(make_store, monkeypatch):
+    store = make_store(backup=V016_BACKUP)
+    assert store.is_saved("curve_current", "offset_current", "boost_active")
+
+    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    with pytest.raises(OSError):
+        store.update(curve_current=1.1)
+
+    assert not store.is_saved("curve_current")
+    assert not store.is_saved("curve_current", "offset_current")
+    assert store.is_saved("offset_current", "boost_active")  # nur das geaenderte Feld fehlt auf der Karte
+
+    monkeypatch.undo()
+    store.update(curve_current=1.1)
+
+    assert store.is_saved("curve_current", "offset_current")
+
+
+def test_is_saved_of_an_unset_field_that_was_never_written(make_store):
+    assert make_store().is_saved("curve_current", "offset_current")
+
+
 def test_runtime_only_update_never_retries_a_failed_write(make_store, monkeypatch):
     store = make_store()
     monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
