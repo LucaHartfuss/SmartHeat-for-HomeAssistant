@@ -18,6 +18,16 @@ MQTT_PORT = 18830
 # Gleicher Host fuer jeden Tenant (siehe DEFAULT_HEIZUNGSSERVER_BASE_URL in der Integration).
 ACCOUNTS_API_BASE_URL = "https://accounts.hartfussha.org"
 
+# Dateien im Add-on-Datenverzeichnis. Nutzer lesen sie zur Laufzeit als `config.<NAME>`, damit
+# Tests sie umbiegen koennen.
+DATA_DIR = Path("/data")
+OPTIONS_PATH = DATA_DIR / "options.json"
+BACKUP_PATH = DATA_DIR / "backup.json"
+FAILSAFE_PATH = DATA_DIR / "failsafe_state.json"
+DERIVED_SENSORS_PATH = DATA_DIR / "derived_sensors.json"
+DAYNIGHT_SNAPSHOT_PATH = DATA_DIR / "daynight_snapshot_state.json"
+ENTITLEMENT_PATH = DATA_DIR / "entitlement_state.json"
+
 # Lokale Checks laufen eventgetrieben; dieser Takt gilt nur noch fuer den Watchdog-Fallback
 # bei getrennter WS-Verbindung (und fuer daynight/grace_check).
 DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS = 300

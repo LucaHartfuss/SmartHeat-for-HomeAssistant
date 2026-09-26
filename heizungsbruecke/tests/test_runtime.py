@@ -11,9 +11,10 @@ from unittest.mock import MagicMock
 import pytest
 
 import heizungsbruecke.__main__ as main_module
-from heizungsbruecke import entitlement
+from heizungsbruecke import entitlement, ticks
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.delivery import DeliveryState
+from heizungsbruecke.runtime import Runtime
 
 OPTIONS = {
     "tenant_id": "test_tenant",
@@ -147,7 +148,7 @@ def env(tmp_path, monkeypatch, clock):
     paths = {}
     for name in ("BACKUP_PATH", "FAILSAFE_PATH", "ENTITLEMENT_PATH", "DERIVED_SENSORS_PATH", "DAYNIGHT_SNAPSHOT_PATH"):
         paths[name] = tmp_path / f"{name.lower()}.json"
-        monkeypatch.setattr(f"heizungsbruecke.__main__.{name}", paths[name])
+        monkeypatch.setattr(f"heizungsbruecke.config.{name}", paths[name])
     monkeypatch.setattr("heizungsbruecke.derived_sensors.ensure_all", lambda **kwargs: dict(DERIVED))
     monkeypatch.setattr("heizungsbruecke.daynight_snapshot.maybe_snapshot", lambda **kwargs: None)
     abo = {"status": entitlement.ACTIVE, "queries": 0}
@@ -194,11 +195,11 @@ def _run_bridge(env):
 
 
 def _is_running(bridge) -> bool:
-    return isinstance(bridge, main_module._Bridge)
+    return isinstance(bridge, Runtime)
 
 
 def _delivery(bridge):
-    return bridge.failsafe_ctx["delivery"]
+    return bridge.store.state.delivery
 
 
 def _awaiting_ack(bridge) -> bool:
@@ -206,23 +207,23 @@ def _awaiting_ack(bridge) -> bool:
 
 
 def _boost_active(bridge) -> bool:
-    return bridge.boost_active
+    return bridge.store.state.boost_active
 
 
 def _stable_target(bridge):
-    return bridge.stable_target
+    return bridge.store.state.stable_target
 
 
 def _abo_inactive_since(bridge):
-    return bridge.failsafe_ctx.get("abo_inactive_since")
+    return bridge.store.state.abo_inactive_since
 
 
 def _mark_abo_finished(bridge) -> None:
-    bridge.failsafe_ctx["abo_finished"] = True
+    bridge.store.update(abo_finished=True)
 
 
 def _override_options(bridge, **values) -> None:
-    bridge.options.update(values)
+    bridge.options.update(values)  # dasselbe Dict wie in bridge.override
 
 
 def _raise_oserror(*args, **kwargs):
@@ -230,11 +231,11 @@ def _raise_oserror(*args, **kwargs):
 
 
 def _break_backup_writes(monkeypatch) -> None:
-    monkeypatch.setattr("heizungsbruecke.__main__.save_backup", _raise_oserror)
+    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
 
 
 def _fail_next_snapshot_read(monkeypatch, error: Exception) -> None:
-    original = main_module.read_snapshot_roles
+    original = ticks.read_snapshot_roles
     failures = [error]
 
     def _flaky(*args, **kwargs):
@@ -242,7 +243,7 @@ def _fail_next_snapshot_read(monkeypatch, error: Exception) -> None:
             raise failures.pop()
         return original(*args, **kwargs)
 
-    monkeypatch.setattr("heizungsbruecke.__main__.read_snapshot_roles", _flaky)
+    monkeypatch.setattr("heizungsbruecke.ticks.read_snapshot_roles", _flaky)
 
 
 def _quiet_backup(env, **extra):
