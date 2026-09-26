@@ -1,31 +1,30 @@
+import functools
 import json
 import logging
 import math
 import os
 import sys
-import threading
 import time
 import uuid
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.boost import BoostDecision, decide_boost
-from heizungsbruecke.bridge import apply_boost_decision, apply_emergency_decision, handle_down_message, publish_snapshot, read_snapshot_roles
+from heizungsbruecke.bridge import (
+    apply_boost_decision,
+    apply_emergency_decision,
+    handle_down_message,
+    publish_snapshot,
+    read_snapshot_roles,
+)
 from heizungsbruecke.clamping import clamp
 from heizungsbruecke.emergency_boost import EmergencyBoostDecision, decide_emergency_boost
-from heizungsbruecke import daynight_snapshot, derived_sensors, entitlement
-from heizungsbruecke.failsafe import (
-    FailsafeState,
-    build_discovery_config,
-    build_state_payload,
-    enter_notbetrieb_on_ack_timeout,
-    exit_notbetrieb_on_ack,
-    register_publish_attempt,
-)
+from heizungsbruecke import daynight_snapshot, delivery, derived_sensors, entitlement
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_trigger_client import HaTriggerClient
-from heizungsbruecke.manifest import ManifestError, build_manifest
+from heizungsbruecke.manifest import ChannelManifest, ManifestError, build_manifest
 from heizungsbruecke.mqtt_client import BridgeMqttClient
 from heizungsbruecke.profiles import (
     UnknownProfileError,
@@ -35,6 +34,7 @@ from heizungsbruecke.profiles import (
     window_size_hours,
 )
 from heizungsbruecke.target_history import record_change, sanitize_history, time_weighted_mean
+from heizungsbruecke.worker import Event, RegulationWorker
 
 OPTIONS_PATH = Path("/data/options.json")
 BACKUP_PATH = Path("/data/backup.json")
@@ -75,12 +75,6 @@ HELPER_NOTIFICATION_MESSAGE = (
     "SmartHeat: Hilfssensoren konnten nicht angelegt werden – Home Assistant noch nicht bereit?"
 )
 
-# Boot-Reihenfolge-Rennen zwischen den beiden Add-ons (cloudflared_access_mqtt startet
-# eventuell noch) oder ein kurzer Broker-Restart duerfen nicht sofort als dauerhafte
-# Fehlkonfiguration gewertet werden -- gleiche Begruendung/Muster wie
-# DERIVED_SENSORS_RETRY_DELAYS_SECONDS oben (Design-Spec Phase 1, Punkt 2).
-MQTT_CONNECT_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60)
-
 # Design-Spec 2026-09-21: seit der Umstellung auf HaTriggerClient steuert dieser Wert
 # nur noch den Watchdog-/Fallback-Takt (Boost-/target_changed-Check nur, wenn die
 # WS-Verbindung down ist), nicht mehr routinemaessiges Polling -- 300s deckt sich mit
@@ -92,27 +86,25 @@ DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS = 300
 # entkoppeltes Intervall, damit Komfort-/Boost-KPIs nicht zu grobkoernig werden.
 DEFAULT_TELEMETRY_INTERVAL_SECONDS = 300
 
-# Design-Spec 2026-09-23: wie lange nach einem vollen Snapshot-Publish auf eine
-# seq-passende Down-Antwort gewartet wird, bevor Notbetrieb ausgeloest wird. Normale
-# Serververarbeitung laeuft synchron im on_message-Handler des Servers (Sekundenbereich)
-# -- 30s deckt ueblichen Broker-/Tunnel-Jitter ab, ohne einen echten Ausfall lange zu
-# verschleppen. Nutzer-bestaetigter Wert, siehe Design-Spec, Abschnitt 1.
-ACK_TIMEOUT_SECONDS = 30
-
 # Design-Spec 2026-09-22 (Zieltemperatur-Debounce): 10s Stabilitaetsfenster, bevor eine
 # room_target-Aenderung als "final" gilt (Boost-Start/-Ende und Heizkurvenanpassung
-# reagieren erst danach, siehe _make_trigger_event_callback/_StableTargetBox weiter
+# reagieren erst danach, siehe _make_trigger_event_callback/_Bridge.stable_target weiter
 # unten). Bewusst fest im Code (kein Add-on-Options-Feld) -- kein bestehender
 # Plumbing-Mechanismus fuer Boost-aehnliche Parameter (auch boost_threshold_k ist
 # profilbasiert, nicht per Config-Flow einstellbar), nur client1 als realer Nutzer
 # aktuell. YAGNI, spaeter bei Bedarf nachruestbar.
 ROOM_TARGET_DEBOUNCE_SECONDS = 10
 
-# In-memory only (not persisted to backup.json) -- persisting it would reintroduce
-# ~288 SD-card writes/day, exactly what A.2 eliminated for the other backup.json
-# fields. Losing this marker on an add-on restart just causes one extra early
-# telemetry publish, which is harmless for a purely observational KPI feed.
-_last_telemetry_publish_ts: float | None = None
+# Ereignisarten des Regel-Workers (Design-Spec 2026-09-26, Abschnitt 1).
+EV_LOCAL_CHECK = "local_check"
+EV_SETPOINTS = "setpoints"
+EV_AUTH_REJECTED = "auth_rejected"
+EV_ACK_TIMEOUT = "ack_timeout"
+EV_RETRY_DUE = "retry_due"
+EV_WATCHDOG = "watchdog"
+EV_TELEMETRY = "telemetry"
+EV_DAYNIGHT = "daynight"
+EV_GRACE_CHECK = "grace_check"
 
 # Optionale KPI-Rollen (Design-Spec KPI-Logging-Rework): nur vorhanden, wenn in
 # manifest.entity_ids konfiguriert; fehlende/ausgefallene Sensoren werden im Payload
@@ -226,9 +218,7 @@ def _validate_telemetry_interval(options: dict) -> str | None:
     below config.yaml's schema floor of 10s, or None if absent/valid. Guards against a
     manually edited options.json on the Pi bypassing that floor (Korrektheit-Review-
     Fund sh-1, same rationale as _validate_local_check_interval above): without this,
-    the cadence gate in _maybe_publish_telemetry effectively never throttles, and every
-    local check (every 30-60s) publishes telemetry instead of every 300s -- 5-10x more
-    MQTT traffic with no startup error to surface the misconfiguration.
+    the telemetry schedule entry would fire as often as every second and flood the server.
     """
     value = options.get("telemetry_interval_seconds")
     if value is not None and (
@@ -326,34 +316,6 @@ def _check_timezone(ha_api) -> None:
         logger.info("Zeitzone: %s", container_time_zone)
 
 
-def _connect_mqtt_with_retry(options: dict, on_auth_rejected=None) -> BridgeMqttClient:
-    """Wraps `BridgeMqttClient` constructor with retry-with-backoff (see
-    MQTT_CONNECT_RETRY_DELAYS_SECONDS above for the rationale) so a transient failure
-    during add-on startup (e.g. cloudflared_access_mqtt hasn't started yet) doesn't
-    crash the whole add-on on the first try.
-    """
-    delays = MQTT_CONNECT_RETRY_DELAYS_SECONDS
-    last_error: Exception | None = None
-    for attempt in range(len(delays) + 1):
-        try:
-            return BridgeMqttClient(
-                host=MQTT_HOST, port=MQTT_PORT, tenant_id=options["tenant_id"],
-                username=options["mqtt_username"], password=options["mqtt_password"],
-                on_auth_rejected=on_auth_rejected,
-            )
-        except Exception as error:
-            last_error = error
-            if attempt == len(delays):
-                break
-            logger.warning(
-                "MQTT-Verbindungsaufbau fehlgeschlagen (Versuch %s/%s, evtl. ist "
-                "cloudflared_access_mqtt noch nicht bereit): %s",
-                attempt + 1, len(delays) + 1, error,
-            )
-            time.sleep(delays[attempt])
-    raise last_error
-
-
 _SETPOINT_STATUSES_WITH_VALUES = ("ok", "skipped_summer")
 
 
@@ -361,106 +323,29 @@ def _is_finite_number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
-def _make_setpoints_callback(manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client):
-    """Verarbeitet die Server-Antwort auf down/setpoints (Schema 2, Design-Spec
-    2026-09-25, Abschnitt 3). Nur eine Antwort mit der gerade erwarteten seq schreibt
-    Werte und zaehlt als Ack -- auch `rejected` und formal kaputte Antworten sind ein
-    Ack (der Server lebt und hat geantwortet). Scheitert das Schreiben selbst (HA nicht
-    erreichbar), gibt es wie bisher keinen Ack."""
-    notify_service = options.get("notify_service", "")
-
-    def _callback(client, userdata, message):
-        try:
-            if message.retain:
-                # paho setzt .retain nur beim Broker-Replay nach (Re-)Subscribe (MQTT
-                # 3.1.1) -- siehe 2026-09-22-heizungsbruecke-retained-down-replay-fix-design.md.
-                # Der Server publiziert seit Schema 2 ohnehin nicht mehr retained.
-                logger.info("Retained Setpoints-Nachricht beim (Re-)Subscribe uebersprungen (Broker-Replay)")
-                return
-            payload = json.loads(message.payload)
-            if not isinstance(payload, dict):
-                logger.warning("Setpoints-Nachricht ist kein JSON-Objekt, verworfen: %r", payload)
-                return
-            seq = payload.get("seq")
-            with write_lock:
-                awaiting_seq = failsafe_ctx["state"].awaiting_seq
-                if seq is None or seq != awaiting_seq:
-                    logger.info("Setpoints-Antwort mit seq=%r ignoriert (erwartet: %r)", seq, awaiting_seq)
-                    return
-
-                status = payload.get("status")
-                curve, offset = payload.get("curve"), payload.get("offset")
-                if status in _SETPOINT_STATUSES_WITH_VALUES and _is_finite_number(curve) and _is_finite_number(offset):
-                    for role, value in (("curve_current", curve), ("offset_current", offset)):
-                        if role in manifest.entity_ids:
-                            handle_down_message(
-                                role=role, value=value, manifest=manifest, ha_api=ha_api,
-                                curve_min=options["curve_min"], curve_max=options["curve_max"],
-                                offset_min=options["offset_min"], offset_max=options["offset_max"],
-                                backup_path=BACKUP_PATH,
-                            )
-                elif status == "rejected":
-                    reason = payload.get("reason") or "ohne Begruendung"
-                    logger.warning("Server hat Snapshot (seq=%s) abgelehnt: %s", seq, reason)
-                    if notify_service:
-                        try:
-                            ha_api.send_notification(
-                                notify_service,
-                                f"Heizungsbruecke: Server hat die Messwerte abgelehnt ({reason}). "
-                                f"Die Heizkurve bleibt unveraendert.",
-                            )
-                        except Exception:
-                            logger.warning("Push-Benachrichtigung fuer abgelehnten Snapshot konnte nicht gesendet werden")
-                else:
-                    logger.warning(
-                        "Setpoints-Antwort (seq=%s) mit unbekanntem Status %r oder ungueltigen Werten "
-                        "(curve=%r, offset=%r) - nichts geschrieben", seq, status, curve, offset,
-                    )
-
-                was_active = failsafe_ctx["state"].active
-                _handle_ack(
-                    failsafe_ctx=failsafe_ctx, mqtt_client=mqtt_client, failsafe_path=FAILSAFE_PATH,
-                    acked_seq=seq, ha_api=ha_api, notify_service=notify_service,
-                )
-                if was_active and not failsafe_ctx["state"].active:
-                    _end_emergency_boost_if_active(failsafe_ctx, manifest, ha_api, options)
-        except Exception:
-            logger.exception("Fehler bei der Verarbeitung einer Setpoints-Nachricht")
-    return _callback
-
-
 def _load_failsafe_ctx(path: Path, backup_path: Path) -> dict:
-    """Stellt den Fail-Safe-Kontext nach einem Neustart wieder her (Design-Spec
-    2026-09-23, Abschnitt 4): `state.active` aus `path` (failsafe_state.json) und
-    `emergency_boost_active` aus `backup_path` (backup.json, dort von
-    `_save_emergency_active_if_changed` gepflegt). Beide MUESSEN den Neustart
-    ueberleben: das Boot-Priming-`_run_local_check` braucht den echten Vorher-Wert von
-    `emergency_boost_active`, um eine noch laufende Notfall-Exkursion korrekt
-    fortzusetzen (Hysterese aus dem "war aktiv"-Zweig) bzw. -- falls Notbetrieb vor dem
-    Neustart schon beendet war -- das Live-Geraet von den Maximalwerten zurueckzusetzen.
-    Mit einem hart auf False gesetzten Startwert blieb das Geraet in beiden Faellen auf
-    curve_max/offset_max haengen (Final-Review-Fund C1). Nur `awaiting_seq` startet
-    frisch (siehe _save_failsafe_ctx).
-    """
+    """Stellt den Kontext nach einem Neustart wieder her: `delivery` aus path
+    (failsafe_state.json, tolerant ueber delivery.from_persisted -- ein offener Tick wird
+    beim Start mit derselben seq erneut versucht, ein Notbetrieb endet so auch ueber
+    Neustarts hinweg von selbst) und `emergency_boost_active` aus backup_path (backup.json,
+    von `_save_emergency_active_if_changed` gepflegt). Beide MUESSEN den Neustart
+    ueberleben: das Boot-Priming braucht den echten Vorher-Wert von
+    `emergency_boost_active`, um eine laufende Notfall-Exkursion korrekt fortzusetzen bzw.
+    das Geraet von den Maximalwerten zurueckzusetzen (Final-Review-Fund C1)."""
     raw = load_backup(path)
     backup = load_backup(backup_path)
     return {
-        "state": FailsafeState(active=raw.get("failsafe_active", False), awaiting_seq=None),
+        "delivery": delivery.from_persisted(raw),
         "emergency_boost_active": backup.get("emergency_boost_active", False),
     }
 
 
 def _load_failsafe_ctx_safe(path: Path, backup_path: Path) -> dict:
     """Wraps `_load_failsafe_ctx` so a corrupt/truncated state file (e.g. after power
-    loss on the Pi's SD card) cannot crash the whole add-on at startup -- every other
-    `load_backup` call site in this codebase runs inside a caller-provided try/except
-    (see bridge.py's handle_down_message/apply_boost_decision), this is that guard for
-    the fail-safe state. Falls back to the same default a missing file would produce,
-    but per file: a corrupt failsafe_state.json must not also discard a still-valid
-    persisted `emergency_boost_active=True` from backup.json -- boot-priming (which then
-    sees Notbetrieb inactive) relies on that flag to restore the live device from its
-    max-heat values.
-    """
+    loss on the Pi's SD card) cannot crash the add-on at startup. Falls back per file: a
+    corrupt failsafe_state.json must not also discard a still-valid persisted
+    `emergency_boost_active=True` from backup.json -- boot-priming relies on that flag to
+    restore the live device from its max-heat values."""
     try:
         return _load_failsafe_ctx(path, backup_path)
     except Exception as error:
@@ -470,29 +355,31 @@ def _load_failsafe_ctx_safe(path: Path, backup_path: Path) -> dict:
             path, backup_path, error,
         )
     try:
-        failsafe_active = load_backup(path).get("failsafe_active", False)
+        delivery_state = delivery.from_persisted(load_backup(path))
     except Exception:
-        failsafe_active = False
+        delivery_state = delivery.DeliveryState()
     try:
         emergency_boost_active = load_backup(backup_path).get("emergency_boost_active", False)
     except Exception:
         emergency_boost_active = False
-    return {
-        "state": FailsafeState(active=failsafe_active, awaiting_seq=None),
-        "emergency_boost_active": emergency_boost_active,
-    }
+    return {"delivery": delivery_state, "emergency_boost_active": emergency_boost_active}
 
 
 def _save_failsafe_ctx(ctx: dict, path: Path) -> None:
-    """Persistiert `state.active` nach failsafe_state.json. `emergency_boost_active` wird
-    separat in backup.json persistiert (`_save_emergency_active_if_changed`, dort liest
-    auch handle_down_message's Live-Write-Sperre mit) und von `_load_failsafe_ctx` beim
-    Boot wieder eingelesen -- beide ueberleben einen Neustart (Design-Spec 2026-09-23,
-    Abschnitt 4). Einzig `awaiting_seq` wird bewusst NICHT persistiert: es bezieht sich
-    auf einen in-Prozess-`threading.Timer`, der nach einem Neustart nicht mehr existiert
-    und den Ack-/Timeout-Vergleich daher nie mehr aufloesen koennte.
-    """
-    save_backup(path, {"failsafe_active": ctx["state"].active})
+    """Persistiert den dauerhaften Teil des Zustell-Zustands (delivery.to_persisted) nach
+    failsafe_state.json. `emergency_boost_active` liegt separat in backup.json."""
+    save_backup(path, delivery.to_persisted(ctx["delivery"]))
+
+
+def _persist_failsafe_ctx(ctx: dict) -> None:
+    """Best effort: ein Schreibfehler (SD-Karte) darf die Regelung nicht aufhalten, der
+    Zustand gilt dann nur bis zum naechsten Neustart."""
+    try:
+        _save_failsafe_ctx(ctx, FAILSAFE_PATH)
+    except Exception:
+        logger.exception(
+            "failsafe_state.json konnte nicht geschrieben werden - Zustand gilt nur bis zum naechsten Neustart"
+        )
 
 
 def _save_emergency_active_if_changed(emergency_boost_active: bool, path: Path) -> None:
@@ -502,98 +389,12 @@ def _save_emergency_active_if_changed(emergency_boost_active: bool, path: Path) 
         save_backup(path, backup)
 
 
-def _handle_ack(
-    failsafe_ctx: dict, mqtt_client, failsafe_path: Path, acked_seq: str | None,
-    ha_api, notify_service: str = "",
-) -> None:
-    """Verarbeitet eine eingehende Down-Nachricht als moeglichen Ack fuer den zuletzt
-    erwarteten Up-Snapshot-Publish. Beendet Notbetrieb, wenn `acked_seq` zum aktuell
-    erwarteten `awaiting_seq` passt -- ein einzelner passender Ack genuegt (kein
-    Anti-Flap-Zaehler mehr, siehe Design-Spec 2026-09-23, Abschnitt 1).
-    """
-    if acked_seq is None:
-        return
-    previous_state = failsafe_ctx["state"]
-    new_state = exit_notbetrieb_on_ack(previous_state, acked_seq)
-    failsafe_ctx["state"] = new_state
-    if new_state.active == previous_state.active:
-        return
-    mqtt_client.publish_status("failsafe", build_state_payload(new_state.active))
-    _save_failsafe_ctx(failsafe_ctx, failsafe_path)
-    logger.warning("Notbetrieb beendet - Server hat Up-Snapshot (seq=%s) beantwortet.", acked_seq)
-    if notify_service:
-        try:
-            ha_api.send_notification(
-                notify_service,
-                "Heizungsbruecke: Notbetrieb beendet, Serververbindung wiederhergestellt.",
-            )
-        except Exception:
-            logger.warning("Push-Benachrichtigung fuer Notbetrieb-Ende konnte nicht gesendet werden")
-
-
-def _handle_ack_timeout(
-    seq: str, failsafe_ctx: dict, mqtt_client, failsafe_path: Path, write_lock,
-    ha_api, notify_service: str, tenant_id: str | None = None,
-) -> None:
-    if tenant_id is not None:
-        with write_lock:
-            if enter_notbetrieb_on_ack_timeout(failsafe_ctx["state"], seq) == failsafe_ctx["state"]:
-                return  # bereits beantwortet oder durch neueren Publish ersetzt
-        # Bewusst AUSSERHALB des write_lock (Design-Spec 2026-09-25, Abschnitt 4): die
-        # HTTP-Abfrage darf den Timer-Thread blockieren, nicht die Setpoints-Verarbeitung.
-        if entitlement.query_status(tenant_id, ACCOUNTS_API_BASE_URL) == entitlement.INACTIVE:
-            with write_lock:
-                still_pending = enter_notbetrieb_on_ack_timeout(failsafe_ctx["state"], seq) != failsafe_ctx["state"]
-            if still_pending:
-                _enter_abo_inactive(
-                    failsafe_ctx, write_lock, mqtt_client, ha_api, notify_service, datetime.now().astimezone(),
-                )
-            return
-    with write_lock:
-        new_state = enter_notbetrieb_on_ack_timeout(failsafe_ctx["state"], seq)
-        if new_state == failsafe_ctx["state"]:
-            return
-        failsafe_ctx["state"] = new_state
-        mqtt_client.publish_status("failsafe", build_state_payload(new_state.active))
-        _save_failsafe_ctx(failsafe_ctx, failsafe_path)
-        logger.warning(
-            "Notbetrieb aktiviert - keine Antwort vom Server auf Up-Snapshot (seq=%s) "
-            "innerhalb von %s Sekunden.", seq, ACK_TIMEOUT_SECONDS,
-        )
-        if notify_service:
-            try:
-                ha_api.send_notification(
-                    notify_service,
-                    "Heizungsbruecke: Server antwortet nicht auf Up-Snapshot, Notbetrieb "
-                    "aktiviert. Bitte Serververbindung pruefen.",
-                )
-            except Exception:
-                logger.warning("Push-Benachrichtigung fuer Notbetrieb-Alarm konnte nicht gesendet werden")
-
-
-def _schedule_ack_timeout(
-    seq: str, failsafe_ctx: dict, mqtt_client, failsafe_path: Path, write_lock,
-    ha_api, notify_service: str, tenant_id: str | None = None,
-) -> threading.Timer:
-    timer = threading.Timer(
-        ACK_TIMEOUT_SECONDS, _handle_ack_timeout,
-        kwargs=dict(
-            seq=seq, failsafe_ctx=failsafe_ctx, mqtt_client=mqtt_client,
-            failsafe_path=failsafe_path, write_lock=write_lock,
-            ha_api=ha_api, notify_service=notify_service, tenant_id=tenant_id,
-        ),
-    )
-    timer.daemon = True
-    timer.start()
-    return timer
-
-
 def _end_emergency_boost_if_active(failsafe_ctx: dict, manifest, ha_api, options: dict) -> None:
     """Beendet eine laufende Notfall-Boost-Exkursion sofort, wenn Notbetrieb selbst
     gerade beendet wurde -- statt auf deren eigene temperaturbasierte Exit-Bedingung zu
     warten, die evtl. eine Weile nicht erneut greift, falls room_actual genau dann
     stabil ist. No-op, wenn Notfall-Boost ohnehin nicht aktiv ist. Wird sowohl direkt
-    im Down-Callback (sofortige Reaktion auf einen erfolgreichen Ack) als auch als
+    beim Notbetrieb-Ende (Zustell-Aktion EndEmergencyBoost) als auch als
     Rueckfallebene im naechsten _run_local_check-Tick aufgerufen (Design-Spec
     2026-09-23 Abschnitt 3 + Edge Cases).
     """
@@ -613,9 +414,8 @@ def _exit_emergency_boost(manifest, ha_api, options: dict) -> bool:
     beim Notfall-Boost-Ende stillschweigend ueberschrieben, waehrend `boost_active`
     weiter True bleibt (Design-Spec 2026-09-23, Abschnitt 3: "Der Comfort-Boost laeuft
     mit seinem eigenen State unbeeinflusst weiter ... endet Notbetrieb, arbeitet er
-    normal weiter"; Final-Review-Fund I2 b). Liest `boost_active` aus backup.json statt
-    aus dem In-Memory-_BoostStateBox, weil auch der Down-Callback-Thread hierher kommt;
-    _run_local_check persistiert den aktuellen Tick-Wert vor dem Notfall-Block.
+    normal weiter"; Final-Review-Fund I2 b). Liest `boost_active` aus backup.json;
+    `_run_local_check` persistiert den aktuellen Wert vor dem Notfall-Block.
     Gibt immer False zurueck (neuer Wert fuer `emergency_boost_active`).
     """
     clamp_kwargs = dict(
@@ -625,8 +425,9 @@ def _exit_emergency_boost(manifest, ha_api, options: dict) -> bool:
     )
     if load_backup(BACKUP_PATH).get("boost_active", False):
         # Schreibt die Comfort-Boost-Werte ueber denselben (geclampten) Transition-Write
-        # wie ein frisch startender Comfort-Boost.
-        apply_boost_decision(
+        # wie ein frisch startender Comfort-Boost. Der laeuft seit Task 6 ueber die
+        # Wiederherstellungspunkt-Pruefung und kann daher ohne Schreiben False liefern.
+        written = apply_boost_decision(
             decision=BoostDecision(
                 active=True,
                 curve_value=options["boost_curve_value"],
@@ -635,7 +436,13 @@ def _exit_emergency_boost(manifest, ha_api, options: dict) -> bool:
             boost_was_active=False,
             manifest=manifest, ha_api=ha_api, **clamp_kwargs,
         )
-        logger.warning("Notfall-Boost beendet: Comfort-Boost laeuft noch, dessen Werte wiederhergestellt")
+        if written:
+            logger.warning("Notfall-Boost beendet: Comfort-Boost laeuft noch, dessen Werte wiederhergestellt")
+        else:
+            logger.warning(
+                "Notfall-Boost beendet: Comfort-Boost laeuft noch, dessen Werte konnten aber nicht "
+                "geschrieben werden (kein Wiederherstellungspunkt)"
+            )
         return False
     return apply_emergency_decision(
         decision=EmergencyBoostDecision(active=False, curve_value=None, offset_value=None),
@@ -703,28 +510,26 @@ def _notify_abo(ha_api, notify_service: str, message: str) -> None:
         logger.warning("HA-Benachrichtigung zum Abo-Status konnte nicht angelegt werden")
 
 
-def _enter_abo_inactive(failsafe_ctx: dict, write_lock, mqtt_client, ha_api, notify_service: str, now: datetime) -> None:
+def _enter_abo_inactive(failsafe_ctx: dict, mqtt_client, ha_api, notify_service: str, now: datetime) -> None:
     """Wechsel in den lokalen Abo-inaktiv-Modus: Notbetrieb an (persistiert), MQTT
     beendet, kein Snapshot/Telemetrie mehr. Meldung nur beim erstmaligen Setzen von
-    inactive_since, nicht bei jedem Neustart. mqtt_client.stop() laeuft bewusst
-    AUSSERHALB des write_lock: ein paho-Callback, der gerade auf den Lock wartet, darf
-    das Join in loop_stop() nicht blockieren."""
-    with write_lock:
-        if _abo_inactive(failsafe_ctx):
-            return
-        try:
-            since, newly_set = entitlement.mark_inactive(ENTITLEMENT_PATH, now)
-        except Exception:
-            # Final-Review Minor 4: ein Schreibfehler (z.B. defekte SD-Karte) darf den
-            # Notbetrieb nicht verhindern -- Modus nur im Speicher, Frist ab jetzt.
-            logger.exception(
-                "Abo-inaktiv-Zeitpunkt konnte nicht gespeichert werden - Abo-inaktiv-Modus "
-                "gilt nur bis zum naechsten Neustart, Frist ab jetzt"
-            )
-            since, newly_set = now, True
-        failsafe_ctx["abo_inactive_since"] = since
-        failsafe_ctx["state"] = FailsafeState(active=True, awaiting_seq=None)
-        _save_failsafe_ctx(failsafe_ctx, FAILSAFE_PATH)
+    inactive_since, nicht bei jedem Neustart. Läuft im Worker-Thread; `mqtt_client.stop()`
+    joint den paho-Thread, dessen Callbacks nur einstellen und daher nie blockieren."""
+    if _abo_inactive(failsafe_ctx):
+        return
+    try:
+        since, newly_set = entitlement.mark_inactive(ENTITLEMENT_PATH, now)
+    except Exception:
+        # Final-Review Minor 4: ein Schreibfehler (z.B. defekte SD-Karte) darf den
+        # Notbetrieb nicht verhindern -- Modus nur im Speicher, Frist ab jetzt.
+        logger.exception(
+            "Abo-inaktiv-Zeitpunkt konnte nicht gespeichert werden - Abo-inaktiv-Modus "
+            "gilt nur bis zum naechsten Neustart, Frist ab jetzt"
+        )
+        since, newly_set = now, True
+    failsafe_ctx["abo_inactive_since"] = since
+    failsafe_ctx["delivery"] = replace(failsafe_ctx["delivery"], pending=None, notbetrieb=True)
+    _persist_failsafe_ctx(failsafe_ctx)
     if mqtt_client is not None:
         try:
             mqtt_client.stop()
@@ -739,59 +544,40 @@ def _enter_abo_inactive(failsafe_ctx: dict, write_lock, mqtt_client, ha_api, not
         )
 
 
-def _make_auth_rejected_callback(tenant_id: str, failsafe_ctx: dict, write_lock, ha_api, notify_service: str):
-    """Wird von BridgeMqttClient im paho-Netzwerk-Thread aufgerufen, wenn der Broker die
-    Zugangsdaten ablehnt (Credentials beim Suspend widerrufen, hs-2). Nur ein eindeutiges
-    "inactive" wechselt in den Abo-inaktiv-Modus; sonst bleibt es beim Log und paho
-    versucht weiter zu verbinden."""
-    def _on_auth_rejected(mqtt_client) -> None:
-        status = entitlement.query_status(tenant_id, ACCOUNTS_API_BASE_URL)
-        if status != entitlement.INACTIVE:
-            logger.error(
-                "MQTT-Anmeldung vom Broker abgelehnt, Abo-Status ist aber '%s' - Zugangsdaten "
-                "pruefen (ggf. SmartHeat-Integration neu einrichten).", status,
-            )
-            return
-        _enter_abo_inactive(failsafe_ctx, write_lock, mqtt_client, ha_api, notify_service, datetime.now().astimezone())
-    return _on_auth_rejected
-
-
 def _finish_abo_grace(
-    manifest, ha_api, options: dict, failsafe_ctx: dict, write_lock, *, always_restore: bool, final_notice: bool,
+    manifest, ha_api, options: dict, failsafe_ctx: dict, *, always_restore: bool, final_notice: bool,
 ) -> bool:
     """Fristende (always_restore=True, final_notice=True) bzw. Abschluss-Start
     (always_restore=False, final_notice=False): laufende Boosts beenden und die zuletzt
     vom Server bestaetigten Werte aus backup.json geclampt auf das Geraet schreiben.
 
     Gibt True zurueck, wenn die Wiederherstellung geklappt hat (oder nichts
-    wiederherzustellen war); dann -- noch unter dem write_lock -- wird
-    failsafe_ctx["abo_finished"] gesetzt, damit ein bereits auf den Lock wartender
-    Trigger-Callback/lokaler Check danach nichts mehr schreibt (Final-Review I-1).
+    wiederherzustellen war); dann wird failsafe_ctx["abo_finished"] gesetzt, damit ein
+    danach noch verarbeiteter lokaler Check nichts mehr schreibt (Final-Review I-1).
     Scheitert das Schreiben, bleiben die Boost-Flags gesetzt, es gibt keine
     Abschlussmeldung und der Aufrufer versucht es erneut (Final-Review I-2) -- sonst
     bliebe das Geraet dauerhaft auf Boost-Werten."""
-    with write_lock:
-        backup = load_backup(BACKUP_PATH)
-        boosting = bool(backup.get("boost_active")) or bool(backup.get("emergency_boost_active"))
-        if always_restore or boosting:
-            try:
-                for role, minimum, maximum in (
-                    ("curve_current", options["curve_min"], options["curve_max"]),
-                    ("offset_current", options["offset_min"], options["offset_max"]),
-                ):
-                    if role in backup and role in manifest.entity_ids:
-                        ha_api.set_number_value(manifest.entity_ids[role], clamp(backup[role], minimum, maximum))
-            except Exception:
-                logger.exception(
-                    "Zuletzt gelernte Werte konnten nicht wiederhergestellt werden - Boost-Flags "
-                    "bleiben gesetzt, es wird erneut versucht"
-                )
-                return False
-            backup["boost_active"] = False
-            backup["emergency_boost_active"] = False
-            save_backup(BACKUP_PATH, backup)
-            failsafe_ctx["emergency_boost_active"] = False
-        failsafe_ctx["abo_finished"] = True
+    backup = load_backup(BACKUP_PATH)
+    boosting = bool(backup.get("boost_active")) or bool(backup.get("emergency_boost_active"))
+    if always_restore or boosting:
+        try:
+            for role, minimum, maximum in (
+                ("curve_current", options["curve_min"], options["curve_max"]),
+                ("offset_current", options["offset_min"], options["offset_max"]),
+            ):
+                if role in backup and role in manifest.entity_ids:
+                    ha_api.set_number_value(manifest.entity_ids[role], clamp(backup[role], minimum, maximum))
+        except Exception:
+            logger.exception(
+                "Zuletzt gelernte Werte konnten nicht wiederhergestellt werden - Boost-Flags "
+                "bleiben gesetzt, es wird erneut versucht"
+            )
+            return False
+        backup["boost_active"] = False
+        backup["emergency_boost_active"] = False
+        save_backup(BACKUP_PATH, backup)
+        failsafe_ctx["emergency_boost_active"] = False
+    failsafe_ctx["abo_finished"] = True
     if final_notice:
         _notify_abo(ha_api, options.get("notify_service", ""), ABO_ENDED_MESSAGE)
     else:
@@ -799,185 +585,475 @@ def _finish_abo_grace(
     return True
 
 
-def _run_local_check(
-    manifest, ha_api, mqtt_client, options, write_lock, boost_was_active: bool,
-    room_target: float | None, failsafe_ctx: dict | None = None,
-) -> bool:
-    """Runs one local check cycle (Design-Spec 2026-09-16, Abschnitt A): reads
-    room_actual locally from Home Assistant (no server/MQTT contact), evaluates and
-    applies the boost decision, and persists boost_active for
-    bridge.py::handle_down_message to read (Abschnitt D). Does NOT publish a full
-    snapshot itself -- see _maybe_publish_full_snapshot, called at the end of this
-    function once Task 8 wires it in. Returns the boost-active state to carry into
-    the next check. Propagates any I/O error to the caller (_run_bridge's loop),
-    which is responsible for catching and logging so a single bad check doesn't kill
-    the whole process.
+@dataclass
+class _Bridge:
+    """Laufzeit-Kontext des Regel-Workers. Wird ausschliesslich im Worker-Thread gelesen
+    und geschrieben (Design-Spec 2026-09-26, Abschnitt 1) und braucht daher keinen Lock.
+    Die volle Zustands-/Persistenzschicht (BridgeState) folgt in TP5."""
+    manifest: ChannelManifest
+    ha_api: HomeAssistantApi
+    options: dict
+    derived_entity_ids: dict
+    worker: RegulationWorker
+    failsafe_ctx: dict
+    boost_active: bool = False
+    stable_target: float | None = None
+    mqtt_client: BridgeMqttClient | None = None
+    trigger_client: HaTriggerClient | None = None
 
-    `room_target` is an explicit PARAMETER, not read live here (Design-Spec
-    2026-09-22, Stable-Target-Cache): every caller resolves it themselves, either from
-    a fresh live read (boot-priming, the room_target trigger's own callback, the
-    watchdog fallback) or from the shared cache (every other trigger). `None` means
-    the cache hasn't been populated yet (accepted boot-priming edge case, see
-    _StableTargetBox) -- treated the same as the role being unmapped, a no-op.
+
+def _local_check_interval(options: dict) -> float:
+    return options.get("local_check_interval_seconds", DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS)
+
+
+def _run_local_check(
+    manifest, ha_api, options, boost_was_active: bool, room_target: float | None, failsafe_ctx: dict | None = None,
+) -> bool:
+    """Ein lokaler Boost-/Notfall-Boost-Durchlauf (Design-Spec 2026-09-16, Abschnitt A):
+    liest room_actual lokal, wertet Comfort- und Notfall-Boost aus und persistiert
+    boost_active fuer bridge.py::handle_down_message (Abschnitt D). Publiziert selbst
+    nichts -- ob ein Tick faellig ist, entscheidet danach _maybe_start_tick
+    (Design-Spec 2026-09-26). Gibt den Boost-Zustand fuer den naechsten Check zurueck;
+    I/O-Fehler gehen an den Aufrufer (Worker-Handler), der sie loggt.
+
+    `room_target` ist ein PARAMETER (Stable-Target-Cache, Design-Spec 2026-09-22), jeder
+    Aufrufer liest ihn selbst live oder aus dem Cache. `None` heisst: Cache noch nicht
+    befuellt -- wie eine ungemappte Rolle ein No-Op.
     """
     if "room_actual" not in manifest.entity_ids or "room_target" not in manifest.entity_ids:
         return boost_was_active
     if room_target is None:
-        # Whole-Branch-Review Important #2 (final-review-report.md): sichtbar machen,
-        # falls der Stable-Target-Cache noch nie befuellt wurde -- ohne dieses Log sieht
-        # ein leerer Check (kein Boost-Eval, kein Snapshot) im Log genauso aus wie ein
-        # regulaerer No-Op.
+        # Whole-Branch-Review Important #2: sichtbar machen, falls der Cache nie befuellt wurde.
         logger.warning("Lokaler Check uebersprungen: Stable-Target-Cache noch nicht befuellt (room_target=None)")
+        return boost_was_active
+    if _abo_finished(failsafe_ctx):
+        # Final-Review I-1: nach abgeschlossener Abo-Frist darf kein Check mehr schreiben.
         return boost_was_active
 
     room_actual = ha_api.get_state(manifest.entity_ids["room_actual"])
+    backup = load_backup(BACKUP_PATH)
+    previous_room_target = backup.get("last_room_target")
 
-    with write_lock:
-        if _abo_finished(failsafe_ctx):
-            # Final-Review I-1: ein Check, der schon vor dem Fristende-Abschluss auf den
-            # Lock gewartet hat, darf die gerade wiederhergestellten Werte nicht wieder
-            # mit einem Notfall-/Comfort-Boost ueberschreiben.
-            return boost_was_active
-        backup = load_backup(BACKUP_PATH)
-        previous_room_target = backup.get("last_room_target")
+    decision = decide_boost(
+        room_actual=room_actual,
+        room_target=room_target,
+        previous_room_target=previous_room_target,
+        boost_was_active=boost_was_active,
+        arrival_threshold_k=options.get("boost_threshold_k", 0.5),
+        boost_curve_value=options["boost_curve_value"],
+        boost_offset_value=options["boost_offset_value"],
+    )
 
-        decision = decide_boost(
-            room_actual=room_actual,
-            room_target=room_target,
-            previous_room_target=previous_room_target,
+    now_epoch = time.time()
+    raw_history = backup.get("target_history", [])
+    history = sanitize_history(raw_history)
+    if history != raw_history:
+        logger.warning(
+            "target_history in Backup war ungueltig (%r) - wird als leer behandelt und neu aufgebaut.",
+            raw_history,
+        )
+    updated_history = record_change(history, now_epoch, room_target)
+
+    if failsafe_ctx is not None and failsafe_ctx["emergency_boost_active"]:
+        # Praezedenz Notfall- vor Comfort-Boost (Design-Spec 2026-09-23, Abschnitt 3;
+        # Final-Review-Fund I2 a): haelt der Notfall-Boost das Geraet bereits (aus
+        # einem frueheren Tick), fuehrt der Comfort-Boost nur seinen eigenen State
+        # weiter und schreibt NICHT live -- apply_boost_decision schreibt nur bei
+        # einem Zustandswechsel, und der Notfall-Block unten schreibt im
+        # Dauerzustand gar nicht, ein Comfort-Transition-Write wuerde die Maximalwerte
+        # also sonst unbemerkt ueberschreiben. Endet der Notfall-Boost (in diesem
+        # oder einem spaeteren Tick), setzt _exit_emergency_boost das Geraet anhand
+        # des dann aktuellen `boost_active` korrekt. `decision.active` ist exakt der
+        # Rueckgabewert, den apply_boost_decision geliefert haette.
+        boost_was_active = decision.active
+    else:
+        boost_was_active = apply_boost_decision(
+            decision=decision,
             boost_was_active=boost_was_active,
-            arrival_threshold_k=options.get("boost_threshold_k", 0.5),
-            boost_curve_value=options["boost_curve_value"],
-            boost_offset_value=options["boost_offset_value"],
+            manifest=manifest,
+            ha_api=ha_api,
+            curve_min=options["curve_min"],
+            curve_max=options["curve_max"],
+            offset_min=options["offset_min"],
+            offset_max=options["offset_max"],
+            backup_path=BACKUP_PATH,
         )
 
-        now_epoch = time.time()
-        raw_history = backup.get("target_history", [])
-        history = sanitize_history(raw_history)
-        if history != raw_history:
-            logger.warning(
-                "target_history in Backup war ungueltig (%r) - wird als leer behandelt und neu aufgebaut.",
-                raw_history,
+    # B5 (Design-Spec 2026-09-26, Abschnitt 3): wurde ein Comfort-Boost mangels
+    # Wiederherstellungspunkt ausgesetzt, bleibt der alte Sollwert gemerkt, damit der
+    # naechste Check die Erhoehung erneut sieht und es noch einmal versucht.
+    boost_refused = decision.active and not boost_was_active
+    remembered_target = previous_room_target if boost_refused else room_target
+    # I/O-Fix (Abschnitt A.2): nur schreiben, wenn sich etwas geaendert hat. Frisch laden:
+    # apply_boost_decision kann gerade einen Wiederherstellungspunkt gesichert haben.
+    if remembered_target != previous_room_target or updated_history != history:
+        backup = load_backup(BACKUP_PATH)
+        backup["last_room_target"] = remembered_target
+        backup["target_history"] = updated_history
+        save_backup(BACKUP_PATH, backup)
+    _save_boost_active_if_changed(boost_was_active, BACKUP_PATH)
+
+    if failsafe_ctx is not None:
+        if failsafe_ctx["delivery"].notbetrieb:
+            emergency_decision = decide_emergency_boost(
+                room_actual=room_actual, room_target=room_target,
+                emergency_was_active=failsafe_ctx["emergency_boost_active"],
+                exit_threshold_k=options.get("boost_threshold_k", 0.5),
+                max_curve_value=options["curve_max"], max_offset_value=options["offset_max"],
             )
-        updated_history = record_change(history, now_epoch, room_target)
-        target_avg = time_weighted_mean(updated_history, now_epoch)
-
-        if failsafe_ctx is not None and failsafe_ctx["emergency_boost_active"]:
-            # Praezedenz Notfall- vor Comfort-Boost (Design-Spec 2026-09-23, Abschnitt 3;
-            # Final-Review-Fund I2 a): haelt der Notfall-Boost das Geraet bereits (aus
-            # einem frueheren Tick), fuehrt der Comfort-Boost nur seinen eigenen State
-            # weiter und schreibt NICHT live -- apply_boost_decision schreibt nur bei
-            # einem Zustandswechsel, und der Notfall-Block unten schreibt im
-            # Dauerzustand gar nicht, ein Comfort-Transition-Write wuerde die Maximalwerte
-            # also sonst unbemerkt ueberschreiben. Endet der Notfall-Boost (in diesem
-            # oder einem spaeteren Tick), setzt _exit_emergency_boost das Geraet anhand
-            # des dann aktuellen `boost_active` korrekt. `decision.active` ist exakt der
-            # Rueckgabewert, den apply_boost_decision geliefert haette.
-            boost_was_active = decision.active
-        else:
-            boost_was_active = apply_boost_decision(
-                decision=decision,
-                boost_was_active=boost_was_active,
-                manifest=manifest,
-                ha_api=ha_api,
-                curve_min=options["curve_min"],
-                curve_max=options["curve_max"],
-                offset_min=options["offset_min"],
-                offset_max=options["offset_max"],
-                backup_path=BACKUP_PATH,
-            )
-
-        # B5 (Design-Spec 2026-09-26, Abschnitt 3): wurde ein Comfort-Boost mangels
-        # Wiederherstellungspunkt ausgesetzt, bleibt der alte Sollwert gemerkt, damit der
-        # naechste Check die Erhoehung erneut sieht und es noch einmal versucht.
-        boost_refused = decision.active and not boost_was_active
-        remembered_target = previous_room_target if boost_refused else room_target
-        # I/O-Fix (Abschnitt A.2): nur schreiben, wenn sich der Wert tatsaechlich
-        # geaendert hat -- bei local_check_interval_seconds=30 sonst bis zu 2.880
-        # SD-Karten-Schreibvorgaenge/Tag statt vorher 24. Frisch laden:
-        # apply_boost_decision kann gerade einen Wiederherstellungspunkt in backup.json
-        # gesichert haben.
-        if remembered_target != previous_room_target or updated_history != history:
-            backup = load_backup(BACKUP_PATH)
-            backup["last_room_target"] = remembered_target
-            backup["target_history"] = updated_history
-            save_backup(BACKUP_PATH, backup)
-        _save_boost_active_if_changed(boost_was_active, BACKUP_PATH)
-
-        if failsafe_ctx is not None:
-            if failsafe_ctx["state"].active:
-                emergency_decision = decide_emergency_boost(
-                    room_actual=room_actual, room_target=room_target,
-                    emergency_was_active=failsafe_ctx["emergency_boost_active"],
-                    exit_threshold_k=options.get("boost_threshold_k", 0.5),
-                    max_curve_value=options["curve_max"], max_offset_value=options["offset_max"],
-                )
-                if failsafe_ctx["emergency_boost_active"] and not emergency_decision.active:
-                    failsafe_ctx["emergency_boost_active"] = _exit_emergency_boost(manifest, ha_api, options)
-                else:
-                    failsafe_ctx["emergency_boost_active"] = apply_emergency_decision(
-                        decision=emergency_decision,
-                        emergency_was_active=failsafe_ctx["emergency_boost_active"],
-                        manifest=manifest, ha_api=ha_api,
-                        curve_min=options["curve_min"], curve_max=options["curve_max"],
-                        offset_min=options["offset_min"], offset_max=options["offset_max"],
-                        backup_path=BACKUP_PATH,
-                    )
-                _save_emergency_active_if_changed(failsafe_ctx["emergency_boost_active"], BACKUP_PATH)
+            if failsafe_ctx["emergency_boost_active"] and not emergency_decision.active:
+                failsafe_ctx["emergency_boost_active"] = _exit_emergency_boost(manifest, ha_api, options)
             else:
-                _end_emergency_boost_if_active(failsafe_ctx, manifest, ha_api, options)
-
-        if _abo_inactive(failsafe_ctx):
-            # Abo-inaktiv-Modus: nur lokale Boost-/Notfall-Logik, kein Server-Kontakt.
-            return boost_was_active
-
-        seq = _maybe_publish_full_snapshot(
-            manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options=options,
-            room_target=room_target, notify_service=options.get("notify_service", ""), now=datetime.now(),
-            target_avg=target_avg,
-        )
-        if seq is not None and failsafe_ctx is not None:
-            failsafe_ctx["state"] = register_publish_attempt(failsafe_ctx["state"], seq)
-            _schedule_ack_timeout(
-                seq=seq, failsafe_ctx=failsafe_ctx, mqtt_client=mqtt_client,
-                failsafe_path=FAILSAFE_PATH, write_lock=write_lock,
-                ha_api=ha_api, notify_service=options.get("notify_service", ""),
-                tenant_id=options.get("tenant_id"),
-            )
+                failsafe_ctx["emergency_boost_active"] = apply_emergency_decision(
+                    decision=emergency_decision,
+                    emergency_was_active=failsafe_ctx["emergency_boost_active"],
+                    manifest=manifest, ha_api=ha_api,
+                    curve_min=options["curve_min"], curve_max=options["curve_max"],
+                    offset_min=options["offset_min"], offset_max=options["offset_max"],
+                    backup_path=BACKUP_PATH,
+                )
+            _save_emergency_active_if_changed(failsafe_ctx["emergency_boost_active"], BACKUP_PATH)
+        else:
+            _end_emergency_boost_if_active(failsafe_ctx, manifest, ha_api, options)
 
     return boost_was_active
 
 
-def _run_telemetry_tick(
-    manifest, ha_api, mqtt_client, options: dict, boost_active: bool, failsafe_active: bool,
-) -> None:
-    """Publishes the KPI telemetry snapshot on its own cadence, independent of whether
-    `_run_local_check` ran this tick (Design-Spec 2026-09-21: telemetry stays a
-    periodic, non-eventified watchdog-loop concern -- see spec's Watchdog-Loop
-    section -- now that `_run_local_check` itself only runs on trigger events or the
-    disconnected-fallback, not on every watchdog tick). Reads room_actual itself: a
-    plain local HA REST call, not a cloud roundtrip, so doing it unconditionally here
-    is cheap. `_maybe_publish_telemetry` still self-throttles via its own interval
-    marker, so most calls to this function are no-ops.
+def _claim_due_tick(options: dict, room_target: float, now: datetime) -> str | None:
+    """Entscheidet, ob ein neuer Tick faellig ist -- room_target seit dem letzten Tick
+    geaendert ("target_change") oder daily_trigger_time heute erstmals erreicht
+    ("daily"), Design-Spec 2026-09-16 Abschnitt A.3/B -- und bucht ihn sofort in
+    backup.json. last_published_target_rt/last_daily_trigger_date werden beim ENTSTEHEN
+    des Ticks gesetzt, nicht erst beim Publish (Design-Spec 2026-09-26, Abschnitt 2
+    "Buchhaltung"): ein wegen Datenfehler zurueckgehaltener Tick erzeugt keine
+    Duplikate, seine Wiederholungen laufen ueber die Zustellung.
+
+    Eine einfache "Uhrzeit erreicht, heute noch nicht gefeuert"-Pruefung genuegt: bei
+    verbundenem HaTriggerClient loest dessen `time`-Trigger genau zu daily_trigger_time
+    einen lokalen Check aus, bei getrennter Verbindung tut es spaetestens das naechste
+    Watchdog-Ereignis (alle local_check_interval_seconds, max. 3600 s).
     """
+    backup = load_backup(BACKUP_PATH)
+    today = now.date().isoformat()
+
+    daily_trigger_time = options.get("daily_trigger_time")
+    daily_due = False
+    if daily_trigger_time:
+        trigger_time = datetime.strptime(daily_trigger_time, "%H:%M").time()
+        daily_due = now.time() >= trigger_time and backup.get("last_daily_trigger_date") != today
+
+    target_changed = room_target != backup.get("last_published_target_rt")
+    if not (daily_due or target_changed):
+        return None
+
+    backup["last_published_target_rt"] = room_target
+    if daily_due:
+        backup["last_daily_trigger_date"] = today
+    save_backup(BACKUP_PATH, backup)
+    return "target_change" if target_changed else "daily"
+
+
+def _maybe_start_tick(bridge: _Bridge, now: datetime) -> None:
+    if _abo_inactive(bridge.failsafe_ctx) or bridge.stable_target is None:
+        return
+    trigger = _claim_due_tick(bridge.options, bridge.stable_target, now)
+    if trigger is not None:
+        _deliver(bridge, delivery.TickDue(seq=str(uuid.uuid4()), trigger=trigger))
+
+
+def _deliver(bridge: _Bridge, event) -> None:
+    """Fuehrt ein Zustell-Ereignis durch delivery.step und dessen Aktionen aus. Aktionen
+    mit Ergebnis (attempt, Abo-Abfrage) speisen es als neues Ereignis zurueck.
+    Persistiert nur, wenn sich der dauerhafte Teil des Zustands aendert (SD-Karte)."""
+    pending_events = [event]
+    while pending_events:
+        current = pending_events.pop(0)
+        before = bridge.failsafe_ctx["delivery"]
+        after, actions = delivery.step(before, current)
+        bridge.failsafe_ctx["delivery"] = after
+        if delivery.to_persisted(after) != delivery.to_persisted(before):
+            _persist_failsafe_ctx(bridge.failsafe_ctx)
+        for action in actions:
+            try:
+                follow_up = _execute_delivery_action(bridge, action)
+            except Exception:
+                logger.exception("Zustell-Aktion %r fehlgeschlagen", action)
+                follow_up = _fallback_follow_up(action)
+            if follow_up is not None:
+                pending_events.append(follow_up)
+
+
+def _fallback_follow_up(action):
+    """Ergebnis-Ereignis fuer eine unerwartet gescheiterte Aktion mit Ergebnis: ohne
+    Rueckmeldung bliebe der offene Tick ohne Zeitplaneintrag haengen (Review Focus 2).
+    Ein gescheiterter attempt zaehlt wie ein Publish ohne Antwort (der Ack-Timeout plant
+    den naechsten Versuch), eine gescheiterte Abo-Abfrage wie "unbekannt" (fail-open)."""
+    if isinstance(action, delivery.Attempt):
+        return delivery.Published(seq=action.seq)
+    if isinstance(action, delivery.QueryEntitlement):
+        return delivery.EntitlementChecked(seq=action.seq, status=entitlement.UNKNOWN)
+    return None
+
+
+def _execute_delivery_action(bridge: _Bridge, action):
+    if isinstance(action, delivery.Attempt):
+        return _attempt(bridge, action.seq, action.trigger)
+    if isinstance(action, delivery.QueryEntitlement):
+        status = entitlement.query_status(bridge.options["tenant_id"], ACCOUNTS_API_BASE_URL)
+        return delivery.EntitlementChecked(seq=action.seq, status=status)
+    if isinstance(action, delivery.ScheduleAckTimeout):
+        bridge.worker.schedule(action.delay_s, Event(EV_ACK_TIMEOUT, {"seq": action.seq, "gen": action.gen}))
+    elif isinstance(action, delivery.ScheduleRetry):
+        bridge.worker.schedule(action.delay_s, Event(EV_RETRY_DUE, {"seq": action.seq, "gen": action.gen}))
+    elif isinstance(action, delivery.EnterAboInactive):
+        _enter_abo_inactive(
+            bridge.failsafe_ctx, bridge.mqtt_client, bridge.ha_api,
+            bridge.options.get("notify_service", ""), datetime.now().astimezone(),
+        )
+    elif isinstance(action, delivery.Notify):
+        _notify_delivery(bridge, action)
+    elif isinstance(action, delivery.PublishFailsafe):
+        if bridge.mqtt_client is not None:
+            bridge.mqtt_client.publish_status("failsafe", delivery.build_state_payload(action.active))
+    elif isinstance(action, delivery.EndEmergencyBoost):
+        _end_emergency_boost_if_active(bridge.failsafe_ctx, bridge.manifest, bridge.ha_api, bridge.options)
+    else:
+        raise TypeError(f"Unbekannte Zustell-Aktion: {action!r}")
+    return None
+
+
+def _attempt(bridge: _Bridge, seq: str, trigger: str):
+    """attempt (Design-Spec 2026-09-26, Abschnitt 2): Pflichtrollen und room_actual frisch
+    lesen; bei ungueltigem Wert kein Publish (ReadInvalid), sonst den Snapshot mit dieser
+    seq publizieren (Published). Darf die Retry-Kette nie abreissen lassen: auch ein
+    Publish-Fehler meldet Published, der Ack-Timeout plant dann den naechsten Versuch."""
+    read = read_snapshot_roles(
+        bridge.manifest, bridge.ha_api, computed_values={"room_target_avg_24h": _current_target_avg()},
+    )
+    if read.invalid_roles:
+        logger.warning("Snapshot (seq=%s) zurueckgehalten, ungueltige Werte: %s", seq, ", ".join(read.invalid_roles))
+        return delivery.ReadInvalid(seq=seq, roles=read.invalid_roles)
+    try:
+        publish_snapshot(bridge.mqtt_client, seq=seq, trigger=trigger, roles=read.roles)
+        logger.info("Voller Snapshot veroeffentlicht (seq=%s, trigger=%s)", seq, trigger)
+    except Exception:
+        logger.exception("Snapshot (seq=%s) konnte nicht veroeffentlicht werden - Retry nach dem Ack-Timeout", seq)
+    return delivery.Published(seq=seq)
+
+
+def _current_target_avg() -> float | None:
+    """Zeitgewichtetes 24-h-Mittel des Sollwerts (room_target_avg_24h) aus backup.json."""
+    try:
+        history = sanitize_history(load_backup(BACKUP_PATH).get("target_history", []))
+        return time_weighted_mean(history, time.time())
+    except Exception as error:
+        logger.warning("Sollwert-Mittel nicht berechenbar, wird weggelassen: %s", error)
+        return None
+
+
+def _notify_delivery(bridge: _Bridge, action) -> None:
+    text = delivery.notification_text(action.kind, action.detail, bridge.manifest.entity_ids)
+    logger.warning(text)
+    notify_service = bridge.options.get("notify_service", "")
+    if notify_service:
+        try:
+            bridge.ha_api.send_notification(notify_service, text)
+        except Exception:
+            logger.warning("Push-Benachrichtigung (%s) konnte nicht gesendet werden", action.kind)
+
+
+def _on_local_check(bridge: _Bridge, event: Event) -> None:
+    """Lokaler Check (Design-Spec 2026-09-26, Abschnitt 1): bei room_target_fired den
+    Stable-Target-Cache frisch lesen, dann Boost-/Notfall-Boost-Logik, dann "Tick
+    faellig?". Beide Teile sind getrennt abgesichert: ein toter room_actual-Fuehler laesst
+    den Boost-Teil scheitern, darf aber einen Tick nicht verhindern -- dessen attempt
+    meldet den Fuehler dann als Datenfehler."""
+    if _abo_finished(bridge.failsafe_ctx):
+        return
+    if event.data.get("room_target_fired"):
+        try:
+            bridge.stable_target = _read_room_target_live(bridge.manifest, bridge.ha_api)
+            logger.info("Stable-Target-Cache aktualisiert: room_target=%s", bridge.stable_target)
+        except Exception as error:
+            logger.warning("room_target nicht lesbar, Stable-Target-Cache bleibt bei %s: %s", bridge.stable_target, error)
+    try:
+        bridge.boost_active = _run_local_check(
+            bridge.manifest, bridge.ha_api, bridge.options, bridge.boost_active,
+            room_target=bridge.stable_target, failsafe_ctx=bridge.failsafe_ctx,
+        )
+    except Exception:
+        logger.exception("Fehler im lokalen Check (Boost/Notfall-Boost), wird beim naechsten Ereignis erneut versucht")
+    _maybe_start_tick(bridge, datetime.now())
+
+
+def _on_setpoints(bridge: _Bridge, event: Event) -> None:
+    """Server-Antwort (Schema 2). Zaehlt nur fuer den offenen Tick (delivery.accepts_ack),
+    auch verspaetet. Bei ok/skipped_summer mit gueltigen Werten werden diese VOR dem Ack
+    geschrieben (geclampt, Boost-Sperre ueber backup.json); scheitert das Schreiben, gibt es
+    keinen Ack -- Ack-Timeout und Retry mit derselben seq holen die Werte erneut, der
+    Server antwortet idempotent. Unbekannter Status oder ungueltige Werte zaehlen als
+    Datenfehler vom Server (Bewusste Abweichung 5)."""
+    payload = event.data["payload"]
+    seq = payload.get("seq")
+    state = bridge.failsafe_ctx["delivery"]
+    if not delivery.accepts_ack(state, seq):
+        expected = state.pending.seq if state.pending is not None else None
+        logger.info("Setpoints-Antwort mit seq=%r ignoriert (erwartet: %r)", seq, expected)
+        return
+
+    status = payload.get("status")
+    curve, offset = payload.get("curve"), payload.get("offset")
+    if status in _SETPOINT_STATUSES_WITH_VALUES and _is_finite_number(curve) and _is_finite_number(offset):
+        options = bridge.options
+        for role, value in (("curve_current", curve), ("offset_current", offset)):
+            if role in bridge.manifest.entity_ids:
+                handle_down_message(
+                    role=role, value=value, manifest=bridge.manifest, ha_api=bridge.ha_api,
+                    curve_min=options["curve_min"], curve_max=options["curve_max"],
+                    offset_min=options["offset_min"], offset_max=options["offset_max"],
+                    backup_path=BACKUP_PATH,
+                )
+        _deliver(bridge, delivery.Ack(seq=seq, status=status))
+    elif status == delivery.STATUS_REJECTED:
+        reason = payload.get("reason")
+        reason = reason if isinstance(reason, str) and reason else None
+        logger.warning("Server hat Snapshot (seq=%s) abgelehnt: %s", seq, reason)
+        _deliver(bridge, delivery.Ack(seq=seq, status=delivery.STATUS_REJECTED, reason=reason))
+    else:
+        reason = f"ungültige Serverantwort (status={status!r}, curve={curve!r}, offset={offset!r})"
+        logger.warning("Setpoints-Antwort (seq=%s): %s - nichts geschrieben", seq, reason)
+        _deliver(bridge, delivery.Ack(seq=seq, status=delivery.STATUS_REJECTED, reason=reason))
+
+
+def _on_ack_timeout(bridge: _Bridge, event: Event) -> None:
+    _deliver(bridge, delivery.AckTimeout(seq=event.data["seq"], gen=event.data["gen"]))
+
+
+def _on_retry_due(bridge: _Bridge, event: Event) -> None:
+    _deliver(bridge, delivery.RetryDue(seq=event.data["seq"], gen=event.data["gen"]))
+
+
+def _on_auth_rejected(bridge: _Bridge, event: Event) -> None:
+    """Der Broker hat die Zugangsdaten abgelehnt (Credentials beim Suspend widerrufen,
+    hs-2). Nur ein eindeutiges "inactive" wechselt in den Abo-inaktiv-Modus; sonst bleibt
+    es beim Log und paho versucht weiter zu verbinden. Die Abfrage blockiert den Worker
+    bis zu 10 s -- akzeptiert (Design-Spec 2026-09-26, Abschnitt 1)."""
+    status = entitlement.query_status(bridge.options["tenant_id"], ACCOUNTS_API_BASE_URL)
+    if status != entitlement.INACTIVE:
+        logger.error(
+            "MQTT-Anmeldung vom Broker abgelehnt, Abo-Status ist aber '%s' - Zugangsdaten "
+            "pruefen (ggf. SmartHeat-Integration neu einrichten).", status,
+        )
+        return
+    _enter_abo_inactive(
+        bridge.failsafe_ctx, bridge.mqtt_client, bridge.ha_api,
+        bridge.options.get("notify_service", ""), datetime.now().astimezone(),
+    )
+
+
+def _on_watchdog(bridge: _Bridge, event: Event) -> None:
+    """Fallback bei getrennter WS-Verbindung (Design-Spec 2026-09-21/22): Cache frisch und
+    undebounced lesen, dann lokaler Check. Bei verbundenem Client tut er nichts."""
+    bridge.worker.schedule(_local_check_interval(bridge.options), Event(EV_WATCHDOG))
+    if bridge.trigger_client is None or not bridge.trigger_client.connected:
+        bridge.worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=True)
+
+
+def _on_telemetry(bridge: _Bridge, event: Event) -> None:
+    bridge.worker.schedule(
+        bridge.options.get("telemetry_interval_seconds", DEFAULT_TELEMETRY_INTERVAL_SECONDS), Event(EV_TELEMETRY),
+    )
+    if _abo_inactive(bridge.failsafe_ctx) or bridge.mqtt_client is None:
+        return
+    _run_telemetry_tick(
+        bridge.manifest, bridge.ha_api, bridge.mqtt_client,
+        boost_active=bridge.boost_active, failsafe_active=bridge.failsafe_ctx["delivery"].notbetrieb,
+    )
+
+
+def _on_daynight(bridge: _Bridge, event: Event) -> None:
+    bridge.worker.schedule(_local_check_interval(bridge.options), Event(EV_DAYNIGHT))
+    daynight_snapshot.maybe_snapshot(
+        ha_api=bridge.ha_api,
+        room_12h_avg_entity_id=bridge.derived_entity_ids["_room_12h_avg"],
+        day_avg_entity_id=bridge.derived_entity_ids["room_day_avg"],
+        night_avg_entity_id=bridge.derived_entity_ids["room_night_avg"],
+        day_avg_window_end=bridge.options["day_avg_window_end"],
+        night_avg_window_end=bridge.options["night_avg_window_end"],
+        state_path=DAYNIGHT_SNAPSHOT_PATH,
+        now=datetime.now(),
+    )
+
+
+def _on_grace_check(bridge: _Bridge, event: Event) -> None:
+    """Abo-Fristende waehrend der Laufzeit (Final-Review I-1/I-2): erst wiederherstellen,
+    dann den Trigger-Client stoppen und den Worker mit Exit 0 beenden. Scheitert die
+    Wiederherstellung, laeuft die lokale Regelung weiter und der naechste Check versucht
+    es erneut."""
+    bridge.worker.schedule(_local_check_interval(bridge.options), Event(EV_GRACE_CHECK))
+    if not _abo_grace_expired(bridge.failsafe_ctx):
+        return
+    if _finish_abo_grace(
+        bridge.manifest, bridge.ha_api, bridge.options, bridge.failsafe_ctx, always_restore=True, final_notice=True,
+    ):
+        if bridge.trigger_client is not None:
+            bridge.trigger_client.stop()
+        bridge.worker.request_exit(0)
+        return
+    logger.error(
+        "Abo-inaktiv-Frist abgelaufen, zuletzt gelernte Werte konnten nicht wiederhergestellt "
+        "werden - Notbetrieb laeuft weiter, erneuter Versuch beim naechsten Check"
+    )
+
+
+def _register_handlers(bridge: _Bridge) -> None:
+    handlers = {
+        EV_LOCAL_CHECK: _on_local_check,
+        EV_SETPOINTS: _on_setpoints,
+        EV_AUTH_REJECTED: _on_auth_rejected,
+        EV_ACK_TIMEOUT: _on_ack_timeout,
+        EV_RETRY_DUE: _on_retry_due,
+        EV_WATCHDOG: _on_watchdog,
+        EV_TELEMETRY: _on_telemetry,
+        EV_DAYNIGHT: _on_daynight,
+        EV_GRACE_CHECK: _on_grace_check,
+    }
+    for kind, handler in handlers.items():
+        bridge.worker.register(kind, functools.partial(handler, bridge))
+
+
+def _run_telemetry_tick(manifest, ha_api, mqtt_client, boost_active: bool, failsafe_active: bool) -> None:
+    """Publiziert den KPI-Telemetrie-Snapshot (Design-Spec 2026-09-16 KPI-Erfassung). Den
+    Takt (telemetry_interval_seconds) gibt der Planeintrag EV_TELEMETRY vor (Design-Spec
+    2026-09-26); eine eigene Drosselung gibt es nicht mehr (Bewusste Abweichung 15).
+    Liest room_actual selbst -- ein lokaler HA-REST-Aufruf, kein Cloud-Roundtrip."""
     if "room_actual" not in manifest.entity_ids:
         return
     try:
         room_actual = ha_api.get_state(manifest.entity_ids["room_actual"])
-        now = time.time()
-        if not _telemetry_publish_due(options, now):
-            return
-        # Optional KPI entities are read only when a publish is actually due, so
-        # throttled ticks stay cheap.
-        _maybe_publish_telemetry(
-            mqtt_client=mqtt_client, options=options, room_actual=room_actual,
-            boost_active=boost_active, failsafe_active=failsafe_active, now=now,
+        _publish_telemetry(
+            mqtt_client=mqtt_client, room_actual=room_actual,
+            boost_active=boost_active, failsafe_active=failsafe_active,
             kpi_fields=_read_kpi_fields(manifest, ha_api),
         )
     except Exception:
         logger.exception(
             "Fehler beim Veroeffentlichen der KPI-Telemetrie, wird beim naechsten Tick erneut versucht"
         )
+
+
+def _publish_telemetry(
+    mqtt_client, room_actual: float, boost_active: bool, failsafe_active: bool, kpi_fields: dict | None = None,
+) -> None:
+    """Nicht retained, nur QoS 1 (siehe BridgeMqttClient.publish_telemetry): reine
+    KPI-Beobachtung ohne Einfluss auf curve.py oder eine Regelentscheidung."""
+    mqtt_client.publish_telemetry({
+        "room_actual": room_actual,
+        "boost_active": boost_active,
+        "failsafe_active": failsafe_active,
+        "ts": datetime.now().isoformat(),
+        **(kpi_fields or {}),
+    })
 
 
 def _read_kpi_fields(manifest, ha_api) -> dict:
@@ -1020,117 +1096,6 @@ def _read_kpi_fields(manifest, ha_api) -> dict:
     return kpi_fields
 
 
-def _maybe_publish_full_snapshot(
-    manifest, ha_api, mqtt_client, options: dict, room_target: float, notify_service: str, now: datetime,
-    target_avg: float | None = None,
-) -> str | None:
-    """Triggers a full snapshot publish (curve.py recompute server-side) when target_rt
-    has changed since the last publish, or the profile's daily_trigger_time has been
-    reached for the first time today -- Design-Spec 2026-09-16, Abschnitt A.3/B. Called
-    from inside _run_local_check's write_lock block, after the boost decision, so a
-    triggered snapshot always carries the just-updated boost_active state (Abschnitt D).
-
-    Unlike daynight_snapshot.maybe_snapshot's boundary-crossing-since-last-check
-    algorithm, a simple "time of day already past, not yet fired today" check is
-    correct here for a different reason since Design-Spec 2026-09-21: while
-    HaTriggerClient is connected, its own `time`-platform trigger fires this path
-    exactly once at daily_trigger_time, regardless of local_check_interval_seconds.
-    While disconnected, the watchdog loop's fallback still calls this at least every
-    local_check_interval_seconds (now up to 3600s, see _validate_local_check_interval),
-    so the daily boundary is still caught within one fallback tick even in that case.
-    """
-    backup = load_backup(BACKUP_PATH)
-    today = now.date().isoformat()
-
-    daily_trigger_time = options.get("daily_trigger_time")
-    daily_due = False
-    if daily_trigger_time:
-        trigger_time = datetime.strptime(daily_trigger_time, "%H:%M").time()
-        daily_due = now.time() >= trigger_time and backup.get("last_daily_trigger_date") != today
-
-    target_changed = room_target != backup.get("last_published_target_rt")
-
-    if not (daily_due or target_changed):
-        return None
-
-    trigger = "target_change" if target_changed else "daily"
-    seq = str(uuid.uuid4())
-    read = read_snapshot_roles(manifest, ha_api, computed_values={"room_target_avg_24h": target_avg})
-    publish_snapshot(mqtt_client, seq=seq, trigger=trigger, roles=read.roles)
-    logger.info(
-        "Voller Snapshot veroeffentlicht (seq=%s, trigger=%s)",
-        seq, trigger,
-    )
-
-    backup["last_published_target_rt"] = room_target
-    if daily_due:
-        backup["last_daily_trigger_date"] = today
-    save_backup(BACKUP_PATH, backup)
-    return seq
-
-
-def _telemetry_publish_due(options: dict, now: float) -> bool:
-    interval = options.get("telemetry_interval_seconds", DEFAULT_TELEMETRY_INTERVAL_SECONDS)
-    return _last_telemetry_publish_ts is None or (now - _last_telemetry_publish_ts) >= interval
-
-
-def _maybe_publish_telemetry(
-    mqtt_client, options: dict, room_actual: float, boost_active: bool,
-    failsafe_active: bool, now: float, kpi_fields: dict | None = None,
-) -> None:
-    """Publishes the KPI telemetry snapshot (Design-Spec 2026-09-16 KPI-Erfassung,
-    Abschnitt 1) on its own interval (telemetry_interval_seconds, default 300s) --
-    decoupled from local_check_interval_seconds (would flood the server with a write
-    every 30-60s again) and from the now-daily/event-driven full snapshot (would make
-    comfort/boost KPIs too coarse-grained). Not retained, QoS 1 only (see
-    BridgeMqttClient.publish_telemetry): this topic feeds only observational KPI
-    reporting and has no influence on curve.py or any control decision. The cadence
-    marker is in-memory only (see `_last_telemetry_publish_ts`), not persisted.
-    """
-    global _last_telemetry_publish_ts
-    if not _telemetry_publish_due(options, now):
-        return
-
-    mqtt_client.publish_telemetry({
-        "room_actual": room_actual,
-        "boost_active": boost_active,
-        "failsafe_active": failsafe_active,
-        "ts": datetime.now().isoformat(),
-        **(kpi_fields or {}),
-    })
-
-    _last_telemetry_publish_ts = now
-
-
-class _BoostStateBox:
-    """Mutable box for the shared `boost_was_active` flag, so the main watchdog-loop
-    thread and HaTriggerClient's callback thread can read-modify-write it while both
-    hold the same (now reentrant) `write_lock`, instead of each tracking its own local
-    copy -- which raced once more than one thread could call `_run_local_check`
-    (Design-Spec 2026-09-21, Risiko 2). `_run_local_check` itself is unchanged; only
-    the call sites coordinate through this box.
-    """
-    def __init__(self, active: bool) -> None:
-        self.active = active
-
-
-class _StableTargetBox:
-    """Mutable box for the in-memory `room_target` stable-value cache (Design-Spec
-    2026-09-22, "Stable-Target-Cache"). Shared, like `_BoostStateBox` above, between
-    the main watchdog-loop thread and HaTriggerClient's callback thread under the same
-    `write_lock`. Holds the last room_target value confirmed stable for
-    ROOM_TARGET_DEBOUNCE_SECONDS -- refreshed only when the debounced room_target
-    trigger itself fires (_make_trigger_event_callback), or by the deliberately
-    undebounced watchdog fallback/boot-priming live reads. Every other
-    _run_local_check call (room_actual trigger, daily_trigger_time trigger) reuses
-    this cached value instead of re-reading room_target live, closing the gap where a
-    stray event during the 10s stabilization window could otherwise still act on a
-    non-final value for both boost start/end and the curve snapshot.
-    """
-    def __init__(self, value: float | None) -> None:
-        self.value = value
-
-
 def _strip_attribute_suffix(entity_id: str) -> str:
     """Strips the `::attribute` suffix `ha_api.get_state()` uses for climate-attribute
     roles (e.g. `climate.wohnzimmer::temperature`) -- a `subscribe_trigger` state
@@ -1152,9 +1117,12 @@ def _extract_attribute_suffix(entity_id: str) -> str | None:
     return attribute or None
 
 
-def _make_trigger_event_callback(
-    manifest, ha_api, mqtt_client, options, write_lock, boost_state, failsafe_ctx, stable_target,
-):
+def _make_trigger_event_callback(manifest, worker: RegulationWorker):
+    """WS-Thread-Callback: stellt nur einen (koaleszierten) lokalen Check ein. Ob der
+    (debounced) room_target-Trigger selbst gefeuert hat, wird ueber entity_id UND attribute
+    erkannt: room_actual und room_target koennen dieselbe physische Entity referenzieren
+    (z.B. ein Thermostat mit current_temperature/temperature), nur das attribute-Feld
+    unterscheidet dann die beiden Trigger (Design-Spec 2026-09-22)."""
     room_target_entity_id = None
     room_target_attribute = None
     if "room_target" in manifest.entity_ids:
@@ -1162,154 +1130,140 @@ def _make_trigger_event_callback(
         room_target_attribute = _extract_attribute_suffix(manifest.entity_ids["room_target"])
 
     def _on_trigger_event(trigger: dict) -> None:
-        try:
-            with write_lock:
-                if _abo_finished(failsafe_ctx):
-                    # Final-Review I-1: Abo-Frist abgeschlossen, Callback lief nur noch
-                    # nach (ha_trigger_client.stop() joint nicht) -- nichts mehr tun.
-                    return
-                if (
-                    room_target_entity_id is not None
-                    and trigger.get("platform") == "state"
-                    and trigger.get("entity_id") == room_target_entity_id
-                    and trigger.get("attribute") == room_target_attribute
-                ):
-                    # Der (debounced) room_target-Trigger selbst ist gefeuert -- der
-                    # Wert ist jetzt garantiert seit ROOM_TARGET_DEBOUNCE_SECONDS
-                    # stabil (Design-Spec 2026-09-22, Abschnitt 2). Frisch lesen
-                    # (nicht aus trigger["to_state"] uebernehmen -- einfacher/robuster
-                    # gegen Payload-Formvarianten) und den Cache aktualisieren, den
-                    # jeder andere Trigger unten mitbenutzt. Matching ueber entity_id
-                    # UND attribute (nicht nur entity_id): room_actual und room_target
-                    # koennen dieselbe physische Entity referenzieren (z.B. ein
-                    # einzelnes Thermostat mit current_temperature/temperature), nur
-                    # das attribute-Feld unterscheidet dann, welcher der beiden
-                    # Trigger tatsaechlich gefeuert hat.
-                    stable_target.value = _read_room_target_live(manifest, ha_api)
-                    logger.info(
-                        "Stable-Target-Cache aktualisiert (room_target-Trigger): room_target=%s",
-                        stable_target.value,
-                    )
-                boost_state.active = _run_local_check(
-                    manifest, ha_api, mqtt_client, options, write_lock, boost_state.active,
-                    room_target=stable_target.value, failsafe_ctx=failsafe_ctx,
-                )
-        except Exception:
-            logger.exception(
-                "Fehler im lokalen Check (ausgeloest durch Trigger-Event, platform=%s), wird beim "
-                "naechsten Trigger/Fallback erneut versucht", trigger.get("platform"),
-            )
+        room_target_fired = (
+            room_target_entity_id is not None
+            and trigger.get("platform") == "state"
+            and trigger.get("entity_id") == room_target_entity_id
+            and trigger.get("attribute") == room_target_attribute
+        )
+        worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=room_target_fired)
     return _on_trigger_event
 
 
-def _make_on_connected_callback(manifest, ha_api, write_lock, stable_target):
-    """Baut den `on_connected`-Callback fuer `HaTriggerClient` (Re-Review final-
-    review-report.md, Nachfolger des `was_connected`-Watchdog-Sampling-Ansatzes aus
-    d8176c2): `HaTriggerClient` ruft diesen Callback synchron aus
-    `_handle_subscribe_result` heraus auf, exakt einmal pro erfolgreicher
-    (Re-)Verbindung -- erster Connect nach `start()` ebenso wie jeder spaetere
-    Reconnect, mit garantiert null Sampling-Luecke, unabhaengig davon, wie kurz ein
-    Ausfall war oder ob der Watchdog-Loop ihn ueberhaupt als "getrennt" beobachtet
-    haette. Deckt damit sowohl den alten Reconnect-Fall (Important #1) als auch den
-    alten "Cache nach fehlgeschlagenem Boot-Priming nie befuellt"-Fall (Important #2)
-    mit demselben einen Mechanismus ab, ohne auf den 300s-Takt des Watchdog-Loops
-    angewiesen zu sein.
-    """
-    def _on_connected() -> None:
-        with write_lock:
-            stable_target.value = _read_room_target_live(manifest, ha_api)
-            logger.info(
-                "Stable-Target-Cache aktualisiert (On-Connect-Hook, (Re-)Verbindung "
-                "hergestellt): room_target=%s", stable_target.value,
-            )
-    return _on_connected
+def _state_trigger(raw_entity_id: str) -> dict:
+    """State-Trigger fuer eine gemappte Rolle; mit `attribute`, wenn die Rolle als
+    `<entity>::<attribut>` gemappt ist (B7: gilt jetzt auch fuer room_actual)."""
+    trigger = {"platform": "state", "entity_id": _strip_attribute_suffix(raw_entity_id)}
+    attribute = _extract_attribute_suffix(raw_entity_id)
+    if attribute:
+        trigger["attribute"] = attribute
+    return trigger
 
 
-def _build_ha_trigger_client(
-    manifest, ha_api, options: dict, mqtt_client, write_lock, boost_state, failsafe_ctx, stable_target,
-):
+def _build_ha_trigger_client(bridge) -> HaTriggerClient:
+    manifest = bridge.manifest
     triggers = []
     if "room_target" in manifest.entity_ids:
-        room_target_raw = manifest.entity_ids["room_target"]
-        room_target_trigger = {
-            "platform": "state",
-            "entity_id": _strip_attribute_suffix(room_target_raw),
-            "for": {"seconds": ROOM_TARGET_DEBOUNCE_SECONDS},
-        }
-        room_target_attribute = _extract_attribute_suffix(room_target_raw)
-        if room_target_attribute:
-            room_target_trigger["attribute"] = room_target_attribute
-        triggers.append(room_target_trigger)
-    if "room_actual" in manifest.entity_ids:
         triggers.append({
-            "platform": "state", "entity_id": _strip_attribute_suffix(manifest.entity_ids["room_actual"]),
+            **_state_trigger(manifest.entity_ids["room_target"]),
+            "for": {"seconds": ROOM_TARGET_DEBOUNCE_SECONDS},
         })
-    daily_trigger_time = options.get("daily_trigger_time")
+    if "room_actual" in manifest.entity_ids:
+        triggers.append(_state_trigger(manifest.entity_ids["room_actual"]))
+    daily_trigger_time = bridge.options.get("daily_trigger_time")
     if daily_trigger_time:
         triggers.append({"platform": "time", "at": daily_trigger_time})
 
-    on_trigger_event = _make_trigger_event_callback(
-        manifest=manifest, ha_api=ha_api, mqtt_client=mqtt_client, options=options,
-        write_lock=write_lock, boost_state=boost_state, failsafe_ctx=failsafe_ctx,
-        stable_target=stable_target,
-    )
-    on_connected = _make_on_connected_callback(
-        manifest=manifest, ha_api=ha_api, write_lock=write_lock, stable_target=stable_target,
-    )
+    worker = bridge.worker
     return HaTriggerClient(
-        ws_url=ha_api.websocket_url(), token=ha_api.token, triggers=triggers,
-        on_trigger_event=on_trigger_event, on_connected=on_connected,
+        ws_url=bridge.ha_api.websocket_url(), token=bridge.ha_api.token, triggers=triggers,
+        on_trigger_event=_make_trigger_event_callback(manifest, worker),
+        # B7: bei jeder (Re-)Verbindung Cache frisch lesen UND lokal pruefen -- eine
+        # Sollwertaenderung waehrend der Trennung wird so sofort verarbeitet.
+        on_connected=lambda: worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=True),
     )
 
 
-def _run_bridge(options: dict, ha_api) -> bool:
-    """Laeuft synchron im Hauptthread (siehe main()); validiert/loest Optionen selbst
-    auf und startet die Poll-Loop nur, wenn die SmartHeat-Integration das Add-on schon
-    (per Supervisor-API in options.json) konfiguriert hat. Ein noch nicht konfiguriertes
-    Add-on ist ab 0.6.0 ein normaler Zustand (siehe _is_configured), deshalb gibt genau
-    dieser Fall `True` zurueck (main() beendet den Prozess dann mit Exit 0). Jeder andere
-    fruehe Return ist ein echter Validierungs-/Startfehler und gibt `False` zurueck, damit
-    main() mit einem Fehlercode abbricht und der Supervisor den Absturz sieht, statt ihn
-    mit "noch nicht konfiguriert" zu verwechseln. Gibt `True` ausserdem beim Abschluss-Start
-    (Abo bereits laenger als 30 Tage inaktiv) und am Fristende waehrend der Laufzeit zurueck
-    (Exit 0 in beiden Faellen) -- ohne `watchdog` in config.yaml bleibt das Add-on danach
-    gestoppt, bis es manuell neu gestartet wird.
-    """
+def _make_setpoints_callback(worker: RegulationWorker):
+    """paho-Callback fuer down/setpoints: parst nur und stellt die Antwort in den
+    Regel-Worker ein. Retained Nachrichten (Broker-Replay beim (Re-)Subscribe, siehe
+    2026-09-22-heizungsbruecke-retained-down-replay-fix-design.md) und Nicht-JSON-Objekte
+    werden hier verworfen."""
+    def _callback(client, userdata, message):
+        try:
+            if message.retain:
+                logger.info("Retained Setpoints-Nachricht beim (Re-)Subscribe uebersprungen (Broker-Replay)")
+                return
+            payload = json.loads(message.payload)
+            if not isinstance(payload, dict):
+                logger.warning("Setpoints-Nachricht ist kein JSON-Objekt, verworfen: %r", payload)
+                return
+            worker.post(Event(EV_SETPOINTS, {"payload": payload}))
+        except Exception:
+            logger.exception("Setpoints-Nachricht nicht lesbar, verworfen")
+    return _callback
+
+
+def _create_mqtt_client(options: dict, worker: RegulationWorker, notbetrieb: bool) -> BridgeMqttClient:
+    """Baut den MQTT-Client (B10: verbindet asynchron, kein Retry-Budget, kein Exit).
+    Discovery, Status und Subscription werden gespeichert und bei jedem (Re-)Connect
+    erneut gesendet; die Auth-Ablehnung aus dem paho-Thread wird nur eingestellt."""
+    client = BridgeMqttClient(
+        host=MQTT_HOST, port=MQTT_PORT, tenant_id=options["tenant_id"],
+        username=options["mqtt_username"], password=options["mqtt_password"],
+        on_auth_rejected=lambda _client: worker.post(Event(EV_AUTH_REJECTED)),
+    )
+    client.publish_discovery(
+        component="binary_sensor", object_id="failsafe",
+        config=delivery.build_discovery_config(options["tenant_id"]),
+    )
+    client.publish_status("failsafe", delivery.build_state_payload(notbetrieb))
+    client.subscribe_setpoints(on_message=_make_setpoints_callback(worker))
+    return client
+
+
+def _prime(bridge: _Bridge) -> None:
+    """Boost-Active-Bootstrap-Fix (Sicherheits-Review-Fund): der erste lokale Check laeuft
+    synchron VOR mqtt.loop_start(), damit backup.json["boost_active"] nach einem Neustart
+    frisch aus echten Sensorwerten bestimmt ist, bevor eine Setpoints-Antwort verarbeitet
+    werden kann (handle_down_message, Design-Spec Abschnitt D)."""
+    try:
+        bridge.stable_target = _read_room_target_live(bridge.manifest, bridge.ha_api)
+        logger.info("Stable-Target-Cache initial befuellt (Boot-Priming): room_target=%s", bridge.stable_target)
+        bridge.boost_active = _run_local_check(
+            bridge.manifest, bridge.ha_api, bridge.options, bridge.boost_active,
+            room_target=bridge.stable_target, failsafe_ctx=bridge.failsafe_ctx,
+        )
+    except Exception:
+        logger.exception("Fehler beim initialen lokalen Check vor MQTT-Start, wird beim naechsten Ereignis erneut versucht")
+        # Fail-open (whole-branch review finding): backup.json["boost_active"] must not be
+        # left at a stale pre-restart value -- a stuck stale-True value can gate out a
+        # down-message and leave the live device pinned at a boost value.
+        _save_boost_active_if_changed(False, BACKUP_PATH)
+        bridge.boost_active = False
+        bridge.failsafe_ctx["emergency_boost_active"] = False
+        _save_emergency_active_if_changed(False, BACKUP_PATH)
+
+
+def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> "_Bridge | int":
+    """Boot-Ablauf (Design-Spec 2026-09-26, Abschnitt 1). Gibt den gestarteten `_Bridge`
+    zurueck oder einen Exit-Code, wenn gar nicht erst geregelt wird: 0 = nicht
+    konfiguriert (ab 0.6.0 ein normaler Zustand, siehe _is_configured) oder Abo-Frist
+    bereits abgeschlossen, 1 = Konfigurationsfehler."""
     if not _is_configured(options):
         logger.info(
             "Add-on ist noch nicht eingerichtet -- bitte die SmartHeat-Integration in "
             "Home Assistant installieren und dort die Verbindung zu diesem Add-on "
             "einrichten (sie schreibt die Konfiguration automatisch per Supervisor-API). "
-            "Die Poll-Loop startet erst, sobald options.json vollstaendig ist, und "
+            "Die Regelung startet erst, sobald options.json vollstaendig ist, und "
             "danach automatisch beim naechsten Neustart des Add-ons."
         )
-        return True
+        return 0
 
     try:
         options = _resolve_effective_options(options)
     except UnknownProfileError as error:
         logger.error("FEHLER: %s", error)
-        return False
+        return 1
 
-    boost_config_error = _validate_boost_config(options)
-    if boost_config_error:
-        logger.error("FEHLER: %s", boost_config_error)
-        return False
-
-    local_check_interval_error = _validate_local_check_interval(options)
-    if local_check_interval_error:
-        logger.error("FEHLER: %s", local_check_interval_error)
-        return False
-
-    telemetry_interval_error = _validate_telemetry_interval(options)
-    if telemetry_interval_error:
-        logger.error("FEHLER: %s", telemetry_interval_error)
-        return False
-
-    prerequisite_error = _validate_derived_sensor_prerequisites(options)
-    if prerequisite_error:
-        logger.error("FEHLER: %s", prerequisite_error)
-        return False
+    for validate in (
+        _validate_boost_config, _validate_local_check_interval,
+        _validate_telemetry_interval, _validate_derived_sensor_prerequisites,
+    ):
+        error = validate(options)
+        if error:
+            logger.error("FEHLER: %s", error)
+            return 1
 
     derived_entity_ids = _ensure_derived_sensors_with_retry(ha_api, options)
     _check_timezone(ha_api)
@@ -1318,12 +1272,9 @@ def _run_bridge(options: dict, ha_api) -> bool:
         manifest = build_manifest(options, derived_entity_ids)
     except ManifestError as error:
         logger.error("FEHLER: %s", error)
-        return False
-
-    write_lock = threading.RLock()
+        return 1
 
     failsafe_ctx = _load_failsafe_ctx_safe(FAILSAFE_PATH, BACKUP_PATH)
-
     notify_service = options.get("notify_service", "")
     # Abo-Status (B8, Design-Spec 2026-09-25, Abschnitt 4): bewusst erst hier, weil
     # Abschluss-Start und lokaler Modus Manifest und Clamps brauchen. "unknown"
@@ -1336,165 +1287,51 @@ def _run_bridge(options: dict, ha_api) -> bool:
         inactive_since = entitlement.load_inactive_since(ENTITLEMENT_PATH)
         if inactive_since is not None and entitlement.grace_expired(inactive_since, now):
             # Final-Review I-2: scheitert die Wiederherstellung (HA/Cloud beim Booten noch
-            # nicht erreichbar), nicht mit liegengebliebenen Boost-Werten beenden, sondern
-            # im Watchdog-Takt erneut versuchen, bis es klappt.
+            # nicht erreichbar), nicht mit liegengebliebenen Boost-Werten beenden.
             while not _finish_abo_grace(
-                manifest, ha_api, options, failsafe_ctx, write_lock, always_restore=False, final_notice=False,
+                manifest, ha_api, options, failsafe_ctx, always_restore=False, final_notice=False,
             ):
-                retry_seconds = options.get("local_check_interval_seconds", DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS)
+                retry_seconds = _local_check_interval(options)
                 logger.error(
                     "Abo-inaktiv-Frist abgelaufen, Boost-Werte konnten nicht zurueckgesetzt werden - "
                     "erneuter Versuch in %s s", retry_seconds,
                 )
                 time.sleep(retry_seconds)
-            return True
-        _enter_abo_inactive(failsafe_ctx, write_lock, None, ha_api, notify_service, now)
+            return 0
+        _enter_abo_inactive(failsafe_ctx, None, ha_api, notify_service, now)
 
-    mqtt_client = None
-    if not _abo_inactive(failsafe_ctx):
-        try:
-            mqtt_client = _connect_mqtt_with_retry(
-                options,
-                on_auth_rejected=_make_auth_rejected_callback(
-                    options["tenant_id"], failsafe_ctx, write_lock, ha_api, notify_service,
-                ),
-            )
-            mqtt_client.publish_discovery(
-                component="binary_sensor", object_id="failsafe",
-                config=build_discovery_config(options["tenant_id"]),
-            )
-            mqtt_client.publish_status("failsafe", build_state_payload(failsafe_ctx["state"].active))
-
-            mqtt_client.subscribe_setpoints(
-                on_message=_make_setpoints_callback(manifest, ha_api, options, write_lock, failsafe_ctx, mqtt_client),
-            )
-        except ConnectionRefusedError as error:
-            logger.error(
-                "FEHLER: MQTT-Verbindung zum Broker fehlgeschlagen (Connection refused): %s. "
-                "Pruefen, ob das Add-on 'cloudflared_access_mqtt' laeuft und auf demselben "
-                "Port (%s) lauscht wie hier konfiguriert (MQTT_PORT in __main__.py).",
-                error, MQTT_PORT,
-            )
-            return False
-        except Exception as error:
-            logger.error("FEHLER: MQTT-Verbindung zum Broker fehlgeschlagen: %s", error)
-            return False
-
-    # Boost-Active-Bootstrap-Fix (Sicherheits-Review-Fund, siehe SDD-Ledger dieses Plans):
-    # mindestens ein lokaler Check MUSS abgeschlossen sein, bevor MQTT-Down-Nachrichten
-    # verarbeitet werden koennen -- sonst kann backup.json["boost_active"] nach einem
-    # Neustart waehrend eines aktiven Boosts fuer ein kurzes Fenster veraltet sein (siehe
-    # handle_down_message, Design-Spec Abschnitt D), und eine in diesem Fenster eintreffende
-    # Down-Nachricht wuerde gegen einen Wert behandelt, der seit dem Neustart nie frisch aus
-    # echten Sensor-Werten neu bestimmt wurde. subscribe_setpoints() liefert allein noch keine
-    # Nachrichten aus -- erst loop_start() startet die Hintergrund-Verarbeitung -- daher
-    # genuegt es, den allerersten _run_local_check()-Aufruf synchron VOR loop_start()
-    # abzuschliessen, statt einen "sichereren" statischen Default zu waehlen.
-    boost_state = _BoostStateBox(active=False)
-    # Stable-Target-Cache-Bootstrap (Design-Spec 2026-09-22): ein einmaliger Live-Read
-    # vor loop_start() initialisiert den Cache, analog zum Boost-Active-Bootstrap-Fix
-    # oben. Bewusst INNERHALB desselben try/except wie der priming _run_local_check()-
-    # Aufruf -- ein HA-API-Hickup beim Booten soll boost_active gleich behandeln,
-    # unabhaengig davon, ob es beim room_target-Read oder erst im lokalen Check selbst
-    # auftritt (gleiche Fail-Open-Begruendung wie dort).
-    stable_target = _StableTargetBox(value=None)
-    try:
-        stable_target.value = _read_room_target_live(manifest, ha_api)
-        logger.info("Stable-Target-Cache initial befuellt (Boot-Priming): room_target=%s", stable_target.value)
-        boost_state.active = _run_local_check(
-            manifest, ha_api, mqtt_client, options, write_lock, boost_state.active,
-            room_target=stable_target.value, failsafe_ctx=failsafe_ctx,
-        )
-    except Exception:
-        logger.exception(
-            "Fehler beim initialen lokalen Check vor MQTT-Start, wird im regulaeren Loop erneut versucht"
-        )
-        # Fail-open (whole-branch review finding): backup.json["boost_active"] must not
-        # be left at a stale pre-restart value here -- that defeats the boot-sync fix in
-        # exactly the failure case it needs to handle (a transient HA-API hiccup at boot).
-        # A missed live-write during a genuine boost costs a little comfort for one cycle;
-        # a stuck stale-True value can gate out a down-message and leave the live device
-        # pinned at a boost value for up to a day under the new publish cadence.
-        _save_boost_active_if_changed(False, BACKUP_PATH)
-        boost_state.active = False
-        failsafe_ctx["emergency_boost_active"] = False
-        _save_emergency_active_if_changed(False, BACKUP_PATH)
-
-    if mqtt_client is not None:
-        try:
-            mqtt_client.loop_start()
-        except Exception as error:
-            logger.error("FEHLER: MQTT-Verbindung zum Broker fehlgeschlagen: %s", error)
-            return False
-
-    ha_trigger_client = _build_ha_trigger_client(
-        manifest=manifest, ha_api=ha_api, options=options, mqtt_client=mqtt_client,
-        write_lock=write_lock, boost_state=boost_state, failsafe_ctx=failsafe_ctx,
-        stable_target=stable_target,
+    bridge = _Bridge(
+        manifest=manifest, ha_api=ha_api, options=options, derived_entity_ids=derived_entity_ids,
+        worker=RegulationWorker(clock=clock), failsafe_ctx=failsafe_ctx,
     )
-    ha_trigger_client.start()
+    _register_handlers(bridge)
+    if not _abo_inactive(failsafe_ctx):
+        bridge.mqtt_client = _create_mqtt_client(options, bridge.worker, failsafe_ctx["delivery"].notbetrieb)
 
-    while True:
-        if _abo_grace_expired(failsafe_ctx):
-            # Final-Review I-1/I-2: erst wiederherstellen, dann den Trigger-Client
-            # stoppen. Nach Erfolg sperrt failsafe_ctx["abo_finished"] (unter dem
-            # write_lock gesetzt) jeden nachlaufenden Trigger-Callback; scheitert die
-            # Wiederherstellung, laeuft die lokale Regelung (Trigger + Watchdog-Fallback
-            # unten) unveraendert weiter und der naechste Tick versucht es erneut.
-            if _finish_abo_grace(
-                manifest, ha_api, options, failsafe_ctx, write_lock, always_restore=True, final_notice=True,
-            ):
-                ha_trigger_client.stop()
-                return True
-            logger.error(
-                "Abo-inaktiv-Frist abgelaufen, zuletzt gelernte Werte konnten nicht wiederhergestellt "
-                "werden - Notbetrieb laeuft weiter, erneuter Versuch beim naechsten Watchdog-Tick"
-            )
+    _prime(bridge)
+    if bridge.mqtt_client is not None:
+        bridge.mqtt_client.loop_start()
 
-        try:
-            if not ha_trigger_client.connected:
-                with write_lock:
-                    # Undebounced mit Absicht (Design-Spec 2026-09-22, Punkt 2): hier
-                    # existiert keine subscribe_trigger-Debounce-Garantie, konsistent
-                    # mit "degradiert automatisch auf reinen Poll-Betrieb". Dies ist der
-                    # urspruengliche, unveraenderte Watchdog-Fallback fuer echtes,
-                    # andauerndes Getrenntsein -- der Reconnect-/Erstverbindungs-Fall
-                    # wird seit dem On-Connect-Hook (_make_on_connected_callback) direkt
-                    # von HaTriggerClient selbst abgedeckt, ohne auf diesen Tick zu
-                    # warten.
-                    stable_target.value = _read_room_target_live(manifest, ha_api)
-                    logger.info(
-                        "Stable-Target-Cache aktualisiert (Watchdog-Fallback, WS getrennt): room_target=%s",
-                        stable_target.value,
-                    )
-                    boost_state.active = _run_local_check(
-                        manifest, ha_api, mqtt_client, options, write_lock, boost_state.active,
-                        room_target=stable_target.value, failsafe_ctx=failsafe_ctx,
-                    )
-        except Exception:
-            logger.exception("Fehler im lokalen Check (Watchdog-Fallback), wird beim naechsten Tick erneut versucht")
+    bridge.trigger_client = _build_ha_trigger_client(bridge)
+    bridge.trigger_client.start()
+    for kind in (EV_WATCHDOG, EV_TELEMETRY, EV_DAYNIGHT, EV_GRACE_CHECK):
+        bridge.worker.schedule(0, Event(kind))
+    if not _abo_inactive(failsafe_ctx):
+        # Offenen Tick aus failsafe_state.json sofort mit derselben seq erneut versuchen.
+        _deliver(bridge, delivery.Boot())
+    return bridge
 
-        if not _abo_inactive(failsafe_ctx):
-            _run_telemetry_tick(
-                manifest, ha_api, mqtt_client, options,
-                boost_active=boost_state.active, failsafe_active=failsafe_ctx["state"].active,
-            )
 
-        try:
-            daynight_snapshot.maybe_snapshot(
-                ha_api=ha_api,
-                room_12h_avg_entity_id=derived_entity_ids["_room_12h_avg"],
-                day_avg_entity_id=derived_entity_ids["room_day_avg"],
-                night_avg_entity_id=derived_entity_ids["room_night_avg"],
-                day_avg_window_end=options["day_avg_window_end"],
-                night_avg_window_end=options["night_avg_window_end"],
-                state_path=DAYNIGHT_SNAPSHOT_PATH,
-                now=datetime.now(),
-            )
-        except Exception:
-            logger.exception("Fehler beim Tag-/Nachtmittel-Snapshot, wird beim naechsten Check erneut versucht")
-
-        time.sleep(options.get("local_check_interval_seconds", DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS))
+def _run_bridge(options: dict, ha_api) -> int:
+    """Laeuft synchron im Hauptthread (siehe main()) und gibt den Exit-Code zurueck: 0 =
+    nicht konfiguriert oder Abo-Frist regulaer abgeschlossen (ohne `watchdog` in
+    config.yaml bleibt das Add-on dann gestoppt), 1 = Konfigurationsfehler.
+    Voruebergehende Fehler (HA noch nicht bereit, Broker nicht erreichbar, Server
+    schweigt) beenden das Add-on nie (Design-Spec 2026-09-26, "Verbleibende Exits")."""
+    started = _start_bridge(options, ha_api)
+    if isinstance(started, int):
+        return started
+    return started.worker.run()
 
 
 def _load_options_safe(path: Path) -> dict:
@@ -1522,8 +1359,9 @@ def main() -> None:
     options = _load_options_safe(OPTIONS_PATH)
     ha_api = HomeAssistantApi(base_url="http://supervisor", token=os.environ["SUPERVISOR_TOKEN"])
 
-    if not _run_bridge(options, ha_api):
-        sys.exit(1)
+    exit_code = _run_bridge(options, ha_api)
+    if exit_code:
+        sys.exit(exit_code)
 
 
 if __name__ == "__main__":
