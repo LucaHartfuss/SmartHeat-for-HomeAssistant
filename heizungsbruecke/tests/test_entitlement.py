@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -61,6 +62,22 @@ def test_query_status_queries_status_endpoint(monkeypatch):
     calls = _patch_get(monkeypatch, response=_Response(200, {"active": True}))
     entitlement.query_status("client1", "https://accounts.example")
     assert calls == [("https://accounts.example/tenants/client1/status", 10)]
+
+
+@pytest.mark.parametrize("response", [
+    _Response(404, json_error=True),          # HTML-Seite, z. B. Cloudflare-Catch-all
+    _Response(404, {"detail": "Not Found"}),  # anderer Dienst
+    _Response(404, ["error"]),
+    _Response(404, None),
+])
+def test_404_without_accounts_api_body_counts_as_unknown(monkeypatch, caplog, response):
+    # T2-4: ein fremder 404 darf nicht alle Tenants zugleich in den Abo-inaktiv-Modus schicken.
+    _patch_get(monkeypatch, response=response)
+
+    with caplog.at_level(logging.WARNING):
+        assert entitlement.query_status("t1", "https://accounts.example.test") == entitlement.UNKNOWN
+
+    assert "404" in caplog.text
 
 
 def test_mark_inactive_sets_once_and_is_idempotent(tmp_path):
