@@ -6,6 +6,7 @@ from dataclasses import replace
 from datetime import datetime
 
 from heizungsbruecke import config, entitlement
+from heizungsbruecke.notifier import STATE_OK
 from heizungsbruecke.runtime import Runtime
 
 logger = logging.getLogger(__name__)
@@ -15,6 +16,15 @@ ABO_ENDED_MESSAGE = (
     "die zuletzt gelernten Werte bleiben eingestellt."
 )
 ABO_ACTIVE_MESSAGE = "SmartHeat: Abo wieder aktiv, die Heizungssteuerung läuft wieder normal."
+ACCESS_DENIED_MESSAGE = (
+    "SmartHeat: Der Server lehnt die Zugangsdaten ab, die Heizkurve wird nicht mehr angepasst. "
+    "Home Assistant fordert zur erneuten Anmeldung bei SmartHeat auf (Einstellungen → Geräte & Dienste)."
+)
+ACCESS_OK_MESSAGE = "SmartHeat: Die Zugangsdaten werden wieder angenommen, die Heizungssteuerung läuft wieder normal."
+ACCESS_DENIED_REASON = "Zugangsdaten vom Server abgelehnt"
+RESTORE_FAILED_MESSAGE = "SmartHeat: Zurücksetzen auf die zuletzt gelernten Werte scheitert. Bitte die Anlage prüfen."
+RESTORE_OK_MESSAGE = "SmartHeat: Die zuletzt gelernten Werte sind wieder eingestellt."
+RESTORE_FAILED_REASON = "Zurücksetzen auf die zuletzt gelernten Werte scheitert"
 
 
 def inactive_message(inactive_since: datetime) -> str:
@@ -69,23 +79,34 @@ def finish_grace(rt: Runtime, *, always_restore: bool, final_notice: bool) -> bo
     if final_notice:
         rt.notifier.notify("abo", "beendet", ABO_ENDED_MESSAGE, critical=True)
     else:
-        logger.info("Abo-inaktiv-Frist ist bereits abgelaufen - Add-on beendet sich ohne weitere Eingriffe.")
+        logger.info("Abo-inaktiv-Frist ist bereits abgelaufen - Add-on bleibt ohne weitere Eingriffe im Ruhezustand.")
     return True
+
+
+def report_restore(notifier, ok: bool) -> None:
+    """T2-7: eine dauerhaft scheiternde Wiederherstellung am Fristende wird einmal gemeldet
+    (kritisch), die spaetere Rueckkehr ebenfalls. Gelingt sie gleich, bleibt es still."""
+    if ok:
+        notifier.notify("wiederherstellung", STATE_OK, RESTORE_OK_MESSAGE, critical=True)
+    else:
+        notifier.notify("wiederherstellung", "fehlgeschlagen", RESTORE_FAILED_MESSAGE, critical=True)
 
 
 def handle_auth_rejected(rt: Runtime) -> None:
     """Der Broker hat die Zugangsdaten abgelehnt (beim Suspend widerrufen). Nur ein eindeutiges
-    "inactive" wechselt in den Abo-inaktiv-Modus, sonst nur ein Log und paho verbindet weiter.
-    Die Abfrage blockiert den Worker bis zu 10 s; deshalb stellt der paho-Hook gebuendelt ein,
-    und im Abo-inaktiv-Modus wird nicht mehr gefragt."""
+    "inactive" wechselt in den Abo-inaktiv-Modus, sonst meldet es "zugang_abgelehnt" und paho
+    verbindet weiter. Die Abfrage blockiert den Worker bis zu 10 s; deshalb stellt der paho-Hook
+    gebuendelt ein, und im Abo-inaktiv-Modus wird nicht mehr gefragt."""
     if rt.store.state.abo_inactive_since is not None:
         return
     status = entitlement.query_status(rt.options["tenant_id"], rt.options["accounts_api_base_url"])
     if status != entitlement.INACTIVE:
         logger.error(
             "MQTT-Anmeldung vom Broker abgelehnt, Abo-Status ist aber '%s' - Zugangsdaten "
-            "pruefen (ggf. SmartHeat-Integration neu einrichten).", status,
+            "pruefen (ggf. SmartHeat-Integration neu anmelden).", status,
         )
+        rt.status.update(zugang_abgelehnt=True, grund=ACCESS_DENIED_REASON)
+        rt.notifier.notify("zugang", "abgelehnt", ACCESS_DENIED_MESSAGE, critical=True)
         return
     enter_inactive(rt, datetime.now().astimezone())
 
@@ -102,20 +123,33 @@ def check_grace_end(rt: Runtime) -> None:
     if entitlement.query_status(rt.options["tenant_id"], rt.options["accounts_api_base_url"]) == entitlement.ACTIVE:
         entitlement.clear(config.ENTITLEMENT_PATH)
         logger.warning("Abo wieder aktiv, Neustart im Normalbetrieb")
-        _restart_process()
+        restart_process()
         return
     if finish_grace(rt, always_restore=True, final_notice=True):
-        if rt.trigger_client is not None:
-            rt.trigger_client.stop()
-        rt.worker.request_exit(0)
+        report_restore(rt.notifier, ok=True)
+        _enter_idle(rt)
         return
+    report_restore(rt.notifier, ok=False)
     logger.error(
         "Abo-inaktiv-Frist abgelaufen, zuletzt gelernte Werte konnten nicht wiederhergestellt "
         "werden - Notbetrieb laeuft weiter, erneuter Versuch beim naechsten Check"
     )
 
 
-def _restart_process() -> None:
-    """Ersetzt den Prozess durch einen frischen Start im Normalbetrieb, unabhaengig vom
-    Supervisor-Watchdog (config.yaml setzt bewusst keinen)."""
+def _enter_idle(rt: Runtime) -> None:
+    """Ruhezustand im Betrieb (Spec TP7 3.2): MQTT und Trigger stoppen; ab jetzt laufen alle
+    Handler ausser dem Lebenszeichen leer (__main__._unless_idle). Kein Exit."""
+    rt.idle = True
+    for client in (rt.mqtt_client, rt.trigger_client):
+        if client is None:
+            continue
+        try:
+            client.stop()
+        except Exception:
+            logger.exception("Verbindung konnte beim Wechsel in den Ruhezustand nicht sauber beendet werden")
+
+
+def restart_process() -> None:
+    """Ersetzt den Prozess durch einen frischen Start (Abo wieder aktiv, Neupruefung im
+    Konfigurationsfehler). Unabhaengig vom Supervisor-Watchdog: der Container laeuft weiter."""
     os.execv(sys.executable, [sys.executable, "-m", "heizungsbruecke"])

@@ -230,10 +230,6 @@ def _start_bridge(env, **option_overrides):
     return main_module._start_bridge({**OPTIONS, **option_overrides}, env.ha, clock=env.clock)
 
 
-def _run_bridge(env):
-    return main_module._run_bridge(OPTIONS, env.ha)
-
-
 def _is_running(bridge) -> bool:
     return isinstance(bridge, Runtime)
 
@@ -965,28 +961,27 @@ def test_inactive_status_at_start_runs_locally_without_mqtt(env):
     assert "Abo inaktiv" in env.ha.pushes[0]
 
 
-def test_inactive_after_grace_exits_cleanly_without_writes(env, monkeypatch):
+def test_inactive_after_grace_idles_as_abo_beendet_without_writes(env, monkeypatch):
     _quiet_backup(env)
     env.abo["status"] = entitlement.INACTIVE
     entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
     monkeypatch.setattr("heizungsbruecke.entitlement.grace_expired", lambda since, now: True)
 
-    assert _run_bridge(env) == 0
+    bridge = _start_bridge(env)
 
-    assert env.mqtt_clients == []
-    assert env.ha.writes == []
-    assert env.ha.pushes == []
+    assert isinstance(bridge, main_module.IdleBridge) and bridge.reason == "abo_beendet"
+    assert env.mqtt_clients == [] and env.trigger_clients == []
+    assert env.ha.writes == [] and env.ha.pushes == []
+    assert _status_states(env) == ["startet", "abo_beendet"]
 
 
-def test_closing_start_retries_failed_restore_until_success(env, monkeypatch):
+def test_closing_start_retries_a_failed_restore_and_reports_it_once(env, monkeypatch):
+    # T2-7 im Startpfad; die Wiederholung laeuft im Worker, das Lebenszeichen weiter.
     _quiet_backup(env, emergency_boost_active=True)
     env.abo["status"] = entitlement.INACTIVE
     entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
     monkeypatch.setattr("heizungsbruecke.entitlement.grace_expired", lambda since, now: True)
-    sleeps = []
-    monkeypatch.setattr("time.sleep", sleeps.append)
     failures = [RuntimeError("HA nicht erreichbar")]
-
     original_write = env.ha.set_number_value
 
     def _flaky_write(entity_id, value):
@@ -996,12 +991,19 @@ def test_closing_start_retries_failed_restore_until_success(env, monkeypatch):
 
     env.ha.set_number_value = _flaky_write
 
-    assert _run_bridge(env) == 0
+    bridge = _start_bridge(env)
 
-    assert sleeps == [300]
+    assert bridge.reason == "abo_beendet"
     assert env.trigger_clients == []
+    assert _last_event(env)["grund"] == abo.RESTORE_FAILED_REASON
+    assert env.ha.pushes == [abo.RESTORE_FAILED_MESSAGE]
+
+    _advance(env, bridge, 300)
+
     assert ("number.offset_current", 22.0) in env.ha.writes
     assert _backup(env)["emergency_boost_active"] is False
+    assert _last_event(env)["grund"] is None
+    assert env.ha.pushes == [abo.RESTORE_FAILED_MESSAGE, abo.RESTORE_OK_MESSAGE]
 
 
 def test_auth_rejected_with_inactive_abo_enters_abo_mode(env):
@@ -1016,10 +1018,11 @@ def test_auth_rejected_with_inactive_abo_enters_abo_mode(env):
     assert _delivery(bridge).notbetrieb is True
     assert _failsafe_file(env)["failsafe_active"] is True
     assert len(env.ha.persistent) == 1
+    assert _status_states(env)[-1] == "abo_inaktiv"
 
 
 @pytest.mark.parametrize("status", [entitlement.ACTIVE, entitlement.UNKNOWN])
-def test_auth_rejected_with_active_or_unknown_abo_only_logs(env, caplog, status):
+def test_auth_rejected_with_active_or_unknown_abo_reports_zugang_abgelehnt(env, caplog, status):
     _quiet_backup(env)
     bridge = _start(env)
     env.abo["status"] = status
@@ -1030,6 +1033,22 @@ def test_auth_rejected_with_active_or_unknown_abo_only_logs(env, caplog, status)
 
     assert _mqtt(env).stopped is False
     assert "abgelehnt" in caplog.text
+    assert _status_states(env)[-1] == "zugang_abgelehnt"
+    assert _last_event(env)["grund"] == abo.ACCESS_DENIED_REASON
+    assert ("smartheat_zugang", abo.ACCESS_DENIED_MESSAGE) in env.ha.persistent
+
+
+def test_successful_connect_clears_zugang_abgelehnt(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _mqtt(env).kwargs["on_auth_rejected"](_mqtt(env))
+    bridge.worker.run_pending()
+
+    _connect(env, bridge)
+
+    assert _status_states(env)[-2:] == ["zugang_abgelehnt", "regelt"]
+    assert "smartheat_zugang" in env.ha.dismissed
+    assert env.ha.pushes[-1] == abo.ACCESS_OK_MESSAGE
 
 
 def test_repeated_auth_rejections_are_coalesced_into_one_entitlement_query(env):
@@ -1103,7 +1122,7 @@ def test_second_timeout_with_inactive_abo_enters_abo_mode_instead_of_alarm(env):
     assert _delivery(bridge).pending is None
 
 
-def test_grace_end_during_runtime_restores_notifies_and_exits(env, monkeypatch):
+def test_grace_end_during_runtime_restores_notifies_and_idles(env, monkeypatch):
     _quiet_backup(env, emergency_boost_active=True)
     env.ha.states.update({"number.curve_current": 1.5, "number.offset_current": 30.0})
     env.abo["status"] = entitlement.INACTIVE
@@ -1112,12 +1131,20 @@ def test_grace_end_during_runtime_restores_notifies_and_exits(env, monkeypatch):
     monkeypatch.setattr("heizungsbruecke.entitlement.grace_expired", lambda since, now: next(answers, True))
 
     bridge = _start_bridge(env)
+    bridge.worker.run_pending()
 
-    assert bridge.worker.run_pending() == 0
+    assert bridge.idle is True
     assert env.trigger_clients[-1].stopped is True
     assert (env.ha.states["number.curve_current"], env.ha.states["number.offset_current"]) == (0.9, 22.0)
     assert env.ha.persistent[-1] == ("smartheat_abo", ABO_ENDED)
     assert _backup(env)["emergency_boost_active"] is False
+    assert _status_states(env)[-1] == "abo_beendet"
+
+    queries, events = env.abo["queries"], len(env.ha.events)
+    _advance(env, bridge, 3600)
+
+    assert env.abo["queries"] == queries  # keine Handler mehr ausser dem Lebenszeichen
+    assert len(env.ha.events) > events
 
 
 def test_grace_end_with_failing_restore_keeps_running_and_retries(env, monkeypatch):
@@ -1135,7 +1162,10 @@ def test_grace_end_with_failing_restore_keeps_running_and_retries(env, monkeypat
     env.ha.write_error = None
     env.clock.advance(300)
 
-    assert bridge.worker.run_pending() == 0
+    bridge.worker.run_pending()
+    assert bridge.idle is True
+    assert env.ha.pushes.count(abo.RESTORE_FAILED_MESSAGE) == 1
+    assert env.ha.pushes[-2:] == [ABO_ENDED, abo.RESTORE_OK_MESSAGE]
     ended = [entry for entry in env.ha.persistent if entry[1] == ABO_ENDED]
     assert len(ended) == 1
 
@@ -1159,7 +1189,7 @@ def test_inactive_after_grace_restores_leftover_boost_once(env, monkeypatch):
     entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
     monkeypatch.setattr("heizungsbruecke.entitlement.grace_expired", lambda since, now: True)
 
-    assert _run_bridge(env) == 0
+    assert _start_bridge(env).reason == "abo_beendet"
 
     assert (env.ha.states["number.curve_current"], env.ha.states["number.offset_current"]) == (0.9, 22.0)
     assert _backup(env)["emergency_boost_active"] is False
@@ -1196,18 +1226,20 @@ def test_grace_end_finishes_when_abo_not_active(env, monkeypatch, status):
     bridge, exec_calls = _start_just_before_grace_end(env, monkeypatch)
     env.abo["status"] = status
 
-    assert bridge.worker.run_pending() == 0
+    bridge.worker.run_pending()
+    assert bridge.idle is True
     assert exec_calls == []
     assert (env.ha.states["number.curve_current"], env.ha.states["number.offset_current"]) == (0.9, 22.0)
 
 
-def test_grace_end_exits_even_if_saving_flags_fails(env, monkeypatch):
-    # T2-8: Werte stehen schon auf dem Geraet -> Wiederherstellung gilt als erfolgt, Exit 0.
+def test_grace_end_idles_even_if_saving_flags_fails(env, monkeypatch):
+    # T2-8: Werte stehen schon auf dem Geraet -> Wiederherstellung gilt als erfolgt, Ruhezustand.
     bridge, _ = _start_just_before_grace_end(env, monkeypatch)
 
     _break_backup_writes(monkeypatch)
 
-    assert bridge.worker.run_pending() == 0
+    bridge.worker.run_pending()
+    assert bridge.idle is True
     assert (env.ha.states["number.curve_current"], env.ha.states["number.offset_current"]) == (0.9, 22.0)
 
 
@@ -1275,7 +1307,8 @@ def test_grace_end_without_boost_restores_learned_values(env, monkeypatch):
 
     bridge = _start_bridge(env)
 
-    assert bridge.worker.run_pending() == 0
+    bridge.worker.run_pending()
+    assert bridge.idle is True
     assert env.ha.writes == [("number.curve_current", 0.9), ("number.offset_current", 22.0)]
     assert env.ha.persistent[-1] == ("smartheat_abo", ABO_ENDED)
 
@@ -1295,7 +1328,8 @@ def test_grace_end_during_comfort_boost_restores_learned_values(env, monkeypatch
 
     env.clock.advance(300)
 
-    assert bridge.worker.run_pending() == 0
+    bridge.worker.run_pending()
+    assert bridge.idle is True
     assert env.ha.writes[-2:] == [("number.curve_current", 0.9), ("number.offset_current", 22.0)]
     assert _backup(env)["boost_active"] is False
 
@@ -1491,3 +1525,75 @@ def test_open_tick_at_start_is_sent_on_connect_without_waiting_for_the_ack_timeo
 
     assert [s["seq"] for s in _mqtt(env).snapshots] == ["alt-1"]
     assert _delivery(bridge).server_failures == 0
+
+
+# --- Lebenszeichen und Abmelden (Spec TP7 1.1, 3.3) ---
+
+def test_heartbeat_sends_the_full_status_every_300_s(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    before = len(env.ha.events)
+
+    _advance(env, bridge, 300)
+    assert len(env.ha.events) == before + 1
+    _advance(env, bridge, 300)
+    assert len(env.ha.events) == before + 2
+
+
+def test_sign_off_during_emergency_boost_restores_clears_and_idles(env):
+    """Review Focus 4 (Add-on-Seite): Integration entfernt -> Anlage auf den
+    Wiederherstellungspunkt, alle Meldungen weg, kein Push, keine Regelung mehr."""
+    _quiet_backup(
+        env, emergency_boost_active=True,
+        notify_states={"notbetrieb": "aktiv", "batterie:sensor.x": "niedrig"},
+        notify_messages={"notbetrieb": NOTBETRIEB_ON},
+    )
+    env.ha.states.update({"number.curve_current": 1.5, "number.offset_current": 30.0})
+
+    bridge = _start_bridge(env, abgemeldet=True)
+
+    assert isinstance(bridge, main_module.IdleBridge) and bridge.reason == "abgemeldet"
+    assert env.ha.writes == [("number.curve_current", 0.9), ("number.offset_current", 22.0)]
+    assert _backup(env)["emergency_boost_active"] is False
+    assert {"smartheat_notbetrieb", "smartheat_batterie_sensor_x"} <= set(env.ha.dismissed)
+    assert "notify_states" not in _backup(env)
+    assert env.ha.pushes == []
+    assert env.mqtt_clients == [] and env.trigger_clients == []
+    assert _status_states(env) == ["startet", "abgemeldet"]
+    assert _last_event(env)["grund"] is None
+    assert env.abo["queries"] == 0
+
+
+def test_sign_off_without_boost_writes_nothing(env):
+    _quiet_backup(env)
+
+    bridge = _start_bridge(env, abgemeldet=True)
+
+    assert bridge.reason == "abgemeldet"
+    assert env.ha.writes == []
+
+
+def test_sign_off_retries_a_failed_restore_with_reason(env):
+    _quiet_backup(env, boost_active=True)
+    env.ha.write_error = RuntimeError("Cloud weg")
+
+    bridge = _start_bridge(env, abgemeldet=True)
+
+    assert _last_event(env)["status"] == "abgemeldet"
+    assert _last_event(env)["grund"] == main_module.SIGN_OFF_RESTORE_FAILED.format(seconds=300)
+
+    env.ha.write_error = None
+    _advance(env, bridge, 300)
+
+    assert env.ha.writes == [("number.curve_current", 0.9), ("number.offset_current", 22.0)]
+    assert _last_event(env)["grund"] is None
+
+
+def test_sign_off_with_invalid_configuration_does_not_write(env):
+    _quiet_backup(env, boost_active=True)
+
+    bridge = _start_bridge(env, abgemeldet=True, verteilsystem="Unbekannt")
+
+    assert bridge.reason == "abgemeldet"
+    assert env.ha.writes == []
+    assert _last_event(env)["grund"] == main_module.SIGN_OFF_INVALID_CONFIG
