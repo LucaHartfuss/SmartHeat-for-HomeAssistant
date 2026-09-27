@@ -11,6 +11,7 @@ from heizungsbruecke.backup_store import load_backup
 from heizungsbruecke.manifest import ChannelManifest
 from heizungsbruecke.notifier import Notifier
 from heizungsbruecke.override import Override
+from heizungsbruecke.status import StatusReporter
 
 ABO_NOW = datetime(2026, 9, 25, 12, 0, tzinfo=timezone(timedelta(hours=2)))
 OPTIONS = {
@@ -33,6 +34,7 @@ def _runtime(store, entity_ids=BOTH_ROLES, notify_services=("notify.handy",)):
         manifest=manifest, ha_api=ha_api, options=options, store=store, mqtt_client=MagicMock(),
         override=Override(store, manifest, ha_api, options),
         notifier=Notifier(store, ha_api, list(notify_services)),
+        status=StatusReporter(ha_api, options["tenant_id"], None, store),
     )
 
 

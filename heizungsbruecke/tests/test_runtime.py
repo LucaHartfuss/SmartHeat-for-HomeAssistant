@@ -1021,6 +1021,41 @@ def test_auth_rejected_with_inactive_abo_enters_abo_mode(env):
     assert _status_states(env)[-1] == "abo_inaktiv"
 
 
+def test_inactive_rejection_after_unknown_rejection_clears_zugang_abgelehnt_silently(env, monkeypatch):
+    """Fix Review Focus 1, Runde 1: eine erste Ablehnung bei noch unklarem Abo setzt
+    zugang_abgelehnt; eine spaetere Ablehnung mit eindeutig inaktivem Abo wechselt in den
+    Abo-inaktiv-Modus (MQTT ist danach beendet, kein Connect kann die Flagge mehr loeschen) und
+    muss Flagge, Grund und Meldung selbst aufraeumen -- sonst haengt der falsche Rat ("neu
+    anmelden") bis zum Fristende, und der Grund haengt sogar noch im abo_beendet-Event."""
+    _quiet_backup(env)
+    bridge = _start(env)
+    env.abo["status"] = entitlement.UNKNOWN
+
+    _mqtt(env).kwargs["on_auth_rejected"](_mqtt(env))
+    bridge.worker.run_pending()
+
+    assert _status_states(env)[-1] == "zugang_abgelehnt"
+    assert ("smartheat_zugang", abo.ACCESS_DENIED_MESSAGE) in env.ha.persistent
+    pushes_before = list(env.ha.pushes)
+
+    env.abo["status"] = entitlement.INACTIVE
+    _mqtt(env).kwargs["on_auth_rejected"](_mqtt(env))
+    bridge.worker.run_pending()
+
+    assert _status_states(env)[-1] == "abo_inaktiv"
+    assert _last_event(env)["grund"] is None
+    assert "smartheat_zugang" in env.ha.dismissed
+    new_pushes = env.ha.pushes[len(pushes_before):]
+    assert new_pushes == [abo.inactive_message(entitlement.load_inactive_since(env.paths["ENTITLEMENT_PATH"]))]
+    assert abo.ACCESS_DENIED_MESSAGE not in new_pushes and abo.ACCESS_OK_MESSAGE not in new_pushes
+
+    monkeypatch.setattr("heizungsbruecke.entitlement.grace_expired", lambda since, now: True)
+    _advance(env, bridge, 300)
+
+    assert _status_states(env)[-1] == "abo_beendet"
+    assert _last_event(env)["grund"] is None  # nicht mehr der stehengebliebene Zugangsgrund
+
+
 @pytest.mark.parametrize("status", [entitlement.ACTIVE, entitlement.UNKNOWN])
 def test_auth_rejected_with_active_or_unknown_abo_reports_zugang_abgelehnt(env, caplog, status):
     _quiet_backup(env)

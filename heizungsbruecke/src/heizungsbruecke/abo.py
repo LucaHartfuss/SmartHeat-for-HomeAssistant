@@ -25,6 +25,10 @@ ACCESS_DENIED_REASON = "Zugangsdaten vom Server abgelehnt"
 RESTORE_FAILED_MESSAGE = "SmartHeat: Zurücksetzen auf die zuletzt gelernten Werte scheitert. Bitte die Anlage prüfen."
 RESTORE_OK_MESSAGE = "SmartHeat: Die zuletzt gelernten Werte sind wieder eingestellt."
 RESTORE_FAILED_REASON = "Zurücksetzen auf die zuletzt gelernten Werte scheitert"
+# Nur fuer den Log (silent_ok): kein Push, die Ablehnung ist mit dem Abo-inaktiv-Wechsel erledigt.
+_ZUGANG_RESOLVED_BY_INACTIVE_MESSAGE = (
+    "SmartHeat: Zugangsdaten-Hinweis durch den Wechsel in den Abo-inaktiv-Modus aufgehoben."
+)
 
 
 def inactive_message(inactive_since: datetime) -> str:
@@ -39,7 +43,10 @@ def enter_inactive(rt: Runtime, now: datetime) -> None:
     """Notbetrieb an (persistiert), MQTT beendet, keine Snapshots/Telemetrie mehr. Gemeldet
     wird nur beim erstmaligen Setzen von inactive_since, nicht bei jedem Neustart.
     `mqtt_client.stop()` joint den paho-Thread; dessen Callbacks stellen nur ein und
-    blockieren daher nie."""
+    blockieren daher nie. Eine vorher gesetzte "zugang_abgelehnt" (eine Ablehnung bei noch
+    unklarem Abo-Status vor dieser eindeutig inaktiven) wird aufgeloest: sonst haengt der
+    falsche Rat ("neu anmelden") die ganze Kulanzfrist, und der Grund wuerde sogar noch im
+    abo_beendet-Event am Fristende auftauchen (Fix Review Focus 1, Runde 1)."""
     state = rt.store.state
     if state.abo_inactive_since is not None:
         return
@@ -59,6 +66,9 @@ def enter_inactive(rt: Runtime, now: datetime) -> None:
             rt.mqtt_client.stop()
         except Exception:
             logger.exception("MQTT-Verbindung konnte nicht sauber beendet werden")
+    if rt.status.flags.zugang_abgelehnt:
+        rt.status.update(zugang_abgelehnt=False, grund=None)
+    rt.notifier.notify("zugang", STATE_OK, _ZUGANG_RESOLVED_BY_INACTIVE_MESSAGE, critical=True, silent_ok=True)
     if newly_set:
         rt.notifier.notify("abo", "inaktiv", inactive_message(since), critical=True)
     else:
