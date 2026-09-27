@@ -203,3 +203,26 @@ def test_failing_template_creation_propagates(tmp_path):
 
     with pytest.raises(RuntimeError):
         _run(ha_api, tmp_path / "d.json")
+
+
+def test_source_change_is_still_reported_when_create_failed_after_delete(tmp_path):
+    """Loeschen gelang, Anlegen scheiterte (Start-Retry): der naechste Versuch findet den alten
+    Helfer nicht mehr, muss den Quellwechsel aber trotzdem melden (einmaliger Hinweis)."""
+    _, existing = _tracking_after_fresh_run(tmp_path)
+    existing = set(existing)
+    ha_api = _ha_api(existing)
+    ha_api.delete_helper.side_effect = existing.discard
+    original = ha_api.create_template_sensor.side_effect
+    ha_api.create_template_sensor.side_effect = [RuntimeError("HA lehnt ab"), original(
+        name="SmartHeat t1 Raumtemperatur", template="x",
+    )]
+
+    with pytest.raises(RuntimeError):
+        _run(ha_api, tmp_path / "d.json", room_sensors=["sensor.wz"])
+    result = _run(ha_api, tmp_path / "d.json", room_sensors=["sensor.wz"])
+
+    ha_api.delete_helper.assert_called_once_with(ROOM_ID)
+    assert result.replaced == ("room_temperature",)
+    assert load_backup(tmp_path / "d.json")["room_temperature"] == {
+        "entity_id": ROOM_ID, "source": room_temperature_template(["sensor.wz"]),
+    }

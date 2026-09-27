@@ -121,16 +121,19 @@ def ensure_all(
 
 def _ensure_entity(ha_api, tracking: dict, key: str, source: str | None, state_path: Path, create_fn) -> tuple[str, bool]:
     """(Entity-ID, neu angelegt wegen Quellwechsel?). Erst loeschen, dann anlegen: nur so
-    bekommt der neue Helfer wieder dieselbe Entity-ID."""
+    bekommt der neue Helfer wieder dieselbe Entity-ID.
+
+    Quellwechsel heisst: eine Quelle ist verlangt und weicht von der gemerkten ab, auch wenn der
+    alte Helfer schon fehlt (Loeschen gelang, Anlegen scheiterte im vorigen Versuch -- das
+    Tracking wird erst nach dem Anlegen geschrieben)."""
     existing = tracking.get(key, {})
     existing_id = existing.get("entity_id")
-    replaced = False
+    replaced = bool(existing_id) and source is not None and existing.get("source") != source
     if existing_id and ha_api.entity_exists(existing_id):
-        if source is None or existing.get("source") == source:
+        if not replaced:
             return existing_id, False
         logger.info("Hilfs-Entity %s (%s) wird wegen geaenderter Quelle neu angelegt", existing_id, key)
         ha_api.delete_helper(existing_id)
-        replaced = True
     entity_id = create_fn()
     tracking[key] = {"entity_id": entity_id} if source is None else {"entity_id": entity_id, "source": source}
     save_backup(state_path, tracking)
