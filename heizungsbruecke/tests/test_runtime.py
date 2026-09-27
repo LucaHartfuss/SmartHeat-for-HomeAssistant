@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import heizungsbruecke.__main__ as main_module
-from heizungsbruecke import entitlement, ticks
+from heizungsbruecke import abo, entitlement, ticks
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.delivery import DeliveryState
 from heizungsbruecke.runtime import Runtime
@@ -735,6 +735,24 @@ def test_active_status_at_start_clears_stale_inactive_state(env):
 
     assert not env.paths["ENTITLEMENT_PATH"].exists()
     assert len(env.mqtt_clients) == 1
+
+
+def test_abo_reactivation_at_start_notifies_once_and_is_silent_on_next_restart(env):
+    # __main__._start_bridge, Abo-active-Zweig: eine zuvor persistierte "abo"-Meldung (inaktiv
+    # oder beendet) muss beim Neustart mit wieder aktivem Abo genau einmal auf "ok" zurueckgehen
+    # (Push + Dismiss der persistent_notification) und beim naechsten Neustart still bleiben.
+    _quiet_backup(env, notify_states={"abo": "inaktiv"})
+
+    _start(env)
+
+    assert env.ha.pushes == [abo.ABO_ACTIVE_MESSAGE]
+    assert env.ha.dismissed == ["smartheat_abo"]
+
+    pushes_before, dismissed_before = list(env.ha.pushes), list(env.ha.dismissed)
+    _start(env)
+
+    assert env.ha.pushes == pushes_before
+    assert env.ha.dismissed == dismissed_before
 
 
 def test_unknown_status_at_start_keeps_state_and_starts_normally(env):
