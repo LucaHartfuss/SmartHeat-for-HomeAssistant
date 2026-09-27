@@ -103,6 +103,14 @@ class FakeHa:
     def entity_exists(self, entity_id):
         return True
 
+    def get_raw_state(self, entity_id):
+        value = self.states[entity_id]
+        if isinstance(value, Exception):
+            raise value
+        if value in ("unavailable", "unknown", ""):
+            raise ValueError(value)
+        return str(value)
+
 
 class FakeMqtt:
     def __init__(self, **kwargs):
@@ -797,6 +805,19 @@ def test_local_check_after_abo_finished_does_nothing(env):
     assert env.ha.writes == []
     assert _mqtt(env).snapshots == []
     assert _stable_target(bridge) == 21.0
+
+
+def test_health_check_runs_at_start_and_every_local_check_interval(env):
+    _quiet_backup(env)
+    env.ha.states["sensor.wz_battery"] = 15
+    bridge = _start(env, battery_entities=["sensor.wz_battery"])
+
+    assert any("Batterie von sensor.wz_battery" in text for text in env.ha.pushes)
+
+    env.ha.states["sensor.wz_battery"] = 90
+    _advance(env, bridge, 300)
+
+    assert any("sensor.wz_battery wieder in Ordnung" in text for text in env.ha.pushes)
 
 
 def test_telemetry_runs_on_its_own_schedule(env):

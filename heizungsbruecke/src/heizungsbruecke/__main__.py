@@ -10,7 +10,8 @@ import time
 from datetime import datetime
 
 from heizungsbruecke import (
-    abo, config, daynight_snapshot, delivery, derived_sensors, entitlement, regulation, telemetry, ticks, triggers,
+    abo, battery, config, daynight_snapshot, delivery, derived_sensors, entitlement, regulation, room_sensors,
+    telemetry, ticks, triggers,
 )
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.ha_api import HomeAssistantApi
@@ -18,7 +19,7 @@ from heizungsbruecke.manifest import ManifestError, build_manifest
 from heizungsbruecke.notifier import STATE_OK, Notifier
 from heizungsbruecke.override import Override
 from heizungsbruecke.runtime import (
-    EV_ACK_TIMEOUT, EV_AUTH_REJECTED, EV_DAYNIGHT, EV_GRACE_CHECK, EV_HA_CONNECTED, EV_LOCAL_CHECK,
+    EV_ACK_TIMEOUT, EV_AUTH_REJECTED, EV_DAYNIGHT, EV_GRACE_CHECK, EV_HA_CONNECTED, EV_HEALTH, EV_LOCAL_CHECK,
     EV_MQTT_CONNECTED, EV_RETRY_DUE, EV_SETPOINTS, EV_TELEMETRY, EV_WATCHDOG, Runtime,
 )
 from heizungsbruecke.state import StateStore
@@ -263,6 +264,19 @@ def _on_grace_check(rt: Runtime, event: Event) -> None:
     abo.check_grace_end(rt)
 
 
+def _on_health(rt: Runtime, event: Event) -> None:
+    """Batterien und einzelne Raumfuehler (Spec TP6 3.5). Eigener Zeitplaneintrag: der lokale
+    Check laeuft seit den eventgetriebenen Triggern nur auf Ereignisse."""
+    rt.worker.schedule(config.local_check_interval(rt.options), Event(EV_HEALTH))
+    if rt.store.state.abo_finished:
+        return
+    for check in (battery.check_batteries, room_sensors.check_room_sensors):
+        try:
+            check(rt)
+        except Exception:
+            logger.exception("Fehler in der Ueberwachung (%s), naechster Versuch im naechsten Takt", check.__name__)
+
+
 def _register_handlers(rt: Runtime) -> None:
     handlers = {
         EV_LOCAL_CHECK: _on_local_check,
@@ -276,6 +290,7 @@ def _register_handlers(rt: Runtime) -> None:
         EV_TELEMETRY: _on_telemetry,
         EV_DAYNIGHT: _on_daynight,
         EV_GRACE_CHECK: _on_grace_check,
+        EV_HEALTH: _on_health,
     }
     for kind, handler in handlers.items():
         rt.worker.register(kind, functools.partial(handler, rt))
@@ -382,7 +397,7 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | int:
 
     rt.trigger_client = triggers.build_ha_trigger_client(manifest, options, ha_api, rt.worker)
     rt.trigger_client.start()
-    for kind in (EV_WATCHDOG, EV_TELEMETRY, EV_DAYNIGHT, EV_GRACE_CHECK):
+    for kind in (EV_WATCHDOG, EV_TELEMETRY, EV_DAYNIGHT, EV_GRACE_CHECK, EV_HEALTH):
         rt.worker.schedule(0, Event(kind))
     if not abo_inactive:
         # Offenen Tick aus failsafe_state.json sofort mit derselben seq erneut versuchen.
