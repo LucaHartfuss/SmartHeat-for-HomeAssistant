@@ -20,6 +20,13 @@ cat > "$DATA_DIR/options.json" <<JSON
 {"hostname":"test.example.com","local_port":18830,"service_token_id":"fake-id","service_token_secret":"fake-secret"}
 JSON
 
+# $TMPDIR is created via `mktemp -d` (mode 0700) and Docker may run the container under a
+# different (e.g. remapped/rootless) uid than this script's -- without this, jq's read of
+# the bind-mounted options.json and the stub's write of stub.log into $DATA_DIR can fail
+# with "Permission denied" even though the files/dirs look fine from this shell. Test-only
+# scratch directory, removed at the end of this script -- permissive mode is not a concern.
+chmod -R 777 "$TMPDIR"
+
 echo "--- container run (Stub-cloudflared via PATH-Override) ---"
 # Git-Bash/MSYS auf Windows schreibt Unix-artige Pfad-Strings in
 # Kommandozeilenargumenten automatisch in Windows-Pfade um, bevor sie an

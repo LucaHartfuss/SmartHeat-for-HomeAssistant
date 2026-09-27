@@ -1,8 +1,9 @@
 """Template-Texte der Hilfssensoren (Spec TP6 3.2), gerendert mit reinem Jinja2 plus
 nachgebauten HA-Funktionen states()/state_attr(). Das echte HA-Verhalten (none -> unknown)
 prueft tests/test_ha_api_real_ha_integration.py."""
-import jinja2
 import pytest
+
+jinja2 = pytest.importorskip("jinja2")
 
 from heizungsbruecke.helper_templates import outdoor_temperature_template, room_temperature_template
 
