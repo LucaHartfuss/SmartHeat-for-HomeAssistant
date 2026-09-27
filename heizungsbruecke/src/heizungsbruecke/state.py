@@ -41,6 +41,8 @@ class BridgeState:
     notify_messages: dict = field(default_factory=dict)
     # Nur Laufzeit (die Abo-Frist selbst liegt in entitlement_state.json).
     stable_target: float | None = None
+    # Aufeinanderfolgende EV_HEALTH-Runden ohne gueltigen Wert je Raumfuehler (room_sensors.py).
+    room_sensor_misses: dict = field(default_factory=dict)
     abo_inactive_since: datetime | None = None
     abo_finished: bool = False
 

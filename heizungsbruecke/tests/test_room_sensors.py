@@ -15,8 +15,9 @@ def _http_error(status_code):
     return error
 
 
-def _rt(make_store, values, room_sensors):
+def _rt(make_store, values, room_sensors, store=None):
     ha_api = MagicMock()
+    store = store if store is not None else make_store()
 
     def _get_state(ref):
         value = values[ref]
@@ -26,8 +27,8 @@ def _rt(make_store, values, room_sensors):
 
     ha_api.get_state.side_effect = _get_state
     return SimpleNamespace(
-        options={"room_sensors": list(room_sensors)}, ha_api=ha_api,
-        notifier=Notifier(make_store(), ha_api, ["notify.mobile_app_a"]),
+        options={"room_sensors": list(room_sensors)}, ha_api=ha_api, store=store,
+        notifier=Notifier(store, ha_api, ["notify.mobile_app_a"]),
     )
 
 
@@ -51,6 +52,7 @@ def test_implausible_value_counts_as_failed_and_recovery_is_reported(make_store)
     values = {"sensor.a": 21.0, "sensor.b": 0.0}
     rt = _rt(make_store, values, values.keys())
     check_room_sensors(rt)
+    check_room_sensors(rt)
 
     values["sensor.b"] = 20.5
     check_room_sensors(rt)
@@ -62,6 +64,7 @@ def test_all_failed_says_so_instead_of_mean_of_zero(make_store):
     values = {"sensor.a": ValueError("x"), "sensor.b": KeyError("current_temperature")}
     rt = _rt(make_store, values, values.keys())
 
+    check_room_sensors(rt)
     check_room_sensors(rt)
 
     texts = _texts(rt)
@@ -94,8 +97,9 @@ def test_deleted_room_sensor_404_is_reported_like_any_failed_sensor(make_store):
     rt = _rt(make_store, values, values.keys())
 
     check_room_sensors(rt)
+    check_room_sensors(rt)
 
-    assert _texts(rt) == ["SmartHeat: Raumfühler sensor.b liefert keine Werte, Mittelwert aus 1 Fühlern."]
+    assert _texts(rt) == ["SmartHeat: Raumfühler sensor.b liefert keine Werte, Mittelwert aus 1 Fühler."]
 
 
 def test_non_404_http_error_stops_the_round_without_changes(make_store):
@@ -105,3 +109,83 @@ def test_non_404_http_error_stops_the_round_without_changes(make_store):
     check_room_sensors(rt)
 
     rt.ha_api.send_notification.assert_not_called()
+
+
+def test_one_failed_round_is_not_reported(make_store):
+    """M1: nach einem Host-Neustart (Zigbee laedt noch) oder bei einer kurzen Funkstoerung
+    faellt ein Fuehler eine Runde aus -- das allein ist noch keine Meldung."""
+    values = {"sensor.a": 21.0, "sensor.b": ValueError("unavailable")}
+    rt = _rt(make_store, values, values.keys())
+
+    check_room_sensors(rt)
+    values["sensor.b"] = 20.5
+    check_room_sensors(rt)
+    values["sensor.b"] = ValueError("unavailable")
+    check_room_sensors(rt)
+
+    rt.ha_api.send_notification.assert_not_called()
+
+
+def test_second_consecutive_failed_round_is_reported(make_store):
+    values = {"sensor.a": 21.0, "sensor.b": ValueError("unavailable")}
+    rt = _rt(make_store, values, values.keys())
+
+    check_room_sensors(rt)
+    rt.ha_api.send_notification.assert_not_called()
+    check_room_sensors(rt)
+    check_room_sensors(rt)
+
+    assert _texts(rt) == ["SmartHeat: Raumfühler sensor.b liefert keine Werte, Mittelwert aus 1 Fühler."]
+
+
+def test_recovery_is_reported_in_the_first_good_round(make_store):
+    values = {"sensor.a": 21.0, "sensor.b": ValueError("unavailable")}
+    rt = _rt(make_store, values, values.keys())
+    check_room_sensors(rt)
+    check_room_sensors(rt)
+
+    values["sensor.b"] = 20.5
+    check_room_sensors(rt)
+
+    assert _texts(rt)[-1] == "SmartHeat: Raumfühler sensor.b liefert wieder Werte."
+    assert len(_texts(rt)) == 2
+
+
+def test_reported_failure_is_kept_through_the_first_round_after_restart(make_store):
+    """Nach einem Neustart zaehlt die Entprellung neu; ein schon gemeldeter Ausfall darf dabei
+    nicht als 'wieder Werte' enden, solange der Fuehler weiter ausfaellt."""
+    store = make_store()
+    values = {"sensor.a": 21.0, "sensor.b": ValueError("unavailable")}
+    rt = _rt(make_store, values, values.keys(), store=store)
+    check_room_sensors(rt)
+    check_room_sensors(rt)
+    store.update(room_sensor_misses={})  # Laufzeitfeld, nach Neustart leer
+
+    rt.ha_api.reset_mock()
+    check_room_sensors(rt)
+    check_room_sensors(rt)
+
+    rt.ha_api.send_notification.assert_not_called()
+
+
+def test_unreachable_ha_keeps_the_failed_round_count(make_store):
+    values = {"sensor.a": 21.0, "sensor.b": ValueError("unavailable")}
+    rt = _rt(make_store, values, values.keys())
+    check_room_sensors(rt)
+
+    values["sensor.a"] = requests.ConnectionError("weg")
+    check_room_sensors(rt)
+    values["sensor.a"] = 21.0
+    check_room_sensors(rt)
+
+    assert len(_texts(rt)) == 1
+
+
+def test_plural_text_with_two_remaining_sensors(make_store):
+    values = {"sensor.a": 21.0, "sensor.b": ValueError("x"), "sensor.c": 20.0}
+    rt = _rt(make_store, values, values.keys())
+
+    check_room_sensors(rt)
+    check_room_sensors(rt)
+
+    assert _texts(rt) == ["SmartHeat: Raumfühler sensor.b liefert keine Werte, Mittelwert aus 2 Fühlern."]
