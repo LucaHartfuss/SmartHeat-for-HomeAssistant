@@ -10,6 +10,7 @@ from heizungsbruecke.__main__ import (
     _ensure_derived_sensors_with_retry,
     _run_bridge,
 )
+from heizungsbruecke.derived_sensors import DerivedSensors
 
 
 @pytest.fixture(autouse=True)
@@ -40,7 +41,7 @@ def _full_valid_options(**overrides):
         "night_avg_window_start": "04:00", "night_avg_window_end": "07:00",
         "mqtt_username": "test_mqtt_user",
         "mqtt_password": "test_mqtt_pass",
-        "entity_room_actual": "sensor.room_actual",
+        "room_sensors": ["sensor.room_actual"],
         "entity_room_target": "sensor.room_target",
         "entity_curve_current": "number.curve_current",
         "entity_offset_current": "number.offset_current",
@@ -79,10 +80,10 @@ def test_run_bridge_returns_one_for_verteilsystem_without_safety_values(monkeypa
     assert "Fussbodenheizung" in caplog.text
 
 
-def test_run_bridge_with_0_17_0_options_fails_loudly_naming_verteilsystem(caplog):
+def test_run_bridge_with_0_17_0_options_fails_loudly_as_outdated(caplog):
     old = {k: v for k, v in _full_valid_options().items() if k not in (
         "verteilsystem", "daily_trigger_time", "day_avg_window_start", "day_avg_window_end",
-        "night_avg_window_start", "night_avg_window_end",
+        "night_avg_window_start", "night_avg_window_end", "room_sensors",
     )}
     old["profile"] = "vaillant_gastherme_heizkoerper"
 
@@ -90,7 +91,7 @@ def test_run_bridge_with_0_17_0_options_fails_loudly_naming_verteilsystem(caplog
         result = _run_bridge(old, MagicMock())
 
     assert result == 1
-    assert "verteilsystem" in caplog.text
+    assert "Konfiguration veraltet" in caplog.text
     assert "noch nicht eingerichtet" not in caplog.text
 
 
@@ -139,13 +140,13 @@ def test_main_exits_nonzero_when_run_bridge_reports_a_genuine_error(tmp_path, mo
 
 
 _DERIVED_OPTIONS = {
-    "tenant_id": "t1", "entity_room_actual": "sensor.rt", "entity_outdoor_temp": "sensor.outdoor",
+    "tenant_id": "t1", "room_sensors": ["sensor.rt"], "entity_outdoor_temp": "sensor.outdoor",
     "avg_window_hours": 3.0,
 }
 
 
 def test_ensure_derived_sensors_with_retry_returns_result_on_first_success(monkeypatch):
-    expected = {"dat": "sensor.dat"}
+    expected = DerivedSensors({"dat": "sensor.dat"}, (), "f")
     monkeypatch.setattr("heizungsbruecke.derived_sensors.ensure_all", lambda **kwargs: expected)
     sleeps = []
     monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", sleeps.append)
@@ -155,7 +156,7 @@ def test_ensure_derived_sensors_with_retry_returns_result_on_first_success(monke
 
 
 def test_ensure_derived_sensors_with_retry_recovers_after_transient_failures(monkeypatch):
-    expected = {"dat": "sensor.dat"}
+    expected = DerivedSensors({"dat": "sensor.dat"}, (), "f")
     attempts = {"count": 0}
 
     def flaky_ensure_all(**kwargs):
@@ -174,7 +175,7 @@ def test_ensure_derived_sensors_with_retry_recovers_after_transient_failures(mon
 
 
 def test_ensure_derived_sensors_with_retry_keeps_retrying_every_five_minutes_after_budget(monkeypatch, caplog):
-    expected = {"dat": "sensor.dat"}
+    expected = DerivedSensors({"dat": "sensor.dat"}, (), "f")
     attempts = {"count": 0}
 
     def flaky_ensure_all(**kwargs):
@@ -206,14 +207,14 @@ def test_ensure_derived_sensors_with_retry_survives_failing_notification(monkeyp
         attempts["count"] += 1
         if attempts["count"] <= 8:
             raise ConnectionError("HA Core noch nicht bereit")
-        return {}
+        return DerivedSensors({}, (), "f")
 
     monkeypatch.setattr("heizungsbruecke.derived_sensors.ensure_all", flaky_ensure_all)
     monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", lambda seconds: None)
     ha_api = MagicMock()
     ha_api.create_persistent_notification.side_effect = RuntimeError("HA kaputt")
 
-    assert _ensure_derived_sensors_with_retry(ha_api, _DERIVED_OPTIONS) == {}
+    assert _ensure_derived_sensors_with_retry(ha_api, _DERIVED_OPTIONS) == DerivedSensors({}, (), "f")
 
 
 def test_check_timezone_warns_on_mismatch(monkeypatch, caplog):

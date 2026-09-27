@@ -14,7 +14,6 @@ options:
   tenant_id: ""
   mqtt_username: ""
   mqtt_password: ""
-  entity_room_actual: ""
   entity_room_target: ""
   entity_curve_current: ""
   entity_offset_current: ""
@@ -51,7 +50,6 @@ schema:
   tenant_id: str
   mqtt_username: str
   mqtt_password: password
-  entity_room_actual: str
   entity_room_target: str
   entity_curve_current: str
   entity_offset_current: str
@@ -79,3 +77,8 @@ schema:
   accounts_api_base_url: url?
   notify_services:
     - str?
+  room_sensors:
+    - str?
+  battery_entities:
+    - str?
+  setup_id: str?

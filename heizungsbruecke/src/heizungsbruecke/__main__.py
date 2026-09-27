@@ -12,6 +12,7 @@ from datetime import datetime
 from heizungsbruecke import (
     abo, config, daynight_snapshot, delivery, derived_sensors, entitlement, regulation, telemetry, ticks, triggers,
 )
+from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.manifest import ManifestError, build_manifest
 from heizungsbruecke.notifier import STATE_OK, Notifier
@@ -32,11 +33,15 @@ HELPER_NOTIFICATION_ID = "smartheat_hilfssensoren"
 HELPER_NOTIFICATION_MESSAGE = (
     "SmartHeat: Hilfssensoren konnten nicht angelegt werden – Home Assistant noch nicht bereit?"
 )
+SOURCE_CHANGE_MESSAGE = (
+    "SmartHeat: Die Quelle der Raum- oder Außentemperatur hat sich geändert. Die Tagesmittel "
+    "(DAT/DART) sind erst nach 24 Stunden wieder vollständig."
+)
 
 logger = logging.getLogger(__name__)
 
 
-def _ensure_derived_sensors_with_retry(ha_api, options: dict) -> dict[str, str]:
+def _ensure_derived_sensors_with_retry(ha_api, options: dict) -> DerivedSensors:
     """derived_sensors.ensure_all mit Retry: erst das Budget, dann unbegrenzt alle
     DERIVED_SENSORS_UNBOUNDED_RETRY_SECONDS. Beim Uebergang einmal ERROR und best effort eine
     HA-Benachrichtigung. Wirft nie."""
@@ -47,8 +52,8 @@ def _ensure_derived_sensors_with_retry(ha_api, options: dict) -> dict[str, str]:
             return derived_sensors.ensure_all(
                 ha_api=ha_api,
                 tenant_id=options["tenant_id"],
-                room_actual_entity_id=options["entity_room_actual"],
-                outdoor_temp_entity_id=options["entity_outdoor_temp"],
+                room_sensors=options["room_sensors"],
+                outdoor_source=options["entity_outdoor_temp"],
                 avg_window_hours=options["avg_window_hours"],
                 state_path=config.DERIVED_SENSORS_PATH,
             )
@@ -237,10 +242,10 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | int:
         logger.error("FEHLER: %s", error)
         return 1
 
-    derived_entity_ids = _ensure_derived_sensors_with_retry(ha_api, options)
+    derived = _ensure_derived_sensors_with_retry(ha_api, options)
     _check_timezone(ha_api)
     try:
-        manifest = build_manifest(options, derived_entity_ids)
+        manifest = build_manifest(options, derived.entity_ids)
     except ManifestError as error:
         logger.error("FEHLER: %s", error)
         return 1
@@ -249,10 +254,12 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | int:
     notifier = Notifier(store, ha_api, config.notify_services(options))
     ticks.seed_notices(notifier, store.state.delivery)
     rt = Runtime(
-        manifest=manifest, ha_api=ha_api, options=options, derived_entity_ids=derived_entity_ids,
+        manifest=manifest, ha_api=ha_api, options=options, derived_entity_ids=derived.entity_ids,
         worker=RegulationWorker(clock=clock), store=store, override=Override(store, manifest, ha_api, options),
         notifier=notifier,
     )
+    if derived.replaced:
+        notifier.notify("quellwechsel", derived.sources_fingerprint, SOURCE_CHANGE_MESSAGE, critical=False)
 
     # Abo-Status erst hier: Abschluss-Start und lokaler Modus brauchen Manifest und Clamps.
     # "unknown" (accounts-api nicht erreichbar) startet normal -- fail-open.

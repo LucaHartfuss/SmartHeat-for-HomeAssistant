@@ -124,3 +124,16 @@ def test_notify_services_is_an_optional_string_list_and_notify_service_is_gone()
     assert schema["notify_services"] == ["str?"]
     assert "notify_service" not in schema
     assert "notify_service" not in _load_config_yaml()["options"]
+
+
+def test_tp6_list_options_and_setup_id_are_optional_and_room_actual_is_gone():
+    config = _load_config_yaml()
+    schema = config["schema"]
+
+    assert schema["room_sensors"] == ["str?"]
+    assert schema["battery_entities"] == ["str?"]
+    assert schema["setup_id"] == "str?"
+    assert "entity_room_actual" not in schema
+    assert "entity_room_actual" not in config["options"]
+    for key in ("room_sensors", "notify_services", "battery_entities", "setup_id"):
+        assert key not in config["options"]

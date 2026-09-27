@@ -6,6 +6,7 @@ from heizungsbruecke import config
 from heizungsbruecke.config import (
     ConfigError,
     DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS,
+    REQUIRED_OPTIONS,
     is_configured,
     load_options_safe,
     local_check_interval,
@@ -13,7 +14,6 @@ from heizungsbruecke.config import (
     telemetry_interval,
     validate,
     validate_boost_config,
-    validate_derived_sensor_prerequisites,
     validate_local_check_interval,
     validate_telemetry_interval,
 )
@@ -42,7 +42,7 @@ PROFILE_PARAMS = {
 REQUIRED = {
     "tenant_id": "wohnung1",
     "mqtt_username": "wohnung1_a1b2c3d4", "mqtt_password": "geheim",
-    "entity_room_actual": "sensor.rt", "entity_room_target": "sensor.target_rt",
+    "room_sensors": ["sensor.rt"], "entity_room_target": "sensor.target_rt",
     "entity_curve_current": "number.curve", "entity_offset_current": "number.offset",
     "entity_outdoor_temp": "sensor.outdoor", "entity_heat_limit": "number.heat_limit",
 }
@@ -225,30 +225,6 @@ def test_accounts_api_base_url_constant_is_gone():
     assert not hasattr(config_module, "ACCOUNTS_API_BASE_URL")
 
 
-def test_validate_derived_sensor_prerequisites_returns_none_when_present():
-    options = {"entity_room_actual": "sensor.rt", "entity_outdoor_temp": "sensor.outdoor"}
-
-    assert validate_derived_sensor_prerequisites(options) is None
-
-
-def test_validate_derived_sensor_prerequisites_flags_missing_outdoor_temp():
-    options = {"entity_room_actual": "sensor.rt"}
-
-    error = validate_derived_sensor_prerequisites(options)
-
-    assert error is not None
-    assert "entity_outdoor_temp" in error
-
-
-def test_validate_derived_sensor_prerequisites_flags_missing_room_actual():
-    options = {"entity_outdoor_temp": "sensor.outdoor"}
-
-    error = validate_derived_sensor_prerequisites(options)
-
-    assert error is not None
-    assert "entity_room_actual" in error
-
-
 def test_validate_local_check_interval_accepts_absent_and_valid_values():
     assert validate_local_check_interval({}) is None
     assert validate_local_check_interval({"local_check_interval_seconds": 30}) is None
@@ -324,12 +300,11 @@ def test_default_local_check_interval_seconds_is_300():
 
 
 def test_validate_returns_first_error_or_none():
-    valid = _base_options(entity_room_actual="sensor.rt", entity_outdoor_temp="sensor.outdoor")
+    valid = _base_options(entity_outdoor_temp="sensor.outdoor")
 
     assert validate(valid) is None
     assert "boost_curve_value" in validate({**valid, "boost_curve_value": 99.0})
     assert "telemetry_interval_seconds" in validate({**valid, "telemetry_interval_seconds": 5})
-    assert "entity_outdoor_temp" in validate({**valid, "entity_outdoor_temp": ""})
 
 
 def test_intervals_fall_back_to_300_seconds():
@@ -346,3 +321,82 @@ def test_intervals_fall_back_to_300_seconds():
 def test_notify_services_is_tolerant(raw, expected):
     options = {} if raw is None else {"notify_services": raw}
     assert config.notify_services(options) == expected
+
+
+def _resolvable(**overrides):
+    return {**REQUIRED, **PROFILE_PARAMS, **BASE_URL, **overrides}
+
+
+def test_required_options_no_longer_contain_entity_room_actual():
+    assert "entity_room_actual" not in REQUIRED_OPTIONS
+
+
+@pytest.mark.parametrize("room_sensors", [None, [], "sensor.rt"])
+def test_missing_or_empty_room_sensors_is_an_outdated_configuration(room_sensors):
+    options = _resolvable()
+    if room_sensors is None:
+        del options["room_sensors"]
+    else:
+        options["room_sensors"] = room_sensors
+
+    with pytest.raises(ConfigError, match="Konfiguration veraltet – bitte SmartHeat-Einrichtung erneut durchführen"):
+        resolve_effective_options(options)
+
+
+def test_0_18_0_options_are_reported_as_outdated_not_as_unconfigured():
+    old = {k: v for k, v in _resolvable().items() if k != "room_sensors"}
+    old["entity_room_actual"] = "sensor.rt"
+
+    assert is_configured(old) is True
+    with pytest.raises(ConfigError, match="Konfiguration veraltet"):
+        resolve_effective_options(old)
+
+
+@pytest.mark.parametrize("bad", [["sensor.RT"], ["climate.wz"], ["climate.wz::temperature"], ["light.x"], [3]])
+def test_room_sensors_must_be_sensor_or_climate_current_temperature(bad):
+    with pytest.raises(ConfigError, match="room_sensors"):
+        resolve_effective_options(_resolvable(room_sensors=bad))
+
+
+def test_room_sensors_accept_sensors_and_climate_current_temperature():
+    resolved = resolve_effective_options(_resolvable(room_sensors=["sensor.a", "climate.wz::current_temperature"]))
+
+    assert resolved["room_sensors"] == ["sensor.a", "climate.wz::current_temperature"]
+
+
+@pytest.mark.parametrize("outdoor,ok", [
+    ("sensor.aussen", True), ("weather.forecast_home", True), ("climate.x", False), ("", False),
+])
+def test_outdoor_source_is_sensor_or_weather(outdoor, ok):
+    options = _resolvable(entity_outdoor_temp=outdoor)
+    if ok:
+        assert resolve_effective_options(options)["entity_outdoor_temp"] == outdoor
+    else:
+        with pytest.raises(ConfigError, match="entity_outdoor_temp"):
+            resolve_effective_options(options)
+
+
+def test_list_options_default_to_empty_lists():
+    resolved = resolve_effective_options(_resolvable())
+
+    assert resolved["battery_entities"] == []
+    assert resolved["notify_services"] == []
+
+
+@pytest.mark.parametrize("key,value", [
+    ("battery_entities", ["light.x"]), ("battery_entities", "sensor.x"),
+    ("notify_services", ["mobile_app_x"]), ("notify_services", "notify.x"),
+])
+def test_invalid_list_options_are_config_errors(key, value):
+    with pytest.raises(ConfigError, match=key):
+        resolve_effective_options(_resolvable(**{key: value}))
+
+
+def test_valid_list_options_are_passed_through():
+    resolved = resolve_effective_options(_resolvable(
+        battery_entities=["sensor.wz_battery", "binary_sensor.kz_battery_low"],
+        notify_services=["notify.mobile_app_a"],
+    ))
+
+    assert resolved["battery_entities"] == ["sensor.wz_battery", "binary_sensor.kz_battery_low"]
+    assert resolved["notify_services"] == ["notify.mobile_app_a"]

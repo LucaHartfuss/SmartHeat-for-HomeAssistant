@@ -35,13 +35,19 @@ class ConfigError(ValueError):
     fehlende oder ungueltige Option."""
 
 
-# Bewusst ohne verteilsystem/Fenster/accounts_api_base_url: eine alte Konfiguration (0.17.0)
-# soll als "eingerichtet" gelten und laut abbrechen, statt still auf die Integration zu warten.
+# Bewusst ohne verteilsystem/Fenster/accounts_api_base_url/room_sensors: eine alte Konfiguration
+# (0.17.0/0.18.0) soll als "eingerichtet" gelten und laut abbrechen, statt still auf die
+# Integration zu warten.
 REQUIRED_OPTIONS = (
     "tenant_id", "mqtt_username", "mqtt_password",
-    "entity_room_actual", "entity_room_target",
-    "entity_curve_current", "entity_offset_current", "entity_outdoor_temp", "entity_heat_limit",
+    "entity_room_target", "entity_curve_current", "entity_offset_current", "entity_outdoor_temp", "entity_heat_limit",
 )
+
+OUTDATED_CONFIGURATION = "Konfiguration veraltet – bitte SmartHeat-Einrichtung erneut durchführen"
+_ROOM_SENSOR = re.compile(r"sensor\.[a-z0-9_]+|climate\.[a-z0-9_]+::current_temperature")
+_OUTDOOR_SOURCE = re.compile(r"(sensor|weather)\.[a-z0-9_]+")
+_BATTERY_ENTITY = re.compile(r"(sensor|binary_sensor)\.[a-z0-9_]+")
+_NOTIFY_SERVICE = re.compile(r"notify\.[a-z0-9_]+")
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +59,34 @@ def is_configured(options: dict) -> bool:
     return all(options.get(field) for field in REQUIRED_OPTIONS)
 
 
+def _resolve_sources(options: dict) -> dict:
+    """Quellen aus der Integration (Spec TP6 3.1). room_sensors zuerst: fehlt es, ist die
+    Konfiguration aelter als TP6 und muss neu eingerichtet werden."""
+    room_sensors = options.get("room_sensors")
+    if not isinstance(room_sensors, list) or not room_sensors:
+        raise ConfigError(f"{OUTDATED_CONFIGURATION} (Option 'room_sensors' fehlt)")
+    invalid = [ref for ref in room_sensors if not isinstance(ref, str) or not _ROOM_SENSOR.fullmatch(ref)]
+    if invalid:
+        raise ConfigError(f"Option 'room_sensors': ungueltige Eintraege {invalid!r}")
+    outdoor = options.get("entity_outdoor_temp")
+    if not isinstance(outdoor, str) or not _OUTDOOR_SOURCE.fullmatch(outdoor):
+        raise ConfigError(f"Option 'entity_outdoor_temp' ({outdoor!r}) muss sensor.* oder weather.* sein")
+    return {
+        "room_sensors": list(room_sensors),
+        "battery_entities": _string_list(options, "battery_entities", _BATTERY_ENTITY),
+        "notify_services": _string_list(options, "notify_services", _NOTIFY_SERVICE),
+    }
+
+
+def _string_list(options: dict, key: str, pattern: re.Pattern) -> list[str]:
+    value = options.get(key, [])
+    if not isinstance(value, list) or any(not isinstance(item, str) or not pattern.fullmatch(item) for item in value):
+        raise ConfigError(f"Option '{key}' ({value!r}) ist keine gueltige Liste")
+    return list(value)
+
+
 def resolve_effective_options(options: dict) -> dict:
+    sources = _resolve_sources(options)
     verteilsystem = options.get("verteilsystem")
     if not verteilsystem:
         raise ConfigError(
@@ -70,6 +103,7 @@ def resolve_effective_options(options: dict) -> dict:
     base_url = resolve_accounts_api_base_url(options.get("accounts_api_base_url"))
     return {
         **options,
+        **sources,
         "curve_min": safety.curve_min,
         "curve_max": safety.curve_max,
         "offset_min": safety.offset_min,
@@ -157,23 +191,11 @@ def validate_telemetry_interval(options: dict) -> str | None:
     return None
 
 
-def validate_derived_sensor_prerequisites(options: dict) -> str | None:
-    """Vorab pruefen, damit ein fehlendes Feld eine klare Startmeldung ergibt statt eines
-    KeyError in derived_sensors.ensure_all."""
-    missing = [field for field in ("entity_room_actual", "entity_outdoor_temp") if not options.get(field)]
-    if missing:
-        return (
-            "Folgende Pflichtfelder fehlen in der Add-on-Konfiguration (werden fuer "
-            f"automatisch berechnete Sensoren gebraucht): {', '.join(missing)}"
-        )
-    return None
-
-
 def validate(options: dict) -> str | None:
     """Erste Fehlermeldung der Startpruefungen, sonst None."""
     for check in (
         validate_boost_config, validate_local_check_interval,
-        validate_telemetry_interval, validate_derived_sensor_prerequisites,
+        validate_telemetry_interval,
     ):
         error = check(options)
         if error:
@@ -195,7 +217,7 @@ def notify_services(options: dict) -> list[str]:
     raw = options.get("notify_services")
     if not isinstance(raw, list):
         return []
-    return [service for service in raw if isinstance(service, str) and re.fullmatch(r"notify\.[a-z0-9_]+", service)]
+    return [service for service in raw if isinstance(service, str) and _NOTIFY_SERVICE.fullmatch(service)]
 
 
 def load_options_safe(path: Path) -> dict:

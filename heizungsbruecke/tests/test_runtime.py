@@ -14,6 +14,7 @@ import heizungsbruecke.__main__ as main_module
 from heizungsbruecke import abo, entitlement, ticks
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.delivery import DeliveryState
+from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.runtime import Runtime
 
 OPTIONS = {
@@ -24,7 +25,7 @@ OPTIONS = {
     "night_avg_window_start": "04:00", "night_avg_window_end": "07:00",
     "mqtt_username": "u",
     "mqtt_password": "p",
-    "entity_room_actual": "sensor.room_actual",
+    "room_sensors": ["sensor.room_actual"],
     "entity_room_target": "sensor.room_target",
     "entity_curve_current": "number.curve_current",
     "entity_offset_current": "number.offset_current",
@@ -161,7 +162,11 @@ def env(tmp_path, monkeypatch, clock):
     for name in ("BACKUP_PATH", "FAILSAFE_PATH", "ENTITLEMENT_PATH", "DERIVED_SENSORS_PATH", "DAYNIGHT_SNAPSHOT_PATH"):
         paths[name] = tmp_path / f"{name.lower()}.json"
         monkeypatch.setattr(f"heizungsbruecke.config.{name}", paths[name])
-    monkeypatch.setattr("heizungsbruecke.derived_sensors.ensure_all", lambda **kwargs: dict(DERIVED))
+    env_derived = {"replaced": ()}
+    monkeypatch.setattr(
+        "heizungsbruecke.derived_sensors.ensure_all",
+        lambda **kwargs: DerivedSensors({**DERIVED, "room_actual": "sensor.room_actual"}, env_derived["replaced"], "fp1"),
+    )
     monkeypatch.setattr("heizungsbruecke.daynight_snapshot.maybe_snapshot", lambda **kwargs: None)
     abo = {"status": entitlement.ACTIVE, "queries": 0}
 
@@ -187,6 +192,7 @@ def env(tmp_path, monkeypatch, clock):
     monkeypatch.setattr("heizungsbruecke.triggers.HaTriggerClient", _trigger_factory)
     return SimpleNamespace(
         clock=clock, paths=paths, abo=abo, ha=FakeHa(), mqtt_clients=mqtt_clients, trigger_clients=trigger_clients,
+        derived=env_derived,
     )
 
 
@@ -439,6 +445,18 @@ def test_notbetrieb_creates_and_recovery_dismisses_a_persistent_notification(env
     _answer(env, bridge, seq)
 
     assert "smartheat_notbetrieb" in env.ha.dismissed
+
+
+def test_source_change_is_announced_once_and_not_critical(env):
+    env.derived["replaced"] = ("dart",)
+    _quiet_backup(env)
+
+    _start(env)
+    _start(env)
+
+    changed = [text for text in env.ha.pushes if "Quelle der Raum- oder Außentemperatur" in text]
+    assert len(changed) == 1
+    assert not any(entry[0] == "smartheat_quellwechsel" for entry in env.ha.persistent)
 
 
 # --- Zustellung und Antworten ---
