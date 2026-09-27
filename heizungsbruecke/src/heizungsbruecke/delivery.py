@@ -46,6 +46,11 @@ PHASE_AWAITING_ACK = "awaiting_ack"
 PHASE_QUERYING_ENTITLEMENT = "querying_entitlement"
 PHASE_WAITING_RETRY = "waiting_retry"
 
+# Wer die Wartezeit eines offenen Ticks geplant hat (N2): nur die Server-Kette bekommt beim
+# (Wieder-)Verbinden einen Sofortversuch, Datenfehler- und Ablehnungs-Wartezeiten laufen ab.
+ORIGIN_SERVER = "server"
+ORIGIN_DATA = "data"
+
 
 @dataclass(frozen=True)
 class PendingTick:
@@ -56,6 +61,9 @@ class PendingTick:
     # Jeder geplante ack_timeout/retry_due traegt die Generation, bei der er geplant wurde; nur
     # die aktuelle zaehlt. Sonst erzeugte eine verspaetete Antwort doppelte Versuche.
     gen: int = 0
+    retry_origin: str = ""  # ORIGIN_SERVER | ORIGIN_DATA, gesetzt von _retry
+    # Der laufende Versuch ging mangels Verbindung gar nicht raus (N3).
+    unsent: bool = False
 
 
 @dataclass(frozen=True)
@@ -106,6 +114,7 @@ class ReadInvalid:
 @dataclass(frozen=True)
 class Published:
     seq: str
+    unsent: bool = False  # ohne Broker-Verbindung nicht gesendet (N3)
 
 
 @dataclass(frozen=True)
@@ -227,12 +236,14 @@ def _is_current(pending: PendingTick | None, seq: str, gen: int) -> bool:
     return pending is not None and pending.seq == seq and pending.gen == gen
 
 
-def _retry(state: DeliveryState, delays: tuple[int, ...]) -> tuple[DeliveryState, ScheduleRetry]:
+def _retry(state: DeliveryState, delays: tuple[int, ...], origin: str) -> tuple[DeliveryState, ScheduleRetry]:
     """Plant den naechsten Versuch mit der Wartezeit der aktuellen Stufe, danach stage+1."""
     pending = state.pending
     gen = pending.gen + 1
     delay = delays[min(pending.stage, len(delays) - 1)]
-    new_pending = replace(pending, stage=pending.stage + 1, phase=PHASE_WAITING_RETRY, gen=gen)
+    new_pending = replace(
+        pending, stage=pending.stage + 1, phase=PHASE_WAITING_RETRY, gen=gen, retry_origin=origin, unsent=False,
+    )
     return replace(state, pending=new_pending), ScheduleRetry(pending.seq, gen, delay)
 
 
@@ -256,7 +267,7 @@ def _read_invalid(state, event):
         return state, []
     fault = DataFault(SOURCE_LOCAL, tuple(sorted(event.roles)))
     actions = [] if fault == state.datenfehler else [Notify(NOTIFY_DATENFEHLER_LOCAL, fault.detail)]
-    new_state, retry = _retry(replace(state, datenfehler=fault), DATA_RETRY_DELAYS_SECONDS)
+    new_state, retry = _retry(replace(state, datenfehler=fault), DATA_RETRY_DELAYS_SECONDS, ORIGIN_DATA)
     return new_state, actions + [retry]
 
 
@@ -265,7 +276,7 @@ def _published(state, event):
     if pending is None or pending.seq != event.seq:
         return state, []
     gen = pending.gen + 1
-    new_pending = replace(pending, phase=PHASE_AWAITING_ACK, gen=gen)
+    new_pending = replace(pending, phase=PHASE_AWAITING_ACK, gen=gen, unsent=event.unsent)
     return replace(state, pending=new_pending), [ScheduleAckTimeout(pending.seq, gen, ACK_TIMEOUT_SECONDS)]
 
 
@@ -290,7 +301,7 @@ def _answered_with_fault(state, fault: DataFault, notify_kind: str):
     answered = replace(state, server_failures=0, notbetrieb=False, datenfehler=fault)
     if state.pending.phase != PHASE_AWAITING_ACK:
         return answered, actions
-    new_state, retry = _retry(answered, DATA_RETRY_DELAYS_SECONDS)
+    new_state, retry = _retry(answered, DATA_RETRY_DELAYS_SECONDS, ORIGIN_DATA)
     return new_state, actions + [retry]
 
 
@@ -316,13 +327,18 @@ def _write_failed(state, event):
 
 
 def _mqtt_connected(state):
-    """Wartet der offene Tick auf seinen naechsten Versuch, startet er sofort (neue Generation,
-    damit der geplante Retry ins Leere laeuft; Stufe unveraendert). Laeuft gerade ein Versuch
-    oder die Abo-Abfrage, bleibt es dabei."""
+    """Die Verbindung steht (wieder). Sofort versucht wird nur, wenn der offene Tick auf die
+    Server-Kette wartet (N2) oder sein laufender Versuch mangels Verbindung nicht gesendet wurde
+    (N3). Neue Generation, damit der geplante Retry bzw. Ack-Timeout ins Leere laeuft; die Stufe
+    bleibt. Sonst (Versuch unterwegs, Abo-Abfrage, Datenfehler-Wartezeit) bleibt es dabei."""
     pending = state.pending
-    if pending is None or pending.phase != PHASE_WAITING_RETRY:
+    if pending is None:
         return state, []
-    new_pending = replace(pending, phase=PHASE_SENDING, gen=pending.gen + 1)
+    server_wait = pending.phase == PHASE_WAITING_RETRY and pending.retry_origin == ORIGIN_SERVER
+    resend = pending.phase == PHASE_AWAITING_ACK and pending.unsent
+    if not (server_wait or resend):
+        return state, []
+    new_pending = replace(pending, phase=PHASE_SENDING, gen=pending.gen + 1, unsent=False)
     return replace(state, pending=new_pending), [Attempt(pending.seq, pending.trigger)]
 
 
@@ -335,7 +351,7 @@ def _ack_timeout(state, event):
         # Erst klaeren, ob das Abo inaktiv ist (dann Abo-inaktiv-Modus statt Alarm).
         querying = replace(pending, phase=PHASE_QUERYING_ENTITLEMENT)
         return replace(state, pending=querying), [QueryEntitlement(pending.seq)]
-    new_state, retry = _retry(state, SERVER_RETRY_DELAYS_SECONDS)
+    new_state, retry = _retry(state, SERVER_RETRY_DELAYS_SECONDS, ORIGIN_SERVER)
     return new_state, [retry]
 
 
@@ -353,11 +369,11 @@ def _entitlement_checked(state, event):
     if state.server_failures < NOTBETRIEB_AFTER_SERVER_FAILURES:
         # Waehrend der Abfrage kam eine Antwort ohne Werte: der Server lebt, das Abo-Ergebnis
         # zaehlt nicht mehr.
-        new_state, retry = _retry(state, DATA_RETRY_DELAYS_SECONDS)
+        new_state, retry = _retry(state, DATA_RETRY_DELAYS_SECONDS, ORIGIN_DATA)
         return new_state, [retry]
     if event.status == INACTIVE:
         return replace(state, pending=None, notbetrieb=True), [EnterAboInactive()]
-    new_state, retry = _retry(replace(state, notbetrieb=True), SERVER_RETRY_DELAYS_SECONDS)
+    new_state, retry = _retry(replace(state, notbetrieb=True), SERVER_RETRY_DELAYS_SECONDS, ORIGIN_SERVER)
     return new_state, [PublishFailsafe(True), Notify(NOTIFY_NOTBETRIEB_ON), retry]
 
 

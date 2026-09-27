@@ -28,6 +28,8 @@ from heizungsbruecke.delivery import (
     EntitlementChecked,
     MqttConnected,
     Notify,
+    ORIGIN_DATA,
+    ORIGIN_SERVER,
     PendingTick,
     PublishFailsafe,
     Published,
@@ -154,7 +156,9 @@ def test_first_ack_timeout_retries_immediately_without_notbetrieb():
 
     assert state.server_failures == 1
     assert state.notbetrieb is False
-    assert state.pending == PendingTick("s1", "daily", stage=1, phase=PHASE_WAITING_RETRY, gen=2)
+    assert state.pending == PendingTick(
+        "s1", "daily", stage=1, phase=PHASE_WAITING_RETRY, gen=2, retry_origin=ORIGIN_SERVER,
+    )
     assert actions == [ScheduleRetry("s1", 2, 0)]
 
 
@@ -722,3 +726,57 @@ def test_mqtt_connected_is_ignored_unless_waiting_for_retry(events):
     state, _ = _run(DeliveryState(), *events)
 
     assert step(state, MqttConnected()) == (state, [])
+
+
+def test_retry_after_a_server_timeout_belongs_to_the_server_chain():
+    state, _ = _published("s1")
+
+    state, _ = step(state, AckTimeout("s1", 1))
+
+    assert (state.pending.phase, state.pending.retry_origin) == (PHASE_WAITING_RETRY, ORIGIN_SERVER)
+
+
+@pytest.mark.parametrize("events", [
+    (TickDue("s1", "daily"), ReadInvalid("s1", ("dat",))),                                     # lokaler Datenfehler
+    (TickDue("s1", "daily"), Published("s1"), Ack("s1", "rejected", "unplausibel")),          # Server-Ablehnung
+    (TickDue("s1", "daily"), Published("s1"), WriteFailed("s1", "curve_current (number.x): weg")),  # Anlage
+])
+def test_mqtt_connected_does_not_cut_short_a_data_fault_wait(events):
+    # N2: Datenfehler- und Ablehnungs-Wartezeiten laufen normal ab.
+    state, _ = _run(DeliveryState(), *events)
+
+    assert (state.pending.phase, state.pending.retry_origin) == (PHASE_WAITING_RETRY, ORIGIN_DATA)
+    assert step(state, MqttConnected()) == (state, [])
+
+
+def test_unsent_attempt_is_sent_as_soon_as_the_broker_connects():
+    # N3: ohne Verbindung beim Versuch kein verlorener Server-Durchlauf.
+    state, _ = _run(DeliveryState(), TickDue("s1", "daily"), Published("s1", unsent=True))
+    assert (state.pending.phase, state.pending.unsent) == (PHASE_AWAITING_ACK, True)
+    unsent_gen = state.pending.gen
+
+    state, actions = step(state, MqttConnected())
+
+    assert actions == [Attempt("s1", "daily")]
+    assert (state.pending.phase, state.pending.unsent, state.pending.stage) == (PHASE_SENDING, False, 0)
+    assert state.server_failures == 0
+    assert step(state, AckTimeout("s1", unsent_gen)) == (state, [])  # Timeout des ungesendeten Versuchs
+
+
+def test_unsent_attempt_without_connect_still_times_out_as_before():
+    state, _ = _run(DeliveryState(), TickDue("s1", "daily"), Published("s1", unsent=True))
+
+    state, _ = step(state, AckTimeout("s1", state.pending.gen))
+
+    assert state.server_failures == 1
+    assert (state.pending.phase, state.pending.retry_origin, state.pending.unsent) == (
+        PHASE_WAITING_RETRY, ORIGIN_SERVER, False,
+    )
+
+
+def test_retry_origin_and_unsent_are_not_persisted():
+    state, _ = _run(DeliveryState(), TickDue("s1", "daily"), Published("s1", unsent=True))
+
+    assert to_persisted(state) == {
+        "failsafe_active": False, "datenfehler": None, "pending": {"seq": "s1", "trigger": "daily"},
+    }

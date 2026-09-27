@@ -1399,3 +1399,21 @@ def test_mqtt_connect_while_awaiting_answer_does_not_send_again(env):
     bridge.worker.run_pending()
 
     assert len(_mqtt(env).snapshots) == 1
+
+
+def test_open_tick_at_start_is_sent_on_connect_without_waiting_for_the_ack_timeout(env, monkeypatch):
+    # N3: 0.17.0-0.19.0 warteten hier 30 s und zaehlten einen Serverausfall.
+    _quiet_backup(env)
+    save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": False, "pending": {"seq": "alt-1", "trigger": "daily"}})
+    link = {"up": False}
+    monkeypatch.setattr(FakeMqtt, "is_connected", lambda self: link["up"])
+
+    bridge = _start(env)
+    assert _mqtt(env).snapshots == []
+
+    link["up"] = True
+    _mqtt(env).kwargs["on_connected"](_mqtt(env))
+    bridge.worker.run_pending()
+
+    assert [s["seq"] for s in _mqtt(env).snapshots] == ["alt-1"]
+    assert _delivery(bridge).server_failures == 0
