@@ -14,6 +14,7 @@ from heizungsbruecke import (
 )
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.manifest import ManifestError, build_manifest
+from heizungsbruecke.notifier import STATE_OK, Notifier
 from heizungsbruecke.override import Override
 from heizungsbruecke.runtime import (
     EV_ACK_TIMEOUT, EV_AUTH_REJECTED, EV_DAYNIGHT, EV_GRACE_CHECK, EV_LOCAL_CHECK, EV_MQTT_CONNECTED,
@@ -245,9 +246,12 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | int:
         return 1
 
     store = StateStore(config.BACKUP_PATH, config.FAILSAFE_PATH)
+    notifier = Notifier(store, ha_api, config.notify_services(options))
+    ticks.seed_notices(notifier, store.state.delivery)
     rt = Runtime(
         manifest=manifest, ha_api=ha_api, options=options, derived_entity_ids=derived_entity_ids,
         worker=RegulationWorker(clock=clock), store=store, override=Override(store, manifest, ha_api, options),
+        notifier=notifier,
     )
 
     # Abo-Status erst hier: Abschluss-Start und lokaler Modus brauchen Manifest und Clamps.
@@ -256,6 +260,7 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | int:
     abo_status = entitlement.query_status(options["tenant_id"], options["accounts_api_base_url"])
     if abo_status == entitlement.ACTIVE:
         entitlement.clear(config.ENTITLEMENT_PATH)
+        notifier.notify("abo", STATE_OK, abo.ABO_ACTIVE_MESSAGE, critical=True)
     elif abo_status == entitlement.INACTIVE:
         inactive_since = entitlement.load_inactive_since(config.ENTITLEMENT_PATH)
         if inactive_since is not None and entitlement.grace_expired(inactive_since, now):

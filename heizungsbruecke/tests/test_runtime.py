@@ -32,7 +32,7 @@ OPTIONS = {
     "entity_heat_limit": "number.heat_limit",
     "entity_dat": "sensor.dat",
     "entity_dart": "sensor.dart",
-    "notify_service": "notify.handy",
+    "notify_services": ["notify.handy"],
     "accounts_api_base_url": "https://accounts.example.test",
 }
 
@@ -59,6 +59,7 @@ class FakeHa:
         self.writes = []
         self.pushes = []
         self.persistent = []
+        self.dismissed = []
         self.write_error = None
 
     def get_state(self, entity_id):
@@ -81,6 +82,9 @@ class FakeHa:
 
     def create_persistent_notification(self, title, message, notification_id):
         self.persistent.append((notification_id, message))
+
+    def dismiss_persistent_notification(self, notification_id):
+        self.dismissed.append(notification_id)
 
     def get_config(self):
         return {"time_zone": "Europe/Berlin"}
@@ -420,6 +424,21 @@ def test_unreachable_broker_does_not_exit_and_tick_runs_into_notbetrieb(env):
     assert _failsafe_file(env)["failsafe_active"] is True
     assert env.ha.pushes == [NOTBETRIEB_ON]
     assert env.abo["queries"] == 2  # Start + zweiter Timeout
+
+
+def test_notbetrieb_creates_and_recovery_dismisses_a_persistent_notification(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[0]["seq"]
+    _advance(env, bridge, 30)
+    _advance(env, bridge, 30)
+
+    assert ("smartheat_notbetrieb", NOTBETRIEB_ON) in env.ha.persistent
+
+    _answer(env, bridge, seq)
+
+    assert "smartheat_notbetrieb" in env.ha.dismissed
 
 
 # --- Zustellung und Antworten ---
@@ -896,7 +915,7 @@ def test_grace_end_during_runtime_restores_notifies_and_exits(env, monkeypatch):
     assert bridge.worker.run_pending() == 0
     assert env.trigger_clients[-1].stopped is True
     assert (env.ha.states["number.curve_current"], env.ha.states["number.offset_current"]) == (0.9, 22.0)
-    assert env.ha.persistent[-1] == ("smartheat_abo_inaktiv", ABO_ENDED)
+    assert env.ha.persistent[-1] == ("smartheat_abo", ABO_ENDED)
     assert _backup(env)["emergency_boost_active"] is False
 
 
@@ -1057,7 +1076,7 @@ def test_grace_end_without_boost_restores_learned_values(env, monkeypatch):
 
     assert bridge.worker.run_pending() == 0
     assert env.ha.writes == [("number.curve_current", 0.9), ("number.offset_current", 22.0)]
-    assert env.ha.persistent[-1] == ("smartheat_abo_inaktiv", ABO_ENDED)
+    assert env.ha.persistent[-1] == ("smartheat_abo", ABO_ENDED)
 
 
 def test_grace_end_during_comfort_boost_restores_learned_values(env, monkeypatch):

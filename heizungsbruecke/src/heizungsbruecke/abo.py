@@ -10,13 +10,11 @@ from heizungsbruecke.runtime import Runtime
 
 logger = logging.getLogger(__name__)
 
-# Stabile notification_id: wiederholte Meldungen ersetzen sich in HA statt sich zu stapeln.
-ABO_NOTIFICATION_ID = "smartheat_abo_inaktiv"
-ABO_NOTIFICATION_TITLE = "SmartHeat"
 ABO_ENDED_MESSAGE = (
     "SmartHeat: Abo seit 30 Tagen inaktiv. Die Heizungssteuerung ist beendet, "
     "die zuletzt gelernten Werte bleiben eingestellt."
 )
+ABO_ACTIVE_MESSAGE = "SmartHeat: Abo wieder aktiv, die Heizungssteuerung läuft wieder normal."
 
 
 def inactive_message(inactive_since: datetime) -> str:
@@ -25,20 +23,6 @@ def inactive_message(inactive_since: datetime) -> str:
         f"SmartHeat: Abo inaktiv. Die Heizung läuft noch bis {end} im Notbetrieb weiter, "
         f"danach bleiben die zuletzt gelernten Werte fest eingestellt."
     )
-
-
-def notify(ha_api, notify_service: str, message: str) -> None:
-    """Log, Push (falls konfiguriert) und HA-persistent_notification; jeder Kanal best effort."""
-    logger.warning(message)
-    if notify_service:
-        try:
-            ha_api.send_notification(notify_service, message)
-        except Exception:
-            logger.warning("Push-Benachrichtigung zum Abo-Status konnte nicht gesendet werden")
-    try:
-        ha_api.create_persistent_notification(ABO_NOTIFICATION_TITLE, message, ABO_NOTIFICATION_ID)
-    except Exception:
-        logger.warning("HA-Benachrichtigung zum Abo-Status konnte nicht angelegt werden")
 
 
 def enter_inactive(rt: Runtime, now: datetime) -> None:
@@ -66,7 +50,7 @@ def enter_inactive(rt: Runtime, now: datetime) -> None:
         except Exception:
             logger.exception("MQTT-Verbindung konnte nicht sauber beendet werden")
     if newly_set:
-        notify(rt.ha_api, rt.options.get("notify_service", ""), inactive_message(since))
+        rt.notifier.notify("abo", "inaktiv", inactive_message(since), critical=True)
     else:
         logger.warning(
             "Abo weiterhin inaktiv (seit %s) - Notbetrieb laeuft bis %s.",
@@ -83,7 +67,7 @@ def finish_grace(rt: Runtime, *, always_restore: bool, final_notice: bool) -> bo
         return False
     rt.store.update(abo_finished=True)
     if final_notice:
-        notify(rt.ha_api, rt.options.get("notify_service", ""), ABO_ENDED_MESSAGE)
+        rt.notifier.notify("abo", "beendet", ABO_ENDED_MESSAGE, critical=True)
     else:
         logger.info("Abo-inaktiv-Frist ist bereits abgelaufen - Add-on beendet sich ohne weitere Eingriffe.")
     return True

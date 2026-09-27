@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime
 
 from heizungsbruecke import abo, delivery, entitlement
+from heizungsbruecke.notifier import STATE_OK
 from heizungsbruecke.override import DeviceWriteError
 from heizungsbruecke.runtime import EV_ACK_TIMEOUT, EV_RETRY_DUE, Runtime
 from heizungsbruecke.snapshot import publish_snapshot, read_snapshot_roles
@@ -110,15 +111,62 @@ def _current_target_avg(rt: Runtime) -> float | None:
         return None
 
 
+# Praefix je Stoerungsquelle fuer den Meldezustand "datenfehler"; abgeleitet aus
+# delivery.DataFault.key() (Praezisierung 2), nicht neu kodiert.
+_FAULT_PREFIXES = {
+    delivery.SOURCE_LOCAL: "lokal",
+    delivery.SOURCE_SERVER: "server",
+    delivery.SOURCE_WRITE: "anlage",
+}
+
+
+def _fault_state(source: str, detail: tuple[str, ...]) -> str:
+    """Zustand des Meldeschluessels "datenfehler" mit derselben Stoerungsidentitaet wie
+    delivery.DataFault.key(): eine andere Stoerung wird gemeldet, ein driftender Server-Messwert
+    nicht."""
+    key = delivery.DataFault(source, detail).key()
+    prefix = _FAULT_PREFIXES[key[0]]
+    if key[0] == delivery.SOURCE_WRITE:
+        return prefix
+    rest = key[1]
+    if isinstance(rest, tuple):
+        rest = ",".join(rest)
+    return f"{prefix}:{rest}"
+
+
+def _notice(kind: str, detail: tuple[str, ...]) -> tuple[str, str]:
+    """(Meldeschluessel, Zustand) je Meldungsart der Zustellung."""
+    if kind == delivery.NOTIFY_NOTBETRIEB_ON:
+        return "notbetrieb", "aktiv"
+    if kind == delivery.NOTIFY_NOTBETRIEB_OFF:
+        return "notbetrieb", STATE_OK
+    if kind == delivery.NOTIFY_DATENFEHLER_LOCAL:
+        return "datenfehler", _fault_state(delivery.SOURCE_LOCAL, detail)
+    if kind == delivery.NOTIFY_DATENFEHLER_SERVER:
+        return "datenfehler", _fault_state(delivery.SOURCE_SERVER, detail)
+    if kind == delivery.NOTIFY_DATENFEHLER_WRITE:
+        return "datenfehler", _fault_state(delivery.SOURCE_WRITE, detail)
+    if kind in (delivery.NOTIFY_DATENFEHLER_RESOLVED, delivery.NOTIFY_WRITE_RESOLVED):
+        return "datenfehler", STATE_OK
+    raise ValueError(f"Unbekannte Meldungsart: {kind!r}")
+
+
+def seed_notices(notifier, delivery_state) -> None:
+    """Notbetrieb und Datenfehler aus failsafe_state.json, die im Meldezustand fehlen (Update von
+    0.18.0, gescheitertes Schreiben von backup.json), still uebernehmen: sonst bliebe die
+    Entwarnung nach dem Neustart aus."""
+    if delivery_state.notbetrieb:
+        notifier.seed("notbetrieb", "aktiv")
+    fault = delivery_state.datenfehler
+    if fault is not None:
+        notifier.seed("datenfehler", _fault_state(fault.source, fault.detail))
+
+
 def _notify(rt: Runtime, action) -> None:
+    """Alles, was die Regelung stoppt, ist kritisch (Push plus HA-Benachrichtigung)."""
     text = delivery.notification_text(action.kind, action.detail, rt.manifest.entity_ids)
-    logger.warning(text)
-    notify_service = rt.options.get("notify_service", "")
-    if notify_service:
-        try:
-            rt.ha_api.send_notification(notify_service, text)
-        except Exception:
-            logger.warning("Push-Benachrichtigung (%s) konnte nicht gesendet werden", action.kind)
+    key, state = _notice(action.kind, action.detail)
+    rt.notifier.notify(key, state, text, critical=True)
 
 
 def handle_setpoints(rt: Runtime, payload: dict) -> None:

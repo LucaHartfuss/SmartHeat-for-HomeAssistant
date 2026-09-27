@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from heizungsbruecke.ha_trigger_client import HaTriggerClient
     from heizungsbruecke.manifest import ChannelManifest
     from heizungsbruecke.mqtt_client import BridgeMqttClient
+    from heizungsbruecke.notifier import Notifier
     from heizungsbruecke.override import Override
     from heizungsbruecke.state import StateStore
     from heizungsbruecke.worker import RegulationWorker
@@ -39,5 +40,6 @@ class Runtime:
     worker: RegulationWorker
     store: StateStore
     override: Override
+    notifier: Notifier
     mqtt_client: BridgeMqttClient | None = None
     trigger_client: HaTriggerClient | None = None

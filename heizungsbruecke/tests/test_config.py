@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from heizungsbruecke import config
 from heizungsbruecke.config import (
     ConfigError,
     DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS,
@@ -336,3 +337,12 @@ def test_intervals_fall_back_to_300_seconds():
     assert telemetry_interval({}) == 300
     assert local_check_interval({"local_check_interval_seconds": 60}) == 60
     assert telemetry_interval({"telemetry_interval_seconds": 30}) == 30
+
+
+@pytest.mark.parametrize("raw,expected", [
+    (None, []), ("notify.x", []), (["notify.mobile_app_a", "notify.b"], ["notify.mobile_app_a", "notify.b"]),
+    (["notify.a", "", 3, "light.x"], ["notify.a"]),
+])
+def test_notify_services_is_tolerant(raw, expected):
+    options = {} if raw is None else {"notify_services": raw}
+    assert config.notify_services(options) == expected

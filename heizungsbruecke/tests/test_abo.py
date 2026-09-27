@@ -9,6 +9,7 @@ import pytest
 from heizungsbruecke import abo, entitlement
 from heizungsbruecke.backup_store import load_backup
 from heizungsbruecke.manifest import ChannelManifest
+from heizungsbruecke.notifier import Notifier
 from heizungsbruecke.override import Override
 
 ABO_NOW = datetime(2026, 9, 25, 12, 0, tzinfo=timezone(timedelta(hours=2)))
@@ -24,13 +25,14 @@ def _entitlement_path(tmp_path, monkeypatch):
     monkeypatch.setattr("heizungsbruecke.config.ENTITLEMENT_PATH", tmp_path / "entitlement_state.json")
 
 
-def _runtime(store, entity_ids=BOTH_ROLES, notify_service="notify.handy"):
+def _runtime(store, entity_ids=BOTH_ROLES, notify_services=("notify.handy",)):
     manifest = ChannelManifest(entity_ids=entity_ids)
     ha_api = MagicMock()
-    options = {**OPTIONS, "notify_service": notify_service}
+    options = dict(OPTIONS)
     return SimpleNamespace(
         manifest=manifest, ha_api=ha_api, options=options, store=store, mqtt_client=MagicMock(),
         override=Override(store, manifest, ha_api, options),
+        notifier=Notifier(store, ha_api, list(notify_services)),
     )
 
 
@@ -52,7 +54,7 @@ def test_enter_inactive_activates_notbetrieb_stops_mqtt_and_notifies_all_channel
     rt.mqtt_client.stop.assert_called_once()
     expected = abo.inactive_message(ABO_NOW)
     rt.ha_api.send_notification.assert_called_once_with("notify.handy", expected)
-    rt.ha_api.create_persistent_notification.assert_called_once_with("SmartHeat", expected, "smartheat_abo_inaktiv")
+    rt.ha_api.create_persistent_notification.assert_called_once_with("SmartHeat", expected, "smartheat_abo")
 
 
 def test_enter_inactive_does_not_repeat_notification_when_already_marked(make_store, tmp_path, caplog):
@@ -102,7 +104,7 @@ def test_enter_inactive_with_failing_entitlement_persist_still_enters_mode(make_
     assert load_backup(tmp_path / "failsafe_state.json")["failsafe_active"] is True
     rt.mqtt_client.stop.assert_called_once()
     rt.ha_api.create_persistent_notification.assert_called_once_with(
-        "SmartHeat", abo.inactive_message(ABO_NOW), "smartheat_abo_inaktiv",
+        "SmartHeat", abo.inactive_message(ABO_NOW), "smartheat_abo",
     )
     assert "SD-Karte kaputt" in caplog.text
 
@@ -123,7 +125,7 @@ def test_finish_grace_mid_boost_restores_learned_values_clamped(make_store, tmp_
     assert store.state.abo_finished is True
     rt.ha_api.send_notification.assert_called_once_with("notify.handy", abo.ABO_ENDED_MESSAGE)
     rt.ha_api.create_persistent_notification.assert_called_once_with(
-        "SmartHeat", abo.ABO_ENDED_MESSAGE, "smartheat_abo_inaktiv",
+        "SmartHeat", abo.ABO_ENDED_MESSAGE, "smartheat_abo",
     )
 
 

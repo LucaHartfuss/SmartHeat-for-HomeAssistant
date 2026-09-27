@@ -11,6 +11,13 @@ def _load_config_yaml() -> dict:
     return yaml.safe_load(CONFIG_YAML_PATH.read_text())
 
 
+def _is_optional(type_spec) -> bool:
+    """Supervisor: bei Listen entscheidet das Listenelement (`- str?`)."""
+    if isinstance(type_spec, list):
+        return bool(type_spec) and str(type_spec[0]).endswith("?")
+    return str(type_spec).endswith("?")
+
+
 def test_schema_declares_every_option_the_integration_writes():
     """The smartheat HA integration configures this add-on as an external caller
     via Supervisor's AddonManager (POST /addons/{slug}/options), not through this
@@ -50,7 +57,7 @@ def test_schema_fields_the_integration_never_sends_are_optional():
     non_optional_extra = [
         field
         for field, type_spec in schema.items()
-        if field not in _REQUIRED_OPTIONS and not str(type_spec).endswith("?")
+        if field not in _REQUIRED_OPTIONS and not _is_optional(type_spec)
     ]
     assert not non_optional_extra, (
         f"schema field(s) the integration never sends must be optional (`?`): "
@@ -109,3 +116,11 @@ def test_profile_params_options_are_optional_schema_entries_without_defaults():
     for key, spec in NEW_OPTIONAL_SCHEMA.items():
         assert config["schema"].get(key) == spec, key
         assert key not in config["options"], key
+
+
+def test_notify_services_is_an_optional_string_list_and_notify_service_is_gone():
+    schema = _load_config_yaml()["schema"]
+
+    assert schema["notify_services"] == ["str?"]
+    assert "notify_service" not in schema
+    assert "notify_service" not in _load_config_yaml()["options"]

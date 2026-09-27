@@ -21,7 +21,6 @@ options:
   entity_outdoor_temp: ""
   entity_heat_limit: ""
   local_check_interval_seconds: 300
-  notify_service: ""
   telemetry_interval_seconds: 300
   entity_flow_temperature: ""
   entity_return_temperature: ""
@@ -34,8 +33,8 @@ options:
   entity_energy_primary_dhw: ""
   entity_energy_thermal_heating: ""
   entity_energy_thermal_dhw: ""
-# local_check_interval_seconds/notify_service/telemetry_interval_seconds must stay optional (`?`):
-# the SmartHeat integration never sends them (it sends tenant_id, profile_params, the MQTT
+# local_check_interval_seconds/telemetry_interval_seconds must stay optional (`?`): the
+# SmartHeat integration never sends them (it sends tenant_id, profile_params, the MQTT
 # credentials and the entity_* mappings). Supervisor validates a set-options call against the
 # whole schema, and a missing required field fails the call silently (straight into
 # AddonError). The add-on falls back to its own defaults for these (config.py), so making
@@ -44,6 +43,10 @@ options:
 # the integration) and accounts_api_base_url (written by the integration). They are optional
 # here and have no entry under options: (an empty default would be invalid for list(...)); the
 # add-on checks them at startup and exits with a configuration error if they are missing.
+# room_sensors, notify_services, battery_entities and setup_id are written by the integration
+# (TP6). They are optional here (list element with `?`) so that an update with an old
+# configuration does not make Supervisor refuse the start silently; the add-on checks them at
+# startup and reports "Konfiguration veraltet" instead.
 schema:
   tenant_id: str
   mqtt_username: str
@@ -55,7 +58,6 @@ schema:
   entity_outdoor_temp: str
   entity_heat_limit: str
   local_check_interval_seconds: int(1,3600)?
-  notify_service: str?
   telemetry_interval_seconds: int(10,)?
   entity_flow_temperature: str?
   entity_return_temperature: str?
@@ -75,3 +77,5 @@ schema:
   night_avg_window_start: str?
   night_avg_window_end: str?
   accounts_api_base_url: url?
+  notify_services:
+    - str?

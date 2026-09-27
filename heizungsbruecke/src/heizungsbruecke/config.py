@@ -2,6 +2,7 @@
 import json
 import logging
 import math
+import re
 import urllib.parse
 from pathlib import Path
 
@@ -186,6 +187,15 @@ def local_check_interval(options: dict) -> float:
 
 def telemetry_interval(options: dict) -> float:
     return options.get("telemetry_interval_seconds", DEFAULT_TELEMETRY_INTERVAL_SECONDS)
+
+
+def notify_services(options: dict) -> list[str]:
+    """Notify-Dienste fuer Push-Meldungen (Spec TP6 3.1). Tolerant, weil auch Startfehler vor
+    der Optionspruefung noch gemeldet werden sollen: ungueltige Eintraege fallen weg."""
+    raw = options.get("notify_services")
+    if not isinstance(raw, list):
+        return []
+    return [service for service in raw if isinstance(service, str) and re.fullmatch(r"notify\.[a-z0-9_]+", service)]
 
 
 def load_options_safe(path: Path) -> dict:
