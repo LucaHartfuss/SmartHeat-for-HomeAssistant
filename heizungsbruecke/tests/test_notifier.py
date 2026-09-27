@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from heizungsbruecke.notifier import STATE_OK, Notifier, notification_id
+from heizungsbruecke.notifier import HINT_CATEGORIES, STATE_OK, Notifier, category, notification_id
 from heizungsbruecke.state import StateStore
 
 SERVICES = ["notify.mobile_app_a", "notify.mobile_app_b"]
@@ -250,3 +250,64 @@ def test_refresh_persistent_does_nothing_for_an_ok_key(make_store, ha_api):
 
     ha_api.create_persistent_notification.assert_not_called()
     assert store.state.notify_messages == {}
+
+
+def test_category_is_the_key_prefix():
+    assert category("raumfuehler:sensor.wz") == "raumfuehler"
+    assert category("quellwechsel") == "quellwechsel"
+    assert HINT_CATEGORIES == ("raumfuehler", "batterie", "manueller_eingriff", "quellwechsel")
+
+
+def test_switched_off_hint_category_is_tracked_and_logged_but_not_pushed(make_store, ha_api, caplog):
+    notifier = Notifier(make_store(), ha_api, SERVICES, hints_off=["batterie"])
+
+    with caplog.at_level(logging.WARNING):
+        assert notifier.notify("batterie:sensor.x", "niedrig", "Batterie schwach", critical=False) is True
+
+    ha_api.send_notification.assert_not_called()
+    assert notifier.state("batterie:sensor.x") == "niedrig"
+    assert "Batterie schwach" in caplog.text
+
+
+def test_other_hint_categories_are_still_pushed(make_store, ha_api):
+    notifier = Notifier(make_store(), ha_api, SERVICES, hints_off=["batterie"])
+
+    notifier.notify("raumfuehler:sensor.a", "ausgefallen", "Fuehler weg", critical=False)
+
+    assert ha_api.send_notification.call_count == len(SERVICES)
+
+
+def test_critical_messages_ignore_the_hint_switches(make_store, ha_api):
+    notifier = Notifier(make_store(), ha_api, SERVICES, hints_off=list(HINT_CATEGORIES))
+
+    notifier.notify("batterie:sensor.x", "niedrig", "Batterie kritisch niedrig", critical=True)
+
+    assert ha_api.send_notification.call_count == len(SERVICES)
+
+
+def test_silent_ok_logs_the_return_without_push(make_store, ha_api, caplog):
+    notifier = _notifier(make_store(), ha_api)
+    notifier.notify("manueller_eingriff", "1.3/24.5", "manuell verstellt", critical=False)
+    ha_api.reset_mock()
+
+    with caplog.at_level(logging.INFO):
+        assert notifier.notify("manueller_eingriff", STATE_OK, "wieder gelernt", critical=False, silent_ok=True) is True
+
+    ha_api.send_notification.assert_not_called()
+    assert notifier.state("manueller_eingriff") == STATE_OK
+    assert "wieder gelernt" in caplog.text
+
+
+def test_clear_all_dismisses_open_notifications_and_forgets_states_without_push(make_store, ha_api):
+    store = make_store()
+    notifier = _notifier(store, ha_api)
+    notifier.notify("notbetrieb", "aktiv", "Notbetrieb aktiv", critical=True)
+    notifier.notify("batterie:sensor.x", "niedrig", "Batterie", critical=False)
+    ha_api.reset_mock()
+
+    notifier.clear_all()
+
+    dismissed = {c.args[0] for c in ha_api.dismiss_persistent_notification.call_args_list}
+    assert dismissed == {"smartheat_notbetrieb", "smartheat_batterie_sensor_x"}
+    ha_api.send_notification.assert_not_called()
+    assert (store.state.notify_states, store.state.notify_messages) == ({}, {})

@@ -6,6 +6,7 @@ import re
 import urllib.parse
 from pathlib import Path
 
+from heizungsbruecke.notifier import HINT_CATEGORIES
 from heizungsbruecke.safety import resolve_local_safety
 from heizungsbruecke.windows import window_size_hours, windows_from_options
 
@@ -75,7 +76,31 @@ def _resolve_sources(options: dict) -> dict:
         "room_sensors": list(room_sensors),
         "battery_entities": _string_list(options, "battery_entities", _BATTERY_ENTITY),
         "notify_services": _string_list(options, "notify_services", _NOTIFY_SERVICE),
+        "notify_hints_off": _hints_off(options),
     }
+
+
+def _hints_off(options: dict) -> list[str]:
+    """Streng: nur die abschaltbaren Hinweis-Kategorien; kritische Meldungen sind nie abschaltbar."""
+    value = options.get("notify_hints_off", [])
+    if not isinstance(value, list) or any(item not in HINT_CATEGORIES for item in value):
+        raise ConfigError(
+            f"Option 'notify_hints_off' ({value!r}) enthaelt unbekannte oder nicht abschaltbare Kategorien"
+        )
+    return list(value)
+
+
+def notify_hints_off(options: dict) -> list[str]:
+    """Tolerant wie notify_services: der notifier entsteht vor der Optionspruefung."""
+    raw = options.get("notify_hints_off")
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if item in HINT_CATEGORIES]
+
+
+def is_signed_off(options: dict) -> bool:
+    """Option abgemeldet (Spec TP7 3.3), setzt die Integration beim Entfernen; fehlend = False."""
+    return options.get("abgemeldet") is True
 
 
 def _string_list(options: dict, key: str, pattern: re.Pattern) -> list[str]:

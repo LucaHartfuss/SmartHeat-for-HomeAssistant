@@ -331,7 +331,7 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | int:
     # ohnehin nichts (Hilfs-Entities, Anlage).
     _wait_until_reachable(ha_api)
     store = StateStore(config.BACKUP_PATH, config.FAILSAFE_PATH)
-    notifier = Notifier(store, ha_api, config.notify_services(options))
+    notifier = Notifier(store, ha_api, config.notify_services(options), config.notify_hints_off(options))
     ticks.seed_notices(notifier, store.state.delivery)
     status = StatusReporter(ha_api, options["tenant_id"], options.get("setup_id"))
     status.set(STATUS_STARTET)

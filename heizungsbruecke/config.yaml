@@ -46,6 +46,9 @@ options:
 # (TP6). They are optional here (list element with `?`) so that an update with an old
 # configuration does not make Supervisor refuse the start silently; the add-on checks them at
 # startup and reports "Konfiguration veraltet" instead.
+# abgemeldet and notify_hints_off are written by the integration (TP7): abgemeldet=true on removal
+# (end a running boost, clear notifications, then idle), notify_hints_off lists the hint
+# categories without push. Both optional, no entry under options:.
 schema:
   tenant_id: str
   mqtt_username: str
@@ -82,3 +85,6 @@ schema:
   battery_entities:
     - str?
   setup_id: str?
+  abgemeldet: bool?
+  notify_hints_off:
+    - list(raumfuehler|batterie|manueller_eingriff|quellwechsel)?

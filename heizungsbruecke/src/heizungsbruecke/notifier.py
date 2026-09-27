@@ -6,7 +6,11 @@ Add-on mit demselben Fehler erneut startet.
 
 HA haelt persistent_notifications nur im Speicher. Deshalb bleibt der Text jeder offenen kritischen
 Meldung in BridgeState.notify_messages, und republish_persistent() legt sie nach einem HA-Neustart
-neu an -- ohne erneuten Push."""
+neu an -- ohne erneuten Push.
+
+Die vier Hinweis-Kategorien (HINT_CATEGORIES, Option notify_hints_off) lassen sich einzeln
+abschalten: der Zustand wird weiter verfolgt und geloggt (Grundlage der Hinweise im Status), nur
+der Push entfaellt. Kritische Meldungen sind nie abschaltbar."""
 import logging
 import re
 
@@ -15,6 +19,15 @@ logger = logging.getLogger(__name__)
 STATE_OK = "ok"
 TITLE = "SmartHeat"
 
+# Abschaltbare Hinweis-Kategorien (Spec TP7 3.4). Muss zum config.yaml-Schema und zu const.py der
+# Integration passen (Contract-Check).
+HINT_CATEGORIES = ("raumfuehler", "batterie", "manueller_eingriff", "quellwechsel")
+
+
+def category(key: str) -> str:
+    """Kategorie eines Meldeschluessels: der Teil vor ":" (raumfuehler:<entity> -> raumfuehler)."""
+    return key.partition(":")[0]
+
 
 def notification_id(key: str) -> str:
     """Stabile ID je Schluessel: eine neue Meldung ersetzt die vorige, statt sich zu stapeln."""
@@ -22,10 +35,11 @@ def notification_id(key: str) -> str:
 
 
 class Notifier:
-    def __init__(self, store, ha_api, services: list[str]) -> None:
+    def __init__(self, store, ha_api, services: list[str], hints_off=()) -> None:
         self._store = store
         self._ha_api = ha_api
         self._services = list(services)
+        self._hints_off = frozenset(hints_off)
 
     def state(self, key: str) -> str:
         return self._store.state.notify_states.get(key, STATE_OK)
@@ -41,9 +55,10 @@ class Notifier:
         except Exception:
             logger.exception("Meldezustand '%s' konnte nicht gespeichert werden", key)
 
-    def notify(self, key: str, state: str, message: str, *, critical: bool) -> bool:
-        """True, wenn gemeldet wurde. Jeder Kanal ist best effort; ein Schreibfehler des
-        Zustands verhindert die Meldung nicht (sie kaeme sonst nie an)."""
+    def notify(self, key: str, state: str, message: str, *, critical: bool, silent_ok: bool = False) -> bool:
+        """True bei einem Zustandswechsel. Jeder Kanal ist best effort; ein Schreibfehler des
+        Zustands verhindert die Meldung nicht (sie kaeme sonst nie an). Ohne Push (nur Log):
+        abgeschaltete Hinweis-Kategorien und, mit silent_ok, der Wechsel auf "ok"."""
         if state == self.state(key):
             return False
         states = dict(self._store.state.notify_states)
@@ -64,11 +79,13 @@ class Notifier:
             logger.info(message)
         else:
             logger.warning(message)
-        for service in self._services:
-            try:
-                self._ha_api.send_notification(service, message)
-            except Exception:
-                logger.warning("Push-Benachrichtigung '%s' an %s konnte nicht gesendet werden", key, service)
+        muted = (not critical and category(key) in self._hints_off) or (silent_ok and state == STATE_OK)
+        if not muted:
+            for service in self._services:
+                try:
+                    self._ha_api.send_notification(service, message)
+                except Exception:
+                    logger.warning("Push-Benachrichtigung '%s' an %s konnte nicht gesendet werden", key, service)
         if critical:
             self._update_persistent(key, state, message)
         return True
@@ -96,6 +113,17 @@ class Notifier:
         for key, state in self._store.state.notify_states.items():
             if state != STATE_OK and key in messages:
                 self._update_persistent(key, state, messages[key])
+
+    def clear_all(self) -> None:
+        """Abmelden (Spec TP7 3.3): alle offenen HA-Benachrichtigungen entfernen und die
+        Meldezustaende leeren, ohne Push."""
+        for key, state in self._store.state.notify_states.items():
+            if state != STATE_OK:
+                self._update_persistent(key, STATE_OK, "")
+        try:
+            self._store.update(notify_states={}, notify_messages={})
+        except Exception:
+            logger.exception("Meldezustaende konnten beim Abmelden nicht geleert werden")
 
     def _update_persistent(self, key: str, state: str, message: str) -> None:
         nid = notification_id(key)
