@@ -3,6 +3,12 @@ import json
 import requests
 import websocket
 
+# Plattformen der Helfer, die derived_sensors per Config-Flow anlegt (und nur die darf
+# delete_helper loeschen).
+HELPER_PLATFORMS = ("statistics", "template")
+# `state` in GET /api/config, sobald HA fertig gestartet ist (homeassistant.core.CoreState).
+HA_STATE_RUNNING = "RUNNING"
+
 
 class HomeAssistantApi:
     def __init__(self, base_url: str, token: str, api_prefix: str = "/core/api"):
@@ -260,13 +266,23 @@ class HomeAssistantApi:
     def delete_helper(self, entity_id: str) -> None:
         """Loescht den Config-Entry eines per Config-Flow angelegten Helfers (Template- oder
         Statistik-Sensor). input_number-Helfer haben keinen Config-Entry und werden nie
-        geloescht (derived_sensors)."""
+        geloescht (derived_sensors).
+
+        Nur Entities der Plattformen HELPER_PLATFORMS: die Entity-ID stammt aus
+        derived_sensors.json. Ist die Datei kaputt, von einer anderen Installation oder die ID
+        inzwischen an eine andere Entity vergeben, wuerde sonst der Config-Entry einer fremden
+        Integration (z.B. mypyllant) geloescht -- nicht rueckgaengig zu machen. Dann wirft es,
+        ohne etwas zu loeschen."""
         entries = self._call_ws_command({"type": "config/entity_registry/list"})
-        config_entry_id = next(
-            (entry.get("config_entry_id") for entry in entries if entry.get("entity_id") == entity_id), None,
-        )
+        entry = next((entry for entry in entries if entry.get("entity_id") == entity_id), {})
+        config_entry_id = entry.get("config_entry_id")
         if not config_entry_id:
             raise RuntimeError(f"Kein Config-Entry zu '{entity_id}' in der Entity-Registry gefunden")
+        if entry.get("platform") not in HELPER_PLATFORMS:
+            raise RuntimeError(
+                f"'{entity_id}' ist kein SmartHeat-Hilfssensor (Plattform {entry.get('platform')!r}), "
+                "wird nicht geloescht"
+            )
         response = requests.delete(
             f"{self._base_url}{self._api_prefix}/config/config_entries/entry/{config_entry_id}",
             headers=self._headers,
@@ -366,12 +382,15 @@ class HomeAssistantApi:
         response.raise_for_status()
 
     def is_reachable(self) -> bool:
-        """HA Core antwortet (Startpruefung: nur dann zaehlt das Retry-Budget). Wirft nie."""
+        """HA Core ist fertig gestartet (`GET /api/config` meldet `state` RUNNING); nur dann
+        zaehlt das Retry-Budget des Starts. Antworten allein reicht nicht: der HTTP-Server laeuft
+        schon frueh im Bootstrap, Integrationen wie mypyllant laden erst spaeter, und bis dahin
+        fehlen ihre Entities (404). Wirft nie."""
         try:
-            self.get_config()
+            config = self.get_config()
+            return isinstance(config, dict) and config.get("state") == HA_STATE_RUNNING
         except Exception:
             return False
-        return True
 
     def send_notification(self, notify_service: str, message: str) -> None:
         """Calls a Home Assistant notify service, e.g. `notify.mobile_app_lucas_iphone`.

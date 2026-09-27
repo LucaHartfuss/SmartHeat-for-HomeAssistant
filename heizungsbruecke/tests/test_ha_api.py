@@ -599,11 +599,12 @@ def test_create_template_sensor_runs_template_flow_with_temperature_fields():
     mock_find.assert_called_once_with("e7")
 
 
-def test_delete_helper_deletes_the_config_entry_of_the_entity():
+@pytest.mark.parametrize("platform", ["statistics", "template"])
+def test_delete_helper_deletes_the_config_entry_of_the_entity(platform):
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
     registry = [
-        {"entity_id": "sensor.other", "config_entry_id": "e1"},
-        {"entity_id": "sensor.smartheat_t1_dart", "config_entry_id": "e2"},
+        {"entity_id": "sensor.other", "config_entry_id": "e1", "platform": "mypyllant"},
+        {"entity_id": "sensor.smartheat_t1_dart", "config_entry_id": "e2", "platform": platform},
     ]
     mock_response = Mock()
     mock_response.raise_for_status.return_value = None
@@ -619,9 +620,29 @@ def test_delete_helper_deletes_the_config_entry_of_the_entity():
 
 def test_delete_helper_raises_for_entity_without_config_entry():
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
-    with patch.object(api, "_call_ws_command", return_value=[{"entity_id": "sensor.x", "config_entry_id": None}]):
+    registry = [{"entity_id": "sensor.x", "config_entry_id": None, "platform": "template"}]
+    with patch.object(api, "_call_ws_command", return_value=registry), \
+         patch("heizungsbruecke.ha_api.requests.delete") as mock_delete:
         with pytest.raises(RuntimeError):
             api.delete_helper("sensor.x")
+
+    mock_delete.assert_not_called()
+
+
+@pytest.mark.parametrize("platform", ["mypyllant", "input_number", None])
+def test_delete_helper_refuses_config_entries_of_other_integrations(platform):
+    """Eine verwechselte/fremde Entity-ID (derived_sensors.json kaputt oder von einer anderen
+    Installation) darf nie den Config-Entry einer anderen Integration loeschen, z.B. mypyllant."""
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    entry = {"entity_id": "sensor.smartheat_t1_dart", "config_entry_id": "e_vaillant"}
+    if platform is not None:
+        entry["platform"] = platform
+    with patch.object(api, "_call_ws_command", return_value=[entry]), \
+         patch("heizungsbruecke.ha_api.requests.delete") as mock_delete:
+        with pytest.raises(RuntimeError, match="kein SmartHeat-Hilfssensor"):
+            api.delete_helper("sensor.smartheat_t1_dart")
+
+    mock_delete.assert_not_called()
 
 
 def test_set_state_posts_state_and_attributes():
@@ -640,10 +661,21 @@ def test_set_state_posts_state_and_attributes():
     )
 
 
-def test_is_reachable_true_when_config_answers():
+def test_is_reachable_true_when_ha_is_running():
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
-    with patch.object(api, "get_config", return_value={"time_zone": "UTC"}):
+    with patch.object(api, "get_config", return_value={"time_zone": "UTC", "state": "RUNNING"}):
         assert api.is_reachable() is True
+
+
+@pytest.mark.parametrize("config", [
+    {"state": "NOT_RUNNING"}, {"state": "STARTING"}, {"state": "STOPPING"}, {"time_zone": "UTC"}, [], None,
+])
+def test_is_reachable_false_while_ha_is_not_running(config):
+    """HAs HTTP-Server antwortet schon frueh im Bootstrap; Integrationen wie mypyllant laden erst
+    danach. Das Start-Budget darf erst bei RUNNING zaehlen (sonst Startfehler bei langsamer Cloud)."""
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    with patch.object(api, "get_config", return_value=config):
+        assert api.is_reachable() is False
 
 
 @pytest.mark.parametrize("error", [requests.ConnectionError("weg"), requests.HTTPError("502"), ValueError("kein JSON")])

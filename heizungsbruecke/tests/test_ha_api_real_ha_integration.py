@@ -397,4 +397,19 @@ def test_set_state_creates_a_readable_status_entity(real_ha):
                             headers={"Authorization": f"Bearer {token}"}, timeout=10)
     assert response.json()["state"] == "bereit"
     assert response.json()["attributes"]["setup_id"] == "abc"
+
+
+def test_is_reachable_once_real_ha_reports_running(real_ha):
+    """Review I2: is_reachable() verlangt `state == "RUNNING"` in GET /api/config. Prueft gegen
+    echtes HA, dass das Feld so heisst und ein fertig gestartetes HA RUNNING meldet (sonst
+    wartete das Add-on ewig)."""
+    base_url, token = real_ha
+    api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
+
+    deadline = time.time() + 60
+    while api.get_config().get("state") != "RUNNING" and time.time() < deadline:
+        time.sleep(1)
+
+    assert api.get_config()["state"] == "RUNNING"
     assert api.is_reachable() is True
+    assert HomeAssistantApi(base_url=base_url, token="falsch", api_prefix="/api").is_reachable() is False

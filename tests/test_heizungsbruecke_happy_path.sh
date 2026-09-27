@@ -106,7 +106,8 @@ class Handler(BaseHTTPRequestHandler):
             _send_ws_frame(self.wfile, {"id": command.get("id", 1), "type": "result", "success": True, "result": result})
             return
         if self.path == "/core/api/config":
-            self._send_json({"time_zone": "UTC"})
+            # "state": the bridge only starts once HA reports RUNNING (ha_api.is_reachable).
+            self._send_json({"time_zone": "UTC", "state": "RUNNING"})
             return
         if self.path.startswith("/core/api/states/"):
             self._send_json({
@@ -168,9 +169,10 @@ EOF
 # room_sensors/entity_room_target deliberately use the C3 entity_id::attribute convention
 # (like the real climate.wohnzimmer_thermostat setup) so this test also exercises that
 # read path end-to-end, not just the plain-state path. mqtt_username/mqtt_password are
-# required since 0.19.0 (config.REQUIRED_OPTIONS) even though the stub broker accepts any
-# value (allow_anonymous true below) -- without them the bridge would just report "noch
-# nicht eingerichtet" and exit 0 without ever touching MQTT.
+# required options (config.REQUIRED_OPTIONS, already before 0.18.0; this options.json only
+# gained them in 0.19.0) even though the stub broker accepts any value (allow_anonymous true
+# below) -- without them the bridge would just report "noch nicht eingerichtet" and exit 0
+# without ever touching MQTT.
 cat > "$DATA_DIR/options.json" <<JSON
 {"tenant_id":"happytest","verteilsystem":"Heizkoerper","daily_trigger_time":"12:00","day_avg_window_start":"14:00","day_avg_window_end":"17:00","night_avg_window_start":"04:00","night_avg_window_end":"07:00","accounts_api_base_url":"https://accounts.example.test","mqtt_username":"heizungsbruecke","mqtt_password":"test-secret","room_sensors":["climate.testroom::current_temperature"],"entity_room_target":"climate.testroom::temperature","entity_curve_current":"number.curve","entity_offset_current":"number.offset","entity_heat_limit":"number.heat_limit","entity_outdoor_temp":"sensor.outdoor","local_check_interval_seconds":2}
 JSON

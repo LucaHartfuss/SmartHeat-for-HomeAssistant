@@ -14,6 +14,7 @@ from heizungsbruecke.__main__ import (
     _wait_for_required_entities,
 )
 from heizungsbruecke.derived_sensors import DerivedSensors
+from heizungsbruecke.ha_api import HomeAssistantApi
 
 
 @pytest.fixture(autouse=True)
@@ -200,6 +201,42 @@ def test_unreachable_ha_never_becomes_a_start_error(sleeps):
     assert _retry_with_budget(ha_api, _attempt, lambda error: "x") == "ok"
     assert len(sleeps) == 29
     assert max(sleeps) == 60
+
+
+@pytest.mark.parametrize("booting_state", ["NOT_RUNNING", "STARTING"])
+def test_budget_only_counts_once_ha_is_running(monkeypatch, sleeps, booting_state):
+    """Review I2: HAs HTTP antwortet schon im Bootstrap, mypyllant laedt erst danach. Solange
+    /api/config nicht RUNNING meldet (hier 30 Abfragen lang, weit ueber dem Budget), fehlt die
+    Entity, ohne dass daraus ein Startfehler wird."""
+    ha = {"booting_checks": 30}
+
+    def _config():
+        if ha["booting_checks"] > 0:
+            ha["booting_checks"] -= 1
+            return {"state": booting_state, "time_zone": "Europe/Berlin"}
+        return {"state": "RUNNING", "time_zone": "Europe/Berlin"}
+
+    ha_api = HomeAssistantApi(base_url="http://supervisor", token="t")
+    monkeypatch.setattr(ha_api, "get_config", _config)
+    monkeypatch.setattr(
+        ha_api, "entity_exists", lambda entity_id: ha["booting_checks"] == 0 or entity_id != "number.heat_limit",
+    )
+
+    _wait_for_required_entities(ha_api, _full_valid_options())
+
+    assert len(sleeps) == 29  # nur Warten auf RUNNING, kein Budget verbraucht
+    assert ha["booting_checks"] == 0
+
+
+def test_budget_expires_when_entity_stays_missing_while_ha_is_running(monkeypatch, sleeps):
+    ha_api = HomeAssistantApi(base_url="http://supervisor", token="t")
+    monkeypatch.setattr(ha_api, "get_config", lambda: {"state": "RUNNING"})
+    monkeypatch.setattr(ha_api, "entity_exists", lambda entity_id: entity_id != "number.heat_limit")
+
+    with pytest.raises(StartupError, match="number.heat_limit"):
+        _wait_for_required_entities(ha_api, _full_valid_options())
+
+    assert sleeps == list(DERIVED_SENSORS_RETRY_DELAYS_SECONDS)
 
 
 def test_missing_entity_is_tolerated_within_budget(sleeps):

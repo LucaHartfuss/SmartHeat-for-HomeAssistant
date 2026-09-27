@@ -89,7 +89,7 @@ class FakeHa:
         self.dismissed.append(notification_id)
 
     def get_config(self):
-        return {"time_zone": "Europe/Berlin"}
+        return {"time_zone": "Europe/Berlin", "state": "RUNNING"}
 
     def websocket_url(self):
         return "ws://x/api/websocket"
