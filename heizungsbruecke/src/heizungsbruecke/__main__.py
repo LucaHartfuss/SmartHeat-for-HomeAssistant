@@ -152,12 +152,12 @@ def _without_credentials(text: str, options: dict) -> str:
 
 def _fail_start(notifier, status, grund: str, key: str | None = None) -> int:
     """Meldezustand `fehler:<key>` (stabile Identitaet, Standard: der Text selbst); Meldung und
-    Status-Entity tragen den ausfuehrlichen Grund."""
+    Status-Entity tragen den ausfuehrlichen Grund. Derselbe Fehler wie beim letzten Start pusht
+    nicht erneut, legt aber die HA-Benachrichtigung neu an (sie fehlt nach einem Host-Neustart)."""
     logger.error("FEHLER: %s", grund)
-    notifier.notify(
-        "konfiguration", f"fehler:{grund if key is None else key}", CONFIG_ERROR_MESSAGE.format(grund=grund),
-        critical=True,
-    )
+    message = CONFIG_ERROR_MESSAGE.format(grund=grund)
+    if not notifier.notify("konfiguration", f"fehler:{grund if key is None else key}", message, critical=True):
+        notifier.refresh_persistent("konfiguration", message)
     status.set(STATUS_KONFIGURATIONSFEHLER, grund=grund)
     return 1
 
@@ -218,8 +218,10 @@ def _on_mqtt_connected(rt: Runtime, event: Event) -> None:
 
 
 def _on_ha_connected(rt: Runtime, event: Event) -> None:
+    """Status-Entity und HA-Benachrichtigungen ueberleben keinen HA-Neustart: neu setzen."""
     if rt.status is not None:
         rt.status.republish()
+    rt.notifier.republish_persistent()
 
 
 def _on_auth_rejected(rt: Runtime, event: Event) -> None:

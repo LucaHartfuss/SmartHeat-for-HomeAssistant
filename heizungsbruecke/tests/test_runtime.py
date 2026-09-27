@@ -526,6 +526,25 @@ def test_status_is_republished_when_the_ha_connection_comes_back(env):
     assert len(_status_states(env)) == 3
 
 
+def test_open_critical_notifications_are_recreated_when_the_ha_connection_comes_back(env):
+    """Review I3: nach einem HA-Neustart fehlen die persistent_notifications (nur im Speicher von
+    HA). Beim Wiederverbinden legt das Add-on die offenen kritischen neu an, ohne Push."""
+    _quiet_backup(
+        env, notify_states={"abo": "inaktiv", "batterie:sensor.x": "niedrig"},
+        notify_messages={"abo": "SmartHeat: Abo inaktiv"},
+    )
+    env.abo["status"] = entitlement.UNKNOWN  # Abo-Meldung bleibt offen
+    bridge = _start(env)
+    pushes_before = list(env.ha.pushes)
+    env.ha.persistent.clear()
+
+    env.trigger_clients[-1].kwargs["on_connected"]()
+    bridge.worker.run_pending()
+
+    assert env.ha.persistent == [("smartheat_abo", "SmartHeat: Abo inaktiv")]
+    assert env.ha.pushes == pushes_before
+
+
 def test_successful_start_clears_an_earlier_configuration_error(env):
     _quiet_backup(env)
     save_backup(env.paths["BACKUP_PATH"], {**_backup(env), "notify_states": {"konfiguration": "fehler:alt"}})

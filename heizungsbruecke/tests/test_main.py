@@ -354,8 +354,13 @@ def test_repeated_helper_failure_with_changing_error_text_does_not_push_again(mo
         run["flow_id"] = flow_id
         assert _run_bridge(options, ha_api) == 1
 
-    assert ha_api.send_notification.call_count == 1
-    ha_api.create_persistent_notification.assert_called_once()
+    assert ha_api.send_notification.call_count == 1  # kein zweiter Push
+    # Die HA-Benachrichtigung wird je Start neu angelegt (ersetzt die vorige per notification_id,
+    # sie ueberlebt keinen HA-Neustart) und traegt den aktuellen Fehlertext (Review I3).
+    persistent = ha_api.create_persistent_notification.call_args_list
+    assert len(persistent) == 2
+    assert {c.args[2] for c in persistent} == {"smartheat_konfiguration"}
+    assert "9f8e7d6c" in persistent[-1].args[1]
     grund = _status_calls(ha_api)[-1][1]["grund"]
     assert "Hilfs-Entities konnten nicht angelegt werden" in grund
     assert "9f8e7d6c" in grund  # der Status zeigt den aktuellen Fehler im Detail

@@ -134,6 +134,33 @@ def test_empty_notify_states_are_not_written(make_store, tmp_path):
     assert "notify_states" not in load_backup(tmp_path / "backup.json")
 
 
+def test_notify_messages_round_trip(make_store, tmp_path):
+    store = make_store()
+
+    store.update(notify_messages={"notbetrieb": "SmartHeat: Notbetrieb aktiv"})
+    reloaded = StateStore(tmp_path / "backup.json", tmp_path / "failsafe_state.json")
+
+    assert reloaded.state.notify_messages == {"notbetrieb": "SmartHeat: Notbetrieb aktiv"}
+
+
+@pytest.mark.parametrize("raw", [None, "x", [1], {"a": 1}, {"a": ["x"]}])
+def test_invalid_notify_messages_fall_back_to_empty(make_store, caplog, raw):
+    with caplog.at_level(logging.WARNING):
+        store = make_store(backup={"notify_messages": raw, "notify_states": {"notbetrieb": "aktiv"}})
+
+    assert store.state.notify_messages == {}
+    assert store.state.notify_states == {"notbetrieb": "aktiv"}
+    assert "notify_messages" in caplog.text
+
+
+def test_empty_notify_messages_are_not_written(make_store, tmp_path):
+    store = make_store()
+
+    store.update(boost_active=True, notify_messages={})
+
+    assert "notify_messages" not in load_backup(tmp_path / "backup.json")
+
+
 # --- Schreiben ---
 
 def test_update_writes_backup_with_unknown_keys_and_without_unset_fields(make_store, tmp_path):

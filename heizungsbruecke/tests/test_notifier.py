@@ -151,3 +151,102 @@ def test_without_services_only_persistent_notification_is_created(make_store, ha
 
     ha_api.send_notification.assert_not_called()
     ha_api.create_persistent_notification.assert_called_once()
+
+
+def test_critical_message_is_kept_until_ok(make_store, ha_api):
+    store = make_store()
+    notifier = _notifier(store, ha_api)
+
+    notifier.notify("notbetrieb", "aktiv", "Notbetrieb aktiv", critical=True)
+    notifier.notify("batterie:sensor.x", "niedrig", "Batterie niedrig", critical=False)
+    assert store.state.notify_messages == {"notbetrieb": "Notbetrieb aktiv"}
+
+    notifier.notify("notbetrieb", STATE_OK, "Notbetrieb beendet", critical=True)
+    assert store.state.notify_messages == {}
+
+
+def test_republish_persistent_recreates_open_critical_notifications_without_push(make_store, ha_api, tmp_path):
+    """Review I3: HA haelt persistent_notifications nur im Speicher. Nach einem HA-Neustart legt
+    das Add-on sie fuer jede noch offene kritische Stoerung neu an, auch nach eigenem Neustart."""
+    notifier = _notifier(make_store(), ha_api)
+    notifier.notify("notbetrieb", "aktiv", "Notbetrieb aktiv", critical=True)
+    notifier.notify("datenfehler", "lokal:dat", "Datenfehler dat", critical=True)
+    notifier.notify("datenfehler", STATE_OK, "Datenfehler behoben", critical=True)
+    notifier.notify("batterie:sensor.x", "niedrig", "Batterie niedrig", critical=False)
+    ha_api.reset_mock()
+    restarted = _notifier(StateStore(tmp_path / "backup.json", tmp_path / "failsafe_state.json"), ha_api)
+
+    restarted.republish_persistent()
+
+    ha_api.create_persistent_notification.assert_called_once_with(
+        "SmartHeat", "Notbetrieb aktiv", "smartheat_notbetrieb",
+    )
+    ha_api.send_notification.assert_not_called()
+    ha_api.dismiss_persistent_notification.assert_not_called()
+
+
+def test_republish_persistent_skips_seeded_state_without_message(make_store, ha_api):
+    notifier = _notifier(make_store(), ha_api)
+    notifier.seed("notbetrieb", "aktiv")
+
+    notifier.republish_persistent()
+
+    ha_api.create_persistent_notification.assert_not_called()
+
+
+def test_republish_persistent_failure_is_only_logged(make_store, ha_api, caplog):
+    notifier = _notifier(make_store(), ha_api)
+    notifier.notify("notbetrieb", "aktiv", "Notbetrieb aktiv", critical=True)
+    notifier.notify("abo", "inaktiv", "Abo inaktiv", critical=True)
+    ha_api.create_persistent_notification.side_effect = RuntimeError("HA weg")
+    ha_api.create_persistent_notification.reset_mock()
+
+    with caplog.at_level(logging.WARNING):
+        notifier.republish_persistent()  # darf nicht werfen
+
+    assert ha_api.create_persistent_notification.call_count == 2
+    assert "notbetrieb" in caplog.text
+
+
+def test_critical_event_while_ha_unreachable_is_restored_by_republish(make_store, ha_api):
+    """Push und Benachrichtigung scheitern (HA weg): der Push wird nicht wiederholt, die
+    Benachrichtigung kommt beim Wiederverbinden (republish_persistent) doch noch an."""
+    ha_api.send_notification.side_effect = RuntimeError("HA weg")
+    ha_api.create_persistent_notification.side_effect = RuntimeError("HA weg")
+    notifier = _notifier(make_store(), ha_api)
+    notifier.notify("notbetrieb", "aktiv", "Notbetrieb aktiv", critical=True)
+    ha_api.reset_mock()
+    ha_api.send_notification.side_effect = None
+    ha_api.create_persistent_notification.side_effect = None
+
+    notifier.republish_persistent()
+
+    ha_api.create_persistent_notification.assert_called_once_with(
+        "SmartHeat", "Notbetrieb aktiv", "smartheat_notbetrieb",
+    )
+    ha_api.send_notification.assert_not_called()
+
+
+def test_refresh_persistent_reasserts_an_unchanged_critical_state_without_push(make_store, ha_api):
+    store = make_store()
+    notifier = _notifier(store, ha_api)
+    notifier.notify("konfiguration", "fehler:hilfs_entities", "Fehler (Flow a)", critical=True)
+    ha_api.reset_mock()
+
+    notifier.refresh_persistent("konfiguration", "Fehler (Flow b)")
+
+    ha_api.create_persistent_notification.assert_called_once_with(
+        "SmartHeat", "Fehler (Flow b)", "smartheat_konfiguration",
+    )
+    ha_api.send_notification.assert_not_called()
+    assert store.state.notify_messages == {"konfiguration": "Fehler (Flow b)"}
+
+
+def test_refresh_persistent_does_nothing_for_an_ok_key(make_store, ha_api):
+    store = make_store()
+    notifier = _notifier(store, ha_api)
+
+    notifier.refresh_persistent("konfiguration", "Fehler")
+
+    ha_api.create_persistent_notification.assert_not_called()
+    assert store.state.notify_messages == {}
