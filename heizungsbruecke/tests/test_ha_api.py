@@ -517,6 +517,32 @@ def test_create_persistent_notification_raises_on_http_error():
             api.create_persistent_notification("SmartHeat", "x", "smartheat_abo_inaktiv")
 
 
+def test_dismiss_persistent_notification_posts_to_service():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    mock_response = Mock()
+    mock_response.raise_for_status.return_value = None
+
+    with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response) as mock_post:
+        api.dismiss_persistent_notification("smartheat_notbetrieb")
+
+    mock_post.assert_called_once_with(
+        "http://supervisor/core/api/services/persistent_notification/dismiss",
+        headers={"Authorization": "Bearer test-token"},
+        json={"notification_id": "smartheat_notbetrieb"},
+        timeout=10,
+    )
+
+
+def test_dismiss_persistent_notification_raises_on_http_error():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    mock_response = Mock()
+    mock_response.raise_for_status.side_effect = requests.HTTPError("500")
+
+    with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response):
+        with pytest.raises(requests.HTTPError):
+            api.dismiss_persistent_notification("smartheat_notbetrieb")
+
+
 def test_get_config_returns_parsed_json():
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
     mock_response = Mock()

@@ -343,3 +343,14 @@ class HomeAssistantApi:
             timeout=10,
         )
         response.raise_for_status()
+
+    def dismiss_persistent_notification(self, notification_id: str) -> None:
+        """Entfernt eine per create_persistent_notification angelegte Benachrichtigung. Wirft
+        wie send_notification; abfangen ist Sache des Aufrufers."""
+        response = requests.post(
+            f"{self._base_url}{self._api_prefix}/services/persistent_notification/dismiss",
+            headers=self._headers,
+            json={"notification_id": notification_id},
+            timeout=10,
+        )
+        response.raise_for_status()

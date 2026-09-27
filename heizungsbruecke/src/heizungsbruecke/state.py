@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 _NUMBER_FIELDS = ("curve_current", "offset_current", "last_room_target", "last_published_target_rt")
 _FLAG_FIELDS = ("boost_active", "emergency_boost_active")
-BACKUP_FIELDS = _NUMBER_FIELDS + _FLAG_FIELDS + ("target_history", "last_daily_trigger_date")
+BACKUP_FIELDS = _NUMBER_FIELDS + _FLAG_FIELDS + ("target_history", "last_daily_trigger_date", "notify_states")
 
 
 @dataclass(frozen=True)
@@ -33,6 +33,8 @@ class BridgeState:
     last_published_target_rt: float | None = None
     last_daily_trigger_date: str | None = None
     delivery: DeliveryState = field(default_factory=DeliveryState)
+    # Zuletzt gemeldeter Zustand je Meldeschluessel (notifier.py); fehlender Schluessel = "ok".
+    notify_states: dict = field(default_factory=dict)
     # Nur Laufzeit (die Abo-Frist selbst liegt in entitlement_state.json).
     stable_target: float | None = None
     abo_inactive_since: datetime | None = None
@@ -79,6 +81,12 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
                 raw["target_history"],
             )
         values["target_history"] = history
+    if "notify_states" in raw:
+        states = raw["notify_states"]
+        if isinstance(states, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in states.items()):
+            values["notify_states"] = dict(states)
+        else:
+            _invalid("notify_states")
     extra = {key: value for key, value in raw.items() if key not in BACKUP_FIELDS}
     return values, extra
 
@@ -89,8 +97,9 @@ def _backup_content(state: BridgeState, extra: dict) -> dict:
     content = dict(extra)
     for key in BACKUP_FIELDS:
         value = getattr(state, key)
-        if value is not None:
-            content[key] = value
+        if value is None or (key == "notify_states" and not value):
+            continue
+        content[key] = value
     return content
 
 
