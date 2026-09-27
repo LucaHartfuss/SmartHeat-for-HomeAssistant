@@ -20,6 +20,42 @@ Home-Assistant-Integration: installieren, dann Einstellungen → Geraete &
 Dienste → Integration hinzufuegen → "SmartHeat". Die Integration schreibt die
 noetige Konfiguration automatisch in dieses Add-on.
 
+## Update von 0.18.0 auf 0.19.0
+
+Nötig: SmartHeat-Integration ab Version 0.5.0. Nach dem Update meldet das Add-on
+„Konfiguration veraltet – bitte SmartHeat-Einrichtung erneut durchführen“ (Status-Entity,
+Benachrichtigung in Home Assistant) und regelt nicht, bis die Einrichtung neu durchlaufen ist.
+Die Anlage behält bis dahin ihre letzten Werte. Dazu den bestehenden SmartHeat-Eintrag unter
+Einstellungen → Geräte & Dienste entfernen und die Integration neu hinzufügen.
+
+Neu: Mehrere Raumfühler. Die Raumtemperatur ist der Mittelwert aller Fühler mit gültigem Wert
+(5–35 °C), als eigener Sensor „SmartHeat <Anlage> Raumtemperatur“. Fällt ein Fühler aus, rechnet
+das Add-on mit den übrigen weiter und meldet das. Thermostate (`climate`) sind als Raumfühler
+möglich.
+
+Neu: Außentemperatur auch aus einem Wetterdienst (`weather`), wenn die Heizung keinen
+Außenfühler hat („SmartHeat <Anlage> Außentemperatur“).
+
+Neu: Meldungen an mehrere Handys. Alles, was die Regelung stoppt (Notbetrieb, Datenfehler,
+Abo inaktiv, Konfigurationsfehler), erscheint zusätzlich als Benachrichtigung in Home Assistant,
+bis es behoben ist. Jede Meldung kommt nur einmal, auch nach einem Neustart.
+
+Neu: Batterieüberwachung der Raumfühler und Thermostate (Meldung unter 20 %, Entwarnung ab 25 %).
+
+Neu: Status-Entity `sensor.smartheat_<anlage>_status` (`startet`, `bereit`,
+`konfigurationsfehler` mit Grund). Die Integration wartet bei der Einrichtung darauf.
+
+Geändert: Fehlt eine Pflicht-Entity oder lässt sich ein Hilfssensor nicht anlegen, meldet das
+Add-on nach etwa 4 Minuten einen Konfigurationsfehler und beendet sich. Solange Home Assistant
+selbst noch nicht erreichbar ist, wartet es weiter.
+
+Einmalig nach dem Update: Die Hilfssensoren DAT, DART, das Raum-Mittel und das 24-h-Minimum
+werden neu angelegt (gleiche Namen und Entity-IDs). DART und das Raum-Mittel beginnen leer, weil
+sie jetzt auf dem neuen Raumtemperatur-Sensor beruhen; nach 24 Stunden sind sie wieder
+vollständig.
+
+Entfällt: die Optionen `entity_room_actual` und `notify_service`.
+
 ## Update von 0.17.0 auf 0.18.0
 
 Server-Update nötig, und zwar vorher. Danach die SmartHeat-Integration (ab Version 0.4.0) neu

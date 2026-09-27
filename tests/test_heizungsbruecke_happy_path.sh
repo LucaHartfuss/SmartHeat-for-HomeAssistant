@@ -105,6 +105,9 @@ class Handler(BaseHTTPRequestHandler):
             result = self._fake_ws_result(command)
             _send_ws_frame(self.wfile, {"id": command.get("id", 1), "type": "result", "success": True, "result": result})
             return
+        if self.path == "/core/api/config":
+            self._send_json({"time_zone": "UTC"})
+            return
         if self.path.startswith("/core/api/states/"):
             self._send_json({
                 "state": "20.0",
@@ -142,6 +145,10 @@ class Handler(BaseHTTPRequestHandler):
             entity_id = f"sensor.stub_derived_{entry_id}"
             _ENTITY_REGISTRY.append({"entity_id": entity_id, "config_entry_id": entry_id})
             self._send_json({"type": "create_entry", "result": {"entry_id": entry_id}})
+        elif self.path.startswith("/core/api/states/"):
+            self._send_json({})
+        elif self.path.startswith("/core/api/services/persistent_notification/"):
+            self._send_json({})
         else:
             self._send_json({"error": "not found"}, code=404)
 
@@ -158,11 +165,11 @@ listener 18830
 allow_anonymous true
 EOF
 
-# entity_room_actual/target deliberately use the C3 entity_id::attribute convention
+# room_sensors/entity_room_target deliberately use the C3 entity_id::attribute convention
 # (like the real climate.wohnzimmer_thermostat setup) so this test also exercises that
 # read path end-to-end, not just the plain-state path.
 cat > "$DATA_DIR/options.json" <<JSON
-{"tenant_id":"happytest","verteilsystem":"Heizkoerper","daily_trigger_time":"12:00","day_avg_window_start":"14:00","day_avg_window_end":"17:00","night_avg_window_start":"04:00","night_avg_window_end":"07:00","accounts_api_base_url":"https://accounts.example.test","entity_room_actual":"climate.testroom::current_temperature","entity_room_target":"climate.testroom::temperature","entity_curve_current":"number.curve","entity_offset_current":"number.offset","entity_heat_limit":"number.heat_limit","entity_outdoor_temp":"sensor.outdoor","local_check_interval_seconds":2}
+{"tenant_id":"happytest","verteilsystem":"Heizkoerper","daily_trigger_time":"12:00","day_avg_window_start":"14:00","day_avg_window_end":"17:00","night_avg_window_start":"04:00","night_avg_window_end":"07:00","accounts_api_base_url":"https://accounts.example.test","room_sensors":["climate.testroom::current_temperature"],"entity_room_target":"climate.testroom::temperature","entity_curve_current":"number.curve","entity_offset_current":"number.offset","entity_heat_limit":"number.heat_limit","entity_outdoor_temp":"sensor.outdoor","local_check_interval_seconds":2}
 JSON
 
 docker network rm "$NET_NAME" >/dev/null 2>&1
