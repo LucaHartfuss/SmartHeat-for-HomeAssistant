@@ -117,7 +117,7 @@ def test_notify_states_round_trip(make_store, tmp_path):
     assert reloaded.state.notify_states == {"notbetrieb": "aktiv", "batterie:sensor.wz_battery": "niedrig"}
 
 
-@pytest.mark.parametrize("raw", [None, "x", [1], {"a": ["x"]}])
+@pytest.mark.parametrize("raw", [None, "x", [1], {"a": 1}, {"a": ["x"]}])
 def test_invalid_notify_states_fall_back_to_empty(make_store, caplog, raw):
     with caplog.at_level(logging.WARNING):
         store = make_store(backup={"notify_states": raw})
