@@ -17,8 +17,10 @@ logger = logging.getLogger(__name__)
 
 _NUMBER_FIELDS = ("curve_current", "offset_current", "last_room_target", "last_published_target_rt")
 _FLAG_FIELDS = ("boost_active", "emergency_boost_active")
+_TEXT_FIELDS = ("last_daily_trigger_date", "last_ack_at")
 _TEXT_MAP_FIELDS = ("notify_states", "notify_messages")
-BACKUP_FIELDS = _NUMBER_FIELDS + _FLAG_FIELDS + ("target_history", "last_daily_trigger_date") + _TEXT_MAP_FIELDS
+_OVERRIDE_FIELDS = ("manual_override", "manual_override_pending")
+BACKUP_FIELDS = _NUMBER_FIELDS + _FLAG_FIELDS + ("target_history",) + _TEXT_FIELDS + _TEXT_MAP_FIELDS + _OVERRIDE_FIELDS
 
 
 @dataclass(frozen=True)
@@ -39,16 +41,31 @@ class BridgeState:
     # Letzter Meldetext je nicht-"ok" kritischem Schluessel: damit legt der notifier die
     # HA-Benachrichtigung nach einem HA-Neustart neu an (HA haelt sie nur im Speicher).
     notify_messages: dict = field(default_factory=dict)
+    # Zeitpunkt (ISO) der letzten Serverantwort auf einen offenen Tick (Status letzte_serverantwort).
+    last_ack_at: str | None = None
+    # R6: aktiver manueller Eingriff {curve, offset, erkannt} bis zur Rueckkehr (Hinweis im Status).
+    manual_override: dict | None = None
+    # R6: noch nicht vom Server verarbeiteter Eingriff (KPI im naechsten Snapshot).
+    manual_override_pending: dict | None = None
     # Nur Laufzeit (die Abo-Frist selbst liegt in entitlement_state.json).
     stable_target: float | None = None
     # Aufeinanderfolgende EV_HEALTH-Runden ohne gueltigen Wert je Raumfuehler (room_sensors.py).
     room_sensor_misses: dict = field(default_factory=dict)
+    # Aufeinanderfolgende EV_HEALTH-Runden mit Abweichung von Kurve/Offset (manual_override.py).
+    manual_override_misses: int = 0
     abo_inactive_since: datetime | None = None
     abo_finished: bool = False
 
 
 def _is_number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _is_override(value) -> bool:
+    return (
+        isinstance(value, dict) and _is_number(value.get("curve")) and _is_number(value.get("offset"))
+        and isinstance(value.get("erkannt"), str)
+    )
 
 
 def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
@@ -74,11 +91,13 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
             values[key] = raw[key]
         else:
             _invalid(key)
-    if raw.get("last_daily_trigger_date") is not None:
-        if isinstance(raw["last_daily_trigger_date"], str):
-            values["last_daily_trigger_date"] = raw["last_daily_trigger_date"]
+    for key in _TEXT_FIELDS:
+        if raw.get(key) is None:
+            continue
+        if isinstance(raw[key], str):
+            values[key] = raw[key]
         else:
-            _invalid("last_daily_trigger_date")
+            _invalid(key)
     if "target_history" in raw:
         history = sanitize_history(raw["target_history"])
         if history != raw["target_history"]:
@@ -93,6 +112,13 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
         mapping = raw[key]
         if isinstance(mapping, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in mapping.items()):
             values[key] = dict(mapping)
+        else:
+            _invalid(key)
+    for key in _OVERRIDE_FIELDS:
+        if raw.get(key) is None:
+            continue
+        if _is_override(raw[key]):
+            values[key] = dict(raw[key])
         else:
             _invalid(key)
     extra = {key: value for key, value in raw.items() if key not in BACKUP_FIELDS}

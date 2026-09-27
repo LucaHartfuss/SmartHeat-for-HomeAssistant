@@ -1,66 +1,147 @@
-"""Status-Entity des Add-ons (Spec TP6 3.6)."""
+"""Status-Kanal des Add-ons (Spec TP7 1.1, 3.1)."""
 import logging
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
-from heizungsbruecke.status import (
-    ADDON_VERSION, STATUS_ATTR_GRUND, STATUS_ATTR_SETUP_ID, STATUS_BEREIT, STATUS_KONFIGURATIONSFEHLER,
-    STATUS_STARTET, StatusReporter, status_entity_id,
-)
+import pytest
+
+from heizungsbruecke import status
+from heizungsbruecke.delivery import DataFault, DeliveryState
+from heizungsbruecke.state import BridgeState
+from heizungsbruecke.status import Flags, StatusReporter, build_event, overall_status
+
+SINCE = datetime(2026, 10, 1, 8, 0, tzinfo=timezone.utc)
+OVERRIDE = {"curve": 1.3, "offset": 24.5, "erkannt": "2026-10-01T08:00:00+02:00"}
 
 
-def test_status_values_match_the_integration_contract():
-    # Gleiche Werte wie const.py der Integration (Contract-Check, Task 15).
-    assert (STATUS_STARTET, STATUS_BEREIT, STATUS_KONFIGURATIONSFEHLER) == ("startet", "bereit", "konfigurationsfehler")
-    assert STATUS_ATTR_SETUP_ID == "setup_id"
-    assert STATUS_ATTR_GRUND == "grund"
-
-
-def test_status_entity_id_is_a_slug_of_the_tenant():
-    assert status_entity_id("client1") == "sensor.smartheat_client1_status"
-    assert status_entity_id("Smoke-Test 01") == "sensor.smartheat_smoke_test_01_status"
-
-
-def test_set_posts_state_with_version_and_setup_id():
-    ha_api = MagicMock()
-    reporter = StatusReporter(ha_api, "client1", "abc123")
-
-    reporter.set(STATUS_STARTET)
-
-    ha_api.set_state.assert_called_once_with(
-        "sensor.smartheat_client1_status", "startet",
-        {"friendly_name": "SmartHeat Status", "addon_version": ADDON_VERSION, "setup_id": "abc123"},
+def test_contract_values_match_the_integration():
+    # Gleiche Werte wie const.py der Integration (Contract-Check 14).
+    assert (status.EVENT_TYPE, status.EVENT_SCHEMA, status.HEARTBEAT_SECONDS) == ("smartheat_status", 1, 300)
+    assert status.STATUS_VALUES == (
+        "startet", "regelt", "konfigurationsfehler", "zugang_abgelehnt", "abo_beendet", "abo_inaktiv",
+        "notbetrieb", "datenfehler", "abgemeldet",
+    )
+    assert status.BOOST_VALUES == ("keiner", "komfort", "notfall")
+    assert status.ABO_VALUES == ("aktiv", "inaktiv", "beendet", "unbekannt")
+    assert status.DATENFEHLER_ARTEN == ("lokal", "server", "anlage")
+    assert status.HINT_FIELDS == ("raumfuehler_ausgefallen", "batterie_niedrig", "manueller_eingriff")
+    assert status.EVENT_FIELDS == (
+        "schema", "tenant_id", "setup_id", "addon_version", "status", "grund", "notbetrieb", "datenfehler",
+        "boost", "letzte_serverantwort", "kurve", "offset", "abo", "abo_frist_ende", "hinweise",
     )
 
 
-def test_error_state_carries_the_reason_and_no_setup_id_when_absent():
+@pytest.mark.parametrize("flags,state,expected", [
+    (Flags(abgemeldet=True, konfigurationsfehler=True, zugang_abgelehnt=True, abo_beendet=True, gestartet=True),
+     BridgeState(delivery=DeliveryState(notbetrieb=True)), "abgemeldet"),
+    (Flags(konfigurationsfehler=True, zugang_abgelehnt=True, abo_beendet=True), BridgeState(), "konfigurationsfehler"),
+    (Flags(zugang_abgelehnt=True, abo_beendet=True), BridgeState(), "zugang_abgelehnt"),
+    (Flags(zugang_abgelehnt=True, gestartet=True), BridgeState(abo_inactive_since=SINCE), "abo_inaktiv"),
+    (Flags(abo_beendet=True), BridgeState(), "abo_beendet"),
+    (Flags(), BridgeState(abo_finished=True, abo_inactive_since=SINCE), "abo_beendet"),
+    (Flags(), BridgeState(abo_inactive_since=SINCE, delivery=DeliveryState(notbetrieb=True)), "abo_inaktiv"),
+    (Flags(), BridgeState(delivery=DeliveryState(notbetrieb=True)), "startet"),
+    (Flags(gestartet=True), BridgeState(delivery=DeliveryState(
+        notbetrieb=True, datenfehler=DataFault("local", ("dat",)))), "notbetrieb"),
+    (Flags(gestartet=True), BridgeState(delivery=DeliveryState(datenfehler=DataFault("server", ("x",)))), "datenfehler"),
+    (Flags(gestartet=True), BridgeState(), "regelt"),
+])
+def test_overall_status_takes_the_first_matching_state(flags, state, expected):
+    assert overall_status(flags, state) == expected
+
+
+def test_event_carries_every_field():
+    state = BridgeState(
+        curve_current=0.9, offset_current=22.0, emergency_boost_active=True,
+        last_ack_at="2026-10-01T12:00:05+02:00", manual_override=OVERRIDE,
+        notify_states={
+            "raumfuehler:sensor.b": "ausgefallen", "raumfuehler:sensor.a": "ausgefallen",
+            "batterie:sensor.x": "niedrig", "notbetrieb": "aktiv",
+        },
+    )
+
+    event = build_event("client1", "abc", Flags(gestartet=True, abo="aktiv"), state)
+
+    assert tuple(event) == status.EVENT_FIELDS
+    assert event == {
+        "schema": 1, "tenant_id": "client1", "setup_id": "abc", "addon_version": status.ADDON_VERSION,
+        "status": "regelt", "grund": None, "notbetrieb": False, "datenfehler": None, "boost": "notfall",
+        "letzte_serverantwort": "2026-10-01T12:00:05+02:00", "kurve": 0.9, "offset": 22.0,
+        "abo": "aktiv", "abo_frist_ende": None,
+        "hinweise": {
+            "raumfuehler_ausgefallen": ["sensor.a", "sensor.b"], "batterie_niedrig": ["sensor.x"],
+            "manueller_eingriff": {"kurve": 1.3, "offset": 24.5, "erkannt": "2026-10-01T08:00:00+02:00"},
+        },
+    }
+
+
+@pytest.mark.parametrize("fault,expected", [
+    (DataFault("local", ("dart", "dat")), {"art": "lokal", "rollen": ["dart", "dat"]}),
+    (DataFault("server", ("unplausibler Wert für dat: 99",)), {"art": "server", "rollen": []}),
+    (DataFault("write", ("curve_current (number.x): Cloud weg",)), {"art": "anlage", "rollen": ["curve_current"]}),
+])
+def test_event_names_the_kind_and_roles_of_a_data_fault(fault, expected):
+    state = BridgeState(delivery=DeliveryState(datenfehler=fault))
+
+    assert build_event("t", None, Flags(gestartet=True), state)["datenfehler"] == expected
+
+
+def test_abo_inactive_carries_the_end_of_the_grace_period():
+    event = build_event("t", None, Flags(), BridgeState(abo_inactive_since=SINCE))
+
+    assert (event["abo"], event["abo_frist_ende"]) == ("inaktiv", "2026-10-31")
+
+
+@pytest.mark.parametrize("flags,state,expected", [
+    (Flags(konfigurationsfehler=True, grund="Entity fehlt"), BridgeState(), "Entity fehlt"),
+    (Flags(abgemeldet=True, grund="scheitert"), BridgeState(), "scheitert"),
+    (Flags(gestartet=True, grund="alt"), BridgeState(), None),
+    (Flags(abo_beendet=True, grund="Zuruecksetzen scheitert"), BridgeState(), "Zuruecksetzen scheitert"),
+])
+def test_reason_is_only_sent_with_a_state_that_has_one(flags, state, expected):
+    assert build_event("t", None, flags, state)["grund"] == expected
+
+
+def test_reporter_publishes_changes_once_but_always_on_publish(make_store):
     ha_api = MagicMock()
-    reporter = StatusReporter(ha_api, "client1", None)
+    reporter = StatusReporter(ha_api, "client1", "abc", make_store())
 
-    reporter.set(STATUS_KONFIGURATIONSFEHLER, grund="Konfiguration veraltet")
+    reporter.publish_if_changed()
+    reporter.publish_if_changed()
+    assert ha_api.fire_event.call_count == 1
 
-    attributes = ha_api.set_state.call_args.args[2]
-    assert attributes["grund"] == "Konfiguration veraltet"
-    assert "setup_id" not in attributes
+    reporter.update(gestartet=True)
+    assert reporter.status == "regelt"
+    assert ha_api.fire_event.call_args.args == ("smartheat_status", reporter.event())
+
+    reporter.publish()
+    assert ha_api.fire_event.call_count == 3
 
 
-def test_republish_resends_the_last_state_and_does_nothing_before_the_first():
+def test_reporter_sees_changes_in_the_store(make_store):
     ha_api = MagicMock()
-    reporter = StatusReporter(ha_api, "client1", "abc")
-    reporter.republish()
-    ha_api.set_state.assert_not_called()
+    store = make_store()
+    reporter = StatusReporter(ha_api, "client1", None, store)
+    reporter.publish()
 
-    reporter.set(STATUS_BEREIT)
-    reporter.republish()
+    store.update(boost_active=True)
+    reporter.publish_if_changed()
 
-    assert [c.args[1] for c in ha_api.set_state.call_args_list] == ["bereit", "bereit"]
-    assert reporter.state == STATUS_BEREIT
+    assert ha_api.fire_event.call_args.args[1]["boost"] == "komfort"
 
 
-def test_failing_ha_is_only_logged(caplog):
+def test_failed_send_is_logged_and_repeated_on_the_next_check(make_store, caplog):
     ha_api = MagicMock()
-    ha_api.set_state.side_effect = RuntimeError("HA weg")
+    ha_api.fire_event.side_effect = [RuntimeError("HA weg"), None]
+    reporter = StatusReporter(ha_api, "client1", None, make_store())
 
     with caplog.at_level(logging.WARNING):
-        StatusReporter(ha_api, "client1", "abc").set(STATUS_STARTET)
+        reporter.publish_if_changed()
+    reporter.publish_if_changed()
 
-    assert "sensor.smartheat_client1_status" in caplog.text
+    assert "smartheat_status" in caplog.text
+    assert ha_api.fire_event.call_count == 2
+
+
+def test_empty_setup_id_is_sent_as_none(make_store):
+    assert StatusReporter(MagicMock(), "t", "", make_store()).event()["setup_id"] is None

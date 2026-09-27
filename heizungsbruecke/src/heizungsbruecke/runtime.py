@@ -30,6 +30,8 @@ EV_GRACE_CHECK = "grace_check"
 EV_HEALTH = "health"
 EV_MQTT_CONNECTED = "mqtt_connected"
 EV_HA_CONNECTED = "ha_connected"
+EV_HEARTBEAT = "heartbeat"
+EV_RECHECK = "recheck"
 
 
 @dataclass
@@ -47,3 +49,7 @@ class Runtime:
     mqtt_client: BridgeMqttClient | None = None
     trigger_client: HaTriggerClient | None = None
     status: StatusReporter | None = None
+    # Ruhezustand im Betrieb (Fristende): alle Handler ausser dem Lebenszeichen laufen leer.
+    idle: bool = False
+    # R6: der mit dem laufenden Tick gesendete Eingriff (wird nach der Serverantwort geloescht).
+    manual_override_sent: dict | None = None

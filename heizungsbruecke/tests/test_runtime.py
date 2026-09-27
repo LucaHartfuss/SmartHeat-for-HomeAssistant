@@ -1,6 +1,7 @@
 """Betrieb von __main__ ueber den Regel-Worker (Design-Spec 2026-09-26): Boot,
 Tick-Zustellung, Datenfehler, Notbetrieb, lokale Checks und Abo-Pfade. Getrieben ueber
 _start_bridge mit Fake-Uhr (tests/conftest.py), Fake-HA, Fake-MQTT und Fake-Trigger-Client."""
+import copy
 import json
 import logging
 import sys
@@ -61,7 +62,7 @@ class FakeHa:
         self.pushes = []
         self.persistent = []
         self.dismissed = []
-        self.status = []
+        self.events = []
         self.write_error = None
 
     def get_state(self, entity_id):
@@ -94,8 +95,8 @@ class FakeHa:
     def websocket_url(self):
         return "ws://x/api/websocket"
 
-    def set_state(self, entity_id, state, attributes):
-        self.status.append((entity_id, state, dict(attributes)))
+    def fire_event(self, event_type, data):
+        self.events.append((event_type, copy.deepcopy(data)))
 
     def is_reachable(self):
         return True
@@ -484,53 +485,101 @@ def test_source_change_is_announced_once_and_not_critical(env):
     assert not any(entry[0] == "smartheat_quellwechsel" for entry in env.ha.persistent)
 
 
-# --- Status-Entity (Spec TP6 3.6) ---
+# --- Status-Event (Spec TP7 1.1, 3.1) ---
 
 def _status_states(env):
-    return [state for entity_id, state, _ in env.ha.status if entity_id == "sensor.smartheat_test_tenant_status"]
+    """Folge der Gesamtzustaende, aufeinanderfolgende Wiederholungen zusammengefasst (Lebenszeichen
+    und Aenderungen anderer Felder senden denselben Zustand erneut)."""
+    states = [data["status"] for kind, data in env.ha.events if kind == "smartheat_status"]
+    return [state for i, state in enumerate(states) if i == 0 or states[i - 1] != state]
 
 
-def test_status_goes_from_startet_to_bereit_when_mqtt_connects(env):
+def _last_event(env):
+    return [data for kind, data in env.ha.events if kind == "smartheat_status"][-1]
+
+
+def _connect(env, bridge):
+    _mqtt(env).kwargs["on_connected"](None)
+    bridge.worker.run_pending()
+
+
+def test_status_goes_from_startet_to_regelt_when_mqtt_connects(env):
     _quiet_backup(env)
     bridge = _start(env)
     assert _status_states(env) == ["startet"]
 
-    _mqtt(env).kwargs["on_connected"](None)
-    bridge.worker.run_pending()
+    _connect(env, bridge)
 
-    assert _status_states(env) == ["startet", "bereit"]
-    assert env.ha.status[-1][2]["addon_version"] == "0.19.0"
+    assert _status_states(env) == ["startet", "regelt"]
+    assert _last_event(env)["addon_version"] == "0.20.0"
 
 
-def test_status_is_bereit_right_after_start_without_mqtt_when_abo_is_inactive(env):
-    # Praezisierung 4: ohne MQTT kommt kein EV_MQTT_CONNECTED.
+def test_status_is_abo_inaktiv_right_after_start_without_mqtt(env):
     _quiet_backup(env)
     env.abo["status"] = entitlement.INACTIVE
 
     _start(env)
 
     assert env.mqtt_clients == []
-    assert _status_states(env) == ["startet", "bereit"]
+    assert _status_states(env) == ["startet", "abo_inaktiv"]
 
 
 def test_status_carries_the_setup_id_from_the_options(env):
     _quiet_backup(env)
     _start(env, setup_id="wizard-42")
 
-    assert env.ha.status[0][2]["setup_id"] == "wizard-42"
+    assert env.ha.events[0][1]["setup_id"] == "wizard-42"
 
 
-def test_status_is_republished_when_the_ha_connection_comes_back(env):
+def test_status_is_sent_again_when_the_ha_connection_comes_back(env):
     _quiet_backup(env)
     bridge = _start(env)
-    _mqtt(env).kwargs["on_connected"](None)
-    bridge.worker.run_pending()
+    _connect(env, bridge)
+    before = len(env.ha.events)
 
     env.trigger_clients[-1].kwargs["on_connected"]()
     bridge.worker.run_pending()
 
-    assert _status_states(env)[-1] == "bereit"
-    assert len(_status_states(env)) == 3
+    assert len(env.ha.events) == before + 1
+    assert _last_event(env)["status"] == "regelt"
+
+
+def test_status_event_carries_the_full_state(env):
+    _quiet_backup(env, notify_states={"raumfuehler:sensor.a": "ausgefallen", "batterie:sensor.b": "niedrig"})
+    bridge = _start(env)
+    _connect(env, bridge)
+    _set_room_target(env, bridge, 20.5)
+
+    _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], curve=0.95, offset=23.0)
+
+    event = _last_event(env)
+    assert (event["schema"], event["tenant_id"], event["status"], event["boost"], event["abo"]) == (
+        1, "test_tenant", "regelt", "keiner", "aktiv",
+    )
+    assert (event["kurve"], event["offset"]) == (0.95, 23.0)
+    assert event["letzte_serverantwort"] is not None
+    assert event["hinweise"] == {
+        "raumfuehler_ausgefallen": ["sensor.a"], "batterie_niedrig": ["sensor.b"], "manueller_eingriff": None,
+    }
+
+
+def test_status_follows_notbetrieb_and_a_rejected_answer(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _connect(env, bridge)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[0]["seq"]
+    _advance(env, bridge, 30)
+    _advance(env, bridge, 30)
+    assert _status_states(env)[-1] == "notbetrieb"
+    assert _last_event(env)["letzte_serverantwort"] is None
+
+    _answer(env, bridge, seq, status="rejected", reason="unplausibler Wert für dat: 99")
+
+    event = _last_event(env)
+    assert (event["status"], event["notbetrieb"]) == ("datenfehler", False)
+    assert event["datenfehler"] == {"art": "server", "rollen": []}
+    assert event["letzte_serverantwort"] is not None
 
 
 def test_open_critical_notifications_are_recreated_when_the_ha_connection_comes_back(env):

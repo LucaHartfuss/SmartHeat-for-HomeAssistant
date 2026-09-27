@@ -327,3 +327,36 @@ def test_saved_restore_point_is_the_last_successfully_saved_one(make_store, monk
 def test_saved_restore_point_needs_both_values(make_store):
     assert make_store().saved_restore_point() is None
     assert make_store(backup={"curve_current": 0.9}).saved_restore_point() is None
+
+
+def test_status_and_r6_fields_round_trip(make_store, tmp_path):
+    store = make_store()
+    override = {"curve": 1.3, "offset": 24.5, "erkannt": "2026-10-01T08:00:00+02:00"}
+
+    store.update(last_ack_at="2026-10-01T12:00:05+02:00", manual_override=override, manual_override_pending=override)
+
+    reread = StateStore(tmp_path / "backup.json", tmp_path / "failsafe_state.json").state
+    assert (reread.last_ack_at, reread.manual_override, reread.manual_override_pending) == (
+        "2026-10-01T12:00:05+02:00", override, override,
+    )
+
+
+@pytest.mark.parametrize("key,value", [
+    ("last_ack_at", 5),
+    ("manual_override", {"curve": "x", "offset": 1.0, "erkannt": "t"}),
+    ("manual_override_pending", [1.3, 24.5]),
+])
+def test_invalid_status_and_r6_fields_fall_back(make_store, caplog, key, value):
+    store = make_store(backup={key: value})
+
+    assert getattr(store.state, key) is None
+    assert key in caplog.text
+
+
+def test_manual_override_misses_is_runtime_only(make_store, monkeypatch):
+    store = make_store()
+    saves = _count_saves(monkeypatch)
+
+    store.update(manual_override_misses=1)
+
+    assert saves == []

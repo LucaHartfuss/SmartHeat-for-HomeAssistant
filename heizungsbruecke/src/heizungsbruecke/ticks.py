@@ -169,6 +169,14 @@ def _notify(rt: Runtime, action) -> None:
     rt.notifier.notify(key, state, text, critical=True)
 
 
+def _record_answer(rt: Runtime) -> None:
+    """Jede Antwort auf den offenen Tick zeigt, dass der Server lebt (Status letzte_serverantwort)."""
+    try:
+        rt.store.update(last_ack_at=datetime.now().astimezone().isoformat(timespec="seconds"))
+    except Exception:
+        logger.exception("Zeitpunkt der Serverantwort konnte nicht gespeichert werden")
+
+
 def handle_setpoints(rt: Runtime, payload: dict) -> None:
     """Server-Antwort (Schema 2), zaehlt nur fuer den offenen Tick (auch verspaetet). Gueltige
     Werte gehen vor dem Ack auf die Anlage. Ein unbekannter Status oder ungueltige Werte zaehlen
@@ -180,6 +188,7 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
         expected = state.pending.seq if state.pending is not None else None
         logger.info("Setpoints-Antwort mit seq=%r ignoriert (erwartet: %r)", seq, expected)
         return
+    _record_answer(rt)
 
     status = payload.get("status")
     curve, offset = payload.get("curve"), payload.get("offset")

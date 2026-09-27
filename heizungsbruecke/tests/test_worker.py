@@ -185,3 +185,27 @@ def test_run_wakes_up_for_event_posted_from_other_thread():
     threading.Timer(0.05, worker.post, args=(Event("stop"),)).start()
 
     assert worker.run() == 0
+
+
+def test_after_each_runs_after_every_handled_event_and_its_errors_are_logged(clock, caplog):
+    worker = RegulationWorker(clock=clock)
+    seen = []
+    worker.register("a", lambda event: seen.append("a"))
+    calls = {"n": 0}
+
+    def _after():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("kaputt")
+
+    worker.after_each(_after)
+    worker.post(Event("a"))
+    worker.post(Event("a"))
+    worker.post(Event("unbekannt"))
+
+    with caplog.at_level(logging.ERROR):
+        worker.run_pending()
+
+    assert seen == ["a", "a"]
+    assert calls["n"] == 2  # nicht nach dem verworfenen Ereignis ohne Handler
+    assert "kaputt" in caplog.text

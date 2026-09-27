@@ -42,9 +42,15 @@ class RegulationWorker:
         self._coalesce_lock = threading.Lock()
         self._coalesced: dict[str, dict[str, bool]] = {}
         self._exit_code: int | None = None
+        self._after_each: Callable[[], None] | None = None
 
     def register(self, kind: str, handler: Handler) -> None:
         self._handlers[kind] = handler
+
+    def after_each(self, callback: Callable[[], None]) -> None:
+        """Wird nach jedem verarbeiteten Ereignis aufgerufen (Status-Kanal: Aenderungen an einer
+        Stelle erkennen statt in jedem Modul). Ein Fehler darin wird nur geloggt."""
+        self._after_each = callback
 
     def post(self, event: Event) -> None:
         """Threadsicher: stellt ein Ereignis zur sofortigen Verarbeitung ein."""
@@ -137,3 +143,8 @@ class RegulationWorker:
             handler(event)
         except Exception:
             logger.exception("Fehler bei der Verarbeitung von Ereignis '%s', Worker laeuft weiter", event.kind)
+        if self._after_each is not None:
+            try:
+                self._after_each()
+            except Exception:
+                logger.exception("Fehler nach der Verarbeitung von Ereignis '%s'", event.kind)

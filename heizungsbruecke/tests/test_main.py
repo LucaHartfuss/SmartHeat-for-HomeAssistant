@@ -304,7 +304,8 @@ def test_ensure_derived_sensors_with_retry_recovers_after_transient_failures(mon
 
 
 def _status_calls(ha_api):
-    return [(c.args[1], c.args[2]) for c in ha_api.set_state.call_args_list]
+    """Die gesendeten Status-Events (Daten), in Reihenfolge."""
+    return [c.args[1] for c in ha_api.fire_event.call_args_list if c.args[0] == "smartheat_status"]
 
 
 def test_start_with_0_18_0_options_reports_outdated_configuration(sleeps):
@@ -316,8 +317,8 @@ def test_start_with_0_18_0_options_reports_outdated_configuration(sleeps):
     assert _run_bridge(old, ha_api) == 1
 
     states = _status_calls(ha_api)
-    assert [state for state, _ in states] == ["startet", "konfigurationsfehler"]
-    assert "Konfiguration veraltet – bitte SmartHeat-Einrichtung erneut durchführen" in states[-1][1]["grund"]
+    assert [event["status"] for event in states] == ["startet", "konfigurationsfehler"]
+    assert "Konfiguration veraltet – bitte SmartHeat-Einrichtung erneut durchführen" in states[-1]["grund"]
     ha_api.create_persistent_notification.assert_called_once()
     assert ha_api.create_persistent_notification.call_args.args[2] == "smartheat_konfiguration"
     ha_api.send_notification.assert_not_called()
@@ -361,7 +362,7 @@ def test_repeated_helper_failure_with_changing_error_text_does_not_push_again(mo
     assert len(persistent) == 2
     assert {c.args[2] for c in persistent} == {"smartheat_konfiguration"}
     assert "9f8e7d6c" in persistent[-1].args[1]
-    grund = _status_calls(ha_api)[-1][1]["grund"]
+    grund = _status_calls(ha_api)[-1]["grund"]
     assert "Hilfs-Entities konnten nicht angelegt werden" in grund
     assert "9f8e7d6c" in grund  # der Status zeigt den aktuellen Fehler im Detail
 
@@ -375,7 +376,7 @@ def test_repeated_missing_entity_does_not_push_again(sleeps):
     assert _run_bridge(options, ha_api) == 1
 
     assert ha_api.send_notification.call_count == 1
-    assert "Entity fehlt in Home Assistant: number.heat_limit" in _status_calls(ha_api)[-1][1]["grund"]
+    assert "Entity fehlt in Home Assistant: number.heat_limit" in _status_calls(ha_api)[-1]["grund"]
 
 
 @pytest.mark.parametrize("overrides", [
@@ -394,7 +395,7 @@ def test_start_error_reason_never_contains_credentials(sleeps, caplog, overrides
     with caplog.at_level(logging.INFO):
         assert _run_bridge(options, ha_api) == 1
 
-    grund = _status_calls(ha_api)[-1][1]["grund"]
+    grund = _status_calls(ha_api)[-1]["grund"]
     assert "***" in grund  # der Fehlertext haette den Wert zitiert
     assert "test_mqtt_pass" not in grund
     ha_api.send_notification.assert_called_once()
@@ -416,7 +417,7 @@ def test_missing_entity_retry_warnings_and_reason_never_contain_credentials(slee
     assert "Start noch nicht moeglich" in caplog.text  # die Warnungen je Versuch sind geloggt
     assert "sensor.***" in caplog.text
     assert "test_mqtt_pass" not in caplog.text
-    grund = _status_calls(ha_api)[-1][1]["grund"]
+    grund = _status_calls(ha_api)[-1]["grund"]
     assert grund == "Entity fehlt in Home Assistant: sensor.***"
     assert "test_mqtt_pass" not in str(ha_api.send_notification.call_args)
     assert "test_mqtt_pass" not in str(ha_api.create_persistent_notification.call_args)
@@ -429,7 +430,7 @@ def test_start_waits_for_ha_before_reporting(sleeps):
     assert _run_bridge(old, ha_api) == 1
 
     assert sleeps[:2] == [5, 10]
-    assert ha_api.set_state.call_count == 2
+    assert len(_status_calls(ha_api)) == 2
 
 
 def test_check_timezone_warns_on_mismatch(monkeypatch, caplog):

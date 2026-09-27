@@ -23,7 +23,7 @@ from heizungsbruecke.runtime import (
     EV_MQTT_CONNECTED, EV_RETRY_DUE, EV_SETPOINTS, EV_TELEMETRY, EV_WATCHDOG, Runtime,
 )
 from heizungsbruecke.state import StateStore
-from heizungsbruecke.status import STATUS_BEREIT, STATUS_KONFIGURATIONSFEHLER, STATUS_STARTET, StatusReporter
+from heizungsbruecke.status import ABO_AKTIV, StatusReporter
 from heizungsbruecke.worker import Event, RegulationWorker
 
 # Das Add-on startet mit `startup: services`, evtl. vor HA Core. Solange HA nicht antwortet,
@@ -158,7 +158,7 @@ def _fail_start(notifier, status, grund: str, key: str | None = None) -> int:
     message = CONFIG_ERROR_MESSAGE.format(grund=grund)
     if not notifier.notify("konfiguration", f"fehler:{grund if key is None else key}", message, critical=True):
         notifier.refresh_persistent("konfiguration", message)
-    status.set(STATUS_KONFIGURATIONSFEHLER, grund=grund)
+    status.update(konfigurationsfehler=True, grund=grund)
     return 1
 
 
@@ -212,15 +212,15 @@ def _on_retry_due(rt: Runtime, event: Event) -> None:
 
 
 def _on_mqtt_connected(rt: Runtime, event: Event) -> None:
-    if rt.status is not None and rt.status.state != STATUS_BEREIT:
-        rt.status.set(STATUS_BEREIT)
+    if not rt.status.flags.gestartet:
+        rt.status.update(gestartet=True)
     ticks.deliver(rt, delivery.MqttConnected())
 
 
 def _on_ha_connected(rt: Runtime, event: Event) -> None:
-    """Status-Entity und HA-Benachrichtigungen ueberleben keinen HA-Neustart: neu setzen."""
-    if rt.status is not None:
-        rt.status.republish()
+    """Voller Status und HA-Benachrichtigungen bei jedem (Wieder-)Verbinden: nach einem
+    HA-Neustart fehlen die Benachrichtigungen, und die Integration hat den Status nicht."""
+    rt.status.publish()
     rt.notifier.republish_persistent()
 
 
@@ -296,6 +296,7 @@ def _register_handlers(rt: Runtime) -> None:
     }
     for kind, handler in handlers.items():
         rt.worker.register(kind, functools.partial(handler, rt))
+    rt.worker.after_each(rt.status.publish_if_changed)
 
 
 # --- Boot ---
@@ -333,8 +334,8 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | int:
     store = StateStore(config.BACKUP_PATH, config.FAILSAFE_PATH)
     notifier = Notifier(store, ha_api, config.notify_services(options), config.notify_hints_off(options))
     ticks.seed_notices(notifier, store.state.delivery)
-    status = StatusReporter(ha_api, options["tenant_id"], options.get("setup_id"))
-    status.set(STATUS_STARTET)
+    status = StatusReporter(ha_api, options["tenant_id"], options.get("setup_id"), store)
+    status.publish()
     try:
         options = config.resolve_effective_options(options)
         error = config.validate(options)
@@ -366,6 +367,7 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | int:
     if abo_status == entitlement.ACTIVE:
         entitlement.clear(config.ENTITLEMENT_PATH)
         notifier.notify("abo", STATE_OK, abo.ABO_ACTIVE_MESSAGE, critical=True)
+        status.update(abo=ABO_AKTIV)
     elif abo_status == entitlement.INACTIVE:
         inactive_since = entitlement.load_inactive_since(config.ENTITLEMENT_PATH)
         if inactive_since is not None and entitlement.grace_expired(inactive_since, now):
@@ -398,8 +400,9 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | int:
         # Offenen Tick aus failsafe_state.json sofort mit derselben seq erneut versuchen.
         ticks.deliver(rt, delivery.Boot())
     if abo_inactive:
-        # Ohne MQTT kein EV_MQTT_CONNECTED: die lokale Regelung laeuft, also bereit.
-        status.set(STATUS_BEREIT)
+        # Ohne MQTT kein EV_MQTT_CONNECTED: die lokale Regelung laeuft, der Start ist abgeschlossen.
+        status.update(gestartet=True)
+    status.publish_if_changed()
     return rt
 
 
