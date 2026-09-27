@@ -137,3 +137,9 @@ def test_tp6_list_options_and_setup_id_are_optional_and_room_actual_is_gone():
     assert "entity_room_actual" not in config["options"]
     for key in ("room_sensors", "notify_services", "battery_entities", "setup_id"):
         assert key not in config["options"]
+
+
+def test_addon_version_constant_matches_config_yaml():
+    from heizungsbruecke.status import ADDON_VERSION
+
+    assert _load_config_yaml()["version"] == ADDON_VERSION

@@ -61,6 +61,7 @@ class FakeHa:
         self.pushes = []
         self.persistent = []
         self.dismissed = []
+        self.status = []
         self.write_error = None
 
     def get_state(self, entity_id):
@@ -92,6 +93,15 @@ class FakeHa:
 
     def websocket_url(self):
         return "ws://x/api/websocket"
+
+    def set_state(self, entity_id, state, attributes):
+        self.status.append((entity_id, state, dict(attributes)))
+
+    def is_reachable(self):
+        return True
+
+    def entity_exists(self, entity_id):
+        return True
 
 
 class FakeMqtt:
@@ -457,6 +467,65 @@ def test_source_change_is_announced_once_and_not_critical(env):
     changed = [text for text in env.ha.pushes if "Quelle der Raum- oder Außentemperatur" in text]
     assert len(changed) == 1
     assert not any(entry[0] == "smartheat_quellwechsel" for entry in env.ha.persistent)
+
+
+# --- Status-Entity (Spec TP6 3.6) ---
+
+def _status_states(env):
+    return [state for entity_id, state, _ in env.ha.status if entity_id == "sensor.smartheat_test_tenant_status"]
+
+
+def test_status_goes_from_startet_to_bereit_when_mqtt_connects(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    assert _status_states(env) == ["startet"]
+
+    _mqtt(env).kwargs["on_connected"](None)
+    bridge.worker.run_pending()
+
+    assert _status_states(env) == ["startet", "bereit"]
+    assert env.ha.status[-1][2]["addon_version"] == "0.19.0"
+
+
+def test_status_is_bereit_right_after_start_without_mqtt_when_abo_is_inactive(env):
+    # Praezisierung 4: ohne MQTT kommt kein EV_MQTT_CONNECTED.
+    _quiet_backup(env)
+    env.abo["status"] = entitlement.INACTIVE
+
+    _start(env)
+
+    assert env.mqtt_clients == []
+    assert _status_states(env) == ["startet", "bereit"]
+
+
+def test_status_carries_the_setup_id_from_the_options(env):
+    _quiet_backup(env)
+    _start(env, setup_id="wizard-42")
+
+    assert env.ha.status[0][2]["setup_id"] == "wizard-42"
+
+
+def test_status_is_republished_when_the_ha_connection_comes_back(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _mqtt(env).kwargs["on_connected"](None)
+    bridge.worker.run_pending()
+
+    env.trigger_clients[-1].kwargs["on_connected"]()
+    bridge.worker.run_pending()
+
+    assert _status_states(env)[-1] == "bereit"
+    assert len(_status_states(env)) == 3
+
+
+def test_successful_start_clears_an_earlier_configuration_error(env):
+    _quiet_backup(env)
+    save_backup(env.paths["BACKUP_PATH"], {**_backup(env), "notify_states": {"konfiguration": "fehler:alt"}})
+
+    _start(env)
+
+    assert "smartheat_konfiguration" in env.ha.dismissed
+    assert any("Einrichtung in Ordnung" in text for text in env.ha.pushes)
 
 
 # --- Zustellung und Antworten ---

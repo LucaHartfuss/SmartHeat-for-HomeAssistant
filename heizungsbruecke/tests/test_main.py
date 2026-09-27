@@ -5,10 +5,13 @@ import pytest
 import requests
 
 from heizungsbruecke.__main__ import (
-    HELPER_NOTIFICATION_MESSAGE,
+    DERIVED_SENSORS_RETRY_DELAYS_SECONDS,
+    StartupError,
     _check_timezone,
     _ensure_derived_sensors_with_retry,
+    _retry_with_budget,
     _run_bridge,
+    _wait_for_required_entities,
 )
 from heizungsbruecke.derived_sensors import DerivedSensors
 
@@ -30,6 +33,21 @@ class _FakeResponse:
 
     def json(self):
         return self._json_body
+
+
+@pytest.fixture
+def sleeps(monkeypatch):
+    recorded = []
+    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", recorded.append)
+    return recorded
+
+
+def _reachable(*answers):
+    """ha_api, dessen is_reachable nacheinander `answers` liefert und danach True."""
+    ha_api = MagicMock()
+    sequence = list(answers)
+    ha_api.is_reachable.side_effect = lambda: sequence.pop(0) if sequence else True
+    return ha_api
 
 
 def _full_valid_options(**overrides):
@@ -65,7 +83,7 @@ def test_run_bridge_returns_zero_when_not_configured(caplog):
     assert "Add-on ist noch nicht eingerichtet" in caplog.text
 
 
-def test_run_bridge_returns_one_for_verteilsystem_without_safety_values(monkeypatch, caplog):
+def test_run_bridge_returns_one_for_verteilsystem_without_safety_values(monkeypatch, caplog, sleeps):
     # Konfiguriert, aber ungueltig: ein echter Startfehler, main() muss ihn von "nicht
     # konfiguriert" unterscheiden koennen.
     monkeypatch.setattr(
@@ -80,7 +98,7 @@ def test_run_bridge_returns_one_for_verteilsystem_without_safety_values(monkeypa
     assert "Fussbodenheizung" in caplog.text
 
 
-def test_run_bridge_with_0_17_0_options_fails_loudly_as_outdated(caplog):
+def test_run_bridge_with_0_17_0_options_fails_loudly_as_outdated(caplog, sleeps):
     old = {k: v for k, v in _full_valid_options().items() if k not in (
         "verteilsystem", "daily_trigger_time", "day_avg_window_start", "day_avg_window_end",
         "night_avg_window_start", "night_avg_window_end", "room_sensors",
@@ -95,7 +113,7 @@ def test_run_bridge_with_0_17_0_options_fails_loudly_as_outdated(caplog):
     assert "noch nicht eingerichtet" not in caplog.text
 
 
-def test_run_bridge_returns_one_for_invalid_telemetry_interval(monkeypatch, caplog):
+def test_run_bridge_returns_one_for_invalid_telemetry_interval(monkeypatch, caplog, sleeps):
     monkeypatch.setattr(
         "heizungsbruecke.entitlement.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
     )
@@ -145,17 +163,94 @@ _DERIVED_OPTIONS = {
 }
 
 
-def test_ensure_derived_sensors_with_retry_returns_result_on_first_success(monkeypatch):
-    expected = DerivedSensors({"dat": "sensor.dat"}, (), "f")
-    monkeypatch.setattr("heizungsbruecke.derived_sensors.ensure_all", lambda **kwargs: expected)
-    sleeps = []
-    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", sleeps.append)
-
-    assert _ensure_derived_sensors_with_retry(MagicMock(), _DERIVED_OPTIONS) == expected
+def test_retry_with_budget_returns_first_success(sleeps):
+    assert _retry_with_budget(_reachable(), lambda: "ok", lambda error: "x") == "ok"
     assert sleeps == []
 
 
-def test_ensure_derived_sensors_with_retry_recovers_after_transient_failures(monkeypatch):
+def test_retry_with_budget_raises_startup_error_after_budget_when_ha_is_reachable(sleeps):
+    def _always_fails():
+        raise RuntimeError("kaputt")
+
+    with pytest.raises(StartupError, match="Beschreibung: kaputt"):
+        _retry_with_budget(_reachable(), _always_fails, lambda error: f"Beschreibung: {error}")
+
+    assert sleeps == list(DERIVED_SENSORS_RETRY_DELAYS_SECONDS)
+
+
+def test_unreachable_ha_never_becomes_a_start_error(sleeps):
+    """Review Focus 3: solange HA nicht antwortet (hier 30 Pruefungen lang, weit ueber dem
+    Budget von 7 Versuchen), zaehlt das Budget nicht."""
+    ha = {"down_checks": 30}
+
+    def _is_reachable():
+        if ha["down_checks"] > 0:
+            ha["down_checks"] -= 1
+            return False
+        return True
+
+    def _attempt():
+        if ha["down_checks"] > 0:
+            raise ConnectionError("HA startet noch")
+        return "ok"
+
+    ha_api = MagicMock()
+    ha_api.is_reachable.side_effect = _is_reachable
+
+    assert _retry_with_budget(ha_api, _attempt, lambda error: "x") == "ok"
+    assert len(sleeps) == 29
+    assert max(sleeps) == 60
+
+
+def test_missing_entity_is_tolerated_within_budget(sleeps):
+    ha_api = _reachable()
+    seen = {"n": 0}
+
+    def _exists(entity_id):
+        if entity_id == "number.heat_limit":
+            seen["n"] += 1
+            return seen["n"] > 2
+        return True
+
+    ha_api.entity_exists.side_effect = _exists
+
+    _wait_for_required_entities(ha_api, _full_valid_options())
+
+    assert sleeps == [5, 10]
+
+
+def test_missing_entity_after_budget_names_the_entity(sleeps):
+    ha_api = _reachable()
+    ha_api.entity_exists.side_effect = lambda entity_id: entity_id != "number.heat_limit"
+
+    with pytest.raises(StartupError, match="number.heat_limit"):
+        _wait_for_required_entities(ha_api, _full_valid_options())
+
+
+def test_required_entities_include_every_room_sensor_without_attribute_suffix(sleeps):
+    ha_api = _reachable()
+    checked = []
+    ha_api.entity_exists.side_effect = lambda entity_id: checked.append(entity_id) or True
+
+    _wait_for_required_entities(ha_api, _full_valid_options(
+        room_sensors=["sensor.a", "climate.wz::current_temperature"], entity_room_target="climate.wz::temperature",
+    ))
+
+    assert "climate.wz" in checked and "sensor.a" in checked
+    assert not any("::" in entity_id for entity_id in checked)
+
+
+def test_helper_creation_failure_after_budget_is_a_start_error(monkeypatch, sleeps):
+    def _broken(**kwargs):
+        raise RuntimeError("Template-Flow abgelehnt")
+
+    monkeypatch.setattr("heizungsbruecke.derived_sensors.ensure_all", _broken)
+
+    with pytest.raises(StartupError, match="Hilfs-Entities konnten nicht angelegt werden"):
+        _ensure_derived_sensors_with_retry(_reachable(), {**_DERIVED_OPTIONS})
+
+
+def test_ensure_derived_sensors_with_retry_recovers_after_transient_failures(monkeypatch, sleeps):
     expected = DerivedSensors({"dat": "sensor.dat"}, (), "f")
     attempts = {"count": 0}
 
@@ -166,55 +261,76 @@ def test_ensure_derived_sensors_with_retry_recovers_after_transient_failures(mon
         return expected
 
     monkeypatch.setattr("heizungsbruecke.derived_sensors.ensure_all", flaky_ensure_all)
-    sleeps = []
-    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", sleeps.append)
 
-    assert _ensure_derived_sensors_with_retry(MagicMock(), _DERIVED_OPTIONS) == expected
-    assert attempts["count"] == 3
+    assert _ensure_derived_sensors_with_retry(_reachable(), _DERIVED_OPTIONS) == expected
     assert sleeps == [5, 10]
 
 
-def test_ensure_derived_sensors_with_retry_keeps_retrying_every_five_minutes_after_budget(monkeypatch, caplog):
-    expected = DerivedSensors({"dat": "sensor.dat"}, (), "f")
-    attempts = {"count": 0}
-
-    def flaky_ensure_all(**kwargs):
-        attempts["count"] += 1
-        if attempts["count"] <= 9:
-            raise ConnectionError("HA Core noch nicht bereit")
-        return expected
-
-    monkeypatch.setattr("heizungsbruecke.derived_sensors.ensure_all", flaky_ensure_all)
-    sleeps = []
-    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", sleeps.append)
-    ha_api = MagicMock()
-
-    with caplog.at_level(logging.ERROR):
-        result = _ensure_derived_sensors_with_retry(ha_api, _DERIVED_OPTIONS)
-
-    assert result == expected
-    assert sleeps == [5, 10, 20, 40, 60, 60, 60, 300, 300]
-    ha_api.create_persistent_notification.assert_called_once_with(
-        "SmartHeat", HELPER_NOTIFICATION_MESSAGE, "smartheat_hilfssensoren",
-    )
-    assert len([record for record in caplog.records if record.levelno == logging.ERROR]) == 1
+def _status_calls(ha_api):
+    return [(c.args[1], c.args[2]) for c in ha_api.set_state.call_args_list]
 
 
-def test_ensure_derived_sensors_with_retry_survives_failing_notification(monkeypatch):
-    attempts = {"count": 0}
+def test_start_with_0_18_0_options_reports_outdated_configuration(sleeps):
+    """Review Focus 1: client1 nach dem Update, bevor der Wizard neu durchlaufen ist."""
+    old = {k: v for k, v in _full_valid_options().items() if k != "room_sensors"}
+    old["entity_room_actual"] = "sensor.room_actual"
+    ha_api = _reachable()
 
-    def flaky_ensure_all(**kwargs):
-        attempts["count"] += 1
-        if attempts["count"] <= 8:
-            raise ConnectionError("HA Core noch nicht bereit")
-        return DerivedSensors({}, (), "f")
+    assert _run_bridge(old, ha_api) == 1
 
-    monkeypatch.setattr("heizungsbruecke.derived_sensors.ensure_all", flaky_ensure_all)
-    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", lambda seconds: None)
-    ha_api = MagicMock()
-    ha_api.create_persistent_notification.side_effect = RuntimeError("HA kaputt")
+    states = _status_calls(ha_api)
+    assert [state for state, _ in states] == ["startet", "konfigurationsfehler"]
+    assert "Konfiguration veraltet – bitte SmartHeat-Einrichtung erneut durchführen" in states[-1][1]["grund"]
+    ha_api.create_persistent_notification.assert_called_once()
+    assert ha_api.create_persistent_notification.call_args.args[2] == "smartheat_konfiguration"
+    ha_api.send_notification.assert_not_called()
+    ha_api.set_number_value.assert_not_called()
 
-    assert _ensure_derived_sensors_with_retry(ha_api, _DERIVED_OPTIONS) == DerivedSensors({}, (), "f")
+
+def test_repeated_start_error_does_not_push_again(sleeps):
+    """Review Focus 4."""
+    options = _full_valid_options(room_sensors=["light.kaputt"], notify_services=["notify.mobile_app_a"])
+    ha_api = _reachable()
+
+    assert _run_bridge(options, ha_api) == 1
+    assert _run_bridge(options, ha_api) == 1
+
+    assert ha_api.send_notification.call_count == 1
+
+
+@pytest.mark.parametrize("overrides", [
+    {"room_sensors": ["test_mqtt_pass"]},
+    {"entity_outdoor_temp": "test_mqtt_pass"},
+    {"battery_entities": ["test_mqtt_pass"]},
+    {"accounts_api_base_url": "http://test_mqtt_pass.example"},
+])
+def test_start_error_reason_never_contains_credentials(sleeps, caplog, overrides):
+    """Regel 6: die Startpruefung zitiert ungueltige Optionswerte (!r). Steht das MQTT-Passwort
+    versehentlich in einer anderen Option, darf es weder in der Status-Entity noch in Meldungen
+    oder im Log auftauchen."""
+    options = _full_valid_options(notify_services=["notify.mobile_app_a"], **overrides)
+    ha_api = _reachable()
+
+    with caplog.at_level(logging.INFO):
+        assert _run_bridge(options, ha_api) == 1
+
+    grund = _status_calls(ha_api)[-1][1]["grund"]
+    assert "***" in grund  # der Fehlertext haette den Wert zitiert
+    assert "test_mqtt_pass" not in grund
+    ha_api.send_notification.assert_called_once()
+    assert "test_mqtt_pass" not in str(ha_api.send_notification.call_args)
+    assert "test_mqtt_pass" not in str(ha_api.create_persistent_notification.call_args)
+    assert "test_mqtt_pass" not in caplog.text
+
+
+def test_start_waits_for_ha_before_reporting(sleeps):
+    old = {k: v for k, v in _full_valid_options().items() if k != "room_sensors"}
+    ha_api = _reachable(False, False)
+
+    assert _run_bridge(old, ha_api) == 1
+
+    assert sleeps[:2] == [5, 10]
+    assert ha_api.set_state.call_count == 2
 
 
 def test_check_timezone_warns_on_mismatch(monkeypatch, caplog):

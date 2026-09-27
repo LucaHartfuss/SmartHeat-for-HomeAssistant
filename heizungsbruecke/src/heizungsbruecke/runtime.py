@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from heizungsbruecke.notifier import Notifier
     from heizungsbruecke.override import Override
     from heizungsbruecke.state import StateStore
+    from heizungsbruecke.status import StatusReporter
     from heizungsbruecke.worker import RegulationWorker
 
 EV_LOCAL_CHECK = "local_check"
@@ -27,6 +28,7 @@ EV_TELEMETRY = "telemetry"
 EV_DAYNIGHT = "daynight"
 EV_GRACE_CHECK = "grace_check"
 EV_MQTT_CONNECTED = "mqtt_connected"
+EV_HA_CONNECTED = "ha_connected"
 
 
 @dataclass
@@ -43,3 +45,4 @@ class Runtime:
     notifier: Notifier
     mqtt_client: BridgeMqttClient | None = None
     trigger_client: HaTriggerClient | None = None
+    status: StatusReporter | None = None

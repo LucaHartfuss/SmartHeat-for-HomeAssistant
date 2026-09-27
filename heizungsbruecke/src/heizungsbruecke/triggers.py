@@ -8,7 +8,9 @@ import logging
 from heizungsbruecke import config, delivery
 from heizungsbruecke.ha_trigger_client import HaTriggerClient
 from heizungsbruecke.mqtt_client import BridgeMqttClient
-from heizungsbruecke.runtime import EV_AUTH_REJECTED, EV_LOCAL_CHECK, EV_MQTT_CONNECTED, EV_SETPOINTS
+from heizungsbruecke.runtime import (
+    EV_AUTH_REJECTED, EV_HA_CONNECTED, EV_LOCAL_CHECK, EV_MQTT_CONNECTED, EV_SETPOINTS,
+)
 from heizungsbruecke.worker import Event, RegulationWorker
 
 logger = logging.getLogger(__name__)
@@ -72,12 +74,17 @@ def build_ha_trigger_client(manifest, options: dict, ha_api, worker: RegulationW
     if daily_trigger_time:
         trigger_list.append({"platform": "time", "at": daily_trigger_time})
 
+    def _on_connected() -> None:
+        # Bei jeder (Re-)Verbindung Cache frisch lesen und pruefen (eine Sollwertaenderung waehrend
+        # der Trennung wird sofort verarbeitet) und die Status-Entity neu setzen (nach einem
+        # HA-Neustart ist sie weg).
+        worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=True)
+        worker.post_coalesced(EV_HA_CONNECTED)
+
     return HaTriggerClient(
         ws_url=ha_api.websocket_url(), token=ha_api.token, triggers=trigger_list,
         on_trigger_event=make_trigger_event_callback(manifest, worker),
-        # Bei jeder (Re-)Verbindung Cache frisch lesen und pruefen: eine Sollwertaenderung
-        # waehrend der Trennung wird so sofort verarbeitet.
-        on_connected=lambda: worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=True),
+        on_connected=_on_connected,
     )
 
 

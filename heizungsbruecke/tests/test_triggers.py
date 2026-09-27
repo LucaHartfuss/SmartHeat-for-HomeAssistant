@@ -6,7 +6,8 @@ import pytest
 
 from heizungsbruecke import triggers
 from heizungsbruecke.manifest import ChannelManifest
-from heizungsbruecke.runtime import EV_LOCAL_CHECK, EV_SETPOINTS
+from heizungsbruecke.runtime import EV_HA_CONNECTED, EV_LOCAL_CHECK, EV_SETPOINTS
+from heizungsbruecke.triggers import build_ha_trigger_client
 from heizungsbruecke.worker import Event, RegulationWorker
 
 
@@ -109,6 +110,21 @@ def test_build_ha_trigger_client_sets_attribute_on_both_room_triggers(
     )
 
     assert created[0]["triggers"] == expected_room_triggers + [{"platform": "time", "at": "12:00"}]
+
+
+def test_on_connected_queues_a_fresh_local_check_and_a_status_refresh(monkeypatch):
+    captured = {}
+    monkeypatch.setattr("heizungsbruecke.triggers.HaTriggerClient", lambda **kwargs: captured.update(kwargs) or kwargs)
+    worker = MagicMock()
+    ha_api = MagicMock()
+    ha_api.websocket_url.return_value = "ws://x/api/websocket"
+    manifest = ChannelManifest(entity_ids={"room_target": "sensor.t", "room_actual": "sensor.a"})
+
+    build_ha_trigger_client(manifest, {}, ha_api, worker)
+    captured["on_connected"]()
+
+    worker.post_coalesced.assert_any_call(EV_LOCAL_CHECK, room_target_fired=True)
+    worker.post_coalesced.assert_any_call(EV_HA_CONNECTED)
 
 
 def test_strip_attribute_suffix_removes_climate_attribute_syntax():
