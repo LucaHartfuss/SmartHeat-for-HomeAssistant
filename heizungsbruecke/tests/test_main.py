@@ -298,6 +298,44 @@ def test_repeated_start_error_does_not_push_again(sleeps):
     assert ha_api.send_notification.call_count == 1
 
 
+def test_repeated_helper_failure_with_changing_error_text_does_not_push_again(monkeypatch, sleeps):
+    """Review Focus 4: HA vergibt je Lauf eine neue Flow-ID; der Meldezustand darf daran nicht
+    haengen, sonst meldet jeder Neustart erneut."""
+    run = {"flow_id": ""}
+
+    def _rejected(**kwargs):
+        raise requests.HTTPError(
+            "400 Client Error: Bad Request for url: "
+            f"http://supervisor/core/api/config/config_entries/flow/{run['flow_id']}"
+        )
+
+    monkeypatch.setattr("heizungsbruecke.derived_sensors.ensure_all", _rejected)
+    options = _full_valid_options(notify_services=["notify.mobile_app_a"])
+    ha_api = _reachable()
+
+    for flow_id in ("0a1b2c3d", "9f8e7d6c"):
+        run["flow_id"] = flow_id
+        assert _run_bridge(options, ha_api) == 1
+
+    assert ha_api.send_notification.call_count == 1
+    ha_api.create_persistent_notification.assert_called_once()
+    grund = _status_calls(ha_api)[-1][1]["grund"]
+    assert "Hilfs-Entities konnten nicht angelegt werden" in grund
+    assert "9f8e7d6c" in grund  # der Status zeigt den aktuellen Fehler im Detail
+
+
+def test_repeated_missing_entity_does_not_push_again(sleeps):
+    options = _full_valid_options(notify_services=["notify.mobile_app_a"])
+    ha_api = _reachable()
+    ha_api.entity_exists.side_effect = lambda entity_id: entity_id != "number.heat_limit"
+
+    assert _run_bridge(options, ha_api) == 1
+    assert _run_bridge(options, ha_api) == 1
+
+    assert ha_api.send_notification.call_count == 1
+    assert "Entity fehlt in Home Assistant: number.heat_limit" in _status_calls(ha_api)[-1][1]["grund"]
+
+
 @pytest.mark.parametrize("overrides", [
     {"room_sensors": ["test_mqtt_pass"]},
     {"entity_outdoor_temp": "test_mqtt_pass"},
@@ -321,6 +359,25 @@ def test_start_error_reason_never_contains_credentials(sleeps, caplog, overrides
     assert "test_mqtt_pass" not in str(ha_api.send_notification.call_args)
     assert "test_mqtt_pass" not in str(ha_api.create_persistent_notification.call_args)
     assert "test_mqtt_pass" not in caplog.text
+
+
+def test_missing_entity_retry_warnings_and_reason_never_contain_credentials(sleeps, caplog):
+    """Regel 6 auch fuer die Warnungen je Versuch: entity_room_target wird nicht per Muster
+    geprueft, eine Entity-ID mit dem Passwort erreicht also die Existenzpruefung."""
+    options = _full_valid_options(entity_room_target="sensor.test_mqtt_pass", notify_services=["notify.mobile_app_a"])
+    ha_api = _reachable()
+    ha_api.entity_exists.side_effect = lambda entity_id: entity_id != "sensor.test_mqtt_pass"
+
+    with caplog.at_level(logging.INFO):
+        assert _run_bridge(options, ha_api) == 1
+
+    assert "Start noch nicht moeglich" in caplog.text  # die Warnungen je Versuch sind geloggt
+    assert "sensor.***" in caplog.text
+    assert "test_mqtt_pass" not in caplog.text
+    grund = _status_calls(ha_api)[-1][1]["grund"]
+    assert grund == "Entity fehlt in Home Assistant: sensor.***"
+    assert "test_mqtt_pass" not in str(ha_api.send_notification.call_args)
+    assert "test_mqtt_pass" not in str(ha_api.create_persistent_notification.call_args)
 
 
 def test_start_waits_for_ha_before_reporting(sleeps):

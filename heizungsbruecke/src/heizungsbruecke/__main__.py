@@ -49,7 +49,14 @@ logger = logging.getLogger(__name__)
 
 
 class StartupError(Exception):
-    """Startfehler bei erreichbarem HA nach Ablauf des Budgets (Spec TP6 3.6)."""
+    """Startfehler bei erreichbarem HA nach Ablauf des Budgets (Spec TP6 3.6). `key` ist die
+    stabile Identitaet des Fehlers fuer den Meldezustand: der Fehlertext enthaelt oft
+    laufzeitabhaengige Details (Flow-ID von HA, Objektadressen), die bei jedem Neustart anders
+    waeren und sonst jedes Mal eine neue Meldung ausloesten (Review Focus 4)."""
+
+    def __init__(self, grund: str, key: str) -> None:
+        super().__init__(grund)
+        self.key = key
 
 
 class _MissingEntities(Exception):
@@ -65,10 +72,11 @@ def _wait_until_reachable(ha_api) -> None:
         attempt += 1
 
 
-def _retry_with_budget(ha_api, attempt, describe):
+def _retry_with_budget(ha_api, attempt, describe, *, identify=None, redact=lambda text: text):
     """Ruft attempt() bis zum Erfolg. Ein Fehler bei nicht erreichbarem HA wartet unbegrenzt,
     ohne das Budget zu verbrauchen; bei erreichbarem HA gilt DERIVED_SENSORS_RETRY_DELAYS_SECONDS,
-    danach StartupError(describe(letzter Fehler))."""
+    danach StartupError(describe(letzter Fehler), identify(letzter Fehler)); ohne identify ist
+    der Text selbst die Identitaet. `redact` gilt fuer Log, Text und Identitaet."""
     used = 0
     while True:
         try:
@@ -78,9 +86,11 @@ def _retry_with_budget(ha_api, attempt, describe):
                 _wait_until_reachable(ha_api)
                 continue
             if used >= len(DERIVED_SENSORS_RETRY_DELAYS_SECONDS):
-                raise StartupError(describe(error)) from error
+                grund = redact(describe(error))
+                key = redact(identify(error)) if identify is not None else grund
+                raise StartupError(grund, key) from error
             logger.warning("Start noch nicht moeglich (Versuch %s/%s): %s",
-                           used + 1, len(DERIVED_SENSORS_RETRY_DELAYS_SECONDS) + 1, error)
+                           used + 1, len(DERIVED_SENSORS_RETRY_DELAYS_SECONDS) + 1, redact(str(error)))
             time.sleep(DERIVED_SENSORS_RETRY_DELAYS_SECONDS[used])
             used += 1
 
@@ -101,7 +111,14 @@ def _wait_for_required_entities(ha_api, options: dict) -> None:
             return f"Entity fehlt in Home Assistant: {error}"
         return f"Entities konnten nicht geprüft werden: {error}"
 
-    _retry_with_budget(ha_api, _check, _describe)
+    def _identify(error):
+        if isinstance(error, _MissingEntities):
+            return f"entity_fehlt:{error}"  # sortiert, also stabil
+        return "entities_nicht_pruefbar"
+
+    _retry_with_budget(
+        ha_api, _check, _describe, identify=_identify, redact=functools.partial(_without_credentials, options=options),
+    )
 
 
 def _ensure_derived_sensors_with_retry(ha_api, options: dict) -> DerivedSensors:
@@ -116,6 +133,8 @@ def _ensure_derived_sensors_with_retry(ha_api, options: dict) -> DerivedSensors:
             state_path=config.DERIVED_SENSORS_PATH,
         ),
         lambda error: f"Hilfs-Entities konnten nicht angelegt werden: {error}",
+        identify=lambda error: "hilfs_entities",
+        redact=functools.partial(_without_credentials, options=options),
     )
 
 
@@ -130,9 +149,14 @@ def _without_credentials(text: str, options: dict) -> str:
     return text
 
 
-def _fail_start(notifier, status, grund: str) -> int:
+def _fail_start(notifier, status, grund: str, key: str | None = None) -> int:
+    """Meldezustand `fehler:<key>` (stabile Identitaet, Standard: der Text selbst); Meldung und
+    Status-Entity tragen den ausfuehrlichen Grund."""
     logger.error("FEHLER: %s", grund)
-    notifier.notify("konfiguration", f"fehler:{grund}", CONFIG_ERROR_MESSAGE.format(grund=grund), critical=True)
+    notifier.notify(
+        "konfiguration", f"fehler:{grund if key is None else key}", CONFIG_ERROR_MESSAGE.format(grund=grund),
+        critical=True,
+    )
     status.set(STATUS_KONFIGURATIONSFEHLER, grund=grund)
     return 1
 
@@ -309,7 +333,10 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | int:
         _wait_for_required_entities(ha_api, options)
         derived = _ensure_derived_sensors_with_retry(ha_api, options)
         manifest = build_manifest(options, derived.entity_ids)
-    except (config.ConfigError, ManifestError, StartupError) as error:
+    except StartupError as error:
+        return _fail_start(notifier, status, str(error), error.key)
+    except (config.ConfigError, ManifestError) as error:
+        # Pruefungstexte sind deterministisch: der Text ist zugleich die Identitaet.
         return _fail_start(notifier, status, _without_credentials(str(error), options))
 
     notifier.notify("konfiguration", STATE_OK, CONFIG_OK_MESSAGE, critical=True)
