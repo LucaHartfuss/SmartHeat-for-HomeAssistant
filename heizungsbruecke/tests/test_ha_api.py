@@ -566,3 +566,88 @@ def test_get_config_raises_on_http_error():
     with patch("heizungsbruecke.ha_api.requests.get", return_value=mock_response):
         with pytest.raises(requests.HTTPError):
             api.get_config()
+
+
+def test_advance_config_flow_follows_a_menu_step_then_the_form():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    menu = {"type": "menu", "flow_id": "f1", "menu_options": ["binary_sensor", "sensor"]}
+    form = {"type": "form", "flow_id": "f1", "data_schema": [{"name": "name"}, {"name": "state"}]}
+    done = {"type": "create_entry", "result": {"entry_id": "e1"}}
+    fields = {"next_step_id": "sensor", "name": "N", "state": "{{ 1 }}", "unit_of_measurement": "°C"}
+
+    with patch.object(api, "_finish_config_flow", side_effect=[form, done]) as mock_finish:
+        result = api._advance_config_flow(menu, fields)
+
+    assert result == done
+    assert mock_finish.call_args_list[0].args == ("f1", {"next_step_id": "sensor"})
+    assert mock_finish.call_args_list[1].args == ("f1", {"name": "N", "state": "{{ 1 }}"})
+
+
+def test_create_template_sensor_runs_template_flow_with_temperature_fields():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    with patch.object(api, "_start_config_flow", return_value={"type": "menu", "flow_id": "f1"}) as mock_start, \
+         patch.object(api, "_advance_config_flow", return_value={"type": "create_entry", "result": {"entry_id": "e7"}}) as mock_advance, \
+         patch.object(api, "_find_entity_by_config_entry", return_value="sensor.smartheat_t1_raumtemperatur") as mock_find:
+        entity_id = api.create_template_sensor(name="SmartHeat t1 Raumtemperatur", template="{{ 20 }}")
+
+    assert entity_id == "sensor.smartheat_t1_raumtemperatur"
+    mock_start.assert_called_once_with("template")
+    assert mock_advance.call_args.args[1] == {
+        "next_step_id": "sensor", "name": "SmartHeat t1 Raumtemperatur", "state": "{{ 20 }}",
+        "unit_of_measurement": "°C", "device_class": "temperature", "state_class": "measurement",
+    }
+    mock_find.assert_called_once_with("e7")
+
+
+def test_delete_helper_deletes_the_config_entry_of_the_entity():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    registry = [
+        {"entity_id": "sensor.other", "config_entry_id": "e1"},
+        {"entity_id": "sensor.smartheat_t1_dart", "config_entry_id": "e2"},
+    ]
+    mock_response = Mock()
+    mock_response.raise_for_status.return_value = None
+    with patch.object(api, "_call_ws_command", return_value=registry), \
+         patch("heizungsbruecke.ha_api.requests.delete", return_value=mock_response) as mock_delete:
+        api.delete_helper("sensor.smartheat_t1_dart")
+
+    mock_delete.assert_called_once_with(
+        "http://supervisor/core/api/config/config_entries/entry/e2",
+        headers={"Authorization": "Bearer test-token"}, timeout=10,
+    )
+
+
+def test_delete_helper_raises_for_entity_without_config_entry():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    with patch.object(api, "_call_ws_command", return_value=[{"entity_id": "sensor.x", "config_entry_id": None}]):
+        with pytest.raises(RuntimeError):
+            api.delete_helper("sensor.x")
+
+
+def test_set_state_posts_state_and_attributes():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    mock_response = Mock()
+    mock_response.raise_for_status.return_value = None
+
+    with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response) as mock_post:
+        api.set_state("sensor.smartheat_t1_status", "bereit", {"addon_version": "0.19.0"})
+
+    mock_post.assert_called_once_with(
+        "http://supervisor/core/api/states/sensor.smartheat_t1_status",
+        headers={"Authorization": "Bearer test-token"},
+        json={"state": "bereit", "attributes": {"addon_version": "0.19.0"}},
+        timeout=10,
+    )
+
+
+def test_is_reachable_true_when_config_answers():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    with patch.object(api, "get_config", return_value={"time_zone": "UTC"}):
+        assert api.is_reachable() is True
+
+
+@pytest.mark.parametrize("error", [requests.ConnectionError("weg"), requests.HTTPError("502"), ValueError("kein JSON")])
+def test_is_reachable_false_on_any_error(error):
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    with patch.object(api, "get_config", side_effect=error):
+        assert api.is_reachable() is False

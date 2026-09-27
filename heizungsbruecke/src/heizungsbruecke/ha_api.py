@@ -239,6 +239,41 @@ class HomeAssistantApi:
         result = self._advance_config_flow(flow_response, fields)
         return self._find_entity_by_config_entry(result["result"]["entry_id"])
 
+    def create_template_sensor(self, name: str, template: str) -> str:
+        """Legt einen Template-Sensor (Temperatur in °C) per Config-Entry-Flow `template` an:
+        erst der Menue-Schritt `sensor`, dann das Formular mit Name, Template, Einheit,
+        Device- und State-Class. Die Entity-ID entsteht aus slugify(name), wie bei den
+        Statistik-Helfern. Gegen einen echten HA-Container verifiziert
+        (tests/test_ha_api_real_ha_integration.py)."""
+        fields = {
+            "next_step_id": "sensor",
+            "name": name,
+            "state": template,
+            "unit_of_measurement": "°C",
+            "device_class": "temperature",
+            "state_class": "measurement",
+        }
+        flow_response = self._start_config_flow("template")
+        result = self._advance_config_flow(flow_response, fields)
+        return self._find_entity_by_config_entry(result["result"]["entry_id"])
+
+    def delete_helper(self, entity_id: str) -> None:
+        """Loescht den Config-Entry eines per Config-Flow angelegten Helfers (Template- oder
+        Statistik-Sensor). input_number-Helfer haben keinen Config-Entry und werden nie
+        geloescht (derived_sensors)."""
+        entries = self._call_ws_command({"type": "config/entity_registry/list"})
+        config_entry_id = next(
+            (entry.get("config_entry_id") for entry in entries if entry.get("entity_id") == entity_id), None,
+        )
+        if not config_entry_id:
+            raise RuntimeError(f"Kein Config-Entry zu '{entity_id}' in der Entity-Registry gefunden")
+        response = requests.delete(
+            f"{self._base_url}{self._api_prefix}/config/config_entries/entry/{config_entry_id}",
+            headers=self._headers,
+            timeout=10,
+        )
+        response.raise_for_status()
+
     def _start_config_flow(self, handler: str) -> dict:
         """Startet einen Config-Entry-Flow und liefert die volle erste Formular-Antwort.
 
@@ -260,15 +295,17 @@ class HomeAssistantApi:
     def _advance_config_flow(self, flow_response: dict, all_fields: dict) -> dict:
         """Durchlaeuft einen mehrstufigen Config-Entry-Flow bis zum Abschluss.
 
-        Filtert bei jedem Formular-Schritt `all_fields` auf die im jeweils
-        zurueckgegebenen `data_schema` genannten Feldnamen und schickt nur diese
-        Teilmenge -- siehe create_statistics_sensor()-Docstring, Punkt 1, fuer
-        die Verifikation, dass der `statistics`-Flow genau das braucht.
+        Formular-Schritt: `all_fields` wird auf die im `data_schema` genannten Feldnamen
+        gefiltert (siehe create_statistics_sensor()-Docstring, Punkt 1). Menue-Schritt (z.B.
+        der erste Schritt des `template`-Flows): Auswahl ueber `all_fields["next_step_id"]`.
         """
         result = flow_response
-        while result.get("type") == "form":
-            allowed_field_names = {field["name"] for field in result["data_schema"]}
-            step_payload = {key: value for key, value in all_fields.items() if key in allowed_field_names}
+        while result.get("type") in ("form", "menu"):
+            if result["type"] == "menu":
+                step_payload = {"next_step_id": all_fields["next_step_id"]}
+            else:
+                allowed_field_names = {field["name"] for field in result["data_schema"]}
+                step_payload = {key: value for key, value in all_fields.items() if key in allowed_field_names}
             result = self._finish_config_flow(result["flow_id"], step_payload)
         return result
 
@@ -314,6 +351,26 @@ class HomeAssistantApi:
         if response.status_code == 404:
             return False
         response.raise_for_status()
+        return True
+
+    def set_state(self, entity_id: str, state: str, attributes: dict) -> None:
+        """Setzt einen Zustand ohne zugehoerige Integration (Status-Entity, Spec TP6 3.6).
+        Ueberlebt keinen HA-Neustart; status.StatusReporter setzt ihn deshalb bei jedem
+        (Wieder-)Verbinden neu."""
+        response = requests.post(
+            f"{self._base_url}{self._api_prefix}/states/{entity_id}",
+            headers=self._headers,
+            json={"state": state, "attributes": attributes},
+            timeout=10,
+        )
+        response.raise_for_status()
+
+    def is_reachable(self) -> bool:
+        """HA Core antwortet (Startpruefung: nur dann zaehlt das Retry-Budget). Wirft nie."""
+        try:
+            self.get_config()
+        except Exception:
+            return False
         return True
 
     def send_notification(self, notify_service: str, message: str) -> None:

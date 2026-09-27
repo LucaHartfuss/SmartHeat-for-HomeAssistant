@@ -20,6 +20,7 @@ import pytest
 import requests
 
 from heizungsbruecke.ha_api import HomeAssistantApi
+from heizungsbruecke.helper_templates import outdoor_temperature_template, room_temperature_template
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("RUN_REAL_HA_TESTS") != "1",
@@ -29,12 +30,15 @@ pytestmark = pytest.mark.skipif(
 HA_IMAGE = "ghcr.io/home-assistant/home-assistant:stable"
 HA_PORT = 18213
 
+# Docker-Aufruf, z.B. REAL_HA_DOCKER="flatpak-spawn --host docker" aus der VS-Code-Flatpak-Sandbox.
+DOCKER = os.environ.get("REAL_HA_DOCKER", "docker").split()
+
 
 @pytest.fixture(scope="module")
 def real_ha():
     container_name = f"heizungsbruecke-real-ha-test-{uuid.uuid4().hex[:8]}"
     subprocess.run(
-        ["docker", "run", "-d", "--rm", "--name", container_name, "-p", f"{HA_PORT}:8123", HA_IMAGE],
+        [*DOCKER, "run", "-d", "--rm", "--name", container_name, "-p", f"{HA_PORT}:8123", HA_IMAGE],
         check=True,
     )
     base_url = f"http://localhost:{HA_PORT}"
@@ -43,7 +47,7 @@ def real_ha():
         token = _complete_onboarding(base_url)
         yield base_url, token
     finally:
-        subprocess.run(["docker", "stop", container_name], check=False)
+        subprocess.run([*DOCKER, "stop", container_name], check=False)
 
 
 def _wait_for_ha_ready(base_url: str, timeout: float = 90.0) -> None:
@@ -304,3 +308,93 @@ def test_create_statistics_sensor_creates_a_real_working_helper(real_ha):
 
     assert entity_id.startswith("sensor.")
     assert api.entity_exists(entity_id)
+
+
+def _wait_for_state(api, entity_id: str, expected: str, timeout: float = 15.0) -> str | None:
+    """Template-Sensoren rechnen asynchron nach einer Quellenaenderung neu."""
+    deadline = time.time() + timeout
+    state = None
+    while time.time() < deadline:
+        state = _raw(api, entity_id)
+        if state == expected:
+            return state
+        time.sleep(0.5)
+    return state
+
+
+def _raw(api, entity_id: str) -> str | None:
+    response = requests.get(
+        f"{api._base_url}{api._api_prefix}/states/{entity_id}", headers=api._headers, timeout=10,
+    )
+    if response.status_code == 404:
+        return None
+    response.raise_for_status()
+    return response.json()["state"]
+
+
+def test_room_template_sensor_averages_valid_sources_and_is_unknown_without(real_ha):
+    """Spec TP6 3.2/6: Mittelwert mit einem toten und einem unplausiblen Fuehler; alle tot ->
+    unknown (nicht "None" als Text, nicht 0)."""
+    base_url, token = real_ha
+    api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
+    api.set_state("sensor.tp6_a", "20.0", {"unit_of_measurement": "°C"})
+    api.set_state("sensor.tp6_b", "unavailable", {})
+    api.set_state("sensor.tp6_c", "0.0", {"unit_of_measurement": "°C"})
+    api.set_state("climate.tp6_d", "heat", {"current_temperature": 21.0, "temperature": 22.0})
+
+    entity_id = api.create_template_sensor(
+        name="SmartHeat realtest Raumtemperatur",
+        template=room_temperature_template(
+            ["sensor.tp6_a", "sensor.tp6_b", "sensor.tp6_c", "climate.tp6_d::current_temperature"],
+        ),
+    )
+
+    assert entity_id == "sensor.smartheat_realtest_raumtemperatur"
+    assert _wait_for_state(api, entity_id, "20.5") == "20.5"
+
+    api.set_state("sensor.tp6_a", "unknown", {})
+    api.set_state("climate.tp6_d", "heat", {"current_temperature": None, "temperature": 22.0})
+    assert _wait_for_state(api, entity_id, "unknown") == "unknown"
+
+
+def test_outdoor_template_sensor_reads_weather_temperature(real_ha):
+    base_url, token = real_ha
+    api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
+    api.set_state("weather.tp6_home", "sunny", {"temperature": 3.2, "temperature_unit": "°C"})
+
+    entity_id = api.create_template_sensor(
+        name="SmartHeat realtest Außentemperatur", template=outdoor_temperature_template("weather.tp6_home"),
+    )
+
+    assert _wait_for_state(api, entity_id, "3.2") == "3.2"
+
+
+def test_deleted_and_recreated_helpers_keep_their_entity_id(real_ha):
+    """Spec TP6 3.3: ein Quellwechsel loescht den Helfer und legt ihn neu an. Die Entity-ID muss
+    gleich bleiben (kein _2), sonst zeigen Dashboards und Recorder-Historie ins Leere."""
+    base_url, token = real_ha
+    api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
+    api.set_state("sensor.tp6_src", "20.0", {"unit_of_measurement": "°C"})
+
+    template_id = api.create_template_sensor(name="SmartHeat recreate Raumtemperatur", template="{{ 20 }}")
+    api.delete_helper(template_id)
+    assert api.create_template_sensor(name="SmartHeat recreate Raumtemperatur", template="{{ 21 }}") == template_id
+
+    stats_id = api.create_statistics_sensor(name="SmartHeat recreate DART", source_entity_id="sensor.tp6_src", max_age_hours=24)
+    api.delete_helper(stats_id)
+    assert api.create_statistics_sensor(
+        name="SmartHeat recreate DART", source_entity_id=template_id, max_age_hours=24,
+    ) == stats_id
+
+
+def test_set_state_creates_a_readable_status_entity(real_ha):
+    base_url, token = real_ha
+    api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
+
+    api.set_state("sensor.smartheat_realtest_status", "bereit", {"addon_version": "0.19.0", "setup_id": "abc"})
+
+    response = requests.get(f"{base_url}/api/states/sensor.smartheat_realtest_status",
+                            headers={"Authorization": f"Bearer {token}"}, timeout=10)
+    assert response.json()["state"] == "bereit"
+    assert response.json()["attributes"]["setup_id"] == "abc"
+    assert api.is_reachable() is True
