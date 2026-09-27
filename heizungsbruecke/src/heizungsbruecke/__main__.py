@@ -303,22 +303,15 @@ def _register_handlers(rt: Runtime) -> None:
 def _prime(rt: Runtime) -> None:
     """Erster lokaler Check synchron vor mqtt.loop_start(): die Boost-Flags sind aus echten
     Sensorwerten bestimmt, bevor eine Server-Antwort verarbeitet wird (sie entscheiden, ob
-    Serverwerte geschrieben oder nur gespeichert werden)."""
+    Serverwerte geschrieben oder nur gespeichert werden). Persistierte Boosts laufen weiter und
+    enden regulaer ueber ihre Schwellen (N1). Scheitert der Check, bleiben die Flags stehen; der
+    naechste erfolgreiche Check beendet die Boosts inklusive Zurueckschreiben (N4)."""
     try:
-        # Wie 0.16.0: ein Comfort-Boost wird nach dem Neustart frisch bestimmt, ein laufender
-        # endet ohne Zuruecksetzen der Anlage (Befund N1, TP5-Plan).
-        rt.store.update(boost_active=False)
         rt.store.update(stable_target=regulation.read_room_target_live(rt))
         logger.info("Stable-Target-Cache initial befuellt (Boot-Priming): room_target=%s", rt.store.state.stable_target)
         regulation.run_local_check(rt)
     except Exception:
         logger.exception("Fehler beim initialen lokalen Check vor MQTT-Start, wird beim naechsten Ereignis erneut versucht")
-        # Fail-open: veraltete Boost-Flags duerfen Serverwerte nicht dauerhaft vom Schreiben
-        # abhalten und die Anlage so auf Boost-Werten festhalten.
-        try:
-            rt.store.update(boost_active=False, emergency_boost_active=False)
-        except Exception:
-            logger.exception("Boost-Flags konnten nach dem fehlgeschlagenen Start-Check nicht gespeichert werden")
 
 
 def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | int:

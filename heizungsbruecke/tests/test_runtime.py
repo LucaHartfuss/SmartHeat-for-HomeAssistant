@@ -353,16 +353,23 @@ def test_start_runs_priming_check_before_mqtt_loop_start(env, monkeypatch):
     assert order[:2] == ["check", "loop_start"]
 
 
-def test_priming_failure_resets_stale_boost_flags(env):
-    # Fail-open (whole-branch review finding): veraltete Boost-Flags nach Neustart.
-    _quiet_backup(env, boost_active=True, emergency_boost_active=True)
+def test_priming_failure_keeps_boost_flags_and_the_next_check_restores(env):
+    # N4: der naechste erfolgreiche Check beendet den Notfall-Boost regulaer inkl. Zurueckschreiben.
+    _quiet_backup(env, emergency_boost_active=True)
+    save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": False})
+    env.ha.states.update({"number.curve_current": 1.5, "number.offset_current": 30.0})
     env.ha.states["sensor.room_actual"] = RuntimeError("HA-API-Hickup beim Booten")
 
     bridge = _start(env)
 
-    assert _backup(env)["boost_active"] is False
+    assert _backup(env)["emergency_boost_active"] is True
+    assert env.ha.writes == []
+
+    env.ha.states["sensor.room_actual"] = 20.0
+    _trigger(env, bridge, "sensor.room_actual")
+
+    assert env.ha.writes == [("number.curve_current", 0.9), ("number.offset_current", 22.0)]
     assert _backup(env)["emergency_boost_active"] is False
-    assert _boost_active(bridge) is False
 
 
 def test_restart_after_notbetrieb_ended_restores_device_during_priming(env):
@@ -1269,16 +1276,34 @@ def test_restart_keeps_unknown_backup_keys_and_resumes_open_tick_with_fault(env)
     assert backup["curve_current"] == 0.95
 
 
-def test_restart_during_comfort_boost_drops_flag_without_touching_device(env):
-    # Pinnt 0.16.0-Verhalten (TP5-Plan, Befund N1): ein Comfort-Boost ueberlebt keinen
-    # Neustart, die Anlage bleibt bis zur naechsten Serverantwort auf den Boost-Werten.
-    _quiet_backup(env, boost_active=True)
-    env.ha.states.update({"number.curve_current": 1.5, "number.offset_current": 30.0})
+def test_restart_during_comfort_boost_continues_and_ends_on_arrival(env):
+    # N1: der persistierte Comfort-Boost laeuft weiter und endet ueber die Ankunftsschwelle.
+    _quiet_backup(env, boost_active=True, last_room_target=22.0, last_published_target_rt=22.0)
+    env.ha.states.update({"sensor.room_target": 22.0, "number.curve_current": 1.5, "number.offset_current": 30.0})
 
-    _start(env)
+    bridge = _start(env)
 
     assert env.ha.writes == []
+    assert _backup(env)["boost_active"] is True
+
+    env.ha.states["sensor.room_actual"] = 21.6
+    _trigger(env, bridge, "sensor.room_actual")
+
+    assert env.ha.writes == [("number.curve_current", 0.9), ("number.offset_current", 22.0)]
     assert _backup(env)["boost_active"] is False
+
+
+def test_priming_fills_the_target_cache_even_if_the_disk_is_read_only(env, monkeypatch):
+    # N5: 0.17.0-0.19.0 speicherten boost_active=False vor dem Fuellen des Caches; ein nicht
+    # beschreibbarer Datentraeger liess den Cache dann leer.
+    _quiet_backup(env, boost_active=True, last_room_target=22.0, last_published_target_rt=22.0)
+    env.ha.states["sensor.room_target"] = 22.0
+    _break_backup_writes(monkeypatch)
+
+    bridge = _start(env)
+
+    assert _stable_target(bridge) == 22.0
+    assert _boost_active(bridge) is True
 
 
 def test_notbetrieb_end_with_unwritable_device_restores_on_next_check(env):

@@ -25,6 +25,11 @@ _ROW_LOG = {
     _ROW_RESTORE: "Boost beendet: Wiederherstellungspunkt geschrieben (sofern vorhanden)",
 }
 
+# Ergebnis von _ensure_restore_point: der aktuelle Punkt ist gesichert, oder (nur Notfall-Boost)
+# der zuletzt gespeicherte aeltere Punkt gilt (N6).
+_POINT_CURRENT = "current"
+_POINT_SAVED = "saved"
+
 
 class DeviceWriteError(Exception):
     """Ein Wert konnte nicht auf die Anlage geschrieben werden (z. B. myVAILLANT-Cloud gestoert)."""
@@ -58,17 +63,20 @@ class Override:
         """Setzt die Boost-Flags und schreibt die Werte der neuen Sollwert-Zeile, falls sie
         sich aendert. Ein neu startender Boost braucht vorher einen in backup.json
         gespeicherten Wiederherstellungspunkt, sonst wird er abgelehnt; ein laufender Boost
-        wird nie abgelehnt. Wirft das Schreiben,
-        bleiben die Flags unveraendert und der naechste Check versucht es erneut. Gibt die
-        tatsaechlich gesetzten Flags zurueck."""
+        wird nie abgelehnt. Ein neuer Notfall-Boost darf zusaetzlich auf dem zuletzt
+        gespeicherten, aelteren Punkt starten, wenn der aktuelle nicht speicherbar ist (N6); sein
+        Ende setzt dann auf genau diesen zurueck. Wirft das Schreiben, bleiben die Flags
+        unveraendert und der naechste Check versucht es erneut. Gibt die tatsaechlich gesetzten
+        Flags zurueck."""
         state = self._store.state
         starting_comfort = comfort and not state.boost_active
         starting_emergency = emergency and not state.emergency_boost_active
-        if (starting_comfort or starting_emergency) and not self._ensure_restore_point():
-            if starting_comfort:
+        if starting_comfort or starting_emergency:
+            point = self._ensure_restore_point(allow_saved_fallback=starting_emergency)
+            if point != _POINT_CURRENT and starting_comfort:
                 logger.warning("Kein Wiederherstellungspunkt, Boost ausgesetzt - naechster Check versucht es erneut")
                 comfort = False
-            if starting_emergency:
+            if point is None and starting_emergency:
                 logger.warning(
                     "Kein Wiederherstellungspunkt, Notfall-Boost ausgesetzt - naechster Check versucht es erneut"
                 )
@@ -151,12 +159,13 @@ class Override:
             except Exception as error:
                 raise DeviceWriteError(role, entity_id, error) from error
 
-    def _ensure_restore_point(self) -> bool:
+    def _ensure_restore_point(self, *, allow_saved_fallback: bool) -> str | None:
         """Fehlende Werte des Wiederherstellungspunkts (z. B. erster Boost vor der ersten
-        Serverantwort) einmalig von der Anlage lesen und speichern. False, wenn das nicht
-        geht oder der Wiederherstellungspunkt noch nicht in backup.json steht: ohne Rueckweg
-        auf der Karte darf kein Boost schreiben. Laeuft schon ein Boost, steht die Anlage auf
-        Boost-Werten: dann wird nichts gelesen und der zweite Boost darf starten."""
+        Serverantwort) einmalig von der Anlage lesen und speichern. None, wenn das nicht geht
+        oder der Punkt noch nicht in backup.json steht: ohne Rueckweg auf dem Datentraeger darf
+        kein Boost schreiben -- ausser (allow_saved_fallback) auf dem zuletzt gespeicherten Punkt
+        (_POINT_SAVED). Laeuft schon ein Boost, steht die Anlage auf Boost-Werten: dann wird
+        nichts gelesen und der zweite Boost darf starten."""
         state = self._store.state
         missing = [role for role in ROLES if role in self._manifest.entity_ids and getattr(state, role) is None]
         if state.boost_active or state.emergency_boost_active:
@@ -165,24 +174,35 @@ class Override:
                     "Wiederherstellungspunkt fehlt (%s), die Anlage steht schon auf Boost-Werten - "
                     "nicht von der Anlage gelesen", ", ".join(missing),
                 )
-            return True
+            return _POINT_CURRENT
         if not missing:
             if self._store.is_saved(*ROLES):
-                return True
+                return _POINT_CURRENT
             try:
                 self._store.update(curve_current=state.curve_current, offset_current=state.offset_current)
             except Exception as error:
                 logger.warning("Wiederherstellungspunkt nicht gespeichert (backup.json): %s", error)
-                return False
-            return True
+                return self._saved_fallback() if allow_saved_fallback else None
+            return _POINT_CURRENT
         try:
             live = {role: self._ha_api.get_state(self._manifest.entity_ids[role]) for role in missing}
         except Exception as error:
             logger.warning("Wiederherstellungspunkt nicht lesbar (%s): %s", ", ".join(missing), error)
-            return False
+            return None
         if not all(_is_finite_number(value) for value in live.values()):
             logger.warning("Wiederherstellungspunkt ungueltig: %r", live)
-            return False
+            return None
         self._store.update(**live)
         logger.info("Wiederherstellungspunkt vor Boost gesichert: %s", live)
-        return True
+        return _POINT_CURRENT
+
+    def _saved_fallback(self) -> str | None:
+        saved = self._store.saved_restore_point()
+        if saved is None:
+            return None
+        self._store.revert_to_saved(*ROLES)
+        logger.warning(
+            "Notfall-Boost auf dem zuletzt gespeicherten Wiederherstellungspunkt %s (neuer Punkt nicht speicherbar)",
+            saved,
+        )
+        return _POINT_SAVED

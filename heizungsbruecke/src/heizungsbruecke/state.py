@@ -151,6 +151,28 @@ class StateStore:
         content = _backup_content(self._state, self._extra)
         return all(content.get(key) == self._backup_saved.get(key) for key in keys)
 
+    def update_saved(self, **changes) -> None:
+        """Wie update(), aber bei einem Schreibfehler bleiben die Felder im Speicher auf dem alten
+        Stand (N5): ein Folgeaufruf sieht dieselbe Aenderung dann erneut."""
+        previous = {key: getattr(self._state, key) for key in changes}
+        try:
+            self.update(**changes)
+        except Exception:
+            self._state = replace(self._state, **previous)
+            raise
+
+    def saved_restore_point(self) -> dict | None:
+        """Der zuletzt erfolgreich in backup.json gespeicherte Wiederherstellungspunkt (beide
+        Werte), sonst None (N6)."""
+        point = {key: self._backup_saved.get(key) for key in ("curve_current", "offset_current")}
+        return point if all(_is_number(value) for value in point.values()) else None
+
+    def revert_to_saved(self, *keys: str) -> None:
+        """Setzt Felder im Speicher auf den zuletzt gespeicherten Stand zurueck, ohne zu schreiben
+        (N6: Notfall-Boost auf dem aelteren, gesicherten Wiederherstellungspunkt)."""
+        self._state = replace(self._state, **{key: self._backup_saved.get(key) for key in keys})
+        self._backup_dirty = _backup_content(self._state, self._extra) != self._backup_saved
+
     def set_delivery(self, delivery_state: DeliveryState) -> None:
         """Best effort: ein Schreibfehler wird geloggt, der Zustand gilt dann bis zum
         naechsten erfolgreichen Schreiben bzw. Neustart."""

@@ -296,3 +296,20 @@ def test_claim_due_tick_needs_cached_target_and_active_abo(make_store, abo_inact
         store.update(abo_inactive_since=datetime(2026, 9, 25).astimezone())
 
     assert regulation.claim_due_tick(rt, datetime(2026, 9, 17, 12, 5)) is None
+
+
+def _raise_oserror(*args, **kwargs):
+    raise OSError("Datentraeger kaputt")
+
+
+def test_failed_save_keeps_the_previous_target_in_memory(make_store, monkeypatch):
+    # N5: wie 0.16.0 -- ein nicht gespeicherter neuer Sollwert gilt noch nicht als gesehen.
+    store = make_store(backup={"last_room_target": 21.0, "boost_active": True, **RESTORE_POINT})
+    rt = _runtime(store, room_actual=20.0, room_target=21.5)
+    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+
+    with pytest.raises(OSError):
+        regulation.run_local_check(rt)
+
+    assert rt.store.state.last_room_target == 21.0
+    assert rt.store.state.target_history == []

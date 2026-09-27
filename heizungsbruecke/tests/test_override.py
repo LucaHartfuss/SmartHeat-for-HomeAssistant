@@ -352,3 +352,56 @@ def test_restore_and_clear_counts_as_done_when_only_saving_flags_fails(make_stor
     assert ha.writes == _written("restore")
     assert store.state.emergency_boost_active is False
     assert "SD-Karte kaputt" in caplog.text
+
+
+# --- N6: Notfall-Boost auf dem zuletzt gespeicherten Wiederherstellungspunkt ---
+
+def test_emergency_boost_starts_on_the_older_saved_point_when_the_new_one_cannot_be_saved(
+    make_store, monkeypatch, caplog,
+):
+    # N6: Datentraeger nicht beschreibbar, Serverwerte nur im Speicher -- der Notfall-Boost startet
+    # trotzdem und setzt am Ende auf den gespeicherten (aelteren) Punkt zurueck.
+    override, store, ha = _setup(make_store, backup=dict(RESTORE_POINT))
+    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    with pytest.raises(OSError):
+        override.apply_server_values(1.0, 25.0)
+
+    with caplog.at_level(logging.WARNING), pytest.raises(OSError):  # Flags nicht speicherbar
+        override.set_boosts(comfort=False, emergency=True)
+
+    assert ha.writes == _written("emergency")
+    assert store.state.emergency_boost_active is True
+    assert (store.state.curve_current, store.state.offset_current) == (0.9, 22.0)
+    assert "zuletzt gespeicherten Wiederherstellungspunkt" in caplog.text
+
+    monkeypatch.undo()
+    override.set_boosts(comfort=False, emergency=False)
+
+    assert ha.writes[-2:] == _written("restore")
+
+
+def test_comfort_boost_is_still_refused_when_only_an_older_point_is_saved(make_store, monkeypatch):
+    override, store, ha = _setup(make_store, backup=dict(RESTORE_POINT))
+    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    with pytest.raises(OSError):
+        override.apply_server_values(1.0, 25.0)
+
+    with pytest.raises(OSError):
+        override.set_boosts(comfort=True, emergency=False)
+
+    assert ha.writes == []
+    assert store.state.boost_active is False
+    assert (store.state.curve_current, store.state.offset_current) == (1.0, 25.0)
+
+
+def test_emergency_boost_without_any_saved_point_is_still_refused(make_store, monkeypatch):
+    override, store, ha = _setup(make_store)
+    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    with pytest.raises(OSError):
+        override.apply_server_values(1.0, 25.0)
+
+    with pytest.raises(OSError):
+        override.set_boosts(comfort=False, emergency=True)
+
+    assert ha.writes == []
+    assert store.state.emergency_boost_active is False

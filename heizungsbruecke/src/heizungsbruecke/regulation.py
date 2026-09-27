@@ -74,7 +74,7 @@ def run_local_check(rt: Runtime) -> None:
     # B5: wurde der Comfort-Start mangels Wiederherstellungspunkt abgelehnt, bleibt der alte
     # Sollwert gemerkt, damit der naechste Check die Erhoehung erneut sieht.
     remembered = state.last_room_target if comfort and not comfort_set else room_target
-    rt.store.update(
+    rt.store.update_saved(
         last_room_target=remembered,
         target_history=record_change(state.target_history, time.time(), room_target),
     )
@@ -101,15 +101,6 @@ def claim_due_tick(rt: Runtime, now: datetime) -> str | None:
     changes = {"last_published_target_rt": room_target}
     if daily_due:
         changes["last_daily_trigger_date"] = today
-    previous = {key: getattr(state, key) for key in changes}
-    try:
-        rt.store.update(**changes)
-    except Exception:
-        # Wie 0.16.0: ohne gespeicherte Buchung kein Tick; die Buchung wird im Speicher
-        # zurueckgenommen, damit der naechste Check den Tick erneut beansprucht.
-        try:
-            rt.store.update(**previous)
-        except Exception:
-            pass  # scheitert erwartungsgemaess ebenso, der Speicher ist trotzdem zurueckgesetzt
-        raise
+    # Wie 0.16.0: ohne gespeicherte Buchung kein Tick; der naechste Check beansprucht ihn erneut.
+    rt.store.update_saved(**changes)
     return "target_change" if target_changed else "daily"

@@ -297,3 +297,33 @@ def test_set_delivery_write_failure_is_logged_and_retried(make_store, tmp_path, 
     store.set_delivery(DeliveryState(notbetrieb=True))
 
     assert load_backup(tmp_path / "failsafe_state.json")["failsafe_active"] is True
+
+
+def test_update_saved_keeps_memory_unchanged_when_the_write_fails(make_store, monkeypatch):
+    # N5: der naechste Check sieht dieselbe Aenderung erneut.
+    store = make_store(backup={"last_room_target": 21.0})
+    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+
+    with pytest.raises(OSError):
+        store.update_saved(last_room_target=22.0)
+
+    assert store.state.last_room_target == 21.0
+
+
+def test_saved_restore_point_is_the_last_successfully_saved_one(make_store, monkeypatch):
+    store = make_store(backup={"curve_current": 0.9, "offset_current": 22.0})
+    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    with pytest.raises(OSError):
+        store.update(curve_current=1.0, offset_current=25.0)
+
+    assert store.saved_restore_point() == {"curve_current": 0.9, "offset_current": 22.0}
+
+    store.revert_to_saved("curve_current", "offset_current")
+
+    assert (store.state.curve_current, store.state.offset_current) == (0.9, 22.0)
+    assert store.is_saved("curve_current", "offset_current")
+
+
+def test_saved_restore_point_needs_both_values(make_store):
+    assert make_store().saved_restore_point() is None
+    assert make_store(backup={"curve_current": 0.9}).saved_restore_point() is None
