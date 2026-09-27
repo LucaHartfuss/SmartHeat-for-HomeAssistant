@@ -30,15 +30,17 @@ Einstellungen → Geräte & Dienste entfernen und die Integration neu hinzufüge
 
 Neu: Mehrere Raumfühler. Die Raumtemperatur ist der Mittelwert aller Fühler mit gültigem Wert
 (5–35 °C), als eigener Sensor „SmartHeat <Anlage> Raumtemperatur“. Fällt ein Fühler aus, rechnet
-das Add-on mit den übrigen weiter und meldet das. Thermostate (`climate`) sind als Raumfühler
-möglich.
+das Add-on mit den übrigen weiter und meldet das, sobald er bei zwei Prüfungen hintereinander
+(Abstand 5 Minuten) keinen gültigen Wert liefert; kurze Aussetzer bleiben still. Thermostate
+(`climate`) sind als Raumfühler möglich.
 
 Neu: Außentemperatur auch aus einem Wetterdienst (`weather`), wenn die Heizung keinen
 Außenfühler hat („SmartHeat <Anlage> Außentemperatur“).
 
 Neu: Meldungen an mehrere Handys. Alles, was die Regelung stoppt (Notbetrieb, Datenfehler,
 Abo inaktiv, Konfigurationsfehler), erscheint zusätzlich als Benachrichtigung in Home Assistant,
-bis es behoben ist. Jede Meldung kommt nur einmal, auch nach einem Neustart.
+bis es behoben ist, auch über einen Neustart von Home Assistant hinweg. Jede Push-Meldung kommt nur
+einmal, auch nach einem Neustart.
 
 Neu: Batterieüberwachung der Raumfühler und Thermostate (Meldung unter 20 %, Entwarnung ab 25 %).
 
@@ -47,7 +49,8 @@ Neu: Status-Entity `sensor.smartheat_<anlage>_status` (`startet`, `bereit`,
 
 Geändert: Fehlt eine Pflicht-Entity oder lässt sich ein Hilfssensor nicht anlegen, meldet das
 Add-on nach etwa 4 Minuten einen Konfigurationsfehler und beendet sich. Solange Home Assistant
-selbst noch nicht erreichbar ist, wartet es weiter.
+selbst noch nicht erreichbar oder noch nicht fertig gestartet ist (z. B. eine Cloud-Integration lädt
+nach einem Neustart noch), wartet es weiter; die 4 Minuten zählen erst danach.
 
 Einmalig nach dem Update: Die Hilfssensoren DAT, DART, das Raum-Mittel und das 24-h-Minimum
 werden neu angelegt (gleiche Namen und Entity-IDs). DART und das Raum-Mittel beginnen leer, weil
