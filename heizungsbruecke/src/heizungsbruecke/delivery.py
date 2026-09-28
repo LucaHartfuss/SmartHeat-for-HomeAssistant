@@ -193,11 +193,6 @@ class Notify:
 
 
 @dataclass(frozen=True)
-class PublishFailsafe:
-    active: bool
-
-
-@dataclass(frozen=True)
 class EndEmergencyBoost:
     pass
 
@@ -283,7 +278,7 @@ def _published(state, event):
 def _notbetrieb_end(state) -> list:
     if not state.notbetrieb:
         return []
-    return [PublishFailsafe(False), EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF)]
+    return [EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF)]
 
 
 def _answered_with_fault(state, fault: DataFault, notify_kind: str):
@@ -374,7 +369,7 @@ def _entitlement_checked(state, event):
     if event.status == INACTIVE:
         return replace(state, pending=None, notbetrieb=True), [EnterAboInactive()]
     new_state, retry = _retry(replace(state, notbetrieb=True), SERVER_RETRY_DELAYS_SECONDS, ORIGIN_SERVER)
-    return new_state, [PublishFailsafe(True), Notify(NOTIFY_NOTBETRIEB_ON), retry]
+    return new_state, [Notify(NOTIFY_NOTBETRIEB_ON), retry]
 
 
 def to_persisted(state: DeliveryState) -> dict:
@@ -445,28 +440,3 @@ def notification_text(kind: str, detail: tuple[str, ...], entity_ids: dict[str, 
     if kind == NOTIFY_WRITE_RESOLVED:
         return "Heizungsbrücke: Anlage wieder erreichbar, Heizkurve übertragen."
     raise ValueError(f"Unbekannte Meldungsart: {kind!r}")
-
-
-def build_discovery_config(tenant_id: str) -> dict:
-    """Builds the MQTT Discovery config payload for the fail-safe binary_sensor. HA's
-    MQTT integration creates the entity from this automatically -- no configuration.yaml
-    needed on the customer side.
-    """
-    return {
-        "name": "Fail-Safe",
-        "unique_id": f"heizungsbruecke_{tenant_id}_failsafe",
-        "state_topic": f"smartheat/{tenant_id}/status/failsafe",
-        "availability_topic": f"smartheat/{tenant_id}/status/availability",
-        "payload_on": "ON",
-        "payload_off": "OFF",
-        "device_class": "problem",
-        "device": {
-            "identifiers": [f"heizungsbruecke_{tenant_id}"],
-            "name": f"Heizungsbruecke ({tenant_id})",
-            "manufacturer": "SmartHeat",
-        },
-    }
-
-
-def build_state_payload(active: bool) -> str:
-    return "ON" if active else "OFF"

@@ -118,7 +118,6 @@ class FakeMqtt:
         self.kwargs = kwargs
         self.snapshots = []
         self.telemetry = []
-        self.status = {}
         self.setpoints_callback = None
         self.publish_error = None
         self.loop_started = False
@@ -127,12 +126,6 @@ class FakeMqtt:
 
     def is_connected(self):
         return self.connected
-
-    def publish_discovery(self, component, object_id, config):
-        pass
-
-    def publish_status(self, object_id, payload):
-        self.status[object_id] = payload
 
     def subscribe_setpoints(self, on_message):
         self.setpoints_callback = on_message
@@ -428,7 +421,6 @@ def test_persisted_pending_tick_is_resumed_with_same_seq_and_ends_notbetrieb(env
     _answer(env, bridge, "alt-1", curve=0.95, offset=23.0)
 
     assert (env.ha.states["number.curve_current"], env.ha.states["number.offset_current"]) == (0.95, 23.0)
-    assert _mqtt(env).status["failsafe"] == "OFF"
     assert _failsafe_file(env) == {"failsafe_active": False, "datenfehler": None, "pending": None}
     assert env.ha.pushes == ["Heizungsbrücke: Serververbindung wiederhergestellt, Notbetrieb beendet."]
 
@@ -448,7 +440,6 @@ def test_unreachable_broker_does_not_exit_and_tick_runs_into_notbetrieb(env):
     _advance(env, bridge, 30)
 
     assert _delivery(bridge).notbetrieb is True
-    assert _mqtt(env).status["failsafe"] == "ON"
     assert _failsafe_file(env)["failsafe_active"] is True
     assert env.ha.pushes == [NOTBETRIEB_ON]
     assert env.abo["queries"] == 2  # Start + zweiter Timeout
@@ -1133,7 +1124,6 @@ def test_unexpected_entitlement_query_error_counts_as_unknown(env, monkeypatch):
     assert _delivery(bridge).notbetrieb is True
     assert _abo_inactive_since(bridge) is None
     assert _mqtt(env).stopped is False
-    assert _mqtt(env).status["failsafe"] == "ON"
     assert env.ha.pushes == [NOTBETRIEB_ON]
 
     _advance(env, bridge, 300)

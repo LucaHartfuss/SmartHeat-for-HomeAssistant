@@ -414,7 +414,7 @@ def test_repeated_missing_entity_does_not_push_again(sleeps):
 ])
 def test_start_error_reason_never_contains_credentials(sleeps, caplog, overrides):
     """Regel 6: die Startpruefung zitiert ungueltige Optionswerte (!r). Steht das MQTT-Passwort
-    versehentlich in einer anderen Option, darf es weder in der Status-Entity noch in Meldungen
+    versehentlich in einer anderen Option, darf es weder im Status-Event noch in Meldungen
     oder im Log auftauchen."""
     options = _full_valid_options(notify_services=["notify.mobile_app_a"], **overrides)
     ha_api = _reachable()

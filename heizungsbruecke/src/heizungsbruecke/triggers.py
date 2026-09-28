@@ -5,7 +5,7 @@ Zustand."""
 import json
 import logging
 
-from heizungsbruecke import config, delivery
+from heizungsbruecke import config
 from heizungsbruecke.ha_trigger_client import HaTriggerClient
 from heizungsbruecke.mqtt_client import BridgeMqttClient
 from heizungsbruecke.runtime import (
@@ -76,8 +76,8 @@ def build_ha_trigger_client(manifest, options: dict, ha_api, worker: RegulationW
 
     def _on_connected() -> None:
         # Bei jeder (Re-)Verbindung Cache frisch lesen und pruefen (eine Sollwertaenderung waehrend
-        # der Trennung wird sofort verarbeitet) und die Status-Entity neu setzen (nach einem
-        # HA-Neustart ist sie weg).
+        # der Trennung wird sofort verarbeitet) und den vollen Status per Event neu senden (nach
+        # einem HA-Neustart hat die Integration ihn nicht mehr).
         worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=True)
         worker.post_coalesced(EV_HA_CONNECTED)
 
@@ -106,20 +106,15 @@ def make_setpoints_callback(worker: RegulationWorker):
     return _callback
 
 
-def create_mqtt_client(options: dict, worker: RegulationWorker, notbetrieb: bool) -> BridgeMqttClient:
-    """Verbindet asynchron, ohne Retry-Budget und ohne Exit. Discovery, Status und
-    Subscription werden bei jedem (Re-)Connect erneut gesendet; die Auth-Ablehnung aus dem
-    paho-Thread wird gebuendelt eingestellt (paho meldet sie im Backoff mehrfach)."""
+def create_mqtt_client(options: dict, worker: RegulationWorker) -> BridgeMqttClient:
+    """Verbindet asynchron, ohne Retry-Budget und ohne Exit. Die Subscription wird bei jedem
+    (Re-)Connect erneuert; die Auth-Ablehnung aus dem paho-Thread wird gebuendelt eingestellt
+    (paho meldet sie im Backoff mehrfach)."""
     client = BridgeMqttClient(
         host=config.MQTT_HOST, port=config.MQTT_PORT, tenant_id=options["tenant_id"],
         username=options["mqtt_username"], password=options["mqtt_password"],
         on_auth_rejected=lambda _client: worker.post_coalesced(EV_AUTH_REJECTED),
         on_connected=lambda _client: worker.post_coalesced(EV_MQTT_CONNECTED),
     )
-    client.publish_discovery(
-        component="binary_sensor", object_id="failsafe",
-        config=delivery.build_discovery_config(options["tenant_id"]),
-    )
-    client.publish_status("failsafe", delivery.build_state_payload(notbetrieb))
     client.subscribe_setpoints(on_message=make_setpoints_callback(worker))
     return client

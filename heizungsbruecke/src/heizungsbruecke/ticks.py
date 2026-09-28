@@ -70,9 +70,6 @@ def _execute(rt: Runtime, action):
         abo.enter_inactive(rt, datetime.now().astimezone())
     elif isinstance(action, delivery.Notify):
         _notify(rt, action)
-    elif isinstance(action, delivery.PublishFailsafe):
-        if rt.mqtt_client is not None:
-            rt.mqtt_client.publish_status("failsafe", delivery.build_state_payload(action.active))
     elif isinstance(action, delivery.EndEmergencyBoost):
         rt.override.set_boosts(comfort=rt.store.state.boost_active, emergency=False)
     else:

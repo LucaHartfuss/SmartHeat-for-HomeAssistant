@@ -502,7 +502,7 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | Idle
     _register_handlers(rt)
     abo_inactive = rt.store.state.abo_inactive_since is not None
     if not abo_inactive:
-        rt.mqtt_client = triggers.create_mqtt_client(options, rt.worker, rt.store.state.delivery.notbetrieb)
+        rt.mqtt_client = triggers.create_mqtt_client(options, rt.worker)
 
     _prime(rt)
     if rt.mqtt_client is not None:

@@ -31,7 +31,6 @@ from heizungsbruecke.delivery import (
     ORIGIN_DATA,
     ORIGIN_SERVER,
     PendingTick,
-    PublishFailsafe,
     Published,
     QueryEntitlement,
     ReadInvalid,
@@ -41,8 +40,6 @@ from heizungsbruecke.delivery import (
     TickDue,
     WriteFailed,
     accepts_ack,
-    build_discovery_config,
-    build_state_payload,
     from_persisted,
     notification_text,
     step,
@@ -206,7 +203,7 @@ def test_entitlement_not_inactive_starts_notbetrieb_and_retries_after_five_minut
     assert state.notbetrieb is True
     assert state.pending.stage == 2
     assert actions == [
-        PublishFailsafe(True), Notify(NOTIFY_NOTBETRIEB_ON), ScheduleRetry("s1", state.pending.gen, 300),
+        Notify(NOTIFY_NOTBETRIEB_ON), ScheduleRetry("s1", state.pending.gen, 300),
     ]
 
 
@@ -234,7 +231,7 @@ def test_ack_after_five_minute_retry_ends_notbetrieb():
     state, actions = _run(state, RetryDue("s1", gen), Published("s1"), Ack("s1", "ok"))
 
     assert state == DeliveryState()
-    assert actions == [PublishFailsafe(False), EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF)]
+    assert actions == [EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF)]
 
 
 def test_server_retry_delays_follow_five_fifteen_sixty_then_hourly():
@@ -349,7 +346,7 @@ def test_rejected_ack_is_server_fault_ends_notbetrieb_and_retries():
     assert state.server_failures == 0
     assert state.datenfehler == DataFault(SOURCE_SERVER, (reason,))
     assert actions == [
-        PublishFailsafe(False), EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF),
+        EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF),
         Notify(NOTIFY_DATENFEHLER_SERVER, (reason,)), ScheduleRetry("s1", gen + 1, 900),
     ]
 
@@ -473,7 +470,7 @@ def test_late_rejected_answer_after_notbetrieb_start_ends_notbetrieb_without_new
 
     assert new_state.notbetrieb is False
     assert actions == [
-        PublishFailsafe(False), EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF),
+        EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF),
         Notify(NOTIFY_DATENFEHLER_SERVER, ("x",)),
     ]
     assert new_state.pending == state.pending
@@ -524,7 +521,7 @@ def test_write_failed_ends_notbetrieb():
     state, actions = step(state, WriteFailed("s1", "x"))
 
     assert state.notbetrieb is False
-    assert actions[:3] == [PublishFailsafe(False), EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF)]
+    assert actions[:2] == [EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF)]
 
 
 def test_repeated_write_failure_with_other_text_is_the_same_fault():
@@ -683,23 +680,6 @@ def test_notification_texts_for_server_fault_and_state_changes():
     assert notification_text(NOTIFY_DATENFEHLER_RESOLVED, (), {}) == (
         "Heizungsbrücke: Messwerte wieder gültig, Heizkurve wird wieder angepasst."
     )
-
-
-# --- MQTT-Discovery (aus failsafe.py uebernommen) ---
-
-def test_build_discovery_config_describes_problem_binary_sensor():
-    config = build_discovery_config("t1")
-
-    assert config["unique_id"] == "heizungsbruecke_t1_failsafe"
-    assert config["state_topic"] == "smartheat/t1/status/failsafe"
-    assert config["availability_topic"] == "smartheat/t1/status/availability"
-    assert (config["payload_on"], config["payload_off"], config["device_class"]) == ("ON", "OFF", "problem")
-    assert config["device"]["identifiers"] == ["heizungsbruecke_t1"]
-
-
-def test_build_state_payload_maps_bool_to_on_off():
-    assert build_state_payload(True) == "ON"
-    assert build_state_payload(False) == "OFF"
 
 
 # --- Broker wieder verbunden (F3) ---
