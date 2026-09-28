@@ -2,7 +2,7 @@ import json
 import os
 from pathlib import Path
 
-from heizungsbruecke.backup_store import save_backup, load_backup
+from heizungsbruecke.backup_store import load_backup, save_backup
 
 
 def test_load_backup_returns_empty_dict_when_file_missing(tmp_path):

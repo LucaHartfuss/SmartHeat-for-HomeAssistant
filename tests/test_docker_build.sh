@@ -48,8 +48,8 @@ else
 fi
 
 MSYS_NO_PATHCONV=1 docker run --rm \
-  -v "$DATA_DIR_HOST:/data" \
-  -v "$STUB_CF_HOST:/usr/local/sbin/cloudflared" \
+  -v "$DATA_DIR_HOST:/data:Z" \
+  -v "$STUB_CF_HOST:/usr/local/sbin/cloudflared:Z" \
   -e STUB_LOG=/data/stub.log \
   -e PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
   "$IMAGE_TAG"

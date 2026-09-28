@@ -29,7 +29,7 @@ CONTAINER_NAME="heizungsbruecke-docker-build-test"
 # "docker logs" danach noch greifen kann (Cleanup passiert explizit am Skriptende).
 MSYS_NO_PATHCONV=1 docker run -d --name "$CONTAINER_NAME" \
   -e SUPERVISOR_TOKEN=test-token \
-  -v "$DATA_DIR_HOST:/data" "$IMAGE_TAG" >/dev/null \
+  -v "$DATA_DIR_HOST:/data:Z" "$IMAGE_TAG" >/dev/null \
   || { echo "FAIL: container start"; exit 1; }
 
 # Ab dieser Version gibt es keinen Wizard/Flask-Server mehr, der den Prozess am Leben

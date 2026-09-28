@@ -234,6 +234,9 @@ def _is_current(pending: PendingTick | None, seq: str, gen: int) -> bool:
 def _retry(state: DeliveryState, delays: tuple[int, ...], origin: str) -> tuple[DeliveryState, ScheduleRetry]:
     """Plant den naechsten Versuch mit der Wartezeit der aktuellen Stufe, danach stage+1."""
     pending = state.pending
+    # Jeder Aufrufer prueft vorher (direkt oder ueber _is_current) pending is not None und
+    # reicht den State nur ueber replace() weiter, das pending unveraendert laesst.
+    assert pending is not None
     gen = pending.gen + 1
     delay = delays[min(pending.stage, len(delays) - 1)]
     new_pending = replace(

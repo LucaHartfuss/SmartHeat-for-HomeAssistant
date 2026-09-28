@@ -1,6 +1,6 @@
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 import requests
@@ -121,5 +121,5 @@ def test_grace_arithmetic():
     assert entitlement.grace_expired(NOW, NOW + timedelta(days=30) - timedelta(seconds=1)) is False
     assert entitlement.grace_expired(NOW, NOW + timedelta(days=30)) is True
     # Unterschiedliche Zeitzonen-Offsets (Sommer-/Winterzeit) muessen korrekt vergleichen.
-    later_utc = (NOW + timedelta(days=31)).astimezone(timezone.utc)
+    later_utc = (NOW + timedelta(days=31)).astimezone(UTC)
     assert entitlement.grace_expired(NOW, later_utc) is True

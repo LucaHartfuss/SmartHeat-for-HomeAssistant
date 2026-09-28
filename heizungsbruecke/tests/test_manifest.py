@@ -1,6 +1,6 @@
 import pytest
 
-from heizungsbruecke.manifest import build_manifest, ManifestError
+from heizungsbruecke.manifest import ManifestError, build_manifest
 
 # room_actual kommt immer aus derived_sensors (Raumtemperatur-Template, Spec TP6 3.2).
 ROOM_ACTUAL = {"room_actual": "sensor.smartheat_t1_raumtemperatur"}

@@ -98,7 +98,7 @@ def claim_due_tick(rt: Runtime, now: datetime) -> str | None:
     target_changed = room_target != state.last_published_target_rt
     if not (daily_due or target_changed):
         return None
-    changes = {"last_published_target_rt": room_target}
+    changes: dict[str, object] = {"last_published_target_rt": room_target}
     if daily_due:
         changes["last_daily_trigger_date"] = today
     # Wie 0.16.0: ohne gespeicherte Buchung kein Tick; der naechste Check beansprucht ihn erneut.

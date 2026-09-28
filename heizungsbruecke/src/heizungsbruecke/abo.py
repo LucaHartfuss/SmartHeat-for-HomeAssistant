@@ -66,8 +66,10 @@ def enter_inactive(rt: Runtime, now: datetime) -> None:
             rt.mqtt_client.stop()
         except Exception:
             logger.exception("MQTT-Verbindung konnte nicht sauber beendet werden")
-    if rt.status.flags.zugang_abgelehnt:
-        rt.status.update(zugang_abgelehnt=False, grund=None)
+    status = rt.status
+    assert status is not None  # beim Boot gesetzt
+    if status.flags.zugang_abgelehnt:
+        status.update(zugang_abgelehnt=False, grund=None)
     rt.notifier.notify("zugang", STATE_OK, _ZUGANG_RESOLVED_BY_INACTIVE_MESSAGE, critical=True, silent_ok=True)
     if newly_set:
         rt.notifier.notify("abo", "inaktiv", inactive_message(since), critical=True)
@@ -115,7 +117,9 @@ def handle_auth_rejected(rt: Runtime) -> None:
             "MQTT-Anmeldung vom Broker abgelehnt, Abo-Status ist aber '%s' - Zugangsdaten "
             "pruefen (ggf. SmartHeat-Integration neu anmelden).", status,
         )
-        rt.status.update(zugang_abgelehnt=True, grund=ACCESS_DENIED_REASON)
+        status_reporter = rt.status
+        assert status_reporter is not None  # beim Boot gesetzt
+        status_reporter.update(zugang_abgelehnt=True, grund=ACCESS_DENIED_REASON)
         rt.notifier.notify("zugang", "abgelehnt", ACCESS_DENIED_MESSAGE, critical=True)
         return
     enter_inactive(rt, datetime.now().astimezone())

@@ -11,8 +11,9 @@ import logging
 import queue
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, NoReturn
+from typing import NoReturn
 
 logger = logging.getLogger(__name__)
 

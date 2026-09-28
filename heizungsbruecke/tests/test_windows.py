@@ -17,7 +17,7 @@ VALID = {
 
 
 def test_window_option_keys():
-    assert WINDOW_OPTION_KEYS == tuple(VALID)
+    assert tuple(VALID) == WINDOW_OPTION_KEYS
 
 
 def test_windows_from_options_valid():

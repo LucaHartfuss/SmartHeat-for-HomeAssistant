@@ -4,9 +4,9 @@ import pytest
 
 from heizungsbruecke import config
 from heizungsbruecke.config import (
-    ConfigError,
     DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS,
     REQUIRED_OPTIONS,
+    ConfigError,
     is_configured,
     load_options_safe,
     local_check_interval,
