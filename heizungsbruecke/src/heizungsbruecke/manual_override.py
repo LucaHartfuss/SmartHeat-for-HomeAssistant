@@ -2,8 +2,10 @@
 Wiederherstellungspunkt ab, ohne dass ein Boost laeuft oder ein Datenfehler vorliegt, hat
 jemand von Hand verstellt. SmartHeat ueberschreibt das weiterhin beim naechsten Regelschritt,
 meldet den Eingriff aber (nicht kritisch, abschaltbar) und schickt ihn als KPI mit dem naechsten
-Snapshot an den Server. Erst nach DETECTION_ROUNDS Runden in Folge: nach eigenem Schreiben kann
-der HA-Zustand eine Runde nachhinken. Die Rueckkehr hebt den Hinweis still auf.
+Snapshot an den Server. Erst nach DETECTION_ROUNDS Runden in Folge, und nie innerhalb von
+OWN_WRITE_SETTLE_SECONDS nach einem eigenen erfolgreichen Schreiben auf Kurve/Offset (Serverwerte,
+Boost-Start/-Ende, Wiederherstellung): der HA-Zustand kann so lange nachhinken. Die Rueckkehr
+hebt den Hinweis still auf, auch innerhalb dieses Fensters.
 
 Jeder offene Datenfehler pausiert die Erkennung, nicht nur ein Schreibfehler: ein Schreibfehler
 kann durch einen lokalen oder Server-Datenfehler abgeloest werden (delivery._read_invalid,
@@ -20,6 +22,11 @@ logger = logging.getLogger(__name__)
 
 KEY = "manueller_eingriff"
 DETECTION_ROUNDS = 2
+# mypyllant fragt die myVAILLANT-Cloud nur alle 30 min ab (DEFAULT_UPDATE_INTERVAL); der Refresh
+# 5 s nach einem set_* kann noch den alten Cloud-Wert liefern. HA zeigt nach eigenem Schreiben
+# also bis zu 30 min den alten Wert -- ohne Pause meldete R6 danach (z. B. nach jedem
+# Comfort-Boost-Ende) faelschlich einen manuellen Eingriff. 35 min = 30 min Poll + Reserve.
+OWN_WRITE_SETTLE_SECONDS = 2100
 TOLERANCE = {"curve_current": 0.01, "offset_current": 0.1}
 _EPSILON = 1e-9  # Gleitkomma-Rest (0.91 - 0.9) zaehlt nicht als Abweichung
 RETURN_MESSAGE = "SmartHeat: Kurve und Offset stehen wieder auf den gelernten Werten."
@@ -75,6 +82,11 @@ def check_manual_override(rt) -> None:
         if state.manual_override is not None:
             rt.store.update(manual_override=None)
         rt.notifier.notify(KEY, STATE_OK, RETURN_MESSAGE, critical=False, silent_ok=True)
+        return
+    since_write = rt.override.seconds_since_last_write()
+    if since_write is not None and since_write < OWN_WRITE_SETTLE_SECONDS:
+        # Abweichung kurz nach eigenem Schreiben: HA hinkt vermutlich nach, keine Erkennung.
+        _set_misses(rt, 0)
         return
     misses = min(state.manual_override_misses + 1, DETECTION_ROUNDS)
     _set_misses(rt, misses)

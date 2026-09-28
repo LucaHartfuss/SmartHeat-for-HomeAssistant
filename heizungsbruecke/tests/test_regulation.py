@@ -127,7 +127,7 @@ def test_comfort_boost_ends_on_arrival_and_restores(make_store, tmp_path):
 
 
 def test_steady_state_check_does_not_write_backup(make_store, monkeypatch):
-    # SD-Karte: ein Check ohne Aenderung schreibt nichts.
+    # Datentraeger: ein Check ohne Aenderung schreibt nichts.
     store = make_store(backup={
         "last_room_target": 20.0, "boost_active": False, "last_published_target_rt": 20.0,
         "target_history": [[0, 20.0]],
@@ -275,7 +275,7 @@ def test_claim_due_tick_is_claimed_again_after_a_failed_booking(make_store, tmp_
     rt = _runtime(make_store(backup={"last_published_target_rt": 21.0}), room_target=20.5)
 
     def _broken_save(path, values):
-        raise OSError("SD-Karte kaputt")
+        raise OSError("Datentraeger kaputt")
 
     monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _broken_save)
     with pytest.raises(OSError):

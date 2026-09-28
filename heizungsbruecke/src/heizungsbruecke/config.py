@@ -32,13 +32,14 @@ DEFAULT_TELEMETRY_INTERVAL_SECONDS = 300
 
 
 class ConfigError(ValueError):
-    """Konfiguriert, aber ungueltig: Startabbruch mit Exit-Code 1. Die Meldung nennt die
-    fehlende oder ungueltige Option."""
+    """Konfiguriert, aber ungueltig: Ruhezustand `konfigurationsfehler` statt Regelung (kein
+    Exit, Neupruefung nach __main__.CONFIG_RECHECK_SECONDS). Die Meldung nennt die fehlende oder
+    ungueltige Option."""
 
 
 # Bewusst ohne verteilsystem/Fenster/accounts_api_base_url/room_sensors: eine alte Konfiguration
-# (0.17.0/0.18.0) soll als "eingerichtet" gelten und laut abbrechen, statt still auf die
-# Integration zu warten.
+# (0.17.0/0.18.0) soll als "eingerichtet" gelten und laut als Konfigurationsfehler melden,
+# statt still auf die Integration zu warten.
 REQUIRED_OPTIONS = (
     "tenant_id", "mqtt_username", "mqtt_password",
     "entity_room_target", "entity_curve_current", "entity_offset_current", "entity_outdoor_temp", "entity_heat_limit",

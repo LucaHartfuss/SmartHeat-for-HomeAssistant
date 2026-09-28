@@ -211,7 +211,7 @@ def test_run_telemetry_tick_skips_when_room_actual_not_mapped():
 def test_run_telemetry_tick_survives_exception_without_propagating(monkeypatch, caplog):
     manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual"})
     ha_api = MagicMock()
-    ha_api.get_state.side_effect = OSError("SD-Karte voll")
+    ha_api.get_state.side_effect = OSError("Datentraeger voll")
     mqtt_client = MagicMock()
 
     with caplog.at_level("ERROR"):

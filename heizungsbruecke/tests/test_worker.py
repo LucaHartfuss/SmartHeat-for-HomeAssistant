@@ -2,6 +2,8 @@ import logging
 import threading
 import time
 
+import pytest
+
 from heizungsbruecke.worker import Event, RegulationWorker
 
 
@@ -156,35 +158,36 @@ def test_handler_can_schedule_follow_up_with_zero_delay(clock):
     assert _kinds(seen) == ["second"]
 
 
-def test_request_exit_stops_processing_and_returns_code(clock):
-    worker, seen = _recording_worker(clock, "later")
-    worker.register("stop", lambda event: worker.request_exit(0))
-    worker.post(Event("stop"))
-    worker.post(Event("later"))
-
-    assert worker.run_pending() == 0
-    assert seen == []
+class _Stop(BaseException):
+    """run() endet nie von selbst; der Test bricht die Schleife ueber eine BaseException ab,
+    die _dispatch (faengt nur Exception) nicht abfaengt."""
 
 
-def test_run_returns_exit_code_after_scheduled_event_fires():
+def _raise_stop(event):
+    raise _Stop
+
+
+def test_run_processes_a_scheduled_event_when_it_is_due():
     worker = RegulationWorker()  # echte monotone Uhr
-    worker.register("stop", lambda event: worker.request_exit(3))
+    worker.register("stop", _raise_stop)
     worker.schedule(0.05, Event("stop"))
     started = time.monotonic()
 
-    assert worker.run() == 3
+    with pytest.raises(_Stop):
+        worker.run()
     assert time.monotonic() - started >= 0.05
 
 
 def test_run_wakes_up_for_event_posted_from_other_thread():
     worker = RegulationWorker()
-    worker.register("stop", lambda event: worker.request_exit(0))
+    worker.register("stop", _raise_stop)
     worker.register("far_future", lambda event: None)
     worker.schedule(60, Event("far_future"))
 
     threading.Timer(0.05, worker.post, args=(Event("stop"),)).start()
 
-    assert worker.run() == 0
+    with pytest.raises(_Stop):
+        worker.run()
 
 
 def test_after_each_runs_after_every_handled_event_and_its_errors_are_logged(clock, caplog):

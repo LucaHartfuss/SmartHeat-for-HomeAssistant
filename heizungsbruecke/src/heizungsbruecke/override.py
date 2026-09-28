@@ -9,6 +9,8 @@ Geschrieben wird nur beim Wechsel der Zeile, weil jeder Schreibvorgang bei mypyl
 Cloud-Aufruf ist; jeder Wert wird auf die lokalen Clamps begrenzt."""
 import logging
 import math
+import time
+from collections.abc import Callable
 
 from heizungsbruecke.clamping import clamp
 
@@ -53,11 +55,23 @@ def _is_finite_number(value) -> bool:
 
 
 class Override:
-    def __init__(self, store, manifest, ha_api, options: dict) -> None:
+    def __init__(self, store, manifest, ha_api, options: dict, *, clock: Callable[[], float] = time.monotonic) -> None:
         self._store = store
         self._manifest = manifest
         self._ha_api = ha_api
         self._options = options
+        self._clock = clock
+        # Zeitpunkt (clock) des letzten erfolgreichen eigenen Schreibens auf Kurve/Offset, nur
+        # Laufzeit: die R6-Erkennung (manual_override) pausiert danach, weil HA den alten Wert
+        # noch eine Weile zeigen kann.
+        self._last_write_at: float | None = None
+
+    def seconds_since_last_write(self) -> float | None:
+        """Sekunden seit dem letzten erfolgreichen eigenen Schreiben auf Kurve/Offset; None,
+        wenn seit dem Start nichts geschrieben wurde."""
+        if self._last_write_at is None:
+            return None
+        return self._clock() - self._last_write_at
 
     def set_boosts(self, comfort: bool, emergency: bool) -> tuple[bool, bool]:
         """Setzt die Boost-Flags und schreibt die Werte der neuen Sollwert-Zeile, falls sie
@@ -148,7 +162,9 @@ class Override:
         return {role: value for role, value in restore.items() if value is not None}
 
     def _write(self, values: dict) -> None:
-        """Kurve vor Offset, nur gemappte Rollen, jeder Wert geclampt."""
+        """Kurve vor Offset, nur gemappte Rollen, jeder Wert geclampt. Jeder erfolgreich
+        geschriebene Wert merkt sich den Zeitpunkt (auch wenn danach der Offset scheitert: die
+        Kurve steht dann schon neu auf der Anlage)."""
         for role in ROLES:
             if role not in values or role not in self._manifest.entity_ids:
                 continue
@@ -158,6 +174,7 @@ class Override:
                 self._ha_api.set_number_value(entity_id, value)
             except Exception as error:
                 raise DeviceWriteError(role, entity_id, error) from error
+            self._last_write_at = self._clock()
 
     def _ensure_restore_point(self, *, allow_saved_fallback: bool) -> str | None:
         """Fehlende Werte des Wiederherstellungspunkts (z. B. erster Boost vor der ersten

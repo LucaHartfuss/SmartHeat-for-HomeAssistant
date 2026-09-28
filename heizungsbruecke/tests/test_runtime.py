@@ -256,7 +256,7 @@ def _override_options(bridge, **values) -> None:
 
 
 def _raise_oserror(*args, **kwargs):
-    raise OSError("SD-Karte kaputt")
+    raise OSError("Datentraeger kaputt")
 
 
 def _break_backup_writes(monkeypatch) -> None:

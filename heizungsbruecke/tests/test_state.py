@@ -17,7 +17,7 @@ V016_BACKUP = {
 
 
 def _raise_oserror(*args, **kwargs):
-    raise OSError("SD-Karte kaputt")
+    raise OSError("Datentraeger kaputt")
 
 
 def _count_saves(monkeypatch) -> list:
@@ -245,7 +245,7 @@ def test_is_saved_reports_only_fields_whose_save_is_still_missing(make_store, mo
 
     assert not store.is_saved("curve_current")
     assert not store.is_saved("curve_current", "offset_current")
-    assert store.is_saved("offset_current", "boost_active")  # nur das geaenderte Feld fehlt auf der Karte
+    assert store.is_saved("offset_current", "boost_active")  # nur das geaenderte Feld fehlt auf dem Datentraeger
 
     monkeypatch.undo()
     store.update(curve_current=1.1)

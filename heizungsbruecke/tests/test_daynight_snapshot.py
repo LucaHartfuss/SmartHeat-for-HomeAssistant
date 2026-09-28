@@ -157,8 +157,8 @@ def test_maybe_snapshot_does_not_fire_night_avg_exactly_at_the_cold_start_window
 
 def test_maybe_snapshot_skips_disk_write_when_nothing_due_and_continuity_is_established(tmp_path, monkeypatch):
     # Regression guard: with local_check_interval_seconds now as low as 30s, this function
-    # can run up to 2880x/day -- an unconditional write here would wear the SD card the
-    # same way the old backup.json write-every-tick behaviour did (Design-Spec
+    # can run up to 2880x/day -- an unconditional write here would hit the disk as needlessly
+    # as the old backup.json write-every-tick behaviour did (Design-Spec
     # 2026-09-16, Abschnitt A.2). Once continuity is established (last_checked set), a
     # call that crosses neither boundary must not touch the state file at all.
     ha_api = MagicMock()

@@ -57,7 +57,7 @@ def _written(row):
 
 
 def _raise_oserror(*args, **kwargs):
-    raise OSError("SD-Karte kaputt")
+    raise OSError("Datentraeger kaputt")
 
 
 # --- set_boosts ---
@@ -147,7 +147,7 @@ def test_restore_point_not_yet_on_the_card_blocks_a_new_boost(make_store, tmp_pa
     assert ha.writes == []
 
     with caplog.at_level(logging.WARNING), pytest.raises(OSError):
-        override.set_boosts(comfort=True, emergency=False)  # Check 2: Karte weiter kaputt
+        override.set_boosts(comfort=True, emergency=False)  # Check 2: Datentraeger weiter kaputt
 
     assert ha.writes == []
     assert store.state.boost_active is False
@@ -155,7 +155,7 @@ def test_restore_point_not_yet_on_the_card_blocks_a_new_boost(make_store, tmp_pa
     assert not (tmp_path / "backup.json").exists()
 
     monkeypatch.undo()
-    assert override.set_boosts(comfort=True, emergency=False) == (True, False)  # Karte wieder ok
+    assert override.set_boosts(comfort=True, emergency=False) == (True, False)  # Datentraeger wieder ok
 
     assert ha.reads == ["number.curve", "number.offset"]  # nur beim ersten Check gelesen
     assert ha.writes == _written("comfort")
@@ -164,8 +164,8 @@ def test_restore_point_not_yet_on_the_card_blocks_a_new_boost(make_store, tmp_pa
 
 
 def test_unsaved_boost_flag_alone_does_not_block_a_new_boost(make_store, monkeypatch):
-    # Steht der Wiederherstellungspunkt auf der Karte, blockiert ein nur im Speicher
-    # stehendes Boost-Flag (Karte kaputt) keinen neuen Boost.
+    # Steht der Wiederherstellungspunkt auf dem Datentraeger, blockiert ein nur im Speicher
+    # stehendes Boost-Flag (Datentraeger kaputt) keinen neuen Boost.
     override, _, ha = _setup(make_store, backup=dict(RESTORE_POINT))
     monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
     for comfort in (True, False):
@@ -208,7 +208,7 @@ def test_write_failure_leaves_flags_unchanged(make_store, tmp_path):
 
 
 def test_flag_save_failure_after_device_write_keeps_memory_consistent(make_store, tmp_path, monkeypatch):
-    # Review Focus 1: SD-Karte schreibt nicht, nachdem die Anlage schon auf Boost-Werten steht.
+    # Review Focus 1: Datentraeger schreibt nicht, nachdem die Anlage schon auf Boost-Werten steht.
     override, store, ha = _setup(make_store, backup=dict(RESTORE_POINT))
     monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
 
@@ -351,7 +351,7 @@ def test_restore_and_clear_counts_as_done_when_only_saving_flags_fails(make_stor
 
     assert ha.writes == _written("restore")
     assert store.state.emergency_boost_active is False
-    assert "SD-Karte kaputt" in caplog.text
+    assert "Datentraeger kaputt" in caplog.text
 
 
 # --- N6: Notfall-Boost auf dem zuletzt gespeicherten Wiederherstellungspunkt ---

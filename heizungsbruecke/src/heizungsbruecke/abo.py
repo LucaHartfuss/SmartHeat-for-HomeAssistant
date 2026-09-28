@@ -53,7 +53,7 @@ def enter_inactive(rt: Runtime, now: datetime) -> None:
     try:
         since, newly_set = entitlement.mark_inactive(config.ENTITLEMENT_PATH, now)
     except Exception:
-        # Ein Schreibfehler (SD-Karte) darf den Notbetrieb nicht verhindern.
+        # Ein Schreibfehler (Datentraeger) darf den Notbetrieb nicht verhindern.
         logger.exception(
             "Abo-inaktiv-Zeitpunkt konnte nicht gespeichert werden - Abo-inaktiv-Modus "
             "gilt nur bis zum naechsten Neustart, Frist ab jetzt"

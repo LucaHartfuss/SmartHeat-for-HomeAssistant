@@ -385,7 +385,7 @@ def to_persisted(state: DeliveryState) -> dict:
 
 def from_persisted(raw) -> DeliveryState:
     """Tolerant: fehlende oder kaputte Felder werden zu Standardwerten (alte Datei mit nur
-    failsafe_active, SD-Karten-Muell). Ein Lesefehler darf den Start nie verhindern."""
+    failsafe_active, Datenmuell nach einem Datentraegerfehler). Ein Lesefehler darf den Start nie verhindern."""
     if not isinstance(raw, dict):
         return DeliveryState()
     return DeliveryState(

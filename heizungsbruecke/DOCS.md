@@ -35,7 +35,11 @@ und abgemeldet sind ein Ruhezustand ohne Regelung. Bei einem Konfigurationsfehle
 erneut, ohne die Meldung zu wiederholen. Watchdog und Start beim Booten setzt die Integration.
 
 Neu: Manuelle Änderungen an Heizkurve oder Offset werden erkannt und gemeldet. SmartHeat setzt sie beim
-nächsten Regelschritt weiterhin zurück.
+nächsten Regelschritt weiterhin zurück. Gemeldet wird erst, wenn die Abweichung zwei Prüfungen in Folge
+besteht, und nie in den ersten 35 Minuten nach einem eigenen Schreiben von SmartHeat auf Kurve/Offset
+(neue Serverwerte, Boost-Start/-Ende): die myVAILLANT-Integration zeigt einen geschriebenen Wert unter
+Umständen erst mit ihrer nächsten Abfrage (alle 30 Minuten). Eine Änderung von Hand kurz nach einem
+eigenen Schreiben wird deshalb bis zu 35 Minuten später erkannt.
 
 Neu: Hinweise (ausgefallener Raumfühler, schwache Batterie, manueller Eingriff, Quellwechsel) lassen sich
 in den Optionen der Integration einzeln abschalten. Kritische Meldungen bleiben immer an.

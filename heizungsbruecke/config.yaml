@@ -41,7 +41,8 @@ options:
 # verteilsystem and the five window times come from the server (profile_params, written by
 # the integration) and accounts_api_base_url (written by the integration). They are optional
 # here and have no entry under options: (an empty default would be invalid for list(...)); the
-# add-on checks them at startup and exits with a configuration error if they are missing.
+# add-on checks them at startup and, if they are missing, stays idle in the state
+# "konfigurationsfehler" (no regulation, re-check after 15 min) -- it never exits.
 # room_sensors, notify_services, battery_entities and setup_id are written by the integration
 # (TP6). They are optional here (list element with `?`) so that an update with an old
 # configuration does not make Supervisor refuse the start silently; the add-on checks them at

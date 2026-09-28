@@ -12,7 +12,7 @@ import queue
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Callable, NoReturn
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,6 @@ class RegulationWorker:
         self._handles = itertools.count()
         self._coalesce_lock = threading.Lock()
         self._coalesced: dict[str, dict[str, bool]] = {}
-        self._exit_code: int | None = None
         self._after_each: Callable[[], None] | None = None
 
     def register(self, kind: str, handler: Handler) -> None:
@@ -79,13 +78,11 @@ class RegulationWorker:
     def cancel(self, handle: int) -> None:
         self._cancelled.add(handle)
 
-    def request_exit(self, code: int) -> None:
-        self._exit_code = code
-
-    def run(self) -> int:
-        """Verarbeitet Ereignisse, bis ein Handler `request_exit` aufruft, und gibt dessen
-        Exit-Code zurueck. Faellige Planeintraege gehen neuen Queue-Eintraegen vor."""
-        while self._exit_code is None:
+    def run(self) -> NoReturn:
+        """Verarbeitet Ereignisse, bis der Prozess beendet wird (das Add-on beendet sich seit
+        0.20.0 nie selbst, Endzustaende sind ein Ruhezustand). Faellige Planeintraege gehen neuen
+        Queue-Eintraegen vor."""
+        while True:
             event = self._pop_due()
             if event is None:
                 try:
@@ -94,21 +91,19 @@ class RegulationWorker:
                     continue
                 event = self._resolve(item)
             self._dispatch(event)
-        return self._exit_code
 
-    def run_pending(self) -> int | None:
+    def run_pending(self) -> None:
         """Verarbeitet alles, was jetzt faellig bzw. eingestellt ist, ohne zu blockieren
-        (Test-Einstieg mit Fake-Uhr). Gibt den Exit-Code zurueck, falls angefordert."""
-        while self._exit_code is None:
+        (Test-Einstieg mit Fake-Uhr)."""
+        while True:
             event = self._pop_due()
             if event is None:
                 try:
                     item = self._queue.get_nowait()
                 except queue.Empty:
-                    break
+                    return
                 event = self._resolve(item)
             self._dispatch(event)
-        return self._exit_code
 
     def _drop_cancelled_head(self) -> None:
         while self._schedule and self._schedule[0][1] in self._cancelled:

@@ -8,14 +8,28 @@ from heizungsbruecke import manual_override
 from heizungsbruecke.delivery import SOURCE_LOCAL, SOURCE_WRITE, DataFault, DeliveryState
 from heizungsbruecke.manifest import ChannelManifest
 from heizungsbruecke.notifier import STATE_OK, Notifier
+from heizungsbruecke.override import Override
 
 MANIFEST = ChannelManifest(entity_ids={"curve_current": "number.curve", "offset_current": "number.offset"})
 POINT = {"curve_current": 0.9, "offset_current": 22.0}
+OPTIONS = {
+    "curve_min": 0.4, "curve_max": 1.5, "offset_min": 20.0, "offset_max": 30.0,
+    "boost_curve_value": 1.0, "boost_offset_value": 25.0,
+}
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self):
+        return self.now
 
 
 def _rt(make_store, live=(0.9, 22.0), hints_off=(), **backup):
     store = make_store(backup={**POINT, **backup})
     ha_api = MagicMock()
+    clock = FakeClock()
     values = {"number.curve": live[0], "number.offset": live[1]}
 
     def _get_state(entity_id):
@@ -25,8 +39,11 @@ def _rt(make_store, live=(0.9, 22.0), hints_off=(), **backup):
         return value
 
     ha_api.get_state.side_effect = _get_state
+    # Eigenes Schreiben geht ueber ha_api.set_number_value (MagicMock) und aendert `values` nicht:
+    # das ist genau der nachhinkende HA-Zustand von mypyllant.
     return SimpleNamespace(
-        store=store, ha_api=ha_api, manifest=MANIFEST, values=values,
+        store=store, ha_api=ha_api, manifest=MANIFEST, values=values, clock=clock,
+        override=Override(store, MANIFEST, ha_api, OPTIONS, clock=clock),
         notifier=Notifier(store, ha_api, ["notify.handy"], hints_off),
     )
 
@@ -168,3 +185,84 @@ def test_switched_off_hint_is_detected_but_not_pushed(make_store):
 
     assert rt.store.state.manual_override is not None
     rt.ha_api.send_notification.assert_not_called()
+
+
+@pytest.mark.parametrize("minutes", [10, 20, 30])
+def test_mypyllant_lag_after_own_write_is_no_manual_override(make_store, minutes):
+    """Final-Review I1: mypyllant zeigt nach eigenem Schreiben bis zu 30 min den alten Wert
+    (Poll-Intervall 30 min, der Refresh 5 s nach dem Schreiben kann den alten Cloud-Wert
+    liefern). Innerhalb von 35 min nach eigenem Schreiben keine Erkennung."""
+    rt = _rt(make_store, live=(0.9, 22.0))
+    rt.override.apply_server_values(0.95, 23.0)  # HA zeigt weiter 0.9 / 22.0
+
+    for step in range(0, minutes + 1, 5):
+        rt.clock.now = 1000.0 + step * 60
+        _rounds(rt)
+
+    assert rt.store.state.manual_override is None
+    assert rt.store.state.manual_override_misses == 0
+    rt.ha_api.send_notification.assert_not_called()
+
+
+def test_lag_after_boost_end_is_no_manual_override(make_store):
+    """Nach jedem Comfort-Boost-Ende steht HA noch auf den Boost-Werten."""
+    rt = _rt(make_store, live=(1.0, 25.0))
+    rt.override.set_boosts(True, False)
+    rt.clock.now += 3600
+    rt.override.set_boosts(False, False)  # schreibt 0.9 / 22.0, HA zeigt weiter 1.0 / 25.0
+
+    for _ in range(6):
+        rt.clock.now += 300
+        _rounds(rt)
+
+    assert rt.store.state.manual_override is None
+    rt.ha_api.send_notification.assert_not_called()
+
+
+def test_deviation_persisting_after_the_window_is_detected_after_two_rounds(make_store):
+    rt = _rt(make_store, live=(1.3, 24.5))
+    rt.override.apply_server_values(0.9, 22.0)
+    rt.clock.now += manual_override.OWN_WRITE_SETTLE_SECONDS - 1
+    _rounds(rt, 3)
+    assert rt.store.state.manual_override is None
+
+    rt.clock.now += 1
+    _rounds(rt)
+    assert rt.store.state.manual_override is None
+    _rounds(rt)
+    assert (rt.store.state.manual_override["curve"], rt.store.state.manual_override["offset"]) == (1.3, 24.5)
+
+
+def test_an_own_write_resets_the_count(make_store):
+    rt = _rt(make_store, live=(1.3, 24.5))
+    _rounds(rt)  # erste Runde der Abweichung
+    rt.override.apply_server_values(0.9, 22.0)
+
+    _rounds(rt)
+    rt.clock.now += manual_override.OWN_WRITE_SETTLE_SECONDS
+    _rounds(rt)
+
+    assert rt.store.state.manual_override is None  # Zaehlung beginnt nach dem Fenster neu
+
+
+def test_a_failed_write_does_not_start_the_window(make_store):
+    rt = _rt(make_store, live=(1.3, 24.5))
+    rt.ha_api.set_number_value.side_effect = RuntimeError("Cloud weg")
+    with pytest.raises(Exception):
+        rt.override.apply_server_values(0.9, 22.0)
+
+    _rounds(rt, 2)
+
+    assert rt.store.state.manual_override is not None
+
+
+def test_return_within_the_window_clears_the_hint(make_store):
+    rt = _rt(make_store, live=(1.3, 24.5))
+    _rounds(rt, 2)
+    rt.override.apply_server_values(0.9, 22.0)
+    rt.values.update({"number.curve": 0.9, "number.offset": 22.0})
+
+    _rounds(rt)
+
+    assert rt.store.state.manual_override is None
+    assert rt.notifier.state("manueller_eingriff") == STATE_OK

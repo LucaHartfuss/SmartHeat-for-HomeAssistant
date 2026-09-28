@@ -2,7 +2,7 @@
 
 Der Zustand wird nur im Worker-Thread gelesen und geaendert, deshalb ohne Lock. Beide
 Dateien werden beim Start genau einmal gelesen und danach nur geschrieben, wenn sich ihr
-Inhalt aendert: jeder Schreibvorgang geht auf die SD-Karte des Pi."""
+Inhalt aendert: jeder Schreibvorgang geht auf den Datentraeger des Pi."""
 import logging
 import math
 from dataclasses import dataclass, field, replace
@@ -172,7 +172,7 @@ class StateStore:
         self._backup_saved, self._backup_dirty = content, False
 
     def is_saved(self, *keys: str) -> bool:
-        """True, wenn die genannten backup.json-Felder so auf der Karte stehen wie im Speicher
+        """True, wenn die genannten backup.json-Felder so auf dem Datentraeger stehen wie im Speicher
         (False nach einem gescheiterten Schreibversuch, bis er nachgeholt ist)."""
         content = _backup_content(self._state, self._extra)
         return all(content.get(key) == self._backup_saved.get(key) for key in keys)

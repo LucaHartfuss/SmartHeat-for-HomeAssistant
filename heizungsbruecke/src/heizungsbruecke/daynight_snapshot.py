@@ -39,7 +39,7 @@ def maybe_snapshot(
 
     Unlike the pre-decoupling version, this function is now called from a fast local
     loop (as often as every check) -- an unconditional write
-    on every call would wear the SD card the same way the old backup.json
+    on every call would hit the disk (Datentraeger) as needlessly as the old backup.json
     write-every-tick behaviour did. The state file is therefore only written when a
     snapshot actually fires, or on the very first call ever (to escape cold-start
     permanently) -- see the `changed` bookkeeping below.

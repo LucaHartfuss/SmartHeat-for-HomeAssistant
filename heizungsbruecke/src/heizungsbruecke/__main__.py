@@ -11,6 +11,7 @@ import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from typing import NoReturn
 
 from heizungsbruecke import (
     abo, battery, config, daynight_snapshot, delivery, derived_sensors, entitlement, manual_override, regulation,
@@ -481,7 +482,8 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | Idle
     _check_timezone(ha_api)
     rt = Runtime(
         manifest=manifest, ha_api=ha_api, options=options, derived_entity_ids=derived.entity_ids,
-        worker=RegulationWorker(clock=clock), store=store, override=Override(store, manifest, ha_api, options),
+        worker=RegulationWorker(clock=clock), store=store,
+        override=Override(store, manifest, ha_api, options, clock=clock),
         notifier=notifier, status=status,
     )
 
@@ -523,10 +525,10 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | Idle
     return rt
 
 
-def _run_bridge(options: dict, ha_api):
+def _run_bridge(options: dict, ha_api) -> NoReturn:
     """Laeuft, bis der Prozess beendet wird. Voruebergehende Fehler (HA nicht bereit, Broker nicht
     erreichbar, Server schweigt) und Endzustaende beenden das Add-on nie."""
-    return _start_bridge(options, ha_api).worker.run()
+    _start_bridge(options, ha_api).worker.run()
 
 
 def main() -> None:
