@@ -1,0 +1,104 @@
+name: CI
+on:
+  push:
+    branches: ["**"]
+  schedule:
+    - cron: "37 3 * * *"
+  workflow_call:
+    secrets:
+      CROSS_REPO_TOKEN:
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+env:
+  CHECKOUT_REF: ${{ github.event_name == 'schedule' && 'develop' || '' }}
+  # Push-Laeufe: HA-Version von client1 (HomeAssistantPapa/.HA_VERSION); taeglich: stable (Spec 2.2).
+  HA_IMAGE: ${{ github.event_name == 'schedule' && 'ghcr.io/home-assistant/home-assistant:stable' || 'ghcr.io/home-assistant/home-assistant:2026.4.4' }}
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install -e "./heizungsbruecke[dev]"
+      - run: PYTHON=python bash scripts/check.sh --only lint
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install -e "./heizungsbruecke[dev]"
+      - run: RUN_REAL_HA_TESTS=1 PYTHON=python bash scripts/check.sh --only test
+  docker:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+      - run: bash scripts/check.sh --only docker
+  build-aarch64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        addon: [heizungsbruecke, cloudflared_access_mqtt]
+    name: build-aarch64 (${{ matrix.addon }})
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - env:
+          ADDON: ${{ matrix.addon }}
+        run: docker buildx build --platform linux/arm64 --tag "ci/$ADDON:arm64" "$ADDON"
+  addon-lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        addon: [heizungsbruecke, cloudflared_access_mqtt]
+    name: addon-lint (${{ matrix.addon }})
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+      - uses: frenck/action-addon-linter@v2
+        with:
+          path: "./${{ matrix.addon }}"
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Dev-Root aufbauen
+        env:
+          CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+          SIBLINGS_REF: ${{ github.event_name == 'schedule' && 'develop' || github.ref_name }}
+        run: >-
+          bash scripts/ci/siblings.sh "$RUNNER_TEMP/dev" SmartHeat-for-HomeAssistant "$GITHUB_WORKSPACE"
+          "$SIBLINGS_REF"
+          HeizungssteuerungServer SmartHeat-Integration
+      - run: pip install -r "$DEV_ROOT/tools/requirements-dev.txt"
+      - run: PYTHON=python bash scripts/check.sh --only contract
