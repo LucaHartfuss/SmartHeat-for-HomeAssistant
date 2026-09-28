@@ -1,5 +1,5 @@
 import json
-from unittest.mock import patch, Mock, MagicMock
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 import requests
@@ -48,17 +48,15 @@ def test_get_raw_state_raises_on_ha_failure_states(bad_state):
     mock_response.json.return_value = {"state": bad_state}
     mock_response.raise_for_status.return_value = None
 
-    with patch("heizungsbruecke.ha_api.requests.get", return_value=mock_response):
-        with pytest.raises(ValueError):
-            api.get_raw_state("sensor.mode")
+    with patch("heizungsbruecke.ha_api.requests.get", return_value=mock_response), pytest.raises(ValueError):
+        api.get_raw_state("sensor.mode")
 
 
 def test_get_raw_state_rejects_attribute_reference_without_http_call():
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
 
-    with patch("heizungsbruecke.ha_api.requests.get") as mock_get:
-        with pytest.raises(ValueError):
-            api.get_raw_state("climate.x::hvac_action")
+    with patch("heizungsbruecke.ha_api.requests.get") as mock_get, pytest.raises(ValueError):
+        api.get_raw_state("climate.x::hvac_action")
 
     mock_get.assert_not_called()
 
@@ -135,9 +133,8 @@ def test_send_notification_raises_on_http_error():
     mock_response = Mock()
     mock_response.raise_for_status.side_effect = RuntimeError("500")
 
-    with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response):
-        with pytest.raises(RuntimeError):
-            api.send_notification("notify.mobile_app_lucas_iphone", "Sensor defekt")
+    with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response), pytest.raises(RuntimeError):
+        api.send_notification("notify.mobile_app_lucas_iphone", "Sensor defekt")
 
 
 def test_get_state_respects_custom_api_prefix():
@@ -205,9 +202,11 @@ def test_call_ws_command_raises_when_first_message_is_not_auth_required():
     ws = MagicMock()
     ws.recv.side_effect = [json.dumps({"type": "event"})]
 
-    with patch("heizungsbruecke.ha_api.websocket.create_connection", return_value=ws):
-        with pytest.raises(RuntimeError, match="Unerwartete erste WS-Nachricht"):
-            api._call_ws_command({"type": "x"})
+    with (
+        patch("heizungsbruecke.ha_api.websocket.create_connection", return_value=ws),
+        pytest.raises(RuntimeError, match="Unerwartete erste WS-Nachricht"),
+    ):
+        api._call_ws_command({"type": "x"})
     ws.close.assert_called_once()
 
 
@@ -219,9 +218,11 @@ def test_call_ws_command_raises_when_auth_fails():
         json.dumps({"type": "auth_invalid"}),
     ]
 
-    with patch("heizungsbruecke.ha_api.websocket.create_connection", return_value=ws):
-        with pytest.raises(RuntimeError, match="WS-Authentifizierung fehlgeschlagen"):
-            api._call_ws_command({"type": "x"})
+    with (
+        patch("heizungsbruecke.ha_api.websocket.create_connection", return_value=ws),
+        pytest.raises(RuntimeError, match="WS-Authentifizierung fehlgeschlagen"),
+    ):
+        api._call_ws_command({"type": "x"})
     ws.close.assert_called_once()
 
 
@@ -234,9 +235,11 @@ def test_call_ws_command_raises_when_command_result_is_unsuccessful():
         json.dumps({"id": 1, "success": False, "error": {"message": "nope"}}),
     ]
 
-    with patch("heizungsbruecke.ha_api.websocket.create_connection", return_value=ws):
-        with pytest.raises(RuntimeError, match="WS-Kommando fehlgeschlagen"):
-            api._call_ws_command({"type": "x"})
+    with (
+        patch("heizungsbruecke.ha_api.websocket.create_connection", return_value=ws),
+        pytest.raises(RuntimeError, match="WS-Kommando fehlgeschlagen"),
+    ):
+        api._call_ws_command({"type": "x"})
     ws.close.assert_called_once()
 
 
@@ -300,9 +303,8 @@ def test_entity_exists_raises_on_other_http_error():
     mock_response = Mock(status_code=500)
     mock_response.raise_for_status.side_effect = RuntimeError("500")
 
-    with patch("heizungsbruecke.ha_api.requests.get", return_value=mock_response):
-        with pytest.raises(RuntimeError):
-            api.entity_exists("sensor.dat")
+    with patch("heizungsbruecke.ha_api.requests.get", return_value=mock_response), pytest.raises(RuntimeError):
+        api.entity_exists("sensor.dat")
 
 
 def test_start_config_flow_posts_handler_and_returns_json():
@@ -402,9 +404,8 @@ def test_find_entity_by_config_entry_returns_matching_entity_id():
 def test_find_entity_by_config_entry_raises_when_not_found():
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
 
-    with patch.object(api, "_call_ws_command", return_value=[]):
-        with pytest.raises(RuntimeError, match="Keine Entity"):
-            api._find_entity_by_config_entry("missing")
+    with patch.object(api, "_call_ws_command", return_value=[]), pytest.raises(RuntimeError, match="Keine Entity"):
+        api._find_entity_by_config_entry("missing")
 
 
 def test_create_statistics_sensor_orchestrates_flow_and_registry_lookup():
@@ -512,9 +513,8 @@ def test_create_persistent_notification_raises_on_http_error():
     mock_response = Mock()
     mock_response.raise_for_status.side_effect = RuntimeError("500")
 
-    with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response):
-        with pytest.raises(RuntimeError):
-            api.create_persistent_notification("SmartHeat", "x", "smartheat_abo_inaktiv")
+    with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response), pytest.raises(RuntimeError):
+        api.create_persistent_notification("SmartHeat", "x", "smartheat_abo_inaktiv")
 
 
 def test_dismiss_persistent_notification_posts_to_service():
@@ -538,9 +538,11 @@ def test_dismiss_persistent_notification_raises_on_http_error():
     mock_response = Mock()
     mock_response.raise_for_status.side_effect = requests.HTTPError("500")
 
-    with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response):
-        with pytest.raises(requests.HTTPError):
-            api.dismiss_persistent_notification("smartheat_notbetrieb")
+    with (
+        patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response),
+        pytest.raises(requests.HTTPError),
+    ):
+        api.dismiss_persistent_notification("smartheat_notbetrieb")
 
 
 def test_get_config_returns_parsed_json():
@@ -563,9 +565,11 @@ def test_get_config_raises_on_http_error():
     mock_response = Mock()
     mock_response.raise_for_status.side_effect = requests.HTTPError("502")
 
-    with patch("heizungsbruecke.ha_api.requests.get", return_value=mock_response):
-        with pytest.raises(requests.HTTPError):
-            api.get_config()
+    with (
+        patch("heizungsbruecke.ha_api.requests.get", return_value=mock_response),
+        pytest.raises(requests.HTTPError),
+    ):
+        api.get_config()
 
 
 def test_advance_config_flow_follows_a_menu_step_then_the_form():
@@ -622,9 +626,8 @@ def test_delete_helper_raises_for_entity_without_config_entry():
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
     registry = [{"entity_id": "sensor.x", "config_entry_id": None, "platform": "template"}]
     with patch.object(api, "_call_ws_command", return_value=registry), \
-         patch("heizungsbruecke.ha_api.requests.delete") as mock_delete:
-        with pytest.raises(RuntimeError):
-            api.delete_helper("sensor.x")
+         patch("heizungsbruecke.ha_api.requests.delete") as mock_delete, pytest.raises(RuntimeError):
+        api.delete_helper("sensor.x")
 
     mock_delete.assert_not_called()
 
@@ -637,10 +640,12 @@ def test_delete_helper_refuses_config_entries_of_other_integrations(platform):
     entry = {"entity_id": "sensor.smartheat_t1_dart", "config_entry_id": "e_vaillant"}
     if platform is not None:
         entry["platform"] = platform
-    with patch.object(api, "_call_ws_command", return_value=[entry]), \
-         patch("heizungsbruecke.ha_api.requests.delete") as mock_delete:
-        with pytest.raises(RuntimeError, match="kein SmartHeat-Hilfssensor"):
-            api.delete_helper("sensor.smartheat_t1_dart")
+    with (
+        patch.object(api, "_call_ws_command", return_value=[entry]),
+        patch("heizungsbruecke.ha_api.requests.delete") as mock_delete,
+        pytest.raises(RuntimeError, match="kein SmartHeat-Hilfssensor"),
+    ):
+        api.delete_helper("sensor.smartheat_t1_dart")
 
     mock_delete.assert_not_called()
 
@@ -666,9 +671,8 @@ def test_fire_event_raises_on_http_error():
     mock_response = Mock()
     mock_response.raise_for_status.side_effect = RuntimeError("401")
 
-    with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response):
-        with pytest.raises(RuntimeError):
-            api.fire_event("smartheat_status", {})
+    with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response), pytest.raises(RuntimeError):
+        api.fire_event("smartheat_status", {})
 
 
 def test_is_reachable_true_when_ha_is_running():

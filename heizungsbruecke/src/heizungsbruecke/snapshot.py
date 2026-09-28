@@ -3,6 +3,7 @@ import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TypeGuard
 
 from heizungsbruecke.manifest import OPTIONAL_SNAPSHOT_ROLES, SNAPSHOT_ROLES, ChannelManifest
 
@@ -20,7 +21,7 @@ MANUAL_OVERRIDE_FIELDS = ("curve", "offset", "erkannt")
 VALIDITY_ONLY_ROLES = ("room_actual",)
 
 
-def _is_finite_number(value) -> bool:
+def _is_finite_number(value) -> TypeGuard[float]:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 

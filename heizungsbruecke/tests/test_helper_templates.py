@@ -3,9 +3,9 @@ nachgebauten HA-Funktionen states()/state_attr(). Das echte HA-Verhalten (none -
 prueft tests/test_ha_api_real_ha_integration.py."""
 import pytest
 
-jinja2 = pytest.importorskip("jinja2")
-
 from heizungsbruecke.helper_templates import outdoor_temperature_template, room_temperature_template
+
+jinja2 = pytest.importorskip("jinja2")
 
 
 def _render(template: str, states: dict[str, str], attributes: dict[tuple[str, str], object] | None = None) -> str:

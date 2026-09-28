@@ -47,7 +47,9 @@ ABO_UNBEKANNT = "unbekannt"
 ABO_VALUES = (ABO_AKTIV, ABO_INAKTIV, ABO_BEENDET, ABO_UNBEKANNT)
 
 DATENFEHLER_ARTEN = ("lokal", "server", "anlage")
-_FAULT_ART = dict(zip((delivery.SOURCE_LOCAL, delivery.SOURCE_SERVER, delivery.SOURCE_WRITE), DATENFEHLER_ARTEN))
+_FAULT_ART = dict(
+    zip((delivery.SOURCE_LOCAL, delivery.SOURCE_SERVER, delivery.SOURCE_WRITE), DATENFEHLER_ARTEN, strict=True)
+)
 
 HINT_FIELDS = ("raumfuehler_ausgefallen", "batterie_niedrig", "manueller_eingriff")
 EVENT_FIELDS = (

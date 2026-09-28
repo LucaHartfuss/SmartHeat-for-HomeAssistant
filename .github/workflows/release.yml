@@ -1,0 +1,61 @@
+name: Release
+on:
+  push:
+    tags: ["heizungsbruecke-v*", "cloudflared_access_mqtt-v*"]
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+env:
+  KIND: addon
+  SELF: SmartHeat-for-HomeAssistant
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
+    permissions:
+      contents: read
+  release:
+    needs: ci
+    # Nur dieser Job schreibt (main per Fast-Forward, GitHub-Release).
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: tools/ aus dem Root-Repo holen
+        env:
+          CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
+        run: bash scripts/ci/siblings.sh "$RUNNER_TEMP/dev" "$SELF" "$GITHUB_WORKSPACE" "$GITHUB_REF_NAME"
+      # release_gate.py braucht nur PyYAML (nicht die ganze tools/requirements-dev.txt).
+      - run: pip install pyyaml==6.0.3
+      - name: Freigabe pruefen
+        id: gate
+        run: >-
+          python "$DEV_ROOT/tools/release_gate.py" --kind "$KIND" --repo "$GITHUB_WORKSPACE"
+          --tag "$GITHUB_REF_NAME" --sha "$GITHUB_SHA" --main-ref origin/main --notes-out "$RUNNER_TEMP/notes.md"
+      - name: main per Fast-Forward nachziehen
+        if: steps.gate.outputs.dryrun == 'false'
+        run: git push origin "$GITHUB_SHA:refs/heads/main"
+      - name: GitHub-Release anlegen
+        if: steps.gate.outputs.dryrun == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ steps.gate.outputs.title }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME existiert bereits"; exit 0
+          fi
+          if [ -s "$RUNNER_TEMP/notes.md" ]; then
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "$TITLE" --notes-file "$RUNNER_TEMP/notes.md"
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "$TITLE" --generate-notes
+          fi
+      - name: Probelauf-Hinweis
+        if: steps.gate.outputs.dryrun == 'true'
+        run: echo "::notice::Probelauf gruen - main unveraendert, kein Release. Tag jetzt loeschen (Runbook 'Probelauf')."

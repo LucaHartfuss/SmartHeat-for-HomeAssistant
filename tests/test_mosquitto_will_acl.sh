@@ -9,7 +9,7 @@
 # ignoriert, nie als Ablehnungsgrund benutzt. Dieses Skript schlaegt fehl, sobald sich das
 # (broker-versionsabhaengige) Verhalten aendert.
 set -eu
-MOSQUITTO_IMAGE="${MOSQUITTO_IMAGE:-eclipse-mosquitto:2.0.11}"  # Produktionsversion: RPi OS Bookworm
+MOSQUITTO_IMAGE="${MOSQUITTO_IMAGE:-eclipse-mosquitto:2.0.21}"  # Produktionsversion: Server Debian 13 (geprueft 2026-09-28)
 TMPDIR="$(mktemp -d)"
 NET_NAME="smartheat-will-acl-net"
 BROKER="smartheat-will-acl-broker"

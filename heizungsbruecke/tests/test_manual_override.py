@@ -8,7 +8,7 @@ from heizungsbruecke import manual_override
 from heizungsbruecke.delivery import SOURCE_LOCAL, SOURCE_WRITE, DataFault, DeliveryState
 from heizungsbruecke.manifest import ChannelManifest
 from heizungsbruecke.notifier import STATE_OK, Notifier
-from heizungsbruecke.override import Override
+from heizungsbruecke.override import DeviceWriteError, Override
 
 MANIFEST = ChannelManifest(entity_ids={"curve_current": "number.curve", "offset_current": "number.offset"})
 POINT = {"curve_current": 0.9, "offset_current": 22.0}
@@ -248,7 +248,7 @@ def test_an_own_write_resets_the_count(make_store):
 def test_a_failed_write_does_not_start_the_window(make_store):
     rt = _rt(make_store, live=(1.3, 24.5))
     rt.ha_api.set_number_value.side_effect = RuntimeError("Cloud weg")
-    with pytest.raises(Exception):
+    with pytest.raises(DeviceWriteError):  # _write() verpackt jeden Schreibfehler so
         rt.override.apply_server_values(0.9, 22.0)
 
     _rounds(rt, 2)

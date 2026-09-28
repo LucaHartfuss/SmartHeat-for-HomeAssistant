@@ -2,6 +2,7 @@ import json
 import logging
 
 import paho.mqtt.client as mqtt
+from paho.mqtt.enums import CallbackAPIVersion
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class BridgeMqttClient:
         self._setpoints_callback = None
         self._on_auth_rejected = on_auth_rejected
         self._on_connected = on_connected
-        self._client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+        self._client = mqtt.Client(CallbackAPIVersion.VERSION2)
         self._client.username_pw_set(username, password)
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
@@ -78,7 +79,11 @@ class BridgeMqttClient:
 
     def _subscribe_setpoints(self) -> None:
         topic = self._setpoints_topic()
-        self._client.message_callback_add(topic, self._setpoints_callback)
+        callback = self._setpoints_callback
+        # Nur aus _on_connect aufgerufen, nachdem dort auf "is not None" geprueft wurde; einmal
+        # gesetzt (subscribe_setpoints()) wird das Feld nie wieder auf None zurueckgesetzt.
+        assert callback is not None
+        self._client.message_callback_add(topic, callback)
         self._client.subscribe(topic, 1)
 
     def publish_telemetry(self, payload: dict) -> None:

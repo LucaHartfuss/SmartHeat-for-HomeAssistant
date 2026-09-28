@@ -14,8 +14,19 @@ from datetime import datetime
 from typing import NoReturn
 
 from heizungsbruecke import (
-    abo, battery, config, daynight_snapshot, delivery, derived_sensors, entitlement, manual_override, regulation,
-    room_sensors, telemetry, ticks, triggers,
+    abo,
+    battery,
+    config,
+    daynight_snapshot,
+    delivery,
+    derived_sensors,
+    entitlement,
+    manual_override,
+    regulation,
+    room_sensors,
+    telemetry,
+    ticks,
+    triggers,
 )
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.ha_api import HomeAssistantApi
@@ -24,12 +35,30 @@ from heizungsbruecke.notifier import STATE_OK, Notifier
 from heizungsbruecke.override import ROLES as OVERRIDE_ROLES
 from heizungsbruecke.override import Override
 from heizungsbruecke.runtime import (
-    EV_ACK_TIMEOUT, EV_AUTH_REJECTED, EV_DAYNIGHT, EV_GRACE_CHECK, EV_HA_CONNECTED, EV_HEALTH, EV_HEARTBEAT,
-    EV_LOCAL_CHECK, EV_MQTT_CONNECTED, EV_RECHECK, EV_RETRY_DUE, EV_SETPOINTS, EV_TELEMETRY, EV_WATCHDOG, Runtime,
+    EV_ACK_TIMEOUT,
+    EV_AUTH_REJECTED,
+    EV_DAYNIGHT,
+    EV_GRACE_CHECK,
+    EV_HA_CONNECTED,
+    EV_HEALTH,
+    EV_HEARTBEAT,
+    EV_LOCAL_CHECK,
+    EV_MQTT_CONNECTED,
+    EV_RECHECK,
+    EV_RETRY_DUE,
+    EV_SETPOINTS,
+    EV_TELEMETRY,
+    EV_WATCHDOG,
+    Runtime,
 )
 from heizungsbruecke.state import StateStore
 from heizungsbruecke.status import (
-    ABO_AKTIV, HEARTBEAT_SECONDS, STATUS_ABGEMELDET, STATUS_ABO_BEENDET, STATUS_KONFIGURATIONSFEHLER, StatusReporter,
+    ABO_AKTIV,
+    HEARTBEAT_SECONDS,
+    STATUS_ABGEMELDET,
+    STATUS_ABO_BEENDET,
+    STATUS_KONFIGURATIONSFEHLER,
+    StatusReporter,
 )
 from heizungsbruecke.worker import Event, RegulationWorker
 
@@ -247,17 +276,19 @@ def _finish_at_start(rt: Runtime, clock) -> IdleBridge:
     mit Boost-Werten liegen bleiben), dann Ruhezustand `abo_beendet`. Scheitert das
     Zuruecksetzen, meldet der notifier das einmal (T2-7), und es wird im Takt
     local_check_interval im Worker erneut versucht."""
-    rt.status.update(abo_beendet=True)
-    bridge = _idle(clock, rt.status, STATUS_ABO_BEENDET)
+    status = rt.status
+    assert status is not None  # beim Boot gesetzt
+    status.update(abo_beendet=True)
+    bridge = _idle(clock, status, STATUS_ABO_BEENDET)
     retry_seconds = config.local_check_interval(rt.options)
 
     def _attempt(event: Event | None = None) -> None:
         if abo.finish_grace(rt, always_restore=False, final_notice=False):
             abo.report_restore(rt.notifier, ok=True)
-            rt.status.update(grund=None)
+            status.update(grund=None)
             return
         abo.report_restore(rt.notifier, ok=False)
-        rt.status.update(grund=abo.RESTORE_FAILED_REASON)
+        status.update(grund=abo.RESTORE_FAILED_REASON)
         logger.error(
             "Abo-inaktiv-Frist abgelaufen, Boost-Werte konnten nicht zurueckgesetzt werden - "
             "erneuter Versuch in %s s", retry_seconds,
@@ -377,10 +408,12 @@ def _on_health(rt: Runtime, event: Event) -> None:
 def _on_mqtt_connected(rt: Runtime, event: Event) -> None:
     """Der erste Connect schliesst den Start ab (Status regelt); jeder Connect hebt eine
     abgelehnte Anmeldung auf."""
-    if rt.status.flags.zugang_abgelehnt:
-        rt.status.update(zugang_abgelehnt=False, grund=None, gestartet=True)
-    elif not rt.status.flags.gestartet:
-        rt.status.update(gestartet=True)
+    status = rt.status
+    assert status is not None  # beim Boot gesetzt
+    if status.flags.zugang_abgelehnt:
+        status.update(zugang_abgelehnt=False, grund=None, gestartet=True)
+    elif not status.flags.gestartet:
+        status.update(gestartet=True)
     rt.notifier.notify("zugang", STATE_OK, abo.ACCESS_OK_MESSAGE, critical=True)
     ticks.deliver(rt, delivery.MqttConnected())
 
@@ -388,13 +421,17 @@ def _on_mqtt_connected(rt: Runtime, event: Event) -> None:
 def _on_ha_connected(rt: Runtime, event: Event) -> None:
     """Voller Status und HA-Benachrichtigungen bei jedem (Wieder-)Verbinden: nach einem
     HA-Neustart fehlen die Benachrichtigungen, und die Integration hat den Status nicht."""
-    rt.status.publish()
+    status = rt.status
+    assert status is not None  # beim Boot gesetzt
+    status.publish()
     rt.notifier.republish_persistent()
 
 
 def _on_heartbeat(rt: Runtime, event: Event) -> None:
     rt.worker.schedule(HEARTBEAT_SECONDS, Event(EV_HEARTBEAT))
-    rt.status.publish()
+    status = rt.status
+    assert status is not None  # beim Boot gesetzt
+    status.publish()
 
 
 def _unless_idle(rt: Runtime, handler, event: Event) -> None:
@@ -422,7 +459,9 @@ def _register_handlers(rt: Runtime) -> None:
     for kind, handler in handlers.items():
         rt.worker.register(kind, functools.partial(_unless_idle, rt, handler))
     rt.worker.register(EV_HEARTBEAT, functools.partial(_on_heartbeat, rt))
-    rt.worker.after_each(rt.status.publish_if_changed)
+    status = rt.status
+    assert status is not None  # beim Boot gesetzt
+    rt.worker.after_each(status.publish_if_changed)
 
 
 # --- Boot ---

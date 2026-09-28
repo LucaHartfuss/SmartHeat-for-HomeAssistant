@@ -29,28 +29,22 @@ CONTAINER_NAME="heizungsbruecke-docker-build-test"
 # "docker logs" danach noch greifen kann (Cleanup passiert explizit am Skriptende).
 MSYS_NO_PATHCONV=1 docker run -d --name "$CONTAINER_NAME" \
   -e SUPERVISOR_TOKEN=test-token \
-  -v "$DATA_DIR_HOST:/data" "$IMAGE_TAG" >/dev/null \
+  -v "$DATA_DIR_HOST:/data:Z" "$IMAGE_TAG" >/dev/null \
   || { echo "FAIL: container start"; exit 1; }
 
-# Ab dieser Version gibt es keinen Wizard/Flask-Server mehr, der den Prozess am Leben
-# haelt: main() ruft _run_bridge() jetzt synchron im Hauptthread auf. Bei unvollstaendiger
-# Config kehrt _run_bridge() sofort zurueck, main() laeuft durch und der Prozess (und
-# damit der Container) beendet sich sauber mit Exit 0. Konfiguriert wird das Add-on ab
-# jetzt ausschliesslich durch die separate SmartHeat-Integration in Home Assistant,
-# die options.json per Supervisor-API schreibt -- nicht mehr durch dieses Add-on selbst.
-# "docker wait" blockiert bis der Container stoppt und liefert dann den Exit-Code --
-# robuster als ein fixes "sleep" gefolgt von einer Running-Pruefung. "timeout 30" davor
-# verhindert, dass eine kuenftige Regression (Prozess beendet sich nicht mehr) das Skript
-# ewig haengen laesst statt schnell fehlzuschlagen -- ein Timeout liefert eine leere
-# Ausgabe, die unten in den bestehenden FAIL-Zweig faellt (kein numerischer Vergleich
-# noetig, der bei leerem/nicht-numerischem Wert sonst einen verwirrenden Fehler werfen
-# wuerde).
-EXIT_CODE="$(timeout 30 docker wait "$CONTAINER_NAME" 2>/dev/null)"
+# Seit TP7 (Ruhezustand statt Exit, siehe __main__.py::_idle/IdleBridge, IDLE_NOT_CONFIGURED)
+# beendet sich der Prozess bei unvollstaendiger Config nicht mehr: er bleibt im Ruhezustand
+# "nicht_eingerichtet" am Leben, weil der Supervisor-Watchdog einen Exit 0 ohnehin sofort neu
+# starten wuerde (siehe SmartHeat-for-HomeAssistant/CLAUDE.md). Erwartet wird daher: der
+# Container laeuft nach kurzer Wartezeit noch, und das Log zeigt den tatsaechlichen
+# Ruhezustand-Hinweis aus __main__.py::_start_bridge/_idle.
+sleep 10
+RUNNING="$(docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null)"
 
-if [ "$EXIT_CODE" = "0" ]; then
-  echo "PASS: Container mit unvollstaendiger Config hat sauber mit Exit 0 beendet (kein Wizard-Modus mehr)"
+if [ "$RUNNING" = "true" ]; then
+  echo "PASS: Container mit unvollstaendiger Config laeuft weiter im Ruhezustand (kein Exit mehr seit TP7)"
 else
-  echo "FAIL: Container mit unvollstaendiger Config sollte sauber mit Exit 0 beenden, Exit-Code war '$EXIT_CODE'"
+  echo "FAIL: Container mit unvollstaendiger Config sollte im Ruhezustand weiterlaufen, State.Running war '$RUNNING'"
   FAIL=1
 fi
 
@@ -58,6 +52,13 @@ if docker logs "$CONTAINER_NAME" 2>&1 | grep -q "Add-on ist noch nicht eingerich
   echo "PASS: Hinweis auf die SmartHeat-Integration im Log vorhanden"
 else
   echo "FAIL: erwarteter Hinweis auf die SmartHeat-Integration fehlt im Log"
+  FAIL=1
+fi
+
+if docker logs "$CONTAINER_NAME" 2>&1 | grep -q "Ruhezustand: nicht_eingerichtet"; then
+  echo "PASS: Ruhezustand-Log (nicht_eingerichtet) vorhanden"
+else
+  echo "FAIL: erwarteter Ruhezustand-Log-Eintrag (nicht_eingerichtet) fehlt"
   FAIL=1
 fi
 

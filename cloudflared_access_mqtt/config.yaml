@@ -5,11 +5,8 @@ description: "Cloudflare Access TCP-Forwarder: macht einen privaten, per Cloudfl
 url: "https://github.com/LucaHartfuss/SmartHeat-for-HomeAssistant"
 arch:
   - aarch64
-  - armhf
-  - armv7
   - amd64
 startup: services
-boot: auto
 host_network: true
 options:
   hostname: ""

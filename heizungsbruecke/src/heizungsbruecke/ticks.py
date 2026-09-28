@@ -5,6 +5,7 @@ import math
 import time
 import uuid
 from datetime import datetime
+from typing import TypeGuard
 
 from heizungsbruecke import abo, delivery, entitlement
 from heizungsbruecke.notifier import STATE_OK
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 _SETPOINT_STATUSES_WITH_VALUES = (delivery.STATUS_OK, delivery.STATUS_SKIPPED_SUMMER)
 
 
-def _is_finite_number(value) -> bool:
+def _is_finite_number(value) -> TypeGuard[float]:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
@@ -209,6 +210,9 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
         expected = state.pending.seq if state.pending is not None else None
         logger.info("Setpoints-Antwort mit seq=%r ignoriert (erwartet: %r)", seq, expected)
         return
+    # accepts_ack() liefert nur True, wenn seq == state.pending.seq (str) ist; andere
+    # JSON-Typen (int/float/bool/list/dict) sind nie gleich einem str, seq ist also ein str.
+    assert isinstance(seq, str)
     _record_answer(rt)
 
     status = payload.get("status")

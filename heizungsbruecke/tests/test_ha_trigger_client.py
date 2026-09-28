@@ -22,6 +22,33 @@ def _wait_until(predicate, timeout=2.0):
     raise AssertionError("condition not met within timeout")
 
 
+def _stop_and_join(client, timeout=2.0):
+    """Stops `client` and waits for its background reconnect thread to actually exit.
+
+    `client.stop()` only sets a flag and closes the *current* (mocked) connection --
+    the background thread notices and returns from `_run_forever_with_reconnect` on its
+    own schedule, one loop iteration later. Not waiting for that here let a thread
+    started by an earlier test in this file outlive that test's `monkeypatch` teardown:
+    several tests below monkeypatch `heizungsbruecke.ha_trigger_client.time.sleep`,
+    which -- since `time` is one shared module object -- patches `time.sleep` globally,
+    not just for that test. A still-running leaked thread's next
+    reconnect-loop iteration then resolved `time.sleep` to whatever a *later* test had
+    it patched to at that moment and silently appended into that later test's own
+    `sleep_calls` list (e.g. a stray 30 landing in
+    test_backoff_restarts_at_one_second_after_successful_subscribe's list, contributed
+    by test_reconnect_uses_increasing_backoff_and_resubscribes's thread -- CI run
+    36439655281, reproduced locally by pinning the test process to one CPU core, which
+    reliably starves the background thread of a scheduling slice right around
+    `client.stop()`). Joining here -- for every test that starts a client, not only the
+    two that patch `time.sleep` -- makes that ordering-dependent leak impossible.
+    """
+    client.stop()
+    thread = client._thread
+    if thread is not None:
+        thread.join(timeout=timeout)
+        assert not thread.is_alive(), "HaTriggerClient background thread leaked past stop()"
+
+
 def _patch_ws_app(captured):
     """Captures the callbacks HaTriggerClient registers on WebSocketApp and hands back
     a fake app whose run_forever() returns immediately (instead of blocking like the
@@ -68,7 +95,7 @@ def test_auth_handshake_sends_auth_then_subscribes_with_full_trigger_list():
         )
         assert client.connected is False  # subscribe result not received yet
 
-        client.stop()
+        _stop_and_join(client)
 
 
 def test_connected_becomes_true_only_after_subscribe_result_success():
@@ -90,7 +117,7 @@ def test_connected_becomes_true_only_after_subscribe_result_success():
         on_message(fake_app, json.dumps({"id": 1, "type": "result", "success": True, "result": None}))
         assert client.connected is True
 
-        client.stop()
+        _stop_and_join(client)
 
 
 def test_connected_becomes_false_after_on_close():
@@ -112,7 +139,7 @@ def test_connected_becomes_false_after_on_close():
         captured["on_close"](fake_app, 1006, "abnormal closure")
         assert client.connected is False
 
-        client.stop()
+        _stop_and_join(client)
 
 
 def test_dispatches_event_trigger_payload_to_callback():
@@ -140,7 +167,7 @@ def test_dispatches_event_trigger_payload_to_callback():
         }))
 
         on_trigger_event.assert_called_once_with(trigger_payload)
-        client.stop()
+        _stop_and_join(client)
 
 
 def test_malformed_event_payload_is_ignored_without_crashing():
@@ -160,7 +187,7 @@ def test_malformed_event_payload_is_ignored_without_crashing():
         on_message(fake_app, json.dumps({"type": "event", "event": {}}))  # missing variables.trigger
 
         on_trigger_event.assert_not_called()
-        client.stop()
+        _stop_and_join(client)
 
 
 def test_callback_exception_does_not_crash_the_dispatch_thread():
@@ -182,7 +209,7 @@ def test_callback_exception_does_not_crash_the_dispatch_thread():
         }))  # must not raise despite the callback raising internally
 
         on_trigger_event.assert_called_once()
-        client.stop()
+        _stop_and_join(client)
 
 
 def test_stop_closes_the_current_websocket_connection():
@@ -248,7 +275,7 @@ def test_on_connected_callback_fires_when_subscribe_result_succeeds():
         assert client.connected is True
         on_connected.assert_called_once()
 
-        client.stop()
+        _stop_and_join(client)
 
 
 def test_on_connected_callback_fires_again_on_a_second_successful_subscribe():
@@ -304,7 +331,7 @@ def test_on_connected_callback_not_called_when_subscribe_fails():
         assert client.connected is False
         on_connected.assert_not_called()
 
-        client.stop()
+        _stop_and_join(client)
 
 
 def test_on_connected_callback_exception_does_not_crash_the_ws_thread():
@@ -340,7 +367,7 @@ def test_on_connected_callback_exception_does_not_crash_the_ws_thread():
         }))
         on_trigger_event.assert_called_once_with(trigger_payload)
 
-        client.stop()
+        _stop_and_join(client)
 
 
 def test_reconnect_uses_increasing_backoff_and_resubscribes(monkeypatch):
@@ -354,7 +381,7 @@ def test_reconnect_uses_increasing_backoff_and_resubscribes(monkeypatch):
         )
         client.start()
         _wait_until(lambda: len(sleep_calls) >= 3)
-        client.stop()
+        _stop_and_join(client)
 
     assert sleep_calls[:3] == [1, 2, 5]
     assert captured["calls"] >= 4  # initial connect + at least 3 reconnects
@@ -383,7 +410,7 @@ def test_backoff_restarts_at_one_second_after_successful_subscribe(monkeypatch):
         )
         client.start()
         _wait_until(lambda: len(sleep_calls) >= 3)
-        client.stop()
+        _stop_and_join(client)
 
     assert sleep_calls[:3] == [1, 1, 1]
 

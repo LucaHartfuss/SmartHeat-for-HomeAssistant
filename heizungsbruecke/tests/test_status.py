@@ -1,6 +1,6 @@
 """Status-Kanal des Add-ons (Spec TP7 1.1, 3.1)."""
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -10,7 +10,7 @@ from heizungsbruecke.delivery import DataFault, DeliveryState
 from heizungsbruecke.state import BridgeState
 from heizungsbruecke.status import Flags, StatusReporter, build_event, overall_status
 
-SINCE = datetime(2026, 10, 1, 8, 0, tzinfo=timezone.utc)
+SINCE = datetime(2026, 10, 1, 8, 0, tzinfo=UTC)
 OVERRIDE = {"curve": 1.3, "offset": 24.5, "erkannt": "2026-10-01T08:00:00+02:00"}
 
 
