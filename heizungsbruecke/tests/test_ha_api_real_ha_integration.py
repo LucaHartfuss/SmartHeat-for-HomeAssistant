@@ -334,15 +334,33 @@ def _raw(api, entity_id: str) -> str | None:
     return response.json()["state"]
 
 
+def _set_state(api, entity_id: str, state: str, attributes: dict) -> None:
+    """Setzt eine Test-Fixture-Entity per rohem REST-POST.
+
+    HomeAssistantApi kennt seit Task 7 (B4, Wegfall der Status-Entity) kein set_state()
+    mehr -- das Add-on selbst braucht die Methode nicht mehr. Diese Tests hier simulieren
+    aber weiterhin Sensor-/Wetter-Quellen fuer die Template-Sensor-Tests unten, dafuer
+    reicht ein lokaler Roundtrip auf denselben Endpunkt, den get_state()/create_*
+    ohnehin verwenden.
+    """
+    response = requests.post(
+        f"{api._base_url}{api._api_prefix}/states/{entity_id}",
+        headers=api._headers,
+        json={"state": state, "attributes": attributes},
+        timeout=10,
+    )
+    response.raise_for_status()
+
+
 def test_room_template_sensor_averages_valid_sources_and_is_unknown_without(real_ha):
     """Spec TP6 3.2/6: Mittelwert mit einem toten und einem unplausiblen Fuehler; alle tot ->
     unknown (nicht "None" als Text, nicht 0)."""
     base_url, token = real_ha
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
-    api.set_state("sensor.tp6_a", "20.0", {"unit_of_measurement": "°C"})
-    api.set_state("sensor.tp6_b", "unavailable", {})
-    api.set_state("sensor.tp6_c", "0.0", {"unit_of_measurement": "°C"})
-    api.set_state("climate.tp6_d", "heat", {"current_temperature": 21.0, "temperature": 22.0})
+    _set_state(api, "sensor.tp6_a", "20.0", {"unit_of_measurement": "°C"})
+    _set_state(api, "sensor.tp6_b", "unavailable", {})
+    _set_state(api, "sensor.tp6_c", "0.0", {"unit_of_measurement": "°C"})
+    _set_state(api, "climate.tp6_d", "heat", {"current_temperature": 21.0, "temperature": 22.0})
 
     entity_id = api.create_template_sensor(
         name="SmartHeat realtest Raumtemperatur",
@@ -354,15 +372,15 @@ def test_room_template_sensor_averages_valid_sources_and_is_unknown_without(real
     assert entity_id == "sensor.smartheat_realtest_raumtemperatur"
     assert _wait_for_state(api, entity_id, "20.5") == "20.5"
 
-    api.set_state("sensor.tp6_a", "unknown", {})
-    api.set_state("climate.tp6_d", "heat", {"current_temperature": None, "temperature": 22.0})
+    _set_state(api, "sensor.tp6_a", "unknown", {})
+    _set_state(api, "climate.tp6_d", "heat", {"current_temperature": None, "temperature": 22.0})
     assert _wait_for_state(api, entity_id, "unknown") == "unknown"
 
 
 def test_outdoor_template_sensor_reads_weather_temperature(real_ha):
     base_url, token = real_ha
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
-    api.set_state("weather.tp6_home", "sunny", {"temperature": 3.2, "temperature_unit": "°C"})
+    _set_state(api, "weather.tp6_home", "sunny", {"temperature": 3.2, "temperature_unit": "°C"})
 
     entity_id = api.create_template_sensor(
         name="SmartHeat realtest Außentemperatur", template=outdoor_temperature_template("weather.tp6_home"),
@@ -376,7 +394,7 @@ def test_deleted_and_recreated_helpers_keep_their_entity_id(real_ha):
     gleich bleiben (kein _2), sonst zeigen Dashboards und Recorder-Historie ins Leere."""
     base_url, token = real_ha
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
-    api.set_state("sensor.tp6_src", "20.0", {"unit_of_measurement": "°C"})
+    _set_state(api, "sensor.tp6_src", "20.0", {"unit_of_measurement": "°C"})
 
     template_id = api.create_template_sensor(name="SmartHeat recreate Raumtemperatur", template="{{ 20 }}")
     api.delete_helper(template_id)
