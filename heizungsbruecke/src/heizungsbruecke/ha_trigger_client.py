@@ -58,6 +58,10 @@ class HaTriggerClient:
         arbitrarily long (it only returns on an actual disconnect). The
         fake-`WebSocketApp` unit tests never caught this since their fake
         `run_forever()` returns immediately by construction.
+
+        Still not synchronous: websocket-client's dispatcher is not always woken by a
+        close from another thread and then ends at its 10-s select timeout, so
+        `connected` can stay True for up to ~10 s after this returns.
         """
         self._stop.set()
         ws_app = self._ws_app
