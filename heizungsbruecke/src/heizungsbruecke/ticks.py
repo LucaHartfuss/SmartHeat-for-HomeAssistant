@@ -94,8 +94,12 @@ def _attempt(rt: Runtime, seq: str, trigger: str):
         # startet den Versuch sofort neu (N3), sonst plant der Ack-Timeout den naechsten.
         logger.warning("Snapshot (seq=%s) nicht gesendet, keine MQTT-Verbindung", seq)
         return delivery.Published(seq=seq, unsent=True)
+    pending_override = rt.store.state.manual_override_pending
     try:
-        publish_snapshot(rt.mqtt_client, seq=seq, trigger=trigger, roles=read.roles)
+        publish_snapshot(
+            rt.mqtt_client, seq=seq, trigger=trigger, roles=read.roles, manual_override=pending_override,
+        )
+        rt.manual_override_sent = pending_override
         logger.info("Voller Snapshot veroeffentlicht (seq=%s, trigger=%s)", seq, trigger)
     except Exception:
         logger.exception("Snapshot (seq=%s) konnte nicht veroeffentlicht werden - Retry nach dem Ack-Timeout", seq)
@@ -177,6 +181,19 @@ def _record_answer(rt: Runtime) -> None:
         logger.exception("Zeitpunkt der Serverantwort konnte nicht gespeichert werden")
 
 
+def _clear_sent_manual_override(rt: Runtime) -> None:
+    """R6: der Server hat den Snapshot mit dem Eingriff verarbeitet (KPI erfasst). Nur genau der
+    gesendete Eintrag wird geloescht; ein inzwischen neu erkannter reist mit dem naechsten Tick."""
+    sent = rt.manual_override_sent
+    if sent is None or rt.store.state.manual_override_pending != sent:
+        return
+    rt.manual_override_sent = None
+    try:
+        rt.store.update(manual_override_pending=None)
+    except Exception:
+        logger.exception("Uebertragener manueller Eingriff konnte nicht als erledigt gespeichert werden")
+
+
 def handle_setpoints(rt: Runtime, payload: dict) -> None:
     """Server-Antwort (Schema 2), zaehlt nur fuer den offenen Tick (auch verspaetet). Gueltige
     Werte gehen vor dem Ack auf die Anlage. Ein unbekannter Status oder ungueltige Werte zaehlen
@@ -193,6 +210,7 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
     status = payload.get("status")
     curve, offset = payload.get("curve"), payload.get("offset")
     if status in _SETPOINT_STATUSES_WITH_VALUES and _is_finite_number(curve) and _is_finite_number(offset):
+        _clear_sent_manual_override(rt)
         try:
             rt.override.apply_server_values(curve, offset)
         except DeviceWriteError as error:

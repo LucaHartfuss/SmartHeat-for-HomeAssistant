@@ -13,8 +13,8 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from heizungsbruecke import (
-    abo, battery, config, daynight_snapshot, delivery, derived_sensors, entitlement, regulation, room_sensors,
-    telemetry, ticks, triggers,
+    abo, battery, config, daynight_snapshot, delivery, derived_sensors, entitlement, manual_override, regulation,
+    room_sensors, telemetry, ticks, triggers,
 )
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.ha_api import HomeAssistantApi
@@ -360,12 +360,13 @@ def _on_grace_check(rt: Runtime, event: Event) -> None:
 
 
 def _on_health(rt: Runtime, event: Event) -> None:
-    """Batterien und einzelne Raumfuehler (Spec TP6 3.5). Eigener Zeitplaneintrag: der lokale
-    Check laeuft seit den eventgetriebenen Triggern nur auf Ereignisse."""
+    """Batterien, einzelne Raumfuehler (Spec TP6 3.5) und manuelle Eingriffe an Kurve/Offset
+    (Spec TP7 3.6). Eigener Zeitplaneintrag: der lokale Check laeuft seit den eventgetriebenen
+    Triggern nur auf Ereignisse."""
     rt.worker.schedule(config.local_check_interval(rt.options), Event(EV_HEALTH))
     if rt.store.state.abo_finished:
         return
-    for check in (battery.check_batteries, room_sensors.check_room_sensors):
+    for check in (battery.check_batteries, room_sensors.check_room_sensors, manual_override.check_manual_override):
         try:
             check(rt)
         except Exception:

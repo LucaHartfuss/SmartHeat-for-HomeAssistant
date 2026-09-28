@@ -1632,3 +1632,48 @@ def test_sign_off_with_invalid_configuration_does_not_write(env):
     assert bridge.reason == "abgemeldet"
     assert env.ha.writes == []
     assert _last_event(env)["grund"] == main_module.SIGN_OFF_INVALID_CONFIG
+
+
+# --- R6: manueller Eingriff (Spec TP7 3.6) ---
+
+OVERRIDE = {"curve": 1.3, "offset": 24.5, "erkannt": "2026-10-01T08:00:00+02:00"}
+
+
+def test_manual_override_travels_with_the_next_snapshot_and_is_cleared_after_the_answer(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    env.ha.states.update({"number.curve_current": 1.3, "number.offset_current": 24.5})
+    _advance(env, bridge, 300)
+    _advance(env, bridge, 300)  # zwei Runden mit Abweichung
+
+    assert _backup(env)["manual_override_pending"]["curve"] == 1.3
+    assert _last_event(env)["hinweise"]["manueller_eingriff"]["kurve"] == 1.3
+
+    _set_room_target(env, bridge, 20.5)
+    snapshot = _mqtt(env).snapshots[-1]
+    assert set(snapshot["manual_override"]) == {"curve", "offset", "erkannt"}
+
+    _answer(env, bridge, snapshot["seq"], curve=0.95, offset=23.0)
+    assert "manual_override_pending" not in _backup(env)
+
+    _advance(env, bridge, 300)  # Anlage steht wieder auf den gelernten Werten
+    assert _last_event(env)["hinweise"]["manueller_eingriff"] is None
+
+
+def test_pending_manual_override_survives_a_restart(env):
+    _quiet_backup(env, manual_override_pending=OVERRIDE)
+    bridge = _start(env)
+
+    _set_room_target(env, bridge, 20.5)
+
+    assert _mqtt(env).snapshots[-1]["manual_override"] == OVERRIDE
+
+
+def test_rejected_answer_keeps_the_pending_manual_override(env):
+    _quiet_backup(env, manual_override_pending=OVERRIDE)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+
+    _answer(env, bridge, _mqtt(env).snapshots[-1]["seq"], status="rejected", reason="x")
+
+    assert _backup(env)["manual_override_pending"] == OVERRIDE
