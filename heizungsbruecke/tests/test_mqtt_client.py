@@ -218,8 +218,10 @@ def test_connected_hook_exception_does_not_escape_network_thread(caplog):
 
 
 def test_client_sets_no_last_will_and_publishes_nothing_on_connect():
-    # B4/TP7: nichts mehr unter smartheat/<tenant>/status/ -- Mosquitto 2 lehnt einen Connect
-    # ab, dessen Will-Topic die neue ACL nicht erlaubt.
+    # B4/TP7: nichts mehr unter smartheat/<tenant>/status/ -- der Status laeuft seit 0.20.0
+    # ueber die SmartHeat-Integration (Spec TP7 1.4), nicht mehr per Last Will/Discovery. Ein
+    # von der ACL nicht erlaubtes Will-Topic wuerde den Connect nicht einmal ablehnen (siehe
+    # tests/test_mosquitto_will_acl.sh) -- das war nie der Grund fuer diese Aenderung.
     _, mock_client = _client_with_mock()
 
     mock_client.on_connect(mock_client, None, {}, 0, None)
