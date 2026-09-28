@@ -2,8 +2,6 @@ name: Release
 on:
   push:
     tags: ["heizungsbruecke-v*", "cloudflared_access_mqtt-v*"]
-permissions:
-  contents: write
 concurrency:
   group: release-${{ github.repository }}
   cancel-in-progress: false
@@ -14,8 +12,13 @@ jobs:
   ci:
     uses: ./.github/workflows/ci.yml
     secrets: inherit
+    permissions:
+      contents: read
   release:
     needs: ci
+    # Nur dieser Job schreibt (main per Fast-Forward, GitHub-Release).
+    permissions:
+      contents: write
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -29,7 +32,8 @@ jobs:
         env:
           CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
         run: bash scripts/ci/siblings.sh "$RUNNER_TEMP/dev" "$SELF" "$GITHUB_WORKSPACE" "$GITHUB_REF_NAME"
-      - run: pip install -r "$DEV_ROOT/tools/requirements-dev.txt"
+      # release_gate.py braucht nur PyYAML (nicht die ganze tools/requirements-dev.txt).
+      - run: pip install pyyaml==6.0.3
       - name: Freigabe pruefen
         id: gate
         run: >-

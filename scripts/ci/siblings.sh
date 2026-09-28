@@ -22,13 +22,23 @@ url() { printf 'https://x-access-token:%s@github.com/%s/%s.git' "$CROSS_REPO_TOK
 ref_for() {
   # Ausserhalb jedes Repos ausfuehren: actions/checkout hinterlegt im Checkout einen extraheader mit dem
   # GITHUB_TOKEN des eigenen Repos, der sonst die Token-URL uebersteuert ("Repository not found").
-  if git -C / ls-remote --exit-code --heads "$(url "$1")" "$BRANCH" >/dev/null 2>&1; then echo "$BRANCH"; else echo develop; fi
+  # Exaktes Muster refs/heads/<branch> (ein nacktes Muster matcht per Suffix, z. B. "ci-pipeline" auf
+  # refs/heads/feat/ci-pipeline). Exit 2 = kein Treffer -> develop; jeder andere Fehler bricht ab.
+  local rc=0
+  git -C / ls-remote --exit-code --heads "$(url "$1")" "refs/heads/$BRANCH" >/dev/null 2>&1 || rc=$?
+  case $rc in
+    0) echo "$BRANCH" ;;
+    2) echo develop ;;
+    *) echo "::error::git ls-remote fuer $1 fehlgeschlagen (Exit $rc), kein Rueckfall auf develop" >&2; return 1 ;;
+  esac
 }
 clone() {
   local repo=$1 target=$2 ref
   ref=$(ref_for "$repo")
   echo "$repo -> $ref"
   git clone -q --depth 1 --branch "$ref" "$(url "$repo")" "$target"
+  # Token nicht in $target/.git/config stehen lassen.
+  git -C "$target" remote set-url origin "https://github.com/$OWNER/$repo.git"
 }
 if [ "$SELF" = HomeAssistant_Dev_Root ]; then
   DEV="$SELF_PATH"

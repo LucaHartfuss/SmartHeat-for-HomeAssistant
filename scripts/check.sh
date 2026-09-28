@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Lokale und CI-Pruefung (docs/ci-cd-runbook.md). Aufruf: scripts/check.sh [--full] [--only SCHRITT]
-# Ohne --full laufen Docker-Schritte nur, wenn docker direkt verfuegbar ist (CI); lokal in der
-# VS-Code-Sandbox laufen sie mit --full ueber flatpak-spawn --host.
+# Docker-Schritte: im Add-on laeuft "docker" nur mit --full oder --only docker; in HomeAssistantPapa
+# braucht "config" immer Docker. Docker wird direkt genutzt, wenn verfuegbar (CI); in der
+# VS-Code-Sandbox nur mit --full ueber flatpak-spawn --host (daher lokal: --only docker --full).
+# Ein unbekannter Schrittname bei --only bricht mit Exit 2 ab (gueltige Namen: check_only-Aufruf unten).
 set -uo pipefail
 cd "$(dirname "$0")/.."
 FULL=0
@@ -25,6 +27,13 @@ finish() {
   if [ ${#FAILED[@]} -eq 0 ]; then echo "=== ALLES GRUEN ==="; exit 0; fi
   echo "=== FEHLER in: ${FAILED[*]} ==="; exit 1
 }
+# Bricht ab, wenn --only keinen der uebergebenen (gueltigen) Schrittnamen nennt.
+check_only() {
+  if [ -z "$ONLY" ]; then return 0; fi
+  local valid
+  for valid in "$@"; do [ "$ONLY" = "$valid" ] && return 0; done
+  echo "Unbekannter Schritt: $ONLY (gueltig: $*)" >&2; exit 2
+}
 # Docker-Befehl: direkt (CI) oder ueber den Host (Sandbox, nur mit --full).
 docker_host_run() {
   if command -v docker >/dev/null 2>&1; then "$@"
@@ -45,6 +54,7 @@ docker_tests() {
   done
   return $rc
 }
+check_only lint test contract docker
 step lint lint
 step test tests
 step contract contract
