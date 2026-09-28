@@ -27,20 +27,27 @@ HA-Add-on-Repository mit zwei Add-ons: `heizungsbruecke` (Client-seitige Bridge-
 - `heizungsbruecke/config.yaml` — hat einen echten `schema:`-Block, wird aber **ausschließlich** von der SmartHeat-Integration befüllt, nie manuell in der Add-on-UI.
 - `cloudflared_access_mqtt/` — nur `run.sh`-Wrapper um `cloudflared access tcp`, keine eigene Logik.
 
-## Tests
+## Prüfen und Branches
 
 ```
-cd heizungsbruecke
-pip install -e ".[dev]"
-pytest
+scripts/check.sh          # lint, test, contract (--only <schritt> für einzelne Schritte)
+scripts/check.sh --full   # zusätzlich die Docker-Schritte (Build, Happy-Path, run.sh, Will-ACL)
 ```
-(`pyproject.toml`: `testpaths = ["tests"]`, `pythonpath = ["src"]`.) 876 Testfunktionen in 38 Dateien (`pytest -q --collect-only`). Zusätzlich Shell-Integrationstests im Repo-Root unter `tests/` (`run_all.sh`, Docker-Build/Happy-Path).
+Direkter Aufruf bleibt möglich: `cd heizungsbruecke && pip install -e ".[dev]" && pytest`
+(`pyproject.toml`: `testpaths = ["tests"]`, `pythonpath = ["src"]`). Testzahl: siehe CI (Job
+`test`). Shell-Integrationstests liegen im Repo-Root unter `tests/` (`run_all.sh`).
+
+Feature-Branches (`feat/…`/`fix/…`) zweigen von `develop` ab und werden `--no-ff` nach `develop`
+gemergt — nie direkt nach `main`. `main` bewegt sich nur per Release-Tag
+(`heizungsbruecke-vX.Y.Z`, `cloudflared_access_mqtt-vX.Y.Z`; `-dryrun`-Suffix = Probelauf) —
+ein Push nach `main` ist ein Release an alle Kunden-Pis, deren Supervisor den Default-Branch
+verfolgt. Release-Ablauf, CI-Jobs, Token: `../docs/ci-cd-runbook.md`.
 
 ## Besonderheiten
 
 - MQTT-Lokalport `18830` ist in `heizungsbruecke` hart codiert — muss zum `local_port`-Default von `cloudflared_access_mqtt` passen (Cross-Repo-Invariante, siehe `../docs/architecture.md` §9).
 - Lokale Sicherheitswerte (`safety.py`) gibt es nur im Add-on. Ihre Schlüssel (Verteilsysteme) spiegelt der Server; Fenster und Basis-URL kommen per Optionen von Server bzw. Integration. `python3 ../tools/contract_check.py` prüft alle Cross-Repo-Duplikate — vor jedem Release grün.
-- Versionierung/Changelog lebt in `DOCS.md` je Add-on (aktuell `heizungsbruecke` v0.20.0, `cloudflared_access_mqtt` v1.0.0), kein separates `CHANGELOG.md`.
+- Versionsstand in `<addon>/config.yaml`; seit der CI/CD-Umstellung (2026-09-28) hat jedes Add-on zusätzlich ein `CHANGELOG.md` (Pflichtabschnitt `## X.Y.Z` je Release, geprüft vom Release-Workflow, im Update-Dialog des Supervisors sichtbar) neben dem bisherigen `DOCS.md`.
 - Startfehler (`__main__.py::StartupError`/`_fail_start`) melden über einen stabilen `notifier`-Schlüssel `fehler:<key>` (z. B. `hilfs_entities`, `entity_fehlt:<sortierte IDs>`) — der ausführliche Grund steht nur im Feld `grund` des Status-Events, in der Meldung und im Log, nicht in der Meldeidentität, sonst würde ein Neustart mit demselben Fehler jedes Mal erneut melden. Ein im Fehlertext zitierter `mqtt_password`-Wert wird überall (Text, `grund`, Meldung, Retry-Log) durch `***` ersetzt (`_without_credentials`).
 - Startbereitschaft: HA gilt erst als erreichbar, wenn `GET /api/config` `state == "RUNNING"` meldet (`ha_api.is_reachable`); vorher wartet der Start unbegrenzt, das ~4-min-Budget für fehlende Entities/Hilfs-Entities zählt nur bei laufendem HA (Cloud-Integrationen wie `mypyllant` laden erst nach dem HTTP-Server).
 - Der Status `regelt` gilt ab dem ersten MQTT-Connect (`EV_MQTT_CONNECTED`); im Abo-inaktiv-Modus direkt nach dem Hochfahren. Endzustände sind ein Ruhezustand, weil der Supervisor-Watchdog auch einen Exit 0 neu startet.
