@@ -80,6 +80,18 @@ def test_rejected_and_errors_never_log_the_password(monkeypatch, caplog):
     assert "sehr-geheim" not in caplog.text
 
 
+def test_rejected_401_logs_a_warning_without_the_password(monkeypatch, caplog):
+    """F4 (finale Review, TP8): eine abgelehnte Anmeldung (401) blieb bisher komplett stumm --
+    fuer eine Diagnose auf dem Kunden-Pi muss zumindest eine Warnung im Log stehen, ohne
+    Zugangsdaten preiszugeben."""
+    _patch_get(monkeypatch, response=_Response(401, {"error": "Nicht authentifiziert"}))
+    with caplog.at_level(logging.DEBUG):
+        result = entitlement.query_status("t1", "https://a.example", "u1", "sehr-geheim")
+    assert result == entitlement.REJECTED
+    assert "sehr-geheim" not in caplog.text
+    assert "401" in caplog.text
+
+
 @pytest.mark.parametrize("response", [
     _Response(404, {"error": "Unbekannter Tenant"}), _Response(404, json_error=True), _Response(404, None),
 ])

@@ -143,9 +143,10 @@ def handle_auth_rejected(rt: Runtime) -> None:
 def check_grace_end(rt: Runtime) -> None:
     """Fristende waehrend der Laufzeit. Vorher erneut fragen: ein inzwischen reaktiviertes Abo
     wird nicht zurueckgesetzt, sondern der Prozess startet im Normalbetrieb neu (set-status
-    active stellt widerrufene MQTT-Zugangsdaten nicht wieder her, dafuer muss die Integration
-    neu eingerichtet werden). Scheitert die Wiederherstellung, laeuft die lokale Regelung
-    weiter und der naechste Check versucht es erneut."""
+    active stellt seit TP8 widerrufene MQTT-Zugangsdaten wieder her, sofern dafuer ein Hash
+    gespeichert ist - fehlt er, muss die Integration neu eingerichtet werden). Scheitert die
+    Wiederherstellung, laeuft die lokale Regelung weiter und der naechste Check versucht es
+    erneut."""
     since = rt.store.state.abo_inactive_since
     if since is None or not entitlement.grace_expired(since, datetime.now().astimezone()):
         return

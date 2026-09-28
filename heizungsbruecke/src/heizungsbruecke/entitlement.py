@@ -34,6 +34,7 @@ def query_status(tenant_id: str, base_url: str, username: str, password: str) ->
         logger.warning("Abo-Status nicht abrufbar (wird als unbekannt behandelt): %s", error)
         return UNKNOWN
     if response.status_code == 401:
+        logger.warning("Abo-Status-Abfrage: Server lehnt die Anmeldung ab (HTTP 401)")
         return REJECTED
     if response.status_code != 200:
         logger.warning("Abo-Status-Abfrage lieferte HTTP %s (wird als unbekannt behandelt)", response.status_code)
