@@ -4,6 +4,8 @@ Importiert zur Laufzeit nichts aus dem Paket, damit regulation/ticks/abo/trigger
 Zyklus nutzen koennen."""
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -59,3 +61,9 @@ class Runtime:
     # geaenderten Eintrag sonst stillschweigend verwerfen (KPI-Verlust). Ein zwischenzeitlich neu
     # erkannter Eingriff reist deshalb erst mit der naechsten seq.
     manual_override_seq: str | None = None
+    # Monotone Uhr des Workers (Tests: FakeClock). Fuer die Drosselung in abo.handle_auth_rejected.
+    clock: Callable[[], float] = time.monotonic
+    # T2-12: Zeitpunkt und Ergebnis der letzten Abo-Abfrage nach einer abgelehnten MQTT-Anmeldung;
+    # ein erfolgreicher Connect setzt beides zurueck. Nicht persistiert.
+    auth_rejected_queried_at: float | None = None
+    auth_rejected_last_status: str | None = None

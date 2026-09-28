@@ -104,37 +104,53 @@ def report_restore(notifier, ok: bool) -> None:
         notifier.notify("wiederherstellung", "fehlgeschlagen", RESTORE_FAILED_MESSAGE, critical=True)
 
 
+AUTH_REJECTED_QUERY_INTERVAL_SECONDS = 600.0
+
+
 def handle_auth_rejected(rt: Runtime) -> None:
-    """Der Broker hat die Zugangsdaten abgelehnt (beim Suspend widerrufen). Nur ein eindeutiges
-    "inactive" wechselt in den Abo-inaktiv-Modus, sonst meldet es "zugang_abgelehnt" und paho
-    verbindet weiter. Die Abfrage blockiert den Worker bis zu 10 s; deshalb stellt der paho-Hook
-    gebuendelt ein, und im Abo-inaktiv-Modus wird nicht mehr gefragt."""
+    """Der Broker hat die Zugangsdaten abgelehnt (beim Suspend widerrufen, ersetzt oder entfernt).
+    Nur ein eindeutiges "inactive" wechselt in den Abo-inaktiv-Modus, sonst "zugang_abgelehnt"
+    und paho verbindet weiter. T2-12: solange zugang_abgelehnt steht, hoechstens alle 600 s eine
+    Abfrage (sie blockiert den Worker bis zu 10 s), ERROR nur beim ersten Mal und bei geaendertem
+    Ergebnis. Im Abo-inaktiv-Modus wird nicht mehr gefragt."""
     if rt.store.state.abo_inactive_since is not None:
         return
-    status = entitlement.query_status(rt.options["tenant_id"], rt.options["accounts_api_base_url"])
-    if status != entitlement.INACTIVE:
-        logger.error(
-            "MQTT-Anmeldung vom Broker abgelehnt, Abo-Status ist aber '%s' - Zugangsdaten "
-            "pruefen (ggf. SmartHeat-Integration neu anmelden).", status,
-        )
-        status_reporter = rt.status
-        assert status_reporter is not None  # beim Boot gesetzt
-        status_reporter.update(zugang_abgelehnt=True, grund=ACCESS_DENIED_REASON)
-        rt.notifier.notify("zugang", "abgelehnt", ACCESS_DENIED_MESSAGE, critical=True)
+    status_reporter = rt.status
+    assert status_reporter is not None  # beim Boot gesetzt
+    now = rt.clock()
+    last = rt.auth_rejected_queried_at
+    if status_reporter.flags.zugang_abgelehnt and last is not None and now - last < AUTH_REJECTED_QUERY_INTERVAL_SECONDS:
+        logger.debug("MQTT-Anmeldung erneut abgelehnt, Abo-Status wird erst nach %.0f s wieder abgefragt",
+                     AUTH_REJECTED_QUERY_INTERVAL_SECONDS)
         return
-    enter_inactive(rt, datetime.now().astimezone())
+    status = entitlement.query_from_options(rt.options)
+    rt.auth_rejected_queried_at = now
+    if status == entitlement.INACTIVE:
+        enter_inactive(rt, datetime.now().astimezone())
+        return
+    log = logger.error if status != rt.auth_rejected_last_status else logger.debug
+    rt.auth_rejected_last_status = status
+    if status == entitlement.REJECTED:
+        log("MQTT-Anmeldung abgelehnt, der Server kennt diese Zugangsdaten nicht mehr - "
+            "SmartHeat-Integration neu anmelden.")
+    else:
+        log("MQTT-Anmeldung vom Broker abgelehnt, Abo-Status ist aber '%s' - Zugangsdaten "
+            "pruefen (ggf. SmartHeat-Integration neu anmelden).", status)
+    status_reporter.update(zugang_abgelehnt=True, grund=ACCESS_DENIED_REASON)
+    rt.notifier.notify("zugang", "abgelehnt", ACCESS_DENIED_MESSAGE, critical=True)
 
 
 def check_grace_end(rt: Runtime) -> None:
     """Fristende waehrend der Laufzeit. Vorher erneut fragen: ein inzwischen reaktiviertes Abo
     wird nicht zurueckgesetzt, sondern der Prozess startet im Normalbetrieb neu (set-status
-    active stellt widerrufene MQTT-Zugangsdaten nicht wieder her, dafuer muss die Integration
-    neu eingerichtet werden). Scheitert die Wiederherstellung, laeuft die lokale Regelung
-    weiter und der naechste Check versucht es erneut."""
+    active stellt seit TP8 widerrufene MQTT-Zugangsdaten wieder her, sofern dafuer ein Hash
+    gespeichert ist - fehlt er, muss die Integration neu eingerichtet werden). Scheitert die
+    Wiederherstellung, laeuft die lokale Regelung weiter und der naechste Check versucht es
+    erneut."""
     since = rt.store.state.abo_inactive_since
     if since is None or not entitlement.grace_expired(since, datetime.now().astimezone()):
         return
-    if entitlement.query_status(rt.options["tenant_id"], rt.options["accounts_api_base_url"]) == entitlement.ACTIVE:
+    if entitlement.query_from_options(rt.options) == entitlement.ACTIVE:
         entitlement.clear(config.ENTITLEMENT_PATH)
         logger.warning("Abo wieder aktiv, Neustart im Normalbetrieb")
         restart_process()

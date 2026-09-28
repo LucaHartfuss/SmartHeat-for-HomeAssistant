@@ -61,7 +61,7 @@ def _execute(rt: Runtime, action):
     if isinstance(action, delivery.Attempt):
         return _attempt(rt, action.seq, action.trigger)
     if isinstance(action, delivery.QueryEntitlement):
-        status = entitlement.query_status(rt.options["tenant_id"], rt.options["accounts_api_base_url"])
+        status = entitlement.query_from_options(rt.options)
         return delivery.EntitlementChecked(seq=action.seq, status=status)
     if isinstance(action, delivery.ScheduleAckTimeout):
         rt.worker.schedule(action.delay_s, Event(EV_ACK_TIMEOUT, {"seq": action.seq, "gen": action.gen}))

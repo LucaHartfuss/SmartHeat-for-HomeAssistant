@@ -3,9 +3,12 @@
 Wird im Update-Dialog des Supervisors angezeigt. Pro Version ein Abschnitt `## X.Y.Z`; der
 Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Release.
 
-## Unveröffentlicht
+## 0.21.0
 
 - `boot: auto` aus der Add-on-Konfiguration entfernt (Standardwert, keine Verhaltensänderung).
+- Die Abo-Status-Abfrage meldet sich mit den MQTT-Zugangsdaten der Anlage an (setzt den
+  Server-Stand TP8 voraus). Bei dauerhaft abgelehnter Anmeldung fragt das Add-on höchstens alle
+  10 Minuten nach und schreibt die Fehlerzeile nur einmal.
 
 ## 0.20.0
 

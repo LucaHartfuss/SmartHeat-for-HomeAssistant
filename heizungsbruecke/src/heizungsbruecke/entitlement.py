@@ -1,7 +1,6 @@
-"""Abo-Status des Tenants und die 30-Tage-Frist des Abo-inaktiv-Modus. Status kommt vom
-unauthentifizierten accounts-api-Endpunkt
-GET /tenants/<id>/status; die Frist wird in /data/entitlement_state.json persistiert,
-damit sie Add-on-Neustarts ueberlebt."""
+"""Abo-Status des Tenants (GET /tenants/<id>/status mit den MQTT-Zugangsdaten der Anlage,
+Spec TP8 3.1) und die 30-Tage-Frist des Abo-inaktiv-Modus. Die Frist wird in
+/data/entitlement_state.json persistiert, damit sie Add-on-Neustarts ueberlebt."""
 import json
 import logging
 import os
@@ -14,29 +13,29 @@ logger = logging.getLogger(__name__)
 
 GRACE_PERIOD = timedelta(days=30)
 
+STATUS_PATH = "/tenants/{tenant_id}/status"
+CREDENTIAL_OPTIONS = ("mqtt_username", "mqtt_password")
+
 ACTIVE = "active"
 INACTIVE = "inactive"
 UNKNOWN = "unknown"
+REJECTED = "rejected"
 
 
-def query_status(tenant_id: str, base_url: str) -> str:
-    """Fail-open: nur eine eindeutige Antwort (active=false oder ein 404 der accounts-api mit
-    {"error": ...}) gilt als inaktiv; ein accounts-api-Ausfall oder ein fremder 404 (Cloudflare-
-    Catch-all, geaenderte Route) darf einen zahlenden Kunden nicht in den Notbetrieb schicken."""
+def query_status(tenant_id: str, base_url: str, username: str, password: str) -> str:
+    """Fail-open: nur eine eindeutige Antwort zaehlt. 200 mit active=true/false ergibt ACTIVE/
+    INACTIVE, 401 ergibt REJECTED (Zugangsdaten ersetzt, entfernt oder falsch). Alles andere --
+    Ausfall, jeder 404 (der Server kennt keinen mehr), Catch-all -- ist UNKNOWN: ein accounts-api-
+    Ausfall darf einen zahlenden Kunden nicht in den Notbetrieb schicken."""
+    url = f"{base_url}{STATUS_PATH.format(tenant_id=tenant_id)}"
     try:
-        response = requests.get(f"{base_url}/tenants/{tenant_id}/status", timeout=10)
+        response = requests.get(url, auth=(username, password), timeout=10)
     except Exception as error:
         logger.warning("Abo-Status nicht abrufbar (wird als unbekannt behandelt): %s", error)
         return UNKNOWN
-    if response.status_code == 404:
-        try:
-            body = response.json()
-        except Exception:
-            body = None
-        if isinstance(body, dict) and "error" in body:
-            return INACTIVE
-        logger.warning("Abo-Status-Abfrage lieferte HTTP 404 ohne accounts-api-Antwort (wird als unbekannt behandelt)")
-        return UNKNOWN
+    if response.status_code == 401:
+        logger.warning("Abo-Status-Abfrage: Server lehnt die Anmeldung ab (HTTP 401)")
+        return REJECTED
     if response.status_code != 200:
         logger.warning("Abo-Status-Abfrage lieferte HTTP %s (wird als unbekannt behandelt)", response.status_code)
         return UNKNOWN
@@ -52,6 +51,13 @@ def query_status(tenant_id: str, base_url: str) -> str:
         return INACTIVE
     logger.warning("Abo-Status-Antwort ohne gueltiges 'active'-Feld: %r", body)
     return UNKNOWN
+
+
+def query_from_options(options: dict) -> str:
+    username_key, password_key = CREDENTIAL_OPTIONS
+    return query_status(
+        options["tenant_id"], options["accounts_api_base_url"], options[username_key], options[password_key],
+    )
 
 
 def load_inactive_since(path: Path) -> datetime | None:

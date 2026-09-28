@@ -183,10 +183,11 @@ def env(tmp_path, monkeypatch, clock):
     monkeypatch.setattr("heizungsbruecke.daynight_snapshot.maybe_snapshot", lambda **kwargs: None)
     abo = {"status": entitlement.ACTIVE, "queries": 0}
 
-    def _query_status(tenant_id, base_url):
+    def _query_status(tenant_id, base_url, username, password):
         # Jede Abo-Abfrage (Boot, Tick-Zustellung, abgelehnte Anmeldung, Fristende) nutzt die
-        # Basis-URL aus den Optionen (Spec TP3, 2.5).
+        # Basis-URL aus den Optionen (Spec TP3, 2.5) und die MQTT-Zugangsdaten (Spec TP8, 3.1).
         assert base_url == OPTIONS["accounts_api_base_url"]
+        assert (username, password) == (OPTIONS["mqtt_username"], OPTIONS["mqtt_password"])
         abo["queries"] += 1
         return abo["status"]
 
@@ -1031,6 +1032,9 @@ def test_inactive_rejection_after_unknown_rejection_clears_zugang_abgelehnt_sile
     pushes_before = list(env.ha.pushes)
 
     env.abo["status"] = entitlement.INACTIVE
+    # T2-12-Drosselung: die erste Ablehnung hat schon abgefragt und zugang_abgelehnt gesetzt,
+    # daher braucht diese zweite Ablehnung 600 s Abstand, um ueberhaupt erneut abzufragen.
+    env.clock.advance(600)
     _mqtt(env).kwargs["on_auth_rejected"](_mqtt(env))
     bridge.worker.run_pending()
 
@@ -1048,7 +1052,7 @@ def test_inactive_rejection_after_unknown_rejection_clears_zugang_abgelehnt_sile
     assert _last_event(env)["grund"] is None  # nicht mehr der stehengebliebene Zugangsgrund
 
 
-@pytest.mark.parametrize("status", [entitlement.ACTIVE, entitlement.UNKNOWN])
+@pytest.mark.parametrize("status", [entitlement.ACTIVE, entitlement.UNKNOWN, entitlement.REJECTED])
 def test_auth_rejected_with_active_or_unknown_abo_reports_zugang_abgelehnt(env, caplog, status):
     _quiet_backup(env)
     bridge = _start(env)
@@ -1063,6 +1067,31 @@ def test_auth_rejected_with_active_or_unknown_abo_reports_zugang_abgelehnt(env, 
     assert _status_states(env)[-1] == "zugang_abgelehnt"
     assert _last_event(env)["grund"] == abo.ACCESS_DENIED_REASON
     assert ("smartheat_zugang", abo.ACCESS_DENIED_MESSAGE) in env.ha.persistent
+
+
+def test_rejected_status_at_start_starts_normally(env):
+    # Spec TP8 3.2: REJECTED beim Start wie UNKNOWN -- die MQTT-Anmeldung klaert den Rest.
+    _quiet_backup(env)
+    env.abo["status"] = entitlement.REJECTED
+
+    bridge = _start(env)
+
+    assert _is_running(bridge)
+    assert _abo_inactive_since(bridge) is None
+    assert _mqtt(env).stopped is False
+
+
+def test_rejected_status_when_the_server_is_silent_is_no_abo_mode(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    env.abo["status"] = entitlement.REJECTED
+
+    _advance(env, bridge, 30)
+    _advance(env, bridge, 30)
+
+    assert _delivery(bridge).notbetrieb is True
+    assert _abo_inactive_since(bridge) is None
 
 
 def test_successful_connect_clears_zugang_abgelehnt(env):
@@ -1107,6 +1136,83 @@ def test_auth_rejected_in_abo_inactive_mode_does_not_query_again(env):
     assert env.abo["queries"] == queries_before
 
 
+def _reject(env, bridge):
+    _mqtt(env).kwargs["on_auth_rejected"](_mqtt(env))
+    bridge.worker.run_pending()
+
+
+def _access_errors(caplog):
+    # nur die Zeilen aus handle_auth_rejected, nicht andere ERRORs aus Takten, die beim Vorstellen der Uhr laufen
+    return [r for r in caplog.records if r.levelno == logging.ERROR and "MQTT-Anmeldung" in r.getMessage()]
+
+
+def test_auth_rejections_query_at_most_every_ten_minutes(env, caplog):
+    _quiet_backup(env)
+    bridge = _start(env)
+    env.abo["status"] = entitlement.REJECTED
+    queries_before = env.abo["queries"]
+
+    with caplog.at_level(logging.ERROR):
+        _reject(env, bridge)
+        env.clock.advance(300)
+        _reject(env, bridge)
+        env.clock.advance(299)
+        _reject(env, bridge)
+
+    assert env.abo["queries"] == queries_before + 1
+    assert len(_access_errors(caplog)) == 1
+
+    env.clock.advance(1)
+    _reject(env, bridge)
+    assert env.abo["queries"] == queries_before + 2
+
+
+def test_error_line_repeats_only_when_the_result_changes(env, caplog):
+    _quiet_backup(env)
+    bridge = _start(env)
+    env.abo["status"] = entitlement.REJECTED
+
+    with caplog.at_level(logging.ERROR):
+        _reject(env, bridge)
+        env.clock.advance(600)
+        _reject(env, bridge)
+        env.abo["status"] = entitlement.UNKNOWN
+        env.clock.advance(600)
+        _reject(env, bridge)
+
+    assert len(_access_errors(caplog)) == 2
+
+
+def test_suspension_during_zugang_abgelehnt_is_seen_after_the_interval(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    env.abo["status"] = entitlement.REJECTED
+    _reject(env, bridge)
+
+    env.abo["status"] = entitlement.INACTIVE
+    env.clock.advance(600)
+    _reject(env, bridge)
+
+    assert _status_states(env)[-1] == "abo_inaktiv"
+
+
+def test_successful_connect_resets_the_throttle(env, caplog):
+    # Nach einem erfolgreichen Connect ist eine neue Ablehnung wieder "die erste": sofortige
+    # Abfrage und wieder eine ERROR-Zeile, auch bei unveraendertem Ergebnis.
+    _quiet_backup(env)
+    bridge = _start(env)
+    env.abo["status"] = entitlement.REJECTED
+    with caplog.at_level(logging.ERROR):
+        _reject(env, bridge)
+        _connect(env, bridge)
+        queries_before = env.abo["queries"]
+
+        _reject(env, bridge)
+
+    assert env.abo["queries"] == queries_before + 1
+    assert len(_access_errors(caplog)) == 2
+
+
 def test_unexpected_entitlement_query_error_counts_as_unknown(env, monkeypatch):
     # T10b: eine unerwartet werfende Abo-Abfrage nach dem zweiten Timeout laeuft ueber
     # _fallback_follow_up als "unbekannt" -- Notbetrieb mit Retry, kein Abo-inaktiv-Modus.
@@ -1115,7 +1221,7 @@ def test_unexpected_entitlement_query_error_counts_as_unknown(env, monkeypatch):
     _set_room_target(env, bridge, 20.5)
     seq = _mqtt(env).snapshots[0]["seq"]
 
-    def _broken_query(tenant_id, base_url):
+    def _broken_query(tenant_id, base_url, username, password):
         raise RuntimeError("unerwartet")
 
     monkeypatch.setattr("heizungsbruecke.entitlement.query_status", _broken_query)
