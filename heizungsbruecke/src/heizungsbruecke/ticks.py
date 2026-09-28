@@ -94,12 +94,19 @@ def _attempt(rt: Runtime, seq: str, trigger: str):
         # startet den Versuch sofort neu (N3), sonst plant der Ack-Timeout den naechsten.
         logger.warning("Snapshot (seq=%s) nicht gesendet, keine MQTT-Verbindung", seq)
         return delivery.Published(seq=seq, unsent=True)
-    pending_override = rt.store.state.manual_override_pending
+    # R6-Fix: der beim ersten erfolgreichen Publish dieser seq gepinnte Eintrag reist bei jedem
+    # Retry unveraendert mit; ein zwischenzeitlich neu erkannter Eingriff wartet auf die naechste
+    # seq (siehe Runtime.manual_override_seq).
+    if rt.manual_override_seq == seq:
+        pending_override = rt.manual_override_sent
+    else:
+        pending_override = rt.store.state.manual_override_pending
     try:
         publish_snapshot(
             rt.mqtt_client, seq=seq, trigger=trigger, roles=read.roles, manual_override=pending_override,
         )
         rt.manual_override_sent = pending_override
+        rt.manual_override_seq = seq
         logger.info("Voller Snapshot veroeffentlicht (seq=%s, trigger=%s)", seq, trigger)
     except Exception:
         logger.exception("Snapshot (seq=%s) konnte nicht veroeffentlicht werden - Retry nach dem Ack-Timeout", seq)

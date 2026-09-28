@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from heizungsbruecke import manual_override
-from heizungsbruecke.delivery import DataFault, DeliveryState
+from heizungsbruecke.delivery import SOURCE_LOCAL, SOURCE_WRITE, DataFault, DeliveryState
 from heizungsbruecke.manifest import ChannelManifest
 from heizungsbruecke.notifier import STATE_OK, Notifier
 
@@ -90,9 +90,24 @@ def test_no_detection_during_a_boost(make_store, backup):
 
 def test_no_detection_during_a_write_fault(make_store):
     rt = _rt(make_store, live=(1.3, 24.5))
-    rt.store.set_delivery(DeliveryState(datenfehler=DataFault("write", ("curve_current (number.curve): weg",))))
+    rt.store.set_delivery(DeliveryState(datenfehler=DataFault(SOURCE_WRITE, ("curve_current (number.curve): weg",))))
 
     _rounds(rt, 3)
+
+    assert rt.store.state.manual_override is None
+
+
+def test_no_detection_after_a_write_fault_turns_into_a_read_fault(make_store):
+    """Fix Runde 1, Befund 1: ein Schreibfehler kann durch einen anderen Datenfehler abgeloest
+    werden (delivery._read_invalid/_ack bei einer Ablehnung), waehrend die Anlage noch auf den
+    alten Werten steht -- die Erkennung muss bei jedem offenen Datenfehler pausieren, nicht nur
+    bei einem Schreibfehler."""
+    rt = _rt(make_store, live=(1.3, 24.5))
+    rt.store.set_delivery(DeliveryState(datenfehler=DataFault(SOURCE_WRITE, ("curve_current (number.curve): weg",))))
+    _rounds(rt)  # noch Schreibfehler
+
+    rt.store.set_delivery(DeliveryState(datenfehler=DataFault(SOURCE_LOCAL, ("room_actual",))))
+    _rounds(rt, 2)  # zwei Runden mit einem anderen (nicht Schreib-) Datenfehler
 
     assert rt.store.state.manual_override is None
 

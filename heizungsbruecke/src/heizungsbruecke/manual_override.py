@@ -1,14 +1,19 @@
 """Manueller Eingriff an Kurve/Offset (R6, Spec TP7 3.6). Weicht die Anlage vom
-Wiederherstellungspunkt ab, ohne dass ein Boost laeuft oder ein Schreibfehler vorliegt, hat
+Wiederherstellungspunkt ab, ohne dass ein Boost laeuft oder ein Datenfehler vorliegt, hat
 jemand von Hand verstellt. SmartHeat ueberschreibt das weiterhin beim naechsten Regelschritt,
 meldet den Eingriff aber (nicht kritisch, abschaltbar) und schickt ihn als KPI mit dem naechsten
 Snapshot an den Server. Erst nach DETECTION_ROUNDS Runden in Folge: nach eigenem Schreiben kann
-der HA-Zustand eine Runde nachhinken. Die Rueckkehr hebt den Hinweis still auf."""
+der HA-Zustand eine Runde nachhinken. Die Rueckkehr hebt den Hinweis still auf.
+
+Jeder offene Datenfehler pausiert die Erkennung, nicht nur ein Schreibfehler: ein Schreibfehler
+kann durch einen lokalen oder Server-Datenfehler abgeloest werden (delivery._read_invalid,
+delivery._ack bei einer Ablehnung), waehrend die Anlage noch auf den alten Werten steht (der
+Wiederherstellungspunkt wird vor dem Schreiben gespeichert, siehe override.apply_server_values) --
+eine Erkennung wuerde dann faelschlich anschlagen, obwohl niemand von Hand eingegriffen hat."""
 import logging
 import math
 from datetime import datetime
 
-from heizungsbruecke import delivery
 from heizungsbruecke.notifier import STATE_OK
 
 logger = logging.getLogger(__name__)
@@ -56,7 +61,7 @@ def check_manual_override(rt) -> None:
     point = {"curve_current": state.curve_current, "offset_current": state.offset_current}
     if (
         state.boost_active or state.emergency_boost_active
-        or (fault is not None and fault.source == delivery.SOURCE_WRITE)
+        or fault is not None
         or not all(_is_number(value) for value in point.values())
     ):
         _set_misses(rt, 0)

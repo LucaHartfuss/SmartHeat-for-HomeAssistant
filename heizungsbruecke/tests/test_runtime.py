@@ -1677,3 +1677,94 @@ def test_rejected_answer_keeps_the_pending_manual_override(env):
     _answer(env, bridge, _mqtt(env).snapshots[-1]["seq"], status="rejected", reason="x")
 
     assert _backup(env)["manual_override_pending"] == OVERRIDE
+
+
+def test_manual_override_detected_during_an_open_tick_survives_a_same_seq_retry(env):
+    """Fix Runde 1, Befund 2: der Server verarbeitet eine bereits gesehene seq idempotent aus
+    dem Cache (generic/tick.py). Ein zwischen dem ersten Publish und einem Retry derselben seq
+    neu erkannter Eingriff darf nicht mit dem Retry reisen -- der Server saehe ihn dann nie,
+    waehrend die (verspaetete) Antwort ihn beim Client trotzdem als erledigt loeschen wuerde
+    (KPI-Verlust). Er muss bis zur naechsten seq warten."""
+    _quiet_backup(env)
+    bridge = _start(env, local_check_interval_seconds=5)
+    _set_room_target(env, bridge, 20.5)  # erster Tick, seq X, noch ohne Eingriff
+    seq = _mqtt(env).snapshots[0]["seq"]
+    assert "manual_override" not in _mqtt(env).snapshots[0]
+
+    env.ha.states.update({"number.curve_current": 1.3, "number.offset_current": 24.5})
+    _advance(env, bridge, 5)
+    _advance(env, bridge, 5)  # zwei Runden mit Abweichung, seq X wartet noch auf Antwort
+    assert _backup(env)["manual_override_pending"]["curve"] == 1.3
+
+    _advance(env, bridge, 20)  # Ack-Timeout (30 s seit dem Publish) loest den Retry derselben seq aus
+    assert [s["seq"] for s in _mqtt(env).snapshots] == [seq, seq]
+    assert "manual_override" not in _mqtt(env).snapshots[-1]  # gepinnt: wie beim ersten Publish
+
+    _answer(env, bridge, seq, curve=0.95, offset=23.0)  # verspaetete Antwort auf den Retry trifft ein
+
+    assert _backup(env)["manual_override_pending"]["curve"] == 1.3  # ueberlebt, der Server hat ihn nie gesehen
+
+
+def test_manual_override_detected_while_a_tick_is_open_survives_its_answer(env):
+    """Fix Runde 1, Befund 3c: ein zwischen Publish und Antwort neu erkannter Eingriff (noch ohne
+    Retry) darf die Antwort auf den urspruenglichen, eingriffslosen Versuch nicht loeschen
+    (sent=None schuetzt ihn ueber die Praezisierung-4-Pruefung in _clear_sent_manual_override)."""
+    _quiet_backup(env)
+    bridge = _start(env, local_check_interval_seconds=5)
+    _set_room_target(env, bridge, 20.5)  # seq X, noch ohne Eingriff
+    seq = _mqtt(env).snapshots[-1]["seq"]
+
+    env.ha.states.update({"number.curve_current": 1.3, "number.offset_current": 24.5})
+    _advance(env, bridge, 5)
+    _advance(env, bridge, 5)  # zwei Runden: Eingriff erkannt, seq X ist noch offen
+
+    _answer(env, bridge, seq, curve=0.95, offset=23.0)  # Antwort auf den urspruenglichen Versuch
+
+    assert _backup(env)["manual_override_pending"]["curve"] == 1.3
+
+
+def test_ok_answer_clears_the_pending_manual_override_even_if_the_write_then_fails(env):
+    """Fix Runde 1, Befund 3a: Praezisierung 4 gilt auch dann, wenn das anschliessende Schreiben
+    auf die Anlage scheitert -- die vorhandenen DeviceWriteError-Tests setzten bisher nie
+    manual_override_pending, die Abdeckung fehlte."""
+    _quiet_backup(env, manual_override_pending=OVERRIDE)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[-1]["seq"]
+    env.ha.write_error = RuntimeError("HA nicht erreichbar")
+
+    _answer(env, bridge, seq, curve=0.95, offset=23.0)
+
+    assert "manual_override_pending" not in _backup(env)
+    assert _delivery(bridge).pending.seq == seq  # Retry derselben seq wegen Schreibfehler laeuft weiter
+
+
+def test_skipped_summer_answer_clears_the_pending_manual_override(env):
+    """Fix Runde 1, Befund 3b: skipped_summer zaehlt wie ok als Antwort mit Werten (Praezisierung 4)."""
+    _quiet_backup(env, manual_override_pending=OVERRIDE)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[-1]["seq"]
+
+    _answer(env, bridge, seq, status="skipped_summer", curve=0.95, offset=23.0)
+
+    assert "manual_override_pending" not in _backup(env)
+
+
+def test_a_failed_publish_does_not_pin_a_manual_override(env):
+    """Fix Runde 1, Befund 3d: ein Publish-Fehler pinnt nichts -- der naechste erfolgreiche
+    Versuch derselben seq liest den aktuellen Stand frisch."""
+    _quiet_backup(env, manual_override_pending=OVERRIDE)
+    bridge = _start(env)
+    _mqtt(env).publish_error = RuntimeError("paho kaputt")
+
+    _set_room_target(env, bridge, 20.5)
+
+    assert _mqtt(env).snapshots == []
+    assert bridge.manual_override_sent is None
+
+    _mqtt(env).publish_error = None
+    _advance(env, bridge, 30)
+
+    assert _mqtt(env).snapshots[-1]["manual_override"] == OVERRIDE
+    assert bridge.manual_override_sent == OVERRIDE

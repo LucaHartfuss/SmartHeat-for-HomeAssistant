@@ -53,3 +53,9 @@ class Runtime:
     idle: bool = False
     # R6: der mit dem laufenden Tick gesendete Eingriff (wird nach der Serverantwort geloescht).
     manual_override_sent: dict | None = None
+    # R6: die seq, fuer die manual_override_sent gepinnt ist (gesetzt beim ersten erfolgreichen
+    # Publish dieser seq). Ein Retry derselben seq sendet exakt diesen Eintrag erneut -- der
+    # Server verarbeitet eine schon gesehene seq idempotent aus dem Cache und wuerde einen
+    # geaenderten Eintrag sonst stillschweigend verwerfen (KPI-Verlust). Ein zwischenzeitlich neu
+    # erkannter Eingriff reist deshalb erst mit der naechsten seq.
+    manual_override_seq: str | None = None
