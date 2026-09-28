@@ -1,4 +1,5 @@
 import logging
+import sys
 from unittest.mock import MagicMock
 
 import pytest
@@ -6,11 +7,12 @@ import requests
 
 from heizungsbruecke.__main__ import (
     DERIVED_SENSORS_RETRY_DELAYS_SECONDS,
+    IdleBridge,
     StartupError,
     _check_timezone,
     _ensure_derived_sensors_with_retry,
     _retry_with_budget,
-    _run_bridge,
+    _start_bridge,
     _wait_for_required_entities,
 )
 from heizungsbruecke.derived_sensors import DerivedSensors
@@ -76,30 +78,32 @@ def _full_valid_options(**overrides):
     return options
 
 
-def test_run_bridge_returns_zero_when_not_configured(caplog):
+def test_unconfigured_addon_idles_without_status_event(caplog):
+    ha_api = MagicMock()
+
     with caplog.at_level("INFO"):
-        result = _run_bridge({}, MagicMock())
+        result = _start_bridge({}, ha_api)
 
-    assert result == 0
+    assert isinstance(result, IdleBridge)
+    assert result.reason == "nicht_eingerichtet"
     assert "Add-on ist noch nicht eingerichtet" in caplog.text
+    ha_api.fire_event.assert_not_called()
 
 
-def test_run_bridge_returns_one_for_verteilsystem_without_safety_values(monkeypatch, caplog, sleeps):
-    # Konfiguriert, aber ungueltig: ein echter Startfehler, main() muss ihn von "nicht
-    # konfiguriert" unterscheiden koennen.
+def test_verteilsystem_without_safety_values_is_a_configuration_error(monkeypatch, caplog, sleeps):
     monkeypatch.setattr(
         "heizungsbruecke.entitlement.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
     )
 
     with caplog.at_level("ERROR"):
-        result = _run_bridge(_full_valid_options(verteilsystem="Fussbodenheizung"), MagicMock())
+        result = _start_bridge(_full_valid_options(verteilsystem="Fussbodenheizung"), MagicMock())
 
-    assert result == 1
+    assert result.reason == "konfigurationsfehler"
     assert "FEHLER" in caplog.text
     assert "Fussbodenheizung" in caplog.text
 
 
-def test_run_bridge_with_0_17_0_options_fails_loudly_as_outdated(caplog, sleeps):
+def test_0_17_0_options_are_outdated_not_unconfigured(caplog, sleeps):
     old = {k: v for k, v in _full_valid_options().items() if k not in (
         "verteilsystem", "daily_trigger_time", "day_avg_window_start", "day_avg_window_end",
         "night_avg_window_start", "night_avg_window_end", "room_sensors",
@@ -107,23 +111,48 @@ def test_run_bridge_with_0_17_0_options_fails_loudly_as_outdated(caplog, sleeps)
     old["profile"] = "vaillant_gastherme_heizkoerper"
 
     with caplog.at_level("INFO"):
-        result = _run_bridge(old, MagicMock())
+        result = _start_bridge(old, MagicMock())
 
-    assert result == 1
+    assert result.reason == "konfigurationsfehler"
     assert "Konfiguration veraltet" in caplog.text
     assert "noch nicht eingerichtet" not in caplog.text
 
 
-def test_run_bridge_returns_one_for_invalid_telemetry_interval(monkeypatch, caplog, sleeps):
-    monkeypatch.setattr(
-        "heizungsbruecke.entitlement.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
-    )
-
+def test_invalid_telemetry_interval_is_a_configuration_error(caplog, sleeps):
     with caplog.at_level(logging.ERROR):
-        result = _run_bridge(_full_valid_options(telemetry_interval_seconds=5), MagicMock())
+        result = _start_bridge(_full_valid_options(telemetry_interval_seconds=5), MagicMock())
 
-    assert result == 1
+    assert result.reason == "konfigurationsfehler"
     assert "telemetry_interval_seconds" in caplog.text
+
+
+def test_outdated_options_idle_with_heartbeat_and_recheck_without_second_push(monkeypatch, clock, sleeps):
+    """Review Focus 1: client1 nach dem Update. Kein Exit (Watchdog-Karussell), Lebenszeichen,
+    nach 900 s Neupruefung per os.execv, derselbe Fehler meldet nicht erneut."""
+    old = {k: v for k, v in _full_valid_options(notify_services=["notify.mobile_app_a"]).items() if k != "room_sensors"}
+    old["entity_room_actual"] = "sensor.room_actual"
+    ha_api = _reachable()
+    execs = []
+    monkeypatch.setattr("os.execv", lambda path, args: execs.append(args))
+
+    bridge = _start_bridge(old, ha_api, clock=clock)
+
+    assert bridge.reason == "konfigurationsfehler"
+    assert ha_api.send_notification.call_count == 1
+    sent = len(_status_calls(ha_api))
+    clock.advance(300)
+    bridge.worker.run_pending()
+    assert len(_status_calls(ha_api)) == sent + 1
+    assert _status_calls(ha_api)[-1]["status"] == "konfigurationsfehler"
+    assert execs == []
+
+    clock.advance(600)
+    bridge.worker.run_pending()
+
+    assert execs == [[sys.executable, "-m", "heizungsbruecke"]]
+    assert _start_bridge(old, ha_api, clock=clock).reason == "konfigurationsfehler"  # neuer Prozess
+    assert ha_api.send_notification.call_count == 1
+    ha_api.set_number_value.assert_not_called()
 
 
 def test_main_runs_bridge_synchronously(tmp_path, monkeypatch):
@@ -143,7 +172,8 @@ def test_main_runs_bridge_synchronously(tmp_path, monkeypatch):
     assert calls[0][0] == {}
 
 
-def test_main_exits_nonzero_when_run_bridge_reports_a_genuine_error(tmp_path, monkeypatch):
+def test_main_never_exits_on_its_own(tmp_path, monkeypatch):
+    # Befund Supervisor-Watchdog: auch ein Exit 0 wuerde neu gestartet.
     options_path = tmp_path / "options.json"
     options_path.write_text("{}")
     monkeypatch.setattr("heizungsbruecke.config.OPTIONS_PATH", options_path)
@@ -152,10 +182,7 @@ def test_main_exits_nonzero_when_run_bridge_reports_a_genuine_error(tmp_path, mo
 
     from heizungsbruecke.__main__ import main
 
-    with pytest.raises(SystemExit) as exc_info:
-        main()
-
-    assert exc_info.value.code != 0
+    assert main() is None  # kein SystemExit
 
 
 _DERIVED_OPTIONS = {
@@ -304,7 +331,8 @@ def test_ensure_derived_sensors_with_retry_recovers_after_transient_failures(mon
 
 
 def _status_calls(ha_api):
-    return [(c.args[1], c.args[2]) for c in ha_api.set_state.call_args_list]
+    """Die gesendeten Status-Events (Daten), in Reihenfolge."""
+    return [c.args[1] for c in ha_api.fire_event.call_args_list if c.args[0] == "smartheat_status"]
 
 
 def test_start_with_0_18_0_options_reports_outdated_configuration(sleeps):
@@ -313,11 +341,11 @@ def test_start_with_0_18_0_options_reports_outdated_configuration(sleeps):
     old["entity_room_actual"] = "sensor.room_actual"
     ha_api = _reachable()
 
-    assert _run_bridge(old, ha_api) == 1
+    assert _start_bridge(old, ha_api).reason == "konfigurationsfehler"
 
     states = _status_calls(ha_api)
-    assert [state for state, _ in states] == ["startet", "konfigurationsfehler"]
-    assert "Konfiguration veraltet – bitte SmartHeat-Einrichtung erneut durchführen" in states[-1][1]["grund"]
+    assert [event["status"] for event in states] == ["startet", "konfigurationsfehler"]
+    assert "Konfiguration veraltet – bitte SmartHeat-Einrichtung erneut durchführen" in states[-1]["grund"]
     ha_api.create_persistent_notification.assert_called_once()
     assert ha_api.create_persistent_notification.call_args.args[2] == "smartheat_konfiguration"
     ha_api.send_notification.assert_not_called()
@@ -329,8 +357,8 @@ def test_repeated_start_error_does_not_push_again(sleeps):
     options = _full_valid_options(room_sensors=["light.kaputt"], notify_services=["notify.mobile_app_a"])
     ha_api = _reachable()
 
-    assert _run_bridge(options, ha_api) == 1
-    assert _run_bridge(options, ha_api) == 1
+    assert _start_bridge(options, ha_api).reason == "konfigurationsfehler"
+    assert _start_bridge(options, ha_api).reason == "konfigurationsfehler"
 
     assert ha_api.send_notification.call_count == 1
 
@@ -352,7 +380,7 @@ def test_repeated_helper_failure_with_changing_error_text_does_not_push_again(mo
 
     for flow_id in ("0a1b2c3d", "9f8e7d6c"):
         run["flow_id"] = flow_id
-        assert _run_bridge(options, ha_api) == 1
+        assert _start_bridge(options, ha_api).reason == "konfigurationsfehler"
 
     assert ha_api.send_notification.call_count == 1  # kein zweiter Push
     # Die HA-Benachrichtigung wird je Start neu angelegt (ersetzt die vorige per notification_id,
@@ -361,7 +389,7 @@ def test_repeated_helper_failure_with_changing_error_text_does_not_push_again(mo
     assert len(persistent) == 2
     assert {c.args[2] for c in persistent} == {"smartheat_konfiguration"}
     assert "9f8e7d6c" in persistent[-1].args[1]
-    grund = _status_calls(ha_api)[-1][1]["grund"]
+    grund = _status_calls(ha_api)[-1]["grund"]
     assert "Hilfs-Entities konnten nicht angelegt werden" in grund
     assert "9f8e7d6c" in grund  # der Status zeigt den aktuellen Fehler im Detail
 
@@ -371,11 +399,11 @@ def test_repeated_missing_entity_does_not_push_again(sleeps):
     ha_api = _reachable()
     ha_api.entity_exists.side_effect = lambda entity_id: entity_id != "number.heat_limit"
 
-    assert _run_bridge(options, ha_api) == 1
-    assert _run_bridge(options, ha_api) == 1
+    assert _start_bridge(options, ha_api).reason == "konfigurationsfehler"
+    assert _start_bridge(options, ha_api).reason == "konfigurationsfehler"
 
     assert ha_api.send_notification.call_count == 1
-    assert "Entity fehlt in Home Assistant: number.heat_limit" in _status_calls(ha_api)[-1][1]["grund"]
+    assert "Entity fehlt in Home Assistant: number.heat_limit" in _status_calls(ha_api)[-1]["grund"]
 
 
 @pytest.mark.parametrize("overrides", [
@@ -386,15 +414,15 @@ def test_repeated_missing_entity_does_not_push_again(sleeps):
 ])
 def test_start_error_reason_never_contains_credentials(sleeps, caplog, overrides):
     """Regel 6: die Startpruefung zitiert ungueltige Optionswerte (!r). Steht das MQTT-Passwort
-    versehentlich in einer anderen Option, darf es weder in der Status-Entity noch in Meldungen
+    versehentlich in einer anderen Option, darf es weder im Status-Event noch in Meldungen
     oder im Log auftauchen."""
     options = _full_valid_options(notify_services=["notify.mobile_app_a"], **overrides)
     ha_api = _reachable()
 
     with caplog.at_level(logging.INFO):
-        assert _run_bridge(options, ha_api) == 1
+        assert _start_bridge(options, ha_api).reason == "konfigurationsfehler"
 
-    grund = _status_calls(ha_api)[-1][1]["grund"]
+    grund = _status_calls(ha_api)[-1]["grund"]
     assert "***" in grund  # der Fehlertext haette den Wert zitiert
     assert "test_mqtt_pass" not in grund
     ha_api.send_notification.assert_called_once()
@@ -411,12 +439,12 @@ def test_missing_entity_retry_warnings_and_reason_never_contain_credentials(slee
     ha_api.entity_exists.side_effect = lambda entity_id: entity_id != "sensor.test_mqtt_pass"
 
     with caplog.at_level(logging.INFO):
-        assert _run_bridge(options, ha_api) == 1
+        assert _start_bridge(options, ha_api).reason == "konfigurationsfehler"
 
     assert "Start noch nicht moeglich" in caplog.text  # die Warnungen je Versuch sind geloggt
     assert "sensor.***" in caplog.text
     assert "test_mqtt_pass" not in caplog.text
-    grund = _status_calls(ha_api)[-1][1]["grund"]
+    grund = _status_calls(ha_api)[-1]["grund"]
     assert grund == "Entity fehlt in Home Assistant: sensor.***"
     assert "test_mqtt_pass" not in str(ha_api.send_notification.call_args)
     assert "test_mqtt_pass" not in str(ha_api.create_persistent_notification.call_args)
@@ -426,10 +454,10 @@ def test_start_waits_for_ha_before_reporting(sleeps):
     old = {k: v for k, v in _full_valid_options().items() if k != "room_sensors"}
     ha_api = _reachable(False, False)
 
-    assert _run_bridge(old, ha_api) == 1
+    assert _start_bridge(old, ha_api).reason == "konfigurationsfehler"
 
     assert sleeps[:2] == [5, 10]
-    assert ha_api.set_state.call_count == 2
+    assert len(_status_calls(ha_api)) == 2
 
 
 def test_check_timezone_warns_on_mismatch(monkeypatch, caplog):

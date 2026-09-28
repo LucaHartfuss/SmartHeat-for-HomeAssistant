@@ -1,29 +1,36 @@
 """Einstieg des Add-ons: Boot, Handler des Regel-Workers, Hauptschleife.
 
 Alle Regelungsereignisse laufen nacheinander im Hauptthread (RegulationWorker). Die Handler
-hier sind duenn und rufen das zustaendige Modul."""
+hier sind duenn und rufen das zustaendige Modul. Das Add-on beendet sich nie absichtlich: mit
+eingeschaltetem Supervisor-Watchdog wuerde auch ein sauberer Exit 0 neu gestartet (Spec TP7,
+Befund Supervisor-Watchdog). Endzustaende sind ein Ruhezustand, in dem nur noch das
+Lebenszeichen an die Integration laeuft."""
 import functools
 import logging
 import os
-import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime
+from typing import NoReturn
 
 from heizungsbruecke import (
-    abo, battery, config, daynight_snapshot, delivery, derived_sensors, entitlement, regulation, room_sensors,
-    telemetry, ticks, triggers,
+    abo, battery, config, daynight_snapshot, delivery, derived_sensors, entitlement, manual_override, regulation,
+    room_sensors, telemetry, ticks, triggers,
 )
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.ha_api import HomeAssistantApi
-from heizungsbruecke.manifest import ManifestError, build_manifest
+from heizungsbruecke.manifest import ChannelManifest, ManifestError, build_manifest
 from heizungsbruecke.notifier import STATE_OK, Notifier
+from heizungsbruecke.override import ROLES as OVERRIDE_ROLES
 from heizungsbruecke.override import Override
 from heizungsbruecke.runtime import (
-    EV_ACK_TIMEOUT, EV_AUTH_REJECTED, EV_DAYNIGHT, EV_GRACE_CHECK, EV_HA_CONNECTED, EV_HEALTH, EV_LOCAL_CHECK,
-    EV_MQTT_CONNECTED, EV_RETRY_DUE, EV_SETPOINTS, EV_TELEMETRY, EV_WATCHDOG, Runtime,
+    EV_ACK_TIMEOUT, EV_AUTH_REJECTED, EV_DAYNIGHT, EV_GRACE_CHECK, EV_HA_CONNECTED, EV_HEALTH, EV_HEARTBEAT,
+    EV_LOCAL_CHECK, EV_MQTT_CONNECTED, EV_RECHECK, EV_RETRY_DUE, EV_SETPOINTS, EV_TELEMETRY, EV_WATCHDOG, Runtime,
 )
 from heizungsbruecke.state import StateStore
-from heizungsbruecke.status import STATUS_BEREIT, STATUS_KONFIGURATIONSFEHLER, STATUS_STARTET, StatusReporter
+from heizungsbruecke.status import (
+    ABO_AKTIV, HEARTBEAT_SECONDS, STATUS_ABGEMELDET, STATUS_ABO_BEENDET, STATUS_KONFIGURATIONSFEHLER, StatusReporter,
+)
 from heizungsbruecke.worker import Event, RegulationWorker
 
 # Das Add-on startet mit `startup: services`, evtl. vor HA Core. Solange HA nicht antwortet,
@@ -35,11 +42,17 @@ DERIVED_SENSORS_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60, 60, 60)
 REQUIRED_ENTITY_OPTIONS = (
     "entity_room_target", "entity_curve_current", "entity_offset_current", "entity_heat_limit", "entity_outdoor_temp",
 )
+# Im Konfigurationsfehler prueft ein frischer Prozess nach dieser Zeit erneut (z. B. eine spaet
+# geladene Integration); der persistierte Meldezustand verhindert eine Wiederholungsmeldung.
+CONFIG_RECHECK_SECONDS = 900
+IDLE_NOT_CONFIGURED = "nicht_eingerichtet"
 CONFIG_OK_MESSAGE = "SmartHeat: Einrichtung in Ordnung, die Heizungssteuerung läuft."
 CONFIG_ERROR_MESSAGE = (
     "SmartHeat: Konfigurationsfehler – {grund}. Die Heizungssteuerung ist gestoppt, "
     "die Anlage behält ihre letzten Werte."
 )
+SIGN_OFF_INVALID_CONFIG = "Konfiguration ungültig, die Anlage wurde nicht zurückgesetzt"
+SIGN_OFF_RESTORE_FAILED = "Zurücksetzen der Anlage scheitert, neuer Versuch in {seconds} s"
 REDACTED = "***"
 SOURCE_CHANGE_MESSAGE = (
     "SmartHeat: Die Quelle der Raum- oder Außentemperatur hat sich geändert. Die Tagesmittel "
@@ -62,6 +75,35 @@ class StartupError(Exception):
 
 class _MissingEntities(Exception):
     pass
+
+
+@dataclass
+class IdleBridge:
+    """Ruhezustand beim Start (Spec TP7 3.2): keine Regelung, kein MQTT, keine Trigger, kein
+    Schreiben auf die Anlage (ausser dem Zuruecksetzen beim Abmelden/Fristende). Es laeuft nur der
+    Worker mit dem Lebenszeichen, sofern es einen Status-Kanal gibt."""
+    worker: RegulationWorker
+    status: StatusReporter | None
+    reason: str  # IDLE_NOT_CONFIGURED oder ein Status-Wert
+
+
+def _idle(clock, status: StatusReporter | None, reason: str, *, recheck_after: float | None = None) -> IdleBridge:
+    worker = RegulationWorker(clock=clock)
+    if status is not None:
+        worker.register(EV_HEARTBEAT, functools.partial(_idle_heartbeat, worker, status))
+        worker.after_each(status.publish_if_changed)
+        worker.schedule(HEARTBEAT_SECONDS, Event(EV_HEARTBEAT))
+        status.publish_if_changed()
+    if recheck_after is not None:
+        worker.register(EV_RECHECK, lambda event: abo.restart_process())
+        worker.schedule(recheck_after, Event(EV_RECHECK))
+    logger.info("Ruhezustand: %s", reason)
+    return IdleBridge(worker=worker, status=status, reason=reason)
+
+
+def _idle_heartbeat(worker: RegulationWorker, status: StatusReporter, event: Event) -> None:
+    worker.schedule(HEARTBEAT_SECONDS, Event(EV_HEARTBEAT))
+    status.publish()
 
 
 def _wait_until_reachable(ha_api) -> None:
@@ -140,8 +182,8 @@ def _ensure_derived_sensors_with_retry(ha_api, options: dict) -> DerivedSensors:
 
 
 def _without_credentials(text: str, options: dict) -> str:
-    """Startfehler zitieren ungueltige Optionswerte (!r) und landen in Status-Entity, Meldungen
-    und Log. Steht das MQTT-Passwort (versehentlich) in so einem Wert, wird es unkenntlich
+    """Startfehler zitieren ungueltige Optionswerte (!r) und landen im Status-Event, in Meldungen
+    und im Log. Steht das MQTT-Passwort (versehentlich) in so einem Wert, wird es unkenntlich
     gemacht, auch in der von repr() maskierten Form (Regel 6)."""
     password = options.get("mqtt_password")
     if isinstance(password, str) and password:
@@ -150,16 +192,81 @@ def _without_credentials(text: str, options: dict) -> str:
     return text
 
 
-def _fail_start(notifier, status, grund: str, key: str | None = None) -> int:
+def _fail_start(notifier, status, clock, grund: str, key: str | None = None) -> IdleBridge:
     """Meldezustand `fehler:<key>` (stabile Identitaet, Standard: der Text selbst); Meldung und
-    Status-Entity tragen den ausfuehrlichen Grund. Derselbe Fehler wie beim letzten Start pusht
-    nicht erneut, legt aber die HA-Benachrichtigung neu an (sie fehlt nach einem Host-Neustart)."""
+    Status tragen den ausfuehrlichen Grund. Derselbe Fehler wie beim letzten Start pusht nicht
+    erneut, legt aber die HA-Benachrichtigung neu an (sie fehlt nach einem Host-Neustart). Danach
+    Ruhezustand mit Neupruefung nach CONFIG_RECHECK_SECONDS."""
     logger.error("FEHLER: %s", grund)
     message = CONFIG_ERROR_MESSAGE.format(grund=grund)
     if not notifier.notify("konfiguration", f"fehler:{grund if key is None else key}", message, critical=True):
         notifier.refresh_persistent("konfiguration", message)
-    status.set(STATUS_KONFIGURATIONSFEHLER, grund=grund)
-    return 1
+    status.update(konfigurationsfehler=True, grund=grund)
+    return _idle(clock, status, STATUS_KONFIGURATIONSFEHLER, recheck_after=CONFIG_RECHECK_SECONDS)
+
+
+def _sign_off(options: dict, ha_api, store, notifier, status, clock) -> IdleBridge:
+    """Abmelden (Spec TP7 3.3, die Integration wird entfernt): laufenden Boost auf den
+    Wiederherstellungspunkt zuruecknehmen, alle Meldungen entfernen, dann Ruhezustand
+    `abgemeldet`. Es wird kein Hilfssensor angelegt: fuer das Zuruecksetzen reichen Kurve, Offset
+    und die Clamps. Scheitert es, wird es im Takt local_check_interval erneut versucht; der Status
+    bleibt `abgemeldet` mit Grund."""
+    try:
+        effective = config.resolve_effective_options(options)
+    except config.ConfigError as error:
+        logger.error("Abmelden ohne Zuruecksetzen, Konfiguration ungueltig: %s", _without_credentials(str(error), options))
+        restorer = None
+    else:
+        manifest = ChannelManifest(entity_ids={role: effective[f"entity_{role}"] for role in OVERRIDE_ROLES})
+        restorer = Override(store, manifest, ha_api, effective)
+    restored = restorer is not None and restorer.restore_and_clear(always_restore=False)
+    notifier.clear_all()
+    retry_seconds = config.local_check_interval(options)
+    if restorer is None:
+        grund = SIGN_OFF_INVALID_CONFIG
+    elif restored:
+        grund = None
+    else:
+        grund = SIGN_OFF_RESTORE_FAILED.format(seconds=retry_seconds)
+    status.update(abgemeldet=True, grund=grund)
+    bridge = _idle(clock, status, STATUS_ABGEMELDET)
+    if restorer is not None and not restored:
+        def _retry(event: Event) -> None:
+            if restorer.restore_and_clear(always_restore=False):
+                status.update(grund=None)
+                return
+            bridge.worker.schedule(retry_seconds, Event(EV_RECHECK))
+
+        bridge.worker.register(EV_RECHECK, _retry)
+        bridge.worker.schedule(retry_seconds, Event(EV_RECHECK))
+    return bridge
+
+
+def _finish_at_start(rt: Runtime, clock) -> IdleBridge:
+    """Abo-Frist beim Start schon abgelaufen (Spec TP7 3.2): laufende Boosts zuruecknehmen (nicht
+    mit Boost-Werten liegen bleiben), dann Ruhezustand `abo_beendet`. Scheitert das
+    Zuruecksetzen, meldet der notifier das einmal (T2-7), und es wird im Takt
+    local_check_interval im Worker erneut versucht."""
+    rt.status.update(abo_beendet=True)
+    bridge = _idle(clock, rt.status, STATUS_ABO_BEENDET)
+    retry_seconds = config.local_check_interval(rt.options)
+
+    def _attempt(event: Event | None = None) -> None:
+        if abo.finish_grace(rt, always_restore=False, final_notice=False):
+            abo.report_restore(rt.notifier, ok=True)
+            rt.status.update(grund=None)
+            return
+        abo.report_restore(rt.notifier, ok=False)
+        rt.status.update(grund=abo.RESTORE_FAILED_REASON)
+        logger.error(
+            "Abo-inaktiv-Frist abgelaufen, Boost-Werte konnten nicht zurueckgesetzt werden - "
+            "erneuter Versuch in %s s", retry_seconds,
+        )
+        bridge.worker.schedule(retry_seconds, Event(EV_RECHECK))
+
+    bridge.worker.register(EV_RECHECK, _attempt)
+    _attempt()
+    return bridge
 
 
 def _check_timezone(ha_api) -> None:
@@ -211,19 +318,6 @@ def _on_retry_due(rt: Runtime, event: Event) -> None:
     ticks.deliver(rt, delivery.RetryDue(seq=event.data["seq"], gen=event.data["gen"]))
 
 
-def _on_mqtt_connected(rt: Runtime, event: Event) -> None:
-    if rt.status is not None and rt.status.state != STATUS_BEREIT:
-        rt.status.set(STATUS_BEREIT)
-    ticks.deliver(rt, delivery.MqttConnected())
-
-
-def _on_ha_connected(rt: Runtime, event: Event) -> None:
-    """Status-Entity und HA-Benachrichtigungen ueberleben keinen HA-Neustart: neu setzen."""
-    if rt.status is not None:
-        rt.status.republish()
-    rt.notifier.republish_persistent()
-
-
 def _on_auth_rejected(rt: Runtime, event: Event) -> None:
     abo.handle_auth_rejected(rt)
 
@@ -267,16 +361,47 @@ def _on_grace_check(rt: Runtime, event: Event) -> None:
 
 
 def _on_health(rt: Runtime, event: Event) -> None:
-    """Batterien und einzelne Raumfuehler (Spec TP6 3.5). Eigener Zeitplaneintrag: der lokale
-    Check laeuft seit den eventgetriebenen Triggern nur auf Ereignisse."""
+    """Batterien, einzelne Raumfuehler (Spec TP6 3.5) und manuelle Eingriffe an Kurve/Offset
+    (Spec TP7 3.6). Eigener Zeitplaneintrag: der lokale Check laeuft seit den eventgetriebenen
+    Triggern nur auf Ereignisse."""
     rt.worker.schedule(config.local_check_interval(rt.options), Event(EV_HEALTH))
     if rt.store.state.abo_finished:
         return
-    for check in (battery.check_batteries, room_sensors.check_room_sensors):
+    for check in (battery.check_batteries, room_sensors.check_room_sensors, manual_override.check_manual_override):
         try:
             check(rt)
         except Exception:
             logger.exception("Fehler in der Ueberwachung (%s), naechster Versuch im naechsten Takt", check.__name__)
+
+
+def _on_mqtt_connected(rt: Runtime, event: Event) -> None:
+    """Der erste Connect schliesst den Start ab (Status regelt); jeder Connect hebt eine
+    abgelehnte Anmeldung auf."""
+    if rt.status.flags.zugang_abgelehnt:
+        rt.status.update(zugang_abgelehnt=False, grund=None, gestartet=True)
+    elif not rt.status.flags.gestartet:
+        rt.status.update(gestartet=True)
+    rt.notifier.notify("zugang", STATE_OK, abo.ACCESS_OK_MESSAGE, critical=True)
+    ticks.deliver(rt, delivery.MqttConnected())
+
+
+def _on_ha_connected(rt: Runtime, event: Event) -> None:
+    """Voller Status und HA-Benachrichtigungen bei jedem (Wieder-)Verbinden: nach einem
+    HA-Neustart fehlen die Benachrichtigungen, und die Integration hat den Status nicht."""
+    rt.status.publish()
+    rt.notifier.republish_persistent()
+
+
+def _on_heartbeat(rt: Runtime, event: Event) -> None:
+    rt.worker.schedule(HEARTBEAT_SECONDS, Event(EV_HEARTBEAT))
+    rt.status.publish()
+
+
+def _unless_idle(rt: Runtime, handler, event: Event) -> None:
+    """Im Ruhezustand (Fristende im Betrieb) laufen alle Handler ausser dem Lebenszeichen leer;
+    sie planen sich dann auch nicht neu ein."""
+    if not rt.idle:
+        handler(rt, event)
 
 
 def _register_handlers(rt: Runtime) -> None:
@@ -295,7 +420,9 @@ def _register_handlers(rt: Runtime) -> None:
         EV_HEALTH: _on_health,
     }
     for kind, handler in handlers.items():
-        rt.worker.register(kind, functools.partial(handler, rt))
+        rt.worker.register(kind, functools.partial(_unless_idle, rt, handler))
+    rt.worker.register(EV_HEARTBEAT, functools.partial(_on_heartbeat, rt))
+    rt.worker.after_each(rt.status.publish_if_changed)
 
 
 # --- Boot ---
@@ -303,45 +430,38 @@ def _register_handlers(rt: Runtime) -> None:
 def _prime(rt: Runtime) -> None:
     """Erster lokaler Check synchron vor mqtt.loop_start(): die Boost-Flags sind aus echten
     Sensorwerten bestimmt, bevor eine Server-Antwort verarbeitet wird (sie entscheiden, ob
-    Serverwerte geschrieben oder nur gespeichert werden)."""
+    Serverwerte geschrieben oder nur gespeichert werden). Persistierte Boosts laufen weiter und
+    enden regulaer ueber ihre Schwellen (N1). Scheitert der Check, bleiben die Flags stehen; der
+    naechste erfolgreiche Check beendet die Boosts inklusive Zurueckschreiben (N4)."""
     try:
-        # Wie 0.16.0: ein Comfort-Boost wird nach dem Neustart frisch bestimmt, ein laufender
-        # endet ohne Zuruecksetzen der Anlage (Befund N1, TP5-Plan).
-        rt.store.update(boost_active=False)
         rt.store.update(stable_target=regulation.read_room_target_live(rt))
         logger.info("Stable-Target-Cache initial befuellt (Boot-Priming): room_target=%s", rt.store.state.stable_target)
         regulation.run_local_check(rt)
     except Exception:
         logger.exception("Fehler beim initialen lokalen Check vor MQTT-Start, wird beim naechsten Ereignis erneut versucht")
-        # Fail-open: veraltete Boost-Flags duerfen Serverwerte nicht dauerhaft vom Schreiben
-        # abhalten und die Anlage so auf Boost-Werten festhalten.
-        try:
-            rt.store.update(boost_active=False, emergency_boost_active=False)
-        except Exception:
-            logger.exception("Boost-Flags konnten nach dem fehlgeschlagenen Start-Check nicht gespeichert werden")
 
 
-def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | int:
-    """Gibt den gestarteten Laufzeit-Kontext zurueck oder einen Exit-Code, wenn gar nicht erst
-    geregelt wird: 0 = nicht konfiguriert oder Abo-Frist bereits abgeschlossen,
-    1 = Konfigurationsfehler (gemeldet ueber notifier und Status-Entity)."""
+def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | IdleBridge:
+    """Gibt den gestarteten Laufzeit-Kontext zurueck oder den Ruhezustand, wenn gar nicht erst
+    geregelt wird: nicht eingerichtet, abgemeldet, Konfigurationsfehler, Abo-Frist abgeschlossen."""
     if not config.is_configured(options):
         logger.info(
             "Add-on ist noch nicht eingerichtet -- bitte die SmartHeat-Integration in "
             "Home Assistant installieren und dort die Verbindung zu diesem Add-on "
-            "einrichten (sie schreibt die Konfiguration automatisch per Supervisor-API). "
-            "Die Regelung startet erst, sobald options.json vollstaendig ist, und "
-            "danach automatisch beim naechsten Neustart des Add-ons."
+            "einrichten (sie schreibt die Konfiguration automatisch per Supervisor-API und "
+            "startet das Add-on danach neu). Bis dahin bleibt das Add-on im Ruhezustand."
         )
-        return 0
+        return _idle(clock, None, IDLE_NOT_CONFIGURED)
     # Erst warten, bis HA antwortet: Status und Meldungen sollen ankommen, und ohne HA geht
     # ohnehin nichts (Hilfs-Entities, Anlage).
     _wait_until_reachable(ha_api)
     store = StateStore(config.BACKUP_PATH, config.FAILSAFE_PATH)
-    notifier = Notifier(store, ha_api, config.notify_services(options))
+    notifier = Notifier(store, ha_api, config.notify_services(options), config.notify_hints_off(options))
     ticks.seed_notices(notifier, store.state.delivery)
-    status = StatusReporter(ha_api, options["tenant_id"], options.get("setup_id"))
-    status.set(STATUS_STARTET)
+    status = StatusReporter(ha_api, options["tenant_id"], options.get("setup_id"), store)
+    status.publish()
+    if config.is_signed_off(options):
+        return _sign_off(options, ha_api, store, notifier, status, clock)
     try:
         options = config.resolve_effective_options(options)
         error = config.validate(options)
@@ -351,10 +471,10 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | int:
         derived = _ensure_derived_sensors_with_retry(ha_api, options)
         manifest = build_manifest(options, derived.entity_ids)
     except StartupError as error:
-        return _fail_start(notifier, status, str(error), error.key)
+        return _fail_start(notifier, status, clock, str(error), error.key)
     except (config.ConfigError, ManifestError) as error:
         # Pruefungstexte sind deterministisch: der Text ist zugleich die Identitaet.
-        return _fail_start(notifier, status, _without_credentials(str(error), options))
+        return _fail_start(notifier, status, clock, _without_credentials(str(error), options))
 
     notifier.notify("konfiguration", STATE_OK, CONFIG_OK_MESSAGE, critical=True)
     if derived.replaced:
@@ -362,7 +482,8 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | int:
     _check_timezone(ha_api)
     rt = Runtime(
         manifest=manifest, ha_api=ha_api, options=options, derived_entity_ids=derived.entity_ids,
-        worker=RegulationWorker(clock=clock), store=store, override=Override(store, manifest, ha_api, options),
+        worker=RegulationWorker(clock=clock), store=store,
+        override=Override(store, manifest, ha_api, options, clock=clock),
         notifier=notifier, status=status,
     )
 
@@ -373,25 +494,17 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | int:
     if abo_status == entitlement.ACTIVE:
         entitlement.clear(config.ENTITLEMENT_PATH)
         notifier.notify("abo", STATE_OK, abo.ABO_ACTIVE_MESSAGE, critical=True)
+        status.update(abo=ABO_AKTIV)
     elif abo_status == entitlement.INACTIVE:
         inactive_since = entitlement.load_inactive_since(config.ENTITLEMENT_PATH)
         if inactive_since is not None and entitlement.grace_expired(inactive_since, now):
-            # Nicht mit liegengebliebenen Boost-Werten beenden, wenn HA/Cloud beim Booten noch
-            # nicht erreichbar ist.
-            while not abo.finish_grace(rt, always_restore=False, final_notice=False):
-                retry_seconds = config.local_check_interval(options)
-                logger.error(
-                    "Abo-inaktiv-Frist abgelaufen, Boost-Werte konnten nicht zurueckgesetzt werden - "
-                    "erneuter Versuch in %s s", retry_seconds,
-                )
-                time.sleep(retry_seconds)
-            return 0
+            return _finish_at_start(rt, clock)
         abo.enter_inactive(rt, now)
 
     _register_handlers(rt)
     abo_inactive = rt.store.state.abo_inactive_since is not None
     if not abo_inactive:
-        rt.mqtt_client = triggers.create_mqtt_client(options, rt.worker, rt.store.state.delivery.notbetrieb)
+        rt.mqtt_client = triggers.create_mqtt_client(options, rt.worker)
 
     _prime(rt)
     if rt.mqtt_client is not None:
@@ -401,25 +514,21 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | int:
     rt.trigger_client.start()
     for kind in (EV_WATCHDOG, EV_TELEMETRY, EV_DAYNIGHT, EV_GRACE_CHECK, EV_HEALTH):
         rt.worker.schedule(0, Event(kind))
-    if not abo_inactive:
+    rt.worker.schedule(HEARTBEAT_SECONDS, Event(EV_HEARTBEAT))
+    if abo_inactive:
+        # Ohne MQTT kein EV_MQTT_CONNECTED: die lokale Regelung laeuft, der Start ist abgeschlossen.
+        status.update(gestartet=True)
+    else:
         # Offenen Tick aus failsafe_state.json sofort mit derselben seq erneut versuchen.
         ticks.deliver(rt, delivery.Boot())
-    if abo_inactive:
-        # Ohne MQTT kein EV_MQTT_CONNECTED: die lokale Regelung laeuft, also bereit.
-        status.set(STATUS_BEREIT)
+    status.publish_if_changed()
     return rt
 
 
-def _run_bridge(options: dict, ha_api) -> int:
-    """Exit-Code: 0 = nicht konfiguriert oder Abo-Frist regulaer abgeschlossen (ohne
-    `watchdog` in config.yaml bleibt das Add-on dann gestoppt), 1 = Konfigurationsfehler
-    (vorher gemeldet).
-    Voruebergehende Fehler (HA nicht bereit, Broker nicht erreichbar, Server schweigt) beenden
-    das Add-on nie."""
-    started = _start_bridge(options, ha_api)
-    if isinstance(started, int):
-        return started
-    return started.worker.run()
+def _run_bridge(options: dict, ha_api) -> NoReturn:
+    """Laeuft, bis der Prozess beendet wird. Voruebergehende Fehler (HA nicht bereit, Broker nicht
+    erreichbar, Server schweigt) und Endzustaende beenden das Add-on nie."""
+    _start_bridge(options, ha_api).worker.run()
 
 
 def main() -> None:
@@ -428,9 +537,7 @@ def main() -> None:
     options = config.load_options_safe(config.OPTIONS_PATH)
     ha_api = HomeAssistantApi(base_url="http://supervisor", token=os.environ["SUPERVISOR_TOKEN"])
 
-    exit_code = _run_bridge(options, ha_api)
-    if exit_code:
-        sys.exit(exit_code)
+    _run_bridge(options, ha_api)
 
 
 if __name__ == "__main__":

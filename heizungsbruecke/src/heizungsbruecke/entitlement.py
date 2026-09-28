@@ -20,15 +20,23 @@ UNKNOWN = "unknown"
 
 
 def query_status(tenant_id: str, base_url: str) -> str:
-    """Fail-open: nur eine eindeutige Antwort (active=false oder 404) gilt als inaktiv;
-    ein accounts-api-Ausfall darf einen zahlenden Kunden nicht in den Notbetrieb schicken."""
+    """Fail-open: nur eine eindeutige Antwort (active=false oder ein 404 der accounts-api mit
+    {"error": ...}) gilt als inaktiv; ein accounts-api-Ausfall oder ein fremder 404 (Cloudflare-
+    Catch-all, geaenderte Route) darf einen zahlenden Kunden nicht in den Notbetrieb schicken."""
     try:
         response = requests.get(f"{base_url}/tenants/{tenant_id}/status", timeout=10)
     except Exception as error:
         logger.warning("Abo-Status nicht abrufbar (wird als unbekannt behandelt): %s", error)
         return UNKNOWN
     if response.status_code == 404:
-        return INACTIVE
+        try:
+            body = response.json()
+        except Exception:
+            body = None
+        if isinstance(body, dict) and "error" in body:
+            return INACTIVE
+        logger.warning("Abo-Status-Abfrage lieferte HTTP 404 ohne accounts-api-Antwort (wird als unbekannt behandelt)")
+        return UNKNOWN
     if response.status_code != 200:
         logger.warning("Abo-Status-Abfrage lieferte HTTP %s (wird als unbekannt behandelt)", response.status_code)
         return UNKNOWN

@@ -17,7 +17,7 @@ V016_BACKUP = {
 
 
 def _raise_oserror(*args, **kwargs):
-    raise OSError("SD-Karte kaputt")
+    raise OSError("Datentraeger kaputt")
 
 
 def _count_saves(monkeypatch) -> list:
@@ -245,7 +245,7 @@ def test_is_saved_reports_only_fields_whose_save_is_still_missing(make_store, mo
 
     assert not store.is_saved("curve_current")
     assert not store.is_saved("curve_current", "offset_current")
-    assert store.is_saved("offset_current", "boost_active")  # nur das geaenderte Feld fehlt auf der Karte
+    assert store.is_saved("offset_current", "boost_active")  # nur das geaenderte Feld fehlt auf dem Datentraeger
 
     monkeypatch.undo()
     store.update(curve_current=1.1)
@@ -297,3 +297,66 @@ def test_set_delivery_write_failure_is_logged_and_retried(make_store, tmp_path, 
     store.set_delivery(DeliveryState(notbetrieb=True))
 
     assert load_backup(tmp_path / "failsafe_state.json")["failsafe_active"] is True
+
+
+def test_update_saved_keeps_memory_unchanged_when_the_write_fails(make_store, monkeypatch):
+    # N5: der naechste Check sieht dieselbe Aenderung erneut.
+    store = make_store(backup={"last_room_target": 21.0})
+    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+
+    with pytest.raises(OSError):
+        store.update_saved(last_room_target=22.0)
+
+    assert store.state.last_room_target == 21.0
+
+
+def test_saved_restore_point_is_the_last_successfully_saved_one(make_store, monkeypatch):
+    store = make_store(backup={"curve_current": 0.9, "offset_current": 22.0})
+    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    with pytest.raises(OSError):
+        store.update(curve_current=1.0, offset_current=25.0)
+
+    assert store.saved_restore_point() == {"curve_current": 0.9, "offset_current": 22.0}
+
+    store.revert_to_saved("curve_current", "offset_current")
+
+    assert (store.state.curve_current, store.state.offset_current) == (0.9, 22.0)
+    assert store.is_saved("curve_current", "offset_current")
+
+
+def test_saved_restore_point_needs_both_values(make_store):
+    assert make_store().saved_restore_point() is None
+    assert make_store(backup={"curve_current": 0.9}).saved_restore_point() is None
+
+
+def test_status_and_r6_fields_round_trip(make_store, tmp_path):
+    store = make_store()
+    override = {"curve": 1.3, "offset": 24.5, "erkannt": "2026-10-01T08:00:00+02:00"}
+
+    store.update(last_ack_at="2026-10-01T12:00:05+02:00", manual_override=override, manual_override_pending=override)
+
+    reread = StateStore(tmp_path / "backup.json", tmp_path / "failsafe_state.json").state
+    assert (reread.last_ack_at, reread.manual_override, reread.manual_override_pending) == (
+        "2026-10-01T12:00:05+02:00", override, override,
+    )
+
+
+@pytest.mark.parametrize("key,value", [
+    ("last_ack_at", 5),
+    ("manual_override", {"curve": "x", "offset": 1.0, "erkannt": "t"}),
+    ("manual_override_pending", [1.3, 24.5]),
+])
+def test_invalid_status_and_r6_fields_fall_back(make_store, caplog, key, value):
+    store = make_store(backup={key: value})
+
+    assert getattr(store.state, key) is None
+    assert key in caplog.text
+
+
+def test_manual_override_misses_is_runtime_only(make_store, monkeypatch):
+    store = make_store()
+    saves = _count_saves(monkeypatch)
+
+    store.update(manual_override_misses=1)
+
+    assert saves == []

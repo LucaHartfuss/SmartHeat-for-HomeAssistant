@@ -369,14 +369,14 @@ class HomeAssistantApi:
         response.raise_for_status()
         return True
 
-    def set_state(self, entity_id: str, state: str, attributes: dict) -> None:
-        """Setzt einen Zustand ohne zugehoerige Integration (Status-Entity, Spec TP6 3.6).
-        Ueberlebt keinen HA-Neustart; status.StatusReporter setzt ihn deshalb bei jedem
-        (Wieder-)Verbinden neu."""
+    def fire_event(self, event_type: str, data: dict) -> None:
+        """Feuert ein Ereignis auf dem HA-Event-Bus (POST /api/events/<typ>): Status-Kanal zur
+        SmartHeat-Integration (Spec TP7 1.1). Wirft wie send_notification; abfangen ist Sache des
+        Aufrufers."""
         response = requests.post(
-            f"{self._base_url}{self._api_prefix}/states/{entity_id}",
+            f"{self._base_url}{self._api_prefix}/events/{event_type}",
             headers=self._headers,
-            json={"state": state, "attributes": attributes},
+            json=data,
             timeout=10,
         )
         response.raise_for_status()

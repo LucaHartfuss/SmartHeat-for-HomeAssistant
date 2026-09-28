@@ -28,8 +28,9 @@ from heizungsbruecke.delivery import (
     EntitlementChecked,
     MqttConnected,
     Notify,
+    ORIGIN_DATA,
+    ORIGIN_SERVER,
     PendingTick,
-    PublishFailsafe,
     Published,
     QueryEntitlement,
     ReadInvalid,
@@ -39,8 +40,6 @@ from heizungsbruecke.delivery import (
     TickDue,
     WriteFailed,
     accepts_ack,
-    build_discovery_config,
-    build_state_payload,
     from_persisted,
     notification_text,
     step,
@@ -154,7 +153,9 @@ def test_first_ack_timeout_retries_immediately_without_notbetrieb():
 
     assert state.server_failures == 1
     assert state.notbetrieb is False
-    assert state.pending == PendingTick("s1", "daily", stage=1, phase=PHASE_WAITING_RETRY, gen=2)
+    assert state.pending == PendingTick(
+        "s1", "daily", stage=1, phase=PHASE_WAITING_RETRY, gen=2, retry_origin=ORIGIN_SERVER,
+    )
     assert actions == [ScheduleRetry("s1", 2, 0)]
 
 
@@ -202,7 +203,7 @@ def test_entitlement_not_inactive_starts_notbetrieb_and_retries_after_five_minut
     assert state.notbetrieb is True
     assert state.pending.stage == 2
     assert actions == [
-        PublishFailsafe(True), Notify(NOTIFY_NOTBETRIEB_ON), ScheduleRetry("s1", state.pending.gen, 300),
+        Notify(NOTIFY_NOTBETRIEB_ON), ScheduleRetry("s1", state.pending.gen, 300),
     ]
 
 
@@ -230,7 +231,7 @@ def test_ack_after_five_minute_retry_ends_notbetrieb():
     state, actions = _run(state, RetryDue("s1", gen), Published("s1"), Ack("s1", "ok"))
 
     assert state == DeliveryState()
-    assert actions == [PublishFailsafe(False), EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF)]
+    assert actions == [EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF)]
 
 
 def test_server_retry_delays_follow_five_fifteen_sixty_then_hourly():
@@ -345,7 +346,7 @@ def test_rejected_ack_is_server_fault_ends_notbetrieb_and_retries():
     assert state.server_failures == 0
     assert state.datenfehler == DataFault(SOURCE_SERVER, (reason,))
     assert actions == [
-        PublishFailsafe(False), EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF),
+        EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF),
         Notify(NOTIFY_DATENFEHLER_SERVER, (reason,)), ScheduleRetry("s1", gen + 1, 900),
     ]
 
@@ -469,7 +470,7 @@ def test_late_rejected_answer_after_notbetrieb_start_ends_notbetrieb_without_new
 
     assert new_state.notbetrieb is False
     assert actions == [
-        PublishFailsafe(False), EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF),
+        EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF),
         Notify(NOTIFY_DATENFEHLER_SERVER, ("x",)),
     ]
     assert new_state.pending == state.pending
@@ -520,7 +521,7 @@ def test_write_failed_ends_notbetrieb():
     state, actions = step(state, WriteFailed("s1", "x"))
 
     assert state.notbetrieb is False
-    assert actions[:3] == [PublishFailsafe(False), EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF)]
+    assert actions[:2] == [EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF)]
 
 
 def test_repeated_write_failure_with_other_text_is_the_same_fault():
@@ -681,23 +682,6 @@ def test_notification_texts_for_server_fault_and_state_changes():
     )
 
 
-# --- MQTT-Discovery (aus failsafe.py uebernommen) ---
-
-def test_build_discovery_config_describes_problem_binary_sensor():
-    config = build_discovery_config("t1")
-
-    assert config["unique_id"] == "heizungsbruecke_t1_failsafe"
-    assert config["state_topic"] == "smartheat/t1/status/failsafe"
-    assert config["availability_topic"] == "smartheat/t1/status/availability"
-    assert (config["payload_on"], config["payload_off"], config["device_class"]) == ("ON", "OFF", "problem")
-    assert config["device"]["identifiers"] == ["heizungsbruecke_t1"]
-
-
-def test_build_state_payload_maps_bool_to_on_off():
-    assert build_state_payload(True) == "ON"
-    assert build_state_payload(False) == "OFF"
-
-
 # --- Broker wieder verbunden (F3) ---
 
 def test_mqtt_connected_while_waiting_for_retry_attempts_at_once():
@@ -722,3 +706,57 @@ def test_mqtt_connected_is_ignored_unless_waiting_for_retry(events):
     state, _ = _run(DeliveryState(), *events)
 
     assert step(state, MqttConnected()) == (state, [])
+
+
+def test_retry_after_a_server_timeout_belongs_to_the_server_chain():
+    state, _ = _published("s1")
+
+    state, _ = step(state, AckTimeout("s1", 1))
+
+    assert (state.pending.phase, state.pending.retry_origin) == (PHASE_WAITING_RETRY, ORIGIN_SERVER)
+
+
+@pytest.mark.parametrize("events", [
+    (TickDue("s1", "daily"), ReadInvalid("s1", ("dat",))),                                     # lokaler Datenfehler
+    (TickDue("s1", "daily"), Published("s1"), Ack("s1", "rejected", "unplausibel")),          # Server-Ablehnung
+    (TickDue("s1", "daily"), Published("s1"), WriteFailed("s1", "curve_current (number.x): weg")),  # Anlage
+])
+def test_mqtt_connected_does_not_cut_short_a_data_fault_wait(events):
+    # N2: Datenfehler- und Ablehnungs-Wartezeiten laufen normal ab.
+    state, _ = _run(DeliveryState(), *events)
+
+    assert (state.pending.phase, state.pending.retry_origin) == (PHASE_WAITING_RETRY, ORIGIN_DATA)
+    assert step(state, MqttConnected()) == (state, [])
+
+
+def test_unsent_attempt_is_sent_as_soon_as_the_broker_connects():
+    # N3: ohne Verbindung beim Versuch kein verlorener Server-Durchlauf.
+    state, _ = _run(DeliveryState(), TickDue("s1", "daily"), Published("s1", unsent=True))
+    assert (state.pending.phase, state.pending.unsent) == (PHASE_AWAITING_ACK, True)
+    unsent_gen = state.pending.gen
+
+    state, actions = step(state, MqttConnected())
+
+    assert actions == [Attempt("s1", "daily")]
+    assert (state.pending.phase, state.pending.unsent, state.pending.stage) == (PHASE_SENDING, False, 0)
+    assert state.server_failures == 0
+    assert step(state, AckTimeout("s1", unsent_gen)) == (state, [])  # Timeout des ungesendeten Versuchs
+
+
+def test_unsent_attempt_without_connect_still_times_out_as_before():
+    state, _ = _run(DeliveryState(), TickDue("s1", "daily"), Published("s1", unsent=True))
+
+    state, _ = step(state, AckTimeout("s1", state.pending.gen))
+
+    assert state.server_failures == 1
+    assert (state.pending.phase, state.pending.retry_origin, state.pending.unsent) == (
+        PHASE_WAITING_RETRY, ORIGIN_SERVER, False,
+    )
+
+
+def test_retry_origin_and_unsent_are_not_persisted():
+    state, _ = _run(DeliveryState(), TickDue("s1", "daily"), Published("s1", unsent=True))
+
+    assert to_persisted(state) == {
+        "failsafe_active": False, "datenfehler": None, "pending": {"seq": "s1", "trigger": "daily"},
+    }

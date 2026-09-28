@@ -146,8 +146,8 @@ class Handler(BaseHTTPRequestHandler):
             entity_id = f"sensor.stub_derived_{entry_id}"
             _ENTITY_REGISTRY.append({"entity_id": entity_id, "config_entry_id": entry_id})
             self._send_json({"type": "create_entry", "result": {"entry_id": entry_id}})
-        elif self.path.startswith("/core/api/states/"):
-            self._send_json({})
+        elif self.path.startswith("/core/api/events/"):
+            self._send_json({"message": "Event fired."})
         elif self.path.startswith("/core/api/services/persistent_notification/"):
             self._send_json({})
         else:
@@ -171,7 +171,7 @@ EOF
 # read path end-to-end, not just the plain-state path. mqtt_username/mqtt_password are
 # required options (config.REQUIRED_OPTIONS, already before 0.18.0; this options.json only
 # gained them in 0.19.0) even though the stub broker accepts any value (allow_anonymous true
-# below) -- without them the bridge would just report "noch nicht eingerichtet" and exit 0
+# below) -- without them the bridge would just report "noch nicht eingerichtet" and idle
 # without ever touching MQTT.
 cat > "$DATA_DIR/options.json" <<JSON
 {"tenant_id":"happytest","verteilsystem":"Heizkoerper","daily_trigger_time":"12:00","day_avg_window_start":"14:00","day_avg_window_end":"17:00","night_avg_window_start":"04:00","night_avg_window_end":"07:00","accounts_api_base_url":"https://accounts.example.test","mqtt_username":"heizungsbruecke","mqtt_password":"test-secret","room_sensors":["climate.testroom::current_temperature"],"entity_room_target":"climate.testroom::temperature","entity_curve_current":"number.curve","entity_offset_current":"number.offset","entity_heat_limit":"number.heat_limit","entity_outdoor_temp":"sensor.outdoor","local_check_interval_seconds":2}
@@ -197,18 +197,18 @@ docker network create "$NET_NAME" >/dev/null || { echo "FAIL: docker network cre
 
 MOSQ_CONF_HOST="$(path_for_docker "$TMPDIR/mosquitto.conf")"
 MSYS_NO_PATHCONV=1 docker run -d --name "$MOSQUITTO_NAME" --network "$NET_NAME" \
-  -v "${MOSQ_CONF_HOST}:/mosquitto/config/mosquitto.conf" \
+  -v "${MOSQ_CONF_HOST}:/mosquitto/config/mosquitto.conf:Z" \
   eclipse-mosquitto:2 >/dev/null || { echo "FAIL: mosquitto stub start"; dump_logs "$MOSQUITTO_NAME"; exit 1; }
 
 STUB_HOST="$(path_for_docker "$TMPDIR/stub_supervisor.py")"
 MSYS_NO_PATHCONV=1 docker run -d --name "$SUPERVISOR_NAME" --network "$NET_NAME" \
-  -v "${STUB_HOST}:/stub_supervisor.py" \
+  -v "${STUB_HOST}:/stub_supervisor.py:Z" \
   python:3.11-slim python /stub_supervisor.py >/dev/null || { echo "FAIL: supervisor stub start"; dump_logs "$SUPERVISOR_NAME"; exit 1; }
 
 DATA_DIR_HOST="$(path_for_docker "$DATA_DIR")"
 MSYS_NO_PATHCONV=1 docker run -d --name "$BRIDGE_NAME" --network "container:$MOSQUITTO_NAME" \
   -e SUPERVISOR_TOKEN=test-token \
-  -v "${DATA_DIR_HOST}:/data" \
+  -v "${DATA_DIR_HOST}:/data:Z" \
   "$IMAGE_TAG" >/dev/null || { echo "FAIL: bridge container start"; dump_logs "$MOSQUITTO_NAME" "$SUPERVISOR_NAME"; exit 1; }
 
 echo "--- warte auf Publish auf smartheat/happytest/up/# ---"

@@ -31,106 +31,6 @@ def test_on_connect_before_any_subscription_does_not_error():
     mock_client.subscribe.assert_not_called()
 
 
-def test_publish_discovery_publishes_retained_config_to_correct_topic():
-    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
-        mock_client = MagicMock()
-        mock_client_cls.return_value = mock_client
-
-        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
-        client.publish_discovery(
-            component="binary_sensor", object_id="failsafe", config={"name": "Fail-Safe"}
-        )
-
-    mock_client.publish.assert_called_once_with(
-        "homeassistant/binary_sensor/heizungsbruecke_kunde2/failsafe/config",
-        '{"name": "Fail-Safe"}',
-        retain=True,
-    )
-
-
-def test_publish_status_publishes_retained_payload_to_correct_topic():
-    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
-        mock_client = MagicMock()
-        mock_client_cls.return_value = mock_client
-
-        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
-        client.publish_status(object_id="failsafe", payload="ON")
-
-    mock_client.publish.assert_called_once_with(
-        "smartheat/kunde2/status/failsafe", "ON", retain=True
-    )
-
-
-def test_on_connect_republishes_discovery_configs():
-    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
-        mock_client = MagicMock()
-        mock_client_cls.return_value = mock_client
-
-        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
-        client.publish_discovery(
-            component="binary_sensor", object_id="failsafe", config={"name": "Fail-Safe"}
-        )
-
-        mock_client.publish.reset_mock()
-
-        # Simulate paho invoking on_connect again after a reconnect.
-        on_connect = mock_client.on_connect
-        on_connect(mock_client, None, {}, 0, None)
-
-    mock_client.publish.assert_any_call(
-        "homeassistant/binary_sensor/heizungsbruecke_kunde2/failsafe/config",
-        '{"name": "Fail-Safe"}',
-        retain=True,
-    )
-
-
-def test_on_connect_republishes_last_status_payloads():
-    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
-        mock_client = MagicMock()
-        mock_client_cls.return_value = mock_client
-
-        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
-        client.publish_status(object_id="failsafe", payload="ON")
-
-        mock_client.publish.reset_mock()
-
-        # Simulate paho invoking on_connect again after a reconnect (e.g. broker lost
-        # retained messages across a restart without persistence).
-        on_connect = mock_client.on_connect
-        on_connect(mock_client, None, {}, 0, None)
-
-    mock_client.publish.assert_any_call("smartheat/kunde2/status/failsafe", "ON", retain=True)
-
-
-def test_init_registers_last_will_for_availability_topic():
-    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
-        mock_client = MagicMock()
-        mock_client_cls.return_value = mock_client
-
-        BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
-
-    mock_client.will_set.assert_called_once_with(
-        "smartheat/kunde2/status/availability", payload="offline", retain=True
-    )
-
-
-def test_on_connect_publishes_online_to_availability_topic():
-    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
-        mock_client = MagicMock()
-        mock_client_cls.return_value = mock_client
-
-        BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
-
-        mock_client.publish.reset_mock()
-
-        on_connect = mock_client.on_connect
-        on_connect(mock_client, None, {}, 0, None)
-
-    mock_client.publish.assert_any_call(
-        "smartheat/kunde2/status/availability", "online", retain=True
-    )
-
-
 def test_on_disconnect_logs_warning_with_reason_code(monkeypatch, caplog):
     fake_paho_client = MagicMock()
     monkeypatch.setattr("heizungsbruecke.mqtt_client.mqtt.Client", lambda *a, **kw: fake_paho_client)
@@ -260,32 +160,6 @@ def test_stop_disconnects_and_stops_loop():
     mock_client.loop_stop.assert_called_once()
 
 
-def test_stop_publishes_offline_availability_before_disconnect():
-    # Final-Review Minor 2: ein sauberes disconnect() loest den Last Will nicht aus --
-    # stop() muss "offline" selbst veroeffentlichen (gleiches Topic/Payload/Retain wie LWT).
-    client, mock_client = _client_with_mock()
-    will_args = mock_client.will_set.call_args
-    mock_client.reset_mock()
-
-    client.stop()
-
-    assert will_args.args[0] == "smartheat/kunde2/status/availability"
-    assert will_args.kwargs == {"payload": "offline", "retain": True}
-    names = [name for name, _, _ in mock_client.mock_calls]
-    assert names == ["publish", "disconnect", "loop_stop"]
-    mock_client.publish.assert_called_once_with("smartheat/kunde2/status/availability", "offline", retain=True)
-
-
-def test_stop_still_disconnects_when_offline_publish_fails():
-    client, mock_client = _client_with_mock()
-    mock_client.publish.side_effect = RuntimeError("nicht verbunden")
-
-    client.stop()  # darf nicht werfen
-
-    mock_client.disconnect.assert_called_once()
-    mock_client.loop_stop.assert_called_once()
-
-
 def test_init_connects_asynchronously_with_bounded_reconnect_backoff():
     _, mock_client = _client_with_mock()
 
@@ -341,3 +215,21 @@ def test_connected_hook_exception_does_not_escape_network_thread(caplog):
         client._on_connect(mock_client, None, {}, 0, None)  # darf nicht werfen
 
     assert "worker kaputt" in caplog.text
+
+
+def test_client_sets_no_last_will_and_publishes_nothing_on_connect():
+    # B4/TP7: nichts mehr unter smartheat/<tenant>/status/ -- der Status laeuft seit 0.20.0
+    # ueber die SmartHeat-Integration (Spec TP7 1.4), nicht mehr per Last Will/Discovery. Ein
+    # von der ACL nicht erlaubtes Will-Topic wuerde den Connect nicht einmal ablehnen (siehe
+    # tests/test_mosquitto_will_acl.sh) -- das war nie der Grund fuer diese Aenderung.
+    _, mock_client = _client_with_mock()
+
+    mock_client.on_connect(mock_client, None, {}, 0, None)
+
+    mock_client.will_set.assert_not_called()
+    mock_client.publish.assert_not_called()
+
+
+def test_client_has_no_status_or_discovery_api():
+    assert not hasattr(BridgeMqttClient, "publish_status")
+    assert not hasattr(BridgeMqttClient, "publish_discovery")

@@ -645,20 +645,30 @@ def test_delete_helper_refuses_config_entries_of_other_integrations(platform):
     mock_delete.assert_not_called()
 
 
-def test_set_state_posts_state_and_attributes():
+def test_fire_event_posts_the_event_data():
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
     mock_response = Mock()
     mock_response.raise_for_status.return_value = None
 
     with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response) as mock_post:
-        api.set_state("sensor.smartheat_t1_status", "bereit", {"addon_version": "0.19.0"})
+        api.fire_event("smartheat_status", {"schema": 1, "status": "regelt"})
 
     mock_post.assert_called_once_with(
-        "http://supervisor/core/api/states/sensor.smartheat_t1_status",
+        "http://supervisor/core/api/events/smartheat_status",
         headers={"Authorization": "Bearer test-token"},
-        json={"state": "bereit", "attributes": {"addon_version": "0.19.0"}},
+        json={"schema": 1, "status": "regelt"},
         timeout=10,
     )
+
+
+def test_fire_event_raises_on_http_error():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    mock_response = Mock()
+    mock_response.raise_for_status.side_effect = RuntimeError("401")
+
+    with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response):
+        with pytest.raises(RuntimeError):
+            api.fire_event("smartheat_status", {})
 
 
 def test_is_reachable_true_when_ha_is_running():

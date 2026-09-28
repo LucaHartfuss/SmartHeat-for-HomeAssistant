@@ -20,6 +20,45 @@ Home-Assistant-Integration: installieren, dann Einstellungen → Geraete &
 Dienste → Integration hinzufuegen → "SmartHeat". Die Integration schreibt die
 noetige Konfiguration automatisch in dieses Add-on.
 
+## Update von 0.19.0 auf 0.20.0
+
+Nötig: SmartHeat-Integration ab Version 0.6.0. Nach dem Update meldet das Add-on bis zum
+„Neu konfigurieren“ in der Integration weiter „Konfiguration veraltet“; die Anlage behält ihre Werte.
+
+Neu: Status in Home Assistant. Die Integration zeigt am Gerät „SmartHeat <Anlage>“ Status, Notbetrieb,
+Datenfehler (mit Quelle), Boost, letzte Serverantwort, zuletzt gelernte Kurve/Offset, Abo und
+Add-on-Version. Das Add-on meldet sich dafür alle 5 Minuten; bleibt das aus oder ist ein Add-on
+gestoppt, meldet die Integration das selbst und startet es neu.
+
+Neu: Das Add-on beendet sich nie mehr von selbst. Nicht eingerichtet, Konfigurationsfehler, Abo beendet
+und abgemeldet sind ein Ruhezustand ohne Regelung. Bei einem Konfigurationsfehler prüft es nach 15 Minuten
+erneut, ohne die Meldung zu wiederholen. Watchdog und Start beim Booten setzt die Integration.
+
+Neu: Manuelle Änderungen an Heizkurve oder Offset werden erkannt und gemeldet. SmartHeat setzt sie beim
+nächsten Regelschritt weiterhin zurück. Gemeldet wird erst, wenn die Abweichung zwei Prüfungen in Folge
+besteht, und nie in den ersten 35 Minuten nach einem eigenen Schreiben von SmartHeat auf Kurve/Offset
+(neue Serverwerte, Boost-Start/-Ende): die myVAILLANT-Integration zeigt einen geschriebenen Wert unter
+Umständen erst mit ihrer nächsten Abfrage (alle 30 Minuten). Eine Änderung von Hand kurz nach einem
+eigenen Schreiben wird deshalb bis zu 35 Minuten später erkannt.
+
+Neu: Hinweise (ausgefallener Raumfühler, schwache Batterie, manueller Eingriff, Quellwechsel) lassen sich
+in den Optionen der Integration einzeln abschalten. Kritische Meldungen bleiben immer an.
+
+Neu: Scheitert am Ende der Abo-Frist das Zurücksetzen auf die gelernten Werte, kommt eine Meldung.
+Lehnt der Server die Zugangsdaten ab, zeigt der Status das und Home Assistant fordert zur neuen Anmeldung auf.
+
+Geändert: Ein Comfort-Boost läuft über einen Neustart weiter und endet regulär; ein nach dem Neustart nicht
+lesbarer Raumfühler lässt die Boost-Flags stehen, der nächste Check beendet den Boost mit Zurücksetzen.
+Ein Notfall-Boost startet auch, wenn nur ein älterer Wiederherstellungspunkt gespeichert werden konnte.
+Beim Verbinden mit dem Broker wird ein offener Tick nur noch sofort wiederholt, wenn er auf den Server
+wartet oder gar nicht gesendet war.
+
+Geändert: Ein HTTP 404 der Abo-Abfrage zählt nur noch mit einer Antwort der SmartHeat-accounts-api als
+„Abo inaktiv“.
+
+Entfällt: MQTT-Discovery (`binary_sensor` Fail-Safe), `status/failsafe` und das Last Will auf
+`status/availability`; die Status-Entity per `POST /api/states`.
+
 ## Update von 0.18.0 auf 0.19.0
 
 Nötig: SmartHeat-Integration ab Version 0.5.0. Nach dem Update meldet das Add-on
@@ -497,9 +536,10 @@ gesamte Einrichtung (Login, Anlagenauswahl, Profil, Entity-Zuordnung) laeuft ueb
 startet es danach selbst neu.
 
 **Erwartetes Verhalten direkt nach der Installation:** Ein frisch installiertes, noch nicht
-konfiguriertes Add-on startet sichtbar und beendet sich kurz danach wieder von selbst (Exit 0,
-kein Absturz) -- das ist beabsichtigt und kein Fehler. Sobald die SmartHeat-Integration die
-Einrichtung abgeschlossen hat, startet das Add-on von selbst wieder und bleibt dauerhaft laufen.
+konfiguriertes Add-on startet und bleibt im Ruhezustand (es regelt nicht und beendet sich nicht). Sobald
+die SmartHeat-Integration die Einrichtung abgeschlossen hat, startet sie das Add-on selbst neu. Watchdog
+und „Start beim Booten“ schaltet die Integration für beide Add-ons ein. Beim Entfernen der Integration
+wird das Add-on abgemeldet (laufender Boost zurückgesetzt, Meldungen entfernt) und gestoppt.
 
 ## Verifizierte Architekturen
 

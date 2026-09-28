@@ -67,7 +67,7 @@ def test_load_options_safe_defaults_when_no_file(tmp_path):
 
 
 def test_load_options_safe_falls_back_on_corrupt_file(tmp_path):
-    # Simulates power loss on the Pi's SD card mid-write: a truncated/corrupt options
+    # Simulates power loss on the Pi's disk (Datentraeger) mid-write: a truncated/corrupt options
     # file must not crash the whole add-on before it can even report its state.
     path = tmp_path / "options.json"
     path.write_bytes(b"{not valid json..")
@@ -400,3 +400,30 @@ def test_valid_list_options_are_passed_through():
 
     assert resolved["battery_entities"] == ["sensor.wz_battery", "binary_sensor.kz_battery_low"]
     assert resolved["notify_services"] == ["notify.mobile_app_a"]
+
+
+@pytest.mark.parametrize("raw,expected", [
+    (None, []), ("batterie", []), (["batterie", "notbetrieb", 3], ["batterie"]),
+    (["raumfuehler", "quellwechsel"], ["raumfuehler", "quellwechsel"]),
+])
+def test_notify_hints_off_is_tolerant(raw, expected):
+    options = {} if raw is None else {"notify_hints_off": raw}
+    assert config.notify_hints_off(options) == expected
+
+
+def test_notify_hints_off_defaults_to_empty_and_is_passed_through():
+    assert resolve_effective_options(_resolvable())["notify_hints_off"] == []
+    resolved = resolve_effective_options(_resolvable(notify_hints_off=["batterie", "manueller_eingriff"]))
+    assert resolved["notify_hints_off"] == ["batterie", "manueller_eingriff"]
+
+
+@pytest.mark.parametrize("value", [["notbetrieb"], ["konfiguration"], ["zugang"], "batterie", [None]])
+def test_critical_or_unknown_hint_categories_are_config_errors(value):
+    with pytest.raises(ConfigError, match="notify_hints_off"):
+        resolve_effective_options(_resolvable(notify_hints_off=value))
+
+
+@pytest.mark.parametrize("value,expected", [(None, False), (False, False), (True, True), ("true", False)])
+def test_is_signed_off_only_for_true(value, expected):
+    options = {} if value is None else {"abgemeldet": value}
+    assert config.is_signed_off(options) is expected

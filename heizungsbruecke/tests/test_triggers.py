@@ -141,3 +141,14 @@ def test_extract_attribute_suffix_returns_attribute_name():
 
 def test_extract_attribute_suffix_returns_none_for_plain_entity_id():
     assert triggers._extract_attribute_suffix("sensor.target_rt") is None
+
+
+def test_create_mqtt_client_only_subscribes_the_answers(monkeypatch, clock):
+    created = MagicMock()
+    monkeypatch.setattr("heizungsbruecke.triggers.BridgeMqttClient", lambda **kwargs: created)
+
+    triggers.create_mqtt_client(
+        {"tenant_id": "t1", "mqtt_username": "u", "mqtt_password": "p"}, RegulationWorker(clock=clock),
+    )
+
+    assert [name for name, _, _ in created.mock_calls] == ["subscribe_setpoints"]

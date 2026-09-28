@@ -11,6 +11,7 @@ Standardmaessig uebersprungen (braucht Docker, dauert ~30-90s Containerstart):
 mit RUN_REAL_HA_TESTS=1 aktivieren, z.B.:
     RUN_REAL_HA_TESTS=1 python -m pytest tests/test_ha_api_real_ha_integration.py -v -s
 """
+import json
 import os
 import subprocess
 import time
@@ -18,6 +19,7 @@ import uuid
 
 import pytest
 import requests
+import websocket
 
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.helper_templates import outdoor_temperature_template, room_temperature_template
@@ -332,15 +334,33 @@ def _raw(api, entity_id: str) -> str | None:
     return response.json()["state"]
 
 
+def _set_state(api, entity_id: str, state: str, attributes: dict) -> None:
+    """Setzt eine Test-Fixture-Entity per rohem REST-POST.
+
+    HomeAssistantApi kennt seit Task 7 (B4, Wegfall der Status-Entity) kein set_state()
+    mehr -- das Add-on selbst braucht die Methode nicht mehr. Diese Tests hier simulieren
+    aber weiterhin Sensor-/Wetter-Quellen fuer die Template-Sensor-Tests unten, dafuer
+    reicht ein lokaler Roundtrip auf denselben Endpunkt, den get_state()/create_*
+    ohnehin verwenden.
+    """
+    response = requests.post(
+        f"{api._base_url}{api._api_prefix}/states/{entity_id}",
+        headers=api._headers,
+        json={"state": state, "attributes": attributes},
+        timeout=10,
+    )
+    response.raise_for_status()
+
+
 def test_room_template_sensor_averages_valid_sources_and_is_unknown_without(real_ha):
     """Spec TP6 3.2/6: Mittelwert mit einem toten und einem unplausiblen Fuehler; alle tot ->
     unknown (nicht "None" als Text, nicht 0)."""
     base_url, token = real_ha
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
-    api.set_state("sensor.tp6_a", "20.0", {"unit_of_measurement": "°C"})
-    api.set_state("sensor.tp6_b", "unavailable", {})
-    api.set_state("sensor.tp6_c", "0.0", {"unit_of_measurement": "°C"})
-    api.set_state("climate.tp6_d", "heat", {"current_temperature": 21.0, "temperature": 22.0})
+    _set_state(api, "sensor.tp6_a", "20.0", {"unit_of_measurement": "°C"})
+    _set_state(api, "sensor.tp6_b", "unavailable", {})
+    _set_state(api, "sensor.tp6_c", "0.0", {"unit_of_measurement": "°C"})
+    _set_state(api, "climate.tp6_d", "heat", {"current_temperature": 21.0, "temperature": 22.0})
 
     entity_id = api.create_template_sensor(
         name="SmartHeat realtest Raumtemperatur",
@@ -352,15 +372,15 @@ def test_room_template_sensor_averages_valid_sources_and_is_unknown_without(real
     assert entity_id == "sensor.smartheat_realtest_raumtemperatur"
     assert _wait_for_state(api, entity_id, "20.5") == "20.5"
 
-    api.set_state("sensor.tp6_a", "unknown", {})
-    api.set_state("climate.tp6_d", "heat", {"current_temperature": None, "temperature": 22.0})
+    _set_state(api, "sensor.tp6_a", "unknown", {})
+    _set_state(api, "climate.tp6_d", "heat", {"current_temperature": None, "temperature": 22.0})
     assert _wait_for_state(api, entity_id, "unknown") == "unknown"
 
 
 def test_outdoor_template_sensor_reads_weather_temperature(real_ha):
     base_url, token = real_ha
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
-    api.set_state("weather.tp6_home", "sunny", {"temperature": 3.2, "temperature_unit": "°C"})
+    _set_state(api, "weather.tp6_home", "sunny", {"temperature": 3.2, "temperature_unit": "°C"})
 
     entity_id = api.create_template_sensor(
         name="SmartHeat realtest Außentemperatur", template=outdoor_temperature_template("weather.tp6_home"),
@@ -374,7 +394,7 @@ def test_deleted_and_recreated_helpers_keep_their_entity_id(real_ha):
     gleich bleiben (kein _2), sonst zeigen Dashboards und Recorder-Historie ins Leere."""
     base_url, token = real_ha
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
-    api.set_state("sensor.tp6_src", "20.0", {"unit_of_measurement": "°C"})
+    _set_state(api, "sensor.tp6_src", "20.0", {"unit_of_measurement": "°C"})
 
     template_id = api.create_template_sensor(name="SmartHeat recreate Raumtemperatur", template="{{ 20 }}")
     api.delete_helper(template_id)
@@ -387,16 +407,28 @@ def test_deleted_and_recreated_helpers_keep_their_entity_id(real_ha):
     ) == stats_id
 
 
-def test_set_state_creates_a_readable_status_entity(real_ha):
+def test_fire_event_reaches_the_event_bus(real_ha):
+    """Spec TP7 1.1: das Status-Event kommt ueber POST /api/events am Bus an (die Integration hoert
+    dort mit hass.bus.async_listen)."""
     base_url, token = real_ha
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
+    ws = websocket.create_connection(api.websocket_url(), timeout=10)
+    try:
+        ws.recv()
+        ws.send(json.dumps({"type": "auth", "access_token": token}))
+        assert json.loads(ws.recv())["type"] == "auth_ok"
+        ws.send(json.dumps({"id": 1, "type": "subscribe_events", "event_type": "smartheat_status"}))
+        assert json.loads(ws.recv())["success"] is True
 
-    api.set_state("sensor.smartheat_realtest_status", "bereit", {"addon_version": "0.19.0", "setup_id": "abc"})
+        api.fire_event("smartheat_status", {"schema": 1, "tenant_id": "realtest", "status": "regelt"})
 
-    response = requests.get(f"{base_url}/api/states/sensor.smartheat_realtest_status",
-                            headers={"Authorization": f"Bearer {token}"}, timeout=10)
-    assert response.json()["state"] == "bereit"
-    assert response.json()["attributes"]["setup_id"] == "abc"
+        message = json.loads(ws.recv())
+    finally:
+        ws.close()
+
+    assert message["type"] == "event"
+    assert message["event"]["event_type"] == "smartheat_status"
+    assert message["event"]["data"] == {"schema": 1, "tenant_id": "realtest", "status": "regelt"}
 
 
 def test_is_reachable_once_real_ha_reports_running(real_ha):

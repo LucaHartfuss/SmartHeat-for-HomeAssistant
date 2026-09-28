@@ -143,3 +143,13 @@ def test_addon_version_constant_matches_config_yaml():
     from heizungsbruecke.status import ADDON_VERSION
 
     assert _load_config_yaml()["version"] == ADDON_VERSION
+
+
+def test_tp7_options_are_optional_and_have_no_default():
+    config = _load_config_yaml()
+    schema = config["schema"]
+
+    assert schema["abgemeldet"] == "bool?"
+    assert schema["notify_hints_off"] == ["list(raumfuehler|batterie|manueller_eingriff|quellwechsel)?"]
+    assert "abgemeldet" not in config["options"] and "notify_hints_off" not in config["options"]
+    assert "abgemeldet" not in _REQUIRED_OPTIONS and "notify_hints_off" not in _REQUIRED_OPTIONS

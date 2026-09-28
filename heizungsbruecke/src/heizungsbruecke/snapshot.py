@@ -10,6 +10,11 @@ logger = logging.getLogger(__name__)
 
 SNAPSHOT_SCHEMA_VERSION = 2
 
+# R6 (Spec TP7 3.6): optionales Top-Level-Feld mit einem erkannten manuellen Eingriff, nur KPI.
+# Muss zu messages.MANUAL_OVERRIDE_* auf dem Server passen (Contract-Check).
+MANUAL_OVERRIDE_KEY = "manual_override"
+MANUAL_OVERRIDE_FIELDS = ("curve", "offset", "erkannt")
+
 # Nur auf Gueltigkeit geprueft, nicht gesendet: ohne gueltiges room_actual scheitern
 # Comfort- und Notfall-Boost still.
 VALIDITY_ONLY_ROLES = ("room_actual",)
@@ -70,12 +75,17 @@ def read_snapshot_roles(
     return SnapshotRead(roles=roles, invalid_roles=tuple(invalid))
 
 
-def publish_snapshot(mqtt_client, seq: str, trigger: str | None, roles: dict[str, float]) -> None:
-    """Eine Nachricht auf up/snapshot (Schema 2)."""
-    mqtt_client.publish_snapshot({
+def publish_snapshot(
+    mqtt_client, seq: str, trigger: str | None, roles: dict[str, float], manual_override: dict | None = None,
+) -> None:
+    """Eine Nachricht auf up/snapshot (Schema 2), mit manual_override nur, wenn einer ansteht."""
+    payload = {
         "schema": SNAPSHOT_SCHEMA_VERSION,
         "seq": seq,
         "trigger": trigger,
         "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
         "roles": roles,
-    })
+    }
+    if manual_override is not None:
+        payload[MANUAL_OVERRIDE_KEY] = {field: manual_override[field] for field in MANUAL_OVERRIDE_FIELDS}
+    mqtt_client.publish_snapshot(payload)

@@ -121,3 +121,18 @@ def test_publish_snapshot_sends_one_schema_2_message():
     assert payload["trigger"] == "daily"
     assert payload["roles"] == {"dat": 4.0}
     assert datetime.fromisoformat(payload["ts"]).tzinfo is not None
+
+
+def test_snapshot_carries_a_manual_override_only_when_given():
+    client = MagicMock()
+
+    publish_snapshot(client, seq="s", trigger="daily", roles={"dat": 1.0})
+    assert "manual_override" not in client.publish_snapshot.call_args.args[0]
+
+    publish_snapshot(
+        client, seq="s", trigger="daily", roles={"dat": 1.0},
+        manual_override={"curve": 1.3, "offset": 24.5, "erkannt": "2026-10-01T08:00:00+02:00", "fremd": 1},
+    )
+    assert client.publish_snapshot.call_args.args[0]["manual_override"] == {
+        "curve": 1.3, "offset": 24.5, "erkannt": "2026-10-01T08:00:00+02:00",
+    }
