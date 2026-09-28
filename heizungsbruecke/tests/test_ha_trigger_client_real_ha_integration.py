@@ -168,14 +168,16 @@ def test_state_change_delivers_trigger_event_with_to_state_value(real_ha):
         client.stop()
 
 
-def test_reconnect_after_container_restart_resubscribes_and_becomes_connected_again(real_ha):
-    """Verifies the reconnect path against a REAL disconnect (not a fake), by killing
-    the underlying socket via a fresh WS auth failure simulation is not possible here
-    without stopping the container itself (out of scope for a per-test action on the
-    shared module-scoped container) -- instead this proves the narrower, still
-    meaningful property: `stop()` cleanly halts the background thread's reconnect loop
-    without leaving it spinning, which the fake-based unit tests (Task 3) cannot verify
-    against a real socket.
+def test_stop_halts_background_thread_and_clears_connected(real_ha):
+    """A real reconnect would need the shared module-scoped container restarted, so this
+    proves the narrower, still meaningful property: `stop()` halts the background
+    thread's reconnect loop against a REAL socket without leaving it spinning, which the
+    fake-based unit tests cannot verify.
+
+    Bounded wait, not a fixed sleep: `stop()` returns immediately, but websocket-client's
+    dispatcher is not always woken by a close from another thread and then only notices
+    at the end of its 10-s select timeout (measured against HA 2026.4.4: ~5 % of runs
+    took ~9.9 s, the rest <= 0.01 s).
     """
     base_url, token = real_ha
     ws_url = base_url.replace("http://", "ws://") + "/api/websocket"
@@ -191,5 +193,6 @@ def test_reconnect_after_container_restart_resubscribes_and_becomes_connected_ag
     finally:
         client.stop()
 
-    time.sleep(0.5)
+    client._thread.join(timeout=20.0)
+    assert not client._thread.is_alive()
     assert client.connected is False

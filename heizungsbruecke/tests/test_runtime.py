@@ -17,6 +17,7 @@ from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.delivery import DeliveryState
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.runtime import Runtime
+from heizungsbruecke.status import ADDON_VERSION
 
 OPTIONS = {
     "tenant_id": "test_tenant",
@@ -498,7 +499,7 @@ def test_status_goes_from_startet_to_regelt_when_mqtt_connects(env):
     _connect(env, bridge)
 
     assert _status_states(env) == ["startet", "regelt"]
-    assert _last_event(env)["addon_version"] == "0.20.0"
+    assert _last_event(env)["addon_version"] == ADDON_VERSION
 
 
 def test_status_is_abo_inaktiv_right_after_start_without_mqtt(env):
