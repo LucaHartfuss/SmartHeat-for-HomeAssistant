@@ -1032,6 +1032,9 @@ def test_inactive_rejection_after_unknown_rejection_clears_zugang_abgelehnt_sile
     pushes_before = list(env.ha.pushes)
 
     env.abo["status"] = entitlement.INACTIVE
+    # T2-12-Drosselung: die erste Ablehnung hat schon abgefragt und zugang_abgelehnt gesetzt,
+    # daher braucht diese zweite Ablehnung 600 s Abstand, um ueberhaupt erneut abzufragen.
+    env.clock.advance(600)
     _mqtt(env).kwargs["on_auth_rejected"](_mqtt(env))
     bridge.worker.run_pending()
 
@@ -1131,6 +1134,83 @@ def test_auth_rejected_in_abo_inactive_mode_does_not_query_again(env):
     bridge.worker.run_pending()
 
     assert env.abo["queries"] == queries_before
+
+
+def _reject(env, bridge):
+    _mqtt(env).kwargs["on_auth_rejected"](_mqtt(env))
+    bridge.worker.run_pending()
+
+
+def _access_errors(caplog):
+    # nur die Zeilen aus handle_auth_rejected, nicht andere ERRORs aus Takten, die beim Vorstellen der Uhr laufen
+    return [r for r in caplog.records if r.levelno == logging.ERROR and "MQTT-Anmeldung" in r.getMessage()]
+
+
+def test_auth_rejections_query_at_most_every_ten_minutes(env, caplog):
+    _quiet_backup(env)
+    bridge = _start(env)
+    env.abo["status"] = entitlement.REJECTED
+    queries_before = env.abo["queries"]
+
+    with caplog.at_level(logging.ERROR):
+        _reject(env, bridge)
+        env.clock.advance(300)
+        _reject(env, bridge)
+        env.clock.advance(299)
+        _reject(env, bridge)
+
+    assert env.abo["queries"] == queries_before + 1
+    assert len(_access_errors(caplog)) == 1
+
+    env.clock.advance(1)
+    _reject(env, bridge)
+    assert env.abo["queries"] == queries_before + 2
+
+
+def test_error_line_repeats_only_when_the_result_changes(env, caplog):
+    _quiet_backup(env)
+    bridge = _start(env)
+    env.abo["status"] = entitlement.REJECTED
+
+    with caplog.at_level(logging.ERROR):
+        _reject(env, bridge)
+        env.clock.advance(600)
+        _reject(env, bridge)
+        env.abo["status"] = entitlement.UNKNOWN
+        env.clock.advance(600)
+        _reject(env, bridge)
+
+    assert len(_access_errors(caplog)) == 2
+
+
+def test_suspension_during_zugang_abgelehnt_is_seen_after_the_interval(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    env.abo["status"] = entitlement.REJECTED
+    _reject(env, bridge)
+
+    env.abo["status"] = entitlement.INACTIVE
+    env.clock.advance(600)
+    _reject(env, bridge)
+
+    assert _status_states(env)[-1] == "abo_inaktiv"
+
+
+def test_successful_connect_resets_the_throttle(env, caplog):
+    # Nach einem erfolgreichen Connect ist eine neue Ablehnung wieder "die erste": sofortige
+    # Abfrage und wieder eine ERROR-Zeile, auch bei unveraendertem Ergebnis.
+    _quiet_backup(env)
+    bridge = _start(env)
+    env.abo["status"] = entitlement.REJECTED
+    with caplog.at_level(logging.ERROR):
+        _reject(env, bridge)
+        _connect(env, bridge)
+        queries_before = env.abo["queries"]
+
+        _reject(env, bridge)
+
+    assert env.abo["queries"] == queries_before + 1
+    assert len(_access_errors(caplog)) == 2
 
 
 def test_unexpected_entitlement_query_error_counts_as_unknown(env, monkeypatch):

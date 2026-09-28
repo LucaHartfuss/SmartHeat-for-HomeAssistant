@@ -410,6 +410,8 @@ def _on_mqtt_connected(rt: Runtime, event: Event) -> None:
     abgelehnte Anmeldung auf."""
     status = rt.status
     assert status is not None  # beim Boot gesetzt
+    rt.auth_rejected_queried_at = None
+    rt.auth_rejected_last_status = None
     if status.flags.zugang_abgelehnt:
         status.update(zugang_abgelehnt=False, grund=None, gestartet=True)
     elif not status.flags.gestartet:
@@ -523,7 +525,7 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | Idle
         manifest=manifest, ha_api=ha_api, options=options, derived_entity_ids=derived.entity_ids,
         worker=RegulationWorker(clock=clock), store=store,
         override=Override(store, manifest, ha_api, options, clock=clock),
-        notifier=notifier, status=status,
+        notifier=notifier, status=status, clock=clock,
     )
 
     # Abo-Status erst hier: Abschluss-Start und lokaler Modus brauchen Manifest und Clamps.
