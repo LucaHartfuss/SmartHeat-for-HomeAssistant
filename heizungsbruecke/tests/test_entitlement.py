@@ -25,8 +25,8 @@ class _Response:
 def _patch_get(monkeypatch, response=None, error=None):
     calls = []
 
-    def fake_get(url, timeout):
-        calls.append((url, timeout))
+    def fake_get(url, auth, timeout):
+        calls.append((url, auth, timeout))
         if error is not None:
             raise error
         return response
@@ -38,7 +38,8 @@ def _patch_get(monkeypatch, response=None, error=None):
 @pytest.mark.parametrize("response,expected", [
     (_Response(200, {"active": True}), "active"),
     (_Response(200, {"active": False}), "inactive"),
-    (_Response(404, {"error": "unbekannt"}), "inactive"),
+    (_Response(404, {"error": "unbekannt"}), "unknown"),
+    (_Response(401, {"error": "Nicht authentifiziert"}), "rejected"),
     (_Response(500, None), "unknown"),
     (_Response(503, None), "unknown"),
     (_Response(429, None), "unknown"),
@@ -49,33 +50,45 @@ def _patch_get(monkeypatch, response=None, error=None):
 ])
 def test_query_status_maps_responses(monkeypatch, response, expected):
     _patch_get(monkeypatch, response=response)
-    assert entitlement.query_status("t1", "https://accounts.example") == expected
+    assert entitlement.query_status("t1", "https://accounts.example", "u", "p") == expected
 
 
 @pytest.mark.parametrize("error", [requests.Timeout("zu langsam"), requests.ConnectionError("weg"), OSError("dns")])
 def test_query_status_fails_open_on_network_errors(monkeypatch, error):
     _patch_get(monkeypatch, error=error)
-    assert entitlement.query_status("t1", "https://accounts.example") == "unknown"
+    assert entitlement.query_status("t1", "https://accounts.example", "u", "p") == "unknown"
 
 
-def test_query_status_queries_status_endpoint(monkeypatch):
+def test_query_status_sends_basic_auth_to_the_status_endpoint(monkeypatch):
     calls = _patch_get(monkeypatch, response=_Response(200, {"active": True}))
-    entitlement.query_status("client1", "https://accounts.example")
-    assert calls == [("https://accounts.example/tenants/client1/status", 10)]
+    entitlement.query_status("client1", "https://accounts.example", "client1_abc", "geheim")
+    assert calls == [("https://accounts.example/tenants/client1/status", ("client1_abc", "geheim"), 10)]
+
+
+def test_query_from_options_uses_the_option_names(monkeypatch):
+    calls = _patch_get(monkeypatch, response=_Response(200, {"active": False}))
+    options = {"tenant_id": "t1", "accounts_api_base_url": "https://a.example", "mqtt_username": "u1", "mqtt_password": "p1"}
+
+    assert entitlement.query_from_options(options) == entitlement.INACTIVE
+    assert calls == [("https://a.example/tenants/t1/status", ("u1", "p1"), 10)]
+
+
+def test_rejected_and_errors_never_log_the_password(monkeypatch, caplog):
+    _patch_get(monkeypatch, error=requests.ConnectionError("weg"))
+    with caplog.at_level(logging.DEBUG):
+        entitlement.query_status("t1", "https://a.example", "u1", "sehr-geheim")
+    assert "sehr-geheim" not in caplog.text
 
 
 @pytest.mark.parametrize("response", [
-    _Response(404, json_error=True),          # HTML-Seite, z. B. Cloudflare-Catch-all
-    _Response(404, {"detail": "Not Found"}),  # anderer Dienst
-    _Response(404, ["error"]),
-    _Response(404, None),
+    _Response(404, {"error": "Unbekannter Tenant"}), _Response(404, json_error=True), _Response(404, None),
 ])
-def test_404_without_accounts_api_body_counts_as_unknown(monkeypatch, caplog, response):
-    # T2-4: ein fremder 404 darf nicht alle Tenants zugleich in den Abo-inaktiv-Modus schicken.
+def test_every_404_counts_as_unknown(monkeypatch, caplog, response):
+    # Spec TP8 3.1: der Server kennt kein 404 mehr; jeder 404 ist ein fremder Dienst.
     _patch_get(monkeypatch, response=response)
 
     with caplog.at_level(logging.WARNING):
-        assert entitlement.query_status("t1", "https://accounts.example.test") == entitlement.UNKNOWN
+        assert entitlement.query_status("t1", "https://accounts.example.test", "u", "p") == entitlement.UNKNOWN
 
     assert "404" in caplog.text
 

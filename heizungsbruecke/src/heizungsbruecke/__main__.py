@@ -529,7 +529,7 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | Idle
     # Abo-Status erst hier: Abschluss-Start und lokaler Modus brauchen Manifest und Clamps.
     # "unknown" (accounts-api nicht erreichbar) startet normal -- fail-open.
     now = datetime.now().astimezone()
-    abo_status = entitlement.query_status(options["tenant_id"], options["accounts_api_base_url"])
+    abo_status = entitlement.query_from_options(options)
     if abo_status == entitlement.ACTIVE:
         entitlement.clear(config.ENTITLEMENT_PATH)
         notifier.notify("abo", STATE_OK, abo.ABO_ACTIVE_MESSAGE, critical=True)
