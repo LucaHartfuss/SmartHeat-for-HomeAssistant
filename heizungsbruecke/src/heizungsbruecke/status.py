@@ -12,7 +12,7 @@ from heizungsbruecke import battery, delivery, entitlement, room_sensors
 logger = logging.getLogger(__name__)
 
 # Muss zu `version` in config.yaml passen (tests/test_config_yaml.py).
-ADDON_VERSION = "0.21.0"
+ADDON_VERSION = "0.22.0"
 
 EVENT_TYPE = "smartheat_status"
 EVENT_SCHEMA = 1

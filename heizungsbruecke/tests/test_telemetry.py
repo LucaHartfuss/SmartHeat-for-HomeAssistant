@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock
 
 from heizungsbruecke import telemetry
+from heizungsbruecke.delivery import DataFault
 from heizungsbruecke.manifest import ChannelManifest
 
 
@@ -206,6 +207,40 @@ def test_run_telemetry_tick_skips_when_room_actual_not_mapped():
 
     ha_api.get_state.assert_not_called()
     mqtt_client.publish_telemetry.assert_not_called()
+
+
+def test_publish_telemetry_includes_datenfehler_when_given():
+    mqtt_client = MagicMock()
+
+    telemetry.publish_telemetry(
+        mqtt_client=mqtt_client, room_actual=20.5, boost_active=False, failsafe_active=False,
+        datenfehler=DataFault("write", ("curve_current", "number.x", "Timeout")),
+    )
+
+    payload = mqtt_client.publish_telemetry.call_args.args[0]
+    assert payload["datenfehler"] == {"source": "write", "detail": ["curve_current", "number.x", "Timeout"]}
+
+
+def test_publish_telemetry_omits_datenfehler_without_fault():
+    mqtt_client = MagicMock()
+
+    telemetry.publish_telemetry(mqtt_client=mqtt_client, room_actual=20.5, boost_active=False, failsafe_active=False)
+
+    assert telemetry.DATENFEHLER_KEY not in mqtt_client.publish_telemetry.call_args.args[0]
+
+
+def test_run_telemetry_tick_passes_datenfehler_through():
+    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual"})
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 20.5
+    mqtt_client = MagicMock()
+
+    telemetry.run_telemetry_tick(
+        manifest, ha_api, mqtt_client, boost_active=False, failsafe_active=False,
+        datenfehler=DataFault("local", ("dat",)),
+    )
+
+    assert mqtt_client.publish_telemetry.call_args.args[0]["datenfehler"] == {"source": "local", "detail": ["dat"]}
 
 
 def test_run_telemetry_tick_survives_exception_without_propagating(monkeypatch, caplog):

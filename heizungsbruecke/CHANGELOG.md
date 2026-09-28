@@ -3,6 +3,11 @@
 Wird im Update-Dialog des Supervisors angezeigt. Pro Version ein Abschnitt `## X.Y.Z`; der
 Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Release.
 
+## 0.22.0
+
+- Die Telemetrie meldet einen anstehenden Datenfehler (Quelle und Details) an den Server, damit
+  dessen Health-Check auch Schreibfehler zur Anlage sieht. Keine Verhaltensänderung an der Regelung.
+
 ## 0.21.0
 
 - `boot: auto` aus der Add-on-Konfiguration entfernt (Standardwert, keine Verhaltensänderung).

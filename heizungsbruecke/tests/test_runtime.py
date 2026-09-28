@@ -895,6 +895,20 @@ def test_telemetry_runs_on_its_own_schedule(env):
     _advance(env, bridge, 1)
     assert len(_mqtt(env).telemetry) == 2
     assert _mqtt(env).telemetry[-1]["failsafe_active"] is False
+    assert "datenfehler" not in _mqtt(env).telemetry[-1]
+
+
+def test_telemetry_reports_pending_data_fault(env):
+    _quiet_backup(env)
+    save_backup(env.paths["FAILSAFE_PATH"], {
+        "failsafe_active": False,
+        "datenfehler": {"source": "local", "detail": ["dat"]},
+        "pending": {"seq": "alt-1", "trigger": "daily"},
+    })
+
+    _start(env)
+
+    assert _mqtt(env).telemetry[0]["datenfehler"] == {"source": "local", "detail": ["dat"]}
 
 
 # --- Abo-Pfade ---
