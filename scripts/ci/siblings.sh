@@ -20,7 +20,9 @@ if [ "$status" != 200 ]; then
 fi
 url() { printf 'https://x-access-token:%s@github.com/%s/%s.git' "$CROSS_REPO_TOKEN" "$OWNER" "$1"; }
 ref_for() {
-  if git ls-remote --exit-code --heads "$(url "$1")" "$BRANCH" >/dev/null 2>&1; then echo "$BRANCH"; else echo develop; fi
+  # Ausserhalb jedes Repos ausfuehren: actions/checkout hinterlegt im Checkout einen extraheader mit dem
+  # GITHUB_TOKEN des eigenen Repos, der sonst die Token-URL uebersteuert ("Repository not found").
+  if git -C / ls-remote --exit-code --heads "$(url "$1")" "$BRANCH" >/dev/null 2>&1; then echo "$BRANCH"; else echo develop; fi
 }
 clone() {
   local repo=$1 target=$2 ref
