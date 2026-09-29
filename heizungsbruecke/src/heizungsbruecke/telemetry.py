@@ -4,6 +4,8 @@ import logging
 import math
 from datetime import datetime
 
+from heizungsbruecke.delivery import DataFault
+
 logger = logging.getLogger(__name__)
 
 # Optionale KPI-Rollen, nur wenn gemappt. Nicht lesbare Sensoren werden weggelassen, nie als
@@ -17,8 +19,15 @@ KPI_ENERGY_ROLES = (
     "energy_thermal_heating", "energy_thermal_dhw",
 )
 
+#: Anstehender Datenfehler fuer den Health-Check des Servers (nur solange einer besteht).
+#: Feldname und Quellen prueft der Contract-Check 21 gegen heizungsserver.generic.history.
+DATENFEHLER_KEY = "datenfehler"
 
-def run_telemetry_tick(manifest, ha_api, mqtt_client, boost_active: bool, failsafe_active: bool) -> None:
+
+def run_telemetry_tick(
+    manifest, ha_api, mqtt_client, boost_active: bool, failsafe_active: bool,
+    datenfehler: DataFault | None = None,
+) -> None:
     """Liest room_actual selbst (lokaler HA-REST-Aufruf, kein Cloud-Roundtrip). Wirft nie."""
     if "room_actual" not in manifest.entity_ids:
         return
@@ -27,7 +36,7 @@ def run_telemetry_tick(manifest, ha_api, mqtt_client, boost_active: bool, failsa
         publish_telemetry(
             mqtt_client=mqtt_client, room_actual=room_actual,
             boost_active=boost_active, failsafe_active=failsafe_active,
-            kpi_fields=read_kpi_fields(manifest, ha_api),
+            kpi_fields=read_kpi_fields(manifest, ha_api), datenfehler=datenfehler,
         )
     except Exception:
         logger.exception("Fehler beim Veroeffentlichen der KPI-Telemetrie, wird beim naechsten Tick erneut versucht")
@@ -35,14 +44,18 @@ def run_telemetry_tick(manifest, ha_api, mqtt_client, boost_active: bool, failsa
 
 def publish_telemetry(
     mqtt_client, room_actual: float, boost_active: bool, failsafe_active: bool, kpi_fields: dict | None = None,
+    datenfehler: DataFault | None = None,
 ) -> None:
-    mqtt_client.publish_telemetry({
+    payload = {
         "room_actual": room_actual,
         "boost_active": boost_active,
         "failsafe_active": failsafe_active,
         "ts": datetime.now().isoformat(),
         **(kpi_fields or {}),
-    })
+    }
+    if datenfehler is not None:
+        payload[DATENFEHLER_KEY] = {"source": datenfehler.source, "detail": list(datenfehler.detail)}
+    mqtt_client.publish_telemetry(payload)
 
 
 def read_kpi_fields(manifest, ha_api) -> dict:
