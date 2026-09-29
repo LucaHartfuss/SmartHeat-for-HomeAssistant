@@ -73,8 +73,9 @@ class Flags:
 
 
 def overall_status(flags: Flags, state) -> str:
-    """Erster zutreffender Zustand (Spec TP7 3.1): Endzustaende und Abo gelten immer, danach vor
-    dem ersten abgeschlossenen Start `startet`."""
+    """Erster zutreffender Zustand (Spec TP7 3.1): Endzustaende und Abo gelten immer, danach
+    Notbetrieb und Datenfehler, erst dann vor dem ersten abgeschlossenen Start `startet` (sonst
+    stuende ein Add-on, dessen Tunnel nie aufgebaut wird, im Notbetrieb dauerhaft auf `startet`)."""
     if flags.abgemeldet:
         return STATUS_ABGEMELDET
     if flags.konfigurationsfehler:
@@ -85,12 +86,12 @@ def overall_status(flags: Flags, state) -> str:
         return STATUS_ABO_BEENDET
     if state.abo_inactive_since is not None:
         return STATUS_ABO_INAKTIV
-    if not flags.gestartet:
-        return STATUS_STARTET
     if state.delivery.notbetrieb:
         return STATUS_NOTBETRIEB
     if state.delivery.datenfehler is not None:
         return STATUS_DATENFEHLER
+    if not flags.gestartet:
+        return STATUS_STARTET
     return STATUS_REGELT
 
 

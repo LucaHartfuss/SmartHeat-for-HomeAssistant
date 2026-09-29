@@ -40,7 +40,11 @@ def test_contract_values_match_the_integration():
     (Flags(abo_beendet=True), BridgeState(), "abo_beendet"),
     (Flags(), BridgeState(abo_finished=True, abo_inactive_since=SINCE), "abo_beendet"),
     (Flags(), BridgeState(abo_inactive_since=SINCE, delivery=DeliveryState(notbetrieb=True)), "abo_inaktiv"),
-    (Flags(), BridgeState(delivery=DeliveryState(notbetrieb=True)), "startet"),
+    # Notbetrieb/Datenfehler vor dem ersten MQTT-Connect (Tunnel nie aufgebaut): sichtbar statt
+    # "startet" (TP7-Gates 2026-09-29).
+    (Flags(), BridgeState(delivery=DeliveryState(notbetrieb=True)), "notbetrieb"),
+    (Flags(), BridgeState(delivery=DeliveryState(datenfehler=DataFault("local", ("dat",)))), "datenfehler"),
+    (Flags(), BridgeState(), "startet"),
     (Flags(gestartet=True), BridgeState(delivery=DeliveryState(
         notbetrieb=True, datenfehler=DataFault("local", ("dat",)))), "notbetrieb"),
     (Flags(gestartet=True), BridgeState(delivery=DeliveryState(datenfehler=DataFault("server", ("x",)))), "datenfehler"),

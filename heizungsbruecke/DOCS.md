@@ -52,7 +52,9 @@ startet es danach selbst neu.
 konfiguriertes Add-on startet und bleibt im Ruhezustand (es regelt nicht und beendet sich nicht). Sobald
 die SmartHeat-Integration die Einrichtung abgeschlossen hat, startet sie das Add-on selbst neu. Watchdog
 und „Start beim Booten“ schaltet die Integration für beide Add-ons ein. Beim Entfernen der Integration
-wird das Add-on abgemeldet (laufender Boost zurückgesetzt, Meldungen entfernt) und gestoppt.
+wird das Add-on abgemeldet (laufender Boost zurückgesetzt, Meldungen entfernt) und gestoppt. Scheitert
+das Zurücksetzen, bleibt es im Ruhezustand laufen, versucht es weiter und meldet die Werte, die sonst von
+Hand einzustellen sind.
 
 ## Verifizierte Architekturen
 
