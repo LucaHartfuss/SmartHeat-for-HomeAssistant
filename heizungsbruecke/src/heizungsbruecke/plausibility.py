@@ -1,5 +1,5 @@
 """Physikalische Plausibilitaetsgrenzen (Spec TP6, Abschnitt 4 und 8). Muessen mit
-heizungsserver generic/messages.py::PLAUSIBLE_RANGES (dart/dat) und der Integration
+heizungsserver generic/messages.py::PLAUSIBLE_RANGES (room_target/outdoor_temp) und der Integration
 (const.PLAUSIBLE_RANGES) uebereinstimmen; tools/contract_check.py prueft das."""
 import math
 

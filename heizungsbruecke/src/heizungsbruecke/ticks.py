@@ -93,7 +93,7 @@ def _attempt(rt: Runtime, seq: str, trigger: str):
         # startet den Versuch sofort neu (N3), sonst plant der Ack-Timeout den naechsten.
         logger.warning("Snapshot (seq=%s) nicht gesendet, keine MQTT-Verbindung", seq)
         return delivery.Published(seq=seq, unsent=True)
-    # R6-Fix: der beim ersten erfolgreichen Publish dieser seq gepinnte Eintrag reist bei jedem
+    # Durchsetzungs-KPI: der beim ersten erfolgreichen Publish dieser seq gepinnte Eintrag reist bei jedem
     # Retry unveraendert mit; ein zwischenzeitlich neu erkannter Eingriff wartet auf die naechste
     # seq (siehe Runtime.manual_override_seq).
     if rt.manual_override_seq == seq:
@@ -179,8 +179,9 @@ def _record_answer(rt: Runtime) -> None:
 
 
 def _clear_sent_manual_override(rt: Runtime) -> None:
-    """R6: der Server hat den Snapshot mit dem Eingriff verarbeitet (KPI erfasst). Nur genau der
-    gesendete Eintrag wird geloescht; ein inzwischen neu erkannter reist mit dem naechsten Tick."""
+    """Der Server hat den Snapshot mit dem (schon zurueckgesetzten) Eingriff verarbeitet (KPI
+    erfasst). Nur genau der gesendete Eintrag wird geloescht; ein inzwischen neu erkannter reist
+    mit dem naechsten Tick."""
     sent = rt.manual_override_sent
     if sent is None or rt.store.state.manual_override_pending != sent:
         return

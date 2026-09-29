@@ -1,4 +1,4 @@
-"""Add-on-Optionen: Pflichtfelder, aufgeloeste Sicherheitswerte und Fenster, Startpruefungen und feste Adressen."""
+"""Add-on-Optionen: Pflichtfelder, aufgeloeste Sicherheitswerte und Tagestick-Zeit, Startpruefungen und feste Adressen."""
 import json
 import logging
 import math
@@ -25,7 +25,7 @@ DERIVED_SENSORS_PATH = DATA_DIR / "derived_sensors.json"
 ENTITLEMENT_PATH = DATA_DIR / "entitlement_state.json"
 
 # Lokale Checks laufen eventgetrieben; dieser Takt gilt nur noch fuer den Watchdog-Fallback
-# bei getrennter WS-Verbindung (und fuer daynight/grace_check).
+# bei getrennter WS-Verbindung (und fuer grace_check/health).
 DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS = 300
 DEFAULT_TELEMETRY_INTERVAL_SECONDS = 300
 

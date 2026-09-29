@@ -1,6 +1,12 @@
 import pytest
 
-from heizungsbruecke.manifest import OPTIONAL_SNAPSHOT_ROLES, SNAPSHOT_ROLES, ManifestError, build_manifest
+from heizungsbruecke.manifest import (
+    OPTIONAL_SNAPSHOT_ROLES,
+    SNAPSHOT_ROLES,
+    ManifestError,
+    build_manifest,
+    entity_ref,
+)
 
 # room_actual kommt immer aus derived_sensors (Raumtemperatur-Template, Spec TP6 3.2).
 ROOM_ACTUAL = {"room_actual": "sensor.smartheat_t1_raumtemperatur"}
@@ -89,6 +95,16 @@ def test_climate_shift_reads_target_temperature_attribute():
 def test_number_shift_is_kept():
     manifest = build_manifest({**BASE, "entity_shift_current": "number.shift"}, DERIVED)
     assert manifest.entity_ids["shift_current"] == "number.shift"
+
+
+@pytest.mark.parametrize("role, value, expected", [
+    ("shift_current", "climate.zone", "climate.zone::temperature"),
+    ("shift_current", "climate.zone::temperature", "climate.zone::temperature"),
+    ("shift_current", "number.shift", "number.shift"),
+    ("room_target", "climate.wz", "climate.wz"),
+])
+def test_entity_ref(role, value, expected):
+    assert entity_ref(role, value) == expected
 
 
 def test_snapshot_roles():

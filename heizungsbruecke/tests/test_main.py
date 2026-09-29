@@ -21,7 +21,7 @@ from heizungsbruecke.ha_api import HomeAssistantApi
 
 @pytest.fixture(autouse=True)
 def _isolate_data_paths(tmp_path, monkeypatch):
-    for name in ("BACKUP_PATH", "FAILSAFE_PATH", "ENTITLEMENT_PATH", "DERIVED_SENSORS_PATH", "DAYNIGHT_SNAPSHOT_PATH"):
+    for name in ("BACKUP_PATH", "FAILSAFE_PATH", "ENTITLEMENT_PATH", "DERIVED_SENSORS_PATH"):
         monkeypatch.setattr(f"heizungsbruecke.config.{name}", tmp_path / f"{name.lower()}.json")
 
 
@@ -58,20 +58,15 @@ def _full_valid_options(**overrides):
         "tenant_id": "test_tenant",
         "verteilsystem": "Heizkoerper",
         "daily_trigger_time": "12:00",
-        "day_avg_window_start": "14:00", "day_avg_window_end": "17:00",
-        "night_avg_window_start": "04:00", "night_avg_window_end": "07:00",
         "mqtt_username": "test_mqtt_user",
         "mqtt_password": "test_mqtt_pass",
         "room_sensors": ["sensor.room_actual"],
         "entity_room_target": "sensor.room_target",
         "entity_curve_current": "number.curve_current",
-        "entity_offset_current": "number.offset_current",
+        "entity_shift_current": "climate.zone",
+        "entity_min_flow": "number.min_flow",
         "entity_outdoor_temp": "sensor.outdoor_temp",
         "entity_heat_limit": "number.heat_limit",
-        "entity_room_day_avg": "sensor.room_day_avg",
-        "entity_room_night_avg": "sensor.room_night_avg",
-        "entity_dat": "sensor.dat",
-        "entity_dart": "sensor.dart",
         "accounts_api_base_url": "https://accounts.example.test",
     }
     options.update(overrides)
@@ -105,8 +100,7 @@ def test_verteilsystem_without_safety_values_is_a_configuration_error(monkeypatc
 
 def test_0_17_0_options_are_outdated_not_unconfigured(caplog, sleeps):
     old = {k: v for k, v in _full_valid_options().items() if k not in (
-        "verteilsystem", "daily_trigger_time", "day_avg_window_start", "day_avg_window_end",
-        "night_avg_window_start", "night_avg_window_end", "room_sensors",
+        "verteilsystem", "daily_trigger_time", "room_sensors",
     )}
     old["profile"] = "vaillant_gastherme_heizkoerper"
 
@@ -185,10 +179,7 @@ def test_main_never_exits_on_its_own(tmp_path, monkeypatch):
     assert main() is None  # kein SystemExit
 
 
-_DERIVED_OPTIONS = {
-    "tenant_id": "t1", "room_sensors": ["sensor.rt"], "entity_outdoor_temp": "sensor.outdoor",
-    "avg_window_hours": 3.0,
-}
+_DERIVED_OPTIONS = {"tenant_id": "t1", "room_sensors": ["sensor.rt"], "entity_outdoor_temp": "sensor.outdoor"}
 
 
 def test_retry_with_budget_returns_first_success(sleeps):
@@ -315,7 +306,7 @@ def test_helper_creation_failure_after_budget_is_a_start_error(monkeypatch, slee
 
 
 def test_ensure_derived_sensors_with_retry_recovers_after_transient_failures(monkeypatch, sleeps):
-    expected = DerivedSensors({"dat": "sensor.dat"}, (), "f")
+    expected = DerivedSensors({"room_actual": "sensor.smartheat_t1_raumtemperatur"}, (), "f")
     attempts = {"count": 0}
 
     def flaky_ensure_all(**kwargs):
@@ -350,6 +341,35 @@ def test_start_with_0_18_0_options_reports_outdated_configuration(sleeps):
     assert ha_api.create_persistent_notification.call_args.args[2] == "smartheat_konfiguration"
     ha_api.send_notification.assert_not_called()
     ha_api.set_number_value.assert_not_called()
+
+
+def test_start_with_0_23_0_options_reports_outdated_configuration_without_writing(sleeps):
+    """Review Focus 3: Update mit der options.json von 0.23.0 (entity_offset_current, keine
+    Parallelverschiebung/kein Mindestvorlauf): Ruhezustand, kein Schreiben auf die Anlage."""
+    old = {k: v for k, v in _full_valid_options().items() if k not in ("entity_shift_current", "entity_min_flow")}
+    old["entity_offset_current"] = "number.zuhause_circuit_0_min_flow_temperature_setpoint"
+    ha_api = _reachable()
+
+    bridge = _start_bridge(old, ha_api)
+
+    assert bridge.reason == "konfigurationsfehler"
+    grund = _status_calls(ha_api)[-1]["grund"]
+    assert grund.startswith("Konfiguration veraltet – bitte SmartHeat-Einrichtung erneut durchführen")
+    assert "'entity_shift_current' fehlt" in grund
+    ha_api.set_number_value.assert_not_called()
+    ha_api.set_climate_temperature.assert_not_called()
+    ha_api.set_hvac_mode.assert_not_called()
+
+
+def test_required_entities_include_zone_and_min_flow(sleeps):
+    ha_api = _reachable()
+    checked = []
+    ha_api.entity_exists.side_effect = lambda entity_id: checked.append(entity_id) or True
+
+    _wait_for_required_entities(ha_api, _full_valid_options())
+
+    assert {"climate.zone", "number.min_flow"} <= set(checked)
+    assert "number.offset_current" not in checked
 
 
 def test_repeated_start_error_does_not_push_again(sleeps):

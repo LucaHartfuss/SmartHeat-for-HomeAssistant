@@ -133,7 +133,8 @@ def _manual(state) -> dict | None:
     override = state.manual_override
     if override is None:
         return None
-    return {"kurve": override["curve"], "offset": override["offset"], "erkannt": override["erkannt"]}
+    # Feldnamen des Events stellt Task 17 (TP11) auf parallelverschiebung um.
+    return {"kurve": override["curve"], "offset": override["shift"], "erkannt": override["erkannt"]}
 
 
 def build_event(tenant_id: str, setup_id: str | None, flags: Flags, state) -> dict:
@@ -151,7 +152,7 @@ def build_event(tenant_id: str, setup_id: str | None, flags: Flags, state) -> di
         "boost": _boost(state),
         "letzte_serverantwort": state.last_ack_at,
         "kurve": state.curve_current,
-        "offset": state.offset_current,
+        "offset": state.shift_current,  # Task 17 (TP11): parallelverschiebung/mindestvorlauf
         "abo": abo,
         "abo_frist_ende": (
             entitlement.grace_end(state.abo_inactive_since).date().isoformat() if abo == ABO_INAKTIV else None

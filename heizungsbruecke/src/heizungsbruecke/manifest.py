@@ -35,6 +35,14 @@ class ChannelManifest:
     entity_ids: dict[str, str]
 
 
+def entity_ref(role: str, value: str) -> str:
+    """Referenz, unter der die Bruecke die Rolle liest: eine Climate-Zone als Parallelverschiebung
+    wird ueber ihr Attribut `temperature` gelesen."""
+    if role == "shift_current" and value.startswith("climate.") and "::" not in value:
+        return f"{value}::{CLIMATE_TARGET_ATTRIBUTE}"
+    return value
+
+
 def build_manifest(options: dict, derived_entity_ids: dict[str, str] | None = None) -> ChannelManifest:
     derived_entity_ids = derived_entity_ids or {}
     entity_ids = {}
@@ -43,10 +51,8 @@ def build_manifest(options: dict, derived_entity_ids: dict[str, str] | None = No
             entity_ids[role] = derived_entity_ids[role]
             continue
         value = options.get(f"entity_{role}")
-        if value and role == "shift_current" and value.startswith("climate.") and "::" not in value:
-            value = f"{value}::{CLIMATE_TARGET_ATTRIBUTE}"
         if value:
-            entity_ids[role] = value
+            entity_ids[role] = entity_ref(role, value)
 
     missing = [role for role in REQUIRED_ROLES if role not in entity_ids]
     if missing:
