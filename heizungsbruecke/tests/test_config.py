@@ -235,6 +235,16 @@ def test_validate_telemetry_interval_flags_value_below_ten():
     assert "telemetry_interval_seconds" in error
 
 
+def test_validate_telemetry_interval_accepts_nine_hundred():
+    assert validate_telemetry_interval({"telemetry_interval_seconds": 900}) is None
+
+
+def test_validate_telemetry_interval_flags_value_above_nine_hundred():
+    error = validate_telemetry_interval({"telemetry_interval_seconds": 901})
+    assert error is not None
+    assert "telemetry_interval_seconds" in error
+
+
 def test_validate_local_check_interval_flags_nan():
     # Task 3a (final-review-fixes-plan): value < 10/> 60 is False for NaN, so a hand-
     # edited options.json with NaN used to sail through validation unnoticed.

@@ -211,7 +211,9 @@ def validate_local_check_interval(options: dict) -> str | None:
 
 def validate_telemetry_interval(options: dict) -> str | None:
     """Untergrenze 10 s wie im config.yaml-Schema, auch fuer ein von Hand editiertes
-    options.json: sonst fluten Telemetrie-Publishes den Server."""
+    options.json: sonst fluten Telemetrie-Publishes den Server. Obergrenze 900 s (TP11-Review):
+    darueber lernt der Regelkern serverseitig praktisch nie (Abdeckungsregel > 15 min Luecke =
+    Pause)."""
     value = options.get("telemetry_interval_seconds")
     if value is not None and not _is_finite_number(value):
         return f"telemetry_interval_seconds ({value!r}) ist kein gueltiger endlicher Zahlenwert"
@@ -219,6 +221,12 @@ def validate_telemetry_interval(options: dict) -> str | None:
         return (
             f"telemetry_interval_seconds ({value}) liegt unter dem zulaessigen Minimum "
             f"von 10 Sekunden"
+        )
+    if value is not None and value > 900:
+        return (
+            f"telemetry_interval_seconds ({value}) liegt ueber dem zulaessigen Maximum "
+            f"von 900 Sekunden (15 min) - der Regelkern wertet nur Telemetrie-Luecken bis "
+            f"15 min als zusammenhaengend, darueber lernt er praktisch nie"
         )
     return None
 
