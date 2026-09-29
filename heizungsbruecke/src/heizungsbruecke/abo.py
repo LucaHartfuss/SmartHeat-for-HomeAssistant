@@ -22,6 +22,8 @@ ACCESS_DENIED_MESSAGE = (
 )
 ACCESS_OK_MESSAGE = "SmartHeat: Die Zugangsdaten werden wieder angenommen, die Heizungssteuerung läuft wieder normal."
 ACCESS_DENIED_REASON = "Zugangsdaten vom Server abgelehnt"
+RESTORE_KEY = "wiederherstellung"
+RESTORE_FAILED_STATE = "fehlgeschlagen"
 RESTORE_FAILED_MESSAGE = "SmartHeat: Zurücksetzen auf die zuletzt gelernten Werte scheitert. Bitte die Anlage prüfen."
 RESTORE_OK_MESSAGE = "SmartHeat: Die zuletzt gelernten Werte sind wieder eingestellt."
 RESTORE_FAILED_REASON = "Zurücksetzen auf die zuletzt gelernten Werte scheitert"
@@ -99,9 +101,9 @@ def report_restore(notifier, ok: bool) -> None:
     """T2-7: eine dauerhaft scheiternde Wiederherstellung am Fristende wird einmal gemeldet
     (kritisch), die spaetere Rueckkehr ebenfalls. Gelingt sie gleich, bleibt es still."""
     if ok:
-        notifier.notify("wiederherstellung", STATE_OK, RESTORE_OK_MESSAGE, critical=True)
+        notifier.notify(RESTORE_KEY, STATE_OK, RESTORE_OK_MESSAGE, critical=True)
     else:
-        notifier.notify("wiederherstellung", "fehlgeschlagen", RESTORE_FAILED_MESSAGE, critical=True)
+        notifier.notify(RESTORE_KEY, RESTORE_FAILED_STATE, RESTORE_FAILED_MESSAGE, critical=True)
 
 
 AUTH_REJECTED_QUERY_INTERVAL_SECONDS = 600.0

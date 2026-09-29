@@ -82,6 +82,14 @@ CONFIG_ERROR_MESSAGE = (
 )
 SIGN_OFF_INVALID_CONFIG = "Konfiguration ungültig, die Anlage wurde nicht zurückgesetzt"
 SIGN_OFF_RESTORE_FAILED = "Zurücksetzen der Anlage scheitert, neuer Versuch in {seconds} s"
+SIGN_OFF_RESTORE_FAILED_MESSAGE = (
+    "SmartHeat wurde entfernt, konnte die Heizung aber nicht auf die zuletzt gelernten Werte "
+    "zurücksetzen ({werte}). Es wird weiter versucht, sonst bitte diese Werte von Hand einstellen."
+)
+SIGN_OFF_NOT_RESTORED_MESSAGE = (
+    "SmartHeat wurde entfernt, die Heizung steht aber noch auf Boost-Werten (Konfiguration "
+    "ungültig, kein Zurücksetzen möglich). Bitte die zuletzt gelernten Werte von Hand einstellen ({werte})."
+)
 REDACTED = "***"
 SOURCE_CHANGE_MESSAGE = (
     "SmartHeat: Die Quelle der Raum- oder Außentemperatur hat sich geändert. Die Tagesmittel "
@@ -248,20 +256,28 @@ def _sign_off(options: dict, ha_api, store, notifier, status, clock) -> IdleBrid
     else:
         manifest = ChannelManifest(entity_ids={role: effective[f"entity_{role}"] for role in OVERRIDE_ROLES})
         restorer = Override(store, manifest, ha_api, effective)
+    boosting = store.state.boost_active or store.state.emergency_boost_active
     restored = restorer is not None and restorer.restore_and_clear(always_restore=False)
-    notifier.clear_all()
+    # Die Meldung zum Zuruecksetzen bleibt: nach dem Entfernen ist sie der einzige Hinweis, dass
+    # die Anlage noch auf Boost-Werten steht (TP7-Gates 2026-09-29).
+    notifier.clear_all(keep=(abo.RESTORE_KEY,))
     retry_seconds = config.local_check_interval(options)
     if restorer is None:
         grund = SIGN_OFF_INVALID_CONFIG
+        if boosting:
+            _report_sign_off_restore(notifier, SIGN_OFF_NOT_RESTORED_MESSAGE, store.state)
     elif restored:
         grund = None
+        abo.report_restore(notifier, ok=True)
     else:
         grund = SIGN_OFF_RESTORE_FAILED.format(seconds=retry_seconds)
+        _report_sign_off_restore(notifier, SIGN_OFF_RESTORE_FAILED_MESSAGE, store.state)
     status.update(abgemeldet=True, grund=grund)
     bridge = _idle(clock, status, STATUS_ABGEMELDET)
     if restorer is not None and not restored:
         def _retry(event: Event) -> None:
             if restorer.restore_and_clear(always_restore=False):
+                abo.report_restore(notifier, ok=True)
                 status.update(grund=None)
                 return
             bridge.worker.schedule(retry_seconds, Event(EV_RECHECK))
@@ -269,6 +285,24 @@ def _sign_off(options: dict, ha_api, store, notifier, status, clock) -> IdleBrid
         bridge.worker.register(EV_RECHECK, _retry)
         bridge.worker.schedule(retry_seconds, Event(EV_RECHECK))
     return bridge
+
+
+def _report_sign_off_restore(notifier, template: str, state) -> None:
+    """Kritische Meldung mit den Werten des Wiederherstellungspunkts, einmal mit Push; bei jedem
+    weiteren Start (Pi-Neustart, Zuruecksetzen scheitert weiter) nur die HA-Benachrichtigung neu,
+    die HA nicht speichert."""
+    message = template.format(werte=_restore_values_text(state))
+    if not notifier.notify(abo.RESTORE_KEY, abo.RESTORE_FAILED_STATE, message, critical=True):
+        notifier.refresh_persistent(abo.RESTORE_KEY, message)
+
+
+def _restore_values_text(state) -> str:
+    parts = [
+        f"{label} {value:g}".replace(".", ",")
+        for label, value in (("Kurve", state.curve_current), ("Offset", state.offset_current))
+        if value is not None
+    ]
+    return ", ".join(parts) if parts else "Werte unbekannt"
 
 
 def _finish_at_start(rt: Runtime, clock) -> IdleBridge:
@@ -486,7 +520,10 @@ def _prime(rt: Runtime) -> None:
 def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | IdleBridge:
     """Gibt den gestarteten Laufzeit-Kontext zurueck oder den Ruhezustand, wenn gar nicht erst
     geregelt wird: nicht eingerichtet, abgemeldet, Konfigurationsfehler, Abo-Frist abgeschlossen."""
-    if not config.is_configured(options):
+    # Abmelden braucht keine Zugangsdaten (die Integration leert sie beim Entfernen), nur den
+    # Tenant: ein noch scheiterndes Zuruecksetzen laeuft so auch nach einem Pi-Neustart weiter.
+    signed_off = config.is_signed_off(options) and bool(options.get("tenant_id"))
+    if not signed_off and not config.is_configured(options):
         logger.info(
             "Add-on ist noch nicht eingerichtet -- bitte die SmartHeat-Integration in "
             "Home Assistant installieren und dort die Verbindung zu diesem Add-on "
@@ -502,7 +539,7 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | Idle
     ticks.seed_notices(notifier, store.state.delivery)
     status = StatusReporter(ha_api, options["tenant_id"], options.get("setup_id"), store)
     status.publish()
-    if config.is_signed_off(options):
+    if signed_off:
         return _sign_off(options, ha_api, store, notifier, status, clock)
     try:
         options = config.resolve_effective_options(options)

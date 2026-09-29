@@ -6,6 +6,10 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
 ## 0.23.0
 
 - Eine Server-Antwort mit unbekanntem Schema wird als Datenfehler vom Server gemeldet und nicht übernommen.
+- Status: Notbetrieb und Datenfehler werden auch vor der ersten MQTT-Verbindung angezeigt statt „startet“.
+- Entfernen der Integration: Scheitert das Zurücksetzen eines laufenden Boosts, kommt eine kritische
+  Meldung mit den Werten zum Einstellen von Hand; das Add-on versucht es weiter, auch ohne
+  Zugangsdaten und nach einem Neustart, und meldet die Entwarnung.
 - Aufräumarbeiten ohne Verhaltensänderung: ungenutzter Code entfernt, Warnung bei einer beschädigten `failsafe_state.json`, zusätzliche Tests.
 
 ## 0.22.0

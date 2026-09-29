@@ -1801,6 +1801,76 @@ def test_sign_off_with_invalid_configuration_does_not_write(env):
     assert _last_event(env)["grund"] == main_module.SIGN_OFF_INVALID_CONFIG
 
 
+def test_sign_off_without_mqtt_credentials_still_restores(env):
+    """TP7-Gates: die Integration leert beim Entfernen die Zugangsdaten. Startet der Pi danach
+    neu, waehrend das Zuruecksetzen noch scheitert, muss der Abmelde-Pfad trotzdem laufen."""
+    _quiet_backup(env, boost_active=True)
+
+    bridge = _start_bridge(env, abgemeldet=True, mqtt_username="", mqtt_password="")
+
+    assert bridge.reason == "abgemeldet"
+    assert env.ha.writes == [("number.curve_current", 0.9), ("number.offset_current", 22.0)]
+
+
+def test_sign_off_failed_restore_notifies_with_the_restore_values(env):
+    _quiet_backup(env, boost_active=True, notify_states={"notbetrieb": "aktiv"})
+    env.ha.write_error = RuntimeError("Cloud weg")
+
+    _start_bridge(env, abgemeldet=True)
+
+    message = main_module.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Kurve 0,9, Offset 22")
+    assert env.ha.pushes == [message]
+    assert ("smartheat_wiederherstellung", message) in env.ha.persistent
+    assert "smartheat_notbetrieb" in env.ha.dismissed
+    assert _backup(env)["notify_states"] == {"wiederherstellung": "fehlgeschlagen"}
+
+
+def test_sign_off_failed_restore_after_a_restart_renews_the_notification_without_push(env):
+    message = main_module.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Kurve 0,9, Offset 22")
+    _quiet_backup(
+        env, boost_active=True,
+        notify_states={"wiederherstellung": "fehlgeschlagen"}, notify_messages={"wiederherstellung": message},
+    )
+    env.ha.write_error = RuntimeError("Cloud weg")
+
+    _start_bridge(env, abgemeldet=True)
+
+    assert env.ha.pushes == []
+    assert ("smartheat_wiederherstellung", message) in env.ha.persistent
+    assert "smartheat_wiederherstellung" not in env.ha.dismissed
+
+
+def test_sign_off_retry_success_reports_ok_and_dismisses_the_notification(env):
+    _quiet_backup(env, boost_active=True)
+    env.ha.write_error = RuntimeError("Cloud weg")
+    bridge = _start_bridge(env, abgemeldet=True)
+
+    env.ha.write_error = None
+    _advance(env, bridge, 300)
+
+    assert env.ha.pushes[-1] == abo.RESTORE_OK_MESSAGE
+    assert env.ha.dismissed[-1] == "smartheat_wiederherstellung"
+    assert "notify_states" not in _backup(env) or _backup(env)["notify_states"] == {}
+
+
+def test_sign_off_with_invalid_configuration_during_a_boost_asks_for_manual_values(env):
+    _quiet_backup(env, emergency_boost_active=True)
+
+    _start_bridge(env, abgemeldet=True, verteilsystem="Unbekannt")
+
+    message = main_module.SIGN_OFF_NOT_RESTORED_MESSAGE.format(werte="Kurve 0,9, Offset 22")
+    assert env.ha.pushes == [message]
+    assert ("smartheat_wiederherstellung", message) in env.ha.persistent
+
+
+def test_sign_off_with_invalid_configuration_without_boost_stays_silent(env):
+    _quiet_backup(env)
+
+    _start_bridge(env, abgemeldet=True, verteilsystem="Unbekannt")
+
+    assert env.ha.pushes == []
+
+
 # --- R6: manueller Eingriff (Spec TP7 3.6) ---
 
 OVERRIDE = {"curve": 1.3, "offset": 24.5, "erkannt": "2026-10-01T08:00:00+02:00"}

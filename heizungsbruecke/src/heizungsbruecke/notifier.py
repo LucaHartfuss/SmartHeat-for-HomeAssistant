@@ -114,14 +114,17 @@ class Notifier:
             if state != STATE_OK and key in messages:
                 self._update_persistent(key, state, messages[key])
 
-    def clear_all(self) -> None:
-        """Abmelden (Spec TP7 3.3): alle offenen HA-Benachrichtigungen entfernen und die
-        Meldezustaende leeren, ohne Push."""
-        for key, state in self._store.state.notify_states.items():
-            if state != STATE_OK:
+    def clear_all(self, keep=()) -> None:
+        """Abmelden (Spec TP7 3.3): alle offenen HA-Benachrichtigungen ausser `keep` entfernen und
+        ihre Meldezustaende leeren, ohne Push."""
+        states = self._store.state.notify_states
+        for key, state in states.items():
+            if state != STATE_OK and key not in keep:
                 self._update_persistent(key, STATE_OK, "")
+        kept_states = {key: state for key, state in states.items() if key in keep}
+        kept_messages = {key: text for key, text in self._store.state.notify_messages.items() if key in keep}
         try:
-            self._store.update(notify_states={}, notify_messages={})
+            self._store.update(notify_states=kept_states, notify_messages=kept_messages)
         except Exception:
             logger.exception("Meldezustaende konnten beim Abmelden nicht geleert werden")
 
