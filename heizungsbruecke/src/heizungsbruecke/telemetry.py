@@ -1,5 +1,6 @@
-"""KPI-Telemetrie: reine Beobachtung auf smartheat/<tenant>/telemetry, ohne Einfluss auf die
-Regelung. Den Takt gibt der Planeintrag EV_TELEMETRY vor."""
+"""KPI- und Regel-Telemetrie auf smartheat/<tenant>/telemetry. Seit TP11 wertet der Server daraus
+Regelabweichung und Betriebspunkt aus (room_target, outdoor_temp, flow_setpoint); fehlende Werte
+fuehren dort nur zu 'nicht lernen'. Den Takt gibt der Planeintrag EV_TELEMETRY vor."""
 import logging
 import math
 from datetime import datetime
@@ -19,6 +20,10 @@ KPI_ENERGY_ROLES = (
     "energy_thermal_heating", "energy_thermal_dhw",
 )
 
+# Regel-Telemetrie fuer den Regelkern (TP11). Gegenstueck: heizungsserver
+# generic/history.TELEMETRY_REGULATION_FIELDS (Contract-Check 22).
+REGULATION_FIELDS = ("room_target", "outdoor_temp", "flow_setpoint")
+
 #: Anstehender Datenfehler fuer den Health-Check des Servers (nur solange einer besteht).
 #: Feldname und Quellen prueft der Contract-Check 21 gegen heizungsserver.generic.history.
 DATENFEHLER_KEY = "datenfehler"
@@ -26,7 +31,7 @@ DATENFEHLER_KEY = "datenfehler"
 
 def run_telemetry_tick(
     manifest, ha_api, mqtt_client, boost_active: bool, failsafe_active: bool,
-    datenfehler: DataFault | None = None,
+    datenfehler: DataFault | None = None, room_target: float | None = None,
 ) -> None:
     """Liest room_actual selbst (lokaler HA-REST-Aufruf, kein Cloud-Roundtrip). Wirft nie."""
     if "room_actual" not in manifest.entity_ids:
@@ -37,6 +42,7 @@ def run_telemetry_tick(
             mqtt_client=mqtt_client, room_actual=room_actual,
             boost_active=boost_active, failsafe_active=failsafe_active,
             kpi_fields=read_kpi_fields(manifest, ha_api), datenfehler=datenfehler,
+            regulation_fields=read_regulation_fields(manifest, ha_api, room_target),
         )
     except Exception:
         logger.exception("Fehler beim Veroeffentlichen der KPI-Telemetrie, wird beim naechsten Tick erneut versucht")
@@ -44,18 +50,39 @@ def run_telemetry_tick(
 
 def publish_telemetry(
     mqtt_client, room_actual: float, boost_active: bool, failsafe_active: bool, kpi_fields: dict | None = None,
-    datenfehler: DataFault | None = None,
+    datenfehler: DataFault | None = None, regulation_fields: dict | None = None,
 ) -> None:
     payload = {
         "room_actual": room_actual,
         "boost_active": boost_active,
         "failsafe_active": failsafe_active,
-        "ts": datetime.now().isoformat(),
+        "ts": datetime.now().astimezone().isoformat(),
         **(kpi_fields or {}),
+        **(regulation_fields or {}),
     }
     if datenfehler is not None:
         payload[DATENFEHLER_KEY] = {"source": datenfehler.source, "detail": list(datenfehler.detail)}
     mqtt_client.publish_telemetry(payload)
+
+
+def read_regulation_fields(manifest, ha_api, room_target: float | None) -> dict:
+    """Aussentemperatur und Vorlauf-Soll lesen (nur gemappte, nur endliche Werte) plus das
+    stabile Raum-Soll. Ein nicht lesbarer Wert fehlt, er wird nie als 0 gesendet."""
+    fields: dict = {}
+    if room_target is not None and math.isfinite(room_target):
+        fields["room_target"] = room_target
+    for role in ("outdoor_temp", "flow_setpoint"):
+        entity_id = manifest.entity_ids.get(role)
+        if entity_id is None:
+            continue
+        try:
+            value = ha_api.get_state(entity_id)
+        except Exception as exc:
+            logger.warning("Regel-Telemetrie '%s' nicht lesbar, Feld wird weggelassen: %s", role, exc)
+            continue
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+            fields[role] = value
+    return fields
 
 
 def read_kpi_fields(manifest, ha_api) -> dict:

@@ -403,7 +403,7 @@ def _on_telemetry(rt: Runtime, event: Event) -> None:
     telemetry.run_telemetry_tick(
         rt.manifest, rt.ha_api, rt.mqtt_client,
         boost_active=state.boost_active, failsafe_active=state.delivery.notbetrieb,
-        datenfehler=state.delivery.datenfehler,
+        datenfehler=state.delivery.datenfehler, room_target=state.stable_target,
     )
 
 

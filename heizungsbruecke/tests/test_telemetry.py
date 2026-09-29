@@ -1,3 +1,5 @@
+from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from heizungsbruecke import telemetry
@@ -255,3 +257,35 @@ def test_run_telemetry_tick_survives_exception_without_propagating(monkeypatch, 
         )  # must not raise
 
     assert "Telemetrie" in caplog.text
+
+
+def test_regulation_fields_and_local_ts():
+    manifest = SimpleNamespace(entity_ids={
+        "room_actual": "sensor.r", "outdoor_temp": "sensor.o", "flow_setpoint": "sensor.vl",
+    })
+    ha = MagicMock()
+    ha.get_state.side_effect = {"sensor.r": 20.1, "sensor.o": 3.5, "sensor.vl": 41.0}.__getitem__
+    mqtt = MagicMock()
+    telemetry.run_telemetry_tick(manifest, ha, mqtt, boost_active=False, failsafe_active=False, room_target=20.5)
+    payload = mqtt.publish_telemetry.call_args.args[0]
+    assert (payload["room_target"], payload["outdoor_temp"], payload["flow_setpoint"]) == (20.5, 3.5, 41.0)
+    assert datetime.fromisoformat(payload["ts"]).tzinfo is not None
+
+
+def test_unreadable_regulation_field_is_omitted():
+    manifest = SimpleNamespace(entity_ids={"room_actual": "sensor.r", "outdoor_temp": "sensor.o"})
+    ha = MagicMock()
+
+    def _get(ref):
+        if ref == "sensor.o":
+            raise RuntimeError("unavailable")
+        return 20.1
+    ha.get_state.side_effect = _get
+    mqtt = MagicMock()
+    telemetry.run_telemetry_tick(manifest, ha, mqtt, boost_active=False, failsafe_active=False, room_target=None)
+    payload = mqtt.publish_telemetry.call_args.args[0]
+    assert "outdoor_temp" not in payload and "room_target" not in payload
+
+
+def test_regulation_fields_constant():
+    assert telemetry.REGULATION_FIELDS == ("room_target", "outdoor_temp", "flow_setpoint")
