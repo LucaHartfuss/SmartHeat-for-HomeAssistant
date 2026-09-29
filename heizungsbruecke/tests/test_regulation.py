@@ -277,12 +277,12 @@ def test_claim_due_tick_is_claimed_again_after_a_failed_booking(make_store, tmp_
     def _broken_save(path, values):
         raise OSError("Datentraeger kaputt")
 
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _broken_save)
-    with pytest.raises(OSError):
-        regulation.claim_due_tick(rt, datetime(2026, 9, 17, 12, 5))
+    with monkeypatch.context() as patch:
+        patch.setattr("heizungsbruecke.backup_store.save_backup", _broken_save)
+        with pytest.raises(OSError):
+            regulation.claim_due_tick(rt, datetime(2026, 9, 17, 12, 5))
     assert (rt.store.state.last_published_target_rt, rt.store.state.last_daily_trigger_date) == (21.0, None)
 
-    monkeypatch.undo()
     assert regulation.claim_due_tick(rt, datetime(2026, 9, 17, 12, 5)) == "target_change"
     backup = load_backup(tmp_path / "backup.json")
     assert (backup["last_published_target_rt"], backup["last_daily_trigger_date"]) == (20.5, "2026-09-17")

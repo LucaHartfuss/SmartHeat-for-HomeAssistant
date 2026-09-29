@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import heizungsbruecke.__main__ as main_module
-from heizungsbruecke import abo, entitlement, ticks
+from heizungsbruecke import abo, backup_store, entitlement, ticks
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.delivery import DeliveryState
 from heizungsbruecke.derived_sensors import DerivedSensors
@@ -763,6 +763,30 @@ def test_failed_value_write_is_retried_with_same_seq(env):
     _advance(env, bridge, 30)
 
     assert [s["seq"] for s in _mqtt(env).snapshots] == [seq, seq]
+
+
+def test_server_values_are_not_written_when_restore_point_cannot_be_saved(env, monkeypatch):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[0]["seq"]
+    real_save = backup_store.save_backup
+    broken = {"on": True}
+
+    def _save(path, content):
+        if broken["on"] and path == env.paths["BACKUP_PATH"]:
+            raise OSError("Datentraeger voll")
+        return real_save(path, content)
+
+    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _save)
+    _answer(env, bridge, seq)
+
+    assert env.ha.writes == []
+    assert _delivery(bridge).pending is not None and _delivery(bridge).pending.seq == seq
+
+    broken["on"] = False
+    _advance(env, bridge, 30)  # Ack-Timeout (delivery.ACK_TIMEOUT_SECONDS)
+    assert _mqtt(env).snapshots[-1]["seq"] == seq
 
 
 def test_answer_during_boost_only_updates_backup(env):

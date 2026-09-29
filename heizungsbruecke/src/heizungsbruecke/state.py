@@ -233,4 +233,7 @@ class StateStore:
         except Exception as error:
             logger.warning("%s nicht lesbar, starte mit Standardwerten: %s", self._failsafe_path, error)
             return DeliveryState()
+        if not isinstance(raw, dict):
+            logger.warning("%s enthaelt kein JSON-Objekt, starte mit Standardwerten", self._failsafe_path)
+            return DeliveryState()
         return from_persisted(raw)
