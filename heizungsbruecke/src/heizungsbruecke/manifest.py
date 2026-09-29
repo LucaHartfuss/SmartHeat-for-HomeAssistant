@@ -1,32 +1,29 @@
 from dataclasses import dataclass
 
 ALL_ROLES = (
-    "room_actual", "room_target", "curve_current", "offset_current",
-    "outdoor_temp", "room_day_avg", "room_night_avg", "heat_limit", "dat", "dart",
-    "outdoor_min_24h",
+    "room_actual", "room_target", "curve_current", "shift_current", "min_flow",
+    "outdoor_temp", "heat_limit", "flow_setpoint",
     "flow_temperature", "return_temperature", "operating_mode", "system_water_pressure",
     "efficiency_ratio", "energy_electrical_heating", "energy_electrical_dhw",
     "energy_primary_heating", "energy_primary_dhw", "energy_thermal_heating", "energy_thermal_dhw",
 )
 
-# Pflicht-Entities der Bruecke (fuer alle Profile gleich). Nicht zu verwechseln mit
-# SNAPSHOT_ROLES: room_actual ist lokal, dat/dart/room_*_avg koennen abgeleitete Sensoren sein.
+# Pflicht-Entities der Bruecke (fuer alle Profile gleich). room_actual (und bei einer weather-Quelle
+# outdoor_temp) kommen aus derived_sensors.
 REQUIRED_ROLES = (
-    "room_actual", "room_target", "curve_current", "offset_current",
-    "room_day_avg", "room_night_avg", "heat_limit", "dat", "dart",
+    "room_actual", "room_target", "curve_current", "shift_current", "min_flow", "heat_limit", "outdoor_temp",
 )
 
-# Rollen, die der volle Snapshot an den Server schickt -- muss mit REQUIRED_ROLES in
-# heizungsserver/generic/messages.py uebereinstimmen. room_actual/outdoor_temp und die
-# optionalen KPI-Rollen sind rein lokal bzw. laufen ueber die Telemetrie.
-SNAPSHOT_ROLES = (
-    "heat_limit", "dat", "room_target", "dart",
-    "room_day_avg", "room_night_avg", "curve_current", "offset_current",
-)
+# Rollen des Snapshots an den Server -- muss mit REQUIRED_ROLES in heizungsserver/generic/messages.py
+# uebereinstimmen (Contract-Check 4). min_flow ist rein lokal (= Raum-Soll), outdoor_temp und
+# flow_setpoint laufen ueber die Telemetrie.
+SNAPSHOT_ROLES = ("heat_limit", "room_target", "curve_current", "shift_current")
 
-# Optionale Snapshot-Rollen (Server: OPTIONAL_ROLES in heizungsserver/generic/messages.py).
-# room_target_avg_24h ist keine Entity, sondern wird im Add-on berechnet (target_history.py).
-OPTIONAL_SNAPSHOT_ROLES = ("outdoor_min_24h", "room_target_avg_24h")
+# Optionale Snapshot-Rollen (Server: OPTIONAL_ROLES). Seit TP11 keine mehr.
+OPTIONAL_SNAPSHOT_ROLES: tuple[str, ...] = ()
+
+# Attribut der Zonen-Wunschtemperatur einer Climate-Entity (ha_api.get_state liest "entity::attribut").
+CLIMATE_TARGET_ATTRIBUTE = "temperature"
 
 
 class ManifestError(ValueError):
@@ -46,6 +43,8 @@ def build_manifest(options: dict, derived_entity_ids: dict[str, str] | None = No
             entity_ids[role] = derived_entity_ids[role]
             continue
         value = options.get(f"entity_{role}")
+        if value and role == "shift_current" and value.startswith("climate.") and "::" not in value:
+            value = f"{value}::{CLIMATE_TARGET_ATTRIBUTE}"
         if value:
             entity_ids[role] = value
 

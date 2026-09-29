@@ -96,10 +96,6 @@ def test_every_optional_kpi_role_has_matching_config_option_and_schema():
 NEW_OPTIONAL_SCHEMA = {
     "verteilsystem": "list(Heizkoerper|Fussbodenheizung)?",
     "daily_trigger_time": "str?",
-    "day_avg_window_start": "str?",
-    "day_avg_window_end": "str?",
-    "night_avg_window_start": "str?",
-    "night_avg_window_end": "str?",
     "accounts_api_base_url": "url?",
 }
 
@@ -153,3 +149,14 @@ def test_tp7_options_are_optional_and_have_no_default():
     assert schema["notify_hints_off"] == ["list(raumfuehler|batterie|manueller_eingriff|quellwechsel)?"]
     assert "abgemeldet" not in config["options"] and "notify_hints_off" not in config["options"]
     assert "abgemeldet" not in _REQUIRED_OPTIONS and "notify_hints_off" not in _REQUIRED_OPTIONS
+
+
+def test_new_entity_options_are_optional_and_offset_is_gone():
+    config = _load_config_yaml()
+    schema, options = config["schema"], config["options"]
+    for key in ("entity_shift_current", "entity_min_flow", "entity_flow_setpoint"):
+        assert schema[key] == "str?" and options[key] == ""
+    for gone in ("entity_offset_current", "day_avg_window_start", "day_avg_window_end",
+                 "night_avg_window_start", "night_avg_window_end"):
+        assert gone not in schema and gone not in options
+    assert schema["daily_trigger_time"] == "str?"
