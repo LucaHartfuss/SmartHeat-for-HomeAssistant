@@ -13,8 +13,11 @@ from heizungsbruecke.runtime import Runtime
 
 OPTIONS = {
     "curve_min": 0.4, "curve_max": 1.5, "shift_min": 15.0, "shift_max": 25.0,
-    "min_flow_min": 20.0, "min_flow_max": 30.0, "boost_curve_value": 1.5, "boost_shift_value": 25.0,
+    # Comfort-Boost-Zeile bewusst ungleich der Notfall-Zeile (curve_max/shift_max), damit die Tests
+    # die beiden Zeilen unterscheiden.
+    "min_flow_min": 20.0, "min_flow_max": 30.0, "boost_curve_value": 1.2, "boost_shift_value": 24.0,
 }
+ROWS = {"boost_active": (1.2, 24.0), "emergency_boost_active": (1.5, 25.0)}
 MANIFEST = ChannelManifest(entity_ids={
     "curve_current": "number.curve", "shift_current": "climate.zone::temperature", "min_flow": "number.mf",
 })
@@ -27,29 +30,48 @@ class Ha:
         self.states = {"number.curve": curve, "climate.zone::temperature": shift, "number.mf": min_flow,
                        "climate.zone": mode}
         self.writes = []
+        # Schreibversuche, auch gescheiterte: (entity_id, Wert, Uhrzeit der Test-Uhr oder None).
+        self.attempts = []
+        self.clock = None
+        # Entity-IDs, deren Schreiben scheitert (z. B. myVAILLANT 403 "Quota Exceeded").
+        self.failing = set()
         # False: mypyllant uebernimmt das Rueckschreiben nicht (oder jemand stellt sofort wieder
         # um) -- HA zeigt weiter den verstellten Wert.
         self.reflects_writes = reflects_writes
 
+    def _value(self, key):
+        value = self.states[key]
+        if isinstance(value, Exception):
+            raise value
+        return value
+
     def get_state(self, ref):
-        return self.states[ref]
+        return self._value(ref)
 
     def get_raw_state(self, entity_id):
-        return self.states[entity_id]
+        return self._value(entity_id)
+
+    def _attempt(self, entity_id, value):
+        self.attempts.append((entity_id, value, self.clock() if self.clock else None))
+        if entity_id in self.failing:
+            raise RuntimeError("403 Quota Exceeded")
 
     def _set(self, key, value):
         if self.reflects_writes:
             self.states[key] = value
 
     def set_number_value(self, entity_id, value):
+        self._attempt(entity_id, value)
         self.writes.append((entity_id, value))
         self._set(entity_id, value)
 
     def set_climate_temperature(self, entity_id, value):
+        self._attempt(entity_id, value)
         self.writes.append((entity_id, value))
         self._set(f"{entity_id}::temperature", value)
 
     def set_hvac_mode(self, entity_id, mode):
+        self._attempt(entity_id, mode)
         self.writes.append((entity_id, mode))
         self._set(entity_id, mode)
 
@@ -68,6 +90,7 @@ def _rt(make_store, clock, ha, uptime=OWN_WRITE_SETTLE_SECONDS + 1, **backup):
     notifier = MagicMock(spec=Notifier)
     notifier.notify.return_value = True
     override = Override(store, MANIFEST, ha, OPTIONS, clock=clock)
+    ha.clock = clock
     clock.advance(uptime)
     return Runtime(
         manifest=MANIFEST, ha_api=ha, options=OPTIONS, derived_entity_ids={}, worker=MagicMock(), store=store,
@@ -82,6 +105,10 @@ def _rounds(rt, n=manual_override.DETECTION_ROUNDS):
 
 def _curve_writes(rt):
     return [w for w in rt.ha_api.writes if w[0] == "number.curve"]
+
+
+def _limit_calls(rt):
+    return [c for c in rt.notifier.notify.call_args_list if str(c.args[1]).startswith("limit")]
 
 
 def _message_calls(rt):
@@ -188,8 +215,7 @@ def test_enforcement_rate_limited_per_day(make_store, clock):
         _rounds(rt)
     assert len(_curve_writes(rt)) == manual_override.MAX_WRITES_PER_DAY
     assert len(_message_calls(rt)) == 1
-    limit_calls = [c for c in rt.notifier.notify.call_args_list if str(c.args[1]).startswith("limit")]
-    assert len(limit_calls) == 1
+    assert len(_limit_calls(rt)) == 1
     assert [c for c in rt.notifier.notify.call_args_list if c.args[1] == STATE_OK] == []
 
 
@@ -269,7 +295,117 @@ def test_counter_resets_next_day(make_store, clock, monkeypatch):
 
 @pytest.mark.parametrize("flag", ["boost_active", "emergency_boost_active"])
 def test_boost_row_is_the_target_during_boost(make_store, clock, flag):
-    rt = _rt(make_store, clock, Ha(curve=1.5, shift=25.0))
+    curve, shift = ROWS[flag]
+    rt = _rt(make_store, clock, Ha(curve=curve, shift=shift))
     rt.store.update(**{flag: True})
     _rounds(rt)
     assert rt.ha_api.writes == []
+
+
+@pytest.mark.parametrize("flag", ["boost_active", "emergency_boost_active"])
+def test_restore_point_on_the_plant_during_a_boost_is_written_back_to_the_boost_row(make_store, clock, flag):
+    rt = _rt(make_store, clock, Ha(curve=0.9, shift=21.0))
+    rt.store.update(**{flag: True})
+    _rounds(rt)
+    curve, shift = ROWS[flag]
+    assert rt.ha_api.writes == [("number.curve", curve), ("climate.zone", shift)]
+
+
+def test_unreadable_zone_mode_is_no_deviation(make_store, clock):
+    rt = _rt(make_store, clock, Ha(mode=RuntimeError("unavailable")))
+    _rounds(rt)
+    assert rt.ha_api.attempts == []
+    assert rt.store.state.manual_override is None
+
+
+def test_failed_write_backs_respect_the_quota(make_store, clock):
+    # IMPORTANT 1: myVAILLANT lehnt ab (403) -- jeder VERSUCH zaehlt: hoechstens einer pro
+    # RETRY_SECONDS und MAX_WRITES_PER_DAY am Tag; kein "zurueckgesetzt", genau eine Limit-Meldung.
+    ha = Ha(curve=1.3)
+    ha.failing.add("number.curve")
+    rt = _rt(make_store, clock, ha)
+    for _ in range(12 * 24):  # ein Tag im 5-min-Takt
+        clock.advance(300)
+        manual_override.check_manual_override(rt)
+    times = [at for entity, _, at in ha.attempts if entity == "number.curve"]
+    assert len(times) == manual_override.MAX_WRITES_PER_DAY
+    assert all(later - earlier >= manual_override.RETRY_SECONDS for earlier, later in zip(times, times[1:], strict=False))
+    assert _message_calls(rt) == []
+    assert len(_limit_calls(rt)) == 1
+    assert rt.store.state.manual_override_pending["curve"] == 1.3
+
+
+def test_partial_write_back_is_one_intervention(make_store, clock):
+    # IMPORTANT 2: Kurve zurueckgeschrieben, Parallelverschiebung scheitert. Danach steht die Kurve
+    # (HA hinkt nach) offen, die Parallelverschiebung weicht weiter ab: kein zweiter Push, der KPI
+    # behaelt die Werte des Kunden; auch das spaetere erfolgreiche Rueckschreiben meldet nicht neu.
+    ha = Ha(curve=1.3, shift=23.0, reflects_writes=False)
+    ha.failing.add("climate.zone")
+    rt = _rt(make_store, clock, ha)
+    _rounds(rt)
+    first = rt.store.state.manual_override_pending
+    for _ in range(12):
+        _rounds(rt)
+        clock.advance(300)
+    ha.failing.clear()
+    for _ in range(12):
+        _rounds(rt)
+        clock.advance(300)
+    assert ("climate.zone", 21.0) in ha.writes
+    assert len(_message_calls(rt)) == 1
+    pending = rt.store.state.manual_override_pending
+    assert (pending["curve"], pending["shift"]) == (1.3, 23.0)
+    assert pending is first  # derselbe Eingriff: KPI nicht neu geschrieben (kein erneutes Senden)
+    assert (rt.store.state.manual_override["curve"], rt.store.state.manual_override["shift"]) == (1.3, 23.0)
+
+
+def test_pending_kpi_is_merged_not_replaced(make_store, clock):
+    # Ein noch nicht gesendeter Eingriff (Kurve 1.3) bleibt im KPI, wenn danach -- nach der
+    # Rueckkehr -- ein zweiter Eingriff nur an der Parallelverschiebung folgt.
+    rt = _rt(make_store, clock, Ha(curve=1.3))
+    _rounds(rt)
+    manual_override.check_manual_override(rt)  # Rueckkehr
+    assert rt.store.state.manual_override is None
+    rt.ha_api.states["climate.zone::temperature"] = 23.0
+    clock.advance(OWN_WRITE_SETTLE_SECONDS + 1)
+    _rounds(rt)
+    pending = rt.store.state.manual_override_pending
+    assert (pending["curve"], pending["shift"]) == (1.3, 23.0)
+
+
+def test_detection_at_the_daily_limit_only_sends_the_limit_message(make_store, clock):
+    # MINOR 1: der 7. Eingriff am Tag wird nicht mehr zurueckgesetzt -- nur die Limit-Meldung,
+    # kein "... und zurueckgesetzt".
+    rt = _rt(make_store, clock, Ha(curve=1.3))
+    for _ in range(manual_override.MAX_WRITES_PER_DAY):
+        rt.ha_api.states["number.curve"] = 1.3
+        clock.advance(OWN_WRITE_SETTLE_SECONDS + 1)
+        _rounds(rt)
+        manual_override.check_manual_override(rt)  # Rueckkehr
+    assert len(_curve_writes(rt)) == manual_override.MAX_WRITES_PER_DAY
+    rt.notifier.notify.reset_mock()
+    rt.ha_api.states["number.curve"] = 1.3
+    clock.advance(OWN_WRITE_SETTLE_SECONDS + 1)
+    _rounds(rt)
+    assert _message_calls(rt) == []
+    assert len(_limit_calls(rt)) == 1
+    assert rt.store.state.manual_override is not None
+
+
+def test_zone_mode_without_shift_target_switches_the_zone_only(make_store, clock):
+    # MINOR 2: kein Wiederherstellungspunkt fuer die Parallelverschiebung -- nur die Zone auf
+    # Manuell stellen, keinen Sollwert schreiben.
+    rt = _rt(make_store, clock, Ha(mode="auto"), shift_current=None)
+    _rounds(rt)
+    assert rt.ha_api.writes == [("climate.zone", "heat_cool")]
+    assert len(_message_calls(rt)) == 1
+
+
+def test_curve_tolerance_is_half_a_plant_step(make_store, clock):
+    # MINOR 4: eine erkannte Abweichung fuehrt immer zu einem echten Schreibvorgang (der Quota-Check
+    # ueberspringt erst innerhalb eines halben Schritts).
+    assert manual_override.TOLERANCE["curve_current"] == pytest.approx(0.025)
+    rt = _rt(make_store, clock, Ha(curve=0.92))
+    _rounds(rt)
+    assert rt.ha_api.writes == []
+    assert rt.store.state.manual_override is None

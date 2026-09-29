@@ -7,12 +7,17 @@ Parallelverschiebung als KPI mit dem naechsten Snapshot.
 Erst nach DETECTION_ROUNDS Runden in Folge und nie innerhalb von OWN_WRITE_SETTLE_SECONDS
 (override.py) nach einem eigenen Schreiben dieser Rolle oder nach dem Start (mypyllant fragt die
 Cloud nur alle 30 min ab, HA zeigt so lange den alten Wert; ein Schreiben kurz vor einem Neustart
-ist unbekannt) -- dieselbe Regel wie der Quota-Check (Override.settled). Eine solche noch nicht eingeschwungene Abweichung ist
-"offen": sie wird weder durchgesetzt noch als Rueckkehr gewertet -- uebernimmt die Anlage das
-Rueckschreiben nicht, bleibt es so bei einer Meldung pro Eingriff (Plan-Praezisierung
-"Durchsetzungs-Meldung"). Kontingent-Schutz der Hersteller-Cloud (myVAILLANT sperrt bei zu vielen
-Aufrufen ~2 h): je Rolle hoechstens ein Rueckschreiben pro RETRY_SECONDS und MAX_WRITES_PER_DAY am
-Tag; danach bis zum naechsten Tag nur noch eine Meldung. Ein offener Datenfehler pausiert die
+ist unbekannt) -- dieselbe Regel wie der Quota-Check (Override.settled). Eine solche noch nicht
+eingeschwungene Abweichung ist "offen": sie wird weder durchgesetzt noch als Rueckkehr gewertet.
+
+Ein Eingriff (manual_override: KPI-Werte, "rollen" = verstellte Werte je Rolle, "signatur",
+"gemeldet") laeuft bis zur Rueckkehr; nur eine neue Rolle oder ein neuer Wert erweitert ihn. Gemeldet
+wird er genau einmal, und erst wenn tatsaechlich zurueckgeschrieben wurde -- uebernimmt die Anlage das
+Rueckschreiben nicht oder scheitert es teilweise, bleibt es bei dieser einen Meldung
+(Plan-Praezisierung "Durchsetzungs-Meldung"). Kontingent-Schutz der Hersteller-Cloud (myVAILLANT
+sperrt bei zu vielen Aufrufen ~2 h): je Rolle hoechstens ein Schreibversuch (auch ein gescheiterter)
+pro RETRY_SECONDS und MAX_WRITES_PER_DAY am Tag; danach bis zum naechsten Tag nur noch eine
+Limit-Meldung. Ein offener Datenfehler pausiert die
 Pruefung (die Anlage kann nach einem gescheiterten Schreiben legitim auf alten Werten stehen).
 Meldet die Zone Wunschtemperatur 0 (heizt gerade nicht), ist das keine Abweichung."""
 import logging
@@ -28,7 +33,14 @@ KEY = "manueller_eingriff"
 DETECTION_ROUNDS = 2
 RETRY_SECONDS = 1800
 MAX_WRITES_PER_DAY = 6
-TOLERANCE = {"curve_current": 0.01, "shift_current": 0.25, "min_flow": 0.1}
+# Spec 5.3 nennt fuer die Steigung 0,01. Die Anlage stellt sie aber nur in Schritten von 0,05 dar,
+# und der Quota-Check (Override._matches_the_device) ueberspringt ein Schreiben innerhalb eines
+# halben Schritts. Mit 0,01 wuerde ein (theoretischer) Zwischenwert als Eingriff erkannt, aber nie
+# geschrieben und trotzdem gezaehlt/gemeldet. Deshalb gilt hier der halbe Anlagenschritt (0,025):
+# jede Abweichung um mindestens einen Anlagenschritt wird wie mit 0,01 erkannt, und jede erkannte
+# Abweichung fuehrt zu einem echten Schreibvorgang. Parallelverschiebung (0,25 = halber Schritt 0,5)
+# und Mindestvorlauf (0,1 > halber Schritt 0,05) erfuellen das schon.
+TOLERANCE = {"curve_current": plant.STEPS["curve_current"] / 2, "shift_current": 0.25, "min_flow": 0.1}
 ZONE_MODE = "zone_mode"
 _EPSILON = 1e-9  # Gleitkomma-Rest (0.91 - 0.9) zaehlt nicht als Abweichung
 _LABELS = {
@@ -117,7 +129,9 @@ def _may_write(rt, role: str) -> bool:
     return log["count"] < MAX_WRITES_PER_DAY and rt.clock() - log["last"] >= RETRY_SECONDS
 
 
-def _count_write(rt, role: str) -> None:
+def _count_attempt(rt, role: str) -> None:
+    """Zaehlt einen Schreibversuch VOR dem Aufruf: auch ein gescheiterter (z. B. 403 "Quota
+    Exceeded") verbraucht Kontingent und darf nicht in jedem Takt wiederholt werden."""
     today = _today().isoformat()
     log = dict(rt.store.state.enforce_log)
     entry = log.get(role)
@@ -138,12 +152,14 @@ def _limit_reached_first_time(rt, role: str) -> bool:
     return True
 
 
-def _restore(rt, expected: dict, deviating: dict) -> list[str]:
-    """Schreibt, was das Kontingent erlaubt. Gibt die Rollen zurueck, die heute erstmals am
-    Tageslimit abgewiesen wurden (fuer genau eine Meldung). Betriebsart und Parallelverschiebung
-    sind ein Rueckschreiben: write_roles(shift_current) stellt die Zone selbst um (override._write),
-    ein zweiter Aufruf wuerde auf dem nachhinkenden HA-Zustand ein zweites set_hvac_mode senden."""
-    at_limit = []
+def _restore(rt, expected: dict, deviating: dict) -> tuple[list[str], list[str]]:
+    """Schreibt, was das Kontingent erlaubt. Gibt (zurueckgesetzte Rollen, heute erstmals am
+    Tageslimit abgewiesene Rollen) zurueck. Betriebsart und Parallelverschiebung sind ein
+    Rueckschreiben: write_roles(shift_current) stellt die Zone selbst um (override._write), ein
+    zweiter Aufruf wuerde auf dem nachhinkenden HA-Zustand ein zweites set_hvac_mode senden. Ohne
+    Sollwert fuer die Parallelverschiebung (kein Wiederherstellungspunkt) wird nur die Zone
+    umgestellt."""
+    written, at_limit = [], []
     for role in deviating:
         if role == "shift_current" and ZONE_MODE in deviating:
             continue
@@ -151,19 +167,68 @@ def _restore(rt, expected: dict, deviating: dict) -> list[str]:
             if _limit_reached_first_time(rt, role):
                 at_limit.append(role)
             continue
+        _count_attempt(rt, role)
         try:
             if role == "min_flow":
                 rt.override.write_min_flow(expected["min_flow"])
+            elif role == ZONE_MODE and "shift_current" not in expected:
+                rt.override.ensure_manual_zone()
             elif role == ZONE_MODE:
                 rt.override.write_roles(("shift_current",))
             else:
                 rt.override.write_roles((role,))
         except Exception:
-            logger.exception("Zuruecksetzen von %s gescheitert, naechster Versuch im naechsten Takt", role)
+            logger.exception("Zuruecksetzen von %s gescheitert, naechster Versuch fruehestens in %s s", role,
+                             RETRY_SECONDS)
             continue
-        _count_write(rt, role)
+        written.append(role)
+        if role == ZONE_MODE and "shift_current" in deviating and "shift_current" in expected:
+            written.append("shift_current")
         logger.warning("Eingriff an %s zurueckgesetzt", role)
-    return at_limit
+    return written, at_limit
+
+
+def _kpi_value(rt, role: str, entries: dict, expected: dict, unsent: dict | None, field: str):
+    """Wert fuer den KPI: der verstellte Wert des Kunden, sonst der noch nicht gesendete Wert eines
+    frueheren Eingriffs (`unsent` = manual_override_pending), sonst der Sollwert, sonst der
+    Live-Wert."""
+    if role in entries:
+        return entries[role]
+    if unsent is not None and _is_number(unsent.get(field)):
+        return unsent[field]
+    if role in expected:
+        return expected[role]
+    return _read(rt, role)
+
+
+def _record(rt, expected: dict, deviating: dict) -> dict:
+    """Fuehrt den laufenden Eingriff fort: Rollen, die schon zu ihm gehoeren (auch solche, die gerade
+    offen sind), behalten ihren Wert; nur eine neue Rolle oder ein neuer Wert aendert ihn (neue
+    Signatur, neuer KPI-Eintrag). Der KPI (manual_override_pending) wird zusammengefuehrt, nicht
+    ersetzt: ein noch nicht gesendeter Wert des Kunden geht nicht verloren."""
+    state = rt.store.state
+    previous = state.manual_override
+    known = previous.get("rollen", {}) if previous is not None else {}
+    if previous is not None and all(known.get(role) == value for role, value in deviating.items()):
+        return previous
+    entries = {**known, **deviating}
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    pending = state.manual_override_pending
+    kpi = {
+        "curve": _kpi_value(rt, "curve_current", entries, expected, pending, "curve"),
+        "shift": _kpi_value(rt, "shift_current", entries, expected, pending, "shift"),
+        "erkannt": now,
+    }
+    record = {
+        **kpi, "rollen": entries,
+        "signatur": ",".join(f"{role}={entries[role]:g}" for role in sorted(entries)),
+        "gemeldet": previous.get("gemeldet") if previous is not None else None,
+    }
+    changes: dict = {"manual_override": record}
+    if _is_number(kpi["curve"]) and _is_number(kpi["shift"]):
+        changes["manual_override_pending"] = kpi
+    rt.store.update(**changes)
+    return record
 
 
 def check_manual_override(rt) -> None:
@@ -186,18 +251,14 @@ def check_manual_override(rt) -> None:
     if misses < DETECTION_ROUNDS:
         return
 
-    was = ", ".join(_LABELS[role] for role in sorted(deviating))
-    signature = ",".join(f"{role}={deviating[role]:g}" for role in sorted(deviating))
-    if state.manual_override is None or state.manual_override.get("signatur") != signature:
-        detected = {
-            "curve": deviating.get("curve_current", expected.get("curve_current")),
-            "shift": deviating.get("shift_current", expected.get("shift_current")),
-            "erkannt": datetime.now().astimezone().isoformat(timespec="seconds"),
-        }
-        if _is_number(detected["curve"]) and _is_number(detected["shift"]):
-            rt.store.update(manual_override={**detected, "signatur": signature}, manual_override_pending=detected)
-        rt.notifier.notify(KEY, signature, MESSAGE.format(was=was), critical=False)
-    at_limit = _restore(rt, expected, deviating)
+    record = _record(rt, expected, deviating)
+    written, at_limit = _restore(rt, expected, deviating)
+    # Einmal pro Eingriff melden, und nur, wenn tatsaechlich zurueckgesetzt wurde (am Tageslimit oder
+    # nach einem gescheiterten Schreiben nicht: dann gilt hoechstens die Limit-Meldung).
+    if written and record.get("gemeldet") != record["signatur"]:
+        was = ", ".join(_LABELS[role] for role in sorted(written))
+        rt.notifier.notify(KEY, record["signatur"], MESSAGE.format(was=was), critical=False)
+        rt.store.update(manual_override={**record, "gemeldet": record["signatur"]})
     if at_limit:
         limit_was = ", ".join(_LABELS[role] for role in sorted(at_limit))
         rt.notifier.notify(KEY, f"limit:{_today().isoformat()}:{limit_was}", LIMIT_MESSAGE.format(was=limit_was),
