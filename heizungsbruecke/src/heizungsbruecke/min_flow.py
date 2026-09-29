@@ -21,15 +21,25 @@ def expected(rt) -> float | None:
 
 
 def sync(rt) -> None:
+    """Schreibt den Mindestvorlauf, wenn er nicht dem Raum-Soll entspricht. Vergleichswert ist der
+    Live-Wert aus HA -- ausser kurz nach einem eigenen Schreiben (Override.settled): dann zeigt HA
+    bei mypyllant bis zu ~30 min noch den alten Wert, und massgeblich ist der eigene letzte
+    Schreibwert. Sonst wuerde eine Rueckkehr zum alten Wert innerhalb dieser Zeit uebersprungen
+    (die Anlage bliebe auf dem neuen) und jeder weitere Anlass schriebe denselben Wert erneut.
+    Ohne eigenes Schreiben seit dem Start bleibt nur der Live-Wert. Wirft nie."""
     value = expected(rt)
     if value is None:
         return
-    try:
-        live = rt.ha_api.get_state(rt.manifest.entity_ids["min_flow"])
-    except Exception as error:
-        logger.warning("Mindestvorlauf nicht lesbar (%s), wird neu geschrieben", error)
-        live = None
-    if live is not None and abs(live - value) <= TOLERANCE:
+    last = rt.override.last_written("min_flow")
+    if not rt.override.settled("min_flow") and last is not None:
+        current = last
+    else:
+        try:
+            current = rt.ha_api.get_state(rt.manifest.entity_ids["min_flow"])
+        except Exception as error:
+            logger.warning("Mindestvorlauf nicht lesbar (%s), wird neu geschrieben", error)
+            current = None
+    if current is not None and abs(current - value) <= TOLERANCE:
         rt.store.update(min_flow_current=value)
         return
     try:

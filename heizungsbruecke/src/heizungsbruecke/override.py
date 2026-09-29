@@ -94,6 +94,10 @@ class Override:
         last = self._last_write_at.get(role, self._started_at)
         return self._clock() - last > OWN_WRITE_SETTLE_SECONDS
 
+    def last_written(self, role: str) -> float | None:
+        """Letzter eigener Schreibwert dieser Rolle seit dem Start (nur Laufzeit), sonst None."""
+        return self._last_written.get(role)
+
     def set_boosts(self, comfort: bool, emergency: bool) -> tuple[bool, bool]:
         """Setzt die Boost-Flags und schreibt die Werte der neuen Sollwert-Zeile, falls sie
         sich aendert. Ein neu startender Boost braucht vorher einen in backup.json

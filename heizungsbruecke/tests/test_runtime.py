@@ -399,6 +399,37 @@ def test_room_target_change_writes_min_flow(env):
     assert ("number.min_flow", 22.0) in env.ha.writes
 
 
+def _min_flow_writes(env):
+    return [value for entity_id, value in env.ha.writes if entity_id == "number.min_flow"]
+
+
+def test_min_flow_change_back_within_the_settle_window_is_written(env):
+    # mypyllant meldet den eigenen Schreibvorgang erst ~30 min spaeter: HA zeigt noch 21, die
+    # Anlage steht schon auf 22. Zurueck auf 21 muss geschrieben werden, sonst bleibt die Anlage
+    # auf 22 und die Durchsetzung meldet spaeter einen falschen Eingriff.
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 22.0)
+    env.ha.states["number.min_flow"] = 21.0  # HA hinkt nach
+
+    _set_room_target(env, bridge, 21.0)
+
+    assert _min_flow_writes(env) == [22.0, 21.0]
+
+
+def test_min_flow_is_not_rewritten_while_ha_lags(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 22.0)
+    env.ha.states["number.min_flow"] = 21.0  # HA hinkt nach
+    env.trigger_clients[-1].connected = False  # Watchdog liest room_target in jedem Takt frisch
+
+    _advance(env, bridge, 300)
+    _advance(env, bridge, 300)
+
+    assert _min_flow_writes(env) == [22.0]
+
+
 def test_room_actual_trigger_does_not_touch_min_flow(env):
     _quiet_backup(env)
     bridge = _start(env)
