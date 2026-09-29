@@ -29,6 +29,14 @@ def round_to_step(value: float, step: float) -> float:
     return round(round(value / step) * step, 6)
 
 
+def target_value(value: float, minimum: float, maximum: float, step: float) -> float:
+    """Begrenzt, rundet auf die Schrittweite und begrenzt danach erneut (falls das Runden ueber
+    den Rand traegt). Gemeinsame Zielwert-Berechnung fuer write() und override.py
+    (expected_values/_write_role), damit beide Seiten immer denselben Wert fuer "unveraendert"
+    halten."""
+    return clamp(round_to_step(clamp(value, minimum, maximum), step), minimum, maximum)
+
+
 def ensure_manual_mode(ha_api, ref: str) -> bool:
     """Stellt eine Climate-Zone auf heat_cool. True, wenn umgestellt wurde. Wirft bei Fehlern."""
     if not is_climate(ref):
@@ -51,7 +59,7 @@ def write(
     den HA-Zustand erst bis zu 30 min nach einem Cloud-Set nach, ein zweiter Check wuerde sonst ein
     zweites `set_hvac_mode` senden und unnoetig Cloud-Kontingent verbrauchen. Aufrufer, die den
     Modus selbst schon umgestellt haben (z.B. beim Erstkontakt), rufen mit False."""
-    target = clamp(round_to_step(clamp(value, minimum, maximum), STEPS[role]), minimum, maximum)
+    target = target_value(value, minimum, maximum, STEPS[role])
     if is_climate(ref):
         if ensure_mode:
             ensure_manual_mode(ha_api, ref)

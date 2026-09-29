@@ -7,8 +7,16 @@ from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.delivery import SOURCE_LOCAL, DataFault, DeliveryState, PendingTick
 from heizungsbruecke.state import BridgeState, StateStore
 
-# Vollstaendige backup.json, wie 0.16.0 sie schreibt.
+# Vollstaendige backup.json, wie 0.16.0 sie schreibt (vor TP11: die Parallelverschiebung hiess
+# noch "offset_current", target_history gab es noch als aktiv gefuehrtes Feld).
 V016_BACKUP = {
+    "curve_current": 0.95, "offset_current": 23.0, "boost_active": True, "emergency_boost_active": False,
+    "last_room_target": 21.0, "target_history": [[1000.0, 20.0], [2000.0, 21.0]],
+    "last_published_target_rt": 21.0, "last_daily_trigger_date": "2026-09-26",
+}
+# Dieselben Werte im aktuellen Schema (fuer Tests, die store.update(**...) direkt aufrufen statt
+# aus einer Datei zu laden -- update() akzeptiert nur echte BridgeState-Felder, keine Legacy-Keys).
+CURRENT_BACKUP = {
     "curve_current": 0.95, "shift_current": 23.0, "boost_active": True, "emergency_boost_active": False,
     "last_room_target": 21.0,
     "last_published_target_rt": 21.0, "last_daily_trigger_date": "2026-09-26",
@@ -34,17 +42,44 @@ def _count_saves(monkeypatch) -> list:
 # --- Laden ---
 
 def test_reads_files_written_by_0_16_0(make_store):
+    # offset_current/target_history sind seit TP11 keine erkannten Felder mehr (siehe
+    # test_pre_tp11_backup_keeps_unknown_keys_and_drops_the_old_override): shift_current bleibt
+    # None, die restlichen (unveraenderten) Felder werden wie gewohnt erkannt.
     store = make_store(
         backup=V016_BACKUP,
         failsafe={"failsafe_active": True, "datenfehler": None, "pending": {"seq": "s1", "trigger": "daily"}},
     )
 
     assert store.state == BridgeState(
-        curve_current=0.95, shift_current=23.0, boost_active=True, emergency_boost_active=False,
+        curve_current=0.95, boost_active=True, emergency_boost_active=False,
         last_room_target=21.0,
         last_published_target_rt=21.0, last_daily_trigger_date="2026-09-26",
         delivery=DeliveryState(pending=PendingTick("s1", "daily"), notbetrieb=True),
     )
+
+
+def test_pre_tp11_backup_keeps_unknown_keys_and_drops_the_old_override(make_store, tmp_path, caplog):
+    # Ein Backup von vor TP11: offset_current/target_history sind keine erkannten Felder mehr, der
+    # alte manual_override (Schluessel "offset" statt "shift") ist ungueltig. Alles davon darf beim
+    # Laden weder abstuerzen noch stillschweigend verschwinden.
+    old_backup = {
+        "curve_current": 0.95, "offset_current": 23.0, "target_history": [[1000.0, 20.0]],
+        "manual_override": {"curve": 1.3, "offset": 24.5, "erkannt": "2026-10-01T08:00:00+02:00"},
+    }
+    with caplog.at_level(logging.WARNING):
+        store = make_store(backup=old_backup)
+
+    assert store.state.shift_current is None
+    assert store.state.curve_current == 0.95
+    assert store.state.manual_override is None
+    assert "manual_override" in caplog.text
+
+    store.update(boost_active=True)  # erzwingt ein Schreiben -- extra muss erhalten bleiben
+
+    backup = load_backup(tmp_path / "backup.json")
+    assert backup["offset_current"] == 23.0
+    assert backup["target_history"] == [[1000.0, 20.0]]
+    assert "manual_override" not in backup
 
 
 def test_missing_files_give_defaults_and_nothing_is_written(make_store, tmp_path):
@@ -190,7 +225,7 @@ def test_written_backup_is_readable_the_way_0_16_0_reads_it(make_store, tmp_path
 
 def test_round_trip_through_a_new_store(make_store, tmp_path):
     store = make_store()
-    store.update(**V016_BACKUP)
+    store.update(**CURRENT_BACKUP)
     store.set_delivery(DeliveryState(pending=PendingTick("s1", "daily"), datenfehler=DataFault(SOURCE_LOCAL, ("dat",))))
 
     reloaded = StateStore(tmp_path / "backup.json", tmp_path / "failsafe_state.json")

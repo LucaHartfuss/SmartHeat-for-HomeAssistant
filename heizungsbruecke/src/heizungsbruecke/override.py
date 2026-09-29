@@ -25,6 +25,13 @@ logger = logging.getLogger(__name__)
 ROLES = ("curve_current", "shift_current")
 _LIMIT_KEYS = {"curve_current": "curve", "shift_current": "shift", "min_flow": "min_flow"}
 
+# mypyllant meldet einen eigenen Cloud-Schreibvorgang erst mit bis zu ~30 min Verzoegerung an HA
+# zurueck (Poll-Intervall). Innerhalb dieser Zeit ist ein lokaler HA-Read fuer eine soeben von UNS
+# selbst geschriebene Rolle nicht vertrauenswuerdig -- er kann noch den Wert VOR unserem
+# Schreibvorgang zeigen. Genutzt vom Quota-Check unten (_matches_the_device) und von der
+# Durchsetzungs-Erkennung (manual_override.py, Task 13: importiert diese Konstante von hier).
+OWN_WRITE_SETTLE_SECONDS = 2100
+
 _ROW_EMERGENCY = "emergency"
 _ROW_COMFORT = "comfort"
 _ROW_RESTORE = "restore"
@@ -68,10 +75,12 @@ class Override:
         self._ha_api = ha_api
         self._options = options
         self._clock = clock
-        # Zeitpunkt (clock) des letzten erfolgreichen eigenen Schreibens je Rolle, nur Laufzeit:
-        # die R6-Erkennung (manual_override) pausiert danach, weil HA den alten Wert noch eine
-        # Weile zeigen kann.
+        # Zeitpunkt (clock) und Wert des letzten erfolgreichen eigenen Schreibens je Rolle, nur
+        # Laufzeit: die Durchsetzungs-Erkennung (manual_override.py) pausiert danach, weil HA den
+        # alten Wert noch eine Weile zeigen kann; derselbe Grund treibt den Quota-Check unten
+        # (_matches_the_device).
         self._last_write_at: dict[str, float] = {}
+        self._last_written: dict[str, float] = {}
 
     def seconds_since_write(self, role: str) -> float | None:
         """Sekunden seit dem letzten eigenen erfolgreichen Schreiben dieser Rolle; None, wenn seit
@@ -166,27 +175,48 @@ class Override:
         restore = {"curve_current": state.curve_current, "shift_current": state.shift_current}
         return {role: value for role, value in restore.items() if value is not None}
 
-    def _write_role(self, role: str, ref: str, value: float, *, ensure_mode: bool = True) -> float:
-        """Schreibt EINEN Wert (Steigung, Parallelverschiebung oder Mindestvorlauf) ueber
-        plant.write, aber nur bei tatsaechlicher Aenderung (Spec 5.2: Kontingent-Schutz der
-        Hersteller-Cloud). Der aktuelle Wert kommt aus einem lokalen HA-Read (kein Cloud-Aufruf,
-        bei der Parallelverschiebung ueber plant.read_shift, das die Zone-inaktiv-Meldung < 5
-        beruecksichtigt); schlaegt der Read fehl oder ist er nicht auswertbar, wird trotzdem
-        geschrieben. Ein uebersprungener Schreibvorgang merkt sich keinen Zeitpunkt. Wirft
-        DeviceWriteError."""
-        minimum, maximum = self._limits(role)
-        target = plant.round_to_step(clamp(value, minimum, maximum), plant.STEPS[role])
+    def _matches_the_device(self, role: str, ref: str, target: float) -> bool:
+        """True, wenn ein Schreiben ueberfluessig waere (Quota-Check, Spec 5.2: "geschrieben wird
+        nur bei tatsaechlicher Aenderung"). Der lokale HA-Read (kein Cloud-Aufruf; bei der
+        Parallelverschiebung ueber plant.read_shift, das die Zone-inaktiv-Meldung < 5
+        beruecksichtigt) muss dafuer erstens innerhalb eines halben Schritts am Ziel liegen. Haben
+        WIR diese Rolle innerhalb von OWN_WRITE_SETTLE_SECONDS selbst zuletzt geschrieben, reicht
+        das allein nicht: mypyllant meldet einen eigenen Schreibvorgang erst mit Verzoegerung an HA
+        zurueck, der Read kann also noch den Stand VOR diesem Schreibvorgang zeigen (A -> B -> A
+        wuerde die Rueckkehr zu A sonst faelschlich ueberspringen, waehrend die Anlage noch auf B
+        steht) -- dann muss zusaetzlich unser letzter eigener Schreibwert schon dem Ziel
+        entsprechen. Schlaegt der Read fehl oder ist er nicht auswertbar, gilt das als
+        "nicht vertrauenswuerdig" (False, es wird geschrieben)."""
         try:
             current = plant.read_shift(self._ha_api, ref) if role == "shift_current" else self._ha_api.get_state(ref)
         except Exception:
-            current = None
-        if current is not None and _is_finite_number(current) and abs(current - target) <= plant.STEPS[role] / 2:
+            return False
+        step = plant.STEPS[role]
+        if current is None or not _is_finite_number(current) or abs(current - target) > step / 2:
+            return False
+        elapsed = self.seconds_since_write(role)
+        if elapsed is None or elapsed > OWN_WRITE_SETTLE_SECONDS:
+            return True
+        last_written = self._last_written.get(role)
+        return last_written is not None and abs(last_written - target) <= step / 2
+
+    def _write_role(self, role: str, ref: str, value: float, *, ensure_mode: bool = True, force: bool = False) -> float:
+        """Schreibt EINEN Wert (Steigung, Parallelverschiebung oder Mindestvorlauf) ueber
+        plant.write, aber nur bei tatsaechlicher Aenderung (`_matches_the_device`), es sei denn
+        `force=True` ueberspringt den Quota-Check ganz (z. B. direkt nach einem Modus-Wechsel: der
+        lokale Read zeigt dann garantiert noch den alten, nicht-manuellen Sollwert). Ein
+        uebersprungener Schreibvorgang merkt sich weder Zeitpunkt noch Wert. Wirft
+        DeviceWriteError."""
+        minimum, maximum = self._limits(role)
+        target = plant.target_value(value, minimum, maximum, plant.STEPS[role])
+        if not force and self._matches_the_device(role, ref, target):
             return target
         try:
             written = plant.write(self._ha_api, role, ref, value, minimum, maximum, ensure_mode=ensure_mode)
         except Exception as error:
             raise DeviceWriteError(role, ref, error) from error
         self._last_write_at[role] = self._clock()
+        self._last_written[role] = written
         return written
 
     def _write(self, values: dict) -> None:
@@ -194,22 +224,26 @@ class Override:
         Wert begrenzt und auf die Schrittweite der Anlage gerundet (plant.write ueber
         _write_role). Ist die Parallelverschiebung eine Climate-Zone, wird sie VOR der Steigung
         auf Manuell gestellt; ihr eigener Schreibvorgang laeuft danach ohne erneute
-        Modus-Pruefung (Ruling #3: mypyllant meldet einen Cloud-Modus-Wechsel erst mit
-        Verzoegerung an HA zurueck)."""
+        Modus-Pruefung und ohne Quota-Check (force=True): musste die Zone gerade erst umgestellt
+        werden, zeigt ein lokaler Read garantiert noch den alten (Zeitprogramm-)Sollwert, ein
+        Quota-Vergleich waere also wertlos und wuerde den Startwert faelschlich als "schon
+        richtig" ueberspringen."""
         shift_ref = self._manifest.entity_ids.get("shift_current")
+        zone_switched = False
         if "shift_current" in values and shift_ref and plant.is_climate(shift_ref):
-            self.ensure_manual_zone()
+            zone_switched = self.ensure_manual_zone()
         for role in ROLES:
             if role not in values or role not in self._manifest.entity_ids:
                 continue
             ref = self._manifest.entity_ids[role]
-            self._write_role(role, ref, values[role], ensure_mode=(role != "shift_current"))
+            force = zone_switched and role == "shift_current"
+            self._write_role(role, ref, values[role], ensure_mode=(role != "shift_current"), force=force)
 
     def expected_values(self) -> dict:
         """Sollwerte der aktuellen Zeile, so wie sie auf der Anlage stehen muessten (begrenzt und
         gerundet); nur vorhandene Werte."""
         return {
-            role: plant.round_to_step(clamp(value, *self._limits(role)), plant.STEPS[role])
+            role: plant.target_value(value, *self._limits(role), plant.STEPS[role])
             for role, value in self._row_values(self._current_row()).items()
             if role in self._manifest.entity_ids
         }
@@ -252,7 +286,11 @@ class Override:
         start = self._store.state.shift_current if self._store.state.shift_current is not None else start_shift
         if start is None:
             return
-        written = self._write_role("shift_current", ref, start, ensure_mode=False)
+        # force=switched (nicht immer True): wurde die Zone gerade erst umgestellt, ist der lokale
+        # Read garantiert veraltet (siehe _write-Docstring); war sie schon manuell (switched=False),
+        # gilt der normale Quota-Check -- dieser Zweig wird ohnehin nur erreicht, wenn `live` schon
+        # ausserhalb der Grenzen lag, also faende der Check sowieso keine Uebereinstimmung.
+        written = self._write_role("shift_current", ref, start, ensure_mode=False, force=switched)
         self._store.update(shift_current=written)
         logger.warning("Startwert der Parallelverschiebung geschrieben: %s", written)
 

@@ -5,7 +5,7 @@ import pytest
 
 from heizungsbruecke.backup_store import load_backup
 from heizungsbruecke.manifest import ChannelManifest
-from heizungsbruecke.override import DeviceWriteError, Override
+from heizungsbruecke.override import OWN_WRITE_SETTLE_SECONDS, DeviceWriteError, Override
 
 OPTIONS = {
     "curve_min": 0.4, "curve_max": 1.5, "shift_min": 15.0, "shift_max": 25.0,
@@ -15,6 +15,9 @@ MANIFEST = ChannelManifest(entity_ids={
     "curve_current": "number.curve", "shift_current": "number.shift", "min_flow": "number.min_flow",
 })
 RESTORE_POINT = {"curve_current": 0.9, "shift_current": 22.0}
+# RecordingHa.states-Form von RESTORE_POINT, fuer Tests der mypyllant-Verzoegerung (HA zeigt nach
+# einem eigenen Schreibvorgang bis zu ~30 min lang noch den vorherigen Wert).
+RESTORE_POINT_STATES = {"number.curve": 0.9, "number.shift": 22.0}
 VALUES = {"restore": (0.9, 22.0), "comfort": (1.0, 24.0), "emergency": (1.5, 25.0)}
 # Sollwert-Regel der Spec: (comfort, emergency) -> Zeile
 ROW = {(False, False): "restore", (True, False): "comfort", (False, True): "emergency", (True, True): "emergency"}
@@ -47,10 +50,11 @@ class RecordingHa:
         return [event[1] for event in self.events if event[0] == "read"]
 
 
-def _setup(make_store, backup=None, states=None, manifest=MANIFEST, **options):
+def _setup(make_store, backup=None, states=None, manifest=MANIFEST, clock=None, **options):
     store = make_store(backup=backup)
     ha = RecordingHa(states)
-    return Override(store, manifest, ha, {**OPTIONS, **options}), store, ha
+    clock_kwargs = {"clock": clock} if clock is not None else {}
+    return Override(store, manifest, ha, {**OPTIONS, **options}, **clock_kwargs), store, ha
 
 
 def _written(row):
@@ -421,6 +425,7 @@ def test_emergency_boost_without_any_saved_point_is_still_refused(make_store, mo
         override.set_boosts(comfort=False, emergency=True)
 
     assert ha.writes == []
+    assert store.state.emergency_boost_active is False
 
 
 # --- expected_values / write_roles / write_min_flow / prepare_zone (Task 11) ---
@@ -513,3 +518,120 @@ def test_write_role_writes_when_the_current_value_cannot_be_read(make_store):
     override.set_boosts(comfort=False, emergency=False)
 
     assert ha.writes == [("number.curve", 0.9), ("number.shift", 22.0)]
+
+
+# --- Quota-Check: mypyllant-Verzoegerung (~30 min), HA-Read kann nach eigenem Schreiben veraltet sein ---
+
+def test_write_role_does_not_trust_a_stale_ha_read_after_our_own_recent_write(make_store, clock):
+    # A (restore 0.9/22) -> B (comfort 1.0/24) -> A, alles innerhalb OWN_WRITE_SETTLE_SECONDS: HA
+    # zeigt wegen der mypyllant-Verzoegerung die ganze Zeit noch A, obwohl die Anlage zwischendurch
+    # auf B stand. Der zweite A-Schreibvorgang darf trotzdem nicht uebersprungen werden, sonst
+    # bleibt die Anlage auf B stehen.
+    override, _, ha = _setup(make_store, backup=dict(RESTORE_POINT), states=dict(RESTORE_POINT_STATES), clock=clock)
+
+    override.set_boosts(comfort=True, emergency=False)  # A -> B
+    clock.advance(60)  # weit innerhalb der Settle-Zeit
+    override.set_boosts(comfort=False, emergency=False)  # B -> A, HA zeigt (stale) weiter A
+
+    assert ha.writes == _written("comfort") + _written("restore")
+
+
+def test_write_role_trusts_a_stale_ha_read_again_after_the_settle_window(make_store, clock):
+    # Dieselbe Lage wie oben, aber der zweite Versuch kommt erst NACH der Settle-Zeit: dann darf
+    # HA wieder als eingeschwungen gelten, der (zufaellig) passende Read wird vertraut, kein
+    # erneutes Schreiben.
+    override, _, ha = _setup(make_store, backup=dict(RESTORE_POINT), states=dict(RESTORE_POINT_STATES), clock=clock)
+
+    override.set_boosts(comfort=True, emergency=False)  # A -> B
+    clock.advance(OWN_WRITE_SETTLE_SECONDS + 1)
+    override.set_boosts(comfort=False, emergency=False)  # B -> A, jetzt wird der stale Read vertraut
+
+    assert ha.writes == _written("comfort")
+
+
+def test_write_min_flow_does_not_trust_a_stale_ha_read_after_our_own_recent_write(make_store, clock):
+    # Dieselbe mypyllant-Verzoegerung fuer den Mindestvorlauf: 21 -> 22 -> 21 innerhalb der
+    # Settle-Zeit, HA zeigt die ganze Zeit (stale) 21.
+    store = make_store()
+    ha = RecordingHa({"number.min_flow": 21.0})
+    override = Override(store, MANIFEST, ha, OPTIONS, clock=clock)
+
+    assert override.write_min_flow(22.0) == 22.0
+    clock.advance(60)
+    assert override.write_min_flow(21.0) == 21.0
+
+    assert ha.writes == [("number.min_flow", 22.0), ("number.min_flow", 21.0)]
+
+
+# --- Quota-Check nach einem Modus-Wechsel: HA-Read ist dann garantiert veraltet (force=True) ---
+
+def test_prepare_zone_writes_the_start_value_even_if_the_stale_auto_setpoint_already_matches_it(make_store):
+    # Repro: Zone "auto" zeigt 21.0, gespeicherter Wiederherstellungspunkt ist ebenfalls 21.0.
+    # prepare_zone stellt auf Manuell um; der (stale, noch aus dem Zeitprogramm stammende) Read
+    # zeigt zufaellig schon den Zielwert -- ohne force wuerde das Schreiben faelschlich
+    # uebersprungen, obwohl der manuelle Sollwert der Anlage noch unbekannt ist.
+    manifest = ChannelManifest(entity_ids={**MANIFEST.entity_ids, "shift_current": "climate.zone::temperature"})
+    store = make_store(backup={"curve_current": 0.9, "shift_current": 21.0})
+    ha = RecordingHa({"climate.zone": "auto", "climate.zone::temperature": 21.0})
+    ha.set_hvac_mode = lambda entity, mode: ha.events.append(("hvac", entity, mode))
+    ha.get_raw_state = lambda entity: ha.states[entity]
+    ha.set_climate_temperature = lambda entity, value: ha.events.append(("write", entity, value))
+
+    Override(store, manifest, ha, OPTIONS).prepare_zone(start_shift=21.0)
+
+    assert ("hvac", "climate.zone", "heat_cool") in ha.events
+    assert ("climate.zone", 21.0) in ha.writes
+
+
+def test_prepare_zone_switches_the_mode_exactly_once(make_store):
+    # Ruling #3: der Startwert-Schreibvorgang (ensure_mode=False) darf keinen zweiten
+    # set_hvac_mode ausloesen.
+    manifest = ChannelManifest(entity_ids={**MANIFEST.entity_ids, "shift_current": "climate.zone::temperature"})
+    store = make_store(backup={"curve_current": 0.9})
+    ha = RecordingHa({"climate.zone": "auto", "climate.zone::temperature": 0.0})
+    ha.set_hvac_mode = lambda entity, mode: ha.events.append(("hvac", entity, mode))
+    ha.get_raw_state = lambda entity: ha.states[entity]
+    ha.set_climate_temperature = lambda entity, value: ha.events.append(("write", entity, value))
+
+    Override(store, manifest, ha, OPTIONS).prepare_zone(start_shift=20.6)
+
+    assert [event for event in ha.events if event[0] == "hvac"] == [("hvac", "climate.zone", "heat_cool")]
+
+
+def test_write_forces_the_shift_write_when_the_zone_had_to_be_switched(make_store):
+    # Wie oben, aber ueber den normalen Sollwert-Pfad (_write, nicht prepare_zone): eine soeben
+    # umgestellte Zone zaehlt als "Parallelverschiebung muss geschrieben werden", auch wenn der
+    # (stale) Read schon zufaellig den Zielwert zeigt.
+    manifest = ChannelManifest(entity_ids={**MANIFEST.entity_ids, "shift_current": "climate.zone::temperature"})
+    store = make_store(backup={"curve_current": 0.9, "shift_current": 22.0})
+    ha = RecordingHa({"climate.zone": "auto", "climate.zone::temperature": 22.0})
+    ha.set_hvac_mode = lambda entity, mode: ha.events.append(("hvac", entity, mode))
+    ha.get_raw_state = lambda entity: ha.states[entity]
+    ha.set_climate_temperature = lambda entity, value: ha.events.append(("write", entity, value))
+    override = Override(store, manifest, ha, OPTIONS)
+
+    override.write_roles(("shift_current",))
+
+    assert ("hvac", "climate.zone", "heat_cool") in ha.events
+    assert ("climate.zone", 22.0) in ha.writes
+
+
+def test_write_switches_mode_before_writing_curve_and_shift_for_a_climate_zone(make_store):
+    # Ruling #11a (Spec 5.2 "Betriebsart -> Steigung -> Parallelverschiebung"): Modus-Wechsel vor
+    # der Kurve, die Parallelverschiebung zuletzt.
+    manifest = ChannelManifest(entity_ids={**MANIFEST.entity_ids, "shift_current": "climate.zone::temperature"})
+    store = make_store(backup={"curve_current": 0.9, "shift_current": 10.0})
+    ha = RecordingHa({"climate.zone": "auto", "number.curve": 0.5})
+    ha.set_hvac_mode = lambda entity, mode: ha.events.append(("hvac", entity, mode))
+    ha.get_raw_state = lambda entity: ha.states[entity]
+    ha.set_climate_temperature = lambda entity, value: ha.events.append(("write", entity, value))
+    override = Override(store, manifest, ha, OPTIONS)
+
+    override.write_roles(("curve_current", "shift_current"))
+
+    ordered = [event for event in ha.events if event[0] in ("hvac", "write")]
+    assert ordered == [
+        ("hvac", "climate.zone", "heat_cool"),
+        ("write", "number.curve", 0.9),
+        ("write", "climate.zone", 15.0),
+    ]
