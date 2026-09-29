@@ -82,7 +82,7 @@ class Override:
         self._last_write_at: dict[str, float] = {}
         self._last_written: dict[str, float] = {}
         # Startzeitpunkt (clock): ein Schreibvorgang kurz VOR einem Neustart ist hier unbekannt, HA
-        # kann ihn aber noch bis zu OWN_WRITE_SETTLE_SECONDS lang nicht zeigen (_matches_the_device).
+        # kann ihn aber noch bis zu OWN_WRITE_SETTLE_SECONDS lang nicht zeigen (settled).
         self._started_at = clock()
 
     def seconds_since_write(self, role: str) -> float | None:
@@ -90,6 +90,15 @@ class Override:
         dem Start nicht geschrieben wurde (die Durchsetzung pausiert danach, HA hinkt nach)."""
         last = self._last_write_at.get(role)
         return None if last is None else self._clock() - last
+
+    def settled(self, role: str) -> bool:
+        """True, wenn ein HA-Read dieser Rolle nicht mehr hinter einem eigenen Schreibvorgang
+        herhinken kann: das letzte eigene Schreiben -- ohne eines seit dem Start der Start selbst,
+        denn ein Schreibvorgang kurz vor einem Neustart ist unbekannt -- liegt laenger als
+        OWN_WRITE_SETTLE_SECONDS zurueck. Eine Regel fuer den Quota-Check (_matches_the_device) und
+        die Durchsetzung (manual_override.py)."""
+        last = self._last_write_at.get(role, self._started_at)
+        return self._clock() - last > OWN_WRITE_SETTLE_SECONDS
 
     def set_boosts(self, comfort: bool, emergency: bool) -> tuple[bool, bool]:
         """Setzt die Boost-Flags und schreibt die Werte der neuen Sollwert-Zeile, falls sie
@@ -199,12 +208,7 @@ class Override:
         step = plant.STEPS[role]
         if current is None or not _is_finite_number(current) or abs(current - target) > step / 2:
             return False
-        elapsed = self.seconds_since_write(role)
-        if elapsed is None:
-            # Seit dem Start nicht selbst geschrieben: ein Schreibvorgang kurz vor dem Neustart kann
-            # in HA noch fehlen, erst nach OWN_WRITE_SETTLE_SECONDS Laufzeit gilt der Read.
-            return self._clock() - self._started_at > OWN_WRITE_SETTLE_SECONDS
-        if elapsed > OWN_WRITE_SETTLE_SECONDS:
+        if self.settled(role):
             return True
         last_written = self._last_written.get(role)
         return last_written is not None and abs(last_written - target) <= step / 2

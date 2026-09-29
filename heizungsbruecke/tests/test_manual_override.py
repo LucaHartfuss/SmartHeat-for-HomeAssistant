@@ -60,14 +60,18 @@ def _fixed_day(monkeypatch):
     monkeypatch.setattr(manual_override, "_today", lambda: TODAY)
 
 
-def _rt(make_store, clock, ha, **backup):
+def _rt(make_store, clock, ha, uptime=OWN_WRITE_SETTLE_SECONDS + 1, **backup):
+    """Runtime mit `uptime` Sekunden Laufzeit seit dem Start (Default: Schonfrist nach dem Start
+    vorbei, HA gilt ohne eigenes Schreiben als eingeschwungen)."""
     store = make_store(backup={**POINT, **backup})
     store.update(stable_target=20.5)
     notifier = MagicMock(spec=Notifier)
     notifier.notify.return_value = True
+    override = Override(store, MANIFEST, ha, OPTIONS, clock=clock)
+    clock.advance(uptime)
     return Runtime(
         manifest=MANIFEST, ha_api=ha, options=OPTIONS, derived_entity_ids={}, worker=MagicMock(), store=store,
-        override=Override(store, MANIFEST, ha, OPTIONS, clock=clock), notifier=notifier, clock=clock,
+        override=override, notifier=notifier, clock=clock,
     )
 
 
@@ -85,10 +89,6 @@ def _message_calls(rt):
         c for c in rt.notifier.notify.call_args_list
         if c.args[1] != STATE_OK and not str(c.args[1]).startswith("limit")
     ]
-
-
-def test_settle_window_is_the_one_from_override():
-    assert manual_override.OWN_WRITE_SETTLE_SECONDS is OWN_WRITE_SETTLE_SECONDS
 
 
 def test_no_deviation_no_write(make_store, clock):
@@ -163,12 +163,28 @@ def test_pause_after_own_write(make_store, clock):
     assert rt.ha_api.writes == []
 
 
+def test_after_a_restart_enforcement_waits_for_the_settle_window(make_store, clock):
+    # Ein eigenes Schreiben kurz vor dem Neustart ist unbekannt, HA kann noch den alten Wert zeigen:
+    # erst nach OWN_WRITE_SETTLE_SECONDS Laufzeit durchsetzen (dieselbe Regel wie der Quota-Check).
+    rt = _rt(make_store, clock, Ha(curve=1.3), uptime=0)
+    _rounds(rt)
+    clock.advance(OWN_WRITE_SETTLE_SECONDS - 60)
+    _rounds(rt)
+    assert rt.ha_api.writes == []
+    assert rt.notifier.notify.call_args_list == []
+    assert rt.store.state.manual_override is None
+    clock.advance(61)
+    _rounds(rt)
+    assert rt.ha_api.writes == [("number.curve", 0.9)]
+    assert len(_message_calls(rt)) == 1
+
+
 def test_enforcement_rate_limited_per_day(make_store, clock):
     # Review Focus 2: mypyllant uebernimmt das Rueckschreiben nicht -- hoechstens
     # MAX_WRITES_PER_DAY Schreibvorgaenge, genau eine Eingriffs- und eine Limit-Meldung.
     rt = _rt(make_store, clock, Ha(curve=1.3, reflects_writes=False))
     for _ in range(20):
-        clock.advance(manual_override.OWN_WRITE_SETTLE_SECONDS + 1)
+        clock.advance(OWN_WRITE_SETTLE_SECONDS + 1)
         _rounds(rt)
     assert len(_curve_writes(rt)) == manual_override.MAX_WRITES_PER_DAY
     assert len(_message_calls(rt)) == 1
@@ -183,11 +199,11 @@ def test_ignored_write_is_reported_once_until_the_return(make_store, clock):
     rt = _rt(make_store, clock, Ha(curve=1.3, reflects_writes=False))
     _rounds(rt)
     for _ in range(3):
-        clock.advance(manual_override.OWN_WRITE_SETTLE_SECONDS + 1)
+        clock.advance(OWN_WRITE_SETTLE_SECONDS + 1)
         _rounds(rt)
     assert len(_message_calls(rt)) == 1
     rt.ha_api.states["number.curve"] = 0.9  # die Anlage uebernimmt den Wert endlich
-    clock.advance(manual_override.OWN_WRITE_SETTLE_SECONDS + 1)
+    clock.advance(OWN_WRITE_SETTLE_SECONDS + 1)
     _rounds(rt)
     assert rt.store.state.manual_override is None
     assert rt.notifier.notify.call_args.args[1] == STATE_OK
@@ -197,7 +213,7 @@ def test_retry_interval_between_writes(make_store, clock):
     rt = _rt(make_store, clock, Ha(curve=1.3))
     _rounds(rt)
     rt.ha_api.states["number.curve"] = 1.3
-    clock.advance(manual_override.OWN_WRITE_SETTLE_SECONDS + 1)  # 35 min > 30 min
+    clock.advance(OWN_WRITE_SETTLE_SECONDS + 1)  # 35 min > 30 min
     _rounds(rt)
     assert len(_curve_writes(rt)) == 2
 
@@ -240,12 +256,12 @@ def test_counter_resets_next_day(make_store, clock, monkeypatch):
     monkeypatch.setattr(manual_override, "_today", lambda: date(2026, 10, 3))
     for _ in range(10):
         rt.ha_api.states["number.curve"] = 1.3
-        clock.advance(manual_override.OWN_WRITE_SETTLE_SECONDS + 1)
+        clock.advance(OWN_WRITE_SETTLE_SECONDS + 1)
         _rounds(rt)
     assert len(_curve_writes(rt)) == manual_override.MAX_WRITES_PER_DAY
     monkeypatch.setattr(manual_override, "_today", lambda: date(2026, 10, 4))
     rt.ha_api.states["number.curve"] = 1.3
-    clock.advance(manual_override.OWN_WRITE_SETTLE_SECONDS + 1)
+    clock.advance(OWN_WRITE_SETTLE_SECONDS + 1)
     before = len(rt.ha_api.writes)
     _rounds(rt)
     assert len(rt.ha_api.writes) == before + 1

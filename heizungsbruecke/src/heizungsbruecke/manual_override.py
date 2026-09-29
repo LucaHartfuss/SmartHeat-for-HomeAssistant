@@ -5,8 +5,9 @@ zurueck, meldet den Eingriff einmal (nicht kritisch, abschaltbar) und schickt St
 Parallelverschiebung als KPI mit dem naechsten Snapshot.
 
 Erst nach DETECTION_ROUNDS Runden in Folge und nie innerhalb von OWN_WRITE_SETTLE_SECONDS
-(override.py) nach einem eigenen Schreiben dieser Rolle (mypyllant fragt die Cloud nur alle 30 min
-ab, HA zeigt so lange den alten Wert). Eine solche noch nicht eingeschwungene Abweichung ist
+(override.py) nach einem eigenen Schreiben dieser Rolle oder nach dem Start (mypyllant fragt die
+Cloud nur alle 30 min ab, HA zeigt so lange den alten Wert; ein Schreiben kurz vor einem Neustart
+ist unbekannt) -- dieselbe Regel wie der Quota-Check (Override.settled). Eine solche noch nicht eingeschwungene Abweichung ist
 "offen": sie wird weder durchgesetzt noch als Rueckkehr gewertet -- uebernimmt die Anlage das
 Rueckschreiben nicht, bleibt es so bei einer Meldung pro Eingriff (Plan-Praezisierung
 "Durchsetzungs-Meldung"). Kontingent-Schutz der Hersteller-Cloud (myVAILLANT sperrt bei zu vielen
@@ -20,7 +21,6 @@ from datetime import date, datetime
 
 from heizungsbruecke import min_flow, plant
 from heizungsbruecke.notifier import STATE_OK
-from heizungsbruecke.override import OWN_WRITE_SETTLE_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -80,16 +80,12 @@ def _zone_not_manual(rt) -> bool:
         return False
 
 
-def _settled(rt, role: str) -> bool:
-    since = rt.override.seconds_since_write(role)
-    return since is None or since >= OWN_WRITE_SETTLE_SECONDS
-
-
 def _deviations(rt) -> tuple[dict, dict, set]:
     """(Sollwerte, abweichende Live-Werte je Rolle, offene Rollen). Offen = der Live-Wert weicht ab,
-    die Rolle wurde aber vor weniger als OWN_WRITE_SETTLE_SECONDS selbst geschrieben (HA hinkt
-    vermutlich nach): weder durchsetzen noch als Rueckkehr werten. Die Betriebsart haengt an der
-    Rolle shift_current (deren Schreiben stellt die Zone um)."""
+    die Rolle ist aber noch nicht eingeschwungen (Override.settled: eigenes Schreiben oder Start vor
+    weniger als OWN_WRITE_SETTLE_SECONDS, HA hinkt vermutlich nach): weder durchsetzen noch als
+    Rueckkehr werten. Die Betriebsart haengt an der Rolle shift_current (deren Schreiben stellt die
+    Zone um)."""
     expected = rt.override.expected_values()
     wanted_min_flow = min_flow.expected(rt)
     if wanted_min_flow is not None and "min_flow" in rt.manifest.entity_ids:
@@ -100,12 +96,12 @@ def _deviations(rt) -> tuple[dict, dict, set]:
         live = _read(rt, role)
         if live is None or abs(live - value) <= TOLERANCE[role] + _EPSILON:
             continue
-        if _settled(rt, role):
+        if rt.override.settled(role):
             deviating[role] = live
         else:
             pending.add(role)
     if _zone_not_manual(rt):
-        if _settled(rt, "shift_current"):
+        if rt.override.settled("shift_current"):
             deviating[ZONE_MODE] = 0.0
         else:
             pending.add(ZONE_MODE)

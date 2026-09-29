@@ -711,3 +711,20 @@ def test_after_the_settle_window_of_uptime_a_matching_ha_read_is_trusted(make_st
     override.set_boosts(comfort=False, emergency=False)
 
     assert ha.writes == []
+
+
+def test_settled_counts_from_the_start_and_from_each_own_write(make_store, clock):
+    # Eine Regel fuer Quota-Check und Durchsetzung (manual_override.py): HA gilt fuer eine Rolle als
+    # eingeschwungen, wenn das letzte eigene Schreiben -- sonst der Start -- laenger als
+    # OWN_WRITE_SETTLE_SECONDS zurueckliegt.
+    store = make_store()
+    ha = RecordingHa({"number.min_flow": 25.0})
+    override = Override(store, MANIFEST, ha, OPTIONS, clock=clock)
+    assert override.settled("min_flow") is False
+    clock.advance(OWN_WRITE_SETTLE_SECONDS + 1)
+    assert override.settled("min_flow") is True
+    override.write_min_flow(22.0)
+    assert override.settled("min_flow") is False
+    assert override.settled("curve_current") is True
+    clock.advance(OWN_WRITE_SETTLE_SECONDS + 1)
+    assert override.settled("min_flow") is True
