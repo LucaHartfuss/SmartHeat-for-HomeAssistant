@@ -452,8 +452,9 @@ def test_write_min_flow_is_clamped_rounded_and_timed(make_store, clock):
     assert override.write_min_flow(19.2) == 20.0
     assert ha.writes == [("number.min_flow", 20.0)]
     clock.advance(60)
-    assert override.seconds_since_write("min_flow") == 60
-    assert override.seconds_since_write("curve_current") is None
+    assert override.settled("min_flow") is False
+    clock.advance(OWN_WRITE_SETTLE_SECONDS)
+    assert override.settled("min_flow") is True
 
 
 def test_restore_point_with_inactive_zone_refuses_boost(make_store):
@@ -498,7 +499,7 @@ def test_write_role_skips_the_device_when_the_current_value_already_matches(make
     override.set_boosts(comfort=False, emergency=False)
 
     assert ha.writes == [("number.curve", 0.9)]
-    assert override.seconds_since_write("shift_current") is None
+    assert override.settled("shift_current") is True  # uebersprungen: kein Zeitstempel
 
 
 def test_write_role_writes_when_the_current_value_differs(make_store):

@@ -28,8 +28,8 @@ _LIMIT_KEYS = {"curve_current": "curve", "shift_current": "shift", "min_flow": "
 # mypyllant meldet einen eigenen Cloud-Schreibvorgang erst mit bis zu ~30 min Verzoegerung an HA
 # zurueck (Poll-Intervall). Innerhalb dieser Zeit ist ein lokaler HA-Read fuer eine soeben von UNS
 # selbst geschriebene Rolle nicht vertrauenswuerdig -- er kann noch den Wert VOR unserem
-# Schreibvorgang zeigen. Genutzt vom Quota-Check unten (_matches_the_device) und von der
-# Durchsetzungs-Erkennung (manual_override.py importiert diese Konstante von hier).
+# Schreibvorgang zeigen. Grundlage von Override.settled, der gemeinsamen Regel fuer den Quota-Check
+# unten (_matches_the_device) und die Durchsetzung (manual_override.py).
 OWN_WRITE_SETTLE_SECONDS = 2100
 
 _ROW_EMERGENCY = "emergency"
@@ -84,12 +84,6 @@ class Override:
         # Startzeitpunkt (clock): ein Schreibvorgang kurz VOR einem Neustart ist hier unbekannt, HA
         # kann ihn aber noch bis zu OWN_WRITE_SETTLE_SECONDS lang nicht zeigen (settled).
         self._started_at = clock()
-
-    def seconds_since_write(self, role: str) -> float | None:
-        """Sekunden seit dem letzten eigenen erfolgreichen Schreiben dieser Rolle; None, wenn seit
-        dem Start nicht geschrieben wurde (die Durchsetzung pausiert danach, HA hinkt nach)."""
-        last = self._last_write_at.get(role)
-        return None if last is None else self._clock() - last
 
     def settled(self, role: str) -> bool:
         """True, wenn ein HA-Read dieser Rolle nicht mehr hinter einem eigenen Schreibvorgang
