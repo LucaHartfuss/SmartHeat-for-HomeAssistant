@@ -13,6 +13,10 @@ MANUAL_HVAC_MODE = "heat_cool"
 # mypyllant meldet als Wunschtemperatur 0, wenn die Zone gerade nicht heizt (Eco, Heizgrenze).
 # Darunter ist der Wert kein Sollwert, sondern "Zone inaktiv" (Plan-Praezisierung 11).
 SHIFT_READ_MIN = 5.0
+# Server-Plausibilitaetsbereich fuer shift_current (heizungsserver generic/messages.py
+# PLAUSIBLE_RANGES). Darueber ist der Wert kein plausibler Sollwert mehr, sondern ein Lesefehler --
+# er wird nie an den Server gemeldet.
+SHIFT_READ_MAX = 35.0
 # Schrittweiten der Anlage (mypyllant: heating_curve 0.05, Zonen-Sollwert 0.5, min_flow 0.1).
 STEPS = {"curve_current": 0.05, "shift_current": 0.5, "min_flow": 0.1}
 
@@ -70,9 +74,14 @@ def write(
 
 
 def read_shift(ha_api, ref: str) -> float | None:
-    """Live-Parallelverschiebung; None, wenn die Zone inaktiv meldet. Wirft bei Lesefehlern."""
+    """Live-Parallelverschiebung; None, wenn die Zone inaktiv meldet. Wirft bei Lesefehlern,
+    auch bei einem Wert ueber SHIFT_READ_MAX (unplausibel, wird nie als Snapshot-Wert gesendet)."""
     value = ha_api.get_state(ref)
-    if not math.isfinite(value) or value < SHIFT_READ_MIN:
+    if not math.isfinite(value):
+        return None
+    if value > SHIFT_READ_MAX:
+        raise ValueError(f"Parallelverschiebung {value} liegt ueber dem plausiblen Maximum {SHIFT_READ_MAX}")
+    if value < SHIFT_READ_MIN:
         return None
     return value
 

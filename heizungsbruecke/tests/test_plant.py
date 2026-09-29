@@ -61,6 +61,16 @@ def test_read_shift_zone_zero_is_inactive():
     assert plant.read_shift(Ha({ZONE: 20.5}), ZONE) == 20.5
 
 
+def test_read_shift_above_max_raises():
+    with pytest.raises(ValueError):
+        plant.read_shift(Ha({ZONE: 35.5}), ZONE)
+    assert plant.read_shift(Ha({ZONE: plant.SHIFT_READ_MAX}), ZONE) == plant.SHIFT_READ_MAX
+
+
+def test_current_shift_falls_back_when_shift_above_max():
+    assert plant.current_shift(Ha({ZONE: 40.0}), ZONE, fallback=21.0) == 21.0
+
+
 def test_current_shift_falls_back_when_zone_reports_zero():
     assert plant.current_shift(Ha({ZONE: 0.0}), ZONE, fallback=21.0) == 21.0
     assert plant.current_shift(Ha({ZONE: RuntimeError("unavailable")}), ZONE, fallback=21.0) == 21.0
