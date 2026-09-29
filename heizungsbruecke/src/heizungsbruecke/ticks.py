@@ -121,7 +121,7 @@ def _current_target_avg(rt: Runtime) -> float | None:
 
 
 # Praefix je Stoerungsquelle fuer den Meldezustand "datenfehler"; abgeleitet aus
-# delivery.DataFault.key() (Praezisierung 2), nicht neu kodiert.
+# delivery.DataFault.key(), nicht neu kodiert.
 _FAULT_PREFIXES = {
     delivery.SOURCE_LOCAL: "lokal",
     delivery.SOURCE_SERVER: "server",
