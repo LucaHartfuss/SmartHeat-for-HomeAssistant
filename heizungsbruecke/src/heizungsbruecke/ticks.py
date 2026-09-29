@@ -80,9 +80,17 @@ def _attempt(rt: Runtime, seq: str, trigger: str):
     """Pflichtrollen und room_actual frisch lesen; bei ungueltigem Wert kein Publish
     (ReadInvalid). Auch ein Publish-Fehler meldet Published: der Ack-Timeout plant dann den
     naechsten Versuch, die Retry-Kette reisst nie ab."""
-    shift = plant.current_shift(
-        rt.ha_api, rt.manifest.entity_ids["shift_current"], rt.store.state.shift_current,
-    )
+    # Kurz nach einem eigenen Schreiben (erster Start: _prime schreibt die Startverschiebung, der
+    # erzwungene Tick folgt Sekunden spaeter) zeigt HA bei mypyllant noch den alten Sollwert des
+    # Zeitprogramms; der Server-Erstkontakt uebernaehme ihn. Wie min_flow.sync: bis Override.settled
+    # gilt der eigene letzte Schreibwert.
+    last = rt.override.last_written("shift_current")
+    if not rt.override.settled("shift_current") and last is not None:
+        shift = last
+    else:
+        shift = plant.current_shift(
+            rt.ha_api, rt.manifest.entity_ids["shift_current"], rt.store.state.shift_current,
+        )
     read = read_snapshot_roles(rt.manifest, rt.ha_api, computed_values={"shift_current": shift})
     if read.invalid_roles:
         logger.warning("Snapshot (seq=%s) zurueckgehalten, ungueltige Werte: %s", seq, ", ".join(read.invalid_roles))
