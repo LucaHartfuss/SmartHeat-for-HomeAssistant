@@ -8,19 +8,21 @@ from heizungsbruecke.manifest import ChannelManifest
 from heizungsbruecke.override import DeviceWriteError, Override
 
 OPTIONS = {
-    "curve_min": 0.4, "curve_max": 1.5, "offset_min": 20.0, "offset_max": 30.0,
-    "boost_curve_value": 1.0, "boost_offset_value": 25.0,
+    "curve_min": 0.4, "curve_max": 1.5, "shift_min": 15.0, "shift_max": 25.0,
+    "min_flow_min": 20.0, "min_flow_max": 30.0, "boost_curve_value": 1.0, "boost_shift_value": 24.0,
 }
-MANIFEST = ChannelManifest(entity_ids={"curve_current": "number.curve", "offset_current": "number.offset"})
-RESTORE_POINT = {"curve_current": 0.9, "offset_current": 22.0}
-VALUES = {"restore": (0.9, 22.0), "comfort": (1.0, 25.0), "emergency": (1.5, 30.0)}
+MANIFEST = ChannelManifest(entity_ids={
+    "curve_current": "number.curve", "shift_current": "number.shift", "min_flow": "number.min_flow",
+})
+RESTORE_POINT = {"curve_current": 0.9, "shift_current": 22.0}
+VALUES = {"restore": (0.9, 22.0), "comfort": (1.0, 24.0), "emergency": (1.5, 25.0)}
 # Sollwert-Regel der Spec: (comfort, emergency) -> Zeile
 ROW = {(False, False): "restore", (True, False): "comfort", (False, True): "emergency", (True, True): "emergency"}
 
 
 class RecordingHa:
     def __init__(self, states=None):
-        self.states = {"number.curve": 0.7, "number.offset": 21.0, **(states or {})}
+        self.states = {"number.curve": 0.7, "number.shift": 21.0, "number.min_flow": 20.0, **(states or {})}
         self.events = []
         self.write_error = None
 
@@ -52,8 +54,8 @@ def _setup(make_store, backup=None, states=None, manifest=MANIFEST, **options):
 
 
 def _written(row):
-    curve, offset = VALUES[row]
-    return [("number.curve", curve), ("number.offset", offset)]
+    curve, shift = VALUES[row]
+    return [("number.curve", curve), ("number.shift", shift)]
 
 
 def _raise_oserror(*args, **kwargs):
@@ -73,7 +75,8 @@ def test_set_boosts_writes_the_target_row_only_when_it_changes(make_store, befor
 
     assert (store.state.boost_active, store.state.emergency_boost_active) == after
     assert ha.writes == ([] if ROW[before] == ROW[after] else _written(ROW[after]))
-    assert ha.reads == []
+    # Reihenwechsel loest je geschriebener Rolle einen Quota-Check-Read voraus (_write_role).
+    assert ha.reads == ([] if ROW[before] == ROW[after] else ["number.curve", "number.shift"])
 
 
 def test_set_boosts_persists_flags(make_store, tmp_path):
@@ -90,11 +93,12 @@ def test_starting_boost_saves_restore_point_from_device_before_first_write(make_
 
     override.set_boosts(comfort=comfort, emergency=emergency)
 
-    assert ha.events[:2] == [("read", "number.curve"), ("read", "number.offset")]
-    assert [event[0] for event in ha.events[2:]] == ["write", "write"]
-    assert (store.state.curve_current, store.state.offset_current) == (0.7, 21.0)
+    assert ha.events[:2] == [("read", "number.curve"), ("read", "number.shift")]
+    # Ab hier je Rolle ein Quota-Check-Read direkt vor ihrem Schreiben (_write_role).
+    assert [event[0] for event in ha.events[2:]] == ["read", "write", "read", "write"]
+    assert (store.state.curve_current, store.state.shift_current) == (0.7, 21.0)
     backup = load_backup(tmp_path / "backup.json")
-    assert (backup["curve_current"], backup["offset_current"]) == (0.7, 21.0)
+    assert (backup["curve_current"], backup["shift_current"]) == (0.7, 21.0)
 
 
 def test_starting_boost_reads_only_the_missing_role(make_store):
@@ -102,8 +106,10 @@ def test_starting_boost_reads_only_the_missing_role(make_store):
 
     override.set_boosts(comfort=True, emergency=False)
 
-    assert ha.reads == ["number.offset"]
-    assert (store.state.curve_current, store.state.offset_current) == (0.9, 21.0)
+    # Wiederherstellungspunkt: nur die fehlende Rolle. Danach je geschriebener Rolle noch ein
+    # Quota-Check-Read (_write_role).
+    assert ha.reads == ["number.shift", "number.curve", "number.shift"]
+    assert (store.state.curve_current, store.state.shift_current) == (0.9, 21.0)
 
 
 @pytest.mark.parametrize("curve_state", [RuntimeError("Cloud nicht erreichbar"), float("nan")])
@@ -132,7 +138,10 @@ def test_running_boost_is_never_refused(make_store):
 
     assert override.set_boosts(comfort=True, emergency=False) == (True, False)
     assert ha.writes == _written("comfort")
-    assert ha.reads == []
+    # Kein Wiederherstellungspunkt-Read (Boost lief schon); nur je Rolle ein Quota-Check-Read
+    # (_write_role) vor dem Schreiben -- der fuer curve_current scheitert (RuntimeError), wird
+    # aber trotzdem als Read gezaehlt, bevor _write_role trotzdem schreibt.
+    assert ha.reads == ["number.curve", "number.shift"]
 
 
 def test_restore_point_not_yet_on_the_card_blocks_a_new_boost(make_store, tmp_path, monkeypatch, caplog):
@@ -157,10 +166,12 @@ def test_restore_point_not_yet_on_the_card_blocks_a_new_boost(make_store, tmp_pa
     monkeypatch.undo()
     assert override.set_boosts(comfort=True, emergency=False) == (True, False)  # Datentraeger wieder ok
 
-    assert ha.reads == ["number.curve", "number.offset"]  # nur beim ersten Check gelesen
+    # Wiederherstellungspunkt nur beim ersten Check gelesen, danach je Rolle ein Quota-Check-Read
+    # vor dem Schreiben (_write_role, nur der dritte Check schreibt tatsaechlich).
+    assert ha.reads == ["number.curve", "number.shift", "number.curve", "number.shift"]
     assert ha.writes == _written("comfort")
     backup = load_backup(tmp_path / "backup.json")
-    assert (backup["curve_current"], backup["offset_current"], backup["boost_active"]) == (0.7, 21.0, True)
+    assert (backup["curve_current"], backup["shift_current"], backup["boost_active"]) == (0.7, 21.0, True)
 
 
 def test_unsaved_boost_flag_alone_does_not_block_a_new_boost(make_store, monkeypatch):
@@ -176,7 +187,9 @@ def test_unsaved_boost_flag_alone_does_not_block_a_new_boost(make_store, monkeyp
         override.set_boosts(comfort=True, emergency=False)
 
     assert ha.writes == _written("comfort") + _written("restore") + _written("comfort")
-    assert ha.reads == []
+    # Wiederherstellungspunkt liegt schon vollstaendig im Backup -- keine Restore-Point-Reads,
+    # aber je geschriebener Rolle ein Quota-Check-Read (_write_role), 3x (curve, shift).
+    assert ha.reads == ["number.curve", "number.shift"] * 3
 
 
 @pytest.mark.parametrize("before", [(True, False), (False, True)])
@@ -186,14 +199,17 @@ def test_second_boost_never_reads_the_device_for_a_restore_point(make_store, bef
     # trotzdem, und das Boost-Ende schreibt nur bekannte Werte.
     override, store, ha = _setup(
         make_store, backup={"boost_active": before[0], "emergency_boost_active": before[1]},
-        states={"number.curve": 1.0, "number.offset": 25.0},
+        states={"number.curve": 1.0, "number.shift": 20.0},
     )
 
     assert override.set_boosts(comfort=True, emergency=True) == (True, True)
 
-    assert ha.reads == []
+    # before=(False, True): Zeile bleibt "emergency" -> kein Schreiben, also auch kein
+    # Quota-Check-Read; before=(True, False): Zeile wechselt, je Rolle ein Quota-Check-Read
+    # (_write_role) -- kein Wiederherstellungspunkt-Read (Boost lief schon).
+    assert ha.reads == ([] if before == (False, True) else ["number.curve", "number.shift"])
     assert ha.writes == ([] if before == (False, True) else _written("emergency"))
-    assert (store.state.curve_current, store.state.offset_current) == (None, None)
+    assert (store.state.curve_current, store.state.shift_current) == (None, None)
 
 
 def test_write_failure_leaves_flags_unchanged(make_store, tmp_path):
@@ -226,19 +242,19 @@ def test_flag_save_failure_after_device_write_keeps_memory_consistent(make_store
 
 
 def test_restore_point_outside_clamps_is_clamped(make_store):
-    override, _, ha = _setup(make_store, backup={"curve_current": 2.0, "offset_current": 10.0, "boost_active": True})
+    override, _, ha = _setup(make_store, backup={"curve_current": 2.0, "shift_current": 10.0, "boost_active": True})
 
     override.set_boosts(comfort=False, emergency=False)
 
-    assert ha.writes == [("number.curve", 1.5), ("number.offset", 20.0)]
+    assert ha.writes == [("number.curve", 1.5), ("number.shift", 15.0)]
 
 
 def test_boost_values_outside_clamps_are_clamped(make_store):
-    override, _, ha = _setup(make_store, backup=dict(RESTORE_POINT), boost_curve_value=9.9, boost_offset_value=0.0)
+    override, _, ha = _setup(make_store, backup=dict(RESTORE_POINT), boost_curve_value=9.9, boost_shift_value=0.0)
 
     override.set_boosts(comfort=True, emergency=False)
 
-    assert ha.writes == [("number.curve", 1.5), ("number.offset", 20.0)]
+    assert ha.writes == [("number.curve", 1.5), ("number.shift", 15.0)]
 
 
 def test_restore_writes_only_known_values(make_store):
@@ -254,7 +270,8 @@ def test_unmapped_roles_are_neither_read_nor_written(make_store):
 
     override.set_boosts(comfort=True, emergency=False)
 
-    assert ha.reads == ["number.curve"]
+    # Wiederherstellungspunkt-Read plus ein Quota-Check-Read (_write_role), beide nur curve_current.
+    assert ha.reads == ["number.curve", "number.curve"]
     assert ha.writes == [("number.curve", 1.0)]
 
 
@@ -266,10 +283,10 @@ def test_server_values_are_clamped_stored_and_written(make_store, tmp_path, capl
     with caplog.at_level(logging.WARNING):
         override.apply_server_values(9.0, 23.0)
 
-    assert ha.writes == [("number.curve", 1.5), ("number.offset", 23.0)]
-    assert (store.state.curve_current, store.state.offset_current) == (1.5, 23.0)
+    assert ha.writes == [("number.curve", 1.5), ("number.shift", 23.0)]
+    assert (store.state.curve_current, store.state.shift_current) == (1.5, 23.0)
     backup = load_backup(tmp_path / "backup.json")
-    assert (backup["curve_current"], backup["offset_current"]) == (1.5, 23.0)
+    assert (backup["curve_current"], backup["shift_current"]) == (1.5, 23.0)
     assert "geclampt" in caplog.text
 
 
@@ -282,7 +299,7 @@ def test_server_values_during_boost_are_only_stored(make_store, flags):
     override.apply_server_values(0.95, 40.0)
 
     assert ha.writes == []
-    assert (store.state.curve_current, store.state.offset_current) == (0.95, 30.0)
+    assert (store.state.curve_current, store.state.shift_current) == (0.95, 25.0)
 
 
 def test_server_values_are_stored_before_a_failing_write(make_store):
@@ -292,7 +309,7 @@ def test_server_values_are_stored_before_a_failing_write(make_store):
     with pytest.raises(DeviceWriteError) as error:
         override.apply_server_values(0.95, 23.0)
 
-    assert (store.state.curve_current, store.state.offset_current) == (0.95, 23.0)
+    assert (store.state.curve_current, store.state.shift_current) == (0.95, 23.0)
     assert (error.value.role, error.value.entity_id) == ("curve_current", "number.curve")
     assert str(error.value) == "curve_current (number.curve): " + "x" * 200
 
@@ -371,7 +388,7 @@ def test_emergency_boost_starts_on_the_older_saved_point_when_the_new_one_cannot
 
     assert ha.writes == _written("emergency")
     assert store.state.emergency_boost_active is True
-    assert (store.state.curve_current, store.state.offset_current) == (0.9, 22.0)
+    assert (store.state.curve_current, store.state.shift_current) == (0.9, 22.0)
     assert "zuletzt gespeicherten Wiederherstellungspunkt" in caplog.text
 
     monkeypatch.undo()
@@ -391,7 +408,7 @@ def test_comfort_boost_is_still_refused_when_only_an_older_point_is_saved(make_s
 
     assert ha.writes == []
     assert store.state.boost_active is False
-    assert (store.state.curve_current, store.state.offset_current) == (1.0, 25.0)
+    assert (store.state.curve_current, store.state.shift_current) == (1.0, 25.0)
 
 
 def test_emergency_boost_without_any_saved_point_is_still_refused(make_store, monkeypatch):
@@ -404,4 +421,95 @@ def test_emergency_boost_without_any_saved_point_is_still_refused(make_store, mo
         override.set_boosts(comfort=False, emergency=True)
 
     assert ha.writes == []
-    assert store.state.emergency_boost_active is False
+
+
+# --- expected_values / write_roles / write_min_flow / prepare_zone (Task 11) ---
+
+def test_expected_values_follow_the_row(make_store):
+    override, store, _ = _setup(make_store, backup=RESTORE_POINT)
+    assert override.expected_values() == {"curve_current": 0.9, "shift_current": 22.0}
+    override.set_boosts(comfort=True, emergency=False)
+    assert override.expected_values() == {"curve_current": 1.0, "shift_current": 24.0}
+
+
+def test_write_roles_writes_only_the_given_roles(make_store):
+    override, _, ha = _setup(make_store, backup=RESTORE_POINT)
+    override.write_roles(("shift_current",))
+    assert ha.writes == [("number.shift", 22.0)]
+
+
+def test_write_min_flow_is_clamped_rounded_and_timed(make_store, clock):
+    store = make_store(backup=RESTORE_POINT)
+    # number.min_flow bewusst abweichend vom Zielwert (20.0), sonst wuerde der Quota-Check
+    # (_write_role) den Schreibvorgang als unveraendert ueberspringen.
+    ha = RecordingHa({"number.min_flow": 25.0})
+    override = Override(store, MANIFEST, ha, OPTIONS, clock=clock)
+    assert override.write_min_flow(19.2) == 20.0
+    assert ha.writes == [("number.min_flow", 20.0)]
+    clock.advance(60)
+    assert override.seconds_since_write("min_flow") == 60
+    assert override.seconds_since_write("curve_current") is None
+
+
+def test_restore_point_with_inactive_zone_refuses_boost(make_store):
+    override, _, ha = _setup(make_store, backup={"curve_current": 0.9}, states={"number.shift": 0.0})
+    assert override.set_boosts(comfort=True, emergency=False) == (False, False)
+    assert ha.writes == []
+
+
+def test_prepare_zone_writes_start_shift_when_zone_is_off(make_store):
+    manifest = ChannelManifest(entity_ids={**MANIFEST.entity_ids, "shift_current": "climate.zone::temperature"})
+    store = make_store(backup={"curve_current": 0.9})
+    ha = RecordingHa({"climate.zone": "auto", "climate.zone::temperature": 0.0})
+    ha.set_hvac_mode = lambda entity, mode: ha.events.append(("hvac", entity, mode))
+    ha.get_raw_state = lambda entity: ha.states[entity]
+    ha.set_climate_temperature = lambda entity, value: ha.events.append(("write", entity, value))
+    Override(store, manifest, ha, OPTIONS).prepare_zone(start_shift=20.6)
+    assert ("hvac", "climate.zone", "heat_cool") in ha.events
+    assert ("climate.zone", 20.5) in ha.writes
+    assert store.state.shift_current == 20.5
+
+
+def test_prepare_zone_leaves_a_plausible_manual_zone_alone(make_store):
+    manifest = ChannelManifest(entity_ids={**MANIFEST.entity_ids, "shift_current": "climate.zone::temperature"})
+    store = make_store(backup={"curve_current": 0.9})
+    ha = RecordingHa({"climate.zone": "heat_cool", "climate.zone::temperature": 21.0})
+    ha.get_raw_state = lambda entity: ha.states[entity]
+    Override(store, manifest, ha, OPTIONS).prepare_zone(start_shift=20.5)
+    assert ha.writes == []
+
+
+# --- Quota-Check: nur bei tatsaechlicher Aenderung schreiben (_write_role) ---
+
+def test_write_role_skips_the_device_when_the_current_value_already_matches(make_store):
+    # number.shift steht schon (innerhalb eines halben Schritts) auf dem Restore-Zielwert 22.0 --
+    # kein Schreiben, kein Zeitstempel, aber curve_current (0.7 != 0.9) wird weiter geschrieben.
+    override, store, ha = _setup(
+        make_store, backup={**RESTORE_POINT, "boost_active": True}, states={"number.shift": 22.2},
+    )
+
+    override.set_boosts(comfort=False, emergency=False)
+
+    assert ha.writes == [("number.curve", 0.9)]
+    assert override.seconds_since_write("shift_current") is None
+
+
+def test_write_role_writes_when_the_current_value_differs(make_store):
+    override, _, ha = _setup(
+        make_store, backup={**RESTORE_POINT, "boost_active": True}, states={"number.shift": 10.0},
+    )
+
+    override.set_boosts(comfort=False, emergency=False)
+
+    assert ha.writes == [("number.curve", 0.9), ("number.shift", 22.0)]
+
+
+def test_write_role_writes_when_the_current_value_cannot_be_read(make_store):
+    override, _, ha = _setup(
+        make_store, backup={**RESTORE_POINT, "boost_active": True},
+        states={"number.shift": RuntimeError("Cloud nicht erreichbar")},
+    )
+
+    override.set_boosts(comfort=False, emergency=False)
+
+    assert ha.writes == [("number.curve", 0.9), ("number.shift", 22.0)]

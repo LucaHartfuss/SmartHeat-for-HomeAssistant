@@ -15,10 +15,10 @@ from heizungsbruecke.status import StatusReporter
 
 ABO_NOW = datetime(2026, 9, 25, 12, 0, tzinfo=timezone(timedelta(hours=2)))
 OPTIONS = {
-    "tenant_id": "t1", "curve_min": 0.2, "curve_max": 0.8, "offset_min": 0.0, "offset_max": 5.0,
-    "boost_curve_value": 0.5, "boost_offset_value": 2.0,
+    "tenant_id": "t1", "curve_min": 0.2, "curve_max": 0.8, "shift_min": 0.0, "shift_max": 5.0,
+    "boost_curve_value": 0.5, "boost_shift_value": 2.0,
 }
-BOTH_ROLES = {"curve_current": "number.curve", "offset_current": "number.offset"}
+BOTH_ROLES = {"curve_current": "number.curve", "shift_current": "number.shift"}
 
 
 @pytest.fixture(autouse=True)
@@ -113,7 +113,7 @@ def test_enter_inactive_with_failing_entitlement_persist_still_enters_mode(make_
 
 def test_finish_grace_mid_boost_restores_learned_values_clamped(make_store, tmp_path):
     store = make_store(backup={
-        "curve_current": 0.4, "offset_current": 9.0,  # ueber offset_max=5.0 -> geclampt
+        "curve_current": 0.4, "shift_current": 9.0,  # ueber shift_max=5.0 -> geclampt
         "emergency_boost_active": True, "boost_active": True,
     })
     rt = _runtime(store)
@@ -121,7 +121,7 @@ def test_finish_grace_mid_boost_restores_learned_values_clamped(make_store, tmp_
     assert abo.finish_grace(rt, always_restore=True, final_notice=True) is True
 
     rt.ha_api.set_number_value.assert_any_call("number.curve", 0.4)
-    rt.ha_api.set_number_value.assert_any_call("number.offset", 5.0)
+    rt.ha_api.set_number_value.assert_any_call("number.shift", 5.0)
     backup = load_backup(tmp_path / "backup.json")
     assert (backup["boost_active"], backup["emergency_boost_active"]) == (False, False)
     assert store.state.abo_finished is True
@@ -132,7 +132,7 @@ def test_finish_grace_mid_boost_restores_learned_values_clamped(make_store, tmp_
 
 
 def test_finish_grace_counts_restore_as_done_when_saving_flags_fails(make_store, monkeypatch, caplog):
-    store = make_store(backup={"curve_current": 0.4, "offset_current": 2.0, "emergency_boost_active": True})
+    store = make_store(backup={"curve_current": 0.4, "shift_current": 2.0, "emergency_boost_active": True})
     rt = _runtime(store)
 
     def _broken_save(path, values):

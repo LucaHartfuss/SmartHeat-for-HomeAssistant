@@ -1,22 +1,29 @@
-"""Welche Kurve und welcher Offset auf der Anlage stehen sollen, und das Schreiben dorthin.
+"""Welche Steigung und Parallelverschiebung auf der Anlage stehen sollen, und das Schreiben
+dorthin.
 
 Sollwert-Regel (Vorrang von oben nach unten):
-    Notfall-Boost aktiv -> curve_max / offset_max
-    Comfort-Boost aktiv -> boost_curve_value / boost_offset_value
-    sonst               -> Wiederherstellungspunkt curve_current / offset_current (nur vorhandene)
+    Notfall-Boost aktiv -> curve_max / shift_max
+    Comfort-Boost aktiv -> boost_curve_value / boost_shift_value
+    sonst               -> Wiederherstellungspunkt curve_current / shift_current (nur vorhandene)
 
-Geschrieben wird nur beim Wechsel der Zeile, weil jeder Schreibvorgang bei mypyllant ein
-Cloud-Aufruf ist; jeder Wert wird auf die lokalen Clamps begrenzt."""
+Der Mindestvorlauf gehoert zu keiner Zeile (immer = Raum-Soll, min_flow.py), wird aber auch
+hier geschrieben (einziger Schreibweg zur Anlage).
+
+Geschrieben wird nur bei tatsaechlicher Aenderung, weil jeder Schreibvorgang bei mypyllant ein
+Cloud-Aufruf ist; jeder Wert wird auf die lokalen Clamps begrenzt und auf die Schrittweite der
+Anlage gerundet (plant.py)."""
 import logging
 import math
 import time
 from collections.abc import Callable
 
+from heizungsbruecke import plant
 from heizungsbruecke.clamping import clamp
 
 logger = logging.getLogger(__name__)
 
-ROLES = ("curve_current", "offset_current")
+ROLES = ("curve_current", "shift_current")
+_LIMIT_KEYS = {"curve_current": "curve", "shift_current": "shift", "min_flow": "min_flow"}
 
 _ROW_EMERGENCY = "emergency"
 _ROW_COMFORT = "comfort"
@@ -61,17 +68,16 @@ class Override:
         self._ha_api = ha_api
         self._options = options
         self._clock = clock
-        # Zeitpunkt (clock) des letzten erfolgreichen eigenen Schreibens auf Kurve/Offset, nur
-        # Laufzeit: die R6-Erkennung (manual_override) pausiert danach, weil HA den alten Wert
-        # noch eine Weile zeigen kann.
-        self._last_write_at: float | None = None
+        # Zeitpunkt (clock) des letzten erfolgreichen eigenen Schreibens je Rolle, nur Laufzeit:
+        # die R6-Erkennung (manual_override) pausiert danach, weil HA den alten Wert noch eine
+        # Weile zeigen kann.
+        self._last_write_at: dict[str, float] = {}
 
-    def seconds_since_last_write(self) -> float | None:
-        """Sekunden seit dem letzten erfolgreichen eigenen Schreiben auf Kurve/Offset; None,
-        wenn seit dem Start nichts geschrieben wurde."""
-        if self._last_write_at is None:
-            return None
-        return self._clock() - self._last_write_at
+    def seconds_since_write(self, role: str) -> float | None:
+        """Sekunden seit dem letzten eigenen erfolgreichen Schreiben dieser Rolle; None, wenn seit
+        dem Start nicht geschrieben wurde (die Durchsetzung pausiert danach, HA hinkt nach)."""
+        last = self._last_write_at.get(role)
+        return None if last is None else self._clock() - last
 
     def set_boosts(self, comfort: bool, emergency: bool) -> tuple[bool, bool]:
         """Setzt die Boost-Flags und schreibt die Werte der neuen Sollwert-Zeile, falls sie
@@ -102,12 +108,12 @@ class Override:
         self._store.update(boost_active=comfort, emergency_boost_active=emergency)
         return comfort, emergency
 
-    def apply_server_values(self, curve: float, offset: float) -> None:
+    def apply_server_values(self, curve: float, shift: float) -> None:
         """Speichert die (geclampten) Serverwerte als Wiederherstellungspunkt, bevor irgendetwas
         geschrieben wird, und schreibt sie nur, wenn kein Boost laeuft; sonst uebernimmt sie
         das Boost-Ende."""
         clamped = {}
-        for role, value in (("curve_current", curve), ("offset_current", offset)):
+        for role, value in (("curve_current", curve), ("shift_current", shift)):
             minimum, maximum = self._limits(role)
             clamped[role] = clamp(value, minimum, maximum)
             if clamped[role] != value:
@@ -145,36 +151,114 @@ class Override:
         return True
 
     def _limits(self, role: str) -> tuple[float, float]:
-        if role == "curve_current":
-            return self._options["curve_min"], self._options["curve_max"]
-        return self._options["offset_min"], self._options["offset_max"]
+        prefix = _LIMIT_KEYS[role]
+        return self._options[f"{prefix}_min"], self._options[f"{prefix}_max"]
 
     def _row_values(self, row: str) -> dict:
         if row == _ROW_EMERGENCY:
-            return {"curve_current": self._options["curve_max"], "offset_current": self._options["offset_max"]}
+            return {"curve_current": self._options["curve_max"], "shift_current": self._options["shift_max"]}
         if row == _ROW_COMFORT:
             return {
                 "curve_current": self._options["boost_curve_value"],
-                "offset_current": self._options["boost_offset_value"],
+                "shift_current": self._options["boost_shift_value"],
             }
         state = self._store.state
-        restore = {"curve_current": state.curve_current, "offset_current": state.offset_current}
+        restore = {"curve_current": state.curve_current, "shift_current": state.shift_current}
         return {role: value for role, value in restore.items() if value is not None}
 
+    def _write_role(self, role: str, ref: str, value: float, *, ensure_mode: bool = True) -> float:
+        """Schreibt EINEN Wert (Steigung, Parallelverschiebung oder Mindestvorlauf) ueber
+        plant.write, aber nur bei tatsaechlicher Aenderung (Spec 5.2: Kontingent-Schutz der
+        Hersteller-Cloud). Der aktuelle Wert kommt aus einem lokalen HA-Read (kein Cloud-Aufruf,
+        bei der Parallelverschiebung ueber plant.read_shift, das die Zone-inaktiv-Meldung < 5
+        beruecksichtigt); schlaegt der Read fehl oder ist er nicht auswertbar, wird trotzdem
+        geschrieben. Ein uebersprungener Schreibvorgang merkt sich keinen Zeitpunkt. Wirft
+        DeviceWriteError."""
+        minimum, maximum = self._limits(role)
+        target = plant.round_to_step(clamp(value, minimum, maximum), plant.STEPS[role])
+        try:
+            current = plant.read_shift(self._ha_api, ref) if role == "shift_current" else self._ha_api.get_state(ref)
+        except Exception:
+            current = None
+        if current is not None and _is_finite_number(current) and abs(current - target) <= plant.STEPS[role] / 2:
+            return target
+        try:
+            written = plant.write(self._ha_api, role, ref, value, minimum, maximum, ensure_mode=ensure_mode)
+        except Exception as error:
+            raise DeviceWriteError(role, ref, error) from error
+        self._last_write_at[role] = self._clock()
+        return written
+
     def _write(self, values: dict) -> None:
-        """Kurve vor Offset, nur gemappte Rollen, jeder Wert geclampt. Jeder erfolgreich
-        geschriebene Wert merkt sich den Zeitpunkt (auch wenn danach der Offset scheitert: die
-        Kurve steht dann schon neu auf der Anlage)."""
+        """Betriebsart -> Steigung -> Parallelverschiebung (Spec 5.2), nur gemappte Rollen, jeder
+        Wert begrenzt und auf die Schrittweite der Anlage gerundet (plant.write ueber
+        _write_role). Ist die Parallelverschiebung eine Climate-Zone, wird sie VOR der Steigung
+        auf Manuell gestellt; ihr eigener Schreibvorgang laeuft danach ohne erneute
+        Modus-Pruefung (Ruling #3: mypyllant meldet einen Cloud-Modus-Wechsel erst mit
+        Verzoegerung an HA zurueck)."""
+        shift_ref = self._manifest.entity_ids.get("shift_current")
+        if "shift_current" in values and shift_ref and plant.is_climate(shift_ref):
+            self.ensure_manual_zone()
         for role in ROLES:
             if role not in values or role not in self._manifest.entity_ids:
                 continue
-            entity_id = self._manifest.entity_ids[role]
-            value = clamp(values[role], *self._limits(role))
-            try:
-                self._ha_api.set_number_value(entity_id, value)
-            except Exception as error:
-                raise DeviceWriteError(role, entity_id, error) from error
-            self._last_write_at = self._clock()
+            ref = self._manifest.entity_ids[role]
+            self._write_role(role, ref, values[role], ensure_mode=(role != "shift_current"))
+
+    def expected_values(self) -> dict:
+        """Sollwerte der aktuellen Zeile, so wie sie auf der Anlage stehen muessten (begrenzt und
+        gerundet); nur vorhandene Werte."""
+        return {
+            role: plant.round_to_step(clamp(value, *self._limits(role)), plant.STEPS[role])
+            for role, value in self._row_values(self._current_row()).items()
+            if role in self._manifest.entity_ids
+        }
+
+    def write_roles(self, roles: tuple[str, ...]) -> None:
+        """Nur diese Rollen der aktuellen Zeile schreiben (Durchsetzung). Wirft DeviceWriteError."""
+        values = self._row_values(self._current_row())
+        self._write({role: values[role] for role in roles if role in values})
+
+    def write_min_flow(self, value: float) -> float:
+        ref = self._manifest.entity_ids["min_flow"]
+        return self._write_role("min_flow", ref, value)
+
+    def ensure_manual_zone(self) -> bool:
+        ref = self._manifest.entity_ids["shift_current"]
+        try:
+            switched = plant.ensure_manual_mode(self._ha_api, ref)
+        except Exception as error:
+            raise DeviceWriteError("shift_current", ref, error) from error
+        if switched:
+            self._last_write_at["shift_current"] = self._clock()
+        return switched
+
+    def prepare_zone(self, start_shift: float | None) -> None:
+        """Start (Plan-Praezisierung 11): Zone auf Manuell; meldet sie danach keine brauchbare
+        Parallelverschiebung oder wurde gerade umgestellt, den Startwert schreiben und als
+        Wiederherstellungspunkt speichern. Startwert: gespeicherter Punkt, sonst `start_shift`
+        (Raum-Soll). Wirft DeviceWriteError."""
+        ref = self._manifest.entity_ids["shift_current"]
+        if not plant.is_climate(ref):
+            return
+        switched = self.ensure_manual_zone()
+        try:
+            live = plant.read_shift(self._ha_api, ref)
+        except Exception:
+            live = None
+        low, high = self._limits("shift_current")
+        if not switched and live is not None and low <= live <= high:
+            return
+        start = self._store.state.shift_current if self._store.state.shift_current is not None else start_shift
+        if start is None:
+            return
+        written = self._write_role("shift_current", ref, start, ensure_mode=False)
+        self._store.update(shift_current=written)
+        logger.warning("Startwert der Parallelverschiebung geschrieben: %s", written)
+
+    def _current_row(self) -> str:
+        state = self._store.state
+        return _row(state.boost_active, state.emergency_boost_active)
 
     def _ensure_restore_point(self, *, allow_saved_fallback: bool) -> str | None:
         """Fehlende Werte des Wiederherstellungspunkts (z. B. erster Boost vor der ersten
@@ -196,17 +280,23 @@ class Override:
             if self._store.is_saved(*ROLES):
                 return _POINT_CURRENT
             try:
-                self._store.update(curve_current=state.curve_current, offset_current=state.offset_current)
+                self._store.update(curve_current=state.curve_current, shift_current=state.shift_current)
             except Exception as error:
                 logger.warning("Wiederherstellungspunkt nicht gespeichert (backup.json): %s", error)
                 return self._saved_fallback() if allow_saved_fallback else None
             return _POINT_CURRENT
         try:
-            live = {role: self._ha_api.get_state(self._manifest.entity_ids[role]) for role in missing}
+            live = {
+                role: (
+                    plant.read_shift(self._ha_api, self._manifest.entity_ids[role]) if role == "shift_current"
+                    else self._ha_api.get_state(self._manifest.entity_ids[role])
+                )
+                for role in missing
+            }
         except Exception as error:
             logger.warning("Wiederherstellungspunkt nicht lesbar (%s): %s", ", ".join(missing), error)
             return None
-        if not all(_is_finite_number(value) for value in live.values()):
+        if not all(value is not None and _is_finite_number(value) for value in live.values()):
             logger.warning("Wiederherstellungspunkt ungueltig: %r", live)
             return None
         self._store.update(**live)

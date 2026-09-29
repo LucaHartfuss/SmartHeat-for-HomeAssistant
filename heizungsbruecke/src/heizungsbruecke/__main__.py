@@ -299,7 +299,7 @@ def _report_sign_off_restore(notifier, template: str, state) -> None:
 def _restore_values_text(state) -> str:
     parts = [
         f"{label} {value:g}".replace(".", ",")
-        for label, value in (("Kurve", state.curve_current), ("Offset", state.offset_current))
+        for label, value in (("Kurve", state.curve_current), ("Parallelverschiebung", state.shift_current))
         if value is not None
     ]
     return ", ".join(parts) if parts else "Werte unbekannt"
