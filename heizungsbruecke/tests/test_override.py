@@ -486,12 +486,14 @@ def test_prepare_zone_leaves_a_plausible_manual_zone_alone(make_store):
 
 # --- Quota-Check: nur bei tatsaechlicher Aenderung schreiben (_write_role) ---
 
-def test_write_role_skips_the_device_when_the_current_value_already_matches(make_store):
+def test_write_role_skips_the_device_when_the_current_value_already_matches(make_store, clock):
     # number.shift steht schon (innerhalb eines halben Schritts) auf dem Restore-Zielwert 22.0 --
     # kein Schreiben, kein Zeitstempel, aber curve_current (0.7 != 0.9) wird weiter geschrieben.
+    # (Laufzeit > Schonfrist: erst dann gilt ein Read ohne eigenes Schreiben seit dem Start.)
     override, store, ha = _setup(
-        make_store, backup={**RESTORE_POINT, "boost_active": True}, states={"number.shift": 22.2},
+        make_store, backup={**RESTORE_POINT, "boost_active": True}, states={"number.shift": 22.2}, clock=clock,
     )
+    clock.advance(OWN_WRITE_SETTLE_SECONDS + 1)
 
     override.set_boosts(comfort=False, emergency=False)
 
@@ -635,3 +637,77 @@ def test_write_switches_mode_before_writing_curve_and_shift_for_a_climate_zone(m
         ("write", "number.curve", 0.9),
         ("write", "climate.zone", 15.0),
     ]
+
+
+# --- Schonfrist-Details (Task-11-Nacharbeit) ---
+
+def _zone_setup(make_store, clock, states):
+    manifest = ChannelManifest(entity_ids={**MANIFEST.entity_ids, "shift_current": "climate.zone::temperature"})
+    store = make_store(backup={"curve_current": 0.9, "shift_current": 22.0})
+    ha = RecordingHa(states)
+
+    def _set_hvac_mode(entity, mode):
+        ha.events.append(("hvac", entity, mode))
+        ha.states[entity] = mode
+
+    ha.set_hvac_mode = _set_hvac_mode
+    ha.get_raw_state = lambda entity: ha.states[entity]
+    ha.set_climate_temperature = lambda entity, value: ha.events.append(("write", entity, value))
+    return Override(store, manifest, ha, OPTIONS, clock=clock), ha
+
+
+def test_write_role_skips_inside_the_settle_window_when_our_last_write_is_the_target(make_store, clock):
+    # Innerhalb der Schonfrist: HA zeigt den Zielwert UND unser letzter eigener Schreibwert ist der
+    # Zielwert -- ueberfluessiger Cloud-Aufruf, wird uebersprungen.
+    store = make_store()
+    ha = RecordingHa({"number.min_flow": 21.0})
+    override = Override(store, MANIFEST, ha, OPTIONS, clock=clock)
+    override.write_min_flow(22.0)
+    ha.states["number.min_flow"] = 22.0
+    clock.advance(60)
+
+    assert override.write_min_flow(22.0) == 22.0
+
+    assert ha.writes == [("number.min_flow", 22.0)]
+
+
+def test_ensure_manual_zone_forgets_the_last_written_shift_after_a_switch(make_store, clock):
+    # Nach einer Umschaltung auf Manuell ist der manuelle Sollwert der Anlage unbekannt: der letzte
+    # eigene Schreibwert darf ein folgendes Schreiben innerhalb der Schonfrist nicht mehr ueberspringen.
+    override, ha = _zone_setup(
+        make_store, clock, {"climate.zone": "heat_cool", "climate.zone::temperature": 10.0},
+    )
+    override.write_roles(("shift_current",))
+    ha.states["climate.zone::temperature"] = 22.0
+    ha.states["climate.zone"] = "auto"  # jemand stellt die Zone um
+    clock.advance(60)
+    assert override.ensure_manual_zone() is True
+    clock.advance(60)
+
+    override.write_roles(("shift_current",))
+
+    assert ha.writes == [("climate.zone", 22.0), ("climate.zone", 22.0)]
+
+
+def test_after_a_restart_a_matching_ha_read_is_not_trusted_within_the_settle_window(make_store, clock):
+    # Vor dem Neustart wurde B (Comfort 1.0/24) geschrieben, HA zeigt wegen mypyllant noch A. Kurz
+    # nach dem Neustart soll A geschrieben werden: der passende Read darf das nicht ueberspringen.
+    override, _, ha = _setup(
+        make_store, backup={**RESTORE_POINT, "boost_active": True}, states=dict(RESTORE_POINT_STATES), clock=clock,
+    )
+    clock.advance(OWN_WRITE_SETTLE_SECONDS - 60)
+
+    override.set_boosts(comfort=False, emergency=False)
+
+    assert ha.writes == _written("restore")
+
+
+def test_after_the_settle_window_of_uptime_a_matching_ha_read_is_trusted(make_store, clock):
+    override, _, ha = _setup(
+        make_store, backup={**RESTORE_POINT, "boost_active": True}, states=dict(RESTORE_POINT_STATES), clock=clock,
+    )
+    clock.advance(OWN_WRITE_SETTLE_SECONDS + 1)
+
+    override.set_boosts(comfort=False, emergency=False)
+
+    assert ha.writes == []

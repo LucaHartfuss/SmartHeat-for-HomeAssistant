@@ -29,7 +29,7 @@ _LIMIT_KEYS = {"curve_current": "curve", "shift_current": "shift", "min_flow": "
 # zurueck (Poll-Intervall). Innerhalb dieser Zeit ist ein lokaler HA-Read fuer eine soeben von UNS
 # selbst geschriebene Rolle nicht vertrauenswuerdig -- er kann noch den Wert VOR unserem
 # Schreibvorgang zeigen. Genutzt vom Quota-Check unten (_matches_the_device) und von der
-# Durchsetzungs-Erkennung (manual_override.py, Task 13: importiert diese Konstante von hier).
+# Durchsetzungs-Erkennung (manual_override.py importiert diese Konstante von hier).
 OWN_WRITE_SETTLE_SECONDS = 2100
 
 _ROW_EMERGENCY = "emergency"
@@ -81,6 +81,9 @@ class Override:
         # (_matches_the_device).
         self._last_write_at: dict[str, float] = {}
         self._last_written: dict[str, float] = {}
+        # Startzeitpunkt (clock): ein Schreibvorgang kurz VOR einem Neustart ist hier unbekannt, HA
+        # kann ihn aber noch bis zu OWN_WRITE_SETTLE_SECONDS lang nicht zeigen (_matches_the_device).
+        self._started_at = clock()
 
     def seconds_since_write(self, role: str) -> float | None:
         """Sekunden seit dem letzten eigenen erfolgreichen Schreiben dieser Rolle; None, wenn seit
@@ -185,7 +188,9 @@ class Override:
         zurueck, der Read kann also noch den Stand VOR diesem Schreibvorgang zeigen (A -> B -> A
         wuerde die Rueckkehr zu A sonst faelschlich ueberspringen, waehrend die Anlage noch auf B
         steht) -- dann muss zusaetzlich unser letzter eigener Schreibwert schon dem Ziel
-        entsprechen. Schlaegt der Read fehl oder ist er nicht auswertbar, gilt das als
+        entsprechen. Ohne eigenes Schreiben dieser Rolle seit dem Start gilt der Read erst nach
+        OWN_WRITE_SETTLE_SECONDS Laufzeit (ein Schreibvorgang kurz vor einem Neustart ist sonst
+        unsichtbar). Schlaegt der Read fehl oder ist er nicht auswertbar, gilt das als
         "nicht vertrauenswuerdig" (False, es wird geschrieben)."""
         try:
             current = plant.read_shift(self._ha_api, ref) if role == "shift_current" else self._ha_api.get_state(ref)
@@ -195,7 +200,11 @@ class Override:
         if current is None or not _is_finite_number(current) or abs(current - target) > step / 2:
             return False
         elapsed = self.seconds_since_write(role)
-        if elapsed is None or elapsed > OWN_WRITE_SETTLE_SECONDS:
+        if elapsed is None:
+            # Seit dem Start nicht selbst geschrieben: ein Schreibvorgang kurz vor dem Neustart kann
+            # in HA noch fehlen, erst nach OWN_WRITE_SETTLE_SECONDS Laufzeit gilt der Read.
+            return self._clock() - self._started_at > OWN_WRITE_SETTLE_SECONDS
+        if elapsed > OWN_WRITE_SETTLE_SECONDS:
             return True
         last_written = self._last_written.get(role)
         return last_written is not None and abs(last_written - target) <= step / 2
@@ -264,7 +273,10 @@ class Override:
         except Exception as error:
             raise DeviceWriteError("shift_current", ref, error) from error
         if switched:
+            # Nach der Umschaltung ist der manuelle Sollwert der Anlage unbekannt: der letzte eigene
+            # Schreibwert darf ein folgendes Schreiben nicht mehr als "schon richtig" ueberspringen.
             self._last_write_at["shift_current"] = self._clock()
+            self._last_written.pop("shift_current", None)
         return switched
 
     def prepare_zone(self, start_shift: float | None) -> None:
