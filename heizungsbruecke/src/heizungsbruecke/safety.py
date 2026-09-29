@@ -9,23 +9,26 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class LocalSafety:
-    """`boost_threshold_k` ist die ANKUNFTS-Schwelle des Comfort-Boosts (wie nah am -- ggf.
-    neuen -- Zielwert er sich selbst beendet), nicht die Ausloese-Schwelle: ausgeloest wird
-    er ausschliesslich durch eine Erhoehung von room_target (boost.decide_boost)."""
+    """`boost_threshold_k` ist die ANKUNFTS-Schwelle des Comfort-Boosts, nicht die Ausloese-Schwelle
+    (ausgeloest wird er ausschliesslich durch eine Erhoehung von room_target, boost.decide_boost).
+    shift_* begrenzen die Parallelverschiebung (Zonen-Wunschtemperatur), min_flow_* die
+    Mindestvorlauftemperatur (TP11, vom Nutzer freigegeben 2026-09-29, Regel 4)."""
 
     curve_min: float
     curve_max: float
-    offset_min: float
-    offset_max: float
+    shift_min: float
+    shift_max: float
+    min_flow_min: float
+    min_flow_max: float
     boost_threshold_k: float
     boost_curve_value: float
-    boost_offset_value: float
+    boost_shift_value: float
 
 
 LOCAL_SAFETY_BY_VERTEILSYSTEM: dict[str, LocalSafety] = {
     "Heizkoerper": LocalSafety(
-        curve_min=0.4, curve_max=1.5, offset_min=20.0, offset_max=30.0,
-        boost_threshold_k=0.5, boost_curve_value=1.5, boost_offset_value=30.0,
+        curve_min=0.4, curve_max=1.5, shift_min=15.0, shift_max=25.0, min_flow_min=20.0, min_flow_max=30.0,
+        boost_threshold_k=0.5, boost_curve_value=1.5, boost_shift_value=25.0,
     ),
 }
 
@@ -36,11 +39,13 @@ def _check_invariants(safety: LocalSafety, verteilsystem: str) -> None:
             f"Verteilsystem '{verteilsystem}': curve_min ({safety.curve_min}) ist groesser als "
             f"curve_max ({safety.curve_max})"
         )
-    if safety.offset_min > safety.offset_max:
-        raise ValueError(
-            f"Verteilsystem '{verteilsystem}': offset_min ({safety.offset_min}) ist groesser als "
-            f"offset_max ({safety.offset_max})"
-        )
+    for min_key, max_key in (("shift_min", "shift_max"), ("min_flow_min", "min_flow_max")):
+        min_value, max_value = getattr(safety, min_key), getattr(safety, max_key)
+        if min_value > max_value:
+            raise ValueError(
+                f"Verteilsystem '{verteilsystem}': {min_key} ({min_value}) ist groesser als "
+                f"{max_key} ({max_value})"
+            )
 
 
 def resolve_local_safety(verteilsystem) -> LocalSafety:

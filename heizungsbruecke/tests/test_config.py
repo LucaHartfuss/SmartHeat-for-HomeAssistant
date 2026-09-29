@@ -5,6 +5,7 @@ import pytest
 from heizungsbruecke import config
 from heizungsbruecke.config import (
     DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS,
+    NEW_ENTITY_OPTIONS,
     REQUIRED_OPTIONS,
     ConfigError,
     is_configured,
@@ -23,10 +24,10 @@ def _base_options(**overrides):
     options = {
         "curve_min": 0.2,
         "curve_max": 0.8,
-        "offset_min": 0.0,
-        "offset_max": 5.0,
+        "shift_min": 0.0,
+        "shift_max": 5.0,
         "boost_curve_value": 0.5,
-        "boost_offset_value": 2.0,
+        "boost_shift_value": 2.0,
     }
     options.update(overrides)
     return options
@@ -35,15 +36,14 @@ def _base_options(**overrides):
 PROFILE_PARAMS = {
     "verteilsystem": "Heizkoerper",
     "daily_trigger_time": "12:00",
-    "day_avg_window_start": "14:00", "day_avg_window_end": "17:00",
-    "night_avg_window_start": "04:00", "night_avg_window_end": "07:00",
 }
 
 REQUIRED = {
     "tenant_id": "wohnung1",
     "mqtt_username": "wohnung1_a1b2c3d4", "mqtt_password": "geheim",
     "room_sensors": ["sensor.rt"], "entity_room_target": "sensor.target_rt",
-    "entity_curve_current": "number.curve", "entity_offset_current": "number.offset",
+    "entity_curve_current": "number.curve", "entity_shift_current": "climate.zone",
+    "entity_min_flow": "number.min_flow",
     "entity_outdoor_temp": "sensor.outdoor", "entity_heat_limit": "number.heat_limit",
 }
 
@@ -98,17 +98,17 @@ def test_validate_boost_config_flags_curve_value_below_min():
     assert "boost_curve_value" in error
 
 
-def test_validate_boost_config_flags_offset_value_out_of_range():
-    error = validate_boost_config(_base_options(boost_offset_value=999.0))
+def test_validate_boost_config_flags_shift_value_out_of_range():
+    error = validate_boost_config(_base_options(boost_shift_value=999.0))
     assert error is not None
-    assert "boost_offset_value" in error
+    assert "boost_shift_value" in error
 
 
 def test_validate_boost_config_accepts_boundary_values():
     assert validate_boost_config(_base_options(boost_curve_value=0.2)) is None
     assert validate_boost_config(_base_options(boost_curve_value=0.8)) is None
-    assert validate_boost_config(_base_options(boost_offset_value=0.0)) is None
-    assert validate_boost_config(_base_options(boost_offset_value=5.0)) is None
+    assert validate_boost_config(_base_options(boost_shift_value=0.0)) is None
+    assert validate_boost_config(_base_options(boost_shift_value=5.0)) is None
 
 
 def test_is_configured_true_for_0_17_0_options_without_new_values():
@@ -118,50 +118,43 @@ def test_is_configured_true_for_0_17_0_options_without_new_values():
 
 
 def test_required_options_do_not_contain_new_values():
-    from heizungsbruecke.config import REQUIRED_OPTIONS
     assert "profile" not in REQUIRED_OPTIONS
     assert not set(PROFILE_PARAMS) & set(REQUIRED_OPTIONS)
     assert "accounts_api_base_url" not in REQUIRED_OPTIONS
 
 
-def test_resolve_effective_options_uses_local_safety_and_option_windows():
+def test_required_options_no_longer_contain_entity_offset_current():
+    assert "entity_offset_current" not in REQUIRED_OPTIONS
+    assert not set(NEW_ENTITY_OPTIONS) & set(REQUIRED_OPTIONS)
+
+
+def test_new_entity_options_constant():
+    assert NEW_ENTITY_OPTIONS == ("entity_shift_current", "entity_min_flow")
+
+
+def test_resolve_effective_options_uses_local_safety_and_daily_trigger_time():
     effective = resolve_effective_options({**REQUIRED, **PROFILE_PARAMS, **BASE_URL})
 
     assert effective["curve_min"] == 0.4
     assert effective["curve_max"] == 1.5
-    assert effective["offset_min"] == 20.0
-    assert effective["offset_max"] == 30.0
+    assert effective["shift_min"] == 15.0
+    assert effective["shift_max"] == 25.0
+    assert effective["min_flow_min"] == 20.0
+    assert effective["min_flow_max"] == 30.0
     assert effective["boost_threshold_k"] == 0.5
     assert effective["boost_curve_value"] == 1.5
-    assert effective["boost_offset_value"] == 30.0
+    assert effective["boost_shift_value"] == 25.0
     assert effective["daily_trigger_time"] == "12:00"
-    assert effective["day_avg_window_start"] == "14:00"
-    assert effective["day_avg_window_end"] == "17:00"
-    assert effective["night_avg_window_start"] == "04:00"
-    assert effective["night_avg_window_end"] == "07:00"
-    assert effective["avg_window_hours"] == 3.0
     assert effective["tenant_id"] == "wohnung1"
 
 
 def test_resolve_effective_options_ignores_safety_values_in_options():
     effective = resolve_effective_options(
-        {**REQUIRED, **PROFILE_PARAMS, **BASE_URL, "offset_max": 28.0, "boost_curve_value": 0.1}
+        {**REQUIRED, **PROFILE_PARAMS, **BASE_URL, "shift_max": 28.0, "boost_curve_value": 0.1}
     )
 
-    assert effective["offset_max"] == 30.0  # lokale Sicherheitswerte gewinnen
+    assert effective["shift_max"] == 25.0  # lokale Sicherheitswerte gewinnen
     assert effective["boost_curve_value"] == 1.5
-
-
-def test_resolve_effective_options_takes_windows_from_options():
-    effective = resolve_effective_options({
-        **REQUIRED, **PROFILE_PARAMS, **BASE_URL,
-        "daily_trigger_time": "11:30",
-        "day_avg_window_start": "13:00", "day_avg_window_end": "17:00",
-        "night_avg_window_start": "03:00", "night_avg_window_end": "07:00",
-    })
-
-    assert effective["daily_trigger_time"] == "11:30"
-    assert effective["avg_window_hours"] == 4.0
 
 
 @pytest.mark.parametrize("verteilsystem", [None, "", "Fussbodenheizung", "Unbekannt"])
@@ -174,21 +167,10 @@ def test_resolve_effective_options_rejects_verteilsystem(verteilsystem):
         resolve_effective_options(options)
 
 
-def test_resolve_effective_options_names_missing_window_option():
-    options = {**REQUIRED, **PROFILE_PARAMS, **BASE_URL}
-    del options["night_avg_window_end"]
-
-    with pytest.raises(ConfigError, match="night_avg_window_end"):
-        resolve_effective_options(options)
-
-
-def test_resolve_effective_options_rejects_unequal_windows():
-    with pytest.raises(ConfigError, match="gleich gross"):
-        resolve_effective_options({**REQUIRED, **PROFILE_PARAMS, **BASE_URL, "day_avg_window_end": "18:00"})
-
-
-def test_resolve_effective_options_0_17_0_config_names_verteilsystem():
-    with pytest.raises(ConfigError, match="verteilsystem"):
+def test_resolve_effective_options_0_17_0_config_names_daily_trigger_time():
+    # Eine 0.17.0-Konfiguration hat weder verteilsystem noch daily_trigger_time; die
+    # Pruefung auf daily_trigger_time greift zuerst.
+    with pytest.raises(ConfigError, match="daily_trigger_time"):
         resolve_effective_options({**REQUIRED, "profile": "vaillant_gastherme_heizkoerper"})
 
 
@@ -253,6 +235,16 @@ def test_validate_telemetry_interval_flags_value_below_ten():
     assert "telemetry_interval_seconds" in error
 
 
+def test_validate_telemetry_interval_accepts_nine_hundred():
+    assert validate_telemetry_interval({"telemetry_interval_seconds": 900}) is None
+
+
+def test_validate_telemetry_interval_flags_value_above_nine_hundred():
+    error = validate_telemetry_interval({"telemetry_interval_seconds": 901})
+    assert error is not None
+    assert "telemetry_interval_seconds" in error
+
+
 def test_validate_local_check_interval_flags_nan():
     # Task 3a (final-review-fixes-plan): value < 10/> 60 is False for NaN, so a hand-
     # edited options.json with NaN used to sail through validation unnoticed.
@@ -303,8 +295,10 @@ def test_validate_returns_first_error_or_none():
     valid = _base_options(entity_outdoor_temp="sensor.outdoor")
 
     assert validate(valid) is None
-    assert "boost_curve_value" in validate({**valid, "boost_curve_value": 99.0})
-    assert "telemetry_interval_seconds" in validate({**valid, "telemetry_interval_seconds": 5})
+    error = validate({**valid, "boost_curve_value": 99.0})
+    assert error is not None and "boost_curve_value" in error
+    error = validate({**valid, "telemetry_interval_seconds": 5})
+    assert error is not None and "telemetry_interval_seconds" in error
 
 
 def test_intervals_fall_back_to_300_seconds():
@@ -427,3 +421,80 @@ def test_critical_or_unknown_hint_categories_are_config_errors(value):
 def test_is_signed_off_only_for_true(value, expected):
     options = {} if value is None else {"abgemeldet": value}
     assert config.is_signed_off(options) is expected
+
+
+VALID = {
+    "tenant_id": "t", "mqtt_username": "u", "mqtt_password": "p", "verteilsystem": "Heizkoerper",
+    "daily_trigger_time": "12:00", "room_sensors": ["sensor.r"], "entity_room_target": "sensor.t",
+    "entity_curve_current": "number.c", "entity_shift_current": "climate.zone", "entity_min_flow": "number.mf",
+    "entity_outdoor_temp": "sensor.o", "entity_heat_limit": "number.hl",
+    "accounts_api_base_url": "https://accounts.example.test",
+}
+
+
+def test_effective_options_carry_new_safety_values():
+    effective = config.resolve_effective_options(VALID)
+    assert (effective["shift_min"], effective["shift_max"]) == (15.0, 25.0)
+    assert (effective["min_flow_min"], effective["min_flow_max"]) == (20.0, 30.0)
+    assert (effective["boost_curve_value"], effective["boost_shift_value"]) == (1.5, 25.0)
+    assert effective["daily_trigger_time"] == "12:00"
+    assert "day_avg_window_start" not in effective and "avg_window_hours" not in effective
+
+
+def test_outdated_options_without_shift_role():
+    old = {key: value for key, value in VALID.items() if key not in ("entity_shift_current", "entity_min_flow")}
+    old["entity_offset_current"] = "number.min_flow"
+    assert config.is_configured(old)
+    with pytest.raises(config.ConfigError, match="Konfiguration veraltet.*entity_shift_current"):
+        config.resolve_effective_options(old)
+
+
+@pytest.mark.parametrize("key, value", [
+    ("entity_shift_current", "sensor.zone_temperature"),
+    ("entity_shift_current", "input_number.shift"),
+    ("entity_shift_current", "climate.zone::current_temperature"),
+    ("entity_min_flow", "climate.zone"),
+    ("entity_min_flow", "input_number.min_flow"),
+    ("entity_min_flow", "sensor.min_flow"),
+])
+def test_unwritable_entity_domain_is_a_configuration_error(key, value):
+    # Spec 5.6: Zonen-Entity muss schreibbar sein; plant.write kennt climate.set_temperature und
+    # number.set_value.
+    with pytest.raises(config.ConfigError, match=f"Option '{key}'.*bitte SmartHeat neu konfigurieren"):
+        config.resolve_effective_options({**VALID, key: value})
+
+
+@pytest.mark.parametrize("shift", ["climate.zone", "climate.zone::temperature", "number.shift"])
+def test_writable_shift_domains_are_accepted(shift):
+    effective = config.resolve_effective_options({**VALID, "entity_shift_current": shift})
+    assert effective["entity_shift_current"] == shift
+
+
+@pytest.mark.parametrize("room_target, shift", [
+    ("climate.zone::temperature", "climate.zone"),
+    ("climate.zone", "climate.zone::temperature"),
+    ("climate.zone::temperature", "climate.zone::temperature"),
+])
+def test_zone_as_room_target_is_a_configuration_error(room_target, shift):
+    # Final-Review I1: Das Add-on schriebe die Parallelverschiebung in die Quelle des Kundenwunsches
+    # (Rueckkopplung bis shift_max).
+    options = {**VALID, "entity_room_target": room_target, "entity_shift_current": shift}
+    with pytest.raises(config.ConfigError, match="entity_shift_current.*entity_room_target.*neu konfigurieren"):
+        config.resolve_effective_options(options)
+
+
+def test_zone_current_temperature_as_room_sensor_is_accepted():
+    options = {**VALID, "room_sensors": ["sensor.r", "climate.zone::current_temperature"]}
+    assert config.resolve_effective_options(options)["room_sensors"] == ["sensor.r", "climate.zone::current_temperature"]
+
+
+@pytest.mark.parametrize("value", [None, "", "25:00", "12"])
+def test_daily_trigger_time_validated(value):
+    with pytest.raises(config.ConfigError, match="daily_trigger_time"):
+        config.resolve_effective_options({**VALID, "daily_trigger_time": value})
+
+
+def test_boost_shift_outside_clamps_is_a_start_error():
+    effective = {**config.resolve_effective_options(VALID), "boost_shift_value": 26.0}
+    error = config.validate_boost_config(effective)
+    assert error is not None and "boost_shift_value" in error

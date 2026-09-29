@@ -1,5 +1,5 @@
 name: "Heizungsbruecke"
-version: "0.23.0"
+version: "0.24.0"
 slug: "heizungsbruecke"
 description: "Generische Bruecken-Logik: liest konfigurierte HA-Entities, meldet sie an den SmartHeat-Server, schreibt Sollwerte zurueck, mit lokalem Boost-Failsafe und Sicherheits-Clamps."
 url: "https://github.com/LucaHartfuss/SmartHeat-for-HomeAssistant"
@@ -15,7 +15,9 @@ options:
   mqtt_password: ""
   entity_room_target: ""
   entity_curve_current: ""
-  entity_offset_current: ""
+  entity_shift_current: ""
+  entity_min_flow: ""
+  entity_flow_setpoint: ""
   entity_outdoor_temp: ""
   entity_heat_limit: ""
   local_check_interval_seconds: 300
@@ -37,11 +39,14 @@ options:
 # whole schema, and a missing required field fails the call silently (straight into
 # AddonError). The add-on falls back to its own defaults for these (config.py), so making
 # them optional here changes nothing at runtime.
-# verteilsystem and the five window times come from the server (profile_params, written by
-# the integration) and accounts_api_base_url (written by the integration). They are optional
+# verteilsystem and daily_trigger_time come from the server (profile_params, written by the
+# integration) and accounts_api_base_url (written by the integration). They are optional
 # here and have no entry under options: (an empty default would be invalid for list(...)); the
 # add-on checks them at startup and, if they are missing, stays idle in the state
 # "konfigurationsfehler" (no regulation, re-check after 15 min) -- it never exits.
+# entity_shift_current/entity_min_flow are optional here so that an update with a 0.23.0
+# configuration still starts and reports 'Konfiguration veraltet' instead of Supervisor
+# refusing the start silently.
 # room_sensors, notify_services, battery_entities and setup_id are written by the integration
 # (TP6). They are optional here (list element with `?`) so that an update with an old
 # configuration does not make Supervisor refuse the start silently; the add-on checks them at
@@ -55,11 +60,10 @@ schema:
   mqtt_password: password
   entity_room_target: str
   entity_curve_current: str
-  entity_offset_current: str
   entity_outdoor_temp: str
   entity_heat_limit: str
   local_check_interval_seconds: int(1,3600)?
-  telemetry_interval_seconds: int(10,)?
+  telemetry_interval_seconds: int(10,900)?
   entity_flow_temperature: str?
   entity_return_temperature: str?
   entity_operating_mode: str?
@@ -71,12 +75,11 @@ schema:
   entity_energy_primary_dhw: str?
   entity_energy_thermal_heating: str?
   entity_energy_thermal_dhw: str?
+  entity_shift_current: str?
+  entity_min_flow: str?
+  entity_flow_setpoint: str?
   verteilsystem: list(Heizkoerper|Fussbodenheizung)?
   daily_trigger_time: str?
-  day_avg_window_start: str?
-  day_avg_window_end: str?
-  night_avg_window_start: str?
-  night_avg_window_end: str?
   accounts_api_base_url: url?
   notify_services:
     - str?

@@ -1,25 +1,35 @@
 import pytest
 
-from heizungsbruecke.manifest import ManifestError, build_manifest
+from heizungsbruecke.manifest import (
+    OPTIONAL_SNAPSHOT_ROLES,
+    SNAPSHOT_ROLES,
+    ManifestError,
+    build_manifest,
+    entity_ref,
+)
 
 # room_actual kommt immer aus derived_sensors (Raumtemperatur-Template, Spec TP6 3.2).
 ROOM_ACTUAL = {"room_actual": "sensor.smartheat_t1_raumtemperatur"}
+
+BASE = {
+    "entity_room_target": "sensor.t", "entity_curve_current": "number.c", "entity_shift_current": "climate.zone",
+    "entity_min_flow": "number.mf", "entity_heat_limit": "number.hl", "entity_outdoor_temp": "sensor.o",
+}
+DERIVED = {"room_actual": "sensor.room"}
 
 
 def test_build_manifest_with_all_required_roles_succeeds():
     options = {
         "entity_room_target": "climate.wohnzimmer_thermostat",
         "entity_curve_current": "number.weishaupt_heizkurve_steigung",
-        "entity_offset_current": "number.weishaupt_heizkurve_niveau",
-        "entity_room_day_avg": "sensor.day_avg",
-        "entity_room_night_avg": "sensor.night_avg",
+        "entity_shift_current": "number.weishaupt_heizkurve_niveau",
+        "entity_min_flow": "number.mindestvorlauf",
         "entity_heat_limit": "sensor.heat_limit",
-        "entity_dat": "sensor.dat",
-        "entity_dart": "sensor.dart",
+        "entity_outdoor_temp": "sensor.aussentemperatur",
     }
     manifest = build_manifest(options, ROOM_ACTUAL)
     assert manifest.entity_ids["room_actual"] == "sensor.smartheat_t1_raumtemperatur"
-    assert "outdoor_temp" not in manifest.entity_ids
+    assert "flow_setpoint" not in manifest.entity_ids
 
 
 def test_build_manifest_missing_required_role_raises():
@@ -28,87 +38,36 @@ def test_build_manifest_missing_required_role_raises():
 
 
 def test_build_manifest_includes_optional_role_when_present():
-    options = {
-        "entity_room_target": "climate.wohnzimmer_thermostat",
-        "entity_curve_current": "number.steigung",
-        "entity_offset_current": "number.niveau",
-        "entity_room_day_avg": "sensor.day_avg",
-        "entity_room_night_avg": "sensor.night_avg",
-        "entity_heat_limit": "sensor.heat_limit",
-        "entity_dat": "sensor.dat",
-        "entity_dart": "sensor.dart",
-        "entity_outdoor_temp": "sensor.aussentemperatur",
-    }
+    options = {**BASE, "entity_flow_setpoint": "sensor.vl_soll"}
     manifest = build_manifest(options, ROOM_ACTUAL)
-    assert manifest.entity_ids["outdoor_temp"] == "sensor.aussentemperatur"
+    assert manifest.entity_ids["flow_setpoint"] == "sensor.vl_soll"
 
 
 def test_build_manifest_missing_profile_required_role_raises():
-    options = {
-        "entity_room_target": "climate.wz",
-        "entity_curve_current": "number.curve",
-        "entity_offset_current": "number.offset",
-        # entity_dat fehlt -- ist Pflicht
-        "entity_room_day_avg": "sensor.day_avg",
-        "entity_room_night_avg": "sensor.night_avg",
-        "entity_heat_limit": "sensor.heat_limit",
-        "entity_dart": "sensor.dart",
-    }
+    # entity_min_flow fehlt -- ist Pflicht (TP11).
+    options = {key: value for key, value in BASE.items() if key != "entity_min_flow"}
 
-    with pytest.raises(ManifestError, match="dat"):
+    with pytest.raises(ManifestError, match="min_flow"):
         build_manifest(options, ROOM_ACTUAL)
 
 
 def test_build_manifest_succeeds_with_all_profile_roles():
-    options = {
-        "entity_room_target": "climate.wz",
-        "entity_curve_current": "number.curve",
-        "entity_offset_current": "number.offset",
-        "entity_room_day_avg": "sensor.day_avg",
-        "entity_room_night_avg": "sensor.night_avg",
-        "entity_heat_limit": "sensor.heat_limit",
-        "entity_dat": "sensor.dat",
-        "entity_dart": "sensor.dart",
-    }
+    manifest = build_manifest(BASE, ROOM_ACTUAL)
 
-    manifest = build_manifest(options, ROOM_ACTUAL)
-
-    assert manifest.entity_ids["dat"] == "sensor.dat"
+    assert manifest.entity_ids["min_flow"] == "number.mf"
 
 
 def test_build_manifest_prefers_derived_entity_ids_over_options():
-    options = {
-        "entity_room_target": "climate.wz",
-        "entity_curve_current": "number.curve",
-        "entity_offset_current": "number.offset",
-        "entity_heat_limit": "sensor.heat_limit",
-        "entity_dat": "sensor.dat_from_options_should_be_ignored",
-    }
-    derived_entity_ids = {
-        **ROOM_ACTUAL,
-        "dat": "sensor.smartheat_client1_dat",
-        "dart": "sensor.smartheat_client1_dart",
-        "room_day_avg": "input_number.smartheat_client1_room_day_avg",
-        "room_night_avg": "input_number.smartheat_client1_room_night_avg",
-    }
+    options = {**BASE, "entity_room_target": "sensor.target_from_options_should_be_ignored"}
+    derived_entity_ids = {**ROOM_ACTUAL, "room_target": "sensor.smartheat_client1_room_target"}
 
     manifest = build_manifest(options, derived_entity_ids)
 
-    assert manifest.entity_ids["dat"] == "sensor.smartheat_client1_dat"
+    assert manifest.entity_ids["room_target"] == "sensor.smartheat_client1_room_target"
 
 
 def test_build_manifest_picks_up_optional_kpi_entity_when_configured():
-    options = {
-        "entity_room_target": "climate.wz",
-        "entity_curve_current": "number.curve",
-        "entity_offset_current": "number.offset",
-        "entity_room_day_avg": "sensor.day_avg",
-        "entity_room_night_avg": "sensor.night_avg",
-        "entity_heat_limit": "sensor.heat_limit",
-        "entity_dat": "sensor.dat",
-        "entity_dart": "sensor.dart",
-        "entity_flow_temperature": "sensor.flow",
-    }
+    options = {**BASE, "entity_flow_temperature": "sensor.flow"}
 
     manifest = build_manifest(options, ROOM_ACTUAL)
 
@@ -116,66 +75,56 @@ def test_build_manifest_picks_up_optional_kpi_entity_when_configured():
 
 
 def test_build_manifest_omits_unconfigured_kpi_entity():
-    options = {
-        "entity_room_target": "climate.wz",
-        "entity_curve_current": "number.curve",
-        "entity_offset_current": "number.offset",
-        "entity_room_day_avg": "sensor.day_avg",
-        "entity_room_night_avg": "sensor.night_avg",
-        "entity_heat_limit": "sensor.heat_limit",
-        "entity_dat": "sensor.dat",
-        "entity_dart": "sensor.dart",
-    }
-
-    manifest = build_manifest(options, ROOM_ACTUAL)
+    manifest = build_manifest(BASE, ROOM_ACTUAL)
 
     assert "flow_temperature" not in manifest.entity_ids
 
 
 def test_build_manifest_treats_empty_string_kpi_entity_as_unconfigured():
-    options = {
-        "entity_room_target": "climate.wz",
-        "entity_curve_current": "number.curve",
-        "entity_offset_current": "number.offset",
-        "entity_room_day_avg": "sensor.day_avg",
-        "entity_room_night_avg": "sensor.night_avg",
-        "entity_heat_limit": "sensor.heat_limit",
-        "entity_dat": "sensor.dat",
-        "entity_dart": "sensor.dart",
-        "entity_flow_temperature": "",
-    }
+    options = {**BASE, "entity_flow_temperature": ""}
 
     manifest = build_manifest(options, ROOM_ACTUAL)
 
     assert "flow_temperature" not in manifest.entity_ids
 
 
-def test_outdoor_min_is_taken_from_derived_entities():
-    from heizungsbruecke.manifest import OPTIONAL_SNAPSHOT_ROLES, build_manifest
-    assert OPTIONAL_SNAPSHOT_ROLES == ("outdoor_min_24h", "room_target_avg_24h")
-    options = { "entity_room_target": "climate.x::temperature",
-        "entity_curve_current": "number.c", "entity_offset_current": "number.o", "entity_heat_limit": "number.h",
-    }
-    derived = {**ROOM_ACTUAL, "dat": "sensor.dat", "dart": "sensor.dart", "room_day_avg": "input_number.d",
-               "room_night_avg": "input_number.n", "outdoor_min_24h": "sensor.omin"}
-    assert build_manifest(options, derived).entity_ids["outdoor_min_24h"] == "sensor.omin"
+def test_climate_shift_reads_target_temperature_attribute():
+    assert build_manifest(BASE, DERIVED).entity_ids["shift_current"] == "climate.zone::temperature"
+
+
+def test_number_shift_is_kept():
+    manifest = build_manifest({**BASE, "entity_shift_current": "number.shift"}, DERIVED)
+    assert manifest.entity_ids["shift_current"] == "number.shift"
+
+
+@pytest.mark.parametrize("role, value, expected", [
+    ("shift_current", "climate.zone", "climate.zone::temperature"),
+    ("shift_current", "climate.zone::temperature", "climate.zone::temperature"),
+    ("shift_current", "number.shift", "number.shift"),
+    ("room_target", "climate.wz", "climate.wz"),
+])
+def test_entity_ref(role, value, expected):
+    assert entity_ref(role, value) == expected
+
+
+def test_snapshot_roles():
+    assert SNAPSHOT_ROLES == ("heat_limit", "room_target", "curve_current", "shift_current")
+    assert OPTIONAL_SNAPSHOT_ROLES == ()
+
+
+def test_flow_setpoint_is_optional_role():
+    manifest = build_manifest({**BASE, "entity_flow_setpoint": "sensor.vl_soll"}, DERIVED)
+    assert manifest.entity_ids["flow_setpoint"] == "sensor.vl_soll"
 
 
 def test_required_roles_are_known_manifest_roles():
     from heizungsbruecke.manifest import ALL_ROLES, REQUIRED_ROLES
 
     assert REQUIRED_ROLES == (
-        "room_actual", "room_target", "curve_current", "offset_current",
-        "room_day_avg", "room_night_avg", "heat_limit", "dat", "dart",
+        "room_actual", "room_target", "curve_current", "shift_current", "min_flow", "heat_limit", "outdoor_temp",
     )
     assert set(REQUIRED_ROLES) <= set(ALL_ROLES)
 
 
 def test_build_manifest_ignores_profile_option():
-    options = { "entity_room_target": "sensor.target",
-        "entity_curve_current": "number.curve", "entity_offset_current": "number.offset",
-        "entity_room_day_avg": "sensor.day", "entity_room_night_avg": "sensor.night",
-        "entity_heat_limit": "number.limit", "entity_dat": "sensor.dat", "entity_dart": "sensor.dart",
-    }
-
-    assert build_manifest(options, ROOM_ACTUAL) == build_manifest({**options, "profile": "does_not_exist"}, ROOM_ACTUAL)
+    assert build_manifest(BASE, ROOM_ACTUAL) == build_manifest({**BASE, "profile": "does_not_exist"}, ROOM_ACTUAL)

@@ -17,11 +17,11 @@ from heizungsbruecke import (
     abo,
     battery,
     config,
-    daynight_snapshot,
     delivery,
     derived_sensors,
     entitlement,
     manual_override,
+    min_flow,
     regulation,
     room_sensors,
     telemetry,
@@ -30,14 +30,13 @@ from heizungsbruecke import (
 )
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.ha_api import HomeAssistantApi
-from heizungsbruecke.manifest import ChannelManifest, ManifestError, build_manifest
+from heizungsbruecke.manifest import ChannelManifest, ManifestError, build_manifest, entity_ref
 from heizungsbruecke.notifier import STATE_OK, Notifier
 from heizungsbruecke.override import ROLES as OVERRIDE_ROLES
 from heizungsbruecke.override import Override
 from heizungsbruecke.runtime import (
     EV_ACK_TIMEOUT,
     EV_AUTH_REJECTED,
-    EV_DAYNIGHT,
     EV_GRACE_CHECK,
     EV_HA_CONNECTED,
     EV_HEALTH,
@@ -69,7 +68,8 @@ from heizungsbruecke.worker import Event, RegulationWorker
 HA_REACHABILITY_DELAYS_SECONDS = (5, 10, 20, 40, 60)
 DERIVED_SENSORS_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60, 60, 60)
 REQUIRED_ENTITY_OPTIONS = (
-    "entity_room_target", "entity_curve_current", "entity_offset_current", "entity_heat_limit", "entity_outdoor_temp",
+    "entity_room_target", "entity_curve_current", "entity_shift_current", "entity_min_flow", "entity_heat_limit",
+    "entity_outdoor_temp",
 )
 # Im Konfigurationsfehler prueft ein frischer Prozess nach dieser Zeit erneut (z. B. eine spaet
 # geladene Integration); der persistierte Meldezustand verhindert eine Wiederholungsmeldung.
@@ -91,10 +91,7 @@ SIGN_OFF_NOT_RESTORED_MESSAGE = (
     "ungültig, kein Zurücksetzen möglich). Bitte die zuletzt gelernten Werte von Hand einstellen ({werte})."
 )
 REDACTED = "***"
-SOURCE_CHANGE_MESSAGE = (
-    "SmartHeat: Die Quelle der Raum- oder Außentemperatur hat sich geändert. Die Tagesmittel "
-    "(DAT/DART) sind erst nach 24 Stunden wieder vollständig."
-)
+SOURCE_CHANGE_MESSAGE = "SmartHeat: Die Quelle der Raum- oder Außentemperatur hat sich geändert."
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +206,6 @@ def _ensure_derived_sensors_with_retry(ha_api, options: dict) -> DerivedSensors:
             tenant_id=options["tenant_id"],
             room_sensors=options["room_sensors"],
             outdoor_source=options["entity_outdoor_temp"],
-            avg_window_hours=options["avg_window_hours"],
             state_path=config.DERIVED_SENSORS_PATH,
         ),
         lambda error: f"Hilfs-Entities konnten nicht angelegt werden: {error}",
@@ -245,16 +241,18 @@ def _fail_start(notifier, status, clock, grund: str, key: str | None = None) -> 
 def _sign_off(options: dict, ha_api, store, notifier, status, clock) -> IdleBridge:
     """Abmelden (Spec TP7 3.3, die Integration wird entfernt): laufenden Boost auf den
     Wiederherstellungspunkt zuruecknehmen, alle Meldungen entfernen, dann Ruhezustand
-    `abgemeldet`. Es wird kein Hilfssensor angelegt: fuer das Zuruecksetzen reichen Kurve, Offset
-    und die Clamps. Scheitert es, wird es im Takt local_check_interval erneut versucht; der Status
-    bleibt `abgemeldet` mit Grund."""
+    `abgemeldet`. Es wird kein Hilfssensor angelegt: fuer das Zuruecksetzen reichen Steigung,
+    Parallelverschiebung und die Clamps. Scheitert es, wird es im Takt local_check_interval erneut
+    versucht; der Status bleibt `abgemeldet` mit Grund."""
     try:
         effective = config.resolve_effective_options(options)
     except config.ConfigError as error:
         logger.error("Abmelden ohne Zuruecksetzen, Konfiguration ungueltig: %s", _without_credentials(str(error), options))
         restorer = None
     else:
-        manifest = ChannelManifest(entity_ids={role: effective[f"entity_{role}"] for role in OVERRIDE_ROLES})
+        manifest = ChannelManifest(
+            entity_ids={role: entity_ref(role, effective[f"entity_{role}"]) for role in OVERRIDE_ROLES},
+        )
         restorer = Override(store, manifest, ha_api, effective)
     boosting = store.state.boost_active or store.state.emergency_boost_active
     restored = restorer is not None and restorer.restore_and_clear(always_restore=False)
@@ -299,7 +297,7 @@ def _report_sign_off_restore(notifier, template: str, state) -> None:
 def _restore_values_text(state) -> str:
     parts = [
         f"{label} {value:g}".replace(".", ",")
-        for label, value in (("Kurve", state.curve_current), ("Offset", state.offset_current))
+        for label, value in (("Kurve", state.curve_current), ("Parallelverschiebung", state.shift_current))
         if value is not None
     ]
     return ", ".join(parts) if parts else "Werte unbekannt"
@@ -335,7 +333,7 @@ def _finish_at_start(rt: Runtime, clock) -> IdleBridge:
 
 
 def _check_timezone(ha_api) -> None:
-    """Taegliche Zeitpunkte (Tagestick, Tag-/Nachtmittel) laufen in der Container-Zeitzone.
+    """Taegliche Zeitpunkte (Tagestick) laufen in der Container-Zeitzone.
     Weicht sie von der HA-Zeitzone ab, nur warnen; kein Abbruch."""
     try:
         ha_time_zone = ha_api.get_config().get("time_zone")
@@ -355,13 +353,17 @@ def _check_timezone(ha_api) -> None:
 # --- Handler des Regel-Workers ---
 
 def _on_local_check(rt: Runtime, event: Event) -> None:
-    """Bei room_target_fired den Cache frisch lesen, dann Boost-Logik, dann "Tick faellig?".
+    """Bei room_target_fired den Cache frisch lesen und den Mindestvorlauf nachfuehren, dann
+    Boost-Logik, dann "Tick faellig?".
     Beides getrennt abgesichert: ein toter room_actual-Fuehler laesst den Boost-Teil scheitern,
     darf aber keinen Tick verhindern; dessen Versuch meldet den Fuehler als Datenfehler."""
     if rt.store.state.abo_finished:
         return
     if event.data.get("room_target_fired"):
         regulation.refresh_stable_target(rt)
+        min_flow.sync(rt)
+    if not rt.zone_prepared:
+        _prepare_zone(rt)
     try:
         regulation.run_local_check(rt)
     except Exception:
@@ -403,21 +405,7 @@ def _on_telemetry(rt: Runtime, event: Event) -> None:
     telemetry.run_telemetry_tick(
         rt.manifest, rt.ha_api, rt.mqtt_client,
         boost_active=state.boost_active, failsafe_active=state.delivery.notbetrieb,
-        datenfehler=state.delivery.datenfehler,
-    )
-
-
-def _on_daynight(rt: Runtime, event: Event) -> None:
-    rt.worker.schedule(config.local_check_interval(rt.options), Event(EV_DAYNIGHT))
-    daynight_snapshot.maybe_snapshot(
-        ha_api=rt.ha_api,
-        room_12h_avg_entity_id=rt.derived_entity_ids["_room_12h_avg"],
-        day_avg_entity_id=rt.derived_entity_ids["room_day_avg"],
-        night_avg_entity_id=rt.derived_entity_ids["room_night_avg"],
-        day_avg_window_end=rt.options["day_avg_window_end"],
-        night_avg_window_end=rt.options["night_avg_window_end"],
-        state_path=config.DAYNIGHT_SNAPSHOT_PATH,
-        now=datetime.now(),
+        datenfehler=state.delivery.datenfehler, room_target=state.stable_target,
     )
 
 
@@ -427,9 +415,9 @@ def _on_grace_check(rt: Runtime, event: Event) -> None:
 
 
 def _on_health(rt: Runtime, event: Event) -> None:
-    """Batterien, einzelne Raumfuehler (Spec TP6 3.5) und manuelle Eingriffe an Kurve/Offset
-    (Spec TP7 3.6). Eigener Zeitplaneintrag: der lokale Check laeuft seit den eventgetriebenen
-    Triggern nur auf Ereignisse."""
+    """Batterien, einzelne Raumfuehler (Spec TP6 3.5) und manuelle Eingriffe an Steigung,
+    Parallelverschiebung, Mindestvorlauf und Zonen-Betriebsart (Durchsetzung, TP11). Eigener
+    Zeitplaneintrag: der lokale Check laeuft seit den eventgetriebenen Triggern nur auf Ereignisse."""
     rt.worker.schedule(config.local_check_interval(rt.options), Event(EV_HEALTH))
     if rt.store.state.abo_finished:
         return
@@ -489,7 +477,6 @@ def _register_handlers(rt: Runtime) -> None:
         EV_HA_CONNECTED: _on_ha_connected,
         EV_WATCHDOG: _on_watchdog,
         EV_TELEMETRY: _on_telemetry,
-        EV_DAYNIGHT: _on_daynight,
         EV_GRACE_CHECK: _on_grace_check,
         EV_HEALTH: _on_health,
     }
@@ -504,17 +491,77 @@ def _register_handlers(rt: Runtime) -> None:
 # --- Boot ---
 
 def _prime(rt: Runtime) -> None:
-    """Erster lokaler Check synchron vor mqtt.loop_start(): die Boost-Flags sind aus echten
-    Sensorwerten bestimmt, bevor eine Server-Antwort verarbeitet wird (sie entscheiden, ob
-    Serverwerte geschrieben oder nur gespeichert werden). Persistierte Boosts laufen weiter und
-    enden regulaer ueber ihre Schwellen (N1). Scheitert der Check, bleiben die Flags stehen; der
-    naechste erfolgreiche Check beendet die Boosts inklusive Zurueckschreiben (N4)."""
+    """Erster lokaler Check synchron vor mqtt.loop_start(): Stable-Target-Cache fuellen, beim
+    ersten Start ohne gespeicherte Parallelverschiebung den Steigungs-Punkt neu setzen und einen
+    Tick erzwingen (_first_start), Zone auf Manuell mit brauchbarer Parallelverschiebung (vor dem
+    ersten Snapshot, Plan-Praezisierung 11), Mindestvorlauf = Raum-Soll, dann Boost-Flags aus
+    echten Sensorwerten. Persistierte Boosts laufen weiter und enden regulaer ueber ihre Schwellen
+    (N1). Scheitert ein Schritt, laufen die uebrigen trotzdem."""
     try:
         rt.store.update(stable_target=regulation.read_room_target_live(rt))
         logger.info("Stable-Target-Cache initial befuellt (Boot-Priming): room_target=%s", rt.store.state.stable_target)
+    except Exception:
+        logger.exception("room_target beim Start nicht lesbar, wird beim naechsten Ereignis erneut versucht")
+    if rt.store.state.shift_current is None:
+        _first_start(rt)
+    _prepare_zone(rt)
+    min_flow.sync(rt)
+    try:
         regulation.run_local_check(rt)
     except Exception:
         logger.exception("Fehler beim initialen lokalen Check vor MQTT-Start, wird beim naechsten Ereignis erneut versucht")
+
+
+def _first_start(rt: Runtime) -> None:
+    """Erster Start ohne gespeicherte Parallelverschiebung (0.23.0 -> 0.24.0): Steigungs-Punkt
+    vom Anlagenwert neu setzen und sofort einen Tick erzwingen, damit der Erstkontakt des Servers
+    mit den Istwerten startet statt erst beim naechsten Tagestick oder Sollwertwechsel."""
+    try:
+        rt.override.reseed_curve_from_plant()
+    except Exception:
+        logger.exception("Wiederherstellungspunkt der Steigung beim ersten Start nicht gespeichert")
+    try:
+        rt.store.update_saved(last_published_target_rt=None)
+    except Exception:
+        logger.exception("Sofortiger Tick beim ersten Start nicht gebucht, es gilt der naechste regulaere Anlass")
+
+
+def _may_prepare_zone(rt: Runtime) -> bool:
+    """Kontingent wie die Durchsetzung (manual_override): hoechstens ein Versuch pro RETRY_SECONDS
+    und MAX_WRITES_PER_DAY am Tag. Jeder Versuch kann zwei Cloud-Aufrufe kosten; bei 403 "Quota
+    Exceeded" wuerde ein Versuch in jedem lokalen Check die Sperre verlaengern. Zaehlt den Versuch
+    VOR dem Aufruf (auch ein gescheiterter verbraucht Kontingent)."""
+    today = datetime.now().date().isoformat()
+    log = rt.zone_prepare_log
+    if log.get("day") != today:
+        log.update(day=today, count=0, limit_logged=False)
+    if log["count"] >= manual_override.MAX_WRITES_PER_DAY:
+        if not log["limit_logged"]:
+            logger.warning(
+                "Zone: Tageslimit von %d Vorbereitungsversuchen erreicht, naechster Versuch morgen",
+                manual_override.MAX_WRITES_PER_DAY,
+            )
+            log["limit_logged"] = True
+        return False
+    last = log.get("last")
+    if last is not None and rt.clock() - last < manual_override.RETRY_SECONDS:
+        return False
+    log.update(count=log["count"] + 1, last=rt.clock())
+    return True
+
+
+def _prepare_zone(rt: Runtime) -> None:
+    """Zone vorbereiten (Override.prepare_zone); scheitert es, versucht es ein spaeterer lokaler
+    Check erneut (Kontingent: _may_prepare_zone), statt dass erst die Durchsetzung nach
+    OWN_WRITE_SETTLE_SECONDS umstellt."""
+    if not _may_prepare_zone(rt):
+        return
+    try:
+        rt.override.prepare_zone(start_shift=rt.store.state.stable_target)
+    except Exception:
+        logger.exception("Zone konnte nicht vorbereitet werden, naechster Versuch beim naechsten lokalen Check")
+        return
+    rt.zone_prepared = True
 
 
 def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | IdleBridge:
@@ -560,7 +607,7 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | Idle
         notifier.notify("quellwechsel", derived.sources_fingerprint, SOURCE_CHANGE_MESSAGE, critical=False)
     _check_timezone(ha_api)
     rt = Runtime(
-        manifest=manifest, ha_api=ha_api, options=options, derived_entity_ids=derived.entity_ids,
+        manifest=manifest, ha_api=ha_api, options=options,
         worker=RegulationWorker(clock=clock), store=store,
         override=Override(store, manifest, ha_api, options, clock=clock),
         notifier=notifier, status=status, clock=clock,
@@ -591,7 +638,7 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | Idle
 
     rt.trigger_client = triggers.build_ha_trigger_client(manifest, options, ha_api, rt.worker)
     rt.trigger_client.start()
-    for kind in (EV_WATCHDOG, EV_TELEMETRY, EV_DAYNIGHT, EV_GRACE_CHECK, EV_HEALTH):
+    for kind in (EV_WATCHDOG, EV_TELEMETRY, EV_GRACE_CHECK, EV_HEALTH):
         rt.worker.schedule(0, Event(kind))
     rt.worker.schedule(HEARTBEAT_SECONDS, Event(EV_HEARTBEAT))
     if abo_inactive:

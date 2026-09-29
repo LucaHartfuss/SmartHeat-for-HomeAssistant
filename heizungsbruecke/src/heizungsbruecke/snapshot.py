@@ -9,12 +9,13 @@ from heizungsbruecke.manifest import OPTIONAL_SNAPSHOT_ROLES, SNAPSHOT_ROLES, Ch
 
 logger = logging.getLogger(__name__)
 
-SNAPSHOT_SCHEMA_VERSION = 2
+SNAPSHOT_SCHEMA_VERSION = 3
 
-# R6 (Spec TP7 3.6): optionales Top-Level-Feld mit einem erkannten manuellen Eingriff, nur KPI.
-# Muss zu messages.MANUAL_OVERRIDE_* auf dem Server passen (Contract-Check).
+# Durchsetzung (manual_override.py): zurueckgesetzter Eingriff, nur KPI. Optionales
+# Top-Level-Feld im Snapshot. Muss zu messages.MANUAL_OVERRIDE_* auf dem Server passen
+# (Contract-Check).
 MANUAL_OVERRIDE_KEY = "manual_override"
-MANUAL_OVERRIDE_FIELDS = ("curve", "offset", "erkannt")
+MANUAL_OVERRIDE_FIELDS = ("curve", "shift", "erkannt")
 
 # Nur auf Gueltigkeit geprueft, nicht gesendet: ohne gueltiges room_actual scheitern
 # Comfort- und Notfall-Boost still.
@@ -37,7 +38,10 @@ def read_snapshot_roles(
     """Liest alle gemappten Server-Pflichtrollen plus room_actual. Ungueltig heisst: get_state
     wirft (unavailable/unknown, nicht numerisch, HTTP-Fehler) oder der Wert ist nicht endlich.
     Optionale Rollen fehlen still, wenn sie nicht lesbar sind. Meldet selbst nichts: das
-    macht die Zustellung einmal pro Fehlerbeginn."""
+    macht die Zustellung einmal pro Fehlerbeginn.
+
+    Pflichtrollen in `computed_values` werden nicht gelesen, sondern uebernommen
+    (shift_current: plant.current_shift)."""
     computed_values = computed_values or {}
     roles: dict[str, float] = {}
 
@@ -57,6 +61,14 @@ def read_snapshot_roles(
 
     invalid: list[str] = []
     for role in SNAPSHOT_ROLES + VALIDITY_ONLY_ROLES:
+        if role in computed_values:
+            value = computed_values[role]
+            if not _is_finite_number(value):
+                logger.warning("Berechneter Wert fuer Rolle '%s' fehlt oder ist ungueltig: %r", role, value)
+                invalid.append(role)
+            elif role in SNAPSHOT_ROLES:
+                roles[role] = value
+            continue
         entity_id = manifest.entity_ids.get(role)
         if entity_id is None:
             continue
@@ -79,7 +91,7 @@ def read_snapshot_roles(
 def publish_snapshot(
     mqtt_client, seq: str, trigger: str | None, roles: dict[str, float], manual_override: dict | None = None,
 ) -> None:
-    """Eine Nachricht auf up/snapshot (Schema 2), mit manual_override nur, wenn einer ansteht."""
+    """Eine Nachricht auf up/snapshot (Schema 3), mit manual_override nur, wenn einer ansteht."""
     payload = {
         "schema": SNAPSHOT_SCHEMA_VERSION,
         "seq": seq,

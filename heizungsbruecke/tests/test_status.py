@@ -8,10 +8,10 @@ import pytest
 from heizungsbruecke import status
 from heizungsbruecke.delivery import DataFault, DeliveryState
 from heizungsbruecke.state import BridgeState
-from heizungsbruecke.status import Flags, StatusReporter, build_event, overall_status
+from heizungsbruecke.status import ADDON_VERSION, Flags, StatusReporter, build_event, overall_status
 
 SINCE = datetime(2026, 10, 1, 8, 0, tzinfo=UTC)
-OVERRIDE = {"curve": 1.3, "offset": 24.5, "erkannt": "2026-10-01T08:00:00+02:00"}
+OVERRIDE = {"curve": 1.3, "shift": 24.5, "erkannt": "2026-10-01T08:00:00+02:00"}
 
 
 def test_contract_values_match_the_integration():
@@ -27,7 +27,8 @@ def test_contract_values_match_the_integration():
     assert status.HINT_FIELDS == ("raumfuehler_ausgefallen", "batterie_niedrig", "manueller_eingriff")
     assert status.EVENT_FIELDS == (
         "schema", "tenant_id", "setup_id", "addon_version", "status", "grund", "notbetrieb", "datenfehler",
-        "boost", "letzte_serverantwort", "kurve", "offset", "abo", "abo_frist_ende", "hinweise",
+        "boost", "letzte_serverantwort", "kurve", "parallelverschiebung", "mindestvorlauf", "abo",
+        "abo_frist_ende", "hinweise",
     )
 
 
@@ -56,7 +57,7 @@ def test_overall_status_takes_the_first_matching_state(flags, state, expected):
 
 def test_event_carries_every_field():
     state = BridgeState(
-        curve_current=0.9, offset_current=22.0, emergency_boost_active=True,
+        curve_current=0.9, shift_current=22.0, emergency_boost_active=True,
         last_ack_at="2026-10-01T12:00:05+02:00", manual_override=OVERRIDE,
         notify_states={
             "raumfuehler:sensor.b": "ausgefallen", "raumfuehler:sensor.a": "ausgefallen",
@@ -70,13 +71,36 @@ def test_event_carries_every_field():
     assert event == {
         "schema": 1, "tenant_id": "client1", "setup_id": "abc", "addon_version": status.ADDON_VERSION,
         "status": "regelt", "grund": None, "notbetrieb": False, "datenfehler": None, "boost": "notfall",
-        "letzte_serverantwort": "2026-10-01T12:00:05+02:00", "kurve": 0.9, "offset": 22.0,
-        "abo": "aktiv", "abo_frist_ende": None,
+        "letzte_serverantwort": "2026-10-01T12:00:05+02:00", "kurve": 0.9, "parallelverschiebung": 22.0,
+        "mindestvorlauf": None, "abo": "aktiv", "abo_frist_ende": None,
         "hinweise": {
             "raumfuehler_ausgefallen": ["sensor.a", "sensor.b"], "batterie_niedrig": ["sensor.x"],
-            "manueller_eingriff": {"kurve": 1.3, "offset": 24.5, "erkannt": "2026-10-01T08:00:00+02:00"},
+            "manueller_eingriff": {
+                "kurve": 1.3, "parallelverschiebung": 24.5, "erkannt": "2026-10-01T08:00:00+02:00",
+            },
         },
     }
+
+
+def test_event_carries_parallel_shift_and_min_flow(make_store):
+    store = make_store(backup={"curve_current": 1.05, "shift_current": 21.0})
+    store.update(min_flow_current=20.5)
+    event = build_event("t", None, Flags(), store.state)
+    assert (event["kurve"], event["parallelverschiebung"], event["mindestvorlauf"]) == (1.05, 21.0, 20.5)
+    assert "offset" not in event
+
+
+def test_manual_hint_shape(make_store):
+    store = make_store(backup={
+        "curve_current": 1.05, "shift_current": 21.0,
+        "manual_override": {"curve": 1.3, "shift": 22.0, "erkannt": "2026-10-03T11:00:00+02:00", "signatur": "x"},
+    })
+    hint = build_event("t", None, Flags(), store.state)["hinweise"]["manueller_eingriff"]
+    assert hint == {"kurve": 1.3, "parallelverschiebung": 22.0, "erkannt": "2026-10-03T11:00:00+02:00"}
+
+
+def test_version():
+    assert ADDON_VERSION == "0.24.0"
 
 
 @pytest.mark.parametrize("fault,expected", [

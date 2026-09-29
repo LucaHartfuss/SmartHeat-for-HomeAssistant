@@ -2,13 +2,11 @@
 entscheiden, ob ein neuer Tick faellig ist. Welche Werte dann auf der Anlage stehen,
 entscheidet override.set_boosts."""
 import logging
-import time
 from datetime import datetime
 
 from heizungsbruecke.boost import decide_boost
 from heizungsbruecke.emergency_boost import decide_emergency_boost
 from heizungsbruecke.runtime import Runtime
-from heizungsbruecke.target_history import record_change
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +57,7 @@ def run_local_check(rt: Runtime) -> None:
         boost_was_active=state.boost_active,
         arrival_threshold_k=threshold_k,
         boost_curve_value=options["boost_curve_value"],
-        boost_offset_value=options["boost_offset_value"],
+        boost_shift_value=options["boost_shift_value"],
     ).active
     emergency = state.delivery.notbetrieb and decide_emergency_boost(
         room_actual=room_actual,
@@ -67,23 +65,22 @@ def run_local_check(rt: Runtime) -> None:
         emergency_was_active=state.emergency_boost_active,
         exit_threshold_k=threshold_k,
         max_curve_value=options["curve_max"],
-        max_offset_value=options["offset_max"],
+        max_shift_value=options["shift_max"],
     ).active
     comfort_set, _ = rt.override.set_boosts(comfort=comfort, emergency=emergency)
 
     # B5: wurde der Comfort-Start mangels Wiederherstellungspunkt abgelehnt, bleibt der alte
     # Sollwert gemerkt, damit der naechste Check die Erhoehung erneut sieht.
     remembered = state.last_room_target if comfort and not comfort_set else room_target
-    rt.store.update_saved(
-        last_room_target=remembered,
-        target_history=record_change(state.target_history, time.time(), room_target),
-    )
+    rt.store.update_saved(last_room_target=remembered)
 
 
 def claim_due_tick(rt: Runtime, now: datetime) -> str | None:
-    """Neuer Tick, wenn sich room_target seit dem letzten Tick geaendert hat ("target_change")
-    oder daily_trigger_time heute erstmals erreicht ist ("daily"). Gebucht wird beim Entstehen,
-    nicht beim Publish: ein zurueckgehaltener Tick erzeugt keine Duplikate, seine
+    """Neuer Tick, wenn daily_trigger_time heute erstmals erreicht ist ("daily") oder sich
+    room_target seit dem letzten Tick geaendert hat ("target_change"). Faellt beides auf denselben
+    Check, geht der Tick als "daily" raus: der Server lernt nur auf "daily" und wendet die
+    Vorsteuerung auf jeden Tick an, sonst fiele der Lernschritt des Tages aus. Gebucht wird beim
+    Entstehen, nicht beim Publish: ein zurueckgehaltener Tick erzeugt keine Duplikate, seine
     Wiederholungen laufen ueber die Zustellung."""
     state = rt.store.state
     room_target = state.stable_target
@@ -103,4 +100,4 @@ def claim_due_tick(rt: Runtime, now: datetime) -> str | None:
         changes["last_daily_trigger_date"] = today
     # Wie 0.16.0: ohne gespeicherte Buchung kein Tick; der naechste Check beansprucht ihn erneut.
     rt.store.update_saved(**changes)
-    return "target_change" if target_changed else "daily"
+    return "daily" if daily_due else "target_change"

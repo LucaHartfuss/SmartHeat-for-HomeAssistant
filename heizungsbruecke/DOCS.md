@@ -1,13 +1,14 @@
 # Heizungsbruecke
 
 Liest konfigurierte Home-Assistant-Entities (Referenzraum, Aussentemperatur,
-aktuelle Heizkurve/Niveau) und meldet sie generisch an den SmartHeat-Server.
-Schreibt vom Server empfangene Sollwerte zurueck, geclamped gegen die
-konfigurierten Sicherheitsgrenzen. **Boost** aktiviert ausschliesslich, wenn die
-Wunschtemperatur erhoeht wird (Komfort-Beschleunigung): das Add-on schaltet
-kurzzeitig auf eine hohe Heizkurve, bis der Raum innerhalb von
-`boost_threshold_k` (Default 0.5 K) an die neue Wunschtemperatur herangekommen
-ist, und schaltet danach zur zuletzt vom Server empfangenen Heizkurve zurueck.
+aktuelle Heizkurve/Parallelverschiebung) und meldet sie generisch an den
+SmartHeat-Server. Schreibt vom Server empfangene Sollwerte zurueck, geclamped
+gegen die konfigurierten Sicherheitsgrenzen. **Boost** aktiviert ausschliesslich,
+wenn die Wunschtemperatur erhoeht wird (Komfort-Beschleunigung): das Add-on
+schaltet kurzzeitig auf eine hohe Heizkurve und Parallelverschiebung, bis der
+Raum innerhalb von `boost_threshold_k` (Default 0.5 K) an die neue
+Wunschtemperatur herangekommen ist, und schaltet danach zum zuletzt vom Server
+empfangenen Wiederherstellungspunkt zurueck.
 Boost reagiert NICHT auf einen kalten Raum aus anderer Ursache
 (Aussentemperatur-Einbruch, offene Tuer) -- diese Faelle werden vom naechsten
 regulaeren Heizkurven-Tick abgedeckt. Ist der Server laengere Zeit nicht

@@ -7,7 +7,7 @@ _TARGET_RISE_EPSILON_K = 0.01
 class BoostDecision:
     active: bool
     curve_value: float | None
-    offset_value: float | None
+    shift_value: float | None
 
 
 def decide_boost(
@@ -17,7 +17,7 @@ def decide_boost(
     boost_was_active: bool,
     arrival_threshold_k: float,
     boost_curve_value: float,
-    boost_offset_value: float,
+    boost_shift_value: float,
 ) -> BoostDecision:
     """Boost aktiviert ausschliesslich als Reaktion auf eine Erhoehung der
     Wunschtemperatur (Komfort-Beschleunigung), nicht mehr bei Kaelte aus anderer
@@ -36,5 +36,5 @@ def decide_boost(
         )
 
     if active:
-        return BoostDecision(active=True, curve_value=boost_curve_value, offset_value=boost_offset_value)
-    return BoostDecision(active=False, curve_value=None, offset_value=None)
+        return BoostDecision(active=True, curve_value=boost_curve_value, shift_value=boost_shift_value)
+    return BoostDecision(active=False, curve_value=None, shift_value=None)

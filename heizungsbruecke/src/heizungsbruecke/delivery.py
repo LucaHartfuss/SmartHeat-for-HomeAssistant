@@ -23,7 +23,7 @@ DATA_RETRY_DELAYS_SECONDS = (30, 300, 900, 3600)
 
 TRIGGERS = ("daily", "target_change")
 STATUS_OK = "ok"
-STATUS_SKIPPED_SUMMER = "skipped_summer"
+STATUS_SKIPPED = "skipped"
 STATUS_REJECTED = "rejected"
 SOURCE_LOCAL = "local"
 SOURCE_SERVER = "server"

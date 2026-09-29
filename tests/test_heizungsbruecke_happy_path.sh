@@ -8,8 +8,11 @@
 # host_network:true makes this add-on and cloudflared_access_mqtt share the real Pi's
 # network stack), C2/C3 (wrong Core API permission flag / get_state attribute handling --
 # exercised via a real HTTP round trip to a "supervisor"-named container), and the
-# automatic DAT/DART/day-night-avg helper provisioning against the stub's config-entry-flow
-# (REST) and input_number/entity-registry (hand-rolled WebSocket handshake) endpoints.
+# automatic room-temperature template helper provisioning against the stub's config-entry-flow
+# (REST) and entity-registry (hand-rolled WebSocket handshake) endpoints. Since TP11 (0.24.0)
+# the options also map the parallel shift (a climate zone, already in manual mode = heat_cool)
+# and the minimum flow temperature; both already match the room target, so the start writes
+# nothing to the stub plant.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ADDON_DIR="$HERE/../heizungsbruecke"
@@ -43,7 +46,8 @@ echo "PASS: docker build erfolgreich"
 
 # --- stub HA Supervisor Core API: any GET on /core/api/states/<entity> returns a fixed
 # state + attribute set (covers both the plain-state and the C3 entity_id::attribute
-# read paths); any POST to the number/set_value service is accepted. ---
+# read paths); the climate zone (parallel shift) is in manual mode (heat_cool) with a
+# target temperature. POSTs to the number/climate services are accepted. ---
 cat > "$TMPDIR/stub_supervisor.py" <<'PYEOF'
 import base64
 import hashlib
@@ -109,7 +113,9 @@ class Handler(BaseHTTPRequestHandler):
             # "state": the bridge only starts once HA reports RUNNING (ha_api.is_reachable).
             self._send_json({"time_zone": "UTC", "state": "RUNNING"})
             return
-        if self.path.startswith("/core/api/states/"):
+        if self.path == "/core/api/states/climate.zone":
+            self._send_json({"state": "heat_cool", "attributes": {"temperature": 20.0}})
+        elif self.path.startswith("/core/api/states/"):
             self._send_json({
                 "state": "20.0",
                 "attributes": {"current_temperature": 20.0, "temperature": 20.0},
@@ -119,16 +125,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def _fake_ws_result(self, command):
         cmd_type = command.get("type")
-        if cmd_type == "input_number/create":
-            return {"id": "stub_input_number"}
         if cmd_type in ("config/entity_registry/list", "config/entity_registry/list_for_display"):
             return list(_ENTITY_REGISTRY)
         return {}
 
     def do_POST(self):
-        if self.path == "/core/api/services/number/set_value":
-            self._send_json({})
-        elif self.path == "/core/api/services/input_number/set_value":
+        if self.path in (
+            "/core/api/services/number/set_value",
+            "/core/api/services/climate/set_temperature",
+            "/core/api/services/climate/set_hvac_mode",
+        ):
             self._send_json({})
         elif self.path == "/core/api/config/config_entries/flow":
             _FLOW_COUNTER["n"] += 1
@@ -174,7 +180,7 @@ EOF
 # below) -- without them the bridge would just report "noch nicht eingerichtet" and idle
 # without ever touching MQTT.
 cat > "$DATA_DIR/options.json" <<JSON
-{"tenant_id":"happytest","verteilsystem":"Heizkoerper","daily_trigger_time":"12:00","day_avg_window_start":"14:00","day_avg_window_end":"17:00","night_avg_window_start":"04:00","night_avg_window_end":"07:00","accounts_api_base_url":"https://accounts.example.test","mqtt_username":"heizungsbruecke","mqtt_password":"test-secret","room_sensors":["climate.testroom::current_temperature"],"entity_room_target":"climate.testroom::temperature","entity_curve_current":"number.curve","entity_offset_current":"number.offset","entity_heat_limit":"number.heat_limit","entity_outdoor_temp":"sensor.outdoor","local_check_interval_seconds":2}
+{"tenant_id":"happytest","verteilsystem":"Heizkoerper","daily_trigger_time":"12:00","accounts_api_base_url":"https://accounts.example.test","mqtt_username":"heizungsbruecke","mqtt_password":"test-secret","room_sensors":["climate.testroom::current_temperature"],"entity_room_target":"climate.testroom::temperature","entity_curve_current":"number.curve","entity_shift_current":"climate.zone","entity_min_flow":"number.min_flow","entity_heat_limit":"number.heat_limit","entity_outdoor_temp":"sensor.outdoor","local_check_interval_seconds":2}
 JSON
 
 # $TMPDIR is created via `mktemp -d` (mode 0700) and Docker may run the containers below

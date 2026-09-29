@@ -11,16 +11,15 @@ from pathlib import Path
 
 from heizungsbruecke import backup_store
 from heizungsbruecke.delivery import DeliveryState, from_persisted, to_persisted
-from heizungsbruecke.target_history import sanitize_history
 
 logger = logging.getLogger(__name__)
 
-_NUMBER_FIELDS = ("curve_current", "offset_current", "last_room_target", "last_published_target_rt")
+_NUMBER_FIELDS = ("curve_current", "shift_current", "last_room_target", "last_published_target_rt")
 _FLAG_FIELDS = ("boost_active", "emergency_boost_active")
 _TEXT_FIELDS = ("last_daily_trigger_date", "last_ack_at")
 _TEXT_MAP_FIELDS = ("notify_states", "notify_messages")
 _OVERRIDE_FIELDS = ("manual_override", "manual_override_pending")
-BACKUP_FIELDS = _NUMBER_FIELDS + _FLAG_FIELDS + ("target_history",) + _TEXT_FIELDS + _TEXT_MAP_FIELDS + _OVERRIDE_FIELDS
+BACKUP_FIELDS = _NUMBER_FIELDS + _FLAG_FIELDS + _TEXT_FIELDS + _TEXT_MAP_FIELDS + _OVERRIDE_FIELDS
 
 
 @dataclass(frozen=True)
@@ -28,11 +27,10 @@ class BridgeState:
     # Wiederherstellungspunkt: zuletzt vom Server bestaetigt oder vor dem ersten Boost von der
     # Anlage gesichert. Darauf setzt jedes Boost-Ende zurueck.
     curve_current: float | None = None
-    offset_current: float | None = None
+    shift_current: float | None = None
     boost_active: bool = False
     emergency_boost_active: bool = False
     last_room_target: float | None = None
-    target_history: list = field(default_factory=list)
     last_published_target_rt: float | None = None
     last_daily_trigger_date: str | None = None
     delivery: DeliveryState = field(default_factory=DeliveryState)
@@ -43,18 +41,27 @@ class BridgeState:
     notify_messages: dict = field(default_factory=dict)
     # Zeitpunkt (ISO) der letzten Serverantwort auf einen offenen Tick (Status letzte_serverantwort).
     last_ack_at: str | None = None
-    # R6: aktiver manueller Eingriff {curve, offset, erkannt} bis zur Rueckkehr (Hinweis im Status).
+    # Durchsetzung (manual_override.py): aktiver Eingriff {curve, shift, erkannt} bis zur
+    # Rueckkehr (Hinweis im Status).
     manual_override: dict | None = None
-    # R6: noch nicht vom Server verarbeiteter Eingriff (KPI im naechsten Snapshot).
+    # Durchsetzung (manual_override.py): noch nicht vom Server verarbeiteter Eingriff (KPI im
+    # naechsten Snapshot).
     manual_override_pending: dict | None = None
     # Nur Laufzeit (die Abo-Frist selbst liegt in entitlement_state.json).
     stable_target: float | None = None
+    # Mindestvorlauf, wie er zuletzt auf der Anlage stand (min_flow.py, fuer den Status). Nur
+    # Laufzeit: wird nicht persistiert (Praezisierung 12), beim Start neu ermittelt.
+    min_flow_current: float | None = None
     # Aufeinanderfolgende EV_HEALTH-Runden ohne gueltigen Wert je Raumfuehler (room_sensors.py).
     room_sensor_misses: dict = field(default_factory=dict)
-    # Aufeinanderfolgende EV_HEALTH-Runden mit Abweichung von Kurve/Offset (manual_override.py).
+    # Aufeinanderfolgende EV_HEALTH-Runden mit Abweichung von Kurve/Parallelverschiebung
+    # (manual_override.py).
     manual_override_misses: int = 0
     abo_inactive_since: datetime | None = None
     abo_finished: bool = False
+    # Durchsetzung (manual_override.py): je Rolle Tag, Anzahl und Zeitpunkt (Worker-Uhr) der
+    # Rueckschreibungen -- Kontingent-Schutz der Hersteller-Cloud. Nur Laufzeit.
+    enforce_log: dict = field(default_factory=dict)
 
 
 def _is_number(value) -> bool:
@@ -63,7 +70,7 @@ def _is_number(value) -> bool:
 
 def _is_override(value) -> bool:
     return (
-        isinstance(value, dict) and _is_number(value.get("curve")) and _is_number(value.get("offset"))
+        isinstance(value, dict) and _is_number(value.get("curve")) and _is_number(value.get("shift"))
         and isinstance(value.get("erkannt"), str)
     )
 
@@ -98,14 +105,6 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
             values[key] = raw[key]
         else:
             _invalid(key)
-    if "target_history" in raw:
-        history = sanitize_history(raw["target_history"])
-        if history != raw["target_history"]:
-            logger.warning(
-                "target_history in Backup war ungueltig (%r) - wird als leer behandelt und neu aufgebaut.",
-                raw["target_history"],
-            )
-        values["target_history"] = history
     for key in _TEXT_MAP_FIELDS:
         if key not in raw:
             continue
@@ -190,7 +189,7 @@ class StateStore:
     def saved_restore_point(self) -> dict | None:
         """Der zuletzt erfolgreich in backup.json gespeicherte Wiederherstellungspunkt (beide
         Werte), sonst None (N6)."""
-        point = {key: self._backup_saved.get(key) for key in ("curve_current", "offset_current")}
+        point = {key: self._backup_saved.get(key) for key in ("curve_current", "shift_current")}
         return point if all(_is_number(value) for value in point.values()) else None
 
     def revert_to_saved(self, *keys: str) -> None:

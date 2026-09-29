@@ -2,22 +2,20 @@
 Abo-Abfrage, Zeitplan, Meldungen) und die Server-Antworten."""
 import logging
 import math
-import time
 import uuid
 from datetime import datetime
 from typing import TypeGuard
 
-from heizungsbruecke import abo, delivery, entitlement
+from heizungsbruecke import abo, delivery, entitlement, plant
 from heizungsbruecke.notifier import STATE_OK
 from heizungsbruecke.override import DeviceWriteError
 from heizungsbruecke.runtime import EV_ACK_TIMEOUT, EV_RETRY_DUE, Runtime
 from heizungsbruecke.snapshot import SNAPSHOT_SCHEMA_VERSION, publish_snapshot, read_snapshot_roles
-from heizungsbruecke.target_history import time_weighted_mean
 from heizungsbruecke.worker import Event
 
 logger = logging.getLogger(__name__)
 
-_SETPOINT_STATUSES_WITH_VALUES = (delivery.STATUS_OK, delivery.STATUS_SKIPPED_SUMMER)
+_SETPOINT_STATUSES_WITH_VALUES = (delivery.STATUS_OK, delivery.STATUS_SKIPPED)
 
 
 def _is_finite_number(value) -> TypeGuard[float]:
@@ -82,7 +80,18 @@ def _attempt(rt: Runtime, seq: str, trigger: str):
     """Pflichtrollen und room_actual frisch lesen; bei ungueltigem Wert kein Publish
     (ReadInvalid). Auch ein Publish-Fehler meldet Published: der Ack-Timeout plant dann den
     naechsten Versuch, die Retry-Kette reisst nie ab."""
-    read = read_snapshot_roles(rt.manifest, rt.ha_api, computed_values={"room_target_avg_24h": _current_target_avg(rt)})
+    # Kurz nach einem eigenen Schreiben (erster Start: _prime schreibt die Startverschiebung, der
+    # erzwungene Tick folgt Sekunden spaeter) zeigt HA bei mypyllant noch den alten Sollwert des
+    # Zeitprogramms; der Server-Erstkontakt uebernaehme ihn. Wie min_flow.sync: bis Override.settled
+    # gilt der eigene letzte Schreibwert.
+    last = rt.override.last_written("shift_current")
+    if not rt.override.settled("shift_current") and last is not None:
+        shift = last
+    else:
+        shift = plant.current_shift(
+            rt.ha_api, rt.manifest.entity_ids["shift_current"], rt.store.state.shift_current,
+        )
+    read = read_snapshot_roles(rt.manifest, rt.ha_api, computed_values={"shift_current": shift})
     if read.invalid_roles:
         logger.warning("Snapshot (seq=%s) zurueckgehalten, ungueltige Werte: %s", seq, ", ".join(read.invalid_roles))
         return delivery.ReadInvalid(seq=seq, roles=read.invalid_roles)
@@ -92,7 +101,7 @@ def _attempt(rt: Runtime, seq: str, trigger: str):
         # startet den Versuch sofort neu (N3), sonst plant der Ack-Timeout den naechsten.
         logger.warning("Snapshot (seq=%s) nicht gesendet, keine MQTT-Verbindung", seq)
         return delivery.Published(seq=seq, unsent=True)
-    # R6-Fix: der beim ersten erfolgreichen Publish dieser seq gepinnte Eintrag reist bei jedem
+    # Durchsetzungs-KPI: der beim ersten erfolgreichen Publish dieser seq gepinnte Eintrag reist bei jedem
     # Retry unveraendert mit; ein zwischenzeitlich neu erkannter Eingriff wartet auf die naechste
     # seq (siehe Runtime.manual_override_seq).
     if rt.manual_override_seq == seq:
@@ -109,15 +118,6 @@ def _attempt(rt: Runtime, seq: str, trigger: str):
     except Exception:
         logger.exception("Snapshot (seq=%s) konnte nicht veroeffentlicht werden - Retry nach dem Ack-Timeout", seq)
     return delivery.Published(seq=seq)
-
-
-def _current_target_avg(rt: Runtime) -> float | None:
-    """Zeitgewichtetes 24-h-Mittel des Sollwerts (room_target_avg_24h)."""
-    try:
-        return time_weighted_mean(rt.store.state.target_history, time.time())
-    except Exception as error:
-        logger.warning("Sollwert-Mittel nicht berechenbar, wird weggelassen: %s", error)
-        return None
 
 
 # Praefix je Stoerungsquelle fuer den Meldezustand "datenfehler"; abgeleitet aus
@@ -187,8 +187,9 @@ def _record_answer(rt: Runtime) -> None:
 
 
 def _clear_sent_manual_override(rt: Runtime) -> None:
-    """R6: der Server hat den Snapshot mit dem Eingriff verarbeitet (KPI erfasst). Nur genau der
-    gesendete Eintrag wird geloescht; ein inzwischen neu erkannter reist mit dem naechsten Tick."""
+    """Der Server hat den Snapshot mit dem (schon zurueckgesetzten) Eingriff verarbeitet (KPI
+    erfasst). Nur genau der gesendete Eintrag wird geloescht; ein inzwischen neu erkannter reist
+    mit dem naechsten Tick."""
     sent = rt.manual_override_sent
     if sent is None or rt.store.state.manual_override_pending != sent:
         return
@@ -200,7 +201,7 @@ def _clear_sent_manual_override(rt: Runtime) -> None:
 
 
 def handle_setpoints(rt: Runtime, payload: dict) -> None:
-    """Server-Antwort (nur Schema 2), zaehlt nur fuer den offenen Tick (auch verspaetet). Gueltige
+    """Server-Antwort (nur Schema 3), zaehlt nur fuer den offenen Tick (auch verspaetet). Gueltige
     Werte gehen vor dem Ack auf die Anlage. Ein unbekanntes Schema, ein unbekannter Status oder
     ungueltige Werte zaehlen als Datenfehler vom Server. Kann die Anlage die Werte nicht
     uebernehmen, ist das eine Antwort mit eigenem Datenfehler (`WriteFailed`), kein Serverausfall."""
@@ -217,7 +218,7 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
 
     schema = payload.get("schema")
     if type(schema) is not int or schema != SNAPSHOT_SCHEMA_VERSION:
-        # Nur Schema 2 wird verstanden; alles andere zaehlt wie eine ungueltige Antwort (Datenfehler
+        # Nur Schema 3 wird verstanden; alles andere zaehlt wie eine ungueltige Antwort (Datenfehler
         # vom Server, sofort sichtbar) statt still verworfen zu werden und erst ueber den
         # Ack-Timeout im Notbetrieb zu enden.
         reason = f"ungültige Serverantwort (unbekanntes Schema {schema!r})"
@@ -226,11 +227,15 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
         return
 
     status = payload.get("status")
-    curve, offset = payload.get("curve"), payload.get("offset")
-    if status in _SETPOINT_STATUSES_WITH_VALUES and _is_finite_number(curve) and _is_finite_number(offset):
+    curve, shift = payload.get("curve"), payload.get("shift")
+    if status in _SETPOINT_STATUSES_WITH_VALUES and _is_finite_number(curve) and _is_finite_number(shift):
         _clear_sent_manual_override(rt)
+        if status == delivery.STATUS_SKIPPED:
+            logger.info(
+                "Server hat fuer seq=%s nicht gelernt (%s), Werte unveraendert uebernommen", seq, payload.get("reason"),
+            )
         try:
-            rt.override.apply_server_values(curve, offset)
+            rt.override.apply_server_values(curve, shift)
         except DeviceWriteError as error:
             logger.warning("Serverwerte (seq=%s) konnten nicht auf die Anlage geschrieben werden: %s", seq, error)
             deliver(rt, delivery.WriteFailed(seq=seq, detail=str(error)))
@@ -242,6 +247,6 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
         logger.warning("Server hat Snapshot (seq=%s) abgelehnt: %s", seq, reason)
         deliver(rt, delivery.Ack(seq=seq, status=delivery.STATUS_REJECTED, reason=reason))
     else:
-        reason = f"ungültige Serverantwort (status={status!r}, curve={curve!r}, offset={offset!r})"
+        reason = f"ungültige Serverantwort (status={status!r}, curve={curve!r}, shift={shift!r})"
         logger.warning("Setpoints-Antwort (seq=%s): %s - nichts geschrieben", seq, reason)
         deliver(rt, delivery.Ack(seq=seq, status=delivery.STATUS_REJECTED, reason=reason))

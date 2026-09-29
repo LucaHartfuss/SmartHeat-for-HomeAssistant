@@ -8,6 +8,12 @@ import websocket
 HELPER_PLATFORMS = ("statistics", "template")
 # `state` in GET /api/config, sobald HA fertig gestartet ist (homeassistant.core.CoreState).
 HA_STATE_RUNNING = "RUNNING"
+# (Verbindungs-, Lese-Timeout) fuer Anlagen-Schreibaufrufe: HA beantwortet einen REST-Service-
+# Aufruf erst, wenn die Integration fertig ist (blocking=True, ohne serverseitiges Timeout).
+# mypyllant wartet danach auf einen Refresh: set_hvac_mode Cloud-Aufruf + 10 s Pause + Refresh,
+# set_temperature/number.set_value ~5 s. Mit 10 s Lese-Timeout meldete der Client ReadTimeout,
+# obwohl die Aenderung in der Cloud angekommen war.
+SERVICE_CALL_TIMEOUT = (10, 60)
 
 
 class HomeAssistantApi:
@@ -112,120 +118,40 @@ class HomeAssistantApi:
             f"{self._base_url}{self._api_prefix}/services/number/set_value",
             headers=self._headers,
             json={"entity_id": entity_id, "value": value},
-            timeout=10,
+            timeout=SERVICE_CALL_TIMEOUT,
         )
         response.raise_for_status()
 
-    def create_input_number(
-        self, name: str, minimum: float, maximum: float, step: float, initial: float
-    ) -> str:
-        """Legt einen input_number-Helper per Websocket an und liefert seine Entity-ID.
-
-        Nutzt Websocket statt REST: der REST-Versuch scheiterte an einem echten
-        HA-Core-Container (2026.9.2) mit 404: `POST .../config/
-        input_number/config/<object_id>` existiert in dieser HA-Version nicht
-        mehr als REST-Route (Quellcode-Pruefung: `homeassistant/components/
-        input_number/__init__.py` registriert Helfer-Erzeugung ausschliesslich
-        ueber `collection.DictStorageCollectionWebsocket(storage_collection,
-        "input_number", "input_number", STORAGE_FIELDS, STORAGE_FIELDS)`, was
-        u.a. das Websocket-Kommando `input_number/create` registriert -- siehe
-        `homeassistant.helpers.collection.StorageCollectionWebsocket.async_setup`).
-        Verifiziert per echtem WS-Roundtrip gegen denselben Container (siehe
-        tests/test_ha_api_real_ha_integration.py).
-
-        WICHTIG, per Quellcode bestaetigt: der Objekt-Teil der Entity-ID wird von
-        HA nicht vom Aufrufer vorgegeben, sondern ist `IDManager.generate_id(name)`,
-        also ein `slugify(name)` mit Kollisions-Suffix (`_2`, `_3`, ...) bei
-        Namenskonflikten. Aufrufer duerfen sich also nicht auf einen selbst
-        gewaehlten Objekt-Teil als Ergebnis verlassen, sondern muessen den
-        zurueckgegebenen String verwenden.
-        """
-        result = self._call_ws_command({
-            "type": "input_number/create",
-            "name": name,
-            "min": minimum,
-            "max": maximum,
-            "step": step,
-            "initial": initial,
-        })
-        return f"input_number.{result['id']}"
-
-    def set_input_number_value(self, entity_id: str, value: float) -> None:
+    def set_climate_temperature(self, entity_id: str, value: float) -> None:
+        """Wunschtemperatur einer Climate-Entity (TP11: Parallelverschiebung = Zonen-Sollwert).
+        Bei mypyllant im Modus "Manuell" dauerhaft (set_manual_mode_setpoint)."""
         response = requests.post(
-            f"{self._base_url}{self._api_prefix}/services/input_number/set_value",
+            f"{self._base_url}{self._api_prefix}/services/climate/set_temperature",
             headers=self._headers,
-            json={"entity_id": entity_id, "value": value},
-            timeout=10,
+            json={"entity_id": entity_id, "temperature": value},
+            timeout=SERVICE_CALL_TIMEOUT,
         )
         response.raise_for_status()
 
-    def create_statistics_sensor(
-        self, name: str, source_entity_id: str, max_age_hours: float,
-        state_characteristic: str = "average_step", sampling_size: int = 10000,
-    ) -> str:
-        """Legt einen `statistics`-Sensor (gleitender Mittelwert) per Config-Entry-Flow an.
+    def set_hvac_mode(self, entity_id: str, mode: str) -> None:
+        response = requests.post(
+            f"{self._base_url}{self._api_prefix}/services/climate/set_hvac_mode",
+            headers=self._headers,
+            json={"entity_id": entity_id, "hvac_mode": mode},
+            timeout=SERVICE_CALL_TIMEOUT,
+        )
+        response.raise_for_status()
 
-        `state_characteristic="average_step"` (zeitgewichteter Mittelwert -- gewichtet
-        jeden Messwert mit der Dauer bis zum naechsten Update) statt des naheliegenderen
-        `"mean"` (einfacher arithmetischer Mittelwert der Samples), plus
-        `keep_last_sample=True`: auf dem Live-Pi von Kunde 1 bereits vorhandene,
-        offenbar mit der aktuellen Heizkurve kalibrierte DAT/DART-Helfer (angelegt
-        2026-09-08, per `.storage/core.config_entries` verifiziert) nutzen exakt diese
-        beiden Werte. Ein Wechsel auf `"mean"` wuerde bei unregelmaessig aktualisierenden
-        Temperatursensoren einen anderen DAT/DART-Wert liefern und damit lautlos die
-        Eingabedaten der proprietaeren Heizkurve verschieben -- deshalb hier bewusst an
-        die live-kalibrierten Werte angeglichen statt einer Neu-Definition.
-
-        ZWEI GETRENNTE VERIFIKATIONSERGEBNISSE gegen einen echten HA-Core-
-        Container (2026.9.2, siehe tests/test_ha_api_real_ha_integration.py):
-
-        1. Der Config-Entry-Flow selbst (`POST .../config/config_entries/flow`
-           zum Start, `POST .../config/config_entries/flow/<flow_id>` zum
-           Abschluss) FUNKTIONIERT per REST und wurde -- anders als die alten
-           Helper-Storage-Views (siehe create_input_number()) -- nicht entfernt.
-           Anders als im urspruenglichen Task-Brief angenommen ist der
-           `statistics`-Flow aber KEIN einstufiger Formular-Flow, sondern
-           DREISTUFIG ("user": name+entity_id -> "state_characteristic":
-           state_characteristic -> "options": sampling_size/max_age/precision/
-           etc.). Jeder Schritt akzeptiert per Voluptuous-Schema ausschliesslich
-           die in seinem eigenen `data_schema` genannten Feldnamen; zusaetzliche
-           Felder fuehren zu 400 ("not a valid option at ..."). Das war eine
-           falsche Annahme im Brief (Payload-Form), keine fehlende Route --
-           siehe _advance_config_flow().
-        2. Die Aufloesung von Config-Entry-ID zu Entity-ID
-           (_find_entity_by_config_entry()) lief per REST (`GET .../config/
-           entity_registry/list`) ebenfalls auf einen 404 -- Quellcode-Pruefung
-           im Container (homeassistant/components/config/entity_registry.py)
-           zeigte, dass diese Datei ausschliesslich `websocket_api.
-           async_register_command(...)` registriert, keine einzige
-           `HomeAssistantView`-Klasse. _find_entity_by_config_entry() nutzt
-           dafuer das Websocket-Kommando
-           `config/entity_registry/list` (registriert in derselben Datei,
-           siehe dortiger Docstring) -- verifiziert per echtem WS-Roundtrip
-           gegen denselben Container.
-
-        `state_characteristic` default `average_step` keeps DAT/DART unchanged;
-        `outdoor_min_24h` uses the minimum characteristic.
-
-        `sampling_size` Default 10.000: HA's statistics sensor
-        keeps a `deque(maxlen=sampling_size)`, sampled on every state_reported event --
-        bei schnell meldenden Fuehlern deckt ein kleiner Puffer nicht das ganze
-        `max_age_hours`-Fenster ab. Messung auf client1 (2026-09-26): DAT-Puffer 20 %,
-        DART 8 %, 12-h-Raummittel 3 % belegt -- 255 wurde dort nie voll; 10.000 schuetzt
-        kuenftige Kunden und aendert bei client1 keinen Wert.
-        """
-        fields = {
-            "name": name,
-            "entity_id": source_entity_id,
-            "state_characteristic": state_characteristic,
-            "keep_last_sample": True,
-            "max_age": {"hours": max_age_hours},
-            "sampling_size": sampling_size,
-            "precision": 2,
-        }
-        flow_response = self._start_config_flow("statistics")
-        result = self._advance_config_flow(flow_response, fields)
-        return self._find_entity_by_config_entry(result["result"]["entry_id"])
+    def delete_input_number(self, entity_id: str) -> None:
+        """Loescht einen input_number-Helfer (TP11: Tag-/Nachtmittel entfallen). Nur input_number.*
+        mit dem Objekt-Teil-Praefix `smartheat_` (wie delete_helper() bei den Config-Entry-Helfern:
+        nie ein fremder Helfer), per WS-Kommando input_number/delete mit dem Objekt-Teil der Entity-ID."""
+        domain, _, object_id = entity_id.partition(".")
+        if domain != "input_number" or not object_id:
+            raise RuntimeError(f"'{entity_id}' ist kein input_number-Helfer, wird nicht geloescht")
+        if not object_id.startswith("smartheat_"):
+            raise RuntimeError(f"'{entity_id}' ist kein SmartHeat-Hilfssensor, wird nicht geloescht")
+        self._call_ws_command({"type": "input_number/delete", "input_number_id": object_id})
 
     def create_template_sensor(self, name: str, template: str) -> str:
         """Legt einen Template-Sensor (Temperatur in °C) per Config-Entry-Flow `template` an:
@@ -247,14 +173,17 @@ class HomeAssistantApi:
 
     def delete_helper(self, entity_id: str) -> None:
         """Loescht den Config-Entry eines per Config-Flow angelegten Helfers (Template- oder
-        Statistik-Sensor). input_number-Helfer haben keinen Config-Entry und werden nie
-        geloescht (derived_sensors).
+        Statistik-Sensor). input_number-Helfer loescht delete_input_number.
 
         Nur Entities der Plattformen HELPER_PLATFORMS: die Entity-ID stammt aus
         derived_sensors.json. Ist die Datei kaputt, von einer anderen Installation oder die ID
         inzwischen an eine andere Entity vergeben, wuerde sonst der Config-Entry einer fremden
         Integration (z.B. mypyllant) geloescht -- nicht rueckgaengig zu machen. Dann wirft es,
-        ohne etwas zu loeschen."""
+        ohne etwas zu loeschen. Zusaetzlich wie bei delete_input_number nur Entities mit dem
+        Objekt-Teil-Praefix `smartheat_` (eine fremde template-/statistics-Entity bleibt)."""
+        object_id = entity_id.partition(".")[2]
+        if not object_id.startswith("smartheat_"):
+            raise RuntimeError(f"'{entity_id}' ist kein SmartHeat-Hilfssensor, wird nicht geloescht")
         entries = self._call_ws_command({"type": "config/entity_registry/list"})
         entry = next((entry for entry in entries if entry.get("entity_id") == entity_id), {})
         config_entry_id = entry.get("config_entry_id")
@@ -294,8 +223,13 @@ class HomeAssistantApi:
         """Durchlaeuft einen mehrstufigen Config-Entry-Flow bis zum Abschluss.
 
         Formular-Schritt: `all_fields` wird auf die im `data_schema` genannten Feldnamen
-        gefiltert (siehe create_statistics_sensor()-Docstring, Punkt 1). Menue-Schritt (z.B.
-        der erste Schritt des `template`-Flows): Auswahl ueber `all_fields["next_step_id"]`.
+        gefiltert. Gegen einen echten HA-Core-Container (2026.9.2) verifiziert: der
+        Config-Entry-Flow laeuft per REST (`POST .../config/config_entries/flow` zum Start,
+        `POST .../config/config_entries/flow/<flow_id>` je Schritt), Flows koennen aber
+        mehrstufig sein, und jeder Schritt akzeptiert per Voluptuous-Schema ausschliesslich die
+        in seinem eigenen `data_schema` genannten Feldnamen; zusaetzliche Felder fuehren zu 400
+        ("not a valid option at ..."). Menue-Schritt (z.B. der erste Schritt des
+        `template`-Flows): Auswahl ueber `all_fields["next_step_id"]`.
         """
         result = flow_response
         while result.get("type") in ("form", "menu"):
@@ -320,8 +254,7 @@ class HomeAssistantApi:
     def _find_entity_by_config_entry(self, config_entry_id: str) -> str:
         """Loest eine Config-Entry-ID per Websocket zu ihrer Entity-ID auf.
 
-        Siehe create_statistics_sensor()-Docstring, Punkt 2: `GET .../config/
-        entity_registry/list` hat in dieser HA-Version (2026.9.2) keine
+        `GET .../config/entity_registry/list` hat in dieser HA-Version (2026.9.2) keine
         REST-Entsprechung (Quellcode-Pruefung: homeassistant/components/config/
         entity_registry.py registriert nur Websocket-Kommandos). Das WS-Kommando
         `config/entity_registry/list` (registriert per

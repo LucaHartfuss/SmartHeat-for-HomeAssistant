@@ -1,16 +1,11 @@
-"""Hilfs-Entities der Bruecke (Spec TP6 3.2/3.3). Der Raumtemperatur-Template-Sensor ist die
-Rolle room_actual (Mittel aller gueltigen Raumfuehler), bei einer weather-Quelle ein
-Aussentemperatur-Template die Rolle outdoor_temp. DAT/DART, das Raum-Mittel des Tagfensters und
-das 24-h-Minimum sind Statistik-Helfer darauf, Tag-/Nachtmittel input_number-Helfer.
+"""Hilfs-Entities der Bruecke. Der Raumtemperatur-Template-Sensor ist die Rolle room_actual (Mittel
+aller gueltigen Raumfuehler), bei einer weather-Quelle ein Aussentemperatur-Template die Rolle
+outdoor_temp. Seit TP11 bildet der Server alle Mittelwerte aus der Telemetrie; die frueheren
+Statistik- und Tag-/Nacht-Helfer raeumt ensure_all beim Start weg.
 
 Jeder Helfer merkt sich die Quelle, auf der er angelegt wurde (derived_sensors.json). Weicht sie
 ab oder ist sie unbekannt (Bestand vor TP6), wird er geloescht und neu angelegt; die Entity-ID
-bleibt dabei gleich (slugify(name), gegen echtes HA geprueft). Statistik-Helfer laden ihr Fenster
-aus dem Recorder: bleibt die Quell-Entity gleich, geht nichts verloren. input_number-Helfer haben
-keine Quelle und werden nie neu angelegt.
-
-Die Tracking-Schluessel 'room_12h_avg' und '_room_12h_avg' bleiben fuer Kontinuitaet mit
-bestehenden Installationen, auch wenn das Fenster aus den Optionen kommt (windows.py)."""
+bleibt dabei gleich (slugify(name), gegen echtes HA geprueft)."""
 import hashlib
 import json
 import logging
@@ -22,6 +17,11 @@ from heizungsbruecke.helper_templates import outdoor_temperature_template, room_
 
 logger = logging.getLogger(__name__)
 
+# TP11: Tracking-Schluessel der frueheren Helfer (DAT/DART, Raum-Mittel, 24-h-Minimum als
+# Statistik-Helfer, Tag-/Nachtmittel als input_number).
+OBSOLETE_STATISTICS = ("room_12h_avg", "dart", "dat", "outdoor_min_24h")
+OBSOLETE_INPUT_NUMBERS = ("room_day_avg", "room_night_avg")
+
 
 @dataclass(frozen=True)
 class DerivedSensors:
@@ -32,10 +32,7 @@ class DerivedSensors:
     sources_fingerprint: str
 
 
-def ensure_all(
-    ha_api, tenant_id: str, room_sensors: list[str], outdoor_source: str,
-    avg_window_hours: float, state_path: Path,
-) -> DerivedSensors:
+def ensure_all(ha_api, tenant_id: str, room_sensors: list[str], outdoor_source: str, state_path: Path) -> DerivedSensors:
     tracking = load_backup(state_path)
     replaced: list[str] = []
     sources: dict[str, str] = {}
@@ -57,63 +54,15 @@ def ensure_all(
 
     if outdoor_source.startswith("weather."):
         outdoor_template = outdoor_temperature_template(outdoor_source)
-        outdoor_entity = ensure(
+        result["outdoor_temp"] = ensure(
             "outdoor_temperature", outdoor_template,
             lambda: ha_api.create_template_sensor(
                 name=f"SmartHeat {tenant_id} Außentemperatur", template=outdoor_template,
             ),
         )
-        result["outdoor_temp"] = outdoor_entity
     else:
-        outdoor_entity = outdoor_source
         _drop_unused(ha_api, tracking, "outdoor_temperature", state_path)
-
-    result["_room_12h_avg"] = ensure(
-        "room_12h_avg", room_actual,
-        lambda: ha_api.create_statistics_sensor(
-            name=f"SmartHeat {tenant_id} Raumtemp. {avg_window_hours:g}h-Mittel",
-            source_entity_id=room_actual, max_age_hours=avg_window_hours,
-        ),
-    )
-    result["dart"] = ensure(
-        "dart", room_actual,
-        lambda: ha_api.create_statistics_sensor(
-            name=f"SmartHeat {tenant_id} DART", source_entity_id=room_actual, max_age_hours=24,
-        ),
-    )
-    result["dat"] = ensure(
-        "dat", outdoor_entity,
-        lambda: ha_api.create_statistics_sensor(
-            name=f"SmartHeat {tenant_id} DAT", source_entity_id=outdoor_entity, max_age_hours=24,
-        ),
-    )
-    result["room_day_avg"] = ensure(
-        "room_day_avg", None,
-        lambda: ha_api.create_input_number(
-            name=f"SmartHeat {tenant_id} Raumtemp. Tagesmittel",
-            minimum=0.0, maximum=35.0, step=0.01, initial=20.0,
-        ),
-    )
-    result["room_night_avg"] = ensure(
-        "room_night_avg", None,
-        lambda: ha_api.create_input_number(
-            name=f"SmartHeat {tenant_id} Raumtemp. Nachtmittel",
-            minimum=0.0, maximum=35.0, step=0.01, initial=20.0,
-        ),
-    )
-    try:
-        result["outdoor_min_24h"] = ensure(
-            "outdoor_min_24h", outdoor_entity,
-            lambda: ha_api.create_statistics_sensor(
-                name=f"SmartHeat {tenant_id} Aussentemp. 24h-Minimum", source_entity_id=outdoor_entity,
-                max_age_hours=24, state_characteristic="value_min",
-            ),
-        )
-    except Exception as exc:
-        logger.warning(
-            "Optionaler Hilfssensor outdoor_min_24h konnte nicht angelegt werden, "
-            "Sommersperre bleibt inaktiv: %s", exc,
-        )
+    _remove_obsolete(ha_api, tracking, state_path)
 
     fingerprint = hashlib.sha256(json.dumps(sources, sort_keys=True).encode()).hexdigest()[:12]
     return DerivedSensors(entity_ids=result, replaced=tuple(replaced), sources_fingerprint=fingerprint)
@@ -140,12 +89,32 @@ def _ensure_entity(ha_api, tracking: dict, key: str, source: str | None, state_p
     return entity_id, replaced
 
 
-def _drop_unused(ha_api, tracking: dict, key: str, state_path: Path) -> None:
-    """Ein nicht mehr gebrauchter Template-Helfer (weather -> sensor) wird entfernt."""
+def _drop_unused(ha_api, tracking: dict, key: str, state_path: Path, delete=None) -> str | None:
+    """Ein nicht mehr gebrauchter Helfer (Template-Helfer bei weather -> sensor, TP11-Altbestand)
+    wird entfernt, erst in HA, dann aus dem Tracking. `delete` loescht in HA (Standard:
+    ha_api.delete_helper). Gibt die entfernte Entity-ID zurueck, None ohne Tracking-Eintrag.
+    Wirft, wenn das Loeschen scheitert; der Eintrag bleibt dann stehen."""
     existing_id = tracking.get(key, {}).get("entity_id")
     if existing_id is None:
-        return
+        return None
     if ha_api.entity_exists(existing_id):
-        ha_api.delete_helper(existing_id)
+        (delete or ha_api.delete_helper)(existing_id)
     del tracking[key]
     save_backup(state_path, tracking)
+    return existing_id
+
+
+def _remove_obsolete(ha_api, tracking: dict, state_path: Path) -> None:
+    """TP11: DAT/DART, Raum-Mittel, 24-h-Minimum und Tag-/Nachtmittel werden nicht mehr gebraucht.
+    Ein Fehler beim Loeschen ist kein Startfehler; der Eintrag bleibt dann fuer den naechsten Start."""
+    for key in OBSOLETE_STATISTICS + OBSOLETE_INPUT_NUMBERS:
+        delete = ha_api.delete_input_number if key in OBSOLETE_INPUT_NUMBERS else ha_api.delete_helper
+        try:
+            removed = _drop_unused(ha_api, tracking, key, state_path, delete=delete)
+        except Exception as error:
+            entry = tracking.get(key)  # kann kaputt sein (kein dict), dann nicht noch einmal werfen
+            entity_id = entry.get("entity_id") if isinstance(entry, dict) else entry
+            logger.warning("Alter Hilfssensor %s (%s) konnte nicht entfernt werden: %s", entity_id, key, error)
+            continue
+        if removed is not None:
+            logger.info("Alter Hilfssensor %s (%s) entfernt", removed, key)

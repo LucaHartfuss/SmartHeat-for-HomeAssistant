@@ -7,7 +7,7 @@ EMERGENCY_TRIGGER_K = 1.0
 class EmergencyBoostDecision:
     active: bool
     curve_value: float | None
-    offset_value: float | None
+    shift_value: float | None
 
 
 def decide_emergency_boost(
@@ -16,7 +16,7 @@ def decide_emergency_boost(
     emergency_was_active: bool,
     exit_threshold_k: float,
     max_curve_value: float,
-    max_offset_value: float,
+    max_shift_value: float,
 ) -> EmergencyBoostDecision:
     """Reine Hysterese-Logik (die des Comfort-Boosts VOR dessen funktionaler
     Neudefinition am 2026-09-15) -- bewusst nur ausgewertet, waehrend Notbetrieb
@@ -27,8 +27,8 @@ def decide_emergency_boost(
     an den Sollwert angenaehert -- derselbe Wert wie die bestehende
     `boost_threshold_k`-Option des Comfort-Boosts, kein eigenes Config-Feld.
 
-    `max_curve_value`/`max_offset_value` sind die Profil-Clamp-Obergrenzen
-    (curve_max/offset_max), keine neuen, vom Profil unabhaengigen Werte.
+    `max_curve_value`/`max_shift_value` sind die Profil-Clamp-Obergrenzen
+    (curve_max/shift_max), keine neuen, vom Profil unabhaengigen Werte.
     """
     if emergency_was_active:
         active = room_actual < room_target - exit_threshold_k
@@ -36,5 +36,5 @@ def decide_emergency_boost(
         active = room_actual < room_target - EMERGENCY_TRIGGER_K
 
     if active:
-        return EmergencyBoostDecision(active=True, curve_value=max_curve_value, offset_value=max_offset_value)
-    return EmergencyBoostDecision(active=False, curve_value=None, offset_value=None)
+        return EmergencyBoostDecision(active=True, curve_value=max_curve_value, shift_value=max_shift_value)
+    return EmergencyBoostDecision(active=False, curve_value=None, shift_value=None)

@@ -1,4 +1,4 @@
-"""Add-on-Optionen: Pflichtfelder, aufgeloeste Sicherheitswerte und Fenster, Startpruefungen und feste Adressen."""
+"""Add-on-Optionen: Pflichtfelder, aufgeloeste Sicherheitswerte und Tagestick-Zeit, Startpruefungen und feste Adressen."""
 import json
 import logging
 import math
@@ -8,7 +8,7 @@ from pathlib import Path
 
 from heizungsbruecke.notifier import HINT_CATEGORIES
 from heizungsbruecke.safety import resolve_local_safety
-from heizungsbruecke.windows import window_size_hours, windows_from_options
+from heizungsbruecke.windows import validate_daily_trigger_time
 
 MQTT_HOST = "127.0.0.1"
 # Muss zum `local_port`-Default von cloudflared_access_mqtt passen: Konvention, kein
@@ -22,11 +22,10 @@ OPTIONS_PATH = DATA_DIR / "options.json"
 BACKUP_PATH = DATA_DIR / "backup.json"
 FAILSAFE_PATH = DATA_DIR / "failsafe_state.json"
 DERIVED_SENSORS_PATH = DATA_DIR / "derived_sensors.json"
-DAYNIGHT_SNAPSHOT_PATH = DATA_DIR / "daynight_snapshot_state.json"
 ENTITLEMENT_PATH = DATA_DIR / "entitlement_state.json"
 
 # Lokale Checks laufen eventgetrieben; dieser Takt gilt nur noch fuer den Watchdog-Fallback
-# bei getrennter WS-Verbindung (und fuer daynight/grace_check).
+# bei getrennter WS-Verbindung (und fuer grace_check/health).
 DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS = 300
 DEFAULT_TELEMETRY_INTERVAL_SECONDS = 300
 
@@ -37,19 +36,36 @@ class ConfigError(ValueError):
     ungueltige Option."""
 
 
-# Bewusst ohne verteilsystem/Fenster/accounts_api_base_url/room_sensors: eine alte Konfiguration
+# Bewusst ohne verteilsystem/accounts_api_base_url/room_sensors: eine alte Konfiguration
 # (0.17.0/0.18.0) soll als "eingerichtet" gelten und laut als Konfigurationsfehler melden,
-# statt still auf die Integration zu warten.
+# statt still auf die Integration zu warten. entity_shift_current/entity_min_flow bewusst
+# ebenfalls nicht hier: eine 0.23.0-Konfiguration gilt so ebenfalls als "eingerichtet" und
+# meldet "Konfiguration veraltet" (resolve_effective_options), statt still auf die
+# Integration zu warten.
 REQUIRED_OPTIONS = (
     "tenant_id", "mqtt_username", "mqtt_password",
-    "entity_room_target", "entity_curve_current", "entity_offset_current", "entity_outdoor_temp", "entity_heat_limit",
+    "entity_room_target", "entity_curve_current", "entity_outdoor_temp", "entity_heat_limit",
 )
+
+# TP11: Parallelverschiebung (Zonen-Wunschtemperatur) und Mindestvorlauf sind die neuen
+# Rollen des generischen Pfads. Nicht in REQUIRED_OPTIONS (siehe Kommentar oben).
+NEW_ENTITY_OPTIONS = ("entity_shift_current", "entity_min_flow")
 
 OUTDATED_CONFIGURATION = "Konfiguration veraltet – bitte SmartHeat-Einrichtung erneut durchführen"
 _ROOM_SENSOR = re.compile(r"sensor\.[a-z0-9_]+|climate\.[a-z0-9_]+::current_temperature")
 _OUTDOOR_SOURCE = re.compile(r"(sensor|weather)\.[a-z0-9_]+")
 _BATTERY_ENTITY = re.compile(r"(sensor|binary_sensor)\.[a-z0-9_]+")
 _NOTIFY_SERVICE = re.compile(r"notify\.[a-z0-9_]+")
+# Spec 5.6 "Zonen-Entity schreibbar": plant.write kennt nur climate.set_temperature und
+# number.set_value (ein input_number- oder sensor-Wert waere beim Start gueltig, liesse sich aber
+# nie schreiben).
+_WRITABLE_ENTITY = {
+    "entity_shift_current": (
+        re.compile(r"climate\.[a-z0-9_]+(::temperature)?|number\.[a-z0-9_]+"), "eine climate.*- oder number.*-Entity",
+    ),
+    "entity_min_flow": (re.compile(r"number\.[a-z0-9_]+"), "eine number.*-Entity"),
+}
+RECONFIGURE_HINT = "bitte SmartHeat neu konfigurieren"
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +129,25 @@ def _string_list(options: dict, key: str, pattern: re.Pattern) -> list[str]:
 
 def resolve_effective_options(options: dict) -> dict:
     sources = _resolve_sources(options)
+    missing = [key for key in NEW_ENTITY_OPTIONS if not options.get(key)]
+    if missing:
+        raise ConfigError(f"{OUTDATED_CONFIGURATION} (Option '{missing[0]}' fehlt)")
+    for key, (pattern, expected) in _WRITABLE_ENTITY.items():
+        value = options[key]
+        if not isinstance(value, str) or not pattern.fullmatch(value):
+            raise ConfigError(f"Option '{key}' ({value!r}) muss {expected} sein – {RECONFIGURE_HINT}")
+    # Final-Review I1: Zone (wird geschrieben) und Raum-Soll (Kundenwunsch, wird gelesen) auf derselben
+    # Entity waeren eine Rueckkopplung bis shift_max. Vergleich ohne "::attribut".
+    shift = options["entity_shift_current"]
+    if shift.partition("::")[0] == str(options.get("entity_room_target", "")).partition("::")[0]:
+        raise ConfigError(
+            f"Option 'entity_shift_current' ({shift!r}) ist dieselbe Entity wie 'entity_room_target' – "
+            f"die Heizzone kann nicht zugleich Raum-Soll sein, {RECONFIGURE_HINT}"
+        )
+    try:
+        daily_trigger_time = validate_daily_trigger_time(options.get("daily_trigger_time"))
+    except ValueError as error:
+        raise ConfigError(str(error)) from None
     verteilsystem = options.get("verteilsystem")
     if not verteilsystem:
         raise ConfigError(
@@ -122,27 +157,20 @@ def resolve_effective_options(options: dict) -> dict:
         safety = resolve_local_safety(verteilsystem)
     except ValueError as error:
         raise ConfigError(f"Option 'verteilsystem': {error}") from None
-    try:
-        windows = windows_from_options(options)
-    except ValueError as error:
-        raise ConfigError(str(error)) from None
     base_url = resolve_accounts_api_base_url(options.get("accounts_api_base_url"))
     return {
         **options,
         **sources,
         "curve_min": safety.curve_min,
         "curve_max": safety.curve_max,
-        "offset_min": safety.offset_min,
-        "offset_max": safety.offset_max,
+        "shift_min": safety.shift_min,
+        "shift_max": safety.shift_max,
+        "min_flow_min": safety.min_flow_min,
+        "min_flow_max": safety.min_flow_max,
         "boost_threshold_k": safety.boost_threshold_k,
         "boost_curve_value": safety.boost_curve_value,
-        "boost_offset_value": safety.boost_offset_value,
-        "daily_trigger_time": windows.daily_trigger_time,
-        "day_avg_window_start": windows.day_avg_window_start,
-        "day_avg_window_end": windows.day_avg_window_end,
-        "night_avg_window_start": windows.night_avg_window_start,
-        "night_avg_window_end": windows.night_avg_window_end,
-        "avg_window_hours": window_size_hours(windows.day_avg_window_start, windows.day_avg_window_end),
+        "boost_shift_value": safety.boost_shift_value,
+        "daily_trigger_time": daily_trigger_time,
         "accounts_api_base_url": base_url,
     }
 
@@ -166,19 +194,19 @@ def validate_boost_config(options: dict) -> str | None:
     """Boost-Werte ausserhalb der Clamps sind ein Startfehler statt still geclampt: der Boost
     ist der einzige Schreibpfad ohne Server-Aufsicht."""
     curve_min, curve_max = options["curve_min"], options["curve_max"]
-    offset_min, offset_max = options["offset_min"], options["offset_max"]
+    shift_min, shift_max = options["shift_min"], options["shift_max"]
     boost_curve_value = options["boost_curve_value"]
-    boost_offset_value = options["boost_offset_value"]
+    boost_shift_value = options["boost_shift_value"]
 
     if not (curve_min <= boost_curve_value <= curve_max):
         return (
             f"boost_curve_value ({boost_curve_value}) liegt ausserhalb des konfigurierten "
             f"Bereichs [curve_min={curve_min}, curve_max={curve_max}]"
         )
-    if not (offset_min <= boost_offset_value <= offset_max):
+    if not (shift_min <= boost_shift_value <= shift_max):
         return (
-            f"boost_offset_value ({boost_offset_value}) liegt ausserhalb des konfigurierten "
-            f"Bereichs [offset_min={offset_min}, offset_max={offset_max}]"
+            f"boost_shift_value ({boost_shift_value}) liegt ausserhalb des konfigurierten "
+            f"Bereichs [shift_min={shift_min}, shift_max={shift_max}]"
         )
     return None
 
@@ -205,7 +233,9 @@ def validate_local_check_interval(options: dict) -> str | None:
 
 def validate_telemetry_interval(options: dict) -> str | None:
     """Untergrenze 10 s wie im config.yaml-Schema, auch fuer ein von Hand editiertes
-    options.json: sonst fluten Telemetrie-Publishes den Server."""
+    options.json: sonst fluten Telemetrie-Publishes den Server. Obergrenze 900 s (TP11-Review):
+    darueber lernt der Regelkern serverseitig praktisch nie (Abdeckungsregel > 15 min Luecke =
+    Pause)."""
     value = options.get("telemetry_interval_seconds")
     if value is not None and not _is_finite_number(value):
         return f"telemetry_interval_seconds ({value!r}) ist kein gueltiger endlicher Zahlenwert"
@@ -213,6 +243,12 @@ def validate_telemetry_interval(options: dict) -> str | None:
         return (
             f"telemetry_interval_seconds ({value}) liegt unter dem zulaessigen Minimum "
             f"von 10 Sekunden"
+        )
+    if value is not None and value > 900:
+        return (
+            f"telemetry_interval_seconds ({value}) liegt ueber dem zulaessigen Maximum "
+            f"von 900 Sekunden (15 min) - der Regelkern wertet nur Telemetrie-Luecken bis "
+            f"15 min als zusammenhaengend, darueber lernt er praktisch nie"
         )
     return None
 

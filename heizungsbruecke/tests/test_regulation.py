@@ -13,16 +13,16 @@ from heizungsbruecke.override import Override
 
 # Unterscheidbar: Notfall (= Clamp-Maximum) 0.8/5.0, Comfort 0.5/2.0, Wiederherstellungspunkt 0.3/1.0.
 OPTIONS = {
-    "curve_min": 0.2, "curve_max": 0.8, "offset_min": 0.0, "offset_max": 5.0,
-    "boost_threshold_k": 0.5, "boost_curve_value": 0.5, "boost_offset_value": 2.0,
+    "curve_min": 0.2, "curve_max": 0.8, "shift_min": 0.0, "shift_max": 5.0,
+    "boost_threshold_k": 0.5, "boost_curve_value": 0.5, "boost_shift_value": 2.0,
     "daily_trigger_time": "12:00",
 }
 ROOM_ROLES = {"room_actual": "sensor.room_actual", "room_target": "sensor.room_target"}
-ENTITY_IDS = {**ROOM_ROLES, "curve_current": "number.curve", "offset_current": "number.offset"}
-RESTORE_POINT = {"curve_current": 0.3, "offset_current": 1.0}
-EMERGENCY = [("number.curve", 0.8), ("number.offset", 5.0)]
-COMFORT = [("number.curve", 0.5), ("number.offset", 2.0)]
-RESTORE = [("number.curve", 0.3), ("number.offset", 1.0)]
+ENTITY_IDS = {**ROOM_ROLES, "curve_current": "number.curve", "shift_current": "number.shift"}
+RESTORE_POINT = {"curve_current": 0.3, "shift_current": 1.0}
+EMERGENCY = [("number.curve", 0.8), ("number.shift", 5.0)]
+COMFORT = [("number.curve", 0.5), ("number.shift", 2.0)]
+RESTORE = [("number.curve", 0.3), ("number.shift", 1.0)]
 
 
 def _runtime(store, *, room_actual=20.0, room_target=21.0, entity_ids=ENTITY_IDS, states=None):
@@ -89,21 +89,18 @@ def test_check_propagates_read_errors(make_store):
         regulation.run_local_check(rt)
 
 
-def test_check_records_target_and_history(make_store, tmp_path, monkeypatch):
-    monkeypatch.setattr("heizungsbruecke.regulation.time.time", lambda: 1_000_000.0)
+def test_check_records_last_room_target(make_store, tmp_path):
     rt = _runtime(make_store(), entity_ids=ROOM_ROLES)
 
     regulation.run_local_check(rt)
 
     backup = load_backup(tmp_path / "backup.json")
     assert backup["last_room_target"] == 21.0
-    assert backup["target_history"] == [[1_000_000.0, 21.0]]
 
-    monkeypatch.setattr("heizungsbruecke.regulation.time.time", lambda: 1_003_600.0)
     rt.store.update(stable_target=22.0)
     regulation.run_local_check(rt)
 
-    assert load_backup(tmp_path / "backup.json")["target_history"] == [[1_000_000.0, 21.0], [1_003_600.0, 22.0]]
+    assert load_backup(tmp_path / "backup.json")["last_room_target"] == 22.0
 
 
 def test_target_raise_starts_comfort_boost(make_store, tmp_path):
@@ -130,7 +127,6 @@ def test_steady_state_check_does_not_write_backup(make_store, monkeypatch):
     # Datentraeger: ein Check ohne Aenderung schreibt nichts.
     store = make_store(backup={
         "last_room_target": 20.0, "boost_active": False, "last_published_target_rt": 20.0,
-        "target_history": [[0, 20.0]],
     })
     rt = _runtime(store, room_actual=20.0, room_target=20.0)
     saves = []
@@ -202,7 +198,7 @@ def test_refused_comfort_start_keeps_target_rise_pending(make_store, tmp_path):
     store = make_store(backup={"last_room_target": 20.0})
     rt = _runtime(
         store, room_actual=19.0, room_target=21.0,
-        states={"number.curve": RuntimeError("Cloud nicht erreichbar"), "number.offset": 22.0},
+        states={"number.curve": RuntimeError("Cloud nicht erreichbar"), "number.shift": 22.0},
     )
 
     regulation.run_local_check(rt)
@@ -263,11 +259,23 @@ def test_claim_due_tick_claims_daily_once_per_day(make_store, tmp_path):
     assert regulation.claim_due_tick(rt, datetime(2026, 9, 17, 15, 0)) is None
 
 
-def test_claim_due_tick_prefers_target_change_but_also_books_daily(make_store, tmp_path):
+def test_claim_due_tick_sends_daily_when_a_target_change_falls_on_the_daily_check(make_store, tmp_path):
+    # Der Server lernt nur auf "daily" und wendet die Vorsteuerung auch dort an: ein gebuchter
+    # Tagestick darf nicht als "target_change" rausgehen, sonst faellt der Lernschritt des Tages aus.
     rt = _runtime(make_store(backup={"last_published_target_rt": 21.0}), room_target=22.0)
 
-    assert regulation.claim_due_tick(rt, datetime(2026, 9, 17, 12, 5)) == "target_change"
-    assert load_backup(tmp_path / "backup.json")["last_daily_trigger_date"] == "2026-09-17"
+    assert regulation.claim_due_tick(rt, datetime(2026, 9, 17, 12, 5)) == "daily"
+    backup = load_backup(tmp_path / "backup.json")
+    assert (backup["last_published_target_rt"], backup["last_daily_trigger_date"]) == (22.0, "2026-09-17")
+
+
+def test_claim_due_tick_sends_target_change_when_daily_is_already_booked(make_store):
+    rt = _runtime(
+        make_store(backup={"last_published_target_rt": 21.0, "last_daily_trigger_date": "2026-09-17"}),
+        room_target=22.0,
+    )
+
+    assert regulation.claim_due_tick(rt, datetime(2026, 9, 17, 14, 0)) == "target_change"
 
 
 def test_claim_due_tick_is_claimed_again_after_a_failed_booking(make_store, tmp_path, monkeypatch):
@@ -283,7 +291,7 @@ def test_claim_due_tick_is_claimed_again_after_a_failed_booking(make_store, tmp_
             regulation.claim_due_tick(rt, datetime(2026, 9, 17, 12, 5))
     assert (rt.store.state.last_published_target_rt, rt.store.state.last_daily_trigger_date) == (21.0, None)
 
-    assert regulation.claim_due_tick(rt, datetime(2026, 9, 17, 12, 5)) == "target_change"
+    assert regulation.claim_due_tick(rt, datetime(2026, 9, 17, 12, 5)) == "daily"
     backup = load_backup(tmp_path / "backup.json")
     assert (backup["last_published_target_rt"], backup["last_daily_trigger_date"]) == (20.5, "2026-09-17")
 
@@ -312,4 +320,3 @@ def test_failed_save_keeps_the_previous_target_in_memory(make_store, monkeypatch
         regulation.run_local_check(rt)
 
     assert rt.store.state.last_room_target == 21.0
-    assert rt.store.state.target_history == []
