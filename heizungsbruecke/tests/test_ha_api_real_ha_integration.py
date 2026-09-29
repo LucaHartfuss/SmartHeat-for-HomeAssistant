@@ -189,16 +189,14 @@ def test_create_input_number_creates_a_real_working_helper(real_ha):
     Zustand ist ueber die normale REST-States-API lesbar.
 
     Der zurueckgegebene entity_id-String wird nur auf das `input_number.`-Praefix
-    geprueft, nicht auf einen exakten Wert: das WS-Create-Schema akzeptiert kein
-    `id`/`object_id`-Feld (siehe Docstring von create_input_number()), HA leitet
-    den Objekt-Teil stattdessen per `slugify(name)` her -- `object_id` beeinflusst
-    das Ergebnis also nicht.
+    geprueft, nicht auf einen exakten Wert: HA leitet den Objekt-Teil per
+    `slugify(name)` her (siehe Docstring von create_input_number()).
     """
     base_url, token = real_ha
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
 
     entity_id = api.create_input_number(
-        object_id="smartheat_test_room_day_avg", name="Test Tagesmittel",
+        name="Test Tagesmittel",
         minimum=0.0, maximum=35.0, step=0.01, initial=20.0,
     )
 
@@ -212,7 +210,7 @@ def test_set_input_number_value_updates_real_state(real_ha):
     base_url, token = real_ha
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
     entity_id = api.create_input_number(
-        object_id="smartheat_test_set_value", name="Test Set Value",
+        name="Test Set Value",
         minimum=0.0, maximum=35.0, step=0.01, initial=18.0,
     )
 
@@ -225,7 +223,7 @@ def test_entity_exists_true_for_created_entity_false_for_unknown(real_ha):
     base_url, token = real_ha
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
     entity_id = api.create_input_number(
-        object_id="smartheat_test_entity_exists", name="Test Entity Exists",
+        name="Test Entity Exists",
         minimum=0.0, maximum=35.0, step=0.01, initial=18.0,
     )
 

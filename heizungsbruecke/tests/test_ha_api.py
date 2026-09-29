@@ -250,7 +250,7 @@ def test_create_input_number_sends_ws_command_and_builds_entity_id():
         api, "_call_ws_command", return_value={"id": "smartheat_t1_room_day_avg_2"}
     ) as mock_call:
         entity_id = api.create_input_number(
-            object_id="smartheat_t1_room_day_avg", name="SmartHeat t1 Tagesmittel",
+            name="SmartHeat t1 Tagesmittel",
             minimum=0.0, maximum=35.0, step=0.01, initial=20.0,
         )
 
@@ -432,26 +432,6 @@ def test_create_statistics_sensor_orchestrates_flow_and_registry_lookup():
         "precision": 2,
     })
     mock_find.assert_called_once_with("e1")
-
-
-def test_list_states_returns_full_states_list():
-    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
-    mock_response = Mock()
-    mock_response.raise_for_status.return_value = None
-    mock_response.json.return_value = [
-        {"entity_id": "sensor.outdoor", "state": "5.0", "attributes": {"unit_of_measurement": "°C"}},
-        {"entity_id": "number.curve", "state": "0.9", "attributes": {}},
-    ]
-
-    with patch("heizungsbruecke.ha_api.requests.get", return_value=mock_response) as mock_get:
-        result = api.list_states()
-
-    assert result == mock_response.json.return_value
-    mock_get.assert_called_once_with(
-        "http://supervisor/core/api/states",
-        headers={"Authorization": "Bearer test-token"},
-        timeout=10,
-    )
 
 
 def test_create_statistics_sensor_passes_custom_state_characteristic():

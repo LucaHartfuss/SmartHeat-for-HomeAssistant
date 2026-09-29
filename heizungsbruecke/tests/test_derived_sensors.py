@@ -24,7 +24,7 @@ def _ha_api(existing=()):
     ha_api.create_statistics_sensor.side_effect = lambda name, source_entity_id, max_age_hours, **kw: (
         "sensor." + name.lower().replace(" ", "_").replace(".", "").replace("-", "_")
     )
-    ha_api.create_input_number.side_effect = lambda object_id, **kw: f"input_number.{object_id}"
+    ha_api.create_input_number.side_effect = lambda name, **kw: "input_number." + name.lower().replace(" ", "_").replace(".", "")
     return ha_api
 
 

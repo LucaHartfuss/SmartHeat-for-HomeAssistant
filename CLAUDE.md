@@ -1,6 +1,6 @@
 # SmartHeat-for-HomeAssistant — Repo-Kontext
 
-HA-Add-on-Repository mit zwei Add-ons: `heizungsbruecke` (Client-seitige Bridge-Logik: Snapshot-Publish, Boost, Fail-Safe, lokale Sicherheits-Clamps) und `cloudflared_access_mqtt` (TCP-Tunnel-Forwarder zum Server). Beide laufen auf jedem Kunden-Pi, inkl. `client1`. Volle Beschreibung: `../docs/architecture.md`, Abschnitt 4. Sicherheitsregeln aus `../CLAUDE.md` gelten unverändert — Änderungen hier wirken sich real auf laufende Kundenanlagen aus, sobald deployed.
+HA-Add-on-Repository mit zwei Add-ons: `heizungsbruecke` (Client-seitige Bridge-Logik: Snapshot-Publish, Boost, Notbetrieb bei ausbleibender Server-Antwort, lokale Sicherheits-Clamps) und `cloudflared_access_mqtt` (TCP-Tunnel-Forwarder zum Server). Beide laufen auf jedem Kunden-Pi, inkl. `client1`. Volle Beschreibung: `../docs/architecture.md`, Abschnitt 4. Sicherheitsregeln aus `../CLAUDE.md` gelten unverändert — Änderungen hier wirken sich real auf laufende Kundenanlagen aus, sobald deployed.
 
 ## Struktur
 
@@ -12,7 +12,7 @@ HA-Add-on-Repository mit zwei Add-ons: `heizungsbruecke` (Client-seitige Bridge-
   - `override.py` — einzige Stelle, die Kurve/Offset auf die Anlage schreibt: Sollwert-Regel Notfall-Boost > Comfort-Boost > Wiederherstellungspunkt, Schreiben nur beim Wechsel, immer geclampt.
   - `regulation.py` — lokaler Check (Comfort-Boost nur bei Sollwerterhöhung, Notfall-Boost nur im Notbetrieb, Stable-Target-Cache mit 10-s-Entprellung) und „Tick fällig?“.
   - `ticks.py` — führt die Aktionen von `delivery.py` aus, verarbeitet Server-Antworten.
-  - `delivery.py` — reine Zustandsmaschine der Tick-Zustellung (Phasen, Retry mit derselben `seq`, Notbetrieb nach 2 Ack-Timeouts, Datenfehler lokal/Server/Anlage).
+  - `delivery.py` — reine Zustandsmaschine der Tick-Zustellung (Phasen, Retry mit derselben `seq`, Datenfehler lokal/Server/Anlage). Fail-Safe = Ack-Timeout: bleibt die Antwort auf einen Snapshot 30 s aus (`ACK_TIMEOUT_SECONDS`), folgt der nächste Versuch nach der Server-Retry-Kette (0/5/15/60 min, danach stündlich); nach 2 Ack-Timeouts in Folge fragt das Add-on den Abo-Status ab und geht bei inaktivem Abo in den Abo-inaktiv-Modus, sonst in den Notbetrieb (Notfall-Boost auf die Clamp-Obergrenzen, sobald der Raum mehr als 1 K unter dem Sollwert liegt, `emergency_boost.py`). Jede passende Server-Antwort beendet den Notbetrieb; eine Ablehnung (`rejected`, auch ein unbekanntes `schema`) oder ein Schreibfehler zur Anlage (`WriteFailed`) zählt als Antwort mit Datenfehler, nie als Notbetrieb. Den zeitbasierten 26-h-Fail-Safe gibt es seit 0.12.0 nicht mehr.
   - `abo.py` — Abo-inaktiv-Modus und Fristende.
   - `triggers.py` — HA-Trigger-Client (WebSocket) und MQTT-Client-Aufbau; Callbacks stellen nur in den Worker ein.
   - `worker.py` — Regel-Worker (Event-Queue + Zeitplan), alle Regelungsereignisse nacheinander im Hauptthread.

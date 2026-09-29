@@ -90,14 +90,14 @@ def ensure_all(
     result["room_day_avg"] = ensure(
         "room_day_avg", None,
         lambda: ha_api.create_input_number(
-            object_id=f"smartheat_{tenant_id}_room_day_avg", name=f"SmartHeat {tenant_id} Raumtemp. Tagesmittel",
+            name=f"SmartHeat {tenant_id} Raumtemp. Tagesmittel",
             minimum=0.0, maximum=35.0, step=0.01, initial=20.0,
         ),
     )
     result["room_night_avg"] = ensure(
         "room_night_avg", None,
         lambda: ha_api.create_input_number(
-            object_id=f"smartheat_{tenant_id}_room_night_avg", name=f"SmartHeat {tenant_id} Raumtemp. Nachtmittel",
+            name=f"SmartHeat {tenant_id} Raumtemp. Nachtmittel",
             minimum=0.0, maximum=35.0, step=0.01, initial=20.0,
         ),
     )

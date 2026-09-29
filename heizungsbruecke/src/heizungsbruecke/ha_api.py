@@ -96,15 +96,6 @@ class HomeAssistantApi:
             raise ValueError(f"Entity {real_entity_id} hat keinen gueltigen Zustand: {state!r}")
         return state
 
-    def list_states(self) -> list[dict]:
-        response = requests.get(
-            f"{self._base_url}{self._api_prefix}/states",
-            headers=self._headers,
-            timeout=10,
-        )
-        response.raise_for_status()
-        return response.json()
-
     def get_config(self) -> dict:
         """GET /api/config -- u.a. `time_zone` der HA-Instanz (Startpruefung der
         Container-Zeitzone)."""
@@ -126,7 +117,7 @@ class HomeAssistantApi:
         response.raise_for_status()
 
     def create_input_number(
-        self, object_id: str, name: str, minimum: float, maximum: float, step: float, initial: float
+        self, name: str, minimum: float, maximum: float, step: float, initial: float
     ) -> str:
         """Legt einen input_number-Helper per Websocket an und liefert seine Entity-ID.
 
@@ -142,20 +133,11 @@ class HomeAssistantApi:
         Verifiziert per echtem WS-Roundtrip gegen denselben Container (siehe
         tests/test_ha_api_real_ha_integration.py).
 
-        WICHTIG, per Quellcode bestaetigt: `object_id` wird von HA NICHT als
-        Entity-ID uebernommen. Das Create-Schema (`STORAGE_FIELDS` in
-        input_number/__init__.py) akzeptiert nur `name`/`min`/`max`/`initial`/
-        `step`/`icon`/`unit_of_measurement`/`mode` -- kein `id`-Feld; die
-        `BASE_COMMAND_MESSAGE_SCHEMA` des Websocket-Kommandos ist strikt
-        (`vol.Schema` ohne `extra=ALLOW_EXTRA`), ein zusaetzliches `id`/
-        `object_id`-Feld wuerde also ohnehin mit "extra keys not allowed"
-        abgelehnt. Der tatsaechliche Objekt-Teil der Entity-ID ist
-        `IDManager.generate_id(name)`, also ein `slugify(name)` mit
-        Kollisions-Suffix (`_2`, `_3`, ...) bei Namenskonflikten -- unabhaengig
-        vom hier uebergebenen `object_id`. Der Parameter bleibt aus
-        Signaturkompatibilitaet (siehe Task-Interface) erhalten, wird aber
-        aktuell nicht verwendet; Aufrufer duerfen sich nicht auf
-        `input_number.<object_id>` als Ergebnis verlassen, sondern muessen den
+        WICHTIG, per Quellcode bestaetigt: der Objekt-Teil der Entity-ID wird von
+        HA nicht vom Aufrufer vorgegeben, sondern ist `IDManager.generate_id(name)`,
+        also ein `slugify(name)` mit Kollisions-Suffix (`_2`, `_3`, ...) bei
+        Namenskonflikten. Aufrufer duerfen sich also nicht auf einen selbst
+        gewaehlten Objekt-Teil als Ergebnis verlassen, sondern muessen den
         zurueckgegebenen String verwenden.
         """
         result = self._call_ws_command({

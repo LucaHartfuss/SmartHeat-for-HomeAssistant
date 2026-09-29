@@ -76,6 +76,16 @@ def test_broken_failsafe_file_keeps_backup(make_store, tmp_path):
     assert store.state.delivery == DeliveryState()
 
 
+def test_failsafe_file_without_object_is_warned_and_ignored(make_store, tmp_path, caplog):
+    (tmp_path / "failsafe_state.json").write_text("[1, 2]")
+
+    with caplog.at_level(logging.WARNING):
+        store = make_store()
+
+    assert store.state.delivery == DeliveryState()
+    assert "failsafe_state.json enthaelt kein JSON-Objekt" in caplog.text
+
+
 @pytest.mark.parametrize("key,value", [
     ("curve_current", "0.9"), ("curve_current", float("nan")), ("offset_current", True),
     ("boost_active", "ja"), ("emergency_boost_active", 1), ("last_room_target", [21]),

@@ -3,6 +3,11 @@
 Wird im Update-Dialog des Supervisors angezeigt. Pro Version ein Abschnitt `## X.Y.Z`; der
 Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Release.
 
+## 0.23.0
+
+- Eine Server-Antwort mit unbekanntem Schema wird als Datenfehler vom Server gemeldet und nicht übernommen.
+- Aufräumarbeiten ohne Verhaltensänderung: ungenutzter Code entfernt, Warnung bei einer beschädigten `failsafe_state.json`, zusätzliche Tests.
+
 ## 0.22.0
 
 - Die Telemetrie meldet einen anstehenden Datenfehler (Quelle und Details) an den Server, damit

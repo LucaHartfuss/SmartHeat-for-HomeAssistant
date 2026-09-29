@@ -46,7 +46,7 @@ def enter_inactive(rt: Runtime, now: datetime) -> None:
     blockieren daher nie. Eine vorher gesetzte "zugang_abgelehnt" (eine Ablehnung bei noch
     unklarem Abo-Status vor dieser eindeutig inaktiven) wird aufgeloest: sonst haengt der
     falsche Rat ("neu anmelden") die ganze Kulanzfrist, und der Grund wuerde sogar noch im
-    abo_beendet-Event am Fristende auftauchen (Fix Review Focus 1, Runde 1)."""
+    abo_beendet-Event am Fristende auftauchen."""
     state = rt.store.state
     if state.abo_inactive_since is not None:
         return

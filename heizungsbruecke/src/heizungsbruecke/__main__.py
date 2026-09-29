@@ -95,7 +95,7 @@ class StartupError(Exception):
     """Startfehler bei erreichbarem HA nach Ablauf des Budgets (Spec TP6 3.6). `key` ist die
     stabile Identitaet des Fehlers fuer den Meldezustand: der Fehlertext enthaelt oft
     laufzeitabhaengige Details (Flow-ID von HA, Objektadressen), die bei jedem Neustart anders
-    waeren und sonst jedes Mal eine neue Meldung ausloesten (Review Focus 4)."""
+    waeren und sonst jedes Mal eine neue Meldung ausloesten."""
 
     def __init__(self, grund: str, key: str) -> None:
         super().__init__(grund)

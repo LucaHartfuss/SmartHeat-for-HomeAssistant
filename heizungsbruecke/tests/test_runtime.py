@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import heizungsbruecke.__main__ as main_module
-from heizungsbruecke import abo, entitlement, ticks
+from heizungsbruecke import abo, backup_store, entitlement, ticks
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.delivery import DeliveryState
 from heizungsbruecke.derived_sensors import DerivedSensors
@@ -114,6 +114,9 @@ class FakeHa:
         return str(value)
 
 
+_OMIT = object()
+
+
 class FakeMqtt:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
@@ -145,13 +148,16 @@ class FakeMqtt:
     def stop(self):
         self.stopped = True
 
-    def answer(self, seq, status="ok", curve=0.95, offset=23.0, reason=None):
-        """Server-Antwort ueber den echten paho-Callback einspeisen."""
+    def answer(self, seq, status="ok", curve=0.95, offset=23.0, reason=None, schema=2):
+        """Server-Antwort ueber den echten paho-Callback einspeisen (schema=_OMIT: Feld fehlt)."""
         message = MagicMock()
         message.retain = False
-        message.payload = json.dumps({
-            "schema": 2, "seq": seq, "ts": "x", "status": status, "curve": curve, "offset": offset, "reason": reason,
-        })
+        payload = {
+            "schema": schema, "seq": seq, "ts": "x", "status": status, "curve": curve, "offset": offset, "reason": reason,
+        }
+        if schema is _OMIT:
+            del payload["schema"]
+        message.payload = json.dumps(payload)
         self.setpoints_callback(None, None, message)
 
 
@@ -716,6 +722,32 @@ def test_invalid_answer_counts_as_server_fault_without_writing(env, answer):
     assert "ungültige Serverantwort" in env.ha.pushes[-1]
 
 
+@pytest.mark.parametrize("schema", [_OMIT, None, 3, "2", True, 2.0])
+def test_answer_with_unknown_schema_counts_as_server_fault_without_writing(env, schema):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+
+    _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], schema=schema)
+
+    assert env.ha.writes == []
+    assert "ungültige Serverantwort" in env.ha.pushes[-1]
+    assert "unbekanntes Schema" in env.ha.pushes[-1]
+
+
+def test_unknown_schema_for_a_foreign_seq_is_ignored(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    pushes_before = list(env.ha.pushes)
+
+    _answer(env, bridge, "fremde-seq", schema=3)
+
+    assert env.ha.writes == []
+    assert env.ha.pushes == pushes_before
+    assert _awaiting_ack(bridge)
+
+
 def test_failed_value_write_is_retried_with_same_seq(env):
     _quiet_backup(env)
     bridge = _start(env)
@@ -731,6 +763,30 @@ def test_failed_value_write_is_retried_with_same_seq(env):
     _advance(env, bridge, 30)
 
     assert [s["seq"] for s in _mqtt(env).snapshots] == [seq, seq]
+
+
+def test_server_values_are_not_written_when_restore_point_cannot_be_saved(env, monkeypatch):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[0]["seq"]
+    real_save = backup_store.save_backup
+    broken = {"on": True}
+
+    def _save(path, content):
+        if broken["on"] and path == env.paths["BACKUP_PATH"]:
+            raise OSError("Datentraeger voll")
+        return real_save(path, content)
+
+    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _save)
+    _answer(env, bridge, seq)
+
+    assert env.ha.writes == []
+    assert _delivery(bridge).pending is not None and _delivery(bridge).pending.seq == seq
+
+    broken["on"] = False
+    _advance(env, bridge, 30)  # Ack-Timeout (delivery.ACK_TIMEOUT_SECONDS)
+    assert _mqtt(env).snapshots[-1]["seq"] == seq
 
 
 def test_answer_during_boost_only_updates_backup(env):

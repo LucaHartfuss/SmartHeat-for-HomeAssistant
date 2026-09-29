@@ -1,5 +1,6 @@
 import json
 import logging
+from collections.abc import Callable
 
 import paho.mqtt.client as mqtt
 from paho.mqtt.enums import CallbackAPIVersion
@@ -21,13 +22,14 @@ class BridgeMqttClient:
     """Snapshots und Telemetrie hoch, Antworten runter -- sonst nichts. Kein Last Will und keine
     Nachricht unter smartheat/<tenant>/status/ oder homeassistant/: der Status fuer den Kunden
     laeuft seit 0.20.0 lokal ueber die SmartHeat-Integration (Spec TP7 1.4). Mosquitto selbst
-    lehnt einen Connect mit einem von der ACL nicht erlaubten Will-Topic NICHT ab (widerlegte
-    Annahme aus Praezisierung 1, siehe tests/test_mosquitto_will_acl.sh) -- Add-ons < 0.20.0
-    behalten ihre Verbindung deshalb auch nach `refresh-acl`."""
+    lehnt einen Connect mit einem von der ACL nicht erlaubten Will-Topic NICHT ab (siehe
+    tests/test_mosquitto_will_acl.sh) -- Add-ons < 0.20.0 behalten ihre Verbindung deshalb
+    auch nach `refresh-acl`."""
 
     def __init__(
         self, host: str, port: int, tenant_id: str, username: str, password: str,
-        on_auth_rejected=None, on_connected=None,
+        on_auth_rejected: Callable[["BridgeMqttClient"], None] | None = None,
+        on_connected: Callable[["BridgeMqttClient"], None] | None = None,
     ):
         self._tenant_id = tenant_id
         self._host, self._port = host, port
