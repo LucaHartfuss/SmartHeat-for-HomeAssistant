@@ -64,18 +64,6 @@ def test_schedule_orders_by_due_time_then_insertion(clock):
     assert _kinds(seen) == ["a", "b", "c"]
 
 
-def test_cancelled_entry_is_not_dispatched(clock):
-    worker, seen = _recording_worker(clock, "a", "b")
-    handle = worker.schedule(5, Event("a"))
-    worker.schedule(5, Event("b"))
-
-    worker.cancel(handle)
-    clock.advance(5)
-    worker.run_pending()
-
-    assert _kinds(seen) == ["b"]
-
-
 def test_coalesced_posts_produce_one_event_with_ored_flags(clock):
     worker, seen = _recording_worker(clock, "local_check")
 

@@ -38,7 +38,6 @@ class RegulationWorker:
         self._queue: queue.Queue = queue.Queue()
         self._handlers: dict[str, Handler] = {}
         self._schedule: list[tuple[float, int, Event]] = []
-        self._cancelled: set[int] = set()
         self._handles = itertools.count()
         self._coalesce_lock = threading.Lock()
         self._coalesced: dict[str, dict[str, bool]] = {}
@@ -76,9 +75,6 @@ class RegulationWorker:
         heapq.heappush(self._schedule, (self._clock() + max(delay_s, 0.0), handle, event))
         return handle
 
-    def cancel(self, handle: int) -> None:
-        self._cancelled.add(handle)
-
     def run(self) -> NoReturn:
         """Verarbeitet Ereignisse, bis der Prozess beendet wird (das Add-on beendet sich seit
         0.20.0 nie selbst, Endzustaende sind ein Ruhezustand). Faellige Planeintraege gehen neuen
@@ -106,19 +102,12 @@ class RegulationWorker:
                 event = self._resolve(item)
             self._dispatch(event)
 
-    def _drop_cancelled_head(self) -> None:
-        while self._schedule and self._schedule[0][1] in self._cancelled:
-            _, handle, _ = heapq.heappop(self._schedule)
-            self._cancelled.discard(handle)
-
     def _pop_due(self) -> Event | None:
-        self._drop_cancelled_head()
         if self._schedule and self._schedule[0][0] <= self._clock():
             return heapq.heappop(self._schedule)[2]
         return None
 
     def _seconds_until_next_due(self) -> float | None:
-        self._drop_cancelled_head()
         if not self._schedule:
             return None
         return max(self._schedule[0][0] - self._clock(), 0.0)
