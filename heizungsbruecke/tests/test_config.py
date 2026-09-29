@@ -449,6 +449,27 @@ def test_outdated_options_without_shift_role():
         config.resolve_effective_options(old)
 
 
+@pytest.mark.parametrize("key, value", [
+    ("entity_shift_current", "sensor.zone_temperature"),
+    ("entity_shift_current", "input_number.shift"),
+    ("entity_shift_current", "climate.zone::current_temperature"),
+    ("entity_min_flow", "climate.zone"),
+    ("entity_min_flow", "input_number.min_flow"),
+    ("entity_min_flow", "sensor.min_flow"),
+])
+def test_unwritable_entity_domain_is_a_configuration_error(key, value):
+    # Spec 5.6: Zonen-Entity muss schreibbar sein; plant.write kennt climate.set_temperature und
+    # number.set_value.
+    with pytest.raises(config.ConfigError, match=f"Option '{key}'.*bitte SmartHeat neu konfigurieren"):
+        config.resolve_effective_options({**VALID, key: value})
+
+
+@pytest.mark.parametrize("shift", ["climate.zone", "climate.zone::temperature", "number.shift"])
+def test_writable_shift_domains_are_accepted(shift):
+    effective = config.resolve_effective_options({**VALID, "entity_shift_current": shift})
+    assert effective["entity_shift_current"] == shift
+
+
 @pytest.mark.parametrize("value", [None, "", "25:00", "12"])
 def test_daily_trigger_time_validated(value):
     with pytest.raises(config.ConfigError, match="daily_trigger_time"):

@@ -56,6 +56,16 @@ _ROOM_SENSOR = re.compile(r"sensor\.[a-z0-9_]+|climate\.[a-z0-9_]+::current_temp
 _OUTDOOR_SOURCE = re.compile(r"(sensor|weather)\.[a-z0-9_]+")
 _BATTERY_ENTITY = re.compile(r"(sensor|binary_sensor)\.[a-z0-9_]+")
 _NOTIFY_SERVICE = re.compile(r"notify\.[a-z0-9_]+")
+# Spec 5.6 "Zonen-Entity schreibbar": plant.write kennt nur climate.set_temperature und
+# number.set_value (ein input_number- oder sensor-Wert waere beim Start gueltig, liesse sich aber
+# nie schreiben).
+_WRITABLE_ENTITY = {
+    "entity_shift_current": (
+        re.compile(r"climate\.[a-z0-9_]+(::temperature)?|number\.[a-z0-9_]+"), "eine climate.*- oder number.*-Entity",
+    ),
+    "entity_min_flow": (re.compile(r"number\.[a-z0-9_]+"), "eine number.*-Entity"),
+}
+RECONFIGURE_HINT = "bitte SmartHeat neu konfigurieren"
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +132,10 @@ def resolve_effective_options(options: dict) -> dict:
     missing = [key for key in NEW_ENTITY_OPTIONS if not options.get(key)]
     if missing:
         raise ConfigError(f"{OUTDATED_CONFIGURATION} (Option '{missing[0]}' fehlt)")
+    for key, (pattern, expected) in _WRITABLE_ENTITY.items():
+        value = options[key]
+        if not isinstance(value, str) or not pattern.fullmatch(value):
+            raise ConfigError(f"Option '{key}' ({value!r}) muss {expected} sein – {RECONFIGURE_HINT}")
     try:
         daily_trigger_time = validate_daily_trigger_time(options.get("daily_trigger_time"))
     except ValueError as error:
