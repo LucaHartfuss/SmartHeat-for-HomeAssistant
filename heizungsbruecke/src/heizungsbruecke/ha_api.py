@@ -116,6 +116,37 @@ class HomeAssistantApi:
         )
         response.raise_for_status()
 
+    def set_climate_temperature(self, entity_id: str, value: float) -> None:
+        """Wunschtemperatur einer Climate-Entity (TP11: Parallelverschiebung = Zonen-Sollwert).
+        Bei mypyllant im Modus "Manuell" dauerhaft (set_manual_mode_setpoint)."""
+        response = requests.post(
+            f"{self._base_url}{self._api_prefix}/services/climate/set_temperature",
+            headers=self._headers,
+            json={"entity_id": entity_id, "temperature": value},
+            timeout=10,
+        )
+        response.raise_for_status()
+
+    def set_hvac_mode(self, entity_id: str, mode: str) -> None:
+        response = requests.post(
+            f"{self._base_url}{self._api_prefix}/services/climate/set_hvac_mode",
+            headers=self._headers,
+            json={"entity_id": entity_id, "hvac_mode": mode},
+            timeout=10,
+        )
+        response.raise_for_status()
+
+    def delete_input_number(self, entity_id: str) -> None:
+        """Loescht einen input_number-Helfer (TP11: Tag-/Nachtmittel entfallen). Nur input_number.*
+        mit dem Objekt-Teil-Praefix `smartheat_` (wie delete_helper() bei den Config-Entry-Helfern:
+        nie ein fremder Helfer), per WS-Kommando input_number/delete mit dem Objekt-Teil der Entity-ID."""
+        domain, _, object_id = entity_id.partition(".")
+        if domain != "input_number" or not object_id:
+            raise RuntimeError(f"'{entity_id}' ist kein input_number-Helfer, wird nicht geloescht")
+        if not object_id.startswith("smartheat_"):
+            raise RuntimeError(f"'{entity_id}' ist kein SmartHeat-Hilfssensor, wird nicht geloescht")
+        self._call_ws_command({"type": "input_number/delete", "input_number_id": object_id})
+
     def create_input_number(
         self, name: str, minimum: float, maximum: float, step: float, initial: float
     ) -> str:
@@ -247,8 +278,7 @@ class HomeAssistantApi:
 
     def delete_helper(self, entity_id: str) -> None:
         """Loescht den Config-Entry eines per Config-Flow angelegten Helfers (Template- oder
-        Statistik-Sensor). input_number-Helfer haben keinen Config-Entry und werden nie
-        geloescht (derived_sensors).
+        Statistik-Sensor). input_number-Helfer loescht delete_input_number.
 
         Nur Entities der Plattformen HELPER_PLATFORMS: die Entity-ID stammt aus
         derived_sensors.json. Ist die Datei kaputt, von einer anderen Installation oder die ID

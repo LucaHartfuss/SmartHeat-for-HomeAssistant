@@ -677,3 +677,66 @@ def test_is_reachable_false_on_any_error(error):
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
     with patch.object(api, "get_config", side_effect=error):
         assert api.is_reachable() is False
+
+
+def test_set_climate_temperature_posts_correct_payload():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    mock_response = Mock()
+    mock_response.raise_for_status.return_value = None
+
+    with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response) as mock_post:
+        api.set_climate_temperature("climate.zone_1", 20.5)
+
+    mock_post.assert_called_once_with(
+        "http://supervisor/core/api/services/climate/set_temperature",
+        headers={"Authorization": "Bearer test-token"},
+        json={"entity_id": "climate.zone_1", "temperature": 20.5},
+        timeout=10,
+    )
+
+
+def test_set_hvac_mode_posts_correct_payload():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    mock_response = Mock()
+    mock_response.raise_for_status.return_value = None
+
+    with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response) as mock_post:
+        api.set_hvac_mode("climate.zone_1", "heat_cool")
+
+    mock_post.assert_called_once_with(
+        "http://supervisor/core/api/services/climate/set_hvac_mode",
+        headers={"Authorization": "Bearer test-token"},
+        json={"entity_id": "climate.zone_1", "hvac_mode": "heat_cool"},
+        timeout=10,
+    )
+
+
+def test_delete_input_number_sends_ws_command():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    with patch.object(api, "_call_ws_command", return_value={}) as mock_ws:
+        api.delete_input_number("input_number.smartheat_x_tagesmittel")
+
+    mock_ws.assert_called_once_with(
+        {"type": "input_number/delete", "input_number_id": "smartheat_x_tagesmittel"}
+    )
+
+
+def test_delete_input_number_refuses_non_input_number_entities():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    with patch.object(api, "_call_ws_command") as mock_ws, pytest.raises(RuntimeError):
+        api.delete_input_number("sensor.smartheat_x_tagesmittel")
+
+    mock_ws.assert_not_called()
+
+
+def test_delete_input_number_refuses_entities_without_smartheat_prefix():
+    """Wie delete_helper(): nur SmartHeat-eigene Helfer werden geloescht, kein fremder
+    input_number-Helfer wird versehentlich getroffen."""
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    with (
+        patch.object(api, "_call_ws_command") as mock_ws,
+        pytest.raises(RuntimeError, match="kein SmartHeat-Hilfssensor"),
+    ):
+        api.delete_input_number("input_number.fremder_helfer")
+
+    mock_ws.assert_not_called()
