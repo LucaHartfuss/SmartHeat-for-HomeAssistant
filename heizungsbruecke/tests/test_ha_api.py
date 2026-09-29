@@ -108,7 +108,7 @@ def test_set_number_value_posts_correct_payload():
         "http://supervisor/core/api/services/number/set_value",
         headers={"Authorization": "Bearer test-token"},
         json={"entity_id": "number.weishaupt_heizkurve_steigung", "value": 0.72},
-        timeout=10,
+        timeout=(10, 60),
     )
 
 
@@ -618,7 +618,7 @@ def test_set_climate_temperature_posts_correct_payload():
         "http://supervisor/core/api/services/climate/set_temperature",
         headers={"Authorization": "Bearer test-token"},
         json={"entity_id": "climate.zone_1", "temperature": 20.5},
-        timeout=10,
+        timeout=(10, 60),
     )
 
 
@@ -634,7 +634,7 @@ def test_set_hvac_mode_posts_correct_payload():
         "http://supervisor/core/api/services/climate/set_hvac_mode",
         headers={"Authorization": "Bearer test-token"},
         json={"entity_id": "climate.zone_1", "hvac_mode": "heat_cool"},
-        timeout=10,
+        timeout=(10, 60),
     )
 
 

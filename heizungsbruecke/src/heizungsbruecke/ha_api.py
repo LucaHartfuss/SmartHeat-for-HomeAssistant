@@ -8,6 +8,12 @@ import websocket
 HELPER_PLATFORMS = ("statistics", "template")
 # `state` in GET /api/config, sobald HA fertig gestartet ist (homeassistant.core.CoreState).
 HA_STATE_RUNNING = "RUNNING"
+# (Verbindungs-, Lese-Timeout) fuer Anlagen-Schreibaufrufe: HA beantwortet einen REST-Service-
+# Aufruf erst, wenn die Integration fertig ist (blocking=True, ohne serverseitiges Timeout).
+# mypyllant wartet danach auf einen Refresh: set_hvac_mode Cloud-Aufruf + 10 s Pause + Refresh,
+# set_temperature/number.set_value ~5 s. Mit 10 s Lese-Timeout meldete der Client ReadTimeout,
+# obwohl die Aenderung in der Cloud angekommen war.
+SERVICE_CALL_TIMEOUT = (10, 60)
 
 
 class HomeAssistantApi:
@@ -112,7 +118,7 @@ class HomeAssistantApi:
             f"{self._base_url}{self._api_prefix}/services/number/set_value",
             headers=self._headers,
             json={"entity_id": entity_id, "value": value},
-            timeout=10,
+            timeout=SERVICE_CALL_TIMEOUT,
         )
         response.raise_for_status()
 
@@ -123,7 +129,7 @@ class HomeAssistantApi:
             f"{self._base_url}{self._api_prefix}/services/climate/set_temperature",
             headers=self._headers,
             json={"entity_id": entity_id, "temperature": value},
-            timeout=10,
+            timeout=SERVICE_CALL_TIMEOUT,
         )
         response.raise_for_status()
 
@@ -132,7 +138,7 @@ class HomeAssistantApi:
             f"{self._base_url}{self._api_prefix}/services/climate/set_hvac_mode",
             headers=self._headers,
             json={"entity_id": entity_id, "hvac_mode": mode},
-            timeout=10,
+            timeout=SERVICE_CALL_TIMEOUT,
         )
         response.raise_for_status()
 

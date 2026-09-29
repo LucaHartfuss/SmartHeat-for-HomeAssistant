@@ -21,6 +21,9 @@ Wunschtemperatur am Raumthermostat.
 - **Nach dem Update SmartHeat einmal „Neu konfigurieren“** (Parallelverschiebung,
   Mindestvorlauftemperatur und Vorlauf-Soll zuordnen). Bis dahin meldet das Add-on
   „Konfiguration veraltet“ und verändert nichts an der Heizung.
+- Beim ersten Start mit der neuen Konfiguration übernimmt SmartHeat die aktuell an der Therme
+  eingestellte Heizkurve als Ausgangswert und meldet sich sofort beim Server, statt bis zum
+  nächsten Tagestick zu warten.
 
 ## 0.23.0
 

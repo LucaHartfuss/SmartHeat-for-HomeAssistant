@@ -378,6 +378,94 @@ def test_boot_keeps_a_usable_zone_shift(env):
     assert env.ha.writes == []
 
 
+def _backup_before_tp11(env, **extra):
+    """backup.json von 0.23.0: Wiederherstellungspunkt nur mit Steigung (am Anschlag), keine
+    Parallelverschiebung; beim Start waere sonst kein Tick faellig."""
+    backup = {
+        "last_room_target": 21.0, "last_published_target_rt": 21.0,
+        "last_daily_trigger_date": datetime.now().date().isoformat(),
+        "curve_current": 1.5, **extra,
+    }
+    save_backup(env.paths["BACKUP_PATH"], backup)
+
+
+def test_first_start_without_shift_restore_point_reseeds_curve_and_ticks_at_once(env):
+    # 0.23.0 -> 0.24.0: der alte Punkt (1.5, am Anschlag) darf den von Hand gesetzten Anlagenwert
+    # nicht per Durchsetzung ueberschreiben, und der Erstkontakt muss mit den Istwerten starten.
+    _backup_before_tp11(env)
+    env.ha.states.update({"number.curve_current": 1.05, "sensor.room_actual": 21.0})
+
+    bridge = _start(env)
+
+    assert _backup(env)["curve_current"] == 1.05
+    _trigger(env, bridge, "sensor.room_actual")  # naechster lokaler Check
+    snapshot = _mqtt(env).snapshots[0]
+    assert (snapshot["trigger"], snapshot["roles"]["curve_current"]) == ("target_change", 1.05)
+
+    _settle(env, bridge)
+    _advance(env, bridge, 300)
+    _advance(env, bridge, 300)  # zwei Durchsetzungsrunden ohne Serverantwort
+    assert [write for write in env.ha.writes if write[0] == "number.curve_current"] == []
+    assert "manual_override_pending" not in _backup(env)
+
+
+@pytest.mark.parametrize("live,seeded", [(1.8, 1.5), (0.3, 0.4), (1.07, 1.05)])
+def test_first_start_reseeds_curve_clamped_and_rounded(env, live, seeded):
+    _backup_before_tp11(env)
+    env.ha.states["number.curve_current"] = live
+
+    _start(env)
+
+    assert _backup(env)["curve_current"] == seeded
+
+
+def test_first_start_drops_the_old_curve_point_when_the_plant_is_unreadable(env):
+    _backup_before_tp11(env)
+    env.ha.states["number.curve_current"] = ValueError("unavailable")
+
+    _start(env)
+
+    assert "curve_current" not in _backup(env)
+
+
+def test_first_start_during_a_boost_keeps_the_curve_point(env):
+    # Die Anlage steht auf Boost-Werten: der Live-Wert ist kein Wiederherstellungspunkt.
+    _backup_before_tp11(env, boost_active=True)
+    env.ha.states.update({"number.curve_current": 1.5, "sensor.room_actual": 20.0})
+
+    _start(env)
+
+    assert _backup(env)["curve_current"] == 1.5
+
+
+def test_restart_with_shift_restore_point_keeps_curve_and_does_not_tick(env):
+    _quiet_backup(env)
+    env.ha.states["number.curve_current"] = 1.05
+    bridge = _start(env)
+
+    _trigger(env, bridge, "sensor.room_actual")
+
+    assert _backup(env)["curve_current"] == 0.9
+    assert _mqtt(env).snapshots == []
+
+
+def test_zone_preparation_failed_at_start_is_retried_on_the_next_local_check(env):
+    env.ha.states.update({"climate.zone": "unavailable", "climate.zone::temperature": 0.0})
+    bridge = _start(env, entity_shift_current="climate.zone")
+    assert env.ha.writes == []
+
+    env.ha.states["climate.zone"] = "auto"
+    _trigger(env, bridge, "sensor.room_actual")
+
+    assert env.ha.writes[:2] == [("climate.zone", "heat_cool"), ("climate.zone::temperature", 21.0)]
+    assert _backup(env)["shift_current"] == 21.0
+
+    writes = len(env.ha.writes)
+    env.ha.states["climate.zone"] = "auto"  # erfolgreich vorbereitet: kein weiterer Versuch
+    _trigger(env, bridge, "sensor.room_actual")
+    assert ("climate.zone", "heat_cool") not in env.ha.writes[writes:]
+
+
 def test_boot_writes_min_flow_when_it_differs_from_the_room_target(env):
     env.ha.states["number.min_flow"] = 25.0
 
@@ -401,7 +489,7 @@ def _min_flow_writes(env):
 
 
 def test_min_flow_change_back_within_the_settle_window_is_written(env):
-    # mypyllant meldet den eigenen Schreibvorgang erst ~30 min spaeter: HA zeigt noch 21, die
+    # Die Cloud spiegelt den eigenen Schreibvorgang erst mit dem naechsten Poll: HA zeigt noch 21, die
     # Anlage steht schon auf 22. Zurueck auf 21 muss geschrieben werden, sonst bleibt die Anlage
     # auf 22 und die Durchsetzung meldet spaeter einen falschen Eingriff.
     _quiet_backup(env)

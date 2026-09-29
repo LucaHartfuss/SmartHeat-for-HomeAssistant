@@ -25,11 +25,13 @@ logger = logging.getLogger(__name__)
 ROLES = ("curve_current", "shift_current")
 _LIMIT_KEYS = {"curve_current": "curve", "shift_current": "shift", "min_flow": "min_flow"}
 
-# mypyllant meldet einen eigenen Cloud-Schreibvorgang erst mit bis zu ~30 min Verzoegerung an HA
-# zurueck (Poll-Intervall). Innerhalb dieser Zeit ist ein lokaler HA-Read fuer eine soeben von UNS
-# selbst geschriebene Rolle nicht vertrauenswuerdig -- er kann noch den Wert VOR unserem
-# Schreibvorgang zeigen. Grundlage von Override.settled, der gemeinsamen Regel fuer den Quota-Check
-# unten (_matches_the_device) und die Durchsetzung (manual_override.py).
+# mypyllant fragt 5-10 s nach einem eigenen Cloud-Schreibvorgang neu ab. Spiegelt die
+# Hersteller-Cloud die Aenderung dann noch nicht wider, zeigt HA den alten Wert bis zum naechsten
+# regulaeren Poll (bis ~30 min). Innerhalb dieses Fensters ist ein lokaler HA-Read fuer eine soeben
+# von UNS selbst geschriebene Rolle deshalb nicht sicher vertrauenswuerdig -- er kann noch den Wert
+# VOR unserem Schreibvorgang zeigen. 35 min decken diesen Fall bewusst konservativ ab. Grundlage von
+# Override.settled, der gemeinsamen Regel fuer den Quota-Check unten (_matches_the_device) und die
+# Durchsetzung (manual_override.py).
 OWN_WRITE_SETTLE_SECONDS = 2100
 
 _ROW_EMERGENCY = "emergency"
@@ -191,8 +193,9 @@ class Override:
         Parallelverschiebung ueber plant.read_shift, das die Zone-inaktiv-Meldung < 5
         beruecksichtigt) muss dafuer erstens innerhalb eines halben Schritts am Ziel liegen. Haben
         WIR diese Rolle innerhalb von OWN_WRITE_SETTLE_SECONDS selbst zuletzt geschrieben, reicht
-        das allein nicht: mypyllant meldet einen eigenen Schreibvorgang erst mit Verzoegerung an HA
-        zurueck, der Read kann also noch den Stand VOR diesem Schreibvorgang zeigen (A -> B -> A
+        das allein nicht: spiegelt die Hersteller-Cloud einen eigenen Schreibvorgang bei mypyllants
+        Refresh kurz danach noch nicht wider, zeigt HA ihn erst mit dem naechsten Poll, der Read kann
+        also noch den Stand VOR diesem Schreibvorgang zeigen (A -> B -> A
         wuerde die Rueckkehr zu A sonst faelschlich ueberspringen, waehrend die Anlage noch auf B
         steht) -- dann muss zusaetzlich unser letzter eigener Schreibwert schon dem Ziel
         entsprechen. Ohne eigenes Schreiben dieser Rolle seit dem Start gilt der Read erst nach
@@ -307,6 +310,31 @@ class Override:
         written = self._write_role("shift_current", ref, start, ensure_mode=False, force=switched)
         self._store.update(shift_current=written)
         logger.warning("Startwert der Parallelverschiebung geschrieben: %s", written)
+
+    def reseed_curve_from_plant(self) -> None:
+        """Erster Start ohne gespeicherte Parallelverschiebung (0.23.0 -> 0.24.0, Neuinstallation):
+        ein vorhandener Wiederherstellungspunkt der Steigung stammt aus der Regelung vor TP11 (z. B.
+        am Anschlag) und wuerde sonst per Durchsetzung oder Boost-Ende ueber den Anlagenwert
+        geschrieben. Deshalb den Live-Wert (begrenzt und gerundet) uebernehmen; ist er nicht lesbar,
+        den alten Punkt verwerfen (ein Boost liest ihn bei Bedarf neu von der Anlage). Waehrend eines
+        Boosts steht die Anlage auf Boost-Werten: dann bleibt der Punkt. Wirft nur beim Speichern."""
+        state = self._store.state
+        ref = self._manifest.entity_ids.get("curve_current")
+        if ref is None or state.boost_active or state.emergency_boost_active:
+            return
+        try:
+            live = self._ha_api.get_state(ref)
+        except Exception as error:
+            logger.warning("Steigung beim ersten Start nicht lesbar: %s", error)
+            live = None
+        seeded = None
+        if live is not None and _is_finite_number(live):
+            seeded = plant.target_value(live, *self._limits("curve_current"), plant.STEPS["curve_current"])
+        logger.warning(
+            "Erster Start ohne Parallelverschiebung: Wiederherstellungspunkt der Steigung %s -> %s (Anlagenwert)",
+            state.curve_current, seeded,
+        )
+        self._store.update(curve_current=seeded)
 
     def _current_row(self) -> str:
         state = self._store.state

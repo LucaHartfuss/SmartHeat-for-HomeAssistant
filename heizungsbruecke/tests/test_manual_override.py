@@ -159,7 +159,7 @@ def test_zone_mode_restore_switches_the_mode_exactly_once(make_store, clock):
 
 
 def test_zone_mode_restore_does_not_switch_again_while_ha_lags(make_store, clock):
-    # HA zeigt nach dem Umschalten noch bis zu 30 min "auto" (mypyllant): keine weitere Umschaltung
+    # HA kann nach dem Umschalten bis zum naechsten Poll noch "auto" zeigen (mypyllant): keine weitere Umschaltung
     # in dieser Zeit, und der Hinweis bleibt stehen (kein "wieder in Ordnung").
     rt = _rt(make_store, clock, Ha(mode="auto", reflects_writes=False))
     _rounds(rt)
@@ -267,7 +267,7 @@ def test_retry_interval_between_writes(make_store, clock):
     rt = _rt(make_store, clock, Ha(curve=1.3))
     _rounds(rt)
     rt.ha_api.states["number.curve"] = 1.3
-    clock.advance(OWN_WRITE_SETTLE_SECONDS + 1)  # 35 min > 30 min
+    clock.advance(OWN_WRITE_SETTLE_SECONDS + 1)  # 35 min > Poll-Intervall 30 min
     _rounds(rt)
     assert len(_curve_writes(rt)) == 2
 

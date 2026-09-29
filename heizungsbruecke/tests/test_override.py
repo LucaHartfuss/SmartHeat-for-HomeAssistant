@@ -15,8 +15,8 @@ MANIFEST = ChannelManifest(entity_ids={
     "curve_current": "number.curve", "shift_current": "number.shift", "min_flow": "number.min_flow",
 })
 RESTORE_POINT = {"curve_current": 0.9, "shift_current": 22.0}
-# RecordingHa.states-Form von RESTORE_POINT, fuer Tests der mypyllant-Verzoegerung (HA zeigt nach
-# einem eigenen Schreibvorgang bis zu ~30 min lang noch den vorherigen Wert).
+# RecordingHa.states-Form von RESTORE_POINT, fuer Tests der mypyllant-Verzoegerung (HA kann nach
+# einem eigenen Schreibvorgang bis zum naechsten Poll, bis ~30 min, noch den vorherigen Wert zeigen).
 RESTORE_POINT_STATES = {"number.curve": 0.9, "number.shift": 22.0}
 VALUES = {"restore": (0.9, 22.0), "comfort": (1.0, 24.0), "emergency": (1.5, 25.0)}
 # Sollwert-Regel der Spec: (comfort, emergency) -> Zeile
@@ -523,7 +523,7 @@ def test_write_role_writes_when_the_current_value_cannot_be_read(make_store):
     assert ha.writes == [("number.curve", 0.9), ("number.shift", 22.0)]
 
 
-# --- Quota-Check: mypyllant-Verzoegerung (~30 min), HA-Read kann nach eigenem Schreiben veraltet sein ---
+# --- Quota-Check: mypyllant-Verzoegerung (bis zum naechsten Poll), HA-Read kann nach eigenem Schreiben veraltet sein ---
 
 def test_write_role_does_not_trust_a_stale_ha_read_after_our_own_recent_write(make_store, clock):
     # A (restore 0.9/22) -> B (comfort 1.0/24) -> A, alles innerhalb OWN_WRITE_SETTLE_SECONDS: HA

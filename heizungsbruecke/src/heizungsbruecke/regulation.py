@@ -76,9 +76,11 @@ def run_local_check(rt: Runtime) -> None:
 
 
 def claim_due_tick(rt: Runtime, now: datetime) -> str | None:
-    """Neuer Tick, wenn sich room_target seit dem letzten Tick geaendert hat ("target_change")
-    oder daily_trigger_time heute erstmals erreicht ist ("daily"). Gebucht wird beim Entstehen,
-    nicht beim Publish: ein zurueckgehaltener Tick erzeugt keine Duplikate, seine
+    """Neuer Tick, wenn daily_trigger_time heute erstmals erreicht ist ("daily") oder sich
+    room_target seit dem letzten Tick geaendert hat ("target_change"). Faellt beides auf denselben
+    Check, geht der Tick als "daily" raus: der Server lernt nur auf "daily" und wendet die
+    Vorsteuerung auf jeden Tick an, sonst fiele der Lernschritt des Tages aus. Gebucht wird beim
+    Entstehen, nicht beim Publish: ein zurueckgehaltener Tick erzeugt keine Duplikate, seine
     Wiederholungen laufen ueber die Zustellung."""
     state = rt.store.state
     room_target = state.stable_target
@@ -98,4 +100,4 @@ def claim_due_tick(rt: Runtime, now: datetime) -> str | None:
         changes["last_daily_trigger_date"] = today
     # Wie 0.16.0: ohne gespeicherte Buchung kein Tick; der naechste Check beansprucht ihn erneut.
     rt.store.update_saved(**changes)
-    return "target_change" if target_changed else "daily"
+    return "daily" if daily_due else "target_change"

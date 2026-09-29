@@ -362,6 +362,8 @@ def _on_local_check(rt: Runtime, event: Event) -> None:
     if event.data.get("room_target_fired"):
         regulation.refresh_stable_target(rt)
         min_flow.sync(rt)
+    if not rt.zone_prepared:
+        _prepare_zone(rt)
     try:
         regulation.run_local_check(rt)
     except Exception:
@@ -489,25 +491,50 @@ def _register_handlers(rt: Runtime) -> None:
 # --- Boot ---
 
 def _prime(rt: Runtime) -> None:
-    """Erster lokaler Check synchron vor mqtt.loop_start(): Stable-Target-Cache fuellen, Zone auf
-    Manuell mit brauchbarer Parallelverschiebung (vor dem ersten Snapshot, Plan-Praezisierung 11),
-    Mindestvorlauf = Raum-Soll, dann Boost-Flags aus echten Sensorwerten. Persistierte Boosts
-    laufen weiter und enden regulaer ueber ihre Schwellen (N1). Scheitert ein Schritt, laufen die
-    uebrigen trotzdem."""
+    """Erster lokaler Check synchron vor mqtt.loop_start(): Stable-Target-Cache fuellen, beim
+    ersten Start ohne gespeicherte Parallelverschiebung den Steigungs-Punkt neu setzen und einen
+    Tick erzwingen (_first_start), Zone auf Manuell mit brauchbarer Parallelverschiebung (vor dem
+    ersten Snapshot, Plan-Praezisierung 11), Mindestvorlauf = Raum-Soll, dann Boost-Flags aus
+    echten Sensorwerten. Persistierte Boosts laufen weiter und enden regulaer ueber ihre Schwellen
+    (N1). Scheitert ein Schritt, laufen die uebrigen trotzdem."""
     try:
         rt.store.update(stable_target=regulation.read_room_target_live(rt))
         logger.info("Stable-Target-Cache initial befuellt (Boot-Priming): room_target=%s", rt.store.state.stable_target)
     except Exception:
         logger.exception("room_target beim Start nicht lesbar, wird beim naechsten Ereignis erneut versucht")
-    try:
-        rt.override.prepare_zone(start_shift=rt.store.state.stable_target)
-    except Exception:
-        logger.exception("Zone konnte beim Start nicht vorbereitet werden, die Durchsetzung versucht es erneut")
+    if rt.store.state.shift_current is None:
+        _first_start(rt)
+    _prepare_zone(rt)
     min_flow.sync(rt)
     try:
         regulation.run_local_check(rt)
     except Exception:
         logger.exception("Fehler beim initialen lokalen Check vor MQTT-Start, wird beim naechsten Ereignis erneut versucht")
+
+
+def _first_start(rt: Runtime) -> None:
+    """Erster Start ohne gespeicherte Parallelverschiebung (0.23.0 -> 0.24.0): Steigungs-Punkt
+    vom Anlagenwert neu setzen und sofort einen Tick erzwingen, damit der Erstkontakt des Servers
+    mit den Istwerten startet statt erst beim naechsten Tagestick oder Sollwertwechsel."""
+    try:
+        rt.override.reseed_curve_from_plant()
+    except Exception:
+        logger.exception("Wiederherstellungspunkt der Steigung beim ersten Start nicht gespeichert")
+    try:
+        rt.store.update_saved(last_published_target_rt=None)
+    except Exception:
+        logger.exception("Sofortiger Tick beim ersten Start nicht gebucht, es gilt der naechste regulaere Anlass")
+
+
+def _prepare_zone(rt: Runtime) -> None:
+    """Zone vorbereiten (Override.prepare_zone); scheitert es, versucht es der naechste lokale Check
+    erneut, statt dass erst die Durchsetzung nach OWN_WRITE_SETTLE_SECONDS umstellt."""
+    try:
+        rt.override.prepare_zone(start_shift=rt.store.state.stable_target)
+    except Exception:
+        logger.exception("Zone konnte nicht vorbereitet werden, naechster Versuch beim naechsten lokalen Check")
+        return
+    rt.zone_prepared = True
 
 
 def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | IdleBridge:

@@ -59,8 +59,9 @@ def write(
     """Begrenzt, rundet auf die Schrittweite der Rolle und schreibt. Gibt den geschriebenen Wert
     zurueck. Wirft bei Fehlern (der Aufrufer macht daraus DeviceWriteError).
 
-    `ensure_mode=False` ueberspringt die Modus-Pruefung/-Umstellung (Ruling #3): mypyllant meldet
-    den HA-Zustand erst bis zu 30 min nach einem Cloud-Set nach, ein zweiter Check wuerde sonst ein
+    `ensure_mode=False` ueberspringt die Modus-Pruefung/-Umstellung (Ruling #3): spiegelt die
+    Hersteller-Cloud die Umstellung bei mypyllants Refresh kurz danach noch nicht wider, zeigt HA den
+    alten Modus bis zum naechsten Poll (bis ~30 min), ein zweiter Check wuerde sonst ein
     zweites `set_hvac_mode` senden und unnoetig Cloud-Kontingent verbrauchen. Aufrufer, die den
     Modus selbst schon umgestellt haben (z.B. beim Erstkontakt), rufen mit False."""
     target = target_value(value, minimum, maximum, STEPS[role])

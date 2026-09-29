@@ -22,9 +22,9 @@ def expected(rt) -> float | None:
 
 def sync(rt) -> None:
     """Schreibt den Mindestvorlauf, wenn er nicht dem Raum-Soll entspricht. Vergleichswert ist der
-    Live-Wert aus HA -- ausser kurz nach einem eigenen Schreiben (Override.settled): dann zeigt HA
-    bei mypyllant bis zu ~30 min noch den alten Wert, und massgeblich ist der eigene letzte
-    Schreibwert. Sonst wuerde eine Rueckkehr zum alten Wert innerhalb dieser Zeit uebersprungen
+    Live-Wert aus HA -- ausser kurz nach einem eigenen Schreiben (Override.settled): dann kann HA
+    bei mypyllant bis zum naechsten Poll (bis ~30 min) noch den alten Wert zeigen, und massgeblich
+    ist der eigene letzte Schreibwert. Sonst wuerde eine Rueckkehr zum alten Wert innerhalb dieser Zeit uebersprungen
     (die Anlage bliebe auf dem neuen) und jeder weitere Anlass schriebe denselben Wert erneut.
     Ohne eigenes Schreiben seit dem Start bleibt nur der Live-Wert. Wirft nie."""
     value = expected(rt)

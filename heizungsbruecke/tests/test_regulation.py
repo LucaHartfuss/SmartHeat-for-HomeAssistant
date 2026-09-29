@@ -259,11 +259,23 @@ def test_claim_due_tick_claims_daily_once_per_day(make_store, tmp_path):
     assert regulation.claim_due_tick(rt, datetime(2026, 9, 17, 15, 0)) is None
 
 
-def test_claim_due_tick_prefers_target_change_but_also_books_daily(make_store, tmp_path):
+def test_claim_due_tick_sends_daily_when_a_target_change_falls_on_the_daily_check(make_store, tmp_path):
+    # Der Server lernt nur auf "daily" und wendet die Vorsteuerung auch dort an: ein gebuchter
+    # Tagestick darf nicht als "target_change" rausgehen, sonst faellt der Lernschritt des Tages aus.
     rt = _runtime(make_store(backup={"last_published_target_rt": 21.0}), room_target=22.0)
 
-    assert regulation.claim_due_tick(rt, datetime(2026, 9, 17, 12, 5)) == "target_change"
-    assert load_backup(tmp_path / "backup.json")["last_daily_trigger_date"] == "2026-09-17"
+    assert regulation.claim_due_tick(rt, datetime(2026, 9, 17, 12, 5)) == "daily"
+    backup = load_backup(tmp_path / "backup.json")
+    assert (backup["last_published_target_rt"], backup["last_daily_trigger_date"]) == (22.0, "2026-09-17")
+
+
+def test_claim_due_tick_sends_target_change_when_daily_is_already_booked(make_store):
+    rt = _runtime(
+        make_store(backup={"last_published_target_rt": 21.0, "last_daily_trigger_date": "2026-09-17"}),
+        room_target=22.0,
+    )
+
+    assert regulation.claim_due_tick(rt, datetime(2026, 9, 17, 14, 0)) == "target_change"
 
 
 def test_claim_due_tick_is_claimed_again_after_a_failed_booking(make_store, tmp_path, monkeypatch):
@@ -279,7 +291,7 @@ def test_claim_due_tick_is_claimed_again_after_a_failed_booking(make_store, tmp_
             regulation.claim_due_tick(rt, datetime(2026, 9, 17, 12, 5))
     assert (rt.store.state.last_published_target_rt, rt.store.state.last_daily_trigger_date) == (21.0, None)
 
-    assert regulation.claim_due_tick(rt, datetime(2026, 9, 17, 12, 5)) == "target_change"
+    assert regulation.claim_due_tick(rt, datetime(2026, 9, 17, 12, 5)) == "daily"
     backup = load_backup(tmp_path / "backup.json")
     assert (backup["last_published_target_rt"], backup["last_daily_trigger_date"]) == (20.5, "2026-09-17")
 
