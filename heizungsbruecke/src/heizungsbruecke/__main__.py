@@ -526,9 +526,36 @@ def _first_start(rt: Runtime) -> None:
         logger.exception("Sofortiger Tick beim ersten Start nicht gebucht, es gilt der naechste regulaere Anlass")
 
 
+def _may_prepare_zone(rt: Runtime) -> bool:
+    """Kontingent wie die Durchsetzung (manual_override): hoechstens ein Versuch pro RETRY_SECONDS
+    und MAX_WRITES_PER_DAY am Tag. Jeder Versuch kann zwei Cloud-Aufrufe kosten; bei 403 "Quota
+    Exceeded" wuerde ein Versuch in jedem lokalen Check die Sperre verlaengern. Zaehlt den Versuch
+    VOR dem Aufruf (auch ein gescheiterter verbraucht Kontingent)."""
+    today = datetime.now().date().isoformat()
+    log = rt.zone_prepare_log
+    if log.get("day") != today:
+        log.update(day=today, count=0, limit_logged=False)
+    if log["count"] >= manual_override.MAX_WRITES_PER_DAY:
+        if not log["limit_logged"]:
+            logger.warning(
+                "Zone: Tageslimit von %d Vorbereitungsversuchen erreicht, naechster Versuch morgen",
+                manual_override.MAX_WRITES_PER_DAY,
+            )
+            log["limit_logged"] = True
+        return False
+    last = log.get("last")
+    if last is not None and rt.clock() - last < manual_override.RETRY_SECONDS:
+        return False
+    log.update(count=log["count"] + 1, last=rt.clock())
+    return True
+
+
 def _prepare_zone(rt: Runtime) -> None:
-    """Zone vorbereiten (Override.prepare_zone); scheitert es, versucht es der naechste lokale Check
-    erneut, statt dass erst die Durchsetzung nach OWN_WRITE_SETTLE_SECONDS umstellt."""
+    """Zone vorbereiten (Override.prepare_zone); scheitert es, versucht es ein spaeterer lokaler
+    Check erneut (Kontingent: _may_prepare_zone), statt dass erst die Durchsetzung nach
+    OWN_WRITE_SETTLE_SECONDS umstellt."""
+    if not _may_prepare_zone(rt):
+        return
     try:
         rt.override.prepare_zone(start_shift=rt.store.state.stable_target)
     except Exception:

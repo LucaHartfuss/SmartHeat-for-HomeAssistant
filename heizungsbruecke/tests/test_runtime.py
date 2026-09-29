@@ -2,6 +2,7 @@
 Tick-Zustellung, Datenfehler, Notbetrieb, lokale Checks und Abo-Pfade. Getrieben ueber
 _start_bridge mit Fake-Uhr (tests/conftest.py), Fake-HA, Fake-MQTT und Fake-Trigger-Client."""
 import copy
+import itertools
 import json
 import logging
 import sys
@@ -16,7 +17,8 @@ from heizungsbruecke import abo, backup_store, entitlement, ticks
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.delivery import DeliveryState
 from heizungsbruecke.derived_sensors import DerivedSensors
-from heizungsbruecke.override import OWN_WRITE_SETTLE_SECONDS
+from heizungsbruecke.manual_override import MAX_WRITES_PER_DAY, RETRY_SECONDS
+from heizungsbruecke.override import OWN_WRITE_SETTLE_SECONDS, Override
 from heizungsbruecke.runtime import Runtime
 from heizungsbruecke.status import ADDON_VERSION
 
@@ -456,6 +458,10 @@ def test_zone_preparation_failed_at_start_is_retried_on_the_next_local_check(env
 
     env.ha.states["climate.zone"] = "auto"
     _trigger(env, bridge, "sensor.room_actual")
+    assert env.ha.writes == []  # noch innerhalb von RETRY_SECONDS nach dem Startversuch
+
+    env.clock.advance(RETRY_SECONDS)
+    _trigger(env, bridge, "sensor.room_actual")
 
     assert env.ha.writes[:2] == [("climate.zone", "heat_cool"), ("climate.zone::temperature", 21.0)]
     assert _backup(env)["shift_current"] == 21.0
@@ -464,6 +470,48 @@ def test_zone_preparation_failed_at_start_is_retried_on_the_next_local_check(env
     env.ha.states["climate.zone"] = "auto"  # erfolgreich vorbereitet: kein weiterer Versuch
     _trigger(env, bridge, "sensor.room_actual")
     assert ("climate.zone", "heat_cool") not in env.ha.writes[writes:]
+
+
+def _failing_zone_preparation(env, monkeypatch, failures=None):
+    """Override.prepare_zone scheitert (z. B. 403 "Quota Exceeded"); gibt die Versuchszeitpunkte
+    (Fake-Uhr) zurueck. failures=None: scheitert immer, sonst nur die ersten `failures` Versuche."""
+    attempts = []
+
+    def _prepare_zone(self, start_shift):
+        attempts.append(env.clock())
+        if failures is None or len(attempts) <= failures:
+            raise RuntimeError("403 Quota Exceeded")
+
+    monkeypatch.setattr(Override, "prepare_zone", _prepare_zone)
+    return attempts
+
+
+def _local_checks(env, bridge, hours):
+    for _ in range(int(hours * 3600 / 300)):
+        _advance(env, bridge, 300)
+        _trigger(env, bridge, "sensor.room_actual")
+
+
+def test_failing_zone_preparation_is_retried_at_most_every_30_min_and_6_times_a_day(env, monkeypatch, caplog):
+    attempts = _failing_zone_preparation(env, monkeypatch)
+    bridge = _start(env)
+
+    with caplog.at_level(logging.WARNING, logger="heizungsbruecke.__main__"):
+        _local_checks(env, bridge, hours=12)
+
+    assert len(attempts) == MAX_WRITES_PER_DAY  # Start + 5 Wiederholungen
+    assert all(later - earlier >= RETRY_SECONDS for earlier, later in itertools.pairwise(attempts))
+    assert sum("Tageslimit" in record.getMessage() for record in caplog.records) == 1
+
+
+def test_zone_preparation_stops_retrying_after_success(env, monkeypatch):
+    attempts = _failing_zone_preparation(env, monkeypatch, failures=2)
+    bridge = _start(env)
+
+    _local_checks(env, bridge, hours=6)
+
+    assert len(attempts) == 3
+    assert attempts[2] - attempts[1] >= RETRY_SECONDS
 
 
 def test_boot_writes_min_flow_when_it_differs_from_the_room_target(env):
