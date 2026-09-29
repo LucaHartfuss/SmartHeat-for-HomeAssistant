@@ -151,6 +151,16 @@ def test_on_connect_auth_hook_exception_does_not_escape_network_thread(caplog):
     assert "status-api kaputt" in caplog.text
 
 
+@pytest.mark.parametrize("identifier", [134, 135])
+def test_auth_rejected_without_hook_only_logs(identifier, caplog):
+    client, mock_client = _client_with_mock()
+
+    with caplog.at_level(logging.ERROR):
+        client._on_connect(mock_client, None, {}, ReasonCode(PacketTypes.CONNACK, identifier=identifier), None)
+
+    assert "abgelehnt" in caplog.text
+
+
 def test_stop_disconnects_and_stops_loop():
     client, mock_client = _client_with_mock()
 

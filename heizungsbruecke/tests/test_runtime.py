@@ -114,6 +114,9 @@ class FakeHa:
         return str(value)
 
 
+_OMIT = object()
+
+
 class FakeMqtt:
     def __init__(self, **kwargs):
         self.kwargs = kwargs
@@ -145,13 +148,16 @@ class FakeMqtt:
     def stop(self):
         self.stopped = True
 
-    def answer(self, seq, status="ok", curve=0.95, offset=23.0, reason=None):
-        """Server-Antwort ueber den echten paho-Callback einspeisen."""
+    def answer(self, seq, status="ok", curve=0.95, offset=23.0, reason=None, schema=2):
+        """Server-Antwort ueber den echten paho-Callback einspeisen (schema=_OMIT: Feld fehlt)."""
         message = MagicMock()
         message.retain = False
-        message.payload = json.dumps({
-            "schema": 2, "seq": seq, "ts": "x", "status": status, "curve": curve, "offset": offset, "reason": reason,
-        })
+        payload = {
+            "schema": schema, "seq": seq, "ts": "x", "status": status, "curve": curve, "offset": offset, "reason": reason,
+        }
+        if schema is _OMIT:
+            del payload["schema"]
+        message.payload = json.dumps(payload)
         self.setpoints_callback(None, None, message)
 
 
@@ -714,6 +720,32 @@ def test_invalid_answer_counts_as_server_fault_without_writing(env, answer):
 
     assert env.ha.writes == []
     assert "ungültige Serverantwort" in env.ha.pushes[-1]
+
+
+@pytest.mark.parametrize("schema", [_OMIT, None, 3, "2", True, 2.0])
+def test_answer_with_unknown_schema_counts_as_server_fault_without_writing(env, schema):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+
+    _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], schema=schema)
+
+    assert env.ha.writes == []
+    assert "ungültige Serverantwort" in env.ha.pushes[-1]
+    assert "unbekanntes Schema" in env.ha.pushes[-1]
+
+
+def test_unknown_schema_for_a_foreign_seq_is_ignored(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    pushes_before = list(env.ha.pushes)
+
+    _answer(env, bridge, "fremde-seq", schema=3)
+
+    assert env.ha.writes == []
+    assert env.ha.pushes == pushes_before
+    assert _awaiting_ack(bridge)
 
 
 def test_failed_value_write_is_retried_with_same_seq(env):

@@ -11,7 +11,7 @@ from heizungsbruecke import abo, delivery, entitlement
 from heizungsbruecke.notifier import STATE_OK
 from heizungsbruecke.override import DeviceWriteError
 from heizungsbruecke.runtime import EV_ACK_TIMEOUT, EV_RETRY_DUE, Runtime
-from heizungsbruecke.snapshot import publish_snapshot, read_snapshot_roles
+from heizungsbruecke.snapshot import SNAPSHOT_SCHEMA_VERSION, publish_snapshot, read_snapshot_roles
 from heizungsbruecke.target_history import time_weighted_mean
 from heizungsbruecke.worker import Event
 
@@ -200,10 +200,10 @@ def _clear_sent_manual_override(rt: Runtime) -> None:
 
 
 def handle_setpoints(rt: Runtime, payload: dict) -> None:
-    """Server-Antwort (Schema 2), zaehlt nur fuer den offenen Tick (auch verspaetet). Gueltige
-    Werte gehen vor dem Ack auf die Anlage. Ein unbekannter Status oder ungueltige Werte zaehlen
-    als Datenfehler vom Server. Kann die Anlage die Werte nicht uebernehmen, ist das eine
-    Antwort mit eigenem Datenfehler (`WriteFailed`), kein Serverausfall."""
+    """Server-Antwort (nur Schema 2), zaehlt nur fuer den offenen Tick (auch verspaetet). Gueltige
+    Werte gehen vor dem Ack auf die Anlage. Ein unbekanntes Schema, ein unbekannter Status oder
+    ungueltige Werte zaehlen als Datenfehler vom Server. Kann die Anlage die Werte nicht
+    uebernehmen, ist das eine Antwort mit eigenem Datenfehler (`WriteFailed`), kein Serverausfall."""
     seq = payload.get("seq")
     state = rt.store.state.delivery
     if not delivery.accepts_ack(state, seq):
@@ -214,6 +214,16 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
     # JSON-Typen (int/float/bool/list/dict) sind nie gleich einem str, seq ist also ein str.
     assert isinstance(seq, str)
     _record_answer(rt)
+
+    schema = payload.get("schema")
+    if type(schema) is not int or schema != SNAPSHOT_SCHEMA_VERSION:
+        # Nur Schema 2 wird verstanden; alles andere zaehlt wie eine ungueltige Antwort (Datenfehler
+        # vom Server, sofort sichtbar) statt still verworfen zu werden und erst ueber den
+        # Ack-Timeout im Notbetrieb zu enden.
+        reason = f"ungültige Serverantwort (unbekanntes Schema {schema!r})"
+        logger.warning("Setpoints-Antwort (seq=%s): %s - nichts geschrieben", seq, reason)
+        deliver(rt, delivery.Ack(seq=seq, status=delivery.STATUS_REJECTED, reason=reason))
+        return
 
     status = payload.get("status")
     curve, offset = payload.get("curve"), payload.get("offset")
