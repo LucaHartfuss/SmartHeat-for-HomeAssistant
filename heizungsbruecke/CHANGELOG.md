@@ -3,6 +3,25 @@
 Wird im Update-Dialog des Supervisors angezeigt. Pro Version ein Abschnitt `## X.Y.Z`; der
 Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Release.
 
+## 0.24.0
+
+**Neue Regelung (TP11): Steigung und Parallelverschiebung.** Die Parallelverschiebung der Heizkurve
+ist jetzt die Wunschtemperatur der Heizzone (bei Vaillant im Modus „Manuell“) – die
+Mindestvorlauftemperatur ist nur eine Untergrenze und folgt ab jetzt automatisch deiner
+Wunschtemperatur am Raumthermostat.
+
+- Beim Start stellt SmartHeat die Heizzone auf „Manuell“. Damit entfällt eine Nachtabsenkung
+  aus dem Zeitprogramm der Therme; das Zeitprogramm bleibt in der Therme gespeichert.
+- Einstellungen an Heizkurve, Wunschtemperatur der Zone, Mindestvorlauf oder Betriebsart in der
+  Hersteller-App setzt SmartHeat zurück (einmalige Meldung). Bitte nur noch am Raumthermostat
+  einstellen.
+- Der Boost hebt jetzt Heizkurve und Parallelverschiebung an und wirkt damit deutlich stärker.
+- Die Hilfssensoren DAT, DART, Raum-Mittel, 24-h-Minimum und Tag-/Nachtmittel werden entfernt;
+  der Server rechnet aus der Telemetrie.
+- **Nach dem Update SmartHeat einmal „Neu konfigurieren“** (Parallelverschiebung,
+  Mindestvorlauftemperatur und Vorlauf-Soll zuordnen). Bis dahin meldet das Add-on
+  „Konfiguration veraltet“ und verändert nichts an der Heizung.
+
 ## 0.23.0
 
 - Eine Server-Antwort mit unbekanntem Schema wird als Datenfehler vom Server gemeldet und nicht übernommen.

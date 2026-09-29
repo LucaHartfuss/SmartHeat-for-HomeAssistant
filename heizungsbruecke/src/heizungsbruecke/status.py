@@ -12,7 +12,7 @@ from heizungsbruecke import battery, delivery, entitlement, room_sensors
 logger = logging.getLogger(__name__)
 
 # Muss zu `version` in config.yaml passen (tests/test_config_yaml.py).
-ADDON_VERSION = "0.23.0"
+ADDON_VERSION = "0.24.0"
 
 EVENT_TYPE = "smartheat_status"
 EVENT_SCHEMA = 1
@@ -54,7 +54,8 @@ _FAULT_ART = dict(
 HINT_FIELDS = ("raumfuehler_ausgefallen", "batterie_niedrig", "manueller_eingriff")
 EVENT_FIELDS = (
     "schema", "tenant_id", "setup_id", "addon_version", "status", "grund", "notbetrieb", "datenfehler",
-    "boost", "letzte_serverantwort", "kurve", "offset", "abo", "abo_frist_ende", "hinweise",
+    "boost", "letzte_serverantwort", "kurve", "parallelverschiebung", "mindestvorlauf", "abo",
+    "abo_frist_ende", "hinweise",
 )
 
 
@@ -133,8 +134,7 @@ def _manual(state) -> dict | None:
     override = state.manual_override
     if override is None:
         return None
-    # Feldnamen des Events stellt Task 17 (TP11) auf parallelverschiebung um.
-    return {"kurve": override["curve"], "offset": override["shift"], "erkannt": override["erkannt"]}
+    return {"kurve": override["curve"], "parallelverschiebung": override["shift"], "erkannt": override["erkannt"]}
 
 
 def build_event(tenant_id: str, setup_id: str | None, flags: Flags, state) -> dict:
@@ -152,7 +152,8 @@ def build_event(tenant_id: str, setup_id: str | None, flags: Flags, state) -> di
         "boost": _boost(state),
         "letzte_serverantwort": state.last_ack_at,
         "kurve": state.curve_current,
-        "offset": state.shift_current,  # Task 17 (TP11): parallelverschiebung/mindestvorlauf
+        "parallelverschiebung": state.shift_current,
+        "mindestvorlauf": state.min_flow_current,
         "abo": abo,
         "abo_frist_ende": (
             entitlement.grace_end(state.abo_inactive_since).date().isoformat() if abo == ABO_INAKTIV else None
