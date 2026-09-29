@@ -23,10 +23,30 @@ def test_end_emergency_boost_without_any_boost_asks_override_to_end_both():
 
 def test_attempt_without_mqtt_client_reports_unsent(monkeypatch):
     monkeypatch.setattr(ticks, "read_snapshot_roles", lambda *a, **kw: SimpleNamespace(invalid_roles=(), roles={}))
-    monkeypatch.setattr(ticks, "_current_target_avg", lambda rt: None)
-    rt = SimpleNamespace(manifest=MagicMock(), ha_api=MagicMock(), mqtt_client=None)
+    rt = SimpleNamespace(
+        manifest=SimpleNamespace(entity_ids={"shift_current": "number.shift"}), ha_api=MagicMock(),
+        mqtt_client=None, store=SimpleNamespace(state=SimpleNamespace(shift_current=21.0)),
+    )
 
     assert ticks._attempt(rt, "s1", "daily") == delivery.Published(seq="s1", unsent=True)
+
+
+def test_snapshot_uses_restore_point_when_zone_is_off(monkeypatch):
+    captured = {}
+
+    def _read(manifest, ha_api, computed_values):
+        captured.update(computed_values)
+        return SimpleNamespace(invalid_roles=(), roles={})
+
+    monkeypatch.setattr(ticks, "read_snapshot_roles", _read)
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 0.0
+    rt = SimpleNamespace(
+        manifest=SimpleNamespace(entity_ids={"shift_current": "climate.zone::temperature"}), ha_api=ha_api,
+        mqtt_client=None, store=SimpleNamespace(state=SimpleNamespace(shift_current=21.0)),
+    )
+    ticks._attempt(rt, "s1", "daily")
+    assert captured == {"shift_current": 21.0}
 
 
 def test_fallback_follow_up_keeps_the_retry_chain_alive():

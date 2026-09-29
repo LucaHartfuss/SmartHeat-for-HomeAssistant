@@ -201,6 +201,20 @@ def _kpi_value(rt, role: str, entries: dict, expected: dict, unsent: dict | None
     return _read(rt, role)
 
 
+def _persisted_kpi_value(rt, role: str, value):
+    """KPI-Wert fuer den PERSISTIERTEN Eintrag (state.manual_override, ueber backup.json): ohne
+    Live- oder Sollwert (Zone inaktiv und noch kein Wiederherstellungspunkt fuer diese Rolle) faellt
+    er auf den zuletzt gespeicherten Sollwert zurueck, notfalls auf 0.0 -- nie auf None. Sonst waere
+    der Eintrag nicht numerisch und state._is_override wuerfe ihn beim naechsten Neustart weg:
+    rollen/signatur/gemeldet gingen verloren, derselbe Eingriff wuerde nach dem Neustart erneut
+    gemeldet. Der ungefilterte KPI-Wert (kann None sein) bleibt fuer manual_override_pending
+    massgeblich, das nur bei zwei Zahlen gesetzt wird."""
+    if _is_number(value):
+        return value
+    fallback = getattr(rt.store.state, role)
+    return fallback if _is_number(fallback) else 0.0
+
+
 def _record(rt, expected: dict, deviating: dict) -> dict:
     """Fuehrt den laufenden Eingriff fort: Rollen, die schon zu ihm gehoeren (auch solche, die gerade
     offen sind), behalten ihren Wert; nur eine neue Rolle oder ein neuer Wert aendert ihn (neue
@@ -220,7 +234,10 @@ def _record(rt, expected: dict, deviating: dict) -> dict:
         "erkannt": now,
     }
     record = {
-        **kpi, "rollen": entries,
+        "curve": _persisted_kpi_value(rt, "curve_current", kpi["curve"]),
+        "shift": _persisted_kpi_value(rt, "shift_current", kpi["shift"]),
+        "erkannt": now,
+        "rollen": entries,
         "signatur": ",".join(f"{role}={entries[role]:g}" for role in sorted(entries)),
         "gemeldet": previous.get("gemeldet") if previous is not None else None,
     }

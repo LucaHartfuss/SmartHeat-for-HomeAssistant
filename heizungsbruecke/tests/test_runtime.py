@@ -626,6 +626,15 @@ def test_answer_writes_values_and_closes_tick(env):
     assert env.ha.pushes == []
 
 
+def test_skipped_answer_is_applied_like_ok(env):
+    bridge = _start(env)
+    _connect(env, bridge)
+    _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], status="skipped", curve=1.0, shift=20.5,
+            reason="zu_wenig_daten")
+    assert (env.ha.states["number.curve_current"], env.ha.states["number.shift_current"]) == (1.0, 20.5)
+    assert bridge.store.state.delivery.datenfehler is None
+
+
 def test_dead_room_actual_holds_tick_and_reports_once(env, caplog):
     # Review Focus 1.
     _quiet_backup(env)

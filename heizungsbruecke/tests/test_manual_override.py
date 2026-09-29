@@ -82,10 +82,13 @@ def _fixed_day(monkeypatch):
     monkeypatch.setattr(manual_override, "_today", lambda: TODAY)
 
 
-def _rt(make_store, clock, ha, uptime=OWN_WRITE_SETTLE_SECONDS + 1, **backup):
+def _rt(make_store, clock, ha, uptime=OWN_WRITE_SETTLE_SECONDS + 1, store=None, **backup):
     """Runtime mit `uptime` Sekunden Laufzeit seit dem Start (Default: Schonfrist nach dem Start
-    vorbei, HA gilt ohne eigenes Schreiben als eingeschwungen)."""
-    store = make_store(backup={**POINT, **backup})
+    vorbei, HA gilt ohne eigenes Schreiben als eingeschwungen). `store` wiederverwendet einen
+    vorhandenen StateStore (Neustart-Simulation: derselbe backup.json-Pfad, frisch eingelesen)
+    statt `backup` neu zu schreiben."""
+    if store is None:
+        store = make_store(backup={**POINT, **backup})
     store.update(stable_target=20.5)
     notifier = MagicMock(spec=Notifier)
     notifier.notify.return_value = True
@@ -179,6 +182,31 @@ def test_zone_zero_is_no_deviation(make_store, clock):
     _rounds(rt)
     assert rt.ha_api.writes == []
     assert rt.store.state.manual_override is None
+
+
+def test_record_with_an_inactive_zone_and_no_restore_point_survives_a_reload(make_store, clock):
+    # Carried Task-13-Befund: ohne Live-Wert (Zone inaktiv) UND ohne gespeicherten
+    # Wiederherstellungspunkt fuer die Parallelverschiebung liefert der KPI dafuer None. Ein
+    # persistierter Eintrag mit shift=None faellt bei state._is_override durch -- gemeldet/rollen/
+    # signatur gehen nach einem Neustart verloren, derselbe Eingriff wird erneut gemeldet.
+    # reflects_writes=False haelt die Abweichung ueber den Neustart hinweg bestehen (mypyllant
+    # zeigt einen eigenen Schreibvorgang wie hier erst mit Verzoegerung).
+    ha = Ha(curve=1.3, shift=0.0, reflects_writes=False)
+    rt = _rt(make_store, clock, ha, shift_current=None)
+    _rounds(rt)
+    override = rt.store.state.manual_override
+    assert override is not None
+    assert manual_override._is_number(override["curve"]) and manual_override._is_number(override["shift"])
+    assert override["gemeldet"] == override["signatur"]
+
+    # Neustart: derselbe backup.json-Pfad, frisch eingelesen.
+    reloaded = make_store()
+    assert reloaded.state.manual_override == override  # state._is_override akzeptiert den Eintrag
+
+    rt2 = _rt(make_store, clock, ha, store=reloaded)
+    _rounds(rt2)
+
+    assert _message_calls(rt2) == []  # derselbe Eingriff wird nicht erneut gemeldet
 
 
 def test_pause_after_own_write(make_store, clock):

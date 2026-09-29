@@ -119,7 +119,7 @@ def test_published_for_foreign_seq_is_ignored():
     assert step(state, Published("fremd")) == (state, [])
 
 
-@pytest.mark.parametrize("status", ["ok", "skipped_summer"])
+@pytest.mark.parametrize("status", ["ok", "skipped"])
 def test_successful_ack_clears_pending_without_actions(status):
     state, _ = _published("s1", server_failures=1)
 
@@ -529,7 +529,7 @@ def test_repeated_write_failure_with_other_text_is_the_same_fault():
     state, _ = step(state, WriteFailed("s1", "curve_current (number.c): Timeout"))
     persisted = to_persisted(state)
 
-    state, actions = _run(state, RetryDue("s1", 2), Published("s1"), WriteFailed("s1", "offset_current (number.o): HTTP 500"))
+    state, actions = _run(state, RetryDue("s1", 2), Published("s1"), WriteFailed("s1", "shift_current (number.o): HTTP 500"))
 
     assert actions == [ScheduleRetry("s1", 4, 300)]
     assert to_persisted(state) == persisted
