@@ -136,6 +136,14 @@ def resolve_effective_options(options: dict) -> dict:
         value = options[key]
         if not isinstance(value, str) or not pattern.fullmatch(value):
             raise ConfigError(f"Option '{key}' ({value!r}) muss {expected} sein – {RECONFIGURE_HINT}")
+    # Final-Review I1: Zone (wird geschrieben) und Raum-Soll (Kundenwunsch, wird gelesen) auf derselben
+    # Entity waeren eine Rueckkopplung bis shift_max. Vergleich ohne "::attribut".
+    shift = options["entity_shift_current"]
+    if shift.partition("::")[0] == str(options.get("entity_room_target", "")).partition("::")[0]:
+        raise ConfigError(
+            f"Option 'entity_shift_current' ({shift!r}) ist dieselbe Entity wie 'entity_room_target' – "
+            f"die Heizzone kann nicht zugleich Raum-Soll sein, {RECONFIGURE_HINT}"
+        )
     try:
         daily_trigger_time = validate_daily_trigger_time(options.get("daily_trigger_time"))
     except ValueError as error:

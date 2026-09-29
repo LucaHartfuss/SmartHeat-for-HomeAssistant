@@ -470,6 +470,24 @@ def test_writable_shift_domains_are_accepted(shift):
     assert effective["entity_shift_current"] == shift
 
 
+@pytest.mark.parametrize("room_target, shift", [
+    ("climate.zone::temperature", "climate.zone"),
+    ("climate.zone", "climate.zone::temperature"),
+    ("climate.zone::temperature", "climate.zone::temperature"),
+])
+def test_zone_as_room_target_is_a_configuration_error(room_target, shift):
+    # Final-Review I1: Das Add-on schriebe die Parallelverschiebung in die Quelle des Kundenwunsches
+    # (Rueckkopplung bis shift_max).
+    options = {**VALID, "entity_room_target": room_target, "entity_shift_current": shift}
+    with pytest.raises(config.ConfigError, match="entity_shift_current.*entity_room_target.*neu konfigurieren"):
+        config.resolve_effective_options(options)
+
+
+def test_zone_current_temperature_as_room_sensor_is_accepted():
+    options = {**VALID, "room_sensors": ["sensor.r", "climate.zone::current_temperature"]}
+    assert config.resolve_effective_options(options)["room_sensors"] == ["sensor.r", "climate.zone::current_temperature"]
+
+
 @pytest.mark.parametrize("value", [None, "", "25:00", "12"])
 def test_daily_trigger_time_validated(value):
     with pytest.raises(config.ConfigError, match="daily_trigger_time"):

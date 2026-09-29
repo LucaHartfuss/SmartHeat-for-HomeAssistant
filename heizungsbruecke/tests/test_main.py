@@ -112,6 +112,20 @@ def test_0_17_0_options_are_outdated_not_unconfigured(caplog, sleeps):
     assert "noch nicht eingerichtet" not in caplog.text
 
 
+def test_zone_as_room_target_is_a_configuration_error_without_writes(caplog, sleeps):
+    ha_api = MagicMock()
+    options = _full_valid_options(entity_room_target="climate.zone::temperature", entity_shift_current="climate.zone")
+
+    with caplog.at_level(logging.ERROR):
+        result = _start_bridge(options, ha_api)
+
+    assert result.reason == "konfigurationsfehler"
+    assert "Raum-Soll" in caplog.text
+    ha_api.set_climate_temperature.assert_not_called()
+    ha_api.set_number_value.assert_not_called()
+    ha_api.set_hvac_mode.assert_not_called()
+
+
 def test_invalid_telemetry_interval_is_a_configuration_error(caplog, sleeps):
     with caplog.at_level(logging.ERROR):
         result = _start_bridge(_full_valid_options(telemetry_interval_seconds=5), MagicMock())
