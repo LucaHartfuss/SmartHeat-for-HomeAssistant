@@ -7,6 +7,7 @@ import pytest
 
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.derived_sensors import ensure_all
+from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.helper_templates import outdoor_temperature_template, room_temperature_template
 
 ROOMS = ["sensor.wz", "climate.kz::current_temperature"]
@@ -16,15 +17,11 @@ OUTDOOR_ID = "sensor.smartheat_t1_aussentemperatur"
 
 
 def _ha_api(existing=()):
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)  # nur Methoden, die es wirklich gibt
     ha_api.entity_exists.side_effect = lambda entity_id: entity_id in existing
     ha_api.create_template_sensor.side_effect = lambda name, template: (
         OUTDOOR_ID if "Außentemperatur" in name else ROOM_ID
     )
-    ha_api.create_statistics_sensor.side_effect = lambda name, source_entity_id, max_age_hours, **kw: (
-        "sensor." + name.lower().replace(" ", "_").replace(".", "").replace("-", "_")
-    )
-    ha_api.create_input_number.side_effect = lambda name, **kw: "input_number." + name.lower().replace(" ", "_").replace(".", "")
     return ha_api
 
 
@@ -38,8 +35,6 @@ def test_fresh_install_creates_only_the_room_template(tmp_path):
     result = _run(ha_api, tmp_path / "d.json")
 
     ha_api.create_template_sensor.assert_called_once_with(name="SmartHeat t1 Raumtemperatur", template=ROOM_TEMPLATE)
-    ha_api.create_statistics_sensor.assert_not_called()
-    ha_api.create_input_number.assert_not_called()
     assert result.entity_ids == {"room_actual": ROOM_ID}
     assert result.replaced == ()
     ha_api.delete_helper.assert_not_called()
@@ -55,7 +50,6 @@ def test_weather_source_gets_an_outdoor_template(tmp_path):
     ha_api.create_template_sensor.assert_any_call(
         name="SmartHeat t1 Außentemperatur", template=outdoor_temperature_template("weather.forecast_home"),
     )
-    ha_api.create_statistics_sensor.assert_not_called()
     assert result.entity_ids == {"room_actual": ROOM_ID, "outdoor_temp": OUTDOOR_ID}
 
 
@@ -73,8 +67,6 @@ def test_same_sources_reuse_every_helper(tmp_path):
     result = _run(ha_api, tmp_path / "d.json")
 
     ha_api.create_template_sensor.assert_not_called()
-    ha_api.create_statistics_sensor.assert_not_called()
-    ha_api.create_input_number.assert_not_called()
     ha_api.delete_helper.assert_not_called()
     assert result.replaced == ()
 
@@ -89,7 +81,6 @@ def test_changed_room_sensors_recreate_only_the_room_template(tmp_path):
     ha_api.create_template_sensor.assert_called_once_with(
         name="SmartHeat t1 Raumtemperatur", template=room_temperature_template(["sensor.wz"]),
     )
-    ha_api.create_statistics_sensor.assert_not_called()  # gleiche Quell-Entity-ID
     assert result.replaced == ("room_temperature",)
 
 
@@ -225,3 +216,16 @@ def test_failing_cleanup_is_not_a_start_error(tmp_path, caplog):
     assert tracking["dat"] == OBSOLETE_TRACKING["dat"]  # naechster Start versucht es erneut
     assert "room_night_avg" not in tracking
     assert "sensor.smartheat_t1_dat" in caplog.text
+
+
+def test_broken_tracking_entry_of_an_obsolete_helper_is_not_a_start_error(tmp_path, caplog):
+    state_path = tmp_path / "d.json"
+    save_backup(state_path, {"dart": "kaputt", "room_day_avg": OBSOLETE_TRACKING["room_day_avg"]})
+    ha_api = _ha_api({"input_number.smartheat_t1_raumtemp_tagesmittel"})
+
+    with caplog.at_level(logging.WARNING):
+        result = _run(ha_api, state_path)
+
+    assert result.entity_ids == {"room_actual": ROOM_ID}
+    ha_api.delete_input_number.assert_called_once_with("input_number.smartheat_t1_raumtemp_tagesmittel")
+    assert "dart" in caplog.text

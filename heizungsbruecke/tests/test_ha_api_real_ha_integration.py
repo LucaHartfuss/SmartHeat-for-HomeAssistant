@@ -177,138 +177,21 @@ def test_get_config_returns_time_zone_from_real_ha(real_ha):
     assert time_zone
 
 
-def test_create_input_number_creates_a_real_working_helper(real_ha):
-    """Verifiziert create_input_number() end-to-end gegen echte HA (Task 4: per Websocket).
-
-    Der REST-Versuch aus Task 2 (`POST /api/config/input_number/config/<object_id>`)
-    scheiterte mit 404 -- siehe Git-Historie und der Docstring von
-    create_input_number() in ha_api.py fuer die Details. Seit Task 4 nutzt die
-    Methode das Websocket-Kommando `input_number/create`
-    (`homeassistant.helpers.collection.StorageCollectionWebsocket`), verifiziert
-    hier per echtem Roundtrip: der Helfer entsteht tatsaechlich in HA und sein
-    Zustand ist ueber die normale REST-States-API lesbar.
-
-    Der zurueckgegebene entity_id-String wird nur auf das `input_number.`-Praefix
-    geprueft, nicht auf einen exakten Wert: HA leitet den Objekt-Teil per
-    `slugify(name)` her (siehe Docstring von create_input_number()).
-    """
-    base_url, token = real_ha
-    api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
-
-    entity_id = api.create_input_number(
-        name="Test Tagesmittel",
-        minimum=0.0, maximum=35.0, step=0.01, initial=20.0,
-    )
-
-    assert entity_id.startswith("input_number.")
-    assert api.get_state(entity_id) == 20.0
 
 
-def test_set_input_number_value_updates_real_state(real_ha):
-    """Nutzt einen per api.create_input_number() frisch angelegten Helfer als reale Entity
-    (statt, wie vor Task 4, einen statisch per YAML in real_ha vorprovisionierten)."""
-    base_url, token = real_ha
-    api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
-    entity_id = api.create_input_number(
-        name="Test Set Value",
-        minimum=0.0, maximum=35.0, step=0.01, initial=18.0,
-    )
-
-    api.set_input_number_value(entity_id, 23.5)
-
-    assert api.get_state(entity_id) == 23.5
 
 
 def test_entity_exists_true_for_created_entity_false_for_unknown(real_ha):
     base_url, token = real_ha
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
-    entity_id = api.create_input_number(
-        name="Test Entity Exists",
-        minimum=0.0, maximum=35.0, step=0.01, initial=18.0,
-    )
+    entity_id = api.create_template_sensor(name="SmartHeat exists Raumtemperatur", template="{{ 20 }}")
 
     assert api.entity_exists(entity_id) is True
-    assert api.entity_exists("input_number.does_not_exist_at_all") is False
+    assert api.entity_exists("sensor.does_not_exist_at_all") is False
 
 
-def test_create_statistics_sensor_config_flow_creates_a_loaded_config_entry(real_ha):
-    """Verifiziert eigenstaendig NUR den Config-Entry-Flow-Teil von create_statistics_sensor().
-
-    HINTERGRUND: der `statistics`-Integrationsflow verlangt eine reale, in der
-    Domain "sensor" oder "binary_sensor" liegende Quell-Entity (per Selector im
-    ersten Formular-Schritt serverseitig erzwungen -- ein input_number wird mit
-    "Entity ... belongs to domain input_number, expected ['binary_sensor',
-    'sensor']" abgelehnt). Ein per api.create_input_number() angelegter Helfer
-    eignet sich dafuer also NICHT. Statt die gemeinsame real_ha-Fixture fuer
-    diesen einen Test zu erweitern, wird hier sensor.sun_next_dawn verwendet --
-    eine von HAs `sun`-Integration (Teil von `default_config`, siehe
-    real_ha-Fixture) immer automatisch angelegte, damit garantiert vorhandene
-    Sensor-Entity. Ihr nicht-numerischer Zustand (ISO-8601-Zeitstempel) ist fuer
-    diesen Test unerheblich: geprueft wird hier nur, dass der Config-Entry-Flow
-    selbst durchlaeuft und einen geladenen Config-Entry erzeugt -- nicht die
-    korrekte Berechnung des Mittelwerts.
-
-    Dieser Test verwendet absichtlich NICHT api.create_statistics_sensor()
-    direkt, sondern ruft _start_config_flow()/_advance_config_flow() einzeln
-    auf: so bleibt er unabhaengig von test_create_statistics_sensor_creates_a_real_working_helper()
-    unten (das den vollen End-to-End-Pfad inkl. Entity-Lookup abdeckt) und
-    verifiziert eigenstaendig nur den Flow-Teil.
-    """
-    base_url, token = real_ha
-    api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
-
-    flow_response = api._start_config_flow("statistics")
-    result = api._advance_config_flow(flow_response, {
-        "name": "Test Mean",
-        "entity_id": "sensor.sun_next_dawn",
-        "state_characteristic": "mean",
-        "max_age": {"hours": 12},
-        "sampling_size": 255,
-        "precision": 2,
-    })
-
-    assert result["type"] == "create_entry"
-    entry_id = result["result"]["entry_id"]
-
-    config_entries_response = requests.get(
-        f"{base_url}/api/config/config_entries/entry",
-        headers={"Authorization": f"Bearer {token}"},
-        params={"domain": "statistics"},
-        timeout=10,
-    )
-    config_entries_response.raise_for_status()
-    matching_entries = [entry for entry in config_entries_response.json() if entry["entry_id"] == entry_id]
-
-    assert len(matching_entries) == 1
-    assert matching_entries[0]["state"] == "loaded"
 
 
-def test_create_statistics_sensor_creates_a_real_working_helper(real_ha):
-    """Verifiziert create_statistics_sensor() end-to-end gegen echte HA (Task 4: Entity-Lookup per Websocket).
-
-    Analog zu test_create_input_number_creates_a_real_working_helper() oben, aber
-    fuer eine andere API-Flaeche: der Config-Entry-Flow-Teil von
-    create_statistics_sensor() funktionierte bereits per REST (siehe Test
-    oberhalb) -- aber die anschliessende Aufloesung "Config-Entry-ID ->
-    Entity-ID" ueber `GET /api/config/entity_registry/list` schlug mit 404 fehl
-    (Quellcode-Pruefung: homeassistant/components/config/entity_registry.py
-    registriert dafuer ausschliesslich Websocket-Kommandos, keine REST-Route).
-    Seit Task 4 nutzt _find_entity_by_config_entry() dafuer das WS-Kommando
-    `config/entity_registry/list` -- verifiziert hier per echtem Roundtrip: die
-    Methode liefert jetzt tatsaechlich eine nutzbare, existierende Entity-ID.
-
-    Nutzt sensor.sun_next_dusk (statt sun_next_dawn im Test oberhalb), damit
-    beide Tests unabhaengige Config-Entries anlegen.
-    """
-    base_url, token = real_ha
-    api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
-
-    entity_id = api.create_statistics_sensor(
-        name="Test Mean 2", source_entity_id="sensor.sun_next_dusk", max_age_hours=12,
-    )
-
-    assert entity_id.startswith("sensor.")
-    assert api.entity_exists(entity_id)
 
 
 def _wait_for_state(api, entity_id: str, expected: str, timeout: float = 15.0) -> str | None:
@@ -393,17 +276,10 @@ def test_deleted_and_recreated_helpers_keep_their_entity_id(real_ha):
     gleich bleiben (kein _2), sonst zeigen Dashboards und Recorder-Historie ins Leere."""
     base_url, token = real_ha
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
-    _set_state(api, "sensor.tp6_src", "20.0", {"unit_of_measurement": "°C"})
 
     template_id = api.create_template_sensor(name="SmartHeat recreate Raumtemperatur", template="{{ 20 }}")
     api.delete_helper(template_id)
     assert api.create_template_sensor(name="SmartHeat recreate Raumtemperatur", template="{{ 21 }}") == template_id
-
-    stats_id = api.create_statistics_sensor(name="SmartHeat recreate DART", source_entity_id="sensor.tp6_src", max_age_hours=24)
-    api.delete_helper(stats_id)
-    assert api.create_statistics_sensor(
-        name="SmartHeat recreate DART", source_entity_id=template_id, max_age_hours=24,
-    ) == stats_id
 
 
 def test_fire_event_reaches_the_event_bus(real_ha):

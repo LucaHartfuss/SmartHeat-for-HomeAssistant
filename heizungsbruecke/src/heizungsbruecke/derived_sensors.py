@@ -112,7 +112,8 @@ def _remove_obsolete(ha_api, tracking: dict, state_path: Path) -> None:
         try:
             removed = _drop_unused(ha_api, tracking, key, state_path, delete=delete)
         except Exception as error:
-            entity_id = tracking.get(key, {}).get("entity_id")
+            entry = tracking.get(key)  # kann kaputt sein (kein dict), dann nicht noch einmal werfen
+            entity_id = entry.get("entity_id") if isinstance(entry, dict) else entry
             logger.warning("Alter Hilfssensor %s (%s) konnte nicht entfernt werden: %s", entity_id, key, error)
             continue
         if removed is not None:

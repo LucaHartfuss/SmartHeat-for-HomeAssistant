@@ -243,42 +243,8 @@ def test_call_ws_command_raises_when_command_result_is_unsuccessful():
     ws.close.assert_called_once()
 
 
-def test_create_input_number_sends_ws_command_and_builds_entity_id():
-    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
-
-    with patch.object(
-        api, "_call_ws_command", return_value={"id": "smartheat_t1_room_day_avg_2"}
-    ) as mock_call:
-        entity_id = api.create_input_number(
-            name="SmartHeat t1 Tagesmittel",
-            minimum=0.0, maximum=35.0, step=0.01, initial=20.0,
-        )
-
-    assert entity_id == "input_number.smartheat_t1_room_day_avg_2"
-    mock_call.assert_called_once_with({
-        "type": "input_number/create",
-        "name": "SmartHeat t1 Tagesmittel",
-        "min": 0.0,
-        "max": 35.0,
-        "step": 0.01,
-        "initial": 20.0,
-    })
 
 
-def test_set_input_number_value_posts_correct_payload():
-    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
-    mock_response = Mock()
-    mock_response.raise_for_status.return_value = None
-
-    with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response) as mock_post:
-        api.set_input_number_value("input_number.smartheat_t1_room_day_avg", 21.3)
-
-    mock_post.assert_called_once_with(
-        "http://supervisor/core/api/services/input_number/set_value",
-        headers={"Authorization": "Bearer test-token"},
-        json={"entity_id": "input_number.smartheat_t1_room_day_avg", "value": 21.3},
-        timeout=10,
-    )
 
 
 def test_entity_exists_returns_true_when_state_found():
@@ -408,68 +374,12 @@ def test_find_entity_by_config_entry_raises_when_not_found():
         api._find_entity_by_config_entry("missing")
 
 
-def test_create_statistics_sensor_orchestrates_flow_and_registry_lookup():
-    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
-    flow_start_response = {"type": "form", "flow_id": "f1", "data_schema": []}
-    flow_final_response = {"type": "create_entry", "result": {"entry_id": "e1"}}
-
-    with patch.object(api, "_start_config_flow", return_value=flow_start_response) as mock_start, \
-         patch.object(api, "_advance_config_flow", return_value=flow_final_response) as mock_advance, \
-         patch.object(api, "_find_entity_by_config_entry", return_value="sensor.dart") as mock_find:
-        result = api.create_statistics_sensor(
-            name="SmartHeat t1 DART", source_entity_id="sensor.room", max_age_hours=24,
-        )
-
-    assert result == "sensor.dart"
-    mock_start.assert_called_once_with("statistics")
-    mock_advance.assert_called_once_with(flow_start_response, {
-        "name": "SmartHeat t1 DART",
-        "entity_id": "sensor.room",
-        "state_characteristic": "average_step",
-        "keep_last_sample": True,
-        "max_age": {"hours": 24},
-        "sampling_size": 10000,
-        "precision": 2,
-    })
-    mock_find.assert_called_once_with("e1")
 
 
-def test_create_statistics_sensor_passes_custom_state_characteristic():
-    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
-    flow_start_response = {"type": "form", "flow_id": "f1", "data_schema": []}
-    with patch.object(api, "_start_config_flow", return_value=flow_start_response), \
-         patch.object(api, "_advance_config_flow", return_value={"type": "create_entry", "result": {"entry_id": "e1"}}) as mock_advance, \
-         patch.object(api, "_find_entity_by_config_entry", return_value="sensor.outdoor_min"):
-        api.create_statistics_sensor(
-            name="SmartHeat t1 Aussentemp. 24h-Minimum", source_entity_id="sensor.out",
-            max_age_hours=24, state_characteristic="value_min",
-        )
-    assert mock_advance.call_args.args[1]["state_characteristic"] == "value_min"
 
 
-def test_create_statistics_sensor_defaults_sampling_size_to_10000():
-    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
-    flow_start_response = {"type": "form", "flow_id": "f1", "data_schema": []}
-    with patch.object(api, "_start_config_flow", return_value=flow_start_response), \
-         patch.object(api, "_advance_config_flow", return_value={"type": "create_entry", "result": {"entry_id": "e1"}}) as mock_advance, \
-         patch.object(api, "_find_entity_by_config_entry", return_value="sensor.dart"):
-        api.create_statistics_sensor(
-            name="SmartHeat t1 DART", source_entity_id="sensor.room", max_age_hours=24,
-        )
-    assert mock_advance.call_args.args[1]["sampling_size"] == 10000
 
 
-def test_create_statistics_sensor_passes_custom_sampling_size():
-    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
-    flow_start_response = {"type": "form", "flow_id": "f1", "data_schema": []}
-    with patch.object(api, "_start_config_flow", return_value=flow_start_response), \
-         patch.object(api, "_advance_config_flow", return_value={"type": "create_entry", "result": {"entry_id": "e1"}}) as mock_advance, \
-         patch.object(api, "_find_entity_by_config_entry", return_value="sensor.outdoor_min"):
-        api.create_statistics_sensor(
-            name="SmartHeat t1 Aussentemp. 24h-Minimum", source_entity_id="sensor.out",
-            max_age_hours=24, state_characteristic="value_min", sampling_size=10000,
-        )
-    assert mock_advance.call_args.args[1]["sampling_size"] == 10000
 
 
 def test_create_persistent_notification_posts_to_service():
@@ -604,10 +514,10 @@ def test_delete_helper_deletes_the_config_entry_of_the_entity(platform):
 
 def test_delete_helper_raises_for_entity_without_config_entry():
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
-    registry = [{"entity_id": "sensor.x", "config_entry_id": None, "platform": "template"}]
+    registry = [{"entity_id": "sensor.smartheat_t1_x", "config_entry_id": None, "platform": "template"}]
     with patch.object(api, "_call_ws_command", return_value=registry), \
          patch("heizungsbruecke.ha_api.requests.delete") as mock_delete, pytest.raises(RuntimeError):
-        api.delete_helper("sensor.x")
+        api.delete_helper("sensor.smartheat_t1_x")
 
     mock_delete.assert_not_called()
 
@@ -627,6 +537,23 @@ def test_delete_helper_refuses_config_entries_of_other_integrations(platform):
     ):
         api.delete_helper("sensor.smartheat_t1_dart")
 
+    mock_delete.assert_not_called()
+
+
+@pytest.mark.parametrize("entity_id", ["sensor.fremder_helfer", "sensor.", "smartheat_t1_dart"])
+def test_delete_helper_refuses_entities_without_smartheat_prefix(entity_id):
+    """Wie delete_input_number: nur Entities mit dem Objekt-Teil-Praefix `smartheat_`, auch wenn
+    eine fremde Entity zufaellig auf der Plattform template/statistics liegt."""
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    entry = {"entity_id": entity_id, "config_entry_id": "e_fremd", "platform": "template"}
+    with (
+        patch.object(api, "_call_ws_command", return_value=[entry]) as mock_ws,
+        patch("heizungsbruecke.ha_api.requests.delete") as mock_delete,
+        pytest.raises(RuntimeError, match="kein SmartHeat-Hilfssensor"),
+    ):
+        api.delete_helper(entity_id)
+
+    mock_ws.assert_not_called()
     mock_delete.assert_not_called()
 
 

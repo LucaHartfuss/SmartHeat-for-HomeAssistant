@@ -79,9 +79,6 @@ class FakeHa:
         self.states[entity_id] = mode
         self.writes.append((entity_id, mode))
 
-    def set_input_number_value(self, entity_id, value):
-        self.states[entity_id] = value
-
     def send_notification(self, service, message):
         self.pushes.append(message)
 
