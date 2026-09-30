@@ -73,10 +73,13 @@ class Flags:
     grund: str | None = None
 
 
-def overall_status(flags: Flags, state) -> str:
+_STORAGE_FAULT_ROLES = (delivery.ROLE_DATENTRAEGER,)
+
+
+def overall_status(flags: Flags, state, storage_failed: bool = False) -> str:
     """Erster zutreffender Zustand (Spec TP7 3.1): Endzustaende und Abo gelten immer, danach
-    Notbetrieb und Datenfehler, erst dann vor dem ersten abgeschlossenen Start `startet` (sonst
-    stuende ein Add-on, dessen Tunnel nie aufgebaut wird, im Notbetrieb dauerhaft auf `startet`)."""
+    Notbetrieb und Datenfehler (auch ein nicht beschreibbarer Datentraeger, TP12b), erst dann vor
+    dem ersten abgeschlossenen Start `startet` (sonst stuende ein Add-on, dessen Tunnel nie aufgebaut wird, im Notbetrieb dauerhaft auf `startet`)."""
     if flags.abgemeldet:
         return STATUS_ABGEMELDET
     if flags.konfigurationsfehler:
@@ -89,7 +92,7 @@ def overall_status(flags: Flags, state) -> str:
         return STATUS_ABO_INAKTIV
     if state.delivery.notbetrieb:
         return STATUS_NOTBETRIEB
-    if state.delivery.datenfehler is not None:
+    if storage_failed or state.delivery.datenfehler is not None:
         return STATUS_DATENFEHLER
     if not flags.gestartet:
         return STATUS_STARTET
@@ -137,8 +140,8 @@ def _manual(state) -> dict | None:
     return {"kurve": override["curve"], "parallelverschiebung": override["shift"], "erkannt": override["erkannt"]}
 
 
-def build_event(tenant_id: str, setup_id: str | None, flags: Flags, state) -> dict:
-    status = overall_status(flags, state)
+def build_event(tenant_id: str, setup_id: str | None, flags: Flags, state, storage_failed: bool = False) -> dict:
+    status = overall_status(flags, state, storage_failed)
     abo = _abo(flags, state)
     return {
         "schema": EVENT_SCHEMA,
@@ -148,7 +151,11 @@ def build_event(tenant_id: str, setup_id: str | None, flags: Flags, state) -> di
         "status": status,
         "grund": flags.grund if status in _STATUS_WITH_REASON else None,
         "notbetrieb": state.delivery.notbetrieb,
-        "datenfehler": _fault(state.delivery.datenfehler),
+        "datenfehler": (
+            _fault(state.delivery.datenfehler) if state.delivery.datenfehler is not None
+            else {"art": _FAULT_ART[delivery.SOURCE_LOCAL], "rollen": list(_STORAGE_FAULT_ROLES)} if storage_failed
+            else None
+        ),
         "boost": _boost(state),
         "letzte_serverantwort": state.last_ack_at,
         "kurve": state.curve_current,
@@ -180,10 +187,12 @@ class StatusReporter:
 
     @property
     def status(self) -> str:
-        return overall_status(self.flags, self._store.state)
+        return overall_status(self.flags, self._store.state, self._store.storage_failed)
 
     def event(self) -> dict:
-        return build_event(self._tenant_id, self._setup_id, self.flags, self._store.state)
+        return build_event(
+            self._tenant_id, self._setup_id, self.flags, self._store.state, self._store.storage_failed,
+        )
 
     def update(self, **changes) -> None:
         self.flags = replace(self.flags, **changes)

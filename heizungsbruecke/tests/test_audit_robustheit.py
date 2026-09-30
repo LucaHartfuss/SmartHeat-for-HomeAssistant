@@ -17,19 +17,15 @@ from test_runtime import (
     _set_room_target,
     _start,
     _trigger,
+    env,  # noqa: F401  (registriert die Fixture `env`)
 )
-from test_runtime import env as _env_fixture  # noqa: F401  (registriert die Fixture `env`)
 
 from heizungsbruecke import entitlement
 from heizungsbruecke.backup_store import save_backup
 from heizungsbruecke.state import StateStore
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "AUDIT: nicht beschreibbarer Datentraeger blockiert jeden Tick (claim_due_tick -> "
-    "update_saved wirft, __main__._on_local_check faengt nicht), ohne Meldung oder Status"
-))
-def test_unwritable_disk_blocks_ticks_silently(env, monkeypatch):
+def test_unwritable_disk_no_longer_blocks_ticks_silently(env, monkeypatch):
     _quiet_backup(env)
     bridge = _start(env)
     pushes, persistent = len(env.ha.pushes), len(env.ha.persistent)

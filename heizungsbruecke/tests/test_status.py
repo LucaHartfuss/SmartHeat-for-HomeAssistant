@@ -173,3 +173,18 @@ def test_failed_send_is_logged_and_repeated_on_the_next_check(make_store, caplog
 
 def test_empty_setup_id_is_sent_as_none(make_store):
     assert StatusReporter(MagicMock(), "t", "", make_store()).event()["setup_id"] is None
+
+
+def test_unwritable_disk_is_a_local_data_fault_ranked_after_notbetrieb():
+    assert overall_status(Flags(gestartet=True), BridgeState(), storage_failed=True) == "datenfehler"
+    assert overall_status(
+        Flags(gestartet=True), BridgeState(delivery=DeliveryState(notbetrieb=True)), storage_failed=True,
+    ) == "notbetrieb"
+    event = build_event("t", None, Flags(gestartet=True), BridgeState(), storage_failed=True)
+    assert event["datenfehler"] == {"art": "lokal", "rollen": ["datentraeger"]}
+
+
+def test_a_delivery_fault_wins_over_the_disk_in_the_event():
+    state = BridgeState(delivery=DeliveryState(datenfehler=DataFault("server", ("x",))))
+    event = build_event("t", None, Flags(gestartet=True), state, storage_failed=True)
+    assert event["datenfehler"] == {"art": "server", "rollen": []}

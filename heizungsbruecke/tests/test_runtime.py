@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 import heizungsbruecke.__main__ as main_module
-from heizungsbruecke import abo, backup_store, entitlement, ticks
+from heizungsbruecke import abo, backup_store, datentraeger, entitlement, ticks
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.delivery import DeliveryState
 from heizungsbruecke.derived_sensors import DerivedSensors
@@ -2256,3 +2256,36 @@ def test_a_failed_publish_does_not_pin_a_manual_override(env):
 
     assert _mqtt(env).snapshots[-1]["manual_override"] == OVERRIDE
     assert bridge.manual_override_sent == OVERRIDE
+
+
+# --- TP12b: Datentraeger nicht beschreibbar ---
+
+def test_unwritable_disk_is_reported_once_and_cleared_after_repair(env, monkeypatch):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _connect(env, bridge)
+    with monkeypatch.context() as patch:
+        _break_backup_writes(patch)
+        _set_room_target(env, bridge, 20.5)
+        _set_room_target(env, bridge, 20.0)
+
+        assert _last_event(env)["status"] == "datenfehler"
+        assert _last_event(env)["datenfehler"] == {"art": "lokal", "rollen": ["datentraeger"]}
+        assert env.ha.pushes.count(datentraeger.FAILED_MESSAGE) == 1
+        assert _mqtt(env).snapshots == []  # N5: ohne gespeicherte Buchung kein Tick
+
+    _advance(env, bridge, 300)  # EV_HEALTH: flush gelingt, ohne dass sich Zustand aendert
+
+    assert env.ha.pushes[-1] == datentraeger.OK_MESSAGE
+    assert _last_event(env)["status"] == "regelt"
+
+
+def test_telemetry_reports_the_unwritable_disk_as_local_data_fault(env, monkeypatch):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _break_backup_writes(monkeypatch)
+    _set_room_target(env, bridge, 20.5)
+
+    _advance(env, bridge, 300)  # Telemetrie-Takt
+
+    assert _mqtt(env).telemetry[-1]["datenfehler"] == {"source": "local", "detail": ["datentraeger"]}

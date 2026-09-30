@@ -17,6 +17,7 @@ from heizungsbruecke import (
     abo,
     battery,
     config,
+    datentraeger,
     delivery,
     derived_sensors,
     entitlement,
@@ -28,6 +29,7 @@ from heizungsbruecke import (
     ticks,
     triggers,
 )
+from heizungsbruecke.delivery import ROLE_DATENTRAEGER, SOURCE_LOCAL, DataFault
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.manifest import ChannelManifest, ManifestError, build_manifest, entity_ref
@@ -50,7 +52,7 @@ from heizungsbruecke.runtime import (
     EV_WATCHDOG,
     Runtime,
 )
-from heizungsbruecke.state import StateStore
+from heizungsbruecke.state import StateStore, StorageError
 from heizungsbruecke.status import (
     ABO_AKTIV,
     HEARTBEAT_SECONDS,
@@ -368,7 +370,13 @@ def _on_local_check(rt: Runtime, event: Event) -> None:
         regulation.run_local_check(rt)
     except Exception:
         logger.exception("Fehler im lokalen Check (Boost/Notfall-Boost), wird beim naechsten Ereignis erneut versucht")
-    trigger = regulation.claim_due_tick(rt, datetime.now())
+    try:
+        trigger = regulation.claim_due_tick(rt, datetime.now())
+    except StorageError:
+        logger.warning(
+            "Tick nicht gebucht, Datentraeger nicht beschreibbar (N5) - naechster Versuch beim naechsten Anlass"
+        )
+        return
     if trigger is not None:
         ticks.start_tick(rt, trigger)
 
@@ -402,10 +410,13 @@ def _on_telemetry(rt: Runtime, event: Event) -> None:
     state = rt.store.state
     if state.abo_inactive_since is not None or rt.mqtt_client is None:
         return
+    datenfehler = state.delivery.datenfehler
+    if datenfehler is None and rt.store.storage_failed:
+        datenfehler = DataFault(SOURCE_LOCAL, (ROLE_DATENTRAEGER,))
     telemetry.run_telemetry_tick(
         rt.manifest, rt.ha_api, rt.mqtt_client,
         boost_active=state.boost_active, failsafe_active=state.delivery.notbetrieb,
-        datenfehler=state.delivery.datenfehler, room_target=state.stable_target,
+        datenfehler=datenfehler, room_target=state.stable_target,
     )
 
 
@@ -419,6 +430,10 @@ def _on_health(rt: Runtime, event: Event) -> None:
     Parallelverschiebung, Mindestvorlauf und Zonen-Betriebsart (Durchsetzung, TP11). Eigener
     Zeitplaneintrag: der lokale Check laeuft seit den eventgetriebenen Triggern nur auf Ereignisse."""
     rt.worker.schedule(config.local_check_interval(rt.options), Event(EV_HEALTH))
+    try:
+        rt.store.flush()
+    except StorageError as error:
+        logger.warning("Datentraeger weiterhin nicht beschreibbar: %s", error)
     if rt.store.state.abo_finished:
         return
     for check in (battery.check_batteries, room_sensors.check_room_sensors, manual_override.check_manual_override):
@@ -483,9 +498,19 @@ def _register_handlers(rt: Runtime) -> None:
     for kind, handler in handlers.items():
         rt.worker.register(kind, functools.partial(_unless_idle, rt, handler))
     rt.worker.register(EV_HEARTBEAT, functools.partial(_on_heartbeat, rt))
+    rt.worker.after_each(functools.partial(_after_each, rt))
+
+
+def _after_each(rt: Runtime) -> None:
+    """Nach jedem Worker-Ereignis: Datentraeger-Meldung (TP12b), dann das Status-Event, falls es
+    sich geaendert hat."""
+    try:
+        datentraeger.report(rt.store, rt.notifier)
+    except Exception:
+        logger.exception("Datentraeger-Meldung fehlgeschlagen")
     status = rt.status
     assert status is not None  # beim Boot gesetzt
-    rt.worker.after_each(status.publish_if_changed)
+    status.publish_if_changed()
 
 
 # --- Boot ---

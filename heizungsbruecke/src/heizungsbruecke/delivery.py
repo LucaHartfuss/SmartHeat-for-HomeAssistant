@@ -28,6 +28,9 @@ STATUS_REJECTED = "rejected"
 SOURCE_LOCAL = "local"
 SOURCE_SERVER = "server"
 SOURCE_WRITE = "write"
+# Rolle des lokalen Datenfehlers "Datentraeger nicht beschreibbar" (TP12b). Vorhandene Vertragswerte:
+# im Status-Event {"art": "lokal", "rollen": ["datentraeger"]}.
+ROLE_DATENTRAEGER = "datentraeger"
 
 NOTIFY_NOTBETRIEB_ON = "notbetrieb_on"
 NOTIFY_NOTBETRIEB_OFF = "notbetrieb_off"
