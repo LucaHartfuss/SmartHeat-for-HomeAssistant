@@ -24,7 +24,7 @@ def test_contract_values_match_the_integration():
     assert status.BOOST_VALUES == ("keiner", "komfort", "notfall")
     assert status.ABO_VALUES == ("aktiv", "inaktiv", "beendet", "unbekannt")
     assert status.DATENFEHLER_ARTEN == ("lokal", "server", "anlage")
-    assert status.HINT_FIELDS == ("raumfuehler_ausgefallen", "batterie_niedrig", "manueller_eingriff")
+    assert status.HINT_FIELDS == ("raumfuehler_ausgefallen", "batterie_niedrig", "manueller_eingriff", "waerme_fehlt")
     assert status.EVENT_FIELDS == (
         "schema", "tenant_id", "setup_id", "addon_version", "status", "grund", "notbetrieb", "datenfehler",
         "boost", "letzte_serverantwort", "kurve", "parallelverschiebung", "mindestvorlauf", "abo",
@@ -78,6 +78,7 @@ def test_event_carries_every_field():
             "manueller_eingriff": {
                 "kurve": 1.3, "parallelverschiebung": 24.5, "erkannt": "2026-10-01T08:00:00+02:00",
             },
+            "waerme_fehlt": None,
         },
     }
 
@@ -188,3 +189,10 @@ def test_a_delivery_fault_wins_over_the_disk_in_the_event():
     state = BridgeState(delivery=DeliveryState(datenfehler=DataFault("server", ("x",))))
     event = build_event("t", None, Flags(gestartet=True), state, storage_failed=True)
     assert event["datenfehler"] == {"art": "server", "rollen": []}
+
+
+def test_hinweise_carry_the_waerme_fehlt_since_time():
+    state = BridgeState(waerme_fehlt_seit="2026-09-30T05:11:00+02:00")
+    event = build_event("t", None, Flags(gestartet=True), state)
+    assert event["hinweise"]["waerme_fehlt"] == "2026-09-30T05:11:00+02:00"
+    assert build_event("t", None, Flags(gestartet=True), BridgeState())["hinweise"]["waerme_fehlt"] is None

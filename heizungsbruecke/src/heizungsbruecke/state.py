@@ -11,6 +11,7 @@ from pathlib import Path
 
 from heizungsbruecke import backup_store
 from heizungsbruecke.delivery import DeliveryState, from_persisted, to_persisted
+from heizungsbruecke.waerme import WaermeState
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ class StorageError(OSError):
 
 _NUMBER_FIELDS = ("curve_current", "shift_current", "last_room_target", "last_published_target_rt")
 _FLAG_FIELDS = ("boost_active", "emergency_boost_active")
-_TEXT_FIELDS = ("last_daily_trigger_date", "last_ack_at")
+_TEXT_FIELDS = ("last_daily_trigger_date", "last_ack_at", "waerme_fehlt_seit")
 _TEXT_MAP_FIELDS = ("notify_states", "notify_messages")
 _OVERRIDE_FIELDS = ("manual_override", "manual_override_pending")
 BACKUP_FIELDS = _NUMBER_FIELDS + _FLAG_FIELDS + _TEXT_FIELDS + _TEXT_MAP_FIELDS + _OVERRIDE_FIELDS + ("write_budget",)
@@ -68,6 +69,11 @@ class BridgeState:
     # Schreibbudget je Schluessel (write_budget.py, TP12b): Durchsetzung, Zonenvorbereitung,
     # Boost-Start/-Ende, Wiederherstellung. In backup.json; "last" nur zur Laufzeit gueltig.
     write_budget: dict = field(default_factory=dict)
+    # Seit wann die Therme trotz Anforderung keine Waerme liefert (waerme.py, TP12f): ISO-Zeitpunkt,
+    # uebersteht Neustarts (keine zweite Meldung). Der Phasenzustand darunter ist nur Laufzeit: er aendert sich
+    # mit jedem Tick, und backup.json wird nur bei geaenderten Feldern geschrieben.
+    waerme_fehlt_seit: str | None = None
+    waerme: WaermeState | None = None
 
 
 def _is_number(value) -> bool:
