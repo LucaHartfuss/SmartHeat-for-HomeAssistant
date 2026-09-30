@@ -23,6 +23,9 @@ CLEAR_WINDOW = timedelta(minutes=60)
 # mindestens CLEAR_WINDOW - ANCHOR_TOLERANCE alt sein. Sonst koennte nach langer Aussagelosigkeit (Hub unter MIN_LIFT,
 # Sensor fehlt: die Phase laeuft weiter) ein einzelner guter Wert ueber den Anker entwarnen. Das garantiert mindestens zwei
 # Werte im Fenster; bei Tick-Abstand <= ANCHOR_TOLERANCE (hier 5 min) liegen Werte auch am alten Rand dicht genug.
+# Luecken ohne Aussage am alten Rand des Fensters oder ueber das ganze Fenster koennen das Flag damit nicht loeschen; eine
+# Luecke in der Mitte des Fensters mit je einem Wert an beiden Enden schon (bekannte Grenze, zurueckgestellt: Mindestzahl
+# Werte im Fenster, z. B. len(inside) >= 6, nach der Pruefung der Positivseite neu bewerten).
 ANCHOR_TOLERANCE = timedelta(minutes=10)
 SHARE_THRESHOLD = 0.5
 # Mindest-Uebertemperatur (Soll - Raum); gleich SHARE_MIN_LIFT_K im Server (samples.py).
