@@ -10,14 +10,17 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
 - Ist der Datenträger des Home-Assistant-Systems voll oder schreibgeschützt, meldet SmartHeat das
   jetzt (Status „Datenfehler“, Push) statt still stehen zu bleiben. Die Meldung verschwindet von
   selbst, sobald wieder gespeichert werden kann.
-- Fehlt die Verbindung zum SmartHeat-Server 15 Minuten lang, geht das Add-on in den Notbetrieb und
+- Fehlt die Verbindung zum SmartHeat-Server etwa 15 bis 20 Minuten lang, geht das Add-on in den Notbetrieb und
   meldet das – auch direkt nach dem Start und wenn gerade keine Anpassung anstand. Der Notbetrieb
   endet, sobald der Server wieder antwortet.
 - Ist das Raumthermostat beim Start nicht lesbar, wird das als Datenfehler gemeldet.
 - Nach einer Abo-Reaktivierung endet ein übrig gebliebener Notbetrieb sofort.
 - Scheitert das Schreiben an die Anlage (z. B. Abrufgrenze der Hersteller-Cloud erreicht), versucht
-  SmartHeat es gestaffelt erneut (nach 5, 15, 30 Minuten, danach halbstündlich) statt bei jeder
-  Raumtemperatur-Änderung. Das Kontingent übersteht einen Neustart.
+  SmartHeat es gestaffelt erneut statt bei jeder Raumtemperatur-Änderung. Das Zurückstellen der
+  Anlage (Ende eines Boosts, Wiederherstellung) wiederholt es nach 5, 15 und 30 Minuten, danach
+  halbstündlich. Ein Boost-Start und die Vorbereitung der Zone werden frühestens nach 30 Minuten
+  wiederholt, höchstens 6 gescheiterte Versuche am Tag. Nur die Tageszählung übersteht einen
+  Neustart, der Mindestabstand beginnt dann neu.
 - Nicht verfügbare Anlagenwerte werden nicht mehr „geschrieben“; heizt die Zone gerade nicht, wird
   die Wunschtemperatur nicht bei jeder Serverantwort neu übertragen.
 - Umbenannte alte Hilfssensoren (DAT, 24-h-Minimum) werden jetzt ebenfalls entfernt.

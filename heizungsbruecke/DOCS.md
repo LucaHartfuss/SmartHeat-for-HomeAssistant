@@ -62,7 +62,7 @@ das Zurücksetzen, bleibt es im Ruhezustand laufen, versucht es weiter und melde
 Hand einzustellen sind.
 
 **Fehlerbilder im Status:** „Notbetrieb“ heißt, der SmartHeat-Server antwortet nicht oder die
-Verbindung fehlt seit 15 Minuten; die Heizung wird dann bei Bedarf lokal abgesichert. „Datenfehler“
+Verbindung fehlt seit etwa 15 bis 20 Minuten; die Heizung wird dann bei Bedarf lokal abgesichert. „Datenfehler“
 mit der Rolle `datentraeger` heißt, der Datenträger des Home-Assistant-Systems ist voll oder
 schreibgeschützt; die Regelung pausiert, die Anlage behält ihre letzten Werte.
 
