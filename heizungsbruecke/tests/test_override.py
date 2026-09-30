@@ -822,3 +822,45 @@ def test_unavailable_entity_is_not_written_and_not_remembered(make_store, clock)
 
     assert ha.writes == []
     assert override.last_written("curve_current") is None
+
+
+# --- TP12b: inaktive Zone (B-TP11-2) ---
+
+ZONE_MANIFEST = ChannelManifest(entity_ids={**MANIFEST.entity_ids, "shift_current": "climate.zone::temperature"})
+
+
+def _inactive_zone(make_store, clock, backup):
+    store = make_store(backup=backup)
+    ha = RecordingHa({"climate.zone": "heat_cool", "climate.zone::temperature": 0.0, "number.curve": 0.9})
+    ha.set_hvac_mode = lambda entity, mode: ha.events.append(("hvac", entity, mode))
+    ha.set_climate_temperature = lambda entity, value: ha.events.append(("write", entity, value))
+    return Override(store, ZONE_MANIFEST, ha, OPTIONS, clock=clock), store, ha
+
+
+def test_inactive_zone_is_not_rewritten_with_the_own_last_value(make_store, clock):
+    override, _, ha = _inactive_zone(make_store, clock, {"curve_current": 0.9, "shift_current": 22.0})
+    clock.advance(OWN_WRITE_SETTLE_SECONDS + 1)
+
+    override.apply_server_values(0.9, 22.0)  # erster Schreibvorgang seit dem Start
+    override.apply_server_values(0.9, 22.0)  # naechste Antwort, Zone weiter inaktiv
+
+    assert ha.writes == [("climate.zone", 22.0)]
+
+
+def test_inactive_zone_still_gets_a_changed_server_value(make_store, clock):
+    override, _, ha = _inactive_zone(make_store, clock, {"curve_current": 0.9, "shift_current": 22.0})
+    clock.advance(OWN_WRITE_SETTLE_SECONDS + 1)
+
+    override.apply_server_values(0.9, 22.0)
+    override.apply_server_values(0.9, 23.0)
+
+    assert ha.writes == [("climate.zone", 22.0), ("climate.zone", 23.0)]
+
+
+def test_prepare_zone_leaves_a_manual_but_inactive_zone_alone(make_store, clock):
+    override, _, ha = _inactive_zone(make_store, clock, {"curve_current": 0.9, "shift_current": 22.0})
+
+    override.prepare_zone(start_shift=20.5)
+
+    assert ha.writes == []
+    assert [event for event in ha.events if event[0] == "hvac"] == []
