@@ -81,17 +81,24 @@ def claim_due_tick(rt: Runtime, now: datetime) -> str | None:
     Check, geht der Tick als "daily" raus: der Server lernt nur auf "daily" und wendet die
     Vorsteuerung auf jeden Tick an, sonst fiele der Lernschritt des Tages aus. Gebucht wird beim
     Entstehen, nicht beim Publish: ein zurueckgehaltener Tick erzeugt keine Duplikate, seine
-    Wiederholungen laufen ueber die Zustellung."""
+    Wiederholungen laufen ueber die Zustellung. Ohne Stable-Target-Cache (Thermostat beim Start
+    nicht lesbar) gibt es nur einen faelligen Tagestick; dessen Versuch liest live und meldet den
+    Fuehler als Datenfehler (AU-013)."""
     state = rt.store.state
-    room_target = state.stable_target
-    if state.abo_inactive_since is not None or room_target is None:
+    if state.abo_inactive_since is not None:
         return None
+    room_target = state.stable_target
     today = now.date().isoformat()
     daily_trigger_time = rt.options.get("daily_trigger_time")
     daily_due = False
     if daily_trigger_time:
         trigger_time = datetime.strptime(daily_trigger_time, "%H:%M").time()
         daily_due = now.time() >= trigger_time and state.last_daily_trigger_date != today
+    if room_target is None:
+        if not daily_due:
+            return None
+        rt.store.update_saved(last_daily_trigger_date=today)
+        return "daily"
     target_changed = room_target != state.last_published_target_rt
     if not (daily_due or target_changed):
         return None

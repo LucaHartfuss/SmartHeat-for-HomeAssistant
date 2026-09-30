@@ -56,12 +56,7 @@ def test_unwritable_disk_on_answer_is_not_diagnosed_as_server_outage(env, monkey
     assert _delivery(bridge).notbetrieb is False
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "AUDIT: ist room_target beim Start nicht lesbar (Integration laedt noch), bleibt der "
-    "Stable-Target-Cache leer; claim_due_tick bucht dann keinen Tick (auch keinen faelligen "
-    "Tagestick) und es entsteht kein lokaler Datenfehler - still bis zur naechsten Soll-Aenderung"
-))
-def test_unreadable_room_target_at_start_suppresses_due_daily_tick_silently(env):
+def test_unreadable_room_target_at_start_no_longer_suppresses_the_due_daily_tick(env):
     yesterday = (date.today() - timedelta(days=1)).isoformat()
     _quiet_backup(env, last_daily_trigger_date=yesterday)
     env.ha.states["sensor.room_target"] = ValueError("could not convert string to float: 'unavailable'")

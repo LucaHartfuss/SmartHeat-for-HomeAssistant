@@ -6,7 +6,7 @@ import itertools
 import json
 import logging
 import sys
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -2305,3 +2305,34 @@ def test_unwritable_disk_on_answer_reports_one_message_and_writes_nothing(env, m
     assert _delivery(bridge).notbetrieb is False
     assert env.ha.pushes == [datentraeger.FAILED_MESSAGE]
     assert env.ha.writes == writes_before
+
+
+# --- TP12b: Pruef-Tick und Soll beim Start ---
+
+def test_probe_tick_sends_target_change_without_booking_the_target(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+
+    ticks.start_probe_tick(bridge, "Test")
+    bridge.worker.run_pending()
+
+    assert [s["trigger"] for s in _mqtt(env).snapshots] == ["target_change"]
+    assert _backup(env)["last_published_target_rt"] == 21.0
+
+
+def test_unreadable_room_target_at_start_reports_a_local_data_fault_for_the_due_daily_tick(env):
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    _quiet_backup(env, last_daily_trigger_date=yesterday)
+    env.ha.states["sensor.room_target"] = ValueError("could not convert string to float: 'unavailable'")
+    bridge = _start(env, daily_trigger_time="00:00")
+
+    _trigger(env, bridge, "sensor.room_actual")
+
+    assert _delivery(bridge).pending.trigger == "daily"
+    assert _delivery(bridge).datenfehler == DataFault("local", ("room_target",))
+    assert len(env.ha.pushes) == 1
+
+    env.ha.states["sensor.room_target"] = 21.0
+    _advance(env, bridge, 30)  # Daten-Retry derselben seq
+
+    assert [s["trigger"] for s in _mqtt(env).snapshots] == ["daily"]

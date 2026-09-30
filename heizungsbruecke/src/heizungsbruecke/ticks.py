@@ -27,6 +27,19 @@ def start_tick(rt: Runtime, trigger: str) -> None:
     deliver(rt, delivery.TickDue(seq=str(uuid.uuid4()), trigger=trigger))
 
 
+# Pruef-Tick (TP12b, Spec 1): der Server lernt nur auf "daily"; ein target_change bei unveraendertem
+# Soll ergibt Vorsteuerung null und dieselben Werte.
+PROBE_TRIGGER = "target_change"
+
+
+def start_probe_tick(rt: Runtime, reason: str) -> None:
+    """Klaert den Zustand des Servers ohne fachlichen Anlass (Verbindungsverlust, Notbetrieb ohne
+    offenen Tick). Laeuft durch die normale Zustellung; bucht last_published_target_rt nicht um,
+    weil er kein Soll-Wechsel ist."""
+    logger.warning("Pruef-Tick: %s", reason)
+    start_tick(rt, PROBE_TRIGGER)
+
+
 def deliver(rt: Runtime, event) -> None:
     """Fuehrt ein Ereignis durch delivery.step und dessen Aktionen aus. Aktionen mit Ergebnis
     (Versuch, Abo-Abfrage) speisen es als neues Ereignis zurueck."""
