@@ -28,9 +28,14 @@ class RecordingHa:
         self.states = {"number.curve": 0.7, "number.shift": 21.0, "number.min_flow": 20.0, **(states or {})}
         self.events = []
         self.write_error = None
+        # Nur get_state scheitert (z. B. voruebergehender Lesefehler/fehlendes Attribut), die Entity
+        # selbst ist verfuegbar: get_raw_state bleibt unberuehrt.
+        self.read_errors = {}
 
     def get_state(self, entity_id):
         self.events.append(("read", entity_id))
+        if entity_id in self.read_errors:
+            raise self.read_errors[entity_id]
         value = self.states[entity_id]
         if isinstance(value, Exception):
             raise value
@@ -39,9 +44,7 @@ class RecordingHa:
     def get_raw_state(self, entity_id):
         value = self.states.get(entity_id, "on")
         if isinstance(value, Exception):
-            # Ein Exception-Eintrag modelliert einen fehlgeschlagenen Zahlen-Read (get_state), nicht
-            # eine nicht verfuegbare Entity: der Zustand selbst gilt als verfuegbar.
-            return "on"
+            raise value
         if value in ("unavailable", "unknown", ""):
             raise ValueError(f"Entity {entity_id} hat keinen gueltigen Zustand: {value!r}")
         return str(value)
@@ -147,8 +150,8 @@ def test_running_boost_is_never_refused(make_store):
     # Datei), wird der Wechsel Notfall -> Comfort nicht abgelehnt und nichts gelesen.
     override, _, ha = _setup(
         make_store, backup={"boost_active": True, "emergency_boost_active": True},
-        states={"number.curve": RuntimeError("Cloud nicht erreichbar")},
     )
+    ha.read_errors["number.curve"] = RuntimeError("Lesefehler")
 
     assert override.set_boosts(comfort=True, emergency=False) == (True, False)
     assert ha.writes == _written("comfort")
@@ -525,8 +528,8 @@ def test_write_role_writes_when_the_current_value_differs(make_store):
 def test_write_role_writes_when_the_current_value_cannot_be_read(make_store):
     override, _, ha = _setup(
         make_store, backup={**RESTORE_POINT, "boost_active": True},
-        states={"number.shift": RuntimeError("Cloud nicht erreichbar")},
     )
+    ha.read_errors["number.shift"] = RuntimeError("Lesefehler")
 
     override.set_boosts(comfort=False, emergency=False)
 
