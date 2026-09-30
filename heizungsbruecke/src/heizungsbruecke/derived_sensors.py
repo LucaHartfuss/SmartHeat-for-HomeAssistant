@@ -6,6 +6,7 @@ Statistik- und Tag-/Nacht-Helfer raeumt ensure_all beim Start weg.
 Jeder Helfer merkt sich die Quelle, auf der er angelegt wurde (derived_sensors.json). Weicht sie
 ab oder ist sie unbekannt (Bestand vor TP6), wird er geloescht und neu angelegt; die Entity-ID
 bleibt dabei gleich (slugify(name), gegen echtes HA geprueft)."""
+import functools
 import hashlib
 import json
 import logging
@@ -38,7 +39,9 @@ def ensure_all(ha_api, tenant_id: str, room_sensors: list[str], outdoor_source: 
     sources: dict[str, str] = {}
 
     def ensure(key: str, source: str | None, create_fn) -> str:
-        entity_id, was_replaced = _ensure_entity(ha_api, tracking, key, source, state_path, create_fn)
+        entity_id, was_replaced = _ensure_entity(
+            ha_api, tracking, key, source, state_path, create_fn, tenant_id,
+        )
         if was_replaced:
             replaced.append(key)
         if source is not None:
@@ -61,14 +64,16 @@ def ensure_all(ha_api, tenant_id: str, room_sensors: list[str], outdoor_source: 
             ),
         )
     else:
-        _drop_unused(ha_api, tracking, "outdoor_temperature", state_path)
-    _remove_obsolete(ha_api, tracking, state_path)
+        _drop_unused(ha_api, tracking, "outdoor_temperature", state_path, tenant_id)
+    _remove_obsolete(ha_api, tracking, state_path, tenant_id)
 
     fingerprint = hashlib.sha256(json.dumps(sources, sort_keys=True).encode()).hexdigest()[:12]
     return DerivedSensors(entity_ids=result, replaced=tuple(replaced), sources_fingerprint=fingerprint)
 
 
-def _ensure_entity(ha_api, tracking: dict, key: str, source: str | None, state_path: Path, create_fn) -> tuple[str, bool]:
+def _ensure_entity(
+    ha_api, tracking: dict, key: str, source: str | None, state_path: Path, create_fn, tenant_id: str,
+) -> tuple[str, bool]:
     """(Entity-ID, neu angelegt wegen Quellwechsel?). Erst loeschen, dann anlegen: nur so
     bekommt der neue Helfer wieder dieselbe Entity-ID.
 
@@ -82,35 +87,37 @@ def _ensure_entity(ha_api, tracking: dict, key: str, source: str | None, state_p
         if not replaced:
             return existing_id, False
         logger.info("Hilfs-Entity %s (%s) wird wegen geaenderter Quelle neu angelegt", existing_id, key)
-        ha_api.delete_helper(existing_id)
+        ha_api.delete_helper(existing_id, tenant_id=tenant_id)
     entity_id = create_fn()
     tracking[key] = {"entity_id": entity_id} if source is None else {"entity_id": entity_id, "source": source}
     save_backup(state_path, tracking)
     return entity_id, replaced
 
 
-def _drop_unused(ha_api, tracking: dict, key: str, state_path: Path, delete=None) -> str | None:
+def _drop_unused(ha_api, tracking: dict, key: str, state_path: Path, tenant_id: str, delete=None) -> str | None:
     """Ein nicht mehr gebrauchter Helfer (Template-Helfer bei weather -> sensor, TP11-Altbestand)
     wird entfernt, erst in HA, dann aus dem Tracking. `delete` loescht in HA (Standard:
-    ha_api.delete_helper). Gibt die entfernte Entity-ID zurueck, None ohne Tracking-Eintrag.
+    ha_api.delete_helper mit dem Tenant fuer die Titelpruefung). Gibt die entfernte Entity-ID zurueck, None ohne Tracking-Eintrag.
     Wirft, wenn das Loeschen scheitert; der Eintrag bleibt dann stehen."""
     existing_id = tracking.get(key, {}).get("entity_id")
     if existing_id is None:
         return None
     if ha_api.entity_exists(existing_id):
-        (delete or ha_api.delete_helper)(existing_id)
+        (delete or functools.partial(ha_api.delete_helper, tenant_id=tenant_id))(existing_id)
     del tracking[key]
     save_backup(state_path, tracking)
     return existing_id
 
 
-def _remove_obsolete(ha_api, tracking: dict, state_path: Path) -> None:
+def _remove_obsolete(ha_api, tracking: dict, state_path: Path, tenant_id: str) -> None:
     """TP11: DAT/DART, Raum-Mittel, 24-h-Minimum und Tag-/Nachtmittel werden nicht mehr gebraucht.
-    Ein Fehler beim Loeschen ist kein Startfehler; der Eintrag bleibt dann fuer den naechsten Start."""
+    Ein Fehler beim Loeschen ist kein Startfehler; der Eintrag bleibt dann fuer den naechsten Start.
+    Umbenannte Helfer erkennt delete_helper am Titel mit dem Tenant (B-TP11-1)."""
+    delete_helper = functools.partial(ha_api.delete_helper, tenant_id=tenant_id)
     for key in OBSOLETE_STATISTICS + OBSOLETE_INPUT_NUMBERS:
-        delete = ha_api.delete_input_number if key in OBSOLETE_INPUT_NUMBERS else ha_api.delete_helper
+        delete = ha_api.delete_input_number if key in OBSOLETE_INPUT_NUMBERS else delete_helper
         try:
-            removed = _drop_unused(ha_api, tracking, key, state_path, delete=delete)
+            removed = _drop_unused(ha_api, tracking, key, state_path, tenant_id, delete=delete)
         except Exception as error:
             entry = tracking.get(key)  # kann kaputt sein (kein dict), dann nicht noch einmal werfen
             entity_id = entry.get("entity_id") if isinstance(entry, dict) else entry

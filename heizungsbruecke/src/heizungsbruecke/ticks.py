@@ -11,6 +11,7 @@ from heizungsbruecke.notifier import STATE_OK
 from heizungsbruecke.override import DeviceWriteError
 from heizungsbruecke.runtime import EV_ACK_TIMEOUT, EV_RETRY_DUE, Runtime
 from heizungsbruecke.snapshot import SNAPSHOT_SCHEMA_VERSION, publish_snapshot, read_snapshot_roles
+from heizungsbruecke.state import StorageError
 from heizungsbruecke.worker import Event
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,19 @@ def _is_finite_number(value) -> TypeGuard[float]:
 
 def start_tick(rt: Runtime, trigger: str) -> None:
     deliver(rt, delivery.TickDue(seq=str(uuid.uuid4()), trigger=trigger))
+
+
+# Pruef-Tick (TP12b, Spec 1): der Server lernt nur auf "daily"; ein target_change bei unveraendertem
+# Soll ergibt Vorsteuerung null und dieselben Werte.
+PROBE_TRIGGER = "target_change"
+
+
+def start_probe_tick(rt: Runtime, reason: str) -> None:
+    """Klaert den Zustand des Servers ohne fachlichen Anlass (Verbindungsverlust, Notbetrieb ohne
+    offenen Tick). Laeuft durch die normale Zustellung; bucht last_published_target_rt nicht um,
+    weil er kein Soll-Wechsel ist."""
+    logger.warning("Pruef-Tick: %s", reason)
+    start_tick(rt, PROBE_TRIGGER)
 
 
 def deliver(rt: Runtime, event) -> None:
@@ -167,7 +181,7 @@ def seed_notices(notifier, delivery_state) -> None:
     if delivery_state.notbetrieb:
         notifier.seed("notbetrieb", "aktiv")
     fault = delivery_state.datenfehler
-    if fault is not None:
+    if fault is not None and not delivery.is_storage_fault(fault):
         notifier.seed("datenfehler", _fault_state(fault.source, fault.detail))
 
 
@@ -239,6 +253,12 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
         except DeviceWriteError as error:
             logger.warning("Serverwerte (seq=%s) konnten nicht auf die Anlage geschrieben werden: %s", seq, error)
             deliver(rt, delivery.WriteFailed(seq=seq, detail=str(error)))
+            return
+        except StorageError as error:
+            logger.warning(
+                "Serverwerte (seq=%s) nicht uebernommen, Wiederherstellungspunkt nicht speicherbar: %s", seq, error,
+            )
+            deliver(rt, delivery.AnsweredLocalFault(seq=seq, roles=(delivery.ROLE_DATENTRAEGER,)))
             return
         deliver(rt, delivery.Ack(seq=seq, status=status))
     elif status == delivery.STATUS_REJECTED:

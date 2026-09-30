@@ -6,16 +6,16 @@ import itertools
 import json
 import logging
 import sys
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
 import heizungsbruecke.__main__ as main_module
-from heizungsbruecke import abo, backup_store, entitlement, ticks
+from heizungsbruecke import abo, backup_store, datentraeger, entitlement, ticks
 from heizungsbruecke.backup_store import load_backup, save_backup
-from heizungsbruecke.delivery import DeliveryState
+from heizungsbruecke.delivery import DataFault, DeliveryState
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.manual_override import MAX_WRITES_PER_DAY, RETRY_SECONDS
 from heizungsbruecke.override import OWN_WRITE_SETTLE_SECONDS, Override
@@ -630,20 +630,55 @@ def test_restart_during_notbetrieb_continues_emergency_hysteresis(env):
     assert _backup(env)["emergency_boost_active"] is False
 
 
-@pytest.mark.parametrize("content,notbetrieb", [
-    ('{"failsafe_active": true}', True),  # Format von 0.15.0
-    ("[1, 2]", False),
-    ("{kaputt", False),
-])
-def test_start_reads_old_or_broken_failsafe_file(env, content, notbetrieb):
+@pytest.mark.parametrize("content", ["[1, 2]", "{kaputt"])
+def test_start_reads_a_broken_failsafe_file(env, content):
     # Review Focus 4.
     _quiet_backup(env)
     env.paths["FAILSAFE_PATH"].write_text(content)
 
     bridge = _start(env)
 
-    assert _delivery(bridge) == DeliveryState(notbetrieb=notbetrieb)
+    assert _delivery(bridge) == DeliveryState()
     assert _mqtt(env).snapshots == []
+
+
+def test_start_with_a_notbetrieb_of_the_0_15_format_probes_the_server(env):
+    _quiet_backup(env)
+    env.paths["FAILSAFE_PATH"].write_text('{"failsafe_active": true}')
+
+    bridge = _start(env)
+
+    assert _delivery(bridge).notbetrieb is False
+    assert [s["trigger"] for s in _mqtt(env).snapshots] == ["target_change"]
+
+
+def test_reactivated_abo_restart_ends_notbetrieb_silently_and_probes(env):
+    _quiet_backup(env)
+    save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": True, "datenfehler": None, "pending": None})
+
+    bridge = _start(env)
+
+    assert _delivery(bridge).notbetrieb is False
+    probe = _mqtt(env).snapshots[0]
+    assert probe["trigger"] == "target_change"
+
+    _answer(env, bridge, probe["seq"], curve=0.9, shift=22.0)
+
+    assert _delivery(bridge).pending is None
+    assert env.ha.pushes == []
+
+
+def test_stale_notbetrieb_with_unknown_abo_stays_until_the_probe_is_answered(env):
+    _quiet_backup(env)
+    save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": True, "datenfehler": None, "pending": None})
+    env.abo["status"] = entitlement.UNKNOWN
+
+    bridge = _start(env)
+
+    assert _delivery(bridge).notbetrieb is True
+    _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], curve=0.9, shift=22.0)
+    assert _delivery(bridge).notbetrieb is False
+    assert env.ha.pushes == ["Heizungsbrücke: Serververbindung wiederhergestellt, Notbetrieb beendet."]
 
 
 def test_persisted_pending_tick_is_resumed_with_same_seq_and_ends_notbetrieb(env):
@@ -1842,10 +1877,29 @@ def test_notbetrieb_end_with_unwritable_device_restores_on_next_check(env):
     assert _backup(env)["emergency_boost_active"] is True
 
     env.ha.write_error = None
+    env.clock.advance(300)  # Rueckkehr-Staffel: erster Retry nach 300 s (TP12b: gestaffelt)
     _trigger(env, bridge, "sensor.room_actual")
 
     assert (env.ha.states["number.curve_current"], env.ha.states["number.shift_current"]) == (0.95, 23.0)
     assert _backup(env)["emergency_boost_active"] is False
+
+
+def test_deferred_comfort_start_is_started_by_a_later_check(env):
+    # Review Focus 4: B5 haelt das alte Soll, der naechste erlaubte Check startet den Boost.
+    _quiet_backup(env)
+    bridge = _start(env)
+    env.ha.write_error = RuntimeError("403 Quota Exceeded")
+    _set_room_target(env, bridge, 22.0)  # Comfort-Start scheitert
+    env.ha.write_error = None
+    # Tick beantworten, sonst laeuft er in den Notbetrieb und der Notfall-Boost verfaelscht den Test.
+    _answer(env, bridge, _mqtt(env).snapshots[-1]["seq"], curve=0.9, shift=22.0)
+
+    _trigger(env, bridge, "sensor.room_actual")
+    assert _boost_active(bridge) is False  # innerhalb von 30 min zurueckgestellt
+
+    env.clock.advance(1800)
+    _trigger(env, bridge, "sensor.room_actual")
+    assert _boost_active(bridge) is True
 
 
 def test_answer_during_boost_with_unwritable_device_is_acked(env):
@@ -2256,3 +2310,231 @@ def test_a_failed_publish_does_not_pin_a_manual_override(env):
 
     assert _mqtt(env).snapshots[-1]["manual_override"] == OVERRIDE
     assert bridge.manual_override_sent == OVERRIDE
+
+
+# --- TP12b: Datentraeger nicht beschreibbar ---
+
+def test_unwritable_disk_is_reported_once_and_cleared_after_repair(env, monkeypatch):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _connect(env, bridge)
+    with monkeypatch.context() as patch:
+        _break_backup_writes(patch)
+        _set_room_target(env, bridge, 20.5)
+        _set_room_target(env, bridge, 20.0)
+
+        assert _last_event(env)["status"] == "datenfehler"
+        assert _last_event(env)["datenfehler"] == {"art": "lokal", "rollen": ["datentraeger"]}
+        assert env.ha.pushes.count(datentraeger.FAILED_MESSAGE) == 1
+        assert _mqtt(env).snapshots == []  # N5: ohne gespeicherte Buchung kein Tick
+
+    _advance(env, bridge, 300)  # EV_HEALTH: flush gelingt, ohne dass sich Zustand aendert
+
+    assert env.ha.pushes[-1] == datentraeger.OK_MESSAGE
+    assert _last_event(env)["status"] == "regelt"
+
+
+def test_server_fault_is_dismissed_after_a_disk_fault_cycle_and_the_ack(env, monkeypatch):
+    """Review F1: eine gemeldete Server-Stoerung darf nicht offen bleiben, wenn die naechste
+    Antwort an einem Datentraegerfehler scheitert und erst die spaetere Antwort sie beendet."""
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[0]["seq"]
+    _answer(env, bridge, seq, status="rejected", curve=None, shift=None, reason="unplausibel")
+    assert "smartheat_datenfehler" in [entry[0] for entry in env.ha.persistent]
+    assert bridge.notifier.state("datenfehler") == "server:unplausibel"
+    _advance(env, bridge, 30)
+
+    with monkeypatch.context() as patch:
+        _break_backup_writes(patch)
+        _answer(env, bridge, seq)
+        assert _delivery(bridge).datenfehler == DataFault("local", ("datentraeger",))
+        assert env.ha.pushes.count(datentraeger.FAILED_MESSAGE) == 1
+
+    _advance(env, bridge, 300)  # EV_HEALTH: flush gelingt, Datentraeger entwarnt
+    _advance(env, bridge, 30)
+    _answer(env, bridge, seq)
+
+    assert _delivery(bridge).datenfehler is None
+    assert bridge.notifier.state("datenfehler") == "ok"
+    assert "smartheat_datenfehler" in env.ha.dismissed
+    assert env.ha.pushes.count(datentraeger.FAILED_MESSAGE) == 1
+
+
+def test_pure_disk_fault_cycle_adds_no_data_fault_push(env, monkeypatch):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[0]["seq"]
+    _break_backup_writes(monkeypatch)
+    _answer(env, bridge, seq)
+    monkeypatch.undo()
+    _advance(env, bridge, 300)
+    _advance(env, bridge, 30)
+    pushes_before = list(env.ha.pushes)
+
+    _answer(env, bridge, seq)
+
+    assert env.ha.pushes == pushes_before
+    assert pushes_before == [datentraeger.FAILED_MESSAGE, datentraeger.OK_MESSAGE]
+    assert _delivery(bridge).datenfehler is None
+
+
+def test_telemetry_reports_the_unwritable_disk_as_local_data_fault(env, monkeypatch):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _break_backup_writes(monkeypatch)
+    _set_room_target(env, bridge, 20.5)
+
+    _advance(env, bridge, 300)  # Telemetrie-Takt
+
+    assert _mqtt(env).telemetry[-1]["datenfehler"] == {"source": "local", "detail": ["datentraeger"]}
+
+
+def test_unwritable_disk_on_answer_reports_one_message_and_writes_nothing(env, monkeypatch):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[0]["seq"]
+    writes_before = list(env.ha.writes)
+    _break_backup_writes(monkeypatch)
+
+    _answer(env, bridge, seq)
+
+    assert _delivery(bridge).datenfehler == DataFault("local", ("datentraeger",))
+    assert _delivery(bridge).notbetrieb is False
+    assert env.ha.pushes == [datentraeger.FAILED_MESSAGE]
+    assert env.ha.writes == writes_before
+
+
+# --- TP12b: Pruef-Tick und Soll beim Start ---
+
+def test_probe_tick_sends_target_change_without_booking_the_target(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+
+    ticks.start_probe_tick(bridge, "Test")
+    bridge.worker.run_pending()
+
+    assert [s["trigger"] for s in _mqtt(env).snapshots] == ["target_change"]
+    assert _backup(env)["last_published_target_rt"] == 21.0
+
+
+def test_unreadable_room_target_at_start_reports_a_local_data_fault_for_the_due_daily_tick(env):
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    _quiet_backup(env, last_daily_trigger_date=yesterday)
+    env.ha.states["sensor.room_target"] = ValueError("could not convert string to float: 'unavailable'")
+    bridge = _start(env, daily_trigger_time="00:00")
+
+    _trigger(env, bridge, "sensor.room_actual")
+
+    assert _delivery(bridge).pending.trigger == "daily"
+    assert _delivery(bridge).datenfehler == DataFault("local", ("room_target",))
+    assert len(env.ha.pushes) == 1
+
+    env.ha.states["sensor.room_target"] = 21.0
+    _advance(env, bridge, 30)  # Daten-Retry derselben seq
+
+    assert [s["trigger"] for s in _mqtt(env).snapshots] == ["daily"]
+
+
+# --- TP12b: Verbindungswaechter (AU-033) ---
+
+NOTBETRIEB_OFF = "Heizungsbrücke: Serververbindung wiederhergestellt, Notbetrieb beendet."
+
+
+def _start_without_broker(env):
+    _quiet_backup(env)
+    bridge = _start_bridge(env)
+    _mqtt(env).connected = False
+    bridge.worker.run_pending()
+    return bridge
+
+
+def _into_notbetrieb_without_broker(env, bridge):
+    for _ in range(3):
+        _advance(env, bridge, 300)  # 900 s ohne Verbindung -> Pruef-Tick
+    _advance(env, bridge, 30)  # 1. Ack-Timeout (Versuch ungesendet) -> Sofort-Retry
+    _advance(env, bridge, 30)  # 2. Ack-Timeout -> Abo aktiv -> Notbetrieb
+
+
+def test_missing_broker_connection_leads_to_notbetrieb_after_15_minutes(env):
+    bridge = _start_without_broker(env)
+    for _ in range(2):
+        _advance(env, bridge, 300)
+    assert _delivery(bridge).pending is None
+
+    _into_notbetrieb_without_broker(env, bridge)
+
+    assert _delivery(bridge).notbetrieb is True
+    assert env.ha.pushes == [NOTBETRIEB_ON]
+    assert _last_event(env)["status"] == "notbetrieb"
+    assert _mqtt(env).snapshots == []
+
+
+def test_reconnect_answers_the_probe_and_ends_notbetrieb(env):
+    bridge = _start_without_broker(env)
+    _into_notbetrieb_without_broker(env, bridge)
+
+    _mqtt(env).connected = True
+    _connect(env, bridge)
+    probe = _mqtt(env).snapshots[-1]
+    _answer(env, bridge, probe["seq"], curve=0.9, shift=22.0)
+
+    assert probe["trigger"] == "target_change"
+    assert _delivery(bridge).notbetrieb is False
+    assert env.ha.pushes[-1] == NOTBETRIEB_OFF
+    assert _last_event(env)["status"] == "regelt"
+
+
+def test_interrupted_outages_do_not_add_up(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    for connected in (False, False, True, False, False, True):
+        _mqtt(env).connected = connected
+        _advance(env, bridge, 300)
+
+    assert _delivery(bridge).pending is None
+
+
+def test_open_tick_during_an_outage_is_not_replaced_by_a_probe(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _mqtt(env).connected = False
+    _set_room_target(env, bridge, 20.5)
+    seq = _delivery(bridge).pending.seq
+
+    for _ in range(4):
+        _advance(env, bridge, 300)
+
+    assert _delivery(bridge).pending.seq == seq
+
+
+def test_telemetry_is_not_published_without_connection(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    sent = len(_mqtt(env).telemetry)
+    _mqtt(env).connected = False
+
+    _advance(env, bridge, 300)
+
+    assert len(_mqtt(env).telemetry) == sent
+
+
+def test_successful_zone_preparation_costs_no_quota_across_restarts(env):
+    _quiet_backup(env)
+    for _ in range(8):  # mehr Neustarts als das Tageslimit
+        _start(env)
+    assert "write_budget" not in _backup(env)
+
+
+def test_min_flow_is_not_written_to_an_unavailable_entity(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    env.ha.states["number.min_flow"] = ValueError("could not convert string to float: 'unavailable'")
+
+    _set_room_target(env, bridge, 20.5)
+
+    assert [write for write in env.ha.writes if write[0] == "number.min_flow"] == []
+    assert bridge.override.last_written("min_flow") is None

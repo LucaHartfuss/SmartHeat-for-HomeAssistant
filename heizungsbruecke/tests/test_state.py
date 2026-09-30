@@ -5,7 +5,7 @@ import pytest
 from heizungsbruecke import backup_store
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.delivery import SOURCE_LOCAL, DataFault, DeliveryState, PendingTick
-from heizungsbruecke.state import BridgeState, StateStore
+from heizungsbruecke.state import BridgeState, StateStore, StorageError
 
 # Vollstaendige backup.json, wie 0.16.0 sie schreibt (vor TP11: die Parallelverschiebung hiess
 # noch "offset_current", target_history gab es noch als aktiv gefuehrtes Feld).
@@ -80,6 +80,21 @@ def test_pre_tp11_backup_keeps_unknown_keys_and_drops_the_old_override(make_stor
     assert backup["offset_current"] == 23.0
     assert backup["target_history"] == [[1000.0, 20.0]]
     assert "manual_override" not in backup
+
+
+def test_unknown_top_level_key_survives_a_save_so_a_rollback_keeps_write_budget(make_store, tmp_path):
+    # Rollback von 0.25.0 auf 0.24.0: dort ist write_budget ein unbekannter Schluessel. Ein Parser
+    # mit dieser Semantik (unbekannt -> extra, beim Speichern zurueckgeschrieben) verliert den
+    # Zaehler nicht; hier am Beispiel eines Schluessels, den der Parser nicht kennt (Spec 5.1).
+    budget = {"boost": {"day": "2026-09-30", "count": 2}}
+    store = make_store(backup={"curve_current": 0.95, "write_budget": budget, "kommt_spaeter": {"a": 1}})
+
+    assert store.state.write_budget == budget
+    store.update(boost_active=True)
+
+    backup = load_backup(tmp_path / "backup.json")
+    assert backup["kommt_spaeter"] == {"a": 1}
+    assert backup["write_budget"] == budget
 
 
 def test_missing_files_give_defaults_and_nothing_is_written(make_store, tmp_path):
@@ -393,3 +408,77 @@ def test_manual_override_misses_is_runtime_only(make_store, monkeypatch):
     store.update(manual_override_misses=1)
 
     assert saves == []
+
+
+def test_failed_backup_write_raises_storage_error_and_sets_storage_failed(make_store, monkeypatch):
+    store = make_store(backup=V016_BACKUP)
+    assert store.storage_failed is False
+    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+
+    with pytest.raises(StorageError, match="Datentraeger kaputt"):
+        store.update(curve_current=1.1)
+
+    assert store.storage_failed is True
+
+
+def test_failed_failsafe_write_sets_storage_failed_without_raising(make_store, monkeypatch):
+    store = make_store()
+    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+
+    store.set_delivery(DeliveryState(notbetrieb=True))
+
+    assert store.storage_failed is True
+
+
+def test_flush_writes_dirty_files_and_clears_storage_failed(make_store, tmp_path, monkeypatch):
+    store = make_store(backup=V016_BACKUP)
+    with monkeypatch.context() as patch:
+        patch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+        with pytest.raises(StorageError):
+            store.update(curve_current=1.1)
+        store.set_delivery(DeliveryState(notbetrieb=True))
+        with pytest.raises(StorageError):
+            store.flush()
+        assert store.storage_failed is True
+
+    store.flush()
+
+    assert store.storage_failed is False
+    assert load_backup(tmp_path / "backup.json")["curve_current"] == 1.1
+    assert load_backup(tmp_path / "failsafe_state.json")["failsafe_active"] is True
+
+
+def test_flush_without_dirty_files_writes_nothing(make_store, monkeypatch):
+    store = make_store(backup=V016_BACKUP)
+    saves = _count_saves(monkeypatch)
+
+    store.flush()
+
+    assert saves == []
+
+
+def test_write_budget_survives_a_restart_without_the_monotonic_time(make_store, tmp_path):
+    store = make_store()
+    store.update(write_budget={
+        "boost_end": {"day": "2026-10-01", "count": 2, "last": 1234.0},
+        "enforce:curve_current": {"day": "2026-10-01", "count": 6, "last": 99.0, "limit_notified": "2026-10-01"},
+    })
+
+    reloaded = StateStore(tmp_path / "backup.json", tmp_path / "failsafe_state.json")
+
+    assert reloaded.state.write_budget == {
+        "boost_end": {"day": "2026-10-01", "count": 2},
+        "enforce:curve_current": {"day": "2026-10-01", "count": 6, "limit_notified": "2026-10-01"},
+    }
+
+
+@pytest.mark.parametrize("raw", [[1], {"x": 1}, {"x": {"day": 1, "count": 1}}, {"x": {"day": "d", "count": True}},
+                                 {"x": {"day": "d", "count": -1}}])
+def test_broken_write_budget_falls_back_to_empty(make_store, raw):
+    assert make_store(backup={"write_budget": raw}).state.write_budget == {}
+
+
+def test_empty_write_budget_is_not_written(make_store, tmp_path):
+    store = make_store()
+    store.update(write_budget={}, curve_current=1.0)
+    assert "write_budget" not in load_backup(tmp_path / "backup.json")

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -29,6 +29,7 @@ EV_WATCHDOG = "watchdog"
 EV_TELEMETRY = "telemetry"
 EV_GRACE_CHECK = "grace_check"
 EV_HEALTH = "health"
+EV_CONNECTION_CHECK = "connection_check"
 EV_MQTT_CONNECTED = "mqtt_connected"
 EV_HA_CONNECTED = "ha_connected"
 EV_HEARTBEAT = "heartbeat"
@@ -69,5 +70,6 @@ class Runtime:
     # Start (Plan-Praezisierung 11): Zone auf Manuell mit brauchbarer Parallelverschiebung. Bis es
     # einmal geklappt hat, versucht es jeder lokale Check erneut. Nicht persistiert.
     zone_prepared: bool = False
-    # Kontingent dieser Versuche (Tag, Anzahl, letzter Versuch auf `clock`, Tageslimit geloggt).
-    zone_prepare_log: dict = field(default_factory=dict)
+    # Verbindungswaechter (TP12b, AU-033): seit wann (clock) die MQTT-Verbindung ununterbrochen
+    # fehlt, None bei Verbindung. Nicht persistiert.
+    mqtt_down_since: float | None = None

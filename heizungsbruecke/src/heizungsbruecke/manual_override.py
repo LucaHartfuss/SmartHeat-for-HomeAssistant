@@ -24,15 +24,15 @@ import logging
 import math
 from datetime import date, datetime
 
-from heizungsbruecke import min_flow, plant
+from heizungsbruecke import min_flow, plant, write_budget
 from heizungsbruecke.notifier import STATE_OK
 
 logger = logging.getLogger(__name__)
 
 KEY = "manueller_eingriff"
 DETECTION_ROUNDS = 2
-RETRY_SECONDS = 1800
-MAX_WRITES_PER_DAY = 6
+RETRY_SECONDS = write_budget.INTERVAL_SECONDS
+MAX_WRITES_PER_DAY = write_budget.MAX_PER_DAY
 # Spec 5.3 nennt fuer die Steigung 0,01. Die Anlage stellt sie aber nur in Schritten von 0,05 dar,
 # und der Quota-Check (Override._matches_the_device) ueberspringt ein Schreiben innerhalb eines
 # halben Schritts. Mit 0,01 wuerde ein (theoretischer) Zwischenwert als Eingriff erkannt, aber nie
@@ -120,35 +120,31 @@ def _deviations(rt) -> tuple[dict, dict, set]:
     return expected, deviating, pending
 
 
+def _budget_key(role: str) -> str:
+    return write_budget.ENFORCE_PREFIX + role
+
+
 def _may_write(rt, role: str) -> bool:
-    """Kontingent: hoechstens einmal pro RETRY_SECONDS und MAX_WRITES_PER_DAY am Tag."""
-    log = rt.store.state.enforce_log.get(role)
-    today = _today().isoformat()
-    if log is None or log["day"] != today:
-        return True
-    return log["count"] < MAX_WRITES_PER_DAY and rt.clock() - log["last"] >= RETRY_SECONDS
+    """Kontingent: hoechstens einmal pro RETRY_SECONDS und MAX_WRITES_PER_DAY am Tag (write_budget.QUOTA)."""
+    entry = write_budget.get(rt.store, _budget_key(role))
+    return write_budget.allowed(entry, write_budget.QUOTA, rt.clock(), _today().isoformat())
 
 
 def _count_attempt(rt, role: str) -> None:
     """Zaehlt einen Schreibversuch VOR dem Aufruf: auch ein gescheiterter (z. B. 403 "Quota
     Exceeded") verbraucht Kontingent und darf nicht in jedem Takt wiederholt werden."""
-    today = _today().isoformat()
-    log = dict(rt.store.state.enforce_log)
-    entry = log.get(role)
-    count = entry["count"] + 1 if entry is not None and entry["day"] == today else 1
-    log[role] = {"day": today, "count": count, "last": rt.clock()}
-    rt.store.update(enforce_log=log)
+    key = _budget_key(role)
+    write_budget.put(rt.store, key, write_budget.counted(write_budget.get(rt.store, key), rt.clock(), _today().isoformat()))
 
 
 def _limit_reached_first_time(rt, role: str) -> bool:
     """True genau einmal pro Tag und Rolle, wenn das Tageslimit erreicht ist (fuer die Meldung)."""
-    log = rt.store.state.enforce_log.get(role)
-    today = _today().isoformat()
-    if log is None or log["day"] != today or log["count"] < MAX_WRITES_PER_DAY:
+    key, day = _budget_key(role), _today().isoformat()
+    entry = write_budget.get(rt.store, key)
+    if not write_budget.limit_first_reached(entry, write_budget.QUOTA, day):
         return False
-    if log.get("limit_notified") == today:
-        return False
-    rt.store.update(enforce_log={**rt.store.state.enforce_log, role: {**log, "limit_notified": today}})
+    assert entry is not None  # limit_first_reached verlangt einen Eintrag
+    write_budget.put(rt.store, key, {**entry, "limit_notified": day})
     return True
 
 

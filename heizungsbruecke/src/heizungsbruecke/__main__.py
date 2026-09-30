@@ -17,6 +17,7 @@ from heizungsbruecke import (
     abo,
     battery,
     config,
+    datentraeger,
     delivery,
     derived_sensors,
     entitlement,
@@ -27,7 +28,9 @@ from heizungsbruecke import (
     telemetry,
     ticks,
     triggers,
+    write_budget,
 )
+from heizungsbruecke.delivery import ROLE_DATENTRAEGER, SOURCE_LOCAL, DataFault
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.manifest import ChannelManifest, ManifestError, build_manifest, entity_ref
@@ -37,6 +40,7 @@ from heizungsbruecke.override import Override
 from heizungsbruecke.runtime import (
     EV_ACK_TIMEOUT,
     EV_AUTH_REJECTED,
+    EV_CONNECTION_CHECK,
     EV_GRACE_CHECK,
     EV_HA_CONNECTED,
     EV_HEALTH,
@@ -50,7 +54,7 @@ from heizungsbruecke.runtime import (
     EV_WATCHDOG,
     Runtime,
 )
-from heizungsbruecke.state import StateStore
+from heizungsbruecke.state import StateStore, StorageError
 from heizungsbruecke.status import (
     ABO_AKTIV,
     HEARTBEAT_SECONDS,
@@ -74,6 +78,10 @@ REQUIRED_ENTITY_OPTIONS = (
 # Im Konfigurationsfehler prueft ein frischer Prozess nach dieser Zeit erneut (z. B. eine spaet
 # geladene Integration); der persistierte Meldezustand verhindert eine Wiederholungsmeldung.
 CONFIG_RECHECK_SECONDS = 900
+# Verbindungswaechter (TP12b, AU-033): so lange ohne MQTT-Verbindung und ohne offenen Tick, dann
+# klaert ein Pruef-Tick den Server (Notbetrieb ueber dessen Ack-Timeouts). Kurze Abrisse des
+# cloudflared-Tunnels bleiben darunter.
+CONNECTION_LOSS_PROBE_SECONDS = 900
 IDLE_NOT_CONFIGURED = "nicht_eingerichtet"
 CONFIG_OK_MESSAGE = "SmartHeat: Einrichtung in Ordnung, die Heizungssteuerung läuft."
 CONFIG_ERROR_MESSAGE = (
@@ -253,7 +261,7 @@ def _sign_off(options: dict, ha_api, store, notifier, status, clock) -> IdleBrid
         manifest = ChannelManifest(
             entity_ids={role: entity_ref(role, effective[f"entity_{role}"]) for role in OVERRIDE_ROLES},
         )
-        restorer = Override(store, manifest, ha_api, effective)
+        restorer = Override(store, manifest, ha_api, effective, clock=clock)
     boosting = store.state.boost_active or store.state.emergency_boost_active
     restored = restorer is not None and restorer.restore_and_clear(always_restore=False)
     # Die Meldung zum Zuruecksetzen bleibt: nach dem Entfernen ist sie der einzige Hinweis, dass
@@ -368,7 +376,13 @@ def _on_local_check(rt: Runtime, event: Event) -> None:
         regulation.run_local_check(rt)
     except Exception:
         logger.exception("Fehler im lokalen Check (Boost/Notfall-Boost), wird beim naechsten Ereignis erneut versucht")
-    trigger = regulation.claim_due_tick(rt, datetime.now())
+    try:
+        trigger = regulation.claim_due_tick(rt, datetime.now())
+    except StorageError:
+        logger.warning(
+            "Tick nicht gebucht, Datentraeger nicht beschreibbar (N5) - naechster Versuch beim naechsten Anlass"
+        )
+        return
     if trigger is not None:
         ticks.start_tick(rt, trigger)
 
@@ -397,15 +411,41 @@ def _on_watchdog(rt: Runtime, event: Event) -> None:
         rt.worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=True)
 
 
+def _on_connection_check(rt: Runtime, event: Event) -> None:
+    """Verbindungswaechter (Spec TP12b 1.1): ohne offenen Tick gibt es keinen Zustellversuch und
+    damit nie einen Notbetrieb. Fehlt die Verbindung CONNECTION_LOSS_PROBE_SECONDS am Stueck, legt er
+    deshalb einen Pruef-Tick an; das Ack nach dem Wiederverbinden beendet den Notbetrieb regulaer."""
+    rt.worker.schedule(config.local_check_interval(rt.options), Event(EV_CONNECTION_CHECK))
+    state = rt.store.state
+    if rt.mqtt_client is None or state.abo_inactive_since is not None or rt.mqtt_client.is_connected():
+        rt.mqtt_down_since = None
+        return
+    now = rt.clock()
+    if rt.mqtt_down_since is None:
+        rt.mqtt_down_since = now
+        return
+    if now - rt.mqtt_down_since < CONNECTION_LOSS_PROBE_SECONDS or state.delivery.pending is not None:
+        return
+    ticks.start_probe_tick(rt, f"seit {now - rt.mqtt_down_since:.0f} s keine MQTT-Verbindung")
+
+
 def _on_telemetry(rt: Runtime, event: Event) -> None:
     rt.worker.schedule(config.telemetry_interval(rt.options), Event(EV_TELEMETRY))
     state = rt.store.state
     if state.abo_inactive_since is not None or rt.mqtt_client is None:
         return
+    if not rt.mqtt_client.is_connected():
+        # Ohne Verbindung nicht publizieren (AU-035): paho staute die Nachrichten unbegrenzt. Der
+        # Server erkennt die Luecke ueber MAX_GAP.
+        logger.debug("Telemetrie uebersprungen, keine MQTT-Verbindung")
+        return
+    datenfehler = state.delivery.datenfehler
+    if datenfehler is None and rt.store.storage_failed:
+        datenfehler = DataFault(SOURCE_LOCAL, (ROLE_DATENTRAEGER,))
     telemetry.run_telemetry_tick(
         rt.manifest, rt.ha_api, rt.mqtt_client,
         boost_active=state.boost_active, failsafe_active=state.delivery.notbetrieb,
-        datenfehler=state.delivery.datenfehler, room_target=state.stable_target,
+        datenfehler=datenfehler, room_target=state.stable_target,
     )
 
 
@@ -419,6 +459,10 @@ def _on_health(rt: Runtime, event: Event) -> None:
     Parallelverschiebung, Mindestvorlauf und Zonen-Betriebsart (Durchsetzung, TP11). Eigener
     Zeitplaneintrag: der lokale Check laeuft seit den eventgetriebenen Triggern nur auf Ereignisse."""
     rt.worker.schedule(config.local_check_interval(rt.options), Event(EV_HEALTH))
+    try:
+        rt.store.flush()
+    except StorageError as error:
+        logger.warning("Datentraeger weiterhin nicht beschreibbar: %s", error)
     if rt.store.state.abo_finished:
         return
     for check in (battery.check_batteries, room_sensors.check_room_sensors, manual_override.check_manual_override):
@@ -479,13 +523,24 @@ def _register_handlers(rt: Runtime) -> None:
         EV_TELEMETRY: _on_telemetry,
         EV_GRACE_CHECK: _on_grace_check,
         EV_HEALTH: _on_health,
+        EV_CONNECTION_CHECK: _on_connection_check,
     }
     for kind, handler in handlers.items():
         rt.worker.register(kind, functools.partial(_unless_idle, rt, handler))
     rt.worker.register(EV_HEARTBEAT, functools.partial(_on_heartbeat, rt))
+    rt.worker.after_each(functools.partial(_after_each, rt))
+
+
+def _after_each(rt: Runtime) -> None:
+    """Nach jedem Worker-Ereignis: Datentraeger-Meldung (TP12b), dann das Status-Event, falls es
+    sich geaendert hat."""
+    try:
+        datentraeger.report(rt.store, rt.notifier)
+    except Exception:
+        logger.exception("Datentraeger-Meldung fehlgeschlagen")
     status = rt.status
     assert status is not None  # beim Boot gesetzt
-    rt.worker.after_each(status.publish_if_changed)
+    status.publish_if_changed()
 
 
 # --- Boot ---
@@ -527,27 +582,22 @@ def _first_start(rt: Runtime) -> None:
 
 
 def _may_prepare_zone(rt: Runtime) -> bool:
-    """Kontingent wie die Durchsetzung (manual_override): hoechstens ein Versuch pro RETRY_SECONDS
-    und MAX_WRITES_PER_DAY am Tag. Jeder Versuch kann zwei Cloud-Aufrufe kosten; bei 403 "Quota
-    Exceeded" wuerde ein Versuch in jedem lokalen Check die Sperre verlaengern. Zaehlt den Versuch
-    VOR dem Aufruf (auch ein gescheiterter verbraucht Kontingent)."""
-    today = datetime.now().date().isoformat()
-    log = rt.zone_prepare_log
-    if log.get("day") != today:
-        log.update(day=today, count=0, limit_logged=False)
-    if log["count"] >= manual_override.MAX_WRITES_PER_DAY:
-        if not log["limit_logged"]:
-            logger.warning(
-                "Zone: Tageslimit von %d Vorbereitungsversuchen erreicht, naechster Versuch morgen",
-                manual_override.MAX_WRITES_PER_DAY,
-            )
-            log["limit_logged"] = True
-        return False
-    last = log.get("last")
-    if last is not None and rt.clock() - last < manual_override.RETRY_SECONDS:
-        return False
-    log.update(count=log["count"] + 1, last=rt.clock())
-    return True
+    """Wiederholungs-Kontingent (write_budget.RETRY_QUOTA): nach einem Fehlschlag hoechstens ein
+    Versuch pro 30 min und 6 Fehlschlaege am Tag. Jeder Versuch kann zwei Cloud-Aufrufe kosten; bei
+    403 "Quota Exceeded" wuerde ein Versuch in jedem lokalen Check die Sperre verlaengern. Ein
+    gelungener Versuch kostet nichts (er laeuft bei jedem Start)."""
+    key, day = write_budget.ZONE_PREPARE, write_budget.today()
+    entry = write_budget.get(rt.store, key)
+    if write_budget.allowed(entry, write_budget.RETRY_QUOTA, rt.clock(), day):
+        return True
+    if write_budget.limit_first_reached(entry, write_budget.RETRY_QUOTA, day):
+        assert entry is not None
+        logger.warning(
+            "Zone: Tageslimit von %d Vorbereitungsversuchen erreicht, naechster Versuch morgen",
+            write_budget.MAX_PER_DAY,
+        )
+        write_budget.put(rt.store, key, {**entry, "limit_notified": day})
+    return False
 
 
 def _prepare_zone(rt: Runtime) -> None:
@@ -559,8 +609,10 @@ def _prepare_zone(rt: Runtime) -> None:
     try:
         rt.override.prepare_zone(start_shift=rt.store.state.stable_target)
     except Exception:
+        write_budget.record_attempt(rt.store, write_budget.ZONE_PREPARE, rt.clock())
         logger.exception("Zone konnte nicht vorbereitet werden, naechster Versuch beim naechsten lokalen Check")
         return
+    write_budget.record_success(rt.store, write_budget.ZONE_PREPARE)
     rt.zone_prepared = True
 
 
@@ -638,7 +690,7 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | Idle
 
     rt.trigger_client = triggers.build_ha_trigger_client(manifest, options, ha_api, rt.worker)
     rt.trigger_client.start()
-    for kind in (EV_WATCHDOG, EV_TELEMETRY, EV_GRACE_CHECK, EV_HEALTH):
+    for kind in (EV_WATCHDOG, EV_TELEMETRY, EV_GRACE_CHECK, EV_HEALTH, EV_CONNECTION_CHECK):
         rt.worker.schedule(0, Event(kind))
     rt.worker.schedule(HEARTBEAT_SECONDS, Event(EV_HEARTBEAT))
     if abo_inactive:
@@ -647,8 +699,25 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | Idle
     else:
         # Offenen Tick aus failsafe_state.json sofort mit derselben seq erneut versuchen.
         ticks.deliver(rt, delivery.Boot())
+        _resolve_stale_notbetrieb(rt, abo_status)
     status.publish_if_changed()
     return rt
+
+
+def _resolve_stale_notbetrieb(rt: Runtime, abo_status: str) -> None:
+    """Notbetrieb ohne offenen Tick endet nie von selbst (Spec TP12b 1.2): im Betrieb hat er immer
+    einen Tick, dessen Ack ihn beendet. Bei aktivem Abo still beenden -- nach dem stillen seed wurde
+    er nie gemeldet, eine Entwarnung waere falsch --, in jedem Fall per Pruef-Tick klaeren."""
+    state = rt.store.state.delivery
+    if not state.notbetrieb or state.pending is not None:
+        return
+    if abo_status == entitlement.ACTIVE:
+        ticks.deliver(rt, delivery.ClearStaleNotbetrieb())
+        rt.notifier.notify(
+            "notbetrieb", STATE_OK, delivery.notification_text(delivery.NOTIFY_NOTBETRIEB_OFF, (), {}),
+            critical=True, silent_ok=True,
+        )
+    ticks.start_probe_tick(rt, "Notbetrieb ohne offenen Tick beim Start")
 
 
 def _run_bridge(options: dict, ha_api) -> NoReturn:

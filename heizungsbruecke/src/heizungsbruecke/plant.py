@@ -57,7 +57,8 @@ def write(
     ha_api, role: str, ref: str, value: float, minimum: float, maximum: float, ensure_mode: bool = True
 ) -> float:
     """Begrenzt, rundet auf die Schrittweite der Rolle und schreibt. Gibt den geschriebenen Wert
-    zurueck. Wirft bei Fehlern (der Aufrufer macht daraus DeviceWriteError).
+    zurueck. Wirft bei Fehlern (der Aufrufer macht daraus DeviceWriteError), auch wenn die Entity
+    nicht verfuegbar ist (unavailable/unknown): dann wird nichts geschrieben.
 
     `ensure_mode=False` ueberspringt die Modus-Pruefung/-Umstellung (Ruling #3): spiegelt die
     Hersteller-Cloud die Umstellung bei mypyllants Refresh kurz danach noch nicht wider, zeigt HA den
@@ -65,6 +66,10 @@ def write(
     zweites `set_hvac_mode` senden und unnoetig Cloud-Kontingent verbrauchen. Aufrufer, die den
     Modus selbst schon umgestellt haben (z.B. beim Erstkontakt), rufen mit False."""
     target = target_value(value, minimum, maximum, STEPS[role])
+    # AU-016: HA ueberspringt eine nicht verfuegbare Entity im Service-Aufruf still (HTTP 200), der
+    # Wert gaelte sonst als geschrieben. get_raw_state wirft bei unavailable/unknown (lokaler
+    # HA-Read, kein Cloud-Aufruf).
+    ha_api.get_raw_state(entity_of(ref))
     if is_climate(ref):
         if ensure_mode:
             ensure_manual_mode(ha_api, ref)

@@ -28,13 +28,26 @@ class RecordingHa:
         self.states = {"number.curve": 0.7, "number.shift": 21.0, "number.min_flow": 20.0, **(states or {})}
         self.events = []
         self.write_error = None
+        # Nur get_state scheitert (z. B. voruebergehender Lesefehler/fehlendes Attribut), die Entity
+        # selbst ist verfuegbar: get_raw_state bleibt unberuehrt.
+        self.read_errors = {}
 
     def get_state(self, entity_id):
         self.events.append(("read", entity_id))
+        if entity_id in self.read_errors:
+            raise self.read_errors[entity_id]
         value = self.states[entity_id]
         if isinstance(value, Exception):
             raise value
         return value
+
+    def get_raw_state(self, entity_id):
+        value = self.states.get(entity_id, "on")
+        if isinstance(value, Exception):
+            raise value
+        if value in ("unavailable", "unknown", ""):
+            raise ValueError(f"Entity {entity_id} hat keinen gueltigen Zustand: {value!r}")
+        return str(value)
 
     def set_number_value(self, entity_id, value):
         if self.write_error is not None:
@@ -137,8 +150,8 @@ def test_running_boost_is_never_refused(make_store):
     # Datei), wird der Wechsel Notfall -> Comfort nicht abgelehnt und nichts gelesen.
     override, _, ha = _setup(
         make_store, backup={"boost_active": True, "emergency_boost_active": True},
-        states={"number.curve": RuntimeError("Cloud nicht erreichbar")},
     )
+    ha.read_errors["number.curve"] = RuntimeError("Lesefehler")
 
     assert override.set_boosts(comfort=True, emergency=False) == (True, False)
     assert ha.writes == _written("comfort")
@@ -515,8 +528,8 @@ def test_write_role_writes_when_the_current_value_differs(make_store):
 def test_write_role_writes_when_the_current_value_cannot_be_read(make_store):
     override, _, ha = _setup(
         make_store, backup={**RESTORE_POINT, "boost_active": True},
-        states={"number.shift": RuntimeError("Cloud nicht erreichbar")},
     )
+    ha.read_errors["number.shift"] = RuntimeError("Lesefehler")
 
     override.set_boosts(comfort=False, emergency=False)
 
@@ -729,3 +742,125 @@ def test_settled_counts_from_the_start_and_from_each_own_write(make_store, clock
     assert override.settled("curve_current") is True
     clock.advance(OWN_WRITE_SETTLE_SECONDS + 1)
     assert override.settled("min_flow") is True
+
+
+# --- TP12b: Schreibbudget (AU-015) ---
+
+def _count_write_attempts(ha):
+    attempts = []
+    original = ha.set_number_value
+
+    def _counting(entity_id, value):
+        attempts.append(entity_id)
+        original(entity_id, value)
+
+    ha.set_number_value = _counting
+    return attempts
+
+
+def test_failed_boost_end_is_retried_on_the_return_staircase(make_store, clock):
+    override, store, ha = _setup(make_store, backup={**RESTORE_POINT, "boost_active": True}, clock=clock)
+    attempts = _count_write_attempts(ha)
+    ha.write_error = RuntimeError("403 Quota Exceeded")
+
+    with pytest.raises(DeviceWriteError):
+        override.set_boosts(comfort=False, emergency=False)  # t=0, Fehlschlag 1
+    clock.advance(299)
+    assert override.set_boosts(comfort=False, emergency=False) == (True, False)  # zurueckgestellt
+    clock.advance(1)
+    with pytest.raises(DeviceWriteError):
+        override.set_boosts(comfort=False, emergency=False)  # t=300, Fehlschlag 2
+    clock.advance(899)
+    assert override.set_boosts(comfort=False, emergency=False) == (True, False)
+    ha.write_error = None
+    clock.advance(1)
+    assert override.set_boosts(comfort=False, emergency=False) == (False, False)  # t=1200, Erfolg
+
+    assert attempts == ["number.curve", "number.curve", "number.curve", "number.shift"]
+    assert "boost_end" not in store.state.write_budget
+
+
+def test_failed_boost_start_waits_30_minutes_and_a_success_costs_nothing(make_store, clock):
+    override, _, ha = _setup(make_store, backup=dict(RESTORE_POINT), clock=clock)
+    ha.write_error = RuntimeError("403 Quota Exceeded")
+
+    with pytest.raises(DeviceWriteError):
+        override.set_boosts(comfort=True, emergency=False)
+    clock.advance(1799)
+    assert override.set_boosts(comfort=True, emergency=False) == (False, False)
+    ha.write_error = None
+    clock.advance(1)
+    assert override.set_boosts(comfort=True, emergency=False) == (True, False)
+    assert override.set_boosts(comfort=False, emergency=False) == (False, False)
+    assert override.set_boosts(comfort=True, emergency=False) == (True, False)  # zweiter Boost sofort
+
+
+def test_failed_restore_is_retried_on_the_return_staircase(make_store, clock):
+    override, store, ha = _setup(make_store, backup={**RESTORE_POINT, "emergency_boost_active": True}, clock=clock)
+    ha.write_error = RuntimeError("HA nicht erreichbar")
+    assert override.restore_and_clear(always_restore=True) is False
+
+    clock.advance(299)
+    attempts = _count_write_attempts(ha)
+    assert override.restore_and_clear(always_restore=True) is False
+    assert attempts == []
+
+    ha.write_error = None
+    clock.advance(1)
+    assert override.restore_and_clear(always_restore=True) is True
+    assert store.state.emergency_boost_active is False
+
+
+def test_unavailable_entity_is_not_written_and_not_remembered(make_store, clock):
+    override, _, ha = _setup(
+        make_store, backup={**RESTORE_POINT, "boost_active": True}, states={"number.curve": "unavailable"},
+        clock=clock,
+    )
+
+    with pytest.raises(DeviceWriteError, match="unavailable"):
+        override.set_boosts(comfort=False, emergency=False)
+
+    assert ha.writes == []
+    assert override.last_written("curve_current") is None
+
+
+# --- TP12b: inaktive Zone (B-TP11-2) ---
+
+ZONE_MANIFEST = ChannelManifest(entity_ids={**MANIFEST.entity_ids, "shift_current": "climate.zone::temperature"})
+
+
+def _inactive_zone(make_store, clock, backup):
+    store = make_store(backup=backup)
+    ha = RecordingHa({"climate.zone": "heat_cool", "climate.zone::temperature": 0.0, "number.curve": 0.9})
+    ha.set_hvac_mode = lambda entity, mode: ha.events.append(("hvac", entity, mode))
+    ha.set_climate_temperature = lambda entity, value: ha.events.append(("write", entity, value))
+    return Override(store, ZONE_MANIFEST, ha, OPTIONS, clock=clock), store, ha
+
+
+def test_inactive_zone_is_not_rewritten_with_the_own_last_value(make_store, clock):
+    override, _, ha = _inactive_zone(make_store, clock, {"curve_current": 0.9, "shift_current": 22.0})
+    clock.advance(OWN_WRITE_SETTLE_SECONDS + 1)
+
+    override.apply_server_values(0.9, 22.0)  # erster Schreibvorgang seit dem Start
+    override.apply_server_values(0.9, 22.0)  # naechste Antwort, Zone weiter inaktiv
+
+    assert ha.writes == [("climate.zone", 22.0)]
+
+
+def test_inactive_zone_still_gets_a_changed_server_value(make_store, clock):
+    override, _, ha = _inactive_zone(make_store, clock, {"curve_current": 0.9, "shift_current": 22.0})
+    clock.advance(OWN_WRITE_SETTLE_SECONDS + 1)
+
+    override.apply_server_values(0.9, 22.0)
+    override.apply_server_values(0.9, 23.0)
+
+    assert ha.writes == [("climate.zone", 22.0), ("climate.zone", 23.0)]
+
+
+def test_prepare_zone_leaves_a_manual_but_inactive_zone_alone(make_store, clock):
+    override, _, ha = _inactive_zone(make_store, clock, {"curve_current": 0.9, "shift_current": 22.0})
+
+    override.prepare_zone(start_shift=20.5)
+
+    assert ha.writes == []
+    assert [event for event in ha.events if event[0] == "hvac"] == []

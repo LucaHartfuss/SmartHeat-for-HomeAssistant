@@ -296,14 +296,27 @@ def test_claim_due_tick_is_claimed_again_after_a_failed_booking(make_store, tmp_
     assert (backup["last_published_target_rt"], backup["last_daily_trigger_date"]) == (20.5, "2026-09-17")
 
 
-@pytest.mark.parametrize("abo_inactive,room_target", [(True, 20.5), (False, None)])
-def test_claim_due_tick_needs_cached_target_and_active_abo(make_store, abo_inactive, room_target):
+@pytest.mark.parametrize("abo_inactive,room_target,now", [
+    (True, 20.5, datetime(2026, 9, 17, 12, 5)),
+    (False, None, datetime(2026, 9, 17, 9, 0)),  # ohne Soll nur der faellige Tagestick (TP12b)
+])
+def test_claim_due_tick_needs_active_abo_and_without_target_a_due_daily_tick(make_store, abo_inactive, room_target, now):
     store = make_store(backup={"last_published_target_rt": 21.0})
     rt = _runtime(store, room_target=room_target)
     if abo_inactive:
         store.update(abo_inactive_since=datetime(2026, 9, 25).astimezone())
 
-    assert regulation.claim_due_tick(rt, datetime(2026, 9, 17, 12, 5)) is None
+    assert regulation.claim_due_tick(rt, now) is None
+
+
+def test_claim_due_tick_without_cached_target_still_claims_the_due_daily_tick(make_store, tmp_path):
+    # AU-013: der Versuch liest live und meldet das tote Thermostat als Datenfehler.
+    rt = _runtime(make_store(backup={"last_published_target_rt": 21.0}), room_target=None)
+
+    assert regulation.claim_due_tick(rt, datetime(2026, 9, 17, 12, 5)) == "daily"
+    backup = load_backup(tmp_path / "backup.json")
+    assert (backup["last_published_target_rt"], backup["last_daily_trigger_date"]) == (21.0, "2026-09-17")
+    assert regulation.claim_due_tick(rt, datetime(2026, 9, 17, 15, 0)) is None
 
 
 def _raise_oserror(*args, **kwargs):

@@ -40,6 +40,10 @@ Alle Versionen und Update-Hinweise stehen in [CHANGELOG.md](CHANGELOG.md) (auch 
   und `host_network: true` (um `cloudflared_access_mqtt`s Broker unter
   `127.0.0.1` tatsaechlich erreichen zu koennen) — beides ist in `config.yaml`
   bereits gesetzt, wird hier nur der Vollstaendigkeit halber dokumentiert.
+- Die Hersteller-Integration muss ihre Werte **mindestens alle 30 Minuten** abfragen (bei
+  mypyllant: Aktualisierungsintervall ≤ 30 min). SmartHeat wartet nach einem eigenen
+  Schreibvorgang 35 Minuten, bevor es eine Abweichung als Eingriff in der App wertet; fragt die
+  Integration seltener ab, würden eigene Schreibvorgänge fälschlich als Eingriff erkannt.
 
 ## Konfiguration
 
@@ -56,6 +60,11 @@ und „Start beim Booten“ schaltet die Integration für beide Add-ons ein. Bei
 wird das Add-on abgemeldet (laufender Boost zurückgesetzt, Meldungen entfernt) und gestoppt. Scheitert
 das Zurücksetzen, bleibt es im Ruhezustand laufen, versucht es weiter und meldet die Werte, die sonst von
 Hand einzustellen sind.
+
+**Fehlerbilder im Status:** „Notbetrieb“ heißt, der SmartHeat-Server antwortet nicht oder die
+Verbindung fehlt seit etwa 15 bis 20 Minuten; die Heizung wird dann bei Bedarf lokal abgesichert. „Datenfehler“
+mit der Rolle `datentraeger` heißt, der Datenträger des Home-Assistant-Systems ist voll oder
+schreibgeschützt; die Regelung pausiert, die Anlage behält ihre letzten Werte.
 
 ## Verifizierte Architekturen
 

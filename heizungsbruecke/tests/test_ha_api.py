@@ -667,3 +667,35 @@ def test_delete_input_number_refuses_entities_without_smartheat_prefix():
         api.delete_input_number("input_number.fremder_helfer")
 
     mock_ws.assert_not_called()
+
+
+def test_delete_helper_deletes_a_renamed_helper_by_its_config_entry_title():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    registry = [{"entity_id": "sensor.heizraum_zuhause_smartheat_t1_dat", "config_entry_id": "e2",
+                 "platform": "statistics"}]
+    entries = [{"entry_id": "e1", "title": "Zuhause"}, {"entry_id": "e2", "title": "SmartHeat t1 DAT"}]
+    mock_response = Mock()
+    mock_response.raise_for_status.return_value = None
+    with patch.object(api, "_call_ws_command", side_effect=[registry, entries]), \
+         patch("heizungsbruecke.ha_api.requests.delete", return_value=mock_response) as mock_delete:
+        api.delete_helper("sensor.heizraum_zuhause_smartheat_t1_dat", tenant_id="t1")
+
+    mock_delete.assert_called_once_with(
+        "http://supervisor/core/api/config/config_entries/entry/e2",
+        headers={"Authorization": "Bearer test-token"}, timeout=10,
+    )
+
+
+@pytest.mark.parametrize("title", ["Wohnzimmer Statistik", "SmartHeat t2 DAT", "SmartHeat t1", None])
+def test_delete_helper_refuses_a_renamed_helper_with_a_foreign_title(title):
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    registry = [{"entity_id": "sensor.umbenannt", "config_entry_id": "e2", "platform": "statistics"}]
+    entries = [] if title is None else [{"entry_id": "e2", "title": title}]
+    with (
+        patch.object(api, "_call_ws_command", side_effect=[registry, entries]),
+        patch("heizungsbruecke.ha_api.requests.delete") as mock_delete,
+        pytest.raises(RuntimeError, match="kein SmartHeat-Hilfssensor"),
+    ):
+        api.delete_helper("sensor.umbenannt", tenant_id="t1")
+
+    mock_delete.assert_not_called()

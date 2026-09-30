@@ -28,6 +28,9 @@ STATUS_REJECTED = "rejected"
 SOURCE_LOCAL = "local"
 SOURCE_SERVER = "server"
 SOURCE_WRITE = "write"
+# Rolle des lokalen Datenfehlers "Datentraeger nicht beschreibbar" (TP12b). Vorhandene Vertragswerte:
+# im Status-Event {"art": "lokal", "rollen": ["datentraeger"]}.
+ROLE_DATENTRAEGER = "datentraeger"
 
 NOTIFY_NOTBETRIEB_ON = "notbetrieb_on"
 NOTIFY_NOTBETRIEB_OFF = "notbetrieb_off"
@@ -150,6 +153,14 @@ class WriteFailed:
 
 
 @dataclass(frozen=True)
+class AnsweredLocalFault:
+    """Der Server hat geantwortet, die Antwort liess sich lokal nicht uebernehmen (TP12b, AU-012:
+    Wiederherstellungspunkt nicht speicherbar). Zaehlt wie eine Antwort: kein Notbetrieb."""
+    seq: str
+    roles: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class MqttConnected:
     """Die Verbindung zum Broker steht (wieder)."""
 
@@ -197,6 +208,13 @@ class EndEmergencyBoost:
     pass
 
 
+@dataclass(frozen=True)
+class ClearStaleNotbetrieb:
+    """Start mit aktivem Abo: Notbetrieb ohne offenen Tick (nach dem Abo-inaktiv-Modus oder aus
+    einer failsafe_state.json von 0.15.0) kann nie von selbst enden. Still beenden (TP12b, AU-014);
+    ein Pruef-Tick klaert danach den Server."""
+
+
 def accepts_ack(state: DeliveryState, seq) -> bool:
     """Eine Antwort zaehlt nur fuer den offenen Tick -- auch verspaetet, waehrend schon
     auf einen Retry gewartet wird."""
@@ -224,6 +242,10 @@ def step(state: DeliveryState, event) -> tuple[DeliveryState, list]:
         return _write_failed(state, event)
     if isinstance(event, MqttConnected):
         return _mqtt_connected(state)
+    if isinstance(event, AnsweredLocalFault):
+        return _answered_local_fault(state, event)
+    if isinstance(event, ClearStaleNotbetrieb):
+        return _clear_stale_notbetrieb(state)
     raise TypeError(f"Unbekanntes Zustell-Ereignis: {event!r}")
 
 
@@ -243,6 +265,12 @@ def _retry(state: DeliveryState, delays: tuple[int, ...], origin: str) -> tuple[
         pending, stage=pending.stage + 1, phase=PHASE_WAITING_RETRY, gen=gen, retry_origin=origin, unsent=False,
     )
     return replace(state, pending=new_pending), ScheduleRetry(pending.seq, gen, delay)
+
+
+def _clear_stale_notbetrieb(state):
+    if state.pending is not None or not state.notbetrieb:
+        return state, []
+    return replace(state, notbetrieb=False, server_failures=0), []
 
 
 def _boot(state):
@@ -284,17 +312,28 @@ def _notbetrieb_end(state) -> list:
     return [EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF)]
 
 
-def _answered_with_fault(state, fault: DataFault, notify_kind: str):
+def is_storage_fault(fault: DataFault | None) -> bool:
+    """Datentraeger-Datenfehler: meldet datentraeger.py, nicht die Zustellmaschine."""
+    return fault is not None and fault.source == SOURCE_LOCAL and fault.detail == (ROLE_DATENTRAEGER,)
+
+
+def _answered_local_fault(state, event):
+    if not accepts_ack(state, event.seq):
+        return state, []
+    return _answered_with_fault(state, DataFault(SOURCE_LOCAL, tuple(sorted(event.roles))), None)
+
+
+def _answered_with_fault(state, fault: DataFault, notify_kind: str | None):
     """Antwort ohne neue Werte: der Server lebt (Zaehler zurueck, Notbetrieb endet), der
     Datenfehler wird gemeldet, wenn er neu ist. Bei gleicher Stoerung bleibt die erste
     Begruendung, damit weder eine Meldung noch ein Schreiben von failsafe_state.json folgt.
     Einen Retry plant nur die Antwort auf den laufenden Versuch (awaiting_ack); eine doppelte
     oder verspaetete Antwort laesst den geplanten Retry bzw. die Abo-Abfrage unveraendert,
-    sonst uebersprange sie Stufen."""
+    sonst uebersprange sie Stufen. `notify_kind=None`: ohne Meldung."""
     actions = _notbetrieb_end(state)
     if state.datenfehler is not None and fault.key() == state.datenfehler.key():
         fault = state.datenfehler
-    else:
+    elif notify_kind is not None:
         actions.append(Notify(notify_kind, fault.detail))
     answered = replace(state, server_failures=0, notbetrieb=False, datenfehler=fault)
     if state.pending.phase != PHASE_AWAITING_ACK:
@@ -311,6 +350,9 @@ def _ack(state, event):
         return _answered_with_fault(state, fault, NOTIFY_DATENFEHLER_SERVER)
     actions = _notbetrieb_end(state)
     if state.datenfehler is not None:
+        # Auch bei einem Datentraegerfehler: er hat eine gemeldete Stoerung ersetzt, deren Meldung
+        # sonst offen bliebe. Der Notifier ignoriert "ok" bei bereits entwarntem Schluessel, ein
+        # reiner Datentraegerfehler bleibt daher still (den meldet datentraeger.py).
         resolved = NOTIFY_WRITE_RESOLVED if state.datenfehler.source == SOURCE_WRITE else NOTIFY_DATENFEHLER_RESOLVED
         actions.append(Notify(resolved))
     return replace(state, pending=None, server_failures=0, notbetrieb=False, datenfehler=None), actions

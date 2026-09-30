@@ -17,7 +17,7 @@ import math
 import time
 from collections.abc import Callable
 
-from heizungsbruecke import plant
+from heizungsbruecke import plant, write_budget
 from heizungsbruecke.clamping import clamp
 
 logger = logging.getLogger(__name__)
@@ -108,7 +108,9 @@ class Override:
         gespeicherten, aelteren Punkt starten, wenn der aktuelle nicht speicherbar ist (N6); sein
         Ende setzt dann auf genau diesen zurueck. Wirft das Schreiben, bleiben die Flags
         unveraendert und der naechste Check versucht es erneut. Gibt die tatsaechlich gesetzten
-        Flags zurueck."""
+        Flags zurueck. Nach einem Fehlschlag bremst das Schreibbudget (write_budget, TP12b): dann
+        bleiben die Flags ohne Schreiben und ohne Fehler stehen, zurueckgegeben werden die
+        bisherigen."""
         state = self._store.state
         starting_comfort = comfort and not state.boost_active
         starting_emergency = emergency and not state.emergency_boost_active
@@ -124,10 +126,27 @@ class Override:
                 emergency = False
         new_row = _row(comfort, emergency)
         if new_row != _row(state.boost_active, state.emergency_boost_active):
-            self._write(self._row_values(new_row))
+            key, rule = (
+                (write_budget.BOOST_END, write_budget.RETURN_STAIRCASE) if new_row == _ROW_RESTORE
+                else (write_budget.BOOST_START, write_budget.RETRY_QUOTA)
+            )
+            if not write_budget.may_attempt(self._store, key, rule, self._clock()):
+                logger.info("Sollwert-Zeile '%s' zurueckgestellt: Schreibbudget nach einem Fehlschlag", new_row)
+                return state.boost_active, state.emergency_boost_active
+            self._budgeted_write(key, self._row_values(new_row))
             logger.warning(_ROW_LOG[new_row])
         self._store.update(boost_active=comfort, emergency_boost_active=emergency)
         return comfort, emergency
+
+    def _budgeted_write(self, key: str, values: dict) -> None:
+        """_write unter einer Wiederholungsregel des Schreibbudgets: ein Fehlschlag zaehlt, ein Erfolg
+        setzt zurueck."""
+        try:
+            self._write(values)
+        except Exception:
+            write_budget.record_attempt(self._store, key, self._clock())
+            raise
+        write_budget.record_success(self._store, key)
 
     def apply_server_values(self, curve: float, shift: float) -> None:
         """Speichert die (geclampten) Serverwerte als Wiederherstellungspunkt, bevor irgendetwas
@@ -157,8 +176,11 @@ class Override:
         state = self._store.state
         if not (always_restore or state.boost_active or state.emergency_boost_active):
             return True
+        if not write_budget.may_attempt(self._store, write_budget.RESTORE, write_budget.RETURN_STAIRCASE, self._clock()):
+            logger.info("Wiederherstellung zurueckgestellt: Schreibbudget nach einem Fehlschlag")
+            return False
         try:
-            self._write(self._row_values(_ROW_RESTORE))
+            self._budgeted_write(write_budget.RESTORE, self._row_values(_ROW_RESTORE))
         except Exception:
             logger.exception(
                 "Zuletzt gelernte Werte konnten nicht wiederhergestellt werden - Boost-Flags "
@@ -201,12 +223,20 @@ class Override:
         entsprechen. Ohne eigenes Schreiben dieser Rolle seit dem Start gilt der Read erst nach
         OWN_WRITE_SETTLE_SECONDS Laufzeit (ein Schreibvorgang kurz vor einem Neustart ist sonst
         unsichtbar). Schlaegt der Read fehl oder ist er nicht auswertbar, gilt das als
-        "nicht vertrauenswuerdig" (False, es wird geschrieben)."""
+        "nicht vertrauenswuerdig" (False, es wird geschrieben). Meldet die Zone inaktiv
+        (Wunschtemperatur < 5, read_shift None), zaehlt nur der eigene letzte Schreibwert seit dem
+        Start (B-TP11-2)."""
         try:
             current = plant.read_shift(self._ha_api, ref) if role == "shift_current" else self._ha_api.get_state(ref)
         except Exception:
             return False
         step = plant.STEPS[role]
+        if role == "shift_current" and current is None:
+            # Zone inaktiv: der Live-Wert sagt nichts. Vergleich nur mit dem eigenen letzten
+            # Schreibwert; der Wiederherstellungspunkt taugt nicht, apply_server_values speichert den
+            # neuen Serverwert VOR dem Schreiben (der Vergleich waere immer "gleich").
+            last_written = self._last_written.get(role)
+            return last_written is not None and abs(last_written - target) <= step / 2
         if current is None or not _is_finite_number(current) or abs(current - target) > step / 2:
             return False
         if self.settled(role):
@@ -298,7 +328,9 @@ class Override:
         except Exception:
             live = None
         low, high = self._limits("shift_current")
-        if not switched and live is not None and low <= live <= high:
+        # Schon manuell und inaktiv (live None, B-TP11-2) oder mit brauchbarem Wert: nichts schreiben,
+        # die naechste Serverantwort setzt die Parallelverschiebung.
+        if not switched and (live is None or low <= live <= high):
             return
         start = self._store.state.shift_current if self._store.state.shift_current is not None else start_shift
         if start is None:

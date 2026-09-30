@@ -14,12 +14,18 @@ from heizungsbruecke.delivery import DeliveryState, from_persisted, to_persisted
 
 logger = logging.getLogger(__name__)
 
+
+class StorageError(OSError):
+    """backup.json oder failsafe_state.json liess sich nicht schreiben (Datentraeger voll oder
+    schreibgeschuetzt, TP12b/AU-005). Unterklasse von OSError: Aufrufer, die OSError erwarten,
+    bleiben gueltig."""
+
 _NUMBER_FIELDS = ("curve_current", "shift_current", "last_room_target", "last_published_target_rt")
 _FLAG_FIELDS = ("boost_active", "emergency_boost_active")
 _TEXT_FIELDS = ("last_daily_trigger_date", "last_ack_at")
 _TEXT_MAP_FIELDS = ("notify_states", "notify_messages")
 _OVERRIDE_FIELDS = ("manual_override", "manual_override_pending")
-BACKUP_FIELDS = _NUMBER_FIELDS + _FLAG_FIELDS + _TEXT_FIELDS + _TEXT_MAP_FIELDS + _OVERRIDE_FIELDS
+BACKUP_FIELDS = _NUMBER_FIELDS + _FLAG_FIELDS + _TEXT_FIELDS + _TEXT_MAP_FIELDS + _OVERRIDE_FIELDS + ("write_budget",)
 
 
 @dataclass(frozen=True)
@@ -59,9 +65,9 @@ class BridgeState:
     manual_override_misses: int = 0
     abo_inactive_since: datetime | None = None
     abo_finished: bool = False
-    # Durchsetzung (manual_override.py): je Rolle Tag, Anzahl und Zeitpunkt (Worker-Uhr) der
-    # Rueckschreibungen -- Kontingent-Schutz der Hersteller-Cloud. Nur Laufzeit.
-    enforce_log: dict = field(default_factory=dict)
+    # Schreibbudget je Schluessel (write_budget.py, TP12b): Durchsetzung, Zonenvorbereitung,
+    # Boost-Start/-Ende, Wiederherstellung. In backup.json; "last" nur zur Laufzeit gueltig.
+    write_budget: dict = field(default_factory=dict)
 
 
 def _is_number(value) -> bool:
@@ -73,6 +79,24 @@ def _is_override(value) -> bool:
         isinstance(value, dict) and _is_number(value.get("curve")) and _is_number(value.get("shift"))
         and isinstance(value.get("erkannt"), str)
     )
+
+
+def _parse_budget(raw) -> dict | None:
+    """Tag, Anzahl und Limit-Markierung je Schluessel; "last" (monotone Uhr des vorigen Laufs) faellt
+    weg. None bei jedem Formfehler (dann gilt ein leeres Budget)."""
+    if not isinstance(raw, dict):
+        return None
+    parsed = {}
+    for key, entry in raw.items():
+        if not isinstance(key, str) or not isinstance(entry, dict):
+            return None
+        day, count = entry.get("day"), entry.get("count")
+        if not isinstance(day, str) or not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            return None
+        parsed[key] = {"day": day, "count": count}
+        if isinstance(entry.get("limit_notified"), str):
+            parsed[key]["limit_notified"] = entry["limit_notified"]
+    return parsed
 
 
 def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
@@ -120,6 +144,12 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
             values[key] = dict(raw[key])
         else:
             _invalid(key)
+    if "write_budget" in raw:
+        budget = _parse_budget(raw["write_budget"])
+        if budget is None:
+            _invalid("write_budget")
+        else:
+            values["write_budget"] = budget
     extra = {key: value for key, value in raw.items() if key not in BACKUP_FIELDS}
     return values, extra
 
@@ -130,7 +160,7 @@ def _backup_content(state: BridgeState, extra: dict) -> dict:
     content = dict(extra)
     for key in BACKUP_FIELDS:
         value = getattr(state, key)
-        if value is None or (key in _TEXT_MAP_FIELDS and not value):
+        if value is None or (key in _TEXT_MAP_FIELDS + ("write_budget",) and not value):
             continue
         content[key] = value
     return content
@@ -154,7 +184,7 @@ class StateStore:
     def update(self, **changes) -> None:
         """Aendert Felder und schreibt backup.json, wenn sich deren Inhalt aendert oder ein
         frueherer Schreibversuch gescheitert ist. Reine Laufzeitfelder schreiben nie. Ein
-        Schreibfehler wird nach der Aenderung im Speicher weitergereicht."""
+        Schreibfehler wird nach der Aenderung im Speicher als StorageError weitergereicht."""
         if "delivery" in changes:
             raise ValueError("delivery nur ueber set_delivery aendern")
         self._state = replace(self._state, **changes)
@@ -164,11 +194,38 @@ class StateStore:
         if content == self._backup_saved and not self._backup_dirty:
             return
         try:
-            backup_store.save_backup(self._backup_path, content)
-        except Exception:
+            self._save(self._backup_path, content)
+        except StorageError:
             self._backup_dirty = True
             raise
         self._backup_saved, self._backup_dirty = content, False
+
+    @property
+    def storage_failed(self) -> bool:
+        """True, solange backup.json oder failsafe_state.json nicht geschrieben werden konnte
+        (TP12b, AU-005). Lebt nur im Speicher: ein kaputter Datentraeger kann sich nicht merken,
+        dass er kaputt ist."""
+        return self._backup_dirty or self._failsafe_dirty
+
+    def flush(self) -> None:
+        """Holt einen gescheiterten Schreibvorgang nach, ohne den Zustand zu aendern (Takt
+        EV_HEALTH): so verschwindet die Datentraeger-Meldung auch ohne neuen Schreibanlass.
+        Wirft StorageError, solange es weiter scheitert."""
+        if self._backup_dirty:
+            content = _backup_content(self._state, self._extra)
+            self._save(self._backup_path, content)
+            self._backup_saved, self._backup_dirty = content, False
+        if self._failsafe_dirty:
+            content = to_persisted(self._state.delivery)
+            self._save(self._failsafe_path, content)
+            self._failsafe_saved, self._failsafe_dirty = content, False
+
+    @staticmethod
+    def _save(path: Path, content: dict) -> None:
+        try:
+            backup_store.save_backup(path, content)
+        except Exception as error:
+            raise StorageError(f"{path.name} nicht schreibbar: {error}") from error
 
     def is_saved(self, *keys: str) -> bool:
         """True, wenn die genannten backup.json-Felder so auf dem Datentraeger stehen wie im Speicher
@@ -206,8 +263,8 @@ class StateStore:
         if content == self._failsafe_saved and not self._failsafe_dirty:
             return
         try:
-            backup_store.save_backup(self._failsafe_path, content)
-        except Exception:
+            self._save(self._failsafe_path, content)
+        except StorageError:
             self._failsafe_dirty = True
             logger.exception(
                 "failsafe_state.json konnte nicht geschrieben werden - Zustand gilt nur bis zum naechsten Neustart"
