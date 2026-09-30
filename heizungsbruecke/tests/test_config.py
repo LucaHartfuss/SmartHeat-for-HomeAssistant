@@ -498,3 +498,12 @@ def test_boost_shift_outside_clamps_is_a_start_error():
     effective = {**config.resolve_effective_options(VALID), "boost_shift_value": 26.0}
     error = config.validate_boost_config(effective)
     assert error is not None and "boost_shift_value" in error
+
+
+@pytest.mark.parametrize("value", [0, -5, 0.5, True])
+def test_validate_local_check_interval_flags_values_below_one_and_bools(value):
+    assert validate_local_check_interval({"local_check_interval_seconds": value}) is not None
+
+
+def test_validate_telemetry_interval_flags_bools():
+    assert validate_telemetry_interval({"telemetry_interval_seconds": True}) is not None

@@ -226,7 +226,7 @@ def test_stop_closes_the_current_websocket_connection():
     def _factory(url, on_message=None, on_close=None, on_error=None):
         fake_app = MagicMock()
         fake_app.close.side_effect = lambda: blocked.set()
-        fake_app.run_forever.side_effect = lambda: blocked.wait(timeout=2.0)
+        fake_app.run_forever.side_effect = lambda **kwargs: blocked.wait(timeout=2.0)
         captured["app"] = fake_app
         captured["on_message"] = on_message
         return fake_app
@@ -395,7 +395,7 @@ def test_backoff_restarts_at_one_second_after_successful_subscribe(monkeypatch):
     def _factory(url, on_message=None, on_close=None, on_error=None):
         fake_app = MagicMock()
 
-        def _connect_subscribe_and_drop():
+        def _connect_subscribe_and_drop(**kwargs):
             on_message(fake_app, json.dumps({"type": "auth_required"}))
             on_message(fake_app, json.dumps({"type": "auth_ok"}))
             on_message(fake_app, json.dumps({"id": 1, "type": "result", "success": True, "result": None}))
@@ -422,3 +422,18 @@ def test_successful_subscribe_resets_attempt_counter():
     client._handle_subscribe_result(MagicMock(), {"success": True})
 
     assert client._attempt == 0
+
+
+def test_connection_is_kept_alive_with_ws_pings():
+    captured = {}
+    with _patch_ws_app(captured):
+        client = HaTriggerClient(
+            ws_url="ws://x", token="t", triggers=[{"platform": "time", "at": "12:00"}],
+            on_trigger_event=MagicMock(),
+        )
+        client.start()
+        _wait_until(lambda: "app" in captured and captured["app"].run_forever.called)
+
+        captured["app"].run_forever.assert_called_with(ping_interval=30, ping_timeout=10)
+
+        _stop_and_join(client)

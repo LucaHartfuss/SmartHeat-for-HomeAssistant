@@ -10,6 +10,12 @@ logger = logging.getLogger(__name__)
 
 _RECONNECT_DELAYS_SECONDS = (1, 2, 5, 10, 20, 30)
 
+# AU-035: eine halb offene WS-Verbindung (Router, NAT) wuerde sonst nie bemerkt; die lokalen Checks
+# stuenden still, waehrend das Lebenszeichen weiter "ok" sendet. Ohne Pong nach dem Timeout schliesst
+# websocket-client die Verbindung, der Reconnect laeuft wie bei jedem Abriss.
+WS_PING_INTERVAL_SECONDS = 30
+WS_PING_TIMEOUT_SECONDS = 10
+
 
 class HaTriggerClient:
     """Persistent WebSocket connection to HA Core's `subscribe_trigger` command -- the
@@ -83,7 +89,7 @@ class HaTriggerClient:
                     on_error=self._on_error,
                 )
                 self._ws_app = ws_app
-                ws_app.run_forever()
+                ws_app.run_forever(ping_interval=WS_PING_INTERVAL_SECONDS, ping_timeout=WS_PING_TIMEOUT_SECONDS)
             except Exception:
                 logger.exception("HaTriggerClient: unerwarteter Fehler in run_forever")
             self._connected.clear()

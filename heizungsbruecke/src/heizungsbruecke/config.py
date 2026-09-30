@@ -215,12 +215,19 @@ def _is_finite_number(value) -> bool:
     return isinstance(value, (int, float)) and not math.isnan(value) and not math.isinf(value)
 
 
+def _is_interval_number(value) -> bool:
+    """Endliche Zahl, aber kein bool (True waere sonst 1 Sekunde)."""
+    return not isinstance(value, bool) and _is_finite_number(value)
+
+
 def validate_local_check_interval(options: dict) -> str | None:
     """Die Obergrenze 3600 s begrenzt, wie veraltet der Watchdog-Fallback bei getrennter
     WS-Verbindung werden kann. Prueft auch ein von Hand editiertes options.json."""
     value = options.get("local_check_interval_seconds")
-    if value is not None and not _is_finite_number(value):
+    if value is not None and not _is_interval_number(value):
         return f"local_check_interval_seconds ({value!r}) ist kein gueltiger endlicher Zahlenwert"
+    if value is not None and value < 1:
+        return f"local_check_interval_seconds ({value}) liegt unter dem zulaessigen Minimum von 1 Sekunde"
     if value is not None and value > 3600:
         return (
             f"local_check_interval_seconds ({value}) liegt ueber dem zulaessigen Maximum "
@@ -237,7 +244,7 @@ def validate_telemetry_interval(options: dict) -> str | None:
     darueber lernt der Regelkern serverseitig praktisch nie (Abdeckungsregel > 15 min Luecke =
     Pause)."""
     value = options.get("telemetry_interval_seconds")
-    if value is not None and not _is_finite_number(value):
+    if value is not None and not _is_interval_number(value):
         return f"telemetry_interval_seconds ({value!r}) ist kein gueltiger endlicher Zahlenwert"
     if value is not None and value < 10:
         return (
