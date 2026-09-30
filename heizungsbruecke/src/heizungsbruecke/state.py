@@ -25,7 +25,7 @@ _FLAG_FIELDS = ("boost_active", "emergency_boost_active")
 _TEXT_FIELDS = ("last_daily_trigger_date", "last_ack_at")
 _TEXT_MAP_FIELDS = ("notify_states", "notify_messages")
 _OVERRIDE_FIELDS = ("manual_override", "manual_override_pending")
-BACKUP_FIELDS = _NUMBER_FIELDS + _FLAG_FIELDS + _TEXT_FIELDS + _TEXT_MAP_FIELDS + _OVERRIDE_FIELDS
+BACKUP_FIELDS = _NUMBER_FIELDS + _FLAG_FIELDS + _TEXT_FIELDS + _TEXT_MAP_FIELDS + _OVERRIDE_FIELDS + ("write_budget",)
 
 
 @dataclass(frozen=True)
@@ -65,9 +65,9 @@ class BridgeState:
     manual_override_misses: int = 0
     abo_inactive_since: datetime | None = None
     abo_finished: bool = False
-    # Durchsetzung (manual_override.py): je Rolle Tag, Anzahl und Zeitpunkt (Worker-Uhr) der
-    # Rueckschreibungen -- Kontingent-Schutz der Hersteller-Cloud. Nur Laufzeit.
-    enforce_log: dict = field(default_factory=dict)
+    # Schreibbudget je Schluessel (write_budget.py, TP12b): Durchsetzung, Zonenvorbereitung,
+    # Boost-Start/-Ende, Wiederherstellung. In backup.json; "last" nur zur Laufzeit gueltig.
+    write_budget: dict = field(default_factory=dict)
 
 
 def _is_number(value) -> bool:
@@ -79,6 +79,24 @@ def _is_override(value) -> bool:
         isinstance(value, dict) and _is_number(value.get("curve")) and _is_number(value.get("shift"))
         and isinstance(value.get("erkannt"), str)
     )
+
+
+def _parse_budget(raw) -> dict | None:
+    """Tag, Anzahl und Limit-Markierung je Schluessel; "last" (monotone Uhr des vorigen Laufs) faellt
+    weg. None bei jedem Formfehler (dann gilt ein leeres Budget)."""
+    if not isinstance(raw, dict):
+        return None
+    parsed = {}
+    for key, entry in raw.items():
+        if not isinstance(key, str) or not isinstance(entry, dict):
+            return None
+        day, count = entry.get("day"), entry.get("count")
+        if not isinstance(day, str) or not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            return None
+        parsed[key] = {"day": day, "count": count}
+        if isinstance(entry.get("limit_notified"), str):
+            parsed[key]["limit_notified"] = entry["limit_notified"]
+    return parsed
 
 
 def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
@@ -126,6 +144,12 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
             values[key] = dict(raw[key])
         else:
             _invalid(key)
+    if "write_budget" in raw:
+        budget = _parse_budget(raw["write_budget"])
+        if budget is None:
+            _invalid("write_budget")
+        else:
+            values["write_budget"] = budget
     extra = {key: value for key, value in raw.items() if key not in BACKUP_FIELDS}
     return values, extra
 
@@ -136,7 +160,7 @@ def _backup_content(state: BridgeState, extra: dict) -> dict:
     content = dict(extra)
     for key in BACKUP_FIELDS:
         value = getattr(state, key)
-        if value is None or (key in _TEXT_MAP_FIELDS and not value):
+        if value is None or (key in _TEXT_MAP_FIELDS + ("write_budget",) and not value):
             continue
         content[key] = value
     return content

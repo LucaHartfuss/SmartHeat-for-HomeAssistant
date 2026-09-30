@@ -2454,3 +2454,10 @@ def test_telemetry_is_not_published_without_connection(env):
     _advance(env, bridge, 300)
 
     assert len(_mqtt(env).telemetry) == sent
+
+
+def test_successful_zone_preparation_costs_no_quota_across_restarts(env):
+    _quiet_backup(env)
+    for _ in range(8):  # mehr Neustarts als das Tageslimit
+        _start(env)
+    assert "write_budget" not in _backup(env)

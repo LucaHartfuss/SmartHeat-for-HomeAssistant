@@ -28,6 +28,7 @@ from heizungsbruecke import (
     telemetry,
     ticks,
     triggers,
+    write_budget,
 )
 from heizungsbruecke.delivery import ROLE_DATENTRAEGER, SOURCE_LOCAL, DataFault
 from heizungsbruecke.derived_sensors import DerivedSensors
@@ -581,27 +582,22 @@ def _first_start(rt: Runtime) -> None:
 
 
 def _may_prepare_zone(rt: Runtime) -> bool:
-    """Kontingent wie die Durchsetzung (manual_override): hoechstens ein Versuch pro RETRY_SECONDS
-    und MAX_WRITES_PER_DAY am Tag. Jeder Versuch kann zwei Cloud-Aufrufe kosten; bei 403 "Quota
-    Exceeded" wuerde ein Versuch in jedem lokalen Check die Sperre verlaengern. Zaehlt den Versuch
-    VOR dem Aufruf (auch ein gescheiterter verbraucht Kontingent)."""
-    today = datetime.now().date().isoformat()
-    log = rt.zone_prepare_log
-    if log.get("day") != today:
-        log.update(day=today, count=0, limit_logged=False)
-    if log["count"] >= manual_override.MAX_WRITES_PER_DAY:
-        if not log["limit_logged"]:
-            logger.warning(
-                "Zone: Tageslimit von %d Vorbereitungsversuchen erreicht, naechster Versuch morgen",
-                manual_override.MAX_WRITES_PER_DAY,
-            )
-            log["limit_logged"] = True
-        return False
-    last = log.get("last")
-    if last is not None and rt.clock() - last < manual_override.RETRY_SECONDS:
-        return False
-    log.update(count=log["count"] + 1, last=rt.clock())
-    return True
+    """Wiederholungs-Kontingent (write_budget.RETRY_QUOTA): nach einem Fehlschlag hoechstens ein
+    Versuch pro 30 min und 6 Fehlschlaege am Tag. Jeder Versuch kann zwei Cloud-Aufrufe kosten; bei
+    403 "Quota Exceeded" wuerde ein Versuch in jedem lokalen Check die Sperre verlaengern. Ein
+    gelungener Versuch kostet nichts (er laeuft bei jedem Start)."""
+    key, day = write_budget.ZONE_PREPARE, write_budget.today()
+    entry = write_budget.get(rt.store, key)
+    if write_budget.allowed(entry, write_budget.RETRY_QUOTA, rt.clock(), day):
+        return True
+    if write_budget.limit_first_reached(entry, write_budget.RETRY_QUOTA, day):
+        assert entry is not None
+        logger.warning(
+            "Zone: Tageslimit von %d Vorbereitungsversuchen erreicht, naechster Versuch morgen",
+            write_budget.MAX_PER_DAY,
+        )
+        write_budget.put(rt.store, key, {**entry, "limit_notified": day})
+    return False
 
 
 def _prepare_zone(rt: Runtime) -> None:
@@ -613,8 +609,10 @@ def _prepare_zone(rt: Runtime) -> None:
     try:
         rt.override.prepare_zone(start_shift=rt.store.state.stable_target)
     except Exception:
+        write_budget.record_attempt(rt.store, write_budget.ZONE_PREPARE, rt.clock())
         logger.exception("Zone konnte nicht vorbereitet werden, naechster Versuch beim naechsten lokalen Check")
         return
+    write_budget.record_success(rt.store, write_budget.ZONE_PREPARE)
     rt.zone_prepared = True
 
 

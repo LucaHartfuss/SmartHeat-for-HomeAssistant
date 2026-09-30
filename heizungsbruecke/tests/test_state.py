@@ -440,3 +440,30 @@ def test_flush_without_dirty_files_writes_nothing(make_store, monkeypatch):
     store.flush()
 
     assert saves == []
+
+
+def test_write_budget_survives_a_restart_without_the_monotonic_time(make_store, tmp_path):
+    store = make_store()
+    store.update(write_budget={
+        "boost_end": {"day": "2026-10-01", "count": 2, "last": 1234.0},
+        "enforce:curve_current": {"day": "2026-10-01", "count": 6, "last": 99.0, "limit_notified": "2026-10-01"},
+    })
+
+    reloaded = StateStore(tmp_path / "backup.json", tmp_path / "failsafe_state.json")
+
+    assert reloaded.state.write_budget == {
+        "boost_end": {"day": "2026-10-01", "count": 2},
+        "enforce:curve_current": {"day": "2026-10-01", "count": 6, "limit_notified": "2026-10-01"},
+    }
+
+
+@pytest.mark.parametrize("raw", [[1], {"x": 1}, {"x": {"day": 1, "count": 1}}, {"x": {"day": "d", "count": True}},
+                                 {"x": {"day": "d", "count": -1}}])
+def test_broken_write_budget_falls_back_to_empty(make_store, raw):
+    assert make_store(backup={"write_budget": raw}).state.write_budget == {}
+
+
+def test_empty_write_budget_is_not_written(make_store, tmp_path):
+    store = make_store()
+    store.update(write_budget={}, curve_current=1.0)
+    assert "write_budget" not in load_backup(tmp_path / "backup.json")

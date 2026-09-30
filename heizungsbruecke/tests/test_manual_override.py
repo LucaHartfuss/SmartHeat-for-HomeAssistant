@@ -277,14 +277,14 @@ def test_retry_interval_between_writes(make_store, clock):
 def test_may_write_respects_the_retry_interval(make_store, clock, ago, allowed):
     # Ruling #9: RETRY_SECONDS direkt pruefen (im Ablauf wird es von der Schonfrist verdeckt).
     rt = _rt(make_store, clock, Ha())
-    rt.store.update(enforce_log={"curve_current": {"day": TODAY.isoformat(), "count": 1, "last": clock() - ago}})
+    rt.store.update(write_budget={"enforce:curve_current": {"day": TODAY.isoformat(), "count": 1, "last": clock() - ago}})
     assert manual_override._may_write(rt, "curve_current") is allowed
 
 
 def test_may_write_respects_the_daily_limit(make_store, clock):
     rt = _rt(make_store, clock, Ha())
     day = TODAY.isoformat()
-    rt.store.update(enforce_log={"curve_current": {"day": day, "count": manual_override.MAX_WRITES_PER_DAY,
+    rt.store.update(write_budget={"enforce:curve_current": {"day": day, "count": manual_override.MAX_WRITES_PER_DAY,
                                                    "last": clock() - 10 * manual_override.RETRY_SECONDS}})
     assert manual_override._may_write(rt, "curve_current") is False
     assert manual_override._may_write(rt, "shift_current") is True
