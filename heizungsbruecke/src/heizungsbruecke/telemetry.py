@@ -3,6 +3,7 @@ Regelabweichung und Betriebspunkt aus (room_target, outdoor_temp, flow_setpoint)
 fuehren dort nur zu 'nicht lernen'. Den Takt gibt der Planeintrag EV_TELEMETRY vor."""
 import logging
 import math
+from collections.abc import Callable
 from datetime import datetime
 
 from heizungsbruecke.delivery import DataFault
@@ -28,21 +29,29 @@ REGULATION_FIELDS = ("room_target", "outdoor_temp", "flow_setpoint")
 #: Feldname und Quellen prueft der Contract-Check 21 gegen heizungsserver.generic.history.
 DATENFEHLER_KEY = "datenfehler"
 
+#: Telemetrie-Flag "Therme liefert trotz Anforderung keine Waerme" (TP12f). Feldname prueft der
+#: Contract-Check 27 gegen heizungsserver.generic.history.TELEMETRY_WAERME_KEY.
+WAERME_FEHLT_KEY = "waerme_fehlt"
+
 
 def run_telemetry_tick(
     manifest, ha_api, mqtt_client, boost_active: bool, failsafe_active: bool,
     datenfehler: DataFault | None = None, room_target: float | None = None,
+    waerme: Callable[[float, dict, dict], bool] | None = None,
 ) -> None:
     """Liest room_actual selbst (lokaler HA-REST-Aufruf, kein Cloud-Roundtrip). Wirft nie."""
     if "room_actual" not in manifest.entity_ids:
         return
     try:
         room_actual = ha_api.get_state(manifest.entity_ids["room_actual"])
+        kpi_fields = read_kpi_fields(manifest, ha_api)
+        regulation_fields = read_regulation_fields(manifest, ha_api, room_target)
+        waerme_fehlt = False if waerme is None else waerme(room_actual, kpi_fields, regulation_fields)
         publish_telemetry(
             mqtt_client=mqtt_client, room_actual=room_actual,
             boost_active=boost_active, failsafe_active=failsafe_active,
-            kpi_fields=read_kpi_fields(manifest, ha_api), datenfehler=datenfehler,
-            regulation_fields=read_regulation_fields(manifest, ha_api, room_target),
+            kpi_fields=kpi_fields, datenfehler=datenfehler, regulation_fields=regulation_fields,
+            waerme_fehlt=waerme_fehlt,
         )
     except Exception:
         logger.exception("Fehler beim Veroeffentlichen der KPI-Telemetrie, wird beim naechsten Tick erneut versucht")
@@ -51,11 +60,13 @@ def run_telemetry_tick(
 def publish_telemetry(
     mqtt_client, room_actual: float, boost_active: bool, failsafe_active: bool, kpi_fields: dict | None = None,
     datenfehler: DataFault | None = None, regulation_fields: dict | None = None,
+    waerme_fehlt: bool = False,
 ) -> None:
     payload = {
         "room_actual": room_actual,
         "boost_active": boost_active,
         "failsafe_active": failsafe_active,
+        WAERME_FEHLT_KEY: waerme_fehlt,
         "ts": datetime.now().astimezone().isoformat(),
         **(kpi_fields or {}),
         **(regulation_fields or {}),

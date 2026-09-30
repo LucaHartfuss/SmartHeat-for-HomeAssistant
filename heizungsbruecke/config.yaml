@@ -90,4 +90,4 @@ schema:
   setup_id: str?
   abgemeldet: bool?
   notify_hints_off:
-    - list(raumfuehler|batterie|manueller_eingriff|quellwechsel)?
+    - list(raumfuehler|batterie|manueller_eingriff|quellwechsel|therme)?

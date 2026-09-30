@@ -289,3 +289,35 @@ def test_unreadable_regulation_field_is_omitted():
 
 def test_regulation_fields_constant():
     assert telemetry.REGULATION_FIELDS == ("room_target", "outdoor_temp", "flow_setpoint")
+
+
+def test_the_payload_always_carries_waerme_fehlt():
+    mqtt_client = MagicMock()
+    telemetry.publish_telemetry(mqtt_client=mqtt_client, room_actual=20.5, boost_active=False, failsafe_active=False)
+    assert mqtt_client.publish_telemetry.call_args.args[0][telemetry.WAERME_FEHLT_KEY] is False
+    telemetry.publish_telemetry(
+        mqtt_client=mqtt_client, room_actual=20.5, boost_active=False, failsafe_active=False, waerme_fehlt=True,
+    )
+    assert mqtt_client.publish_telemetry.call_args.args[0]["waerme_fehlt"] is True
+
+
+def test_run_telemetry_tick_hands_the_readings_to_the_waerme_callback():
+    manifest = ChannelManifest(entity_ids={
+        "room_actual": "sensor.room", "flow_temperature": "sensor.flow", "flow_setpoint": "sensor.set",
+    })
+    ha_api = MagicMock()
+    readings = {"sensor.room": 21.0, "sensor.flow": 26.0, "sensor.set": 36.0}
+    ha_api.get_state.side_effect = lambda entity_id: readings[entity_id]
+    mqtt_client = MagicMock()
+    seen = []
+
+    def waerme(room, kpi, regulation):
+        seen.append((room, kpi["flow_temperature"], regulation["flow_setpoint"]))
+        return True
+
+    telemetry.run_telemetry_tick(
+        manifest, ha_api, mqtt_client, boost_active=False, failsafe_active=False, waerme=waerme,
+    )
+
+    assert seen == [(21.0, 26.0, 36.0)]
+    assert mqtt_client.publish_telemetry.call_args.args[0]["waerme_fehlt"] is True

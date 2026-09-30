@@ -146,7 +146,7 @@ def test_tp7_options_are_optional_and_have_no_default():
     schema = config["schema"]
 
     assert schema["abgemeldet"] == "bool?"
-    assert schema["notify_hints_off"] == ["list(raumfuehler|batterie|manueller_eingriff|quellwechsel)?"]
+    assert schema["notify_hints_off"] == ["list(raumfuehler|batterie|manueller_eingriff|quellwechsel|therme)?"]
     assert "abgemeldet" not in config["options"] and "notify_hints_off" not in config["options"]
     assert "abgemeldet" not in _REQUIRED_OPTIONS and "notify_hints_off" not in _REQUIRED_OPTIONS
 

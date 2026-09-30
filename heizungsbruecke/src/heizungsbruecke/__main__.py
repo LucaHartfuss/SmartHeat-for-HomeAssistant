@@ -28,6 +28,7 @@ from heizungsbruecke import (
     telemetry,
     ticks,
     triggers,
+    waerme_hint,
     write_budget,
 )
 from heizungsbruecke.delivery import ROLE_DATENTRAEGER, SOURCE_LOCAL, DataFault
@@ -446,6 +447,7 @@ def _on_telemetry(rt: Runtime, event: Event) -> None:
         rt.manifest, rt.ha_api, rt.mqtt_client,
         boost_active=state.boost_active, failsafe_active=state.delivery.notbetrieb,
         datenfehler=datenfehler, room_target=state.stable_target,
+        waerme=lambda room, kpi, regulation: waerme_hint.apply_tick(rt, room, kpi, regulation),
     )
 
 
