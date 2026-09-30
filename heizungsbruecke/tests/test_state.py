@@ -5,7 +5,7 @@ import pytest
 from heizungsbruecke import backup_store
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.delivery import SOURCE_LOCAL, DataFault, DeliveryState, PendingTick
-from heizungsbruecke.state import BridgeState, StateStore
+from heizungsbruecke.state import BridgeState, StateStore, StorageError
 
 # Vollstaendige backup.json, wie 0.16.0 sie schreibt (vor TP11: die Parallelverschiebung hiess
 # noch "offset_current", target_history gab es noch als aktiv gefuehrtes Feld).
@@ -391,5 +391,52 @@ def test_manual_override_misses_is_runtime_only(make_store, monkeypatch):
     saves = _count_saves(monkeypatch)
 
     store.update(manual_override_misses=1)
+
+    assert saves == []
+
+
+def test_failed_backup_write_raises_storage_error_and_sets_storage_failed(make_store, monkeypatch):
+    store = make_store(backup=V016_BACKUP)
+    assert store.storage_failed is False
+    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+
+    with pytest.raises(StorageError, match="Datentraeger kaputt"):
+        store.update(curve_current=1.1)
+
+    assert store.storage_failed is True
+
+
+def test_failed_failsafe_write_sets_storage_failed_without_raising(make_store, monkeypatch):
+    store = make_store()
+    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+
+    store.set_delivery(DeliveryState(notbetrieb=True))
+
+    assert store.storage_failed is True
+
+
+def test_flush_writes_dirty_files_and_clears_storage_failed(make_store, tmp_path, monkeypatch):
+    store = make_store(backup=V016_BACKUP)
+    with monkeypatch.context() as patch:
+        patch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+        with pytest.raises(StorageError):
+            store.update(curve_current=1.1)
+        store.set_delivery(DeliveryState(notbetrieb=True))
+        with pytest.raises(StorageError):
+            store.flush()
+        assert store.storage_failed is True
+
+    store.flush()
+
+    assert store.storage_failed is False
+    assert load_backup(tmp_path / "backup.json")["curve_current"] == 1.1
+    assert load_backup(tmp_path / "failsafe_state.json")["failsafe_active"] is True
+
+
+def test_flush_without_dirty_files_writes_nothing(make_store, monkeypatch):
+    store = make_store(backup=V016_BACKUP)
+    saves = _count_saves(monkeypatch)
+
+    store.flush()
 
     assert saves == []

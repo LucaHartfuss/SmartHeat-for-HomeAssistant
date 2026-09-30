@@ -48,3 +48,24 @@ def test_save_backup_writes_via_atomic_rename(tmp_path, monkeypatch):
 
     assert len(replace_calls) == 1
     assert load_backup(path) == {"curve_current": 0.9}
+
+
+def test_save_backup_syncs_the_temp_file_before_replacing(tmp_path, monkeypatch):
+    calls = []
+    real_fsync, real_replace = os.fsync, os.replace
+
+    def _fsync(fd):
+        calls.append("fsync")
+        real_fsync(fd)
+
+    def _replace(source, target):
+        calls.append("replace")
+        real_replace(source, target)
+
+    monkeypatch.setattr("heizungsbruecke.backup_store.os.fsync", _fsync)
+    monkeypatch.setattr("heizungsbruecke.backup_store.os.replace", _replace)
+
+    save_backup(tmp_path / "b.json", {"a": 1})
+
+    assert calls == ["fsync", "replace"]
+    assert load_backup(tmp_path / "b.json") == {"a": 1}

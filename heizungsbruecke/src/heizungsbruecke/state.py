@@ -14,6 +14,12 @@ from heizungsbruecke.delivery import DeliveryState, from_persisted, to_persisted
 
 logger = logging.getLogger(__name__)
 
+
+class StorageError(OSError):
+    """backup.json oder failsafe_state.json liess sich nicht schreiben (Datentraeger voll oder
+    schreibgeschuetzt, TP12b/AU-005). Unterklasse von OSError: Aufrufer, die OSError erwarten,
+    bleiben gueltig."""
+
 _NUMBER_FIELDS = ("curve_current", "shift_current", "last_room_target", "last_published_target_rt")
 _FLAG_FIELDS = ("boost_active", "emergency_boost_active")
 _TEXT_FIELDS = ("last_daily_trigger_date", "last_ack_at")
@@ -154,7 +160,7 @@ class StateStore:
     def update(self, **changes) -> None:
         """Aendert Felder und schreibt backup.json, wenn sich deren Inhalt aendert oder ein
         frueherer Schreibversuch gescheitert ist. Reine Laufzeitfelder schreiben nie. Ein
-        Schreibfehler wird nach der Aenderung im Speicher weitergereicht."""
+        Schreibfehler wird nach der Aenderung im Speicher als StorageError weitergereicht."""
         if "delivery" in changes:
             raise ValueError("delivery nur ueber set_delivery aendern")
         self._state = replace(self._state, **changes)
@@ -164,11 +170,38 @@ class StateStore:
         if content == self._backup_saved and not self._backup_dirty:
             return
         try:
-            backup_store.save_backup(self._backup_path, content)
-        except Exception:
+            self._save(self._backup_path, content)
+        except StorageError:
             self._backup_dirty = True
             raise
         self._backup_saved, self._backup_dirty = content, False
+
+    @property
+    def storage_failed(self) -> bool:
+        """True, solange backup.json oder failsafe_state.json nicht geschrieben werden konnte
+        (TP12b, AU-005). Lebt nur im Speicher: ein kaputter Datentraeger kann sich nicht merken,
+        dass er kaputt ist."""
+        return self._backup_dirty or self._failsafe_dirty
+
+    def flush(self) -> None:
+        """Holt einen gescheiterten Schreibvorgang nach, ohne den Zustand zu aendern (Takt
+        EV_HEALTH): so verschwindet die Datentraeger-Meldung auch ohne neuen Schreibanlass.
+        Wirft StorageError, solange es weiter scheitert."""
+        if self._backup_dirty:
+            content = _backup_content(self._state, self._extra)
+            self._save(self._backup_path, content)
+            self._backup_saved, self._backup_dirty = content, False
+        if self._failsafe_dirty:
+            content = to_persisted(self._state.delivery)
+            self._save(self._failsafe_path, content)
+            self._failsafe_saved, self._failsafe_dirty = content, False
+
+    @staticmethod
+    def _save(path: Path, content: dict) -> None:
+        try:
+            backup_store.save_backup(path, content)
+        except Exception as error:
+            raise StorageError(f"{path.name} nicht schreibbar: {error}") from error
 
     def is_saved(self, *keys: str) -> bool:
         """True, wenn die genannten backup.json-Felder so auf dem Datentraeger stehen wie im Speicher
@@ -206,8 +239,8 @@ class StateStore:
         if content == self._failsafe_saved and not self._failsafe_dirty:
             return
         try:
-            backup_store.save_backup(self._failsafe_path, content)
-        except Exception:
+            self._save(self._failsafe_path, content)
+        except StorageError:
             self._failsafe_dirty = True
             logger.exception(
                 "failsafe_state.json konnte nicht geschrieben werden - Zustand gilt nur bis zum naechsten Neustart"
