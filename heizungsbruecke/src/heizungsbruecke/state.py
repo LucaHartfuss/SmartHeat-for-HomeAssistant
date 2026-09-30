@@ -257,8 +257,11 @@ class StateStore:
             raise
 
     def saved_restore_point(self) -> dict | None:
-        """Der zuletzt erfolgreich in backup.json gespeicherte Wiederherstellungspunkt (beide
-        Werte), sonst None (N6)."""
+        """Der zuletzt erfolgreich in backup.json gespeicherte Wiederherstellungspunkt, sonst None
+        (N6): Steigung und Parallelverschiebung, beide muessen gespeichert sein. Die Heizgrenze (TP12h)
+        ist bewusst optional und nicht Teil des Ergebnisses: revert_to_saved setzt sie auf ihren
+        gespeicherten Stand, fehlt der (Punkt aus der Version vor TP12h), laesst der Notfall-Boost sie
+        unangetastet (override._row_values)."""
         point = {key: self._backup_saved.get(key) for key in ("curve_current", "shift_current")}
         return point if all(_is_number(value) for value in point.values()) else None
 
