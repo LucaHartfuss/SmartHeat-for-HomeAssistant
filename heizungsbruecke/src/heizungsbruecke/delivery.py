@@ -153,6 +153,14 @@ class WriteFailed:
 
 
 @dataclass(frozen=True)
+class AnsweredLocalFault:
+    """Der Server hat geantwortet, die Antwort liess sich lokal nicht uebernehmen (TP12b, AU-012:
+    Wiederherstellungspunkt nicht speicherbar). Zaehlt wie eine Antwort: kein Notbetrieb."""
+    seq: str
+    roles: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class MqttConnected:
     """Die Verbindung zum Broker steht (wieder)."""
 
@@ -227,6 +235,8 @@ def step(state: DeliveryState, event) -> tuple[DeliveryState, list]:
         return _write_failed(state, event)
     if isinstance(event, MqttConnected):
         return _mqtt_connected(state)
+    if isinstance(event, AnsweredLocalFault):
+        return _answered_local_fault(state, event)
     raise TypeError(f"Unbekanntes Zustell-Ereignis: {event!r}")
 
 
@@ -287,17 +297,28 @@ def _notbetrieb_end(state) -> list:
     return [EndEmergencyBoost(), Notify(NOTIFY_NOTBETRIEB_OFF)]
 
 
-def _answered_with_fault(state, fault: DataFault, notify_kind: str):
+def is_storage_fault(fault: DataFault | None) -> bool:
+    """Datentraeger-Datenfehler: meldet datentraeger.py, nicht die Zustellmaschine."""
+    return fault is not None and fault.source == SOURCE_LOCAL and fault.detail == (ROLE_DATENTRAEGER,)
+
+
+def _answered_local_fault(state, event):
+    if not accepts_ack(state, event.seq):
+        return state, []
+    return _answered_with_fault(state, DataFault(SOURCE_LOCAL, tuple(sorted(event.roles))), None)
+
+
+def _answered_with_fault(state, fault: DataFault, notify_kind: str | None):
     """Antwort ohne neue Werte: der Server lebt (Zaehler zurueck, Notbetrieb endet), der
     Datenfehler wird gemeldet, wenn er neu ist. Bei gleicher Stoerung bleibt die erste
     Begruendung, damit weder eine Meldung noch ein Schreiben von failsafe_state.json folgt.
     Einen Retry plant nur die Antwort auf den laufenden Versuch (awaiting_ack); eine doppelte
     oder verspaetete Antwort laesst den geplanten Retry bzw. die Abo-Abfrage unveraendert,
-    sonst uebersprange sie Stufen."""
+    sonst uebersprange sie Stufen. `notify_kind=None`: ohne Meldung."""
     actions = _notbetrieb_end(state)
     if state.datenfehler is not None and fault.key() == state.datenfehler.key():
         fault = state.datenfehler
-    else:
+    elif notify_kind is not None:
         actions.append(Notify(notify_kind, fault.detail))
     answered = replace(state, server_failures=0, notbetrieb=False, datenfehler=fault)
     if state.pending.phase != PHASE_AWAITING_ACK:
@@ -313,7 +334,7 @@ def _ack(state, event):
         fault = DataFault(SOURCE_SERVER, (event.reason or _NO_REASON,))
         return _answered_with_fault(state, fault, NOTIFY_DATENFEHLER_SERVER)
     actions = _notbetrieb_end(state)
-    if state.datenfehler is not None:
+    if state.datenfehler is not None and not is_storage_fault(state.datenfehler):
         resolved = NOTIFY_WRITE_RESOLVED if state.datenfehler.source == SOURCE_WRITE else NOTIFY_DATENFEHLER_RESOLVED
         actions.append(Notify(resolved))
     return replace(state, pending=None, server_failures=0, notbetrieb=False, datenfehler=None), actions

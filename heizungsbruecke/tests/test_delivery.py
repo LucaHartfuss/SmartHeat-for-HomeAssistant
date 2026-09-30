@@ -16,11 +16,13 @@ from heizungsbruecke.delivery import (
     PHASE_QUERYING_ENTITLEMENT,
     PHASE_SENDING,
     PHASE_WAITING_RETRY,
+    ROLE_DATENTRAEGER,
     SOURCE_LOCAL,
     SOURCE_SERVER,
     SOURCE_WRITE,
     Ack,
     AckTimeout,
+    AnsweredLocalFault,
     Attempt,
     Boot,
     DataFault,
@@ -41,6 +43,7 @@ from heizungsbruecke.delivery import (
     WriteFailed,
     accepts_ack,
     from_persisted,
+    is_storage_fault,
     notification_text,
     step,
     to_persisted,
@@ -760,3 +763,35 @@ def test_retry_origin_and_unsent_are_not_persisted():
     assert to_persisted(state) == {
         "failsafe_active": False, "datenfehler": None, "pending": {"seq": "s1", "trigger": "daily"},
     }
+
+
+# --- TP12b: Antwort da, lokal nicht speicherbar (AU-012) ---
+
+def test_answered_local_fault_counts_as_answer_without_notification():
+    state, _ = _published(server_failures=1)
+
+    state, actions = step(state, AnsweredLocalFault(seq="s1", roles=(ROLE_DATENTRAEGER,)))
+
+    assert (state.server_failures, state.notbetrieb) == (0, False)
+    assert state.datenfehler == DataFault(SOURCE_LOCAL, (ROLE_DATENTRAEGER,))
+    assert actions == [ScheduleRetry("s1", 2, 30)]
+
+
+def test_answered_local_fault_for_a_foreign_seq_is_ignored():
+    state, _ = _published()
+    assert step(state, AnsweredLocalFault(seq="fremd", roles=(ROLE_DATENTRAEGER,))) == (state, [])
+
+
+def test_ack_after_a_storage_fault_clears_it_silently():
+    state, _ = _published(datenfehler=DataFault(SOURCE_LOCAL, (ROLE_DATENTRAEGER,)))
+
+    state, actions = step(state, Ack(seq="s1", status="ok"))
+
+    assert state.datenfehler is None
+    assert actions == []
+
+
+def test_is_storage_fault():
+    assert is_storage_fault(DataFault(SOURCE_LOCAL, (ROLE_DATENTRAEGER,))) is True
+    assert is_storage_fault(DataFault(SOURCE_LOCAL, ("room_actual",))) is False
+    assert is_storage_fault(None) is False

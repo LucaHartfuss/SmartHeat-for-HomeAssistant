@@ -15,7 +15,7 @@ import pytest
 import heizungsbruecke.__main__ as main_module
 from heizungsbruecke import abo, backup_store, datentraeger, entitlement, ticks
 from heizungsbruecke.backup_store import load_backup, save_backup
-from heizungsbruecke.delivery import DeliveryState
+from heizungsbruecke.delivery import DataFault, DeliveryState
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.manual_override import MAX_WRITES_PER_DAY, RETRY_SECONDS
 from heizungsbruecke.override import OWN_WRITE_SETTLE_SECONDS, Override
@@ -2289,3 +2289,19 @@ def test_telemetry_reports_the_unwritable_disk_as_local_data_fault(env, monkeypa
     _advance(env, bridge, 300)  # Telemetrie-Takt
 
     assert _mqtt(env).telemetry[-1]["datenfehler"] == {"source": "local", "detail": ["datentraeger"]}
+
+
+def test_unwritable_disk_on_answer_reports_one_message_and_writes_nothing(env, monkeypatch):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[0]["seq"]
+    writes_before = list(env.ha.writes)
+    _break_backup_writes(monkeypatch)
+
+    _answer(env, bridge, seq)
+
+    assert _delivery(bridge).datenfehler == DataFault("local", ("datentraeger",))
+    assert _delivery(bridge).notbetrieb is False
+    assert env.ha.pushes == [datentraeger.FAILED_MESSAGE]
+    assert env.ha.writes == writes_before

@@ -41,11 +41,7 @@ def test_unwritable_disk_no_longer_blocks_ticks_silently(env, monkeypatch):
     assert sent or reported or status_changed
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "AUDIT: scheitert nur das Speichern des Wiederherstellungspunkts (Datentraeger), endet die "
-    "beantwortete Zustellung ueber zwei Ack-Timeouts im Notbetrieb 'Server antwortet nicht'"
-))
-def test_unwritable_disk_on_answer_is_diagnosed_as_server_outage(env, monkeypatch):
+def test_unwritable_disk_on_answer_is_not_diagnosed_as_server_outage(env, monkeypatch):
     _quiet_backup(env)
     bridge = _start(env)
     _set_room_target(env, bridge, 20.5)
