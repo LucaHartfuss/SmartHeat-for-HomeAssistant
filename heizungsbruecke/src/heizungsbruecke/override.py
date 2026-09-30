@@ -2,10 +2,12 @@
 Schreiben dorthin.
 
 Sollwert-Regel (Vorrang von oben nach unten):
-    Notfall-Boost aktiv -> curve_max / shift_max / heat_limit_max
-    Comfort-Boost aktiv -> boost_curve_value / boost_shift_value / heat_limit_max
+    Notfall-Boost aktiv -> curve_max / shift_max / heat_limit_max (*)
+    Comfort-Boost aktiv -> boost_curve_value / boost_shift_value / heat_limit_max (*)
     sonst               -> Wiederherstellungspunkt curve_current / shift_current / heat_limit
                            (nur vorhandene)
+    (*) heat_limit_max nur, wenn ein Wiederherstellungspunkt der Heizgrenze existiert; sonst bleibt
+        die Heizgrenze waehrend des Boosts unangetastet.
 
 Die Heizgrenze (TP12h) geht beim Ende der Regelung (restore_and_clear) auf ihren Ursprungswert
 heat_limit_original, den capture_heat_limit_original vor dem ersten eigenen Schreiben merkt.
@@ -219,18 +221,23 @@ class Override:
         return self._options[f"{prefix}_min"], self._options[f"{prefix}_max"]
 
     def _row_values(self, row: str) -> dict:
+        state = self._store.state
+        # Heizgrenze in den Boost-Zeilen nur mit Wiederherstellungspunkt: ohne ihn (Boost aus der
+        # Version vor TP12h, Notfall-Boost auf dem aelteren gespeicherten Punkt, N6) koennte das
+        # Boost-Ende G nicht zuruecknehmen, G bliebe auf heat_limit_max und capture_heat_limit_original
+        # merkte sich danach diesen Wert als Ursprungswert.
+        boost_heat_limit = {"heat_limit": self._options["heat_limit_max"]} if state.heat_limit is not None else {}
         if row == _ROW_EMERGENCY:
             return {
                 "curve_current": self._options["curve_max"], "shift_current": self._options["shift_max"],
-                "heat_limit": self._options["heat_limit_max"],
+                **boost_heat_limit,
             }
         if row == _ROW_COMFORT:
             return {
                 "curve_current": self._options["boost_curve_value"],
                 "shift_current": self._options["boost_shift_value"],
-                "heat_limit": self._options["heat_limit_max"],
+                **boost_heat_limit,
             }
-        state = self._store.state
         restore = {
             "curve_current": state.curve_current, "shift_current": state.shift_current,
             "heat_limit": state.heat_limit,

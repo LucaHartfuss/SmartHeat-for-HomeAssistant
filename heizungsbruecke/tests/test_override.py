@@ -1108,3 +1108,59 @@ def test_restore_and_clear_ignores_the_original_without_mapped_heat_limit(make_s
     assert override.restore_and_clear(always_restore=False) is True
     assert ha.writes == []
     assert store.state.heat_limit == 18.0
+
+
+# --- Review Task 7: Boost ohne Wiederherstellungspunkt der Heizgrenze laesst G in Ruhe ---
+
+def test_row_change_during_a_carried_over_boost_without_heat_limit_point_leaves_g_alone(make_store):
+    # Nach dem Update laeuft ein Boost aus der alten Version (kein G-Wiederherstellungspunkt); ein
+    # Zeilenwechsel darf G nicht auf 20 setzen, sonst bliebe G nach dem Boost-Ende dort und der
+    # Ursprungswert wuerde als 20 gemerkt.
+    override, store, ha = _setup_g(
+        make_store, backup={**RESTORE_POINT, "boost_active": True, "emergency_boost_active": True},
+    )
+    override.set_boosts(comfort=True, emergency=False)  # Notfall endet, Comfort laeuft weiter
+    override.set_boosts(comfort=False, emergency=False)  # Boost-Ende
+    assert _heat_writes(ha) == []
+    assert store.state.heat_limit is None
+    override.capture_heat_limit_original()
+    assert store.state.heat_limit_original == 15.0
+
+
+def test_emergency_start_during_a_carried_over_comfort_boost_leaves_g_alone(make_store):
+    override, store, ha = _setup_g(make_store, backup={**RESTORE_POINT, "boost_active": True})
+    override.set_boosts(comfort=True, emergency=True)
+    override.set_boosts(comfort=False, emergency=False)
+    assert _heat_writes(ha) == []
+    override.capture_heat_limit_original()  # naechster Aufruf nach dem Boost (z. B. naechster Check)
+    assert store.state.heat_limit_original == 15.0
+
+
+def test_emergency_boost_on_the_saved_point_without_heat_limit_leaves_g_alone(make_store, monkeypatch):
+    # N6: Serverwerte (inkl. G) nur im Speicher, backup.json haelt keinen G-Punkt. Der Notfall-Boost
+    # startet auf dem gespeicherten aelteren Punkt (G None) und darf G deshalb nicht schreiben.
+    override, store, ha = _setup_g(make_store, backup={**RESTORE_POINT, "heat_limit_original": 15.0})
+    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    with pytest.raises(OSError):
+        override.apply_server_values(1.0, 25.0, 18.0)
+    ha.events.clear()
+
+    with pytest.raises(OSError):  # Flags nicht speicherbar
+        override.set_boosts(comfort=False, emergency=True)
+
+    assert store.state.emergency_boost_active is True
+    assert store.state.heat_limit is None
+    assert _heat_writes(ha) == []
+    monkeypatch.undo()
+    override.set_boosts(comfort=False, emergency=False)
+    assert _heat_writes(ha) == []
+    assert store.state.heat_limit_original == 15.0
+
+
+def test_boost_from_idle_still_saves_g_first_and_writes_the_maximum(make_store):
+    override, store, ha = _setup_g(make_store, backup=RESTORE_POINT)
+    override.set_boosts(comfort=False, emergency=True)
+    assert store.state.heat_limit == 15.0
+    assert _heat_writes(ha) == [20.0]
+    override.set_boosts(comfort=False, emergency=False)
+    assert _heat_writes(ha) == [20.0, 15.0]
