@@ -1,4 +1,5 @@
 """Erkennung "Therme liefert keine Waerme" (TP12f, Spec 1): reine Logik, Messreihen als Fixtures."""
+import random
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -150,7 +151,7 @@ def test_a_set_flag_survives_a_new_phase_until_the_window_median_reaches_the_thr
     rows = [(_at(2, 0), 0.0, 20.0, 21.0), (_at(3, 0), 38.0, 35.0, 21.0)]
     states = dict(_replay(rows, _at(4, 30), state=flagged))
     assert states[_at(3, 25)].fehlt_seit == _at(1, 0)     # SETTLE nach Phasenbeginn: noch nicht bewertet
-    assert states[_at(3, 30)].fehlt_seit == _at(1, 0)     # erster bewerteter Tick: Halte-Zeit beginnt
+    assert states[_at(3, 30)].fehlt_seit == _at(1, 0)     # erster bewerteter Tick: das Fenster beginnt sich zu fuellen
     assert states[_at(4, 25)].fehlt_seit == _at(1, 0)
     assert states[_at(4, 30)].fehlt_seit is None
 
@@ -224,10 +225,11 @@ def test_the_window_must_span_clear_window_before_a_set_flag_clears():
     assert dict(states)[E + CLEAR_WINDOW - TICK].fehlt_seit == F
 
 
-def test_the_window_keeps_only_the_last_clear_window_of_shares():
+def test_the_window_keeps_the_last_clear_window_of_shares_plus_one_older_anchor():
     state = _trace(_flagged_after_settle(), E, [0.3] * 30)[-1][1]
-    assert len(state.anteile) == 13                                               # 60 min inklusive, 5-min-Raster
-    assert state.anteile[-1][0] - state.anteile[0][0] == CLEAR_WINDOW
+    assert len(state.anteile) == 14                                               # 13 im Fenster (60 min inklusive) + Anker
+    inside = [ts for ts, _ in state.anteile if state.anteile[-1][0] - ts <= CLEAR_WINDOW]
+    assert len(inside) == 13 and state.anteile[-1][0] - state.anteile[0][0] > CLEAR_WINDOW
 
 
 def test_the_median_of_the_window_decides_with_the_threshold_comparison_on_the_boundary():
@@ -274,6 +276,85 @@ def test_ticks_without_a_statement_leave_the_window_alone():
         state = evaluate(state, at, *args)                                   # fehlender Wert bzw. Hub unter MIN_LIFT
         at += TICK
         assert state.anteile == window and state.fehlt_seit == F
+
+
+def _jittered_times(start, count, spacing_s, seed=None):
+    """Zeitpunkte ab start im Abstand spacing_s Sekunden; mit seed +-5 s deterministische Streuung (Scheduler-Latenz)."""
+    rng = random.Random(seed)
+    times, ts = [], start
+    for _ in range(count):
+        times.append(ts)
+        ts += timedelta(seconds=spacing_s + (rng.uniform(-5, 5) if seed is not None else 0))
+    return times
+
+
+def _trace_at(state, times, shares, per=1, soll=41.0, room=21.0):
+    """Wie _trace, aber mit frei gewaehlten Tick-Zeitpunkten (je Anteil `per` Ticks)."""
+    out = []
+    for index, ts in enumerate(times):
+        value = shares[(index // per) % len(shares)]
+        state = evaluate(state, ts, soll, room + value * (soll - room), room)
+        out.append((ts, state))
+    return out
+
+
+JITTER = [(301, None), (299, None), (300, 12345), (300, 777)]       # (Abstand in s, Seed fuer +-5 s Streuung)
+
+
+@pytest.mark.parametrize("spacing, seed", JITTER)
+def test_jittered_tick_times_still_clear_a_set_flag_once_a_sample_is_an_hour_old(spacing, seed):
+    times = _jittered_times(E, 40, spacing, seed)
+    states = _trace_at(_flagged_after_settle(), times, [0.9])
+    cleared = _cleared_at(states)
+    assert cleared is not None and cleared - times[0] >= CLEAR_WINDOW
+    # sofort im ersten Tick, in dem der aelteste Wert eine Stunde alt ist (kein Dauerzustand "haengt")
+    first_old = next(ts for ts in times if ts - times[0] >= CLEAR_WINDOW)
+    assert cleared == first_old
+    assert all(len(state.anteile) <= 14 for _, state in states)           # Fenster + ein Anker, nie mehr
+
+
+@pytest.mark.parametrize("spacing, seed", JITTER)
+def test_a_cycling_boiler_clears_a_set_flag_on_jittered_tick_times(spacing, seed):
+    times = _jittered_times(E, 60, spacing, seed)
+    states = _trace_at(_flagged_after_settle(), times, [0.79, 0.47], per=6)
+    cleared = _cleared_at(states)
+    assert cleared is not None and times[0] + CLEAR_WINDOW <= cleared <= times[0] + timedelta(hours=2)
+
+
+@pytest.mark.parametrize("spacing, seed", JITTER)
+def test_a_decaying_residual_heat_trace_never_clears_on_jittered_tick_times(spacing, seed):
+    times = _jittered_times(E, 50, spacing, seed)
+    states = _trace_at(_flagged_after_settle(), times, [0.6, 0.5, 0.4] + [0.3] * 10, per=6)
+    assert _cleared_at(states) is None
+
+
+def _at_offsets(offsets_s_and_shares):
+    state, out = _flagged_after_settle(), []
+    for offset_s, value in offsets_s_and_shares:
+        state = evaluate(state, E + timedelta(seconds=offset_s), 41.0, 21.0 + value * 20.0, 21.0)
+        out.append(state)
+    return out
+
+
+def test_the_anchor_needs_a_sample_of_at_least_the_window_span():
+    # Aeltester Wert 59:59 alt -> noch nicht; beim naechsten Tick ist E 64:59 alt und dient als Anker -> Entwarnung.
+    states = _at_offsets([(0, 0.9), (1800, 0.9), (3599, 0.9)])
+    assert states[-1].fehlt_seit == F
+    state = evaluate(states[-1], E + timedelta(seconds=3899), 41.0, 39.0, 21.0)
+    assert state.fehlt_seit is None
+    # genau eine Stunde alt: zaehlt als Fenster-Wert, nicht als Anker
+    states = _at_offsets([(0, 0.9), (1800, 0.9), (3600, 0.9)])
+    assert states[-1].fehlt_seit is None
+
+
+def test_the_anchor_takes_part_in_the_span_check_but_not_in_the_median():
+    # Anker E (Anteil 0,9, 61 min alt); im Fenster 0,3 / 0,3 / 0,9 -> Median 0,3. Mit Anker waeren es 0,6: Entwarnung zu Unrecht.
+    states = _at_offsets([(0, 0.9), (600, 0.3), (1200, 0.3), (3660, 0.9)])
+    assert states[-1].fehlt_seit == F
+    assert states[-1].anteile[0][0] == E and len(states[-1].anteile) == 4
+    # Spaeter wandert der Anker: E+10 min ist dann eine Stunde alt, E wird verworfen, es bleibt genau ein Anker.
+    state = evaluate(states[-1], E + timedelta(seconds=4260), 41.0, 27.0, 21.0)
+    assert state.fehlt_seit == F and state.anteile[0][0] == E + timedelta(seconds=600) and len(state.anteile) == 4
 
 
 @pytest.mark.parametrize("polls", [

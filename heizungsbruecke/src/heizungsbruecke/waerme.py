@@ -33,7 +33,7 @@ class WaermeState:
     unter_schwelle: bool = False
     letzte_anforderung: datetime | None = None
     unterbrochen: bool = False
-    # Bewertete (Zeitpunkt, Anteil) der letzten CLEAR_WINDOW, nur zur Laufzeit; unveraenderlich (frozen Dataclass).
+    # Bewertete (Zeitpunkt, Anteil) der letzten CLEAR_WINDOW plus ein Anker, nur zur Laufzeit; unveraenderlich.
     anteile: tuple[tuple[datetime, float], ...] = ()
 
 
@@ -56,7 +56,8 @@ def evaluate(state: WaermeState, now: datetime, setpoint, flow, room) -> WaermeS
     """Neuer Zustand nach einem Telemetrie-Tick. Ticks ohne Aussage (fehlende Werte, zu geringe
     Anforderung, SETTLE) aendern das Flag nie: kein Setzen und kein Loeschen aus Unwissen. Geloescht wird ein
     gesetztes Flag erst, wenn ein bewerteter Tick >= SHARE_THRESHOLD kommt, das Fenster der letzten CLEAR_WINDOW
-    voll abgedeckt ist (aeltester Wert mindestens CLEAR_WINDOW alt) und der Median seiner Anteile >= SHARE_THRESHOLD ist."""
+    voll abgedeckt ist (aeltester Wert, auch der Anker, mindestens CLEAR_WINDOW alt) und der Median der Anteile im
+    Fenster >= SHARE_THRESHOLD ist."""
     if not _finite(setpoint):
         return state
     if setpoint <= 0:
@@ -76,12 +77,18 @@ def evaluate(state: WaermeState, now: datetime, setpoint, flow, room) -> WaermeS
     value = share(setpoint, flow, room)
     if value is None:
         return state
-    kept = tuple(item for item in state.anteile if now - item[0] <= CLEAR_WINDOW) + ((now, value),)
+    # Fenster: alle Werte bis CLEAR_WINDOW alt, dazu hoechstens ein Anker (der neueste aeltere Wert), der nur die
+    # Abdeckung belegt, nicht in den Median eingeht. Ohne Anker waere die Abdeckung nur bei Tick-Abstand genau 5 min
+    # erfuellbar: die echten Zeitpunkte streuen (Scheduler-Latenz), ein Wert ist selten genau CLEAR_WINDOW alt.
+    items = state.anteile + ((now, value),)
+    inside = tuple(item for item in items if now - item[0] <= CLEAR_WINDOW)
+    older = tuple(item for item in items if now - item[0] > CLEAR_WINDOW)
+    kept = older[-1:] + inside
     state = replace(state, anteile=kept)
     if value >= SHARE_THRESHOLD:
         if state.fehlt_seit is None:
             return replace(state, beobachtung_seit=now, unter_schwelle=False)
-        if now - kept[0][0] >= CLEAR_WINDOW and median(anteil for _, anteil in kept) >= SHARE_THRESHOLD:
+        if now - kept[0][0] >= CLEAR_WINDOW and median(anteil for _, anteil in inside) >= SHARE_THRESHOLD:
             return replace(state, fehlt_seit=None, beobachtung_seit=now, unter_schwelle=False, anteile=())
         return state
     state = replace(state, unter_schwelle=True)
