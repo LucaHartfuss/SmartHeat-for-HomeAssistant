@@ -181,12 +181,18 @@ class Override:
         """Abo-Fristende: beide Boosts beenden und den Wiederherstellungspunkt schreiben (bei
         always_restore auch ohne laufenden Boost). Die Heizgrenze geht auf heat_limit_original
         zurueck (Nutzer-Entscheidung 2026-09-30), auch ohne laufenden Boost, wenn der
-        Wiederherstellungspunkt davon abweicht; ist der Ursprungswert unbekannt, bleibt sie.
+        Wiederherstellungspunkt davon abweicht; ist der Ursprungswert unbekannt, bleibt sie (auf dem
+        Wiederherstellungspunkt) und das wird im Log gemeldet.
         False, wenn das Schreiben scheitert: die Flags bleiben, der Aufrufer versucht es erneut.
         Scheitert danach nur das Speichern der Flags, gilt die Wiederherstellung als erfolgt, die
         Werte stehen ja auf der Anlage."""
         state = self._store.state
-        original = state.heat_limit_original if "heat_limit" in self._manifest.entity_ids else None
+        mapped = "heat_limit" in self._manifest.entity_ids
+        original = state.heat_limit_original if mapped else None
+        if mapped and original is None and state.heat_limit is not None:
+            logger.warning(
+                "Ursprungswert der Heizgrenze unbekannt: sie bleibt auf dem gelernten Wert %s", state.heat_limit,
+            )
         heat_limit_differs = (
             original is not None and state.heat_limit is not None
             and abs(state.heat_limit - original) > plant.STEPS["heat_limit"] / 2
@@ -225,7 +231,8 @@ class Override:
         # Heizgrenze in den Boost-Zeilen nur mit Wiederherstellungspunkt: ohne ihn (Boost aus der
         # Version vor TP12h, Notfall-Boost auf dem aelteren gespeicherten Punkt, N6) koennte das
         # Boost-Ende G nicht zuruecknehmen, G bliebe auf heat_limit_max und capture_heat_limit_original
-        # merkte sich danach diesen Wert als Ursprungswert.
+        # merkte sich danach diesen Wert als Ursprungswert. Umgekehrt darf capture deshalb auch
+        # waehrend eines Boosts lesen, solange state.heat_limit None ist.
         boost_heat_limit = {"heat_limit": self._options["heat_limit_max"]} if state.heat_limit is not None else {}
         if row == _ROW_EMERGENCY:
             return {
@@ -454,15 +461,15 @@ class Override:
 
     def capture_heat_limit_original(self) -> None:
         """Erster Start (TP12h): die Heizgrenze der Anlage vor dem ersten eigenen Schreiben als
-        Ursprungswert merken, damit Abo-Ende und Abmelden sie wiederherstellen. Nur einmal, nur solange
-        noch kein Wiederherstellungspunkt der Heizgrenze existiert (sonst waere der Live-Wert schon ein
-        gelernter) und nie waehrend eines Boosts (die Anlage steht auf Boost-Werten). Ein Lesefehler
-        ist kein Fehler: der naechste Aufruf (vor dem ersten Schreiben) versucht es erneut."""
+        Ursprungswert merken, damit Abo-Ende und Abmelden sie wiederherstellen. Nur einmal und nur
+        solange noch kein Wiederherstellungspunkt der Heizgrenze existiert (sonst waere der Live-Wert
+        schon ein gelernter). Auch waehrend eines Boosts: die Boost-Zeilen schreiben die Heizgrenze nur
+        mit Wiederherstellungspunkt (_row_values), ohne ihn hat also kein Boost sie angefasst (z. B.
+        Boost aus der Version vor TP12h). Ein Lesefehler ist kein Fehler: der naechste Aufruf (vor dem
+        ersten Schreiben) versucht es erneut."""
         state = self._store.state
         ref = self._manifest.entity_ids.get("heat_limit")
         if ref is None or state.heat_limit_original is not None or state.heat_limit is not None:
-            return
-        if state.boost_active or state.emergency_boost_active:
             return
         try:
             live = self._ha_api.get_state(ref)

@@ -980,11 +980,28 @@ def test_capture_is_skipped_when_a_restore_point_of_the_heat_limit_exists(make_s
 
 
 @pytest.mark.parametrize("flags", [{"boost_active": True}, {"emergency_boost_active": True}])
-def test_capture_is_skipped_during_a_boost(make_store, flags):
-    override, store, ha = _setup_g(make_store, backup=flags, states={"number.heat_limit": 20.0})
+def test_capture_during_a_boost_without_heat_limit_point_takes_the_live_value(make_store, flags):
+    # Boost-Zeilen schreiben G nur mit Wiederherstellungspunkt der Heizgrenze: ohne ihn hat kein
+    # Boost G angefasst, der Live-Wert ist der Ursprungswert (z. B. Boost aus der Version vor TP12h).
+    override, store, ha = _setup_g(make_store, backup={**RESTORE_POINT, **flags})
     override.capture_heat_limit_original()
-    assert store.state.heat_limit_original is None
-    assert ha.reads == []
+    assert store.state.heat_limit_original == 15.0
+
+
+@pytest.mark.parametrize("flags", [{"boost_active": True}, {"emergency_boost_active": True}])
+def test_carried_over_boost_then_server_answer_keeps_the_original_for_the_abo_end(make_store, flags):
+    # Deploy-Tag: backup.json aus 0.26.0 mit laufendem Boost -> Start -> Serverantwort -> Boost-Ende
+    # -> Abo-Ende/Abmelden. Die Heizgrenze muss auf den Ursprungswert 15 zurueck, nicht auf den
+    # gelernten Wert 17.
+    override, store, ha = _setup_g(make_store, backup={**RESTORE_POINT, **flags})
+    override.capture_heat_limit_original()  # _prime
+    override.apply_server_values(0.9, 22.0, 17.0)
+    assert _heat_writes(ha) == []  # waehrend des Boosts nur gespeichert
+    override.set_boosts(comfort=False, emergency=False)  # Boost-Ende
+    assert _heat_writes(ha) == [17.0]
+    assert override.restore_and_clear(always_restore=False) is True
+    assert _heat_writes(ha) == [17.0, 15.0]
+    assert (store.state.heat_limit, store.state.heat_limit_original) == (15.0, 15.0)
 
 
 def test_capture_without_mapped_heat_limit_does_nothing(make_store):
@@ -1085,11 +1102,29 @@ def test_restore_and_clear_is_quiet_when_nothing_differs(make_store):
     assert ha.writes == []
 
 
-def test_restore_and_clear_with_unknown_original_keeps_the_learned_heat_limit(make_store):
+def test_restore_and_clear_with_unknown_original_keeps_the_learned_heat_limit(make_store, caplog):
     override, store, ha = _setup_g(make_store, backup={**RESTORE_POINT, "heat_limit": 18.0})
-    assert override.restore_and_clear(always_restore=True) is True
+    with caplog.at_level(logging.WARNING, logger="heizungsbruecke.override"):
+        assert override.restore_and_clear(always_restore=True) is True
     assert _heat_writes(ha) == [18.0]
     assert store.state.heat_limit == 18.0
+    assert "Ursprungswert der Heizgrenze unbekannt" in caplog.text
+
+
+def test_restore_and_clear_without_boost_reports_an_unknown_original(make_store, caplog):
+    # Abmelden ohne Boost: nichts zu schreiben, aber die Heizgrenze bleibt auf dem gelernten Wert.
+    override, store, ha = _setup_g(make_store, backup={**RESTORE_POINT, "heat_limit": 18.0})
+    with caplog.at_level(logging.WARNING, logger="heizungsbruecke.override"):
+        assert override.restore_and_clear(always_restore=False) is True
+    assert ha.writes == []
+    assert "Ursprungswert der Heizgrenze unbekannt" in caplog.text
+
+
+def test_restore_and_clear_without_heat_limit_point_does_not_report(make_store, caplog):
+    override, store, ha = _setup_g(make_store, backup=RESTORE_POINT)
+    with caplog.at_level(logging.WARNING, logger="heizungsbruecke.override"):
+        assert override.restore_and_clear(always_restore=True) is True
+    assert "Ursprungswert der Heizgrenze unbekannt" not in caplog.text
 
 
 def test_restore_and_clear_keeps_the_heat_limit_when_the_write_fails(make_store):
