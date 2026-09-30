@@ -2480,3 +2480,14 @@ def test_successful_zone_preparation_costs_no_quota_across_restarts(env):
     for _ in range(8):  # mehr Neustarts als das Tageslimit
         _start(env)
     assert "write_budget" not in _backup(env)
+
+
+def test_min_flow_is_not_written_to_an_unavailable_entity(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    env.ha.states["number.min_flow"] = ValueError("could not convert string to float: 'unavailable'")
+
+    _set_room_target(env, bridge, 20.5)
+
+    assert [write for write in env.ha.writes if write[0] == "number.min_flow"] == []
+    assert bridge.override.last_written("min_flow") is None

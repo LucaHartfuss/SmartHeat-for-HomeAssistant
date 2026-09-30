@@ -36,6 +36,16 @@ class RecordingHa:
             raise value
         return value
 
+    def get_raw_state(self, entity_id):
+        value = self.states.get(entity_id, "on")
+        if isinstance(value, Exception):
+            # Ein Exception-Eintrag modelliert einen fehlgeschlagenen Zahlen-Read (get_state), nicht
+            # eine nicht verfuegbare Entity: der Zustand selbst gilt als verfuegbar.
+            return "on"
+        if value in ("unavailable", "unknown", ""):
+            raise ValueError(f"Entity {entity_id} hat keinen gueltigen Zustand: {value!r}")
+        return str(value)
+
     def set_number_value(self, entity_id, value):
         if self.write_error is not None:
             raise self.write_error
@@ -796,3 +806,16 @@ def test_failed_restore_is_retried_on_the_return_staircase(make_store, clock):
     clock.advance(1)
     assert override.restore_and_clear(always_restore=True) is True
     assert store.state.emergency_boost_active is False
+
+
+def test_unavailable_entity_is_not_written_and_not_remembered(make_store, clock):
+    override, _, ha = _setup(
+        make_store, backup={**RESTORE_POINT, "boost_active": True}, states={"number.curve": "unavailable"},
+        clock=clock,
+    )
+
+    with pytest.raises(DeviceWriteError, match="unavailable"):
+        override.set_boosts(comfort=False, emergency=False)
+
+    assert ha.writes == []
+    assert override.last_written("curve_current") is None

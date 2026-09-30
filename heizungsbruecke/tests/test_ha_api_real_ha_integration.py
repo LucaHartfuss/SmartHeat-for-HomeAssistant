@@ -11,6 +11,7 @@ Standardmaessig uebersprungen (braucht Docker, dauert ~30-90s Containerstart):
 mit RUN_REAL_HA_TESTS=1 aktivieren, z.B.:
     RUN_REAL_HA_TESTS=1 python -m pytest tests/test_ha_api_real_ha_integration.py -v -s
 """
+import contextlib
 import json
 import os
 import subprocess
@@ -21,6 +22,7 @@ import pytest
 import requests
 import websocket
 
+from heizungsbruecke import plant
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.helper_templates import outdoor_temperature_template, room_temperature_template
 
@@ -320,3 +322,19 @@ def test_is_reachable_once_real_ha_reports_running(real_ha):
     assert api.get_config()["state"] == "RUNNING"
     assert api.is_reachable() is True
     assert HomeAssistantApi(base_url=base_url, token="falsch", api_prefix="/api").is_reachable() is False
+
+
+def test_tp12b_write_refuses_an_unavailable_number(real_ha):
+    """TP12b, AU-016: HA ueberspringt eine nicht verfuegbare Entity im Service-Aufruf still;
+    plant.write prueft deshalb vorher den Zustand und schreibt nicht."""
+    base_url, token = real_ha
+    api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
+    _set_state(api, "number.tp12b_unavailable", "unavailable", {})
+
+    with pytest.raises(ValueError, match="unavailable"):
+        plant.write(api, "curve_current", "number.tp12b_unavailable", 1.0, 0.4, 1.5)
+
+    # Beleg fuer die Annahme: der direkte Service-Aufruf aendert den Zustand nicht.
+    with contextlib.suppress(requests.HTTPError):
+        api.set_number_value("number.tp12b_unavailable", 1.0)
+    assert _raw(api, "number.tp12b_unavailable") == "unavailable"

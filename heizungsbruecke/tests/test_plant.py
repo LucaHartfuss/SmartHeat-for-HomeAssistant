@@ -15,7 +15,10 @@ class Ha:
         return value
 
     def get_raw_state(self, entity_id):
-        return self.states[entity_id]
+        value = self.states.get(entity_id, "on")  # nicht hinterlegt = verfuegbar
+        if value in ("unavailable", "unknown", ""):
+            raise ValueError(f"Entity {entity_id} hat keinen gueltigen Zustand: {value!r}")
+        return value
 
     def set_hvac_mode(self, entity_id, mode):
         self.calls.append(("hvac", entity_id, mode))
@@ -87,3 +90,18 @@ def test_ensure_manual_mode_ignores_numbers():
 @pytest.mark.parametrize(("ref", "entity"), [(ZONE, "climate.zone"), ("number.x", "number.x")])
 def test_entity_of(ref, entity):
     assert plant.entity_of(ref) == entity
+
+
+@pytest.mark.parametrize("state", ["unavailable", "unknown"])
+def test_write_refuses_an_unavailable_number(state):
+    ha = Ha({"number.curve": state})
+    with pytest.raises(ValueError, match=state):
+        plant.write(ha, "curve_current", "number.curve", 1.0, 0.4, 1.5)
+    assert ha.calls == []
+
+
+def test_write_refuses_an_unavailable_zone_even_without_mode_check():
+    ha = Ha({"climate.zone": "unavailable"})
+    with pytest.raises(ValueError):
+        plant.write(ha, "shift_current", ZONE, 20.0, 15.0, 25.0, ensure_mode=False)
+    assert ha.calls == []
