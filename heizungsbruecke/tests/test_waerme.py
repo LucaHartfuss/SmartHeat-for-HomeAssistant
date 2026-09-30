@@ -3,7 +3,14 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from heizungsbruecke.waerme import WaermeState, evaluate, parse_since, share
+from heizungsbruecke.waerme import (
+    REQUEST_PAUSE_TOLERANCE,
+    SHARE_THRESHOLD,
+    WaermeState,
+    evaluate,
+    parse_since,
+    share,
+)
 
 CEST = timezone(timedelta(hours=2))
 TICK = timedelta(minutes=5)
@@ -89,7 +96,7 @@ def test_regular_burner_cycling_never_sets_the_flag():
     assert all(state.fehlt_seit is None for _, state in _replay(rows, T0 + timedelta(hours=11)))
 
 
-def test_a_share_at_the_threshold_clears_the_flag_and_restarts_the_observation():
+def test_a_share_above_the_threshold_clears_the_flag_and_restarts_the_observation():
     rows = [
         (T0, 38.0, 26.0, 21.0),
         (T0 + timedelta(hours=4), 38.0, 33.0, 21.0),                  # Anteil 0,71: Waerme kommt an
@@ -100,6 +107,33 @@ def test_a_share_at_the_threshold_clears_the_flag_and_restarts_the_observation()
     assert states[T0 + timedelta(hours=4)].fehlt_seit is None
     assert states[T0 + timedelta(hours=6, minutes=55)].fehlt_seit is None   # Beobachtung beginnt neu
     assert states[T0 + timedelta(hours=7)].fehlt_seit == T0 + timedelta(hours=7)
+
+
+def test_a_share_exactly_at_the_threshold_clears_a_set_flag():
+    # Vergleich ist >=: Anteil genau SHARE_THRESHOLD loescht, knapp darunter nicht (41 K Soll, 21 K Raum: Hub 20 K).
+    assert share(41.0, 31.0, 21.0) == 0.5
+    assert share(41.0, 31.0, 21.0) == SHARE_THRESHOLD
+    flagged = WaermeState(fehlt_seit=_at(1, 0))
+    rows_at = [(T0, 41.0, 21.0, 21.0), (T0 + timedelta(minutes=30), 41.0, 31.0, 21.0)]
+    states = dict(_replay(rows_at, T0 + timedelta(minutes=30), state=flagged))
+    assert states[T0 + timedelta(minutes=25)].fehlt_seit == _at(1, 0)     # SETTLE: noch nicht bewertet
+    assert states[T0 + timedelta(minutes=30)].fehlt_seit is None
+    rows_below = [(T0, 41.0, 21.0, 21.0), (T0 + timedelta(minutes=30), 41.0, 30.9, 21.0)]
+    states = dict(_replay(rows_below, T0 + timedelta(minutes=30), state=flagged))
+    assert states[T0 + timedelta(minutes=30)].fehlt_seit == _at(1, 0)
+
+
+@pytest.mark.parametrize("extra, continues", [(timedelta(0), True), (timedelta(seconds=1), False)])
+def test_a_request_pause_of_exactly_the_tolerance_continues_the_phase(extra, continues):
+    # Vergleich ist strikt >: genau REQUEST_PAUSE_TOLERANCE seit dem letzten Anforderungs-Tick setzt die Phase fort,
+    # eine Sekunde mehr beginnt eine neue (beobachtung_seit springt auf den Wiederbeginn).
+    assert timedelta(minutes=45) == REQUEST_PAUSE_TOLERANCE
+    state = evaluate(WaermeState(), T0, 40.0, 30.0, 21.0)
+    state = evaluate(state, T0 + timedelta(minutes=10), 0.0, 75.0, 21.0)      # Unterbrechung (Warmwasser)
+    resume = T0 + REQUEST_PAUSE_TOLERANCE + extra
+    state = evaluate(state, resume, 40.0, 30.0, 21.0)
+    assert state.beobachtung_seit == (T0 if continues else resume)
+    assert state.settle_bis == resume + timedelta(minutes=30)      # beide Wege: 30 min Beruhigung
 
 
 def test_a_set_flag_survives_a_new_phase_until_a_share_reaches_the_threshold():
