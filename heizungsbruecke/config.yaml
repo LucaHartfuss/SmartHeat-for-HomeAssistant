@@ -63,7 +63,7 @@ schema:
   entity_outdoor_temp: str
   entity_heat_limit: str
   local_check_interval_seconds: int(1,3600)?
-  telemetry_interval_seconds: int(10,900)?
+  telemetry_interval_seconds: int(10,600)?
   entity_flow_temperature: str?
   entity_return_temperature: str?
   entity_operating_mode: str?
