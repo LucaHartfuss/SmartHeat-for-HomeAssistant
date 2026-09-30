@@ -349,7 +349,10 @@ def _ack(state, event):
         fault = DataFault(SOURCE_SERVER, (event.reason or _NO_REASON,))
         return _answered_with_fault(state, fault, NOTIFY_DATENFEHLER_SERVER)
     actions = _notbetrieb_end(state)
-    if state.datenfehler is not None and not is_storage_fault(state.datenfehler):
+    if state.datenfehler is not None:
+        # Auch bei einem Datentraegerfehler: er hat eine gemeldete Stoerung ersetzt, deren Meldung
+        # sonst offen bliebe. Der Notifier ignoriert "ok" bei bereits entwarntem Schluessel, ein
+        # reiner Datentraegerfehler bleibt daher still (den meldet datentraeger.py).
         resolved = NOTIFY_WRITE_RESOLVED if state.datenfehler.source == SOURCE_WRITE else NOTIFY_DATENFEHLER_RESOLVED
         actions.append(Notify(resolved))
     return replace(state, pending=None, server_failures=0, notbetrieb=False, datenfehler=None), actions

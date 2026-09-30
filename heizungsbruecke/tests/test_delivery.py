@@ -783,13 +783,15 @@ def test_answered_local_fault_for_a_foreign_seq_is_ignored():
     assert step(state, AnsweredLocalFault(seq="fremd", roles=(ROLE_DATENTRAEGER,))) == (state, [])
 
 
-def test_ack_after_a_storage_fault_clears_it_silently():
+def test_ack_after_a_storage_fault_emits_the_resolve_notice():
+    # Der Notifier macht daraus bei bereits entwarntem Schluessel nichts (test_runtime), bei einer
+    # vom Datentraegerfehler ersetzten Stoerung entwarnt er sie.
     state, _ = _published(datenfehler=DataFault(SOURCE_LOCAL, (ROLE_DATENTRAEGER,)))
 
     state, actions = step(state, Ack(seq="s1", status="ok"))
 
     assert state.datenfehler is None
-    assert actions == []
+    assert actions == [Notify(NOTIFY_DATENFEHLER_RESOLVED)]
 
 
 def test_is_storage_fault():

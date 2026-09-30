@@ -2334,6 +2334,53 @@ def test_unwritable_disk_is_reported_once_and_cleared_after_repair(env, monkeypa
     assert _last_event(env)["status"] == "regelt"
 
 
+def test_server_fault_is_dismissed_after_a_disk_fault_cycle_and_the_ack(env, monkeypatch):
+    """Review F1: eine gemeldete Server-Stoerung darf nicht offen bleiben, wenn die naechste
+    Antwort an einem Datentraegerfehler scheitert und erst die spaetere Antwort sie beendet."""
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[0]["seq"]
+    _answer(env, bridge, seq, status="rejected", curve=None, shift=None, reason="unplausibel")
+    assert "smartheat_datenfehler" in [entry[0] for entry in env.ha.persistent]
+    assert bridge.notifier.state("datenfehler") == "server:unplausibel"
+    _advance(env, bridge, 30)
+
+    with monkeypatch.context() as patch:
+        _break_backup_writes(patch)
+        _answer(env, bridge, seq)
+        assert _delivery(bridge).datenfehler == DataFault("local", ("datentraeger",))
+        assert env.ha.pushes.count(datentraeger.FAILED_MESSAGE) == 1
+
+    _advance(env, bridge, 300)  # EV_HEALTH: flush gelingt, Datentraeger entwarnt
+    _advance(env, bridge, 30)
+    _answer(env, bridge, seq)
+
+    assert _delivery(bridge).datenfehler is None
+    assert bridge.notifier.state("datenfehler") == "ok"
+    assert "smartheat_datenfehler" in env.ha.dismissed
+    assert env.ha.pushes.count(datentraeger.FAILED_MESSAGE) == 1
+
+
+def test_pure_disk_fault_cycle_adds_no_data_fault_push(env, monkeypatch):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[0]["seq"]
+    _break_backup_writes(monkeypatch)
+    _answer(env, bridge, seq)
+    monkeypatch.undo()
+    _advance(env, bridge, 300)
+    _advance(env, bridge, 30)
+    pushes_before = list(env.ha.pushes)
+
+    _answer(env, bridge, seq)
+
+    assert env.ha.pushes == pushes_before
+    assert pushes_before == [datentraeger.FAILED_MESSAGE, datentraeger.OK_MESSAGE]
+    assert _delivery(bridge).datenfehler is None
+
+
 def test_telemetry_reports_the_unwritable_disk_as_local_data_fault(env, monkeypatch):
     _quiet_backup(env)
     bridge = _start(env)
