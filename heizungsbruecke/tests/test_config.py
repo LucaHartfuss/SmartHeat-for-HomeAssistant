@@ -441,6 +441,11 @@ def test_effective_options_carry_new_safety_values():
     assert "day_avg_window_start" not in effective and "avg_window_hours" not in effective
 
 
+def test_effective_options_carry_the_heat_limit_clamps():
+    effective = config.resolve_effective_options(VALID)
+    assert (effective["heat_limit_min"], effective["heat_limit_max"]) == (5.0, 20.0)
+
+
 def test_outdated_options_without_shift_role():
     old = {key: value for key, value in VALID.items() if key not in ("entity_shift_current", "entity_min_flow")}
     old["entity_offset_current"] = "number.min_flow"
@@ -456,6 +461,8 @@ def test_outdated_options_without_shift_role():
     ("entity_min_flow", "climate.zone"),
     ("entity_min_flow", "input_number.min_flow"),
     ("entity_min_flow", "sensor.min_flow"),
+    ("entity_heat_limit", "sensor.heizgrenze"),
+    ("entity_heat_limit", "input_number.heizgrenze"),
 ])
 def test_unwritable_entity_domain_is_a_configuration_error(key, value):
     # Spec 5.6: Zonen-Entity muss schreibbar sein; plant.write kennt climate.set_temperature und

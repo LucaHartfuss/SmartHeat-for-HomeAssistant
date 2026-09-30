@@ -17,8 +17,8 @@ SHIFT_READ_MIN = 5.0
 # PLAUSIBLE_RANGES). Darueber ist der Wert kein plausibler Sollwert mehr, sondern ein Lesefehler --
 # er wird nie an den Server gemeldet.
 SHIFT_READ_MAX = 35.0
-# Schrittweiten der Anlage (mypyllant: heating_curve 0.05, Zonen-Sollwert 0.5, min_flow 0.1).
-STEPS = {"curve_current": 0.05, "shift_current": 0.5, "min_flow": 0.1}
+# Schrittweiten der Anlage (mypyllant: heating_curve 0.05, Zonen-Sollwert 0.5, min_flow 0.1, Heizgrenze 0.1).
+STEPS = {"curve_current": 0.05, "shift_current": 0.5, "min_flow": 0.1, "heat_limit": 0.1}
 
 
 def entity_of(ref: str) -> str:

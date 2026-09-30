@@ -512,3 +512,15 @@ def test_an_invalid_waerme_fehlt_seit_falls_back_to_no_flag(make_store, caplog, 
 def test_a_timezone_aware_waerme_fehlt_seit_loads(make_store):
     store = make_store({"waerme_fehlt_seit": "2026-09-30T05:11:00+02:00"})
     assert store.state.waerme_fehlt_seit == "2026-09-30T05:11:00+02:00"
+
+
+def test_heat_limit_fields_round_trip_through_backup(make_store):
+    store = make_store(backup={"heat_limit": 16.0, "heat_limit_original": 15.0})
+    assert (store.state.heat_limit, store.state.heat_limit_original) == (16.0, 15.0)
+    store.update(heat_limit=17.0)
+    assert load_backup(store._backup_path)["heat_limit"] == 17.0
+
+
+def test_invalid_heat_limit_in_backup_falls_back_to_none(make_store):
+    store = make_store(backup={"heat_limit": "hoch", "heat_limit_original": float("nan")})
+    assert (store.state.heat_limit, store.state.heat_limit_original) == (None, None)
