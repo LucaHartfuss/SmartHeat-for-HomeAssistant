@@ -11,7 +11,7 @@ from pathlib import Path
 
 from heizungsbruecke import backup_store
 from heizungsbruecke.delivery import DeliveryState, from_persisted, to_persisted
-from heizungsbruecke.waerme import WaermeState
+from heizungsbruecke.waerme import WaermeState, parse_since
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +131,9 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
     for key in _TEXT_FIELDS:
         if raw.get(key) is None:
             continue
-        if isinstance(raw[key], str):
+        # waerme_fehlt_seit: nur ein ISO-Zeitpunkt mit Zeitzone ist ein Flag, alles andere "kein Flag" (Spec 1.4).
+        valid = isinstance(raw[key], str) and (key != "waerme_fehlt_seit" or parse_since(raw[key]) is not None)
+        if valid:
             values[key] = raw[key]
         else:
             _invalid(key)
