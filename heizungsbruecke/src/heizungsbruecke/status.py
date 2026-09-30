@@ -12,7 +12,7 @@ from heizungsbruecke import battery, delivery, entitlement, room_sensors
 logger = logging.getLogger(__name__)
 
 # Muss zu `version` in config.yaml passen (tests/test_config_yaml.py).
-ADDON_VERSION = "0.25.0"
+ADDON_VERSION = "0.26.0"
 
 EVENT_TYPE = "smartheat_status"
 EVENT_SCHEMA = 1
@@ -51,7 +51,7 @@ _FAULT_ART = dict(
     zip((delivery.SOURCE_LOCAL, delivery.SOURCE_SERVER, delivery.SOURCE_WRITE), DATENFEHLER_ARTEN, strict=True)
 )
 
-HINT_FIELDS = ("raumfuehler_ausgefallen", "batterie_niedrig", "manueller_eingriff")
+HINT_FIELDS = ("raumfuehler_ausgefallen", "batterie_niedrig", "manueller_eingriff", "waerme_fehlt")
 EVENT_FIELDS = (
     "schema", "tenant_id", "setup_id", "addon_version", "status", "grund", "notbetrieb", "datenfehler",
     "boost", "letzte_serverantwort", "kurve", "parallelverschiebung", "mindestvorlauf", "abo",
@@ -169,6 +169,7 @@ def build_event(tenant_id: str, setup_id: str | None, flags: Flags, state, stora
             "raumfuehler_ausgefallen": _open_keys(state, "raumfuehler", room_sensors.STATE_FAILED),
             "batterie_niedrig": _open_keys(state, "batterie", battery.STATE_LOW),
             "manueller_eingriff": _manual(state),
+            "waerme_fehlt": state.waerme_fehlt_seit,
         },
     }
 

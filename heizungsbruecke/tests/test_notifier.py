@@ -255,7 +255,8 @@ def test_refresh_persistent_does_nothing_for_an_ok_key(make_store, ha_api):
 def test_category_is_the_key_prefix():
     assert category("raumfuehler:sensor.wz") == "raumfuehler"
     assert category("quellwechsel") == "quellwechsel"
-    assert HINT_CATEGORIES == ("raumfuehler", "batterie", "manueller_eingriff", "quellwechsel")
+    assert HINT_CATEGORIES == ("raumfuehler", "batterie", "manueller_eingriff", "quellwechsel", "therme")
+    assert category("therme") == "therme"
 
 
 def test_switched_off_hint_category_is_tracked_and_logged_but_not_pushed(make_store, ha_api, caplog):

@@ -6,6 +6,7 @@ from heizungsbruecke import backup_store
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.delivery import SOURCE_LOCAL, DataFault, DeliveryState, PendingTick
 from heizungsbruecke.state import BridgeState, StateStore, StorageError
+from heizungsbruecke.waerme import WaermeState
 
 # Vollstaendige backup.json, wie 0.16.0 sie schreibt (vor TP11: die Parallelverschiebung hiess
 # noch "offset_current", target_history gab es noch als aktiv gefuehrtes Feld).
@@ -482,3 +483,32 @@ def test_empty_write_budget_is_not_written(make_store, tmp_path):
     store = make_store()
     store.update(write_budget={}, curve_current=1.0)
     assert "write_budget" not in load_backup(tmp_path / "backup.json")
+
+
+def test_waerme_fehlt_seit_survives_a_restart(make_store, tmp_path):
+    store = make_store()
+    store.update(waerme_fehlt_seit="2026-09-30T05:11:00+02:00")
+
+    reloaded = StateStore(tmp_path / "backup.json", tmp_path / "failsafe_state.json")
+
+    assert reloaded.state.waerme_fehlt_seit == "2026-09-30T05:11:00+02:00"
+    assert reloaded.state.waerme is None
+
+
+def test_the_runtime_waerme_phase_is_never_written_to_backup_json(make_store, tmp_path):
+    store = make_store()
+    store.update(waerme=WaermeState(beobachtung_seit=None, unter_schwelle=True))
+    assert not (tmp_path / "backup.json").exists()
+
+
+@pytest.mark.parametrize("raw", [5, "abc", "2026-09-30T05:11:00"])
+def test_an_invalid_waerme_fehlt_seit_falls_back_to_no_flag(make_store, caplog, raw):
+    with caplog.at_level(logging.WARNING):
+        store = make_store({"waerme_fehlt_seit": raw})
+    assert store.state.waerme_fehlt_seit is None
+    assert "waerme_fehlt_seit" in caplog.text
+
+
+def test_a_timezone_aware_waerme_fehlt_seit_loads(make_store):
+    store = make_store({"waerme_fehlt_seit": "2026-09-30T05:11:00+02:00"})
+    assert store.state.waerme_fehlt_seit == "2026-09-30T05:11:00+02:00"

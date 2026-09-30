@@ -1,5 +1,5 @@
 name: "Heizungsbruecke"
-version: "0.25.0"
+version: "0.26.0"
 slug: "heizungsbruecke"
 description: "Generische Bruecken-Logik: liest konfigurierte HA-Entities, meldet sie an den SmartHeat-Server, schreibt Sollwerte zurueck, mit lokalem Boost-Failsafe und Sicherheits-Clamps."
 url: "https://github.com/LucaHartfuss/SmartHeat-for-HomeAssistant"
@@ -90,4 +90,4 @@ schema:
   setup_id: str?
   abgemeldet: bool?
   notify_hints_off:
-    - list(raumfuehler|batterie|manueller_eingriff|quellwechsel)?
+    - list(raumfuehler|batterie|manueller_eingriff|quellwechsel|therme)?

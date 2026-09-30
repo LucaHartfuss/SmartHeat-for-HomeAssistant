@@ -525,3 +525,23 @@ def test_check_timezone_survives_failing_config_query(caplog):
         _check_timezone(ha_api)  # darf nicht werfen
 
     assert "Zeitzone" in caplog.text
+
+
+def test_on_telemetry_hands_the_waerme_callback_to_the_tick(make_store, monkeypatch):
+    from types import SimpleNamespace
+
+    from heizungsbruecke.__main__ import _on_telemetry
+
+    captured = {}
+    monkeypatch.setattr(
+        "heizungsbruecke.__main__.telemetry.run_telemetry_tick", lambda *args, **kwargs: captured.update(kwargs),
+    )
+    rt = SimpleNamespace(
+        worker=MagicMock(), options={}, store=make_store(), mqtt_client=MagicMock(), manifest=MagicMock(),
+        ha_api=MagicMock(), notifier=MagicMock(), status=MagicMock(),
+    )
+    rt.mqtt_client.is_connected.return_value = True
+
+    _on_telemetry(rt, None)
+
+    assert captured["waerme"](21.0, {"flow_temperature": 26.0}, {"flow_setpoint": 38.0}) is False
