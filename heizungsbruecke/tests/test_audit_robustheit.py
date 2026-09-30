@@ -6,7 +6,6 @@ Nutzt das Harness aus test_runtime.py (Fake-HA mit sofort sichtbaren Schreibwert
 Fake-Uhr)."""
 from datetime import date, timedelta
 
-import pytest
 from test_runtime import (
     _advance,
     _answer,
@@ -96,12 +95,7 @@ def _count_curve_write_attempts(env):
     return attempts
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "AUDIT: scheitert das Rueckschreiben am Comfort-Boost-Ende, wiederholt jeder lokale Check "
-    "(jede room_actual-Aenderung) den Cloud-Schreibversuch - ohne Kontingent wie bei der "
-    "Durchsetzung (1/30 min)"
-))
-def test_failing_boost_end_write_is_retried_on_every_local_check(env):
+def test_failing_boost_end_write_follows_the_return_staircase(env):
     _quiet_backup(env)
     bridge = _start(env)
     _set_room_target(env, bridge, 22.0)  # Comfort-Boost startet (1.5/25) + Tick
@@ -114,7 +108,7 @@ def test_failing_boost_end_write_is_retried_on_every_local_check(env):
         _advance(env, bridge, 60)
         _trigger(env, bridge, "sensor.room_actual")
 
-    assert len(attempts) <= 1  # innerhalb von 6 min hoechstens ein Cloud-Versuch
+    assert len(attempts) <= 2  # Rueckkehr-Staffel: sofort, dann fruehestens nach 300 s (vorher: 6)
 
 
 def test_old_manual_override_format_is_dropped_by_the_first_backup_write(tmp_path):

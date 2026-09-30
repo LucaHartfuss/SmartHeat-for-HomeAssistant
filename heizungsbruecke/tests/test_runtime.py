@@ -1877,10 +1877,29 @@ def test_notbetrieb_end_with_unwritable_device_restores_on_next_check(env):
     assert _backup(env)["emergency_boost_active"] is True
 
     env.ha.write_error = None
+    env.clock.advance(300)  # Rueckkehr-Staffel: erster Retry nach 300 s (TP12b: gestaffelt)
     _trigger(env, bridge, "sensor.room_actual")
 
     assert (env.ha.states["number.curve_current"], env.ha.states["number.shift_current"]) == (0.95, 23.0)
     assert _backup(env)["emergency_boost_active"] is False
+
+
+def test_deferred_comfort_start_is_started_by_a_later_check(env):
+    # Review Focus 4: B5 haelt das alte Soll, der naechste erlaubte Check startet den Boost.
+    _quiet_backup(env)
+    bridge = _start(env)
+    env.ha.write_error = RuntimeError("403 Quota Exceeded")
+    _set_room_target(env, bridge, 22.0)  # Comfort-Start scheitert
+    env.ha.write_error = None
+    # Tick beantworten, sonst laeuft er in den Notbetrieb und der Notfall-Boost verfaelscht den Test.
+    _answer(env, bridge, _mqtt(env).snapshots[-1]["seq"], curve=0.9, shift=22.0)
+
+    _trigger(env, bridge, "sensor.room_actual")
+    assert _boost_active(bridge) is False  # innerhalb von 30 min zurueckgestellt
+
+    env.clock.advance(1800)
+    _trigger(env, bridge, "sensor.room_actual")
+    assert _boost_active(bridge) is True
 
 
 def test_answer_during_boost_with_unwritable_device_is_acked(env):

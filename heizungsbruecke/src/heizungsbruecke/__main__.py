@@ -261,7 +261,7 @@ def _sign_off(options: dict, ha_api, store, notifier, status, clock) -> IdleBrid
         manifest = ChannelManifest(
             entity_ids={role: entity_ref(role, effective[f"entity_{role}"]) for role in OVERRIDE_ROLES},
         )
-        restorer = Override(store, manifest, ha_api, effective)
+        restorer = Override(store, manifest, ha_api, effective, clock=clock)
     boosting = store.state.boost_active or store.state.emergency_boost_active
     restored = restorer is not None and restorer.restore_and_clear(always_restore=False)
     # Die Meldung zum Zuruecksetzen bleibt: nach dem Entfernen ist sie der einzige Hinweis, dass

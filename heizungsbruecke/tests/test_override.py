@@ -729,3 +729,70 @@ def test_settled_counts_from_the_start_and_from_each_own_write(make_store, clock
     assert override.settled("curve_current") is True
     clock.advance(OWN_WRITE_SETTLE_SECONDS + 1)
     assert override.settled("min_flow") is True
+
+
+# --- TP12b: Schreibbudget (AU-015) ---
+
+def _count_write_attempts(ha):
+    attempts = []
+    original = ha.set_number_value
+
+    def _counting(entity_id, value):
+        attempts.append(entity_id)
+        original(entity_id, value)
+
+    ha.set_number_value = _counting
+    return attempts
+
+
+def test_failed_boost_end_is_retried_on_the_return_staircase(make_store, clock):
+    override, store, ha = _setup(make_store, backup={**RESTORE_POINT, "boost_active": True}, clock=clock)
+    attempts = _count_write_attempts(ha)
+    ha.write_error = RuntimeError("403 Quota Exceeded")
+
+    with pytest.raises(DeviceWriteError):
+        override.set_boosts(comfort=False, emergency=False)  # t=0, Fehlschlag 1
+    clock.advance(299)
+    assert override.set_boosts(comfort=False, emergency=False) == (True, False)  # zurueckgestellt
+    clock.advance(1)
+    with pytest.raises(DeviceWriteError):
+        override.set_boosts(comfort=False, emergency=False)  # t=300, Fehlschlag 2
+    clock.advance(899)
+    assert override.set_boosts(comfort=False, emergency=False) == (True, False)
+    ha.write_error = None
+    clock.advance(1)
+    assert override.set_boosts(comfort=False, emergency=False) == (False, False)  # t=1200, Erfolg
+
+    assert attempts == ["number.curve", "number.curve", "number.curve", "number.shift"]
+    assert "boost_end" not in store.state.write_budget
+
+
+def test_failed_boost_start_waits_30_minutes_and_a_success_costs_nothing(make_store, clock):
+    override, _, ha = _setup(make_store, backup=dict(RESTORE_POINT), clock=clock)
+    ha.write_error = RuntimeError("403 Quota Exceeded")
+
+    with pytest.raises(DeviceWriteError):
+        override.set_boosts(comfort=True, emergency=False)
+    clock.advance(1799)
+    assert override.set_boosts(comfort=True, emergency=False) == (False, False)
+    ha.write_error = None
+    clock.advance(1)
+    assert override.set_boosts(comfort=True, emergency=False) == (True, False)
+    assert override.set_boosts(comfort=False, emergency=False) == (False, False)
+    assert override.set_boosts(comfort=True, emergency=False) == (True, False)  # zweiter Boost sofort
+
+
+def test_failed_restore_is_retried_on_the_return_staircase(make_store, clock):
+    override, store, ha = _setup(make_store, backup={**RESTORE_POINT, "emergency_boost_active": True}, clock=clock)
+    ha.write_error = RuntimeError("HA nicht erreichbar")
+    assert override.restore_and_clear(always_restore=True) is False
+
+    clock.advance(299)
+    attempts = _count_write_attempts(ha)
+    assert override.restore_and_clear(always_restore=True) is False
+    assert attempts == []
+
+    ha.write_error = None
+    clock.advance(1)
+    assert override.restore_and_clear(always_restore=True) is True
+    assert store.state.emergency_boost_active is False
