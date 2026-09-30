@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from heizungsbruecke.waerme import (
+    ANCHOR_TOLERANCE,
     CLEAR_WINDOW,
     REQUEST_PAUSE_TOLERANCE,
     SHARE_THRESHOLD,
@@ -338,7 +339,7 @@ def _at_offsets(offsets_s_and_shares):
 
 def test_the_anchor_needs_a_sample_of_at_least_the_window_span():
     # Aeltester Wert 59:59 alt -> noch nicht; beim naechsten Tick ist E 64:59 alt und dient als Anker -> Entwarnung.
-    states = _at_offsets([(0, 0.9), (1800, 0.9), (3599, 0.9)])
+    states = _at_offsets([(0, 0.9), (600, 0.9), (2400, 0.9), (3599, 0.9)])
     assert states[-1].fehlt_seit == F
     state = evaluate(states[-1], E + timedelta(seconds=3899), 41.0, 39.0, 21.0)
     assert state.fehlt_seit is None
@@ -355,6 +356,56 @@ def test_the_anchor_takes_part_in_the_span_check_but_not_in_the_median():
     # Spaeter wandert der Anker: E+10 min ist dann eine Stunde alt, E wird verworfen, es bleibt genau ein Anker.
     state = evaluate(states[-1], E + timedelta(seconds=4260), 41.0, 27.0, 21.0)
     assert state.fehlt_seit == F and state.anteile[0][0] == E + timedelta(seconds=600) and len(state.anteile) == 4
+
+
+def _statements(state, start, items):
+    """items: (Sekunden ab start, Anteil oder None); None = Tick ohne Aussage (Vorlauf fehlt)."""
+    out = []
+    for offset_s, value in items:
+        flow = None if value is None else 21.0 + value * 20.0
+        state = evaluate(state, start + timedelta(seconds=offset_s), 41.0, flow, 21.0)
+        out.append(state)
+    return out
+
+
+def _bad_stretch_then_gap(gap_min, gap_kind):
+    """Gesetztes Flag, sechs schlechte Werte (Anteil 0,3), danach gap_min Minuten ohne Aussage, dann EIN guter Wert."""
+    state = _trace(_flagged_after_settle(), E, [0.3] * 6)[-1][1]
+    ts = E + 6 * TICK
+    end = ts + timedelta(minutes=gap_min)
+    while ts < end:
+        # "lift": nur 3 K angefordert (unter MIN_LIFT); sonst fehlt der Vorlauf-Sensor.
+        setpoint, flow = (24.0, 22.0) if gap_kind == "lift" else (41.0, None)
+        state = evaluate(state, ts, setpoint, flow, 21.0)
+        ts += TICK
+    return state, end
+
+
+@pytest.mark.parametrize("gap_kind", ["lift", "flow_missing"])
+@pytest.mark.parametrize("gap_min", [60, 180])
+def test_a_gap_without_statement_followed_by_one_good_sample_does_not_clear_the_flag(gap_min, gap_kind):
+    state, end = _bad_stretch_then_gap(gap_min, gap_kind)
+    assert state.fehlt_seit == F
+    state = evaluate(state, end, 41.0, 39.0, 21.0)                          # ein guter Wert (0,9)
+    assert state.fehlt_seit == F
+
+
+@pytest.mark.parametrize("gap_kind", ["lift", "flow_missing"])
+def test_after_a_gap_the_old_edge_must_fill_again_before_the_flag_clears(gap_kind):
+    state, end = _bad_stretch_then_gap(180, gap_kind)
+    states = _trace(state, end, [0.9] * 14)
+    # Erst wenn der aelteste Wert im Fenster (der erste gute) CLEAR_WINDOW - ANCHOR_TOLERANCE alt ist (50 min).
+    assert _cleared_at(states) == end + CLEAR_WINDOW - ANCHOR_TOLERANCE
+
+
+def test_the_dense_old_edge_tolerance_is_ten_minutes_on_the_boundary():
+    assert timedelta(minutes=10) == ANCHOR_TOLERANCE
+    # Anker A (E) ist beim letzten Tick 61 min alt; der aelteste Wert im Fenster (B) ist genau 50:00 bzw. 49:59 alt.
+    # Der Tick ohne Aussage bei 30 min haelt die Phase fort (Pause sonst > 45 min).
+    cleared = _statements(_flagged_after_settle(), E, [(0, 0.9), (660, 0.9), (1800, None), (3660, 0.9)])
+    assert cleared[-1].fehlt_seit is None
+    held = _statements(_flagged_after_settle(), E, [(0, 0.9), (661, 0.9), (1800, None), (3660, 0.9)])
+    assert held[-1].fehlt_seit == F
 
 
 @pytest.mark.parametrize("polls", [

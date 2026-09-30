@@ -19,6 +19,11 @@ MIN_REQUEST = timedelta(hours=3)
 # Cloud-Abfragen ist ein kurzer Ausschlag, ein taktender, aber heizender Brenner liefert dagegen mehrheitlich gute
 # Werte. Fenster statt Tick-Zahl, weil die 5-min-Ticks den zuletzt abgefragten Wert wiederholen (~30 min je Abfrage).
 CLEAR_WINDOW = timedelta(minutes=60)
+# Der Anker deckt nur Zeitstempel-Jitter ab, nicht Luecken ohne Aussage: Der aelteste Wert im Fenster (ohne Anker) muss
+# mindestens CLEAR_WINDOW - ANCHOR_TOLERANCE alt sein. Sonst koennte nach langer Aussagelosigkeit (Hub unter MIN_LIFT,
+# Sensor fehlt: die Phase laeuft weiter) ein einzelner guter Wert ueber den Anker entwarnen. Das garantiert mindestens zwei
+# Werte im Fenster; bei Tick-Abstand <= ANCHOR_TOLERANCE (hier 5 min) liegen Werte auch am alten Rand dicht genug.
+ANCHOR_TOLERANCE = timedelta(minutes=10)
 SHARE_THRESHOLD = 0.5
 # Mindest-Uebertemperatur (Soll - Raum); gleich SHARE_MIN_LIFT_K im Server (samples.py).
 MIN_LIFT = 5.0
@@ -56,8 +61,8 @@ def evaluate(state: WaermeState, now: datetime, setpoint, flow, room) -> WaermeS
     """Neuer Zustand nach einem Telemetrie-Tick. Ticks ohne Aussage (fehlende Werte, zu geringe
     Anforderung, SETTLE) aendern das Flag nie: kein Setzen und kein Loeschen aus Unwissen. Geloescht wird ein
     gesetztes Flag erst, wenn ein bewerteter Tick >= SHARE_THRESHOLD kommt, das Fenster der letzten CLEAR_WINDOW
-    voll abgedeckt ist (aeltester Wert, auch der Anker, mindestens CLEAR_WINDOW alt) und der Median der Anteile im
-    Fenster >= SHARE_THRESHOLD ist."""
+    voll abgedeckt ist (aeltester Wert, auch der Anker, mindestens CLEAR_WINDOW alt, der aelteste Wert im Fenster
+    mindestens CLEAR_WINDOW - ANCHOR_TOLERANCE) und der Median der Anteile im Fenster >= SHARE_THRESHOLD ist."""
     if not _finite(setpoint):
         return state
     if setpoint <= 0:
@@ -88,7 +93,8 @@ def evaluate(state: WaermeState, now: datetime, setpoint, flow, room) -> WaermeS
     if value >= SHARE_THRESHOLD:
         if state.fehlt_seit is None:
             return replace(state, beobachtung_seit=now, unter_schwelle=False)
-        if now - kept[0][0] >= CLEAR_WINDOW and median(anteil for _, anteil in inside) >= SHARE_THRESHOLD:
+        covered = now - kept[0][0] >= CLEAR_WINDOW and now - inside[0][0] >= CLEAR_WINDOW - ANCHOR_TOLERANCE
+        if covered and median(anteil for _, anteil in inside) >= SHARE_THRESHOLD:
             return replace(state, fehlt_seit=None, beobachtung_seit=now, unter_schwelle=False, anteile=())
         return state
     state = replace(state, unter_schwelle=True)
