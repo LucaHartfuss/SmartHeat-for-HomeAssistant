@@ -131,7 +131,8 @@ class LaggingFakeHa(FakeHa):
 
 class WallClock:
     """Steuerbare Wanduhr in Europe/Berlin fuer Szenarien um 12:00, Mitternacht und die Zeitumstellung.
-    `datetime_class` ersetzt `datetime` in den Modulen der Bruecke: `now()` liefert immer eine
+    `datetime_class` ersetzt `datetime` in einem Modul der Bruecke (per monkeypatch, in den Szenarien
+    `heizungsbruecke.__main__`, das den Tagestick prueft): `now()` liefert immer eine
     Berlin-Zeit (aware), damit `datetime.now().astimezone()` nicht an der Zeitzone der Test-Maschine haengt."""
 
     ZONE = ZoneInfo("Europe/Berlin")

@@ -55,6 +55,8 @@ def test_lagging_fake_set_hvac_mode_respects_write_error(env, lagging):
     lagging.write_error = RuntimeError("HA nicht erreichbar")
     with pytest.raises(RuntimeError):
         lagging.set_hvac_mode("climate.zone", "heat_cool")
+
+
 def _curve_calls(ha):
     return [call for call in ha.service_calls if call[0] == "number.curve_current"]
 
@@ -123,6 +125,10 @@ def test_a_written_value_is_not_rewritten_while_ha_still_shows_the_old_one(env, 
     assert len(_curve_calls(lagging)) == 1
 
 
+def _zone_mode_calls(ha):
+    return [call for call in ha.service_calls if call == ("climate.zone", "heat_cool")]
+
+
 def test_climate_zone_start_switches_the_mode_once_despite_the_mode_lag(env, lagging):
     lagging.states.update({"climate.zone": "auto", "climate.zone::temperature": 0.0})
     _quiet_backup(env)
@@ -131,8 +137,41 @@ def test_climate_zone_start_switches_the_mode_once_despite_the_mode_lag(env, lag
         _advance(env, bridge, 120)
         _trigger(env, bridge, "sensor.room_actual")
     assert lagging.states["climate.zone"] == "heat_cool"
-    mode_calls = [call for call in lagging.service_calls if call == ("climate.zone", "heat_cool")]
-    assert len(mode_calls) == 1  # der Modus zeigt noch "auto" (Lag 600 s), das Add-on stellt nicht erneut um
+    # Nur der Startpfad (rt.zone_prepared schuetzt ihn): spaetere lokale Checks stellen nicht um.
+    assert len(_zone_mode_calls(lagging)) == 1
+
+
+def test_server_answer_within_the_mode_lag_does_not_switch_the_zone_mode_again(env, lagging):
+    # Start stellt die Zone um (Modus-Lag 600 s); die Serverantwort kommt 120 s spaeter, die Zone zeigt noch
+    # "auto". override._write darf daraufhin nicht ein zweites Mal set_hvac_mode senden (Cloud-Kontingent).
+    lagging.states.update({"climate.zone": "auto", "climate.zone::temperature": 0.0})
+    _quiet_backup(env)
+    bridge = _start(env, entity_shift_current="climate.zone")
+    assert len(_zone_mode_calls(lagging)) == 1
+    _advance(env, bridge, 120)
+    _set_room_target(env, bridge, 20.5)
+    assert lagging.get_raw_state("climate.zone") == "auto"  # der Lag ist noch nicht abgelaufen
+
+    _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], curve=0.95, shift=23.0)
+
+    assert len(_zone_mode_calls(lagging)) == 1
+    assert ("number.curve_current", 0.95) in lagging.service_calls
+    assert ("climate.zone::temperature", 23.0) in lagging.service_calls  # Parallelverschiebung wird trotzdem gesetzt
+    env.clock.advance(1800)  # beide Lags abgelaufen: die Zone steht auf Manuell mit dem Serverwert
+    assert (lagging.get_raw_state("climate.zone"), lagging.get_state("climate.zone::temperature")) == ("heat_cool", 23.0)
+
+
+def test_zone_flipped_back_after_the_settle_window_is_corrected_again(env, lagging):
+    lagging.states.update({"climate.zone": "auto", "climate.zone::temperature": 0.0})
+    _quiet_backup(env)
+    bridge = _start(env, entity_shift_current="climate.zone")
+    _advance(env, bridge, 2200)  # laenger als OWN_WRITE_SETTLE_SECONDS (2100 s)
+    lagging.states["climate.zone"] = "auto"  # jemand/die Cloud stellt auf das Zeitprogramm zurueck
+    _set_room_target(env, bridge, 20.5)
+
+    _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], curve=0.95, shift=23.0)
+
+    assert len(_zone_mode_calls(lagging)) == 2
 
 
 @pytest.fixture

@@ -92,6 +92,8 @@ class Override:
         # Startzeitpunkt (clock): ein Schreibvorgang kurz VOR einem Neustart ist hier unbekannt, HA
         # kann ihn aber noch bis zu OWN_WRITE_SETTLE_SECONDS lang nicht zeigen (settled).
         self._started_at = clock()
+        # Zeitpunkt (clock) der letzten eigenen, erfolgreichen Modus-Umstellung der Zone (nur Laufzeit).
+        self._zone_switched_at: float | None = None
 
     def settled(self, role: str) -> bool:
         """True, wenn ein HA-Read dieser Rolle nicht mehr hinter einem eigenen Schreibvorgang
@@ -345,11 +347,17 @@ class Override:
 
     def ensure_manual_zone(self) -> bool:
         ref = self._manifest.entity_ids["shift_current"]
+        # Hat WIR die Zone gerade erst umgestellt, zeigt HA den alten Modus bis zum naechsten Poll der
+        # Hersteller-Cloud (Lag wie bei OWN_WRITE_SETTLE_SECONDS): der Read waere noch veraltet und ein
+        # zweites set_hvac_mode verbraucht nur Cloud-Kontingent. Danach gilt wieder lesen und korrigieren.
+        if self._zone_switched_at is not None and self._clock() - self._zone_switched_at <= OWN_WRITE_SETTLE_SECONDS:
+            return False
         try:
             switched = plant.ensure_manual_mode(self._ha_api, ref)
         except Exception as error:
             raise DeviceWriteError("shift_current", ref, error) from error
         if switched:
+            self._zone_switched_at = self._clock()
             # Nach der Umschaltung ist der manuelle Sollwert der Anlage unbekannt: der letzte eigene
             # Schreibwert darf ein folgendes Schreiben nicht mehr als "schon richtig" ueberspringen.
             self._last_write_at["shift_current"] = self._clock()
