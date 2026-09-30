@@ -6,6 +6,7 @@ Raumtemperatur. Massgeblich ist der Anteil der angeforderten Uebertemperatur, de
 import math
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from statistics import median
 
 # Laengere Unterbrechung der Anforderung beendet die Phase (kuerzere, z. B. eine Warmwasserladung, nicht).
 REQUEST_PAUSE_TOLERANCE = timedelta(minutes=45)
@@ -13,11 +14,11 @@ REQUEST_PAUSE_TOLERANCE = timedelta(minutes=45)
 SETTLE = timedelta(minutes=30)
 # So lange muss die Beobachtung mindestens laufen, bevor "Waerme fehlt" gilt.
 MIN_REQUEST = timedelta(hours=3)
-# Ein gesetztes Flag faellt erst, wenn bewertete Ticks so lange am Stueck Anteil >= SHARE_THRESHOLD haben:
-# Restwaerme nach einer Warmwasserladung bzw. eine Ladung, die zwischen zwei Cloud-Abfragen versteckt bleibt,
-# zeigt sich als kurzer Ausschlag. Halte-Zeit statt Tick-Zahl, weil die 5-min-Ticks den zuletzt abgefragten
-# Wert wiederholen (zwei Ticks in Folge sind oft dieselbe Abfrage).
-CLEAR_HOLD = timedelta(minutes=60)
+# Ein gesetztes Flag faellt erst, wenn die bewerteten Anteile der letzten CLEAR_WINDOW (voll abgedeckt) im Median
+# mindestens SHARE_THRESHOLD erreichen: Restwaerme nach einer Warmwasserladung bzw. eine Ladung zwischen zwei
+# Cloud-Abfragen ist ein kurzer Ausschlag, ein taktender, aber heizender Brenner liefert dagegen mehrheitlich gute
+# Werte. Fenster statt Tick-Zahl, weil die 5-min-Ticks den zuletzt abgefragten Wert wiederholen (~30 min je Abfrage).
+CLEAR_WINDOW = timedelta(minutes=60)
 SHARE_THRESHOLD = 0.5
 # Mindest-Uebertemperatur (Soll - Raum); gleich SHARE_MIN_LIFT_K im Server (samples.py).
 MIN_LIFT = 5.0
@@ -32,7 +33,8 @@ class WaermeState:
     unter_schwelle: bool = False
     letzte_anforderung: datetime | None = None
     unterbrochen: bool = False
-    klar_seit: datetime | None = None
+    # Bewertete (Zeitpunkt, Anteil) der letzten CLEAR_WINDOW, nur zur Laufzeit; unveraenderlich (frozen Dataclass).
+    anteile: tuple[tuple[datetime, float], ...] = ()
 
 
 def _finite(value) -> bool:
@@ -53,7 +55,8 @@ def share(setpoint, flow, room) -> float | None:
 def evaluate(state: WaermeState, now: datetime, setpoint, flow, room) -> WaermeState:
     """Neuer Zustand nach einem Telemetrie-Tick. Ticks ohne Aussage (fehlende Werte, zu geringe
     Anforderung, SETTLE) aendern das Flag nie: kein Setzen und kein Loeschen aus Unwissen. Geloescht wird ein
-    gesetztes Flag erst nach CLEAR_HOLD am Stueck mit Anteil >= SHARE_THRESHOLD (klar_seit)."""
+    gesetztes Flag erst, wenn ein bewerteter Tick >= SHARE_THRESHOLD kommt, das Fenster der letzten CLEAR_WINDOW
+    voll abgedeckt ist (aeltester Wert mindestens CLEAR_WINDOW alt) und der Median seiner Anteile >= SHARE_THRESHOLD ist."""
     if not _finite(setpoint):
         return state
     if setpoint <= 0:
@@ -63,24 +66,25 @@ def evaluate(state: WaermeState, now: datetime, setpoint, flow, room) -> WaermeS
     if last is None or state.beobachtung_seit is None or now - last > REQUEST_PAUSE_TOLERANCE:
         state = replace(
             state, beobachtung_seit=now, settle_bis=now + SETTLE, unter_schwelle=False, unterbrochen=False,
-            klar_seit=None,
+            anteile=(),
         )
     elif state.unterbrochen:
-        state = replace(state, settle_bis=now + SETTLE, unterbrochen=False, klar_seit=None)
+        state = replace(state, settle_bis=now + SETTLE, unterbrochen=False, anteile=())
     state = replace(state, letzte_anforderung=now)
     if state.settle_bis is not None and now < state.settle_bis:
         return state
     value = share(setpoint, flow, room)
     if value is None:
         return state
+    kept = tuple(item for item in state.anteile if now - item[0] <= CLEAR_WINDOW) + ((now, value),)
+    state = replace(state, anteile=kept)
     if value >= SHARE_THRESHOLD:
         if state.fehlt_seit is None:
             return replace(state, beobachtung_seit=now, unter_schwelle=False)
-        klar_seit = state.klar_seit or now
-        if now - klar_seit >= CLEAR_HOLD:
-            return replace(state, fehlt_seit=None, beobachtung_seit=now, unter_schwelle=False, klar_seit=None)
-        return replace(state, klar_seit=klar_seit)
-    state = replace(state, unter_schwelle=True, klar_seit=None)
+        if now - kept[0][0] >= CLEAR_WINDOW and median(anteil for _, anteil in kept) >= SHARE_THRESHOLD:
+            return replace(state, fehlt_seit=None, beobachtung_seit=now, unter_schwelle=False, anteile=())
+        return state
+    state = replace(state, unter_schwelle=True)
     if state.fehlt_seit is None and state.beobachtung_seit is not None and now - state.beobachtung_seit >= MIN_REQUEST:
         state = replace(state, fehlt_seit=now)
     return state
