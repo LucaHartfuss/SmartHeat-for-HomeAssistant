@@ -11,6 +11,8 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
   Sommerbetrieb steht, Statuscode S.031), meldet SmartHeat das jetzt: als Hinweis auf dem Handy, im
   Status-Sensor (Attribut `waerme_fehlt`) und beim Betreiber. Die Heizkurvenoptimierung pausiert dann,
   damit sie nicht aus einem ungeheizten Haus lernt, und läuft von selbst weiter, sobald wieder Wärme ankommt.
+- Eine einmal erkannte Situation wird erst aufgehoben, wenn die Wärme mindestens eine Stunde am Stück
+  ankommt (Restwärme nach einer Warmwasserladung löst die Entwarnung nicht aus).
 - Der Hinweis lässt sich in den SmartHeat-Optionen abschalten („Benachrichtigen, wenn die Therme keine
   Heizwärme liefert“). Voraussetzung sind die Sensoren „Vorlauftemperatur“ und „Vorlauf-Soll“ im Mapping.
 - SmartHeat schreibt dafür nichts an die Anlage; Steigung, Parallelverschiebung und Mindestvorlauf bleiben

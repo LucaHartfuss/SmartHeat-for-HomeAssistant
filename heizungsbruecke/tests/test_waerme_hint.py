@@ -38,13 +38,16 @@ def test_setting_the_flag_notifies_once_persists_and_publishes_the_status(make_s
     rt.status.publish_if_changed.assert_called_once()
 
 
-def test_a_share_at_the_threshold_clears_the_flag_with_a_silent_all_clear(make_store):
+def test_a_share_at_the_threshold_for_the_hold_clears_the_flag_with_a_silent_all_clear(make_store):
     rt = _rt(make_store())
     _feed(rt, T0, T0 + timedelta(hours=4))
     rt.notifier.notify.reset_mock()
     rt.status.publish_if_changed.reset_mock()
 
-    assert _feed(rt, T0 + timedelta(hours=4), T0 + timedelta(hours=4, minutes=5), flow=33.0) is False
+    # Eine Stunde guter Vorlauf (Anteil 0,71): das Flag bleibt, bis CLEAR_HOLD erreicht ist.
+    assert _feed(rt, T0 + timedelta(hours=4), T0 + timedelta(hours=5), flow=33.0) is True
+    rt.notifier.notify.assert_not_called()
+    assert _feed(rt, T0 + timedelta(hours=5), T0 + timedelta(hours=5, minutes=5), flow=33.0) is False
 
     assert rt.store.state.waerme_fehlt_seit is None
     args, kwargs = rt.notifier.notify.call_args

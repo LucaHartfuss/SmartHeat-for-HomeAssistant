@@ -2,7 +2,7 @@
 
 Der Systemregler fordert Waerme an (Vorlauf-Soll > 0), aber der gemessene Vorlauf steigt nicht ueber die
 Raumtemperatur. Massgeblich ist der Anteil der angeforderten Uebertemperatur, den der Vorlauf erreicht:
-(Vorlauf - Raum) / (Soll - Raum). Konstanten sind vorlaeufig und werden vor dem Release kalibriert."""
+(Vorlauf - Raum) / (Soll - Raum). Konstanten: Kalibrierung 2026-09-30 (Spec 5.2), Positivseite noch offen."""
 import math
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
@@ -13,6 +13,11 @@ REQUEST_PAUSE_TOLERANCE = timedelta(minutes=45)
 SETTLE = timedelta(minutes=30)
 # So lange muss die Beobachtung mindestens laufen, bevor "Waerme fehlt" gilt.
 MIN_REQUEST = timedelta(hours=3)
+# Ein gesetztes Flag faellt erst, wenn bewertete Ticks so lange am Stueck Anteil >= SHARE_THRESHOLD haben:
+# Restwaerme nach einer Warmwasserladung bzw. eine Ladung, die zwischen zwei Cloud-Abfragen versteckt bleibt,
+# zeigt sich als kurzer Ausschlag. Halte-Zeit statt Tick-Zahl, weil die 5-min-Ticks den zuletzt abgefragten
+# Wert wiederholen (zwei Ticks in Folge sind oft dieselbe Abfrage).
+CLEAR_HOLD = timedelta(minutes=60)
 SHARE_THRESHOLD = 0.5
 # Mindest-Uebertemperatur (Soll - Raum); gleich SHARE_MIN_LIFT_K im Server (samples.py).
 MIN_LIFT = 5.0
@@ -27,6 +32,7 @@ class WaermeState:
     unter_schwelle: bool = False
     letzte_anforderung: datetime | None = None
     unterbrochen: bool = False
+    klar_seit: datetime | None = None
 
 
 def _finite(value) -> bool:
@@ -46,7 +52,8 @@ def share(setpoint, flow, room) -> float | None:
 
 def evaluate(state: WaermeState, now: datetime, setpoint, flow, room) -> WaermeState:
     """Neuer Zustand nach einem Telemetrie-Tick. Ticks ohne Aussage (fehlende Werte, zu geringe
-    Anforderung, SETTLE) aendern das Flag nie: kein Setzen und kein Loeschen aus Unwissen."""
+    Anforderung, SETTLE) aendern das Flag nie: kein Setzen und kein Loeschen aus Unwissen. Geloescht wird ein
+    gesetztes Flag erst nach CLEAR_HOLD am Stueck mit Anteil >= SHARE_THRESHOLD (klar_seit)."""
     if not _finite(setpoint):
         return state
     if setpoint <= 0:
@@ -56,9 +63,10 @@ def evaluate(state: WaermeState, now: datetime, setpoint, flow, room) -> WaermeS
     if last is None or state.beobachtung_seit is None or now - last > REQUEST_PAUSE_TOLERANCE:
         state = replace(
             state, beobachtung_seit=now, settle_bis=now + SETTLE, unter_schwelle=False, unterbrochen=False,
+            klar_seit=None,
         )
     elif state.unterbrochen:
-        state = replace(state, settle_bis=now + SETTLE, unterbrochen=False)
+        state = replace(state, settle_bis=now + SETTLE, unterbrochen=False, klar_seit=None)
     state = replace(state, letzte_anforderung=now)
     if state.settle_bis is not None and now < state.settle_bis:
         return state
@@ -66,8 +74,13 @@ def evaluate(state: WaermeState, now: datetime, setpoint, flow, room) -> WaermeS
     if value is None:
         return state
     if value >= SHARE_THRESHOLD:
-        return replace(state, fehlt_seit=None, beobachtung_seit=now, unter_schwelle=False)
-    state = replace(state, unter_schwelle=True)
+        if state.fehlt_seit is None:
+            return replace(state, beobachtung_seit=now, unter_schwelle=False)
+        klar_seit = state.klar_seit or now
+        if now - klar_seit >= CLEAR_HOLD:
+            return replace(state, fehlt_seit=None, beobachtung_seit=now, unter_schwelle=False, klar_seit=None)
+        return replace(state, klar_seit=klar_seit)
+    state = replace(state, unter_schwelle=True, klar_seit=None)
     if state.fehlt_seit is None and state.beobachtung_seit is not None and now - state.beobachtung_seit >= MIN_REQUEST:
         state = replace(state, fehlt_seit=now)
     return state
