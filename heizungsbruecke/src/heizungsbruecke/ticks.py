@@ -249,7 +249,7 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
                 "Server hat fuer seq=%s nicht gelernt (%s), Werte unveraendert uebernommen", seq, payload.get("reason"),
             )
         try:
-            rt.override.apply_server_values(curve, shift)
+            rt.override.apply_server_values(curve, shift, payload["heat_limit"])
         except DeviceWriteError as error:
             logger.warning("Serverwerte (seq=%s) konnten nicht auf die Anlage geschrieben werden: %s", seq, error)
             deliver(rt, delivery.WriteFailed(seq=seq, detail=str(error)))

@@ -16,7 +16,7 @@ from heizungsbruecke.status import StatusReporter
 ABO_NOW = datetime(2026, 9, 25, 12, 0, tzinfo=timezone(timedelta(hours=2)))
 OPTIONS = {
     "tenant_id": "t1", "curve_min": 0.2, "curve_max": 0.8, "shift_min": 0.0, "shift_max": 5.0,
-    "boost_curve_value": 0.5, "boost_shift_value": 2.0,
+    "boost_curve_value": 0.5, "boost_shift_value": 2.0, "heat_limit_min": 5.0, "heat_limit_max": 20.0,
 }
 BOTH_ROLES = {"curve_current": "number.curve", "shift_current": "number.shift"}
 

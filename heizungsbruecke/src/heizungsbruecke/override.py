@@ -1,10 +1,14 @@
-"""Welche Steigung und Parallelverschiebung auf der Anlage stehen sollen, und das Schreiben
-dorthin.
+"""Welche Steigung, Parallelverschiebung und Heizgrenze auf der Anlage stehen sollen, und das
+Schreiben dorthin.
 
 Sollwert-Regel (Vorrang von oben nach unten):
-    Notfall-Boost aktiv -> curve_max / shift_max
-    Comfort-Boost aktiv -> boost_curve_value / boost_shift_value
-    sonst               -> Wiederherstellungspunkt curve_current / shift_current (nur vorhandene)
+    Notfall-Boost aktiv -> curve_max / shift_max / heat_limit_max
+    Comfort-Boost aktiv -> boost_curve_value / boost_shift_value / heat_limit_max
+    sonst               -> Wiederherstellungspunkt curve_current / shift_current / heat_limit
+                           (nur vorhandene)
+
+Die Heizgrenze (TP12h) geht beim Ende der Regelung (restore_and_clear) auf ihren Ursprungswert
+heat_limit_original, den capture_heat_limit_original vor dem ersten eigenen Schreiben merkt.
 
 Der Mindestvorlauf gehoert zu keiner Zeile (immer = Raum-Soll, min_flow.py), wird aber auch
 hier geschrieben (einziger Schreibweg zur Anlage).
@@ -22,8 +26,8 @@ from heizungsbruecke.clamping import clamp
 
 logger = logging.getLogger(__name__)
 
-ROLES = ("curve_current", "shift_current")
-_LIMIT_KEYS = {"curve_current": "curve", "shift_current": "shift", "min_flow": "min_flow"}
+ROLES = ("curve_current", "shift_current", "heat_limit")
+_LIMIT_KEYS = {"curve_current": "curve", "shift_current": "shift", "min_flow": "min_flow", "heat_limit": "heat_limit"}
 
 # mypyllant fragt 5-10 s nach einem eigenen Cloud-Schreibvorgang neu ab. Spiegelt die
 # Hersteller-Cloud die Aenderung dann noch nicht wider, zeigt HA den alten Wert bis zum naechsten
@@ -111,6 +115,7 @@ class Override:
         Flags zurueck. Nach einem Fehlschlag bremst das Schreibbudget (write_budget, TP12b): dann
         bleiben die Flags ohne Schreiben und ohne Fehler stehen, zurueckgegeben werden die
         bisherigen."""
+        self.capture_heat_limit_original()
         state = self._store.state
         starting_comfort = comfort and not state.boost_active
         starting_emergency = emergency and not state.emergency_boost_active
@@ -148,12 +153,14 @@ class Override:
             raise
         write_budget.record_success(self._store, key)
 
-    def apply_server_values(self, curve: float, shift: float) -> None:
+    def apply_server_values(self, curve: float, shift: float, heat_limit: float) -> None:
         """Speichert die (geclampten) Serverwerte als Wiederherstellungspunkt, bevor irgendetwas
         geschrieben wird, und schreibt sie nur, wenn kein Boost laeuft; sonst uebernimmt sie
-        das Boost-Ende."""
+        das Boost-Ende. Vorher wird der Ursprungswert der Heizgrenze gemerkt, falls noch offen
+        (capture_heat_limit_original)."""
+        self.capture_heat_limit_original()
         clamped = {}
-        for role, value in (("curve_current", curve), ("shift_current", shift)):
+        for role, value in (("curve_current", curve), ("shift_current", shift), ("heat_limit", heat_limit)):
             minimum, maximum = self._limits(role)
             clamped[role] = clamp(value, minimum, maximum)
             if clamped[role] != value:
@@ -170,17 +177,28 @@ class Override:
 
     def restore_and_clear(self, always_restore: bool) -> bool:
         """Abo-Fristende: beide Boosts beenden und den Wiederherstellungspunkt schreiben (bei
-        always_restore auch ohne laufenden Boost). False, wenn das Schreiben scheitert: die
-        Flags bleiben, der Aufrufer versucht es erneut. Scheitert danach nur das Speichern der
-        Flags, gilt die Wiederherstellung als erfolgt, die Werte stehen ja auf der Anlage."""
+        always_restore auch ohne laufenden Boost). Die Heizgrenze geht auf heat_limit_original
+        zurueck (Nutzer-Entscheidung 2026-09-30), auch ohne laufenden Boost, wenn der
+        Wiederherstellungspunkt davon abweicht; ist der Ursprungswert unbekannt, bleibt sie.
+        False, wenn das Schreiben scheitert: die Flags bleiben, der Aufrufer versucht es erneut.
+        Scheitert danach nur das Speichern der Flags, gilt die Wiederherstellung als erfolgt, die
+        Werte stehen ja auf der Anlage."""
         state = self._store.state
-        if not (always_restore or state.boost_active or state.emergency_boost_active):
+        original = state.heat_limit_original if "heat_limit" in self._manifest.entity_ids else None
+        heat_limit_differs = (
+            original is not None and state.heat_limit is not None
+            and abs(state.heat_limit - original) > plant.STEPS["heat_limit"] / 2
+        )
+        if not (always_restore or state.boost_active or state.emergency_boost_active or heat_limit_differs):
             return True
         if not write_budget.may_attempt(self._store, write_budget.RESTORE, write_budget.RETURN_STAIRCASE, self._clock()):
             logger.info("Wiederherstellung zurueckgestellt: Schreibbudget nach einem Fehlschlag")
             return False
+        values = self._row_values(_ROW_RESTORE)
+        if original is not None:
+            values["heat_limit"] = original
         try:
-            self._budgeted_write(write_budget.RESTORE, self._row_values(_ROW_RESTORE))
+            self._budgeted_write(write_budget.RESTORE, values)
         except Exception:
             logger.exception(
                 "Zuletzt gelernte Werte konnten nicht wiederhergestellt werden - Boost-Flags "
@@ -188,7 +206,10 @@ class Override:
             )
             return False
         try:
-            self._store.update(boost_active=False, emergency_boost_active=False)
+            changes = {"boost_active": False, "emergency_boost_active": False}
+            if original is not None:
+                changes["heat_limit"] = original
+            self._store.update(**changes)
         except Exception:
             logger.exception("Zuletzt gelernte Werte wiederhergestellt, Boost-Flags konnten aber nicht gespeichert werden")
         return True
@@ -199,14 +220,21 @@ class Override:
 
     def _row_values(self, row: str) -> dict:
         if row == _ROW_EMERGENCY:
-            return {"curve_current": self._options["curve_max"], "shift_current": self._options["shift_max"]}
+            return {
+                "curve_current": self._options["curve_max"], "shift_current": self._options["shift_max"],
+                "heat_limit": self._options["heat_limit_max"],
+            }
         if row == _ROW_COMFORT:
             return {
                 "curve_current": self._options["boost_curve_value"],
                 "shift_current": self._options["boost_shift_value"],
+                "heat_limit": self._options["heat_limit_max"],
             }
         state = self._store.state
-        restore = {"curve_current": state.curve_current, "shift_current": state.shift_current}
+        restore = {
+            "curve_current": state.curve_current, "shift_current": state.shift_current,
+            "heat_limit": state.heat_limit,
+        }
         return {role: value for role, value in restore.items() if value is not None}
 
     def _matches_the_device(self, role: str, ref: str, target: float) -> bool:
@@ -392,7 +420,9 @@ class Override:
             if self._store.is_saved(*ROLES):
                 return _POINT_CURRENT
             try:
-                self._store.update(curve_current=state.curve_current, shift_current=state.shift_current)
+                self._store.update(
+                    curve_current=state.curve_current, shift_current=state.shift_current, heat_limit=state.heat_limit,
+                )
             except Exception as error:
                 logger.warning("Wiederherstellungspunkt nicht gespeichert (backup.json): %s", error)
                 return self._saved_fallback() if allow_saved_fallback else None
@@ -414,6 +444,29 @@ class Override:
         self._store.update(**live)
         logger.info("Wiederherstellungspunkt vor Boost gesichert: %s", live)
         return _POINT_CURRENT
+
+    def capture_heat_limit_original(self) -> None:
+        """Erster Start (TP12h): die Heizgrenze der Anlage vor dem ersten eigenen Schreiben als
+        Ursprungswert merken, damit Abo-Ende und Abmelden sie wiederherstellen. Nur einmal, nur solange
+        noch kein Wiederherstellungspunkt der Heizgrenze existiert (sonst waere der Live-Wert schon ein
+        gelernter) und nie waehrend eines Boosts (die Anlage steht auf Boost-Werten). Ein Lesefehler
+        ist kein Fehler: der naechste Aufruf (vor dem ersten Schreiben) versucht es erneut."""
+        state = self._store.state
+        ref = self._manifest.entity_ids.get("heat_limit")
+        if ref is None or state.heat_limit_original is not None or state.heat_limit is not None:
+            return
+        if state.boost_active or state.emergency_boost_active:
+            return
+        try:
+            live = self._ha_api.get_state(ref)
+        except Exception as error:
+            logger.warning("Heizgrenze beim Start nicht lesbar, Ursprungswert bleibt offen: %s", error)
+            return
+        if not _is_finite_number(live):
+            logger.warning("Heizgrenze beim Start nicht numerisch (%r), Ursprungswert bleibt offen", live)
+            return
+        self._store.update(heat_limit_original=live)
+        logger.info("Ursprungswert der Heizgrenze gemerkt: %s", live)
 
     def _saved_fallback(self) -> str | None:
         saved = self._store.saved_restore_point()

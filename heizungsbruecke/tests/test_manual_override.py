@@ -16,6 +16,7 @@ OPTIONS = {
     # Comfort-Boost-Zeile bewusst ungleich der Notfall-Zeile (curve_max/shift_max), damit die Tests
     # die beiden Zeilen unterscheiden.
     "min_flow_min": 20.0, "min_flow_max": 30.0, "boost_curve_value": 1.2, "boost_shift_value": 24.0,
+    "heat_limit_min": 5.0, "heat_limit_max": 20.0,
 }
 ROWS = {"boost_active": (1.2, 24.0), "emergency_boost_active": (1.5, 25.0)}
 MANIFEST = ChannelManifest(entity_ids={

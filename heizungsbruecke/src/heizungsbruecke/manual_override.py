@@ -40,12 +40,15 @@ MAX_WRITES_PER_DAY = write_budget.MAX_PER_DAY
 # jede Abweichung um mindestens einen Anlagenschritt wird wie mit 0,01 erkannt, und jede erkannte
 # Abweichung fuehrt zu einem echten Schreibvorgang. Parallelverschiebung (0,25 = halber Schritt 0,5)
 # und Mindestvorlauf (0,1 > halber Schritt 0,05) erfuellen das schon.
-TOLERANCE = {"curve_current": plant.STEPS["curve_current"] / 2, "shift_current": 0.25, "min_flow": 0.1}
+TOLERANCE = {
+    "curve_current": plant.STEPS["curve_current"] / 2, "shift_current": 0.25, "min_flow": 0.1,
+    "heat_limit": plant.STEPS["heat_limit"] / 2,
+}
 ZONE_MODE = "zone_mode"
 _EPSILON = 1e-9  # Gleitkomma-Rest (0.91 - 0.9) zaehlt nicht als Abweichung
 _LABELS = {
     "curve_current": "Heizkurve", "shift_current": "Wunschtemperatur der Zone",
-    "min_flow": "Mindestvorlauftemperatur", ZONE_MODE: "Betriebsart der Zone",
+    "min_flow": "Mindestvorlauftemperatur", "heat_limit": "Heizgrenze", ZONE_MODE: "Betriebsart der Zone",
 }
 MESSAGE = (
     "SmartHeat: Die Heizungseinstellung wurde in der App verstellt ({was}) und zurückgesetzt. "
