@@ -2371,3 +2371,86 @@ def test_unreadable_room_target_at_start_reports_a_local_data_fault_for_the_due_
     _advance(env, bridge, 30)  # Daten-Retry derselben seq
 
     assert [s["trigger"] for s in _mqtt(env).snapshots] == ["daily"]
+
+
+# --- TP12b: Verbindungswaechter (AU-033) ---
+
+NOTBETRIEB_OFF = "Heizungsbrücke: Serververbindung wiederhergestellt, Notbetrieb beendet."
+
+
+def _start_without_broker(env):
+    _quiet_backup(env)
+    bridge = _start_bridge(env)
+    _mqtt(env).connected = False
+    bridge.worker.run_pending()
+    return bridge
+
+
+def _into_notbetrieb_without_broker(env, bridge):
+    for _ in range(3):
+        _advance(env, bridge, 300)  # 900 s ohne Verbindung -> Pruef-Tick
+    _advance(env, bridge, 30)  # 1. Ack-Timeout (Versuch ungesendet) -> Sofort-Retry
+    _advance(env, bridge, 30)  # 2. Ack-Timeout -> Abo aktiv -> Notbetrieb
+
+
+def test_missing_broker_connection_leads_to_notbetrieb_after_15_minutes(env):
+    bridge = _start_without_broker(env)
+    for _ in range(2):
+        _advance(env, bridge, 300)
+    assert _delivery(bridge).pending is None
+
+    _into_notbetrieb_without_broker(env, bridge)
+
+    assert _delivery(bridge).notbetrieb is True
+    assert env.ha.pushes == [NOTBETRIEB_ON]
+    assert _last_event(env)["status"] == "notbetrieb"
+    assert _mqtt(env).snapshots == []
+
+
+def test_reconnect_answers_the_probe_and_ends_notbetrieb(env):
+    bridge = _start_without_broker(env)
+    _into_notbetrieb_without_broker(env, bridge)
+
+    _mqtt(env).connected = True
+    _connect(env, bridge)
+    probe = _mqtt(env).snapshots[-1]
+    _answer(env, bridge, probe["seq"], curve=0.9, shift=22.0)
+
+    assert probe["trigger"] == "target_change"
+    assert _delivery(bridge).notbetrieb is False
+    assert env.ha.pushes[-1] == NOTBETRIEB_OFF
+    assert _last_event(env)["status"] == "regelt"
+
+
+def test_interrupted_outages_do_not_add_up(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    for connected in (False, False, True, False, False, True):
+        _mqtt(env).connected = connected
+        _advance(env, bridge, 300)
+
+    assert _delivery(bridge).pending is None
+
+
+def test_open_tick_during_an_outage_is_not_replaced_by_a_probe(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _mqtt(env).connected = False
+    _set_room_target(env, bridge, 20.5)
+    seq = _delivery(bridge).pending.seq
+
+    for _ in range(4):
+        _advance(env, bridge, 300)
+
+    assert _delivery(bridge).pending.seq == seq
+
+
+def test_telemetry_is_not_published_without_connection(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    sent = len(_mqtt(env).telemetry)
+    _mqtt(env).connected = False
+
+    _advance(env, bridge, 300)
+
+    assert len(_mqtt(env).telemetry) == sent

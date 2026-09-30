@@ -29,6 +29,7 @@ EV_WATCHDOG = "watchdog"
 EV_TELEMETRY = "telemetry"
 EV_GRACE_CHECK = "grace_check"
 EV_HEALTH = "health"
+EV_CONNECTION_CHECK = "connection_check"
 EV_MQTT_CONNECTED = "mqtt_connected"
 EV_HA_CONNECTED = "ha_connected"
 EV_HEARTBEAT = "heartbeat"
@@ -71,3 +72,6 @@ class Runtime:
     zone_prepared: bool = False
     # Kontingent dieser Versuche (Tag, Anzahl, letzter Versuch auf `clock`, Tageslimit geloggt).
     zone_prepare_log: dict = field(default_factory=dict)
+    # Verbindungswaechter (TP12b, AU-033): seit wann (clock) die MQTT-Verbindung ununterbrochen
+    # fehlt, None bei Verbindung. Nicht persistiert.
+    mqtt_down_since: float | None = None

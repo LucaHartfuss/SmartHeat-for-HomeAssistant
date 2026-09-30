@@ -39,6 +39,7 @@ from heizungsbruecke.override import Override
 from heizungsbruecke.runtime import (
     EV_ACK_TIMEOUT,
     EV_AUTH_REJECTED,
+    EV_CONNECTION_CHECK,
     EV_GRACE_CHECK,
     EV_HA_CONNECTED,
     EV_HEALTH,
@@ -76,6 +77,10 @@ REQUIRED_ENTITY_OPTIONS = (
 # Im Konfigurationsfehler prueft ein frischer Prozess nach dieser Zeit erneut (z. B. eine spaet
 # geladene Integration); der persistierte Meldezustand verhindert eine Wiederholungsmeldung.
 CONFIG_RECHECK_SECONDS = 900
+# Verbindungswaechter (TP12b, AU-033): so lange ohne MQTT-Verbindung und ohne offenen Tick, dann
+# klaert ein Pruef-Tick den Server (Notbetrieb ueber dessen Ack-Timeouts). Kurze Abrisse des
+# cloudflared-Tunnels bleiben darunter.
+CONNECTION_LOSS_PROBE_SECONDS = 900
 IDLE_NOT_CONFIGURED = "nicht_eingerichtet"
 CONFIG_OK_MESSAGE = "SmartHeat: Einrichtung in Ordnung, die Heizungssteuerung läuft."
 CONFIG_ERROR_MESSAGE = (
@@ -405,10 +410,33 @@ def _on_watchdog(rt: Runtime, event: Event) -> None:
         rt.worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=True)
 
 
+def _on_connection_check(rt: Runtime, event: Event) -> None:
+    """Verbindungswaechter (Spec TP12b 1.1): ohne offenen Tick gibt es keinen Zustellversuch und
+    damit nie einen Notbetrieb. Fehlt die Verbindung CONNECTION_LOSS_PROBE_SECONDS am Stueck, legt er
+    deshalb einen Pruef-Tick an; das Ack nach dem Wiederverbinden beendet den Notbetrieb regulaer."""
+    rt.worker.schedule(config.local_check_interval(rt.options), Event(EV_CONNECTION_CHECK))
+    state = rt.store.state
+    if rt.mqtt_client is None or state.abo_inactive_since is not None or rt.mqtt_client.is_connected():
+        rt.mqtt_down_since = None
+        return
+    now = rt.clock()
+    if rt.mqtt_down_since is None:
+        rt.mqtt_down_since = now
+        return
+    if now - rt.mqtt_down_since < CONNECTION_LOSS_PROBE_SECONDS or state.delivery.pending is not None:
+        return
+    ticks.start_probe_tick(rt, f"seit {now - rt.mqtt_down_since:.0f} s keine MQTT-Verbindung")
+
+
 def _on_telemetry(rt: Runtime, event: Event) -> None:
     rt.worker.schedule(config.telemetry_interval(rt.options), Event(EV_TELEMETRY))
     state = rt.store.state
     if state.abo_inactive_since is not None or rt.mqtt_client is None:
+        return
+    if not rt.mqtt_client.is_connected():
+        # Ohne Verbindung nicht publizieren (AU-035): paho staute die Nachrichten unbegrenzt. Der
+        # Server erkennt die Luecke ueber MAX_GAP.
+        logger.debug("Telemetrie uebersprungen, keine MQTT-Verbindung")
         return
     datenfehler = state.delivery.datenfehler
     if datenfehler is None and rt.store.storage_failed:
@@ -494,6 +522,7 @@ def _register_handlers(rt: Runtime) -> None:
         EV_TELEMETRY: _on_telemetry,
         EV_GRACE_CHECK: _on_grace_check,
         EV_HEALTH: _on_health,
+        EV_CONNECTION_CHECK: _on_connection_check,
     }
     for kind, handler in handlers.items():
         rt.worker.register(kind, functools.partial(_unless_idle, rt, handler))
@@ -663,7 +692,7 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | Idle
 
     rt.trigger_client = triggers.build_ha_trigger_client(manifest, options, ha_api, rt.worker)
     rt.trigger_client.start()
-    for kind in (EV_WATCHDOG, EV_TELEMETRY, EV_GRACE_CHECK, EV_HEALTH):
+    for kind in (EV_WATCHDOG, EV_TELEMETRY, EV_GRACE_CHECK, EV_HEALTH, EV_CONNECTION_CHECK):
         rt.worker.schedule(0, Event(kind))
     rt.worker.schedule(HEARTBEAT_SECONDS, Event(EV_HEARTBEAT))
     if abo_inactive:
