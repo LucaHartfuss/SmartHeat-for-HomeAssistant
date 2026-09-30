@@ -64,6 +64,7 @@ _WRITABLE_ENTITY = {
         re.compile(r"climate\.[a-z0-9_]+(::temperature)?|number\.[a-z0-9_]+"), "eine climate.*- oder number.*-Entity",
     ),
     "entity_min_flow": (re.compile(r"number\.[a-z0-9_]+"), "eine number.*-Entity"),
+    "entity_heat_limit": (re.compile(r"number\.[a-z0-9_]+"), "eine number.*-Entity"),
 }
 RECONFIGURE_HINT = "bitte SmartHeat neu konfigurieren"
 
@@ -167,6 +168,8 @@ def resolve_effective_options(options: dict) -> dict:
         "shift_max": safety.shift_max,
         "min_flow_min": safety.min_flow_min,
         "min_flow_max": safety.min_flow_max,
+        "heat_limit_min": safety.heat_limit_min,
+        "heat_limit_max": safety.heat_limit_max,
         "boost_threshold_k": safety.boost_threshold_k,
         "boost_curve_value": safety.boost_curve_value,
         "boost_shift_value": safety.boost_shift_value,

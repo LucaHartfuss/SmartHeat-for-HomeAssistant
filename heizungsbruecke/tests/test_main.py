@@ -545,3 +545,42 @@ def test_on_telemetry_hands_the_waerme_callback_to_the_tick(make_store, monkeypa
     _on_telemetry(rt, None)
 
     assert captured["waerme"](21.0, {"flow_temperature": 26.0}, {"flow_setpoint": 38.0}) is False
+
+
+def _prime_rt(monkeypatch, capture):
+    """Laufzeit-Attrappe fuer _prime: nur Heizgrenzen-Erfassung unter Test, alles Uebrige still."""
+    from types import SimpleNamespace
+
+    from heizungsbruecke import __main__ as main_module
+
+    monkeypatch.setattr(main_module.regulation, "read_room_target_live", lambda rt: 20.5)
+    monkeypatch.setattr(main_module.regulation, "run_local_check", lambda rt: None)
+    monkeypatch.setattr(main_module.min_flow, "sync", lambda rt: None)
+    monkeypatch.setattr(main_module, "_prepare_zone", lambda rt: None)
+    rt = SimpleNamespace(
+        override=SimpleNamespace(capture_heat_limit_original=capture),
+        store=SimpleNamespace(state=SimpleNamespace(shift_current=21.0, stable_target=None), update=lambda **kw: None),
+    )
+    return main_module, rt
+
+
+def test_prime_captures_the_heat_limit_original(monkeypatch):
+    capture = MagicMock()
+    main_module, rt = _prime_rt(monkeypatch, capture)
+
+    main_module._prime(rt)
+
+    capture.assert_called_once_with()
+
+
+def test_prime_heat_limit_capture_failure_does_not_abort_startup(monkeypatch, caplog):
+    capture = MagicMock(side_effect=RuntimeError("Speicher voll"))
+    main_module, rt = _prime_rt(monkeypatch, capture)
+    ran = []
+    monkeypatch.setattr(main_module.regulation, "run_local_check", lambda rt: ran.append(True))
+
+    with caplog.at_level(logging.ERROR):
+        main_module._prime(rt)
+
+    assert ran == [True]
+    assert "Heizgrenze" in caplog.text

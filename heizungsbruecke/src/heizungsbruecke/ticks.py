@@ -241,15 +241,19 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
         return
 
     status = payload.get("status")
-    curve, shift = payload.get("curve"), payload.get("shift")
-    if status in _SETPOINT_STATUSES_WITH_VALUES and _is_finite_number(curve) and _is_finite_number(shift):
+    curve, shift, heat_limit = payload.get("curve"), payload.get("shift"), payload.get("heat_limit")
+    # Die Heizgrenze gehoert seit TP12h zur Antwort; eine Antwort ohne sie (alter Server) ist ungueltig.
+    if (
+        status in _SETPOINT_STATUSES_WITH_VALUES and _is_finite_number(curve) and _is_finite_number(shift)
+        and _is_finite_number(heat_limit)
+    ):
         _clear_sent_manual_override(rt)
         if status == delivery.STATUS_SKIPPED:
             logger.info(
                 "Server hat fuer seq=%s nicht gelernt (%s), Werte unveraendert uebernommen", seq, payload.get("reason"),
             )
         try:
-            rt.override.apply_server_values(curve, shift)
+            rt.override.apply_server_values(curve, shift, heat_limit)
         except DeviceWriteError as error:
             logger.warning("Serverwerte (seq=%s) konnten nicht auf die Anlage geschrieben werden: %s", seq, error)
             deliver(rt, delivery.WriteFailed(seq=seq, detail=str(error)))
@@ -267,6 +271,9 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
         logger.warning("Server hat Snapshot (seq=%s) abgelehnt: %s", seq, reason)
         deliver(rt, delivery.Ack(seq=seq, status=delivery.STATUS_REJECTED, reason=reason))
     else:
-        reason = f"ungültige Serverantwort (status={status!r}, curve={curve!r}, shift={shift!r})"
+        reason = (
+            f"ungültige Serverantwort (status={status!r}, curve={curve!r}, shift={shift!r}, "
+            f"heat_limit={heat_limit!r})"
+        )
         logger.warning("Setpoints-Antwort (seq=%s): %s - nichts geschrieben", seq, reason)
         deliver(rt, delivery.Ack(seq=seq, status=delivery.STATUS_REJECTED, reason=reason))

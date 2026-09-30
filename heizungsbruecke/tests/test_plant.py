@@ -105,3 +105,7 @@ def test_write_refuses_an_unavailable_zone_even_without_mode_check():
     with pytest.raises(ValueError):
         plant.write(ha, "shift_current", ZONE, 20.0, 15.0, 25.0, ensure_mode=False)
     assert ha.calls == []
+
+
+def test_heat_limit_step_is_one_tenth():
+    assert plant.STEPS["heat_limit"] == 0.1

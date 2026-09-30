@@ -12,7 +12,7 @@ from heizungsbruecke import battery, delivery, entitlement, room_sensors
 logger = logging.getLogger(__name__)
 
 # Muss zu `version` in config.yaml passen (tests/test_config_yaml.py).
-ADDON_VERSION = "0.26.0"
+ADDON_VERSION = "0.27.0"
 
 EVENT_TYPE = "smartheat_status"
 EVENT_SCHEMA = 1
@@ -54,7 +54,8 @@ _FAULT_ART = dict(
 HINT_FIELDS = ("raumfuehler_ausgefallen", "batterie_niedrig", "manueller_eingriff", "waerme_fehlt")
 EVENT_FIELDS = (
     "schema", "tenant_id", "setup_id", "addon_version", "status", "grund", "notbetrieb", "datenfehler",
-    "boost", "letzte_serverantwort", "kurve", "parallelverschiebung", "mindestvorlauf", "abo",
+    "boost", "letzte_serverantwort", "kurve", "parallelverschiebung", "mindestvorlauf", "heizgrenze",
+    "abo",
     "abo_frist_ende", "hinweise",
 )
 
@@ -161,6 +162,7 @@ def build_event(tenant_id: str, setup_id: str | None, flags: Flags, state, stora
         "kurve": state.curve_current,
         "parallelverschiebung": state.shift_current,
         "mindestvorlauf": state.min_flow_current,
+        "heizgrenze": state.heat_limit,
         "abo": abo,
         "abo_frist_ende": (
             entitlement.grace_end(state.abo_inactive_since).date().isoformat() if abo == ABO_INAKTIV else None

@@ -3,6 +3,17 @@
 Wird im Update-Dialog des Supervisors angezeigt. Pro Version ein Abschnitt `## X.Y.Z`; der
 Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Release.
 
+## 0.27.0
+
+- Heizgrenze als Stellgröße (TP12h): Der Server führt die Heizgrenze der Anlage und hebt sie bei Abschaltung durch
+  die Heizgrenze und zu kaltem Raum um bis zu 4 K (höchstens 20 °C) an; das Add-on schreibt sie wie Steigung und
+  Parallelverschiebung, setzt sie bei Boost auf 20 °C, stellt sie nach Verstellen in der App zurück und merkt
+  sich beim ersten Start den Ursprungswert, auf den sie bei Abo-Ende oder Abmelden zurückgeht.
+- Neue lokale Grenzen: Heizgrenze 5 bis 20 °C (Heizkörper).
+- Voraussetzung: SmartHeat-Server mit TP12h (Antwortfeld `heat_limit`); eine Antwort ohne das Feld gilt als ungültig.
+- Status-Event: neues Feld `heizgrenze`. Die Heizgrenze muss eine `number`-Entity sein (Neu konfigurieren, wenn
+  bisher ein Sensor gewählt war).
+
 ## 0.26.0
 
 **SmartHeat merkt, wenn die Therme keine Heizwärme liefert.**

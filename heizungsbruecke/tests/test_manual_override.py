@@ -16,6 +16,7 @@ OPTIONS = {
     # Comfort-Boost-Zeile bewusst ungleich der Notfall-Zeile (curve_max/shift_max), damit die Tests
     # die beiden Zeilen unterscheiden.
     "min_flow_min": 20.0, "min_flow_max": 30.0, "boost_curve_value": 1.2, "boost_shift_value": 24.0,
+    "heat_limit_min": 5.0, "heat_limit_max": 20.0,
 }
 ROWS = {"boost_active": (1.2, 24.0), "emergency_boost_active": (1.5, 25.0)}
 MANIFEST = ChannelManifest(entity_ids={
@@ -82,7 +83,8 @@ def _fixed_day(monkeypatch):
     monkeypatch.setattr(manual_override, "_today", lambda: TODAY)
 
 
-def _rt(make_store, clock, ha, uptime=OWN_WRITE_SETTLE_SECONDS + 1, store=None, **backup):
+def _rt(make_store, clock, ha, uptime=OWN_WRITE_SETTLE_SECONDS + 1, store=None, manifest=MANIFEST, options=OPTIONS,
+        **backup):
     """Runtime mit `uptime` Sekunden Laufzeit seit dem Start (Default: Schonfrist nach dem Start
     vorbei, HA gilt ohne eigenes Schreiben als eingeschwungen). `store` wiederverwendet einen
     vorhandenen StateStore (Neustart-Simulation: derselbe backup.json-Pfad, frisch eingelesen)
@@ -92,13 +94,23 @@ def _rt(make_store, clock, ha, uptime=OWN_WRITE_SETTLE_SECONDS + 1, store=None, 
     store.update(stable_target=20.5)
     notifier = MagicMock(spec=Notifier)
     notifier.notify.return_value = True
-    override = Override(store, MANIFEST, ha, OPTIONS, clock=clock)
+    override = Override(store, manifest, ha, options, clock=clock)
     ha.clock = clock
     clock.advance(uptime)
     return Runtime(
-        manifest=MANIFEST, ha_api=ha, options=OPTIONS, worker=MagicMock(), store=store,
+        manifest=manifest, ha_api=ha, options=options, worker=MagicMock(), store=store,
         override=override, notifier=notifier, clock=clock,
     )
+
+
+MANIFEST_G = ChannelManifest(entity_ids={**MANIFEST.entity_ids, "heat_limit": "number.hl"})
+OPTIONS_G = {**OPTIONS, "heat_limit_min": 5.0, "heat_limit_max": 20.0}
+
+
+def _rt_g(make_store, clock, live_heat_limit):
+    ha = Ha()
+    ha.states["number.hl"] = live_heat_limit
+    return _rt(make_store, clock, ha, manifest=MANIFEST_G, options=OPTIONS_G, heat_limit=15.0)
 
 
 def _rounds(rt, n=manual_override.DETECTION_ROUNDS):
@@ -133,6 +145,20 @@ def test_manual_curve_change_is_written_back_and_reported(make_store, clock):
     assert rt.ha_api.writes == [("number.curve", 0.9)]
     assert rt.store.state.manual_override_pending["curve"] == 1.3
     assert rt.notifier.notify.call_args.args[0] == manual_override.KEY
+
+
+def test_heat_limit_changed_in_the_app_is_written_back_and_reported(make_store, clock):
+    rt = _rt_g(make_store, clock, 16.0)
+    _rounds(rt)
+    assert ("number.hl", 15.0) in rt.ha_api.writes
+    assert rt.store.state.manual_override_pending is not None
+    assert "Heizgrenze" in rt.notifier.notify.call_args.args[2]
+
+
+def test_heat_limit_within_half_a_step_is_no_deviation(make_store, clock):
+    rt = _rt_g(make_store, clock, 15.04)
+    _rounds(rt)
+    assert rt.ha_api.writes == []
 
 
 def test_detection_needs_two_rounds(make_store, clock):

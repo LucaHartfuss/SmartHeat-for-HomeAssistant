@@ -15,7 +15,7 @@ from heizungsbruecke.override import Override
 OPTIONS = {
     "curve_min": 0.2, "curve_max": 0.8, "shift_min": 0.0, "shift_max": 5.0,
     "boost_threshold_k": 0.5, "boost_curve_value": 0.5, "boost_shift_value": 2.0,
-    "daily_trigger_time": "12:00",
+    "daily_trigger_time": "12:00", "heat_limit_min": 5.0, "heat_limit_max": 20.0,
 }
 ROOM_ROLES = {"room_actual": "sensor.room_actual", "room_target": "sensor.room_target"}
 ENTITY_IDS = {**ROOM_ROLES, "curve_current": "number.curve", "shift_current": "number.shift"}

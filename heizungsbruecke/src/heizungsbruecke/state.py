@@ -21,7 +21,8 @@ class StorageError(OSError):
     schreibgeschuetzt, TP12b/AU-005). Unterklasse von OSError: Aufrufer, die OSError erwarten,
     bleiben gueltig."""
 
-_NUMBER_FIELDS = ("curve_current", "shift_current", "last_room_target", "last_published_target_rt")
+_NUMBER_FIELDS = ("curve_current", "shift_current", "last_room_target", "last_published_target_rt",
+                  "heat_limit", "heat_limit_original")
 _FLAG_FIELDS = ("boost_active", "emergency_boost_active")
 _TEXT_FIELDS = ("last_daily_trigger_date", "last_ack_at", "waerme_fehlt_seit")
 _TEXT_MAP_FIELDS = ("notify_states", "notify_messages")
@@ -35,6 +36,10 @@ class BridgeState:
     # Anlage gesichert. Darauf setzt jedes Boost-Ende zurueck.
     curve_current: float | None = None
     shift_current: float | None = None
+    # TP12h: Heizgrenze als Teil des Wiederherstellungspunkts, und ihr Wert vor dem ersten eigenen
+    # Schreiben (Ursprungswert: Abo-Ende und Abmelden stellen ihn wieder her).
+    heat_limit: float | None = None
+    heat_limit_original: float | None = None
     boost_active: bool = False
     emergency_boost_active: bool = False
     last_room_target: float | None = None
@@ -252,8 +257,11 @@ class StateStore:
             raise
 
     def saved_restore_point(self) -> dict | None:
-        """Der zuletzt erfolgreich in backup.json gespeicherte Wiederherstellungspunkt (beide
-        Werte), sonst None (N6)."""
+        """Der zuletzt erfolgreich in backup.json gespeicherte Wiederherstellungspunkt, sonst None
+        (N6): Steigung und Parallelverschiebung, beide muessen gespeichert sein. Die Heizgrenze (TP12h)
+        ist bewusst optional und nicht Teil des Ergebnisses: revert_to_saved setzt sie auf ihren
+        gespeicherten Stand, fehlt der (Punkt aus der Version vor TP12h), laesst der Notfall-Boost sie
+        unangetastet (override._row_values)."""
         point = {key: self._backup_saved.get(key) for key in ("curve_current", "shift_current")}
         return point if all(_is_number(value) for value in point.values()) else None
 

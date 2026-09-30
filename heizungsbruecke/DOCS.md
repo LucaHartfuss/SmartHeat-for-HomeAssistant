@@ -8,7 +8,9 @@ wenn die Wunschtemperatur erhoeht wird (Komfort-Beschleunigung): das Add-on
 schaltet kurzzeitig auf eine hohe Heizkurve und Parallelverschiebung, bis der
 Raum innerhalb von `boost_threshold_k` (Default 0.5 K) an die neue
 Wunschtemperatur herangekommen ist, und schaltet danach zum zuletzt vom Server
-empfangenen Wiederherstellungspunkt zurueck.
+empfangenen Wiederherstellungspunkt zurueck. Zu den geschriebenen Werten gehoert seit 0.27.0 auch die
+**Heizgrenze** (vom Server gefuehrt, bei Boost 20 Grad): das Add-on merkt sich beim ersten Start den
+urspruenglichen Wert der Anlage und stellt ihn bei Abo-Ende oder Abmelden wieder her.
 Boost reagiert NICHT auf einen kalten Raum aus anderer Ursache
 (Aussentemperatur-Einbruch, offene Tuer) -- diese Faelle werden vom naechsten
 regulaeren Heizkurven-Tick abgedeckt. Ist der Server laengere Zeit nicht

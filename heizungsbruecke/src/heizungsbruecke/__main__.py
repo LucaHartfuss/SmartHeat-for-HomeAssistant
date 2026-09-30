@@ -553,7 +553,14 @@ def _prime(rt: Runtime) -> None:
     Tick erzwingen (_first_start), Zone auf Manuell mit brauchbarer Parallelverschiebung (vor dem
     ersten Snapshot, Plan-Praezisierung 11), Mindestvorlauf = Raum-Soll, dann Boost-Flags aus
     echten Sensorwerten. Persistierte Boosts laufen weiter und enden regulaer ueber ihre Schwellen
-    (N1). Scheitert ein Schritt, laufen die uebrigen trotzdem."""
+    (N1). Der Ursprungswert der Heizgrenze wird vor dem ersten eigenen Schreiben gemerkt (TP12h).
+    Scheitert ein Schritt, laufen die uebrigen trotzdem."""
+    try:
+        rt.override.capture_heat_limit_original()
+    except Exception:
+        logger.exception(
+            "Ursprungswert der Heizgrenze beim Start nicht gespeichert, wird beim ersten Schreiben erneut versucht"
+        )
     try:
         rt.store.update(stable_target=regulation.read_room_target_live(rt))
         logger.info("Stable-Target-Cache initial befuellt (Boot-Priming): room_target=%s", rt.store.state.stable_target)
