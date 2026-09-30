@@ -338,3 +338,23 @@ def test_tp12b_write_refuses_an_unavailable_number(real_ha):
     with contextlib.suppress(requests.HTTPError):
         api.set_number_value("number.tp12b_unavailable", 1.0)
     assert _raw(api, "number.tp12b_unavailable") == "unavailable"
+
+
+def test_tp12b_renamed_helper_keeps_its_title_and_is_deleted_by_it(real_ha):
+    """TP12b, B-TP11-1: HA benennt Entity-IDs um (z. B. mit Bereichs-Praefix); der Titel des
+    Config-Entry bleibt. delete_helper erkennt den Helfer daran."""
+    base_url, token = real_ha
+    api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
+    entity_id = api.create_template_sensor(name="SmartHeat realtest DAT", template="{{ 5 }}")
+    renamed = "sensor.heizraum_realtest_dat"
+    api._call_ws_command({"type": "config/entity_registry/update", "entity_id": entity_id, "new_entity_id": renamed})
+
+    titles = [entry.get("title") for entry in api._call_ws_command({"type": "config_entries/get"})]
+    assert "SmartHeat realtest DAT" in titles
+
+    api.delete_helper(renamed, tenant_id="realtest")
+
+    deadline = time.time() + 15
+    while api.entity_exists(renamed) and time.time() < deadline:
+        time.sleep(0.5)
+    assert api.entity_exists(renamed) is False

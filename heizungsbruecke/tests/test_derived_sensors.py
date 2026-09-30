@@ -229,3 +229,14 @@ def test_broken_tracking_entry_of_an_obsolete_helper_is_not_a_start_error(tmp_pa
     assert result.entity_ids == {"room_actual": ROOM_ID}
     ha_api.delete_input_number.assert_called_once_with("input_number.smartheat_t1_raumtemp_tagesmittel")
     assert "dart" in caplog.text
+
+
+def test_obsolete_helpers_are_deleted_with_the_tenant_for_the_title_check(tmp_path):
+    state_path = tmp_path / "d.json"
+    renamed = "sensor.heizraum_zuhause_smartheat_t1_dat"
+    save_backup(state_path, {"dat": {"entity_id": renamed, "source": "sensor.aussen"}})
+    ha_api = _ha_api({renamed})
+
+    _run(ha_api, state_path)
+
+    ha_api.delete_helper.assert_called_once_with(renamed, tenant_id="t1")

@@ -171,7 +171,7 @@ class HomeAssistantApi:
         result = self._advance_config_flow(flow_response, fields)
         return self._find_entity_by_config_entry(result["result"]["entry_id"])
 
-    def delete_helper(self, entity_id: str) -> None:
+    def delete_helper(self, entity_id: str, tenant_id: str | None = None) -> None:
         """Loescht den Config-Entry eines per Config-Flow angelegten Helfers (Template- oder
         Statistik-Sensor). input_number-Helfer loescht delete_input_number.
 
@@ -179,10 +179,13 @@ class HomeAssistantApi:
         derived_sensors.json. Ist die Datei kaputt, von einer anderen Installation oder die ID
         inzwischen an eine andere Entity vergeben, wuerde sonst der Config-Entry einer fremden
         Integration (z.B. mypyllant) geloescht -- nicht rueckgaengig zu machen. Dann wirft es,
-        ohne etwas zu loeschen. Zusaetzlich wie bei delete_input_number nur Entities mit dem
-        Objekt-Teil-Praefix `smartheat_` (eine fremde template-/statistics-Entity bleibt)."""
+        ohne etwas zu loeschen. Zusaetzlich muss der Helfer als SmartHeat-eigen erkennbar sein:
+        am Objekt-Teil-Praefix `smartheat_` oder -- bei einer von HA/dem Nutzer umbenannten
+        Entity-ID (B-TP11-1, TP12b) -- am Titel des Config-Entry `SmartHeat {tenant_id} ...`, den
+        das Add-on beim Anlegen vergibt und den HA beim Umbenennen der Entity nicht aendert."""
         object_id = entity_id.partition(".")[2]
-        if not object_id.startswith("smartheat_"):
+        prefixed = object_id.startswith("smartheat_")
+        if not prefixed and not tenant_id:
             raise RuntimeError(f"'{entity_id}' ist kein SmartHeat-Hilfssensor, wird nicht geloescht")
         entries = self._call_ws_command({"type": "config/entity_registry/list"})
         entry = next((entry for entry in entries if entry.get("entity_id") == entity_id), {})
@@ -194,12 +197,22 @@ class HomeAssistantApi:
                 f"'{entity_id}' ist kein SmartHeat-Hilfssensor (Plattform {entry.get('platform')!r}), "
                 "wird nicht geloescht"
             )
+        if not prefixed:
+            title = self._config_entry_title(config_entry_id)
+            if not (isinstance(title, str) and title.startswith(f"SmartHeat {tenant_id} ")):
+                raise RuntimeError(
+                    f"'{entity_id}' ist kein SmartHeat-Hilfssensor (Titel {title!r}), wird nicht geloescht"
+                )
         response = requests.delete(
             f"{self._base_url}{self._api_prefix}/config/config_entries/entry/{config_entry_id}",
             headers=self._headers,
             timeout=10,
         )
         response.raise_for_status()
+
+    def _config_entry_title(self, config_entry_id: str) -> str | None:
+        entries = self._call_ws_command({"type": "config_entries/get"})
+        return next((entry.get("title") for entry in entries if entry.get("entry_id") == config_entry_id), None)
 
     def _start_config_flow(self, handler: str) -> dict:
         """Startet einen Config-Entry-Flow und liefert die volle erste Formular-Antwort.

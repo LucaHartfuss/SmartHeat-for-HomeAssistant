@@ -6,6 +6,7 @@ Statistik- und Tag-/Nacht-Helfer raeumt ensure_all beim Start weg.
 Jeder Helfer merkt sich die Quelle, auf der er angelegt wurde (derived_sensors.json). Weicht sie
 ab oder ist sie unbekannt (Bestand vor TP6), wird er geloescht und neu angelegt; die Entity-ID
 bleibt dabei gleich (slugify(name), gegen echtes HA geprueft)."""
+import functools
 import hashlib
 import json
 import logging
@@ -62,7 +63,7 @@ def ensure_all(ha_api, tenant_id: str, room_sensors: list[str], outdoor_source: 
         )
     else:
         _drop_unused(ha_api, tracking, "outdoor_temperature", state_path)
-    _remove_obsolete(ha_api, tracking, state_path)
+    _remove_obsolete(ha_api, tracking, state_path, tenant_id)
 
     fingerprint = hashlib.sha256(json.dumps(sources, sort_keys=True).encode()).hexdigest()[:12]
     return DerivedSensors(entity_ids=result, replaced=tuple(replaced), sources_fingerprint=fingerprint)
@@ -104,11 +105,13 @@ def _drop_unused(ha_api, tracking: dict, key: str, state_path: Path, delete=None
     return existing_id
 
 
-def _remove_obsolete(ha_api, tracking: dict, state_path: Path) -> None:
+def _remove_obsolete(ha_api, tracking: dict, state_path: Path, tenant_id: str) -> None:
     """TP11: DAT/DART, Raum-Mittel, 24-h-Minimum und Tag-/Nachtmittel werden nicht mehr gebraucht.
-    Ein Fehler beim Loeschen ist kein Startfehler; der Eintrag bleibt dann fuer den naechsten Start."""
+    Ein Fehler beim Loeschen ist kein Startfehler; der Eintrag bleibt dann fuer den naechsten Start.
+    Umbenannte Helfer erkennt delete_helper am Titel mit dem Tenant (B-TP11-1)."""
+    delete_helper = functools.partial(ha_api.delete_helper, tenant_id=tenant_id)
     for key in OBSOLETE_STATISTICS + OBSOLETE_INPUT_NUMBERS:
-        delete = ha_api.delete_input_number if key in OBSOLETE_INPUT_NUMBERS else ha_api.delete_helper
+        delete = ha_api.delete_input_number if key in OBSOLETE_INPUT_NUMBERS else delete_helper
         try:
             removed = _drop_unused(ha_api, tracking, key, state_path, delete=delete)
         except Exception as error:
