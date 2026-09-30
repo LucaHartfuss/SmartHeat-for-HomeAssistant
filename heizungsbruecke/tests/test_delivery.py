@@ -25,6 +25,7 @@ from heizungsbruecke.delivery import (
     AnsweredLocalFault,
     Attempt,
     Boot,
+    ClearStaleNotbetrieb,
     DataFault,
     DeliveryState,
     EndEmergencyBoost,
@@ -795,3 +796,13 @@ def test_is_storage_fault():
     assert is_storage_fault(DataFault(SOURCE_LOCAL, (ROLE_DATENTRAEGER,))) is True
     assert is_storage_fault(DataFault(SOURCE_LOCAL, ("room_actual",))) is False
     assert is_storage_fault(None) is False
+
+
+def test_clear_stale_notbetrieb_ends_it_silently_without_open_tick():
+    state = DeliveryState(notbetrieb=True, server_failures=2)
+    assert step(state, ClearStaleNotbetrieb()) == (DeliveryState(), [])
+
+
+def test_clear_stale_notbetrieb_keeps_a_notbetrieb_with_open_tick():
+    state, _ = _in_notbetrieb()
+    assert step(state, ClearStaleNotbetrieb()) == (state, [])

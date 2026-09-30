@@ -672,8 +672,25 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | Idle
     else:
         # Offenen Tick aus failsafe_state.json sofort mit derselben seq erneut versuchen.
         ticks.deliver(rt, delivery.Boot())
+        _resolve_stale_notbetrieb(rt, abo_status)
     status.publish_if_changed()
     return rt
+
+
+def _resolve_stale_notbetrieb(rt: Runtime, abo_status: str) -> None:
+    """Notbetrieb ohne offenen Tick endet nie von selbst (Spec TP12b 1.2): im Betrieb hat er immer
+    einen Tick, dessen Ack ihn beendet. Bei aktivem Abo still beenden -- nach dem stillen seed wurde
+    er nie gemeldet, eine Entwarnung waere falsch --, in jedem Fall per Pruef-Tick klaeren."""
+    state = rt.store.state.delivery
+    if not state.notbetrieb or state.pending is not None:
+        return
+    if abo_status == entitlement.ACTIVE:
+        ticks.deliver(rt, delivery.ClearStaleNotbetrieb())
+        rt.notifier.notify(
+            "notbetrieb", STATE_OK, delivery.notification_text(delivery.NOTIFY_NOTBETRIEB_OFF, (), {}),
+            critical=True, silent_ok=True,
+        )
+    ticks.start_probe_tick(rt, "Notbetrieb ohne offenen Tick beim Start")
 
 
 def _run_bridge(options: dict, ha_api) -> NoReturn:

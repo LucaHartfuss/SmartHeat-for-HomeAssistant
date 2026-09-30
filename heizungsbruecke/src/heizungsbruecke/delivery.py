@@ -208,6 +208,13 @@ class EndEmergencyBoost:
     pass
 
 
+@dataclass(frozen=True)
+class ClearStaleNotbetrieb:
+    """Start mit aktivem Abo: Notbetrieb ohne offenen Tick (nach dem Abo-inaktiv-Modus oder aus
+    einer failsafe_state.json von 0.15.0) kann nie von selbst enden. Still beenden (TP12b, AU-014);
+    ein Pruef-Tick klaert danach den Server."""
+
+
 def accepts_ack(state: DeliveryState, seq) -> bool:
     """Eine Antwort zaehlt nur fuer den offenen Tick -- auch verspaetet, waehrend schon
     auf einen Retry gewartet wird."""
@@ -237,6 +244,8 @@ def step(state: DeliveryState, event) -> tuple[DeliveryState, list]:
         return _mqtt_connected(state)
     if isinstance(event, AnsweredLocalFault):
         return _answered_local_fault(state, event)
+    if isinstance(event, ClearStaleNotbetrieb):
+        return _clear_stale_notbetrieb(state)
     raise TypeError(f"Unbekanntes Zustell-Ereignis: {event!r}")
 
 
@@ -256,6 +265,12 @@ def _retry(state: DeliveryState, delays: tuple[int, ...], origin: str) -> tuple[
         pending, stage=pending.stage + 1, phase=PHASE_WAITING_RETRY, gen=gen, retry_origin=origin, unsent=False,
     )
     return replace(state, pending=new_pending), ScheduleRetry(pending.seq, gen, delay)
+
+
+def _clear_stale_notbetrieb(state):
+    if state.pending is not None or not state.notbetrieb:
+        return state, []
+    return replace(state, notbetrieb=False, server_failures=0), []
 
 
 def _boot(state):

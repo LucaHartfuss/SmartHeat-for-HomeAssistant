@@ -69,12 +69,7 @@ def test_unreadable_room_target_at_start_no_longer_suppresses_the_due_daily_tick
     assert attempted or _delivery(bridge).datenfehler is not None
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "AUDIT: nach Abo-inaktiv (enter_inactive: notbetrieb=True, pending=None) und Neustart mit "
-    "wieder aktivem Abo bleibt der Notbetrieb samt scharfem Notfall-Boost bis zur Antwort auf "
-    "den naechsten regulaeren Tick bestehen (bis ~24 h), Status 'notbetrieb'"
-))
-def test_reactivated_abo_restart_keeps_notbetrieb_until_next_tick(env):
+def test_reactivated_abo_restart_no_longer_keeps_notbetrieb_until_next_tick(env):
     _quiet_backup(env)
     save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": True, "datenfehler": None, "pending": None})
     env.abo["status"] = entitlement.ACTIVE

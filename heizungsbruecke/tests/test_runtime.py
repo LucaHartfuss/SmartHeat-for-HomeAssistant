@@ -630,20 +630,55 @@ def test_restart_during_notbetrieb_continues_emergency_hysteresis(env):
     assert _backup(env)["emergency_boost_active"] is False
 
 
-@pytest.mark.parametrize("content,notbetrieb", [
-    ('{"failsafe_active": true}', True),  # Format von 0.15.0
-    ("[1, 2]", False),
-    ("{kaputt", False),
-])
-def test_start_reads_old_or_broken_failsafe_file(env, content, notbetrieb):
+@pytest.mark.parametrize("content", ["[1, 2]", "{kaputt"])
+def test_start_reads_a_broken_failsafe_file(env, content):
     # Review Focus 4.
     _quiet_backup(env)
     env.paths["FAILSAFE_PATH"].write_text(content)
 
     bridge = _start(env)
 
-    assert _delivery(bridge) == DeliveryState(notbetrieb=notbetrieb)
+    assert _delivery(bridge) == DeliveryState()
     assert _mqtt(env).snapshots == []
+
+
+def test_start_with_a_notbetrieb_of_the_0_15_format_probes_the_server(env):
+    _quiet_backup(env)
+    env.paths["FAILSAFE_PATH"].write_text('{"failsafe_active": true}')
+
+    bridge = _start(env)
+
+    assert _delivery(bridge).notbetrieb is False
+    assert [s["trigger"] for s in _mqtt(env).snapshots] == ["target_change"]
+
+
+def test_reactivated_abo_restart_ends_notbetrieb_silently_and_probes(env):
+    _quiet_backup(env)
+    save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": True, "datenfehler": None, "pending": None})
+
+    bridge = _start(env)
+
+    assert _delivery(bridge).notbetrieb is False
+    probe = _mqtt(env).snapshots[0]
+    assert probe["trigger"] == "target_change"
+
+    _answer(env, bridge, probe["seq"], curve=0.9, shift=22.0)
+
+    assert _delivery(bridge).pending is None
+    assert env.ha.pushes == []
+
+
+def test_stale_notbetrieb_with_unknown_abo_stays_until_the_probe_is_answered(env):
+    _quiet_backup(env)
+    save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": True, "datenfehler": None, "pending": None})
+    env.abo["status"] = entitlement.UNKNOWN
+
+    bridge = _start(env)
+
+    assert _delivery(bridge).notbetrieb is True
+    _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], curve=0.9, shift=22.0)
+    assert _delivery(bridge).notbetrieb is False
+    assert env.ha.pushes == ["Heizungsbrücke: Serververbindung wiederhergestellt, Notbetrieb beendet."]
 
 
 def test_persisted_pending_tick_is_resumed_with_same_seq_and_ends_notbetrieb(env):
