@@ -77,7 +77,7 @@ def test_changed_room_sensors_recreate_only_the_room_template(tmp_path):
 
     result = _run(ha_api, tmp_path / "d.json", room_sensors=["sensor.wz"])
 
-    ha_api.delete_helper.assert_called_once_with(ROOM_ID)
+    ha_api.delete_helper.assert_called_once_with(ROOM_ID, tenant_id="t1")
     ha_api.create_template_sensor.assert_called_once_with(
         name="SmartHeat t1 Raumtemperatur", template=room_temperature_template(["sensor.wz"]),
     )
@@ -90,7 +90,7 @@ def test_changed_weather_source_recreates_the_outdoor_template(tmp_path):
 
     result = _run(ha_api, tmp_path / "d.json", outdoor="weather.other")
 
-    ha_api.delete_helper.assert_called_once_with(OUTDOOR_ID)
+    ha_api.delete_helper.assert_called_once_with(OUTDOOR_ID, tenant_id="t1")
     assert result.replaced == ("outdoor_temperature",)
 
 
@@ -111,7 +111,7 @@ def test_switch_from_weather_to_sensor_deletes_the_outdoor_template(tmp_path):
 
     result = _run(ha_api, tmp_path / "d.json", outdoor="sensor.aussen")
 
-    ha_api.delete_helper.assert_any_call(OUTDOOR_ID)
+    ha_api.delete_helper.assert_any_call(OUTDOOR_ID, tenant_id="t1")
     assert "outdoor_temperature" not in load_backup(tmp_path / "d.json")
     assert "outdoor_temp" not in result.entity_ids
 
@@ -140,7 +140,7 @@ def test_source_change_is_still_reported_when_create_failed_after_delete(tmp_pat
     _, existing = _tracking_after_fresh_run(tmp_path)
     existing = set(existing)
     ha_api = _ha_api(existing)
-    ha_api.delete_helper.side_effect = existing.discard
+    ha_api.delete_helper.side_effect = lambda entity_id, tenant_id=None: existing.discard(entity_id)
     original = ha_api.create_template_sensor.side_effect
     ha_api.create_template_sensor.side_effect = [RuntimeError("HA lehnt ab"), original(
         name="SmartHeat t1 Raumtemperatur", template="x",
@@ -150,7 +150,7 @@ def test_source_change_is_still_reported_when_create_failed_after_delete(tmp_pat
         _run(ha_api, tmp_path / "d.json", room_sensors=["sensor.wz"])
     result = _run(ha_api, tmp_path / "d.json", room_sensors=["sensor.wz"])
 
-    ha_api.delete_helper.assert_called_once_with(ROOM_ID)
+    ha_api.delete_helper.assert_called_once_with(ROOM_ID, tenant_id="t1")
     assert result.replaced == ("room_temperature",)
     assert load_backup(tmp_path / "d.json")["room_temperature"] == {
         "entity_id": ROOM_ID, "source": room_temperature_template(["sensor.wz"]),

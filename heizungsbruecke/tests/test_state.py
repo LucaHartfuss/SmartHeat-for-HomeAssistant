@@ -82,6 +82,21 @@ def test_pre_tp11_backup_keeps_unknown_keys_and_drops_the_old_override(make_stor
     assert "manual_override" not in backup
 
 
+def test_unknown_top_level_key_survives_a_save_so_a_rollback_keeps_write_budget(make_store, tmp_path):
+    # Rollback von 0.25.0 auf 0.24.0: dort ist write_budget ein unbekannter Schluessel. Ein Parser
+    # mit dieser Semantik (unbekannt -> extra, beim Speichern zurueckgeschrieben) verliert den
+    # Zaehler nicht; hier am Beispiel eines Schluessels, den der Parser nicht kennt (Spec 5.1).
+    budget = {"boost": {"day": "2026-09-30", "count": 2}}
+    store = make_store(backup={"curve_current": 0.95, "write_budget": budget, "kommt_spaeter": {"a": 1}})
+
+    assert store.state.write_budget == budget
+    store.update(boost_active=True)
+
+    backup = load_backup(tmp_path / "backup.json")
+    assert backup["kommt_spaeter"] == {"a": 1}
+    assert backup["write_budget"] == budget
+
+
 def test_missing_files_give_defaults_and_nothing_is_written(make_store, tmp_path):
     store = make_store()
 
