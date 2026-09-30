@@ -158,6 +158,8 @@ class FakeMqtt:
         }
         if schema is _OMIT:
             del payload["schema"]
+        if heat_limit is _OMIT:
+            del payload["heat_limit"]
         message.payload = json.dumps(payload)
         self.setpoints_callback(None, None, message)
 
@@ -999,6 +1001,31 @@ def test_invalid_answer_counts_as_server_fault_without_writing(env, answer):
 
     assert _regulation_writes(env) == []
     assert "ungültige Serverantwort" in env.ha.pushes[-1]
+
+
+@pytest.mark.parametrize("bad", [_OMIT, None, "16", float("nan"), True])
+def test_answer_without_a_valid_heat_limit_is_invalid_and_writes_nothing(env, bad):
+    # Antwort eines alten Servers (Feld fehlt) oder unbrauchbarer Wert: nichts schreiben, Datenfehler.
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+
+    _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], heat_limit=bad)
+
+    assert _regulation_writes(env) == []
+    assert "ungültige Serverantwort" in env.ha.pushes[-1]
+    assert "heat_limit" in env.ha.pushes[-1]
+
+
+def test_answer_with_heat_limit_writes_all_three_values(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+
+    _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], curve=1.0, shift=21.0, heat_limit=16.0)
+
+    assert ("number.heat_limit", 16.0) in _regulation_writes(env)
+    assert ("number.curve_current", 1.0) in _regulation_writes(env)
 
 
 @pytest.mark.parametrize("schema", [_OMIT, None, 2, "3", True, 3.0])

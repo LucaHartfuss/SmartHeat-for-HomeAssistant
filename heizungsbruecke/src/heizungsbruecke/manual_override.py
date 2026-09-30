@@ -1,5 +1,5 @@
 """Durchsetzen statt Melden (TP11, Spec 5.3). Weicht die Anlage vom Sollstand ab -- Steigung,
-Parallelverschiebung (Zeile aus override.py), Mindestvorlauf (= Raum-Soll, min_flow.py) oder die
+Parallelverschiebung, Heizgrenze (Zeilen aus override.py), Mindestvorlauf (= Raum-Soll, min_flow.py) oder die
 Zonen-Betriebsart --, hat jemand in der App oder in HA verstellt: SmartHeat schreibt den Sollstand
 zurueck, meldet den Eingriff einmal (nicht kritisch, abschaltbar) und schickt Steigung/
 Parallelverschiebung als KPI mit dem naechsten Snapshot.
@@ -39,7 +39,8 @@ MAX_WRITES_PER_DAY = write_budget.MAX_PER_DAY
 # geschrieben und trotzdem gezaehlt/gemeldet. Deshalb gilt hier der halbe Anlagenschritt (0,025):
 # jede Abweichung um mindestens einen Anlagenschritt wird wie mit 0,01 erkannt, und jede erkannte
 # Abweichung fuehrt zu einem echten Schreibvorgang. Parallelverschiebung (0,25 = halber Schritt 0,5)
-# und Mindestvorlauf (0,1 > halber Schritt 0,05) erfuellen das schon.
+# und Mindestvorlauf (0,1 > halber Schritt 0,05) erfuellen das schon. Die Heizgrenze (Anlagenschritt
+# 0,1) nimmt wie die Steigung den halben Anlagenschritt, 0,05.
 TOLERANCE = {
     "curve_current": plant.STEPS["curve_current"] / 2, "shift_current": 0.25, "min_flow": 0.1,
     "heat_limit": plant.STEPS["heat_limit"] / 2,

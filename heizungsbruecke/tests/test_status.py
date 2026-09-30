@@ -27,8 +27,8 @@ def test_contract_values_match_the_integration():
     assert status.HINT_FIELDS == ("raumfuehler_ausgefallen", "batterie_niedrig", "manueller_eingriff", "waerme_fehlt")
     assert status.EVENT_FIELDS == (
         "schema", "tenant_id", "setup_id", "addon_version", "status", "grund", "notbetrieb", "datenfehler",
-        "boost", "letzte_serverantwort", "kurve", "parallelverschiebung", "mindestvorlauf", "abo",
-        "abo_frist_ende", "hinweise",
+        "boost", "letzte_serverantwort", "kurve", "parallelverschiebung", "mindestvorlauf",
+        "heizgrenze", "abo", "abo_frist_ende", "hinweise",
     )
 
 
@@ -72,7 +72,7 @@ def test_event_carries_every_field():
         "schema": 1, "tenant_id": "client1", "setup_id": "abc", "addon_version": status.ADDON_VERSION,
         "status": "regelt", "grund": None, "notbetrieb": False, "datenfehler": None, "boost": "notfall",
         "letzte_serverantwort": "2026-10-01T12:00:05+02:00", "kurve": 0.9, "parallelverschiebung": 22.0,
-        "mindestvorlauf": None, "abo": "aktiv", "abo_frist_ende": None,
+        "mindestvorlauf": None, "heizgrenze": None, "abo": "aktiv", "abo_frist_ende": None,
         "hinweise": {
             "raumfuehler_ausgefallen": ["sensor.a", "sensor.b"], "batterie_niedrig": ["sensor.x"],
             "manueller_eingriff": {
@@ -85,9 +85,10 @@ def test_event_carries_every_field():
 
 def test_event_carries_parallel_shift_and_min_flow(make_store):
     store = make_store(backup={"curve_current": 1.05, "shift_current": 21.0})
-    store.update(min_flow_current=20.5)
+    store.update(min_flow_current=20.5, heat_limit=16.0)
     event = build_event("t", None, Flags(), store.state)
     assert (event["kurve"], event["parallelverschiebung"], event["mindestvorlauf"]) == (1.05, 21.0, 20.5)
+    assert event["heizgrenze"] == 16.0
     assert "offset" not in event
 
 
@@ -101,7 +102,7 @@ def test_manual_hint_shape(make_store):
 
 
 def test_version():
-    assert ADDON_VERSION == "0.26.0"
+    assert ADDON_VERSION == "0.27.0"
 
 
 @pytest.mark.parametrize("fault,expected", [
