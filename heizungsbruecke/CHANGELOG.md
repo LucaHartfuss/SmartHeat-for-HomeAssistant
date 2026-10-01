@@ -3,6 +3,10 @@
 Wird im Update-Dialog des Supervisors angezeigt. Pro Version ein Abschnitt `## X.Y.Z`; der
 Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Release.
 
+## Unveröffentlicht
+
+- Eigenes Icon und Logo (SmartHeat-Flamme) im Add-on-Store und in der Add-on-Übersicht.
+
 ## 0.29.0
 
 **Heizgrenze bis 23 °C.**

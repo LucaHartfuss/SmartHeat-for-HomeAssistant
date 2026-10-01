@@ -2,6 +2,10 @@
 
 Wird im Update-Dialog des Supervisors angezeigt. Pro Version ein Abschnitt `## X.Y.Z`.
 
+## Unveröffentlicht
+
+- Eigenes Icon und Logo (SmartHeat-Flamme) im Add-on-Store und in der Add-on-Übersicht.
+
 ## 1.0.2
 
 - Das Zugangs-Token wird nicht mehr als Programmargument übergeben, sondern über Umgebungsvariablen
