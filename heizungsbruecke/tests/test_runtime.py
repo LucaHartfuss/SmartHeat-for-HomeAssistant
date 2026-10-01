@@ -1712,7 +1712,7 @@ def test_emergency_start_during_comfort_boost_writes_max_values_and_both_end_tog
     env.ha.states["sensor.room_actual"] = 21.6  # beide Schwellen erreicht
     _trigger(env, bridge, "sensor.room_actual")
 
-    # Boost-Ende: Wiederherstellungspunkt (Heizgrenze beim Boost-Start von der Anlage gelesen), nicht 20,0
+    # Boost-Ende: Wiederherstellungspunkt (Heizgrenze beim Boost-Start von der Anlage gelesen), nicht 23,0
     assert _regulation_writes(env)[-3:] == [
         ("number.curve_current", 0.9), ("number.shift_current", 22.0), ("number.heat_limit", 16.0),
     ]
