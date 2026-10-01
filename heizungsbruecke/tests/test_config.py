@@ -450,7 +450,7 @@ def test_effective_options_carry_new_safety_values():
 
 def test_effective_options_carry_the_heat_limit_clamps():
     effective = config.resolve_effective_options(VALID)
-    assert (effective["heat_limit_min"], effective["heat_limit_max"]) == (5.0, 20.0)
+    assert (effective["heat_limit_min"], effective["heat_limit_max"]) == (5.0, 23.0)
 
 
 def test_outdated_options_without_shift_role():

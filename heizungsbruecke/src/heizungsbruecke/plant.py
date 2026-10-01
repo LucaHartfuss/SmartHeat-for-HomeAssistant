@@ -93,8 +93,10 @@ def read_shift(ha_api, ref: str) -> float | None:
 
 
 def current_shift(ha_api, ref: str, fallback: float | None) -> float | None:
-    """Fuer den Snapshot: Live-Wert, sonst `fallback` (Wiederherstellungspunkt). Der Server nutzt
-    den gemeldeten Wert nur beim Erstkontakt, danach seinen eigenen Stand."""
+    """Fuer den Snapshot: Live-Wert, sonst `fallback` (zuletzt geschriebener Wert). Der Server protokolliert den
+    gemeldeten Wert beim Erstkontakt nur und vergleicht ihn an jedem Tagestick mit seinem zuletzt gesendeten
+    Wert ("Anlage folgt nicht"); der Rueckfall auf den Schreibwert verhindert den Fehlalarm, solange die ruhende
+    Zone 0 liest."""
     try:
         live = read_shift(ha_api, ref)
     except Exception as error:

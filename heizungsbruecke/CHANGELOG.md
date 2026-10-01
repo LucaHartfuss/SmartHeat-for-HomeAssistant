@@ -3,6 +3,17 @@
 Wird im Update-Dialog des Supervisors angezeigt. Pro Version ein Abschnitt `## X.Y.Z`; der
 Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Release.
 
+## 0.29.0
+
+**Heizgrenze bis 23 °C.**
+
+- Die lokale Obergrenze der Heizgrenze steigt für Heizkörper von 20 auf 23 °C (Regelkern 3.0 des Servers, TP13).
+  Der Server führt die Heizgrenze künftig als gelernte Stellgröße zwischen 10 °C und Raum-Soll − 0,5 K.
+- Folge: Comfort- und Notfall-Boost setzen die Heizgrenze auf 23 °C statt 20 °C.
+- Verträglich nur mit einem TP12h-fähigen Server (Antwortfeld `heat_limit`; ab Add-on 0.27.0 nötig). Ist der
+  Live-Server bereits TP12h-fähig, dieses Add-on vor dem Server-Update mit TP13 einspielen. Sonst (gebündeltes
+  Release) zuerst den Server, das Add-on unmittelbar danach (Runbook „TP13-Deploy“, Fall A/B).
+
 ## 0.28.0
 
 **Verlässlichere Installation und ein engeres Intervall.**

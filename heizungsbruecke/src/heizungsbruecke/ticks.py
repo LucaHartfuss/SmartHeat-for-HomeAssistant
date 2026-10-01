@@ -96,7 +96,8 @@ def _attempt(rt: Runtime, seq: str, trigger: str):
     naechsten Versuch, die Retry-Kette reisst nie ab."""
     # Kurz nach einem eigenen Schreiben (erster Start: _prime schreibt die Startverschiebung, der
     # erzwungene Tick folgt Sekunden spaeter) zeigt HA bei mypyllant noch den alten Sollwert des
-    # Zeitprogramms; der Server-Erstkontakt uebernaehme ihn. Wie min_flow.sync: bis Override.settled
+    # Zeitprogramms; der Server protokolliert beim Erstkontakt den gemeldeten Wert und vergleicht ihn an jedem
+    # Tagestick mit seinem zuletzt gesendeten ("Anlage folgt nicht"). Wie min_flow.sync: bis Override.settled
     # gilt der eigene letzte Schreibwert.
     last = rt.override.last_written("shift_current")
     if not rt.override.settled("shift_current") and last is not None:
