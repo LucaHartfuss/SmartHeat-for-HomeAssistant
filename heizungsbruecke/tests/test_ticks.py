@@ -110,3 +110,55 @@ def test_first_start_snapshot_reports_the_written_start_shift_not_the_stale_zone
 def test_fallback_follow_up_keeps_the_retry_chain_alive():
     assert ticks._fallback_follow_up(delivery.Attempt(seq="s1", trigger="daily")) == delivery.Published(seq="s1")
     assert ticks._fallback_follow_up(delivery.EndEmergencyBoost()) is None
+
+
+class _LaggingPlantHa:
+    """mypyllant nach einem Cloud-Schreibvorgang: HA zeigt bis zum naechsten Poll die alten Werte."""
+
+    def __init__(self):
+        self.states = {"number.curve": 1.0, "number.shift": 17.5, "number.heat_limit": 16.0}
+        self.writes = []
+
+    def get_state(self, entity_id):
+        return self.states[entity_id]
+
+    def get_raw_state(self, entity_id):
+        return str(self.states[entity_id])
+
+    def set_number_value(self, entity_id, value):
+        self.writes.append((entity_id, value))
+
+
+def test_snapshot_reports_all_own_writes_until_settled_then_the_live_values(monkeypatch, make_store, clock):
+    # Audit 3, A3-02: der Tagestick vergleicht curve_current/heat_limit mit den zuletzt gesendeten Werten
+    # ("Anlage folgt nicht"). Kurz nach einem eigenen Schreiben zeigt HA noch die alten Werte; ohne diese Regel
+    # zaehlte eine Soll-Absenkung kurz vor dem Tagestick als Abweichung.
+    snapshots = []
+
+    def _read(manifest, ha_api, computed_values):
+        snapshots.append(dict(computed_values))
+        return SimpleNamespace(invalid_roles=(), roles={})
+
+    monkeypatch.setattr(ticks, "read_snapshot_roles", _read)
+    manifest = ChannelManifest(entity_ids={
+        "curve_current": "number.curve", "shift_current": "number.shift", "heat_limit": "number.heat_limit",
+    })
+    options = {
+        "curve_min": 0.4, "curve_max": 1.5, "shift_min": 15.0, "shift_max": 25.0,
+        "heat_limit_min": 5.0, "heat_limit_max": 23.0,
+        "min_flow_min": 20.0, "min_flow_max": 30.0, "boost_curve_value": 1.5, "boost_shift_value": 25.0,
+    }
+    ha, store = _LaggingPlantHa(), make_store()
+    override = Override(store, manifest, ha, options, clock=clock)
+    override.apply_server_values(curve=1.2, shift=18.5, heat_limit=17.0)
+    assert sorted(ha.writes) == [("number.curve", 1.2), ("number.heat_limit", 17.0), ("number.shift", 18.5)]
+    rt = SimpleNamespace(manifest=manifest, ha_api=ha, mqtt_client=None, store=store, override=override)
+
+    ticks._attempt(rt, "s1", "daily")
+    clock.advance(OWN_WRITE_SETTLE_SECONDS + 1)
+    ticks._attempt(rt, "s2", "daily")
+
+    assert snapshots == [
+        {"curve_current": 1.2, "shift_current": 18.5, "heat_limit": 17.0},
+        {"shift_current": 17.5},  # eingeschwungen: Live-Werte (curve/heat_limit liest read_snapshot_roles selbst)
+    ]
