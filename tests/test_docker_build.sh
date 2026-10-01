@@ -9,6 +9,11 @@ echo "--- docker build ---"
 docker build --platform linux/amd64 -t "$IMAGE_TAG" "$ADDON_DIR" || { echo "FAIL: docker build"; exit 1; }
 echo "PASS: docker build erfolgreich"
 
+echo "--- Smoke-Test: jq und cloudflared laufen auf der neuen Alpine-Basis ---"
+docker run --rm --entrypoint sh "$IMAGE_TAG" -c 'jq --version && cloudflared --version' \
+  || { echo "FAIL: jq/cloudflared laufen im Image nicht"; exit 1; }
+echo "PASS: jq und cloudflared laufen im Image"
+
 TMPDIR="$(mktemp -d)"
 DATA_DIR="$TMPDIR/data"
 STUB_DIR="$TMPDIR/bin"

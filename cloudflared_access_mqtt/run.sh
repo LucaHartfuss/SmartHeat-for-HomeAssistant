@@ -15,9 +15,10 @@ if [ -z "$HOSTNAME" ] || [ -z "$LOCAL_PORT" ] || [ -z "$SERVICE_TOKEN_ID" ] || [
 fi
 
 # AU-034: Das Token steht nicht in der argv (per ps im Host-Namespace sichtbar), sondern in der
-# Umgebung. Die Namen sind gegen cloudflared 2025.8.1 geprueft (cmd/cloudflared/access/cmd.go:
-# --service-token-id = TUNNEL_SERVICE_TOKEN_ID, --service-token-secret = TUNNEL_SERVICE_TOKEN_SECRET,
-# nur am Kommando `access tcp`). Beim Wechsel der cloudflared-Version erneut pruefen.
+# Umgebung. Die Namen sind am gepinnten Image cloudflared 2025.8.1 am 2026-10-01 geprueft, per
+# `cloudflared access tcp --help`: --service-token-id [$TUNNEL_SERVICE_TOKEN_ID] und
+# --service-token-secret [$TUNNEL_SERVICE_TOKEN_SECRET]. Beim Wechsel der cloudflared-Version
+# erneut pruefen.
 export TUNNEL_SERVICE_TOKEN_ID="$SERVICE_TOKEN_ID"
 export TUNNEL_SERVICE_TOKEN_SECRET="$SERVICE_TOKEN_SECRET"
 
