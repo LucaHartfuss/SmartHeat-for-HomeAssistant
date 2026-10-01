@@ -13,7 +13,8 @@ class LocalSafety:
     (ausgeloest wird er ausschliesslich durch eine Erhoehung von room_target, boost.decide_boost).
     shift_* begrenzen die Parallelverschiebung (Zonen-Wunschtemperatur), min_flow_* die
     Mindestvorlauftemperatur (TP11, vom Nutzer freigegeben 2026-09-29, Regel 4).
-    heat_limit_* begrenzen die Heizgrenze (TP12h, vom Nutzer freigegeben 2026-09-30, Regel 4)."""
+    heat_limit_* begrenzen die Heizgrenze (TP12h, vom Nutzer freigegeben 2026-09-30, Regel 4).
+    Obergrenze 23 °C seit TP13 (Nutzer-Entscheidung 2026-10-01, Regel 4)."""
 
     curve_min: float
     curve_max: float
@@ -31,7 +32,7 @@ class LocalSafety:
 LOCAL_SAFETY_BY_VERTEILSYSTEM: dict[str, LocalSafety] = {
     "Heizkoerper": LocalSafety(
         curve_min=0.4, curve_max=1.5, shift_min=15.0, shift_max=25.0, min_flow_min=20.0, min_flow_max=30.0,
-        heat_limit_min=5.0, heat_limit_max=20.0,
+        heat_limit_min=5.0, heat_limit_max=23.0,
         boost_threshold_k=0.5, boost_curve_value=1.5, boost_shift_value=25.0,
     ),
 }

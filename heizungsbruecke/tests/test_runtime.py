@@ -1030,7 +1030,7 @@ def test_answer_during_boost_only_updates_backup(env):
     bridge = _start(env)
 
     _set_room_target(env, bridge, 22.0)  # Erhoehung: Comfort-Boost + Tick
-    boost_writes = [("number.curve_current", 1.5), ("number.shift_current", 25.0), ("number.heat_limit", 20.0)]
+    boost_writes = [("number.curve_current", 1.5), ("number.shift_current", 25.0), ("number.heat_limit", 23.0)]
     assert _regulation_writes(env) == boost_writes
 
     _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], curve=0.95, shift=23.0, heat_limit=17.0)
@@ -1085,7 +1085,7 @@ def test_notbetrieb_end_hands_device_to_running_comfort_boost(env):
     _set_room_target(env, bridge, 22.0)  # Comfort-Boost startet, Notfall-Boost haelt die Anlage
 
     assert _regulation_writes(env) == [
-        ("number.curve_current", 1.5), ("number.shift_current", 25.0), ("number.heat_limit", 20.0),
+        ("number.curve_current", 1.5), ("number.shift_current", 25.0), ("number.heat_limit", 23.0),
     ]
 
     _answer(env, bridge, _mqtt(env).snapshots[-1]["seq"], curve=0.95, shift=23.0)
@@ -1702,10 +1702,10 @@ def test_emergency_start_during_comfort_boost_writes_max_values_and_both_end_tog
 
     _trigger(env, bridge, "sensor.room_actual")  # 20.0 bei Soll 22.0: > 1 K darunter
 
-    # Heizgrenze: beide Zeilen setzen heat_limit_max (20,0); der Notfall-Boost ueberspringt sie, weil
+    # Heizgrenze: beide Zeilen setzen heat_limit_max (23,0); der Notfall-Boost ueberspringt sie, weil
     # die Anlage schon darauf steht (Quota-Check mit dem eigenen letzten Schreibwert).
     assert _regulation_writes(env) == [
-        ("number.curve_current", 1.0), ("number.shift_current", 24.0), ("number.heat_limit", 20.0),
+        ("number.curve_current", 1.0), ("number.shift_current", 24.0), ("number.heat_limit", 23.0),
         ("number.curve_current", 1.5), ("number.shift_current", 25.0),
     ]
 
@@ -1725,7 +1725,7 @@ def test_answer_during_emergency_boost_is_written_once_when_notbetrieb_ends(env)
     _answer(env, bridge, "alt-1", curve=0.95, shift=23.0)
 
     assert env.ha.writes == [
-        ("number.curve_current", 1.5), ("number.shift_current", 25.0), ("number.heat_limit", 20.0),
+        ("number.curve_current", 1.5), ("number.shift_current", 25.0), ("number.heat_limit", 23.0),
         ("number.curve_current", 0.95), ("number.shift_current", 23.0), ("number.heat_limit", 16.0),
     ]
 
@@ -1740,7 +1740,7 @@ def test_comfort_boost_end_restores_values_answered_during_the_boost(env):
     _trigger(env, bridge, "sensor.room_actual")
 
     assert _regulation_writes(env) == [
-        ("number.curve_current", 1.5), ("number.shift_current", 25.0), ("number.heat_limit", 20.0),
+        ("number.curve_current", 1.5), ("number.shift_current", 25.0), ("number.heat_limit", 23.0),
         ("number.curve_current", 0.95), ("number.shift_current", 23.0), ("number.heat_limit", 16.0),
     ]
     assert _backup(env)["boost_active"] is False
@@ -1777,7 +1777,7 @@ def test_grace_end_during_comfort_boost_restores_learned_values(env, monkeypatch
     _set_room_target(env, bridge, 22.0)
 
     assert _regulation_writes(env) == [
-        ("number.curve_current", 1.5), ("number.shift_current", 25.0), ("number.heat_limit", 20.0),
+        ("number.curve_current", 1.5), ("number.shift_current", 25.0), ("number.heat_limit", 23.0),
     ]
 
     env.clock.advance(300)
