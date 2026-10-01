@@ -95,18 +95,24 @@ def _attempt(rt: Runtime, seq: str, trigger: str):
     (ReadInvalid). Auch ein Publish-Fehler meldet Published: der Ack-Timeout plant dann den
     naechsten Versuch, die Retry-Kette reisst nie ab."""
     # Kurz nach einem eigenen Schreiben (erster Start: _prime schreibt die Startverschiebung, der
-    # erzwungene Tick folgt Sekunden spaeter) zeigt HA bei mypyllant noch den alten Sollwert des
-    # Zeitprogramms; der Server protokolliert beim Erstkontakt den gemeldeten Wert und vergleicht ihn an jedem
-    # Tagestick mit seinem zuletzt gesendeten ("Anlage folgt nicht"). Wie min_flow.sync: bis Override.settled
-    # gilt der eigene letzte Schreibwert.
+    # erzwungene Tick folgt Sekunden spaeter; eine Soll-Aenderung kurz vor dem Tagestick) zeigt HA bei
+    # mypyllant noch die alten Werte; der Server protokolliert beim Erstkontakt die gemeldeten Werte und
+    # vergleicht sie an jedem Tagestick mit seinen zuletzt gesendeten ("Anlage folgt nicht"). Wie
+    # min_flow.sync: bis Override.settled gilt fuer jede geschriebene Rolle der eigene letzte Schreibwert
+    # (Audit 3, A3-02: auch Steigung und Heizgrenze, nicht nur die Parallelverschiebung).
+    computed: dict[str, float | None] = {}
+    for role in ("curve_current", "heat_limit"):
+        last = rt.override.last_written(role)
+        if not rt.override.settled(role) and last is not None:
+            computed[role] = last
     last = rt.override.last_written("shift_current")
     if not rt.override.settled("shift_current") and last is not None:
-        shift = last
+        computed["shift_current"] = last
     else:
-        shift = plant.current_shift(
+        computed["shift_current"] = plant.current_shift(
             rt.ha_api, rt.manifest.entity_ids["shift_current"], rt.store.state.shift_current,
         )
-    read = read_snapshot_roles(rt.manifest, rt.ha_api, computed_values={"shift_current": shift})
+    read = read_snapshot_roles(rt.manifest, rt.ha_api, computed_values=computed)
     if read.invalid_roles:
         logger.warning("Snapshot (seq=%s) zurueckgehalten, ungueltige Werte: %s", seq, ", ".join(read.invalid_roles))
         return delivery.ReadInvalid(seq=seq, roles=read.invalid_roles)
