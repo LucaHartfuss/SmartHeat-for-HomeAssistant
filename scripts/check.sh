@@ -42,7 +42,7 @@ docker_host_run() {
 }
 PY="${PYTHON:-python3}"
 DEV="${DEV_ROOT:-$(cd .. && pwd)}"
-lint() { (cd heizungsbruecke && "$PY" -m ruff check . && "$PY" -m pyright --pythonpath "$("$PY" -c 'import sys; print(sys.executable)')"); }
+lint() { (cd heizungsbruecke && "$PY" -m ruff check . && "$PY" -m pyright --pythonpath "$("$PY" -c 'import sys; print(sys.executable)')") && "$PY" scripts/ci/pin_check.py --repo "$PWD"; }
 tests() { (cd heizungsbruecke && "$PY" -m pytest -q); }
 contract() { "$PY" "$DEV/tools/contract_check.py"; }
 docker_tests() {
