@@ -347,7 +347,7 @@ class Override:
 
     def ensure_manual_zone(self) -> bool:
         ref = self._manifest.entity_ids["shift_current"]
-        # Hat WIR die Zone gerade erst umgestellt, zeigt HA den alten Modus bis zum naechsten Poll der
+        # Haben WIR die Zone gerade erst umgestellt, zeigt HA den alten Modus bis zum naechsten Poll der
         # Hersteller-Cloud (Lag wie bei OWN_WRITE_SETTLE_SECONDS): der Read waere noch veraltet und ein
         # zweites set_hvac_mode verbraucht nur Cloud-Kontingent. Danach gilt wieder lesen und korrigieren.
         if self._zone_switched_at is not None and self._clock() - self._zone_switched_at <= OWN_WRITE_SETTLE_SECONDS:

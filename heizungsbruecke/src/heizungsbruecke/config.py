@@ -262,7 +262,7 @@ def validate_telemetry_interval(options: dict) -> str | None:
     if value is not None and value > MAX_TELEMETRY_INTERVAL_SECONDS:
         return (
             f"telemetry_interval_seconds ({value}) liegt ueber dem zulaessigen Maximum "
-            f"von {MAX_TELEMETRY_INTERVAL_SECONDS} Sekunden (10 min) - der Server wertet Telemetrie-Luecken "
+            f"von {MAX_TELEMETRY_INTERVAL_SECONDS} Sekunden ({MAX_TELEMETRY_INTERVAL_SECONDS // 60} min) - der Server wertet Telemetrie-Luecken "
             f"ab 15 min als Pause; darueber bleibt keine Reserve fuer Laufzeitschwankungen"
         )
     return None

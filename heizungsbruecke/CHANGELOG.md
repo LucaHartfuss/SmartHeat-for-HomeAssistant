@@ -9,12 +9,12 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
 
 - Das Telemetrie-Intervall darf höchstens noch 10 Minuten (600 s) betragen, vorher 15 Minuten. Der Server wertet
   Lücken ab 15 Minuten als Pause; bei 15 Minuten Intervall blieb dafür keine Reserve, und die Regelung hätte
-  nie gelernt. Der Standard von 5 Minuten bleibt. Eine Konfiguration mit einem Wert über 600 s wird beim
-  Start als Konfigurationsfehler gemeldet; in den Optionen vorher gespeicherte Werte über 600 s bitte anpassen.
+  nie gelernt. Der Standard von 5 Minuten bleibt. Ein in den Optionen gespeicherter Wert über 600 s wird vom
+  Supervisor abgelehnt (das Add-on startet dann nicht); bitte vor dem Update anpassen.
 - Die Installation des Add-ons nutzt feste Paketstände mit Prüfsummen und ein festes Basis-Image, dadurch ist
   jede Installation identisch getestet.
 - Moduswechsel der Heizzone: Hat das Add-on die Zone gerade selbst auf „Manuell“ gestellt, schaltet eine
-  Server-Antwort in den folgenden gut 35 Minuten nicht ein zweites Mal um (Home Assistant zeigt den neuen
+  Server-Antwort in den folgenden 35 Minuten nicht ein zweites Mal um (Home Assistant zeigt den neuen
   Modus bis zum nächsten Abruf der Hersteller-Cloud noch nicht). Das spart Zugriffe auf die Hersteller-Cloud.
   Danach wird eine zurückgestellte Zone wie bisher wieder korrigiert.
 
