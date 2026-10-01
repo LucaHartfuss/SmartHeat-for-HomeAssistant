@@ -28,6 +28,11 @@ ENTITLEMENT_PATH = DATA_DIR / "entitlement_state.json"
 # bei getrennter WS-Verbindung (und fuer grace_check/health).
 DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS = 300
 DEFAULT_TELEMETRY_INTERVAL_SECONDS = 300
+# Obergrenze des Telemetrie-Intervalls (Regel 4, TP12e, AU-022): der Server wertet Luecken ab
+# samples.MAX_GAP (15 min) als Pause. Bei 900 s laege jede Nachricht mit positiver
+# Laufzeitabweichung darueber (dauerhaft Aufwaermphase/keine_heizstunden ohne Alarm); 600 s lassen
+# Reserve (Contract-Check 33: <= 0,8 x MAX_GAP). Muss zu config.yaml (schema) passen.
+MAX_TELEMETRY_INTERVAL_SECONDS = 600
 
 
 class ConfigError(ValueError):
@@ -243,9 +248,9 @@ def validate_local_check_interval(options: dict) -> str | None:
 
 def validate_telemetry_interval(options: dict) -> str | None:
     """Untergrenze 10 s wie im config.yaml-Schema, auch fuer ein von Hand editiertes
-    options.json: sonst fluten Telemetrie-Publishes den Server. Obergrenze 900 s (TP11-Review):
-    darueber lernt der Regelkern serverseitig praktisch nie (Abdeckungsregel > 15 min Luecke =
-    Pause)."""
+    options.json: sonst fluten Telemetrie-Publishes den Server. Obergrenze 600 s (TP12e): der
+    Regelkern wertet Luecken ab 15 min als Pause, 900 s liessen keine Reserve fuer
+    Laufzeitschwankungen."""
     value = options.get("telemetry_interval_seconds")
     if value is not None and not _is_interval_number(value):
         return f"telemetry_interval_seconds ({value!r}) ist kein gueltiger endlicher Zahlenwert"
@@ -254,11 +259,11 @@ def validate_telemetry_interval(options: dict) -> str | None:
             f"telemetry_interval_seconds ({value}) liegt unter dem zulaessigen Minimum "
             f"von 10 Sekunden"
         )
-    if value is not None and value > 900:
+    if value is not None and value > MAX_TELEMETRY_INTERVAL_SECONDS:
         return (
             f"telemetry_interval_seconds ({value}) liegt ueber dem zulaessigen Maximum "
-            f"von 900 Sekunden (15 min) - der Regelkern wertet nur Telemetrie-Luecken bis "
-            f"15 min als zusammenhaengend, darueber lernt er praktisch nie"
+            f"von {MAX_TELEMETRY_INTERVAL_SECONDS} Sekunden ({MAX_TELEMETRY_INTERVAL_SECONDS // 60} min) - der Server wertet Telemetrie-Luecken "
+            f"ab 15 min als Pause; darueber bleibt keine Reserve fuer Laufzeitschwankungen"
         )
     return None
 

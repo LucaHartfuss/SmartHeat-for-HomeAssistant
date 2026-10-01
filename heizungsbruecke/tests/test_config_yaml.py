@@ -160,3 +160,8 @@ def test_new_entity_options_are_optional_and_offset_is_gone():
                  "night_avg_window_start", "night_avg_window_end"):
         assert gone not in schema and gone not in options
     assert schema["daily_trigger_time"] == "str?"
+
+
+def test_telemetry_interval_schema_upper_bound_is_600():
+    schema = _load_config_yaml()["schema"]
+    assert schema["telemetry_interval_seconds"] == "int(10,600)?"

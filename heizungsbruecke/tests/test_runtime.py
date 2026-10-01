@@ -1,7 +1,6 @@
 """Betrieb von __main__ ueber den Regel-Worker (Design-Spec 2026-09-26): Boot,
 Tick-Zustellung, Datenfehler, Notbetrieb, lokale Checks und Abo-Pfade. Getrieben ueber
 _start_bridge mit Fake-Uhr (tests/conftest.py), Fake-HA, Fake-MQTT und Fake-Trigger-Client."""
-import copy
 import itertools
 import json
 import logging
@@ -11,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from fakes import FakeHa
 
 import heizungsbruecke.__main__ as main_module
 from heizungsbruecke import abo, backup_store, datentraeger, entitlement, ticks
@@ -42,76 +42,6 @@ OPTIONS = {
 DERIVED: dict[str, str] = {}
 
 NOTBETRIEB_ON = "Heizungsbrücke: Server antwortet nicht, Notbetrieb aktiv. Die Heizung wird bei Bedarf lokal abgesichert."
-
-
-class FakeHa:
-    token = "tok"
-
-    def __init__(self):
-        self.states = {
-            "sensor.room_actual": 20.0, "sensor.room_target": 21.0,
-            "number.curve_current": 0.9, "number.shift_current": 22.0,
-            "sensor.outdoor_temp": 5.0, "number.heat_limit": 16.0,
-            # Raum-Soll 21.0 -> kein Mindestvorlauf-Schreiben beim Start
-            "number.min_flow": 21.0,
-        }
-        self.writes = []
-        self.pushes = []
-        self.persistent = []
-        self.dismissed = []
-        self.events = []
-        self.write_error = None
-
-    def get_state(self, entity_id):
-        value = self.states[entity_id]
-        if isinstance(value, Exception):
-            raise value
-        return value
-
-    def set_number_value(self, entity_id, value):
-        if self.write_error is not None:
-            raise self.write_error
-        self.states[entity_id] = value
-        self.writes.append((entity_id, value))
-
-    def set_climate_temperature(self, entity_id, value):
-        self.set_number_value(f"{entity_id}::temperature", value)
-
-    def set_hvac_mode(self, entity_id, mode):
-        self.states[entity_id] = mode
-        self.writes.append((entity_id, mode))
-
-    def send_notification(self, service, message):
-        self.pushes.append(message)
-
-    def create_persistent_notification(self, title, message, notification_id):
-        self.persistent.append((notification_id, message))
-
-    def dismiss_persistent_notification(self, notification_id):
-        self.dismissed.append(notification_id)
-
-    def get_config(self):
-        return {"time_zone": "Europe/Berlin", "state": "RUNNING"}
-
-    def websocket_url(self):
-        return "ws://x/api/websocket"
-
-    def fire_event(self, event_type, data):
-        self.events.append((event_type, copy.deepcopy(data)))
-
-    def is_reachable(self):
-        return True
-
-    def entity_exists(self, entity_id):
-        return True
-
-    def get_raw_state(self, entity_id):
-        value = self.states[entity_id]
-        if isinstance(value, Exception):
-            raise value
-        if value in ("unavailable", "unknown", ""):
-            raise ValueError(value)
-        return str(value)
 
 
 _OMIT = object()

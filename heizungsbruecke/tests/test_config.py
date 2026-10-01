@@ -235,12 +235,19 @@ def test_validate_telemetry_interval_flags_value_below_ten():
     assert "telemetry_interval_seconds" in error
 
 
-def test_validate_telemetry_interval_accepts_nine_hundred():
-    assert validate_telemetry_interval({"telemetry_interval_seconds": 900}) is None
+@pytest.mark.parametrize("value, accepted", [(9, False), (10, True), (300, True), (600, True), (601, False), (900, False)])
+def test_telemetry_interval_bounds(value, accepted):
+    error = validate_telemetry_interval({"telemetry_interval_seconds": value})
+    assert (error is None) == accepted
 
 
-def test_validate_telemetry_interval_flags_value_above_nine_hundred():
-    error = validate_telemetry_interval({"telemetry_interval_seconds": 901})
+def test_telemetry_interval_error_explains_the_reserve():
+    error = validate_telemetry_interval({"telemetry_interval_seconds": 900})
+    assert "600" in error and "15 min" in error
+
+
+def test_validate_telemetry_interval_flags_value_above_the_maximum_by_name():
+    error = validate_telemetry_interval({"telemetry_interval_seconds": 601})
     assert error is not None
     assert "telemetry_interval_seconds" in error
 
