@@ -1,0 +1,9 @@
+# Build-Kontext schlank und reproduzierbar halten (TP12e, AU-018): kein lokales Entwickler-Artefakt im Image.
+# Insbesondere ein src/*.egg-info (von `pip install -e .` im Entwicklungs-Checkout) wuerde ueber PYTHONPATH=/app/src
+# als installiertes Paket erscheinen und die Paketliste des Images veraendern.
+**/*.egg-info
+**/__pycache__
+.venv
+.pytest_cache
+.ruff_cache
+tests
