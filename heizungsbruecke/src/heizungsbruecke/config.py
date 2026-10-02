@@ -7,8 +7,9 @@ import urllib.parse
 from pathlib import Path
 
 from heizungsbruecke.notifier import HINT_CATEGORIES
-from heizungsbruecke.safety import resolve_local_safety
 from heizungsbruecke.windows import validate_daily_trigger_time
+from smartheat_core.levers import VAILLANT_VRC720
+from smartheat_core.safety import resolve_local_safety
 
 MQTT_HOST = "127.0.0.1"
 # Muss zum `local_port`-Default von cloudflared_access_mqtt passen: Konvention, kein
@@ -160,24 +161,25 @@ def resolve_effective_options(options: dict) -> dict:
             "Option 'verteilsystem' fehlt - bitte die SmartHeat-Integration neu einrichten"
         )
     try:
-        safety = resolve_local_safety(verteilsystem)
+        safety = resolve_local_safety(VAILLANT_VRC720.id, verteilsystem)
     except ValueError as error:
         raise ConfigError(f"Option 'verteilsystem': {error}") from None
     base_url = resolve_accounts_api_base_url(options.get("accounts_api_base_url"))
     return {
         **options,
         **sources,
-        "curve_min": safety.curve_min,
-        "curve_max": safety.curve_max,
-        "shift_min": safety.shift_min,
-        "shift_max": safety.shift_max,
-        "min_flow_min": safety.min_flow_min,
-        "min_flow_max": safety.min_flow_max,
-        "heat_limit_min": safety.heat_limit_min,
-        "heat_limit_max": safety.heat_limit_max,
-        "boost_threshold_k": safety.boost_threshold_k,
-        "boost_curve_value": safety.boost_curve_value,
-        "boost_shift_value": safety.boost_shift_value,
+        # Bis Plan 2 Task 8 noch als flache Optionen; danach liest die Hebel-Pipeline LocalSafety direkt.
+        "curve_min": safety.ranges["curve"][0],
+        "curve_max": safety.ranges["curve"][1],
+        "shift_min": safety.ranges["room_setpoint"][0],
+        "shift_max": safety.ranges["room_setpoint"][1],
+        "min_flow_min": safety.ranges["min_flow"][0],
+        "min_flow_max": safety.ranges["min_flow"][1],
+        "heat_limit_min": safety.ranges["heat_limit"][0],
+        "heat_limit_max": safety.ranges["heat_limit"][1],
+        "boost_threshold_k": safety.arrival_threshold_k,
+        "boost_curve_value": safety.comfort_boost["curve"],
+        "boost_shift_value": safety.comfort_boost["room_setpoint"],
         "daily_trigger_time": daily_trigger_time,
         "accounts_api_base_url": base_url,
     }
