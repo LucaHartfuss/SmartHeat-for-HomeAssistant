@@ -6,13 +6,13 @@ import uuid
 from datetime import datetime
 from typing import TypeGuard
 
-from heizungsbruecke import abo, delivery, entitlement, plant
+from heizungsbruecke import abo, delivery, entitlement
 from heizungsbruecke.notifier import STATE_OK
-from heizungsbruecke.override import DeviceWriteError
 from heizungsbruecke.runtime import EV_ACK_TIMEOUT, EV_RETRY_DUE, Runtime
-from heizungsbruecke.snapshot import SNAPSHOT_SCHEMA_VERSION, publish_snapshot, read_snapshot_roles
+from heizungsbruecke.snapshot import SNAPSHOT_SCHEMA_VERSION, publish_snapshot, read_snapshot
 from heizungsbruecke.state import StorageError
 from heizungsbruecke.worker import Event
+from smartheat_core.pipeline import DeviceWriteError
 
 logger = logging.getLogger(__name__)
 
@@ -91,31 +91,30 @@ def _execute(rt: Runtime, action):
 
 
 def _attempt(rt: Runtime, seq: str, trigger: str):
-    """Pflichtrollen und room_actual frisch lesen; bei ungueltigem Wert kein Publish
+    """Hebel, Raum-Soll und room_actual frisch lesen; bei ungueltigem Wert kein Publish
     (ReadInvalid). Auch ein Publish-Fehler meldet Published: der Ack-Timeout plant dann den
     naechsten Versuch, die Retry-Kette reisst nie ab."""
     # Kurz nach einem eigenen Schreiben (erster Start: _prime schreibt die Startverschiebung, der
     # erzwungene Tick folgt Sekunden spaeter; eine Soll-Aenderung kurz vor dem Tagestick) zeigt HA bei
     # mypyllant noch die alten Werte; der Server protokolliert beim Erstkontakt die gemeldeten Werte und
     # vergleicht sie an jedem Tagestick mit seinen zuletzt gesendeten ("Anlage folgt nicht"). Wie
-    # min_flow.sync: bis Override.settled gilt fuer jede geschriebene Rolle der eigene letzte Schreibwert
-    # (Audit 3, A3-02: auch Steigung und Heizgrenze, nicht nur die Parallelverschiebung).
-    computed: dict[str, float | None] = {}
-    for role in ("curve_current", "heat_limit"):
-        last = rt.override.last_written(role)
-        if not rt.override.settled(role) and last is not None:
-            computed[role] = last
-    last = rt.override.last_written("shift_current")
-    if not rt.override.settled("shift_current") and last is not None:
-        computed["shift_current"] = last
-    else:
-        computed["shift_current"] = plant.current_shift(
-            rt.ha_api, rt.manifest.entity_ids["shift_current"], rt.store.state.shift_current,
-        )
-    read = read_snapshot_roles(rt.manifest, rt.ha_api, computed_values=computed)
-    if read.invalid_roles:
-        logger.warning("Snapshot (seq=%s) zurueckgehalten, ungueltige Werte: %s", seq, ", ".join(read.invalid_roles))
-        return delivery.ReadInvalid(seq=seq, roles=read.invalid_roles)
+    # derived.sync: bis LeverPipeline.settled gilt fuer jeden geschriebenen Hebel der eigene letzte Schreibwert
+    # (Audit 3, A3-02: auch Steigung und Heizgrenze, nicht nur die Parallelverschiebung). Der vorbereitete Hebel
+    # (Vaillant: Wunschtemperatur der Zone) faellt sonst bei ruhender Zone auf den Wiederherstellungspunkt zurueck.
+    pipeline = rt.override
+    binding = pipeline.binding
+    known: dict[str, float | None] = {}
+    for lever in binding.description.lever_set.levers:
+        last = pipeline.last_written(lever)
+        if not pipeline.settled(lever) and last is not None:
+            known[lever] = last
+        elif lever == binding.description.prepared_lever:
+            known[lever] = binding.read_or(lever, rt.store.state.restore_point.get(lever))
+    read = read_snapshot(rt.manifest, rt.ha_api, binding, known)
+    if read.invalid:
+        logger.warning("Snapshot (seq=%s) zurueckgehalten, ungueltige Werte: %s", seq, ", ".join(read.invalid))
+        return delivery.ReadInvalid(seq=seq, roles=read.invalid)
+    assert read.room_target is not None  # sonst stuende room_target in read.invalid
     if rt.mqtt_client is None or not rt.mqtt_client.is_connected():
         # Ohne Verbindung nicht publizieren: paho wuerde QoS-1-Nachrichten stauen und nach einem
         # langen Ausfall einen Stunden alten Messwertsatz nachliefern. Das (Wieder-)Verbinden
@@ -131,7 +130,8 @@ def _attempt(rt: Runtime, seq: str, trigger: str):
         pending_override = rt.store.state.manual_override_pending
     try:
         publish_snapshot(
-            rt.mqtt_client, seq=seq, trigger=trigger, roles=read.roles, manual_override=pending_override,
+            rt.mqtt_client, seq=seq, trigger=trigger, room_target=read.room_target, levers=read.levers,
+            manual_override=pending_override,
         )
         rt.manual_override_sent = pending_override
         rt.manual_override_seq = seq
@@ -193,8 +193,14 @@ def seed_notices(notifier, delivery_state) -> None:
 
 
 def _notify(rt: Runtime, action) -> None:
-    """Alles, was die Regelung stoppt, ist kritisch (Push plus HA-Benachrichtigung)."""
-    text = delivery.notification_text(action.kind, action.detail, rt.manifest.entity_ids)
+    """Alles, was die Regelung stoppt, ist kritisch (Push plus HA-Benachrichtigung). Lesefehler nennen Hebel oder
+    Rollen (room_target, room_actual); beide werden mit ihrer Entity genannt."""
+    binding = rt.override.binding
+    refs = {
+        **rt.manifest.entity_ids,
+        **{lever: binding.ref(lever) for lever in binding.description.lever_set.levers if binding.has(lever)},
+    }
+    text = delivery.notification_text(action.kind, action.detail, refs)
     key, state = _notice(action.kind, action.detail)
     rt.notifier.notify(key, state, text, critical=True)
 
@@ -221,16 +227,25 @@ def _clear_sent_manual_override(rt: Runtime) -> None:
         logger.exception("Uebertragener manueller Eingriff konnte nicht als erledigt gespeichert werden")
 
 
+def _valid_levers(levers, expected: tuple[str, ...]) -> TypeGuard[dict[str, float]]:
+    """Genau die Hebel des Hebelsatzes, jeder eine endliche Zahl (kein JSON true): eine Antwort mit fehlendem oder
+    fremdem Hebel ist ungueltig, geschrieben wird dann nichts."""
+    return (
+        isinstance(levers, dict) and set(levers) == set(expected)
+        and all(_is_finite_number(value) for value in levers.values())
+    )
+
+
 def handle_setpoints(rt: Runtime, payload: dict) -> None:
-    """Server-Antwort (nur Schema 3), zaehlt nur fuer den offenen Tick (auch verspaetet). Gueltige
+    """Server-Antwort (nur Schema 4), zaehlt nur fuer den offenen Tick (auch verspaetet). Gueltige
     Werte gehen vor dem Ack auf die Anlage. Ein unbekanntes Schema, ein unbekannter Status oder
     ungueltige Werte zaehlen als Datenfehler vom Server. Kann die Anlage die Werte nicht
     uebernehmen, ist das eine Antwort mit eigenem Datenfehler (`WriteFailed`), kein Serverausfall."""
     seq = payload.get("seq")
     state = rt.store.state.delivery
     if not delivery.accepts_ack(state, seq):
-        expected = state.pending.seq if state.pending is not None else None
-        logger.info("Setpoints-Antwort mit seq=%r ignoriert (erwartet: %r)", seq, expected)
+        pending_seq = state.pending.seq if state.pending is not None else None
+        logger.info("Setpoints-Antwort mit seq=%r ignoriert (erwartet: %r)", seq, pending_seq)
         return
     # accepts_ack() liefert nur True, wenn seq == state.pending.seq (str) ist; andere
     # JSON-Typen (int/float/bool/list/dict) sind nie gleich einem str, seq ist also ein str.
@@ -239,7 +254,7 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
 
     schema = payload.get("schema")
     if type(schema) is not int or schema != SNAPSHOT_SCHEMA_VERSION:
-        # Nur Schema 3 wird verstanden; alles andere zaehlt wie eine ungueltige Antwort (Datenfehler
+        # Nur Schema 4 wird verstanden; alles andere zaehlt wie eine ungueltige Antwort (Datenfehler
         # vom Server, sofort sichtbar) statt still verworfen zu werden und erst ueber den
         # Ack-Timeout im Notbetrieb zu enden.
         reason = f"ungültige Serverantwort (unbekanntes Schema {schema!r})"
@@ -248,19 +263,16 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
         return
 
     status = payload.get("status")
-    curve, shift, heat_limit = payload.get("curve"), payload.get("shift"), payload.get("heat_limit")
-    # Die Heizgrenze gehoert seit TP12h zur Antwort; eine Antwort ohne sie (alter Server) ist ungueltig.
-    if (
-        status in _SETPOINT_STATUSES_WITH_VALUES and _is_finite_number(curve) and _is_finite_number(shift)
-        and _is_finite_number(heat_limit)
-    ):
+    levers = payload.get("levers")
+    expected = rt.override.binding.description.lever_set.levers
+    if status in _SETPOINT_STATUSES_WITH_VALUES and _valid_levers(levers, expected):
         _clear_sent_manual_override(rt)
         if status == delivery.STATUS_SKIPPED:
             logger.info(
                 "Server hat fuer seq=%s nicht gelernt (%s), Werte unveraendert uebernommen", seq, payload.get("reason"),
             )
         try:
-            rt.override.apply_server_values(curve, shift, heat_limit)
+            rt.override.apply_server_values({lever: levers[lever] for lever in expected})
         except DeviceWriteError as error:
             logger.warning("Serverwerte (seq=%s) konnten nicht auf die Anlage geschrieben werden: %s", seq, error)
             deliver(rt, delivery.WriteFailed(seq=seq, detail=str(error)))
@@ -278,9 +290,6 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
         logger.warning("Server hat Snapshot (seq=%s) abgelehnt: %s", seq, reason)
         deliver(rt, delivery.Ack(seq=seq, status=delivery.STATUS_REJECTED, reason=reason))
     else:
-        reason = (
-            f"ungültige Serverantwort (status={status!r}, curve={curve!r}, shift={shift!r}, "
-            f"heat_limit={heat_limit!r})"
-        )
+        reason = f"ungültige Serverantwort (status={status!r}, levers={levers!r}, erwartet: {', '.join(expected)})"
         logger.warning("Setpoints-Antwort (seq=%s): %s - nichts geschrieben", seq, reason)
         deliver(rt, delivery.Ack(seq=seq, status=delivery.STATUS_REJECTED, reason=reason))

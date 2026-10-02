@@ -14,14 +14,6 @@ REQUIRED_ROLES = (
     "room_actual", "room_target", "curve_current", "shift_current", "min_flow", "heat_limit", "outdoor_temp",
 )
 
-# Rollen des Snapshots an den Server -- muss mit REQUIRED_ROLES in heizungsserver/generic/messages.py
-# uebereinstimmen (Contract-Check 4). min_flow ist rein lokal (= Raum-Soll), outdoor_temp und
-# flow_setpoint laufen ueber die Telemetrie.
-SNAPSHOT_ROLES = ("heat_limit", "room_target", "curve_current", "shift_current")
-
-# Optionale Snapshot-Rollen (Server: OPTIONAL_ROLES). Seit TP11 keine mehr.
-OPTIONAL_SNAPSHOT_ROLES: tuple[str, ...] = ()
-
 # Attribut der Zonen-Wunschtemperatur einer Climate-Entity (ha_api.get_state liest "entity::attribut").
 CLIMATE_TARGET_ATTRIBUTE = "temperature"
 

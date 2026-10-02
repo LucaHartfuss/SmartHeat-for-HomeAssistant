@@ -7,8 +7,9 @@ import urllib.parse
 from pathlib import Path
 
 from heizungsbruecke.notifier import HINT_CATEGORIES
-from heizungsbruecke.safety import resolve_local_safety
 from heizungsbruecke.windows import validate_daily_trigger_time
+from smartheat_core.binding import VAILLANT_MYPYLLANT
+from smartheat_core.safety import LocalSafety, resolve_local_safety
 
 MQTT_HOST = "127.0.0.1"
 # Muss zum `local_port`-Default von cloudflared_access_mqtt passen: Konvention, kein
@@ -61,7 +62,7 @@ _ROOM_SENSOR = re.compile(r"sensor\.[a-z0-9_]+|climate\.[a-z0-9_]+::current_temp
 _OUTDOOR_SOURCE = re.compile(r"(sensor|weather)\.[a-z0-9_]+")
 _BATTERY_ENTITY = re.compile(r"(sensor|binary_sensor)\.[a-z0-9_]+")
 _NOTIFY_SERVICE = re.compile(r"notify\.[a-z0-9_]+")
-# Spec 5.6 "Zonen-Entity schreibbar": plant.write kennt nur climate.set_temperature und
+# Spec 5.6 "Zonen-Entity schreibbar": HaPlantBinding.write kennt nur climate.set_temperature und
 # number.set_value (ein input_number- oder sensor-Wert waere beim Start gueltig, liesse sich aber
 # nie schreiben).
 _WRITABLE_ENTITY = {
@@ -159,28 +160,23 @@ def resolve_effective_options(options: dict) -> dict:
         raise ConfigError(
             "Option 'verteilsystem' fehlt - bitte die SmartHeat-Integration neu einrichten"
         )
-    try:
-        safety = resolve_local_safety(verteilsystem)
-    except ValueError as error:
-        raise ConfigError(f"Option 'verteilsystem': {error}") from None
+    local_safety(options)
     base_url = resolve_accounts_api_base_url(options.get("accounts_api_base_url"))
     return {
         **options,
         **sources,
-        "curve_min": safety.curve_min,
-        "curve_max": safety.curve_max,
-        "shift_min": safety.shift_min,
-        "shift_max": safety.shift_max,
-        "min_flow_min": safety.min_flow_min,
-        "min_flow_max": safety.min_flow_max,
-        "heat_limit_min": safety.heat_limit_min,
-        "heat_limit_max": safety.heat_limit_max,
-        "boost_threshold_k": safety.boost_threshold_k,
-        "boost_curve_value": safety.boost_curve_value,
-        "boost_shift_value": safety.boost_shift_value,
         "daily_trigger_time": daily_trigger_time,
         "accounts_api_base_url": base_url,
     }
+
+
+def local_safety(options: dict) -> LocalSafety:
+    """Lokale Sicherheitswerte fuer den Hebelsatz des HA-Bindings und das Verteilsystem des Profils (Regel 4). Die
+    Boost-Werte liegen per check_invariants in den Bereichen (bis 0.29.0 validate_boost_config)."""
+    try:
+        return resolve_local_safety(VAILLANT_MYPYLLANT.lever_set.id, options.get("verteilsystem"))
+    except ValueError as error:
+        raise ConfigError(f"Option 'verteilsystem': {error}") from None
 
 
 def resolve_accounts_api_base_url(value) -> str:
@@ -196,27 +192,6 @@ def resolve_accounts_api_base_url(value) -> str:
             f"Option 'accounts_api_base_url' ({value!r}) muss mit https:// beginnen und einen Host haben"
         )
     return value.rstrip("/")
-
-
-def validate_boost_config(options: dict) -> str | None:
-    """Boost-Werte ausserhalb der Clamps sind ein Startfehler statt still geclampt: der Boost
-    ist der einzige Schreibpfad ohne Server-Aufsicht."""
-    curve_min, curve_max = options["curve_min"], options["curve_max"]
-    shift_min, shift_max = options["shift_min"], options["shift_max"]
-    boost_curve_value = options["boost_curve_value"]
-    boost_shift_value = options["boost_shift_value"]
-
-    if not (curve_min <= boost_curve_value <= curve_max):
-        return (
-            f"boost_curve_value ({boost_curve_value}) liegt ausserhalb des konfigurierten "
-            f"Bereichs [curve_min={curve_min}, curve_max={curve_max}]"
-        )
-    if not (shift_min <= boost_shift_value <= shift_max):
-        return (
-            f"boost_shift_value ({boost_shift_value}) liegt ausserhalb des konfigurierten "
-            f"Bereichs [shift_min={shift_min}, shift_max={shift_max}]"
-        )
-    return None
 
 
 def _is_finite_number(value) -> bool:
@@ -271,8 +246,7 @@ def validate_telemetry_interval(options: dict) -> str | None:
 def validate(options: dict) -> str | None:
     """Erste Fehlermeldung der Startpruefungen, sonst None."""
     for check in (
-        validate_boost_config, validate_local_check_interval,
-        validate_telemetry_interval,
+        validate_local_check_interval, validate_telemetry_interval,
     ):
         error = check(options)
         if error:

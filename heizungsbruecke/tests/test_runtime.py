@@ -1,6 +1,7 @@
 """Betrieb von __main__ ueber den Regel-Worker (Design-Spec 2026-09-26): Boot,
 Tick-Zustellung, Datenfehler, Notbetrieb, lokale Checks und Abo-Pfade. Getrieben ueber
 _start_bridge mit Fake-Uhr (tests/conftest.py), Fake-HA, Fake-MQTT und Fake-Trigger-Client."""
+import dataclasses
 import itertools
 import json
 import logging
@@ -17,10 +18,13 @@ from heizungsbruecke import abo, backup_store, datentraeger, entitlement, ticks
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.delivery import DataFault, DeliveryState
 from heizungsbruecke.derived_sensors import DerivedSensors
-from heizungsbruecke.manual_override import MAX_WRITES_PER_DAY, RETRY_SECONDS
-from heizungsbruecke.override import OWN_WRITE_SETTLE_SECONDS, Override
 from heizungsbruecke.runtime import Runtime
 from heizungsbruecke.status import ADDON_VERSION
+from smartheat_core.binding import VAILLANT_MYPYLLANT
+from smartheat_core.enforce import MAX_WRITES_PER_DAY, RETRY_SECONDS
+from smartheat_core.pipeline import LeverPipeline
+
+SETTLE = VAILLANT_MYPYLLANT.settle_seconds
 
 OPTIONS = {
     "tenant_id": "test_tenant",
@@ -78,18 +82,32 @@ class FakeMqtt:
     def stop(self):
         self.stopped = True
 
-    def answer(self, seq, status="ok", curve=0.95, shift=23.0, reason=None, schema=3, heat_limit=16.0):
-        """Server-Antwort ueber den echten paho-Callback einspeisen (schema=_OMIT: Feld fehlt)."""
+    def answer(self, seq, status="ok", curve=0.95, shift=23.0, reason=None, schema=4, heat_limit=16.0, levers=None):
+        """Server-Antwort (Schema 4) ueber den echten paho-Callback einspeisen. levers=None baut die Hebel aus
+        curve/shift/heat_limit (ein Wert _OMIT laesst den Hebel weg); schema=_OMIT bzw. levers=_OMIT: Feld fehlt."""
         message = MagicMock()
         message.retain = False
+        if levers is None:
+            levers = {
+                name: value for name, value in (("curve", curve), ("room_setpoint", shift), ("heat_limit", heat_limit))
+                if value is not _OMIT
+            }
         payload = {
-            "schema": schema, "seq": seq, "ts": "x", "status": status, "curve": curve, "shift": shift, "reason": reason,
-            "heat_limit": heat_limit,
+            "schema": schema, "seq": seq, "ts": "x", "status": status, "reason": reason, "levers": levers,
+            "learned": {"curve": 1.0, "heat_limit": 16.0},
         }
         if schema is _OMIT:
             del payload["schema"]
-        if heat_limit is _OMIT:
-            del payload["heat_limit"]
+        if levers is _OMIT:
+            del payload["levers"]
+        message.payload = json.dumps(payload)
+        self.setpoints_callback(None, None, message)
+
+    def answer_raw(self, seq, **fields):
+        message = MagicMock()
+        message.retain = False
+        payload = {"schema": 4, "seq": seq, "ts": "x", "status": "ok", "reason": None,
+                   "levers": {"curve": 0.95, "room_setpoint": 23.0, "heat_limit": 16.0}, "learned": None, **fields}
         message.payload = json.dumps(payload)
         self.setpoints_callback(None, None, message)
 
@@ -191,8 +209,11 @@ def _mark_abo_finished(bridge) -> None:
     bridge.store.update(abo_finished=True)
 
 
-def _override_options(bridge, **values) -> None:
-    bridge.options.update(values)  # dasselbe Dict wie in bridge.override
+def _override_comfort_boost(bridge, **values) -> None:
+    """Comfort-Boost-Werte je Hebel abweichend von LocalSafety setzen (bis 0.29.0 ueber die Optionen
+    boost_curve_value/boost_shift_value), damit die Tests Comfort- und Notfall-Zeile unterscheiden."""
+    safety = bridge.override.safety
+    bridge.override._safety = dataclasses.replace(safety, comfort_boost={**safety.comfort_boost, **values})
 
 
 def _raise_oserror(*args, **kwargs):
@@ -204,7 +225,7 @@ def _break_backup_writes(monkeypatch) -> None:
 
 
 def _fail_next_snapshot_read(monkeypatch, error: Exception) -> None:
-    original = ticks.read_snapshot_roles
+    original = ticks.read_snapshot
     failures = [error]
 
     def _flaky(*args, **kwargs):
@@ -212,7 +233,7 @@ def _fail_next_snapshot_read(monkeypatch, error: Exception) -> None:
             raise failures.pop()
         return original(*args, **kwargs)
 
-    monkeypatch.setattr("heizungsbruecke.ticks.read_snapshot_roles", _flaky)
+    monkeypatch.setattr("heizungsbruecke.ticks.read_snapshot", _flaky)
 
 
 def _quiet_backup(env, **extra):
@@ -220,7 +241,7 @@ def _quiet_backup(env, **extra):
     save_backup(env.paths["BACKUP_PATH"], {
         "last_room_target": 21.0, "last_published_target_rt": 21.0,
         "last_daily_trigger_date": datetime.now().date().isoformat(),
-        "curve_current": 0.9, "shift_current": 22.0, **extra,
+        "restore_point": {"curve": 0.9, "room_setpoint": 22.0}, **extra,
     })
 
 
@@ -298,11 +319,11 @@ def test_boot_prepares_zone_before_first_snapshot(env, monkeypatch):
 
     assert order == [[("climate.zone", "heat_cool"), ("climate.zone::temperature", 21.0)]]  # vor MQTT
     assert env.ha.states["climate.zone::temperature"] == 21.0  # Raum-Soll als Startwert
-    assert _backup(env)["shift_current"] == 21.0
+    assert _backup(env)["restore_point"]["room_setpoint"] == 21.0
 
     _trigger(env, bridge, "sensor.room_target")  # erster Tick
 
-    assert _mqtt(env).snapshots[0]["roles"]["shift_current"] == 21.0
+    assert _mqtt(env).snapshots[0]["levers"]["room_setpoint"] == 21.0
 
 
 def test_boot_keeps_a_usable_zone_shift(env):
@@ -315,7 +336,8 @@ def test_boot_keeps_a_usable_zone_shift(env):
 
 def _backup_before_tp11(env, **extra):
     """backup.json von 0.23.0: Wiederherstellungspunkt nur mit Steigung (am Anschlag), keine
-    Parallelverschiebung; beim Start waere sonst kein Tick faellig."""
+    Parallelverschiebung; beim Start waere sonst kein Tick faellig. Bewusst mit dem alten Rollen-Schluessel
+    curve_current: der Start migriert ihn auf restore_point (Plan 2, state._migrate_legacy_roles)."""
     backup = {
         "last_room_target": 21.0, "last_published_target_rt": 21.0,
         "last_daily_trigger_date": datetime.now().date().isoformat(),
@@ -332,10 +354,10 @@ def test_first_start_without_shift_restore_point_reseeds_curve_and_ticks_at_once
 
     bridge = _start(env)
 
-    assert _backup(env)["curve_current"] == 1.05
+    assert _backup(env)["restore_point"]["curve"] == 1.05
     _trigger(env, bridge, "sensor.room_actual")  # naechster lokaler Check
     snapshot = _mqtt(env).snapshots[0]
-    assert (snapshot["trigger"], snapshot["roles"]["curve_current"]) == ("target_change", 1.05)
+    assert (snapshot["trigger"], snapshot["levers"]["curve"]) == ("target_change", 1.05)
 
     _settle(env, bridge)
     _advance(env, bridge, 300)
@@ -351,7 +373,7 @@ def test_first_start_reseeds_curve_clamped_and_rounded(env, live, seeded):
 
     _start(env)
 
-    assert _backup(env)["curve_current"] == seeded
+    assert _backup(env)["restore_point"]["curve"] == seeded
 
 
 def test_first_start_drops_the_old_curve_point_when_the_plant_is_unreadable(env):
@@ -360,6 +382,7 @@ def test_first_start_drops_the_old_curve_point_when_the_plant_is_unreadable(env)
 
     _start(env)
 
+    assert "curve" not in _backup(env).get("restore_point", {})
     assert "curve_current" not in _backup(env)
 
 
@@ -370,7 +393,7 @@ def test_first_start_during_a_boost_keeps_the_curve_point(env):
 
     _start(env)
 
-    assert _backup(env)["curve_current"] == 1.5
+    assert _backup(env)["restore_point"]["curve"] == 1.5
 
 
 def test_restart_with_shift_restore_point_keeps_curve_and_does_not_tick(env):
@@ -380,7 +403,7 @@ def test_restart_with_shift_restore_point_keeps_curve_and_does_not_tick(env):
 
     _trigger(env, bridge, "sensor.room_actual")
 
-    assert _backup(env)["curve_current"] == 0.9
+    assert _backup(env)["restore_point"]["curve"] == 0.9
     assert _mqtt(env).snapshots == []
 
 
@@ -397,7 +420,7 @@ def test_zone_preparation_failed_at_start_is_retried_on_the_next_local_check(env
     _trigger(env, bridge, "sensor.room_actual")
 
     assert env.ha.writes[:2] == [("climate.zone", "heat_cool"), ("climate.zone::temperature", 21.0)]
-    assert _backup(env)["shift_current"] == 21.0
+    assert _backup(env)["restore_point"]["room_setpoint"] == 21.0
 
     writes = len(env.ha.writes)
     env.ha.states["climate.zone"] = "auto"  # erfolgreich vorbereitet: kein weiterer Versuch
@@ -406,16 +429,16 @@ def test_zone_preparation_failed_at_start_is_retried_on_the_next_local_check(env
 
 
 def _failing_zone_preparation(env, monkeypatch, failures=None):
-    """Override.prepare_zone scheitert (z. B. 403 "Quota Exceeded"); gibt die Versuchszeitpunkte
+    """LeverPipeline.prepare_start scheitert (z. B. 403 "Quota Exceeded"); gibt die Versuchszeitpunkte
     (Fake-Uhr) zurueck. failures=None: scheitert immer, sonst nur die ersten `failures` Versuche."""
     attempts = []
 
-    def _prepare_zone(self, start_shift):
+    def _prepare_start(self, start_value):
         attempts.append(env.clock())
         if failures is None or len(attempts) <= failures:
             raise RuntimeError("403 Quota Exceeded")
 
-    monkeypatch.setattr(Override, "prepare_zone", _prepare_zone)
+    monkeypatch.setattr(LeverPipeline, "prepare_start", _prepare_start)
     return attempts
 
 
@@ -816,13 +839,13 @@ def test_answer_writes_values_and_closes_tick(env):
     _answer(env, bridge, snapshot["seq"], curve=0.95, shift=23.0)
 
     assert snapshot["trigger"] == "target_change"
-    assert snapshot["roles"]["room_target"] == 20.5
-    assert set(snapshot["roles"]) == {"heat_limit", "room_target", "curve_current", "shift_current"}
+    assert snapshot["room_target"] == 20.5
+    assert set(snapshot["levers"]) == {"curve", "room_setpoint", "heat_limit"}
     assert ("number.min_flow", 20.5) in env.ha.writes  # Mindestvorlauf folgt dem Raum-Soll
     assert _regulation_writes(env) == [
         ("number.curve_current", 0.95), ("number.shift_current", 23.0), ("number.heat_limit", 16.0),
     ]
-    assert _backup(env)["curve_current"] == 0.95
+    assert _backup(env)["restore_point"]["curve"] == 0.95
     assert _delivery(bridge).pending is None
     assert env.ha.pushes == []
 
@@ -863,7 +886,7 @@ def test_dead_room_actual_holds_tick_and_reports_once(env, caplog):
     snapshot = _mqtt(env).snapshots[0]
     _answer(env, bridge, snapshot["seq"])
 
-    assert "room_actual" not in snapshot["roles"]
+    assert "room_actual" not in snapshot and "room_actual" not in snapshot["levers"]
     assert env.ha.pushes[-1] == "Heizungsbrücke: Messwerte wieder gültig, Heizkurve wird wieder angepasst."
 
 
@@ -958,7 +981,7 @@ def test_answer_with_heat_limit_writes_all_three_values(env):
     assert ("number.curve_current", 1.0) in _regulation_writes(env)
 
 
-@pytest.mark.parametrize("schema", [_OMIT, None, 2, "3", True, 3.0])
+@pytest.mark.parametrize("schema", [_OMIT, None, 2, 3, "3", True, 3.0])
 def test_answer_with_unknown_schema_counts_as_server_fault_without_writing(env, schema):
     _quiet_backup(env)
     bridge = _start(env)
@@ -969,6 +992,47 @@ def test_answer_with_unknown_schema_counts_as_server_fault_without_writing(env, 
     assert _regulation_writes(env) == []
     assert "ungültige Serverantwort" in env.ha.pushes[-1]
     assert "unbekanntes Schema" in env.ha.pushes[-1]
+
+
+@pytest.mark.parametrize("levers", [
+    {"curve": 1.0, "room_setpoint": 21.0},
+    {"curve": 1.0, "room_setpoint": 21.0, "heat_limit": 16.0, "level": 2.0},
+    {"curve": float("inf"), "room_setpoint": 21.0, "heat_limit": 16.0},
+    _OMIT,
+])
+def test_answer_with_wrong_levers_is_a_server_fault_without_writing(env, levers):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+
+    _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], levers=levers)
+
+    assert _regulation_writes(env) == []
+    assert "ungültige Serverantwort" in env.ha.pushes[-1]
+
+
+def test_answer_with_null_levers_is_a_server_fault_without_writing(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+
+    _mqtt(env).answer_raw(_mqtt(env).snapshots[0]["seq"], levers=None)
+    bridge.worker.run_pending()
+
+    assert _regulation_writes(env) == []
+    assert "ungültige Serverantwort" in env.ha.pushes[-1]
+
+
+def test_snapshot_payload_is_schema_4(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+
+    snapshot = _mqtt(env).snapshots[-1]
+    assert snapshot["schema"] == 4
+    assert snapshot["readonly"] == []
+    assert set(snapshot["levers"]) == {"curve", "room_setpoint", "heat_limit"}
+    assert snapshot["room_target"] == 20.5
 
 
 def test_unknown_schema_for_a_foreign_seq_is_ignored(env):
@@ -1036,8 +1100,8 @@ def test_answer_during_boost_only_updates_backup(env):
     _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], curve=0.95, shift=23.0, heat_limit=17.0)
 
     assert _regulation_writes(env) == boost_writes
-    assert (_backup(env)["curve_current"], _backup(env)["shift_current"]) == (0.95, 23.0)
-    assert _backup(env)["heat_limit"] == 17.0
+    assert (_backup(env)["restore_point"]["curve"], _backup(env)["restore_point"]["room_setpoint"]) == (0.95, 23.0)
+    assert _backup(env)["restore_point"]["heat_limit"] == 17.0
 
 
 def test_foreign_seq_and_duplicate_answers_are_ignored(env):
@@ -1080,7 +1144,7 @@ def test_notbetrieb_end_hands_device_to_running_comfort_boost(env):
     # Laeuft der Comfort-Boost noch, gehen am Notbetriebsende dessen Werte auf die Anlage;
     # an seinem eigenen Ende die zwischenzeitlich vom Server gelieferten.
     bridge = _start_in_notbetrieb_with_emergency_boost(env)
-    _override_options(bridge, boost_curve_value=1.0, boost_shift_value=24.0)
+    _override_comfort_boost(bridge, curve=1.0, room_setpoint=24.0)
 
     _set_room_target(env, bridge, 22.0)  # Comfort-Boost startet, Notfall-Boost haelt die Anlage
 
@@ -1092,7 +1156,7 @@ def test_notbetrieb_end_hands_device_to_running_comfort_boost(env):
 
     assert (env.ha.states["number.curve_current"], env.ha.states["number.shift_current"]) == (1.0, 24.0)
     assert _backup(env)["boost_active"] is True
-    assert _backup(env)["curve_current"] == 0.95
+    assert _backup(env)["restore_point"]["curve"] == 0.95
 
     env.ha.states["sensor.room_actual"] = 21.6
     _trigger(env, bridge, "sensor.room_actual")
@@ -1692,7 +1756,7 @@ def test_grace_end_idles_even_if_saving_flags_fails(env, monkeypatch):
 def test_emergency_start_during_comfort_boost_writes_max_values_and_both_end_together(env):
     _quiet_backup(env)
     bridge = _start(env)
-    _override_options(bridge, boost_curve_value=1.0, boost_shift_value=24.0)
+    _override_comfort_boost(bridge, curve=1.0, room_setpoint=24.0)
 
     _set_room_target(env, bridge, 22.0)  # Comfort-Boost + Tick
     _advance(env, bridge, 30)
@@ -1812,7 +1876,7 @@ def test_restart_keeps_unknown_backup_keys_and_resumes_open_tick_with_fault(env)
 
     assert backup["zukunft"] == {"x": 1}
     assert backup["last_published_target_rt"] == 20.5
-    assert backup["curve_current"] == 0.95
+    assert backup["restore_point"]["curve"] == 0.95
 
 
 def test_restart_during_comfort_boost_continues_and_ends_on_arrival(env):
@@ -1912,7 +1976,8 @@ def test_duplicate_rejected_answer_does_not_skip_a_retry_stage(env):
 
 # --- F1: Anlage nicht beschreibbar ---
 
-WRITE_DETAIL = "curve_current (number.curve_current): myVAILLANT-Cloud nicht erreichbar"
+# Datenfehler nennen Hebel (Controller-Ruling Task 10, Spec P2-3); bis 0.29.0 "curve_current (...)".
+WRITE_DETAIL = "curve (number.curve_current): myVAILLANT-Cloud nicht erreichbar"
 WRITE_FAULT = (
     f"Heizungsbrücke: Neue Heizkurve konnte nicht an die Anlage übertragen werden ({WRITE_DETAIL}). "
     "Wird automatisch erneut versucht."
@@ -2148,13 +2213,13 @@ def test_sign_off_with_invalid_configuration_without_boost_stays_silent(env):
 
 # --- Durchsetzung: zurueckgesetzter Eingriff reist als KPI mit (TP11, Spec 5.3) ---
 
-OVERRIDE = {"curve": 1.3, "shift": 24.5, "erkannt": "2026-10-01T08:00:00+02:00"}
+OVERRIDE = {"levers": {"curve": 1.3, "room_setpoint": 24.5, "heat_limit": 16.0}, "erkannt": "2026-10-01T08:00:00+02:00"}
 
 
 def _settle(env, bridge):
-    """Die Durchsetzung wertet erst nach OWN_WRITE_SETTLE_SECONDS Laufzeit bzw. seit dem letzten
-    eigenen Schreiben aus (Override.settled)."""
-    _advance(env, bridge, OWN_WRITE_SETTLE_SECONDS + 1)
+    """Die Durchsetzung wertet erst nach settle_seconds Laufzeit bzw. seit dem letzten
+    eigenen Schreiben aus (LeverPipeline.settled)."""
+    _advance(env, bridge, SETTLE + 1)
 
 
 def test_manual_override_travels_with_the_next_snapshot_and_is_cleared_after_the_answer(env):
@@ -2165,13 +2230,14 @@ def test_manual_override_travels_with_the_next_snapshot_and_is_cleared_after_the
     _advance(env, bridge, 300)
     _advance(env, bridge, 300)  # zwei Runden mit Abweichung
 
-    assert _backup(env)["manual_override_pending"]["curve"] == 1.3
+    # Heizgrenze ohne Wiederherstellungspunkt: Live-Wert der Anlage (Rueckfallkette, Plan-Praezisierung 6).
+    assert _backup(env)["manual_override_pending"]["levers"] == {"curve": 1.3, "room_setpoint": 24.5, "heat_limit": 16.0}
     assert _last_event(env)["hinweise"]["manueller_eingriff"]["kurve"] == 1.3
     assert _regulation_writes(env) == [("number.curve_current", 0.9), ("number.shift_current", 22.0)]  # zurueckgesetzt
 
     _set_room_target(env, bridge, 20.5)
     snapshot = _mqtt(env).snapshots[-1]
-    assert set(snapshot["manual_override"]) == {"curve", "shift", "erkannt"}
+    assert set(snapshot["manual_override"]) == {"levers", "erkannt"}
 
     _answer(env, bridge, snapshot["seq"], curve=0.95, shift=23.0)
     assert "manual_override_pending" not in _backup(env)
@@ -2215,7 +2281,7 @@ def test_manual_override_detected_during_an_open_tick_survives_a_same_seq_retry(
     env.ha.states.update({"number.curve_current": 1.3, "number.shift_current": 24.5})
     _advance(env, bridge, 5)
     _advance(env, bridge, 5)  # zwei Runden mit Abweichung, seq X wartet noch auf Antwort
-    assert _backup(env)["manual_override_pending"]["curve"] == 1.3
+    assert _backup(env)["manual_override_pending"]["levers"]["curve"] == 1.3
 
     _advance(env, bridge, 20)  # Ack-Timeout (30 s seit dem Publish) loest den Retry derselben seq aus
     assert [s["seq"] for s in _mqtt(env).snapshots] == [seq, seq]
@@ -2223,7 +2289,7 @@ def test_manual_override_detected_during_an_open_tick_survives_a_same_seq_retry(
 
     _answer(env, bridge, seq, curve=0.95, shift=23.0)  # verspaetete Antwort auf den Retry trifft ein
 
-    assert _backup(env)["manual_override_pending"]["curve"] == 1.3  # ueberlebt, der Server hat ihn nie gesehen
+    assert _backup(env)["manual_override_pending"]["levers"]["curve"] == 1.3  # ueberlebt, der Server hat ihn nie gesehen
 
 
 def test_manual_override_detected_while_a_tick_is_open_survives_its_answer(env):
@@ -2242,7 +2308,7 @@ def test_manual_override_detected_while_a_tick_is_open_survives_its_answer(env):
 
     _answer(env, bridge, seq, curve=0.95, shift=23.0)  # Antwort auf den urspruenglichen Versuch
 
-    assert _backup(env)["manual_override_pending"]["curve"] == 1.3
+    assert _backup(env)["manual_override_pending"]["levers"]["curve"] == 1.3
 
 
 def test_ok_answer_clears_the_pending_manual_override_even_if_the_write_then_fails(env):

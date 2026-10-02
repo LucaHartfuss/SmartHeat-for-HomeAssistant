@@ -555,11 +555,13 @@ def _prime_rt(monkeypatch, capture):
 
     monkeypatch.setattr(main_module.regulation, "read_room_target_live", lambda rt: 20.5)
     monkeypatch.setattr(main_module.regulation, "run_local_check", lambda rt: None)
-    monkeypatch.setattr(main_module.min_flow, "sync", lambda rt: None)
+    monkeypatch.setattr(main_module.derived, "sync", lambda rt: None)
     monkeypatch.setattr(main_module, "_prepare_zone", lambda rt: None)
     rt = SimpleNamespace(
-        override=SimpleNamespace(capture_heat_limit_original=capture),
-        store=SimpleNamespace(state=SimpleNamespace(shift_current=21.0, stable_target=None), update=lambda **kw: None),
+        override=SimpleNamespace(capture_originals=capture),
+        store=SimpleNamespace(
+            state=SimpleNamespace(restore_point={"room_setpoint": 21.0}, stable_target=None), update=lambda **kw: None,
+        ),
     )
     return main_module, rt
 

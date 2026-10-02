@@ -15,7 +15,7 @@ from heizungsbruecke.ticks import _notice, seed_notices
     (delivery.NOTIFY_DATENFEHLER_SERVER, ("unplausibler Wert für dat: 99 (erlaubt -40–45)",),
      ("datenfehler", "server:unplausibler Wert für dat")),
     (delivery.NOTIFY_DATENFEHLER_SERVER, (), ("datenfehler", "server:")),
-    (delivery.NOTIFY_DATENFEHLER_WRITE, ("curve_current", "number.x", "503"), ("datenfehler", "anlage")),
+    (delivery.NOTIFY_DATENFEHLER_WRITE, ("curve", "number.x", "503"), ("datenfehler", "anlage")),
     (delivery.NOTIFY_DATENFEHLER_RESOLVED, (), ("datenfehler", "ok")),
     (delivery.NOTIFY_WRITE_RESOLVED, (), ("datenfehler", "ok")),
 ])

@@ -11,20 +11,20 @@ def test_load_backup_returns_empty_dict_when_file_missing(tmp_path):
 
 def test_save_then_load_backup_roundtrips(tmp_path):
     path = tmp_path / "backup.json"
-    save_backup(path, {"curve_current": 0.7, "shift_current": 25.7})
-    assert load_backup(path) == {"curve_current": 0.7, "shift_current": 25.7}
+    save_backup(path, {"restore_point": {"curve": 0.7, "room_setpoint": 25.7}})
+    assert load_backup(path) == {"restore_point": {"curve": 0.7, "room_setpoint": 25.7}}
 
 
 def test_save_backup_overwrites_previous_content(tmp_path):
     path = tmp_path / "backup.json"
-    save_backup(path, {"curve_current": 0.7})
-    save_backup(path, {"curve_current": 0.8})
-    assert load_backup(path) == {"curve_current": 0.8}
+    save_backup(path, {"restore_point": {"curve": 0.7}})
+    save_backup(path, {"restore_point": {"curve": 0.8}})
+    assert load_backup(path) == {"restore_point": {"curve": 0.8}}
 
 
 def test_save_backup_leaves_no_temp_file_behind(tmp_path):
     path = tmp_path / "backup.json"
-    save_backup(path, {"curve_current": 0.7})
+    save_backup(path, {"restore_point": {"curve": 0.7}})
     assert not (tmp_path / "backup.json.tmp").exists()
     assert list(tmp_path.iterdir()) == [path]
 
@@ -38,16 +38,16 @@ def test_save_backup_writes_via_atomic_rename(tmp_path, monkeypatch):
 
     def spy_replace(src, dst):
         # At the moment of replace, the temp file must already hold the full content.
-        assert Path(src).read_text() == json.dumps({"curve_current": 0.9})
+        assert Path(src).read_text() == json.dumps({"restore_point": {"curve": 0.9}})
         replace_calls.append((src, dst))
         return original_replace(src, dst)
 
     monkeypatch.setattr(backup_store_module.os, "replace", spy_replace)
 
-    save_backup(path, {"curve_current": 0.9})
+    save_backup(path, {"restore_point": {"curve": 0.9}})
 
     assert len(replace_calls) == 1
-    assert load_backup(path) == {"curve_current": 0.9}
+    assert load_backup(path) == {"restore_point": {"curve": 0.9}}
 
 
 def test_save_backup_syncs_the_temp_file_before_replacing(tmp_path, monkeypatch):

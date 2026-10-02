@@ -1,13 +1,4 @@
-from dataclasses import dataclass
-
 _TARGET_RISE_EPSILON_K = 0.01
-
-
-@dataclass(frozen=True)
-class BoostDecision:
-    active: bool
-    curve_value: float | None
-    shift_value: float | None
 
 
 def decide_boost(
@@ -16,9 +7,7 @@ def decide_boost(
     previous_room_target: float | None,
     boost_was_active: bool,
     arrival_threshold_k: float,
-    boost_curve_value: float,
-    boost_shift_value: float,
-) -> BoostDecision:
+) -> bool:
     """Boost aktiviert ausschliesslich als Reaktion auf eine Erhoehung der
     Wunschtemperatur (Komfort-Beschleunigung), nicht mehr bei Kaelte aus anderer
     Ursache -- bewusste funktionale Neudefinition (inkl. dokumentiertem Tradeoff: Boost
@@ -28,13 +17,5 @@ def decide_boost(
     einen Trigger aus -- es gibt keine "Erhoehung" ohne Vorwert.
     """
     if boost_was_active:
-        active = room_actual < room_target - arrival_threshold_k
-    else:
-        active = (
-            previous_room_target is not None
-            and room_target > previous_room_target + _TARGET_RISE_EPSILON_K
-        )
-
-    if active:
-        return BoostDecision(active=True, curve_value=boost_curve_value, shift_value=boost_shift_value)
-    return BoostDecision(active=False, curve_value=None, shift_value=None)
+        return room_actual < room_target - arrival_threshold_k
+    return previous_room_target is not None and room_target > previous_room_target + _TARGET_RISE_EPSILON_K

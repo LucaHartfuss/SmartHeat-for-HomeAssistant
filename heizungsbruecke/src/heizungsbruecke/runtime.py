@@ -15,10 +15,10 @@ if TYPE_CHECKING:
     from heizungsbruecke.manifest import ChannelManifest
     from heizungsbruecke.mqtt_client import BridgeMqttClient
     from heizungsbruecke.notifier import Notifier
-    from heizungsbruecke.override import Override
     from heizungsbruecke.state import StateStore
     from heizungsbruecke.status import StatusReporter
     from heizungsbruecke.worker import RegulationWorker
+    from smartheat_core.pipeline import LeverPipeline
 
 EV_LOCAL_CHECK = "local_check"
 EV_SETPOINTS = "setpoints"
@@ -39,20 +39,20 @@ EV_RECHECK = "recheck"
 @dataclass
 class Runtime:
     """Wird nur im Worker-Thread benutzt. Zustand liegt ausschliesslich in `store`, Schreiben
-    auf die Anlage ausschliesslich ueber `override`."""
+    auf die Anlage ausschliesslich ueber `override` (die Hebel-Pipeline; der Name stammt aus der Zeit vor Plan 2)."""
     manifest: ChannelManifest
     ha_api: HomeAssistantApi
     options: dict
     worker: RegulationWorker
     store: StateStore
-    override: Override
+    override: LeverPipeline
     notifier: Notifier
     mqtt_client: BridgeMqttClient | None = None
     trigger_client: HaTriggerClient | None = None
     status: StatusReporter | None = None
     # Ruhezustand im Betrieb (Fristende): alle Handler ausser dem Lebenszeichen laufen leer.
     idle: bool = False
-    # Durchsetzung (manual_override.py): der mit dem laufenden Tick als KPI gesendete, schon
+    # Durchsetzung (enforce.py): der mit dem laufenden Tick als KPI gesendete, schon
     # zurueckgesetzte Eingriff (wird nach der Serverantwort geloescht).
     manual_override_sent: dict | None = None
     # Die seq, fuer die manual_override_sent gepinnt ist (gesetzt beim ersten erfolgreichen

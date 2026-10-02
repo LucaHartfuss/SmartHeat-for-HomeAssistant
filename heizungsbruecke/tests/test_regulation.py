@@ -1,4 +1,4 @@
-"""Lokaler Check und "Tick faellig?" (regulation.py) mit echtem StateStore und Override."""
+"""Lokaler Check und "Tick faellig?" (regulation.py) mit echtem StateStore und Hebel-Pipeline."""
 import logging
 from datetime import datetime
 from types import SimpleNamespace
@@ -8,18 +8,22 @@ import pytest
 
 from heizungsbruecke import regulation
 from heizungsbruecke.backup_store import load_backup
+from heizungsbruecke.ha_binding import HaPlantBinding
 from heizungsbruecke.manifest import ChannelManifest
-from heizungsbruecke.override import Override
+from smartheat_core.pipeline import LeverPipeline
+from smartheat_core.safety import LocalSafety
 
 # Unterscheidbar: Notfall (= Clamp-Maximum) 0.8/5.0, Comfort 0.5/2.0, Wiederherstellungspunkt 0.3/1.0.
-OPTIONS = {
-    "curve_min": 0.2, "curve_max": 0.8, "shift_min": 0.0, "shift_max": 5.0,
-    "boost_threshold_k": 0.5, "boost_curve_value": 0.5, "boost_shift_value": 2.0,
-    "daily_trigger_time": "12:00", "heat_limit_min": 5.0, "heat_limit_max": 20.0,
-}
+OPTIONS = {"daily_trigger_time": "12:00"}
+SAFETY = LocalSafety(
+    ranges={"curve": (0.2, 0.8), "room_setpoint": (0.0, 5.0), "heat_limit": (5.0, 20.0), "min_flow": (20.0, 30.0)},
+    comfort_boost={"curve": 0.5, "room_setpoint": 2.0, "heat_limit": 20.0},
+    emergency_boost_levers=("curve", "room_setpoint", "heat_limit"),
+    arrival_threshold_k=0.5,
+)
 ROOM_ROLES = {"room_actual": "sensor.room_actual", "room_target": "sensor.room_target"}
 ENTITY_IDS = {**ROOM_ROLES, "curve_current": "number.curve", "shift_current": "number.shift"}
-RESTORE_POINT = {"curve_current": 0.3, "shift_current": 1.0}
+RESTORE_POINT = {"restore_point": {"curve": 0.3, "room_setpoint": 1.0}}
 EMERGENCY = [("number.curve", 0.8), ("number.shift", 5.0)]
 COMFORT = [("number.curve", 0.5), ("number.shift", 2.0)]
 RESTORE = [("number.curve", 0.3), ("number.shift", 1.0)]
@@ -44,7 +48,7 @@ def _runtime(store, *, room_actual=20.0, room_target=21.0, entity_ids=ENTITY_IDS
         store.update(stable_target=room_target)
     return SimpleNamespace(
         manifest=manifest, ha_api=ha_api, options=options, store=store, states=values,
-        override=Override(store, manifest, ha_api, options),
+        override=LeverPipeline(store, HaPlantBinding(ha_api, manifest), SAFETY),
     )
 
 

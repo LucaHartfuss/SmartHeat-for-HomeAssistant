@@ -21,23 +21,19 @@ from heizungsbruecke import (
     delivery,
     derived_sensors,
     entitlement,
-    manual_override,
-    min_flow,
     regulation,
     room_sensors,
     telemetry,
     ticks,
     triggers,
     waerme_hint,
-    write_budget,
 )
 from heizungsbruecke.delivery import ROLE_DATENTRAEGER, SOURCE_LOCAL, DataFault
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.ha_api import HomeAssistantApi
+from heizungsbruecke.ha_binding import LEVER_ROLES, HaPlantBinding
 from heizungsbruecke.manifest import ChannelManifest, ManifestError, build_manifest, entity_ref
 from heizungsbruecke.notifier import STATE_OK, Notifier
-from heizungsbruecke.override import ROLES as OVERRIDE_ROLES
-from heizungsbruecke.override import Override
 from heizungsbruecke.runtime import (
     EV_ACK_TIMEOUT,
     EV_AUTH_REJECTED,
@@ -65,6 +61,9 @@ from heizungsbruecke.status import (
     StatusReporter,
 )
 from heizungsbruecke.worker import Event, RegulationWorker
+from smartheat_core import derived, enforce, write_budget
+from smartheat_core.binding import VAILLANT_MYPYLLANT
+from smartheat_core.pipeline import LeverPipeline
 
 # Das Add-on startet mit `startup: services`, evtl. vor HA Core. Solange HA nicht antwortet,
 # wird unbegrenzt gewartet (B10). Erst bei erreichbarem HA zaehlt das Budget fuer fehlende
@@ -259,10 +258,11 @@ def _sign_off(options: dict, ha_api, store, notifier, status, clock) -> IdleBrid
         logger.error("Abmelden ohne Zuruecksetzen, Konfiguration ungueltig: %s", _without_credentials(str(error), options))
         restorer = None
     else:
-        manifest = ChannelManifest(
-            entity_ids={role: entity_ref(role, effective[f"entity_{role}"]) for role in OVERRIDE_ROLES},
+        roles = [LEVER_ROLES[lever] for lever in VAILLANT_MYPYLLANT.lever_set.levers]
+        manifest = ChannelManifest(entity_ids={role: entity_ref(role, effective[f"entity_{role}"]) for role in roles})
+        restorer = LeverPipeline(
+            store, HaPlantBinding(ha_api, manifest), config.local_safety(effective), clock=clock,
         )
-        restorer = Override(store, manifest, ha_api, effective, clock=clock)
     boosting = store.state.boost_active or store.state.emergency_boost_active
     restored = restorer is not None and restorer.restore_and_clear(always_restore=False)
     # Die Meldung zum Zuruecksetzen bleibt: nach dem Entfernen ist sie der einzige Hinweis, dass
@@ -306,7 +306,9 @@ def _report_sign_off_restore(notifier, template: str, state) -> None:
 def _restore_values_text(state) -> str:
     parts = [
         f"{label} {value:g}".replace(".", ",")
-        for label, value in (("Kurve", state.curve_current), ("Parallelverschiebung", state.shift_current))
+        for label, value in (
+            ("Kurve", state.restore_point.get("curve")), ("Parallelverschiebung", state.restore_point.get("room_setpoint")),
+        )
         if value is not None
     ]
     return ", ".join(parts) if parts else "Werte unbekannt"
@@ -370,7 +372,7 @@ def _on_local_check(rt: Runtime, event: Event) -> None:
         return
     if event.data.get("room_target_fired"):
         regulation.refresh_stable_target(rt)
-        min_flow.sync(rt)
+        derived.sync(rt)
     if not rt.zone_prepared:
         _prepare_zone(rt)
     try:
@@ -467,7 +469,7 @@ def _on_health(rt: Runtime, event: Event) -> None:
         logger.warning("Datentraeger weiterhin nicht beschreibbar: %s", error)
     if rt.store.state.abo_finished:
         return
-    for check in (battery.check_batteries, room_sensors.check_room_sensors, manual_override.check_manual_override):
+    for check in (battery.check_batteries, room_sensors.check_room_sensors, enforce.check_manual_override):
         try:
             check(rt)
         except Exception:
@@ -556,7 +558,7 @@ def _prime(rt: Runtime) -> None:
     (N1). Der Ursprungswert der Heizgrenze wird vor dem ersten eigenen Schreiben gemerkt (TP12h).
     Scheitert ein Schritt, laufen die uebrigen trotzdem."""
     try:
-        rt.override.capture_heat_limit_original()
+        rt.override.capture_originals()
     except Exception:
         logger.exception(
             "Ursprungswert der Heizgrenze beim Start nicht gespeichert, wird beim ersten Schreiben erneut versucht"
@@ -566,10 +568,10 @@ def _prime(rt: Runtime) -> None:
         logger.info("Stable-Target-Cache initial befuellt (Boot-Priming): room_target=%s", rt.store.state.stable_target)
     except Exception:
         logger.exception("room_target beim Start nicht lesbar, wird beim naechsten Ereignis erneut versucht")
-    if rt.store.state.shift_current is None:
+    if rt.store.state.restore_point.get("room_setpoint") is None:
         _first_start(rt)
     _prepare_zone(rt)
-    min_flow.sync(rt)
+    derived.sync(rt)
     try:
         regulation.run_local_check(rt)
     except Exception:
@@ -581,7 +583,7 @@ def _first_start(rt: Runtime) -> None:
     vom Anlagenwert neu setzen und sofort einen Tick erzwingen, damit der Erstkontakt des Servers
     mit den Istwerten startet statt erst beim naechsten Tagestick oder Sollwertwechsel."""
     try:
-        rt.override.reseed_curve_from_plant()
+        rt.override.reseed_from_plant("curve")
     except Exception:
         logger.exception("Wiederherstellungspunkt der Steigung beim ersten Start nicht gespeichert")
     try:
@@ -610,13 +612,13 @@ def _may_prepare_zone(rt: Runtime) -> bool:
 
 
 def _prepare_zone(rt: Runtime) -> None:
-    """Zone vorbereiten (Override.prepare_zone); scheitert es, versucht es ein spaeterer lokaler
+    """Zone vorbereiten (LeverPipeline.prepare_start); scheitert es, versucht es ein spaeterer lokaler
     Check erneut (Kontingent: _may_prepare_zone), statt dass erst die Durchsetzung nach
-    OWN_WRITE_SETTLE_SECONDS umstellt."""
+    settle_seconds des Bindings umstellt."""
     if not _may_prepare_zone(rt):
         return
     try:
-        rt.override.prepare_zone(start_shift=rt.store.state.stable_target)
+        rt.override.prepare_start(rt.store.state.stable_target)
     except Exception:
         write_budget.record_attempt(rt.store, write_budget.ZONE_PREPARE, rt.clock())
         logger.exception("Zone konnte nicht vorbereitet werden, naechster Versuch beim naechsten lokalen Check")
@@ -670,7 +672,7 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | Idle
     rt = Runtime(
         manifest=manifest, ha_api=ha_api, options=options,
         worker=RegulationWorker(clock=clock), store=store,
-        override=Override(store, manifest, ha_api, options, clock=clock),
+        override=LeverPipeline(store, HaPlantBinding(ha_api, manifest), config.local_safety(options), clock=clock),
         notifier=notifier, status=status, clock=clock,
     )
 

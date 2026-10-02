@@ -1,8 +1,8 @@
 # Heizungsbruecke
 
-Liest konfigurierte Home-Assistant-Entities (Referenzraum, Aussentemperatur,
-aktuelle Heizkurve/Parallelverschiebung) und meldet sie generisch an den
-SmartHeat-Server. Schreibt vom Server empfangene Sollwerte zurueck, geclamped
+Liest konfigurierte Home-Assistant-Entities (Referenzraum, Aussentemperatur und die
+Hebel der Anlage: Heizkurve, Parallelverschiebung, Heizgrenze) und meldet sie generisch an den
+SmartHeat-Server (Protokoll Schema 4, seit 0.30.0). Schreibt vom Server empfangene Sollwerte zurueck, geclamped
 gegen die konfigurierten Sicherheitsgrenzen. **Boost** aktiviert ausschliesslich,
 wenn die Wunschtemperatur erhoeht wird (Komfort-Beschleunigung): das Add-on
 schaltet kurzzeitig auf eine hohe Heizkurve und Parallelverschiebung, bis der
