@@ -145,8 +145,10 @@ def test_failsafe_file_without_object_is_warned_and_ignored(make_store, tmp_path
     ("last_published_target_rt", {}), ("last_daily_trigger_date", 20260926),
 ])
 def test_field_with_wrong_type_falls_back_only_for_that_field(make_store, caplog, key, value):
+    # Ohne den alten Schluessel curve_current: neben restore_point gaelte er als neuerer Wert (Rueckweg, Ruling Task 8).
+    base = {k: v for k, v in V016_BACKUP.items() if key != "restore_point" or k != "curve_current"}
     with caplog.at_level(logging.WARNING):
-        store = make_store(backup={**V016_BACKUP, key: value})
+        store = make_store(backup={**base, key: value})
 
     assert getattr(store.state, key) == getattr(BridgeState(), key)
     assert key in caplog.text
@@ -625,14 +627,47 @@ def test_legacy_field_with_wrong_type_is_dropped_only_for_that_field(make_store,
     assert "curve_current" in caplog.text and "heat_limit_original" in caplog.text
 
 
-def test_new_fields_win_over_leftover_legacy_keys(make_store, tmp_path):
-    # Steht beides in der Datei (z. B. von Hand ergaenzt), gilt die Hebel-Form; die alten Schluessel verschwinden.
-    store = make_store(backup={"restore_point": {"curve": 0.8}, "curve_current": 1.4, "heat_limit_original": 9.0,
-                               "originals": {"heat_limit": 12.0}})
-    assert store.state.restore_point == {"curve": 0.8}
-    assert store.state.originals == {"heat_limit": 12.0}
+# 0.30.0 -> Rueckweg auf 0.29.0 -> erneutes Update: 0.29.0 fuehrte die neuen Felder als unbekannte Schluessel mit
+# und schrieb daneben wieder die alten; die alten sind dann die neueren Werte (Controller-Ruling Task 8).
+
+def test_legacy_restore_values_win_over_a_stale_restore_point_after_a_rollback(make_store, tmp_path):
+    store = make_store(backup={
+        "restore_point": {"curve": 0.8, "room_setpoint": 20.0, "heat_limit": 14.0},
+        "curve_current": 1.05, "shift_current": 17.5,
+    })
+    # Alte Werte gewinnen; die Heizgrenze traegt kein altes Feld und behaelt ihren Eintrag.
+    assert store.state.restore_point == {"curve": 1.05, "room_setpoint": 17.5, "heat_limit": 14.0}
     store.update(last_room_target=21.0)
-    assert not {"curve_current", "heat_limit_original"} & set(load_backup(tmp_path / "backup.json"))
+    written = load_backup(tmp_path / "backup.json")
+    assert not {"curve_current", "shift_current", "heat_limit"} & set(written)
+    assert written["restore_point"] == {"curve": 1.05, "room_setpoint": 17.5, "heat_limit": 14.0}
+
+
+def test_existing_originals_win_over_a_recaptured_heat_limit_original_after_a_rollback(make_store, tmp_path):
+    store = make_store(backup={
+        "restore_point": {"heat_limit": 14.0}, "originals": {"heat_limit": 12.0},
+        "heat_limit": 17.4, "heat_limit_original": 17.4,
+    })
+    assert store.state.originals == {"heat_limit": 12.0}
+    assert store.state.restore_point == {"heat_limit": 17.4}
+    store.update(last_room_target=21.0)
+    assert not {"heat_limit", "heat_limit_original"} & set(load_backup(tmp_path / "backup.json"))
+
+
+def test_legacy_enforce_budget_entries_win_after_a_rollback(make_store, tmp_path):
+    store = make_store(backup={"write_budget": {
+        "enforce:curve": {"day": "2026-10-01", "count": 5},
+        "enforce:curve_current": {"day": "2026-10-02", "count": 1},
+        "enforce:room_setpoint": {"day": "2026-10-02", "count": 3},
+        "enforce:zone_mode": {"day": "2026-10-02", "count": 2},
+    }})
+    assert store.state.write_budget == {
+        "enforce:curve": {"day": "2026-10-02", "count": 1},
+        "enforce:room_setpoint": {"day": "2026-10-02", "count": 3},
+        "enforce:zone_mode": {"day": "2026-10-02", "count": 2},
+    }
+    store.update(last_room_target=21.0)
+    assert "enforce:curve_current" not in load_backup(tmp_path / "backup.json")["write_budget"]
 
 
 def test_the_migrated_notify_key_is_the_manual_override_key():

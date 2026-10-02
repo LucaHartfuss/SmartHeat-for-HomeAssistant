@@ -136,25 +136,42 @@ def _lever_signature(signature):
 
 def _migrate_legacy_roles(raw: dict) -> dict:
     """Wie bis 0.29.0 wird jedes alte Feld einzeln geprueft: ein ungueltiger Wert faellt weg (Warnung), die anderen
-    bleiben."""
+    bleiben.
+
+    Stehen alte und neue Felder zugleich in der Datei, kommt das nur aus 0.30.0 -> Rueckweg auf 0.29.0 -> erneutes
+    Update (0.30.0 schreibt die alten Schluessel nie, 0.29.0 fuehrt unbekannte mit). Dann gilt (Controller-Ruling
+    Task 8): die alten Werte des Wiederherstellungspunkts und alte Budget-Eintraege enforce:<rolle> sind die neueren
+    und gewinnen; Hebel ohne alten Wert behalten ihren Eintrag. Beim Ursprungswert gewinnt dagegen ein vorhandenes
+    `originals`: 0.29.0 haette nach dem Rueckweg den schon gelernten Live-Wert als heat_limit_original gemerkt."""
     raw = dict(raw)
     legacy = {key: raw.pop(key) for key in list(_LEGACY_RESTORE_KEYS) if key in raw}
     original = raw.pop("heat_limit_original", None)
     for key, value in {**legacy, "heat_limit_original": original}.items():
         if value is not None and not _is_number(value):
             logger.warning("backup.json: altes Feld '%s' ungueltig (%r), wird verworfen", key, value)
-    if "restore_point" not in raw and legacy:
+    if legacy:
+        existing = raw.get("restore_point")
+        if "restore_point" in raw:
+            logger.warning("backup.json: alte Felder neben restore_point (Rueckweg auf 0.29.0?), die alten gelten")
         raw["restore_point"] = {
-            _LEGACY_RESTORE_KEYS[key]: value for key, value in legacy.items() if _is_number(value)
+            **({k: v for k, v in existing.items() if _is_number(v)} if isinstance(existing, dict) else {}),
+            **{_LEGACY_RESTORE_KEYS[key]: value for key, value in legacy.items() if _is_number(value)},
         }
     if "originals" not in raw and _is_number(original):
         raw["originals"] = {"heat_limit": original}
     budget = raw.get("write_budget")
     if isinstance(budget, dict):
         prefix = "enforce:"
+
+        def _legacy_budget_key(key) -> bool:
+            return isinstance(key, str) and key.startswith(prefix) and key[len(prefix):] in _LEGACY_ROLE_NAMES
+
         raw["write_budget"] = {
-            (prefix + _lever_name(key[len(prefix):]) if isinstance(key, str) and key.startswith(prefix) else key): entry
-            for key, entry in budget.items()
+            **{key: entry for key, entry in budget.items() if not _legacy_budget_key(key)},
+            **{
+                prefix + _lever_name(key[len(prefix):]): entry
+                for key, entry in budget.items() if _legacy_budget_key(key)
+            },
         }
     override = raw.get("manual_override")
     if isinstance(override, dict) and isinstance(override.get("rollen"), dict):
