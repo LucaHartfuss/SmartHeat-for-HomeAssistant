@@ -5,7 +5,7 @@ Ohne eigenen Zustand; wer schreibt, entscheidet override.py."""
 import logging
 import math
 
-from heizungsbruecke.clamping import clamp
+from smartheat_core.clamping import target_value
 
 logger = logging.getLogger(__name__)
 
@@ -27,18 +27,6 @@ def entity_of(ref: str) -> str:
 
 def is_climate(ref: str) -> bool:
     return entity_of(ref).startswith("climate.")
-
-
-def round_to_step(value: float, step: float) -> float:
-    return round(round(value / step) * step, 6)
-
-
-def target_value(value: float, minimum: float, maximum: float, step: float) -> float:
-    """Begrenzt, rundet auf die Schrittweite und begrenzt danach erneut (falls das Runden ueber
-    den Rand traegt). Gemeinsame Zielwert-Berechnung fuer write() und override.py
-    (expected_values/_write_role), damit beide Seiten immer denselben Wert fuer "unveraendert"
-    halten."""
-    return clamp(round_to_step(clamp(value, minimum, maximum), step), minimum, maximum)
 
 
 def ensure_manual_mode(ha_api, ref: str) -> bool:

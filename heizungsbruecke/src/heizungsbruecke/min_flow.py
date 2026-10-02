@@ -4,8 +4,8 @@ Server kennt sie nicht. Geschrieben wird nur bei Abweichung vom Live-Wert (lokal
 kein Cloud-Aufruf), also beim Start und nach einer Soll-Aenderung."""
 import logging
 
-from heizungsbruecke.clamping import clamp
-from heizungsbruecke.plant import STEPS, round_to_step
+from heizungsbruecke.plant import STEPS
+from smartheat_core.clamping import clamp, round_to_step
 
 logger = logging.getLogger(__name__)
 

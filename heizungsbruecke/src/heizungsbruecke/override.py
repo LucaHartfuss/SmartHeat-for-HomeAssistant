@@ -23,8 +23,9 @@ import math
 import time
 from collections.abc import Callable
 
-from heizungsbruecke import plant, write_budget
-from heizungsbruecke.clamping import clamp
+from heizungsbruecke import plant
+from smartheat_core import write_budget
+from smartheat_core.clamping import clamp
 
 logger = logging.getLogger(__name__)
 

@@ -29,7 +29,6 @@ from heizungsbruecke import (
     ticks,
     triggers,
     waerme_hint,
-    write_budget,
 )
 from heizungsbruecke.delivery import ROLE_DATENTRAEGER, SOURCE_LOCAL, DataFault
 from heizungsbruecke.derived_sensors import DerivedSensors
@@ -65,6 +64,7 @@ from heizungsbruecke.status import (
     StatusReporter,
 )
 from heizungsbruecke.worker import Event, RegulationWorker
+from smartheat_core import write_budget
 
 # Das Add-on startet mit `startup: services`, evtl. vor HA Core. Solange HA nicht antwortet,
 # wird unbegrenzt gewartet (B10). Erst bei erreichbarem HA zaehlt das Budget fuer fehlende

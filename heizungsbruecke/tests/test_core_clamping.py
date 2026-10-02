@@ -1,6 +1,6 @@
 import pytest
 
-from heizungsbruecke.clamping import clamp
+from smartheat_core.clamping import clamp
 
 
 def test_clamp_within_range_returns_unchanged():

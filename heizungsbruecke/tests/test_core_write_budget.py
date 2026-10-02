@@ -1,7 +1,7 @@
 """Schreibbudget fuer Cloud-Schreibvorgaenge (TP12b, Spec 3.1)."""
 import pytest
 
-from heizungsbruecke import write_budget as wb
+from smartheat_core import write_budget as wb
 
 DAY = "2026-10-01"
 

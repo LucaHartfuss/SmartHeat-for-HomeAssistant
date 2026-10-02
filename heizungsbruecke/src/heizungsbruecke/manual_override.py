@@ -24,8 +24,9 @@ import logging
 import math
 from datetime import date, datetime
 
-from heizungsbruecke import min_flow, plant, write_budget
+from heizungsbruecke import min_flow, plant
 from heizungsbruecke.notifier import STATE_OK
+from smartheat_core import write_budget
 
 logger = logging.getLogger(__name__)
 
