@@ -15,7 +15,10 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
   Mindestvorlauf, Boost, Schreibbudget); mypyllant-Spezifisches im HA-Binding `ha_binding.py`.
 - `backup.json` wird beim ersten Start einmalig auf Hebelnamen umgestellt (Wiederherstellungspunkt, Ursprungswerte,
   Schreibbudget, Eingriff). Rückweg auf 0.29.0: startet ohne Wiederherstellungspunkt wie eine Neuinstallation.
-- Verhalten für Vaillant unverändert (Sicherheitswerte, Boost, Durchsetzen, Kundenmeldungen).
+- Verhalten für Vaillant unverändert (Sicherheitswerte, Boost, Durchsetzen, Kundenmeldungen). Einzige sichtbare
+  Änderung: Datenfehler-Meldungen nennen jetzt Hebel statt Rollen (`curve` statt `curve_current`, `room_setpoint`
+  statt `shift_current`), im Meldungstext und im Status-Event-Attribut `rollen`; ein von 0.29.0 gespeicherter
+  Datenfehler wird nach dem Update einmal erneut gemeldet.
 
 ## 0.29.0
 
