@@ -6,13 +6,14 @@ import uuid
 from datetime import datetime
 from typing import TypeGuard
 
-from heizungsbruecke import abo, delivery, entitlement, plant
+from heizungsbruecke import abo, delivery, entitlement
+from heizungsbruecke.ha_binding import LEVER_ROLES
 from heizungsbruecke.notifier import STATE_OK
-from heizungsbruecke.override import DeviceWriteError
 from heizungsbruecke.runtime import EV_ACK_TIMEOUT, EV_RETRY_DUE, Runtime
 from heizungsbruecke.snapshot import SNAPSHOT_SCHEMA_VERSION, publish_snapshot, read_snapshot_roles
 from heizungsbruecke.state import StorageError
 from heizungsbruecke.worker import Event
+from smartheat_core.pipeline import DeviceWriteError
 
 logger = logging.getLogger(__name__)
 
@@ -98,19 +99,20 @@ def _attempt(rt: Runtime, seq: str, trigger: str):
     # erzwungene Tick folgt Sekunden spaeter; eine Soll-Aenderung kurz vor dem Tagestick) zeigt HA bei
     # mypyllant noch die alten Werte; der Server protokolliert beim Erstkontakt die gemeldeten Werte und
     # vergleicht sie an jedem Tagestick mit seinen zuletzt gesendeten ("Anlage folgt nicht"). Wie
-    # min_flow.sync: bis Override.settled gilt fuer jede geschriebene Rolle der eigene letzte Schreibwert
-    # (Audit 3, A3-02: auch Steigung und Heizgrenze, nicht nur die Parallelverschiebung).
+    # min_flow.sync: bis LeverPipeline.settled gilt fuer jeden geschriebenen Hebel der eigene letzte Schreibwert
+    # (Audit 3, A3-02: auch Steigung und Heizgrenze, nicht nur die Parallelverschiebung). Die Snapshot-Felder
+    # tragen bis Schema 4 (Task 10) die Rollen-Namen.
     computed: dict[str, float | None] = {}
-    for role in ("curve_current", "heat_limit"):
-        last = rt.override.last_written(role)
-        if not rt.override.settled(role) and last is not None:
-            computed[role] = last
-    last = rt.override.last_written("shift_current")
-    if not rt.override.settled("shift_current") and last is not None:
+    for lever in ("curve", "heat_limit"):
+        last = rt.override.last_written(lever)
+        if not rt.override.settled(lever) and last is not None:
+            computed[LEVER_ROLES[lever]] = last
+    last = rt.override.last_written("room_setpoint")
+    if not rt.override.settled("room_setpoint") and last is not None:
         computed["shift_current"] = last
     else:
-        computed["shift_current"] = plant.current_shift(
-            rt.ha_api, rt.manifest.entity_ids["shift_current"], rt.store.state.shift_current,
+        computed["shift_current"] = rt.override.binding.read_or(
+            "room_setpoint", rt.store.state.restore_point.get("room_setpoint"),
         )
     read = read_snapshot_roles(rt.manifest, rt.ha_api, computed_values=computed)
     if read.invalid_roles:
@@ -221,6 +223,14 @@ def _clear_sent_manual_override(rt: Runtime) -> None:
         logger.exception("Uebertragener manueller Eingriff konnte nicht als erledigt gespeichert werden")
 
 
+def _write_fault_detail(error: DeviceWriteError) -> str:
+    """Text des Schreibfehlers fuer Meldung und Status: "<rolle> (<entity>): <ursache>" wie bis 0.29.0. Der Text
+    steht in der Kundenmeldung, und der Status meldet die Rolle (datenfehler.rollen) an die Integration (P2-3);
+    DeviceWriteError nennt den Hebel."""
+    text = str(error)
+    return LEVER_ROLES.get(error.lever, error.lever) + text[len(error.lever):]
+
+
 def handle_setpoints(rt: Runtime, payload: dict) -> None:
     """Server-Antwort (nur Schema 3), zaehlt nur fuer den offenen Tick (auch verspaetet). Gueltige
     Werte gehen vor dem Ack auf die Anlage. Ein unbekanntes Schema, ein unbekannter Status oder
@@ -260,10 +270,10 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
                 "Server hat fuer seq=%s nicht gelernt (%s), Werte unveraendert uebernommen", seq, payload.get("reason"),
             )
         try:
-            rt.override.apply_server_values(curve, shift, heat_limit)
+            rt.override.apply_server_values({"curve": curve, "room_setpoint": shift, "heat_limit": heat_limit})
         except DeviceWriteError as error:
             logger.warning("Serverwerte (seq=%s) konnten nicht auf die Anlage geschrieben werden: %s", seq, error)
-            deliver(rt, delivery.WriteFailed(seq=seq, detail=str(error)))
+            deliver(rt, delivery.WriteFailed(seq=seq, detail=_write_fault_detail(error)))
             return
         except StorageError as error:
             logger.warning(

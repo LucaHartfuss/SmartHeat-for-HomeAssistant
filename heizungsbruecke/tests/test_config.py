@@ -1,3 +1,4 @@
+import dataclasses
 import json
 
 import pytest
@@ -14,24 +15,10 @@ from heizungsbruecke.config import (
     resolve_effective_options,
     telemetry_interval,
     validate,
-    validate_boost_config,
     validate_local_check_interval,
     validate_telemetry_interval,
 )
-
-
-def _base_options(**overrides):
-    options = {
-        "curve_min": 0.2,
-        "curve_max": 0.8,
-        "shift_min": 0.0,
-        "shift_max": 5.0,
-        "boost_curve_value": 0.5,
-        "boost_shift_value": 2.0,
-    }
-    options.update(overrides)
-    return options
-
+from smartheat_core.safety import LOCAL_SAFETY
 
 PROFILE_PARAMS = {
     "verteilsystem": "Heizkoerper",
@@ -82,33 +69,30 @@ def test_load_options_safe_passes_through_valid_file(tmp_path):
     assert load_options_safe(path) == {"tenant_id": "wohnung1"}
 
 
-def test_validate_boost_config_returns_none_when_within_range():
-    assert validate_boost_config(_base_options()) is None
+def test_boost_values_outside_the_ranges_are_a_configuration_error(monkeypatch):
+    """Ersetzt die validate_boost_config-Tests bis 0.29.0: Boost-Werte ausserhalb der Bereiche sind ein Startfehler
+    statt still geclampt (der Boost ist der einzige Schreibpfad ohne Server-Aufsicht). Geprueft wird jetzt in
+    smartheat_core.safety.check_invariants (test_core_safety::test_invariants); hier der Weg bis zum Konfigurationsfehler."""
+    safety = dict(LOCAL_SAFETY)
+    heizkoerper = safety[("vaillant_vrc720", "Heizkoerper")]
+    for comfort_boost in ({**heizkoerper.comfort_boost, "curve": 99.0}, {**heizkoerper.comfort_boost, "curve": -1.0},
+                          {**heizkoerper.comfort_boost, "room_setpoint": 999.0},
+                          {**heizkoerper.comfort_boost, "room_setpoint": 26.0}):
+        safety[("vaillant_vrc720", "Heizkoerper")] = dataclasses.replace(heizkoerper, comfort_boost=comfort_boost)
+        monkeypatch.setattr("smartheat_core.safety.LOCAL_SAFETY", safety)
+        with pytest.raises(ConfigError, match="Comfort-Boost"):
+            config.local_safety({"verteilsystem": "Heizkoerper"})
 
 
-def test_validate_boost_config_flags_curve_value_above_max():
-    error = validate_boost_config(_base_options(boost_curve_value=99.0))
-    assert error is not None
-    assert "boost_curve_value" in error
-
-
-def test_validate_boost_config_flags_curve_value_below_min():
-    error = validate_boost_config(_base_options(boost_curve_value=-1.0))
-    assert error is not None
-    assert "boost_curve_value" in error
-
-
-def test_validate_boost_config_flags_shift_value_out_of_range():
-    error = validate_boost_config(_base_options(boost_shift_value=999.0))
-    assert error is not None
-    assert "boost_shift_value" in error
-
-
-def test_validate_boost_config_accepts_boundary_values():
-    assert validate_boost_config(_base_options(boost_curve_value=0.2)) is None
-    assert validate_boost_config(_base_options(boost_curve_value=0.8)) is None
-    assert validate_boost_config(_base_options(boost_shift_value=0.0)) is None
-    assert validate_boost_config(_base_options(boost_shift_value=5.0)) is None
+def test_boost_values_on_the_range_boundaries_are_accepted(monkeypatch):
+    safety = dict(LOCAL_SAFETY)
+    heizkoerper = safety[("vaillant_vrc720", "Heizkoerper")]
+    low, high = heizkoerper.ranges["curve"]
+    for curve in (low, high):
+        boosted = dataclasses.replace(heizkoerper, comfort_boost={**heizkoerper.comfort_boost, "curve": curve})
+        safety[("vaillant_vrc720", "Heizkoerper")] = boosted
+        monkeypatch.setattr("smartheat_core.safety.LOCAL_SAFETY", safety)
+        assert config.local_safety({"verteilsystem": "Heizkoerper"}).comfort_boost["curve"] == curve
 
 
 def test_is_configured_true_for_0_17_0_options_without_new_values():
@@ -134,16 +118,15 @@ def test_new_entity_options_constant():
 
 def test_resolve_effective_options_uses_local_safety_and_daily_trigger_time():
     effective = resolve_effective_options({**REQUIRED, **PROFILE_PARAMS, **BASE_URL})
+    safety = config.local_safety(effective)
 
-    assert effective["curve_min"] == 0.4
-    assert effective["curve_max"] == 1.5
-    assert effective["shift_min"] == 15.0
-    assert effective["shift_max"] == 25.0
-    assert effective["min_flow_min"] == 20.0
-    assert effective["min_flow_max"] == 30.0
-    assert effective["boost_threshold_k"] == 0.5
-    assert effective["boost_curve_value"] == 1.5
-    assert effective["boost_shift_value"] == 25.0
+    assert safety.ranges["curve"] == (0.4, 1.5)
+    assert safety.ranges["room_setpoint"] == (15.0, 25.0)
+    assert safety.ranges["min_flow"] == (20.0, 30.0)
+    assert safety.arrival_threshold_k == 0.5
+    assert safety.comfort_boost["curve"] == 1.5
+    assert safety.comfort_boost["room_setpoint"] == 25.0
+    assert "curve_min" not in effective and "boost_curve_value" not in effective  # keine flachen Optionen mehr
     assert effective["daily_trigger_time"] == "12:00"
     assert effective["tenant_id"] == "wohnung1"
 
@@ -153,8 +136,9 @@ def test_resolve_effective_options_ignores_safety_values_in_options():
         {**REQUIRED, **PROFILE_PARAMS, **BASE_URL, "shift_max": 28.0, "boost_curve_value": 0.1}
     )
 
-    assert effective["shift_max"] == 25.0  # lokale Sicherheitswerte gewinnen
-    assert effective["boost_curve_value"] == 1.5
+    safety = config.local_safety(effective)
+    assert safety.ranges["room_setpoint"][1] == 25.0  # lokale Sicherheitswerte gewinnen
+    assert safety.comfort_boost["curve"] == 1.5
 
 
 @pytest.mark.parametrize("verteilsystem", [None, "", "Fussbodenheizung", "Unbekannt"])
@@ -299,11 +283,11 @@ def test_default_local_check_interval_seconds_is_300():
 
 
 def test_validate_returns_first_error_or_none():
-    valid = _base_options(entity_outdoor_temp="sensor.outdoor")
+    valid = {"entity_outdoor_temp": "sensor.outdoor"}
 
     assert validate(valid) is None
-    error = validate({**valid, "boost_curve_value": 99.0})
-    assert error is not None and "boost_curve_value" in error
+    error = validate({**valid, "local_check_interval_seconds": 0})
+    assert error is not None and "local_check_interval_seconds" in error
     error = validate({**valid, "telemetry_interval_seconds": 5})
     assert error is not None and "telemetry_interval_seconds" in error
 
@@ -441,16 +425,18 @@ VALID = {
 
 def test_effective_options_carry_new_safety_values():
     effective = config.resolve_effective_options(VALID)
-    assert (effective["shift_min"], effective["shift_max"]) == (15.0, 25.0)
-    assert (effective["min_flow_min"], effective["min_flow_max"]) == (20.0, 30.0)
-    assert (effective["boost_curve_value"], effective["boost_shift_value"]) == (1.5, 25.0)
+    safety = config.local_safety(effective)
+    assert safety.ranges["room_setpoint"] == (15.0, 25.0)
+    assert safety.ranges["min_flow"] == (20.0, 30.0)
+    assert (safety.comfort_boost["curve"], safety.comfort_boost["room_setpoint"]) == (1.5, 25.0)
     assert effective["daily_trigger_time"] == "12:00"
     assert "day_avg_window_start" not in effective and "avg_window_hours" not in effective
 
 
 def test_effective_options_carry_the_heat_limit_clamps():
-    effective = config.resolve_effective_options(VALID)
-    assert (effective["heat_limit_min"], effective["heat_limit_max"]) == (5.0, 23.0)
+    safety = config.local_safety(config.resolve_effective_options(VALID))
+    assert safety.ranges["heat_limit"] == (5.0, 23.0)
+    assert safety.comfort_boost["heat_limit"] == 23.0  # bis 0.29.0: Boost-Heizgrenze = heat_limit_max
 
 
 def test_outdated_options_without_shift_role():
@@ -472,7 +458,7 @@ def test_outdated_options_without_shift_role():
     ("entity_heat_limit", "input_number.heizgrenze"),
 ])
 def test_unwritable_entity_domain_is_a_configuration_error(key, value):
-    # Spec 5.6: Zonen-Entity muss schreibbar sein; plant.write kennt climate.set_temperature und
+    # Spec 5.6: Zonen-Entity muss schreibbar sein; HaPlantBinding.write kennt climate.set_temperature und
     # number.set_value.
     with pytest.raises(config.ConfigError, match=f"Option '{key}'.*bitte SmartHeat neu konfigurieren"):
         config.resolve_effective_options({**VALID, key: value})
@@ -506,12 +492,6 @@ def test_zone_current_temperature_as_room_sensor_is_accepted():
 def test_daily_trigger_time_validated(value):
     with pytest.raises(config.ConfigError, match="daily_trigger_time"):
         config.resolve_effective_options({**VALID, "daily_trigger_time": value})
-
-
-def test_boost_shift_outside_clamps_is_a_start_error():
-    effective = {**config.resolve_effective_options(VALID), "boost_shift_value": 26.0}
-    error = config.validate_boost_config(effective)
-    assert error is not None and "boost_shift_value" in error
 
 
 @pytest.mark.parametrize("value", [0, -5, 0.5, True])

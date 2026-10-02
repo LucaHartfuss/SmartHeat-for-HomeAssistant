@@ -1,6 +1,7 @@
 """Betrieb von __main__ ueber den Regel-Worker (Design-Spec 2026-09-26): Boot,
 Tick-Zustellung, Datenfehler, Notbetrieb, lokale Checks und Abo-Pfade. Getrieben ueber
 _start_bridge mit Fake-Uhr (tests/conftest.py), Fake-HA, Fake-MQTT und Fake-Trigger-Client."""
+import dataclasses
 import itertools
 import json
 import logging
@@ -18,9 +19,12 @@ from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.delivery import DataFault, DeliveryState
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.manual_override import MAX_WRITES_PER_DAY, RETRY_SECONDS
-from heizungsbruecke.override import OWN_WRITE_SETTLE_SECONDS, Override
 from heizungsbruecke.runtime import Runtime
 from heizungsbruecke.status import ADDON_VERSION
+from smartheat_core.binding import VAILLANT_MYPYLLANT
+from smartheat_core.pipeline import LeverPipeline
+
+SETTLE = VAILLANT_MYPYLLANT.settle_seconds
 
 OPTIONS = {
     "tenant_id": "test_tenant",
@@ -191,8 +195,11 @@ def _mark_abo_finished(bridge) -> None:
     bridge.store.update(abo_finished=True)
 
 
-def _override_options(bridge, **values) -> None:
-    bridge.options.update(values)  # dasselbe Dict wie in bridge.override
+def _override_comfort_boost(bridge, **values) -> None:
+    """Comfort-Boost-Werte je Hebel abweichend von LocalSafety setzen (bis 0.29.0 ueber die Optionen
+    boost_curve_value/boost_shift_value), damit die Tests Comfort- und Notfall-Zeile unterscheiden."""
+    safety = bridge.override.safety
+    bridge.override._safety = dataclasses.replace(safety, comfort_boost={**safety.comfort_boost, **values})
 
 
 def _raise_oserror(*args, **kwargs):
@@ -220,7 +227,7 @@ def _quiet_backup(env, **extra):
     save_backup(env.paths["BACKUP_PATH"], {
         "last_room_target": 21.0, "last_published_target_rt": 21.0,
         "last_daily_trigger_date": datetime.now().date().isoformat(),
-        "curve_current": 0.9, "shift_current": 22.0, **extra,
+        "restore_point": {"curve": 0.9, "room_setpoint": 22.0}, **extra,
     })
 
 
@@ -298,7 +305,7 @@ def test_boot_prepares_zone_before_first_snapshot(env, monkeypatch):
 
     assert order == [[("climate.zone", "heat_cool"), ("climate.zone::temperature", 21.0)]]  # vor MQTT
     assert env.ha.states["climate.zone::temperature"] == 21.0  # Raum-Soll als Startwert
-    assert _backup(env)["shift_current"] == 21.0
+    assert _backup(env)["restore_point"]["room_setpoint"] == 21.0
 
     _trigger(env, bridge, "sensor.room_target")  # erster Tick
 
@@ -315,7 +322,8 @@ def test_boot_keeps_a_usable_zone_shift(env):
 
 def _backup_before_tp11(env, **extra):
     """backup.json von 0.23.0: Wiederherstellungspunkt nur mit Steigung (am Anschlag), keine
-    Parallelverschiebung; beim Start waere sonst kein Tick faellig."""
+    Parallelverschiebung; beim Start waere sonst kein Tick faellig. Bewusst mit dem alten Rollen-Schluessel
+    curve_current: der Start migriert ihn auf restore_point (Plan 2, state._migrate_legacy_roles)."""
     backup = {
         "last_room_target": 21.0, "last_published_target_rt": 21.0,
         "last_daily_trigger_date": datetime.now().date().isoformat(),
@@ -332,7 +340,7 @@ def test_first_start_without_shift_restore_point_reseeds_curve_and_ticks_at_once
 
     bridge = _start(env)
 
-    assert _backup(env)["curve_current"] == 1.05
+    assert _backup(env)["restore_point"]["curve"] == 1.05
     _trigger(env, bridge, "sensor.room_actual")  # naechster lokaler Check
     snapshot = _mqtt(env).snapshots[0]
     assert (snapshot["trigger"], snapshot["roles"]["curve_current"]) == ("target_change", 1.05)
@@ -351,7 +359,7 @@ def test_first_start_reseeds_curve_clamped_and_rounded(env, live, seeded):
 
     _start(env)
 
-    assert _backup(env)["curve_current"] == seeded
+    assert _backup(env)["restore_point"]["curve"] == seeded
 
 
 def test_first_start_drops_the_old_curve_point_when_the_plant_is_unreadable(env):
@@ -360,6 +368,7 @@ def test_first_start_drops_the_old_curve_point_when_the_plant_is_unreadable(env)
 
     _start(env)
 
+    assert "curve" not in _backup(env).get("restore_point", {})
     assert "curve_current" not in _backup(env)
 
 
@@ -370,7 +379,7 @@ def test_first_start_during_a_boost_keeps_the_curve_point(env):
 
     _start(env)
 
-    assert _backup(env)["curve_current"] == 1.5
+    assert _backup(env)["restore_point"]["curve"] == 1.5
 
 
 def test_restart_with_shift_restore_point_keeps_curve_and_does_not_tick(env):
@@ -380,7 +389,7 @@ def test_restart_with_shift_restore_point_keeps_curve_and_does_not_tick(env):
 
     _trigger(env, bridge, "sensor.room_actual")
 
-    assert _backup(env)["curve_current"] == 0.9
+    assert _backup(env)["restore_point"]["curve"] == 0.9
     assert _mqtt(env).snapshots == []
 
 
@@ -397,7 +406,7 @@ def test_zone_preparation_failed_at_start_is_retried_on_the_next_local_check(env
     _trigger(env, bridge, "sensor.room_actual")
 
     assert env.ha.writes[:2] == [("climate.zone", "heat_cool"), ("climate.zone::temperature", 21.0)]
-    assert _backup(env)["shift_current"] == 21.0
+    assert _backup(env)["restore_point"]["room_setpoint"] == 21.0
 
     writes = len(env.ha.writes)
     env.ha.states["climate.zone"] = "auto"  # erfolgreich vorbereitet: kein weiterer Versuch
@@ -406,16 +415,16 @@ def test_zone_preparation_failed_at_start_is_retried_on_the_next_local_check(env
 
 
 def _failing_zone_preparation(env, monkeypatch, failures=None):
-    """Override.prepare_zone scheitert (z. B. 403 "Quota Exceeded"); gibt die Versuchszeitpunkte
+    """LeverPipeline.prepare_start scheitert (z. B. 403 "Quota Exceeded"); gibt die Versuchszeitpunkte
     (Fake-Uhr) zurueck. failures=None: scheitert immer, sonst nur die ersten `failures` Versuche."""
     attempts = []
 
-    def _prepare_zone(self, start_shift):
+    def _prepare_start(self, start_value):
         attempts.append(env.clock())
         if failures is None or len(attempts) <= failures:
             raise RuntimeError("403 Quota Exceeded")
 
-    monkeypatch.setattr(Override, "prepare_zone", _prepare_zone)
+    monkeypatch.setattr(LeverPipeline, "prepare_start", _prepare_start)
     return attempts
 
 
@@ -822,7 +831,7 @@ def test_answer_writes_values_and_closes_tick(env):
     assert _regulation_writes(env) == [
         ("number.curve_current", 0.95), ("number.shift_current", 23.0), ("number.heat_limit", 16.0),
     ]
-    assert _backup(env)["curve_current"] == 0.95
+    assert _backup(env)["restore_point"]["curve"] == 0.95
     assert _delivery(bridge).pending is None
     assert env.ha.pushes == []
 
@@ -1036,8 +1045,8 @@ def test_answer_during_boost_only_updates_backup(env):
     _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], curve=0.95, shift=23.0, heat_limit=17.0)
 
     assert _regulation_writes(env) == boost_writes
-    assert (_backup(env)["curve_current"], _backup(env)["shift_current"]) == (0.95, 23.0)
-    assert _backup(env)["heat_limit"] == 17.0
+    assert (_backup(env)["restore_point"]["curve"], _backup(env)["restore_point"]["room_setpoint"]) == (0.95, 23.0)
+    assert _backup(env)["restore_point"]["heat_limit"] == 17.0
 
 
 def test_foreign_seq_and_duplicate_answers_are_ignored(env):
@@ -1080,7 +1089,7 @@ def test_notbetrieb_end_hands_device_to_running_comfort_boost(env):
     # Laeuft der Comfort-Boost noch, gehen am Notbetriebsende dessen Werte auf die Anlage;
     # an seinem eigenen Ende die zwischenzeitlich vom Server gelieferten.
     bridge = _start_in_notbetrieb_with_emergency_boost(env)
-    _override_options(bridge, boost_curve_value=1.0, boost_shift_value=24.0)
+    _override_comfort_boost(bridge, curve=1.0, room_setpoint=24.0)
 
     _set_room_target(env, bridge, 22.0)  # Comfort-Boost startet, Notfall-Boost haelt die Anlage
 
@@ -1092,7 +1101,7 @@ def test_notbetrieb_end_hands_device_to_running_comfort_boost(env):
 
     assert (env.ha.states["number.curve_current"], env.ha.states["number.shift_current"]) == (1.0, 24.0)
     assert _backup(env)["boost_active"] is True
-    assert _backup(env)["curve_current"] == 0.95
+    assert _backup(env)["restore_point"]["curve"] == 0.95
 
     env.ha.states["sensor.room_actual"] = 21.6
     _trigger(env, bridge, "sensor.room_actual")
@@ -1692,7 +1701,7 @@ def test_grace_end_idles_even_if_saving_flags_fails(env, monkeypatch):
 def test_emergency_start_during_comfort_boost_writes_max_values_and_both_end_together(env):
     _quiet_backup(env)
     bridge = _start(env)
-    _override_options(bridge, boost_curve_value=1.0, boost_shift_value=24.0)
+    _override_comfort_boost(bridge, curve=1.0, room_setpoint=24.0)
 
     _set_room_target(env, bridge, 22.0)  # Comfort-Boost + Tick
     _advance(env, bridge, 30)
@@ -1812,7 +1821,7 @@ def test_restart_keeps_unknown_backup_keys_and_resumes_open_tick_with_fault(env)
 
     assert backup["zukunft"] == {"x": 1}
     assert backup["last_published_target_rt"] == 20.5
-    assert backup["curve_current"] == 0.95
+    assert backup["restore_point"]["curve"] == 0.95
 
 
 def test_restart_during_comfort_boost_continues_and_ends_on_arrival(env):
@@ -2152,9 +2161,9 @@ OVERRIDE = {"curve": 1.3, "shift": 24.5, "erkannt": "2026-10-01T08:00:00+02:00"}
 
 
 def _settle(env, bridge):
-    """Die Durchsetzung wertet erst nach OWN_WRITE_SETTLE_SECONDS Laufzeit bzw. seit dem letzten
-    eigenen Schreiben aus (Override.settled)."""
-    _advance(env, bridge, OWN_WRITE_SETTLE_SECONDS + 1)
+    """Die Durchsetzung wertet erst nach settle_seconds Laufzeit bzw. seit dem letzten
+    eigenen Schreiben aus (LeverPipeline.settled)."""
+    _advance(env, bridge, SETTLE + 1)
 
 
 def test_manual_override_travels_with_the_next_snapshot_and_is_cleared_after_the_answer(env):

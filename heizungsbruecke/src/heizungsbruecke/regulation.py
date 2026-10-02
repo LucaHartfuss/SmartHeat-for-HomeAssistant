@@ -1,6 +1,6 @@
 """Lokaler Check: Comfort- und Notfall-Boost entscheiden, Sollwert-Historie fuehren und
 entscheiden, ob ein neuer Tick faellig ist. Welche Werte dann auf der Anlage stehen,
-entscheidet override.set_boosts."""
+entscheidet die Hebel-Pipeline (LeverPipeline.set_boosts)."""
 import logging
 from datetime import datetime
 
@@ -37,7 +37,7 @@ def run_local_check(rt: Runtime) -> None:
     """Comfort-Boost nur bei Sollwerterhoehung, Notfall-Boost nur waehrend Notbetrieb. room_target
     kommt aus dem Stable-Target-Cache, damit ein Zwischenwert beim Verstellen keinen Boost
     ausloest. I/O-Fehler gehen an den Aufrufer."""
-    manifest, options = rt.manifest, rt.options
+    manifest = rt.manifest
     if "room_actual" not in manifest.entity_ids or "room_target" not in manifest.entity_ids:
         return
     state = rt.store.state
@@ -49,19 +49,20 @@ def run_local_check(rt: Runtime) -> None:
         return
 
     room_actual = rt.ha_api.get_state(manifest.entity_ids["room_actual"])
-    threshold_k = options.get("boost_threshold_k", 0.5)
-    comfort = decide_boost(
+    safety = rt.override.safety
+    # Ohne Comfort-Boost-Werte (z. B. Fussbodenheizung, Spec 6.3) gibt es keinen Comfort-Boost.
+    comfort = bool(safety.comfort_boost) and decide_boost(
         room_actual=room_actual,
         room_target=room_target,
         previous_room_target=state.last_room_target,
         boost_was_active=state.boost_active,
-        arrival_threshold_k=threshold_k,
+        arrival_threshold_k=safety.arrival_threshold_k,
     )
     emergency = state.delivery.notbetrieb and decide_emergency_boost(
         room_actual=room_actual,
         room_target=room_target,
         emergency_was_active=state.emergency_boost_active,
-        exit_threshold_k=threshold_k,
+        exit_threshold_k=safety.arrival_threshold_k,
     )
     comfort_set, _ = rt.override.set_boosts(comfort=comfort, emergency=emergency)
 

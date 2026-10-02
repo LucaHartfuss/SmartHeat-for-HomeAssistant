@@ -113,7 +113,7 @@ def test_snapshot_carries_a_manual_override_only_when_given():
     }
 
 
-# --- Pflichtrollen aus computed_values (TP11: shift_current kommt von plant.current_shift,
+# --- Pflichtrollen aus computed_values (TP11: shift_current kommt von HaPlantBinding.read_or,
 # nicht von einem Live-Read der Zone) ---
 
 MANIFEST = ChannelManifest(entity_ids={

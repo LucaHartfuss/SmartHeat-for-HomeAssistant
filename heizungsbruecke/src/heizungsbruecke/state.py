@@ -21,25 +21,26 @@ class StorageError(OSError):
     schreibgeschuetzt, TP12b/AU-005). Unterklasse von OSError: Aufrufer, die OSError erwarten,
     bleiben gueltig."""
 
-_NUMBER_FIELDS = ("curve_current", "shift_current", "last_room_target", "last_published_target_rt",
-                  "heat_limit", "heat_limit_original")
+_NUMBER_FIELDS = ("last_room_target", "last_published_target_rt")
 _FLAG_FIELDS = ("boost_active", "emergency_boost_active")
 _TEXT_FIELDS = ("last_daily_trigger_date", "last_ack_at", "waerme_fehlt_seit")
 _TEXT_MAP_FIELDS = ("notify_states", "notify_messages")
+_LEVER_MAP_FIELDS = ("restore_point", "originals")
 _OVERRIDE_FIELDS = ("manual_override", "manual_override_pending")
-BACKUP_FIELDS = _NUMBER_FIELDS + _FLAG_FIELDS + _TEXT_FIELDS + _TEXT_MAP_FIELDS + _OVERRIDE_FIELDS + ("write_budget",)
+BACKUP_FIELDS = (
+    _NUMBER_FIELDS + _FLAG_FIELDS + _TEXT_FIELDS + _TEXT_MAP_FIELDS + _LEVER_MAP_FIELDS + _OVERRIDE_FIELDS
+    + ("write_budget",)
+)
 
 
 @dataclass(frozen=True)
 class BridgeState:
-    # Wiederherstellungspunkt: zuletzt vom Server bestaetigt oder vor dem ersten Boost von der
+    # Wiederherstellungspunkt je Hebel (Plan 2 P2-4): zuletzt vom Server bestaetigt oder vor dem ersten Boost von der
     # Anlage gesichert. Darauf setzt jedes Boost-Ende zurueck.
-    curve_current: float | None = None
-    shift_current: float | None = None
-    # TP12h: Heizgrenze als Teil des Wiederherstellungspunkts, und ihr Wert vor dem ersten eigenen
-    # Schreiben (Ursprungswert: Abo-Ende und Abmelden stellen ihn wieder her).
-    heat_limit: float | None = None
-    heat_limit_original: float | None = None
+    restore_point: dict = field(default_factory=dict)
+    # Ursprungswerte je Hebel vor dem ersten eigenen Schreiben (P2-5; Vaillant: nur die Heizgrenze): Abo-Ende und
+    # Abmelden stellen sie wieder her.
+    originals: dict = field(default_factory=dict)
     boost_active: bool = False
     emergency_boost_active: bool = False
     last_room_target: float | None = None
@@ -53,8 +54,8 @@ class BridgeState:
     notify_messages: dict = field(default_factory=dict)
     # Zeitpunkt (ISO) der letzten Serverantwort auf einen offenen Tick (Status letzte_serverantwort).
     last_ack_at: str | None = None
-    # Durchsetzung (manual_override.py): aktiver Eingriff {curve, shift, erkannt} bis zur
-    # Rueckkehr (Hinweis im Status).
+    # Durchsetzung (manual_override.py): aktiver Eingriff {curve, shift, erkannt, rollen, signatur, gemeldet} bis
+    # zur Rueckkehr (Hinweis im Status); rollen und signatur nennen Hebel.
     manual_override: dict | None = None
     # Durchsetzung (manual_override.py): noch nicht vom Server verarbeiteter Eingriff (KPI im
     # naechsten Snapshot).
@@ -110,10 +111,72 @@ def _parse_budget(raw) -> dict | None:
     return parsed
 
 
+# Plan 2 (P2-4, Plan-Praezisierung 1): Felder bis Add-on 0.29.0 (Rollen-Namen) -> Hebel-Namen. Die alten Schluessel
+# werden uebernommen und entfernt, sonst blieben sie als unbekannte Schluessel fuer immer in backup.json.
+_LEGACY_RESTORE_KEYS = {"curve_current": "curve", "shift_current": "room_setpoint", "heat_limit": "heat_limit"}
+_LEGACY_ROLE_NAMES = {"curve_current": "curve", "shift_current": "room_setpoint"}
+_MANUAL_OVERRIDE_KEY = "manueller_eingriff"  # manual_override.KEY (Import waere zyklisch)
+
+
+def _lever_name(role: str) -> str:
+    return _LEGACY_ROLE_NAMES.get(role, role)
+
+
+def _lever_signature(signature):
+    """Signatur eines Eingriffs ("curve_current=1.2,shift_current=18") in Hebel-Namen: manual_override vergleicht
+    signatur und gemeldet; beide werden gleich umbenannt, damit derselbe Eingriff nach dem Update nicht erneut
+    gemeldet wird und eine Neuberechnung aus `rollen` dieselbe Signatur ergibt."""
+    if not isinstance(signature, str):
+        return signature
+    return ",".join(
+        f"{_lever_name(name)}{separator}{value}"
+        for name, separator, value in (part.partition("=") for part in signature.split(","))
+    )
+
+
+def _migrate_legacy_roles(raw: dict) -> dict:
+    """Wie bis 0.29.0 wird jedes alte Feld einzeln geprueft: ein ungueltiger Wert faellt weg (Warnung), die anderen
+    bleiben."""
+    raw = dict(raw)
+    legacy = {key: raw.pop(key) for key in list(_LEGACY_RESTORE_KEYS) if key in raw}
+    original = raw.pop("heat_limit_original", None)
+    for key, value in {**legacy, "heat_limit_original": original}.items():
+        if value is not None and not _is_number(value):
+            logger.warning("backup.json: altes Feld '%s' ungueltig (%r), wird verworfen", key, value)
+    if "restore_point" not in raw and legacy:
+        raw["restore_point"] = {
+            _LEGACY_RESTORE_KEYS[key]: value for key, value in legacy.items() if _is_number(value)
+        }
+    if "originals" not in raw and _is_number(original):
+        raw["originals"] = {"heat_limit": original}
+    budget = raw.get("write_budget")
+    if isinstance(budget, dict):
+        prefix = "enforce:"
+        raw["write_budget"] = {
+            (prefix + _lever_name(key[len(prefix):]) if isinstance(key, str) and key.startswith(prefix) else key): entry
+            for key, entry in budget.items()
+        }
+    override = raw.get("manual_override")
+    if isinstance(override, dict) and isinstance(override.get("rollen"), dict):
+        raw["manual_override"] = {
+            **override, "rollen": {_lever_name(role): value for role, value in override["rollen"].items()},
+            **{key: _lever_signature(override[key]) for key in ("signatur", "gemeldet") if key in override},
+        }
+    # Der Meldezustand des Eingriffs (notifier, Schluessel manual_override.KEY) ist dieselbe Signatur: sonst gaelte
+    # eine nach dem Update erstmals gemeldete, schon vorher zugestellte Signatur als neuer Zustand.
+    notify_states = raw.get("notify_states")
+    if isinstance(notify_states, dict) and isinstance(notify_states.get(_MANUAL_OVERRIDE_KEY), str):
+        raw["notify_states"] = {
+            **notify_states, _MANUAL_OVERRIDE_KEY: _lever_signature(notify_states[_MANUAL_OVERRIDE_KEY]),
+        }
+    return raw
+
+
 def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
     """Liest die bekannten Felder tolerant: ein Feld mit falschem Typ faellt auf seinen
     Standardwert zurueck, die anderen bleiben. Unbekannte Schluessel werden unveraendert
-    mitgefuehrt (Rueckweg auf 0.16.0, spaetere Versionen)."""
+    mitgefuehrt (spaetere Versionen). Felder bis 0.29.0 werden vorher auf Hebel umbenannt."""
+    raw = _migrate_legacy_roles(raw)
     values = {}
 
     def _invalid(key):
@@ -150,6 +213,14 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
             values[key] = dict(mapping)
         else:
             _invalid(key)
+    for key in _LEVER_MAP_FIELDS:
+        if key not in raw:
+            continue
+        mapping = raw[key]
+        if isinstance(mapping, dict) and all(isinstance(k, str) and _is_number(v) for k, v in mapping.items()):
+            values[key] = dict(mapping)
+        else:
+            _invalid(key)
     for key in _OVERRIDE_FIELDS:
         if raw.get(key) is None:
             continue
@@ -168,12 +239,11 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
 
 
 def _backup_content(state: BridgeState, extra: dict) -> dict:
-    """Unbekannte Schluessel plus alle gesetzten Felder. Nicht gesetzte Felder fehlen: 0.16.0
-    erkennt einen vorhandenen Wiederherstellungspunkt an `"curve_current" in backup`."""
+    """Unbekannte Schluessel plus alle gesetzten Felder. Nicht gesetzte und leere Felder fehlen."""
     content = dict(extra)
     for key in BACKUP_FIELDS:
         value = getattr(state, key)
-        if value is None or (key in _TEXT_MAP_FIELDS + ("write_budget",) and not value):
+        if value is None or (key in _TEXT_MAP_FIELDS + _LEVER_MAP_FIELDS + ("write_budget",) and not value):
             continue
         content[key] = value
     return content
@@ -256,19 +326,19 @@ class StateStore:
             self._state = replace(self._state, **previous)
             raise
 
-    def saved_restore_point(self) -> dict | None:
-        """Der zuletzt erfolgreich in backup.json gespeicherte Wiederherstellungspunkt, sonst None
-        (N6): Steigung und Parallelverschiebung, beide muessen gespeichert sein. Die Heizgrenze (TP12h)
-        ist bewusst optional und nicht Teil des Ergebnisses: revert_to_saved setzt sie auf ihren
-        gespeicherten Stand, fehlt der (Punkt aus der Version vor TP12h), laesst der Notfall-Boost sie
-        unangetastet (override._row_values)."""
-        point = {key: self._backup_saved.get(key) for key in ("curve_current", "shift_current")}
-        return point if all(_is_number(value) for value in point.values()) else None
+    def saved_restore_point(self, required: tuple[str, ...]) -> dict | None:
+        """Der zuletzt erfolgreich gespeicherte Wiederherstellungspunkt, wenn er alle `required` Hebel hat, sonst None
+        (N6; die Hebel aus optional_restore duerfen fehlen)."""
+        point = self._backup_saved.get("restore_point") or {}
+        return dict(point) if all(_is_number(point.get(lever)) for lever in required) else None
 
     def revert_to_saved(self, *keys: str) -> None:
-        """Setzt Felder im Speicher auf den zuletzt gespeicherten Stand zurueck, ohne zu schreiben
-        (N6: Notfall-Boost auf dem aelteren, gesicherten Wiederherstellungspunkt)."""
-        self._state = replace(self._state, **{key: self._backup_saved.get(key) for key in keys})
+        """Setzt Felder im Speicher auf den zuletzt gespeicherten Stand zurueck, ohne zu schreiben (N6)."""
+        reverted = {}
+        for key in keys:
+            value = self._backup_saved.get(key)
+            reverted[key] = (dict(value) if value else {}) if key in _LEVER_MAP_FIELDS else value
+        self._state = replace(self._state, **reverted)
         self._backup_dirty = _backup_content(self._state, self._extra) != self._backup_saved
 
     def set_delivery(self, delivery_state: DeliveryState) -> None:

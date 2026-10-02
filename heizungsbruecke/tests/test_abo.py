@@ -8,16 +8,21 @@ import pytest
 
 from heizungsbruecke import abo, entitlement
 from heizungsbruecke.backup_store import load_backup
+from heizungsbruecke.ha_binding import HaPlantBinding
 from heizungsbruecke.manifest import ChannelManifest
 from heizungsbruecke.notifier import Notifier
-from heizungsbruecke.override import Override
 from heizungsbruecke.status import StatusReporter
+from smartheat_core.pipeline import LeverPipeline
+from smartheat_core.safety import LocalSafety
 
 ABO_NOW = datetime(2026, 9, 25, 12, 0, tzinfo=timezone(timedelta(hours=2)))
-OPTIONS = {
-    "tenant_id": "t1", "curve_min": 0.2, "curve_max": 0.8, "shift_min": 0.0, "shift_max": 5.0,
-    "boost_curve_value": 0.5, "boost_shift_value": 2.0, "heat_limit_min": 5.0, "heat_limit_max": 20.0,
-}
+OPTIONS = {"tenant_id": "t1"}
+SAFETY = LocalSafety(
+    ranges={"curve": (0.2, 0.8), "room_setpoint": (0.0, 5.0), "heat_limit": (5.0, 20.0), "min_flow": (20.0, 30.0)},
+    comfort_boost={"curve": 0.5, "room_setpoint": 2.0, "heat_limit": 20.0},
+    emergency_boost_levers=("curve", "room_setpoint", "heat_limit"),
+    arrival_threshold_k=0.5,
+)
 BOTH_ROLES = {"curve_current": "number.curve", "shift_current": "number.shift"}
 
 
@@ -32,7 +37,7 @@ def _runtime(store, entity_ids=BOTH_ROLES, notify_services=("notify.handy",)):
     options = dict(OPTIONS)
     return SimpleNamespace(
         manifest=manifest, ha_api=ha_api, options=options, store=store, mqtt_client=MagicMock(),
-        override=Override(store, manifest, ha_api, options),
+        override=LeverPipeline(store, HaPlantBinding(ha_api, manifest), SAFETY),
         notifier=Notifier(store, ha_api, list(notify_services)),
         status=StatusReporter(ha_api, options["tenant_id"], None, store),
     )
@@ -113,7 +118,7 @@ def test_enter_inactive_with_failing_entitlement_persist_still_enters_mode(make_
 
 def test_finish_grace_mid_boost_restores_learned_values_clamped(make_store, tmp_path):
     store = make_store(backup={
-        "curve_current": 0.4, "shift_current": 9.0,  # ueber shift_max=5.0 -> geclampt
+        "restore_point": {"curve": 0.4, "room_setpoint": 9.0},  # ueber dem Maximum 5.0 -> geclampt
         "emergency_boost_active": True, "boost_active": True,
     })
     rt = _runtime(store)
@@ -132,7 +137,7 @@ def test_finish_grace_mid_boost_restores_learned_values_clamped(make_store, tmp_
 
 
 def test_finish_grace_counts_restore_as_done_when_saving_flags_fails(make_store, monkeypatch, caplog):
-    store = make_store(backup={"curve_current": 0.4, "shift_current": 2.0, "emergency_boost_active": True})
+    store = make_store(backup={"restore_point": {"curve": 0.4, "room_setpoint": 2.0}, "emergency_boost_active": True})
     rt = _runtime(store)
 
     def _broken_save(path, values):
@@ -150,7 +155,7 @@ def test_finish_grace_counts_restore_as_done_when_saving_flags_fails(make_store,
 
 
 def test_finish_grace_keeps_flags_when_restore_write_fails(make_store, tmp_path):
-    store = make_store(backup={"curve_current": 0.4, "emergency_boost_active": True})
+    store = make_store(backup={"restore_point": {"curve": 0.4}, "emergency_boost_active": True})
     rt = _runtime(store, entity_ids={"curve_current": "number.curve"})
     rt.ha_api.set_number_value.side_effect = RuntimeError("HA nicht erreichbar")
 
@@ -163,7 +168,10 @@ def test_finish_grace_keeps_flags_when_restore_write_fails(make_store, tmp_path)
 
 
 def test_finish_grace_without_forced_restore_and_without_flags_writes_nothing(make_store, caplog):
-    rt = _runtime(make_store(backup={"curve_current": 0.4, "boost_active": False}), entity_ids={"curve_current": "number.curve"})
+    rt = _runtime(
+        make_store(backup={"restore_point": {"curve": 0.4}, "boost_active": False}),
+        entity_ids={"curve_current": "number.curve"},
+    )
 
     with caplog.at_level(logging.INFO):
         assert abo.finish_grace(rt, always_restore=False, final_notice=False) is True

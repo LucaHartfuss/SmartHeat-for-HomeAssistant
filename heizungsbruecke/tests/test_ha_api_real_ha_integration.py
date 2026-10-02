@@ -22,9 +22,10 @@ import pytest
 import requests
 import websocket
 
-from heizungsbruecke import plant
 from heizungsbruecke.ha_api import HomeAssistantApi
+from heizungsbruecke.ha_binding import HaPlantBinding
 from heizungsbruecke.helper_templates import outdoor_temperature_template, room_temperature_template
+from heizungsbruecke.manifest import ChannelManifest
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("RUN_REAL_HA_TESTS") != "1",
@@ -326,13 +327,13 @@ def test_is_reachable_once_real_ha_reports_running(real_ha):
 
 def test_tp12b_write_refuses_an_unavailable_number(real_ha):
     """TP12b, AU-016: HA ueberspringt eine nicht verfuegbare Entity im Service-Aufruf still;
-    plant.write prueft deshalb vorher den Zustand und schreibt nicht."""
+    HaPlantBinding.write prueft deshalb vorher den Zustand und schreibt nicht."""
     base_url, token = real_ha
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
     _set_state(api, "number.tp12b_unavailable", "unavailable", {})
 
     with pytest.raises(ValueError, match="unavailable"):
-        plant.write(api, "curve_current", "number.tp12b_unavailable", 1.0, 0.4, 1.5)
+        HaPlantBinding(api, ChannelManifest(entity_ids={"curve_current": "number.tp12b_unavailable"})).write("curve", 1.0)
 
     # Beleg fuer die Annahme: der direkte Service-Aufruf aendert den Zustand nicht.
     with contextlib.suppress(requests.HTTPError):

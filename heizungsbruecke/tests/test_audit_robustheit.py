@@ -127,4 +127,4 @@ def test_old_manual_override_format_is_dropped_by_the_first_backup_write(tmp_pat
     reloaded = StateStore(tmp_path / "backup.json", tmp_path / "failsafe_state.json")
     raw = (tmp_path / "backup.json").read_text()
     assert "manual_override" not in raw
-    assert reloaded.state.curve_current == 1.5
+    assert reloaded.state.restore_point.get("curve") == 1.5  # alter Rollen-Schluessel, migriert (Plan 2)

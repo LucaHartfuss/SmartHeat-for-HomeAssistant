@@ -143,7 +143,7 @@ def test_climate_zone_start_switches_the_mode_once_despite_the_mode_lag(env, lag
 
 def test_server_answer_within_the_mode_lag_does_not_switch_the_zone_mode_again(env, lagging):
     # Start stellt die Zone um (Modus-Lag 600 s); die Serverantwort kommt 120 s spaeter, die Zone zeigt noch
-    # "auto". override._write darf daraufhin nicht ein zweites Mal set_hvac_mode senden (Cloud-Kontingent).
+    # "auto". LeverPipeline._write darf daraufhin nicht ein zweites Mal set_hvac_mode senden (Cloud-Kontingent).
     lagging.states.update({"climate.zone": "auto", "climate.zone::temperature": 0.0})
     _quiet_backup(env)
     bridge = _start(env, entity_shift_current="climate.zone")
@@ -165,7 +165,7 @@ def test_zone_flipped_back_after_the_settle_window_is_corrected_again(env, laggi
     lagging.states.update({"climate.zone": "auto", "climate.zone::temperature": 0.0})
     _quiet_backup(env)
     bridge = _start(env, entity_shift_current="climate.zone")
-    _advance(env, bridge, 2200)  # laenger als OWN_WRITE_SETTLE_SECONDS (2100 s)
+    _advance(env, bridge, 2200)  # laenger als settle_seconds des Bindings (2100 s)
     lagging.states["climate.zone"] = "auto"  # jemand/die Cloud stellt auf das Zeitprogramm zurueck
     _set_room_target(env, bridge, 20.5)
 

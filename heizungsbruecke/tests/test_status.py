@@ -57,7 +57,7 @@ def test_overall_status_takes_the_first_matching_state(flags, state, expected):
 
 def test_event_carries_every_field():
     state = BridgeState(
-        curve_current=0.9, shift_current=22.0, emergency_boost_active=True,
+        restore_point={"curve": 0.9, "room_setpoint": 22.0}, emergency_boost_active=True,
         last_ack_at="2026-10-01T12:00:05+02:00", manual_override=OVERRIDE,
         notify_states={
             "raumfuehler:sensor.b": "ausgefallen", "raumfuehler:sensor.a": "ausgefallen",
@@ -84,8 +84,8 @@ def test_event_carries_every_field():
 
 
 def test_event_carries_parallel_shift_and_min_flow(make_store):
-    store = make_store(backup={"curve_current": 1.05, "shift_current": 21.0})
-    store.update(min_flow_current=20.5, heat_limit=16.0)
+    store = make_store(backup={"restore_point": {"curve": 1.05, "room_setpoint": 21.0}})
+    store.update(min_flow_current=20.5, restore_point={**store.state.restore_point, "heat_limit": 16.0})
     event = build_event("t", None, Flags(), store.state)
     assert (event["kurve"], event["parallelverschiebung"], event["mindestvorlauf"]) == (1.05, 21.0, 20.5)
     assert event["heizgrenze"] == 16.0
@@ -94,7 +94,7 @@ def test_event_carries_parallel_shift_and_min_flow(make_store):
 
 def test_manual_hint_shape(make_store):
     store = make_store(backup={
-        "curve_current": 1.05, "shift_current": 21.0,
+        "restore_point": {"curve": 1.05, "room_setpoint": 21.0},
         "manual_override": {"curve": 1.3, "shift": 22.0, "erkannt": "2026-10-03T11:00:00+02:00", "signatur": "x"},
     })
     hint = build_event("t", None, Flags(), store.state)["hinweise"]["manueller_eingriff"]

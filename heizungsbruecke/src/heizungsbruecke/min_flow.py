@@ -4,7 +4,6 @@ Server kennt sie nicht. Geschrieben wird nur bei Abweichung vom Live-Wert (lokal
 kein Cloud-Aufruf), also beim Start und nach einer Soll-Aenderung."""
 import logging
 
-from heizungsbruecke.plant import STEPS
 from smartheat_core.clamping import clamp, round_to_step
 
 logger = logging.getLogger(__name__)
@@ -16,13 +15,13 @@ def expected(rt) -> float | None:
     target = rt.store.state.stable_target
     if target is None:
         return None
-    options = rt.options
-    return round_to_step(clamp(target, options["min_flow_min"], options["min_flow_max"]), STEPS["min_flow"])
+    low, high = rt.override.safety.ranges["min_flow"]
+    return round_to_step(clamp(target, low, high), rt.override.binding.description.steps["min_flow"])
 
 
 def sync(rt) -> None:
     """Schreibt den Mindestvorlauf, wenn er nicht dem Raum-Soll entspricht. Vergleichswert ist der
-    Live-Wert aus HA -- ausser kurz nach einem eigenen Schreiben (Override.settled): dann kann HA
+    Live-Wert aus HA -- ausser kurz nach einem eigenen Schreiben (LeverPipeline.settled): dann kann HA
     bei mypyllant bis zum naechsten Poll (bis ~30 min) noch den alten Wert zeigen, und massgeblich
     ist der eigene letzte Schreibwert. Sonst wuerde eine Rueckkehr zum alten Wert innerhalb dieser Zeit uebersprungen
     (die Anlage bliebe auf dem neuen) und jeder weitere Anlass schriebe denselben Wert erneut.
@@ -35,7 +34,7 @@ def sync(rt) -> None:
         current = last
     else:
         try:
-            current = rt.ha_api.get_state(rt.manifest.entity_ids["min_flow"])
+            current = rt.override.binding.read("min_flow")
         except Exception as error:
             logger.warning("Mindestvorlauf nicht lesbar (%s), wird neu geschrieben", error)
             current = None
@@ -43,7 +42,7 @@ def sync(rt) -> None:
         rt.store.update(min_flow_current=value)
         return
     try:
-        written = rt.override.write_min_flow(value)
+        written = rt.override.write_lever("min_flow", value)
     except Exception:
         logger.exception("Mindestvorlauf konnte nicht geschrieben werden, naechster Versuch beim naechsten Anlass")
         return

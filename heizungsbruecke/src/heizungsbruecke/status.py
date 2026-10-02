@@ -106,7 +106,7 @@ def _fault(fault) -> dict | None:
     if fault.source == delivery.SOURCE_LOCAL:
         roles = list(fault.detail)
     elif fault.source == delivery.SOURCE_WRITE and fault.detail:
-        roles = [fault.detail[0].split(" ", 1)[0]]  # "curve_current (number.x): Ursache"
+        roles = [fault.detail[0].split(" ", 1)[0]]  # "curve_current (number.x): Ursache" (ticks._write_fault_detail)
     else:
         roles = []
     return {"art": _FAULT_ART[fault.source], "rollen": roles}
@@ -159,10 +159,10 @@ def build_event(tenant_id: str, setup_id: str | None, flags: Flags, state, stora
         ),
         "boost": _boost(state),
         "letzte_serverantwort": state.last_ack_at,
-        "kurve": state.curve_current,
-        "parallelverschiebung": state.shift_current,
+        "kurve": state.restore_point.get("curve"),
+        "parallelverschiebung": state.restore_point.get("room_setpoint"),
         "mindestvorlauf": state.min_flow_current,
-        "heizgrenze": state.heat_limit,
+        "heizgrenze": state.restore_point.get("heat_limit"),
         "abo": abo,
         "abo_frist_ende": (
             entitlement.grace_end(state.abo_inactive_since).date().isoformat() if abo == ABO_INAKTIV else None

@@ -41,7 +41,7 @@ def read_snapshot_roles(
     macht die Zustellung einmal pro Fehlerbeginn.
 
     Pflichtrollen in `computed_values` werden nicht gelesen, sondern uebernommen
-    (shift_current: plant.current_shift)."""
+    (shift_current: HaPlantBinding.read_or)."""
     computed_values = computed_values or {}
     roles: dict[str, float] = {}
 
