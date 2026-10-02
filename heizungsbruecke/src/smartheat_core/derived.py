@@ -1,17 +1,26 @@
-"""Mindestvorlauftemperatur = Raum-Soll des Kunden (TP11, Spec 2/5.2). Die Mindestvorlauftemperatur
-ist bei Vaillant eine Untergrenze, keine Parallelverschiebung; sie wird lokal nachgefuehrt, der
+"""Mindestvorlauftemperatur = Raum-Soll des Kunden (TP11; client-abgeleiteter Hebel min_flow, Spec 3.3). Die
+Mindestvorlauftemperatur ist bei Vaillant eine Untergrenze, keine Parallelverschiebung; sie wird lokal nachgefuehrt, der
 Server kennt sie nicht. Geschrieben wird nur bei Abweichung vom Live-Wert (lokaler HA-Aufruf,
 kein Cloud-Aufruf), also beim Start und nach einer Soll-Aenderung."""
 import logging
+from typing import Any, Protocol
 
 from smartheat_core.clamping import clamp, round_to_step
 
 logger = logging.getLogger(__name__)
 
+
+class DerivedRuntime(Protocol):
+    """Was der abgeleitete Hebel braucht: Zustand (store) und Hebel-Pipeline mit Binding (override)."""
+
+    store: Any
+    override: Any
+
+
 TOLERANCE = 0.05
 
 
-def expected(rt) -> float | None:
+def expected(rt: DerivedRuntime) -> float | None:
     target = rt.store.state.stable_target
     if target is None:
         return None
@@ -19,7 +28,7 @@ def expected(rt) -> float | None:
     return round_to_step(clamp(target, low, high), rt.override.binding.description.steps["min_flow"])
 
 
-def sync(rt) -> None:
+def sync(rt: DerivedRuntime) -> None:
     """Schreibt den Mindestvorlauf, wenn er nicht dem Raum-Soll entspricht. Vergleichswert ist der
     Live-Wert aus HA -- ausser kurz nach einem eigenen Schreiben (LeverPipeline.settled): dann kann HA
     bei mypyllant bis zum naechsten Poll (bis ~30 min) noch den alten Wert zeigen, und massgeblich

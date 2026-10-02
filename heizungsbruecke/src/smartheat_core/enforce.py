@@ -1,5 +1,5 @@
 """Durchsetzen statt Melden (TP11, Spec 5.3). Weicht die Anlage vom Sollstand ab -- Steigung,
-Parallelverschiebung, Heizgrenze (Zeilen der Hebel-Pipeline), Mindestvorlauf (= Raum-Soll, min_flow.py) oder die
+Parallelverschiebung, Heizgrenze (Zeilen der Hebel-Pipeline), Mindestvorlauf (= Raum-Soll, derived.py) oder die
 Zonen-Betriebsart --, hat jemand in der App oder in HA verstellt: SmartHeat schreibt den Sollstand
 zurueck, meldet den Eingriff einmal (nicht kritisch, abschaltbar) und schickt Steigung/
 Parallelverschiebung als KPI mit dem naechsten Snapshot.
@@ -22,15 +22,28 @@ Pruefung (die Anlage kann nach einem gescheiterten Schreiben legitim auf alten W
 Meldet die Zone Wunschtemperatur 0 (heizt gerade nicht), ist das keine Abweichung."""
 import logging
 import math
+from collections.abc import Callable
 from datetime import date, datetime
+from typing import Any, Protocol
 
-from heizungsbruecke import min_flow
-from heizungsbruecke.notifier import STATE_OK
-from smartheat_core import write_budget
+from smartheat_core import derived, write_budget
 
 logger = logging.getLogger(__name__)
 
+
+class EnforceRuntime(Protocol):
+    """Was Durchsetzen braucht: Zustand (store), Hebel-Pipeline mit Binding (override), Meldungen (notifier:
+    notify(key, state, message, critical, silent_ok=False)), monotone Uhr (clock)."""
+
+    store: Any
+    override: Any
+    notifier: Any
+    clock: Callable[[], float]
+
+
 KEY = "manueller_eingriff"
+# Zustand "ok" eines Meldeschluessels; muss notifier.STATE_OK im Add-on entsprechen (tests/test_core_enforce.py).
+STATE_OK = "ok"
 DETECTION_ROUNDS = 2
 RETRY_SECONDS = write_budget.INTERVAL_SECONDS
 MAX_WRITES_PER_DAY = write_budget.MAX_PER_DAY
@@ -63,18 +76,18 @@ def _is_number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
-def _set_misses(rt, misses: int) -> None:
+def _set_misses(rt: EnforceRuntime, misses: int) -> None:
     if rt.store.state.manual_override_misses != misses:
         rt.store.update(manual_override_misses=misses)
 
 
-def _labels(rt) -> dict:
+def _labels(rt: EnforceRuntime) -> dict:
     """Anzeigenamen je Hebel und fuer die Betriebsart (Kundentext, wortgleich bis 0.29.0)."""
     description = rt.override.binding.description
     return {**description.labels, ZONE_MODE: description.preparation_label}
 
 
-def _read(rt, lever: str) -> float | None:
+def _read(rt: EnforceRuntime, lever: str) -> float | None:
     """Live-Wert oder None (nicht lesbar, Zone inaktiv) -- None ist nie eine Abweichung."""
     try:
         value = rt.override.binding.read(lever)
@@ -84,7 +97,7 @@ def _read(rt, lever: str) -> float | None:
     return value if _is_number(value) else None
 
 
-def _zone_not_manual(rt) -> bool:
+def _zone_not_manual(rt: EnforceRuntime) -> bool:
     binding = rt.override.binding
     if not binding.needs_preparation():
         return False
@@ -95,7 +108,7 @@ def _zone_not_manual(rt) -> bool:
         return False
 
 
-def _deviations(rt) -> tuple[dict, dict, set]:
+def _deviations(rt: EnforceRuntime) -> tuple[dict, dict, set]:
     """(Sollwerte, abweichende Live-Werte je Hebel, offene Hebel). Offen = der Live-Wert weicht ab,
     der Hebel ist aber noch nicht eingeschwungen (LeverPipeline.settled: eigenes Schreiben oder Start vor
     weniger als settle_seconds, HA hinkt vermutlich nach): weder durchsetzen noch als
@@ -103,7 +116,7 @@ def _deviations(rt) -> tuple[dict, dict, set]:
     Zone um)."""
     tolerance = rt.override.binding.description.enforce_tolerance
     expected = rt.override.expected_values()
-    wanted_min_flow = min_flow.expected(rt)
+    wanted_min_flow = derived.expected(rt)
     if wanted_min_flow is not None and rt.override.binding.has("min_flow"):
         expected["min_flow"] = wanted_min_flow
     deviating: dict = {}
@@ -128,20 +141,20 @@ def _budget_key(lever: str) -> str:
     return write_budget.ENFORCE_PREFIX + lever
 
 
-def _may_write(rt, lever: str) -> bool:
+def _may_write(rt: EnforceRuntime, lever: str) -> bool:
     """Kontingent: hoechstens einmal pro RETRY_SECONDS und MAX_WRITES_PER_DAY am Tag (write_budget.QUOTA)."""
     entry = write_budget.get(rt.store, _budget_key(lever))
     return write_budget.allowed(entry, write_budget.QUOTA, rt.clock(), _today().isoformat())
 
 
-def _count_attempt(rt, lever: str) -> None:
+def _count_attempt(rt: EnforceRuntime, lever: str) -> None:
     """Zaehlt einen Schreibversuch VOR dem Aufruf: auch ein gescheiterter (z. B. 403 "Quota
     Exceeded") verbraucht Kontingent und darf nicht in jedem Takt wiederholt werden."""
     key = _budget_key(lever)
     write_budget.put(rt.store, key, write_budget.counted(write_budget.get(rt.store, key), rt.clock(), _today().isoformat()))
 
 
-def _limit_reached_first_time(rt, lever: str) -> bool:
+def _limit_reached_first_time(rt: EnforceRuntime, lever: str) -> bool:
     """True genau einmal pro Tag und Hebel, wenn das Tageslimit erreicht ist (fuer die Meldung)."""
     key, day = _budget_key(lever), _today().isoformat()
     entry = write_budget.get(rt.store, key)
@@ -152,7 +165,7 @@ def _limit_reached_first_time(rt, lever: str) -> bool:
     return True
 
 
-def _restore(rt, expected: dict, deviating: dict) -> tuple[list[str], list[str]]:
+def _restore(rt: EnforceRuntime, expected: dict, deviating: dict) -> tuple[list[str], list[str]]:
     """Schreibt, was das Kontingent erlaubt. Gibt (zurueckgesetzte Hebel, heute erstmals am
     Tageslimit abgewiesene Hebel) zurueck. Betriebsart und prepared_lever (Wunschtemperatur der Zone) sind ein
     Rueckschreiben: write_levers(prepared_lever) stellt die Zone selbst um (LeverPipeline._write), ein
@@ -189,7 +202,7 @@ def _restore(rt, expected: dict, deviating: dict) -> tuple[list[str], list[str]]
     return written, at_limit
 
 
-def _kpi_value(rt, lever: str, entries: dict, expected: dict, unsent: dict | None, field: str):
+def _kpi_value(rt: EnforceRuntime, lever: str, entries: dict, expected: dict, unsent: dict | None, field: str):
     """Wert fuer den KPI: der verstellte Wert des Kunden, sonst der noch nicht gesendete Wert eines
     frueheren Eingriffs (`unsent` = manual_override_pending), sonst der Sollwert, sonst der
     Live-Wert."""
@@ -202,7 +215,7 @@ def _kpi_value(rt, lever: str, entries: dict, expected: dict, unsent: dict | Non
     return _read(rt, lever)
 
 
-def _persisted_kpi_value(rt, lever: str, value):
+def _persisted_kpi_value(rt: EnforceRuntime, lever: str, value):
     """KPI-Wert fuer den PERSISTIERTEN Eintrag (state.manual_override, ueber backup.json): ohne
     Live- oder Sollwert (Zone inaktiv und noch kein Wiederherstellungspunkt fuer diesen Hebel) faellt
     er auf den zuletzt gespeicherten Sollwert zurueck, notfalls auf 0.0 -- nie auf None. Sonst waere
@@ -216,7 +229,7 @@ def _persisted_kpi_value(rt, lever: str, value):
     return fallback if _is_number(fallback) else 0.0
 
 
-def _record(rt, expected: dict, deviating: dict) -> dict:
+def _record(rt: EnforceRuntime, expected: dict, deviating: dict) -> dict:
     """Fuehrt den laufenden Eingriff fort: Hebel, die schon zu ihm gehoeren (auch solche, die gerade
     offen sind), behalten ihren Wert; nur ein neuer Hebel oder ein neuer Wert aendert ihn (neue
     Signatur, neuer KPI-Eintrag). Der KPI (manual_override_pending) wird zusammengefuehrt, nicht
@@ -249,7 +262,7 @@ def _record(rt, expected: dict, deviating: dict) -> dict:
     return record
 
 
-def check_manual_override(rt) -> None:
+def check_manual_override(rt: EnforceRuntime) -> None:
     state = rt.store.state
     if state.delivery.datenfehler is not None:
         _set_misses(rt, 0)

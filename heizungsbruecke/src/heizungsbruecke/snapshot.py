@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 SNAPSHOT_SCHEMA_VERSION = 3
 
-# Durchsetzung (manual_override.py): zurueckgesetzter Eingriff, nur KPI. Optionales
+# Durchsetzung (enforce.py): zurueckgesetzter Eingriff, nur KPI. Optionales
 # Top-Level-Feld im Snapshot. Muss zu messages.MANUAL_OVERRIDE_* auf dem Server passen
 # (Contract-Check).
 MANUAL_OVERRIDE_KEY = "manual_override"

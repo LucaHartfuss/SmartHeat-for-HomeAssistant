@@ -4,12 +4,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from heizungsbruecke import manual_override
 from heizungsbruecke.delivery import SOURCE_LOCAL, DataFault, DeliveryState
 from heizungsbruecke.ha_binding import HaPlantBinding
 from heizungsbruecke.manifest import ChannelManifest
 from heizungsbruecke.notifier import STATE_OK, Notifier
 from heizungsbruecke.runtime import Runtime
+from smartheat_core import enforce
 from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import LocalSafety
@@ -85,7 +85,7 @@ class Ha:
 @pytest.fixture(autouse=True)
 def _fixed_day(monkeypatch):
     # Kein Flackern um Mitternacht: der Tageszaehler haengt an _today().
-    monkeypatch.setattr(manual_override, "_today", lambda: TODAY)
+    monkeypatch.setattr(enforce, "_today", lambda: TODAY)
 
 
 def _rt(make_store, clock, ha, uptime=SETTLE + 1, store=None, manifest=MANIFEST, **point):
@@ -117,9 +117,9 @@ def _rt_g(make_store, clock, live_heat_limit):
     return _rt(make_store, clock, ha, manifest=MANIFEST_G, heat_limit=15.0)
 
 
-def _rounds(rt, n=manual_override.DETECTION_ROUNDS):
+def _rounds(rt, n=enforce.DETECTION_ROUNDS):
     for _ in range(n):
-        manual_override.check_manual_override(rt)
+        enforce.check_manual_override(rt)
 
 
 def _curve_writes(rt):
@@ -148,7 +148,7 @@ def test_manual_curve_change_is_written_back_and_reported(make_store, clock):
     _rounds(rt)
     assert rt.ha_api.writes == [("number.curve", 0.9)]
     assert rt.store.state.manual_override_pending["curve"] == 1.3
-    assert rt.notifier.notify.call_args.args[0] == manual_override.KEY
+    assert rt.notifier.notify.call_args.args[0] == enforce.KEY
 
 
 def test_heat_limit_changed_in_the_app_is_written_back_and_reported(make_store, clock):
@@ -226,7 +226,7 @@ def test_record_with_an_inactive_zone_and_no_restore_point_survives_a_reload(mak
     _rounds(rt)
     override = rt.store.state.manual_override
     assert override is not None
-    assert manual_override._is_number(override["curve"]) and manual_override._is_number(override["shift"])
+    assert enforce._is_number(override["curve"]) and enforce._is_number(override["shift"])
     assert override["gemeldet"] == override["signatur"]
 
     # Neustart: derselbe backup.json-Pfad, frisch eingelesen.
@@ -271,7 +271,7 @@ def test_enforcement_rate_limited_per_day(make_store, clock):
     for _ in range(20):
         clock.advance(SETTLE + 1)
         _rounds(rt)
-    assert len(_curve_writes(rt)) == manual_override.MAX_WRITES_PER_DAY
+    assert len(_curve_writes(rt)) == enforce.MAX_WRITES_PER_DAY
     assert len(_message_calls(rt)) == 1
     assert len(_limit_calls(rt)) == 1
     assert [c for c in rt.notifier.notify.call_args_list if c.args[1] == STATE_OK] == []
@@ -302,22 +302,22 @@ def test_retry_interval_between_writes(make_store, clock):
     assert len(_curve_writes(rt)) == 2
 
 
-@pytest.mark.parametrize(("ago", "allowed"), [(manual_override.RETRY_SECONDS - 1, False),
-                                              (manual_override.RETRY_SECONDS + 1, True)])
+@pytest.mark.parametrize(("ago", "allowed"), [(enforce.RETRY_SECONDS - 1, False),
+                                              (enforce.RETRY_SECONDS + 1, True)])
 def test_may_write_respects_the_retry_interval(make_store, clock, ago, allowed):
     # Ruling #9: RETRY_SECONDS direkt pruefen (im Ablauf wird es von der Schonfrist verdeckt).
     rt = _rt(make_store, clock, Ha())
     rt.store.update(write_budget={"enforce:curve": {"day": TODAY.isoformat(), "count": 1, "last": clock() - ago}})
-    assert manual_override._may_write(rt, "curve") is allowed
+    assert enforce._may_write(rt, "curve") is allowed
 
 
 def test_may_write_respects_the_daily_limit(make_store, clock):
     rt = _rt(make_store, clock, Ha())
     day = TODAY.isoformat()
-    rt.store.update(write_budget={"enforce:curve": {"day": day, "count": manual_override.MAX_WRITES_PER_DAY,
-                                                    "last": clock() - 10 * manual_override.RETRY_SECONDS}})
-    assert manual_override._may_write(rt, "curve") is False
-    assert manual_override._may_write(rt, "room_setpoint") is True
+    rt.store.update(write_budget={"enforce:curve": {"day": day, "count": enforce.MAX_WRITES_PER_DAY,
+                                                    "last": clock() - 10 * enforce.RETRY_SECONDS}})
+    assert enforce._may_write(rt, "curve") is False
+    assert enforce._may_write(rt, "room_setpoint") is True
 
 
 def test_open_data_fault_pauses(make_store, clock):
@@ -330,20 +330,20 @@ def test_open_data_fault_pauses(make_store, clock):
 def test_return_clears_hint(make_store, clock):
     rt = _rt(make_store, clock, Ha(curve=1.3))
     _rounds(rt)
-    manual_override.check_manual_override(rt)  # Anlage steht wieder richtig
+    enforce.check_manual_override(rt)  # Anlage steht wieder richtig
     assert rt.store.state.manual_override is None
     assert rt.notifier.notify.call_args.args[1] == STATE_OK
 
 
 def test_counter_resets_next_day(make_store, clock, monkeypatch):
     rt = _rt(make_store, clock, Ha(curve=1.3))
-    monkeypatch.setattr(manual_override, "_today", lambda: date(2026, 10, 3))
+    monkeypatch.setattr(enforce, "_today", lambda: date(2026, 10, 3))
     for _ in range(10):
         rt.ha_api.states["number.curve"] = 1.3
         clock.advance(SETTLE + 1)
         _rounds(rt)
-    assert len(_curve_writes(rt)) == manual_override.MAX_WRITES_PER_DAY
-    monkeypatch.setattr(manual_override, "_today", lambda: date(2026, 10, 4))
+    assert len(_curve_writes(rt)) == enforce.MAX_WRITES_PER_DAY
+    monkeypatch.setattr(enforce, "_today", lambda: date(2026, 10, 4))
     rt.ha_api.states["number.curve"] = 1.3
     clock.advance(SETTLE + 1)
     before = len(rt.ha_api.writes)
@@ -384,10 +384,10 @@ def test_failed_write_backs_respect_the_quota(make_store, clock):
     rt = _rt(make_store, clock, ha)
     for _ in range(12 * 24):  # ein Tag im 5-min-Takt
         clock.advance(300)
-        manual_override.check_manual_override(rt)
+        enforce.check_manual_override(rt)
     times = [at for entity, _, at in ha.attempts if entity == "number.curve"]
-    assert len(times) == manual_override.MAX_WRITES_PER_DAY
-    assert all(later - earlier >= manual_override.RETRY_SECONDS for earlier, later in zip(times, times[1:], strict=False))
+    assert len(times) == enforce.MAX_WRITES_PER_DAY
+    assert all(later - earlier >= enforce.RETRY_SECONDS for earlier, later in zip(times, times[1:], strict=False))
     assert _message_calls(rt) == []
     assert len(_limit_calls(rt)) == 1
     assert rt.store.state.manual_override_pending["curve"] == 1.3
@@ -422,7 +422,7 @@ def test_pending_kpi_is_merged_not_replaced(make_store, clock):
     # Rueckkehr -- ein zweiter Eingriff nur an der Parallelverschiebung folgt.
     rt = _rt(make_store, clock, Ha(curve=1.3))
     _rounds(rt)
-    manual_override.check_manual_override(rt)  # Rueckkehr
+    enforce.check_manual_override(rt)  # Rueckkehr
     assert rt.store.state.manual_override is None
     rt.ha_api.states["climate.zone::temperature"] = 23.0
     clock.advance(SETTLE + 1)
@@ -435,12 +435,12 @@ def test_detection_at_the_daily_limit_only_sends_the_limit_message(make_store, c
     # MINOR 1: der 7. Eingriff am Tag wird nicht mehr zurueckgesetzt -- nur die Limit-Meldung,
     # kein "... und zurueckgesetzt".
     rt = _rt(make_store, clock, Ha(curve=1.3))
-    for _ in range(manual_override.MAX_WRITES_PER_DAY):
+    for _ in range(enforce.MAX_WRITES_PER_DAY):
         rt.ha_api.states["number.curve"] = 1.3
         clock.advance(SETTLE + 1)
         _rounds(rt)
-        manual_override.check_manual_override(rt)  # Rueckkehr
-    assert len(_curve_writes(rt)) == manual_override.MAX_WRITES_PER_DAY
+        enforce.check_manual_override(rt)  # Rueckkehr
+    assert len(_curve_writes(rt)) == enforce.MAX_WRITES_PER_DAY
     rt.notifier.notify.reset_mock()
     rt.ha_api.states["number.curve"] = 1.3
     clock.advance(SETTLE + 1)
@@ -486,3 +486,9 @@ def test_an_intervention_reported_by_0_29_0_is_not_reported_again_after_the_upda
     assert _message_calls(rt) == []
     assert rt.store.state.manual_override["gemeldet"] == rt.store.state.manual_override["signatur"] == "curve=1.3"
     assert rt.store.state.write_budget["enforce:curve"]["count"] == 2
+
+
+def test_state_ok_matches_the_notifier():
+    from heizungsbruecke.notifier import STATE_OK as NOTIFIER_OK
+    from smartheat_core.enforce import STATE_OK
+    assert STATE_OK == NOTIFIER_OK

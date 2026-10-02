@@ -21,8 +21,6 @@ from heizungsbruecke import (
     delivery,
     derived_sensors,
     entitlement,
-    manual_override,
-    min_flow,
     regulation,
     room_sensors,
     telemetry,
@@ -63,7 +61,7 @@ from heizungsbruecke.status import (
     StatusReporter,
 )
 from heizungsbruecke.worker import Event, RegulationWorker
-from smartheat_core import write_budget
+from smartheat_core import derived, enforce, write_budget
 from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.pipeline import LeverPipeline
 
@@ -374,7 +372,7 @@ def _on_local_check(rt: Runtime, event: Event) -> None:
         return
     if event.data.get("room_target_fired"):
         regulation.refresh_stable_target(rt)
-        min_flow.sync(rt)
+        derived.sync(rt)
     if not rt.zone_prepared:
         _prepare_zone(rt)
     try:
@@ -471,7 +469,7 @@ def _on_health(rt: Runtime, event: Event) -> None:
         logger.warning("Datentraeger weiterhin nicht beschreibbar: %s", error)
     if rt.store.state.abo_finished:
         return
-    for check in (battery.check_batteries, room_sensors.check_room_sensors, manual_override.check_manual_override):
+    for check in (battery.check_batteries, room_sensors.check_room_sensors, enforce.check_manual_override):
         try:
             check(rt)
         except Exception:
@@ -573,7 +571,7 @@ def _prime(rt: Runtime) -> None:
     if rt.store.state.restore_point.get("room_setpoint") is None:
         _first_start(rt)
     _prepare_zone(rt)
-    min_flow.sync(rt)
+    derived.sync(rt)
     try:
         regulation.run_local_check(rt)
     except Exception:

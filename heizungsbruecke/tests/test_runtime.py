@@ -18,10 +18,10 @@ from heizungsbruecke import abo, backup_store, datentraeger, entitlement, ticks
 from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.delivery import DataFault, DeliveryState
 from heizungsbruecke.derived_sensors import DerivedSensors
-from heizungsbruecke.manual_override import MAX_WRITES_PER_DAY, RETRY_SECONDS
 from heizungsbruecke.runtime import Runtime
 from heizungsbruecke.status import ADDON_VERSION
 from smartheat_core.binding import VAILLANT_MYPYLLANT
+from smartheat_core.enforce import MAX_WRITES_PER_DAY, RETRY_SECONDS
 from smartheat_core.pipeline import LeverPipeline
 
 SETTLE = VAILLANT_MYPYLLANT.settle_seconds

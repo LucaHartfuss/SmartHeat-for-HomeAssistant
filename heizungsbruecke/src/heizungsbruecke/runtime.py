@@ -52,7 +52,7 @@ class Runtime:
     status: StatusReporter | None = None
     # Ruhezustand im Betrieb (Fristende): alle Handler ausser dem Lebenszeichen laufen leer.
     idle: bool = False
-    # Durchsetzung (manual_override.py): der mit dem laufenden Tick als KPI gesendete, schon
+    # Durchsetzung (enforce.py): der mit dem laufenden Tick als KPI gesendete, schon
     # zurueckgesetzte Eingriff (wird nach der Serverantwort geloescht).
     manual_override_sent: dict | None = None
     # Die seq, fuer die manual_override_sent gepinnt ist (gesetzt beim ersten erfolgreichen

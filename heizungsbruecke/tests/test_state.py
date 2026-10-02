@@ -671,6 +671,7 @@ def test_legacy_enforce_budget_entries_win_after_a_rollback(make_store, tmp_path
 
 
 def test_the_migrated_notify_key_is_the_manual_override_key():
-    from heizungsbruecke import manual_override, state
+    from heizungsbruecke import state
+    from smartheat_core import enforce
 
-    assert state._MANUAL_OVERRIDE_KEY == manual_override.KEY
+    assert state._MANUAL_OVERRIDE_KEY == enforce.KEY
