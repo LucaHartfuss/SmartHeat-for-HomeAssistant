@@ -11,7 +11,7 @@ from heizungsbruecke.state import BridgeState
 from heizungsbruecke.status import ADDON_VERSION, Flags, StatusReporter, build_event, overall_status
 
 SINCE = datetime(2026, 10, 1, 8, 0, tzinfo=UTC)
-OVERRIDE = {"curve": 1.3, "shift": 24.5, "erkannt": "2026-10-01T08:00:00+02:00"}
+OVERRIDE = {"levers": {"curve": 1.3, "room_setpoint": 24.5, "heat_limit": 16.0}, "erkannt": "2026-10-01T08:00:00+02:00"}
 
 
 def test_contract_values_match_the_integration():
@@ -95,20 +95,21 @@ def test_event_carries_parallel_shift_and_min_flow(make_store):
 def test_manual_hint_shape(make_store):
     store = make_store(backup={
         "restore_point": {"curve": 1.05, "room_setpoint": 21.0},
-        "manual_override": {"curve": 1.3, "shift": 22.0, "erkannt": "2026-10-03T11:00:00+02:00", "signatur": "x"},
+        "manual_override": {"levers": {"curve": 1.3, "room_setpoint": 22.0, "heat_limit": 16.0},
+                            "erkannt": "2026-10-03T11:00:00+02:00", "signatur": "x"},
     })
     hint = build_event("t", None, Flags(), store.state)["hinweise"]["manueller_eingriff"]
     assert hint == {"kurve": 1.3, "parallelverschiebung": 22.0, "erkannt": "2026-10-03T11:00:00+02:00"}
 
 
 def test_version():
-    assert ADDON_VERSION == "0.29.0"
+    assert ADDON_VERSION == "0.30.0"
 
 
 @pytest.mark.parametrize("fault,expected", [
     (DataFault("local", ("dart", "dat")), {"art": "lokal", "rollen": ["dart", "dat"]}),
     (DataFault("server", ("unplausibler Wert für dat: 99",)), {"art": "server", "rollen": []}),
-    (DataFault("write", ("curve_current (number.x): Cloud weg",)), {"art": "anlage", "rollen": ["curve_current"]}),
+    (DataFault("write", ("curve (number.x): Cloud weg",)), {"art": "anlage", "rollen": ["curve"]}),
 ])
 def test_event_names_the_kind_and_roles_of_a_data_fault(fault, expected):
     state = BridgeState(delivery=DeliveryState(datenfehler=fault))

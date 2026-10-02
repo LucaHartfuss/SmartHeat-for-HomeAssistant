@@ -147,7 +147,7 @@ def test_manual_curve_change_is_written_back_and_reported(make_store, clock):
     rt = _rt(make_store, clock, Ha(curve=1.3))
     _rounds(rt)
     assert rt.ha_api.writes == [("number.curve", 0.9)]
-    assert rt.store.state.manual_override_pending["curve"] == 1.3
+    assert rt.store.state.manual_override_pending["levers"]["curve"] == 1.3
     assert rt.notifier.notify.call_args.args[0] == enforce.KEY
 
 
@@ -217,7 +217,7 @@ def test_zone_zero_is_no_deviation(make_store, clock):
 def test_record_with_an_inactive_zone_and_no_restore_point_survives_a_reload(make_store, clock):
     # Carried Task-13-Befund: ohne Live-Wert (Zone inaktiv) UND ohne gespeicherten
     # Wiederherstellungspunkt fuer die Parallelverschiebung liefert der KPI dafuer None. Ein
-    # persistierter Eintrag mit shift=None faellt bei state._is_override durch -- gemeldet/rollen/
+    # persistierter Eintrag mit room_setpoint=None faellt bei state._is_override durch -- gemeldet/rollen/
     # signatur gehen nach einem Neustart verloren, derselbe Eingriff wird erneut gemeldet.
     # reflects_writes=False haelt die Abweichung ueber den Neustart hinweg bestehen (mypyllant
     # zeigt einen eigenen Schreibvorgang wie hier erst mit Verzoegerung).
@@ -226,7 +226,7 @@ def test_record_with_an_inactive_zone_and_no_restore_point_survives_a_reload(mak
     _rounds(rt)
     override = rt.store.state.manual_override
     assert override is not None
-    assert enforce._is_number(override["curve"]) and enforce._is_number(override["shift"])
+    assert enforce._is_number(override["levers"]["curve"]) and enforce._is_number(override["levers"]["room_setpoint"])
     assert override["gemeldet"] == override["signatur"]
 
     # Neustart: derselbe backup.json-Pfad, frisch eingelesen.
@@ -390,7 +390,7 @@ def test_failed_write_backs_respect_the_quota(make_store, clock):
     assert all(later - earlier >= enforce.RETRY_SECONDS for earlier, later in zip(times, times[1:], strict=False))
     assert _message_calls(rt) == []
     assert len(_limit_calls(rt)) == 1
-    assert rt.store.state.manual_override_pending["curve"] == 1.3
+    assert rt.store.state.manual_override_pending["levers"]["curve"] == 1.3
 
 
 def test_partial_write_back_is_one_intervention(make_store, clock):
@@ -412,9 +412,9 @@ def test_partial_write_back_is_one_intervention(make_store, clock):
     assert ("climate.zone", 21.0) in ha.writes
     assert len(_message_calls(rt)) == 1
     pending = rt.store.state.manual_override_pending
-    assert (pending["curve"], pending["shift"]) == (1.3, 23.0)
+    assert pending["levers"] == {"curve": 1.3, "room_setpoint": 23.0}
     assert pending is first  # derselbe Eingriff: KPI nicht neu geschrieben (kein erneutes Senden)
-    assert (rt.store.state.manual_override["curve"], rt.store.state.manual_override["shift"]) == (1.3, 23.0)
+    assert rt.store.state.manual_override["levers"] == {"curve": 1.3, "room_setpoint": 23.0}
 
 
 def test_pending_kpi_is_merged_not_replaced(make_store, clock):
@@ -428,7 +428,7 @@ def test_pending_kpi_is_merged_not_replaced(make_store, clock):
     clock.advance(SETTLE + 1)
     _rounds(rt)
     pending = rt.store.state.manual_override_pending
-    assert (pending["curve"], pending["shift"]) == (1.3, 23.0)
+    assert pending["levers"] == {"curve": 1.3, "room_setpoint": 23.0}
 
 
 def test_detection_at_the_daily_limit_only_sends_the_limit_message(make_store, clock):

@@ -393,7 +393,7 @@ def test_saved_restore_point_needs_both_values(make_store):
 
 def test_status_and_r6_fields_round_trip(make_store, tmp_path):
     store = make_store()
-    override = {"curve": 1.3, "shift": 24.5, "erkannt": "2026-10-01T08:00:00+02:00"}
+    override = {"levers": {"curve": 1.3, "room_setpoint": 24.5}, "erkannt": "2026-10-01T08:00:00+02:00"}
 
     store.update(last_ack_at="2026-10-01T12:00:05+02:00", manual_override=override, manual_override_pending=override)
 
@@ -405,6 +405,9 @@ def test_status_and_r6_fields_round_trip(make_store, tmp_path):
 
 @pytest.mark.parametrize("key,value", [
     ("last_ack_at", 5),
+    ("manual_override", {"levers": {"curve": "x", "room_setpoint": 1.0}, "erkannt": "t"}),
+    ("manual_override", {"levers": {}, "erkannt": "t"}),
+    ("manual_override", {"levers": {"curve": True}, "erkannt": "t"}),
     ("manual_override", {"curve": "x", "shift": 1.0, "erkannt": "t"}),
     ("manual_override_pending", [1.3, 24.5]),
 ])
@@ -675,3 +678,41 @@ def test_the_migrated_notify_key_is_the_manual_override_key():
     from smartheat_core import enforce
 
     assert state._MANUAL_OVERRIDE_KEY == enforce.KEY
+
+
+def test_kpi_records_from_029_move_into_levers(tmp_path):
+    backup = tmp_path / "backup.json"
+    backup.write_text(json.dumps({
+        "manual_override": {"curve": 1.2, "shift": 17.5, "erkannt": "2026-10-02T09:00:00+02:00",
+                            "rollen": {"curve_current": 1.2}, "signatur": "curve_current=1.2", "gemeldet": None},
+        "manual_override_pending": {"curve": 1.2, "shift": 17.5, "erkannt": "2026-10-02T09:00:00+02:00"},
+    }), encoding="utf-8")
+    state = StateStore(backup, tmp_path / "failsafe_state.json").state
+    assert state.manual_override == {
+        "levers": {"curve": 1.2, "room_setpoint": 17.5}, "erkannt": "2026-10-02T09:00:00+02:00",
+        # signatur wird wie rollen auf Hebel umgestellt (Task 8, test_migrated_signature_matches_a_recomputed_one).
+        "rollen": {"curve": 1.2}, "signatur": "curve=1.2", "gemeldet": None,
+    }
+    assert state.manual_override_pending == {"levers": {"curve": 1.2, "room_setpoint": 17.5},
+                                             "erkannt": "2026-10-02T09:00:00+02:00"}
+
+
+def test_kpi_migration_is_idempotent(make_store, tmp_path):
+    # Ein schon umgestelltes backup.json bleibt beim zweiten Laden gleich; ein Eintrag ohne beide alten Schluessel
+    # (vor TP11: "offset") wird nicht umgestellt und faellt weiter als ungueltig weg.
+    make_store(backup=CLIENT1_BACKUP_029).update(last_room_target=21.0)
+    first = load_backup(tmp_path / "backup.json")
+    assert first["manual_override"]["levers"] == {"curve": 1.2, "room_setpoint": 17.5}
+    assert not {"curve", "shift"} & set(first["manual_override"])
+    StateStore(tmp_path / "backup.json", tmp_path / "failsafe_state.json").update(last_room_target=22.0)
+    assert load_backup(tmp_path / "backup.json") == {**first, "last_room_target": 22.0}
+
+
+def test_legacy_kpi_values_win_over_levers_after_a_rollback(make_store):
+    store = make_store(backup={"manual_override_pending": {
+        "levers": {"curve": 0.8, "room_setpoint": 20.0, "heat_limit": 16.0},
+        "curve": 1.2, "shift": 17.5, "erkannt": "2026-10-02T09:00:00+02:00",
+    }})
+    assert store.state.manual_override_pending == {
+        "levers": {"curve": 1.2, "room_setpoint": 17.5, "heat_limit": 16.0}, "erkannt": "2026-10-02T09:00:00+02:00",
+    }

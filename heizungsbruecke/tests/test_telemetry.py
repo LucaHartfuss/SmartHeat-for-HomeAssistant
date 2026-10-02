@@ -216,11 +216,11 @@ def test_publish_telemetry_includes_datenfehler_when_given():
 
     telemetry.publish_telemetry(
         mqtt_client=mqtt_client, room_actual=20.5, boost_active=False, failsafe_active=False,
-        datenfehler=DataFault("write", ("curve_current", "number.x", "Timeout")),
+        datenfehler=DataFault("write", ("curve", "number.x", "Timeout")),
     )
 
     payload = mqtt_client.publish_telemetry.call_args.args[0]
-    assert payload["datenfehler"] == {"source": "write", "detail": ["curve_current", "number.x", "Timeout"]}
+    assert payload["datenfehler"] == {"source": "write", "detail": ["curve", "number.x", "Timeout"]}
 
 
 def test_publish_telemetry_omits_datenfehler_without_fault():

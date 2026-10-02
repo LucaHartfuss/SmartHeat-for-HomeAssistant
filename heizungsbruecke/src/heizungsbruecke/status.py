@@ -12,7 +12,7 @@ from heizungsbruecke import battery, delivery, entitlement, room_sensors
 logger = logging.getLogger(__name__)
 
 # Muss zu `version` in config.yaml passen (tests/test_config_yaml.py).
-ADDON_VERSION = "0.29.0"
+ADDON_VERSION = "0.30.0"
 
 EVENT_TYPE = "smartheat_status"
 EVENT_SCHEMA = 1
@@ -106,7 +106,7 @@ def _fault(fault) -> dict | None:
     if fault.source == delivery.SOURCE_LOCAL:
         roles = list(fault.detail)
     elif fault.source == delivery.SOURCE_WRITE and fault.detail:
-        roles = [fault.detail[0].split(" ", 1)[0]]  # "curve_current (number.x): Ursache" (ticks._write_fault_detail)
+        roles = [fault.detail[0].split(" ", 1)[0]]  # "curve (number.x): Ursache" (pipeline.DeviceWriteError)
     else:
         roles = []
     return {"art": _FAULT_ART[fault.source], "rollen": roles}
@@ -138,7 +138,11 @@ def _manual(state) -> dict | None:
     override = state.manual_override
     if override is None:
         return None
-    return {"kurve": override["curve"], "parallelverschiebung": override["shift"], "erkannt": override["erkannt"]}
+    levers = override["levers"]
+    return {
+        "kurve": levers.get("curve"), "parallelverschiebung": levers.get("room_setpoint"),
+        "erkannt": override["erkannt"],
+    }
 
 
 def build_event(tenant_id: str, setup_id: str | None, flags: Flags, state, storage_failed: bool = False) -> dict:

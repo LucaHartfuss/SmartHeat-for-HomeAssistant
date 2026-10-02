@@ -1,8 +1,6 @@
 import pytest
 
 from heizungsbruecke.manifest import (
-    OPTIONAL_SNAPSHOT_ROLES,
-    SNAPSHOT_ROLES,
     ManifestError,
     build_manifest,
     entity_ref,
@@ -107,9 +105,16 @@ def test_entity_ref(role, value, expected):
     assert entity_ref(role, value) == expected
 
 
-def test_snapshot_roles():
-    assert SNAPSHOT_ROLES == ("heat_limit", "room_target", "curve_current", "shift_current")
-    assert OPTIONAL_SNAPSHOT_ROLES == ()
+def test_every_snapshot_lever_is_mapped_by_the_required_roles():
+    # Ersetzt test_snapshot_roles (Schema 4: der Snapshot meldet room_target und die Hebel des Hebelsatzes statt
+    # SNAPSHOT_ROLES). Die Pflichtrollen decken jeden Hebel ab; der Payload selbst: test_runtime.py
+    # test_snapshot_payload_is_schema_4.
+    from heizungsbruecke.ha_binding import HaPlantBinding
+
+    binding = HaPlantBinding(None, build_manifest(BASE, DERIVED))
+    assert [lever for lever in binding.description.lever_set.levers if binding.has(lever)] == [
+        "curve", "room_setpoint", "heat_limit",
+    ]
 
 
 def test_flow_setpoint_is_optional_role():

@@ -54,10 +54,10 @@ class BridgeState:
     notify_messages: dict = field(default_factory=dict)
     # Zeitpunkt (ISO) der letzten Serverantwort auf einen offenen Tick (Status letzte_serverantwort).
     last_ack_at: str | None = None
-    # Durchsetzung (enforce.py): aktiver Eingriff {curve, shift, erkannt, rollen, signatur, gemeldet} bis
-    # zur Rueckkehr (Hinweis im Status); rollen und signatur nennen Hebel.
+    # Durchsetzung (enforce.py): aktiver Eingriff {levers, erkannt, rollen, signatur, gemeldet} bis
+    # zur Rueckkehr (Hinweis im Status); levers, rollen und signatur nennen Hebel.
     manual_override: dict | None = None
-    # Durchsetzung (enforce.py): noch nicht vom Server verarbeiteter Eingriff (KPI im
+    # Durchsetzung (enforce.py): noch nicht vom Server verarbeiteter Eingriff {levers, erkannt} (KPI im
     # naechsten Snapshot).
     manual_override_pending: dict | None = None
     # Nur Laufzeit (die Abo-Frist selbst liegt in entitlement_state.json).
@@ -87,9 +87,13 @@ def _is_number(value) -> bool:
 
 
 def _is_override(value) -> bool:
+    """KPI-Eintrag eines Eingriffs: `levers` ein nicht leeres Dict aus endlichen Zahlen je Hebel, `erkannt` Text."""
+    if not isinstance(value, dict) or not isinstance(value.get("erkannt"), str):
+        return False
+    levers = value.get("levers")
     return (
-        isinstance(value, dict) and _is_number(value.get("curve")) and _is_number(value.get("shift"))
-        and isinstance(value.get("erkannt"), str)
+        isinstance(levers, dict) and bool(levers)
+        and all(isinstance(lever, str) and _is_number(number) for lever, number in levers.items())
     )
 
 
@@ -115,6 +119,8 @@ def _parse_budget(raw) -> dict | None:
 # werden uebernommen und entfernt, sonst blieben sie als unbekannte Schluessel fuer immer in backup.json.
 _LEGACY_RESTORE_KEYS = {"curve_current": "curve", "shift_current": "room_setpoint", "heat_limit": "heat_limit"}
 _LEGACY_ROLE_NAMES = {"curve_current": "curve", "shift_current": "room_setpoint"}
+# KPI-Felder eines Eingriffs bis 0.29.0 (manual_override, manual_override_pending) -> Hebel in `levers`.
+_LEGACY_KPI_KEYS = {"curve": "curve", "shift": "room_setpoint"}
 _MANUAL_OVERRIDE_KEY = "manueller_eingriff"  # manual_override.KEY (Import waere zyklisch)
 
 
@@ -132,6 +138,23 @@ def _lever_signature(signature):
         f"{_lever_name(name)}{separator}{value}"
         for name, separator, value in (part.partition("=") for part in signature.split(","))
     )
+
+
+def _lever_kpi(entry):
+    """KPI-Eintrag bis 0.29.0 ({"curve", "shift", "erkannt", ...}) in die Form ab 0.30.0 ({"levers": {"curve",
+    "room_setpoint"}, "erkannt", ...}); der Rest des Eintrags bleibt. Nur ein Eintrag mit beiden alten Schluesseln war
+    bis 0.29.0 gueltig; jeder andere bleibt unveraendert (ein schon umgestellter, ein ungueltiger faellt danach in
+    _is_override weg). Neben einem vorhandenen `levers` gelten die alten Werte (Rueckweg, Controller-Ruling Task 8)."""
+    if not isinstance(entry, dict) or not all(key in entry for key in _LEGACY_KPI_KEYS):
+        return entry
+    existing = entry.get("levers")
+    return {
+        **{key: value for key, value in entry.items() if key not in _LEGACY_KPI_KEYS},
+        "levers": {
+            **(existing if isinstance(existing, dict) else {}),
+            **{lever: entry[key] for key, lever in _LEGACY_KPI_KEYS.items()},
+        },
+    }
 
 
 def _migrate_legacy_roles(raw: dict) -> dict:
@@ -173,6 +196,9 @@ def _migrate_legacy_roles(raw: dict) -> dict:
                 for key, entry in budget.items() if _legacy_budget_key(key)
             },
         }
+    for key in ("manual_override", "manual_override_pending"):
+        if key in raw:
+            raw[key] = _lever_kpi(raw[key])
     override = raw.get("manual_override")
     if isinstance(override, dict) and isinstance(override.get("rollen"), dict):
         raw["manual_override"] = {

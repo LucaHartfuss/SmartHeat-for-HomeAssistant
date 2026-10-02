@@ -7,6 +7,16 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
 
 - Eigenes Icon und Logo (SmartHeat-Flamme) im Add-on-Store und in der Add-on-Übersicht.
 
+## 0.30.0
+
+- **Hersteller-Abstraktion (Plan 2):** Protokoll Schema 4 – der Snapshot meldet `room_target` und die Hebel des
+  Hebelsatzes (`levers`, `readonly`), die Antwort trägt `levers` und `learned`. Braucht einen Server mit Schema 4.
+- Neuer HA-freier Kern `smartheat_core` (Hebel, Hebelsätze, lokale Sicherheit, Binding, Hebel-Pipeline, Durchsetzen,
+  Mindestvorlauf, Boost, Schreibbudget); mypyllant-Spezifisches im HA-Binding `ha_binding.py`.
+- `backup.json` wird beim ersten Start einmalig auf Hebelnamen umgestellt (Wiederherstellungspunkt, Ursprungswerte,
+  Schreibbudget, Eingriff). Rückweg auf 0.29.0: startet ohne Wiederherstellungspunkt wie eine Neuinstallation.
+- Verhalten für Vaillant unverändert (Sicherheitswerte, Boost, Durchsetzen, Kundenmeldungen).
+
 ## 0.29.0
 
 **Heizgrenze bis 23 °C.**

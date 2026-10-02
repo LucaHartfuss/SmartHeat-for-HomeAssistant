@@ -509,7 +509,7 @@ def test_retry_due_outside_waiting_retry_is_ignored(events):
 
 def test_write_failed_is_an_answer_with_its_own_fault_and_data_retry():
     state, _ = _published("s1", server_failures=1)
-    detail = "curve_current (number.c): Cloud weg"
+    detail = "curve (number.c): Cloud weg"
 
     state, actions = step(state, WriteFailed("s1", detail))
 
@@ -530,10 +530,10 @@ def test_write_failed_ends_notbetrieb():
 
 def test_repeated_write_failure_with_other_text_is_the_same_fault():
     state, _ = _published("s1")
-    state, _ = step(state, WriteFailed("s1", "curve_current (number.c): Timeout"))
+    state, _ = step(state, WriteFailed("s1", "curve (number.c): Timeout"))
     persisted = to_persisted(state)
 
-    state, actions = _run(state, RetryDue("s1", 2), Published("s1"), WriteFailed("s1", "shift_current (number.o): HTTP 500"))
+    state, actions = _run(state, RetryDue("s1", 2), Published("s1"), WriteFailed("s1", "room_setpoint (number.o): HTTP 500"))
 
     assert actions == [ScheduleRetry("s1", 4, 300)]
     assert to_persisted(state) == persisted
@@ -578,9 +578,9 @@ def test_write_fault_is_persisted_and_read_back():
 
 
 def test_notification_texts_for_write_fault():
-    assert notification_text(NOTIFY_DATENFEHLER_WRITE, ("curve_current (number.c): Cloud weg",), {}) == (
+    assert notification_text(NOTIFY_DATENFEHLER_WRITE, ("curve (number.c): Cloud weg",), {}) == (
         "Heizungsbrücke: Neue Heizkurve konnte nicht an die Anlage übertragen werden "
-        "(curve_current (number.c): Cloud weg). Wird automatisch erneut versucht."
+        "(curve (number.c): Cloud weg). Wird automatisch erneut versucht."
     )
     assert notification_text(NOTIFY_WRITE_RESOLVED, (), {}) == (
         "Heizungsbrücke: Anlage wieder erreichbar, Heizkurve übertragen."
@@ -723,7 +723,7 @@ def test_retry_after_a_server_timeout_belongs_to_the_server_chain():
 @pytest.mark.parametrize("events", [
     (TickDue("s1", "daily"), ReadInvalid("s1", ("dat",))),                                     # lokaler Datenfehler
     (TickDue("s1", "daily"), Published("s1"), Ack("s1", "rejected", "unplausibel")),          # Server-Ablehnung
-    (TickDue("s1", "daily"), Published("s1"), WriteFailed("s1", "curve_current (number.x): weg")),  # Anlage
+    (TickDue("s1", "daily"), Published("s1"), WriteFailed("s1", "curve (number.x): weg")),  # Anlage
 ])
 def test_mqtt_connected_does_not_cut_short_a_data_fault_wait(events):
     # N2: Datenfehler- und Ablehnungs-Wartezeiten laufen normal ab.

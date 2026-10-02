@@ -1,8 +1,8 @@
 """Durchsetzen statt Melden (TP11, Spec 5.3). Weicht die Anlage vom Sollstand ab -- Steigung,
 Parallelverschiebung, Heizgrenze (Zeilen der Hebel-Pipeline), Mindestvorlauf (= Raum-Soll, derived.py) oder die
 Zonen-Betriebsart --, hat jemand in der App oder in HA verstellt: SmartHeat schreibt den Sollstand
-zurueck, meldet den Eingriff einmal (nicht kritisch, abschaltbar) und schickt Steigung/
-Parallelverschiebung als KPI mit dem naechsten Snapshot.
+zurueck, meldet den Eingriff einmal (nicht kritisch, abschaltbar) und schickt die Werte aller Hebel des
+Hebelsatzes als KPI mit dem naechsten Snapshot (Plan-Praezisierung 6).
 
 Erst nach DETECTION_ROUNDS Runden in Folge und nie innerhalb von settle_seconds des Bindings
 nach einem eigenen Schreiben dieses Hebels oder nach dem Start (mypyllant fragt die
@@ -10,7 +10,7 @@ Cloud nur alle 30 min ab, HA zeigt so lange den alten Wert; ein Schreiben kurz v
 ist unbekannt) -- dieselbe Regel wie der Quota-Check (LeverPipeline.settled). Eine solche noch nicht
 eingeschwungene Abweichung ist "offen": sie wird weder durchgesetzt noch als Rueckkehr gewertet.
 
-Ein Eingriff (manual_override: KPI-Werte, "rollen" = verstellte Werte je Hebel, "signatur",
+Ein Eingriff (manual_override: KPI-Werte "levers", "rollen" = verstellte Werte je Hebel, "signatur",
 "gemeldet") laeuft bis zur Rueckkehr; nur ein neuer Hebel oder ein neuer Wert erweitert ihn. Gemeldet
 wird er genau einmal, und erst wenn tatsaechlich zurueckgeschrieben wurde -- uebernimmt die Anlage das
 Rueckschreiben nicht oder scheitert es teilweise, bleibt es bei dieser einen Meldung
@@ -202,14 +202,14 @@ def _restore(rt: EnforceRuntime, expected: dict, deviating: dict) -> tuple[list[
     return written, at_limit
 
 
-def _kpi_value(rt: EnforceRuntime, lever: str, entries: dict, expected: dict, unsent: dict | None, field: str):
+def _kpi_value(rt: EnforceRuntime, lever: str, entries: dict, expected: dict, unsent: dict | None):
     """Wert fuer den KPI: der verstellte Wert des Kunden, sonst der noch nicht gesendete Wert eines
     frueheren Eingriffs (`unsent` = manual_override_pending), sonst der Sollwert, sonst der
     Live-Wert."""
     if lever in entries:
         return entries[lever]
-    if unsent is not None and _is_number(unsent.get(field)):
-        return unsent[field]
+    if unsent is not None and _is_number(unsent["levers"].get(lever)):
+        return unsent["levers"][lever]
     if lever in expected:
         return expected[lever]
     return _read(rt, lever)
@@ -222,7 +222,7 @@ def _persisted_kpi_value(rt: EnforceRuntime, lever: str, value):
     der Eintrag nicht numerisch und state._is_override wuerfe ihn beim naechsten Neustart weg:
     rollen/signatur/gemeldet gingen verloren, derselbe Eingriff wuerde nach dem Neustart erneut
     gemeldet. Der ungefilterte KPI-Wert (kann None sein) bleibt fuer manual_override_pending
-    massgeblich, das nur bei zwei Zahlen gesetzt wird."""
+    massgeblich, das nur gesetzt wird, wenn jeder Hebel eine Zahl hat."""
     if _is_number(value):
         return value
     fallback = rt.store.state.restore_point.get(lever)
@@ -242,22 +242,20 @@ def _record(rt: EnforceRuntime, expected: dict, deviating: dict) -> dict:
     entries = {**known, **deviating}
     now = datetime.now().astimezone().isoformat(timespec="seconds")
     pending = state.manual_override_pending
-    kpi = {
-        "curve": _kpi_value(rt, "curve", entries, expected, pending, "curve"),
-        "shift": _kpi_value(rt, "room_setpoint", entries, expected, pending, "shift"),
-        "erkannt": now,
-    }
+    # Alle zugeordneten Hebel des Hebelsatzes (Plan-Praezisierung 6), wie Snapshot und Sollwerte (expected_values).
+    binding = rt.override.binding
+    levers = [lever for lever in binding.description.lever_set.levers if binding.has(lever)]
+    kpi_levers = {lever: _kpi_value(rt, lever, entries, expected, pending) for lever in levers}
     record = {
-        "curve": _persisted_kpi_value(rt, "curve", kpi["curve"]),
-        "shift": _persisted_kpi_value(rt, "room_setpoint", kpi["shift"]),
+        "levers": {lever: _persisted_kpi_value(rt, lever, value) for lever, value in kpi_levers.items()},
         "erkannt": now,
         "rollen": entries,
         "signatur": ",".join(f"{lever}={entries[lever]:g}" for lever in sorted(entries)),
         "gemeldet": previous.get("gemeldet") if previous is not None else None,
     }
     changes: dict = {"manual_override": record}
-    if _is_number(kpi["curve"]) and _is_number(kpi["shift"]):
-        changes["manual_override_pending"] = kpi
+    if all(_is_number(value) for value in kpi_levers.values()):
+        changes["manual_override_pending"] = {"levers": kpi_levers, "erkannt": now}
     rt.store.update(**changes)
     return record
 

@@ -75,10 +75,10 @@ def _client_with_mock(**kwargs):
 def test_publish_snapshot_publishes_one_message_with_qos_1():
     client, mock_client = _client_with_mock()
 
-    client.publish_snapshot({"schema": 2, "seq": "s1", "roles": {"dat": 8.2}})
+    client.publish_snapshot({"schema": 4, "seq": "s1", "levers": {"curve": 1.2}})
 
     mock_client.publish.assert_called_once_with(
-        "smartheat/kunde2/up/snapshot", '{"schema": 2, "seq": "s1", "roles": {"dat": 8.2}}', qos=1,
+        "smartheat/kunde2/up/snapshot", '{"schema": 4, "seq": "s1", "levers": {"curve": 1.2}}', qos=1,
     )
 
 
