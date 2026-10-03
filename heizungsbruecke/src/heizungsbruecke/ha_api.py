@@ -152,6 +152,30 @@ class HomeAssistantApi:
         )
         response.raise_for_status()
 
+    def set_preset_mode(self, entity_id: str, preset: str) -> None:
+        """Preset einer Climate-Entity setzen (Plan 3b, Viessmann-Heizprogramm)."""
+        response = requests.post(
+            f"{self._base_url}{self._api_prefix}/services/climate/set_preset_mode",
+            headers=self._headers,
+            json={"entity_id": entity_id, "preset_mode": preset},
+            timeout=SERVICE_CALL_TIMEOUT,
+        )
+        response.raise_for_status()
+
+    def get_attribute(self, entity_id: str, attribute: str) -> str:
+        """Ein Attribut als Text (Plan 3b, z. B. preset_mode); ein fehlendes oder leeres Attribut wirft ValueError wie
+        get_raw_state bei unavailable/unknown."""
+        response = requests.get(
+            f"{self._base_url}{self._api_prefix}/states/{entity_id}",
+            headers=self._headers,
+            timeout=10,
+        )
+        response.raise_for_status()
+        value = response.json().get("attributes", {}).get(attribute)
+        if value in (None, ""):
+            raise ValueError(f"Entity {entity_id} hat kein Attribut {attribute!r}")
+        return str(value)
+
     def delete_input_number(self, entity_id: str) -> None:
         """Loescht einen input_number-Helfer (TP11: Tag-/Nachtmittel entfallen). Nur input_number.*
         mit dem Objekt-Teil-Praefix `smartheat_` (wie delete_helper() bei den Config-Entry-Helfern:

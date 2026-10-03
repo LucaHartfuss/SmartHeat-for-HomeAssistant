@@ -195,3 +195,53 @@ class WeishauptHaBinding(HaPlantBinding):
             self._ha_api.select_option(entity_id, mode)
             self.physical_writes += 1
             logger.warning("Betriebsart %s auf den Ursprungswert %s zurueckgestellt", entity_id, mode)
+
+
+# Plan 3b, Viessmann (HA-Core vicare, Spec 1.3/5.4). HA bildet das ViCare-Programm "normal" auf das Preset "home" ab
+# (homeassistant/components/vicare/types.py, VICARE_TO_HA_PRESET_HEATING). Nur die vom Nutzer schaltbaren Programme
+# Komfort und Eco (CHANGABLE_HEATING_PROGRAMS) gelten als "nicht vorbereitet"; "reduced" (Preset sleep) setzt der
+# Zeitplan des Geraets selbst und bleibt unangetastet. Annahme bis zur Inventur (Spec 8: Verhalten von "normal" und der
+# Sparschaltung).
+VIESSMANN_NORMAL_PRESET = "home"
+VIESSMANN_FOREIGN_PRESETS = ("comfort", "eco")
+PRESET_ATTRIBUTE = "preset_mode"
+
+
+class ViessmannHaBinding(HaPlantBinding):
+    """Viessmann ueber vicare: Neigung (curve_current), Niveau (level_current) und Programmtemperatur "normal"
+    (shift_current) sind number-Entities; Neigung und Niveau schreibt die Pipeline als Gruppe (setCurve). Vorbereitung:
+    die Climate-Entity (Rolle mode_select) verlaesst ein aktives Komfort-/Eco-Programm (Preset "home")."""
+
+    def _preset(self) -> str:
+        return self._ha_api.get_attribute(self._manifest.entity_ids["mode_select"], PRESET_ATTRIBUTE)
+
+    def needs_preparation(self) -> bool:
+        return "mode_select" in self._manifest.entity_ids
+
+    def is_prepared(self) -> bool:
+        return self._preset() not in VIESSMANN_FOREIGN_PRESETS
+
+    def prepare(self) -> bool:
+        """Komfort-/Eco-Programm beenden; True, wenn umgestellt wurde. Wirft bei Fehlern."""
+        if not self.needs_preparation() or self.is_prepared():
+            return False
+        entity_id = self._manifest.entity_ids["mode_select"]
+        self._ha_api.set_preset_mode(entity_id, VIESSMANN_NORMAL_PRESET)
+        self.physical_writes += 1
+        logger.warning("Heizprogramm %s auf %s gestellt", entity_id, VIESSMANN_NORMAL_PRESET)
+        return True
+
+    def read_aux(self) -> dict[str, str | float]:
+        return {"mode_select": self._preset()}
+
+    def restore_aux(self, values: Mapping[str, str | float]) -> None:
+        """Nur ein beim Start aktives Komfort-/Eco-Programm wird wieder aktiviert; normal/reduziert steuert der
+        Zeitplan des Geraets."""
+        preset = values.get("mode_select")
+        if preset not in VIESSMANN_FOREIGN_PRESETS or self._preset() == preset:
+            return
+        assert isinstance(preset, str)
+        entity_id = self._manifest.entity_ids["mode_select"]
+        self._ha_api.set_preset_mode(entity_id, preset)
+        self.physical_writes += 1
+        logger.warning("Heizprogramm %s auf den Ursprungswert %s zurueckgestellt", entity_id, preset)

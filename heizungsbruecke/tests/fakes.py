@@ -48,6 +48,18 @@ class FakeHa:
         self.states[entity_id] = option
         self.writes.append((entity_id, option))
 
+    def set_preset_mode(self, entity_id, preset):
+        if self.write_error is not None:
+            raise self.write_error
+        self.states[f"{entity_id}::preset_mode"] = preset
+        self.writes.append((f"{entity_id}::preset_mode", preset))
+
+    def get_attribute(self, entity_id, attribute):
+        value = self.states[f"{entity_id}::{attribute}"]
+        if isinstance(value, Exception):
+            raise value
+        return str(value)
+
     def send_notification(self, service, message):
         self.pushes.append(message)
 
@@ -136,6 +148,13 @@ class LaggingFakeHa(FakeHa):
 
     def select_option(self, entity_id, option):
         self._service(entity_id, option, self.mode_lag_seconds)
+
+    def set_preset_mode(self, entity_id, preset):
+        self._service(f"{entity_id}::preset_mode", preset, self.mode_lag_seconds)
+
+    def get_attribute(self, entity_id, attribute):
+        self._settle()
+        return super().get_attribute(entity_id, attribute)
 
 
 class WallClock:

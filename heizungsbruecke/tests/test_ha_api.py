@@ -726,3 +726,55 @@ def test_select_option_raises_on_http_error():
 
     with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response), pytest.raises(requests.HTTPError):
         api.select_option("select.x", "Normal")
+
+
+def test_set_preset_mode_posts_correct_payload():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    mock_response = Mock()
+    mock_response.raise_for_status.return_value = None
+
+    with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response) as mock_post:
+        api.set_preset_mode("climate.heizkreis", "home")
+
+    mock_post.assert_called_once_with(
+        "http://supervisor/core/api/services/climate/set_preset_mode",
+        headers={"Authorization": "Bearer test-token"},
+        json={"entity_id": "climate.heizkreis", "preset_mode": "home"},
+        timeout=(10, 60),
+    )
+
+
+def test_set_preset_mode_raises_on_http_error():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    mock_response = Mock()
+    mock_response.raise_for_status.side_effect = requests.HTTPError("500")
+
+    with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response), pytest.raises(requests.HTTPError):
+        api.set_preset_mode("climate.x", "home")
+
+
+def test_get_attribute_returns_the_attribute_as_text():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    mock_response = Mock()
+    mock_response.json.return_value = {"state": "heat", "attributes": {"preset_mode": "home"}}
+    mock_response.raise_for_status.return_value = None
+
+    with patch("heizungsbruecke.ha_api.requests.get", return_value=mock_response) as mock_get:
+        assert api.get_attribute("climate.heizkreis", "preset_mode") == "home"
+
+    mock_get.assert_called_once_with(
+        "http://supervisor/core/api/states/climate.heizkreis",
+        headers={"Authorization": "Bearer test-token"},
+        timeout=10,
+    )
+
+
+@pytest.mark.parametrize("attributes", [{}, {"preset_mode": None}, {"preset_mode": ""}])
+def test_get_attribute_raises_when_missing_or_empty(attributes):
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    mock_response = Mock()
+    mock_response.json.return_value = {"state": "heat", "attributes": attributes}
+    mock_response.raise_for_status.return_value = None
+
+    with patch("heizungsbruecke.ha_api.requests.get", return_value=mock_response), pytest.raises(ValueError):
+        api.get_attribute("climate.heizkreis", "preset_mode")
