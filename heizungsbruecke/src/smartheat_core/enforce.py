@@ -16,8 +16,11 @@ wird er genau einmal, und erst wenn tatsaechlich zurueckgeschrieben wurde -- ueb
 Rueckschreiben nicht oder scheitert es teilweise, bleibt es bei dieser einen Meldung
 (Plan-Praezisierung "Durchsetzungs-Meldung"). Kontingent-Schutz der Hersteller-Cloud (myVAILLANT
 sperrt bei zu vielen Aufrufen ~2 h): je Hebel hoechstens ein Schreibversuch (auch ein gescheiterter)
-pro RETRY_SECONDS und MAX_WRITES_PER_DAY am Tag; danach bis zum naechsten Tag nur noch eine
-Limit-Meldung. Ein offener Datenfehler pausiert die
+pro RETRY_SECONDS und BindingDescription.enforce_per_day am Tag (Vaillant MAX_WRITES_PER_DAY, Viessmann 4; eine
+Schreibgruppe wie Viessmann curve+level teilt ein Kontingent); danach bis zum naechsten Tag nur noch eine
+Limit-Meldung. Plan 3b: Ist das Tagesbudget der Pipeline erreicht (Weishaupt), wird weder geschrieben noch gezaehlt;
+wegen des Budgets zurueckgestellte Serverwerte (deferred_levers) sind offen, kein Eingriff, und werden zu Beginn jeder
+Pruefung still nachgeholt (LeverPipeline.write_deferred). Ein offener Datenfehler pausiert die
 Pruefung (die Anlage kann nach einem gescheiterten Schreiben legitim auf alten Werten stehen).
 Meldet die Zone Wunschtemperatur 0 (heizt gerade nicht), ist das keine Abweichung."""
 import logging
@@ -27,6 +30,7 @@ from datetime import date, datetime
 from typing import Any, Protocol
 
 from smartheat_core import derived, write_budget
+from smartheat_core.pipeline import WriteBudgetExhausted
 
 logger = logging.getLogger(__name__)
 
@@ -120,8 +124,10 @@ def _deviations(rt: EnforceRuntime) -> tuple[dict, dict, set]:
     if wanted_min_flow is not None and rt.override.binding.has("min_flow"):
         expected["min_flow"] = wanted_min_flow
     deviating: dict = {}
-    pending: set = set()
+    pending: set = set(rt.store.state.deferred_levers)  # Plan 3b: Serverwert wegen Tagesbudget noch offen
     for lever, value in expected.items():
+        if lever in pending:
+            continue
         live = _read(rt, lever)
         if live is None or abs(live - value) <= tolerance[lever] + _EPSILON:
             continue
@@ -137,28 +143,40 @@ def _deviations(rt: EnforceRuntime) -> tuple[dict, dict, set]:
     return expected, deviating, pending
 
 
-def _budget_key(lever: str) -> str:
-    return write_budget.ENFORCE_PREFIX + lever
+def _group(rt: EnforceRuntime, lever: str) -> tuple[str, ...]:
+    """Schreibgruppe des Hebels (Plan 3b, Viessmann curve+level), sonst nur der Hebel selbst."""
+    groups = rt.override.binding.description.write_groups
+    return next((group for group in groups if lever in group), (lever,))
+
+
+def _budget_key(rt: EnforceRuntime, lever: str) -> str:
+    """enforce:<hebel>; eine Schreibgruppe teilt einen Schluessel (enforce:curve+level)."""
+    return write_budget.ENFORCE_PREFIX + "+".join(_group(rt, lever))
+
+
+def _rule(rt: EnforceRuntime) -> write_budget.Rule:
+    """Kontingent des Bindings: 1/RETRY_SECONDS, enforce_per_day am Tag (Vaillant 6 = write_budget.QUOTA)."""
+    return write_budget.enforce_rule(rt.override.binding.description.enforce_per_day)
 
 
 def _may_write(rt: EnforceRuntime, lever: str) -> bool:
-    """Kontingent: hoechstens einmal pro RETRY_SECONDS und MAX_WRITES_PER_DAY am Tag (write_budget.QUOTA)."""
-    entry = write_budget.get(rt.store, _budget_key(lever))
-    return write_budget.allowed(entry, write_budget.QUOTA, rt.clock(), _today().isoformat())
+    """Kontingent: hoechstens einmal pro RETRY_SECONDS und enforce_per_day am Tag (_rule)."""
+    entry = write_budget.get(rt.store, _budget_key(rt, lever))
+    return write_budget.allowed(entry, _rule(rt), rt.clock(), _today().isoformat())
 
 
 def _count_attempt(rt: EnforceRuntime, lever: str) -> None:
     """Zaehlt einen Schreibversuch VOR dem Aufruf: auch ein gescheiterter (z. B. 403 "Quota
     Exceeded") verbraucht Kontingent und darf nicht in jedem Takt wiederholt werden."""
-    key = _budget_key(lever)
+    key = _budget_key(rt, lever)
     write_budget.put(rt.store, key, write_budget.counted(write_budget.get(rt.store, key), rt.clock(), _today().isoformat()))
 
 
 def _limit_reached_first_time(rt: EnforceRuntime, lever: str) -> bool:
-    """True genau einmal pro Tag und Hebel, wenn das Tageslimit erreicht ist (fuer die Meldung)."""
-    key, day = _budget_key(lever), _today().isoformat()
+    """True genau einmal pro Tag und Hebel(-gruppe), wenn das Tageslimit erreicht ist (fuer die Meldung)."""
+    key, day = _budget_key(rt, lever), _today().isoformat()
     entry = write_budget.get(rt.store, key)
-    if not write_budget.limit_first_reached(entry, write_budget.QUOTA, day):
+    if not write_budget.limit_first_reached(entry, _rule(rt), day):
         return False
     assert entry is not None  # limit_first_reached verlangt einen Eintrag
     write_budget.put(rt.store, key, {**entry, "limit_notified": day})
@@ -174,13 +192,27 @@ def _restore(rt: EnforceRuntime, expected: dict, deviating: dict) -> tuple[list[
     umgestellt."""
     prepared = rt.override.binding.description.prepared_lever
     written, at_limit = [], []
+    if rt.override.daily_budget_reached():
+        # Plan 3b (Weishaupt): Tagesbudget erreicht -- nichts schreiben und nichts zaehlen; den Hinweis gibt die
+        # Pipeline, der naechste Takt nach dem Tageswechsel setzt zurueck.
+        logger.info("Eingriff nicht zurueckgesetzt: Tagesbudget der Schreibvorgaenge erreicht")
+        return written, at_limit
+    done: set[str] = set()
     for lever in deviating:
         if lever == prepared and ZONE_MODE in deviating:
             continue
+        if lever in done:
+            continue
+        done.update(_group(rt, lever))
         if not _may_write(rt, lever):
             if _limit_reached_first_time(rt, lever):
                 at_limit.append(lever)
             continue
+        if rt.override.daily_budget_reached():
+            # Plan 3b: ein frueherer Hebel dieses Takts hat das Tagesbudget aufgebraucht -- wie oben weder schreiben
+            # noch zaehlen.
+            logger.info("Eingriff an %s nicht zurueckgesetzt: Tagesbudget der Schreibvorgaenge erreicht", lever)
+            break
         _count_attempt(rt, lever)
         try:
             if lever == "min_flow":
@@ -191,11 +223,15 @@ def _restore(rt: EnforceRuntime, expected: dict, deviating: dict) -> tuple[list[
                 rt.override.write_levers((prepared,))
             else:
                 rt.override.write_levers((lever,))
+        except WriteBudgetExhausted:
+            # Budget waehrend dieses Schreibens erreicht (z. B. durch die Vorbereitung): kein Fehler, kein Retry-Takt.
+            logger.info("Eingriff an %s nicht zurueckgesetzt: Tagesbudget der Schreibvorgaenge erreicht", lever)
+            break
         except Exception:
             logger.exception("Zuruecksetzen von %s gescheitert, naechster Versuch fruehestens in %s s", lever,
                              RETRY_SECONDS)
             continue
-        written.append(lever)
+        written.extend(member for member in _group(rt, lever) if member in deviating)
         if lever == ZONE_MODE and prepared in deviating and prepared in expected:
             written.append(prepared)
         logger.warning("Eingriff an %s zurueckgesetzt", lever)
@@ -265,6 +301,7 @@ def check_manual_override(rt: EnforceRuntime) -> None:
     if state.delivery.datenfehler is not None:
         _set_misses(rt, 0)
         return
+    rt.override.write_deferred()
     expected, deviating, pending = _deviations(rt)
     if not deviating:
         _set_misses(rt, 0)

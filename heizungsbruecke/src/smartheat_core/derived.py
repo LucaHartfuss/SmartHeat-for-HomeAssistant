@@ -21,6 +21,10 @@ TOLERANCE = 0.05
 
 
 def expected(rt: DerivedRuntime) -> float | None:
+    """Sollwert des Mindestvorlaufs; None ohne Raum-Soll oder wenn der Hebelsatz keinen Mindestvorlauf ableitet
+    (Plan 3b: Weishaupt, Viessmann)."""
+    if "min_flow" not in rt.override.binding.description.lever_set.client_derived:
+        return None
     target = rt.store.state.stable_target
     if target is None:
         return None

@@ -73,3 +73,15 @@ def test_unsettled_sync_without_own_write_since_start_compares_with_ha():
     rt = _rt(21.0, 21.0, settled=False, last_written=None)
     derived.sync(rt)
     rt.override.write_lever.assert_not_called()
+
+
+def test_lever_sets_without_min_flow_derive_nothing():
+    """Plan 3b: Weishaupt/Viessmann haben keinen Mindestvorlauf (kein min_flow in client_derived, kein Bereich)."""
+    from smartheat_core.binding import WEISHAUPT_MODBUS
+
+    rt = _rt(20.5, 20.0)
+    rt.override.binding.description = WEISHAUPT_MODBUS
+    rt.override.safety = LocalSafety(ranges={}, comfort_boost={}, emergency_boost_levers=(), arrival_threshold_k=0.5)
+    assert derived.expected(rt) is None
+    derived.sync(rt)
+    rt.override.write_lever.assert_not_called()
