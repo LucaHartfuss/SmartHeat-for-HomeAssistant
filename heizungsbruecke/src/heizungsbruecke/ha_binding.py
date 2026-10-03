@@ -5,6 +5,7 @@ meldet 0, wenn die Zone gerade nicht heizt. Die Hebel haengen an den Manifest-Ro
 Add-on-Optionen (P2-3)."""
 import logging
 import math
+from collections.abc import Mapping
 
 from heizungsbruecke.manifest import ChannelManifest
 from smartheat_core.binding import VAILLANT_MYPYLLANT, BindingDescription
@@ -103,3 +104,10 @@ class HaPlantBinding:
         self.physical_writes += 1
         logger.warning("Zone %s auf Manuell (%s) gestellt", entity_id, MANUAL_HVAC_MODE)
         return True
+
+    def read_aux(self) -> dict[str, str | float]:
+        """Vaillant hat keine Hilfs-Ursprungswerte (description.aux_originals leer)."""
+        return {}
+
+    def restore_aux(self, values: Mapping[str, str | float]) -> None:
+        return None

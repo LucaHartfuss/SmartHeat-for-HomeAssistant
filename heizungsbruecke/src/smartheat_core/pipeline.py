@@ -11,7 +11,9 @@ Sollwert-Zeile (Vorrang von oben nach unten):
         Boost-Ende sie nicht zuruecknehmen).
 
 Ursprungswerte (P2-5): die Hebel aus BindingDescription.restore_originals merkt capture_originals vor dem ersten eigenen
-Schreiben; restore_and_clear (Abo-Ende, Abmelden) stellt sie wieder her.
+Schreiben; restore_and_clear (Abo-Ende, Abmelden) stellt sie wieder her. Plan 3b: zusaetzlich die Hilfswerte aus
+BindingDescription.aux_originals (Betriebsart, Komfort-/Absenk-Soll), gemerkt vor der ersten Vorbereitung bzw. dem ersten
+Schreiben des prepared_lever und nach den Hebeln zurueckgestellt.
 
 Geschrieben wird nur bei tatsaechlicher Aenderung (Quota-Check, jeder Schreibvorgang kann ein Cloud-Aufruf sein), jeder
 Wert auf die lokalen Grenzen begrenzt und auf die Schrittweite der Anlage gerundet. Client-abgeleitete Hebel
@@ -169,10 +171,15 @@ class LeverPipeline:
         self._store.update(boost_active=comfort, emergency_boost_active=emergency)
         return comfort, emergency
 
-    def _budgeted_write(self, key: str, values: dict) -> None:
-        """Boost-Start/-Ende und Wiederherstellung: vom Tagesbudget ausgenommen (exempt), zaehlen aber mit."""
+    def _budgeted_write(
+        self, key: str, values: dict, *, aux: Mapping[str, str | float] | None = None, require_aux: bool = True,
+    ) -> None:
+        """Boost-Start/-Ende und Wiederherstellung: vom Tagesbudget ausgenommen (exempt), zaehlen aber mit. `aux`:
+        Hilfs-Ursprungswerte, die nach den Hebeln zurueckgestellt werden (nur Wiederherstellung)."""
         try:
-            self._write(values, exempt=True)
+            self._write(values, exempt=True, require_aux=require_aux)
+            if aux:
+                self._restore_aux(aux)
         except Exception:
             write_budget.record_attempt(self._store, key, self._clock())
             raise
@@ -254,14 +261,16 @@ class LeverPipeline:
             originals[lever] = original
             if current is not None and abs(current - original) > self._description.steps[lever] / 2:
                 differs = True
-        if not (always_restore or state.boost_active or state.emergency_boost_active or differs):
+        aux = dict(state.aux_originals)
+        if not (always_restore or state.boost_active or state.emergency_boost_active or differs or aux):
             return True
         if not write_budget.may_attempt(self._store, write_budget.RESTORE, write_budget.RETURN_STAIRCASE, self._clock()):
             logger.info("Wiederherstellung zurueckgestellt: Schreibbudget nach einem Fehlschlag")
             return False
         values = {**self._row_values(_ROW_RESTORE), **originals}
         try:
-            self._budgeted_write(write_budget.RESTORE, values)
+            # Rueckweg vor Vollstaendigkeit: ohne gemerkte Hilfswerte wird trotzdem zurueckgestellt (require_aux=False).
+            self._budgeted_write(write_budget.RESTORE, values, aux=aux, require_aux=False)
         except Exception:
             logger.exception(
                 "Zuletzt gelernte Werte konnten nicht wiederhergestellt werden - Boost-Flags "
@@ -364,19 +373,21 @@ class LeverPipeline:
     def _group(self, lever: str) -> tuple[str, ...]:
         return next((group for group in self._description.write_groups if lever in group), (lever,))
 
-    def _write(self, values: Mapping[str, float], *, exempt: bool = False) -> None:
+    def _write(self, values: Mapping[str, float], *, exempt: bool = False, require_aux: bool = True) -> None:
         """Vorbereitung -> Hebel in der Reihenfolge des Hebelsatzes (Vaillant: Betriebsart -> Steigung ->
         Parallelverschiebung -> Heizgrenze), nur zugeordnete Hebel. Muss die Anlage fuer prepared_lever erst
         vorbereitet werden, geschieht das VOR dem ersten Hebel; macht die Vorbereitung den Sollwert unbrauchbar
         (preparation_resets_setpoint, Vaillant), wird prepared_lever danach ohne Quota-Check geschrieben (force), weil
-        der Read garantiert noch den alten Sollwert zeigt. Schreibgruppen (write_groups) gehen zusammen."""
+        der Read garantiert noch den alten Sollwert zeigt. Schreibgruppen (write_groups) gehen zusammen. Vor dem
+        prepared_lever muessen die Hilfs-Ursprungswerte gemerkt sein (require_aux; nur die Wiederherstellung schreibt
+        auch ohne)."""
         prepared_lever = self._description.prepared_lever
         switched = False
-        if (
-            prepared_lever is not None and prepared_lever in values and self._binding.has(prepared_lever)
-            and self._binding.needs_preparation()
-        ):
-            switched = self.ensure_prepared(exempt=exempt)
+        if prepared_lever is not None and prepared_lever in values and self._binding.has(prepared_lever):
+            if require_aux:
+                self._require_aux(prepared_lever)
+            if self._binding.needs_preparation():
+                switched = self.ensure_prepared(exempt=exempt, require_aux=require_aux)
         force_prepared = switched and self._description.preparation_resets_setpoint
         written: list[str] = []
         done: set[str] = set()
@@ -471,7 +482,7 @@ class LeverPipeline:
         WriteBudgetExhausted."""
         return self._write_lever(lever, value)
 
-    def ensure_prepared(self, *, exempt: bool = False) -> bool:
+    def ensure_prepared(self, *, exempt: bool = False, require_aux: bool = True) -> bool:
         """Anlage vorbereiten (Vaillant: Zone auf Manuell). Direkt nach einer eigenen Umstellung zeigt HA den alten
         Modus bis zum naechsten Poll der Hersteller-Cloud: dann nicht erneut umstellen (Kontingent). Nach einer
         Umstellung ist der Sollwert des prepared_lever unbekannt: der letzte eigene Schreibwert darf ein folgendes
@@ -481,6 +492,8 @@ class LeverPipeline:
             return False
         if self._prepared_at is not None and self._clock() - self._prepared_at <= self._description.settle_seconds:
             return False
+        if require_aux:
+            self._require_aux(lever)
         if not exempt and self.daily_budget_reached():
             try:
                 prepared = self._binding.is_prepared()
@@ -599,6 +612,48 @@ class LeverPipeline:
         return _POINT_CURRENT
 
     def capture_originals(self) -> None:
+        """Die Hebel aus restore_originals vor dem ersten eigenen Schreiben als Ursprungswert merken (TP12h, P2-5). Nur
+        einmal und nur solange es fuer den Hebel noch keinen Wiederherstellungswert gibt (sonst waere der Live-Wert
+        schon ein gelernter). Ein Lesefehler ist kein Fehler: der naechste Aufruf versucht es erneut. Plan 3b: danach
+        die Hilfs-Ursprungswerte (_capture_aux)."""
+        self._capture_lever_originals()
+        self._capture_aux()
+
+    def _capture_aux(self) -> bool:
+        """Hilfs-Ursprungswerte (aux_originals) einmal und vollstaendig merken; True, wenn sie bekannt sind oder das
+        Binding keine hat. Ein Lesefehler ist kein Fehler: der naechste Aufruf versucht es erneut."""
+        names = self._description.aux_originals
+        if not names or self._store.state.aux_originals:
+            return True
+        try:
+            values = self._binding.read_aux()
+        except Exception as error:
+            logger.warning("Ursprungswerte %s nicht lesbar, bleiben offen: %s", ", ".join(names), error)
+            return False
+        missing = [name for name in names if name not in values]
+        if missing:
+            logger.warning("Ursprungswerte %s fehlen, bleiben offen", ", ".join(missing))
+            return False
+        self._store.update(aux_originals={name: values[name] for name in names})
+        logger.info("Ursprungswerte gemerkt: %s", values)
+        return True
+
+    def _require_aux(self, lever: str) -> None:
+        """Vor dem ersten Schreiben, das Hilfswerte veraendern kann (Vorbereitung, prepared_lever), muessen sie gemerkt
+        sein; sonst waere der spaeter gelesene Wert schon ein eigener. Wirft DeviceWriteError."""
+        if not self._capture_aux():
+            raise DeviceWriteError(
+                lever, self._binding.ref(lever), RuntimeError("Ursprungswerte der Anlage nicht lesbar"),
+            )
+
+    def _restore_aux(self, values: Mapping[str, str | float]) -> None:
+        before = self._binding.physical_writes
+        try:
+            self._binding.restore_aux(values)
+        finally:
+            self._count_physical(self._binding.physical_writes - before)
+
+    def _capture_lever_originals(self) -> None:
         """Die Hebel aus restore_originals vor dem ersten eigenen Schreiben als Ursprungswert merken (TP12h, P2-5). Nur
         einmal und nur solange es fuer den Hebel noch keinen Wiederherstellungswert gibt (sonst waere der Live-Wert
         schon ein gelernter). Ein Lesefehler ist kein Fehler: der naechste Aufruf versucht es erneut."""

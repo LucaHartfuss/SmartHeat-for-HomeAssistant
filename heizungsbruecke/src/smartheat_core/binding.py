@@ -110,7 +110,9 @@ class PlantBinding(Protocol):
     (prepare) stellt die Anlage so, dass prepared_lever wirkt; True heisst "gerade umgestellt".
 
     Plan 3b: physical_writes zaehlt jeden erfolgreichen physischen Schreibvorgang des Bindings (auch Hilfswerte und
-    Vorbereitung; die Pipeline liest die Differenz, Tagesbudget und Lebensdauer)."""
+    Vorbereitung; die Pipeline liest die Differenz, Tagesbudget und Lebensdauer). read_aux liefert die Hilfswerte aus
+    description.aux_originals (wirft bei Lesefehlern), restore_aux stellt sie in sicherer Reihenfolge zurueck und
+    schreibt nur abweichende."""
 
     description: BindingDescription
     physical_writes: int
@@ -123,6 +125,8 @@ class PlantBinding(Protocol):
     def needs_preparation(self) -> bool: ...
     def is_prepared(self) -> bool: ...
     def prepare(self) -> bool: ...
+    def read_aux(self) -> dict[str, str | float]: ...
+    def restore_aux(self, values: Mapping[str, str | float]) -> None: ...
 
 
 # Vaillant VRC 720 ueber mypyllant (Spec 5.4): Schrittweiten der Anlage; Toleranzen = halber Anlagenschritt
