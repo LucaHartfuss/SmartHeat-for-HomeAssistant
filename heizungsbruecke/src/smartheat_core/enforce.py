@@ -193,8 +193,9 @@ def _restore(rt: EnforceRuntime, expected: dict, deviating: dict) -> tuple[list[
     prepared = rt.override.binding.description.prepared_lever
     written, at_limit = [], []
     if rt.override.daily_budget_reached():
-        # Plan 3b (Weishaupt): Tagesbudget erreicht -- nichts schreiben und nichts zaehlen; den Hinweis gibt die
-        # Pipeline, der naechste Takt nach dem Tageswechsel setzt zurueck.
+        # Plan 3b (Weishaupt): Tagesbudget erreicht -- nichts schreiben und nichts zaehlen. Hier kein Hinweis zum
+        # Tageslimit: den gibt die Pipeline, sobald sie einen Schreibvorgang am Limit abweist (Serverwerte,
+        # Vorbereitung, Mindestvorlauf); der naechste Takt nach dem Tageswechsel setzt zurueck.
         logger.info("Eingriff nicht zurueckgesetzt: Tagesbudget der Schreibvorgaenge erreicht")
         return written, at_limit
     done: set[str] = set()

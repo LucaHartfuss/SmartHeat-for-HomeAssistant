@@ -42,10 +42,12 @@ Alle Versionen und Update-Hinweise stehen in [CHANGELOG.md](CHANGELOG.md) (auch 
   und `host_network: true` (um `cloudflared_access_mqtt`s Broker unter
   `127.0.0.1` tatsaechlich erreichen zu koennen) — beides ist in `config.yaml`
   bereits gesetzt, wird hier nur der Vollstaendigkeit halber dokumentiert.
-- Die Hersteller-Integration muss ihre Werte **mindestens alle 30 Minuten** abfragen (bei
-  mypyllant: Aktualisierungsintervall ≤ 30 min). SmartHeat wartet nach einem eigenen
+- Vaillant (mypyllant): Die Hersteller-Integration muss ihre Werte **mindestens alle 30 Minuten**
+  abfragen (Aktualisierungsintervall ≤ 30 min). SmartHeat wartet nach einem eigenen
   Schreibvorgang 35 Minuten, bevor es eine Abweichung als Eingriff in der App wertet; fragt die
-  Integration seltener ab, würden eigene Schreibvorgänge fälschlich als Eingriff erkannt.
+  Integration seltener ab, würden eigene Schreibvorgänge fälschlich als Eingriff erkannt. Für
+  Weishaupt und Viessmann richtet sich die Wartezeit nach dem Abfrageintervall der Integration
+  (2 × Intervall + 60 s, mindestens 2 bzw. 3 Minuten), siehe „Hersteller und Hebelsätze“.
 
 ## Konfiguration
 
@@ -94,8 +96,8 @@ Zurückstellen beim Abo-Ende oder Entfernen sind davon ausgenommen. Das Normal-S
 Komfort-Soll; SmartHeat verschiebt Komfort bzw. Absenk dafür vorher mit und stellt beide beim Ende zurück. Beim
 Zurückstellen wird die Betriebsart (Weishaupt) bzw. das Heizprogramm (Viessmann) nicht vorher umgeschaltet; die
 gemerkten Ursprungswerte (Betriebsart bzw. Heizprogramm, Komfort-/Absenk-Soll) werden nach den Hebeln zurückgeschrieben
-und danach vergessen. Ist das Weishaupt-Tageslimit erreicht, zählt ein abgebrochener Versuch der Zonenvorbereitung nicht
-als Fehlversuch, sondern erscheint nur als Hinweis im Log.
+und danach vergessen. Ist das Weishaupt-Tageslimit erreicht, zählt ein abgebrochener Versuch der Vorbereitung (Betriebsart) nicht als
+Fehlversuch; du erhältst den Hinweis zum Tageslimit (einmal am Tag), und der nächste lokale Check versucht es erneut.
 
 ## Verifizierte Architekturen
 
