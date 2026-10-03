@@ -104,6 +104,18 @@ gemerkten Ursprungswerte (Betriebsart bzw. Heizprogramm, Komfort-/Absenk-Soll) w
 und danach vergessen. Ist das Weishaupt-Tageslimit erreicht, zählt ein abgebrochener Versuch der Vorbereitung (Betriebsart) nicht als
 Fehlversuch; du erhältst den Hinweis zum Tageslimit (einmal am Tag), und der nächste lokale Check versucht es erneut.
 
+Die Weishaupt-Betriebsart „Normal“ steht in weishaupt_modbus als Übersetzungsschlüssel `hz_operationmode_normal` (ab 0.33.0;
+die Optionen der Select-Entity sind dort die Schlüssel, nicht die Texte).
+
+## Statusereignis und Hinweise (ab 0.33.0)
+
+Das Ereignis `smartheat_status` hat Schema 2: `hebelsatz` (ID), `hebel` (Wert je Hebel des Hebelsatzes, auch der
+vom Add-on abgeleitete Mindestvorlauf) und `gelernt` (Steigung und Heizgrenze aus der letzten Serverantwort, sonst
+`null`) ersetzen die früheren Felder `kurve`, `parallelverschiebung`, `mindestvorlauf` und `heizgrenze`. Das braucht die
+Integration ab 0.12.0. Die gelernten Werte stehen auch in `backup.json`. Die Hinweise `schreibbudget` (Tageslimit
+erreicht) und `schreibzaehler` (Lebensdauer-Hinweis) lassen sich wie die übrigen Kategorien über `notify_hints_off`
+abschalten. Neuer Energiekanal `electrical_total` (Option `entity_energy_electrical_total`, Strom gesamt).
+
 ## Verifizierte Architekturen
 
 Aktuell werden nur `aarch64` (Raspberry Pi 4/5, 64-bit — das reale
