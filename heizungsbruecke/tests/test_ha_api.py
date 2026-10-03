@@ -699,3 +699,30 @@ def test_delete_helper_refuses_a_renamed_helper_with_a_foreign_title(title):
         api.delete_helper("sensor.umbenannt", tenant_id="t1")
 
     mock_delete.assert_not_called()
+
+
+# --- Plan 3b: Weishaupt-Betriebsart und Viessmann-Heizprogramm ---
+
+def test_select_option_posts_correct_payload():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    mock_response = Mock()
+    mock_response.raise_for_status.return_value = None
+
+    with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response) as mock_post:
+        api.select_option("select.betriebsart", "Normal")
+
+    mock_post.assert_called_once_with(
+        "http://supervisor/core/api/services/select/select_option",
+        headers={"Authorization": "Bearer test-token"},
+        json={"entity_id": "select.betriebsart", "option": "Normal"},
+        timeout=(10, 60),
+    )
+
+
+def test_select_option_raises_on_http_error():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    mock_response = Mock()
+    mock_response.raise_for_status.side_effect = requests.HTTPError("500")
+
+    with patch("heizungsbruecke.ha_api.requests.post", return_value=mock_response), pytest.raises(requests.HTTPError):
+        api.select_option("select.x", "Normal")

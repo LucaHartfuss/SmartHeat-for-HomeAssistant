@@ -172,3 +172,51 @@ def test_missing_known_lever_is_invalid():
     ha = Ha({"number.hl": 15.0, "sensor.t": 20.5, "number.c": 1.05, "sensor.r": 20.1})
     read = _read(MANIFEST, ha, known={"room_setpoint": None})
     assert read.invalid == ("room_setpoint",)
+
+
+# --- Plan 3b: nur lesbare Hebel (Weishaupt-Basis) ---
+
+def _basis_manifest(**extra):
+    return ChannelManifest(entity_ids={
+        "shift_current": "sensor.shift_current", "room_target": "sensor.room_target", **extra,
+    })
+
+
+def _basis_read(manifest, ha_api):
+    from smartheat_core.binding import WEISHAUPT_MODBUS_BASIS
+
+    return read_snapshot(manifest, ha_api, HaPlantBinding(ha_api, manifest, WEISHAUPT_MODBUS_BASIS), {})
+
+
+def test_basis_reports_the_mapped_curve_as_readonly():
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = _states_with({"sensor.curve_current": 0.75})
+
+    read = _basis_read(_basis_manifest(curve_current="sensor.curve_current", heat_limit="sensor.heat_limit"), ha_api)
+
+    assert read.levers == {"room_setpoint": 20.0, "curve": 0.75}
+    assert read.readonly == ("curve",)  # die Heizgrenze wird nie gemeldet (Plausibilitaet des Servers 5-25)
+    assert read.invalid == ()
+
+
+def test_basis_without_curve_mapping_reports_nothing_readonly():
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 20.0
+    read = _basis_read(_basis_manifest(), ha_api)
+    assert (read.levers, read.readonly) == ({"room_setpoint": 20.0}, ())
+
+
+@pytest.mark.parametrize("bad", [ValueError("unavailable"), float("nan")])
+def test_an_unreadable_readonly_lever_is_left_out_without_a_data_fault(bad):
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = _states_with({"sensor.curve_current": bad})
+    read = _basis_read(_basis_manifest(curve_current="sensor.curve_current"), ha_api)
+    assert (read.levers, read.readonly, read.invalid) == ({"room_setpoint": 20.0}, (), ())
+
+
+def test_publish_snapshot_carries_readonly():
+    mqtt = MagicMock()
+    publish_snapshot(mqtt, "s1", "daily", 21.0, {"room_setpoint": 20.0, "curve": 0.75}, readonly=("curve",))
+    payload = mqtt.publish_snapshot.call_args.args[0]
+    assert payload["readonly"] == ["curve"]
+    assert payload["levers"] == {"room_setpoint": 20.0, "curve": 0.75}

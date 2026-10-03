@@ -111,3 +111,87 @@ class HaPlantBinding:
 
     def restore_aux(self, values: Mapping[str, str | float]) -> None:
         return None
+
+
+# Plan 3b, Weishaupt (weishaupt_modbus, Spec 1.2/5.4). Annahme bis zur Inventur: Optionstext der Betriebsart "Normal"
+# (Register 41103: Automatik, Komfort, Normal, Absenkbetrieb, Standby).
+WEISHAUPT_NORMAL_MODE = "Normal"
+# Hilfs-Sollwerte gelten als unveraendert innerhalb eines halben Geraeteschritts (0,5 K).
+AUX_SETPOINT_TOLERANCE = 0.25
+
+
+class WeishauptHaBinding(HaPlantBinding):
+    """Weishaupt-Waermepumpe ueber weishaupt_modbus: Hebel sind number-Entities (Heizkennlinie, Raumsolltemperatur
+    Normal, Sommer-Winter-Umschaltung; Rollen curve_current, shift_current, heat_limit -- "shift_current" ist der
+    historische Rollenname). Vorbereitung: Betriebsart-Select (Rolle mode_select) auf "Normal". Das Geraet erzwingt
+    Absenk <= Normal <= Komfort: vor dem Anheben des Normal-Solls ueber das Komfort-Soll wird zuerst Komfort, vor dem
+    Senken unter das Absenk-Soll zuerst Absenk auf den neuen Wert gesetzt (Rollen setpoint_comfort, setpoint_setback).
+    Scheitert der zweite Schritt, steht die Anlage weiter in einem gueltigen Zustand (nur Komfort bzw. Absenk
+    verschoben, beide gehoeren zu den Hilfs-Ursprungswerten)."""
+
+    def write(self, lever: str, value: float) -> None:
+        if lever == "room_setpoint":
+            self._make_room_for_normal(value)
+        super().write(lever, value)
+
+    def _number(self, role: str) -> float:
+        value = self._ha_api.get_state(self._manifest.entity_ids[role])
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
+            raise ValueError(f"{role} liefert keinen endlichen Wert: {value!r}")
+        return value
+
+    def _set_number(self, role: str, value: float) -> None:
+        entity_id = self._manifest.entity_ids[role]
+        self._ha_api.get_raw_state(entity_id)  # AU-016: nicht verfuegbare Entity wirft statt still 200
+        self._ha_api.set_number_value(entity_id, value)
+        self.physical_writes += 1
+        logger.info("%s (%s) auf %s gesetzt", role, entity_id, value)
+
+    def _make_room_for_normal(self, value: float) -> None:
+        if value > self._number("setpoint_comfort"):
+            self._set_number("setpoint_comfort", value)
+        elif value < self._number("setpoint_setback"):
+            self._set_number("setpoint_setback", value)
+
+    def needs_preparation(self) -> bool:
+        return "mode_select" in self._manifest.entity_ids
+
+    def is_prepared(self) -> bool:
+        return self._ha_api.get_raw_state(self._manifest.entity_ids["mode_select"]) == WEISHAUPT_NORMAL_MODE
+
+    def prepare(self) -> bool:
+        """Betriebsart auf "Normal"; True, wenn umgestellt wurde. Wirft bei Fehlern."""
+        if not self.needs_preparation() or self.is_prepared():
+            return False
+        entity_id = self._manifest.entity_ids["mode_select"]
+        self._ha_api.select_option(entity_id, WEISHAUPT_NORMAL_MODE)
+        self.physical_writes += 1
+        logger.warning("Betriebsart %s auf %s gestellt", entity_id, WEISHAUPT_NORMAL_MODE)
+        return True
+
+    def read_aux(self) -> dict[str, str | float]:
+        return {
+            "mode_select": self._ha_api.get_raw_state(self._manifest.entity_ids["mode_select"]),
+            "setpoint_comfort": self._number("setpoint_comfort"),
+            "setpoint_setback": self._number("setpoint_setback"),
+        }
+
+    def restore_aux(self, values: Mapping[str, str | float]) -> None:
+        """Komfort und Absenk zurueck, begrenzt auf das aktuelle Normal-Soll (Absenk <= Normal <= Komfort bleibt
+        gueltig, auch wenn dessen Ursprungswert unbekannt war), danach die Betriebsart. Schreibt nur Abweichungen."""
+        normal = self._number("shift_current")
+        for role, bound in (("setpoint_comfort", max), ("setpoint_setback", min)):
+            original = values.get(role)
+            if not isinstance(original, (int, float)) or isinstance(original, bool):
+                continue
+            target = bound(original, normal)
+            if target != original:
+                logger.warning("%s: Ursprungswert %s auf %s begrenzt (Normal-Soll %s)", role, original, target, normal)
+            if abs(self._number(role) - target) > AUX_SETPOINT_TOLERANCE:
+                self._set_number(role, target)
+        mode = values.get("mode_select")
+        entity_id = self._manifest.entity_ids["mode_select"]
+        if isinstance(mode, str) and self._ha_api.get_raw_state(entity_id) != mode:
+            self._ha_api.select_option(entity_id, mode)
+            self.physical_writes += 1
+            logger.warning("Betriebsart %s auf den Ursprungswert %s zurueckgestellt", entity_id, mode)

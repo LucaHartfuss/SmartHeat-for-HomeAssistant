@@ -42,6 +42,12 @@ class FakeHa:
         self.states[entity_id] = mode
         self.writes.append((entity_id, mode))
 
+    def select_option(self, entity_id, option):
+        if self.write_error is not None:
+            raise self.write_error
+        self.states[entity_id] = option
+        self.writes.append((entity_id, option))
+
     def send_notification(self, service, message):
         self.pushes.append(message)
 
@@ -127,6 +133,9 @@ class LaggingFakeHa(FakeHa):
 
     def set_hvac_mode(self, entity_id, mode):
         self._service(entity_id, mode, self.mode_lag_seconds)
+
+    def select_option(self, entity_id, option):
+        self._service(entity_id, option, self.mode_lag_seconds)
 
 
 class WallClock:

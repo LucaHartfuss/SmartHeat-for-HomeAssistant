@@ -142,6 +142,16 @@ class HomeAssistantApi:
         )
         response.raise_for_status()
 
+    def select_option(self, entity_id: str, option: str) -> None:
+        """Option einer select-Entity waehlen (Plan 3b, Weishaupt-Betriebsart)."""
+        response = requests.post(
+            f"{self._base_url}{self._api_prefix}/services/select/select_option",
+            headers=self._headers,
+            json={"entity_id": entity_id, "option": option},
+            timeout=SERVICE_CALL_TIMEOUT,
+        )
+        response.raise_for_status()
+
     def delete_input_number(self, entity_id: str) -> None:
         """Loescht einen input_number-Helfer (TP11: Tag-/Nachtmittel entfallen). Nur input_number.*
         mit dem Objekt-Teil-Praefix `smartheat_` (wie delete_helper() bei den Config-Entry-Helfern:

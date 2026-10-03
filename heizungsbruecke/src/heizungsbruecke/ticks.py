@@ -131,7 +131,7 @@ def _attempt(rt: Runtime, seq: str, trigger: str):
     try:
         publish_snapshot(
             rt.mqtt_client, seq=seq, trigger=trigger, room_target=read.room_target, levers=read.levers,
-            manual_override=pending_override,
+            manual_override=pending_override, readonly=read.readonly,
         )
         rt.manual_override_sent = pending_override
         rt.manual_override_seq = seq
