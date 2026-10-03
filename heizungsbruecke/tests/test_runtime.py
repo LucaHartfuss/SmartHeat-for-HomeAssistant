@@ -56,6 +56,7 @@ class FakeMqtt:
     def __init__(self, options=None, tenant_id=None, **kwargs):
         self.options, self.tenant_id = options, tenant_id
         self.kwargs = kwargs
+        self.connect_failures = 0
         self.snapshots = []
         self.telemetry = []
         self.setpoints_callback = None
@@ -141,11 +142,11 @@ def env(tmp_path, monkeypatch, clock):
     )
     abo = {"status": entitlement.ACTIVE, "queries": 0}
 
-    def _query_status(tenant_id, base_url, username, password):
+    def _query_status(tenant_id, base_url, token):
         # Jede Abo-Abfrage (Boot, Tick-Zustellung, abgelehnte Anmeldung, Fristende) nutzt die
-        # Basis-URL aus den Optionen (Spec TP3, 2.5) und die MQTT-Zugangsdaten (Spec TP8, 3.1).
+        # Basis-URL aus den Optionen (Spec TP3, 2.5) und das Installations-Token (Spec AWS-IoT 4.3).
         assert base_url == OPTIONS["accounts_api_base_url"]
-        assert (username, password) == (OPTIONS["mqtt_username"], OPTIONS["mqtt_password"])
+        assert token == OPTIONS["installation_token"]
         abo["queries"] += 1
         return abo["status"]
 
@@ -1599,7 +1600,7 @@ def test_unexpected_entitlement_query_error_counts_as_unknown(env, monkeypatch):
     _set_room_target(env, bridge, 20.5)
     seq = _mqtt(env).snapshots[0]["seq"]
 
-    def _broken_query(tenant_id, base_url, username, password):
+    def _broken_query(tenant_id, base_url, token):
         raise RuntimeError("unerwartet")
 
     monkeypatch.setattr("heizungsbruecke.entitlement.query_status", _broken_query)

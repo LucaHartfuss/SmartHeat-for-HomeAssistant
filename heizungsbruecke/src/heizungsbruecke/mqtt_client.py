@@ -51,9 +51,13 @@ class BridgeMqttClient:
         self._setpoints_callback = None
         self._on_auth_rejected = on_auth_rejected
         self._on_connected = on_connected
-        # Gescheiterte Verbindungsversuche in Folge (paho-Thread schreibt, Worker liest; ein int ist
-        # unter dem GIL atomar). Basis der transportneutralen Abo-Erkennung (abo.handle_connection_failing).
+        # Gescheiterte Verbindungsversuche in Folge: nur der paho-Netzwerk-Thread schreibt (Einzel-
+        # Schreiber, deshalb ohne Sperre), der Worker liest. Basis der transportneutralen Abo-Erkennung
+        # (abo.handle_connection_failing).
         self.connect_failures = 0
+        # Gab es seit dem letzten Verbindungsende ein erfolgreiches CONNACK? Eine Trennung ohne CONNACK ist
+        # ein gescheiterter Versuch (z. B. von IoT Core nach dem TLS-1.3-Handshake abgelehntes Zertifikat).
+        self._connack_received = False
         self._client = mqtt.Client(CallbackAPIVersion.VERSION2, client_id=options.client_id)
         apply(self._client, options)
         self._client.on_connect = self._on_connect
@@ -76,6 +80,7 @@ class BridgeMqttClient:
                     logger.exception("Fehler bei der Behandlung der abgelehnten MQTT-Anmeldung")
             return
         self.connect_failures = 0
+        self._connack_received = True
         logger.info("MQTT verbunden (reason_code=%s)", reason_code)
         if self._setpoints_callback is not None:
             self._subscribe_setpoints()
@@ -86,6 +91,13 @@ class BridgeMqttClient:
                 logger.exception("Fehler bei der Behandlung der MQTT-Verbindung")
 
     def _on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties) -> None:
+        # Ein Zertifikat, das IoT Core nach dem TLS-1.3-Handshake ablehnt (z. B. gesperrt), zeigt sich als
+        # Trennung statt als on_connect_fail. Eine Trennung ohne CONNACK gilt deshalb als gescheiterter
+        # Versuch; eine Trennung nach erfolgreichem CONNACK beendet nur eine gute Verbindung.
+        if self._connack_received:
+            self._connack_received = False
+        else:
+            self.connect_failures += 1
         logger.warning("MQTT-Verbindung getrennt (reason_code=%s) - Reconnect laeuft ueber paho automatisch", reason_code)
 
     def _on_connect_fail(self, client, userdata) -> None:

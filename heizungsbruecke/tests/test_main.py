@@ -1,9 +1,11 @@
 import logging
 import sys
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
+from conftest import FakeClock
 from fakes import ACCESS_OPTIONS
 
 from heizungsbruecke import __main__
@@ -620,3 +622,52 @@ def test_prime_heat_limit_capture_failure_does_not_abort_startup(monkeypatch, ca
 
     assert ran == [True]
     assert "Heizgrenze" in caplog.text
+
+
+@pytest.mark.parametrize("failures, down_seconds, expect_query", [
+    (3, 900, True), (2, 900, False), (3, 899, False), (0, 2000, False),
+])
+def test_connection_check_queries_the_status_after_long_repeated_failures(failures, down_seconds, expect_query, monkeypatch):
+    rt = SimpleNamespace(
+        worker=MagicMock(), options={}, clock=FakeClock(), mqtt_down_since=None,
+        mqtt_client=MagicMock(), store=SimpleNamespace(state=SimpleNamespace(
+            abo_inactive_since=None, delivery=SimpleNamespace(pending="offen"))),
+    )
+    rt.mqtt_client.is_connected.return_value = False
+    rt.mqtt_client.connect_failures = failures
+    called = []
+    monkeypatch.setattr(__main__.abo, "handle_connection_failing", lambda runtime: called.append(runtime))
+    __main__._on_connection_check(rt, None)  # setzt mqtt_down_since
+    rt.clock.advance(down_seconds)
+    __main__._on_connection_check(rt, None)
+    assert bool(called) is expect_query
+
+
+def test_mqtt_connected_resets_the_connection_failing_throttle():
+    rt = SimpleNamespace(
+        status=MagicMock(), notifier=MagicMock(), auth_rejected_queried_at=5.0, auth_rejected_last_status="x",
+        connection_failing_queried_at=7.0,
+    )
+    rt.status.flags.zugang_abgelehnt = False
+    rt.status.flags.gestartet = True
+    with patch.object(__main__.ticks, "deliver"):
+        __main__._on_mqtt_connected(rt, None)
+    assert rt.connection_failing_queried_at is None
+
+
+def test_connection_check_starts_no_probe_tick_when_the_query_found_the_abo_inactive(monkeypatch):
+    state = SimpleNamespace(abo_inactive_since=None, delivery=SimpleNamespace(pending=None))
+    rt = SimpleNamespace(
+        worker=MagicMock(), options={}, clock=FakeClock(), mqtt_down_since=None,
+        mqtt_client=MagicMock(), store=SimpleNamespace(state=state),
+    )
+    rt.mqtt_client.is_connected.return_value = False
+    rt.mqtt_client.connect_failures = 3
+    monkeypatch.setattr(__main__.abo, "handle_connection_failing",
+                        lambda runtime: setattr(state, "abo_inactive_since", "jetzt"))
+    probes = []
+    monkeypatch.setattr(__main__.ticks, "start_probe_tick", lambda *args: probes.append(args))
+    __main__._on_connection_check(rt, None)
+    rt.clock.advance(900)
+    __main__._on_connection_check(rt, None)
+    assert probes == []

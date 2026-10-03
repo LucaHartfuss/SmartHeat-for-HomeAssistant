@@ -107,6 +107,7 @@ def report_restore(notifier, ok: bool) -> None:
 
 
 AUTH_REJECTED_QUERY_INTERVAL_SECONDS = 600.0
+CONNECT_FAILURES_BEFORE_STATUS_QUERY = 3
 
 
 def handle_auth_rejected(rt: Runtime) -> None:
@@ -130,6 +131,14 @@ def handle_auth_rejected(rt: Runtime) -> None:
     if status == entitlement.INACTIVE:
         enter_inactive(rt, datetime.now().astimezone())
         return
+    _report_rejection(rt, status)
+
+
+def _report_rejection(rt: Runtime, status: str) -> None:
+    """Meldung einer abgelehnten Anmeldung (Status != inactive): Log (ERROR nur bei geaendertem
+    Ergebnis), Status-Flag und Benachrichtigung."""
+    status_reporter = rt.status
+    assert status_reporter is not None  # beim Boot gesetzt
     log = logger.error if status != rt.auth_rejected_last_status else logger.debug
     rt.auth_rejected_last_status = status
     if status == entitlement.REJECTED:
@@ -140,6 +149,30 @@ def handle_auth_rejected(rt: Runtime) -> None:
             "pruefen (ggf. SmartHeat-Integration neu anmelden).", status)
     status_reporter.update(zugang_abgelehnt=True, grund=ACCESS_DENIED_REASON)
     rt.notifier.notify("zugang", "abgelehnt", ACCESS_DENIED_MESSAGE, critical=True)
+
+
+def handle_connection_failing(rt: Runtime) -> None:
+    """Spec AWS-IoT 5.1: Bei IoT Core endet ein gesperrtes Zertifikat vermutlich im TLS-Aufbau statt mit
+    CONNACK 134/135 (AN-1). Fehlt die Verbindung lange und scheitern die Versuche wiederholt
+    (__main__._on_connection_check), fragt das Add-on deshalb den Abo-Status, gedrosselt wie nach einer
+    abgelehnten Anmeldung. Nur ein eindeutiges Ergebnis wirkt: inactive -> Abo-inaktiv-Modus,
+    rejected -> wie eine abgelehnte Anmeldung; active und unknown aendern nichts (normaler Ausfall, den
+    Notbetrieb und Pruef-Tick abdecken)."""
+    if rt.store.state.abo_inactive_since is not None:
+        return
+    now = rt.clock()
+    last = rt.connection_failing_queried_at
+    if last is not None and now - last < AUTH_REJECTED_QUERY_INTERVAL_SECONDS:
+        return
+    rt.connection_failing_queried_at = now
+    status = entitlement.query_from_options(rt.options)
+    if status == entitlement.INACTIVE:
+        enter_inactive(rt, datetime.now().astimezone())
+    elif status == entitlement.REJECTED:
+        rt.auth_rejected_queried_at = now
+        _report_rejection(rt, status)
+    else:
+        logger.warning("MQTT-Verbindung fehlt seit Langem, Abo-Status ist '%s' - Verbindung pruefen.", status)
 
 
 def check_grace_end(rt: Runtime) -> None:

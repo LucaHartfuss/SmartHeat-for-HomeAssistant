@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from conftest import FakeClock
 
 from heizungsbruecke import abo, entitlement
 from heizungsbruecke.backup_store import load_backup
@@ -31,7 +32,7 @@ def _entitlement_path(tmp_path, monkeypatch):
     monkeypatch.setattr("heizungsbruecke.config.ENTITLEMENT_PATH", tmp_path / "entitlement_state.json")
 
 
-def _runtime(store, entity_ids=BOTH_ROLES, notify_services=("notify.handy",)):
+def _runtime(store, entity_ids=BOTH_ROLES, notify_services=("notify.handy",), clock=None):
     manifest = ChannelManifest(entity_ids=entity_ids)
     ha_api = MagicMock()
     options = dict(OPTIONS)
@@ -40,6 +41,8 @@ def _runtime(store, entity_ids=BOTH_ROLES, notify_services=("notify.handy",)):
         override=LeverPipeline(store, HaPlantBinding(ha_api, manifest), SAFETY),
         notifier=Notifier(store, ha_api, list(notify_services)),
         status=StatusReporter(ha_api, options["tenant_id"], None, store),
+        clock=clock or FakeClock(), auth_rejected_queried_at=None, auth_rejected_last_status=None,
+        connection_failing_queried_at=None,
     )
 
 
@@ -180,3 +183,43 @@ def test_finish_grace_without_forced_restore_and_without_flags_writes_nothing(ma
     rt.ha_api.send_notification.assert_not_called()
     rt.ha_api.create_persistent_notification.assert_not_called()
     assert "Frist" in caplog.text
+
+
+@pytest.mark.parametrize("status, expect_inactive, expect_rejected", [
+    (entitlement.INACTIVE, True, False),
+    (entitlement.REJECTED, False, True),
+    (entitlement.ACTIVE, False, False),
+    (entitlement.UNKNOWN, False, False),
+])
+def test_connection_failing_acts_only_on_a_clear_answer(make_store, monkeypatch, status, expect_inactive, expect_rejected):
+    rt = _runtime(make_store())
+    monkeypatch.setattr(abo.entitlement, "query_from_options", lambda options: status)
+    abo.handle_connection_failing(rt)
+    assert (rt.store.state.abo_inactive_since is not None) is expect_inactive
+    assert rt.status.flags.zugang_abgelehnt is expect_rejected
+
+
+def test_connection_failing_rejected_notifies_like_an_auth_rejection(make_store, monkeypatch):
+    rt = _runtime(make_store())
+    monkeypatch.setattr(abo.entitlement, "query_from_options", lambda options: entitlement.REJECTED)
+    abo.handle_connection_failing(rt)
+    rt.ha_api.send_notification.assert_called_once_with("notify.handy", abo.ACCESS_DENIED_MESSAGE)
+    assert rt.auth_rejected_queried_at == rt.clock()
+
+
+def test_connection_failing_is_throttled_like_auth_rejection(make_store, monkeypatch):
+    rt = _runtime(make_store())
+    queries = []
+    monkeypatch.setattr(abo.entitlement, "query_from_options", lambda options: queries.append(1) or entitlement.UNKNOWN)
+    abo.handle_connection_failing(rt)
+    abo.handle_connection_failing(rt)
+    rt.clock.advance(abo.AUTH_REJECTED_QUERY_INTERVAL_SECONDS)
+    abo.handle_connection_failing(rt)
+    assert len(queries) == 2
+
+
+def test_connection_failing_is_silent_in_the_abo_inactive_mode(make_store, monkeypatch):
+    rt = _runtime(make_store())
+    rt.store.update(abo_inactive_since=ABO_NOW)
+    monkeypatch.setattr(abo.entitlement, "query_from_options", lambda options: pytest.fail("keine Abfrage"))
+    abo.handle_connection_failing(rt)

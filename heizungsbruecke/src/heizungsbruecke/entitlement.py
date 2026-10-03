@@ -1,4 +1,4 @@
-"""Abo-Status des Tenants (GET /tenants/<id>/status mit den MQTT-Zugangsdaten der Anlage,
+"""Abo-Status des Tenants (GET /tenants/<id>/status mit dem Installations-Token der Anlage (Spec AWS-IoT 4.3),
 Spec TP8 3.1) und die 30-Tage-Frist des Abo-inaktiv-Modus. Die Frist wird in
 /data/entitlement_state.json persistiert, damit sie Add-on-Neustarts ueberlebt."""
 import json
@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 GRACE_PERIOD = timedelta(days=30)
 
 STATUS_PATH = "/tenants/{tenant_id}/status"
-CREDENTIAL_OPTIONS = ("mqtt_username", "mqtt_password")  # Task 5 ersetzt sie durch TOKEN_OPTION
 TOKEN_OPTION = "installation_token"
 
 ACTIVE = "active"
@@ -23,14 +22,14 @@ UNKNOWN = "unknown"
 REJECTED = "rejected"
 
 
-def query_status(tenant_id: str, base_url: str, username: str, password: str) -> str:
+def query_status(tenant_id: str, base_url: str, token: str) -> str:
     """Fail-open: nur eine eindeutige Antwort zaehlt. 200 mit active=true/false ergibt ACTIVE/
-    INACTIVE, 401 ergibt REJECTED (Zugangsdaten ersetzt, entfernt oder falsch). Alles andere --
+    INACTIVE, 401 ergibt REJECTED (Token ersetzt, entfernt oder falsch). Alles andere --
     Ausfall, jeder 404 (der Server kennt keinen mehr), Catch-all -- ist UNKNOWN: ein accounts-api-
     Ausfall darf einen zahlenden Kunden nicht in den Notbetrieb schicken."""
     url = f"{base_url}{STATUS_PATH.format(tenant_id=tenant_id)}"
     try:
-        response = requests.get(url, auth=(username, password), timeout=10)
+        response = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=10)
     except Exception as error:
         logger.warning("Abo-Status nicht abrufbar (wird als unbekannt behandelt): %s", error)
         return UNKNOWN
@@ -55,10 +54,11 @@ def query_status(tenant_id: str, base_url: str, username: str, password: str) ->
 
 
 def query_from_options(options: dict) -> str:
-    username_key, password_key = CREDENTIAL_OPTIONS
-    return query_status(
-        options["tenant_id"], options["accounts_api_base_url"], options[username_key], options[password_key],
-    )
+    """Ohne Token (Konfiguration von vor AWS-2, wird beim Start als veraltet gemeldet) keine Anfrage."""
+    token = options.get(TOKEN_OPTION)
+    if not token:
+        return UNKNOWN
+    return query_status(options["tenant_id"], options["accounts_api_base_url"], token)
 
 
 def load_inactive_since(path: Path) -> datetime | None:

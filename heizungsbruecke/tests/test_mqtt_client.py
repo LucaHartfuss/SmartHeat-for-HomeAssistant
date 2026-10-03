@@ -314,3 +314,32 @@ def test_auth_rejection_is_logged_differently_from_connect_failures(caplog):
     with caplog.at_level(logging.ERROR):
         bridge._on_connect(paho, None, {}, ReasonCode(PacketTypes.CONNACK, identifier=135), None)
     assert rejected == [bridge] and "Anmeldung" in caplog.text and bridge.connect_failures == 0
+
+
+def test_disconnect_without_a_successful_connack_counts_as_a_failed_attempt():
+    """Ein Zertifikat, das IoT Core nach dem TLS-1.3-Handshake ablehnt (z. B. gesperrt), zeigt sich als
+    Trennung statt als on_connect_fail -- ohne diese Zaehlung wuerde die Schwelle der Abo-Erkennung nie erreicht."""
+    paho = MagicMock()
+    bridge, _ = _client(paho)
+    bridge._on_disconnect(paho, None, None, ReasonCode(PacketTypes.DISCONNECT, identifier=0), None)
+    bridge._on_disconnect(paho, None, None, ReasonCode(PacketTypes.DISCONNECT, identifier=0), None)
+    assert bridge.connect_failures == 2
+
+
+def test_disconnect_after_a_successful_connack_does_not_count():
+    paho = MagicMock()
+    bridge, _ = _client(paho)
+    bridge._on_connect(paho, None, {}, 0, None)
+    bridge._on_disconnect(paho, None, None, ReasonCode(PacketTypes.DISCONNECT, identifier=0), None)
+    assert bridge.connect_failures == 0
+
+
+def test_a_new_attempt_after_a_normal_disconnect_counts_again_and_a_connack_resets():
+    paho = MagicMock()
+    bridge, _ = _client(paho)
+    bridge._on_connect(paho, None, {}, 0, None)
+    bridge._on_disconnect(paho, None, None, 0, None)      # Verbindung war da: zaehlt nicht
+    bridge._on_disconnect(paho, None, None, 0, None)      # Versuch ohne CONNACK danach: zaehlt
+    assert bridge.connect_failures == 1
+    bridge._on_connect(paho, None, {}, 0, None)
+    assert bridge.connect_failures == 0

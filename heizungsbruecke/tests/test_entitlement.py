@@ -25,8 +25,8 @@ class _Response:
 def _patch_get(monkeypatch, response=None, error=None):
     calls = []
 
-    def fake_get(url, auth, timeout):
-        calls.append((url, auth, timeout))
+    def fake_get(url, headers, timeout):
+        calls.append((url, headers, timeout))
         if error is not None:
             raise error
         return response
@@ -50,33 +50,49 @@ def _patch_get(monkeypatch, response=None, error=None):
 ])
 def test_query_status_maps_responses(monkeypatch, response, expected):
     _patch_get(monkeypatch, response=response)
-    assert entitlement.query_status("t1", "https://accounts.example", "u", "p") == expected
+    assert entitlement.query_status("t1", "https://accounts.example", "tok") == expected
 
 
 @pytest.mark.parametrize("error", [requests.Timeout("zu langsam"), requests.ConnectionError("weg"), OSError("dns")])
 def test_query_status_fails_open_on_network_errors(monkeypatch, error):
     _patch_get(monkeypatch, error=error)
-    assert entitlement.query_status("t1", "https://accounts.example", "u", "p") == "unknown"
+    assert entitlement.query_status("t1", "https://accounts.example", "tok") == "unknown"
 
 
-def test_query_status_sends_basic_auth_to_the_status_endpoint(monkeypatch):
-    calls = _patch_get(monkeypatch, response=_Response(200, {"active": True}))
-    entitlement.query_status("client1", "https://accounts.example", "client1_abc", "geheim")
-    assert calls == [("https://accounts.example/tenants/client1/status", ("client1_abc", "geheim"), 10)]
+def test_query_sends_the_installation_token_as_bearer(monkeypatch):
+    calls = _patch_get(monkeypatch, _Response(200, {"active": True}))
+    assert entitlement.query_status("client1", "https://accounts.example.test", "tok-123") == entitlement.ACTIVE
+    assert calls == [("https://accounts.example.test/tenants/client1/status",
+                      {"Authorization": "Bearer tok-123"}, 10)]
 
 
-def test_query_from_options_uses_the_option_names(monkeypatch):
+def test_query_from_options_uses_the_token_option(monkeypatch):
     calls = _patch_get(monkeypatch, response=_Response(200, {"active": False}))
-    options = {"tenant_id": "t1", "accounts_api_base_url": "https://a.example", "mqtt_username": "u1", "mqtt_password": "p1"}
+    options = {"tenant_id": "t1", "accounts_api_base_url": "https://a.example", "installation_token": "tok-9"}
 
     assert entitlement.query_from_options(options) == entitlement.INACTIVE
-    assert calls == [("https://a.example/tenants/t1/status", ("u1", "p1"), 10)]
+    assert calls == [("https://a.example/tenants/t1/status", {"Authorization": "Bearer tok-9"}, 10)]
+
+
+@pytest.mark.parametrize("token", ["", None])
+def test_query_from_options_without_token_asks_nothing_and_is_unknown(monkeypatch, token):
+    calls = _patch_get(monkeypatch, _Response(200, {"active": True}))
+    options = {"tenant_id": "client1", "accounts_api_base_url": "https://a.example.test", "installation_token": token}
+    assert entitlement.query_from_options(options) == entitlement.UNKNOWN
+    assert calls == []
+
+
+def test_token_is_never_logged(monkeypatch, caplog):
+    _patch_get(monkeypatch, _Response(500))
+    with caplog.at_level(logging.DEBUG):
+        entitlement.query_status("client1", "https://a.example.test", "tok-GEHEIM")
+    assert "tok-GEHEIM" not in caplog.text
 
 
 def test_rejected_and_errors_never_log_the_password(monkeypatch, caplog):
     _patch_get(monkeypatch, error=requests.ConnectionError("weg"))
     with caplog.at_level(logging.DEBUG):
-        entitlement.query_status("t1", "https://a.example", "u1", "sehr-geheim")
+        entitlement.query_status("t1", "https://a.example", "sehr-geheim")
     assert "sehr-geheim" not in caplog.text
 
 
@@ -86,7 +102,7 @@ def test_rejected_401_logs_a_warning_without_the_password(monkeypatch, caplog):
     Zugangsdaten preiszugeben."""
     _patch_get(monkeypatch, response=_Response(401, {"error": "Nicht authentifiziert"}))
     with caplog.at_level(logging.DEBUG):
-        result = entitlement.query_status("t1", "https://a.example", "u1", "sehr-geheim")
+        result = entitlement.query_status("t1", "https://a.example", "sehr-geheim")
     assert result == entitlement.REJECTED
     assert "sehr-geheim" not in caplog.text
     assert "401" in caplog.text
@@ -100,7 +116,7 @@ def test_every_404_counts_as_unknown(monkeypatch, caplog, response):
     _patch_get(monkeypatch, response=response)
 
     with caplog.at_level(logging.WARNING):
-        assert entitlement.query_status("t1", "https://accounts.example.test", "u", "p") == entitlement.UNKNOWN
+        assert entitlement.query_status("t1", "https://accounts.example.test", "tok") == entitlement.UNKNOWN
 
     assert "404" in caplog.text
 

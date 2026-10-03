@@ -174,13 +174,13 @@ EOF
 
 # room_sensors/entity_room_target deliberately use the C3 entity_id::attribute convention
 # (like the real climate.wohnzimmer_thermostat setup) so this test also exercises that
-# read path end-to-end, not just the plain-state path. mqtt_username/mqtt_password are
-# required options (config.REQUIRED_OPTIONS, already before 0.18.0; this options.json only
-# gained them in 0.19.0) even though the stub broker accepts any value (allow_anonymous true
-# below) -- without them the bridge would just report "noch nicht eingerichtet" and idle
+# read path end-to-end, not just the plain-state path. transport (descriptor as JSON string)
+# and installation_token are required since 0.32.0, mqtt_username/mqtt_password are required
+# for the password credential, even though the stub broker accepts any value (allow_anonymous
+# true below) -- without them the bridge would just report "Konfiguration veraltet" and idle
 # without ever touching MQTT.
 cat > "$DATA_DIR/options.json" <<JSON
-{"tenant_id":"happytest","verteilsystem":"Heizkoerper","daily_trigger_time":"12:00","accounts_api_base_url":"https://accounts.example.test","mqtt_username":"heizungsbruecke","mqtt_password":"test-secret","room_sensors":["climate.testroom::current_temperature"],"entity_room_target":"climate.testroom::temperature","entity_curve_current":"number.curve","entity_shift_current":"climate.zone","entity_min_flow":"number.min_flow","entity_heat_limit":"number.heat_limit","entity_outdoor_temp":"sensor.outdoor","local_check_interval_seconds":2}
+{"tenant_id":"happytest","verteilsystem":"Heizkoerper","daily_trigger_time":"12:00","accounts_api_base_url":"https://accounts.example.test","transport":"{\"kind\":\"mosquitto_cloudflared\",\"host\":\"127.0.0.1\",\"port\":18830}","installation_token":"happy-token","mqtt_username":"heizungsbruecke","mqtt_password":"test-secret","room_sensors":["climate.testroom::current_temperature"],"entity_room_target":"climate.testroom::temperature","entity_curve_current":"number.curve","entity_shift_current":"climate.zone","entity_min_flow":"number.min_flow","entity_heat_limit":"number.heat_limit","entity_outdoor_temp":"sensor.outdoor","local_check_interval_seconds":2}
 JSON
 
 # $TMPDIR is created via `mktemp -d` (mode 0700) and Docker may run the containers below

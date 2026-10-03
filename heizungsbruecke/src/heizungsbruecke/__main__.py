@@ -429,6 +429,11 @@ def _on_connection_check(rt: Runtime, event: Event) -> None:
     if rt.mqtt_down_since is None:
         rt.mqtt_down_since = now
         return
+    if (now - rt.mqtt_down_since >= CONNECTION_LOSS_PROBE_SECONDS
+            and rt.mqtt_client.connect_failures >= abo.CONNECT_FAILURES_BEFORE_STATUS_QUERY):
+        abo.handle_connection_failing(rt)
+        if rt.store.state.abo_inactive_since is not None:
+            return  # eindeutig inaktiv: kein Pruef-Tick mehr
     if now - rt.mqtt_down_since < CONNECTION_LOSS_PROBE_SECONDS or state.delivery.pending is not None:
         return
     ticks.start_probe_tick(rt, f"seit {now - rt.mqtt_down_since:.0f} s keine MQTT-Verbindung")
@@ -486,6 +491,7 @@ def _on_mqtt_connected(rt: Runtime, event: Event) -> None:
     assert status is not None  # beim Boot gesetzt
     rt.auth_rejected_queried_at = None
     rt.auth_rejected_last_status = None
+    rt.connection_failing_queried_at = None
     if status.flags.zugang_abgelehnt:
         status.update(zugang_abgelehnt=False, grund=None, gestartet=True)
     elif not status.flags.gestartet:
