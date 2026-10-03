@@ -9,7 +9,7 @@ CREDENTIAL_PASSWORD = "password"
 CREDENTIAL_CERTIFICATE = "certificate"
 ALPN_443 = "x-amzn-mqtt-ca"
 IOT_PORTS = (8883, 443)
-# Gegen den Server (broker/wire.py, dort mit "cloudflared") prueft Contract-Check 40.
+# Gegen den Server (broker/wire.py, dort mit "cloudflared") prueft Contract-Check 41.
 DESCRIPTOR_KEYS = {
     KIND_MOSQUITTO: frozenset({"kind", "host", "port"}),
     KIND_IOT_CORE: frozenset({"kind", "host", "port", "alpn", "ca_pem", "client_id"}),
