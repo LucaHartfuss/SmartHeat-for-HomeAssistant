@@ -34,6 +34,8 @@ RETRY_QUOTA = Rule(every_attempt=False, waits=(INTERVAL_SECONDS,), max_per_day=M
 RETURN_STAIRCASE = Rule(every_attempt=False, waits=(300, 900, INTERVAL_SECONDS), max_per_day=None)
 
 ENFORCE_PREFIX = "enforce:"
+# Plan 3b: physische Schreibvorgaenge des Tages ueber alle Hebel (BindingDescription.daily_write_limit, Weishaupt).
+TOTAL = "writes:total"
 ZONE_PREPARE = "zone_prepare"
 BOOST_START = "boost_start"
 BOOST_END = "boost_end"
@@ -61,6 +63,22 @@ def counted(entry: dict | None, now: float, day: str) -> dict:
     if entry is None or entry.get("day") != day:
         return {"day": day, "count": 1, "last": now}
     return {**entry, "count": entry["count"] + 1, "last": now}
+
+
+def enforce_rule(per_day: int) -> Rule:
+    """Durchsetzungs-Regel mit dem Tageslimit des Bindings (BindingDescription.enforce_per_day); 6 ergibt QUOTA."""
+    return Rule(every_attempt=True, waits=(INTERVAL_SECONDS,), max_per_day=per_day)
+
+
+def added(entry: dict | None, count: int, now: float, day: str) -> dict:
+    """Eintrag nach `count` weiteren Schreibvorgaengen (TOTAL); ein Eintrag vom Vortag beginnt neu."""
+    if entry is None or entry.get("day") != day:
+        return {"day": day, "count": count, "last": now}
+    return {**entry, "count": entry["count"] + count, "last": now}
+
+
+def count_today(entry: dict | None, day: str) -> int:
+    return entry["count"] if entry is not None and entry.get("day") == day else 0
 
 
 def limit_first_reached(entry: dict | None, rule: Rule, day: str) -> bool:

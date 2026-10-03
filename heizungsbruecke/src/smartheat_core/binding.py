@@ -107,9 +107,13 @@ class BindingDescription:
 class PlantBinding(Protocol):
     """Lesen wirft bei Lesefehlern; None heisst "Anlage meldet gerade keinen Sollwert" (z. B. ruhende Zone).
     write schreibt den schon begrenzten und gerundeten Wert und wirft, wenn er nicht ankommen kann. Die Vorbereitung
-    (prepare) stellt die Anlage so, dass prepared_lever wirkt; True heisst "gerade umgestellt"."""
+    (prepare) stellt die Anlage so, dass prepared_lever wirkt; True heisst "gerade umgestellt".
+
+    Plan 3b: physical_writes zaehlt jeden erfolgreichen physischen Schreibvorgang des Bindings (auch Hilfswerte und
+    Vorbereitung; die Pipeline liest die Differenz, Tagesbudget und Lebensdauer)."""
 
     description: BindingDescription
+    physical_writes: int
 
     def has(self, lever: str) -> bool: ...
     def ref(self, lever: str) -> str: ...

@@ -17,7 +17,10 @@ ROOM_SETPOINT_READ_MIN = 5.0
 # Server-Plausibilitaet fuer room_setpoint (messages.PLAUSIBLE_RANGES, Contract-Check 11): darueber ist der Wert ein
 # Lesefehler und wird nie gemeldet.
 ROOM_SETPOINT_READ_MAX = 35.0
-LEVER_ROLES = {"curve": "curve_current", "room_setpoint": "shift_current", "heat_limit": "heat_limit", "min_flow": "min_flow"}
+LEVER_ROLES = {
+    "curve": "curve_current", "room_setpoint": "shift_current", "level": "level_current", "heat_limit": "heat_limit",
+    "min_flow": "min_flow",
+}
 
 
 def entity_of(ref: str) -> str:
@@ -33,6 +36,8 @@ class HaPlantBinding:
         self._ha_api = ha_api
         self._manifest = manifest
         self.description = description
+        # Plan 3b: erfolgreiche Service-Aufrufe (Schreiben, Vorbereitung, Hilfswerte), siehe PlantBinding.
+        self.physical_writes = 0
 
     def has(self, lever: str) -> bool:
         role = LEVER_ROLES.get(lever)
@@ -74,6 +79,7 @@ class HaPlantBinding:
             self._ha_api.set_climate_temperature(entity_id, value)
         else:
             self._ha_api.set_number_value(entity_id, value)
+        self.physical_writes += 1
 
     def needs_preparation(self) -> bool:
         lever = self.description.prepared_lever
@@ -94,5 +100,6 @@ class HaPlantBinding:
         if self._ha_api.get_raw_state(entity_id) == MANUAL_HVAC_MODE:
             return False
         self._ha_api.set_hvac_mode(entity_id, MANUAL_HVAC_MODE)
+        self.physical_writes += 1
         logger.warning("Zone %s auf Manuell (%s) gestellt", entity_id, MANUAL_HVAC_MODE)
         return True
