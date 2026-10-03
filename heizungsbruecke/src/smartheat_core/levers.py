@@ -26,4 +26,11 @@ class LeverSet:
 
 VAILLANT_VRC720 = LeverSet("vaillant_vrc720", ("curve", "room_setpoint", "heat_limit"), ("min_flow",))
 
-LEVER_SETS: dict[str, LeverSet] = {lever_set.id: lever_set for lever_set in (VAILLANT_VRC720,)}
+# Hersteller-Abstraktion Plan 3b: gleiche IDs und Hebel wie heizungsserver.generic.plants (Contract-Checks 4 und 40).
+WEISHAUPT_WWP = LeverSet("weishaupt_wwp", ("curve", "room_setpoint", "heat_limit"))
+WEISHAUPT_WWP_BASIS = LeverSet("weishaupt_wwp_basis", ("room_setpoint",))
+VIESSMANN_VICARE = LeverSet("viessmann_vicare", ("curve", "level", "room_setpoint"))
+
+LEVER_SETS: dict[str, LeverSet] = {
+    lever_set.id: lever_set for lever_set in (VAILLANT_VRC720, WEISHAUPT_WWP, WEISHAUPT_WWP_BASIS, VIESSMANN_VICARE)
+}

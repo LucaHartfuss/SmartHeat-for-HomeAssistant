@@ -91,11 +91,11 @@ def test_verteilsystem_without_safety_values_is_a_configuration_error(monkeypatc
     )
 
     with caplog.at_level("ERROR"):
-        result = _start_bridge(_full_valid_options(verteilsystem="Fussbodenheizung"), MagicMock())
+        result = _start_bridge(_full_valid_options(verteilsystem="Deckenheizung"), MagicMock())
 
     assert result.reason == "konfigurationsfehler"
     assert "FEHLER" in caplog.text
-    assert "Fussbodenheizung" in caplog.text
+    assert "Deckenheizung" in caplog.text
 
 
 def test_0_17_0_options_are_outdated_not_unconfigured(caplog, sleeps):

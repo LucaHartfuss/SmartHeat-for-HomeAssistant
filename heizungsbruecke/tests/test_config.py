@@ -141,7 +141,7 @@ def test_resolve_effective_options_ignores_safety_values_in_options():
     assert safety.comfort_boost["curve"] == 1.5
 
 
-@pytest.mark.parametrize("verteilsystem", [None, "", "Fussbodenheizung", "Unbekannt"])
+@pytest.mark.parametrize("verteilsystem", [None, "", "Deckenheizung", "Unbekannt"])
 def test_resolve_effective_options_rejects_verteilsystem(verteilsystem):
     options = {**REQUIRED, **PROFILE_PARAMS, **BASE_URL, "verteilsystem": verteilsystem}
     if verteilsystem is None:
