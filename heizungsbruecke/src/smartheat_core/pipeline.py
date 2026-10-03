@@ -245,7 +245,8 @@ class LeverPipeline:
         auch ohne laufenden Boost). Die Hebel aus restore_originals gehen auf ihren Ursprungswert, auch ohne laufenden
         Boost, wenn der Wiederherstellungspunkt davon abweicht; ist der Ursprungswert unbekannt, bleibt der Hebel auf
         dem Wiederherstellungspunkt (Log). False, wenn das Schreiben scheitert: die Flags bleiben, der Aufrufer
-        versucht es erneut. Scheitert danach nur das Speichern, gilt die Wiederherstellung als erfolgt."""
+        versucht es erneut. Scheitert danach nur das Speichern, gilt die Wiederherstellung als erfolgt. Plan 3b: danach
+        die Hilfs-Ursprungswerte (aux_originals), die anschliessend geleert werden."""
         state = self._store.state
         originals: dict[str, float] = {}
         differs = False
@@ -281,6 +282,9 @@ class LeverPipeline:
             self._store.update(
                 boost_active=False, emergency_boost_active=False,
                 restore_point={**self._store.state.restore_point, **originals},
+                # Hilfswerte sind zurueckgestellt: ein weiterer Aufruf (naechster Start) schreibt nichts mehr, ein
+                # neues Abo merkt sie neu (idempotentes Ende, keine lokalen Schreibvorgaenge danach).
+                aux_originals={},
             )
         except Exception:
             logger.exception("Zuletzt gelernte Werte wiederhergestellt, Boost-Flags konnten aber nicht gespeichert werden")

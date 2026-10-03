@@ -146,3 +146,19 @@ def test_aux_originals_loaded_from_backup_are_restored(make_store, clock):
     pipeline, store, ha, binding = _setup(make_store, clock, backup={"aux_originals": AUX})
     assert pipeline.restore_and_clear(always_restore=False) is True
     assert binding.restored == [AUX]
+
+
+def test_a_successful_restore_clears_the_aux_values_and_is_not_repeated(make_store, clock, tmp_path):
+    pipeline, store, ha, binding = _setup(make_store, clock)
+    pipeline.capture_originals()
+    pipeline.apply_server_values({"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 16.0})
+    assert pipeline.restore_and_clear(always_restore=False) is True
+    assert store.state.aux_originals == {}
+    assert "aux_originals" not in load_backup(tmp_path / "backup.json")
+    writes = list(ha.writes)
+    binding.aux = {**AUX, "mode_select": "Komfort"}  # danach vom Kunden selbst verstellt
+    assert pipeline.restore_and_clear(always_restore=False) is True  # naechster Start: keine Schreibvorgaenge
+    assert ha.writes == writes
+    assert binding.restored == [AUX]
+    pipeline.capture_originals()  # erneutes Abo: Hilfswerte werden neu gemerkt
+    assert store.state.aux_originals == {**AUX, "mode_select": "Komfort"}
