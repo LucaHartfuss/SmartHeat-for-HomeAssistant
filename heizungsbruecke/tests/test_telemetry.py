@@ -78,6 +78,16 @@ def test_run_telemetry_tick_omits_unconfigured_optional_kpi_fields():
     ha_api.get_raw_state.assert_not_called()
 
 
+def test_electrical_total_is_read_as_energy_channel():
+    manifest = ChannelManifest(entity_ids={"energy_electrical_total": "sensor.e_total"})
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 12.5
+
+    fields = telemetry.read_kpi_fields(manifest, ha_api)
+
+    assert fields["energy"] == {"electrical_total": 12.5}
+
+
 def test_run_telemetry_tick_builds_energy_subobject_from_configured_channels():
     manifest = ChannelManifest(entity_ids={
         "room_actual": "sensor.room_actual",

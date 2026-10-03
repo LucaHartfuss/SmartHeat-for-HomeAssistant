@@ -21,6 +21,7 @@ KPI_ENERGY_ROLES = (
     "energy_electrical_heating", "energy_electrical_dhw",
     "energy_primary_heating", "energy_primary_dhw",
     "energy_thermal_heating", "energy_thermal_dhw",
+    "energy_electrical_total",
 )
 
 # Regel-Telemetrie fuer den Regelkern (TP11). Gegenstueck: heizungsserver

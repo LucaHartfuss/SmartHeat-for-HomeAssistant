@@ -103,7 +103,7 @@ def test_manual_hint_shape(make_store):
 
 
 def test_version():
-    assert ADDON_VERSION == "0.32.0"
+    assert ADDON_VERSION == "0.33.0"
 
 
 @pytest.mark.parametrize("fault,expected", [

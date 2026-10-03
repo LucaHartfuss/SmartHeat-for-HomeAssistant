@@ -6,6 +6,7 @@ import pytest
 
 from heizungsbruecke.notifier import HINT_CATEGORIES, STATE_OK, Notifier, category, notification_id
 from heizungsbruecke.state import StateStore
+from smartheat_core import pipeline
 
 SERVICES = ["notify.mobile_app_a", "notify.mobile_app_b"]
 
@@ -255,7 +256,7 @@ def test_refresh_persistent_does_nothing_for_an_ok_key(make_store, ha_api):
 def test_category_is_the_key_prefix():
     assert category("raumfuehler:sensor.wz") == "raumfuehler"
     assert category("quellwechsel") == "quellwechsel"
-    assert HINT_CATEGORIES == ("raumfuehler", "batterie", "manueller_eingriff", "quellwechsel", "therme")
+    assert HINT_CATEGORIES[:5] == ("raumfuehler", "batterie", "manueller_eingriff", "quellwechsel", "therme")
     assert category("therme") == "therme"
 
 
@@ -268,6 +269,22 @@ def test_switched_off_hint_category_is_tracked_and_logged_but_not_pushed(make_st
     ha_api.send_notification.assert_not_called()
     assert notifier.state("batterie:sensor.x") == "niedrig"
     assert "Batterie schwach" in caplog.text
+
+
+def test_write_budget_hints_are_switchable():
+    assert HINT_CATEGORIES[-2:] == ("schreibbudget", "schreibzaehler")
+    assert category(pipeline.BUDGET_KEY) == "schreibbudget"
+    assert category(pipeline.LIFETIME_KEY) == "schreibzaehler"
+
+
+def test_switched_off_write_budget_hint_is_tracked_but_not_pushed(make_store, ha_api):
+    notifier = Notifier(make_store(), ha_api, SERVICES, hints_off=["schreibbudget"])
+
+    assert notifier.notify(pipeline.BUDGET_KEY, "erreicht", "Tageslimit erreicht", critical=False) is True
+    notifier.notify(pipeline.LIFETIME_KEY, "10000", "Zaehler", critical=False)
+
+    assert notifier.state(pipeline.BUDGET_KEY) == "erreicht"
+    assert ha_api.send_notification.call_count == len(SERVICES)  # nur der Zaehler-Hinweis
 
 
 def test_other_hint_categories_are_still_pushed(make_store, ha_api):
