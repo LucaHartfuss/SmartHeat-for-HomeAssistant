@@ -2,8 +2,9 @@
 
 Wird im Update-Dialog des Supervisors angezeigt. Pro Version ein Abschnitt `## X.Y.Z`.
 
-## Unveröffentlicht
+## 1.0.3
 
+- Nur Kommentar: `local_port` kommt jetzt aus dem Transport-Deskriptor des Servers (die Integration schreibt ihn).
 - Eigenes Icon und Logo (SmartHeat-Flamme) im Add-on-Store und in der Add-on-Übersicht.
 
 ## 1.0.2

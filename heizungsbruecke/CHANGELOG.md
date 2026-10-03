@@ -3,8 +3,19 @@
 Wird im Update-Dialog des Supervisors angezeigt. Pro Version ein Abschnitt `## X.Y.Z`; der
 Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Release.
 
-## Unveröffentlicht
+## 0.32.0
 
+- **Neu einrichten nötig:** Eine Konfiguration von vor dieser Version meldet „Konfiguration veraltet“ – die
+  SmartHeat-Einrichtung (Integration) einmal erneut durchführen. Es gibt keinen stillen Rückfall auf die alten Optionen.
+- Transport-Deskriptor (`transport`) und Installations-Token (`installation_token`) statt fester Adresse
+  (`127.0.0.1:18830`) und MQTT-Passwort für die Abo-Abfrage `/status`; das Token geht als Bearer-Token an den
+  Server und taucht in keinem Log oder Status auf.
+- Zertifikats-Anmeldung (AWS IoT Core) vorbereitet, inaktiv (`tls_certificate`, `tls_private_key`).
+- TLS-, Anmelde- und Netzwerkfehler sind im Log unterscheidbar; der Hinweis auf `cloudflared_access_mqtt` erscheint
+  nur noch beim Mosquitto-Transport.
+- Abo-Erkennung auch ohne CONNACK: fehlt die Verbindung seit 15 Minuten und sind mindestens 3 Versuche in Folge
+  gescheitert (auch Trennungen vor dem CONNACK zählen), fragt das Add-on den Abo-Status (höchstens alle 10 Minuten).
+  „Inaktiv“ wechselt in den Abo-inaktiv-Modus, „abgelehnt“ meldet wie eine abgelehnte Anmeldung.
 - Eigenes Icon und Logo (SmartHeat-Flamme) im Add-on-Store und in der Add-on-Übersicht.
 
 ## 0.31.0

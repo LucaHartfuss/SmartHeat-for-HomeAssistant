@@ -1,5 +1,5 @@
 name: "Heizungsbruecke"
-version: "0.31.0"
+version: "0.32.0"
 slug: "heizungsbruecke"
 description: "Generische Bruecken-Logik: liest konfigurierte HA-Entities, meldet sie an den SmartHeat-Server, schreibt Sollwerte zurueck, mit lokalem Boost-Failsafe und Sicherheits-Clamps."
 url: "https://github.com/LucaHartfuss/SmartHeat-for-HomeAssistant"
@@ -11,8 +11,6 @@ host_network: true
 homeassistant_api: true
 options:
   tenant_id: ""
-  mqtt_username: ""
-  mqtt_password: ""
   entity_room_target: ""
   entity_curve_current: ""
   entity_shift_current: ""
@@ -34,8 +32,8 @@ options:
   entity_energy_thermal_heating: ""
   entity_energy_thermal_dhw: ""
 # local_check_interval_seconds/telemetry_interval_seconds must stay optional (`?`): the
-# SmartHeat integration never sends them (it sends tenant_id, profile_params, the MQTT
-# credentials and the entity_* mappings). Supervisor validates a set-options call against the
+# SmartHeat integration never sends them (it sends tenant_id, profile_params, the access
+# options and the entity_* mappings). Supervisor validates a set-options call against the
 # whole schema, and a missing required field fails the call silently (straight into
 # AddonError). The add-on falls back to its own defaults for these (config.py), so making
 # them optional here changes nothing at runtime.
@@ -54,10 +52,18 @@ options:
 # abgemeldet and notify_hints_off are written by the integration (TP7): abgemeldet=true on removal
 # (end a running boost, clear notifications, then idle), notify_hints_off lists the hint
 # categories without push. Both optional, no entry under options:.
+# transport, installation_token and the access credentials are written by the integration (Spec
+# AWS-IoT 5.1, Plan AWS-2). All optional so that an update with an old configuration starts and
+# reports 'Konfiguration veraltet' instead of Supervisor refusing the start silently. Secrets
+# have the type password.
 schema:
   tenant_id: str
-  mqtt_username: str
-  mqtt_password: password
+  transport: str?
+  installation_token: password?
+  mqtt_username: str?
+  mqtt_password: password?
+  tls_certificate: str?
+  tls_private_key: password?
   entity_room_target: str
   entity_curve_current: str
   entity_outdoor_temp: str

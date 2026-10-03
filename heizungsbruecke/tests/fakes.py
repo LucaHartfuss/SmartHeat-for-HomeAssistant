@@ -4,6 +4,12 @@ import copy
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+# Zugangsoptionen seit AWS-2: Deskriptor (Mosquitto ueber cloudflared) und Installations-Token. Gueltige Test-Optionen
+# mit mqtt_username/mqtt_password tragen beides, sonst meldet der Start "Konfiguration veraltet".
+MOSQUITTO_TRANSPORT = '{"kind": "mosquitto_cloudflared", "host": "127.0.0.1", "port": 18830}'
+INSTALLATION_TOKEN = "tok"
+ACCESS_OPTIONS = {"transport": MOSQUITTO_TRANSPORT, "installation_token": INSTALLATION_TOKEN}
+
 
 class FakeHa:
     token = "tok"

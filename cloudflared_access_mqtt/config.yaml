@@ -1,5 +1,5 @@
 name: "Cloudflared Access TCP-Bridge"
-version: "1.0.2"
+version: "1.0.3"
 slug: "cloudflared_access_mqtt"
 description: "Cloudflare Access TCP-Forwarder: macht einen privaten, per Cloudflare Access geschuetzten TCP-Dienst (z. B. einen MQTT-Broker) fuer Home Assistant OS unter 127.0.0.1 erreichbar."
 url: "https://github.com/LucaHartfuss/SmartHeat-for-HomeAssistant"
@@ -10,9 +10,8 @@ startup: services
 host_network: true
 options:
   hostname: ""
-  # Muss mit heizungsbruecke/src/heizungsbruecke/__main__.py's MQTT_PORT
-  # uebereinstimmen (siehe Kommentar dort) -- kein geteilter Konfigurationswert
-  # zwischen den beiden Add-ons, nur Konvention.
+  # Die Integration schreibt hier den Port aus dem Transport-Deskriptor des Servers
+  # (CLOUDFLARED_LOCAL_PORT, Contract-Check 6).
   local_port: 18830
   service_token_id: ""
   service_token_secret: ""

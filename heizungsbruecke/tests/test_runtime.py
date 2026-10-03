@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from fakes import FakeHa
+from fakes import ACCESS_OPTIONS, FakeHa
 
 import heizungsbruecke.__main__ as main_module
 from heizungsbruecke import abo, backup_store, datentraeger, entitlement, ticks
@@ -30,6 +30,7 @@ OPTIONS = {
     "tenant_id": "test_tenant",
     "verteilsystem": "Heizkoerper",  # Clamps 0.4-1.5 / 15-25 (Mindestvorlauf 20-30), Boost 1.5/25
     "daily_trigger_time": "12:00",  # Tagestick 12:00
+    **ACCESS_OPTIONS,
     "mqtt_username": "u",
     "mqtt_password": "p",
     "room_sensors": ["sensor.room_actual"],
@@ -52,8 +53,10 @@ _OMIT = object()
 
 
 class FakeMqtt:
-    def __init__(self, **kwargs):
+    def __init__(self, options=None, tenant_id=None, **kwargs):
+        self.options, self.tenant_id = options, tenant_id
         self.kwargs = kwargs
+        self.connect_failures = 0
         self.snapshots = []
         self.telemetry = []
         self.setpoints_callback = None
@@ -139,19 +142,19 @@ def env(tmp_path, monkeypatch, clock):
     )
     abo = {"status": entitlement.ACTIVE, "queries": 0}
 
-    def _query_status(tenant_id, base_url, username, password):
+    def _query_status(tenant_id, base_url, token):
         # Jede Abo-Abfrage (Boot, Tick-Zustellung, abgelehnte Anmeldung, Fristende) nutzt die
-        # Basis-URL aus den Optionen (Spec TP3, 2.5) und die MQTT-Zugangsdaten (Spec TP8, 3.1).
+        # Basis-URL aus den Optionen (Spec TP3, 2.5) und das Installations-Token (Spec AWS-IoT 4.3).
         assert base_url == OPTIONS["accounts_api_base_url"]
-        assert (username, password) == (OPTIONS["mqtt_username"], OPTIONS["mqtt_password"])
+        assert token == OPTIONS["installation_token"]
         abo["queries"] += 1
         return abo["status"]
 
     monkeypatch.setattr("heizungsbruecke.entitlement.query_status", _query_status)
     mqtt_clients, trigger_clients = [], []
 
-    def _mqtt_factory(**kwargs):
-        mqtt_clients.append(FakeMqtt(**kwargs))
+    def _mqtt_factory(*args, **kwargs):
+        mqtt_clients.append(FakeMqtt(*args, **kwargs))
         return mqtt_clients[-1]
 
     def _trigger_factory(**kwargs):
@@ -1597,7 +1600,7 @@ def test_unexpected_entitlement_query_error_counts_as_unknown(env, monkeypatch):
     _set_room_target(env, bridge, 20.5)
     seq = _mqtt(env).snapshots[0]["seq"]
 
-    def _broken_query(tenant_id, base_url, username, password):
+    def _broken_query(tenant_id, base_url, token):
         raise RuntimeError("unerwartet")
 
     monkeypatch.setattr("heizungsbruecke.entitlement.query_status", _broken_query)

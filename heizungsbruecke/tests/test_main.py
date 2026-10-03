@@ -1,10 +1,15 @@
+import json
 import logging
 import sys
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
+from conftest import FakeClock
+from fakes import ACCESS_OPTIONS
 
+from heizungsbruecke import __main__
 from heizungsbruecke.__main__ import (
     DERIVED_SENSORS_RETRY_DELAYS_SECONDS,
     IdleBridge,
@@ -58,6 +63,7 @@ def _full_valid_options(**overrides):
         "tenant_id": "test_tenant",
         "verteilsystem": "Heizkoerper",
         "daily_trigger_time": "12:00",
+        **ACCESS_OPTIONS,
         "mqtt_username": "test_mqtt_user",
         "mqtt_password": "test_mqtt_pass",
         "room_sensors": ["sensor.room_actual"],
@@ -83,6 +89,33 @@ def test_unconfigured_addon_idles_without_status_event(caplog):
     assert result.reason == "nicht_eingerichtet"
     assert "Add-on ist noch nicht eingerichtet" in caplog.text
     ha_api.fire_event.assert_not_called()
+
+
+def test_start_with_the_old_configuration_reports_outdated_not_silence(sleeps):
+    ha_api = MagicMock()
+    options = {**_full_valid_options(), "mqtt_username": "client1_alt", "mqtt_password": "x9alt7"}
+    for key in ("transport", "installation_token", "tls_certificate", "tls_private_key"):
+        options.pop(key, None)
+
+    result = _start_bridge(options, ha_api)
+
+    assert result.reason == "konfigurationsfehler"
+    last = _status_calls(ha_api)[-1]
+    assert last["status"] == "konfigurationsfehler"
+    assert "Konfiguration veraltet" in last["grund"]
+
+
+@pytest.mark.parametrize("secret_key", ["mqtt_password", "installation_token", "tls_private_key"])
+def test_start_errors_never_show_secret_option_values(secret_key):
+    options = {secret_key: "GEHEIM-123", "notify_services": ["notify.GEHEIM-123"]}
+    text = __main__._without_credentials("Option 'notify_services' (['notify.GEHEIM-123']) ungueltig", options)
+    assert "GEHEIM-123" not in text
+
+
+def test_a_secret_with_special_characters_is_redacted_in_its_repr_form_too():
+    options = {"tls_private_key": "-----BEGIN-----\nabc'\n-----END-----"}
+    text = __main__._without_credentials(f"Option ungueltig: {options['tls_private_key']!r}", options)
+    assert "abc" not in text
 
 
 def test_verteilsystem_without_safety_values_is_a_configuration_error(monkeypatch, caplog, sleeps):
@@ -590,3 +623,96 @@ def test_prime_heat_limit_capture_failure_does_not_abort_startup(monkeypatch, ca
 
     assert ran == [True]
     assert "Heizgrenze" in caplog.text
+
+
+@pytest.mark.parametrize("failures, down_seconds, expect_query", [
+    (3, 900, True), (2, 900, False), (3, 899, False), (0, 2000, False),
+])
+def test_connection_check_queries_the_status_after_long_repeated_failures(failures, down_seconds, expect_query, monkeypatch):
+    rt = SimpleNamespace(
+        worker=MagicMock(), options={}, clock=FakeClock(), mqtt_down_since=None,
+        mqtt_client=MagicMock(), store=SimpleNamespace(state=SimpleNamespace(
+            abo_inactive_since=None, delivery=SimpleNamespace(pending="offen"))),
+    )
+    rt.mqtt_client.is_connected.return_value = False
+    rt.mqtt_client.connect_failures = failures
+    called = []
+    monkeypatch.setattr(__main__.abo, "handle_connection_failing", lambda runtime: called.append(runtime))
+    __main__._on_connection_check(rt, None)  # setzt mqtt_down_since
+    rt.clock.advance(down_seconds)
+    __main__._on_connection_check(rt, None)
+    assert bool(called) is expect_query
+
+
+def test_mqtt_connected_resets_the_connection_failing_throttle():
+    rt = SimpleNamespace(
+        status=MagicMock(), notifier=MagicMock(), auth_rejected_queried_at=5.0, auth_rejected_last_status="x",
+        connection_failing_queried_at=7.0,
+    )
+    rt.status.flags.zugang_abgelehnt = False
+    rt.status.flags.gestartet = True
+    with patch.object(__main__.ticks, "deliver"):
+        __main__._on_mqtt_connected(rt, None)
+    assert rt.connection_failing_queried_at is None
+
+
+def test_connection_check_starts_no_probe_tick_when_the_query_found_the_abo_inactive(monkeypatch):
+    state = SimpleNamespace(abo_inactive_since=None, delivery=SimpleNamespace(pending=None))
+    rt = SimpleNamespace(
+        worker=MagicMock(), options={}, clock=FakeClock(), mqtt_down_since=None,
+        mqtt_client=MagicMock(), store=SimpleNamespace(state=state),
+    )
+    rt.mqtt_client.is_connected.return_value = False
+    rt.mqtt_client.connect_failures = 3
+    monkeypatch.setattr(__main__.abo, "handle_connection_failing",
+                        lambda runtime: setattr(state, "abo_inactive_since", "jetzt"))
+    probes = []
+    monkeypatch.setattr(__main__.ticks, "start_probe_tick", lambda *args: probes.append(args))
+    __main__._on_connection_check(rt, None)
+    rt.clock.advance(900)
+    __main__._on_connection_check(rt, None)
+    assert probes == []
+
+
+def test_unwritable_temp_storage_is_a_configuration_error_not_a_crash(monkeypatch, caplog, sleeps):
+    from tls_helpers import ca_pem, issue, make_ca
+
+    ca = make_ca()
+    key, cert = issue(ca, "client1")
+    transport = json.dumps({"kind": "iot_core", "host": "h.example", "port": 8883, "alpn": None,
+                            "ca_pem": ca_pem(ca), "client_id": "test_tenant"})
+    options = _full_valid_options(transport=transport, tls_certificate=cert, tls_private_key=key,
+                                  mqtt_username="", mqtt_password="")
+
+    def boom(*args, **kwargs):
+        raise OSError("Platte voll")
+
+    monkeypatch.setattr("smartheat_transport.connect.tempfile.TemporaryDirectory", boom)
+    ha_api = MagicMock()
+    with caplog.at_level(logging.ERROR):
+        result = _start_bridge(options, ha_api)
+
+    assert result.reason == "konfigurationsfehler"
+    assert "nicht ablegbar" in caplog.text
+    assert key not in caplog.text
+
+
+@pytest.mark.parametrize("status", [__main__.abo.entitlement.ACTIVE, __main__.abo.entitlement.UNKNOWN])
+def test_connection_check_still_starts_the_probe_tick_after_an_unclear_or_active_query(status, monkeypatch):
+    """Regression: ein normaler Ausfall (Abo aktiv oder Abfrage unklar) darf den Notbetrieb nicht verhindern."""
+    state = SimpleNamespace(abo_inactive_since=None, delivery=SimpleNamespace(pending=None))
+    rt = SimpleNamespace(
+        worker=MagicMock(), options={}, clock=FakeClock(), mqtt_down_since=None, connection_failing_queried_at=None,
+        mqtt_client=MagicMock(), store=SimpleNamespace(state=state), ha_api=MagicMock(),
+    )
+    rt.mqtt_client.is_connected.return_value = False
+    rt.mqtt_client.connect_failures = 3
+    monkeypatch.setattr(__main__.abo.entitlement, "query_from_options", lambda options: status)
+    probes = []
+    monkeypatch.setattr(__main__.ticks, "start_probe_tick", lambda *args: probes.append(args))
+    __main__._on_connection_check(rt, None)
+    rt.clock.advance(900)
+    __main__._on_connection_check(rt, None)
+    assert len(probes) == 1
+    assert state.abo_inactive_since is None
+    rt.ha_api.send_notification.assert_not_called()

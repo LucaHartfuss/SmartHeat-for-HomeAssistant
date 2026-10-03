@@ -3,12 +3,14 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from fakes import ACCESS_OPTIONS
 
 from heizungsbruecke import triggers
 from heizungsbruecke.manifest import ChannelManifest
 from heizungsbruecke.runtime import EV_HA_CONNECTED, EV_LOCAL_CHECK, EV_SETPOINTS
 from heizungsbruecke.triggers import build_ha_trigger_client
 from heizungsbruecke.worker import Event, RegulationWorker
+from smartheat_transport.connect import ConnectOptions
 
 
 @pytest.mark.parametrize("raw,retain", [
@@ -145,10 +147,16 @@ def test_extract_attribute_suffix_returns_none_for_plain_entity_id():
 
 def test_create_mqtt_client_only_subscribes_the_answers(monkeypatch, clock):
     created = MagicMock()
-    monkeypatch.setattr("heizungsbruecke.triggers.BridgeMqttClient", lambda **kwargs: created)
+    factory = MagicMock(return_value=created)
+    monkeypatch.setattr("heizungsbruecke.triggers.BridgeMqttClient", factory)
 
     triggers.create_mqtt_client(
-        {"tenant_id": "t1", "mqtt_username": "u", "mqtt_password": "p"}, RegulationWorker(clock=clock),
+        {"tenant_id": "t1", "mqtt_username": "u", "mqtt_password": "p", **ACCESS_OPTIONS},
+        RegulationWorker(clock=clock),
     )
 
+    options, tenant = factory.call_args.args
+    assert options == ConnectOptions(host="127.0.0.1", port=18830, client_id="", username="u", password="p")
+    assert tenant == "t1"
+    assert factory.call_args.kwargs["transport_kind"] == "mosquitto_cloudflared"
     assert [name for name, _, _ in created.mock_calls] == ["subscribe_setpoints"]

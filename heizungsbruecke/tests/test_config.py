@@ -2,6 +2,8 @@ import dataclasses
 import json
 
 import pytest
+from fakes import ACCESS_OPTIONS
+from tls_helpers import ca_pem, issue, make_ca
 
 from heizungsbruecke import config
 from heizungsbruecke.config import (
@@ -26,7 +28,7 @@ PROFILE_PARAMS = {
 }
 
 REQUIRED = {
-    "tenant_id": "wohnung1",
+    "tenant_id": "wohnung1", **ACCESS_OPTIONS,
     "mqtt_username": "wohnung1_a1b2c3d4", "mqtt_password": "geheim",
     "room_sensors": ["sensor.rt"], "entity_room_target": "sensor.target_rt",
     "entity_curve_current": "number.curve", "entity_shift_current": "climate.zone",
@@ -415,7 +417,7 @@ def test_is_signed_off_only_for_true(value, expected):
 
 
 VALID = {
-    "tenant_id": "t", "mqtt_username": "u", "mqtt_password": "p", "verteilsystem": "Heizkoerper",
+    "tenant_id": "t", **ACCESS_OPTIONS, "mqtt_username": "u", "mqtt_password": "p", "verteilsystem": "Heizkoerper",
     "daily_trigger_time": "12:00", "room_sensors": ["sensor.r"], "entity_room_target": "sensor.t",
     "entity_curve_current": "number.c", "entity_shift_current": "climate.zone", "entity_min_flow": "number.mf",
     "entity_outdoor_temp": "sensor.o", "entity_heat_limit": "number.hl",
@@ -578,7 +580,7 @@ def test_mode_select_is_required_for_weishaupt_and_viessmann(lever_set):
 
 def test_non_vaillant_lever_set_is_configured_with_the_core_fields_only():
     # Fehlende Hebel-Entities sind dann ein Konfigurationsfehler (resolve_effective_options), kein stilles Warten.
-    core = {key: VALID[key] for key in ("tenant_id", "mqtt_username", "mqtt_password", "entity_room_target", "entity_outdoor_temp")}
+    core = {key: VALID[key] for key in ("tenant_id", "entity_room_target", "entity_outdoor_temp")}
     assert config.is_configured({**core, "lever_set": "viessmann_vicare"}) is True
     assert config.is_configured(core) is False  # Vaillant wie bisher
 
@@ -602,3 +604,70 @@ def test_binding_description_takes_the_poll_interval():
 def test_binding_description_ignores_an_invalid_poll_interval(value):
     # Das Abmelden laeuft ohne config.validate: ein ungueltiges Intervall gilt dort als fehlend (Standardwert).
     assert config.binding_description({**WEISHAUPT_OPTIONS, "poll_interval_seconds": value}).settle_seconds == 120
+
+
+MOSQUITTO = ACCESS_OPTIONS["transport"]
+
+
+@pytest.fixture(scope="module")
+def iot_options():
+    ca = make_ca()
+    key, cert = issue(ca, "client1")
+    transport = json.dumps({"kind": "iot_core", "host": "abc-ats.iot.eu-central-1.amazonaws.com", "port": 8883,
+                            "alpn": None, "ca_pem": ca_pem(ca), "client_id": "client1"})
+    return {"transport": transport, "installation_token": "tok", "tls_certificate": cert, "tls_private_key": key}
+
+
+def _password_options(**overrides):
+    return {"transport": MOSQUITTO, "installation_token": "tok", "mqtt_username": "client1_x",
+            "mqtt_password": "pw", **overrides}
+
+
+def test_password_transport_resolves():
+    descriptor, credential = config.resolve_transport(_password_options())
+    assert descriptor.kind == "mosquitto_cloudflared" and credential.username == "client1_x"
+
+
+def test_certificate_transport_resolves(iot_options):
+    descriptor, credential = config.resolve_transport(iot_options)
+    assert descriptor.client_id == "client1" and credential.kind == "certificate"
+
+
+@pytest.mark.parametrize("missing", ["transport", "installation_token"])
+def test_old_configuration_without_transport_or_token_is_outdated(missing):
+    options = {"mqtt_username": "client1_alt", "mqtt_password": "alt", **_password_options()}
+    del options[missing]
+    with pytest.raises(config.ConfigError, match="Konfiguration veraltet"):
+        config.resolve_transport(options)
+
+
+def test_iot_transport_with_a_password_is_a_config_error(iot_options):
+    with pytest.raises(config.ConfigError, match="neu konfigurieren"):
+        config.resolve_transport({**iot_options, "mqtt_password": "pw"})
+
+
+def test_iot_transport_with_a_foreign_key_is_a_config_error(iot_options):
+    other_key, _ = issue(make_ca(), "fremd")
+    with pytest.raises(config.ConfigError, match="passen nicht"):
+        config.resolve_transport({**iot_options, "tls_private_key": other_key})
+
+
+def test_transport_errors_never_quote_secrets(iot_options):
+    with pytest.raises(config.ConfigError) as info:
+        config.resolve_transport({**iot_options, "mqtt_password": "pw-geheim"})
+    assert "pw-geheim" not in str(info.value) and iot_options["tls_private_key"] not in str(info.value)
+
+
+def test_credentials_are_no_longer_required_to_count_as_configured():
+    options = {"tenant_id": "t", "entity_room_target": "climate.wz::temperature", "entity_curve_current": "number.c",
+               "entity_outdoor_temp": "sensor.o", "entity_heat_limit": "number.h"}
+    assert config.is_configured(options)
+
+
+def test_unwritable_temp_storage_is_a_config_error_not_a_crash(iot_options, monkeypatch):
+    def boom(*args, **kwargs):
+        raise OSError("Platte voll")
+
+    monkeypatch.setattr("smartheat_transport.connect.tempfile.TemporaryDirectory", boom)
+    with pytest.raises(config.ConfigError, match="nicht ablegbar"):
+        config.resolve_transport(iot_options)

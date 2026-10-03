@@ -67,6 +67,9 @@ class Runtime:
     # ein erfolgreicher Connect setzt beides zurueck. Nicht persistiert.
     auth_rejected_queried_at: float | None = None
     auth_rejected_last_status: str | None = None
+    # Transportneutrale Abo-Erkennung (Spec AWS-IoT 5.1): letzte /status-Abfrage nach langem,
+    # wiederholtem Verbindungsfehler; ein erfolgreicher Connect setzt sie zurueck. Nicht persistiert.
+    connection_failing_queried_at: float | None = None
     # Start (Plan-Praezisierung 11): Zone auf Manuell mit brauchbarer Parallelverschiebung. Bis es
     # einmal geklappt hat, versucht es jeder lokale Check erneut. Nicht persistiert.
     zone_prepared: bool = False

@@ -16,6 +16,7 @@ from heizungsbruecke.runtime import (
     EV_SETPOINTS,
 )
 from heizungsbruecke.worker import Event, RegulationWorker
+from smartheat_transport.connect import connect_options
 
 logger = logging.getLogger(__name__)
 
@@ -111,12 +112,13 @@ def make_setpoints_callback(worker: RegulationWorker):
 
 
 def create_mqtt_client(options: dict, worker: RegulationWorker) -> BridgeMqttClient:
-    """Verbindet asynchron, ohne Retry-Budget und ohne Exit. Die Subscription wird bei jedem
-    (Re-)Connect erneuert; die Auth-Ablehnung aus dem paho-Thread wird gebuendelt eingestellt
-    (paho meldet sie im Backoff mehrfach)."""
+    """Verbindet asynchron, ohne Retry-Budget und ohne Exit, ueber den Transport aus den Optionen (beim
+    Start schon von config.resolve_transport geprueft). Die Subscription wird bei jedem (Re-)Connect
+    erneuert; die Auth-Ablehnung aus dem paho-Thread wird gebuendelt eingestellt (paho meldet sie im
+    Backoff mehrfach)."""
+    descriptor, credential = config.resolve_transport(options)
     client = BridgeMqttClient(
-        host=config.MQTT_HOST, port=config.MQTT_PORT, tenant_id=options["tenant_id"],
-        username=options["mqtt_username"], password=options["mqtt_password"],
+        connect_options(descriptor, credential), options["tenant_id"], transport_kind=descriptor.kind,
         on_auth_rejected=lambda _client: worker.post_coalesced(EV_AUTH_REJECTED),
         on_connected=lambda _client: worker.post_coalesced(EV_MQTT_CONNECTED),
     )

@@ -13,9 +13,12 @@ inside Home Assistant OS at `127.0.0.1:<port>` — a thin wrapper around `cloudf
 
 Generic bridge logic: reads configured Home Assistant entities, reports them to the SmartHeat
 server over MQTT, writes setpoints back (clamped against configured safety limits), and includes
-a local boost failsafe. Requires `cloudflared_access_mqtt` to be installed and running first --
-`cloudflared_access_mqtt`'s `local_port` must stay on its default `18830`, since this add-on's
-MQTT connection is fixed to `127.0.0.1:18830` (no config field for it). Has no configuration UI
+a local boost failsafe. Requires `cloudflared_access_mqtt` to be installed (the SmartHeat
+integration checks this). With the `mosquitto_cloudflared` transport the MQTT connection goes
+through that tunnel; the address and port come from the transport descriptor the server delivers
+(option `transport`), and the integration writes the same port as `local_port` into
+`cloudflared_access_mqtt`, so neither needs to be edited by hand. With the `iot_core` transport
+the bridge connects to AWS IoT Core directly and the tunnel is stopped. Has no configuration UI
 of its own; see [Installation](#installation) below.
 
 ## Installation

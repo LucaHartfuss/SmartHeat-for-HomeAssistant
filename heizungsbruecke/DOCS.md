@@ -33,10 +33,8 @@ Alle Versionen und Update-Hinweise stehen in [CHANGELOG.md](CHANGELOG.md) (auch 
   demselben Repository) muss installiert, konfiguriert und **gestartet** sein,
   bevor dieses Add-on gestartet wird — es stellt den MQTT-Broker unter
   `127.0.0.1:<local_port>` bereit.
-- Dieses Add-on ist fest auf `127.0.0.1:18830` verdrahtet (kein Config-Feld
-  mehr, siehe Changelog 0.5.0) -- `cloudflared_access_mqtt`s `local_port`
-  **muss** deshalb auf dessen Standardwert `18830` bleiben, sonst findet das
-  Add-on den Broker nicht.
+- Adresse und Port des Brokers kommen aus dem Deskriptor (Option `transport`); beim
+  Mosquitto-Deskriptor ist das der lokale Port von `cloudflared_access_mqtt`.
 - Dieses Add-on benoetigt `homeassistant_api: true` (Zugriff auf die
   Home-Assistant-Core-API, um Entity-Zustaende zu lesen/Sollwerte zu setzen)
   und `host_network: true` (um `cloudflared_access_mqtt`s Broker unter
@@ -56,6 +54,13 @@ gesamte Einrichtung (Login, Anlagenauswahl, Profil, Entity-Zuordnung) laeuft ueb
 **SmartHeat**-Integration (Einstellungen → Geraete & Dienste → Integration hinzufuegen →
 "SmartHeat"). Die Integration schreibt die noetigen Werte automatisch in dieses Add-on und
 startet es danach selbst neu.
+
+Die Integration schreibt dabei folgende Optionen (nicht von Hand ändern): `transport` (Deskriptor des Servers als
+JSON: Art `mosquitto_cloudflared` oder `iot_core`, Adresse, Port), `installation_token` (Token der Anlage für die
+Abo-Abfrage), je nach Zugangsart `mqtt_username`/`mqtt_password` oder `tls_certificate`/`tls_private_key` (Zertifikat
+und Schlüssel, der Schlüssel entsteht in der Integration). Fehlen `transport` oder `installation_token`, meldet das
+Add-on „Konfiguration veraltet“ und bleibt im Ruhezustand: dann die SmartHeat-Einrichtung erneut durchführen.
+Passwort, Token und Schlüssel erscheinen nie in Log, Status oder Meldungen.
 
 **Erwartetes Verhalten direkt nach der Installation:** Ein frisch installiertes, noch nicht
 konfiguriertes Add-on startet und bleibt im Ruhezustand (es regelt nicht und beendet sich nicht). Sobald

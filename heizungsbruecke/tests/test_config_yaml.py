@@ -165,3 +165,13 @@ def test_new_entity_options_are_optional_and_offset_is_gone():
 def test_telemetry_interval_schema_upper_bound_is_600():
     schema = _load_config_yaml()["schema"]
     assert schema["telemetry_interval_seconds"] == "int(10,600)?"
+
+
+def test_access_options_are_optional_and_secrets_are_masked():
+    addon_config = _load_config_yaml()
+    schema = addon_config["schema"]
+    assert schema["transport"] == "str?" and schema["installation_token"] == "password?"
+    assert schema["mqtt_username"] == "str?" and schema["mqtt_password"] == "password?"
+    assert schema["tls_certificate"] == "str?" and schema["tls_private_key"] == "password?"
+    for key in ("transport", "installation_token", "mqtt_username", "mqtt_password", "tls_certificate", "tls_private_key"):
+        assert key not in addon_config["options"]

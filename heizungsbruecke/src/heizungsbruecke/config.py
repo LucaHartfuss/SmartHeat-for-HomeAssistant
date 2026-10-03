@@ -6,15 +6,19 @@ import re
 import urllib.parse
 from pathlib import Path
 
+from heizungsbruecke.entitlement import TOKEN_OPTION
 from heizungsbruecke.notifier import HINT_CATEGORIES
 from heizungsbruecke.windows import validate_daily_trigger_time
 from smartheat_core.binding import BINDINGS, BindingDescription, with_poll_interval
 from smartheat_core.safety import LocalSafety, resolve_local_safety
-
-MQTT_HOST = "127.0.0.1"
-# Muss zum `local_port`-Default von cloudflared_access_mqtt passen: Konvention, kein
-# geteilter Konfigurationswert zwischen den beiden Add-ons.
-MQTT_PORT = 18830
+from smartheat_transport.connect import connect_options
+from smartheat_transport.descriptor import (
+    Credential,
+    Descriptor,
+    TransportConfigError,
+    credential_for,
+    parse_descriptor,
+)
 
 # Dateien im Add-on-Datenverzeichnis. Nutzer lesen sie zur Laufzeit als `config.<NAME>`, damit
 # Tests sie umbiegen koennen.
@@ -47,15 +51,22 @@ class ConfigError(ValueError):
 # statt still auf die Integration zu warten. entity_shift_current/entity_min_flow bewusst
 # ebenfalls nicht hier: eine 0.23.0-Konfiguration gilt so ebenfalls als "eingerichtet" und
 # meldet "Konfiguration veraltet" (resolve_effective_options), statt still auf die
-# Integration zu warten.
+# Integration zu warten. Zugangsdaten bewusst nicht hier (seit AWS-2): eine alte Konfiguration gilt als
+# eingerichtet und meldet "Konfiguration veraltet" (resolve_transport).
 REQUIRED_OPTIONS = (
-    "tenant_id", "mqtt_username", "mqtt_password",
+    "tenant_id",
     "entity_room_target", "entity_curve_current", "entity_outdoor_temp", "entity_heat_limit",
 )
 
 # TP11: Parallelverschiebung (Zonen-Wunschtemperatur) und Mindestvorlauf sind die neuen
 # Rollen des generischen Pfads. Nicht in REQUIRED_OPTIONS (siehe Kommentar oben).
 NEW_ENTITY_OPTIONS = ("entity_shift_current", "entity_min_flow")
+
+TRANSPORT_OPTION = "transport"
+PASSWORD_CREDENTIAL_OPTIONS = ("mqtt_username", "mqtt_password")
+CERTIFICATE_CREDENTIAL_OPTIONS = ("tls_certificate", "tls_private_key")
+# Werte, die nie in einem Status, einer Meldung oder einem Log erscheinen duerfen (Regel 6).
+SECRET_OPTIONS = ("mqtt_password", "tls_private_key", TOKEN_OPTION)
 
 OUTDATED_CONFIGURATION = "Konfiguration veraltet – bitte SmartHeat-Einrichtung erneut durchführen"
 _ROOM_SENSOR = re.compile(r"sensor\.[a-z0-9_]+|climate\.[a-z0-9_]+::current_temperature")
@@ -79,7 +90,7 @@ LEVER_SET_OPTION = "lever_set"
 DEFAULT_LEVER_SET = "vaillant_vrc720"
 # Minimal-Pflichtfelder fuer "eingerichtet" bei einem anderen Hebelsatz: der Rest wird in resolve_effective_options als
 # Konfigurationsfehler gemeldet statt still als "nicht eingerichtet" zu warten.
-_CORE_REQUIRED_OPTIONS = ("tenant_id", "mqtt_username", "mqtt_password", "entity_room_target", "entity_outdoor_temp")
+_CORE_REQUIRED_OPTIONS = ("tenant_id", "entity_room_target", "entity_outdoor_temp")
 # Pflicht-Entity-Optionen je Hebelsatz (Startpruefung "Entity existiert", Konfigurationsfehler bei fehlender Option).
 # Vaillant: wie bis 0.30.0 (__main__.REQUIRED_ENTITY_OPTIONS).
 REQUIRED_ENTITY_OPTIONS: dict[str, tuple[str, ...]] = {
@@ -254,6 +265,28 @@ def resolve_effective_options(options: dict) -> dict:
         "daily_trigger_time": daily_trigger_time,
         "accounts_api_base_url": base_url,
     }
+
+
+def resolve_transport(options: dict) -> tuple[Descriptor, Credential]:
+    """Spec AWS-IoT 5.1: Deskriptor und Zugangsdaten aus den Optionen; Zertifikat, Schluessel und CA werden
+    hier schon geladen, damit ein Widerspruch beim Start als Konfigurationsfehler auffaellt statt als
+    endlose Verbindungsfehler. Fehlt transport oder installation_token, stammt die Konfiguration von vor
+    AWS-2 (keine Kompatibilitaet: neu einrichten)."""
+    for key in (TRANSPORT_OPTION, TOKEN_OPTION):
+        if not options.get(key):
+            raise ConfigError(f"{OUTDATED_CONFIGURATION} (Option '{key}' fehlt)")
+    try:
+        descriptor = parse_descriptor(options[TRANSPORT_OPTION])
+        credential = credential_for(
+            descriptor,
+            username=options.get("mqtt_username") or None, password=options.get("mqtt_password") or None,
+            certificate_pem=options.get("tls_certificate") or None,
+            private_key_pem=options.get("tls_private_key") or None,
+        )
+        connect_options(descriptor, credential)
+    except TransportConfigError as error:
+        raise ConfigError(f"Transport bzw. Zugangsdaten: {error} – {RECONFIGURE_HINT}") from None
+    return descriptor, credential
 
 
 def local_safety(options: dict) -> LocalSafety:

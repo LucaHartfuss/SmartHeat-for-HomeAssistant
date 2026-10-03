@@ -1,4 +1,5 @@
 import logging
+import ssl
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -6,6 +7,16 @@ from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.reasoncodes import ReasonCode
 
 from heizungsbruecke.mqtt_client import BridgeMqttClient
+from smartheat_transport.connect import ConnectOptions
+from smartheat_transport.descriptor import KIND_IOT_CORE, KIND_MOSQUITTO
+
+PASSWORD_OPTIONS = ConnectOptions("127.0.0.1", 18830, "", username="u", password="p")
+
+
+def _client(mock_paho_client, options=PASSWORD_OPTIONS, kind=KIND_MOSQUITTO, tenant="kunde2", **kwargs):
+    with patch("heizungsbruecke.mqtt_client.mqtt.Client", return_value=mock_paho_client) as client_cls:
+        bridge = BridgeMqttClient(options, tenant, transport_kind=kind, **kwargs)
+    return bridge, client_cls
 
 
 def test_init_authenticates_with_given_credentials():
@@ -13,7 +24,7 @@ def test_init_authenticates_with_given_credentials():
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
 
-        BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
+        BridgeMqttClient(PASSWORD_OPTIONS, "kunde2", transport_kind=KIND_MOSQUITTO)
 
     mock_client.username_pw_set.assert_called_once_with("u", "p")
 
@@ -23,7 +34,7 @@ def test_on_connect_before_any_subscription_does_not_error():
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
 
-        BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
+        BridgeMqttClient(PASSWORD_OPTIONS, "kunde2", transport_kind=KIND_MOSQUITTO)
 
         on_connect = mock_client.on_connect
         on_connect(mock_client, None, {}, 0, None)  # must not raise
@@ -35,7 +46,7 @@ def test_on_disconnect_logs_warning_with_reason_code(monkeypatch, caplog):
     fake_paho_client = MagicMock()
     monkeypatch.setattr("heizungsbruecke.mqtt_client.mqtt.Client", lambda *a, **kw: fake_paho_client)
 
-    client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="t1", username="u", password="p")
+    client = BridgeMqttClient(PASSWORD_OPTIONS, "t1", transport_kind=KIND_MOSQUITTO)
 
     with caplog.at_level(logging.WARNING):
         client._on_disconnect(fake_paho_client, None, None, 7, None)
@@ -49,7 +60,7 @@ def test_publish_telemetry_publishes_correct_topic_payload_and_not_retained():
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
 
-        client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p")
+        client = BridgeMqttClient(PASSWORD_OPTIONS, "kunde2", transport_kind=KIND_MOSQUITTO)
         client.publish_telemetry({
             "room_actual": 20.5, "boost_active": False, "failsafe_active": False,
             "ts": "2026-09-18T08:00:00Z",
@@ -67,7 +78,7 @@ def _client_with_mock(**kwargs):
     mock_client_cls = patcher.start()
     mock_client = MagicMock()
     mock_client_cls.return_value = mock_client
-    client = BridgeMqttClient(host="127.0.0.1", port=18830, tenant_id="kunde2", username="u", password="p", **kwargs)
+    client = BridgeMqttClient(PASSWORD_OPTIONS, "kunde2", transport_kind=KIND_MOSQUITTO, **kwargs)
     patcher.stop()
     return client, mock_client
 
@@ -158,7 +169,7 @@ def test_auth_rejected_without_hook_only_logs(identifier, caplog):
     with caplog.at_level(logging.ERROR):
         client._on_connect(mock_client, None, {}, ReasonCode(PacketTypes.CONNACK, identifier=identifier), None)
 
-    assert "abgelehnt" in caplog.text
+    assert "Anmeldung" in caplog.text and "abgelehnt" in caplog.text
 
 
 def test_stop_disconnects_and_stops_loop():
@@ -183,7 +194,7 @@ def test_on_connect_fail_is_registered_and_logs_tunnel_hint(caplog):
 
     assert mock_client.on_connect_fail == client._on_connect_fail
     with caplog.at_level(logging.ERROR):
-        client._on_connect_fail(mock_client, None)
+        _fail(client, mock_client, ConnectionRefusedError())
 
     assert "cloudflared_access_mqtt" in caplog.text
     assert "18830" in caplog.text
@@ -243,3 +254,92 @@ def test_client_sets_no_last_will_and_publishes_nothing_on_connect():
 def test_client_has_no_status_or_discovery_api():
     assert not hasattr(BridgeMqttClient, "publish_status")
     assert not hasattr(BridgeMqttClient, "publish_discovery")
+
+
+def test_password_transport_logs_in_with_username_and_paho_client_id():
+    paho = MagicMock()
+    _, client_cls = _client(paho)
+    assert client_cls.call_args.kwargs.get("client_id", "") == ""
+    paho.username_pw_set.assert_called_once_with("u", "p")
+    paho.connect_async.assert_called_once_with("127.0.0.1", 18830)
+
+
+def test_certificate_transport_uses_tls_and_the_thing_name_as_client_id():
+    paho = MagicMock()
+    context = ssl.create_default_context()
+    _, client_cls = _client(paho, ConnectOptions("e-ats.iot", 8883, "client1", ssl_context=context), KIND_IOT_CORE)
+    assert client_cls.call_args.kwargs["client_id"] == "client1"
+    paho.tls_set_context.assert_called_once_with(context)
+    paho.username_pw_set.assert_not_called()
+
+
+def _fail(bridge, paho, error):
+    try:
+        raise error
+    except OSError:
+        bridge._on_connect_fail(paho, None)  # paho ruft es im except-Block auf (loop_forever)
+
+
+def test_connect_failures_are_counted_and_reset_by_a_connect():
+    paho = MagicMock()
+    bridge, _ = _client(paho)
+    _fail(bridge, paho, ConnectionRefusedError())
+    _fail(bridge, paho, ConnectionRefusedError())
+    assert bridge.connect_failures == 2
+    bridge._on_connect(paho, None, {}, 0, None)
+    assert bridge.connect_failures == 0
+
+
+def test_tls_failure_is_logged_as_tls_without_the_cloudflared_hint(caplog):
+    paho = MagicMock()
+    bridge, _ = _client(paho, ConnectOptions("e-ats.iot", 8883, "client1", ssl_context=ssl.create_default_context()),
+                        KIND_IOT_CORE)
+    with caplog.at_level(logging.ERROR):
+        _fail(bridge, paho, ssl.SSLError("handshake failure"))
+    assert "TLS" in caplog.text and "cloudflared" not in caplog.text
+
+
+def test_network_failure_on_mosquitto_names_the_cloudflared_add_on(caplog):
+    paho = MagicMock()
+    bridge, _ = _client(paho)
+    with caplog.at_level(logging.ERROR):
+        _fail(bridge, paho, ConnectionRefusedError())
+    assert "Netzwerk" in caplog.text and "cloudflared_access_mqtt" in caplog.text
+
+
+def test_auth_rejection_is_logged_differently_from_connect_failures(caplog):
+    paho = MagicMock()
+    rejected = []
+    bridge, _ = _client(paho, on_auth_rejected=rejected.append)
+    with caplog.at_level(logging.ERROR):
+        bridge._on_connect(paho, None, {}, ReasonCode(PacketTypes.CONNACK, identifier=135), None)
+    assert rejected == [bridge] and "Anmeldung" in caplog.text and bridge.connect_failures == 0
+
+
+def test_disconnect_without_a_successful_connack_counts_as_a_failed_attempt():
+    """Ein Zertifikat, das IoT Core nach dem TLS-1.3-Handshake ablehnt (z. B. gesperrt), zeigt sich als
+    Trennung statt als on_connect_fail -- ohne diese Zaehlung wuerde die Schwelle der Abo-Erkennung nie erreicht."""
+    paho = MagicMock()
+    bridge, _ = _client(paho)
+    bridge._on_disconnect(paho, None, None, ReasonCode(PacketTypes.DISCONNECT, identifier=0), None)
+    bridge._on_disconnect(paho, None, None, ReasonCode(PacketTypes.DISCONNECT, identifier=0), None)
+    assert bridge.connect_failures == 2
+
+
+def test_disconnect_after_a_successful_connack_does_not_count():
+    paho = MagicMock()
+    bridge, _ = _client(paho)
+    bridge._on_connect(paho, None, {}, 0, None)
+    bridge._on_disconnect(paho, None, None, ReasonCode(PacketTypes.DISCONNECT, identifier=0), None)
+    assert bridge.connect_failures == 0
+
+
+def test_a_new_attempt_after_a_normal_disconnect_counts_again_and_a_connack_resets():
+    paho = MagicMock()
+    bridge, _ = _client(paho)
+    bridge._on_connect(paho, None, {}, 0, None)
+    bridge._on_disconnect(paho, None, None, 0, None)      # Verbindung war da: zaehlt nicht
+    bridge._on_disconnect(paho, None, None, 0, None)      # Versuch ohne CONNACK danach: zaehlt
+    assert bridge.connect_failures == 1
+    bridge._on_connect(paho, None, {}, 0, None)
+    assert bridge.connect_failures == 0
