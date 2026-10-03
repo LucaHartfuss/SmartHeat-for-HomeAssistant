@@ -182,3 +182,29 @@ def test_entity_of(ref, entity):
 
 def test_is_climate():
     assert is_climate(ZONE) and not is_climate("number.x")
+
+
+# --- Plan 3b: Binding je Hebelsatz ---
+
+@pytest.mark.parametrize(("lever_set", "cls"), [
+    (None, "HaPlantBinding"), ("weishaupt_wwp", "WeishauptHaBinding"), ("weishaupt_wwp_basis", "WeishauptHaBinding"),
+    ("viessmann_vicare", "ViessmannHaBinding"),
+])
+def test_binding_for_picks_the_class_and_description_of_the_lever_set(lever_set, cls):
+    from heizungsbruecke.ha_binding import binding_for
+
+    options = {} if lever_set is None else {"lever_set": lever_set}
+    binding = binding_for(options, FakeHa(), MANIFEST)
+    assert type(binding).__name__ == cls
+    assert binding.description.lever_set.id == (lever_set or "vaillant_vrc720")
+
+
+def test_binding_roles_for_sign_off():
+    from heizungsbruecke.ha_binding import binding_roles
+    from smartheat_core.binding import VIESSMANN_VICARE_BINDING, WEISHAUPT_MODBUS
+
+    assert binding_roles(VAILLANT_MYPYLLANT) == ("curve_current", "shift_current", "heat_limit")
+    assert binding_roles(WEISHAUPT_MODBUS) == (
+        "curve_current", "shift_current", "heat_limit", "mode_select", "setpoint_comfort", "setpoint_setback",
+    )
+    assert binding_roles(VIESSMANN_VICARE_BINDING) == ("curve_current", "level_current", "shift_current", "mode_select")

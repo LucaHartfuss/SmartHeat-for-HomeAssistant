@@ -133,3 +133,25 @@ def test_required_roles_are_known_manifest_roles():
 
 def test_build_manifest_ignores_profile_option():
     assert build_manifest(BASE, ROOM_ACTUAL) == build_manifest({**BASE, "profile": "does_not_exist"}, ROOM_ACTUAL)
+
+
+def test_required_roles_per_lever_set():
+    from heizungsbruecke.manifest import ALL_ROLES, REQUIRED_ROLES, REQUIRED_ROLES_BY_LEVER_SET
+    from smartheat_core.levers import LEVER_SETS
+
+    assert set(REQUIRED_ROLES_BY_LEVER_SET) == set(LEVER_SETS)
+    assert REQUIRED_ROLES_BY_LEVER_SET["vaillant_vrc720"] == REQUIRED_ROLES
+    assert all(set(roles) <= set(ALL_ROLES) for roles in REQUIRED_ROLES_BY_LEVER_SET.values())
+    assert {"level_current", "mode_select", "setpoint_comfort", "setpoint_setback"} <= set(ALL_ROLES)
+
+
+def test_build_manifest_checks_the_roles_of_the_lever_set():
+    options = {
+        "entity_room_target": "sensor.t", "entity_outdoor_temp": "sensor.o", "entity_shift_current": "number.normal",
+        "entity_mode_select": "select.betriebsart", "entity_setpoint_comfort": "number.komfort",
+    }
+    with pytest.raises(ManifestError, match="setpoint_setback"):
+        build_manifest(options, {"room_actual": "sensor.r"}, "weishaupt_wwp_basis")
+    manifest = build_manifest({**options, "entity_setpoint_setback": "number.absenk"}, {"room_actual": "sensor.r"},
+                              "weishaupt_wwp_basis")
+    assert manifest.entity_ids["mode_select"] == "select.betriebsart"

@@ -42,10 +42,12 @@ Alle Versionen und Update-Hinweise stehen in [CHANGELOG.md](CHANGELOG.md) (auch 
   und `host_network: true` (um `cloudflared_access_mqtt`s Broker unter
   `127.0.0.1` tatsaechlich erreichen zu koennen) — beides ist in `config.yaml`
   bereits gesetzt, wird hier nur der Vollstaendigkeit halber dokumentiert.
-- Die Hersteller-Integration muss ihre Werte **mindestens alle 30 Minuten** abfragen (bei
-  mypyllant: Aktualisierungsintervall ≤ 30 min). SmartHeat wartet nach einem eigenen
+- Vaillant (mypyllant): Die Hersteller-Integration muss ihre Werte **mindestens alle 30 Minuten**
+  abfragen (Aktualisierungsintervall ≤ 30 min). SmartHeat wartet nach einem eigenen
   Schreibvorgang 35 Minuten, bevor es eine Abweichung als Eingriff in der App wertet; fragt die
-  Integration seltener ab, würden eigene Schreibvorgänge fälschlich als Eingriff erkannt.
+  Integration seltener ab, würden eigene Schreibvorgänge fälschlich als Eingriff erkannt. Für
+  Weishaupt und Viessmann richtet sich die Wartezeit nach dem Abfrageintervall der Integration
+  (2 × Intervall + 60 s, mindestens 2 bzw. 3 Minuten), siehe „Hersteller und Hebelsätze“.
 
 ## Konfiguration
 
@@ -67,6 +69,35 @@ Hand einzustellen sind.
 Verbindung fehlt seit etwa 15 bis 20 Minuten; die Heizung wird dann bei Bedarf lokal abgesichert. „Datenfehler“
 mit der Rolle `datentraeger` heißt, der Datenträger des Home-Assistant-Systems ist voll oder
 schreibgeschützt; die Regelung pausiert, die Anlage behält ihre letzten Werte.
+
+## Hersteller und Hebelsätze (ab 0.31.0)
+
+Welche Anlage das Add-on bedient, legt die Option `lever_set` fest (schreibt die SmartHeat-Integration; fehlt sie,
+gilt Vaillant). Die Entities je Hebelsatz:
+
+| `lever_set` | Integration | Pflicht-Entities (Optionen) |
+| --- | --- | --- |
+| `vaillant_vrc720` | mypyllant | `entity_curve_current`, `entity_shift_current` (Zone), `entity_heat_limit`, `entity_min_flow` |
+| `weishaupt_wwp` | weishaupt_modbus | `entity_curve_current` (Heizkennlinie), `entity_shift_current` (Raumsolltemperatur Normal), `entity_heat_limit` (Sommer-Winter-Umschaltung), `entity_mode_select` (Betriebsart), `entity_setpoint_comfort`, `entity_setpoint_setback` |
+| `weishaupt_wwp_basis` | weishaupt_modbus | wie `weishaupt_wwp`, aber ohne Heizkennlinie und Sommer-Winter-Umschaltung (die Heizkennlinie wird, falls angegeben, nur gelesen) |
+| `viessmann_vicare` | vicare | `entity_curve_current` (Neigung), `entity_level_current` (Niveau), `entity_shift_current` (Raumtemperatur „normal“), `entity_mode_select` (Climate-Entity des Heizkreises) |
+
+Dazu immer `entity_room_target`, `entity_outdoor_temp` und die Raumfühler. `poll_interval_seconds` (optional, 10–3600 s)
+ist das Abfrageintervall der Hersteller-Integration (Standard Weishaupt 30 s, Viessmann 60 s); daraus folgt die
+Wartezeit nach einem eigenen Schreibvorgang (2 × Intervall + 60 s, mindestens 2 bzw. 3 Minuten). Fehlt eine
+Pflicht-Entity, ist `lever_set` unbekannt oder liegt `poll_interval_seconds` außerhalb von 10–3600 s (oder ist keine
+endliche Zahl), bleibt das Add-on im Zustand „Konfigurationsfehler“. Nur beim Abmelden (Abo-Ende, Entfernen der
+Integration) gilt bei einem ungültigen Intervall stattdessen der Standardwert, damit das Zurückstellen nicht daran
+scheitert.
+
+Weishaupt schreibt höchstens 10 Werte am Tag in den Regler (Gerätespeicher, laut Weishaupt 100.000 Schreibvorgänge auf
+Lebensdauer); weitere Serverwerte werden gespeichert und nach Mitternacht geschrieben. Boost, Notfall-Boost und das
+Zurückstellen beim Abo-Ende oder Entfernen sind davon ausgenommen. Das Normal-Soll liegt immer zwischen Absenk- und
+Komfort-Soll; SmartHeat verschiebt Komfort bzw. Absenk dafür vorher mit und stellt beide beim Ende zurück. Beim
+Zurückstellen wird die Betriebsart (Weishaupt) bzw. das Heizprogramm (Viessmann) nicht vorher umgeschaltet; die
+gemerkten Ursprungswerte (Betriebsart bzw. Heizprogramm, Komfort-/Absenk-Soll) werden nach den Hebeln zurückgeschrieben
+und danach vergessen. Ist das Weishaupt-Tageslimit erreicht, zählt ein abgebrochener Versuch der Vorbereitung (Betriebsart) nicht als
+Fehlversuch; du erhältst den Hinweis zum Tageslimit (einmal am Tag), und der nächste lokale Check versucht es erneut.
 
 ## Verifizierte Architekturen
 

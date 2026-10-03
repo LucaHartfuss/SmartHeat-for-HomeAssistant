@@ -141,7 +141,7 @@ def test_resolve_effective_options_ignores_safety_values_in_options():
     assert safety.comfort_boost["curve"] == 1.5
 
 
-@pytest.mark.parametrize("verteilsystem", [None, "", "Fussbodenheizung", "Unbekannt"])
+@pytest.mark.parametrize("verteilsystem", [None, "", "Deckenheizung", "Unbekannt"])
 def test_resolve_effective_options_rejects_verteilsystem(verteilsystem):
     options = {**REQUIRED, **PROFILE_PARAMS, **BASE_URL, "verteilsystem": verteilsystem}
     if verteilsystem is None:
@@ -501,3 +501,104 @@ def test_validate_local_check_interval_flags_values_below_one_and_bools(value):
 
 def test_validate_telemetry_interval_flags_bools():
     assert validate_telemetry_interval({"telemetry_interval_seconds": True}) is not None
+
+
+# --- Plan 3b: Hebelsatz je Option lever_set ---
+
+WEISHAUPT_OPTIONS = {
+    **{key: value for key, value in VALID.items() if key not in ("entity_min_flow",)},
+    "lever_set": "weishaupt_wwp", "entity_curve_current": "number.hk", "entity_shift_current": "number.normal",
+    "entity_heat_limit": "number.swu", "entity_mode_select": "select.betriebsart",
+    "entity_setpoint_comfort": "number.komfort", "entity_setpoint_setback": "number.absenk",
+}
+
+
+@pytest.mark.parametrize("options", [{}, {"lever_set": None}, {"lever_set": ""}, {"lever_set": "vaillant_vrc720"}])
+def test_missing_lever_set_means_vaillant(options):
+    assert config.lever_set_id(options) == "vaillant_vrc720"
+    assert config.binding_description(options).lever_set.id == "vaillant_vrc720"
+
+
+@pytest.mark.parametrize("value", ["buderus", 3, ["weishaupt_wwp"], True])
+def test_unknown_lever_set_is_a_configuration_error(value):
+    with pytest.raises(ConfigError, match="lever_set"):
+        config.lever_set_id({"lever_set": value})
+
+
+def test_weishaupt_options_resolve_with_their_own_safety_values():
+    effective = resolve_effective_options(WEISHAUPT_OPTIONS)
+    assert config.local_safety(effective).ranges == {
+        "curve": (0.30, 1.00), "room_setpoint": (16.0, 25.0), "heat_limit": (5.0, 23.0),
+    }
+    floor = config.local_safety({**effective, "verteilsystem": "Fussbodenheizung"})
+    assert floor.comfort_boost == {}
+
+
+# entity_outdoor_temp prueft schon _resolve_sources (sensor.* oder weather.*).
+@pytest.mark.parametrize("missing", [k for k in config.REQUIRED_ENTITY_OPTIONS["weishaupt_wwp"] if k != "entity_outdoor_temp"])
+def test_every_weishaupt_entity_is_required(missing):
+    with pytest.raises(ConfigError, match=f"'{missing}' fehlt für den Hebelsatz 'weishaupt_wwp'"):
+        resolve_effective_options({**WEISHAUPT_OPTIONS, missing: ""})
+
+
+def test_basis_does_not_need_curve_or_heat_limit():
+    options = {**WEISHAUPT_OPTIONS, "lever_set": "weishaupt_wwp_basis", "entity_curve_current": "", "entity_heat_limit": ""}
+    assert config.is_configured(options) is True
+    resolve_effective_options(options)
+
+
+@pytest.mark.parametrize(("key", "value"), [
+    ("entity_mode_select", "input_select.betriebsart"), ("entity_setpoint_comfort", "sensor.komfort"),
+    ("entity_shift_current", "climate.zone"),
+])
+def test_weishaupt_entities_must_be_writable(key, value):
+    with pytest.raises(ConfigError, match=key):
+        resolve_effective_options({**WEISHAUPT_OPTIONS, key: value})
+
+
+def test_viessmann_program_must_be_a_climate_entity():
+    options = {
+        **{key: value for key, value in VALID.items() if key not in ("entity_min_flow", "entity_heat_limit")},
+        "lever_set": "viessmann_vicare", "entity_curve_current": "number.slope", "entity_level_current": "number.shift",
+        "entity_shift_current": "number.normal_temperature", "entity_mode_select": "climate.heizkreis",
+    }
+    resolve_effective_options(options)
+    with pytest.raises(ConfigError, match="entity_mode_select"):
+        resolve_effective_options({**options, "entity_mode_select": "select.programm"})
+
+
+@pytest.mark.parametrize("lever_set", ["weishaupt_wwp", "viessmann_vicare"])
+def test_mode_select_is_required_for_weishaupt_and_viessmann(lever_set):
+    # Ohne Betriebsart/Heizprogramm wirft read_aux einen KeyError (Review Task 8/9): Konfigurationsfehler beim Start.
+    assert "entity_mode_select" in config.required_entity_options(lever_set)
+    if lever_set == "weishaupt_wwp":
+        with pytest.raises(ConfigError, match="'entity_mode_select' fehlt"):
+            resolve_effective_options({**WEISHAUPT_OPTIONS, "entity_mode_select": ""})
+
+
+def test_non_vaillant_lever_set_is_configured_with_the_core_fields_only():
+    # Fehlende Hebel-Entities sind dann ein Konfigurationsfehler (resolve_effective_options), kein stilles Warten.
+    core = {key: VALID[key] for key in ("tenant_id", "mqtt_username", "mqtt_password", "entity_room_target", "entity_outdoor_temp")}
+    assert config.is_configured({**core, "lever_set": "viessmann_vicare"}) is True
+    assert config.is_configured(core) is False  # Vaillant wie bisher
+
+
+@pytest.mark.parametrize(("value", "error"), [
+    (None, False), (30, False), (10, False), (3600, False), (9, True), (3601, True), ("30", True), (True, True),
+    (float("nan"), True), (float("inf"), True), (float("-inf"), True),
+])
+def test_poll_interval_is_validated(value, error):
+    options = {} if value is None else {"poll_interval_seconds": value}
+    assert (config.validate(options) is not None) is error
+
+
+def test_binding_description_takes_the_poll_interval():
+    assert config.binding_description({**WEISHAUPT_OPTIONS, "poll_interval_seconds": 90}).settle_seconds == 240
+    assert config.binding_description(WEISHAUPT_OPTIONS).settle_seconds == 120
+    assert config.binding_description({**VALID, "poll_interval_seconds": 90}).settle_seconds == 2100
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), 5, 99999, "90", True])
+def test_binding_description_ignores_an_invalid_poll_interval(value):
+    # Das Abmelden laeuft ohne config.validate: ein ungueltiges Intervall gilt dort als fehlend (Standardwert).
+    assert config.binding_description({**WEISHAUPT_OPTIONS, "poll_interval_seconds": value}).settle_seconds == 120

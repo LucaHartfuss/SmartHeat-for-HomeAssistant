@@ -33,6 +33,55 @@ LOCAL_SAFETY: dict[tuple[str, str], LocalSafety] = {
         emergency_boost_levers=("curve", "room_setpoint", "heat_limit"),
         arrival_threshold_k=0.5,
     ),
+    # Plan 3b, Regel 4 (Nutzer-Freigabe 2026-10-02, Spec 6.2): Heizkoerper fuer die neuen Hebelsaetze; Comfort-Boost auf
+    # die lokalen Maxima aller gesendeten Hebel. Ankunftsschwelle 0,5 K wie Vaillant (Annahme, nicht in Spec 6.2).
+    ("weishaupt_wwp", "Heizkoerper"): LocalSafety(
+        ranges={"curve": (0.30, 1.00), "room_setpoint": (16.0, 25.0), "heat_limit": (5.0, 23.0)},
+        comfort_boost={"curve": 1.00, "room_setpoint": 25.0, "heat_limit": 23.0},
+        emergency_boost_levers=("curve", "room_setpoint", "heat_limit"),
+        arrival_threshold_k=0.5,
+    ),
+    ("weishaupt_wwp_basis", "Heizkoerper"): LocalSafety(
+        ranges={"room_setpoint": (16.0, 25.0)},
+        comfort_boost={"room_setpoint": 25.0},
+        emergency_boost_levers=("room_setpoint",),
+        arrival_threshold_k=0.5,
+    ),
+    ("viessmann_vicare", "Heizkoerper"): LocalSafety(
+        ranges={"curve": (0.4, 1.4), "level": (-13.0, 3.0), "room_setpoint": (15.0, 25.0)},
+        comfort_boost={"curve": 1.4, "level": 3.0, "room_setpoint": 25.0},
+        emergency_boost_levers=("curve", "level", "room_setpoint"),
+        arrival_threshold_k=0.5,
+    ),
+    # Plan 3b, Regel 4 (Nutzer-Freigabe 2026-10-02, Spec 6.3): Fussbodenheizung -- alle Hebel am lokalen Maximum ergeben
+    # bei -15 °C hoechstens 45 °C Vorlauf; kein Comfort-Boost (Estrich), der Notfall-Boost setzt alle gesendeten Hebel
+    # auf ihr lokales Maximum. Mindestvorlauf (nur Vaillant) 20-30 wie bei Heizkoerpern. Die Profile bleiben inaktiv.
+    ("vaillant_vrc720", "Fussbodenheizung"): LocalSafety(
+        ranges={
+            "curve": (0.10, 0.35), "room_setpoint": (15.0, 24.0), "heat_limit": (5.0, 20.0), "min_flow": (20.0, 30.0),
+        },
+        comfort_boost={},
+        emergency_boost_levers=("curve", "room_setpoint", "heat_limit"),
+        arrival_threshold_k=0.5,
+    ),
+    ("weishaupt_wwp", "Fussbodenheizung"): LocalSafety(
+        ranges={"curve": (0.10, 0.50), "room_setpoint": (16.0, 24.0), "heat_limit": (5.0, 20.0)},
+        comfort_boost={},
+        emergency_boost_levers=("curve", "room_setpoint", "heat_limit"),
+        arrival_threshold_k=0.5,
+    ),
+    ("weishaupt_wwp_basis", "Fussbodenheizung"): LocalSafety(
+        ranges={"room_setpoint": (16.0, 24.0)},
+        comfort_boost={},
+        emergency_boost_levers=("room_setpoint",),
+        arrival_threshold_k=0.5,
+    ),
+    ("viessmann_vicare", "Fussbodenheizung"): LocalSafety(
+        ranges={"curve": (0.2, 0.4), "level": (-5.0, 3.0), "room_setpoint": (15.0, 24.0)},
+        comfort_boost={},
+        emergency_boost_levers=("curve", "level", "room_setpoint"),
+        arrival_threshold_k=0.5,
+    ),
 }
 
 

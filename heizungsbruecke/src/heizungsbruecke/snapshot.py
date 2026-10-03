@@ -32,6 +32,8 @@ class SnapshotRead:
     room_target: float | None
     levers: dict[str, float]
     invalid: tuple[str, ...]
+    # Plan 3b: gelesene, aber nicht schreibbare Hebel (BindingDescription.readonly_levers), stehen auch in `levers`.
+    readonly: tuple[str, ...] = ()
 
 
 def _read_role(manifest: ChannelManifest, ha_api, role: str, invalid: list[str]) -> float | None:
@@ -76,19 +78,34 @@ def read_snapshot(manifest: ChannelManifest, ha_api, binding, known: Mapping[str
             invalid.append(lever)
             continue
         levers[lever] = value
+    readonly: list[str] = []
+    for lever in binding.description.readonly_levers:
+        if not binding.has(lever):
+            continue
+        # Nur gelesen (Spec 3.3/2, eingefrorene Steigung): ein Lesefehler ist kein Datenfehler, der Hebel fehlt dann.
+        try:
+            value = binding.read(lever)
+        except Exception as error:
+            logger.warning("Nur lesbarer Hebel '%s' (%s) nicht lesbar, wird weggelassen: %s", lever, binding.ref(lever), error)
+            continue
+        if not _is_finite_number(value):
+            logger.warning("Nur lesbarer Hebel '%s' (%s) nicht endlich, wird weggelassen: %r", lever, binding.ref(lever), value)
+            continue
+        levers[lever] = value
+        readonly.append(lever)
     room_target = _read_role(manifest, ha_api, TARGET_ROLE, invalid)
     for role in VALIDITY_ONLY_ROLES:
         if role in manifest.entity_ids:
             _read_role(manifest, ha_api, role, invalid)
-    return SnapshotRead(room_target=room_target, levers=levers, invalid=tuple(invalid))
+    return SnapshotRead(room_target=room_target, levers=levers, invalid=tuple(invalid), readonly=tuple(readonly))
 
 
 def publish_snapshot(
     mqtt_client, seq: str, trigger: str | None, room_target: float, levers: dict[str, float],
-    manual_override: dict | None = None,
+    manual_override: dict | None = None, readonly: tuple[str, ...] = (),
 ) -> None:
-    """Eine Nachricht auf up/snapshot (Schema 4); manual_override nur, wenn einer ansteht. Das HA-Binding kann jeden
-    seiner Hebel schreiben, deshalb ist readonly leer."""
+    """Eine Nachricht auf up/snapshot (Schema 4); manual_override nur, wenn einer ansteht. `readonly` nennt die nur
+    gelesenen Hebel (Plan 3b, Weishaupt-Basis: Steigung), sonst leer."""
     payload = {
         "schema": SNAPSHOT_SCHEMA_VERSION,
         "seq": seq,
@@ -96,7 +113,7 @@ def publish_snapshot(
         "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
         "room_target": room_target,
         "levers": levers,
-        "readonly": [],
+        "readonly": list(readonly),
     }
     if manual_override is not None:
         payload[MANUAL_OVERRIDE_KEY] = {field: manual_override[field] for field in MANUAL_OVERRIDE_FIELDS}

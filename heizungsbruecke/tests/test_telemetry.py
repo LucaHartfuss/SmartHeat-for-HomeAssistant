@@ -321,3 +321,34 @@ def test_run_telemetry_tick_hands_the_readings_to_the_waerme_callback():
 
     assert seen == [(21.0, 26.0, 36.0)]
     assert mqtt_client.publish_telemetry.call_args.args[0]["waerme_fehlt"] is True
+
+
+# --- Plan 3b: Energie-Normalisierung (Tageszaehler) ---
+
+ENERGY_MANIFEST = ChannelManifest(entity_ids={"energy_thermal_heating": "sensor.waerme_heute"})
+
+
+def test_daily_energy_is_sent_as_a_growing_sum_and_survives_a_restart(make_store):
+    ha_api = MagicMock()
+    store = make_store()
+    for raw, expected in ((4.0, 4.0), (6.0, 6.0), (0.5, 6.5)):
+        ha_api.get_state.return_value = raw
+        fields = telemetry.read_kpi_fields(ENERGY_MANIFEST, ha_api, telemetry.energy_normalizer(store, "daily"))
+        assert fields["energy"] == {"thermal_heating": expected}
+    restarted = make_store()  # backup.json neu eingelesen
+    ha_api.get_state.return_value = 1.5
+    fields = telemetry.read_kpi_fields(ENERGY_MANIFEST, ha_api, telemetry.energy_normalizer(restarted, "daily"))
+    assert fields["energy"] == {"thermal_heating": 7.5}
+
+
+def test_unreadable_daily_energy_is_left_out_and_keeps_the_state(make_store):
+    store = make_store(backup={"energy_state": {"thermal_heating": {"raw": 4.0, "sum": 10.0}}})
+    for reader in (MagicMock(side_effect=ValueError("unavailable")), MagicMock(return_value=float("inf"))):
+        ha_api = MagicMock(get_state=reader)
+        fields = telemetry.read_kpi_fields(ENERGY_MANIFEST, ha_api, telemetry.energy_normalizer(store, "daily"))
+        assert "energy" not in fields
+    assert store.state.energy_state == {"thermal_heating": {"raw": 4.0, "sum": 10.0}}
+
+
+def test_total_counters_get_no_normalizer():
+    assert telemetry.energy_normalizer(object(), "total") is None

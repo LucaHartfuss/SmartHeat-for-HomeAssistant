@@ -27,10 +27,15 @@ _TEXT_FIELDS = ("last_daily_trigger_date", "last_ack_at", "waerme_fehlt_seit")
 _TEXT_MAP_FIELDS = ("notify_states", "notify_messages")
 _LEVER_MAP_FIELDS = ("restore_point", "originals")
 _OVERRIDE_FIELDS = ("manual_override", "manual_override_pending")
+# Plan 3b: Lebensdauerzaehler, zurueckgestellte Serverwerte, Hilfs-Ursprungswerte, Energie-Normalisierung. Fehlen sie in
+# backup.json (bis 0.30.0), gilt der Standardwert; leer bzw. 0 werden sie nicht geschrieben (backup.json von client1
+# bleibt gleich).
+_PLAN3B_FIELDS = ("lifetime_writes", "deferred_levers", "aux_originals", "energy_state")
 BACKUP_FIELDS = (
     _NUMBER_FIELDS + _FLAG_FIELDS + _TEXT_FIELDS + _TEXT_MAP_FIELDS + _LEVER_MAP_FIELDS + _OVERRIDE_FIELDS
-    + ("write_budget",)
+    + ("write_budget",) + _PLAN3B_FIELDS
 )
+_OMITTED_WHEN_EMPTY = _TEXT_MAP_FIELDS + _LEVER_MAP_FIELDS + ("write_budget",) + _PLAN3B_FIELDS
 
 
 @dataclass(frozen=True)
@@ -80,6 +85,16 @@ class BridgeState:
     # mit jedem Tick, und backup.json wird nur bei geaenderten Feldern geschrieben.
     waerme_fehlt_seit: str | None = None
     waerme: WaermeState | None = None
+    # Plan 3b: erfolgreiche physische Schreibvorgaenge seit der Einrichtung (nur Bindings mit lifetime_hint_at, EEPROM).
+    lifetime_writes: int = 0
+    # Plan 3b: Hebel, deren Serverwert wegen des Tagesbudgets noch nicht geschrieben ist (LeverPipeline.write_deferred);
+    # Durchsetzen wertet sie nicht als Eingriff.
+    deferred_levers: tuple[str, ...] = ()
+    # Plan 3b: Hilfs-Ursprungswerte (BindingDescription.aux_originals) vor dem ersten eigenen Schreiben, z. B.
+    # {"mode_select": "Automatik", "setpoint_comfort": 22.0}; Abo-Ende und Abmelden stellen sie zurueck.
+    aux_originals: dict = field(default_factory=dict)
+    # Plan 3b: Energie-Normalisierung je Kanal {"raw": letzter Rohwert, "sum": monotone Summe} (nur Tageszaehler).
+    energy_state: dict = field(default_factory=dict)
 
 
 def _is_number(value) -> bool:
@@ -95,6 +110,14 @@ def _is_override(value) -> bool:
         isinstance(levers, dict) and bool(levers)
         and all(isinstance(lever, str) and _is_number(number) for lever, number in levers.items())
     )
+
+
+def _is_aux(value) -> bool:
+    return isinstance(value, str) or _is_number(value)
+
+
+def _is_energy_entry(value) -> bool:
+    return isinstance(value, dict) and set(value) == {"raw", "sum"} and all(_is_number(v) for v in value.values())
 
 
 def _parse_budget(raw) -> dict | None:
@@ -277,8 +300,32 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
             _invalid("write_budget")
         else:
             values["write_budget"] = budget
+    _parse_plan3b(raw, values, _invalid)
     extra = {key: value for key, value in raw.items() if key not in BACKUP_FIELDS}
     return values, extra
+
+
+def _parse_plan3b(raw: dict, values: dict, invalid) -> None:
+    """Felder aus Plan 3b, tolerant wie die uebrigen: falscher Typ -> Standardwert (Warnung)."""
+    checks = {
+        "lifetime_writes": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
+        "deferred_levers": lambda v: isinstance(v, list) and all(isinstance(item, str) for item in v),
+        "aux_originals": lambda v: isinstance(v, dict) and all(isinstance(k, str) and _is_aux(x) for k, x in v.items()),
+        "energy_state": lambda v: isinstance(v, dict) and all(
+            isinstance(k, str) and _is_energy_entry(x) for k, x in v.items()
+        ),
+    }
+    for key, valid in checks.items():
+        if key not in raw:
+            continue
+        if not valid(raw[key]):
+            invalid(key)
+        elif key == "deferred_levers":
+            values[key] = tuple(raw[key])
+        elif isinstance(raw[key], dict):
+            values[key] = {k: dict(v) if isinstance(v, dict) else v for k, v in raw[key].items()}
+        else:
+            values[key] = raw[key]
 
 
 def _backup_content(state: BridgeState, extra: dict) -> dict:
@@ -286,9 +333,9 @@ def _backup_content(state: BridgeState, extra: dict) -> dict:
     content = dict(extra)
     for key in BACKUP_FIELDS:
         value = getattr(state, key)
-        if value is None or (key in _TEXT_MAP_FIELDS + _LEVER_MAP_FIELDS + ("write_budget",) and not value):
+        if value is None or (key in _OMITTED_WHEN_EMPTY and not value):
             continue
-        content[key] = value
+        content[key] = list(value) if isinstance(value, tuple) else value
     return content
 
 
