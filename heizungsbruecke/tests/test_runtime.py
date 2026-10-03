@@ -53,7 +53,8 @@ _OMIT = object()
 
 
 class FakeMqtt:
-    def __init__(self, **kwargs):
+    def __init__(self, options=None, tenant_id=None, **kwargs):
+        self.options, self.tenant_id = options, tenant_id
         self.kwargs = kwargs
         self.snapshots = []
         self.telemetry = []
@@ -151,8 +152,8 @@ def env(tmp_path, monkeypatch, clock):
     monkeypatch.setattr("heizungsbruecke.entitlement.query_status", _query_status)
     mqtt_clients, trigger_clients = [], []
 
-    def _mqtt_factory(**kwargs):
-        mqtt_clients.append(FakeMqtt(**kwargs))
+    def _mqtt_factory(*args, **kwargs):
+        mqtt_clients.append(FakeMqtt(*args, **kwargs))
         return mqtt_clients[-1]
 
     def _trigger_factory(**kwargs):

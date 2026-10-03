@@ -20,11 +20,6 @@ from smartheat_transport.descriptor import (
     parse_descriptor,
 )
 
-MQTT_HOST = "127.0.0.1"
-# Muss zum `local_port`-Default von cloudflared_access_mqtt passen: Konvention, kein
-# geteilter Konfigurationswert zwischen den beiden Add-ons.
-MQTT_PORT = 18830
-
 # Dateien im Add-on-Datenverzeichnis. Nutzer lesen sie zur Laufzeit als `config.<NAME>`, damit
 # Tests sie umbiegen koennen.
 DATA_DIR = Path("/data")

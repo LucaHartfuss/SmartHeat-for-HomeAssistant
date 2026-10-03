@@ -1,9 +1,19 @@
 import json
 import logging
+import sys
 from collections.abc import Callable
 
 import paho.mqtt.client as mqtt
 from paho.mqtt.enums import CallbackAPIVersion
+
+from smartheat_transport.connect import (
+    CONNECT_ERROR_NETWORK,
+    CONNECT_ERROR_TLS,
+    ConnectOptions,
+    apply,
+    classify_connect_error,
+)
+from smartheat_transport.descriptor import KIND_MOSQUITTO
 
 logger = logging.getLogger(__name__)
 
@@ -12,10 +22,14 @@ logger = logging.getLogger(__name__)
 # Suspend des Tenants widerrufen, siehe Abo-inaktiv-Modus in abo.py.
 _AUTH_REJECTED_REASON_CODES = frozenset({134, 135})
 
-# Obergrenze fuer paho's Reconnect-Backoff: der Broker ist
-# nur ueber cloudflared_access_mqtt erreichbar, das beim Booten evtl. noch nicht laeuft --
-# das Add-on wartet darauf, statt sich zu beenden.
+# Obergrenze fuer paho's Reconnect-Backoff: der Broker bzw. der lokale Tunnel ist beim Booten evtl. noch
+# nicht erreichbar -- das Add-on wartet darauf, statt sich zu beenden.
 _RECONNECT_MAX_DELAY_SECONDS = 120
+
+_CONNECT_ERROR_TEXT = {
+    CONNECT_ERROR_TLS: "TLS-Fehler (Zertifikat abgelehnt oder Handshake abgebrochen)",
+    CONNECT_ERROR_NETWORK: "Netzwerkfehler (Broker nicht erreichbar)",
+}
 
 
 class BridgeMqttClient:
@@ -27,17 +41,21 @@ class BridgeMqttClient:
     auch nach `refresh-acl`."""
 
     def __init__(
-        self, host: str, port: int, tenant_id: str, username: str, password: str,
+        self, options: ConnectOptions, tenant_id: str, *, transport_kind: str,
         on_auth_rejected: Callable[["BridgeMqttClient"], None] | None = None,
         on_connected: Callable[["BridgeMqttClient"], None] | None = None,
     ):
         self._tenant_id = tenant_id
-        self._host, self._port = host, port
+        self._host, self._port = options.host, options.port
+        self._transport_kind = transport_kind
         self._setpoints_callback = None
         self._on_auth_rejected = on_auth_rejected
         self._on_connected = on_connected
-        self._client = mqtt.Client(CallbackAPIVersion.VERSION2)
-        self._client.username_pw_set(username, password)
+        # Gescheiterte Verbindungsversuche in Folge (paho-Thread schreibt, Worker liest; ein int ist
+        # unter dem GIL atomar). Basis der transportneutralen Abo-Erkennung (abo.handle_connection_failing).
+        self.connect_failures = 0
+        self._client = mqtt.Client(CallbackAPIVersion.VERSION2, client_id=options.client_id)
+        apply(self._client, options)
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
         self._client.on_connect_fail = self._on_connect_fail
@@ -45,18 +63,19 @@ class BridgeMqttClient:
         # Kein blockierender Connect (B10): paho verbindet nach loop_start() selbst und
         # versucht es bei Fehlschlag dauerhaft weiter (loop_forever mit
         # retry_first_connection=True) -- kein Retry-Budget, kein Exit.
-        self._client.connect_async(host, port)
+        self._client.connect_async(options.host, options.port)
 
     def _on_connect(self, client, userdata, flags, reason_code, properties) -> None:
         # reason_code ist in Produktion ein paho-ReasonCode; Tests uebergeben auch 0.
         if getattr(reason_code, "is_failure", False):
-            logger.error("MQTT-Verbindung vom Broker abgelehnt (reason_code=%s)", reason_code)
+            logger.error("MQTT-Anmeldung vom Broker abgelehnt (reason_code=%s)", reason_code)
             if getattr(reason_code, "value", None) in _AUTH_REJECTED_REASON_CODES and self._on_auth_rejected is not None:
                 try:
                     self._on_auth_rejected(self)
                 except Exception:
                     logger.exception("Fehler bei der Behandlung der abgelehnten MQTT-Anmeldung")
             return
+        self.connect_failures = 0
         logger.info("MQTT verbunden (reason_code=%s)", reason_code)
         if self._setpoints_callback is not None:
             self._subscribe_setpoints()
@@ -70,10 +89,15 @@ class BridgeMqttClient:
         logger.warning("MQTT-Verbindung getrennt (reason_code=%s) - Reconnect laeuft ueber paho automatisch", reason_code)
 
     def _on_connect_fail(self, client, userdata) -> None:
+        # paho ruft das im except-Block von loop_forever auf: sys.exception() ist der Verbindungsfehler.
+        self.connect_failures += 1
+        kind = classify_connect_error(sys.exception())
+        hint = ""
+        if self._transport_kind == KIND_MOSQUITTO and kind == CONNECT_ERROR_NETWORK:
+            hint = f" - laeuft das Add-on 'cloudflared_access_mqtt' und lauscht es auf Port {self._port}?"
         logger.error(
-            "MQTT-Verbindung zu %s:%s fehlgeschlagen - laeuft das Add-on 'cloudflared_access_mqtt' "
-            "und lauscht es auf Port %s? paho versucht es automatisch weiter.",
-            self._host, self._port, self._port,
+            "MQTT-Verbindung zu %s:%s fehlgeschlagen: %s, %d. Versuch in Folge%s - paho versucht es automatisch weiter.",
+            self._host, self._port, _CONNECT_ERROR_TEXT.get(kind, "unbekannter Fehler"), self.connect_failures, hint,
         )
 
     def _setpoints_topic(self) -> str:
