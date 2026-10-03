@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from fakes import FakeHa
+from fakes import ACCESS_OPTIONS, FakeHa
 
 import heizungsbruecke.__main__ as main_module
 from heizungsbruecke import abo, backup_store, datentraeger, entitlement, ticks
@@ -30,6 +30,7 @@ OPTIONS = {
     "tenant_id": "test_tenant",
     "verteilsystem": "Heizkoerper",  # Clamps 0.4-1.5 / 15-25 (Mindestvorlauf 20-30), Boost 1.5/25
     "daily_trigger_time": "12:00",  # Tagestick 12:00
+    **ACCESS_OPTIONS,
     "mqtt_username": "u",
     "mqtt_password": "p",
     "room_sensors": ["sensor.room_actual"],

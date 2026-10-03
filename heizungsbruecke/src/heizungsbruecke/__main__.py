@@ -219,13 +219,14 @@ def _ensure_derived_sensors_with_retry(ha_api, options: dict) -> DerivedSensors:
 
 
 def _without_credentials(text: str, options: dict) -> str:
-    """Startfehler zitieren ungueltige Optionswerte (!r) und landen im Status-Event, in Meldungen
-    und im Log. Steht das MQTT-Passwort (versehentlich) in so einem Wert, wird es unkenntlich
-    gemacht, auch in der von repr() maskierten Form (Regel 6)."""
-    password = options.get("mqtt_password")
-    if isinstance(password, str) and password:
-        for variant in (password, repr(password)[1:-1]):
-            text = text.replace(variant, REDACTED)
+    """Startfehler zitieren ungueltige Optionswerte (!r) und landen im Status-Event, in Meldungen und im
+    Log. Steht ein Geheimnis (MQTT-Passwort, privater Schluessel, Installations-Token) versehentlich in so
+    einem Wert, wird es unkenntlich gemacht, auch in der von repr() maskierten Form (Regel 6)."""
+    for key in config.SECRET_OPTIONS:
+        secret = options.get(key)
+        if isinstance(secret, str) and secret:
+            for variant in (secret, repr(secret)[1:-1]):
+                text = text.replace(variant, REDACTED)
     return text
 
 
@@ -660,6 +661,7 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | Idle
         return _sign_off(options, ha_api, store, notifier, status, clock)
     try:
         options = config.resolve_effective_options(options)
+        config.resolve_transport(options)
         error = config.validate(options)
         if error:
             raise config.ConfigError(error)

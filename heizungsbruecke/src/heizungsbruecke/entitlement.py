@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 GRACE_PERIOD = timedelta(days=30)
 
 STATUS_PATH = "/tenants/{tenant_id}/status"
-CREDENTIAL_OPTIONS = ("mqtt_username", "mqtt_password")
+CREDENTIAL_OPTIONS = ("mqtt_username", "mqtt_password")  # Task 5 ersetzt sie durch TOKEN_OPTION
+TOKEN_OPTION = "installation_token"
 
 ACTIVE = "active"
 INACTIVE = "inactive"

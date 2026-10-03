@@ -4,7 +4,9 @@ from unittest.mock import MagicMock
 
 import pytest
 import requests
+from fakes import ACCESS_OPTIONS
 
+from heizungsbruecke import __main__
 from heizungsbruecke.__main__ import (
     DERIVED_SENSORS_RETRY_DELAYS_SECONDS,
     IdleBridge,
@@ -58,6 +60,7 @@ def _full_valid_options(**overrides):
         "tenant_id": "test_tenant",
         "verteilsystem": "Heizkoerper",
         "daily_trigger_time": "12:00",
+        **ACCESS_OPTIONS,
         "mqtt_username": "test_mqtt_user",
         "mqtt_password": "test_mqtt_pass",
         "room_sensors": ["sensor.room_actual"],
@@ -83,6 +86,33 @@ def test_unconfigured_addon_idles_without_status_event(caplog):
     assert result.reason == "nicht_eingerichtet"
     assert "Add-on ist noch nicht eingerichtet" in caplog.text
     ha_api.fire_event.assert_not_called()
+
+
+def test_start_with_the_old_configuration_reports_outdated_not_silence(sleeps):
+    ha_api = MagicMock()
+    options = {**_full_valid_options(), "mqtt_username": "client1_alt", "mqtt_password": "x9alt7"}
+    for key in ("transport", "installation_token", "tls_certificate", "tls_private_key"):
+        options.pop(key, None)
+
+    result = _start_bridge(options, ha_api)
+
+    assert result.reason == "konfigurationsfehler"
+    last = _status_calls(ha_api)[-1]
+    assert last["status"] == "konfigurationsfehler"
+    assert "Konfiguration veraltet" in last["grund"]
+
+
+@pytest.mark.parametrize("secret_key", ["mqtt_password", "installation_token", "tls_private_key"])
+def test_start_errors_never_show_secret_option_values(secret_key):
+    options = {secret_key: "GEHEIM-123", "notify_services": ["notify.GEHEIM-123"]}
+    text = __main__._without_credentials("Option 'notify_services' (['notify.GEHEIM-123']) ungueltig", options)
+    assert "GEHEIM-123" not in text
+
+
+def test_a_secret_with_special_characters_is_redacted_in_its_repr_form_too():
+    options = {"tls_private_key": "-----BEGIN-----\nabc'\n-----END-----"}
+    text = __main__._without_credentials(f"Option ungueltig: {options['tls_private_key']!r}", options)
+    assert "abc" not in text
 
 
 def test_verteilsystem_without_safety_values_is_a_configuration_error(monkeypatch, caplog, sleeps):
