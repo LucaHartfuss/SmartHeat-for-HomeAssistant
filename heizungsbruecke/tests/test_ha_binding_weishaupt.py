@@ -262,3 +262,40 @@ def test_unreadable_auxiliary_values_block_a_boost_that_writes_the_room_setpoint
     assert pipeline.set_boosts(comfort=comfort, emergency=emergency) == (comfort, emergency)
     assert store.state.aux_originals == {"mode_select": "Automatik", "setpoint_comfort": 22.0, "setpoint_setback": 18.0}
     assert ha.calls[0] == ("select", "select.betriebsart", "Normal")
+
+
+# --- Wiederherstellung ohne gemerkte Hilfswerte stellt die Betriebsart nicht um (Review Task 8) ---
+
+def test_a_second_restore_after_a_successful_one_neither_switches_nor_writes(make_store, clock):
+    ha = FakeHa()
+    pipeline, store = _pipeline(make_store, clock, ha)
+    pipeline.apply_server_values({"curve": 0.8, "room_setpoint": 23.0, "heat_limit": 17.0})
+    assert pipeline.restore_and_clear(always_restore=False) is True
+    assert store.state.aux_originals == {} and ha.states["select.betriebsart"] == "Automatik"
+    ha.calls.clear()
+    clock.advance(WEISHAUPT_MODBUS.settle_seconds + 1)
+    assert pipeline.restore_and_clear(always_restore=True) is True  # z. B. Fristende nach dem Abmelden
+    assert ha.calls == []
+    assert ha.states["select.betriebsart"] == "Automatik"
+
+
+def test_a_restore_without_auxiliary_originals_does_not_switch_the_mode(make_store, clock):
+    # Hilfswerte nie gemerkt (Backup ohne aux_originals), Ursprungswert des Normal-Solls weicht ab: das Normal-Soll (eigenes
+    # Register) wird geschrieben, die Betriebsart bleibt beim Nutzer.
+    ha = FakeHa(**{"number.normal": 21.0})
+    pipeline, store = _pipeline(make_store, clock, ha, backup={
+        "restore_point": {"curve": 0.75, "room_setpoint": 21.0, "heat_limit": 18.0},
+        "originals": {"room_setpoint": 20.0},
+    })
+    assert store.state.aux_originals == {}
+    assert pipeline.restore_and_clear(always_restore=True) is True
+    assert ("select", "select.betriebsart", "Normal") not in ha.calls
+    assert ha.calls == [("number", "number.normal", 20.0)]
+    assert ha.states["select.betriebsart"] == "Automatik"
+
+
+def test_regular_writes_still_prepare_the_operating_mode(make_store, clock):
+    ha = FakeHa()
+    pipeline, _ = _pipeline(make_store, clock, ha)
+    pipeline.apply_server_values({"room_setpoint": 21.0})
+    assert ha.calls == [("select", "select.betriebsart", "Normal"), ("number", "number.normal", 21.0)]

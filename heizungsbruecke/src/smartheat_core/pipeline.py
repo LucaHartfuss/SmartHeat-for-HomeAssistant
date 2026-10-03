@@ -282,8 +282,9 @@ class LeverPipeline:
             self._store.update(
                 boost_active=False, emergency_boost_active=False,
                 restore_point={**self._store.state.restore_point, **originals},
-                # Hilfswerte sind zurueckgestellt: ein weiterer Aufruf (naechster Start) schreibt nichts mehr, ein
-                # neues Abo merkt sie neu (idempotentes Ende, keine lokalen Schreibvorgaenge danach).
+                # Hilfswerte sind zurueckgestellt: ein weiterer Aufruf (naechster Start, Fristende) schreibt nur noch
+                # abweichende Hebel (Quota-Check) und stellt ein Binding mit Hilfswerten nicht mehr um (_write); ein
+                # neues Abo merkt sie neu.
                 aux_originals={},
             )
         except Exception:
@@ -384,13 +385,16 @@ class LeverPipeline:
         (preparation_resets_setpoint, Vaillant), wird prepared_lever danach ohne Quota-Check geschrieben (force), weil
         der Read garantiert noch den alten Sollwert zeigt. Schreibgruppen (write_groups) gehen zusammen. Vor dem
         prepared_lever muessen die Hilfs-Ursprungswerte gemerkt sein (require_aux; nur die Wiederherstellung schreibt
-        auch ohne)."""
+        auch ohne und bereitet ein Binding mit Hilfswerten dabei nicht vor)."""
         prepared_lever = self._description.prepared_lever
         switched = False
         if prepared_lever is not None and prepared_lever in values and self._binding.has(prepared_lever):
             if require_aux:
                 self._require_aux(prepared_lever)
-            if self._binding.needs_preparation():
+            # Ohne Pflicht zu Hilfswerten (nur die Wiederherstellung) nicht vorbereiten, wenn das Binding Hilfswerte hat:
+            # die Betriebsart geht ueber restore_aux zurueck, ohne gemerkte Werte bliebe eine Umstellung fuer immer.
+            # Vaillant (keine Hilfswerte) bereitet wie bisher vor.
+            if self._binding.needs_preparation() and (require_aux or not self._description.aux_originals):
                 switched = self.ensure_prepared(exempt=exempt, require_aux=require_aux)
         force_prepared = switched and self._description.preparation_resets_setpoint
         written: list[str] = []
