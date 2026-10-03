@@ -62,6 +62,7 @@ from heizungsbruecke.status import (
 )
 from heizungsbruecke.worker import Event, RegulationWorker
 from smartheat_core import derived, enforce, write_budget
+from smartheat_core.binding import BINDINGS
 from smartheat_core.pipeline import LeverPipeline, WriteBudgetExhausted
 
 # Das Add-on startet mit `startup: services`, evtl. vor HA Core. Solange HA nicht antwortet,
@@ -641,6 +642,15 @@ def _prepare_zone(rt: Runtime) -> None:
     rt.zone_prepared = True
 
 
+def _status_lever_set(options: dict):
+    """Hebelsatz fuers Statusereignis. Ein unbekannter Hebelsatz ist ein Konfigurationsfehler (der Start meldet ihn
+    gleich danach); das Statusereignis braucht dann trotzdem einen Satz, es faellt auf den Standard zurueck."""
+    try:
+        return config.binding_description(options).lever_set
+    except config.ConfigError:
+        return BINDINGS[config.DEFAULT_LEVER_SET].lever_set
+
+
 def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | IdleBridge:
     """Gibt den gestarteten Laufzeit-Kontext zurueck oder den Ruhezustand, wenn gar nicht erst
     geregelt wird: nicht eingerichtet, abgemeldet, Konfigurationsfehler, Abo-Frist abgeschlossen."""
@@ -661,7 +671,7 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | Idle
     store = StateStore(config.BACKUP_PATH, config.FAILSAFE_PATH)
     notifier = Notifier(store, ha_api, config.notify_services(options), config.notify_hints_off(options))
     ticks.seed_notices(notifier, store.state.delivery)
-    status = StatusReporter(ha_api, options["tenant_id"], options.get("setup_id"), store)
+    status = StatusReporter(ha_api, options["tenant_id"], options.get("setup_id"), store, _status_lever_set(options))
     status.publish()
     if signed_off:
         return _sign_off(options, ha_api, store, notifier, status, clock)

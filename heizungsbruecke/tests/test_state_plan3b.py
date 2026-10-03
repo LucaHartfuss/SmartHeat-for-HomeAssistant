@@ -1,5 +1,6 @@
 """Persistenz Plan 3b: neue backup.json-Felder mit Standardwerten, ohne Migration (Review Focus: backup.json von 0.30.0
 laedt ohne Wertverlust und bleibt beim Schreiben gleich)."""
+import json
 import logging
 
 import pytest
@@ -65,3 +66,22 @@ def test_invalid_new_fields_fall_back_to_their_default(make_store, caplog, key, 
     assert getattr(store.state, key) == getattr(BridgeState(), key)
     assert key in caplog.text
     assert store.state.restore_point == V030_BACKUP["restore_point"]
+
+
+def test_learned_survives_a_restart(make_store):
+    store = make_store()
+    store.update(learned={"curve": 1.1, "heat_limit": 15.4})
+    assert make_store().state.learned == {"curve": 1.1, "heat_limit": 15.4}
+
+
+def test_empty_learned_is_not_written(make_store, tmp_path):
+    store = make_store()
+    store.update(boost_active=True)
+    assert "learned" not in json.loads((tmp_path / "backup.json").read_text())
+
+
+def test_invalid_learned_falls_back_to_empty(make_store, caplog):
+    with caplog.at_level(logging.WARNING):
+        store = make_store(backup={**V030_BACKUP, "learned": {"curve": "x"}})
+    assert store.state.learned == {}
+    assert "learned" in caplog.text
