@@ -41,16 +41,23 @@ def _tls_context(descriptor: Descriptor, credential: Credential) -> ssl.SSLConte
     except (ssl.SSLError, ValueError) as error:
         raise TransportConfigError(f"CA des Transport-Deskriptors nicht lesbar ({type(error).__name__})") from None
     # load_cert_chain liest nur Dateien: kurz in ein privates Verzeichnis (0700, Dateien 0600), danach weg.
-    with tempfile.TemporaryDirectory(prefix="smartheat-tls-") as directory:
-        cert_path, key_path = os.path.join(directory, "cert.pem"), os.path.join(directory, "key.pem")
-        _write_private(cert_path, credential.certificate_pem or "")
-        _write_private(key_path, credential.private_key_pem or "")
-        try:
-            context.load_cert_chain(cert_path, key_path)
-        except ssl.SSLError as error:
-            raise TransportConfigError(
-                f"Zertifikat und Schluessel passen nicht zusammen oder sind kaputt ({error.reason or type(error).__name__})"
-            ) from None
+    # Jeder OSError/ValueError (volles oder schreibgeschuetztes /tmp, NUL-Byte im PEM) wird zu einem
+    # Konfigurationsfehler; nur der Klassenname geht in den Text, nie die Meldung (kann Pfade/Inhalt nennen).
+    try:
+        with tempfile.TemporaryDirectory(prefix="smartheat-tls-") as directory:
+            cert_path, key_path = os.path.join(directory, "cert.pem"), os.path.join(directory, "key.pem")
+            _write_private(cert_path, credential.certificate_pem or "")
+            _write_private(key_path, credential.private_key_pem or "")
+            try:
+                context.load_cert_chain(cert_path, key_path)
+            except ssl.SSLError as error:
+                raise TransportConfigError(
+                    f"Zertifikat und Schluessel passen nicht zusammen oder sind kaputt ({error.reason or type(error).__name__})"
+                ) from None
+    except TransportConfigError:
+        raise
+    except (OSError, ValueError) as error:
+        raise TransportConfigError(f"Zertifikat/Schluessel nicht ablegbar ({type(error).__name__})") from None
     if descriptor.alpn:
         context.set_alpn_protocols([descriptor.alpn])
     return context

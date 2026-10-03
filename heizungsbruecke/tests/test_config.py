@@ -662,3 +662,12 @@ def test_credentials_are_no_longer_required_to_count_as_configured():
     options = {"tenant_id": "t", "entity_room_target": "climate.wz::temperature", "entity_curve_current": "number.c",
                "entity_outdoor_temp": "sensor.o", "entity_heat_limit": "number.h"}
     assert config.is_configured(options)
+
+
+def test_unwritable_temp_storage_is_a_config_error_not_a_crash(iot_options, monkeypatch):
+    def boom(*args, **kwargs):
+        raise OSError("Platte voll")
+
+    monkeypatch.setattr("smartheat_transport.connect.tempfile.TemporaryDirectory", boom)
+    with pytest.raises(config.ConfigError, match="nicht ablegbar"):
+        config.resolve_transport(iot_options)

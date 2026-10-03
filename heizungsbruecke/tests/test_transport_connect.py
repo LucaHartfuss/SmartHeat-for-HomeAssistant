@@ -73,13 +73,19 @@ def test_tls_handshake_with_client_certificate_and_alpn_against_a_local_server(p
     port = listener.getsockname()[1]
     seen = {}
 
-    def _serve():
-        conn, _ = listener.accept()
-        with server_ctx.wrap_socket(conn, server_side=True) as tls:
-            seen["peer"] = dict(item[0] for item in tls.getpeercert()["subject"])["commonName"]
-            seen["alpn"] = tls.selected_alpn_protocol()
+    listener.settimeout(5)  # ein Fehler darf die CI nicht haengen lassen
 
-    thread = threading.Thread(target=_serve)
+    def _serve():
+        try:
+            conn, _ = listener.accept()
+            conn.settimeout(5)
+            with server_ctx.wrap_socket(conn, server_side=True) as tls:
+                seen["peer"] = dict(item[0] for item in tls.getpeercert()["subject"])["commonName"]
+                seen["alpn"] = tls.selected_alpn_protocol()
+        except (OSError, ssl.SSLError) as error:
+            seen["error"] = type(error).__name__
+
+    thread = threading.Thread(target=_serve, daemon=True)
     thread.start()
     options = connect_options(_iot(pki, port=443, alpn=ALPN_443), _cert_credential(pki))
     with (
@@ -89,6 +95,7 @@ def test_tls_handshake_with_client_certificate_and_alpn_against_a_local_server(p
         assert tls.selected_alpn_protocol() == ALPN_443
     thread.join(5)
     listener.close()
+    assert not thread.is_alive()
     assert seen == {"peer": "client1", "alpn": ALPN_443}
 
 
@@ -128,3 +135,23 @@ def test_temporary_key_files_are_removed(pki, tmp_path, monkeypatch):
 ])
 def test_connect_errors_are_classified(error, expected):
     assert classify_connect_error(error) == expected
+
+
+def _boom(*args, **kwargs):
+    raise OSError("Platte voll: GEHEIM-PFAD")
+
+
+@pytest.mark.parametrize("target", ["smartheat_transport.connect.tempfile.TemporaryDirectory",
+                                    "smartheat_transport.connect.os.open"])
+def test_unwritable_temp_storage_is_a_config_error_without_leaking_the_message(pki, monkeypatch, target):
+    monkeypatch.setattr(target, _boom)
+    with pytest.raises(TransportConfigError, match=r"nicht ablegbar \(OSError\)") as info:
+        connect_options(_iot(pki), _cert_credential(pki))
+    assert "GEHEIM-PFAD" not in str(info.value)
+
+
+def test_nul_byte_inside_the_key_is_a_config_error(pki):
+    key, cert = pki["client"]
+    broken = key[:60] + "\x00" + key[60:]
+    with pytest.raises(TransportConfigError):
+        connect_options(_iot(pki), Credential("certificate", certificate_pem=cert, private_key_pem=broken))

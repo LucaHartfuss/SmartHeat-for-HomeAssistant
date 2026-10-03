@@ -197,6 +197,9 @@ def test_connection_failing_acts_only_on_a_clear_answer(make_store, monkeypatch,
     abo.handle_connection_failing(rt)
     assert (rt.store.state.abo_inactive_since is not None) is expect_inactive
     assert rt.status.flags.zugang_abgelehnt is expect_rejected
+    if status in (entitlement.ACTIVE, entitlement.UNKNOWN):  # normaler Ausfall: keine Meldung an den Kunden
+        rt.ha_api.send_notification.assert_not_called()
+        rt.ha_api.create_persistent_notification.assert_not_called()
 
 
 def test_connection_failing_rejected_notifies_like_an_auth_rejection(make_store, monkeypatch):

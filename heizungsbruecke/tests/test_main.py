@@ -1,3 +1,4 @@
+import json
 import logging
 import sys
 from types import SimpleNamespace
@@ -671,3 +672,47 @@ def test_connection_check_starts_no_probe_tick_when_the_query_found_the_abo_inac
     rt.clock.advance(900)
     __main__._on_connection_check(rt, None)
     assert probes == []
+
+
+def test_unwritable_temp_storage_is_a_configuration_error_not_a_crash(monkeypatch, caplog, sleeps):
+    from tls_helpers import ca_pem, issue, make_ca
+
+    ca = make_ca()
+    key, cert = issue(ca, "client1")
+    transport = json.dumps({"kind": "iot_core", "host": "h.example", "port": 8883, "alpn": None,
+                            "ca_pem": ca_pem(ca), "client_id": "test_tenant"})
+    options = _full_valid_options(transport=transport, tls_certificate=cert, tls_private_key=key,
+                                  mqtt_username="", mqtt_password="")
+
+    def boom(*args, **kwargs):
+        raise OSError("Platte voll")
+
+    monkeypatch.setattr("smartheat_transport.connect.tempfile.TemporaryDirectory", boom)
+    ha_api = MagicMock()
+    with caplog.at_level(logging.ERROR):
+        result = _start_bridge(options, ha_api)
+
+    assert result.reason == "konfigurationsfehler"
+    assert "nicht ablegbar" in caplog.text
+    assert key not in caplog.text
+
+
+@pytest.mark.parametrize("status", [__main__.abo.entitlement.ACTIVE, __main__.abo.entitlement.UNKNOWN])
+def test_connection_check_still_starts_the_probe_tick_after_an_unclear_or_active_query(status, monkeypatch):
+    """Regression: ein normaler Ausfall (Abo aktiv oder Abfrage unklar) darf den Notbetrieb nicht verhindern."""
+    state = SimpleNamespace(abo_inactive_since=None, delivery=SimpleNamespace(pending=None))
+    rt = SimpleNamespace(
+        worker=MagicMock(), options={}, clock=FakeClock(), mqtt_down_since=None, connection_failing_queried_at=None,
+        mqtt_client=MagicMock(), store=SimpleNamespace(state=state), ha_api=MagicMock(),
+    )
+    rt.mqtt_client.is_connected.return_value = False
+    rt.mqtt_client.connect_failures = 3
+    monkeypatch.setattr(__main__.abo.entitlement, "query_from_options", lambda options: status)
+    probes = []
+    monkeypatch.setattr(__main__.ticks, "start_probe_tick", lambda *args: probes.append(args))
+    __main__._on_connection_check(rt, None)
+    rt.clock.advance(900)
+    __main__._on_connection_check(rt, None)
+    assert len(probes) == 1
+    assert state.abo_inactive_since is None
+    rt.ha_api.send_notification.assert_not_called()
