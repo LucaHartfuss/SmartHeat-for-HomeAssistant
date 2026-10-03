@@ -7,6 +7,20 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
 
 - Eigenes Icon und Logo (SmartHeat-Flamme) im Add-on-Store und in der Add-on-Übersicht.
 
+## 0.31.0
+
+- **Hersteller-Abstraktion (Plan 3b):** Der Kern kann neben Vaillant (`vaillant_vrc720`) auch Weishaupt-Wärmepumpen
+  über `weishaupt_modbus` (`weishaupt_wwp`, Rückfall `weishaupt_wwp_basis` nur mit dem Raumsoll) und Viessmann über
+  `vicare` (`viessmann_vicare`: Neigung, Niveau, Raumtemperatur „normal“) bedienen. Die zugehörigen Profile des
+  Servers sind noch inaktiv (Inventur ausstehend); eingerichtet werden sie ab dem nächsten Integrations-Release.
+- Lokale Sicherheitswerte (Regel 4) für die neuen Hersteller und für Fußbodenheizung (alle Hebel am Maximum ergeben
+  bei −15 °C höchstens 45 °C Vorlauf; kein Komfort-Boost bei Fußbodenheizung).
+- Weishaupt: höchstens 10 Schreibvorgänge am Tag (Gerätespeicher), Hinweis ab 50.000 Schreibvorgängen; Betriebsart,
+  Komfort- und Absenk-Soll werden gemerkt und bei Abo-Ende oder Entfernen zurückgestellt. Viessmann: Neigung und
+  Niveau zählen als ein Schreibvorgang, höchstens 4 Korrekturen je Tag.
+- Tageszähler für Energie werden als fortlaufende Summe gemeldet.
+- Für bestehende Vaillant-Installationen ändert sich nichts (Werte, Boost, Meldungen, `backup.json`).
+
 ## 0.30.0
 
 - **Hersteller-Abstraktion (Plan 2):** Protokoll Schema 4 – der Snapshot meldet `room_target` und die Hebel des
