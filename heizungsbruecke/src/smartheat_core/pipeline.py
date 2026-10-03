@@ -179,7 +179,12 @@ class LeverPipeline:
         try:
             self._write(values, exempt=True, require_aux=require_aux)
             if aux:
-                self._restore_aux(aux)
+                # Zielwerte der Hebel, nicht der Read: der zeigt einen eigenen Schreibvorgang erst nach settle_seconds.
+                # Uebersprungen (Quota-Check) heisst, die Anlage steht schon darauf; gescheitert, kommt man nicht hierher.
+                targets = {
+                    lever: self._target(lever, value) for lever, value in values.items() if self._binding.has(lever)
+                }
+                self._restore_aux(aux, targets)
         except Exception:
             write_budget.record_attempt(self._store, key, self._clock())
             raise
@@ -654,10 +659,10 @@ class LeverPipeline:
                 lever, self._binding.ref(lever), RuntimeError("Ursprungswerte der Anlage nicht lesbar"),
             )
 
-    def _restore_aux(self, values: Mapping[str, str | float]) -> None:
+    def _restore_aux(self, values: Mapping[str, str | float], levers: Mapping[str, float]) -> None:
         before = self._binding.physical_writes
         try:
-            self._binding.restore_aux(values)
+            self._binding.restore_aux(values, levers=levers)
         finally:
             self._count_physical(self._binding.physical_writes - before)
 

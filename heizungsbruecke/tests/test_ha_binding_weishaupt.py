@@ -299,3 +299,61 @@ def test_regular_writes_still_prepare_the_operating_mode(make_store, clock):
     pipeline, _ = _pipeline(make_store, clock, ha)
     pipeline.apply_server_values({"room_setpoint": 21.0})
     assert ha.calls == [("select", "select.betriebsart", "Normal"), ("number", "number.normal", 21.0)]
+
+
+# --- Wiederherstellung mit Abfrageverzug: Komfort/Absenk gegen das Ziel des Normal-Solls begrenzen (Final-Review) ---
+
+class LaggingHa(FakeHa):
+    """weishaupt_modbus fragt zyklisch ab: ein geschriebener Zahlenwert ist erst nach `poll()` in HA lesbar."""
+
+    def __init__(self, **states):
+        super().__init__(**states)
+        self.pending = {}
+
+    def set_number_value(self, entity_id, value):
+        if entity_id in self.failing:
+            raise RuntimeError("Modbus-Fehler")
+        self.calls.append(("number", entity_id, value))
+        self.pending[entity_id] = value
+
+    def poll(self):
+        self.states.update(self.pending)
+        self.pending.clear()
+
+
+@pytest.mark.parametrize(("server", "restored"), [
+    (24.0, {"number.normal": 20.0, "number.komfort": 22.0, "number.absenk": 18.0}),  # Komfort war mit angehoben
+    (16.5, {"number.normal": 20.0, "number.komfort": 22.0, "number.absenk": 18.0}),  # Absenk war mit gesenkt
+])
+def test_restore_caps_the_auxiliary_setpoints_against_the_restored_normal_not_a_stale_read(
+    make_store, clock, server, restored,
+):
+    ha = LaggingHa()
+    pipeline, store = _pipeline(make_store, clock, ha)
+    pipeline.apply_server_values({"curve": 0.75, "room_setpoint": server, "heat_limit": 18.0})
+    ha.poll()
+    clock.advance(10000)
+    ha.calls.clear()
+    assert pipeline.restore_and_clear(always_restore=False) is True
+    ha.poll()  # HA zeigte waehrend restore_aux noch das alte Normal-Soll
+    assert {entity: ha.states[entity] for entity in restored} == restored
+    assert ha.states["select.betriebsart"] == "Automatik"
+    assert store.state.aux_originals == {}
+
+
+def test_restore_aux_uses_the_given_normal_target_instead_of_the_read():
+    ha = FakeHa(**{"number.normal": 24.0, "number.komfort": 24.0})  # Read hinkt: Normal ist schon auf 20 geschrieben
+    binding = _binding(ha)
+    binding.restore_aux(
+        {"mode_select": "Automatik", "setpoint_comfort": 22.0, "setpoint_setback": 18.0}, levers={"room_setpoint": 20.0},
+    )
+    assert ("number", "number.komfort", 22.0) in ha.calls
+
+
+def test_restore_aux_never_raises_setback_above_a_normal_that_stayed_low():
+    # Ursprungswert des Normal-Solls unbekannt: Normal bleibt 17, Absenk darf nicht auf 18 zurueck, nur auf 17.
+    ha = FakeHa(**{"number.normal": 17.0, "number.absenk": 16.5})
+    _binding(ha).restore_aux({"setpoint_comfort": 22.0, "setpoint_setback": 18.0, "mode_select": "Automatik"})
+    assert ("number", "number.absenk", 18.0) not in ha.calls
+    assert ha.states["number.absenk"] == 17.0
+    assert ha.states["number.absenk"] <= ha.states["number.normal"] <= ha.states["number.komfort"]

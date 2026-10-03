@@ -110,7 +110,7 @@ class HaPlantBinding:
         """Vaillant hat keine Hilfs-Ursprungswerte (description.aux_originals leer)."""
         return {}
 
-    def restore_aux(self, values: Mapping[str, str | float]) -> None:
+    def restore_aux(self, values: Mapping[str, str | float], levers: Mapping[str, float] | None = None) -> None:
         return None
 
 
@@ -177,10 +177,13 @@ class WeishauptHaBinding(HaPlantBinding):
             "setpoint_setback": self._number("setpoint_setback"),
         }
 
-    def restore_aux(self, values: Mapping[str, str | float]) -> None:
-        """Komfort und Absenk zurueck, begrenzt auf das aktuelle Normal-Soll (Absenk <= Normal <= Komfort bleibt
-        gueltig, auch wenn dessen Ursprungswert unbekannt war), danach die Betriebsart. Schreibt nur Abweichungen."""
-        normal = self._number("shift_current")
+    def restore_aux(self, values: Mapping[str, str | float], levers: Mapping[str, float] | None = None) -> None:
+        """Komfort und Absenk zurueck, begrenzt auf das Normal-Soll (Absenk <= Normal <= Komfort bleibt gueltig,
+        auch wenn dessen Ursprungswert unbekannt war), danach die Betriebsart. Schreibt nur Abweichungen. Das Normal-Soll
+        ist das gerade zurueckgestellte Ziel (`levers`): HA zeigt einen eigenen Schreibvorgang erst nach der naechsten
+        Abfrage; nur ohne Ziel wird es gelesen."""
+        target_normal = (levers or {}).get("room_setpoint")
+        normal = target_normal if target_normal is not None else self._number("shift_current")
         for role, bound in (("setpoint_comfort", max), ("setpoint_setback", min)):
             original = values.get(role)
             if not isinstance(original, (int, float)) or isinstance(original, bool):
@@ -235,7 +238,7 @@ class ViessmannHaBinding(HaPlantBinding):
     def read_aux(self) -> dict[str, str | float]:
         return {"mode_select": self._preset()}
 
-    def restore_aux(self, values: Mapping[str, str | float]) -> None:
+    def restore_aux(self, values: Mapping[str, str | float], levers: Mapping[str, float] | None = None) -> None:
         """Nur ein beim Start aktives Komfort-/Eco-Programm wird wieder aktiviert; normal/reduziert steuert der
         Zeitplan des Geraets."""
         preset = values.get("mode_select")

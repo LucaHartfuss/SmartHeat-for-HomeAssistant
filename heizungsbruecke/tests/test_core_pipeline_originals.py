@@ -44,7 +44,7 @@ class AuxBinding(HaPlantBinding):
             raise self.aux_error
         return dict(self.aux)
 
-    def restore_aux(self, values):
+    def restore_aux(self, values, levers=None):
         self.restored.append(dict(values))
         self.physical_writes += 1
 
@@ -77,7 +77,7 @@ def test_server_values_capture_before_the_first_write(make_store, clock):
     assert ha.writes == [("number.hk", 0.8), ("number.normal", 21.0), ("number.swu", 17.0)]
 
 
-def test_unreadable_aux_values_block_the_prepared_lever_but_not_the_others(make_store, clock):
+def test_unreadable_aux_values_block_every_write_until_they_are_captured(make_store, clock):
     pipeline, store, ha, binding = _setup(make_store, clock)
     binding.aux_error = RuntimeError("select nicht verfuegbar")
     with pytest.raises(DeviceWriteError) as error:
@@ -134,7 +134,7 @@ def test_restore_runs_even_when_the_aux_values_cannot_be_read(make_store, clock)
 def test_failing_aux_restore_is_retried_on_the_return_staircase(make_store, clock):
     pipeline, store, ha, binding = _setup(make_store, clock, backup={"aux_originals": AUX})
 
-    def _fail(values):
+    def _fail(values, levers=None):
         raise RuntimeError("Modbus weg")
 
     binding.restore_aux = _fail
