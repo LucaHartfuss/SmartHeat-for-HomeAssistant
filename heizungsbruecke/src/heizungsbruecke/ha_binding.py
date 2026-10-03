@@ -7,6 +7,7 @@ import logging
 import math
 from collections.abc import Mapping
 
+from heizungsbruecke import config
 from heizungsbruecke.manifest import ChannelManifest
 from smartheat_core.binding import VAILLANT_MYPYLLANT, BindingDescription
 
@@ -245,3 +246,24 @@ class ViessmannHaBinding(HaPlantBinding):
         self._ha_api.set_preset_mode(entity_id, preset)
         self.physical_writes += 1
         logger.warning("Heizprogramm %s auf den Ursprungswert %s zurueckgestellt", entity_id, preset)
+
+
+# Plan 3b: HA-Umsetzung je Hebelsatz und die Rollen, die das Binding zum Lesen/Schreiben/Zurueckstellen braucht.
+_BINDING_CLASSES: dict[str, type[HaPlantBinding]] = {
+    "vaillant_vrc720": HaPlantBinding,
+    "weishaupt_wwp": WeishauptHaBinding,
+    "weishaupt_wwp_basis": WeishauptHaBinding,
+    "viessmann_vicare": ViessmannHaBinding,
+}
+
+
+def binding_for(options: dict, ha_api, manifest: ChannelManifest) -> HaPlantBinding:
+    """Binding des gewaehlten Hebelsatzes (Option lever_set, Standard Vaillant) mit der wirksamen Beschreibung
+    (Wartezeit zum Abfrageintervall). Wirft config.ConfigError bei unbekanntem Hebelsatz."""
+    description = config.binding_description(options)
+    return _BINDING_CLASSES[description.lever_set.id](ha_api, manifest, description)
+
+
+def binding_roles(description: BindingDescription) -> tuple[str, ...]:
+    """Manifest-Rollen fuer das Zurueckstellen beim Abmelden: gesendete Hebel und Hilfs-Ursprungswerte."""
+    return tuple(LEVER_ROLES[lever] for lever in description.lever_set.levers) + description.aux_originals

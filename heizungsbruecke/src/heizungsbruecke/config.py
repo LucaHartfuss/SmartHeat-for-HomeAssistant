@@ -8,7 +8,7 @@ from pathlib import Path
 
 from heizungsbruecke.notifier import HINT_CATEGORIES
 from heizungsbruecke.windows import validate_daily_trigger_time
-from smartheat_core.binding import VAILLANT_MYPYLLANT
+from smartheat_core.binding import BINDINGS, BindingDescription, with_poll_interval
 from smartheat_core.safety import LocalSafety, resolve_local_safety
 
 MQTT_HOST = "127.0.0.1"
@@ -73,6 +73,57 @@ _WRITABLE_ENTITY = {
     "entity_heat_limit": (re.compile(r"number\.[a-z0-9_]+"), "eine number.*-Entity"),
 }
 RECONFIGURE_HINT = "bitte SmartHeat neu konfigurieren"
+# Plan 3b: Hebelsatz des Bindings (Option lever_set, schreibt die Integration ab Plan 3c). Fehlt sie, gilt Vaillant
+# (client1 unveraendert, kein Verhaltenswechsel).
+LEVER_SET_OPTION = "lever_set"
+DEFAULT_LEVER_SET = "vaillant_vrc720"
+# Minimal-Pflichtfelder fuer "eingerichtet" bei einem anderen Hebelsatz: der Rest wird in resolve_effective_options als
+# Konfigurationsfehler gemeldet statt still als "nicht eingerichtet" zu warten.
+_CORE_REQUIRED_OPTIONS = ("tenant_id", "mqtt_username", "mqtt_password", "entity_room_target", "entity_outdoor_temp")
+# Pflicht-Entity-Optionen je Hebelsatz (Startpruefung "Entity existiert", Konfigurationsfehler bei fehlender Option).
+# Vaillant: wie bis 0.30.0 (__main__.REQUIRED_ENTITY_OPTIONS).
+REQUIRED_ENTITY_OPTIONS: dict[str, tuple[str, ...]] = {
+    "vaillant_vrc720": (
+        "entity_room_target", "entity_curve_current", "entity_shift_current", "entity_min_flow", "entity_heat_limit",
+        "entity_outdoor_temp",
+    ),
+    "weishaupt_wwp": (
+        "entity_room_target", "entity_curve_current", "entity_shift_current", "entity_heat_limit", "entity_outdoor_temp",
+        "entity_mode_select", "entity_setpoint_comfort", "entity_setpoint_setback",
+    ),
+    "weishaupt_wwp_basis": (
+        "entity_room_target", "entity_shift_current", "entity_outdoor_temp", "entity_mode_select",
+        "entity_setpoint_comfort", "entity_setpoint_setback",
+    ),
+    "viessmann_vicare": (
+        "entity_room_target", "entity_curve_current", "entity_level_current", "entity_shift_current",
+        "entity_outdoor_temp", "entity_mode_select",
+    ),
+}
+_NUMBER_ENTITY = (re.compile(r"number\.[a-z0-9_]+"), "eine number.*-Entity")
+# Schreibbarkeit je Hebelsatz (Spec 5.6 "schreibbar"): Vaillant = _WRITABLE_ENTITY (Contract-Check 25 vergleicht nur
+# diese mit der Integration); Weishaupt-Betriebsart ist ein select, das Viessmann-Heizprogramm eine climate-Entity.
+_WRITABLE_BY_LEVER_SET: dict[str, dict[str, tuple[re.Pattern, str]]] = {
+    "weishaupt_wwp": {
+        "entity_curve_current": _NUMBER_ENTITY, "entity_shift_current": _NUMBER_ENTITY,
+        "entity_heat_limit": _NUMBER_ENTITY, "entity_setpoint_comfort": _NUMBER_ENTITY,
+        "entity_setpoint_setback": _NUMBER_ENTITY,
+        "entity_mode_select": (re.compile(r"select\.[a-z0-9_]+"), "eine select.*-Entity"),
+    },
+    "weishaupt_wwp_basis": {
+        "entity_shift_current": _NUMBER_ENTITY, "entity_setpoint_comfort": _NUMBER_ENTITY,
+        "entity_setpoint_setback": _NUMBER_ENTITY,
+        "entity_mode_select": (re.compile(r"select\.[a-z0-9_]+"), "eine select.*-Entity"),
+    },
+    "viessmann_vicare": {
+        "entity_curve_current": _NUMBER_ENTITY, "entity_level_current": _NUMBER_ENTITY,
+        "entity_shift_current": _NUMBER_ENTITY,
+        "entity_mode_select": (re.compile(r"climate\.[a-z0-9_]+"), "eine climate.*-Entity"),
+    },
+}
+# Abfrageintervall der Hersteller-Integration (Plan 3b, Wartezeit nach eigenem Schreiben); Grenzen sind eine Annahme.
+POLL_INTERVAL_OPTION = "poll_interval_seconds"
+POLL_INTERVAL_RANGE = (10, 3600)
 
 logger = logging.getLogger(__name__)
 
@@ -80,8 +131,38 @@ logger = logging.getLogger(__name__)
 def is_configured(options: dict) -> bool:
     """config.yaml hat Pflichtfelder, aber mit leeren Defaults: bis die SmartHeat-Integration
     options.json per Supervisor-API fuellt, startet das Add-on mit leeren Werten. Das ist ein
-    normaler Zustand, kein Fehler."""
-    return all(options.get(field) for field in REQUIRED_OPTIONS)
+    normaler Zustand, kein Fehler. Plan 3b: mit einem anderen Hebelsatz als Vaillant genuegen die
+    Minimal-Pflichtfelder; was fehlt, meldet resolve_effective_options als Konfigurationsfehler."""
+    required = REQUIRED_OPTIONS if options.get(LEVER_SET_OPTION) in (None, "", DEFAULT_LEVER_SET) else _CORE_REQUIRED_OPTIONS
+    return all(options.get(field) for field in required)
+
+
+def lever_set_id(options: dict) -> str:
+    """Hebelsatz aus der Option lever_set; fehlend oder leer = Vaillant. Ein unbekannter Wert ist ein
+    Konfigurationsfehler (kein stiller Rueckfall auf Vaillant)."""
+    value = options.get(LEVER_SET_OPTION)
+    if value is None or value == "":
+        return DEFAULT_LEVER_SET
+    if not isinstance(value, str) or value not in BINDINGS:
+        raise ConfigError(f"Option '{LEVER_SET_OPTION}' ({value!r}) ist kein bekannter Hebelsatz – {RECONFIGURE_HINT}")
+    return value
+
+
+def required_entity_options(lever_set: str) -> tuple[str, ...]:
+    return REQUIRED_ENTITY_OPTIONS[lever_set]
+
+
+def writable_entity_rules(lever_set: str) -> dict[str, tuple[re.Pattern, str]]:
+    return _WRITABLE_ENTITY if lever_set == DEFAULT_LEVER_SET else _WRITABLE_BY_LEVER_SET[lever_set]
+
+
+def binding_description(options: dict) -> BindingDescription:
+    """Wirksame Binding-Beschreibung: Standard-Beschreibung des Hebelsatzes mit der Wartezeit zum Abfrageintervall
+    (Option poll_interval_seconds; Vaillant bleibt bei 2100 s). Ein ungueltiges Intervall gilt als fehlend: der Start
+    lehnt es per validate ab, das Abmelden (ohne validate) soll daran nicht scheitern."""
+    interval = options.get(POLL_INTERVAL_OPTION)
+    valid = interval is not None and validate_poll_interval(options) is None
+    return with_poll_interval(BINDINGS[lever_set_id(options)], interval if valid else None)
 
 
 def _resolve_sources(options: dict) -> dict:
@@ -135,11 +216,16 @@ def _string_list(options: dict, key: str, pattern: re.Pattern) -> list[str]:
 
 
 def resolve_effective_options(options: dict) -> dict:
+    lever_set = lever_set_id(options)
     sources = _resolve_sources(options)
-    missing = [key for key in NEW_ENTITY_OPTIONS if not options.get(key)]
+    if lever_set == DEFAULT_LEVER_SET:
+        missing = [key for key in NEW_ENTITY_OPTIONS if not options.get(key)]
+        if missing:
+            raise ConfigError(f"{OUTDATED_CONFIGURATION} (Option '{missing[0]}' fehlt)")
+    missing = [key for key in required_entity_options(lever_set) if not options.get(key)]
     if missing:
-        raise ConfigError(f"{OUTDATED_CONFIGURATION} (Option '{missing[0]}' fehlt)")
-    for key, (pattern, expected) in _WRITABLE_ENTITY.items():
+        raise ConfigError(f"Option '{missing[0]}' fehlt für den Hebelsatz '{lever_set}' – {RECONFIGURE_HINT}")
+    for key, (pattern, expected) in writable_entity_rules(lever_set).items():
         value = options[key]
         if not isinstance(value, str) or not pattern.fullmatch(value):
             raise ConfigError(f"Option '{key}' ({value!r}) muss {expected} sein – {RECONFIGURE_HINT}")
@@ -171,10 +257,11 @@ def resolve_effective_options(options: dict) -> dict:
 
 
 def local_safety(options: dict) -> LocalSafety:
-    """Lokale Sicherheitswerte fuer den Hebelsatz des HA-Bindings und das Verteilsystem des Profils (Regel 4). Die
-    Boost-Werte liegen per check_invariants in den Bereichen (bis 0.29.0 validate_boost_config)."""
+    """Lokale Sicherheitswerte fuer den Hebelsatz des HA-Bindings (Option lever_set) und das Verteilsystem des Profils
+    (Regel 4). Die Boost-Werte liegen per check_invariants in den Bereichen (bis 0.29.0 validate_boost_config)."""
+    lever_set = lever_set_id(options)
     try:
-        return resolve_local_safety(VAILLANT_MYPYLLANT.lever_set.id, options.get("verteilsystem"))
+        return resolve_local_safety(lever_set, options.get("verteilsystem"))
     except ValueError as error:
         raise ConfigError(f"Option 'verteilsystem': {error}") from None
 
@@ -243,10 +330,21 @@ def validate_telemetry_interval(options: dict) -> str | None:
     return None
 
 
+def validate_poll_interval(options: dict) -> str | None:
+    """Plan 3b: optionales Abfrageintervall der Hersteller-Integration (Sekunden), Grenzen POLL_INTERVAL_RANGE."""
+    value = options.get(POLL_INTERVAL_OPTION)
+    if value is None:
+        return None
+    low, high = POLL_INTERVAL_RANGE
+    if not _is_interval_number(value) or not low <= value <= high:
+        return f"{POLL_INTERVAL_OPTION} ({value!r}) muss eine Zahl von {low} bis {high} Sekunden sein"
+    return None
+
+
 def validate(options: dict) -> str | None:
     """Erste Fehlermeldung der Startpruefungen, sonst None."""
     for check in (
-        validate_local_check_interval, validate_telemetry_interval,
+        validate_local_check_interval, validate_telemetry_interval, validate_poll_interval,
     ):
         error = check(options)
         if error:

@@ -31,7 +31,7 @@ from heizungsbruecke import (
 from heizungsbruecke.delivery import ROLE_DATENTRAEGER, SOURCE_LOCAL, DataFault
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.ha_api import HomeAssistantApi
-from heizungsbruecke.ha_binding import LEVER_ROLES, HaPlantBinding
+from heizungsbruecke.ha_binding import binding_for, binding_roles
 from heizungsbruecke.manifest import ChannelManifest, ManifestError, build_manifest, entity_ref
 from heizungsbruecke.notifier import STATE_OK, Notifier
 from heizungsbruecke.runtime import (
@@ -62,8 +62,7 @@ from heizungsbruecke.status import (
 )
 from heizungsbruecke.worker import Event, RegulationWorker
 from smartheat_core import derived, enforce, write_budget
-from smartheat_core.binding import VAILLANT_MYPYLLANT
-from smartheat_core.pipeline import LeverPipeline
+from smartheat_core.pipeline import LeverPipeline, WriteBudgetExhausted
 
 # Das Add-on startet mit `startup: services`, evtl. vor HA Core. Solange HA nicht antwortet,
 # wird unbegrenzt gewartet (B10). Erst bei erreichbarem HA zaehlt das Budget fuer fehlende
@@ -71,10 +70,6 @@ from smartheat_core.pipeline import LeverPipeline
 # danach ist es ein Startfehler (Spec TP6 3.6).
 HA_REACHABILITY_DELAYS_SECONDS = (5, 10, 20, 40, 60)
 DERIVED_SENSORS_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60, 60, 60)
-REQUIRED_ENTITY_OPTIONS = (
-    "entity_room_target", "entity_curve_current", "entity_shift_current", "entity_min_flow", "entity_heat_limit",
-    "entity_outdoor_temp",
-)
 # Im Konfigurationsfehler prueft ein frischer Prozess nach dieser Zeit erneut (z. B. eine spaet
 # geladene Integration); der persistierte Meldezustand verhindert eine Wiederholungsmeldung.
 CONFIG_RECHECK_SECONDS = 900
@@ -183,7 +178,8 @@ def _retry_with_budget(ha_api, attempt, describe, *, identify=None, redact=lambd
 def _wait_for_required_entities(ha_api, options: dict) -> None:
     """Pflicht-Entities muessen existieren; `unavailable` ist kein Startfehler (das behandeln
     Datenfehler und Notbetrieb im Betrieb)."""
-    refs = [options[key] for key in REQUIRED_ENTITY_OPTIONS] + list(options["room_sensors"])
+    keys = config.required_entity_options(config.lever_set_id(options))
+    refs = [options[key] for key in keys] + list(options["room_sensors"])
     entity_ids = sorted({ref.partition("::")[0] for ref in refs})
 
     def _check():
@@ -258,10 +254,10 @@ def _sign_off(options: dict, ha_api, store, notifier, status, clock) -> IdleBrid
         logger.error("Abmelden ohne Zuruecksetzen, Konfiguration ungueltig: %s", _without_credentials(str(error), options))
         restorer = None
     else:
-        roles = [LEVER_ROLES[lever] for lever in VAILLANT_MYPYLLANT.lever_set.levers]
+        roles = [role for role in binding_roles(config.binding_description(effective)) if effective.get(f"entity_{role}")]
         manifest = ChannelManifest(entity_ids={role: entity_ref(role, effective[f"entity_{role}"]) for role in roles})
         restorer = LeverPipeline(
-            store, HaPlantBinding(ha_api, manifest), config.local_safety(effective), clock=clock,
+            store, binding_for(effective, ha_api, manifest), config.local_safety(effective), clock=clock,
         )
     boosting = store.state.boost_active or store.state.emergency_boost_active
     restored = restorer is not None and restorer.restore_and_clear(always_restore=False)
@@ -292,6 +288,11 @@ def _sign_off(options: dict, ha_api, store, notifier, status, clock) -> IdleBrid
         bridge.worker.register(EV_RECHECK, _retry)
         bridge.worker.schedule(retry_seconds, Event(EV_RECHECK))
     return bridge
+
+
+def _hint(notifier, key: str, state: str, message: str) -> None:
+    """Nicht kritischer Hinweis der Hebel-Pipeline (Plan 3b: Tageslimit, Lebensdauerzaehler)."""
+    notifier.notify(key, state, message, critical=False)
 
 
 def _report_sign_off_restore(notifier, template: str, state) -> None:
@@ -619,6 +620,11 @@ def _prepare_zone(rt: Runtime) -> None:
         return
     try:
         rt.override.prepare_start(rt.store.state.stable_target)
+    except WriteBudgetExhausted as error:
+        # Plan 3b (Weishaupt): Tagesbudget erreicht, kein Fehlschlag der Anlage -- kein Versuch im Kontingent, der
+        # naechste lokale Check (spaetestens am naechsten Tag) versucht es erneut; den Hinweis gibt die Pipeline.
+        logger.info("Zone nicht vorbereitet: %s, naechster Versuch beim naechsten lokalen Check", error)
+        return
     except Exception:
         write_budget.record_attempt(rt.store, write_budget.ZONE_PREPARE, rt.clock())
         logger.exception("Zone konnte nicht vorbereitet werden, naechster Versuch beim naechsten lokalen Check")
@@ -658,7 +664,7 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | Idle
             raise config.ConfigError(error)
         _wait_for_required_entities(ha_api, options)
         derived = _ensure_derived_sensors_with_retry(ha_api, options)
-        manifest = build_manifest(options, derived.entity_ids)
+        manifest = build_manifest(options, derived.entity_ids, config.lever_set_id(options))
     except StartupError as error:
         return _fail_start(notifier, status, clock, str(error), error.key)
     except (config.ConfigError, ManifestError) as error:
@@ -672,7 +678,10 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | Idle
     rt = Runtime(
         manifest=manifest, ha_api=ha_api, options=options,
         worker=RegulationWorker(clock=clock), store=store,
-        override=LeverPipeline(store, HaPlantBinding(ha_api, manifest), config.local_safety(options), clock=clock),
+        override=LeverPipeline(
+            store, binding_for(options, ha_api, manifest), config.local_safety(options), clock=clock,
+            notify=functools.partial(_hint, notifier),
+        ),
         notifier=notifier, status=status, clock=clock,
     )
 
