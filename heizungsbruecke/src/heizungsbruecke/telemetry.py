@@ -7,6 +7,8 @@ from collections.abc import Callable
 from datetime import datetime
 
 from heizungsbruecke.delivery import DataFault
+from smartheat_core import energy as energy_core
+from smartheat_core.binding import ENERGY_TOTAL
 
 logger = logging.getLogger(__name__)
 
@@ -38,13 +40,15 @@ def run_telemetry_tick(
     manifest, ha_api, mqtt_client, boost_active: bool, failsafe_active: bool,
     datenfehler: DataFault | None = None, room_target: float | None = None,
     waerme: Callable[[float, dict, dict], bool] | None = None,
+    energy: Callable[[dict], dict] | None = None,
 ) -> None:
-    """Liest room_actual selbst (lokaler HA-REST-Aufruf, kein Cloud-Roundtrip). Wirft nie."""
+    """Liest room_actual selbst (lokaler HA-REST-Aufruf, kein Cloud-Roundtrip). `energy` normalisiert die
+    Energie-Rohwerte (Plan 3b, Tageszaehler; None = unveraendert). Wirft nie."""
     if "room_actual" not in manifest.entity_ids:
         return
     try:
         room_actual = ha_api.get_state(manifest.entity_ids["room_actual"])
-        kpi_fields = read_kpi_fields(manifest, ha_api)
+        kpi_fields = read_kpi_fields(manifest, ha_api, energy)
         regulation_fields = read_regulation_fields(manifest, ha_api, room_target)
         waerme_fehlt = False if waerme is None else waerme(room_actual, kpi_fields, regulation_fields)
         publish_telemetry(
@@ -96,10 +100,11 @@ def read_regulation_fields(manifest, ha_api, room_target: float | None) -> dict:
     return fields
 
 
-def read_kpi_fields(manifest, ha_api) -> dict:
+def read_kpi_fields(manifest, ha_api, normalize_energy: Callable[[dict], dict] | None = None) -> dict:
     """Jeder Sensor fuer sich: ein nicht lesbarer oder nicht endlicher Wert wird mit WARNING
     weggelassen und blockiert weder die Kern-Telemetrie noch die anderen Sensoren. `energy`
-    gibt es nur, wenn mindestens ein Kanal lesbar war."""
+    gibt es nur, wenn mindestens ein Kanal lesbar war. normalize_energy (Plan 3b) macht aus Tageszaehlern
+    monoton wachsende Summen unter denselben Kanalnamen."""
     kpi_fields: dict = {}
 
     def _read(role, reader):
@@ -130,6 +135,27 @@ def read_kpi_fields(manifest, ha_api) -> dict:
             ok, value = _read(role, ha_api.get_state)
             if ok:
                 energy[role.removeprefix("energy_")] = value
+    if energy and normalize_energy is not None:
+        energy = normalize_energy(energy)
     if energy:
         kpi_fields["energy"] = energy
     return kpi_fields
+
+
+def energy_normalizer(store, kind: str) -> Callable[[dict], dict] | None:
+    """Normalisierer fuer die Zaehlerart des Bindings (BindingDescription.energy_counters); None fuer Summenzaehler
+    (Vaillant: unveraendert, kein Zustand). Der Zustand liegt in BridgeState.energy_state (backup.json); scheitert das
+    Speichern, gilt er im Speicher weiter (StateStore.update aendert vor dem Schreiben)."""
+    if kind == ENERGY_TOTAL:
+        return None
+
+    def _normalize(raw: dict) -> dict:
+        sent, state = energy_core.normalize(kind, store.state.energy_state, raw)
+        if state != store.state.energy_state:
+            try:
+                store.update(energy_state=state)
+            except Exception as error:
+                logger.warning("Energie-Zaehlerstand nicht gespeichert (%s), gilt bis zum Neustart", error)
+        return sent
+
+    return _normalize

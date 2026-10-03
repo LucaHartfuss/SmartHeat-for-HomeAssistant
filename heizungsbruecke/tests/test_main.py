@@ -536,15 +536,19 @@ def test_on_telemetry_hands_the_waerme_callback_to_the_tick(make_store, monkeypa
     monkeypatch.setattr(
         "heizungsbruecke.__main__.telemetry.run_telemetry_tick", lambda *args, **kwargs: captured.update(kwargs),
     )
+    from smartheat_core.binding import VAILLANT_MYPYLLANT
+
     rt = SimpleNamespace(
         worker=MagicMock(), options={}, store=make_store(), mqtt_client=MagicMock(), manifest=MagicMock(),
         ha_api=MagicMock(), notifier=MagicMock(), status=MagicMock(),
+        override=SimpleNamespace(binding=SimpleNamespace(description=VAILLANT_MYPYLLANT)),
     )
     rt.mqtt_client.is_connected.return_value = True
 
     _on_telemetry(rt, None)
 
     assert captured["waerme"](21.0, {"flow_temperature": 26.0}, {"flow_setpoint": 38.0}) is False
+    assert captured["energy"] is None  # Vaillant: Summenzaehler, unveraendert (Plan 3b)
 
 
 def _prime_rt(monkeypatch, capture):

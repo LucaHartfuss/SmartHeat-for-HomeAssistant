@@ -4,6 +4,7 @@ lever_set bleibt unveraendert (alle Tests in test_runtime.py)."""
 import logging
 
 from test_runtime import (
+    _advance,
     _backup,
     _last_event,
     _mqtt,
@@ -178,3 +179,15 @@ def test_zone_preparation_at_the_daily_limit_is_a_budget_stop_not_a_failed_attem
     assert any(
         record.levelno == logging.INFO and "Tageslimit" in record.getMessage() for record in caplog.records
     )
+
+
+def test_weishaupt_daily_energy_reaches_the_server_as_a_growing_sum(env):
+    env.ha.states.update({**WEISHAUPT_STATES, "sensor.waerme_heute": 8.0})
+    bridge = _start(env, **WEISHAUPT, entity_energy_thermal_heating="sensor.waerme_heute")
+    assert _mqtt(env).telemetry[-1]["energy"] == {"thermal_heating": 8.0}
+
+    env.ha.states["sensor.waerme_heute"] = 0.5  # Mitternacht
+    _advance(env, bridge, 300)
+
+    assert _mqtt(env).telemetry[-1]["energy"] == {"thermal_heating": 8.5}
+    assert _backup(env)["energy_state"] == {"thermal_heating": {"raw": 0.5, "sum": 8.5}}

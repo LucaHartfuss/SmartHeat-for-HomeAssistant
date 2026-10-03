@@ -451,6 +451,7 @@ def _on_telemetry(rt: Runtime, event: Event) -> None:
         boost_active=state.boost_active, failsafe_active=state.delivery.notbetrieb,
         datenfehler=datenfehler, room_target=state.stable_target,
         waerme=lambda room, kpi, regulation: waerme_hint.apply_tick(rt, room, kpi, regulation),
+        energy=telemetry.energy_normalizer(rt.store, rt.override.binding.description.energy_counters),
     )
 
 
