@@ -25,7 +25,7 @@ _NUMBER_FIELDS = ("last_room_target", "last_published_target_rt")
 _FLAG_FIELDS = ("boost_active", "emergency_boost_active")
 _TEXT_FIELDS = ("last_daily_trigger_date", "last_ack_at", "waerme_fehlt_seit")
 _TEXT_MAP_FIELDS = ("notify_states", "notify_messages")
-_LEVER_MAP_FIELDS = ("restore_point", "originals")
+_LEVER_MAP_FIELDS = ("restore_point", "originals", "learned")
 _OVERRIDE_FIELDS = ("manual_override", "manual_override_pending")
 # Plan 3b: Lebensdauerzaehler, zurueckgestellte Serverwerte, Hilfs-Ursprungswerte, Energie-Normalisierung. Fehlen sie in
 # backup.json (bis 0.30.0), gilt der Standardwert; leer bzw. 0 werden sie nicht geschrieben (backup.json von client1
@@ -46,6 +46,9 @@ class BridgeState:
     # Ursprungswerte je Hebel vor dem ersten eigenen Schreiben (P2-5; Vaillant: nur die Heizgrenze): Abo-Ende und
     # Abmelden stellen sie wieder her.
     originals: dict = field(default_factory=dict)
+    # Plan 3c: Lernwerte der letzten gueltigen Serverantwort (learned: {"curve": c, "heat_limit": G}), nur Anzeige im
+    # Statusereignis.
+    learned: dict = field(default_factory=dict)
     boost_active: bool = False
     emergency_boost_active: bool = False
     last_room_target: float | None = None

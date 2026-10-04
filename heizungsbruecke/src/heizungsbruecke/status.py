@@ -12,10 +12,10 @@ from heizungsbruecke import battery, delivery, entitlement, room_sensors
 logger = logging.getLogger(__name__)
 
 # Muss zu `version` in config.yaml passen (tests/test_config_yaml.py).
-ADDON_VERSION = "0.32.0"
+ADDON_VERSION = "0.33.0"
 
 EVENT_TYPE = "smartheat_status"
-EVENT_SCHEMA = 1
+EVENT_SCHEMA = 2
 HEARTBEAT_SECONDS = 300
 
 STATUS_STARTET = "startet"
@@ -54,9 +54,7 @@ _FAULT_ART = dict(
 HINT_FIELDS = ("raumfuehler_ausgefallen", "batterie_niedrig", "manueller_eingriff", "waerme_fehlt")
 EVENT_FIELDS = (
     "schema", "tenant_id", "setup_id", "addon_version", "status", "grund", "notbetrieb", "datenfehler",
-    "boost", "letzte_serverantwort", "kurve", "parallelverschiebung", "mindestvorlauf", "heizgrenze",
-    "abo",
-    "abo_frist_ende", "hinweise",
+    "boost", "letzte_serverantwort", "hebelsatz", "hebel", "gelernt", "abo", "abo_frist_ende", "hinweise",
 )
 
 
@@ -138,14 +136,20 @@ def _manual(state) -> dict | None:
     override = state.manual_override
     if override is None:
         return None
-    levers = override["levers"]
-    return {
-        "kurve": levers.get("curve"), "parallelverschiebung": levers.get("room_setpoint"),
-        "erkannt": override["erkannt"],
-    }
+    return {"hebel": dict(override["levers"]), "erkannt": override["erkannt"]}
 
 
-def build_event(tenant_id: str, setup_id: str | None, flags: Flags, state, storage_failed: bool = False) -> dict:
+def _levers(state, lever_set) -> dict:
+    """Stand je Hebel (Wiederherstellungspunkt = zuletzt bestaetigt) plus die vom Client abgeleiteten (Mindestvorlauf)."""
+    levers = {lever: state.restore_point.get(lever) for lever in lever_set.levers}
+    if "min_flow" in lever_set.client_derived:
+        levers["min_flow"] = state.min_flow_current
+    return levers
+
+
+def build_event(
+    tenant_id: str, setup_id: str | None, flags: Flags, state, lever_set, storage_failed: bool = False,
+) -> dict:
     status = overall_status(flags, state, storage_failed)
     abo = _abo(flags, state)
     return {
@@ -163,10 +167,9 @@ def build_event(tenant_id: str, setup_id: str | None, flags: Flags, state, stora
         ),
         "boost": _boost(state),
         "letzte_serverantwort": state.last_ack_at,
-        "kurve": state.restore_point.get("curve"),
-        "parallelverschiebung": state.restore_point.get("room_setpoint"),
-        "mindestvorlauf": state.min_flow_current,
-        "heizgrenze": state.restore_point.get("heat_limit"),
+        "hebelsatz": lever_set.id,
+        "hebel": _levers(state, lever_set),
+        "gelernt": dict(state.learned) or None,
         "abo": abo,
         "abo_frist_ende": (
             entitlement.grace_end(state.abo_inactive_since).date().isoformat() if abo == ABO_INAKTIV else None
@@ -184,11 +187,12 @@ class StatusReporter:
     """Haelt die Laufzeit-Flags und sendet das Status-Event. Der uebrige Zustand kommt aus dem
     StateStore; Module aendern nur Flags bzw. BridgeState, gesendet wird zentral."""
 
-    def __init__(self, ha_api, tenant_id: str, setup_id: str | None, store) -> None:
+    def __init__(self, ha_api, tenant_id: str, setup_id: str | None, store, lever_set) -> None:
         self._ha_api = ha_api
         self._tenant_id = tenant_id
         self._setup_id = setup_id if isinstance(setup_id, str) and setup_id else None
         self._store = store
+        self._lever_set = lever_set
         self.flags = Flags()
         self._published: dict | None = None
 
@@ -198,7 +202,8 @@ class StatusReporter:
 
     def event(self) -> dict:
         return build_event(
-            self._tenant_id, self._setup_id, self.flags, self._store.state, self._store.storage_failed,
+            self._tenant_id, self._setup_id, self.flags, self._store.state, self._lever_set,
+            self._store.storage_failed,
         )
 
     def update(self, **changes) -> None:

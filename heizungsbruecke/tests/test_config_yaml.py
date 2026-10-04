@@ -73,7 +73,7 @@ def test_config_yaml_has_new_optional_kpi_entity_options():
         "entity_system_water_pressure", "entity_efficiency_ratio",
         "entity_energy_electrical_heating", "entity_energy_electrical_dhw",
         "entity_energy_primary_heating", "entity_energy_primary_dhw",
-        "entity_energy_thermal_heating", "entity_energy_thermal_dhw",
+        "entity_energy_thermal_heating", "entity_energy_thermal_dhw", "entity_energy_electrical_total",
     ):
         assert config["options"][key] == ""
         assert config["schema"][key] == "str?"
@@ -85,7 +85,7 @@ def test_every_optional_kpi_role_has_matching_config_option_and_schema():
     from heizungsbruecke.manifest import ALL_ROLES
 
     kpi_roles = ALL_ROLES[ALL_ROLES.index("flow_temperature"):]
-    assert len(kpi_roles) == 11
+    assert len(kpi_roles) == 12
     config = _load_config_yaml()
     for role in kpi_roles:
         key = f"entity_{role}"
@@ -146,7 +146,7 @@ def test_tp7_options_are_optional_and_have_no_default():
     schema = config["schema"]
 
     assert schema["abgemeldet"] == "bool?"
-    assert schema["notify_hints_off"] == ["list(raumfuehler|batterie|manueller_eingriff|quellwechsel|therme)?"]
+    assert schema["notify_hints_off"] == ["list(raumfuehler|batterie|manueller_eingriff|quellwechsel|therme|schreibbudget|schreibzaehler)?"]
     assert "abgemeldet" not in config["options"] and "notify_hints_off" not in config["options"]
     assert "abgemeldet" not in _REQUIRED_OPTIONS and "notify_hints_off" not in _REQUIRED_OPTIONS
 
@@ -175,3 +175,40 @@ def test_access_options_are_optional_and_secrets_are_masked():
     assert schema["tls_certificate"] == "str?" and schema["tls_private_key"] == "password?"
     for key in ("transport", "installation_token", "mqtt_username", "mqtt_password", "tls_certificate", "tls_private_key"):
         assert key not in addon_config["options"]
+
+
+def _schema() -> dict:
+    return _load_config_yaml()["schema"]
+
+
+def test_plan3c_options_are_in_the_schema():
+    schema = _schema()
+    assert schema["lever_set"] == "list(vaillant_vrc720|weishaupt_wwp|weishaupt_wwp_basis|viessmann_vicare)?"
+    assert schema["poll_interval_seconds"] == "int(10,3600)?"
+    for option in ("entity_level_current", "entity_mode_select", "entity_setpoint_comfort", "entity_setpoint_setback",
+                   "entity_energy_electrical_total", "entity_curve_current", "entity_heat_limit"):
+        assert schema[option] == "str?", option
+
+
+def test_lever_set_schema_matches_the_bindings():
+    from smartheat_core.binding import BINDINGS
+    values = _schema()["lever_set"].removeprefix("list(").removesuffix(")?").split("|")
+    assert set(values) == set(BINDINGS)
+
+
+def test_poll_interval_schema_matches_config_range():
+    from heizungsbruecke.config import POLL_INTERVAL_RANGE
+    assert _schema()["poll_interval_seconds"] == f"int({POLL_INTERVAL_RANGE[0]},{POLL_INTERVAL_RANGE[1]})?"
+
+
+def test_hint_categories_schema_matches_the_notifier():
+    from heizungsbruecke.notifier import HINT_CATEGORIES
+    assert _schema()["notify_hints_off"] == [f"list({'|'.join(HINT_CATEGORIES)})?"]
+
+
+def test_required_entity_options_per_lever_set_are_in_the_schema():
+    from heizungsbruecke.config import REQUIRED_ENTITY_OPTIONS
+    schema = _schema()
+    for lever_set, options in REQUIRED_ENTITY_OPTIONS.items():
+        for option in options:
+            assert option in schema, (lever_set, option)

@@ -9,6 +9,7 @@ ALL_ROLES = (
     "flow_temperature", "return_temperature", "operating_mode", "system_water_pressure",
     "efficiency_ratio", "energy_electrical_heating", "energy_electrical_dhw",
     "energy_primary_heating", "energy_primary_dhw", "energy_thermal_heating", "energy_thermal_dhw",
+    "energy_electrical_total",
 )
 
 # Pflicht-Entities der Bruecke (fuer alle Profile gleich). room_actual (und bei einer weather-Quelle

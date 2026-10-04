@@ -773,9 +773,11 @@ def test_status_event_carries_the_full_state(env):
 
     event = _last_event(env)
     assert (event["schema"], event["tenant_id"], event["status"], event["boost"], event["abo"]) == (
-        1, "test_tenant", "regelt", "keiner", "aktiv",
+        2, "test_tenant", "regelt", "keiner", "aktiv",
     )
-    assert (event["kurve"], event["parallelverschiebung"]) == (0.95, 23.0)
+    assert event["hebelsatz"] == "vaillant_vrc720"
+    assert event["hebel"] == {"curve": 0.95, "room_setpoint": 23.0, "heat_limit": 16.0, "min_flow": 20.5}
+    assert event["gelernt"] == {"curve": 1.0, "heat_limit": 16.0}
     assert event["letzte_serverantwort"] is not None
     assert event["hinweise"] == {
         "raumfuehler_ausgefallen": ["sensor.a"], "batterie_niedrig": ["sensor.b"], "manueller_eingriff": None,
@@ -971,6 +973,51 @@ def test_answer_without_a_valid_heat_limit_is_invalid_and_writes_nothing(env, ba
     assert _regulation_writes(env) == []
     assert "ungültige Serverantwort" in env.ha.pushes[-1]
     assert "heat_limit" in env.ha.pushes[-1]
+
+
+def test_learned_values_of_the_answer_are_stored(env):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+
+    _mqtt(env).answer_raw(_mqtt(env).snapshots[0]["seq"], learned={"curve": 1.1, "heat_limit": 15.4})
+    bridge.worker.run_pending()
+
+    assert bridge.store.state.learned == {"curve": 1.1, "heat_limit": 15.4}
+    assert load_backup(env.paths["BACKUP_PATH"])["learned"] == {"curve": 1.1, "heat_limit": 15.4}
+
+
+@pytest.mark.parametrize("learned", [None, "x", {}, {"curve": float("nan")}, {"curve": True}, {"foo": 1.0}])
+def test_invalid_learned_values_are_ignored_without_fault(env, learned):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+
+    _mqtt(env).answer_raw(_mqtt(env).snapshots[0]["seq"], learned=learned)
+    bridge.worker.run_pending()
+
+    assert bridge.store.state.learned == {}
+    assert _delivery(bridge).datenfehler is None
+    assert ("number.curve_current", 0.95) in _regulation_writes(env)
+
+
+def test_unstorable_learned_values_do_not_fail_the_answer(env, monkeypatch):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    real_update = bridge.store.update
+
+    def _update(**changes):
+        if "learned" in changes:
+            raise ticks.StorageError("Datentraeger kaputt")
+        return real_update(**changes)
+
+    monkeypatch.setattr(bridge.store, "update", _update)
+    _mqtt(env).answer_raw(_mqtt(env).snapshots[0]["seq"], learned={"curve": 1.1, "heat_limit": 15.4})
+    bridge.worker.run_pending()
+
+    assert _delivery(bridge).datenfehler is None
+    assert ("number.curve_current", 0.95) in _regulation_writes(env)
 
 
 def test_answer_with_heat_limit_writes_all_three_values(env):
@@ -2235,7 +2282,7 @@ def test_manual_override_travels_with_the_next_snapshot_and_is_cleared_after_the
 
     # Heizgrenze ohne Wiederherstellungspunkt: Live-Wert der Anlage (Rueckfallkette, Plan-Praezisierung 6).
     assert _backup(env)["manual_override_pending"]["levers"] == {"curve": 1.3, "room_setpoint": 24.5, "heat_limit": 16.0}
-    assert _last_event(env)["hinweise"]["manueller_eingriff"]["kurve"] == 1.3
+    assert _last_event(env)["hinweise"]["manueller_eingriff"]["hebel"]["curve"] == 1.3
     assert _regulation_writes(env) == [("number.curve_current", 0.9), ("number.shift_current", 22.0)]  # zurueckgesetzt
 
     _set_room_target(env, bridge, 20.5)

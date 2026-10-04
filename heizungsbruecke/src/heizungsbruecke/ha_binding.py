@@ -114,9 +114,10 @@ class HaPlantBinding:
         return None
 
 
-# Plan 3b, Weishaupt (weishaupt_modbus, Spec 1.2/5.4). Annahme bis zur Inventur: Optionstext der Betriebsart "Normal"
-# (Register 41103: Automatik, Komfort, Normal, Absenkbetrieb, Standby).
-WEISHAUPT_NORMAL_MODE = "Normal"
+# Plan 3c (Fix zu 3b-Praezisierung 6): weishaupt_modbus 1.0.20 nutzt als Select-Optionen die Uebersetzungsschluessel der
+# StatusItems (entities.py, MySelectEntity), nicht deren Texte; Register 41103 "Normal" = hz_operationmode_normal.
+# Bei der Inventur gegen die dann aktuelle Version pruefen (Spec 10: 2.0 aendert evtl. Entities).
+WEISHAUPT_NORMAL_MODE = "hz_operationmode_normal"
 # Hilfs-Sollwerte gelten als unveraendert innerhalb eines halben Geraeteschritts (0,5 K).
 AUX_SETPOINT_TOLERANCE = 0.25
 
@@ -124,7 +125,7 @@ AUX_SETPOINT_TOLERANCE = 0.25
 class WeishauptHaBinding(HaPlantBinding):
     """Weishaupt-Waermepumpe ueber weishaupt_modbus: Hebel sind number-Entities (Heizkennlinie, Raumsolltemperatur
     Normal, Sommer-Winter-Umschaltung; Rollen curve_current, shift_current, heat_limit -- "shift_current" ist der
-    historische Rollenname). Vorbereitung: Betriebsart-Select (Rolle mode_select) auf "Normal". Das Geraet erzwingt
+    historische Rollenname). Vorbereitung: Betriebsart-Select (Rolle mode_select) auf WEISHAUPT_NORMAL_MODE. Das Geraet erzwingt
     Absenk <= Normal <= Komfort: vor dem Anheben des Normal-Solls ueber das Komfort-Soll wird zuerst Komfort, vor dem
     Senken unter das Absenk-Soll zuerst Absenk auf den neuen Wert gesetzt (Rollen setpoint_comfort, setpoint_setback).
     Scheitert der zweite Schritt, steht die Anlage weiter in einem gueltigen Zustand (nur Komfort bzw. Absenk
@@ -161,7 +162,7 @@ class WeishauptHaBinding(HaPlantBinding):
         return self._ha_api.get_raw_state(self._manifest.entity_ids["mode_select"]) == WEISHAUPT_NORMAL_MODE
 
     def prepare(self) -> bool:
-        """Betriebsart auf "Normal"; True, wenn umgestellt wurde. Wirft bei Fehlern."""
+        """Betriebsart auf WEISHAUPT_NORMAL_MODE (Uebersetzungsschluessel); True, wenn umgestellt wurde. Wirft bei Fehlern."""
         if not self.needs_preparation() or self.is_prepared():
             return False
         entity_id = self._manifest.entity_ids["mode_select"]

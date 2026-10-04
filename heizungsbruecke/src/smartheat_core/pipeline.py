@@ -52,7 +52,7 @@ _POINT_CURRENT = "current"
 _POINT_SAVED = "saved"
 
 
-# Plan 3b: Meldeschluessel der nicht kritischen Hinweise (ohne Hinweis-Kategorie: abschaltbar erst mit Plan 3c).
+# Plan 3b: Meldeschluessel der nicht kritischen Hinweise (abschaltbar, Plan 3c).
 BUDGET_KEY = "schreibbudget"
 LIFETIME_KEY = "schreibzaehler"
 LIFETIME_STEP = 10000

@@ -3,6 +3,26 @@
 Wird im Update-Dialog des Supervisors angezeigt. Pro Version ein Abschnitt `## X.Y.Z`; der
 Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Release.
 
+## 0.33.0
+
+- **Hersteller-Abstraktion (Plan 3c):** Das Add-on-Schema kennt jetzt die Optionen der Weishaupt- und Viessmann-Hebelsätze
+  (`lever_set`, `poll_interval_seconds`, `entity_level_current`, `entity_mode_select`, `entity_setpoint_comfort`,
+  `entity_setpoint_setback`, `entity_energy_electrical_total`); `entity_curve_current` und `entity_heat_limit` sind
+  optional (Weishaupt-Basis hat keine Steigung, Viessmann keine Heizgrenze), die Pflichtprüfung je Hebelsatz bleibt.
+- **Fix Weishaupt:** Die Betriebsart „Normal“ wird als Übersetzungsschlüssel `hz_operationmode_normal` gelesen und
+  geschrieben (weishaupt_modbus 1.0.20 liefert für Select-Entities die Schlüssel statt der Texte); vorher hätte das
+  Add-on die Betriebsart nie umgestellt.
+- **Statusereignis Schema 2:** `hebelsatz` (ID), `hebel` (alle Hebel des Hebelsatzes samt abgeleitetem `min_flow`) und
+  `gelernt` (`curve`, `heat_limit` aus der letzten Serverantwort, sonst `null`) ersetzen `kurve`, `parallelverschiebung`,
+  `mindestvorlauf` und `heizgrenze`; der Hinweis `manueller_eingriff` trägt `{hebel, erkannt}`.
+- Gelernte Werte der letzten Serverantwort stehen in `backup.json` (`learned`, wie der Wiederherstellungspunkt).
+- Hinweis-Kategorien `schreibbudget` und `schreibzaehler` lassen sich über `notify_hints_off` abschalten.
+- Neuer Energiekanal `electrical_total` (Strom gesamt).
+- **Integration ab 0.12.0 nötig** (Statusereignis Schema 2): Add-on und Integration innerhalb von 15 Minuten
+  nacheinander aktualisieren, sonst startet der Wächter der älteren Integration das Add-on neu. Danach in der Integration
+  „Neu konfigurieren“ (ein Eintrag ohne Hebelsatz gilt dort als unvollständig).
+- Für `client1` (Vaillant) ändern sich Werte, Boost und Meldungen nicht; nur das Statusereignis hat neue Felder.
+
 ## 0.32.0
 
 - **Neu einrichten nötig:** Eine Konfiguration von vor dieser Version meldet „Konfiguration veraltet“ – die

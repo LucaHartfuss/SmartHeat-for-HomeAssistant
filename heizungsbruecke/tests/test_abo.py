@@ -13,6 +13,7 @@ from heizungsbruecke.ha_binding import HaPlantBinding
 from heizungsbruecke.manifest import ChannelManifest
 from heizungsbruecke.notifier import Notifier
 from heizungsbruecke.status import StatusReporter
+from smartheat_core.levers import LEVER_SETS
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import LocalSafety
 
@@ -40,7 +41,7 @@ def _runtime(store, entity_ids=BOTH_ROLES, notify_services=("notify.handy",), cl
         manifest=manifest, ha_api=ha_api, options=options, store=store, mqtt_client=MagicMock(),
         override=LeverPipeline(store, HaPlantBinding(ha_api, manifest), SAFETY),
         notifier=Notifier(store, ha_api, list(notify_services)),
-        status=StatusReporter(ha_api, options["tenant_id"], None, store),
+        status=StatusReporter(ha_api, options["tenant_id"], None, store, LEVER_SETS["vaillant_vrc720"]),
         clock=clock or FakeClock(), auth_rejected_queried_at=None, auth_rejected_last_status=None,
         connection_failing_queried_at=None,
     )

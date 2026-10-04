@@ -23,6 +23,24 @@ def _is_finite_number(value) -> TypeGuard[float]:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
+_LEARNED_KEYS = frozenset({"curve", "heat_limit"})
+
+
+def _store_learned(rt: Runtime, learned) -> None:
+    """Lernwerte der Antwort fuer das Statusereignis (Plan 3c). Nur Anzeige: ungueltige Werte werden geloggt und
+    ignoriert, ein Speicherfehler bricht die Antwort nicht ab (der Regelpfad ist schon durch)."""
+    if not (
+        isinstance(learned, dict) and learned and set(learned) <= _LEARNED_KEYS
+        and all(_is_finite_number(value) for value in learned.values())
+    ):
+        logger.info("Serverantwort ohne gueltige Lernwerte (%r), Anzeige unveraendert", learned)
+        return
+    try:
+        rt.store.update(learned=dict(learned))
+    except StorageError as error:
+        logger.warning("Lernwerte nicht gespeichert: %s", error)
+
+
 def start_tick(rt: Runtime, trigger: str) -> None:
     deliver(rt, delivery.TickDue(seq=str(uuid.uuid4()), trigger=trigger))
 
@@ -283,6 +301,7 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
             )
             deliver(rt, delivery.AnsweredLocalFault(seq=seq, roles=(delivery.ROLE_DATENTRAEGER,)))
             return
+        _store_learned(rt, payload.get("learned"))
         deliver(rt, delivery.Ack(seq=seq, status=status))
     elif status == delivery.STATUS_REJECTED:
         reason = payload.get("reason")

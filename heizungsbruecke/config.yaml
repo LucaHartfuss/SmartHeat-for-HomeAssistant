@@ -1,5 +1,5 @@
 name: "Heizungsbruecke"
-version: "0.32.0"
+version: "0.33.0"
 slug: "heizungsbruecke"
 description: "Generische Bruecken-Logik: liest konfigurierte HA-Entities, meldet sie an den SmartHeat-Server, schreibt Sollwerte zurueck, mit lokalem Boost-Failsafe und Sicherheits-Clamps."
 url: "https://github.com/LucaHartfuss/SmartHeat-for-HomeAssistant"
@@ -31,6 +31,7 @@ options:
   entity_energy_primary_dhw: ""
   entity_energy_thermal_heating: ""
   entity_energy_thermal_dhw: ""
+  entity_energy_electrical_total: ""
 # local_check_interval_seconds/telemetry_interval_seconds must stay optional (`?`): the
 # SmartHeat integration never sends them (it sends tenant_id, profile_params, the access
 # options and the entity_* mappings). Supervisor validates a set-options call against the
@@ -56,6 +57,10 @@ options:
 # AWS-IoT 5.1, Plan AWS-2). All optional so that an update with an old configuration starts and
 # reports 'Konfiguration veraltet' instead of Supervisor refusing the start silently. Secrets
 # have the type password.
+# lever_set, poll_interval_seconds and the entity options of the other lever sets (level, mode_select,
+# setpoint_comfort/_setback) are written by the integration (Plan 3c). entity_curve_current and entity_heat_limit are
+# optional here because the Weishaupt fallback has no curve and Viessmann has no heat limit; the add-on checks the
+# required entities per lever set at startup (config.REQUIRED_ENTITY_OPTIONS) and reports a configuration error.
 schema:
   tenant_id: str
   transport: str?
@@ -65,9 +70,9 @@ schema:
   tls_certificate: str?
   tls_private_key: password?
   entity_room_target: str
-  entity_curve_current: str
+  entity_curve_current: str?
   entity_outdoor_temp: str
-  entity_heat_limit: str
+  entity_heat_limit: str?
   local_check_interval_seconds: int(1,3600)?
   telemetry_interval_seconds: int(10,600)?
   entity_flow_temperature: str?
@@ -81,9 +86,16 @@ schema:
   entity_energy_primary_dhw: str?
   entity_energy_thermal_heating: str?
   entity_energy_thermal_dhw: str?
+  entity_energy_electrical_total: str?
   entity_shift_current: str?
   entity_min_flow: str?
   entity_flow_setpoint: str?
+  lever_set: list(vaillant_vrc720|weishaupt_wwp|weishaupt_wwp_basis|viessmann_vicare)?
+  poll_interval_seconds: int(10,3600)?
+  entity_level_current: str?
+  entity_mode_select: str?
+  entity_setpoint_comfort: str?
+  entity_setpoint_setback: str?
   verteilsystem: list(Heizkoerper|Fussbodenheizung)?
   daily_trigger_time: str?
   accounts_api_base_url: url?
@@ -96,4 +108,4 @@ schema:
   setup_id: str?
   abgemeldet: bool?
   notify_hints_off:
-    - list(raumfuehler|batterie|manueller_eingriff|quellwechsel|therme)?
+    - list(raumfuehler|batterie|manueller_eingriff|quellwechsel|therme|schreibbudget|schreibzaehler)?

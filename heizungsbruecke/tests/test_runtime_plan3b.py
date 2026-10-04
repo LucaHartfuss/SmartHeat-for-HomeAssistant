@@ -24,7 +24,7 @@ WEISHAUPT = {
     "entity_setpoint_comfort": "number.komfort", "entity_setpoint_setback": "number.absenk", "entity_min_flow": "",
 }
 WEISHAUPT_STATES = {
-    "number.hk": 0.75, "number.normal": 20.0, "number.swu": 18.0, "select.betriebsart": "Automatik",
+    "number.hk": 0.75, "number.normal": 20.0, "number.swu": 18.0, "select.betriebsart": "hz_operationmode_automatic",
     "number.komfort": 22.0, "number.absenk": 18.0,
 }
 VIESSMANN = {
@@ -51,9 +51,9 @@ def test_weishaupt_start_remembers_originals_prepares_and_reports_its_levers(env
     env.ha.states.update(WEISHAUPT_STATES)
     bridge = _start(env, **WEISHAUPT)
 
-    assert env.ha.writes == [("select.betriebsart", "Normal")]  # Normal-Soll 20 bleibt (Register, kein Startwert)
+    assert env.ha.writes == [("select.betriebsart", "hz_operationmode_normal")]  # Normal-Soll 20 bleibt (Register, kein Startwert)
     backup = _backup(env)
-    assert backup["aux_originals"] == {"mode_select": "Automatik", "setpoint_comfort": 22.0, "setpoint_setback": 18.0}
+    assert backup["aux_originals"] == {"mode_select": "hz_operationmode_automatic", "setpoint_comfort": 22.0, "setpoint_setback": 18.0}
     assert backup["originals"] == {"curve": 0.75, "room_setpoint": 20.0, "heat_limit": 18.0}
     snapshot = _first_snapshot(env, bridge)
     assert snapshot["levers"] == {"curve": 0.75, "room_setpoint": 20.0, "heat_limit": 18.0}
@@ -111,7 +111,7 @@ def test_weishaupt_sign_off_restores_levers_and_operating_mode(env):
     assert signed_off.reason == "abgemeldet"
     assert env.ha.writes == [
         ("number.hk", 0.75), ("number.normal", 20.0), ("number.swu", 18.0), ("number.komfort", 22.0),
-        ("select.betriebsart", "Automatik"),
+        ("select.betriebsart", "hz_operationmode_automatic"),
     ]
 
 
