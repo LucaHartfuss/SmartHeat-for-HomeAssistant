@@ -168,7 +168,7 @@ def test_zone_preparation_at_the_daily_limit_is_a_budget_stop_not_a_failed_attem
 
     monkeypatch.setattr(LeverPipeline, "prepare_start", _prepare_start)
     env.ha.states.update(WEISHAUPT_STATES)
-    with caplog.at_level(logging.INFO, logger="heizungsbruecke.__main__"):
+    with caplog.at_level(logging.INFO, logger="smartheat_runtime.app"):
         bridge = _start(env, **WEISHAUPT)
         _trigger(env, bridge, "sensor.room_actual")
 

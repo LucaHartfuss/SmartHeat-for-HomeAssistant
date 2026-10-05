@@ -42,7 +42,7 @@ MAX_TELEMETRY_INTERVAL_SECONDS = 600
 
 class ConfigError(ValueError):
     """Konfiguriert, aber ungueltig: Ruhezustand `konfigurationsfehler` statt Regelung (kein
-    Exit, Neupruefung nach __main__.CONFIG_RECHECK_SECONDS). Die Meldung nennt die fehlende oder
+    Exit, Neupruefung nach app.CONFIG_RECHECK_SECONDS). Die Meldung nennt die fehlende oder
     ungueltige Option."""
 
 

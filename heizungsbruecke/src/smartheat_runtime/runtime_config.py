@@ -3,8 +3,25 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from smartheat_core.levers import LeverSet
 from smartheat_core.safety import LocalSafety
 from smartheat_transport.descriptor import Credential, Descriptor
+
+
+@dataclass(frozen=True)
+class BootInfo:
+    """Was vor der Konfigurationspruefung feststeht (Plan SHG G1, Praezisierung 3): Status und Meldungen arbeiten schon,
+    bevor die Konfiguration geprueft ist. Der Host liest es tolerant und wirft nie."""
+    configured: bool
+    signed_off: bool
+    tenant_id: str | None
+    setup_id: str | None
+    lever_set: LeverSet
+    client_version: str
+    notify_hints_off: tuple[str, ...]
+    local_check_interval: float
+    backup_path: Path
+    failsafe_path: Path
 
 
 @dataclass(frozen=True)

@@ -23,7 +23,7 @@ class HaTriggerClient:
     (see docs/superpowers/specs/2026-09-21-heizungsbruecke-eventgetriebene-trigger-design.md).
     This is NOT a documented/stable public API: if `subscribe_trigger` ever fails or
     changes shape on a future HA Core version, `connected` simply stays False forever
-    and the caller's watchdog-loop fallback (see __main__.py) covers the gap -- this
+    and the caller's watchdog-loop fallback (see smartheat_runtime/app.py) covers the gap -- this
     class must never raise out of its background thread or otherwise take down the
     add-on process.
     """

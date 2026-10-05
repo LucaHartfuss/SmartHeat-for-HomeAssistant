@@ -19,7 +19,7 @@ from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.enforce import MAX_WRITES_PER_DAY, RETRY_SECONDS
 from smartheat_core.pipeline import LeverPipeline
-from smartheat_runtime import abo, backup_store, datentraeger, entitlement, ticks
+from smartheat_runtime import abo, app, backup_store, datentraeger, entitlement, ticks
 from smartheat_runtime.backup_store import load_backup, save_backup
 from smartheat_runtime.delivery import DataFault, DeliveryState
 from smartheat_runtime.runtime import Runtime
@@ -455,7 +455,7 @@ def test_failing_zone_preparation_is_retried_at_most_every_30_min_and_6_times_a_
     attempts = _failing_zone_preparation(env, monkeypatch)
     bridge = _start(env)
 
-    with caplog.at_level(logging.WARNING, logger="heizungsbruecke.__main__"):
+    with caplog.at_level(logging.WARNING, logger="smartheat_runtime.app"):
         _local_checks(env, bridge, hours=12)
 
     assert len(attempts) == MAX_WRITES_PER_DAY  # Start + 5 Wiederholungen
@@ -1388,7 +1388,7 @@ def test_inactive_after_grace_idles_as_abo_beendet_without_writes(env, monkeypat
 
     bridge = _start_bridge(env)
 
-    assert isinstance(bridge, main_module.IdleBridge) and bridge.reason == "abo_beendet"
+    assert isinstance(bridge, app.IdleBridge) and bridge.reason == "abo_beendet"
     assert env.mqtt_clients == [] and env.trigger_clients == []
     assert env.ha.writes == [] and env.ha.pushes == []
     assert _status_states(env) == ["startet", "abo_beendet"]
@@ -2145,7 +2145,7 @@ def test_sign_off_during_emergency_boost_restores_clears_and_idles(env):
 
     bridge = _start_bridge(env, abgemeldet=True)
 
-    assert isinstance(bridge, main_module.IdleBridge) and bridge.reason == "abgemeldet"
+    assert isinstance(bridge, app.IdleBridge) and bridge.reason == "abgemeldet"
     assert env.ha.writes == [("number.curve_current", 0.9), ("number.shift_current", 22.0)]
     assert _backup(env)["emergency_boost_active"] is False
     assert {"smartheat_notbetrieb", "smartheat_batterie_sensor_x"} <= set(env.ha.dismissed)
@@ -2173,7 +2173,7 @@ def test_sign_off_retries_a_failed_restore_with_reason(env):
     bridge = _start_bridge(env, abgemeldet=True)
 
     assert _last_event(env)["status"] == "abgemeldet"
-    assert _last_event(env)["grund"] == main_module.SIGN_OFF_RESTORE_FAILED.format(seconds=300)
+    assert _last_event(env)["grund"] == app.SIGN_OFF_RESTORE_FAILED.format(seconds=300)
 
     env.ha.write_error = None
     _advance(env, bridge, 300)
@@ -2189,7 +2189,7 @@ def test_sign_off_with_invalid_configuration_does_not_write(env):
 
     assert bridge.reason == "abgemeldet"
     assert env.ha.writes == []
-    assert _last_event(env)["grund"] == main_module.SIGN_OFF_INVALID_CONFIG
+    assert _last_event(env)["grund"] == app.SIGN_OFF_INVALID_CONFIG
 
 
 def test_sign_off_without_mqtt_credentials_still_restores(env):
@@ -2209,7 +2209,7 @@ def test_sign_off_failed_restore_notifies_with_the_restore_values(env):
 
     _start_bridge(env, abgemeldet=True)
 
-    message = main_module.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Kurve 0,9, Parallelverschiebung 22")
+    message = app.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Kurve 0,9, Parallelverschiebung 22")
     assert env.ha.pushes == [message]
     assert ("smartheat_wiederherstellung", message) in env.ha.persistent
     assert "smartheat_notbetrieb" in env.ha.dismissed
@@ -2217,7 +2217,7 @@ def test_sign_off_failed_restore_notifies_with_the_restore_values(env):
 
 
 def test_sign_off_failed_restore_after_a_restart_renews_the_notification_without_push(env):
-    message = main_module.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Kurve 0,9, Parallelverschiebung 22")
+    message = app.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Kurve 0,9, Parallelverschiebung 22")
     _quiet_backup(
         env, boost_active=True,
         notify_states={"wiederherstellung": "fehlgeschlagen"}, notify_messages={"wiederherstellung": message},
@@ -2249,7 +2249,7 @@ def test_sign_off_with_invalid_configuration_during_a_boost_asks_for_manual_valu
 
     _start_bridge(env, abgemeldet=True, verteilsystem="Unbekannt")
 
-    message = main_module.SIGN_OFF_NOT_RESTORED_MESSAGE.format(werte="Kurve 0,9, Parallelverschiebung 22")
+    message = app.SIGN_OFF_NOT_RESTORED_MESSAGE.format(werte="Kurve 0,9, Parallelverschiebung 22")
     assert env.ha.pushes == [message]
     assert ("smartheat_wiederherstellung", message) in env.ha.persistent
 

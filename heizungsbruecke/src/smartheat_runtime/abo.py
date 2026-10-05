@@ -155,7 +155,7 @@ def _report_rejection(rt: Runtime, status: str) -> None:
 def handle_connection_failing(rt: Runtime) -> None:
     """Spec AWS-IoT 5.1: Bei IoT Core endet ein gesperrtes Zertifikat vermutlich im TLS-Aufbau statt mit
     CONNACK 134/135 (AN-1). Fehlt die Verbindung lange und scheitern die Versuche wiederholt
-    (__main__._on_connection_check), fragt das Add-on deshalb den Abo-Status, gedrosselt wie nach einer
+    (app._on_connection_check), fragt das Add-on deshalb den Abo-Status, gedrosselt wie nach einer
     abgelehnten Anmeldung. Nur ein eindeutiges Ergebnis wirkt: inactive -> Abo-inaktiv-Modus,
     rejected -> wie eine abgelehnte Anmeldung; active und unknown aendern nichts (normaler Ausfall, den
     Notbetrieb und Pruef-Tick abdecken)."""
@@ -204,7 +204,7 @@ def check_grace_end(rt: Runtime) -> None:
 
 def _enter_idle(rt: Runtime) -> None:
     """Ruhezustand im Betrieb (Spec TP7 3.2): MQTT und Trigger stoppen; ab jetzt laufen alle
-    Handler ausser dem Lebenszeichen leer (__main__._unless_idle). Kein Exit."""
+    Handler ausser dem Lebenszeichen leer (app._unless_idle). Kein Exit."""
     rt.idle = True
     for client in (rt.mqtt_client, rt.trigger_client):
         if client is None:

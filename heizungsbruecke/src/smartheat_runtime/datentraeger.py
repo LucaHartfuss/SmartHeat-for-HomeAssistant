@@ -1,6 +1,6 @@
 """Datentraeger nicht beschreibbar (TP12b, AU-005): Meldung an den Kunden. Der Zustand selbst steht
 in StateStore.storage_failed (nur im Speicher); gemeldet wird nach jedem Worker-Ereignis
-(__main__._after_each), entwarnt beim ersten erfolgreichen Schreiben (StateStore.flush im Takt
+(app._after_each), entwarnt beim ersten erfolgreichen Schreiben (StateStore.flush im Takt
 EV_HEALTH). Die Zustellmaschine meldet einen Datentraeger-Datenfehler nicht selbst (delivery.py),
 sonst kaeme dieselbe Stoerung doppelt."""
 from smartheat_runtime.notifier import STATE_OK
