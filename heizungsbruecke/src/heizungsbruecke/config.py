@@ -419,7 +419,7 @@ def load_options_safe(path: Path) -> dict:
 
 
 def runtime_config(options: dict) -> RuntimeConfig:
-    """Hostneutrale Laufzeit-Konfiguration aus den wirksamen, gepruefte Optionen (nach resolve_effective_options und
+    """Hostneutrale Laufzeit-Konfiguration aus den wirksamen, geprueften Optionen (nach resolve_effective_options und
     validate; resolve_transport prueft hier noch einmal)."""
     descriptor, credential = resolve_transport(options)
     return RuntimeConfig(

@@ -125,6 +125,36 @@ def test_failing_persistent_notification_is_only_logged(make_store, ha_api, capl
     assert "abo" in caplog.text
 
 
+class _RaisingPushSink:
+    """NotifySink-Fake, dessen Push scheitert (ein Host-Sink ausser HA darf den Notifier nicht abbrechen)."""
+
+    def __init__(self) -> None:
+        self.shown: list[tuple[str, str]] = []
+
+    def push(self, key: str, message: str) -> None:
+        raise RuntimeError("Push kaputt")
+
+    def show(self, key: str, message: str) -> None:
+        self.shown.append((key, message))
+
+    def withdraw(self, key: str) -> None:
+        pass
+
+
+def test_failing_sink_push_does_not_stop_the_persistent_notification_or_the_state(make_store, caplog):
+    store = make_store()
+    sink = _RaisingPushSink()
+    notifier = Notifier(store, sink)
+
+    with caplog.at_level(logging.WARNING):
+        assert notifier.notify("abo", "inaktiv", "Abo inaktiv", critical=True) is True
+
+    assert sink.shown == [("abo", "Abo inaktiv")]
+    assert store.state.notify_states == {"abo": "inaktiv"}
+    assert store.state.notify_messages == {"abo": "Abo inaktiv"}
+    assert "Push-Benachrichtigung 'abo' konnte nicht gesendet werden" in caplog.text
+
+
 def test_state_write_failure_still_notifies(make_store, ha_api, monkeypatch):
     store = make_store()
     notifier = _notifier(store, ha_api)

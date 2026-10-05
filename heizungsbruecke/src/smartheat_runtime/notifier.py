@@ -77,7 +77,10 @@ class Notifier:
             logger.warning(message)
         muted = (not critical and category(key) in self._hints_off) or (silent_ok and state == STATE_OK)
         if not muted:
-            self._sink.push(key, message)
+            try:
+                self._sink.push(key, message)
+            except Exception:
+                logger.warning("Push-Benachrichtigung '%s' konnte nicht gesendet werden", key)
         if critical:
             self._update_persistent(key, state, message)
         return True

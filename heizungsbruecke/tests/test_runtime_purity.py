@@ -26,14 +26,14 @@ def _imported_modules(path: Path) -> list[str]:
 
 def test_runtime_imports_only_stdlib_own_packages_and_requests_for_the_accounts_api():
     offenders = []
-    for path in sorted(RUNTIME.glob("*.py")):
+    for path in sorted(RUNTIME.rglob("*.py")):
         for module in _imported_modules(path):
             top = module.split(".")[0]
             if top in OWN_PACKAGES or top in sys.stdlib_module_names:
                 continue
             if path.name in THIRD_PARTY_ALLOWED_IN.get(top, set()):
                 continue
-            offenders.append(f"{path.name}: {module}")
+            offenders.append(f"{path.relative_to(RUNTIME)}: {module}")
     assert offenders == []
     assert (RUNTIME / "__init__.py").exists()
 

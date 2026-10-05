@@ -11,8 +11,8 @@ HA-Add-on-Repository mit zwei Add-ons: `heizungsbruecke` (Client-seitige Bridge-
   (Durchsetzen statt Melden), `derived.py` (Mindestvorlauf), `boost.py`/`emergency_boost.py`, `write_budget.py`,
   `clamping.py`, `energy.py`, `wallclock.py` (prozessweite Wanduhr, `now()`/`today()`).
 - `heizungsbruecke/src/smartheat_runtime/` — **hostneutraler Betrieb** (SHG G1; nur Standardbibliothek,
-  `smartheat_core`, `smartheat_transport`, `requests` nur in `entitlement.py`; nie `heizungsbruecke`, `paho`,
-  `websocket`; keine Tenant-IDs; Grenzen geprüft von `tests/test_runtime_purity.py`): `app.py` (`start(host, clock)`,
+  `smartheat_core`, `smartheat_transport`, `requests` nur in `entitlement.py`; nie `heizungsbruecke`, `websocket`, `paho`
+  nur über `smartheat_transport.mqtt_client`; keine Tenant-IDs; Grenzen geprüft von `tests/test_runtime_purity.py`): `app.py` (`start(host, clock)`,
   Handler, Ruhezustand, Abmelden, `StartFailure`/`_fail_start`), `ports.py` (Schnittstellen zum Host),
   `runtime_config.py` (`BootInfo`/`RuntimeConfig`), `runtime.py`/`worker.py` (Ereignisse nacheinander im
   Hauptthread), `delivery.py`/`ticks.py`/`snapshot.py` (Zustellung, Notbetrieb, Datenfehler), `telemetry.py`,
@@ -64,7 +64,7 @@ verfolgt. Release-Ablauf, CI-Jobs, Token: `../docs/ci-cd-runbook.md`.
 
   Danach `scripts/check.sh --only docker --full` (u. a. `tests/test_heizungsbruecke_reproducible.sh`); den Drift-Check gegen `pyproject.toml` übernimmt `scripts/ci/pin_check.py`.
 - Startfehler (`smartheat_runtime/app.py::StartFailure`/`_fail_start`, HA-Teil `heizungsbruecke/host.py::StartupError`) melden über einen stabilen `notifier`-Schlüssel `fehler:<key>` (z. B. `hilfs_entities`, `entity_fehlt:<sortierte IDs>`) — der ausführliche Grund steht nur im Feld `grund` des Status-Events, in der Meldung und im Log, nicht in der Meldeidentität, sonst würde ein Neustart mit demselben Fehler jedes Mal erneut melden. Ein im Fehlertext zitiertes Geheimnis (`config.SECRET_OPTIONS`: `mqtt_password`, `tls_private_key`, `installation_token`) wird überall (Text, `grund`, Meldung, Retry-Log) durch `***` ersetzt (`host._without_credentials`).
-- Golden-Master `heizungsbruecke/tests/test_golden_master.py` (Aufzeichnung `tests/golden/addon_scenario.json`) sichert, dass das Add-on nach außen unverändert handelt (HA-Schreibaufrufe, Meldungen, Ereignisse, MQTT, Dateien im Datenverzeichnis). Die Aufzeichnung wird nie neu erzeugt, ohne dass ein Plan es verlangt: ändert sich der Golden-Master, ist der Code falsch, nicht die Datei.
+- Golden-Master `heizungsbruecke/tests/test_golden_master.py` (Aufzeichnung `tests/golden/addon_scenario.json`) sichert zusammen mit den unveränderten Unit-Tests, dass das Add-on nach außen unverändert handelt (HA-Schreibaufrufe, Meldungen, Ereignisse, MQTT, Dateien im Datenverzeichnis). Die Aufzeichnung wird nie neu erzeugt, ohne dass ein Plan es verlangt: ändert sich der Golden-Master, ist der Code falsch, nicht die Datei.
 - Startbereitschaft: HA gilt erst als erreichbar, wenn `GET /api/config` `state == "RUNNING"` meldet (`ha_api.is_reachable`); vorher wartet der Start unbegrenzt, das ~4-min-Budget für fehlende Entities/Hilfs-Entities zählt nur bei laufendem HA (Cloud-Integrationen wie `mypyllant` laden erst nach dem HTTP-Server).
 - Der Status `regelt` gilt ab dem ersten MQTT-Connect (`EV_MQTT_CONNECTED`); im Abo-inaktiv-Modus direkt nach dem Hochfahren. Endzustände sind ein Ruhezustand, weil der Supervisor-Watchdog auch einen Exit 0 neu startet.
 - Kein Last Will und nichts unter `smartheat/<tenant>/status/` (B4): der Server erwartet dort nichts mehr. Ein Connect mit einem von der ACL verbotenen Will-Topic nimmt Mosquitto 2 (verifiziert 2.0.11/2.1.2) trotzdem an, nur ein direktes Publish dorthin lehnt sie ab (`tests/test_mosquitto_will_acl.sh`) — kein Verbindungsschutz, also kein Grund, `refresh-acl` auf ältere Add-ons zu warten.
