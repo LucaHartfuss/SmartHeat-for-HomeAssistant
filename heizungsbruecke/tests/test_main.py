@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 from conftest import FakeClock
-from fakes import ACCESS_OPTIONS
+from fakes import ACCESS_OPTIONS, runtime_config
 
 from heizungsbruecke import __main__
 from heizungsbruecke.__main__ import (
@@ -572,8 +572,8 @@ def test_on_telemetry_hands_the_waerme_callback_to_the_tick(make_store, monkeypa
     from smartheat_core.binding import VAILLANT_MYPYLLANT
 
     rt = SimpleNamespace(
-        worker=MagicMock(), options={}, store=make_store(), mqtt_client=MagicMock(), manifest=MagicMock(),
-        ha_api=MagicMock(), notifier=MagicMock(), status=MagicMock(),
+        worker=MagicMock(), config=runtime_config(), store=make_store(), mqtt_client=MagicMock(),
+        manifest=MagicMock(), signals=MagicMock(), notifier=MagicMock(), status=MagicMock(),
         override=SimpleNamespace(binding=SimpleNamespace(description=VAILLANT_MYPYLLANT)),
     )
     rt.mqtt_client.is_connected.return_value = True
@@ -630,7 +630,7 @@ def test_prime_heat_limit_capture_failure_does_not_abort_startup(monkeypatch, ca
 ])
 def test_connection_check_queries_the_status_after_long_repeated_failures(failures, down_seconds, expect_query, monkeypatch):
     rt = SimpleNamespace(
-        worker=MagicMock(), options={}, clock=FakeClock(), mqtt_down_since=None,
+        worker=MagicMock(), config=runtime_config(), clock=FakeClock(), mqtt_down_since=None,
         mqtt_client=MagicMock(), store=SimpleNamespace(state=SimpleNamespace(
             abo_inactive_since=None, delivery=SimpleNamespace(pending="offen"))),
     )
@@ -659,7 +659,7 @@ def test_mqtt_connected_resets_the_connection_failing_throttle():
 def test_connection_check_starts_no_probe_tick_when_the_query_found_the_abo_inactive(monkeypatch):
     state = SimpleNamespace(abo_inactive_since=None, delivery=SimpleNamespace(pending=None))
     rt = SimpleNamespace(
-        worker=MagicMock(), options={}, clock=FakeClock(), mqtt_down_since=None,
+        worker=MagicMock(), config=runtime_config(), clock=FakeClock(), mqtt_down_since=None,
         mqtt_client=MagicMock(), store=SimpleNamespace(state=state),
     )
     rt.mqtt_client.is_connected.return_value = False
@@ -702,12 +702,12 @@ def test_connection_check_still_starts_the_probe_tick_after_an_unclear_or_active
     """Regression: ein normaler Ausfall (Abo aktiv oder Abfrage unklar) darf den Notbetrieb nicht verhindern."""
     state = SimpleNamespace(abo_inactive_since=None, delivery=SimpleNamespace(pending=None))
     rt = SimpleNamespace(
-        worker=MagicMock(), options={}, clock=FakeClock(), mqtt_down_since=None, connection_failing_queried_at=None,
+        worker=MagicMock(), config=runtime_config(), clock=FakeClock(), mqtt_down_since=None, connection_failing_queried_at=None,
         mqtt_client=MagicMock(), store=SimpleNamespace(state=state), ha_api=MagicMock(),
     )
     rt.mqtt_client.is_connected.return_value = False
     rt.mqtt_client.connect_failures = 3
-    monkeypatch.setattr(__main__.abo.entitlement, "query_from_options", lambda options: status)
+    monkeypatch.setattr(__main__.abo.entitlement, "query", lambda config: status)
     probes = []
     monkeypatch.setattr(__main__.ticks, "start_probe_tick", lambda *args: probes.append(args))
     __main__._on_connection_check(rt, None)

@@ -3,6 +3,7 @@ from datetime import date
 from unittest.mock import MagicMock
 
 import pytest
+from fakes import runtime_config
 
 from heizungsbruecke.ha_binding import HaPlantBinding
 from heizungsbruecke.manifest import ChannelManifest
@@ -103,7 +104,7 @@ def _rt(make_store, clock, ha, uptime=SETTLE + 1, store=None, manifest=MANIFEST,
     ha.clock = clock
     clock.advance(uptime)
     return Runtime(
-        manifest=manifest, ha_api=ha, options={}, worker=MagicMock(), store=store,
+        manifest=manifest, signals=ha, config=runtime_config(), worker=MagicMock(), store=store,
         override=override, notifier=notifier, clock=clock,
     )
 
@@ -123,7 +124,7 @@ def _rounds(rt, n=enforce.DETECTION_ROUNDS):
 
 
 def _curve_writes(rt):
-    return [w for w in rt.ha_api.writes if w[0] == "number.curve"]
+    return [w for w in rt.signals.writes if w[0] == "number.curve"]
 
 
 def _limit_calls(rt):
@@ -140,13 +141,13 @@ def _message_calls(rt):
 def test_no_deviation_no_write(make_store, clock):
     rt = _rt(make_store, clock, Ha())
     _rounds(rt)
-    assert rt.ha_api.writes == []
+    assert rt.signals.writes == []
 
 
 def test_manual_curve_change_is_written_back_and_reported(make_store, clock):
     rt = _rt(make_store, clock, Ha(curve=1.3))
     _rounds(rt)
-    assert rt.ha_api.writes == [("number.curve", 0.9)]
+    assert rt.signals.writes == [("number.curve", 0.9)]
     assert rt.store.state.manual_override_pending["levers"]["curve"] == 1.3
     assert rt.notifier.notify.call_args.args[0] == enforce.KEY
 
@@ -154,7 +155,7 @@ def test_manual_curve_change_is_written_back_and_reported(make_store, clock):
 def test_heat_limit_changed_in_the_app_is_written_back_and_reported(make_store, clock):
     rt = _rt_g(make_store, clock, 16.0)
     _rounds(rt)
-    assert ("number.hl", 15.0) in rt.ha_api.writes
+    assert ("number.hl", 15.0) in rt.signals.writes
     assert rt.store.state.manual_override_pending is not None
     assert "Heizgrenze" in rt.notifier.notify.call_args.args[2]
 
@@ -162,20 +163,20 @@ def test_heat_limit_changed_in_the_app_is_written_back_and_reported(make_store, 
 def test_heat_limit_within_half_a_step_is_no_deviation(make_store, clock):
     rt = _rt_g(make_store, clock, 15.04)
     _rounds(rt)
-    assert rt.ha_api.writes == []
+    assert rt.signals.writes == []
 
 
 def test_detection_needs_two_rounds(make_store, clock):
     rt = _rt(make_store, clock, Ha(curve=1.3))
     _rounds(rt, 1)
-    assert rt.ha_api.writes == []
+    assert rt.signals.writes == []
 
 
 def test_zone_mode_is_restored_and_shift_rewritten(make_store, clock):
     rt = _rt(make_store, clock, Ha(mode="auto"))
     _rounds(rt)
-    assert ("climate.zone", "heat_cool") in rt.ha_api.writes
-    assert ("climate.zone", 21.0) in rt.ha_api.writes
+    assert ("climate.zone", "heat_cool") in rt.signals.writes
+    assert ("climate.zone", 21.0) in rt.signals.writes
 
 
 def test_zone_mode_restore_switches_the_mode_exactly_once(make_store, clock):
@@ -184,8 +185,8 @@ def test_zone_mode_restore_switches_the_mode_exactly_once(make_store, clock):
     # Rueckschreiben (sonst schaltete der zweite Schreibvorgang auf dem veralteten "auto" erneut).
     rt = _rt(make_store, clock, Ha(mode="auto", shift=18.0, reflects_writes=False))
     _rounds(rt)
-    assert [w for w in rt.ha_api.writes if w[1] == "heat_cool"] == [("climate.zone", "heat_cool")]
-    assert [w for w in rt.ha_api.writes if w[1] == 21.0] == [("climate.zone", 21.0)]
+    assert [w for w in rt.signals.writes if w[1] == "heat_cool"] == [("climate.zone", "heat_cool")]
+    assert [w for w in rt.signals.writes if w[1] == 21.0] == [("climate.zone", 21.0)]
 
 
 def test_zone_mode_restore_does_not_switch_again_while_ha_lags(make_store, clock):
@@ -196,7 +197,7 @@ def test_zone_mode_restore_does_not_switch_again_while_ha_lags(make_store, clock
     for _ in range(5):
         clock.advance(300)
         _rounds(rt)
-    assert [w for w in rt.ha_api.writes if w[1] == "heat_cool"] == [("climate.zone", "heat_cool")]
+    assert [w for w in rt.signals.writes if w[1] == "heat_cool"] == [("climate.zone", "heat_cool")]
     assert rt.store.state.manual_override is not None
     assert [c for c in rt.notifier.notify.call_args_list if c.args[1] == STATE_OK] == []
 
@@ -204,13 +205,13 @@ def test_zone_mode_restore_does_not_switch_again_while_ha_lags(make_store, clock
 def test_min_flow_deviation_is_written_back(make_store, clock):
     rt = _rt(make_store, clock, Ha(min_flow=25.0))
     _rounds(rt)
-    assert rt.ha_api.writes == [("number.mf", 20.5)]
+    assert rt.signals.writes == [("number.mf", 20.5)]
 
 
 def test_zone_zero_is_no_deviation(make_store, clock):
     rt = _rt(make_store, clock, Ha(shift=0.0))
     _rounds(rt)
-    assert rt.ha_api.writes == []
+    assert rt.signals.writes == []
     assert rt.store.state.manual_override is None
 
 
@@ -242,10 +243,10 @@ def test_record_with_an_inactive_zone_and_no_restore_point_survives_a_reload(mak
 def test_pause_after_own_write(make_store, clock):
     rt = _rt(make_store, clock, Ha(curve=1.3))
     rt.override.write_levers(("curve",))  # eigener Schreibvorgang
-    rt.ha_api.states["number.curve"] = 1.3  # HA zeigt noch den alten Wert
-    rt.ha_api.writes.clear()
+    rt.signals.states["number.curve"] = 1.3  # HA zeigt noch den alten Wert
+    rt.signals.writes.clear()
     _rounds(rt)
-    assert rt.ha_api.writes == []
+    assert rt.signals.writes == []
 
 
 def test_after_a_restart_enforcement_waits_for_the_settle_window(make_store, clock):
@@ -255,12 +256,12 @@ def test_after_a_restart_enforcement_waits_for_the_settle_window(make_store, clo
     _rounds(rt)
     clock.advance(SETTLE - 60)
     _rounds(rt)
-    assert rt.ha_api.writes == []
+    assert rt.signals.writes == []
     assert rt.notifier.notify.call_args_list == []
     assert rt.store.state.manual_override is None
     clock.advance(61)
     _rounds(rt)
-    assert rt.ha_api.writes == [("number.curve", 0.9)]
+    assert rt.signals.writes == [("number.curve", 0.9)]
     assert len(_message_calls(rt)) == 1
 
 
@@ -286,7 +287,7 @@ def test_ignored_write_is_reported_once_until_the_return(make_store, clock):
         clock.advance(SETTLE + 1)
         _rounds(rt)
     assert len(_message_calls(rt)) == 1
-    rt.ha_api.states["number.curve"] = 0.9  # die Anlage uebernimmt den Wert endlich
+    rt.signals.states["number.curve"] = 0.9  # die Anlage uebernimmt den Wert endlich
     clock.advance(SETTLE + 1)
     _rounds(rt)
     assert rt.store.state.manual_override is None
@@ -296,7 +297,7 @@ def test_ignored_write_is_reported_once_until_the_return(make_store, clock):
 def test_retry_interval_between_writes(make_store, clock):
     rt = _rt(make_store, clock, Ha(curve=1.3))
     _rounds(rt)
-    rt.ha_api.states["number.curve"] = 1.3
+    rt.signals.states["number.curve"] = 1.3
     clock.advance(SETTLE + 1)  # 35 min > Poll-Intervall 30 min
     _rounds(rt)
     assert len(_curve_writes(rt)) == 2
@@ -324,7 +325,7 @@ def test_open_data_fault_pauses(make_store, clock):
     rt = _rt(make_store, clock, Ha(curve=1.3))
     rt.store.set_delivery(DeliveryState(datenfehler=DataFault(SOURCE_LOCAL, ("room_actual",))))
     _rounds(rt)
-    assert rt.ha_api.writes == []
+    assert rt.signals.writes == []
 
 
 def test_return_clears_hint(make_store, clock):
@@ -339,16 +340,16 @@ def test_counter_resets_next_day(make_store, clock, monkeypatch):
     rt = _rt(make_store, clock, Ha(curve=1.3))
     monkeypatch.setattr(enforce, "_today", lambda: date(2026, 10, 3))
     for _ in range(10):
-        rt.ha_api.states["number.curve"] = 1.3
+        rt.signals.states["number.curve"] = 1.3
         clock.advance(SETTLE + 1)
         _rounds(rt)
     assert len(_curve_writes(rt)) == enforce.MAX_WRITES_PER_DAY
     monkeypatch.setattr(enforce, "_today", lambda: date(2026, 10, 4))
-    rt.ha_api.states["number.curve"] = 1.3
+    rt.signals.states["number.curve"] = 1.3
     clock.advance(SETTLE + 1)
-    before = len(rt.ha_api.writes)
+    before = len(rt.signals.writes)
     _rounds(rt)
-    assert len(rt.ha_api.writes) == before + 1
+    assert len(rt.signals.writes) == before + 1
 
 
 @pytest.mark.parametrize("flag", ["boost_active", "emergency_boost_active"])
@@ -357,7 +358,7 @@ def test_boost_row_is_the_target_during_boost(make_store, clock, flag):
     rt = _rt(make_store, clock, Ha(curve=curve, shift=shift))
     rt.store.update(**{flag: True})
     _rounds(rt)
-    assert rt.ha_api.writes == []
+    assert rt.signals.writes == []
 
 
 @pytest.mark.parametrize("flag", ["boost_active", "emergency_boost_active"])
@@ -366,13 +367,13 @@ def test_restore_point_on_the_plant_during_a_boost_is_written_back_to_the_boost_
     rt.store.update(**{flag: True})
     _rounds(rt)
     curve, shift = ROWS[flag]
-    assert rt.ha_api.writes == [("number.curve", curve), ("climate.zone", shift)]
+    assert rt.signals.writes == [("number.curve", curve), ("climate.zone", shift)]
 
 
 def test_unreadable_zone_mode_is_no_deviation(make_store, clock):
     rt = _rt(make_store, clock, Ha(mode=RuntimeError("unavailable")))
     _rounds(rt)
-    assert rt.ha_api.attempts == []
+    assert rt.signals.attempts == []
     assert rt.store.state.manual_override is None
 
 
@@ -424,7 +425,7 @@ def test_pending_kpi_is_merged_not_replaced(make_store, clock):
     _rounds(rt)
     enforce.check_manual_override(rt)  # Rueckkehr
     assert rt.store.state.manual_override is None
-    rt.ha_api.states["climate.zone::temperature"] = 23.0
+    rt.signals.states["climate.zone::temperature"] = 23.0
     clock.advance(SETTLE + 1)
     _rounds(rt)
     pending = rt.store.state.manual_override_pending
@@ -436,13 +437,13 @@ def test_detection_at_the_daily_limit_only_sends_the_limit_message(make_store, c
     # kein "... und zurueckgesetzt".
     rt = _rt(make_store, clock, Ha(curve=1.3))
     for _ in range(enforce.MAX_WRITES_PER_DAY):
-        rt.ha_api.states["number.curve"] = 1.3
+        rt.signals.states["number.curve"] = 1.3
         clock.advance(SETTLE + 1)
         _rounds(rt)
         enforce.check_manual_override(rt)  # Rueckkehr
     assert len(_curve_writes(rt)) == enforce.MAX_WRITES_PER_DAY
     rt.notifier.notify.reset_mock()
-    rt.ha_api.states["number.curve"] = 1.3
+    rt.signals.states["number.curve"] = 1.3
     clock.advance(SETTLE + 1)
     _rounds(rt)
     assert _message_calls(rt) == []
@@ -455,7 +456,7 @@ def test_zone_mode_without_shift_target_switches_the_zone_only(make_store, clock
     # Manuell stellen, keinen Sollwert schreiben.
     rt = _rt(make_store, clock, Ha(mode="auto"), room_setpoint=None)
     _rounds(rt)
-    assert rt.ha_api.writes == [("climate.zone", "heat_cool")]
+    assert rt.signals.writes == [("climate.zone", "heat_cool")]
     assert len(_message_calls(rt)) == 1
 
 
@@ -465,7 +466,7 @@ def test_curve_tolerance_is_half_a_plant_step(make_store, clock):
     assert VAILLANT_MYPYLLANT.enforce_tolerance["curve"] == pytest.approx(0.025)
     rt = _rt(make_store, clock, Ha(curve=0.92))
     _rounds(rt)
-    assert rt.ha_api.writes == []
+    assert rt.signals.writes == []
     assert rt.store.state.manual_override is None
 
 
@@ -482,7 +483,7 @@ def test_an_intervention_reported_by_0_29_0_is_not_reported_again_after_the_upda
     })
     rt = _rt(make_store, clock, Ha(curve=1.3, reflects_writes=False), store=store)
     _rounds(rt)
-    assert rt.ha_api.writes == [("number.curve", 0.9)]
+    assert rt.signals.writes == [("number.curve", 0.9)]
     assert _message_calls(rt) == []
     assert rt.store.state.manual_override["gemeldet"] == rt.store.state.manual_override["signatur"] == "curve=1.3"
     assert rt.store.state.write_budget["enforce:curve"]["count"] == 2

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from fakes import runtime_config
 
 from heizungsbruecke import regulation
 from heizungsbruecke.ha_binding import HaPlantBinding
@@ -14,7 +15,6 @@ from smartheat_core.safety import LocalSafety
 from smartheat_runtime.backup_store import load_backup
 
 # Unterscheidbar: Notfall (= Clamp-Maximum) 0.8/5.0, Comfort 0.5/2.0, Wiederherstellungspunkt 0.3/1.0.
-OPTIONS = {"daily_trigger_time": "12:00"}
 SAFETY = LocalSafety(
     ranges={"curve": (0.2, 0.8), "room_setpoint": (0.0, 5.0), "heat_limit": (5.0, 20.0), "min_flow": (20.0, 30.0)},
     comfort_boost={"curve": 0.5, "room_setpoint": 2.0, "heat_limit": 20.0},
@@ -43,11 +43,11 @@ def _runtime(store, *, room_actual=20.0, room_target=21.0, entity_ids=ENTITY_IDS
 
     ha_api.get_state.side_effect = _get_state
     manifest = ChannelManifest(entity_ids=entity_ids)
-    options = dict(OPTIONS)
     if room_target is not None:
         store.update(stable_target=room_target)
     return SimpleNamespace(
-        manifest=manifest, ha_api=ha_api, options=options, store=store, states=values,
+        manifest=manifest, signals=ha_api, ha_api=ha_api, config=runtime_config(), store=store,
+        states=values,
         override=LeverPipeline(store, HaPlantBinding(ha_api, manifest), SAFETY),
     )
 

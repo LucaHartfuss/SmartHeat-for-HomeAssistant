@@ -5,7 +5,6 @@ import sys
 from dataclasses import replace
 from datetime import datetime
 
-from heizungsbruecke import config
 from heizungsbruecke.notifier import STATE_OK
 from heizungsbruecke.runtime import Runtime
 from smartheat_core import wallclock
@@ -55,7 +54,7 @@ def enter_inactive(rt: Runtime, now: datetime) -> None:
     if state.abo_inactive_since is not None:
         return
     try:
-        since, newly_set = entitlement.mark_inactive(config.ENTITLEMENT_PATH, now)
+        since, newly_set = entitlement.mark_inactive(rt.config.entitlement_path, now)
     except Exception:
         # Ein Schreibfehler (Datentraeger) darf den Notbetrieb nicht verhindern.
         logger.exception(
@@ -128,7 +127,7 @@ def handle_auth_rejected(rt: Runtime) -> None:
         logger.debug("MQTT-Anmeldung erneut abgelehnt, Abo-Status wird erst nach %.0f s wieder abgefragt",
                      AUTH_REJECTED_QUERY_INTERVAL_SECONDS)
         return
-    status = entitlement.query_from_options(rt.options)
+    status = entitlement.query(rt.config)
     rt.auth_rejected_queried_at = now
     if status == entitlement.INACTIVE:
         enter_inactive(rt, wallclock.now())
@@ -167,7 +166,7 @@ def handle_connection_failing(rt: Runtime) -> None:
     if last is not None and now - last < AUTH_REJECTED_QUERY_INTERVAL_SECONDS:
         return
     rt.connection_failing_queried_at = now
-    status = entitlement.query_from_options(rt.options)
+    status = entitlement.query(rt.config)
     if status == entitlement.INACTIVE:
         enter_inactive(rt, wallclock.now())
     elif status == entitlement.REJECTED:
@@ -187,8 +186,8 @@ def check_grace_end(rt: Runtime) -> None:
     since = rt.store.state.abo_inactive_since
     if since is None or not entitlement.grace_expired(since, wallclock.now()):
         return
-    if entitlement.query_from_options(rt.options) == entitlement.ACTIVE:
-        entitlement.clear(config.ENTITLEMENT_PATH)
+    if entitlement.query(rt.config) == entitlement.ACTIVE:
+        entitlement.clear(rt.config.entitlement_path)
         logger.warning("Abo wieder aktiv, Neustart im Normalbetrieb")
         restart_process()
         return

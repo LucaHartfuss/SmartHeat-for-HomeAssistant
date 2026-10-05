@@ -9,7 +9,7 @@ from pathlib import Path
 from heizungsbruecke.notifier import HINT_CATEGORIES
 from smartheat_core.binding import BINDINGS, BindingDescription, with_poll_interval
 from smartheat_core.safety import LocalSafety, resolve_local_safety
-from smartheat_runtime.entitlement import TOKEN_OPTION
+from smartheat_runtime.runtime_config import RuntimeConfig
 from smartheat_runtime.windows import validate_daily_trigger_time
 from smartheat_transport.connect import connect_options
 from smartheat_transport.descriptor import (
@@ -65,6 +65,7 @@ NEW_ENTITY_OPTIONS = ("entity_shift_current", "entity_min_flow")
 TRANSPORT_OPTION = "transport"
 PASSWORD_CREDENTIAL_OPTIONS = ("mqtt_username", "mqtt_password")
 CERTIFICATE_CREDENTIAL_OPTIONS = ("tls_certificate", "tls_private_key")
+TOKEN_OPTION = "installation_token"
 # Werte, die nie in einem Status, einer Meldung oder einem Log erscheinen duerfen (Regel 6).
 SECRET_OPTIONS = ("mqtt_password", "tls_private_key", TOKEN_OPTION)
 
@@ -415,3 +416,26 @@ def load_options_safe(path: Path) -> dict:
             path, error,
         )
         return {}
+
+
+def runtime_config(options: dict) -> RuntimeConfig:
+    """Hostneutrale Laufzeit-Konfiguration aus den wirksamen, gepruefte Optionen (nach resolve_effective_options und
+    validate; resolve_transport prueft hier noch einmal)."""
+    descriptor, credential = resolve_transport(options)
+    return RuntimeConfig(
+        tenant_id=options["tenant_id"],
+        setup_id=options.get("setup_id"),
+        lever_set_id=lever_set_id(options),
+        local_safety=local_safety(options),
+        descriptor=descriptor,
+        credential=credential,
+        installation_token=options[TOKEN_OPTION],
+        accounts_api_base_url=options["accounts_api_base_url"],
+        daily_trigger_time=options.get("daily_trigger_time"),
+        local_check_interval=local_check_interval(options),
+        telemetry_interval=telemetry_interval(options),
+        notify_hints_off=tuple(notify_hints_off(options)),
+        room_sensor_refs=tuple(options["room_sensors"]),
+        battery_refs=tuple(options.get("battery_entities", [])),
+        entitlement_path=ENTITLEMENT_PATH,
+    )

@@ -10,13 +10,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from heizungsbruecke.ha_api import HomeAssistantApi
     from heizungsbruecke.ha_trigger_client import HaTriggerClient
     from heizungsbruecke.manifest import ChannelManifest
     from heizungsbruecke.mqtt_client import BridgeMqttClient
     from heizungsbruecke.notifier import Notifier
     from heizungsbruecke.status import StatusReporter
     from smartheat_core.pipeline import LeverPipeline
+    from smartheat_runtime.ports import SignalSource
+    from smartheat_runtime.runtime_config import RuntimeConfig
     from smartheat_runtime.state import StateStore
     from smartheat_runtime.worker import RegulationWorker
 
@@ -41,8 +42,8 @@ class Runtime:
     """Wird nur im Worker-Thread benutzt. Zustand liegt ausschliesslich in `store`, Schreiben
     auf die Anlage ausschliesslich ueber `override` (die Hebel-Pipeline; der Name stammt aus der Zeit vor Plan 2)."""
     manifest: ChannelManifest
-    ha_api: HomeAssistantApi
-    options: dict
+    signals: SignalSource
+    config: RuntimeConfig
     worker: RegulationWorker
     store: StateStore
     override: LeverPipeline

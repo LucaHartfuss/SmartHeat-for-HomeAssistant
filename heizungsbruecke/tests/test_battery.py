@@ -4,8 +4,10 @@ from unittest.mock import MagicMock
 
 import pytest
 import requests
+from fakes import runtime_config
 
 from heizungsbruecke.battery import STATE_LOW, check_batteries, next_state
+from heizungsbruecke.ha_signals import HaSignalSource
 from heizungsbruecke.notifier import Notifier
 
 
@@ -43,7 +45,7 @@ def _rt(make_store, raw_states, battery_entities=("sensor.wz_battery",)):
     ha_api.get_raw_state.side_effect = _raw
     store = make_store()
     return SimpleNamespace(
-        options={"battery_entities": list(battery_entities)}, ha_api=ha_api,
+        config=runtime_config(battery_refs=tuple(battery_entities)), signals=HaSignalSource(ha_api), ha_api=ha_api,
         notifier=Notifier(store, ha_api, ["notify.mobile_app_a"]),
     )
 
@@ -105,3 +107,18 @@ def test_non_404_http_error_stops_the_round_without_changes(make_store):
     check_batteries(rt)
 
     rt.ha_api.send_notification.assert_not_called()
+
+
+def test_a_deleted_battery_entity_is_skipped_and_an_unreachable_ha_ends_the_round(make_store):
+    states = {"sensor.weg_battery": _http_error(404), "sensor.wz_battery": "10"}
+    rt = _rt(make_store, states, battery_entities=("sensor.weg_battery", "sensor.wz_battery"))
+
+    check_batteries(rt)
+    assert rt.notifier.state("batterie:sensor.wz_battery") == STATE_LOW
+
+    states["sensor.weg_battery"] = requests.ConnectionError("HA weg")
+    states["sensor.wz_battery"] = "80"
+    check_batteries(rt)
+
+    assert rt.notifier.state("batterie:sensor.wz_battery") == STATE_LOW  # Runde abgebrochen, keine Entwarnung
+    assert len(rt.ha_api.send_notification.call_args_list) == 1

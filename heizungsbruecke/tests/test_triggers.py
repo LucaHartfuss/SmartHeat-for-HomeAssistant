@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from fakes import ACCESS_OPTIONS
+from fakes import runtime_config
 
 from heizungsbruecke import triggers
 from heizungsbruecke.manifest import ChannelManifest
@@ -151,7 +151,7 @@ def test_create_mqtt_client_only_subscribes_the_answers(monkeypatch, clock):
     monkeypatch.setattr("heizungsbruecke.triggers.BridgeMqttClient", factory)
 
     triggers.create_mqtt_client(
-        {"tenant_id": "t1", "mqtt_username": "u", "mqtt_password": "p", **ACCESS_OPTIONS},
+        runtime_config(tenant_id="t1"),
         RegulationWorker(clock=clock),
     )
 

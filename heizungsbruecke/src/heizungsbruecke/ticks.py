@@ -92,7 +92,7 @@ def _execute(rt: Runtime, action):
     if isinstance(action, delivery.Attempt):
         return _attempt(rt, action.seq, action.trigger)
     if isinstance(action, delivery.QueryEntitlement):
-        status = entitlement.query_from_options(rt.options)
+        status = entitlement.query(rt.config)
         return delivery.EntitlementChecked(seq=action.seq, status=status)
     if isinstance(action, delivery.ScheduleAckTimeout):
         rt.worker.schedule(action.delay_s, Event(EV_ACK_TIMEOUT, {"seq": action.seq, "gen": action.gen}))
@@ -129,7 +129,7 @@ def _attempt(rt: Runtime, seq: str, trigger: str):
             known[lever] = last
         elif lever == binding.description.prepared_lever:
             known[lever] = binding.read_or(lever, rt.store.state.restore_point.get(lever))
-    read = read_snapshot(rt.manifest, rt.ha_api, binding, known)
+    read = read_snapshot(rt.manifest, rt.signals, binding, known)
     if read.invalid:
         logger.warning("Snapshot (seq=%s) zurueckgehalten, ungueltige Werte: %s", seq, ", ".join(read.invalid))
         return delivery.ReadInvalid(seq=seq, roles=read.invalid)

@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from conftest import FakeClock
+from fakes import runtime_config
 
 from heizungsbruecke import abo
 from heizungsbruecke.ha_binding import HaPlantBinding
@@ -29,20 +30,15 @@ SAFETY = LocalSafety(
 BOTH_ROLES = {"curve_current": "number.curve", "shift_current": "number.shift"}
 
 
-@pytest.fixture(autouse=True)
-def _entitlement_path(tmp_path, monkeypatch):
-    monkeypatch.setattr("heizungsbruecke.config.ENTITLEMENT_PATH", tmp_path / "entitlement_state.json")
-
-
-def _runtime(store, entity_ids=BOTH_ROLES, notify_services=("notify.handy",), clock=None):
+def _runtime(tmp_path, store, entity_ids=BOTH_ROLES, notify_services=("notify.handy",), clock=None):
     manifest = ChannelManifest(entity_ids=entity_ids)
     ha_api = MagicMock()
-    options = dict(OPTIONS)
     return SimpleNamespace(
-        manifest=manifest, ha_api=ha_api, options=options, store=store, mqtt_client=MagicMock(),
+        manifest=manifest, signals=ha_api, ha_api=ha_api, store=store, mqtt_client=MagicMock(),
+        config=runtime_config(entitlement_path=tmp_path / "entitlement_state.json"),
         override=LeverPipeline(store, HaPlantBinding(ha_api, manifest), SAFETY),
         notifier=Notifier(store, ha_api, list(notify_services)),
-        status=StatusReporter(ha_api, options["tenant_id"], None, store, LEVER_SETS["vaillant_vrc720"]),
+        status=StatusReporter(ha_api, OPTIONS["tenant_id"], None, store, LEVER_SETS["vaillant_vrc720"]),
         clock=clock or FakeClock(), auth_rejected_queried_at=None, auth_rejected_last_status=None,
         connection_failing_queried_at=None,
     )
@@ -56,7 +52,7 @@ def test_inactive_message_contains_grace_end_date():
 
 
 def test_enter_inactive_activates_notbetrieb_stops_mqtt_and_notifies_all_channels(make_store, tmp_path):
-    rt = _runtime(make_store(failsafe={"failsafe_active": False, "pending": {"seq": "s1", "trigger": "daily"}}))
+    rt = _runtime(tmp_path, make_store(failsafe={"failsafe_active": False, "pending": {"seq": "s1", "trigger": "daily"}}))
 
     abo.enter_inactive(rt, ABO_NOW)
 
@@ -71,7 +67,7 @@ def test_enter_inactive_activates_notbetrieb_stops_mqtt_and_notifies_all_channel
 
 def test_enter_inactive_does_not_repeat_notification_when_already_marked(make_store, tmp_path, caplog):
     entitlement.mark_inactive(tmp_path / "entitlement_state.json", ABO_NOW - timedelta(days=5))
-    rt = _runtime(make_store())
+    rt = _runtime(tmp_path, make_store())
 
     with caplog.at_level(logging.WARNING):
         abo.enter_inactive(rt, ABO_NOW)
@@ -82,8 +78,8 @@ def test_enter_inactive_does_not_repeat_notification_when_already_marked(make_st
     assert "20.10.2026" in caplog.text  # Fristende weiter im Log sichtbar
 
 
-def test_enter_inactive_is_noop_when_already_in_mode(make_store):
-    rt = _runtime(make_store())
+def test_enter_inactive_is_noop_when_already_in_mode(make_store, tmp_path):
+    rt = _runtime(tmp_path, make_store())
     rt.store.update(abo_inactive_since=ABO_NOW)
 
     abo.enter_inactive(rt, ABO_NOW)
@@ -91,8 +87,8 @@ def test_enter_inactive_is_noop_when_already_in_mode(make_store):
     rt.mqtt_client.stop.assert_not_called()
 
 
-def test_enter_inactive_survives_failing_channels(make_store):
-    rt = _runtime(make_store())
+def test_enter_inactive_survives_failing_channels(make_store, tmp_path):
+    rt = _runtime(tmp_path, make_store())
     rt.ha_api.send_notification.side_effect = RuntimeError("push kaputt")
     rt.ha_api.create_persistent_notification.side_effect = RuntimeError("ha kaputt")
     rt.mqtt_client.stop.side_effect = RuntimeError("paho kaputt")
@@ -107,7 +103,7 @@ def test_enter_inactive_with_failing_entitlement_persist_still_enters_mode(make_
         raise OSError("Datentraeger kaputt")
 
     monkeypatch.setattr("smartheat_runtime.entitlement.mark_inactive", _failing)
-    rt = _runtime(make_store())
+    rt = _runtime(tmp_path, make_store())
 
     with caplog.at_level(logging.ERROR):
         abo.enter_inactive(rt, ABO_NOW)
@@ -126,7 +122,7 @@ def test_finish_grace_mid_boost_restores_learned_values_clamped(make_store, tmp_
         "restore_point": {"curve": 0.4, "room_setpoint": 9.0},  # ueber dem Maximum 5.0 -> geclampt
         "emergency_boost_active": True, "boost_active": True,
     })
-    rt = _runtime(store)
+    rt = _runtime(tmp_path, store)
 
     assert abo.finish_grace(rt, always_restore=True, final_notice=True) is True
 
@@ -141,9 +137,9 @@ def test_finish_grace_mid_boost_restores_learned_values_clamped(make_store, tmp_
     )
 
 
-def test_finish_grace_counts_restore_as_done_when_saving_flags_fails(make_store, monkeypatch, caplog):
+def test_finish_grace_counts_restore_as_done_when_saving_flags_fails(make_store, tmp_path, monkeypatch, caplog):
     store = make_store(backup={"restore_point": {"curve": 0.4, "room_setpoint": 2.0}, "emergency_boost_active": True})
-    rt = _runtime(store)
+    rt = _runtime(tmp_path, store)
 
     def _broken_save(path, values):
         raise OSError("Datentraeger kaputt")
@@ -161,7 +157,7 @@ def test_finish_grace_counts_restore_as_done_when_saving_flags_fails(make_store,
 
 def test_finish_grace_keeps_flags_when_restore_write_fails(make_store, tmp_path):
     store = make_store(backup={"restore_point": {"curve": 0.4}, "emergency_boost_active": True})
-    rt = _runtime(store, entity_ids={"curve_current": "number.curve"})
+    rt = _runtime(tmp_path, store, entity_ids={"curve_current": "number.curve"})
     rt.ha_api.set_number_value.side_effect = RuntimeError("HA nicht erreichbar")
 
     assert abo.finish_grace(rt, always_restore=True, final_notice=True) is False
@@ -172,8 +168,8 @@ def test_finish_grace_keeps_flags_when_restore_write_fails(make_store, tmp_path)
     rt.ha_api.create_persistent_notification.assert_not_called()
 
 
-def test_finish_grace_without_forced_restore_and_without_flags_writes_nothing(make_store, caplog):
-    rt = _runtime(
+def test_finish_grace_without_forced_restore_and_without_flags_writes_nothing(make_store, tmp_path, caplog):
+    rt = _runtime(tmp_path,
         make_store(backup={"restore_point": {"curve": 0.4}, "boost_active": False}),
         entity_ids={"curve_current": "number.curve"},
     )
@@ -193,9 +189,9 @@ def test_finish_grace_without_forced_restore_and_without_flags_writes_nothing(ma
     (entitlement.ACTIVE, False, False),
     (entitlement.UNKNOWN, False, False),
 ])
-def test_connection_failing_acts_only_on_a_clear_answer(make_store, monkeypatch, status, expect_inactive, expect_rejected):
-    rt = _runtime(make_store())
-    monkeypatch.setattr(abo.entitlement, "query_from_options", lambda options: status)
+def test_connection_failing_acts_only_on_a_clear_answer(make_store, tmp_path, monkeypatch, status, expect_inactive, expect_rejected):
+    rt = _runtime(tmp_path, make_store())
+    monkeypatch.setattr(abo.entitlement, "query", lambda config: status)
     abo.handle_connection_failing(rt)
     assert (rt.store.state.abo_inactive_since is not None) is expect_inactive
     assert rt.status.flags.zugang_abgelehnt is expect_rejected
@@ -204,18 +200,18 @@ def test_connection_failing_acts_only_on_a_clear_answer(make_store, monkeypatch,
         rt.ha_api.create_persistent_notification.assert_not_called()
 
 
-def test_connection_failing_rejected_notifies_like_an_auth_rejection(make_store, monkeypatch):
-    rt = _runtime(make_store())
-    monkeypatch.setattr(abo.entitlement, "query_from_options", lambda options: entitlement.REJECTED)
+def test_connection_failing_rejected_notifies_like_an_auth_rejection(make_store, tmp_path, monkeypatch):
+    rt = _runtime(tmp_path, make_store())
+    monkeypatch.setattr(abo.entitlement, "query", lambda config: entitlement.REJECTED)
     abo.handle_connection_failing(rt)
     rt.ha_api.send_notification.assert_called_once_with("notify.handy", abo.ACCESS_DENIED_MESSAGE)
     assert rt.auth_rejected_queried_at == rt.clock()
 
 
-def test_connection_failing_is_throttled_like_auth_rejection(make_store, monkeypatch):
-    rt = _runtime(make_store())
+def test_connection_failing_is_throttled_like_auth_rejection(make_store, tmp_path, monkeypatch):
+    rt = _runtime(tmp_path, make_store())
     queries = []
-    monkeypatch.setattr(abo.entitlement, "query_from_options", lambda options: queries.append(1) or entitlement.UNKNOWN)
+    monkeypatch.setattr(abo.entitlement, "query", lambda config: queries.append(1) or entitlement.UNKNOWN)
     abo.handle_connection_failing(rt)
     abo.handle_connection_failing(rt)
     rt.clock.advance(abo.AUTH_REJECTED_QUERY_INTERVAL_SECONDS)
@@ -223,8 +219,8 @@ def test_connection_failing_is_throttled_like_auth_rejection(make_store, monkeyp
     assert len(queries) == 2
 
 
-def test_connection_failing_is_silent_in_the_abo_inactive_mode(make_store, monkeypatch):
-    rt = _runtime(make_store())
+def test_connection_failing_is_silent_in_the_abo_inactive_mode(make_store, tmp_path, monkeypatch):
+    rt = _runtime(tmp_path, make_store())
     rt.store.update(abo_inactive_since=ABO_NOW)
-    monkeypatch.setattr(abo.entitlement, "query_from_options", lambda options: pytest.fail("keine Abfrage"))
+    monkeypatch.setattr(abo.entitlement, "query", lambda config: pytest.fail("keine Abfrage"))
     abo.handle_connection_failing(rt)

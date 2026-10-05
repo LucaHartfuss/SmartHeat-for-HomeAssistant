@@ -9,10 +9,9 @@ Rueckkehr wird sofort gemeldet. Der Zaehler ist reine Laufzeit und beginnt nach 
 ein schon gemeldeter Ausfall bleibt dabei bestehen, bis der Fuehler wieder Werte liefert."""
 import logging
 
-import requests
-
 from heizungsbruecke.notifier import STATE_OK
 from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
+from smartheat_runtime.ports import SignalNotFound, SourceUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -34,20 +33,16 @@ def _message(ref: str, ok: bool, ok_count: int) -> str:
 
 
 def check_room_sensors(rt) -> None:
-    sensors = rt.options["room_sensors"]
+    sensors = rt.config.room_sensor_refs
     if len(sensors) < 2:
         return
     valid = {}
     for ref in sensors:
         try:
-            value = rt.ha_api.get_state(ref)
-        except requests.HTTPError as error:
-            if error.response is not None and error.response.status_code == 404:
-                value = None
-            else:
-                logger.warning("Raumfuehler-Pruefung abgebrochen, Home Assistant nicht erreichbar: %s", error)
-                return
-        except requests.RequestException as error:
+            value = rt.signals.get_state(ref)
+        except SignalNotFound:
+            value = None
+        except SourceUnavailable as error:
             logger.warning("Raumfuehler-Pruefung abgebrochen, Home Assistant nicht erreichbar: %s", error)
             return
         except (ValueError, KeyError, TypeError):

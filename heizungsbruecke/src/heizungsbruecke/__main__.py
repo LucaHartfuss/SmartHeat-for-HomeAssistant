@@ -28,6 +28,7 @@ from heizungsbruecke import (
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_binding import binding_for, binding_roles
+from heizungsbruecke.ha_signals import HaSignalSource
 from heizungsbruecke.manifest import ChannelManifest, ManifestError, build_manifest, entity_ref
 from heizungsbruecke.notifier import STATE_OK, Notifier
 from heizungsbruecke.runtime import (
@@ -324,7 +325,7 @@ def _finish_at_start(rt: Runtime, clock) -> IdleBridge:
     assert status is not None  # beim Boot gesetzt
     status.update(abo_beendet=True)
     bridge = _idle(clock, status, STATUS_ABO_BEENDET)
-    retry_seconds = config.local_check_interval(rt.options)
+    retry_seconds = rt.config.local_check_interval
 
     def _attempt(event: Event | None = None) -> None:
         if abo.finish_grace(rt, always_restore=False, final_notice=False):
@@ -410,7 +411,7 @@ def _on_auth_rejected(rt: Runtime, event: Event) -> None:
 def _on_watchdog(rt: Runtime, event: Event) -> None:
     """Fallback bei getrennter WS-Verbindung: Cache frisch (ohne Entprellung) lesen, dann
     lokaler Check. Bei verbundenem Trigger-Client passiert nichts."""
-    rt.worker.schedule(config.local_check_interval(rt.options), Event(EV_WATCHDOG))
+    rt.worker.schedule(rt.config.local_check_interval, Event(EV_WATCHDOG))
     if rt.trigger_client is None or not rt.trigger_client.connected:
         rt.worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=True)
 
@@ -419,7 +420,7 @@ def _on_connection_check(rt: Runtime, event: Event) -> None:
     """Verbindungswaechter (Spec TP12b 1.1): ohne offenen Tick gibt es keinen Zustellversuch und
     damit nie einen Notbetrieb. Fehlt die Verbindung CONNECTION_LOSS_PROBE_SECONDS am Stueck, legt er
     deshalb einen Pruef-Tick an; das Ack nach dem Wiederverbinden beendet den Notbetrieb regulaer."""
-    rt.worker.schedule(config.local_check_interval(rt.options), Event(EV_CONNECTION_CHECK))
+    rt.worker.schedule(rt.config.local_check_interval, Event(EV_CONNECTION_CHECK))
     state = rt.store.state
     if rt.mqtt_client is None or state.abo_inactive_since is not None or rt.mqtt_client.is_connected():
         rt.mqtt_down_since = None
@@ -439,7 +440,7 @@ def _on_connection_check(rt: Runtime, event: Event) -> None:
 
 
 def _on_telemetry(rt: Runtime, event: Event) -> None:
-    rt.worker.schedule(config.telemetry_interval(rt.options), Event(EV_TELEMETRY))
+    rt.worker.schedule(rt.config.telemetry_interval, Event(EV_TELEMETRY))
     state = rt.store.state
     if state.abo_inactive_since is not None or rt.mqtt_client is None:
         return
@@ -452,7 +453,7 @@ def _on_telemetry(rt: Runtime, event: Event) -> None:
     if datenfehler is None and rt.store.storage_failed:
         datenfehler = DataFault(SOURCE_LOCAL, (ROLE_DATENTRAEGER,))
     telemetry.run_telemetry_tick(
-        rt.manifest, rt.ha_api, rt.mqtt_client,
+        rt.manifest, rt.signals, rt.mqtt_client,
         boost_active=state.boost_active, failsafe_active=state.delivery.notbetrieb,
         datenfehler=datenfehler, room_target=state.stable_target,
         waerme=lambda room, kpi, regulation: waerme_hint.apply_tick(rt, room, kpi, regulation),
@@ -461,7 +462,7 @@ def _on_telemetry(rt: Runtime, event: Event) -> None:
 
 
 def _on_grace_check(rt: Runtime, event: Event) -> None:
-    rt.worker.schedule(config.local_check_interval(rt.options), Event(EV_GRACE_CHECK))
+    rt.worker.schedule(rt.config.local_check_interval, Event(EV_GRACE_CHECK))
     abo.check_grace_end(rt)
 
 
@@ -469,7 +470,7 @@ def _on_health(rt: Runtime, event: Event) -> None:
     """Batterien, einzelne Raumfuehler (Spec TP6 3.5) und manuelle Eingriffe an Steigung,
     Parallelverschiebung, Mindestvorlauf und Zonen-Betriebsart (Durchsetzung, TP11). Eigener
     Zeitplaneintrag: der lokale Check laeuft seit den eventgetriebenen Triggern nur auf Ereignisse."""
-    rt.worker.schedule(config.local_check_interval(rt.options), Event(EV_HEALTH))
+    rt.worker.schedule(rt.config.local_check_interval, Event(EV_HEALTH))
     try:
         rt.store.flush()
     except StorageError as error:
@@ -693,7 +694,7 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | Idle
         notifier.notify("quellwechsel", derived.sources_fingerprint, SOURCE_CHANGE_MESSAGE, critical=False)
     _check_timezone(ha_api)
     rt = Runtime(
-        manifest=manifest, ha_api=ha_api, options=options,
+        manifest=manifest, signals=HaSignalSource(ha_api), config=config.runtime_config(options),
         worker=RegulationWorker(clock=clock), store=store,
         override=LeverPipeline(
             store, binding_for(options, ha_api, manifest), config.local_safety(options), clock=clock,
@@ -705,13 +706,13 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | Idle
     # Abo-Status erst hier: Abschluss-Start und lokaler Modus brauchen Manifest und Clamps.
     # "unknown" (accounts-api nicht erreichbar) startet normal -- fail-open.
     now = wallclock.now()
-    abo_status = entitlement.query_from_options(options)
+    abo_status = entitlement.query(rt.config)
     if abo_status == entitlement.ACTIVE:
-        entitlement.clear(config.ENTITLEMENT_PATH)
+        entitlement.clear(rt.config.entitlement_path)
         notifier.notify("abo", STATE_OK, abo.ABO_ACTIVE_MESSAGE, critical=True)
         status.update(abo=ABO_AKTIV)
     elif abo_status == entitlement.INACTIVE:
-        inactive_since = entitlement.load_inactive_since(config.ENTITLEMENT_PATH)
+        inactive_since = entitlement.load_inactive_since(rt.config.entitlement_path)
         if inactive_since is not None and entitlement.grace_expired(inactive_since, now):
             return _finish_at_start(rt, clock)
         abo.enter_inactive(rt, now)
@@ -719,7 +720,7 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | Idle
     _register_handlers(rt)
     abo_inactive = rt.store.state.abo_inactive_since is not None
     if not abo_inactive:
-        rt.mqtt_client = triggers.create_mqtt_client(options, rt.worker)
+        rt.mqtt_client = triggers.create_mqtt_client(rt.config, rt.worker)
 
     _prime(rt)
     if rt.mqtt_client is not None:
