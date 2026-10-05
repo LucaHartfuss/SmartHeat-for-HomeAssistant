@@ -7,7 +7,8 @@ Integration (Contract-Check)."""
 import logging
 from dataclasses import dataclass, replace
 
-from heizungsbruecke import battery, delivery, entitlement, room_sensors
+from heizungsbruecke import battery, room_sensors
+from smartheat_runtime import delivery, entitlement
 
 logger = logging.getLogger(__name__)
 

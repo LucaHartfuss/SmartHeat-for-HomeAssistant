@@ -19,9 +19,9 @@ from test_runtime import (
     env,  # noqa: F401  (registriert die Fixture `env`)
 )
 
-from heizungsbruecke import entitlement
-from heizungsbruecke.backup_store import save_backup
-from heizungsbruecke.state import StateStore
+from smartheat_runtime import entitlement
+from smartheat_runtime.backup_store import save_backup
+from smartheat_runtime.state import StateStore
 
 
 def test_unwritable_disk_no_longer_blocks_ticks_silently(env, monkeypatch):

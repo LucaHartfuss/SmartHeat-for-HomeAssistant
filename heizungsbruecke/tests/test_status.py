@@ -6,10 +6,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from heizungsbruecke import status
-from heizungsbruecke.delivery import DataFault, DeliveryState
-from heizungsbruecke.state import BridgeState
 from heizungsbruecke.status import ADDON_VERSION, Flags, StatusReporter, build_event, overall_status
 from smartheat_core.levers import LEVER_SETS
+from smartheat_runtime.delivery import DataFault, DeliveryState
+from smartheat_runtime.state import BridgeState
 
 VAILLANT = LEVER_SETS["vaillant_vrc720"]
 VIESSMANN = LEVER_SETS["viessmann_vicare"]

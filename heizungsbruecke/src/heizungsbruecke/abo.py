@@ -5,10 +5,11 @@ import sys
 from dataclasses import replace
 from datetime import datetime
 
-from heizungsbruecke import config, entitlement
+from heizungsbruecke import config
 from heizungsbruecke.notifier import STATE_OK
 from heizungsbruecke.runtime import Runtime
 from smartheat_core import wallclock
+from smartheat_runtime import entitlement
 
 logger = logging.getLogger(__name__)
 

@@ -3,11 +3,11 @@ import logging
 
 import pytest
 
-from heizungsbruecke import backup_store
-from heizungsbruecke.backup_store import load_backup, save_backup
-from heizungsbruecke.delivery import SOURCE_LOCAL, DataFault, DeliveryState, PendingTick
-from heizungsbruecke.state import BridgeState, StateStore, StorageError
-from heizungsbruecke.waerme import WaermeState
+from smartheat_runtime import backup_store
+from smartheat_runtime.backup_store import load_backup, save_backup
+from smartheat_runtime.delivery import SOURCE_LOCAL, DataFault, DeliveryState, PendingTick
+from smartheat_runtime.state import BridgeState, StateStore, StorageError
+from smartheat_runtime.waerme import WaermeState
 
 # Vollstaendige backup.json, wie 0.16.0 sie schreibt (vor TP11: die Parallelverschiebung hiess
 # noch "offset_current", target_history gab es noch als aktiv gefuehrtes Feld).
@@ -37,7 +37,7 @@ def _count_saves(monkeypatch) -> list:
         saves.append(path.name)
         original(path, values)
 
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _spy)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _spy)
     return saves
 
 
@@ -278,7 +278,7 @@ def test_update_rejects_delivery(make_store):
 
 def test_backup_write_failure_keeps_memory_raises_and_is_retried(make_store, tmp_path, monkeypatch):
     store = make_store(backup=CURRENT_BACKUP)
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
 
     with pytest.raises(OSError):
         store.update(restore_point={"curve": 1.1, "room_setpoint": 23.0})
@@ -298,7 +298,7 @@ def test_is_saved_reports_only_fields_whose_save_is_still_missing(make_store, mo
     store = make_store(backup=CURRENT_BACKUP)
     assert store.is_saved("restore_point", "last_room_target", "boost_active")
 
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
     with pytest.raises(OSError):
         store.update(restore_point={"curve": 1.1, "room_setpoint": 23.0})
 
@@ -318,7 +318,7 @@ def test_is_saved_of_an_unset_field_that_was_never_written(make_store):
 
 def test_runtime_only_update_never_retries_a_failed_write(make_store, monkeypatch):
     store = make_store()
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
     with pytest.raises(OSError):
         store.update(boost_active=True)
 
@@ -344,7 +344,7 @@ def test_set_delivery_writes_only_on_persisted_change(make_store, tmp_path, monk
 
 def test_set_delivery_write_failure_is_logged_and_retried(make_store, tmp_path, monkeypatch, caplog):
     store = make_store()
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
 
     with caplog.at_level(logging.ERROR):
         store.set_delivery(DeliveryState(notbetrieb=True))  # wirft nicht
@@ -361,7 +361,7 @@ def test_set_delivery_write_failure_is_logged_and_retried(make_store, tmp_path, 
 def test_update_saved_keeps_memory_unchanged_when_the_write_fails(make_store, monkeypatch):
     # N5: der naechste Check sieht dieselbe Aenderung erneut.
     store = make_store(backup={"last_room_target": 21.0})
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
 
     with pytest.raises(OSError):
         store.update_saved(last_room_target=22.0)
@@ -374,7 +374,7 @@ REQUIRED = ("curve", "room_setpoint")  # Vaillant: alle Hebel ausser optional_re
 
 def test_saved_restore_point_is_the_last_successfully_saved_one(make_store, monkeypatch):
     store = make_store(backup={"restore_point": {"curve": 0.9, "room_setpoint": 22.0}})
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
     with pytest.raises(OSError):
         store.update(restore_point={"curve": 1.0, "room_setpoint": 25.0})
 
@@ -430,7 +430,7 @@ def test_manual_override_misses_is_runtime_only(make_store, monkeypatch):
 def test_failed_backup_write_raises_storage_error_and_sets_storage_failed(make_store, monkeypatch):
     store = make_store(backup=V016_BACKUP)
     assert store.storage_failed is False
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
 
     with pytest.raises(StorageError, match="Datentraeger kaputt"):
         store.update(restore_point={"curve": 1.1})
@@ -440,7 +440,7 @@ def test_failed_backup_write_raises_storage_error_and_sets_storage_failed(make_s
 
 def test_failed_failsafe_write_sets_storage_failed_without_raising(make_store, monkeypatch):
     store = make_store()
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
 
     store.set_delivery(DeliveryState(notbetrieb=True))
 
@@ -450,7 +450,7 @@ def test_failed_failsafe_write_sets_storage_failed_without_raising(make_store, m
 def test_flush_writes_dirty_files_and_clears_storage_failed(make_store, tmp_path, monkeypatch):
     store = make_store(backup=V016_BACKUP)
     with monkeypatch.context() as patch:
-        patch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+        patch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
         with pytest.raises(StorageError):
             store.update(restore_point={"curve": 1.1})
         store.set_delivery(DeliveryState(notbetrieb=True))
@@ -674,8 +674,8 @@ def test_legacy_enforce_budget_entries_win_after_a_rollback(make_store, tmp_path
 
 
 def test_the_migrated_notify_key_is_the_manual_override_key():
-    from heizungsbruecke import state
     from smartheat_core import enforce
+    from smartheat_runtime import state
 
     assert state._MANUAL_OVERRIDE_KEY == enforce.KEY
 

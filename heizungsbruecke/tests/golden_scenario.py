@@ -20,7 +20,7 @@ from fakes import ACCESS_OPTIONS, FakeHa
 import heizungsbruecke.__main__ as main_module
 from heizungsbruecke.derived_sensors import DerivedSensors
 
-QUERY_STATUS = "heizungsbruecke.entitlement.query_status"
+QUERY_STATUS = "smartheat_runtime.entitlement.query_status"
 MQTT_CLIENT = "heizungsbruecke.triggers.BridgeMqttClient"
 TRIGGER_CLIENT = "heizungsbruecke.triggers.HaTriggerClient"
 RESTART = "heizungsbruecke.abo.restart_process"

@@ -7,8 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 from conftest import FakeClock
 
-from heizungsbruecke import abo, entitlement
-from heizungsbruecke.backup_store import load_backup
+from heizungsbruecke import abo
 from heizungsbruecke.ha_binding import HaPlantBinding
 from heizungsbruecke.manifest import ChannelManifest
 from heizungsbruecke.notifier import Notifier
@@ -16,6 +15,8 @@ from heizungsbruecke.status import StatusReporter
 from smartheat_core.levers import LEVER_SETS
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import LocalSafety
+from smartheat_runtime import entitlement
+from smartheat_runtime.backup_store import load_backup
 
 ABO_NOW = datetime(2026, 9, 25, 12, 0, tzinfo=timezone(timedelta(hours=2)))
 OPTIONS = {"tenant_id": "t1"}
@@ -105,7 +106,7 @@ def test_enter_inactive_with_failing_entitlement_persist_still_enters_mode(make_
     def _failing(path, now):
         raise OSError("Datentraeger kaputt")
 
-    monkeypatch.setattr("heizungsbruecke.entitlement.mark_inactive", _failing)
+    monkeypatch.setattr("smartheat_runtime.entitlement.mark_inactive", _failing)
     rt = _runtime(make_store())
 
     with caplog.at_level(logging.ERROR):
@@ -147,7 +148,7 @@ def test_finish_grace_counts_restore_as_done_when_saving_flags_fails(make_store,
     def _broken_save(path, values):
         raise OSError("Datentraeger kaputt")
 
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _broken_save)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _broken_save)
 
     with caplog.at_level(logging.ERROR):
         assert abo.finish_grace(rt, always_restore=True, final_notice=True) is True

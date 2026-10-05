@@ -5,8 +5,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from heizungsbruecke.notifier import HINT_CATEGORIES, STATE_OK, Notifier, category, notification_id
-from heizungsbruecke.state import StateStore
 from smartheat_core import pipeline
+from smartheat_runtime.state import StateStore
 
 SERVICES = ["notify.mobile_app_a", "notify.mobile_app_b"]
 
@@ -120,7 +120,7 @@ def test_state_write_failure_still_notifies(make_store, ha_api, monkeypatch):
     def _broken(*args, **kwargs):
         raise OSError("Datentraeger kaputt")
 
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _broken)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _broken)
     assert notifier.notify("notbetrieb", "aktiv", "Notbetrieb aktiv", critical=True) is True
 
     assert store.state.notify_states == {"notbetrieb": "aktiv"}

@@ -12,7 +12,7 @@ import logging
 import requests
 
 from heizungsbruecke.notifier import STATE_OK
-from heizungsbruecke.plausibility import ROOM_TEMP_RANGE, is_plausible
+from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
 
 logger = logging.getLogger(__name__)
 

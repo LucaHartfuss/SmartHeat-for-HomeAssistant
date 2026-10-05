@@ -1,7 +1,7 @@
 import pytest
 
-from heizungsbruecke.backup_store import save_backup
-from heizungsbruecke.state import StateStore
+from smartheat_runtime.backup_store import save_backup
+from smartheat_runtime.state import StateStore
 
 
 class FakeClock:

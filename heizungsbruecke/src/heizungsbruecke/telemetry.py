@@ -5,10 +5,10 @@ import logging
 import math
 from collections.abc import Callable
 
-from heizungsbruecke.delivery import DataFault
 from smartheat_core import energy as energy_core
 from smartheat_core import wallclock
 from smartheat_core.binding import ENERGY_TOTAL
+from smartheat_runtime.delivery import DataFault
 
 logger = logging.getLogger(__name__)
 

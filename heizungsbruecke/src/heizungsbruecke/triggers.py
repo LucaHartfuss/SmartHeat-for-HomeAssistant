@@ -15,7 +15,7 @@ from heizungsbruecke.runtime import (
     EV_MQTT_CONNECTED,
     EV_SETPOINTS,
 )
-from heizungsbruecke.worker import Event, RegulationWorker
+from smartheat_runtime.worker import Event, RegulationWorker
 from smartheat_transport.connect import connect_options
 
 logger = logging.getLogger(__name__)

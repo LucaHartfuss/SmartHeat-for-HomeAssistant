@@ -9,9 +9,9 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 
-from heizungsbruecke import backup_store
-from heizungsbruecke.delivery import DeliveryState, from_persisted, to_persisted
-from heizungsbruecke.waerme import WaermeState, parse_since
+from smartheat_runtime import backup_store
+from smartheat_runtime.delivery import DeliveryState, from_persisted, to_persisted
+from smartheat_runtime.waerme import WaermeState, parse_since
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ _TEXT_MAP_FIELDS = ("notify_states", "notify_messages")
 _LEVER_MAP_FIELDS = ("restore_point", "originals", "learned")
 _OVERRIDE_FIELDS = ("manual_override", "manual_override_pending")
 # Plan 3b: Lebensdauerzaehler, zurueckgestellte Serverwerte, Hilfs-Ursprungswerte, Energie-Normalisierung. Fehlen sie in
-# backup.json (bis 0.30.0), gilt der Standardwert; leer bzw. 0 werden sie nicht geschrieben (backup.json von client1
+# backup.json (bis 0.30.0), gilt der Standardwert; leer bzw. 0 werden sie nicht geschrieben (eine bestehende backup.json
 # bleibt gleich).
 _PLAN3B_FIELDS = ("lifetime_writes", "deferred_levers", "aux_originals", "energy_state")
 BACKUP_FIELDS = (

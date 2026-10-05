@@ -120,7 +120,7 @@ def test_a_secret_with_special_characters_is_redacted_in_its_repr_form_too():
 
 def test_verteilsystem_without_safety_values_is_a_configuration_error(monkeypatch, caplog, sleeps):
     monkeypatch.setattr(
-        "heizungsbruecke.entitlement.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
+        "smartheat_runtime.entitlement.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
     )
 
     with caplog.at_level("ERROR"):

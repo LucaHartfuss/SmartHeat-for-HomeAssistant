@@ -3,8 +3,8 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from heizungsbruecke import telemetry
-from heizungsbruecke.delivery import DataFault
 from heizungsbruecke.manifest import ChannelManifest
+from smartheat_runtime.delivery import DataFault
 
 
 def test_publish_telemetry_publishes_payload():

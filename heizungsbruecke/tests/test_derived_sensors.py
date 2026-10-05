@@ -5,10 +5,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.derived_sensors import ensure_all
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.helper_templates import outdoor_temperature_template, room_temperature_template
+from smartheat_runtime.backup_store import load_backup, save_backup
 
 ROOMS = ["sensor.wz", "climate.kz::current_temperature"]
 ROOM_TEMPLATE = room_temperature_template(ROOMS)

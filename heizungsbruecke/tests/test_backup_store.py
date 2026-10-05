@@ -2,7 +2,7 @@ import json
 import os
 from pathlib import Path
 
-from heizungsbruecke.backup_store import load_backup, save_backup
+from smartheat_runtime.backup_store import load_backup, save_backup
 
 
 def test_load_backup_returns_empty_dict_when_file_missing(tmp_path):
@@ -30,7 +30,7 @@ def test_save_backup_leaves_no_temp_file_behind(tmp_path):
 
 
 def test_save_backup_writes_via_atomic_rename(tmp_path, monkeypatch):
-    import heizungsbruecke.backup_store as backup_store_module
+    import smartheat_runtime.backup_store as backup_store_module
 
     path = tmp_path / "backup.json"
     replace_calls = []
@@ -62,8 +62,8 @@ def test_save_backup_syncs_the_temp_file_before_replacing(tmp_path, monkeypatch)
         calls.append("replace")
         real_replace(source, target)
 
-    monkeypatch.setattr("heizungsbruecke.backup_store.os.fsync", _fsync)
-    monkeypatch.setattr("heizungsbruecke.backup_store.os.replace", _replace)
+    monkeypatch.setattr("smartheat_runtime.backup_store.os.fsync", _fsync)
+    monkeypatch.setattr("smartheat_runtime.backup_store.os.replace", _replace)
 
     save_backup(tmp_path / "b.json", {"a": 1})
 

@@ -9,7 +9,7 @@ from heizungsbruecke import triggers
 from heizungsbruecke.manifest import ChannelManifest
 from heizungsbruecke.runtime import EV_HA_CONNECTED, EV_LOCAL_CHECK, EV_SETPOINTS
 from heizungsbruecke.triggers import build_ha_trigger_client
-from heizungsbruecke.worker import Event, RegulationWorker
+from smartheat_runtime.worker import Event, RegulationWorker
 from smartheat_transport.connect import ConnectOptions
 
 

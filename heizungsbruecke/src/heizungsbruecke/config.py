@@ -6,11 +6,11 @@ import re
 import urllib.parse
 from pathlib import Path
 
-from heizungsbruecke.entitlement import TOKEN_OPTION
 from heizungsbruecke.notifier import HINT_CATEGORIES
-from heizungsbruecke.windows import validate_daily_trigger_time
 from smartheat_core.binding import BINDINGS, BindingDescription, with_poll_interval
 from smartheat_core.safety import LocalSafety, resolve_local_safety
+from smartheat_runtime.entitlement import TOKEN_OPTION
+from smartheat_runtime.windows import validate_daily_trigger_time
 from smartheat_transport.connect import connect_options
 from smartheat_transport.descriptor import (
     Credential,

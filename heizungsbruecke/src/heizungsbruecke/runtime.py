@@ -15,10 +15,10 @@ if TYPE_CHECKING:
     from heizungsbruecke.manifest import ChannelManifest
     from heizungsbruecke.mqtt_client import BridgeMqttClient
     from heizungsbruecke.notifier import Notifier
-    from heizungsbruecke.state import StateStore
     from heizungsbruecke.status import StatusReporter
-    from heizungsbruecke.worker import RegulationWorker
     from smartheat_core.pipeline import LeverPipeline
+    from smartheat_runtime.state import StateStore
+    from smartheat_runtime.worker import RegulationWorker
 
 EV_LOCAL_CHECK = "local_check"
 EV_SETPOINTS = "setpoints"

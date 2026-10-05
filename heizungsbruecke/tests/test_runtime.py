@@ -14,15 +14,16 @@ import pytest
 from fakes import ACCESS_OPTIONS, FakeHa
 
 import heizungsbruecke.__main__ as main_module
-from heizungsbruecke import abo, backup_store, datentraeger, entitlement, ticks
-from heizungsbruecke.backup_store import load_backup, save_backup
-from heizungsbruecke.delivery import DataFault, DeliveryState
+from heizungsbruecke import abo, datentraeger, ticks
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.runtime import Runtime
 from heizungsbruecke.status import ADDON_VERSION
 from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.enforce import MAX_WRITES_PER_DAY, RETRY_SECONDS
 from smartheat_core.pipeline import LeverPipeline
+from smartheat_runtime import backup_store, entitlement
+from smartheat_runtime.backup_store import load_backup, save_backup
+from smartheat_runtime.delivery import DataFault, DeliveryState
 
 SETTLE = VAILLANT_MYPYLLANT.settle_seconds
 
@@ -150,7 +151,7 @@ def env(tmp_path, monkeypatch, clock):
         abo["queries"] += 1
         return abo["status"]
 
-    monkeypatch.setattr("heizungsbruecke.entitlement.query_status", _query_status)
+    monkeypatch.setattr("smartheat_runtime.entitlement.query_status", _query_status)
     mqtt_clients, trigger_clients = [], []
 
     def _mqtt_factory(*args, **kwargs):
@@ -224,7 +225,7 @@ def _raise_oserror(*args, **kwargs):
 
 
 def _break_backup_writes(monkeypatch) -> None:
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
 
 
 def _fail_next_snapshot_read(monkeypatch, error: Exception) -> None:
@@ -1128,7 +1129,7 @@ def test_server_values_are_not_written_when_restore_point_cannot_be_saved(env, m
             raise OSError("Datentraeger voll")
         return real_save(path, content)
 
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _save)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _save)
     _answer(env, bridge, seq)
 
     assert _regulation_writes(env) == []
@@ -1384,7 +1385,7 @@ def test_inactive_after_grace_idles_as_abo_beendet_without_writes(env, monkeypat
     _quiet_backup(env)
     env.abo["status"] = entitlement.INACTIVE
     entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
-    monkeypatch.setattr("heizungsbruecke.entitlement.grace_expired", lambda since, now: True)
+    monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: True)
 
     bridge = _start_bridge(env)
 
@@ -1399,7 +1400,7 @@ def test_closing_start_retries_a_failed_restore_and_reports_it_once(env, monkeyp
     _quiet_backup(env, emergency_boost_active=True)
     env.abo["status"] = entitlement.INACTIVE
     entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
-    monkeypatch.setattr("heizungsbruecke.entitlement.grace_expired", lambda since, now: True)
+    monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: True)
     failures = [RuntimeError("HA nicht erreichbar")]
     original_write = env.ha.set_number_value
 
@@ -1471,7 +1472,7 @@ def test_inactive_rejection_after_unknown_rejection_clears_zugang_abgelehnt_sile
     assert new_pushes == [abo.inactive_message(entitlement.load_inactive_since(env.paths["ENTITLEMENT_PATH"]))]
     assert abo.ACCESS_DENIED_MESSAGE not in new_pushes and abo.ACCESS_OK_MESSAGE not in new_pushes
 
-    monkeypatch.setattr("heizungsbruecke.entitlement.grace_expired", lambda since, now: True)
+    monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: True)
     _advance(env, bridge, 300)
 
     assert _status_states(env)[-1] == "abo_beendet"
@@ -1650,7 +1651,7 @@ def test_unexpected_entitlement_query_error_counts_as_unknown(env, monkeypatch):
     def _broken_query(tenant_id, base_url, token):
         raise RuntimeError("unerwartet")
 
-    monkeypatch.setattr("heizungsbruecke.entitlement.query_status", _broken_query)
+    monkeypatch.setattr("smartheat_runtime.entitlement.query_status", _broken_query)
     _advance(env, bridge, 30)
     _advance(env, bridge, 30)
 
@@ -1686,7 +1687,7 @@ def test_grace_end_during_runtime_restores_notifies_and_idles(env, monkeypatch):
     env.abo["status"] = entitlement.INACTIVE
     entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
     answers = iter([False, True])  # Startpruefung, dann grace_check
-    monkeypatch.setattr("heizungsbruecke.entitlement.grace_expired", lambda since, now: next(answers, True))
+    monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: next(answers, True))
 
     bridge = _start_bridge(env)
     bridge.worker.run_pending()
@@ -1710,7 +1711,7 @@ def test_grace_end_with_failing_restore_keeps_running_and_retries(env, monkeypat
     env.abo["status"] = entitlement.INACTIVE
     entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
     answers = iter([False])  # Startpruefung, danach ist die Frist abgelaufen
-    monkeypatch.setattr("heizungsbruecke.entitlement.grace_expired", lambda since, now: next(answers, True))
+    monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: next(answers, True))
     bridge = _start_bridge(env)
     env.ha.write_error = RuntimeError("HA nicht erreichbar")
 
@@ -1745,7 +1746,7 @@ def test_inactive_after_grace_restores_leftover_boost_once(env, monkeypatch):
     env.ha.states.update({"number.curve_current": 1.5, "number.shift_current": 25.0})
     env.abo["status"] = entitlement.INACTIVE
     entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
-    monkeypatch.setattr("heizungsbruecke.entitlement.grace_expired", lambda since, now: True)
+    monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: True)
 
     assert _start_bridge(env).reason == "abo_beendet"
 
@@ -1759,7 +1760,7 @@ def _start_just_before_grace_end(env, monkeypatch):
     env.abo["status"] = entitlement.INACTIVE
     entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
     answers = iter([False])  # Startpruefung, danach ist die Frist abgelaufen
-    monkeypatch.setattr("heizungsbruecke.entitlement.grace_expired", lambda since, now: next(answers, True))
+    monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: next(answers, True))
     exec_calls = []
     monkeypatch.setattr("os.execv", lambda path, args: exec_calls.append((path, args)))
     bridge = _start_bridge(env)
@@ -1866,7 +1867,7 @@ def test_grace_end_without_boost_restores_learned_values(env, monkeypatch):
     env.abo["status"] = entitlement.INACTIVE
     entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
     answers = iter([False])  # Startpruefung, danach ist die Frist abgelaufen
-    monkeypatch.setattr("heizungsbruecke.entitlement.grace_expired", lambda since, now: next(answers, True))
+    monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: next(answers, True))
 
     bridge = _start_bridge(env)
 
@@ -1885,7 +1886,7 @@ def test_grace_end_during_comfort_boost_restores_learned_values(env, monkeypatch
     env.abo["status"] = entitlement.INACTIVE
     entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
     answers = iter([False, False])  # Startpruefung und erster grace_check
-    monkeypatch.setattr("heizungsbruecke.entitlement.grace_expired", lambda since, now: next(answers, True))
+    monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: next(answers, True))
     bridge = _start(env)
 
     _set_room_target(env, bridge, 22.0)

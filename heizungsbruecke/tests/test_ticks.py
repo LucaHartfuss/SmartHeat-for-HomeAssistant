@@ -2,12 +2,13 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from heizungsbruecke import delivery, ticks
+from heizungsbruecke import ticks
 from heizungsbruecke.ha_binding import HaPlantBinding
 from heizungsbruecke.manifest import ChannelManifest
 from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.pipeline import DeviceWriteError, LeverPipeline
 from smartheat_core.safety import LocalSafety
+from smartheat_runtime import delivery
 
 SETTLE = VAILLANT_MYPYLLANT.settle_seconds
 

@@ -62,7 +62,7 @@ def test_put_is_best_effort_and_keeps_memory(make_store, monkeypatch):
     def _broken(*args, **kwargs):
         raise OSError("Datentraeger kaputt")
 
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _broken)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _broken)
 
     wb.put(store, wb.BOOST_END, {"day": DAY, "count": 1, "last": 1.0})
 
@@ -73,7 +73,7 @@ def test_put_is_best_effort_and_keeps_memory(make_store, monkeypatch):
 def test_record_success_removes_only_an_existing_key(make_store, tmp_path, monkeypatch):
     store = make_store()
     saves = []
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", lambda path, values: saves.append(values))
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", lambda path, values: saves.append(values))
 
     wb.record_success(store, wb.RESTORE)  # nichts da -> kein Schreiben
     assert saves == []

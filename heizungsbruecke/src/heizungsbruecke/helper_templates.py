@@ -2,7 +2,7 @@
 oder `entity::attribut` (Add-on-Konvention, siehe ha_api.get_state). Ungueltige oder
 unplausible Werte zaehlen nicht; ohne gueltigen Wert rendert das Template `none`, der Sensor
 steht dann auf `unknown` und der Tick meldet einen lokalen Datenfehler."""
-from heizungsbruecke.plausibility import OUTDOOR_TEMP_RANGE, ROOM_TEMP_RANGE
+from smartheat_runtime.plausibility import OUTDOOR_TEMP_RANGE, ROOM_TEMP_RANGE
 
 
 def _source_expression(ref: str) -> str:

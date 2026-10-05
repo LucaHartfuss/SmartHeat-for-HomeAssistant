@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from heizungsbruecke.worker import Event, RegulationWorker
+from smartheat_runtime.worker import Event, RegulationWorker
 
 
 def _recording_worker(clock, *kinds):

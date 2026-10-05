@@ -4,7 +4,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from heizungsbruecke.delivery import SOURCE_LOCAL, DataFault, DeliveryState
 from heizungsbruecke.ha_binding import HaPlantBinding
 from heizungsbruecke.manifest import ChannelManifest
 from heizungsbruecke.notifier import STATE_OK, Notifier
@@ -13,6 +12,7 @@ from smartheat_core import enforce
 from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import LocalSafety
+from smartheat_runtime.delivery import SOURCE_LOCAL, DataFault, DeliveryState
 
 SETTLE = VAILLANT_MYPYLLANT.settle_seconds
 SAFETY = LocalSafety(

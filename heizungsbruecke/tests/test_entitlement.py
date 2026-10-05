@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta, timezone
 import pytest
 import requests
 
-from heizungsbruecke import entitlement
+from smartheat_runtime import entitlement
 
 NOW = datetime(2026, 9, 25, 12, 0, tzinfo=timezone(timedelta(hours=2)))
 
@@ -31,7 +31,7 @@ def _patch_get(monkeypatch, response=None, error=None):
             raise error
         return response
 
-    monkeypatch.setattr("heizungsbruecke.entitlement.requests.get", fake_get)
+    monkeypatch.setattr("smartheat_runtime.entitlement.requests.get", fake_get)
     return calls
 
 

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 from heizungsbruecke import waerme_hint
 from heizungsbruecke.notifier import STATE_OK
-from heizungsbruecke.state import StateStore, StorageError
+from smartheat_runtime.state import StateStore, StorageError
 
 CEST = timezone(timedelta(hours=2))
 T0 = datetime(2026, 9, 30, 2, 11, tzinfo=CEST)
