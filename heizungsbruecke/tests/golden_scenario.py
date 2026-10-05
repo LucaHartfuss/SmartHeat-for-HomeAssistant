@@ -8,6 +8,7 @@ TRIGGER_CLIENT, RESTART und install_wall_clock sind die einzigen Stellen, die di
 import copy
 import itertools
 import json
+import time
 import uuid
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
@@ -216,6 +217,9 @@ class World:
         monkeypatch.setattr(RESTART, lambda: self.log.append(["prozess", "neustart"]))
         counter = itertools.count(1)
         monkeypatch.setattr("uuid.uuid4", lambda: uuid.UUID(int=next(counter)))
+        # datetime.now().astimezone() im Add-on liefert die Systemzone: fuer den Lauf fest auf Berlin setzen.
+        monkeypatch.setenv("TZ", "Europe/Berlin")
+        time.tzset()
         install_wall_clock(monkeypatch, self.wall)
 
     def _query_status(self, tenant_id, base_url, token):
