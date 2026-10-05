@@ -17,7 +17,7 @@ import heizungsbruecke.__main__ as main_module
 from heizungsbruecke import abo, datentraeger, ticks
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.runtime import Runtime
-from heizungsbruecke.status import ADDON_VERSION
+from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.enforce import MAX_WRITES_PER_DAY, RETRY_SECONDS
 from smartheat_core.pipeline import LeverPipeline

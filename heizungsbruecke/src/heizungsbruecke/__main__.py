@@ -29,6 +29,7 @@ from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_binding import binding_for, binding_roles
 from heizungsbruecke.ha_signals import HaSignalSource
+from heizungsbruecke.ha_sinks import HaNotifySink, HaStatusSink
 from heizungsbruecke.manifest import ChannelManifest, ManifestError, build_manifest, entity_ref
 from heizungsbruecke.notifier import STATE_OK, Notifier
 from heizungsbruecke.runtime import (
@@ -56,6 +57,7 @@ from heizungsbruecke.status import (
     STATUS_KONFIGURATIONSFEHLER,
     StatusReporter,
 )
+from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core import derived, enforce, wallclock, write_budget
 from smartheat_core.binding import BINDINGS
 from smartheat_core.pipeline import LeverPipeline, WriteBudgetExhausted
@@ -668,9 +670,14 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | Idle
     # ohnehin nichts (Hilfs-Entities, Anlage).
     _wait_until_reachable(ha_api)
     store = StateStore(config.BACKUP_PATH, config.FAILSAFE_PATH)
-    notifier = Notifier(store, ha_api, config.notify_services(options), config.notify_hints_off(options))
+    notifier = Notifier(
+        store, HaNotifySink(ha_api, config.notify_services(options)), config.notify_hints_off(options),
+    )
     ticks.seed_notices(notifier, store.state.delivery)
-    status = StatusReporter(ha_api, options["tenant_id"], options.get("setup_id"), store, _status_lever_set(options))
+    status = StatusReporter(
+        HaStatusSink(ha_api), options["tenant_id"], options.get("setup_id"), store, _status_lever_set(options),
+        ADDON_VERSION,
+    )
     status.publish()
     if signed_off:
         return _sign_off(options, ha_api, store, notifier, status, clock)

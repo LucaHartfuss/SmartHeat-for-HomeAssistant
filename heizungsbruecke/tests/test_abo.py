@@ -10,9 +10,11 @@ from fakes import runtime_config
 
 from heizungsbruecke import abo
 from heizungsbruecke.ha_binding import HaPlantBinding
+from heizungsbruecke.ha_sinks import HaNotifySink, HaStatusSink
 from heizungsbruecke.manifest import ChannelManifest
 from heizungsbruecke.notifier import Notifier
 from heizungsbruecke.status import StatusReporter
+from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core.levers import LEVER_SETS
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import LocalSafety
@@ -37,8 +39,10 @@ def _runtime(tmp_path, store, entity_ids=BOTH_ROLES, notify_services=("notify.ha
         manifest=manifest, signals=ha_api, ha_api=ha_api, store=store, mqtt_client=MagicMock(),
         config=runtime_config(entitlement_path=tmp_path / "entitlement_state.json"),
         override=LeverPipeline(store, HaPlantBinding(ha_api, manifest), SAFETY),
-        notifier=Notifier(store, ha_api, list(notify_services)),
-        status=StatusReporter(ha_api, OPTIONS["tenant_id"], None, store, LEVER_SETS["vaillant_vrc720"]),
+        notifier=Notifier(store, HaNotifySink(ha_api, list(notify_services))),
+        status=StatusReporter(
+            HaStatusSink(ha_api), OPTIONS["tenant_id"], None, store, LEVER_SETS["vaillant_vrc720"], ADDON_VERSION,
+        ),
         clock=clock or FakeClock(), auth_rejected_queried_at=None, auth_rejected_last_status=None,
         connection_failing_queried_at=None,
     )

@@ -6,6 +6,7 @@ import requests
 from fakes import runtime_config
 
 from heizungsbruecke.ha_signals import HaSignalSource
+from heizungsbruecke.ha_sinks import HaNotifySink
 from heizungsbruecke.notifier import Notifier
 from heizungsbruecke.room_sensors import check_room_sensors
 
@@ -31,7 +32,7 @@ def _rt(make_store, values, room_sensors, store=None):
     return SimpleNamespace(
         config=runtime_config(room_sensor_refs=tuple(room_sensors)), signals=HaSignalSource(ha_api), ha_api=ha_api,
         store=store,
-        notifier=Notifier(store, ha_api, ["notify.mobile_app_a"]),
+        notifier=Notifier(store, HaNotifySink(ha_api, ["notify.mobile_app_a"])),
     )
 
 

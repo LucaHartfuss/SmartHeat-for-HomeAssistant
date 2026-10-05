@@ -20,3 +20,25 @@ class SignalSource(Protocol):
     def get_state(self, ref: str) -> float: ...
 
     def get_raw_state(self, ref: str) -> str: ...
+
+
+class StatusSink(Protocol):
+    def publish(self, event: dict) -> None:
+        """Status-Modell (Schema 2) veroeffentlichen. Darf werfen; der Reporter sendet beim naechsten Anlass erneut."""
+        ...
+
+
+class NotifySink(Protocol):
+    """Meldungen an den Kunden. Entprellung, Hinweis-Schalter und offene Meldungen fuehrt der Notifier."""
+
+    def push(self, key: str, message: str) -> None:
+        """Einmalige Nachricht (HA: alle Notify-Dienste). Fehler einzelner Kanaele behandelt der Sink selbst."""
+        ...
+
+    def show(self, key: str, message: str) -> None:
+        """Offene kritische Meldung anlegen oder ersetzen (HA: persistent_notification). Darf werfen."""
+        ...
+
+    def withdraw(self, key: str) -> None:
+        """Offene kritische Meldung zuruecknehmen. Darf werfen."""
+        ...

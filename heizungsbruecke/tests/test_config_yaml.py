@@ -136,7 +136,7 @@ def test_tp6_list_options_and_setup_id_are_optional_and_room_actual_is_gone():
 
 
 def test_addon_version_constant_matches_config_yaml():
-    from heizungsbruecke.status import ADDON_VERSION
+    from heizungsbruecke.version import ADDON_VERSION
 
     assert _load_config_yaml()["version"] == ADDON_VERSION
 

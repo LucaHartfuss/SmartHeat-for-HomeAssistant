@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from heizungsbruecke.ha_sinks import HaNotifySink
 from heizungsbruecke.notifier import Notifier
 from heizungsbruecke.ticks import _notice, seed_notices
 from smartheat_runtime import delivery
@@ -29,7 +30,7 @@ def test_notice_rejects_unknown_kind():
 
 
 def test_seed_notices_takes_over_persisted_notbetrieb_and_fault(make_store):
-    notifier = Notifier(make_store(), MagicMock(), [])
+    notifier = Notifier(make_store(), HaNotifySink(MagicMock(), []))
     state = delivery.DeliveryState(
         notbetrieb=True, datenfehler=delivery.DataFault(delivery.SOURCE_SERVER, ("unplausibel: 99",)),
     )
@@ -41,7 +42,7 @@ def test_seed_notices_takes_over_persisted_notbetrieb_and_fault(make_store):
 
 
 def test_seed_notices_leaves_a_clean_state_alone(make_store):
-    notifier = Notifier(make_store(), MagicMock(), [])
+    notifier = Notifier(make_store(), HaNotifySink(MagicMock(), []))
 
     seed_notices(notifier, delivery.DeliveryState())
 

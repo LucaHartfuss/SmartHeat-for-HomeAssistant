@@ -120,6 +120,15 @@ class FakeHa:
         return str(value)
 
 
+class FailingServiceHa(FakeHa):
+    """Der Notify-Dienst `notify.kaputt` wirft, alle anderen gehen durch (Plan SHG G1, Review-Fokus 5)."""
+
+    def send_notification(self, service, message):
+        if service == "notify.kaputt":
+            raise RuntimeError("Dienst weg")
+        super().send_notification(service, message)
+
+
 class LaggingFakeHa(FakeHa):
     """HA/mypyllant-Modell (TP12e, AU-023): ein geschriebener Wert ist erst nach `lag_seconds` lesbar
     (mypyllant pollt die Hersteller-Cloud bis ca. 30 min spaeter), ein Moduswechsel wirkt nach

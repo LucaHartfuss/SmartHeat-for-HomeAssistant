@@ -1,6 +1,6 @@
-"""Meldungen an den Kunden (Spec TP6, 3.4): Push an alle konfigurierten Notify-Dienste, bei
-kritischen Anlaessen zusaetzlich eine HA-persistent_notification, die beim Rueckwechsel auf "ok"
-wieder verschwindet. Gemeldet wird nur bei einem Zustandswechsel je Schluessel. Der Zustand liegt
+"""Meldungen an den Kunden (Spec TP6, 3.4): Push (HA: an alle konfigurierten Notify-Dienste), bei
+kritischen Anlaessen zusaetzlich eine offene Meldung (HA: persistent_notification), die beim
+Rueckwechsel auf "ok" wieder verschwindet. Gemeldet wird nur bei einem Zustandswechsel je Schluessel. Der Zustand liegt
 in BridgeState.notify_states (backup.json) und uebersteht Neustarts: kein Meldungssturm, wenn das
 Add-on mit demselben Fehler erneut startet.
 
@@ -12,12 +12,12 @@ Die sieben Hinweis-Kategorien (HINT_CATEGORIES, Option notify_hints_off) lassen 
 abschalten: der Zustand wird weiter verfolgt und geloggt (Grundlage der Hinweise im Status), nur
 der Push entfaellt. Kritische Meldungen sind nie abschaltbar."""
 import logging
-import re
+
+from smartheat_runtime.ports import NotifySink
 
 logger = logging.getLogger(__name__)
 
 STATE_OK = "ok"
-TITLE = "SmartHeat"
 
 # Abschaltbare Hinweis-Kategorien (Spec TP7 3.4). Muss zum config.yaml-Schema und zu const.py der
 # Integration passen (Contract-Check).
@@ -31,16 +31,10 @@ def category(key: str) -> str:
     return key.partition(":")[0]
 
 
-def notification_id(key: str) -> str:
-    """Stabile ID je Schluessel: eine neue Meldung ersetzt die vorige, statt sich zu stapeln."""
-    return "smartheat_" + re.sub(r"[^a-z0-9_]", "_", key.lower())
-
-
 class Notifier:
-    def __init__(self, store, ha_api, services: list[str], hints_off=()) -> None:
+    def __init__(self, store, sink: NotifySink, hints_off=()) -> None:
         self._store = store
-        self._ha_api = ha_api
-        self._services = list(services)
+        self._sink = sink
         self._hints_off = frozenset(hints_off)
 
     def state(self, key: str) -> str:
@@ -83,18 +77,14 @@ class Notifier:
             logger.warning(message)
         muted = (not critical and category(key) in self._hints_off) or (silent_ok and state == STATE_OK)
         if not muted:
-            for service in self._services:
-                try:
-                    self._ha_api.send_notification(service, message)
-                except Exception:
-                    logger.warning("Push-Benachrichtigung '%s' an %s konnte nicht gesendet werden", key, service)
+            self._sink.push(key, message)
         if critical:
             self._update_persistent(key, state, message)
         return True
 
     def refresh_persistent(self, key: str, message: str) -> None:
         """Legt die HA-Benachrichtigung eines unveraenderten, nicht-"ok" Zustands mit dem
-        aktuellen Text erneut an (ersetzt die vorige per notification_id), ohne Push. Fuer einen
+        aktuellen Text erneut an (ersetzt die vorige je Schluessel), ohne Push. Fuer einen
         Startfehler, der bei jedem Start erneut auftritt: nach einem Host-Neustart fehlt die
         Benachrichtigung sonst, weil HA sie nicht speichert."""
         state = self.state(key)
@@ -131,11 +121,10 @@ class Notifier:
             logger.exception("Meldezustaende konnten beim Abmelden nicht geleert werden")
 
     def _update_persistent(self, key: str, state: str, message: str) -> None:
-        nid = notification_id(key)
         try:
             if state == STATE_OK:
-                self._ha_api.dismiss_persistent_notification(nid)
+                self._sink.withdraw(key)
             else:
-                self._ha_api.create_persistent_notification(TITLE, message, nid)
+                self._sink.show(key, message)
         except Exception:
-            logger.warning("HA-Benachrichtigung '%s' konnte nicht aktualisiert werden", key)
+            logger.warning("Offene Meldung '%s' konnte nicht aktualisiert werden", key)

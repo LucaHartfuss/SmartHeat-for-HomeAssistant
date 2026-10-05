@@ -8,6 +8,7 @@ from fakes import runtime_config
 
 from heizungsbruecke.battery import STATE_LOW, check_batteries, next_state
 from heizungsbruecke.ha_signals import HaSignalSource
+from heizungsbruecke.ha_sinks import HaNotifySink
 from heizungsbruecke.notifier import Notifier
 
 
@@ -46,7 +47,7 @@ def _rt(make_store, raw_states, battery_entities=("sensor.wz_battery",)):
     store = make_store()
     return SimpleNamespace(
         config=runtime_config(battery_refs=tuple(battery_entities)), signals=HaSignalSource(ha_api), ha_api=ha_api,
-        notifier=Notifier(store, ha_api, ["notify.mobile_app_a"]),
+        notifier=Notifier(store, HaNotifySink(ha_api, ["notify.mobile_app_a"])),
     )
 
 
