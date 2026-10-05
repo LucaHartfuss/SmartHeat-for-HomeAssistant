@@ -21,9 +21,9 @@ import heizungsbruecke.__main__ as main_module
 from heizungsbruecke.derived_sensors import DerivedSensors
 
 QUERY_STATUS = "smartheat_runtime.entitlement.query_status"
-MQTT_CLIENT = "heizungsbruecke.triggers.BridgeMqttClient"
+MQTT_CLIENT = "smartheat_runtime.mqtt_link.BridgeMqttClient"
 TRIGGER_CLIENT = "heizungsbruecke.triggers.HaTriggerClient"
-RESTART = "heizungsbruecke.abo.restart_process"
+RESTART = "smartheat_runtime.abo.restart_process"
 
 BERLIN = ZoneInfo("Europe/Berlin")
 START = datetime(2026, 1, 15, 8, 0, tzinfo=BERLIN)

@@ -6,10 +6,10 @@ import pytest
 import requests
 from fakes import runtime_config
 
-from heizungsbruecke.battery import STATE_LOW, check_batteries, next_state
 from heizungsbruecke.ha_signals import HaSignalSource
 from heizungsbruecke.ha_sinks import HaNotifySink
-from heizungsbruecke.notifier import Notifier
+from smartheat_runtime.battery import STATE_LOW, check_batteries, next_state
+from smartheat_runtime.notifier import Notifier
 
 
 @pytest.mark.parametrize("previous,raw,expected", [

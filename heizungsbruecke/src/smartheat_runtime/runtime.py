@@ -10,13 +10,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from heizungsbruecke.manifest import ChannelManifest
-    from heizungsbruecke.notifier import Notifier
-    from heizungsbruecke.status import StatusReporter
     from smartheat_core.pipeline import LeverPipeline
+    from smartheat_runtime.notifier import Notifier
     from smartheat_runtime.ports import SignalSource, TriggerSource
+    from smartheat_runtime.roles import ChannelManifest
     from smartheat_runtime.runtime_config import RuntimeConfig
     from smartheat_runtime.state import StateStore
+    from smartheat_runtime.status import StatusReporter
     from smartheat_runtime.worker import RegulationWorker
     from smartheat_transport.mqtt_client import BridgeMqttClient
 

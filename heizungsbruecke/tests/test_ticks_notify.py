@@ -4,9 +4,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from heizungsbruecke.ha_sinks import HaNotifySink
-from heizungsbruecke.notifier import Notifier
-from heizungsbruecke.ticks import _notice, seed_notices
 from smartheat_runtime import delivery
+from smartheat_runtime.notifier import Notifier
+from smartheat_runtime.ticks import _notice, seed_notices
 
 
 @pytest.mark.parametrize("kind,detail,expected", [

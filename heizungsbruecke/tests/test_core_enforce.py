@@ -6,14 +6,14 @@ import pytest
 from fakes import runtime_config
 
 from heizungsbruecke.ha_binding import HaPlantBinding
-from heizungsbruecke.manifest import ChannelManifest
-from heizungsbruecke.notifier import STATE_OK, Notifier
-from heizungsbruecke.runtime import Runtime
 from smartheat_core import enforce
 from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import LocalSafety
 from smartheat_runtime.delivery import SOURCE_LOCAL, DataFault, DeliveryState
+from smartheat_runtime.notifier import STATE_OK, Notifier
+from smartheat_runtime.roles import ChannelManifest
+from smartheat_runtime.runtime import Runtime
 
 SETTLE = VAILLANT_MYPYLLANT.settle_seconds
 SAFETY = LocalSafety(
@@ -490,6 +490,6 @@ def test_an_intervention_reported_by_0_29_0_is_not_reported_again_after_the_upda
 
 
 def test_state_ok_matches_the_notifier():
-    from heizungsbruecke.notifier import STATE_OK as NOTIFIER_OK
     from smartheat_core.enforce import STATE_OK
+    from smartheat_runtime.notifier import STATE_OK as NOTIFIER_OK
     assert STATE_OK == NOTIFIER_OK

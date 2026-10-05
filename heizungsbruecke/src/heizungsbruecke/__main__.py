@@ -12,27 +12,34 @@ import time
 from dataclasses import dataclass
 from typing import NoReturn
 
-from heizungsbruecke import (
-    abo,
-    battery,
-    config,
-    datentraeger,
-    derived_sensors,
-    regulation,
-    room_sensors,
-    telemetry,
-    ticks,
-    triggers,
-    waerme_hint,
-)
+from heizungsbruecke import config, derived_sensors, triggers
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_binding import binding_for, binding_roles
 from heizungsbruecke.ha_signals import HaSignalSource
 from heizungsbruecke.ha_sinks import HaNotifySink, HaStatusSink
-from heizungsbruecke.manifest import ChannelManifest, ManifestError, build_manifest, entity_ref
-from heizungsbruecke.notifier import STATE_OK, Notifier
-from heizungsbruecke.runtime import (
+from heizungsbruecke.manifest import build_manifest, entity_ref
+from heizungsbruecke.version import ADDON_VERSION
+from smartheat_core import derived, enforce, wallclock, write_budget
+from smartheat_core.binding import BINDINGS
+from smartheat_core.pipeline import LeverPipeline, WriteBudgetExhausted
+from smartheat_runtime import (
+    abo,
+    battery,
+    datentraeger,
+    delivery,
+    entitlement,
+    mqtt_link,
+    regulation,
+    room_sensors,
+    telemetry,
+    ticks,
+    waerme_hint,
+)
+from smartheat_runtime.delivery import ROLE_DATENTRAEGER, SOURCE_LOCAL, DataFault
+from smartheat_runtime.notifier import STATE_OK, Notifier
+from smartheat_runtime.roles import ChannelManifest, ManifestError
+from smartheat_runtime.runtime import (
     EV_ACK_TIMEOUT,
     EV_AUTH_REJECTED,
     EV_CONNECTION_CHECK,
@@ -49,7 +56,8 @@ from heizungsbruecke.runtime import (
     EV_WATCHDOG,
     Runtime,
 )
-from heizungsbruecke.status import (
+from smartheat_runtime.state import StateStore, StorageError
+from smartheat_runtime.status import (
     ABO_AKTIV,
     HEARTBEAT_SECONDS,
     STATUS_ABGEMELDET,
@@ -57,13 +65,6 @@ from heizungsbruecke.status import (
     STATUS_KONFIGURATIONSFEHLER,
     StatusReporter,
 )
-from heizungsbruecke.version import ADDON_VERSION
-from smartheat_core import derived, enforce, wallclock, write_budget
-from smartheat_core.binding import BINDINGS
-from smartheat_core.pipeline import LeverPipeline, WriteBudgetExhausted
-from smartheat_runtime import delivery, entitlement
-from smartheat_runtime.delivery import ROLE_DATENTRAEGER, SOURCE_LOCAL, DataFault
-from smartheat_runtime.state import StateStore, StorageError
 from smartheat_runtime.worker import Event, RegulationWorker
 
 # Das Add-on startet mit `startup: services`, evtl. vor HA Core. Solange HA nicht antwortet,
@@ -727,7 +728,7 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | Idle
     _register_handlers(rt)
     abo_inactive = rt.store.state.abo_inactive_since is not None
     if not abo_inactive:
-        rt.mqtt_client = triggers.create_mqtt_client(rt.config, rt.worker)
+        rt.mqtt_client = mqtt_link.create_mqtt_client(rt.config, rt.worker)
 
     _prime(rt)
     if rt.mqtt_client is not None:

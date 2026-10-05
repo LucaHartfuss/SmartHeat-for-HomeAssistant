@@ -6,8 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TypeGuard
 
-from heizungsbruecke.manifest import ChannelManifest
 from smartheat_core import wallclock
+from smartheat_runtime.roles import ChannelManifest
 
 logger = logging.getLogger(__name__)
 

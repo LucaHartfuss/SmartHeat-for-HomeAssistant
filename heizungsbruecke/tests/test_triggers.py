@@ -6,9 +6,10 @@ import pytest
 from fakes import runtime_config
 
 from heizungsbruecke import triggers
-from heizungsbruecke.manifest import ChannelManifest
-from heizungsbruecke.runtime import EV_LOCAL_CHECK, EV_SETPOINTS, EV_SOURCE_CONNECTED
 from heizungsbruecke.triggers import build_ha_trigger_client
+from smartheat_runtime import mqtt_link
+from smartheat_runtime.roles import ChannelManifest
+from smartheat_runtime.runtime import EV_LOCAL_CHECK, EV_SETPOINTS, EV_SOURCE_CONNECTED
 from smartheat_runtime.worker import Event, RegulationWorker
 from smartheat_transport.connect import ConnectOptions
 
@@ -24,7 +25,7 @@ def test_setpoints_callback_drops_retained_and_non_object_payloads(clock, raw, r
     message.payload = raw
     message.retain = retain
 
-    triggers.make_setpoints_callback(worker)(None, None, message)  # darf nicht werfen
+    mqtt_link.make_setpoints_callback(worker)(None, None, message)  # darf nicht werfen
     worker.run_pending()
 
     assert seen == []
@@ -38,7 +39,7 @@ def test_setpoints_callback_posts_fresh_answer_to_worker(clock):
     message.payload = b'{"seq": "s1", "status": "ok"}'
     message.retain = False
 
-    triggers.make_setpoints_callback(worker)(None, None, message)
+    mqtt_link.make_setpoints_callback(worker)(None, None, message)
     worker.run_pending()
 
     assert seen == [Event(EV_SETPOINTS, {"payload": {"seq": "s1", "status": "ok"}})]
@@ -148,9 +149,9 @@ def test_extract_attribute_suffix_returns_none_for_plain_entity_id():
 def test_create_mqtt_client_only_subscribes_the_answers(monkeypatch, clock):
     created = MagicMock()
     factory = MagicMock(return_value=created)
-    monkeypatch.setattr("heizungsbruecke.triggers.BridgeMqttClient", factory)
+    monkeypatch.setattr("smartheat_runtime.mqtt_link.BridgeMqttClient", factory)
 
-    triggers.create_mqtt_client(
+    mqtt_link.create_mqtt_client(
         runtime_config(tenant_id="t1"),
         RegulationWorker(clock=clock),
     )

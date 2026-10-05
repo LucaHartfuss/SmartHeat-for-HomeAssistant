@@ -9,7 +9,7 @@ Rueckkehr wird sofort gemeldet. Der Zaehler ist reine Laufzeit und beginnt nach 
 ein schon gemeldeter Ausfall bleibt dabei bestehen, bis der Fuehler wieder Werte liefert."""
 import logging
 
-from heizungsbruecke.notifier import STATE_OK
+from smartheat_runtime.notifier import STATE_OK
 from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
 from smartheat_runtime.ports import SignalNotFound, SourceUnavailable
 

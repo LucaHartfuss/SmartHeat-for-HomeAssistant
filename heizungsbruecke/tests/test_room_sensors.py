@@ -7,8 +7,8 @@ from fakes import runtime_config
 
 from heizungsbruecke.ha_signals import HaSignalSource
 from heizungsbruecke.ha_sinks import HaNotifySink
-from heizungsbruecke.notifier import Notifier
-from heizungsbruecke.room_sensors import check_room_sensors
+from smartheat_runtime.notifier import Notifier
+from smartheat_runtime.room_sensors import check_room_sensors
 
 
 def _http_error(status_code):

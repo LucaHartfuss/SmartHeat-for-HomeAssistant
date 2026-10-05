@@ -6,8 +6,8 @@ import pytest
 from fakes import FailingServiceHa
 
 from heizungsbruecke.ha_sinks import HaNotifySink, notification_id
-from heizungsbruecke.notifier import HINT_CATEGORIES, STATE_OK, Notifier, category
 from smartheat_core import pipeline
+from smartheat_runtime.notifier import HINT_CATEGORIES, STATE_OK, Notifier, category
 from smartheat_runtime.state import StateStore
 
 SERVICES = ["notify.mobile_app_a", "notify.mobile_app_b"]

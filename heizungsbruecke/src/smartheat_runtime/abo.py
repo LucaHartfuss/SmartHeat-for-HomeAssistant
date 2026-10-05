@@ -5,10 +5,10 @@ import sys
 from dataclasses import replace
 from datetime import datetime
 
-from heizungsbruecke.notifier import STATE_OK
-from heizungsbruecke.runtime import Runtime
 from smartheat_core import wallclock
 from smartheat_runtime import entitlement
+from smartheat_runtime.notifier import STATE_OK
+from smartheat_runtime.runtime import Runtime
 
 logger = logging.getLogger(__name__)
 
@@ -216,6 +216,6 @@ def _enter_idle(rt: Runtime) -> None:
 
 
 def restart_process() -> None:
-    """Ersetzt den Prozess durch einen frischen Start (Abo wieder aktiv, Neupruefung im
-    Konfigurationsfehler). Unabhaengig vom Supervisor-Watchdog: der Container laeuft weiter."""
-    os.execv(sys.executable, [sys.executable, "-m", "heizungsbruecke"])
+    """Ersetzt den Prozess durch einen frischen Start mit demselben Befehl (Abo wieder aktiv, Neupruefung im
+    Konfigurationsfehler). Im Add-on ist das `python -m heizungsbruecke`. Unabhaengig vom Watchdog des Hosts."""
+    os.execv(sys.executable, [sys.executable, *sys.orig_argv[1:]])

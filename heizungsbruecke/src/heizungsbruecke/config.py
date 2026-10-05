@@ -6,9 +6,9 @@ import re
 import urllib.parse
 from pathlib import Path
 
-from heizungsbruecke.notifier import HINT_CATEGORIES
 from smartheat_core.binding import BINDINGS, BindingDescription, with_poll_interval
 from smartheat_core.safety import LocalSafety, resolve_local_safety
+from smartheat_runtime.notifier import HINT_CATEGORIES
 from smartheat_runtime.runtime_config import RuntimeConfig
 from smartheat_runtime.windows import validate_daily_trigger_time
 from smartheat_transport.connect import connect_options

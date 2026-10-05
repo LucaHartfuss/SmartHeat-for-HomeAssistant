@@ -175,6 +175,7 @@ def test_outdated_options_idle_with_heartbeat_and_recheck_without_second_push(mo
     ha_api = _reachable()
     execs = []
     monkeypatch.setattr("os.execv", lambda path, args: execs.append(args))
+    monkeypatch.setattr("sys.orig_argv", ["python", "-m", "heizungsbruecke"])  # Add-on-Start (restart_process)
 
     bridge = _start_bridge(old, ha_api, clock=clock)
 

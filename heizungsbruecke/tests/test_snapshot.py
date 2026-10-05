@@ -4,8 +4,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from heizungsbruecke.ha_binding import HaPlantBinding
-from heizungsbruecke.manifest import ChannelManifest
-from heizungsbruecke.snapshot import SnapshotRead, publish_snapshot, read_snapshot
+from smartheat_runtime.roles import ChannelManifest
+from smartheat_runtime.snapshot import SnapshotRead, publish_snapshot, read_snapshot
 
 LEVERS = ("curve", "room_setpoint", "heat_limit")
 # Rollen der Manifest-Entities je Hebel (Add-on-Optionen unveraendert, P2-3).

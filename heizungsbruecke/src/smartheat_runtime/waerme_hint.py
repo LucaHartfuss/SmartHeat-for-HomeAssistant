@@ -2,9 +2,9 @@
 import logging
 from datetime import datetime
 
-from heizungsbruecke.notifier import STATE_OK
 from smartheat_core import wallclock
 from smartheat_runtime import waerme
+from smartheat_runtime.notifier import STATE_OK
 from smartheat_runtime.state import StorageError
 
 logger = logging.getLogger(__name__)

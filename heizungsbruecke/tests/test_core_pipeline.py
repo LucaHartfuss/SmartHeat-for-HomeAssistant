@@ -6,11 +6,11 @@ import logging
 import pytest
 
 from heizungsbruecke.ha_binding import HaPlantBinding
-from heizungsbruecke.manifest import ChannelManifest
 from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.pipeline import DeviceWriteError, LeverPipeline
 from smartheat_core.safety import LocalSafety
 from smartheat_runtime.backup_store import load_backup
+from smartheat_runtime.roles import ChannelManifest
 
 SETTLE = VAILLANT_MYPYLLANT.settle_seconds
 # Bisherige Test-Optionen (boost 1.0/24.0, heat_limit_max 20) als LocalSafety.

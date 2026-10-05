@@ -5,7 +5,7 @@ unknown aendert nichts. Gemeldet wird nur beim Wechsel (notifier), nicht kritisc
 import logging
 import math
 
-from heizungsbruecke.notifier import STATE_OK
+from smartheat_runtime.notifier import STATE_OK
 from smartheat_runtime.ports import SignalNotFound, SourceUnavailable
 
 logger = logging.getLogger(__name__)

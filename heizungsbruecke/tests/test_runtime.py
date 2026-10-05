@@ -14,16 +14,15 @@ import pytest
 from fakes import ACCESS_OPTIONS, FakeHa
 
 import heizungsbruecke.__main__ as main_module
-from heizungsbruecke import abo, datentraeger, ticks
 from heizungsbruecke.derived_sensors import DerivedSensors
-from heizungsbruecke.runtime import Runtime
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.enforce import MAX_WRITES_PER_DAY, RETRY_SECONDS
 from smartheat_core.pipeline import LeverPipeline
-from smartheat_runtime import backup_store, entitlement
+from smartheat_runtime import abo, backup_store, datentraeger, entitlement, ticks
 from smartheat_runtime.backup_store import load_backup, save_backup
 from smartheat_runtime.delivery import DataFault, DeliveryState
+from smartheat_runtime.runtime import Runtime
 
 SETTLE = VAILLANT_MYPYLLANT.settle_seconds
 
@@ -162,7 +161,7 @@ def env(tmp_path, monkeypatch, clock):
         trigger_clients.append(FakeTriggerClient(**kwargs))
         return trigger_clients[-1]
 
-    monkeypatch.setattr("heizungsbruecke.triggers.BridgeMqttClient", _mqtt_factory)
+    monkeypatch.setattr("smartheat_runtime.mqtt_link.BridgeMqttClient", _mqtt_factory)
     monkeypatch.setattr("heizungsbruecke.triggers.HaTriggerClient", _trigger_factory)
     return SimpleNamespace(
         clock=clock, paths=paths, abo=abo, ha=FakeHa(), mqtt_clients=mqtt_clients, trigger_clients=trigger_clients,
@@ -237,7 +236,7 @@ def _fail_next_snapshot_read(monkeypatch, error: Exception) -> None:
             raise failures.pop()
         return original(*args, **kwargs)
 
-    monkeypatch.setattr("heizungsbruecke.ticks.read_snapshot", _flaky)
+    monkeypatch.setattr("smartheat_runtime.ticks.read_snapshot", _flaky)
 
 
 def _quiet_backup(env, **extra):
@@ -1763,6 +1762,7 @@ def _start_just_before_grace_end(env, monkeypatch):
     monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: next(answers, True))
     exec_calls = []
     monkeypatch.setattr("os.execv", lambda path, args: exec_calls.append((path, args)))
+    monkeypatch.setattr("sys.orig_argv", ["python", "-m", "heizungsbruecke"])  # Add-on-Start (restart_process)
     bridge = _start_bridge(env)
     return bridge, exec_calls
 

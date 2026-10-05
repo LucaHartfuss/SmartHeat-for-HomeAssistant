@@ -4,9 +4,9 @@ entscheidet die Hebel-Pipeline (LeverPipeline.set_boosts)."""
 import logging
 from datetime import datetime
 
-from heizungsbruecke.runtime import Runtime
 from smartheat_core.boost import decide_boost
 from smartheat_core.emergency_boost import decide_emergency_boost
+from smartheat_runtime.runtime import Runtime
 
 logger = logging.getLogger(__name__)
 

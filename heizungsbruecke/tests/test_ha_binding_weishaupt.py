@@ -4,11 +4,11 @@ Reihenfolge und Wiederherstellung."""
 import pytest
 
 from heizungsbruecke.ha_binding import WEISHAUPT_NORMAL_MODE, WeishauptHaBinding
-from heizungsbruecke.manifest import ChannelManifest
 from smartheat_core import write_budget
 from smartheat_core.binding import WEISHAUPT_MODBUS
 from smartheat_core.pipeline import DeviceWriteError, LeverPipeline, WriteBudgetExhausted
 from smartheat_core.safety import resolve_local_safety
+from smartheat_runtime.roles import ChannelManifest
 
 MANIFEST = ChannelManifest(entity_ids={
     "curve_current": "number.hk", "shift_current": "number.normal", "heat_limit": "number.swu",

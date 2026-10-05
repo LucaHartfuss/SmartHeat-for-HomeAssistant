@@ -8,13 +8,13 @@ import pytest
 from fakes import runtime_config
 
 from heizungsbruecke.ha_binding import HaPlantBinding
-from heizungsbruecke.manifest import ChannelManifest
-from heizungsbruecke.notifier import Notifier
-from heizungsbruecke.runtime import Runtime
 from smartheat_core import enforce, write_budget
 from smartheat_core.binding import VIESSMANN_VICARE_BINDING, WEISHAUPT_MODBUS
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import resolve_local_safety
+from smartheat_runtime.notifier import Notifier
+from smartheat_runtime.roles import ChannelManifest
+from smartheat_runtime.runtime import Runtime
 
 TODAY = date(2026, 10, 3)
 VIESSMANN = dataclasses.replace(VIESSMANN_VICARE_BINDING, aux_originals=())

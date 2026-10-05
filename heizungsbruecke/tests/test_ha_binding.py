@@ -3,9 +3,9 @@ import math
 import pytest
 
 from heizungsbruecke.ha_binding import MANUAL_HVAC_MODE, ROOM_SETPOINT_READ_MAX, HaPlantBinding, entity_of, is_climate
-from heizungsbruecke.manifest import ChannelManifest
 from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.clamping import target_value
+from smartheat_runtime.roles import ChannelManifest
 
 MANIFEST = ChannelManifest(entity_ids={
     "curve_current": "number.curve", "shift_current": "climate.zone::temperature",

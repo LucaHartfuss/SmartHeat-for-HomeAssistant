@@ -8,18 +8,17 @@ import pytest
 from conftest import FakeClock
 from fakes import runtime_config
 
-from heizungsbruecke import abo
 from heizungsbruecke.ha_binding import HaPlantBinding
 from heizungsbruecke.ha_sinks import HaNotifySink, HaStatusSink
-from heizungsbruecke.manifest import ChannelManifest
-from heizungsbruecke.notifier import Notifier
-from heizungsbruecke.status import StatusReporter
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core.levers import LEVER_SETS
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import LocalSafety
-from smartheat_runtime import entitlement
+from smartheat_runtime import abo, entitlement
 from smartheat_runtime.backup_store import load_backup
+from smartheat_runtime.notifier import Notifier
+from smartheat_runtime.roles import ChannelManifest
+from smartheat_runtime.status import StatusReporter
 
 ABO_NOW = datetime(2026, 9, 25, 12, 0, tzinfo=timezone(timedelta(hours=2)))
 OPTIONS = {"tenant_id": "t1"}
@@ -228,3 +227,11 @@ def test_connection_failing_is_silent_in_the_abo_inactive_mode(make_store, tmp_p
     rt.store.update(abo_inactive_since=ABO_NOW)
     monkeypatch.setattr(abo.entitlement, "query", lambda config: pytest.fail("keine Abfrage"))
     abo.handle_connection_failing(rt)
+
+
+def test_restart_process_reexecs_the_original_command(monkeypatch):
+    calls = []
+    monkeypatch.setattr(abo.os, "execv", lambda executable, argv: calls.append((executable, argv)))
+    monkeypatch.setattr(abo.sys, "orig_argv", ["python", "-m", "heizungsbruecke"])
+    abo.restart_process()
+    assert calls == [(abo.sys.executable, [abo.sys.executable, "-m", "heizungsbruecke"])]

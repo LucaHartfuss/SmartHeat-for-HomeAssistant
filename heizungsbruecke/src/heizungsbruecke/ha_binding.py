@@ -8,8 +8,8 @@ import math
 from collections.abc import Mapping
 
 from heizungsbruecke import config
-from heizungsbruecke.manifest import ChannelManifest
 from smartheat_core.binding import VAILLANT_MYPYLLANT, BindingDescription
+from smartheat_runtime.roles import ChannelManifest
 
 logger = logging.getLogger(__name__)
 

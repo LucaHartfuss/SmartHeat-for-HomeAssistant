@@ -7,12 +7,12 @@ from unittest.mock import MagicMock
 import pytest
 from fakes import runtime_config
 
-from heizungsbruecke import regulation
 from heizungsbruecke.ha_binding import HaPlantBinding
-from heizungsbruecke.manifest import ChannelManifest
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import LocalSafety
+from smartheat_runtime import regulation
 from smartheat_runtime.backup_store import load_backup
+from smartheat_runtime.roles import ChannelManifest
 
 # Unterscheidbar: Notfall (= Clamp-Maximum) 0.8/5.0, Comfort 0.5/2.0, Wiederherstellungspunkt 0.3/1.0.
 SAFETY = LocalSafety(

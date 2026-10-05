@@ -3,7 +3,7 @@ in StateStore.storage_failed (nur im Speicher); gemeldet wird nach jedem Worker-
 (__main__._after_each), entwarnt beim ersten erfolgreichen Schreiben (StateStore.flush im Takt
 EV_HEALTH). Die Zustellmaschine meldet einen Datentraeger-Datenfehler nicht selbst (delivery.py),
 sonst kaeme dieselbe Stoerung doppelt."""
-from heizungsbruecke.notifier import STATE_OK
+from smartheat_runtime.notifier import STATE_OK
 
 KEY = "datentraeger"
 STATE_FAILED = "nicht_beschreibbar"
