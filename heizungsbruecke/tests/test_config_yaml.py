@@ -80,7 +80,7 @@ def test_config_yaml_has_new_optional_kpi_entity_options():
 
 
 def test_every_optional_kpi_role_has_matching_config_option_and_schema():
-    """Drift guard: the KPI roles registered in manifest.ALL_ROLES must each have an
+    """Drift guard: the KPI roles registered in smartheat_runtime.roles.ALL_ROLES must each have an
     `entity_<role>` option (default "") and an optional `str?` schema entry."""
     from smartheat_runtime.roles import ALL_ROLES
 
