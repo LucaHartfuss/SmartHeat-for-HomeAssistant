@@ -10,7 +10,6 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from datetime import datetime
 from typing import NoReturn
 
 from heizungsbruecke import (
@@ -61,7 +60,7 @@ from heizungsbruecke.status import (
     StatusReporter,
 )
 from heizungsbruecke.worker import Event, RegulationWorker
-from smartheat_core import derived, enforce, write_budget
+from smartheat_core import derived, enforce, wallclock, write_budget
 from smartheat_core.binding import BINDINGS
 from smartheat_core.pipeline import LeverPipeline, WriteBudgetExhausted
 
@@ -354,7 +353,7 @@ def _check_timezone(ha_api) -> None:
     except Exception as error:
         logger.warning("Zeitzone von Home Assistant konnte nicht abgefragt werden: %s", error)
         return
-    container_time_zone = os.environ.get("TZ") or str(datetime.now().astimezone().tzinfo)
+    container_time_zone = os.environ.get("TZ") or str(wallclock.now().tzinfo)
     if ha_time_zone and ha_time_zone != container_time_zone:
         logger.warning(
             "Zeitzone weicht ab: Home Assistant '%s', Add-on-Container '%s' - taegliche "
@@ -383,7 +382,7 @@ def _on_local_check(rt: Runtime, event: Event) -> None:
     except Exception:
         logger.exception("Fehler im lokalen Check (Boost/Notfall-Boost), wird beim naechsten Ereignis erneut versucht")
     try:
-        trigger = regulation.claim_due_tick(rt, datetime.now())
+        trigger = regulation.claim_due_tick(rt, wallclock.now())
     except StorageError:
         logger.warning(
             "Tick nicht gebucht, Datentraeger nicht beschreibbar (N5) - naechster Versuch beim naechsten Anlass"
@@ -706,7 +705,7 @@ def _start_bridge(options: dict, ha_api, clock=time.monotonic) -> Runtime | Idle
 
     # Abo-Status erst hier: Abschluss-Start und lokaler Modus brauchen Manifest und Clamps.
     # "unknown" (accounts-api nicht erreichbar) startet normal -- fail-open.
-    now = datetime.now().astimezone()
+    now = wallclock.now()
     abo_status = entitlement.query_from_options(options)
     if abo_status == entitlement.ACTIVE:
         entitlement.clear(config.ENTITLEMENT_PATH)

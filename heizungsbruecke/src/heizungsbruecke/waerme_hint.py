@@ -5,6 +5,7 @@ from datetime import datetime
 from heizungsbruecke import waerme
 from heizungsbruecke.notifier import STATE_OK
 from heizungsbruecke.state import StorageError
+from smartheat_core import wallclock
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,7 @@ def apply_tick(rt, room_actual, kpi_fields: dict, regulation_fields: dict, now: 
     previous = state.waerme or waerme.WaermeState(fehlt_seit=waerme.parse_since(state.waerme_fehlt_seit))
     try:
         current = waerme.evaluate(
-            previous, now or datetime.now().astimezone(),
+            previous, now or wallclock.now(),
             regulation_fields.get("flow_setpoint"), kpi_fields.get("flow_temperature"), room_actual,
         )
     except Exception:

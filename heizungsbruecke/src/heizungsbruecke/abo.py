@@ -8,6 +8,7 @@ from datetime import datetime
 from heizungsbruecke import config, entitlement
 from heizungsbruecke.notifier import STATE_OK
 from heizungsbruecke.runtime import Runtime
+from smartheat_core import wallclock
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +130,7 @@ def handle_auth_rejected(rt: Runtime) -> None:
     status = entitlement.query_from_options(rt.options)
     rt.auth_rejected_queried_at = now
     if status == entitlement.INACTIVE:
-        enter_inactive(rt, datetime.now().astimezone())
+        enter_inactive(rt, wallclock.now())
         return
     _report_rejection(rt, status)
 
@@ -167,7 +168,7 @@ def handle_connection_failing(rt: Runtime) -> None:
     rt.connection_failing_queried_at = now
     status = entitlement.query_from_options(rt.options)
     if status == entitlement.INACTIVE:
-        enter_inactive(rt, datetime.now().astimezone())
+        enter_inactive(rt, wallclock.now())
     elif status == entitlement.REJECTED:
         rt.auth_rejected_queried_at = now
         _report_rejection(rt, status)
@@ -183,7 +184,7 @@ def check_grace_end(rt: Runtime) -> None:
     Wiederherstellung, laeuft die lokale Regelung weiter und der naechste Check versucht es
     erneut."""
     since = rt.store.state.abo_inactive_since
-    if since is None or not entitlement.grace_expired(since, datetime.now().astimezone()):
+    if since is None or not entitlement.grace_expired(since, wallclock.now()):
         return
     if entitlement.query_from_options(rt.options) == entitlement.ACTIVE:
         entitlement.clear(config.ENTITLEMENT_PATH)

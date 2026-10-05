@@ -26,10 +26,10 @@ Meldet die Zone Wunschtemperatur 0 (heizt gerade nicht), ist das keine Abweichun
 import logging
 import math
 from collections.abc import Callable
-from datetime import date, datetime
+from datetime import date
 from typing import Any, Protocol
 
-from smartheat_core import derived, write_budget
+from smartheat_core import derived, wallclock, write_budget
 from smartheat_core.pipeline import WriteBudgetExhausted
 
 logger = logging.getLogger(__name__)
@@ -73,7 +73,7 @@ LIMIT_MESSAGE = (
 RETURN_MESSAGE = "SmartHeat: Die Heizungseinstellung steht wieder auf den gelernten Werten."
 
 def _today() -> date:
-    return date.today()
+    return wallclock.today()
 
 
 def _is_number(value) -> bool:
@@ -277,7 +277,7 @@ def _record(rt: EnforceRuntime, expected: dict, deviating: dict) -> dict:
     if previous is not None and all(known.get(lever) == value for lever, value in deviating.items()):
         return previous
     entries = {**known, **deviating}
-    now = datetime.now().astimezone().isoformat(timespec="seconds")
+    now = wallclock.now().isoformat(timespec="seconds")
     pending = state.manual_override_pending
     # Alle zugeordneten Hebel des Hebelsatzes (Plan-Praezisierung 6), wie Snapshot und Sollwerte (expected_values).
     binding = rt.override.binding

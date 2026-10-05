@@ -16,8 +16,6 @@ from test_runtime import (  # noqa: F401  (env ist eine Fixture)
     env,
 )
 
-from heizungsbruecke import __main__ as main_module
-
 
 @pytest.fixture
 def lagging(env):
@@ -177,7 +175,7 @@ def test_zone_flipped_back_after_the_settle_window_is_corrected_again(env, laggi
 @pytest.fixture
 def wall(monkeypatch):
     clock = WallClock(datetime(2026, 3, 28, 11, 59, tzinfo=WallClock.ZONE))
-    monkeypatch.setattr(main_module, "datetime", clock.datetime_class)
+    monkeypatch.setattr("smartheat_core.wallclock._now", clock.now)
     return clock
 
 
@@ -204,7 +202,7 @@ def test_daily_tick_fires_once_per_calendar_day_across_midnight_and_the_dst_chan
     assert len(_daily_snapshots(env)) == 1  # nach Mitternacht nicht erneut
     wall.set(datetime(2026, 3, 29, 1, 30, tzinfo=wall.ZONE))
     wall.advance(3600)  # absolut eine Stunde weiter: ueber die Umstellung 02:00 -> 03:00, lokal 03:30
-    assert wall.datetime_class.now().hour == 3
+    assert wall.now().hour == 3
     _trigger(env, bridge, "sensor.room_actual")
     assert len(_daily_snapshots(env)) == 1  # auch die Umstellung loest keinen Tick aus
     check_at(29, 11, 59)

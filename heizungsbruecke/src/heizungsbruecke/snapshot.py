@@ -4,10 +4,10 @@ import logging
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
 from typing import TypeGuard
 
 from heizungsbruecke.manifest import ChannelManifest
+from smartheat_core import wallclock
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,7 @@ def publish_snapshot(
         "schema": SNAPSHOT_SCHEMA_VERSION,
         "seq": seq,
         "trigger": trigger,
-        "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "ts": wallclock.now().isoformat(timespec="seconds"),
         "room_target": room_target,
         "levers": levers,
         "readonly": list(readonly),

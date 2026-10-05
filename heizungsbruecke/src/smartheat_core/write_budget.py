@@ -8,7 +8,8 @@ Ein Log je Schluessel in BridgeState.write_budget (backup.json): {"day", "count"
 einem Neustart gilt das Tageslimit weiter, der Mindestabstand beginnt neu."""
 import logging
 from dataclasses import dataclass
-from datetime import date
+
+from smartheat_core import wallclock
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ RESTORE = "restore"
 
 
 def today() -> str:
-    return date.today().isoformat()
+    return wallclock.today().isoformat()
 
 
 def allowed(entry: dict | None, rule: Rule, now: float, day: str) -> bool:

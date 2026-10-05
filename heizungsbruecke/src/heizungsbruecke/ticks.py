@@ -3,7 +3,6 @@ Abo-Abfrage, Zeitplan, Meldungen) und die Server-Antworten."""
 import logging
 import math
 import uuid
-from datetime import datetime
 from typing import TypeGuard
 
 from heizungsbruecke import abo, delivery, entitlement
@@ -12,6 +11,7 @@ from heizungsbruecke.runtime import EV_ACK_TIMEOUT, EV_RETRY_DUE, Runtime
 from heizungsbruecke.snapshot import SNAPSHOT_SCHEMA_VERSION, publish_snapshot, read_snapshot
 from heizungsbruecke.state import StorageError
 from heizungsbruecke.worker import Event
+from smartheat_core import wallclock
 from smartheat_core.pipeline import DeviceWriteError
 
 logger = logging.getLogger(__name__)
@@ -98,7 +98,7 @@ def _execute(rt: Runtime, action):
     elif isinstance(action, delivery.ScheduleRetry):
         rt.worker.schedule(action.delay_s, Event(EV_RETRY_DUE, {"seq": action.seq, "gen": action.gen}))
     elif isinstance(action, delivery.EnterAboInactive):
-        abo.enter_inactive(rt, datetime.now().astimezone())
+        abo.enter_inactive(rt, wallclock.now())
     elif isinstance(action, delivery.Notify):
         _notify(rt, action)
     elif isinstance(action, delivery.EndEmergencyBoost):
@@ -226,7 +226,7 @@ def _notify(rt: Runtime, action) -> None:
 def _record_answer(rt: Runtime) -> None:
     """Jede Antwort auf den offenen Tick zeigt, dass der Server lebt (Status letzte_serverantwort)."""
     try:
-        rt.store.update(last_ack_at=datetime.now().astimezone().isoformat(timespec="seconds"))
+        rt.store.update(last_ack_at=wallclock.now().isoformat(timespec="seconds"))
     except Exception:
         logger.exception("Zeitpunkt der Serverantwort konnte nicht gespeichert werden")
 

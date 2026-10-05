@@ -4,10 +4,10 @@ fuehren dort nur zu 'nicht lernen'. Den Takt gibt der Planeintrag EV_TELEMETRY v
 import logging
 import math
 from collections.abc import Callable
-from datetime import datetime
 
 from heizungsbruecke.delivery import DataFault
 from smartheat_core import energy as energy_core
+from smartheat_core import wallclock
 from smartheat_core.binding import ENERGY_TOTAL
 
 logger = logging.getLogger(__name__)
@@ -72,7 +72,7 @@ def publish_telemetry(
         "boost_active": boost_active,
         "failsafe_active": failsafe_active,
         WAERME_FEHLT_KEY: waerme_fehlt,
-        "ts": datetime.now().astimezone().isoformat(),
+        "ts": wallclock.now().isoformat(),
         **(kpi_fields or {}),
         **(regulation_fields or {}),
     }

@@ -10,7 +10,7 @@ import itertools
 import json
 import time
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -24,13 +24,6 @@ QUERY_STATUS = "heizungsbruecke.entitlement.query_status"
 MQTT_CLIENT = "heizungsbruecke.triggers.BridgeMqttClient"
 TRIGGER_CLIENT = "heizungsbruecke.triggers.HaTriggerClient"
 RESTART = "heizungsbruecke.abo.restart_process"
-
-# Vor G1 lesen diese Module die Systemzeit selbst (Task 2 ersetzt das durch smartheat_core.wallclock).
-_WALL_DATETIME_MODULES = (
-    "heizungsbruecke.__main__", "heizungsbruecke.abo", "heizungsbruecke.telemetry", "heizungsbruecke.snapshot",
-    "heizungsbruecke.ticks", "heizungsbruecke.waerme_hint", "smartheat_core.enforce",
-)
-_WALL_DATE_MODULES = ("smartheat_core.enforce", "smartheat_core.write_budget")
 
 BERLIN = ZoneInfo("Europe/Berlin")
 START = datetime(2026, 1, 15, 8, 0, tzinfo=BERLIN)
@@ -71,20 +64,6 @@ class FrozenWall:
 
     def __init__(self, start: datetime) -> None:
         self._now = start
-        wall = self
-
-        class _Datetime(datetime):
-            @classmethod
-            def now(cls, tz=None):
-                return wall._now if tz is None else wall._now.astimezone(tz)
-
-        class _Date(date):
-            @classmethod
-            def today(cls):
-                return wall._now.date()
-
-        self.datetime_class = _Datetime
-        self.date_class = _Date
 
     def now(self) -> datetime:
         return self._now
@@ -97,10 +76,7 @@ class FrozenWall:
 
 
 def install_wall_clock(monkeypatch, wall: FrozenWall) -> None:
-    for module in _WALL_DATETIME_MODULES:
-        monkeypatch.setattr(f"{module}.datetime", wall.datetime_class)
-    for module in _WALL_DATE_MODULES:
-        monkeypatch.setattr(f"{module}.date", wall.date_class)
+    monkeypatch.setattr("smartheat_core.wallclock._now", wall.now)
 
 
 class RecordingHa(FakeHa):
