@@ -4,11 +4,11 @@ fuehren dort nur zu 'nicht lernen'. Den Takt gibt der Planeintrag EV_TELEMETRY v
 import logging
 import math
 from collections.abc import Callable
-from datetime import datetime
 
-from heizungsbruecke.delivery import DataFault
 from smartheat_core import energy as energy_core
+from smartheat_core import wallclock
 from smartheat_core.binding import ENERGY_TOTAL
+from smartheat_runtime.delivery import DataFault
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ WAERME_FEHLT_KEY = "waerme_fehlt"
 
 
 def run_telemetry_tick(
-    manifest, ha_api, mqtt_client, boost_active: bool, failsafe_active: bool,
+    manifest, signals, mqtt_client, boost_active: bool, failsafe_active: bool,
     datenfehler: DataFault | None = None, room_target: float | None = None,
     waerme: Callable[[float, dict, dict], bool] | None = None,
     energy: Callable[[dict], dict] | None = None,
@@ -48,9 +48,9 @@ def run_telemetry_tick(
     if "room_actual" not in manifest.entity_ids:
         return
     try:
-        room_actual = ha_api.get_state(manifest.entity_ids["room_actual"])
-        kpi_fields = read_kpi_fields(manifest, ha_api, energy)
-        regulation_fields = read_regulation_fields(manifest, ha_api, room_target)
+        room_actual = signals.get_state(manifest.entity_ids["room_actual"])
+        kpi_fields = read_kpi_fields(manifest, signals, energy)
+        regulation_fields = read_regulation_fields(manifest, signals, room_target)
         waerme_fehlt = False if waerme is None else waerme(room_actual, kpi_fields, regulation_fields)
         publish_telemetry(
             mqtt_client=mqtt_client, room_actual=room_actual,
@@ -72,7 +72,7 @@ def publish_telemetry(
         "boost_active": boost_active,
         "failsafe_active": failsafe_active,
         WAERME_FEHLT_KEY: waerme_fehlt,
-        "ts": datetime.now().astimezone().isoformat(),
+        "ts": wallclock.now().isoformat(),
         **(kpi_fields or {}),
         **(regulation_fields or {}),
     }
@@ -81,7 +81,7 @@ def publish_telemetry(
     mqtt_client.publish_telemetry(payload)
 
 
-def read_regulation_fields(manifest, ha_api, room_target: float | None) -> dict:
+def read_regulation_fields(manifest, signals, room_target: float | None) -> dict:
     """Aussentemperatur und Vorlauf-Soll lesen (nur gemappte, nur endliche Werte) plus das
     stabile Raum-Soll. Ein nicht lesbarer Wert fehlt, er wird nie als 0 gesendet."""
     fields: dict = {}
@@ -92,7 +92,7 @@ def read_regulation_fields(manifest, ha_api, room_target: float | None) -> dict:
         if entity_id is None:
             continue
         try:
-            value = ha_api.get_state(entity_id)
+            value = signals.get_state(entity_id)
         except Exception as exc:
             logger.warning("Regel-Telemetrie '%s' nicht lesbar, Feld wird weggelassen: %s", role, exc)
             continue
@@ -101,7 +101,7 @@ def read_regulation_fields(manifest, ha_api, room_target: float | None) -> dict:
     return fields
 
 
-def read_kpi_fields(manifest, ha_api, normalize_energy: Callable[[dict], dict] | None = None) -> dict:
+def read_kpi_fields(manifest, signals, normalize_energy: Callable[[dict], dict] | None = None) -> dict:
     """Jeder Sensor fuer sich: ein nicht lesbarer oder nicht endlicher Wert wird mit WARNING
     weggelassen und blockiert weder die Kern-Telemetrie noch die anderen Sensoren. `energy`
     gibt es nur, wenn mindestens ein Kanal lesbar war. normalize_energy (Plan 3b) macht aus Tageszaehlern
@@ -122,18 +122,18 @@ def read_kpi_fields(manifest, ha_api, normalize_energy: Callable[[dict], dict] |
 
     for role in KPI_NUMERIC_ROLES:
         if role in manifest.entity_ids:
-            ok, value = _read(role, ha_api.get_state)
+            ok, value = _read(role, signals.get_state)
             if ok:
                 kpi_fields[role] = value
     if "operating_mode" in manifest.entity_ids:
-        ok, value = _read("operating_mode", ha_api.get_raw_state)
+        ok, value = _read("operating_mode", signals.get_raw_state)
         if ok:
             kpi_fields["operating_mode"] = value
 
     energy: dict = {}
     for role in KPI_ENERGY_ROLES:
         if role in manifest.entity_ids:
-            ok, value = _read(role, ha_api.get_state)
+            ok, value = _read(role, signals.get_state)
             if ok:
                 energy[role.removeprefix("energy_")] = value
     if energy and normalize_energy is not None:

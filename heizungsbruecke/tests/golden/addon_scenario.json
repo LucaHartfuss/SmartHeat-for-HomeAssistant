@@ -1,0 +1,3653 @@
+[
+ {
+  "schritt": "erster_start",
+  "wirkungen": [
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "startet",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": null,
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": null,
+      "room_setpoint": null,
+      "heat_limit": null,
+      "min_flow": null
+     },
+     "gelernt": null,
+     "abo": "unbekannt",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "accounts",
+    "status",
+    "golden",
+    "https://accounts.example.test"
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "startet",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": null,
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": null,
+      "room_setpoint": null,
+      "heat_limit": null,
+      "min_flow": null
+     },
+     "gelernt": null,
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "ha",
+    "climate.set_hvac_mode",
+    "climate.zone",
+    "heat_cool"
+   ],
+   [
+    "ha",
+    "climate.set_temperature",
+    "climate.zone::temperature",
+    21.0
+   ],
+   [
+    "mqtt",
+    "loop_start"
+   ],
+   [
+    "trigger",
+    "start"
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "startet",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": null,
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 0.9,
+      "room_setpoint": 21.0,
+      "heat_limit": null,
+      "min_flow": 21.0
+     },
+     "gelernt": null,
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "mqtt",
+    "telemetry",
+    {
+     "room_actual": 20.0,
+     "boost_active": false,
+     "failsafe_active": false,
+     "waerme_fehlt": false,
+     "ts": "2026-01-15T08:00:00+01:00",
+     "flow_temperature": 35.0,
+     "room_target": 21.0,
+     "outdoor_temp": 5.0,
+     "flow_setpoint": 35.0
+    }
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": null,
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 0.9,
+      "room_setpoint": 21.0,
+      "heat_limit": null,
+      "min_flow": 21.0
+     },
+     "gelernt": null,
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "mqtt",
+    "snapshot",
+    {
+     "schema": 4,
+     "seq": "00000000-0000-0000-0000-000000000001",
+     "trigger": "target_change",
+     "ts": "2026-01-15T08:00:00+01:00",
+     "room_target": 21.0,
+     "levers": {
+      "curve": 0.9,
+      "room_setpoint": 21.0,
+      "heat_limit": 16.0
+     },
+     "readonly": []
+    }
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": null,
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 0.9,
+      "room_setpoint": 21.0,
+      "heat_limit": null,
+      "min_flow": 21.0
+     },
+     "gelernt": null,
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ]
+  ],
+  "dateien": {
+   "backup.json": {
+    "last_room_target": 21.0,
+    "last_published_target_rt": 21.0,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "restore_point": {
+     "curve": 0.9,
+     "room_setpoint": 21.0
+    },
+    "originals": {
+     "heat_limit": 16.0
+    }
+   },
+   "failsafe_state.json": {
+    "failsafe_active": false,
+    "datenfehler": null,
+    "pending": {
+     "seq": "00000000-0000-0000-0000-000000000001",
+     "trigger": "target_change"
+    }
+   }
+  }
+ },
+ {
+  "schritt": "erste_antwort",
+  "wirkungen": [
+   [
+    "ha",
+    "number.set_value",
+    "number.curve_current",
+    0.95
+   ],
+   [
+    "ha",
+    "climate.set_temperature",
+    "climate.zone::temperature",
+    23.0
+   ],
+   [
+    "ha",
+    "number.set_value",
+    "number.heat_limit",
+    16.0
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T08:00:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 0.95,
+      "room_setpoint": 23.0,
+      "heat_limit": 16.0,
+      "min_flow": 21.0
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ]
+  ],
+  "dateien": {
+   "backup.json": {
+    "last_room_target": 21.0,
+    "last_published_target_rt": 21.0,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_ack_at": "2026-01-15T08:00:00+01:00",
+    "restore_point": {
+     "curve": 0.95,
+     "room_setpoint": 23.0,
+     "heat_limit": 16.0
+    },
+    "originals": {
+     "heat_limit": 16.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    }
+   },
+   "failsafe_state.json": {
+    "failsafe_active": false,
+    "datenfehler": null,
+    "pending": null
+   }
+  }
+ },
+ {
+  "schritt": "tagestick",
+  "wirkungen": [
+   [
+    "mqtt",
+    "snapshot",
+    {
+     "schema": 4,
+     "seq": "00000000-0000-0000-0000-000000000002",
+     "trigger": "daily",
+     "ts": "2026-01-15T12:01:00+01:00",
+     "room_target": 21.0,
+     "levers": {
+      "curve": 0.95,
+      "room_setpoint": 23.0,
+      "heat_limit": 16.0
+     },
+     "readonly": []
+    }
+   ],
+   [
+    "ha",
+    "number.set_value",
+    "number.curve_current",
+    1.0
+   ],
+   [
+    "ha",
+    "climate.set_temperature",
+    "climate.zone::temperature",
+    23.5
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:01:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.0,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 21.0
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ]
+  ],
+  "dateien": {
+   "backup.json": {
+    "last_room_target": 21.0,
+    "last_published_target_rt": 21.0,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:01:00+01:00",
+    "restore_point": {
+     "curve": 1.0,
+     "room_setpoint": 23.5,
+     "heat_limit": 16.0
+    },
+    "originals": {
+     "heat_limit": 16.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    }
+   },
+   "failsafe_state.json": {
+    "failsafe_active": false,
+    "datenfehler": null,
+    "pending": null
+   }
+  }
+ },
+ {
+  "schritt": "soll_senken",
+  "wirkungen": [
+   [
+    "ha",
+    "number.set_value",
+    "number.min_flow",
+    20.5
+   ],
+   [
+    "mqtt",
+    "snapshot",
+    {
+     "schema": 4,
+     "seq": "00000000-0000-0000-0000-000000000003",
+     "trigger": "target_change",
+     "ts": "2026-01-15T12:01:00+01:00",
+     "room_target": 20.5,
+     "levers": {
+      "curve": 1.0,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0
+     },
+     "readonly": []
+    }
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:01:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.0,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "ha",
+    "climate.set_temperature",
+    "climate.zone::temperature",
+    23.0
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:01:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.0,
+      "room_setpoint": 23.0,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ]
+  ],
+  "dateien": {
+   "backup.json": {
+    "last_room_target": 20.5,
+    "last_published_target_rt": 20.5,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:01:00+01:00",
+    "restore_point": {
+     "curve": 1.0,
+     "room_setpoint": 23.0,
+     "heat_limit": 16.0
+    },
+    "originals": {
+     "heat_limit": 16.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    }
+   },
+   "failsafe_state.json": {
+    "failsafe_active": false,
+    "datenfehler": null,
+    "pending": null
+   }
+  }
+ },
+ {
+  "schritt": "soll_erhoehen_komfort_boost",
+  "wirkungen": [
+   [
+    "ha",
+    "number.set_value",
+    "number.min_flow",
+    22.0
+   ],
+   [
+    "ha",
+    "number.set_value",
+    "number.curve_current",
+    1.5
+   ],
+   [
+    "ha",
+    "climate.set_temperature",
+    "climate.zone::temperature",
+    25.0
+   ],
+   [
+    "ha",
+    "number.set_value",
+    "number.heat_limit",
+    23.0
+   ],
+   [
+    "mqtt",
+    "snapshot",
+    {
+     "schema": 4,
+     "seq": "00000000-0000-0000-0000-000000000004",
+     "trigger": "target_change",
+     "ts": "2026-01-15T12:01:00+01:00",
+     "room_target": 22.0,
+     "levers": {
+      "curve": 1.5,
+      "room_setpoint": 25.0,
+      "heat_limit": 23.0
+     },
+     "readonly": []
+    }
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "komfort",
+     "letzte_serverantwort": "2026-01-15T12:01:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.0,
+      "room_setpoint": 23.0,
+      "heat_limit": 16.0,
+      "min_flow": 22.0
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "komfort",
+     "letzte_serverantwort": "2026-01-15T12:01:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.0,
+      "room_setpoint": 24.0,
+      "heat_limit": 16.0,
+      "min_flow": 22.0
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ]
+  ],
+  "dateien": {
+   "backup.json": {
+    "last_room_target": 22.0,
+    "last_published_target_rt": 22.0,
+    "boost_active": true,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:01:00+01:00",
+    "restore_point": {
+     "curve": 1.0,
+     "room_setpoint": 24.0,
+     "heat_limit": 16.0
+    },
+    "originals": {
+     "heat_limit": 16.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    }
+   },
+   "failsafe_state.json": {
+    "failsafe_active": false,
+    "datenfehler": null,
+    "pending": null
+   }
+  }
+ },
+ {
+  "schritt": "boost_ende",
+  "wirkungen": [
+   [
+    "ha",
+    "number.set_value",
+    "number.curve_current",
+    1.0
+   ],
+   [
+    "ha",
+    "climate.set_temperature",
+    "climate.zone::temperature",
+    24.0
+   ],
+   [
+    "ha",
+    "number.set_value",
+    "number.heat_limit",
+    16.0
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:01:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.0,
+      "room_setpoint": 24.0,
+      "heat_limit": 16.0,
+      "min_flow": 22.0
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ]
+  ],
+  "dateien": {
+   "backup.json": {
+    "last_room_target": 22.0,
+    "last_published_target_rt": 22.0,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:01:00+01:00",
+    "restore_point": {
+     "curve": 1.0,
+     "room_setpoint": 24.0,
+     "heat_limit": 16.0
+    },
+    "originals": {
+     "heat_limit": 16.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    }
+   },
+   "failsafe_state.json": {
+    "failsafe_active": false,
+    "datenfehler": null,
+    "pending": null
+   }
+  }
+ },
+ {
+  "schritt": "notbetrieb",
+  "wirkungen": [
+   [
+    "ha",
+    "number.set_value",
+    "number.min_flow",
+    21.5
+   ],
+   [
+    "mqtt",
+    "snapshot",
+    {
+     "schema": 4,
+     "seq": "00000000-0000-0000-0000-000000000005",
+     "trigger": "target_change",
+     "ts": "2026-01-15T12:01:00+01:00",
+     "room_target": 21.5,
+     "levers": {
+      "curve": 1.0,
+      "room_setpoint": 24.0,
+      "heat_limit": 16.0
+     },
+     "readonly": []
+    }
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:01:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.0,
+      "room_setpoint": 24.0,
+      "heat_limit": 16.0,
+      "min_flow": 21.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "mqtt",
+    "snapshot",
+    {
+     "schema": 4,
+     "seq": "00000000-0000-0000-0000-000000000005",
+     "trigger": "target_change",
+     "ts": "2026-01-15T12:01:30+01:00",
+     "room_target": 21.5,
+     "levers": {
+      "curve": 1.0,
+      "room_setpoint": 24.0,
+      "heat_limit": 16.0
+     },
+     "readonly": []
+    }
+   ],
+   [
+    "accounts",
+    "status",
+    "golden",
+    "https://accounts.example.test"
+   ],
+   [
+    "ha",
+    "notify",
+    "notify.handy",
+    "Heizungsbrücke: Server antwortet nicht, Notbetrieb aktiv. Die Heizung wird bei Bedarf lokal abgesichert."
+   ],
+   [
+    "ha",
+    "persistent_notification.create",
+    "smartheat_notbetrieb",
+    "SmartHeat",
+    "Heizungsbrücke: Server antwortet nicht, Notbetrieb aktiv. Die Heizung wird bei Bedarf lokal abgesichert."
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "notbetrieb",
+     "grund": null,
+     "notbetrieb": true,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:01:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.0,
+      "room_setpoint": 24.0,
+      "heat_limit": 16.0,
+      "min_flow": 21.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ]
+  ],
+  "dateien": {
+   "backup.json": {
+    "last_room_target": 21.5,
+    "last_published_target_rt": 21.5,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:01:00+01:00",
+    "notify_states": {
+     "notbetrieb": "aktiv"
+    },
+    "notify_messages": {
+     "notbetrieb": "Heizungsbrücke: Server antwortet nicht, Notbetrieb aktiv. Die Heizung wird bei Bedarf lokal abgesichert."
+    },
+    "restore_point": {
+     "curve": 1.0,
+     "room_setpoint": 24.0,
+     "heat_limit": 16.0
+    },
+    "originals": {
+     "heat_limit": 16.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    }
+   },
+   "failsafe_state.json": {
+    "failsafe_active": true,
+    "datenfehler": null,
+    "pending": {
+     "seq": "00000000-0000-0000-0000-000000000005",
+     "trigger": "target_change"
+    }
+   }
+  }
+ },
+ {
+  "schritt": "notfall_boost",
+  "wirkungen": [
+   [
+    "ha",
+    "number.set_value",
+    "number.curve_current",
+    1.5
+   ],
+   [
+    "ha",
+    "climate.set_temperature",
+    "climate.zone::temperature",
+    25.0
+   ],
+   [
+    "ha",
+    "number.set_value",
+    "number.heat_limit",
+    23.0
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "notbetrieb",
+     "grund": null,
+     "notbetrieb": true,
+     "datenfehler": null,
+     "boost": "notfall",
+     "letzte_serverantwort": "2026-01-15T12:01:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.0,
+      "room_setpoint": 24.0,
+      "heat_limit": 16.0,
+      "min_flow": 21.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ]
+  ],
+  "dateien": {
+   "backup.json": {
+    "last_room_target": 21.5,
+    "last_published_target_rt": 21.5,
+    "boost_active": false,
+    "emergency_boost_active": true,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:01:00+01:00",
+    "notify_states": {
+     "notbetrieb": "aktiv"
+    },
+    "notify_messages": {
+     "notbetrieb": "Heizungsbrücke: Server antwortet nicht, Notbetrieb aktiv. Die Heizung wird bei Bedarf lokal abgesichert."
+    },
+    "restore_point": {
+     "curve": 1.0,
+     "room_setpoint": 24.0,
+     "heat_limit": 16.0
+    },
+    "originals": {
+     "heat_limit": 16.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    }
+   },
+   "failsafe_state.json": {
+    "failsafe_active": true,
+    "datenfehler": null,
+    "pending": {
+     "seq": "00000000-0000-0000-0000-000000000005",
+     "trigger": "target_change"
+    }
+   }
+  }
+ },
+ {
+  "schritt": "rueckkehr_aus_notbetrieb",
+  "wirkungen": [
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "notbetrieb",
+     "grund": null,
+     "notbetrieb": true,
+     "datenfehler": null,
+     "boost": "notfall",
+     "letzte_serverantwort": "2026-01-15T12:01:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.0,
+      "room_setpoint": 24.0,
+      "heat_limit": 16.0,
+      "min_flow": 21.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "mqtt",
+    "telemetry",
+    {
+     "room_actual": 18.0,
+     "boost_active": false,
+     "failsafe_active": true,
+     "waerme_fehlt": false,
+     "ts": "2026-01-15T12:07:00+01:00",
+     "flow_temperature": 35.0,
+     "room_target": 21.5,
+     "outdoor_temp": 5.0,
+     "flow_setpoint": 35.0
+    }
+   ],
+   [
+    "mqtt",
+    "snapshot",
+    {
+     "schema": 4,
+     "seq": "00000000-0000-0000-0000-000000000005",
+     "trigger": "target_change",
+     "ts": "2026-01-15T12:07:00+01:00",
+     "room_target": 21.5,
+     "levers": {
+      "curve": 1.5,
+      "room_setpoint": 25.0,
+      "heat_limit": 23.0
+     },
+     "readonly": []
+    }
+   ],
+   [
+    "ha",
+    "number.set_value",
+    "number.curve_current",
+    1.0
+   ],
+   [
+    "ha",
+    "climate.set_temperature",
+    "climate.zone::temperature",
+    23.5
+   ],
+   [
+    "ha",
+    "number.set_value",
+    "number.heat_limit",
+    16.0
+   ],
+   [
+    "ha",
+    "notify",
+    "notify.handy",
+    "Heizungsbrücke: Serververbindung wiederhergestellt, Notbetrieb beendet."
+   ],
+   [
+    "ha",
+    "persistent_notification.dismiss",
+    "smartheat_notbetrieb"
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:07:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.0,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 21.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ]
+  ],
+  "dateien": {
+   "backup.json": {
+    "last_room_target": 21.5,
+    "last_published_target_rt": 21.5,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:07:00+01:00",
+    "restore_point": {
+     "curve": 1.0,
+     "room_setpoint": 23.5,
+     "heat_limit": 16.0
+    },
+    "originals": {
+     "heat_limit": 16.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    }
+   },
+   "failsafe_state.json": {
+    "failsafe_active": false,
+    "datenfehler": null,
+    "pending": null
+   }
+  }
+ },
+ {
+  "schritt": "datenfehler_lokal",
+  "wirkungen": [
+   [
+    "ha",
+    "number.set_value",
+    "number.min_flow",
+    21.0
+   ],
+   [
+    "ha",
+    "notify",
+    "notify.handy",
+    "Heizungsbrücke: Sensor(en) ohne gültigen Wert: room_actual (sensor.room_actual). Die Heizkurve bleibt unverändert, bis die Werte wieder verfügbar sind (z. B. Batterie prüfen)."
+   ],
+   [
+    "ha",
+    "persistent_notification.create",
+    "smartheat_datenfehler",
+    "SmartHeat",
+    "Heizungsbrücke: Sensor(en) ohne gültigen Wert: room_actual (sensor.room_actual). Die Heizkurve bleibt unverändert, bis die Werte wieder verfügbar sind (z. B. Batterie prüfen)."
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "datenfehler",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": {
+      "art": "lokal",
+      "rollen": [
+       "room_actual"
+      ]
+     },
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:07:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.0,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 21.0
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "mqtt",
+    "snapshot",
+    {
+     "schema": 4,
+     "seq": "00000000-0000-0000-0000-000000000006",
+     "trigger": "target_change",
+     "ts": "2026-01-15T12:07:30+01:00",
+     "room_target": 21.0,
+     "levers": {
+      "curve": 1.0,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0
+     },
+     "readonly": []
+    }
+   ],
+   [
+    "ha",
+    "climate.set_temperature",
+    "climate.zone::temperature",
+    23.0
+   ],
+   [
+    "ha",
+    "notify",
+    "notify.handy",
+    "Heizungsbrücke: Messwerte wieder gültig, Heizkurve wird wieder angepasst."
+   ],
+   [
+    "ha",
+    "persistent_notification.dismiss",
+    "smartheat_datenfehler"
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:07:30+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.0,
+      "room_setpoint": 23.0,
+      "heat_limit": 16.0,
+      "min_flow": 21.0
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ]
+  ],
+  "dateien": {
+   "backup.json": {
+    "last_room_target": 21.5,
+    "last_published_target_rt": 21.0,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:07:30+01:00",
+    "restore_point": {
+     "curve": 1.0,
+     "room_setpoint": 23.0,
+     "heat_limit": 16.0
+    },
+    "originals": {
+     "heat_limit": 16.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    }
+   },
+   "failsafe_state.json": {
+    "failsafe_active": false,
+    "datenfehler": null,
+    "pending": null
+   }
+  }
+ },
+ {
+  "schritt": "datenfehler_server",
+  "wirkungen": [
+   [
+    "ha",
+    "number.set_value",
+    "number.min_flow",
+    21.5
+   ],
+   [
+    "mqtt",
+    "snapshot",
+    {
+     "schema": 4,
+     "seq": "00000000-0000-0000-0000-000000000007",
+     "trigger": "target_change",
+     "ts": "2026-01-15T12:07:30+01:00",
+     "room_target": 21.5,
+     "levers": {
+      "curve": 1.0,
+      "room_setpoint": 23.0,
+      "heat_limit": 16.0
+     },
+     "readonly": []
+    }
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:07:30+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.0,
+      "room_setpoint": 23.0,
+      "heat_limit": 16.0,
+      "min_flow": 21.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "ha",
+    "notify",
+    "notify.handy",
+    "Heizungsbrücke: Server hat die Messwerte abgelehnt (Testgrund). Die Heizkurve bleibt unverändert."
+   ],
+   [
+    "ha",
+    "persistent_notification.create",
+    "smartheat_datenfehler",
+    "SmartHeat",
+    "Heizungsbrücke: Server hat die Messwerte abgelehnt (Testgrund). Die Heizkurve bleibt unverändert."
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "datenfehler",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": {
+      "art": "server",
+      "rollen": []
+     },
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:07:30+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.0,
+      "room_setpoint": 23.0,
+      "heat_limit": 16.0,
+      "min_flow": 21.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "ha",
+    "number.set_value",
+    "number.min_flow",
+    21.0
+   ],
+   [
+    "mqtt",
+    "snapshot",
+    {
+     "schema": 4,
+     "seq": "00000000-0000-0000-0000-000000000008",
+     "trigger": "target_change",
+     "ts": "2026-01-15T12:07:30+01:00",
+     "room_target": 21.0,
+     "levers": {
+      "curve": 1.0,
+      "room_setpoint": 23.0,
+      "heat_limit": 16.0
+     },
+     "readonly": []
+    }
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "datenfehler",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": {
+      "art": "server",
+      "rollen": []
+     },
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:07:30+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.0,
+      "room_setpoint": 23.0,
+      "heat_limit": 16.0,
+      "min_flow": 21.0
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "ha",
+    "notify",
+    "notify.handy",
+    "Heizungsbrücke: Messwerte wieder gültig, Heizkurve wird wieder angepasst."
+   ],
+   [
+    "ha",
+    "persistent_notification.dismiss",
+    "smartheat_datenfehler"
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:07:30+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.0,
+      "room_setpoint": 23.0,
+      "heat_limit": 16.0,
+      "min_flow": 21.0
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ]
+  ],
+  "dateien": {
+   "backup.json": {
+    "last_room_target": 21.0,
+    "last_published_target_rt": 21.0,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:07:30+01:00",
+    "restore_point": {
+     "curve": 1.0,
+     "room_setpoint": 23.0,
+     "heat_limit": 16.0
+    },
+    "originals": {
+     "heat_limit": 16.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    }
+   },
+   "failsafe_state.json": {
+    "failsafe_active": false,
+    "datenfehler": null,
+    "pending": null
+   }
+  }
+ },
+ {
+  "schritt": "datenfehler_anlage",
+  "wirkungen": [
+   [
+    "ha",
+    "number.set_value",
+    "number.min_flow",
+    20.5
+   ],
+   [
+    "mqtt",
+    "snapshot",
+    {
+     "schema": 4,
+     "seq": "00000000-0000-0000-0000-000000000009",
+     "trigger": "target_change",
+     "ts": "2026-01-15T12:07:30+01:00",
+     "room_target": 20.5,
+     "levers": {
+      "curve": 1.0,
+      "room_setpoint": 23.0,
+      "heat_limit": 16.0
+     },
+     "readonly": []
+    }
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:07:30+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.0,
+      "room_setpoint": 23.0,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "ha",
+    "number.set_value",
+    "number.curve_current",
+    1.05,
+    "fehler"
+   ],
+   [
+    "ha",
+    "notify",
+    "notify.handy",
+    "Heizungsbrücke: Neue Heizkurve konnte nicht an die Anlage übertragen werden (curve (number.curve_current): Cloud nicht erreichbar). Wird automatisch erneut versucht."
+   ],
+   [
+    "ha",
+    "persistent_notification.create",
+    "smartheat_datenfehler",
+    "SmartHeat",
+    "Heizungsbrücke: Neue Heizkurve konnte nicht an die Anlage übertragen werden (curve (number.curve_current): Cloud nicht erreichbar). Wird automatisch erneut versucht."
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "datenfehler",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": {
+      "art": "anlage",
+      "rollen": [
+       "curve"
+      ]
+     },
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:07:30+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "mqtt",
+    "snapshot",
+    {
+     "schema": 4,
+     "seq": "00000000-0000-0000-0000-000000000009",
+     "trigger": "target_change",
+     "ts": "2026-01-15T12:08:00+01:00",
+     "room_target": 20.5,
+     "levers": {
+      "curve": 1.0,
+      "room_setpoint": 23.0,
+      "heat_limit": 16.0
+     },
+     "readonly": []
+    }
+   ],
+   [
+    "ha",
+    "number.set_value",
+    "number.curve_current",
+    1.05
+   ],
+   [
+    "ha",
+    "climate.set_temperature",
+    "climate.zone::temperature",
+    23.5
+   ],
+   [
+    "ha",
+    "notify",
+    "notify.handy",
+    "Heizungsbrücke: Anlage wieder erreichbar, Heizkurve übertragen."
+   ],
+   [
+    "ha",
+    "persistent_notification.dismiss",
+    "smartheat_datenfehler"
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ]
+  ],
+  "dateien": {
+   "backup.json": {
+    "last_room_target": 20.5,
+    "last_published_target_rt": 20.5,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:08:00+01:00",
+    "restore_point": {
+     "curve": 1.05,
+     "room_setpoint": 23.5,
+     "heat_limit": 16.0
+    },
+    "originals": {
+     "heat_limit": 16.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    }
+   },
+   "failsafe_state.json": {
+    "failsafe_active": false,
+    "datenfehler": null,
+    "pending": null
+   }
+  }
+ },
+ {
+  "schritt": "durchsetzen",
+  "wirkungen": [
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "mqtt",
+    "telemetry",
+    {
+     "room_actual": 21.5,
+     "boost_active": false,
+     "failsafe_active": false,
+     "waerme_fehlt": false,
+     "ts": "2026-01-15T12:13:00+01:00",
+     "flow_temperature": 35.0,
+     "room_target": 20.5,
+     "outdoor_temp": 5.0,
+     "flow_setpoint": 35.0
+    }
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "mqtt",
+    "telemetry",
+    {
+     "room_actual": 21.5,
+     "boost_active": false,
+     "failsafe_active": false,
+     "waerme_fehlt": false,
+     "ts": "2026-01-15T12:18:00+01:00",
+     "flow_temperature": 35.0,
+     "room_target": 20.5,
+     "outdoor_temp": 5.0,
+     "flow_setpoint": 35.0
+    }
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "mqtt",
+    "telemetry",
+    {
+     "room_actual": 21.5,
+     "boost_active": false,
+     "failsafe_active": false,
+     "waerme_fehlt": false,
+     "ts": "2026-01-15T12:23:00+01:00",
+     "flow_temperature": 35.0,
+     "room_target": 20.5,
+     "outdoor_temp": 5.0,
+     "flow_setpoint": 35.0
+    }
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "mqtt",
+    "telemetry",
+    {
+     "room_actual": 21.5,
+     "boost_active": false,
+     "failsafe_active": false,
+     "waerme_fehlt": false,
+     "ts": "2026-01-15T12:28:00+01:00",
+     "flow_temperature": 35.0,
+     "room_target": 20.5,
+     "outdoor_temp": 5.0,
+     "flow_setpoint": 35.0
+    }
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "mqtt",
+    "telemetry",
+    {
+     "room_actual": 21.5,
+     "boost_active": false,
+     "failsafe_active": false,
+     "waerme_fehlt": false,
+     "ts": "2026-01-15T12:33:00+01:00",
+     "flow_temperature": 35.0,
+     "room_target": 20.5,
+     "outdoor_temp": 5.0,
+     "flow_setpoint": 35.0
+    }
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "mqtt",
+    "telemetry",
+    {
+     "room_actual": 21.5,
+     "boost_active": false,
+     "failsafe_active": false,
+     "waerme_fehlt": false,
+     "ts": "2026-01-15T12:38:00+01:00",
+     "flow_temperature": 35.0,
+     "room_target": 20.5,
+     "outdoor_temp": 5.0,
+     "flow_setpoint": 35.0
+    }
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "mqtt",
+    "telemetry",
+    {
+     "room_actual": 21.5,
+     "boost_active": false,
+     "failsafe_active": false,
+     "waerme_fehlt": false,
+     "ts": "2026-01-15T12:43:00+01:00",
+     "flow_temperature": 35.0,
+     "room_target": 20.5,
+     "outdoor_temp": 5.0,
+     "flow_setpoint": 35.0
+    }
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "mqtt",
+    "telemetry",
+    {
+     "room_actual": 21.5,
+     "boost_active": false,
+     "failsafe_active": false,
+     "waerme_fehlt": false,
+     "ts": "2026-01-15T12:48:00+01:00",
+     "flow_temperature": 35.0,
+     "room_target": 20.5,
+     "outdoor_temp": 5.0,
+     "flow_setpoint": 35.0
+    }
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "mqtt",
+    "telemetry",
+    {
+     "room_actual": 21.5,
+     "boost_active": false,
+     "failsafe_active": false,
+     "waerme_fehlt": false,
+     "ts": "2026-01-15T12:53:00+01:00",
+     "flow_temperature": 35.0,
+     "room_target": 20.5,
+     "outdoor_temp": 5.0,
+     "flow_setpoint": 35.0
+    }
+   ],
+   [
+    "ha",
+    "number.set_value",
+    "number.curve_current",
+    1.05
+   ],
+   [
+    "ha",
+    "notify",
+    "notify.handy",
+    "SmartHeat: Die Heizungseinstellung wurde in der App verstellt (Heizkurve) und zurückgesetzt. Einstellungen bitte nur über das Raumthermostat."
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": {
+       "hebel": {
+        "curve": 1.4,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0
+       },
+       "erkannt": "2026-01-15T12:53:00+01:00"
+      },
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": {
+       "hebel": {
+        "curve": 1.4,
+        "room_setpoint": 23.5,
+        "heat_limit": 16.0
+       },
+       "erkannt": "2026-01-15T12:53:00+01:00"
+      },
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "mqtt",
+    "telemetry",
+    {
+     "room_actual": 21.5,
+     "boost_active": false,
+     "failsafe_active": false,
+     "waerme_fehlt": false,
+     "ts": "2026-01-15T12:58:00+01:00",
+     "flow_temperature": 35.0,
+     "room_target": 20.5,
+     "outdoor_temp": 5.0,
+     "flow_setpoint": 35.0
+    }
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ]
+  ],
+  "dateien": {
+   "backup.json": {
+    "last_room_target": 20.5,
+    "last_published_target_rt": 20.5,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:08:00+01:00",
+    "restore_point": {
+     "curve": 1.05,
+     "room_setpoint": 23.5,
+     "heat_limit": 16.0
+    },
+    "originals": {
+     "heat_limit": 16.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    },
+    "manual_override_pending": {
+     "levers": {
+      "curve": 1.4,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0
+     },
+     "erkannt": "2026-01-15T12:53:00+01:00"
+    },
+    "write_budget": {
+     "enforce:curve": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 4150.0
+     }
+    }
+   },
+   "failsafe_state.json": {
+    "failsafe_active": false,
+    "datenfehler": null,
+    "pending": null
+   }
+  }
+ },
+ {
+  "schritt": "hinweis_batterie",
+  "wirkungen": [
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "mqtt",
+    "telemetry",
+    {
+     "room_actual": 21.5,
+     "boost_active": false,
+     "failsafe_active": false,
+     "waerme_fehlt": false,
+     "ts": "2026-01-15T13:03:00+01:00",
+     "flow_temperature": 35.0,
+     "room_target": 20.5,
+     "outdoor_temp": 5.0,
+     "flow_setpoint": 35.0
+    }
+   ],
+   [
+    "ha",
+    "notify",
+    "notify.handy",
+    "SmartHeat: Batterie von sensor.thermostat_battery ist schwach (15 %). Bitte bald wechseln."
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [
+       "sensor.thermostat_battery"
+      ],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ]
+  ],
+  "dateien": {
+   "backup.json": {
+    "last_room_target": 20.5,
+    "last_published_target_rt": 20.5,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:08:00+01:00",
+    "notify_states": {
+     "batterie:sensor.thermostat_battery": "niedrig"
+    },
+    "restore_point": {
+     "curve": 1.05,
+     "room_setpoint": 23.5,
+     "heat_limit": 16.0
+    },
+    "originals": {
+     "heat_limit": 16.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    },
+    "manual_override_pending": {
+     "levers": {
+      "curve": 1.4,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0
+     },
+     "erkannt": "2026-01-15T12:53:00+01:00"
+    },
+    "write_budget": {
+     "enforce:curve": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 4150.0
+     }
+    }
+   },
+   "failsafe_state.json": {
+    "failsafe_active": false,
+    "datenfehler": null,
+    "pending": null
+   }
+  }
+ },
+ {
+  "schritt": "neustart_mit_zustand",
+  "wirkungen": [
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "startet",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": null
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "unbekannt",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [
+       "sensor.thermostat_battery"
+      ],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "accounts",
+    "status",
+    "golden",
+    "https://accounts.example.test"
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "startet",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": null
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [
+       "sensor.thermostat_battery"
+      ],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "mqtt",
+    "loop_start"
+   ],
+   [
+    "trigger",
+    "start"
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "startet",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [
+       "sensor.thermostat_battery"
+      ],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "mqtt",
+    "telemetry",
+    {
+     "room_actual": 21.5,
+     "boost_active": false,
+     "failsafe_active": false,
+     "waerme_fehlt": false,
+     "ts": "2026-01-15T13:03:00+01:00",
+     "flow_temperature": 35.0,
+     "room_target": 20.5,
+     "outdoor_temp": 5.0,
+     "flow_setpoint": 35.0
+    }
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [
+       "sensor.thermostat_battery"
+      ],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "regelt",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "aktiv",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [
+       "sensor.thermostat_battery"
+      ],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ]
+  ],
+  "dateien": {
+   "backup.json": {
+    "last_room_target": 20.5,
+    "last_published_target_rt": 20.5,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:08:00+01:00",
+    "notify_states": {
+     "batterie:sensor.thermostat_battery": "niedrig"
+    },
+    "restore_point": {
+     "curve": 1.05,
+     "room_setpoint": 23.5,
+     "heat_limit": 16.0
+    },
+    "originals": {
+     "heat_limit": 16.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    },
+    "manual_override_pending": {
+     "levers": {
+      "curve": 1.4,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0
+     },
+     "erkannt": "2026-01-15T12:53:00+01:00"
+    },
+    "write_budget": {
+     "enforce:curve": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 4150.0
+     }
+    }
+   },
+   "failsafe_state.json": {
+    "failsafe_active": false,
+    "datenfehler": null,
+    "pending": null
+   }
+  }
+ },
+ {
+  "schritt": "abo_inaktiv",
+  "wirkungen": [
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "startet",
+     "grund": null,
+     "notbetrieb": false,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": null
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "unbekannt",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [
+       "sensor.thermostat_battery"
+      ],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "accounts",
+    "status",
+    "golden",
+    "https://accounts.example.test"
+   ],
+   [
+    "ha",
+    "notify",
+    "notify.handy",
+    "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach bleiben die zuletzt gelernten Werte fest eingestellt."
+   ],
+   [
+    "ha",
+    "persistent_notification.create",
+    "smartheat_abo",
+    "SmartHeat",
+    "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach bleiben die zuletzt gelernten Werte fest eingestellt."
+   ],
+   [
+    "trigger",
+    "start"
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "abo_inaktiv",
+     "grund": null,
+     "notbetrieb": true,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "inaktiv",
+     "abo_frist_ende": "2026-02-14",
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [
+       "sensor.thermostat_battery"
+      ],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ]
+  ],
+  "dateien": {
+   "backup.json": {
+    "last_room_target": 20.5,
+    "last_published_target_rt": 20.5,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:08:00+01:00",
+    "notify_states": {
+     "batterie:sensor.thermostat_battery": "niedrig",
+     "abo": "inaktiv"
+    },
+    "notify_messages": {
+     "abo": "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach bleiben die zuletzt gelernten Werte fest eingestellt."
+    },
+    "restore_point": {
+     "curve": 1.05,
+     "room_setpoint": 23.5,
+     "heat_limit": 16.0
+    },
+    "originals": {
+     "heat_limit": 16.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    },
+    "manual_override_pending": {
+     "levers": {
+      "curve": 1.4,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0
+     },
+     "erkannt": "2026-01-15T12:53:00+01:00"
+    },
+    "write_budget": {
+     "enforce:curve": {
+      "day": "2026-01-15",
+      "count": 1
+     }
+    }
+   },
+   "entitlement_state.json": {
+    "inactive_since": "2026-01-15T13:03:00+01:00"
+   },
+   "failsafe_state.json": {
+    "failsafe_active": true,
+    "datenfehler": null,
+    "pending": null
+   }
+  }
+ },
+ {
+  "schritt": "abo_wieder_aktiv",
+  "wirkungen": [
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "abo_inaktiv",
+     "grund": null,
+     "notbetrieb": true,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "inaktiv",
+     "abo_frist_ende": "2026-02-14",
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [
+       "sensor.thermostat_battery"
+      ],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "accounts",
+    "status",
+    "golden",
+    "https://accounts.example.test"
+   ],
+   [
+    "prozess",
+    "neustart"
+   ]
+  ],
+  "dateien": {
+   "backup.json": {
+    "last_room_target": 20.5,
+    "last_published_target_rt": 20.5,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:08:00+01:00",
+    "notify_states": {
+     "batterie:sensor.thermostat_battery": "niedrig",
+     "abo": "inaktiv"
+    },
+    "notify_messages": {
+     "abo": "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach bleiben die zuletzt gelernten Werte fest eingestellt."
+    },
+    "restore_point": {
+     "curve": 1.05,
+     "room_setpoint": 23.5,
+     "heat_limit": 16.0
+    },
+    "originals": {
+     "heat_limit": 16.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    },
+    "manual_override_pending": {
+     "levers": {
+      "curve": 1.4,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0
+     },
+     "erkannt": "2026-01-15T12:53:00+01:00"
+    },
+    "write_budget": {
+     "enforce:curve": {
+      "day": "2026-01-15",
+      "count": 1
+     }
+    }
+   },
+   "failsafe_state.json": {
+    "failsafe_active": true,
+    "datenfehler": null,
+    "pending": null
+   }
+  }
+ },
+ {
+  "schritt": "abo_erneut_inaktiv",
+  "wirkungen": [
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "notbetrieb",
+     "grund": null,
+     "notbetrieb": true,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": null
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "unbekannt",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [
+       "sensor.thermostat_battery"
+      ],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "accounts",
+    "status",
+    "golden",
+    "https://accounts.example.test"
+   ],
+   [
+    "trigger",
+    "start"
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "abo_inaktiv",
+     "grund": null,
+     "notbetrieb": true,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "inaktiv",
+     "abo_frist_ende": "2026-03-17",
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [
+       "sensor.thermostat_battery"
+      ],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ]
+  ],
+  "dateien": {
+   "backup.json": {
+    "last_room_target": 20.5,
+    "last_published_target_rt": 20.5,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:08:00+01:00",
+    "notify_states": {
+     "batterie:sensor.thermostat_battery": "niedrig",
+     "abo": "inaktiv",
+     "notbetrieb": "aktiv"
+    },
+    "notify_messages": {
+     "abo": "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach bleiben die zuletzt gelernten Werte fest eingestellt."
+    },
+    "restore_point": {
+     "curve": 1.05,
+     "room_setpoint": 23.5,
+     "heat_limit": 16.0
+    },
+    "originals": {
+     "heat_limit": 16.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    },
+    "manual_override_pending": {
+     "levers": {
+      "curve": 1.4,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0
+     },
+     "erkannt": "2026-01-15T12:53:00+01:00"
+    },
+    "write_budget": {
+     "enforce:curve": {
+      "day": "2026-01-15",
+      "count": 1
+     }
+    }
+   },
+   "entitlement_state.json": {
+    "inactive_since": "2026-02-15T13:08:00+01:00"
+   },
+   "failsafe_state.json": {
+    "failsafe_active": true,
+    "datenfehler": null,
+    "pending": null
+   }
+  }
+ },
+ {
+  "schritt": "fristende",
+  "wirkungen": [
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "abo_inaktiv",
+     "grund": null,
+     "notbetrieb": true,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "inaktiv",
+     "abo_frist_ende": "2026-03-17",
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [
+       "sensor.thermostat_battery"
+      ],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "accounts",
+    "status",
+    "golden",
+    "https://accounts.example.test"
+   ],
+   [
+    "ha",
+    "number.set_value",
+    "number.curve_current",
+    1.05
+   ],
+   [
+    "ha",
+    "climate.set_temperature",
+    "climate.zone::temperature",
+    23.5
+   ],
+   [
+    "ha",
+    "number.set_value",
+    "number.heat_limit",
+    16.0
+   ],
+   [
+    "ha",
+    "notify",
+    "notify.handy",
+    "SmartHeat: Abo seit 30 Tagen inaktiv. Die Heizungssteuerung ist beendet, die zuletzt gelernten Werte bleiben eingestellt."
+   ],
+   [
+    "ha",
+    "persistent_notification.create",
+    "smartheat_abo",
+    "SmartHeat",
+    "SmartHeat: Abo seit 30 Tagen inaktiv. Die Heizungssteuerung ist beendet, die zuletzt gelernten Werte bleiben eingestellt."
+   ],
+   [
+    "trigger",
+    "stop"
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "abo_beendet",
+     "grund": null,
+     "notbetrieb": true,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": 20.5
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "beendet",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [
+       "sensor.thermostat_battery"
+      ],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ]
+  ],
+  "dateien": {
+   "backup.json": {
+    "last_room_target": 20.5,
+    "last_published_target_rt": 20.5,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:08:00+01:00",
+    "notify_states": {
+     "batterie:sensor.thermostat_battery": "niedrig",
+     "abo": "beendet",
+     "notbetrieb": "aktiv"
+    },
+    "notify_messages": {
+     "abo": "SmartHeat: Abo seit 30 Tagen inaktiv. Die Heizungssteuerung ist beendet, die zuletzt gelernten Werte bleiben eingestellt."
+    },
+    "restore_point": {
+     "curve": 1.05,
+     "room_setpoint": 23.5,
+     "heat_limit": 16.0
+    },
+    "originals": {
+     "heat_limit": 16.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    },
+    "manual_override_pending": {
+     "levers": {
+      "curve": 1.4,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0
+     },
+     "erkannt": "2026-01-15T12:53:00+01:00"
+    },
+    "write_budget": {
+     "enforce:curve": {
+      "day": "2026-01-15",
+      "count": 1
+     }
+    }
+   },
+   "entitlement_state.json": {
+    "inactive_since": "2026-02-15T13:08:00+01:00"
+   },
+   "failsafe_state.json": {
+    "failsafe_active": true,
+    "datenfehler": null,
+    "pending": null
+   }
+  }
+ },
+ {
+  "schritt": "abmelden",
+  "wirkungen": [
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "notbetrieb",
+     "grund": null,
+     "notbetrieb": true,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": null
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "unbekannt",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [
+       "sensor.thermostat_battery"
+      ],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ],
+   [
+    "ha",
+    "persistent_notification.dismiss",
+    "smartheat_batterie_sensor_thermostat_battery"
+   ],
+   [
+    "ha",
+    "persistent_notification.dismiss",
+    "smartheat_abo"
+   ],
+   [
+    "ha",
+    "persistent_notification.dismiss",
+    "smartheat_notbetrieb"
+   ],
+   [
+    "ha",
+    "event",
+    "smartheat_status",
+    {
+     "schema": 2,
+     "tenant_id": "golden",
+     "setup_id": "setup-golden-1",
+     "addon_version": "0.33.0",
+     "status": "abgemeldet",
+     "grund": null,
+     "notbetrieb": true,
+     "datenfehler": null,
+     "boost": "keiner",
+     "letzte_serverantwort": "2026-01-15T12:08:00+01:00",
+     "hebelsatz": "vaillant_vrc720",
+     "hebel": {
+      "curve": 1.05,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0,
+      "min_flow": null
+     },
+     "gelernt": {
+      "curve": 1.0,
+      "heat_limit": 16.0
+     },
+     "abo": "unbekannt",
+     "abo_frist_ende": null,
+     "hinweise": {
+      "raumfuehler_ausgefallen": [],
+      "batterie_niedrig": [],
+      "manueller_eingriff": null,
+      "waerme_fehlt": null
+     }
+    }
+   ]
+  ],
+  "dateien": {
+   "backup.json": {
+    "last_room_target": 20.5,
+    "last_published_target_rt": 20.5,
+    "boost_active": false,
+    "emergency_boost_active": false,
+    "last_daily_trigger_date": "2026-01-15",
+    "last_ack_at": "2026-01-15T12:08:00+01:00",
+    "restore_point": {
+     "curve": 1.05,
+     "room_setpoint": 23.5,
+     "heat_limit": 16.0
+    },
+    "originals": {
+     "heat_limit": 16.0
+    },
+    "learned": {
+     "curve": 1.0,
+     "heat_limit": 16.0
+    },
+    "manual_override_pending": {
+     "levers": {
+      "curve": 1.4,
+      "room_setpoint": 23.5,
+      "heat_limit": 16.0
+     },
+     "erkannt": "2026-01-15T12:53:00+01:00"
+    },
+    "write_budget": {
+     "enforce:curve": {
+      "day": "2026-01-15",
+      "count": 1
+     }
+    }
+   },
+   "entitlement_state.json": {
+    "inactive_since": "2026-02-15T13:08:00+01:00"
+   },
+   "failsafe_state.json": {
+    "failsafe_active": true,
+    "datenfehler": null,
+    "pending": null
+   }
+  }
+ }
+]

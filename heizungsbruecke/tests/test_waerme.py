@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from heizungsbruecke.waerme import (
+from smartheat_runtime.waerme import (
     ANCHOR_TOLERANCE,
     CLEAR_WINDOW,
     REQUEST_PAUSE_TOLERANCE,

@@ -1,6 +1,6 @@
 import pytest
 
-from heizungsbruecke.windows import parse_hhmm_minutes, validate_daily_trigger_time
+from smartheat_runtime.windows import parse_hhmm_minutes, validate_daily_trigger_time
 
 
 def test_parse_hhmm_minutes():

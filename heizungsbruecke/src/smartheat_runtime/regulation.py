@@ -4,9 +4,9 @@ entscheidet die Hebel-Pipeline (LeverPipeline.set_boosts)."""
 import logging
 from datetime import datetime
 
-from heizungsbruecke.runtime import Runtime
 from smartheat_core.boost import decide_boost
 from smartheat_core.emergency_boost import decide_emergency_boost
+from smartheat_runtime.runtime import Runtime
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ def read_room_target_live(rt: Runtime) -> float | None:
     room_target-Trigger, (Wieder-)Verbinden und den Watchdog. None, wenn die Rolle fehlt."""
     if "room_target" not in rt.manifest.entity_ids:
         return None
-    return rt.ha_api.get_state(rt.manifest.entity_ids["room_target"])
+    return rt.signals.get_state(rt.manifest.entity_ids["room_target"])
 
 
 def refresh_stable_target(rt: Runtime) -> None:
@@ -48,7 +48,7 @@ def run_local_check(rt: Runtime) -> None:
     if state.abo_finished:
         return
 
-    room_actual = rt.ha_api.get_state(manifest.entity_ids["room_actual"])
+    room_actual = rt.signals.get_state(manifest.entity_ids["room_actual"])
     safety = rt.override.safety
     # Ohne Comfort-Boost-Werte (z. B. Fussbodenheizung, Spec 6.3) gibt es keinen Comfort-Boost.
     comfort = bool(safety.comfort_boost) and decide_boost(
@@ -86,7 +86,7 @@ def claim_due_tick(rt: Runtime, now: datetime) -> str | None:
         return None
     room_target = state.stable_target
     today = now.date().isoformat()
-    daily_trigger_time = rt.options.get("daily_trigger_time")
+    daily_trigger_time = rt.config.daily_trigger_time
     daily_due = False
     if daily_trigger_time:
         trigger_time = datetime.strptime(daily_trigger_time, "%H:%M").time()

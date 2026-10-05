@@ -2,13 +2,34 @@
 und WallClock (Wanduhr). Plain-Import (`from fakes import ...`), tests/ hat kein __init__.py."""
 import copy
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
+
+from smartheat_core.safety import resolve_local_safety
+from smartheat_runtime.runtime_config import RuntimeConfig
+from smartheat_transport.descriptor import credential_for, parse_descriptor
 
 # Zugangsoptionen seit AWS-2: Deskriptor (Mosquitto ueber cloudflared) und Installations-Token. Gueltige Test-Optionen
 # mit mqtt_username/mqtt_password tragen beides, sonst meldet der Start "Konfiguration veraltet".
 MOSQUITTO_TRANSPORT = '{"kind": "mosquitto_cloudflared", "host": "127.0.0.1", "port": 18830}'
 INSTALLATION_TOKEN = "tok"
 ACCESS_OPTIONS = {"transport": MOSQUITTO_TRANSPORT, "installation_token": INSTALLATION_TOKEN}
+
+
+def runtime_config(**overrides) -> RuntimeConfig:
+    """Gueltige RuntimeConfig fuer Tests, die einen Laufzeit-Kontext von Hand bauen (Plan SHG G1)."""
+    descriptor = parse_descriptor(MOSQUITTO_TRANSPORT)
+    values = {
+        "tenant_id": "test_tenant", "setup_id": None, "lever_set_id": "vaillant_vrc720",
+        "local_safety": resolve_local_safety("vaillant_vrc720", "Heizkoerper"),
+        "descriptor": descriptor, "credential": credential_for(descriptor, username="u", password="p"),
+        "installation_token": INSTALLATION_TOKEN, "accounts_api_base_url": "https://accounts.example.test",
+        "daily_trigger_time": "12:00", "local_check_interval": 300, "telemetry_interval": 300,
+        "notify_hints_off": (), "room_sensor_refs": ("sensor.room_actual",), "battery_refs": (),
+        "entitlement_path": Path("/nonexistent/entitlement_state.json"),
+    }
+    values.update(overrides)
+    return RuntimeConfig(**values)
 
 
 class FakeHa:
@@ -99,6 +120,15 @@ class FakeHa:
         return str(value)
 
 
+class FailingServiceHa(FakeHa):
+    """Der Notify-Dienst `notify.kaputt` wirft, alle anderen gehen durch (Plan SHG G1, Review-Fokus 5)."""
+
+    def send_notification(self, service, message):
+        if service == "notify.kaputt":
+            raise RuntimeError("Dienst weg")
+        super().send_notification(service, message)
+
+
 class LaggingFakeHa(FakeHa):
     """HA/mypyllant-Modell (TP12e, AU-023): ein geschriebener Wert ist erst nach `lag_seconds` lesbar
     (mypyllant pollt die Hersteller-Cloud bis ca. 30 min spaeter), ein Moduswechsel wirkt nach
@@ -165,23 +195,16 @@ class LaggingFakeHa(FakeHa):
 
 class WallClock:
     """Steuerbare Wanduhr in Europe/Berlin fuer Szenarien um 12:00, Mitternacht und die Zeitumstellung.
-    `datetime_class` ersetzt `datetime` in einem Modul der Bruecke (per monkeypatch, in den Szenarien
-    `heizungsbruecke.__main__`, das den Tagestick prueft): `now()` liefert immer eine
-    Berlin-Zeit (aware), damit `datetime.now().astimezone()` nicht an der Zeitzone der Test-Maschine haengt."""
+    `now()` ist die Wanduhr der Bruecke, per `monkeypatch.setattr("smartheat_core.wallclock._now", wall.now)`;
+    sie liefert immer eine Berlin-Zeit (aware), damit der Test nicht an der Zeitzone der Test-Maschine haengt."""
 
     ZONE = ZoneInfo("Europe/Berlin")
 
     def __init__(self, start: datetime) -> None:
         self._utc = start.astimezone(UTC)
-        clock = self
 
-        class _Datetime(datetime):
-            @classmethod
-            def now(cls, tz=None):
-                local = clock._utc.astimezone(clock.ZONE)
-                return local if tz is None else local.astimezone(tz)
-
-        self.datetime_class = _Datetime
+    def now(self) -> datetime:
+        return self._utc.astimezone(self.ZONE)
 
     def set(self, value: datetime) -> None:
         self._utc = value.astimezone(UTC)

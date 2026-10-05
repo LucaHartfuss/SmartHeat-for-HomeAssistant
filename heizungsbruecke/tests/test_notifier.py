@@ -3,10 +3,12 @@ import logging
 from unittest.mock import MagicMock
 
 import pytest
+from fakes import FailingServiceHa
 
-from heizungsbruecke.notifier import HINT_CATEGORIES, STATE_OK, Notifier, category, notification_id
-from heizungsbruecke.state import StateStore
+from heizungsbruecke.ha_sinks import HaNotifySink, notification_id
 from smartheat_core import pipeline
+from smartheat_runtime.notifier import HINT_CATEGORIES, STATE_OK, Notifier, category
+from smartheat_runtime.state import StateStore
 
 SERVICES = ["notify.mobile_app_a", "notify.mobile_app_b"]
 
@@ -17,12 +19,22 @@ def ha_api():
 
 
 def _notifier(store, ha_api, services=SERVICES):
-    return Notifier(store, ha_api, services)
+    return Notifier(store, HaNotifySink(ha_api, services))
 
 
 def test_notification_id_is_a_slug():
     assert notification_id("raumfuehler:sensor.wz-1") == "smartheat_raumfuehler_sensor_wz_1"
     assert notification_id("notbetrieb") == "smartheat_notbetrieb"
+
+
+def test_a_failing_notify_service_does_not_stop_the_persistent_notification_or_the_state(make_store):
+    store = make_store()
+    ha = FailingServiceHa()
+    notifier = Notifier(store, HaNotifySink(ha, ["notify.kaputt", "notify.handy"]))
+    assert notifier.notify("abo", "inaktiv", "Text", critical=True)
+    assert ha.pushes == ["Text"]
+    assert ha.persistent == [("smartheat_abo", "Text")]
+    assert store.state.notify_states == {"abo": "inaktiv"}
 
 
 def test_unknown_previous_state_counts_as_ok(make_store, ha_api):
@@ -113,6 +125,36 @@ def test_failing_persistent_notification_is_only_logged(make_store, ha_api, capl
     assert "abo" in caplog.text
 
 
+class _RaisingPushSink:
+    """NotifySink-Fake, dessen Push scheitert (ein Host-Sink ausser HA darf den Notifier nicht abbrechen)."""
+
+    def __init__(self) -> None:
+        self.shown: list[tuple[str, str]] = []
+
+    def push(self, key: str, message: str) -> None:
+        raise RuntimeError("Push kaputt")
+
+    def show(self, key: str, message: str) -> None:
+        self.shown.append((key, message))
+
+    def withdraw(self, key: str) -> None:
+        pass
+
+
+def test_failing_sink_push_does_not_stop_the_persistent_notification_or_the_state(make_store, caplog):
+    store = make_store()
+    sink = _RaisingPushSink()
+    notifier = Notifier(store, sink)
+
+    with caplog.at_level(logging.WARNING):
+        assert notifier.notify("abo", "inaktiv", "Abo inaktiv", critical=True) is True
+
+    assert sink.shown == [("abo", "Abo inaktiv")]
+    assert store.state.notify_states == {"abo": "inaktiv"}
+    assert store.state.notify_messages == {"abo": "Abo inaktiv"}
+    assert "Push-Benachrichtigung 'abo' konnte nicht gesendet werden" in caplog.text
+
+
 def test_state_write_failure_still_notifies(make_store, ha_api, monkeypatch):
     store = make_store()
     notifier = _notifier(store, ha_api)
@@ -120,7 +162,7 @@ def test_state_write_failure_still_notifies(make_store, ha_api, monkeypatch):
     def _broken(*args, **kwargs):
         raise OSError("Datentraeger kaputt")
 
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _broken)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _broken)
     assert notifier.notify("notbetrieb", "aktiv", "Notbetrieb aktiv", critical=True) is True
 
     assert store.state.notify_states == {"notbetrieb": "aktiv"}
@@ -261,7 +303,7 @@ def test_category_is_the_key_prefix():
 
 
 def test_switched_off_hint_category_is_tracked_and_logged_but_not_pushed(make_store, ha_api, caplog):
-    notifier = Notifier(make_store(), ha_api, SERVICES, hints_off=["batterie"])
+    notifier = Notifier(make_store(), HaNotifySink(ha_api, SERVICES), hints_off=["batterie"])
 
     with caplog.at_level(logging.WARNING):
         assert notifier.notify("batterie:sensor.x", "niedrig", "Batterie schwach", critical=False) is True
@@ -278,7 +320,7 @@ def test_write_budget_hints_are_switchable():
 
 
 def test_switched_off_write_budget_hint_is_tracked_but_not_pushed(make_store, ha_api):
-    notifier = Notifier(make_store(), ha_api, SERVICES, hints_off=["schreibbudget"])
+    notifier = Notifier(make_store(), HaNotifySink(ha_api, SERVICES), hints_off=["schreibbudget"])
 
     assert notifier.notify(pipeline.BUDGET_KEY, "erreicht", "Tageslimit erreicht", critical=False) is True
     notifier.notify(pipeline.LIFETIME_KEY, "10000", "Zaehler", critical=False)
@@ -288,7 +330,7 @@ def test_switched_off_write_budget_hint_is_tracked_but_not_pushed(make_store, ha
 
 
 def test_other_hint_categories_are_still_pushed(make_store, ha_api):
-    notifier = Notifier(make_store(), ha_api, SERVICES, hints_off=["batterie"])
+    notifier = Notifier(make_store(), HaNotifySink(ha_api, SERVICES), hints_off=["batterie"])
 
     notifier.notify("raumfuehler:sensor.a", "ausgefallen", "Fuehler weg", critical=False)
 
@@ -296,7 +338,7 @@ def test_other_hint_categories_are_still_pushed(make_store, ha_api):
 
 
 def test_critical_messages_ignore_the_hint_switches(make_store, ha_api):
-    notifier = Notifier(make_store(), ha_api, SERVICES, hints_off=list(HINT_CATEGORIES))
+    notifier = Notifier(make_store(), HaNotifySink(ha_api, SERVICES), hints_off=list(HINT_CATEGORIES))
 
     notifier.notify("batterie:sensor.x", "niedrig", "Batterie kritisch niedrig", critical=True)
 

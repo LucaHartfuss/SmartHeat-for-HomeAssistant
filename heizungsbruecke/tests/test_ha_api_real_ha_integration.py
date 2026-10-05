@@ -25,7 +25,7 @@ import websocket
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_binding import HaPlantBinding
 from heizungsbruecke.helper_templates import outdoor_temperature_template, room_temperature_template
-from heizungsbruecke.manifest import ChannelManifest
+from smartheat_runtime.roles import ChannelManifest
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("RUN_REAL_HA_TESTS") != "1",

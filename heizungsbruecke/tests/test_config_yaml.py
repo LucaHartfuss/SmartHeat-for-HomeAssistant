@@ -80,9 +80,9 @@ def test_config_yaml_has_new_optional_kpi_entity_options():
 
 
 def test_every_optional_kpi_role_has_matching_config_option_and_schema():
-    """Drift guard: the KPI roles registered in manifest.ALL_ROLES must each have an
+    """Drift guard: the KPI roles registered in smartheat_runtime.roles.ALL_ROLES must each have an
     `entity_<role>` option (default "") and an optional `str?` schema entry."""
-    from heizungsbruecke.manifest import ALL_ROLES
+    from smartheat_runtime.roles import ALL_ROLES
 
     kpi_roles = ALL_ROLES[ALL_ROLES.index("flow_temperature"):]
     assert len(kpi_roles) == 12
@@ -136,7 +136,7 @@ def test_tp6_list_options_and_setup_id_are_optional_and_room_actual_is_gone():
 
 
 def test_addon_version_constant_matches_config_yaml():
-    from heizungsbruecke.status import ADDON_VERSION
+    from heizungsbruecke.version import ADDON_VERSION
 
     assert _load_config_yaml()["version"] == ADDON_VERSION
 
@@ -202,7 +202,7 @@ def test_poll_interval_schema_matches_config_range():
 
 
 def test_hint_categories_schema_matches_the_notifier():
-    from heizungsbruecke.notifier import HINT_CATEGORIES
+    from smartheat_runtime.notifier import HINT_CATEGORIES
     assert _schema()["notify_hints_off"] == [f"list({'|'.join(HINT_CATEGORIES)})?"]
 
 

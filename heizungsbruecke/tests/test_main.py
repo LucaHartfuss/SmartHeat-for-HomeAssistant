@@ -7,21 +7,22 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 from conftest import FakeClock
-from fakes import ACCESS_OPTIONS
+from fakes import ACCESS_OPTIONS, runtime_config
 
-from heizungsbruecke import __main__
-from heizungsbruecke.__main__ import (
+from heizungsbruecke import host
+from heizungsbruecke.__main__ import _start_bridge
+from heizungsbruecke.derived_sensors import DerivedSensors
+from heizungsbruecke.ha_api import HomeAssistantApi
+from heizungsbruecke.host import (
     DERIVED_SENSORS_RETRY_DELAYS_SECONDS,
-    IdleBridge,
     StartupError,
     _check_timezone,
     _ensure_derived_sensors_with_retry,
     _retry_with_budget,
-    _start_bridge,
     _wait_for_required_entities,
 )
-from heizungsbruecke.derived_sensors import DerivedSensors
-from heizungsbruecke.ha_api import HomeAssistantApi
+from smartheat_runtime import app
+from smartheat_runtime.app import IdleBridge
 
 
 @pytest.fixture(autouse=True)
@@ -46,7 +47,7 @@ class _FakeResponse:
 @pytest.fixture
 def sleeps(monkeypatch):
     recorded = []
-    monkeypatch.setattr("heizungsbruecke.__main__.time.sleep", recorded.append)
+    monkeypatch.setattr("heizungsbruecke.host.time.sleep", recorded.append)
     return recorded
 
 
@@ -108,19 +109,19 @@ def test_start_with_the_old_configuration_reports_outdated_not_silence(sleeps):
 @pytest.mark.parametrize("secret_key", ["mqtt_password", "installation_token", "tls_private_key"])
 def test_start_errors_never_show_secret_option_values(secret_key):
     options = {secret_key: "GEHEIM-123", "notify_services": ["notify.GEHEIM-123"]}
-    text = __main__._without_credentials("Option 'notify_services' (['notify.GEHEIM-123']) ungueltig", options)
+    text = host._without_credentials("Option 'notify_services' (['notify.GEHEIM-123']) ungueltig", options)
     assert "GEHEIM-123" not in text
 
 
 def test_a_secret_with_special_characters_is_redacted_in_its_repr_form_too():
     options = {"tls_private_key": "-----BEGIN-----\nabc'\n-----END-----"}
-    text = __main__._without_credentials(f"Option ungueltig: {options['tls_private_key']!r}", options)
+    text = host._without_credentials(f"Option ungueltig: {options['tls_private_key']!r}", options)
     assert "abc" not in text
 
 
 def test_verteilsystem_without_safety_values_is_a_configuration_error(monkeypatch, caplog, sleeps):
     monkeypatch.setattr(
-        "heizungsbruecke.entitlement.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
+        "smartheat_runtime.entitlement.requests.get", lambda url, timeout: _FakeResponse({"active": True}),
     )
 
     with caplog.at_level("ERROR"):
@@ -175,6 +176,7 @@ def test_outdated_options_idle_with_heartbeat_and_recheck_without_second_push(mo
     ha_api = _reachable()
     execs = []
     monkeypatch.setattr("os.execv", lambda path, args: execs.append(args))
+    monkeypatch.setattr("sys.orig_argv", ["python", "-m", "heizungsbruecke"])  # Add-on-Start (restart_process)
 
     bridge = _start_bridge(old, ha_api, clock=clock)
 
@@ -563,17 +565,17 @@ def test_check_timezone_survives_failing_config_query(caplog):
 def test_on_telemetry_hands_the_waerme_callback_to_the_tick(make_store, monkeypatch):
     from types import SimpleNamespace
 
-    from heizungsbruecke.__main__ import _on_telemetry
+    from smartheat_runtime.app import _on_telemetry
 
     captured = {}
     monkeypatch.setattr(
-        "heizungsbruecke.__main__.telemetry.run_telemetry_tick", lambda *args, **kwargs: captured.update(kwargs),
+        "smartheat_runtime.app.telemetry.run_telemetry_tick", lambda *args, **kwargs: captured.update(kwargs),
     )
     from smartheat_core.binding import VAILLANT_MYPYLLANT
 
     rt = SimpleNamespace(
-        worker=MagicMock(), options={}, store=make_store(), mqtt_client=MagicMock(), manifest=MagicMock(),
-        ha_api=MagicMock(), notifier=MagicMock(), status=MagicMock(),
+        worker=MagicMock(), config=runtime_config(), store=make_store(), mqtt_client=MagicMock(),
+        manifest=MagicMock(), signals=MagicMock(), notifier=MagicMock(), status=MagicMock(),
         override=SimpleNamespace(binding=SimpleNamespace(description=VAILLANT_MYPYLLANT)),
     )
     rt.mqtt_client.is_connected.return_value = True
@@ -588,38 +590,36 @@ def _prime_rt(monkeypatch, capture):
     """Laufzeit-Attrappe fuer _prime: nur Heizgrenzen-Erfassung unter Test, alles Uebrige still."""
     from types import SimpleNamespace
 
-    from heizungsbruecke import __main__ as main_module
-
-    monkeypatch.setattr(main_module.regulation, "read_room_target_live", lambda rt: 20.5)
-    monkeypatch.setattr(main_module.regulation, "run_local_check", lambda rt: None)
-    monkeypatch.setattr(main_module.derived, "sync", lambda rt: None)
-    monkeypatch.setattr(main_module, "_prepare_zone", lambda rt: None)
+    monkeypatch.setattr(app.regulation, "read_room_target_live", lambda rt: 20.5)
+    monkeypatch.setattr(app.regulation, "run_local_check", lambda rt: None)
+    monkeypatch.setattr(app.derived, "sync", lambda rt: None)
+    monkeypatch.setattr(app, "_prepare_zone", lambda rt: None)
     rt = SimpleNamespace(
         override=SimpleNamespace(capture_originals=capture),
         store=SimpleNamespace(
             state=SimpleNamespace(restore_point={"room_setpoint": 21.0}, stable_target=None), update=lambda **kw: None,
         ),
     )
-    return main_module, rt
+    return app, rt
 
 
 def test_prime_captures_the_heat_limit_original(monkeypatch):
     capture = MagicMock()
-    main_module, rt = _prime_rt(monkeypatch, capture)
+    _, rt = _prime_rt(monkeypatch, capture)
 
-    main_module._prime(rt)
+    app._prime(rt)
 
     capture.assert_called_once_with()
 
 
 def test_prime_heat_limit_capture_failure_does_not_abort_startup(monkeypatch, caplog):
     capture = MagicMock(side_effect=RuntimeError("Speicher voll"))
-    main_module, rt = _prime_rt(monkeypatch, capture)
+    _, rt = _prime_rt(monkeypatch, capture)
     ran = []
-    monkeypatch.setattr(main_module.regulation, "run_local_check", lambda rt: ran.append(True))
+    monkeypatch.setattr(app.regulation, "run_local_check", lambda rt: ran.append(True))
 
     with caplog.at_level(logging.ERROR):
-        main_module._prime(rt)
+        app._prime(rt)
 
     assert ran == [True]
     assert "Heizgrenze" in caplog.text
@@ -630,17 +630,17 @@ def test_prime_heat_limit_capture_failure_does_not_abort_startup(monkeypatch, ca
 ])
 def test_connection_check_queries_the_status_after_long_repeated_failures(failures, down_seconds, expect_query, monkeypatch):
     rt = SimpleNamespace(
-        worker=MagicMock(), options={}, clock=FakeClock(), mqtt_down_since=None,
+        worker=MagicMock(), config=runtime_config(), clock=FakeClock(), mqtt_down_since=None,
         mqtt_client=MagicMock(), store=SimpleNamespace(state=SimpleNamespace(
             abo_inactive_since=None, delivery=SimpleNamespace(pending="offen"))),
     )
     rt.mqtt_client.is_connected.return_value = False
     rt.mqtt_client.connect_failures = failures
     called = []
-    monkeypatch.setattr(__main__.abo, "handle_connection_failing", lambda runtime: called.append(runtime))
-    __main__._on_connection_check(rt, None)  # setzt mqtt_down_since
+    monkeypatch.setattr(app.abo, "handle_connection_failing", lambda runtime: called.append(runtime))
+    app._on_connection_check(rt, None)  # setzt mqtt_down_since
     rt.clock.advance(down_seconds)
-    __main__._on_connection_check(rt, None)
+    app._on_connection_check(rt, None)
     assert bool(called) is expect_query
 
 
@@ -651,26 +651,26 @@ def test_mqtt_connected_resets_the_connection_failing_throttle():
     )
     rt.status.flags.zugang_abgelehnt = False
     rt.status.flags.gestartet = True
-    with patch.object(__main__.ticks, "deliver"):
-        __main__._on_mqtt_connected(rt, None)
+    with patch.object(app.ticks, "deliver"):
+        app._on_mqtt_connected(rt, None)
     assert rt.connection_failing_queried_at is None
 
 
 def test_connection_check_starts_no_probe_tick_when_the_query_found_the_abo_inactive(monkeypatch):
     state = SimpleNamespace(abo_inactive_since=None, delivery=SimpleNamespace(pending=None))
     rt = SimpleNamespace(
-        worker=MagicMock(), options={}, clock=FakeClock(), mqtt_down_since=None,
+        worker=MagicMock(), config=runtime_config(), clock=FakeClock(), mqtt_down_since=None,
         mqtt_client=MagicMock(), store=SimpleNamespace(state=state),
     )
     rt.mqtt_client.is_connected.return_value = False
     rt.mqtt_client.connect_failures = 3
-    monkeypatch.setattr(__main__.abo, "handle_connection_failing",
+    monkeypatch.setattr(app.abo, "handle_connection_failing",
                         lambda runtime: setattr(state, "abo_inactive_since", "jetzt"))
     probes = []
-    monkeypatch.setattr(__main__.ticks, "start_probe_tick", lambda *args: probes.append(args))
-    __main__._on_connection_check(rt, None)
+    monkeypatch.setattr(app.ticks, "start_probe_tick", lambda *args: probes.append(args))
+    app._on_connection_check(rt, None)
     rt.clock.advance(900)
-    __main__._on_connection_check(rt, None)
+    app._on_connection_check(rt, None)
     assert probes == []
 
 
@@ -697,22 +697,22 @@ def test_unwritable_temp_storage_is_a_configuration_error_not_a_crash(monkeypatc
     assert key not in caplog.text
 
 
-@pytest.mark.parametrize("status", [__main__.abo.entitlement.ACTIVE, __main__.abo.entitlement.UNKNOWN])
+@pytest.mark.parametrize("status", [app.abo.entitlement.ACTIVE, app.abo.entitlement.UNKNOWN])
 def test_connection_check_still_starts_the_probe_tick_after_an_unclear_or_active_query(status, monkeypatch):
     """Regression: ein normaler Ausfall (Abo aktiv oder Abfrage unklar) darf den Notbetrieb nicht verhindern."""
     state = SimpleNamespace(abo_inactive_since=None, delivery=SimpleNamespace(pending=None))
     rt = SimpleNamespace(
-        worker=MagicMock(), options={}, clock=FakeClock(), mqtt_down_since=None, connection_failing_queried_at=None,
+        worker=MagicMock(), config=runtime_config(), clock=FakeClock(), mqtt_down_since=None, connection_failing_queried_at=None,
         mqtt_client=MagicMock(), store=SimpleNamespace(state=state), ha_api=MagicMock(),
     )
     rt.mqtt_client.is_connected.return_value = False
     rt.mqtt_client.connect_failures = 3
-    monkeypatch.setattr(__main__.abo.entitlement, "query_from_options", lambda options: status)
+    monkeypatch.setattr(app.abo.entitlement, "query", lambda config: status)
     probes = []
-    monkeypatch.setattr(__main__.ticks, "start_probe_tick", lambda *args: probes.append(args))
-    __main__._on_connection_check(rt, None)
+    monkeypatch.setattr(app.ticks, "start_probe_tick", lambda *args: probes.append(args))
+    app._on_connection_check(rt, None)
     rt.clock.advance(900)
-    __main__._on_connection_check(rt, None)
+    app._on_connection_check(rt, None)
     assert len(probes) == 1
     assert state.abo_inactive_since is None
     rt.ha_api.send_notification.assert_not_called()

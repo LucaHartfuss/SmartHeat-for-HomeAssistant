@@ -3,13 +3,14 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from fakes import ACCESS_OPTIONS
+from fakes import runtime_config
 
 from heizungsbruecke import triggers
-from heizungsbruecke.manifest import ChannelManifest
-from heizungsbruecke.runtime import EV_HA_CONNECTED, EV_LOCAL_CHECK, EV_SETPOINTS
 from heizungsbruecke.triggers import build_ha_trigger_client
-from heizungsbruecke.worker import Event, RegulationWorker
+from smartheat_runtime import mqtt_link
+from smartheat_runtime.roles import ChannelManifest
+from smartheat_runtime.runtime import EV_LOCAL_CHECK, EV_SETPOINTS, EV_SOURCE_CONNECTED
+from smartheat_runtime.worker import Event, RegulationWorker
 from smartheat_transport.connect import ConnectOptions
 
 
@@ -24,7 +25,7 @@ def test_setpoints_callback_drops_retained_and_non_object_payloads(clock, raw, r
     message.payload = raw
     message.retain = retain
 
-    triggers.make_setpoints_callback(worker)(None, None, message)  # darf nicht werfen
+    mqtt_link.make_setpoints_callback(worker)(None, None, message)  # darf nicht werfen
     worker.run_pending()
 
     assert seen == []
@@ -38,7 +39,7 @@ def test_setpoints_callback_posts_fresh_answer_to_worker(clock):
     message.payload = b'{"seq": "s1", "status": "ok"}'
     message.retain = False
 
-    triggers.make_setpoints_callback(worker)(None, None, message)
+    mqtt_link.make_setpoints_callback(worker)(None, None, message)
     worker.run_pending()
 
     assert seen == [Event(EV_SETPOINTS, {"payload": {"seq": "s1", "status": "ok"}})]
@@ -126,7 +127,7 @@ def test_on_connected_queues_a_fresh_local_check_and_a_status_refresh(monkeypatc
     captured["on_connected"]()
 
     worker.post_coalesced.assert_any_call(EV_LOCAL_CHECK, room_target_fired=True)
-    worker.post_coalesced.assert_any_call(EV_HA_CONNECTED)
+    worker.post_coalesced.assert_any_call(EV_SOURCE_CONNECTED)
 
 
 def test_strip_attribute_suffix_removes_climate_attribute_syntax():
@@ -148,10 +149,10 @@ def test_extract_attribute_suffix_returns_none_for_plain_entity_id():
 def test_create_mqtt_client_only_subscribes_the_answers(monkeypatch, clock):
     created = MagicMock()
     factory = MagicMock(return_value=created)
-    monkeypatch.setattr("heizungsbruecke.triggers.BridgeMqttClient", factory)
+    monkeypatch.setattr("smartheat_runtime.mqtt_link.BridgeMqttClient", factory)
 
-    triggers.create_mqtt_client(
-        {"tenant_id": "t1", "mqtt_username": "u", "mqtt_password": "p", **ACCESS_OPTIONS},
+    mqtt_link.create_mqtt_client(
+        runtime_config(tenant_id="t1"),
         RegulationWorker(clock=clock),
     )
 

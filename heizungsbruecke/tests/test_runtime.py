@@ -14,15 +14,15 @@ import pytest
 from fakes import ACCESS_OPTIONS, FakeHa
 
 import heizungsbruecke.__main__ as main_module
-from heizungsbruecke import abo, backup_store, datentraeger, entitlement, ticks
-from heizungsbruecke.backup_store import load_backup, save_backup
-from heizungsbruecke.delivery import DataFault, DeliveryState
 from heizungsbruecke.derived_sensors import DerivedSensors
-from heizungsbruecke.runtime import Runtime
-from heizungsbruecke.status import ADDON_VERSION
+from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.enforce import MAX_WRITES_PER_DAY, RETRY_SECONDS
 from smartheat_core.pipeline import LeverPipeline
+from smartheat_runtime import abo, app, backup_store, datentraeger, entitlement, ticks
+from smartheat_runtime.backup_store import load_backup, save_backup
+from smartheat_runtime.delivery import DataFault, DeliveryState
+from smartheat_runtime.runtime import Runtime
 
 SETTLE = VAILLANT_MYPYLLANT.settle_seconds
 
@@ -150,7 +150,7 @@ def env(tmp_path, monkeypatch, clock):
         abo["queries"] += 1
         return abo["status"]
 
-    monkeypatch.setattr("heizungsbruecke.entitlement.query_status", _query_status)
+    monkeypatch.setattr("smartheat_runtime.entitlement.query_status", _query_status)
     mqtt_clients, trigger_clients = [], []
 
     def _mqtt_factory(*args, **kwargs):
@@ -161,7 +161,7 @@ def env(tmp_path, monkeypatch, clock):
         trigger_clients.append(FakeTriggerClient(**kwargs))
         return trigger_clients[-1]
 
-    monkeypatch.setattr("heizungsbruecke.triggers.BridgeMqttClient", _mqtt_factory)
+    monkeypatch.setattr("smartheat_runtime.mqtt_link.BridgeMqttClient", _mqtt_factory)
     monkeypatch.setattr("heizungsbruecke.triggers.HaTriggerClient", _trigger_factory)
     return SimpleNamespace(
         clock=clock, paths=paths, abo=abo, ha=FakeHa(), mqtt_clients=mqtt_clients, trigger_clients=trigger_clients,
@@ -224,7 +224,7 @@ def _raise_oserror(*args, **kwargs):
 
 
 def _break_backup_writes(monkeypatch) -> None:
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
 
 
 def _fail_next_snapshot_read(monkeypatch, error: Exception) -> None:
@@ -236,7 +236,7 @@ def _fail_next_snapshot_read(monkeypatch, error: Exception) -> None:
             raise failures.pop()
         return original(*args, **kwargs)
 
-    monkeypatch.setattr("heizungsbruecke.ticks.read_snapshot", _flaky)
+    monkeypatch.setattr("smartheat_runtime.ticks.read_snapshot", _flaky)
 
 
 def _quiet_backup(env, **extra):
@@ -455,7 +455,7 @@ def test_failing_zone_preparation_is_retried_at_most_every_30_min_and_6_times_a_
     attempts = _failing_zone_preparation(env, monkeypatch)
     bridge = _start(env)
 
-    with caplog.at_level(logging.WARNING, logger="heizungsbruecke.__main__"):
+    with caplog.at_level(logging.WARNING, logger="smartheat_runtime.app"):
         _local_checks(env, bridge, hours=12)
 
     assert len(attempts) == MAX_WRITES_PER_DAY  # Start + 5 Wiederholungen
@@ -1128,7 +1128,7 @@ def test_server_values_are_not_written_when_restore_point_cannot_be_saved(env, m
             raise OSError("Datentraeger voll")
         return real_save(path, content)
 
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _save)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _save)
     _answer(env, bridge, seq)
 
     assert _regulation_writes(env) == []
@@ -1384,11 +1384,11 @@ def test_inactive_after_grace_idles_as_abo_beendet_without_writes(env, monkeypat
     _quiet_backup(env)
     env.abo["status"] = entitlement.INACTIVE
     entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
-    monkeypatch.setattr("heizungsbruecke.entitlement.grace_expired", lambda since, now: True)
+    monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: True)
 
     bridge = _start_bridge(env)
 
-    assert isinstance(bridge, main_module.IdleBridge) and bridge.reason == "abo_beendet"
+    assert isinstance(bridge, app.IdleBridge) and bridge.reason == "abo_beendet"
     assert env.mqtt_clients == [] and env.trigger_clients == []
     assert env.ha.writes == [] and env.ha.pushes == []
     assert _status_states(env) == ["startet", "abo_beendet"]
@@ -1399,7 +1399,7 @@ def test_closing_start_retries_a_failed_restore_and_reports_it_once(env, monkeyp
     _quiet_backup(env, emergency_boost_active=True)
     env.abo["status"] = entitlement.INACTIVE
     entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
-    monkeypatch.setattr("heizungsbruecke.entitlement.grace_expired", lambda since, now: True)
+    monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: True)
     failures = [RuntimeError("HA nicht erreichbar")]
     original_write = env.ha.set_number_value
 
@@ -1471,7 +1471,7 @@ def test_inactive_rejection_after_unknown_rejection_clears_zugang_abgelehnt_sile
     assert new_pushes == [abo.inactive_message(entitlement.load_inactive_since(env.paths["ENTITLEMENT_PATH"]))]
     assert abo.ACCESS_DENIED_MESSAGE not in new_pushes and abo.ACCESS_OK_MESSAGE not in new_pushes
 
-    monkeypatch.setattr("heizungsbruecke.entitlement.grace_expired", lambda since, now: True)
+    monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: True)
     _advance(env, bridge, 300)
 
     assert _status_states(env)[-1] == "abo_beendet"
@@ -1650,7 +1650,7 @@ def test_unexpected_entitlement_query_error_counts_as_unknown(env, monkeypatch):
     def _broken_query(tenant_id, base_url, token):
         raise RuntimeError("unerwartet")
 
-    monkeypatch.setattr("heizungsbruecke.entitlement.query_status", _broken_query)
+    monkeypatch.setattr("smartheat_runtime.entitlement.query_status", _broken_query)
     _advance(env, bridge, 30)
     _advance(env, bridge, 30)
 
@@ -1686,7 +1686,7 @@ def test_grace_end_during_runtime_restores_notifies_and_idles(env, monkeypatch):
     env.abo["status"] = entitlement.INACTIVE
     entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
     answers = iter([False, True])  # Startpruefung, dann grace_check
-    monkeypatch.setattr("heizungsbruecke.entitlement.grace_expired", lambda since, now: next(answers, True))
+    monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: next(answers, True))
 
     bridge = _start_bridge(env)
     bridge.worker.run_pending()
@@ -1710,7 +1710,7 @@ def test_grace_end_with_failing_restore_keeps_running_and_retries(env, monkeypat
     env.abo["status"] = entitlement.INACTIVE
     entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
     answers = iter([False])  # Startpruefung, danach ist die Frist abgelaufen
-    monkeypatch.setattr("heizungsbruecke.entitlement.grace_expired", lambda since, now: next(answers, True))
+    monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: next(answers, True))
     bridge = _start_bridge(env)
     env.ha.write_error = RuntimeError("HA nicht erreichbar")
 
@@ -1745,7 +1745,7 @@ def test_inactive_after_grace_restores_leftover_boost_once(env, monkeypatch):
     env.ha.states.update({"number.curve_current": 1.5, "number.shift_current": 25.0})
     env.abo["status"] = entitlement.INACTIVE
     entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
-    monkeypatch.setattr("heizungsbruecke.entitlement.grace_expired", lambda since, now: True)
+    monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: True)
 
     assert _start_bridge(env).reason == "abo_beendet"
 
@@ -1759,9 +1759,10 @@ def _start_just_before_grace_end(env, monkeypatch):
     env.abo["status"] = entitlement.INACTIVE
     entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
     answers = iter([False])  # Startpruefung, danach ist die Frist abgelaufen
-    monkeypatch.setattr("heizungsbruecke.entitlement.grace_expired", lambda since, now: next(answers, True))
+    monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: next(answers, True))
     exec_calls = []
     monkeypatch.setattr("os.execv", lambda path, args: exec_calls.append((path, args)))
+    monkeypatch.setattr("sys.orig_argv", ["python", "-m", "heizungsbruecke"])  # Add-on-Start (restart_process)
     bridge = _start_bridge(env)
     return bridge, exec_calls
 
@@ -1866,7 +1867,7 @@ def test_grace_end_without_boost_restores_learned_values(env, monkeypatch):
     env.abo["status"] = entitlement.INACTIVE
     entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
     answers = iter([False])  # Startpruefung, danach ist die Frist abgelaufen
-    monkeypatch.setattr("heizungsbruecke.entitlement.grace_expired", lambda since, now: next(answers, True))
+    monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: next(answers, True))
 
     bridge = _start_bridge(env)
 
@@ -1885,7 +1886,7 @@ def test_grace_end_during_comfort_boost_restores_learned_values(env, monkeypatch
     env.abo["status"] = entitlement.INACTIVE
     entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
     answers = iter([False, False])  # Startpruefung und erster grace_check
-    monkeypatch.setattr("heizungsbruecke.entitlement.grace_expired", lambda since, now: next(answers, True))
+    monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: next(answers, True))
     bridge = _start(env)
 
     _set_room_target(env, bridge, 22.0)
@@ -2144,7 +2145,7 @@ def test_sign_off_during_emergency_boost_restores_clears_and_idles(env):
 
     bridge = _start_bridge(env, abgemeldet=True)
 
-    assert isinstance(bridge, main_module.IdleBridge) and bridge.reason == "abgemeldet"
+    assert isinstance(bridge, app.IdleBridge) and bridge.reason == "abgemeldet"
     assert env.ha.writes == [("number.curve_current", 0.9), ("number.shift_current", 22.0)]
     assert _backup(env)["emergency_boost_active"] is False
     assert {"smartheat_notbetrieb", "smartheat_batterie_sensor_x"} <= set(env.ha.dismissed)
@@ -2172,7 +2173,7 @@ def test_sign_off_retries_a_failed_restore_with_reason(env):
     bridge = _start_bridge(env, abgemeldet=True)
 
     assert _last_event(env)["status"] == "abgemeldet"
-    assert _last_event(env)["grund"] == main_module.SIGN_OFF_RESTORE_FAILED.format(seconds=300)
+    assert _last_event(env)["grund"] == app.SIGN_OFF_RESTORE_FAILED.format(seconds=300)
 
     env.ha.write_error = None
     _advance(env, bridge, 300)
@@ -2188,7 +2189,7 @@ def test_sign_off_with_invalid_configuration_does_not_write(env):
 
     assert bridge.reason == "abgemeldet"
     assert env.ha.writes == []
-    assert _last_event(env)["grund"] == main_module.SIGN_OFF_INVALID_CONFIG
+    assert _last_event(env)["grund"] == app.SIGN_OFF_INVALID_CONFIG
 
 
 def test_sign_off_without_mqtt_credentials_still_restores(env):
@@ -2208,7 +2209,7 @@ def test_sign_off_failed_restore_notifies_with_the_restore_values(env):
 
     _start_bridge(env, abgemeldet=True)
 
-    message = main_module.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Kurve 0,9, Parallelverschiebung 22")
+    message = app.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Kurve 0,9, Parallelverschiebung 22")
     assert env.ha.pushes == [message]
     assert ("smartheat_wiederherstellung", message) in env.ha.persistent
     assert "smartheat_notbetrieb" in env.ha.dismissed
@@ -2216,7 +2217,7 @@ def test_sign_off_failed_restore_notifies_with_the_restore_values(env):
 
 
 def test_sign_off_failed_restore_after_a_restart_renews_the_notification_without_push(env):
-    message = main_module.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Kurve 0,9, Parallelverschiebung 22")
+    message = app.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Kurve 0,9, Parallelverschiebung 22")
     _quiet_backup(
         env, boost_active=True,
         notify_states={"wiederherstellung": "fehlgeschlagen"}, notify_messages={"wiederherstellung": message},
@@ -2248,7 +2249,7 @@ def test_sign_off_with_invalid_configuration_during_a_boost_asks_for_manual_valu
 
     _start_bridge(env, abgemeldet=True, verteilsystem="Unbekannt")
 
-    message = main_module.SIGN_OFF_NOT_RESTORED_MESSAGE.format(werte="Kurve 0,9, Parallelverschiebung 22")
+    message = app.SIGN_OFF_NOT_RESTORED_MESSAGE.format(werte="Kurve 0,9, Parallelverschiebung 22")
     assert env.ha.pushes == [message]
     assert ("smartheat_wiederherstellung", message) in env.ha.persistent
 

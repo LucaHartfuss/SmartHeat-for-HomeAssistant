@@ -2,12 +2,12 @@
 Komfort-/Absenk-Soll) -- gemerkt vor dem ersten Schreiben, zurueckgestellt bei Abo-Ende und Abmelden (Spec 5.4)."""
 import pytest
 
-from heizungsbruecke.backup_store import load_backup
 from heizungsbruecke.ha_binding import HaPlantBinding
-from heizungsbruecke.manifest import ChannelManifest
 from smartheat_core.binding import WEISHAUPT_MODBUS
 from smartheat_core.pipeline import DeviceWriteError, LeverPipeline
 from smartheat_core.safety import resolve_local_safety
+from smartheat_runtime.backup_store import load_backup
+from smartheat_runtime.roles import ChannelManifest
 
 MANIFEST = ChannelManifest(entity_ids={"curve_current": "number.hk", "shift_current": "number.normal", "heat_limit": "number.swu"})
 SAFETY = resolve_local_safety("weishaupt_wwp", "Heizkoerper")

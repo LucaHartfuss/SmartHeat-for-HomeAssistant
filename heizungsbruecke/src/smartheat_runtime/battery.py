@@ -5,9 +5,8 @@ unknown aendert nichts. Gemeldet wird nur beim Wechsel (notifier), nicht kritisc
 import logging
 import math
 
-import requests
-
-from heizungsbruecke.notifier import STATE_OK
+from smartheat_runtime.notifier import STATE_OK
+from smartheat_runtime.ports import SignalNotFound, SourceUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -40,17 +39,14 @@ def _message(entity_id: str, state: str, raw: str) -> str:
 
 
 def check_batteries(rt) -> None:
-    for entity_id in rt.options.get("battery_entities", []):
+    for entity_id in rt.config.battery_refs:
         key = f"batterie:{entity_id}"
         try:
-            raw = rt.ha_api.get_raw_state(entity_id)
-        except requests.HTTPError as error:
-            if error.response is not None and error.response.status_code == 404:
-                logger.info("Batterie-Entity %s nicht gefunden (404), wird uebersprungen", entity_id)
-                continue
-            logger.warning("Batteriepruefung abgebrochen, Home Assistant nicht erreichbar: %s", error)
-            return
-        except requests.RequestException as error:
+            raw = rt.signals.get_raw_state(entity_id)
+        except SignalNotFound:
+            logger.info("Batterie-Entity %s nicht gefunden (404), wird uebersprungen", entity_id)
+            continue
+        except SourceUnavailable as error:
             logger.warning("Batteriepruefung abgebrochen, Home Assistant nicht erreichbar: %s", error)
             return
         except ValueError:

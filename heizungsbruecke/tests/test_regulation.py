@@ -5,16 +5,16 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from fakes import runtime_config
 
-from heizungsbruecke import regulation
-from heizungsbruecke.backup_store import load_backup
 from heizungsbruecke.ha_binding import HaPlantBinding
-from heizungsbruecke.manifest import ChannelManifest
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import LocalSafety
+from smartheat_runtime import regulation
+from smartheat_runtime.backup_store import load_backup
+from smartheat_runtime.roles import ChannelManifest
 
 # Unterscheidbar: Notfall (= Clamp-Maximum) 0.8/5.0, Comfort 0.5/2.0, Wiederherstellungspunkt 0.3/1.0.
-OPTIONS = {"daily_trigger_time": "12:00"}
 SAFETY = LocalSafety(
     ranges={"curve": (0.2, 0.8), "room_setpoint": (0.0, 5.0), "heat_limit": (5.0, 20.0), "min_flow": (20.0, 30.0)},
     comfort_boost={"curve": 0.5, "room_setpoint": 2.0, "heat_limit": 20.0},
@@ -43,11 +43,11 @@ def _runtime(store, *, room_actual=20.0, room_target=21.0, entity_ids=ENTITY_IDS
 
     ha_api.get_state.side_effect = _get_state
     manifest = ChannelManifest(entity_ids=entity_ids)
-    options = dict(OPTIONS)
     if room_target is not None:
         store.update(stable_target=room_target)
     return SimpleNamespace(
-        manifest=manifest, ha_api=ha_api, options=options, store=store, states=values,
+        manifest=manifest, signals=ha_api, ha_api=ha_api, config=runtime_config(), store=store,
+        states=values,
         override=LeverPipeline(store, HaPlantBinding(ha_api, manifest), SAFETY),
     )
 
@@ -134,7 +134,7 @@ def test_steady_state_check_does_not_write_backup(make_store, monkeypatch):
     })
     rt = _runtime(store, room_actual=20.0, room_target=20.0)
     saves = []
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", lambda path, values: saves.append(path))
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", lambda path, values: saves.append(path))
 
     regulation.run_local_check(rt)
 
@@ -290,7 +290,7 @@ def test_claim_due_tick_is_claimed_again_after_a_failed_booking(make_store, tmp_
         raise OSError("Datentraeger kaputt")
 
     with monkeypatch.context() as patch:
-        patch.setattr("heizungsbruecke.backup_store.save_backup", _broken_save)
+        patch.setattr("smartheat_runtime.backup_store.save_backup", _broken_save)
         with pytest.raises(OSError):
             regulation.claim_due_tick(rt, datetime(2026, 9, 17, 12, 5))
     assert (rt.store.state.last_published_target_rt, rt.store.state.last_daily_trigger_date) == (21.0, None)
@@ -331,7 +331,7 @@ def test_failed_save_keeps_the_previous_target_in_memory(make_store, monkeypatch
     # N5: wie 0.16.0 -- ein nicht gespeicherter neuer Sollwert gilt noch nicht als gesehen.
     store = make_store(backup={"last_room_target": 21.0, "boost_active": True, **RESTORE_POINT})
     rt = _runtime(store, room_actual=20.0, room_target=21.5)
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
 
     with pytest.raises(OSError):
         regulation.run_local_check(rt)

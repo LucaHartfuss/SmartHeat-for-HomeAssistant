@@ -2,7 +2,7 @@ from dataclasses import replace
 
 import pytest
 
-from heizungsbruecke.delivery import (
+from smartheat_runtime.delivery import (
     NOTIFY_DATENFEHLER_LOCAL,
     NOTIFY_DATENFEHLER_RESOLVED,
     NOTIFY_DATENFEHLER_SERVER,

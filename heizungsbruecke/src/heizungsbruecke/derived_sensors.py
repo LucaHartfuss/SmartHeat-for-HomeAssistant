@@ -13,8 +13,8 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from heizungsbruecke.backup_store import load_backup, save_backup
 from heizungsbruecke.helper_templates import outdoor_temperature_template, room_temperature_template
+from smartheat_runtime.backup_store import load_backup, save_backup
 
 logger = logging.getLogger(__name__)
 

@@ -3,10 +3,10 @@ Neigung und Niveau als eine Schreibgruppe."""
 import pytest
 
 from heizungsbruecke.ha_binding import VIESSMANN_NORMAL_PRESET, ViessmannHaBinding
-from heizungsbruecke.manifest import ChannelManifest
 from smartheat_core.binding import VIESSMANN_VICARE_BINDING
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import resolve_local_safety
+from smartheat_runtime.roles import ChannelManifest
 
 MANIFEST = ChannelManifest(entity_ids={
     "curve_current": "number.slope", "level_current": "number.shift", "shift_current": "number.normal_temperature",

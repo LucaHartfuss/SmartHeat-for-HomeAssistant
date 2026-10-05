@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from heizungsbruecke.plausibility import OUTDOOR_TEMP_RANGE, ROOM_TEMP_RANGE, is_plausible
+from smartheat_runtime.plausibility import OUTDOOR_TEMP_RANGE, ROOM_TEMP_RANGE, is_plausible
 
 
 def test_ranges_match_server_r4():

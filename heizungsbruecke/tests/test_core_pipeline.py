@@ -5,12 +5,12 @@ import logging
 
 import pytest
 
-from heizungsbruecke.backup_store import load_backup
 from heizungsbruecke.ha_binding import HaPlantBinding
-from heizungsbruecke.manifest import ChannelManifest
 from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.pipeline import DeviceWriteError, LeverPipeline
 from smartheat_core.safety import LocalSafety
+from smartheat_runtime.backup_store import load_backup
+from smartheat_runtime.roles import ChannelManifest
 
 SETTLE = VAILLANT_MYPYLLANT.settle_seconds
 # Bisherige Test-Optionen (boost 1.0/24.0, heat_limit_max 20) als LocalSafety.
@@ -181,7 +181,7 @@ def test_restore_point_not_yet_on_the_card_blocks_a_new_boost(make_store, tmp_pa
     # backup.json nicht geschrieben werden konnte. Der naechste Check darf den Boost dann
     # nicht schreiben, sondern holt zuerst das Speichern nach.
     override, store, ha = _setup(make_store)
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
 
     with pytest.raises(OSError):
         override.set_boosts(comfort=True, emergency=False)  # Check 1: gelesen, Speichern scheitert
@@ -210,7 +210,7 @@ def test_unsaved_boost_flag_alone_does_not_block_a_new_boost(make_store, monkeyp
     # Steht der Wiederherstellungspunkt auf dem Datentraeger, blockiert ein nur im Speicher
     # stehendes Boost-Flag (Datentraeger kaputt) keinen neuen Boost.
     override, _, ha = _setup(make_store, backup=dict(RESTORE_POINT))
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
     for comfort in (True, False):
         with pytest.raises(OSError):
             override.set_boosts(comfort=comfort, emergency=False)
@@ -258,7 +258,7 @@ def test_write_failure_leaves_flags_unchanged(make_store, tmp_path):
 def test_flag_save_failure_after_device_write_keeps_memory_consistent(make_store, tmp_path, monkeypatch):
     # Review Focus 1: Datentraeger schreibt nicht, nachdem die Anlage schon auf Boost-Werten steht.
     override, store, ha = _setup(make_store, backup=dict(RESTORE_POINT))
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
 
     with pytest.raises(OSError):
         override.set_boosts(comfort=True, emergency=False)
@@ -396,7 +396,7 @@ def test_restore_and_clear_keeps_flags_when_write_fails(make_store):
 
 def test_restore_and_clear_counts_as_done_when_only_saving_flags_fails(make_store, monkeypatch, caplog):
     override, store, ha = _setup(make_store, backup={**RESTORE_POINT, "emergency_boost_active": True})
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
 
     with caplog.at_level(logging.ERROR):
         assert override.restore_and_clear(always_restore=True) is True
@@ -414,7 +414,7 @@ def test_emergency_boost_starts_on_the_older_saved_point_when_the_new_one_cannot
     # N6: Datentraeger nicht beschreibbar, Serverwerte nur im Speicher -- der Notfall-Boost startet
     # trotzdem und setzt am Ende auf den gespeicherten (aelteren) Punkt zurueck.
     override, store, ha = _setup(make_store, backup=dict(RESTORE_POINT))
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
     with pytest.raises(OSError):
         override.apply_server_values(_server(1.0, 25.0, 15.0))
 
@@ -434,7 +434,7 @@ def test_emergency_boost_starts_on_the_older_saved_point_when_the_new_one_cannot
 
 def test_comfort_boost_is_still_refused_when_only_an_older_point_is_saved(make_store, monkeypatch):
     override, store, ha = _setup(make_store, backup=dict(RESTORE_POINT))
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
     with pytest.raises(OSError):
         override.apply_server_values(_server(1.0, 25.0, 15.0))
 
@@ -448,7 +448,7 @@ def test_comfort_boost_is_still_refused_when_only_an_older_point_is_saved(make_s
 
 def test_emergency_boost_without_any_saved_point_is_still_refused(make_store, monkeypatch):
     override, store, ha = _setup(make_store)
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
     with pytest.raises(OSError):
         override.apply_server_values(_server(1.0, 25.0, 15.0))
 
@@ -1192,7 +1192,7 @@ def test_emergency_boost_on_the_saved_point_without_heat_limit_leaves_g_alone(ma
     # N6: Serverwerte (inkl. G) nur im Speicher, backup.json haelt keinen G-Punkt. Der Notfall-Boost
     # startet auf dem gespeicherten aelteren Punkt (G None) und darf G deshalb nicht schreiben.
     override, store, ha = _setup_g(make_store, backup={**RESTORE_POINT, "originals": {"heat_limit": 15.0}})
-    monkeypatch.setattr("heizungsbruecke.backup_store.save_backup", _raise_oserror)
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
     with pytest.raises(OSError):
         override.apply_server_values(_server(1.0, 25.0, 18.0))
     ha.events.clear()

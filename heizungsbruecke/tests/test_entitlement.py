@@ -4,8 +4,9 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 import requests
+from fakes import runtime_config
 
-from heizungsbruecke import entitlement
+from smartheat_runtime import entitlement
 
 NOW = datetime(2026, 9, 25, 12, 0, tzinfo=timezone(timedelta(hours=2)))
 
@@ -31,7 +32,7 @@ def _patch_get(monkeypatch, response=None, error=None):
             raise error
         return response
 
-    monkeypatch.setattr("heizungsbruecke.entitlement.requests.get", fake_get)
+    monkeypatch.setattr("smartheat_runtime.entitlement.requests.get", fake_get)
     return calls
 
 
@@ -66,19 +67,18 @@ def test_query_sends_the_installation_token_as_bearer(monkeypatch):
                       {"Authorization": "Bearer tok-123"}, 10)]
 
 
-def test_query_from_options_uses_the_token_option(monkeypatch):
+def test_query_uses_the_token_of_the_config(monkeypatch):
     calls = _patch_get(monkeypatch, response=_Response(200, {"active": False}))
-    options = {"tenant_id": "t1", "accounts_api_base_url": "https://a.example", "installation_token": "tok-9"}
+    config = runtime_config(tenant_id="t1", accounts_api_base_url="https://a.example", installation_token="tok-9")
 
-    assert entitlement.query_from_options(options) == entitlement.INACTIVE
+    assert entitlement.query(config) == entitlement.INACTIVE
     assert calls == [("https://a.example/tenants/t1/status", {"Authorization": "Bearer tok-9"}, 10)]
 
 
-@pytest.mark.parametrize("token", ["", None])
-def test_query_from_options_without_token_asks_nothing_and_is_unknown(monkeypatch, token):
+def test_query_without_token_asks_nothing_and_is_unknown(monkeypatch):
     calls = _patch_get(monkeypatch, _Response(200, {"active": True}))
-    options = {"tenant_id": "client1", "accounts_api_base_url": "https://a.example.test", "installation_token": token}
-    assert entitlement.query_from_options(options) == entitlement.UNKNOWN
+    config = runtime_config(tenant_id="client1", accounts_api_base_url="https://a.example.test", installation_token="")
+    assert entitlement.query(config) == entitlement.UNKNOWN
     assert calls == []
 
 
@@ -164,3 +164,8 @@ def test_grace_arithmetic():
     # Unterschiedliche Zeitzonen-Offsets (Sommer-/Winterzeit) muessen korrekt vergleichen.
     later_utc = (NOW + timedelta(days=31)).astimezone(UTC)
     assert entitlement.grace_expired(NOW, later_utc) is True
+
+
+def test_query_without_installation_token_asks_nobody(monkeypatch):
+    monkeypatch.setattr(entitlement, "query_status", lambda *args: pytest.fail("keine Anfrage ohne Token"))
+    assert entitlement.query(runtime_config(installation_token="")) == entitlement.UNKNOWN

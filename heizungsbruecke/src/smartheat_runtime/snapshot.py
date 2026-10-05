@@ -4,10 +4,10 @@ import logging
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
 from typing import TypeGuard
 
-from heizungsbruecke.manifest import ChannelManifest
+from smartheat_core import wallclock
+from smartheat_runtime.roles import ChannelManifest
 
 logger = logging.getLogger(__name__)
 
@@ -36,13 +36,13 @@ class SnapshotRead:
     readonly: tuple[str, ...] = ()
 
 
-def _read_role(manifest: ChannelManifest, ha_api, role: str, invalid: list[str]) -> float | None:
+def _read_role(manifest: ChannelManifest, signals, role: str, invalid: list[str]) -> float | None:
     entity_id = manifest.entity_ids.get(role)
     if entity_id is None:
         invalid.append(role)
         return None
     try:
-        value = ha_api.get_state(entity_id)
+        value = signals.get_state(entity_id)
     except Exception as error:
         logger.warning("Sensor fuer Rolle '%s' (%s) liefert keinen gueltigen Wert: %s", role, entity_id, error)
         invalid.append(role)
@@ -54,7 +54,7 @@ def _read_role(manifest: ChannelManifest, ha_api, role: str, invalid: list[str])
     return value
 
 
-def read_snapshot(manifest: ChannelManifest, ha_api, binding, known: Mapping[str, float | None]) -> SnapshotRead:
+def read_snapshot(manifest: ChannelManifest, signals, binding, known: Mapping[str, float | None]) -> SnapshotRead:
     """Liest jeden Hebel des Hebelsatzes und das Raum-Soll; prueft room_actual. `known` traegt Hebelwerte, die nicht
     gelesen werden (eigener Schreibwert kurz nach dem Schreiben, A3-02; Wiederherstellungspunkt bei ruhender Zone).
     Ungueltig heisst: Lesen wirft oder der Wert ist nicht endlich. Meldet selbst nichts: das macht die Zustellung
@@ -93,10 +93,10 @@ def read_snapshot(manifest: ChannelManifest, ha_api, binding, known: Mapping[str
             continue
         levers[lever] = value
         readonly.append(lever)
-    room_target = _read_role(manifest, ha_api, TARGET_ROLE, invalid)
+    room_target = _read_role(manifest, signals, TARGET_ROLE, invalid)
     for role in VALIDITY_ONLY_ROLES:
         if role in manifest.entity_ids:
-            _read_role(manifest, ha_api, role, invalid)
+            _read_role(manifest, signals, role, invalid)
     return SnapshotRead(room_target=room_target, levers=levers, invalid=tuple(invalid), readonly=tuple(readonly))
 
 
@@ -110,7 +110,7 @@ def publish_snapshot(
         "schema": SNAPSHOT_SCHEMA_VERSION,
         "seq": seq,
         "trigger": trigger,
-        "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "ts": wallclock.now().isoformat(timespec="seconds"),
         "room_target": room_target,
         "levers": levers,
         "readonly": list(readonly),

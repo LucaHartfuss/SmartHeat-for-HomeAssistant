@@ -4,13 +4,13 @@ import dataclasses
 
 import pytest
 
-from heizungsbruecke.backup_store import load_backup
 from heizungsbruecke.ha_binding import HaPlantBinding
-from heizungsbruecke.manifest import ChannelManifest
 from smartheat_core import write_budget
 from smartheat_core.binding import VAILLANT_MYPYLLANT, VIESSMANN_VICARE_BINDING, WEISHAUPT_MODBUS
 from smartheat_core.pipeline import LIFETIME_KEY, DeviceWriteError, LeverPipeline, WriteBudgetExhausted
 from smartheat_core.safety import resolve_local_safety
+from smartheat_runtime.backup_store import load_backup
+from smartheat_runtime.roles import ChannelManifest
 
 DAY = "2026-10-03"
 NEXT_DAY = "2026-10-04"

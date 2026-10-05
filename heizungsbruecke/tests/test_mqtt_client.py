@@ -6,21 +6,21 @@ import pytest
 from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.reasoncodes import ReasonCode
 
-from heizungsbruecke.mqtt_client import BridgeMqttClient
 from smartheat_transport.connect import ConnectOptions
 from smartheat_transport.descriptor import KIND_IOT_CORE, KIND_MOSQUITTO
+from smartheat_transport.mqtt_client import BridgeMqttClient
 
 PASSWORD_OPTIONS = ConnectOptions("127.0.0.1", 18830, "", username="u", password="p")
 
 
 def _client(mock_paho_client, options=PASSWORD_OPTIONS, kind=KIND_MOSQUITTO, tenant="kunde2", **kwargs):
-    with patch("heizungsbruecke.mqtt_client.mqtt.Client", return_value=mock_paho_client) as client_cls:
+    with patch("smartheat_transport.mqtt_client.mqtt.Client", return_value=mock_paho_client) as client_cls:
         bridge = BridgeMqttClient(options, tenant, transport_kind=kind, **kwargs)
     return bridge, client_cls
 
 
 def test_init_authenticates_with_given_credentials():
-    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
+    with patch("smartheat_transport.mqtt_client.mqtt.Client") as mock_client_cls:
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
 
@@ -30,7 +30,7 @@ def test_init_authenticates_with_given_credentials():
 
 
 def test_on_connect_before_any_subscription_does_not_error():
-    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
+    with patch("smartheat_transport.mqtt_client.mqtt.Client") as mock_client_cls:
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
 
@@ -44,7 +44,7 @@ def test_on_connect_before_any_subscription_does_not_error():
 
 def test_on_disconnect_logs_warning_with_reason_code(monkeypatch, caplog):
     fake_paho_client = MagicMock()
-    monkeypatch.setattr("heizungsbruecke.mqtt_client.mqtt.Client", lambda *a, **kw: fake_paho_client)
+    monkeypatch.setattr("smartheat_transport.mqtt_client.mqtt.Client", lambda *a, **kw: fake_paho_client)
 
     client = BridgeMqttClient(PASSWORD_OPTIONS, "t1", transport_kind=KIND_MOSQUITTO)
 
@@ -56,7 +56,7 @@ def test_on_disconnect_logs_warning_with_reason_code(monkeypatch, caplog):
 
 
 def test_publish_telemetry_publishes_correct_topic_payload_and_not_retained():
-    with patch("heizungsbruecke.mqtt_client.mqtt.Client") as mock_client_cls:
+    with patch("smartheat_transport.mqtt_client.mqtt.Client") as mock_client_cls:
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client
 
@@ -74,7 +74,7 @@ def test_publish_telemetry_publishes_correct_topic_payload_and_not_retained():
 
 
 def _client_with_mock(**kwargs):
-    patcher = patch("heizungsbruecke.mqtt_client.mqtt.Client")
+    patcher = patch("smartheat_transport.mqtt_client.mqtt.Client")
     mock_client_cls = patcher.start()
     mock_client = MagicMock()
     mock_client_cls.return_value = mock_client

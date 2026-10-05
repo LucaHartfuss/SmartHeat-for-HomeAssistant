@@ -5,9 +5,10 @@ import sys
 from dataclasses import replace
 from datetime import datetime
 
-from heizungsbruecke import config, entitlement
-from heizungsbruecke.notifier import STATE_OK
-from heizungsbruecke.runtime import Runtime
+from smartheat_core import wallclock
+from smartheat_runtime import entitlement
+from smartheat_runtime.notifier import STATE_OK
+from smartheat_runtime.runtime import Runtime
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ def enter_inactive(rt: Runtime, now: datetime) -> None:
     if state.abo_inactive_since is not None:
         return
     try:
-        since, newly_set = entitlement.mark_inactive(config.ENTITLEMENT_PATH, now)
+        since, newly_set = entitlement.mark_inactive(rt.config.entitlement_path, now)
     except Exception:
         # Ein Schreibfehler (Datentraeger) darf den Notbetrieb nicht verhindern.
         logger.exception(
@@ -126,10 +127,10 @@ def handle_auth_rejected(rt: Runtime) -> None:
         logger.debug("MQTT-Anmeldung erneut abgelehnt, Abo-Status wird erst nach %.0f s wieder abgefragt",
                      AUTH_REJECTED_QUERY_INTERVAL_SECONDS)
         return
-    status = entitlement.query_from_options(rt.options)
+    status = entitlement.query(rt.config)
     rt.auth_rejected_queried_at = now
     if status == entitlement.INACTIVE:
-        enter_inactive(rt, datetime.now().astimezone())
+        enter_inactive(rt, wallclock.now())
         return
     _report_rejection(rt, status)
 
@@ -154,7 +155,7 @@ def _report_rejection(rt: Runtime, status: str) -> None:
 def handle_connection_failing(rt: Runtime) -> None:
     """Spec AWS-IoT 5.1: Bei IoT Core endet ein gesperrtes Zertifikat vermutlich im TLS-Aufbau statt mit
     CONNACK 134/135 (AN-1). Fehlt die Verbindung lange und scheitern die Versuche wiederholt
-    (__main__._on_connection_check), fragt das Add-on deshalb den Abo-Status, gedrosselt wie nach einer
+    (app._on_connection_check), fragt das Add-on deshalb den Abo-Status, gedrosselt wie nach einer
     abgelehnten Anmeldung. Nur ein eindeutiges Ergebnis wirkt: inactive -> Abo-inaktiv-Modus,
     rejected -> wie eine abgelehnte Anmeldung; active und unknown aendern nichts (normaler Ausfall, den
     Notbetrieb und Pruef-Tick abdecken)."""
@@ -165,9 +166,9 @@ def handle_connection_failing(rt: Runtime) -> None:
     if last is not None and now - last < AUTH_REJECTED_QUERY_INTERVAL_SECONDS:
         return
     rt.connection_failing_queried_at = now
-    status = entitlement.query_from_options(rt.options)
+    status = entitlement.query(rt.config)
     if status == entitlement.INACTIVE:
-        enter_inactive(rt, datetime.now().astimezone())
+        enter_inactive(rt, wallclock.now())
     elif status == entitlement.REJECTED:
         rt.auth_rejected_queried_at = now
         _report_rejection(rt, status)
@@ -183,10 +184,10 @@ def check_grace_end(rt: Runtime) -> None:
     Wiederherstellung, laeuft die lokale Regelung weiter und der naechste Check versucht es
     erneut."""
     since = rt.store.state.abo_inactive_since
-    if since is None or not entitlement.grace_expired(since, datetime.now().astimezone()):
+    if since is None or not entitlement.grace_expired(since, wallclock.now()):
         return
-    if entitlement.query_from_options(rt.options) == entitlement.ACTIVE:
-        entitlement.clear(config.ENTITLEMENT_PATH)
+    if entitlement.query(rt.config) == entitlement.ACTIVE:
+        entitlement.clear(rt.config.entitlement_path)
         logger.warning("Abo wieder aktiv, Neustart im Normalbetrieb")
         restart_process()
         return
@@ -203,7 +204,7 @@ def check_grace_end(rt: Runtime) -> None:
 
 def _enter_idle(rt: Runtime) -> None:
     """Ruhezustand im Betrieb (Spec TP7 3.2): MQTT und Trigger stoppen; ab jetzt laufen alle
-    Handler ausser dem Lebenszeichen leer (__main__._unless_idle). Kein Exit."""
+    Handler ausser dem Lebenszeichen leer (app._unless_idle). Kein Exit."""
     rt.idle = True
     for client in (rt.mqtt_client, rt.trigger_client):
         if client is None:
@@ -215,6 +216,6 @@ def _enter_idle(rt: Runtime) -> None:
 
 
 def restart_process() -> None:
-    """Ersetzt den Prozess durch einen frischen Start (Abo wieder aktiv, Neupruefung im
-    Konfigurationsfehler). Unabhaengig vom Supervisor-Watchdog: der Container laeuft weiter."""
-    os.execv(sys.executable, [sys.executable, "-m", "heizungsbruecke"])
+    """Ersetzt den Prozess durch einen frischen Start mit demselben Befehl (Abo wieder aktiv, Neupruefung im
+    Konfigurationsfehler). Im Add-on ist das `python -m heizungsbruecke`. Unabhaengig vom Watchdog des Hosts."""
+    os.execv(sys.executable, [sys.executable, *sys.orig_argv[1:]])

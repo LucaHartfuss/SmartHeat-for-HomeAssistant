@@ -5,8 +5,8 @@ import logging
 
 import pytest
 
-from heizungsbruecke.backup_store import load_backup
-from heizungsbruecke.state import BridgeState
+from smartheat_runtime.backup_store import load_backup
+from smartheat_runtime.state import BridgeState
 
 # backup.json, wie Add-on 0.30.0 sie fuer client1 schreibt (alle Feldarten, ein unbekannter Schluessel).
 V030_BACKUP = {

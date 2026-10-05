@@ -9,12 +9,13 @@ from pathlib import Path
 
 import requests
 
+from smartheat_runtime.runtime_config import RuntimeConfig
+
 logger = logging.getLogger(__name__)
 
 GRACE_PERIOD = timedelta(days=30)
 
 STATUS_PATH = "/tenants/{tenant_id}/status"
-TOKEN_OPTION = "installation_token"
 
 ACTIVE = "active"
 INACTIVE = "inactive"
@@ -53,12 +54,11 @@ def query_status(tenant_id: str, base_url: str, token: str) -> str:
     return UNKNOWN
 
 
-def query_from_options(options: dict) -> str:
-    """Ohne Token (Konfiguration von vor AWS-2, wird beim Start als veraltet gemeldet) keine Anfrage."""
-    token = options.get(TOKEN_OPTION)
-    if not token:
+def query(config: RuntimeConfig) -> str:
+    """Ohne Installations-Token keine Anfrage (der Start prueft ihn; Schutz gegen leere Konfiguration)."""
+    if not config.installation_token:
         return UNKNOWN
-    return query_status(options["tenant_id"], options["accounts_api_base_url"], token)
+    return query_status(config.tenant_id, config.accounts_api_base_url, config.installation_token)
 
 
 def load_inactive_since(path: Path) -> datetime | None:

@@ -1,20 +1,17 @@
-"""Status-Kanal zur SmartHeat-Integration (Spec TP7 1.1, 3.1). Das Add-on feuert das HA-Event
-`smartheat_status` mit dem vollen Status: nach jedem Worker-Ereignis, wenn sich der Inhalt
-geaendert hat, bei jedem (Wieder-)Verbinden des WS-Trigger-Clients und als Lebenszeichen alle
-HEARTBEAT_SECONDS. Die Integration haelt daraus ihre Entities; bleibt das Lebenszeichen aus,
-meldet sie das selbst. Name, Felder und Wertemengen sind Cross-Repo-Vertrag mit const.py der
-Integration (Contract-Check)."""
+"""Status-Modell Schema 2 (Spec TP7 1.1, 3.1); der Host sendet es ueber seinen StatusSink, beim HA-Host als
+Ereignis `smartheat_status` an die SmartHeat-Integration. Gesendet wird der volle Status: nach jedem
+Worker-Ereignis, wenn sich der Inhalt geaendert hat, bei jedem (Wieder-)Verbinden des WS-Trigger-Clients und
+als Lebenszeichen alle HEARTBEAT_SECONDS. Die Integration haelt daraus ihre Entities; bleibt das Lebenszeichen
+aus, meldet sie das selbst. Felder und Wertemengen sind Cross-Repo-Vertrag mit const.py der Integration
+(Contract-Check)."""
 import logging
 from dataclasses import dataclass, replace
 
-from heizungsbruecke import battery, delivery, entitlement, room_sensors
+from smartheat_runtime import battery, delivery, entitlement, room_sensors
+from smartheat_runtime.ports import StatusSink
 
 logger = logging.getLogger(__name__)
 
-# Muss zu `version` in config.yaml passen (tests/test_config_yaml.py).
-ADDON_VERSION = "0.33.0"
-
-EVENT_TYPE = "smartheat_status"
 EVENT_SCHEMA = 2
 HEARTBEAT_SECONDS = 300
 
@@ -148,7 +145,8 @@ def _levers(state, lever_set) -> dict:
 
 
 def build_event(
-    tenant_id: str, setup_id: str | None, flags: Flags, state, lever_set, storage_failed: bool = False,
+    tenant_id: str, setup_id: str | None, flags: Flags, state, lever_set, client_version: str,
+    storage_failed: bool = False,
 ) -> dict:
     status = overall_status(flags, state, storage_failed)
     abo = _abo(flags, state)
@@ -156,7 +154,7 @@ def build_event(
         "schema": EVENT_SCHEMA,
         "tenant_id": tenant_id,
         "setup_id": setup_id,
-        "addon_version": ADDON_VERSION,
+        "addon_version": client_version,
         "status": status,
         "grund": flags.grund if status in _STATUS_WITH_REASON else None,
         "notbetrieb": state.delivery.notbetrieb,
@@ -184,15 +182,18 @@ def build_event(
 
 
 class StatusReporter:
-    """Haelt die Laufzeit-Flags und sendet das Status-Event. Der uebrige Zustand kommt aus dem
+    """Haelt die Laufzeit-Flags und sendet das Status-Modell. Der uebrige Zustand kommt aus dem
     StateStore; Module aendern nur Flags bzw. BridgeState, gesendet wird zentral."""
 
-    def __init__(self, ha_api, tenant_id: str, setup_id: str | None, store, lever_set) -> None:
-        self._ha_api = ha_api
+    def __init__(
+        self, sink: StatusSink, tenant_id: str, setup_id: str | None, store, lever_set, client_version: str,
+    ) -> None:
+        self._sink = sink
         self._tenant_id = tenant_id
         self._setup_id = setup_id if isinstance(setup_id, str) and setup_id else None
         self._store = store
         self._lever_set = lever_set
+        self._client_version = client_version
         self.flags = Flags()
         self._published: dict | None = None
 
@@ -203,7 +204,7 @@ class StatusReporter:
     def event(self) -> dict:
         return build_event(
             self._tenant_id, self._setup_id, self.flags, self._store.state, self._lever_set,
-            self._store.storage_failed,
+            self._client_version, self._store.storage_failed,
         )
 
     def update(self, **changes) -> None:
@@ -219,8 +220,8 @@ class StatusReporter:
         sendet erneut, weil der zuletzt gesendete Stand dann nicht aktualisiert ist."""
         event = self.event()
         try:
-            self._ha_api.fire_event(EVENT_TYPE, event)
+            self._sink.publish(event)
         except Exception:
-            logger.warning("Status-Event '%s' (%s) konnte nicht gesendet werden", EVENT_TYPE, event["status"])
+            logger.warning("Status (%s) konnte nicht gesendet werden", event["status"])
             return
         self._published = event

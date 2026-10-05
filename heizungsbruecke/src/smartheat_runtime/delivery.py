@@ -11,7 +11,7 @@ seqs speichert der Server nicht, ein Retry wird mit frischen Werten neu gerechne
 """
 from dataclasses import dataclass, replace
 
-from heizungsbruecke.entitlement import INACTIVE
+from smartheat_runtime.entitlement import INACTIVE
 
 ACK_TIMEOUT_SECONDS = 30
 NOTBETRIEB_AFTER_SERVER_FAILURES = 2

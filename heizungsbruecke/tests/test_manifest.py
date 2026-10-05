@@ -1,10 +1,7 @@
 import pytest
 
-from heizungsbruecke.manifest import (
-    ManifestError,
-    build_manifest,
-    entity_ref,
-)
+from heizungsbruecke.manifest import build_manifest, entity_ref
+from smartheat_runtime.roles import ManifestError
 
 # room_actual kommt immer aus derived_sensors (Raumtemperatur-Template, Spec TP6 3.2).
 ROOM_ACTUAL = {"room_actual": "sensor.smartheat_t1_raumtemperatur"}
@@ -123,7 +120,7 @@ def test_flow_setpoint_is_optional_role():
 
 
 def test_required_roles_are_known_manifest_roles():
-    from heizungsbruecke.manifest import ALL_ROLES, REQUIRED_ROLES
+    from smartheat_runtime.roles import ALL_ROLES, REQUIRED_ROLES
 
     assert REQUIRED_ROLES == (
         "room_actual", "room_target", "curve_current", "shift_current", "min_flow", "heat_limit", "outdoor_temp",
@@ -136,8 +133,8 @@ def test_build_manifest_ignores_profile_option():
 
 
 def test_required_roles_per_lever_set():
-    from heizungsbruecke.manifest import ALL_ROLES, REQUIRED_ROLES, REQUIRED_ROLES_BY_LEVER_SET
     from smartheat_core.levers import LEVER_SETS
+    from smartheat_runtime.roles import ALL_ROLES, REQUIRED_ROLES, REQUIRED_ROLES_BY_LEVER_SET
 
     assert set(REQUIRED_ROLES_BY_LEVER_SET) == set(LEVER_SETS)
     assert REQUIRED_ROLES_BY_LEVER_SET["vaillant_vrc720"] == REQUIRED_ROLES

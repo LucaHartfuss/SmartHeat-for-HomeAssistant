@@ -3,16 +3,16 @@ Abo-Abfrage, Zeitplan, Meldungen) und die Server-Antworten."""
 import logging
 import math
 import uuid
-from datetime import datetime
 from typing import TypeGuard
 
-from heizungsbruecke import abo, delivery, entitlement
-from heizungsbruecke.notifier import STATE_OK
-from heizungsbruecke.runtime import EV_ACK_TIMEOUT, EV_RETRY_DUE, Runtime
-from heizungsbruecke.snapshot import SNAPSHOT_SCHEMA_VERSION, publish_snapshot, read_snapshot
-from heizungsbruecke.state import StorageError
-from heizungsbruecke.worker import Event
+from smartheat_core import wallclock
 from smartheat_core.pipeline import DeviceWriteError
+from smartheat_runtime import abo, delivery, entitlement
+from smartheat_runtime.notifier import STATE_OK
+from smartheat_runtime.runtime import EV_ACK_TIMEOUT, EV_RETRY_DUE, Runtime
+from smartheat_runtime.snapshot import SNAPSHOT_SCHEMA_VERSION, publish_snapshot, read_snapshot
+from smartheat_runtime.state import StorageError
+from smartheat_runtime.worker import Event
 
 logger = logging.getLogger(__name__)
 
@@ -91,14 +91,14 @@ def _execute(rt: Runtime, action):
     if isinstance(action, delivery.Attempt):
         return _attempt(rt, action.seq, action.trigger)
     if isinstance(action, delivery.QueryEntitlement):
-        status = entitlement.query_from_options(rt.options)
+        status = entitlement.query(rt.config)
         return delivery.EntitlementChecked(seq=action.seq, status=status)
     if isinstance(action, delivery.ScheduleAckTimeout):
         rt.worker.schedule(action.delay_s, Event(EV_ACK_TIMEOUT, {"seq": action.seq, "gen": action.gen}))
     elif isinstance(action, delivery.ScheduleRetry):
         rt.worker.schedule(action.delay_s, Event(EV_RETRY_DUE, {"seq": action.seq, "gen": action.gen}))
     elif isinstance(action, delivery.EnterAboInactive):
-        abo.enter_inactive(rt, datetime.now().astimezone())
+        abo.enter_inactive(rt, wallclock.now())
     elif isinstance(action, delivery.Notify):
         _notify(rt, action)
     elif isinstance(action, delivery.EndEmergencyBoost):
@@ -128,7 +128,7 @@ def _attempt(rt: Runtime, seq: str, trigger: str):
             known[lever] = last
         elif lever == binding.description.prepared_lever:
             known[lever] = binding.read_or(lever, rt.store.state.restore_point.get(lever))
-    read = read_snapshot(rt.manifest, rt.ha_api, binding, known)
+    read = read_snapshot(rt.manifest, rt.signals, binding, known)
     if read.invalid:
         logger.warning("Snapshot (seq=%s) zurueckgehalten, ungueltige Werte: %s", seq, ", ".join(read.invalid))
         return delivery.ReadInvalid(seq=seq, roles=read.invalid)
@@ -226,7 +226,7 @@ def _notify(rt: Runtime, action) -> None:
 def _record_answer(rt: Runtime) -> None:
     """Jede Antwort auf den offenen Tick zeigt, dass der Server lebt (Status letzte_serverantwort)."""
     try:
-        rt.store.update(last_ack_at=datetime.now().astimezone().isoformat(timespec="seconds"))
+        rt.store.update(last_ack_at=wallclock.now().isoformat(timespec="seconds"))
     except Exception:
         logger.exception("Zeitpunkt der Serverantwort konnte nicht gespeichert werden")
 
