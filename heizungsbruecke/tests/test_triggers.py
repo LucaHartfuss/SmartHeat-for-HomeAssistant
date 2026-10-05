@@ -7,7 +7,7 @@ from fakes import runtime_config
 
 from heizungsbruecke import triggers
 from heizungsbruecke.manifest import ChannelManifest
-from heizungsbruecke.runtime import EV_HA_CONNECTED, EV_LOCAL_CHECK, EV_SETPOINTS
+from heizungsbruecke.runtime import EV_LOCAL_CHECK, EV_SETPOINTS, EV_SOURCE_CONNECTED
 from heizungsbruecke.triggers import build_ha_trigger_client
 from smartheat_runtime.worker import Event, RegulationWorker
 from smartheat_transport.connect import ConnectOptions
@@ -126,7 +126,7 @@ def test_on_connected_queues_a_fresh_local_check_and_a_status_refresh(monkeypatc
     captured["on_connected"]()
 
     worker.post_coalesced.assert_any_call(EV_LOCAL_CHECK, room_target_fired=True)
-    worker.post_coalesced.assert_any_call(EV_HA_CONNECTED)
+    worker.post_coalesced.assert_any_call(EV_SOURCE_CONNECTED)
 
 
 def test_strip_attribute_suffix_removes_climate_attribute_syntax():

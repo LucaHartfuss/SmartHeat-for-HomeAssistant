@@ -10,16 +10,15 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from heizungsbruecke.ha_trigger_client import HaTriggerClient
     from heizungsbruecke.manifest import ChannelManifest
-    from heizungsbruecke.mqtt_client import BridgeMqttClient
     from heizungsbruecke.notifier import Notifier
     from heizungsbruecke.status import StatusReporter
     from smartheat_core.pipeline import LeverPipeline
-    from smartheat_runtime.ports import SignalSource
+    from smartheat_runtime.ports import SignalSource, TriggerSource
     from smartheat_runtime.runtime_config import RuntimeConfig
     from smartheat_runtime.state import StateStore
     from smartheat_runtime.worker import RegulationWorker
+    from smartheat_transport.mqtt_client import BridgeMqttClient
 
 EV_LOCAL_CHECK = "local_check"
 EV_SETPOINTS = "setpoints"
@@ -32,7 +31,7 @@ EV_GRACE_CHECK = "grace_check"
 EV_HEALTH = "health"
 EV_CONNECTION_CHECK = "connection_check"
 EV_MQTT_CONNECTED = "mqtt_connected"
-EV_HA_CONNECTED = "ha_connected"
+EV_SOURCE_CONNECTED = "source_connected"
 EV_HEARTBEAT = "heartbeat"
 EV_RECHECK = "recheck"
 
@@ -49,7 +48,7 @@ class Runtime:
     override: LeverPipeline
     notifier: Notifier
     mqtt_client: BridgeMqttClient | None = None
-    trigger_client: HaTriggerClient | None = None
+    trigger_client: TriggerSource | None = None
     status: StatusReporter | None = None
     # Ruhezustand im Betrieb (Fristende): alle Handler ausser dem Lebenszeichen laufen leer.
     idle: bool = False

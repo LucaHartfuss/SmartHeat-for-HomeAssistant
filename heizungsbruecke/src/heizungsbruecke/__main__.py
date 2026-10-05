@@ -37,7 +37,6 @@ from heizungsbruecke.runtime import (
     EV_AUTH_REJECTED,
     EV_CONNECTION_CHECK,
     EV_GRACE_CHECK,
-    EV_HA_CONNECTED,
     EV_HEALTH,
     EV_HEARTBEAT,
     EV_LOCAL_CHECK,
@@ -45,6 +44,7 @@ from heizungsbruecke.runtime import (
     EV_RECHECK,
     EV_RETRY_DUE,
     EV_SETPOINTS,
+    EV_SOURCE_CONNECTED,
     EV_TELEMETRY,
     EV_WATCHDOG,
     Runtime,
@@ -502,8 +502,8 @@ def _on_mqtt_connected(rt: Runtime, event: Event) -> None:
     ticks.deliver(rt, delivery.MqttConnected())
 
 
-def _on_ha_connected(rt: Runtime, event: Event) -> None:
-    """Voller Status und HA-Benachrichtigungen bei jedem (Wieder-)Verbinden: nach einem
+def _on_source_connected(rt: Runtime, event: Event) -> None:
+    """Voller Status und offene Meldungen bei jedem (Wieder-)Verbinden der Quelle: nach einem
     HA-Neustart fehlen die Benachrichtigungen, und die Integration hat den Status nicht."""
     status = rt.status
     assert status is not None  # beim Boot gesetzt
@@ -533,7 +533,7 @@ def _register_handlers(rt: Runtime) -> None:
         EV_ACK_TIMEOUT: _on_ack_timeout,
         EV_RETRY_DUE: _on_retry_due,
         EV_MQTT_CONNECTED: _on_mqtt_connected,
-        EV_HA_CONNECTED: _on_ha_connected,
+        EV_SOURCE_CONNECTED: _on_source_connected,
         EV_WATCHDOG: _on_watchdog,
         EV_TELEMETRY: _on_telemetry,
         EV_GRACE_CHECK: _on_grace_check,

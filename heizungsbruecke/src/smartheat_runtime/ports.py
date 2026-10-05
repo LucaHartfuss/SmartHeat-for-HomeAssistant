@@ -42,3 +42,15 @@ class NotifySink(Protocol):
     def withdraw(self, key: str) -> None:
         """Offene kritische Meldung zuruecknehmen. Darf werfen."""
         ...
+
+
+class TriggerSource(Protocol):
+    """Trigger-Eingang (Spec SHG 3.2): stellt Signal-Aenderungen und "Quelle verbunden" als Ereignis in den Worker
+    (post_coalesced). HA: WebSocket-Trigger; SHG: lokaler Bus. `connected` steuert den Watchdog-Rueckfall."""
+
+    @property
+    def connected(self) -> bool: ...
+
+    def start(self) -> None: ...
+
+    def stop(self) -> None: ...

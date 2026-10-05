@@ -6,17 +6,17 @@ import json
 import logging
 
 from heizungsbruecke.ha_trigger_client import HaTriggerClient
-from heizungsbruecke.mqtt_client import BridgeMqttClient
 from heizungsbruecke.runtime import (
     EV_AUTH_REJECTED,
-    EV_HA_CONNECTED,
     EV_LOCAL_CHECK,
     EV_MQTT_CONNECTED,
     EV_SETPOINTS,
+    EV_SOURCE_CONNECTED,
 )
 from smartheat_runtime.runtime_config import RuntimeConfig
 from smartheat_runtime.worker import Event, RegulationWorker
 from smartheat_transport.connect import connect_options
+from smartheat_transport.mqtt_client import BridgeMqttClient
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +84,7 @@ def build_ha_trigger_client(manifest, options: dict, ha_api, worker: RegulationW
         # der Trennung wird sofort verarbeitet) und den vollen Status per Event neu senden (nach
         # einem HA-Neustart hat die Integration ihn nicht mehr).
         worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=True)
-        worker.post_coalesced(EV_HA_CONNECTED)
+        worker.post_coalesced(EV_SOURCE_CONNECTED)
 
     return HaTriggerClient(
         ws_url=ha_api.websocket_url(), token=ha_api.token, triggers=trigger_list,
