@@ -80,3 +80,50 @@ def test_idle_states_clear_the_retained_raum(world):
     assert result.reason == "konfigurationsfehler"
     assert topics.RAUM not in world.bus.retained
     assert world.status()["status"] == "konfigurationsfehler"  # der Status bleibt dem Ruhezustand ueberlassen
+
+
+def _watch_rounds(world, rounds: int) -> None:
+    """Je Runde die Konfigurationswache faellig machen und genau einmal abarbeiten. Ohne world.run(): ein Ende der
+    Laufzeit (SystemExit) soll der Test selbst sehen, ein Neustart braeuchte den getrennten Bus."""
+    for _ in range(rounds):
+        world.clock.advance(runtime_main.CONFIG_WATCH_SECONDS + 1)
+        world.wall.advance(runtime_main.CONFIG_WATCH_SECONDS + 1)
+        world.result.worker.run_pending()
+
+
+def test_runtime_exits_when_the_bus_stays_lost(world, monkeypatch):
+    monkeypatch.setenv("SHG_BUS_LOST_EXIT_SECONDS", "90")
+    write_runtime_files(world.paths, apply_config())
+    world.start_runtime()
+    world.connect()
+    world.bus.disconnect()
+    _watch_rounds(world, 3)  # 31 s: erste Wache merkt sich den Verlust; danach 31 s, 62 s getrennt
+    assert world.restarts == 1
+    with pytest.raises(SystemExit) as stop:
+        _watch_rounds(world, 1)  # 93 s getrennt, Frist 90 s
+    assert stop.value.code == 0
+
+
+def test_short_bus_loss_is_tolerated(world, monkeypatch):
+    monkeypatch.setenv("SHG_BUS_LOST_EXIT_SECONDS", "90")
+    write_runtime_files(world.paths, apply_config())
+    world.start_runtime()
+    world.connect()
+    world.bus.disconnect()
+    _watch_rounds(world, 2)
+    world.bus.connect()
+    _watch_rounds(world, 3)
+    world.bus.disconnect()  # ein neuer Verlust beginnt die Frist von vorn
+    _watch_rounds(world, 3)
+    assert world.restarts == 1
+
+
+def test_unreadable_bus_lost_limit_falls_back_to_the_default(world, monkeypatch):
+    monkeypatch.setenv("SHG_BUS_LOST_EXIT_SECONDS", "bald")
+    write_runtime_files(world.paths, apply_config())
+    world.start_runtime()
+    world.connect()
+    world.bus.disconnect()
+    _watch_rounds(world, 9)  # 279 s getrennt, Standardfrist 300 s
+    with pytest.raises(SystemExit):
+        _watch_rounds(world, 2)

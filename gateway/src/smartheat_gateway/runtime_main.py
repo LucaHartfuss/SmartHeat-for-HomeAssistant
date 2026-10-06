@@ -2,7 +2,12 @@
 smartheat_runtime.app und haengt die Gateway-Ereignisse an den Worker: shg/cmd/reload und eine eigene
 Konfigurationswache (beide beenden den Prozess mit Exit 0 zwischen zwei Worker-Ereignissen, Compose startet neu) und
 den Raum-Kanal. In jedem Ruhezustand raeumt sie den retained Raum ab, im Ruhezustand "nicht eingerichtet" auch den
-Status (ein Schreiber je Topic)."""
+Status (ein Schreiber je Topic).
+
+Netz-Wache (Plan G2b-1, Restpunkt 3): die Laufzeit haengt per network_mode am Netz des Tunnel-Containers; startet der
+neu, bleibt sie im toten Netzwerk-Namensraum und der lokale Bus kommt nie wieder. Die Konfigurationswache beendet den
+Prozess daher (Exit 0, Compose startet neu), wenn der Bus SHG_BUS_LOST_EXIT_SECONDS (Standard 300) am Stueck getrennt
+ist."""
 import contextlib
 import logging
 import os
@@ -26,6 +31,7 @@ EV_CONFIG_WATCH = "shg_config_watch"
 EV_RAUM = "shg_raum"
 CONFIG_WATCH_SECONDS = 30
 RAUM_SECONDS = 30
+BUS_LOST_EXIT_SECONDS = 300
 
 
 def _alive_file() -> Path:
@@ -38,6 +44,13 @@ def _touch_alive() -> None:
         _alive_file().touch()
 
 
+def _bus_lost_limit() -> float:
+    try:
+        return float(os.environ.get("SHG_BUS_LOST_EXIT_SECONDS", BUS_LOST_EXIT_SECONDS))
+    except ValueError:
+        return BUS_LOST_EXIT_SECONDS
+
+
 def _config_key(raw: dict) -> tuple:
     return raw.get("setup_id"), raw.get("abgemeldet") is True, gateway_config.is_configured(raw)
 
@@ -45,12 +58,14 @@ def _config_key(raw: dict) -> tuple:
 def start(paths: Paths, bus, clock=time.monotonic, *, driver_threads: bool = True):
     host = GatewayHost(paths, bus, clock=clock, driver_threads=driver_threads)
     result = app.start(host, clock)
-    attach(result, host, bus, paths)
+    attach(result, host, bus, paths, clock)
     return result, host
 
 
-def attach(result, host: GatewayHost, bus, paths: Paths) -> None:
+def attach(result, host: GatewayHost, bus, paths: Paths, clock=time.monotonic) -> None:
     worker = result.worker
+    limit = _bus_lost_limit()
+    lost_since: list[float | None] = [None]  # Beginn des aktuellen Busverlusts (monotone Uhr)
     # Vergleichsstand = die Konfiguration, die der Host geladen hat (nicht erneut von der Platte: eine Aenderung
     # zwischen Laden und Anhaengen ginge sonst verloren).
     loaded_key = _config_key(host.raw)
@@ -62,6 +77,13 @@ def attach(result, host: GatewayHost, bus, paths: Paths) -> None:
     def _watch(event: Event) -> None:
         if _config_key(gateway_config.load_raw(paths)) != loaded_key:
             _exit(event)
+        if bus.connected:
+            lost_since[0] = None
+        elif lost_since[0] is None:
+            lost_since[0] = clock()
+        elif clock() - lost_since[0] >= limit:
+            logger.warning("Lokaler Bus seit %.0f s getrennt, Laufzeit startet neu", clock() - lost_since[0])
+            raise SystemExit(0)
         worker.schedule(CONFIG_WATCH_SECONDS, Event(EV_CONFIG_WATCH))  # zuerst: die Wache darf nie abreissen
         _touch_alive()
 
