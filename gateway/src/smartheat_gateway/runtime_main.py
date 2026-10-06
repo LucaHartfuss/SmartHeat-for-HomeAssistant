@@ -17,7 +17,7 @@ from pathlib import Path
 from smartheat_core import wallclock
 from smartheat_gateway import config as gateway_config
 from smartheat_gateway import topics
-from smartheat_gateway.bus import LocalBus
+from smartheat_gateway.bus import LocalBus, credentials_from_env
 from smartheat_gateway.host import GatewayHost
 from smartheat_gateway.paths import Paths, from_env
 from smartheat_runtime import app
@@ -112,6 +112,7 @@ def main() -> None:  # pragma: no cover - Container-Einstieg
     logging.basicConfig(level=logging.INFO)
     bus = LocalBus(
         os.environ.get("SHG_BUS_HOST", "mosquitto"), int(os.environ.get("SHG_BUS_PORT", "1883")), "shg-runtime",
+        credentials=credentials_from_env(),
     )
     bus.start()
     result, _ = start(from_env(), bus)

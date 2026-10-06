@@ -38,7 +38,7 @@ def test_third_party_images_are_pinned():
 
 
 def test_zigbee2mqtt_runs_as_the_agent_uid():
-    # Der Agent schreibt configuration.yaml mit 0600 (z2m_config); Zigbee2MQTT muss sie lesen und umschreiben.
+    # Der Init-Schritt schreibt configuration.yaml mit 0600 (als Agent-Benutzer); Zigbee2MQTT muss sie lesen und umschreiben.
     image_user = re.search(r"^USER\s+(\S+)\s*$", (GATEWAY / "Dockerfile").read_text(), re.MULTILINE)
     assert image_user is not None
     assert _services()["zigbee2mqtt"]["user"] == image_user.group(1)
