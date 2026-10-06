@@ -20,6 +20,12 @@ REQUIRED_ROLES = (
     "room_actual", "room_target", "curve_current", "shift_current", "min_flow", "heat_limit", "outdoor_temp",
 )
 
+# Rollen der Hebel im Manifest ("shift_current" ist der historische Rollenname der Parallelverschiebung).
+LEVER_ROLES = {
+    "curve": "curve_current", "room_setpoint": "shift_current", "level": "level_current", "heat_limit": "heat_limit",
+    "min_flow": "min_flow",
+}
+
 # Plan 3b: Pflicht-Rollen je Hebelsatz (Spec 5.5 "Pflicht je Hebelsatz"); Vaillant = REQUIRED_ROLES. Bei
 # weishaupt_wwp_basis sind curve_current/heat_limit optional (curve_current nur lesend, Snapshot readonly).
 REQUIRED_ROLES_BY_LEVER_SET: dict[str, tuple[str, ...]] = {

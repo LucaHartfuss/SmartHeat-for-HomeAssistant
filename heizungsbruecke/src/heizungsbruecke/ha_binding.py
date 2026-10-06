@@ -9,7 +9,7 @@ from collections.abc import Mapping
 
 from heizungsbruecke import config
 from smartheat_core.binding import VAILLANT_MYPYLLANT, BindingDescription
-from smartheat_runtime.roles import ChannelManifest
+from smartheat_runtime.roles import LEVER_ROLES, ChannelManifest
 
 logger = logging.getLogger(__name__)
 
@@ -19,10 +19,6 @@ ROOM_SETPOINT_READ_MIN = 5.0
 # Server-Plausibilitaet fuer room_setpoint (messages.PLAUSIBLE_RANGES, Contract-Check 11): darueber ist der Wert ein
 # Lesefehler und wird nie gemeldet.
 ROOM_SETPOINT_READ_MAX = 35.0
-LEVER_ROLES = {
-    "curve": "curve_current", "room_setpoint": "shift_current", "level": "level_current", "heat_limit": "heat_limit",
-    "min_flow": "min_flow",
-}
 
 
 def entity_of(ref: str) -> str:
