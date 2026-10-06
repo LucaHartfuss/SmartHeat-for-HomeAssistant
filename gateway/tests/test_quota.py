@@ -2,9 +2,14 @@ import multiprocessing
 
 import pytest
 
+import smartheat_gateway.quota as quota_module
 from smartheat_gateway.quota import QuotaExhausted, QuotaGuard, QuotaSpec
 
 SPEC = QuotaSpec(limit=5, hard_limit=3, window_seconds=100)
+
+
+def make_guard(tmp_path):
+    return QuotaGuard(tmp_path / "quota" / "q.json", SPEC, now=lambda: 1000.0)
 
 
 def test_window_and_hard_limit(tmp_path):
@@ -42,4 +47,21 @@ def test_two_processes_share_one_counter(tmp_path):
         worker.start()
     for worker in workers:
         worker.join(30)
+    assert [worker.exitcode for worker in workers] == [0, 0]
     assert QuotaGuard(path, SPEC).used() == 100
+
+
+def test_save_goes_through_the_atomic_writer(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(quota_module, "write_json", lambda path, data, **kw: calls.append((path, data)))
+    guard = make_guard(tmp_path)
+    guard.take()
+    assert calls and calls[-1][0] == guard._path
+
+
+def test_corrupt_or_foreign_file_counts_as_empty(tmp_path):
+    guard = make_guard(tmp_path)
+    guard._path.parent.mkdir(parents=True, exist_ok=True)
+    for content in ("{kaputt", "[1, 2]", ""):
+        guard._path.write_text(content)
+        assert guard.used() == 0
