@@ -9,7 +9,7 @@ from smartheat_gateway.config import GatewayConfig
 from smartheat_gateway.drivers.registry import create
 from smartheat_gateway.host import SHG_TEXTS, GatewayHost, build_manifest
 from smartheat_gateway.paths import Paths
-from smartheat_runtime.app import IDLE_NOT_CONFIGURED, IdleBridge, StartFailure
+from smartheat_runtime.app import IDLE_NOT_CONFIGURED, IdleBridge, RestoreParts, StartFailure
 from smartheat_runtime.roles import ManifestError
 from smartheat_runtime.runtime import Runtime
 from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG, BATTERY_PERCENT, BatteryRef
@@ -77,6 +77,31 @@ def test_sign_off_without_matching_lever_set_does_not_restore(world):
     host = GatewayHost(world.paths, world.bus, clock=world.clock, driver_threads=False)
     assert host.sign_off_parts() is None
     assert host.driver is None
+
+
+def test_sign_off_with_a_valid_signed_off_config_restores_with_the_driver(world):
+    write_runtime_files(world.paths, apply_config(abgemeldet=True))  # Treiber und Hebelsatz passen (viessmann_vicare)
+    host = GatewayHost(world.paths, world.bus, clock=world.clock, driver_threads=False)
+    parts = host.sign_off_parts()
+    assert isinstance(parts, RestoreParts)
+    assert host.driver is not None and parts.binding is host.driver
+
+
+def test_manifest_error_is_a_start_failure_with_the_manifest_key(world, monkeypatch):
+    write_runtime_files(world.paths, apply_config())
+    host = GatewayHost(world.paths, world.bus, clock=world.clock, driver_threads=False)
+    create_driver = host._create_driver
+
+    def partial_driver(spec):
+        driver = create_driver(spec)
+        driver.signals = lambda: {"outdoor_temp": "treiber:outdoor_temp"}  # Pflicht-Rollen des Hebelsatzes fehlen
+        return driver
+
+    monkeypatch.setattr(host, "_create_driver", partial_driver)
+    with pytest.raises(StartFailure) as manifest_error:
+        host.load()
+    assert manifest_error.value.key == "manifest" and "Pflicht-Rollen" in manifest_error.value.grund
+    assert host.driver is None  # nie aktiviert, nie abgefragt
 
 
 def test_waiting_for_devices_is_bounded_by_the_real_clock_not_the_injected_one(data_dir, clock):

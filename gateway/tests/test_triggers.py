@@ -64,6 +64,17 @@ def test_portal_target_is_debounced_and_written_to_the_thermostat(world, clock):
     clock.advance(10)
     worker.run_pending()
     assert ("check", True) in checks
+    assert store.source == "portal"
+
+
+def test_portal_target_after_a_thermostat_change_takes_over_the_source(world, clock):
+    bus, z2m, worker, store, _ = world
+    z2m.report(THERMOSTAT, occupied_heating_setpoint=19.0, local_temperature=20.0)
+    worker.run_pending()
+    assert (store.value, store.source) == (19.0, "thermostat")
+    bus.publish(topics.CMD_ROOM_TARGET, {"value": 22.0, "source": "portal", "ts": "x"})
+    worker.run_pending()
+    assert (store.value, store.source) == (22.0, "portal")
 
 
 def test_portal_value_outside_the_range_is_dropped_by_the_runtime(world, clock):
