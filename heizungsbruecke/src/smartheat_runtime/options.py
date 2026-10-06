@@ -8,6 +8,7 @@ import urllib.parse
 from smartheat_core.binding import BINDINGS, BindingDescription, with_poll_interval
 from smartheat_core.safety import LocalSafety, resolve_local_safety
 from smartheat_runtime.notifier import HINT_CATEGORIES
+from smartheat_runtime.texts import HA_TEXTS
 from smartheat_transport.connect import connect_options
 from smartheat_transport.descriptor import (
     Credential,
@@ -127,13 +128,11 @@ def local_safety(options: dict) -> LocalSafety:
         raise ConfigError(f"Option 'verteilsystem': {error}") from None
 
 
-def resolve_accounts_api_base_url(value) -> str:
-    """Basis-URL der accounts-api (Abo-Status). Setzt die Integration; https-Pflicht, weil
-    der Status ueber das Internet abgefragt wird."""
+def resolve_accounts_api_base_url(value, missing_hint: str = HA_TEXTS.accounts_url_missing_hint) -> str:
+    """Basis-URL der accounts-api (Abo-Status). Setzt die Integration bzw. der Gateway-Agent; https-Pflicht, weil
+    der Status ueber das Internet abgefragt wird. missing_hint kommt vom Host (HostTexts)."""
     if not isinstance(value, str) or not value:
-        raise ConfigError(
-            "Option 'accounts_api_base_url' fehlt - bitte die SmartHeat-Integration neu einrichten"
-        )
+        raise ConfigError(f"Option 'accounts_api_base_url' fehlt - {missing_hint}")
     parsed = urllib.parse.urlsplit(value)
     if parsed.scheme != "https" or not parsed.hostname:
         raise ConfigError(

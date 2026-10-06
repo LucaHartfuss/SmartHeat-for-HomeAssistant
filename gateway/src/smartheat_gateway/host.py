@@ -14,6 +14,7 @@ from smartheat_gateway.raum import RaumPublisher
 from smartheat_gateway.signals import REF_ROOM_MEAN, REF_ROOM_TARGET, GatewaySignalSource
 from smartheat_gateway.sinks import BusNotifySink, BusStatusSink
 from smartheat_gateway.target_store import TargetStore
+from smartheat_gateway.texts import SHG_TEXTS
 from smartheat_gateway.triggers import BusTriggerSource
 from smartheat_gateway.zigbee import CAP_BATTERY, CAP_BATTERY_LOW, ZigbeeMirror
 from smartheat_runtime import options
@@ -33,25 +34,6 @@ KEY_MANIFEST = "manifest"
 KEY_DRIVER = "treiber"
 BATTERY_POLL_SECONDS = 0.2
 
-SHG_TEXTS = HostTexts(
-    access_denied=(
-        "SmartHeat: Der Server lehnt die Zugangsdaten ab, die Heizkurve wird nicht mehr angepasst. "
-        "Bitte das Gateway im SmartHeat-Portal neu anmelden."
-    ),
-    storage_failed=(
-        "SmartHeat: Der Datenträger des Gateways ist nicht beschreibbar (voll oder schreibgeschützt). "
-        "Die Heizungsregelung pausiert, die Anlage behält ihre letzten Werte."
-    ),
-    delivery_prefix="SmartHeat-Gateway",
-    relogin_log_rejected=(
-        "MQTT-Anmeldung abgelehnt, der Server kennt diese Zugangsdaten nicht mehr - Gateway im Portal neu anmelden."
-    ),
-    relogin_log_status=(
-        "MQTT-Anmeldung vom Broker abgelehnt, Abo-Status ist aber '%s' - Zugangsdaten pruefen (ggf. Gateway im Portal "
-        "neu anmelden)."
-    ),
-    source_unavailable_log="Signalquelle nicht erreichbar",
-)
 NOT_CONFIGURED_HINT = "Gateway ist noch nicht eingerichtet - die Einrichtung laeuft im SmartHeat-Portal."
 
 

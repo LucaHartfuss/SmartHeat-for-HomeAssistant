@@ -115,3 +115,12 @@ def test_redact_replaces_secrets_in_plain_and_repr_form(paths):
     redacted = config.redact(text, raw)
     assert "test-pa" not in redacted and "test-token" not in redacted
     assert redacted.count(config.REDACTED) == 3
+
+
+def test_missing_accounts_url_names_the_portal_not_the_integration(paths):
+    # Der Schluessel ist Pflicht im Schema (sonst meldet schon check_apply_config); ein leerer Wert erreicht
+    # resolve_accounts_api_base_url.
+    write_runtime_files(paths, apply_config(accounts_api_base_url=""))
+    with pytest.raises(ConfigError) as error:
+        config.parse(config.load_raw(paths), paths)
+    assert "SmartHeat-Portal" in str(error.value) and "Integration" not in str(error.value)

@@ -12,6 +12,7 @@ from smartheat_gateway.drivers.registry import driver_ids
 from smartheat_gateway.files import read_json
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.target_store import is_valid_portal_target
+from smartheat_gateway.texts import SHG_TEXTS
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_runtime import options
 from smartheat_runtime.options import ConfigError
@@ -146,7 +147,9 @@ def parse(raw: dict, paths: Paths) -> tuple[RuntimeConfig, GatewayConfig]:
     lever_set = options.lever_set_id(raw)
     safety = options.local_safety(raw)
     descriptor, credential = options.resolve_transport(raw)  # Option "transport" ist hier ein Objekt
-    base_url = options.resolve_accounts_api_base_url(raw.get("accounts_api_base_url"))
+    base_url = options.resolve_accounts_api_base_url(
+        raw.get("accounts_api_base_url"), SHG_TEXTS.accounts_url_missing_hint,
+    )
     try:
         daily = validate_daily_trigger_time(raw.get("daily_trigger_time"))
     except ValueError as error_text:

@@ -28,6 +28,8 @@ class HostTexts:
     )
     # Log, wenn die Signalquelle nicht antwortet (battery, room_sensors).
     source_unavailable_log: str = "Home Assistant nicht erreichbar"
+    # Hinweis, wenn accounts_api_base_url fehlt (options.resolve_accounts_api_base_url).
+    accounts_url_missing_hint: str = "bitte die SmartHeat-Integration neu einrichten"
 
 
 HA_TEXTS = HostTexts()
