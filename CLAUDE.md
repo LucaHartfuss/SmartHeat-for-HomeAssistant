@@ -50,7 +50,7 @@ HA-Add-on-Repository mit zwei Add-ons: `heizungsbruecke` (Client-seitige Bridge-
   `heizungsbruecke`. Tests: `cd gateway/host && pytest` (`install_checks.sh` läuft im Docker-Test des Installers).
 - `gateway/release/` — Bundle-Bau (`build_bundle.py`: Compose mit Image-Digests und Manifest; nutzt dieselben
   Prüffunktionen wie der Updater). Tests: `cd gateway/release && pytest`. Der Release-Workflow
-  `.github/workflows/release-gateway.yml` (Tag `gateway-vX.Y.Z`) ruft das Skript auf; Ablauf und Schlüssel: `../docs/ci-cd-runbook.md`,
+  `.github/workflows/release-gateway.yml` (Tag `gateway-vX.Y.Z`) ruft das Skript auf (`sign_bundle.sh`: Bundle prüfen, mit minisign signieren, mit dem Gerätecode verifizieren; Secrets nur im Job `sign`); Ablauf und Schlüssel: `../docs/ci-cd-runbook.md`,
   Abschnitt „Gateway-Release“.
 - `heizungsbruecke/config.yaml` — hat einen echten `schema:`-Block, wird aber **ausschließlich** von der
   SmartHeat-Integration befüllt, nie manuell in der Add-on-UI.

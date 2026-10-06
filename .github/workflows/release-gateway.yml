@@ -1,7 +1,11 @@
 name: Release Gateway
-# Tag gateway-vX.Y.Z (Spec SHG G2b-1 7, Plan-Praezisierung 8): CI -> Freigabe -> Image multi-arch -> Bundle ->
-# minisign-Signatur + Pruefung -> main per Fast-Forward -> GitHub-Release. -dryrun: lokale Registry (Workflow-Dienst),
-# Wegwerf-Schluessel mit Passwort; derselbe Signier- und Pruefweg, aber kein Push nach ghcr, kein Release, main bleibt.
+# Tag gateway-vX.Y.Z (Spec SHG G2b-1 7, Plan-Praezisierung 8). Zwei Jobs, damit der Signierschluessel nie neben
+# Fremdcode laeuft (Dockerfile-Schritte, Basis-Images, pip, Repo-Skripte):
+#   build: CI -> Freigabe -> Image multi-arch -> Bundle; KEINE Environment, KEINE Secrets. -dryrun: lokale Registry
+#          (Workflow-Dienst), Wegwerf-Schluessel mit Passwort, derselbe Signier-Code wie der echte Release; kein Push
+#          nach ghcr, kein Release, main bleibt.
+#   sign:  nur beim echten Release; Environment "release" mit den Secrets; prueft das Bundle, signiert (gateway/release/
+#          sign_bundle.sh), prueft die Signatur, zieht main per Fast-Forward nach und legt das GitHub-Release an.
 on:
   push:
     tags: ["gateway-v*"]
@@ -18,16 +22,18 @@ jobs:
     secrets: inherit
     permissions:
       contents: read
-  release:
+  build:
     needs: ci
-    # Secrets MINISIGN_SECRET_KEY / MINISIGN_PASSWORD liegen im Environment "release" (Runbook Gateway-Release).
-    environment: release
-    # Nur dieser Job schreibt (ghcr-Image, main per Fast-Forward, GitHub-Release).
+    # Kein "environment:" und keine Signier-Secrets in diesem Job.
     permissions:
-      contents: write
+      contents: read
       packages: write
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    outputs:
+      dryrun: ${{ steps.gate.outputs.dryrun }}
+      title: ${{ steps.gate.outputs.title }}
+      version: ${{ steps.version.outputs.version }}
     services:
       # Nur fuer -dryrun genutzt (localhost:5000); Multi-Arch-Index-Digest wie in tests/test_gateway_updater.sh.
       registry:
@@ -37,6 +43,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
@@ -47,17 +54,17 @@ jobs:
       # release_gate.py braucht PyYAML; build_bundle.py und smartheat_host.minisign zusaetzlich cryptography
       # (Versionen wie in den Lock-Dateien bzw. release.yml).
       - run: pip install pyyaml==6.0.3 cryptography==50.0.2
+      - run: mkdir -p "$RUNNER_TEMP/out"
       - name: Freigabe pruefen
         id: gate
         run: >-
           python "$DEV_ROOT/tools/release_gate.py" --kind "$KIND" --repo "$GITHUB_WORKSPACE"
-          --tag "$GITHUB_REF_NAME" --sha "$GITHUB_SHA" --main-ref origin/main --notes-out "$RUNNER_TEMP/notes.md"
+          --tag "$GITHUB_REF_NAME" --sha "$GITHUB_SHA" --main-ref origin/main --notes-out "$RUNNER_TEMP/out/notes.md"
       - name: Version aus dem Tag
         id: version
         run: |
           v="${GITHUB_REF_NAME#gateway-v}"
           echo "version=${v%-dryrun}" >> "$GITHUB_OUTPUT"
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq minisign
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         with:
@@ -90,56 +97,65 @@ jobs:
         run: >-
           python gateway/release/build_bundle.py
           --compose gateway/compose/docker-compose.yml --mosquitto-conf gateway/compose/mosquitto.conf
-          --image "$REF" --version "$VERSION" --out "$RUNNER_TEMP/bundle"
-      - name: Bundle signieren und pruefen
+          --image "$REF" --version "$VERSION" --out "$RUNNER_TEMP/out/bundle"
+      - name: Probelauf - Bundle mit Wegwerf-Schluessel signieren und pruefen
+        if: steps.gate.outputs.dryrun == 'true'
         env:
-          DRYRUN: ${{ steps.gate.outputs.dryrun }}
           VERSION: ${{ steps.version.outputs.version }}
-          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
-          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
         run: |
-          set -euo pipefail
-          umask 077
-          key="$RUNNER_TEMP/release.key"
-          trap 'rm -f "$key"' EXIT
-          if [ "$DRYRUN" = true ]; then
-            # Wegwerf-Schluessel mit Passwort (erkennbarer Testwert); danach derselbe Weg wie beim echten Release.
-            password="test-pw"
-            pub="$RUNNER_TEMP/test.pub"
-            printf '%s\n%s\n' "$password" "$password" | minisign -G -p "$pub" -s "$key" >/dev/null
-          else
-            if [ -z "$MINISIGN_SECRET_KEY" ] || [ -z "$MINISIGN_PASSWORD" ]; then
-              echo "::error::MINISIGN_SECRET_KEY/MINISIGN_PASSWORD fehlen im Environment 'release' (Runbook Gateway-Release)"
-              exit 1
-            fi
-            printf '%s' "$MINISIGN_SECRET_KEY" | base64 -d > "$key"
-            password="$MINISIGN_PASSWORD"
-            pub="$GITHUB_WORKSPACE/gateway/host/release.pub"
-          fi
-          cd "$RUNNER_TEMP/bundle"
-          # minisign liest das Passwort ohne Terminal von stdin (Ubuntu 24.04: minisign 0.11).
-          printf '%s\n' "$password" | minisign -S -s "$key" -m manifest.json -t "smartheat-gateway $VERSION" >/dev/null
-          rm -f "$key"
-          # Pruefung mit demselben Code wie auf dem Geraet (smartheat_host.minisign), gegen den passenden Schluessel.
-          PYTHONPATH="$GITHUB_WORKSPACE/gateway/host:$GITHUB_WORKSPACE/gateway/src" \
-            python -m smartheat_host.minisign "$pub" manifest.json manifest.json.minisig
-      - name: main per Fast-Forward nachziehen
-        if: steps.gate.outputs.dryrun == 'false'
-        run: git push origin "$GITHUB_SHA:refs/heads/main"
-      - name: GitHub-Release anlegen
-        if: steps.gate.outputs.dryrun == 'false'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TITLE: ${{ steps.gate.outputs.title }}
-        run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "Release $GITHUB_REF_NAME existiert bereits"; exit 0
-          fi
-          bundle="$RUNNER_TEMP/bundle"
-          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$TITLE" --notes-file "$RUNNER_TEMP/notes.md" \
-            "$bundle/docker-compose.yml" "$bundle/mosquitto.conf" "$bundle/manifest.json" "$bundle/manifest.json.minisig"
+          sudo apt-get update -qq && sudo apt-get install -y -qq minisign
+          bash gateway/release/sign_bundle.sh "$RUNNER_TEMP/out/bundle" "$VERSION" "$RUNNER_TEMP/test.pub" --dryrun
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: gateway-bundle
+          path: ${{ runner.temp }}/out
+          if-no-files-found: error
+          retention-days: 1
       - name: Probelauf-Hinweis
         if: steps.gate.outputs.dryrun == 'true'
         run: >-
           echo "::notice::Probelauf gruen - kein Push nach ghcr, kein Release, main unveraendert.
           Tag jetzt loeschen (Runbook 'Probelauf')."
+  sign:
+    needs: build
+    if: needs.build.outputs.dryrun == 'false'
+    # Nur dieser Job sieht die Signier-Secrets (Environment "release") und schreibt (main per Fast-Forward, Release).
+    # Er fuehrt nur Skripte aus dem getaggten Commit aus; das Bundle aus dem Artefakt ist Daten und wird vor dem
+    # Signieren geprueft (sign_bundle.sh).
+    environment: release
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - run: pip install cryptography==50.0.2
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq minisign
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: gateway-bundle
+          path: ${{ runner.temp }}/out
+      - name: Bundle pruefen, signieren und gegen release.pub verifizieren
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: bash gateway/release/sign_bundle.sh "$RUNNER_TEMP/out/bundle" "$VERSION" gateway/host/release.pub
+      - name: main per Fast-Forward nachziehen
+        run: git push origin "$GITHUB_SHA:refs/heads/main"
+      - name: GitHub-Release anlegen
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ needs.build.outputs.title }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME existiert bereits"; exit 0
+          fi
+          bundle="$RUNNER_TEMP/out/bundle"
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$TITLE" --notes-file "$RUNNER_TEMP/out/notes.md" \
+            "$bundle/docker-compose.yml" "$bundle/mosquitto.conf" "$bundle/manifest.json" "$bundle/manifest.json.minisig"
