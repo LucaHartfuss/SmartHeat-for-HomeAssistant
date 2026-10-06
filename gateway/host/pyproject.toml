@@ -1,7 +1,7 @@
 # Host-Dienste des Gateways (Spec SHG G2b-1 2.1): laufen auf dem System-Python des Pi (Debian 13 trixie, 3.13) mit
 # Standardbibliothek und python3-cryptography; kein eigenes Paket-Build, install.sh kopiert die Dateien.
 [tool.pytest.ini_options]
-pythonpath = [".", "tests", "../src"]
+pythonpath = [".", "tests", "../src", "../tests"]
 testpaths = ["tests"]
 
 [tool.ruff]
