@@ -98,10 +98,10 @@ DRIVER_LOGIN_PHASES: dict[str, tuple[str, ...]] = {
 APPLY_CONFIG_VERSION = 1
 APPLY_CONFIG_REQUIRED = (
     "config_version", "tenant_id", "setup_id", "lever_set", "verteilsystem", "transport", "accounts_api_base_url",
-    "driver", "room_sensors", "room_target_start", "abgemeldet",
+    "daily_trigger_time", "driver", "room_sensors", "room_target_start", "abgemeldet",
 )
 APPLY_CONFIG_OPTIONAL = (
-    "mqtt_username", "mqtt_password", "tls_certificate", "installation_token", "daily_trigger_time",
+    "mqtt_username", "mqtt_password", "tls_certificate", "installation_token",
     "local_check_interval_seconds", "telemetry_interval_seconds", "poll_interval_seconds", "notify_hints_off",
     "thermostat", "cloudflared",
 )
