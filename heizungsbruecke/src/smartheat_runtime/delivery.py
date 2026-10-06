@@ -12,6 +12,7 @@ seqs speichert der Server nicht, ein Retry wird mit frischen Werten neu gerechne
 from dataclasses import dataclass, replace
 
 from smartheat_runtime.entitlement import INACTIVE
+from smartheat_runtime.texts import HA_TEXTS, HostTexts
 
 ACK_TIMEOUT_SECONDS = 30
 NOTBETRIEB_AFTER_SERVER_FAILURES = 2
@@ -460,28 +461,31 @@ def _parse_fault(raw) -> DataFault | None:
     return DataFault(source=source, detail=tuple(detail))
 
 
-def notification_text(kind: str, detail: tuple[str, ...], entity_ids: dict[str, str]) -> str:
+def notification_text(
+    kind: str, detail: tuple[str, ...], entity_ids: dict[str, str], texts: HostTexts = HA_TEXTS,
+) -> str:
+    prefix = texts.delivery_prefix
     if kind == NOTIFY_NOTBETRIEB_ON:
-        return "Heizungsbrücke: Server antwortet nicht, Notbetrieb aktiv. Die Heizung wird bei Bedarf lokal abgesichert."
+        return f"{prefix}: Server antwortet nicht, Notbetrieb aktiv. Die Heizung wird bei Bedarf lokal abgesichert."
     if kind == NOTIFY_NOTBETRIEB_OFF:
-        return "Heizungsbrücke: Serververbindung wiederhergestellt, Notbetrieb beendet."
+        return f"{prefix}: Serververbindung wiederhergestellt, Notbetrieb beendet."
     if kind == NOTIFY_DATENFEHLER_LOCAL:
         sensors = ", ".join(f"{role} ({entity_ids.get(role, 'nicht zugeordnet')})" for role in detail)
         return (
-            f"Heizungsbrücke: Sensor(en) ohne gültigen Wert: {sensors}. Die Heizkurve bleibt "
+            f"{prefix}: Sensor(en) ohne gültigen Wert: {sensors}. Die Heizkurve bleibt "
             f"unverändert, bis die Werte wieder verfügbar sind (z. B. Batterie prüfen)."
         )
     if kind == NOTIFY_DATENFEHLER_SERVER:
         reason = detail[0] if detail else _NO_REASON
-        return f"Heizungsbrücke: Server hat die Messwerte abgelehnt ({reason}). Die Heizkurve bleibt unverändert."
+        return f"{prefix}: Server hat die Messwerte abgelehnt ({reason}). Die Heizkurve bleibt unverändert."
     if kind == NOTIFY_DATENFEHLER_RESOLVED:
-        return "Heizungsbrücke: Messwerte wieder gültig, Heizkurve wird wieder angepasst."
+        return f"{prefix}: Messwerte wieder gültig, Heizkurve wird wieder angepasst."
     if kind == NOTIFY_DATENFEHLER_WRITE:
         detail_text = detail[0] if detail else "unbekannt"
         return (
-            f"Heizungsbrücke: Neue Heizkurve konnte nicht an die Anlage übertragen werden ({detail_text}). "
+            f"{prefix}: Neue Heizkurve konnte nicht an die Anlage übertragen werden ({detail_text}). "
             f"Wird automatisch erneut versucht."
         )
     if kind == NOTIFY_WRITE_RESOLVED:
-        return "Heizungsbrücke: Anlage wieder erreichbar, Heizkurve übertragen."
+        return f"{prefix}: Anlage wieder erreichbar, Heizkurve übertragen."
     raise ValueError(f"Unbekannte Meldungsart: {kind!r}")

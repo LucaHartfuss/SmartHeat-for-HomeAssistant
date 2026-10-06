@@ -9,6 +9,7 @@ from heizungsbruecke.ha_signals import HaSignalSource
 from heizungsbruecke.ha_sinks import HaNotifySink
 from smartheat_runtime.notifier import Notifier
 from smartheat_runtime.room_sensors import check_room_sensors
+from smartheat_runtime.texts import HA_TEXTS
 
 
 def _http_error(status_code):
@@ -32,7 +33,7 @@ def _rt(make_store, values, room_sensors, store=None):
     return SimpleNamespace(
         config=runtime_config(room_sensor_refs=tuple(room_sensors)), signals=HaSignalSource(ha_api), ha_api=ha_api,
         store=store,
-        notifier=Notifier(store, HaNotifySink(ha_api, ["notify.mobile_app_a"])),
+        notifier=Notifier(store, HaNotifySink(ha_api, ["notify.mobile_app_a"])), texts=HA_TEXTS,
     )
 
 

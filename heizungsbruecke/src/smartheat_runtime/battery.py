@@ -47,7 +47,7 @@ def check_batteries(rt) -> None:
             logger.info("Batterie-Entity %s nicht gefunden (404), wird uebersprungen", entity_id)
             continue
         except SourceUnavailable as error:
-            logger.warning("Batteriepruefung abgebrochen, Home Assistant nicht erreichbar: %s", error)
+            logger.warning("Batteriepruefung abgebrochen, %s: %s", rt.texts.source_unavailable_log, error)
             return
         except ValueError:
             continue

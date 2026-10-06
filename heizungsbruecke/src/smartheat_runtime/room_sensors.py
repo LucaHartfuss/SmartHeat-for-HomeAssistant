@@ -43,7 +43,7 @@ def check_room_sensors(rt) -> None:
         except SignalNotFound:
             value = None
         except SourceUnavailable as error:
-            logger.warning("Raumfuehler-Pruefung abgebrochen, Home Assistant nicht erreichbar: %s", error)
+            logger.warning("Raumfuehler-Pruefung abgebrochen, %s: %s", rt.texts.source_unavailable_log, error)
             return
         except (ValueError, KeyError, TypeError):
             value = None

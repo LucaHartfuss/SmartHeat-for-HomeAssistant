@@ -10,6 +10,7 @@ from heizungsbruecke.ha_signals import HaSignalSource
 from heizungsbruecke.ha_sinks import HaNotifySink
 from smartheat_runtime.battery import STATE_LOW, check_batteries, next_state
 from smartheat_runtime.notifier import Notifier
+from smartheat_runtime.texts import HA_TEXTS
 
 
 @pytest.mark.parametrize("previous,raw,expected", [
@@ -47,7 +48,7 @@ def _rt(make_store, raw_states, battery_entities=("sensor.wz_battery",)):
     store = make_store()
     return SimpleNamespace(
         config=runtime_config(battery_refs=tuple(battery_entities)), signals=HaSignalSource(ha_api), ha_api=ha_api,
-        notifier=Notifier(store, HaNotifySink(ha_api, ["notify.mobile_app_a"])),
+        notifier=Notifier(store, HaNotifySink(ha_api, ["notify.mobile_app_a"])), texts=HA_TEXTS,
     )
 
 

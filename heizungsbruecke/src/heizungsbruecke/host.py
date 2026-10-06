@@ -19,6 +19,7 @@ from smartheat_runtime.app import Loaded, Notice, RestoreParts, StartFailure
 from smartheat_runtime.ports import NotifySink, SignalSource, StatusSink, TriggerSource
 from smartheat_runtime.roles import ChannelManifest, ManifestError
 from smartheat_runtime.runtime_config import BootInfo
+from smartheat_runtime.texts import HA_TEXTS, HostTexts
 from smartheat_runtime.worker import RegulationWorker
 
 # Das Add-on startet mit `startup: services`, evtl. vor HA Core. Solange HA nicht antwortet,
@@ -66,6 +67,7 @@ class HaHost:
         self.signals: SignalSource = HaSignalSource(ha_api)
         self.status_sink: StatusSink = HaStatusSink(ha_api)
         self.notify_sink: NotifySink = HaNotifySink(ha_api, config.notify_services(options))
+        self.texts: HostTexts = HA_TEXTS
 
     def boot_info(self) -> BootInfo:
         options = self._options

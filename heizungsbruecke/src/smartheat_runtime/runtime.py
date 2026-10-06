@@ -9,6 +9,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from smartheat_runtime.texts import HA_TEXTS, HostTexts
+
 if TYPE_CHECKING:
     from smartheat_core.pipeline import LeverPipeline
     from smartheat_runtime.notifier import Notifier
@@ -76,3 +78,5 @@ class Runtime:
     # Verbindungswaechter (TP12b, AU-033): seit wann (clock) die MQTT-Verbindung ununterbrochen
     # fehlt, None bei Verbindung. Nicht persistiert.
     mqtt_down_since: float | None = None
+    # Kundentexte des Hosts (Spec SHG G2 2.1); Standard = HA-Texte.
+    texts: HostTexts = HA_TEXTS
