@@ -1,0 +1,17 @@
+[Unit]
+Description=SmartHeat-Gateway LED (G2 8.5)
+After=local-fs.target
+
+[Service]
+Environment=PYTHONPATH=/opt/smartheat/host
+Environment=SHG_ROOT=@ROOT@
+ExecStart=/usr/bin/python3 -m smartheat_host.led
+Restart=always
+RestartSec=30
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes
+ReadOnlyPaths=@ROOT@
+
+[Install]
+WantedBy=multi-user.target

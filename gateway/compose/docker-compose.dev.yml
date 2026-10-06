@@ -16,6 +16,8 @@ x-fake: &fake
     - ../tests:/gw-tests:ro
 
 services:
+  init:
+    security_opt: ["label:disable"]
   zigbee2mqtt:
     profiles: ["hardware"]          # am Dev-Rechner nicht starten
   agent:
@@ -33,6 +35,16 @@ services:
     <<: *fake
     command: ["python", "/gw-tests/fake_z2m.py"]
     networks: [bus]
+    depends_on:
+      init: {condition: service_completed_successfully}
+      mosquitto: {condition: service_started}
+    environment:
+      SHG_BUS_HOST: mosquitto
+      SHG_BUS_CREDENTIALS: /run/shg-bus/bus.json
+      PYTHONPATH: /app/src
+    volumes:
+      - ../tests:/gw-tests:ro
+      - ${SHG_ROOT:-/var/lib/smartheat}/bus/credentials/zigbee2mqtt:/run/shg-bus:ro
   fake-device-api:
     <<: *fake
     command: ["python", "/gw-tests/fake_device_api.py"]

@@ -87,6 +87,8 @@ class GatewayWorld:
     def start_runtime(self):
         self.result, self.host = runtime_main.start(self.paths, self.bus, clock=self.clock, driver_threads=False)
         self.restarts += 1
+        # Der Fuehler meldet live (retained Werte aus dem Broker-Replay gelten nicht als frisch, Plan G2b-1).
+        self.z2m.report(SENSOR, temperature=20.0, battery=90)
         return self.result
 
     def run(self) -> None:

@@ -3,6 +3,7 @@ Server (smartheat_transport). Callbacks laufen im paho-Thread und duerfen nur Da
 Worker stellen. Abos werden bei jedem (Wieder-)Verbinden erneuert."""
 import json
 import logging
+import os
 import threading
 from collections.abc import Callable
 from typing import Protocol
@@ -44,10 +45,27 @@ class Bus(Protocol):
     def stop(self) -> None: ...
 
 
+def credentials_from_env() -> tuple[str, str] | None:
+    """Zugangsdaten des Dienstes am lokalen Bus (Plan G2b-1 Task 7): Datei aus SHG_BUS_CREDENTIALS, geschrieben vom
+    Init-Schritt. Ohne Variable anonym (Tests). Gesetzt, aber unlesbar: Fehler, damit Compose den Dienst neu startet
+    statt ihn anonym (und damit abgewiesen) laufen zu lassen."""
+    path = os.environ.get("SHG_BUS_CREDENTIALS")
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        return str(data["username"]), str(data["password"])
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise RuntimeError(f"Zugangsdaten fuer den lokalen Bus unlesbar ({type(error).__name__})") from None
+
+
 class LocalBus:
-    def __init__(self, host: str, port: int, client_id: str) -> None:
+    def __init__(self, host: str, port: int, client_id: str, credentials: tuple[str, str] | None = None) -> None:
         self._host, self._port = host, port
         self._client = mqtt.Client(CallbackAPIVersion.VERSION2, client_id=client_id)
+        if credentials is not None:
+            self._client.username_pw_set(*credentials)
         self._client.on_connect = self._on_connect
         self._client.on_disconnect = self._on_disconnect
         self._client.on_message = self._on_message

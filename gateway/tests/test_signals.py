@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 from configs import SENSOR, THERMOSTAT
 from fake_z2m import FakeZigbee2Mqtt
@@ -7,10 +9,13 @@ from smartheat_gateway.drivers.registry import create
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.signals import REF_ROOM_MEAN, REF_ROOM_TARGET, GatewaySignalSource
 from smartheat_gateway.target_store import TargetStore
+from smartheat_gateway.texts import SHG_TEXTS
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime import battery
+from smartheat_runtime.notifier import Notifier
 from smartheat_runtime.ports import SignalNotFound, SourceUnavailable
-from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG
+from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG, BatteryRef
+from smartheat_runtime.state import StateStore
 
 SECOND = "0x00124b0000000003"
 
@@ -74,3 +79,35 @@ def test_device_keys(world):
     _, _, source = world
     assert source.device_key(f"zigbee:{SENSOR}:temperature") == SENSOR
     assert source.device_key("treiber:room_temperature") == "treiber:room_temperature"
+
+
+class RecordingSink:
+    def __init__(self) -> None:
+        self.pushed: list[tuple[str, str]] = []
+
+    def push(self, key: str, message: str) -> None:
+        self.pushed.append((key, message))
+
+    def show(self, key: str, message: str) -> None:
+        pass
+
+    def withdraw(self, key: str) -> None:
+        pass
+
+
+def test_battery_low_flag_ends_up_as_one_hint(world, data_dir):
+    """Batterie-Hinweis durchgaengig: Zigbee-Meldung -> Signalquelle -> battery.check_batteries -> Notifier."""
+    _, z2m, source = world
+    ref = f"zigbee:{SECOND}:battery_low"
+    sink = RecordingSink()
+    rt = SimpleNamespace(
+        config=SimpleNamespace(battery_refs=(BatteryRef(ref, BATTERY_LOW_FLAG),)), signals=source,
+        notifier=Notifier(StateStore(data_dir / "backup.json", data_dir / "failsafe_state.json"), sink),
+        texts=SHG_TEXTS,
+    )
+    z2m.report(SECOND, battery_low=True)
+    battery.check_batteries(rt)
+    battery.check_batteries(rt)  # unveraendert: keine zweite Meldung
+    assert len(sink.pushed) == 1
+    key, text = sink.pushed[0]
+    assert key == f"batterie:{ref}" and SECOND in text and "schwach" in text

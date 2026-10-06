@@ -25,3 +25,12 @@ def test_delivery_texts_use_the_prefix():
 
 def test_every_text_has_a_default():
     assert all(isinstance(getattr(HA_TEXTS, field.name), str) for field in fields(HostTexts))
+
+
+def test_accounts_url_hint_default_is_the_addon_text():
+    import pytest
+
+    from smartheat_runtime import options
+    with pytest.raises(options.ConfigError) as error:
+        options.resolve_accounts_api_base_url(None)
+    assert str(error.value) == "Option 'accounts_api_base_url' fehlt - bitte die SmartHeat-Integration neu einrichten"

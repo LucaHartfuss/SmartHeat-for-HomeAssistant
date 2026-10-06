@@ -1,3 +1,4 @@
+import pytest
 from fakes import FakeBus
 
 from smartheat_gateway.bus import LocalBus, decode
@@ -50,3 +51,65 @@ def test_subscribe_racing_with_connect_is_not_lost():
     bus._on_connect(stub, None, None, _ConnectReason(), None)
     assert bus.connected
     assert "shg/status" in stub.subscribed and "shg/notify/+" in stub.subscribed
+
+
+class _Msg:
+    def __init__(self, topic, payload=b"", retain=False):
+        self.topic, self.payload, self.retain = topic, payload, retain
+
+
+def _local_bus():
+    bus = LocalBus("localhost", 1883, "test-bus")
+    stub = _StubPaho(None)
+    bus._client = stub  # paho wird hier nicht gebraucht; _on_connect bekommt den Stub als client
+    return bus, stub
+
+
+def test_resubscribes_everything_on_reconnect():
+    bus, stub = _local_bus()
+    bus.subscribe("a/#", lambda *a: None)
+    bus.subscribe("b", lambda *a: None)
+    bus._on_connect(stub, None, None, _ConnectReason(), None)
+    bus._on_disconnect(stub, None, None, _ConnectReason(), None)
+    bus._on_connect(stub, None, None, _ConnectReason(), None)
+    assert stub.subscribed == ["a/#", "b", "a/#", "b"]
+
+
+def test_failing_callback_does_not_block_the_others():
+    bus, stub = _local_bus()
+    got = []
+    bus.subscribe("t", lambda topic, raw, retain: 1 / 0)
+    bus.subscribe("t", lambda topic, raw, retain: got.append((topic, raw, retain)))
+    bus._on_message(stub, None, _Msg("t", b"x", retain=True))
+    assert got == [("t", b"x", True)]
+
+
+def test_failing_connect_hook_does_not_block_the_others():
+    bus, stub = _local_bus()
+    calls = []
+    bus.on_connected(lambda: 1 / 0)
+    bus.on_connected(lambda: calls.append("ok"))
+    bus._on_connect(stub, None, None, _ConnectReason(), None)
+    assert calls == ["ok"] and bus.connected
+
+
+def test_credentials_from_env(tmp_path, monkeypatch):
+    from smartheat_gateway.bus import credentials_from_env
+    monkeypatch.delenv("SHG_BUS_CREDENTIALS", raising=False)
+    assert credentials_from_env() is None
+    path = tmp_path / "bus.json"
+    path.write_text('{"username": "agent", "password": "test-pw"}')
+    monkeypatch.setenv("SHG_BUS_CREDENTIALS", str(path))
+    assert credentials_from_env() == ("agent", "test-pw")
+    path.write_text("{kaputt")
+    with pytest.raises(RuntimeError):
+        credentials_from_env()
+
+
+def test_local_bus_passes_credentials_to_paho(monkeypatch):
+    calls = []
+    import paho.mqtt.client as mqtt
+    monkeypatch.setattr(mqtt.Client, "username_pw_set", lambda self, user, password=None: calls.append((user, password)))
+    LocalBus("localhost", 1883, "test-bus", credentials=("agent", "test-pw"))
+    LocalBus("localhost", 1883, "test-bus")
+    assert calls == [("agent", "test-pw")]

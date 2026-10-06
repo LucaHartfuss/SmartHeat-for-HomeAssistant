@@ -57,8 +57,11 @@ class FakeZigbee2Mqtt:
 
 
 def main() -> None:  # pragma: no cover - laeuft im Container
-    from smartheat_gateway.bus import LocalBus
-    bus = LocalBus(os.environ.get("SHG_BUS_HOST", "mosquitto"), int(os.environ.get("SHG_BUS_PORT", "1883")), "fake-z2m")
+    from smartheat_gateway.bus import LocalBus, credentials_from_env
+    bus = LocalBus(
+        os.environ.get("SHG_BUS_HOST", "mosquitto"), int(os.environ.get("SHG_BUS_PORT", "1883")), "fake-z2m",
+        credentials=credentials_from_env(),
+    )
     bus.start()
     bus.wait_connected()
     z2m = FakeZigbee2Mqtt(bus)

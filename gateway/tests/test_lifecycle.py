@@ -1,7 +1,11 @@
+import datetime
 import stat
 
 import pytest
 from configs import apply_config, write_runtime_files
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 from fake_z2m import FakeZigbee2Mqtt
 from fakes import FakeBus
 
@@ -50,6 +54,61 @@ def test_apply_config_writes_secrets_first_and_waits_for_the_status(ctx, monkeyp
     assert "test-password" not in ctx.paths.runtime_config.read_text()
     assert "test-secret" not in ctx.paths.runtime_config.read_text()
     assert stat.S_IMODE(ctx.paths.runtime_secrets.stat().st_mode) == 0o600
+
+
+def _sign_csr(csr_pem: str) -> tuple[str, str]:
+    """(Zertifikat fuer den Schluessel des CSR, CA-PEM): kleine Test-CA, die den CSR des Gateways signiert (nur Tests)."""
+    csr = x509.load_pem_x509_csr(csr_pem.encode())
+    ca_key = ec.generate_private_key(ec.SECP256R1())
+    ca_name = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, "SmartHeat Test-CA")])
+    now = datetime.datetime.now(datetime.UTC)
+    validity = {"not_valid_before": now - datetime.timedelta(minutes=5), "not_valid_after": now + datetime.timedelta(days=1)}
+
+    def build(subject, issuer, public_key) -> x509.CertificateBuilder:
+        return (
+            x509.CertificateBuilder().subject_name(subject).issuer_name(issuer).public_key(public_key)
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(validity["not_valid_before"]).not_valid_after(validity["not_valid_after"])
+        )
+
+    key_usage = {
+        "digital_signature": False, "content_commitment": False, "key_encipherment": False,
+        "data_encipherment": False, "key_agreement": False, "key_cert_sign": True, "crl_sign": True,
+        "encipher_only": False, "decipher_only": False,
+    }
+    ca = (
+        build(ca_name, ca_name, ca_key.public_key())
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .add_extension(x509.KeyUsage(**key_usage), critical=True)
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), critical=False)
+        .sign(ca_key, hashes.SHA256())
+    )
+    leaf = (
+        build(csr.subject, ca_name, csr.public_key())
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(csr.public_key()), critical=False)
+        .sign(ca_key, hashes.SHA256())
+    )
+    pem = serialization.Encoding.PEM
+    return leaf.public_bytes(pem).decode(), ca.public_bytes(pem).decode()
+
+
+def test_iot_core_setup_creates_the_key_with_the_csr_and_never_stores_it_in_the_config(ctx):
+    created = execute(ctx, "create_csr", {"tenant_id": "test-tenant"})
+    assert isinstance(created, Done) and ctx.paths.transport_key.exists()
+    certificate, ca = _sign_csr(created.result["csr"])
+    transport = {"kind": "iot_core", "host": "x.example.test", "port": 8883, "alpn": None, "ca_pem": ca,
+                 "client_id": "test-tenant"}
+    config = apply_config(transport=transport, mqtt_username=None, mqtt_password=None, tls_certificate=certificate)
+    outcome = execute(ctx, "apply_config", {"setup_id": "setup-1", "config": config})
+    assert isinstance(outcome, Waiting) and outcome.check() is None
+    _status(ctx, setup_id="setup-1")
+    assert outcome.check() == Done({"setup_id": "setup-1"})
+    key = ctx.paths.transport_key.read_text()
+    assert load_raw(ctx.paths)["tls_private_key"] == key  # fuer die Laufzeit gelesen, nicht gespeichert
+    assert "tls_private_key" not in ctx.paths.runtime_config.read_text()
+    assert "tls_private_key" not in ctx.paths.runtime_secrets.read_text()
+    assert "PRIVATE KEY" not in ctx.paths.runtime_config.read_text() + ctx.paths.runtime_secrets.read_text()
 
 
 def test_apply_config_keeps_missing_secrets(ctx):

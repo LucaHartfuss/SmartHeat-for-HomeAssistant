@@ -147,7 +147,9 @@ class AgentLoop:
         self._check_pending()
         # Erst nach dem ersten Kontakt seit dem Start: ein ueber einen Neustart hinweg erneut gelieferter sign_off
         # ist dann schon ausgefuehrt und gemeldet; sonst faende er die Einrichtung geloescht (nicht_eingerichtet).
-        if self._server_seen:
+        # Kein Aufraeumen, solange ein sign_off wartet: sonst faende sein check() die setup_id nie mehr und endete
+        # mit keine_bestaetigung (Plan G2b-1, Restpunkt 5).
+        if self._server_seen and not any(kind == "sign_off" for kind, _ in self._pending.values()):
             try:
                 lifecycle.cleanup_after_sign_off(self.ctx)
             except Exception:

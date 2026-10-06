@@ -38,8 +38,22 @@ HA-Add-on-Repository mit zwei Add-ons: `heizungsbruecke` (Client-seitige Bridge-
   Registry, `simulation.py`), `runtime_main.py`; Tunnel: `tunnel.py`. Agent: `agent/` (Identität, signierter Client der
   Geräte-API, Befehle, Lebenszyklus, Schleife, Diagnoseseite), `agent/wire.py` ist der Vertrag mit dem Server
   (↔ `../tools/contracts/shg_device_v1.json`, Contract-Check 44). Compose: `gateway/compose/` (`docker-compose.yml`,
-  Dev-Overlay, `mosquitto.conf`). Tests: `gateway/tests/` inkl. Fake-Zigbee2MQTT (`fake_z2m.py`) und Fake-Geräte-API
+  Dev-Overlay, `mosquitto.conf`; Dienst `init` aus `init.py` schreibt Bus-Zugangsdaten, ACL und Zigbee2MQTT-Grundkonfiguration). Tests: `gateway/tests/` inkl. Fake-Zigbee2MQTT (`fake_z2m.py`) und Fake-Geräte-API
   (`fake_device_api.py`). Aufbau und Abläufe: `../docs/architecture.md`, Abschnitt „SmartHeat-Gateway“.
+- `gateway/host/` — **Host-Dienste und Installer des Gateways** (SHG G2b-1; läuft auf dem **System-Python** des Pi
+  (Debian 13 trixie, Python 3.13), nicht im Container): Paket `smartheat_host/` mit `updater.py` (Soll-Version, Manifest- und
+  minisign-Prüfung, Umschalten, Gesundheit, Rückweg), `bundles.py`, `device_api.py`, `minisign.py`, `led.py`,
+  `hoststatus.py`; dazu `install.sh`, `systemd/`, `udev/`, `nftables.conf`, `apt/`, `journald.conf.d/` und `release.pub`
+  (bis zum echten Schlüssel ein Platzhalter). **Grenze** (geprüft von `gateway/host/tests/test_boundaries.py`): nur
+  Standardbibliothek, `cryptography`, `smartheat_host` und genau `smartheat_gateway.{files,paths,version}` sowie
+  `smartheat_gateway.agent.{wire,identity}` (`install.sh` legt diese Module mit ab); keine Tenant-IDs; nie
+  `heizungsbruecke`. Tests: `cd gateway/host && pytest` (`install_checks.sh` läuft im Docker-Test des Installers).
+- `gateway/release/` — Bundle-Bau (`build_bundle.py`: Compose mit Image-Digests und Manifest; nutzt dieselben
+  Prüffunktionen wie der Updater), `verify_bundle.py` (Neubau aus dem Tag und byte-genauer Vergleich vor dem Signieren),
+  `sign_bundle.sh` und die Hash-Lock-Datei `requirements.txt` (PyYAML, cryptography; einzige pip-Quelle des
+  Release-Workflows). Tests: `cd gateway/release && pytest`. Der Release-Workflow
+  `.github/workflows/release-gateway.yml` (Tag `gateway-vX.Y.Z`) ruft das Skript auf (`sign_bundle.sh`: Bundle per Neubau prüfen, mit minisign signieren, mit dem Gerätecode verifizieren; Secrets nur im Job `sign`, nie im Environment der Python-Schritte); Ablauf und Schlüssel: `../docs/ci-cd-runbook.md`,
+  Abschnitt „Gateway-Release“.
 - `heizungsbruecke/config.yaml` — hat einen echten `schema:`-Block, wird aber **ausschließlich** von der
   SmartHeat-Integration befüllt, nie manuell in der Add-on-UI.
 - `cloudflared_access_mqtt/` — nur `run.sh`-Wrapper um `cloudflared access tcp`, keine eigene Logik.
@@ -50,9 +64,9 @@ HA-Add-on-Repository mit zwei Add-ons: `heizungsbruecke` (Client-seitige Bridge-
 scripts/check.sh          # lint, test, contract (--only <schritt> für einzelne Schritte)
 scripts/check.sh --full   # zusätzlich die Docker-Schritte (Build, Happy-Path, run.sh, Will-ACL, Gateway-Image und Compose-Lauf)
 ```
-`scripts/check.sh` prüft und testet `heizungsbruecke/` **und** `gateway/`; `--full` baut zusätzlich das Gateway-Image
-(lokal nur amd64) und fährt den Compose-Lauf mit dem Dev-Overlay (`tests/test_gateway_docker_build.sh`; die statische
-Prüfung der Compose-Datei steckt in `gateway/tests/test_compose.py`). Im Dev-Root fährt `scripts/check.sh --only e2e --full`
+`scripts/check.sh` prüft und testet `heizungsbruecke/`, `gateway/`, `gateway/host/` **und** `gateway/release/`; `--full` baut zusätzlich das Gateway-Image
+(lokal nur amd64) und fährt den Compose-Lauf mit dem Dev-Overlay (`tests/test_gateway_docker_build.sh`; dabei Bus-Anmeldung und ACL, Masken, Netz-Wache; die statische
+Prüfung der Compose-Datei steckt in `gateway/tests/test_compose.py`). Zwei weitere Docker-Skripte gehören zum Gateway: `tests/test_gateway_install.sh` (Host-Installer zweimal in `debian:trixie`, Plattform per `SHG_INSTALL_PLATFORM`, die CI fährt zusätzlich arm64 im Job `install-arm64`) und `tests/test_gateway_updater.sh` (Updater gegen eine lokale Registry mit drei signierten Test-Bundles, Rückweg und Manipulation; Laufzeit rund 6 min, steuert Compose über den Docker-Socket des Hosts). Im Dev-Root fährt `scripts/check.sh --only e2e --full`
 zusätzlich die Gateway-Modi des Ende-zu-Ende-Tests.
 Direkter Aufruf bleibt möglich: `cd heizungsbruecke && pip install -e ".[dev]" && pytest` bzw.
 `cd gateway && pip install -e ".[dev]" && pytest` (`pyproject.toml`: `testpaths = ["tests"]`, `pythonpath = ["src"]`). Testzahl: siehe CI (Job
@@ -60,13 +74,14 @@ Direkter Aufruf bleibt möglich: `cd heizungsbruecke && pip install -e ".[dev]" 
 
 Feature-Branches (`feat/…`/`fix/…`) zweigen von `develop` ab und werden `--no-ff` nach `develop`
 gemergt — nie direkt nach `main`. `main` bewegt sich nur per Release-Tag
-(`heizungsbruecke-vX.Y.Z`, `cloudflared_access_mqtt-vX.Y.Z`; `-dryrun`-Suffix = Probelauf) —
+(`heizungsbruecke-vX.Y.Z`, `cloudflared_access_mqtt-vX.Y.Z` über `release.yml`, `gateway-vX.Y.Z` über
+`release-gateway.yml`; `-dryrun`-Suffix = Probelauf) —
 ein Push nach `main` ist ein Release an alle Kunden-Pis, deren Supervisor den Default-Branch
 verfolgt. Release-Ablauf, CI-Jobs, Token: `../docs/ci-cd-runbook.md`.
 
 ## Besonderheiten
 
-- **`gateway/` ist kein Add-on:** Der Supervisor sieht den Ordner nicht (keine `config.yaml`), er taucht nie im Add-on-Store auf. Das Image wird aus der Repo-Wurzel gebaut (`docker build -f gateway/Dockerfile .`, kopiert `smartheat_core`/`smartheat_transport`/`smartheat_runtime` aus `heizungsbruecke/src/`). Ein Release gibt es erst mit G2b (Tag-Muster `gateway-v*`); bis dahin lebt der Code nur auf `develop`. Die CI baut das Image zusätzlich für amd64 und arm64 (Job `build-gateway`). Änderungen in `smartheat_core`/`smartheat_runtime` wirken auf beide Clienttypen; der Golden-Master des Add-ons bleibt davon unberührt.
+- **`gateway/` ist kein Add-on:** Der Supervisor sieht den Ordner nicht (keine `config.yaml`), er taucht nie im Add-on-Store auf. Das Image wird aus der Repo-Wurzel gebaut (`docker build -f gateway/Dockerfile .`, kopiert `smartheat_core`/`smartheat_transport`/`smartheat_runtime` aus `heizungsbruecke/src/`). Ein Release läuft über den eigenen Workflow `release-gateway.yml` (Tag-Muster `gateway-vX.Y.Z`, Version in `gateway/VERSION` und `gateway/CHANGELOG.md`, Image nach ghcr, signiertes Bundle); ohne echten Schlüssel in `gateway/host/release.pub` lehnt das Gate echte Tags ab, `-dryrun` geht. Die CI baut das Image zusätzlich für amd64 und arm64 (Job `build-gateway`). Änderungen in `smartheat_core`/`smartheat_runtime` wirken auf beide Clienttypen; der Golden-Master des Add-ons bleibt davon unberührt.
 - **Gerätevertrag:** `gateway/src/smartheat_gateway/agent/wire.py` ist die Gerätehälfte des Vertrags mit dem Server (G3). Änderungen nur gleichzeitig in `wire.py`, `../tools/contracts/shg_device_v1.json` und (G3) `heizungsserver/devices_wire.py`; Contract-Check 44 vergleicht alle drei.
 - MQTT-Adresse und -Port kommen aus dem Transport-Deskriptor (Option `transport`, vom Server geliefert); die Integration schreibt denselben Port als `local_port` in `cloudflared_access_mqtt` (Cross-Repo-Invariante, Contract-Check 6, siehe `../docs/architecture.md` §9).
 - Lokale Sicherheitswerte (`smartheat_core/safety.py`, je Hebelsatz × Verteilsystem) gibt es nur im Add-on. Ihre Schlüssel (Verteilsysteme) spiegelt der Server; Tagestick-Uhrzeit (`daily_trigger_time`) und Basis-URL kommen per Optionen von Server bzw. Integration. `python3 ../tools/contract_check.py` prüft alle Cross-Repo-Duplikate — vor jedem Release grün.

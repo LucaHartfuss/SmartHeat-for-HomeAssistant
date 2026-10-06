@@ -10,6 +10,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from smartheat_gateway.files import write_json
+
 
 @dataclass(frozen=True)
 class QuotaSpec:
@@ -82,6 +84,6 @@ class QuotaGuard:
         return {"aufrufe": calls, "gesperrt_bis": blocked if isinstance(blocked, int | float) else None}
 
     def _save(self, state: dict) -> None:
-        tmp = self._path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(state))
-        os.replace(tmp, self._path)
+        # Atomar mit fsync (files.py): nach einem Stromausfall nie eine halbe Datei, die als leer gilt und das
+        # Kontingent zuruecksetzt (Plan G2b-1, Restpunkt 8). Welche Uhr das Fenster zaehlt, entscheidet G4.
+        write_json(self._path, state)

@@ -1,0 +1,3 @@
+services:
+  agent:
+    image: ghcr.io/lucahartfuss/smartheat-gateway@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

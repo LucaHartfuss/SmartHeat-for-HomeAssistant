@@ -1,8 +1,10 @@
 import pytest
 from configs import THERMOSTAT, apply_config, write_runtime_files
 
+from smartheat_core.binding import BINDINGS
 from smartheat_gateway import config
 from smartheat_gateway.paths import Paths
+from smartheat_runtime import options
 from smartheat_runtime.options import ConfigError
 from smartheat_runtime.runtime_config import RuntimeConfig
 
@@ -37,7 +39,18 @@ def test_round_trip_through_the_files(paths):
     assert runtime.tenant_id == "test-tenant" and runtime.room_sensor_refs == ("zigbee:0x00124b0000000001:temperature",)
     assert runtime.entitlement_path == paths.entitlement
     assert gateway.driver_id == "simulation" and gateway.thermostat == THERMOSTAT
-    assert "test-password" not in paths.runtime_config.read_text()
+    public, secrets = paths.runtime_config.read_text(), paths.runtime_secrets.read_text()
+    for secret in ("test-password", "test-token", "test-secret"):  # Passwort, Installations-Token, Tunnel-Secret
+        assert secret not in public and secret in secrets
+    assert raw["installation_token"] == "test-token"
+
+
+def test_unknown_lever_set_falls_back_in_boot_info_but_parse_rejects_it(paths):
+    write_runtime_files(paths, apply_config(lever_set="gibtsnicht"))
+    raw = config.load_raw(paths)
+    assert config.boot_info(raw, paths).lever_set == BINDINGS[options.DEFAULT_LEVER_SET].lever_set
+    with pytest.raises(ConfigError):
+        config.parse(raw, paths)
 
 
 def test_poll_interval_becomes_the_driver_parameter(paths):
@@ -115,3 +128,12 @@ def test_redact_replaces_secrets_in_plain_and_repr_form(paths):
     redacted = config.redact(text, raw)
     assert "test-pa" not in redacted and "test-token" not in redacted
     assert redacted.count(config.REDACTED) == 3
+
+
+def test_missing_accounts_url_names_the_portal_not_the_integration(paths):
+    # Der Schluessel ist Pflicht im Schema (sonst meldet schon check_apply_config); ein leerer Wert erreicht
+    # resolve_accounts_api_base_url.
+    write_runtime_files(paths, apply_config(accounts_api_base_url=""))
+    with pytest.raises(ConfigError) as error:
+        config.parse(config.load_raw(paths), paths)
+    assert "SmartHeat-Portal" in str(error.value) and "Integration" not in str(error.value)

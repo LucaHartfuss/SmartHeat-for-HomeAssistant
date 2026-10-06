@@ -3,7 +3,9 @@ nur Ereignisse ein. Soll-Eingang (Portal ueber shg/cmd/room_target, Thermostat u
 in den Worker; dort schreibt der Soll-Speicher und der Debouncer (10 s) postet EV_LOCAL_CHECK(room_target_fired=True).
 Fuehler-Aenderungen posten EV_LOCAL_CHECK(False); die Tagestick-Zeit ebenfalls (wie der Zeit-Trigger in HA)."""
 import logging
-from datetime import datetime, timedelta
+import os
+from datetime import UTC, datetime, time, timedelta, tzinfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from smartheat_core import wallclock
 from smartheat_gateway import topics
@@ -21,12 +23,28 @@ EV_DAILY = "shg_daily"
 DEBOUNCE_KIND = "shg_target_debounce"
 
 
-def seconds_until(daily_time: str, now: datetime) -> float:
+def local_zone(now: datetime | None = None) -> tzinfo:
+    """Zeitzone fuer den Tagestick: TZ (Compose setzt sie), sonst der Offset von now (fester Offset, ohne
+    Sommerzeit-Wechsel)."""
+    name = os.environ.get("TZ", "")
+    if name:
+        try:
+            return ZoneInfo(name)
+        except (ZoneInfoNotFoundError, ValueError):
+            pass
+    return (now.tzinfo if now is not None else None) or UTC
+
+
+def seconds_until(daily_time: str, now: datetime, zone: tzinfo | None = None) -> float:
+    """Sekunden bis zur naechsten Tageszeit HH:MM in der Ortszeit der Zone; rechnet ueber UTC, damit der Wechsel
+    Sommer-/Winterzeit stimmt (Plan G2b-1, Restpunkt 6)."""
+    zone = zone or local_zone(now)
     hour, minute = (int(part) for part in daily_time.split(":")[:2])
-    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    if target <= now:
-        target += timedelta(days=1)
-    return (target - now).total_seconds()
+    local = now.astimezone(zone)
+    target = datetime.combine(local.date(), time(hour, minute), tzinfo=zone)
+    if target <= local:
+        target = datetime.combine(local.date() + timedelta(days=1), time(hour, minute), tzinfo=zone)
+    return (target.astimezone(UTC) - now.astimezone(UTC)).total_seconds()
 
 
 class BusTriggerSource:

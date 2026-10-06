@@ -10,7 +10,7 @@ import time
 import uuid
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
@@ -18,6 +18,8 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 from smartheat_gateway.agent import wire
 from smartheat_gateway.agent.identity import device_id_for
+
+_FILES_PREFIX = "/_e2e/files/"
 
 
 def _route(method: str, path: str):
@@ -47,6 +49,8 @@ class FakeDeviceApi:
         self.statuses: dict[str, list[dict]] = {}
         self.notifications: dict[tuple[str, str], dict] = {}
         self.registrations = 0
+        self.update_results: list[dict] = []
+        self.files: dict[str, bytes] = {}  # GET /_e2e/files/<name>: der Fake dient auch als Release-Host (Updater-Test)
         self.result_status: int | None = None  # nur Tests: Ergebnis-Route antwortet mit diesem HTTP-Status
         api = self
 
@@ -114,6 +118,13 @@ class FakeDeviceApi:
             entries = self.statuses.get(self._only(device_id), [])
             return entries[-1] if entries else None
 
+    def set_desired(self, device_id=None, *, version, manifest_url, manifest_sha256, signature) -> None:
+        with self.lock:
+            self.devices[self._only(device_id)]["desired"] = {
+                "version": version, "manifest_url": manifest_url, "manifest_sha256": manifest_sha256,
+                "signature": signature,
+            }
+
     # --- HTTP ---
 
     def _handle(self, request, method: str) -> None:
@@ -122,6 +133,8 @@ class FakeDeviceApi:
         if length > wire.MAX_BODY_BYTES:
             return self._send(request, 413, {"error": "zu gross"})
         body = request.rfile.read(length) if length else b""
+        if method == "GET" and path.startswith(_FILES_PREFIX):
+            return self._send_file(request, path[len(_FILES_PREFIX):])
         if path.startswith("/_e2e/"):
             return self._control(request, method, path, body)
         name, params = _route(method, path)
@@ -212,9 +225,11 @@ class FakeDeviceApi:
         return {}
 
     def _on_desired(self, params, data):
-        return {"version": self.devices[params["device_id"]].get("version")}
+        device = self.devices[params["device_id"]]
+        return dict(device["desired"]) if device.get("desired") else {"version": device.get("version")}
 
     def _on_update_result(self, params, data):
+        self.update_results.append({"device_id": params["device_id"], **data})
         return {}
 
     def _control(self, request, method, path, body):
@@ -228,6 +243,15 @@ class FakeDeviceApi:
         if method == "POST" and path == "/_e2e/commands":
             command_id = self.enqueue(data["kind"], data.get("payload", {}), data.get("device_id"))
             return self._send(request, 200, {"command_id": command_id})
+        if method == "POST" and path == "/_e2e/desired":
+            self.set_desired(
+                data.get("device_id"), **{k: data[k] for k in ("version", "manifest_url", "manifest_sha256", "signature")},
+            )
+            return self._send(request, 200, {})
+        if method == "POST" and path == "/_e2e/files":
+            with self.lock:
+                self.files.update({name: base64.b64decode(value) for name, value in data.items()})
+            return self._send(request, 200, {})
         if method == "GET" and path == "/_e2e/state":
             with self.lock:
                 state = {
@@ -235,9 +259,21 @@ class FakeDeviceApi:
                     "results": {k: v["result"] for k, v in self.commands.items()},
                     "statuses": {k: v[-1] for k, v in self.statuses.items() if v},
                     "registrations": self.registrations,
+                    "update_results": list(self.update_results),
                 }
             return self._send(request, 200, state)
         return self._send(request, 404, {"error": "unbekannt"})
+
+    def _send_file(self, request, name: str) -> None:
+        with self.lock:
+            content = self.files.get(unquote(name))
+        if content is None:
+            return self._send(request, 404, {"error": "unbekannt"})
+        request.send_response(200)
+        request.send_header("Content-Type", "application/octet-stream")
+        request.send_header("Content-Length", str(len(content)))
+        request.end_headers()
+        request.wfile.write(content)
 
     @staticmethod
     def _send(request, code: int, body: dict) -> None:

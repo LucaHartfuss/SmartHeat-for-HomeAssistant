@@ -1,0 +1,20 @@
+[Unit]
+Description=SmartHeat-Gateway Hoststatus (Spec SHG G2b-1 5)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Environment=PYTHONPATH=/opt/smartheat/host
+Environment=SHG_ROOT=@ROOT@
+EnvironmentFile=@ROOT@/host/gateway.env
+ExecStart=/usr/bin/python3 -m smartheat_host.hoststatus
+Restart=always
+RestartSec=30
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=@ROOT@/host
+
+[Install]
+WantedBy=multi-user.target

@@ -260,6 +260,35 @@ def test_redelivered_sign_off_after_a_restart_reports_the_reset_before_cleanup(a
     assert not agent.ctx.paths.runtime_config.exists()
 
 
+def test_no_cleanup_while_a_sign_off_is_pending(agent, api, clock, monkeypatch):
+    """Race (Plan G2b-1, Restpunkt 5): erscheint `abgemeldet` zwischen der Pruefung der wartenden Befehle und dem
+    Aufraeumen derselben Runde, darf nicht aufgeraeumt werden, solange sign_off noch wartet; sonst fiele sein check()
+    nach dem Zuruecksetzen des Status nie mehr an (keine_bestaetigung)."""
+    agent.run_once()
+    api.claim()
+    write_runtime_files(agent.ctx.paths, apply_config())
+    command_id = api.enqueue("sign_off", {})
+    clock.advance(POLL)
+    agent.run_once()  # sign_off wartet auf die Laufzeit
+    assert api.result_of(command_id) is None
+    setup_id = load_raw(agent.ctx.paths)["setup_id"]
+    original = agent._check_pending
+
+    def check_then_status_arrives() -> None:
+        original()  # der wartende sign_off sieht den Status noch nicht ...
+        agent.ctx.bus.publish(  # ... er trifft erst danach ein (Bus-Thread), vor dem Aufraeumen
+            topics.STATUS, {"schema": 2, "status": "abgemeldet", "setup_id": setup_id, "grund": None}, retain=True,
+        )
+
+    monkeypatch.setattr(agent, "_check_pending", check_then_status_arrives)
+    agent.run_once()
+    assert agent.ctx.paths.runtime_config.exists()  # Einrichtung noch da: sign_off wartet
+    monkeypatch.undo()
+    agent.run_once()  # check() schliesst ab, danach darf aufgeraeumt werden
+    assert api.result_of(command_id) == {"ok": True, "result": {"zurueckgesetzt": True, "werte": {}}, "error": None}
+    assert not agent.ctx.paths.runtime_config.exists()
+
+
 def _waiting_kinds() -> set[str]:
     """Befehle, deren Handler Waiting liefern kann (nur diese laufen in den Zeitablauf der Schleife)."""
     return {kind for kind, handler in commands.HANDLERS.items() if "Waiting(" in inspect.getsource(handler)}
