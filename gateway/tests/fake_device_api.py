@@ -47,6 +47,7 @@ class FakeDeviceApi:
         self.statuses: dict[str, list[dict]] = {}
         self.notifications: dict[tuple[str, str], dict] = {}
         self.registrations = 0
+        self.result_status: int | None = None  # nur Tests: Ergebnis-Route antwortet mit diesem HTTP-Status
         api = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -132,6 +133,8 @@ class FakeDeviceApi:
             return self._send(request, 400, {"error": "kein JSON"})
         if not self._authenticated(request, method, request.path, body, name, data, params):
             return self._send(request, 401, {"error": wire.UNAUTHENTICATED_ERROR})
+        if name == "result" and self.result_status is not None:
+            return self._send(request, self.result_status, {"error": "test"})
         with self.lock:
             answer = getattr(self, f"_on_{name}")(params, data)
         self._send(request, 200, answer)

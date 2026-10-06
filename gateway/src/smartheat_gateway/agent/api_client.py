@@ -1,7 +1,8 @@
 """Signierter Client der Geraete-API (Spec SHG G3 2.1/2.2). Jede Anfrage traegt X-SHG-Device/-Timestamp/-Signature;
 der Body wird kompakt und sortiert serialisiert, damit der signierte Hash dem gesendeten Body entspricht. 401 =
-NotAuthenticated (auch bei falscher Uhrzeit, Plan G2a Review Focus 1), Netz- und Serverfehler = ApiUnavailable.
-Wiederholung mit Backoff ist Sache der Agent-Schleife."""
+NotAuthenticated (auch bei falscher Uhrzeit, Plan G2a Review Focus 1), Netz- und Serverfehler = ApiUnavailable;
+eine dauerhafte Ablehnung (4xx ausser 401, 408, 429) = Rejected (Unterklasse von ApiUnavailable: eine Wiederholung
+derselben Anfrage hilft nicht). Wiederholung mit Backoff ist Sache der Agent-Schleife."""
 import json
 import time
 
@@ -17,6 +18,13 @@ class NotAuthenticated(Exception):
 
 class ApiUnavailable(Exception):
     pass
+
+
+class Rejected(ApiUnavailable):
+    pass
+
+
+_TRANSIENT_4XX = (408, 429)
 
 
 class DeviceApiClient:
@@ -65,6 +73,8 @@ class DeviceApiClient:
             raise ApiUnavailable(type(error).__name__) from None
         if response.status_code == 401:
             raise NotAuthenticated(route)
+        if 400 <= response.status_code < 500 and response.status_code not in _TRANSIENT_4XX:
+            raise Rejected(f"{route}: HTTP {response.status_code}")
         if response.status_code >= 400:
             raise ApiUnavailable(f"{route}: HTTP {response.status_code}")
         try:

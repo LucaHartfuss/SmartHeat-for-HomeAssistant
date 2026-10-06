@@ -4,7 +4,7 @@ import pytest
 from fake_device_api import FakeDeviceApi
 
 from smartheat_gateway.agent import identity
-from smartheat_gateway.agent.api_client import ApiUnavailable, DeviceApiClient, NotAuthenticated
+from smartheat_gateway.agent.api_client import ApiUnavailable, DeviceApiClient, NotAuthenticated, Rejected
 from smartheat_gateway.paths import Paths
 
 CAPS = {"drivers": ["simulation"], "zigbee": True}
@@ -61,3 +61,16 @@ def test_unreachable_server(data_dir):
     client = DeviceApiClient("http://127.0.0.1:9", identity.load_or_create(Paths(data_dir)), timeout=0.5)
     with pytest.raises(ApiUnavailable):
         client.commands()
+
+
+@pytest.mark.parametrize(("status", "rejected"), [(400, True), (404, True), (422, True), (408, False), (429, False),
+                                                  (500, False), (503, False)])
+def test_permanent_rejection_is_distinguished(api, data_dir, status, rejected):
+    ident = identity.load_or_create(Paths(data_dir))
+    client = DeviceApiClient(api.url, ident)
+    client.register("0.1.0", CAPS)
+    command_id = api.enqueue("diagnostics", {})
+    api.result_status = status
+    with pytest.raises(ApiUnavailable) as caught:
+        client.result(command_id, True, result={})
+    assert isinstance(caught.value, Rejected) is rejected

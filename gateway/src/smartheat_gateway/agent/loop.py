@@ -1,8 +1,14 @@
 """Agent-Schleife (Spec SHG G2 6.3): registrieren (Backoff bis zur Annahme), Befehle im Takt poll_after holen und
 ausfuehren, wartende Befehle jede Runde pruefen, Status bei Aenderung und alle 300 s, Meldungen bei Aenderung,
-Aufraeumen nach dem Abmelden, Agent-Zustand schreiben. Erledigte command_ids in /data/agent/done.json (letzte 500):
-ein erneut gelieferter Befehl wird nicht noch einmal ausgefuehrt, sein Ergebnis aber erneut gemeldet, falls das
-Melden scheiterte (solange der Agent laeuft). Ein kaputtes done.json gilt als leer (Review Focus 5).
+Aufraeumen nach dem Abmelden, Agent-Zustand schreiben.
+
+Erledigte Befehle stehen MIT ihrem Ergebnis in /data/agent/done.json (Liste [command_id, ok, result, error], letzte
+500, aelteste zuerst), geschrieben bevor das Ergebnis hochgeladen wird. Ein erneut gelieferter Befehl (Melden
+gescheitert, auch ueber einen Neustart des Agenten hinweg) wird nie noch einmal ausgefuehrt (driver_login finish,
+new_claim_code, create_csr sind nicht idempotent); sein gespeichertes Ergebnis geht erneut hoch, der Server behaelt
+das erste (G3 2.2). Ein kaputtes done.json gilt als leer, das alte Format (nur ids) als erledigt ohne Ergebnis
+(Review Focus 5). Ein Ergebnis, das der Server dauerhaft ablehnt (Rejected), wird protokolliert und verworfen, damit
+es spaetere Ergebnisse nicht blockiert.
 
 Jeder gemeldete `grund` steht in der festen Liste des Befehls (wire.command_errors): Handler-Gruende prueft
 commands.execute, den Zeitablauf wartender Befehle (keine_bestaetigung) prueft timed_out."""
@@ -12,7 +18,7 @@ from datetime import UTC, datetime
 
 from smartheat_gateway import topics
 from smartheat_gateway.agent import commands, lifecycle, wire
-from smartheat_gateway.agent.api_client import ApiUnavailable, NotAuthenticated
+from smartheat_gateway.agent.api_client import ApiUnavailable, NotAuthenticated, Rejected
 from smartheat_gateway.agent.context import AgentContext
 from smartheat_gateway.agent.state import AgentStateWriter, derive
 from smartheat_gateway.bus import decode
@@ -29,6 +35,25 @@ DONE_KEEP = 500
 TIMEOUT_GRUND = "keine_bestaetigung"
 TIMEOUT_TEXT = "Das Gateway hat die Änderung nicht rechtzeitig bestätigt."
 INTERN_TEXT = "Interner Fehler im Gateway."
+
+
+ResultEntry = tuple[bool, dict | None, dict | None]  # (ok, result, error) wie in api.result
+
+
+def _load_done(path) -> dict[str, ResultEntry | None]:
+    entries = read_json(path)
+    done: dict[str, ResultEntry | None] = {}
+    if not isinstance(entries, list):
+        return done
+    for entry in entries:
+        if isinstance(entry, str):  # altes Format: erledigt, Ergebnis unbekannt
+            done[entry] = None
+        elif (
+            isinstance(entry, list) and len(entry) == 4 and isinstance(entry[0], str) and isinstance(entry[1], bool)
+            and isinstance(entry[2], dict | None) and isinstance(entry[3], dict | None)
+        ):
+            done[entry[0]] = (entry[1], entry[2], entry[3])
+    return done
 
 
 def _iso(wall: float) -> str:
@@ -53,9 +78,8 @@ class AgentLoop:
         self._last_ok: float | None = None
         self._server_seen = False
         self._pending: dict[str, tuple[str, commands.Waiting]] = {}
-        self._unsent: dict[str, tuple[bool, dict | None, dict | None]] = {}
-        done = read_json(ctx.paths.agent_dir / "done.json")
-        self._done: list[str] = [item for item in done if isinstance(item, str)] if isinstance(done, list) else []
+        self._unsent: dict[str, ResultEntry] = {}
+        self._done = _load_done(ctx.paths.agent_dir / "done.json")
         self._last_status_body: dict | None = None
         self._last_status_at: float | None = None
         self._open: dict[str, dict] = {}
@@ -145,6 +169,8 @@ class AgentLoop:
             self._next_poll = now + float(answer.get("poll_after") or 60)
             for command in answer.get("commands", []):
                 self._dispatch(command)
+        if not self._registered:  # 401 beim Melden eines Ergebnisses (_send_unsent)
+            raise NotAuthenticated("result")
         self._upload_status(now)
         self._upload_notifications()
 
@@ -157,7 +183,13 @@ class AgentLoop:
 
     def _dispatch(self, command: dict) -> None:
         command_id = command.get("command_id")
-        if not isinstance(command_id, str) or command_id in self._pending or command_id in self._done:
+        if not isinstance(command_id, str) or command_id in self._pending:
+            return
+        if command_id in self._done:
+            stored = self._done[command_id]
+            if stored is not None and command_id not in self._unsent:
+                self._unsent[command_id] = stored  # Ergebnis kam nie an: erneut melden, nicht erneut ausfuehren
+                self._send_unsent()
             return
         kind = command.get("kind", "")
         outcome = commands.execute(self.ctx, kind, command.get("payload"))
@@ -168,10 +200,11 @@ class AgentLoop:
             self._pending[command_id] = (kind, outcome)
             return
         if isinstance(outcome, commands.Done):
-            self._unsent[command_id] = (True, outcome.result, None)
+            entry: ResultEntry = (True, outcome.result, None)
         else:
-            self._unsent[command_id] = (False, None, {"grund": outcome.grund, "text": outcome.text})
-        self._mark_done(command_id)
+            entry = (False, None, {"grund": outcome.grund, "text": outcome.text})
+        self._mark_done(command_id, entry)  # zuerst dauerhaft, dann melden
+        self._unsent[command_id] = entry
         self._send_unsent()
 
     def _check_pending(self) -> None:
@@ -183,14 +216,24 @@ class AgentLoop:
                 del self._pending[command_id]
                 self._finish_or_wait(command_id, kind, outcome)
 
-    def _mark_done(self, command_id: str) -> None:
-        self._done = (self._done + [command_id])[-DONE_KEEP:]
-        write_json(self.ctx.paths.agent_dir / "done.json", self._done)
+    def _mark_done(self, command_id: str, entry: ResultEntry) -> None:
+        self._done.pop(command_id, None)
+        self._done[command_id] = entry
+        while len(self._done) > DONE_KEEP:
+            del self._done[next(iter(self._done))]
+        entries = [[cid, *outcome] if outcome is not None else cid for cid, outcome in self._done.items()]
+        write_json(self.ctx.paths.agent_dir / "done.json", entries, private=True)
 
     def _send_unsent(self) -> None:
         for command_id, (ok, result, error) in list(self._unsent.items()):
             try:
                 self.api.result(command_id, ok, result, error)
+            except NotAuthenticated:
+                logger.warning("Geraete-API: Ergebnis nicht authentifiziert, registriere neu")
+                self._registered = False
+                return
+            except Rejected as rejection:
+                logger.error("Ergebnis von Befehl %s vom Server abgelehnt (%s), verworfen", command_id, rejection)
             except ApiUnavailable:
                 return
             del self._unsent[command_id]

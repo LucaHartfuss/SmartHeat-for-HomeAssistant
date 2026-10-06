@@ -1,5 +1,6 @@
 """Einstieg des Agenten (Spec SHG G2 6): Identitaet, lokaler Bus, Zigbee-Spiegel, Zigbee2MQTT-Grundkonfiguration,
-Diagnoseseite, Geraete-API, Schleife. Umgebung: Plan G2a Praezisierung 12."""
+Diagnoseseite, Geraete-API, Schleife. Umgebung: Plan G2a Praezisierung 12, dazu SHG_DIAG_HOSTNAMES (kommagetrennte
+Namen, unter denen die Diagnoseseite neben IP-Adressen und localhost antworten darf; Schutz gegen DNS-Rebinding)."""
 import logging
 import os
 import time
@@ -38,6 +39,7 @@ def main() -> None:  # pragma: no cover - Container-Einstieg
     ctx.diagnostics = lambda: diagnostics.command_snapshot(ctx, loop, host_status)
     diagnostics.start_server(
         int(os.environ.get("SHG_DIAG_PORT", "8080")), lambda: diagnostics.snapshot(ctx, loop, host_status), qr_url,
+        diagnostics.parse_hostnames(os.environ.get("SHG_DIAG_HOSTNAMES", "")),
     )
     loop.run()
 
