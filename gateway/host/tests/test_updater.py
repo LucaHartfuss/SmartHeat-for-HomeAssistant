@@ -71,11 +71,16 @@ class World:
         updater.State(current="0.2.0").save(self.state_path)
         self.healthy = healthy
         self.clock = [0.0]
-        extra = {} if health_seconds is None else {"health_seconds": health_seconds}
-        self.updater = updater.Updater(
+        self.extra = {} if health_seconds is None else {"health_seconds": health_seconds}
+        self.context = {"updater": version, "key": self.key_id.hex()}
+        self.updater = self.rebuild(version=version)
+
+    def rebuild(self, *, version="0.2.0", public_key_text=None):
+        """Neuer Updater ueber derselben Zustandsdatei (Neustart, neue Host-Version, neuer Schluessel)."""
+        return updater.Updater(
             api_factory=lambda: self.api, store=self.store, compose=self.compose, fetch=self.fetch,
-            public_key_text=self.public, state_path=self.state_path, version=version,
-            health=lambda version: self.healthy, clock=lambda: self.clock[0], sleep=self.sleep, **extra,
+            public_key_text=public_key_text or self.public, state_path=self.state_path, version=version,
+            health=lambda version: self.healthy, clock=lambda: self.clock[0], sleep=self.sleep, **self.extra,
         )
 
     def fetch(self, url, max_bytes):
@@ -106,7 +111,8 @@ def test_state_file_is_world_readable_and_survives_load(tmp_path):
     world.updater.run_once()
     assert stat.S_IMODE(world.state_path.stat().st_mode) == 0o644
     assert json.loads(world.state_path.read_text()) == {
-        "current": "0.3.0", "previous": "0.2.0", "rejected": [], "in_progress": None}
+        "current": "0.3.0", "previous": "0.2.0", "rejected": [], "in_progress": None,
+        "rejected_context": {"updater": "0.2.0", "key": world.key_id.hex()}}
 
 
 def test_in_progress_is_persisted_before_the_switch(tmp_path):
@@ -256,7 +262,8 @@ def test_no_update_offered(tmp_path):
 
 def test_rejected_list_is_capped(tmp_path):
     world = World(tmp_path)
-    updater.State(current="0.2.0", rejected=[f"0.1.{i}" for i in range(updater.MAX_REJECTED)]).save(world.state_path)
+    updater.State(current="0.2.0", rejected=[f"0.1.{i}" for i in range(updater.MAX_REJECTED)],
+                  rejected_context=world.context).save(world.state_path)
     world.api.desired_answer["signature"] = "kaputt"
     assert world.updater.run_once() == "abgelehnt"
     rejected = world.state().rejected
@@ -276,16 +283,115 @@ def test_recover_finishes_or_rolls_back_an_interrupted_update(tmp_path):
     assert world.api.results == [("0.3.0", "rollback", "ungesund")]
 
 
-def test_recover_accepts_an_interrupted_update_that_became_healthy(tmp_path):
-    world = World(tmp_path)
+def _interrupted(world, previous="0.2.0", **extra):
     world.store.install("0.3.0", {"docker-compose.yml": COMPOSE, "mosquitto.conf": MOSQ})
-    updater.State(current="0.2.0", in_progress={"version": "0.3.0", "previous": "0.2.0", "since": 0.0}).save(
-        world.state_path)
+    updater.State(current=previous, rejected_context=world.context,
+                  in_progress={"version": "0.3.0", "previous": previous, "since": 0.0, **extra}).save(world.state_path)
+
+
+def test_recover_restarts_the_new_bundle_before_trusting_health(tmp_path):
+    """Stromausfall vor/waehrend up: die alten Container kommen zurueck und wirken gesund (healthy=True), das neue
+    Bundle muss trotzdem hochgefahren werden, sonst liefe nie das, was als current gilt."""
+    world = World(tmp_path)
+    _interrupted(world)
     world.updater.recover()
     state = world.state()
     assert (state.current, state.previous, state.in_progress) == ("0.3.0", "0.2.0", None)
     assert world.api.results == [("0.3.0", "ok", "")]
-    assert not any(call[0] == "up" for call in world.compose.calls)
+    assert world.compose.calls[0] == ("up", "0.3.0")
+
+
+def test_recover_rolls_back_when_the_restart_fails(tmp_path):
+    world = World(tmp_path, fail_up={"0.3.0"})
+    _interrupted(world)
+    world.updater.recover()
+    state = world.state()
+    assert (state.current, state.in_progress, state.rejected) == ("0.2.0", None, ["0.3.0"])
+    assert world.compose.calls == [("up", "0.3.0"), ("up", "0.2.0")]
+    assert world.api.results == [("0.3.0", "rollback", "start_fehlgeschlagen")]
+
+
+def test_failed_rollback_is_kept_and_retried_before_anything_else(tmp_path):
+    world = World(tmp_path, healthy=False, fail_up={"0.3.0", "0.2.0"})
+    assert world.updater.run_once() == "vorlaeufig"
+    state = world.state()
+    assert state.in_progress == {"version": "0.3.0", "previous": "0.2.0", "since": state.in_progress["since"],
+                                 "rollback": "start_fehlgeschlagen"}
+    assert (state.current, state.rejected) == ("0.2.0", []) and world.api.results == []  # noch nichts gemeldet
+    # naechster Durchlauf: Rueckweg wird zuerst wiederholt, weiter scheitert er -> kein Abruf, kein Bericht
+    world.api.desired_answer = RuntimeError("darf nicht abgefragt werden")
+    assert world.updater.run_once() == "vorlaeufig"
+    assert world.compose.calls[-1] == ("up", "0.2.0") and world.state().in_progress is not None
+    # Rueckweg gelingt: abgelehnt, genau einmal gemeldet
+    world.compose.fail_up.clear()
+    world.api.desired_answer = {"version": "0.2.0"}
+    assert world.updater.run_once() == "aktuell"
+    state = world.state()
+    assert (state.current, state.in_progress, state.rejected) == ("0.2.0", None, ["0.3.0"])
+    assert world.api.results == [("0.3.0", "rollback", "start_fehlgeschlagen")]
+
+
+def test_pending_rollback_survives_a_restart(tmp_path):
+    world = World(tmp_path)
+    _interrupted(world, rollback="ungesund")
+    world.rebuild().recover()
+    state = world.state()
+    assert (state.current, state.in_progress, state.rejected) == ("0.2.0", None, ["0.3.0"])
+    assert world.compose.calls == [("up", "0.2.0")]  # kein erneuter Start des abgelehnten Bundles
+    assert world.api.results == [("0.3.0", "rollback", "ungesund")]
+
+
+def test_rollback_without_a_previous_bundle_is_logged_and_reported(tmp_path, caplog):
+    world = World(tmp_path, healthy=False)
+    _interrupted(world, previous=None)
+    updater.State(current=None, rejected_context=world.context,
+                  in_progress={"version": "0.3.0", "previous": None, "since": 0.0}).save(world.state_path)
+    world.updater.recover()
+    state = world.state()
+    assert (state.current, state.in_progress, state.rejected) == (None, None, ["0.3.0"])
+    assert world.compose.calls == [("up", "0.3.0")]  # kein Rueckweg-up
+    assert world.api.results == [("0.3.0", "rollback", "ungesund")]
+    assert "Kein Rueckweg moeglich" in caplog.text
+
+
+def _reject_once(world):
+    world.api.desired_answer["signature"] = "kaputt"
+    assert world.updater.run_once() == "abgelehnt"
+    assert world.state().rejected == ["0.3.0"]
+
+
+def test_rejected_is_kept_for_the_same_updater_and_key(tmp_path):
+    world = World(tmp_path)
+    _reject_once(world)
+    assert world.rebuild().run_once() == "aktuell"
+    assert world.state().rejected == ["0.3.0"]
+
+
+def test_rejected_is_cleared_after_an_updater_upgrade(tmp_path):
+    world = World(tmp_path, manifest_over={"min_updater_version": "0.3.0"})
+    assert world.updater.run_once() == "abgelehnt"
+    assert world.api.results == [("0.3.0", "rollback", "updater_zu_alt")]
+    assert world.rebuild().run_once() == "aktuell"
+    assert world.rebuild(version="0.3.0").run_once() == "aktualisiert"
+    assert world.state().rejected == []
+
+
+def test_rejected_is_cleared_after_a_release_key_change(tmp_path):
+    world = World(tmp_path)
+    placeholder = "untrusted comment: SMARTHEAT-PLATZHALTER\nSMARTHEAT-PLATZHALTER\n"
+    placeholder_updater = world.rebuild(public_key_text=placeholder)
+    assert placeholder_updater.run_once() == "abgelehnt"
+    assert world.state().rejected_context == {"updater": "0.2.0", "key": "placeholder"}
+    assert world.rebuild(public_key_text=placeholder).run_once() == "aktuell"  # gleicher Schluessel: bleibt abgelehnt
+    assert world.rebuild().run_once() == "aktualisiert"  # echter Schluessel: neuer Versuch
+    assert world.state().rejected_context == world.context
+
+
+def test_state_from_an_older_file_without_context_loads(tmp_path):
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps({"current": "0.2.0", "previous": None, "rejected": ["0.3.0"], "in_progress": None}))
+    state = updater.State.load(path)
+    assert (state.rejected, state.rejected_context) == (["0.3.0"], None)
 
 
 def test_recover_without_interrupted_update_does_nothing(tmp_path):

@@ -1,7 +1,18 @@
 """Updater des Gateways (Spec G2b-1 4, G2 8.4): fragt alle 15 min die Soll-Version ab, laedt und prueft Manifest
 (https, SHA-256, minisign gegen release.pub, Version, min_updater_version) und Bundle-Dateien, schaltet per Compose um,
 wartet bis zu 10 min auf "gesund" und rollt sonst auf das vorige Bundle zurueck. Fristen ueber die monotone Uhr (die
-Wanduhr springt beim Boot). Zustand in updater/state.json (in_progress uebersteht einen Stromausfall)."""
+Wanduhr springt beim Boot). Zustand in updater/state.json (atomar, 0644), Format:
+
+    {"current": str|null, "previous": str|null, "rejected": [str],
+     "rejected_context": {"updater": str, "key": str}|null,
+     "in_progress": {"version": str, "previous": str|null, "since": float, "rollback": str (optional)}|null}
+
+in_progress wird vor `compose up` geschrieben und uebersteht einen Stromausfall: recover() startet das Bundle dann
+erneut (up ist idempotent) und wartet auf Gesundheit. Ist "rollback" gesetzt (Grund), scheiterte der Rueckweg auf
+`previous`; recover()/run_once wiederholen ihn, bevor sonst etwas geschieht, und melden das Ergebnis erst danach.
+rejected gilt nur im Kontext rejected_context (Version des Updaters und Schluessel-ID aus release.pub oder
+"placeholder"): aendert sich eines von beiden, wird rejected geleert (ein neuer Updater oder der echte Schluessel
+darf es neu versuchen)."""
 import hashlib
 import http.client
 import json
@@ -55,6 +66,7 @@ class State:
     previous: str | None = None
     rejected: list[str] = field(default_factory=list)
     in_progress: dict | None = None
+    rejected_context: dict | None = None
 
     @classmethod
     def load(cls, path: Path) -> "State":
@@ -65,7 +77,11 @@ class State:
             if not (isinstance(in_progress, dict) and isinstance(in_progress.get("version"), str)):
                 in_progress = None
             rejected = [item for item in data.get("rejected") or [] if isinstance(item, str)]
-            return cls(_text_or_none(data.get("current")), _text_or_none(data.get("previous")), rejected, in_progress)
+            context = data.get("rejected_context")  # fehlt in aelteren Dateien
+            if not (isinstance(context, dict) and all(isinstance(value, str) for value in context.values())):
+                context = None
+            return cls(_text_or_none(data.get("current")), _text_or_none(data.get("previous")), rejected, in_progress,
+                       context)
         except (OSError, ValueError, AttributeError, TypeError):
             return cls()
 
@@ -106,6 +122,14 @@ def health_ok(data: dict | None, containers: dict[str, str]) -> bool:
     return all(containers.get(name) == "healthy" for name in REQUIRED_HEALTHY)
 
 
+def _key_identity(public_key_text: str) -> str:
+    """Schluessel-ID aus release.pub (hex) oder "placeholder"; Teil des Kontexts der abgelehnten Versionen."""
+    try:
+        return minisign.load_public_key(public_key_text).key_id.hex()
+    except minisign.SignatureError:
+        return "placeholder" if minisign.PLACEHOLDER_MARKER in public_key_text else "ungueltig"
+
+
 class Updater:
     def __init__(self, *, api_factory: Callable[[], object], store: bundles.BundleStore, compose,
                  fetch: Callable[[str, int], bytes], public_key_text: str, state_path: Path, version: str,
@@ -116,23 +140,49 @@ class Updater:
         self._public_key_text, self._state_path, self._version = public_key_text, state_path, version
         self._health, self._clock, self._sleep, self._allow_http = health, clock, sleep, allow_http
         self._health_seconds = health_seconds
+        self._context = {"updater": version, "key": _key_identity(public_key_text)}
+
+    def _load(self) -> State:
+        """Zustand laden; eine Ablehnung gilt nur fuer denselben Updater und denselben Release-Schluessel."""
+        state = State.load(self._state_path)
+        if state.rejected_context != self._context:
+            state.rejected = []
+        state.rejected_context = dict(self._context)
+        return state
 
     # --- Ablauf ---
 
     def recover(self) -> None:
-        """Nach einem Neustart: ein unterbrochenes Update zu Ende bringen (gesund) oder zuruecknehmen."""
-        state = State.load(self._state_path)
-        if not state.in_progress:
+        """Nach einem Neustart: ein unterbrochenes Update zu Ende bringen oder zuruecknehmen. Nach einem Stromausfall
+        laufen eventuell noch die alten Container (restart: unless-stopped) und wirken gesund; deshalb wird das neue
+        Bundle erst erneut hochgefahren (up ist idempotent), bevor die Gesundheit zaehlt."""
+        state = self._load()
+        progress = state.in_progress
+        if not progress:
             return
-        version = state.in_progress["version"]
-        logger.warning("Unterbrochenes Update auf %s gefunden, pruefe Gesundheit", version)
+        version = progress["version"]
+        if isinstance(progress.get("rollback"), str):
+            logger.warning("Rueckweg von %s war nicht abgeschlossen, wiederhole ihn", version)
+            self._rollback(state, version, progress["rollback"])
+            return
+        logger.warning("Unterbrochenes Update auf %s gefunden, starte es erneut und pruefe Gesundheit", version)
+        try:
+            self._compose.up(version)
+        except bundles.ComposeError as error:
+            logger.error("Start von %s gescheitert: %s", version, error)
+            self._rollback(state, version, "start_fehlgeschlagen")
+            return
         if self._wait_healthy(version):
             self._finish(state, version)
         else:
             self._rollback(state, version, "ungesund")
 
     def run_once(self) -> str:
-        state = State.load(self._state_path)
+        if State.load(self._state_path).in_progress:  # offener Auftrag (z. B. gescheiterter Rueckweg) zuerst
+            self.recover()
+            if State.load(self._state_path).in_progress:
+                return "vorlaeufig"
+        state = self._load()
         try:
             desired = self._api_factory().desired()  # type: ignore[attr-defined]
         except device_api.DeviceApiError as error:  # auch NotAuthenticated (401): vorlaeufig, nie ein Grund zum Ablehnen
@@ -163,13 +213,11 @@ class Updater:
             self._compose.up(version)
         except bundles.ComposeError as error:
             logger.error("Start von %s gescheitert: %s", version, error)
-            self._rollback(state, version, "start_fehlgeschlagen")
-            return "zurueckgerollt"
+            return self._rolled_back(state, version, "start_fehlgeschlagen")
         if self._wait_healthy(version):
             self._finish(state, version)
             return "aktualisiert"
-        self._rollback(state, version, "ungesund")
-        return "zurueckgerollt"
+        return self._rolled_back(state, version, "ungesund")
 
     # --- Schritte ---
 
@@ -238,16 +286,31 @@ class Updater:
         self._report(version, "ok", "")
         logger.info("Update auf %s abgeschlossen", version)
 
-    def _rollback(self, state: State, version: str, reason: str) -> None:
-        previous = state.in_progress.get("previous") if state.in_progress else state.current
+    def _rolled_back(self, state: State, version: str, reason: str) -> str:
+        return "zurueckgerollt" if self._rollback(state, version, reason) else "vorlaeufig"
+
+    def _rollback(self, state: State, version: str, reason: str) -> bool:
+        """Zurueck auf das vorige Bundle. Scheitert `up`, bleibt in_progress (mit "rollback") erhalten und der
+        naechste recover()/run_once wiederholt den Rueckweg; abgelehnt und gemeldet wird erst, wenn er gelang."""
+        progress = state.in_progress or {}
+        previous = progress.get("previous") if state.in_progress else state.current
         if previous and self._store.exists(previous):
             try:
                 self._compose.up(previous)
             except bundles.ComposeError as error:
-                logger.error("Rueckweg auf %s gescheitert: %s", previous, error)
+                logger.error("Rueckweg auf %s gescheitert (%s), wird wiederholt", previous, error)
+                since = progress.get("since")
+                state.in_progress = {"version": version, "previous": previous,
+                                     "since": since if isinstance(since, float) else time.time(), "rollback": reason}
+                state.save(self._state_path)
+                return False
+        else:
+            logger.error("Kein Rueckweg moeglich fuer %s (voriges Bundle: %s), laufende Container bleiben unveraendert",
+                         version, previous or "keines")
         state.current, state.in_progress = previous, None
         logger.error("Update auf %s zurueckgerollt (%s)", version, reason)
         self._reject(state, version, reason)
+        return True
 
 
 def main(argv: list[str] | None = None) -> None:
