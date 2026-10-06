@@ -50,8 +50,13 @@ class NotifySink(Protocol):
 
 
 class TriggerSource(Protocol):
-    """Trigger-Eingang (Spec SHG 3.2): stellt Signal-Aenderungen und "Quelle verbunden" als Ereignis in den Worker
-    (post_coalesced). HA: WebSocket-Trigger; SHG: lokaler Bus. `connected` steuert den Watchdog-Rueckfall."""
+    """Trigger-Eingang (Spec SHG G2 2.4), Ereignisvertrag fuer jeden Host:
+    - Aenderung der Wunschtemperatur: erst nach ROOM_TARGET_DEBOUNCE_SECONDS (debounce.py) Stabilitaet
+      EV_LOCAL_CHECK(room_target_fired=True);
+    - jede andere zugeordnete Signalaenderung: EV_LOCAL_CHECK(room_target_fired=False) (post_coalesced);
+    - jede (Wieder-)Verbindung der Quelle: EV_LOCAL_CHECK(room_target_fired=True) und EV_SOURCE_CONNECTED.
+    HA: WebSocket-Trigger (Entprellung ueber `for:`); Gateway: lokaler Bus mit Debouncer. `connected` steuert den
+    Watchdog-Rueckfall."""
 
     @property
     def connected(self) -> bool: ...

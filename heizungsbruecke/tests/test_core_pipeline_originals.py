@@ -9,7 +9,7 @@ from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime.backup_store import load_backup
 from smartheat_runtime.roles import ChannelManifest
 
-MANIFEST = ChannelManifest(entity_ids={"curve_current": "number.hk", "shift_current": "number.normal", "heat_limit": "number.swu"})
+MANIFEST = ChannelManifest(refs={"curve_current": "number.hk", "shift_current": "number.normal", "heat_limit": "number.swu"})
 SAFETY = resolve_local_safety("weishaupt_wwp", "Heizkoerper")
 AUX = {"mode_select": "Automatik", "setpoint_comfort": 22.0, "setpoint_setback": 18.0}
 

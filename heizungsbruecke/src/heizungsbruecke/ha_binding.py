@@ -43,10 +43,10 @@ class HaPlantBinding:
 
     def has(self, lever: str) -> bool:
         role = LEVER_ROLES.get(lever)
-        return role is not None and role in self._manifest.entity_ids
+        return role is not None and role in self._manifest.refs
 
     def ref(self, lever: str) -> str:
-        return self._manifest.entity_ids[LEVER_ROLES[lever]]
+        return self._manifest.refs[LEVER_ROLES[lever]]
 
     def read(self, lever: str) -> float | None:
         value = self._ha_api.get_state(self.ref(lever))
@@ -137,13 +137,13 @@ class WeishauptHaBinding(HaPlantBinding):
         super().write(lever, value)
 
     def _number(self, role: str) -> float:
-        value = self._ha_api.get_state(self._manifest.entity_ids[role])
+        value = self._ha_api.get_state(self._manifest.refs[role])
         if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
             raise ValueError(f"{role} liefert keinen endlichen Wert: {value!r}")
         return value
 
     def _set_number(self, role: str, value: float) -> None:
-        entity_id = self._manifest.entity_ids[role]
+        entity_id = self._manifest.refs[role]
         self._ha_api.get_raw_state(entity_id)  # AU-016: nicht verfuegbare Entity wirft statt still 200
         self._ha_api.set_number_value(entity_id, value)
         self.physical_writes += 1
@@ -156,16 +156,16 @@ class WeishauptHaBinding(HaPlantBinding):
             self._set_number("setpoint_setback", value)
 
     def needs_preparation(self) -> bool:
-        return "mode_select" in self._manifest.entity_ids
+        return "mode_select" in self._manifest.refs
 
     def is_prepared(self) -> bool:
-        return self._ha_api.get_raw_state(self._manifest.entity_ids["mode_select"]) == WEISHAUPT_NORMAL_MODE
+        return self._ha_api.get_raw_state(self._manifest.refs["mode_select"]) == WEISHAUPT_NORMAL_MODE
 
     def prepare(self) -> bool:
         """Betriebsart auf WEISHAUPT_NORMAL_MODE (Uebersetzungsschluessel); True, wenn umgestellt wurde. Wirft bei Fehlern."""
         if not self.needs_preparation() or self.is_prepared():
             return False
-        entity_id = self._manifest.entity_ids["mode_select"]
+        entity_id = self._manifest.refs["mode_select"]
         self._ha_api.select_option(entity_id, WEISHAUPT_NORMAL_MODE)
         self.physical_writes += 1
         logger.warning("Betriebsart %s auf %s gestellt", entity_id, WEISHAUPT_NORMAL_MODE)
@@ -173,7 +173,7 @@ class WeishauptHaBinding(HaPlantBinding):
 
     def read_aux(self) -> dict[str, str | float]:
         return {
-            "mode_select": self._ha_api.get_raw_state(self._manifest.entity_ids["mode_select"]),
+            "mode_select": self._ha_api.get_raw_state(self._manifest.refs["mode_select"]),
             "setpoint_comfort": self._number("setpoint_comfort"),
             "setpoint_setback": self._number("setpoint_setback"),
         }
@@ -195,7 +195,7 @@ class WeishauptHaBinding(HaPlantBinding):
             if abs(self._number(role) - target) > AUX_SETPOINT_TOLERANCE:
                 self._set_number(role, target)
         mode = values.get("mode_select")
-        entity_id = self._manifest.entity_ids["mode_select"]
+        entity_id = self._manifest.refs["mode_select"]
         if isinstance(mode, str) and self._ha_api.get_raw_state(entity_id) != mode:
             self._ha_api.select_option(entity_id, mode)
             self.physical_writes += 1
@@ -218,10 +218,10 @@ class ViessmannHaBinding(HaPlantBinding):
     die Climate-Entity (Rolle mode_select) verlaesst ein aktives Komfort-/Eco-Programm (Preset "home")."""
 
     def _preset(self) -> str:
-        return self._ha_api.get_attribute(self._manifest.entity_ids["mode_select"], PRESET_ATTRIBUTE)
+        return self._ha_api.get_attribute(self._manifest.refs["mode_select"], PRESET_ATTRIBUTE)
 
     def needs_preparation(self) -> bool:
-        return "mode_select" in self._manifest.entity_ids
+        return "mode_select" in self._manifest.refs
 
     def is_prepared(self) -> bool:
         return self._preset() not in VIESSMANN_FOREIGN_PRESETS
@@ -230,7 +230,7 @@ class ViessmannHaBinding(HaPlantBinding):
         """Komfort-/Eco-Programm beenden; True, wenn umgestellt wurde. Wirft bei Fehlern."""
         if not self.needs_preparation() or self.is_prepared():
             return False
-        entity_id = self._manifest.entity_ids["mode_select"]
+        entity_id = self._manifest.refs["mode_select"]
         self._ha_api.set_preset_mode(entity_id, VIESSMANN_NORMAL_PRESET)
         self.physical_writes += 1
         logger.warning("Heizprogramm %s auf %s gestellt", entity_id, VIESSMANN_NORMAL_PRESET)
@@ -246,7 +246,7 @@ class ViessmannHaBinding(HaPlantBinding):
         if preset not in VIESSMANN_FOREIGN_PRESETS or self._preset() == preset:
             return
         assert isinstance(preset, str)
-        entity_id = self._manifest.entity_ids["mode_select"]
+        entity_id = self._manifest.refs["mode_select"]
         self._ha_api.set_preset_mode(entity_id, preset)
         self.physical_writes += 1
         logger.warning("Heizprogramm %s auf den Ursprungswert %s zurueckgestellt", entity_id, preset)

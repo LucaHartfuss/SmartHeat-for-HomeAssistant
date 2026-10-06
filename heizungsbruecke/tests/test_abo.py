@@ -33,7 +33,7 @@ BOTH_ROLES = {"curve_current": "number.curve", "shift_current": "number.shift"}
 
 
 def _runtime(tmp_path, store, entity_ids=BOTH_ROLES, notify_services=("notify.handy",), clock=None):
-    manifest = ChannelManifest(entity_ids=entity_ids)
+    manifest = ChannelManifest(refs=entity_ids)
     ha_api = MagicMock()
     return SimpleNamespace(
         manifest=manifest, signals=ha_api, ha_api=ha_api, store=store, mqtt_client=MagicMock(),

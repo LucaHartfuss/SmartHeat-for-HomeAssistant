@@ -10,7 +10,7 @@ from smartheat_core.pipeline import DeviceWriteError, LeverPipeline, WriteBudget
 from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime.roles import ChannelManifest
 
-MANIFEST = ChannelManifest(entity_ids={
+MANIFEST = ChannelManifest(refs={
     "curve_current": "number.hk", "shift_current": "number.normal", "heat_limit": "number.swu",
     "mode_select": "select.betriebsart", "setpoint_comfort": "number.komfort", "setpoint_setback": "number.absenk",
 })
@@ -106,7 +106,7 @@ def test_preparation_switches_the_operating_mode_to_normal_once():
 
 
 def test_without_mode_select_there_is_nothing_to_prepare():
-    manifest = ChannelManifest(entity_ids={k: v for k, v in MANIFEST.entity_ids.items() if k != "mode_select"})
+    manifest = ChannelManifest(refs={k: v for k, v in MANIFEST.refs.items() if k != "mode_select"})
     binding = WeishauptHaBinding(FakeHa(), manifest, WEISHAUPT_MODBUS)
     assert binding.needs_preparation() is False and binding.prepare() is False
 

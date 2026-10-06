@@ -14,9 +14,9 @@ logger = logging.getLogger(__name__)
 def read_room_target_live(rt: Runtime) -> float | None:
     """Liest room_target an HA vorbei am Stable-Target-Cache. Nur fuer Boot, den entprellten
     room_target-Trigger, (Wieder-)Verbinden und den Watchdog. None, wenn die Rolle fehlt."""
-    if "room_target" not in rt.manifest.entity_ids:
+    if "room_target" not in rt.manifest.refs:
         return None
-    return rt.signals.get_state(rt.manifest.entity_ids["room_target"])
+    return rt.signals.get_state(rt.manifest.refs["room_target"])
 
 
 def refresh_stable_target(rt: Runtime) -> None:
@@ -38,7 +38,7 @@ def run_local_check(rt: Runtime) -> None:
     kommt aus dem Stable-Target-Cache, damit ein Zwischenwert beim Verstellen keinen Boost
     ausloest. I/O-Fehler gehen an den Aufrufer."""
     manifest = rt.manifest
-    if "room_actual" not in manifest.entity_ids or "room_target" not in manifest.entity_ids:
+    if "room_actual" not in manifest.refs or "room_target" not in manifest.refs:
         return
     state = rt.store.state
     room_target = state.stable_target
@@ -48,7 +48,7 @@ def run_local_check(rt: Runtime) -> None:
     if state.abo_finished:
         return
 
-    room_actual = rt.signals.get_state(manifest.entity_ids["room_actual"])
+    room_actual = rt.signals.get_state(manifest.refs["room_actual"])
     safety = rt.override.safety
     # Ohne Comfort-Boost-Werte (z. B. Fussbodenheizung, Spec 6.3) gibt es keinen Comfort-Boost.
     comfort = bool(safety.comfort_boost) and decide_boost(

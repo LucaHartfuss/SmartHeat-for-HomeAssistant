@@ -25,7 +25,7 @@ SAFETY = LocalSafety(
     arrival_threshold_k=0.5,
 )
 ROWS = {"boost_active": (1.2, 24.0), "emergency_boost_active": (1.5, 25.0)}
-MANIFEST = ChannelManifest(entity_ids={
+MANIFEST = ChannelManifest(refs={
     "curve_current": "number.curve", "shift_current": "climate.zone::temperature", "min_flow": "number.mf",
 })
 POINT = {"curve": 0.9, "room_setpoint": 21.0}
@@ -109,7 +109,7 @@ def _rt(make_store, clock, ha, uptime=SETTLE + 1, store=None, manifest=MANIFEST,
     )
 
 
-MANIFEST_G = ChannelManifest(entity_ids={**MANIFEST.entity_ids, "heat_limit": "number.hl"})
+MANIFEST_G = ChannelManifest(refs={**MANIFEST.refs, "heat_limit": "number.hl"})
 
 
 def _rt_g(make_store, clock, live_heat_limit):

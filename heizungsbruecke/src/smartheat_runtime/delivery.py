@@ -462,7 +462,7 @@ def _parse_fault(raw) -> DataFault | None:
 
 
 def notification_text(
-    kind: str, detail: tuple[str, ...], entity_ids: dict[str, str], texts: HostTexts = HA_TEXTS,
+    kind: str, detail: tuple[str, ...], refs: dict[str, str], texts: HostTexts = HA_TEXTS,
 ) -> str:
     prefix = texts.delivery_prefix
     if kind == NOTIFY_NOTBETRIEB_ON:
@@ -470,7 +470,7 @@ def notification_text(
     if kind == NOTIFY_NOTBETRIEB_OFF:
         return f"{prefix}: Serververbindung wiederhergestellt, Notbetrieb beendet."
     if kind == NOTIFY_DATENFEHLER_LOCAL:
-        sensors = ", ".join(f"{role} ({entity_ids.get(role, 'nicht zugeordnet')})" for role in detail)
+        sensors = ", ".join(f"{role} ({refs.get(role, 'nicht zugeordnet')})" for role in detail)
         return (
             f"{prefix}: Sensor(en) ohne gültigen Wert: {sensors}. Die Heizkurve bleibt "
             f"unverändert, bis die Werte wieder verfügbar sind (z. B. Batterie prüfen)."

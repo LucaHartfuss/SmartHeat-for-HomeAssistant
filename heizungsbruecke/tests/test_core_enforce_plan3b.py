@@ -19,10 +19,10 @@ from smartheat_runtime.runtime import Runtime
 TODAY = date(2026, 10, 3)
 VIESSMANN = dataclasses.replace(VIESSMANN_VICARE_BINDING, aux_originals=())
 WEISHAUPT = dataclasses.replace(WEISHAUPT_MODBUS, aux_originals=())
-VI_MANIFEST = ChannelManifest(entity_ids={
+VI_MANIFEST = ChannelManifest(refs={
     "curve_current": "number.slope", "level_current": "number.shift", "shift_current": "number.normal",
 })
-WH_MANIFEST = ChannelManifest(entity_ids={
+WH_MANIFEST = ChannelManifest(refs={
     "curve_current": "number.hk", "shift_current": "number.normal", "heat_limit": "number.swu",
 })
 

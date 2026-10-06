@@ -14,7 +14,7 @@ LEVER_ENTITIES = {"curve": "sensor.curve_current", "room_setpoint": "sensor.shif
 
 
 def _all_roles_manifest():
-    return ChannelManifest(entity_ids={
+    return ChannelManifest(refs={
         **{role: f"sensor.{role}" for role in ("heat_limit", "room_target", "curve_current", "shift_current")},
         "room_actual": "sensor.room_actual",
     })
@@ -80,7 +80,7 @@ def test_read_snapshot_checks_room_actual_but_never_sends_it():
 
 
 def test_read_snapshot_skips_unmapped_levers_without_marking_them_invalid():
-    manifest = ChannelManifest(entity_ids={"heat_limit": "number.h", "room_target": "sensor.t"})
+    manifest = ChannelManifest(refs={"heat_limit": "number.h", "room_target": "sensor.t"})
     ha_api = MagicMock()
     ha_api.get_state.return_value = 16.0
 
@@ -144,7 +144,7 @@ def test_snapshot_carries_a_manual_override_only_when_given():
 # --- Hebel aus `known` (TP11: room_setpoint kommt von HaPlantBinding.read_or, nicht von einem Live-Read der
 # Zone) ---
 
-MANIFEST = ChannelManifest(entity_ids={
+MANIFEST = ChannelManifest(refs={
     "heat_limit": "number.hl", "room_target": "sensor.t", "curve_current": "number.c",
     "shift_current": "climate.zone::temperature", "room_actual": "sensor.r",
 })
@@ -177,7 +177,7 @@ def test_missing_known_lever_is_invalid():
 # --- Plan 3b: nur lesbare Hebel (Weishaupt-Basis) ---
 
 def _basis_manifest(**extra):
-    return ChannelManifest(entity_ids={
+    return ChannelManifest(refs={
         "shift_current": "sensor.shift_current", "room_target": "sensor.room_target", **extra,
     })
 

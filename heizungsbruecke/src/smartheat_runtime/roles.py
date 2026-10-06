@@ -1,6 +1,5 @@
 """Hostneutrales Rollen-Vokabular (Spec SHG 3.3): welche Signale und Hebel die Laufzeit kennt und welche je Hebelsatz
-Pflicht sind. ChannelManifest bildet Rolle -> Referenz der SignalSource ab (HA: Entity-ID bzw. entity::attribut; das
-Feld heisst aus der HA-Zeit entity_ids)."""
+Pflicht sind. ChannelManifest bildet Rolle -> Referenz der SignalSource ab (HA: Entity-ID bzw. entity::attribut)."""
 from dataclasses import dataclass
 
 ALL_ROLES = (
@@ -45,4 +44,6 @@ class ManifestError(ValueError):
 
 @dataclass(frozen=True)
 class ChannelManifest:
-    entity_ids: dict[str, str]
+    """Rolle -> Referenz der SignalSource."""
+
+    refs: dict[str, str]

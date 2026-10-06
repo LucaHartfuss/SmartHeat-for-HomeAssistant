@@ -8,7 +8,7 @@ from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime.roles import ChannelManifest
 
-MANIFEST = ChannelManifest(entity_ids={
+MANIFEST = ChannelManifest(refs={
     "curve_current": "number.slope", "level_current": "number.shift", "shift_current": "number.normal_temperature",
     "mode_select": "climate.heizkreis",
 })

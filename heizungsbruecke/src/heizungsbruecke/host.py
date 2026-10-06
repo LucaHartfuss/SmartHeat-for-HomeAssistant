@@ -100,7 +100,7 @@ class HaHost:
             )
             return None
         roles = [role for role in binding_roles(config.binding_description(effective)) if effective.get(f"entity_{role}")]
-        manifest = ChannelManifest(entity_ids={role: entity_ref(role, effective[f"entity_{role}"]) for role in roles})
+        manifest = ChannelManifest(refs={role: entity_ref(role, effective[f"entity_{role}"]) for role in roles})
         return RestoreParts(binding_for(effective, self._ha_api, manifest), config.local_safety(effective))
 
     def load(self) -> Loaded:

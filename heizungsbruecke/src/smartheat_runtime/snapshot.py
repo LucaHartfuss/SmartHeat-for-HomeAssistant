@@ -37,7 +37,7 @@ class SnapshotRead:
 
 
 def _read_role(manifest: ChannelManifest, signals, role: str, invalid: list[str]) -> float | None:
-    entity_id = manifest.entity_ids.get(role)
+    entity_id = manifest.refs.get(role)
     if entity_id is None:
         invalid.append(role)
         return None
@@ -95,7 +95,7 @@ def read_snapshot(manifest: ChannelManifest, signals, binding, known: Mapping[st
         readonly.append(lever)
     room_target = _read_role(manifest, signals, TARGET_ROLE, invalid)
     for role in VALIDITY_ONLY_ROLES:
-        if role in manifest.entity_ids:
+        if role in manifest.refs:
             _read_role(manifest, signals, role, invalid)
     return SnapshotRead(room_target=room_target, levers=levers, invalid=tuple(invalid), readonly=tuple(readonly))
 

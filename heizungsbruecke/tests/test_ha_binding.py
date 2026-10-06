@@ -7,7 +7,7 @@ from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.clamping import target_value
 from smartheat_runtime.roles import ChannelManifest
 
-MANIFEST = ChannelManifest(entity_ids={
+MANIFEST = ChannelManifest(refs={
     "curve_current": "number.curve", "shift_current": "climate.zone::temperature",
     "heat_limit": "number.g", "min_flow": "number.mf",
 })
@@ -49,7 +49,7 @@ def test_has_and_ref_follow_the_manifest_roles():
     assert binding.ref("curve") == "number.curve"
     assert binding.ref("room_setpoint") == "climate.zone::temperature"
     assert binding.has("min_flow") and not binding.has("level")
-    assert not HaPlantBinding(FakeHa(), ChannelManifest(entity_ids={"curve_current": "number.curve"})).has("heat_limit")
+    assert not HaPlantBinding(FakeHa(), ChannelManifest(refs={"curve_current": "number.curve"})).has("heat_limit")
 
 
 @pytest.mark.parametrize(("raw", "expected"), [(21.5, 21.5), (0.0, None), (4.9, None), (math.nan, None)])
@@ -167,7 +167,7 @@ def test_prepare_on_an_already_manual_zone_sends_nothing():
 
 
 def test_number_entity_as_room_setpoint_needs_no_preparation():
-    manifest = ChannelManifest(entity_ids={**MANIFEST.entity_ids, "shift_current": "number.zone"})
+    manifest = ChannelManifest(refs={**MANIFEST.refs, "shift_current": "number.zone"})
     ha = FakeHa()
     binding = HaPlantBinding(ha, manifest)
     assert not binding.needs_preparation()
