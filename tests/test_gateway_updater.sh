@@ -160,11 +160,11 @@ updater() {
     "$UPDATER_IMAGE" python3 -m smartheat_host.updater --once
 }
 expect_word() {  # $1 erwartetes Ergebnis, $2 Version; Log des Updaters (stderr) nur bei Abweichung
-  local out word
-  out="$(updater 2>&1)"
-  word="$(printf '%s\n' "$out" | tail -n 1)"
+  # Ergebniswort nur aus stdout: docker run kopiert stdout und stderr getrennt, ihre Reihenfolge ist nicht garantiert.
+  local word
+  word="$(updater 2>"$DATA/updater.log" | tail -n 1)"
   if [ "$word" != "$1" ]; then
-    printf '%s\n' "$out" | tail -n 40
+    tail -n 40 "$DATA/updater.log"
     fail "Updater fuer $2: '$word' statt '$1'"
   fi
 }
