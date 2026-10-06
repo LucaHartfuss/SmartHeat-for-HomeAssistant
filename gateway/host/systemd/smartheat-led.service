@@ -1,6 +1,6 @@
 [Unit]
 Description=SmartHeat-Gateway LED (G2 8.5)
-After=multi-user.target
+After=local-fs.target
 
 [Service]
 Environment=PYTHONPATH=/opt/smartheat/host

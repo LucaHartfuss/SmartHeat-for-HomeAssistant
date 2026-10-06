@@ -24,23 +24,45 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ -n "$API_URL" ] || { echo "--device-api-url fehlt" >&2; exit 2; }
-CHANGED=0
+ROOT="${ROOT%/}"
+[ -n "$ROOT" ] || { echo "--root darf nicht / sein" >&2; exit 2; }
+CHANGED=0 WROTE=0 FIREWALL_CHANGED=0
 
-# Schreibt stdin nach $1 (Modus $2, Eigentuemer $3), nur wenn sich der Inhalt aendert. Nie hinter einer Pipe aufrufen
-# (CHANGED ginge in der Unter-Shell verloren): Eingabe per Umleitung oder < <(...).
+# Bricht ab, wenn $1 (unter ROOT) oder eine Komponente zwischen ROOT und $1 ein Symlink ist. Ordner unter ROOT
+# gehoeren zum Teil uid 1000 (Container): ein dort angelegter Symlink duerfte den Installer (root) nie auf einen
+# Systempfad umlenken (chown/chmod/Schreiben). Restrisiko: Wettlauf zwischen Pruefung und Zugriff.
+refuse_symlinks() {
+  local path=$1 cur rest part
+  case "$path" in "$ROOT"|"$ROOT"/*) ;; *) return 0 ;; esac
+  cur="$ROOT"
+  rest="${path#"$ROOT"}"
+  while :; do
+    if [ -L "$cur" ]; then echo "FEHLER: $cur ist ein Symlink, Installer bricht ab" >&2; exit 1; fi
+    rest="${rest#/}"
+    [ -n "$rest" ] || break
+    part="${rest%%/*}"
+    cur="$cur/$part"
+    case "$rest" in */*) rest="${rest#*/}" ;; *) rest="" ;; esac
+  done
+}
+
+# Schreibt stdin nach $1 (Modus $2, Eigentuemer $3), nur wenn sich der Inhalt aendert (WROTE=1 bei jeder Aenderung).
+# Nie hinter einer Pipe aufrufen (CHANGED ginge in der Unter-Shell verloren): Eingabe per Umleitung oder < <(...).
 put() {
   local target=$1 mode=$2 owner=$3 tmp
+  refuse_symlinks "$target"
   tmp="$(mktemp)"; cat >"$tmp"
   mkdir -p "$(dirname "$target")"
   if [ -f "$target" ] && cmp -s "$tmp" "$target"; then rm -f "$tmp"
-  else install -m "$mode" -o "${owner%:*}" -g "${owner#*:}" "$tmp" "$target"; rm -f "$tmp"; CHANGED=1; echo "geschrieben: $target"; fi
+  else install -m "$mode" -o "${owner%:*}" -g "${owner#*:}" "$tmp" "$target"; rm -f "$tmp"; CHANGED=1; WROTE=1; echo "geschrieben: $target"; fi
   if [ "$(stat -c '%a %u:%g' "$target")" != "${mode#0} $owner" ]; then
-    chmod "$mode" "$target"; chown "$owner" "$target"; CHANGED=1
+    chmod "$mode" "$target"; chown -h "$owner" "$target"; CHANGED=1; WROTE=1
   fi
 }
 dir() {  # Ordner $1 mit Modus $2 und Eigentuemer $3
+  refuse_symlinks "$1"
   if [ ! -d "$1" ]; then mkdir -p "$1"; CHANGED=1; fi
-  if [ "$(stat -c '%a %u:%g' "$1")" != "${2#0} $3" ]; then chmod "$2" "$1"; chown "$3" "$1"; CHANGED=1; fi
+  if [ "$(stat -c '%a %u:%g' "$1")" != "${2#0} $3" ]; then chmod "$2" "$1"; chown -h "$3" "$1"; CHANGED=1; fi
 }
 subst() { sed -e "s|@ROOT@|$ROOT|g" "$1"; }
 
@@ -52,7 +74,8 @@ packages() {
     dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed" || missing+=("$pkg")
   done
   if [ ${#missing[@]} -gt 0 ]; then
-    apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${missing[@]}"
+    apt-get update -qq
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends "${missing[@]}"
     CHANGED=1
   fi
 }
@@ -89,20 +112,29 @@ host_package() {
 
 system_files() {
   local unit ssh_rule=""
-  for unit in "$HERE"/systemd/*.service; do put "/etc/systemd/system/$(basename "$unit")" 0644 0:0 < <(subst "$unit"); done
+  for unit in "$HERE"/systemd/*.service; do
+    WROTE=0
+    put "/etc/systemd/system/$(basename "$unit")" 0644 0:0 < <(subst "$unit")
+    if [ "$WROTE" = 1 ] && [ "$(basename "$unit")" = smartheat-firewall.service ]; then FIREWALL_CHANGED=1; fi
+  done
   put /etc/udev/rules.d/99-smartheat-zigbee.rules 0644 0:0 < <(subst "$HERE/udev/99-smartheat-zigbee.rules")
   [ -n "$PILOT_KEY" ] && ssh_rule="tcp dport 22 accept"
+  WROTE=0
   put /etc/smartheat/nftables.conf 0644 0:0 < <(sed -e "s|@PILOT_SSH@|$ssh_rule|" "$HERE/nftables.conf")
+  if [ "$WROTE" = 1 ]; then FIREWALL_CHANGED=1; fi
   put /etc/systemd/journald.conf.d/smartheat.conf 0644 0:0 <"$HERE/journald.conf.d/smartheat.conf"
   put /etc/apt/apt.conf.d/52smartheat-unattended 0644 0:0 <"$HERE/apt/52smartheat-unattended"
   if [ -n "$PILOT_KEY" ]; then
-    put /etc/ssh/sshd_config.d/smartheat.conf 0644 0:0 < <(printf \
+    put /etc/ssh/sshd_config.d/00-smartheat.conf 0644 0:0 < <(printf \
       'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin prohibit-password\n')
     dir /root/.ssh 0700 0:0
     put /root/.ssh/authorized_keys 0600 0:0 < <(printf '%s\n' "$PILOT_KEY")
-  elif [ -f /etc/ssh/sshd_config.d/smartheat.conf ]; then
-    rm -f /etc/ssh/sshd_config.d/smartheat.conf; CHANGED=1
+  elif [ -f /etc/ssh/sshd_config.d/00-smartheat.conf ]; then
+    rm -f /etc/ssh/sshd_config.d/00-smartheat.conf; CHANGED=1
   fi
+  # sshd nimmt je Schluesselwort den ersten Wert: nur ein Drop-in vor allen anderen (00-) setzt sich durch. Der fruehere
+  # Name smartheat.conf wuerde von lexikalisch frueheren Dateien (z. B. 50-cloud-init.conf) uebergangen.
+  if [ -f /etc/ssh/sshd_config.d/smartheat.conf ]; then rm -f /etc/ssh/sshd_config.d/smartheat.conf; CHANGED=1; fi
 }
 
 first_bundle() {
@@ -121,11 +153,16 @@ first_bundle() {
 activate() {
   [ "$ACTIVATE" = 1 ] || return 0
   systemctl daemon-reload
-  udevadm control --reload && udevadm trigger --subsystem-match=tty
+  udevadm control --reload
+  udevadm trigger --subsystem-match=tty
   systemctl restart systemd-journald
   systemctl enable --now smartheat-firewall.service smartheat-hoststatus.service smartheat-led.service
+  # Oneshot mit RemainAfterExit: geaenderte Regeln (z. B. Pilot-SSH an/aus) greifen erst nach einem Neustart der Unit.
+  if [ "$FIREWALL_CHANGED" = 1 ]; then systemctl restart smartheat-firewall.service; fi
   if [ "$DOCKER" = 1 ]; then systemctl enable --now docker.service smartheat-updater.service; fi
-  if [ -n "$PILOT_KEY" ]; then systemctl enable --now ssh.service && systemctl reload ssh.service
+  if [ -n "$PILOT_KEY" ]; then
+    systemctl enable --now ssh.service
+    systemctl reload ssh.service
   else systemctl disable --now ssh.service 2>/dev/null || true; fi
   local current
   current="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("current") or "")' \
