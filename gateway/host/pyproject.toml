@@ -1,0 +1,22 @@
+# Host-Dienste des Gateways (Spec SHG G2b-1 2.1): laufen auf dem System-Python des Pi (Debian 13 trixie, 3.13) mit
+# Standardbibliothek und python3-cryptography; kein eigenes Paket-Build, install.sh kopiert die Dateien.
+[tool.pytest.ini_options]
+pythonpath = [".", "tests", "../src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["smartheat_host", "smartheat_gateway"]
+
+[tool.pyright]
+include = ["smartheat_host"]
+extraPaths = ["../src"]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"

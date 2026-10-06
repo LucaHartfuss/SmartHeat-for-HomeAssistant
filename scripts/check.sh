@@ -43,9 +43,9 @@ docker_host_run() {
 PY="${PYTHON:-python3}"
 DEV="${DEV_ROOT:-$(cd .. && pwd)}"
 pyright_in() { (cd "$1" && "$PY" -m ruff check . && "$PY" -m pyright --pythonpath "$("$PY" -c 'import sys; print(sys.executable)')"); }
-lint() { pyright_in heizungsbruecke && pyright_in gateway && "$PY" scripts/ci/pin_check.py --repo "$PWD"; }
-# Kern- und HA-Host-Tests (heizungsbruecke/tests), dann Gateway-Tests (Spec SHG 9.1).
-tests() { (cd heizungsbruecke && "$PY" -m pytest -q) && (cd gateway && "$PY" -m pytest -q); }
+lint() { pyright_in heizungsbruecke && pyright_in gateway && pyright_in gateway/host && "$PY" scripts/ci/pin_check.py --repo "$PWD"; }
+# Kern- und HA-Host-Tests (heizungsbruecke/tests), Gateway-Tests, Host-Dienste des Gateways (Spec SHG 9.1, G2b-1 10).
+tests() { (cd heizungsbruecke && "$PY" -m pytest -q) && (cd gateway && "$PY" -m pytest -q) && (cd gateway/host && "$PY" -m pytest -q); }
 contract() { "$PY" "$DEV/tools/contract_check.py"; }
 docker_tests() {
   local rc=0 script

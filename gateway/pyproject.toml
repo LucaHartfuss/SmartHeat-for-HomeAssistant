@@ -1,6 +1,6 @@
 [project]
 name = "smartheat-gateway"
-version = "0.1.0"
+version = "0.2.0"
 requires-python = ">=3.12"
 dependencies = ["paho-mqtt>=2.1,<3", "requests>=2.31,<3", "cryptography>=46,<51", "segno>=1.6,<2", "tzdata>=2025.2"]
 
