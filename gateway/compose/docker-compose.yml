@@ -81,8 +81,8 @@ services:
       # Geraeteschluessel und Agent-Zustand sind fuer tunnel und runtime unsichtbar (G2b-1 Restpunkt 4). Einzelne
       # Dateien einzubinden scheidet aus: atomares rename waere im Container unsichtbar. YAML-Anker in Listen werden
       # nicht eingeflochten, daher je Dienst ausgeschrieben.
-      - {type: tmpfs, target: /data/device, tmpfs: {size: 4096, mode: 0}}
-      - {type: tmpfs, target: /data/agent, tmpfs: {size: 4096, mode: 0}}
+      - {type: tmpfs, target: /data/device, read_only: true, tmpfs: {size: 4096}}
+      - {type: tmpfs, target: /data/agent, read_only: true, tmpfs: {size: 4096}}
 
   runtime:
     <<: *gateway
@@ -103,8 +103,8 @@ services:
     volumes:
       - ${SHG_ROOT:-/var/lib/smartheat}/data:/data
       - ${SHG_ROOT:-/var/lib/smartheat}/bus/credentials/runtime:/run/shg-bus:ro
-      - {type: tmpfs, target: /data/device, tmpfs: {size: 4096, mode: 0}}
-      - {type: tmpfs, target: /data/agent, tmpfs: {size: 4096, mode: 0}}
+      - {type: tmpfs, target: /data/device, read_only: true, tmpfs: {size: 4096}}
+      - {type: tmpfs, target: /data/agent, read_only: true, tmpfs: {size: 4096}}
     healthcheck:
       test: ["CMD", "python", "-c", "import os,sys,time; sys.exit(time.time() - os.path.getmtime('/tmp/shg-runtime-alive') > 120)"]
       interval: 60s

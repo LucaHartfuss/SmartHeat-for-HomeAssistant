@@ -85,8 +85,10 @@ def test_each_gateway_service_gets_only_its_own_bus_credentials():
 
 def test_device_keys_are_masked_in_tunnel_and_runtime():
     for name in ("tunnel", "runtime"):
-        masks = {v["target"] for v in _services()[name]["volumes"] if isinstance(v, dict) and v.get("type") == "tmpfs"}
-        assert masks == {"/data/device", "/data/agent"}, name
+        masks = [v for v in _services()[name]["volumes"] if isinstance(v, dict) and v.get("type") == "tmpfs"]
+        assert {v["target"] for v in masks} == {"/data/device", "/data/agent"}, name
+        # Leer und schreibgeschuetzt (Spec G2b-1 Restpunkt 4); "mode: 0" waere das Go-Nullwert-Aus und damit 1777.
+        assert all(v.get("read_only") is True for v in masks), name
 
 
 def test_mosquitto_requires_login():

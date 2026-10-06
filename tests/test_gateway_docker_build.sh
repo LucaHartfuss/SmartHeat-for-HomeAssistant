@@ -62,7 +62,12 @@ run_in_image --user "$GATEWAY_UID" -v "$DATA/zigbee2mqtt:/app/data" "$IMAGE" \
   sh -c 'test -r /app/data/configuration.yaml && test -w /app/data/configuration.yaml && test -w /app/data' \
   || fail "Zigbee2MQTT (uid $GATEWAY_UID) kann configuration.yaml des Init-Schritts nicht lesen/ersetzen"
 MOSQ_IMAGE="eclipse-mosquitto:2@sha256:38c0da4f2ef84284d47b3b3eeea1cb3bdeabe81ee10caf0cd5c5ff61ee3ea408"
-pw() { python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['password'])" "$DATA/bus/credentials/$1/bus.json"; }
+# Die Zugangsdaten gehoeren uid 1000 mit 0600: ein Wegwerf-Container als root liest sie fuer jede Host-uid (CI-Runner 1001).
+pw() {
+  run_in_image --user 0:0 -v "$DATA/bus:/b:ro" "$IMAGE" \
+    python -c "import json,sys; print(json.load(open('/b/credentials/' + sys.argv[1] + '/bus.json'))['password'])" "$1"
+}
+for svc in agent runtime zigbee2mqtt; do [ -n "$(pw "$svc")" ] || fail "Bus-Zugangsdaten von $svc nicht lesbar"; done
 mosq() { docker run --rm --security-opt label=disable --network "${PROJECT}_bus" "$MOSQ_IMAGE" "$@"; }
 # Anonym abgewiesen, Dienste angemeldet, ACL greift (Review Focus 5).
 mosq mosquitto_pub -h mosquitto -t shg/cmd/reload -m x 2>/dev/null && fail "anonymer Zugriff auf den Bus moeglich"
@@ -72,9 +77,25 @@ got=$(mosq sh -c "mosquitto_sub -h mosquitto -u runtime -P '$(pw runtime)' -t sh
 got=$(mosq sh -c "mosquitto_sub -h mosquitto -u runtime -P '$(pw runtime)' -t shg/cmd/test -C 1 -W 6 & sleep 2;
   mosquitto_pub -h mosquitto -u agent -P '$(pw agent)' -t shg/cmd/test -m from-agent; wait" 2>/dev/null)
 [ "$got" = "from-agent" ] || fail "agent kann shg/cmd/# nicht schreiben (ACL zu streng)"
+# zigbee2mqtt darf shg/status nicht faelschen; Gegenprobe: die Laufzeit darf es und der Agent liest es.
+got=$(mosq sh -c "mosquitto_sub -h mosquitto -u agent -P '$(pw agent)' -t shg/status -C 1 -W 6 & sleep 2;
+  mosquitto_pub -h mosquitto -u zigbee2mqtt -P '$(pw zigbee2mqtt)' -t shg/status -m forged-by-z2m; wait" 2>/dev/null)
+[ "$got" = "forged-by-z2m" ] && fail "zigbee2mqtt darf shg/status faelschen"
+got=$(mosq sh -c "mosquitto_sub -h mosquitto -u agent -P '$(pw agent)' -t shg/status -C 1 -W 6 & sleep 2;
+  mosquitto_pub -h mosquitto -u runtime -P '$(pw runtime)' -t shg/status -m from-runtime; wait" 2>/dev/null)
+[ "$got" = "from-runtime" ] || fail "runtime kann shg/status nicht schreiben oder agent nicht lesen (ACL zu streng)"
 # Schluessel in tunnel/runtime unsichtbar (Restpunkt 4).
 for svc in tunnel runtime; do
   "${COMPOSE[@]}" exec -T "$svc" sh -c 'test -z "$(ls -A /data/device 2>/dev/null)"' || fail "$svc sieht /data/device"
+  # Schreibgeschuetzt (Spec G2b-1 Restpunkt 4): weder device/ noch agent/ nimmt Dateien an.
+  for dir in /data/device /data/agent; do
+    "${COMPOSE[@]}" exec -T "$svc" sh -c "touch $dir/x" 2>/dev/null && fail "$svc darf in $dir schreiben"
+  done
+done
+for svc in tunnel runtime; do  # Nachweis der Einbindung: tmpfs, schreibgeschuetzt
+  cid=$("${COMPOSE[@]}" ps -q "$svc")
+  docker inspect -f '{{range .Mounts}}{{if eq .Destination "/data/device" "/data/agent"}}{{.Destination}} {{.Type}} rw={{.RW}}{{"\n"}}{{end}}{{end}}' "$cid" \
+    | grep -c "tmpfs rw=false" | grep -qx 2 || fail "$svc: Masken sind kein schreibgeschuetztes tmpfs"
 done
 # Netz-Wache (Restpunkt 3): Tunnel neu starten, die Laufzeit muss sich innerhalb der Frist neu starten.
 tunnel_id=$("${COMPOSE[@]}" ps -q tunnel); runtime_id=$("${COMPOSE[@]}" ps -q runtime)
