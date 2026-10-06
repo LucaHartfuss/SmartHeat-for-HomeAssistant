@@ -79,10 +79,72 @@ def test_apply_config_rejections(ctx):
 
 
 def test_apply_config_rejection_redacts_secrets(ctx):
-    # Die Fehlermeldung zitiert den ungueltigen Wert; stimmt er mit einem Geheimnis ueberein, erscheint *** statt seiner.
+    # Die Fehlermeldung zitiert den ungueltigen Wert; gleicht er einem Geheimnis, erscheint *** statt seiner.
     failed = execute(ctx, "apply_config", {"setup_id": "setup-1", "config": apply_config(thermostat="test-password")})
     assert isinstance(failed, Failed) and failed.grund == "konfiguration_ungueltig"
     assert "thermostat" in failed.text and "***" in failed.text and "test-password" not in failed.text
+
+
+def test_apply_config_redacts_unexpected_errors(ctx, monkeypatch, caplog):
+    def broken(raw, paths):
+        raise RuntimeError(f"kaputt bei {raw['mqtt_password']}")
+
+    monkeypatch.setattr(lifecycle, "parse", broken)
+    failed = execute(ctx, "apply_config", {"setup_id": "setup-1", "config": apply_config()})
+    assert isinstance(failed, Failed) and failed.grund == "konfiguration_ungueltig"
+    assert "***" in failed.text and "test-password" not in failed.text
+    assert "RuntimeError" in caplog.text and "test-password" not in caplog.text
+    assert not ctx.paths.runtime_config.exists()
+
+
+def _signed_off_with_failed_restore(ctx):
+    write_runtime_files(ctx.paths, apply_config())
+    write_json(ctx.paths.backup, {"restore_point": {"curve": 1.0, "room_setpoint": 20.0}})
+    execute(ctx, "sign_off", {})
+    _status(ctx, status="abgemeldet", setup_id=load_raw(ctx.paths)["setup_id"], grund="Zurücksetzen scheitert")
+
+
+def test_apply_config_after_failed_sign_off_starts_like_a_fresh_install(ctx):
+    _signed_off_with_failed_restore(ctx)
+    config = apply_config(setup_id="setup-2", tenant_id="test-tenant-2")
+    del config["installation_token"]
+    rejected = execute(ctx, "apply_config", {"setup_id": "setup-2", "config": config})
+    assert isinstance(rejected, Failed) and rejected.grund == "konfiguration_ungueltig"  # alter Token nicht uebernommen
+    assert ctx.paths.backup.exists() and load_raw(ctx.paths)["abgemeldet"] is True  # Ablehnung aendert nichts
+    # Neue Einrichtung: der Treiber-Login (driver_login) liegt schon vor apply_config bereit und bleibt.
+    write_json(ctx.paths.driver_secrets_dir / "simulation.json", {"token": "test-driver-token"}, private=True)
+    config = apply_config(setup_id="setup-2", tenant_id="test-tenant-2", installation_token="test-token-2")
+    assert isinstance(execute(ctx, "apply_config", {"setup_id": "setup-2", "config": config}), Waiting)
+    raw = load_raw(ctx.paths)
+    assert raw["setup_id"] == "setup-2" and raw["abgemeldet"] is False and raw["installation_token"] == "test-token-2"
+    assert not ctx.paths.runtime_dir.exists()  # keine Wiederherstellungspunkte der alten Anlage
+    assert (ctx.paths.driver_secrets_dir / "simulation.json").exists()
+
+
+def test_remove_setup_for_a_new_setup_keeps_the_new_key_and_driver_login(ctx):
+    write_runtime_files(ctx.paths, apply_config(abgemeldet=True))
+    write_json(ctx.paths.backup, {"restore_point": {}})
+    assert isinstance(execute(ctx, "create_csr", {"tenant_id": "test-tenant-2"}), Done)
+    write_json(ctx.paths.driver_secrets_dir / "simulation.json", {"token": "test-driver-token"}, private=True)
+    lifecycle.remove_setup(ctx.paths, keep_new_credentials=True)
+    assert not ctx.paths.runtime_dir.exists() and not ctx.paths.runtime_secrets.exists()
+    assert not ctx.paths.runtime_config.exists()
+    assert ctx.paths.transport_key.exists() and (ctx.paths.driver_secrets_dir / "simulation.json").exists()
+
+
+def test_apply_config_after_failed_sign_off_never_takes_old_secrets(ctx):
+    _signed_off_with_failed_restore(ctx)
+    config = apply_config(setup_id="setup-2", installation_token="test-token-2")
+    del config["mqtt_password"]
+    config["cloudflared"] = {k: v for k, v in config["cloudflared"].items() if k != "service_token_secret"}
+    rejected = execute(ctx, "apply_config", {"setup_id": "setup-2", "config": config})
+    assert isinstance(rejected, Failed) and rejected.grund == "konfiguration_ungueltig"
+    config["mqtt_password"] = "test-password-2"
+    config["cloudflared"]["service_token_secret"] = "test-secret-2"
+    assert isinstance(execute(ctx, "apply_config", {"setup_id": "setup-2", "config": config}), Waiting)
+    secrets = ctx.paths.runtime_secrets.read_text()
+    assert "test-password-2" in secrets and "test-secret-2" in secrets
+    assert "test-password\"" not in secrets and "test-secret\"" not in secrets and "test-token\"" not in secrets
 
 
 def test_apply_config_waits_until_the_status_shows_the_new_setup(ctx, clock):
@@ -149,8 +211,10 @@ def test_sign_off_repeated_after_restart_keeps_its_setup_id(ctx):
     write_runtime_files(ctx.paths, apply_config())
     execute(ctx, "sign_off", {})
     first = load_raw(ctx.paths)["setup_id"]
+    ctx.paths.transport_key.write_text("test-key")  # Abbruch zwischen write_config und dem Loeschen des Schluessels
     outcome = execute(ctx, "sign_off", {})  # Server liefert den Befehl nach einem Agent-Neustart erneut
     assert load_raw(ctx.paths)["setup_id"] == first
+    assert not ctx.paths.transport_key.exists()
     _status(ctx, status="abgemeldet", setup_id=first, grund=None)
     assert isinstance(outcome, Waiting) and outcome.check() == Done({"zurueckgesetzt": True, "werte": {}})
 
@@ -171,3 +235,29 @@ def test_sign_off_with_failed_restore_keeps_the_device(ctx):
     assert isinstance(result, Done) and result.result["zurueckgesetzt"] is False
     assert not lifecycle.cleanup_after_sign_off(ctx)
     assert ctx.paths.runtime_config.exists()
+
+
+def test_cleanup_interrupted_by_power_loss_completes_on_the_next_pass(ctx, monkeypatch):
+    write_runtime_files(ctx.paths, apply_config())
+    write_json(ctx.paths.backup, {"restore_point": {}})
+    execute(ctx, "sign_off", {})
+    _status(ctx, status="abgemeldet", setup_id=load_raw(ctx.paths)["setup_id"], grund=None)
+    ctx.paths.transport_key.write_text("test-key")
+    write_json(ctx.paths.driver_secrets_dir / "simulation.json", {"token": "test-driver-token"}, private=True)
+    real_rmtree = lifecycle.shutil.rmtree
+
+    def power_loss(path, **kwargs):
+        if path == ctx.paths.driver_secrets_dir:
+            raise OSError("Stromausfall")
+        real_rmtree(path, **kwargs)
+
+    monkeypatch.setattr(lifecycle.shutil, "rmtree", power_loss)
+    with pytest.raises(OSError):
+        lifecycle.cleanup_after_sign_off(ctx)
+    # runtime/, Geheimnisse und Schluessel sind weg, die Markierung `abgemeldet` steht noch.
+    assert not ctx.paths.runtime_dir.exists() and not ctx.paths.runtime_secrets.exists()
+    assert not ctx.paths.transport_key.exists() and load_raw(ctx.paths)["abgemeldet"] is True
+    monkeypatch.setattr(lifecycle.shutil, "rmtree", real_rmtree)
+    assert lifecycle.cleanup_after_sign_off(ctx)
+    assert not ctx.paths.driver_secrets_dir.exists() and not ctx.paths.runtime_config.exists()
+    assert ctx.paths.device_dir.exists()

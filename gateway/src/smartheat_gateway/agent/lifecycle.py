@@ -28,9 +28,11 @@ _CREDENTIAL_KEYS = ("mqtt_username", "mqtt_password", "tls_certificate", "cloudf
 def merge_existing_secrets(paths: Paths, config: dict) -> dict:
     """Fehlende Geheimnisse = vorhandene behalten (Plan G2a Praezisierung 2); die einzige Stelle dieser Regel.
     Das MQTT-Passwort gehoert zum Benutzernamen, das Tunnel-Geheimnis zum Tunnel: ohne mqtt_username bzw. cloudflared
-    (Abmelden) bleiben sie nicht erhalten."""
+    (Abmelden) bleiben sie nicht erhalten. Aus einer abgemeldeten Einrichtung wird nie etwas uebernommen."""
     existing = load_raw(paths)
     merged = dict(config)
+    if existing.get("abgemeldet") is True:
+        return merged
     if "installation_token" not in merged and existing.get("installation_token"):
         merged["installation_token"] = existing["installation_token"]
     if "mqtt_password" not in merged and merged.get("mqtt_username") and existing.get("mqtt_password"):
@@ -52,6 +54,20 @@ def write_config(paths: Paths, config: dict) -> None:
     write_json(paths.runtime_config, public)
 
 
+def remove_setup(paths: Paths, *, keep_new_credentials: bool = False) -> None:
+    """Entfernt eine (abgemeldete) Einrichtung: zuerst den Laufzeit-Ordner (Praezisierung 3), dann Geheimnisse,
+    Transport-Schluessel und Treiber-Tokens, die Konfiguration mit der Markierung `abgemeldet` ZULETZT; bricht es
+    mittendrin ab (Stromausfall), findet der naechste Durchlauf die Markierung und raeumt den Rest weg.
+    keep_new_credentials (apply_config): Transport-Schluessel und Treiber-Tokens stammen dann aus create_csr bzw.
+    driver_login derselben neuen Einrichtung (der alte Schluessel ist seit sign_off weg) und bleiben."""
+    shutil.rmtree(paths.runtime_dir, ignore_errors=True)
+    paths.runtime_secrets.unlink(missing_ok=True)
+    if not keep_new_credentials:
+        paths.transport_key.unlink(missing_ok=True)
+        shutil.rmtree(paths.driver_secrets_dir, ignore_errors=True)
+    paths.runtime_config.unlink(missing_ok=True)
+
+
 def _status_with(ctx: AgentContext, setup_id: str) -> dict | None:
     status = ctx.runtime_status
     return status if status is not None and status.get("setup_id") == setup_id else None
@@ -70,8 +86,14 @@ def apply_config(ctx: AgentContext, payload: dict) -> Outcome:
         candidate["tls_private_key"] = ctx.paths.transport_key.read_text()
     try:
         parse(candidate, ctx.paths)
-    except ConfigError as error:
-        return Failed("konfiguration_ungueltig", f"Die Konfiguration ist ungültig: {redact(str(error), candidate)}")
+    except Exception as error:  # jeder Fehlertext geschwaerzt, nie ungeschwaerzt in logger.exception (Regel 6)
+        text = redact(str(error), candidate)
+        if not isinstance(error, ConfigError):
+            logger.error("apply_config: Pruefung gescheitert (%s): %s", type(error).__name__, text)
+        return Failed("konfiguration_ungueltig", f"Die Konfiguration ist ungültig: {text}")
+    if load_raw(ctx.paths).get("abgemeldet") is True:
+        # Abgemeldet (auch mit gescheitertem Zuruecksetzen): neu einrichten wie frisch installiert (Praezisierung 3).
+        remove_setup(ctx.paths, keep_new_credentials=True)
     write_config(ctx.paths, config)
     ctx.bus.publish(topics.CMD_RELOAD, {"setup_id": setup_id})
 
@@ -122,8 +144,9 @@ def sign_off(ctx: AgentContext, payload: dict) -> Outcome:
         config = {k: v for k, v in raw.items() if k not in (*_CREDENTIAL_KEYS, "tls_private_key")}
         config.update(setup_id=setup_id, abgemeldet=True)
         write_config(ctx.paths, config)
-        ctx.paths.transport_key.unlink(missing_ok=True)
         ctx.bus.publish(topics.CMD_RELOAD, {"setup_id": setup_id})
+    # Immer, auch beim erneuten Zustellen: ein Abbruch zwischen write_config und hier liesse ihn sonst liegen.
+    ctx.paths.transport_key.unlink(missing_ok=True)
 
     def check() -> Done | Failed | None:
         status = _status_with(ctx, setup_id)
@@ -135,9 +158,8 @@ def sign_off(ctx: AgentContext, payload: dict) -> Outcome:
 
 
 def cleanup_after_sign_off(ctx: AgentContext) -> bool:
-    """Abschnitt 6.4 Punkt 3: erst wenn die Laufzeit abgemeldet OHNE Ruecksetzfehler ruht, Laufzeit-Ordner, dann
-    Konfiguration, Geheimnisse und Treiber-Tokens loeschen; Geraet, Zigbee und Kontingent bleiben.
-    True = aufgeraeumt."""
+    """Abschnitt 6.4 Punkt 3: erst wenn die Laufzeit abgemeldet OHNE Ruecksetzfehler ruht, die Einrichtung entfernen
+    (remove_setup, Konfiguration zuletzt); Geraet, Zigbee und Kontingent bleiben. True = aufgeraeumt."""
     raw = load_raw(ctx.paths)
     setup_id = raw.get("setup_id")
     if raw.get("abgemeldet") is not True or not isinstance(setup_id, str):
@@ -145,11 +167,7 @@ def cleanup_after_sign_off(ctx: AgentContext) -> bool:
     status = _status_with(ctx, setup_id)
     if status is None or status.get("status") != STATUS_ABGEMELDET or status.get("grund") is not None:
         return False
-    shutil.rmtree(ctx.paths.runtime_dir, ignore_errors=True)
-    ctx.paths.runtime_config.unlink(missing_ok=True)
-    ctx.paths.runtime_secrets.unlink(missing_ok=True)
-    ctx.paths.transport_key.unlink(missing_ok=True)
-    shutil.rmtree(ctx.paths.driver_secrets_dir, ignore_errors=True)
+    remove_setup(ctx.paths)
     ctx.bus.publish(topics.CMD_RELOAD, {"setup_id": None})
     logger.info("Abmelden abgeschlossen, Gateway wieder frei (gleicher Uebernahme-Code)")
     return True
