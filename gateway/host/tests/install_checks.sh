@@ -4,8 +4,13 @@ set -u
 FAIL=0
 fail() { echo "FAIL: $1"; FAIL=1; }
 SRC=/src/gateway/host
+# Release-Bundles bringen manifest.json.minisig mit, die Fixture nicht: die Laeufe mit Pilot-SSH nutzen eine Kopie mit
+# Signatur, die ohne Pilot-SSH die Fixture selbst (Signatur optional).
+SIGNED_BUNDLE=/tmp/bundle-signed
+cp -r "$SRC/tests/fixtures/bundle" "$SIGNED_BUNDLE"
+printf 'untrusted comment: signature from minisign secret key\ntest-signatur\n' >"$SIGNED_BUNDLE/manifest.json.minisig"
 ARGS=(--no-docker --no-activate --device-api-url https://api.example.test --root /var/lib/smartheat
-      --bundle "$SRC/tests/fixtures/bundle" --pilot-ssh "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAItest test-key")
+      --bundle "$SIGNED_BUNDLE" --pilot-ssh "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAItest test-key")
 # Aelterer Installer-Stand: smartheat.conf (statt 00-smartheat.conf) muss beim Lauf verschwinden.
 mkdir -p /etc/ssh/sshd_config.d && echo "PasswordAuthentication yes" >/etc/ssh/sshd_config.d/smartheat.conf
 bash "$SRC/install.sh" "${ARGS[@]}" >/tmp/run1.log 2>&1 || { cat /tmp/run1.log; fail "erster Lauf"; }
@@ -52,6 +57,12 @@ grep -q "/var/lib/smartheat/host/zigbee_adapter" /etc/udev/rules.d/99-smartheat-
 [ "$(stat -c '%u:%g' /var/lib/smartheat/data)" = "1000:1000" ] || fail "data gehoert nicht uid 1000"
 grep -q '^SHG_DEVICE_API_URL=https://api.example.test$' /var/lib/smartheat/host/gateway.env || fail "gateway.env"
 grep -q '"current": "0.2.0"' /var/lib/smartheat/updater/state.json || fail "erstes Bundle nicht als current"
+for name in docker-compose.yml mosquitto.conf manifest.json manifest.json.minisig; do
+  cmp -s "$SIGNED_BUNDLE/$name" "/var/lib/smartheat/bundles/0.2.0/$name" || fail "Bundle-Ordner ohne $name (Spec 2.2)"
+done
+dpkg-query -W -f='${Status}' ca-certificates 2>/dev/null | grep -q "install ok installed" \
+  || fail "ca-certificates nicht installiert (Updater-HTTPS, docker pull)"
+grep -q "WARNUNG: ohne --pilot-ssh" /tmp/run1.log && fail "SSH-Warnung trotz --pilot-ssh"
 [ "$(stat -c '%a' /root/.ssh/authorized_keys)" = "600" ] || fail "authorized_keys"
 PYTHONPATH=/opt/smartheat/host python3 -c "import smartheat_host.updater, smartheat_host.led, smartheat_host.hoststatus, smartheat_host.minisign" \
   || fail "Host-Dienste mit dem System-Python nicht importierbar"
@@ -74,6 +85,7 @@ ARGS_NOPILOT=(--no-docker --no-activate --device-api-url https://api.example.tes
               --bundle "$SRC/tests/fixtures/bundle")
 bash "$SRC/install.sh" "${ARGS_NOPILOT[@]}" >/tmp/run3.log 2>&1 || { cat /tmp/run3.log; fail "Lauf ohne Pilot-SSH"; }
 [ ! -e /etc/ssh/sshd_config.d/00-smartheat.conf ] || fail "Drop-in ohne --pilot-ssh nicht entfernt"
+grep -q "WARNUNG: ohne --pilot-ssh wird ssh deaktiviert" /tmp/run3.log || { cat /tmp/run3.log; fail "keine SSH-Warnung ohne --pilot-ssh"; }
 grep -q 'dport 22' /etc/smartheat/nftables.conf && fail "Port 22 ohne --pilot-ssh in der Firewall"
 grep -q '@PILOT_SSH@' /etc/smartheat/nftables.conf && fail "@PILOT_SSH@ nicht ersetzt"
 nft -c -f /etc/smartheat/nftables.conf || fail "nftables-Regeln ohne Pilot ungueltig"
@@ -114,5 +126,43 @@ sed 's|^After=local-fs.target|After=multi-user.target|' /etc/systemd/system/smar
 ln -sf /etc/systemd/system/smartheat-cycle.service /etc/systemd/system/multi-user.target.wants/smartheat-cycle.service
 cycle_check smartheat-cycle.service >/tmp/cycle2.log
 grep -qi 'ordering cycle' /tmp/cycle2.log || { cat /tmp/cycle2.log; fail "Zyklus-Test erkennt das Gegenbeispiel nicht"; }
+# Aktivierung mit Attrappen fuer systemctl, udevadm, docker und dpkg-query (der Container hat weder systemd noch Docker):
+# das laufende Bundle startet nur ohne offenen Updater-Auftrag und mit allen Geraeten aus devices: (Final-Review FW-2,
+# FW-10); fehlt eines, sagt der Installer das klar, statt an `docker compose up` abzubrechen.
+STUBS=/tmp/stubs
+mkdir -p "$STUBS"
+for cmd in systemctl udevadm docker; do
+  printf '#!/bin/sh\necho "%s $*" >>/tmp/stub.log\n' "$cmd" >"$STUBS/$cmd"
+done
+printf '#!/bin/sh\necho "install ok installed"\n' >"$STUBS/dpkg-query"  # alle Pakete gelten als installiert
+chmod +x "$STUBS"/*
+STICK=/tmp/fake-zigbee
+ACT_BUNDLE=/tmp/bundle-act
+cp -r "$SRC/tests/fixtures/bundle" "$ACT_BUNDLE"
+printf '  zigbee2mqtt:\n    image: koenkk/zigbee2mqtt@sha256:%s\n    devices:\n    - %s:/dev/zigbee\n' \
+  "$(printf '%064d' 0 | tr 0 b)" "$STICK" >>"$ACT_BUNDLE/docker-compose.yml"
+ACT_ROOT=/var/lib/smartheat-act
+activate_run() {
+  : >/tmp/stub.log
+  PATH="$STUBS:$PATH" bash "$SRC/install.sh" --device-api-url https://api.example.test --root "$ACT_ROOT" \
+    --bundle "$ACT_BUNDLE" >/tmp/act.log 2>&1 || { cat /tmp/act.log; fail "Aktivierung: $1 bricht ab"; }
+}
+compose_started() { grep -q "^docker compose -p smartheat .*/bundles/0.2.0/docker-compose.yml up -d" /tmp/stub.log; }
+activate_run "ohne Stick"
+grep -q "Geraet fehlt: $STICK" /tmp/act.log || { cat /tmp/act.log; fail "Aktivierung ohne Stick: keine klare Meldung"; }
+compose_started && fail "Aktivierung ohne Stick: compose up trotzdem aufgerufen"
+grep -q "^systemctl enable --now docker.service smartheat-updater.service" /tmp/stub.log || fail "Updater nicht aktiviert"
+touch "$STICK"
+activate_run "mit Stick"
+compose_started || { cat /tmp/act.log /tmp/stub.log; fail "Aktivierung mit Stick startet das Bundle nicht"; }
+python3 -c '
+import json, sys
+path = sys.argv[1]
+state = json.load(open(path))
+state["in_progress"] = {"version": "0.3.0", "previous": "0.2.0", "since": 1.0}
+json.dump(state, open(path, "w"))' "$ACT_ROOT/updater/state.json"
+activate_run "mit offenem Updater-Auftrag"
+grep -q "Updater-Auftrag fuer 0.3.0 offen" /tmp/act.log || { cat /tmp/act.log; fail "offener Auftrag: keine Meldung"; }
+compose_started && fail "offener Updater-Auftrag: compose up trotzdem aufgerufen"
 command -v shellcheck >/dev/null && { shellcheck "$SRC/install.sh" "$SRC/tests/install_checks.sh" || fail "shellcheck"; }
 exit $FAIL

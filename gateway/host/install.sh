@@ -3,6 +3,9 @@
 # chroot mit --no-activate) und fuer Bastler auf frischem Raspberry Pi OS Lite 64 bit (Debian 13 trixie).
 # Aufruf: install.sh --device-api-url URL [--portal-base-url URL] [--diag-hostnames NAMEN] [--timezone ZONE]
 #                    [--bundle ORDNER] [--pilot-ssh PUBKEY] [--root PFAD] [--no-docker] [--no-activate]
+# ACHTUNG: Ohne --pilot-ssh bleibt Port 22 in der Firewall zu und ssh wird deaktiviert (laufende Sitzungen bestehen bis
+# zu ihrem Ende weiter, neue sind nicht mehr moeglich). --bundle: Ordner mit docker-compose.yml, mosquitto.conf,
+# manifest.json und (optional) manifest.json.minisig.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 GW="$(cd "$HERE/.." && pwd)"
@@ -26,6 +29,10 @@ done
 [ -n "$API_URL" ] || { echo "--device-api-url fehlt" >&2; exit 2; }
 ROOT="${ROOT%/}"
 [ -n "$ROOT" ] || { echo "--root darf nicht / sein" >&2; exit 2; }
+if [ -z "$PILOT_KEY" ]; then
+  echo "WARNUNG: ohne --pilot-ssh wird ssh deaktiviert und Port 22 bleibt zu (laufende Sitzungen bestehen bis zu ihrem" \
+    "Ende weiter, neue sind nicht mehr moeglich)." >&2
+fi
 CHANGED=0 WROTE=0 FIREWALL_CHANGED=0
 
 # Bricht ab, wenn $1 (unter ROOT) oder eine Komponente zwischen ROOT und $1 ein Symlink ist. Ordner unter ROOT
@@ -67,7 +74,7 @@ dir() {  # Ordner $1 mit Modus $2 und Eigentuemer $3
 subst() { sed -e "s|@ROOT@|$ROOT|g" "$1"; }
 
 packages() {
-  local wanted=(python3 python3-cryptography unattended-upgrades nftables)
+  local wanted=(python3 python3-cryptography unattended-upgrades nftables ca-certificates)  # CA: Updater-HTTPS, pull
   [ "$DOCKER" = 1 ] && wanted+=(docker.io docker-compose)
   local missing=() pkg
   for pkg in "${wanted[@]}"; do
@@ -144,6 +151,10 @@ first_bundle() {
   for name in docker-compose.yml mosquitto.conf manifest.json; do
     put "$ROOT/bundles/$version/$name" 0644 0:0 <"$BUNDLE/$name"
   done
+  # Signatur des Manifests (Spec 2.2) - ein Release-Bundle hat sie, Test-Fixtures nicht.
+  if [ -f "$BUNDLE/manifest.json.minisig" ]; then
+    put "$ROOT/bundles/$version/manifest.json.minisig" 0644 0:0 <"$BUNDLE/manifest.json.minisig"
+  fi
   if [ ! -f "$ROOT/updater/state.json" ]; then
     put "$ROOT/updater/state.json" 0644 0:0 < <(printf \
       '{"current": "%s", "in_progress": null, "previous": null, "rejected": []}' "$version")
@@ -164,12 +175,40 @@ activate() {
     systemctl enable --now ssh.service
     systemctl reload ssh.service
   else systemctl disable --now ssh.service 2>/dev/null || true; fi
-  local current
-  current="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("current") or "")' \
-    "$ROOT/updater/state.json" 2>/dev/null || true)"
-  if [ "$DOCKER" = 1 ] && [ -n "$current" ]; then
-    docker compose -p smartheat --env-file "$ROOT/host/gateway.env" -f "$ROOT/bundles/$current/docker-compose.yml" up -d
+  if [ "$DOCKER" = 1 ]; then start_current; fi
+}
+
+# Feld aus updater/state.json: current bzw. die Version eines offenen Auftrags (in_progress); leer, wenn nicht gesetzt.
+state_field() {
+  python3 -c 'import json, sys
+value = json.load(open(sys.argv[1])).get(sys.argv[2])
+value = value.get("version") if isinstance(value, dict) else value
+print(value if isinstance(value, str) else "")' "$ROOT/updater/state.json" "$1" 2>/dev/null || true
+}
+
+# Startet das laufende Bundle - nicht bei offenem Updater-Auftrag (den schliesst smartheat-updater ab oder rollt ihn
+# zurueck) und nicht, solange ein Geraet aus devices: fehlt (sonst bricht `docker compose up` mitten im Lauf ab).
+start_current() {
+  local current pending compose missing
+  pending="$(state_field in_progress)"
+  if [ -n "$pending" ]; then
+    echo "Updater-Auftrag fuer $pending offen (updater/state.json): docker compose up uebersprungen," \
+      "smartheat-updater schliesst ihn ab oder rollt zurueck"
+    return 0
   fi
+  current="$(state_field current)"
+  [ -n "$current" ] || return 0
+  compose="$ROOT/bundles/$current/docker-compose.yml"
+  [ -f "$compose" ] || { echo "FEHLER: Bundle $current fehlt ($compose)" >&2; exit 1; }
+  missing="$(PYTHONPATH="$OPT" python3 -c 'import os, sys
+from smartheat_host import bundles
+print(" ".join(p for p in bundles.compose_devices(open(sys.argv[1]).read()) if not os.path.exists(p)))' "$compose")"
+  if [ -n "$missing" ]; then
+    echo "HINWEIS: Geraet fehlt: $missing (Zigbee-Stick nicht eingesteckt?). Die Gateway-Dienste sind nicht gestartet;" \
+      "Stick einstecken und install.sh mit denselben Optionen erneut ausfuehren."
+    return 0
+  fi
+  docker compose -p smartheat --env-file "$ROOT/host/gateway.env" -f "$compose" up -d
 }
 
 packages
