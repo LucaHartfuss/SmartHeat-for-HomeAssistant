@@ -1,6 +1,7 @@
 """Laufzeit-Konfiguration des Gateways (Spec SHG G2 3.1, G3 2.5, Plan G2a Praezisierung 2). Der Agent schreibt
 runtime_config.json (ohne Geheimnisse) und secrets/runtime.json; die Laufzeit fuehrt beide (plus den Transport-Schluessel
-aus create_csr) zu einem Options-Dict mit den Namen des Add-ons zusammen und prueft mit smartheat_runtime.options."""
+aus create_csr, nur bei iot_core) zu einem Options-Dict mit den Namen des Add-ons zusammen und prueft mit
+smartheat_runtime.options."""
 import contextlib
 import re
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ from smartheat_runtime import options
 from smartheat_runtime.options import ConfigError
 from smartheat_runtime.runtime_config import BootInfo, RuntimeConfig
 from smartheat_runtime.windows import validate_daily_trigger_time
+from smartheat_transport.descriptor import KIND_IOT_CORE
 
 IEEE = re.compile(r"0x[0-9a-f]{16}")
 ROOM_SENSOR_REF = re.compile(r"zigbee:0x[0-9a-f]{16}:(temperature|local_temperature)|treiber:room_temperature")
@@ -66,9 +68,19 @@ def load_raw(paths: Paths) -> dict:
     raw = {**public, **{key: secrets[key] for key in _SECRET_KEYS if key in secrets}}
     if isinstance(raw.get("cloudflared"), dict) and _CLOUDFLARED_SECRET in secrets:
         raw["cloudflared"] = {**raw["cloudflared"], "service_token_secret": secrets[_CLOUDFLARED_SECRET]}
+    add_transport_key(paths, raw)
+    return raw
+
+
+def add_transport_key(paths: Paths, raw: dict) -> None:
+    """Schluessel aus create_csr als tls_private_key, nur fuer Transport iot_core: bei mosquitto_cloudflared muss das
+    Feld leer sein (credential_for); ein liegengebliebener Schluessel (create_csr, Einrichten abgebrochen) stoert
+    dann nicht."""
+    transport = raw.get("transport")
+    if not isinstance(transport, dict) or transport.get("kind") != KIND_IOT_CORE:
+        return
     with contextlib.suppress(OSError, ValueError):
         raw["tls_private_key"] = paths.transport_key.read_text()
-    return raw
 
 
 def secret_values(raw: dict) -> list[str]:

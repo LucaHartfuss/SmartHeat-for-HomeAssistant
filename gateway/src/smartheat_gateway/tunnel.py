@@ -1,6 +1,11 @@
 """Tunnel-Dienst (Spec SHG G2 6.1): bei Transport mosquitto_cloudflared startet er `cloudflared access tcp` mit
 denselben Parametern wie das Add-on cloudflared_access_mqtt (Token in der Umgebung, nicht in argv, AU-034) und startet
-es bei neuer setup_id neu; bei IoT Core, abgemeldet oder ohne Konfiguration ruht er. Liest /data nur."""
+es bei neuer setup_id oder neuem Token neu; bei IoT Core, abgemeldet oder ohne Konfiguration ruht er. Liest /data nur.
+Der Dienst endet nie: die Laufzeit teilt seinen Netz-Namensraum (network_mode service:tunnel), ein Neustart des
+Containers liesse sie in einem toten Namensraum zurueck. Jeder Fehler eines Durchlaufs wird protokolliert, der naechste
+Durchlauf versucht es erneut."""
+import hashlib
+import json
 import logging
 import subprocess
 import time
@@ -21,9 +26,10 @@ def tunnel_command(raw: dict) -> tuple[list[str], dict[str, str]] | None:
         return None
     if not isinstance(cloudflared, dict) or not all(cloudflared.get(key) for key in _CLOUDFLARED_KEYS):
         return None
-    argv = [
-        "cloudflared", "access", "tcp", "--hostname", cloudflared["hostname"], "--url", f"127.0.0.1:{transport['port']}",
-    ]
+    port = transport.get("port")
+    if port is None:
+        return None
+    argv = ["cloudflared", "access", "tcp", "--hostname", cloudflared["hostname"], "--url", f"127.0.0.1:{port}"]
     env = {
         "TUNNEL_SERVICE_TOKEN_ID": cloudflared["service_token_id"],
         "TUNNEL_SERVICE_TOKEN_SECRET": cloudflared["service_token_secret"],
@@ -42,26 +48,52 @@ def _stop(child: subprocess.Popen) -> None:
         child.wait()
 
 
+def restart_key(raw: dict, command: tuple[list[str], dict[str, str]] | None) -> tuple:
+    """Neustart bei anderer setup_id, anderem argv oder anderer Umgebung; die Umgebung (Token) nur als Hash, nie im
+    Klartext im Speicher des Schluessels."""
+    if command is None:
+        return (raw.get("setup_id"), None, None)
+    argv, env = command
+    env_hash = hashlib.sha256(json.dumps(env, sort_keys=True).encode()).hexdigest()
+    return (raw.get("setup_id"), tuple(argv), env_hash)
+
+
+class TunnelLoop:
+    def __init__(self, paths, *, popen=subprocess.Popen) -> None:
+        self._paths, self._popen = paths, popen
+        self._child: subprocess.Popen | None = None
+        self._running_for: tuple | None = None
+
+    def tick(self) -> None:
+        """Ein Durchlauf; wirft nie."""
+        try:
+            self._tick()
+        except Exception:
+            logger.exception("Tunnel: Fehler im Durchlauf, naechster Versuch in %s s", CHECK_SECONDS)
+
+    def _tick(self) -> None:
+        raw = load_raw(self._paths)
+        command = tunnel_command(raw)
+        key = restart_key(raw, command)
+        if key == self._running_for and (self._child is None or self._child.poll() is None):
+            return
+        if self._child is not None:
+            _stop(self._child)
+        self._child = None
+        if command is not None:
+            argv, env = command
+            logger.info("Starte cloudflared fuer %s", argv[4])
+            self._child = self._popen(argv, env={"PATH": "/usr/local/bin:/usr/bin:/bin", **env})
+        else:
+            logger.info("Tunnel ruht (kein mosquitto_cloudflared-Transport)")
+        self._running_for = key
+
+
 def main() -> None:  # pragma: no cover - Container-Einstieg
     logging.basicConfig(level=logging.INFO)
-    paths = from_env()
-    child: subprocess.Popen | None = None
-    running_for: tuple | None = None
+    loop = TunnelLoop(from_env())
     while True:
-        raw = load_raw(paths)
-        command = tunnel_command(raw)
-        key = (raw.get("setup_id"), tuple(command[0]) if command else None)
-        if key != running_for or (child is not None and child.poll() is not None):
-            if child is not None:
-                _stop(child)
-            child = None
-            if command is not None:
-                argv, env = command
-                logger.info("Starte cloudflared fuer %s", argv[4])
-                child = subprocess.Popen(argv, env={"PATH": "/usr/local/bin:/usr/bin:/bin", **env})
-            else:
-                logger.info("Tunnel ruht (kein mosquitto_cloudflared-Transport)")
-            running_for = key
+        loop.tick()
         time.sleep(CHECK_SECONDS)
 
 

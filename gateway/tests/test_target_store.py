@@ -55,6 +55,16 @@ def test_echo_window_and_thermostat_rounding(tmp_path, clock):
     assert store.value == 21.0
 
 
+def test_thermostat_report_of_the_current_value_is_a_no_op(tmp_path, clock):
+    changes = []
+    store = _store(tmp_path, clock, changes=changes)
+    assert store.apply_portal(21.5)
+    store.note_own_write()
+    clock.advance(61)
+    assert not store.apply_thermostat(21.5)  # Echo nach dem Fenster: kein Wechsel der Quelle, keine Meldung
+    assert (store.value, store.source, len(changes)) == (21.5, SOURCE_PORTAL, 1)
+
+
 def test_thermostat_plausibility_without_clamp(tmp_path, clock):
     store = _store(tmp_path, clock)
     assert store.apply_thermostat(30.0)        # ausserhalb 15-25, aber plausibel: gilt (kein Clamp)

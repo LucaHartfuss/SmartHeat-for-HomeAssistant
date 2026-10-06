@@ -4,7 +4,7 @@ import logging
 import time
 
 import pytest
-from configs import apply_config
+from configs import apply_config, write_runtime_files
 from fake_z2m import FakeZigbee2Mqtt
 from fakes import FakeBus
 
@@ -14,6 +14,7 @@ from smartheat_gateway.agent import loop as loop_module
 from smartheat_gateway.agent.api_client import DeviceApiClient, NotAuthenticated, Rejected
 from smartheat_gateway.agent.context import AgentContext
 from smartheat_gateway.agent.loop import AgentLoop
+from smartheat_gateway.config import load_raw
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.zigbee import ZigbeeMirror
 
@@ -230,6 +231,33 @@ def test_waiting_command_completes_when_confirmed(agent, api, clock):
     agent.ctx.bus.publish(topics.STATUS, {"schema": 2, "status": "startet", "setup_id": "setup-1"}, retain=True)
     agent.run_once()
     assert api.result_of(command_id) == {"ok": True, "result": {"setup_id": "setup-1"}, "error": None}
+
+
+def test_redelivered_sign_off_after_a_restart_reports_the_reset_before_cleanup(agent, api, clock, monkeypatch):
+    agent.run_once()
+    api.claim()
+    write_runtime_files(agent.ctx.paths, apply_config())
+    command_id = api.enqueue("sign_off", {})
+    clock.advance(POLL)
+    agent.run_once()  # sign_off wartet auf die Laufzeit
+    assert api.result_of(command_id) is None
+    setup_id = load_raw(agent.ctx.paths)["setup_id"]
+    restarted = _restart(agent)  # Agent-Neustart, der wartende Befehl lebt nur im Speicher
+    agent.ctx.bus.publish(
+        topics.STATUS, {"schema": 2, "status": "abgemeldet", "setup_id": setup_id, "grund": None}, retain=True,
+    )
+
+    def unavailable(*args, **kwargs):
+        raise loop_module.ApiUnavailable("test")
+
+    monkeypatch.setattr(restarted.api, "register", unavailable)
+    restarted.run_once()  # erster Kontakt scheitert: noch nicht aufraeumen
+    assert agent.ctx.paths.runtime_config.exists()
+    monkeypatch.undo()
+    clock.advance(loop_module.MAX_BACKOFF_SECONDS)
+    restarted.run_once()  # Server liefert sign_off erneut, Ergebnis zuerst, dann aufraeumen
+    assert api.result_of(command_id) == {"ok": True, "result": {"zurueckgesetzt": True, "werte": {}}, "error": None}
+    assert not agent.ctx.paths.runtime_config.exists()
 
 
 def _waiting_kinds() -> set[str]:

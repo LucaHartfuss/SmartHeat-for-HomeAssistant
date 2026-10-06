@@ -38,7 +38,6 @@ class BusTriggerSource:
         self._sensor_ieees = frozenset(sensor_ieees)
         self._daily = daily_trigger_time
         self._now = now
-        self._last_thermostat: float | None = None
         self._debouncer = Debouncer(
             worker, DEBOUNCE_KIND, ROOM_TARGET_DEBOUNCE_SECONDS,
             lambda: worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=True),
@@ -70,10 +69,10 @@ class BusTriggerSource:
 
     def _on_device_message(self, ieee: str, payload: dict) -> None:
         if ieee == self._thermostat and "occupied_heating_setpoint" in payload:
+            # Jede Meldung geht in den Worker, kein Entprellen hier: der Soll-Speicher verwirft den aktuellen Wert, und
+            # eine im Echo-Fenster verworfene Aenderung gilt mit der naechsten Meldung des Thermostats.
             value = payload["occupied_heating_setpoint"]
-            if value != self._last_thermostat:
-                self._last_thermostat = value
-                self._worker.post(Event(EV_TARGET_INPUT, {"value": value, "source": SOURCE_THERMOSTAT}))
+            self._worker.post(Event(EV_TARGET_INPUT, {"value": value, "source": SOURCE_THERMOSTAT}))
         if ieee in self._sensor_ieees:
             self._worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=False)
 

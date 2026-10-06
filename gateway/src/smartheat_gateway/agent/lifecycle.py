@@ -2,7 +2,6 @@
 set_room_target, sign_off und das Aufraeumen nach dem Abmelden. Der Agent schreibt runtime_config.json und secrets/
 (Geheimnisse zuerst, Review Focus 3) und meldet der Laufzeit per shg/cmd/reload; bestaetigt wird ueber shg/status bzw.
 shg/raum. Ein Schreiber je Datei: den Laufzeit-Ordner loescht der Agent nur, wenn die Laufzeit abgemeldet ruht."""
-import contextlib
 import logging
 import shutil
 import uuid
@@ -10,7 +9,15 @@ import uuid
 from smartheat_gateway import topics
 from smartheat_gateway.agent.commands import Done, Failed, InvalidPayload, Outcome, Waiting, register
 from smartheat_gateway.agent.context import AgentContext
-from smartheat_gateway.config import check_apply_config, is_configured, load_raw, parse, redact, split_secrets
+from smartheat_gateway.config import (
+    add_transport_key,
+    check_apply_config,
+    is_configured,
+    load_raw,
+    parse,
+    redact,
+    split_secrets,
+)
 from smartheat_gateway.files import read_json, write_json
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.target_store import is_valid_portal_target
@@ -82,8 +89,7 @@ def apply_config(ctx: AgentContext, payload: dict) -> Outcome:
     if problem:
         return Failed("konfiguration_ungueltig", f"Die Konfiguration ist ungültig ({problem}).")
     candidate = merge_existing_secrets(ctx.paths, config)
-    with contextlib.suppress(OSError, ValueError):  # Schluessel aus create_csr, nur fuer die Pruefung
-        candidate["tls_private_key"] = ctx.paths.transport_key.read_text()
+    add_transport_key(ctx.paths, candidate)  # Schluessel aus create_csr (nur iot_core), nur fuer die Pruefung
     try:
         parse(candidate, ctx.paths)
     except Exception as error:  # jeder Fehlertext geschwaerzt, nie ungeschwaerzt in logger.exception (Regel 6)

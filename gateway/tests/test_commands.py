@@ -97,6 +97,14 @@ def test_create_csr_writes_a_private_key_and_returns_only_the_csr(ctx):
     assert execute(ctx, "create_csr", {}).grund == "ungueltige_nutzlast"
 
 
+def test_create_csr_keeps_the_current_key_when_the_csr_cannot_be_built(ctx):
+    ctx.paths.transport_key.parent.mkdir(parents=True, exist_ok=True)
+    ctx.paths.transport_key.write_text("test-current-key")
+    outcome = execute(ctx, "create_csr", {"tenant_id": "t" * 65})  # CN laenger als 64 Zeichen: ValueError
+    assert isinstance(outcome, Failed) and outcome.grund == "intern"
+    assert ctx.paths.transport_key.read_text() == "test-current-key"
+
+
 def test_new_claim_code_only_while_unclaimed(ctx):
     old = ctx.identity.claim_code
     ctx.device_state = "uebernommen"

@@ -187,13 +187,13 @@ def _create_csr(ctx: AgentContext, payload: dict) -> Outcome:
     if not isinstance(tenant_id, str) or not tenant_id:
         raise InvalidPayload("tenant_id fehlt.")
     key = ec.generate_private_key(ec.SECP256R1())
-    pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
-    write_text_private(ctx.paths.transport_key, pem.decode())
-    csr = (
+    csr = (  # zuerst bauen und signieren: scheitert es, bleibt der vorhandene Schluessel unangetastet
         x509.CertificateSigningRequestBuilder()
         .subject_name(x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, tenant_id)]))
         .sign(key, hashes.SHA256())
     )
+    pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    write_text_private(ctx.paths.transport_key, pem.decode())
     return Done({"csr": csr.public_bytes(serialization.Encoding.PEM).decode()})
 
 

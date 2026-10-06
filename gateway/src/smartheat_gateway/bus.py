@@ -61,9 +61,12 @@ class LocalBus:
         return self._connected.is_set()
 
     def subscribe(self, topic_filter: str, callback: Callback) -> None:
+        # Anhaengen und `connected` lesen unter derselben Sperre wie Momentaufnahme+set() in _on_connect: das Abo
+        # steht entweder in der Momentaufnahme oder wird hier gesendet (doppeltes SUBSCRIBE ist harmlos).
         with self._lock:
             self._subscriptions.append((topic_filter, callback))
-        if self.connected:
+            connected = self._connected.is_set()
+        if connected:
             self._client.subscribe(topic_filter, qos=1)
 
     def publish(self, topic: str, payload, *, retain: bool = False) -> None:
@@ -90,9 +93,9 @@ class LocalBus:
             return
         with self._lock:
             filters = [topic_filter for topic_filter, _ in self._subscriptions]
+            self._connected.set()
         for topic_filter in filters:
             client.subscribe(topic_filter, qos=1)
-        self._connected.set()
         for hook in self._hooks:
             try:
                 hook()

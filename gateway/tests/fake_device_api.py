@@ -156,8 +156,8 @@ class FakeDeviceApi:
                 key = serialization.load_der_public_key(base64.b64decode(data["public_key"]))
                 if device_id_for(key) != device_id or data.get("device_id") != device_id:
                     return False
-                if device is not None and device["public_key"] != data["public_key"]:
-                    return False
+                if device is not None and (device["public_key"] != data["public_key"] or device["state"] == "gesperrt"):
+                    return False  # gesperrt: 401 wie jede andere Route (G3 2.1)
             else:
                 if device is None or device["state"] == "gesperrt" or params.get("device_id") != device_id:
                     return False

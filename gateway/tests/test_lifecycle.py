@@ -65,6 +65,14 @@ def test_apply_config_keeps_missing_secrets(ctx):
     assert raw["mqtt_password"] == "test-password" and raw["cloudflared"]["service_token_secret"] == "test-secret"
 
 
+def test_apply_config_ignores_a_stale_transport_key_for_mosquitto(ctx):
+    # create_csr, Einrichten abgebrochen: der Schluessel liegt noch da, die neue Konfiguration nutzt mosquitto_cloudflared
+    assert isinstance(execute(ctx, "create_csr", {"tenant_id": "test-tenant"}), Done)
+    outcome = execute(ctx, "apply_config", {"setup_id": "setup-1", "config": apply_config()})
+    assert isinstance(outcome, Waiting)
+    assert "tls_private_key" not in load_raw(ctx.paths)
+
+
 def test_apply_config_rejections(ctx):
     assert execute(ctx, "apply_config", {"setup_id": "a", "config": apply_config()}).grund == "ungueltige_nutzlast"
     bad = execute(ctx, "apply_config", {"setup_id": "setup-1", "config": apply_config(room_target_start=30.0)})

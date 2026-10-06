@@ -48,6 +48,18 @@ def test_foreign_key_gets_the_same_401(api, data_dir, tmp_path):
         impostor.commands()
 
 
+def test_blocked_device_gets_401_on_every_route_including_register(api, data_dir):
+    ident = identity.load_or_create(Paths(data_dir))
+    client = DeviceApiClient(api.url, ident)
+    client.register("0.1.0", CAPS)
+    api.block()
+    with pytest.raises(NotAuthenticated):
+        client.register("0.1.0", CAPS)
+    with pytest.raises(NotAuthenticated):
+        client.commands()
+    assert api.registrations == 1
+
+
 def test_unreachable_server(data_dir):
     client = DeviceApiClient("http://127.0.0.1:9", identity.load_or_create(Paths(data_dir)), timeout=0.5)
     with pytest.raises(ApiUnavailable):

@@ -85,6 +85,23 @@ def test_thermostat_change_is_taken_after_the_echo_window(world, clock):
     assert ("check", True) in checks
 
 
+def test_thermostat_change_inside_the_echo_window_is_taken_from_a_later_identical_report(world, clock):
+    bus, z2m, worker, store, checks = world
+    bus.publish(topics.CMD_ROOM_TARGET, {"value": 22.0, "source": "portal", "ts": "x"})
+    worker.run_pending()  # schreibt 22 ans Thermostat, Echo-Fenster 60 s
+    clock.advance(30)
+    z2m.report(THERMOSTAT, occupied_heating_setpoint=23.0, local_temperature=20.0)  # Nutzer dreht im Fenster
+    worker.run_pending()
+    assert store.value == 22.0  # im Fenster als Echo verworfen
+    clock.advance(31)
+    z2m.report(THERMOSTAT, occupied_heating_setpoint=23.0, local_temperature=20.1)  # naechste Meldung, gleicher Wert
+    worker.run_pending()
+    assert (store.value, store.source) == (23.0, "thermostat")
+    clock.advance(10)
+    worker.run_pending()
+    assert ("check", True) in checks
+
+
 def test_daily_trigger_time_posts_a_check(world, clock):
     _, _, worker, _, checks = world
     clock.advance(61)

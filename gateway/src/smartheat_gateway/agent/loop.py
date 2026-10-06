@@ -1,6 +1,6 @@
 """Agent-Schleife (Spec SHG G2 6.3): registrieren (Backoff bis zur Annahme), Befehle im Takt poll_after holen und
 ausfuehren, wartende Befehle jede Runde pruefen, Status bei Aenderung und alle 300 s, Meldungen bei Aenderung,
-Aufraeumen nach dem Abmelden, Agent-Zustand schreiben.
+Aufraeumen nach dem Abmelden (erst nach dem ersten Serverkontakt seit dem Start), Agent-Zustand schreiben.
 
 Erledigte Befehle stehen MIT ihrem Ergebnis in /data/agent/done.json (Liste [command_id, ok, result, error], letzte
 500, aelteste zuerst), geschrieben bevor das Ergebnis hochgeladen wird. Ein erneut gelieferter Befehl (Melden
@@ -145,10 +145,13 @@ class AgentLoop:
                 logger.warning("Geraete-API nicht erreichbar: %s", error)
                 self._contact_failed(now)
         self._check_pending()
-        try:
-            lifecycle.cleanup_after_sign_off(self.ctx)
-        except Exception:
-            logger.exception("Aufraeumen nach dem Abmelden gescheitert, naechster Versuch in der naechsten Runde")
+        # Erst nach dem ersten Kontakt seit dem Start: ein ueber einen Neustart hinweg erneut gelieferter sign_off
+        # ist dann schon ausgefuehrt und gemeldet; sonst faende er die Einrichtung geloescht (nicht_eingerichtet).
+        if self._server_seen:
+            try:
+                lifecycle.cleanup_after_sign_off(self.ctx)
+            except Exception:
+                logger.exception("Aufraeumen nach dem Abmelden gescheitert, naechster Versuch in der naechsten Runde")
         down = None if self._last_ok is None else (now - self._last_ok if self._failures else None)
         self._state.update(derive(
             server_seen=self._server_seen, server_down_seconds=down, device_state=self.ctx.device_state,

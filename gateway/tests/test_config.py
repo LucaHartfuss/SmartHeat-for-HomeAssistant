@@ -98,6 +98,16 @@ def test_secret_values_lists_every_secret(paths):
     assert {"test-password", "test-token", "test-secret"} <= set(values)
 
 
+def test_transport_key_is_only_read_for_iot_core(paths):
+    paths.transport_key.parent.mkdir(parents=True, exist_ok=True)
+    paths.transport_key.write_text("test-key")  # liegt nach create_csr und abgebrochenem Einrichten noch da
+    write_runtime_files(paths, apply_config())
+    assert "tls_private_key" not in config.load_raw(paths)
+    iot = {"kind": "iot_core", "host": "x.example.test", "port": 8883, "alpn": None, "ca_pem": "x", "client_id": "t"}
+    write_runtime_files(paths, apply_config(transport=iot, mqtt_username=None, mqtt_password=None))
+    assert config.load_raw(paths)["tls_private_key"] == "test-key"
+
+
 def test_redact_replaces_secrets_in_plain_and_repr_form(paths):
     write_runtime_files(paths, apply_config(mqtt_password="test-pa'ss\\wort"))
     raw = config.load_raw(paths)

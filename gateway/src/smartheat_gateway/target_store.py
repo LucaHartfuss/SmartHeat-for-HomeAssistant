@@ -1,7 +1,8 @@
 """Soll-Speicher (Spec SHG G2 3.3): /data/runtime/room_target.json = {value, source, ts}, geschrieben nur von der
 Laufzeit (im Worker-Thread). Der zuletzt gestellte Wert gilt. Portal: 15-25 °C in 0,5-K-Schritten (Regel 4,
 Nutzer-Entscheidung 2026-10-06; der Agent prueft vorher, hier erneut). Thermostat: nur Plausibilitaet 5-35 °C, kein
-Clamp. Nach eigenem Schreiben ans Thermostat gelten dessen Meldungen ECHO_WINDOW_SECONDS lang als Echo."""
+Clamp. Nach eigenem Schreiben ans Thermostat gelten dessen Meldungen ECHO_WINDOW_SECONDS lang als Echo; meldet das
+Thermostat das geltende Soll, aendert sich nichts (auch nicht die Quelle)."""
 import logging
 import math
 from collections.abc import Callable
@@ -55,6 +56,8 @@ class TargetStore:
             return False
         if not is_plausible(value, ROOM_TEMP_RANGE):
             logger.warning("Wunschtemperatur %r vom Thermostat unplausibel, verworfen", value)
+            return False
+        if float(value) == self.value:  # Thermostat meldet das geltende Soll (Echo, Wiederholung): keine Aenderung
             return False
         return self._set(float(value), SOURCE_THERMOSTAT)
 
