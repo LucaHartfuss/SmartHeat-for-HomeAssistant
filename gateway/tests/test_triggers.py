@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -8,7 +8,7 @@ from fakes import FakeBus
 
 from smartheat_gateway import topics
 from smartheat_gateway.target_store import TargetStore
-from smartheat_gateway.triggers import BusTriggerSource
+from smartheat_gateway.triggers import BusTriggerSource, seconds_until
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime.runtime import EV_LOCAL_CHECK, EV_SOURCE_CONNECTED
 from smartheat_runtime.worker import RegulationWorker
@@ -107,3 +107,28 @@ def test_daily_trigger_time_posts_a_check(world, clock):
     clock.advance(61)
     worker.run_pending()
     assert ("check", False) in checks
+
+
+def test_daily_tick_across_the_autumn_change():
+    # 2026-10-25 03:00 MESZ -> 02:00 MEZ: der Tag hat 25 Stunden. now = 24.10. 12:12 MESZ (fester Offset wie wallclock).
+    now = datetime(2026, 10, 24, 12, 12, tzinfo=timezone(timedelta(hours=2)))
+    assert seconds_until("12:12", now, BERLIN) == 25 * 3600
+
+
+def test_daily_tick_across_the_spring_change():
+    # 2026-03-29 02:00 MEZ -> 03:00 MESZ: 23 Stunden.
+    now = datetime(2026, 3, 28, 12, 12, tzinfo=timezone(timedelta(hours=1)))
+    assert seconds_until("12:12", now, BERLIN) == 23 * 3600
+
+
+def test_daily_tick_same_day_and_default_zone(monkeypatch):
+    monkeypatch.delenv("TZ", raising=False)
+    now = datetime(2026, 7, 1, 10, 0, tzinfo=timezone(timedelta(hours=2)))
+    assert seconds_until("12:12", now, BERLIN) == 2 * 3600 + 12 * 60
+    assert seconds_until("12:12", now) == 2 * 3600 + 12 * 60  # ohne Zone: Offset von now
+
+
+def test_daily_tick_zone_comes_from_tz(monkeypatch):
+    monkeypatch.setenv("TZ", "Europe/Berlin")
+    now = datetime(2026, 10, 24, 12, 12, tzinfo=timezone(timedelta(hours=2)))
+    assert seconds_until("12:12", now) == 25 * 3600
