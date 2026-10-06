@@ -49,7 +49,7 @@ def test_trigger_callback_coalesces_flood_and_keeps_room_target_flag(clock):
     worker = RegulationWorker(clock=clock)
     seen = []
     worker.register(EV_LOCAL_CHECK, seen.append)
-    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual", "room_target": "sensor.room_target"})
+    manifest = ChannelManifest(refs={"room_actual": "sensor.room_actual", "room_target": "sensor.room_target"})
     callback = triggers.make_trigger_event_callback(manifest, worker)
 
     for _ in range(10):
@@ -71,7 +71,7 @@ def test_trigger_callback_matches_room_target_by_entity_and_attribute(clock, tri
     worker = RegulationWorker(clock=clock)
     seen = []
     worker.register(EV_LOCAL_CHECK, seen.append)
-    manifest = ChannelManifest(entity_ids={
+    manifest = ChannelManifest(refs={
         "room_actual": "climate.wz::current_temperature", "room_target": "climate.wz::temperature",
     })
 
@@ -108,7 +108,7 @@ def test_build_ha_trigger_client_sets_attribute_on_both_room_triggers(
     ha_api.websocket_url.return_value = "ws://x/api/websocket"
 
     triggers.build_ha_trigger_client(
-        ChannelManifest(entity_ids={"room_actual": room_actual, "room_target": room_target}),
+        ChannelManifest(refs={"room_actual": room_actual, "room_target": room_target}),
         {"daily_trigger_time": "12:00"}, ha_api, RegulationWorker(clock=clock),
     )
 
@@ -121,7 +121,7 @@ def test_on_connected_queues_a_fresh_local_check_and_a_status_refresh(monkeypatc
     worker = MagicMock()
     ha_api = MagicMock()
     ha_api.websocket_url.return_value = "ws://x/api/websocket"
-    manifest = ChannelManifest(entity_ids={"room_target": "sensor.t", "room_actual": "sensor.a"})
+    manifest = ChannelManifest(refs={"room_target": "sensor.t", "room_actual": "sensor.a"})
 
     build_ha_trigger_client(manifest, {}, ha_api, worker)
     captured["on_connected"]()

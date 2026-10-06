@@ -23,8 +23,8 @@ def test_build_manifest_with_all_required_roles_succeeds():
         "entity_outdoor_temp": "sensor.aussentemperatur",
     }
     manifest = build_manifest(options, ROOM_ACTUAL)
-    assert manifest.entity_ids["room_actual"] == "sensor.smartheat_t1_raumtemperatur"
-    assert "flow_setpoint" not in manifest.entity_ids
+    assert manifest.refs["room_actual"] == "sensor.smartheat_t1_raumtemperatur"
+    assert "flow_setpoint" not in manifest.refs
 
 
 def test_build_manifest_missing_required_role_raises():
@@ -35,7 +35,7 @@ def test_build_manifest_missing_required_role_raises():
 def test_build_manifest_includes_optional_role_when_present():
     options = {**BASE, "entity_flow_setpoint": "sensor.vl_soll"}
     manifest = build_manifest(options, ROOM_ACTUAL)
-    assert manifest.entity_ids["flow_setpoint"] == "sensor.vl_soll"
+    assert manifest.refs["flow_setpoint"] == "sensor.vl_soll"
 
 
 def test_build_manifest_missing_profile_required_role_raises():
@@ -49,7 +49,7 @@ def test_build_manifest_missing_profile_required_role_raises():
 def test_build_manifest_succeeds_with_all_profile_roles():
     manifest = build_manifest(BASE, ROOM_ACTUAL)
 
-    assert manifest.entity_ids["min_flow"] == "number.mf"
+    assert manifest.refs["min_flow"] == "number.mf"
 
 
 def test_build_manifest_prefers_derived_entity_ids_over_options():
@@ -58,7 +58,7 @@ def test_build_manifest_prefers_derived_entity_ids_over_options():
 
     manifest = build_manifest(options, derived_entity_ids)
 
-    assert manifest.entity_ids["room_target"] == "sensor.smartheat_client1_room_target"
+    assert manifest.refs["room_target"] == "sensor.smartheat_client1_room_target"
 
 
 def test_build_manifest_picks_up_optional_kpi_entity_when_configured():
@@ -66,13 +66,13 @@ def test_build_manifest_picks_up_optional_kpi_entity_when_configured():
 
     manifest = build_manifest(options, ROOM_ACTUAL)
 
-    assert manifest.entity_ids["flow_temperature"] == "sensor.flow"
+    assert manifest.refs["flow_temperature"] == "sensor.flow"
 
 
 def test_build_manifest_omits_unconfigured_kpi_entity():
     manifest = build_manifest(BASE, ROOM_ACTUAL)
 
-    assert "flow_temperature" not in manifest.entity_ids
+    assert "flow_temperature" not in manifest.refs
 
 
 def test_build_manifest_treats_empty_string_kpi_entity_as_unconfigured():
@@ -80,16 +80,16 @@ def test_build_manifest_treats_empty_string_kpi_entity_as_unconfigured():
 
     manifest = build_manifest(options, ROOM_ACTUAL)
 
-    assert "flow_temperature" not in manifest.entity_ids
+    assert "flow_temperature" not in manifest.refs
 
 
 def test_climate_shift_reads_target_temperature_attribute():
-    assert build_manifest(BASE, DERIVED).entity_ids["shift_current"] == "climate.zone::temperature"
+    assert build_manifest(BASE, DERIVED).refs["shift_current"] == "climate.zone::temperature"
 
 
 def test_number_shift_is_kept():
     manifest = build_manifest({**BASE, "entity_shift_current": "number.shift"}, DERIVED)
-    assert manifest.entity_ids["shift_current"] == "number.shift"
+    assert manifest.refs["shift_current"] == "number.shift"
 
 
 @pytest.mark.parametrize("role, value, expected", [
@@ -116,7 +116,7 @@ def test_every_snapshot_lever_is_mapped_by_the_required_roles():
 
 def test_flow_setpoint_is_optional_role():
     manifest = build_manifest({**BASE, "entity_flow_setpoint": "sensor.vl_soll"}, DERIVED)
-    assert manifest.entity_ids["flow_setpoint"] == "sensor.vl_soll"
+    assert manifest.refs["flow_setpoint"] == "sensor.vl_soll"
 
 
 def test_required_roles_are_known_manifest_roles():
@@ -151,4 +151,4 @@ def test_build_manifest_checks_the_roles_of_the_lever_set():
         build_manifest(options, {"room_actual": "sensor.r"}, "weishaupt_wwp_basis")
     manifest = build_manifest({**options, "entity_setpoint_setback": "number.absenk"}, {"room_actual": "sensor.r"},
                               "weishaupt_wwp_basis")
-    assert manifest.entity_ids["mode_select"] == "select.betriebsart"
+    assert manifest.refs["mode_select"] == "select.betriebsart"

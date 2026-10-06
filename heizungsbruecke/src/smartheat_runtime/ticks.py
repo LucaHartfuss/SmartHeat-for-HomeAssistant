@@ -215,10 +215,10 @@ def _notify(rt: Runtime, action) -> None:
     Rollen (room_target, room_actual); beide werden mit ihrer Entity genannt."""
     binding = rt.override.binding
     refs = {
-        **rt.manifest.entity_ids,
+        **rt.manifest.refs,
         **{lever: binding.ref(lever) for lever in binding.description.lever_set.levers if binding.has(lever)},
     }
-    text = delivery.notification_text(action.kind, action.detail, refs)
+    text = delivery.notification_text(action.kind, action.detail, refs, rt.texts)
     key, state = _notice(action.kind, action.detail)
     rt.notifier.notify(key, state, text, critical=True)
 

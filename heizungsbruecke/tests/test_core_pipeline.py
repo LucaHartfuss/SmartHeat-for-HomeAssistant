@@ -20,7 +20,7 @@ SAFETY = LocalSafety(
     emergency_boost_levers=("curve", "room_setpoint", "heat_limit"),
     arrival_threshold_k=0.5,
 )
-MANIFEST = ChannelManifest(entity_ids={
+MANIFEST = ChannelManifest(refs={
     "curve_current": "number.curve", "shift_current": "number.shift", "min_flow": "number.min_flow",
 })
 POINT = {"curve": 0.9, "room_setpoint": 22.0}
@@ -301,7 +301,7 @@ def test_restore_writes_only_known_values(make_store):
 
 
 def test_unmapped_roles_are_neither_read_nor_written(make_store):
-    override, _, ha = _setup(make_store, manifest=ChannelManifest(entity_ids={"curve_current": "number.curve"}))
+    override, _, ha = _setup(make_store, manifest=ChannelManifest(refs={"curve_current": "number.curve"}))
 
     override.set_boosts(comfort=True, emergency=False)
 
@@ -495,7 +495,7 @@ def test_restore_point_with_inactive_zone_refuses_boost(make_store):
 
 
 def test_prepare_start_writes_start_shift_when_zone_is_off(make_store):
-    manifest = ChannelManifest(entity_ids={**MANIFEST.entity_ids, "shift_current": "climate.zone::temperature"})
+    manifest = ChannelManifest(refs={**MANIFEST.refs, "shift_current": "climate.zone::temperature"})
     store = make_store(backup={"restore_point": {"curve": 0.9}})
     ha = RecordingHa({"climate.zone": "auto", "climate.zone::temperature": 0.0})
     ha.set_hvac_mode = lambda entity, mode: ha.events.append(("hvac", entity, mode))
@@ -508,7 +508,7 @@ def test_prepare_start_writes_start_shift_when_zone_is_off(make_store):
 
 
 def test_prepare_start_leaves_a_plausible_manual_zone_alone(make_store):
-    manifest = ChannelManifest(entity_ids={**MANIFEST.entity_ids, "shift_current": "climate.zone::temperature"})
+    manifest = ChannelManifest(refs={**MANIFEST.refs, "shift_current": "climate.zone::temperature"})
     store = make_store(backup={"restore_point": {"curve": 0.9}})
     ha = RecordingHa({"climate.zone": "heat_cool", "climate.zone::temperature": 21.0})
     ha.get_raw_state = lambda entity: ha.states[entity]
@@ -604,7 +604,7 @@ def test_prepare_start_writes_the_start_value_even_if_the_stale_auto_setpoint_al
     # prepare_start stellt auf Manuell um; der (stale, noch aus dem Zeitprogramm stammende) Read
     # zeigt zufaellig schon den Zielwert -- ohne force wuerde das Schreiben faelschlich
     # uebersprungen, obwohl der manuelle Sollwert der Anlage noch unbekannt ist.
-    manifest = ChannelManifest(entity_ids={**MANIFEST.entity_ids, "shift_current": "climate.zone::temperature"})
+    manifest = ChannelManifest(refs={**MANIFEST.refs, "shift_current": "climate.zone::temperature"})
     store = make_store(backup={"restore_point": {"curve": 0.9, "room_setpoint": 21.0}})
     ha = RecordingHa({"climate.zone": "auto", "climate.zone::temperature": 21.0})
     ha.set_hvac_mode = lambda entity, mode: ha.events.append(("hvac", entity, mode))
@@ -620,7 +620,7 @@ def test_prepare_start_writes_the_start_value_even_if_the_stale_auto_setpoint_al
 def test_prepare_start_switches_the_mode_exactly_once(make_store):
     # Ruling #3: der Startwert-Schreibvorgang (ensure_mode=False) darf keinen zweiten
     # set_hvac_mode ausloesen.
-    manifest = ChannelManifest(entity_ids={**MANIFEST.entity_ids, "shift_current": "climate.zone::temperature"})
+    manifest = ChannelManifest(refs={**MANIFEST.refs, "shift_current": "climate.zone::temperature"})
     store = make_store(backup={"restore_point": {"curve": 0.9}})
     ha = RecordingHa({"climate.zone": "auto", "climate.zone::temperature": 0.0})
     ha.set_hvac_mode = lambda entity, mode: ha.events.append(("hvac", entity, mode))
@@ -636,7 +636,7 @@ def test_write_forces_the_shift_write_when_the_zone_had_to_be_switched(make_stor
     # Wie oben, aber ueber den normalen Sollwert-Pfad (_write, nicht prepare_start): eine soeben
     # umgestellte Zone zaehlt als "Parallelverschiebung muss geschrieben werden", auch wenn der
     # (stale) Read schon zufaellig den Zielwert zeigt.
-    manifest = ChannelManifest(entity_ids={**MANIFEST.entity_ids, "shift_current": "climate.zone::temperature"})
+    manifest = ChannelManifest(refs={**MANIFEST.refs, "shift_current": "climate.zone::temperature"})
     store = make_store(backup={"restore_point": {"curve": 0.9, "room_setpoint": 22.0}})
     ha = RecordingHa({"climate.zone": "auto", "climate.zone::temperature": 22.0})
     ha.set_hvac_mode = lambda entity, mode: ha.events.append(("hvac", entity, mode))
@@ -653,7 +653,7 @@ def test_write_forces_the_shift_write_when_the_zone_had_to_be_switched(make_stor
 def test_write_switches_mode_before_writing_curve_and_shift_for_a_climate_zone(make_store):
     # Ruling #11a (Spec 5.2 "Betriebsart -> Steigung -> Parallelverschiebung"): Modus-Wechsel vor
     # der Kurve, die Parallelverschiebung zuletzt.
-    manifest = ChannelManifest(entity_ids={**MANIFEST.entity_ids, "shift_current": "climate.zone::temperature"})
+    manifest = ChannelManifest(refs={**MANIFEST.refs, "shift_current": "climate.zone::temperature"})
     store = make_store(backup={"restore_point": {"curve": 0.9, "room_setpoint": 10.0}})
     ha = RecordingHa({"climate.zone": "auto", "number.curve": 0.5})
     ha.set_hvac_mode = lambda entity, mode: ha.events.append(("hvac", entity, mode))
@@ -674,7 +674,7 @@ def test_write_switches_mode_before_writing_curve_and_shift_for_a_climate_zone(m
 # --- Schonfrist-Details (Task-11-Nacharbeit) ---
 
 def _zone_setup(make_store, clock, states):
-    manifest = ChannelManifest(entity_ids={**MANIFEST.entity_ids, "shift_current": "climate.zone::temperature"})
+    manifest = ChannelManifest(refs={**MANIFEST.refs, "shift_current": "climate.zone::temperature"})
     store = make_store(backup={"restore_point": {"curve": 0.9, "room_setpoint": 22.0}})
     ha = RecordingHa(states)
 
@@ -844,7 +844,7 @@ def test_unavailable_entity_is_not_written_and_not_remembered(make_store, clock)
 
 # --- TP12b: inaktive Zone (B-TP11-2) ---
 
-ZONE_MANIFEST = ChannelManifest(entity_ids={**MANIFEST.entity_ids, "shift_current": "climate.zone::temperature"})
+ZONE_MANIFEST = ChannelManifest(refs={**MANIFEST.refs, "shift_current": "climate.zone::temperature"})
 
 
 def _inactive_zone(make_store, clock, backup):
@@ -886,7 +886,7 @@ def test_prepare_start_leaves_a_manual_but_inactive_zone_alone(make_store, clock
 
 # --- TP12h: Heizgrenze als dritte Rolle ---
 
-MANIFEST_G = ChannelManifest(entity_ids={
+MANIFEST_G = ChannelManifest(refs={
     "curve_current": "number.curve", "shift_current": "number.shift", "min_flow": "number.min_flow",
     "heat_limit": "number.heat_limit",
 })

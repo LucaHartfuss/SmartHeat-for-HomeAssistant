@@ -42,7 +42,7 @@ def _runtime(store, *, room_actual=20.0, room_target=21.0, entity_ids=ENTITY_IDS
         return value
 
     ha_api.get_state.side_effect = _get_state
-    manifest = ChannelManifest(entity_ids=entity_ids)
+    manifest = ChannelManifest(refs=entity_ids)
     if room_target is not None:
         store.update(stable_target=room_target)
     return SimpleNamespace(

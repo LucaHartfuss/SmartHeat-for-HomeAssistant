@@ -1,0 +1,8 @@
+"""Topics des lokalen Busses (Spec SHG G2 6.1, Plan G2a Praezisierungen 4 und 5)."""
+STATUS = "shg/status"
+NOTIFY_PREFIX = "shg/notify/"
+NOTIFY_PUSH = "shg/notify_push"
+RAUM = "shg/raum"
+CMD_ROOM_TARGET = "shg/cmd/room_target"
+CMD_RELOAD = "shg/cmd/reload"
+Z2M_BASE = "zigbee2mqtt"

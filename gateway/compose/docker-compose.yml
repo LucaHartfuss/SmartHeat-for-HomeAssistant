@@ -1,0 +1,101 @@
+# SmartHeat-Gateway (Spec SHG G2 7.2). G2a: Agent, Laufzeit und Tunnel bauen lokal (build:); G2b erzeugt daraus das
+# signierte Bundle mit image: ...@sha256. Host-Ordner unter ${SHG_ROOT:-/var/lib/smartheat}. Start auf dem Geraet:
+#   docker compose -f gateway/compose/docker-compose.yml up -d
+# Die Diagnoseseite antwortet nur unter IP-Adressen, localhost und den Namen aus SHG_DIAG_HOSTNAMES (kommagetrennt).
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: [/tmp]
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: {max-size: 10m, max-file: "3"}
+
+x-gateway: &gateway
+  <<: *hardening
+  build:
+    context: ../..
+    dockerfile: gateway/Dockerfile
+
+services:
+  agent:
+    <<: *gateway
+    command: ["python", "-m", "smartheat_gateway.agent"]
+    networks: [bus, wan]
+    ports: ["80:8080"]
+    depends_on: [mosquitto]
+    environment:
+      SHG_BUS_HOST: mosquitto
+      SHG_DATA_DIR: /data
+      SHG_ZIGBEE_DIR: /zigbee2mqtt
+      SHG_HOST_DIR: /host
+      SHG_DEVICE_API_URL: ${SHG_DEVICE_API_URL:?SHG_DEVICE_API_URL fehlt}
+      SHG_PORTAL_BASE_URL: ${SHG_PORTAL_BASE_URL:-}
+      SHG_DIAG_HOSTNAMES: ${SHG_DIAG_HOSTNAMES:-}
+      ZIGBEE_ADAPTER: ${ZIGBEE_ADAPTER:-ember}
+    volumes:
+      - ${SHG_ROOT:-/var/lib/smartheat}/data:/data
+      - ${SHG_ROOT:-/var/lib/smartheat}/zigbee2mqtt:/zigbee2mqtt
+      - ${SHG_ROOT:-/var/lib/smartheat}/host:/host:ro
+    healthcheck:
+      # Host 127.0.0.1: die Diagnoseseite lehnt fremde Host-Namen mit 403 ab (Schutz gegen DNS-Rebinding).
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  tunnel:
+    <<: *gateway
+    command: ["python", "-m", "smartheat_gateway.tunnel"]
+    networks: [bus, wan]
+    environment:
+      SHG_DATA_DIR: /data
+    volumes:
+      - ${SHG_ROOT:-/var/lib/smartheat}/data:/data:ro
+
+  runtime:
+    <<: *gateway
+    command: ["python", "-m", "smartheat_gateway.runtime_main"]
+    # Der Transport-Deskriptor nennt 127.0.0.1:<port> (cloudflared im Tunnel-Container), Plan G2a Praezisierung 6.
+    network_mode: "service:tunnel"
+    depends_on: [tunnel, mosquitto]
+    environment:
+      SHG_BUS_HOST: mosquitto
+      SHG_DATA_DIR: /data
+      TZ: ${TZ:-Europe/Berlin}
+    volumes:
+      - ${SHG_ROOT:-/var/lib/smartheat}/data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,sys,time; sys.exit(time.time() - os.path.getmtime('/tmp/shg-runtime-alive') > 120)"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+
+  mosquitto:
+    <<: *hardening
+    image: eclipse-mosquitto:2@sha256:38c0da4f2ef84284d47b3b3eeea1cb3bdeabe81ee10caf0cd5c5ff61ee3ea408
+    user: "1883:1883"
+    networks: [bus]
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  zigbee2mqtt:
+    <<: *hardening
+    # Zigbee2MQTT 2.14.2 (Index-Digest, amd64 + arm64). Lauf mit Stick erst in G2b (Hardware-Gate).
+    # Gleiche uid wie das Gateway-Image: der Agent schreibt configuration.yaml mit 0600, Zigbee2MQTT liest und
+    # ersetzt sie (GENERATE). Kein retain fuer Geraete (z2m_config).
+    image: koenkk/zigbee2mqtt:2.14.2@sha256:addbfb08fcef2e4477de1535636118241e10d13e898fbe4d9faba8a4d7396311
+    user: "1000:1000"
+    group_add: [dialout]
+    networks: [bus]
+    devices: ["/dev/zigbee:/dev/zigbee"]
+    environment:
+      TZ: ${TZ:-Europe/Berlin}
+    volumes:
+      - ${SHG_ROOT:-/var/lib/smartheat}/zigbee2mqtt:/app/data
+
+networks:
+  bus:
+    internal: true
+  wan: {}

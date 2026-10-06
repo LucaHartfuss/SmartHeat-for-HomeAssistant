@@ -59,6 +59,7 @@ from smartheat_runtime.status import (
     STATUS_KONFIGURATIONSFEHLER,
     StatusReporter,
 )
+from smartheat_runtime.texts import HostTexts
 from smartheat_runtime.worker import Event, RegulationWorker
 
 # Im Konfigurationsfehler prueft ein frischer Prozess nach dieser Zeit erneut (z. B. eine spaet
@@ -127,6 +128,7 @@ class Host(Protocol):
     signals: SignalSource
     status_sink: StatusSink
     notify_sink: NotifySink
+    texts: HostTexts
 
     def boot_info(self) -> BootInfo: ...
 
@@ -461,7 +463,7 @@ def _after_each(rt: Runtime) -> None:
     """Nach jedem Worker-Ereignis: Datentraeger-Meldung (TP12b), dann das Status-Event, falls es
     sich geaendert hat."""
     try:
-        datentraeger.report(rt.store, rt.notifier)
+        datentraeger.report(rt.store, rt.notifier, rt.texts)
     except Exception:
         logger.exception("Datentraeger-Meldung fehlgeschlagen")
     status = rt.status
@@ -585,7 +587,7 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic) -> Runtime | 
         override=LeverPipeline(
             store, loaded.binding, config.local_safety, clock=clock, notify=functools.partial(_hint, notifier),
         ),
-        notifier=notifier, status=status, clock=clock,
+        notifier=notifier, status=status, clock=clock, texts=host.texts,
     )
     # Abo-Status erst hier: Abschluss-Start und lokaler Modus brauchen Manifest und Clamps.
     # "unknown" (accounts-api nicht erreichbar) startet normal -- fail-open.
@@ -636,7 +638,7 @@ def _resolve_stale_notbetrieb(rt: Runtime, abo_status: str) -> None:
     if abo_status == entitlement.ACTIVE:
         ticks.deliver(rt, delivery.ClearStaleNotbetrieb())
         rt.notifier.notify(
-            "notbetrieb", STATE_OK, delivery.notification_text(delivery.NOTIFY_NOTBETRIEB_OFF, (), {}),
+            "notbetrieb", STATE_OK, delivery.notification_text(delivery.NOTIFY_NOTBETRIEB_OFF, (), {}, rt.texts),
             critical=True, silent_ok=True,
         )
     ticks.start_probe_tick(rt, "Notbetrieb ohne offenen Tick beim Start")

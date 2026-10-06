@@ -49,3 +49,9 @@ def test_other_request_errors_are_source_unavailable(error):
 def test_invalid_values_keep_their_error(error):
     with pytest.raises(type(error)):
         HaSignalSource(_Ha(error=error)).get_state("sensor.x")
+
+
+def test_device_key_is_the_entity_without_attribute():
+    source = HaSignalSource(object())
+    assert source.device_key("climate.wz::current_temperature") == "climate.wz"
+    assert source.device_key("sensor.a") == "sensor.a"

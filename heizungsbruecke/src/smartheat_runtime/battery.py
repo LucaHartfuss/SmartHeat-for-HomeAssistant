@@ -7,6 +7,7 @@ import math
 
 from smartheat_runtime.notifier import STATE_OK
 from smartheat_runtime.ports import SignalNotFound, SourceUnavailable
+from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG
 
 logger = logging.getLogger(__name__)
 
@@ -15,8 +16,8 @@ RECOVERED_FROM_PERCENT = 25
 STATE_LOW = "niedrig"
 
 
-def next_state(previous: str, entity_id: str, raw: str) -> str:
-    if entity_id.startswith("binary_sensor."):
+def next_state(previous: str, art: str, raw: str) -> str:
+    if art == BATTERY_LOW_FLAG:
         return {"on": STATE_LOW, "off": STATE_OK}.get(raw, previous)
     try:
         value = float(raw)
@@ -31,25 +32,27 @@ def next_state(previous: str, entity_id: str, raw: str) -> str:
     return previous
 
 
-def _message(entity_id: str, state: str, raw: str) -> str:
+def _message(label: str, art: str, state: str, raw: str) -> str:
     if state == STATE_OK:
-        return f"SmartHeat: Batterie von {entity_id} wieder in Ordnung."
-    level = "" if entity_id.startswith("binary_sensor.") else f" ({raw} %)"
-    return f"SmartHeat: Batterie von {entity_id} ist schwach{level}. Bitte bald wechseln."
+        return f"SmartHeat: Batterie von {label} wieder in Ordnung."
+    level = "" if art == BATTERY_LOW_FLAG else f" ({raw} %)"
+    return f"SmartHeat: Batterie von {label} ist schwach{level}. Bitte bald wechseln."
 
 
 def check_batteries(rt) -> None:
-    for entity_id in rt.config.battery_refs:
-        key = f"batterie:{entity_id}"
+    for battery in rt.config.battery_refs:
+        key = f"batterie:{battery.ref}"
         try:
-            raw = rt.signals.get_raw_state(entity_id)
+            raw = rt.signals.get_raw_state(battery.ref)
         except SignalNotFound:
-            logger.info("Batterie-Entity %s nicht gefunden (404), wird uebersprungen", entity_id)
+            logger.info("Batterie-Entity %s nicht gefunden (404), wird uebersprungen", battery.ref)
             continue
         except SourceUnavailable as error:
-            logger.warning("Batteriepruefung abgebrochen, Home Assistant nicht erreichbar: %s", error)
+            logger.warning("Batteriepruefung abgebrochen, %s: %s", rt.texts.source_unavailable_log, error)
             return
         except ValueError:
             continue
-        state = next_state(rt.notifier.state(key), entity_id, raw)
-        rt.notifier.notify(key, state, _message(entity_id, state, raw), critical=False)
+        state = next_state(rt.notifier.state(key), battery.art, raw)
+        rt.notifier.notify(
+            key, state, _message(rt.signals.device_key(battery.ref), battery.art, state, raw), critical=False,
+        )

@@ -45,10 +45,10 @@ def run_telemetry_tick(
 ) -> None:
     """Liest room_actual selbst (lokaler HA-REST-Aufruf, kein Cloud-Roundtrip). `energy` normalisiert die
     Energie-Rohwerte (Plan 3b, Tageszaehler; None = unveraendert). Wirft nie."""
-    if "room_actual" not in manifest.entity_ids:
+    if "room_actual" not in manifest.refs:
         return
     try:
-        room_actual = signals.get_state(manifest.entity_ids["room_actual"])
+        room_actual = signals.get_state(manifest.refs["room_actual"])
         kpi_fields = read_kpi_fields(manifest, signals, energy)
         regulation_fields = read_regulation_fields(manifest, signals, room_target)
         waerme_fehlt = False if waerme is None else waerme(room_actual, kpi_fields, regulation_fields)
@@ -88,7 +88,7 @@ def read_regulation_fields(manifest, signals, room_target: float | None) -> dict
     if room_target is not None and math.isfinite(room_target):
         fields["room_target"] = room_target
     for role in ("outdoor_temp", "flow_setpoint"):
-        entity_id = manifest.entity_ids.get(role)
+        entity_id = manifest.refs.get(role)
         if entity_id is None:
             continue
         try:
@@ -110,7 +110,7 @@ def read_kpi_fields(manifest, signals, normalize_energy: Callable[[dict], dict] 
 
     def _read(role, reader):
         try:
-            value = reader(manifest.entity_ids[role])
+            value = reader(manifest.refs[role])
             # "nan"/"inf" ueberstehen float(), der Server lehnt nicht-endliche Zahlen aber
             # fuer die ganze Nachricht ab.
             if isinstance(value, float) and not math.isfinite(value):
@@ -121,18 +121,18 @@ def read_kpi_fields(manifest, signals, normalize_energy: Callable[[dict], dict] 
             return False, None
 
     for role in KPI_NUMERIC_ROLES:
-        if role in manifest.entity_ids:
+        if role in manifest.refs:
             ok, value = _read(role, signals.get_state)
             if ok:
                 kpi_fields[role] = value
-    if "operating_mode" in manifest.entity_ids:
+    if "operating_mode" in manifest.refs:
         ok, value = _read("operating_mode", signals.get_raw_state)
         if ok:
             kpi_fields["operating_mode"] = value
 
     energy: dict = {}
     for role in KPI_ENERGY_ROLES:
-        if role in manifest.entity_ids:
+        if role in manifest.refs:
             ok, value = _read(role, signals.get_state)
             if ok:
                 energy[role.removeprefix("energy_")] = value

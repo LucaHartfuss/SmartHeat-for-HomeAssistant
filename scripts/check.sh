@@ -42,13 +42,16 @@ docker_host_run() {
 }
 PY="${PYTHON:-python3}"
 DEV="${DEV_ROOT:-$(cd .. && pwd)}"
-lint() { (cd heizungsbruecke && "$PY" -m ruff check . && "$PY" -m pyright --pythonpath "$("$PY" -c 'import sys; print(sys.executable)')") && "$PY" scripts/ci/pin_check.py --repo "$PWD"; }
-tests() { (cd heizungsbruecke && "$PY" -m pytest -q); }
+pyright_in() { (cd "$1" && "$PY" -m ruff check . && "$PY" -m pyright --pythonpath "$("$PY" -c 'import sys; print(sys.executable)')"); }
+lint() { pyright_in heizungsbruecke && pyright_in gateway && "$PY" scripts/ci/pin_check.py --repo "$PWD"; }
+# Kern- und HA-Host-Tests (heizungsbruecke/tests), dann Gateway-Tests (Spec SHG 9.1).
+tests() { (cd heizungsbruecke && "$PY" -m pytest -q) && (cd gateway && "$PY" -m pytest -q); }
 contract() { "$PY" "$DEV/tools/contract_check.py"; }
 docker_tests() {
   local rc=0 script
   for script in test_run_sh.sh test_docker_build.sh test_heizungsbruecke_docker_build.sh \
-                test_heizungsbruecke_reproducible.sh test_heizungsbruecke_happy_path.sh test_mosquitto_will_acl.sh; do
+                test_heizungsbruecke_reproducible.sh test_heizungsbruecke_happy_path.sh test_mosquitto_will_acl.sh \
+                test_gateway_docker_build.sh; do
     echo "--- tests/$script"
     docker_host_run bash "$PWD/tests/$script" || rc=1
   done

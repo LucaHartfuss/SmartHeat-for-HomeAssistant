@@ -16,6 +16,9 @@ class HaSignalSource:
     def get_raw_state(self, ref: str) -> str:
         return _translated(self._ha_api.get_raw_state, ref)
 
+    def device_key(self, ref: str) -> str:
+        return ref.partition("::")[0]
+
 
 def _translated(read, ref: str):
     try:

@@ -1,0 +1,40 @@
+# Overlay fuer den Dev-Rechner (Spec SHG G2 7.2): Fake-Zigbee2MQTT statt Zigbee2MQTT (kein Stick), Fake-Geraete-API,
+# Diagnoseseite auf 127.0.0.1:8080. Start:
+#   SHG_ROOT=$PWD/.dev-data SHG_DEVICE_API_URL=http://fake-device-api:8090 docker compose \
+#     -f gateway/compose/docker-compose.yml -f gateway/compose/docker-compose.dev.yml up -d
+# security_opt label:disable: auf SELinux-Hosts (Fedora) duerfen die Container die Bind-Mounts sonst nicht lesen
+# (wie tools/e2e); ergaenzt die Liste der Basisdatei, no-new-privileges bleibt. Ohne SELinux wirkungslos.
+x-fake: &fake
+  build:
+    context: ../..
+    dockerfile: gateway/Dockerfile
+  security_opt: ["label:disable"]
+  environment:
+    SHG_BUS_HOST: mosquitto
+    PYTHONPATH: /app/src
+  volumes:
+    - ../tests:/gw-tests:ro
+
+services:
+  zigbee2mqtt:
+    profiles: ["hardware"]          # am Dev-Rechner nicht starten
+  agent:
+    ports: !override ["127.0.0.1:8080:8080"]
+    security_opt: ["label:disable"]
+    environment:
+      SHG_DEVICE_API_URL: http://fake-device-api:8090
+  tunnel:
+    security_opt: ["label:disable"]
+  runtime:
+    security_opt: ["label:disable"]
+  mosquitto:
+    security_opt: ["label:disable"]
+  fake-zigbee2mqtt:
+    <<: *fake
+    command: ["python", "/gw-tests/fake_z2m.py"]
+    networks: [bus]
+  fake-device-api:
+    <<: *fake
+    command: ["python", "/gw-tests/fake_device_api.py"]
+    networks: [wan]
+    ports: ["127.0.0.1:18090:8090"]

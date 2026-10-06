@@ -19,6 +19,7 @@ from smartheat_runtime.backup_store import load_backup
 from smartheat_runtime.notifier import Notifier
 from smartheat_runtime.roles import ChannelManifest
 from smartheat_runtime.status import StatusReporter
+from smartheat_runtime.texts import HA_TEXTS
 
 ABO_NOW = datetime(2026, 9, 25, 12, 0, tzinfo=timezone(timedelta(hours=2)))
 OPTIONS = {"tenant_id": "t1"}
@@ -32,7 +33,7 @@ BOTH_ROLES = {"curve_current": "number.curve", "shift_current": "number.shift"}
 
 
 def _runtime(tmp_path, store, entity_ids=BOTH_ROLES, notify_services=("notify.handy",), clock=None):
-    manifest = ChannelManifest(entity_ids=entity_ids)
+    manifest = ChannelManifest(refs=entity_ids)
     ha_api = MagicMock()
     return SimpleNamespace(
         manifest=manifest, signals=ha_api, ha_api=ha_api, store=store, mqtt_client=MagicMock(),
@@ -43,7 +44,7 @@ def _runtime(tmp_path, store, entity_ids=BOTH_ROLES, notify_services=("notify.ha
             HaStatusSink(ha_api), OPTIONS["tenant_id"], None, store, LEVER_SETS["vaillant_vrc720"], ADDON_VERSION,
         ),
         clock=clock or FakeClock(), auth_rejected_queried_at=None, auth_rejected_last_status=None,
-        connection_failing_queried_at=None,
+        connection_failing_queried_at=None, texts=HA_TEXTS,
     )
 
 

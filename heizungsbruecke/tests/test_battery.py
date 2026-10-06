@@ -10,6 +10,8 @@ from heizungsbruecke.ha_signals import HaSignalSource
 from heizungsbruecke.ha_sinks import HaNotifySink
 from smartheat_runtime.battery import STATE_LOW, check_batteries, next_state
 from smartheat_runtime.notifier import Notifier
+from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG, BATTERY_PERCENT, BatteryRef
+from smartheat_runtime.texts import HA_TEXTS
 
 
 @pytest.mark.parametrize("previous,raw,expected", [
@@ -17,14 +19,27 @@ from smartheat_runtime.notifier import Notifier
     (STATE_LOW, "24.9", STATE_LOW), (STATE_LOW, "25", "ok"), ("ok", "nan", "ok"), ("ok", "leer", "ok"),
 ])
 def test_percent_sensor_hysteresis(previous, raw, expected):
-    assert next_state(previous, "sensor.wz_battery", raw) == expected
+    assert next_state(previous, BATTERY_PERCENT, raw) == expected
 
 
 @pytest.mark.parametrize("previous,raw,expected", [
     ("ok", "on", STATE_LOW), (STATE_LOW, "off", "ok"), (STATE_LOW, "komisch", STATE_LOW),
 ])
 def test_binary_sensor(previous, raw, expected):
-    assert next_state(previous, "binary_sensor.wz_battery_low", raw) == expected
+    assert next_state(previous, BATTERY_LOW_FLAG, raw) == expected
+
+
+def _battery_refs(entity_ids) -> tuple[BatteryRef, ...]:
+    return tuple(
+        BatteryRef(e, BATTERY_LOW_FLAG if e.startswith("binary_sensor.") else BATTERY_PERCENT) for e in entity_ids
+    )
+
+
+def test_art_comes_from_the_host_not_from_the_prefix():
+    # Ein Flag ohne binary_sensor.-Praefix (Gateway: zigbee:<ieee>:battery_low) wird als Flag gelesen.
+    assert next_state("ok", BATTERY_LOW_FLAG, "on") == "niedrig"
+    assert next_state("niedrig", BATTERY_LOW_FLAG, "off") == "ok"
+    assert next_state("ok", BATTERY_PERCENT, "on") == "ok"  # kein Prozentwert, Zustand bleibt
 
 
 def _http_error(status_code):
@@ -46,8 +61,8 @@ def _rt(make_store, raw_states, battery_entities=("sensor.wz_battery",)):
     ha_api.get_raw_state.side_effect = _raw
     store = make_store()
     return SimpleNamespace(
-        config=runtime_config(battery_refs=tuple(battery_entities)), signals=HaSignalSource(ha_api), ha_api=ha_api,
-        notifier=Notifier(store, HaNotifySink(ha_api, ["notify.mobile_app_a"])),
+        config=runtime_config(battery_refs=_battery_refs(battery_entities)), signals=HaSignalSource(ha_api), ha_api=ha_api,
+        notifier=Notifier(store, HaNotifySink(ha_api, ["notify.mobile_app_a"])), texts=HA_TEXTS,
     )
 
 

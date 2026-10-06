@@ -16,10 +16,10 @@ DAY = "2026-10-03"
 NEXT_DAY = "2026-10-04"
 # Weishaupt ohne Vorbereitung (Betriebsart nicht gemappt): reines Budget-Verhalten; die Reihenfolge Komfort/Normal/
 # Absenk testet test_ha_binding_weishaupt.py.
-WH_MANIFEST = ChannelManifest(entity_ids={
+WH_MANIFEST = ChannelManifest(refs={
     "curve_current": "number.hk", "shift_current": "number.normal", "heat_limit": "number.swu",
 })
-VI_MANIFEST = ChannelManifest(entity_ids={
+VI_MANIFEST = ChannelManifest(refs={
     "curve_current": "number.slope", "level_current": "number.shift", "shift_current": "number.normal",
 })
 WH_SAFETY = resolve_local_safety("weishaupt_wwp", "Heizkoerper")
@@ -200,7 +200,7 @@ def test_lifetime_hint_at_the_threshold_and_every_further_10000(make_store, cloc
 def test_vaillant_counts_nothing_and_never_writes_the_new_fields(make_store, clock, tmp_path):
     store = make_store()
     ha = Ha({"number.curve": 0.7, "number.shift": 21.0})
-    manifest = ChannelManifest(entity_ids={"curve_current": "number.curve", "shift_current": "number.shift"})
+    manifest = ChannelManifest(refs={"curve_current": "number.curve", "shift_current": "number.shift"})
     pipeline = LeverPipeline(store, HaPlantBinding(ha, manifest), resolve_local_safety("vaillant_vrc720", "Heizkoerper"),
                              clock=clock)
     pipeline.apply_server_values({"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 16.0})
@@ -265,6 +265,6 @@ def test_write_levers_expands_a_group_member_to_the_group(make_store, clock):
 
 def test_vaillant_binding_counts_physical_writes_too():
     ha = Ha({"number.curve": 0.7})
-    binding = HaPlantBinding(ha, ChannelManifest(entity_ids={"curve_current": "number.curve"}), VAILLANT_MYPYLLANT)
+    binding = HaPlantBinding(ha, ChannelManifest(refs={"curve_current": "number.curve"}), VAILLANT_MYPYLLANT)
     binding.write("curve", 0.9)
     assert binding.physical_writes == 1

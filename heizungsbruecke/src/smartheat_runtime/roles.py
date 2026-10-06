@@ -1,6 +1,5 @@
 """Hostneutrales Rollen-Vokabular (Spec SHG 3.3): welche Signale und Hebel die Laufzeit kennt und welche je Hebelsatz
-Pflicht sind. ChannelManifest bildet Rolle -> Referenz der SignalSource ab (HA: Entity-ID bzw. entity::attribut; das
-Feld heisst aus der HA-Zeit entity_ids)."""
+Pflicht sind. ChannelManifest bildet Rolle -> Referenz der SignalSource ab (HA: Entity-ID bzw. entity::attribut)."""
 from dataclasses import dataclass
 
 ALL_ROLES = (
@@ -20,6 +19,12 @@ ALL_ROLES = (
 REQUIRED_ROLES = (
     "room_actual", "room_target", "curve_current", "shift_current", "min_flow", "heat_limit", "outdoor_temp",
 )
+
+# Rollen der Hebel im Manifest ("shift_current" ist der historische Rollenname der Parallelverschiebung).
+LEVER_ROLES = {
+    "curve": "curve_current", "room_setpoint": "shift_current", "level": "level_current", "heat_limit": "heat_limit",
+    "min_flow": "min_flow",
+}
 
 # Plan 3b: Pflicht-Rollen je Hebelsatz (Spec 5.5 "Pflicht je Hebelsatz"); Vaillant = REQUIRED_ROLES. Bei
 # weishaupt_wwp_basis sind curve_current/heat_limit optional (curve_current nur lesend, Snapshot readonly).
@@ -45,4 +50,6 @@ class ManifestError(ValueError):
 
 @dataclass(frozen=True)
 class ChannelManifest:
-    entity_ids: dict[str, str]
+    """Rolle -> Referenz der SignalSource."""
+
+    refs: dict[str, str]

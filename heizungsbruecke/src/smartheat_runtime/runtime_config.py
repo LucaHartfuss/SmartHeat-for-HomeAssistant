@@ -7,6 +7,17 @@ from smartheat_core.levers import LeverSet
 from smartheat_core.safety import LocalSafety
 from smartheat_transport.descriptor import Credential, Descriptor
 
+BATTERY_PERCENT = "prozent"
+BATTERY_LOW_FLAG = "niedrig_flag"
+
+
+@dataclass(frozen=True)
+class BatteryRef:
+    """Batterie-Signal eines Fuehlers/Thermostats (Spec SHG G2 2.2): `art` legt der Host fest (HA: aus dem Praefix
+    binary_sensor., Gateway: aus den Zigbee-Faehigkeiten); die Laufzeit liest kein Praefix."""
+    ref: str
+    art: str  # BATTERY_PERCENT oder BATTERY_LOW_FLAG
+
 
 @dataclass(frozen=True)
 class BootInfo:
@@ -40,6 +51,6 @@ class RuntimeConfig:
     notify_hints_off: tuple[str, ...]
     # Referenzen der SignalSource: Raumfuehler des Referenzraums und Batterie-Signale der Fuehler/Thermostate.
     room_sensor_refs: tuple[str, ...]
-    battery_refs: tuple[str, ...]
+    battery_refs: tuple[BatteryRef, ...]
     # Datei der Abo-inaktiv-Frist (entitlement.py).
     entitlement_path: Path

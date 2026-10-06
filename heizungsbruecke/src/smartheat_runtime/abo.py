@@ -143,13 +143,11 @@ def _report_rejection(rt: Runtime, status: str) -> None:
     log = logger.error if status != rt.auth_rejected_last_status else logger.debug
     rt.auth_rejected_last_status = status
     if status == entitlement.REJECTED:
-        log("MQTT-Anmeldung abgelehnt, der Server kennt diese Zugangsdaten nicht mehr - "
-            "SmartHeat-Integration neu anmelden.")
+        log(rt.texts.relogin_log_rejected)
     else:
-        log("MQTT-Anmeldung vom Broker abgelehnt, Abo-Status ist aber '%s' - Zugangsdaten "
-            "pruefen (ggf. SmartHeat-Integration neu anmelden).", status)
+        log(rt.texts.relogin_log_status, status)
     status_reporter.update(zugang_abgelehnt=True, grund=ACCESS_DENIED_REASON)
-    rt.notifier.notify("zugang", "abgelehnt", ACCESS_DENIED_MESSAGE, critical=True)
+    rt.notifier.notify("zugang", "abgelehnt", rt.texts.access_denied, critical=True)
 
 
 def handle_connection_failing(rt: Runtime) -> None:

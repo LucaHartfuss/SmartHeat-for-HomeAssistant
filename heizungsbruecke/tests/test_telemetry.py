@@ -21,7 +21,7 @@ def test_publish_telemetry_publishes_payload():
 
 
 def test_run_telemetry_tick_reads_room_actual_and_publishes():
-    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual"})
+    manifest = ChannelManifest(refs={"room_actual": "sensor.room_actual"})
     ha_api = MagicMock()
     ha_api.get_state.return_value = 20.5
     mqtt_client = MagicMock()
@@ -39,7 +39,7 @@ def test_run_telemetry_tick_reads_room_actual_and_publishes():
 
 
 def test_run_telemetry_tick_includes_configured_optional_kpi_fields():
-    manifest = ChannelManifest(entity_ids={
+    manifest = ChannelManifest(refs={
         "room_actual": "sensor.room_actual",
         "flow_temperature": "sensor.flow",
         "operating_mode": "sensor.mode",
@@ -62,7 +62,7 @@ def test_run_telemetry_tick_includes_configured_optional_kpi_fields():
 
 
 def test_run_telemetry_tick_omits_unconfigured_optional_kpi_fields():
-    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual"})
+    manifest = ChannelManifest(refs={"room_actual": "sensor.room_actual"})
     ha_api = MagicMock()
     ha_api.get_state.return_value = 20.5
     mqtt_client = MagicMock()
@@ -79,7 +79,7 @@ def test_run_telemetry_tick_omits_unconfigured_optional_kpi_fields():
 
 
 def test_electrical_total_is_read_as_energy_channel():
-    manifest = ChannelManifest(entity_ids={"energy_electrical_total": "sensor.e_total"})
+    manifest = ChannelManifest(refs={"energy_electrical_total": "sensor.e_total"})
     ha_api = MagicMock()
     ha_api.get_state.return_value = 12.5
 
@@ -89,7 +89,7 @@ def test_electrical_total_is_read_as_energy_channel():
 
 
 def test_run_telemetry_tick_builds_energy_subobject_from_configured_channels():
-    manifest = ChannelManifest(entity_ids={
+    manifest = ChannelManifest(refs={
         "room_actual": "sensor.room_actual",
         "energy_thermal_heating": "sensor.e_thermal",
         "energy_electrical_heating": "sensor.e_elec",
@@ -109,7 +109,7 @@ def test_run_telemetry_tick_builds_energy_subobject_from_configured_channels():
 
 
 def test_run_telemetry_tick_omits_failing_optional_sensor_but_publishes_rest():
-    manifest = ChannelManifest(entity_ids={
+    manifest = ChannelManifest(refs={
         "room_actual": "sensor.room_actual",
         "flow_temperature": "sensor.flow",
         "return_temperature": "sensor.ret",
@@ -139,7 +139,7 @@ def test_run_telemetry_tick_omits_failing_optional_sensor_but_publishes_rest():
 
 
 def test_run_telemetry_tick_omits_operating_mode_when_sensor_unavailable():
-    manifest = ChannelManifest(entity_ids={
+    manifest = ChannelManifest(refs={
         "room_actual": "sensor.room_actual",
         "operating_mode": "sensor.mode",
     })
@@ -158,7 +158,7 @@ def test_run_telemetry_tick_omits_operating_mode_when_sensor_unavailable():
 
 
 def test_run_telemetry_tick_omits_non_finite_kpi_values():
-    manifest = ChannelManifest(entity_ids={
+    manifest = ChannelManifest(refs={
         "room_actual": "sensor.room_actual",
         "flow_temperature": "sensor.flow",
         "return_temperature": "sensor.ret",
@@ -184,7 +184,7 @@ def test_run_telemetry_tick_omits_non_finite_kpi_values():
 
 
 def test_run_telemetry_tick_omits_energy_key_when_all_channels_fail():
-    manifest = ChannelManifest(entity_ids={
+    manifest = ChannelManifest(refs={
         "room_actual": "sensor.room_actual",
         "energy_thermal_heating": "sensor.e1",
         "energy_thermal_dhw": "sensor.e2",
@@ -209,7 +209,7 @@ def test_run_telemetry_tick_omits_energy_key_when_all_channels_fail():
 
 
 def test_run_telemetry_tick_skips_when_room_actual_not_mapped():
-    manifest = ChannelManifest(entity_ids={})
+    manifest = ChannelManifest(refs={})
     ha_api = MagicMock()
     mqtt_client = MagicMock()
 
@@ -242,7 +242,7 @@ def test_publish_telemetry_omits_datenfehler_without_fault():
 
 
 def test_run_telemetry_tick_passes_datenfehler_through():
-    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual"})
+    manifest = ChannelManifest(refs={"room_actual": "sensor.room_actual"})
     ha_api = MagicMock()
     ha_api.get_state.return_value = 20.5
     mqtt_client = MagicMock()
@@ -256,7 +256,7 @@ def test_run_telemetry_tick_passes_datenfehler_through():
 
 
 def test_run_telemetry_tick_survives_exception_without_propagating(monkeypatch, caplog):
-    manifest = ChannelManifest(entity_ids={"room_actual": "sensor.room_actual"})
+    manifest = ChannelManifest(refs={"room_actual": "sensor.room_actual"})
     ha_api = MagicMock()
     ha_api.get_state.side_effect = OSError("Datentraeger voll")
     mqtt_client = MagicMock()
@@ -270,7 +270,7 @@ def test_run_telemetry_tick_survives_exception_without_propagating(monkeypatch, 
 
 
 def test_regulation_fields_and_local_ts():
-    manifest = SimpleNamespace(entity_ids={
+    manifest = SimpleNamespace(refs={
         "room_actual": "sensor.r", "outdoor_temp": "sensor.o", "flow_setpoint": "sensor.vl",
     })
     ha = MagicMock()
@@ -283,7 +283,7 @@ def test_regulation_fields_and_local_ts():
 
 
 def test_unreadable_regulation_field_is_omitted():
-    manifest = SimpleNamespace(entity_ids={"room_actual": "sensor.r", "outdoor_temp": "sensor.o"})
+    manifest = SimpleNamespace(refs={"room_actual": "sensor.r", "outdoor_temp": "sensor.o"})
     ha = MagicMock()
 
     def _get(ref):
@@ -312,7 +312,7 @@ def test_the_payload_always_carries_waerme_fehlt():
 
 
 def test_run_telemetry_tick_hands_the_readings_to_the_waerme_callback():
-    manifest = ChannelManifest(entity_ids={
+    manifest = ChannelManifest(refs={
         "room_actual": "sensor.room", "flow_temperature": "sensor.flow", "flow_setpoint": "sensor.set",
     })
     ha_api = MagicMock()
@@ -335,7 +335,7 @@ def test_run_telemetry_tick_hands_the_readings_to_the_waerme_callback():
 
 # --- Plan 3b: Energie-Normalisierung (Tageszaehler) ---
 
-ENERGY_MANIFEST = ChannelManifest(entity_ids={"energy_thermal_heating": "sensor.waerme_heute"})
+ENERGY_MANIFEST = ChannelManifest(refs={"energy_thermal_heating": "sensor.waerme_heute"})
 
 
 def test_daily_energy_is_sent_as_a_growing_sum_and_survives_a_restart(make_store):

@@ -42,7 +42,7 @@ def test_attempt_without_mqtt_client_reports_unsent(monkeypatch):
     monkeypatch.setattr(
         ticks, "read_snapshot", lambda *a, **kw: SimpleNamespace(invalid=(), levers={}, room_target=20.0),
     )
-    manifest = ChannelManifest(entity_ids={"shift_current": "number.shift"})
+    manifest = ChannelManifest(refs={"shift_current": "number.shift"})
     ha_api = MagicMock()
     rt = SimpleNamespace(
         manifest=manifest, signals=ha_api,
@@ -65,7 +65,7 @@ def test_snapshot_uses_restore_point_when_zone_is_off(monkeypatch):
     monkeypatch.setattr(ticks, "read_snapshot", _read)
     ha_api = MagicMock()
     ha_api.get_state.return_value = 0.0
-    manifest = ChannelManifest(entity_ids={"shift_current": "climate.zone::temperature"})
+    manifest = ChannelManifest(refs={"shift_current": "climate.zone::temperature"})
     rt = SimpleNamespace(
         manifest=manifest, signals=ha_api,
         mqtt_client=None, store=SimpleNamespace(state=SimpleNamespace(restore_point={"room_setpoint": 21.0})),
@@ -109,7 +109,7 @@ def test_first_start_snapshot_reports_the_written_start_shift_not_the_stale_zone
         return SimpleNamespace(invalid=(), levers={}, room_target=20.0)
 
     monkeypatch.setattr(ticks, "read_snapshot", _read)
-    manifest = ChannelManifest(entity_ids={
+    manifest = ChannelManifest(refs={
         "curve_current": "number.curve", "shift_current": "climate.zone::temperature", "min_flow": "number.min_flow",
     })
     ha, store = _StaleZoneHa(), make_store()
@@ -160,7 +160,7 @@ def test_snapshot_reports_all_own_writes_until_settled_then_the_live_values(monk
         return SimpleNamespace(invalid=(), levers={}, room_target=20.0)
 
     monkeypatch.setattr(ticks, "read_snapshot", _read)
-    manifest = ChannelManifest(entity_ids={
+    manifest = ChannelManifest(refs={
         "curve_current": "number.curve", "shift_current": "number.shift", "heat_limit": "number.heat_limit",
     })
     ha, store = _LaggingPlantHa(), make_store()

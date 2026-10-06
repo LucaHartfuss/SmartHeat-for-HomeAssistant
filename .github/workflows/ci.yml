@@ -28,7 +28,7 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-      - run: pip install -e "./heizungsbruecke[dev]"
+      - run: pip install -e "./heizungsbruecke[dev]" -e "./gateway[dev]"
       - run: PYTHON=python bash scripts/check.sh --only lint
   test:
     runs-on: ubuntu-24.04
@@ -40,7 +40,7 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-      - run: pip install -e "./heizungsbruecke[dev]"
+      - run: pip install -e "./heizungsbruecke[dev]" -e "./gateway[dev]"
       - run: RUN_REAL_HA_TESTS=1 PYTHON=python bash scripts/check.sh --only test
   docker:
     runs-on: ubuntu-24.04
@@ -67,6 +67,17 @@ jobs:
       - env:
           ADDON: ${{ matrix.addon }}
         run: docker buildx build --platform linux/arm64 --tag "ci/$ADDON:arm64" "$ADDON"
+  build-gateway:
+    # Gateway-Image fuer amd64 und arm64 (Spec SHG G2 7.4); der Compose-Lauf (amd64) steckt im Job docker.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.CHECKOUT_REF }}
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - run: docker buildx build --platform linux/amd64,linux/arm64 -f gateway/Dockerfile .
   addon-lint:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
