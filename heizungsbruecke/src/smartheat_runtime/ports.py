@@ -21,6 +21,11 @@ class SignalSource(Protocol):
 
     def get_raw_state(self, ref: str) -> str: ...
 
+    def device_key(self, ref: str) -> str:
+        """Geraet hinter einer Referenz, fuer Meldeschluessel und Kundentexte (HA: Entity-ID ohne ::attribut,
+        Gateway: IEEE-Adresse bzw. treiber:<rolle>)."""
+        ...
+
 
 class StatusSink(Protocol):
     def publish(self, event: dict) -> None:

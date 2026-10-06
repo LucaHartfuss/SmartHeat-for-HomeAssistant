@@ -9,7 +9,7 @@ from pathlib import Path
 from smartheat_core.binding import BINDINGS, BindingDescription, with_poll_interval
 from smartheat_core.safety import LocalSafety, resolve_local_safety
 from smartheat_runtime.notifier import HINT_CATEGORIES
-from smartheat_runtime.runtime_config import RuntimeConfig
+from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG, BATTERY_PERCENT, BatteryRef, RuntimeConfig
 from smartheat_runtime.windows import validate_daily_trigger_time
 from smartheat_transport.connect import connect_options
 from smartheat_transport.descriptor import (
@@ -436,6 +436,9 @@ def runtime_config(options: dict) -> RuntimeConfig:
         telemetry_interval=telemetry_interval(options),
         notify_hints_off=tuple(notify_hints_off(options)),
         room_sensor_refs=tuple(options["room_sensors"]),
-        battery_refs=tuple(options.get("battery_entities", [])),
+        battery_refs=tuple(
+            BatteryRef(entity_id, BATTERY_LOW_FLAG if entity_id.startswith("binary_sensor.") else BATTERY_PERCENT)
+            for entity_id in options.get("battery_entities", [])
+        ),
         entitlement_path=ENTITLEMENT_PATH,
     )

@@ -209,3 +209,19 @@ def test_a_deleted_room_sensor_counts_as_failed_and_an_unreachable_ha_ends_the_r
 
     assert len(_texts(rt)) == 1
     assert rt.store.state.room_sensor_misses == misses
+
+
+def test_message_and_key_use_the_device_key_of_the_source(make_store):
+    values = {"sensor.a": 21.0, "sensor.b": ValueError("unavailable")}
+    rt = _rt(make_store, values, values.keys())
+
+    class Keyed(HaSignalSource):
+        def device_key(self, ref):
+            return "GERAET-" + ref.partition("::")[0]
+
+    rt.signals = Keyed(rt.ha_api)
+    check_room_sensors(rt)
+    check_room_sensors(rt)
+
+    assert "raumfuehler:GERAET-sensor.b" in rt.store.state.notify_states
+    assert _texts(rt) == ["SmartHeat: Raumfühler GERAET-sensor.b liefert keine Werte, Mittelwert aus 1 Fühler."]

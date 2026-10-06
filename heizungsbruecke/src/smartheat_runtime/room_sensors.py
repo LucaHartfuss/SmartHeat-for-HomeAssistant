@@ -19,15 +19,14 @@ STATE_FAILED = "ausgefallen"
 FAILED_ROUNDS = 2
 
 
-def _message(ref: str, ok: bool, ok_count: int) -> str:
-    entity_id = ref.partition("::")[0]
+def _message(device: str, ok: bool, ok_count: int) -> str:
     if ok:
-        return f"SmartHeat: Raumfühler {entity_id} liefert wieder Werte."
+        return f"SmartHeat: Raumfühler {device} liefert wieder Werte."
     if ok_count:
         sensors = "Fühler" if ok_count == 1 else "Fühlern"
-        return f"SmartHeat: Raumfühler {entity_id} liefert keine Werte, Mittelwert aus {ok_count} {sensors}."
+        return f"SmartHeat: Raumfühler {device} liefert keine Werte, Mittelwert aus {ok_count} {sensors}."
     return (
-        f"SmartHeat: Raumfühler {entity_id} liefert keine Werte. Kein Raumfühler liefert mehr "
+        f"SmartHeat: Raumfühler {device} liefert keine Werte. Kein Raumfühler liefert mehr "
         f"gültige Werte, die Heizkurve bleibt unverändert."
     )
 
@@ -56,8 +55,8 @@ def check_room_sensors(rt) -> None:
             misses[ref] = min(previous_misses.get(ref, 0) + 1, FAILED_ROUNDS)
             if misses[ref] < FAILED_ROUNDS:
                 continue
+        device = rt.signals.device_key(ref)
         rt.notifier.notify(
-            f"raumfuehler:{ref.partition('::')[0]}", STATE_OK if ok else STATE_FAILED,
-            _message(ref, ok, ok_count), critical=False,
+            f"raumfuehler:{device}", STATE_OK if ok else STATE_FAILED, _message(device, ok, ok_count), critical=False,
         )
     rt.store.update(room_sensor_misses=misses)
