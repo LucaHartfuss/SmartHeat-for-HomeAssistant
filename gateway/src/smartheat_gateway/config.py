@@ -22,6 +22,7 @@ ROOM_SENSOR_REF = re.compile(r"zigbee:0x[0-9a-f]{16}:(temperature|local_temperat
 # Top-level-Geheimnisse; das Geheimnis von cloudflared steckt im Unterobjekt.
 _SECRET_KEYS = ("mqtt_password", "installation_token")
 _CLOUDFLARED_SECRET = "cloudflared_service_token_secret"
+REDACTED = "***"
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,14 @@ def secret_values(raw: dict) -> list[str]:
     if isinstance(cloudflared, dict):
         values.append(cloudflared.get("service_token_secret"))
     return [value for value in values if isinstance(value, str) and value]
+
+
+def redact(text: str, raw: dict) -> str:
+    """Ersetzt jedes Geheimnis aus raw in text durch *** (auch in der repr-Form mit Escapes); die einzige
+    Schwaerzungsfunktion des Gateways (Host und Lebenszyklus nutzen sie)."""
+    for secret in secret_values(raw):
+        text = text.replace(secret, REDACTED).replace(repr(secret)[1:-1], REDACTED)
+    return text
 
 
 def is_configured(raw: dict) -> bool:

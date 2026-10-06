@@ -96,3 +96,12 @@ def test_secret_values_lists_every_secret(paths):
     write_runtime_files(paths, apply_config())
     values = config.secret_values(config.load_raw(paths))
     assert {"test-password", "test-token", "test-secret"} <= set(values)
+
+
+def test_redact_replaces_secrets_in_plain_and_repr_form(paths):
+    write_runtime_files(paths, apply_config(mqtt_password="test-pa'ss\\wort"))
+    raw = config.load_raw(paths)
+    text = f"Fehler mit {raw['mqtt_password']} und {raw['mqtt_password']!r} und {raw['installation_token']}"
+    redacted = config.redact(text, raw)
+    assert "test-pa" not in redacted and "test-token" not in redacted
+    assert redacted.count(config.REDACTED) == 3
