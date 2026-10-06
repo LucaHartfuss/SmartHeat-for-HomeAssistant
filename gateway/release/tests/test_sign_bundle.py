@@ -10,7 +10,8 @@ import pytest
 from build_bundle import build
 
 GW = Path(__file__).resolve().parents[2]
-IMAGE = "localhost:5000/smartheat-gateway@sha256:" + "a" * 64
+IMAGE = "localhost:5000/smartheat-gateway@sha256:" + "a" * 64  # -dryrun: Job-Registry
+RELEASE_IMAGE = "ghcr.io/lucahartfuss/smartheat-gateway@sha256:" + "a" * 64  # echter Release
 SCRIPT = Path(__file__).resolve().parents[1] / "sign_bundle.sh"
 pytestmark = pytest.mark.skipif(shutil.which("minisign") is None, reason="minisign nicht installiert (CI-Job test)")
 
@@ -24,12 +25,30 @@ def _run(bundle: Path, pub: Path, tmp: Path, *args: str, **env: str):
                           capture_output=True, text=True, check=False)
 
 
+def _build(tmp_path, image, compose=GW / "compose" / "docker-compose.yml"):
+    out = tmp_path / "bundle"
+    build(compose, GW / "compose" / "mosquitto.conf", image, "0.2.0", out)
+    (tmp_path / "work").mkdir(exist_ok=True)
+    return out
+
+
 @pytest.fixture
 def bundle(tmp_path):
-    out = tmp_path / "bundle"
-    build(GW / "compose" / "docker-compose.yml", GW / "compose" / "mosquitto.conf", IMAGE, "0.2.0", out)
-    (tmp_path / "work").mkdir()
-    return out
+    return _build(tmp_path, IMAGE)
+
+
+@pytest.fixture
+def release_bundle(tmp_path):
+    return _build(tmp_path, RELEASE_IMAGE)
+
+
+def _secret(tmp_path):
+    key, pub = tmp_path / "k.key", tmp_path / "k.pub"
+    subprocess.run(["minisign", "-G", "-p", str(pub), "-s", str(key)], input="test-pw\ntest-pw\n",
+                   capture_output=True, text=True, check=True)
+    secret = base64.b64encode(key.read_bytes()).decode()
+    key.unlink()
+    return secret, pub
 
 
 def test_dryrun_signs_with_a_throwaway_key_and_verifies(bundle, tmp_path):
@@ -41,7 +60,8 @@ def test_dryrun_signs_with_a_throwaway_key_and_verifies(bundle, tmp_path):
     assert list((tmp_path / "work").iterdir()) == []  # Schluessel und Arbeitsordner sind weg
 
 
-def test_release_path_signs_with_the_secret_from_the_environment(bundle, tmp_path):
+def test_release_path_signs_with_the_secret_from_the_environment(release_bundle, tmp_path):
+    bundle = release_bundle
     key, pub = tmp_path / "k.key", tmp_path / "k.pub"
     generate = subprocess.run(["minisign", "-G", "-p", str(pub), "-s", str(key)], input="test-pw\ntest-pw\n",
                               capture_output=True, text=True, check=False)
@@ -55,7 +75,8 @@ def test_release_path_signs_with_the_secret_from_the_environment(bundle, tmp_pat
     assert list((tmp_path / "work").iterdir()) == []
 
 
-def test_wrong_password_fails_and_leaves_no_key_behind(bundle, tmp_path):
+def test_wrong_password_fails_and_leaves_no_key_behind(release_bundle, tmp_path):
+    bundle = release_bundle
     key, pub = tmp_path / "k.key", tmp_path / "k.pub"
     subprocess.run(["minisign", "-G", "-p", str(pub), "-s", str(key)], input="test-pw\ntest-pw\n",
                    capture_output=True, text=True, check=True)
@@ -66,11 +87,10 @@ def test_wrong_password_fails_and_leaves_no_key_behind(bundle, tmp_path):
     assert list((tmp_path / "work").iterdir()) == []
 
 
-def test_missing_secrets_fail_with_an_error_annotation(bundle, tmp_path):
-    result = _run(bundle, tmp_path / "x.pub", tmp_path / "work")
+def test_missing_secrets_fail_with_an_error_annotation(release_bundle, tmp_path):
+    result = _run(release_bundle, tmp_path / "x.pub", tmp_path / "work")
     assert result.returncode == 1
     assert "::error::MINISIGN_SECRET_KEY/MINISIGN_PASSWORD fehlen" in result.stdout
-
 
 
 def test_tampered_or_foreign_bundles_are_not_signed(bundle, tmp_path):
@@ -88,3 +108,44 @@ def test_extra_files_and_other_versions_are_not_signed(bundle, tmp_path):
                            env={**os.environ, "PYTHON": sys.executable, "TMPDIR": str(tmp_path / "work")},
                            capture_output=True, text=True, check=False)
     assert wrong.returncode != 0 and "passt nicht zur Release-Version" in wrong.stderr
+
+
+def test_real_release_refuses_an_image_from_the_dryrun_registry(bundle, tmp_path):
+    secret, pub = _secret(tmp_path)
+    result = _run(bundle, pub, tmp_path / "work", MINISIGN_SECRET_KEY=secret, MINISIGN_PASSWORD="test-pw")
+    assert result.returncode != 0 and "images.gateway" in result.stderr
+    assert not (bundle / "manifest.json.minisig").exists()
+
+
+@pytest.mark.parametrize("mode", ["dryrun", "release"])
+def test_self_consistent_bundle_from_a_foreign_compose_is_not_signed(tmp_path, mode):
+    """Kompromittierter Build-Job: Compose mit privileged, Manifest passt dazu - der Neubau aus dem Tag faellt ab."""
+    source = tmp_path / "evil-compose.yml"
+    source.write_text((GW / "compose" / "docker-compose.yml").read_text().replace(
+        "    devices:", "    privileged: true\n    devices:", 1))
+    bundle = _build(tmp_path, IMAGE if mode == "dryrun" else RELEASE_IMAGE, compose=source)
+    if mode == "dryrun":
+        result = _run(bundle, tmp_path / "t.pub", tmp_path / "work", "--dryrun")
+    else:
+        secret, pub = _secret(tmp_path)
+        result = _run(bundle, pub, tmp_path / "work", MINISIGN_SECRET_KEY=secret, MINISIGN_PASSWORD="test-pw")
+    assert result.returncode != 0 and "docker-compose.yml weicht vom Neubau" in result.stderr
+    assert not (bundle / "manifest.json.minisig").exists()
+    assert list((tmp_path / "work").iterdir()) == []
+
+
+def test_python_steps_never_see_the_signing_secrets(release_bundle, tmp_path):
+    secret, pub = _secret(tmp_path)
+    dumps = tmp_path / "env"
+    dumps.mkdir()
+    wrapper = tmp_path / "python-wrapper"
+    wrapper.write_text(f'#!/bin/sh\nenv > "{dumps}/$$"\nexec "{sys.executable}" "$@"\n')
+    wrapper.chmod(0o755)
+    result = _run(release_bundle, pub, tmp_path / "work", MINISIGN_SECRET_KEY=secret, MINISIGN_PASSWORD="test-pw",
+                  PYTHON=str(wrapper))
+    assert result.returncode == 0, result.stderr
+    seen = [path.read_text() for path in dumps.iterdir()]
+    assert len(seen) == 2  # Pruefung vor dem Signieren und Signaturpruefung danach
+    for environment in seen:
+        assert "MINISIGN_SECRET_KEY" not in environment and "MINISIGN_PASSWORD" not in environment
+        assert secret not in environment and "test-pw" not in environment

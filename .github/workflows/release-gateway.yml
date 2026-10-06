@@ -4,8 +4,10 @@ name: Release Gateway
 #   build: CI -> Freigabe -> Image multi-arch -> Bundle; KEINE Environment, KEINE Secrets. -dryrun: lokale Registry
 #          (Workflow-Dienst), Wegwerf-Schluessel mit Passwort, derselbe Signier-Code wie der echte Release; kein Push
 #          nach ghcr, kein Release, main bleibt.
-#   sign:  nur beim echten Release; Environment "release" mit den Secrets; prueft das Bundle, signiert (gateway/release/
-#          sign_bundle.sh), prueft die Signatur, zieht main per Fast-Forward nach und legt das GitHub-Release an.
+#   sign:  nur beim echten Release; Environment "release" mit den Secrets; prueft das Bundle per Neubau aus dem Tag
+#          (gateway/release/verify_bundle.py ueber sign_bundle.sh), signiert, prueft die Signatur, zieht main per
+#          Fast-Forward nach und legt das GitHub-Release an.
+# Python-Pakete beider Jobs nur aus der Hash-Lock-Datei gateway/release/requirements.txt (--require-hashes).
 on:
   push:
     tags: ["gateway-v*"]
@@ -51,9 +53,8 @@ jobs:
         env:
           CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
         run: bash scripts/ci/siblings.sh "$RUNNER_TEMP/dev" "$SELF" "$GITHUB_WORKSPACE" "$GITHUB_REF_NAME"
-      # release_gate.py braucht PyYAML; build_bundle.py und smartheat_host.minisign zusaetzlich cryptography
-      # (Versionen wie in den Lock-Dateien bzw. release.yml).
-      - run: pip install pyyaml==6.0.3 cryptography==50.0.2
+      # release_gate.py braucht PyYAML; build_bundle.py und smartheat_host.minisign zusaetzlich cryptography.
+      - run: pip install --require-hashes -r gateway/release/requirements.txt
       - run: mkdir -p "$RUNNER_TEMP/out"
       - name: Freigabe pruefen
         id: gate
@@ -110,7 +111,8 @@ jobs:
           name: gateway-bundle
           path: ${{ runner.temp }}/out
           if-no-files-found: error
-          retention-days: 1
+          # Der Job sign wartet auf die Freigabe der Environment "release" (Pflicht-Reviewer).
+          retention-days: 7
       - name: Probelauf-Hinweis
         if: steps.gate.outputs.dryrun == 'true'
         run: >-
@@ -120,8 +122,9 @@ jobs:
     needs: build
     if: needs.build.outputs.dryrun == 'false'
     # Nur dieser Job sieht die Signier-Secrets (Environment "release") und schreibt (main per Fast-Forward, Release).
-    # Er fuehrt nur Skripte aus dem getaggten Commit aus; das Bundle aus dem Artefakt ist Daten und wird vor dem
-    # Signieren geprueft (sign_bundle.sh).
+    # Er fuehrt nur Skripte aus dem getaggten Commit aus; das Bundle aus dem Artefakt ist Daten: sign_bundle.sh baut es
+    # mit build_bundle.py aus diesem Checkout und dem Gateway-Digest aus dem Manifest neu und signiert nur bei
+    # byte-gleichem Ergebnis (verify_bundle.py; Python-Schritte ohne die Secrets im Environment).
     environment: release
     permissions:
       contents: write
@@ -134,13 +137,13 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-      - run: pip install cryptography==50.0.2
+      - run: pip install --require-hashes -r gateway/release/requirements.txt
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq minisign
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: gateway-bundle
           path: ${{ runner.temp }}/out
-      - name: Bundle pruefen, signieren und gegen release.pub verifizieren
+      - name: Bundle per Neubau pruefen, signieren und gegen release.pub verifizieren
         env:
           VERSION: ${{ needs.build.outputs.version }}
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}

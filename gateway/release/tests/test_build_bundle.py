@@ -111,3 +111,14 @@ def test_script_runs_without_pythonpath(tmp_path):
         capture_output=True, text=True, env={"PATH": ""}, check=False)
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "manifest.json").is_file()
+
+
+def test_device_parser_of_the_updater_finds_the_stick_in_the_bundle(tmp_path):
+    """Der Updater liest devices: ohne yaml (bundles.compose_devices); er muss den Stick im erzeugten Bundle finden."""
+    build(COMPOSE, MOSQUITTO_CONF, IMAGE, "0.2.0", tmp_path)
+    text = (tmp_path / "docker-compose.yml").read_text()
+    expected = [entry.split(":", 1)[0] for service in yaml.safe_load(text)["services"].values()
+                for entry in service.get("devices", [])]
+    assert expected == ["/dev/zigbee"]
+    assert bundles.compose_devices(text) == expected
+    assert bundles.compose_devices(COMPOSE.read_text()) == expected  # Quelle (Flussliste) ebenso
