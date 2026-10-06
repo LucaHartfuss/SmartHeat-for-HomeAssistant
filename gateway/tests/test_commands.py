@@ -1,0 +1,176 @@
+import json
+
+import pytest
+from configs import SENSOR, THERMOSTAT
+from cryptography import x509
+from fake_z2m import FakeZigbee2Mqtt
+from fakes import FakeBus
+
+from smartheat_gateway.agent import commands, identity, wire
+from smartheat_gateway.agent.commands import Done, Failed, Waiting, execute
+from smartheat_gateway.agent.context import AgentContext
+from smartheat_gateway.drivers.base import DriverError
+from smartheat_gateway.paths import Paths
+from smartheat_gateway.quota import QuotaExhausted
+from smartheat_gateway.zigbee import ZigbeeMirror
+
+
+@pytest.fixture
+def ctx(data_dir, clock):
+    bus = FakeBus()
+    z2m = FakeZigbee2Mqtt(bus)
+    mirror = ZigbeeMirror(bus, clock)
+    mirror.start()
+    z2m.bridge(online=True)
+    z2m.add_sensor(SENSOR)
+    z2m.add_thermostat(THERMOSTAT)
+    z2m.report(SENSOR, temperature=20.5, battery=80)
+    paths = Paths(data_dir)
+    context = AgentContext(
+        paths, bus, mirror, identity.load_or_create(paths), clock=clock, wall=lambda: 1_700_000_000.0,
+    )
+    context.start()
+    context.z2m = z2m
+    return context
+
+
+def test_unknown_kind_and_bad_payload(ctx):
+    assert execute(ctx, "gibtsnicht", {}).grund == "ungueltige_nutzlast"
+    assert execute(ctx, "zigbee_permit_join", {"seconds": 999}).grund == "ungueltige_nutzlast"
+    assert execute(ctx, "zigbee_permit_join", {"seconds": True}).grund == "ungueltige_nutzlast"
+    assert execute(ctx, "diagnostics", []).grund == "ungueltige_nutzlast"
+
+
+def test_permit_join_and_device_list(ctx):
+    assert execute(ctx, "zigbee_permit_join", {"seconds": 120}) == Done({})
+    assert ctx.z2m.permit_join_requests == [120]
+    devices = execute(ctx, "zigbee_devices", {}).result["devices"]
+    sensor = next(d for d in devices if d["ieee"] == SENSOR)
+    assert sensor["art"] == "fuehler" and sensor["werte"]["temperature"] == 20.5 and sensor["batterie"] == 80
+    assert set(sensor) == set(wire.ZIGBEE_DEVICE_FIELDS)
+    assert sensor["last_seen"] == "2023-11-14T22:13:20+00:00"
+
+
+def test_zigbee_not_ready(ctx):
+    ctx.z2m.bridge(online=False)
+    assert execute(ctx, "zigbee_devices", {}).grund == "zigbee_nicht_bereit"
+    assert execute(ctx, "zigbee_permit_join", {"seconds": 60}).grund == "zigbee_nicht_bereit"
+    assert ctx.z2m.permit_join_requests == []
+
+
+def test_probe_adds_safety_warnings_and_never_writes(ctx):
+    result = execute(ctx, "driver_probe", {"driver_id": "simulation"}).result
+    assert set(result["kandidaten"][0]["sicherheitswarnungen"]) == {"Heizkoerper", "Fussbodenheizung"}
+    assert not (ctx.paths.sim_dir / "plant.json").exists()
+    assert execute(ctx, "driver_probe", {"driver_id": "gibtsnicht"}).grund == "treiber_unbekannt"
+
+
+def test_probe_reports_driver_errors_with_their_reason(ctx):
+    ctx.paths.sim_dir.mkdir(parents=True)
+    (ctx.paths.sim_dir / "control.json").write_text(json.dumps({"token_expired": True}))
+    assert execute(ctx, "driver_probe", {"driver_id": "simulation"}).grund == "nicht_angemeldet"
+
+
+def test_login_not_needed_for_the_simulation(ctx):
+    outcome = execute(ctx, "driver_login", {"phase": "begin", "driver_id": "simulation", "client_id": "x",
+                                            "redirect_uri": "https://p.example.test/oauth/callback", "scope": "s"})
+    assert outcome.grund == "login_nicht_noetig"
+    assert execute(ctx, "driver_login", {"phase": "nonsense", "driver_id": "simulation"}).grund == "ungueltige_nutzlast"
+
+
+def test_inventory_waits_for_the_window(ctx, clock):
+    outcome = execute(ctx, "driver_inventory", {"driver_id": "simulation", "stunden": 1})
+    assert isinstance(outcome, Waiting) and outcome.check() is None
+    assert outcome.deadline == clock() + 3600 + 3600
+    clock.advance(3601)
+    done = outcome.check()
+    assert isinstance(done, Done) and done.result["stunden"] == 1
+    assert execute(ctx, "driver_inventory", {"driver_id": "simulation", "stunden": 49}).grund == "ungueltige_nutzlast"
+
+
+def test_create_csr_writes_a_private_key_and_returns_only_the_csr(ctx):
+    result = execute(ctx, "create_csr", {"tenant_id": "test-tenant"}).result
+    csr = x509.load_pem_x509_csr(result["csr"].encode())
+    assert csr.subject.get_attributes_for_oid(x509.NameOID.COMMON_NAME)[0].value == "test-tenant"
+    assert "PRIVATE KEY" not in result["csr"] and ctx.paths.transport_key.exists()
+    assert ctx.paths.transport_key.stat().st_mode & 0o777 == 0o600
+    assert execute(ctx, "create_csr", {}).grund == "ungueltige_nutzlast"
+
+
+def test_new_claim_code_only_while_unclaimed(ctx):
+    old = ctx.identity.claim_code
+    ctx.device_state = "uebernommen"
+    assert execute(ctx, "new_claim_code", {}).grund == "bereits_uebernommen"
+    ctx.device_state = "nicht_uebernommen"
+    assert execute(ctx, "new_claim_code", {}) == Done({})
+    assert ctx.identity.claim_code != old and ctx.register_requested
+
+
+def test_diagnostics_never_contains_secrets(ctx):
+    ctx.diagnostics = lambda: {"versionen": {"gateway": "0.1.0"}}
+    assert execute(ctx, "diagnostics", {}) == Done({"versionen": {"gateway": "0.1.0"}})
+
+
+def test_internal_errors_are_reported_not_raised(ctx, monkeypatch):
+    monkeypatch.setitem(commands.HANDLERS, "diagnostics", lambda c, p: 1 / 0)
+    outcome = execute(ctx, "diagnostics", {})
+    assert isinstance(outcome, Failed) and outcome.grund == "intern"
+    assert "division" not in outcome.text
+
+
+def test_quota_exhausted_is_only_reported_for_commands_that_list_it(ctx, monkeypatch):
+    def exhausted(context, payload):
+        raise QuotaExhausted("Kontingent erschöpft (3/3)")
+
+    for kind in ("driver_probe", "driver_inventory"):
+        monkeypatch.setitem(commands.HANDLERS, kind, exhausted)
+        assert execute(ctx, kind, {}).grund == "kontingent_erschoepft"
+    for kind in ("zigbee_devices", "create_csr", "new_claim_code"):
+        monkeypatch.setitem(commands.HANDLERS, kind, exhausted)
+        assert execute(ctx, kind, {}).grund == "intern"
+
+
+def test_reasons_outside_the_command_list_become_internal(ctx, monkeypatch):
+    def not_logged_in(context, payload):
+        raise DriverError("nicht_angemeldet", "x")
+
+    monkeypatch.setitem(commands.HANDLERS, "driver_login", not_logged_in)  # nicht in der Liste von driver_login
+    assert execute(ctx, "driver_login", {}).grund == "intern"
+    monkeypatch.setitem(commands.HANDLERS, "driver_probe", not_logged_in)
+    assert execute(ctx, "driver_probe", {}).grund == "nicht_angemeldet"
+
+
+def test_waiting_check_maps_errors_like_the_handler(ctx, clock, monkeypatch):
+    from smartheat_gateway.drivers.simulation import SimulationDriver
+
+    outcome = execute(ctx, "driver_inventory", {"driver_id": "simulation", "stunden": 1})
+
+    def unreachable(self, hours):
+        raise DriverError("anlage_nicht_erreichbar", "Die Anlage antwortet nicht.")
+
+    monkeypatch.setattr(SimulationDriver, "inventory", unreachable)
+    clock.advance(3601)
+    assert outcome.check() == Failed("anlage_nicht_erreichbar", "Die Anlage antwortet nicht.")
+
+    def broken(self, hours):
+        raise QuotaExhausted("Kontingent erschöpft (3/3)")
+
+    monkeypatch.setattr(SimulationDriver, "inventory", broken)
+    assert outcome.check().grund == "kontingent_erschoepft"
+
+
+def test_every_handler_is_a_contract_command_and_emitted_reasons_are_listed(ctx):
+    assert set(commands.HANDLERS) <= set(wire.COMMANDS)
+    # Alle Gruende, die diese Handler direkt erzeugen, stehen in der Vertragsliste des jeweiligen Befehls.
+    produced = {
+        "zigbee_permit_join": {"ungueltige_nutzlast", "zigbee_nicht_bereit"},
+        "zigbee_devices": {"zigbee_nicht_bereit"},
+        "driver_login": {"ungueltige_nutzlast", "treiber_unbekannt", "login_nicht_noetig"},
+        "driver_probe": {"treiber_unbekannt", "nicht_angemeldet", "kontingent_erschoepft"},
+        "driver_inventory": {"ungueltige_nutzlast", "treiber_unbekannt", "kontingent_erschoepft"},
+        "create_csr": {"ungueltige_nutzlast"},
+        "new_claim_code": {"bereits_uebernommen"},
+        "diagnostics": set(),
+    }
+    for kind, reasons in produced.items():
+        assert reasons <= set(wire.command_errors(kind)), kind
