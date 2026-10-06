@@ -1,0 +1,119 @@
+# Nur fuer tests/test_gateway_updater.sh (Plan G2b-1 Task 15).
+# Abgeleitet von gateway/compose/docker-compose.yml: ohne zigbee2mqtt, Netz wan extern (shg-upd-wan, dort laeuft die
+# Fake-Geraete-API shg-upd-api und der Updater-Container), Agent ohne ports. Der Bundle-Bau
+# (gateway/host/tests/fixtures/make_test_bundles.py) ersetzt build: der Gateway-Dienste durch das Image mit Digest.
+# security_opt label:disable: auf SELinux-Hosts (Fedora) duerfen die Container die Bind-Mounts sonst nicht lesen
+# (wie docker-compose.dev.yml); ohne SELinux wirkungslos.
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true", "label:disable"]
+  tmpfs: [/tmp]
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: {max-size: 10m, max-file: "3"}
+
+x-gateway: &gateway
+  <<: *hardening
+  build:
+    context: ../../../..
+    dockerfile: gateway/Dockerfile
+
+x-after-init: &after-init
+  init: {condition: service_completed_successfully}
+
+services:
+  init:
+    <<: *gateway
+    restart: "no"
+    command: ["python", "-m", "smartheat_gateway.init"]
+    network_mode: none
+    environment:
+      SHG_BUS_DIR: /bus
+      SHG_ZIGBEE_DIR: /zigbee2mqtt
+      SHG_DATA_DIR: /data
+      SHG_HOST_DIR: /host
+      ZIGBEE_ADAPTER: ${ZIGBEE_ADAPTER:-ember}
+    volumes:
+      - ${SHG_ROOT:-/var/lib/smartheat}/bus:/bus
+      - ${SHG_ROOT:-/var/lib/smartheat}/zigbee2mqtt:/zigbee2mqtt
+      - ${SHG_ROOT:-/var/lib/smartheat}/data:/data
+      - ${SHG_ROOT:-/var/lib/smartheat}/host:/host:ro
+
+  agent:
+    <<: *gateway
+    command: ["python", "-m", "smartheat_gateway.agent"]
+    networks: [bus, wan]
+    depends_on:
+      <<: *after-init
+      mosquitto: {condition: service_started}
+    environment:
+      SHG_BUS_HOST: mosquitto
+      SHG_BUS_CREDENTIALS: /run/shg-bus/bus.json
+      SHG_DATA_DIR: /data
+      SHG_HOST_DIR: /host
+      SHG_DEVICE_API_URL: http://shg-upd-api:8090
+      SHG_PORTAL_BASE_URL: ${SHG_PORTAL_BASE_URL:-}
+      SHG_DIAG_HOSTNAMES: ${SHG_DIAG_HOSTNAMES:-}
+    volumes:
+      - ${SHG_ROOT:-/var/lib/smartheat}/data:/data
+      - ${SHG_ROOT:-/var/lib/smartheat}/host:/host:ro
+      - ${SHG_ROOT:-/var/lib/smartheat}/bus/credentials/agent:/run/shg-bus:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  tunnel:
+    <<: *gateway
+    command: ["python", "-m", "smartheat_gateway.tunnel"]
+    networks: [bus, wan]
+    depends_on: *after-init
+    environment:
+      SHG_DATA_DIR: /data
+    volumes:
+      - ${SHG_ROOT:-/var/lib/smartheat}/data:/data:ro
+      - {type: tmpfs, target: /data/device, read_only: true, tmpfs: {size: 4096}}
+      - {type: tmpfs, target: /data/agent, read_only: true, tmpfs: {size: 4096}}
+
+  runtime:
+    <<: *gateway
+    command: ["python", "-m", "smartheat_gateway.runtime_main"]
+    network_mode: "service:tunnel"
+    depends_on:
+      <<: *after-init
+      tunnel: {condition: service_started}
+      mosquitto: {condition: service_started}
+    environment:
+      SHG_BUS_HOST: mosquitto
+      SHG_BUS_CREDENTIALS: /run/shg-bus/bus.json
+      SHG_BUS_LOST_EXIT_SECONDS: ${SHG_BUS_LOST_EXIT_SECONDS:-300}
+      SHG_DATA_DIR: /data
+      TZ: ${TZ:-Europe/Berlin}
+    volumes:
+      - ${SHG_ROOT:-/var/lib/smartheat}/data:/data
+      - ${SHG_ROOT:-/var/lib/smartheat}/bus/credentials/runtime:/run/shg-bus:ro
+      - {type: tmpfs, target: /data/device, read_only: true, tmpfs: {size: 4096}}
+      - {type: tmpfs, target: /data/agent, read_only: true, tmpfs: {size: 4096}}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,sys,time; sys.exit(time.time() - os.path.getmtime('/tmp/shg-runtime-alive') > 120)"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+
+  mosquitto:
+    <<: *hardening
+    image: eclipse-mosquitto:2@sha256:38c0da4f2ef84284d47b3b3eeea1cb3bdeabe81ee10caf0cd5c5ff61ee3ea408
+    user: "1000:1000"
+    networks: [bus]
+    depends_on: *after-init
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ${SHG_ROOT:-/var/lib/smartheat}/bus/mosquitto:/mosquitto/config/bus:ro
+
+networks:
+  bus:
+    internal: true
+  wan: {external: true, name: shg-upd-wan}
