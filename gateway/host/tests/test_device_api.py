@@ -159,3 +159,59 @@ def test_fake_control_routes_for_desired_and_files(tmp_path, api):
     client.update_result("0.9.1", "ok", "")
     state = json.loads(_get(f"{api.url}/_e2e/state")[1])
     assert state["update_results"][0]["result"] == "ok"
+
+
+def _raw_server(reply: bytes):
+    """Stub-Server auf 127.0.0.1: liest die Anfrage und schickt rohe Bytes zurueck (kaputte Antworten)."""
+    import socket
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+
+    def serve():
+        try:
+            connection, _ = listener.accept()
+        except OSError:
+            return
+        with connection:
+            connection.recv(65536)
+            connection.sendall(reply)
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    return listener, thread
+
+
+@pytest.mark.parametrize("reply", [
+    b"das ist kein http\r\n\r\n",  # BadStatusLine
+    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n10\r\nabc",  # IncompleteRead
+], ids=["garbage-status-line", "truncated-chunked-body"])
+def test_malformed_http_is_a_temporary_error(tmp_path, api, reply):
+    _registered(tmp_path, api)
+    listener, thread = _raw_server(reply)
+    try:
+        client = device_api.DeviceApi(f"http://127.0.0.1:{listener.getsockname()[1]}",
+                                      device_api.load_device_key(tmp_path / "device"), timeout=2)
+        with pytest.raises(device_api.DeviceApiError) as raised:
+            client.desired()
+        assert not isinstance(raised.value, device_api.NotAuthenticated)
+    finally:
+        listener.close()
+        thread.join(timeout=5)
+
+
+def test_oversized_answer_is_a_temporary_error(tmp_path, api):
+    from smartheat_gateway.agent import wire
+    _registered(tmp_path, api)
+    body = b'{"x":"' + b"a" * wire.MAX_BODY_BYTES + b'"}'
+    listener, thread = _raw_server(
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "
+        + str(len(body)).encode() + b"\r\n\r\n" + body)
+    try:
+        client = device_api.DeviceApi(f"http://127.0.0.1:{listener.getsockname()[1]}",
+                                      device_api.load_device_key(tmp_path / "device"), timeout=2)
+        with pytest.raises(device_api.DeviceApiError, match="zu gross"):
+            client.desired()
+    finally:
+        listener.close()
+        thread.join(timeout=5)

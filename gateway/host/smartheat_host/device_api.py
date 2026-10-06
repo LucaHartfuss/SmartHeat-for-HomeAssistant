@@ -1,6 +1,7 @@
 """Signierte Anfragen des Updaters an die Geraete-API (Spec G3 2.1/2.2, G2b-1 4): desired und update_result.
 Standardbibliothek; Signatur und Geraete-ID wie der Agent (smartheat_gateway.agent.identity/wire). Der Schluessel wird
 nur gelesen: anlegen darf ihn nur der Agent (ein Schreiber je Datei)."""
+import http.client
 import json
 import time
 import urllib.error
@@ -64,7 +65,7 @@ class DeviceApi:
             if error.code == 401:
                 raise NotAuthenticated(route) from None
             raise DeviceApiError(f"{route}: HTTP {error.code}") from None
-        except (urllib.error.URLError, OSError) as error:
+        except (urllib.error.URLError, http.client.HTTPException, OSError) as error:
             raise DeviceApiError(f"{route}: {type(error).__name__}") from None
         if len(raw) > wire.MAX_BODY_BYTES:
             raise DeviceApiError(f"{route}: Antwort zu gross")
