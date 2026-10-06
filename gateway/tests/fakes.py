@@ -37,6 +37,13 @@ class FakeBus:
             if topic_matches_sub(topic_filter, topic):
                 callback(topic, raw, False)
 
+    def deliver(self, topic, payload, *, retain=False) -> None:
+        """Stellt eine Nachricht an die Abonnenten zu, ohne sie zu speichern (Broker-Replay: retain=True)."""
+        raw = encode(payload)
+        for topic_filter, callback in list(self.subscriptions):
+            if topic_matches_sub(topic_filter, topic):
+                callback(topic, raw, retain)
+
     def decoded(self) -> list[tuple[str, object]]:
         return [(topic, decode(raw)) for topic, raw, _ in self.published]
 

@@ -1,7 +1,7 @@
 """Grundkonfiguration von Zigbee2MQTT 2.x (Spec SHG G2 5), einmal geschrieben, wenn configuration.yaml fehlt;
 danach gehoert die Datei Zigbee2MQTT (es ersetzt GENERATE selbst). permit_join steht nicht darin: Zigbee2MQTT 2.x kennt
-die Option nicht mehr, Koppeln ist nach dem Start immer aus (Plan G2a; gegen das echte Image in G2b pruefen). Kein
-`retain` fuer Geraete: der Zigbee-Spiegel stempelt retained Werte beim Empfang als frisch."""
+die Option nicht mehr, Koppeln ist nach dem Start immer aus (Plan G2a; gegen das echte Image in G2b pruefen). Zigbee2MQTT
+soll keine Geraetewerte retained senden; der Spiegel stempelt retained Werte ohnehin nicht frisch."""
 from pathlib import Path
 
 from smartheat_gateway.files import write_text_private

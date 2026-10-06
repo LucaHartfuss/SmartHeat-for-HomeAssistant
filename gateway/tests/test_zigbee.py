@@ -86,3 +86,27 @@ def test_device_message_hook_ignores_bridge_and_subtopics(world):
     z2m.report(SENSOR, temperature=21.0)
     bus.publish(f"zigbee2mqtt/{SENSOR}/availability", {"state": "online"})
     assert seen == [(SENSOR, {"temperature": 21.0})]
+
+
+def test_retained_device_payload_is_kept_but_not_fresh(clock):
+    bus = FakeBus()
+    mirror = ZigbeeMirror(bus, clock)
+    mirror.start()
+    seen = []
+    mirror.on_device_message(lambda ieee, payload: seen.append(ieee))
+    bus.deliver("zigbee2mqtt/0xabc", {"temperature": 21.5}, retain=True)
+    assert mirror.payload("0xabc") == {"temperature": 21.5}
+    assert mirror.last_seen("0xabc") is None
+    with pytest.raises(ValueError, match="noch nicht live"):
+        mirror.value("0xabc", "temperature")
+    assert seen == []  # ein replaytes Thermostat-Soll ist keine Eingabe
+
+
+def test_live_message_after_retained_counts(clock):
+    bus = FakeBus()
+    mirror = ZigbeeMirror(bus, clock)
+    mirror.start()
+    bus.deliver("zigbee2mqtt/0xabc", {"temperature": 21.5}, retain=True)
+    bus.deliver("zigbee2mqtt/0xabc", {"temperature": 21.7})
+    assert mirror.value("0xabc", "temperature") == 21.7
+    assert mirror.last_seen("0xabc") == clock()

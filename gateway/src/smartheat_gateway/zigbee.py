@@ -1,6 +1,7 @@
 """Zigbee-Spiegel (Spec SHG G2 5): letzte Werte der Geraete aus Zigbee2MQTT mit Zeitstempel der MONOTONEN Uhr (die
 Wanduhr des Pi springt beim Boot, Plan G2a Review Focus 1), Faehigkeiten aus bridge/devices (exposes), Schreiben ans
-Thermostat, Koppeln. Friendly Name = IEEE-Adresse. Callbacks laufen im Bus-Thread; der Spiegel haelt nur Daten."""
+Thermostat, Koppeln. Friendly Name = IEEE-Adresse. Callbacks laufen im Bus-Thread; der Spiegel haelt nur Daten.
+Retained Geraetemeldungen gelten bis zur ersten Live-Meldung als veraltet."""
 import logging
 import threading
 from collections.abc import Callable
@@ -65,7 +66,7 @@ class ZigbeeMirror:
         self._lock = threading.Lock()
         self._online: bool | None = None
         self._devices: dict[str, ZigbeeDevice] = {}
-        self._payloads: dict[str, tuple[dict, float]] = {}
+        self._payloads: dict[str, tuple[dict, float | None]] = {}
         self._hooks: list[Callable[[str, dict], None]] = []
 
     def start(self) -> None:
@@ -104,6 +105,8 @@ class ZigbeeMirror:
         if entry is None:
             raise ValueError(f"Zigbee-Geraet {ieee} hat noch keinen Wert gemeldet")
         payload, seen = entry
+        if seen is None:
+            raise ValueError(f"Wert von {ieee} noch nicht live gemeldet")
         if self._clock() - seen > self._max_age:
             raise ValueError(f"Wert von {ieee} veraltet ({self._clock() - seen:.0f} s)")
         if field not in payload:
@@ -125,8 +128,12 @@ class ZigbeeMirror:
         elif parts[1:] == ["bridge", "devices"] and isinstance(body, list):
             self._set_devices(body)
         elif len(parts) == 2 and parts[1] != "bridge" and isinstance(body, dict):
+            # Retained Meldungen (Broker-Replay beim Verbinden) sind beliebig alt: speichern, aber nicht frisch
+            # stempeln und keine Geraete-Hooks (Plan G2b-1 Praezisierung 13).
             with self._lock:
-                self._payloads[parts[1]] = (body, self._clock())
+                self._payloads[parts[1]] = (body, None if retain else self._clock())
+            if retain:
+                return
             for hook in self._hooks:
                 hook(parts[1], body)
 
