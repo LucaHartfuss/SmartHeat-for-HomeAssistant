@@ -5,14 +5,29 @@ Wanduhr springt beim Boot). Zustand in updater/state.json (atomar, 0644), Format
 
     {"current": str|null, "previous": str|null, "rejected": [str],
      "rejected_context": {"updater": str, "key": str}|null,
-     "in_progress": {"version": str, "previous": str|null, "since": float, "rollback": str (optional)}|null}
+     "in_progress": {"version": str, "previous": str|null, "since": float, "rollback": str (optional),
+                     "reject": false (optional)}|null,
+     "pending_reports": [{"version": str, "result": str, "reason": str}]}
 
 in_progress wird vor `compose up` geschrieben und uebersteht einen Stromausfall: recover() startet das Bundle dann
 erneut (up ist idempotent) und wartet auf Gesundheit. Ist "rollback" gesetzt (Grund), scheiterte der Rueckweg auf
-`previous`; recover()/run_once wiederholen ihn, bevor sonst etwas geschieht, und melden das Ergebnis erst danach.
+`previous`; recover()/run_once wiederholen ihn, bevor sonst etwas geschieht, und melden das Ergebnis erst danach
+("reject": false = die Version kommt danach nicht nach rejected, siehe unten).
 rejected gilt nur im Kontext rejected_context (Version des Updaters und Schluessel-ID aus release.pub oder
 "placeholder"): aendert sich eines von beiden, wird rejected geleert (ein neuer Updater oder der echte Schluessel
-darf es neu versuchen)."""
+darf es neu versuchen).
+
+Umgebung ist kein Fehler des Bundles (Final-Review FW-1/FW-2):
+- Die Gesundheitsfrist ruht, solange der Host die Geraete-API nicht erreicht (je Takt ein signiertes `desired`;
+  DeviceApiError inkl. NotAuthenticated, z. B. Uhr nach dem Stromausfall noch nicht synchron, gilt als nicht
+  erreichbar) - nach einem Stromausfall im ganzen Haus kommt der Router oft erst nach dem Pi. Hoechstens
+  HEALTH_CAP_SECONDS insgesamt; ist der Server dann noch immer nicht erreichbar, geht es zurueck auf das vorige Bundle,
+  ohne die Version abzulehnen (sie wird erneut versucht, solange der Server sie will), gemeldet als rollback/ungesund.
+- Fehlt ein Geraetepfad aus `devices:` des Ziel-Bundles (Zigbee-Stick abgezogen), wird nicht umgeschaltet
+  ("vorlaeufig"); ein unterbrochenes Update wartet in recover() ebenso, statt zurueckzurollen.
+- update_result geht ueber die Warteschlange pending_reports: erst mit dem Zustand gespeichert, dann gesendet; was nicht
+  durchgeht (offline), wird zu Beginn des naechsten Durchlaufs vor allem anderen erneut gesendet, in Reihenfolge
+  (mindestens einmal: ein Stromausfall zwischen Senden und Speichern sendet doppelt)."""
 import hashlib
 import http.client
 import json
@@ -37,12 +52,16 @@ logger = logging.getLogger(__name__)
 REASONS = ("manifest_ungueltig", "signatur_ungueltig", "updater_zu_alt", "start_fehlgeschlagen", "ungesund")
 HEALTH_SECONDS = 600
 HEALTH_POLL_SECONDS = 10
+HEALTH_CAP_SECONDS = 3600  # Gesamtgrenze der Gesundheitspruefung, wenn die Frist wegen Unerreichbarkeit ruht
 PERIOD_SECONDS = 900
 JITTER_SECONDS = 300
 FIRST_DELAY_SECONDS = 120
 MAX_MANIFEST_BYTES = 65536
 MAX_FILE_BYTES = 1048576
 MAX_REJECTED = 20
+MAX_PENDING_REPORTS = 20
+OFFER_KEYS = ("manifest_url", "manifest_sha256", "signature")
+_HEALTHY, _UNHEALTHY, _UNREACHABLE = "gesund", "ungesund", "unerreichbar"
 REQUIRED_HEALTHY = ("agent", "runtime")
 
 
@@ -60,6 +79,14 @@ def _text_or_none(value) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _report_entries(value) -> list[dict]:
+    if not isinstance(value, list):
+        return []
+    keys = ("version", "result", "reason")
+    return [{key: item[key] for key in keys} for item in value
+            if isinstance(item, dict) and all(isinstance(item.get(key), str) for key in keys)]
+
+
 @dataclass
 class State:
     current: str | None = None
@@ -67,6 +94,7 @@ class State:
     rejected: list[str] = field(default_factory=list)
     in_progress: dict | None = None
     rejected_context: dict | None = None
+    pending_reports: list[dict] = field(default_factory=list)
 
     @classmethod
     def load(cls, path: Path) -> "State":
@@ -81,7 +109,7 @@ class State:
             if not (isinstance(context, dict) and all(isinstance(value, str) for value in context.values())):
                 context = None
             return cls(_text_or_none(data.get("current")), _text_or_none(data.get("previous")), rejected, in_progress,
-                       context)
+                       context, _report_entries(data.get("pending_reports")))
         except (OSError, ValueError, AttributeError, TypeError):
             return cls()
 
@@ -96,7 +124,7 @@ def fetch_url(url: str, max_bytes: int, allow_http: bool) -> bytes:
     try:
         with urllib.request.urlopen(url, timeout=30) as response:
             data = response.read(max_bytes + 1)
-    except (urllib.error.URLError, http.client.HTTPException, OSError) as error:
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as error:
         raise FetchError(f"{url}: {type(error).__name__}") from None
     if len(data) > max_bytes:
         raise FetchError(f"{url}: zu gross")
@@ -135,11 +163,11 @@ class Updater:
                  fetch: Callable[[str, int], bytes], public_key_text: str, state_path: Path, version: str,
                  health: Callable[[str], bool], clock: Callable[[], float] = time.monotonic,
                  sleep: Callable[[float], None] = time.sleep, allow_http: bool = False,
-                 health_seconds: float = HEALTH_SECONDS) -> None:
+                 health_seconds: float = HEALTH_SECONDS, path_exists: Callable[[str], bool] = os.path.exists) -> None:
         self._api_factory, self._store, self._compose, self._fetch = api_factory, store, compose, fetch
         self._public_key_text, self._state_path, self._version = public_key_text, state_path, version
         self._health, self._clock, self._sleep, self._allow_http = health, clock, sleep, allow_http
-        self._health_seconds = health_seconds
+        self._health_seconds, self._path_exists = health_seconds, path_exists
         self._context = {"updater": version, "key": _key_identity(public_key_text)}
 
     def _load(self) -> State:
@@ -157,14 +185,20 @@ class Updater:
         laufen eventuell noch die alten Container (restart: unless-stopped) und wirken gesund; deshalb wird das neue
         Bundle erst erneut hochgefahren (up ist idempotent), bevor die Gesundheit zaehlt."""
         state = self._load()
+        self._flush(state)  # offene Meldungen vor allen neuen
         progress = state.in_progress
         if not progress:
             return
         version = progress["version"]
         if isinstance(progress.get("rollback"), str):
             logger.warning("Rueckweg von %s war nicht abgeschlossen, wiederhole ihn", version)
-            self._rollback(state, version, progress["rollback"])
+            self._rollback(state, version, progress["rollback"], reject=progress.get("reject") is not False)
             return
+        if self._store.exists(version):
+            missing = self._missing_devices((self._store.dir(version) / "docker-compose.yml").read_text())
+            if missing:
+                logger.warning("Unterbrochenes Update auf %s wartet: Geraet fehlt (%s)", version, ", ".join(missing))
+                return
         logger.warning("Unterbrochenes Update auf %s gefunden, starte es erneut und pruefe Gesundheit", version)
         try:
             self._compose.up(version)
@@ -172,16 +206,15 @@ class Updater:
             logger.error("Start von %s gescheitert: %s", version, error)
             self._rollback(state, version, "start_fehlgeschlagen")
             return
-        if self._wait_healthy(version):
-            self._finish(state, version)
-        else:
-            self._rollback(state, version, "ungesund")
+        self._settle(state, version)
 
     def run_once(self) -> str:
         if State.load(self._state_path).in_progress:  # offener Auftrag (z. B. gescheiterter Rueckweg) zuerst
-            self.recover()
+            self.recover()  # sendet zuerst die offenen Meldungen
             if State.load(self._state_path).in_progress:
                 return "vorlaeufig"
+        else:
+            self._flush(self._load())  # offene Meldungen vor allem anderen
         state = self._load()
         try:
             desired = self._api_factory().desired()  # type: ignore[attr-defined]
@@ -189,8 +222,9 @@ class Updater:
             logger.info("Soll-Version nicht abrufbar (%s), naechster Durchlauf", error)
             return "vorlaeufig"
         version = desired.get("version")
-        if (not isinstance(version, str) or version == state.current or version in state.rejected
-                or not all(desired.get(key) for key in ("manifest_url", "manifest_sha256", "signature"))):
+        if not isinstance(version, str) or version == state.current or version in state.rejected:
+            return "aktuell"
+        if not any(desired.get(key) for key in OFFER_KEYS):  # nur eine Version, kein Bundle angeboten
             return "aktuell"
         try:
             files = self._download(desired, version)
@@ -201,6 +235,10 @@ class Updater:
             logger.error("Bundle %s abgelehnt: %s", version, refused)
             self._reject(state, version, refused.reason)
             return "abgelehnt"
+        missing = self._missing_devices(files["docker-compose.yml"].decode("utf-8"))
+        if missing:  # z. B. Zigbee-Stick abgezogen: up und Rueckweg scheiterten beide, kein Fehler des Bundles
+            logger.warning("Bundle %s wartet: Geraet fehlt (%s), naechster Durchlauf", version, ", ".join(missing))
+            return "vorlaeufig"
         self._store.install(version, files)  # erst nach allen Pruefungen, atomar
         try:
             self._compose.pull(version)
@@ -213,24 +251,45 @@ class Updater:
             self._compose.up(version)
         except bundles.ComposeError as error:
             logger.error("Start von %s gescheitert: %s", version, error)
-            return self._rolled_back(state, version, "start_fehlgeschlagen")
-        if self._wait_healthy(version):
+            return "zurueckgerollt" if self._rollback(state, version, "start_fehlgeschlagen") else "vorlaeufig"
+        return self._settle(state, version)
+
+    def _settle(self, state: State, version: str) -> str:
+        """Auf Gesundheit warten, dann abschliessen oder zurueckrollen (ohne Ablehnung, wenn nur der Server fehlte)."""
+        outcome = self._wait_healthy(version)
+        if outcome == _HEALTHY:
             self._finish(state, version)
             return "aktualisiert"
-        return self._rolled_back(state, version, "ungesund")
+        if outcome == _UNREACHABLE:
+            logger.error("Server nach %d s nicht erreichbar, %s wird spaeter erneut versucht", HEALTH_CAP_SECONDS,
+                         version)
+        done = self._rollback(state, version, "ungesund", reject=outcome == _UNHEALTHY)
+        return "zurueckgerollt" if done else "vorlaeufig"
 
     # --- Schritte ---
 
     def _download(self, desired: dict, version: str) -> dict[str, bytes]:
-        url = desired["manifest_url"]
-        scheme = urllib.parse.urlsplit(url).scheme
-        if scheme != "https" and not (self._allow_http and scheme == "http"):
+        """Prueft und laedt; liefert die Bundle-Dateien plus Manifest und Signatur (alles fuer bundles/<version>/)."""
+        url, expected_sha, signature = (desired.get(key) for key in OFFER_KEYS)
+        if not isinstance(url, str):
+            raise _Refused("manifest_ungueltig", "Manifest-URL fehlt oder ist kein Text")
+        try:
+            parts = urllib.parse.urlsplit(url)
+        except ValueError:
+            raise _Refused("manifest_ungueltig", f"Manifest-URL unlesbar: {url!r}") from None
+        if parts.scheme != "https" and not (self._allow_http and parts.scheme == "http"):
             raise _Refused("manifest_ungueltig", f"Manifest-URL muss https sein: {url}")
+        if not parts.hostname:
+            raise _Refused("manifest_ungueltig", f"Manifest-URL ohne Host: {url}")
+        if not (isinstance(expected_sha, str) and len(expected_sha) == 64):
+            raise _Refused("manifest_ungueltig", "manifest_sha256 fehlt oder ist kein SHA-256")
+        if not isinstance(signature, str):
+            raise _Refused("signatur_ungueltig", "Signatur fehlt oder ist kein Text")
         raw = self._fetch(url, MAX_MANIFEST_BYTES)
-        if hashlib.sha256(raw).hexdigest() != desired["manifest_sha256"]:
+        if hashlib.sha256(raw).hexdigest() != expected_sha.lower():
             raise _Refused("manifest_ungueltig", "SHA-256 des Manifests passt nicht")
         try:
-            minisign.verify(minisign.load_public_key(self._public_key_text), raw, desired["signature"])
+            minisign.verify(minisign.load_public_key(self._public_key_text), raw, signature)
         except minisign.SignatureError as error:
             raise _Refused("signatur_ungueltig", str(error)) from None
         try:
@@ -251,31 +310,75 @@ class Updater:
             bundles.check_compose(files["docker-compose.yml"].decode("utf-8"))
         except (bundles.ManifestError, UnicodeDecodeError) as error:
             raise _Refused("manifest_ungueltig", str(error)) from None
+        files[bundles.MANIFEST_NAME] = raw
+        files[bundles.SIGNATURE_NAME] = signature.encode()
         return files
 
-    def _wait_healthy(self, version: str) -> bool:
-        deadline = self._clock() + self._health_seconds
+    def _missing_devices(self, compose_text: str) -> list[str]:
+        return [path for path in bundles.compose_devices(compose_text) if not self._path_exists(path)]
+
+    def _reachable(self) -> bool:
+        """Erreicht der Host die Geraete-API? Signiertes desired (prueft Netz, DNS, TLS und die Uhr in einem)."""
+        try:
+            self._api_factory().desired()  # type: ignore[attr-defined]
+        except device_api.DeviceApiError:
+            return False
+        return True
+
+    def _wait_healthy(self, version: str) -> str:
+        """gesund | ungesund (Frist abgelaufen) | unerreichbar (Gesamtgrenze erreicht, Server weiter nicht erreichbar).
+        Ein Takt, in dem der Server nicht erreichbar war, verschiebt die Frist um seine Dauer."""
+        start = last = self._clock()
+        deadline = start + self._health_seconds
+        cap = start + max(HEALTH_CAP_SECONDS, self._health_seconds)
         while True:
             if self._health(version):
-                return True
-            if self._clock() >= deadline:
-                return False
+                return _HEALTHY
+            reachable = self._reachable()
+            now = self._clock()
+            if reachable:
+                if now >= deadline:
+                    return _UNHEALTHY
+            else:
+                if now >= cap:
+                    return _UNREACHABLE
+                deadline = min(deadline + (now - last), cap)
+            last = now
             self._sleep(HEALTH_POLL_SECONDS)
 
-    def _report(self, version: str, result: str, reason: str) -> None:
-        try:
-            self._api_factory().update_result(version, result, reason)  # type: ignore[attr-defined]
-        except device_api.DeviceApiError as error:
-            logger.warning("update_result fuer %s nicht gemeldet: %s", version, error)
+    # --- Meldungen ---
+
+    def _queue(self, state: State, version: str, result: str, reason: str) -> None:
+        """Meldung vormerken; der Aufrufer speichert den Zustand und ruft danach _flush."""
+        entry = {"version": version, "result": result, "reason": reason}
+        state.pending_reports = (state.pending_reports + [entry])[-MAX_PENDING_REPORTS:]
+
+    def _flush(self, state: State) -> None:
+        """Vorgemerkte Meldungen in Reihenfolge senden; beim ersten Fehler aufhoeren, der Rest bleibt fuer spaeter."""
+        sent = 0
+        for entry in state.pending_reports:
+            try:
+                self._api_factory().update_result(  # type: ignore[attr-defined]
+                    entry["version"], entry["result"], entry["reason"])
+            except device_api.DeviceApiError as error:
+                logger.warning("update_result fuer %s nicht gemeldet (%s), naechster Durchlauf", entry["version"],
+                               error)
+                break
+            sent += 1
+        if sent:
+            state.pending_reports = state.pending_reports[sent:]
+            state.save(self._state_path)
 
     def _reject(self, state: State, version: str, reason: str) -> None:
         state.rejected = (state.rejected + [version])[-MAX_REJECTED:]
+        self._queue(state, version, "rollback", reason)
         state.save(self._state_path)
-        self._report(version, "rollback", reason)
+        self._flush(state)
 
     def _finish(self, state: State, version: str) -> None:
         previous = state.in_progress.get("previous") if state.in_progress else state.current
         state.previous, state.current, state.in_progress = previous, version, None
+        self._queue(state, version, "ok", "")
         state.save(self._state_path)
         keep: set[str] = set()
         for kept in (version, previous):
@@ -283,15 +386,13 @@ class Updater:
                 keep |= set(bundles.compose_images((self._store.dir(kept) / "docker-compose.yml").read_text()))
         if keep:
             self._compose.prune(keep)
-        self._report(version, "ok", "")
+        self._flush(state)
         logger.info("Update auf %s abgeschlossen", version)
 
-    def _rolled_back(self, state: State, version: str, reason: str) -> str:
-        return "zurueckgerollt" if self._rollback(state, version, reason) else "vorlaeufig"
-
-    def _rollback(self, state: State, version: str, reason: str) -> bool:
+    def _rollback(self, state: State, version: str, reason: str, reject: bool = True) -> bool:
         """Zurueck auf das vorige Bundle. Scheitert `up`, bleibt in_progress (mit "rollback") erhalten und der
-        naechste recover()/run_once wiederholt den Rueckweg; abgelehnt und gemeldet wird erst, wenn er gelang."""
+        naechste recover()/run_once wiederholt den Rueckweg; abgelehnt und gemeldet wird erst, wenn er gelang.
+        reject=False (Server nur nicht erreichbar): gemeldet, aber nicht nach rejected."""
         progress = state.in_progress or {}
         previous = progress.get("previous") if state.in_progress else state.current
         if previous and self._store.exists(previous):
@@ -302,6 +403,8 @@ class Updater:
                 since = progress.get("since")
                 state.in_progress = {"version": version, "previous": previous,
                                      "since": since if isinstance(since, float) else time.time(), "rollback": reason}
+                if not reject:
+                    state.in_progress["reject"] = False
                 state.save(self._state_path)
                 return False
         else:
@@ -309,7 +412,12 @@ class Updater:
                          version, previous or "keines")
         state.current, state.in_progress = previous, None
         logger.error("Update auf %s zurueckgerollt (%s)", version, reason)
-        self._reject(state, version, reason)
+        if reject:
+            self._reject(state, version, reason)
+        else:
+            self._queue(state, version, "rollback", reason)
+            state.save(self._state_path)
+            self._flush(state)
         return True
 
 

@@ -130,6 +130,63 @@ def test_prune_removes_only_unreferenced_images_of_the_bundle_repositories(tmp_p
     assert len([cmd for cmd in calls if cmd[:3] == ["docker", "image", "rm"]]) == 1
 
 
+def test_prune_matches_tagged_refs_and_registries_with_a_port(tmp_path):
+    """Compose nennt Images mit Tag (eclipse-mosquitto:2@sha256:...), `docker image ls` zeigt das Repository ohne Tag;
+    ein Registry-Port (localhost:5000/...) ist kein Tag."""
+    keep = {"eclipse-mosquitto:2@sha256:" + "e" * 64, "koenkk/zigbee2mqtt:2.14.2@sha256:" + "d" * 64,
+            "localhost:5000/smartheat-gateway@sha256:" + "a" * 64}
+    listed = "\n".join([
+        "eclipse-mosquitto@sha256:" + "e" * 64, "eclipse-mosquitto@sha256:" + "1" * 64,
+        "koenkk/zigbee2mqtt@sha256:" + "d" * 64, "koenkk/zigbee2mqtt@sha256:" + "2" * 64,
+        "localhost:5000/smartheat-gateway@sha256:" + "a" * 64, "localhost:5000/smartheat-gateway@sha256:" + "3" * 64,
+        "localhost@sha256:" + "4" * 64, "fremd/bild@sha256:" + "5" * 64,
+    ])
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        return _Done(0, listed if cmd[:3] == ["docker", "image", "ls"] else "")
+
+    bundles.ComposeRunner(tmp_path, run=run).prune(keep)
+    removed = sorted(cmd[3] for cmd in calls if cmd[:3] == ["docker", "image", "rm"])
+    assert removed == sorted([
+        "eclipse-mosquitto@sha256:" + "1" * 64, "koenkk/zigbee2mqtt@sha256:" + "2" * 64,
+        "localhost:5000/smartheat-gateway@sha256:" + "3" * 64])
+
+
+@pytest.mark.parametrize(("ref", "repository"), [
+    ("eclipse-mosquitto:2@sha256:" + "e" * 64, "eclipse-mosquitto"),
+    ("eclipse-mosquitto@sha256:" + "e" * 64, "eclipse-mosquitto"),
+    ("localhost:5000/smartheat-gateway@sha256:" + "a" * 64, "localhost:5000/smartheat-gateway"),
+    ("localhost:5000/smartheat-gateway:1.2@sha256:" + "a" * 64, "localhost:5000/smartheat-gateway"),
+    ("ghcr.io/x/gw:latest", "ghcr.io/x/gw"),
+])
+def test_image_repository_strips_only_the_tag(ref, repository):
+    assert bundles.image_repository(ref) == repository
+
+
+@pytest.mark.parametrize(("text", "paths"), [
+    ("services:\n  z:\n    devices:\n    - /dev/zigbee:/dev/zigbee\n    environment: {}\n", ["/dev/zigbee"]),
+    ("services:\n  z:\n    devices:\n      - \"/dev/a:/dev/a:rwm\"\n      - /dev/b\n    x: 1\n", ["/dev/a", "/dev/b"]),
+    ('services:\n  z:\n    devices: ["/dev/zigbee:/dev/zigbee", \'/dev/c:/c\']\n', ["/dev/zigbee", "/dev/c"]),
+    ("services:\n  z:\n    devices:\n    # Kommentar\n\n    - /dev/x:/dev/x # Stick\n  y:\n    devices: [/dev/y]\n",
+     ["/dev/x", "/dev/y"]),
+    ("services:\n  z:\n    devices:\n    - ${STICK}:/dev/zigbee\n    - vendor.com/class=all\n", []),
+    ("services:\n  z:\n    image: x\n", []),
+])
+def test_compose_devices_lists_host_paths(text, paths):
+    assert bundles.compose_devices(text) == paths
+
+
+def test_store_keeps_manifest_and_signature(tmp_path):
+    store = bundles.BundleStore(tmp_path)
+    store.install("0.3.0", {"docker-compose.yml": GOOD_COMPOSE.encode(), "mosquitto.conf": b"x",
+                            bundles.MANIFEST_NAME: b"{}", bundles.SIGNATURE_NAME: b"sig"})
+    assert (tmp_path / "bundles" / "0.3.0" / "manifest.json.minisig").read_bytes() == b"sig"
+    assert (tmp_path / "bundles" / "0.3.0" / "manifest.json").read_bytes() == b"{}"
+    assert store.exists("0.3.0")
+
+
 class _Done:
     def __init__(self, returncode, stdout):
         self.returncode, self.stdout, self.stderr = returncode, stdout, ""

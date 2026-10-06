@@ -1,5 +1,7 @@
 """Bundles des Updaters (Spec G2b-1 2.2, 4): Manifest, Pruefung der Compose-Datei, Ablage unter bundles/<version>/
-und Compose-Aufrufe. Ein Bundle = Compose-Datei (nur Images mit Digest) + mosquitto.conf."""
+und Compose-Aufrufe. Ein Bundle = Compose-Datei (nur Images mit Digest) + mosquitto.conf; im Bundle-Ordner liegen
+zusaetzlich manifest.json und manifest.json.minisig (Nachweis, was signiert war; exists() verlangt sie nicht, damit
+aeltere Ordner gueltig bleiben)."""
 import json
 import os
 import re
@@ -9,11 +11,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 MANIFEST_FILES = ("docker-compose.yml", "mosquitto.conf")
+MANIFEST_NAME = "manifest.json"
+SIGNATURE_NAME = "manifest.json.minisig"
 _VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 _SHA = re.compile(r"[0-9a-f]{64}")
 _IMAGE = re.compile(r"^\s*image:\s*(.*?)\s*$", re.MULTILINE)
 _PINNED_IMAGE = re.compile(r"[^\s@]+@sha256:[0-9a-f]{64}")
 _BUILD = re.compile(r"^\s*build:", re.MULTILINE)
+_DEVICES_KEY = re.compile(r"^(\s*)devices:\s*(.*?)\s*$")
+_LIST_ITEM = re.compile(r"^(\s*)-\s+(.*?)\s*$")
 
 
 class ManifestError(Exception):
@@ -63,6 +69,53 @@ def compose_images(text: str) -> list[str]:
     """Alle Werte von image: (ohne Anfuehrungszeichen); ein Kommentar am Zeilenende bleibt im Wert und faellt so bei
     check_compose durch."""
     return [value.strip("\"'") for value in _IMAGE.findall(text)]
+
+
+def _strip_comment(value: str) -> str:
+    return re.sub(r"\s+#.*$", "", value).strip()
+
+
+def compose_devices(text: str) -> list[str]:
+    """Host-Pfade aus `devices:` aller Dienste (vor dem ersten ":"), ohne yaml (der Host hat keins). Erkannt werden die
+    Formen, die Compose-Datei und Bundle-Bau erzeugen: Blockliste (`- /host:/ctr[:rechte]`, auf gleicher oder tieferer
+    Einrueckung als der Schluessel) und Flussliste in einer Zeile (`devices: ["/host:/ctr"]`). Grenzen: Eintraege mit
+    Variablen (`${...}`) oder ohne absoluten Pfad (CDI-Namen) werden uebergangen, mehrzeilige Flusslisten nicht erkannt."""
+    values: list[str] = []
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        match = _DEVICES_KEY.match(lines[index])
+        index += 1
+        if match is None:
+            continue
+        indent, rest = len(match.group(1)), _strip_comment(match.group(2))
+        if rest.startswith("[") and rest.endswith("]"):
+            values += [item.strip() for item in rest[1:-1].split(",") if item.strip()]
+            continue
+        while index < len(lines):
+            line = lines[index]
+            if not line.strip() or line.lstrip().startswith("#"):
+                index += 1
+                continue
+            item = _LIST_ITEM.match(line)
+            if item is None or len(item.group(1)) < indent:
+                break
+            values.append(_strip_comment(item.group(2)))
+            index += 1
+    paths = []
+    for value in values:
+        host = value.strip("\"'").split(":", 1)[0]
+        if host.startswith("/") and "${" not in host:
+            paths.append(host)
+    return paths
+
+
+def image_repository(ref: str) -> str:
+    """Repository einer Image-Angabe wie `docker image ls` es zeigt: ohne Digest und ohne Tag. Der Tag steht nach dem
+    letzten "/" (ein ":" davor gehoert zum Registry-Port, z. B. localhost:5000/name)."""
+    name = ref.split("@", 1)[0]
+    head, slash, last = name.rpartition("/")
+    return head + slash + last.split(":", 1)[0]
 
 
 def check_compose(text: str) -> None:
@@ -141,12 +194,15 @@ class ComposeRunner:
                 for row in rows if isinstance(row, dict) and row.get("Health")}
 
     def prune(self, keep: set[str]) -> None:
-        repositories = {ref.split("@", 1)[0] for ref in keep}
+        """Loescht Images der Repositories aus `keep`, deren Digest nicht in `keep` steht. Verglichen wird ohne Tag
+        (Compose nennt eclipse-mosquitto:2@sha256:..., `docker image ls` zeigt eclipse-mosquitto)."""
+        kept = {f"{image_repository(ref)}@{ref.split('@', 1)[1]}" for ref in keep if "@" in ref}
+        repositories = {image_repository(ref) for ref in keep}
         try:
             listed = self._run(["docker", "image", "ls", "--digests", "--format", "{{.Repository}}@{{.Digest}}"],
                                capture_output=True, text=True, check=False)
             for ref in (listed.stdout or "").split():
-                if ref.split("@", 1)[0] in repositories and ref not in keep and "@sha256:" in ref:
+                if image_repository(ref) in repositories and ref not in kept and "@sha256:" in ref:
                     self._run(["docker", "image", "rm", ref], capture_output=True, text=True, check=False)
         except OSError:
             return

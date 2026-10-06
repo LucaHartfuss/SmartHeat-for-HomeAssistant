@@ -15,15 +15,22 @@ BASE = "https://release.example.test/0.3.0/"
 
 
 class FakeApi:
+    """offline=True: weder desired noch update_result erreichen den Server (Netz weg, z. B. Router nach Stromausfall)."""
+
     def __init__(self, desired):
-        self.desired_answer, self.results = desired, []
+        self.desired_answer, self.results, self.offline, self.desired_calls = desired, [], False, 0
 
     def desired(self):
+        self.desired_calls += 1
+        if self.offline:
+            raise device_api.DeviceApiError("desired: URLError")
         if isinstance(self.desired_answer, Exception):
             raise self.desired_answer
         return self.desired_answer
 
     def update_result(self, version, result, reason):
+        if self.offline:
+            raise device_api.DeviceApiError("update_result: URLError")
         self.results.append((version, result, reason))
 
 
@@ -112,7 +119,7 @@ def test_state_file_is_world_readable_and_survives_load(tmp_path):
     assert stat.S_IMODE(world.state_path.stat().st_mode) == 0o644
     assert json.loads(world.state_path.read_text()) == {
         "current": "0.3.0", "previous": "0.2.0", "rejected": [], "in_progress": None,
-        "rejected_context": {"updater": "0.2.0", "key": world.key_id.hex()}}
+        "rejected_context": {"updater": "0.2.0", "key": world.key_id.hex()}, "pending_reports": []}
 
 
 def test_in_progress_is_persisted_before_the_switch(tmp_path):
@@ -413,6 +420,203 @@ def test_state_without_a_usable_in_progress_entry_is_cleaned(tmp_path):
     path = tmp_path / "state.json"
     path.write_text(json.dumps({"current": "0.2.0", "in_progress": {"previous": "0.1.0"}}))
     assert updater.State.load(path).in_progress is None
+
+
+# --- Umgebung statt Bundle: Server nicht erreichbar, Stick fehlt (Final-Review FW-1, FW-2) ---
+
+
+def _offline_until(world, seconds, healthy_from=None):
+    """Netz weg bis Uhrzeit `seconds` (monoton), gesund ab `healthy_from` (None: nie)."""
+    original_sleep = world.sleep
+
+    def sleep(step):
+        original_sleep(step)
+        world.api.offline = world.clock[0] < seconds
+        world.healthy = healthy_from is not None and world.clock[0] >= healthy_from
+
+    world.updater._sleep = sleep
+
+
+def test_health_countdown_pauses_while_the_server_is_unreachable(tmp_path):
+    """Stromausfall im ganzen Haus: der Router kommt nach dem Pi. Solange der Host die Geraete-API nicht erreicht, zaehlt
+    die Frist nicht; wird das Bundle danach gesund, ist das Update gelungen."""
+    world = World(tmp_path, healthy=False)
+    _offline_until(world, 1500, healthy_from=1700)
+    world.api.offline = False  # desired des Durchlaufs selbst geht noch durch
+    assert world.updater.run_once() == "aktualisiert"
+    assert world.clock[0] >= 1700 > updater.HEALTH_SECONDS
+    state = world.state()
+    assert (state.current, state.rejected, state.pending_reports) == ("0.3.0", [], [])
+    assert world.api.results == [("0.3.0", "ok", "")]
+
+
+def test_reachable_but_unhealthy_still_rolls_back_after_ten_minutes(tmp_path):
+    world = World(tmp_path, healthy=False)
+    _offline_until(world, 0)
+    assert world.updater.run_once() == "zurueckgerollt"
+    assert updater.HEALTH_SECONDS <= world.clock[0] < updater.HEALTH_SECONDS + updater.HEALTH_POLL_SECONDS
+    assert world.state().rejected == ["0.3.0"]
+    assert world.api.desired_calls > 1  # Erreichbarkeit wird je Takt geprueft
+
+
+def test_unreachable_until_the_cap_rolls_back_without_rejecting_and_keeps_the_report(tmp_path):
+    world = World(tmp_path, healthy=False)
+    _offline_until(world, 10 ** 9)
+    assert world.updater.run_once() == "zurueckgerollt"
+    assert updater.HEALTH_CAP_SECONDS <= world.clock[0] < updater.HEALTH_CAP_SECONDS + updater.HEALTH_POLL_SECONDS
+    assert world.compose.calls[-1] == ("up", "0.2.0")
+    state = world.state()
+    assert (state.current, state.rejected, state.in_progress) == ("0.2.0", [], None)  # nicht abgelehnt
+    assert world.api.results == []  # offline: nichts gemeldet ...
+    assert state.pending_reports == [{"version": "0.3.0", "result": "rollback", "reason": "ungesund"}]  # ... gemerkt
+    # Netz wieder da: zuerst die offene Meldung, dann der neue Versuch derselben Version
+    world.api.offline, world.healthy = False, True
+    world.updater._sleep = world.sleep
+    assert world.rebuild().run_once() == "aktualisiert"
+    assert world.api.results == [("0.3.0", "rollback", "ungesund"), ("0.3.0", "ok", "")]
+    assert world.state().pending_reports == []
+
+
+def test_cap_rollback_that_fails_keeps_the_no_reject_marker(tmp_path):
+    world = World(tmp_path, healthy=False, fail_up={"0.2.0"})
+    _offline_until(world, 10 ** 9)
+    assert world.updater.run_once() == "vorlaeufig"
+    assert world.state().in_progress["rollback"] == "ungesund"
+    world.compose.fail_up.clear()
+    world.updater.recover()
+    state = world.state()
+    assert (state.current, state.rejected, state.in_progress) == ("0.2.0", [], None)
+
+
+def test_report_that_cannot_be_sent_is_kept_and_sent_first_next_run(tmp_path):
+    world = World(tmp_path)
+    world.api.desired_answer["signature"] = "kaputt"
+    original = world.api.update_result
+
+    def broken(*args):
+        raise device_api.NotAuthenticated("update_result")
+
+    world.api.update_result = broken
+    assert world.updater.run_once() == "abgelehnt"
+    assert world.state().pending_reports == [{"version": "0.3.0", "result": "rollback", "reason": "signatur_ungueltig"}]
+    world.api.update_result = original
+    world.api.desired_answer = {"version": "0.2.0"}
+    assert world.rebuild().run_once() == "aktuell"
+    assert world.api.results == [("0.3.0", "rollback", "signatur_ungueltig")]
+    assert world.state().pending_reports == []
+
+
+def test_pending_reports_go_out_before_recover_reports(tmp_path):
+    world = World(tmp_path)
+    _interrupted(world)
+    state = world.state()
+    state.pending_reports = [{"version": "0.2.9", "result": "rollback", "reason": "ungesund"}]
+    state.save(world.state_path)
+    world.updater.recover()
+    assert world.api.results == [("0.2.9", "rollback", "ungesund"), ("0.3.0", "ok", "")]
+
+
+def test_pending_reports_keep_their_order_while_offline(tmp_path):
+    world = World(tmp_path)
+    updater.State(current="0.2.0", rejected_context=world.context, pending_reports=[
+        {"version": "0.2.8", "result": "rollback", "reason": "ungesund"},
+        {"version": "0.2.9", "result": "ok", "reason": ""}]).save(world.state_path)
+    world.api.offline = True
+    assert world.updater.run_once() == "vorlaeufig"
+    assert len(world.state().pending_reports) == 2
+    world.api.offline = False
+    world.api.desired_answer = {"version": "0.2.0"}
+    world.updater.run_once()
+    assert world.api.results == [("0.2.8", "rollback", "ungesund"), ("0.2.9", "ok", "")]
+
+
+def test_unusable_pending_reports_are_dropped_on_load(tmp_path):
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps({"current": "0.2.0", "pending_reports": [
+        {"version": "0.2.9", "result": "ok", "reason": ""}, {"version": 1}, "x", {"result": "ok"}]}))
+    assert updater.State.load(path).pending_reports == [{"version": "0.2.9", "result": "ok", "reason": ""}]
+    path.write_text(json.dumps({"current": "0.2.0", "pending_reports": "kaputt"}))
+    assert updater.State.load(path).pending_reports == []
+
+
+def _devices_compose(device: str) -> bytes:
+    return (COMPOSE.decode() + f"  zigbee2mqtt:\n    image: koenkk/z2m@sha256:{'b' * 64}\n    devices:\n"
+            f"    - {device}:/dev/zigbee\n").encode()
+
+
+def test_missing_device_of_the_target_bundle_is_temporary(tmp_path):
+    """Zigbee-Stick abgezogen: `up` wuerde scheitern und der Rueckweg ebenso - also gar nicht erst umschalten."""
+    stick = tmp_path / "zigbee"
+    world = World(tmp_path, compose=_devices_compose(str(stick)))
+    assert world.updater.run_once() == "vorlaeufig"
+    state = world.state()
+    assert (state.current, state.rejected, state.in_progress) == ("0.2.0", [], None)
+    assert not any(call[0] in ("pull", "up") for call in world.compose.calls) and world.api.results == []
+    stick.touch()  # Stick wieder da
+    assert world.updater.run_once() == "aktualisiert"
+
+
+def test_recover_waits_for_a_missing_device_instead_of_rolling_back(tmp_path):
+    stick = tmp_path / "zigbee"
+    world = World(tmp_path)
+    world.store.install("0.3.0", {"docker-compose.yml": _devices_compose(str(stick)), "mosquitto.conf": MOSQ})
+    updater.State(current="0.2.0", rejected_context=world.context,
+                  in_progress={"version": "0.3.0", "previous": "0.2.0", "since": 0.0}).save(world.state_path)
+    world.updater.recover()
+    assert world.compose.calls == [] and world.state().in_progress is not None
+    assert world.updater.run_once() == "vorlaeufig"
+    stick.touch()
+    world.updater.recover()
+    assert world.state().current == "0.3.0" and world.state().in_progress is None
+
+
+# --- Felder von desired (FW-5, FW-6) ---
+
+
+@pytest.mark.parametrize("answer", [{"version": 3}, {"version": None}, {"version": ["0.3.0"]}, {"manifest_url": "x"}])
+def test_missing_or_non_text_version_counts_as_current(tmp_path, answer):
+    world = World(tmp_path)
+    world.api.desired_answer = answer
+    assert world.updater.run_once() == "aktuell"
+    assert world.api.results == [] and world.state().rejected == []
+
+
+@pytest.mark.parametrize(("field", "value", "reason"), [
+    ("manifest_url", 42, "manifest_ungueltig"),
+    ("manifest_url", None, "manifest_ungueltig"),
+    ("manifest_url", "https://[kaputt/manifest.json", "manifest_ungueltig"),
+    ("manifest_url", "https:///manifest.json", "manifest_ungueltig"),
+    ("manifest_sha256", 7, "manifest_ungueltig"),
+    ("manifest_sha256", "abc", "manifest_ungueltig"),
+    ("manifest_sha256", None, "manifest_ungueltig"),
+    ("signature", {"x": 1}, "signatur_ungueltig"),
+    ("signature", None, "signatur_ungueltig"),
+])
+def test_non_text_or_malformed_offer_fields_are_refused(tmp_path, field, value, reason):
+    world = World(tmp_path)
+    world.api.desired_answer[field] = value
+    assert world.updater.run_once() == "abgelehnt"
+    assert world.api.results == [("0.3.0", "rollback", reason)]
+    assert not any(call[0] in ("pull", "up") for call in world.compose.calls)
+
+
+def test_manifest_sha_is_compared_case_insensitively(tmp_path):
+    world = World(tmp_path)
+    world.api.desired_answer["manifest_sha256"] = world.api.desired_answer["manifest_sha256"].upper()
+    assert world.updater.run_once() == "aktualisiert"
+
+
+# --- Bundle-Ordner (FW-9, Spec 2.2) ---
+
+
+def test_bundle_dir_keeps_manifest_and_signature(tmp_path):
+    world = World(tmp_path)
+    assert world.updater.run_once() == "aktualisiert"
+    target = world.store.dir("0.3.0")
+    assert (target / "manifest.json").read_bytes() == world.served[BASE + "manifest.json"]
+    assert (target / "manifest.json.minisig").read_text() == world.api.desired_answer["signature"]
+    assert sorted(p.name for p in target.iterdir()) == [
+        "docker-compose.yml", "manifest.json", "manifest.json.minisig", "mosquitto.conf"]
 
 
 HEALTHY = {"agent": "healthy", "runtime": "healthy"}

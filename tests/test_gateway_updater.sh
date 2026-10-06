@@ -133,7 +133,9 @@ curl -fsS "$API_URL/_e2e/files/0.9.2/docker-compose.yml" | cmp -s - "$DATA/relea
 
 # 6. Erstes Bundle wie install.sh --bundle, Start per Compose
 mkdir -p "$DATA/bundles/0.9.1"
-for name in docker-compose.yml mosquitto.conf manifest.json; do cp "$DATA/release/0.9.1/$name" "$DATA/bundles/0.9.1/"; done
+for name in docker-compose.yml mosquitto.conf manifest.json manifest.json.minisig; do
+  cp "$DATA/release/0.9.1/$name" "$DATA/bundles/0.9.1/"
+done
 printf '{"current": "0.9.1", "previous": null, "rejected": [], "in_progress": null}' >"$DATA/updater/state.json"
 compose_bundle 0.9.1 up -d >/dev/null 2>&1 || die "compose up 0.9.1"
 ok=0
@@ -193,10 +195,12 @@ set_desired 0.9.2
 start=$SECONDS
 expect_word aktualisiert 0.9.2
 echo "    0.9.2: $((SECONDS - start)) s"
-state_is 's["current"] == "0.9.2" and s["previous"] == "0.9.1" and s["in_progress"] is None' \
+state_is 's["current"] == "0.9.2" and s["previous"] == "0.9.1" and s["in_progress"] is None and s["pending_reports"] == []' \
   || fail "state.json nach 0.9.2: $(cat "$DATA/updater/state.json")"
 reported 0.9.2 ok "" || fail "update_result ok fuer 0.9.2 fehlt"
-[ -f "$DATA/bundles/0.9.2/docker-compose.yml" ] || fail "Bundle 0.9.2 nicht abgelegt"
+for name in docker-compose.yml mosquitto.conf manifest.json manifest.json.minisig; do  # Spec 2.2
+  cmp -s "$DATA/release/0.9.2/$name" "$DATA/bundles/0.9.2/$name" || fail "Bundle 0.9.2: $name fehlt oder weicht ab"
+done
 stage_done "Update auf 0.9.2"
 echo "PASS: Update 0.9.1 -> 0.9.2"
 
