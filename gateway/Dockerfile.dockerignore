@@ -1,0 +1,7 @@
+*
+!gateway/requirements.txt
+!gateway/src/smartheat_gateway
+!heizungsbruecke/src/smartheat_core
+!heizungsbruecke/src/smartheat_transport
+!heizungsbruecke/src/smartheat_runtime
+**/__pycache__
