@@ -5,7 +5,6 @@ import time
 
 import pytest
 from configs import apply_config
-from fake_device_api import FakeDeviceApi
 from fake_z2m import FakeZigbee2Mqtt
 from fakes import FakeBus
 
@@ -19,14 +18,6 @@ from smartheat_gateway.paths import Paths
 from smartheat_gateway.zigbee import ZigbeeMirror
 
 POLL = 1  # FakeDeviceApi.poll_after
-
-
-@pytest.fixture
-def api():
-    server = FakeDeviceApi()
-    server.start()
-    yield server
-    server.stop()
 
 
 @pytest.fixture

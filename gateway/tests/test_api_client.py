@@ -1,21 +1,12 @@
 import time
 
 import pytest
-from fake_device_api import FakeDeviceApi
 
 from smartheat_gateway.agent import identity
 from smartheat_gateway.agent.api_client import ApiUnavailable, DeviceApiClient, NotAuthenticated, Rejected
 from smartheat_gateway.paths import Paths
 
 CAPS = {"drivers": ["simulation"], "zigbee": True}
-
-
-@pytest.fixture
-def api():
-    server = FakeDeviceApi()
-    server.start()
-    yield server
-    server.stop()
 
 
 def test_register_commands_result(api, data_dir):

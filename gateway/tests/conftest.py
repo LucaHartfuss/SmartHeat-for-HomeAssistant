@@ -1,4 +1,5 @@
 import pytest
+from fake_device_api import FakeDeviceApi
 
 
 class FakeClock:
@@ -25,3 +26,11 @@ def data_dir(tmp_path):
     path = tmp_path / "data"
     path.mkdir()
     return path
+
+
+@pytest.fixture
+def api():
+    server = FakeDeviceApi()
+    server.start()
+    yield server
+    server.stop()
