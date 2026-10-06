@@ -20,6 +20,9 @@ extend-exclude = [".venv"]
 select = ["E", "F", "W", "I", "B", "UP", "SIM"]
 ignore = ["E501"]
 
+[tool.ruff.lint.isort]
+known-first-party = ["smartheat_core", "smartheat_runtime", "smartheat_transport", "smartheat_gateway"]
+
 [tool.pyright]
 include = ["src"]
 extraPaths = ["../heizungsbruecke/src"]
