@@ -80,7 +80,9 @@ COMMANDS: dict[str, Command] = {
     "driver_probe": Command(("driver_id",), PROBE_FIELDS, 120, _DRIVER_ERRORS),
     "driver_inventory": Command(("driver_id", "stunden"), (), None, _DRIVER_ERRORS, "stunden*3600+3600"),
     "create_csr": Command(("tenant_id",), ("csr",), 120),
-    "apply_config": Command(("setup_id", "config"), ("setup_id",), 300, ("konfiguration_ungueltig", "keine_bestaetigung")),
+    "apply_config": Command(
+        ("setup_id", "config"), ("setup_id",), 300, ("konfiguration_ungueltig", "keine_bestaetigung"),
+    ),
     "set_room_target": Command(
         ("value",), ("value",), 120, ("ausserhalb_bereich", "nicht_eingerichtet", "keine_bestaetigung"),
     ),
