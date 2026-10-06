@@ -1,0 +1,406 @@
+import hashlib
+import http.server
+import json
+import stat
+import threading
+
+import pytest
+from minisign_helper import keypair, sign
+
+from smartheat_host import bundles, device_api, updater
+
+COMPOSE = ("services:\n  agent:\n    image: ghcr.io/x/gw@sha256:" + "a" * 64 + "\n").encode()
+MOSQ = b"listener 1883\n"
+BASE = "https://release.example.test/0.3.0/"
+
+
+class FakeApi:
+    def __init__(self, desired):
+        self.desired_answer, self.results = desired, []
+
+    def desired(self):
+        if isinstance(self.desired_answer, Exception):
+            raise self.desired_answer
+        return self.desired_answer
+
+    def update_result(self, version, result, reason):
+        self.results.append((version, result, reason))
+
+
+class FakeCompose:
+    def __init__(self, fail_up=(), fail_pull=False):
+        self.calls, self.fail_up, self.fail_pull = [], set(fail_up), fail_pull
+        self.on_up = None
+
+    def pull(self, version):
+        self.calls.append(("pull", version))
+        if self.fail_pull:
+            raise bundles.ComposeError("kein Netz")
+
+    def up(self, version):
+        self.calls.append(("up", version))
+        if self.on_up:
+            self.on_up(version)
+        if version in self.fail_up:
+            raise bundles.ComposeError("boom")
+
+    def prune(self, keep):
+        self.calls.append(("prune", frozenset(keep)))
+
+
+class World:
+    def __init__(self, tmp_path, *, manifest_over=None, compose=COMPOSE, healthy=True, version="0.2.0",
+                 url=BASE + "manifest.json", tamper=False, fail_up=(), fail_pull=False, health_seconds=None):
+        self.secret, self.key_id, self.public = keypair()
+        files = {"docker-compose.yml": compose, "mosquitto.conf": MOSQ}
+        manifest = {"version": "0.3.0", "min_updater_version": "0.2.0",
+                    "files": {n: hashlib.sha256(d).hexdigest() for n, d in files.items()},
+                    "images": {"gateway": "ghcr.io/x/gw@sha256:" + "a" * 64}}
+        manifest.update(manifest_over or {})
+        raw = json.dumps(manifest).encode()
+        self.served = {BASE + "manifest.json": raw, **{BASE + n: d for n, d in files.items()}}
+        if tamper:
+            self.served[BASE + "docker-compose.yml"] = compose + b"#x\n"
+        self.api = FakeApi({"version": "0.3.0", "manifest_url": url,
+                            "manifest_sha256": hashlib.sha256(raw).hexdigest(),
+                            "signature": sign(self.secret, self.key_id, raw)})
+        self.compose = FakeCompose(fail_up, fail_pull)
+        self.store = bundles.BundleStore(tmp_path)
+        self.store.install("0.2.0", {"docker-compose.yml": COMPOSE, "mosquitto.conf": MOSQ})  # laufendes Bundle
+        self.state_path = tmp_path / "updater" / "state.json"
+        updater.State(current="0.2.0").save(self.state_path)
+        self.healthy = healthy
+        self.clock = [0.0]
+        extra = {} if health_seconds is None else {"health_seconds": health_seconds}
+        self.updater = updater.Updater(
+            api_factory=lambda: self.api, store=self.store, compose=self.compose, fetch=self.fetch,
+            public_key_text=self.public, state_path=self.state_path, version=version,
+            health=lambda version: self.healthy, clock=lambda: self.clock[0], sleep=self.sleep, **extra,
+        )
+
+    def fetch(self, url, max_bytes):
+        if url not in self.served:
+            raise updater.FetchError(url)
+        return self.served[url]
+
+    def sleep(self, seconds):
+        self.clock[0] += seconds
+
+    def state(self):
+        return updater.State.load(self.state_path)
+
+
+def test_healthy_update(tmp_path):
+    world = World(tmp_path)
+    assert world.updater.run_once() == "aktualisiert"
+    state = world.state()
+    assert (state.current, state.previous, state.in_progress) == ("0.3.0", "0.2.0", None)
+    assert world.api.results == [("0.3.0", "ok", "")]
+    assert ("pull", "0.3.0") in world.compose.calls and ("up", "0.3.0") in world.compose.calls
+    assert world.store.exists("0.3.0")
+    assert world.compose.calls[-1] == ("prune", frozenset({"ghcr.io/x/gw@sha256:" + "a" * 64}))
+
+
+def test_state_file_is_world_readable_and_survives_load(tmp_path):
+    world = World(tmp_path)
+    world.updater.run_once()
+    assert stat.S_IMODE(world.state_path.stat().st_mode) == 0o644
+    assert json.loads(world.state_path.read_text()) == {
+        "current": "0.3.0", "previous": "0.2.0", "rejected": [], "in_progress": None}
+
+
+def test_in_progress_is_persisted_before_the_switch(tmp_path):
+    """Stromausfall waehrend des Umschaltens: die Datei muss schon vor compose up den Auftrag tragen."""
+    world = World(tmp_path)
+    seen = []
+    world.compose.on_up = lambda version: seen.append(world.state().in_progress) if version == "0.3.0" else None
+    world.updater.run_once()
+    assert seen == [{"version": "0.3.0", "previous": "0.2.0", "since": seen[0]["since"]}]
+    assert isinstance(seen[0]["since"], float)
+
+
+def test_unhealthy_update_rolls_back_within_ten_minutes(tmp_path):
+    world = World(tmp_path, healthy=False)
+    assert world.updater.run_once() == "zurueckgerollt"
+    assert world.compose.calls[-1] == ("up", "0.2.0")
+    assert world.clock[0] >= updater.HEALTH_SECONDS  # Standardfrist 10 min
+    assert world.clock[0] < updater.HEALTH_SECONDS + updater.HEALTH_POLL_SECONDS
+    state = world.state()
+    assert (state.current, state.rejected, state.in_progress) == ("0.2.0", ["0.3.0"], None)
+    assert world.api.results == [("0.3.0", "rollback", "ungesund")]
+    assert world.updater.run_once() == "aktuell"  # abgelehnt bleibt abgelehnt
+
+
+def test_health_deadline_is_configurable(tmp_path):
+    world = World(tmp_path, healthy=False, health_seconds=30)
+    assert world.updater.run_once() == "zurueckgerollt"
+    assert 30 <= world.clock[0] < 30 + updater.HEALTH_POLL_SECONDS
+
+
+def test_health_that_arrives_late_is_accepted(tmp_path):
+    world = World(tmp_path, healthy=False)
+    original_sleep = world.sleep
+
+    def sleep(seconds):
+        original_sleep(seconds)
+        world.healthy = world.clock[0] >= 100
+
+    world.updater._sleep = sleep
+    assert world.updater.run_once() == "aktualisiert"
+
+
+def test_start_failure_rolls_back(tmp_path):
+    world = World(tmp_path, fail_up={"0.3.0"})
+    assert world.updater.run_once() == "zurueckgerollt"
+    assert world.api.results == [("0.3.0", "rollback", "start_fehlgeschlagen")]
+    assert world.compose.calls[-1] == ("up", "0.2.0") and world.clock[0] == 0.0  # kein Warten auf Gesundheit
+    assert world.state().current == "0.2.0"
+
+
+@pytest.mark.parametrize(("kwargs", "reason"), [
+    ({"tamper": True}, "manifest_ungueltig"),
+    ({"manifest_over": {"version": "0.4.0"}}, "manifest_ungueltig"),
+    ({"url": "http://release.example.test/0.3.0/manifest.json"}, "manifest_ungueltig"),
+    ({"manifest_over": {"min_updater_version": "9.0.0"}}, "updater_zu_alt"),
+    ({"compose": b"services:\n  agent:\n    image: ghcr.io/x/gw:latest\n"}, "manifest_ungueltig"),
+])
+def test_refused_bundles_are_never_started(tmp_path, kwargs, reason):
+    world = World(tmp_path, **kwargs)
+    if "url" in kwargs:  # http-URL: der Fetcher wuerde liefern, der Updater darf trotzdem nicht laden
+        world.served[kwargs["url"]] = world.served[BASE + "manifest.json"]
+    assert world.updater.run_once() == "abgelehnt"
+    assert not any(call[0] in ("up", "pull") for call in world.compose.calls)
+    assert not world.store.exists("0.3.0")  # nichts davon landet im Bundle-Ordner
+    assert world.api.results == [("0.3.0", "rollback", reason)]
+    assert world.state().current == "0.2.0" and world.state().rejected == ["0.3.0"]
+
+
+def test_manifest_with_wrong_sha_is_refused(tmp_path):
+    world = World(tmp_path)
+    world.api.desired_answer["manifest_sha256"] = "0" * 64
+    assert world.updater.run_once() == "abgelehnt"
+    assert world.api.results == [("0.3.0", "rollback", "manifest_ungueltig")]
+
+
+def test_http_manifest_is_loaded_when_allowed(tmp_path):
+    url = "http://release.example.test/0.3.0/manifest.json"
+    world = World(tmp_path, url=url)
+    world.served[url] = world.served[BASE + "manifest.json"]
+    for name in bundles.MANIFEST_FILES:
+        world.served["http://release.example.test/0.3.0/" + name] = world.served[BASE + name]
+    world.updater._allow_http = True
+    assert world.updater.run_once() == "aktualisiert"
+
+
+def test_wrong_signature_is_refused(tmp_path):
+    world = World(tmp_path)
+    other_secret, other_id, _ = keypair()
+    world.api.desired_answer["signature"] = sign(other_secret, other_id, world.served[BASE + "manifest.json"])
+    assert world.updater.run_once() == "abgelehnt"
+    assert world.api.results == [("0.3.0", "rollback", "signatur_ungueltig")]
+    assert not any(call[0] == "up" for call in world.compose.calls)
+
+
+def test_placeholder_release_key_refuses_every_update(tmp_path):
+    world = World(tmp_path)
+    world.updater = updater.Updater(
+        api_factory=lambda: world.api, store=world.store, compose=world.compose, fetch=world.fetch,
+        public_key_text="untrusted comment: SMARTHEAT-PLATZHALTER\nSMARTHEAT-PLATZHALTER\n",
+        state_path=world.state_path, version="0.2.0", health=lambda version: True, clock=lambda: 0.0,
+        sleep=world.sleep)
+    assert world.updater.run_once() == "abgelehnt"
+    assert world.api.results == [("0.3.0", "rollback", "signatur_ungueltig")]
+
+
+@pytest.mark.parametrize("error", [device_api.DeviceApiError("x"), device_api.NotAuthenticated("desired")])
+def test_server_trouble_is_temporary(tmp_path, error):
+    world = World(tmp_path)
+    world.api.desired_answer = error
+    assert world.updater.run_once() == "vorlaeufig"
+    assert world.state().rejected == [] and world.api.results == []
+
+
+def test_missing_device_key_is_temporary(tmp_path):
+    world = World(tmp_path)
+
+    def no_key():
+        raise device_api.DeviceApiError("Geraeteschluessel unlesbar")
+
+    world.updater._api_factory = no_key
+    assert world.updater.run_once() == "vorlaeufig"
+
+
+def test_missing_download_is_temporary(tmp_path):
+    world = World(tmp_path)
+    del world.served[BASE + "mosquitto.conf"]
+    assert world.updater.run_once() == "vorlaeufig"
+    assert world.state().rejected == []
+    assert not world.store.exists("0.3.0") and not (tmp_path / "bundles" / "0.3.0").exists()  # kein halbes Bundle
+
+
+def test_failed_pull_is_temporary_and_leaves_no_in_progress(tmp_path):
+    world = World(tmp_path, fail_pull=True)
+    assert world.updater.run_once() == "vorlaeufig"
+    state = world.state()
+    assert (state.current, state.rejected, state.in_progress) == ("0.2.0", [], None)
+    assert not any(call[0] == "up" for call in world.compose.calls) and world.api.results == []
+
+
+def test_no_update_offered(tmp_path):
+    world = World(tmp_path)
+    world.api.desired_answer = {"version": "0.2.0"}
+    assert world.updater.run_once() == "aktuell"
+    world.api.desired_answer = {}
+    assert world.updater.run_once() == "aktuell"
+
+
+def test_rejected_list_is_capped(tmp_path):
+    world = World(tmp_path)
+    updater.State(current="0.2.0", rejected=[f"0.1.{i}" for i in range(updater.MAX_REJECTED)]).save(world.state_path)
+    world.api.desired_answer["signature"] = "kaputt"
+    assert world.updater.run_once() == "abgelehnt"
+    rejected = world.state().rejected
+    assert len(rejected) == updater.MAX_REJECTED and rejected[-1] == "0.3.0" and "0.1.0" not in rejected
+
+
+def test_recover_finishes_or_rolls_back_an_interrupted_update(tmp_path):
+    world = World(tmp_path)
+    world.store.install("0.3.0", {"docker-compose.yml": COMPOSE, "mosquitto.conf": MOSQ})  # 0.2.0 legt World an
+    updater.State(current="0.2.0", in_progress={"version": "0.3.0", "previous": "0.2.0", "since": 0.0}).save(
+        world.state_path)
+    world.healthy = False
+    world.updater.recover()
+    state = world.state()
+    assert (state.current, state.in_progress, state.rejected) == ("0.2.0", None, ["0.3.0"])
+    assert world.compose.calls[-1] == ("up", "0.2.0")
+    assert world.api.results == [("0.3.0", "rollback", "ungesund")]
+
+
+def test_recover_accepts_an_interrupted_update_that_became_healthy(tmp_path):
+    world = World(tmp_path)
+    world.store.install("0.3.0", {"docker-compose.yml": COMPOSE, "mosquitto.conf": MOSQ})
+    updater.State(current="0.2.0", in_progress={"version": "0.3.0", "previous": "0.2.0", "since": 0.0}).save(
+        world.state_path)
+    world.updater.recover()
+    state = world.state()
+    assert (state.current, state.previous, state.in_progress) == ("0.3.0", "0.2.0", None)
+    assert world.api.results == [("0.3.0", "ok", "")]
+    assert not any(call[0] == "up" for call in world.compose.calls)
+
+
+def test_recover_without_interrupted_update_does_nothing(tmp_path):
+    world = World(tmp_path)
+    world.updater.recover()
+    assert world.compose.calls == [] and world.api.results == []
+
+
+def test_corrupt_state_counts_as_empty(tmp_path):
+    path = tmp_path / "state.json"
+    path.write_text("{kaputt")
+    assert updater.State.load(path) == updater.State()
+    path.write_text("[1, 2]")
+    assert updater.State.load(path) == updater.State()
+    assert updater.State.load(tmp_path / "fehlt.json") == updater.State()
+
+
+def test_state_without_a_usable_in_progress_entry_is_cleaned(tmp_path):
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps({"current": "0.2.0", "in_progress": {"previous": "0.1.0"}}))
+    assert updater.State.load(path).in_progress is None
+
+
+HEALTHY = {"agent": "healthy", "runtime": "healthy"}
+
+
+@pytest.mark.parametrize(("data", "containers", "ok"), [
+    ({"server_ok": True, "runtime_status": "regelt"}, HEALTHY, True),
+    ({"server_ok": True, "runtime_status": "notbetrieb"}, HEALTHY, True),
+    ({"server_ok": True, "runtime_status": None}, HEALTHY, True),       # nicht eingerichtet: Status abgeraeumt
+    ({"server_ok": True, "runtime_status": "startet"}, HEALTHY, False),
+    ({"server_ok": False, "runtime_status": "regelt"}, HEALTHY, False),
+    ({"server_ok": None, "runtime_status": "regelt"}, HEALTHY, False),
+    ({"runtime_status": "regelt"}, HEALTHY, False),
+    ({"server_ok": True, "runtime_status": "regelt"}, {"agent": "healthy", "runtime": "unhealthy"}, False),
+    ({"server_ok": True, "runtime_status": "regelt"}, {"agent": "healthy", "runtime": "starting"}, False),
+    ({"server_ok": True, "runtime_status": "regelt"}, {"agent": "unhealthy", "runtime": "healthy"}, False),
+    ({"server_ok": True, "runtime_status": "regelt"}, {"agent": "healthy"}, False),  # Laufzeit fehlt/startet neu
+    ({"server_ok": True, "runtime_status": "regelt"}, {}, False),
+    (None, HEALTHY, False),
+])
+def test_health_rule(data, containers, ok):
+    assert updater.health_ok(data, containers) is ok
+
+
+def test_fetch_refuses_http_unless_allowed():
+    with pytest.raises(updater.FetchError, match="https"):
+        updater.fetch_url("http://example.test/x", 10, allow_http=False)
+    with pytest.raises(updater.FetchError, match="https"):
+        updater.fetch_url("file:///etc/passwd", 10, allow_http=True)
+
+
+@pytest.fixture
+def local_server():
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = b'{"server_ok": true, "runtime_status": null}' if self.path == "/healthz" else b"x" * 100
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_port}"
+    server.shutdown()
+    server.server_close()
+    thread.join()
+
+
+def test_fetch_url_limits_size_and_reads_when_allowed(local_server):
+    assert updater.fetch_url(local_server + "/file", 100, allow_http=True) == b"x" * 100
+    with pytest.raises(updater.FetchError, match="gross"):
+        updater.fetch_url(local_server + "/file", 99, allow_http=True)
+
+
+def test_fetch_url_network_errors_are_fetch_errors():
+    with pytest.raises(updater.FetchError):
+        updater.fetch_url("http://127.0.0.1:1/x", 10, allow_http=True)
+
+
+def test_fetch_health(local_server):
+    assert updater.fetch_health(local_server + "/healthz") == {"server_ok": True, "runtime_status": None}
+    assert updater.fetch_health("http://127.0.0.1:1/healthz") is None
+
+
+def test_main_once_wires_the_environment(tmp_path, monkeypatch, capsys):
+    release_pub = tmp_path / "release.pub"
+    release_pub.write_text("pub")
+    monkeypatch.setenv("SHG_ROOT", str(tmp_path))
+    monkeypatch.setenv("SHG_DEVICE_API_URL", "https://api.example.test")
+    monkeypatch.setenv("SHG_RELEASE_PUB", str(release_pub))
+    monkeypatch.setenv("SHG_UPDATER_ALLOW_HTTP", "1")
+    monkeypatch.setenv("SHG_UPDATER_HEALTH_SECONDS", "5")
+    monkeypatch.setenv("SHG_UPDATER_HEALTH_URL", "http://127.0.0.1:9/healthz")
+    monkeypatch.setenv("SHG_COMPOSE_PROJECT", "testprojekt")
+    seen = {}
+
+    class FakeUpdater:
+        def __init__(self, **kwargs):
+            seen.update(kwargs)
+
+        def recover(self):
+            seen["recovered"] = True
+
+        def run_once(self):
+            return "aktuell"
+
+    monkeypatch.setattr(updater, "Updater", FakeUpdater)
+    updater.main(["--once"])
+    assert capsys.readouterr().out == "aktuell\n"
+    assert seen["recovered"] and seen["allow_http"] is True and seen["health_seconds"] == 5.0
+    assert seen["public_key_text"] == "pub" and seen["state_path"] == tmp_path / "updater" / "state.json"
+    assert seen["version"] == updater.GATEWAY_VERSION
+    assert seen["compose"]._project == "testprojekt"
