@@ -78,7 +78,9 @@ COMMANDS: dict[str, Command] = {
         ("treiber_unbekannt", "login_nicht_noetig", "login_fehlgeschlagen", "anlage_nicht_erreichbar"),
     ),
     "driver_probe": Command(("driver_id",), PROBE_FIELDS, 120, _DRIVER_ERRORS),
-    "driver_inventory": Command(("driver_id", "stunden"), (), None, _DRIVER_ERRORS, "stunden*3600+3600"),
+    "driver_inventory": Command(
+        ("driver_id", "stunden"), (), None, (*_DRIVER_ERRORS, "keine_bestaetigung"), "stunden*3600+3600",
+    ),
     "create_csr": Command(("tenant_id",), ("csr",), 120),
     "apply_config": Command(
         ("setup_id", "config"), ("setup_id",), 300, ("konfiguration_ungueltig", "keine_bestaetigung"),
@@ -86,7 +88,7 @@ COMMANDS: dict[str, Command] = {
     "set_room_target": Command(
         ("value",), ("value",), 120, ("ausserhalb_bereich", "nicht_eingerichtet", "keine_bestaetigung"),
     ),
-    "sign_off": Command((), ("zurueckgesetzt", "werte"), 24 * 3600, ("nicht_eingerichtet",)),
+    "sign_off": Command((), ("zurueckgesetzt", "werte"), 24 * 3600, ("nicht_eingerichtet", "keine_bestaetigung")),
     "new_claim_code": Command((), (), 300, ("bereits_uebernommen",)),
     "diagnostics": Command((), (), 300),
 }
