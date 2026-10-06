@@ -49,8 +49,10 @@ HA-Add-on-Repository mit zwei Add-ons: `heizungsbruecke` (Client-seitige Bridge-
   `smartheat_gateway.agent.{wire,identity}` (`install.sh` legt diese Module mit ab); keine Tenant-IDs; nie
   `heizungsbruecke`. Tests: `cd gateway/host && pytest` (`install_checks.sh` läuft im Docker-Test des Installers).
 - `gateway/release/` — Bundle-Bau (`build_bundle.py`: Compose mit Image-Digests und Manifest; nutzt dieselben
-  Prüffunktionen wie der Updater). Tests: `cd gateway/release && pytest`. Der Release-Workflow
-  `.github/workflows/release-gateway.yml` (Tag `gateway-vX.Y.Z`) ruft das Skript auf (`sign_bundle.sh`: Bundle prüfen, mit minisign signieren, mit dem Gerätecode verifizieren; Secrets nur im Job `sign`); Ablauf und Schlüssel: `../docs/ci-cd-runbook.md`,
+  Prüffunktionen wie der Updater), `verify_bundle.py` (Neubau aus dem Tag und byte-genauer Vergleich vor dem Signieren),
+  `sign_bundle.sh` und die Hash-Lock-Datei `requirements.txt` (PyYAML, cryptography; einzige pip-Quelle des
+  Release-Workflows). Tests: `cd gateway/release && pytest`. Der Release-Workflow
+  `.github/workflows/release-gateway.yml` (Tag `gateway-vX.Y.Z`) ruft das Skript auf (`sign_bundle.sh`: Bundle per Neubau prüfen, mit minisign signieren, mit dem Gerätecode verifizieren; Secrets nur im Job `sign`, nie im Environment der Python-Schritte); Ablauf und Schlüssel: `../docs/ci-cd-runbook.md`,
   Abschnitt „Gateway-Release“.
 - `heizungsbruecke/config.yaml` — hat einen echten `schema:`-Block, wird aber **ausschließlich** von der
   SmartHeat-Integration befüllt, nie manuell in der Add-on-UI.
@@ -72,7 +74,8 @@ Direkter Aufruf bleibt möglich: `cd heizungsbruecke && pip install -e ".[dev]" 
 
 Feature-Branches (`feat/…`/`fix/…`) zweigen von `develop` ab und werden `--no-ff` nach `develop`
 gemergt — nie direkt nach `main`. `main` bewegt sich nur per Release-Tag
-(`heizungsbruecke-vX.Y.Z`, `cloudflared_access_mqtt-vX.Y.Z`; `-dryrun`-Suffix = Probelauf) —
+(`heizungsbruecke-vX.Y.Z`, `cloudflared_access_mqtt-vX.Y.Z` über `release.yml`, `gateway-vX.Y.Z` über
+`release-gateway.yml`; `-dryrun`-Suffix = Probelauf) —
 ein Push nach `main` ist ein Release an alle Kunden-Pis, deren Supervisor den Default-Branch
 verfolgt. Release-Ablauf, CI-Jobs, Token: `../docs/ci-cd-runbook.md`.
 
