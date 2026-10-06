@@ -1,0 +1,12 @@
+[Unit]
+Description=SmartHeat-Gateway Firewall (eigene nftables-Tabelle, Spec SHG G2b-1 6)
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/smartheat/nftables.conf
+
+[Install]
+WantedBy=multi-user.target

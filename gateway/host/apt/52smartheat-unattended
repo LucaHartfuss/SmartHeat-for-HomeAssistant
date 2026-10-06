@@ -1,0 +1,4 @@
+// SmartHeat-Gateway (Spec G2 8.2): nur Sicherheitsupdates automatisch.
+Unattended-Upgrade::Origins-Pattern { "origin=Debian,codename=${distro_codename}-security,label=Debian-Security"; };
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";

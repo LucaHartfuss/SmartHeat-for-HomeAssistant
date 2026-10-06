@@ -1,0 +1,4 @@
+# SmartHeat-Gateway (Spec G2 8.2): bekannter Zigbee-Stick -> /dev/zigbee, Adapterart fuer den Init-Schritt.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d4", SYMLINK+="zigbee", GROUP="dialout", MODE="0660", RUN+="/bin/sh -c 'echo ember > @ROOT@/host/zigbee_adapter'"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", ATTRS{product}=="*V2*", SYMLINK+="zigbee", GROUP="dialout", MODE="0660", RUN+="/bin/sh -c 'echo ember > @ROOT@/host/zigbee_adapter'"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", ATTRS{product}!="*V2*", SYMLINK+="zigbee", GROUP="dialout", MODE="0660", RUN+="/bin/sh -c 'echo zstack > @ROOT@/host/zigbee_adapter'"

@@ -1,0 +1,11 @@
+{
+  "files": {
+    "docker-compose.yml": "719189ffe7825ec10281581229e6c4935774f2c290b87f089d77519f51b0e12d",
+    "mosquitto.conf": "aef80cf30a30c7ba5791585230f68a944967d0bf5177540c6208965be9dfac2d"
+  },
+  "images": {
+    "gateway": "ghcr.io/lucahartfuss/smartheat-gateway@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "min_updater_version": "0.2.0",
+  "version": "0.2.0"
+}
