@@ -19,6 +19,9 @@ Hardware-Gate (Teil B) mit dem echten minisign-Schluessel.
 - Zeitzone Europe/Berlin und Standard-Locale de_DE.UTF-8 (Tastatur de) im Image (Abschnitt `locale` der
   Image-Konfiguration; Pakete `locales` und `tzdata` im Layer, `locale_default.sh` setzt LANG, weil `locale-base` von
   rpi-image-gen v2.8.0 `LANG=C.UTF-8` schreibt); `rootfs_checks.sh` prueft `/etc/localtime` und `/etc/locale.conf`.
+- WLAN aus in jedem Image (das Gateway laeuft nur am Ethernet): `wlan_off.sh` maskiert `iwd.service`, entfernt
+  `02-wlan0.network` und setzt `dtoverlay=disable-wifi` in der `config.txt`; Bluetooth bleibt unberuehrt (kein
+  Bluetooth-Dienst im Image). `rootfs_checks.sh` prueft alle drei Stellen.
 - Erststart ohne Pull: Container-Images werden mit `skopeo copy --all --preserve-digests` als OCI-Archive exportiert;
   das Geraet laedt sie in den containerd-Speicher von Docker (`/etc/docker/daemon.json`, von `install.sh` vor der
   Docker-Installation geschrieben; nur frische Geraete). Die Root-Partition ist fest 8G gross (kein Wachstum beim ersten

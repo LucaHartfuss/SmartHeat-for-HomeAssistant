@@ -377,3 +377,80 @@ def test_layer_runs_the_locale_hook_before_customize():
     assert '- bash "$SRCROOT/locale_default.sh" "$1"' in layer
     assert layer.index('- bash "$SRCROOT/locale_default.sh"') < layer.index(
         '- bash "$IGconf_shg_stage/installer/gateway/image/customize.sh"')
+
+
+FAKE_SYSTEMCTL_CHROOT = """#!/bin/bash
+# chroot-Attrappe fuer wlan_off.sh: protokolliert den Befehl und spielt systemctl disable/mask im Root-Dateisystem nach.
+root="$1"; shift
+echo "$*" >>"$SHG_FAKE_CHROOT_LOG"
+[ "${SHG_FAKE_CHROOT_RC:-0}" = 0 ] || exit "$SHG_FAKE_CHROOT_RC"
+[ "$1" = systemctl ] || exit 0
+case "$2" in
+  disable) rm -f "$root"/etc/systemd/system/*.wants/"$3" ;;
+  mask) ln -sf /dev/null "$root/etc/systemd/system/$3" ;;
+esac
+"""
+
+
+def _wlan_root(tmp_path: Path) -> Path:
+    """Stand nach den Layern von v2.8.0: iwd aktiviert (enable-units), 01-eth0/02-wlan0.network (rpi-device-base),
+    config.txt aus der Vorlage."""
+    root = tmp_path / "root"
+    wants = root / "etc/systemd/system/multi-user.target.wants"
+    wants.mkdir(parents=True)
+    (wants / "iwd.service").symlink_to("/usr/lib/systemd/system/iwd.service")
+    (wants / "ssh.service").symlink_to("/usr/lib/systemd/system/ssh.service")
+    net = root / "etc/systemd/network"
+    net.mkdir(parents=True)
+    (net / "01-eth0.network").write_text("[Match]\nName=eth0\n")
+    (net / "02-wlan0.network").write_text("[Match]\nName=wlan0\n")
+    (root / "boot/firmware").mkdir(parents=True)
+    (root / "boot/firmware/config.txt").write_text("dtparam=audio=on\n[pi4]\nenable_uart=1\n[all]\nuart_2ndstage=1\n")
+    return root
+
+
+def _wlan_off(tmp_path: Path, root: Path, rc: int = 0) -> subprocess.CompletedProcess:
+    bindir = tmp_path / "wlanbin"
+    bindir.mkdir(exist_ok=True)
+    (bindir / "chroot").write_text(FAKE_SYSTEMCTL_CHROOT)
+    (bindir / "chroot").chmod(0o755)
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}", "SHG_FAKE_CHROOT_LOG": str(tmp_path / "wlan.log"),
+           "SHG_FAKE_CHROOT_RC": str(rc)}
+    return subprocess.run(["bash", str(IMAGE / "wlan_off.sh"), str(root)], capture_output=True, text=True,
+                          check=False, env=env)
+
+
+def test_wlan_off_masks_iwd_drops_the_wlan_network_and_disables_the_chip(tmp_path):
+    root = _wlan_root(tmp_path)
+    result = _wlan_off(tmp_path, root)
+    assert result.returncode == 0, result.stderr
+    calls = (tmp_path / "wlan.log").read_text().splitlines()
+    assert calls == ["systemctl disable iwd.service", "systemctl mask iwd.service"]
+    assert os.readlink(root / "etc/systemd/system/iwd.service") == "/dev/null"
+    assert not (root / "etc/systemd/system/multi-user.target.wants/iwd.service").is_symlink()
+    assert (root / "etc/systemd/system/multi-user.target.wants/ssh.service").is_symlink()
+    assert sorted(p.name for p in (root / "etc/systemd/network").iterdir()) == ["01-eth0.network"]
+    config = (root / "boot/firmware/config.txt").read_text()
+    assert config.startswith("dtparam=audio=on\n[pi4]\nenable_uart=1\n[all]\nuart_2ndstage=1\n")
+    assert config.rstrip().endswith("[all]\ndtoverlay=disable-wifi")
+    assert "disable-bt" not in config  # Bluetooth bleibt unberuehrt (kein Bluetooth-Dienst im Image)
+    # ein zweiter Lauf haengt nichts doppelt an
+    assert _wlan_off(tmp_path, root).returncode == 0
+    assert (root / "boot/firmware/config.txt").read_text() == config
+
+
+def test_wlan_off_fails_without_config_txt(tmp_path):
+    root = _wlan_root(tmp_path)
+    (root / "boot/firmware/config.txt").unlink()
+    assert _wlan_off(tmp_path, root).returncode != 0
+
+
+def test_wlan_off_fails_when_systemctl_fails(tmp_path):
+    assert _wlan_off(tmp_path, _wlan_root(tmp_path), rc=1).returncode != 0
+
+
+def test_layer_runs_the_wlan_hook_before_customize():
+    layer = (IMAGE / "layer" / "smartheat-gateway.yaml").read_text()
+    assert '- bash "$SRCROOT/wlan_off.sh" "$1"' in layer
+    assert layer.index('- bash "$SRCROOT/wlan_off.sh"') < layer.index(
+        '- bash "$IGconf_shg_stage/installer/gateway/image/customize.sh"')

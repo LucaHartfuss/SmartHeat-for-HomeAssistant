@@ -27,6 +27,13 @@ GOOD_USB_HOOK = (
     "#!/bin/sh\n. /usr/share/initramfs-tools/hook-functions\n"
     "copy_file config /etc/udev/rules.d/99-rpi-01-smartheat-usbboot.rules\n"
 )
+CONFIG_TXT = "boot/firmware/config.txt"
+# Ende der Vorlage von rpi-image-gen v2.8.0 plus der Block aus wlan_off.sh
+GOOD_CONFIG_TXT = (
+    "dtparam=audio=on\n[pi4]\nenable_uart=1\n\n[all]\nuart_2ndstage=1\n\n"
+    "# SmartHeat-Gateway: nur Ethernet, WLAN-Chip abgeschaltet (gateway/image/wlan_off.sh)\n[all]\n"
+    "dtoverlay=disable-wifi\n"
+)
 
 GOOD_URLS = [
     "https://accounts.hartfussha.org",
@@ -223,6 +230,9 @@ def _good(root: Path, pilot: bool = False) -> Path:
         "etc/locale.conf": "LANG=de_DE.UTF-8\n#LANGUAGE=C\n",
         "etc/locale.gen": "# en_GB.UTF-8 UTF-8\nde_DE.UTF-8 UTF-8\n",
         "usr/lib/locale/locale-archive": "archive",
+        # WLAN aus (wlan_off.sh): nur die Ethernet-Konfiguration, WLAN-Chip per Overlay abgeschaltet
+        "etc/systemd/network/01-eth0.network": "[Match]\nName=eth0\n\n[Network]\nDHCP=yes\n",
+        CONFIG_TXT: GOOD_CONFIG_TXT,
     }
     if pilot:
         files["root/.ssh/authorized_keys"] = "ssh-ed25519 AAAA test-key\n"
@@ -232,6 +242,7 @@ def _good(root: Path, pilot: bool = False) -> Path:
     (root / "var/lib/smartheat/data").mkdir(parents=True)
     (root / WANTS).mkdir(parents=True)
     (root / USB_HOOK).chmod(0o755)
+    (root / "etc/systemd/system/iwd.service").symlink_to("/dev/null")
     (root / "etc/localtime").symlink_to("/usr/share/zoneinfo/Europe/Berlin")
     (root / "etc/default").mkdir(parents=True, exist_ok=True)
     (root / "etc/default/locale").symlink_to("../locale.conf")
@@ -379,6 +390,50 @@ def test_timezone_and_default_locale_are_checked(tmp_path, breakit, problem):
     lambda r: (r / "etc/locale.conf").write_text("# Kommentar\nLANG=de_DE.UTF-8\nLANGUAGE=de_DE:de\n"),
 ], ids=["relative-link", "etc-timezone-berlin", "no-default-locale", "default-locale-file", "language-de"])
 def test_timezone_and_locale_variants_that_are_fine(tmp_path, fixit):
+    root = _good(tmp_path)
+    fixit(root)
+    result = _run(root)
+    assert result.returncode == 0, result.stdout
+
+
+IWD = "etc/systemd/system/iwd.service"
+
+
+@pytest.mark.parametrize("breakit, problem", [
+    (lambda r: (r / IWD).unlink(), "iwd"),
+    (lambda r: _relink(r / IWD, "/usr/lib/systemd/system/iwd.service"), "iwd"),
+    (lambda r: (r / WANTS / "iwd.service").symlink_to("/usr/lib/systemd/system/iwd.service"), "iwd"),
+    (lambda r: (r / "etc/systemd/system/network.target.wants").mkdir()
+     or (r / "etc/systemd/system/network.target.wants/iwd.service").symlink_to("/usr/lib/systemd/system/iwd.service"),
+     "iwd"),
+    (lambda r: (r / "etc/systemd/network/02-wlan0.network").write_text("[Match]\nName=wlan0\n"), "WLAN"),
+    (lambda r: (r / "etc/systemd/network/30-funk.network").write_text("[Match]\nName=wlan*\n[Network]\nDHCP=yes\n"),
+     "WLAN"),
+    (lambda r: (r / "etc/systemd/network/02-wlan0.network").write_text(""), "WLAN"),
+    (lambda r: (r / CONFIG_TXT).write_text(GOOD_CONFIG_TXT.replace("dtoverlay=", "#dtoverlay=")), "disable-wifi"),
+    (lambda r: (r / CONFIG_TXT).write_text(GOOD_CONFIG_TXT.rsplit("[all]", 1)[0] + "[pi5]\ndtoverlay=disable-wifi\n"),
+     "disable-wifi"),
+    (lambda r: (r / CONFIG_TXT).write_text("dtparam=audio=on\n"), "disable-wifi"),
+    (lambda r: (r / CONFIG_TXT).unlink(), "config.txt"),
+], ids=["iwd-not-masked", "iwd-linked", "iwd-wanted", "iwd-wanted-other-target", "wlan0-network", "wlan-glob",
+        "empty-wlan0-network", "overlay-commented", "overlay-in-pi5-section", "no-overlay", "no-config-txt"])
+def test_wlan_is_off(tmp_path, breakit, problem):
+    """Das Gateway laeuft nur am Ethernet (Nutzer-Vorgabe 2026-10-07): jede WLAN-Spur allein laesst die Pruefung
+    scheitern, mit genau einer passenden Meldung."""
+    root = _good(tmp_path)
+    assert _run(root).returncode == 0
+    breakit(root)
+    result = _run(root)
+    fails = [line for line in result.stdout.splitlines() if line.startswith("FAIL:")]
+    assert result.returncode != 0 and len(fails) == 1 and problem in fails[0], result.stdout
+
+
+@pytest.mark.parametrize("fixit", [
+    lambda r: (r / CONFIG_TXT).write_text("dtoverlay=disable-wifi\n[pi4]\nenable_uart=1\n"),  # vor jedem Abschnitt
+    lambda r: (r / CONFIG_TXT).write_text("[pi4]\nenable_uart=1\n[all]\n  dtoverlay=disable-wifi  \n"),
+    lambda r: (r / "etc/systemd/network/10-eth1.network").write_text("[Match]\nName=eth1\n"),
+], ids=["overlay-before-sections", "overlay-with-spaces", "other-ethernet"])
+def test_wlan_off_variants_that_are_fine(tmp_path, fixit):
     root = _good(tmp_path)
     fixit(root)
     result = _run(root)

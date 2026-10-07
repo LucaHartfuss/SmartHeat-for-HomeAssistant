@@ -2,8 +2,8 @@
 # Pruefungen am Root-Dateisystem des Gateway-Images (Plan G2b-2 Task 9): bricht den Image-Bau ab, wenn ein Geraet aus
 # dem Image eine geteilte Identitaet (machine-id, SSH-Hostschluessel, Geraeteschluessel, Bus-Zugangsdaten), ein
 # Passwort, ein Tunnel-Token oder im Serien-Image SSH bekaeme, wenn der Erststart ohne Pull nicht moeglich waere, wenn
-# Zeitzone oder Standard-Locale nicht den Vorgaben entsprechen oder die Geraete-API-/Portal-Adresse kein eigener
-# DNS-Name per https in der eigenen Zone ist (own_url.sh).
+# WLAN an waere, Zeitzone oder Standard-Locale nicht den Vorgaben entsprechen oder die Geraete-API-/Portal-Adresse
+# kein eigener DNS-Name per https in der eigenen Zone ist (own_url.sh).
 # Aufruf: rootfs_checks.sh ROOTFS [--pilot] [--customize]
 #   --customize: Lauf im customize-Hook (customize.sh). Die machine-ids (systemd, dbus) bestehen dort noch;
 #                zurueckgesetzt werden sie erst beim Aufraeumen von mmdebstrap, geprueft dann im post-build-Hook
@@ -129,6 +129,26 @@ fi
 # Sicherheitsupdates aus dem Raspberry-Pi-Archiv moeglich
 grep -rqs "archive.raspberrypi.com" "$R/etc/apt/sources.list.d" "$R/etc/apt/sources.list" \
   || fail "Raspberry-Pi-Archiv nicht eingebunden"
+
+# WLAN aus (wlan_off.sh, nur Ethernet): iwd maskiert und von keinem Ziel gewollt, keine systemd-networkd-Konfiguration
+# fuer WLAN, WLAN-Chip per dtoverlay=disable-wifi im Abschnitt [all] (bzw. vor jedem Abschnitt) der config.txt.
+if [ "$(readlink "$R/etc/systemd/system/iwd.service" 2>/dev/null)" != /dev/null ]; then
+  fail "iwd nicht maskiert (etc/systemd/system/iwd.service -> /dev/null erwartet)"
+fi
+bad="$(find "$R/etc/systemd/system" \( -path '*.wants/iwd.service' -o -path '*.requires/iwd.service' \) -print -quit \
+  2>/dev/null)"
+if [ -n "$bad" ]; then fail "iwd aktiviert (${bad#"$R"})"; fi
+bad="$(grep -lsE '^[[:space:]]*Name=.*wlan' "$R"/etc/systemd/network/*.network | head -n 1)"
+if [ -e "$R/etc/systemd/network/02-wlan0.network" ]; then bad=/etc/systemd/network/02-wlan0.network; fi
+if [ -n "$bad" ]; then fail "WLAN-Netzwerkkonfiguration im Image (${bad#"$R"})"; fi
+CONFIG_TXT="$R/boot/firmware/config.txt"
+if [ ! -f "$CONFIG_TXT" ]; then
+  fail "boot/firmware/config.txt fehlt"
+elif ! awk '/^[[:space:]]*\[/ { sec = $0; gsub(/[[:space:]]/, "", sec); next }
+            (sec == "" || sec == "[all]") && /^[[:space:]]*dtoverlay=disable-wifi[[:space:]]*$/ { found = 1 }
+            END { exit !found }' "$CONFIG_TXT"; then
+  fail "dtoverlay=disable-wifi fehlt in config.txt (Abschnitt [all])"
+fi
 
 # Zeitzone: /etc/localtime zeigt (absolut oder relativ) auf die Zonendatei, die im Image liegt (tzdata); ein
 # vorhandenes /etc/timezone (trixie legt es nicht mehr an) muss dieselbe Zone nennen.

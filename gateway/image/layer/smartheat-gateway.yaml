@@ -35,4 +35,5 @@ mmdebstrap:
     # Vor customize.sh (dessen rootfs_checks-Lauf prueft die Regel) und vor update-initramfs (runner customize).
     - bash "$SRCROOT/usbboot.sh" "$1"
     - bash "$SRCROOT/locale_default.sh" "$1"
+    - bash "$SRCROOT/wlan_off.sh" "$1"
     - bash "$IGconf_shg_stage/installer/gateway/image/customize.sh" "$1" "$IGconf_shg_stage"
