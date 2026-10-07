@@ -103,6 +103,33 @@ def test_429_with_unparsable_retry_after_falls_back_to_one_hour(world):
     assert error.value.retry_after == 3600.0
 
 
+@pytest.mark.parametrize("header, expected", [("0", 60.0), ("-5", 60.0), ("nan", 3600.0), ("inf", 3600.0),
+                                               ("-inf", 3600.0), ("999999999", 86400.0), ("120", 120.0),
+                                               ("1.5", 60.0)])
+def test_retry_after_is_sanitised_before_it_reaches_the_quota_file(world, header, expected):
+    client, session, guard = stubbed(world, StubResponse(429, {}, {"Retry-After": header}))
+    with pytest.raises(vicare.RateLimited) as error:
+        client.features(*IDS)
+    assert error.value.retry_after == expected
+    assert abs(guard._load()["gesperrt_bis"] - (time.time() + expected)) < 5
+
+
+@pytest.mark.parametrize("status", [400, 403, 404, 408])
+def test_a_4xx_on_a_read_is_not_a_rejected_command(world, status):
+    client, session, guard = stubbed(world, StubResponse(status, {"error": "x"}), StubResponse(status, {}))
+    with pytest.raises(vicare.ReadFailed) as error:
+        client.features(*IDS)
+    assert not isinstance(error.value, vicare.CommandRejected) and "Einstellung" not in str(error.value)
+    with pytest.raises(vicare.ReadFailed):
+        client.installations()
+
+
+def test_a_wrong_path_on_the_real_fake_is_a_read_failure(world):
+    server, client, guard, tokens = world
+    with pytest.raises(vicare.ReadFailed):
+        client.features(2012345, "7637415000000001", "99")  # Fake: 404 DEVICE_NOT_FOUND
+
+
 def test_offline_is_unreachable_and_an_expired_token_is_renewed_once(world):
     server, client, guard, tokens = world
     server.control({"offline": True})

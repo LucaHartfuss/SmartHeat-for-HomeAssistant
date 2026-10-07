@@ -2,6 +2,7 @@
 zaehlt gegen das Kontingent (G2 4.2); IAM-Aufrufe (Token) nicht. Endpunkte wie PyViCare (Referenz). In Logs und
 Fehlertexten stehen nie Token, Antwortinhalte oder Seriennummern (Regel 6)."""
 import logging
+import math
 import time
 
 import requests
@@ -13,6 +14,8 @@ logger = logging.getLogger(__name__)
 
 PATH = "/iot/v2"
 DEFAULT_RETRY_AFTER = 3600.0
+MIN_RETRY_AFTER = 60.0
+MAX_RETRY_AFTER = 86400.0
 HTTP_TIMEOUT = 20
 UNREACHABLE_TEXT = "Viessmann ist nicht erreichbar."
 EXPIRED_TEXT = "Die Anmeldung bei Viessmann ist abgelaufen."
@@ -34,6 +37,13 @@ class RateLimited(ViCareError):
     def __init__(self, retry_after: float) -> None:
         super().__init__("Viessmann hat die Abfragegrenze gemeldet.")
         self.retry_after = retry_after
+
+
+class ReadFailed(ViCareError):
+    """Eine Abfrage (GET) wurde mit 4xx abgelehnt: kein Kommando, also kein Text ueber eine abgelehnte Einstellung."""
+
+    def __init__(self) -> None:
+        super().__init__("Viessmann hat die Abfrage abgelehnt.")
 
 
 class CommandRejected(ViCareError):
@@ -70,16 +80,25 @@ class ViCareApi:
                 raise Unreachable(UNREACHABLE_TEXT) from None
             if response.status_code == 401 and attempt == 0:
                 continue  # Token serverseitig widerrufen oder Uhr falsch: einmal erneuern
-            return self._handle(response)
+            return self._handle(method, response)
         raise NotAuthenticated(EXPIRED_TEXT)  # pragma: no cover
 
-    def _handle(self, response) -> dict:
+    @staticmethod
+    def _retry_after(header: str | None) -> float:
+        """Sekunden aus dem Header; unlesbar, nan, inf oder fehlend = eine Stunde, sonst auf 60 s bis 24 h begrenzt
+        (inf waere eine Dauersperre in der Kontingentdatei, 0/negativ gar keine)."""
+        try:
+            retry = float(header) if header is not None else DEFAULT_RETRY_AFTER
+        except ValueError:
+            return DEFAULT_RETRY_AFTER
+        if not math.isfinite(retry):
+            return DEFAULT_RETRY_AFTER
+        return min(max(retry, MIN_RETRY_AFTER), MAX_RETRY_AFTER)
+
+    def _handle(self, method: str, response) -> dict:
         status = response.status_code
         if status == 429:
-            try:
-                retry = float(response.headers.get("Retry-After", DEFAULT_RETRY_AFTER))
-            except ValueError:
-                retry = DEFAULT_RETRY_AFTER
+            retry = self._retry_after(response.headers.get("Retry-After"))
             if self._guard is not None:
                 self._guard.block_until(self._wall() + retry)
             raise RateLimited(retry)
@@ -89,6 +108,8 @@ class ViCareApi:
             raise Unreachable(UNREACHABLE_TEXT)
         if status >= 400:
             logger.warning("ViCare lehnt die Anfrage ab (HTTP %s)", status)  # nie den Body loggen (Werte, Seriennummern)
+            if method == "GET":
+                raise ReadFailed()
             raise CommandRejected("Die Anlage hat die Einstellung abgelehnt.")
         try:
             body = response.json()
