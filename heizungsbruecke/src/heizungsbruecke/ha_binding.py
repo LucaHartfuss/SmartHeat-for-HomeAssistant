@@ -80,13 +80,16 @@ class HaPlantBinding:
         self.physical_writes += 1
 
     def limits(self, lever: str) -> tuple[float, float] | None:
-        """Wertebereich der Ziel-Entity (Plan Client2-Bereitschaft): number min/max, climate min_temp/max_temp; None,
-        wenn ein Attribut fehlt oder keinen brauchbaren Bereich ergibt."""
+        """Wertebereich der Ziel-Entity (Plan Client2-Bereitschaft): number min/max, climate min_temp/max_temp. None bei
+        nicht zugeordnetem Hebel, fehlendem/nicht lesbarem Attribut oder unbrauchbarem Bereich. Verbindungsfehler zu
+        HA werfen (die Pipeline behaelt dann den letzten guten Bereich)."""
+        if not self.has(lever):
+            return None
         entity_id = entity_of(self.ref(lever))
         names = ("min_temp", "max_temp") if entity_id.startswith("climate.") else ("min", "max")
         try:
             low, high = (float(self._ha_api.get_attribute(entity_id, name)) for name in names)
-        except Exception as error:
+        except (KeyError, ValueError, TypeError) as error:
             logger.debug("Wertebereich von %s nicht lesbar: %s", entity_id, error)
             return None
         if not (math.isfinite(low) and math.isfinite(high)) or low > high:

@@ -15,6 +15,7 @@ SAFETY = LocalSafety(
 def _rt(target, live, settled=True, last_written=None):
     override = MagicMock()
     override.safety = SAFETY
+    override.range_of.side_effect = lambda lever: SAFETY.ranges[lever]
     override.binding.description = VAILLANT_MYPYLLANT
     override.binding.read.side_effect = lambda lever: live() if callable(live) else live
     override.write_lever.side_effect = lambda lever, value: value

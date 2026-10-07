@@ -236,3 +236,16 @@ def test_limits_is_none_when_the_range_is_not_usable(attributes):
     ha = FakeHa()
     ha.attributes = attributes
     assert HaPlantBinding(ha, MANIFEST).limits("curve") is None
+
+
+def test_limits_is_none_for_an_unmapped_lever():
+    assert HaPlantBinding(FakeHa(), ChannelManifest(refs={"curve_current": "number.curve"})).limits("heat_limit") is None
+
+
+def test_limits_lets_connection_errors_through_so_the_pipeline_keeps_the_last_range():
+    class Broken(FakeHa):
+        def get_attribute(self, entity_id, attribute):
+            raise ConnectionError("ha weg")
+
+    with pytest.raises(ConnectionError):
+        HaPlantBinding(Broken(), MANIFEST).limits("curve")
