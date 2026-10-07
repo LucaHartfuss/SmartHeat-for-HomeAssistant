@@ -16,6 +16,7 @@ class Paths:
     driver_secrets_dir = property(lambda self: self.data / "secrets" / "drivers")
     device_dir = property(lambda self: self.data / "device")
     agent_dir = property(lambda self: self.data / "agent")
+    inventory_samples = property(lambda self: self.data / "agent" / "inventory.json")
     agent_state = property(lambda self: self.data / "agent_state.json")
     runtime_dir = property(lambda self: self.data / "runtime")
     backup = property(lambda self: self.data / "runtime" / "backup.json")

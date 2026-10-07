@@ -65,3 +65,22 @@ def test_corrupt_or_foreign_file_counts_as_empty(tmp_path):
     for content in ("{kaputt", "[1, 2]", ""):
         guard._path.write_text(content)
         assert guard.used() == 0
+
+
+def test_a_forward_clock_jump_at_boot_lets_old_calls_expire_early_but_never_blocks(tmp_path):
+    now = [1_000_000.0]
+    guard = QuotaGuard(tmp_path / "q.json", QuotaSpec(10, 5, 86400), now=lambda: now[0])
+    for _ in range(5):
+        guard.take()
+    assert guard.exhausted()
+    now[0] += 90_000  # Sprung nach vorn (Pi ohne Echtzeituhr, NTP stellt die Uhr)
+    assert not guard.exhausted() and guard.used() == 0
+
+
+def test_a_backward_clock_jump_drops_calls_from_the_future_at_once(tmp_path):
+    now = [1_000_000.0]
+    guard = QuotaGuard(tmp_path / "q.json", QuotaSpec(10, 5, 86400), now=lambda: now[0])
+    for _ in range(5):
+        guard.take()
+    now[0] -= 3 * 86400  # Sprung zurueck: die Eintraege liegen jetzt in der Zukunft
+    assert guard.used() == 0  # quota._load behaelt nur now - window < ts <= now + 1 (Praezisierung 8)

@@ -270,7 +270,7 @@ class SimulationDriver:
         plant = self._plant()
         return {"driver_id": self.driver_id, "stunden": hours, "anlage": {
             "hebel": plant["hebel"], "hilfswerte": plant["hilfswerte"], "vorbereitet": plant["vorbereitet"],
-        }, "proben": len(samples)}
+        }, "proben": samples}
 
     def forget_credentials(self) -> None:
         """Die Simulation hat keine Zugangsdaten."""

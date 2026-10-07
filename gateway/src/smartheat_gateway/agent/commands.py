@@ -18,11 +18,12 @@ from smartheat_gateway.agent import safety_warnings, wire
 from smartheat_gateway.agent.context import AgentContext
 from smartheat_gateway.drivers import registry
 from smartheat_gateway.drivers.base import Driver, DriverError
-from smartheat_gateway.files import write_text_private
+from smartheat_gateway.files import read_json, write_json, write_text_private
 from smartheat_gateway.quota import QuotaExhausted
 
 logger = logging.getLogger(__name__)
 
+INVENTORY_EVERY_SECONDS = 900
 ZIGBEE_VALUE_FIELDS = ("temperature", "local_temperature", "occupied_heating_setpoint", "humidity")
 QUOTA_TEXT = "Das Abfrage-Kontingent beim Hersteller ist erschöpft, später erneut versuchen."
 
@@ -171,15 +172,41 @@ def _probe(ctx: AgentContext, payload: dict) -> Outcome:
 def _inventory(ctx: AgentContext, payload: dict) -> Outcome:
     hours = _int(payload, "stunden", 1, 48)
     driver = _driver(ctx, payload)
-    ready_at = ctx.clock() + hours * 3600
-    samples: list[dict] = []  # Probenspeicher des Agenten folgt in Plan G4 Task 7
+    series = _series(ctx, driver.driver_id, hours)
+    deadline_in = min(max(series["started"] + hours * 3600 - ctx.wall(), 0), hours * 3600)
+    ready_at = ctx.clock() + deadline_in
 
     def check() -> Done | Failed | None:
+        now = ctx.wall()
+        if now >= series["next_at"] and now < series["started"] + hours * 3600:
+            series["samples"].append(driver.inventory_sample())
+            series["next_at"] = now + INVENTORY_EVERY_SECONDS
+            write_json(ctx.paths.inventory_samples, series, private=True)
         if ctx.clock() < ready_at:
             return None
-        return Done(driver.inventory(hours, samples))
+        return Done(driver.inventory(hours, series["samples"]))
 
     return Waiting(check, ready_at + 3600)
+
+
+def _series(ctx: AgentContext, driver_id: str, hours: int) -> dict:
+    """Reihe fortsetzen (Neustart, erneute Zustellung: nichts wird doppelt abgerufen) oder neu beginnen: anderer
+    Treiber, andere Dauer, ein abgelaufenes Fenster oder ein Beginn in der Zukunft (Uhrsprung zurueck) beginnen neu."""
+    saved = read_json(ctx.paths.inventory_samples)
+    now = ctx.wall()
+    if (
+        isinstance(saved, dict) and saved.get("driver_id") == driver_id and saved.get("hours") == hours
+        and isinstance(saved.get("samples"), list) and _is_number(saved.get("started"))
+        and _is_number(saved.get("next_at")) and saved["started"] <= now < saved["started"] + hours * 3600
+    ):
+        return saved
+    series = {"driver_id": driver_id, "started": now, "hours": hours, "samples": [], "next_at": now}
+    write_json(ctx.paths.inventory_samples, series, private=True)
+    return series
+
+
+def _is_number(value) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
 
 
 @register("create_csr")

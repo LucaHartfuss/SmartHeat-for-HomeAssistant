@@ -10,6 +10,7 @@ from smartheat_gateway.agent import commands, identity, wire
 from smartheat_gateway.agent.commands import Done, Failed, Waiting, execute
 from smartheat_gateway.agent.context import AgentContext
 from smartheat_gateway.drivers.base import DriverError
+from smartheat_gateway.files import write_json
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.quota import QuotaExhausted
 from smartheat_gateway.zigbee import ZigbeeMirror
@@ -182,3 +183,79 @@ def test_every_handler_is_a_contract_command_and_emitted_reasons_are_listed(ctx)
     }
     for kind, reasons in produced.items():
         assert reasons <= set(wire.command_errors(kind)), kind
+
+
+def server_calls(server) -> int:
+    return len(server.calls)
+
+
+def test_inventory_samples_every_15_minutes_and_returns_the_series(vicare_ctx):
+    ctx, server, clock = vicare_ctx
+    outcome = commands.execute(ctx, "driver_inventory", {"driver_id": "vicare_cloud", "stunden": 1})
+    assert isinstance(outcome, commands.Waiting)
+    done = None
+    for _ in range(5):  # 5 x 15 min > 1 h
+        clock.advance(900)
+        ctx.wall = lambda: 1_000_000 + clock()
+        done = outcome.check()
+        if done is not None:
+            break
+    assert isinstance(done, commands.Done)
+    assert len(done.result["proben"]) == 3  # bei 900, 1800 und 2700 s; bei 3600 s ist das Fenster zu
+    assert "Seriennummer" not in str(done.result) and "7637415" not in str(done.result)
+
+
+def test_a_restart_in_the_middle_resumes_the_series_instead_of_starting_a_second_one(vicare_ctx):
+    ctx, server, clock = vicare_ctx
+    first = commands.execute(ctx, "driver_inventory", {"driver_id": "vicare_cloud", "stunden": 2})
+    clock.advance(900)
+    first.check()
+    used = server_calls(server)
+    second = commands.execute(ctx, "driver_inventory", {"driver_id": "vicare_cloud", "stunden": 2})  # erneute Zustellung
+    second.check()
+    assert server_calls(server) == used  # nichts doppelt abgerufen
+    saved = json.loads(ctx.paths.inventory_samples.read_text())
+    assert saved["driver_id"] == "vicare_cloud" and len(saved["samples"]) >= 1
+
+
+def test_a_series_for_another_driver_or_older_than_its_window_starts_fresh(vicare_ctx):
+    ctx, server, clock = vicare_ctx
+    write_json(ctx.paths.inventory_samples,
+               {"driver_id": "simulation", "started": 0, "hours": 1, "samples": [{}], "next_at": 0})
+    outcome = commands.execute(ctx, "driver_inventory", {"driver_id": "vicare_cloud", "stunden": 1})
+    outcome.check()
+    assert json.loads(ctx.paths.inventory_samples.read_text())["driver_id"] == "vicare_cloud"
+
+
+def test_the_saved_series_is_private_free_of_ids_and_not_resampled_within_15_minutes(vicare_ctx):
+    ctx, server, clock = vicare_ctx
+    outcome = commands.execute(ctx, "driver_inventory", {"driver_id": "vicare_cloud", "stunden": 2})
+    clock.advance(900)
+    outcome.check()
+    used = server_calls(server)
+    outcome.check()  # erneuter Aufruf derselben Pruefung im selben 15-Minuten-Fenster: keine zweite Probe
+    clock.advance(300)
+    outcome.check()
+    assert server_calls(server) == used
+    text = ctx.paths.inventory_samples.read_text()
+    assert ctx.paths.inventory_samples.stat().st_mode & 0o777 == 0o600
+    for secret in ("7637415", "2012345", "access_token", "refresh_token", "Bearer"):
+        assert secret not in text
+
+
+def test_a_series_that_starts_in_the_future_after_a_backward_clock_jump_starts_fresh(vicare_ctx):
+    ctx, server, clock = vicare_ctx
+    write_json(ctx.paths.inventory_samples, {
+        "driver_id": "vicare_cloud", "started": ctx.wall() + 90_000, "hours": 1, "samples": [{"ts": 1.0}],
+        "next_at": ctx.wall() + 90_000,
+    })
+    commands.execute(ctx, "driver_inventory", {"driver_id": "vicare_cloud", "stunden": 1})
+    saved = json.loads(ctx.paths.inventory_samples.read_text())
+    assert saved["samples"] == [] and saved["started"] == ctx.wall()
+
+
+def test_the_simulation_returns_its_series_like_every_driver(ctx, clock):
+    outcome = execute(ctx, "driver_inventory", {"driver_id": "simulation", "stunden": 1})
+    clock.advance(3601)
+    done = outcome.check()
+    assert isinstance(done, Done) and isinstance(done.result["proben"], list) and len(done.result["proben"]) == 1
