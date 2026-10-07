@@ -75,14 +75,21 @@ def generator(index: dict[str, dict]) -> str | None:
     return "gastherme" if burner else "waermepumpe"
 
 
+def lever_ranges(index: dict[str, dict], n: int) -> dict[str, tuple[float, float, float] | None]:
+    """(min, max, stepping) je Hebel aus den Kommando-Constraints des Heizkreises n; gemeinsam fuer die Probe (`hebel`)
+    und den Wertebereich des Treibers (PlantBinding.limits, Plan G4 Praezisierung 13)."""
+    curve, normal = index.get(CURVE.format(n=n)), index.get(NORMAL.format(n=n))
+    return {"curve": command_range(curve, "setCurve", "slope"), "level": command_range(curve, "setCurve", "shift"),
+            "room_setpoint": command_range(normal, "setTemperature", "targetTemperature")}
+
+
 def _levers(index: dict[str, dict], n: int) -> tuple[dict, str | None]:
     """(hebel, ablehnungsgrund). Reihenfolge der Pruefungen = Reihenfolge von REJECTIONS."""
     curve, normal = index.get(CURVE.format(n=n)), index.get(NORMAL.format(n=n))
-    slope = command_range(curve, "setCurve", "slope")
-    shift = command_range(curve, "setCurve", "shift")
+    found = lever_ranges(index, n)
+    slope, shift, setpoint = found["curve"], found["level"], found["room_setpoint"]
     if slope is None or shift is None:
         return {}, "heizkurve_nicht_schreibbar"
-    setpoint = command_range(normal, "setTemperature", "targetTemperature")
     if setpoint is None:
         return {}, "kein_normalprogramm"
     now = {"curve": number_value(curve, "slope"), "level": number_value(curve, "shift"),

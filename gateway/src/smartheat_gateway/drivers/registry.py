@@ -3,9 +3,12 @@ import time
 
 from smartheat_gateway.drivers.base import Driver
 from smartheat_gateway.drivers.simulation import SimulationDriver
+from smartheat_gateway.drivers.vicare_cloud.driver import ViCareCloudDriver
 from smartheat_gateway.paths import Paths
 
-DRIVERS: dict[str, type] = {SimulationDriver.driver_id: SimulationDriver}
+DRIVERS: dict[str, type] = {
+    SimulationDriver.driver_id: SimulationDriver, ViCareCloudDriver.driver_id: ViCareCloudDriver,
+}
 
 
 def driver_ids() -> tuple[str, ...]:
