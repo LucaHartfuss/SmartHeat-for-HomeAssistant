@@ -30,6 +30,9 @@ Hardware-Gate (Teil B) mit dem echten minisign-Schluessel.
   ausserhalb von Docker, cloudflared 2025.8.1 per SHA-256 gepinnt; `install.sh` bricht ohne `--pilot-ssh` ab,
   solange der Tunnel eingerichtet ist.
 - Updater: nur streng neuere Versionen (Downgrade-Schutz, Grund `version_zu_alt`).
+- Updater: ein Rueckweg, weil der Server waehrend der ganzen Gesundheitspruefung nicht erreichbar war, meldet den
+  Grund `server_unerreichbar` statt `ungesund` (die Version wird erneut versucht); `ungesund` heisst jetzt immer
+  abgelehnt.
 - Init-Schritt heilt Bus-Drift: Passwortdatei passend zu den Zugangsdateien, Zugangsdaten in der
   Zigbee2MQTT-Konfiguration angeglichen (Netzschluessel bleibt); eine unlesbare oder beschaedigte ACL-Datei wird neu
   geschrieben statt den Init-Schritt abzubrechen.
