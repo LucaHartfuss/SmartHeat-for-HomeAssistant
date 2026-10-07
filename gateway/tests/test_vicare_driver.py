@@ -329,3 +329,66 @@ def test_inventory_sample_without_parameters_finds_the_heating_device(env):
     server, logged_in, paths, clock = env
     driver = ViCareCloudDriver({}, paths, clock=clock)  # der Agent erzeugt den Treiber ohne Parameter
     assert driver.inventory_sample()["werte"]["level_current"] == 0
+
+
+# --- Fix-Runde 1: Programmwechsel als Ueberlagerung mit Zeitstempel (nachlaufende Cloud) ---
+
+
+def _activate_eco(server):
+    for feature in server.features["0"]:
+        if feature["feature"].endswith("programs.active"):
+            feature["properties"]["value"]["value"] = "eco"
+        if feature["feature"].endswith("programs.eco"):
+            feature["properties"]["active"]["value"] = True
+
+
+def test_a_lagging_poll_after_prepare_does_not_lose_the_customers_program(env):
+    """(a) prepare() -> Abruf zeigt noch eco -> weiter vorbereitet, und restore_aux aktiviert eco wirklich wieder."""
+    server, driver, paths, clock = env
+    _activate_eco(server)
+    driver.poll_once()
+    aux = driver.read_aux()
+    server.control({"settle": 10_000.0})  # die Cloud zeigt die Deaktivierung lange nicht
+    assert driver.prepare() is True
+    driver.poll_once()                     # zeigt noch eco
+    assert driver.is_prepared() and driver.read_aux() == {"mode_select": "normal"}
+    assert driver.prepare() is False and [c["command"] for c in server.commands] == ["deactivate"]
+    driver.restore_aux(aux)
+    assert server.commands[-1] == {"feature": "heating.circuits.0.operating.programs.eco", "command": "activate", "params": {}}
+
+
+def test_a_lagging_poll_after_restore_keeps_the_restored_program_until_the_settle_time(env):
+    """(b) restore_aux(eco) -> Abruf zeigt noch normal -> read_aux meldet eco; nach der Wartezeit gewinnt die Cloud."""
+    server, driver, paths, clock = env
+    server.control({"settle": 10_000.0})
+    driver.restore_aux({"mode_select": "eco"})
+    driver.poll_once()                     # zeigt noch normal
+    assert driver.read_aux() == {"mode_select": "eco"} and not driver.is_prepared()
+    clock.advance(driver.description.settle_seconds + 1)
+    driver.poll_once()
+    assert driver.read_aux() == {"mode_select": "normal"}  # Ueberlagerung verfallen, der Abruf gilt
+
+
+def test_a_confirming_poll_ends_the_program_overlay_so_a_later_app_change_is_seen(env):
+    server, driver, paths, clock = env
+    driver.restore_aux({"mode_select": "eco"})
+    driver.poll_once()                     # die Cloud zeigt eco: bestaetigt
+    for feature in server.features["0"]:
+        if feature["feature"].endswith("programs.active"):
+            feature["properties"]["value"]["value"] = "comfort"  # Kunde waehlt in der App comfort
+    driver.poll_once()
+    assert driver.read_aux() == {"mode_select": "comfort"}
+
+
+def test_after_prepare_any_non_foreign_program_of_the_cloud_confirms(env):
+    """Nach dem Deaktivieren kann die Cloud z. B. reduced zeigen (Zeitprogramm): das bestaetigt die Vorbereitung."""
+    server, driver, paths, clock = env
+    _activate_eco(server)
+    driver.poll_once()
+    server.control({"settle": 10_000.0})
+    driver.prepare()
+    for feature in server.features["0"]:
+        if feature["feature"].endswith("programs.active"):
+            feature["properties"]["value"]["value"] = "reduced"
+    driver.poll_once()
+    assert driver.read_aux() == {"mode_select": "reduced"} and driver.is_prepared()

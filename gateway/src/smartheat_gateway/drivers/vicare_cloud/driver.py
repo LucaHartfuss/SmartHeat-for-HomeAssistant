@@ -64,6 +64,10 @@ class ViCareCloudDriver:
         self._limits: dict[str, tuple[float, float] | None] = {}
         self._overlay: dict[str, float] = {}      # eigene Schreibwerte, bis die Cloud sie zeigt (Praezisierung 6)
         self._overlay_at: dict[str, float] = {}
+        # Eigener Programmwechsel (prepare/restore_aux) mit Zeitpunkt: gilt ueber jedem neuen Cache, bis ein Abruf ihn
+        # bestaetigt oder settle_seconds vergangen sind; sonst wuerde eine nachlaufende Cloud das Ursprungsprogramm
+        # des Kunden verlieren oder ueberschreiben (Fix-Runde 1 Task 6).
+        self._mode_overlay: tuple[str, float] | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -120,6 +124,31 @@ class ViCareCloudDriver:
                 confirmed = isinstance(shown, float) and abs(shown - value) <= self.description.enforce_tolerance[lever]
                 if confirmed or now - self._overlay_at[lever] >= self.description.settle_seconds:
                     del self._overlay[lever], self._overlay_at[lever]
+            self._apply_mode_overlay(now)
+
+    @staticmethod
+    def _mode_confirmed(shown: float | str | None, wanted: str) -> bool:
+        """Ein Abruf bestaetigt den eigenen Programmwechsel: dasselbe Programm, oder nach prepare() (wanted kein
+        Fremdprogramm) irgendein Programm ausser comfort/eco (die Cloud kann z. B. reduced aus dem Zeitprogramm zeigen)."""
+        if shown == wanted:
+            return True
+        return wanted not in FOREIGN_PROGRAMS and isinstance(shown, str) and shown not in FOREIGN_PROGRAMS
+
+    def _apply_mode_overlay(self, now: float) -> None:
+        """Unter der Sperre: Programm-Ueberlagerung auf den eben gebauten Cache legen oder beenden."""
+        if self._mode_overlay is None:
+            return
+        wanted, since = self._mode_overlay
+        if self._mode_confirmed(self._cache.get("mode_select"), wanted) or now - since >= self.description.settle_seconds:
+            self._mode_overlay = None
+        else:
+            self._cache["mode_select"] = wanted
+
+    def _set_mode(self, program: str) -> None:
+        with self._lock:
+            self.physical_writes += 1
+            self._mode_overlay = (program, self._clock())
+            self._cache["mode_select"] = program
 
     def _extract(self, features) -> tuple[dict[str, float | str], dict[str, tuple[float, float] | None]]:
         """Cache und Wertebereiche aus einer Feature-Liste, jedes Mal neu aufgebaut (nie mit dem alten zusammengefuehrt):
@@ -229,9 +258,7 @@ class ViCareCloudDriver:
         if program not in FOREIGN_PROGRAMS:
             return False
         self._execute(self._program(str(program)), "deactivate", {})
-        with self._lock:
-            self.physical_writes += 1
-            self._cache["mode_select"] = "normal"  # bis der naechste Abruf es bestaetigt
+        self._set_mode("normal")
         return True
 
     def read_aux(self) -> dict[str, str | float]:
@@ -242,9 +269,7 @@ class ViCareCloudDriver:
         if program not in FOREIGN_PROGRAMS or self._fresh()["mode_select"] == program:
             return
         self._execute(self._program(str(program)), "activate", {})
-        with self._lock:
-            self.physical_writes += 1
-            self._cache["mode_select"] = str(program)
+        self._set_mode(str(program))
 
     def limits(self, lever: str) -> tuple[float, float] | None:
         """Wertebereich der Anlage aus den Kommando-Constraints im Cache (Praezisierung 13); ohne Constraint, mit
