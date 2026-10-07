@@ -1,0 +1,32 @@
+# METABEGIN
+# X-Env-Layer-Name: smartheat-gateway
+# X-Env-Layer-Category: app
+# X-Env-Layer-Desc: SmartHeat-Gateway: Host-Installer im chroot (install.sh --image), Container-Images fuer den
+#  Erststart ohne Pull, Pruefung des fertigen Root-Dateisystems (Plan G2b-2 Task 9).
+# X-Env-Layer-Version: 1.0.0
+# X-Env-Layer-Requires: trixie-minbase
+#
+# X-Env-VarPrefix: shg
+#
+# X-Env-Var-stage: /stage
+# X-Env-Var-stage-Desc: Ordner von prepare.sh (installer/, bundle/, images/, install.args, pilot)
+# X-Env-Var-stage-Required: y
+# X-Env-Var-stage-Valid: string
+# X-Env-Var-stage-Set: y
+# METAEND
+---
+# Alle Pakete, die install.sh verlangt (Test: test_image_scripts.py), damit install.sh im chroot kein apt braucht.
+# docker-cli ausdruecklich: unter trixie nur "Recommends" von docker.io, und rpi-image-gen installiert ohne Recommends.
+# openssh-server (Pilot-Image) bringt trixie-minbase mit.
+mmdebstrap:
+  packages:
+    - docker.io
+    - docker-cli
+    - docker-compose
+    - python3
+    - python3-cryptography
+    - unattended-upgrades
+    - nftables
+    - ca-certificates
+  customize-hooks:
+    - bash "$IGconf_shg_stage/installer/gateway/image/customize.sh" "$1" "$IGconf_shg_stage"

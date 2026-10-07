@@ -72,8 +72,9 @@ fi
 # Erststart ohne Pull, signiertes laufendes Bundle
 if ! compgen -G "$SH/images/*.tar" >/dev/null; then fail "keine Image-Archive fuer den Erststart"; fi
 current="$(sed -n 's/.*"current": *"\([^"]*\)".*/\1/p' "$SH/updater/state.json" 2>/dev/null)"
-[ -n "$current" ] && [ -f "$SH/bundles/$current/manifest.json.minisig" ] \
-  || fail "laufendes Bundle fehlt oder ist nicht signiert"
+if [ -z "$current" ] || [ ! -f "$SH/bundles/$current/manifest.json.minisig" ]; then
+  fail "laufendes Bundle fehlt oder ist nicht signiert"
+fi
 
 # Sicherheitsupdates aus dem Raspberry-Pi-Archiv moeglich
 grep -rqs "archive.raspberrypi.com" "$R/etc/apt/sources.list.d" "$R/etc/apt/sources.list" \

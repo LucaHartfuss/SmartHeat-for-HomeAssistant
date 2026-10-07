@@ -1,0 +1,25 @@
+# SmartHeat-Gateway-Image (Plan G2b-2 Task 9), rpi-image-gen v2.8.0 (Commit 262d4df, gepinnt in build.sh). Aufbau
+# wie das mitgelieferte config/trixie-minbase.yaml, Geraet Raspberry Pi 4 mit SSD am USB. /stage stellt build.sh
+# bereit (Inhalt von prepare.sh).
+device:
+  layer: rpi4
+  storage_type: usb
+  hostname: smartheat-gateway
+
+image:
+  layer: image-rpios
+  boot_part_size: 200%
+  # Feste Groesse: v2.8.0 vergroessert die Root-Partition beim ersten Start nicht (kein resize/growpart im Layer).
+  root_part_size: 8G
+  name: smartheat-gateway
+
+layer:
+  base: trixie-minbase
+  shg: smartheat-gateway
+
+deploy:
+  # Standard von v2.8.0, hier ausdruecklich: build.sh erwartet work/deploy-<version>/smartheat-gateway.img.zst
+  compression: zstd
+
+shg:
+  stage: /stage
