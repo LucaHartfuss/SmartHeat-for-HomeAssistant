@@ -10,7 +10,7 @@ from fake_z2m import FakeZigbee2Mqtt
 from fakes import FakeBus
 
 from smartheat_gateway import topics
-from smartheat_gateway.agent import identity, lifecycle
+from smartheat_gateway.agent import identity, lifecycle, wire
 from smartheat_gateway.agent.commands import Done, Failed, Waiting, execute
 from smartheat_gateway.agent.context import AgentContext
 from smartheat_gateway.bus import decode
@@ -328,3 +328,89 @@ def test_cleanup_interrupted_by_power_loss_completes_on_the_next_pass(ctx, monke
     assert lifecycle.cleanup_after_sign_off(ctx)
     assert not ctx.paths.driver_secrets_dir.exists() and not ctx.paths.runtime_config.exists()
     assert ctx.paths.device_dir.exists()
+
+
+VICARE_DRIVER = {"id": "vicare_cloud", "parameter": {"installation_id": 2012345, "gateway_serial": "7637415000000001",
+                                                       "device_id": "0", "heizkreis": 0, "poll_seconds": 300.0}}
+
+
+def _old_vicare_login(ctx):
+    write_json(ctx.paths.driver_secrets_dir / "vicare.json", {"refresh_token": "test-refresh"}, private=True)
+
+
+def test_a_new_setup_with_another_driver_after_sign_off_forgets_the_old_vicare_login(ctx):
+    _signed_off_with_failed_restore(ctx)
+    _old_vicare_login(ctx)
+    config = apply_config(setup_id="setup-2", installation_token="test-token-2")  # Treiber simulation
+    assert isinstance(execute(ctx, "apply_config", {"setup_id": "setup-2", "config": config}), Waiting)
+    assert not (ctx.paths.driver_secrets_dir / "vicare.json").exists()
+
+
+def test_a_new_setup_with_vicare_cloud_after_sign_off_keeps_its_fresh_login(ctx):
+    _signed_off_with_failed_restore(ctx)
+    _old_vicare_login(ctx)  # bei vicare_cloud stammt vicare.json aus dem driver_login der neuen Einrichtung
+    config = apply_config(setup_id="setup-2", installation_token="test-token-2", driver=VICARE_DRIVER)
+    assert isinstance(execute(ctx, "apply_config", {"setup_id": "setup-2", "config": config}), Waiting)
+    assert (ctx.paths.driver_secrets_dir / "vicare.json").exists()
+
+
+def test_a_successful_sign_off_with_vicare_cloud_removes_the_login(ctx):
+    write_runtime_files(ctx.paths, apply_config(driver=VICARE_DRIVER))
+    _old_vicare_login(ctx)
+    execute(ctx, "sign_off", {})
+    _status(ctx, status="abgemeldet", setup_id=load_raw(ctx.paths)["setup_id"], grund=None)
+    assert lifecycle.cleanup_after_sign_off(ctx)
+    assert not ctx.paths.driver_secrets_dir.exists()
+
+
+def test_a_driver_that_cannot_forget_does_not_block_the_new_setup(ctx, monkeypatch, caplog):
+    from smartheat_gateway.drivers.vicare_cloud.driver import ViCareCloudDriver
+
+    def broken(self):
+        raise OSError("test-token-details")
+
+    monkeypatch.setattr(ViCareCloudDriver, "forget_credentials", broken)
+    _signed_off_with_failed_restore(ctx)
+    config = apply_config(setup_id="setup-2", installation_token="test-token-2")
+    assert isinstance(execute(ctx, "apply_config", {"setup_id": "setup-2", "config": config}), Waiting)
+    assert "test-token-details" not in caplog.text and "vicare_cloud" in caplog.text
+
+
+def _stale_series(ctx, started):
+    write_json(ctx.paths.inventory_samples, {
+        "driver_id": "vicare_cloud", "started": started, "hours": 1, "samples": [{"ts": 1.0, "werte": {"x": 9.0}}],
+        "next_at": started + 900,
+    })
+
+
+def test_sign_off_removes_the_inventory_series(vicare_ctx):
+    ctx, server, clock = vicare_ctx
+    write_runtime_files(ctx.paths, apply_config(driver=VICARE_DRIVER))
+    _stale_series(ctx, ctx.wall())
+    execute(ctx, "sign_off", {})
+    _status(ctx, status="abgemeldet", setup_id=load_raw(ctx.paths)["setup_id"], grund=None)
+    assert lifecycle.cleanup_after_sign_off(ctx)
+    assert not ctx.paths.inventory_samples.exists()
+
+
+def test_apply_config_removes_a_stale_inventory_series(ctx):
+    _stale_series(ctx, 1_700_000_000.0)
+    config = apply_config(setup_id="setup-2", installation_token="test-token-2")
+    assert isinstance(execute(ctx, "apply_config", {"setup_id": "setup-2", "config": config}), Waiting)
+    assert not ctx.paths.inventory_samples.exists()
+
+
+def test_an_old_series_is_not_returned_after_sign_off_for_the_same_driver_and_hours(vicare_ctx):
+    ctx, server, clock = vicare_ctx
+    write_runtime_files(ctx.paths, apply_config(driver=VICARE_DRIVER))
+    _stale_series(ctx, ctx.wall())
+    execute(ctx, "sign_off", {})
+    _status(ctx, status="abgemeldet", setup_id=load_raw(ctx.paths)["setup_id"], grund=None)
+    assert lifecycle.cleanup_after_sign_off(ctx)
+    outcome = execute(ctx, "driver_inventory", {"driver_id": "vicare_cloud", "stunden": 1})
+    clock.advance(3600)
+    ctx.wall = lambda: 1_000_000 + clock()
+    done = outcome.check()
+    # Die alte Reihe kommt nicht zurueck: eine frische Reihe ohne jede Probe endet am Fensterende mit Failed
+    # (frueher: Done mit leerer Liste; Anpassung an die Inventur-Regel "keine Probe, kein Ergebnis").
+    assert isinstance(done, Failed) and done.grund in wire.command_errors("driver_inventory")

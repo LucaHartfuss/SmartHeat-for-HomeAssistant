@@ -18,6 +18,8 @@ from smartheat_gateway.config import (
     redact,
     split_secrets,
 )
+from smartheat_gateway.drivers import registry
+from smartheat_gateway.drivers.base import KIND_CLOUD
 from smartheat_gateway.files import read_json, write_json
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.target_store import is_valid_portal_target
@@ -61,17 +63,43 @@ def write_config(paths: Paths, config: dict) -> None:
     write_json(paths.runtime_config, public)
 
 
-def remove_setup(paths: Paths, *, keep_new_credentials: bool = False) -> None:
+def _forget_other_drivers(paths: Paths, keep_driver: str | None) -> None:
+    """Anmeldedaten jedes Cloud-Treibers der alten Einrichtung vergessen, ausser dem der neuen. Ein Fehler wird
+    protokolliert (nie mit Geheimnissen: nur der Typ), nie geworfen: das Einrichten geht vor."""
+    for driver_id, driver_type in registry.DRIVERS.items():
+        if driver_id == keep_driver or driver_type.kind != KIND_CLOUD:
+            continue
+        try:
+            registry.create(driver_id, {}, paths, writer=False).forget_credentials()
+        except Exception as error:
+            logger.error("Anmeldedaten von %s nicht gelöscht (%s)", driver_id, type(error).__name__)
+
+
+def forget_inventory(paths: Paths) -> None:
+    """Proben einer Inventur gehoeren zur Anlage der Einrichtung; nach Abmelden oder neuer Einrichtung darf keine
+    Reihe der alten Anlage als Inventur der neuen zurueckkommen. Wirft nie."""
+    for path in (paths.inventory_samples, paths.inventory_samples.with_name(paths.inventory_samples.name + ".tmp")):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as error:
+            logger.error("Inventur-Proben nicht gelöscht (%s)", type(error).__name__)
+
+
+def remove_setup(paths: Paths, *, keep_new_credentials: bool = False, keep_driver: str | None = None) -> None:
     """Entfernt eine (abgemeldete) Einrichtung: zuerst den Laufzeit-Ordner (Praezisierung 3), dann Geheimnisse,
     Transport-Schluessel und Treiber-Tokens, die Konfiguration mit der Markierung `abgemeldet` ZULETZT; bricht es
     mittendrin ab (Stromausfall), findet der naechste Durchlauf die Markierung und raeumt den Rest weg.
     keep_new_credentials (apply_config): Transport-Schluessel und Treiber-Tokens stammen dann aus create_csr bzw.
-    driver_login derselben neuen Einrichtung (der alte Schluessel ist seit sign_off weg) und bleiben."""
+    driver_login derselben neuen Einrichtung (der alte Schluessel ist seit sign_off weg) und bleiben; die Anmeldedaten
+    der uebrigen Cloud-Treiber (alte Einrichtung, anderer Treiber als keep_driver) werden vergessen (Plan G4 K4)."""
     shutil.rmtree(paths.runtime_dir, ignore_errors=True)
     paths.runtime_secrets.unlink(missing_ok=True)
+    forget_inventory(paths)
     if not keep_new_credentials:
         paths.transport_key.unlink(missing_ok=True)
         shutil.rmtree(paths.driver_secrets_dir, ignore_errors=True)
+    else:
+        _forget_other_drivers(paths, keep_driver)
     paths.runtime_config.unlink(missing_ok=True)
 
 
@@ -99,7 +127,8 @@ def apply_config(ctx: AgentContext, payload: dict) -> Outcome:
         return Failed("konfiguration_ungueltig", f"Die Konfiguration ist ungültig: {text}")
     if load_raw(ctx.paths).get("abgemeldet") is True:
         # Abgemeldet (auch mit gescheitertem Zuruecksetzen): neu einrichten wie frisch installiert (Praezisierung 3).
-        remove_setup(ctx.paths, keep_new_credentials=True)
+        remove_setup(ctx.paths, keep_new_credentials=True, keep_driver=config["driver"]["id"])
+    forget_inventory(ctx.paths)  # jede (Neu-)Einrichtung beginnt ohne Proben einer frueheren Anlage
     write_config(ctx.paths, config)
     ctx.bus.publish(topics.CMD_RELOAD, {"setup_id": setup_id})
 

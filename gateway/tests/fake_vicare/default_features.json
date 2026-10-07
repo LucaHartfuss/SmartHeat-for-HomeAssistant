@@ -1,0 +1,146 @@
+[
+ {
+  "feature": "heating.circuits.0.heating.curve",
+  "isEnabled": true,
+  "properties": {
+   "shift": {
+    "type": "number",
+    "value": 0
+   },
+   "slope": {
+    "type": "number",
+    "value": 1.4
+   }
+  },
+  "commands": {
+   "setCurve": {
+    "isExecutable": true,
+    "params": {
+     "shift": {
+      "type": "number",
+      "required": true,
+      "constraints": {
+       "min": -13,
+       "max": 40,
+       "stepping": 1
+      }
+     },
+     "slope": {
+      "type": "number",
+      "required": true,
+      "constraints": {
+       "min": 0.2,
+       "max": 3.5,
+       "stepping": 0.1
+      }
+     }
+    }
+   }
+  }
+ },
+ {
+  "feature": "heating.circuits.0.operating.programs.normal",
+  "isEnabled": true,
+  "properties": {
+   "temperature": {
+    "type": "number",
+    "value": 20
+   }
+  },
+  "commands": {
+   "setTemperature": {
+    "isExecutable": true,
+    "params": {
+     "targetTemperature": {
+      "type": "number",
+      "required": true,
+      "constraints": {
+       "min": 3,
+       "max": 37,
+       "stepping": 1
+      }
+     }
+    }
+   }
+  }
+ },
+ {
+  "feature": "heating.circuits.0.operating.programs.active",
+  "isEnabled": true,
+  "properties": {
+   "value": {
+    "type": "string",
+    "value": "normal"
+   }
+  },
+  "commands": {}
+ },
+ {
+  "feature": "heating.circuits.0.sensors.temperature.supply",
+  "isEnabled": true,
+  "properties": {
+   "value": {
+    "type": "number",
+    "value": 35
+   }
+  },
+  "commands": {}
+ },
+ {
+  "feature": "heating.sensors.temperature.outside",
+  "isEnabled": true,
+  "properties": {
+   "value": {
+    "type": "number",
+    "value": 5
+   }
+  },
+  "commands": {}
+ },
+ {
+  "feature": "heating.burners.0",
+  "isEnabled": true,
+  "properties": {},
+  "commands": {}
+ },
+ {
+  "feature": "heating.circuits.0.operating.programs.comfort",
+  "isEnabled": true,
+  "properties": {
+   "active": {
+    "type": "boolean",
+    "value": false
+   }
+  },
+  "commands": {
+   "activate": {
+    "isExecutable": true,
+    "params": {}
+   },
+   "deactivate": {
+    "isExecutable": true,
+    "params": {}
+   }
+  }
+ },
+ {
+  "feature": "heating.circuits.0.operating.programs.eco",
+  "isEnabled": true,
+  "properties": {
+   "active": {
+    "type": "boolean",
+    "value": false
+   }
+  },
+  "commands": {
+   "activate": {
+    "isExecutable": true,
+    "params": {}
+   },
+   "deactivate": {
+    "isExecutable": true,
+    "params": {}
+   }
+  }
+ }
+]

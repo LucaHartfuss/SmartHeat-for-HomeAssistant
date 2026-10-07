@@ -2,6 +2,7 @@
 BindingDescription wie der HA-Pfad, liefert die Pflicht-Rollen seines Hebelsatzes und ein Probe-Ergebnis nach dem
 Vertrag. G4 ergaenzt PARAMETERS um seine Treiber."""
 import pytest
+from fake_vicare.server import DEVICE, GATEWAY, GOOD_CODE, INSTALLATION, FakeVicare
 
 from smartheat_core.binding import BINDINGS
 from smartheat_gateway.agent import wire
@@ -11,16 +12,36 @@ from smartheat_gateway.paths import Paths
 from smartheat_runtime.roles import REQUIRED_ROLES_BY_LEVER_SET
 
 # Treiber -> Parametersaetze, unter denen er im Test laeuft (ein Satz je Hebelsatz, den er bedienen kann).
-PARAMETERS = {"simulation": [{"lever_set": lever_set} for lever_set in BINDINGS]}
+# Wie `parameter` eines Probe-Kandidaten (capabilities.candidates), also auch mit lever_set.
+PARAMETER_BASIS = {"installation_id": INSTALLATION, "gateway_serial": GATEWAY, "device_id": DEVICE, "heizkreis": 0,
+                   "lever_set": "viessmann_vicare"}
+PARAMETERS = {
+    "simulation": [{"lever_set": lever_set} for lever_set in BINDINGS],
+    "vicare_cloud": [{**PARAMETER_BASIS}],
+}
 CASES = [(driver_id, parameter) for driver_id in DRIVERS for parameter in PARAMETERS[driver_id]]
+REDIRECT = "https://portal.test/oauth/callback"
 
 
 @pytest.fixture
-def driver(request, data_dir, clock):
+def driver(request, data_dir, clock, monkeypatch):
     driver_id, parameter = request.param
+    server = None
+    if driver_id == "vicare_cloud":  # Cloud-Treiber gegen den Fake-ViCare, vorher angemeldet
+        server = FakeVicare()
+        base = server.start()
+        monkeypatch.setenv("SHG_TEST_ENDPOINTS", "1")
+        monkeypatch.setenv("SHG_VICARE_IAM_BASE", base)
+        monkeypatch.setenv("SHG_VICARE_API_BASE", base)
     instance = create(driver_id, parameter, Paths(data_dir), clock=clock, writer=True)
+    if server is not None:
+        instance.login_begin({"phase": "begin", "driver_id": driver_id, "client_id": "c", "redirect_uri": REDIRECT,
+                              "scope": "x"})
+        instance.login_finish({"phase": "finish", "driver_id": driver_id, "code": GOOD_CODE, "redirect_uri": REDIRECT})
     instance.poll_once()
-    return instance
+    yield instance
+    if server is not None:
+        server.stop()
 
 
 def test_every_registered_driver_has_parameters():
@@ -70,3 +91,8 @@ def test_probe_follows_the_contract(driver):
             assert candidate["ablehnung"]["grund"] in type(driver).REJECTION_REASONS
         for lever in candidate["hebel"].values():
             assert tuple(lever) == wire.PROBE_LEVER_FIELDS
+
+
+def test_every_driver_declares_the_lever_sets_it_can_serve():
+    for driver_class in DRIVERS.values():
+        assert driver_class.LEVER_SETS and set(driver_class.LEVER_SETS) <= set(BINDINGS)

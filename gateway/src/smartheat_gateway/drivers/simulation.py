@@ -36,6 +36,7 @@ class SimulationDriver:
     driver_id = "simulation"
     kind = KIND_LOCAL
     login_kind = None
+    LEVER_SETS = tuple(BINDINGS)
     REJECTION_REASONS = ("hebel_fehlt",)
 
     def __init__(
@@ -55,6 +56,7 @@ class SimulationDriver:
         self._room = float(self._p["raum_start"])
         self._last_model: float | None = None
         self._random = random.Random(self._p["seed"])
+        self._lock = threading.RLock()  # Thread-Vertrag wie die Cloud-Treiber (Plan G4 Praezisierung 9)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -94,6 +96,10 @@ class SimulationDriver:
     # --- Abfrage ---
 
     def poll_once(self) -> None:
+        with self._lock:
+            self._poll_locked()
+
+    def _poll_locked(self) -> None:
         control = self._control()
         if control.get("offline") or control.get("quota_exhausted") or control.get("token_expired"):
             return  # kein Abruf: der Cache altert
@@ -130,9 +136,10 @@ class SimulationDriver:
     def _fresh(self) -> dict:
         if self._control().get("offline"):
             raise ConnectionError("Simulation offline")
-        if self._cache_at is None or self._clock() - self._cache_at > CACHE_MAX_POLLS * self.poll_seconds:
-            raise ValueError("Treiber-Cache veraltet")
-        return self._cache
+        with self._lock:
+            if self._cache_at is None or self._clock() - self._cache_at > CACHE_MAX_POLLS * self.poll_seconds:
+                raise ValueError("Treiber-Cache veraltet")
+            return self._cache
 
     def start(self) -> None:
         if self._thread is None:
@@ -256,8 +263,14 @@ class SimulationDriver:
         }
         return {"driver_id": self.driver_id, "kandidaten": [ok, rejected]}
 
-    def inventory(self, hours: int) -> dict:
+    def inventory_sample(self) -> dict:
+        return {"hebel": dict(self._plant()["hebel"])}
+
+    def inventory(self, hours: int, samples: list[dict]) -> dict:
         plant = self._plant()
         return {"driver_id": self.driver_id, "stunden": hours, "anlage": {
             "hebel": plant["hebel"], "hilfswerte": plant["hilfswerte"], "vorbereitet": plant["vorbereitet"],
-        }}
+        }, "proben": samples}
+
+    def forget_credentials(self) -> None:
+        """Die Simulation hat keine Zugangsdaten."""

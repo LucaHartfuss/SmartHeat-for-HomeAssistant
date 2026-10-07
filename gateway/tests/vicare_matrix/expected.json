@@ -1,0 +1,758 @@
+{
+ "Ecotronic.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": "viessmann_vicare",
+   "grund": null,
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 3,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "gastherme"
+  }
+ ],
+ "RoomControl.json": [],
+ "Solar.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": "viessmann_vicare",
+   "grund": null,
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "gastherme"
+  }
+ ],
+ "TCU300_ethernet.json": [],
+ "VitoairFs300E.json": [],
+ "Vitocal111S.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "erzeuger_unbekannt",
+   "erzeuger_typ": "unbekannt"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "unbekannt"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "unbekannt"
+  }
+ ],
+ "Vitocal151A.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "waermepumpe"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "waermepumpe"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "waermepumpe"
+  },
+  {
+   "heizkreis": 3,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "waermepumpe"
+  }
+ ],
+ "Vitocal200.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "erzeuger_unbekannt",
+   "erzeuger_typ": "unbekannt"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "unbekannt"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "unbekannt"
+  }
+ ],
+ "Vitocal200A_OutdoorUnit.json": [],
+ "Vitocal200A_SystemController.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "unbekannt"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "unbekannt"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "unbekannt"
+  },
+  {
+   "heizkreis": 3,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "unbekannt"
+  }
+ ],
+ "Vitocal200S-with-Vitovent300W.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "unbekannt"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "erzeuger_unbekannt",
+   "erzeuger_typ": "unbekannt"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "unbekannt"
+  }
+ ],
+ "Vitocal200S.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "erzeuger_unbekannt",
+   "erzeuger_typ": "unbekannt"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "unbekannt"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "unbekannt"
+  }
+ ],
+ "Vitocal200S_AWB-M-E-AC-201.D10.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "erzeuger_unbekannt",
+   "erzeuger_typ": "unbekannt"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "erzeuger_unbekannt",
+   "erzeuger_typ": "unbekannt"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "unbekannt"
+  }
+ ],
+ "Vitocal200S_E8NEV.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "waermepumpe"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "waermepumpe"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "waermepumpe"
+  },
+  {
+   "heizkreis": 3,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "waermepumpe"
+  }
+ ],
+ "Vitocal222S-with-Vitovent.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "erzeuger_unbekannt",
+   "erzeuger_typ": "unbekannt"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "unbekannt"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "unbekannt"
+  }
+ ],
+ "Vitocal222S.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "waermepumpe"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "waermepumpe"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "waermepumpe"
+  },
+  {
+   "heizkreis": 3,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "waermepumpe"
+  }
+ ],
+ "Vitocal250A.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "waermepumpe"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "waermepumpe"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "waermepumpe"
+  },
+  {
+   "heizkreis": 3,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "waermepumpe"
+  }
+ ],
+ "Vitocal252.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "waermepumpe"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "waermepumpe"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "waermepumpe"
+  },
+  {
+   "heizkreis": 3,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "waermepumpe"
+  }
+ ],
+ "Vitocal252A.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "waermepumpe"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "waermepumpe"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "waermepumpe"
+  },
+  {
+   "heizkreis": 3,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "waermepumpe"
+  }
+ ],
+ "Vitocal300G_CU401B.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "waermepumpe"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": "viessmann_vicare",
+   "grund": null,
+   "erzeuger_typ": "waermepumpe"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "waermepumpe"
+  }
+ ],
+ "Vitocal333G-with-Vitovent300F.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": "viessmann_vicare",
+   "grund": null,
+   "erzeuger_typ": "waermepumpe"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": "viessmann_vicare",
+   "grund": null,
+   "erzeuger_typ": "waermepumpe"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "waermepumpe"
+  }
+ ],
+ "Vitocal333G.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "erzeuger_unbekannt",
+   "erzeuger_typ": "unbekannt"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "unbekannt"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "unbekannt"
+  }
+ ],
+ "Vitocaldens222F.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "unbekannt"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "erzeuger_unbekannt",
+   "erzeuger_typ": "unbekannt"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "unbekannt"
+  }
+ ],
+ "Vitocharge03.json": [],
+ "Vitocharge05.json": [],
+ "VitoconnectOpto1.json": [],
+ "VitoconnectOpto2.json": [],
+ "Vitodens050W.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "gastherme"
+  }
+ ],
+ "Vitodens100NA.json": [],
+ "Vitodens100W.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "gastherme"
+  }
+ ],
+ "Vitodens100W_B1HC-26.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "gastherme"
+  }
+ ],
+ "Vitodens111W.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "gastherme"
+  }
+ ],
+ "Vitodens200W.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": "viessmann_vicare",
+   "grund": null,
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 3,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "gastherme"
+  }
+ ],
+ "Vitodens200W_2.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": "viessmann_vicare",
+   "grund": null,
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": "viessmann_vicare",
+   "grund": null,
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "gastherme"
+  }
+ ],
+ "Vitodens200W_B2HA.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": "viessmann_vicare",
+   "grund": null,
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "gastherme"
+  }
+ ],
+ "Vitodens200W_B2HF.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": "viessmann_vicare",
+   "grund": null,
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 3,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "gastherme"
+  }
+ ],
+ "Vitodens222W.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": "viessmann_vicare",
+   "grund": null,
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 3,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "gastherme"
+  }
+ ],
+ "Vitodens300W.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": "viessmann_vicare",
+   "grund": null,
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": "viessmann_vicare",
+   "grund": null,
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "gastherme"
+  }
+ ],
+ "Vitodens333F.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": "viessmann_vicare",
+   "grund": null,
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": "viessmann_vicare",
+   "grund": null,
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "gastherme"
+  }
+ ],
+ "Vitodens343F_B3UF.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": "viessmann_vicare",
+   "grund": null,
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 3,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "gastherme"
+  }
+ ],
+ "Vitodens_100_BHC_0421.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "gastherme"
+  }
+ ],
+ "VitolaUniferral.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": "viessmann_vicare",
+   "grund": null,
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": null,
+   "grund": "kein_normalprogramm",
+   "erzeuger_typ": "gastherme"
+  }
+ ],
+ "Vitoladens300-C_J3RA.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": "viessmann_vicare",
+   "grund": null,
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "gastherme"
+  }
+ ],
+ "Vitopure350.json": [],
+ "VitosetAqua.json": [],
+ "VitovalorPT2.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 1,
+   "lever_set": "viessmann_vicare",
+   "grund": null,
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 2,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "gastherme"
+  },
+  {
+   "heizkreis": 3,
+   "lever_set": null,
+   "grund": "heizkurve_nicht_schreibbar",
+   "erzeuger_typ": "gastherme"
+  }
+ ],
+ "eigen-aussentemperatur_fehlt.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "aussentemperatur_fehlt",
+   "erzeuger_typ": "gastherme"
+  }
+ ],
+ "eigen-schrittweite_abweichend.json": [
+  {
+   "heizkreis": 0,
+   "lever_set": null,
+   "grund": "schrittweite_abweichend",
+   "erzeuger_typ": "gastherme"
+  }
+ ],
+ "zigbee_zk03838_fht_channel.json": [],
+ "zigbee_zk03838_fht_main.json": [],
+ "zigbee_zk03839_cs.json": [],
+ "zigbee_zk03840_trv.json": [],
+ "zigbee_zk05390_repeater.json": []
+}

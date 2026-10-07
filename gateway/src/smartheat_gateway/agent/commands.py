@@ -18,11 +18,14 @@ from smartheat_gateway.agent import safety_warnings, wire
 from smartheat_gateway.agent.context import AgentContext
 from smartheat_gateway.drivers import registry
 from smartheat_gateway.drivers.base import Driver, DriverError
-from smartheat_gateway.files import write_text_private
+from smartheat_gateway.files import read_json, write_json, write_text_private
 from smartheat_gateway.quota import QuotaExhausted
 
 logger = logging.getLogger(__name__)
 
+INVENTORY_EVERY_SECONDS = 900
+INVENTORY_ABORTED_TEXT = "Die Inventur wurde abgebrochen, weil sich die Einrichtung des Gateways geändert hat."
+INVENTORY_NO_SAMPLES_TEXT = "Die Inventur konnte keine einzige Probe abrufen, weil die Anlage nicht erreichbar war."
 ZIGBEE_VALUE_FIELDS = ("temperature", "local_temperature", "occupied_heating_setpoint", "humidity")
 QUOTA_TEXT = "Das Abfrage-Kontingent beim Hersteller ist erschöpft, später erneut versuchen."
 
@@ -171,14 +174,70 @@ def _probe(ctx: AgentContext, payload: dict) -> Outcome:
 def _inventory(ctx: AgentContext, payload: dict) -> Outcome:
     hours = _int(payload, "stunden", 1, 48)
     driver = _driver(ctx, payload)
-    ready_at = ctx.clock() + hours * 3600
+    series = _series(ctx, driver.driver_id, hours)
+    deadline_in = min(max(series["started"] + hours * 3600 - ctx.wall(), 0), hours * 3600)
+    ready_at = ctx.clock() + deadline_in
+    last_failure = Failed("anlage_nicht_erreichbar", INVENTORY_NO_SAMPLES_TEXT)  # nur fuer eine Reihe ohne Probe
 
     def check() -> Done | Failed | None:
+        nonlocal last_failure
+        if not _adopt_saved(ctx, series):  # Reihe weg oder ersetzt (Abmelden, Neueinrichtung): nichts mehr abrufen
+            return Failed("anlage_nicht_erreichbar", INVENTORY_ABORTED_TEXT)
+        now = ctx.wall()
+        if now >= series["next_at"] and now < series["started"] + hours * 3600:
+            try:
+                series["samples"].append(driver.inventory_sample())
+            except (DriverError, QuotaExhausted) as error:
+                # Eine einzelne Probe (5xx, Zeitueberschreitung, 429) beendet die 24-48-h-Reihe nicht: ueberspringen,
+                # frueher erst im naechsten 15-Minuten-Takt wieder versuchen (schont das Kontingent). Nur der Typname
+                # wird protokolliert, nie der Text.
+                logger.warning("Inventur-Probe uebersprungen (%s)", type(error).__name__)
+                last_failure = (Failed(error.grund, error.text) if isinstance(error, DriverError)
+                                else Failed("kontingent_erschoepft", QUOTA_TEXT))
+            series["next_at"] = now + INVENTORY_EVERY_SECONDS
+            write_json(ctx.paths.inventory_samples, series, private=True)
         if ctx.clock() < ready_at:
             return None
-        return Done(driver.inventory(hours))
+        if not series["samples"]:
+            return last_failure
+        return Done(driver.inventory(hours, series["samples"]))
 
     return Waiting(check, ready_at + 3600)
+
+
+def _series(ctx: AgentContext, driver_id: str, hours: int) -> dict:
+    """Reihe fortsetzen (Neustart, erneute Zustellung: nichts wird doppelt abgerufen) oder neu beginnen: anderer
+    Treiber, andere Dauer, ein abgelaufenes Fenster oder ein Beginn in der Zukunft (Uhrsprung zurueck) beginnen neu."""
+    saved = read_json(ctx.paths.inventory_samples)
+    now = ctx.wall()
+    if (
+        isinstance(saved, dict) and saved.get("driver_id") == driver_id and saved.get("hours") == hours
+        and isinstance(saved.get("samples"), list) and _is_number(saved.get("started"))
+        and _is_number(saved.get("next_at")) and saved["started"] <= now < saved["started"] + hours * 3600
+    ):
+        return saved
+    series = {"driver_id": driver_id, "started": now, "hours": hours, "samples": [], "next_at": now}
+    write_json(ctx.paths.inventory_samples, series, private=True)
+    return series
+
+
+def _adopt_saved(ctx: AgentContext, series: dict) -> bool:
+    """Neuere Proben derselben Reihe (gleicher Treiber, gleiche Dauer, gleicher Beginn) aus der Datei uebernehmen:
+    ein zweiter Befehl mit anderer ID darf einen 15-Minuten-Zeitpunkt nicht ein zweites Mal abrufen. _series legt die
+    Datei immer an; fehlt sie spaeter oder gehoert sie zu einer anderen Reihe, hat Abmelden/Neueinrichtung sie
+    geloescht oder ersetzt: False, der wartende Befehl darf sie weder neu anlegen noch seine alten Proben liefern."""
+    saved = read_json(ctx.paths.inventory_samples)
+    if not (
+        isinstance(saved, dict) and isinstance(saved.get("samples"), list) and _is_number(saved.get("next_at"))
+        and all(saved.get(key) == series[key] for key in ("driver_id", "hours", "started"))
+    ):
+        return False
+    series.update(samples=saved["samples"], next_at=saved["next_at"])
+    return True
+
+
+def _is_number(value) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
 
 
 @register("create_csr")
