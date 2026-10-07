@@ -10,7 +10,7 @@ from fake_z2m import FakeZigbee2Mqtt
 from fakes import FakeBus
 
 from smartheat_gateway import topics
-from smartheat_gateway.agent import identity, lifecycle
+from smartheat_gateway.agent import identity, lifecycle, wire
 from smartheat_gateway.agent.commands import Done, Failed, Waiting, execute
 from smartheat_gateway.agent.context import AgentContext
 from smartheat_gateway.bus import decode
@@ -411,4 +411,6 @@ def test_an_old_series_is_not_returned_after_sign_off_for_the_same_driver_and_ho
     clock.advance(3600)
     ctx.wall = lambda: 1_000_000 + clock()
     done = outcome.check()
-    assert isinstance(done, Done) and all(sample["werte"].get("x") != 9.0 for sample in done.result["proben"])
+    # Die alte Reihe kommt nicht zurueck: eine frische Reihe ohne jede Probe endet am Fensterende mit Failed
+    # (frueher: Done mit leerer Liste; Anpassung an die Inventur-Regel "keine Probe, kein Ergebnis").
+    assert isinstance(done, Failed) and done.grund in wire.command_errors("driver_inventory")
