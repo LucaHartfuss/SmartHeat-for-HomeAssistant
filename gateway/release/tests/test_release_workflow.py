@@ -193,6 +193,10 @@ def test_image_check_step_rejects_bad_urls_and_tags(tmp_path):
         result = _run_check(tmp_path, api, portal)
         assert result.returncode != 0
         assert "3.120.4.5" not in result.stdout + result.stderr and "amazonaws" not in result.stdout + result.stderr
+    for api, portal in (("https://accounts.example.test", ok), (ok, "https://hartfussha.org.evil.com")):
+        result = _run_check(tmp_path, api, portal)
+        assert result.returncode != 0 and "Zone hartfussha.org" in result.stdout, result.stdout
+    assert _run_check(tmp_path, "https://ACCOUNTS.HARTFUSSHA.ORG", "https://portal.hartfussha.org").returncode == 0
     for tag in ("", "main", "gateway-v1.2", "gateway-v1.2.3-dryrun", "gateway-v1.2.3\nfoo", "../gateway-v1.2.3"):
         assert _run_check(tmp_path, ok, ok, tag, "workflow_dispatch").returncode != 0, tag
 
@@ -219,6 +223,24 @@ def test_release_build_job_checks_the_urls_early_so_the_dryrun_exercises_the_rul
     first_expensive = [i for i, s in enumerate(steps) if "setup-qemu" in s.get("uses", "") or "pip install" in s.get("run", "")]
     checkout = [i for i, s in enumerate(steps) if "actions/checkout" in s.get("uses", "")]
     assert checkout[0] < index[0] < min(first_expensive)
+
+
+def test_release_check_step_rejects_names_outside_the_own_zone():
+    import os
+    import subprocess
+
+    step = [s for s in _jobs()["build"]["steps"] if "own_url.sh" in s.get("run", "")][0]
+
+    def run(api, portal):
+        env = {**os.environ, "API_URL": api, "PORTAL_URL": portal}
+        return subprocess.run(["bash", "-eo", "pipefail", "-c", step["run"]], env=env, cwd=REPO,
+                              capture_output=True, text=True)
+
+    assert run(OWN_API_URL, "https://portal.hartfussha.org").returncode == 0
+    assert run(OWN_API_URL, "").returncode == 0  # Portal-Variable noch nicht gesetzt: wird uebersprungen
+    for api, portal in (("https://accounts.example.test", ""), (OWN_API_URL, "https://evilhartfussha.org")):
+        result = run(api, portal)
+        assert result.returncode != 0 and "Zone hartfussha.org" in result.stdout, result.stdout
 
 
 def test_device_api_url_defaults_to_the_own_hostname_in_both_entry_points():
