@@ -3,6 +3,19 @@
 set -u
 FAIL=0
 fail() { echo "FAIL: $1"; FAIL=1; }
+# nft -c braucht einen Netlink-Socket; unter QEMU-User-Emulation (CI-Lauf linux/arm64) gibt es den nicht ("Protocol not
+# supported"). Dann wird nur diese eine Pruefung uebersprungen, der amd64-Lauf prueft die Regeln. Damit das ehrlich bleibt,
+# darf der Skip auf x86_64 nie greifen. Die grep-Pruefungen auf den Inhalt der nftables.conf laufen in beiden Faellen.
+nft_syntax_check() {  # $1 = Fehlermeldung
+  local out
+  out="$(nft -c -f /etc/smartheat/nftables.conf 2>&1)" && return 0
+  if grep -q 'Protocol not supported' <<<"$out"; then
+    if [ "$(uname -m)" = x86_64 ]; then echo "$out"; fail "$1 (nft -c darf auf amd64 nicht uebersprungen werden)"; return 0; fi
+    echo "SKIP: nft -c (Netlink im Emulator nicht verfuegbar, amd64-Lauf prueft die Regeln)"
+    return 0
+  fi
+  echo "$out"; fail "$1"
+}
 SRC=/src/gateway/host
 # Release-Bundles bringen manifest.json.minisig mit, die Fixture nicht: die Laeufe mit Pilot-SSH nutzen eine Kopie mit
 # Signatur, die ohne Pilot-SSH die Fixture selbst (Signatur optional).
@@ -52,7 +65,7 @@ if [ "$(printf '%s\n' "$patterns" | wc -l)" != 2 ] || ! grep -q 'codename=${dist
   echo "$patterns"; fail "Origins-Pattern nicht genau Debian-Security und Raspberry-Pi-Archiv"
 fi
 apt-config dump | grep -q '^Unattended-Upgrade::Automatic-Reboot "false";$' || fail "Automatic-Reboot nicht aus"
-nft -c -f /etc/smartheat/nftables.conf || fail "nftables-Regeln ungueltig"
+nft_syntax_check "nftables-Regeln ungueltig"
 grep -q "tcp dport 22 accept" /etc/smartheat/nftables.conf || fail "Pilot-SSH fehlt in der Firewall"
 if udevadm --help 2>&1 | grep -q verify; then udevadm verify /etc/udev/rules.d/99-smartheat-zigbee.rules || fail "udev-Regel ungueltig"; fi
 grep -q "/var/lib/smartheat/host/zigbee_adapter" /etc/udev/rules.d/99-smartheat-zigbee.rules || fail "@ROOT@ nicht ersetzt"
@@ -91,7 +104,7 @@ bash "$SRC/install.sh" "${ARGS_NOPILOT[@]}" >/tmp/run3.log 2>&1 || { cat /tmp/ru
 grep -q "WARNUNG: ohne --pilot-ssh wird ssh deaktiviert" /tmp/run3.log || { cat /tmp/run3.log; fail "keine SSH-Warnung ohne --pilot-ssh"; }
 grep -q 'dport 22' /etc/smartheat/nftables.conf && fail "Port 22 ohne --pilot-ssh in der Firewall"
 grep -q '@PILOT_SSH@' /etc/smartheat/nftables.conf && fail "@PILOT_SSH@ nicht ersetzt"
-nft -c -f /etc/smartheat/nftables.conf || fail "nftables-Regeln ohne Pilot ungueltig"
+nft_syntax_check "nftables-Regeln ohne Pilot ungueltig"
 bash "$SRC/install.sh" "${ARGS_NOPILOT[@]}" >/tmp/run4.log 2>&1 || fail "Wiederholung ohne Pilot-SSH"
 grep -q "Nichts zu tun" /tmp/run4.log || fail "Wiederholung ohne Pilot-SSH meldet Aenderungen"
 # Symlinks unter ROOT (dort schreibt uid 1000): Installer bricht ab und fasst das Ziel nicht an.
