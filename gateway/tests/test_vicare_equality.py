@@ -109,8 +109,10 @@ class CloudWorld:
 
 
 def scenario(world, store, clock):
-    """Start mit Vorbereitung (aus Eco), Tagestick mit neuer Kurve, Durchsetzen nach Eingriff, Abmelden mit
-    Zuruecksetzen."""
+    """Start mit Vorbereitung (aus Eco bzw. Normalprogramm), Tagestick mit neuer Kurve, Abmelden mit Zuruecksetzen.
+
+    Nicht abgedeckt (Backlog): das Durchsetzen nach einem Eingriff von aussen (es gibt hier keinen) und der
+    Komfort-Boost aus Spec G4 3."""
     pipeline = LeverPipeline(store, world.binding, SAFETY, clock=clock)
     clock.advance(BINDING.settle_seconds + 1)
     pipeline.apply_server_values({"curve": 1.1, "level": 2.0, "room_setpoint": 21.0})
