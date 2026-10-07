@@ -42,3 +42,14 @@ shg_own_url_problem() {
   done
   return 0
 }
+
+# shg_require_own_url OPTION URL: Abbruch mit Exit 2 und Meldung auf stderr, wenn URL nicht zulaessig ist (fuer die
+# Optionen von prepare.sh und make_image.sh).
+shg_require_own_url() {
+  local why
+  if ! why="$(shg_own_url_problem "${2-}")"; then
+    echo "FEHLER: $1 '${2-}': $why (erlaubt: https://<eigener DNS-Name>, z. B. https://accounts.hartfussha.org;" \
+      "keine IP- und keine AWS-Adresse)" >&2
+    exit 2
+  fi
+}
