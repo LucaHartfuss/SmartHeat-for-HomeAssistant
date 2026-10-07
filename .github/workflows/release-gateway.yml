@@ -50,7 +50,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Image-Adressen pruefen (eigener DNS-Name, keine IP, keine AWS-Adresse)
+      - name: Image-Adressen pruefen (eigene Zone, keine IP, keine AWS-Adresse)
         env:
           API_URL: ${{ vars.SHG_DEVICE_API_URL || 'https://accounts.hartfussha.org' }}
           PORTAL_URL: ${{ vars.SHG_PORTAL_BASE_URL }}
@@ -62,7 +62,7 @@ jobs:
             if why="$(shg_own_url_problem "${!name}")"; then
               echo "$name ist zulaessig"
             else
-              echo "::error::$name ist ungueltig: $why. Erlaubt ist nur https://<eigener DNS-Name>, z. B. https://accounts.hartfussha.org (Repo-Variable SHG_DEVICE_API_URL / SHG_PORTAL_BASE_URL pruefen)."
+              echo "::error::$name ist ungueltig: $why. Erlaubt ist nur $(shg_own_url_hint) (Repo-Variable SHG_DEVICE_API_URL / SHG_PORTAL_BASE_URL pruefen)."
               bad=1
             fi
           done

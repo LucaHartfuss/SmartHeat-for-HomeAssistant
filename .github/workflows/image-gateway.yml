@@ -2,8 +2,9 @@ name: Gateway-Image
 # Basis-Image des SmartHeat-Gateways (Plan G2b-2 Task 10): rpi-image-gen auf einem ARM-Runner in einem privilegierten
 # debian:trixie-Container (gateway/image/make_image.sh). Nur Leserechte, keine Secrets. Aufruf aus release-gateway.yml
 # (Serien-Image ohne SSH) oder von Hand aus einem veroeffentlichten Release (z. B. Pilot-Image mit SSH-Schluessel).
-# Geraete-API- und Portal-Adresse muessen ein eigener https-DNS-Name sein (keine IP, keine AWS-Adresse); die Regel steht
-# nur in gateway/image/own_url.sh, der erste Schritt bricht vor dem teuren Bau damit ab.
+# Geraete-API- und Portal-Adresse muessen ein https-DNS-Name in der eigenen Zone sein (keine IP, keine AWS-Adresse); die
+# Regel samt Zonenliste (SHG_OWN_ZONES) steht nur in gateway/image/own_url.sh, der erste Schritt bricht vor dem teuren
+# Bau damit ab.
 on:
   workflow_call:
     inputs:
@@ -34,7 +35,7 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.sha }}
           persist-credentials: false
-      - name: Eingaben pruefen (Tag, eigener DNS-Name, keine IP, keine AWS-Adresse)
+      - name: Eingaben pruefen (Tag, eigene Zone, keine IP, keine AWS-Adresse)
         run: |
           source gateway/image/own_url.sh
           bad=0
@@ -46,7 +47,7 @@ jobs:
             if why="$(shg_own_url_problem "${!name}")"; then
               echo "$name ist zulaessig"
             else
-              echo "::error::$name ist ungueltig: $why. Erlaubt ist nur https://<eigener DNS-Name>, z. B. https://accounts.hartfussha.org (Repo-Variable SHG_DEVICE_API_URL / SHG_PORTAL_BASE_URL bzw. Eingabe des Workflows pruefen)."
+              echo "::error::$name ist ungueltig: $why. Erlaubt ist nur $(shg_own_url_hint) (Repo-Variable SHG_DEVICE_API_URL / SHG_PORTAL_BASE_URL bzw. Eingabe des Workflows pruefen)."
               bad=1
             fi
           done

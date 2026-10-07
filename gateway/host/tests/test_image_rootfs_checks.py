@@ -1,7 +1,7 @@
 """rootfs_checks.sh (Plan G2b-2 Task 9) an einem nachgebauten Root-Dateisystem: ein gutes besteht, jede einzelne
 Verletzung (geteilte Identitaet, Passwort, SSH im Serien-Image, Tunnel-Token, fehlende Archive, fremde
 Geraete-API-Adresse) laesst es scheitern. Dazu die Adress-Regel own_url.sh (Nutzer-Vorgabe 2026-10-07: eigener
-DNS-Name per https, keine IP-Adresse, keine AWS-Adresse) direkt."""
+DNS-Name per https in der eigenen Zone hartfussha.org, keine IP-Adresse, keine AWS-Adresse) direkt."""
 import os
 import subprocess
 from pathlib import Path
@@ -32,10 +32,22 @@ GOOD_URLS = [
     "https://accounts.hartfussha.org",
     "https://accounts.hartfussha.org/",
     "https://portal.hartfussha.org",
+    "https://a-b.c1.hartfussha.org",
+    "https://hartfussha.org",
+    "https://Accounts.Hartfussha.ORG",
+    "https://ACCOUNTS.HARTFUSSHA.ORG",
+]
+# Sonst zulaessige DNS-Namen ausserhalb der eigenen Zone (Nutzer-Vorgabe 2026-10-07, Allowlist)
+FOREIGN_ZONE_URLS = [
     "https://accounts.example.test",
     "https://portal.example.test",
     "https://a-b.c1.example.org",
-    "https://Accounts.Hartfussha.ORG",
+    "https://hartfussha.org.evil.com",
+    "https://accounts.hartfussha.org.evil.com",
+    "https://evilhartfussha.org",
+    "https://accounts.evilhartfussha.org",
+    "https://hartfussha.com",
+    "https://hartfussha.org-evil.com",
 ]
 BAD_URLS = [
     "",
@@ -61,9 +73,9 @@ BAD_URLS = [
     "https://accounts.hartfussha.org/?x=1",
     "https://accounts.hartfussha.org#x",
     "https://accounts.hartfussha.org.",
-    "https://-bad.example.org",
-    "https://bad-.example.org",
-    "https://acc ounts.example.org",
+    "https://-bad.hartfussha.org",
+    "https://bad-.hartfussha.org",
+    "https://acc ounts.hartfussha.org",
     " https://accounts.hartfussha.org",
     "https://accounts.hartfussha.org\nSHG_ROOT=/",
     "https://abc123.execute-api.eu-central-1.amazonaws.com",
@@ -105,7 +117,7 @@ NON_ASCII_URLS = [
     "https://accounts\uff0ehartfussha.org",
     "https://\uff41ccounts.hartfussha.org",
 ]
-BAD_URLS += NON_ASCII_URLS
+BAD_URLS += NON_ASCII_URLS + FOREIGN_ZONE_URLS
 
 
 def _locales() -> list[str]:
@@ -141,8 +153,37 @@ def test_own_url_rejects_ip_aws_and_everything_but_https_with_a_dns_name(url):
     assert result.returncode == 1 and result.stdout.strip(), url
 
 
+@pytest.mark.parametrize("url", FOREIGN_ZONE_URLS)
+def test_own_url_names_the_own_zone_for_foreign_names(url):
+    result = _problem(url)
+    assert result.returncode == 1 and "Zone hartfussha.org" in result.stdout, result.stdout
+
+
+@pytest.mark.parametrize("url", [
+    "https://accounts.hartfussha.org.",  # Punkt am Ende: weiterhin abgelehnt (kein vollstaendiger Name)
+    "https://x.amazonaws.com.hartfussha.org",  # Denylist bleibt (Tiefenverteidigung), auch in der eigenen Zone
+    "https://192.168.2.154",
+])
+def test_other_rules_still_win_before_the_zone(url):
+    result = _problem(url)
+    assert result.returncode == 1 and "Zone" not in result.stdout, result.stdout
+
+
+def test_own_zones_are_defined_once_in_own_url_sh():
+    """Eine Stelle fuer die Regel: SHG_OWN_ZONES in own_url.sh, Hinweistext fuer Meldungen aus shg_own_url_hint."""
+    script = 'source "$1"; printf "%s|" "${SHG_OWN_ZONES[@]}"; echo; shg_own_url_hint'
+    result = subprocess.run(["bash", "-c", script, "_", str(OWN_URL)], capture_output=True, text=True, check=False)
+    zones, hint = result.stdout.splitlines()
+    assert zones == "hartfussha.org|"
+    assert "hartfussha.org" in hint and "https://" in hint
+    for path in IMAGE.glob("*.sh"):
+        if path.name != "own_url.sh":
+            assert "hartfussha" not in path.read_text(), path
+
+
 @pytest.mark.parametrize("locale", LOCALES)
-@pytest.mark.parametrize("url", NON_ASCII_URLS + ["https://x.amazonaws.com", "https://192.168.2.154"])
+@pytest.mark.parametrize("url", NON_ASCII_URLS + ["https://x.amazonaws.com", "https://192.168.2.154",
+                                                  "https://accounts.example.test"])
 def test_own_url_rule_does_not_depend_on_the_locale(url, locale):
     assert _problem(url, locale).returncode == 1, (url, locale)
 
@@ -154,7 +195,7 @@ def test_own_url_accepts_good_urls_in_every_locale(url, locale):
 
 
 def test_own_url_restores_the_callers_locale():
-    script = 'source "$1"; shg_own_url_problem https://accounts.example.test; printf %s "$LC_ALL"'
+    script = 'source "$1"; shg_own_url_problem https://accounts.hartfussha.org; printf %s "$LC_ALL"'
     result = subprocess.run(["bash", "-c", script, "_", str(OWN_URL)], capture_output=True, text=True, check=False,
                             env={**os.environ, "LC_ALL": "C.UTF-8"})
     assert result.stdout == "C.UTF-8"
@@ -167,8 +208,8 @@ def _good(root: Path, pilot: bool = False) -> Path:
         "etc/passwd": "root:x:0:0:root:/root:/bin/bash\npi:x:1000:1000::/home/pi:/bin/bash\n"
                       "nobody:*:65534:65534::/nonexistent:/usr/sbin/nologin\nlocked:!x:1001:1001::/:/bin/false\n",
         "etc/apt/sources.list.d/raspi.sources": "URIs: http://archive.raspberrypi.com/debian/\n",
-        ENV: "SHG_ROOT=/var/lib/smartheat\nSHG_DEVICE_API_URL=https://accounts.example.test\n"
-             "SHG_PORTAL_BASE_URL=https://portal.example.test\nTZ=Europe/Berlin\n",
+        ENV: "SHG_ROOT=/var/lib/smartheat\nSHG_DEVICE_API_URL=https://accounts.hartfussha.org\n"
+             "SHG_PORTAL_BASE_URL=https://portal.hartfussha.org\nTZ=Europe/Berlin\n",
         "var/lib/smartheat/updater/state.json": '{"current": "0.3.0", "in_progress": null}',
         "var/lib/smartheat/bundles/0.3.0/manifest.json.minisig": "sig",
         "var/lib/smartheat/images/01.tar": "x",
@@ -239,7 +280,7 @@ def test_uninitialized_machine_id_is_fine(tmp_path):
     lambda r: (r / WANTS / "smartheat-updater.service").unlink(),
     lambda r: (r / WANTS / "docker.service").unlink(),
     lambda r: (r / "etc/apt/sources.list.d/raspi.sources").unlink(),
-    lambda r: (r / ENV).write_text("SHG_DEVICE_API_URL=http://x\nSHG_PORTAL_BASE_URL=https://portal.example.test\n"),
+    lambda r: (r / ENV).write_text("SHG_DEVICE_API_URL=http://x\nSHG_PORTAL_BASE_URL=https://portal.hartfussha.org\n"),
     lambda r: (r / ENV).unlink(),
     lambda r: (r / "etc/passwd").write_text("root:x:0:0::/root:/bin/bash\npi::1000:1000::/home/pi:/bin/bash\n"),
     lambda r: (r / "etc/passwd").write_text("root:$6$salt$hash:0:0::/root:/bin/bash\n"),
@@ -298,29 +339,30 @@ def test_own_hostname_as_device_api_passes(tmp_path, url):
     "https://192.168.2.154", "https://192.168.2.154:8443", "https://[2001:db8::1]", "https://localhost",
     "https://abc123.execute-api.eu-central-1.amazonaws.com", "https://my-lb-1.eu-central-1.elb.amazonaws.com",
     "https://abc.eu-central-1.awsapprunner.com", "https://accounts.hartfussha.org/api", "https://accounts",
-    "https://user@accounts.hartfussha.org", "",
+    "https://user@accounts.hartfussha.org", "", "https://accounts.example.test", "https://hartfussha.org.evil.com",
 ])
 def test_device_api_must_be_an_own_dns_name(tmp_path, url):
     root = _good(tmp_path)
-    (root / ENV).write_text(f"SHG_DEVICE_API_URL={url}\nSHG_PORTAL_BASE_URL=https://portal.example.test\n")
+    (root / ENV).write_text(f"SHG_DEVICE_API_URL={url}\nSHG_PORTAL_BASE_URL=https://portal.hartfussha.org\n")
     result = _run(root)
     assert result.returncode != 0 and "FAIL: Geraete-API" in result.stdout
 
 
-@pytest.mark.parametrize("url", ["https://10.0.0.5", "https://portal.cloudfront.net", ""])
+@pytest.mark.parametrize("url", ["https://10.0.0.5", "https://portal.cloudfront.net", "", "https://portal.example.test",
+                                 "https://evilhartfussha.org"])
 def test_portal_must_be_an_own_dns_name(tmp_path, url):
     root = _good(tmp_path)
-    (root / ENV).write_text(f"SHG_DEVICE_API_URL=https://accounts.example.test\nSHG_PORTAL_BASE_URL={url}\n")
+    (root / ENV).write_text(f"SHG_DEVICE_API_URL=https://accounts.hartfussha.org\nSHG_PORTAL_BASE_URL={url}\n")
     result = _run(root)
     assert result.returncode != 0 and "FAIL: Portal" in result.stdout
 
 
 @pytest.mark.parametrize("extra", [
-    "SHG_DEVICE_API_URL=https://accounts.example.test\n",  # doppelt, auch mit gleichem Wert
+    "SHG_DEVICE_API_URL=https://accounts.hartfussha.org\n",  # doppelt, auch mit gleichem Wert
     "SHG_PORTAL_BASE_URL=https://10.0.0.5\n",
     " SHG_DEVICE_API_URL=https://10.0.0.5\n",
     "export SHG_DEVICE_API_URL=https://10.0.0.5\n",
-    "SHG_PORTAL_BASE_URL =https://portal.example.test\n",
+    "SHG_PORTAL_BASE_URL =https://portal.hartfussha.org\n",
     "#SHG_DEVICE_API_URL=https://10.0.0.5\n",
 ])
 def test_gateway_env_needs_exactly_one_plain_assignment_per_address(tmp_path, extra):

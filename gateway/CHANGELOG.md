@@ -13,7 +13,9 @@ Hardware-Gate (Teil B) mit dem echten minisign-Schluessel.
 - Eigener Hostname statt IP oder AWS-Adresse (Nutzer-Vorgabe): Geraete-API- und Portal-Adresse im Image sind immer
   `https://<eigener DNS-Name>`; `gateway/image/own_url.sh` lehnt IP-Adressen, Einzel-Label-Hosts, Port, Pfad und
   AWS-Namen ab (`prepare.sh`, `make_image.sh` und die Workflows pruefen die Adressen vor dem Bau; `rootfs_checks.sh`
-  prueft das Root-Dateisystem waehrend (Hook) und nach dem Bau (post-build)).
+  prueft das Root-Dateisystem waehrend (Hook) und nach dem Bau (post-build)). Zusaetzlich Allowlist: nur Namen in der
+  eigenen Zone `hartfussha.org` (die Zone selbst oder ein Name darunter, `SHG_OWN_ZONES` in `own_url.sh`); die
+  Denylist bleibt als Tiefenverteidigung.
 - Erststart ohne Pull: Container-Images werden mit `skopeo copy --all --preserve-digests` als OCI-Archive exportiert;
   das Geraet laedt sie in den containerd-Speicher von Docker (`/etc/docker/daemon.json`, von `install.sh` vor der
   Docker-Installation geschrieben; nur frische Geraete). Die Root-Partition ist fest 8G gross (kein Wachstum beim ersten

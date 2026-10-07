@@ -21,7 +21,8 @@ BAD_URLS = ["https://192.168.2.154", "http://accounts.hartfussha.org",
             "https://abc.execute-api.eu-central-1.amazonaws.com", "https://x.eu-central-1.elb.amazonaws.com",
             "https://abc.awsapprunner.com", "https://[2001:db8::1]", "https://accounts.hartfussha.org:8443",
             "https://accounts.hartfussha.org/api", "https://localhost", "https://x.amazonaws.\uff43\uff4f\uff4d",
-            "https://b\u00fccher.example", "https://gw.10.0.0.5.nip.io", ""]
+            "https://b\u00fccher.example", "https://gw.10.0.0.5.nip.io", "", "https://accounts.example.test",
+            "https://hartfussha.org.evil.com", "https://evilhartfussha.org", "https://accounts.hartfussha.org."]
 FAKE_DOCKER = """#!/bin/bash
 # Docker-Attrappe: "version" meldet arm64; sonst protokolliert sie den Aufruf und legt beim Export (Mount :/stage)
 # je Referenz ein Archiv an.
@@ -85,6 +86,7 @@ def test_prepare_rejects_foreign_urls_before_any_work(tmp_path, option, url):
     result = _script("prepare.sh", tmp_path, "--bundle", str(_bundle(tmp_path / "b")), "--stage", str(stage), *args)
     assert result.returncode == 2, result.stderr
     assert f"FEHLER: {option}" in result.stderr and "eigener DNS-Name" in result.stderr
+    assert "Zone hartfussha.org" in result.stderr  # die Meldung nennt die erlaubte Zone (aus own_url.sh)
     assert not stage.exists() and _docker_calls(tmp_path) == []
 
 
@@ -171,6 +173,14 @@ def test_make_image_runs_prepare_then_the_arm64_build(tmp_path):
     assert build.endswith("/src/gateway/image/build.sh")
     assert f"{out}:/out" in build and ":/stage:ro" in build
     assert [p.name for p in tmp_path.iterdir() if p.name.startswith("tmp")] == []  # Stage aufgeraeumt
+
+
+@pytest.mark.parametrize("script, target", [("prepare.sh", "--stage"), ("make_image.sh", "--out")])
+def test_upper_case_own_zone_is_accepted(tmp_path, script, target):
+    """Gross-/Kleinschreibung zaehlt bei DNS-Namen nicht: ACCOUNTS.HARTFUSSHA.ORG ist die eigene Zone."""
+    args = ["--device-api-url", "https://ACCOUNTS.HARTFUSSHA.ORG", "--portal-base-url", "https://Portal.Hartfussha.Org"]
+    result = _script(script, tmp_path, "--bundle", str(_bundle(tmp_path / "b")), target, str(tmp_path / "t"), *args)
+    assert result.returncode == 0, result.stderr
 
 
 def test_make_image_needs_out(tmp_path):
