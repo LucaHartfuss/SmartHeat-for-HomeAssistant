@@ -112,6 +112,47 @@ def test_unsent_apply_config_result_arrives_after_a_restart(agent, api, clock):
     assert _reloads(agent) == 1  # nicht erneut ausgefuehrt
 
 
+def test_waiting_apply_config_redelivered_after_a_restart_completes_once(agent, api, clock):
+    """G3-Restpunkt (wartende Befehle nur im Speicher): Neustart, bevor die Laufzeit bestaetigt. Der Server liefert
+    erneut aus, der Agent fuehrt erneut aus (dieselbe Konfiguration, ein zweiter Laufzeit-Neustart) und meldet einmal."""
+    agent.run_once()
+    api.claim()
+    command_id = api.enqueue("apply_config", {"setup_id": "setup-1", "config": apply_config()})
+    clock.advance(POLL)
+    agent.run_once()  # wartet auf die Laufzeit
+    written = agent.ctx.paths.runtime_config.read_text()
+    assert api.result_of(command_id) is None and _reloads(agent) == 1
+    restarted = _restart(agent)
+    clock.advance(POLL)
+    restarted.run_once()  # erneut zugestellt und ausgefuehrt
+    assert _reloads(agent) == 2 and agent.ctx.paths.runtime_config.read_text() == written
+    agent.ctx.bus.publish(topics.STATUS, {"schema": 2, "status": "regelt", "setup_id": "setup-1"}, retain=True)
+    restarted.run_once()
+    assert api.result_of(command_id) == {"ok": True, "result": {"setup_id": "setup-1"}, "error": None}
+    clock.advance(POLL)
+    restarted.run_once()  # danach nie wieder ausgefuehrt
+    assert _reloads(agent) == 2 and command_id in _done(restarted)
+
+
+def test_waiting_set_room_target_redelivered_after_a_restart_sends_the_same_value(agent, api, clock):
+    """G3-Restpunkt: Neustart zwischen Senden des Solls und Bestaetigung ueber shg/raum. Erneut ausgefuehrt heisst nur
+    derselbe Wert noch einmal (die Laufzeit prueft ihn erneut); bestaetigt wird wie beim ersten Mal."""
+    write_runtime_files(agent.ctx.paths, apply_config())
+    agent.run_once()
+    api.claim()
+    command_id = api.enqueue("set_room_target", {"value": 22.0})
+    clock.advance(POLL)
+    agent.run_once()
+    restarted = _restart(agent)
+    clock.advance(POLL)
+    restarted.run_once()
+    sent = [body["value"] for topic, body in agent.ctx.bus.decoded() if topic == topics.CMD_ROOM_TARGET]
+    assert sent == [22.0, 22.0] and api.result_of(command_id) is None
+    agent.ctx.bus.publish(topics.RAUM, {"ist": 20.0, "soll": 22.0, "soll_quelle": "portal", "ts": "x"}, retain=True)
+    restarted.run_once()
+    assert api.result_of(command_id) == {"ok": True, "result": {"value": 22.0}, "error": None}
+
+
 def test_old_done_format_counts_as_done_without_result(agent, api, clock):
     agent.run_once()
     command_id = api.enqueue("zigbee_permit_join", {"seconds": 30})
