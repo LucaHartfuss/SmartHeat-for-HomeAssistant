@@ -2,6 +2,7 @@
 Verletzung (geteilte Identitaet, Passwort, SSH im Serien-Image, Tunnel-Token, fehlende Archive, fremde
 Geraete-API-Adresse) laesst es scheitern. Dazu die Adress-Regel own_url.sh (Nutzer-Vorgabe 2026-10-07: eigener
 DNS-Name per https, keine IP-Adresse, keine AWS-Adresse) direkt."""
+import os
 import subprocess
 from pathlib import Path
 
@@ -64,12 +65,56 @@ BAD_URLS = [
     "https://app.eu-central-1.elasticbeanstalk.com",
     "https://a1234.awsglobalaccelerator.com",
     "https://accounts.amazonaws.com.hartfussha.org",
+    # weitere AWS-Namen und .aws als oberste Ebene
+    "https://x.amazonaws.cn",
+    "https://myapp.amazonlightsail.com",
+    "https://auth.eu-central-1.amazoncognito.com",
+    "https://corp.awsapps.com",
+    "https://foo.bar.aws",
+    "https://abc.api.aws",
+    # fremde Platzhalter- und private Namen
+    "https://10.0.0.5.nip.io",
+    "https://nip.io",
+    "https://gw.10-0-0-5.sslip.io",
+    "https://gw.127.0.0.1.xip.io",
+    "https://api.internal",
+    "https://gw.home.arpa",
+    "https://home.arpa",
+    "https://gw.localdomain",
+    "https://gateway.lan",
+    "https://5.0.0.10.in-addr.arpa",
+    "https://1.0.ip6.arpa",
 ]
+# Nicht-ASCII: Vollbreite (IDNA normalisiert x.amazonaws.ｃｏｍ zu x.amazonaws.com), Umlaute, Vollbreiten-Punkt.
+NON_ASCII_URLS = [
+    "https://x.amazonaws.\uff43\uff4f\uff4d",
+    "https://b\u00fccher.example",
+    "https://a.b.\u00e9",
+    "https://accounts\uff0ehartfussha.org",
+    "https://\uff41ccounts.hartfussha.org",
+]
+BAD_URLS += NON_ASCII_URLS
 
 
-def _problem(url: str) -> subprocess.CompletedProcess:
+def _locales() -> list[str]:
+    """Gesetzte Locale-Namen, die es hier gibt (C immer); UTF-8-Locales lassen Bereiche wie [a-z] sonst Nicht-ASCII
+    treffen."""
+    try:
+        available = subprocess.run(["locale", "-a"], capture_output=True, text=True, check=False).stdout.split()
+    except OSError:
+        available = []
+    normal = {name.lower().replace("-", "") for name in available}
+    wanted = ["C.UTF-8", "en_US.UTF-8", "de_DE.UTF-8"]
+    return ["C"] + [name for name in wanted if name.lower().replace("-", "") in normal]
+
+
+LOCALES = _locales()
+
+
+def _problem(url: str, locale: str | None = None) -> subprocess.CompletedProcess:
+    env = {**os.environ, "LC_ALL": locale} if locale else None
     return subprocess.run(["bash", "-c", 'source "$1" && shg_own_url_problem "$2"', "_", str(OWN_URL), url],
-                          capture_output=True, text=True, check=False)
+                          capture_output=True, text=True, check=False, env=env)
 
 
 @pytest.mark.parametrize("url", GOOD_URLS)
@@ -84,10 +129,31 @@ def test_own_url_rejects_ip_aws_and_everything_but_https_with_a_dns_name(url):
     assert result.returncode == 1 and result.stdout.strip(), url
 
 
+@pytest.mark.parametrize("locale", LOCALES)
+@pytest.mark.parametrize("url", NON_ASCII_URLS + ["https://x.amazonaws.com", "https://192.168.2.154"])
+def test_own_url_rule_does_not_depend_on_the_locale(url, locale):
+    assert _problem(url, locale).returncode == 1, (url, locale)
+
+
+@pytest.mark.parametrize("locale", LOCALES)
+@pytest.mark.parametrize("url", GOOD_URLS)
+def test_own_url_accepts_good_urls_in_every_locale(url, locale):
+    assert _problem(url, locale).returncode == 0, (url, locale)
+
+
+def test_own_url_restores_the_callers_locale():
+    script = 'source "$1"; shg_own_url_problem https://accounts.example.test; printf %s "$LC_ALL"'
+    result = subprocess.run(["bash", "-c", script, "_", str(OWN_URL)], capture_output=True, text=True, check=False,
+                            env={**os.environ, "LC_ALL": "C.UTF-8"})
+    assert result.stdout == "C.UTF-8"
+
+
 def _good(root: Path, pilot: bool = False) -> Path:
     files = {
         "etc/machine-id": "",
         "etc/shadow": "root:*:20000:0:99999:7:::\npi:!:20000:0:99999:7:::\n",
+        "etc/passwd": "root:x:0:0:root:/root:/bin/bash\npi:x:1000:1000::/home/pi:/bin/bash\n"
+                      "nobody:*:65534:65534::/nonexistent:/usr/sbin/nologin\nlocked:!x:1001:1001::/:/bin/false\n",
         "etc/apt/sources.list.d/raspi.sources": "URIs: http://archive.raspberrypi.com/debian/\n",
         ENV: "SHG_ROOT=/var/lib/smartheat\nSHG_DEVICE_API_URL=https://accounts.example.test\n"
              "SHG_PORTAL_BASE_URL=https://portal.example.test\nTZ=Europe/Berlin\n",
@@ -95,6 +161,8 @@ def _good(root: Path, pilot: bool = False) -> Path:
         "var/lib/smartheat/bundles/0.3.0/manifest.json.minisig": "sig",
         "var/lib/smartheat/images/01.tar": "x",
         "home/pi/.ssh/authorized_keys": "",
+        "opt/smartheat/installer/gateway/host/install.sh": "#!/bin/bash\n",
+        "opt/smartheat/host/VERSION": "0.3.0\n",
     }
     if pilot:
         files["root/.ssh/authorized_keys"] = "ssh-ed25519 AAAA test-key\n"
@@ -105,11 +173,18 @@ def _good(root: Path, pilot: bool = False) -> Path:
     (root / WANTS).mkdir(parents=True)
     for unit in UNITS + (("ssh",) if pilot else ()):
         (root / WANTS / f"{unit}.service").symlink_to(f"/lib/systemd/system/{unit}.service")
+    for tree in ("opt/smartheat", "var/lib/smartheat/images"):  # wie im Image: nicht gruppen-/weltbeschreibbar
+        for path in [root / tree, *(root / tree).rglob("*")]:
+            path.chmod(path.stat().st_mode & ~0o022)
     return root
 
 
-def _run(root: Path, *extra: str) -> subprocess.CompletedProcess:
-    return subprocess.run(["bash", str(SCRIPT), str(root), *extra], capture_output=True, text=True, check=False)
+def _run(root: Path, *extra: str, owner_uid: int | None = None) -> subprocess.CompletedProcess:
+    """Die Fixtures gehoeren dem Testbenutzer: SHG_ROOTFS_CHECK_UID (nur fuer Tests) setzt den erwarteten Eigentuemer
+    statt root."""
+    uid = os.getuid() if owner_uid is None else owner_uid
+    return subprocess.run(["bash", str(SCRIPT), str(root), *extra], capture_output=True, text=True, check=False,
+                          env={**os.environ, "SHG_ROOTFS_CHECK_UID": str(uid)})
 
 
 def test_good_rootfs_passes(tmp_path):
@@ -151,6 +226,16 @@ def test_uninitialized_machine_id_is_fine(tmp_path):
     lambda r: (r / "etc/apt/sources.list.d/raspi.sources").unlink(),
     lambda r: (r / ENV).write_text("SHG_DEVICE_API_URL=http://x\nSHG_PORTAL_BASE_URL=https://portal.example.test\n"),
     lambda r: (r / ENV).unlink(),
+    lambda r: (r / "etc/passwd").write_text("root:x:0:0::/root:/bin/bash\npi::1000:1000::/home/pi:/bin/bash\n"),
+    lambda r: (r / "etc/passwd").write_text("root:$6$salt$hash:0:0::/root:/bin/bash\n"),
+    lambda r: (r / "etc/passwd").unlink(),
+    lambda r: (r / "var/lib/smartheat/bus/mosquitto").mkdir(parents=True)
+    or (r / "var/lib/smartheat/bus/mosquitto/passwd").write_text("agent:$7$x\n"),
+    lambda r: (r / "opt/smartheat/installer/gateway/host/install.sh").chmod(0o666),
+    lambda r: (r / "opt/smartheat/installer").chmod(0o775),
+    lambda r: (r / "var/lib/smartheat/images/01.tar").chmod(0o664),
+    lambda r: (r / "var/lib/smartheat/images").chmod(0o777),
+    lambda r: __import__("shutil").rmtree(r / "opt/smartheat"),
 ])
 def test_each_violation_fails(tmp_path, breakit):
     root = _good(tmp_path)
@@ -187,12 +272,46 @@ def test_portal_must_be_an_own_dns_name(tmp_path, url):
     assert result.returncode != 0 and "FAIL: Portal" in result.stdout
 
 
-def test_last_assignment_counts(tmp_path):
-    """Docker und systemd nehmen bei doppeltem Schluessel den letzten Wert: der zaehlt auch hier."""
+@pytest.mark.parametrize("extra", [
+    "SHG_DEVICE_API_URL=https://accounts.example.test\n",  # doppelt, auch mit gleichem Wert
+    "SHG_PORTAL_BASE_URL=https://10.0.0.5\n",
+    " SHG_DEVICE_API_URL=https://10.0.0.5\n",
+    "export SHG_DEVICE_API_URL=https://10.0.0.5\n",
+    "SHG_PORTAL_BASE_URL =https://portal.example.test\n",
+    "#SHG_DEVICE_API_URL=https://10.0.0.5\n",
+])
+def test_gateway_env_needs_exactly_one_plain_assignment_per_address(tmp_path, extra):
+    """Doppelte oder anders geschriebene Zuweisungen (Leerzeichen, export, auskommentiert) koennten je nach Leser
+    (Docker, systemd, Shell) einen anderen Wert ergeben als den geprueften."""
     root = _good(tmp_path)
-    env = (root / ENV).read_text()
-    (root / ENV).write_text(env + "SHG_DEVICE_API_URL=https://10.0.0.5\n")
-    assert _run(root).returncode != 0
+    (root / ENV).write_text((root / ENV).read_text() + extra)
+    result = _run(root)
+    assert result.returncode != 0 and "gateway.env" in result.stdout, result.stdout
+
+
+def test_owner_other_than_root_fails(tmp_path):
+    """Gegenprobe ohne root: erwarteter Eigentuemer != Eigentuemer der Fixtures (im Image: uid 0, Testbenutzer = uid
+    1000 = pi auf dem Geraet)."""
+    root = _good(tmp_path)
+    result = _run(root, owner_uid=os.getuid() + 1)
+    assert result.returncode != 0
+    assert "/opt/smartheat" in result.stdout and "/var/lib/smartheat/images" in result.stdout
+
+
+def test_default_expected_owner_is_root(tmp_path):
+    if os.getuid() == 0:
+        pytest.skip("laeuft als root: die Fixtures gehoeren dann root")
+    root = _good(tmp_path)
+    env = {k: v for k, v in os.environ.items() if k != "SHG_ROOTFS_CHECK_UID"}
+    result = subprocess.run(["bash", str(SCRIPT), str(root)], capture_output=True, text=True, check=False, env=env)
+    assert result.returncode != 0 and "nicht root" in result.stdout
+
+
+def test_invalid_expected_owner_is_rejected(tmp_path):
+    root = _good(tmp_path)
+    result = subprocess.run(["bash", str(SCRIPT), str(root)], capture_output=True, text=True, check=False,
+                            env={**os.environ, "SHG_ROOTFS_CHECK_UID": "root"})
+    assert result.returncode == 2
 
 
 def test_pilot_image_needs_its_key_and_ssh(tmp_path):
@@ -225,3 +344,18 @@ def test_customize_mode_leaves_only_the_machine_id_to_the_final_check(tmp_path):
 
 def test_unknown_option_is_rejected(tmp_path):
     assert _run(_good(tmp_path), "--pilto").returncode == 2
+
+
+def test_build_hooks_ignore_the_test_only_owner_override(tmp_path):
+    """post-build.sh (und customize.sh) rufen rootfs_checks ohne SHG_ROOTFS_CHECK_UID auf: ein gesetzter Wert in der
+    Bau-Umgebung schwaecht die Eigentuemer-Pruefung nicht ab."""
+    if os.getuid() == 0:
+        pytest.skip("laeuft als root: die Fixtures gehoeren dann root")
+    root = _good(tmp_path / "root")
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    env = {**os.environ, "SHG_ROOTFS_CHECK_UID": str(os.getuid()), "IGconf_shg_stage": str(stage)}
+    result = subprocess.run(["bash", str(IMAGE / "post-build.sh"), str(root)], capture_output=True, text=True,
+                            check=False, env=env)
+    assert result.returncode != 0 and "nicht root" in result.stdout
+    assert "env -u SHG_ROOTFS_CHECK_UID" in (IMAGE / "customize.sh").read_text()

@@ -8,12 +8,17 @@
 set -euo pipefail
 R=$1 STAGE=$2
 mkdir -p "$R/opt/smartheat" "$R/var/lib/smartheat/images" "$R/tmp/shg-bundle"
-rm -rf "$R/opt/smartheat/installer" && cp -a "$STAGE/installer" "$R/opt/smartheat/installer"
-cp -a "$STAGE/bundle/." "$R/tmp/shg-bundle/"
-cp -a "$STAGE/images/." "$R/var/lib/smartheat/images/"
+# Die Stage gehoert dem Aufrufer von make_image.sh (z. B. uid 1000 = pi bzw. Container auf dem Geraet); root fuehrt den
+# Installer aus und laedt die Archive: Eigentuemer root, nichts gruppen-/weltbeschreibbar (rootfs_checks prueft es).
+rm -rf "$R/opt/smartheat/installer"
+cp -R --preserve=mode,timestamps --no-preserve=ownership "$STAGE/installer" "$R/opt/smartheat/installer"
+cp -R --preserve=mode,timestamps --no-preserve=ownership "$STAGE/bundle/." "$R/tmp/shg-bundle/"
+cp -R --preserve=mode,timestamps --no-preserve=ownership "$STAGE/images/." "$R/var/lib/smartheat/images/"
+chown -R 0:0 "$R/opt/smartheat" "$R/var/lib/smartheat/images"
+chmod -R go-w "$R/opt/smartheat" "$R/var/lib/smartheat/images"
 mapfile -t args <"$STAGE/install.args"
 chroot "$R" bash /opt/smartheat/installer/gateway/host/install.sh --image "${args[@]}" --bundle /tmp/shg-bundle
 rm -rf "$R/tmp/shg-bundle"
-check=(bash "$R/opt/smartheat/installer/gateway/image/rootfs_checks.sh" "$R" --customize)
+check=(env -u SHG_ROOTFS_CHECK_UID bash "$R/opt/smartheat/installer/gateway/image/rootfs_checks.sh" "$R" --customize)
 if [ -f "$STAGE/pilot" ]; then check+=(--pilot); fi
 "${check[@]}"

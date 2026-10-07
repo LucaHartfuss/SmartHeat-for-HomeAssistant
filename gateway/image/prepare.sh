@@ -63,7 +63,8 @@ cp "$BUNDLE"/{docker-compose.yml,mosquitto.conf,manifest.json,manifest.json.mini
 # 4. Container-Images: jede Referenz einmal (Agent und Laufzeit teilen sich das Gateway-Image)
 mapfile -t refs < <(PYTHONPATH="$GW/host" python3 -c 'import sys
 from smartheat_host import bundles
-print("\n".join(bundles.compose_images(open(sys.argv[1]).read())))' "$BUNDLE/docker-compose.yml" | awk 'NF && !seen[$0]++')
+print("\n".join(bundles.compose_images(open(sys.argv[1]).read())))' "$BUNDLE/docker-compose.yml" \
+  | awk 'NF && !seen[$0]++')
 [ ${#refs[@]} -gt 0 ] || usage "keine Images in $BUNDLE/docker-compose.yml"
 # Export ohne Docker-Daemon und ohne Privilegien (skopeo); die Archive gehoeren danach dem Aufrufer.
 docker run --rm --security-opt label=disable -e "HOST_IDS=$(id -u):$(id -g)" -v "$STAGE:/stage" -v "$HERE:/img:ro" \

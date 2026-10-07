@@ -19,7 +19,9 @@ GATEWAY = "ghcr.io/lucahartfuss/smartheat-gateway@sha256:" + "a" * 64
 GOOD = ["--device-api-url", "https://accounts.hartfussha.org", "--portal-base-url", "https://portal.hartfussha.org"]
 BAD_URLS = ["https://192.168.2.154", "http://accounts.hartfussha.org",
             "https://abc.execute-api.eu-central-1.amazonaws.com", "https://x.eu-central-1.elb.amazonaws.com",
-            "https://abc.awsapprunner.com", "https://[2001:db8::1]", "https://accounts.hartfussha.org:8443", "https://accounts.hartfussha.org/api", "https://localhost", ""]
+            "https://abc.awsapprunner.com", "https://[2001:db8::1]", "https://accounts.hartfussha.org:8443",
+            "https://accounts.hartfussha.org/api", "https://localhost", "https://x.amazonaws.\uff43\uff4f\uff4d",
+            "https://b\u00fccher.example", "https://gw.10.0.0.5.nip.io", ""]
 FAKE_DOCKER = """#!/bin/bash
 # Docker-Attrappe: "version" meldet arm64; sonst protokolliert sie den Aufruf und legt beim Export (Mount :/stage)
 # je Referenz ein Archiv an.

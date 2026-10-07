@@ -7,6 +7,10 @@
 #   --customize: Lauf im customize-Hook (customize.sh). Die machine-id legt dort noch systemd an; zurueckgesetzt wird
 #                sie erst beim Aufraeumen von mmdebstrap, geprueft dann im post-build-Hook (post-build.sh, voller Lauf).
 # Exit 0 = in Ordnung, 1 = Verstoesse (je Zeile "FAIL: ..."), 2 = falscher Aufruf.
+# Eigentuemer: alles unter /opt/smartheat und /var/lib/smartheat/images gehoert uid 0 (root fuehrt es aus bzw. laedt es;
+# uid 1000 waere auf dem Geraet der Benutzer pi bzw. die Container). SHG_ROOTFS_CHECK_UID setzt die erwartete uid -
+# NUR fuer die Tests (deren Fixtures gehoeren dem Testbenutzer, eine Gegenprobe mit fremdem Eigentuemer geht ohne root
+# nur so); customize.sh und post-build.sh rufen dieses Skript ausdruecklich ohne die Variable auf.
 # shellcheck source-path=SCRIPTDIR
 set -u
 R="${1:?ROOTFS fehlt}"
@@ -21,6 +25,8 @@ for arg in "$@"; do
 done
 # shellcheck source=own_url.sh
 . "$(dirname "${BASH_SOURCE[0]}")/own_url.sh" || { echo "FAIL: own_url.sh fehlt"; exit 1; }
+OWNER_UID="${SHG_ROOTFS_CHECK_UID:-0}"
+[[ $OWNER_UID =~ ^[0-9]+$ ]] || { echo "SHG_ROOTFS_CHECK_UID ungueltig: $OWNER_UID" >&2; exit 2; }
 FAIL=0
 fail() { echo "FAIL: $1"; FAIL=1; }
 WANTS="$R/etc/systemd/system/multi-user.target.wants"
@@ -38,6 +44,7 @@ fi
 if compgen -G "$R/etc/ssh/ssh_host_*" >/dev/null; then fail "SSH-Hostschluessel im Image"; fi
 [ -z "$(ls -A "$SH/data" 2>/dev/null)" ] || fail "data/ nicht leer (Geraeteschluessel, Agent-Zustand)"
 if compgen -G "$SH/bus/credentials/*/bus.json" >/dev/null; then fail "Bus-Zugangsdaten im Image"; fi
+[ ! -e "$SH/bus/mosquitto/passwd" ] || fail "Mosquitto-passwd im Image"
 [ ! -e "$SH/zigbee2mqtt/configuration.yaml" ] || fail "Zigbee2MQTT-Konfiguration im Image"
 [ ! -e "$R/etc/smartheat/pilot-ssh-tunnel.env" ] || fail "Tunnel-Token im Image"
 
@@ -50,6 +57,25 @@ if [ -r "$R/etc/shadow" ]; then
 else
   fail "etc/shadow fehlt"
 fi
+# passwd: Passwortfeld x (steht in shadow), * oder gesperrt (!...); leer oder ein Hash waere eine Anmeldung ohne shadow
+if [ -r "$R/etc/passwd" ]; then
+  while IFS=: read -r user field _; do
+    [ -n "$user" ] || continue
+    case "$field" in x|'*'|'!'*) ;; *) fail "Benutzer $user: Passwortfeld in etc/passwd leer oder mit Hash" ;; esac
+  done <"$R/etc/passwd"
+else
+  fail "etc/passwd fehlt"
+fi
+
+# Eigentuemer und Rechte: root fuehrt den Installer aus und laedt die Archive (Links ausgenommen: immer 777)
+for tree in "$R/opt/smartheat" "$SH/images"; do
+  rel="${tree#"$R"}"
+  if [ ! -d "$tree" ]; then fail "$rel fehlt"; continue; fi
+  bad="$(find "$tree" ! -uid "$OWNER_UID" -print -quit 2>/dev/null)"
+  if [ -n "$bad" ]; then fail "$rel: ${bad#"$R"} gehoert nicht root (uid $OWNER_UID erwartet)"; fi
+  bad="$(find "$tree" ! -type l -perm /022 -print -quit 2>/dev/null)"
+  if [ -n "$bad" ]; then fail "$rel: ${bad#"$R"} ist gruppen- oder weltbeschreibbar"; fi
+done
 
 # Dienste
 for unit in smartheat-firewall smartheat-hoststatus smartheat-led smartheat-firstboot smartheat-updater docker; do
@@ -80,12 +106,20 @@ fi
 grep -rqs "archive.raspberrypi.com" "$R/etc/apt/sources.list.d" "$R/etc/apt/sources.list" \
   || fail "Raspberry-Pi-Archiv nicht eingebunden"
 
-# Geraete-API und Portal: eigener DNS-Name per https (letzte Zuweisung zaehlt, wie bei Docker und systemd)
-env_value() { sed -n "s/^$1=//p" "$SH/host/gateway.env" 2>/dev/null | tail -n 1; }
+# Geraete-API und Portal: eigener DNS-Name per https. Genau eine Zuweisung KEY=... am Zeilenanfang; jede andere Zeile,
+# die den Schluessel nennt (Leerzeichen, export, Kommentar, doppelt), koennte je nach Leser (Docker, systemd, Shell)
+# einen anderen Wert ergeben als den hier geprueften.
+ENV_FILE="$SH/host/gateway.env"
 for pair in "SHG_DEVICE_API_URL:Geraete-API" "SHG_PORTAL_BASE_URL:Portal"; do
-  value="$(env_value "${pair%%:*}")"
+  key="${pair%%:*}" name="${pair#*:}"
+  plain="$(grep -c "^$key=" "$ENV_FILE" 2>/dev/null)"
+  other="$(grep -F "$key" "$ENV_FILE" 2>/dev/null | grep -cv "^$key=")"
+  if [ "${plain:-0}" -gt 1 ] || [ "${other:-0}" -gt 0 ]; then
+    fail "$name-Adresse in gateway.env: $key mehrfach oder nicht als $key=... am Zeilenanfang"
+  fi
+  value="$(sed -n "s/^$key=//p" "$ENV_FILE" 2>/dev/null | head -n 1)"
   if ! why="$(shg_own_url_problem "$value")"; then
-    fail "${pair#*:}-Adresse '${value}' in gateway.env: $why"
+    fail "$name-Adresse '${value}' in gateway.env: $why"
   fi
 done
 exit "$FAIL"

@@ -6,6 +6,6 @@
 set -euo pipefail
 R="${1:?Root-Dateisystem fehlt}"
 STAGE="${IGconf_shg_stage:?IGconf_shg_stage fehlt}"
-check=(bash "$(dirname "$0")/rootfs_checks.sh" "$R")
+check=(env -u SHG_ROOTFS_CHECK_UID bash "$(dirname "$0")/rootfs_checks.sh" "$R")  # Variable nur fuer Tests
 if [ -f "$STAGE/pilot" ]; then check+=(--pilot); fi
 "${check[@]}"
