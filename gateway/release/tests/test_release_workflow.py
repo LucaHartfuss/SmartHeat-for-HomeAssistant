@@ -89,11 +89,136 @@ def test_sign_job_hands_the_signed_bundle_to_the_image_job():
     assert [step["with"]["name"] for step in uploads] == ["gateway-bundle-signed"]
 
 
-def test_image_job_is_skipped_without_portal_variable_and_dryrun_is_not_verified():
+def test_image_job_runs_only_after_a_real_signing_and_never_in_dryrun():
+    # Das Bundle des -dryrun verweist auf localhost:5000 (Service-Container des Jobs build): dort kein Image-Bau.
     job = _jobs()["image"]
-    assert "vars.SHG_PORTAL_BASE_URL != ''" in job["if"]
-    assert job["with"]["verify"] == "${{ needs.build.outputs.dryrun != 'true' }}"
+    condition = job["if"]
+    for part in ("!cancelled()", "needs.build.result == 'success'", "vars.SHG_PORTAL_BASE_URL != ''",
+                 "needs.sign.result == 'success'"):
+        assert part in condition, part
+    assert "dryrun" not in condition
+    assert job["permissions"] == {"contents": "read"}
+    assert job["needs"] == ["build", "sign"]
+    assert job["with"]["artifact"] == "gateway-bundle-signed"
+    assert "verify" not in job["with"]  # immer gegen release.pub (Standard true)
     assert job["with"]["portal_base_url"] == "${{ vars.SHG_PORTAL_BASE_URL }}"
+
+
+def test_attach_image_gate_and_scope():
+    job = _jobs()["attach-image"]
+    assert "needs.build.outputs.dryrun == 'false'" in job["if"]
+    assert "needs.image.result == 'success'" in job["if"]
+    assert job["needs"] == ["build", "image"]
+    assert not any("checkout" in step.get("uses", "") for step in job["steps"])
+
+
+def _attach_script() -> str:
+    step = [s for s in _jobs()["attach-image"]["steps"] if "gh release upload" in s.get("run", "")][0]
+    assert step["env"]["VERSION"] == "${{ needs.build.outputs.version }}"
+    assert "${{" not in step["run"]
+    return step["run"]
+
+
+def test_attach_image_uploads_exactly_the_two_named_files_without_blanket_clobber():
+    script = _attach_script()
+    assert '"$RUNNER_TEMP"/image/*' not in script and "image/*" not in script
+    uploads = [line for line in script.splitlines() if "gh release upload" in line]
+    assert len(uploads) == 1
+    assert '"$dir/$img" "$dir/$sum"' in uploads[0] and uploads[0].count("--clobber") <= 1
+    assert 'img="smartheat-gateway-$VERSION.img.zst"' in script and 'sum="$img.sha256"' in script
+
+
+def _run_attach(tmp_path, files: list[str], version="1.2.3"):
+    import os
+    import subprocess
+
+    image = tmp_path / "image"
+    image.mkdir()
+    for name in files:
+        (image / name).write_text("x")
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "gh").write_text('#!/bin/sh\necho "$@" > "$RUNNER_TEMP/gh.args"\n')
+    (fake / "gh").chmod(0o755)
+    env = {**os.environ, "RUNNER_TEMP": str(tmp_path), "VERSION": version, "GITHUB_REF_NAME": "gateway-v1.2.3",
+           "GITHUB_REPOSITORY": "o/r", "PATH": f"{fake}:{os.environ['PATH']}"}
+    result = subprocess.run(["bash", "-eo", "pipefail", "-c", _attach_script()], env=env, capture_output=True, text=True)
+    return result, tmp_path / "gh.args"
+
+
+def test_attach_image_guard_script_accepts_exactly_the_two_files(tmp_path):
+    result, args = _run_attach(tmp_path, ["smartheat-gateway-1.2.3.img.zst", "smartheat-gateway-1.2.3.img.zst.sha256"])
+    assert result.returncode == 0, result.stderr
+    uploaded = args.read_text()
+    assert uploaded.count("smartheat-gateway-1.2.3.img.zst") == 2 and "image/*" not in uploaded
+
+
+def test_attach_image_guard_script_rejects_extra_missing_and_bad_version(tmp_path):
+    good = ["smartheat-gateway-1.2.3.img.zst", "smartheat-gateway-1.2.3.img.zst.sha256"]
+    cases = {
+        "extra": (good + ["manifest.json"], "1.2.3"),
+        "missing": (good[:1], "1.2.3"),
+        "pilot": (["smartheat-gateway-1.2.3-pilot.img.zst", good[1]], "1.2.3"),
+        "version": (good, "1.2.3-dryrun"),
+    }
+    for name, (files, version) in cases.items():
+        case = tmp_path / name
+        case.mkdir()
+        result, args = _run_attach(case, files, version)
+        assert result.returncode != 0, name
+        assert not args.exists(), name  # nichts hochgeladen
+
+
+def _image_check_script() -> tuple[dict, str]:
+    image = yaml.safe_load(IMAGE_WORKFLOW.read_text())
+    steps = image["jobs"]["image"]["steps"]
+    step = [s for s in steps if "own_url.sh" in s.get("run", "")][0]
+    return step, step["run"]
+
+
+def _run_check(tmp_path, api, portal, tag="", event="workflow_call"):
+    import os
+    import subprocess
+
+    env = {**os.environ, "API_URL": api, "PORTAL_URL": portal, "TAG": tag, "EVENT": event}
+    return subprocess.run(["bash", "-eo", "pipefail", "-c", _image_check_script()[1]], env=env, cwd=REPO,
+                          capture_output=True, text=True)
+
+
+def test_image_check_step_rejects_bad_urls_and_tags(tmp_path):
+    ok = "https://accounts.hartfussha.org"
+    assert _run_check(tmp_path, ok, "https://portal.hartfussha.org").returncode == 0
+    assert _run_check(tmp_path, ok, "https://portal.hartfussha.org", "gateway-v1.2.3", "workflow_dispatch").returncode == 0
+    for api, portal in (("https://3.120.4.5", ok), (ok, "https://x.eu-central-1.amazonaws.com"), ("", ok)):
+        result = _run_check(tmp_path, api, portal)
+        assert result.returncode != 0
+        assert "3.120.4.5" not in result.stdout + result.stderr and "amazonaws" not in result.stdout + result.stderr
+    for tag in ("", "main", "gateway-v1.2", "gateway-v1.2.3-dryrun", "gateway-v1.2.3\nfoo", "../gateway-v1.2.3"):
+        assert _run_check(tmp_path, ok, ok, tag, "workflow_dispatch").returncode != 0, tag
+
+
+def test_image_check_step_tag_comes_from_env_and_checkout_uses_the_tag_ref():
+    _, script = _image_check_script()
+    image = yaml.safe_load(IMAGE_WORKFLOW.read_text())
+    env = image["jobs"]["image"]["env"]
+    assert env["TAG"] == "${{ inputs.tag }}" and env["EVENT"] == "${{ github.event_name }}"
+    assert "ARTIFACT" not in env and "FROM_RELEASE" not in env
+    assert "gateway-v[0-9]+" in script
+    checkout = [s for s in image["jobs"]["image"]["steps"] if "actions/checkout" in s.get("uses", "")][0]
+    assert checkout["with"]["ref"] == "${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.sha }}"
+
+
+def test_release_build_job_checks_the_urls_early_so_the_dryrun_exercises_the_rule():
+    steps = _jobs()["build"]["steps"]
+    index = [i for i, s in enumerate(steps) if "own_url.sh" in s.get("run", "")]
+    assert len(index) == 1
+    step = steps[index[0]]
+    assert "shg_own_url_problem" in step["run"] and "${{" not in step["run"]
+    assert step["env"]["API_URL"] == "${{ vars.SHG_DEVICE_API_URL || '" + OWN_API_URL + "' }}"
+    assert step["env"]["PORTAL_URL"] == "${{ vars.SHG_PORTAL_BASE_URL }}"
+    first_expensive = [i for i, s in enumerate(steps) if "setup-qemu" in s.get("uses", "") or "pip install" in s.get("run", "")]
+    checkout = [i for i, s in enumerate(steps) if "actions/checkout" in s.get("uses", "")]
+    assert checkout[0] < index[0] < min(first_expensive)
 
 
 def test_device_api_url_defaults_to_the_own_hostname_in_both_entry_points():

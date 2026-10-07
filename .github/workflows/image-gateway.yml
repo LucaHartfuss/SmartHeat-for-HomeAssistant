@@ -26,21 +26,24 @@ jobs:
     timeout-minutes: 120
     env:
       TAG: ${{ inputs.tag }}
-      ARTIFACT: ${{ inputs.artifact }}
+      EVENT: ${{ github.event_name }}
       API_URL: ${{ inputs.device_api_url }}
       PORTAL_URL: ${{ inputs.portal_base_url }}
       PILOT_KEY: ${{ inputs.pilot_ssh_pubkey }}
       VERIFY: ${{ github.event_name == 'workflow_dispatch' || inputs.verify }}
-      FROM_RELEASE: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.sha }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.sha }}
           persist-credentials: false
-      - name: Adressen pruefen (eigener DNS-Name, keine IP, keine AWS-Adresse)
+      - name: Eingaben pruefen (Tag, eigener DNS-Name, keine IP, keine AWS-Adresse)
         run: |
           source gateway/image/own_url.sh
           bad=0
+          if [ "$EVENT" = workflow_dispatch ] && [[ ! $TAG =~ ^gateway-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag ungueltig: erwartet wird ein veroeffentlichtes Release der Form gateway-vX.Y.Z"
+            bad=1
+          fi
           for name in API_URL PORTAL_URL; do
             if why="$(shg_own_url_problem "${!name}")"; then
               echo "$name ist zulaessig"
