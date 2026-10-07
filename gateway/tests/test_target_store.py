@@ -2,7 +2,13 @@ import json
 
 import pytest
 
-from smartheat_gateway.target_store import SOURCE_PORTAL, SOURCE_THERMOSTAT, TargetStore, is_valid_portal_target
+from smartheat_gateway.target_store import (
+    PENDING_SECONDS,
+    SOURCE_PORTAL,
+    SOURCE_THERMOSTAT,
+    TargetStore,
+    is_valid_portal_target,
+)
 
 
 @pytest.mark.parametrize(("value", "ok"), [
@@ -70,3 +76,34 @@ def test_thermostat_plausibility_without_clamp(tmp_path, clock):
     assert store.apply_thermostat(30.0)        # ausserhalb 15-25, aber plausibel: gilt (kein Clamp)
     assert not store.apply_thermostat(36.0)    # unplausibel: verworfen
     assert store.value == 30.0
+
+
+def test_late_report_of_the_old_value_does_not_overwrite_the_portal_target(tmp_path, clock):
+    store = _store(tmp_path, clock)            # Start 20.0
+    assert store.apply_portal(22.0)
+    store.note_own_write()
+    clock.advance(300)                         # weit hinter dem Echo-Fenster
+    assert not store.apply_thermostat(20.0)    # verspaetete Meldung des alten Werts
+    assert (store.value, store.source) == (22.0, SOURCE_PORTAL)
+    assert not store.apply_thermostat(22.0)    # Bestaetigung schliesst den offenen Befehl
+    assert store.apply_thermostat(20.0)        # danach ist 20 eine echte Eingabe am Thermostat
+    assert (store.value, store.source) == (20.0, SOURCE_THERMOSTAT)
+
+
+def test_user_turning_the_knob_while_a_write_is_pending_wins(tmp_path, clock):
+    store = _store(tmp_path, clock)
+    store.apply_portal(22.0)
+    store.note_own_write()
+    clock.advance(120)
+    assert store.apply_thermostat(19.0)        # weder alt noch geschrieben: Nutzereingabe
+    assert (store.value, store.source) == (19.0, SOURCE_THERMOSTAT)
+    assert store.apply_thermostat(20.0)        # offener Befehl ist erledigt, 20 ist wieder eine Eingabe
+
+
+def test_unconfirmed_write_expires(tmp_path, clock, caplog):
+    store = _store(tmp_path, clock)
+    store.apply_portal(22.0)
+    store.note_own_write()
+    clock.advance(PENDING_SECONDS + 1)
+    assert store.apply_thermostat(20.0)        # nie bestaetigt: Thermostat gilt wieder, mit Warnung
+    assert "nicht bestaetigt" in caplog.text
