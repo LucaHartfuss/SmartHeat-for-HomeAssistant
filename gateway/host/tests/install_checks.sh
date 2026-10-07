@@ -43,12 +43,15 @@ grep -q '^DefaultDependencies=no$' /etc/systemd/system/smartheat-firewall.servic
 grep -q '^After=nftables.service$' /etc/systemd/system/smartheat-firewall.service || fail "Firewall-Unit nicht nach nftables.service"
 [ -f /etc/ssh/sshd_config.d/00-smartheat.conf ] || fail "sshd-Drop-in 00-smartheat.conf fehlt"
 [ ! -e /etc/ssh/sshd_config.d/smartheat.conf ] || fail "alter sshd-Drop-in smartheat.conf nicht entfernt"
-# Nur Sicherheitsupdates: nach der Konfiguration von 50unattended-upgrades darf nur das -security-Muster uebrig sein.
+# Sicherheitsupdates (Plan G2b-2 Task 6): Debian-Security und das Raspberry-Pi-Archiv (Kernel, Firmware), sonst nichts;
+# kein automatischer Neustart.
 patterns="$(apt-config dump | grep 'Unattended-Upgrade::Origins-Pattern::')"
 # shellcheck disable=SC2016  # ${distro_codename} bleibt in der apt-Konfiguration woertlich stehen
-if [ "$(printf '%s\n' "$patterns" | wc -l)" != 1 ] || ! grep -q 'codename=${distro_codename}-security,' <<<"$patterns"; then
-  echo "$patterns"; fail "Origins-Pattern nicht auf das Security-Archiv beschraenkt"
+if [ "$(printf '%s\n' "$patterns" | wc -l)" != 2 ] || ! grep -q 'codename=${distro_codename}-security,' <<<"$patterns" \
+   || ! grep -q 'origin=Raspberry Pi Foundation,codename=${distro_codename},label=Raspberry Pi Foundation' <<<"$patterns"; then
+  echo "$patterns"; fail "Origins-Pattern nicht genau Debian-Security und Raspberry-Pi-Archiv"
 fi
+apt-config dump | grep -q '^Unattended-Upgrade::Automatic-Reboot "false";$' || fail "Automatic-Reboot nicht aus"
 nft -c -f /etc/smartheat/nftables.conf || fail "nftables-Regeln ungueltig"
 grep -q "tcp dport 22 accept" /etc/smartheat/nftables.conf || fail "Pilot-SSH fehlt in der Firewall"
 if udevadm --help 2>&1 | grep -q verify; then udevadm verify /etc/udev/rules.d/99-smartheat-zigbee.rules || fail "udev-Regel ungueltig"; fi
