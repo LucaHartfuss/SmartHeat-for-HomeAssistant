@@ -156,7 +156,9 @@ class TokenStore:
         return bool(data.get("access_token")) and expires_at - self._wall() > RENEW_BEFORE_SECONDS
 
     def _with_tokens(self, data: dict, body: dict) -> dict:
-        data = {k: v for k, v in data.items() if k not in ("pending", "abgelaufen")}
+        # "pending" bleibt: eine Erneuerung waehrend einer neuen Anmeldung darf deren PKCE-Zustand nicht loeschen
+        # (finish baut die Daten ohne "pending" neu auf).
+        data = {k: v for k, v in data.items() if k != "abgelaufen"}
         data.update({"access_token": body["access_token"],
                      "refresh_token": body.get("refresh_token") or data.get("refresh_token"),
                      "expires_at": self._wall() + float(body.get("expires_in", 3600))})

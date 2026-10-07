@@ -267,6 +267,21 @@ def test_force_refresh_renews_a_fresh_token(fake, tmp_path):
     assert tokens.access_token(force_refresh=True) != first and server.tokens_issued == 2
 
 
+def test_a_refresh_during_a_new_login_keeps_the_pending_login_alive(fake, tmp_path):
+    """Meldet sich der Kunde neu an, waehrend die Laufzeit mit dem noch gueltigen Token erneuert, darf die Erneuerung den
+    vorbereiteten PKCE-Zustand nicht loeschen; nur der erfolgreiche Tausch entfernt ihn."""
+    server, base = fake
+    tokens = store(tmp_path, base)
+    tokens.begin("c", "r")
+    tokens.finish(GOOD_CODE, "r")
+    tokens.begin("c", "r")  # erneute Anmeldung, das alte Token ist noch gueltig
+    before = tokens.access_token()
+    assert tokens.access_token(force_refresh=True) != before  # die Erneuerung laeuft dazwischen
+    assert "pending" in json.loads((tmp_path / "vicare.json").read_text())
+    assert tokens.finish(GOOD_CODE, "r") is None
+    assert tokens.logged_in() and "pending" not in json.loads((tmp_path / "vicare.json").read_text())
+
+
 def test_not_logged_in_without_a_file(tmp_path):
     tokens = oauth.TokenStore(tmp_path / "vicare.json", iam="http://127.0.0.1:1")
     assert not tokens.logged_in() and not tokens.expired()
