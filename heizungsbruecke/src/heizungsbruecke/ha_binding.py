@@ -79,6 +79,20 @@ class HaPlantBinding:
             self._ha_api.set_number_value(entity_id, value)
         self.physical_writes += 1
 
+    def limits(self, lever: str) -> tuple[float, float] | None:
+        """Wertebereich der Ziel-Entity (Plan Client2-Bereitschaft): number min/max, climate min_temp/max_temp; None,
+        wenn ein Attribut fehlt oder keinen brauchbaren Bereich ergibt."""
+        entity_id = entity_of(self.ref(lever))
+        names = ("min_temp", "max_temp") if entity_id.startswith("climate.") else ("min", "max")
+        try:
+            low, high = (float(self._ha_api.get_attribute(entity_id, name)) for name in names)
+        except Exception as error:
+            logger.debug("Wertebereich von %s nicht lesbar: %s", entity_id, error)
+            return None
+        if not (math.isfinite(low) and math.isfinite(high)) or low > high:
+            return None
+        return low, high
+
     def needs_preparation(self) -> bool:
         lever = self.description.prepared_lever
         return lever is not None and self.has(lever) and is_climate(self.ref(lever))

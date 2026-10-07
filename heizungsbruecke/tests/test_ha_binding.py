@@ -17,6 +17,7 @@ ZONE = "climate.zone::temperature"
 class FakeHa:
     def __init__(self, states=None):
         self.states = {"climate.zone": MANUAL_HVAC_MODE, **(states or {})}
+        self.attributes = {}
         self.calls = []
 
     def get_state(self, ref):
@@ -32,6 +33,9 @@ class FakeHa:
         if value in ("unavailable", "unknown", ""):
             raise ValueError(f"{entity_id} nicht verfuegbar: {value!r}")
         return str(value)
+
+    def get_attribute(self, entity_id, attribute):
+        return self.attributes[(entity_id, attribute)]  # fehlend: KeyError
 
     def set_number_value(self, entity_id, value):
         self.calls.append(("number", entity_id, value))
@@ -208,3 +212,27 @@ def test_binding_roles_for_sign_off():
         "curve_current", "shift_current", "heat_limit", "mode_select", "setpoint_comfort", "setpoint_setback",
     )
     assert binding_roles(VIESSMANN_VICARE_BINDING) == ("curve_current", "level_current", "shift_current", "mode_select")
+
+
+def test_limits_reads_min_and_max_of_a_number_entity():
+    ha = FakeHa()
+    ha.attributes = {("number.curve", "min"): "0.1", ("number.curve", "max"): "5"}
+    assert HaPlantBinding(ha, MANIFEST).limits("curve") == (0.1, 5.0)
+
+
+def test_limits_reads_min_temp_and_max_temp_of_a_climate_entity():
+    ha = FakeHa()
+    ha.attributes = {("climate.zone", "min_temp"): "5", ("climate.zone", "max_temp"): "30"}
+    assert HaPlantBinding(ha, MANIFEST).limits("room_setpoint") == (5.0, 30.0)
+
+
+@pytest.mark.parametrize("attributes", [
+    {},
+    {("number.curve", "min"): "x", ("number.curve", "max"): "5"},
+    {("number.curve", "min"): "6", ("number.curve", "max"): "5"},
+    {("number.curve", "min"): "nan", ("number.curve", "max"): "5"},
+])
+def test_limits_is_none_when_the_range_is_not_usable(attributes):
+    ha = FakeHa()
+    ha.attributes = attributes
+    assert HaPlantBinding(ha, MANIFEST).limits("curve") is None

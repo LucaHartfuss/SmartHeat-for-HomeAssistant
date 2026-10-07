@@ -34,6 +34,7 @@ def _runtime(store, *, room_actual=20.0, room_target=21.0, entity_ids=ENTITY_IDS
     HA-Werte (eine Exception als Wert wird beim Lesen geworfen)."""
     values = {"sensor.room_actual": room_actual, **(states or {})}
     ha_api = MagicMock()
+    ha_api.get_attribute.side_effect = ValueError("kein Wertebereich")  # wie eine Entity ohne min/max
 
     def _get_state(entity_id):
         value = values[entity_id]

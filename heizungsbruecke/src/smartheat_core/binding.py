@@ -113,7 +113,9 @@ class PlantBinding(Protocol):
     Vorbereitung; die Pipeline liest die Differenz, Tagesbudget und Lebensdauer). read_aux liefert die Hilfswerte aus
     description.aux_originals (wirft bei Lesefehlern), restore_aux stellt sie in sicherer Reihenfolge zurueck und
     schreibt nur abweichende; `levers` sind die gerade zurueckgestellten Hebel-Zielwerte (der Read kann ihnen noch
-    hinterherhinken), None = unbekannt."""
+    hinterherhinken), None = unbekannt. limits liefert den Wertebereich, den die Anlage fuer den Hebel annimmt (z. B.
+    min/max der HA-Entity), None = unbekannt; die Pipeline schreibt in der Schnittmenge mit den lokalen Grenzen und
+    erweitert sie nie."""
 
     description: BindingDescription
     physical_writes: int
@@ -128,6 +130,7 @@ class PlantBinding(Protocol):
     def prepare(self) -> bool: ...
     def read_aux(self) -> dict[str, str | float]: ...
     def restore_aux(self, values: Mapping[str, str | float], levers: Mapping[str, float] | None = None) -> None: ...
+    def limits(self, lever: str) -> tuple[float, float] | None: ...
 
 
 # Vaillant VRC 720 ueber mypyllant (Spec 5.4): Schrittweiten der Anlage; Toleranzen = halber Anlagenschritt
