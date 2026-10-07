@@ -10,6 +10,8 @@ from smartheat_gateway.agent.context import AgentContext
 from smartheat_gateway.drivers.vicare_cloud.driver import ViCareCloudDriver
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.zigbee import ZigbeeMirror
+from smartheat_runtime.backup_store import save_backup
+from smartheat_runtime.state import StateStore
 
 
 class FakeClock:
@@ -28,6 +30,20 @@ class FakeClock:
 @pytest.fixture
 def clock():
     return FakeClock()
+
+
+@pytest.fixture
+def make_store(tmp_path):
+    """StateStore auf tmp_path/backup.json und tmp_path/failsafe_state.json; schreibt die
+    uebergebenen Inhalte vorher in die Dateien (wie ein vorheriger Lauf).
+    Woertlich aus heizungsbruecke/tests/conftest.py uebernommen."""
+    def _make(backup: dict | None = None, failsafe: dict | None = None) -> StateStore:
+        if backup is not None:
+            save_backup(tmp_path / "backup.json", backup)
+        if failsafe is not None:
+            save_backup(tmp_path / "failsafe_state.json", failsafe)
+        return StateStore(tmp_path / "backup.json", tmp_path / "failsafe_state.json")
+    return _make
 
 
 @pytest.fixture
