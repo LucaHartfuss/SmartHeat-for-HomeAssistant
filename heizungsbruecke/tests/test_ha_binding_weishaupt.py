@@ -400,3 +400,32 @@ def test_the_normal_setpoint_uses_the_static_range_of_the_scheme(mode, expected)
 def test_scheme_helpers():
     assert weishaupt_scheme("hz_operationmode_lowering") == "hz_operationmode_"
     assert weishaupt_option("hz_operationmode_lowering", V2) == V2 + "lowering"
+
+
+def test_a_read_error_of_the_mode_propagates_out_of_limits():
+    class Down(FakeHa):
+        def get_raw_state(self, entity_id):
+            raise ConnectionError("HA nicht erreichbar")
+
+    with pytest.raises(ConnectionError):
+        _binding(Down()).limits("room_setpoint")
+
+
+@pytest.mark.parametrize("state", ["Normal", "operation_mode_normal", "hz_operationmode"])
+def test_an_unknown_scheme_gives_no_range(state):
+    assert _binding(FakeHa(**{"select.betriebsart": state})).limits("room_setpoint") is None
+
+
+def test_without_a_mode_select_ref_there_is_no_range():
+    refs = {role: ref for role, ref in MANIFEST.refs.items() if role != "mode_select"}
+    binding = WeishauptHaBinding(FakeHa(), ChannelManifest(refs=refs), WEISHAUPT_MODBUS)
+    assert binding.limits("room_setpoint") is None
+
+
+def test_prepare_with_an_unknown_scheme_raises_without_a_select_call():
+    ha = FakeHa(**{"select.betriebsart": "Normal"})
+    binding = _binding(ha)
+    with pytest.raises(ValueError, match="Betriebsart"):
+        binding.prepare()
+    assert [call for call in ha.calls if call[0] == "select"] == []
+    assert binding.physical_writes == 0

@@ -222,3 +222,28 @@ def test_min_flow_expected_and_written_use_the_narrowed_range_and_enforce_sees_n
     expected, deviating, pending = enforce._deviations(runtime)
     assert expected["min_flow"] == 24.0
     assert deviating == {} and pending == set()
+
+
+def test_a_narrowed_range_is_logged_once_and_again_when_it_changes(make_store, clock, caplog):
+    pipeline, binding = _counting(make_store, clock, {"room_setpoint": (18.0, 24.0)})
+    with caplog.at_level(logging.INFO):
+        for _ in range(3):
+            pipeline.range_of("room_setpoint")
+            clock.advance(LIMITS_TTL_SECONDS + 1)
+        assert caplog.text.count("Wertebereich der Anlage verengt") == 1
+        assert "[16.0, 25.0] -> [18.0, 24.0]" in caplog.text
+        binding.device = {"room_setpoint": (19.0, 24.0)}
+        clock.advance(LIMITS_TTL_SECONDS + 1)
+        pipeline.range_of("room_setpoint")
+        pipeline.range_of("room_setpoint")
+    assert caplog.text.count("Wertebereich der Anlage verengt") == 2
+
+
+def test_a_wider_or_equal_device_range_logs_no_narrowing(make_store, clock, caplog):
+    pipeline, binding = _counting(make_store, clock, {"room_setpoint": (5.0, 35.0)})
+    with caplog.at_level(logging.INFO):
+        pipeline.range_of("room_setpoint")
+        binding.device = {"room_setpoint": SAFETY.ranges["room_setpoint"]}
+        clock.advance(LIMITS_TTL_SECONDS + 1)
+        pipeline.range_of("room_setpoint")
+    assert "verengt" not in caplog.text

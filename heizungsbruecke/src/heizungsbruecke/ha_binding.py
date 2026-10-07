@@ -197,9 +197,13 @@ class WeishauptHaBinding(HaPlantBinding):
     def limits(self, lever: str) -> tuple[float, float] | None:
         if lever != "room_setpoint":
             return super().limits(lever)
+        if "mode_select" not in self._manifest.refs:
+            return None
+        # Lesefehler (HA nicht erreichbar, nicht verfuegbar) steigen auf: die Pipeline behaelt den letzten guten Bereich.
+        mode = self._mode()
         try:
-            return WEISHAUPT_NORMAL_RANGE[weishaupt_scheme(self._mode())]
-        except Exception as error:
+            return WEISHAUPT_NORMAL_RANGE[weishaupt_scheme(mode)]
+        except ValueError as error:
             logger.debug("Bereich des Normal-Solls unbekannt: %s", error)
             return None
 

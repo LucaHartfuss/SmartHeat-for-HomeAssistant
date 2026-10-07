@@ -111,6 +111,7 @@ class LeverPipeline:
         self._limits_cache: dict[str, tuple[float, tuple[float, float] | None]] = {}
         self._limits_unreadable: set[str] = set()
         self._overlap_warned: dict[str, tuple[float, float]] = {}
+        self._narrowing_logged: dict[str, tuple[float, float]] = {}
         # Nicht kritischer Hinweis (Schluessel, Zustand, Text); im Add-on Notifier.notify(..., critical=False).
         self._notify = notify
         # Zeitpunkt (clock) und Wert des letzten erfolgreichen eigenen Schreibens je Hebel, nur Laufzeit: Durchsetzen
@@ -362,8 +363,16 @@ class LeverPipeline:
                     "Wertebereich der Anlage fuer %s %s liegt ausserhalb der lokalen Grenzen [%s, %s]",
                     lever, device, low, high,
                 )
+            self._narrowing_logged.pop(lever, None)
             return low, high
         self._overlap_warned.pop(lever, None)
+        if narrowed == (low, high):
+            self._narrowing_logged.pop(lever, None)
+        elif self._narrowing_logged.get(lever) != narrowed:
+            self._narrowing_logged[lever] = narrowed
+            logger.info(
+                "Wertebereich der Anlage verengt %s: lokal [%s, %s] -> [%s, %s]", lever, low, high, *narrowed,
+            )
         return narrowed
 
     def _device_limits(self, lever: str) -> tuple[float, float] | None:
