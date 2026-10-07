@@ -35,7 +35,7 @@ SH="$R/var/lib/smartheat"
 
 # Identitaet: jedes Geraet erzeugt sie selbst beim ersten Start
 # Beide machine-ids (systemd und dbus) legen die Pakete schon vor dem customize-Hook an; mmdebstrap setzt
-# /etc/machine-id beim Aufraeumen zurueck und loescht /var/lib/dbus/machine-id (Spike 2026-10-07, CI auf dem ARM-Runner).
+# /etc/machine-id beim Aufraeumen zurueck und loescht /var/lib/dbus/machine-id (Spike 2026-10-07, ARM-Runner).
 if [ "$CUSTOMIZE" = 0 ]; then
   mid="$(cat "$R/etc/machine-id" 2>/dev/null || true)"
   case "$mid" in ""|uninitialized) ;; *) fail "machine-id im Image gesetzt" ;; esac
@@ -105,11 +105,21 @@ if [ -z "$current" ] || [ ! -f "$SH/bundles/$current/manifest.json.minisig" ]; t
   fail "laufendes Bundle fehlt oder ist nicht signiert"
 fi
 
-# Start von der SSD am USB (usbboot.sh): Regel mit fester Disk-Signatur und initramfs-Hook, der sie mitnimmt
+# Start von der SSD am USB (usbboot.sh): Regel mit fester Disk-Signatur und initramfs-Hook, der sie mitnimmt.
+# Die Regel darf auf mehrere Zeilen (Backslash am Ende) verteilt sein und nicht nur in einem Kommentar stehen.
 USB_RULE="$R/etc/udev/rules.d/99-rpi-01-smartheat-usbboot.rules"
-grep -qs 'ENV{ID_PART_ENTRY_UUID}=="[0-9a-f]\{8\}-0\[12\]".*ENV{RPI_ONBOOTDEV}="1"' "$USB_RULE" \
-  || fail "USB-Startregel fehlt (usbboot.sh)"
-[ -x "$R/etc/initramfs-tools/hooks/smartheat-usbboot" ] || fail "initramfs-Hook fuer den USB-Start fehlt"
+USB_HOOK="$R/etc/initramfs-tools/hooks/smartheat-usbboot"
+usb_rule_lines() {  # Regelzeilen ohne Kommentare, Fortsetzungszeilen zu einer verbunden
+  sed -e ':a' -e '/\\$/{N;s/\\\n[[:space:]]*/ /;ba' -e '}' "$USB_RULE" 2>/dev/null | grep -v '^[[:space:]]*#'
+}
+usb_rule_lines | grep -q \
+  'KERNEL=="sd.*ENV{ID_PART_ENTRY_UUID}=="[0-9a-f]\{8\}-0\[12\]".*ENV{RPI_ONBOOTDEV}="1"' \
+  || fail "USB-Startregel fehlt oder unvollstaendig (usbboot.sh)"
+if [ ! -x "$USB_HOOK" ]; then
+  fail "initramfs-Hook fuer den USB-Start fehlt oder ist nicht ausfuehrbar"
+elif ! grep -q '^[[:space:]]*copy_file config /etc/udev/rules.d/99-rpi-01-smartheat-usbboot.rules' "$USB_HOOK"; then
+  fail "initramfs-Hook fuer den USB-Start nimmt die Regel nicht mit (copy_file fehlt)"
+fi
 
 # Sicherheitsupdates aus dem Raspberry-Pi-Archiv moeglich
 grep -rqs "archive.raspberrypi.com" "$R/etc/apt/sources.list.d" "$R/etc/apt/sources.list" \

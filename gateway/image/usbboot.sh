@@ -22,8 +22,10 @@ RULE=99-rpi-01-smartheat-usbboot.rules
 install -d -m 0755 "$R/etc/udev/rules.d" "$R/etc/initramfs-tools/hooks"
 cat >"$R/etc/udev/rules.d/$RULE" <<EOF
 # SmartHeat-Gateway: Start von der SSD am USB (gateway/image/usbboot.sh). rpi-storage-binder markiert nur SD/eMMC und
-# NVMe als Startgeraet; hier die Partitionen des Images (MBR-Signatur $sig) am USB.
-SUBSYSTEM=="block", KERNEL=="sd[a-z]*[0-9]", ENV{DEVTYPE}=="partition", ENV{ID_PART_ENTRY_UUID}=="$sig-0[12]", ACTION=="add|change", ENV{RPI_ONBOOTDEV}="1"
+# NVMe als Startgeraet; hier die Partitionen des Images (MBR-Signatur $sig) am USB. Eine Regel, per Backslash
+# auf zwei Zeilen verteilt (wie upstream rpi-storage-binder).
+SUBSYSTEM=="block", KERNEL=="sd[a-z]*[0-9]", ENV{DEVTYPE}=="partition", \\
+  ENV{ID_PART_ENTRY_UUID}=="$sig-0[12]", ACTION=="add|change", ENV{RPI_ONBOOTDEV}="1"
 EOF
 chmod 0644 "$R/etc/udev/rules.d/$RULE"
 cat >"$R/etc/initramfs-tools/hooks/smartheat-usbboot" <<EOF
