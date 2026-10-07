@@ -107,3 +107,39 @@ def test_unconfirmed_write_expires(tmp_path, clock, caplog):
     clock.advance(PENDING_SECONDS + 1)
     assert store.apply_thermostat(20.0)        # nie bestaetigt: Thermostat gilt wieder, mit Warnung
     assert "nicht bestaetigt" in caplog.text
+    assert (store.value, store.source) == (20.0, SOURCE_THERMOSTAT)
+
+
+def test_report_of_the_written_value_after_expiry_changes_nothing(tmp_path, clock):
+    store = _store(tmp_path, clock)
+    store.apply_portal(22.0)
+    store.note_own_write()
+    clock.advance(PENDING_SECONDS + 1)
+    assert not store.apply_thermostat(22.0)    # Wiederholung des geltenden Solls: keine Aenderung, Quelle bleibt
+    assert (store.value, store.source) == (22.0, SOURCE_PORTAL)
+
+
+def test_confirmation_inside_the_echo_window_closes_the_open_write(tmp_path, clock):
+    store = _store(tmp_path, clock)
+    store.apply_portal(22.0)
+    store.note_own_write()
+    clock.advance(2)
+    assert not store.apply_thermostat(22.0)    # Bestaetigung als Echo verworfen, schliesst aber den Befehl
+    clock.advance(600)
+    assert store.apply_thermostat(20.0)        # Nutzer dreht zurueck auf den alten Wert: echte Eingabe
+    assert (store.value, store.source) == (20.0, SOURCE_THERMOSTAT)
+
+
+def test_two_portal_writes_before_confirmation_keep_every_stale_value(tmp_path, clock):
+    store = _store(tmp_path, clock)            # Thermostat zeigt 20
+    store.apply_portal(22.0)
+    store.note_own_write()
+    clock.advance(120)
+    store.apply_portal(23.0)
+    store.note_own_write()
+    clock.advance(300)
+    assert not store.apply_thermostat(20.0)    # urspruenglicher Altwert: verspaetet
+    assert not store.apply_thermostat(22.0)    # erster, nie bestaetigter Schreibwert: ebenfalls veraltet
+    assert (store.value, store.source) == (23.0, SOURCE_PORTAL)
+    assert store.apply_thermostat(21.0)        # alles andere ist Nutzereingabe
+    assert (store.value, store.source) == (21.0, SOURCE_THERMOSTAT)

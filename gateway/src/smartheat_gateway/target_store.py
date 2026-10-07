@@ -39,8 +39,9 @@ class TargetStore:
         self._now_iso = now_iso
         self._on_change = on_change
         self._echo_until: float | None = None
-        self._pending: tuple[float, float, float] | None = None  # (geschrieben, vorher, Frist) - nur im Speicher
-        self._before: float | None = None
+        # (geschrieben, veraltete Werte, Frist) - nur im Speicher
+        self._pending: tuple[float, frozenset[float], float] | None = None
+        self._before: float | None = None  # Wert vor der letzten Aenderung (= was das Thermostat noch zeigt)
         stored = read_json(path)
         if isinstance(stored, dict) and is_plausible(stored.get("value"), ROOM_TEMP_RANGE) and stored.get("source") in (
             SOURCE_PORTAL, SOURCE_THERMOSTAT,
@@ -59,18 +60,23 @@ class TargetStore:
     def note_own_write(self) -> None:
         now = self._clock()
         self._echo_until = now + ECHO_WINDOW_SECONDS
-        before = self._before if self._before is not None else self.value
-        self._pending = (self.value, before, now + PENDING_SECONDS)
+        if self._pending is not None and now < self._pending[2]:  # zweiter Befehl vor der Bestaetigung des ersten
+            stale = self._pending[1] | {self._pending[0]}
+        else:
+            stale = frozenset({self._before if self._before is not None else self.value})
+        self._pending = (self.value, stale - {self.value}, now + PENDING_SECONDS)
 
     def apply_thermostat(self, value) -> bool:
         if self._echo_until is not None and self._clock() < self._echo_until:
+            if self._pending is not None and is_plausible(value, ROOM_TEMP_RANGE) and float(value) == self._pending[0]:
+                self._pending = None  # Bestaetigung im Echo-Fenster schliesst den offenen Befehl trotzdem
             return False
         if not is_plausible(value, ROOM_TEMP_RANGE):
             logger.warning("Wunschtemperatur %r vom Thermostat unplausibel, verworfen", value)
             return False
         value = float(value)
         if self._pending is not None:
-            written, before, until = self._pending
+            written, stale, until = self._pending
             if self._clock() >= until:
                 self._pending = None
                 if value != written:
@@ -78,8 +84,8 @@ class TargetStore:
             elif value == written:
                 self._pending = None
                 return False
-            elif value == before:
-                logger.info("Thermostat meldet noch den alten Sollwert %.1f (Schreibbefehl offen), verworfen", value)
+            elif value in stale:
+                logger.info("Thermostat meldet noch einen alten Sollwert %.1f (Schreibbefehl offen), verworfen", value)
                 return False
             else:
                 self._pending = None

@@ -40,7 +40,8 @@ class FakeZigbee2Mqtt:
         self._sleepy.add(ieee)
 
     def wake(self, ieee: str, stale_setpoint: float | None = None) -> None:
-        """Aufwachen: zuerst optional der alte Stand (verspaetete Meldung), dann der liegengebliebene Schreibwert."""
+        """Aufwachen: zuerst optional der alte Stand (verspaetete Meldung), dann der liegengebliebene Schreibwert.
+        Danach schlaeft das Geraet wieder (weitere Schreibbefehle bleiben liegen, bis wake() erneut gerufen wird)."""
         if stale_setpoint is not None:
             self.report(ieee, occupied_heating_setpoint=stale_setpoint, local_temperature=20.0)
         if ieee in self._held:
