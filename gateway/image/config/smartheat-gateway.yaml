@@ -3,7 +3,10 @@
 # bereit (Inhalt von prepare.sh).
 device:
   layer: rpi4
-  storage_type: usb
+  # sd statt usb: v2.8.0 nimmt usb im Geraete-Layer an, die Pruefung der Image-Beschreibung (IDP-Schema v2, post-image)
+  # kennt aber nur sd/emmc/nvme und bricht den Bau ab (CI-Spike 2026-10-07). Der Wert geht nur in diese Beschreibung
+  # und als RPI_BOOT_MEDIA in die initramfs-Konfiguration; den Start vom USB macht usbboot.sh (siehe image.disksig).
+  storage_type: sd
   hostname: smartheat-gateway
 
 image:
@@ -12,6 +15,9 @@ image:
   # Feste Groesse: v2.8.0 vergroessert die Root-Partition beim ersten Start nicht (kein resize/growpart im Layer).
   root_part_size: 8G
   name: smartheat-gateway
+  # Feste MBR-Disk-Signatur (statt random): usbboot.sh erkennt daran die Partitionen des Images am USB (PARTUUID
+  # 5348470a-01/-02), damit /dev/disk/by-slot/{boot,system} (cmdline.txt, fstab von image-rpios) auch dort entstehen.
+  disksig: "0x5348470a"
 
 layer:
   base: trixie-minbase

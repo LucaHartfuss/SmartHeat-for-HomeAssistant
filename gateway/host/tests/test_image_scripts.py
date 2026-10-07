@@ -200,7 +200,12 @@ def test_config_layer_and_hook_fit_together():
     assert re.search(rf"^  shg: {name}$", config, re.MULTILINE)
     assert re.search(r"^# X-Env-VarPrefix: shg$", layer, re.MULTILINE)
     assert "$IGconf_shg_stage/installer/gateway/image/customize.sh" in layer
-    assert re.search(r"^  layer: rpi4$", config, re.MULTILINE) and "storage_type: usb" in config
+    assert re.search(r"^  layer: rpi4$", config, re.MULTILINE)
+    # v2.8.0: das IDP-Schema (post-image) kennt kein usb; der USB-Start kommt aus usbboot.sh (CI-Spike 2026-10-07)
+    assert re.search(r"^  storage_type: sd$", config, re.MULTILINE)
+    assert re.search(r'^  disksig: "0x[0-9a-f]{8}"$', config, re.MULTILINE)
+    assert layer.index('- bash "$SRCROOT/usbboot.sh"') < layer.index(
+        '- bash "$IGconf_shg_stage/installer/gateway/image/customize.sh"')
     post_build = IMAGE / "post-build.sh"
     assert post_build.stat().st_mode & stat.S_IXUSR, "rpi-image-gen fuehrt nur ausfuehrbare Hooks aus"
 
@@ -219,3 +224,61 @@ def test_pins_are_the_same_everywhere():
 def test_no_tenant_ids_in_image_files():
     for path in sorted(p for p in IMAGE.rglob("*") if p.is_file()):
         assert not TENANT_ID.search(path.read_text(encoding="utf-8", errors="ignore")), path
+
+
+def _usbboot(root: Path, sig: str | None) -> subprocess.CompletedProcess:
+    env = {k: v for k, v in os.environ.items() if k != "IGconf_image_disksig"}
+    if sig is not None:
+        env["IGconf_image_disksig"] = sig
+    return subprocess.run(["bash", str(IMAGE / "usbboot.sh"), str(root)], capture_output=True, text=True,
+                          check=False, env=env)
+
+
+def test_usbboot_writes_the_rule_for_the_configured_disk_signature(tmp_path):
+    """rpi-image-gen v2.8.0 legt /dev/disk/by-slot/* nur fuer SD/eMMC und NVMe an (CI-Spike 2026-10-07): usbboot.sh
+    markiert die Partitionen des Images am USB ueber die feste Disk-Signatur aus der Konfiguration, auch in der
+    initramfs, und rootfs_checks.sh erkennt die Regel."""
+    config = (IMAGE / "config" / "smartheat-gateway.yaml").read_text()
+    found = re.search(r'^  disksig: "(0x[0-9a-f]{8})"$', config, re.MULTILINE)
+    assert found
+    sig = found.group(1)
+    result = _usbboot(tmp_path, sig.upper().replace("0X", "0x"))
+    assert result.returncode == 0, result.stderr
+    # Der Dateiname kommt aus dem, was usbboot.sh wirklich schreibt (nicht aus einem Literal im Test)
+    written = sorted(p.name for p in (tmp_path / "etc/udev/rules.d").iterdir())
+    assert len(written) == 1, written
+    name = written[0]
+    rule = _logical_rule_lines(tmp_path / "etc/udev/rules.d" / name)
+    assert len(rule) == 1, rule  # eine Regel, auch mit Fortsetzungszeilen
+    rule = rule[0]
+    assert f'ENV{{ID_PART_ENTRY_UUID}}=="{sig[2:]}-0[12]"' in rule and 'ENV{RPI_ONBOOTDEV}="1"' in rule
+    assert 'KERNEL=="sd[a-z]*[0-9]"' in rule
+    hook = tmp_path / "etc/initramfs-tools/hooks/smartheat-usbboot"
+    assert hook.stat().st_mode & stat.S_IXUSR
+    assert f"copy_file config /etc/udev/rules.d/{name}" in hook.read_text()
+    # udev liest die Regeldateien in lexikalischer Reihenfolge: nach 99-rpi-00-bootdev (rpi-storage-binder, setzt
+    # RPI_ONBOOTDEV fuer SD/NVMe) und vor 99-rpi-05-image (legt die by-slot-Links an)
+    assert "99-rpi-00-bootdev.rules" < name < "99-rpi-05-image.rules"
+
+
+def _logical_rule_lines(path: Path) -> list[str]:
+    """Regelzeilen einer udev-Datei ohne Kommentare, Zeilen mit Backslash am Ende zu einer verbunden."""
+    lines, current = [], ""
+    for raw in path.read_text().splitlines():
+        if not current and raw.lstrip().startswith("#"):
+            continue
+        if raw.endswith("\\"):
+            current += raw[:-1]
+            continue
+        current += raw
+        if current.strip():
+            lines.append(current.strip())
+        current = ""
+    return lines
+
+
+@pytest.mark.parametrize("sig", [None, "", "random", "0x123", "5348470a", "0x5348470g"])
+def test_usbboot_needs_a_fixed_disk_signature(tmp_path, sig):
+    result = _usbboot(tmp_path, sig)
+    assert result.returncode != 0
+    assert not (tmp_path / "etc").exists()
