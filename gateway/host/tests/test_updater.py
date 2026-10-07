@@ -457,6 +457,7 @@ def test_reachable_but_unhealthy_still_rolls_back_after_ten_minutes(tmp_path):
     assert updater.HEALTH_SECONDS <= world.clock[0] < updater.HEALTH_SECONDS + updater.HEALTH_POLL_SECONDS
     assert world.state().rejected == ["0.3.0"]
     assert world.api.desired_calls > 1  # Erreichbarkeit wird je Takt geprueft
+    assert world.api.results == [("0.3.0", "rollback", "ungesund")]  # abgelehnt, nicht server_unerreichbar
 
 
 def test_unreachable_until_the_cap_rolls_back_without_rejecting_and_keeps_the_report(tmp_path):
@@ -468,12 +469,12 @@ def test_unreachable_until_the_cap_rolls_back_without_rejecting_and_keeps_the_re
     state = world.state()
     assert (state.current, state.rejected, state.in_progress) == ("0.2.0", [], None)  # nicht abgelehnt
     assert world.api.results == []  # offline: nichts gemeldet ...
-    assert state.pending_reports == [{"version": "0.3.0", "result": "rollback", "reason": "ungesund"}]  # ... gemerkt
+    assert state.pending_reports == [{"version": "0.3.0", "result": "rollback", "reason": "server_unerreichbar"}]  # ... gemerkt
     # Netz wieder da: zuerst die offene Meldung, dann der neue Versuch derselben Version
     world.api.offline, world.healthy = False, True
     world.updater._sleep = world.sleep
     assert world.rebuild().run_once() == "aktualisiert"
-    assert world.api.results == [("0.3.0", "rollback", "ungesund"), ("0.3.0", "ok", "")]
+    assert world.api.results == [("0.3.0", "rollback", "server_unerreichbar"), ("0.3.0", "ok", "")]
     assert world.state().pending_reports == []
 
 
@@ -481,7 +482,7 @@ def test_cap_rollback_that_fails_keeps_the_no_reject_marker(tmp_path):
     world = World(tmp_path, healthy=False, fail_up={"0.2.0"})
     _offline_until(world, 10 ** 9)
     assert world.updater.run_once() == "vorlaeufig"
-    assert world.state().in_progress["rollback"] == "ungesund"
+    assert world.state().in_progress["rollback"] == "server_unerreichbar"
     world.compose.fail_up.clear()
     world.updater.recover()
     state = world.state()
@@ -738,3 +739,4 @@ def test_unreadable_current_version_does_not_block_updates(tmp_path):
 
 def test_downgrade_reason_is_in_the_fixed_list():
     assert "version_zu_alt" in updater.REASONS
+    assert updater.RETRY_REASON in updater.REASONS

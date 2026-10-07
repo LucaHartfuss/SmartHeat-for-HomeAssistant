@@ -24,7 +24,8 @@ Umgebung ist kein Fehler des Bundles (Final-Review FW-1/FW-2):
   DeviceApiError inkl. NotAuthenticated, z. B. Uhr nach dem Stromausfall noch nicht synchron, gilt als nicht
   erreichbar) - nach einem Stromausfall im ganzen Haus kommt der Router oft erst nach dem Pi. Hoechstens
   HEALTH_CAP_SECONDS insgesamt; ist der Server dann noch immer nicht erreichbar, geht es zurueck auf das vorige Bundle,
-  ohne die Version abzulehnen (sie wird erneut versucht, solange der Server sie will), gemeldet als rollback/ungesund.
+  ohne die Version abzulehnen (sie wird erneut versucht, solange der Server sie will), gemeldet als
+  rollback/server_unerreichbar (RETRY_REASON; rollback/ungesund heisst dagegen immer abgelehnt).
 - Fehlt ein Geraetepfad aus `devices:` des Ziel-Bundles (Zigbee-Stick abgezogen), wird nicht umgeschaltet
   ("vorlaeufig"); ein unterbrochenes Update wartet in recover() ebenso, statt zurueckzurollen.
 - update_result geht ueber die Warteschlange pending_reports: erst mit dem Zustand gespeichert, dann gesendet; was nicht
@@ -51,8 +52,11 @@ from smartheat_host import bundles, device_api, minisign
 
 logger = logging.getLogger(__name__)
 
+#: Grund eines Rueckwegs ohne Ablehnung: der Server war waehrend der ganzen Gesundheitspruefung nicht erreichbar, die
+#: Version wird erneut versucht (G3-Restpunkt; der Server zeigt ihn dem Betreiber als "wird erneut versucht").
+RETRY_REASON = "server_unerreichbar"
 REASONS = ("manifest_ungueltig", "signatur_ungueltig", "updater_zu_alt", "version_zu_alt",
-           "start_fehlgeschlagen", "ungesund")
+           "start_fehlgeschlagen", "ungesund", RETRY_REASON)
 HEALTH_SECONDS = 600
 HEALTH_POLL_SECONDS = 10
 HEALTH_CAP_SECONDS = 3600  # Gesamtgrenze der Gesundheitspruefung, wenn die Frist wegen Unerreichbarkeit ruht
@@ -281,7 +285,10 @@ class Updater:
         if outcome == _UNREACHABLE:
             logger.error("Server nach %d s nicht erreichbar, %s wird spaeter erneut versucht", HEALTH_CAP_SECONDS,
                          version)
-        done = self._rollback(state, version, "ungesund", reject=outcome == _UNHEALTHY)
+        if outcome == _UNHEALTHY:
+            done = self._rollback(state, version, "ungesund")
+        else:
+            done = self._rollback(state, version, RETRY_REASON, reject=False)
         return "zurueckgerollt" if done else "vorlaeufig"
 
     # --- Schritte ---
