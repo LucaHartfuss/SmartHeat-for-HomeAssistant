@@ -1,6 +1,6 @@
 #!/bin/bash
 # Host-Installer des SmartHeat-Gateways (Spec SHG G2 8.2, G2b-1 6): idempotent, eine Quelle fuer das Image (G2b-2,
-# chroot mit --no-activate) und fuer Bastler auf frischem Raspberry Pi OS Lite 64 bit (Debian 13 trixie).
+# chroot mit --image) und fuer Bastler auf frischem Raspberry Pi OS Lite 64 bit (Debian 13 trixie).
 # Aufruf: install.sh --device-api-url URL [--portal-base-url URL] [--diag-hostnames NAMEN] [--timezone ZONE]
 #                    [--bundle ORDNER] [--pilot-ssh PUBKEY] [--root PFAD] [--no-docker] [--no-activate] [--image]
 # ACHTUNG: Ohne --pilot-ssh bleibt Port 22 in der Firewall zu und ssh wird deaktiviert (laufende Sitzungen bestehen bis
@@ -41,8 +41,8 @@ if [ -z "$PILOT_KEY" ] && [ -f /etc/smartheat/pilot-ssh-tunnel.env ]; then
   exit 1
 fi
 if [ -z "$PILOT_KEY" ]; then
-  echo "WARNUNG: ohne --pilot-ssh wird ssh deaktiviert und Port 22 bleibt zu (laufende Sitzungen bestehen bis zu ihrem" \
-    "Ende weiter, neue sind nicht mehr moeglich)." >&2
+  echo "WARNUNG: ohne --pilot-ssh wird ssh deaktiviert und Port 22 bleibt zu" \
+    "(laufende Sitzungen bestehen bis zu ihrem Ende weiter, neue sind nicht mehr moeglich)." >&2
 fi
 CHANGED=0 WROTE=0 FIREWALL_CHANGED=0
 
@@ -244,7 +244,8 @@ start_current() {
 from smartheat_host import bundles
 print(" ".join(p for p in bundles.compose_devices(open(sys.argv[1]).read()) if not os.path.exists(p)))' "$compose")"
   if [ -n "$missing" ]; then
-    echo "HINWEIS: Geraet fehlt: $missing (Zigbee-Stick nicht eingesteckt?). Die Gateway-Dienste sind nicht gestartet;" \
+    echo "HINWEIS: Geraet fehlt: $missing (Zigbee-Stick nicht eingesteckt?)." \
+      "Die Gateway-Dienste sind nicht gestartet;" \
       "Stick einstecken und install.sh mit denselben Optionen erneut ausfuehren."
     return 0
   fi

@@ -2,7 +2,8 @@
 (https, SHA-256, minisign gegen release.pub, Version, min_updater_version) und Bundle-Dateien, schaltet per Compose um,
 wartet bis zu 10 min auf "gesund" und rollt sonst auf das vorige Bundle zurueck. Nur streng neuere Versionen werden
 geladen (Downgrade-Schutz, Grund version_zu_alt; der Betreiber gibt fuer einen Rueckweg der Flotte den alten Stand als
-neue Version heraus). Fristen ueber die monotone Uhr (die Wanduhr springt beim Boot). Zustand in updater/state.json (atomar, 0644), Format:
+neue Version heraus). Fristen ueber die monotone Uhr (die Wanduhr springt beim Boot).
+Zustand in updater/state.json (atomar, 0644), Format:
 
     {"current": str|null, "previous": str|null, "rejected": [str],
      "rejected_context": {"updater": str, "key": str}|null,

@@ -127,3 +127,11 @@ def test_binary_corrupt_passwd_is_rebuilt(tmp_path):
 def test_mosquitto_verify_rejects_absurd_iteration_counts():
     for count in ("99999999999", "1000001", "99999999999999999999999999"):
         assert not init.mosquitto_verify("test-pw", f"$7${count}$YWJj$ZGVm")
+
+
+def test_binary_corrupt_acl_is_rewritten(tmp_path):
+    _run(tmp_path)
+    acl = tmp_path / "bus" / "mosquitto" / "acl"
+    acl.write_bytes(b"\xff\xfe\x00\x80 kaputt")
+    assert _run(tmp_path) == ["bus/mosquitto/acl"]
+    assert acl.read_text() == init.render_acl()

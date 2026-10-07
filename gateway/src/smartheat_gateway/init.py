@@ -75,6 +75,14 @@ def render_acl() -> str:
     ) + "\n"
 
 
+def _acl_matches(path: Path) -> bool:
+    """Entspricht die ACL-Datei der gerenderten? Unlesbar oder kein UTF-8 gilt als abweichend."""
+    try:
+        return path.read_text() == render_acl()
+    except (OSError, ValueError):  # auch FileNotFoundError, UnicodeDecodeError
+        return False
+
+
 def adapter(host_dir: Path, default: str) -> str:
     try:
         value = (host_dir / "zigbee_adapter").read_text().strip()
@@ -110,7 +118,7 @@ def ensure(bus_dir: Path, zigbee_dir: Path, data_dir: Path, adapter_name: str,
         write_text_private(passwd, "".join(f"{s}:{mosquitto_hash(passwords[s])}\n" for s in SERVICES))
         written.append("bus/mosquitto/passwd")
     acl = bus_dir / "mosquitto" / "acl"
-    if not acl.exists() or acl.read_text() != render_acl():
+    if not _acl_matches(acl):
         write_text_private(acl, render_acl())
         written.append("bus/mosquitto/acl")
     if z2m_config.ensure(zigbee_dir, adapter_name, "zigbee2mqtt", passwords["zigbee2mqtt"]):

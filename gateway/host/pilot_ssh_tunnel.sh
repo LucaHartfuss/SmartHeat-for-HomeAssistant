@@ -71,7 +71,9 @@ case "$ACTION" in
     fi ;;
   remove)
     if [ "$ACTIVATE" = 1 ]; then systemctl disable --now smartheat-pilot-ssh.service 2>/dev/null || true; fi
-    if [ -e "$UNIT" ] || [ -e "$ENV_FILE" ]; then rm -f "$UNIT" "$ENV_FILE"; CHANGED=1; echo "entfernt: Pilot-SSH-Tunnel"; fi
+    if [ -e "$UNIT" ] || [ -e "$ENV_FILE" ]; then
+      rm -f "$UNIT" "$ENV_FILE"; CHANGED=1; echo "entfernt: Pilot-SSH-Tunnel"
+    fi
     if [ "$ACTIVATE" = 1 ]; then systemctl daemon-reload; fi ;;
   *) echo "Aufruf: $0 install --token-file DATEI [--deb DATEI] [--no-activate] | remove [--no-activate]" >&2; exit 2 ;;
 esac

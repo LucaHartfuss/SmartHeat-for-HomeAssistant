@@ -53,7 +53,7 @@ HA-Add-on-Repository mit zwei Add-ons: `heizungsbruecke` (Client-seitige Bridge-
   ein (Token als Datei; `install.sh` bricht ohne `--pilot-ssh` ab, solange er eingerichtet ist).
 - `gateway/image/` — **Basis-Image** (SHG G2b-2, `rpi-image-gen` v2.8.0): Layer und Konfiguration, `prepare.sh` (Stage),
   `build.sh`/`make_image.sh`, Hooks, `rootfs_checks.sh` und `own_url.sh` (Adressregel: nur eigener DNS-Name per https, nie IP
-  oder AWS-Adresse). Gebaut wird nur auf einem arm64-Host bzw. in der CI (`.github/workflows/image-gateway.yml`, im Release
+  oder AWS-Adresse). Gebaut wird auf einem arm64-Host (oder mit QEMU-binfmt) bzw. in der CI (`.github/workflows/image-gateway.yml`, im Release
   als Job `image`); Tests (`test_image_scripts.py`, `test_image_rootfs_checks.py`) laufen ohne Image-Bau.
 - `gateway/release/` — Bundle-Bau (`build_bundle.py`: Compose mit Image-Digests und Manifest; nutzt dieselben
   Prüffunktionen wie der Updater), `verify_bundle.py` (Neubau aus dem Tag und byte-genauer Vergleich vor dem Signieren),

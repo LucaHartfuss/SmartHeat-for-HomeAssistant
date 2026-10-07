@@ -100,7 +100,7 @@ def test_image_job_runs_only_after_a_real_signing_and_never_in_dryrun():
     assert job["permissions"] == {"contents": "read"}
     assert job["needs"] == ["build", "sign"]
     assert job["with"]["artifact"] == "gateway-bundle-signed"
-    assert "verify" not in job["with"]  # immer gegen release.pub (Standard true)
+    assert "verify" not in job["with"]  # kein Schalter mehr: immer gegen release.pub
     assert job["with"]["portal_base_url"] == "${{ vars.SHG_PORTAL_BASE_URL }}"
 
 
@@ -259,3 +259,11 @@ def test_no_workflow_uses_an_ip_address_or_aws_host_as_url():
             host = re.sub(r"^https?://", "", url).split("/")[0].split(":")[0]
             assert not re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", host), (path.name, url)
             assert "amazonaws.com" not in host, (path.name, url)
+
+
+def test_image_workflow_always_verifies_the_signature_against_release_pub():
+    image = yaml.safe_load(IMAGE_WORKFLOW.read_text())
+    assert "verify" not in image[True]["workflow_call"]["inputs"]  # kein Schalter zum Abschalten
+    assert "VERIFY" not in image["jobs"]["image"]["env"]
+    step = [s for s in image["jobs"]["image"]["steps"] if "release.pub" in s.get("run", "")]
+    assert len(step) == 1 and "if" not in step[0]

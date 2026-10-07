@@ -11,7 +11,6 @@ on:
       device_api_url: {type: string, required: true}
       portal_base_url: {type: string, required: true}
       pilot_ssh_pubkey: {type: string, required: false, default: ""}
-      verify: {type: boolean, required: false, default: true}
   workflow_dispatch:
     inputs:
       tag: {description: "Veroeffentlichtes Release gateway-vX.Y.Z", type: string, required: true}
@@ -30,7 +29,6 @@ jobs:
       API_URL: ${{ inputs.device_api_url }}
       PORTAL_URL: ${{ inputs.portal_base_url }}
       PILOT_KEY: ${{ inputs.pilot_ssh_pubkey }}
-      VERIFY: ${{ github.event_name == 'workflow_dispatch' || inputs.verify }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -72,7 +70,6 @@ jobs:
           gh release download "$TAG" -R "$GITHUB_REPOSITORY" -D "$RUNNER_TEMP/in/bundle" \
             -p docker-compose.yml -p mosquitto.conf -p manifest.json -p manifest.json.minisig
       - name: Signatur gegen release.pub pruefen
-        if: env.VERIFY == 'true'
         env:
           PYTHONPATH: gateway/host:gateway/src
         run: |
