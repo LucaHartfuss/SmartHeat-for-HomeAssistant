@@ -18,7 +18,7 @@ Hardware-Gate (Teil B) mit dem echten minisign-Schluessel.
   Denylist bleibt als Tiefenverteidigung.
 - Zeitzone Europe/Berlin und Standard-Locale de_DE.UTF-8 (Tastatur de) im Image (Abschnitt `locale` der
   Image-Konfiguration; Pakete `locales` und `tzdata` im Layer, `locale_default.sh` setzt LANG, weil `locale-base` von
-  rpi-image-gen v2.8.0 `LANG=C.UTF-8` schreibt); `rootfs_checks.sh` prueft `/etc/localtime` und `/etc/locale.conf`.
+  rpi-image-gen v2.8.0 `LANG=C.UTF-8` schreibt); `rootfs_checks.sh` prueft `/etc/localtime`, `/etc/locale.conf` und `/etc/default/keyboard`.
 - WLAN aus in jedem Image (das Gateway laeuft nur am Ethernet): `wlan_off.sh` maskiert `iwd.service`, entfernt
   `02-wlan0.network` und setzt `dtoverlay=disable-wifi` in der `config.txt`; Bluetooth bleibt unberuehrt (kein
   Bluetooth-Dienst im Image). `rootfs_checks.sh` prueft alle drei Stellen.

@@ -314,6 +314,7 @@ def test_rootfs_checks_and_install_expect_the_configured_timezone_and_locale():
     checks = (IMAGE / "rootfs_checks.sh").read_text()
     assert re.search(rf"^SHG_IMAGE_TIMEZONE={re.escape(wanted['timezone'])}$", checks, re.MULTILINE)
     assert re.search(rf"^SHG_IMAGE_LOCALE={re.escape(wanted['default'])}$", checks, re.MULTILINE)
+    assert re.search(rf"^SHG_IMAGE_KEYMAP={re.escape(wanted['keyboard_keymap'])}$", checks, re.MULTILINE)
     assert f'TZ_NAME="{wanted["timezone"]}"' in (GW / "host" / "install.sh").read_text()
 
 
@@ -437,6 +438,21 @@ def test_wlan_off_masks_iwd_drops_the_wlan_network_and_disables_the_chip(tmp_pat
     # ein zweiter Lauf haengt nichts doppelt an
     assert _wlan_off(tmp_path, root).returncode == 0
     assert (root / "boot/firmware/config.txt").read_text() == config
+
+
+def test_wlan_off_appends_its_own_block_even_if_the_overlay_appears_elsewhere(tmp_path):
+    """Der Waechter gegen doppeltes Anhaengen erkennt nur den eigenen Block (Markierung, [all], Overlay): ein
+    dtoverlay=disable-wifi in einem anderen Abschnitt (hier [pi5]) wirkt auf dem Pi 4 nicht und zaehlt nicht."""
+    root = _wlan_root(tmp_path)
+    config = root / "boot/firmware/config.txt"
+    config.write_text("[pi5]\ndtoverlay=disable-wifi\n[all]\nuart_2ndstage=1\n")
+    assert _wlan_off(tmp_path, root).returncode == 0
+    text = config.read_text()
+    assert text.startswith("[pi5]\ndtoverlay=disable-wifi\n[all]\nuart_2ndstage=1\n")
+    marker = "# SmartHeat-Gateway: nur Ethernet, WLAN-Chip abgeschaltet (gateway/image/wlan_off.sh)"
+    assert text.rstrip().endswith(f"{marker}\n[all]\ndtoverlay=disable-wifi")
+    assert _wlan_off(tmp_path, root).returncode == 0
+    assert config.read_text() == text and text.count(marker) == 1
 
 
 def test_wlan_off_fails_without_config_txt(tmp_path):

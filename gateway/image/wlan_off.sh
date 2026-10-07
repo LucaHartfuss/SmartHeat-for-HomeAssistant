@@ -22,8 +22,13 @@ fi
 chroot "$R" systemctl disable iwd.service
 chroot "$R" systemctl mask iwd.service
 rm -f "$R/etc/systemd/network/02-wlan0.network"
-if ! grep -qx 'dtoverlay=disable-wifi' "$CONFIG"; then
-  printf '\n# SmartHeat-Gateway: nur Ethernet, WLAN-Chip abgeschaltet (gateway/image/wlan_off.sh)\n[all]\n%s\n' \
-    'dtoverlay=disable-wifi' >>"$CONFIG"
+# Waechter gegen doppeltes Anhaengen: nur der eigene Block (Markierung, [all], Overlay in drei Zeilen hintereinander);
+# ein disable-wifi in einem anderen Abschnitt (z. B. [pi5]) wirkt auf dem Pi 4 nicht und zaehlt nicht.
+MARK='# SmartHeat-Gateway: nur Ethernet, WLAN-Chip abgeschaltet (gateway/image/wlan_off.sh)'
+if ! awk -v mark="$MARK" '{ l[NR] = $0 }
+      END { for (i = 1; i + 2 <= NR; i++)
+              if (l[i] == mark && l[i + 1] == "[all]" && l[i + 2] == "dtoverlay=disable-wifi") exit 0
+            exit 1 }' "$CONFIG"; then
+  printf '\n%s\n[all]\ndtoverlay=disable-wifi\n' "$MARK" >>"$CONFIG"
 fi
 echo "WLAN aus: iwd maskiert, 02-wlan0.network entfernt, dtoverlay=disable-wifi in config.txt"

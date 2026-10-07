@@ -33,6 +33,7 @@ OWNER_UID="${SHG_ROOTFS_CHECK_UID:-0}"
 # setzt sie von dort; test_image_scripts.py prueft die Gleichheit).
 SHG_IMAGE_TIMEZONE=Europe/Berlin
 SHG_IMAGE_LOCALE=de_DE.UTF-8
+SHG_IMAGE_KEYMAP=de
 FAIL=0
 fail() { echo "FAIL: $1"; FAIL=1; }
 WANTS="$R/etc/systemd/system/multi-user.target.wants"
@@ -161,7 +162,9 @@ elif [ -e "$R/etc/timezone" ] && [ "$(tr -d '[:space:]' <"$R/etc/timezone")" != 
 fi
 
 # Standard-Locale: genau LANG=<Locale> in /etc/locale.conf (trixie; /etc/default/locale ist dort ein Link darauf) bzw.
-# in /etc/default/locale als eigener Datei, kein LC_ALL, das LANG ueberstimmt. Die Locale muss erzeugt sein.
+# in /etc/default/locale als eigener Datei. Nichts, was LANG ueberstimmt: kein aktives LC_ALL, kein LC_MESSAGES=C/POSIX,
+# LANGUAGE nur mit der Sprache der Locale (z. B. de_DE:de; locale-base schreibt LANGUAGE=C, update-locale --reset
+# kommentiert es aus). Die Locale muss erzeugt sein.
 locale_problem() {
   local f target lang
   local -a files=()
@@ -178,6 +181,12 @@ locale_problem() {
     lang="$(grep -E '^[[:space:]]*LANG=' "$R/$f")"
     if [ "$lang" != "LANG=$SHG_IMAGE_LOCALE" ]; then echo "/$f: LANG ist nicht genau $SHG_IMAGE_LOCALE"; return; fi
     if grep -qE '^[[:space:]]*LC_ALL=' "$R/$f"; then echo "/$f: LC_ALL ueberstimmt LANG"; return; fi
+    if grep -qE '^[[:space:]]*LC_MESSAGES="?(C|POSIX)([.@"].*)?$' "$R/$f"; then
+      echo "/$f: LC_MESSAGES=C/POSIX ueberstimmt LANG"; return
+    fi
+    if grep -E '^[[:space:]]*LANGUAGE=' "$R/$f" | grep -qvE "^[[:space:]]*LANGUAGE=\"?${SHG_IMAGE_LOCALE%%_*}"; then
+      echo "/$f: LANGUAGE nennt nicht ${SHG_IMAGE_LOCALE%%_*}"; return
+    fi
   done
   if ! grep -qE "^[[:space:]]*${SHG_IMAGE_LOCALE//./\\.}[[:space:]]+UTF-8" "$R/etc/locale.gen" 2>/dev/null; then
     echo "$SHG_IMAGE_LOCALE nicht in /etc/locale.gen (nicht erzeugt)"; return
@@ -186,6 +195,11 @@ locale_problem() {
 }
 why="$(locale_problem)"
 [ -z "$why" ] || fail "Locale nicht $SHG_IMAGE_LOCALE: $why"
+# Tastatur (keyboard-configuration aus der debconf-Vorbelegung von locale-base): genau eine aktive XKBLAYOUT-Zeile.
+kbd="$(grep -E '^[[:space:]]*XKBLAYOUT=' "$R/etc/default/keyboard" 2>/dev/null)"
+if [ "$kbd" != "XKBLAYOUT=\"$SHG_IMAGE_KEYMAP\"" ]; then
+  fail "Tastatur nicht $SHG_IMAGE_KEYMAP (/etc/default/keyboard: ${kbd:-fehlt})"
+fi
 
 # Geraete-API und Portal: eigener DNS-Name per https. Genau eine Zuweisung KEY=... am Zeilenanfang; jede andere Zeile,
 # die den Schluessel nennt (Leerzeichen, export, Kommentar, doppelt), koennte je nach Leser (Docker, systemd, Shell)

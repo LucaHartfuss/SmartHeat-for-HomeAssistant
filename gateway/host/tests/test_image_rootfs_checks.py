@@ -230,6 +230,7 @@ def _good(root: Path, pilot: bool = False) -> Path:
         "etc/locale.conf": "LANG=de_DE.UTF-8\n#LANGUAGE=C\n",
         "etc/locale.gen": "# en_GB.UTF-8 UTF-8\nde_DE.UTF-8 UTF-8\n",
         "usr/lib/locale/locale-archive": "archive",
+        "etc/default/keyboard": 'XKBMODEL="pc105"\nXKBLAYOUT="de"\nXKBVARIANT=""\nXKBOPTIONS=""\n',
         # WLAN aus (wlan_off.sh): nur die Ethernet-Konfiguration, WLAN-Chip per Overlay abgeschaltet
         "etc/systemd/network/01-eth0.network": "[Match]\nName=eth0\n\n[Network]\nDHCP=yes\n",
         CONFIG_TXT: GOOD_CONFIG_TXT,
@@ -369,8 +370,21 @@ def _relink(path: Path, target: str) -> None:
      "Locale"),
     (lambda r: (r / "etc/locale.gen").write_text("en_GB.UTF-8 UTF-8\n# de_DE.UTF-8 UTF-8\n"), "Locale"),
     (lambda r: (r / "usr/lib/locale/locale-archive").unlink(), "Locale"),
+    (lambda r: (r / "etc/locale.conf").write_text("LANG=de_DE.UTF-8\nLANGUAGE=C\n"), "LANGUAGE"),
+    (lambda r: (r / "etc/locale.conf").write_text("LANG=de_DE.UTF-8\nLANGUAGE=en_GB:en\n"), "LANGUAGE"),
+    (lambda r: (r / "etc/locale.conf").write_text("LANG=de_DE.UTF-8\nLANGUAGE=\n"), "LANGUAGE"),
+    (lambda r: (r / "etc/locale.conf").write_text("LANG=de_DE.UTF-8\nLC_ALL=POSIX\n"), "LC_ALL"),
+    (lambda r: (r / "etc/locale.conf").write_text("LANG=de_DE.UTF-8\nLC_MESSAGES=C\n"), "LC_MESSAGES"),
+    (lambda r: (r / "etc/locale.conf").write_text("LANG=de_DE.UTF-8\nLC_MESSAGES=\"POSIX\"\n"), "LC_MESSAGES"),
+    (lambda r: (r / "etc/default/locale").unlink()
+     or (r / "etc/default/locale").write_text("LANG=de_DE.UTF-8\nLANGUAGE=C\n"), "LANGUAGE"),
+    (lambda r: (r / "etc/default/keyboard").write_text('XKBMODEL="pc105"\nXKBLAYOUT="gb"\n'), "Tastatur"),
+    (lambda r: (r / "etc/default/keyboard").write_text('#XKBLAYOUT="de"\nXKBLAYOUT="us"\n'), "Tastatur"),
+    (lambda r: (r / "etc/default/keyboard").unlink(), "Tastatur"),
 ], ids=["london", "utc", "no-localtime", "berlin2", "no-zonefile", "etc-timezone-london", "lang-c", "lang-en",
-        "lang-commented", "lc-all", "lang-twice", "no-locale-file", "default-locale-c", "not-generated", "no-archive"])
+        "lang-commented", "lc-all", "lang-twice", "no-locale-file", "default-locale-c", "not-generated", "no-archive",
+        "language-c", "language-en", "language-empty", "lc-all-posix", "lc-messages-c", "lc-messages-posix-quoted",
+        "default-locale-language-c", "keyboard-gb", "keyboard-us", "no-keyboard"])
 def test_timezone_and_default_locale_are_checked(tmp_path, breakit, problem):
     """Zeitzone Europe/Berlin und Standard-Locale de_DE.UTF-8 (config/smartheat-gateway.yaml, Abschnitt locale):
     jede Abweichung allein laesst die Pruefung scheitern, mit genau einer passenden Meldung."""
@@ -388,7 +402,10 @@ def test_timezone_and_default_locale_are_checked(tmp_path, breakit, problem):
     lambda r: (r / "etc/default/locale").unlink(),
     lambda r: (r / "etc/default/locale").unlink() or (r / "etc/default/locale").write_text("LANG=de_DE.UTF-8\n"),
     lambda r: (r / "etc/locale.conf").write_text("# Kommentar\nLANG=de_DE.UTF-8\nLANGUAGE=de_DE:de\n"),
-], ids=["relative-link", "etc-timezone-berlin", "no-default-locale", "default-locale-file", "language-de"])
+    lambda r: (r / "etc/locale.conf").write_text(
+        "LANG=de_DE.UTF-8\n# LANGUAGE=C\n#LC_ALL=C\nLC_MESSAGES=de_DE.UTF-8\n"),
+], ids=["relative-link", "etc-timezone-berlin", "no-default-locale", "default-locale-file", "language-de",
+        "commented-overrides"])
 def test_timezone_and_locale_variants_that_are_fine(tmp_path, fixit):
     root = _good(tmp_path)
     fixit(root)
