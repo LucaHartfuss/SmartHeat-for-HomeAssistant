@@ -3,10 +3,27 @@
 Wird im Update-Dialog des Supervisors angezeigt. Pro Version ein Abschnitt `## X.Y.Z`; der
 Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Release.
 
-## Unveröffentlicht
+## 0.34.0
 
-- weishaupt_modbus 2.0 neben 1.x; Schreibwerte nie außerhalb des Wertebereichs der Entity (nur enger als die lokalen
-  Grenzen).
+- **Kein „Neu konfigurieren“ nötig:** Das Optionsschema ist unverändert. Die Integration ab 0.12.0 genügt; für `client1`
+  (Vaillant) ändern sich Werte, Boost, Meldungen, Statusereignis und `backup.json` nicht.
+- **Wertebereich der Anlage:** Geschriebene Werte werden zusätzlich auf den Wertebereich der zugeordneten Entity begrenzt
+  (`min`/`max` der Zahl-Entity bzw. `min_temp`/`max_temp` der Klima-Entity), nie weiter als die lokalen Sicherheitsgrenzen
+  des Add-ons – der Bereich kann sie nur verengen. Fehlt der Anlagenbereich, ist er unbrauchbar oder schneidet er sich
+  nicht mit den lokalen Grenzen, gelten die lokalen Grenzen. Der Bereich wird je Hebel fünf Minuten gemerkt, bei einem
+  Lesefehler bleibt der letzte gute Wert; weicht er erstmals vom lokalen ab, steht eine Zeile im Log. Auch das Durchsetzen
+  des Mindestvorlaufs rechnet mit diesem Bereich (sonst bliebe eine dauerhafte Abweichung). Nicht zugeordnete Hebel
+  erzeugen keinen Traceback mehr.
+- **weishaupt_modbus 2.0 neben 1.x:** Die Betriebsart „Normal“ heißt in 1.x `hz_operationmode_normal`, ab 2.0
+  `heating_circuit_operation_mode_normal`; das Add-on erkennt das Schema am aktuellen Wert, wählt beim Vorbereiten „Normal“
+  und stellt beim Abmelden den Ursprungswert im passenden Schema zurück. Bei einem unbekannten Schema stellt es nichts um
+  und meldet den Fehler, statt eine Option zu raten. Der Normal-Bereich des Raumsolls ist je Schema fest (1.x 16–28 °C,
+  2.0 18–25 °C).
+- **Kern-Extraktion (SHG G1/G2a, verhaltensgleich):** Laufzeit, Abo-Prüfung, Meldungen und Regelpipeline liegen jetzt in den
+  Paketen `smartheat_runtime` und `smartheat_core`, die ohne Home Assistant laufen können (Grundlage des SmartHeat-Gateways);
+  das Add-on ist nur noch die dünne Home-Assistant-Anbindung (Host, Sinks, Texte). Ein Golden-Master-Test des ganzen Add-ons
+  vor der Umstellung belegt, dass Schreibwerte, Statusereignisse und Meldungen unverändert bleiben. Die Kundentexte bleiben
+  unverändert.
 
 ## 0.33.0
 
