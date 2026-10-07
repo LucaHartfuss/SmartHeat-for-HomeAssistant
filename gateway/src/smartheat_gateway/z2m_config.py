@@ -48,6 +48,12 @@ def ensure(zigbee_dir: Path, adapter: str, username: str, password: str) -> bool
 _KEY_LINE = re.compile(r"^(?P<indent> +)(?P<key>user|password): *(?P<value>.*?) *$")
 
 
+def _is_content(line: str) -> bool:
+    """Weder leer noch Kommentar: nur solche Zeilen zaehlen fuer Blockende und Einrueckung."""
+    stripped = line.strip()
+    return bool(stripped) and not stripped.startswith("#")
+
+
 def _unquote(value: str) -> str:
     if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
         return value[1:-1]
@@ -62,14 +68,14 @@ def sync_credentials(zigbee_dir: Path, username: str, password: str) -> bool:
     path = zigbee_dir / "configuration.yaml"
     try:
         lines = path.read_text().splitlines(keepends=True)
-    except FileNotFoundError:
+    except (OSError, ValueError):  # fehlt, Verzeichnis, keine Rechte, kein UTF-8: Datei bleibt unberuehrt
         return False
     start = next((i for i, line in enumerate(lines) if line.rstrip() == "mqtt:"), None)
     if start is None:
         return False
-    end = next((i for i in range(start + 1, len(lines)) if lines[i].strip() and not lines[i].startswith(" ")),
+    end = next((i for i in range(start + 1, len(lines)) if _is_content(lines[i]) and not lines[i].startswith(" ")),
                len(lines))
-    body = [i for i in range(start + 1, end) if lines[i].strip()]
+    body = [i for i in range(start + 1, end) if _is_content(lines[i])]
     if not body:
         return False
     first = lines[body[0]]

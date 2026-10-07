@@ -49,3 +49,28 @@ def test_sync_ignores_nested_keys_of_the_mqtt_block(tmp_path):
     path = tmp_path / "configuration.yaml"
     path.write_text('mqtt:\n  user: zigbee2mqtt\n  password: "test-pw"\n  extra:\n    password: anderes\n')
     assert not sync_credentials(tmp_path, "zigbee2mqtt", "test-pw")
+
+
+def test_sync_leaves_undecodable_or_unreadable_files_alone(tmp_path):
+    path = tmp_path / "configuration.yaml"
+    path.write_bytes(b"mqtt:\n  user: \xff\xfe\n")
+    assert not sync_credentials(tmp_path, "zigbee2mqtt", "test-pw")
+    assert path.read_bytes() == b"mqtt:\n  user: \xff\xfe\n"
+    path.unlink()
+    path.mkdir()  # Verzeichnis statt Datei
+    assert not sync_credentials(tmp_path, "zigbee2mqtt", "test-pw")
+
+
+def test_sync_comment_at_column_0_does_not_end_the_mqtt_block(tmp_path):
+    path = tmp_path / "configuration.yaml"
+    path.write_text('mqtt:\n  user: zigbee2mqtt\n# Kommentar\n  password: "test-alt"\nserial:\n  port: x\n')
+    assert sync_credentials(tmp_path, "zigbee2mqtt", "test-neu")
+    assert path.read_text() == ('mqtt:\n  user: zigbee2mqtt\n# Kommentar\n  password: "test-neu"\nserial:\n  port: x\n')
+
+
+def test_sync_comment_first_line_does_not_set_the_indent(tmp_path):
+    path = tmp_path / "configuration.yaml"
+    path.write_text("mqtt:\n      # tief eingerueckter Kommentar\n  server: mqtt://mosquitto:1883\n")
+    assert sync_credentials(tmp_path, "zigbee2mqtt", "test-pw")
+    assert path.read_text() == ('mqtt:\n  user: zigbee2mqtt\n  password: "test-pw"\n'
+                                "      # tief eingerueckter Kommentar\n  server: mqtt://mosquitto:1883\n")

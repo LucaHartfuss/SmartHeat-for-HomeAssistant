@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 SERVICES = ("agent", "runtime", "zigbee2mqtt")
 ITERATIONS = 101
 SALT_BYTES = 12
+MAX_VERIFY_ITERATIONS = 1_000_000  # Obergrenze beim Pruefen: ein feindlicher Eintrag soll nicht ewig rechnen
 ACL_RULES: dict[str, tuple[tuple[str, str], ...]] = {
     "agent": (
         ("read", "shg/status"), ("read", "shg/raum"), ("read", "shg/notify/#"), ("read", "shg/notify_push"),
@@ -47,12 +48,12 @@ def mosquitto_verify(password: str, line_hash: str) -> bool:
     """Passt das Passwort zum $7$-Eintrag (PBKDF2-SHA512) der Passwortdatei? Unlesbare Eintraege passen nie."""
     try:
         _, seven, iterations, salt_b64, digest_b64 = line_hash.split("$")
-        if seven != "7":
+        if seven != "7" or int(iterations) > MAX_VERIFY_ITERATIONS:
             return False
         salt = base64.b64decode(salt_b64, validate=True)
         digest = base64.b64decode(digest_b64, validate=True)
         computed = hashlib.pbkdf2_hmac("sha512", password.encode(), salt, int(iterations), len(digest))
-    except ValueError:  # auch binascii.Error
+    except (ValueError, OverflowError):  # auch binascii.Error
         return False
     return hmac.compare_digest(computed, digest)
 
@@ -61,7 +62,7 @@ def _passwd_matches(path: Path, passwords: dict[str, str]) -> bool:
     """Hat die Passwortdatei genau einen passenden Eintrag je Dienst?"""
     try:
         lines = path.read_text().splitlines()
-    except OSError:
+    except (OSError, ValueError):  # auch UnicodeDecodeError
         return False
     entries = dict(line.split(":", 1) for line in lines if ":" in line)
     return set(entries) == set(SERVICES) and all(mosquitto_verify(passwords[s], entries[s]) for s in SERVICES)

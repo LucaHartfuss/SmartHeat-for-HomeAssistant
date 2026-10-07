@@ -115,3 +115,15 @@ def test_mosquitto_verify():
     assert init.mosquitto_verify("test-pw", line) and not init.mosquitto_verify("test-anders", line)
     for broken in ("", "$6$abc$def", "$7$x$y$z", "$7$101$%%%$%%%"):
         assert not init.mosquitto_verify("test-pw", broken)
+
+
+def test_binary_corrupt_passwd_is_rebuilt(tmp_path):
+    _run(tmp_path)
+    passwd = tmp_path / "bus" / "mosquitto" / "passwd"
+    passwd.write_bytes(b"\xff\xfe\x80 kaputt")
+    assert _run(tmp_path) == ["bus/mosquitto/passwd"]
+
+
+def test_mosquitto_verify_rejects_absurd_iteration_counts():
+    for count in ("99999999999", "1000001", "99999999999999999999999999"):
+        assert not init.mosquitto_verify("test-pw", f"$7${count}$YWJj$ZGVm")
