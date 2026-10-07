@@ -1,7 +1,7 @@
 """rootfs_checks.sh (Plan G2b-2 Task 9) an einem nachgebauten Root-Dateisystem: ein gutes besteht, jede einzelne
 Verletzung (geteilte Identitaet, Passwort, SSH im Serien-Image, Tunnel-Token, fehlende Archive, fremde
 Geraete-API-Adresse) laesst es scheitern. Dazu die Adress-Regel own_url.sh (Nutzer-Vorgabe 2026-10-07: eigener
-DNS-Name per https, keine IP-Adresse, keine AWS-Adresse) direkt."""
+DNS-Name per https in der eigenen Zone hartfussha.org, keine IP-Adresse, keine AWS-Adresse) direkt."""
 import os
 import subprocess
 from pathlib import Path
@@ -27,15 +27,34 @@ GOOD_USB_HOOK = (
     "#!/bin/sh\n. /usr/share/initramfs-tools/hook-functions\n"
     "copy_file config /etc/udev/rules.d/99-rpi-01-smartheat-usbboot.rules\n"
 )
+CONFIG_TXT = "boot/firmware/config.txt"
+# Ende der Vorlage von rpi-image-gen v2.8.0 plus der Block aus wlan_off.sh
+GOOD_CONFIG_TXT = (
+    "dtparam=audio=on\n[pi4]\nenable_uart=1\n\n[all]\nuart_2ndstage=1\n\n"
+    "# SmartHeat-Gateway: nur Ethernet, WLAN-Chip abgeschaltet (gateway/image/wlan_off.sh)\n[all]\n"
+    "dtoverlay=disable-wifi\n"
+)
 
 GOOD_URLS = [
     "https://accounts.hartfussha.org",
     "https://accounts.hartfussha.org/",
     "https://portal.hartfussha.org",
+    "https://a-b.c1.hartfussha.org",
+    "https://hartfussha.org",
+    "https://Accounts.Hartfussha.ORG",
+    "https://ACCOUNTS.HARTFUSSHA.ORG",
+]
+# Sonst zulaessige DNS-Namen ausserhalb der eigenen Zone (Nutzer-Vorgabe 2026-10-07, Allowlist)
+FOREIGN_ZONE_URLS = [
     "https://accounts.example.test",
     "https://portal.example.test",
     "https://a-b.c1.example.org",
-    "https://Accounts.Hartfussha.ORG",
+    "https://hartfussha.org.evil.com",
+    "https://accounts.hartfussha.org.evil.com",
+    "https://evilhartfussha.org",
+    "https://accounts.evilhartfussha.org",
+    "https://hartfussha.com",
+    "https://hartfussha.org-evil.com",
 ]
 BAD_URLS = [
     "",
@@ -61,9 +80,9 @@ BAD_URLS = [
     "https://accounts.hartfussha.org/?x=1",
     "https://accounts.hartfussha.org#x",
     "https://accounts.hartfussha.org.",
-    "https://-bad.example.org",
-    "https://bad-.example.org",
-    "https://acc ounts.example.org",
+    "https://-bad.hartfussha.org",
+    "https://bad-.hartfussha.org",
+    "https://acc ounts.hartfussha.org",
     " https://accounts.hartfussha.org",
     "https://accounts.hartfussha.org\nSHG_ROOT=/",
     "https://abc123.execute-api.eu-central-1.amazonaws.com",
@@ -105,7 +124,7 @@ NON_ASCII_URLS = [
     "https://accounts\uff0ehartfussha.org",
     "https://\uff41ccounts.hartfussha.org",
 ]
-BAD_URLS += NON_ASCII_URLS
+BAD_URLS += NON_ASCII_URLS + FOREIGN_ZONE_URLS
 
 
 def _locales() -> list[str]:
@@ -141,8 +160,37 @@ def test_own_url_rejects_ip_aws_and_everything_but_https_with_a_dns_name(url):
     assert result.returncode == 1 and result.stdout.strip(), url
 
 
+@pytest.mark.parametrize("url", FOREIGN_ZONE_URLS)
+def test_own_url_names_the_own_zone_for_foreign_names(url):
+    result = _problem(url)
+    assert result.returncode == 1 and "Zone hartfussha.org" in result.stdout, result.stdout
+
+
+@pytest.mark.parametrize("url", [
+    "https://accounts.hartfussha.org.",  # Punkt am Ende: weiterhin abgelehnt (kein vollstaendiger Name)
+    "https://x.amazonaws.com.hartfussha.org",  # Denylist bleibt (Tiefenverteidigung), auch in der eigenen Zone
+    "https://192.168.2.154",
+])
+def test_other_rules_still_win_before_the_zone(url):
+    result = _problem(url)
+    assert result.returncode == 1 and "Zone" not in result.stdout, result.stdout
+
+
+def test_own_zones_are_defined_once_in_own_url_sh():
+    """Eine Stelle fuer die Regel: SHG_OWN_ZONES in own_url.sh, Hinweistext fuer Meldungen aus shg_own_url_hint."""
+    script = 'source "$1"; printf "%s|" "${SHG_OWN_ZONES[@]}"; echo; shg_own_url_hint'
+    result = subprocess.run(["bash", "-c", script, "_", str(OWN_URL)], capture_output=True, text=True, check=False)
+    zones, hint = result.stdout.splitlines()
+    assert zones == "hartfussha.org|"
+    assert "hartfussha.org" in hint and "https://" in hint
+    for path in IMAGE.glob("*.sh"):
+        if path.name != "own_url.sh":
+            assert "hartfussha" not in path.read_text(), path
+
+
 @pytest.mark.parametrize("locale", LOCALES)
-@pytest.mark.parametrize("url", NON_ASCII_URLS + ["https://x.amazonaws.com", "https://192.168.2.154"])
+@pytest.mark.parametrize("url", NON_ASCII_URLS + ["https://x.amazonaws.com", "https://192.168.2.154",
+                                                  "https://accounts.example.test"])
 def test_own_url_rule_does_not_depend_on_the_locale(url, locale):
     assert _problem(url, locale).returncode == 1, (url, locale)
 
@@ -154,7 +202,7 @@ def test_own_url_accepts_good_urls_in_every_locale(url, locale):
 
 
 def test_own_url_restores_the_callers_locale():
-    script = 'source "$1"; shg_own_url_problem https://accounts.example.test; printf %s "$LC_ALL"'
+    script = 'source "$1"; shg_own_url_problem https://accounts.hartfussha.org; printf %s "$LC_ALL"'
     result = subprocess.run(["bash", "-c", script, "_", str(OWN_URL)], capture_output=True, text=True, check=False,
                             env={**os.environ, "LC_ALL": "C.UTF-8"})
     assert result.stdout == "C.UTF-8"
@@ -167,8 +215,8 @@ def _good(root: Path, pilot: bool = False) -> Path:
         "etc/passwd": "root:x:0:0:root:/root:/bin/bash\npi:x:1000:1000::/home/pi:/bin/bash\n"
                       "nobody:*:65534:65534::/nonexistent:/usr/sbin/nologin\nlocked:!x:1001:1001::/:/bin/false\n",
         "etc/apt/sources.list.d/raspi.sources": "URIs: http://archive.raspberrypi.com/debian/\n",
-        ENV: "SHG_ROOT=/var/lib/smartheat\nSHG_DEVICE_API_URL=https://accounts.example.test\n"
-             "SHG_PORTAL_BASE_URL=https://portal.example.test\nTZ=Europe/Berlin\n",
+        ENV: "SHG_ROOT=/var/lib/smartheat\nSHG_DEVICE_API_URL=https://accounts.hartfussha.org\n"
+             "SHG_PORTAL_BASE_URL=https://portal.hartfussha.org\nTZ=Europe/Berlin\n",
         "var/lib/smartheat/updater/state.json": '{"current": "0.3.0", "in_progress": null}',
         "var/lib/smartheat/bundles/0.3.0/manifest.json.minisig": "sig",
         "var/lib/smartheat/images/01.tar": "x",
@@ -177,6 +225,15 @@ def _good(root: Path, pilot: bool = False) -> Path:
         "opt/smartheat/host/VERSION": "0.3.0\n",
         USB_RULE: GOOD_USB_RULE,
         USB_HOOK: GOOD_USB_HOOK,
+        # Zeitzone und Locale (locale_default.sh, Layer locale-base/locale-gen): so sieht es nach dem Bau aus
+        "usr/share/zoneinfo/Europe/Berlin": "TZif",
+        "etc/locale.conf": "LANG=de_DE.UTF-8\n#LANGUAGE=C\n",
+        "etc/locale.gen": "# en_GB.UTF-8 UTF-8\nde_DE.UTF-8 UTF-8\n",
+        "usr/lib/locale/locale-archive": "archive",
+        "etc/default/keyboard": 'XKBMODEL="pc105"\nXKBLAYOUT="de"\nXKBVARIANT=""\nXKBOPTIONS=""\n',
+        # WLAN aus (wlan_off.sh): nur die Ethernet-Konfiguration, WLAN-Chip per Overlay abgeschaltet
+        "etc/systemd/network/01-eth0.network": "[Match]\nName=eth0\n\n[Network]\nDHCP=yes\n",
+        CONFIG_TXT: GOOD_CONFIG_TXT,
     }
     if pilot:
         files["root/.ssh/authorized_keys"] = "ssh-ed25519 AAAA test-key\n"
@@ -186,6 +243,10 @@ def _good(root: Path, pilot: bool = False) -> Path:
     (root / "var/lib/smartheat/data").mkdir(parents=True)
     (root / WANTS).mkdir(parents=True)
     (root / USB_HOOK).chmod(0o755)
+    (root / "etc/systemd/system/iwd.service").symlink_to("/dev/null")
+    (root / "etc/localtime").symlink_to("/usr/share/zoneinfo/Europe/Berlin")
+    (root / "etc/default").mkdir(parents=True, exist_ok=True)
+    (root / "etc/default/locale").symlink_to("../locale.conf")
     for unit in UNITS + (("ssh",) if pilot else ()):
         (root / WANTS / f"{unit}.service").symlink_to(f"/lib/systemd/system/{unit}.service")
     for tree in ("opt/smartheat", "var/lib/smartheat/images"):  # wie im Image: nicht gruppen-/weltbeschreibbar
@@ -239,7 +300,7 @@ def test_uninitialized_machine_id_is_fine(tmp_path):
     lambda r: (r / WANTS / "smartheat-updater.service").unlink(),
     lambda r: (r / WANTS / "docker.service").unlink(),
     lambda r: (r / "etc/apt/sources.list.d/raspi.sources").unlink(),
-    lambda r: (r / ENV).write_text("SHG_DEVICE_API_URL=http://x\nSHG_PORTAL_BASE_URL=https://portal.example.test\n"),
+    lambda r: (r / ENV).write_text("SHG_DEVICE_API_URL=http://x\nSHG_PORTAL_BASE_URL=https://portal.hartfussha.org\n"),
     lambda r: (r / ENV).unlink(),
     lambda r: (r / "etc/passwd").write_text("root:x:0:0::/root:/bin/bash\npi::1000:1000::/home/pi:/bin/bash\n"),
     lambda r: (r / "etc/passwd").write_text("root:$6$salt$hash:0:0::/root:/bin/bash\n"),
@@ -287,6 +348,115 @@ def test_usb_boot_rule_and_hook_are_checked_strictly(tmp_path, breakit, problem)
     assert len(fails) == 1 and problem in fails[0], result.stdout
 
 
+def _relink(path: Path, target: str) -> None:
+    path.unlink()
+    path.symlink_to(target)
+
+
+@pytest.mark.parametrize("breakit, problem", [
+    (lambda r: _relink(r / "etc/localtime", "/usr/share/zoneinfo/Europe/London"), "Zeitzone"),
+    (lambda r: _relink(r / "etc/localtime", "/usr/share/zoneinfo/Etc/UTC"), "Zeitzone"),
+    (lambda r: (r / "etc/localtime").unlink(), "Zeitzone"),
+    (lambda r: _relink(r / "etc/localtime", "/usr/share/zoneinfo/Europe/Berlin2"), "Zeitzone"),
+    (lambda r: (r / "usr/share/zoneinfo/Europe/Berlin").unlink(), "Zeitzone"),
+    (lambda r: (r / "etc/timezone").write_text("Europe/London\n"), "Zeitzone"),
+    (lambda r: (r / "etc/locale.conf").write_text("LANG=C.UTF-8\nLANGUAGE=C\n"), "Locale"),
+    (lambda r: (r / "etc/locale.conf").write_text("LANG=en_GB.UTF-8\n"), "Locale"),
+    (lambda r: (r / "etc/locale.conf").write_text("#LANG=de_DE.UTF-8\n"), "Locale"),
+    (lambda r: (r / "etc/locale.conf").write_text("LANG=de_DE.UTF-8\nLC_ALL=C\n"), "Locale"),
+    (lambda r: (r / "etc/locale.conf").write_text("LANG=de_DE.UTF-8\nLANG=C.UTF-8\n"), "Locale"),
+    (lambda r: (r / "etc/locale.conf").unlink() or (r / "etc/default/locale").unlink(), "Locale"),
+    (lambda r: (r / "etc/default/locale").unlink() or (r / "etc/default/locale").write_text("LANG=C.UTF-8\n"),
+     "Locale"),
+    (lambda r: (r / "etc/locale.gen").write_text("en_GB.UTF-8 UTF-8\n# de_DE.UTF-8 UTF-8\n"), "Locale"),
+    (lambda r: (r / "usr/lib/locale/locale-archive").unlink(), "Locale"),
+    (lambda r: (r / "etc/locale.conf").write_text("LANG=de_DE.UTF-8\nLANGUAGE=C\n"), "LANGUAGE"),
+    (lambda r: (r / "etc/locale.conf").write_text("LANG=de_DE.UTF-8\nLANGUAGE=en_GB:en\n"), "LANGUAGE"),
+    (lambda r: (r / "etc/locale.conf").write_text("LANG=de_DE.UTF-8\nLANGUAGE=\n"), "LANGUAGE"),
+    (lambda r: (r / "etc/locale.conf").write_text("LANG=de_DE.UTF-8\nLC_ALL=POSIX\n"), "LC_ALL"),
+    (lambda r: (r / "etc/locale.conf").write_text("LANG=de_DE.UTF-8\nLC_MESSAGES=C\n"), "LC_MESSAGES"),
+    (lambda r: (r / "etc/locale.conf").write_text("LANG=de_DE.UTF-8\nLC_MESSAGES=\"POSIX\"\n"), "LC_MESSAGES"),
+    (lambda r: (r / "etc/default/locale").unlink()
+     or (r / "etc/default/locale").write_text("LANG=de_DE.UTF-8\nLANGUAGE=C\n"), "LANGUAGE"),
+    (lambda r: (r / "etc/default/keyboard").write_text('XKBMODEL="pc105"\nXKBLAYOUT="gb"\n'), "Tastatur"),
+    (lambda r: (r / "etc/default/keyboard").write_text('#XKBLAYOUT="de"\nXKBLAYOUT="us"\n'), "Tastatur"),
+    (lambda r: (r / "etc/default/keyboard").unlink(), "Tastatur"),
+], ids=["london", "utc", "no-localtime", "berlin2", "no-zonefile", "etc-timezone-london", "lang-c", "lang-en",
+        "lang-commented", "lc-all", "lang-twice", "no-locale-file", "default-locale-c", "not-generated", "no-archive",
+        "language-c", "language-en", "language-empty", "lc-all-posix", "lc-messages-c", "lc-messages-posix-quoted",
+        "default-locale-language-c", "keyboard-gb", "keyboard-us", "no-keyboard"])
+def test_timezone_and_default_locale_are_checked(tmp_path, breakit, problem):
+    """Zeitzone Europe/Berlin und Standard-Locale de_DE.UTF-8 (config/smartheat-gateway.yaml, Abschnitt locale):
+    jede Abweichung allein laesst die Pruefung scheitern, mit genau einer passenden Meldung."""
+    root = _good(tmp_path)
+    assert _run(root).returncode == 0
+    breakit(root)
+    result = _run(root)
+    fails = [line for line in result.stdout.splitlines() if line.startswith("FAIL:")]
+    assert result.returncode != 0 and len(fails) == 1 and problem in fails[0], result.stdout
+
+
+@pytest.mark.parametrize("fixit", [
+    lambda r: _relink(r / "etc/localtime", "../usr/share/zoneinfo/Europe/Berlin"),
+    lambda r: (r / "etc/timezone").write_text("Europe/Berlin\n"),
+    lambda r: (r / "etc/default/locale").unlink(),
+    lambda r: (r / "etc/default/locale").unlink() or (r / "etc/default/locale").write_text("LANG=de_DE.UTF-8\n"),
+    lambda r: (r / "etc/locale.conf").write_text("# Kommentar\nLANG=de_DE.UTF-8\nLANGUAGE=de_DE:de\n"),
+    lambda r: (r / "etc/locale.conf").write_text(
+        "LANG=de_DE.UTF-8\n# LANGUAGE=C\n#LC_ALL=C\nLC_MESSAGES=de_DE.UTF-8\n"),
+], ids=["relative-link", "etc-timezone-berlin", "no-default-locale", "default-locale-file", "language-de",
+        "commented-overrides"])
+def test_timezone_and_locale_variants_that_are_fine(tmp_path, fixit):
+    root = _good(tmp_path)
+    fixit(root)
+    result = _run(root)
+    assert result.returncode == 0, result.stdout
+
+
+IWD = "etc/systemd/system/iwd.service"
+
+
+@pytest.mark.parametrize("breakit, problem", [
+    (lambda r: (r / IWD).unlink(), "iwd"),
+    (lambda r: _relink(r / IWD, "/usr/lib/systemd/system/iwd.service"), "iwd"),
+    (lambda r: (r / WANTS / "iwd.service").symlink_to("/usr/lib/systemd/system/iwd.service"), "iwd"),
+    (lambda r: (r / "etc/systemd/system/network.target.wants").mkdir()
+     or (r / "etc/systemd/system/network.target.wants/iwd.service").symlink_to("/usr/lib/systemd/system/iwd.service"),
+     "iwd"),
+    (lambda r: (r / "etc/systemd/network/02-wlan0.network").write_text("[Match]\nName=wlan0\n"), "WLAN"),
+    (lambda r: (r / "etc/systemd/network/30-funk.network").write_text("[Match]\nName=wlan*\n[Network]\nDHCP=yes\n"),
+     "WLAN"),
+    (lambda r: (r / "etc/systemd/network/02-wlan0.network").write_text(""), "WLAN"),
+    (lambda r: (r / CONFIG_TXT).write_text(GOOD_CONFIG_TXT.replace("dtoverlay=", "#dtoverlay=")), "disable-wifi"),
+    (lambda r: (r / CONFIG_TXT).write_text(GOOD_CONFIG_TXT.rsplit("[all]", 1)[0] + "[pi5]\ndtoverlay=disable-wifi\n"),
+     "disable-wifi"),
+    (lambda r: (r / CONFIG_TXT).write_text("dtparam=audio=on\n"), "disable-wifi"),
+    (lambda r: (r / CONFIG_TXT).unlink(), "config.txt"),
+], ids=["iwd-not-masked", "iwd-linked", "iwd-wanted", "iwd-wanted-other-target", "wlan0-network", "wlan-glob",
+        "empty-wlan0-network", "overlay-commented", "overlay-in-pi5-section", "no-overlay", "no-config-txt"])
+def test_wlan_is_off(tmp_path, breakit, problem):
+    """Das Gateway laeuft nur am Ethernet (Nutzer-Vorgabe 2026-10-07): jede WLAN-Spur allein laesst die Pruefung
+    scheitern, mit genau einer passenden Meldung."""
+    root = _good(tmp_path)
+    assert _run(root).returncode == 0
+    breakit(root)
+    result = _run(root)
+    fails = [line for line in result.stdout.splitlines() if line.startswith("FAIL:")]
+    assert result.returncode != 0 and len(fails) == 1 and problem in fails[0], result.stdout
+
+
+@pytest.mark.parametrize("fixit", [
+    lambda r: (r / CONFIG_TXT).write_text("dtoverlay=disable-wifi\n[pi4]\nenable_uart=1\n"),  # vor jedem Abschnitt
+    lambda r: (r / CONFIG_TXT).write_text("[pi4]\nenable_uart=1\n[all]\n  dtoverlay=disable-wifi  \n"),
+    lambda r: (r / "etc/systemd/network/10-eth1.network").write_text("[Match]\nName=eth1\n"),
+], ids=["overlay-before-sections", "overlay-with-spaces", "other-ethernet"])
+def test_wlan_off_variants_that_are_fine(tmp_path, fixit):
+    root = _good(tmp_path)
+    fixit(root)
+    result = _run(root)
+    assert result.returncode == 0, result.stdout
+
+
 @pytest.mark.parametrize("url", ["https://accounts.hartfussha.org", "https://accounts.hartfussha.org/"])
 def test_own_hostname_as_device_api_passes(tmp_path, url):
     root = _good(tmp_path)
@@ -298,29 +468,30 @@ def test_own_hostname_as_device_api_passes(tmp_path, url):
     "https://192.168.2.154", "https://192.168.2.154:8443", "https://[2001:db8::1]", "https://localhost",
     "https://abc123.execute-api.eu-central-1.amazonaws.com", "https://my-lb-1.eu-central-1.elb.amazonaws.com",
     "https://abc.eu-central-1.awsapprunner.com", "https://accounts.hartfussha.org/api", "https://accounts",
-    "https://user@accounts.hartfussha.org", "",
+    "https://user@accounts.hartfussha.org", "", "https://accounts.example.test", "https://hartfussha.org.evil.com",
 ])
 def test_device_api_must_be_an_own_dns_name(tmp_path, url):
     root = _good(tmp_path)
-    (root / ENV).write_text(f"SHG_DEVICE_API_URL={url}\nSHG_PORTAL_BASE_URL=https://portal.example.test\n")
+    (root / ENV).write_text(f"SHG_DEVICE_API_URL={url}\nSHG_PORTAL_BASE_URL=https://portal.hartfussha.org\n")
     result = _run(root)
     assert result.returncode != 0 and "FAIL: Geraete-API" in result.stdout
 
 
-@pytest.mark.parametrize("url", ["https://10.0.0.5", "https://portal.cloudfront.net", ""])
+@pytest.mark.parametrize("url", ["https://10.0.0.5", "https://portal.cloudfront.net", "", "https://portal.example.test",
+                                 "https://evilhartfussha.org"])
 def test_portal_must_be_an_own_dns_name(tmp_path, url):
     root = _good(tmp_path)
-    (root / ENV).write_text(f"SHG_DEVICE_API_URL=https://accounts.example.test\nSHG_PORTAL_BASE_URL={url}\n")
+    (root / ENV).write_text(f"SHG_DEVICE_API_URL=https://accounts.hartfussha.org\nSHG_PORTAL_BASE_URL={url}\n")
     result = _run(root)
     assert result.returncode != 0 and "FAIL: Portal" in result.stdout
 
 
 @pytest.mark.parametrize("extra", [
-    "SHG_DEVICE_API_URL=https://accounts.example.test\n",  # doppelt, auch mit gleichem Wert
+    "SHG_DEVICE_API_URL=https://accounts.hartfussha.org\n",  # doppelt, auch mit gleichem Wert
     "SHG_PORTAL_BASE_URL=https://10.0.0.5\n",
     " SHG_DEVICE_API_URL=https://10.0.0.5\n",
     "export SHG_DEVICE_API_URL=https://10.0.0.5\n",
-    "SHG_PORTAL_BASE_URL =https://portal.example.test\n",
+    "SHG_PORTAL_BASE_URL =https://portal.hartfussha.org\n",
     "#SHG_DEVICE_API_URL=https://10.0.0.5\n",
 ])
 def test_gateway_env_needs_exactly_one_plain_assignment_per_address(tmp_path, extra):
