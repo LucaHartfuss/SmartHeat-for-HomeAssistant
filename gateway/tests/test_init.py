@@ -79,3 +79,39 @@ def test_unreadable_credentials_are_replaced_and_passwd_follows(tmp_path):
     written = _run(tmp_path, token=lambda n=32: "test-neu")
     assert written == ["bus/credentials/runtime/bus.json", "bus/mosquitto/passwd"]
     assert json.loads((tmp_path / "bus" / "credentials" / "runtime" / "bus.json").read_text())["password"] == "test-neu"
+
+
+def test_stale_passwd_is_rebuilt(tmp_path):
+    """Zurueckgespielte Sicherung: bus/passwd passt nicht mehr zu den Zugangsdateien (Plan G2b-2 Task 3)."""
+    _run(tmp_path)
+    passwd = tmp_path / "bus" / "mosquitto" / "passwd"
+    passwd.write_text("".join(f"{s}:{init.mosquitto_hash('test-veraltet')}\n" for s in init.SERVICES))
+    assert _run(tmp_path) == ["bus/mosquitto/passwd"]
+    entries = dict(line.split(":", 1) for line in passwd.read_text().splitlines())
+    for service in init.SERVICES:
+        password = json.loads((tmp_path / "bus" / "credentials" / service / "bus.json").read_text())["password"]
+        assert init.mosquitto_verify(password, entries[service])
+
+
+def test_passwd_with_a_missing_user_is_rebuilt(tmp_path):
+    _run(tmp_path)
+    passwd = tmp_path / "bus" / "mosquitto" / "passwd"
+    passwd.write_text("".join(line + "\n" for line in passwd.read_text().splitlines() if not line.startswith("agent:")))
+    assert _run(tmp_path) == ["bus/mosquitto/passwd"]
+
+
+def test_new_zigbee2mqtt_password_reaches_its_configuration(tmp_path):
+    """Schluesseltausch: Zugangsdatei geloescht -> neues Passwort in passwd UND in configuration.yaml."""
+    _run(tmp_path)
+    (tmp_path / "bus" / "credentials" / "zigbee2mqtt" / "bus.json").unlink()
+    written = _run(tmp_path, token=lambda n=32: "test-neu")
+    assert written == ["bus/credentials/zigbee2mqtt/bus.json", "bus/mosquitto/passwd",
+                       "zigbee2mqtt/configuration.yaml (Zugangsdaten)"]
+    assert 'password: "test-neu"' in (tmp_path / "zigbee2mqtt" / "configuration.yaml").read_text()
+
+
+def test_mosquitto_verify():
+    line = init.mosquitto_hash("test-pw")
+    assert init.mosquitto_verify("test-pw", line) and not init.mosquitto_verify("test-anders", line)
+    for broken in ("", "$6$abc$def", "$7$x$y$z", "$7$101$%%%$%%%"):
+        assert not init.mosquitto_verify("test-pw", broken)

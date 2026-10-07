@@ -1,9 +1,11 @@
 """Grundkonfiguration von Zigbee2MQTT 2.x (Spec SHG G2 5), einmal geschrieben, wenn configuration.yaml fehlt;
-danach gehoert die Datei Zigbee2MQTT (es ersetzt GENERATE selbst). Schreiber ist der Init-Schritt (init.py), nicht mehr
+danach gehoert die Datei Zigbee2MQTT (es ersetzt GENERATE selbst); nur user/password im Block mqtt: gleicht der
+Init-Schritt danach noch an (sync_credentials, Plan G2b-2). Schreiber ist der Init-Schritt (init.py), nicht mehr
 der Agent. Die Datei enthaelt die Zugangsdaten von Zigbee2MQTT am lokalen Bus (0600). permit_join steht nicht darin:
 Zigbee2MQTT 2.x kennt die Option nicht mehr, Koppeln ist nach dem Start immer aus (Plan G2a; gegen das echte Image in
 G2b pruefen). Zigbee2MQTT soll keine Geraetewerte retained senden; der Spiegel stempelt retained Werte ohnehin nicht
 frisch."""
+import re
 from pathlib import Path
 
 from smartheat_gateway.files import write_text_private
@@ -41,3 +43,54 @@ def ensure(zigbee_dir: Path, adapter: str, username: str, password: str) -> bool
         return False
     write_text_private(path, render(adapter, username, password))
     return True
+
+
+_KEY_LINE = re.compile(r"^(?P<indent> +)(?P<key>user|password): *(?P<value>.*?) *$")
+
+
+def _unquote(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1]
+    return value
+
+
+def sync_credentials(zigbee_dir: Path, username: str, password: str) -> bool:
+    """Gleicht user/password im Block mqtt: an die Zugangsdaten des Init-Schritts an (Plan G2b-2 Task 3): nach einem
+    Schluesseltausch oder einer zurueckgespielten Sicherung verbaende sich Zigbee2MQTT sonst nie. Aendert nur diese
+    zwei Zeilen der ersten Einrueckungsebene (Netzschluessel und alles andere bleiben, wie Zigbee2MQTT sie geschrieben
+    hat); ohne erkennbaren Block mqtt: bleibt die Datei unberuehrt. True, wenn geschrieben wurde."""
+    path = zigbee_dir / "configuration.yaml"
+    try:
+        lines = path.read_text().splitlines(keepends=True)
+    except FileNotFoundError:
+        return False
+    start = next((i for i, line in enumerate(lines) if line.rstrip() == "mqtt:"), None)
+    if start is None:
+        return False
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].strip() and not lines[i].startswith(" ")),
+               len(lines))
+    body = [i for i in range(start + 1, end) if lines[i].strip()]
+    if not body:
+        return False
+    first = lines[body[0]]
+    indent = first[: len(first) - len(first.lstrip(" "))]
+    wanted = {"user": username, "password": password}
+    rendered = {"user": username, "password": f'"{password}"'}
+    seen: set[str] = set()
+    changed = False
+    for i in body:
+        match = _KEY_LINE.match(lines[i].rstrip("\n"))
+        if match is None or match["indent"] != indent:
+            continue
+        key = match["key"]
+        seen.add(key)
+        if _unquote(match["value"]) != wanted[key]:
+            lines[i] = f"{indent}{key}: {rendered[key]}\n"
+            changed = True
+    for key in ("password", "user"):  # fehlende Zeilen direkt unter mqtt: einfuegen (user landet zuerst)
+        if key not in seen:
+            lines.insert(start + 1, f"{indent}{key}: {rendered[key]}\n")
+            changed = True
+    if changed:
+        write_text_private(path, "".join(lines))
+    return changed

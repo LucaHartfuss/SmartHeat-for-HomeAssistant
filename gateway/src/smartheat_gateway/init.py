@@ -1,11 +1,14 @@
 """Init-Schritt des Gateways (Spec G2b-1 Abschnitt 3): einmaliger Compose-Dienst vor allen anderen. Erzeugt, was
 fehlt: zufaellige Passwoerter je Dienst am lokalen Bus, Mosquitto-Passwortdatei ($7$, PBKDF2-SHA512) und ACL, die
 Zigbee2MQTT-Grundkonfiguration mit Zugangsdaten und die Ordner data/device und data/agent (0700; sonst legte Docker
-die Mountpunkte der Masken in tunnel/runtime als root an). Idempotent: ein zweiter Lauf schreibt nichts. Ein Schreiber
-je Datei: bus/ und configuration.yaml (nur wenn sie fehlt) gehoeren diesem Schritt. Passwoerter erscheinen nie im Log
-(nur Dateinamen)."""
+die Mountpunkte der Masken in tunnel/runtime als root an). Heilt ausserdem Drift (Plan G2b-2): eine Passwortdatei, die
+nicht zu den Zugangsdateien passt, wird neu aufgebaut, und die Zugangsdaten in einer bestehenden Zigbee2MQTT-
+Konfiguration werden angeglichen. Idempotent: ein zweiter Lauf schreibt nichts. Ein Schreiber je Datei: bus/ und
+configuration.yaml (ganz nur wenn sie fehlt, sonst nur user/password) gehoeren diesem Schritt. Passwoerter erscheinen
+nie im Log (nur Dateinamen)."""
 import base64
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -38,6 +41,30 @@ def mosquitto_hash(password: str, salt: bytes | None = None, iterations: int = I
     salt = salt if salt is not None else secrets.token_bytes(SALT_BYTES)
     digest = hashlib.pbkdf2_hmac("sha512", password.encode(), salt, iterations, 64)
     return f"$7${iterations}${base64.b64encode(salt).decode()}${base64.b64encode(digest).decode()}"
+
+
+def mosquitto_verify(password: str, line_hash: str) -> bool:
+    """Passt das Passwort zum $7$-Eintrag (PBKDF2-SHA512) der Passwortdatei? Unlesbare Eintraege passen nie."""
+    try:
+        _, seven, iterations, salt_b64, digest_b64 = line_hash.split("$")
+        if seven != "7":
+            return False
+        salt = base64.b64decode(salt_b64, validate=True)
+        digest = base64.b64decode(digest_b64, validate=True)
+        computed = hashlib.pbkdf2_hmac("sha512", password.encode(), salt, int(iterations), len(digest))
+    except ValueError:  # auch binascii.Error
+        return False
+    return hmac.compare_digest(computed, digest)
+
+
+def _passwd_matches(path: Path, passwords: dict[str, str]) -> bool:
+    """Hat die Passwortdatei genau einen passenden Eintrag je Dienst?"""
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return False
+    entries = dict(line.split(":", 1) for line in lines if ":" in line)
+    return set(entries) == set(SERVICES) and all(mosquitto_verify(passwords[s], entries[s]) for s in SERVICES)
 
 
 def render_acl() -> str:
@@ -78,7 +105,7 @@ def ensure(bus_dir: Path, zigbee_dir: Path, data_dir: Path, adapter_name: str,
     written: list[str] = []
     passwords, created = _credentials(bus_dir, token, written)
     passwd = bus_dir / "mosquitto" / "passwd"
-    if created or not passwd.exists():
+    if created or not _passwd_matches(passwd, passwords):
         write_text_private(passwd, "".join(f"{s}:{mosquitto_hash(passwords[s])}\n" for s in SERVICES))
         written.append("bus/mosquitto/passwd")
     acl = bus_dir / "mosquitto" / "acl"
@@ -87,6 +114,8 @@ def ensure(bus_dir: Path, zigbee_dir: Path, data_dir: Path, adapter_name: str,
         written.append("bus/mosquitto/acl")
     if z2m_config.ensure(zigbee_dir, adapter_name, "zigbee2mqtt", passwords["zigbee2mqtt"]):
         written.append("zigbee2mqtt/configuration.yaml")
+    elif z2m_config.sync_credentials(zigbee_dir, "zigbee2mqtt", passwords["zigbee2mqtt"]):
+        written.append("zigbee2mqtt/configuration.yaml (Zugangsdaten)")
     for name in ("device", "agent"):
         path = data_dir / name
         if not path.is_dir():
