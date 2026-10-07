@@ -15,6 +15,18 @@ WANTS = "etc/systemd/system/multi-user.target.wants"
 UNITS = ("smartheat-firewall", "smartheat-hoststatus", "smartheat-led", "smartheat-firstboot", "smartheat-updater",
          "docker")
 ENV = "var/lib/smartheat/host/gateway.env"
+USB_RULE = "etc/udev/rules.d/99-rpi-01-smartheat-usbboot.rules"
+USB_HOOK = "etc/initramfs-tools/hooks/smartheat-usbboot"
+# so schreibt usbboot.sh beide Dateien (die Regel mit Fortsetzungszeile)
+GOOD_USB_RULE = (
+    "# SmartHeat-Gateway: Start von der SSD am USB\n"
+    'SUBSYSTEM=="block", KERNEL=="sd[a-z]*[0-9]", ENV{DEVTYPE}=="partition", \\\n'
+    '  ENV{ID_PART_ENTRY_UUID}=="5348470a-0[12]", ACTION=="add|change", ENV{RPI_ONBOOTDEV}="1"\n'
+)
+GOOD_USB_HOOK = (
+    "#!/bin/sh\n. /usr/share/initramfs-tools/hook-functions\n"
+    "copy_file config /etc/udev/rules.d/99-rpi-01-smartheat-usbboot.rules\n"
+)
 
 GOOD_URLS = [
     "https://accounts.hartfussha.org",
@@ -163,6 +175,8 @@ def _good(root: Path, pilot: bool = False) -> Path:
         "home/pi/.ssh/authorized_keys": "",
         "opt/smartheat/installer/gateway/host/install.sh": "#!/bin/bash\n",
         "opt/smartheat/host/VERSION": "0.3.0\n",
+        USB_RULE: GOOD_USB_RULE,
+        USB_HOOK: GOOD_USB_HOOK,
     }
     if pilot:
         files["root/.ssh/authorized_keys"] = "ssh-ed25519 AAAA test-key\n"
@@ -171,6 +185,7 @@ def _good(root: Path, pilot: bool = False) -> Path:
         (root / rel).write_text(text)
     (root / "var/lib/smartheat/data").mkdir(parents=True)
     (root / WANTS).mkdir(parents=True)
+    (root / USB_HOOK).chmod(0o755)
     for unit in UNITS + (("ssh",) if pilot else ()):
         (root / WANTS / f"{unit}.service").symlink_to(f"/lib/systemd/system/{unit}.service")
     for tree in ("opt/smartheat", "var/lib/smartheat/images"):  # wie im Image: nicht gruppen-/weltbeschreibbar
@@ -236,12 +251,40 @@ def test_uninitialized_machine_id_is_fine(tmp_path):
     lambda r: (r / "var/lib/smartheat/images/01.tar").chmod(0o664),
     lambda r: (r / "var/lib/smartheat/images").chmod(0o777),
     lambda r: __import__("shutil").rmtree(r / "opt/smartheat"),
+    lambda r: (r / USB_RULE).unlink(),
+    lambda r: (r / USB_RULE).write_text('SUBSYSTEM=="block", ENV{ID_PART_ENTRY_UUID}=="random-0[12]"\n'),
+    lambda r: (r / USB_HOOK).chmod(0o644),
 ])
 def test_each_violation_fails(tmp_path, breakit):
     root = _good(tmp_path)
     breakit(root)
     result = _run(root)
     assert result.returncode != 0 and "FAIL:" in result.stdout
+
+
+@pytest.mark.parametrize("breakit, problem", [
+    # jede Zeile isoliert genau einen Mangel an sonst bestehendem Rootfs
+    (lambda r: (r / USB_RULE).write_text(GOOD_USB_RULE.replace('ENV{RPI_ONBOOTDEV}="1"', 'ENV{OTHER}="1"')),
+     "USB-Startregel"),
+    (lambda r: (r / USB_RULE).write_text(GOOD_USB_RULE.replace('ENV{RPI_ONBOOTDEV}="1"', 'ENV{RPI_ONBOOTDEV}="0"')),
+     "USB-Startregel"),
+    (lambda r: (r / USB_RULE).write_text(
+        "".join(f"# {line}\n" for line in GOOD_USB_RULE.replace("\\\n", "").splitlines()[1:])),
+     "USB-Startregel"),
+    (lambda r: (r / USB_RULE).write_text(GOOD_USB_RULE.replace('KERNEL=="sd[a-z]*[0-9]", ', "")),
+     "USB-Startregel"),
+    (lambda r: (r / USB_HOOK).write_text(""), "initramfs-Hook"),
+    (lambda r: (r / USB_HOOK).write_text(GOOD_USB_HOOK.replace("copy_file", "# copy_file")), "initramfs-Hook"),
+], ids=["no-onbootdev", "onbootdev-0", "rule-in-comment", "no-kernel-sd", "empty-hook", "commented-copy_file"])
+def test_usb_boot_rule_and_hook_are_checked_strictly(tmp_path, breakit, problem):
+    root = _good(tmp_path)
+    assert _run(root).returncode == 0
+    breakit(root)
+    (root / USB_HOOK).chmod(0o755)  # der Hook bleibt ausfuehrbar: nur sein Inhalt bzw. die Regel ist der Mangel
+    result = _run(root)
+    assert result.returncode != 0
+    fails = [line for line in result.stdout.splitlines() if line.startswith("FAIL:")]
+    assert len(fails) == 1 and problem in fails[0], result.stdout
 
 
 @pytest.mark.parametrize("url", ["https://accounts.hartfussha.org", "https://accounts.hartfussha.org/"])
@@ -330,13 +373,18 @@ def test_pilot_image_has_no_host_keys_either(tmp_path):
     assert _run(root, "--pilot").returncode != 0
 
 
-def test_customize_mode_leaves_only_the_machine_id_to_the_final_check(tmp_path):
-    """Im customize-Hook hat systemd die machine-id schon angelegt; zurueckgesetzt wird sie erst beim Aufraeumen von
-    mmdebstrap (geprueft in post-build.sh). Alles andere prueft auch der customize-Lauf."""
+def test_customize_mode_leaves_only_the_machine_ids_to_the_final_check(tmp_path):
+    """Im customize-Hook bestehen die machine-ids von systemd und dbus noch; zurueckgesetzt bzw. geloescht werden sie
+    erst beim Aufraeumen von mmdebstrap (geprueft in post-build.sh). Alles andere prueft auch der customize-Lauf."""
     root = _good(tmp_path)
     (root / "etc/machine-id").write_text("0123456789abcdef0123456789abcdef\n")
     assert _run(root, "--customize").returncode == 0
     assert _run(root).returncode != 0
+    (root / "etc/machine-id").write_text("uninitialized\n")
+    (root / "var/lib/dbus").mkdir(parents=True)
+    (root / "var/lib/dbus/machine-id").write_text("0123456789abcdef0123456789abcdef\n")
+    assert _run(root, "--customize").returncode == 0
+    assert "dbus-machine-id" in _run(root).stdout
     (root / "etc/ssh").mkdir()
     (root / "etc/ssh/ssh_host_ed25519_key").write_text("k")
     assert _run(root, "--customize").returncode != 0
@@ -359,3 +407,82 @@ def test_build_hooks_ignore_the_test_only_owner_override(tmp_path):
                             check=False, env=env)
     assert result.returncode != 0 and "nicht root" in result.stdout
     assert "env -u SHG_ROOTFS_CHECK_UID" in (IMAGE / "customize.sh").read_text()
+
+
+# initramfs_check.sh (nur post-build): lsinitramfs laeuft per chroot im Root-Dateisystem. Die Tests ersetzen chroot und
+# lsinitramfs durch Attrappen im PATH: chroot ruft den Befehl ohne Wurzelwechsel auf (relativ zum Root-Dateisystem
+# aufgeloest), lsinitramfs gibt den Inhalt der "initramfs" (Textdatei mit einem Eintrag je Zeile) aus.
+INITRAMFS_CHECK = IMAGE / "initramfs_check.sh"
+USB_RULE_ENTRY = "etc/udev/rules.d/99-rpi-01-smartheat-usbboot.rules"
+
+
+def _fake_chroot_path(tmp_path: Path) -> str:
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    (bindir / "chroot").write_text('#!/bin/bash\nroot="$1"; shift\nSHG_FAKE_ROOT="$root" exec "$@"\n')
+    (bindir / "lsinitramfs").write_text(
+        '#!/bin/bash\nf="$SHG_FAKE_ROOT$1"\n[ -s "$f" ] || { echo "lsinitramfs: $1: nicht lesbar" >&2; exit 1; }\n'
+        'cat "$f"\n')
+    for tool in ("chroot", "lsinitramfs"):
+        (bindir / tool).chmod(0o755)
+    return f"{bindir}{os.pathsep}{os.environ['PATH']}"
+
+
+def _initramfs_run(tmp_path: Path, root: Path, *, path_env: str | None = None) -> subprocess.CompletedProcess:
+    env = {**os.environ, "PATH": path_env or _fake_chroot_path(tmp_path)}
+    return subprocess.run(["bash", str(INITRAMFS_CHECK), str(root)], capture_output=True, text=True, check=False,
+                          env=env)
+
+
+def _initramfs(root: Path, rel: str, entries: list[str]) -> None:
+    (root / rel).parent.mkdir(parents=True, exist_ok=True)
+    (root / rel).write_text("\n".join(entries) + "\n")
+
+
+def test_initramfs_check_passes_with_the_rule_inside(tmp_path):
+    root = tmp_path / "root"
+    _initramfs(root, "boot/firmware/initramfs8", ["etc/udev/rules.d/60-persistent-storage.rules", USB_RULE_ENTRY])
+    _initramfs(root, "boot/initrd.img-6.18.50+rpt-rpi-v8", [USB_RULE_ENTRY])
+    result = _initramfs_run(tmp_path, root)
+    assert result.returncode == 0, result.stdout
+
+
+@pytest.mark.parametrize("where", ["boot/firmware/initramfs8", "boot/initrd.img-6.18.50+rpt-rpi-v8"])
+def test_initramfs_check_fails_when_the_rule_is_missing_in_any_initramfs(tmp_path, where):
+    root = tmp_path / "root"
+    for rel in ("boot/firmware/initramfs8", "boot/initrd.img-6.18.50+rpt-rpi-v8"):
+        _initramfs(root, rel, ["etc/udev/rules.d/99-rpi-00-bootdev.rules"] if rel == where else [USB_RULE_ENTRY])
+    result = _initramfs_run(tmp_path, root)
+    assert result.returncode != 0
+    assert f"FAIL: USB-Startregel fehlt in der initramfs /{where}" in result.stdout
+
+
+def test_initramfs_check_fails_clearly_without_any_initramfs(tmp_path):
+    root = tmp_path / "root"
+    (root / "boot/firmware").mkdir(parents=True)
+    result = _initramfs_run(tmp_path, root)
+    assert result.returncode != 0 and "FAIL: keine initramfs im Image gefunden" in result.stdout
+
+
+def test_initramfs_check_fails_when_lsinitramfs_cannot_run(tmp_path):
+    root = tmp_path / "root"
+    _initramfs(root, "boot/firmware/initramfs8", [USB_RULE_ENTRY])
+    (root / "boot/firmware/initramfs8").write_text("")  # die Attrappe meldet eine nicht lesbare Datei (Exit 1)
+    result = _initramfs_run(tmp_path, root)
+    assert result.returncode != 0 and "FAIL: lsinitramfs /boot/firmware/initramfs8 fehlgeschlagen" in result.stdout
+
+
+def test_post_build_runs_the_initramfs_check_too(tmp_path):
+    """post-build.sh bricht den Bau auch bei scheiternder initramfs-Pruefung ab und fuehrt beide Pruefungen aus."""
+    root = _good(tmp_path / "root")
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    _initramfs(root, "boot/firmware/initramfs8", ["etc/udev/rules.d/99-rpi-00-bootdev.rules"])
+    env = {**os.environ, "PATH": _fake_chroot_path(tmp_path), "IGconf_shg_stage": str(stage)}
+    result = subprocess.run(["bash", str(IMAGE / "post-build.sh"), str(root)], capture_output=True, text=True,
+                            check=False, env=env)
+    assert result.returncode != 0
+    assert "FAIL: USB-Startregel fehlt in der initramfs /boot/firmware/initramfs8" in result.stdout
+    if os.getuid() != 0:  # die Fixtures gehoeren dem Testbenutzer: rootfs_checks scheitert dann ebenfalls (Eigentuemer)
+        assert "nicht root" in result.stdout
+    assert os.access(INITRAMFS_CHECK, os.X_OK)
