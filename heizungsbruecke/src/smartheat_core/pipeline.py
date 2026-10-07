@@ -38,6 +38,8 @@ from smartheat_core.safety import LocalSafety
 logger = logging.getLogger(__name__)
 
 _ROW_EMERGENCY = "emergency"
+# Gueltigkeit eines gelesenen Wertebereichs der Anlage (binding.limits).
+LIMITS_TTL_SECONDS = 300.0
 _ROW_COMFORT = "comfort"
 _ROW_RESTORE = "restore"
 _ROW_LOG = {
@@ -105,6 +107,11 @@ class LeverPipeline:
         self._description = binding.description
         self._safety = safety
         self._clock = clock
+        # Wertebereich der Anlage je Hebel (Zeitpunkt, Wert), nur Laufzeit; siehe _device_limits.
+        self._limits_cache: dict[str, tuple[float, tuple[float, float] | None]] = {}
+        self._limits_unreadable: set[str] = set()
+        self._overlap_warned: dict[str, tuple[float, float]] = {}
+        self._narrowing_logged: dict[str, tuple[float, float]] = {}
         # Nicht kritischer Hinweis (Schluessel, Zustand, Text); im Add-on Notifier.notify(..., critical=False).
         self._notify = notify
         # Zeitpunkt (clock) und Wert des letzten erfolgreichen eigenen Schreibens je Hebel, nur Laufzeit: Durchsetzen
@@ -199,7 +206,7 @@ class LeverPipeline:
             if lever not in levers:
                 continue
             value = levers[lever]
-            minimum, maximum = self._safety.ranges[lever]
+            minimum, maximum = self.range_of(lever)
             clamped[lever] = clamp(value, minimum, maximum)
             if clamped[lever] != value:
                 logger.warning(
@@ -304,7 +311,7 @@ class LeverPipeline:
 
         if row == _ROW_EMERGENCY:
             return {
-                lever: self._safety.ranges[lever][1] for lever in self._safety.emergency_boost_levers if included(lever)
+                lever: self.range_of(lever)[1] for lever in self._safety.emergency_boost_levers if included(lever)
             }
         if row == _ROW_COMFORT:
             return {lever: value for lever, value in self._safety.comfort_boost.items() if included(lever)}
@@ -336,8 +343,58 @@ class LeverPipeline:
         return last_written is not None and abs(last_written - target) <= step / 2
 
     def _target(self, lever: str, value: float) -> float:
-        minimum, maximum = self._safety.ranges[lever]
+        minimum, maximum = self.range_of(lever)
         return target_value(value, minimum, maximum, self._description.steps[lever])
+
+    def range_of(self, lever: str) -> tuple[float, float]:
+        """Lokale Grenzen, verengt auf den Wertebereich der Anlage (binding.limits). Erweitert nie; ohne Schnittmenge
+        gelten die lokalen Grenzen (das Schreiben scheitert dann sichtbar an der Anlage, nie ein Wert ausserhalb der
+        lokalen Grenzen). Einzige Quelle des Schreibbereichs: auch Mindestvorlauf (derived) und Durchsetzen lesen ihn
+        hier."""
+        low, high = self._safety.ranges[lever]
+        device = self._device_limits(lever)
+        if device is None:
+            return low, high
+        narrowed = (max(low, device[0]), min(high, device[1]))
+        if narrowed[0] > narrowed[1]:
+            if self._overlap_warned.get(lever) != device:
+                self._overlap_warned[lever] = device
+                logger.warning(
+                    "Wertebereich der Anlage fuer %s %s liegt ausserhalb der lokalen Grenzen [%s, %s]",
+                    lever, device, low, high,
+                )
+            self._narrowing_logged.pop(lever, None)
+            return low, high
+        self._overlap_warned.pop(lever, None)
+        if narrowed == (low, high):
+            self._narrowing_logged.pop(lever, None)
+        elif self._narrowing_logged.get(lever) != narrowed:
+            self._narrowing_logged[lever] = narrowed
+            logger.info(
+                "Wertebereich der Anlage verengt %s: lokal [%s, %s] -> [%s, %s]", lever, low, high, *narrowed,
+            )
+        return narrowed
+
+    def _device_limits(self, lever: str) -> tuple[float, float] | None:
+        """binding.limits je Hebel, LIMITS_TTL_SECONDS lang gemerkt (ein Lesevorgang ist ein blockierender HA-Aufruf,
+        die Bereichsabfrage laeuft je Hebel bei jedem Schreiben und Durchsetzen). Auch None wird gemerkt. Scheitert das
+        Lesen, bleibt der letzte gute Wert (auch abgelaufen); gab es nie einen, gelten die lokalen Grenzen. Der
+        Fehler wird je Hebel einmal protokolliert."""
+        now = self._clock()
+        cached = self._limits_cache.get(lever)
+        if cached is not None and now - cached[0] < LIMITS_TTL_SECONDS:
+            return cached[1]
+        try:
+            device = self._binding.limits(lever)
+        except Exception as error:
+            if lever not in self._limits_unreadable:
+                self._limits_unreadable.add(lever)
+                logger.info("Wertebereich der Anlage fuer %s nicht lesbar (%s), letzter Wert bzw. lokale Grenzen", lever, error)
+            device = cached[1] if cached is not None else None
+        else:
+            self._limits_unreadable.discard(lever)
+        self._limits_cache[lever] = (now, device)
+        return device
 
     def _write_lever(self, lever: str, value: float, *, force: bool = False, exempt: bool = False) -> float:
         """Schreibt EINEN Hebel, aber nur bei tatsaechlicher Aenderung, es sei denn `force=True` (direkt nach einer
@@ -478,7 +535,7 @@ class LeverPipeline:
         """Sollwerte der aktuellen Zeile, so wie sie auf der Anlage stehen muessten (begrenzt und gerundet); nur
         vorhandene, zugeordnete Hebel."""
         return {
-            lever: target_value(value, *self._safety.ranges[lever], self._description.steps[lever])
+            lever: target_value(value, *self.range_of(lever), self._description.steps[lever])
             for lever, value in self._row_values(self._current_row()).items()
             if self._binding.has(lever)
         }
@@ -539,7 +596,7 @@ class LeverPipeline:
             live = self._binding.read(lever)
         except Exception:
             live = None
-        low, high = self._safety.ranges[lever]
+        low, high = self.range_of(lever)
         forced = switched and self._description.preparation_resets_setpoint
         # Schon vorbereitet und ruhend (None) oder mit brauchbarem Wert: nichts schreiben, die naechste
         # Serverantwort setzt den Hebel.
@@ -571,7 +628,7 @@ class LeverPipeline:
             live = None
         seeded = None
         if live is not None and _is_finite_number(live):
-            seeded = target_value(live, *self._safety.ranges[lever], self._description.steps[lever])
+            seeded = target_value(live, *self.range_of(lever), self._description.steps[lever])
         logger.warning(
             "Erster Start: Wiederherstellungswert von %s %s -> %s (Anlagenwert)",
             lever, state.restore_point.get(lever), seeded,

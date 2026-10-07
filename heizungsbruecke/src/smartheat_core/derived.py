@@ -28,7 +28,7 @@ def expected(rt: DerivedRuntime) -> float | None:
     target = rt.store.state.stable_target
     if target is None:
         return None
-    low, high = rt.override.safety.ranges["min_flow"]
+    low, high = rt.override.range_of("min_flow")
     return round_to_step(clamp(target, low, high), rt.override.binding.description.steps["min_flow"])
 
 
