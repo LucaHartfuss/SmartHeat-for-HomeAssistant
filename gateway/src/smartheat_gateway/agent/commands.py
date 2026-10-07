@@ -172,11 +172,12 @@ def _inventory(ctx: AgentContext, payload: dict) -> Outcome:
     hours = _int(payload, "stunden", 1, 48)
     driver = _driver(ctx, payload)
     ready_at = ctx.clock() + hours * 3600
+    samples: list[dict] = []  # Probenspeicher des Agenten folgt in Plan G4 Task 7
 
     def check() -> Done | Failed | None:
         if ctx.clock() < ready_at:
             return None
-        return Done(driver.inventory(hours))
+        return Done(driver.inventory(hours, samples))
 
     return Waiting(check, ready_at + 3600)
 

@@ -70,3 +70,8 @@ def test_probe_follows_the_contract(driver):
             assert candidate["ablehnung"]["grund"] in type(driver).REJECTION_REASONS
         for lever in candidate["hebel"].values():
             assert tuple(lever) == wire.PROBE_LEVER_FIELDS
+
+
+def test_every_driver_declares_the_lever_sets_it_can_serve():
+    for driver_class in DRIVERS.values():
+        assert driver_class.LEVER_SETS and set(driver_class.LEVER_SETS) <= set(BINDINGS)

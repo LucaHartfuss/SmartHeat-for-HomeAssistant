@@ -153,14 +153,14 @@ def test_waiting_check_maps_errors_like_the_handler(ctx, clock, monkeypatch):
 
     outcome = execute(ctx, "driver_inventory", {"driver_id": "simulation", "stunden": 1})
 
-    def unreachable(self, hours):
+    def unreachable(self, hours, samples):
         raise DriverError("anlage_nicht_erreichbar", "Die Anlage antwortet nicht.")
 
     monkeypatch.setattr(SimulationDriver, "inventory", unreachable)
     clock.advance(3601)
     assert outcome.check() == Failed("anlage_nicht_erreichbar", "Die Anlage antwortet nicht.")
 
-    def broken(self, hours):
+    def broken(self, hours, samples):
         raise QuotaExhausted("Kontingent erschöpft (3/3)")
 
     monkeypatch.setattr(SimulationDriver, "inventory", broken)
