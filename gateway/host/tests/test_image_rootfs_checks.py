@@ -330,13 +330,18 @@ def test_pilot_image_has_no_host_keys_either(tmp_path):
     assert _run(root, "--pilot").returncode != 0
 
 
-def test_customize_mode_leaves_only_the_machine_id_to_the_final_check(tmp_path):
-    """Im customize-Hook hat systemd die machine-id schon angelegt; zurueckgesetzt wird sie erst beim Aufraeumen von
-    mmdebstrap (geprueft in post-build.sh). Alles andere prueft auch der customize-Lauf."""
+def test_customize_mode_leaves_only_the_machine_ids_to_the_final_check(tmp_path):
+    """Im customize-Hook bestehen die machine-ids von systemd und dbus noch; zurueckgesetzt bzw. geloescht werden sie
+    erst beim Aufraeumen von mmdebstrap (geprueft in post-build.sh). Alles andere prueft auch der customize-Lauf."""
     root = _good(tmp_path)
     (root / "etc/machine-id").write_text("0123456789abcdef0123456789abcdef\n")
     assert _run(root, "--customize").returncode == 0
     assert _run(root).returncode != 0
+    (root / "etc/machine-id").write_text("uninitialized\n")
+    (root / "var/lib/dbus").mkdir(parents=True)
+    (root / "var/lib/dbus/machine-id").write_text("0123456789abcdef0123456789abcdef\n")
+    assert _run(root, "--customize").returncode == 0
+    assert "dbus-machine-id" in _run(root).stdout
     (root / "etc/ssh").mkdir()
     (root / "etc/ssh/ssh_host_ed25519_key").write_text("k")
     assert _run(root, "--customize").returncode != 0

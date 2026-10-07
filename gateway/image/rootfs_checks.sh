@@ -4,8 +4,9 @@
 # Passwort, ein Tunnel-Token oder im Serien-Image SSH bekaeme, wenn der Erststart ohne Pull nicht moeglich waere oder
 # die Geraete-API-/Portal-Adresse kein eigener DNS-Name per https ist (own_url.sh).
 # Aufruf: rootfs_checks.sh ROOTFS [--pilot] [--customize]
-#   --customize: Lauf im customize-Hook (customize.sh). Die machine-id legt dort noch systemd an; zurueckgesetzt wird
-#                sie erst beim Aufraeumen von mmdebstrap, geprueft dann im post-build-Hook (post-build.sh, voller Lauf).
+#   --customize: Lauf im customize-Hook (customize.sh). Die machine-ids (systemd, dbus) bestehen dort noch;
+#                zurueckgesetzt werden sie erst beim Aufraeumen von mmdebstrap, geprueft dann im post-build-Hook
+#                (post-build.sh, voller Lauf).
 # Exit 0 = in Ordnung, 1 = Verstoesse (je Zeile "FAIL: ..."), 2 = falscher Aufruf.
 # Eigentuemer: alles unter /opt/smartheat und /var/lib/smartheat/images gehoert uid 0 (root fuehrt es aus bzw. laedt es;
 # uid 1000 waere auf dem Geraet der Benutzer pi bzw. die Container). SHG_ROOTFS_CHECK_UID setzt die erwartete uid -
@@ -33,13 +34,15 @@ WANTS="$R/etc/systemd/system/multi-user.target.wants"
 SH="$R/var/lib/smartheat"
 
 # Identitaet: jedes Geraet erzeugt sie selbst beim ersten Start
+# Beide machine-ids (systemd und dbus) legen die Pakete schon vor dem customize-Hook an; mmdebstrap setzt
+# /etc/machine-id beim Aufraeumen zurueck und loescht /var/lib/dbus/machine-id (Spike 2026-10-07, CI auf dem ARM-Runner).
 if [ "$CUSTOMIZE" = 0 ]; then
   mid="$(cat "$R/etc/machine-id" 2>/dev/null || true)"
   case "$mid" in ""|uninitialized) ;; *) fail "machine-id im Image gesetzt" ;; esac
-fi
-if [ -f "$R/var/lib/dbus/machine-id" ] && [ ! -L "$R/var/lib/dbus/machine-id" ] \
-   && [ -s "$R/var/lib/dbus/machine-id" ]; then
-  fail "dbus-machine-id im Image gesetzt"
+  if [ -f "$R/var/lib/dbus/machine-id" ] && [ ! -L "$R/var/lib/dbus/machine-id" ] \
+     && [ -s "$R/var/lib/dbus/machine-id" ]; then
+    fail "dbus-machine-id im Image gesetzt"
+  fi
 fi
 if compgen -G "$R/etc/ssh/ssh_host_*" >/dev/null; then fail "SSH-Hostschluessel im Image"; fi
 [ -z "$(ls -A "$SH/data" 2>/dev/null)" ] || fail "data/ nicht leer (Geraeteschluessel, Agent-Zustand)"
