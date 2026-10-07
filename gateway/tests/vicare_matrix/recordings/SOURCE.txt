@@ -1,0 +1,2 @@
+openviess/PyViCare e5a8a7bd9741e25fad45cd911f2cc17df67247cd
+tests/response/*.json, geholt am 2026-10-07
