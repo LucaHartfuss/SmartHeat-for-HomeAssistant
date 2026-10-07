@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from configs import SENSOR, THERMOSTAT
 from fake_device_api import FakeDeviceApi
@@ -34,15 +36,17 @@ def clock():
 
 @pytest.fixture
 def make_store(tmp_path):
-    """StateStore auf tmp_path/backup.json und tmp_path/failsafe_state.json; schreibt die
-    uebergebenen Inhalte vorher in die Dateien (wie ein vorheriger Lauf).
-    Woertlich aus heizungsbruecke/tests/conftest.py uebernommen."""
-    def _make(backup: dict | None = None, failsafe: dict | None = None) -> StateStore:
+    """StateStore auf <directory>/backup.json und <directory>/failsafe_state.json (Vorgabe: tmp_path); schreibt die
+    uebergebenen Inhalte vorher in die Dateien (wie ein vorheriger Lauf). Wie heizungsbruecke/tests/conftest.py, nur
+    mit wahlweisem Verzeichnis, damit zwei Staende im selben Test unabhaengig voneinander bleiben."""
+    def _make(backup: dict | None = None, failsafe: dict | None = None, directory: Path | None = None) -> StateStore:
+        base = directory if directory is not None else tmp_path
+        base.mkdir(parents=True, exist_ok=True)
         if backup is not None:
-            save_backup(tmp_path / "backup.json", backup)
+            save_backup(base / "backup.json", backup)
         if failsafe is not None:
-            save_backup(tmp_path / "failsafe_state.json", failsafe)
-        return StateStore(tmp_path / "backup.json", tmp_path / "failsafe_state.json")
+            save_backup(base / "failsafe_state.json", failsafe)
+        return StateStore(base / "backup.json", base / "failsafe_state.json")
     return _make
 
 

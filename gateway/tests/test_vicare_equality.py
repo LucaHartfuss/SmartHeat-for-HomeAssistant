@@ -130,10 +130,16 @@ def scenario(world, store, clock):
 @pytest.mark.parametrize("program", ["eco", "normal"])
 def test_ha_path_and_gateway_driver_make_the_same_decisions(program, make_store, clock, tmp_path, monkeypatch):
     ha_program = "home" if program == "normal" else program
-    ha_result = scenario(HaWorld(ha_program), make_store(), clock)
+    # Jede Welt hat ihren eigenen Zustandsspeicher: ein gemeinsames backup.json wuerde die Ursprungswerte des ersten
+    # Laufs in den zweiten tragen, und der zweite haette seine eigenen nie erfasst.
+    ha_store = make_store(directory=tmp_path / "ha-state")
+    cloud_store = make_store(directory=tmp_path / "cloud-state")
+    assert ha_store.state.originals == cloud_store.state.originals == {}
+    ha_result = scenario(HaWorld(ha_program), ha_store, clock)
+    assert cloud_store.state.originals == {}, "der Lauf des HA-Pfads darf den Speicher des Cloud-Laufs nicht beruehren"
     cloud = CloudWorld(program, tmp_path / "cloud", clock, monkeypatch)
     try:
-        cloud_result = scenario(cloud, make_store(), clock)
+        cloud_result = scenario(cloud, cloud_store, clock)
     finally:
         cloud.server.stop()
     ha_result["aux"] = {k: ("normal" if v == "home" else v) for k, v in ha_result["aux"].items()}
