@@ -75,6 +75,16 @@ def _forget_other_drivers(paths: Paths, keep_driver: str | None) -> None:
             logger.error("Anmeldedaten von %s nicht gelöscht (%s)", driver_id, type(error).__name__)
 
 
+def forget_inventory(paths: Paths) -> None:
+    """Proben einer Inventur gehoeren zur Anlage der Einrichtung; nach Abmelden oder neuer Einrichtung darf keine
+    Reihe der alten Anlage als Inventur der neuen zurueckkommen. Wirft nie."""
+    for path in (paths.inventory_samples, paths.inventory_samples.with_name(paths.inventory_samples.name + ".tmp")):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as error:
+            logger.error("Inventur-Proben nicht gelöscht (%s)", type(error).__name__)
+
+
 def remove_setup(paths: Paths, *, keep_new_credentials: bool = False, keep_driver: str | None = None) -> None:
     """Entfernt eine (abgemeldete) Einrichtung: zuerst den Laufzeit-Ordner (Praezisierung 3), dann Geheimnisse,
     Transport-Schluessel und Treiber-Tokens, die Konfiguration mit der Markierung `abgemeldet` ZULETZT; bricht es
@@ -84,6 +94,7 @@ def remove_setup(paths: Paths, *, keep_new_credentials: bool = False, keep_drive
     der uebrigen Cloud-Treiber (alte Einrichtung, anderer Treiber als keep_driver) werden vergessen (Plan G4 K4)."""
     shutil.rmtree(paths.runtime_dir, ignore_errors=True)
     paths.runtime_secrets.unlink(missing_ok=True)
+    forget_inventory(paths)
     if not keep_new_credentials:
         paths.transport_key.unlink(missing_ok=True)
         shutil.rmtree(paths.driver_secrets_dir, ignore_errors=True)
@@ -117,6 +128,7 @@ def apply_config(ctx: AgentContext, payload: dict) -> Outcome:
     if load_raw(ctx.paths).get("abgemeldet") is True:
         # Abgemeldet (auch mit gescheitertem Zuruecksetzen): neu einrichten wie frisch installiert (Praezisierung 3).
         remove_setup(ctx.paths, keep_new_credentials=True, keep_driver=config["driver"]["id"])
+    forget_inventory(ctx.paths)  # jede (Neu-)Einrichtung beginnt ohne Proben einer frueheren Anlage
     write_config(ctx.paths, config)
     ctx.bus.publish(topics.CMD_RELOAD, {"setup_id": setup_id})
 

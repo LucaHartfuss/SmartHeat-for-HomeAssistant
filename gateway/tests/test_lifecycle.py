@@ -374,3 +374,41 @@ def test_a_driver_that_cannot_forget_does_not_block_the_new_setup(ctx, monkeypat
     config = apply_config(setup_id="setup-2", installation_token="test-token-2")
     assert isinstance(execute(ctx, "apply_config", {"setup_id": "setup-2", "config": config}), Waiting)
     assert "test-token-details" not in caplog.text and "vicare_cloud" in caplog.text
+
+
+def _stale_series(ctx, started):
+    write_json(ctx.paths.inventory_samples, {
+        "driver_id": "vicare_cloud", "started": started, "hours": 1, "samples": [{"ts": 1.0, "werte": {"x": 9.0}}],
+        "next_at": started + 900,
+    })
+
+
+def test_sign_off_removes_the_inventory_series(vicare_ctx):
+    ctx, server, clock = vicare_ctx
+    write_runtime_files(ctx.paths, apply_config(driver=VICARE_DRIVER))
+    _stale_series(ctx, ctx.wall())
+    execute(ctx, "sign_off", {})
+    _status(ctx, status="abgemeldet", setup_id=load_raw(ctx.paths)["setup_id"], grund=None)
+    assert lifecycle.cleanup_after_sign_off(ctx)
+    assert not ctx.paths.inventory_samples.exists()
+
+
+def test_apply_config_removes_a_stale_inventory_series(ctx):
+    _stale_series(ctx, 1_700_000_000.0)
+    config = apply_config(setup_id="setup-2", installation_token="test-token-2")
+    assert isinstance(execute(ctx, "apply_config", {"setup_id": "setup-2", "config": config}), Waiting)
+    assert not ctx.paths.inventory_samples.exists()
+
+
+def test_an_old_series_is_not_returned_after_sign_off_for_the_same_driver_and_hours(vicare_ctx):
+    ctx, server, clock = vicare_ctx
+    write_runtime_files(ctx.paths, apply_config(driver=VICARE_DRIVER))
+    _stale_series(ctx, ctx.wall())
+    execute(ctx, "sign_off", {})
+    _status(ctx, status="abgemeldet", setup_id=load_raw(ctx.paths)["setup_id"], grund=None)
+    assert lifecycle.cleanup_after_sign_off(ctx)
+    outcome = execute(ctx, "driver_inventory", {"driver_id": "vicare_cloud", "stunden": 1})
+    clock.advance(3600)
+    ctx.wall = lambda: 1_000_000 + clock()
+    done = outcome.check()
+    assert isinstance(done, Done) and all(sample["werte"].get("x") != 9.0 for sample in done.result["proben"])

@@ -177,6 +177,7 @@ def _inventory(ctx: AgentContext, payload: dict) -> Outcome:
     ready_at = ctx.clock() + deadline_in
 
     def check() -> Done | Failed | None:
+        _adopt_saved(ctx, series)  # zwei laufende Befehle derselben Reihe teilen sie ueber die Datei
         now = ctx.wall()
         if now >= series["next_at"] and now < series["started"] + hours * 3600:
             series["samples"].append(driver.inventory_sample())
@@ -203,6 +204,17 @@ def _series(ctx: AgentContext, driver_id: str, hours: int) -> dict:
     series = {"driver_id": driver_id, "started": now, "hours": hours, "samples": [], "next_at": now}
     write_json(ctx.paths.inventory_samples, series, private=True)
     return series
+
+
+def _adopt_saved(ctx: AgentContext, series: dict) -> None:
+    """Neuere Proben derselben Reihe (gleicher Treiber, gleiche Dauer, gleicher Beginn) aus der Datei uebernehmen:
+    ein zweiter Befehl mit anderer ID darf einen 15-Minuten-Zeitpunkt nicht ein zweites Mal abrufen."""
+    saved = read_json(ctx.paths.inventory_samples)
+    if (
+        isinstance(saved, dict) and isinstance(saved.get("samples"), list) and _is_number(saved.get("next_at"))
+        and all(saved.get(key) == series[key] for key in ("driver_id", "hours", "started"))
+    ):
+        series.update(samples=saved["samples"], next_at=saved["next_at"])
 
 
 def _is_number(value) -> bool:

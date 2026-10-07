@@ -259,3 +259,24 @@ def test_the_simulation_returns_its_series_like_every_driver(ctx, clock):
     clock.advance(3601)
     done = outcome.check()
     assert isinstance(done, Done) and isinstance(done.result["proben"], list) and len(done.result["proben"]) == 1
+
+
+def test_two_live_commands_for_the_same_series_sample_each_boundary_once(vicare_ctx):
+    ctx, server, clock = vicare_ctx
+    first = commands.execute(ctx, "driver_inventory", {"driver_id": "vicare_cloud", "stunden": 1})
+    second = commands.execute(ctx, "driver_inventory", {"driver_id": "vicare_cloud", "stunden": 1})  # neue Command-ID
+    clock.advance(900)
+    first.check()
+    used = server_calls(server)
+    second.check()
+    assert server_calls(server) == used  # die zweite Pruefung nimmt die Probe der ersten aus der Datei
+    assert len(json.loads(ctx.paths.inventory_samples.read_text())["samples"]) == 1
+    done = []
+    for _ in range(4):
+        clock.advance(900)
+        ctx.wall = lambda: 1_000_000 + clock()
+        done = [first.check(), second.check()]
+        if all(d is not None for d in done):
+            break
+    assert all(isinstance(d, commands.Done) for d in done)
+    assert done[0].result["proben"] == done[1].result["proben"] and len(done[0].result["proben"]) == 3
