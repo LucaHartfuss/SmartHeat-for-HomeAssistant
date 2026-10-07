@@ -292,3 +292,88 @@ def test_usbboot_needs_a_fixed_disk_signature(tmp_path, sig):
     result = _usbboot(tmp_path, sig)
     assert result.returncode != 0
     assert not (tmp_path / "etc").exists()
+
+
+def _config_locale() -> dict[str, str]:
+    config = (IMAGE / "config" / "smartheat-gateway.yaml").read_text()
+    block = re.search(r"^locale:\n((?:  .*\n)+)", config, re.MULTILINE)
+    assert block, "Abschnitt locale fehlt in config/smartheat-gateway.yaml"
+    return dict(re.findall(r"^  (\w+): (.+?)\s*$", block.group(1), re.MULTILINE))
+
+
+def test_config_sets_german_locale_keyboard_and_berlin_time():
+    """Nutzer-Vorgabe 2026-10-07: Layer locale-config von rpi-image-gen v2.8.0 (Standard en_GB/gb/Europe/London)."""
+    assert _config_locale() == {"default": "de_DE.UTF-8", "keyboard_keymap": "de", "keyboard_layout": "German",
+                                "timezone": "Europe/Berlin"}
+
+
+def test_rootfs_checks_and_install_expect_the_configured_timezone_and_locale():
+    """Eine Quelle fuer den Bau (Konfiguration); rootfs_checks.sh und der Standard von install.sh (TZ der Container)
+    muessen dazu passen."""
+    wanted = _config_locale()
+    checks = (IMAGE / "rootfs_checks.sh").read_text()
+    assert re.search(rf"^SHG_IMAGE_TIMEZONE={re.escape(wanted['timezone'])}$", checks, re.MULTILINE)
+    assert re.search(rf"^SHG_IMAGE_LOCALE={re.escape(wanted['default'])}$", checks, re.MULTILINE)
+    assert f'TZ_NAME="{wanted["timezone"]}"' in (GW / "host" / "install.sh").read_text()
+
+
+def _fake_chroot(tmp_path: Path) -> tuple[dict[str, str], Path]:
+    """chroot-Attrappe: protokolliert den Befehl im Root-Dateisystem (eine Zeile je Aufruf) statt ihn auszufuehren."""
+    bindir = tmp_path / "fakebin"
+    bindir.mkdir(exist_ok=True)
+    log = tmp_path / "chroot.log"
+    (bindir / "chroot").write_text('#!/bin/bash\nroot="$1"; shift\necho "$root|$*" >>"$SHG_FAKE_CHROOT_LOG"\n'
+                                   'exit "${SHG_FAKE_CHROOT_RC:-0}"\n')
+    (bindir / "chroot").chmod(0o755)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("IGconf_")}
+    env.update({"PATH": f"{bindir}:{os.environ['PATH']}", "SHG_FAKE_CHROOT_LOG": str(log)})
+    return env, log
+
+
+def test_locale_hook_sets_the_configured_default_locale(tmp_path):
+    """locale-base (v2.8.0) schreibt LANG=C.UTF-8 nach /etc/locale.conf, das Paket locales aendert die Datei beim
+    Einrichten nicht (nur die Erzeugung folgt der Konfiguration): locale_default.sh setzt LANG per update-locale im
+    chroot, das die erzeugte Locale prueft."""
+    env, log = _fake_chroot(tmp_path)
+    env["IGconf_locale_default"] = _config_locale()["default"]
+    root = tmp_path / "root"
+    root.mkdir()
+    result = subprocess.run(["bash", str(IMAGE / "locale_default.sh"), str(root)], capture_output=True, text=True,
+                            check=False, env=env)
+    assert result.returncode == 0, result.stderr
+    assert log.read_text().splitlines() == [f"{root}|update-locale --reset LANG=de_DE.UTF-8"]
+
+
+@pytest.mark.parametrize("value", [None, "", "de_DE", "de_DE.UTF-8 UTF-8", "LANG=x", "de_DE.UTF-8\nLC_ALL=C"])
+def test_locale_hook_rejects_a_missing_or_odd_locale(tmp_path, value):
+    env, log = _fake_chroot(tmp_path)
+    if value is not None:
+        env["IGconf_locale_default"] = value
+    root = tmp_path / "root"
+    root.mkdir()
+    result = subprocess.run(["bash", str(IMAGE / "locale_default.sh"), str(root)], capture_output=True, text=True,
+                            check=False, env=env)
+    assert result.returncode != 0 and not log.exists()
+
+
+def test_locale_hook_fails_when_update_locale_fails(tmp_path):
+    env, _ = _fake_chroot(tmp_path)
+    env.update({"IGconf_locale_default": "de_DE.UTF-8", "SHG_FAKE_CHROOT_RC": "1"})
+    root = tmp_path / "root"
+    root.mkdir()
+    result = subprocess.run(["bash", str(IMAGE / "locale_default.sh"), str(root)], capture_output=True, text=True,
+                            check=False, env=env)
+    assert result.returncode != 0
+
+
+def test_layer_installs_locales_and_tzdata():
+    """trixie-minbase (v2.8.0) laedt locale-base, aber nicht locale-gen: ohne das Paket locales gaebe es weder die
+    Locale noch update-locale; tzdata wertet die Vorbelegung der Zeitzone aus."""
+    assert {"locales", "tzdata"} <= _layer_packages()
+
+
+def test_layer_runs_the_locale_hook_before_customize():
+    layer = (IMAGE / "layer" / "smartheat-gateway.yaml").read_text()
+    assert '- bash "$SRCROOT/locale_default.sh" "$1"' in layer
+    assert layer.index('- bash "$SRCROOT/locale_default.sh"') < layer.index(
+        '- bash "$IGconf_shg_stage/installer/gateway/image/customize.sh"')

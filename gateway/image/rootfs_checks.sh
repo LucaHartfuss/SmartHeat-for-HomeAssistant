@@ -1,8 +1,9 @@
 #!/bin/bash
 # Pruefungen am Root-Dateisystem des Gateway-Images (Plan G2b-2 Task 9): bricht den Image-Bau ab, wenn ein Geraet aus
 # dem Image eine geteilte Identitaet (machine-id, SSH-Hostschluessel, Geraeteschluessel, Bus-Zugangsdaten), ein
-# Passwort, ein Tunnel-Token oder im Serien-Image SSH bekaeme, wenn der Erststart ohne Pull nicht moeglich waere oder
-# die Geraete-API-/Portal-Adresse kein eigener DNS-Name per https ist (own_url.sh).
+# Passwort, ein Tunnel-Token oder im Serien-Image SSH bekaeme, wenn der Erststart ohne Pull nicht moeglich waere, wenn
+# Zeitzone oder Standard-Locale nicht den Vorgaben entsprechen oder die Geraete-API-/Portal-Adresse kein eigener
+# DNS-Name per https in der eigenen Zone ist (own_url.sh).
 # Aufruf: rootfs_checks.sh ROOTFS [--pilot] [--customize]
 #   --customize: Lauf im customize-Hook (customize.sh). Die machine-ids (systemd, dbus) bestehen dort noch;
 #                zurueckgesetzt werden sie erst beim Aufraeumen von mmdebstrap, geprueft dann im post-build-Hook
@@ -28,6 +29,10 @@ done
 . "$(dirname "${BASH_SOURCE[0]}")/own_url.sh" || { echo "FAIL: own_url.sh fehlt"; exit 1; }
 OWNER_UID="${SHG_ROOTFS_CHECK_UID:-0}"
 [[ $OWNER_UID =~ ^[0-9]+$ ]] || { echo "SHG_ROOTFS_CHECK_UID ungueltig: $OWNER_UID" >&2; exit 2; }
+# Zeitzone und Standard-Locale: dieselben Werte wie im Abschnitt locale von config/smartheat-gateway.yaml (der Bau
+# setzt sie von dort; test_image_scripts.py prueft die Gleichheit).
+SHG_IMAGE_TIMEZONE=Europe/Berlin
+SHG_IMAGE_LOCALE=de_DE.UTF-8
 FAIL=0
 fail() { echo "FAIL: $1"; FAIL=1; }
 WANTS="$R/etc/systemd/system/multi-user.target.wants"
@@ -124,6 +129,43 @@ fi
 # Sicherheitsupdates aus dem Raspberry-Pi-Archiv moeglich
 grep -rqs "archive.raspberrypi.com" "$R/etc/apt/sources.list.d" "$R/etc/apt/sources.list" \
   || fail "Raspberry-Pi-Archiv nicht eingebunden"
+
+# Zeitzone: /etc/localtime zeigt (absolut oder relativ) auf die Zonendatei, die im Image liegt (tzdata); ein
+# vorhandenes /etc/timezone (trixie legt es nicht mehr an) muss dieselbe Zone nennen.
+tz_link="$(readlink "$R/etc/localtime" 2>/dev/null || true)"
+case "$tz_link" in */zoneinfo/"$SHG_IMAGE_TIMEZONE") tz_ok=1 ;; *) tz_ok=0 ;; esac
+if [ "$tz_ok" = 0 ] || [ ! -f "$R/usr/share/zoneinfo/$SHG_IMAGE_TIMEZONE" ]; then
+  fail "Zeitzone nicht $SHG_IMAGE_TIMEZONE (/etc/localtime -> ${tz_link:-fehlt}, Zonendatei im Image noetig)"
+elif [ -e "$R/etc/timezone" ] && [ "$(tr -d '[:space:]' <"$R/etc/timezone")" != "$SHG_IMAGE_TIMEZONE" ]; then
+  fail "Zeitzone: /etc/timezone nennt nicht $SHG_IMAGE_TIMEZONE"
+fi
+
+# Standard-Locale: genau LANG=<Locale> in /etc/locale.conf (trixie; /etc/default/locale ist dort ein Link darauf) bzw.
+# in /etc/default/locale als eigener Datei, kein LC_ALL, das LANG ueberstimmt. Die Locale muss erzeugt sein.
+locale_problem() {
+  local f target lang
+  local -a files=()
+  for f in etc/locale.conf etc/default/locale; do
+    if [ -L "$R/$f" ]; then
+      target="$(readlink "$R/$f")"
+      case "$target" in ../locale.conf|/etc/locale.conf) continue ;; esac
+      echo "/$f ist ein Link auf $target"; return
+    fi
+    if [ -e "$R/$f" ]; then files+=("$f"); fi
+  done
+  if [ ${#files[@]} -eq 0 ]; then echo "keine Locale-Datei (/etc/locale.conf)"; return; fi
+  for f in "${files[@]}"; do
+    lang="$(grep -E '^[[:space:]]*LANG=' "$R/$f")"
+    if [ "$lang" != "LANG=$SHG_IMAGE_LOCALE" ]; then echo "/$f: LANG ist nicht genau $SHG_IMAGE_LOCALE"; return; fi
+    if grep -qE '^[[:space:]]*LC_ALL=' "$R/$f"; then echo "/$f: LC_ALL ueberstimmt LANG"; return; fi
+  done
+  if ! grep -qE "^[[:space:]]*${SHG_IMAGE_LOCALE//./\\.}[[:space:]]+UTF-8" "$R/etc/locale.gen" 2>/dev/null; then
+    echo "$SHG_IMAGE_LOCALE nicht in /etc/locale.gen (nicht erzeugt)"; return
+  fi
+  [ -s "$R/usr/lib/locale/locale-archive" ] || echo "keine erzeugten Locales (/usr/lib/locale/locale-archive fehlt)"
+}
+why="$(locale_problem)"
+[ -z "$why" ] || fail "Locale nicht $SHG_IMAGE_LOCALE: $why"
 
 # Geraete-API und Portal: eigener DNS-Name per https. Genau eine Zuweisung KEY=... am Zeilenanfang; jede andere Zeile,
 # die den Schluessel nennt (Leerzeichen, export, Kommentar, doppelt), koennte je nach Leser (Docker, systemd, Shell)

@@ -218,6 +218,11 @@ def _good(root: Path, pilot: bool = False) -> Path:
         "opt/smartheat/host/VERSION": "0.3.0\n",
         USB_RULE: GOOD_USB_RULE,
         USB_HOOK: GOOD_USB_HOOK,
+        # Zeitzone und Locale (locale_default.sh, Layer locale-base/locale-gen): so sieht es nach dem Bau aus
+        "usr/share/zoneinfo/Europe/Berlin": "TZif",
+        "etc/locale.conf": "LANG=de_DE.UTF-8\n#LANGUAGE=C\n",
+        "etc/locale.gen": "# en_GB.UTF-8 UTF-8\nde_DE.UTF-8 UTF-8\n",
+        "usr/lib/locale/locale-archive": "archive",
     }
     if pilot:
         files["root/.ssh/authorized_keys"] = "ssh-ed25519 AAAA test-key\n"
@@ -227,6 +232,9 @@ def _good(root: Path, pilot: bool = False) -> Path:
     (root / "var/lib/smartheat/data").mkdir(parents=True)
     (root / WANTS).mkdir(parents=True)
     (root / USB_HOOK).chmod(0o755)
+    (root / "etc/localtime").symlink_to("/usr/share/zoneinfo/Europe/Berlin")
+    (root / "etc/default").mkdir(parents=True, exist_ok=True)
+    (root / "etc/default/locale").symlink_to("../locale.conf")
     for unit in UNITS + (("ssh",) if pilot else ()):
         (root / WANTS / f"{unit}.service").symlink_to(f"/lib/systemd/system/{unit}.service")
     for tree in ("opt/smartheat", "var/lib/smartheat/images"):  # wie im Image: nicht gruppen-/weltbeschreibbar
@@ -326,6 +334,55 @@ def test_usb_boot_rule_and_hook_are_checked_strictly(tmp_path, breakit, problem)
     assert result.returncode != 0
     fails = [line for line in result.stdout.splitlines() if line.startswith("FAIL:")]
     assert len(fails) == 1 and problem in fails[0], result.stdout
+
+
+def _relink(path: Path, target: str) -> None:
+    path.unlink()
+    path.symlink_to(target)
+
+
+@pytest.mark.parametrize("breakit, problem", [
+    (lambda r: _relink(r / "etc/localtime", "/usr/share/zoneinfo/Europe/London"), "Zeitzone"),
+    (lambda r: _relink(r / "etc/localtime", "/usr/share/zoneinfo/Etc/UTC"), "Zeitzone"),
+    (lambda r: (r / "etc/localtime").unlink(), "Zeitzone"),
+    (lambda r: _relink(r / "etc/localtime", "/usr/share/zoneinfo/Europe/Berlin2"), "Zeitzone"),
+    (lambda r: (r / "usr/share/zoneinfo/Europe/Berlin").unlink(), "Zeitzone"),
+    (lambda r: (r / "etc/timezone").write_text("Europe/London\n"), "Zeitzone"),
+    (lambda r: (r / "etc/locale.conf").write_text("LANG=C.UTF-8\nLANGUAGE=C\n"), "Locale"),
+    (lambda r: (r / "etc/locale.conf").write_text("LANG=en_GB.UTF-8\n"), "Locale"),
+    (lambda r: (r / "etc/locale.conf").write_text("#LANG=de_DE.UTF-8\n"), "Locale"),
+    (lambda r: (r / "etc/locale.conf").write_text("LANG=de_DE.UTF-8\nLC_ALL=C\n"), "Locale"),
+    (lambda r: (r / "etc/locale.conf").write_text("LANG=de_DE.UTF-8\nLANG=C.UTF-8\n"), "Locale"),
+    (lambda r: (r / "etc/locale.conf").unlink() or (r / "etc/default/locale").unlink(), "Locale"),
+    (lambda r: (r / "etc/default/locale").unlink() or (r / "etc/default/locale").write_text("LANG=C.UTF-8\n"),
+     "Locale"),
+    (lambda r: (r / "etc/locale.gen").write_text("en_GB.UTF-8 UTF-8\n# de_DE.UTF-8 UTF-8\n"), "Locale"),
+    (lambda r: (r / "usr/lib/locale/locale-archive").unlink(), "Locale"),
+], ids=["london", "utc", "no-localtime", "berlin2", "no-zonefile", "etc-timezone-london", "lang-c", "lang-en",
+        "lang-commented", "lc-all", "lang-twice", "no-locale-file", "default-locale-c", "not-generated", "no-archive"])
+def test_timezone_and_default_locale_are_checked(tmp_path, breakit, problem):
+    """Zeitzone Europe/Berlin und Standard-Locale de_DE.UTF-8 (config/smartheat-gateway.yaml, Abschnitt locale):
+    jede Abweichung allein laesst die Pruefung scheitern, mit genau einer passenden Meldung."""
+    root = _good(tmp_path)
+    assert _run(root).returncode == 0
+    breakit(root)
+    result = _run(root)
+    fails = [line for line in result.stdout.splitlines() if line.startswith("FAIL:")]
+    assert result.returncode != 0 and len(fails) == 1 and problem in fails[0], result.stdout
+
+
+@pytest.mark.parametrize("fixit", [
+    lambda r: _relink(r / "etc/localtime", "../usr/share/zoneinfo/Europe/Berlin"),
+    lambda r: (r / "etc/timezone").write_text("Europe/Berlin\n"),
+    lambda r: (r / "etc/default/locale").unlink(),
+    lambda r: (r / "etc/default/locale").unlink() or (r / "etc/default/locale").write_text("LANG=de_DE.UTF-8\n"),
+    lambda r: (r / "etc/locale.conf").write_text("# Kommentar\nLANG=de_DE.UTF-8\nLANGUAGE=de_DE:de\n"),
+], ids=["relative-link", "etc-timezone-berlin", "no-default-locale", "default-locale-file", "language-de"])
+def test_timezone_and_locale_variants_that_are_fine(tmp_path, fixit):
+    root = _good(tmp_path)
+    fixit(root)
+    result = _run(root)
+    assert result.returncode == 0, result.stdout
 
 
 @pytest.mark.parametrize("url", ["https://accounts.hartfussha.org", "https://accounts.hartfussha.org/"])

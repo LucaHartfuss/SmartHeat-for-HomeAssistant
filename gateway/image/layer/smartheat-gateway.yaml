@@ -17,9 +17,12 @@
 ---
 # Alle Pakete, die install.sh verlangt (Test: test_image_scripts.py), damit install.sh im chroot kein apt braucht.
 # docker-cli ausdruecklich: unter trixie nur "Recommends" von docker.io, und rpi-image-gen installiert ohne Recommends.
-# openssh-server (Pilot-Image) bringt trixie-minbase mit.
+# openssh-server (Pilot-Image) bringt trixie-minbase mit. locales und tzdata fuer Locale und Zeitzone (Abschnitt locale
+# der Konfiguration): trixie-minbase laedt locale-base (debconf-Vorbelegung), aber nicht locale-gen.
 mmdebstrap:
   packages:
+    - locales
+    - tzdata
     - docker.io
     - docker-cli
     - docker-compose
@@ -31,4 +34,5 @@ mmdebstrap:
   customize-hooks:
     # Vor customize.sh (dessen rootfs_checks-Lauf prueft die Regel) und vor update-initramfs (runner customize).
     - bash "$SRCROOT/usbboot.sh" "$1"
+    - bash "$SRCROOT/locale_default.sh" "$1"
     - bash "$IGconf_shg_stage/installer/gateway/image/customize.sh" "$1" "$IGconf_shg_stage"

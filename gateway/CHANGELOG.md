@@ -16,6 +16,9 @@ Hardware-Gate (Teil B) mit dem echten minisign-Schluessel.
   prueft das Root-Dateisystem waehrend (Hook) und nach dem Bau (post-build)). Zusaetzlich Allowlist: nur Namen in der
   eigenen Zone `hartfussha.org` (die Zone selbst oder ein Name darunter, `SHG_OWN_ZONES` in `own_url.sh`); die
   Denylist bleibt als Tiefenverteidigung.
+- Zeitzone Europe/Berlin und Standard-Locale de_DE.UTF-8 (Tastatur de) im Image (Abschnitt `locale` der
+  Image-Konfiguration; Pakete `locales` und `tzdata` im Layer, `locale_default.sh` setzt LANG, weil `locale-base` von
+  rpi-image-gen v2.8.0 `LANG=C.UTF-8` schreibt); `rootfs_checks.sh` prueft `/etc/localtime` und `/etc/locale.conf`.
 - Erststart ohne Pull: Container-Images werden mit `skopeo copy --all --preserve-digests` als OCI-Archive exportiert;
   das Geraet laedt sie in den containerd-Speicher von Docker (`/etc/docker/daemon.json`, von `install.sh` vor der
   Docker-Installation geschrieben; nur frische Geraete). Die Root-Partition ist fest 8G gross (kein Wachstum beim ersten

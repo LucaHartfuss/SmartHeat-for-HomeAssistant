@@ -19,6 +19,16 @@ image:
   # 5348470a-01/-02), damit /dev/disk/by-slot/{boot,system} (cmdline.txt, fstab von image-rpios) auch dort entstehen.
   disksig: "0x5348470a"
 
+# Layer locale-config (v2.8.0, Standard en_GB.UTF-8 / gb / English (UK) / Europe/London; Nutzer-Vorgabe 2026-10-07).
+# Die Zeitzone setzt tzdata aus der Vorbelegung (locale-base), die Locale erzeugt locales (beide Pakete aus dem Layer
+# smartheat-gateway); den Standard (LANG) setzt locale_default.sh, weil locale-base LANG=C.UTF-8 schreibt.
+# rootfs_checks.sh prueft beides.
+locale:
+  default: de_DE.UTF-8
+  keyboard_keymap: de
+  keyboard_layout: German
+  timezone: Europe/Berlin
+
 layer:
   base: trixie-minbase
   shg: smartheat-gateway
