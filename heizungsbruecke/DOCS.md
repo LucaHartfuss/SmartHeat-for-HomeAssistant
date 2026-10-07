@@ -104,8 +104,12 @@ gemerkten Ursprungswerte (Betriebsart bzw. Heizprogramm, Komfort-/Absenk-Soll) w
 und danach vergessen. Ist das Weishaupt-Tageslimit erreicht, zählt ein abgebrochener Versuch der Vorbereitung (Betriebsart) nicht als
 Fehlversuch; du erhältst den Hinweis zum Tageslimit (einmal am Tag), und der nächste lokale Check versucht es erneut.
 
-Die Weishaupt-Betriebsart „Normal“ steht in weishaupt_modbus als Übersetzungsschlüssel `hz_operationmode_normal` (ab 0.33.0;
-die Optionen der Select-Entity sind dort die Schlüssel, nicht die Texte).
+Die Weishaupt-Betriebsart „Normal“ steht in weishaupt_modbus als Übersetzungsschlüssel (ab 0.33.0; die Optionen der
+Select-Entity sind dort die Schlüssel, nicht die Texte). Die Betriebsart „Normal“ heißt in weishaupt_modbus 1.x
+`hz_operationmode_normal`, ab 2.0 `heating_circuit_operation_mode_normal`; die Heizungsbrücke erkennt die Version am
+aktuellen Wert und stellt beim Abmelden die ursprüngliche Betriebsart im passenden Schema zurück. Hat die Betriebsart
+einen unbekannten Wert (eine künftige Version benennt die Optionen erneut), stellt die Heizungsbrücke nichts um und
+meldet den Fehler, statt eine Option zu raten.
 
 ## Statusereignis und Hinweise (ab 0.33.0)
 
