@@ -328,3 +328,49 @@ def test_cleanup_interrupted_by_power_loss_completes_on_the_next_pass(ctx, monke
     assert lifecycle.cleanup_after_sign_off(ctx)
     assert not ctx.paths.driver_secrets_dir.exists() and not ctx.paths.runtime_config.exists()
     assert ctx.paths.device_dir.exists()
+
+
+VICARE_DRIVER = {"id": "vicare_cloud", "parameter": {"installation_id": 2012345, "gateway_serial": "7637415000000001",
+                                                       "device_id": "0", "heizkreis": 0, "poll_seconds": 300.0}}
+
+
+def _old_vicare_login(ctx):
+    write_json(ctx.paths.driver_secrets_dir / "vicare.json", {"refresh_token": "test-refresh"}, private=True)
+
+
+def test_a_new_setup_with_another_driver_after_sign_off_forgets_the_old_vicare_login(ctx):
+    _signed_off_with_failed_restore(ctx)
+    _old_vicare_login(ctx)
+    config = apply_config(setup_id="setup-2", installation_token="test-token-2")  # Treiber simulation
+    assert isinstance(execute(ctx, "apply_config", {"setup_id": "setup-2", "config": config}), Waiting)
+    assert not (ctx.paths.driver_secrets_dir / "vicare.json").exists()
+
+
+def test_a_new_setup_with_vicare_cloud_after_sign_off_keeps_its_fresh_login(ctx):
+    _signed_off_with_failed_restore(ctx)
+    _old_vicare_login(ctx)  # bei vicare_cloud stammt vicare.json aus dem driver_login der neuen Einrichtung
+    config = apply_config(setup_id="setup-2", installation_token="test-token-2", driver=VICARE_DRIVER)
+    assert isinstance(execute(ctx, "apply_config", {"setup_id": "setup-2", "config": config}), Waiting)
+    assert (ctx.paths.driver_secrets_dir / "vicare.json").exists()
+
+
+def test_a_successful_sign_off_with_vicare_cloud_removes_the_login(ctx):
+    write_runtime_files(ctx.paths, apply_config(driver=VICARE_DRIVER))
+    _old_vicare_login(ctx)
+    execute(ctx, "sign_off", {})
+    _status(ctx, status="abgemeldet", setup_id=load_raw(ctx.paths)["setup_id"], grund=None)
+    assert lifecycle.cleanup_after_sign_off(ctx)
+    assert not ctx.paths.driver_secrets_dir.exists()
+
+
+def test_a_driver_that_cannot_forget_does_not_block_the_new_setup(ctx, monkeypatch, caplog):
+    from smartheat_gateway.drivers.vicare_cloud.driver import ViCareCloudDriver
+
+    def broken(self):
+        raise OSError("test-token-details")
+
+    monkeypatch.setattr(ViCareCloudDriver, "forget_credentials", broken)
+    _signed_off_with_failed_restore(ctx)
+    config = apply_config(setup_id="setup-2", installation_token="test-token-2")
+    assert isinstance(execute(ctx, "apply_config", {"setup_id": "setup-2", "config": config}), Waiting)
+    assert "test-token-details" not in caplog.text and "vicare_cloud" in caplog.text
