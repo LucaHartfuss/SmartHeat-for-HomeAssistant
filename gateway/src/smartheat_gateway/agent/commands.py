@@ -24,6 +24,7 @@ from smartheat_gateway.quota import QuotaExhausted
 logger = logging.getLogger(__name__)
 
 INVENTORY_EVERY_SECONDS = 900
+INVENTORY_ABORTED_TEXT = "Die Inventur wurde abgebrochen, weil sich die Einrichtung des Gateways geändert hat."
 ZIGBEE_VALUE_FIELDS = ("temperature", "local_temperature", "occupied_heating_setpoint", "humidity")
 QUOTA_TEXT = "Das Abfrage-Kontingent beim Hersteller ist erschöpft, später erneut versuchen."
 
@@ -177,7 +178,8 @@ def _inventory(ctx: AgentContext, payload: dict) -> Outcome:
     ready_at = ctx.clock() + deadline_in
 
     def check() -> Done | Failed | None:
-        _adopt_saved(ctx, series)  # zwei laufende Befehle derselben Reihe teilen sie ueber die Datei
+        if not _adopt_saved(ctx, series):  # Reihe weg oder ersetzt (Abmelden, Neueinrichtung): nichts mehr abrufen
+            return Failed("anlage_nicht_erreichbar", INVENTORY_ABORTED_TEXT)
         now = ctx.wall()
         if now >= series["next_at"] and now < series["started"] + hours * 3600:
             series["samples"].append(driver.inventory_sample())
@@ -206,15 +208,19 @@ def _series(ctx: AgentContext, driver_id: str, hours: int) -> dict:
     return series
 
 
-def _adopt_saved(ctx: AgentContext, series: dict) -> None:
+def _adopt_saved(ctx: AgentContext, series: dict) -> bool:
     """Neuere Proben derselben Reihe (gleicher Treiber, gleiche Dauer, gleicher Beginn) aus der Datei uebernehmen:
-    ein zweiter Befehl mit anderer ID darf einen 15-Minuten-Zeitpunkt nicht ein zweites Mal abrufen."""
+    ein zweiter Befehl mit anderer ID darf einen 15-Minuten-Zeitpunkt nicht ein zweites Mal abrufen. _series legt die
+    Datei immer an; fehlt sie spaeter oder gehoert sie zu einer anderen Reihe, hat Abmelden/Neueinrichtung sie
+    geloescht oder ersetzt: False, der wartende Befehl darf sie weder neu anlegen noch seine alten Proben liefern."""
     saved = read_json(ctx.paths.inventory_samples)
-    if (
+    if not (
         isinstance(saved, dict) and isinstance(saved.get("samples"), list) and _is_number(saved.get("next_at"))
         and all(saved.get(key) == series[key] for key in ("driver_id", "hours", "started"))
     ):
-        series.update(samples=saved["samples"], next_at=saved["next_at"])
+        return False
+    series.update(samples=saved["samples"], next_at=saved["next_at"])
+    return True
 
 
 def _is_number(value) -> bool:

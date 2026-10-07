@@ -280,3 +280,24 @@ def test_two_live_commands_for_the_same_series_sample_each_boundary_once(vicare_
             break
     assert all(isinstance(d, commands.Done) for d in done)
     assert done[0].result["proben"] == done[1].result["proben"] and len(done[0].result["proben"]) == 3
+
+
+def test_a_pending_inventory_does_not_recreate_its_series_after_the_setup_was_removed(vicare_ctx):
+    from smartheat_gateway.agent import lifecycle
+
+    ctx, server, clock = vicare_ctx
+    outcome = commands.execute(ctx, "driver_inventory", {"driver_id": "vicare_cloud", "stunden": 2})
+    clock.advance(900)
+    ctx.wall = lambda: 1_000_000 + clock()
+    assert outcome.check() is None and len(json.loads(ctx.paths.inventory_samples.read_text())["samples"]) == 1
+    lifecycle.forget_inventory(ctx.paths)  # Abmelden oder Neueinrichtung
+    used = server_calls(server)
+    clock.advance(900)
+    ctx.wall = lambda: 1_000_000 + clock()
+    result = outcome.check()
+    assert isinstance(result, commands.Failed) and result.grund in wire.command_errors("driver_inventory")
+    assert not ctx.paths.inventory_samples.exists() and server_calls(server) == used
+    clock.advance(7200)
+    ctx.wall = lambda: 1_000_000 + clock()
+    assert isinstance(outcome.check(), commands.Failed)  # auch nach Ablauf des Fensters keine alten Proben als Done
+    assert not ctx.paths.inventory_samples.exists()
