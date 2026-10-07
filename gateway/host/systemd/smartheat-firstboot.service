@@ -1,0 +1,22 @@
+[Unit]
+Description=SmartHeat-Gateway Erststart: Images aus dem Image laden, Bundle starten (Plan G2b-2)
+After=docker.service
+Requires=docker.service
+Before=smartheat-updater.service
+ConditionDirectoryNotEmpty=@ROOT@/images
+
+[Service]
+Type=oneshot
+Environment=PYTHONPATH=/opt/smartheat/host
+Environment=SHG_ROOT=@ROOT@
+ExecStart=/usr/bin/python3 -m smartheat_host.firstboot
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=@ROOT@ /run/docker.sock
+
+[Install]
+WantedBy=multi-user.target

@@ -2,15 +2,16 @@
 # Host-Installer des SmartHeat-Gateways (Spec SHG G2 8.2, G2b-1 6): idempotent, eine Quelle fuer das Image (G2b-2,
 # chroot mit --no-activate) und fuer Bastler auf frischem Raspberry Pi OS Lite 64 bit (Debian 13 trixie).
 # Aufruf: install.sh --device-api-url URL [--portal-base-url URL] [--diag-hostnames NAMEN] [--timezone ZONE]
-#                    [--bundle ORDNER] [--pilot-ssh PUBKEY] [--root PFAD] [--no-docker] [--no-activate]
+#                    [--bundle ORDNER] [--pilot-ssh PUBKEY] [--root PFAD] [--no-docker] [--no-activate] [--image]
 # ACHTUNG: Ohne --pilot-ssh bleibt Port 22 in der Firewall zu und ssh wird deaktiviert (laufende Sitzungen bestehen bis
 # zu ihrem Ende weiter, neue sind nicht mehr moeglich). --bundle: Ordner mit docker-compose.yml, mosquitto.conf,
-# manifest.json und (optional) manifest.json.minisig.
+# manifest.json und (optional) manifest.json.minisig. --image: Image-Bau im chroot (Plan G2b-2): wie --no-activate,
+# aktiviert die Units aber offline (systemctl enable, nichts startet; der erste Boot startet smartheat-firstboot).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 GW="$(cd "$HERE/.." && pwd)"
 ROOT=/var/lib/smartheat OPT=/opt/smartheat/host API_URL="" PORTAL_URL="" DIAG_NAMES="" TZ_NAME="Europe/Berlin"
-BUNDLE="" PILOT_KEY="" DOCKER=1 ACTIVATE=1
+BUNDLE="" PILOT_KEY="" DOCKER=1 ACTIVATE=1 IMAGE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --device-api-url) API_URL="$2"; shift ;;
@@ -22,6 +23,7 @@ while [ $# -gt 0 ]; do
     --root) ROOT="$2"; shift ;;
     --no-docker) DOCKER=0 ;;
     --no-activate) ACTIVATE=0 ;;
+    --image) IMAGE=1; ACTIVATE=0 ;;
     *) echo "Unbekannte Option: $1" >&2; exit 2 ;;
   esac
   shift
@@ -75,7 +77,7 @@ subst() { sed -e "s|@ROOT@|$ROOT|g" "$1"; }
 
 packages() {
   local wanted=(python3 python3-cryptography unattended-upgrades nftables ca-certificates)  # CA: Updater-HTTPS, pull
-  [ "$DOCKER" = 1 ] && wanted+=(docker.io docker-compose)
+  [ "$DOCKER" = 1 ] && wanted+=(docker.io docker-cli docker-compose)  # trixie: CLI ist nur "Recommends" von docker.io
   local missing=() pkg
   for pkg in "${wanted[@]}"; do
     dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed" || missing+=("$pkg")
@@ -131,6 +133,9 @@ system_files() {
   if [ "$WROTE" = 1 ]; then FIREWALL_CHANGED=1; fi
   put /etc/systemd/journald.conf.d/smartheat.conf 0644 0:0 <"$HERE/journald.conf.d/smartheat.conf"
   put /etc/apt/apt.conf.d/52smartheat-unattended 0644 0:0 <"$HERE/apt/52smartheat-unattended"
+  if [ "$DOCKER" = 1 ] && [ -f "$HERE/docker-daemon.json" ]; then
+    put /etc/docker/daemon.json 0644 0:0 <"$HERE/docker-daemon.json"  # Speicherweg fuer den Erststart (G2b-2 Task 7)
+  fi
   if [ -n "$PILOT_KEY" ]; then
     put /etc/ssh/sshd_config.d/00-smartheat.conf 0644 0:0 < <(printf \
       'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin prohibit-password\n')
@@ -167,7 +172,8 @@ activate() {
   udevadm control --reload
   udevadm trigger --subsystem-match=tty
   systemctl restart systemd-journald
-  systemctl enable --now smartheat-firewall.service smartheat-hoststatus.service smartheat-led.service
+  systemctl enable --now smartheat-firewall.service smartheat-hoststatus.service smartheat-led.service \
+    smartheat-firstboot.service
   # Oneshot mit RemainAfterExit: geaenderte Regeln (z. B. Pilot-SSH an/aus) greifen erst nach einem Neustart der Unit.
   if [ "$FIREWALL_CHANGED" = 1 ]; then systemctl restart smartheat-firewall.service; fi
   if [ "$DOCKER" = 1 ]; then systemctl enable --now docker.service smartheat-updater.service; fi
@@ -176,6 +182,16 @@ activate() {
     systemctl reload ssh.service
   else systemctl disable --now ssh.service 2>/dev/null || true; fi
   if [ "$DOCKER" = 1 ]; then start_current; fi
+}
+
+# Image-Bau (--image): Units offline aktivieren; gestartet wird erst beim ersten Boot (smartheat-firstboot).
+enable_offline() {
+  [ "$IMAGE" = 1 ] || return 0
+  systemctl enable smartheat-firewall.service smartheat-hoststatus.service smartheat-led.service \
+    smartheat-firstboot.service
+  if [ "$DOCKER" = 1 ]; then systemctl enable docker.service smartheat-updater.service; fi
+  if [ -n "$PILOT_KEY" ]; then systemctl enable ssh.service
+  else systemctl disable ssh.service ssh.socket 2>/dev/null || true; fi
 }
 
 # Feld aus updater/state.json: current bzw. die Version eines offenen Auftrags (in_progress); leer, wenn nicht gesetzt.
@@ -217,4 +233,5 @@ host_package
 system_files
 first_bundle
 activate
+enable_offline
 if [ "$CHANGED" = 0 ]; then echo "Nichts zu tun (bereits installiert)"; fi

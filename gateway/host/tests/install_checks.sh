@@ -23,7 +23,7 @@ bash "$SRC/install.sh" "${ARGS[@]}" >/tmp/run2.log 2>&1 || fail "zweiter Lauf"
 snapshot >/tmp/after
 diff /tmp/before /tmp/after >/dev/null || { diff /tmp/before /tmp/after; fail "zweiter Lauf hat etwas geaendert"; }
 grep -q "Nichts zu tun" /tmp/run2.log || fail "zweiter Lauf meldet Aenderungen"
-for unit in updater led hoststatus firewall; do
+for unit in updater led hoststatus firewall firstboot; do
   # Nur die fehlende docker.service-Abhaengigkeit (Container ohne Docker) wird ausgefiltert, Syntaxfehler nicht.
   systemd-analyze verify "/etc/systemd/system/smartheat-$unit.service" 2>&1 | grep -v "^$" | grep -vi "docker.service" \
     && fail "Unit smartheat-$unit ungueltig"
@@ -114,7 +114,7 @@ done
 # steht diese implizite Regel hier als Drop-in explizit. Ein Gegenbeispiel (After=multi-user.target bei
 # WantedBy=multi-user.target) muss den Test ausloesen, sonst taugt er nichts.
 mkdir -p /etc/systemd/system/multi-user.target.wants /etc/systemd/system/multi-user.target.d
-for unit in updater led hoststatus firewall; do
+for unit in updater led hoststatus firewall firstboot; do
   ln -sf "/etc/systemd/system/smartheat-$unit.service" "/etc/systemd/system/multi-user.target.wants/smartheat-$unit.service"
 done
 cycle_check() {  # Ausgabe von verify fuer multi-user.target mit der impliziten Reihenfolge fuer die Units $*
@@ -122,7 +122,7 @@ cycle_check() {  # Ausgabe von verify fuer multi-user.target mit der impliziten 
   systemd-analyze verify --man=no multi-user.target 2>&1
 }
 cycle_check smartheat-updater.service smartheat-led.service smartheat-hoststatus.service smartheat-firewall.service \
-  >/tmp/cycle.log
+  smartheat-firstboot.service >/tmp/cycle.log
 if grep -qi 'ordering cycle' /tmp/cycle.log; then grep -i cycle /tmp/cycle.log; fail "Ordnungszyklus in den Gateway-Units"; fi
 sed 's|^After=local-fs.target|After=multi-user.target|' /etc/systemd/system/smartheat-led.service \
   >/etc/systemd/system/smartheat-cycle.service
@@ -155,6 +155,7 @@ activate_run "ohne Stick"
 grep -q "Geraet fehlt: $STICK" /tmp/act.log || { cat /tmp/act.log; fail "Aktivierung ohne Stick: keine klare Meldung"; }
 compose_started && fail "Aktivierung ohne Stick: compose up trotzdem aufgerufen"
 grep -q "^systemctl enable --now docker.service smartheat-updater.service" /tmp/stub.log || fail "Updater nicht aktiviert"
+cmp -s "$SRC/docker-daemon.json" /etc/docker/daemon.json || fail "docker daemon.json (Speicherweg fuer den Erststart) fehlt"
 touch "$STICK"
 activate_run "mit Stick"
 compose_started || { cat /tmp/act.log /tmp/stub.log; fail "Aktivierung mit Stick startet das Bundle nicht"; }
@@ -167,5 +168,13 @@ json.dump(state, open(path, "w"))' "$ACT_ROOT/updater/state.json"
 activate_run "mit offenem Updater-Auftrag"
 grep -q "Updater-Auftrag fuer 0.3.0 offen" /tmp/act.log || { cat /tmp/act.log; fail "offener Auftrag: keine Meldung"; }
 compose_started && fail "offener Updater-Auftrag: compose up trotzdem aufgerufen"
+# Image-Bau (Plan G2b-2 Task 7): --image aktiviert offline, startet nichts.
+IMAGE_ARGS=("${ARGS[@]/--no-activate/--image}")
+bash "$SRC/install.sh" "${IMAGE_ARGS[@]}" >/tmp/run-image.log 2>&1 || { cat /tmp/run-image.log; fail "Lauf mit --image"; }
+for unit in smartheat-firewall smartheat-hoststatus smartheat-led smartheat-firstboot ssh; do
+  [ -L "/etc/systemd/system/multi-user.target.wants/$unit.service" ] || fail "$unit mit --image nicht aktiviert"
+done
+grep -q '^ConditionDirectoryNotEmpty=/var/lib/smartheat/images$' /etc/systemd/system/smartheat-firstboot.service \
+  || fail "Firstboot-Bedingung fehlt oder @ROOT@ nicht ersetzt"
 command -v shellcheck >/dev/null && { shellcheck "$SRC/install.sh" "$SRC/tests/install_checks.sh" || fail "shellcheck"; }
 exit $FAIL
