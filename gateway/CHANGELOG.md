@@ -1,5 +1,27 @@
 # Changelog SmartHeat-Gateway
 
+## Unveröffentlicht
+
+Plan SHG G4: Treiber `vicare_cloud` (Viessmann-ViCare-Cloud). `gateway/VERSION` bleibt unverändert, die Version
+vergibt das Release.
+
+- Neuer Treiber `vicare_cloud` (`drivers/vicare_cloud/`): `PlantBinding` mit derselben `VIESSMANN_VICARE_BINDING` wie der
+  HA-Pfad, eigener dünner `requests`-Client der ViCare-REST-API (PyViCare ist keine Laufzeit-Abhängigkeit), Schreibgruppe
+  Steigung/Niveau als zwei `setCurve`-Aufrufe mit Überlagerung, Programmwechsel mit Einschwingfenster, Wertebereich der
+  Anlage aus den Kommando-Constraints (`limits()`).
+- Anmeldung per OAuth2 mit PKCE (Variante A, **vorläufig bis zum Eingangs-Gate** mit dem echten Viessmann-Client): Tokens
+  nur in `/data/secrets/drivers/vicare.json` (0600), Erneuerung unter `flock`, abgemeldet wird nur bei `invalid_grant`.
+- Kontingent-Wächter angeschlossen (1450/Tag, harte Grenze 1200, 429 sperrt bis `Retry-After`); Thread-Vertrag der Treiber
+  (ein `RLock`, auch im Simulations-Treiber); Treiber-Cache nach drei Abfrageintervallen veraltet.
+- Probe liefert Kandidaten mit Hebelsatz `viessmann_vicare` oder einem von fünf Ablehnungsgründen
+  (`heizkurve_nicht_schreibbar`, `kein_normalprogramm`, `schrittweite_abweichend`, `erzeuger_unbekannt`,
+  `aussentemperatur_fehlt`).
+- Inventur im Agenten: Probenreihe `/data/agent/inventory.json` (alle 900 s eine Probe, setzt nach Neustart und erneuter
+  Zustellung fort, wird beim Einrichten und Abmelden gelöscht); `driver.inventory(stunden, proben)` ohne Seriennummern.
+- Tests: Matrix aus den PyViCare-Aufzeichnungen (gepinnter Commit, Lizenzhinweis) plus eigenen, Fake-ViCare-Server
+  (`tests/fake_vicare/`, auch als E2E-Container), Gleichheitstest gegen den HA-Pfad, Szenario „Anmeldung abgelaufen“.
+- Bekannt: `urllib3` loggt auf Stufe DEBUG URLs mit Seriennummer (Logger noch nicht auf WARNING begrenzt, Roadmap).
+
 ## 0.3.0
 
 Plan G2b-2 Teil A (Basis-Image und Pilot-Zugang, ohne Hardware geprueft). Erstes echtes Release folgt im
