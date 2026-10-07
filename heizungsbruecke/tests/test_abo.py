@@ -35,6 +35,7 @@ BOTH_ROLES = {"curve_current": "number.curve", "shift_current": "number.shift"}
 def _runtime(tmp_path, store, entity_ids=BOTH_ROLES, notify_services=("notify.handy",), clock=None):
     manifest = ChannelManifest(refs=entity_ids)
     ha_api = MagicMock()
+    ha_api.get_attribute.side_effect = ValueError("kein Wertebereich")  # wie eine Entity ohne min/max
     return SimpleNamespace(
         manifest=manifest, signals=ha_api, ha_api=ha_api, store=store, mqtt_client=MagicMock(),
         config=runtime_config(entitlement_path=tmp_path / "entitlement_state.json"),

@@ -3,7 +3,7 @@ Reihenfolge Komfort/Normal/Absenk, Hilfs-Ursprungswerte, physische Schreibvorgae
 Reihenfolge und Wiederherstellung."""
 import pytest
 
-from heizungsbruecke.ha_binding import WEISHAUPT_NORMAL_MODE, WeishauptHaBinding
+from heizungsbruecke.ha_binding import WeishauptHaBinding, weishaupt_option, weishaupt_scheme
 from smartheat_core import write_budget
 from smartheat_core.binding import WEISHAUPT_MODBUS
 from smartheat_core.pipeline import DeviceWriteError, LeverPipeline, WriteBudgetExhausted
@@ -101,7 +101,7 @@ def test_preparation_switches_the_operating_mode_to_normal_once():
     assert binding.needs_preparation() and not binding.is_prepared()
     assert binding.prepare() is True
     assert binding.prepare() is False
-    assert ha.calls == [("select", "select.betriebsart", WEISHAUPT_NORMAL_MODE)]
+    assert ha.calls == [("select", "select.betriebsart", "hz_operationmode_normal")]
     assert binding.physical_writes == 1
 
 
@@ -118,7 +118,7 @@ def test_read_aux_returns_mode_and_both_auxiliary_setpoints():
 
 
 def test_restore_aux_writes_only_differences_in_a_safe_order():
-    ha = FakeHa(**{"number.komfort": 24.0, "number.absenk": 17.0, "select.betriebsart": WEISHAUPT_NORMAL_MODE})
+    ha = FakeHa(**{"number.komfort": 24.0, "number.absenk": 17.0, "select.betriebsart": "hz_operationmode_normal"})
     binding = _binding(ha)
     binding.restore_aux({"mode_select": "hz_operationmode_automatic", "setpoint_comfort": 22.0, "setpoint_setback": 18.0})
     assert ha.calls == [
@@ -155,7 +155,7 @@ def test_first_server_answer_remembers_originals_prepares_and_writes(make_store,
     assert store.state.aux_originals == {"mode_select": "hz_operationmode_automatic", "setpoint_comfort": 22.0, "setpoint_setback": 18.0}
     assert store.state.originals == {"curve": 0.75, "room_setpoint": 20.0, "heat_limit": 18.0}
     assert ha.calls == [
-        ("select", "select.betriebsart", WEISHAUPT_NORMAL_MODE), ("number", "number.hk", 0.8),
+        ("select", "select.betriebsart", "hz_operationmode_normal"), ("number", "number.hk", 0.8),
         ("number", "number.komfort", 23.0), ("number", "number.normal", 23.0), ("number", "number.swu", 17.0),
     ]
     assert store.state.lifetime_writes == 5
@@ -163,7 +163,7 @@ def test_first_server_answer_remembers_originals_prepares_and_writes(make_store,
 
 
 def test_a_failure_in_the_middle_of_the_order_keeps_the_state_consistent_and_retries(make_store, clock):
-    ha = FakeHa(**{"select.betriebsart": WEISHAUPT_NORMAL_MODE})
+    ha = FakeHa(**{"select.betriebsart": "hz_operationmode_normal"})
     pipeline, store = _pipeline(make_store, clock, ha)
     ha.failing.add("number.normal")
     with pytest.raises(DeviceWriteError) as error:
@@ -217,7 +217,7 @@ def test_preparation_at_the_daily_limit_is_refused_when_the_mode_must_change(mak
 
 def test_preparation_at_the_daily_limit_proceeds_when_the_mode_is_already_normal(make_store, clock, monkeypatch):
     monkeypatch.setattr(write_budget, "today", lambda: DAY)
-    ha = FakeHa(**{"select.betriebsart": WEISHAUPT_NORMAL_MODE})
+    ha = FakeHa(**{"select.betriebsart": "hz_operationmode_normal"})
     pipeline, store = _pipeline(make_store, clock, ha, backup=AT_LIMIT)
     assert pipeline.ensure_prepared() is False
     assert ha.calls == [] and _total(store) == 10
@@ -228,7 +228,7 @@ def test_exempt_preparation_at_the_daily_limit_switches_and_counts(make_store, c
     ha = FakeHa()
     pipeline, store = _pipeline(make_store, clock, ha, backup=AT_LIMIT)
     assert pipeline.ensure_prepared(exempt=True) is True
-    assert ha.calls == [("select", "select.betriebsart", WEISHAUPT_NORMAL_MODE)]
+    assert ha.calls == [("select", "select.betriebsart", "hz_operationmode_normal")]
     assert _total(store) == 11 and store.state.lifetime_writes == 1
 
 
@@ -238,7 +238,7 @@ def test_a_comfort_boost_at_the_daily_limit_prepares_writes_in_order_and_counts(
     pipeline, store = _pipeline(make_store, clock, ha, backup=AT_LIMIT)
     assert pipeline.set_boosts(comfort=True, emergency=False) == (True, False)
     assert ha.calls == [
-        ("select", "select.betriebsart", WEISHAUPT_NORMAL_MODE), ("number", "number.hk", 1.0),
+        ("select", "select.betriebsart", "hz_operationmode_normal"), ("number", "number.hk", 1.0),
         ("number", "number.komfort", 25.0), ("number", "number.normal", 25.0), ("number", "number.swu", 23.0),
     ]
     assert _total(store) == 15
@@ -261,7 +261,7 @@ def test_unreadable_auxiliary_values_block_a_boost_that_writes_the_room_setpoint
     clock.advance(3600)
     assert pipeline.set_boosts(comfort=comfort, emergency=emergency) == (comfort, emergency)
     assert store.state.aux_originals == {"mode_select": "hz_operationmode_automatic", "setpoint_comfort": 22.0, "setpoint_setback": 18.0}
-    assert ha.calls[0] == ("select", "select.betriebsart", WEISHAUPT_NORMAL_MODE)
+    assert ha.calls[0] == ("select", "select.betriebsart", "hz_operationmode_normal")
 
 
 # --- Wiederherstellung ohne gemerkte Hilfswerte stellt die Betriebsart nicht um (Review Task 8) ---
@@ -289,7 +289,7 @@ def test_a_restore_without_auxiliary_originals_does_not_switch_the_mode(make_sto
     })
     assert store.state.aux_originals == {}
     assert pipeline.restore_and_clear(always_restore=True) is True
-    assert ("select", "select.betriebsart", WEISHAUPT_NORMAL_MODE) not in ha.calls
+    assert ("select", "select.betriebsart", "hz_operationmode_normal") not in ha.calls
     assert ha.calls == [("number", "number.normal", 20.0)]
     assert ha.states["select.betriebsart"] == "hz_operationmode_automatic"
 
@@ -298,7 +298,7 @@ def test_regular_writes_still_prepare_the_operating_mode(make_store, clock):
     ha = FakeHa()
     pipeline, _ = _pipeline(make_store, clock, ha)
     pipeline.apply_server_values({"room_setpoint": 21.0})
-    assert ha.calls == [("select", "select.betriebsart", WEISHAUPT_NORMAL_MODE), ("number", "number.normal", 21.0)]
+    assert ha.calls == [("select", "select.betriebsart", "hz_operationmode_normal"), ("number", "number.normal", 21.0)]
 
 
 # --- Wiederherstellung mit Abfrageverzug: Komfort/Absenk gegen das Ziel des Normal-Solls begrenzen (Final-Review) ---
@@ -359,6 +359,73 @@ def test_restore_aux_never_raises_setback_above_a_normal_that_stayed_low():
     assert ha.states["number.absenk"] <= ha.states["number.normal"] <= ha.states["number.komfort"]
 
 
-def test_normal_mode_is_the_translation_key_of_weishaupt_modbus():
-    # weishaupt_modbus 1.0.20, entities.py MySelectEntity: options = translation_key der StatusItems (hpconst.HZ_BETRIEBSART)
-    assert WEISHAUPT_NORMAL_MODE == "hz_operationmode_normal"
+# --- weishaupt_modbus 2.0: andere Uebersetzungsschluessel, Schema steht im aktuellen Zustand ---
+
+V2 = "heating_circuit_operation_mode_"
+
+
+def test_prepare_selects_normal_in_the_2_0_scheme():
+    ha = FakeHa(**{"select.betriebsart": V2 + "automatic"})
+    assert _binding(ha).prepare() is True
+    assert ha.calls == [("select", "select.betriebsart", V2 + "normal")]
+
+
+def test_2_0_normal_counts_as_prepared():
+    assert _binding(FakeHa(**{"select.betriebsart": V2 + "normal"})).is_prepared() is True
+
+
+@pytest.mark.parametrize("state", ["Normal", "operation_mode_normal", "hz_operationmode"])
+def test_an_unknown_scheme_raises_instead_of_guessing(state):
+    binding = _binding(FakeHa(**{"select.betriebsart": state}))
+    with pytest.raises(ValueError, match="Betriebsart"):
+        binding.is_prepared()
+
+
+def test_a_1_x_original_is_restored_in_the_2_0_scheme_after_an_update():
+    ha = FakeHa(**{"select.betriebsart": V2 + "normal", "number.komfort": 22.0, "number.absenk": 18.0})
+    _binding(ha).restore_aux(
+        {"mode_select": "hz_operationmode_automatic", "setpoint_comfort": 22.0, "setpoint_setback": 18.0},
+    )
+    assert ha.calls == [("select", "select.betriebsart", V2 + "automatic")]
+
+
+@pytest.mark.parametrize(("mode", "expected"), [
+    ("hz_operationmode_automatic", (16.0, 28.0)), (V2 + "automatic", (18.0, 25.0)),
+])
+def test_the_normal_setpoint_uses_the_static_range_of_the_scheme(mode, expected):
+    ha = FakeHa(**{"select.betriebsart": mode})
+    assert _binding(ha).limits("room_setpoint") == expected
+
+
+def test_scheme_helpers():
+    assert weishaupt_scheme("hz_operationmode_lowering") == "hz_operationmode_"
+    assert weishaupt_option("hz_operationmode_lowering", V2) == V2 + "lowering"
+
+
+def test_a_read_error_of_the_mode_propagates_out_of_limits():
+    class Down(FakeHa):
+        def get_raw_state(self, entity_id):
+            raise ConnectionError("HA nicht erreichbar")
+
+    with pytest.raises(ConnectionError):
+        _binding(Down()).limits("room_setpoint")
+
+
+@pytest.mark.parametrize("state", ["Normal", "operation_mode_normal", "hz_operationmode"])
+def test_an_unknown_scheme_gives_no_range(state):
+    assert _binding(FakeHa(**{"select.betriebsart": state})).limits("room_setpoint") is None
+
+
+def test_without_a_mode_select_ref_there_is_no_range():
+    refs = {role: ref for role, ref in MANIFEST.refs.items() if role != "mode_select"}
+    binding = WeishauptHaBinding(FakeHa(), ChannelManifest(refs=refs), WEISHAUPT_MODBUS)
+    assert binding.limits("room_setpoint") is None
+
+
+def test_prepare_with_an_unknown_scheme_raises_without_a_select_call():
+    ha = FakeHa(**{"select.betriebsart": "Normal"})
+    binding = _binding(ha)
+    with pytest.raises(ValueError, match="Betriebsart"):
+        binding.prepare()
+    assert [call for call in ha.calls if call[0] == "select"] == []
+    assert binding.physical_writes == 0

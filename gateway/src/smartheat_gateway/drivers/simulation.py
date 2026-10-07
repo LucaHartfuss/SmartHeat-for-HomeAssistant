@@ -202,6 +202,10 @@ class SimulationDriver:
         cache = self._fresh()
         return {key: cache[key] for key in self.description.aux_originals}
 
+    def limits(self, lever: str) -> tuple[float, float] | None:
+        """Die Simulation hat keinen eigenen Wertebereich; es gelten die lokalen Grenzen."""
+        return None
+
     def restore_aux(self, values: Mapping[str, str | float], levers: Mapping[str, float] | None = None) -> None:
         plant = self._plant()
         changed = {key: value for key, value in values.items()

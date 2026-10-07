@@ -79,6 +79,23 @@ class HaPlantBinding:
             self._ha_api.set_number_value(entity_id, value)
         self.physical_writes += 1
 
+    def limits(self, lever: str) -> tuple[float, float] | None:
+        """Wertebereich der Ziel-Entity (Plan Client2-Bereitschaft): number min/max, climate min_temp/max_temp. None bei
+        nicht zugeordnetem Hebel, fehlendem/nicht lesbarem Attribut oder unbrauchbarem Bereich. Verbindungsfehler zu
+        HA werfen (die Pipeline behaelt dann den letzten guten Bereich)."""
+        if not self.has(lever):
+            return None
+        entity_id = entity_of(self.ref(lever))
+        names = ("min_temp", "max_temp") if entity_id.startswith("climate.") else ("min", "max")
+        try:
+            low, high = (float(self._ha_api.get_attribute(entity_id, name)) for name in names)
+        except (KeyError, ValueError, TypeError) as error:
+            logger.debug("Wertebereich von %s nicht lesbar: %s", entity_id, error)
+            return None
+        if not (math.isfinite(low) and math.isfinite(high)) or low > high:
+            return None
+        return low, high
+
     def needs_preparation(self) -> bool:
         lever = self.description.prepared_lever
         return lever is not None and self.has(lever) and is_climate(self.ref(lever))
@@ -110,10 +127,30 @@ class HaPlantBinding:
         return None
 
 
-# Plan 3c (Fix zu 3b-Praezisierung 6): weishaupt_modbus 1.0.20 nutzt als Select-Optionen die Uebersetzungsschluessel der
-# StatusItems (entities.py, MySelectEntity), nicht deren Texte; Register 41103 "Normal" = hz_operationmode_normal.
-# Bei der Inventur gegen die dann aktuelle Version pruefen (Spec 10: 2.0 aendert evtl. Entities).
-WEISHAUPT_NORMAL_MODE = "hz_operationmode_normal"
+# weishaupt_modbus nutzt als Select-Optionen Uebersetzungsschluessel, nicht Texte: 1.x "hz_operationmode_<modus>"
+# (entities.py, MySelectEntity), 2.0 "heating_circuit_operation_mode_<modus>" (modbus/descriptions/myenums.py). Die
+# Modi heissen in beiden gleich (automatic, comfort, normal, lowering, standby); das Schema steht im aktuellen Zustand.
+WEISHAUPT_MODE_SCHEMES = ("hz_operationmode_", "heating_circuit_operation_mode_")
+WEISHAUPT_NORMAL = "normal"
+# Statischer Bereich des Raum-Solls Normal je Schema: 1.x PARAMS_ROOMTEMP_MID 16-28 (dazu dynamisch zwischen Absenk und
+# Komfort; das verschiebt _make_room_for_normal, die min/max-Attribute der Entity zeigen bei 1.x die dynamischen
+# Grenzen und taugen deshalb nicht), 2.0 ROOM_TEMP_NORMAL 18-25.
+WEISHAUPT_NORMAL_RANGE = {"hz_operationmode_": (16.0, 28.0), "heating_circuit_operation_mode_": (18.0, 25.0)}
+
+
+def weishaupt_scheme(option: str) -> str:
+    """Schema (Praefix) einer Betriebsart-Option; ValueError bei einem unbekannten Schema (nie raten)."""
+    for scheme in WEISHAUPT_MODE_SCHEMES:
+        if option.startswith(scheme):
+            return scheme
+    raise ValueError(f"Unbekannte Betriebsart von weishaupt_modbus: {option!r}")
+
+
+def weishaupt_option(option: str, scheme: str) -> str:
+    """Dieselbe Betriebsart im Schema `scheme` (Ursprungswert aus 1.x nach einem Update auf 2.0)."""
+    return scheme + option[len(weishaupt_scheme(option)):]
+
+
 # Hilfs-Sollwerte gelten als unveraendert innerhalb eines halben Geraeteschritts (0,5 K).
 AUX_SETPOINT_TOLERANCE = 0.25
 
@@ -121,11 +158,11 @@ AUX_SETPOINT_TOLERANCE = 0.25
 class WeishauptHaBinding(HaPlantBinding):
     """Weishaupt-Waermepumpe ueber weishaupt_modbus: Hebel sind number-Entities (Heizkennlinie, Raumsolltemperatur
     Normal, Sommer-Winter-Umschaltung; Rollen curve_current, shift_current, heat_limit -- "shift_current" ist der
-    historische Rollenname). Vorbereitung: Betriebsart-Select (Rolle mode_select) auf WEISHAUPT_NORMAL_MODE. Das Geraet erzwingt
-    Absenk <= Normal <= Komfort: vor dem Anheben des Normal-Solls ueber das Komfort-Soll wird zuerst Komfort, vor dem
-    Senken unter das Absenk-Soll zuerst Absenk auf den neuen Wert gesetzt (Rollen setpoint_comfort, setpoint_setback).
-    Scheitert der zweite Schritt, steht die Anlage weiter in einem gueltigen Zustand (nur Komfort bzw. Absenk
-    verschoben, beide gehoeren zu den Hilfs-Ursprungswerten)."""
+    historische Rollenname). Vorbereitung: Betriebsart-Select (Rolle mode_select) auf Normal im Schema der installierten
+    Version. Das Geraet erzwingt Absenk <= Normal <= Komfort: vor dem Anheben des Normal-Solls ueber das Komfort-Soll
+    wird zuerst Komfort, vor dem Senken unter das Absenk-Soll zuerst Absenk auf den neuen Wert gesetzt (Rollen
+    setpoint_comfort, setpoint_setback). Scheitert der zweite Schritt, steht die Anlage weiter in einem gueltigen
+    Zustand (nur Komfort bzw. Absenk verschoben, beide gehoeren zu den Hilfs-Ursprungswerten)."""
 
     def write(self, lever: str, value: float) -> None:
         if lever == "room_setpoint":
@@ -154,22 +191,41 @@ class WeishauptHaBinding(HaPlantBinding):
     def needs_preparation(self) -> bool:
         return "mode_select" in self._manifest.refs
 
+    def _mode(self) -> str:
+        return self._ha_api.get_raw_state(self._manifest.refs["mode_select"])
+
+    def limits(self, lever: str) -> tuple[float, float] | None:
+        if lever != "room_setpoint":
+            return super().limits(lever)
+        if "mode_select" not in self._manifest.refs:
+            return None
+        # Lesefehler (HA nicht erreichbar, nicht verfuegbar) steigen auf: die Pipeline behaelt den letzten guten Bereich.
+        mode = self._mode()
+        try:
+            return WEISHAUPT_NORMAL_RANGE[weishaupt_scheme(mode)]
+        except ValueError as error:
+            logger.debug("Bereich des Normal-Solls unbekannt: %s", error)
+            return None
+
     def is_prepared(self) -> bool:
-        return self._ha_api.get_raw_state(self._manifest.refs["mode_select"]) == WEISHAUPT_NORMAL_MODE
+        mode = self._mode()
+        return mode == weishaupt_scheme(mode) + WEISHAUPT_NORMAL
 
     def prepare(self) -> bool:
-        """Betriebsart auf WEISHAUPT_NORMAL_MODE (Uebersetzungsschluessel); True, wenn umgestellt wurde. Wirft bei Fehlern."""
+        """Betriebsart auf Normal (Uebersetzungsschluessel im Schema des aktuellen Zustands); True, wenn umgestellt
+        wurde. Wirft bei Fehlern, auch bei einem unbekannten Schema."""
         if not self.needs_preparation() or self.is_prepared():
             return False
         entity_id = self._manifest.refs["mode_select"]
-        self._ha_api.select_option(entity_id, WEISHAUPT_NORMAL_MODE)
+        target = weishaupt_scheme(self._mode()) + WEISHAUPT_NORMAL
+        self._ha_api.select_option(entity_id, target)
         self.physical_writes += 1
-        logger.warning("Betriebsart %s auf %s gestellt", entity_id, WEISHAUPT_NORMAL_MODE)
+        logger.warning("Betriebsart %s auf %s gestellt", entity_id, target)
         return True
 
     def read_aux(self) -> dict[str, str | float]:
         return {
-            "mode_select": self._ha_api.get_raw_state(self._manifest.refs["mode_select"]),
+            "mode_select": self._mode(),
             "setpoint_comfort": self._number("setpoint_comfort"),
             "setpoint_setback": self._number("setpoint_setback"),
         }
@@ -191,11 +247,15 @@ class WeishauptHaBinding(HaPlantBinding):
             if abs(self._number(role) - target) > AUX_SETPOINT_TOLERANCE:
                 self._set_number(role, target)
         mode = values.get("mode_select")
+        if not isinstance(mode, str):
+            return
         entity_id = self._manifest.refs["mode_select"]
-        if isinstance(mode, str) and self._ha_api.get_raw_state(entity_id) != mode:
-            self._ha_api.select_option(entity_id, mode)
+        current = self._mode()
+        target = weishaupt_option(mode, weishaupt_scheme(current))
+        if current != target:
+            self._ha_api.select_option(entity_id, target)
             self.physical_writes += 1
-            logger.warning("Betriebsart %s auf den Ursprungswert %s zurueckgestellt", entity_id, mode)
+            logger.warning("Betriebsart %s auf den Ursprungswert %s zurueckgestellt", entity_id, target)
 
 
 # Plan 3b, Viessmann (HA-Core vicare, Spec 1.3/5.4). HA bildet das ViCare-Programm "normal" auf das Preset "home" ab

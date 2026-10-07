@@ -3,6 +3,11 @@
 Wird im Update-Dialog des Supervisors angezeigt. Pro Version ein Abschnitt `## X.Y.Z`; der
 Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Release.
 
+## Unveröffentlicht
+
+- weishaupt_modbus 2.0 neben 1.x; Schreibwerte nie außerhalb des Wertebereichs der Entity (nur enger als die lokalen
+  Grenzen).
+
 ## 0.33.0
 
 - **Hersteller-Abstraktion (Plan 3c):** Das Add-on-Schema kennt jetzt die Optionen der Weishaupt- und Viessmann-Hebelsätze
