@@ -105,6 +105,12 @@ if [ -z "$current" ] || [ ! -f "$SH/bundles/$current/manifest.json.minisig" ]; t
   fail "laufendes Bundle fehlt oder ist nicht signiert"
 fi
 
+# Start von der SSD am USB (usbboot.sh): Regel mit fester Disk-Signatur und initramfs-Hook, der sie mitnimmt
+USB_RULE="$R/etc/udev/rules.d/99-rpi-01-smartheat-usbboot.rules"
+grep -qs 'ENV{ID_PART_ENTRY_UUID}=="[0-9a-f]\{8\}-0\[12\]".*ENV{RPI_ONBOOTDEV}="1"' "$USB_RULE" \
+  || fail "USB-Startregel fehlt (usbboot.sh)"
+[ -x "$R/etc/initramfs-tools/hooks/smartheat-usbboot" ] || fail "initramfs-Hook fuer den USB-Start fehlt"
+
 # Sicherheitsupdates aus dem Raspberry-Pi-Archiv moeglich
 grep -rqs "archive.raspberrypi.com" "$R/etc/apt/sources.list.d" "$R/etc/apt/sources.list" \
   || fail "Raspberry-Pi-Archiv nicht eingebunden"

@@ -15,6 +15,8 @@ WANTS = "etc/systemd/system/multi-user.target.wants"
 UNITS = ("smartheat-firewall", "smartheat-hoststatus", "smartheat-led", "smartheat-firstboot", "smartheat-updater",
          "docker")
 ENV = "var/lib/smartheat/host/gateway.env"
+USB_RULE = "etc/udev/rules.d/99-rpi-01-smartheat-usbboot.rules"
+USB_HOOK = "etc/initramfs-tools/hooks/smartheat-usbboot"
 
 GOOD_URLS = [
     "https://accounts.hartfussha.org",
@@ -163,6 +165,9 @@ def _good(root: Path, pilot: bool = False) -> Path:
         "home/pi/.ssh/authorized_keys": "",
         "opt/smartheat/installer/gateway/host/install.sh": "#!/bin/bash\n",
         "opt/smartheat/host/VERSION": "0.3.0\n",
+        USB_RULE: 'SUBSYSTEM=="block", KERNEL=="sd[a-z]*[0-9]", ENV{DEVTYPE}=="partition", '
+                  'ENV{ID_PART_ENTRY_UUID}=="5348470a-0[12]", ACTION=="add|change", ENV{RPI_ONBOOTDEV}="1"\n',
+        USB_HOOK: "#!/bin/sh\n",
     }
     if pilot:
         files["root/.ssh/authorized_keys"] = "ssh-ed25519 AAAA test-key\n"
@@ -171,6 +176,7 @@ def _good(root: Path, pilot: bool = False) -> Path:
         (root / rel).write_text(text)
     (root / "var/lib/smartheat/data").mkdir(parents=True)
     (root / WANTS).mkdir(parents=True)
+    (root / USB_HOOK).chmod(0o755)
     for unit in UNITS + (("ssh",) if pilot else ()):
         (root / WANTS / f"{unit}.service").symlink_to(f"/lib/systemd/system/{unit}.service")
     for tree in ("opt/smartheat", "var/lib/smartheat/images"):  # wie im Image: nicht gruppen-/weltbeschreibbar
@@ -236,6 +242,9 @@ def test_uninitialized_machine_id_is_fine(tmp_path):
     lambda r: (r / "var/lib/smartheat/images/01.tar").chmod(0o664),
     lambda r: (r / "var/lib/smartheat/images").chmod(0o777),
     lambda r: __import__("shutil").rmtree(r / "opt/smartheat"),
+    lambda r: (r / USB_RULE).unlink(),
+    lambda r: (r / USB_RULE).write_text('SUBSYSTEM=="block", ENV{ID_PART_ENTRY_UUID}=="random-0[12]"\n'),
+    lambda r: (r / USB_HOOK).chmod(0o644),
 ])
 def test_each_violation_fails(tmp_path, breakit):
     root = _good(tmp_path)
