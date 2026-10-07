@@ -7,6 +7,8 @@
 # zu ihrem Ende weiter, neue sind nicht mehr moeglich). --bundle: Ordner mit docker-compose.yml, mosquitto.conf,
 # manifest.json und (optional) manifest.json.minisig. --image: Image-Bau im chroot (Plan G2b-2): wie --no-activate,
 # aktiviert die Units aber offline (systemctl enable, nichts startet; der erste Boot startet smartheat-firstboot).
+# Pilotgeraete in fremden Netzen: zusaetzlich pilot_ssh_tunnel.sh (eigener Cloudflare-Tunnel fuer SSH, ausserhalb von
+# Docker). Solange er eingerichtet ist, bricht install.sh ohne --pilot-ssh ab (Schutz vor dem Aussperren).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 GW="$(cd "$HERE/.." && pwd)"
@@ -31,6 +33,13 @@ done
 [ -n "$API_URL" ] || { echo "--device-api-url fehlt" >&2; exit 2; }
 ROOT="${ROOT%/}"
 [ -n "$ROOT" ] || { echo "--root darf nicht / sein" >&2; exit 2; }
+# Schutz vor dem Aussperren (Plan G2b-2 Task 8): ohne --pilot-ssh wuerde ssh abgeschaltet - bei einem Pilotgeraet in
+# einem fremden LAN waere es dann nicht mehr erreichbar. Erst pilot_ssh_tunnel.sh remove, dann ohne --pilot-ssh.
+if [ -z "$PILOT_KEY" ] && [ -f /etc/smartheat/pilot-ssh-tunnel.env ]; then
+  echo "FEHLER: Pilot-SSH-Tunnel ist eingerichtet; install.sh nur mit --pilot-ssh aufrufen" \
+    "(oder vorher pilot_ssh_tunnel.sh remove)." >&2
+  exit 1
+fi
 if [ -z "$PILOT_KEY" ]; then
   echo "WARNUNG: ohne --pilot-ssh wird ssh deaktiviert und Port 22 bleibt zu (laufende Sitzungen bestehen bis zu ihrem" \
     "Ende weiter, neue sind nicht mehr moeglich)." >&2
@@ -94,6 +103,7 @@ docker_daemon_config() {
 packages() {
   local wanted=(python3 python3-cryptography unattended-upgrades nftables ca-certificates)  # CA: Updater-HTTPS, pull
   [ "$DOCKER" = 1 ] && wanted+=(docker.io docker-cli docker-compose)  # trixie: CLI ist nur "Recommends" von docker.io
+  [ -z "$PILOT_KEY" ] || wanted+=(openssh-server)  # Pilotgeraete (sshd); ohne --pilot-ssh bleibt ssh aus
   local missing=() pkg
   for pkg in "${wanted[@]}"; do
     dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed" || missing+=("$pkg")
