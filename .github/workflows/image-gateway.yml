@@ -1,0 +1,94 @@
+name: Gateway-Image
+# Basis-Image des SmartHeat-Gateways (Plan G2b-2 Task 10): rpi-image-gen auf einem ARM-Runner in einem privilegierten
+# debian:trixie-Container (gateway/image/make_image.sh). Nur Leserechte, keine Secrets. Aufruf aus release-gateway.yml
+# (Serien-Image ohne SSH) oder von Hand aus einem veroeffentlichten Release (z. B. Pilot-Image mit SSH-Schluessel).
+# Geraete-API- und Portal-Adresse muessen ein eigener https-DNS-Name sein (keine IP, keine AWS-Adresse); die Regel steht
+# nur in gateway/image/own_url.sh, der erste Schritt bricht vor dem teuren Bau damit ab.
+on:
+  workflow_call:
+    inputs:
+      artifact: {type: string, required: true}
+      device_api_url: {type: string, required: true}
+      portal_base_url: {type: string, required: true}
+      pilot_ssh_pubkey: {type: string, required: false, default: ""}
+  workflow_dispatch:
+    inputs:
+      tag: {description: "Veroeffentlichtes Release gateway-vX.Y.Z", type: string, required: true}
+      device_api_url: {type: string, required: true, default: "https://accounts.hartfussha.org"}
+      portal_base_url: {description: "Oeffentliche Portal-URL (G3)", type: string, required: true}
+      pilot_ssh_pubkey: {description: "Oeffentlicher SSH-Schluessel (nur Pilot-Image)", type: string, required: false, default: ""}
+permissions:
+  contents: read
+jobs:
+  image:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    env:
+      TAG: ${{ inputs.tag }}
+      EVENT: ${{ github.event_name }}
+      API_URL: ${{ inputs.device_api_url }}
+      PORTAL_URL: ${{ inputs.portal_base_url }}
+      PILOT_KEY: ${{ inputs.pilot_ssh_pubkey }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.tag) || github.sha }}
+          persist-credentials: false
+      - name: Eingaben pruefen (Tag, eigener DNS-Name, keine IP, keine AWS-Adresse)
+        run: |
+          source gateway/image/own_url.sh
+          bad=0
+          if [ "$EVENT" = workflow_dispatch ] && [[ ! $TAG =~ ^gateway-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tag ungueltig: erwartet wird ein veroeffentlichtes Release der Form gateway-vX.Y.Z"
+            bad=1
+          fi
+          for name in API_URL PORTAL_URL; do
+            if why="$(shg_own_url_problem "${!name}")"; then
+              echo "$name ist zulaessig"
+            else
+              echo "::error::$name ist ungueltig: $why. Erlaubt ist nur https://<eigener DNS-Name>, z. B. https://accounts.hartfussha.org (Repo-Variable SHG_DEVICE_API_URL / SHG_PORTAL_BASE_URL bzw. Eingabe des Workflows pruefen)."
+              bad=1
+            fi
+          done
+          exit "$bad"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - run: pip install --require-hashes -r gateway/release/requirements.txt
+      - name: Bundle aus dem Artefakt
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: ${{ inputs.artifact }}
+          path: ${{ runner.temp }}/in
+      - name: Bundle aus dem Release
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/in/bundle"
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -D "$RUNNER_TEMP/in/bundle" \
+            -p docker-compose.yml -p mosquitto.conf -p manifest.json -p manifest.json.minisig
+      - name: Signatur gegen release.pub pruefen
+        env:
+          PYTHONPATH: gateway/host:gateway/src
+        run: |
+          python - "$RUNNER_TEMP/in/bundle" <<'PY'
+          import pathlib, sys
+          from smartheat_host import minisign
+          bundle = pathlib.Path(sys.argv[1])
+          key = minisign.load_public_key(pathlib.Path("gateway/host/release.pub").read_text())
+          minisign.verify(key, (bundle / "manifest.json").read_bytes(), (bundle / "manifest.json.minisig").read_text())
+          print("Signatur gueltig")
+          PY
+      - name: Image bauen
+        run: |
+          args=(--bundle "$RUNNER_TEMP/in/bundle" --out "$RUNNER_TEMP/image" --device-api-url "$API_URL" --portal-base-url "$PORTAL_URL")
+          if [ -n "$PILOT_KEY" ]; then args+=(--pilot-ssh "$PILOT_KEY"); fi
+          bash gateway/image/make_image.sh "${args[@]}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: gateway-image
+          path: ${{ runner.temp }}/image
+          if-no-files-found: error
+          retention-days: 7

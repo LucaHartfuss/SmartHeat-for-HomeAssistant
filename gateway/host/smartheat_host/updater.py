@@ -1,7 +1,9 @@
 """Updater des Gateways (Spec G2b-1 4, G2 8.4): fragt alle 15 min die Soll-Version ab, laedt und prueft Manifest
 (https, SHA-256, minisign gegen release.pub, Version, min_updater_version) und Bundle-Dateien, schaltet per Compose um,
-wartet bis zu 10 min auf "gesund" und rollt sonst auf das vorige Bundle zurueck. Fristen ueber die monotone Uhr (die
-Wanduhr springt beim Boot). Zustand in updater/state.json (atomar, 0644), Format:
+wartet bis zu 10 min auf "gesund" und rollt sonst auf das vorige Bundle zurueck. Nur streng neuere Versionen werden
+geladen (Downgrade-Schutz, Grund version_zu_alt; der Betreiber gibt fuer einen Rueckweg der Flotte den alten Stand als
+neue Version heraus). Fristen ueber die monotone Uhr (die Wanduhr springt beim Boot).
+Zustand in updater/state.json (atomar, 0644), Format:
 
     {"current": str|null, "previous": str|null, "rejected": [str],
      "rejected_context": {"updater": str, "key": str}|null,
@@ -49,7 +51,8 @@ from smartheat_host import bundles, device_api, minisign
 
 logger = logging.getLogger(__name__)
 
-REASONS = ("manifest_ungueltig", "signatur_ungueltig", "updater_zu_alt", "start_fehlgeschlagen", "ungesund")
+REASONS = ("manifest_ungueltig", "signatur_ungueltig", "updater_zu_alt", "version_zu_alt",
+           "start_fehlgeschlagen", "ungesund")
 HEALTH_SECONDS = 600
 HEALTH_POLL_SECONDS = 10
 HEALTH_CAP_SECONDS = 3600  # Gesamtgrenze der Gesundheitspruefung, wenn die Frist wegen Unerreichbarkeit ruht
@@ -158,6 +161,17 @@ def _key_identity(public_key_text: str) -> str:
         return "placeholder" if minisign.PLACEHOLDER_MARKER in public_key_text else "ungueltig"
 
 
+def _older_or_equal(version: str, current: str | None) -> bool:
+    """Downgrade-Schutz (Plan G2b-2 Task 5): nur streng neuere Soll-Versionen. Der eigene Rueckweg (_rollback auf
+    previous) ist davon unberuehrt; unlesbare Versionen entscheidet die Manifest-Pruefung."""
+    if current is None:
+        return False
+    try:
+        return bundles.parse_version(version) <= bundles.parse_version(current)
+    except bundles.ManifestError:
+        return False
+
+
 class Updater:
     def __init__(self, *, api_factory: Callable[[], object], store: bundles.BundleStore, compose,
                  fetch: Callable[[str, int], bytes], public_key_text: str, state_path: Path, version: str,
@@ -226,6 +240,10 @@ class Updater:
             return "aktuell"
         if not any(desired.get(key) for key in OFFER_KEYS):  # nur eine Version, kein Bundle angeboten
             return "aktuell"
+        if _older_or_equal(version, state.current):
+            logger.error("Soll-Version %s ist nicht neuer als %s, abgelehnt (Downgrade-Schutz)", version, state.current)
+            self._reject(state, version, "version_zu_alt")
+            return "abgelehnt"
         try:
             files = self._download(desired, version)
         except FetchError as error:

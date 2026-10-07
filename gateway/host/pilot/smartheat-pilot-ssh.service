@@ -1,0 +1,18 @@
+[Unit]
+Description=SmartHeat-Gateway Pilot-SSH-Tunnel (Cloudflare, nur Pilotgeraete; Plan G2b-2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/smartheat/pilot-ssh-tunnel.env
+ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run
+Restart=always
+RestartSec=10
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

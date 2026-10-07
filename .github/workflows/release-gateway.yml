@@ -7,6 +7,10 @@ name: Release Gateway
 #   sign:  nur beim echten Release; Environment "release" mit den Secrets; prueft das Bundle per Neubau aus dem Tag
 #          (gateway/release/verify_bundle.py ueber sign_bundle.sh), signiert, prueft die Signatur, zieht main per
 #          Fast-Forward nach und legt das GitHub-Release an.
+# image/attach-image: Basis-Image nach Plan G2b-2 (Job image ohne Secrets, attach-image nur gh release upload). Nur beim
+#          echten Release: der -dryrun baut das Image NICHT (sein Bundle verweist auf die Job-Registry localhost:5000, die
+#          nur im Job build existiert). Der Bau wird vom echten Release und von Hand per workflow_dispatch von
+#          image-gateway.yml geuebt; die Adress-Regel (own_url.sh) prueft schon der Job build, damit auch der Probelauf sie sieht.
 # Python-Pakete beider Jobs nur aus der Hash-Lock-Datei gateway/release/requirements.txt (--require-hashes).
 on:
   push:
@@ -46,6 +50,23 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Image-Adressen pruefen (eigener DNS-Name, keine IP, keine AWS-Adresse)
+        env:
+          API_URL: ${{ vars.SHG_DEVICE_API_URL || 'https://accounts.hartfussha.org' }}
+          PORTAL_URL: ${{ vars.SHG_PORTAL_BASE_URL }}
+        run: |
+          source gateway/image/own_url.sh
+          bad=0
+          for name in API_URL PORTAL_URL; do
+            if [ "$name" = PORTAL_URL ] && [ -z "$PORTAL_URL" ]; then continue; fi
+            if why="$(shg_own_url_problem "${!name}")"; then
+              echo "$name ist zulaessig"
+            else
+              echo "::error::$name ist ungueltig: $why. Erlaubt ist nur https://<eigener DNS-Name>, z. B. https://accounts.hartfussha.org (Repo-Variable SHG_DEVICE_API_URL / SHG_PORTAL_BASE_URL pruefen)."
+              bad=1
+            fi
+          done
+          exit "$bad"
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
@@ -149,6 +170,12 @@ jobs:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
           MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
         run: bash gateway/release/sign_bundle.sh "$RUNNER_TEMP/out/bundle" "$VERSION" gateway/host/release.pub
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: gateway-bundle-signed
+          path: ${{ runner.temp }}/out
+          if-no-files-found: error
+          retention-days: 7
       - name: main per Fast-Forward nachziehen
         run: git push origin "$GITHUB_SHA:refs/heads/main"
       - name: GitHub-Release anlegen
@@ -162,3 +189,49 @@ jobs:
           bundle="$RUNNER_TEMP/out/bundle"
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "$TITLE" --notes-file "$RUNNER_TEMP/out/notes.md" \
             "$bundle/docker-compose.yml" "$bundle/mosquitto.conf" "$bundle/manifest.json" "$bundle/manifest.json.minisig"
+  image:
+    # Basis-Image (Plan G2b-2 Task 10): nur nach dem echten Signieren (nie im -dryrun, siehe Kopfkommentar); ohne
+    # Repo-Variable SHG_PORTAL_BASE_URL (Portal-Hostname, G3) uebersprungen. Keine Secrets, nur Leserechte. Die Repo-Variable
+    # SHG_DEVICE_API_URL wird nur durchgereicht; image-gateway.yml prueft sie vor dem Bau (eigener DNS-Name).
+    needs: [build, sign]
+    if: >-
+      ${{ !cancelled() && needs.build.result == 'success' && vars.SHG_PORTAL_BASE_URL != '' &&
+      needs.sign.result == 'success' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/image-gateway.yml
+    with:
+      artifact: gateway-bundle-signed
+      device_api_url: ${{ vars.SHG_DEVICE_API_URL || 'https://accounts.hartfussha.org' }}
+      portal_base_url: ${{ vars.SHG_PORTAL_BASE_URL }}
+  attach-image:
+    # Haengt das Image an das GitHub-Release (nur echtes Release); fuehrt keinen Repo-Code aus.
+    needs: [build, image]
+    if: ${{ needs.build.outputs.dryrun == 'false' && needs.image.result == 'success' }}
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: gateway-image
+          path: ${{ runner.temp }}/image
+      - name: Image an das Release haengen
+        # Das Artefakt stammt aus dem Job image (Fremdcode beim Bau): nur genau die zwei erwarteten Dateien, nichts sonst,
+        # und --clobber gilt nur fuer genau diese zwei Namen (nie fuer signierte Release-Assets).
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Version ungueltig"; exit 1; }
+          dir="$RUNNER_TEMP/image"
+          img="smartheat-gateway-$VERSION.img.zst"
+          sum="$img.sha256"
+          expected="$(printf '%s\n%s\n' "$img" "$sum" | sort)"
+          actual="$(cd "$dir" && find . -mindepth 1 -printf '%P\n' | sort)"
+          if [ "$actual" != "$expected" ] || [ ! -f "$dir/$img" ] || [ -L "$dir/$img" ] || [ ! -f "$dir/$sum" ] || [ -L "$dir/$sum" ]; then
+            echo "::error::Image-Artefakt enthaelt nicht genau $img und $sum"
+            exit 1
+          fi
+          gh release upload "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" "$dir/$img" "$dir/$sum" --clobber

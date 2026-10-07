@@ -143,3 +143,19 @@ def test_daily_tick_zone_comes_from_tz(monkeypatch):
     monkeypatch.setenv("TZ", "Europe/Berlin")
     now = datetime(2026, 10, 24, 12, 12, tzinfo=timezone(timedelta(hours=2)))
     assert seconds_until("12:12", now) == 25 * 3600
+
+
+def test_sleepy_thermostat_does_not_overwrite_the_portal_target(world, clock):
+    bus, z2m, worker, store, _ = world
+    z2m.report(THERMOSTAT, occupied_heating_setpoint=20.0, local_temperature=20.0)  # Ausgangszustand = Soll 20
+    worker.run_pending()
+    z2m.make_sleepy(THERMOSTAT)
+    bus.publish(topics.CMD_ROOM_TARGET, {"value": 22.0, "source": "portal", "ts": "x"})
+    worker.run_pending()
+    clock.advance(300)
+    z2m.wake(THERMOSTAT, stale_setpoint=20.0)  # erst der alte Stand, dann der geschriebene Wert
+    worker.run_pending()
+    assert (store.value, store.source) == (22.0, "portal")
+    z2m.report(THERMOSTAT, occupied_heating_setpoint=19.0, local_temperature=20.0)  # Nutzer dreht danach
+    worker.run_pending()
+    assert (store.value, store.source) == (19.0, "thermostat")

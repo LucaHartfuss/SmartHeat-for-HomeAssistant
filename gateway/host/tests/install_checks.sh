@@ -23,7 +23,7 @@ bash "$SRC/install.sh" "${ARGS[@]}" >/tmp/run2.log 2>&1 || fail "zweiter Lauf"
 snapshot >/tmp/after
 diff /tmp/before /tmp/after >/dev/null || { diff /tmp/before /tmp/after; fail "zweiter Lauf hat etwas geaendert"; }
 grep -q "Nichts zu tun" /tmp/run2.log || fail "zweiter Lauf meldet Aenderungen"
-for unit in updater led hoststatus firewall; do
+for unit in updater led hoststatus firewall firstboot; do
   # Nur die fehlende docker.service-Abhaengigkeit (Container ohne Docker) wird ausgefiltert, Syntaxfehler nicht.
   systemd-analyze verify "/etc/systemd/system/smartheat-$unit.service" 2>&1 | grep -v "^$" | grep -vi "docker.service" \
     && fail "Unit smartheat-$unit ungueltig"
@@ -43,12 +43,15 @@ grep -q '^DefaultDependencies=no$' /etc/systemd/system/smartheat-firewall.servic
 grep -q '^After=nftables.service$' /etc/systemd/system/smartheat-firewall.service || fail "Firewall-Unit nicht nach nftables.service"
 [ -f /etc/ssh/sshd_config.d/00-smartheat.conf ] || fail "sshd-Drop-in 00-smartheat.conf fehlt"
 [ ! -e /etc/ssh/sshd_config.d/smartheat.conf ] || fail "alter sshd-Drop-in smartheat.conf nicht entfernt"
-# Nur Sicherheitsupdates: nach der Konfiguration von 50unattended-upgrades darf nur das -security-Muster uebrig sein.
+# Sicherheitsupdates (Plan G2b-2 Task 6): Debian-Security und das Raspberry-Pi-Archiv (Kernel, Firmware), sonst nichts;
+# kein automatischer Neustart.
 patterns="$(apt-config dump | grep 'Unattended-Upgrade::Origins-Pattern::')"
 # shellcheck disable=SC2016  # ${distro_codename} bleibt in der apt-Konfiguration woertlich stehen
-if [ "$(printf '%s\n' "$patterns" | wc -l)" != 1 ] || ! grep -q 'codename=${distro_codename}-security,' <<<"$patterns"; then
-  echo "$patterns"; fail "Origins-Pattern nicht auf das Security-Archiv beschraenkt"
+if [ "$(printf '%s\n' "$patterns" | wc -l)" != 2 ] || ! grep -q 'codename=${distro_codename}-security,' <<<"$patterns" \
+   || ! grep -q 'origin=Raspberry Pi Foundation,codename=${distro_codename},label=Raspberry Pi Foundation' <<<"$patterns"; then
+  echo "$patterns"; fail "Origins-Pattern nicht genau Debian-Security und Raspberry-Pi-Archiv"
 fi
+apt-config dump | grep -q '^Unattended-Upgrade::Automatic-Reboot "false";$' || fail "Automatic-Reboot nicht aus"
 nft -c -f /etc/smartheat/nftables.conf || fail "nftables-Regeln ungueltig"
 grep -q "tcp dport 22 accept" /etc/smartheat/nftables.conf || fail "Pilot-SSH fehlt in der Firewall"
 if udevadm --help 2>&1 | grep -q verify; then udevadm verify /etc/udev/rules.d/99-smartheat-zigbee.rules || fail "udev-Regel ungueltig"; fi
@@ -111,7 +114,7 @@ done
 # steht diese implizite Regel hier als Drop-in explizit. Ein Gegenbeispiel (After=multi-user.target bei
 # WantedBy=multi-user.target) muss den Test ausloesen, sonst taugt er nichts.
 mkdir -p /etc/systemd/system/multi-user.target.wants /etc/systemd/system/multi-user.target.d
-for unit in updater led hoststatus firewall; do
+for unit in updater led hoststatus firewall firstboot; do
   ln -sf "/etc/systemd/system/smartheat-$unit.service" "/etc/systemd/system/multi-user.target.wants/smartheat-$unit.service"
 done
 cycle_check() {  # Ausgabe von verify fuer multi-user.target mit der impliziten Reihenfolge fuer die Units $*
@@ -119,7 +122,7 @@ cycle_check() {  # Ausgabe von verify fuer multi-user.target mit der impliziten 
   systemd-analyze verify --man=no multi-user.target 2>&1
 }
 cycle_check smartheat-updater.service smartheat-led.service smartheat-hoststatus.service smartheat-firewall.service \
-  >/tmp/cycle.log
+  smartheat-firstboot.service >/tmp/cycle.log
 if grep -qi 'ordering cycle' /tmp/cycle.log; then grep -i cycle /tmp/cycle.log; fail "Ordnungszyklus in den Gateway-Units"; fi
 sed 's|^After=local-fs.target|After=multi-user.target|' /etc/systemd/system/smartheat-led.service \
   >/etc/systemd/system/smartheat-cycle.service
@@ -152,6 +155,7 @@ activate_run "ohne Stick"
 grep -q "Geraet fehlt: $STICK" /tmp/act.log || { cat /tmp/act.log; fail "Aktivierung ohne Stick: keine klare Meldung"; }
 compose_started && fail "Aktivierung ohne Stick: compose up trotzdem aufgerufen"
 grep -q "^systemctl enable --now docker.service smartheat-updater.service" /tmp/stub.log || fail "Updater nicht aktiviert"
+cmp -s "$SRC/docker-daemon.json" /etc/docker/daemon.json || fail "docker daemon.json (Speicherweg fuer den Erststart) fehlt"
 touch "$STICK"
 activate_run "mit Stick"
 compose_started || { cat /tmp/act.log /tmp/stub.log; fail "Aktivierung mit Stick startet das Bundle nicht"; }
@@ -164,5 +168,74 @@ json.dump(state, open(path, "w"))' "$ACT_ROOT/updater/state.json"
 activate_run "mit offenem Updater-Auftrag"
 grep -q "Updater-Auftrag fuer 0.3.0 offen" /tmp/act.log || { cat /tmp/act.log; fail "offener Auftrag: keine Meldung"; }
 compose_started && fail "offener Updater-Auftrag: compose up trotzdem aufgerufen"
+# Image-Bau (Plan G2b-2 Task 7): --image aktiviert offline, startet nichts.
+# Vorher die Symlinks des Zyklustests (oben) entfernen, sonst wuerde ein "aktiviert" von dort stammen.
+rm -f /etc/systemd/system/multi-user.target.wants/smartheat-*.service /etc/systemd/system/multi-user.target.d/*.conf \
+  /etc/systemd/system/smartheat-cycle.service
+IMAGE_ARGS=("${ARGS[@]/--no-activate/--image}")
+bash "$SRC/install.sh" "${IMAGE_ARGS[@]}" >/tmp/run-image.log 2>&1 || { cat /tmp/run-image.log; fail "Lauf mit --image"; }
+for unit in smartheat-firewall smartheat-hoststatus smartheat-led ssh; do
+  [ -L "/etc/systemd/system/multi-user.target.wants/$unit.service" ] || fail "$unit mit --image nicht aktiviert"
+done
+# Ohne Docker (--no-docker) bleibt smartheat-firstboot aus: die Unit hat Requires=docker.service.
+[ -L /etc/systemd/system/multi-user.target.wants/smartheat-firstboot.service ] \
+  && fail "firstboot mit --image --no-docker aktiviert"
+grep -q '^ConditionDirectoryNotEmpty=/var/lib/smartheat/images$' /etc/systemd/system/smartheat-firstboot.service \
+  || fail "Firstboot-Bedingung fehlt oder @ROOT@ nicht ersetzt"
+# Docker-Speicherweg (Plan G2b-2 Task 7): daemon.json liegt VOR der Installation von docker.io, eine abweichende
+# bestehende Datei bricht ab und bleibt unberuehrt, identischer Inhalt ist ein No-op.
+ORD_STUBS=/tmp/stubs-order
+mkdir -p "$ORD_STUBS"
+cat >"$ORD_STUBS/dpkg-query" <<'STUB'
+#!/bin/sh
+case "$*" in *docker.io*|*docker-cli*|*docker-compose*) exit 1 ;; esac
+echo "install ok installed"
+STUB
+cat >"$ORD_STUBS/apt-get" <<'STUB'
+#!/bin/sh
+if [ -f /etc/docker/daemon.json ]; then state=vorhanden; else state=fehlt; fi
+echo "apt-get $* daemon.json=$state" >>/tmp/apt.log
+STUB
+chmod +x "$ORD_STUBS"/*
+ORD_ARGS=(--no-activate --device-api-url https://api.example.test --root /var/lib/smartheat-ord)
+rm -rf /etc/docker; : >/tmp/apt.log
+PATH="$ORD_STUBS:$STUBS:$PATH" bash "$SRC/install.sh" "${ORD_ARGS[@]}" >/tmp/ord.log 2>&1 || { cat /tmp/ord.log; fail "Docker-Lauf"; }
+grep -q 'apt-get install .*docker.io.* daemon.json=vorhanden$' /tmp/apt.log \
+  || { cat /tmp/apt.log; fail "daemon.json liegt nicht vor der Installation von docker.io"; }
+cmp -s "$SRC/docker-daemon.json" /etc/docker/daemon.json || fail "daemon.json Inhalt"
+: >/tmp/apt.log
+PATH="$STUBS:$PATH" bash "$SRC/install.sh" "${ORD_ARGS[@]}" >/tmp/ord2.log 2>&1 || fail "zweiter Docker-Lauf"
+grep -q "geschrieben: /etc/docker/daemon.json" /tmp/ord2.log && fail "identische daemon.json neu geschrieben"
+echo '{"fremd": true}' >/etc/docker/daemon.json
+: >/tmp/apt.log
+if PATH="$ORD_STUBS:$STUBS:$PATH" bash "$SRC/install.sh" "${ORD_ARGS[@]}" >/tmp/ord3.log 2>&1; then
+  fail "abweichende daemon.json: Installer lief durch"
+fi
+grep -q "bestehende /etc/docker/daemon.json weicht ab" /tmp/ord3.log || { cat /tmp/ord3.log; fail "keine klare Meldung"; }
+[ "$(cat /etc/docker/daemon.json)" = '{"fremd": true}' ] || fail "abweichende daemon.json veraendert"
+[ -s /tmp/apt.log ] && fail "Pakete trotz abweichender daemon.json installiert"
+# Mit --no-docker ignoriert der Installer daemon.json ganz.
+PATH="$STUBS:$PATH" bash "$SRC/install.sh" --no-docker "${ORD_ARGS[@]}" >/tmp/ord4.log 2>&1 \
+  || { cat /tmp/ord4.log; fail "--no-docker mit fremder daemon.json"; }
+rm -rf /etc/docker
+# smartheat-firstboot nur mit Docker (Requires=docker.service): --image mit Docker aktiviert es zusammen mit
+# docker.service, die Aktivierung ohne Docker kommt ohne die Unit aus, selbst wenn systemctl daran scheitern wuerde.
+FAILFB_STUBS=/tmp/stubs-failfb
+mkdir -p "$FAILFB_STUBS"
+printf '#!/bin/sh\necho "systemctl $*" >>/tmp/stub.log\ncase "$*" in *smartheat-firstboot*) exit 1 ;; esac\n' \
+  >"$FAILFB_STUBS/systemctl"
+chmod +x "$FAILFB_STUBS/systemctl"
+: >/tmp/stub.log
+PATH="$STUBS:$PATH" bash "$SRC/install.sh" --image "${ORD_ARGS[@]}" --pilot-ssh "ssh-ed25519 AAAAtest k" \
+  >/tmp/img-docker.log 2>&1 || { cat /tmp/img-docker.log; fail "--image mit Docker"; }
+grep -q "^systemctl enable docker.service smartheat-updater.service smartheat-firstboot.service" /tmp/stub.log \
+  || { cat /tmp/stub.log; fail "--image mit Docker aktiviert firstboot nicht"; }
+grep -q "^systemctl enable --now" /tmp/stub.log && fail "--image startet Dienste"
+rm -rf /etc/docker
+: >/tmp/stub.log
+PATH="$FAILFB_STUBS:$STUBS:$PATH" bash "$SRC/install.sh" --no-docker --device-api-url https://api.example.test \
+  --root /var/lib/smartheat-nd >/tmp/nodocker.log 2>&1 || { cat /tmp/nodocker.log; fail "Aktivierung mit --no-docker bricht ab"; }
+grep -q "firstboot" /tmp/stub.log && fail "--no-docker beruehrt smartheat-firstboot"
+grep -q "^systemctl disable --now ssh.service" /tmp/stub.log || fail "--no-docker: ssh-Schritt nach der Aktivierung fehlt"
 command -v shellcheck >/dev/null && { shellcheck "$SRC/install.sh" "$SRC/tests/install_checks.sh" || fail "shellcheck"; }
 exit $FAIL

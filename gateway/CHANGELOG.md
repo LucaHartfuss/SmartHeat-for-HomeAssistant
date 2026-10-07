@@ -1,5 +1,36 @@
 # Changelog SmartHeat-Gateway
 
+## 0.3.0
+
+Plan G2b-2 Teil A (Basis-Image und Pilot-Zugang, ohne Hardware geprueft). Erstes echtes Release folgt im
+Hardware-Gate (Teil B) mit dem echten minisign-Schluessel.
+
+- Basis-Image mit `rpi-image-gen` v2.8.0 (`gateway/image/`): Raspberry Pi 4, Debian 13, Host-Installer im chroot
+  (`install.sh --image`), Container-Images als Archive fuer den Erststart ohne Pull (`smartheat-firstboot`),
+  Pruefung des Root-Dateisystems (keine geteilte Identitaet, kein Passwort, kein Tunnel-Token, SSH nur im
+  Pilot-Image). Release-Workflow haengt das Serien-Image an das GitHub-Release. Der echte Bau ist ohne arm64-Host
+  noch nicht gelaufen (Hardware-Gate bzw. CI-Spike); der `-dryrun` baut das Image nicht.
+- Eigener Hostname statt IP oder AWS-Adresse (Nutzer-Vorgabe): Geraete-API- und Portal-Adresse im Image sind immer
+  `https://<eigener DNS-Name>`; `gateway/image/own_url.sh` lehnt IP-Adressen, Einzel-Label-Hosts, Port, Pfad und
+  AWS-Namen ab (`prepare.sh`, `make_image.sh` und die Workflows pruefen die Adressen vor dem Bau; `rootfs_checks.sh`
+  prueft das Root-Dateisystem waehrend (Hook) und nach dem Bau (post-build)).
+- Erststart ohne Pull: Container-Images werden mit `skopeo copy --all --preserve-digests` als OCI-Archive exportiert;
+  das Geraet laedt sie in den containerd-Speicher von Docker (`/etc/docker/daemon.json`, von `install.sh` vor der
+  Docker-Installation geschrieben; nur frische Geraete). Die Root-Partition ist fest 8G gross (kein Wachstum beim ersten
+  Start).
+- Pilot-SSH-Tunnel (`gateway/host/pilot_ssh_tunnel.sh`): eigener Cloudflare-Tunnel nur fuer SSH, Host-Dienst
+  ausserhalb von Docker, cloudflared 2025.8.1 per SHA-256 gepinnt; `install.sh` bricht ohne `--pilot-ssh` ab,
+  solange der Tunnel eingerichtet ist.
+- Updater: nur streng neuere Versionen (Downgrade-Schutz, Grund `version_zu_alt`).
+- Init-Schritt heilt Bus-Drift: Passwortdatei passend zu den Zugangsdateien, Zugangsdaten in der
+  Zigbee2MQTT-Konfiguration angeglichen (Netzschluessel bleibt); eine unlesbare oder beschaedigte ACL-Datei wird neu
+  geschrieben statt den Init-Schritt abzubrechen.
+- Thermostat: ein offener Schreibbefehl verwirft verspaetete Meldungen des alten Sollwerts (bis 30 min); jede andere
+  Meldung gilt als Eingabe am Thermostat.
+- Automatische Updates auch fuer alle Pakete des Raspberry-Pi-Archivs (vor allem Kernel und Firmware), ohne automatischen
+  Neustart.
+- Drift-Tests: ACL gegen alle Bus-Aufrufe, Updater-Fixture gegen die Geraete-Compose.
+
 ## 0.2.0
 
 Plan G2b-1 (Geraetesoftware ohne Hardware). Noch nicht veroeffentlicht: der erste Release braucht den echten

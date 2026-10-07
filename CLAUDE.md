@@ -48,6 +48,13 @@ HA-Add-on-Repository mit zwei Add-ons: `heizungsbruecke` (Client-seitige Bridge-
   Standardbibliothek, `cryptography`, `smartheat_host` und genau `smartheat_gateway.{files,paths,version}` sowie
   `smartheat_gateway.agent.{wire,identity}` (`install.sh` legt diese Module mit ab); keine Tenant-IDs; nie
   `heizungsbruecke`. Tests: `cd gateway/host && pytest` (`install_checks.sh` läuft im Docker-Test des Installers).
+  `smartheat_host/firstboot.py` (Dienst `smartheat-firstboot`) lädt beim Erststart die Container-Image-Archive ohne Pull.
+  `gateway/host/pilot_ssh_tunnel.sh` richtet für Pilotgeräte einen eigenen Cloudflare-Tunnel nur für SSH als Host-Dienst
+  ein (Token als Datei; `install.sh` bricht ohne `--pilot-ssh` ab, solange er eingerichtet ist).
+- `gateway/image/` — **Basis-Image** (SHG G2b-2, `rpi-image-gen` v2.8.0): Layer und Konfiguration, `prepare.sh` (Stage),
+  `build.sh`/`make_image.sh`, Hooks, `rootfs_checks.sh` und `own_url.sh` (Adressregel: nur eigener DNS-Name per https, nie IP
+  oder AWS-Adresse). Gebaut wird auf einem arm64-Host (oder mit QEMU-binfmt) bzw. in der CI (`.github/workflows/image-gateway.yml`, im Release
+  als Job `image`); Tests (`test_image_scripts.py`, `test_image_rootfs_checks.py`) laufen ohne Image-Bau.
 - `gateway/release/` — Bundle-Bau (`build_bundle.py`: Compose mit Image-Digests und Manifest; nutzt dieselben
   Prüffunktionen wie der Updater), `verify_bundle.py` (Neubau aus dem Tag und byte-genauer Vergleich vor dem Signieren),
   `sign_bundle.sh` und die Hash-Lock-Datei `requirements.txt` (PyYAML, cryptography; einzige pip-Quelle des
@@ -66,7 +73,7 @@ scripts/check.sh --full   # zusätzlich die Docker-Schritte (Build, Happy-Path, 
 ```
 `scripts/check.sh` prüft und testet `heizungsbruecke/`, `gateway/`, `gateway/host/` **und** `gateway/release/`; `--full` baut zusätzlich das Gateway-Image
 (lokal nur amd64) und fährt den Compose-Lauf mit dem Dev-Overlay (`tests/test_gateway_docker_build.sh`; dabei Bus-Anmeldung und ACL, Masken, Netz-Wache; die statische
-Prüfung der Compose-Datei steckt in `gateway/tests/test_compose.py`). Zwei weitere Docker-Skripte gehören zum Gateway: `tests/test_gateway_install.sh` (Host-Installer zweimal in `debian:trixie`, Plattform per `SHG_INSTALL_PLATFORM`, die CI fährt zusätzlich arm64 im Job `install-arm64`) und `tests/test_gateway_updater.sh` (Updater gegen eine lokale Registry mit drei signierten Test-Bundles, Rückweg und Manipulation; Laufzeit rund 6 min, steuert Compose über den Docker-Socket des Hosts). Im Dev-Root fährt `scripts/check.sh --only e2e --full`
+Prüfung der Compose-Datei steckt in `gateway/tests/test_compose.py`). Drei weitere Docker-Skripte gehören zum Gateway: `tests/test_gateway_install.sh` (Host-Installer zweimal in `debian:trixie`, Plattform per `SHG_INSTALL_PLATFORM`, die CI fährt zusätzlich arm64 im Job `install-arm64`), `tests/test_gateway_updater.sh` (Updater gegen eine lokale Registry mit drei signierten Test-Bundles, Rückweg und Manipulation; Laufzeit rund 6 min, steuert Compose über den Docker-Socket des Hosts) und `tests/test_gateway_firstboot.sh` (Export wie im Image-Bau, Laden ohne Netz in einem Docker mit containerd-Speicher, Start per Index-Digest). Der Image-Bau selbst (`gateway/image/make_image.sh`) braucht einen arm64-Host und gehört nicht zu `check.sh`. Im Dev-Root fährt `scripts/check.sh --only e2e --full`
 zusätzlich die Gateway-Modi des Ende-zu-Ende-Tests.
 Direkter Aufruf bleibt möglich: `cd heizungsbruecke && pip install -e ".[dev]" && pytest` bzw.
 `cd gateway && pip install -e ".[dev]" && pytest` (`pyproject.toml`: `testpaths = ["tests"]`, `pythonpath = ["src"]`). Testzahl: siehe CI (Job

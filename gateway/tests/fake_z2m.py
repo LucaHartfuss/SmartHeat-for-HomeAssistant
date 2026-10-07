@@ -15,6 +15,8 @@ class FakeZigbee2Mqtt:
     def __init__(self, bus) -> None:
         self._bus = bus
         self._devices: list[dict] = []
+        self._sleepy: set[str] = set()
+        self._held: dict[str, float] = {}
         self.permit_join_requests: list[int] = []
         bus.subscribe(f"{BASE}/bridge/request/permit_join", self._on_permit_join)
         bus.subscribe(f"{BASE}/+/set", self._on_set)
@@ -32,6 +34,18 @@ class FakeZigbee2Mqtt:
             {"name": "local_temperature", "property": "local_temperature", "access": 5},
         ]}
         self._add(ieee, "TRV-Test", "Test", [climate, _BATTERY_LOW])
+
+    def make_sleepy(self, ieee: str) -> None:
+        """Das Geraet schlaeft: Schreibbefehle bleiben bis wake() liegen (batteriebetriebenes Thermostat)."""
+        self._sleepy.add(ieee)
+
+    def wake(self, ieee: str, stale_setpoint: float | None = None) -> None:
+        """Aufwachen: zuerst optional der alte Stand (verspaetete Meldung), dann der liegengebliebene Schreibwert.
+        Danach schlaeft das Geraet wieder (weitere Schreibbefehle bleiben liegen, bis wake() erneut gerufen wird)."""
+        if stale_setpoint is not None:
+            self.report(ieee, occupied_heating_setpoint=stale_setpoint, local_temperature=20.0)
+        if ieee in self._held:
+            self.report(ieee, occupied_heating_setpoint=self._held.pop(ieee), local_temperature=20.0)
 
     def report(self, ieee: str, **values) -> None:
         self._bus.publish(f"{BASE}/{ieee}", values, retain=True)
@@ -52,8 +66,12 @@ class FakeZigbee2Mqtt:
     def _on_set(self, topic, payload, retain) -> None:
         ieee = topic.split("/")[1]
         body = decode(payload)
-        if isinstance(body, dict) and "occupied_heating_setpoint" in body:
-            self.report(ieee, occupied_heating_setpoint=body["occupied_heating_setpoint"], local_temperature=20.0)
+        if not (isinstance(body, dict) and "occupied_heating_setpoint" in body):
+            return
+        if ieee in self._sleepy:
+            self._held[ieee] = body["occupied_heating_setpoint"]
+            return
+        self.report(ieee, occupied_heating_setpoint=body["occupied_heating_setpoint"], local_temperature=20.0)
 
 
 def main() -> None:  # pragma: no cover - laeuft im Container

@@ -1,16 +1,19 @@
 #!/bin/bash
 # Host-Installer des SmartHeat-Gateways (Spec SHG G2 8.2, G2b-1 6): idempotent, eine Quelle fuer das Image (G2b-2,
-# chroot mit --no-activate) und fuer Bastler auf frischem Raspberry Pi OS Lite 64 bit (Debian 13 trixie).
+# chroot mit --image) und fuer Bastler auf frischem Raspberry Pi OS Lite 64 bit (Debian 13 trixie).
 # Aufruf: install.sh --device-api-url URL [--portal-base-url URL] [--diag-hostnames NAMEN] [--timezone ZONE]
-#                    [--bundle ORDNER] [--pilot-ssh PUBKEY] [--root PFAD] [--no-docker] [--no-activate]
+#                    [--bundle ORDNER] [--pilot-ssh PUBKEY] [--root PFAD] [--no-docker] [--no-activate] [--image]
 # ACHTUNG: Ohne --pilot-ssh bleibt Port 22 in der Firewall zu und ssh wird deaktiviert (laufende Sitzungen bestehen bis
 # zu ihrem Ende weiter, neue sind nicht mehr moeglich). --bundle: Ordner mit docker-compose.yml, mosquitto.conf,
-# manifest.json und (optional) manifest.json.minisig.
+# manifest.json und (optional) manifest.json.minisig. --image: Image-Bau im chroot (Plan G2b-2): wie --no-activate,
+# aktiviert die Units aber offline (systemctl enable, nichts startet; der erste Boot startet smartheat-firstboot).
+# Pilotgeraete in fremden Netzen: zusaetzlich pilot_ssh_tunnel.sh (eigener Cloudflare-Tunnel fuer SSH, ausserhalb von
+# Docker). Solange er eingerichtet ist, bricht install.sh ohne --pilot-ssh ab (Schutz vor dem Aussperren).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 GW="$(cd "$HERE/.." && pwd)"
 ROOT=/var/lib/smartheat OPT=/opt/smartheat/host API_URL="" PORTAL_URL="" DIAG_NAMES="" TZ_NAME="Europe/Berlin"
-BUNDLE="" PILOT_KEY="" DOCKER=1 ACTIVATE=1
+BUNDLE="" PILOT_KEY="" DOCKER=1 ACTIVATE=1 IMAGE=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --device-api-url) API_URL="$2"; shift ;;
@@ -22,6 +25,7 @@ while [ $# -gt 0 ]; do
     --root) ROOT="$2"; shift ;;
     --no-docker) DOCKER=0 ;;
     --no-activate) ACTIVATE=0 ;;
+    --image) IMAGE=1; ACTIVATE=0 ;;
     *) echo "Unbekannte Option: $1" >&2; exit 2 ;;
   esac
   shift
@@ -29,9 +33,16 @@ done
 [ -n "$API_URL" ] || { echo "--device-api-url fehlt" >&2; exit 2; }
 ROOT="${ROOT%/}"
 [ -n "$ROOT" ] || { echo "--root darf nicht / sein" >&2; exit 2; }
+# Schutz vor dem Aussperren (Plan G2b-2 Task 8): ohne --pilot-ssh wuerde ssh abgeschaltet - bei einem Pilotgeraet in
+# einem fremden LAN waere es dann nicht mehr erreichbar. Erst pilot_ssh_tunnel.sh remove, dann ohne --pilot-ssh.
+if [ -z "$PILOT_KEY" ] && [ -f /etc/smartheat/pilot-ssh-tunnel.env ]; then
+  echo "FEHLER: Pilot-SSH-Tunnel ist eingerichtet; install.sh nur mit --pilot-ssh aufrufen" \
+    "(oder vorher pilot_ssh_tunnel.sh remove)." >&2
+  exit 1
+fi
 if [ -z "$PILOT_KEY" ]; then
-  echo "WARNUNG: ohne --pilot-ssh wird ssh deaktiviert und Port 22 bleibt zu (laufende Sitzungen bestehen bis zu ihrem" \
-    "Ende weiter, neue sind nicht mehr moeglich)." >&2
+  echo "WARNUNG: ohne --pilot-ssh wird ssh deaktiviert und Port 22 bleibt zu" \
+    "(laufende Sitzungen bestehen bis zu ihrem Ende weiter, neue sind nicht mehr moeglich)." >&2
 fi
 CHANGED=0 WROTE=0 FIREWALL_CHANGED=0
 
@@ -73,9 +84,26 @@ dir() {  # Ordner $1 mit Modus $2 und Eigentuemer $3
 }
 subst() { sed -e "s|@ROOT@|$ROOT|g" "$1"; }
 
+# Speicherweg von Docker (containerd-Snapshotter, Erststart ohne Pull, G2b-2 Task 7). MUSS vor der Installation von
+# docker.io stehen: dockerd legt seinen Speicher beim ersten Start an, ein spaeter umgestellter Speicher versteckt
+# alles, was vorher im klassischen angelegt wurde. Bestehende Installationen mit klassischem Speicher werden nicht
+# unterstuetzt (das Gateway-Image und frische Raspberry-Pi-OS-Installationen haben noch keinen). Eine abweichende
+# bestehende daemon.json wird nie ueberschrieben.
+docker_daemon_config() {
+  [ "$DOCKER" = 1 ] || return 0
+  local want="$HERE/docker-daemon.json"
+  if [ -f /etc/docker/daemon.json ] && ! cmp -s "$want" /etc/docker/daemon.json; then
+    echo "FEHLER: bestehende /etc/docker/daemon.json weicht ab; nicht ueberschrieben - von Hand zusammenfuehren" \
+      "(erwartet: $want)" >&2
+    exit 1
+  fi
+  put /etc/docker/daemon.json 0644 0:0 <"$want"
+}
+
 packages() {
   local wanted=(python3 python3-cryptography unattended-upgrades nftables ca-certificates)  # CA: Updater-HTTPS, pull
-  [ "$DOCKER" = 1 ] && wanted+=(docker.io docker-compose)
+  [ "$DOCKER" = 1 ] && wanted+=(docker.io docker-cli docker-compose)  # trixie: CLI ist nur "Recommends" von docker.io
+  [ -z "$PILOT_KEY" ] || wanted+=(openssh-server)  # Pilotgeraete (sshd); ohne --pilot-ssh bleibt ssh aus
   local missing=() pkg
   for pkg in "${wanted[@]}"; do
     dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed" || missing+=("$pkg")
@@ -170,12 +198,24 @@ activate() {
   systemctl enable --now smartheat-firewall.service smartheat-hoststatus.service smartheat-led.service
   # Oneshot mit RemainAfterExit: geaenderte Regeln (z. B. Pilot-SSH an/aus) greifen erst nach einem Neustart der Unit.
   if [ "$FIREWALL_CHANGED" = 1 ]; then systemctl restart smartheat-firewall.service; fi
-  if [ "$DOCKER" = 1 ]; then systemctl enable --now docker.service smartheat-updater.service; fi
+  # smartheat-firstboot hat Requires=docker.service: nur mit Docker aktivieren (sonst bricht enable --now ab).
+  if [ "$DOCKER" = 1 ]; then
+    systemctl enable --now docker.service smartheat-updater.service smartheat-firstboot.service
+  fi
   if [ -n "$PILOT_KEY" ]; then
     systemctl enable --now ssh.service
     systemctl reload ssh.service
   else systemctl disable --now ssh.service 2>/dev/null || true; fi
   if [ "$DOCKER" = 1 ]; then start_current; fi
+}
+
+# Image-Bau (--image): Units offline aktivieren; gestartet wird erst beim ersten Boot (smartheat-firstboot).
+enable_offline() {
+  [ "$IMAGE" = 1 ] || return 0
+  systemctl enable smartheat-firewall.service smartheat-hoststatus.service smartheat-led.service
+  if [ "$DOCKER" = 1 ]; then systemctl enable docker.service smartheat-updater.service smartheat-firstboot.service; fi
+  if [ -n "$PILOT_KEY" ]; then systemctl enable ssh.service
+  else systemctl disable ssh.service ssh.socket 2>/dev/null || true; fi
 }
 
 # Feld aus updater/state.json: current bzw. die Version eines offenen Auftrags (in_progress); leer, wenn nicht gesetzt.
@@ -204,17 +244,20 @@ start_current() {
 from smartheat_host import bundles
 print(" ".join(p for p in bundles.compose_devices(open(sys.argv[1]).read()) if not os.path.exists(p)))' "$compose")"
   if [ -n "$missing" ]; then
-    echo "HINWEIS: Geraet fehlt: $missing (Zigbee-Stick nicht eingesteckt?). Die Gateway-Dienste sind nicht gestartet;" \
+    echo "HINWEIS: Geraet fehlt: $missing (Zigbee-Stick nicht eingesteckt?)." \
+      "Die Gateway-Dienste sind nicht gestartet;" \
       "Stick einstecken und install.sh mit denselben Optionen erneut ausfuehren."
     return 0
   fi
   docker compose -p smartheat --env-file "$ROOT/host/gateway.env" -f "$compose" up -d
 }
 
+docker_daemon_config
 packages
 layout
 host_package
 system_files
 first_bundle
 activate
+enable_offline
 if [ "$CHANGED" = 0 ]; then echo "Nichts zu tun (bereits installiert)"; fi

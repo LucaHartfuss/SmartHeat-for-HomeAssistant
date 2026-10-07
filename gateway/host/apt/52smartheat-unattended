@@ -1,6 +1,12 @@
-// SmartHeat-Gateway (Spec G2 8.2): nur Sicherheitsupdates automatisch. 50unattended-upgrades erlaubt auch den
-// regulaeren Stable-Zweig; die Liste wird zuerst geleert, dann bleibt nur das Security-Archiv.
+// SmartHeat-Gateway (Spec G2 8.2, Plan G2b-2 Task 6): automatisch nur Sicherheitsupdates aus Debian-Security und
+// Kernel/Firmware aus dem Raspberry-Pi-Archiv (dort gibt es keinen eigenen Security-Zweig). 50unattended-upgrades
+// erlaubt auch den regulaeren Stable-Zweig; die Liste wird zuerst geleert. Kein automatischer Neustart: ein neuer
+// Kernel wird beim naechsten Neustart aktiv.
 #clear Unattended-Upgrade::Origins-Pattern;
-Unattended-Upgrade::Origins-Pattern { "origin=Debian,codename=${distro_codename}-security,label=Debian-Security"; };
+Unattended-Upgrade::Origins-Pattern {
+  "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+  "origin=Raspberry Pi Foundation,codename=${distro_codename},label=Raspberry Pi Foundation";
+};
+Unattended-Upgrade::Automatic-Reboot "false";
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
