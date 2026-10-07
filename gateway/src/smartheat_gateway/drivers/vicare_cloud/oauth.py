@@ -142,7 +142,8 @@ class TokenStore:
             if not force_refresh and self._fresh(data):
                 return data["access_token"]
             body = self._token_request({"grant_type": "refresh_token", "client_id": data["client_id"],
-                                        "refresh_token": data["refresh_token"]})
+                                        "refresh_token": data["refresh_token"]},
+                                       revoked_only=True)
             if body is None:
                 self._save({"client_id": data.get("client_id"), "abgelaufen": True})
                 raise NotLoggedIn("Die Anmeldung bei Viessmann ist abgelaufen.")
@@ -161,22 +162,32 @@ class TokenStore:
                      "expires_at": self._wall() + float(body.get("expires_in", 3600))})
         return data
 
-    def _token_request(self, form: dict) -> dict | None:
-        """Antwort bei 200, None bei einer Ablehnung (4xx), TokenUnavailable sonst. Nie den Inhalt loggen."""
+    def _token_request(self, form: dict, *, revoked_only: bool = False) -> dict | None:
+        """Antwort bei 200, None bei einer Ablehnung, TokenUnavailable sonst. Nie den Inhalt loggen.
+
+        Beim Erneuern (revoked_only) gilt nur 400/401 mit error=invalid_grant als Ablehnung, denn sie loescht die
+        Anmeldung; 403 (WAF), 404 (falsche Basis), invalid_client u. a. sind kein Widerruf. Beim Code-Tausch
+        (finish) ist jede nicht voruebergehende 4xx eine Ablehnung, das zerstoert nichts."""
         try:
             response = self._post((self._iam or iam_base()) + TOKEN_PATH, data=form, timeout=HTTP_TIMEOUT)
         except requests.RequestException as error:
             logger.warning("Viessmann-IAM nicht erreichbar (%s)", type(error).__name__)
             raise TokenUnavailable() from None
         status = response.status_code
+        try:
+            body = response.json()
+        except ValueError:
+            body = None
         if status == 200:
-            try:
-                body = response.json()
-            except ValueError:
-                body = None
             if isinstance(body, dict) and isinstance(body.get("access_token"), str):
                 return body
             logger.warning("Viessmann-IAM: unbrauchbare Antwort")
+            raise TokenUnavailable()
+        if revoked_only:
+            if status in (400, 401) and isinstance(body, dict) and body.get("error") == "invalid_grant":
+                logger.warning("Viessmann-IAM widerruft die Anmeldung (%s, invalid_grant)", status)
+                return None
+            logger.warning("Viessmann-IAM antwortet beim Erneuern mit %s, Anmeldung bleibt", status)
             raise TokenUnavailable()
         if 400 <= status < 500 and status not in TRANSIENT_CLIENT_STATUS:
             logger.warning("Viessmann-IAM lehnt die Anfrage ab (%s)", status)

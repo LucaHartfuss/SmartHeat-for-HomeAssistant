@@ -188,6 +188,54 @@ def test_a_rate_limited_or_failing_iam_is_not_a_logout(fake, tmp_path):
         assert tokens.logged_in() and not tokens.expired()
 
 
+@pytest.mark.parametrize("status, body", [(403, {}), (404, {}), (401, {"error": "invalid_client"}),
+                                          (400, {"error": "invalid_request"}), (400, {})])
+def test_other_client_errors_on_refresh_are_not_a_logout(fake, tmp_path, status, body):
+    """Nur 400/401 mit error=invalid_grant widerruft; WAF-403, falsche Basis-404, invalid_client nicht."""
+    server, base = fake
+    now = [5_500_000.0]
+    server._clock = lambda: now[0]
+    tokens = store(tmp_path, base, wall=lambda: now[0])
+    tokens.begin("c", "r")
+    tokens.finish(GOOD_CODE, "r")
+    before = (tmp_path / "vicare.json").read_bytes()
+
+    class Response:
+        status_code = status
+
+        def json(self):
+            return body
+
+    tokens._post = lambda *a, **k: Response()
+    now[0] += 3601
+    with pytest.raises(oauth.TokenUnavailable):
+        tokens.access_token()
+    assert (tmp_path / "vicare.json").read_bytes() == before  # Datei unveraendert, gueltiges JSON
+    assert json.loads(before) and tokens.logged_in() and not tokens.expired()
+
+
+@pytest.mark.parametrize("status", [400, 401])
+def test_invalid_grant_with_400_or_401_is_a_logout(fake, tmp_path, status):
+    server, base = fake
+    now = [5_600_000.0]
+    server._clock = lambda: now[0]
+    tokens = store(tmp_path, base, wall=lambda: now[0])
+    tokens.begin("c", "r")
+    tokens.finish(GOOD_CODE, "r")
+
+    class Response:
+        status_code = status
+
+        def json(self):
+            return {"error": "invalid_grant"}
+
+    tokens._post = lambda *a, **k: Response()
+    now[0] += 3601
+    with pytest.raises(oauth.NotLoggedIn):
+        tokens.access_token()
+    assert not tokens.logged_in() and tokens.expired()
+
+
 def test_a_malformed_token_response_is_not_a_logout(fake, tmp_path):
     server, base = fake
     now = [6_000_000.0]
