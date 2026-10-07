@@ -714,3 +714,27 @@ def test_main_once_wires_the_environment(tmp_path, monkeypatch, capsys):
     assert seen["public_key_text"] == "pub" and seen["state_path"] == tmp_path / "updater" / "state.json"
     assert seen["version"] == updater.GATEWAY_VERSION
     assert seen["compose"]._project == "testprojekt"
+
+
+@pytest.mark.parametrize("current", ["0.3.1", "1.0.0"])
+def test_older_desired_version_is_refused_without_download(tmp_path, current):
+    world = World(tmp_path)
+    updater.State(current=current).save(world.state_path)
+    world.served.clear()  # ein Download wuerde scheitern - es darf keinen geben
+    assert world.updater.run_once() == "abgelehnt"
+    assert world.api.results == [("0.3.0", "rollback", "version_zu_alt")]
+    state = world.state()
+    assert state.current == current and "0.3.0" in state.rejected
+    assert world.compose.calls == []
+    assert world.updater.run_once() == "aktuell"  # bleibt abgelehnt, keine zweite Meldung
+    assert len(world.api.results) == 1
+
+
+def test_unreadable_current_version_does_not_block_updates(tmp_path):
+    world = World(tmp_path)
+    updater.State(current="kaputt").save(world.state_path)
+    assert world.updater.run_once() == "aktualisiert"
+
+
+def test_downgrade_reason_is_in_the_fixed_list():
+    assert "version_zu_alt" in updater.REASONS
