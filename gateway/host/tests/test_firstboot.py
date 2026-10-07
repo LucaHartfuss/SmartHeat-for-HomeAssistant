@@ -43,8 +43,60 @@ def test_missing_stick_waits_without_loading(root):
 def test_open_updater_job_only_loads(root):
     updater.State(current="0.3.0", in_progress={"version": "0.3.1", "previous": "0.3.0", "since": 1.0}).save(
         root / "updater" / "state.json")
+    compose, loaded = FakeCompose(), []
+    assert firstboot.run(root, compose, load=lambda p: loaded.append(p.name), path_exists=lambda p: False) == 0
+    assert loaded == ["01.tar", "02.tar"]
+    assert compose.ups == [] and list((root / "images").iterdir()) == []
+
+
+def test_without_current_bundle_only_loads(root):
+    updater.State().save(root / "updater" / "state.json")
+    loaded, compose = [], FakeCompose()
+    assert firstboot.run(root, compose, load=lambda p: loaded.append(p.name), path_exists=lambda p: False) == 0
+    assert loaded == ["01.tar", "02.tar"] and compose.ups == []
+    assert list((root / "images").iterdir()) == []
+
+
+def test_partial_load_keeps_all_archives_and_starts_nothing(root):
+    loaded, compose = [], FakeCompose()
+
+    def second_breaks(path):
+        if path.name == "02.tar":
+            raise firstboot.LoadError(path.name)
+        loaded.append(path.name)
+    with pytest.raises(firstboot.LoadError):
+        firstboot.run(root, compose, load=second_breaks, path_exists=lambda p: True)
+    assert loaded == ["01.tar"] and compose.ups == []
+    assert sorted(path.name for path in (root / "images").iterdir()) == ["01.tar", "02.tar"]
+
+
+def test_main_maps_failures_to_exit_code_1(root, monkeypatch):
+    monkeypatch.setenv("SHG_ROOT", str(root))
+
+    def broken(*args, **kwargs):
+        raise firstboot.LoadError("boom")
+    monkeypatch.setattr(firstboot, "run", broken)
+    with pytest.raises(SystemExit) as stop:
+        firstboot.main()
+    assert stop.value.code == 1
+
+
+def test_updater_job_opened_while_loading_wins_over_the_start(root):
     compose = FakeCompose()
-    assert firstboot.run(root, compose, load=lambda p: None, path_exists=lambda p: False) == 0
+
+    def load_while_updater_takes_over(path):
+        updater.State(current="0.3.0", in_progress={"version": "0.3.1", "previous": "0.3.0", "since": 1.0}).save(
+            root / "updater" / "state.json")
+    assert firstboot.run(root, compose, load=load_while_updater_takes_over, path_exists=lambda p: True) == 0
+    assert compose.ups == [] and list((root / "images").iterdir()) == []
+
+
+def test_current_switched_while_loading_is_not_started_again(root):
+    compose = FakeCompose()
+
+    def load_while_updater_switches(path):
+        updater.State(current="0.3.1", previous="0.3.0").save(root / "updater" / "state.json")
+    assert firstboot.run(root, compose, load=load_while_updater_switches, path_exists=lambda p: True) == 0
     assert compose.ups == [] and list((root / "images").iterdir()) == []
 
 

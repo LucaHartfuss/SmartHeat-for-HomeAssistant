@@ -75,6 +75,22 @@ dir() {  # Ordner $1 mit Modus $2 und Eigentuemer $3
 }
 subst() { sed -e "s|@ROOT@|$ROOT|g" "$1"; }
 
+# Speicherweg von Docker (containerd-Snapshotter, Erststart ohne Pull, G2b-2 Task 7). MUSS vor der Installation von
+# docker.io stehen: dockerd legt seinen Speicher beim ersten Start an, ein spaeter umgestellter Speicher versteckt
+# alles, was vorher im klassischen angelegt wurde. Bestehende Installationen mit klassischem Speicher werden nicht
+# unterstuetzt (das Gateway-Image und frische Raspberry-Pi-OS-Installationen haben noch keinen). Eine abweichende
+# bestehende daemon.json wird nie ueberschrieben.
+docker_daemon_config() {
+  [ "$DOCKER" = 1 ] || return 0
+  local want="$HERE/docker-daemon.json"
+  if [ -f /etc/docker/daemon.json ] && ! cmp -s "$want" /etc/docker/daemon.json; then
+    echo "FEHLER: bestehende /etc/docker/daemon.json weicht ab; nicht ueberschrieben - von Hand zusammenfuehren" \
+      "(erwartet: $want)" >&2
+    exit 1
+  fi
+  put /etc/docker/daemon.json 0644 0:0 <"$want"
+}
+
 packages() {
   local wanted=(python3 python3-cryptography unattended-upgrades nftables ca-certificates)  # CA: Updater-HTTPS, pull
   [ "$DOCKER" = 1 ] && wanted+=(docker.io docker-cli docker-compose)  # trixie: CLI ist nur "Recommends" von docker.io
@@ -133,9 +149,6 @@ system_files() {
   if [ "$WROTE" = 1 ]; then FIREWALL_CHANGED=1; fi
   put /etc/systemd/journald.conf.d/smartheat.conf 0644 0:0 <"$HERE/journald.conf.d/smartheat.conf"
   put /etc/apt/apt.conf.d/52smartheat-unattended 0644 0:0 <"$HERE/apt/52smartheat-unattended"
-  if [ "$DOCKER" = 1 ] && [ -f "$HERE/docker-daemon.json" ]; then
-    put /etc/docker/daemon.json 0644 0:0 <"$HERE/docker-daemon.json"  # Speicherweg fuer den Erststart (G2b-2 Task 7)
-  fi
   if [ -n "$PILOT_KEY" ]; then
     put /etc/ssh/sshd_config.d/00-smartheat.conf 0644 0:0 < <(printf \
       'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin prohibit-password\n')
@@ -172,11 +185,13 @@ activate() {
   udevadm control --reload
   udevadm trigger --subsystem-match=tty
   systemctl restart systemd-journald
-  systemctl enable --now smartheat-firewall.service smartheat-hoststatus.service smartheat-led.service \
-    smartheat-firstboot.service
+  systemctl enable --now smartheat-firewall.service smartheat-hoststatus.service smartheat-led.service
   # Oneshot mit RemainAfterExit: geaenderte Regeln (z. B. Pilot-SSH an/aus) greifen erst nach einem Neustart der Unit.
   if [ "$FIREWALL_CHANGED" = 1 ]; then systemctl restart smartheat-firewall.service; fi
-  if [ "$DOCKER" = 1 ]; then systemctl enable --now docker.service smartheat-updater.service; fi
+  # smartheat-firstboot hat Requires=docker.service: nur mit Docker aktivieren (sonst bricht enable --now ab).
+  if [ "$DOCKER" = 1 ]; then
+    systemctl enable --now docker.service smartheat-updater.service smartheat-firstboot.service
+  fi
   if [ -n "$PILOT_KEY" ]; then
     systemctl enable --now ssh.service
     systemctl reload ssh.service
@@ -187,9 +202,8 @@ activate() {
 # Image-Bau (--image): Units offline aktivieren; gestartet wird erst beim ersten Boot (smartheat-firstboot).
 enable_offline() {
   [ "$IMAGE" = 1 ] || return 0
-  systemctl enable smartheat-firewall.service smartheat-hoststatus.service smartheat-led.service \
-    smartheat-firstboot.service
-  if [ "$DOCKER" = 1 ]; then systemctl enable docker.service smartheat-updater.service; fi
+  systemctl enable smartheat-firewall.service smartheat-hoststatus.service smartheat-led.service
+  if [ "$DOCKER" = 1 ]; then systemctl enable docker.service smartheat-updater.service smartheat-firstboot.service; fi
   if [ -n "$PILOT_KEY" ]; then systemctl enable ssh.service
   else systemctl disable ssh.service ssh.socket 2>/dev/null || true; fi
 }
@@ -227,6 +241,7 @@ print(" ".join(p for p in bundles.compose_devices(open(sys.argv[1]).read()) if n
   docker compose -p smartheat --env-file "$ROOT/host/gateway.env" -f "$compose" up -d
 }
 
+docker_daemon_config
 packages
 layout
 host_package

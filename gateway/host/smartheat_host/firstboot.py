@@ -2,7 +2,8 @@
 (images/*.tar, docker load, kein Pull), startet das laufende Bundle (updater/state.json "current") und loescht danach
 die Archive. Die Unit smartheat-firstboot laeuft nur, solange images/ nicht leer ist (ConditionDirectoryNotEmpty).
 Fehlt ein Geraet aus devices: (Zigbee-Stick), endet sie mit EXIT_RETRY, bevor etwas geladen wird, und systemd versucht
-es nach 30 s erneut. Ein offener Updater-Auftrag (in_progress) gehoert dem Updater: dann nur laden, nicht starten."""
+es nach 30 s erneut. Ein offener Updater-Auftrag (in_progress, auch erst waehrend des Ladens eroeffnet) oder ein
+Bundle-Wechsel gehoert dem Updater: dann nur laden, nicht starten."""
 import logging
 import os
 import subprocess
@@ -46,8 +47,14 @@ def run(root: Path, compose, load: Callable[[Path], None] = docker_load,
         load(archive)
         logger.info("Image geladen: %s", archive.name)
     if version is not None:
-        compose.up(version)
-        logger.info("Bundle %s gestartet", version)
+        # Der Updater (startet parallel nach dem Laden der Unit) kann waehrend des Ladens einen Auftrag eroeffnet oder
+        # das Bundle gewechselt haben: dann gehoert ihm der Stack, der Erststart startet nichts mehr.
+        latest = updater.State.load(root / "updater" / "state.json")
+        if latest.in_progress or latest.current != version:
+            logger.info("Updater hat uebernommen (Auftrag oder Bundle-Wechsel), Erststart startet nichts")
+        else:
+            compose.up(version)
+            logger.info("Bundle %s gestartet", version)
     for archive in archives:
         archive.unlink()
     return 0
