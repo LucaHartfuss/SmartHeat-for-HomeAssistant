@@ -301,3 +301,82 @@ def test_a_pending_inventory_does_not_recreate_its_series_after_the_setup_was_re
     ctx.wall = lambda: 1_000_000 + clock()
     assert isinstance(outcome.check(), commands.Failed)  # auch nach Ablauf des Fensters keine alten Proben als Done
     assert not ctx.paths.inventory_samples.exists()
+
+
+# --- Inventur: eine fehlgeschlagene Probe darf die Reihe nicht beenden ---
+
+
+def _tick(ctx, clock, outcome, seconds=900):
+    clock.advance(seconds)
+    ctx.wall = lambda: 1_000_000 + clock()
+    return outcome.check()
+
+
+def _run_to_the_end(ctx, clock, outcome, limit=5):
+    """Prueft im 15-Minuten-Takt bis zum Ergebnis; liefert (Ergebnis, Anzahl der Pruefungen)."""
+    for ticks in range(1, limit + 1):
+        result = _tick(ctx, clock, outcome)
+        if result is not None:
+            return result, ticks
+    return None, limit
+
+
+def test_a_failed_sample_is_skipped_and_the_inventory_still_finishes_with_the_others(vicare_ctx, caplog):
+    ctx, server, clock = vicare_ctx
+    outcome = commands.execute(ctx, "driver_inventory", {"driver_id": "vicare_cloud", "stunden": 2})
+    assert _tick(ctx, clock, outcome) is None  # 900 s: Probe 1
+    server.control({"offline": True})
+    with caplog.at_level("DEBUG"):
+        assert _tick(ctx, clock, outcome) is None  # 1800 s: Cloud antwortet mit 503, die Probe faellt aus
+    server.control({"offline": False})
+    saved = json.loads(ctx.paths.inventory_samples.read_text())
+    assert len(saved["samples"]) == 1 and saved["next_at"] == ctx.wall() + commands.INVENTORY_EVERY_SECONDS
+    done = None
+    for _ in range(6):
+        done = _tick(ctx, clock, outcome)
+        if done is not None:
+            break
+    assert isinstance(done, commands.Done)
+    assert len(done.result["proben"]) == 6  # sieben Zeitpunkte (900 ... 6300 s) minus der ausgefallene
+    for secret in ("7637415", "2012345", "access_token", "refresh_token", "Bearer"):
+        assert secret not in caplog.text and secret not in str(done.result)
+    assert "DriverError" in caplog.text  # nur der Typname der Ausnahme
+
+
+def test_after_a_failed_sample_the_next_attempt_waits_for_next_at(vicare_ctx):
+    ctx, server, clock = vicare_ctx
+    outcome = commands.execute(ctx, "driver_inventory", {"driver_id": "vicare_cloud", "stunden": 2})
+    server.control({"offline": True})
+    assert _tick(ctx, clock, outcome) is None  # 900 s: Fehlversuch
+    attempted = server_calls(server)
+    assert attempted >= 1
+    server.control({"offline": False})
+    assert _tick(ctx, clock, outcome, 300) is None  # 1200 s < next_at (1800 s): kein Abruf
+    assert server_calls(server) == attempted
+    assert _tick(ctx, clock, outcome, 600) is None  # 1800 s: naechster Versuch
+    assert server_calls(server) > attempted
+    assert len(json.loads(ctx.paths.inventory_samples.read_text())["samples"]) == 1
+
+
+def test_an_inventory_without_any_sample_fails_at_the_deadline_with_a_contract_reason(vicare_ctx, caplog):
+    ctx, server, clock = vicare_ctx
+    outcome = commands.execute(ctx, "driver_inventory", {"driver_id": "vicare_cloud", "stunden": 1})
+    server.control({"offline": True})
+    with caplog.at_level("DEBUG"):
+        result, ticks = _run_to_the_end(ctx, clock, outcome)
+    assert ticks == 4  # erst am Ende des Fensters (3600 s), nicht schon beim ersten Fehlversuch
+    assert isinstance(result, commands.Failed)
+    assert result.grund == "anlage_nicht_erreichbar" and result.grund in wire.command_errors("driver_inventory")
+    assert json.loads(ctx.paths.inventory_samples.read_text())["samples"] == []
+    for secret in ("7637415", "2012345", "access_token", "refresh_token", "Bearer"):
+        assert secret not in caplog.text and secret not in result.text
+
+
+def test_an_inventory_whose_samples_are_all_rate_limited_reports_the_quota_at_the_deadline(vicare_ctx):
+    ctx, server, clock = vicare_ctx
+    outcome = commands.execute(ctx, "driver_inventory", {"driver_id": "vicare_cloud", "stunden": 1})
+    server.control({"rate_limit_after": len(server.calls)})
+    result, ticks = _run_to_the_end(ctx, clock, outcome)
+    assert ticks == 4
+    assert isinstance(result, commands.Failed) and result.grund == "kontingent_erschoepft"
+    assert result.grund in wire.command_errors("driver_inventory")

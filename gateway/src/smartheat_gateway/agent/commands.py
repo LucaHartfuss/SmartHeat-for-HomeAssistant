@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 INVENTORY_EVERY_SECONDS = 900
 INVENTORY_ABORTED_TEXT = "Die Inventur wurde abgebrochen, weil sich die Einrichtung des Gateways geändert hat."
+INVENTORY_NO_SAMPLES_TEXT = "Die Inventur konnte keine einzige Probe abrufen, weil die Anlage nicht erreichbar war."
 ZIGBEE_VALUE_FIELDS = ("temperature", "local_temperature", "occupied_heating_setpoint", "humidity")
 QUOTA_TEXT = "Das Abfrage-Kontingent beim Hersteller ist erschöpft, später erneut versuchen."
 
@@ -176,17 +177,29 @@ def _inventory(ctx: AgentContext, payload: dict) -> Outcome:
     series = _series(ctx, driver.driver_id, hours)
     deadline_in = min(max(series["started"] + hours * 3600 - ctx.wall(), 0), hours * 3600)
     ready_at = ctx.clock() + deadline_in
+    last_failure = Failed("anlage_nicht_erreichbar", INVENTORY_NO_SAMPLES_TEXT)  # nur fuer eine Reihe ohne Probe
 
     def check() -> Done | Failed | None:
+        nonlocal last_failure
         if not _adopt_saved(ctx, series):  # Reihe weg oder ersetzt (Abmelden, Neueinrichtung): nichts mehr abrufen
             return Failed("anlage_nicht_erreichbar", INVENTORY_ABORTED_TEXT)
         now = ctx.wall()
         if now >= series["next_at"] and now < series["started"] + hours * 3600:
-            series["samples"].append(driver.inventory_sample())
+            try:
+                series["samples"].append(driver.inventory_sample())
+            except (DriverError, QuotaExhausted) as error:
+                # Eine einzelne Probe (5xx, Zeitueberschreitung, 429) beendet die 24-48-h-Reihe nicht: ueberspringen,
+                # frueher erst im naechsten 15-Minuten-Takt wieder versuchen (schont das Kontingent). Nur der Typname
+                # wird protokolliert, nie der Text.
+                logger.warning("Inventur-Probe uebersprungen (%s)", type(error).__name__)
+                last_failure = (Failed(error.grund, error.text) if isinstance(error, DriverError)
+                                else Failed("kontingent_erschoepft", QUOTA_TEXT))
             series["next_at"] = now + INVENTORY_EVERY_SECONDS
             write_json(ctx.paths.inventory_samples, series, private=True)
         if ctx.clock() < ready_at:
             return None
+        if not series["samples"]:
+            return last_failure
         return Done(driver.inventory(hours, series["samples"]))
 
     return Waiting(check, ready_at + 3600)
