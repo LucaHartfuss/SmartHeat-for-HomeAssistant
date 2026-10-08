@@ -10,7 +10,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "startet",
      "grund": null,
      "notbetrieb": false,
@@ -30,8 +30,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -49,7 +48,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "startet",
      "grund": null,
      "notbetrieb": false,
@@ -69,8 +68,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -102,7 +100,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "startet",
      "grund": null,
      "notbetrieb": false,
@@ -122,8 +120,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -134,7 +131,6 @@
      "room_actual": 20.0,
      "boost_active": false,
      "failsafe_active": false,
-     "waerme_fehlt": false,
      "ts": "2026-01-15T08:00:00+01:00",
      "flow_temperature": 35.0,
      "room_target": 21.0,
@@ -150,7 +146,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -170,8 +166,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -200,7 +195,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -220,8 +215,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ]
@@ -281,7 +275,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -304,8 +298,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ]
@@ -379,7 +372,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -402,8 +395,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ]
@@ -472,7 +464,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -495,8 +487,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -514,7 +505,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -537,8 +528,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ]
@@ -625,7 +615,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -648,8 +638,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -661,7 +650,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -684,8 +673,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ]
@@ -750,7 +738,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -773,8 +761,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ]
@@ -843,7 +830,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -866,8 +853,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -915,7 +901,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "notbetrieb",
      "grund": null,
      "notbetrieb": true,
@@ -938,8 +924,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ]
@@ -1012,7 +997,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "notbetrieb",
      "grund": null,
      "notbetrieb": true,
@@ -1035,8 +1020,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ]
@@ -1091,7 +1075,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "notbetrieb",
      "grund": null,
      "notbetrieb": true,
@@ -1114,8 +1098,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -1126,7 +1109,6 @@
      "room_actual": 18.0,
      "boost_active": false,
      "failsafe_active": true,
-     "waerme_fehlt": false,
      "ts": "2026-01-15T12:07:00+01:00",
      "flow_temperature": 35.0,
      "room_target": 21.5,
@@ -1188,7 +1170,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -1211,8 +1193,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ]
@@ -1277,7 +1258,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "datenfehler",
      "grund": null,
      "notbetrieb": false,
@@ -1305,8 +1286,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -1352,7 +1332,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -1375,8 +1355,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ]
@@ -1445,7 +1424,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -1468,8 +1447,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -1494,7 +1472,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "datenfehler",
      "grund": null,
      "notbetrieb": false,
@@ -1520,8 +1498,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -1556,7 +1533,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "datenfehler",
      "grund": null,
      "notbetrieb": false,
@@ -1582,8 +1559,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -1606,7 +1582,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -1629,8 +1605,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ]
@@ -1699,7 +1674,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -1722,8 +1697,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -1755,7 +1729,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "datenfehler",
      "grund": null,
      "notbetrieb": false,
@@ -1783,8 +1757,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -1836,7 +1809,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -1859,8 +1832,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ]
@@ -1906,7 +1878,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -1929,8 +1901,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -1941,7 +1912,6 @@
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
-     "waerme_fehlt": false,
      "ts": "2026-01-15T12:13:00+01:00",
      "flow_temperature": 35.0,
      "room_target": 20.5,
@@ -1957,7 +1927,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -1980,8 +1950,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -1992,7 +1961,6 @@
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
-     "waerme_fehlt": false,
      "ts": "2026-01-15T12:18:00+01:00",
      "flow_temperature": 35.0,
      "room_target": 20.5,
@@ -2008,7 +1976,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2031,8 +1999,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -2043,7 +2010,6 @@
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
-     "waerme_fehlt": false,
      "ts": "2026-01-15T12:23:00+01:00",
      "flow_temperature": 35.0,
      "room_target": 20.5,
@@ -2059,7 +2025,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2082,8 +2048,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -2094,7 +2059,6 @@
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
-     "waerme_fehlt": false,
      "ts": "2026-01-15T12:28:00+01:00",
      "flow_temperature": 35.0,
      "room_target": 20.5,
@@ -2110,7 +2074,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2133,8 +2097,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -2145,7 +2108,6 @@
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
-     "waerme_fehlt": false,
      "ts": "2026-01-15T12:33:00+01:00",
      "flow_temperature": 35.0,
      "room_target": 20.5,
@@ -2161,7 +2123,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2184,8 +2146,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -2196,7 +2157,6 @@
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
-     "waerme_fehlt": false,
      "ts": "2026-01-15T12:38:00+01:00",
      "flow_temperature": 35.0,
      "room_target": 20.5,
@@ -2212,7 +2172,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2235,8 +2195,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -2247,7 +2206,6 @@
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
-     "waerme_fehlt": false,
      "ts": "2026-01-15T12:43:00+01:00",
      "flow_temperature": 35.0,
      "room_target": 20.5,
@@ -2263,7 +2221,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2286,8 +2244,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -2298,7 +2255,6 @@
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
-     "waerme_fehlt": false,
      "ts": "2026-01-15T12:48:00+01:00",
      "flow_temperature": 35.0,
      "room_target": 20.5,
@@ -2314,7 +2270,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2337,8 +2293,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -2349,7 +2304,6 @@
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
-     "waerme_fehlt": false,
      "ts": "2026-01-15T12:53:00+01:00",
      "flow_temperature": 35.0,
      "room_target": 20.5,
@@ -2377,7 +2331,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2407,8 +2361,7 @@
         "heat_limit": 16.0
        },
        "erkannt": "2026-01-15T12:53:00+01:00"
-      },
-      "waerme_fehlt": null
+      }
      }
     }
    ],
@@ -2420,7 +2373,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2450,8 +2403,7 @@
         "heat_limit": 16.0
        },
        "erkannt": "2026-01-15T12:53:00+01:00"
-      },
-      "waerme_fehlt": null
+      }
      }
     }
    ],
@@ -2462,7 +2414,6 @@
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
-     "waerme_fehlt": false,
      "ts": "2026-01-15T12:58:00+01:00",
      "flow_temperature": 35.0,
      "room_target": 20.5,
@@ -2478,7 +2429,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2501,8 +2452,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ]
@@ -2563,7 +2513,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2586,8 +2536,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -2598,7 +2547,6 @@
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
-     "waerme_fehlt": false,
      "ts": "2026-01-15T13:03:00+01:00",
      "flow_temperature": 35.0,
      "room_target": 20.5,
@@ -2620,7 +2568,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2645,8 +2593,7 @@
       "batterie_niedrig": [
        "sensor.thermostat_battery"
       ],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ]
@@ -2710,7 +2657,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "startet",
      "grund": null,
      "notbetrieb": false,
@@ -2735,8 +2682,7 @@
       "batterie_niedrig": [
        "sensor.thermostat_battery"
       ],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -2754,7 +2700,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "startet",
      "grund": null,
      "notbetrieb": false,
@@ -2779,8 +2725,7 @@
       "batterie_niedrig": [
        "sensor.thermostat_battery"
       ],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -2800,7 +2745,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "startet",
      "grund": null,
      "notbetrieb": false,
@@ -2825,8 +2770,7 @@
       "batterie_niedrig": [
        "sensor.thermostat_battery"
       ],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -2837,7 +2781,6 @@
      "room_actual": 21.5,
      "boost_active": false,
      "failsafe_active": false,
-     "waerme_fehlt": false,
      "ts": "2026-01-15T13:03:00+01:00",
      "flow_temperature": 35.0,
      "room_target": 20.5,
@@ -2853,7 +2796,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2878,8 +2821,7 @@
       "batterie_niedrig": [
        "sensor.thermostat_battery"
       ],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -2891,7 +2833,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2916,8 +2858,7 @@
       "batterie_niedrig": [
        "sensor.thermostat_battery"
       ],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ]
@@ -2981,7 +2922,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "startet",
      "grund": null,
      "notbetrieb": false,
@@ -3006,8 +2947,7 @@
       "batterie_niedrig": [
        "sensor.thermostat_battery"
       ],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -3042,7 +2982,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "abo_inaktiv",
      "grund": null,
      "notbetrieb": true,
@@ -3067,8 +3007,7 @@
       "batterie_niedrig": [
        "sensor.thermostat_battery"
       ],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ]
@@ -3138,7 +3077,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "abo_inaktiv",
      "grund": null,
      "notbetrieb": true,
@@ -3163,8 +3102,7 @@
       "batterie_niedrig": [
        "sensor.thermostat_battery"
       ],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -3241,7 +3179,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "notbetrieb",
      "grund": null,
      "notbetrieb": true,
@@ -3266,8 +3204,7 @@
       "batterie_niedrig": [
        "sensor.thermostat_battery"
       ],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -3289,7 +3226,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "abo_inaktiv",
      "grund": null,
      "notbetrieb": true,
@@ -3314,8 +3251,7 @@
       "batterie_niedrig": [
        "sensor.thermostat_battery"
       ],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ]
@@ -3386,7 +3322,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "abo_inaktiv",
      "grund": null,
      "notbetrieb": true,
@@ -3411,8 +3347,7 @@
       "batterie_niedrig": [
        "sensor.thermostat_battery"
       ],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -3465,7 +3400,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "abo_beendet",
      "grund": null,
      "notbetrieb": true,
@@ -3490,8 +3425,7 @@
       "batterie_niedrig": [
        "sensor.thermostat_battery"
       ],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ]
@@ -3562,7 +3496,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "notbetrieb",
      "grund": null,
      "notbetrieb": true,
@@ -3587,8 +3521,7 @@
       "batterie_niedrig": [
        "sensor.thermostat_battery"
       ],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ],
@@ -3615,7 +3548,7 @@
      "schema": 2,
      "tenant_id": "golden",
      "setup_id": "setup-golden-1",
-     "addon_version": "0.35.0",
+     "addon_version": "0.36.0",
      "status": "abgemeldet",
      "grund": null,
      "notbetrieb": true,
@@ -3638,8 +3571,7 @@
      "hinweise": {
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
-      "manueller_eingriff": null,
-      "waerme_fehlt": null
+      "manueller_eingriff": null
      }
     }
    ]

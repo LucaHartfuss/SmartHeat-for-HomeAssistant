@@ -3,8 +3,13 @@
 Wird im Update-Dialog des Supervisors angezeigt. Pro Version ein Abschnitt `## X.Y.Z`; der
 Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Release.
 
-## Unveröffentlicht
+## 0.36.0
 
+- Neu: optionale Zuordnungen für Betriebsstunden, Starts und Status des Wärmeerzeugers. Der Server weist damit nach,
+  dass die Heizung Wärme liefert, und lernt nur dann (Audit 4 P-B).
+- Entfernt: die eigene Erkennung „Therme liefert keine Wärme“ samt Telemetrie-Flag, Status-Hinweis und Meldung. Den
+  Hinweis gibt jetzt der Server (Betreiber-Push, Portal). Die Meldekategorie `therme` entfällt aus `notify_hints_off`.
+- Behoben: Energiezähler von myVAILLANT werden als Tageszähler behandelt (A4-49).
 - **Aufräumen ohne Verhaltensänderung (Audit 4 P-E):** Die Übernahme alter `backup.json`-Felder aus Add-on 0.29.0
   entfällt; alle Anlagen laufen seit Release 2 auf neueren Versionen. Doppelte Meldungstexte und veraltete Kommentare
   sind bereinigt. Kein „Neu konfigurieren“ nötig.

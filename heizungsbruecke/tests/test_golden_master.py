@@ -1,7 +1,8 @@
 """Golden-Master (Spec SHG 3.4): der Szenario-Lauf muss bytegleich zur Aufzeichnung vom Stand vor G1 sein.
 Neu schreiben nur mit GOLDEN_UPDATE=1 und nur in Task 1 des Plans SHG G1
 und in Task 1 des Plans Audit 4 P-C2 (neues backup.json-Feld boost_since)
-und in Task 3 des Plans Audit 4 P-C2 (neue backup.json-Felder setup_id, plant_id)."""
+und in Task 3 des Plans Audit 4 P-C2 (neue backup.json-Felder setup_id, plant_id)
+und in Task 9 des Plans Audit 4 P-B (Telemetrie ohne waerme_fehlt, Status ohne Hinweis waerme_fehlt, Version 0.36.0)."""
 import os
 import time
 from datetime import date

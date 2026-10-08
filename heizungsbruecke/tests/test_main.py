@@ -562,7 +562,7 @@ def test_check_timezone_survives_failing_config_query(caplog):
     assert "Zeitzone" in caplog.text
 
 
-def test_on_telemetry_hands_the_waerme_callback_to_the_tick(make_store, monkeypatch):
+def test_on_telemetry_hands_the_energy_normalizer_to_the_tick(make_store, monkeypatch):
     from types import SimpleNamespace
 
     from smartheat_runtime.app import _on_telemetry
@@ -582,8 +582,8 @@ def test_on_telemetry_hands_the_waerme_callback_to_the_tick(make_store, monkeypa
 
     _on_telemetry(rt, None)
 
-    assert captured["waerme"](21.0, {"flow_temperature": 26.0}, {"flow_setpoint": 38.0}) is False
-    assert captured["energy"] is None  # Vaillant: Summenzaehler, unveraendert (Plan 3b)
+    assert "waerme" not in captured  # Audit 4 P-B: die Erkennung liegt beim Server
+    assert callable(captured["energy"])  # Vaillant: Tageszaehler werden normalisiert (Audit 4 P-B, A4-49)
 
 
 def _prime_rt(monkeypatch, capture):

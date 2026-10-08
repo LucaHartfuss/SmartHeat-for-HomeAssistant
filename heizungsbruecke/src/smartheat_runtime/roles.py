@@ -13,6 +13,8 @@ ALL_ROLES = (
     "efficiency_ratio", "energy_electrical_heating", "energy_electrical_dhw",
     "energy_primary_heating", "energy_primary_dhw", "energy_thermal_heating", "energy_thermal_dhw",
     "energy_electrical_total",
+    # Audit 4 P-B: Liefer-Signale des Waermeerzeugers, optional
+    "generator_hours", "generator_starts", "generator_state",
 )
 
 # Pflicht-Entities der Bruecke (fuer alle Profile gleich). room_actual (und bei einer weather-Quelle

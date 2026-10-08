@@ -781,7 +781,6 @@ def test_status_event_carries_the_full_state(env):
     assert event["letzte_serverantwort"] is not None
     assert event["hinweise"] == {
         "raumfuehler_ausgefallen": ["sensor.a"], "batterie_niedrig": ["sensor.b"], "manueller_eingriff": None,
-        "waerme_fehlt": None,
     }
 
 

@@ -8,7 +8,7 @@ HA haelt persistent_notifications nur im Speicher. Deshalb bleibt der Text jeder
 Meldung in BridgeState.notify_messages, und republish_persistent() legt sie nach einem HA-Neustart
 neu an -- ohne erneuten Push.
 
-Die sieben Hinweis-Kategorien (HINT_CATEGORIES, Option notify_hints_off) lassen sich einzeln
+Die sechs Hinweis-Kategorien (HINT_CATEGORIES, Option notify_hints_off) lassen sich einzeln
 abschalten: der Zustand wird weiter verfolgt und geloggt (Grundlage der Hinweise im Status), nur
 der Push entfaellt. Kritische Meldungen sind nie abschaltbar."""
 import logging
@@ -22,7 +22,7 @@ STATE_OK = "ok"
 # Abschaltbare Hinweis-Kategorien (Spec TP7 3.4). Muss zum config.yaml-Schema und zu const.py der
 # Integration passen (Contract-Check).
 HINT_CATEGORIES = (
-    "raumfuehler", "batterie", "manueller_eingriff", "quellwechsel", "therme", "schreibbudget", "schreibzaehler",
+    "raumfuehler", "batterie", "manueller_eingriff", "quellwechsel", "schreibbudget", "schreibzaehler",
 )
 
 

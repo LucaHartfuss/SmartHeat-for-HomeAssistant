@@ -1,5 +1,5 @@
 name: "Heizungsbruecke"
-version: "0.35.0"
+version: "0.36.0"
 slug: "heizungsbruecke"
 description: "Generische Bruecken-Logik: liest konfigurierte HA-Entities, meldet sie an den SmartHeat-Server, schreibt Sollwerte zurueck, mit lokalem Boost-Failsafe und Sicherheits-Clamps."
 url: "https://github.com/LucaHartfuss/SmartHeat-for-HomeAssistant"
@@ -23,6 +23,9 @@ options:
   entity_flow_temperature: ""
   entity_return_temperature: ""
   entity_operating_mode: ""
+  entity_generator_hours: ""
+  entity_generator_starts: ""
+  entity_generator_state: ""
   entity_system_water_pressure: ""
   entity_efficiency_ratio: ""
   entity_energy_electrical_heating: ""
@@ -78,6 +81,9 @@ schema:
   entity_flow_temperature: str?
   entity_return_temperature: str?
   entity_operating_mode: str?
+  entity_generator_hours: str?
+  entity_generator_starts: str?
+  entity_generator_state: str?
   entity_system_water_pressure: str?
   entity_efficiency_ratio: str?
   entity_energy_electrical_heating: str?
@@ -108,4 +114,4 @@ schema:
   setup_id: str?
   abgemeldet: bool?
   notify_hints_off:
-    - list(raumfuehler|batterie|manueller_eingriff|quellwechsel|therme|schreibbudget|schreibzaehler)?
+    - list(raumfuehler|batterie|manueller_eingriff|quellwechsel|schreibbudget|schreibzaehler)?

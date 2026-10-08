@@ -8,7 +8,7 @@ from smartheat_core import wallclock
 from smartheat_core.boost import UNREADABLE_ROOM_CHECKS, comfort_boost_expired, decide_boost
 from smartheat_core.emergency_boost import decide_emergency_boost
 from smartheat_runtime.runtime import Runtime
-from smartheat_runtime.waerme import parse_since
+from smartheat_runtime.state import parse_since
 
 logger = logging.getLogger(__name__)
 

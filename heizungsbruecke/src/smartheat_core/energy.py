@@ -1,7 +1,8 @@
 """Energie-Normalisierung (Hersteller-Abstraktion Spec 6.5, Plan 3b). Der Server rechnet mit monoton wachsenden
-Zaehlerstaenden je Kanal (generic_energy_log.cumulative_value). Vaillant liefert solche Summen ("total": unveraendert
-durchgereicht, kein Zustand). Weishaupt und Viessmann liefern Tageszaehler ("daily", Rueckgang auf 0 um Mitternacht):
-daraus fuehrt der Kern je Kanal eine monoton wachsende Summe.
+Zaehlerstaenden je Kanal (generic_energy_log.cumulative_value). Alle derzeitigen Bindings (Vaillant/myVAILLANT seit
+Audit 4 A4-49, Weishaupt, Viessmann) liefern Tageszaehler ("daily", Rueckgang auf 0 um Mitternacht): daraus fuehrt der
+Kern je Kanal eine monoton wachsende Summe. Fuer einen Hersteller mit durchlaufender Summe bleibt "total" (Werte
+unveraendert durchgereicht, kein Zustand).
 
 Regel "daily" je Kanal mit Zustand {"raw": letzter Rohwert, "sum": Summe}:
 - erster Wert ohne Zustand: Summe = Rohwert (Basis; der Server rechnet nur Differenzen);
@@ -16,6 +17,8 @@ from collections.abc import Mapping
 from smartheat_core.binding import ENERGY_DAILY, ENERGY_TOTAL
 
 # Annahme bis zur Inventur: ein Tageszaehler faellt um Mitternacht auf (nahe) 0, Messrauschen ist viel kleiner.
+# Grenze: myVAILLANT aktualisiert die Energiesensoren nur beim Neuladen der Integration (Audit 4 P-B, D-5); setzt ein
+# Neuladen den Zaehler mitten am Tag zurueck, kann die Summe Verbrauch des Tages vor dem Neuladen unterzaehlen.
 RESET_FRACTION = 0.5
 
 

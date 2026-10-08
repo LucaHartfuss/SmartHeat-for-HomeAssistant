@@ -27,7 +27,6 @@ from smartheat_runtime import (
     room_sensors,
     telemetry,
     ticks,
-    waerme_hint,
 )
 from smartheat_runtime.delivery import ROLE_DATENTRAEGER, SOURCE_LOCAL, DataFault
 from smartheat_runtime.notifier import STATE_OK, Notifier
@@ -395,7 +394,6 @@ def _on_telemetry(rt: Runtime, event: Event) -> None:
         rt.manifest, rt.signals, rt.mqtt_client,
         boost_active=state.boost_active, failsafe_active=state.delivery.notbetrieb,
         datenfehler=datenfehler, room_target=state.stable_target,
-        waerme=lambda room, kpi, regulation: waerme_hint.apply_tick(rt, room, kpi, regulation),
         energy=telemetry.energy_normalizer(rt.store, rt.override.binding.description.energy_counters),
     )
 

@@ -5,7 +5,6 @@ import pytest
 from smartheat_core.binding import (
     BINDINGS,
     ENERGY_DAILY,
-    ENERGY_TOTAL,
     VAILLANT_MYPYLLANT,
     VIESSMANN_VICARE_BINDING,
     WEISHAUPT_MODBUS,
@@ -32,12 +31,13 @@ def test_vaillant_mypyllant_description():
 
 def test_vaillant_keeps_the_defaults_of_the_plan_3b_fields():
     """Plan 3b: die neuen Felder lassen Vaillant unveraendert (feste Wartezeit, kein Tagesbudget, 6 Durchsetzungen,
-    keine Gruppen, keine Hilfswerte, Summenzaehler)."""
+    keine Gruppen, keine Hilfswerte); Tageszaehler seit Audit 4 P-B (A4-49, myVAILLANT setzt die Energiesensoren um
+    Mitternacht zurueck)."""
     d = VAILLANT_MYPYLLANT
     assert d.preparation_resets_setpoint is True
     assert (d.settle_min_seconds, d.default_poll_seconds, d.daily_write_limit, d.lifetime_hint_at) == (None,) * 4
     assert (d.enforce_per_day, d.write_groups, d.aux_originals, d.readonly_levers) == (6, (), (), ())
-    assert d.energy_counters == ENERGY_TOTAL
+    assert d.energy_counters == ENERGY_DAILY
     assert with_poll_interval(d, 10) is d
 
 

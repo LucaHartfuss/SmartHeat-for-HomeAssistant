@@ -58,6 +58,7 @@ class SimulationDriver:
         self._cache_at: float | None = None
         self._room = float(self._p["raum_start"])
         self._last_model: float | None = None
+        self._hours = 1000.0  # Betriebsstunden des simulierten Erzeugers (Audit 4 P-B)
         self._random = random.Random(self._p["seed"])
         self._lock = threading.RLock()  # Thread-Vertrag wie die Cloud-Treiber (Plan G4 Praezisierung 9)
         self._stop = threading.Event()
@@ -114,9 +115,14 @@ class SimulationDriver:
             levers.get("room_setpoint", 20.0) + 4.0 * (levers.get("curve", 1.0) - 1.0) + 0.5 * levers.get("level", 0.0)
             - 0.1 * (15.0 - outdoor)
         )
+        dt = max(now - self._last_model, 0.0) if self._last_model is not None else 0.0
         if self._last_model is not None:
-            dt = max(now - self._last_model, 0.0)
             self._room += (equilibrium - self._room) * (1 - math.exp(-dt / TAU_SECONDS))
+        # Audit 4 P-B: ohne Liefer-Signal lernt der Server nicht (E5); `keine_waerme` in der Steuerdatei bildet einen
+        # Waermeausfall nach.
+        delivers = not control.get("keine_waerme")
+        if delivers:
+            self._hours += dt / 3600
         self._last_model = now
         noise = self._random.gauss(0, float(self._p["rauschen"])) if self._p["rauschen"] else 0.0
         flow = (
@@ -127,8 +133,10 @@ class SimulationDriver:
         cache.update({key: plant["hilfswerte"].get(key, START_AUX[key]) for key in self.description.aux_originals})
         cache.update({
             "outdoor_temp": round(outdoor, 2), "flow_setpoint": round(flow, 1), "flow_temperature": round(flow, 1),
-            "room_temperature": round(self._room + noise, 2),
+            "room_temperature": round(self._room + noise, 2), "generator_hours": round(self._hours, 3),
         })
+        if not delivers:
+            cache["flow_temperature"] = 29.5
         self._cache, self._cache_at = cache, now
 
     def _outdoor(self) -> float:
@@ -230,7 +238,7 @@ class SimulationDriver:
 
     def signals(self) -> Mapping[str, str]:
         roles = [LEVER_ROLES[lever] for lever in self._levers()] + list(self.description.aux_originals)
-        roles += ["outdoor_temp", "flow_setpoint", "flow_temperature", "room_temperature"]
+        roles += ["outdoor_temp", "flow_setpoint", "flow_temperature", "room_temperature", "generator_hours"]
         return {role: f"treiber:{role}" for role in roles}
 
     def read_signal(self, role: str) -> float | str:
