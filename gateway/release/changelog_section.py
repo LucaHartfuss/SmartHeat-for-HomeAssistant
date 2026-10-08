@@ -10,15 +10,27 @@ from pathlib import Path
 
 
 def section(text: str, version: str) -> str | None:
-    match = re.search(rf"^## {re.escape(version)}[ \t]*\n(.*?)(?=^## |\Z)", text, re.MULTILINE | re.DOTALL)
-    return None if match is None else match.group(1).strip() + "\n"
+    """Wie changelog_section in tools/release_gate.py: Ueberschrift "## V", "## [V]" oder "## V <Zusatz>" (z. B. Datum);
+    der Abschnitt endet an der naechsten Zeile mit "## "; ein leerer Abschnitt zaehlt als fehlend."""
+    heading = re.compile(rf"^## \[?{re.escape(version)}\]?(\s.*)?$")
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if heading.match(line):
+            body: list[str] = []
+            for following in lines[index + 1:]:
+                if following.startswith("## "):
+                    break
+                body.append(following)
+            found = "\n".join(body).strip()
+            return found + "\n" if found else None
+    return None
 
 
 def main(argv: list[str]) -> int:
     path, version = argv
     found = section(Path(path).read_text(encoding="utf-8"), version)
     if found is None:
-        print(f"::error::{path} hat keinen Abschnitt '## {version}'", file=sys.stderr)
+        print(f"::error::{path} hat keinen (oder einen leeren) Abschnitt '## {version}'", file=sys.stderr)
         return 1
     sys.stdout.write(found)
     return 0
