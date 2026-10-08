@@ -51,6 +51,84 @@ def _reloads(agent) -> int:
     return sum(1 for topic, _ in agent.ctx.bus.decoded() if topic == topics.CMD_RELOAD)
 
 
+def test_status_upload_is_not_forced_by_the_room_timestamp(data_dir, clock):
+    """Audit 4, A4-35: shg/raum traegt je Veroeffentlichung (alle 30 s) einen frischen ts; das darf den Statusupload
+    nicht erzwingen. Erwartet: Aenderung bzw. alle STATUS_EVERY_SECONDS, also hoechstens 13 Aufrufe in 3600 s."""
+    class Api:
+        def __init__(self):
+            self.status_calls = 0
+
+        def register(self, version, caps):
+            return {"device_state": "uebernommen", "poll_after": 60}
+
+        def commands(self):
+            return {"device_state": "uebernommen", "poll_after": 60, "commands": []}
+
+        def status(self, body):
+            self.status_calls += 1
+
+        def notifications(self, items):
+            pass
+
+        def result(self, *args):
+            pass
+
+    bus = FakeBus()
+    mirror = ZigbeeMirror(bus, clock)
+    paths = Paths(data_dir)
+    ctx = AgentContext(paths, bus, mirror, identity.load_or_create(paths), clock=clock, wall=lambda: 1e9 + clock())
+    ctx.start()
+    api = Api()
+    loop = AgentLoop(ctx, api, sleep=lambda seconds: None)
+    bus.publish(topics.STATUS, {"status": "regelt", "setup_id": "s"}, retain=True)
+    for second in range(3600):
+        if second % 30 == 0:  # RaumPublisher (runtime_main.RAUM_SECONDS)
+            bus.publish(topics.RAUM, {"ist": 20.5, "soll": 21.0, "soll_quelle": "portal", "ts": f"t{second}"},
+                        retain=True)
+        loop.run_once()
+        clock.advance(1)
+    assert 1 <= api.status_calls <= 13
+
+
+def test_status_upload_still_follows_a_real_change_of_the_room(data_dir, clock):
+    """Audit 4, A4-35: nur der ts faellt aus dem Vergleich; ein geaenderter Ist- oder Sollwert geht sofort hoch."""
+    sent = []
+
+    class Api:
+        def register(self, version, caps):
+            return {"device_state": "uebernommen", "poll_after": 60}
+
+        def commands(self):
+            return {"device_state": "uebernommen", "poll_after": 60, "commands": []}
+
+        def status(self, body):
+            sent.append(body)
+
+        def notifications(self, items):
+            pass
+
+        def result(self, *args):
+            pass
+
+    bus = FakeBus()
+    paths = Paths(data_dir)
+    ctx = AgentContext(paths, bus, ZigbeeMirror(bus, clock), identity.load_or_create(paths), clock=clock,
+                       wall=lambda: 1e9 + clock())
+    ctx.start()
+    loop = AgentLoop(ctx, Api(), sleep=lambda seconds: None)
+    bus.publish(topics.RAUM, {"ist": 20.5, "soll": 21.0, "ts": "t0"}, retain=True)
+    loop.run_once()
+    count = len(sent)
+    clock.advance(30)
+    bus.publish(topics.RAUM, {"ist": 20.5, "soll": 21.0, "ts": "t30"}, retain=True)
+    loop.run_once()
+    assert len(sent) == count  # nur ts neu: nichts
+    clock.advance(30)
+    bus.publish(topics.RAUM, {"ist": 20.7, "soll": 21.0, "ts": "t60"}, retain=True)
+    loop.run_once()
+    assert len(sent) == count + 1 and sent[-1]["raum"]["ist"] == 20.7
+
+
 def test_registers_and_reports_unclaimed(agent, api):
     agent.run_once()
     assert api.registrations == 1

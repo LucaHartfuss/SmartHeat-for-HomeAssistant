@@ -23,7 +23,7 @@ class StorageError(OSError):
 
 _NUMBER_FIELDS = ("last_room_target", "last_published_target_rt")
 _FLAG_FIELDS = ("boost_active", "emergency_boost_active")
-_TEXT_FIELDS = ("last_daily_trigger_date", "last_ack_at", "waerme_fehlt_seit")
+_TEXT_FIELDS = ("last_daily_trigger_date", "last_ack_at", "waerme_fehlt_seit", "boost_since", "setup_id", "plant_id")
 _TEXT_MAP_FIELDS = ("notify_states", "notify_messages")
 _LEVER_MAP_FIELDS = ("restore_point", "originals", "learned")
 _OVERRIDE_FIELDS = ("manual_override", "manual_override_pending")
@@ -51,9 +51,16 @@ class BridgeState:
     learned: dict = field(default_factory=dict)
     boost_active: bool = False
     emergency_boost_active: bool = False
+    # Audit 4, A4-09: Beginn des laufenden Comfort-Boosts (ISO), fuer die Hoechstdauer; None ohne Boost.
+    boost_since: str | None = None
+    # Aufeinanderfolgende lokale Checks ohne lesbaren Raumwert (nur Laufzeit, A4-09).
+    room_actual_misses: int = 0
     last_room_target: float | None = None
     last_published_target_rt: float | None = None
     last_daily_trigger_date: str | None = None
+    # Audit 4, A4-08: Einrichtung und Anlage, zu denen der Zustand gehoert (bind_to_setup).
+    setup_id: str | None = None
+    plant_id: str | None = None
     delivery: DeliveryState = field(default_factory=DeliveryState)
     # Zuletzt gemeldeter Zustand je Meldeschluessel (notifier.py); fehlender Schluessel = "ok".
     notify_states: dict = field(default_factory=dict)
@@ -268,8 +275,11 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
     for key in _TEXT_FIELDS:
         if raw.get(key) is None:
             continue
-        # waerme_fehlt_seit: nur ein ISO-Zeitpunkt mit Zeitzone ist ein Flag, alles andere "kein Flag" (Spec 1.4).
-        valid = isinstance(raw[key], str) and (key != "waerme_fehlt_seit" or parse_since(raw[key]) is not None)
+        # waerme_fehlt_seit, boost_since: nur ein ISO-Zeitpunkt mit Zeitzone ist gueltig, alles andere "kein Flag"
+        # (Spec 1.4; boost_since: Audit 4 P-C2, sonst bricht der lokale Check bei jedem Lauf ab).
+        valid = isinstance(raw[key], str) and (
+            key not in ("waerme_fehlt_seit", "boost_since") or parse_since(raw[key]) is not None
+        )
         if valid:
             values[key] = raw[key]
         else:
@@ -472,3 +482,36 @@ class StateStore:
             logger.warning("%s enthaelt kein JSON-Objekt, starte mit Standardwerten", self._failsafe_path)
             return DeliveryState()
         return from_persisted(raw)
+
+
+# Audit 4, A4-08 (Nutzer-Entscheidung E3): was zur Anlage gehoert (bei einer anderen Anlage verworfen) und was zur
+# Einrichtung (bei jeder neuen Einrichtung zurueckgesetzt: Erstkontakt-Tick, frische Zustellung).
+_PLANT_BOUND = (
+    "restore_point", "originals", "aux_originals", "learned", "boost_active", "emergency_boost_active", "boost_since",
+    "manual_override", "manual_override_pending", "write_budget", "deferred_levers", "energy_state",
+    "lifetime_writes", "last_room_target", "waerme_fehlt_seit",
+)
+_SETUP_BOUND = ("last_published_target_rt", "last_daily_trigger_date")
+
+
+def bind_to_setup(store: "StateStore", setup_id: str | None, plant_id: str) -> str:
+    """Bindet den Zustand an Einrichtung und Anlage. Ein Bestand ohne Bindung (bis Add-on 0.34.0) gilt als gebunden
+    (nichts verwerfen, Review Focus 1). Andere Anlage: anlagenbezogene Felder auf den Standardwert. Neue Einrichtung
+    derselben Anlage: Ursprungswerte bleiben, nur Tick-Buchung und Zustellung beginnen neu."""
+    state, defaults = store.state, BridgeState()
+    if state.setup_id is None and state.plant_id is None:
+        store.update(setup_id=setup_id, plant_id=plant_id)
+        return "bestand"
+    if state.plant_id != plant_id:
+        logger.warning("Andere Anlage als in backup.json: anlagenbezogener Zustand wird verworfen")
+        # Zustellung zuerst: set_delivery wirft nicht, update bei einem Schreibfehler (StorageError) schon
+        store.set_delivery(DeliveryState())
+        store.update(**{key: getattr(defaults, key) for key in _PLANT_BOUND + _SETUP_BOUND},
+                     setup_id=setup_id, plant_id=plant_id)
+        return "andere_anlage"
+    if state.setup_id != setup_id:
+        logger.info("Neue Einrichtung derselben Anlage: Ursprungswerte bleiben, Erstkontakt-Tick folgt")
+        store.set_delivery(DeliveryState())
+        store.update(**{key: getattr(defaults, key) for key in _SETUP_BOUND}, setup_id=setup_id)
+        return "neue_einrichtung"
+    return "unveraendert"

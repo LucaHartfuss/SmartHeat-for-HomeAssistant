@@ -74,6 +74,18 @@ def host_allowed(header: str | None, hostnames: frozenset[str]) -> bool:
     return True
 
 
+def client_allowed(address: str) -> bool:
+    """Nur Loopback, private Netze (inkl. IPv6-ULA) und Link-Local (Audit 4, A4-37): der veroeffentlichte Docker-Port
+    umgeht die input-Kette der Firewall, die Seite zeigt vor der Uebernahme den Uebernahme-Code."""
+    try:
+        ip = ipaddress.ip_address(address.split("%", 1)[0])
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return ip.is_loopback or ip.is_link_local or (ip.is_private and not ip.is_global)
+
+
 def _row(label: str, value) -> str:
     text = "unbekannt" if value is None else ("ja" if value is True else "nein" if value is False else str(value))
     return f"<tr><th>{html.escape(label)}</th><td>{html.escape(text)}</td></tr>"
@@ -121,6 +133,9 @@ def start_server(
             self.wfile.write(raw)
 
         def do_GET(self):
+            if not client_allowed(self.client_address[0]):
+                self._answer(403)
+                return
             if not host_allowed(self.headers.get("Host"), allowed):
                 self._answer(403)
                 return

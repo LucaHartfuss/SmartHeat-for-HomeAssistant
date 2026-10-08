@@ -1,4 +1,5 @@
 import datetime
+import json
 import stat
 
 import pytest
@@ -184,7 +185,8 @@ def test_apply_config_after_failed_sign_off_starts_like_a_fresh_install(ctx):
     assert isinstance(execute(ctx, "apply_config", {"setup_id": "setup-2", "config": config}), Waiting)
     raw = load_raw(ctx.paths)
     assert raw["setup_id"] == "setup-2" and raw["abgemeldet"] is False and raw["installation_token"] == "test-token-2"
-    assert not ctx.paths.runtime_dir.exists()  # keine Wiederherstellungspunkte der alten Anlage
+    # dieselbe Anlage (Audit 4, GW-1): nur backup.json mit den Ursprungswerten bleibt im Laufzeit-Ordner
+    assert [entry.name for entry in ctx.paths.runtime_dir.iterdir()] == [ctx.paths.backup.name]
     assert (ctx.paths.driver_secrets_dir / "simulation.json").exists()
 
 
@@ -274,6 +276,15 @@ def test_sign_off_success_then_cleanup(ctx):
     assert not lifecycle.cleanup_after_sign_off(ctx)  # einmal genuegt
 
 
+def test_sign_off_drops_the_installation_token(ctx):
+    """Audit 4, A4-38: die abgemeldete Konfiguration traegt keine Zugangsdaten mehr, auch nicht den Installationstoken."""
+    write_runtime_files(ctx.paths, apply_config())
+    assert "installation_token" in json.loads(ctx.paths.runtime_secrets.read_text())
+    execute(ctx, "sign_off", {})
+    assert "installation_token" not in json.loads(ctx.paths.runtime_secrets.read_text())
+    assert "installation_token" not in load_raw(ctx.paths)
+
+
 def test_sign_off_repeated_after_restart_keeps_its_setup_id(ctx):
     write_runtime_files(ctx.paths, apply_config())
     execute(ctx, "sign_off", {})
@@ -348,6 +359,7 @@ def test_a_new_setup_with_another_driver_after_sign_off_forgets_the_old_vicare_l
 
 def test_a_new_setup_with_vicare_cloud_after_sign_off_keeps_its_fresh_login(ctx):
     _signed_off_with_failed_restore(ctx)
+    _status(ctx, status="abgemeldet", setup_id=load_raw(ctx.paths)["setup_id"], grund=None)  # Rueckweg gelungen
     _old_vicare_login(ctx)  # bei vicare_cloud stammt vicare.json aus dem driver_login der neuen Einrichtung
     config = apply_config(setup_id="setup-2", installation_token="test-token-2", driver=VICARE_DRIVER)
     assert isinstance(execute(ctx, "apply_config", {"setup_id": "setup-2", "config": config}), Waiting)
@@ -414,3 +426,43 @@ def test_an_old_series_is_not_returned_after_sign_off_for_the_same_driver_and_ho
     # Die alte Reihe kommt nicht zurueck: eine frische Reihe ohne jede Probe endet am Fensterende mit Failed
     # (frueher: Done mit leerer Liste; Anpassung an die Inventur-Regel "keine Probe, kein Ergebnis").
     assert isinstance(done, Failed) and done.grund in wire.command_errors("driver_inventory")
+
+
+SIM_A = {"id": "simulation", "parameter": {"lever_set": "viessmann_vicare", "heizkreis": 0}}
+SIM_B = {"id": "simulation", "parameter": {"lever_set": "viessmann_vicare", "heizkreis": 1}}
+OLD_PLANT = {
+    "originals": {"curve": 1.6, "level": 2.0, "room_setpoint": 21.0},
+    "restore_point": {"curve": 1.1, "level": -2.0, "room_setpoint": 20.0},
+}
+
+
+def _plant_ctx(tmp_path, *, abgemeldet):
+    """Gateway mit Anlage SIM_A und gespeicherten Ursprungswerten (Audit 4, GW-1/GW-2); keine Laufzeit-Statusmeldung."""
+    paths = Paths(tmp_path)
+    write_runtime_files(paths, apply_config(driver=SIM_A, abgemeldet=abgemeldet))
+    write_json(paths.backup, OLD_PLANT)
+    bus = FakeBus()
+    clock = lambda: 1000.0  # noqa: E731
+    return paths, AgentContext(paths, bus, ZigbeeMirror(bus, clock), identity.load_or_create(paths), clock=clock)
+
+
+def test_new_setup_of_the_same_plant_after_a_failed_restore_keeps_the_originals(tmp_path):
+    # Audit 4, GW-1: die Ursprungswerte der Anlage gehen nie verloren
+    paths, ctx = _plant_ctx(tmp_path, abgemeldet=True)
+    outcome = lifecycle.apply_config(ctx, {"setup_id": "s2", "config": apply_config(setup_id="s2", driver=SIM_A)})
+    assert isinstance(outcome, Waiting) and paths.backup.exists()
+
+
+def test_new_setup_of_another_plant_after_a_failed_restore_is_refused(tmp_path):
+    paths, ctx = _plant_ctx(tmp_path, abgemeldet=True)
+    outcome = lifecycle.apply_config(ctx, {"setup_id": "s2", "config": apply_config(setup_id="s2", driver=SIM_B)})
+    assert isinstance(outcome, Failed) and "zurückgesetzt" in outcome.text
+    assert paths.backup.exists() and load_raw(paths)["setup_id"] == "setup-1"
+
+
+def test_reconfigure_to_another_plant_is_refused(tmp_path):
+    # Audit 4, GW-2 / E3: zweite Pruefung neben dem Server (P-C1)
+    paths, ctx = _plant_ctx(tmp_path, abgemeldet=False)
+    outcome = lifecycle.apply_config(ctx, {"setup_id": "s2", "config": apply_config(setup_id="s2", driver=SIM_B)})
+    assert isinstance(outcome, Failed) and "dieselbe Anlage" in outcome.text
+    assert load_raw(paths)["setup_id"] == "setup-1"

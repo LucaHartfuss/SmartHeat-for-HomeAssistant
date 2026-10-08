@@ -7,7 +7,7 @@ vergibt das Release.
 
 - Neuer Treiber `vicare_cloud` (`drivers/vicare_cloud/`): `PlantBinding` mit derselben `VIESSMANN_VICARE_BINDING` wie der
   HA-Pfad, eigener dünner `requests`-Client der ViCare-REST-API (PyViCare ist keine Laufzeit-Abhängigkeit), Schreibgruppe
-  Steigung/Niveau als zwei `setCurve`-Aufrufe mit Überlagerung, Programmwechsel mit Einschwingfenster, Wertebereich der
+  Steigung/Niveau als zwei `setCurve`-Aufrufe (seit Audit 4 P-C2 ein Aufruf, siehe unten) mit Überlagerung, Programmwechsel mit Einschwingfenster, Wertebereich der
   Anlage aus den Kommando-Constraints (`limits()`).
 - Anmeldung per OAuth2 mit PKCE (Variante A, **vorläufig bis zum Eingangs-Gate** mit dem echten Viessmann-Client): Tokens
   nur in `/data/secrets/drivers/vicare.json` (0600), Erneuerung unter `flock`, abgemeldet wird nur bei `invalid_grant`.
@@ -21,6 +21,24 @@ vergibt das Release.
 - Tests: Matrix aus den PyViCare-Aufzeichnungen (gepinnter Commit, Lizenzhinweis) plus eigenen, Fake-ViCare-Server
   (`tests/fake_vicare/`, auch als E2E-Container), Gleichheitstest gegen den HA-Pfad, Szenario „Anmeldung abgelaufen“.
 - Bekannt: `urllib3` loggt auf Stufe DEBUG URLs mit Seriennummer (Logger noch nicht auf WARNING begrenzt, Roadmap).
+- Audit 4 Paket P-C2 (Gateway-Punkte):
+  - Zustand an Einrichtung und Anlage gebunden: `backup.json` trägt `setup_id` und `plant_id`; ein Bestand ohne Bindung
+    gilt als gebunden und wird nur ergänzt. Eine Neueinrichtung oder „Neu konfigurieren“ derselben Anlage behält die
+    gemerkten Ursprungswerte; eine andere Anlage wird nach Abmeldung erst nach bestätigtem Rückweg zugelassen und
+    sonst abgelehnt (`konfiguration_ungueltig` mit eigenem Text). Ein bereits eingerichtetes Gateway lehnt die
+    Konfiguration einer anderen Anlage ebenfalls ab; „Neu konfigurieren“ geht nur für dieselbe Anlage.
+  - ViCare: eine `setCurve`-Anfrage je Schreibgruppe (Steigung und Niveau zusammen) statt zwei; zählt als ein
+    Schreibzugriff im Kontingent.
+  - Manifest wird nach der ersten Abfrage gebaut (optionale Signale wie `flow_temperature` sind enthalten); der Treiber
+    prüft seine Parameter, `poll_seconds` (gilt für den Treiber `vicare_cloud`) muss mindestens 120 s sein.
+  - Anmeldung (ViCare/OAuth2) überlebt einen Widerruf des Refresh-Tokens: eine im Portal vorbereitete Anmeldung lässt sich
+    abschließen.
+  - Statusmeldung wird nur bei einer echten Änderung (oder spätestens alle 300 s) gesendet, nicht mehr wegen des
+    Zeitstempels des Raumwerts.
+  - Abmelden löscht auch das Installations-Token.
+  - Diagnoseseite nur aus dem lokalen Netz (private und Link-Local-Adressen, sonst 403). Bekannt: Eine Anfrage, die über
+    docker-proxy ankommt (IPv6, Hairpin), erscheint mit einer privaten Adresse; der Router darf Port 80 deshalb nicht ins
+    Internet weiterleiten.
 
 ## 0.3.0
 

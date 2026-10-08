@@ -250,11 +250,14 @@ class AgentLoop:
             "runtime_status": self.ctx.runtime_status, "raum": self.ctx.raum, "version": GATEWAY_VERSION,
             "capabilities": self.capabilities(),
         }
+        # Audit 4, A4-35: shg/raum traegt je Veroeffentlichung (alle 30 s) einen frischen ts; er zaehlt nicht als Aenderung
+        comparable = {**body, "raum": {k: v for k, v in body["raum"].items() if k != "ts"}} \
+            if isinstance(body.get("raum"), dict) else body
         due = self._last_status_at is None or now - self._last_status_at >= STATUS_EVERY_SECONDS
-        if body == self._last_status_body and not due:
+        if comparable == self._last_status_body and not due:
             return
         self.api.status({**body, "ts": _iso(self.ctx.wall())})
-        self._last_status_body, self._last_status_at = body, now
+        self._last_status_body, self._last_status_at = comparable, now
 
     def _upload_notifications(self) -> None:
         if not self._changed_notes:

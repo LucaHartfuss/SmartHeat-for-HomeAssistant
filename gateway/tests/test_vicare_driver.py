@@ -35,6 +35,17 @@ def env(tmp_path, clock, monkeypatch):
     server.stop()
 
 
+def test_parameters_are_checked_by_the_driver(tmp_path):
+    # Audit 4, A4-34 (GW-7)
+    for bad in ({"poll_seconds": 0}, {"poll_seconds": -5}, {"poll_seconds": 60}, {"poll_seconds": True},
+                {"poll_seconds": "300"}, {"installation_id": "x"}, {"installation_id": True}, {"heizkreis": -1},
+                {"gateway_serial": ""}, {"device_id": 0}):
+        with pytest.raises(ValueError):
+            ViCareCloudDriver({**PARAMETER, **bad}, Paths(tmp_path))
+    ViCareCloudDriver({}, Paths(tmp_path))  # ohne Parameter (Vergessen der Anmeldedaten) bleibt erlaubt
+    assert ViCareCloudDriver({**PARAMETER, "poll_seconds": 120}, Paths(tmp_path)).poll_seconds == 120.0
+
+
 def test_the_driver_uses_the_one_binding_of_the_ha_path(env):
     server, driver, paths, clock = env
     assert dict(driver.description.steps) == dict(BINDING.steps)
@@ -56,6 +67,44 @@ def test_curve_and_level_are_written_as_one_group_without_reverting_the_first_me
     driver.write("level", 3.0)
     assert [c["params"] for c in server.commands] == [{"shift": 0, "slope": 1.1}, {"shift": 3, "slope": 1.1}]
     assert driver.physical_writes == 2  # die Pipeline zaehlt die Gruppe als einen Schreibvorgang (min(diff, 1))
+
+
+def test_a_write_group_sends_one_setcurve_with_both_values(env):
+    # Audit 4, A4-31 (GW-4): keine Zwischenstellung mit dem alten Partnerwert, ein Aufruf aus dem Kontingent
+    server, driver, paths, clock = env
+    driver.write_group({"curve": 1.2, "level": 1.0})
+    assert [c["params"] for c in server.commands] == [{"shift": 1, "slope": 1.2}] and driver.physical_writes == 1
+
+
+def test_a_write_group_sets_the_overlay_for_both_members_and_rejects_foreign_levers(env):
+    server, driver, paths, clock = env
+    server.control({"settle": 10_000.0})  # die Cloud zeigt den neuen Wert lange nicht
+    driver.write_group({"curve": 1.15, "level": 2.4})
+    driver.poll_once()
+    driver.write("room_setpoint", 21.0)
+    driver.write_group({"curve": 1.0, "level": 3.0})
+    assert [c["params"] for c in server.commands][1:] == [
+        {"targetTemperature": 21.0}, {"shift": 3, "slope": 1.0}] and driver.physical_writes == 3
+    with pytest.raises(ValueError):
+        driver.write_group({"curve": 1.0})
+    with pytest.raises(ValueError):
+        driver.write_group({"curve": 1.0, "level": 1.0, "room_setpoint": 20.0})
+    assert len(server.commands) == 3
+    # Das Overlay der Gruppe stellt beide Partnerwerte (Cloud zeigt noch 1.4 / 0): jeder Einzelschreibvorgang nimmt
+    # den Gruppenwert des anderen Hebels, nicht den veralteten Cloud-Wert.
+    driver.write("curve", 1.2)
+    assert server.commands[-1]["params"] == {"shift": 3, "slope": 1.2}
+    driver.write("level", 1.0)
+    assert server.commands[-1]["params"] == {"shift": 1, "slope": 1.2}
+
+
+def test_a_rejected_write_group_raises_and_counts_nothing(env):
+    server, driver, paths, clock = env
+    with pytest.raises(RuntimeError):
+        driver.write_group({"curve": 9.9, "level": 1.0})  # ausserhalb der Constraints
+    assert driver.physical_writes == 0
+    driver.write("level", 1.0)
+    assert server.commands[-1]["params"] == {"shift": 1, "slope": 1.4}
 
 
 def test_room_setpoint_is_the_normal_program_temperature(env):

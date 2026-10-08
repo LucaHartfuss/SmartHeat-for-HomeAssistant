@@ -36,6 +36,7 @@ class Driver(PlantBinding, Protocol):
     login_kind: ClassVar[str | None]
     LEVER_SETS: ClassVar[tuple[str, ...]]
     REJECTION_REASONS: ClassVar[tuple[str, ...]]
+    IDENTITY_PARAMETERS: ClassVar[tuple[str, ...]]
     quota: QuotaSpec | None
     poll_seconds: float
 

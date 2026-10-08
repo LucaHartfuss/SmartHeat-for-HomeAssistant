@@ -23,6 +23,7 @@ from smartheat_runtime import (
     entitlement,
     mqtt_link,
     regulation,
+    roles,
     room_sensors,
     telemetry,
     ticks,
@@ -50,7 +51,7 @@ from smartheat_runtime.runtime import (
     Runtime,
 )
 from smartheat_runtime.runtime_config import BootInfo, RuntimeConfig
-from smartheat_runtime.state import StateStore, StorageError
+from smartheat_runtime.state import StateStore, StorageError, bind_to_setup
 from smartheat_runtime.status import (
     ABO_AKTIV,
     HEARTBEAT_SECONDS,
@@ -74,6 +75,10 @@ CONFIG_OK_MESSAGE = "SmartHeat: Einrichtung in Ordnung, die Heizungssteuerung l�
 CONFIG_ERROR_MESSAGE = (
     "SmartHeat: Konfigurationsfehler – {grund}. Die Heizungssteuerung ist gestoppt, "
     "die Anlage behält ihre letzten Werte."
+)
+CONFIG_ERROR_BOOST_MESSAGE = (
+    "SmartHeat: Konfigurationsfehler – {grund}. Die Heizungssteuerung ist gestoppt, die Anlage steht aber noch auf "
+    "Boost-Werten. Bitte die zuletzt gelernten Werte von Hand einstellen ({werte})."
 )
 SIGN_OFF_INVALID_CONFIG = "Konfiguration ungültig, die Anlage wurde nicht zurückgesetzt"
 SIGN_OFF_RESTORE_FAILED = "Zurücksetzen der Anlage scheitert, neuer Versuch in {seconds} s"
@@ -113,6 +118,8 @@ class Loaded:
     manifest: ChannelManifest
     binding: PlantBinding
     notices: tuple[Notice, ...] = ()
+    # Audit 4, A4-08: Anlagen-Kennung des Hosts; None = aus den Hebel-Referenzen des Manifests (roles.lever_refs_identity).
+    plant_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -176,17 +183,34 @@ def _idle_heartbeat(worker: RegulationWorker, status: StatusReporter, event: Eve
     status.publish()
 
 
-def _fail_start(notifier, status, clock, grund: str, key: str | None = None) -> IdleBridge:
+def _fail_start(notifier, status, clock, grund: str, key: str | None = None, *, store=None,
+                parts: RestoreParts | None = None) -> IdleBridge:
     """Meldezustand `fehler:<key>` (stabile Identitaet, Standard: der Text selbst); Meldung und
     Status tragen den ausfuehrlichen Grund. Derselbe Fehler wie beim letzten Start pusht nicht
     erneut, legt aber die offene Meldung neu an (in HA fehlt sie nach einem Host-Neustart). Danach
-    Ruhezustand mit Neupruefung nach CONFIG_RECHECK_SECONDS."""
+    Ruhezustand mit Neupruefung nach CONFIG_RECHECK_SECONDS. Laeuft ein Boost, nimmt der Start ihn ueber `parts`
+    zurueck; geht das nicht, sagt die Meldung, dass die Boost-Werte noch auf der Anlage stehen (Audit 4, A4-10)."""
     logger.error("FEHLER: %s", grund)
     message = CONFIG_ERROR_MESSAGE.format(grund=grund)
+    if (store is not None and (store.state.boost_active or store.state.emergency_boost_active)
+            and not _end_boosts(store, parts, clock)):
+        message = CONFIG_ERROR_BOOST_MESSAGE.format(grund=grund, werte=_restore_values_text(store.state))
     if not notifier.notify("konfiguration", f"fehler:{grund if key is None else key}", message, critical=True):
         notifier.refresh_persistent("konfiguration", message)
     status.update(konfigurationsfehler=True, grund=grund)
     return _idle(clock, status, STATUS_KONFIGURATIONSFEHLER, recheck_after=CONFIG_RECHECK_SECONDS)
+
+
+def _end_boosts(store, parts: RestoreParts | None, clock) -> bool:
+    """Laufende Boosts auf den Wiederherstellungspunkt zuruecknehmen; True, wenn danach keiner mehr laeuft."""
+    if parts is None:
+        return False
+    try:
+        LeverPipeline(store, parts.binding, parts.safety, clock=clock).set_boosts(comfort=False, emergency=False)
+    except Exception:
+        logger.exception("Boost beim Konfigurationsfehler nicht zurueckgenommen")
+        return False
+    return not (store.state.boost_active or store.state.emergency_boost_active)
 
 
 def _sign_off(parts: RestoreParts | None, store, notifier, status, clock, retry_seconds: float) -> IdleBridge:
@@ -575,12 +599,19 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic) -> Runtime | 
     try:
         loaded = host.load()
     except StartFailure as error:
-        return _fail_start(notifier, status, clock, error.grund, error.key)
+        boosting = store.state.boost_active or store.state.emergency_boost_active
+        return _fail_start(notifier, status, clock, error.grund, error.key, store=store,
+                           parts=host.sign_off_parts() if boosting else None)
 
     notifier.notify("konfiguration", STATE_OK, CONFIG_OK_MESSAGE, critical=True)
     for notice in loaded.notices:
         notifier.notify(notice.key, notice.state, notice.message, critical=False)
     config = loaded.config
+    # Audit 4, A4-08: Zustand an Einrichtung und Anlage binden, bevor irgendetwas daraus gelesen wird.
+    try:
+        bind_to_setup(store, boot.setup_id, loaded.plant_id or roles.lever_refs_identity(loaded.manifest))
+    except StorageError:
+        logger.warning("Bindung an Einrichtung und Anlage nicht gespeichert, gilt bis zum naechsten Schreiben", exc_info=True)
     rt = Runtime(
         manifest=loaded.manifest, signals=host.signals, config=config,
         worker=RegulationWorker(clock=clock), store=store,

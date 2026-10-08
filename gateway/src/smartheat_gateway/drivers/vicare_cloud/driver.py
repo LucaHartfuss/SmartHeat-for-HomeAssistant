@@ -35,6 +35,22 @@ LOGIN_UNREACHABLE_TEXT = "Die Anmeldung bei Viessmann ist gerade nicht erreichba
 # Rollen, die signals() immer meldet (Pflichtrollen des Hebelsatzes ohne den Raum); die uebrigen nur, wenn vorhanden.
 ALWAYS_SIGNALS = ("curve_current", "level_current", "shift_current", "mode_select", "outdoor_temp")
 CURVE_LEVERS = ("curve", "level")
+MIN_POLL_SECONDS = 120.0  # Abfrage + Inventur + Schreiben bleiben unter dem Tageskontingent (Audit 4, A4-34)
+
+
+def _check_parameter(parameter: dict) -> None:
+    """Prueft nur vorhandene Schluessel; ein leerer Parameter (Anmeldedaten vergessen) ist erlaubt."""
+    poll = parameter.get("poll_seconds")
+    if poll is not None and (isinstance(poll, bool) or not isinstance(poll, int | float) or poll < MIN_POLL_SECONDS):
+        raise ValueError(f"poll_seconds muss mindestens {MIN_POLL_SECONDS:g} s sein")
+    for key in ("installation_id", "heizkreis"):
+        value = parameter.get(key)
+        if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
+            raise ValueError(f"{key} muss eine nicht negative ganze Zahl sein")
+    for key in ("gateway_serial", "device_id"):
+        value = parameter.get(key)
+        if value is not None and (not isinstance(value, str) or not value):
+            raise ValueError(f"{key} muss ein nicht leerer Text sein")
 
 
 class ViCareCloudDriver:
@@ -43,11 +59,15 @@ class ViCareCloudDriver:
     login_kind = LOGIN_OAUTH
     LEVER_SETS = (caps.LEVER_SET,)
     REJECTION_REASONS = caps.REJECTIONS
+    # Audit 4, A4-08: Parameter, die die Anlage bestimmen (registry.same_plant/plant_id).
+    # Achtung (Audit 4, A4-08): Eine Aenderung aendert die plant_id jeder Installation; beim Update gilt das als andere Anlage und setzt den anlagenbezogenen Zustand zurueck.
+    IDENTITY_PARAMETERS = ("installation_id", "gateway_serial", "device_id", "heizkreis")
     quota = QUOTA
 
     def __init__(self, parameter: dict, paths: Paths, *, clock=time.monotonic, writer: bool = False,
                  wall=time.time, api: vicare.ViCareApi | None = None) -> None:
         self._p = dict(parameter or {})
+        _check_parameter(self._p)
         self._paths, self._clock, self._wall, self._writer = paths, clock, wall, writer
         self.poll_seconds = float(self._p.get("poll_seconds", 300.0))
         self.description = with_poll_interval(BINDINGS[caps.LEVER_SET], self.poll_seconds)
@@ -244,6 +264,19 @@ class ViCareCloudDriver:
             raise ValueError(f"Hebel {lever} gibt es bei vicare_cloud nicht")
         with self._lock:
             self._overlay[lever], self._overlay_at[lever] = written, self._clock()
+            self.physical_writes += 1
+
+    def write_group(self, values: Mapping[str, float]) -> None:
+        """Steigung und Niveau in EINEM setCurve (Audit 4, A4-31): keine Zwischenstellung mit dem alten Partnerwert,
+        ein Aufruf aus dem Kontingent. Die Pipeline nutzt diese optionale Methode fuer die Schreibgruppe."""
+        if set(values) != set(CURVE_LEVERS):
+            raise ValueError(f"Schreibgruppe {sorted(values)} ist nicht {list(CURVE_LEVERS)}")
+        self._fresh()  # QuotaExhausted / nicht_angemeldet, bevor ein Aufruf entsteht
+        sent = {"curve": round(float(values["curve"]), 1), "level": int(round(float(values["level"])))}
+        self._execute(caps.CURVE.format(n=self._n), "setCurve", {"shift": sent["level"], "slope": sent["curve"]})
+        with self._lock:
+            for lever in CURVE_LEVERS:
+                self._overlay[lever], self._overlay_at[lever] = float(sent[lever]), self._clock()
             self.physical_writes += 1
 
     def needs_preparation(self) -> bool:
