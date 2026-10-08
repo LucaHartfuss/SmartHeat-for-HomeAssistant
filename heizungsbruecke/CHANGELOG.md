@@ -21,7 +21,7 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
 - **Gemerkter Zustand gehört zu Einrichtung und Anlage:** Die gemerkten Ursprungswerte, der Wiederherstellungspunkt und
   der übrige Zustand in `backup.json` tragen jetzt die Kennung der Einrichtung und der Anlage. Wer eine andere Anlage neu
   einrichtet oder später die Hebel-Zuordnung (die zugeordneten Hebel-Entities) ändert, gilt als andere Anlage und
-  startet sauber; die gemerkten Ursprungswerte gehören immer zur richtigen Anlage und werden nie auf eine
+  startet sauber; nach einem erfolgreichen Start werden gemerkte Ursprungswerte nie auf eine
   fremde Anlage geschrieben. Bestehende Installationen (z. B. `client1`) behalten ihren Zustand: Beim ersten Start werden
   nur Einrichtungs- und Anlagenkennung ergänzt.
 

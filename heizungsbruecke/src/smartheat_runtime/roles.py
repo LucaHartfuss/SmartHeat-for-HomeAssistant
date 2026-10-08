@@ -22,6 +22,7 @@ REQUIRED_ROLES = (
 )
 
 # Rollen der Hebel im Manifest ("shift_current" ist der historische Rollenname der Parallelverschiebung).
+# Achtung (Audit 4, A4-08): Eine Aenderung aendert die plant_id jeder Installation; beim Update gilt das als andere Anlage und setzt den anlagenbezogenen Zustand zurueck.
 LEVER_ROLES = {
     "curve": "curve_current", "room_setpoint": "shift_current", "level": "level_current", "heat_limit": "heat_limit",
     "min_flow": "min_flow",

@@ -716,3 +716,17 @@ def test_legacy_kpi_values_win_over_levers_after_a_rollback(make_store):
     assert store.state.manual_override_pending == {
         "levers": {"curve": 1.2, "room_setpoint": 17.5, "heat_limit": 16.0}, "erkannt": "2026-10-02T09:00:00+02:00",
     }
+
+
+@pytest.mark.parametrize("raw", [5, "abc", "2026-10-08T06:00:00"])
+def test_an_invalid_boost_since_falls_back_to_none(make_store, caplog, raw):
+    # Audit 4 P-C2 Endpruefung: wie waerme_fehlt_seit nur ein ISO-Zeitpunkt mit Zeitzone
+    with caplog.at_level(logging.WARNING):
+        store = make_store({"boost_since": raw})
+    assert store.state.boost_since is None
+    assert "boost_since" in caplog.text
+
+
+def test_a_timezone_aware_boost_since_loads(make_store):
+    store = make_store({"boost_since": "2026-10-08T06:00:00+02:00"})
+    assert store.state.boost_since == "2026-10-08T06:00:00+02:00"

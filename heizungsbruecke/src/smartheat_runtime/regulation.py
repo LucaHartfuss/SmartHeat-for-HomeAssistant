@@ -8,6 +8,7 @@ from smartheat_core import wallclock
 from smartheat_core.boost import UNREADABLE_ROOM_CHECKS, comfort_boost_expired, decide_boost
 from smartheat_core.emergency_boost import decide_emergency_boost
 from smartheat_runtime.runtime import Runtime
+from smartheat_runtime.waerme import parse_since
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,8 @@ def run_local_check(rt: Runtime) -> None:
     if state.room_actual_misses:
         rt.store.update(room_actual_misses=0)
     now = wallclock.now()
-    since = datetime.fromisoformat(state.boost_since) if state.boost_since else None
+    # Nicht lesbarer oder zeitzonenloser Zeitstempel = unbekannt (wie ein Boost vor dem Update), nie ein Abbruch.
+    since = parse_since(state.boost_since)
     expired = state.boost_active and comfort_boost_expired(since, now)
     if expired:
         logger.info("Comfort-Boost endet nach der Hoechstdauer (seit %s)", state.boost_since)
@@ -76,8 +78,9 @@ def run_local_check(rt: Runtime) -> None:
         emergency_was_active=state.emergency_boost_active,
         exit_threshold_k=safety.arrival_threshold_k,
     )
+    was_active = state.boost_active
     comfort_set, _ = rt.override.set_boosts(comfort=comfort, emergency=emergency)
-    _track_boost_since(rt, now)
+    _track_boost_since(rt, now, was_active)
 
     # B5: wurde der Comfort-Start mangels Wiederherstellungspunkt abgelehnt, bleibt der alte
     # Sollwert gemerkt, damit der naechste Check die Erhoehung erneut sieht.
@@ -85,12 +88,20 @@ def run_local_check(rt: Runtime) -> None:
     rt.store.update_saved(last_room_target=remembered)
 
 
-def _track_boost_since(rt: Runtime, now: datetime) -> None:
-    """Beginn des Comfort-Boosts merken (auch fuer einen vor dem Update persistierten Boost: ab jetzt) bzw. loeschen."""
+def _track_boost_since(rt: Runtime, now: datetime, was_active: bool) -> None:
+    """Beginn des Comfort-Boosts merken bzw. loeschen. Startet der Boost jetzt (vorher inaktiv), gilt `now` und ein
+    uebrig gebliebener alter Zeitstempel wird ueberschrieben; ein laufender Boost behaelt seinen Zeitstempel, ein
+    vor dem Update persistierter (ohne oder mit unlesbarem Zeitstempel) laeuft ab jetzt. update() statt
+    update_saved(): bei einem Schreibfehler bleibt der Wert im Speicher, die 4-h-Grenze greift trotzdem."""
     state = rt.store.state
-    since = (state.boost_since or now.isoformat()) if state.boost_active else None
+    if not state.boost_active:
+        since = None
+    elif not was_active or parse_since(state.boost_since) is None:
+        since = now.isoformat()
+    else:
+        since = state.boost_since
     if since != state.boost_since:
-        rt.store.update_saved(boost_since=since)
+        rt.store.update(boost_since=since)
 
 
 def _count_unreadable_room(rt: Runtime) -> None:
@@ -101,7 +112,7 @@ def _count_unreadable_room(rt: Runtime) -> None:
     if misses >= UNREADABLE_ROOM_CHECKS and rt.store.state.boost_active:
         logger.warning("Raumfuehler %d-mal in Folge nicht lesbar, Comfort-Boost endet", misses)
         rt.override.set_boosts(comfort=False, emergency=rt.store.state.emergency_boost_active)
-        _track_boost_since(rt, wallclock.now())
+        _track_boost_since(rt, wallclock.now(), was_active=True)
 
 
 def claim_due_tick(rt: Runtime, now: datetime) -> str | None:

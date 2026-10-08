@@ -60,6 +60,7 @@ class ViCareCloudDriver:
     LEVER_SETS = (caps.LEVER_SET,)
     REJECTION_REASONS = caps.REJECTIONS
     # Audit 4, A4-08: Parameter, die die Anlage bestimmen (registry.same_plant/plant_id).
+    # Achtung (Audit 4, A4-08): Eine Aenderung aendert die plant_id jeder Installation; beim Update gilt das als andere Anlage und setzt den anlagenbezogenen Zustand zurueck.
     IDENTITY_PARAMETERS = ("installation_id", "gateway_serial", "device_id", "heizkreis")
     quota = QUOTA
 

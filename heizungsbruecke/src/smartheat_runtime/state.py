@@ -275,8 +275,11 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
     for key in _TEXT_FIELDS:
         if raw.get(key) is None:
             continue
-        # waerme_fehlt_seit: nur ein ISO-Zeitpunkt mit Zeitzone ist ein Flag, alles andere "kein Flag" (Spec 1.4).
-        valid = isinstance(raw[key], str) and (key != "waerme_fehlt_seit" or parse_since(raw[key]) is not None)
+        # waerme_fehlt_seit, boost_since: nur ein ISO-Zeitpunkt mit Zeitzone ist gueltig, alles andere "kein Flag"
+        # (Spec 1.4; boost_since: Audit 4 P-C2, sonst bricht der lokale Check bei jedem Lauf ab).
+        valid = isinstance(raw[key], str) and (
+            key not in ("waerme_fehlt_seit", "boost_since") or parse_since(raw[key]) is not None
+        )
         if valid:
             values[key] = raw[key]
         else:
