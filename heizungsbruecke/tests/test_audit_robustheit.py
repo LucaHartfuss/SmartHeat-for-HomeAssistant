@@ -117,7 +117,7 @@ def test_old_manual_override_format_is_dropped_by_the_first_backup_write(tmp_pat
     die WARNINGs enden damit nach dem ersten Schreibanlass von selbst."""
     old = {"curve": 1.5, "offset": 20.0, "erkannt": "2026-09-28T10:00:00+02:00"}
     save_backup(tmp_path / "backup.json", {
-        "curve_current": 1.5, "shift_current": 20.5, "manual_override": old, "manual_override_pending": old,
+        "restore_point": {"curve": 1.5}, "manual_override": old, "manual_override_pending": old,
     })
     store = StateStore(tmp_path / "backup.json", tmp_path / "failsafe_state.json")
     assert store.state.manual_override is None
@@ -127,4 +127,4 @@ def test_old_manual_override_format_is_dropped_by_the_first_backup_write(tmp_pat
     reloaded = StateStore(tmp_path / "backup.json", tmp_path / "failsafe_state.json")
     raw = (tmp_path / "backup.json").read_text()
     assert "manual_override" not in raw
-    assert reloaded.state.restore_point.get("curve") == 1.5  # alter Rollen-Schluessel, migriert (Plan 2)
+    assert reloaded.state.restore_point.get("curve") == 1.5

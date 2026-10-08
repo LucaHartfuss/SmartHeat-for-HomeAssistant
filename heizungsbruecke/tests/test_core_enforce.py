@@ -470,25 +470,6 @@ def test_curve_tolerance_is_half_a_plant_step(make_store, clock):
     assert rt.store.state.manual_override is None
 
 
-def test_an_intervention_reported_by_0_29_0_is_not_reported_again_after_the_update(make_store, clock):
-    """Plan 2 (P2-4): backup.json aus 0.29.0 nennt in rollen/signatur/gemeldet und im Schreibbudget Rollen. Nach der
-    Migration auf Hebel bleibt derselbe Eingriff derselbe (keine zweite Meldung), das Rueckschreiben laeuft weiter und
-    zaehlt auf dem migrierten Budget-Schluessel."""
-    store = make_store(backup={
-        "curve_current": 0.9, "shift_current": 21.0,
-        "manual_override": {"curve": 1.3, "shift": 21.0, "erkannt": "2026-10-02T09:00:00+02:00",
-                            "rollen": {"curve_current": 1.3}, "signatur": "curve_current=1.3",
-                            "gemeldet": "curve_current=1.3"},
-        "write_budget": {"enforce:curve_current": {"day": TODAY.isoformat(), "count": 1}},
-    })
-    rt = _rt(make_store, clock, Ha(curve=1.3, reflects_writes=False), store=store)
-    _rounds(rt)
-    assert rt.signals.writes == [("number.curve", 0.9)]
-    assert _message_calls(rt) == []
-    assert rt.store.state.manual_override["gemeldet"] == rt.store.state.manual_override["signatur"] == "curve=1.3"
-    assert rt.store.state.write_budget["enforce:curve"]["count"] == 2
-
-
 def test_state_ok_matches_the_notifier():
     from smartheat_core.enforce import STATE_OK
     from smartheat_runtime.notifier import STATE_OK as NOTIFIER_OK

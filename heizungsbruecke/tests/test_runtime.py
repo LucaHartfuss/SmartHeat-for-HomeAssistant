@@ -339,12 +339,12 @@ def test_boot_keeps_a_usable_zone_shift(env):
 
 def _backup_before_tp11(env, **extra):
     """backup.json von 0.23.0: Wiederherstellungspunkt nur mit Steigung (am Anschlag), keine
-    Parallelverschiebung; beim Start waere sonst kein Tick faellig. Bewusst mit dem alten Rollen-Schluessel
-    curve_current: der Start migriert ihn auf restore_point (Plan 2, state._migrate_legacy_roles)."""
+    Parallelverschiebung; beim Start waere sonst kein Tick faellig. Im Schema ab 0.30.0 (restore_point mit Hebel
+    curve); die Altmigration der Rollen-Schluessel bis 0.29.0 entfiel mit Audit 4 P-E."""
     backup = {
         "last_room_target": 21.0, "last_published_target_rt": 21.0,
         "last_daily_trigger_date": datetime.now().date().isoformat(),
-        "curve_current": 1.5, **extra,
+        "restore_point": {"curve": 1.5}, **extra,
     }
     save_backup(env.paths["BACKUP_PATH"], backup)
 
@@ -386,7 +386,6 @@ def test_first_start_drops_the_old_curve_point_when_the_plant_is_unreadable(env)
     _start(env)
 
     assert "curve" not in _backup(env).get("restore_point", {})
-    assert "curve_current" not in _backup(env)
 
 
 def test_first_start_during_a_boost_keeps_the_curve_point(env):
