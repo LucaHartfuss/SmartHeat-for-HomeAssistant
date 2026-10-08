@@ -16,7 +16,7 @@ concurrency:
 env:
   CHECKOUT_REF: ${{ github.event_name == 'schedule' && 'develop' || '' }}
   # Push-Laeufe: HA-Version von client1 (HomeAssistantPapa/.HA_VERSION); taeglich: stable (Spec 2.2).
-  HA_IMAGE: ${{ github.event_name == 'schedule' && 'ghcr.io/home-assistant/home-assistant:stable' || 'ghcr.io/home-assistant/home-assistant:2026.4.4' }}
+  HA_IMAGE: ${{ github.event_name == 'schedule' && 'ghcr.io/home-assistant/home-assistant:stable' || 'ghcr.io/home-assistant/home-assistant:2026.9.4' }}
 jobs:
   lint:
     runs-on: ubuntu-24.04
