@@ -27,7 +27,8 @@ def same_plant(old: dict | None, new: dict | None) -> bool:
     """Gleicher Treiber und gleiche identifizierende Parameter (Audit 4, A4-08; Server: shg_catalog.same_plant)."""
     if not isinstance(old, dict) or not isinstance(new, dict) or old.get("id") != new.get("id"):
         return False
-    driver = DRIVERS.get(new.get("id"))
+    driver_id = new.get("id")
+    driver = DRIVERS.get(driver_id) if isinstance(driver_id, str) else None
     old_p, new_p = old.get("parameter"), new.get("parameter")
     if driver is None or not isinstance(old_p, dict) or not isinstance(new_p, dict):
         return False

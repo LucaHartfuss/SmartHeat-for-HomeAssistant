@@ -79,6 +79,12 @@ def test_a_write_group_sets_the_overlay_for_both_members_and_rejects_foreign_lev
     with pytest.raises(ValueError):
         driver.write_group({"curve": 1.0, "level": 1.0, "room_setpoint": 20.0})
     assert len(server.commands) == 3
+    # Das Overlay der Gruppe stellt beide Partnerwerte (Cloud zeigt noch 1.4 / 0): jeder Einzelschreibvorgang nimmt
+    # den Gruppenwert des anderen Hebels, nicht den veralteten Cloud-Wert.
+    driver.write("curve", 1.2)
+    assert server.commands[-1]["params"] == {"shift": 3, "slope": 1.2}
+    driver.write("level", 1.0)
+    assert server.commands[-1]["params"] == {"shift": 1, "slope": 1.2}
 
 
 def test_a_rejected_write_group_raises_and_counts_nothing(env):

@@ -1,6 +1,9 @@
 """Audit 4, A4-08 (GK-3, GW-2), Nutzer-Entscheidung E3."""
+import pytest
+
 from smartheat_runtime.backup_store import load_backup, save_backup
-from smartheat_runtime.state import StateStore, bind_to_setup
+from smartheat_runtime.delivery import DeliveryState
+from smartheat_runtime.state import StateStore, StorageError, bind_to_setup
 
 OLD = {
     "restore_point": {"curve": 1.4, "room_setpoint": 22.0, "heat_limit": 18.0}, "originals": {"heat_limit": 16.0},
@@ -41,3 +44,18 @@ def test_the_same_setup_changes_nothing(tmp_path):
     store = _store(tmp_path, {**OLD, "setup_id": "s1", "plant_id": "anlage-a"})
     assert bind_to_setup(store, "s1", "anlage-a") == "unveraendert"
     assert store.state.last_published_target_rt == 21.0
+
+
+@pytest.mark.parametrize("plant", ["anlage-a", "anlage-b"], ids=["neue_einrichtung", "andere_anlage"])
+def test_the_delivery_state_is_reset_even_if_saving_the_binding_fails(tmp_path, monkeypatch, plant):
+    # app.py faengt den StorageError ab und startet weiter: die Zustellung darf dann nicht mehr vom alten Setup stammen
+    store = _store(tmp_path, {**OLD, "setup_id": "s1", "plant_id": "anlage-a"})
+    store.set_delivery(DeliveryState(server_failures=2, notbetrieb=True))
+
+    def failing_update(**changes):
+        raise StorageError("Datentraeger voll")
+
+    monkeypatch.setattr(store, "update", failing_update)
+    with pytest.raises(StorageError):
+        bind_to_setup(store, "s2", plant)
+    assert store.state.delivery == DeliveryState()

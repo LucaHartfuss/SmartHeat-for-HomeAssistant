@@ -501,13 +501,14 @@ def bind_to_setup(store: "StateStore", setup_id: str | None, plant_id: str) -> s
         return "bestand"
     if state.plant_id != plant_id:
         logger.warning("Andere Anlage als in backup.json: anlagenbezogener Zustand wird verworfen")
+        # Zustellung zuerst: set_delivery wirft nicht, update bei einem Schreibfehler (StorageError) schon
+        store.set_delivery(DeliveryState())
         store.update(**{key: getattr(defaults, key) for key in _PLANT_BOUND + _SETUP_BOUND},
                      setup_id=setup_id, plant_id=plant_id)
-        store.set_delivery(DeliveryState())
         return "andere_anlage"
     if state.setup_id != setup_id:
         logger.info("Neue Einrichtung derselben Anlage: Ursprungswerte bleiben, Erstkontakt-Tick folgt")
-        store.update(**{key: getattr(defaults, key) for key in _SETUP_BOUND}, setup_id=setup_id)
         store.set_delivery(DeliveryState())
+        store.update(**{key: getattr(defaults, key) for key in _SETUP_BOUND}, setup_id=setup_id)
         return "neue_einrichtung"
     return "unveraendert"

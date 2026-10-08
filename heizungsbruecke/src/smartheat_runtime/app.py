@@ -192,8 +192,8 @@ def _fail_start(notifier, status, clock, grund: str, key: str | None = None, *, 
     zurueck; geht das nicht, sagt die Meldung, dass die Boost-Werte noch auf der Anlage stehen (Audit 4, A4-10)."""
     logger.error("FEHLER: %s", grund)
     message = CONFIG_ERROR_MESSAGE.format(grund=grund)
-    boosting = store is not None and (store.state.boost_active or store.state.emergency_boost_active)
-    if boosting and not _end_boosts(store, parts, clock):
+    if (store is not None and (store.state.boost_active or store.state.emergency_boost_active)
+            and not _end_boosts(store, parts, clock)):
         message = CONFIG_ERROR_BOOST_MESSAGE.format(grund=grund, werte=_restore_values_text(store.state))
     if not notifier.notify("konfiguration", f"fehler:{grund if key is None else key}", message, critical=True):
         notifier.refresh_persistent("konfiguration", message)

@@ -129,6 +129,7 @@ def test_same_plant_compares_driver_and_identity_parameters():
     assert not registry.same_plant(base, {**base, "parameter": {**base["parameter"], "heizkreis": 1}})
     assert not registry.same_plant(base, {"id": "vicare_cloud", "parameter": base["parameter"]})
     assert not registry.same_plant(None, base)
+    assert not registry.same_plant({"parameter": {}}, {"parameter": {}})  # ohne ID: unbekannter Treiber
 
 
 def test_manifest_requires_the_roles_of_the_lever_set(data_dir, clock):
