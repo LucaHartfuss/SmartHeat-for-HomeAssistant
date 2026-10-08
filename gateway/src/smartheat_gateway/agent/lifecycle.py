@@ -32,6 +32,13 @@ APPLY_CONFIRM_SECONDS = 120
 ROOM_TARGET_CONFIRM_SECONDS = 60
 SIGN_OFF_WAIT_SECONDS = 24 * 3600
 _CREDENTIAL_KEYS = ("mqtt_username", "mqtt_password", "tls_certificate", "cloudflared")
+OTHER_PLANT_TEXT = (
+    "„Neu konfigurieren“ gilt nur für dieselbe Anlage. Für eine andere Anlage das Gateway entfernen und neu einrichten."
+)
+RESTORE_PENDING_TEXT = (
+    "Das Gateway hat die bisherige Anlage noch nicht zurückgesetzt. Erst wenn das gelingt, lässt es sich für eine "
+    "andere Anlage einrichten."
+)
 
 
 def merge_existing_secrets(paths: Paths, config: dict) -> dict:
@@ -85,14 +92,25 @@ def forget_inventory(paths: Paths) -> None:
             logger.error("Inventur-Proben nicht gelöscht (%s)", type(error).__name__)
 
 
-def remove_setup(paths: Paths, *, keep_new_credentials: bool = False, keep_driver: str | None = None) -> None:
+def remove_setup(
+    paths: Paths, *, keep_new_credentials: bool = False, keep_driver: str | None = None,
+    keep_runtime_state: bool = False,
+) -> None:
     """Entfernt eine (abgemeldete) Einrichtung: zuerst den Laufzeit-Ordner (Praezisierung 3), dann Geheimnisse,
     Transport-Schluessel und Treiber-Tokens, die Konfiguration mit der Markierung `abgemeldet` ZULETZT; bricht es
     mittendrin ab (Stromausfall), findet der naechste Durchlauf die Markierung und raeumt den Rest weg.
     keep_new_credentials (apply_config): Transport-Schluessel und Treiber-Tokens stammen dann aus create_csr bzw.
     driver_login derselben neuen Einrichtung (der alte Schluessel ist seit sign_off weg) und bleiben; die Anmeldedaten
-    der uebrigen Cloud-Treiber (alte Einrichtung, anderer Treiber als keep_driver) werden vergessen (Plan G4 K4)."""
-    shutil.rmtree(paths.runtime_dir, ignore_errors=True)
+    der uebrigen Cloud-Treiber (alte Einrichtung, anderer Treiber als keep_driver) werden vergessen (Plan G4 K4).
+    keep_runtime_state (apply_config, neue Einrichtung DERSELBEN Anlage): backup.json mit den Ursprungswerten bleibt,
+    alles andere im Laufzeit-Ordner geht (Audit 4, GW-1)."""
+    if keep_runtime_state and paths.runtime_dir.is_dir():
+        # Audit 4, GW-1: backup.json (Ursprungswerte) bleibt; die Laufzeit bindet ihn an die neue Einrichtung.
+        for entry in paths.runtime_dir.iterdir():
+            if entry != paths.backup:
+                shutil.rmtree(entry, ignore_errors=True) if entry.is_dir() else entry.unlink(missing_ok=True)
+    else:
+        shutil.rmtree(paths.runtime_dir, ignore_errors=True)
     paths.runtime_secrets.unlink(missing_ok=True)
     forget_inventory(paths)
     if not keep_new_credentials:
@@ -106,6 +124,13 @@ def remove_setup(paths: Paths, *, keep_new_credentials: bool = False, keep_drive
 def _status_with(ctx: AgentContext, setup_id: str) -> dict | None:
     status = ctx.runtime_status
     return status if status is not None and status.get("setup_id") == setup_id else None
+
+
+def _restore_done(ctx: AgentContext, previous: dict) -> bool:
+    """Die abgemeldete Laufzeit ruht ohne Ruecksetzfehler (wie cleanup_after_sign_off es verlangt)."""
+    setup_id = previous.get("setup_id")
+    status = _status_with(ctx, setup_id) if isinstance(setup_id, str) else None
+    return status is not None and status.get("status") == STATUS_ABGEMELDET and status.get("grund") is None
 
 
 @register("apply_config")
@@ -125,9 +150,19 @@ def apply_config(ctx: AgentContext, payload: dict) -> Outcome:
         if not isinstance(error, ConfigError):
             logger.error("apply_config: Pruefung gescheitert (%s): %s", type(error).__name__, text)
         return Failed("konfiguration_ungueltig", f"Die Konfiguration ist ungültig: {text}")
-    if load_raw(ctx.paths).get("abgemeldet") is True:
-        # Abgemeldet (auch mit gescheitertem Zuruecksetzen): neu einrichten wie frisch installiert (Praezisierung 3).
-        remove_setup(ctx.paths, keep_new_credentials=True, keep_driver=config["driver"]["id"])
+    previous = load_raw(ctx.paths)
+    same = registry.same_plant(previous.get("driver"), config.get("driver"))
+    if previous.get("abgemeldet") is True:
+        # Abgemeldet heisst: das Zuruecksetzen ist noch nicht bestaetigt aufgeraeumt (cleanup_after_sign_off).
+        # Neu einrichten wie frisch installiert (Praezisierung 3); die Ursprungswerte derselben Anlage bleiben (GW-1),
+        # fuer eine andere Anlage erst, wenn die alte zurueckgesetzt ist (GW-2).
+        if not same and not _restore_done(ctx, previous):
+            return Failed("konfiguration_ungueltig", RESTORE_PENDING_TEXT)
+        remove_setup(
+            ctx.paths, keep_new_credentials=True, keep_driver=config["driver"]["id"], keep_runtime_state=same,
+        )
+    elif is_configured(previous) and not same:
+        return Failed("konfiguration_ungueltig", OTHER_PLANT_TEXT)
     forget_inventory(ctx.paths)  # jede (Neu-)Einrichtung beginnt ohne Proben einer frueheren Anlage
     write_config(ctx.paths, config)
     ctx.bus.publish(topics.CMD_RELOAD, {"setup_id": setup_id})
