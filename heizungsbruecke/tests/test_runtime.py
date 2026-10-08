@@ -23,6 +23,7 @@ from smartheat_runtime import abo, app, backup_store, datentraeger, entitlement,
 from smartheat_runtime.backup_store import load_backup, save_backup
 from smartheat_runtime.delivery import DataFault, DeliveryState
 from smartheat_runtime.runtime import Runtime
+from smartheat_runtime.texts import HA_TEXTS
 
 SETTLE = VAILLANT_MYPYLLANT.settle_seconds
 
@@ -339,12 +340,12 @@ def test_boot_keeps_a_usable_zone_shift(env):
 
 def _backup_before_tp11(env, **extra):
     """backup.json von 0.23.0: Wiederherstellungspunkt nur mit Steigung (am Anschlag), keine
-    Parallelverschiebung; beim Start waere sonst kein Tick faellig. Bewusst mit dem alten Rollen-Schluessel
-    curve_current: der Start migriert ihn auf restore_point (Plan 2, state._migrate_legacy_roles)."""
+    Parallelverschiebung; beim Start waere sonst kein Tick faellig. Im Schema ab 0.30.0 (restore_point mit Hebel
+    curve); die Altmigration der Rollen-Schluessel bis 0.29.0 entfiel mit Audit 4 P-E."""
     backup = {
         "last_room_target": 21.0, "last_published_target_rt": 21.0,
         "last_daily_trigger_date": datetime.now().date().isoformat(),
-        "curve_current": 1.5, **extra,
+        "restore_point": {"curve": 1.5}, **extra,
     }
     save_backup(env.paths["BACKUP_PATH"], backup)
 
@@ -386,7 +387,6 @@ def test_first_start_drops_the_old_curve_point_when_the_plant_is_unreadable(env)
     _start(env)
 
     assert "curve" not in _backup(env).get("restore_point", {})
-    assert "curve_current" not in _backup(env)
 
 
 def test_first_start_during_a_boost_keeps_the_curve_point(env):
@@ -1454,7 +1454,7 @@ def test_inactive_rejection_after_unknown_rejection_clears_zugang_abgelehnt_sile
     bridge.worker.run_pending()
 
     assert _status_states(env)[-1] == "zugang_abgelehnt"
-    assert ("smartheat_zugang", abo.ACCESS_DENIED_MESSAGE) in env.ha.persistent
+    assert ("smartheat_zugang", HA_TEXTS.access_denied) in env.ha.persistent
     pushes_before = list(env.ha.pushes)
 
     env.abo["status"] = entitlement.INACTIVE
@@ -1469,7 +1469,7 @@ def test_inactive_rejection_after_unknown_rejection_clears_zugang_abgelehnt_sile
     assert "smartheat_zugang" in env.ha.dismissed
     new_pushes = env.ha.pushes[len(pushes_before):]
     assert new_pushes == [abo.inactive_message(entitlement.load_inactive_since(env.paths["ENTITLEMENT_PATH"]))]
-    assert abo.ACCESS_DENIED_MESSAGE not in new_pushes and abo.ACCESS_OK_MESSAGE not in new_pushes
+    assert HA_TEXTS.access_denied not in new_pushes and abo.ACCESS_OK_MESSAGE not in new_pushes
 
     monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: True)
     _advance(env, bridge, 300)
@@ -1492,7 +1492,7 @@ def test_auth_rejected_with_active_or_unknown_abo_reports_zugang_abgelehnt(env, 
     assert "abgelehnt" in caplog.text
     assert _status_states(env)[-1] == "zugang_abgelehnt"
     assert _last_event(env)["grund"] == abo.ACCESS_DENIED_REASON
-    assert ("smartheat_zugang", abo.ACCESS_DENIED_MESSAGE) in env.ha.persistent
+    assert ("smartheat_zugang", HA_TEXTS.access_denied) in env.ha.persistent
 
 
 def test_rejected_status_at_start_starts_normally(env):
@@ -2423,7 +2423,7 @@ def test_unwritable_disk_is_reported_once_and_cleared_after_repair(env, monkeypa
 
         assert _last_event(env)["status"] == "datenfehler"
         assert _last_event(env)["datenfehler"] == {"art": "lokal", "rollen": ["datentraeger"]}
-        assert env.ha.pushes.count(datentraeger.FAILED_MESSAGE) == 1
+        assert env.ha.pushes.count(HA_TEXTS.storage_failed) == 1
         assert _mqtt(env).snapshots == []  # N5: ohne gespeicherte Buchung kein Tick
 
     _advance(env, bridge, 300)  # EV_HEALTH: flush gelingt, ohne dass sich Zustand aendert
@@ -2448,7 +2448,7 @@ def test_server_fault_is_dismissed_after_a_disk_fault_cycle_and_the_ack(env, mon
         _break_backup_writes(patch)
         _answer(env, bridge, seq)
         assert _delivery(bridge).datenfehler == DataFault("local", ("datentraeger",))
-        assert env.ha.pushes.count(datentraeger.FAILED_MESSAGE) == 1
+        assert env.ha.pushes.count(HA_TEXTS.storage_failed) == 1
 
     _advance(env, bridge, 300)  # EV_HEALTH: flush gelingt, Datentraeger entwarnt
     _advance(env, bridge, 30)
@@ -2457,7 +2457,7 @@ def test_server_fault_is_dismissed_after_a_disk_fault_cycle_and_the_ack(env, mon
     assert _delivery(bridge).datenfehler is None
     assert bridge.notifier.state("datenfehler") == "ok"
     assert "smartheat_datenfehler" in env.ha.dismissed
-    assert env.ha.pushes.count(datentraeger.FAILED_MESSAGE) == 1
+    assert env.ha.pushes.count(HA_TEXTS.storage_failed) == 1
 
 
 def test_pure_disk_fault_cycle_adds_no_data_fault_push(env, monkeypatch):
@@ -2475,7 +2475,7 @@ def test_pure_disk_fault_cycle_adds_no_data_fault_push(env, monkeypatch):
     _answer(env, bridge, seq)
 
     assert env.ha.pushes == pushes_before
-    assert pushes_before == [datentraeger.FAILED_MESSAGE, datentraeger.OK_MESSAGE]
+    assert pushes_before == [HA_TEXTS.storage_failed, datentraeger.OK_MESSAGE]
     assert _delivery(bridge).datenfehler is None
 
 
@@ -2502,7 +2502,7 @@ def test_unwritable_disk_on_answer_reports_one_message_and_writes_nothing(env, m
 
     assert _delivery(bridge).datenfehler == DataFault("local", ("datentraeger",))
     assert _delivery(bridge).notbetrieb is False
-    assert env.ha.pushes == [datentraeger.FAILED_MESSAGE]
+    assert env.ha.pushes == [HA_TEXTS.storage_failed]
     assert env.ha.writes == writes_before
 
 

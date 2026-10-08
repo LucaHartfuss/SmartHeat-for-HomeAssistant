@@ -1,7 +1,7 @@
 """Mindestvorlauftemperatur = Raum-Soll des Kunden (TP11; client-abgeleiteter Hebel min_flow, Spec 3.3). Die
 Mindestvorlauftemperatur ist bei Vaillant eine Untergrenze, keine Parallelverschiebung; sie wird lokal nachgefuehrt, der
-Server kennt sie nicht. Geschrieben wird nur bei Abweichung vom Live-Wert (lokaler HA-Aufruf,
-kein Cloud-Aufruf), also beim Start und nach einer Soll-Aenderung."""
+Server kennt sie nicht. Geschrieben wird nur bei Abweichung vom Live-Wert (bei mypyllant ein Cloud-Aufruf;
+nur das Lesen ist lokal), also beim Start und nach einer Soll-Aenderung."""
 import logging
 from typing import Any, Protocol
 

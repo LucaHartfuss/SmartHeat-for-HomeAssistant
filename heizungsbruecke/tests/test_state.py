@@ -44,17 +44,17 @@ def _count_saves(monkeypatch) -> list:
 # --- Laden ---
 
 def test_reads_files_written_by_0_16_0(make_store):
-    # offset_current/target_history sind seit TP11 keine erkannten Felder mehr (siehe
-    # test_pre_tp11_backup_keeps_unknown_keys_and_drops_the_old_override): die Wunschtemperatur fehlt
-    # im Wiederherstellungspunkt, curve_current wird zum Hebel curve (Plan 2), die restlichen Felder
-    # werden wie gewohnt erkannt.
+    # offset_current/target_history/curve_current sind keine erkannten Felder mehr (siehe
+    # test_pre_tp11_backup_keeps_unknown_keys_and_drops_the_old_override und
+    # test_fields_from_029_are_no_longer_interpreted_but_kept): sie bleiben als unbekannte Schluessel
+    # erhalten, der Wiederherstellungspunkt bleibt leer, die restlichen Felder werden wie gewohnt erkannt.
     store = make_store(
         backup=V016_BACKUP,
         failsafe={"failsafe_active": True, "datenfehler": None, "pending": {"seq": "s1", "trigger": "daily"}},
     )
 
     assert store.state == BridgeState(
-        restore_point={"curve": 0.95}, boost_active=True, emergency_boost_active=False,
+        boost_active=True, emergency_boost_active=False,
         last_room_target=21.0,
         last_published_target_rt=21.0, last_daily_trigger_date="2026-09-26",
         delivery=DeliveryState(pending=PendingTick("s1", "daily"), notbetrieb=True),
@@ -72,14 +72,14 @@ def test_pre_tp11_backup_keeps_unknown_keys_and_drops_the_old_override(make_stor
     with caplog.at_level(logging.WARNING):
         store = make_store(backup=old_backup)
 
-    assert store.state.restore_point.get("room_setpoint") is None
-    assert store.state.restore_point.get("curve") == 0.95
+    assert store.state.restore_point == {}  # curve_current wird nicht mehr zum Hebel curve umgedeutet
     assert store.state.manual_override is None
     assert "manual_override" in caplog.text
 
     store.update(boost_active=True)  # erzwingt ein Schreiben -- extra muss erhalten bleiben
 
     backup = load_backup(tmp_path / "backup.json")
+    assert backup["curve_current"] == 0.95
     assert backup["offset_current"] == 23.0
     assert backup["target_history"] == [[1000.0, 20.0]]
     assert "manual_override" not in backup
@@ -542,182 +542,6 @@ def test_invalid_heat_limit_in_backup_falls_back_to_none(make_store):
     assert (store.state.restore_point.get("heat_limit"), store.state.originals.get("heat_limit")) == (None, None)
 
 
-# --- Plan 2: Migration der Rollen-Felder bis 0.29.0 auf Hebel (P2-4, Plan-Praezisierung 1) ---
-
-CLIENT1_BACKUP_029 = {
-    "curve_current": 1.05, "shift_current": 17.5, "heat_limit": 17.4, "heat_limit_original": 15.0,
-    "boost_active": False, "emergency_boost_active": False, "last_room_target": 20.5,
-    "write_budget": {"enforce:curve_current": {"day": "2026-10-02", "count": 2},
-                     "enforce:shift_current": {"day": "2026-10-02", "count": 1},
-                     "enforce:zone_mode": {"day": "2026-10-02", "count": 1}},
-    "manual_override": {"curve": 1.2, "shift": 17.5, "erkannt": "2026-10-02T09:00:00+02:00",
-                        "rollen": {"curve_current": 1.2}, "signatur": "curve_current=1.2", "gemeldet": "curve_current=1.2"},
-}
-
-
-def test_backup_from_029_migrates_to_levers_and_drops_old_keys(tmp_path):
-    backup = tmp_path / "backup.json"
-    backup.write_text(json.dumps(CLIENT1_BACKUP_029), encoding="utf-8")
-    store = StateStore(backup, tmp_path / "failsafe_state.json")
-    state = store.state
-    assert state.restore_point == {"curve": 1.05, "room_setpoint": 17.5, "heat_limit": 17.4}
-    assert state.originals == {"heat_limit": 15.0}
-    assert state.write_budget == {
-        "enforce:curve": {"day": "2026-10-02", "count": 2},
-        "enforce:room_setpoint": {"day": "2026-10-02", "count": 1},
-        "enforce:zone_mode": {"day": "2026-10-02", "count": 1},
-    }
-    assert state.manual_override["rollen"] == {"curve": 1.2}
-    assert state.manual_override["gemeldet"] == state.manual_override["signatur"]  # keine zweite Meldung
-    store.update(last_room_target=21.0)
-    written = json.loads(backup.read_text(encoding="utf-8"))
-    assert not {"curve_current", "shift_current", "heat_limit", "heat_limit_original"} & set(written)
-    assert written["restore_point"] == {"curve": 1.05, "room_setpoint": 17.5, "heat_limit": 17.4}
-
-
-def test_migrated_signature_matches_a_recomputed_one(tmp_path):
-    """signatur und gemeldet werden wie `rollen` umbenannt: manual_override bildet die Signatur aus `rollen`
-    ("<hebel>=<wert>", sortiert); ein Vergleich mit einem alten Rollen-Text loeste sonst eine zweite Meldung aus."""
-    raw = {
-        **CLIENT1_BACKUP_029,
-        "manual_override": {
-            "curve": 1.2, "shift": 18.0, "erkannt": "2026-10-02T09:00:00+02:00",
-            "rollen": {"curve_current": 1.2, "shift_current": 18.0, "zone_mode": 0.0},
-            "signatur": "curve_current=1.2,shift_current=18,zone_mode=0", "gemeldet": "curve_current=1.2",
-        },
-    }
-    raw["notify_states"] = {
-        "manueller_eingriff": "curve_current=1.2,shift_current=18,zone_mode=0", "batterie:sensor.x": "niedrig",
-    }
-    backup = tmp_path / "backup.json"
-    backup.write_text(json.dumps(raw), encoding="utf-8")
-    state = StateStore(backup, tmp_path / "failsafe_state.json").state
-    override = state.manual_override
-    assert override["rollen"] == {"curve": 1.2, "room_setpoint": 18.0, "zone_mode": 0.0}
-    recomputed = ",".join(f"{lever}={override['rollen'][lever]:g}" for lever in sorted(override["rollen"]))
-    assert override["signatur"] == recomputed == "curve=1.2,room_setpoint=18,zone_mode=0"
-    assert override["gemeldet"] == "curve=1.2"
-    # Meldezustand des Notifiers: dieselbe Signatur, sonst gaelte sie als neuer Zustand (zweite Meldung).
-    assert state.notify_states == {
-        "manueller_eingriff": "curve=1.2,room_setpoint=18,zone_mode=0", "batterie:sensor.x": "niedrig",
-    }
-
-
-@pytest.mark.parametrize("state", ["ok", "limit:2026-10-02:Heizkurve, Wunschtemperatur der Zone"])
-def test_notify_state_without_a_signature_is_kept(make_store, state):
-    store = make_store(backup={"notify_states": {"manueller_eingriff": state}})
-    assert store.state.notify_states == {"manueller_eingriff": state}
-
-
-def test_a_migrated_backup_is_not_rewritten_without_a_change(make_store, tmp_path, monkeypatch):
-    # Der erste Schreibanlass schreibt die Hebel-Form (siehe oben); ohne Aenderung bleibt die Datei, ein erneuter
-    # Start liest sie wieder gleich.
-    store = make_store(backup=CLIENT1_BACKUP_029)
-    saves = _count_saves(monkeypatch)
-    store.update(boost_active=False, last_room_target=20.5)
-    assert saves == []
-    assert store.is_saved("restore_point", "originals", "write_budget", "manual_override")
-    reloaded = StateStore(tmp_path / "backup.json", tmp_path / "failsafe_state.json")
-    assert reloaded.state == store.state
-
-
-def test_legacy_field_with_wrong_type_is_dropped_only_for_that_field(make_store, caplog):
-    # Wie bis 0.29.0 je Feld: ein ungueltiger alter Wert faellt weg, die anderen bleiben.
-    with caplog.at_level(logging.WARNING):
-        store = make_store(backup={"curve_current": "0.9", "shift_current": 22.0, "heat_limit_original": True})
-    assert store.state.restore_point == {"room_setpoint": 22.0}
-    assert store.state.originals == {}
-    assert "curve_current" in caplog.text and "heat_limit_original" in caplog.text
-
-
-# 0.30.0 -> Rueckweg auf 0.29.0 -> erneutes Update: 0.29.0 fuehrte die neuen Felder als unbekannte Schluessel mit
-# und schrieb daneben wieder die alten; die alten sind dann die neueren Werte (Controller-Ruling Task 8).
-
-def test_legacy_restore_values_win_over_a_stale_restore_point_after_a_rollback(make_store, tmp_path):
-    store = make_store(backup={
-        "restore_point": {"curve": 0.8, "room_setpoint": 20.0, "heat_limit": 14.0},
-        "curve_current": 1.05, "shift_current": 17.5,
-    })
-    # Alte Werte gewinnen; die Heizgrenze traegt kein altes Feld und behaelt ihren Eintrag.
-    assert store.state.restore_point == {"curve": 1.05, "room_setpoint": 17.5, "heat_limit": 14.0}
-    store.update(last_room_target=21.0)
-    written = load_backup(tmp_path / "backup.json")
-    assert not {"curve_current", "shift_current", "heat_limit"} & set(written)
-    assert written["restore_point"] == {"curve": 1.05, "room_setpoint": 17.5, "heat_limit": 14.0}
-
-
-def test_existing_originals_win_over_a_recaptured_heat_limit_original_after_a_rollback(make_store, tmp_path):
-    store = make_store(backup={
-        "restore_point": {"heat_limit": 14.0}, "originals": {"heat_limit": 12.0},
-        "heat_limit": 17.4, "heat_limit_original": 17.4,
-    })
-    assert store.state.originals == {"heat_limit": 12.0}
-    assert store.state.restore_point == {"heat_limit": 17.4}
-    store.update(last_room_target=21.0)
-    assert not {"heat_limit", "heat_limit_original"} & set(load_backup(tmp_path / "backup.json"))
-
-
-def test_legacy_enforce_budget_entries_win_after_a_rollback(make_store, tmp_path):
-    store = make_store(backup={"write_budget": {
-        "enforce:curve": {"day": "2026-10-01", "count": 5},
-        "enforce:curve_current": {"day": "2026-10-02", "count": 1},
-        "enforce:room_setpoint": {"day": "2026-10-02", "count": 3},
-        "enforce:zone_mode": {"day": "2026-10-02", "count": 2},
-    }})
-    assert store.state.write_budget == {
-        "enforce:curve": {"day": "2026-10-02", "count": 1},
-        "enforce:room_setpoint": {"day": "2026-10-02", "count": 3},
-        "enforce:zone_mode": {"day": "2026-10-02", "count": 2},
-    }
-    store.update(last_room_target=21.0)
-    assert "enforce:curve_current" not in load_backup(tmp_path / "backup.json")["write_budget"]
-
-
-def test_the_migrated_notify_key_is_the_manual_override_key():
-    from smartheat_core import enforce
-    from smartheat_runtime import state
-
-    assert state._MANUAL_OVERRIDE_KEY == enforce.KEY
-
-
-def test_kpi_records_from_029_move_into_levers(tmp_path):
-    backup = tmp_path / "backup.json"
-    backup.write_text(json.dumps({
-        "manual_override": {"curve": 1.2, "shift": 17.5, "erkannt": "2026-10-02T09:00:00+02:00",
-                            "rollen": {"curve_current": 1.2}, "signatur": "curve_current=1.2", "gemeldet": None},
-        "manual_override_pending": {"curve": 1.2, "shift": 17.5, "erkannt": "2026-10-02T09:00:00+02:00"},
-    }), encoding="utf-8")
-    state = StateStore(backup, tmp_path / "failsafe_state.json").state
-    assert state.manual_override == {
-        "levers": {"curve": 1.2, "room_setpoint": 17.5}, "erkannt": "2026-10-02T09:00:00+02:00",
-        # signatur wird wie rollen auf Hebel umgestellt (Task 8, test_migrated_signature_matches_a_recomputed_one).
-        "rollen": {"curve": 1.2}, "signatur": "curve=1.2", "gemeldet": None,
-    }
-    assert state.manual_override_pending == {"levers": {"curve": 1.2, "room_setpoint": 17.5},
-                                             "erkannt": "2026-10-02T09:00:00+02:00"}
-
-
-def test_kpi_migration_is_idempotent(make_store, tmp_path):
-    # Ein schon umgestelltes backup.json bleibt beim zweiten Laden gleich; ein Eintrag ohne beide alten Schluessel
-    # (vor TP11: "offset") wird nicht umgestellt und faellt weiter als ungueltig weg.
-    make_store(backup=CLIENT1_BACKUP_029).update(last_room_target=21.0)
-    first = load_backup(tmp_path / "backup.json")
-    assert first["manual_override"]["levers"] == {"curve": 1.2, "room_setpoint": 17.5}
-    assert not {"curve", "shift"} & set(first["manual_override"])
-    StateStore(tmp_path / "backup.json", tmp_path / "failsafe_state.json").update(last_room_target=22.0)
-    assert load_backup(tmp_path / "backup.json") == {**first, "last_room_target": 22.0}
-
-
-def test_legacy_kpi_values_win_over_levers_after_a_rollback(make_store):
-    store = make_store(backup={"manual_override_pending": {
-        "levers": {"curve": 0.8, "room_setpoint": 20.0, "heat_limit": 16.0},
-        "curve": 1.2, "shift": 17.5, "erkannt": "2026-10-02T09:00:00+02:00",
-    }})
-    assert store.state.manual_override_pending == {
-        "levers": {"curve": 1.2, "room_setpoint": 17.5, "heat_limit": 16.0}, "erkannt": "2026-10-02T09:00:00+02:00",
-    }
-
-
 @pytest.mark.parametrize("raw", [5, "abc", "2026-10-08T06:00:00"])
 def test_an_invalid_boost_since_falls_back_to_none(make_store, caplog, raw):
     # Audit 4 P-C2 Endpruefung: wie waerme_fehlt_seit nur ein ISO-Zeitpunkt mit Zeitzone
@@ -730,3 +554,18 @@ def test_an_invalid_boost_since_falls_back_to_none(make_store, caplog, raw):
 def test_a_timezone_aware_boost_since_loads(make_store):
     store = make_store({"boost_since": "2026-10-08T06:00:00+02:00"})
     assert store.state.boost_since == "2026-10-08T06:00:00+02:00"
+
+
+def test_fields_from_029_are_no_longer_interpreted_but_kept(make_store, tmp_path, caplog):
+    # Audit 4 P-E (E11): client1 laeuft seit Release 2 auf >= 0.30 (Gate in Task 0). Eine zurueckgespielte alte
+    # backup.json startet trotzdem; ihre Felder werden mitgefuehrt, aber nicht mehr umgedeutet.
+    old = {"curve_current": 1.2, "shift_current": 18.0, "heat_limit": 16.0, "heat_limit_original": 15.0,
+           "write_budget": {"enforce:curve_current": {"day": "2026-10-08", "count": 1}}}
+    store = make_store(old)
+    assert store.state.restore_point == {}
+    assert store.state.originals == {}
+    assert store.state.write_budget == {"enforce:curve_current": {"day": "2026-10-08", "count": 1}}
+    store.update(last_room_target=20.5)
+    written = json.loads((tmp_path / "backup.json").read_text())
+    for key in ("curve_current", "shift_current", "heat_limit", "heat_limit_original"):
+        assert written[key] == old[key]

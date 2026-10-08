@@ -1,5 +1,9 @@
 # Changelog SmartHeat-Gateway
 
+## Unveröffentlicht
+
+- Laufzeit: Übernahme alter `backup.json`-Felder aus Add-on 0.29.0 entfernt (betrifft das Gateway nicht, Audit 4 P-E).
+
 ## 0.4.0
 
 Plan SHG G4: Treiber `vicare_cloud` (Viessmann-ViCare-Cloud) und Audit 4 Paket P-C2 (Gateway-Punkte). Die Version 0.4.0

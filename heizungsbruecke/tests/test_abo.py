@@ -209,7 +209,7 @@ def test_connection_failing_rejected_notifies_like_an_auth_rejection(make_store,
     rt = _runtime(tmp_path, make_store())
     monkeypatch.setattr(abo.entitlement, "query", lambda config: entitlement.REJECTED)
     abo.handle_connection_failing(rt)
-    rt.ha_api.send_notification.assert_called_once_with("notify.handy", abo.ACCESS_DENIED_MESSAGE)
+    rt.ha_api.send_notification.assert_called_once_with("notify.handy", HA_TEXTS.access_denied)
     assert rt.auth_rejected_queried_at == rt.clock()
 
 
