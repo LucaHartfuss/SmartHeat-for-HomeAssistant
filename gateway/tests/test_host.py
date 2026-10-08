@@ -2,18 +2,24 @@ import time
 
 import pytest
 from configs import SENSOR, THERMOSTAT, apply_config, write_runtime_files
+from fake_vicare.server import GOOD_CODE, FakeVicare
 from fakes import FakeBus
 from world import GatewayWorld
 
 from smartheat_gateway.config import GatewayConfig
 from smartheat_gateway.drivers import registry
+from smartheat_gateway.drivers.base import DriverError
 from smartheat_gateway.drivers.registry import create
+from smartheat_gateway.drivers.vicare_cloud.driver import ViCareCloudDriver
 from smartheat_gateway.host import SHG_TEXTS, GatewayHost, build_manifest
 from smartheat_gateway.paths import Paths
 from smartheat_runtime.app import IDLE_NOT_CONFIGURED, IdleBridge, RestoreParts, StartFailure
 from smartheat_runtime.roles import ManifestError
 from smartheat_runtime.runtime import Runtime
 from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG, BATTERY_PERCENT, BatteryRef
+
+VICARE = {"id": "vicare_cloud", "parameter": {"installation_id": 2012345, "gateway_serial": "7637415000000001",
+                                               "device_id": "0", "heizkreis": 0, "poll_seconds": 300.0}}
 
 
 @pytest.fixture
@@ -92,9 +98,11 @@ def test_manifest_error_is_a_start_failure_with_the_manifest_key(world, monkeypa
     write_runtime_files(world.paths, apply_config())
     host = GatewayHost(world.paths, world.bus, clock=world.clock, driver_threads=False)
     create_driver = host._create_driver
+    created = []
 
     def partial_driver(spec):
         driver = create_driver(spec)
+        created.append(driver)
         driver.signals = lambda: {"outdoor_temp": "treiber:outdoor_temp"}  # Pflicht-Rollen des Hebelsatzes fehlen
         return driver
 
@@ -102,7 +110,43 @@ def test_manifest_error_is_a_start_failure_with_the_manifest_key(world, monkeypa
     with pytest.raises(StartFailure) as manifest_error:
         host.load()
     assert manifest_error.value.key == "manifest" and "Pflicht-Rollen" in manifest_error.value.grund
-    assert host.driver is None  # nie aktiviert, nie abgefragt
+    assert host.driver is None  # nicht gehalten: ein Treiber ohne Manifest laeuft nicht weiter
+    assert created[0]._stop.is_set()  # Abfrage-Thread (falls gestartet) beendet, kein Abfragen im Leerlauf
+
+
+def test_manifest_is_built_after_the_first_poll_so_optional_signals_are_in_it(data_dir, clock, monkeypatch):
+    # Audit 4, A4-32 (GW-1): flow_temperature steht erst nach der ersten Abfrage im Cache
+    server = FakeVicare()
+    base = server.start()
+    try:
+        for key, value in {"SHG_TEST_ENDPOINTS": "1", "SHG_VICARE_IAM_BASE": base, "SHG_VICARE_API_BASE": base}.items():
+            monkeypatch.setenv(key, value)
+        paths = Paths(data_dir)
+        login = ViCareCloudDriver(VICARE["parameter"], paths, clock=clock)
+        login.login_begin({"client_id": "c", "redirect_uri": "r"})
+        login.login_finish({"code": GOOD_CODE, "redirect_uri": "r"})
+        write_runtime_files(paths, apply_config(driver=VICARE))
+        host = GatewayHost(paths, FakeBus(), clock=clock, devices_wait_seconds=0.1, driver_threads=False)
+        loaded = host.load()
+        assert loaded.manifest.refs["flow_temperature"] == "treiber:flow_temperature"
+        assert host.driver is loaded.binding
+    finally:
+        server.stop()
+
+
+def test_a_failing_first_poll_still_loads_and_the_runtime_reports_the_data_error(data_dir, clock, monkeypatch):
+    # Cloud beim Start nicht erreichbar: das Manifest hat nur die Pflicht-Rollen, der Start gelingt, die Laufzeit
+    # behandelt es als Datenfehler (kein Absturz in load())
+    monkeypatch.setenv("SHG_TEST_ENDPOINTS", "1")
+    monkeypatch.setenv("SHG_VICARE_IAM_BASE", "http://127.0.0.1:9")
+    monkeypatch.setenv("SHG_VICARE_API_BASE", "http://127.0.0.1:9")
+    paths = Paths(data_dir)
+    write_runtime_files(paths, apply_config(driver=VICARE))
+    host = GatewayHost(paths, FakeBus(), clock=clock, devices_wait_seconds=0.1, driver_threads=False)
+    loaded = host.load()
+    assert "flow_temperature" not in loaded.manifest.refs and "curve_current" in loaded.manifest.refs
+    with pytest.raises((ValueError, DriverError)):
+        loaded.binding.read("curve")  # kein Cache: ValueError/DriverError, wie bei jedem Lesefehler
 
 
 def test_waiting_for_devices_is_bounded_by_the_real_clock_not_the_injected_one(data_dir, clock):

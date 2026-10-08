@@ -116,12 +116,15 @@ class GatewayHost:
             ) from error
         try:
             check_lever_set(driver, runtime.lever_set_id)
-            manifest = build_manifest(driver, gateway)
         except ConfigError as error:
             raise StartFailure(self._redacted(str(error)), KEY_CONFIG) from error
+        self._activate(driver)  # erste Abfrage vor dem Manifest: optionale Signale stehen dann im Cache (A4-32)
+        try:
+            manifest = build_manifest(driver, gateway)
         except ManifestError as error:
+            driver.stop()  # kein Abfragen im Leerlauf, bis die Neupruefung den Treiber neu baut
+            self.driver = None
             raise StartFailure(self._redacted(str(error)), KEY_MANIFEST) from error
-        self._activate(driver)
         store = TargetStore(self._paths.room_target, gateway.room_target_start, self._clock,
                             lambda: wallclock.now().isoformat(), on_change=self._raum_changed)
         self._signals.bind(driver, store, gateway.room_sensors)

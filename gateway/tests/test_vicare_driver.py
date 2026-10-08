@@ -35,6 +35,17 @@ def env(tmp_path, clock, monkeypatch):
     server.stop()
 
 
+def test_parameters_are_checked_by_the_driver(tmp_path):
+    # Audit 4, A4-34 (GW-7)
+    for bad in ({"poll_seconds": 0}, {"poll_seconds": -5}, {"poll_seconds": 60}, {"poll_seconds": True},
+                {"poll_seconds": "300"}, {"installation_id": "x"}, {"installation_id": True}, {"heizkreis": -1},
+                {"gateway_serial": ""}, {"device_id": 0}):
+        with pytest.raises(ValueError):
+            ViCareCloudDriver({**PARAMETER, **bad}, Paths(tmp_path))
+    ViCareCloudDriver({}, Paths(tmp_path))  # ohne Parameter (Vergessen der Anmeldedaten) bleibt erlaubt
+    assert ViCareCloudDriver({**PARAMETER, "poll_seconds": 120}, Paths(tmp_path)).poll_seconds == 120.0
+
+
 def test_the_driver_uses_the_one_binding_of_the_ha_path(env):
     server, driver, paths, clock = env
     assert dict(driver.description.steps) == dict(BINDING.steps)
