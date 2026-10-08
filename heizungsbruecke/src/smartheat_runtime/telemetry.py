@@ -16,7 +16,13 @@ logger = logging.getLogger(__name__)
 # null/0 gesendet: der Server speichert fuer fehlende Felder NULL.
 KPI_NUMERIC_ROLES = (
     "flow_temperature", "return_temperature", "system_water_pressure", "efficiency_ratio",
+    "generator_hours", "generator_starts",
 )
+# Text-Rollen (Rohzustand, ohne Zahlumwandlung): Betriebsart und Status des Waermeerzeugers.
+KPI_TEXT_ROLES = ("operating_mode", "generator_state")
+#: Liefer-Signale fuer die Waermelieferung auf dem Server (Audit 4 P-B). Gegenstueck: heizungsserver
+#: generic/history.TELEMETRY_DELIVERY_FIELDS (Contract-Check "Lieferrollen").
+DELIVERY_ROLES = ("generator_hours", "generator_starts", "generator_state")
 KPI_ENERGY_ROLES = (
     "energy_electrical_heating", "energy_electrical_dhw",
     "energy_primary_heating", "energy_primary_dhw",
@@ -32,15 +38,10 @@ REGULATION_FIELDS = ("room_target", "outdoor_temp", "flow_setpoint")
 #: Feldname und Quellen prueft der Contract-Check 21 gegen heizungsserver.generic.history.
 DATENFEHLER_KEY = "datenfehler"
 
-#: Telemetrie-Flag "Therme liefert trotz Anforderung keine Waerme" (TP12f). Feldname prueft der
-#: Contract-Check 27 gegen heizungsserver.generic.history.TELEMETRY_WAERME_KEY.
-WAERME_FEHLT_KEY = "waerme_fehlt"
-
 
 def run_telemetry_tick(
     manifest, signals, mqtt_client, boost_active: bool, failsafe_active: bool,
     datenfehler: DataFault | None = None, room_target: float | None = None,
-    waerme: Callable[[float, dict, dict], bool] | None = None,
     energy: Callable[[dict], dict] | None = None,
 ) -> None:
     """Liest room_actual selbst (lokaler HA-REST-Aufruf, kein Cloud-Roundtrip). `energy` normalisiert die
@@ -51,12 +52,10 @@ def run_telemetry_tick(
         room_actual = signals.get_state(manifest.refs["room_actual"])
         kpi_fields = read_kpi_fields(manifest, signals, energy)
         regulation_fields = read_regulation_fields(manifest, signals, room_target)
-        waerme_fehlt = False if waerme is None else waerme(room_actual, kpi_fields, regulation_fields)
         publish_telemetry(
             mqtt_client=mqtt_client, room_actual=room_actual,
             boost_active=boost_active, failsafe_active=failsafe_active,
             kpi_fields=kpi_fields, datenfehler=datenfehler, regulation_fields=regulation_fields,
-            waerme_fehlt=waerme_fehlt,
         )
     except Exception:
         logger.exception("Fehler beim Veroeffentlichen der KPI-Telemetrie, wird beim naechsten Tick erneut versucht")
@@ -65,13 +64,11 @@ def run_telemetry_tick(
 def publish_telemetry(
     mqtt_client, room_actual: float, boost_active: bool, failsafe_active: bool, kpi_fields: dict | None = None,
     datenfehler: DataFault | None = None, regulation_fields: dict | None = None,
-    waerme_fehlt: bool = False,
 ) -> None:
     payload = {
         "room_actual": room_actual,
         "boost_active": boost_active,
         "failsafe_active": failsafe_active,
-        WAERME_FEHLT_KEY: waerme_fehlt,
         "ts": wallclock.now().isoformat(),
         **(kpi_fields or {}),
         **(regulation_fields or {}),
@@ -125,10 +122,11 @@ def read_kpi_fields(manifest, signals, normalize_energy: Callable[[dict], dict] 
             ok, value = _read(role, signals.get_state)
             if ok:
                 kpi_fields[role] = value
-    if "operating_mode" in manifest.refs:
-        ok, value = _read("operating_mode", signals.get_raw_state)
-        if ok:
-            kpi_fields["operating_mode"] = value
+    for role in KPI_TEXT_ROLES:
+        if role in manifest.refs:
+            ok, value = _read(role, signals.get_raw_state)
+            if ok:
+                kpi_fields[role] = value
 
     energy: dict = {}
     for role in KPI_ENERGY_ROLES:

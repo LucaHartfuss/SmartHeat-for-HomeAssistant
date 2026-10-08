@@ -150,6 +150,8 @@ VAILLANT_MYPYLLANT = BindingDescription(
         "min_flow": "Mindestvorlauftemperatur",
     },
     preparation_label="Betriebsart der Zone",
+    # Audit 4 P-B (A4-49): myVAILLANT setzt die Energiesensoren um Mitternacht zurueck (Task 0, D-5).
+    energy_counters=ENERGY_DAILY,
 )
 
 # Weishaupt WWP ueber weishaupt_modbus (Spec 1.2, 5.4; Plan 3b): Schrittweiten aus der Integration (Heizkennlinie 0,05,

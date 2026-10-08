@@ -7,7 +7,6 @@ from smartheat_runtime import backup_store
 from smartheat_runtime.backup_store import load_backup, save_backup
 from smartheat_runtime.delivery import SOURCE_LOCAL, DataFault, DeliveryState, PendingTick
 from smartheat_runtime.state import BridgeState, StateStore, StorageError
-from smartheat_runtime.waerme import WaermeState
 
 # Vollstaendige backup.json, wie 0.16.0 sie schreibt (vor TP11: die Parallelverschiebung hiess
 # noch "offset_current", target_history gab es noch als aktiv gefuehrtes Feld).
@@ -501,33 +500,12 @@ def test_empty_write_budget_is_not_written(make_store, tmp_path):
     assert "write_budget" not in load_backup(tmp_path / "backup.json")
 
 
-def test_waerme_fehlt_seit_survives_a_restart(make_store, tmp_path):
-    store = make_store()
-    store.update(waerme_fehlt_seit="2026-09-30T05:11:00+02:00")
-
-    reloaded = StateStore(tmp_path / "backup.json", tmp_path / "failsafe_state.json")
-
-    assert reloaded.state.waerme_fehlt_seit == "2026-09-30T05:11:00+02:00"
-    assert reloaded.state.waerme is None
-
-
-def test_the_runtime_waerme_phase_is_never_written_to_backup_json(make_store, tmp_path):
-    store = make_store()
-    store.update(waerme=WaermeState(beobachtung_seit=None, unter_schwelle=True))
-    assert not (tmp_path / "backup.json").exists()
-
-
-@pytest.mark.parametrize("raw", [5, "abc", "2026-09-30T05:11:00"])
-def test_an_invalid_waerme_fehlt_seit_falls_back_to_no_flag(make_store, caplog, raw):
-    with caplog.at_level(logging.WARNING):
-        store = make_store({"waerme_fehlt_seit": raw})
-    assert store.state.waerme_fehlt_seit is None
-    assert "waerme_fehlt_seit" in caplog.text
-
-
-def test_a_timezone_aware_waerme_fehlt_seit_loads(make_store):
-    store = make_store({"waerme_fehlt_seit": "2026-09-30T05:11:00+02:00"})
-    assert store.state.waerme_fehlt_seit == "2026-09-30T05:11:00+02:00"
+def test_a_035_backup_with_waerme_fehlt_seit_still_loads(make_store, tmp_path):
+    # Add-on 0.35.0 schrieb waerme_fehlt_seit; 0.36.0 ignoriert den Schluessel und schreibt ihn nicht mehr.
+    store = make_store({"waerme_fehlt_seit": "2026-10-07T08:00:00+02:00"})
+    assert not hasattr(store.state, "waerme_fehlt_seit")
+    store.update(last_ack_at="2026-10-09T10:00:00+02:00")
+    assert "waerme_fehlt_seit" not in json.loads((tmp_path / "backup.json").read_text())
 
 
 def test_heat_limit_fields_round_trip_through_backup(make_store):

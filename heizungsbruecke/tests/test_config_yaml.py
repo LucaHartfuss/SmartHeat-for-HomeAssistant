@@ -74,6 +74,7 @@ def test_config_yaml_has_new_optional_kpi_entity_options():
         "entity_energy_electrical_heating", "entity_energy_electrical_dhw",
         "entity_energy_primary_heating", "entity_energy_primary_dhw",
         "entity_energy_thermal_heating", "entity_energy_thermal_dhw", "entity_energy_electrical_total",
+        "entity_generator_hours", "entity_generator_starts", "entity_generator_state",
     ):
         assert config["options"][key] == ""
         assert config["schema"][key] == "str?"
@@ -85,7 +86,7 @@ def test_every_optional_kpi_role_has_matching_config_option_and_schema():
     from smartheat_runtime.roles import ALL_ROLES
 
     kpi_roles = ALL_ROLES[ALL_ROLES.index("flow_temperature"):]
-    assert len(kpi_roles) == 12
+    assert len(kpi_roles) == 15
     config = _load_config_yaml()
     for role in kpi_roles:
         key = f"entity_{role}"
@@ -146,7 +147,7 @@ def test_tp7_options_are_optional_and_have_no_default():
     schema = config["schema"]
 
     assert schema["abgemeldet"] == "bool?"
-    assert schema["notify_hints_off"] == ["list(raumfuehler|batterie|manueller_eingriff|quellwechsel|therme|schreibbudget|schreibzaehler)?"]
+    assert schema["notify_hints_off"] == ["list(raumfuehler|batterie|manueller_eingriff|quellwechsel|schreibbudget|schreibzaehler)?"]
     assert "abgemeldet" not in config["options"] and "notify_hints_off" not in config["options"]
     assert "abgemeldet" not in _REQUIRED_OPTIONS and "notify_hints_off" not in _REQUIRED_OPTIONS
 

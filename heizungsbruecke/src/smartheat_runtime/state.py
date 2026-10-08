@@ -11,7 +11,6 @@ from pathlib import Path
 
 from smartheat_runtime import backup_store
 from smartheat_runtime.delivery import DeliveryState, from_persisted, to_persisted
-from smartheat_runtime.waerme import WaermeState, parse_since
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +22,7 @@ class StorageError(OSError):
 
 _NUMBER_FIELDS = ("last_room_target", "last_published_target_rt")
 _FLAG_FIELDS = ("boost_active", "emergency_boost_active")
-_TEXT_FIELDS = ("last_daily_trigger_date", "last_ack_at", "waerme_fehlt_seit", "boost_since", "setup_id", "plant_id")
+_TEXT_FIELDS = ("last_daily_trigger_date", "last_ack_at", "boost_since", "setup_id", "plant_id")
 _TEXT_MAP_FIELDS = ("notify_states", "notify_messages")
 _LEVER_MAP_FIELDS = ("restore_point", "originals", "learned")
 _OVERRIDE_FIELDS = ("manual_override", "manual_override_pending")
@@ -36,6 +35,9 @@ BACKUP_FIELDS = (
     + ("write_budget",) + _PLAN3B_FIELDS
 )
 _OMITTED_WHEN_EMPTY = _TEXT_MAP_FIELDS + _LEVER_MAP_FIELDS + ("write_budget",) + _PLAN3B_FIELDS
+# Audit 4 P-B: Schluessel, die Add-on 0.35.0 noch schrieb und die seit 0.36.0 ohne Bedeutung sind; sie werden beim Laden
+# verworfen statt als unbekannte Schluessel weitergeschrieben.
+_DROPPED_KEYS = ("waerme_fehlt_seit",)
 
 
 @dataclass(frozen=True)
@@ -90,11 +92,6 @@ class BridgeState:
     # Schreibbudget je Schluessel (write_budget.py, TP12b): Durchsetzung, Zonenvorbereitung,
     # Boost-Start/-Ende, Wiederherstellung. In backup.json; "last" nur zur Laufzeit gueltig.
     write_budget: dict = field(default_factory=dict)
-    # Seit wann die Therme trotz Anforderung keine Waerme liefert (waerme.py, TP12f): ISO-Zeitpunkt,
-    # uebersteht Neustarts (keine zweite Meldung). Der Phasenzustand darunter ist nur Laufzeit: er aendert sich
-    # mit jedem Tick, und backup.json wird nur bei geaenderten Feldern geschrieben.
-    waerme_fehlt_seit: str | None = None
-    waerme: WaermeState | None = None
     # Plan 3b: erfolgreiche physische Schreibvorgaenge seit der Einrichtung (nur Bindings mit lifetime_hint_at, EEPROM).
     lifetime_writes: int = 0
     # Plan 3b: Hebel, deren Serverwert wegen des Tagesbudgets noch nicht geschrieben ist (LeverPipeline.write_deferred);
@@ -105,6 +102,17 @@ class BridgeState:
     aux_originals: dict = field(default_factory=dict)
     # Plan 3b: Energie-Normalisierung je Kanal {"raw": letzter Rohwert, "sum": monotone Summe} (nur Tageszaehler).
     energy_state: dict = field(default_factory=dict)
+
+
+def parse_since(value) -> datetime | None:
+    """ISO-Zeitpunkt mit Zeitzone aus backup.json (boost_since); alles andere gilt als "kein Zeitpunkt"."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
 
 
 def _is_number(value) -> bool:
@@ -174,11 +182,9 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
     for key in _TEXT_FIELDS:
         if raw.get(key) is None:
             continue
-        # waerme_fehlt_seit, boost_since: nur ein ISO-Zeitpunkt mit Zeitzone ist gueltig, alles andere "kein Flag"
-        # (Spec 1.4; boost_since: Audit 4 P-C2, sonst bricht der lokale Check bei jedem Lauf ab).
-        valid = isinstance(raw[key], str) and (
-            key not in ("waerme_fehlt_seit", "boost_since") or parse_since(raw[key]) is not None
-        )
+        # boost_since: nur ein ISO-Zeitpunkt mit Zeitzone ist gueltig, alles andere "kein Flag" (Audit 4 P-C2, sonst
+        # bricht der lokale Check bei jedem Lauf ab).
+        valid = isinstance(raw[key], str) and (key != "boost_since" or parse_since(raw[key]) is not None)
         if valid:
             values[key] = raw[key]
         else:
@@ -213,7 +219,7 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
         else:
             values["write_budget"] = budget
     _parse_plan3b(raw, values, _invalid)
-    extra = {key: value for key, value in raw.items() if key not in BACKUP_FIELDS}
+    extra = {key: value for key, value in raw.items() if key not in BACKUP_FIELDS and key not in _DROPPED_KEYS}
     return values, extra
 
 
@@ -388,7 +394,7 @@ class StateStore:
 _PLANT_BOUND = (
     "restore_point", "originals", "aux_originals", "learned", "boost_active", "emergency_boost_active", "boost_since",
     "manual_override", "manual_override_pending", "write_budget", "deferred_levers", "energy_state",
-    "lifetime_writes", "last_room_target", "waerme_fehlt_seit",
+    "lifetime_writes", "last_room_target",
 )
 _SETUP_BOUND = ("last_published_target_rt", "last_daily_trigger_date")
 

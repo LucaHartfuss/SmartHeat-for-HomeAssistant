@@ -48,7 +48,7 @@ _FAULT_ART = dict(
     zip((delivery.SOURCE_LOCAL, delivery.SOURCE_SERVER, delivery.SOURCE_WRITE), DATENFEHLER_ARTEN, strict=True)
 )
 
-HINT_FIELDS = ("raumfuehler_ausgefallen", "batterie_niedrig", "manueller_eingriff", "waerme_fehlt")
+HINT_FIELDS = ("raumfuehler_ausgefallen", "batterie_niedrig", "manueller_eingriff")
 EVENT_FIELDS = (
     "schema", "tenant_id", "setup_id", "addon_version", "status", "grund", "notbetrieb", "datenfehler",
     "boost", "letzte_serverantwort", "hebelsatz", "hebel", "gelernt", "abo", "abo_frist_ende", "hinweise",
@@ -176,7 +176,6 @@ def build_event(
             "raumfuehler_ausgefallen": _open_keys(state, "raumfuehler", room_sensors.STATE_FAILED),
             "batterie_niedrig": _open_keys(state, "batterie", battery.STATE_LOW),
             "manueller_eingriff": _manual(state),
-            "waerme_fehlt": state.waerme_fehlt_seit,
         },
     }
 

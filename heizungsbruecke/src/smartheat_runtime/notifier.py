@@ -22,7 +22,7 @@ STATE_OK = "ok"
 # Abschaltbare Hinweis-Kategorien (Spec TP7 3.4). Muss zum config.yaml-Schema und zu const.py der
 # Integration passen (Contract-Check).
 HINT_CATEGORIES = (
-    "raumfuehler", "batterie", "manueller_eingriff", "quellwechsel", "therme", "schreibbudget", "schreibzaehler",
+    "raumfuehler", "batterie", "manueller_eingriff", "quellwechsel", "schreibbudget", "schreibzaehler",
 )
 
 
