@@ -1,13 +1,11 @@
 """Kundentexte vom Host (Spec SHG G2 2.1): die HA-Standardwerte sind die bisherigen Texte (wortgleich)."""
 from dataclasses import fields
 
-from smartheat_runtime import abo, datentraeger, delivery
+from smartheat_runtime import delivery
 from smartheat_runtime.texts import HA_TEXTS, HostTexts
 
 
 def test_ha_defaults_are_the_previous_texts():
-    assert HA_TEXTS.access_denied == abo.ACCESS_DENIED_MESSAGE
-    assert HA_TEXTS.storage_failed == datentraeger.FAILED_MESSAGE
     assert HA_TEXTS.delivery_prefix == "Heizungsbrücke"
     assert "SmartHeat-Integration neu anmelden" in HA_TEXTS.relogin_log_rejected
     assert "%s" in HA_TEXTS.relogin_log_status

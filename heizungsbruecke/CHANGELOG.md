@@ -3,6 +3,12 @@
 Wird im Update-Dialog des Supervisors angezeigt. Pro Version ein Abschnitt `## X.Y.Z`; der
 Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Release.
 
+## Unveröffentlicht
+
+- **Aufräumen ohne Verhaltensänderung (Audit 4 P-E):** Die Übernahme alter `backup.json`-Felder aus Add-on 0.29.0
+  entfällt; alle Anlagen laufen seit Release 2 auf neueren Versionen. Doppelte Meldungstexte und veraltete Kommentare
+  sind bereinigt. Kein „Neu konfigurieren" nötig.
+
 ## 0.35.0
 
 - **Kein „Neu konfigurieren“ nötig:** Das Optionsschema ist unverändert. Die Integration ab 0.12.0 genügt; für `client1`

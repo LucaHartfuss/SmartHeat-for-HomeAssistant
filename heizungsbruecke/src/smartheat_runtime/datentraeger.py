@@ -8,10 +8,6 @@ from smartheat_runtime.texts import HA_TEXTS, HostTexts
 
 KEY = "datentraeger"
 STATE_FAILED = "nicht_beschreibbar"
-FAILED_MESSAGE = (
-    "SmartHeat: Der Datenträger des Home-Assistant-Systems ist nicht beschreibbar (voll oder "
-    "schreibgeschützt). Die Heizungsregelung pausiert, die Anlage behält ihre letzten Werte."
-)
 OK_MESSAGE = "SmartHeat: Der Datenträger ist wieder beschreibbar, die Heizungsregelung läuft wieder."
 
 

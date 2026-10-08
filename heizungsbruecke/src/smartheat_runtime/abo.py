@@ -17,10 +17,6 @@ ABO_ENDED_MESSAGE = (
     "die zuletzt gelernten Werte bleiben eingestellt."
 )
 ABO_ACTIVE_MESSAGE = "SmartHeat: Abo wieder aktiv, die Heizungssteuerung läuft wieder normal."
-ACCESS_DENIED_MESSAGE = (
-    "SmartHeat: Der Server lehnt die Zugangsdaten ab, die Heizkurve wird nicht mehr angepasst. "
-    "Home Assistant fordert zur erneuten Anmeldung bei SmartHeat auf (Einstellungen → Geräte & Dienste)."
-)
 ACCESS_OK_MESSAGE = "SmartHeat: Die Zugangsdaten werden wieder angenommen, die Heizungssteuerung läuft wieder normal."
 ACCESS_DENIED_REASON = "Zugangsdaten vom Server abgelehnt"
 RESTORE_KEY = "wiederherstellung"

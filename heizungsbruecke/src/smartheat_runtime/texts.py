@@ -1,5 +1,4 @@
-"""Kundentexte und Log-Texte, die den Host nennen (Spec SHG G2 2.1). Standardwerte = die Texte des HA-Add-ons
-(wortgleich mit abo.ACCESS_DENIED_MESSAGE und datentraeger.FAILED_MESSAGE, tests/test_texts.py); das Gateway liefert
+"""Kundentexte und Log-Texte, die den Host nennen (Spec SHG G2 2.1). Standardwerte = die Texte des HA-Add-ons; das Gateway liefert
 eigene ueber Host.texts. Importiert nichts aus dem Paket (kein Zyklus)."""
 from dataclasses import dataclass
 
