@@ -7,7 +7,7 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
 
 - **Aufräumen ohne Verhaltensänderung (Audit 4 P-E):** Die Übernahme alter `backup.json`-Felder aus Add-on 0.29.0
   entfällt; alle Anlagen laufen seit Release 2 auf neueren Versionen. Doppelte Meldungstexte und veraltete Kommentare
-  sind bereinigt. Kein „Neu konfigurieren" nötig.
+  sind bereinigt. Kein „Neu konfigurieren“ nötig.
 
 ## 0.35.0
 
