@@ -282,6 +282,31 @@ def test_a_refresh_during_a_new_login_keeps_the_pending_login_alive(fake, tmp_pa
     assert tokens.logged_in() and "pending" not in json.loads((tmp_path / "vicare.json").read_text())
 
 
+def test_a_pending_login_survives_a_revoked_refresh_token(tmp_path):
+    """Audit 4, A4-33: bemerkt die Laufzeit das widerrufene Refresh-Token (invalid_grant), waehrend der Kunde im Portal
+    die erneute Anmeldung vorbereitet hat, darf 'abgelaufen' den PKCE-Zustand nicht loeschen; finish gelingt."""
+    class Resp:
+        def __init__(self, status, body):
+            self.status_code, self._body = status, body
+
+        def json(self):
+            return self._body
+
+    def post(url, data, timeout):
+        if data["grant_type"] == "refresh_token":
+            return Resp(400, {"error": "invalid_grant"})
+        return Resp(200, {"access_token": "a2", "refresh_token": "r2", "expires_in": 3600})
+
+    tokens = oauth.TokenStore(tmp_path / "vicare.json", wall=lambda: 5000.0, iam="https://iam.test", post=post)
+    tokens._save({"client_id": "c", "access_token": "a1", "refresh_token": "r1", "expires_at": 9e9})
+    tokens.begin("c", "r")
+    with pytest.raises(oauth.NotLoggedIn):
+        tokens.access_token(force_refresh=True)
+    assert tokens.expired() and "pending" in json.loads((tmp_path / "vicare.json").read_text())
+    assert tokens.finish("code-vom-portal", "r") is None
+    assert tokens.logged_in() and not tokens.expired()
+
+
 def test_not_logged_in_without_a_file(tmp_path):
     tokens = oauth.TokenStore(tmp_path / "vicare.json", iam="http://127.0.0.1:1")
     assert not tokens.logged_in() and not tokens.expired()

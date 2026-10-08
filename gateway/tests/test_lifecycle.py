@@ -1,4 +1,5 @@
 import datetime
+import json
 import stat
 
 import pytest
@@ -273,6 +274,15 @@ def test_sign_off_success_then_cleanup(ctx):
     assert not ctx.paths.runtime_dir.exists() and not ctx.paths.runtime_config.exists()
     assert not ctx.paths.runtime_secrets.exists() and ctx.paths.device_dir.exists()
     assert not lifecycle.cleanup_after_sign_off(ctx)  # einmal genuegt
+
+
+def test_sign_off_drops_the_installation_token(ctx):
+    """Audit 4, A4-38: die abgemeldete Konfiguration traegt keine Zugangsdaten mehr, auch nicht den Installationstoken."""
+    write_runtime_files(ctx.paths, apply_config())
+    assert "installation_token" in json.loads(ctx.paths.runtime_secrets.read_text())
+    execute(ctx, "sign_off", {})
+    assert "installation_token" not in json.loads(ctx.paths.runtime_secrets.read_text())
+    assert "installation_token" not in load_raw(ctx.paths)
 
 
 def test_sign_off_repeated_after_restart_keeps_its_setup_id(ctx):

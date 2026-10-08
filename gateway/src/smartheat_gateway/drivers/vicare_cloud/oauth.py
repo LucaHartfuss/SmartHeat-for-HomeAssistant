@@ -145,7 +145,9 @@ class TokenStore:
                                         "refresh_token": data["refresh_token"]},
                                        revoked_only=True)
             if body is None:
-                self._save({"client_id": data.get("client_id"), "abgelaufen": True})
+                # Audit 4, A4-33: ein vorbereiteter PKCE-Zustand bleibt, die laufende Anmeldung im Portal gelingt noch
+                kept = {"pending": data["pending"]} if isinstance(data.get("pending"), dict) else {}
+                self._save({"client_id": data.get("client_id"), "abgelaufen": True, **kept})
                 raise NotLoggedIn("Die Anmeldung bei Viessmann ist abgelaufen.")
             data = self._with_tokens(data, body)
             self._save(data)

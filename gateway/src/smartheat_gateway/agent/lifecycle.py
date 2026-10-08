@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 APPLY_CONFIRM_SECONDS = 120
 ROOM_TARGET_CONFIRM_SECONDS = 60
 SIGN_OFF_WAIT_SECONDS = 24 * 3600
-_CREDENTIAL_KEYS = ("mqtt_username", "mqtt_password", "tls_certificate", "cloudflared")
+# Audit 4, A4-38: auch der Installationstoken faellt beim Abmelden weg
+_CREDENTIAL_KEYS = ("mqtt_username", "mqtt_password", "tls_certificate", "cloudflared", "installation_token")
 OTHER_PLANT_TEXT = (
     "„Neu konfigurieren“ gilt nur für dieselbe Anlage. Für eine andere Anlage das Gateway entfernen und neu einrichten."
 )
@@ -47,7 +48,9 @@ def merge_existing_secrets(paths: Paths, config: dict) -> dict:
     (Abmelden) bleiben sie nicht erhalten. Aus einer abgemeldeten Einrichtung wird nie etwas uebernommen."""
     existing = load_raw(paths)
     merged = dict(config)
-    if existing.get("abgemeldet") is True:
+    # Audit 4, A4-38: auch die abgemeldete Konfiguration selbst (sign_off) uebernimmt nichts, sonst kaeme der
+    # Installationstoken ueber diese Regel zurueck.
+    if existing.get("abgemeldet") is True or merged.get("abgemeldet") is True:
         return merged
     if "installation_token" not in merged and existing.get("installation_token"):
         merged["installation_token"] = existing["installation_token"]
