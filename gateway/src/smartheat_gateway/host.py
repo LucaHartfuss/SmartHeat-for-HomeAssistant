@@ -128,7 +128,8 @@ class GatewayHost:
         runtime = dataclasses.replace(runtime, battery_refs=self._battery_refs(gateway))
         self._store, self._gateway, self._runtime_config = store, gateway, runtime
         self.raum = RaumPublisher(self._bus, self.signals, store, lambda: wallclock.now().isoformat())
-        return Loaded(config=runtime, manifest=manifest, binding=driver)
+        return Loaded(config=runtime, manifest=manifest, binding=driver,
+                      plant_id=registry.plant_id(gateway.driver_spec()))
 
     def trigger_source(self, manifest: ChannelManifest, worker: RegulationWorker) -> TriggerSource:
         assert self._store is not None and self._gateway is not None and self._runtime_config is not None

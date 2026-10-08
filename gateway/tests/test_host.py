@@ -6,6 +6,7 @@ from fakes import FakeBus
 from world import GatewayWorld
 
 from smartheat_gateway.config import GatewayConfig
+from smartheat_gateway.drivers import registry
 from smartheat_gateway.drivers.registry import create
 from smartheat_gateway.host import SHG_TEXTS, GatewayHost, build_manifest
 from smartheat_gateway.paths import Paths
@@ -111,6 +112,23 @@ def test_waiting_for_devices_is_bounded_by_the_real_clock_not_the_injected_one(d
     loaded = host.load()  # leeres bridge/devices, die injizierte Uhr steht still
     assert loaded.config.battery_refs == ()
     assert 0.25 <= time.monotonic() - started < 5
+
+
+def test_load_reports_the_plant_identity_of_the_driver(data_dir, clock):
+    # Audit 4, A4-08: die Laufzeit bindet backup.json an diese Kennung
+    write_runtime_files(Paths(data_dir), apply_config())
+    host = GatewayHost(Paths(data_dir), FakeBus(), clock=clock, devices_wait_seconds=0.1, driver_threads=False)
+    loaded = host.load()
+    assert loaded.plant_id == registry.plant_id({"id": "simulation", "parameter": {"lever_set": "viessmann_vicare"}})
+    assert loaded.plant_id is not None and "viessmann_vicare" in loaded.plant_id
+
+
+def test_same_plant_compares_driver_and_identity_parameters():
+    base = {"id": "simulation", "parameter": {"lever_set": "viessmann_vicare", "heizkreis": 0, "poll_seconds": 60}}
+    assert registry.same_plant(base, {**base, "parameter": {**base["parameter"], "poll_seconds": 300}})
+    assert not registry.same_plant(base, {**base, "parameter": {**base["parameter"], "heizkreis": 1}})
+    assert not registry.same_plant(base, {"id": "vicare_cloud", "parameter": base["parameter"]})
+    assert not registry.same_plant(None, base)
 
 
 def test_manifest_requires_the_roles_of_the_lever_set(data_dir, clock):

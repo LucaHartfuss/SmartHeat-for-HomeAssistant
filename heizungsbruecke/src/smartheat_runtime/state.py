@@ -23,7 +23,7 @@ class StorageError(OSError):
 
 _NUMBER_FIELDS = ("last_room_target", "last_published_target_rt")
 _FLAG_FIELDS = ("boost_active", "emergency_boost_active")
-_TEXT_FIELDS = ("last_daily_trigger_date", "last_ack_at", "waerme_fehlt_seit", "boost_since")
+_TEXT_FIELDS = ("last_daily_trigger_date", "last_ack_at", "waerme_fehlt_seit", "boost_since", "setup_id", "plant_id")
 _TEXT_MAP_FIELDS = ("notify_states", "notify_messages")
 _LEVER_MAP_FIELDS = ("restore_point", "originals", "learned")
 _OVERRIDE_FIELDS = ("manual_override", "manual_override_pending")
@@ -58,6 +58,9 @@ class BridgeState:
     last_room_target: float | None = None
     last_published_target_rt: float | None = None
     last_daily_trigger_date: str | None = None
+    # Audit 4, A4-08: Einrichtung und Anlage, zu denen der Zustand gehoert (bind_to_setup).
+    setup_id: str | None = None
+    plant_id: str | None = None
     delivery: DeliveryState = field(default_factory=DeliveryState)
     # Zuletzt gemeldeter Zustand je Meldeschluessel (notifier.py); fehlender Schluessel = "ok".
     notify_states: dict = field(default_factory=dict)
@@ -476,3 +479,35 @@ class StateStore:
             logger.warning("%s enthaelt kein JSON-Objekt, starte mit Standardwerten", self._failsafe_path)
             return DeliveryState()
         return from_persisted(raw)
+
+
+# Audit 4, A4-08 (Nutzer-Entscheidung E3): was zur Anlage gehoert (bei einer anderen Anlage verworfen) und was zur
+# Einrichtung (bei jeder neuen Einrichtung zurueckgesetzt: Erstkontakt-Tick, frische Zustellung).
+_PLANT_BOUND = (
+    "restore_point", "originals", "aux_originals", "learned", "boost_active", "emergency_boost_active", "boost_since",
+    "manual_override", "manual_override_pending", "write_budget", "deferred_levers", "energy_state",
+    "lifetime_writes", "last_room_target", "waerme_fehlt_seit",
+)
+_SETUP_BOUND = ("last_published_target_rt", "last_daily_trigger_date")
+
+
+def bind_to_setup(store: "StateStore", setup_id: str | None, plant_id: str) -> str:
+    """Bindet den Zustand an Einrichtung und Anlage. Ein Bestand ohne Bindung (bis Add-on 0.34.0) gilt als gebunden
+    (nichts verwerfen, Review Focus 1). Andere Anlage: anlagenbezogene Felder auf den Standardwert. Neue Einrichtung
+    derselben Anlage: Ursprungswerte bleiben, nur Tick-Buchung und Zustellung beginnen neu."""
+    state, defaults = store.state, BridgeState()
+    if state.setup_id is None and state.plant_id is None:
+        store.update(setup_id=setup_id, plant_id=plant_id)
+        return "bestand"
+    if state.plant_id != plant_id:
+        logger.warning("Andere Anlage als in backup.json: anlagenbezogener Zustand wird verworfen")
+        store.update(**{key: getattr(defaults, key) for key in _PLANT_BOUND + _SETUP_BOUND},
+                     setup_id=setup_id, plant_id=plant_id)
+        store.set_delivery(DeliveryState())
+        return "andere_anlage"
+    if state.setup_id != setup_id:
+        logger.info("Neue Einrichtung derselben Anlage: Ursprungswerte bleiben, Erstkontakt-Tick folgt")
+        store.update(**{key: getattr(defaults, key) for key in _SETUP_BOUND}, setup_id=setup_id)
+        store.set_delivery(DeliveryState())
+        return "neue_einrichtung"
+    return "unveraendert"

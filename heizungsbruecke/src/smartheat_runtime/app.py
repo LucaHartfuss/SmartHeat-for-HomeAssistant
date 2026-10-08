@@ -23,6 +23,7 @@ from smartheat_runtime import (
     entitlement,
     mqtt_link,
     regulation,
+    roles,
     room_sensors,
     telemetry,
     ticks,
@@ -50,7 +51,7 @@ from smartheat_runtime.runtime import (
     Runtime,
 )
 from smartheat_runtime.runtime_config import BootInfo, RuntimeConfig
-from smartheat_runtime.state import StateStore, StorageError
+from smartheat_runtime.state import StateStore, StorageError, bind_to_setup
 from smartheat_runtime.status import (
     ABO_AKTIV,
     HEARTBEAT_SECONDS,
@@ -117,6 +118,8 @@ class Loaded:
     manifest: ChannelManifest
     binding: PlantBinding
     notices: tuple[Notice, ...] = ()
+    # Audit 4, A4-08: Anlagen-Kennung des Hosts; None = aus den Hebel-Referenzen des Manifests (roles.lever_refs_identity).
+    plant_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -604,6 +607,11 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic) -> Runtime | 
     for notice in loaded.notices:
         notifier.notify(notice.key, notice.state, notice.message, critical=False)
     config = loaded.config
+    # Audit 4, A4-08: Zustand an Einrichtung und Anlage binden, bevor irgendetwas daraus gelesen wird.
+    try:
+        bind_to_setup(store, boot.setup_id, loaded.plant_id or roles.lever_refs_identity(loaded.manifest))
+    except StorageError:
+        logger.warning("Bindung an Einrichtung und Anlage nicht gespeichert, gilt bis zum naechsten Schreiben", exc_info=True)
     rt = Runtime(
         manifest=loaded.manifest, signals=host.signals, config=config,
         worker=RegulationWorker(clock=clock), store=store,

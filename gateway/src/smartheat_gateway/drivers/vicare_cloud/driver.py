@@ -43,6 +43,8 @@ class ViCareCloudDriver:
     login_kind = LOGIN_OAUTH
     LEVER_SETS = (caps.LEVER_SET,)
     REJECTION_REASONS = caps.REJECTIONS
+    # Audit 4, A4-08: Parameter, die die Anlage bestimmen (registry.same_plant/plant_id).
+    IDENTITY_PARAMETERS = ("installation_id", "gateway_serial", "device_id", "heizkreis")
     quota = QUOTA
 
     def __init__(self, parameter: dict, paths: Paths, *, clock=time.monotonic, writer: bool = False,
