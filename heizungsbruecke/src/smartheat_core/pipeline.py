@@ -419,21 +419,33 @@ class LeverPipeline:
     def _write_group(self, members: list[str], values: Mapping[str, float], *, exempt: bool) -> None:
         """Schreibgruppe (Viessmann setCurve): weicht ein Mitglied ab, werden alle geschrieben (Reihenfolge des
         Hebelsatzes) und zaehlen als EIN Schreibvorgang. Scheitert ein spaeteres Mitglied, schreibt der naechste
-        Versuch wieder alle."""
+        Versuch wieder alle. Hat das Binding write_group (Viessmann-Treiber, Audit 4 A4-31), geht die ganze Gruppe in
+        EINEM Aufruf hinaus: keine Zwischenstellung, ein Aufruf aus dem Kontingent; ein Fehler gilt dem ersten Mitglied.
+        Die Buchfuehrung (letzter Schreibzeitpunkt und -wert) bleibt je Mitglied."""
         targets = {lever: self._target(lever, values[lever]) for lever in members}
         if all(self._matches_the_device(lever, target) for lever, target in targets.items()):
             return
         if not exempt:
             self._check_daily_budget(members[0])
         before = self._binding.physical_writes
+        group_write = getattr(self._binding, "write_group", None)
         try:
-            for lever, target in targets.items():
+            if group_write is not None:
                 try:
-                    self._binding.write(lever, target)
+                    group_write(targets)
                 except Exception as error:
-                    raise DeviceWriteError(lever, self._binding.ref(lever), error) from error
-                self._last_write_at[lever] = self._clock()
-                self._last_written[lever] = target
+                    raise DeviceWriteError(members[0], self._binding.ref(members[0]), error) from error
+                for lever, target in targets.items():
+                    self._last_write_at[lever] = self._clock()
+                    self._last_written[lever] = target
+            else:
+                for lever, target in targets.items():
+                    try:
+                        self._binding.write(lever, target)
+                    except Exception as error:
+                        raise DeviceWriteError(lever, self._binding.ref(lever), error) from error
+                    self._last_write_at[lever] = self._clock()
+                    self._last_written[lever] = target
         finally:
             self._count_physical(min(self._binding.physical_writes - before, 1))
 

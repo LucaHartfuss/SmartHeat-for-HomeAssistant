@@ -248,6 +248,19 @@ class ViCareCloudDriver:
             self._overlay[lever], self._overlay_at[lever] = written, self._clock()
             self.physical_writes += 1
 
+    def write_group(self, values: Mapping[str, float]) -> None:
+        """Steigung und Niveau in EINEM setCurve (Audit 4, A4-31): keine Zwischenstellung mit dem alten Partnerwert,
+        ein Aufruf aus dem Kontingent. Die Pipeline nutzt diese optionale Methode fuer die Schreibgruppe."""
+        if set(values) != set(CURVE_LEVERS):
+            raise ValueError(f"Schreibgruppe {sorted(values)} ist nicht {list(CURVE_LEVERS)}")
+        self._fresh()  # QuotaExhausted / nicht_angemeldet, bevor ein Aufruf entsteht
+        sent = {"curve": round(float(values["curve"]), 1), "level": int(round(float(values["level"])))}
+        self._execute(caps.CURVE.format(n=self._n), "setCurve", {"shift": sent["level"], "slope": sent["curve"]})
+        with self._lock:
+            for lever in CURVE_LEVERS:
+                self._overlay[lever], self._overlay_at[lever] = float(sent[lever]), self._clock()
+            self.physical_writes += 1
+
     def needs_preparation(self) -> bool:
         return True
 

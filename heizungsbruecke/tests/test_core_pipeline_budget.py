@@ -268,3 +268,54 @@ def test_vaillant_binding_counts_physical_writes_too():
     binding = HaPlantBinding(ha, ChannelManifest(refs={"curve_current": "number.curve"}), VAILLANT_MYPYLLANT)
     binding.write("curve", 0.9)
     assert binding.physical_writes == 1
+
+
+class GroupBinding(HaPlantBinding):
+    """Binding mit optionaler Gruppenschreibung (Audit 4, A4-31): ein physischer Aufruf fuer alle Mitglieder."""
+
+    def __init__(self, ha, manifest, description):
+        super().__init__(ha, manifest, description)
+        self.group_calls = []
+        self.single_calls = []
+        self.group_error = None
+
+    def write(self, lever, value):
+        self.single_calls.append((lever, value))
+        super().write(lever, value)
+
+    def write_group(self, values):
+        if self.group_error is not None:
+            raise self.group_error
+        self.group_calls.append(dict(values))
+        self.physical_writes += 1
+
+
+def _group_pipeline(make_store, clock, description=VIESSMANN):
+    store = make_store()
+    ha = Ha({"number.slope": 1.0, "number.shift": 0.0, "number.normal": 20.0})
+    binding = GroupBinding(ha, VI_MANIFEST, description)
+    pipeline = LeverPipeline(store, binding, VI_SAFETY, clock=clock)
+    clock.advance(description.settle_seconds + 1)
+    return pipeline, binding, store
+
+
+def test_a_binding_with_write_group_gets_one_call_with_all_targets(make_store, clock):
+    # Audit 4, A4-31: Gruppenschreibung statt zwei Einzelschreibvorgaengen
+    counted = dataclasses.replace(VIESSMANN, daily_write_limit=10, lifetime_hint_at=50000)
+    pipeline, binding, store = _group_pipeline(make_store, clock, counted)
+    pipeline.apply_server_values({"curve": 1.2, "level": -2.0, "room_setpoint": 20.0})
+    assert binding.group_calls == [{"curve": 1.2, "level": -2.0}] and binding.single_calls == []
+    assert _total(store) == 1 and store.state.lifetime_writes == 1
+    # je Mitglied gilt der Hebel als geschrieben: der naechste Tick mit denselben Zielwerten schreibt nichts mehr
+    assert pipeline._last_written["curve"] == 1.2 and pipeline._last_written["level"] == -2.0
+
+
+def test_a_failing_group_write_names_the_first_member_and_counts_nothing(make_store, clock):
+    counted = dataclasses.replace(VIESSMANN, daily_write_limit=10)
+    pipeline, binding, store = _group_pipeline(make_store, clock, counted)
+    binding.group_error = RuntimeError("abgelehnt")
+    with pytest.raises(DeviceWriteError) as error:
+        pipeline.apply_server_values({"curve": 1.2, "level": -2.0, "room_setpoint": 20.0})
+    assert error.value.lever == "curve"
+    assert "curve" not in pipeline._last_written and "level" not in pipeline._last_written
+    assert _total(store) == 0

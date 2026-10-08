@@ -58,6 +58,38 @@ def test_curve_and_level_are_written_as_one_group_without_reverting_the_first_me
     assert driver.physical_writes == 2  # die Pipeline zaehlt die Gruppe als einen Schreibvorgang (min(diff, 1))
 
 
+def test_a_write_group_sends_one_setcurve_with_both_values(env):
+    # Audit 4, A4-31 (GW-4): keine Zwischenstellung mit dem alten Partnerwert, ein Aufruf aus dem Kontingent
+    server, driver, paths, clock = env
+    driver.write_group({"curve": 1.2, "level": 1.0})
+    assert [c["params"] for c in server.commands] == [{"shift": 1, "slope": 1.2}] and driver.physical_writes == 1
+
+
+def test_a_write_group_sets_the_overlay_for_both_members_and_rejects_foreign_levers(env):
+    server, driver, paths, clock = env
+    server.control({"settle": 10_000.0})  # die Cloud zeigt den neuen Wert lange nicht
+    driver.write_group({"curve": 1.15, "level": 2.4})
+    driver.poll_once()
+    driver.write("room_setpoint", 21.0)
+    driver.write_group({"curve": 1.0, "level": 3.0})
+    assert [c["params"] for c in server.commands][1:] == [
+        {"targetTemperature": 21.0}, {"shift": 3, "slope": 1.0}] and driver.physical_writes == 3
+    with pytest.raises(ValueError):
+        driver.write_group({"curve": 1.0})
+    with pytest.raises(ValueError):
+        driver.write_group({"curve": 1.0, "level": 1.0, "room_setpoint": 20.0})
+    assert len(server.commands) == 3
+
+
+def test_a_rejected_write_group_raises_and_counts_nothing(env):
+    server, driver, paths, clock = env
+    with pytest.raises(RuntimeError):
+        driver.write_group({"curve": 9.9, "level": 1.0})  # ausserhalb der Constraints
+    assert driver.physical_writes == 0
+    driver.write("level", 1.0)
+    assert server.commands[-1]["params"] == {"shift": 1, "slope": 1.4}
+
+
 def test_room_setpoint_is_the_normal_program_temperature(env):
     server, driver, paths, clock = env
     driver.write("room_setpoint", 21.0)

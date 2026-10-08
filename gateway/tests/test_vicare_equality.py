@@ -31,12 +31,23 @@ SAFETY = resolve_local_safety("viessmann_vicare", "Heizkoerper")
 NAMES = {"number.slope": "curve", "number.shift": "level", "number.normal_temperature": "room_setpoint"}
 
 
+def curve_pairs(log):
+    """Anzahl der Schreibgruppen (curve unmittelbar gefolgt von level) in einem normalisierten Protokoll."""
+    return sum(1 for first, second in zip(log, log[1:], strict=False)
+               if first[:2] == ("hebel", "curve") and second[:2] == ("hebel", "level"))
+
+
 class HaWorld:
     """Fake-HA wie in test_ha_binding_viessmann; normalisiert jeden Schreibvorgang auf (Art, Hebel/Programm, Wert)."""
 
     def __init__(self, program):
         self.ha = FakeHa(program, **{"number.slope": 1.4, "number.shift": 0.0, "number.normal_temperature": 20.0})
         self.binding = ViessmannHaBinding(self.ha, MANIFEST, BINDING)
+
+    def calls(self, log):
+        """Physische Aufrufe: der HA-Pfad schreibt zwei number-Entities je Schreibgruppe, der Treiber nur ein setCurve
+        (Audit 4, A4-31); gleichgesetzt wird die Gruppe als EIN Aufruf (so zaehlt sie auch die Pipeline)."""
+        return self.binding.physical_writes - curve_pairs(log)
 
     def log(self):
         return [("preset", call[2]) if call[0] == "preset" else ("hebel", NAMES[call[1]], call[2])
@@ -72,8 +83,9 @@ class CloudWorld:
         self.binding = self.driver
 
     def _record_curve_writes(self):
-        """Haelt fest, fuer welchen Hebel der Treiber write() aufruft: setCurve traegt immer BEIDE Werte und gibt
-        deshalb nicht preis, welcher Hebel gemeint war (der HA-Pfad schreibt zwei number-Entities einzeln)."""
+        """Haelt fest, fuer welchen Hebel der Treiber write() aufruft (oder dass write_group beide schreibt): setCurve
+        traegt immer BEIDE Werte und gibt deshalb nicht preis, welcher Hebel gemeint war (der HA-Pfad schreibt zwei
+        number-Entities einzeln)."""
         real_write = self.driver.write
 
         def write(lever, value):
@@ -82,6 +94,16 @@ class CloudWorld:
                 self.curve_writes.append(lever)
 
         self.driver.write = write
+        real_group = self.driver.write_group
+
+        def write_group(values):
+            real_group(values)
+            self.curve_writes.append("gruppe")  # Audit 4, A4-31: ein setCurve fuer beide Mitglieder
+
+        self.driver.write_group = write_group
+
+    def calls(self, log):
+        return self.binding.physical_writes
 
     def log(self):
         entries, writes = [], list(self.curve_writes)
@@ -89,6 +111,11 @@ class CloudWorld:
             if command["command"] == "setCurve":
                 # genau ein setCurve je Hebelschreibvorgang, in der Reihenfolge der Aufrufe
                 lever = writes.pop(0)
+                if lever == "gruppe":
+                    # Gruppenschreibung (A4-31): der HA-Pfad schreibt dieselben zwei Hebel nacheinander (curve, level)
+                    entries.append(("hebel", "curve", command["params"]["slope"]))
+                    entries.append(("hebel", "level", float(command["params"]["shift"])))
+                    continue
                 value = command["params"]["slope"] if lever == "curve" else float(command["params"]["shift"])
                 entries.append(("hebel", lever, value))
             elif command["command"] == "setTemperature":
@@ -116,7 +143,8 @@ def scenario(world, store, clock):
     pipeline = LeverPipeline(store, world.binding, SAFETY, clock=clock)
     clock.advance(BINDING.settle_seconds + 1)
     pipeline.apply_server_values({"curve": 1.1, "level": 2.0, "room_setpoint": 21.0})
-    start_log, start_writes = world.log(), world.binding.physical_writes
+    start_log = world.log()
+    start_writes = world.calls(start_log)
     originals, aux = dict(store.state.originals), dict(store.state.aux_originals)
     world.clear()
     world.refresh()
