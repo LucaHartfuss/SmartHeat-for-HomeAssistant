@@ -88,3 +88,19 @@ def test_agent_instance_does_not_create_the_plant_file(paths, clock):
     agent = create("simulation", {}, paths, clock=clock, writer=False)
     agent.probe()
     assert not (paths.sim_dir / "plant.json").exists()
+
+
+def test_generator_hours_rise_and_stand_still_without_heat(paths, clock):
+    # Audit 4 P-B: ohne Liefer-Signal lernt der Server nicht (E5); keine_waerme bildet einen Waermeausfall nach
+    driver = _sim(paths, clock)
+    assert "generator_hours" in driver.signals()
+    first = driver.read_signal("generator_hours")
+    clock.advance(1800)
+    driver.poll_once()
+    second = driver.read_signal("generator_hours")
+    assert second > first
+    (paths.sim_dir / "control.json").write_text(json.dumps({"keine_waerme": True}))
+    clock.advance(1800)
+    driver.poll_once()
+    assert driver.read_signal("generator_hours") == second
+    assert driver.read_signal("flow_temperature") == 29.5

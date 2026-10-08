@@ -1,7 +1,9 @@
 # Changelog SmartHeat-Gateway
 
-## Unveröffentlicht
+## 0.5.0
 
+- Neu: Liefer-Signale (Betriebsstunden, Starts, Status, Betriebsart) aus der Viessmann-Cloud und im Simulations-Treiber
+  (Audit 4 P-B). Die Feature-Namen sind aus PyViCare abgeleitet und an einer echten Anlage noch nicht geprüft (G4-Pilot).
 - Laufzeit: Übernahme alter `backup.json`-Felder aus Add-on 0.29.0 entfernt (betrifft das Gateway nicht, Audit 4 P-E).
 
 ## 0.4.0

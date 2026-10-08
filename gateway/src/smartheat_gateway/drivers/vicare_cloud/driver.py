@@ -187,6 +187,10 @@ class ViCareCloudDriver:
             number = caps.number_value(index.get(template.format(n=n)), prop)
             if number is not None:
                 cache[role] = number
+        cache.update(caps.generator_signals(index))
+        mode = caps.mode_signal(index, n)
+        if mode is not None:
+            cache["operating_mode"] = mode
         limits: dict[str, tuple[float, float] | None] = {}
         for lever, found in caps.lever_ranges(index, n).items():
             limits[lever] = (found[0], found[1]) if found is not None and found[0] < found[1] else None
@@ -317,7 +321,7 @@ class ViCareCloudDriver:
     def signals(self) -> Mapping[str, str]:
         with self._lock:
             present = set(self._cache)
-        roles = list(ALWAYS_SIGNALS) + [role for role in caps.SIGNAL_FEATURES if role in present
+        roles = list(ALWAYS_SIGNALS) + [role for role in caps.OPTIONAL_SIGNALS if role in present
                                         and role not in ALWAYS_SIGNALS]
         return {role: f"treiber:{role}" for role in roles}
 

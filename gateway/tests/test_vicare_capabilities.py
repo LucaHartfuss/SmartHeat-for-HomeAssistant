@@ -133,3 +133,41 @@ def test_the_signal_feature_names_exist_in_at_least_one_recording():
         seen |= {f.get("feature") for f in json.loads(path.read_text()).get("data", [])}
     for role, (template, _prop) in caps.SIGNAL_FEATURES.items():
         assert template.format(n=0) in seen, f"{role}: {template} kommt in keiner Aufzeichnung vor"
+
+
+def test_generator_signals_from_the_burner_features():
+    # Audit 4 P-B (W-1): Liefer-Signale aus den Brenner-Features
+    index = caps.by_name([
+        {"feature": "heating.burners.0", "properties": {"active": {"type": "boolean", "value": True}}},
+        {"feature": "heating.burners.0.statistics",
+         "properties": {"hours": {"type": "number", "value": 4321.0}, "starts": {"type": "number", "value": 98765}}},
+        {"feature": "heating.circuits.0.operating.modes.active", "properties": {"value": {"type": "string", "value": "dhw"}}},
+    ])
+    assert caps.generator_signals(index) == {"generator_hours": 4321.0, "generator_starts": 98765.0, "generator_state": "on"}
+    assert caps.mode_signal(index, 0) == "dhw"
+
+
+def test_generator_signals_fall_back_to_the_compressor():
+    index = caps.by_name([{"feature": "heating.compressors.0.statistics",
+                           "properties": {"hours": {"type": "number", "value": 12.5}}}])
+    assert caps.generator_signals(index) == {"generator_hours": 12.5}
+
+
+def test_generator_signals_ignore_garbage_and_missing_features():
+    index = caps.by_name([
+        {"feature": "heating.burners.0", "properties": {"active": {"type": "string", "value": "yes"}}},
+        {"feature": "heating.burners.0.statistics", "properties": {"hours": {"type": "number", "value": "x"}}},
+        {"feature": "heating.circuits.0.operating.modes.active", "properties": {"value": {"type": "string", "value": ""}}},
+    ])
+    assert caps.generator_signals(index) == {} and caps.mode_signal(index, 0) is None
+    assert caps.generator_signals({}) == {} and caps.mode_signal({}, 0) is None
+
+
+def test_the_probe_lists_the_delivery_roles_that_are_present():
+    features = good_features() + [
+        feature("heating.burners.0.statistics", {"hours": number(10), "starts": number(3)}),
+        feature("heating.circuits.0.operating.modes.active", {"value": {"type": "string", "value": "heating"}})]
+    signals = only(features)["signale"]
+    assert {"generator_hours", "generator_starts", "operating_mode"} <= set(signals)
+    assert "generator_state" not in signals  # kein Eigenschaft active am Brenner
+    assert not {"generator_hours", "generator_starts", "operating_mode"} & set(only(good_features())["signale"])

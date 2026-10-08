@@ -441,3 +441,22 @@ def test_after_prepare_any_non_foreign_program_of_the_cloud_confirms(env):
             feature["properties"]["value"]["value"] = "reduced"
     driver.poll_once()
     assert driver.read_aux() == {"mode_select": "reduced"} and driver.is_prepared()
+
+
+def test_delivery_signals_are_reported_when_the_cloud_has_the_features(env):
+    # Audit 4 P-B (W-1): Betriebsstunden, Starts, Brennerstatus und Betriebsart als Signale
+    server, driver, paths, clock = env
+    assert not {"generator_hours", "generator_starts", "generator_state", "operating_mode"} & set(driver.signals())
+    for feature in server.features["0"]:
+        if feature["feature"] == "heating.burners.0":
+            feature["properties"] = {"active": {"type": "boolean", "value": True}}
+    server.features["0"] += [
+        {"feature": "heating.burners.0.statistics", "isEnabled": True, "commands": {},
+         "properties": {"hours": {"type": "number", "value": 4321.0}, "starts": {"type": "number", "value": 98765}}},
+        {"feature": "heating.circuits.0.operating.modes.active", "isEnabled": True, "commands": {},
+         "properties": {"value": {"type": "string", "value": "dhw"}}},
+    ]
+    driver.poll_once()
+    assert {"generator_hours", "generator_starts", "generator_state", "operating_mode"} <= set(driver.signals())
+    assert driver.read_signal("operating_mode") == "dhw" and driver.read_signal("generator_state") == "on"
+    assert driver.read_signal("generator_hours") == 4321.0 and driver.read_signal("generator_starts") == 98765.0

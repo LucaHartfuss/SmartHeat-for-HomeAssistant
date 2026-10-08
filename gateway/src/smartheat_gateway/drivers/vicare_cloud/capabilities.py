@@ -28,6 +28,16 @@ SIGNAL_FEATURES: dict[str, tuple[str, str]] = {
     "flow_temperature": ("heating.circuits.{n}.sensors.temperature.supply", "value"),
     "room_temperature": ("heating.circuits.{n}.sensors.temperature.room", "value"),
 }
+# Liefer-Signale (Audit 4 P-B, W-1): Rolle -> Kandidaten (Feature, Eigenschaft), der erste mit Zahl gilt. Brenner 0
+# (Gastherme) vor Verdichter 0 (Waermepumpe); aus PyViCare abgeleitet, an einer echten Anlage erst im G4-Pilot geprueft
+# (ungeprueft).
+GENERATOR_FEATURES: dict[str, tuple[tuple[str, str], ...]] = {
+    "generator_hours": (("heating.burners.0.statistics", "hours"), ("heating.compressors.0.statistics", "hours")),
+    "generator_starts": (("heating.burners.0.statistics", "starts"), ("heating.compressors.0.statistics", "starts")),
+}
+GENERATOR_ACTIVE = ("heating.burners.0", "heating.compressors.0")  # Eigenschaft active (bool) -> "on"/"off"
+MODE = "heating.circuits.{n}.operating.modes.active"  # Eigenschaft value: z. B. dhwAndHeating, dhw, standby (ungeprueft)
+OPTIONAL_SIGNALS = tuple(SIGNAL_FEATURES) + ("generator_hours", "generator_starts", "generator_state", "operating_mode")
 _CIRCUIT = re.compile(r"^heating\.circuits\.(\d+)\.")
 
 
@@ -53,6 +63,27 @@ def _number(raw) -> float | None:
 
 def number_value(feature: dict | None, prop: str) -> float | None:
     return _number(value(feature, prop))
+
+
+def generator_signals(index: dict[str, dict]) -> dict[str, float | str]:
+    found: dict[str, float | str] = {}
+    for role, candidates in GENERATOR_FEATURES.items():
+        for name, prop in candidates:
+            number = number_value(index.get(name), prop)
+            if number is not None:
+                found[role] = number
+                break
+    for name in GENERATOR_ACTIVE:
+        active = value(index.get(name), "active")
+        if isinstance(active, bool):
+            found["generator_state"] = "on" if active else "off"
+            break
+    return found
+
+
+def mode_signal(index: dict[str, dict], n: int) -> str | None:
+    mode = value(index.get(MODE.format(n=n)), "value")
+    return mode if isinstance(mode, str) and mode else None
 
 
 def command_range(feature: dict | None, command: str, param: str) -> tuple[float, float, float] | None:
@@ -108,6 +139,9 @@ def signals_for(index: dict[str, dict], n: int) -> list[str]:
     for role, (template, prop) in SIGNAL_FEATURES.items():
         if number_value(index.get(template.format(n=n)), prop) is not None:
             roles.append(role)
+    roles += sorted(generator_signals(index))
+    if mode_signal(index, n) is not None:
+        roles.append("operating_mode")
     return sorted(roles)
 
 
