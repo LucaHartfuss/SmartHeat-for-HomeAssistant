@@ -1,9 +1,10 @@
 # Changelog SmartHeat-Gateway
 
-## Unveröffentlicht
+## 0.4.0
 
-Plan SHG G4: Treiber `vicare_cloud` (Viessmann-ViCare-Cloud). `gateway/VERSION` bleibt unverändert, die Version
-vergibt das Release.
+Plan SHG G4: Treiber `vicare_cloud` (Viessmann-ViCare-Cloud) und Audit 4 Paket P-C2 (Gateway-Punkte). Die Version 0.4.0
+wird mit dem Add-on-Release `heizungsbruecke` 0.35.0 vergeben, weil sich Code unter `gateway/` geändert hat (Release-Gate);
+das Gateway-Image selbst ist noch nicht veröffentlicht, sein Release (Tag `gateway-v0.4.0`) bleibt getrennt.
 
 - Neuer Treiber `vicare_cloud` (`drivers/vicare_cloud/`): `PlantBinding` mit derselben `VIESSMANN_VICARE_BINDING` wie der
   HA-Pfad, eigener dünner `requests`-Client der ViCare-REST-API (PyViCare ist keine Laufzeit-Abhängigkeit), Schreibgruppe
