@@ -104,17 +104,28 @@ def test_image_job_runs_only_after_a_real_signing_and_never_in_dryrun():
     assert job["with"]["portal_base_url"] == "${{ vars.SHG_PORTAL_BASE_URL }}"
 
 
+def test_sign_job_takes_version_title_and_notes_from_the_tag_not_from_build():
+    # Audit 4, A4-36 (GW-9): build fuehrt Fremdcode aus; seine Ausgaben duerfen Version, Titel und Notizen nicht setzen.
+    jobs = _jobs()
+    sign_steps = yaml.safe_dump(jobs["sign"]["steps"])
+    assert "needs.build.outputs" not in sign_steps
+    assert "needs.build.outputs" not in yaml.safe_dump(jobs["attach-image"]["steps"])
+    tag_step = next(step for step in jobs["sign"]["steps"] if step.get("id") == "tag")
+    assert "gateway/VERSION" in tag_step["run"] and "changelog_section.py" in tag_step["run"]
+    assert jobs["sign"]["outputs"]["version"] == "${{ steps.tag.outputs.version }}"
+
+
 def test_attach_image_gate_and_scope():
     job = _jobs()["attach-image"]
     assert "needs.build.outputs.dryrun == 'false'" in job["if"]
     assert "needs.image.result == 'success'" in job["if"]
-    assert job["needs"] == ["build", "image"]
+    assert job["needs"] == ["build", "sign", "image"]
     assert not any("checkout" in step.get("uses", "") for step in job["steps"])
 
 
 def _attach_script() -> str:
     step = [s for s in _jobs()["attach-image"]["steps"] if "gh release upload" in s.get("run", "")][0]
-    assert step["env"]["VERSION"] == "${{ needs.build.outputs.version }}"
+    assert step["env"]["VERSION"] == "${{ needs.sign.outputs.version }}"
     assert "${{" not in step["run"]
     return step["run"]
 
