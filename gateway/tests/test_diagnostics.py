@@ -8,7 +8,7 @@ from configs import apply_config, write_runtime_files
 from fake_z2m import FakeZigbee2Mqtt
 from fakes import FakeBus
 
-from smartheat_gateway.agent import identity
+from smartheat_gateway.agent import diagnostics, identity
 from smartheat_gateway.agent.context import AgentContext
 from smartheat_gateway.agent.diagnostics import (
     command_snapshot,
@@ -65,6 +65,37 @@ def _get(port: int, path: str, host: str) -> tuple[int, bytes, http.client.HTTPM
         return response.status, response.read(), response.headers
     finally:
         connection.close()
+
+
+@pytest.mark.parametrize("address, allowed", [
+    ("127.0.0.1", True), ("192.168.178.20", True), ("10.0.0.5", True), ("fd12:3456::1", True), ("fe80::1", True),
+    ("::ffff:192.168.1.5", True), ("::1", True),
+    ("8.8.8.8", False), ("2a00:1450:4001::1", False), ("::ffff:8.8.8.8", False), ("kaputt", False),
+])
+def test_only_local_clients_may_see_the_page(address, allowed):
+    # Audit 4, A4-37 (GW-10), Nutzer-Entscheidung E12; Review Focus 5
+    assert diagnostics.client_allowed(address) is allowed
+
+
+def test_docker_bridge_and_zone_scoped_clients_are_local():
+    # Der veroeffentlichte Docker-Port zeigt dem Handler je nach Pfad die Bridge-Adresse (172.16/12) oder den Link-Local mit Zone.
+    assert diagnostics.client_allowed("172.17.0.1") and diagnostics.client_allowed("172.31.255.254")
+    assert diagnostics.client_allowed("fe80::1%eth0")
+    assert not diagnostics.client_allowed("172.32.0.1")
+
+
+def test_foreign_client_gets_403_without_content_on_every_route(monkeypatch):
+    monkeypatch.setattr(diagnostics, "client_allowed", lambda address: False)
+    server = start_server(0, lambda: {"server_ok": True, "laufzeit": "regelt", "uebernommen": False, "code": "ABCDEFGHJKLM"},
+                          lambda: None)
+    port = server.server_address[1]
+    try:
+        for path in ("/", "/healthz", "/unbekannt"):
+            status, body, _ = _get(port, path, f"127.0.0.1:{port}")
+            assert (status, body) == (403, b"")
+    finally:
+        server.shutdown()
+        server.server_close()
 
 
 @pytest.mark.parametrize("path", ["/", "/healthz"])
