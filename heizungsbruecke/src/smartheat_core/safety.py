@@ -1,5 +1,5 @@
 """Lokale Sicherheitswerte je (Hebelsatz x Verteilsystem) (Spec 5.3, Regel 4). Bleiben bewusst auf dem Client und
-kommen nie vom Server. Die Server-Bereiche jedes aktiven Profils muessen innerhalb liegen (Contract-Check 2); die
+kommen nie vom Server. Die Server-Bereiche jedes aktiven Profils muessen innerhalb liegen (Contract-Check 40); die
 Verteilsysteme spiegeln VERTEILSYSTEME_MIT_LOKALEN_SICHERHEITSWERTEN im Server (Contract-Check 1). Fehlen Werte,
 verweigert der Client den Start, bis der Nutzer Werte freigibt."""
 from collections.abc import Mapping
