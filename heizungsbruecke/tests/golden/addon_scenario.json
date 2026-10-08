@@ -690,6 +690,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:01:00+01:00",
+    "boost_since": "2026-01-15T12:01:00+01:00",
     "restore_point": {
      "curve": 1.0,
      "room_setpoint": 24.0,

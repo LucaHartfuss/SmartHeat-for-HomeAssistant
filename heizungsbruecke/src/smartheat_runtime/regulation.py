@@ -4,7 +4,8 @@ entscheidet die Hebel-Pipeline (LeverPipeline.set_boosts)."""
 import logging
 from datetime import datetime
 
-from smartheat_core.boost import decide_boost
+from smartheat_core import wallclock
+from smartheat_core.boost import UNREADABLE_ROOM_CHECKS, comfort_boost_expired, decide_boost
 from smartheat_core.emergency_boost import decide_emergency_boost
 from smartheat_runtime.runtime import Runtime
 
@@ -48,10 +49,21 @@ def run_local_check(rt: Runtime) -> None:
     if state.abo_finished:
         return
 
-    room_actual = rt.signals.get_state(manifest.refs["room_actual"])
+    try:
+        room_actual = rt.signals.get_state(manifest.refs["room_actual"])
+    except Exception:
+        _count_unreadable_room(rt)
+        raise
+    if state.room_actual_misses:
+        rt.store.update(room_actual_misses=0)
+    now = wallclock.now()
+    since = datetime.fromisoformat(state.boost_since) if state.boost_since else None
+    expired = state.boost_active and comfort_boost_expired(since, now)
+    if expired:
+        logger.info("Comfort-Boost endet nach der Hoechstdauer (seit %s)", state.boost_since)
     safety = rt.override.safety
     # Ohne Comfort-Boost-Werte (z. B. Fussbodenheizung, Spec 6.3) gibt es keinen Comfort-Boost.
-    comfort = bool(safety.comfort_boost) and decide_boost(
+    comfort = not expired and bool(safety.comfort_boost) and decide_boost(
         room_actual=room_actual,
         room_target=room_target,
         previous_room_target=state.last_room_target,
@@ -65,11 +77,31 @@ def run_local_check(rt: Runtime) -> None:
         exit_threshold_k=safety.arrival_threshold_k,
     )
     comfort_set, _ = rt.override.set_boosts(comfort=comfort, emergency=emergency)
+    _track_boost_since(rt, now)
 
     # B5: wurde der Comfort-Start mangels Wiederherstellungspunkt abgelehnt, bleibt der alte
     # Sollwert gemerkt, damit der naechste Check die Erhoehung erneut sieht.
     remembered = state.last_room_target if comfort and not comfort_set else room_target
     rt.store.update_saved(last_room_target=remembered)
+
+
+def _track_boost_since(rt: Runtime, now: datetime) -> None:
+    """Beginn des Comfort-Boosts merken (auch fuer einen vor dem Update persistierten Boost: ab jetzt) bzw. loeschen."""
+    state = rt.store.state
+    since = (state.boost_since or now.isoformat()) if state.boost_active else None
+    if since != state.boost_since:
+        rt.store.update_saved(boost_since=since)
+
+
+def _count_unreadable_room(rt: Runtime) -> None:
+    """Audit 4, A4-09: nach UNREADABLE_ROOM_CHECKS unlesbaren Raumwerten in Folge endet ein laufender Comfort-Boost
+    (Rueckkehr auf den Wiederherstellungspunkt); der Notfall-Boost bleibt, wie er ist."""
+    misses = rt.store.state.room_actual_misses + 1
+    rt.store.update(room_actual_misses=misses)
+    if misses >= UNREADABLE_ROOM_CHECKS and rt.store.state.boost_active:
+        logger.warning("Raumfuehler %d-mal in Folge nicht lesbar, Comfort-Boost endet", misses)
+        rt.override.set_boosts(comfort=False, emergency=rt.store.state.emergency_boost_active)
+        _track_boost_since(rt, wallclock.now())
 
 
 def claim_due_tick(rt: Runtime, now: datetime) -> str | None:

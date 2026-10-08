@@ -23,7 +23,7 @@ class StorageError(OSError):
 
 _NUMBER_FIELDS = ("last_room_target", "last_published_target_rt")
 _FLAG_FIELDS = ("boost_active", "emergency_boost_active")
-_TEXT_FIELDS = ("last_daily_trigger_date", "last_ack_at", "waerme_fehlt_seit")
+_TEXT_FIELDS = ("last_daily_trigger_date", "last_ack_at", "waerme_fehlt_seit", "boost_since")
 _TEXT_MAP_FIELDS = ("notify_states", "notify_messages")
 _LEVER_MAP_FIELDS = ("restore_point", "originals", "learned")
 _OVERRIDE_FIELDS = ("manual_override", "manual_override_pending")
@@ -51,6 +51,10 @@ class BridgeState:
     learned: dict = field(default_factory=dict)
     boost_active: bool = False
     emergency_boost_active: bool = False
+    # Audit 4, A4-09: Beginn des laufenden Comfort-Boosts (ISO), fuer die Hoechstdauer; None ohne Boost.
+    boost_since: str | None = None
+    # Aufeinanderfolgende lokale Checks ohne lesbaren Raumwert (nur Laufzeit, A4-09).
+    room_actual_misses: int = 0
     last_room_target: float | None = None
     last_published_target_rt: float | None = None
     last_daily_trigger_date: str | None = None
