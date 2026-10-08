@@ -1,2 +1,2 @@
 """Version der Gateway-Software (gleich gateway/VERSION, tests/test_boundaries.py)."""
-GATEWAY_VERSION = "0.3.0"
+GATEWAY_VERSION = "0.4.0"
