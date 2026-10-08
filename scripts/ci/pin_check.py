@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Pin-Check (TP12e, AU-018, Spec 2026-09-30-tp12e-vertraege-tests-lieferkette-design.md Abschnitt 3):
 Jede Basis-Image-Angabe hat einen Digest, jede GitHub-Action eine 40-stellige SHA, jede Lock-Datei
-Hashes und passt zu ihrer pyproject.toml. Nur Standardbibliothek; kanonisch in
+Hashes und passt zu ihrer pyproject.toml. In Workflows laeuft jedes pip install mit --require-hashes
+oder traegt die Markierung `# pin-check: ungehasht (<Grund>)` (Audit 4, A4-41). Nur Standardbibliothek; kanonisch in
 HomeAssistant_Dev_Root/tools/pin_check.py, identische Kopien in den Unter-Repos unter
 scripts/ci/pin_check.py (Root-check.sh Schritt "copies" prueft das).
 
@@ -26,6 +27,9 @@ _FROM_LINE = re.compile(r"^\s*FROM(?:\s|$)", re.IGNORECASE)
 _FROM = re.compile(r"^\s*FROM\s+(?:--\S+\s+)*(\S+)(?:\s+AS\s+(\S+))?\s*$", re.IGNORECASE)
 _PIP_INSTALL = re.compile(r"\bpip3?\s+install\b")
 _PIP_REQUIREMENT_OPTION = re.compile(r"\s(?:-r|--requirement)(?:\s|=|$)")
+# Workflows (Audit 4, A4-41): jedes pip install laeuft mit --require-hashes oder ist ausdruecklich markiert (CI-Jobs
+# ohne Schreibrecht, Testumgebungen mit Versionsbereichen). Release-Jobs mit Schreibrecht nehmen nie die Markierung.
+UNHASHED_MARKER = "pin-check: ungehasht"
 _USES = re.compile(r"^\s*(?:-\s*)?uses:\s*[\"']?([^\s\"']+)[\"']?(.*)$")
 _IMAGE = re.compile(r"^\s*image:\s*[\"']?([^\s\"']+)")
 _NAME = r"[A-Za-z0-9][A-Za-z0-9._-]*"
@@ -92,6 +96,9 @@ def _check_workflow(repo: Path, path: Path) -> list[str]:
     problems = []
     name = path.relative_to(repo)
     for line in path.read_text().splitlines():
+        if (not line.lstrip().startswith("#") and _PIP_INSTALL.search(line)
+                and "--require-hashes" not in line and UNHASHED_MARKER not in line):
+            problems.append(f"{name}: pip install ohne --require-hashes (oder Markierung '# {UNHASHED_MARKER} (Grund)')")
         match = _USES.match(line)
         if match is None or match.group(1).startswith("./"):
             continue
