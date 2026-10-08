@@ -6,19 +6,22 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
 ## 0.35.0
 
 - **Kein „Neu konfigurieren“ nötig:** Das Optionsschema ist unverändert. Die Integration ab 0.12.0 genügt; für `client1`
-  (Vaillant) ändern sich Werte, Meldungen und Statusereignis nicht. In `backup.json` kommen beim ersten Start nur die
+  (Vaillant) ändern sich im Normalbetrieb Werte, Meldungen und Statusereignis nicht; der Boost bekommt nur die neue
+  Höchstdauer (siehe unten). In `backup.json` kommen beim ersten Start nur die
   Kennungen von Einrichtung und Anlage dazu (siehe unten), nichts wird verworfen.
 - **Comfort-Boost endet von selbst:** Der Boost nach einer Erhöhung der Wunschtemperatur läuft höchstens 4 Stunden und
   endet früher, wenn der Raumfühler dreimal in Folge nicht lesbar ist; dann kehrt das Add-on auf die gemerkten Werte
   zurück. Ein einzelner oder zweimal unlesbarer Wert beendet den Boost nicht, ein lesbarer Wert setzt die Zählung zurück.
-  Der Notfall-Boost bei kaltem Raum bleibt unverändert.
+  Ein beim Update bereits laufender Comfort-Boost wird ab dem ersten Check nach dem Update für höchstens 4 Stunden
+  weitergeführt. Der Notfall-Boost bei kaltem Raum bleibt unverändert.
 - **Konfigurationsfehler nimmt einen laufenden Boost zurück:** Stellt das Add-on beim Start einen Konfigurationsfehler
   fest, während ein Boost läuft, stellt es die gemerkten Werte wieder her. Gelingt das nicht, sagt die Meldung ehrlich,
   dass die Boost-Werte noch stehen und welche Werte zurückzusetzen sind. Ohne laufenden Boost bleibt alles wie bisher
   („behält ihre letzten Werte“).
 - **Gemerkter Zustand gehört zu Einrichtung und Anlage:** Die gemerkten Ursprungswerte, der Wiederherstellungspunkt und
   der übrige Zustand in `backup.json` tragen jetzt die Kennung der Einrichtung und der Anlage. Wer eine andere Anlage neu
-  einrichtet, startet sauber; die gemerkten Ursprungswerte gehören immer zur richtigen Anlage und werden nie auf eine
+  einrichtet oder später die Hebel-Zuordnung (die zugeordneten Hebel-Entities) ändert, gilt als andere Anlage und
+  startet sauber; die gemerkten Ursprungswerte gehören immer zur richtigen Anlage und werden nie auf eine
   fremde Anlage geschrieben. Bestehende Installationen (z. B. `client1`) behalten ihren Zustand: Beim ersten Start werden
   nur Einrichtungs- und Anlagenkennung ergänzt.
 
