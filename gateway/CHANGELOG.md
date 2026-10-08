@@ -21,6 +21,21 @@ vergibt das Release.
 - Tests: Matrix aus den PyViCare-Aufzeichnungen (gepinnter Commit, Lizenzhinweis) plus eigenen, Fake-ViCare-Server
   (`tests/fake_vicare/`, auch als E2E-Container), Gleichheitstest gegen den HA-Pfad, Szenario „Anmeldung abgelaufen“.
 - Bekannt: `urllib3` loggt auf Stufe DEBUG URLs mit Seriennummer (Logger noch nicht auf WARNING begrenzt, Roadmap).
+- Audit 4 Paket P-C2 (Gateway-Punkte):
+  - Zustand an Einrichtung und Anlage gebunden: `backup.json` trägt `setup_id` und `plant_id`; ein Bestand ohne Bindung
+    gilt als gebunden und wird nur ergänzt. Eine Neueinrichtung oder „Neu konfigurieren“ derselben Anlage behält die
+    gemerkten Ursprungswerte; eine andere Anlage wird nach Abmeldung erst nach bestätigtem Rückweg zugelassen und
+    sonst abgelehnt (`konfiguration_ungueltig` mit eigenem Text).
+  - ViCare: eine `setCurve`-Anfrage je Schreibgruppe (Steigung und Niveau zusammen) statt zwei; zählt als ein
+    Schreibzugriff im Kontingent.
+  - Manifest wird nach der ersten Abfrage gebaut (optionale Signale wie `flow_temperature` sind enthalten); der Treiber
+    prüft seine Parameter, `poll_seconds` muss mindestens 120 s sein.
+  - Anmeldung (ViCare/OAuth2) überlebt einen Widerruf des Refresh-Tokens: eine im Portal vorbereitete Anmeldung lässt sich
+    abschließen.
+  - Statusmeldung wird nur bei einer echten Änderung (oder spätestens alle 300 s) gesendet, nicht mehr wegen des
+    Zeitstempels des Raumwerts.
+  - Abmelden löscht auch das Installations-Token.
+  - Diagnoseseite nur aus dem lokalen Netz (private und Link-Local-Adressen, sonst 403).
 
 ## 0.3.0
 
