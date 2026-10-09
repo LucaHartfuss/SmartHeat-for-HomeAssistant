@@ -1,69 +1,23 @@
 # SmartHeat-for-HomeAssistant — Repo-Kontext
 
-HA-Add-on-Repository mit zwei Add-ons: `heizungsbruecke` (Client-seitige Bridge-Logik: Snapshot-Publish, Boost, Notbetrieb bei ausbleibender Server-Antwort, lokale Sicherheits-Clamps) und `cloudflared_access_mqtt` (TCP-Tunnel-Forwarder zum Server). Beide laufen auf jedem Kunden-Pi, inkl. `client1`. Dazu `gateway/`: die Software des SmartHeat-Gateways (SHG, Clienttyp ohne Home Assistant), **kein** Add-on (siehe Besonderheiten). Volle Beschreibung: `../docs/architecture.md`, Abschnitte 4 und 5. Sicherheitsregeln aus `../CLAUDE.md` gelten unverändert — Änderungen hier wirken sich real auf laufende Kundenanlagen aus, sobald deployed.
+Add-on-Repository: `heizungsbruecke` (Client: Snapshot und Telemetrie, Boost, Notbetrieb, lokale Sicherheitswerte),
+`cloudflared_access_mqtt` (nur `run.sh` um `cloudflared access tcp`) und `gateway/` (SmartHeat-Gateway ohne Home
+Assistant, **kein** Add-on). Die Add-ons laufen auf jedem Kunden-Pi inkl. `client1`: Änderungen wirken real, sobald sie
+released sind. Die Sicherheitsregeln aus `../CLAUDE.md` gelten unverändert.
 
-## Struktur (Details: `../docs/architecture.md` §4–§5)
+## Struktur (Details: `../docs/architecture.md` §4, §5, §5a)
 
-- `heizungsbruecke/src/smartheat_core/` — HA-freier **Client-Kern** (nur Standardbibliothek, geprüft von
-  `tests/test_core_purity.py`; Anlage, Speicher, Meldungen und Uhr über Schnittstellen): `levers.py` (Hebel und
-  Hebelsätze), `safety.py` (lokale Sicherheitswerte je Hebelsatz × Verteilsystem, Regel 4), `binding.py`
-  (Beschreibung je Hersteller-Anbindung), `pipeline.py` (einzige Stelle, die Hebel schreibt), `enforce.py`
-  (Durchsetzen statt Melden), `derived.py` (Mindestvorlauf), `boost.py`/`emergency_boost.py`, `write_budget.py`,
-  `clamping.py`, `energy.py`, `wallclock.py` (prozessweite Wanduhr, `now()`/`today()`).
-- `heizungsbruecke/src/smartheat_runtime/` — **hostneutraler Betrieb** (SHG G1; nur Standardbibliothek,
-  `smartheat_core`, `smartheat_transport`, `requests` nur in `entitlement.py`; nie `heizungsbruecke`, `websocket`, `paho`
-  nur über `smartheat_transport.mqtt_client`; keine Tenant-IDs; Grenzen geprüft von `tests/test_runtime_purity.py`): `app.py` (`start(host, clock)`,
-  Handler, Ruhezustand, Abmelden, `StartFailure`/`_fail_start`), `ports.py` (Schnittstellen zum Host),
-  `runtime_config.py` (`BootInfo`/`RuntimeConfig`), `runtime.py`/`worker.py` (Ereignisse nacheinander im
-  Hauptthread), `delivery.py`/`ticks.py`/`snapshot.py` (Zustellung, Notbetrieb, Datenfehler), `telemetry.py`,
-  `regulation.py`, `abo.py`/`entitlement.py`, `status.py` (Status-Modell `schema` 2) und `notifier.py`,
-  `state.py`/`backup_store.py`, `battery.py`/`room_sensors.py`/`datentraeger.py`,
-  `roles.py`, `mqtt_link.py`, `plausibility.py`, `windows.py`. Seit SHG G2a zusätzlich: `texts.py`
-  (`HostTexts`, Kunden- und Log-Texte, die den Host nennen; Standard = Texte des HA-Add-ons), `debounce.py`
-  (`Debouncer`, 10-s-Entprellung des Raum-Solls), `room_mean.py` (Raummittel), `options.py` (hostneutrale Prüfung der
-  Laufzeit-Optionen, gemeinsam für Add-on und Gateway).
-- `heizungsbruecke/src/smartheat_transport/` — Transport-Deskriptor und Zugangsdaten, MQTT-Verbindung
-  (`mqtt_client.py` als einzige Stelle mit `paho`, geprüft von `tests/test_transport_purity.py`).
-- `heizungsbruecke/src/heizungsbruecke/` — **HA-Host** (`smartheat_runtime` über die Ports an Home Assistant
-  angeschlossen): `__main__.py` (dünner Einstieg, `_start_bridge`), `host.py` (`HaHost`, `StartupError`, Warten auf
-  HA, Prüfung der Hilfs-Entities), `config.py` (Optionen), `ha_api.py` (REST/WebSocket), `ha_signals.py`
-  (`HaSignalSource`), `ha_sinks.py` (`HaStatusSink` mit Ereignis `smartheat_status`, `HaNotifySink`),
-  `ha_trigger_client.py`/`triggers.py` (Auslöser aus HA), `ha_binding.py` (mypyllant, Weishaupt, Viessmann),
-  `derived_sensors.py`/`helper_templates.py`, `manifest.py`, `version.py` (`ADDON_VERSION`).
-- `gateway/` — **SmartHeat-Gateway ohne Home Assistant** (SHG G2a; Image, Compose, Agent und Laufzeit; Paket
-  `src/smartheat_gateway/`, importiert `smartheat_core`/`smartheat_runtime`/`smartheat_transport`, nie `heizungsbruecke`;
-  geprüft von `gateway/tests/test_boundaries.py`). Laufzeit-Seite (der `GatewayHost` an `smartheat_runtime`):
-  `host.py`, `config.py`, `signals.py` (Referenzen `zigbee:`/`soll:`/`treiber:`/`raum:`), `triggers.py`,
-  `target_store.py`, `zigbee.py`, `bus.py`, `sinks.py`, `raum.py`, `quota.py`, `drivers/` (Treiber-Protokoll,
-  Registry, `simulation.py`), `runtime_main.py`; Tunnel: `tunnel.py`. Agent: `agent/` (Identität, signierter Client der
-  Geräte-API, Befehle, Lebenszyklus, Schleife, Diagnoseseite), `agent/wire.py` ist der Vertrag mit dem Server
-  (↔ `../tools/contracts/shg_device_v1.json`, Contract-Check 44). Compose: `gateway/compose/` (`docker-compose.yml`,
-  Dev-Overlay, `mosquitto.conf`; Dienst `init` aus `init.py` schreibt Bus-Zugangsdaten, ACL und Zigbee2MQTT-Grundkonfiguration). Tests: `gateway/tests/` inkl. Fake-Zigbee2MQTT (`fake_z2m.py`) und Fake-Geräte-API
-  (`fake_device_api.py`). Aufbau und Abläufe: `../docs/architecture.md`, Abschnitt „SmartHeat-Gateway“.
-- `gateway/host/` — **Host-Dienste und Installer des Gateways** (SHG G2b-1; läuft auf dem **System-Python** des Pi
-  (Debian 13 trixie, Python 3.13), nicht im Container): Paket `smartheat_host/` mit `updater.py` (Soll-Version, Manifest- und
-  minisign-Prüfung, Umschalten, Gesundheit, Rückweg), `bundles.py`, `device_api.py`, `minisign.py`, `led.py`,
-  `hoststatus.py`; dazu `install.sh`, `systemd/`, `udev/`, `nftables.conf`, `apt/`, `journald.conf.d/` und `release.pub`
-  (bis zum echten Schlüssel ein Platzhalter). **Grenze** (geprüft von `gateway/host/tests/test_boundaries.py`): nur
-  Standardbibliothek, `cryptography`, `smartheat_host` und genau `smartheat_gateway.{files,paths,version}` sowie
-  `smartheat_gateway.agent.{wire,identity}` (`install.sh` legt diese Module mit ab); keine Tenant-IDs; nie
-  `heizungsbruecke`. Tests: `cd gateway/host && pytest` (`install_checks.sh` läuft im Docker-Test des Installers).
-  `smartheat_host/firstboot.py` (Dienst `smartheat-firstboot`) lädt beim Erststart die Container-Image-Archive ohne Pull.
-  `gateway/host/pilot_ssh_tunnel.sh` richtet für Pilotgeräte einen eigenen Cloudflare-Tunnel nur für SSH als Host-Dienst
-  ein (Token als Datei; `install.sh` bricht ohne `--pilot-ssh` ab, solange er eingerichtet ist).
-- `gateway/image/` — **Basis-Image** (SHG G2b-2, `rpi-image-gen` v2.8.0): Layer und Konfiguration, `prepare.sh` (Stage),
-  `build.sh`/`make_image.sh`, Hooks, `rootfs_checks.sh` und `own_url.sh` (Adressregel: nur eigener DNS-Name per https in der Zone
-  `hartfussha.org` (`SHG_OWN_ZONES`), nie IP oder AWS-Adresse). Gebaut wird auf einem arm64-Host (oder mit QEMU-binfmt) bzw. in der CI (`.github/workflows/image-gateway.yml`, im Release
-  als Job `image`); Tests (`test_image_scripts.py`, `test_image_rootfs_checks.py`) laufen ohne Image-Bau.
-- `gateway/release/` — Bundle-Bau (`build_bundle.py`: Compose mit Image-Digests und Manifest; nutzt dieselben
-  Prüffunktionen wie der Updater), `verify_bundle.py` (Neubau aus dem Tag und byte-genauer Vergleich vor dem Signieren),
-  `sign_bundle.sh` und die Hash-Lock-Datei `requirements.txt` (PyYAML, cryptography; einzige pip-Quelle des
-  Release-Workflows). Tests: `cd gateway/release && pytest`. Der Release-Workflow
-  `.github/workflows/release-gateway.yml` (Tag `gateway-vX.Y.Z`) ruft das Skript auf (`sign_bundle.sh`: Bundle per Neubau prüfen, mit minisign signieren, mit dem Gerätecode verifizieren; Secrets nur im Job `sign`, nie im Environment der Python-Schritte); Ablauf und Schlüssel: `../docs/ci-cd-runbook.md`,
-  Abschnitt „Gateway-Release“.
-- `heizungsbruecke/config.yaml` — hat einen echten `schema:`-Block, wird aber **ausschließlich** von der
-  SmartHeat-Integration befüllt, nie manuell in der Add-on-UI.
-- `cloudflared_access_mqtt/` — nur `run.sh`-Wrapper um `cloudflared access tcp`, keine eigene Logik.
+- `heizungsbruecke/src/smartheat_core/` — HA-freier Client-Kern, nur Standardbibliothek (`tests/test_core_purity.py`).
+  `safety.py` = lokale Sicherheitswerte je Hebelsatz × Verteilsystem (Regel 4), `pipeline.py` = einzige Stelle, die
+  Hebel schreibt, `boost.py`/`emergency_boost.py`.
+- `heizungsbruecke/src/smartheat_runtime/` — hostneutraler Betrieb für Add-on und Gateway (`app.py`, `delivery.py`,
+  `status.py` …); Grenzen in `tests/test_runtime_purity.py`: nie `heizungsbruecke`, `paho` nur über
+  `smartheat_transport.mqtt_client`, keine Tenant-IDs.
+- `heizungsbruecke/src/smartheat_transport/` — Transport-Deskriptor, MQTT (`mqtt_client.py` = einzige Stelle mit `paho`).
+- `heizungsbruecke/src/heizungsbruecke/` — HA-Host: `HaHost`, REST/WebSocket, Bindings für mypyllant, Weishaupt, Viessmann.
+- `gateway/` — Laufzeit-Host, Agent, Compose (§5a.1–5a.7); `gateway/host/` Host-Dienste, Updater, Installer auf dem
+  System-Python des Pi (§5a.8–5a.12); `gateway/image/` Basis-Image mit `rpi-image-gen` (§5a.13); `gateway/release/`
+  Bundle und Signatur (§5a.10). Grenzen: `gateway/tests/test_boundaries.py`, `gateway/host/tests/test_boundaries.py`.
 
 ## Prüfen und Branches
 
@@ -86,14 +40,27 @@ gemergt — nie direkt nach `main`. `main` bewegt sich nur per Release-Tag
 ein Push nach `main` ist ein Release an alle Kunden-Pis, deren Supervisor den Default-Branch
 verfolgt. Release-Ablauf, CI-Jobs, Token: `../docs/ci-cd-runbook.md`.
 
-## Besonderheiten
+## Regeln und Fallen
 
-- **`gateway/` ist kein Add-on:** Der Supervisor sieht den Ordner nicht (keine `config.yaml`), er taucht nie im Add-on-Store auf. Das Image wird aus der Repo-Wurzel gebaut (`docker build -f gateway/Dockerfile .`, kopiert `smartheat_core`/`smartheat_transport`/`smartheat_runtime` aus `heizungsbruecke/src/`). Ein Release läuft über den eigenen Workflow `release-gateway.yml` (Tag-Muster `gateway-vX.Y.Z`, Version in `gateway/VERSION` und `gateway/CHANGELOG.md`, Image nach ghcr, signiertes Bundle); ohne echten Schlüssel in `gateway/host/release.pub` lehnt das Gate echte Tags ab, `-dryrun` geht. Die CI baut das Image zusätzlich für amd64 und arm64 (Job `build-gateway`). Änderungen in `smartheat_core`/`smartheat_runtime` wirken auf beide Clienttypen; der Golden-Master des Add-ons bleibt davon unberührt, bis auf neue `backup.json`-Felder in Audit 4 P-C2.
-- **Gerätevertrag:** `gateway/src/smartheat_gateway/agent/wire.py` ist die Gerätehälfte des Vertrags mit dem Server (G3). Änderungen nur gleichzeitig in `wire.py`, `../tools/contracts/shg_device_v1.json` und (G3) `heizungsserver/devices_wire.py`; Contract-Check 44 vergleicht alle drei.
-- MQTT-Adresse und -Port kommen aus dem Transport-Deskriptor (Option `transport`, vom Server geliefert); die Integration schreibt denselben Port als `local_port` in `cloudflared_access_mqtt` (Cross-Repo-Invariante, Contract-Check 6, siehe `../docs/architecture.md` §9).
-- Lokale Sicherheitswerte (`smartheat_core/safety.py`, je Hebelsatz × Verteilsystem) gibt es nur im Add-on. Ihre Schlüssel (Verteilsysteme) spiegelt der Server; Tagestick-Uhrzeit (`daily_trigger_time`) und Basis-URL kommen per Optionen von Server bzw. Integration. `python3 ../tools/contract_check.py` prüft alle Cross-Repo-Duplikate — vor jedem Release grün.
-- Versionsstand in `<addon>/config.yaml` (bei `heizungsbruecke` zusätzlich `ADDON_VERSION` in `src/heizungsbruecke/version.py`, Test prüft den Gleichlauf); seit der CI/CD-Umstellung (2026-09-28) hat jedes Add-on zusätzlich ein `CHANGELOG.md` (Pflichtabschnitt `## X.Y.Z` je Release, geprüft vom Release-Workflow, im Update-Dialog des Supervisors sichtbar) neben dem bisherigen `DOCS.md`.
-- Lock-Datei erneuern (`heizungsbruecke/requirements.txt`, TP12e/AU-018): Das Image installiert nur aus dieser Datei (`pip install --require-hashes`, Hashes für alle Plattformen), `src/` liegt per `PYTHONPATH` auf dem Suchpfad, das Paket selbst wird nicht installiert. Basis-Images sind per Index-Digest gepinnt. Erneuert wird die Datei nur bei geänderten `dependencies` in `heizungsbruecke/pyproject.toml` oder bewusstem Bump, im Ordner `heizungsbruecke/` in einem Wegwerf-Container (die alte Datei wird als Ausgangsdatei mitgegeben, damit bestehende Pins bleiben; für einen Bump `--upgrade` vor `--generate-hashes` ergänzen und das Diff lesen):
+- `heizungsbruecke/config.yaml` hat einen `schema:`-Block, wird aber **nur** von der Integration befüllt, nie von Hand.
+- **Golden-Master** (`heizungsbruecke/tests/test_golden_master.py`, `tests/golden/addon_scenario.json`) nie neu erzeugen,
+  ohne dass ein Plan es verlangt: ändert er sich, ist der Code falsch, nicht die Datei.
+- **Verträge:** Gerätevertrag `gateway/src/smartheat_gateway/agent/wire.py` ↔ `../tools/contracts/shg_device_v1.json` ↔
+  Server `devices_wire.py` nur gemeinsam ändern (Check 44); Status-Event, Hebel-, Rollen- und Optionsnamen, Ports und
+  Sicherheitswert-Schlüssel prüft `python3 ../tools/contract_check.py` (vor jedem Release grün; `architecture.md` §9).
+- **Versionen:** `<addon>/config.yaml`, bei `heizungsbruecke` zusätzlich `ADDON_VERSION` in `src/heizungsbruecke/version.py`
+  (Test prüft den Gleichlauf), je Add-on `CHANGELOG.md` mit `## X.Y.Z`; Gateway: `gateway/VERSION` und
+  `gateway/CHANGELOG.md`.
+- **`gateway/` ist kein Add-on** (keine `config.yaml`): Image aus der Repo-Wurzel (`docker build -f gateway/Dockerfile .`),
+  eigener Release-Workflow; ohne echten Schlüssel in `gateway/host/release.pub` lehnt das Gate echte `gateway-v*`-Tags ab.
+  Änderungen in `smartheat_core`/`smartheat_runtime` wirken auf beide Clienttypen.
+- **Startfehler** melden mit stabilem Schlüssel `fehler:<key>`, der Grund steht nur im Feld `grund`; Geheimnisse
+  (`config.SECRET_OPTIONS`) werden überall durch `***` ersetzt (`host._without_credentials`).
+- **Endzustände sind ein Ruhezustand**, kein Exit, weil der Supervisor-Watchdog auch Exit 0 neu startet
+  (`tests/test_heizungsbruecke_docker_build.sh`). Kein Last Will, nichts unter `smartheat/<tenant>/status/`.
+- **Lock-Datei** `heizungsbruecke/requirements.txt`: das Image installiert nur daraus (`--require-hashes`). Erneuern nur bei
+  geänderten `dependencies` in `pyproject.toml` oder bewusstem Bump (dann `--upgrade` vor `--generate-hashes`, Diff lesen),
+  im Ordner `heizungsbruecke/`:
 
   ```
   tar cf - pyproject.toml requirements.txt | docker run --rm -i \
@@ -103,9 +70,4 @@ verfolgt. Release-Ablauf, CI-Jobs, Token: `../docs/ci-cd-runbook.md`.
            && tar cf - requirements.txt" | tar xf -
   ```
 
-  Danach `scripts/check.sh --only docker --full` (u. a. `tests/test_heizungsbruecke_reproducible.sh`); den Drift-Check gegen `pyproject.toml` übernimmt `scripts/ci/pin_check.py`.
-- Startfehler (`smartheat_runtime/app.py::StartFailure`/`_fail_start`, HA-Teil `heizungsbruecke/host.py::StartupError`) melden über einen stabilen `notifier`-Schlüssel `fehler:<key>` (z. B. `hilfs_entities`, `entity_fehlt:<sortierte IDs>`) — der ausführliche Grund steht nur im Feld `grund` des Status-Events, in der Meldung und im Log, nicht in der Meldeidentität, sonst würde ein Neustart mit demselben Fehler jedes Mal erneut melden. Ein im Fehlertext zitiertes Geheimnis (`config.SECRET_OPTIONS`: `mqtt_password`, `tls_private_key`, `installation_token`) wird überall (Text, `grund`, Meldung, Retry-Log) durch `***` ersetzt (`host._without_credentials`).
-- Golden-Master `heizungsbruecke/tests/test_golden_master.py` (Aufzeichnung `tests/golden/addon_scenario.json`) sichert zusammen mit den unveränderten Unit-Tests, dass das Add-on nach außen unverändert handelt (HA-Schreibaufrufe, Meldungen, Ereignisse, MQTT, Dateien im Datenverzeichnis). Die Aufzeichnung wird nie neu erzeugt, ohne dass ein Plan es verlangt: ändert sich der Golden-Master, ist der Code falsch, nicht die Datei. Neu geschrieben zuletzt in Audit 4 P-B (Telemetrie ohne `waerme_fehlt`, `backup.json` ohne `waerme_fehlt_seit`, Status ohne Hinweis `waerme_fehlt`; Versionsstand 0.36.0).
-- Startbereitschaft: HA gilt erst als erreichbar, wenn `GET /api/config` `state == "RUNNING"` meldet (`ha_api.is_reachable`); vorher wartet der Start unbegrenzt, das ~4-min-Budget für fehlende Entities/Hilfs-Entities zählt nur bei laufendem HA (Cloud-Integrationen wie `mypyllant` laden erst nach dem HTTP-Server).
-- Der Status `regelt` gilt ab dem ersten MQTT-Connect (`EV_MQTT_CONNECTED`); im Abo-inaktiv-Modus direkt nach dem Hochfahren. Endzustände sind ein Ruhezustand, weil der Supervisor-Watchdog auch einen Exit 0 neu startet.
-- Kein Last Will und nichts unter `smartheat/<tenant>/status/` (B4): der Server erwartet dort nichts mehr. Ein Connect mit einem von der ACL verbotenen Will-Topic nimmt Mosquitto 2 (verifiziert 2.0.11/2.1.2) trotzdem an, nur ein direktes Publish dorthin lehnt sie ab (`tests/test_mosquitto_will_acl.sh`) — kein Verbindungsschutz, also kein Grund, `refresh-acl` auf ältere Add-ons zu warten.
+  Danach `scripts/check.sh --only docker --full`; den Drift-Check übernimmt `scripts/ci/pin_check.py`.
