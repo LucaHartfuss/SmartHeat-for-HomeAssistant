@@ -24,7 +24,7 @@ from typing import NoReturn
 from smartheat_core import wallclock
 from smartheat_device.device import Device
 from smartheat_device.documents import KONFIGURATION, DocumentStore
-from smartheat_gateway import befehle
+from smartheat_gateway import befehle, diagnose
 from smartheat_gateway import geraet_host as geraet_host_module
 from smartheat_gateway.bus import LocalBus, credentials_from_env
 from smartheat_gateway.geraet_host import GatewayDeviceHost
@@ -172,6 +172,11 @@ def main() -> None:  # pragma: no cover - Container-Einstieg
     geraet = GatewayDeviceHost(paths, mirror, host_dir=Path(os.environ.get("SHG_HOST_DIR", "/host")))
     device = Device(geraet, paths.data, os.environ["SHG_DEVICE_API_URL"], befehl_fehler=befehle.fehler_uebersetzen)
     geraet.verbinden(device)
+    portal = os.environ.get("SHG_PORTAL_BASE_URL", "")
+    diagnose.start_server(
+        int(os.environ.get("SHG_DIAG_PORT", "8080")), lambda: diagnose.seite(geraet, device),
+        lambda: diagnose.qr_url(portal, device), diagnose.parse_hostnames(os.environ.get("SHG_DIAG_HOSTNAMES", "")),
+    )
     software_soll_nachholen(geraet, device)  # vor dem Geraete-Thread: kein Rennen mit einer neuen Konfiguration
     signal.signal(signal.SIGTERM, _terminate)  # vor dem Geraete-Thread: ein SIGTERM endet immer ueber beenden
     thread: threading.Thread | None = None
