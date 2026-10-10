@@ -190,6 +190,40 @@ def test_port_falls_back_to_443_with_alpn_and_back(tls):
     assert clients[-1].connect_args["port"] == 8883
 
 
+def _link_mit_startfehlern(tls, fehler):
+    """Link mit ALPN; die Fabrik wirft beim n-ten Aufbau (ab 0) TransportConfigError, wenn fehler[n] wahr ist."""
+    ca, cert, key = tls
+    events, clients, aufrufe = [], [], []
+
+    def factory(client_id):
+        aufrufe.append(client_id)
+        if fehler[len(aufrufe) - 1]:
+            raise TransportConfigError("Port passt nicht")
+        clients.append(FakePaho(client_id))
+        return clients[-1]
+
+    link = link_module.Link(DEVICE, Zugang(cert, Endpoint("mosquitto", 8883, ca, "x-amzn-mqtt-ca")), key,
+                            lambda *event: events.append(event), client_factory=factory)
+    link.start()
+    for _ in range(link_module.PORT_FALLBACK_FAILURES):
+        clients[-1].fail(OSError("Netz"))
+    return link, clients, events
+
+
+def test_a_port_switch_that_cannot_start_stays_on_the_previous_port(tls):
+    link, clients, events = _link_mit_startfehlern(tls, [False, True, False])
+    link.port_wechseln_falls_noetig()
+    assert link.port == 8883 and len(clients) == 2 and clients[0].stopped
+    assert clients[1].connect_args["port"] == 8883 and clients[1].started and events == []
+
+
+def test_a_link_that_cannot_start_on_either_port_asks_for_rescue(tls):
+    link, clients, events = _link_mit_startfehlern(tls, [False, True, True])
+    link.port_wechseln_falls_noetig()
+    assert len(clients) == 1 and clients[0].stopped and not link.connected
+    assert events == [("anmeldung_scheitert",)] and link.port == 8883
+
+
 def test_no_fallback_without_alpn(tls):
     link, clients, _ = _link(tls)
     for _ in range(5):

@@ -98,14 +98,28 @@ class Link:
         return info.mid if info.rc == mqtt.MQTT_ERR_SUCCESS else None
 
     def port_wechseln_falls_noetig(self) -> None:
-        """Im Geraete-Thread: nach PORT_FALLBACK_FAILURES Netzfehlern neuer Client auf dem anderen Port."""
+        """Im Geraete-Thread: nach PORT_FALLBACK_FAILURES Netzfehlern neuer Client auf dem anderen Port. Startet er dort
+        nicht (TransportConfigError), bleibt der Link auf dem bisherigen Port; scheitert auch das, meldet er
+        "anmeldung_scheitert" (Rettungsweg), sonst bliebe er ohne Client und ohne jeden Rueckruf stehen."""
         if not self._wechsel:
             return
         self.stop()
         self._wechsel = False
+        vorher = self.port
         self.port = PORT_443 if self.port != PORT_443 else self._zugang.endpoint.port
         logger.warning("MQTT: Broker nicht erreichbar, Wechsel auf Port %d", self.port)
-        self.start()
+        try:
+            self.start()
+            return
+        except ValueError as error:  # TransportConfigError
+            logger.error("MQTT: Start auf Port %d gescheitert (%s), bleibe auf Port %d", self.port,
+                         type(error).__name__, vorher)
+        self.port = vorher
+        try:
+            self.start()
+        except ValueError as error:
+            logger.error("MQTT: Start auf Port %d gescheitert (%s), Rettungsweg", self.port, type(error).__name__)
+            self._melden(ANMELDUNG_SCHEITERT)
 
     # --- intern ---
 
