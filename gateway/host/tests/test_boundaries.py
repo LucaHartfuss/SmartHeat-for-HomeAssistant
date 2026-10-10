@@ -7,18 +7,16 @@ from pathlib import Path
 HOST = Path(__file__).resolve().parents[1]
 SRC = HOST.parent / "src" / "smartheat_gateway"
 ALLOWED_GATEWAY = {
-    "smartheat_gateway", "smartheat_gateway.agent", "smartheat_gateway.agent.wire", "smartheat_gateway.agent.identity",
-    "smartheat_gateway.files", "smartheat_gateway.paths", "smartheat_gateway.version",
+    "smartheat_gateway", "smartheat_gateway.files", "smartheat_gateway.paths", "smartheat_gateway.version",
 }
-# Dateien, die install.sh aus gateway/src mit ablegt (Plan G2b-1 Praezisierung 10).
-SHIPPED = ["__init__.py", "files.py", "paths.py", "version.py", "agent/__init__.py", "agent/wire.py",
-           "agent/identity.py"]
+# Dateien, die install.sh aus gateway/src mit ablegt (Plan G2b-1 Praezisierung 10; ab 0.6.0 ohne agent/, Plan 5b D2).
+SHIPPED = ["__init__.py", "files.py", "paths.py", "version.py"]
 TENANT_ID = re.compile(r"\bclient\d+\b|\bzuhause\b", re.IGNORECASE)
 
 
 # Pakete der erlaubten Gateway-Module: ein "from <Paket> import name" importiert ein Untermodul "<Paket>.name"
 # und dieses muss selbst in ALLOWED_GATEWAY stehen. Namen aus erlaubten Modulen (files, paths, ...) sind frei.
-ALLOWED_PACKAGES = {"smartheat_gateway", "smartheat_gateway.agent"}
+ALLOWED_PACKAGES = {"smartheat_gateway"}
 
 
 def _resolve(node: ast.ImportFrom, package: str) -> str | None:
@@ -82,14 +80,16 @@ def test_checker_rejects_forbidden_gateway_imports():
     cases = [
         ("import smartheat_gateway.agent.mqtt", "smartheat_host", ["smartheat_gateway.agent.mqtt"]),
         ("from smartheat_gateway import runtime", "smartheat_host", ["smartheat_gateway.runtime"]),
-        ("from smartheat_gateway.agent import loop", "smartheat_host", ["smartheat_gateway.agent.loop"]),
+        ("from smartheat_gateway.agent import loop", "smartheat_host", ["smartheat_gateway.agent"]),
         ("from smartheat_gateway.runtime_main import main", "smartheat_host", ["smartheat_gateway.runtime_main"]),
         ("from .runtime import x", "smartheat_gateway", ["smartheat_gateway.runtime"]),
         ("from . import runtime", "smartheat_gateway", ["smartheat_gateway.runtime"]),
-        ("from .agent import loop", "smartheat_gateway", ["smartheat_gateway.agent.loop"]),
+        ("from .agent import loop", "smartheat_gateway", ["smartheat_gateway.agent"]),
         ("from ..bus import x", "smartheat_gateway.agent", ["smartheat_gateway.bus"]),
         ("from .loop import x", "smartheat_gateway.agent", ["smartheat_gateway.agent.loop"]),
         ("from ... import x", "smartheat_gateway", ["<unaufloesbar: Ebene 3>", "<unaufloesbar: Ebene 3>.x"]),
+        ("from smartheat_gateway.agent import wire", "smartheat_host", ["smartheat_gateway.agent"]),
+        ("import smartheat_device.wire", "smartheat_host", ["smartheat_device.wire"]),
         ("import requests", "smartheat_host", ["requests"]),
     ]
     for source, package, expected in cases:
@@ -107,10 +107,7 @@ def test_checker_accepts_the_allowed_forms():
         "import os, json",
         "from cryptography.hazmat.primitives import hashes",
         "import smartheat_gateway",
-        "import smartheat_gateway.agent.wire",
         "from smartheat_gateway import files, paths, version",
-        "from smartheat_gateway.agent import identity, wire",
-        "from smartheat_gateway.agent.wire import sign_request",
         "from smartheat_gateway.files import write_json",
         "from smartheat_gateway.paths import Paths",
         "from smartheat_gateway.version import GATEWAY_VERSION",
@@ -119,8 +116,14 @@ def test_checker_accepts_the_allowed_forms():
         "from . import minisign as sibling",
     ])
     assert forbidden_imports(source, "smartheat_host", allow_host=True) == []
-    relative = "from .wire import x\nfrom . import wire\nfrom .. import files\nfrom ..paths import Paths"
-    assert forbidden_imports(relative, "smartheat_gateway.agent", allow_host=False) == []
+    relative = "from . import files\nfrom .paths import Paths"
+    assert forbidden_imports(relative, "smartheat_gateway", allow_host=False) == []
+
+
+def test_install_ships_exactly_the_listed_gateway_modules():
+    text = (HOST / "install.sh").read_text()
+    line = next(row for row in text.splitlines() if "for rel in" in row and "files.py" in row)
+    assert line.split("for rel in", 1)[1].split(";", 1)[0].split() == SHIPPED
 
 
 def test_no_tenant_ids_in_host_files():

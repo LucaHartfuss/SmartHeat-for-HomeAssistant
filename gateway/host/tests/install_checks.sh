@@ -72,7 +72,7 @@ nft_syntax_check "nftables-Regeln ungueltig"
 grep -q "tcp dport 22 accept" /etc/smartheat/nftables.conf || fail "Pilot-SSH fehlt in der Firewall"
 if udevadm --help 2>&1 | grep -q verify; then udevadm verify /etc/udev/rules.d/99-smartheat-zigbee.rules || fail "udev-Regel ungueltig"; fi
 grep -q "/var/lib/smartheat/host/zigbee_adapter" /etc/udev/rules.d/99-smartheat-zigbee.rules || fail "@ROOT@ nicht ersetzt"
-[ "$(stat -c '%u:%g %a' /var/lib/smartheat/bus/credentials/agent)" = "1000:1000 700" ] || fail "bus/credentials/agent"
+[ "$(stat -c '%u:%g %a' /var/lib/smartheat/bus/credentials/runtime)" = "1000:1000 700" ] || fail "bus/credentials/runtime"
 [ "$(stat -c '%u:%g' /var/lib/smartheat/data)" = "1000:1000" ] || fail "data gehoert nicht uid 1000"
 grep -q '^SHG_DEVICE_API_URL=https://api.example.test$' /var/lib/smartheat/host/gateway.env || fail "gateway.env"
 grep -q '"current": "0.2.0"' /var/lib/smartheat/updater/state.json || fail "erstes Bundle nicht als current"
@@ -113,7 +113,7 @@ grep -q "Nichts zu tun" /tmp/run4.log || fail "Wiederholung ohne Pilot-SSH melde
 # Symlinks unter ROOT (dort schreibt uid 1000): Installer bricht ab und fasst das Ziel nicht an.
 SYM_TARGET=/tmp/symlink-target
 mkdir -p "$SYM_TARGET" && chmod 0755 "$SYM_TARGET" && echo keep >"$SYM_TARGET/file" && chmod 0644 "$SYM_TARGET/file"
-for plant in bus/credentials/agent bus data host/gateway.env; do
+for plant in bus/credentials/runtime bus data host/gateway.env; do
   victim=/var/lib/smartheat/$plant
   mv "$victim" "$victim.orig"
   if [ "$plant" = host/gateway.env ]; then ln -s "$SYM_TARGET/file" "$victim"; else ln -s "$SYM_TARGET" "$victim"; fi

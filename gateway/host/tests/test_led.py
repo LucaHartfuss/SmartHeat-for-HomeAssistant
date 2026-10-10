@@ -16,16 +16,20 @@ def _state(tmp_path, zustand, age=0):
 
 
 @pytest.mark.parametrize("zustand", ["startet", "nicht_uebernommen", "wartet_auf_einrichtung", "keine_verbindung",
-                                     "regelt", "stoerung"])
+                                     "regelt", "stoerung", "gesperrt", "update_noetig"])
 def test_known_states_have_patterns(tmp_path, zustand):
     assert led.state_from_file(_state(tmp_path, zustand)) == zustand
     assert sum(seconds for _, seconds in led.PATTERNS[zustand]) <= 2.0
 
 
-def test_patterns_cover_exactly_the_agent_states():
-    from smartheat_gateway.agent import wire
+def test_patterns_cover_exactly_the_device_states():
+    from smartheat_device import wire
 
-    assert set(led.PATTERNS) == set(wire.AGENT_STATES)
+    assert set(led.PATTERNS) == set(wire.ZUSTAENDE)
+
+
+def test_blocked_and_update_needed_are_distinct_from_each_other_and_from_stoerung():
+    assert len({led.PATTERNS[z] for z in ("gesperrt", "update_noetig", "stoerung")}) == 3
 
 
 def test_stale_unreadable_or_unknown_state_is_stoerung(tmp_path):

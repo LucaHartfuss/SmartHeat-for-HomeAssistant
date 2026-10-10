@@ -1,6 +1,7 @@
-"""LED des Gateways (Spec G2b-1 5, G2 8.5): spielt je Agent-Zustand ein Muster auf der ACT-LED. Zustand aus
-data/agent_state.json (Agent schreibt mindestens alle 60 s); aelter als 5 min oder unlesbar = stoerung. Die Schluessel
-von PATTERNS sind genau die Zustaende des Agenten (wire.AGENT_STATES)."""
+"""LED des Gateways (Spec G2b-1 5, G2 8.5): spielt je Zustand des Geraetekerns (wire.ZUSTAENDE, Spec 5b 5.3) ein Muster
+auf der ACT-LED. Zustand aus data/agent_state.json (die Laufzeit schreibt mindestens alle 60 s; der Name stammt aus
+0.5.0); aelter als 5 min oder unlesbar = stoerung. Die Schluessel von PATTERNS sind genau die Zustaende des
+Geraetekerns."""
 import json
 import os
 import signal
@@ -17,11 +18,14 @@ PATTERNS: dict[str, tuple[tuple[bool, float], ...]] = {
     "keine_verbindung": ((True, 0.5), (False, 0.5)),
     "regelt": ((True, 1.0),),
     "stoerung": ((True, _PULSE), (False, _PULSE)) * 2 + ((True, _PULSE), (False, 2.0 - 5 * _PULSE)),
+    # Spec 5b 5.3: gesperrt = lang an, kurz aus (dauerhaft, Support noetig); update_noetig = zwei lange Pulse.
+    "gesperrt": ((True, 1.7), (False, 0.3)),
+    "update_noetig": ((True, 0.6), (False, 0.2), (True, 0.6), (False, 0.6)),
 }
 
 
 def state_from_file(path: Path, now: Callable[[], float] = time.time) -> str:
-    """Zustand des Agenten; veraltete, unlesbare oder unbekannte Angaben zeigen stoerung."""
+    """Zustand des Geraetekerns; veraltete, unlesbare oder unbekannte Angaben zeigen stoerung."""
     try:
         if now() - path.stat().st_mtime > STALE_SECONDS:
             return "stoerung"

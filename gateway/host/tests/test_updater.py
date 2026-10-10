@@ -7,31 +7,35 @@ import threading
 import pytest
 from minisign_helper import keypair, sign
 
-from smartheat_host import bundles, device_api, updater
+from smartheat_host import bundles, kanal, updater
 
 COMPOSE = ("services:\n  agent:\n    image: ghcr.io/x/gw@sha256:" + "a" * 64 + "\n").encode()
 MOSQ = b"listener 1883\n"
 BASE = "https://release.example.test/0.3.0/"
 
 
-class FakeApi:
-    """offline=True: weder desired noch update_result erreichen den Server (Netz weg, z. B. Router nach Stromausfall)."""
+class FakeKanal:
+    """offline=True: der Broker ist nicht erreichbar (Netz weg, z. B. Router nach Stromausfall). Meldungen gehen
+    lokal immer durch, ausser broken=True (Datentraeger nicht schreibbar)."""
 
     def __init__(self, desired):
-        self.desired_answer, self.results, self.offline, self.desired_calls = desired, [], False, 0
+        self.desired_answer, self.results, self.offline, self.broken = desired, [], False, False
+        self.desired_calls = self.reach_calls = 0
 
     def desired(self):
         self.desired_calls += 1
-        if self.offline:
-            raise device_api.DeviceApiError("desired: URLError")
         if isinstance(self.desired_answer, Exception):
             raise self.desired_answer
         return self.desired_answer
 
     def update_result(self, version, result, reason):
-        if self.offline:
-            raise device_api.DeviceApiError("update_result: URLError")
+        if self.broken:
+            raise kanal.KanalFehler("nicht schreibbar")
         self.results.append((version, result, reason))
+
+    def erreichbar(self):
+        self.reach_calls += 1
+        return not self.offline
 
 
 class FakeCompose:
@@ -68,7 +72,7 @@ class World:
         self.served = {BASE + "manifest.json": raw, **{BASE + n: d for n, d in files.items()}}
         if tamper:
             self.served[BASE + "docker-compose.yml"] = compose + b"#x\n"
-        self.api = FakeApi({"version": "0.3.0", "manifest_url": url,
+        self.api = FakeKanal({"version": "0.3.0", "manifest_url": url,
                             "manifest_sha256": hashlib.sha256(raw).hexdigest(),
                             "signature": sign(self.secret, self.key_id, raw)})
         self.compose = FakeCompose(fail_up, fail_pull)
@@ -85,7 +89,7 @@ class World:
     def rebuild(self, *, version="0.2.0", public_key_text=None):
         """Neuer Updater ueber derselben Zustandsdatei (Neustart, neue Host-Version, neuer Schluessel)."""
         return updater.Updater(
-            api_factory=lambda: self.api, store=self.store, compose=self.compose, fetch=self.fetch,
+            kanal=self.api, store=self.store, compose=self.compose, fetch=self.fetch,
             public_key_text=public_key_text or self.public, state_path=self.state_path, version=version,
             health=lambda version: self.healthy, clock=lambda: self.clock[0], sleep=self.sleep, **self.extra,
         )
@@ -217,7 +221,7 @@ def test_wrong_signature_is_refused(tmp_path):
 def test_placeholder_release_key_refuses_every_update(tmp_path):
     world = World(tmp_path)
     world.updater = updater.Updater(
-        api_factory=lambda: world.api, store=world.store, compose=world.compose, fetch=world.fetch,
+        kanal=world.api, store=world.store, compose=world.compose, fetch=world.fetch,
         public_key_text="untrusted comment: SMARTHEAT-PLATZHALTER\nSMARTHEAT-PLATZHALTER\n",
         state_path=world.state_path, version="0.2.0", health=lambda version: True, clock=lambda: 0.0,
         sleep=world.sleep)
@@ -225,7 +229,7 @@ def test_placeholder_release_key_refuses_every_update(tmp_path):
     assert world.api.results == [("0.3.0", "rollback", "signatur_ungueltig")]
 
 
-@pytest.mark.parametrize("error", [device_api.DeviceApiError("x"), device_api.NotAuthenticated("desired")])
+@pytest.mark.parametrize("error", [kanal.KanalFehler("x")])
 def test_server_trouble_is_temporary(tmp_path, error):
     world = World(tmp_path)
     world.api.desired_answer = error
@@ -233,14 +237,10 @@ def test_server_trouble_is_temporary(tmp_path, error):
     assert world.state().rejected == [] and world.api.results == []
 
 
-def test_missing_device_key_is_temporary(tmp_path):
+def test_missing_desired_file_is_temporary(tmp_path):
     world = World(tmp_path)
-
-    def no_key():
-        raise device_api.DeviceApiError("Geraeteschluessel unlesbar")
-
-    world.updater._api_factory = no_key
-    assert world.updater.run_once() == "vorlaeufig"
+    world.api.desired_answer = kanal.KanalFehler("Soll-Software noch nicht bekannt")
+    assert world.updater.run_once() == "vorlaeufig" and world.compose.calls == []
 
 
 def test_missing_download_is_temporary(tmp_path):
@@ -456,22 +456,23 @@ def test_reachable_but_unhealthy_still_rolls_back_after_ten_minutes(tmp_path):
     assert world.updater.run_once() == "zurueckgerollt"
     assert updater.HEALTH_SECONDS <= world.clock[0] < updater.HEALTH_SECONDS + updater.HEALTH_POLL_SECONDS
     assert world.state().rejected == ["0.3.0"]
-    assert world.api.desired_calls > 1  # Erreichbarkeit wird je Takt geprueft
+    assert world.api.reach_calls > 1  # Erreichbarkeit wird je Takt geprueft
     assert world.api.results == [("0.3.0", "rollback", "ungesund")]  # abgelehnt, nicht server_unerreichbar
 
 
 def test_unreachable_until_the_cap_rolls_back_without_rejecting_and_keeps_the_report(tmp_path):
     world = World(tmp_path, healthy=False)
     _offline_until(world, 10 ** 9)
+    world.api.broken = True  # Datentraeger nicht schreibbar: die Meldung bleibt in pending_reports
     assert world.updater.run_once() == "zurueckgerollt"
     assert updater.HEALTH_CAP_SECONDS <= world.clock[0] < updater.HEALTH_CAP_SECONDS + updater.HEALTH_POLL_SECONDS
     assert world.compose.calls[-1] == ("up", "0.2.0")
     state = world.state()
     assert (state.current, state.rejected, state.in_progress) == ("0.2.0", [], None)  # nicht abgelehnt
-    assert world.api.results == []  # offline: nichts gemeldet ...
+    assert world.api.results == []  # nicht schreibbar: nichts gemeldet ...
     assert state.pending_reports == [{"version": "0.3.0", "result": "rollback", "reason": "server_unerreichbar"}]  # ... gemerkt
     # Netz wieder da: zuerst die offene Meldung, dann der neue Versuch derselben Version
-    world.api.offline, world.healthy = False, True
+    world.api.offline, world.api.broken, world.healthy = False, False, True
     world.updater._sleep = world.sleep
     assert world.rebuild().run_once() == "aktualisiert"
     assert world.api.results == [("0.3.0", "rollback", "server_unerreichbar"), ("0.3.0", "ok", "")]
@@ -495,7 +496,7 @@ def test_report_that_cannot_be_sent_is_kept_and_sent_first_next_run(tmp_path):
     original = world.api.update_result
 
     def broken(*args):
-        raise device_api.NotAuthenticated("update_result")
+        raise kanal.KanalFehler("update_result")
 
     world.api.update_result = broken
     assert world.updater.run_once() == "abgelehnt"
@@ -522,11 +523,11 @@ def test_pending_reports_keep_their_order_while_offline(tmp_path):
     updater.State(current="0.2.0", rejected_context=world.context, pending_reports=[
         {"version": "0.2.8", "result": "rollback", "reason": "ungesund"},
         {"version": "0.2.9", "result": "ok", "reason": ""}]).save(world.state_path)
-    world.api.offline = True
-    assert world.updater.run_once() == "vorlaeufig"
-    assert len(world.state().pending_reports) == 2
-    world.api.offline = False
     world.api.desired_answer = {"version": "0.2.0"}
+    world.api.broken = True
+    assert world.updater.run_once() == "aktuell"
+    assert len(world.state().pending_reports) == 2
+    world.api.broken = False
     world.updater.run_once()
     assert world.api.results == [("0.2.8", "rollback", "ungesund"), ("0.2.9", "ok", "")]
 
@@ -620,7 +621,7 @@ def test_bundle_dir_keeps_manifest_and_signature(tmp_path):
         "docker-compose.yml", "manifest.json", "manifest.json.minisig", "mosquitto.conf"]
 
 
-HEALTHY = {"agent": "healthy", "runtime": "healthy"}
+HEALTHY = {"runtime": "healthy"}
 
 
 @pytest.mark.parametrize(("data", "containers", "ok"), [
@@ -631,10 +632,9 @@ HEALTHY = {"agent": "healthy", "runtime": "healthy"}
     ({"server_ok": False, "runtime_status": "regelt"}, HEALTHY, False),
     ({"server_ok": None, "runtime_status": "regelt"}, HEALTHY, False),
     ({"runtime_status": "regelt"}, HEALTHY, False),
-    ({"server_ok": True, "runtime_status": "regelt"}, {"agent": "healthy", "runtime": "unhealthy"}, False),
-    ({"server_ok": True, "runtime_status": "regelt"}, {"agent": "healthy", "runtime": "starting"}, False),
-    ({"server_ok": True, "runtime_status": "regelt"}, {"agent": "unhealthy", "runtime": "healthy"}, False),
-    ({"server_ok": True, "runtime_status": "regelt"}, {"agent": "healthy"}, False),  # Laufzeit fehlt/startet neu
+    ({"server_ok": True, "runtime_status": "regelt"}, {"runtime": "unhealthy"}, False),
+    ({"server_ok": True, "runtime_status": "regelt"}, {"runtime": "starting"}, False),
+    ({"server_ok": True, "runtime_status": "regelt"}, {"zigbee2mqtt": "healthy"}, False),  # Laufzeit fehlt/startet neu
     ({"server_ok": True, "runtime_status": "regelt"}, {}, False),
     (None, HEALTHY, False),
 ])
@@ -690,7 +690,6 @@ def test_main_once_wires_the_environment(tmp_path, monkeypatch, capsys):
     release_pub = tmp_path / "release.pub"
     release_pub.write_text("pub")
     monkeypatch.setenv("SHG_ROOT", str(tmp_path))
-    monkeypatch.setenv("SHG_DEVICE_API_URL", "https://api.example.test")
     monkeypatch.setenv("SHG_RELEASE_PUB", str(release_pub))
     monkeypatch.setenv("SHG_UPDATER_ALLOW_HTTP", "1")
     monkeypatch.setenv("SHG_UPDATER_HEALTH_SECONDS", "5")
@@ -715,6 +714,7 @@ def test_main_once_wires_the_environment(tmp_path, monkeypatch, capsys):
     assert seen["public_key_text"] == "pub" and seen["state_path"] == tmp_path / "updater" / "state.json"
     assert seen["version"] == updater.GATEWAY_VERSION
     assert seen["compose"]._project == "testprojekt"
+    assert isinstance(seen["kanal"], kanal.LokalerKanal) and seen["kanal"]._data == tmp_path / "data"
 
 
 @pytest.mark.parametrize("current", ["0.3.1", "1.0.0"])
@@ -740,3 +740,22 @@ def test_unreadable_current_version_does_not_block_updates(tmp_path):
 def test_downgrade_reason_is_in_the_fixed_list():
     assert "version_zu_alt" in updater.REASONS
     assert updater.RETRY_REASON in updater.REASONS
+
+
+def test_reachability_is_the_broker_not_the_bundle(tmp_path):
+    # Review Focus 5: das neue Bundle ist ungesund, der Broker erreichbar -> nach der Frist zurueck und abgelehnt;
+    # ist der Broker nicht erreichbar, ruht die Frist und die Version wird nicht abgelehnt.
+    world = World(tmp_path, healthy=False)
+    assert world.updater.run_once() == "zurueckgerollt"
+    assert world.api.results[-1] == ("0.3.0", "rollback", "ungesund") and "0.3.0" in world.state().rejected
+    (tmp_path / "zwei").mkdir()
+    offline = World(tmp_path / "zwei", healthy=False)
+    offline.api.offline = True
+    assert offline.updater.run_once() == "zurueckgerollt"
+    assert offline.api.results[-1] == ("0.3.0", "rollback", updater.RETRY_REASON)
+    assert "0.3.0" not in offline.state().rejected
+
+
+def test_only_the_runtime_container_must_be_healthy():
+    assert updater.REQUIRED_HEALTHY == ("runtime",)
+    assert updater.health_ok({"server_ok": True, "runtime_status": "regelt"}, {"runtime": "healthy"})
