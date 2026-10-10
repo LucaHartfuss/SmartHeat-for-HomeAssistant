@@ -1,6 +1,7 @@
-# Overlay fuer den Dev-Rechner (Spec SHG G2 7.2): Fake-Zigbee2MQTT statt Zigbee2MQTT (kein Stick), Fake-Geraete-API,
-# Diagnoseseite auf 127.0.0.1:8080. Start:
-#   SHG_ROOT=$PWD/.dev-data SHG_DEVICE_API_URL=http://fake-device-api:8090 docker compose \
+# Overlay fuer den Dev-Rechner (Spec SHG G2 7.2): Fake-Zigbee2MQTT statt Zigbee2MQTT (kein Stick), Diagnoseseite auf
+# 127.0.0.1:8080. Fake-Bootstrap und Fake-Broker ergaenzt Plan 5b D2 Task 10; bis dahin startet das Overlay ohne Server,
+# die Seite zeigt keine_verbindung. Start:
+#   SHG_ROOT=$PWD/.dev-data SHG_DEVICE_API_URL=http://127.0.0.1:9 docker compose \
 #     -f gateway/compose/docker-compose.yml -f gateway/compose/docker-compose.dev.yml up -d
 # security_opt label:disable: auf SELinux-Hosts (Fedora) duerfen die Container die Bind-Mounts sonst nicht lesen
 # (wie tools/e2e); ergaenzt die Liste der Basisdatei, no-new-privileges bleibt. Ohne SELinux wirkungslos.
@@ -20,14 +21,8 @@ services:
     security_opt: ["label:disable"]
   zigbee2mqtt:
     profiles: ["hardware"]          # am Dev-Rechner nicht starten
-  agent:
-    ports: !override ["127.0.0.1:8080:8080"]
-    security_opt: ["label:disable"]
-    environment:
-      SHG_DEVICE_API_URL: http://fake-device-api:8090
-  tunnel:
-    security_opt: ["label:disable"]
   runtime:
+    ports: !override ["127.0.0.1:8080:8080"]
     security_opt: ["label:disable"]
   mosquitto:
     security_opt: ["label:disable"]
@@ -45,8 +40,3 @@ services:
     volumes:
       - ../tests:/gw-tests:ro
       - ${SHG_ROOT:-/var/lib/smartheat}/bus/credentials/zigbee2mqtt:/run/shg-bus:ro
-  fake-device-api:
-    <<: *fake
-    command: ["python", "/gw-tests/fake_device_api.py"]
-    networks: [wan]
-    ports: ["127.0.0.1:18090:8090"]

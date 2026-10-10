@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "host"))  # Aufruf 
 from smartheat_host import bundles  # noqa: E402
 
 MIN_UPDATER_VERSION = "0.2.0"  # steigt nur, wenn sich das Manifest-Format aendert (Plan G2b-1 Praezisierung 9)
-GATEWAY_SERVICES = ("init", "agent", "tunnel", "runtime")
+GATEWAY_SERVICES = ("init", "runtime")
 _PINNED = re.compile(r"[^\s@]+@sha256:[0-9a-f]{64}")
 _HEADER = "# SmartHeat-Gateway-Bundle (erzeugt von gateway/release/build_bundle.py, nicht von Hand aendern)\n"
 

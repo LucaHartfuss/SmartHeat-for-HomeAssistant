@@ -16,20 +16,9 @@ ACCESS = {"publish": ("write", "readwrite"), "subscribe": ("read", "readwrite")}
 
 # (Datei relativ zu smartheat_gateway, umgebende Funktion, publish|subscribe) -> Dienste, die diese Stelle ausfuehren
 CALLERS: dict[tuple[str, str, str], tuple[str, ...]] = {
-    ("agent/context.py", "start", "subscribe"): ("agent",),
-    ("agent/lifecycle.py", "apply_config", "publish"): ("agent",),
-    ("agent/lifecycle.py", "set_room_target", "publish"): ("agent",),
-    ("agent/lifecycle.py", "sign_off", "publish"): ("agent",),
-    ("agent/lifecycle.py", "cleanup_after_sign_off", "publish"): ("agent",),
-    ("agent/loop.py", "__init__", "subscribe"): ("agent",),
-    ("sinks.py", "publish", "publish"): ("runtime",),
-    ("sinks.py", "push", "publish"): ("runtime",),
-    ("sinks.py", "show", "publish"): ("runtime",),
-    ("sinks.py", "withdraw", "publish"): ("runtime",),
-    ("triggers.py", "start", "subscribe"): ("runtime",),
-    ("zigbee.py", "start", "subscribe"): ("agent", "runtime"),
+    ("zigbee.py", "start", "subscribe"): ("runtime",),
     ("zigbee.py", "write_setpoint", "publish"): ("runtime",),
-    ("zigbee.py", "permit_join", "publish"): ("agent",),
+    ("zigbee.py", "permit_join", "publish"): ("runtime",),
 }
 
 
@@ -116,13 +105,13 @@ def test_covers_follows_mqtt_rules():
     assert not covers("shg/status", "shg/status/x") and not covers("shg/+", "shg/notify/+")
 
 
-def test_zigbee2mqtt_cannot_reach_the_gateway_topics():
-    for method, topic in (("publish", topics.CMD_RELOAD), ("publish", topics.STATUS),
-                          ("subscribe", topics.CMD_ROOM_TARGET)):
+def test_zigbee2mqtt_reaches_only_its_own_topics():
+    for method, topic in (("publish", "shg/cmd/reload"), ("publish", "shg/status"), ("subscribe", "shg/cmd/#")):
         assert not allowed("zigbee2mqtt", method, topic)
+    assert allowed("zigbee2mqtt", "publish", "zigbee2mqtt/+") and allowed("zigbee2mqtt", "subscribe", "zigbee2mqtt/#")
 
 
 def test_a_missing_acl_line_is_detected(monkeypatch):
-    rules = tuple(rule for rule in init.ACL_RULES["runtime"] if rule != ("write", "shg/raum"))
+    rules = tuple(rule for rule in init.ACL_RULES["runtime"] if rule != ("write", "zigbee2mqtt/+/set"))
     monkeypatch.setitem(init.ACL_RULES, "runtime", rules)
-    assert not allowed("runtime", "publish", topics.RAUM)
+    assert not allowed("runtime", "publish", f"{topics.Z2M_BASE}/+/set")

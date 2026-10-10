@@ -13,8 +13,7 @@ from datetime import UTC, datetime, time, timedelta, tzinfo
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from smartheat_core import wallclock
-from smartheat_gateway import topics
-from smartheat_gateway.bus import Bus, decode
+from smartheat_gateway.bus import Bus
 from smartheat_gateway.target_store import SOURCE_PORTAL, SOURCE_THERMOSTAT, TargetStore
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime.debounce import ROOM_TARGET_DEBOUNCE_SECONDS, Debouncer
@@ -81,7 +80,6 @@ class BusTriggerSource:
 
     def start(self) -> None:
         self._mirror.on_device_message(self._on_device_message)
-        self._bus.subscribe(topics.CMD_ROOM_TARGET, self._on_room_target_command)
         self._bus.on_connected(self._on_connected)
         if self._bus.connected:
             self._on_connected()
@@ -108,12 +106,6 @@ class BusTriggerSource:
                 self._worker.post(Event(EV_TARGET_INPUT, {"value": value, "source": SOURCE_THERMOSTAT}))
         if ieee in self._sensor_ieees:
             self._worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=False)
-
-    def _on_room_target_command(self, topic: str, raw: bytes, retain: bool) -> None:
-        body = decode(raw)
-        if retain or not isinstance(body, dict) or "value" not in body:
-            return
-        self._worker.post(Event(EV_TARGET_INPUT, {"value": body["value"], "source": SOURCE_PORTAL}))
 
     # --- Worker-Thread ---
 

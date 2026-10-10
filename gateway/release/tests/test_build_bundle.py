@@ -25,18 +25,17 @@ def test_render_replaces_build_by_the_digest_for_every_gateway_service():
     bundles.check_compose(text)  # das Geraet akzeptiert genau diese Datei
 
 
-def test_render_keeps_variables_tmpfs_masks_and_string_values():
+def test_render_keeps_variables_and_string_values():
     text = render_compose(COMPOSE.read_text(), IMAGE)
     assert "${SHG_ROOT:-/var/lib/smartheat}" in text
     assert "${SHG_DEVICE_API_URL:?SHG_DEVICE_API_URL fehlt}" in text
     services = yaml.safe_load(text)["services"]
     assert services["init"]["restart"] == "no"  # String, kein YAML-1.1-Bool
     assert isinstance(services["init"]["restart"], str)
-    mask = {"type": "tmpfs", "target": "/data/device", "read_only": True, "tmpfs": {"size": 4096}}
-    assert mask in services["tunnel"]["volumes"] and mask in services["runtime"]["volumes"]
     assert services["init"]["network_mode"] == "none"
-    assert services["runtime"]["network_mode"] == "service:tunnel"
+    assert services["runtime"]["ports"] == ["80:8080"]
     assert services["mosquitto"]["user"] == "1000:1000"
+    assert set(GATEWAY_SERVICES) == {"init", "runtime"}
 
 
 def test_render_has_no_yaml_anchors_or_extension_keys():

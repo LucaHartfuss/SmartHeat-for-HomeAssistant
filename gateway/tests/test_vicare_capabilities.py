@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from smartheat_core.binding import VIESSMANN_VICARE_BINDING as BINDING
-from smartheat_gateway.agent import wire
+from smartheat_device import wire
 from smartheat_gateway.drivers.vicare_cloud import capabilities as caps
 
 MATRIX = Path(__file__).parent / "vicare_matrix"

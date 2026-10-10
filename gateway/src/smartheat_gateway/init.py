@@ -1,8 +1,8 @@
 """Init-Schritt des Gateways (Spec G2b-1 Abschnitt 3): einmaliger Compose-Dienst vor allen anderen. Erzeugt, was
 fehlt: zufaellige Passwoerter je Dienst am lokalen Bus, Mosquitto-Passwortdatei ($7$, PBKDF2-SHA512) und ACL, die
-Zigbee2MQTT-Grundkonfiguration mit Zugangsdaten und die Ordner data/device und data/agent (0700; sonst legte Docker
-die Mountpunkte der Masken in tunnel/runtime als root an). Heilt ausserdem Drift (Plan G2b-2): eine Passwortdatei, die
-nicht zu den Zugangsdateien passt, wird neu aufgebaut, und die Zugangsdaten in einer bestehenden Zigbee2MQTT-
+Zigbee2MQTT-Grundkonfiguration mit Zugangsdaten und den Ordner data/device (0700, Geraetekern; ab 0.6.0 ohne Agent
+und Masken). Heilt ausserdem Drift (Plan G2b-2): eine Passwortdatei, die nicht zu den Zugangsdateien passt (auch eine
+aus 0.5.0 mit dem Benutzer agent), wird neu aufgebaut, und die Zugangsdaten in einer bestehenden Zigbee2MQTT-
 Konfiguration werden angeglichen. Idempotent: ein zweiter Lauf schreibt nichts. Ein Schreiber je Datei: bus/ und
 configuration.yaml (ganz nur wenn sie fehlt, sonst nur user/password) gehoeren diesem Schritt. Passwoerter erscheinen
 nie im Log (nur Dateinamen)."""
@@ -21,18 +21,14 @@ from smartheat_gateway.files import write_text_private
 
 logger = logging.getLogger(__name__)
 
-SERVICES = ("agent", "runtime", "zigbee2mqtt")
+SERVICES = ("runtime", "zigbee2mqtt")
 ITERATIONS = 101
 SALT_BYTES = 12
 MAX_VERIFY_ITERATIONS = 1_000_000  # Obergrenze beim Pruefen: ein feindlicher Eintrag soll nicht ewig rechnen
 ACL_RULES: dict[str, tuple[tuple[str, str], ...]] = {
-    "agent": (
-        ("read", "shg/status"), ("read", "shg/raum"), ("read", "shg/notify/#"), ("read", "shg/notify_push"),
-        ("read", "zigbee2mqtt/#"), ("write", "shg/cmd/#"), ("write", "zigbee2mqtt/bridge/request/#"),
-    ),
+    # Ab 0.6.0 (Spec 5b 5.3) traegt der lokale Bus nur noch Zigbee2MQTT; Status, Raum und Meldungen bleiben im Prozess.
     "runtime": (
-        ("read", "shg/cmd/#"), ("read", "zigbee2mqtt/#"), ("write", "shg/status"), ("write", "shg/raum"),
-        ("write", "shg/notify/#"), ("write", "shg/notify_push"), ("write", "zigbee2mqtt/+/set"),
+        ("read", "zigbee2mqtt/#"), ("write", "zigbee2mqtt/+/set"), ("write", "zigbee2mqtt/bridge/request/#"),
     ),
     "zigbee2mqtt": (("readwrite", "zigbee2mqtt/#"),),
 }
@@ -125,7 +121,7 @@ def ensure(bus_dir: Path, zigbee_dir: Path, data_dir: Path, adapter_name: str,
         written.append("zigbee2mqtt/configuration.yaml")
     elif z2m_config.sync_credentials(zigbee_dir, "zigbee2mqtt", passwords["zigbee2mqtt"]):
         written.append("zigbee2mqtt/configuration.yaml (Zugangsdaten)")
-    for name in ("device", "agent"):
+    for name in ("device",):
         path = data_dir / name
         if not path.is_dir():
             path.mkdir(parents=True, exist_ok=True)

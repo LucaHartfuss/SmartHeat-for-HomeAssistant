@@ -4,4 +4,5 @@
 !heizungsbruecke/src/smartheat_core
 !heizungsbruecke/src/smartheat_transport
 !heizungsbruecke/src/smartheat_runtime
+!heizungsbruecke/src/smartheat_device
 **/__pycache__

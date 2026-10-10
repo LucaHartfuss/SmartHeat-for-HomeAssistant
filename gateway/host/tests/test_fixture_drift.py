@@ -17,9 +17,9 @@ def as_fixture(real: dict) -> dict:
     data = copy.deepcopy(real)
     del data["services"]["zigbee2mqtt"]  # Test ohne Stick
     data["networks"]["wan"] = {**data["networks"]["wan"], "external": True, "name": "shg-upd-wan"}
-    agent = data["services"]["agent"]
-    del agent["ports"]
-    agent["environment"] = {**agent["environment"], "SHG_DEVICE_API_URL": "http://shg-upd-api:8090"}
+    runtime = data["services"]["runtime"]
+    del runtime["ports"]
+    runtime["environment"] = {**runtime["environment"], "SHG_DEVICE_API_URL": "http://shg-upd-bootstrap:8090"}
     for block in (data["x-hardening"], data["x-gateway"], *data["services"].values()):
         if block.get("security_opt") == HARDENING:
             block["security_opt"] = [*HARDENING, "label:disable"]
