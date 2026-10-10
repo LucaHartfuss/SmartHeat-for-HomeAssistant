@@ -93,9 +93,7 @@ def test_reachable_uses_a_real_tcp_connection_by_default(tmp_path):
         _write(tmp_path / "device" / "endpoint.json",
                {"host": "127.0.0.1", "port": listener.getsockname()[1], "ca_pem": "x", "alpn": None})
         assert kanal.LokalerKanal(tmp_path, timeout=2.0).erreichbar()
-        closed_port = listener.getsockname()[1]
     # Listener geschlossen: derselbe Port nimmt nichts mehr an.
-    assert closed_port > 0
     assert not kanal.LokalerKanal(tmp_path, timeout=2.0).erreichbar()
 
 
@@ -117,3 +115,91 @@ def test_file_names_match_the_device_core_and_the_gateway_paths():
     assert paths.software_soll.name == kanal.SOLL_FILE
     assert paths.software_meldungen.name == kanal.MELDUNGEN_FILE
     assert paths.software_quittung.name == kanal.QUITTUNG_FILE
+
+
+# --- Container-schreibbarer Datenordner: Symlinks, FIFOs, riesige Dateien (Root liest und schreibt dort) ---
+
+
+def test_planted_symlinks_in_the_data_dir_never_reach_a_foreign_file(tmp_path):
+    outside = tmp_path / "fremd.txt"
+    outside.write_text("unberuehrt")
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "software_meldungen.json.tmp").symlink_to(outside)
+    kanal.LokalerKanal(data).update_result("0.6.1", "ok", "")
+    assert outside.read_text() == "unberuehrt"
+    (data / "software_meldungen.json").unlink()
+    (data / "software_meldungen.json").symlink_to(outside)
+    (data / "software_meldungen.json.tmp").symlink_to(outside)
+    kanal.LokalerKanal(data).update_result("0.6.2", "ok", "")
+    assert outside.read_text() == "unberuehrt"
+    assert not (data / "software_meldungen.json").is_symlink()
+    assert json.loads((data / "software_meldungen.json").read_text())["meldungen"][0]["version"] == "0.6.2"
+
+
+def _fifo(path: Path) -> None:
+    os.mkfifo(path)
+
+
+def _symlink(path: Path) -> None:
+    target = path.with_name("ziel.json")
+    target.write_text(json.dumps(SOFTWARE))
+    path.symlink_to(target)
+
+
+def _huge(path: Path) -> None:
+    path.write_text(json.dumps({"version": "0.6.1", "fuell": "x" * 200_000}))
+
+
+@pytest.mark.parametrize("plant", [_fifo, _symlink, _huge])
+def test_unsafe_desired_file_is_temporary_and_never_blocks(tmp_path, plant):
+    plant(tmp_path / "software_soll.json")
+    with pytest.raises(kanal.KanalFehler):
+        kanal.LokalerKanal(tmp_path).desired()
+
+
+@pytest.mark.parametrize("plant", [_fifo, _symlink, _huge])
+def test_unsafe_results_and_acknowledgement_files_count_as_lost(tmp_path, plant):
+    plant(tmp_path / "software_meldungen.json")
+    plant(tmp_path / "software_quittung.json")
+    kanal.LokalerKanal(tmp_path).update_result("0.6.1", "ok", "")
+    raw = json.loads((tmp_path / "software_meldungen.json").read_text())
+    assert [e["seq"] for e in raw["meldungen"]] == [1]  # die manipulierte Datei wurde ersetzt, nicht gelesen
+
+
+@pytest.mark.parametrize("plant", [_fifo, _symlink, _huge])
+def test_unsafe_endpoint_file_is_unreachable_without_connecting(tmp_path, plant):
+    (tmp_path / "device").mkdir()
+    plant(tmp_path / "device" / "endpoint.json")
+
+    def never(address, timeout):
+        raise AssertionError("darf nicht verbinden")
+
+    assert not kanal.LokalerKanal(tmp_path, connect=never).erreichbar()
+
+
+def test_a_symlinked_device_dir_is_unreachable_without_connecting(tmp_path):
+    real = tmp_path / "echt"
+    _write(real / "endpoint.json", {"host": "broker.test", "port": 8883, "ca_pem": "x", "alpn": None})
+    (tmp_path / "device").symlink_to(real)
+
+    def never(address, timeout):
+        raise AssertionError("darf nicht verbinden")
+
+    assert not kanal.LokalerKanal(tmp_path, connect=never).erreichbar()
+
+
+def test_results_are_read_by_the_device_host_exactly_as_written(tmp_path):
+    """Vertrag Updater -> Laufzeit: GatewayDeviceHost liest, was LokalerKanal schreibt (seq, version, result, reason)."""
+    from test_geraet_host import Welt
+
+    clock = [1000.0]
+    welt = Welt(tmp_path, lambda: clock[0])
+    k = kanal.LokalerKanal(welt.paths.data)
+    k.update_result("0.6.1", "ok", "")
+    k.update_result("0.6.2", "rollback", "ungesund")
+    k.update_result("0.6.3", "rollback", "server_unerreichbar")
+    welt.host._software_ergebnisse()
+    assert [(v, ok, grund) for v, ok, grund, _text in welt.device.ergebnisse] == [
+        ("0.6.1", True, None), ("0.6.2", False, "ungesund"), ("0.6.3", False, "server_unerreichbar")]
+    assert json.loads(welt.paths.software_quittung.read_text()) == {"seq": 3}

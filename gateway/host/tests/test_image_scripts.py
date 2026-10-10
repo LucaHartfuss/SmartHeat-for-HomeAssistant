@@ -148,8 +148,9 @@ def test_prepare_builds_the_stage(tmp_path, pilot):
     assert (installer / "host" / "pilot_ssh_tunnel.sh").is_file()
     for name in ("rootfs_checks.sh", "own_url.sh", "customize.sh"):
         assert (installer / "image" / name).is_file(), name
-    for rel in SHIPPED:
-        assert (installer / "src" / "smartheat_gateway" / rel).is_file(), rel
+    shipped = {str(p.relative_to(installer / "src" / "smartheat_gateway")) for p in
+               (installer / "src" / "smartheat_gateway").rglob("*") if p.is_file()}
+    assert shipped == set(SHIPPED)  # genau das, was install.sh ablegt: nichts fehlt, nichts (agent/) kommt dazu
     assert (installer / "VERSION").read_text() == (GW / "VERSION").read_text()
     for name in ("docker-compose.yml", "mosquitto.conf", "manifest.json", "manifest.json.minisig"):
         assert (stage / "bundle" / name).is_file(), name

@@ -9,6 +9,8 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from smartheat_host import lesen
+
 STALE_SECONDS = 300
 _PULSE = 0.15
 PATTERNS: dict[str, tuple[tuple[bool, float], ...]] = {
@@ -27,9 +29,10 @@ PATTERNS: dict[str, tuple[tuple[bool, float], ...]] = {
 def state_from_file(path: Path, now: Callable[[], float] = time.time) -> str:
     """Zustand des Geraetekerns; veraltete, unlesbare oder unbekannte Angaben zeigen stoerung."""
     try:
-        if now() - path.stat().st_mtime > STALE_SECONDS:
+        data, info = lesen.read_stat(path)  # data/ ist fuer Container schreibbar: begrenzt, ohne Symlink, ohne FIFO
+        if now() - info.st_mtime > STALE_SECONDS:
             return "stoerung"
-        zustand = json.loads(path.read_text()).get("zustand")
+        zustand = json.loads(data).get("zustand")
     except (OSError, ValueError, AttributeError):
         return "stoerung"
     return zustand if isinstance(zustand, str) and zustand in PATTERNS else "stoerung"

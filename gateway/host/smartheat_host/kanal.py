@@ -9,11 +9,14 @@ unabhaengig vom neuen Bundle). Standardbibliothek; smartheat_device ist auf dem 
 haelt test_kanal gleich."""
 import contextlib
 import json
+import os
 import socket
+import stat
 from collections.abc import Callable
 from pathlib import Path
 
-from smartheat_gateway.files import read_json, write_json
+from smartheat_gateway.files import write_json
+from smartheat_host.lesen import read_bytes, read_json
 
 SOLL_FILE = "software_soll.json"
 MELDUNGEN_FILE = "software_meldungen.json"
@@ -35,11 +38,10 @@ class LokalerKanal:
         self._data, self._connect, self._timeout = data_dir, connect, timeout
 
     def desired(self) -> dict:
-        path = self._data / SOLL_FILE
-        if not path.exists():
-            raise KanalFehler("Soll-Software noch nicht bekannt (Laufzeit hat keine Konfiguration geschrieben)")
         try:
-            raw = json.loads(path.read_text())
+            raw = json.loads(read_bytes(self._data / SOLL_FILE))  # begrenzt, ohne Symlink, nie an einer FIFO haengend
+        except FileNotFoundError:
+            raise KanalFehler("Soll-Software noch nicht bekannt (Laufzeit hat keine Konfiguration geschrieben)") from None
         except (OSError, ValueError) as error:
             raise KanalFehler(f"Soll-Software unlesbar ({type(error).__name__})") from None
         if raw is None:
@@ -62,6 +64,11 @@ class LokalerKanal:
             raise KanalFehler(f"Meldung nicht schreibbar ({type(error).__name__})") from None
 
     def erreichbar(self) -> bool:
+        try:
+            if not stat.S_ISDIR(os.lstat(self._data / "device").st_mode):  # lstat: ein Symlink ist kein Ordner
+                return False
+        except OSError:
+            return False
         raw = read_json(self._data / "device" / ENDPOINT_FILE)
         if not (isinstance(raw, dict) and isinstance(raw.get("host"), str) and isinstance(raw.get("port"), int)):
             return False

@@ -10,7 +10,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 GW="$(cd "$HERE/.." && pwd)"
 DEBIAN_IMAGE="debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5"
 # Module aus gateway/src, die install.sh mit ablegt (wie dort und in tests/test_boundaries.py SHIPPED).
-SHIPPED=(__init__.py files.py paths.py version.py agent/__init__.py agent/wire.py agent/identity.py)
+SHIPPED=(__init__.py files.py paths.py version.py)
 # shellcheck source=own_url.sh
 . "$HERE/own_url.sh"
 usage() { echo "FEHLER: $1" >&2; exit 2; }
@@ -52,7 +52,7 @@ mkdir -p "$STAGE"
 STAGE="$(cd "$STAGE" && pwd)"
 # 3. Installer-Baum, wie install.sh ihn erwartet (gateway/host, gateway/src/..., gateway/VERSION) plus Image-Pruefung
 inst="$STAGE/installer/gateway"
-mkdir -p "$inst/src/smartheat_gateway/agent" "$inst/image" "$STAGE/bundle" "$STAGE/images"
+mkdir -p "$inst/src/smartheat_gateway" "$inst/image" "$STAGE/bundle" "$STAGE/images"
 cp -a "$GW/host" "$inst/host"
 rm -rf "$inst/host/tests"
 find "$inst/host" -name __pycache__ -type d -prune -exec rm -rf {} +

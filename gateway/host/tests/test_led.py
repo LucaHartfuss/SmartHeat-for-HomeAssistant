@@ -103,3 +103,26 @@ def test_play_switches_pattern_when_the_state_changes(tmp_path):
 
     led.play(device, read_state, lambda: clock[0], lambda s: clock.__setitem__(0, clock[0] + s), steps=4)
     assert writes == [True, True, True, True]  # keine_verbindung waere nach 0,5 s aus; nach dem Wechsel dauerhaft an
+
+
+def _plant_fifo(path):
+    os.mkfifo(path)
+
+
+def _plant_symlink(path):
+    target = path.with_name("ziel.json")
+    target.write_text(json.dumps({"zustand": "regelt"}))
+    path.symlink_to(target)
+
+
+def _plant_huge(path):
+    path.write_text(json.dumps({"zustand": "regelt", "fuell": "x" * 200_000}))
+
+
+@pytest.mark.parametrize("plant", [_plant_fifo, _plant_symlink, _plant_huge])
+def test_unsafe_state_files_are_stoerung_and_never_block(tmp_path, plant):
+    """data/ ist fuer Container schreibbar, der Host-Dienst laeuft als root: kein Folgen von Symlinks, kein Blockieren
+    an einer FIFO, kein unbegrenztes Lesen."""
+    path = tmp_path / "agent_state.json"
+    plant(path)
+    assert led.state_from_file(path) == "stoerung"
