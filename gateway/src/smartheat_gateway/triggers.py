@@ -69,6 +69,7 @@ class BusTriggerSource:
         self._wunsch, self._soll_quelle_aus = wunsch, soll_quelle_aus
         self._aus: set[str] = set()  # Gruende: "modus", "frost"
         self._wunsch_offen = False
+        self._vor_wunsch: tuple[float, str] | None = None  # Soll und Quelle vor dem ersten offenen Wunsch
         self._debouncer = Debouncer(worker, DEBOUNCE_KIND, ROOM_TARGET_DEBOUNCE_SECONDS, self._entprellt)
         worker.register(EV_TARGET_INPUT, self._on_target_input)
         worker.register(EV_SOLL_MODUS, self._on_mode)
@@ -123,7 +124,15 @@ class BusTriggerSource:
         else:
             self._aus.discard(grund)
         if bool(self._aus) != vorher:
+            if self._aus:
+                self._wunsch_verwerfen()  # Thermostat aus ist kein Wunsch (Spec 5b 3.2): auch ein offener nicht
             self._soll_quelle_aus(bool(self._aus), self._store.value if self._aus else None)
+
+    def _wunsch_verwerfen(self) -> None:
+        if self._wunsch_offen and self._vor_wunsch is not None:
+            self._store.wiederherstellen(*self._vor_wunsch)
+        self._wunsch_offen = False
+        self._vor_wunsch = None
 
     def _on_mode(self, event: Event) -> None:
         self._setze_aus("modus", event.data.get("mode") == MODUS_AUS)
@@ -135,6 +144,7 @@ class BusTriggerSource:
             if not self._store.apply_portal(value):
                 return
             self._wunsch_offen = False  # die Bedienung des Servers gilt; ein halber Wunsch geht nicht mehr hoch
+            self._vor_wunsch = None
             if self._thermostat is not None and not self._aus and self._store.value != vorher:
                 self._mirror.write_setpoint(self._thermostat, self._store.value)
                 self._store.note_own_write()
@@ -143,14 +153,18 @@ class BusTriggerSource:
                 self._setze_aus("frost", True)
                 return
             self._setze_aus("frost", False)
+            vor_wunsch = (self._store.value, self._store.source)
             if self._aus or not self._store.apply_thermostat(value):
                 return
+            if not self._wunsch_offen:
+                self._vor_wunsch = vor_wunsch
             self._wunsch_offen = True
         self._debouncer.poke()
 
     def _entprellt(self) -> None:
         if self._wunsch_offen:
             self._wunsch_offen = False
+            self._vor_wunsch = None
             try:
                 begrenzt = self._wunsch(self._store.value)
             except ValueError:

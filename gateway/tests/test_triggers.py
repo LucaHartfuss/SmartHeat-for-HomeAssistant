@@ -206,6 +206,15 @@ def test_turning_the_knob_sends_one_limited_wish_after_the_debounce(mit_geraet, 
     assert welt.wuensche == [14.0]
     assert (welt.store.value, welt.store.source) == (15.0, "thermostat")
     assert _setpoint_writes(welt) == [15.0] and welt.checks == [True]
+    # das Thermostat zeigt 15 (Echo) und meldet danach noch einen veralteten Zwischenwert: kein neuer Wunsch, kein Schreiben
+    welt.z2m.report(THERMOSTAT, occupied_heating_setpoint=15.0, local_temperature=20.0)
+    welt.worker.run_pending()
+    welt.z2m.report(THERMOSTAT, occupied_heating_setpoint=14.0, local_temperature=20.0)
+    welt.worker.run_pending()
+    clock.advance(10)
+    welt.worker.run_pending()
+    assert welt.wuensche == [14.0] and _setpoint_writes(welt) == [15.0]
+    assert (welt.store.value, welt.store.source) == (15.0, "thermostat")
 
 
 def test_a_wish_inside_the_range_is_not_written_back(mit_geraet, clock):
@@ -264,3 +273,33 @@ def test_an_operation_with_the_current_value_writes_nothing(mit_geraet):
     welt.worker.post(Event(EV_TARGET_INPUT, {"value": 20.0, "source": "portal"}))
     welt.worker.run_pending()
     assert _setpoint_writes(welt) == []
+
+
+def test_dialing_down_to_frost_cancels_the_pending_wish(mit_geraet, clock):
+    welt = mit_geraet
+    for value in (12.0, 9.0, 8.0, 7.0, 5.0):  # Nutzer dreht auf Frostschutz, 8 war kurz ein Wunsch
+        welt.z2m.report(THERMOSTAT, occupied_heating_setpoint=value, local_temperature=20.0)
+        welt.worker.run_pending()
+        clock.advance(1)
+    clock.advance(10)
+    welt.worker.run_pending()
+    assert welt.wuensche == [] and _setpoint_writes(welt) == []
+    assert welt.aus == [(True, 20.0)]  # wirksam ist der Wert vor dem verworfenen Wunsch, nicht 8.0
+    assert (welt.store.value, welt.store.source) == (20.0, "portal")
+    welt.z2m.report(THERMOSTAT, occupied_heating_setpoint=21.0, local_temperature=20.0)
+    welt.worker.run_pending()
+    assert welt.aus[-1] == (False, None)
+
+
+def test_thermostat_off_cancels_a_pending_wish(mit_geraet, clock):
+    welt = mit_geraet
+    welt.z2m.report(THERMOSTAT, occupied_heating_setpoint=17.0, local_temperature=20.0)
+    welt.worker.run_pending()
+    assert welt.store.value == 17.0
+    clock.advance(3)
+    welt.z2m.report(THERMOSTAT, system_mode="off")
+    welt.worker.run_pending()
+    clock.advance(10)
+    welt.worker.run_pending()
+    assert welt.wuensche == [] and _setpoint_writes(welt) == []
+    assert welt.aus == [(True, 20.0)] and welt.store.value == 20.0
