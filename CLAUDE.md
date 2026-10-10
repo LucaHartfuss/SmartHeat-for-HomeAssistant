@@ -13,7 +13,8 @@ released sind. Die Sicherheitsregeln aus `../CLAUDE.md` gelten unverändert.
 - `heizungsbruecke/src/smartheat_runtime/` — hostneutraler Betrieb für Add-on und Gateway (`app.py`, `delivery.py`,
   `status.py` …); Grenzen in `tests/test_runtime_purity.py`: nie `heizungsbruecke`, `paho` nur über
   `smartheat_transport.mqtt_client`, keine Tenant-IDs.
-- `heizungsbruecke/src/smartheat_transport/` — Transport-Deskriptor, MQTT (`mqtt_client.py` = einzige Stelle mit `paho` im Optionen-Pfad; im Geraetekern nur `smartheat_device/link.py`).
+- `heizungsbruecke/src/smartheat_transport/` — Transport-Deskriptor, MQTT (`mqtt_client.py` = einzige Stelle mit
+  `paho` im Optionen-Pfad; im Gerätekern nur `smartheat_device/link.py`).
 - `heizungsbruecke/src/smartheat_device/` — Gerätekern (Spec 5b): Vertragskopie `wire.py` (wörtlich aus Server
   `device_protocol.py`), Identität, Bootstrap mit Rettungsweg, die eine MQTT-Verbindung (`link.py`), Dokumentspeicher,
   Befehle, Bedienwunsch, Inventur, `device.py` (Thread, hello, Status), `laufzeit.py` (Laufzeit auf dem Link). Grenzen:
