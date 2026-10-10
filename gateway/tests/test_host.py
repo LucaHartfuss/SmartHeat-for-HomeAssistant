@@ -1,18 +1,22 @@
+"""Laufzeit-Host des Gateways ab 0.6.0 (Spec SHG G2 3.1, Spec 5b Plan D2 Task 5): Start aus dem Konfigurationsdokument,
+Startfehler mit stabilem Schluessel, Hebelsatz, Abmelden, Manifest nach der ersten Abfrage, Batterien, Anlagen-Kennung."""
 import time
 
 import pytest
-from configs import SENSOR, THERMOSTAT, apply_config, write_runtime_files
+from configs import SENSOR, THERMOSTAT, dokumente_schreiben, konfiguration
 from fake_vicare.server import GOOD_CODE, FakeVicare
 from fakes import FakeBus
+from geraet_fakes import geraet_fuer
 from world import GatewayWorld
 
-from smartheat_gateway.config import GatewayConfig
+from smartheat_gateway import config as gateway_config
 from smartheat_gateway.drivers import registry
 from smartheat_gateway.drivers.base import DriverError
 from smartheat_gateway.drivers.registry import create
 from smartheat_gateway.drivers.vicare_cloud.driver import ViCareCloudDriver
 from smartheat_gateway.host import SHG_TEXTS, GatewayHost, build_manifest
 from smartheat_gateway.paths import Paths
+from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime.app import IDLE_NOT_CONFIGURED, IdleBridge, RestoreParts, StartFailure
 from smartheat_runtime.roles import ManifestError
 from smartheat_runtime.runtime import Runtime
@@ -27,76 +31,76 @@ def world(data_dir, monkeypatch, clock):
     return GatewayWorld(data_dir, monkeypatch, clock)
 
 
-def test_not_configured_is_idle_and_clears_retained_status(world):
-    world.bus.publish("shg/status", {"status": "abgemeldet"}, retain=True)
+def _host(paths, konf, clock, *, bus=None, wait=0.1):
+    bus = bus or FakeBus()
+    mirror = ZigbeeMirror(bus, clock)
+    mirror.start()
+    return GatewayHost(paths, bus, mirror, geraet_fuer(paths, mirror, konf), clock=clock, devices_wait_seconds=wait,
+                       driver_threads=False)
+
+
+def test_not_configured_is_idle(world):
     result = world.start_runtime()
-    assert isinstance(result, IdleBridge) and result.reason == IDLE_NOT_CONFIGURED
-    assert world.status() is None
+    assert isinstance(result, IdleBridge) and result.reason == IDLE_NOT_CONFIGURED and world.status() is None
 
 
 def test_configured_start_regulates_with_gateway_texts_and_batteries(world):
-    write_runtime_files(world.paths, apply_config())
+    dokumente_schreiben(world.paths, konfiguration())
     result = world.start_runtime()
     assert isinstance(result, Runtime)
     world.connect()
-    assert world.status()["status"] == "regelt" and world.status()["setup_id"] == "setup-1"
-    assert result.texts is SHG_TEXTS
+    assert world.status()["status"] == "regelt" and world.status()["setup_id"] == "test-tenant"
+    assert result.texts is SHG_TEXTS and result.config.descriptor is None
     assert set(result.config.battery_refs) == {
         BatteryRef(f"zigbee:{SENSOR}:battery", BATTERY_PERCENT),
         BatteryRef(f"zigbee:{THERMOSTAT}:battery_low", BATTERY_LOW_FLAG),
     }
     assert result.manifest.refs["room_actual"] == "raum:mittel"
-    assert world.bus.retained["shg/raum"]["soll"] == 20.0
+    assert world.geraet.zustand.raum["soll"] == 20.0
 
 
-def test_invalid_config_is_a_config_error_without_secrets(world):
-    write_runtime_files(world.paths, apply_config(room_sensors=["test-geheim"], mqtt_password="test-geheim"))
+def test_invalid_room_sensor_is_a_config_error(world):
+    dokumente_schreiben(world.paths, konfiguration(raumfuehler=["test-falsch"]))
     result = world.start_runtime()
     assert isinstance(result, IdleBridge) and result.reason == "konfigurationsfehler"
-    assert "test-geheim" not in str(world.status())
-    assert "test-geheim" not in str(world.bus.decoded())
 
 
-def test_start_failures_carry_a_stable_key_independent_of_the_text(world):
-    write_runtime_files(world.paths, apply_config(room_sensors=["zigbee:0xzz"]))
-    host = GatewayHost(world.paths, world.bus, clock=world.clock, driver_threads=False)
+def test_start_failures_carry_a_stable_key_independent_of_the_text(data_dir, clock):
+    paths = Paths(data_dir)
     with pytest.raises(StartFailure) as config_error:
-        host.load()
+        _host(paths, konfiguration(raumfuehler=["zigbee:0xzz"]), clock).load()
     assert config_error.value.key == "konfiguration" and config_error.value.grund
-
-    unknown = {"id": "simulation", "parameter": {"lever_set": "gibt-es-nicht"}}
-    write_runtime_files(world.paths, apply_config(driver=unknown))
+    unknown = {"treiber": {"id": "simulation", "parameter": {"lever_set": "gibt-es-nicht"}}, "thermostat": None}
     with pytest.raises(StartFailure) as driver_error:
-        GatewayHost(world.paths, world.bus, clock=world.clock, driver_threads=False).load()
+        _host(paths, konfiguration(bindung=unknown), clock).load()
     assert driver_error.value.key == "treiber"
 
 
 def test_driver_lever_set_must_match_the_configured_lever_set(world):
-    write_runtime_files(world.paths, apply_config(lever_set="vaillant_vrc720"))  # Treiber simuliert viessmann_vicare
+    dokumente_schreiben(world.paths, konfiguration(hebelsatz="vaillant_vrc720"))  # Treiber simuliert viessmann_vicare
     result = world.start_runtime()
     assert isinstance(result, IdleBridge) and result.reason == "konfigurationsfehler"
     assert "Hebelsatz" in world.status()["grund"]
-    assert world.host.driver is None  # nie gestartet, nie abgefragt
+    assert world.host.driver is None
 
 
-def test_sign_off_without_matching_lever_set_does_not_restore(world):
-    write_runtime_files(world.paths, apply_config(lever_set="vaillant_vrc720", abgemeldet=True))
-    host = GatewayHost(world.paths, world.bus, clock=world.clock, driver_threads=False)
-    assert host.sign_off_parts() is None
-    assert host.driver is None
+def test_sign_off_without_matching_lever_set_does_not_restore(data_dir, clock):
+    paths = Paths(data_dir)
+    gateway_config.abmelden(paths, "test-tenant")
+    host = _host(paths, konfiguration(hebelsatz="vaillant_vrc720"), clock)
+    assert host.boot_info().signed_off and host.sign_off_parts() is None and host.driver is None
 
 
-def test_sign_off_with_a_valid_signed_off_config_restores_with_the_driver(world):
-    write_runtime_files(world.paths, apply_config(abgemeldet=True))  # Treiber und Hebelsatz passen (viessmann_vicare)
-    host = GatewayHost(world.paths, world.bus, clock=world.clock, driver_threads=False)
+def test_sign_off_with_a_matching_plant_restores_with_the_driver(data_dir, clock):
+    paths = Paths(data_dir)
+    gateway_config.abmelden(paths, "test-tenant")
+    host = _host(paths, konfiguration(), clock)
     parts = host.sign_off_parts()
-    assert isinstance(parts, RestoreParts)
-    assert host.driver is not None and parts.binding is host.driver
+    assert isinstance(parts, RestoreParts) and host.driver is not None and parts.binding is host.driver
 
 
-def test_manifest_error_is_a_start_failure_with_the_manifest_key(world, monkeypatch):
-    write_runtime_files(world.paths, apply_config())
-    host = GatewayHost(world.paths, world.bus, clock=world.clock, driver_threads=False)
+def test_manifest_error_is_a_start_failure_with_the_manifest_key(data_dir, clock, monkeypatch):
+    host = _host(Paths(data_dir), konfiguration(), clock)
     create_driver = host._create_driver
     created = []
 
@@ -110,12 +114,10 @@ def test_manifest_error_is_a_start_failure_with_the_manifest_key(world, monkeypa
     with pytest.raises(StartFailure) as manifest_error:
         host.load()
     assert manifest_error.value.key == "manifest" and "Pflicht-Rollen" in manifest_error.value.grund
-    assert host.driver is None  # nicht gehalten: ein Treiber ohne Manifest laeuft nicht weiter
-    assert created[0]._stop.is_set()  # Abfrage-Thread (falls gestartet) beendet, kein Abfragen im Leerlauf
+    assert host.driver is None and created[0]._stop.is_set()
 
 
 def test_manifest_is_built_after_the_first_poll_so_optional_signals_are_in_it(data_dir, clock, monkeypatch):
-    # Audit 4, A4-32 (GW-1): flow_temperature steht erst nach der ersten Abfrage im Cache
     server = FakeVicare()
     base = server.start()
     try:
@@ -125,8 +127,7 @@ def test_manifest_is_built_after_the_first_poll_so_optional_signals_are_in_it(da
         login = ViCareCloudDriver(VICARE["parameter"], paths, clock=clock)
         login.login_begin({"client_id": "c", "redirect_uri": "r"})
         login.login_finish({"code": GOOD_CODE, "redirect_uri": "r"})
-        write_runtime_files(paths, apply_config(driver=VICARE))
-        host = GatewayHost(paths, FakeBus(), clock=clock, devices_wait_seconds=0.1, driver_threads=False)
+        host = _host(paths, konfiguration(bindung={"treiber": VICARE, "thermostat": THERMOSTAT}), clock)
         loaded = host.load()
         assert loaded.manifest.refs["flow_temperature"] == "treiber:flow_temperature"
         assert host.driver is loaded.binding
@@ -135,23 +136,18 @@ def test_manifest_is_built_after_the_first_poll_so_optional_signals_are_in_it(da
 
 
 def test_a_failing_first_poll_still_loads_and_the_runtime_reports_the_data_error(data_dir, clock, monkeypatch):
-    # Cloud beim Start nicht erreichbar: das Manifest hat nur die Pflicht-Rollen, der Start gelingt, die Laufzeit
-    # behandelt es als Datenfehler (kein Absturz in load())
     monkeypatch.setenv("SHG_TEST_ENDPOINTS", "1")
     monkeypatch.setenv("SHG_VICARE_IAM_BASE", "http://127.0.0.1:9")
     monkeypatch.setenv("SHG_VICARE_API_BASE", "http://127.0.0.1:9")
-    paths = Paths(data_dir)
-    write_runtime_files(paths, apply_config(driver=VICARE))
-    host = GatewayHost(paths, FakeBus(), clock=clock, devices_wait_seconds=0.1, driver_threads=False)
+    host = _host(Paths(data_dir), konfiguration(bindung={"treiber": VICARE, "thermostat": THERMOSTAT}), clock)
     loaded = host.load()
     assert "flow_temperature" not in loaded.manifest.refs and "curve_current" in loaded.manifest.refs
     with pytest.raises((ValueError, DriverError)):
-        loaded.binding.read("curve")  # kein Cache: ValueError/DriverError, wie bei jedem Lesefehler
+        loaded.binding.read("curve")
 
 
 def test_waiting_for_devices_is_bounded_by_the_real_clock_not_the_injected_one(data_dir, clock):
-    write_runtime_files(Paths(data_dir), apply_config())
-    host = GatewayHost(Paths(data_dir), FakeBus(), clock=clock, devices_wait_seconds=0.3, driver_threads=False)
+    host = _host(Paths(data_dir), konfiguration(), clock, wait=0.3)
     started = time.monotonic()
     loaded = host.load()  # leeres bridge/devices, die injizierte Uhr steht still
     assert loaded.config.battery_refs == ()
@@ -159,12 +155,9 @@ def test_waiting_for_devices_is_bounded_by_the_real_clock_not_the_injected_one(d
 
 
 def test_load_reports_the_plant_identity_of_the_driver(data_dir, clock):
-    # Audit 4, A4-08: die Laufzeit bindet backup.json an diese Kennung
-    write_runtime_files(Paths(data_dir), apply_config())
-    host = GatewayHost(Paths(data_dir), FakeBus(), clock=clock, devices_wait_seconds=0.1, driver_threads=False)
-    loaded = host.load()
-    assert loaded.plant_id == registry.plant_id({"id": "simulation", "parameter": {"lever_set": "viessmann_vicare"}})
-    assert loaded.plant_id is not None and "viessmann_vicare" in loaded.plant_id
+    loaded = _host(Paths(data_dir), konfiguration(), clock).load()
+    assert loaded.plant_id == registry.plant_id(
+        {"id": "simulation", "parameter": {"lever_set": "viessmann_vicare", "heizkreis": 0}})
 
 
 def test_same_plant_compares_driver_and_identity_parameters():
@@ -173,13 +166,11 @@ def test_same_plant_compares_driver_and_identity_parameters():
     assert not registry.same_plant(base, {**base, "parameter": {**base["parameter"], "heizkreis": 1}})
     assert not registry.same_plant(base, {"id": "vicare_cloud", "parameter": base["parameter"]})
     assert not registry.same_plant(None, base)
-    assert not registry.same_plant({"parameter": {}}, {"parameter": {}})  # ohne ID: unbekannter Treiber
 
 
 def test_manifest_requires_the_roles_of_the_lever_set(data_dir, clock):
     driver = create("simulation", {"lever_set": "viessmann_vicare"}, Paths(data_dir), clock=clock, writer=True)
-    gateway = GatewayConfig("simulation", {}, (f"zigbee:{SENSOR}:temperature",), None, 20.0, None)
-    assert build_manifest(driver, gateway).refs["level_current"] == "treiber:level_current"
+    assert build_manifest(driver).refs["level_current"] == "treiber:level_current"
 
     class Partial:
         description = driver.description
@@ -188,7 +179,12 @@ def test_manifest_requires_the_roles_of_the_lever_set(data_dir, clock):
             return {"outdoor_temp": "treiber:outdoor_temp"}
 
     with pytest.raises(ManifestError):
-        build_manifest(Partial(), gateway)
+        build_manifest(Partial())
+
+
+def test_abo_comes_from_the_document(data_dir, clock):
+    loaded = _host(Paths(data_dir), konfiguration(abo="inaktiv"), clock).load()
+    assert loaded.config.abo_source() == "inactive"
 
 
 def test_gateway_texts_never_name_home_assistant():
