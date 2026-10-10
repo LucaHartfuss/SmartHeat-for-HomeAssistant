@@ -1,16 +1,16 @@
 """Soll-Speicher (Spec SHG G2 3.3): /data/runtime/room_target.json = {value, source, ts}, geschrieben nur von der
 Laufzeit (im Worker-Thread). Der zuletzt gestellte Wert gilt. Portal: 15-25 °C in 0,5-K-Schritten (Regel 4,
-Nutzer-Entscheidung 2026-10-06; der Agent prueft vorher, hier erneut). Thermostat: nur Plausibilitaet 5-35 °C, kein
+Nutzer-Entscheidung 2026-10-06; der Agent prueft vorher, hier erneut; Bedienung vom Server, Spec 5b 3.2;
+Bedienbereich, keine Sicherheitsgrenze). Thermostat: nur Plausibilitaet 5-35 °C, kein
 Clamp. Nach eigenem Schreiben ans Thermostat gelten dessen Meldungen ECHO_WINDOW_SECONDS lang als Echo; meldet das
 Thermostat das geltende Soll, aendert sich nichts (auch nicht die Quelle). Ein offener Schreibbefehl
 (PENDING_SECONDS) verwirft verspaetete Meldungen des alten Werts, bis das Thermostat den geschriebenen Wert meldet;
 jeder andere Wert gilt als Eingabe am Thermostat (Plan G2b-2 Task 4)."""
 import logging
-import math
 from collections.abc import Callable
 from pathlib import Path
 
-from smartheat_gateway.agent import wire
+from smartheat_device.documents import im_bedienbereich
 from smartheat_gateway.files import read_json, write_json
 from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
 
@@ -23,12 +23,8 @@ PENDING_SECONDS = 1800
 
 
 def is_valid_portal_target(value) -> bool:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
-        return False
-    if not wire.ROOM_TARGET_MIN <= value <= wire.ROOM_TARGET_MAX:
-        return False
-    steps = value / wire.ROOM_TARGET_STEP
-    return abs(steps - round(steps)) < 1e-9
+    """Bedienbereich (Spec 5b 3.2): 15-25 °C in 0,5-K-Schritten, wie Server und Geraetekern."""
+    return im_bedienbereich(value)
 
 
 class TargetStore:
@@ -92,6 +88,10 @@ class TargetStore:
         if value == self.value:  # Thermostat meldet das geltende Soll (Echo, Wiederholung): keine Aenderung
             return False
         return self._set(value, SOURCE_THERMOSTAT)
+
+    def begrenzen(self, value: float) -> bool:
+        """Begrenzter Thermostat-Wunsch (Spec 5b 3.2): der begrenzte Wert gilt sofort, Quelle bleibt das Thermostat."""
+        return self._set(float(value), SOURCE_THERMOSTAT)
 
     def _set(self, value: float, source: str) -> bool:
         if value == self.value and source == self.source:

@@ -143,3 +143,10 @@ def test_two_portal_writes_before_confirmation_keep_every_stale_value(tmp_path, 
     assert (store.value, store.source) == (23.0, SOURCE_PORTAL)
     assert store.apply_thermostat(21.0)        # alles andere ist Nutzereingabe
     assert (store.value, store.source) == (21.0, SOURCE_THERMOSTAT)
+
+
+def test_a_limited_wish_keeps_the_thermostat_as_source(tmp_path, clock):
+    store = _store(tmp_path, clock)
+    assert store.apply_thermostat(14.0)
+    assert store.begrenzen(15.0) and (store.value, store.source) == (15.0, SOURCE_THERMOSTAT)
+    assert not store.begrenzen(15.0)
