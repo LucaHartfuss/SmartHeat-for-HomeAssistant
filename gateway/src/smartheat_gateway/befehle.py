@@ -245,8 +245,10 @@ def _restore_values(ctx: Kontext) -> dict:
 @_handler("sign_off")
 def sign_off(ctx: Kontext, payload: dict) -> Outcome:
     """Abmelden (Spec TP7 3.3, 5b 4.5): Markierung fuer die Anlage, dann startet die Laufzeit als "abgemeldet" neu und
-    setzt die Anlage auf die zuletzt gelernten Werte zurueck. Erneut zugestellt (nach dem Neustart): dieselbe
-    Markierung, kein zweiter Neustart. Fertig, sobald der Status "abgemeldet" fuer diese Anlage zeigt."""
+    setzt die Anlage zurueck (LeverPipeline.restore_and_clear): die Hebel aus restore_originals auf ihre Ursprungswerte,
+    die uebrigen auf die zuletzt gelernten Werte (Wiederherstellungspunkt). Erneut zugestellt (nach dem Neustart):
+    dieselbe Markierung, kein zweiter Neustart. Fertig, sobald der Status "abgemeldet" fuer diese Anlage zeigt; werte
+    ist der Wiederherstellungspunkt danach."""
     konfiguration = ctx.konfiguration()
     if not dokument_config.eingerichtet(konfiguration):
         return Failed("nicht_eingerichtet", NOT_SET_UP_TEXT)

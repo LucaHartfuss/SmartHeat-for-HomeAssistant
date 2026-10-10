@@ -9,12 +9,18 @@ import pytest
 from configs import THERMOSTAT, bedienung, konfiguration, leer
 from world import GatewayWorld
 
+from smartheat_core.binding import BINDINGS
 from smartheat_core.safety import resolve_local_safety
+from smartheat_gateway.drivers.simulation import START_LEVERS
 from smartheat_gateway.files import write_json
 from smartheat_gateway.target_store import ECHO_WINDOW_SECONDS
 from smartheat_runtime.app import IDLE_NOT_CONFIGURED
 
-LEVERS = {"curve": 1.0, "level": 0.0, "room_setpoint": 20.0}
+# Gelernte Werte des Dienstes; bewusst ungleich den Ursprungswerten der Simulation (START_LEVERS), auf die sign_off
+# die Hebel aus restore_originals zuruecksetzt: sonst bliebe Schritt 7 gruen, auch wenn nichts zurueckgesetzt wuerde.
+LEVERS = {"curve": 1.4, "level": 3.0, "room_setpoint": 20.0}
+#: Ursprungswerte = Anlagenwerte vor dem ersten eigenen Schreiben (viessmann_vicare: curve, level, room_setpoint)
+URSPRUNG = {lever: START_LEVERS[lever] for lever in BINDINGS["viessmann_vicare"].restore_originals}
 
 
 @pytest.fixture
@@ -47,7 +53,7 @@ def _befehl(world: GatewayWorld, command_id: str, kind: str, payload: dict | Non
                                   "expires_at": "2026-01-16T08:00:00+01:00"})
 
 
-def test_gateway_scenario(world, clock):
+def test_gateway_scenario(world):
     # 1. uebernommen, nicht eingerichtet: Ruhezustand, hello mit Version 0, LED wartet
     world.start_runtime()
     assert world.result.reason == IDLE_NOT_CONFIGURED
@@ -108,8 +114,11 @@ def test_gateway_scenario(world, clock):
     world.advance(300)
     world.answer(LEVERS)
     assert not world.result.store.state.delivery.notbetrieb
+    world.advance(1)
+    assert _led(world) == "regelt"
 
-    # 7. sign_off -> Neustart in den Abmelde-Pfad -> Ergebnis mit den zurueckgesetzten Werten
+    # 7. sign_off -> Neustart in den Abmelde-Pfad -> Ergebnis mit den zurueckgesetzten Werten (Ursprungswerte)
+    assert any(_plant(world)[lever] != wert for lever, wert in URSPRUNG.items())  # die Anlage steht auf Gelerntem
     _befehl(world, "c-1", "sign_off")
     assert world.restarts == 3
     assert not [body for link in world.links for body in link.of("up/result") if body.get("command_id") == "c-1"]
@@ -120,9 +129,8 @@ def test_gateway_scenario(world, clock):
     assert len([body for body in world.link.of("up/result") if body.get("command_id") == "c-1"]) == 1
     ergebnis = _ergebnis(world, command_id="c-1")
     assert ergebnis["ok"] is True and ergebnis["result"]["zurueckgesetzt"] is True
-    assert ergebnis["result"]["werte"]  # nicht leer, sonst pruefte die Schleife unten nichts
-    plant = _plant(world)
-    assert all(plant[lever] == value for lever, value in ergebnis["result"]["werte"].items())
+    assert {lever: ergebnis["result"]["werte"].get(lever) for lever in URSPRUNG} == URSPRUNG
+    assert {lever: _plant(world)[lever] for lever in URSPRUNG} == URSPRUNG
 
     # 8. leere Konfiguration (entfernt, erst nach dem sign_off-Ergebnis, Spec 5b 5) -> Neustart -> der naechste Start
     # raeumt auf
