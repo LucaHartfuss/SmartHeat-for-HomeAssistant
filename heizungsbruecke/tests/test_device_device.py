@@ -567,6 +567,59 @@ def test_rescue_with_an_unsynchronised_clock_keeps_the_link(tmp_path):
     assert not world.link.stopped and world.device.zustand() != "gesperrt"
 
 
+def test_a_failed_rescue_ends_when_the_link_connects_normally(tmp_path):
+    world = World(tmp_path)
+    world.host.synchron = False
+    world.device.schritt()
+    world.client.script["certificate"] = [bootstrap.NotAuthenticated("c")]
+    world.client.script["register"] = [bootstrap.NotAuthenticated("r")]
+    world.link.ereignis("anmeldung_scheitert")
+    world.device.schritt()
+    world.link.verbinden()
+    world.device.schritt()
+    world.clock.now += bootstrap.RETRY_MAX_SECONDS
+    world.device.schritt()
+    assert [call[0] for call in world.client.calls] == ["certificate", "register"]
+    assert len(world.links) == 1 and world.link.connected and not world.link.stopped
+
+
+# --- Host-Rueckrufe ---
+
+class SoftwareFehlerHost(FakeHost):
+    def software_soll(self, software):
+        raise RuntimeError("geheimer Parameter")
+
+
+def test_a_failing_software_callback_still_answers_and_hands_over(tmp_path, caplog):
+    world = World(tmp_path, SoftwareFehlerHost())
+    world.verbinden()
+    world.empfangen("down/config", _konfiguration())
+    assert world.link.of("up/result") == [{"schema": 1, "dokument": "konfiguration", "version": 1, "ok": True}]
+    assert len(world.host.konfigurationen) == 1
+    assert "RuntimeError" in caplog.text and "geheimer Parameter" not in caplog.text
+
+
+class FaehigkeitenFehlerHost(FakeHost):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fehler = 2
+
+    def faehigkeiten(self):
+        if self.fehler:
+            self.fehler -= 1
+            raise RuntimeError("geheimer Parameter")
+        return super().faehigkeiten()
+
+
+def test_a_failing_capabilities_callback_sends_hello_on_a_later_tick(tmp_path, caplog):
+    world = World(tmp_path, FaehigkeitenFehlerHost())
+    world.verbinden()
+    assert world.link.of("up/hello") == [] and world.host.fehler == 0
+    world.device.schritt()
+    assert world.link.topics()[0] == "up/hello" and len(world.link.of("up/hello")) == 1
+    assert "geheimer Parameter" not in caplog.text
+
+
 # --- Laufzeit-Kanal ---
 
 def test_setpoints_reach_the_runtime_and_snapshots_the_link(tmp_path):

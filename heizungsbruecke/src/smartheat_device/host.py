@@ -1,6 +1,8 @@
 """Schnittstelle Host <-> Geraetekern (Spec 5b 5.1): was der Host dem Paket liefert (Soll-Quelle, Uhr, Inventur,
 Befehle, Anzeige) und wie das Paket ihm Dokumente uebergibt. Gateway (Plan D2) und HA-Add-on (5c) setzen sie um. Alle
-Rueckrufe laufen im Geraete-Thread und duerfen nicht lange blockieren (Befehle mit Wartezeit liefern Waiting)."""
+Rueckrufe laufen im Geraete-Thread, duerfen nicht lange blockieren (Befehle mit Wartezeit liefern Waiting) und keine
+Ausnahme werfen: das Geraet faengt sie zwar ab und loggt nur Fehlerart und Ort, aber die Wirkung des Rueckrufs fehlt dann
+(z. B. eine nicht angewandte Konfiguration bis zur naechsten Version, ein spaeteres hello)."""
 from dataclasses import dataclass
 from typing import Protocol
 

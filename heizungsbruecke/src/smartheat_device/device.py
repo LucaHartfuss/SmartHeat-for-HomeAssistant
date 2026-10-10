@@ -107,6 +107,7 @@ class Device:
             uhr_synchron=host.uhr_synchron, identity=lambda: self.identity, clock=clock)
         self.link: Link | None = None
         self._bereit = False  # verbunden und hello gesendet
+        self._hello_offen = False  # verbunden, hello noch nicht gesendet (Takt versucht es erneut)
         self._rettung = False
         self._channel: RuntimeChannel | None = None
         self._eigene: dict[str, str] = {}  # eigene Meldungen des Geraets: key -> Text
@@ -179,7 +180,7 @@ class Device:
     def laufzeit_kanal(self, worker: RegulationWorker) -> RuntimeChannel:
         """mqtt_factory fuer app.start (Spec 5b 5.2): Tick und Telemetrie ueber den Link."""
         channel = RuntimeChannel(self._publish_nach_hello,
-                                 lambda: self._bereit and self.link is not None and self.link.connected,
+                                 lambda: self._bereit and (link := self.link) is not None and link.connected,
                                  lambda: link.connect_failures if (link := self.link) is not None else 0)
         self._channel = channel
         channel.binden(worker)
@@ -196,7 +197,7 @@ class Device:
         return dokument_config.abo_status(self.konfiguration())
 
     def zustand(self) -> str:
-        connected = self.link is not None and self.link.connected
+        connected = (link := self.link) is not None and link.connected
         since = self._last_ok if self._last_ok is not None else self._started_at
         return derive_zustand(
             gesperrt=self._bootstrap.gesperrt, update_noetig=self.documents.update_noetig,
@@ -208,7 +209,7 @@ class Device:
     def anzeige(self) -> Anzeige:
         ablehnung = self.documents.ablehnung(KONFIGURATION)
         return Anzeige(
-            zustand=self.zustand(), server_ok=self.link is not None and self.link.connected,
+            zustand=self.zustand(), server_ok=(link := self.link) is not None and link.connected,
             device_state=bootstrap.device_state(self._dir), eingerichtet=self.documents.eingerichtet(),
             hinweise=self.hinweise.alle(),
             meldungen=tuple({"key": key, "text": text} for key, text in sorted(self._eigene.items())),
@@ -265,6 +266,8 @@ class Device:
             link.port_wechseln_falls_noetig()
             if link.connected:
                 self._last_ok = now
+                if self._hello_offen and not self._bereit:
+                    self._hello_senden()
         self.befehle.pruefen()
         self._wunsch_senden()
         self._status_senden(now, force=False)
@@ -332,9 +335,26 @@ class Device:
                 "uhr_synchron": self.host.uhr_synchron() is True}
 
     def _verbunden(self) -> None:
+        if not self._bootstrap.gesperrt:
+            # der bisherige Zugang funktioniert: ein noch offener Rettungsversuch (gescheitert, z. B. Uhr nicht synchron)
+            # ist hinfaellig, sonst holte der naechste Backoff ein neues Zertifikat und braeche den Link ab
+            self._rettung = False
+            self._bootstrap.erfolg()
         self._bereit = False
-        if self._publish("up/hello", self._hello()) is None:
+        self._hello_offen = True
+        self._hello_senden()
+
+    def _hello_senden(self) -> None:
+        try:
+            hello = self._hello()
+        except Exception as error:
+            # Host-Rueckruf gescheitert: Fehlerart und Ort, nie die Meldung (Regel 6); der naechste Takt versucht es erneut
+            logger.error("hello nicht gebaut (%s)%s, erneuter Versuch im naechsten Takt", type(error).__name__,
+                         commands.fehlerort(error))
+            return
+        if self._publish("up/hello", hello) is None:
             return  # schon wieder getrennt: das naechste "verbunden" schickt hello
+        self._hello_offen = False
         self._bereit = True
         now = self._clock()
         self._last_ok = now
@@ -370,24 +390,33 @@ class Device:
             logger.debug("Topic %s unbekannt, ignoriert (Spec 2.1)", name)
 
     def _dokument(self, art: str, body: dict) -> None:
+        """Erst das Ergebnis und die Uebergabe, dann software: jeder Host-Rueckruf ist einzeln abgesichert, damit ein
+        gescheiterter die anderen nicht verhindert (das Dokument ist dann schon gespeichert)."""
         alt = self.documents.inhalt(art)
         ergebnis = self.documents.empfangen(art, body)
         if ergebnis is None:
             return
+        self._publish("up/result", ergebnis.payload())
+        if ergebnis.uebernommen:
+            neu = self.documents.inhalt(art)
+            assert neu is not None
+            if art == KONFIGURATION:
+                if not config_check.ist_leer(neu):
+                    bootstrap.device_state_speichern(self._dir, "uebernommen")
+                self._host_rufen("konfiguration_uebernommen", self.host.konfiguration_uebernommen, alt, neu)
+            else:
+                self._host_rufen("bedienung_uebernommen", self.host.bedienung_uebernommen, neu)
         if art == KONFIGURATION and body.get("schema") in wire.SCHEMATA:
             software = body.get("software")
-            self.host.software_soll(software if isinstance(software, dict) else None)
-        self._publish("up/result", ergebnis.payload())
-        if not ergebnis.uebernommen:
-            return
-        neu = self.documents.inhalt(art)
-        assert neu is not None
-        if art == KONFIGURATION:
-            if not config_check.ist_leer(neu):
-                bootstrap.device_state_speichern(self._dir, "uebernommen")
-            self.host.konfiguration_uebernommen(alt, neu)
-        else:
-            self.host.bedienung_uebernommen(neu)
+            self._host_rufen("software_soll", self.host.software_soll, software if isinstance(software, dict) else None)
+
+    @staticmethod
+    def _host_rufen(name: str, rueckruf: Callable[..., None], *args) -> None:
+        try:
+            rueckruf(*args)
+        except Exception as error:
+            # nur Fehlerart und innerster Frame: die Meldung kann Treiberparameter tragen (Regel 6)
+            logger.error("Host-Rueckruf %s gescheitert (%s)%s", name, type(error).__name__, commands.fehlerort(error))
 
     def _ergebnis_senden(self, body: dict) -> bool:
         return self._publish_nach_hello("up/result", body) is not None

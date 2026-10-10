@@ -241,6 +241,25 @@ def test_a_certificate_for_another_key_is_not_stored(tmp_path, ident, ca):
     assert _flow(tmp_path, ident, client).holen(rettung=False) is None and bootstrap.laden(tmp_path) is None
 
 
+def test_after_a_foreign_certificate_from_register_the_next_try_renews_for_the_own_csr(tmp_path, ident, ca):
+    clock = Clock()
+    other = identity.load_or_create(tmp_path / "anderes")
+    client = ScriptedClient(register=[_ok(ident, ca, cert=zertifikat_fuer(other, ca))], certificate=[_ok(ident, ca)])
+    flow = _flow(tmp_path, ident, client, clock=clock)
+    assert flow.holen(rettung=False) is None and not flow.faellig()
+    clock.now += bootstrap.RETRY_MIN_SECONDS
+    assert flow.holen(rettung=False) is not None and client.calls == ["register", "certificate"]
+
+
+def test_success_resets_the_backoff(tmp_path, ident):
+    clock = Clock()
+    client = ScriptedClient(certificate=[bootstrap.NotAuthenticated("c")], register=[bootstrap.NotAuthenticated("r")])
+    flow = _flow(tmp_path, ident, client, synchron=False, clock=clock)
+    assert flow.holen(rettung=True) is None and flow.uhr_ungewiss and not flow.faellig()
+    flow.erfolg()  # der Link verbindet mit dem bisherigen Zugang
+    assert flow.faellig() and not flow.uhr_ungewiss and not flow.gesperrt
+
+
 def test_an_unusable_access_counts_as_a_failure_with_backoff(tmp_path, ident, ca):
     clock = Clock()
     flow = _flow(tmp_path, ident, ScriptedClient(certificate=[_ok(ident, ca)]), clock=clock)

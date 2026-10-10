@@ -161,7 +161,8 @@ def laden(device_dir: Path) -> Zugang | None:
 class Bootstrap:
     """Ablauf im Geraete-Thread: holen(rettung=False) beim ersten Start (register), holen(rettung=True) als Rettungsweg
     (certificate, bei 401 register). Ein neuer Zugang wird gespeichert und zurueckgegeben; None heisst: spaeter erneut
-    (faellig() sagt wann)."""
+    (faellig() sagt wann). Lieferte register ein Zertifikat fuer einen fremden Schluessel, nimmt der naechste Versuch den
+    Rettungsweg (certificate stellt fuer den eigenen CSR aus), sonst kaeme bei jedem Versuch dasselbe Zertifikat."""
 
     def __init__(self, device_dir: Path, client: Callable[[], BootstrapClient], *, register_args: Callable[[], dict],
                  uhr_synchron: Callable[[], bool | None], identity: Callable[[], identity_module.Identity],
@@ -172,6 +173,7 @@ class Bootstrap:
         self.uhr_ungewiss = False
         self._failures = 0
         self._next = 0.0
+        self._fremdes_zertifikat = False
 
     def faellig(self) -> bool:
         return self._clock() >= self._next
@@ -179,7 +181,7 @@ class Bootstrap:
     def holen(self, *, rettung: bool) -> Zugang | None:
         client = self._client()
         try:
-            if rettung:
+            if rettung or self._fremdes_zertifikat:
                 try:
                     antwort = client.certificate()
                 except NotAuthenticated:
@@ -194,11 +196,18 @@ class Bootstrap:
             return self._spaeter()
         if not identity_module.passt_zum_schluessel(self._identity(), antwort.zugang.certificate_pem):
             logger.error("Bootstrap: Zertifikat passt nicht zum eigenen Schluessel, verworfen")
+            self._fremdes_zertifikat = True
             return self._spaeter()
         speichern(self._dir, antwort)
-        self.gesperrt = self.uhr_ungewiss = False
-        self._failures, self._next = 0, 0.0
+        self.gesperrt = False
+        self.erfolg()
         return antwort.zugang
+
+    def erfolg(self) -> None:
+        """Der Zugang funktioniert (neu geholt oder der Link hat mit dem bisherigen verbunden): Backoff zuruecksetzen.
+        Eine Sperre hebt nur ein neu geholter Zugang auf."""
+        self.uhr_ungewiss = self._fremdes_zertifikat = False
+        self._failures, self._next = 0, 0.0
 
     def spaeter(self) -> None:
         """Fehlschlag ausserhalb des Bootstraps (Link startet mit dem Zugang nicht): naechster Versuch erst nach dem
