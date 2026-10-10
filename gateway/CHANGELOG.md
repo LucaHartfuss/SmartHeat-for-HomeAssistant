@@ -1,5 +1,9 @@
 # Changelog SmartHeat-Gateway
 
+## 0.6.0
+
+- Gateway auf dem Gerätekern `smartheat_device` (Spec 5b, Plan D2; Einzelheiten folgen mit dem Abschluss von Task 11).
+
 ## 0.5.0
 
 - Neu: Liefer-Signale (Betriebsstunden, Starts, Status, Betriebsart) aus der Viessmann-Cloud und im Simulations-Treiber
