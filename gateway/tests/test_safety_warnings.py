@@ -1,4 +1,4 @@
-from smartheat_gateway.agent.safety_warnings import compute
+from smartheat_gateway.safety_warnings import compute
 
 
 def _candidate(**levers):

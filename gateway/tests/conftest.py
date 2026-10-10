@@ -90,3 +90,34 @@ def vicare_ctx(data_dir, clock, monkeypatch):
     context.start()
     yield context, server, clock
     server.stop()
+
+
+VICARE_PARAMETER = {"installation_id": 2012345, "gateway_serial": "7637415000000001", "device_id": "0",
+                    "heizkreis": 0, "poll_seconds": 300.0}
+
+
+@pytest.fixture
+def vicare_kontext(data_dir, clock, monkeypatch):
+    """Befehls-Kontext mit angemeldetem vicare_cloud-Treiber gegen den Fake-ViCare-Server und einer Konfiguration fuer
+    diesen Treiber: (ctx, server, clock). Die Wanduhr folgt der Test-Uhr (ctx.wall = 1_000_000 + clock())."""
+    from configs import konfiguration
+
+    from smartheat_gateway import befehle
+
+    server = FakeVicare()
+    base = server.start()
+    for key, value in {"SHG_TEST_ENDPOINTS": "1", "SHG_VICARE_IAM_BASE": base, "SHG_VICARE_API_BASE": base}.items():
+        monkeypatch.setenv(key, value)
+    paths = Paths(data_dir)
+    login = ViCareCloudDriver({}, paths, clock=clock)
+    login.login_begin({"client_id": "c", "redirect_uri": "https://portal.test/oauth/callback"})
+    login.login_finish({"code": GOOD_CODE, "redirect_uri": "https://portal.test/oauth/callback"})
+    bus = FakeBus()
+    mirror = ZigbeeMirror(bus, clock)
+    mirror.start()
+    konf = konfiguration(bindung={"treiber": {"id": "vicare_cloud", "parameter": VICARE_PARAMETER},
+                                  "thermostat": THERMOSTAT})
+    context = befehle.Kontext(paths, mirror, konfiguration=lambda: konf, runtime_status=lambda: None,
+                              neustart=lambda: None, clock=clock, wall=lambda: 1_000_000 + clock())
+    yield context, server, clock
+    server.stop()
