@@ -289,3 +289,20 @@ def test_the_driver_check_and_commands(welt, tmp_path):
     register = CommandRegister(tmp_path / "reg", lambda body: True)
     welt.host.befehle_eintragen(register)
     assert {"sign_off", "inventory", "diagnostics"} <= register.kinds
+
+
+def test_an_unexpected_driver_error_becomes_a_rejection(welt, caplog):
+    # float(10**400) im Simulations-Treiber: OverflowError, den config.treiber_pruefen nicht kennt
+    bindung = {"treiber": {"id": "simulation", "parameter": {"lever_set": "viessmann_vicare", "poll_seconds": 10**400}}}
+    text = welt.host.treiber_pruefen(bindung)
+    assert text == gh.gateway_config.DRIVER_PARAMETER_TEXT.format(art="OverflowError")
+    assert "OverflowError" in caplog.text and str(10**400)[:20] not in caplog.text
+
+
+def test_a_failing_led_write_does_not_stop_the_software_results(welt):
+    (welt.paths.agent_state / "belegt").mkdir(parents=True)  # Ziel ist ein Ordner: das Schreiben scheitert
+    write_json(welt.paths.software_meldungen, {"meldungen": [
+        {"seq": 1, "version": "0.6.1", "result": "ok", "reason": ""}]})
+    welt.host.anzeigen(_anzeige())
+    assert welt.device.ergebnisse == [("0.6.1", True, None, "")]
+    assert welt.host.letzte_anzeige is not None

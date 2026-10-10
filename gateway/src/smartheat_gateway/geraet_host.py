@@ -242,7 +242,14 @@ class GatewayDeviceHost:
         return value if isinstance(value, bool) else None
 
     def treiber_pruefen(self, bindung: dict) -> str | None:
-        return gateway_config.treiber_pruefen(self.paths, bindung)
+        """Jede unerwartete Ausnahme des Treibers (z. B. OverflowError) wird eine Ablehnung: sonst bekaeme die
+        Konfiguration keine Antwort und software_soll liefe nie (Review Focus 4). Nur der Typname, Regel 6."""
+        try:
+            return gateway_config.treiber_pruefen(self.paths, bindung)
+        except Exception as error:
+            art = type(error).__name__
+            logger.error("Treiberpruefung gescheitert (%s), Konfiguration abgelehnt", art)
+            return gateway_config.DRIVER_PARAMETER_TEXT.format(art=art)
 
     def befehle_eintragen(self, register: CommandRegister) -> None:
         befehle.eintragen(register, befehle.Kontext(
@@ -278,7 +285,10 @@ class GatewayDeviceHost:
 
     def anzeigen(self, anzeige: Anzeige) -> None:
         self.letzte_anzeige = anzeige
-        self._datei.update(anzeige.zustand)
+        try:
+            self._datei.update(anzeige.zustand)
+        except Exception as error:  # die Software-Bruecke haengt nicht an der LED-Datei
+            logger.error("LED-Datei nicht geschrieben (%s)", type(error).__name__)
         self._software_ergebnisse()
 
     # --- Software-Bruecke ---
