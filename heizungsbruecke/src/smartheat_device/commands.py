@@ -3,13 +3,19 @@ Gateway-Agenten bis 0.5.0). Ein Befehl wird hoechstens einmal ausgefuehrt; sein 
 <daten>/device/befehle.json (Liste [command_id, ok, result, error], letzte DONE_KEEP, aelteste zuerst) und geht bei
 einem Duplikat (erneute Zustellung nach hello, auch ueber einen Neustart) erneut hoch; der Server behaelt das erste.
 Ueber den Ablauf entscheidet nur der Server (expires_at wird nicht gegen die eigene Uhr geprueft). Jeder gemeldete
-Grund steht in der Liste des Befehls (wire.command_errors), sonst geht `intern` hoch und der Fehler ins Log.
+Grund steht in der Liste des Befehls (wire.command_errors), sonst geht `intern` hoch und die Fehlerart ins Log.
+
+Hoechstens einmal gilt auch ueber einen Neustart: bevor ein Handler laeuft, steht in derselben Liste ein Marker
+"gestartet" ([command_id, null, null, null]). Kommt eine so markierte command_id nach einem Neustart erneut (weder
+wartend noch fertig; der Handler lief schon, sein Ergebnis ist unbekannt), laeuft der Handler nicht noch einmal, der
+Befehl endet mit `intern` (UNTERBROCHEN_TEXT) und dieses Ergebnis ersetzt den Marker.
 
 Ein Handler liefert Done, Failed oder Waiting; wartende Befehle prueft pruefen() ohne zu blockieren. Done kann eine
 Inventur tragen: sie geht als up/inventory vor dem Ergebnis (Spec 3.4); ohne Verbindung wartet der Befehl, bis sie
 gesendet ist. Eingebaut, weil jedes Geraet ihn koennen muss: hinweis (Hinweise)."""
 import logging
 import time
+import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +34,7 @@ TIMEOUT_TEXT = "Das Gerät hat die Änderung nicht rechtzeitig bestätigt."
 INTERN_TEXT = "Interner Fehler im Gerät."
 UNKNOWN_TEXT = "Unbekannter Befehl."
 INVENTUR_TEXT = "Die Inventur ist zu groß für eine Übertragung."
+UNTERBROCHEN_TEXT = "Der Befehl wurde durch einen Neustart des Geräts unterbrochen."
 HINWEIS_KEY_MAX_CHARS = 64
 HINWEIS_TEXT_MAX_CHARS = 1000
 
@@ -52,7 +59,7 @@ class Waiting:
 
 Outcome = Done | Failed | Waiting
 Handler = Callable[[dict], Outcome]
-Entry = tuple[bool, dict | None, dict | None]  # (ok, result, error) wie in up/result
+Entry = tuple[bool | None, dict | None, dict | None]  # (ok, result, error) wie in up/result; ok None = gestartet
 
 
 class InvalidPayload(ValueError):
@@ -70,10 +77,17 @@ def _load_done(path: Path) -> dict[str, Entry]:
     if not isinstance(entries, list):
         return done
     for entry in entries:
-        if (isinstance(entry, list) and len(entry) == 4 and isinstance(entry[0], str) and isinstance(entry[1], bool)
+        if (isinstance(entry, list) and len(entry) == 4 and isinstance(entry[0], str) and isinstance(entry[1], bool | None)
                 and isinstance(entry[2], dict | None) and isinstance(entry[3], dict | None)):
             done[entry[0]] = (entry[1], entry[2], entry[3])
     return done
+
+
+def _frame(error: Exception) -> str:
+    frames = traceback.extract_tb(error.__traceback__)
+    if not frames:
+        return ""
+    return f" in {Path(frames[-1].filename).name}:{frames[-1].lineno} {frames[-1].name}"
 
 
 class CommandRegister:
@@ -108,11 +122,15 @@ class CommandRegister:
         if command_id in self._pending:
             return
         if command_id in self._done:
-            self._send_result(result_payload(command_id, *self._done[command_id]))
+            ok, result, error = self._done[command_id]
+            if ok is None:  # gestartet, Ergebnis unbekannt (Neustart): nicht noch einmal ausfuehren
+                self._finish_or_wait(command_id, "", Failed("intern", UNTERBROCHEN_TEXT))
+            else:
+                self._send_result(result_payload(command_id, ok, result, error))
             return
         kind = message.get("kind")
         kind = kind if isinstance(kind, str) else ""
-        self._finish_or_wait(command_id, kind, self._execute(kind, message.get("payload")))
+        self._finish_or_wait(command_id, kind, self._execute(command_id, kind, message.get("payload")))
 
     def pruefen(self) -> None:
         """Wartende Befehle (Takt des Geraets): fertig, gescheitert oder Frist abgelaufen."""
@@ -126,10 +144,11 @@ class CommandRegister:
 
     # --- intern ---
 
-    def _execute(self, kind: str, payload) -> Outcome:
+    def _execute(self, command_id: str, kind: str, payload) -> Outcome:
         handler = self._handlers.get(kind)
         if handler is None or not isinstance(payload, dict):
             return Failed("ungueltige_nutzlast", UNKNOWN_TEXT)
+        self._store(command_id, (None, None, None))  # Marker "gestartet" vor dem Handler
         outcome = self._guarded(kind, lambda: handler(payload))
         return outcome if outcome is not None else Failed("intern", INTERN_TEXT)
 
@@ -142,8 +161,8 @@ class CommandRegister:
         except Exception as error:
             outcome = self._uebersetzen(error)
             if outcome is None:
-                # nur die Fehlerart: Meldung und Traceback koennen Nutzlast-Teile tragen (driver_login, Regel 6)
-                logger.error("Befehl %s fehlgeschlagen (%s)", kind, type(error).__name__)
+                # nur Fehlerart und innerster Frame: Meldung und Quelltext koennen Nutzlast-Teile tragen (Regel 6)
+                logger.error("Befehl %s fehlgeschlagen (%s)%s", kind, type(error).__name__, _frame(error))
                 return Failed("intern", INTERN_TEXT)
         if isinstance(outcome, Failed) and kind in wire.COMMANDS and outcome.grund not in wire.command_errors(kind):
             logger.error("Befehl %s: Grund %s steht nicht in der Vertragsliste", kind, outcome.grund)
@@ -166,11 +185,11 @@ class CommandRegister:
                 return  # ohne Verbindung: pruefen() versucht es erneut
             outcome = sent
         if isinstance(outcome, Done):
-            entry: Entry = (True, outcome.result, None)
+            ok, result, error = True, outcome.result, None
         else:
-            entry = (False, None, {"grund": outcome.grund, "text": outcome.text})
-        self._mark_done(command_id, entry)  # zuerst dauerhaft, dann melden
-        self._send_result(result_payload(command_id, *entry))
+            ok, result, error = False, None, {"grund": outcome.grund, "text": outcome.text}
+        self._store(command_id, (ok, result, error))  # zuerst dauerhaft, dann melden
+        self._send_result(result_payload(command_id, ok, result, error))
 
     def _inventur_senden(self, command_id: str, kind: str, done: Done) -> Done | Failed | None:
         assert done.inventur is not None
@@ -186,7 +205,7 @@ class CommandRegister:
         self._pending[command_id] = (kind, Waiting(lambda: done, float("inf")))
         return None
 
-    def _mark_done(self, command_id: str, entry: Entry) -> None:
+    def _store(self, command_id: str, entry: Entry) -> None:
         self._done.pop(command_id, None)
         self._done[command_id] = entry
         while len(self._done) > DONE_KEEP:

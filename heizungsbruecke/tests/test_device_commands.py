@@ -191,6 +191,61 @@ def test_a_too_large_inventory_fails_intern(tmp_path):
     assert sent.results == [_fail("intern", cmd.INVENTUR_TEXT)]
 
 
+def test_a_started_marker_is_on_disk_before_the_handler_runs(tmp_path):
+    seen = []
+
+    def handler(payload):
+        seen.append(json.loads((tmp_path / cmd.STORE_FILE).read_text()))
+        return cmd.Done({})
+
+    register = cmd.CommandRegister(tmp_path, Sent())
+    register.register("diagnostics", handler)
+    register.empfangen(_command())
+    assert seen == [[["c1", None, None, None]]]
+    assert json.loads((tmp_path / cmd.STORE_FILE).read_text()) == [["c1", True, {}, None]]
+
+
+def test_a_waiting_command_is_not_run_again_after_a_restart(tmp_path):
+    sent, calls, clock = Sent(), [], Clock()
+
+    def sign_off(payload):
+        calls.append(1)
+        return cmd.Waiting(lambda: None, clock.now + 60)
+
+    first = cmd.CommandRegister(tmp_path, sent, clock=clock)
+    first.register("sign_off", sign_off)
+    first.empfangen(_command("sign_off"))
+    restarted = cmd.CommandRegister(tmp_path, sent, clock=clock)
+    restarted.register("sign_off", sign_off)
+    restarted.empfangen(_command("sign_off"))  # nach hello erneut zugestellt
+    restarted.empfangen(_command("sign_off"))  # weiteres Duplikat
+    assert calls == [1]
+    assert sent.results == [_fail("intern", cmd.UNTERBROCHEN_TEXT)] * 2
+    assert json.loads((tmp_path / cmd.STORE_FILE).read_text()) == [
+        ["c1", False, None, {"grund": "intern", "text": cmd.UNTERBROCHEN_TEXT}]]
+
+
+def test_a_crash_between_handler_and_result_is_not_run_again(tmp_path):
+    sent, calls = Sent(), []
+    (tmp_path / cmd.STORE_FILE).write_text(json.dumps([["c1", None, None, None]]))  # Marker ohne Ergebnis
+    register = cmd.CommandRegister(tmp_path, sent)
+    register.register("diagnostics", lambda payload: calls.append(1) or cmd.Done({}))
+    register.empfangen(_command())
+    assert calls == [] and sent.results == [_fail("intern", cmd.UNTERBROCHEN_TEXT)]
+
+
+def test_a_handler_crash_logs_kind_type_and_frame_only(tmp_path, caplog):
+    def broken(payload):
+        raise KeyError("geheim-im-text")
+
+    register = cmd.CommandRegister(tmp_path, Sent())
+    register.register("diagnostics", broken)
+    with caplog.at_level("ERROR"):
+        register.empfangen(_command())
+    assert "diagnostics" in caplog.text and "KeyError" in caplog.text and "test_device_commands.py" in caplog.text
+    assert "geheim-im-text" not in caplog.text
+
+
 def test_the_store_keeps_the_last_500(tmp_path):
     register = cmd.CommandRegister(tmp_path, Sent())
     register.register("diagnostics", lambda payload: cmd.Done({}))
