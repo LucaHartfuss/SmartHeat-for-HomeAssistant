@@ -1,9 +1,15 @@
 """Spec 5b 2/3.4: Inventur in Teilen unter der Nachrichtengrenze (AN-10: 120 KB)."""
 import json
+import time
 
 import pytest
 
 from smartheat_device import inventory, wire
+
+
+def _gesendet(message) -> int:
+    """Bytes wie der Sender sie schreibt (Link.publish): kompakt, ensure_ascii=False."""
+    return len(json.dumps(message, separators=(",", ":"), ensure_ascii=False).encode())
 
 
 def _server_merge(parts):
@@ -45,7 +51,49 @@ def test_every_message_fits_the_broker_limit():
     daten = {"proben": [{"i": i, "x": "y" * 1000} for i in range(500)]}
     messages = inventory.nachrichten("c1", daten)
     assert len(messages) > 1 and [m["teil"] for m in messages] == list(range(1, len(messages) + 1))
-    assert all(len(json.dumps(m, separators=(",", ":")).encode()) <= wire.MAX_MESSAGE_BYTES for m in messages)
+    assert all(_gesendet(m) <= wire.MAX_MESSAGE_BYTES for m in messages)
+
+
+def test_non_ascii_inventories_fit_in_the_sent_form_and_merge_back():
+    daten = {"proben": [{"i": i, "x": "ä€" * 60} for i in range(2500)], "name": "Küche €"}
+    messages = inventory.nachrichten("c1", daten)
+    assert len(messages) > 1
+    assert all(_gesendet(m) <= wire.MAX_MESSAGE_BYTES for m in messages)
+    assert _server_merge([m["daten"] for m in messages]) == daten
+
+
+def _teilen_neu_serialisiert(daten, limit):
+    """Referenz: dieselbe Aufteilung, aber mit vollstaendiger Neuberechnung je Eintrag (langsam, offensichtlich richtig)."""
+    teile = [{k: v for k, v in daten.items() if not isinstance(v, list) or not v}]
+    for key, values in daten.items():
+        if not isinstance(values, list) or not values:
+            continue
+        for item in values:
+            kandidat = {**teile[-1], key: [*teile[-1].get(key, []), item]}
+            if inventory.groesse(kandidat) <= limit:
+                teile[-1] = kandidat
+            else:
+                teile.append({key: [item]})
+    return teile
+
+
+def test_the_running_byte_count_matches_a_full_measurement():
+    daten = {
+        "a": [{"i": i, "x": "ä" * (i % 37)} for i in range(120)], "leer": [], "treiber": "sim €",
+        "b": [i * 1000 for i in range(150)], "c": [[i, "€"] for i in range(90)], "d": [], "e": ["z" * 70] * 30,
+    }
+    for limit in (2000, 3000, 6000):
+        teile = inventory.teilen(daten, limit=limit)
+        assert teile == _teilen_neu_serialisiert(daten, limit)
+        assert all(inventory.groesse(teil) <= limit for teil in teile)
+        assert _server_merge(teile) == daten
+
+
+def test_an_oversize_inventory_is_refused_quickly():
+    start = time.monotonic()
+    with pytest.raises(inventory.InventurZuGross):
+        inventory.teilen({"proben": [{"i": i} for i in range(100_000)]}, limit=200)
+    assert time.monotonic() - start < 1.0
 
 
 def test_too_large_inventories_are_refused():

@@ -29,8 +29,10 @@ def begrenzen(wert) -> tuple[float, float | None]:
         endlich = False
     if not endlich:
         raise ValueError("Wunsch ist keine endliche Zahl")
-    gerundet = math.floor(wert / wire.RAUM_SOLL_STEP + 0.5) * wire.RAUM_SOLL_STEP
-    begrenzt = float(min(wire.RAUM_SOLL_MAX, max(wire.RAUM_SOLL_MIN, gerundet)))
+    # erst in den Bereich, dann runden: riesige endliche Werte laufen so nicht in einen Ueberlauf (die Grenzen liegen
+    # auf dem Raster, das Ergebnis ist dasselbe wie Runden und dann Begrenzen)
+    im_bereich = min(wire.RAUM_SOLL_MAX, max(wire.RAUM_SOLL_MIN, wert))
+    begrenzt = float(math.floor(im_bereich / wire.RAUM_SOLL_STEP + 0.5) * wire.RAUM_SOLL_STEP)
     return begrenzt, (None if begrenzt == wert else float(wert))
 
 
