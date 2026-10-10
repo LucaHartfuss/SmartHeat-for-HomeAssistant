@@ -50,12 +50,7 @@ class GatewayWorld:
         self.result = self.host = self.geraet = self.device = None
         monkeypatch.setenv("SHG_ALIVE_FILE", str(data_dir / "alive"))
         monkeypatch.setattr("smartheat_core.wallclock._now", self.wall.now)
-        # Nie os.execv im Test; attach leitet den Neustart der Laufzeit ohnehin um, monkeypatch stellt danach das
-        # Original wieder her.
-        monkeypatch.setattr("smartheat_runtime.abo.restart_process", self._restart)
-
-    def _restart(self):
-        raise SystemExit(0)
+        # abo.restart_process: conftest (_kein_prozessneustart) sichert das Original, attach leitet um.
 
     def _link(self, *args):
         self.links.append(FakeLink(*args))
@@ -77,6 +72,7 @@ class GatewayWorld:
                              wall=self._wall, bootstrap_client=lambda ident: KeinBootstrap(), link_factory=self._link,
                              befehl_fehler=befehle.fehler_uebersetzen)
         self.geraet.verbinden(self.device)
+        runtime_main.software_soll_nachholen(self.geraet, self.device)  # wie main(): bevor der Geraete-Thread laeuft
         self.device.schritt()  # baut den Link (Zugang liegt vor)
         self.result, self.host = runtime_main.start(self.paths, self.bus, mirror, self.geraet, self.device,
                                                     clock=self.clock, driver_threads=False)

@@ -1,6 +1,8 @@
 """Plan 5b D2 Task 5: ein Prozess aus Geraetekern und Laufzeit - Neustart bei neuer Konfiguration mit sauberem
 Trennen, Aufraeumen nach dem Entfernen, Raum im Prozess, Bedienung beim Start, Lebenszeichen."""
 import json
+import threading
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +11,7 @@ from fakes import FakeBus
 from geraet_fakes import geraet_fuer
 from world import GatewayWorld
 
+from smartheat_device import documents as device_documents
 from smartheat_gateway import runtime_main
 from smartheat_gateway.files import write_json
 from smartheat_gateway.paths import Paths
@@ -18,6 +21,8 @@ from smartheat_runtime.app import IDLE_NOT_CONFIGURED, IdleBridge
 from smartheat_runtime.runtime import EV_RECHECK, Runtime
 from smartheat_runtime.status import STATUS_ABGEMELDET
 from smartheat_runtime.worker import Event, RegulationWorker
+
+SOFTWARE = {"version": "0.6.1", "manifest_url": "https://x.test/m.json", "manifest_sha256": "a" * 64, "signature": "s"}
 
 
 @pytest.fixture
@@ -107,8 +112,7 @@ def test_a_software_only_configuration_does_not_restart(world):
     dokumente_schreiben(world.paths, konfiguration())
     world.start_runtime()
     world.connect()
-    world.konfiguration_senden(konfiguration(software={"version": "0.6.1", "manifest_url": "https://x.test/m.json",
-                                                       "manifest_sha256": "a" * 64, "signature": "s"}), 2)
+    world.konfiguration_senden(konfiguration(software=SOFTWARE), 2)
     assert world.restarts == 1
     assert json.loads(world.paths.software_soll.read_text())["version"] == "0.6.1"
 
@@ -149,6 +153,72 @@ def test_unchanged_configuration_keeps_the_alive_file_fresh(world):
     alive.unlink()
     world.advance(5 * runtime_main.CONFIG_WATCH_SECONDS)
     assert world.restarts == 1 and alive.exists()
+
+
+def test_a_failing_alive_file_does_not_stop_the_config_watch(world, monkeypatch):
+    dokumente_schreiben(world.paths, konfiguration())
+    world.start_runtime()
+    alive = world.paths.data / "alive"
+    alive.unlink()
+    touch, kaputt = Path.touch, [True]
+
+    def touch_or_fail(self, *args, **kwargs):
+        if kaputt[0]:
+            raise OSError("read-only file system")
+        return touch(self, *args, **kwargs)
+
+    monkeypatch.setattr("pathlib.Path.touch", touch_or_fail)
+    world.advance(runtime_main.CONFIG_WATCH_SECONDS + 1)
+    assert not alive.exists()
+    kaputt[0] = False
+    world.advance(runtime_main.CONFIG_WATCH_SECONDS + 1)  # die Wache laeuft weiter
+    assert alive.exists() and world.restarts == 1
+
+
+def test_the_target_software_of_the_stored_configuration_is_replayed_at_start(world):
+    """Ein Neustart kann den Prozess beenden, bevor der Geraete-Thread software_soll.json schrieb (der Server stellt
+    eine bestaetigte Version nicht erneut zu); der naechste Start holt es nach."""
+    dokumente_schreiben(world.paths, konfiguration(software=SOFTWARE))
+    world.start_runtime()
+    assert json.loads(world.paths.software_soll.read_text())["version"] == "0.6.1"
+
+
+def test_no_replay_after_a_rejected_configuration(world):
+    """Die zuletzt empfangene Konfiguration wurde abgelehnt (z. B. Mindestversion): ihre Soll-Software steht schon in
+    software_soll.json und gilt; die aeltere gespeicherte Konfiguration ueberschreibt sie nicht."""
+    dokumente_schreiben(world.paths, konfiguration())
+    device_documents.write_json(world.paths.device_dir / "dokumente.json",
+                                {"update_anlass": None, "abgelehnt": {"konfiguration": [2, "update_noetig", "t"]}})
+    write_json(world.paths.software_soll, SOFTWARE)
+    world.start_runtime()
+    assert json.loads(world.paths.software_soll.read_text())["version"] == "0.6.1"
+
+
+def test_no_replay_without_a_stored_configuration(world):
+    world.start_runtime()
+    assert not world.paths.software_soll.exists()
+
+
+def test_the_end_stops_the_device_and_waits_for_its_thread():
+    """Ende des Prozesses: erst stoppen (sauberes Trennen), dann den Geraete-Thread sein laufendes Ereignis beenden
+    lassen (z. B. software_soll nach konfiguration_uebernommen), dann erst Exit."""
+    gestoppt, fertig = threading.Event(), []
+    device = SimpleNamespace(stop=gestoppt.set)
+
+    def laufendes_ereignis():
+        gestoppt.wait(5)
+        fertig.append("software_soll")
+
+    thread = threading.Thread(target=laufendes_ereignis, daemon=True)
+    thread.start()
+    runtime_main.beenden(device, thread)
+    assert gestoppt.is_set() and fertig == ["software_soll"] and not thread.is_alive()
+
+
+def test_the_end_without_a_started_thread_only_stops():
+    gestoppt = threading.Event()
+    runtime_main.beenden(SimpleNamespace(stop=gestoppt.set), None)
+    assert gestoppt.is_set()
 
 
 def test_room_is_kept_in_the_process_on_a_new_operation(world):

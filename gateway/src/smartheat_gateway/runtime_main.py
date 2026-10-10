@@ -5,7 +5,8 @@ und Telemetrie laufen ueber den Link des Geraets (mqtt_factory).
 Neustart: eine laufzeitrelevante neue Konfiguration oder sign_off fordert ihn an (EV_RELOAD). Der Worker trennt zuerst
 den Link sauber (MQTT-DISCONNECT; sonst meldet IoT Core DUPLICATE_CLIENTID, wenn der neue Prozess verbindet, und der
 Dienst saehe nach drei Aenderungen eine Kopie, Spec 4.2) und endet dann mit Exit 0; Compose startet neu. SIGTERM
-(docker stop) endet genauso. Auch die Neustarts der Laufzeit selbst (abo.restart_process: Neupruefung im Ruhezustand
+(docker stop) endet genauso; vor dem Exit schliesst der Geraete-Thread sein laufendes Ereignis ab (beenden), und jeder
+Start reicht die Soll-Software der gespeicherten Konfiguration erneut an den Updater (software_soll_nachholen). Auch die Neustarts der Laufzeit selbst (abo.restart_process: Neupruefung im Ruhezustand
 Konfigurationsfehler, Abo am Fristende wieder aktiv) nehmen diesen Weg statt os.execv, das den Link ohne DISCONNECT
 abrisse. Nach dem Entfernen (Markierung aufraeumen.json) loescht der naechste Start den anlagengebundenen Zustand
 (A4-07), bevor der Geraetekern startet - aber nur, solange die gespeicherte Konfiguration noch leer ist: kam vor dem
@@ -15,6 +16,7 @@ import contextlib
 import logging
 import os
 import signal
+import threading
 import time
 from pathlib import Path
 from typing import NoReturn
@@ -42,6 +44,8 @@ EV_CONFIG_WATCH = "shg_config_watch"
 EV_RAUM = "shg_raum"
 CONFIG_WATCH_SECONDS = 30
 RAUM_SECONDS = 30
+#: Ende des Prozesses: so lange darf der Geraete-Thread sein laufendes Ereignis noch abschliessen.
+JOIN_SECONDS = 10.0
 
 
 def _alive_file() -> Path:
@@ -70,6 +74,31 @@ def aufraeumen(paths: Paths) -> None:
     paths.aufraeumen.unlink(missing_ok=True)
 
 
+def software_soll_nachholen(geraet: GatewayDeviceHost, device: Device) -> None:
+    """Soll-Software der gespeicherten Konfiguration erneut an den Updater (idempotent), bevor der Geraete-Thread
+    laeuft: ein Neustart (EV_RELOAD aus konfiguration_uebernommen) kann den Prozess beenden, bevor der Geraete-Thread
+    software_soll.json schrieb, und der Server stellt eine bestaetigte Version nicht erneut zu (Review Focus 4). Nicht
+    nach einer abgelehnten Konfiguration: deren Soll-Software steht schon dort (ohne Neustart geschrieben) und gilt."""
+    konfiguration = device.konfiguration()
+    if konfiguration is None or device.documents.ablehnung(KONFIGURATION) is not None:
+        return
+    software = konfiguration.get("software")
+    try:
+        geraet.software_soll(software if isinstance(software, dict) else None)
+    except Exception as error:  # ein Schreibfehler darf den Start nicht verhindern; der naechste Start versucht es erneut
+        logger.error("Soll-Software nicht nachgeholt (%s)", type(error).__name__)
+
+
+def beenden(device, thread: threading.Thread | None, timeout: float = JOIN_SECONDS) -> None:
+    """Ende des Prozesses (Neustart, SIGTERM): erst den Geraetekern stoppen (sauberes Trennen), dann den Geraete-Thread
+    sein laufendes Ereignis abschliessen lassen, z. B. software_soll nach konfiguration_uebernommen."""
+    device.stop()
+    if thread is not None:
+        thread.join(timeout)
+        if thread.is_alive():
+            logger.warning("Geraete-Thread nach %.0f s nicht beendet, Prozess endet trotzdem", timeout)
+
+
 def start(paths: Paths, bus, mirror: ZigbeeMirror, geraet: GatewayDeviceHost, device: Device, clock=time.monotonic,
           *, driver_threads: bool = True) -> tuple[Runtime | app.IdleBridge, GatewayHost]:
     host = GatewayHost(paths, bus, mirror, geraet, clock=clock, driver_threads=driver_threads)
@@ -80,7 +109,7 @@ def start(paths: Paths, bus, mirror: ZigbeeMirror, geraet: GatewayDeviceHost, de
 
 def _neustart(device: Device, anlass: str) -> NoReturn:
     logger.info("%s, Laufzeit startet neu", anlass)
-    device.stop()  # zuerst sauber trennen (MQTT-DISCONNECT)
+    device.stop()  # zuerst sauber trennen (MQTT-DISCONNECT); main() wartet danach auf den Geraete-Thread (beenden)
     raise SystemExit(0)
 
 
@@ -122,6 +151,7 @@ def attach(result: Runtime | app.IdleBridge, host: GatewayHost, geraet: GatewayD
         if result.reason == app.IDLE_NOT_CONFIGURED:
             geraet.zustand.status = None
         elif result.reason == STATUS_KONFIGURATIONSFEHLER:
+            # bewusst zusaetzlich zur Umleitung von abo.restart_process: haengt nicht an diesem globalen Eingriff
             worker.register(EV_RECHECK, _recheck)
     geraet.worker_binden(worker)
 
@@ -142,14 +172,16 @@ def main() -> None:  # pragma: no cover - Container-Einstieg
     geraet = GatewayDeviceHost(paths, mirror, host_dir=Path(os.environ.get("SHG_HOST_DIR", "/host")))
     device = Device(geraet, paths.data, os.environ["SHG_DEVICE_API_URL"], befehl_fehler=befehle.fehler_uebersetzen)
     geraet.verbinden(device)
-    device.start()
-    signal.signal(signal.SIGTERM, _terminate)
+    software_soll_nachholen(geraet, device)  # vor dem Geraete-Thread: kein Rennen mit einer neuen Konfiguration
+    signal.signal(signal.SIGTERM, _terminate)  # vor dem Geraete-Thread: ein SIGTERM endet immer ueber beenden
+    thread: threading.Thread | None = None
     try:
+        thread = device.start()
         result, _ = start(paths, bus, mirror, geraet, device)
         logger.info("Laufzeit gestartet (%s), Zeitzone %s", type(result).__name__, wallclock.now().tzinfo)
         result.worker.run()
     finally:
-        device.stop()
+        beenden(device, thread)
 
 
 if __name__ == "__main__":
