@@ -3,6 +3,13 @@
 Wird im Update-Dialog des Supervisors angezeigt. Pro Version ein Abschnitt `## X.Y.Z`; der
 Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Release.
 
+## Unveröffentlicht
+
+- Neu, vom Add-on noch nicht genutzt (Teilprojekt 5b, Plan D1): Gerätekern `smartheat_device` und
+  `smartheat_core.config_check`; die Laufzeit kann aus einem Konfigurationsdokument starten und den Link des Geräts
+  nutzen (`dokument_config`, `RuntimeConfig.abo_source`, `app.start(mqtt_factory=...)`). Für das Add-on ändert sich
+  nichts; es zieht mit 5c um.
+
 ## 0.36.0
 
 - Neu: optionale Zuordnungen für Betriebsstunden, Starts und Status des Wärmeerzeugers. Der Server weist damit nach,
