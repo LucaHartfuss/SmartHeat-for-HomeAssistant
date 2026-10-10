@@ -14,13 +14,12 @@ from smartheat_runtime.texts import HA_TEXTS, HostTexts
 if TYPE_CHECKING:
     from smartheat_core.pipeline import LeverPipeline
     from smartheat_runtime.notifier import Notifier
-    from smartheat_runtime.ports import SignalSource, TriggerSource
+    from smartheat_runtime.ports import MqttChannel, SignalSource, TriggerSource
     from smartheat_runtime.roles import ChannelManifest
     from smartheat_runtime.runtime_config import RuntimeConfig
     from smartheat_runtime.state import StateStore
     from smartheat_runtime.status import StatusReporter
     from smartheat_runtime.worker import RegulationWorker
-    from smartheat_transport.mqtt_client import BridgeMqttClient
 
 EV_LOCAL_CHECK = "local_check"
 EV_SETPOINTS = "setpoints"
@@ -49,7 +48,7 @@ class Runtime:
     store: StateStore
     override: LeverPipeline
     notifier: Notifier
-    mqtt_client: BridgeMqttClient | None = None
+    mqtt_client: MqttChannel | None = None
     trigger_client: TriggerSource | None = None
     status: StatusReporter | None = None
     # Ruhezustand im Betrieb (Fristende): alle Handler ausser dem Lebenszeichen laufen leer.

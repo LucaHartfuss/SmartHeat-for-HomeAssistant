@@ -35,6 +35,9 @@ def create_mqtt_client(config: RuntimeConfig, worker: RegulationWorker) -> Bridg
     Start schon von config.resolve_transport geprueft). Die Subscription wird bei jedem (Re-)Connect
     erneuert; die Auth-Ablehnung aus dem paho-Thread wird gebuendelt eingestellt (paho meldet sie im
     Backoff mehrfach)."""
+    if config.descriptor is None or config.credential is None:
+        raise ValueError("Laufzeit ohne Transport-Deskriptor: der Host muss eine mqtt_factory uebergeben "
+                         "(Geraete-Pfad, Spec 5b 5.2)")
     client = BridgeMqttClient(
         connect_options(config.descriptor, config.credential), config.tenant_id, transport_kind=config.descriptor.kind,
         on_auth_rejected=lambda _client: worker.post_coalesced(EV_AUTH_REJECTED),

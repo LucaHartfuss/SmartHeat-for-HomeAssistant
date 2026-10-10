@@ -30,7 +30,7 @@ from smartheat_runtime import (
 )
 from smartheat_runtime.delivery import ROLE_DATENTRAEGER, SOURCE_LOCAL, DataFault
 from smartheat_runtime.notifier import STATE_OK, Notifier
-from smartheat_runtime.ports import NotifySink, SignalSource, StatusSink, TriggerSource
+from smartheat_runtime.ports import MqttChannel, NotifySink, SignalSource, StatusSink, TriggerSource
 from smartheat_runtime.roles import ChannelManifest
 from smartheat_runtime.runtime import (
     EV_ACK_TIMEOUT,
@@ -578,9 +578,11 @@ def _prepare_zone(rt: Runtime) -> None:
     rt.zone_prepared = True
 
 
-def start(host: Host, clock: Callable[[], float] = time.monotonic) -> Runtime | IdleBridge:
+def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
+          mqtt_factory: Callable[[RegulationWorker], MqttChannel] | None = None) -> Runtime | IdleBridge:
     """Gibt den gestarteten Laufzeit-Kontext zurueck oder den Ruhezustand, wenn gar nicht erst geregelt wird: nicht
-    eingerichtet, abgemeldet, Konfigurationsfehler, Abo-Frist abgeschlossen."""
+    eingerichtet, abgemeldet, Konfigurationsfehler, Abo-Frist abgeschlossen. mqtt_factory (Geraete-Pfad, Spec 5b 5.2):
+    die Laufzeit nutzt die Verbindung des Geraets statt eines eigenen MQTT-Clients."""
     boot = host.boot_info()
     if not boot.signed_off and not boot.configured:
         return _idle(clock, None, IDLE_NOT_CONFIGURED)
@@ -635,7 +637,8 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic) -> Runtime | 
     _register_handlers(rt)
     abo_inactive = rt.store.state.abo_inactive_since is not None
     if not abo_inactive:
-        rt.mqtt_client = mqtt_link.create_mqtt_client(config, rt.worker)
+        factory = mqtt_factory or functools.partial(mqtt_link.create_mqtt_client, config)
+        rt.mqtt_client = factory(rt.worker)
 
     _prime(rt)
     if rt.mqtt_client is not None:

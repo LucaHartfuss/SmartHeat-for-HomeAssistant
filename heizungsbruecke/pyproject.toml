@@ -26,6 +26,7 @@ ignore = ["E501"]
 "tests/test_host.py" = ["F811"]
 "tests/test_realistic_ha.py" = ["F811"]
 "tests/test_runtime_plan3b.py" = ["F811"]
+"tests/test_runtime_geraetepfad.py" = ["F811"]
 
 [tool.pyright]
 include = ["src"]

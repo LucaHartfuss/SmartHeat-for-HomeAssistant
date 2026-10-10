@@ -1,5 +1,7 @@
 """Hostneutrale, gepruefte Konfiguration der Laufzeit (Spec SHG 3.3). Der HA-Host fuellt sie aus options.json
-(heizungsbruecke.config.runtime_config), das SHG aus der Laufzeit-Konfiguration des Agenten."""
+(heizungsbruecke.config.runtime_config), das SHG aus der Laufzeit-Konfiguration des Agenten, das Gateway ab 0.6.0 aus
+dem Konfigurationsdokument (dokument_config, Spec 5b 5.2)."""
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -41,10 +43,12 @@ class RuntimeConfig:
     setup_id: str | None
     lever_set_id: str
     local_safety: LocalSafety
-    descriptor: Descriptor
-    credential: Credential
-    installation_token: str
-    accounts_api_base_url: str
+    # Optionen-Pfad (Add-on bis 5c): Transport, Zugang und Abo-Abruf. Im Geraete-Pfad (Spec 5b 5.2) None: die
+    # MQTT-Verbindung haelt smartheat_device (app.start mqtt_factory), den Abo-Status liefert abo_source.
+    descriptor: Descriptor | None
+    credential: Credential | None
+    installation_token: str | None
+    accounts_api_base_url: str | None
     daily_trigger_time: str | None
     local_check_interval: float
     telemetry_interval: float
@@ -54,3 +58,6 @@ class RuntimeConfig:
     battery_refs: tuple[BatteryRef, ...]
     # Datei der Abo-inaktiv-Frist (entitlement.py).
     entitlement_path: Path
+    # Spec 5b (Plan D1): Abo-Status aus dem Konfigurationsdokument (entitlement.ACTIVE/INACTIVE/UNKNOWN); None = Abruf
+    # GET /tenants/<id>/status mit dem Installations-Token.
+    abo_source: Callable[[], str] | None = None
