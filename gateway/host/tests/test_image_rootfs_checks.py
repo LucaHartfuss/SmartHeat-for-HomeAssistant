@@ -281,8 +281,8 @@ def test_uninitialized_machine_id_is_fine(tmp_path):
     lambda r: (r / "var/lib/dbus").mkdir(parents=True) or (r / "var/lib/dbus/machine-id").write_text("0123abcd\n"),
     lambda r: (r / "etc/ssh").mkdir() or (r / "etc/ssh/ssh_host_ed25519_key").write_text("k"),
     lambda r: (r / "var/lib/smartheat/data/device").mkdir(),
-    lambda r: (r / "var/lib/smartheat/bus/credentials/agent").mkdir(parents=True)
-    or (r / "var/lib/smartheat/bus/credentials/agent/bus.json").write_text("{}"),
+    lambda r: (r / "var/lib/smartheat/bus/credentials/runtime").mkdir(parents=True)
+    or (r / "var/lib/smartheat/bus/credentials/runtime/bus.json").write_text("{}"),
     lambda r: (r / "var/lib/smartheat/zigbee2mqtt").mkdir()
     or (r / "var/lib/smartheat/zigbee2mqtt/configuration.yaml").write_text("x"),
     lambda r: (r / "etc/shadow").write_text("root:*:1::::::\npi::1::::::\n"),
@@ -306,7 +306,7 @@ def test_uninitialized_machine_id_is_fine(tmp_path):
     lambda r: (r / "etc/passwd").write_text("root:$6$salt$hash:0:0::/root:/bin/bash\n"),
     lambda r: (r / "etc/passwd").unlink(),
     lambda r: (r / "var/lib/smartheat/bus/mosquitto").mkdir(parents=True)
-    or (r / "var/lib/smartheat/bus/mosquitto/passwd").write_text("agent:$7$x\n"),
+    or (r / "var/lib/smartheat/bus/mosquitto/passwd").write_text("runtime:$7$x\n"),
     lambda r: (r / "opt/smartheat/installer/gateway/host/install.sh").chmod(0o666),
     lambda r: (r / "opt/smartheat/installer").chmod(0o775),
     lambda r: (r / "var/lib/smartheat/images/01.tar").chmod(0o664),

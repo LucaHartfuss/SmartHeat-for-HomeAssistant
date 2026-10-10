@@ -4,7 +4,10 @@
 # echte Updater (python3 -m smartheat_host.updater --once) in einem Debian-13-Container, der docker compose ueber den
 # Docker-Socket des Hosts steuert. Geprueft: 0.9.1 -> 0.9.2 gelingt, 0.9.3 wird zurueckgerollt, ein manipuliertes
 # Manifest (Signatur einer anderen Version) wird abgelehnt, ohne Container anzufassen (Review Focus 1 und 2).
-# Laufzeit rund 6 min: die Healthchecks (30 s/60 s) und die Gesundheitsfrist (180 s) im Rueckweg-Fall.
+# Laufzeit rund 6 min: die Healthchecks (30 s) und die Gesundheitsfrist (180 s) im Rueckweg-Fall.
+# Ab Gateway 0.6.0 (Plan 5b D2): ein Gateway-Container runtime (Fixture ohne agent/tunnel). Die Fake-Geraete-API ist
+# mit dem Agenten entfallen; Task 10 stellt den Test auf Fake-Bootstrap, Fake-Broker und die Soll-Software im
+# Datenordner um (software_soll.json, software_meldungen.json).
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
@@ -12,7 +15,7 @@ IMAGE="smartheat-gateway-test:local"
 UPDATER_IMAGE="shg-updater-test:local"
 PROJECT="smartheat-updtest"
 NET="shg-upd-wan"
-API="shg-upd-api"
+API="shg-upd-bootstrap"  # Name wie in gateway/host/tests/fixtures/updater-compose.yml (SHG_DEVICE_API_URL)
 API_URL="http://127.0.0.1:18092"
 REGISTRY="shg-upd-registry"
 PUSHED="localhost:15000/smartheat-gateway:test"
@@ -98,9 +101,9 @@ for _ in $(seq 1 30); do curl -fsS "$API_URL/_e2e/state" >/dev/null 2>&1 && { ok
 [ "$ok" = 1 ] || die "Fake-Geraete-API antwortet nicht"
 
 # 4. Datenordner wie install.sh (die Container schreiben als uid 1000, daher 777 wie im Compose-Test)
-mkdir -p "$DATA/data" "$DATA/zigbee2mqtt" "$DATA/host" "$DATA/bus/mosquitto" "$DATA/bus/credentials/agent" \
+mkdir -p "$DATA/data" "$DATA/zigbee2mqtt" "$DATA/host" "$DATA/bus/mosquitto" \
          "$DATA/bus/credentials/runtime" "$DATA/bus/credentials/zigbee2mqtt" "$DATA/bundles" "$DATA/updater"
-printf 'SHG_ROOT=%s\nSHG_DEVICE_API_URL=http://%s:8090\nSHG_DIAG_HOSTNAMES=agent\nTZ=Europe/Berlin\n' \
+printf 'SHG_ROOT=%s\nSHG_DEVICE_API_URL=http://%s:8090\nSHG_DIAG_HOSTNAMES=runtime\nTZ=Europe/Berlin\n' \
   "$DATA" "$API" >"$DATA/host/gateway.env"
 chmod -R 777 "$DATA"
 
@@ -142,7 +145,7 @@ ok=0
 for _ in $(seq 1 45); do
   curl -fsS "$API_URL/_e2e/state" 2>/dev/null | grep -q '"registrations": [1-9]' && { ok=1; break; }; sleep 2
 done
-[ "$ok" = 1 ] || die "Agent hat sich nicht bei der Fake-Geraete-API registriert"
+[ "$ok" = 1 ] || die "Gateway hat sich nicht bei der Fake-Geraete-API gemeldet"
 echo "PASS: Registry, Bundles, Start mit 0.9.1"
 
 # 7. Updater-Image (nur Docker-Client und Compose-Plugin aus Debian 13, wie auf dem Geraet) und Aufruf
@@ -155,7 +158,7 @@ updater() {
   docker run --rm --network "$NET" --security-opt label=disable \
     -v /var/run/docker.sock:/var/run/docker.sock -v "$DATA:$DATA" -v "$REPO/gateway:/gw:ro" \
     -e PYTHONPATH=/gw/host:/gw/src -e SHG_ROOT="$DATA" -e SHG_DEVICE_API_URL="http://$API:8090" \
-    -e SHG_UPDATER_ALLOW_HTTP=1 -e SHG_UPDATER_HEALTH_URL=http://agent:8080/healthz -e SHG_UPDATER_HEALTH_SECONDS=180 \
+    -e SHG_UPDATER_ALLOW_HTTP=1 -e SHG_UPDATER_HEALTH_URL=http://runtime:8080/healthz -e SHG_UPDATER_HEALTH_SECONDS=180 \
     -e SHG_COMPOSE_PROJECT="$PROJECT" -e SHG_RELEASE_PUB="$DATA/release/test.pub" \
     "$UPDATER_IMAGE" python3 -m smartheat_host.updater --once
 }
@@ -216,7 +219,7 @@ runtime_id="$(service_container runtime)"
 docker inspect -f '{{json .Config.Cmd}}' "$runtime_id" 2>/dev/null | grep -q runtime_main \
   || fail "Laufzeit nach dem Rueckweg nicht mit dem Befehl von 0.9.2"
 ok=0
-for _ in $(seq 1 40); do  # Healthcheck der Laufzeit: interval 60 s, spaetestens nach 3 min gesund
+for _ in $(seq 1 40); do  # Healthcheck der Laufzeit: interval 30 s, spaetestens nach 3 min gesund
   [ "$(docker inspect -f '{{.State.Status}} {{.State.Health.Status}}' "$runtime_id" 2>/dev/null)" = "running healthy" ] \
     && { ok=1; break; }
   sleep 5
@@ -234,7 +237,7 @@ after="$(created_times)"
 if [ -z "$before" ] || [ "$before" != "$after" ]; then
   fail "Container nach der Ablehnung veraendert: $before / $after"
 fi
-printf '%s\n' "$before" | grep -q "${PROJECT}-agent-1 " || fail "Agent-Container nicht im Vergleich"
+printf '%s\n' "$before" | grep -q "${PROJECT}-runtime-1 " || fail "Container runtime nicht im Vergleich"
 state_is 's["current"] == "0.9.2" and "0.9.4" in s["rejected"] and s["in_progress"] is None' \
   || fail "state.json nach der Ablehnung: $(cat "$DATA/updater/state.json")"
 reported 0.9.4 rollback signatur_ungueltig || fail "update_result signatur_ungueltig fuer 0.9.4 fehlt"

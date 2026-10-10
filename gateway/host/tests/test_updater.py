@@ -9,7 +9,7 @@ from minisign_helper import keypair, sign
 
 from smartheat_host import bundles, kanal, updater
 
-COMPOSE = ("services:\n  agent:\n    image: ghcr.io/x/gw@sha256:" + "a" * 64 + "\n").encode()
+COMPOSE = ("services:\n  runtime:\n    image: ghcr.io/x/gw@sha256:" + "a" * 64 + "\n").encode()
 MOSQ = b"listener 1883\n"
 BASE = "https://release.example.test/0.3.0/"
 
@@ -179,7 +179,7 @@ def test_start_failure_rolls_back(tmp_path):
     ({"manifest_over": {"version": "0.4.0"}}, "manifest_ungueltig"),
     ({"url": "http://release.example.test/0.3.0/manifest.json"}, "manifest_ungueltig"),
     ({"manifest_over": {"min_updater_version": "9.0.0"}}, "updater_zu_alt"),
-    ({"compose": b"services:\n  agent:\n    image: ghcr.io/x/gw:latest\n"}, "manifest_ungueltig"),
+    ({"compose": b"services:\n  runtime:\n    image: ghcr.io/x/gw:latest\n"}, "manifest_ungueltig"),
 ])
 def test_refused_bundles_are_never_started(tmp_path, kwargs, reason):
     world = World(tmp_path, **kwargs)

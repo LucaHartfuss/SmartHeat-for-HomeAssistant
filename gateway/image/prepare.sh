@@ -60,7 +60,7 @@ cp "$HERE/rootfs_checks.sh" "$HERE/own_url.sh" "$HERE/customize.sh" "$inst/image
 cp "$GW/VERSION" "$inst/VERSION"
 for rel in "${SHIPPED[@]}"; do cp "$GW/src/smartheat_gateway/$rel" "$inst/src/smartheat_gateway/$rel"; done
 cp "$BUNDLE"/{docker-compose.yml,mosquitto.conf,manifest.json,manifest.json.minisig} "$STAGE/bundle/"
-# 4. Container-Images: jede Referenz einmal (Agent und Laufzeit teilen sich das Gateway-Image)
+# 4. Container-Images: jede Referenz einmal (init und runtime teilen sich das Gateway-Image)
 mapfile -t refs < <(PYTHONPATH="$GW/host" python3 -c 'import sys
 from smartheat_host import bundles
 print("\n".join(bundles.compose_images(open(sys.argv[1]).read())))' "$BUNDLE/docker-compose.yml" \

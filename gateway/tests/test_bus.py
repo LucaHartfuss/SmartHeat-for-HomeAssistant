@@ -98,9 +98,9 @@ def test_credentials_from_env(tmp_path, monkeypatch):
     monkeypatch.delenv("SHG_BUS_CREDENTIALS", raising=False)
     assert credentials_from_env() is None
     path = tmp_path / "bus.json"
-    path.write_text('{"username": "agent", "password": "test-pw"}')
+    path.write_text('{"username": "runtime", "password": "test-pw"}')
     monkeypatch.setenv("SHG_BUS_CREDENTIALS", str(path))
-    assert credentials_from_env() == ("agent", "test-pw")
+    assert credentials_from_env() == ("runtime", "test-pw")
     path.write_text("{kaputt")
     with pytest.raises(RuntimeError):
         credentials_from_env()
@@ -110,6 +110,6 @@ def test_local_bus_passes_credentials_to_paho(monkeypatch):
     calls = []
     import paho.mqtt.client as mqtt
     monkeypatch.setattr(mqtt.Client, "username_pw_set", lambda self, user, password=None: calls.append((user, password)))
-    LocalBus("localhost", 1883, "test-bus", credentials=("agent", "test-pw"))
+    LocalBus("localhost", 1883, "test-bus", credentials=("runtime", "test-pw"))
     LocalBus("localhost", 1883, "test-bus")
-    assert calls == [("agent", "test-pw")]
+    assert calls == [("runtime", "test-pw")]

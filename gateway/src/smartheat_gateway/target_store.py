@@ -1,6 +1,6 @@
 """Soll-Speicher (Spec SHG G2 3.3): /data/runtime/room_target.json = {value, source, ts}, geschrieben nur von der
 Laufzeit (im Worker-Thread). Der zuletzt gestellte Wert gilt. Portal: 15-25 °C in 0,5-K-Schritten (Regel 4,
-Nutzer-Entscheidung 2026-10-06; der Agent prueft vorher, hier erneut; Bedienung vom Server, Spec 5b 3.2;
+Nutzer-Entscheidung 2026-10-06; der Geraetekern prueft vorher, hier erneut; Bedienung vom Server, Spec 5b 3.2;
 Bedienbereich, keine Sicherheitsgrenze). Thermostat: nur Plausibilitaet 5-35 °C, kein
 Clamp. Nach eigenem Schreiben ans Thermostat gelten dessen Meldungen ECHO_WINDOW_SECONDS lang als Echo; meldet das
 Thermostat das geltende Soll, aendert sich nichts (auch nicht die Quelle). Ein offener Schreibbefehl

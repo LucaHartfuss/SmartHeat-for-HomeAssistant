@@ -1,6 +1,7 @@
-"""Kontingent-Waechter (Spec SHG G2 4.2): Zaehler je Treiber in /data/quota/<treiber>.json, gemeinsam fuer Agent und
-Laufzeit (zwei Prozesse) ueber flock. Gleitendes Fenster ueber die WANDUHR (die monotone Uhr ist je Prozess
-verschieden); Eintraege aus der Zukunft (Uhrsprung beim Boot) verfallen mit dem Fenster."""
+"""Kontingent-Waechter (Spec SHG G2 4.2): Zaehler je Treiber in /data/quota/<treiber>.json, gemeinsam fuer die Befehle
+des Geraetekerns und die Laufzeit ueber flock (bis 0.5.0 zwei Prozesse, ab 0.6.0 zwei Threads). Gleitendes Fenster
+ueber die WANDUHR (die monotone Uhr ist je Prozess verschieden); Eintraege aus der Zukunft (Uhrsprung beim Boot)
+verfallen mit dem Fenster."""
 import fcntl
 import json
 import os

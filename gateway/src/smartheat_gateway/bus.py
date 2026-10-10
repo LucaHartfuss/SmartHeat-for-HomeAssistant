@@ -1,6 +1,6 @@
-"""Lokaler Bus (Spec SHG G2 6.1): kleine paho-Huelle fuer Agent und Laufzeit, getrennt von der MQTT-Verbindung zum
-Server (smartheat_transport). Callbacks laufen im paho-Thread und duerfen nur Daten ablegen bzw. Ereignisse in den
-Worker stellen. Abos werden bei jedem (Wieder-)Verbinden erneuert."""
+"""Lokaler Bus (Spec SHG G2 6.1): kleine paho-Huelle fuer die Laufzeit (ab 0.6.0 nur Zigbee2MQTT), getrennt von
+der MQTT-Verbindung zum Server (Geraetekern). Callbacks laufen im paho-Thread und duerfen nur Daten ablegen bzw.
+Ereignisse in den Worker stellen. Abos werden bei jedem (Wieder-)Verbinden erneuert."""
 import json
 import logging
 import os

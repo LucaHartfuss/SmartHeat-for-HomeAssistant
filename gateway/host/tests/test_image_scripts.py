@@ -44,7 +44,7 @@ exit 0
 
 def _bundle(path: Path) -> Path:
     path.mkdir(parents=True)
-    compose = (f"services:\n  agent:\n    image: {GATEWAY}\n  runtime:\n    image: {GATEWAY}\n"
+    compose = (f"services:\n  init:\n    image: {GATEWAY}\n  runtime:\n    image: {GATEWAY}\n"
                f"  mosquitto:\n    image: {MOSQ}\n")
     (path / "docker-compose.yml").write_text(compose)
     (path / "mosquitto.conf").write_text("listener 1883\n")
@@ -150,11 +150,11 @@ def test_prepare_builds_the_stage(tmp_path, pilot):
         assert (installer / "image" / name).is_file(), name
     shipped = {str(p.relative_to(installer / "src" / "smartheat_gateway")) for p in
                (installer / "src" / "smartheat_gateway").rglob("*") if p.is_file()}
-    assert shipped == set(SHIPPED)  # genau das, was install.sh ablegt: nichts fehlt, nichts (agent/) kommt dazu
+    assert shipped == set(SHIPPED)  # genau das, was install.sh ablegt: nichts fehlt, nichts kommt dazu
     assert (installer / "VERSION").read_text() == (GW / "VERSION").read_text()
     for name in ("docker-compose.yml", "mosquitto.conf", "manifest.json", "manifest.json.minisig"):
         assert (stage / "bundle" / name).is_file(), name
-    # jedes Image genau einmal exportiert (agent und runtime teilen sich das Gateway-Image)
+    # jedes Image genau einmal exportiert (init und runtime teilen sich das Gateway-Image)
     assert sorted(p.read_text() for p in (stage / "images").glob("*.tar")) == sorted([GATEWAY, MOSQ])
     lines = (stage / "install.args").read_text().splitlines()
     assert lines[:4] == GOOD
