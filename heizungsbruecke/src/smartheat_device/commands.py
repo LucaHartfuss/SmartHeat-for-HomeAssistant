@@ -9,6 +9,9 @@ Hoechstens einmal gilt auch ueber einen Neustart: bevor ein Handler laeuft, steh
 "gestartet" ([command_id, null, null, null]). Kommt eine so markierte command_id nach einem Neustart erneut (weder
 wartend noch fertig; der Handler lief schon, sein Ergebnis ist unbekannt), laeuft der Handler nicht noch einmal, der
 Befehl endet mit `intern` (UNTERBROCHEN_TEXT) und dieses Ergebnis ersetzt den Marker.
+Ausnahme: eine Art, die mit wiederholbar=True eingetragen ist (idempotent, z. B. sign_off des Gateways, das den
+Neustart selbst ausloest), laeuft nach einem Neustart bei erneuter Zustellung noch einmal; die Art kommt aus der
+erneut zugestellten Nachricht. Fertige Befehle beantwortet das Register auch dann aus dem Speicher.
 
 Ein Handler liefert Done, Failed oder Waiting; wartende Befehle prueft pruefen() ohne zu blockieren. Done kann eine
 Inventur tragen: sie geht als up/inventory vor dem Ergebnis (Spec 3.4); ohne Verbindung wartet der Befehl, bis sie
@@ -102,13 +105,18 @@ class CommandRegister:
         self._send_result, self._send_inventory = send_result, send_inventory
         self._clock, self._uebersetzen = clock, uebersetzen
         self._handlers: dict[str, Handler] = {}
+        self._wiederholbar: set[str] = set()
         self._pending: dict[str, tuple[str, Waiting]] = {}
         self._done = _load_done(self._path)
 
-    def register(self, kind: str, handler: Handler) -> None:
+    def register(self, kind: str, handler: Handler, *, wiederholbar: bool = False) -> None:
+        """wiederholbar: idempotenter Handler, der nach einem Neustart bei erneuter Zustellung noch einmal laeuft."""
         if kind not in wire.COMMANDS:
             raise ValueError(f"Befehlsart {kind!r} steht nicht im Vertrag")
         self._handlers[kind] = handler
+        self._wiederholbar.discard(kind)
+        if wiederholbar:
+            self._wiederholbar.add(kind)
 
     @property
     def kinds(self) -> frozenset[str]:
@@ -122,15 +130,17 @@ class CommandRegister:
             return
         if command_id in self._pending:
             return
-        if command_id in self._done:
-            ok, result, error = self._done[command_id]
-            if ok is None:  # gestartet, Ergebnis unbekannt (Neustart): nicht noch einmal ausfuehren
-                self._finish_or_wait(command_id, "", Failed("intern", UNTERBROCHEN_TEXT))
-            else:
-                self._send_result(result_payload(command_id, ok, result, error))
-            return
         kind = message.get("kind")
         kind = kind if isinstance(kind, str) else ""
+        if command_id in self._done:
+            ok, result, error = self._done[command_id]
+            if ok is not None:
+                self._send_result(result_payload(command_id, ok, result, error))
+            elif kind in self._wiederholbar:  # gestartet, Neustart: idempotent, noch einmal ausfuehren
+                self._finish_or_wait(command_id, kind, self._execute(command_id, kind, message.get("payload")))
+            else:  # gestartet, Ergebnis unbekannt (Neustart): nicht noch einmal ausfuehren
+                self._finish_or_wait(command_id, "", Failed("intern", UNTERBROCHEN_TEXT))
+            return
         self._finish_or_wait(command_id, kind, self._execute(command_id, kind, message.get("payload")))
 
     def pruefen(self) -> None:
