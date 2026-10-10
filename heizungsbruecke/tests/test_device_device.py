@@ -522,6 +522,40 @@ def test_a_blocked_device_stops_its_link_shows_blocked_and_retries_after_6_hours
     assert len(world.links) == 2 and world.device.zustand() != "gesperrt"
 
 
+class BrokenLink(FakeLink):
+    def start(self):
+        raise ValueError("Zugang unbrauchbar")  # wie TransportConfigError
+
+
+def test_an_unusable_access_backs_off_instead_of_fetching_a_certificate_every_tick(tmp_path):
+    world = World(tmp_path)
+    world.client.script["certificate"] = [bootstrap.Antwort("uebernommen", world.zugang),
+                                          bootstrap.Antwort("uebernommen", world.zugang)]
+
+    def broken(*args):
+        world.links.append(BrokenLink(*args))
+        return world.links[-1]
+
+    world.device = device.Device(world.host, tmp_path, "https://accounts.example.test", clock=world.clock,
+                                 wall=lambda: WALL, bootstrap_client=lambda ident: world.client, link_factory=broken)
+
+    def certificates():
+        return sum(1 for call in world.client.calls if call[0] == "certificate")
+
+    for _ in range(10):
+        world.device.schritt()
+    assert certificates() <= 1
+    world.clock.now += bootstrap.RETRY_MIN_SECONDS
+    world.device.schritt()
+    assert certificates() == 1
+    for _ in range(10):
+        world.device.schritt()
+    assert certificates() == 1  # neuer Zugang ebenfalls unbrauchbar: wieder Backoff, nicht jeden Takt
+    world.clock.now += bootstrap.RETRY_MIN_SECONDS
+    world.device.schritt()
+    assert certificates() == 2 and world.device.link is None
+
+
 def test_rescue_with_an_unsynchronised_clock_keeps_the_link(tmp_path):
     world = World(tmp_path)
     world.host.synchron = False
@@ -547,6 +581,16 @@ def test_setpoints_reach_the_runtime_and_snapshots_the_link(tmp_path):
     assert [event.data["payload"] for event in seen] == [{"seq": "s1"}]
     channel.publish_snapshot({"room_target": 21.0})
     assert world.link.of("up/snapshot") == [{"room_target": 21.0, "raum_soll_wirksam": 21.0}]
+
+
+def test_runtime_messages_wait_for_hello(tmp_path):
+    world = World(tmp_path)
+    channel = world.device.laufzeit_kanal(RegulationWorker(clock=world.clock))
+    world.device.schritt()
+    world.link.connected = True  # verbunden, aber das Ereignis (und damit hello) steht noch aus
+    channel.publish_snapshot({"room_target": 21.0})
+    channel.publish_telemetry({"a": 1})
+    assert world.link.sent == []
 
 
 # --- Zustand und Thread ---
@@ -590,3 +634,18 @@ def test_the_thread_runs_and_stops(tmp_path):
     world.device.stop()
     thread.join(timeout=5)
     assert world.links and world.links[0].started and not thread.is_alive()
+
+
+def test_host_errors_are_logged_without_their_message(tmp_path, caplog):
+    world = World(tmp_path)
+
+    def kaputt(alt, neu):
+        raise RuntimeError("geheim")
+
+    world.host.konfiguration_uebernommen = kaputt
+    world.verbinden()
+    with caplog.at_level("DEBUG", logger="smartheat_device"):
+        world.empfangen("down/config", _konfiguration())
+    assert "RuntimeError" in caplog.text and "test_device_device.py" in caplog.text
+    assert "geheim" not in caplog.text and "Traceback" not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)

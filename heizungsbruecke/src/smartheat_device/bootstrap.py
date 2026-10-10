@@ -200,6 +200,11 @@ class Bootstrap:
         self._failures, self._next = 0, 0.0
         return antwort.zugang
 
+    def spaeter(self) -> None:
+        """Fehlschlag ausserhalb des Bootstraps (Link startet mit dem Zugang nicht): naechster Versuch erst nach dem
+        normalen Backoff, sonst holte jeder Takt ein neues Zertifikat."""
+        self._spaeter()
+
     def _nicht_angemeldet(self) -> None:
         if self._uhr_synchron() is not True:
             self.uhr_ungewiss = True

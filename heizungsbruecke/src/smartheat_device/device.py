@@ -174,13 +174,15 @@ class Device:
         body = {"schema": wire.SCHEMA, "dokument": wire.DOKUMENT_SOFTWARE, "version": version, "ok": ok}
         if not ok:
             body["error"] = {"grund": grund, "text": text}
-        return self._bereit and self._publish("up/result", body) is not None
+        return self._publish_nach_hello("up/result", body) is not None
 
     def laufzeit_kanal(self, worker: RegulationWorker) -> RuntimeChannel:
         """mqtt_factory fuer app.start (Spec 5b 5.2): Tick und Telemetrie ueber den Link."""
-        channel = RuntimeChannel(self._publish, lambda: self._bereit and self.link is not None and self.link.connected,
-                                 lambda: self.link.connect_failures if self.link is not None else 0)
-        self._channel = channel.binden(worker)
+        channel = RuntimeChannel(self._publish_nach_hello,
+                                 lambda: self._bereit and self.link is not None and self.link.connected,
+                                 lambda: link.connect_failures if (link := self.link) is not None else 0)
+        self._channel = channel
+        channel.binden(worker)
         return channel
 
     def konfiguration(self) -> dict | None:
@@ -224,8 +226,10 @@ class Device:
                 self._verarbeiten(item)
             if takt:
                 self._takt()
-        except Exception:
-            logger.exception("Fehler im Geraete-Thread, weiter im naechsten Takt")
+        except Exception as error:
+            # nur Fehlerart und innerster Frame: Meldungen von Host-Rueckrufen koennen Treiberparameter tragen (Regel 6)
+            logger.error("Fehler im Geraete-Thread (%s)%s, weiter im naechsten Takt", type(error).__name__,
+                         commands.fehlerort(error))
 
     def _verarbeiten(self, item: tuple) -> None:
         quelle = item[0]
@@ -287,6 +291,7 @@ class Device:
         except ValueError as error:  # TransportConfigError: gespeicherter Zugang unbrauchbar -> Rettungsweg
             logger.error("MQTT-Zugang unbrauchbar (%s), nehme den Rettungsweg", type(error).__name__)
             self._rettung = True
+            self._bootstrap.spaeter()  # Backoff wie ein gescheiterter Bootstrap, nicht jeden Takt ein Zertifikat
             return
         self.link = link
 
@@ -314,6 +319,10 @@ class Device:
         except ValueError as error:
             logger.error("%s nicht gesendet: %s", name, error)
             return None
+
+    def _publish_nach_hello(self, name: str, payload: dict) -> int | None:
+        """Laufzeit-Nachrichten (Snapshot, Telemetrie) erst nach hello (Spec 5b 5.1: hello zuerst)."""
+        return self._publish(name, payload) if self._bereit else None
 
     def _hello(self) -> dict:
         return {"schema": wire.SCHEMA, "schemata": list(wire.SCHEMATA),
@@ -381,7 +390,7 @@ class Device:
             self.host.bedienung_uebernommen(neu)
 
     def _ergebnis_senden(self, body: dict) -> bool:
-        return self._bereit and self._publish("up/result", body) is not None
+        return self._publish_nach_hello("up/result", body) is not None
 
     def _inventur_senden(self, command_id: str, daten: dict) -> bool:
         nachrichten = inventory.nachrichten(command_id, daten)  # ValueError (zu gross) wertet das Register aus

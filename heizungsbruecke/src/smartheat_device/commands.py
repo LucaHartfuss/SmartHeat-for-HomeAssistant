@@ -83,7 +83,8 @@ def _load_done(path: Path) -> dict[str, Entry]:
     return done
 
 
-def _frame(error: Exception) -> str:
+def fehlerort(error: Exception) -> str:
+    """Innerster Frame einer Ausnahme fuer Logs (Datei:Zeile Funktion), ohne Meldung und Quelltext (Regel 6)."""
     frames = traceback.extract_tb(error.__traceback__)
     if not frames:
         return ""
@@ -162,7 +163,7 @@ class CommandRegister:
             outcome = self._uebersetzen(error)
             if outcome is None:
                 # nur Fehlerart und innerster Frame: Meldung und Quelltext koennen Nutzlast-Teile tragen (Regel 6)
-                logger.error("Befehl %s fehlgeschlagen (%s)%s", kind, type(error).__name__, _frame(error))
+                logger.error("Befehl %s fehlgeschlagen (%s)%s", kind, type(error).__name__, fehlerort(error))
                 return Failed("intern", INTERN_TEXT)
         if isinstance(outcome, Failed) and kind in wire.COMMANDS and outcome.grund not in wire.command_errors(kind):
             logger.error("Befehl %s: Grund %s steht nicht in der Vertragsliste", kind, outcome.grund)

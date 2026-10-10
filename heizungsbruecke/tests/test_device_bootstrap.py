@@ -239,3 +239,13 @@ def test_a_certificate_for_another_key_is_not_stored(tmp_path, ident, ca):
     other = identity.load_or_create(tmp_path / "anderes")
     client = ScriptedClient(register=[_ok(ident, ca, cert=zertifikat_fuer(other, ca))])
     assert _flow(tmp_path, ident, client).holen(rettung=False) is None and bootstrap.laden(tmp_path) is None
+
+
+def test_an_unusable_access_counts_as_a_failure_with_backoff(tmp_path, ident, ca):
+    clock = Clock()
+    flow = _flow(tmp_path, ident, ScriptedClient(certificate=[_ok(ident, ca)]), clock=clock)
+    assert flow.holen(rettung=True) is not None and flow.faellig()
+    flow.spaeter()  # Link mit dem neuen Zugang startet nicht (TransportConfigError)
+    assert not flow.faellig() and not flow.gesperrt
+    clock.now += bootstrap.RETRY_MIN_SECONDS
+    assert flow.faellig()
