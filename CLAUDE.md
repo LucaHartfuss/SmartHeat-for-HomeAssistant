@@ -13,7 +13,13 @@ released sind. Die Sicherheitsregeln aus `../CLAUDE.md` gelten unverändert.
 - `heizungsbruecke/src/smartheat_runtime/` — hostneutraler Betrieb für Add-on und Gateway (`app.py`, `delivery.py`,
   `status.py` …); Grenzen in `tests/test_runtime_purity.py`: nie `heizungsbruecke`, `paho` nur über
   `smartheat_transport.mqtt_client`, keine Tenant-IDs.
-- `heizungsbruecke/src/smartheat_transport/` — Transport-Deskriptor, MQTT (`mqtt_client.py` = einzige Stelle mit `paho`).
+- `heizungsbruecke/src/smartheat_transport/` — Transport-Deskriptor, MQTT (`mqtt_client.py` = einzige Stelle mit
+  `paho` im Optionen-Pfad; im Gerätekern nur `smartheat_device/link.py`).
+- `heizungsbruecke/src/smartheat_device/` — Gerätekern (Spec 5b): Vertragskopie `wire.py` (wörtlich aus Server
+  `device_protocol.py`), Identität, Bootstrap mit Rettungsweg, die eine MQTT-Verbindung (`link.py`), Dokumentspeicher,
+  Befehle, Bedienwunsch, Inventur, `device.py` (Thread, hello, Status), `laufzeit.py` (Laufzeit auf dem Link). Grenzen:
+  `tests/test_device_purity.py`; das Add-on nutzt ihn erst ab 5c, das Gateway ab 0.6.0. `smartheat_core.config_check`
+  prüft eine Konfiguration lokal vor dem Übernehmen.
 - `heizungsbruecke/src/heizungsbruecke/` — HA-Host: `HaHost`, REST/WebSocket, Bindings für mypyllant, Weishaupt, Viessmann.
 - `gateway/` — Laufzeit-Host, Agent, Compose (§5a.1–5a.7); `gateway/host/` Host-Dienste, Updater, Installer auf dem
   System-Python des Pi (§5a.8–5a.12); `gateway/image/` Basis-Image mit `rpi-image-gen` (§5a.13); `gateway/release/`

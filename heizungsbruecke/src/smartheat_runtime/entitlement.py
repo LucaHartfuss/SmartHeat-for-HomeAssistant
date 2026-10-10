@@ -55,8 +55,11 @@ def query_status(tenant_id: str, base_url: str, token: str) -> str:
 
 
 def query(config: RuntimeConfig) -> str:
-    """Ohne Installations-Token keine Anfrage (der Start prueft ihn; Schutz gegen leere Konfiguration)."""
-    if not config.installation_token:
+    """Geraete-Pfad (Spec 5b 5.2): der Status aus dem Konfigurationsdokument (abo_source), nie ein Abruf. Sonst ohne
+    Installations-Token oder Basis-URL keine Anfrage (der Start prueft beides; Schutz gegen leere Konfiguration)."""
+    if config.abo_source is not None:
+        return config.abo_source()
+    if not config.installation_token or not config.accounts_api_base_url:
         return UNKNOWN
     return query_status(config.tenant_id, config.accounts_api_base_url, config.installation_token)
 
