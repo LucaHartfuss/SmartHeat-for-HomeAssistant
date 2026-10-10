@@ -9,7 +9,11 @@ wird mit einem Grund aus wire.DOKUMENT_ERRORS; die vorige Version bleibt, die Ab
 
 Mindestversion (Spec 2.1): liegt die eigene Software unter mindest_software, wird die Konfiguration mit update_noetig
 abgelehnt (das Geraet regelt mit der alten weiter); eine leere Konfiguration (anlage None, "nicht eingerichtet") wird
-immer uebernommen. update_noetig gilt auch nach einem Dokument mit unbekanntem schema und uebersteht Neustarts.
+immer uebernommen. update_noetig gilt auch nach einem Dokument mit unbekanntem schema und uebersteht Neustarts. Der
+Server schickt eine abgelehnte Version nicht erneut; gespeichert wird daher der Anlass (die mindest_software der
+abgelehnten Konfiguration bzw. die eigene Software beim unbekannten schema), und update_noetig wird gegen die laufende
+Software ausgewertet: nach einem Update endet es von selbst. Nur eine vollstaendige Konfiguration (alle Felder) setzt den
+Anlass neu; eine wegen fehlender Felder abgelehnte laesst ihn stehen.
 Eine kaputte Datei (Stromausfall) gilt als "keine Version": hello meldet 0, der Server stellt neu zu."""
 import json
 import logging
@@ -109,6 +113,14 @@ def unter_mindest(eigene, mindest) -> bool:
     return own is not None and need is not None and own < need
 
 
+def _anlass(raw) -> tuple[str, str] | None:
+    """Gespeicherter Anlass fuer update_noetig: [grund, version]; alles andere gilt als kein Anlass."""
+    if (isinstance(raw, list) and len(raw) == 2 and raw[0] in (UPDATE_NOETIG, SCHEMA_UNBEKANNT)
+            and isinstance(raw[1], str)):
+        return raw[0], raw[1]
+    return None
+
+
 def _is_version(value) -> TypeGuard[int]:
     return isinstance(value, int) and not isinstance(value, bool)
 
@@ -162,7 +174,7 @@ class DocumentStore:
         self._docs: dict[str, Dokument | None] = {art: self._laden(art) for art in wire.DOKUMENTE}
         zustand = read_json(directory / ZUSTAND_DATEI)
         zustand = zustand if isinstance(zustand, dict) else {}
-        self._update_noetig = zustand.get("update_noetig") is True
+        self._update_anlass = _anlass(zustand.get("update_anlass"))
         roh = zustand.get("abgelehnt")
         abgelehnt: dict = roh if isinstance(roh, dict) else {}
         self._abgelehnt: dict[str, tuple[int, str, str]] = {
@@ -171,7 +183,12 @@ class DocumentStore:
 
     @property
     def update_noetig(self) -> bool:
-        return self._update_noetig
+        anlass = self._update_anlass
+        if anlass is None:
+            return False
+        if anlass[0] == SCHEMA_UNBEKANNT:
+            return anlass[1] == self._software_version
+        return unter_mindest(self._software_version, anlass[1])
 
     def _laden(self, art: str) -> Dokument | None:
         raw = read_json(self._dir / DATEIEN[art])
@@ -185,7 +202,8 @@ class DocumentStore:
         self._docs[doc.art] = doc
 
     def _zustand_speichern(self) -> None:
-        write_json(self._dir / ZUSTAND_DATEI, {"update_noetig": self._update_noetig,
+        anlass = list(self._update_anlass) if self._update_anlass is not None else None
+        write_json(self._dir / ZUSTAND_DATEI, {"update_anlass": anlass,
                                                 "abgelehnt": {art: list(v) for art, v in self._abgelehnt.items()}})
 
     def aktuell(self, art: str) -> Dokument | None:
@@ -224,14 +242,12 @@ class DocumentStore:
         with self._lock:
             if payload.get("schema") not in wire.SCHEMATA:
                 if art == KONFIGURATION:
-                    self._update_noetig = True
+                    self._update_anlass = (SCHEMA_UNBEKANNT, self._software_version)
                 return self._abgelehnt_mit(art, version, SCHEMA_UNBEKANNT, SCHEMA_TEXT)
             current = self._docs[art]
             if current is not None and current.version == version and not current.dirty:
                 return Ergebnis(art, version, True)
             inhalt = {key: value for key, value in payload.items() if key not in _RESERVIERT}
-            if art == KONFIGURATION:
-                self._update_noetig = unter_mindest(self._software_version, inhalt.get("mindest_software"))
             ablehnung = self._pruefen(art, inhalt, current)
             if ablehnung is not None:
                 return self._abgelehnt_mit(art, version, ablehnung.grund, ablehnung.text)
@@ -251,10 +267,12 @@ class DocumentStore:
         fehlen = [field for field in wire.KONFIGURATION_FIELDS if field not in _RESERVIERT and field not in inhalt]
         if fehlen:
             return config_check.Ablehnung(UNGUELTIG, FELDER_TEXT.format(felder=", ".join(fehlen)))
+        mindest = inhalt.get("mindest_software")  # erst eine vollstaendige Konfiguration setzt den Anlass neu
+        self._update_anlass = (UPDATE_NOETIG, mindest) if unter_mindest(self._software_version, mindest) else None
         if config_check.ist_leer(inhalt):
             return None
-        if self._update_noetig:
+        if self._update_anlass is not None:
             return config_check.Ablehnung(UPDATE_NOETIG, UPDATE_TEXT.format(eigene=self._software_version,
-                                                                            mindest=inhalt.get("mindest_software")))
+                                                                            mindest=mindest))
         vorher = current.inhalt if current is not None else None
         return config_check.pruefen(inhalt, vorher, host=self._host, treiber_pruefen=self._treiber_pruefen)

@@ -156,6 +156,29 @@ def test_a_configuration_within_reach_clears_update_needed(tmp_path):
     assert store.empfangen("konfiguration", _konfiguration(version=2)).uebernommen and not store.update_noetig
 
 
+def test_update_needed_ends_once_the_device_reaches_the_rejected_minimum(tmp_path):
+    store = _store(tmp_path, version="0.5.9")
+    assert store.empfangen("konfiguration", _konfiguration()).grund == "update_noetig"
+    assert not _store(tmp_path, version="0.6.0").update_noetig  # aktualisiert: der Server schickt nichts erneut
+    assert _store(tmp_path, version="0.5.9").update_noetig  # dieselbe alte Software: weiter noetig
+
+
+def test_update_needed_after_an_unknown_schema_ends_with_a_new_software(tmp_path):
+    store = _store(tmp_path, version="0.6.0")
+    store.empfangen("konfiguration", {**_konfiguration(), "schema": 2})
+    assert _store(tmp_path, version="0.6.0").update_noetig
+    assert not _store(tmp_path, version="0.6.1").update_noetig
+
+
+def test_an_invalid_configuration_keeps_update_needed(tmp_path):
+    store = _store(tmp_path, version="0.5.9")
+    store.empfangen("konfiguration", _konfiguration())
+    body = _konfiguration(version=2)
+    del body["mindest_software"]
+    assert store.empfangen("konfiguration", body).grund == "ungueltig"
+    assert store.update_noetig and _store(tmp_path, version="0.5.9").update_noetig
+
+
 def test_the_driver_check_of_the_host_is_used(tmp_path):
     store = docs.DocumentStore(tmp_path, host="gateway", software_version="0.6.0",
                                treiber_pruefen=lambda bindung: "Heizkreis fehlt.")
