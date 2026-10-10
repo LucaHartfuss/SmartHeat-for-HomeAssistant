@@ -218,3 +218,45 @@ def test_a_key_that_does_not_match_the_certificate_is_a_config_error(tls):
                             client_factory=FakePaho)
     with pytest.raises(TransportConfigError):
         link.start()
+
+
+def test_a_rejected_connack_followed_by_disconnect_counts_once(tls):
+    """Echtes paho: auf ein abgelehntes CONNACK folgt on_disconnect (Ruling 8)."""
+    link, clients, events = _link(tls)
+    client = clients[-1]
+    client.connack(failure=True)
+    client.drop()
+    assert link.connect_failures == 1 and events == []
+    for _ in range(2):
+        client.connack(failure=True)
+        client.drop()
+    assert events == [("anmeldung_scheitert",)] and link.connect_failures == 3
+
+
+def test_a_pending_port_switch_is_void_after_a_successful_connect(tls):
+    link, clients, _ = _link(tls, alpn="x-amzn-mqtt-ca")
+    for _ in range(link_module.PORT_FALLBACK_FAILURES):
+        clients[-1].fail(OSError("Netz"))
+    clients[-1].connack()
+    link.port_wechseln_falls_noetig()
+    assert len(clients) == 1 and link.port == 8883 and not clients[0].stopped
+
+
+def test_a_failing_event_sink_does_not_escape_the_paho_callbacks(tls):
+    def sink(*event):
+        raise RuntimeError("Geraet kaputt")
+
+    ca, cert, key = tls
+    clients = []
+
+    def factory(client_id):
+        clients.append(FakePaho(client_id))
+        return clients[-1]
+
+    link = link_module.Link(DEVICE, Zugang(cert, Endpoint("mosquitto", 8883, ca)), key, sink, client_factory=factory)
+    link.start()
+    client = clients[-1]
+    client.connack()
+    client.message(f"smartheat/{DEVICE}/down/config")
+    client.on_publish(client, None, 1, SimpleNamespace(is_failure=False), None)
+    client.drop()

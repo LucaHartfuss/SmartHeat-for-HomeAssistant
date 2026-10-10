@@ -61,6 +61,7 @@ class Link:
         self._auth_failures = 0
         self._net_failures = 0
         self._connack = False
+        self._abgelehnt = False  # abgelehntes CONNACK schon gezaehlt; paho ruft danach on_disconnect
         self._wechsel = False
         self._client: Any = None
 
@@ -71,6 +72,7 @@ class Link:
 
     def start(self) -> None:
         """Wirft TransportConfigError, wenn Zertifikat, Schluessel oder CA nicht zusammenpassen."""
+        self._connack = self._abgelehnt = False
         self._client = self._neuer_client()
         self._client.loop_start()
 
@@ -99,8 +101,8 @@ class Link:
         """Im Geraete-Thread: nach PORT_FALLBACK_FAILURES Netzfehlern neuer Client auf dem anderen Port."""
         if not self._wechsel:
             return
-        self._wechsel = False
         self.stop()
+        self._wechsel = False
         self.port = PORT_443 if self.port != PORT_443 else self._zugang.endpoint.port
         logger.warning("MQTT: Broker nicht erreichbar, Wechsel auf Port %d", self.port)
         self.start()
@@ -133,34 +135,48 @@ class Link:
         endpoint = self._zugang.endpoint
         return endpoint.alpn is not None and endpoint.port != PORT_443
 
+    def _melden(self, *event) -> None:
+        """Ereignis ans Geraet; ein Fehler dort darf den paho-Thread nicht beenden (paho wirft Rueckruf-Fehler weiter)."""
+        try:
+            self._ereignis(*event)
+        except Exception as error:
+            logger.error("MQTT: Ereignis %s wurde im Geraet nicht verarbeitet (%s)", event[0], type(error).__name__)
+
     def _anmeldefehler(self) -> None:
         self._auth_failures += 1
         if self._auth_failures >= AUTH_FAILURES_FOR_RESCUE:
             self._auth_failures = 0
-            self._ereignis(ANMELDUNG_SCHEITERT)
+            self._melden(ANMELDUNG_SCHEITERT)
 
     def _on_connect(self, client, userdata, flags, reason_code, properties) -> None:
         if getattr(reason_code, "is_failure", False):
             logger.error("MQTT-Anmeldung abgelehnt (reason_code=%s)", reason_code)
             self.connect_failures += 1
+            self._abgelehnt = True
             self._anmeldefehler()
             return
         self._connack = True
+        self._abgelehnt = False
+        self._wechsel = False  # Verbindung steht wieder: ein noch nicht ausgefuehrter Portwechsel ist hinfaellig
         self.connect_failures = self._auth_failures = self._net_failures = 0
         client.subscribe(wire.topic(self.device_id, wire.DEVICE_SUBSCRIPTION), wire.QOS)
         logger.info("MQTT verbunden (Port %d)", self.port)
-        self._ereignis(VERBUNDEN)
+        self._melden(VERBUNDEN)
 
     def _on_disconnect(self, client, userdata, flags, reason_code, properties) -> None:
         if self._connack:
             self._connack = False
             logger.warning("MQTT getrennt (reason_code=%s), paho verbindet neu", reason_code)
-            self._ereignis(GETRENNT)
+            self._melden(GETRENNT)
+            return
+        if self._abgelehnt:  # paho trennt nach einem abgelehnten CONNACK; der Versuch ist schon gezaehlt
+            self._abgelehnt = False
             return
         self.connect_failures += 1
         self._anmeldefehler()
 
     def _on_connect_fail(self, client, userdata) -> None:
+        self._abgelehnt = False  # neuer Versuch
         self.connect_failures += 1
         kind = classify_connect_error(sys.exception())
         if kind == CONNECT_ERROR_TLS:
@@ -182,7 +198,7 @@ class Link:
         parsed = wire.parse_topic(message.topic)
         if parsed is None or parsed[0] != self.device_id or not parsed[1].startswith("down/"):
             return
-        self._ereignis(NACHRICHT, parsed[1], bytes(message.payload))
+        self._melden(NACHRICHT, parsed[1], bytes(message.payload))
 
     def _on_publish(self, client, userdata, mid, reason_code, properties) -> None:
-        self._ereignis(GESENDET, mid)
+        self._melden(GESENDET, mid)
