@@ -9,6 +9,9 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
   `smartheat_core.config_check`; die Laufzeit kann aus einem Konfigurationsdokument starten und den Link des Geräts
   nutzen (`dokument_config`, `RuntimeConfig.abo_source`, `app.start(mqtt_factory=...)`). Für das Add-on ändert sich
   nichts; es zieht mit 5c um.
+- Neu, vom Add-on noch nicht genutzt (Plan D2): `CommandRegister.register(..., wiederholbar=True)`. Eine so
+  eingetragene Befehlsart läuft bei erneuter Zustellung nach einem Neustart noch einmal, statt mit `intern` zu enden
+  (`sign_off` des Gateways). Für das Add-on ändert sich nichts.
 
 ## 0.36.0
 

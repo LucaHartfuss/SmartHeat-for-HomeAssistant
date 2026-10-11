@@ -2,7 +2,31 @@
 
 ## 0.6.0
 
-- Gateway auf dem Gerätekern `smartheat_device` (Spec 5b, Plan D2; Einzelheiten folgen mit dem Abschluss von Task 11).
+Spec 5b (Geräteprotokoll über MQTT), Plan D2. Nur für Labor-Gateways; im Feld gibt es keine Gateways, einen Übergang
+von 0.5.0 gibt es nicht (Spec 5.3). Kein Release-Tag in 5b ohne echten Signierschlüssel (Runbook 13.1).
+
+- Ein Gateway-Container `runtime`: Gerätekern `smartheat_device` (Bootstrap mit Zertifikat, MQTT 5 über TLS zu
+  `smartheat/<geräte_id>/…`, Soll-Dokumente, Befehle, Bedienwunsch, Inventur) und Laufzeit in einem Prozess; Tick und
+  Telemetrie über denselben Link. Agent-Container, HTTPS-Polling, Tunnel (`cloudflared`) und Netz-Wache entfallen.
+  Compose gibt `runtime` 20 s `stop_grace_period`; der Gerätethread wird beim Beenden abgewartet. Die Soll-Software
+  wird beim Start erneut an den Updater gegeben.
+- Konfiguration und Bedienung kommen als Dokumente; eine laufzeitrelevante neue Konfiguration startet den Prozess nach
+  einem sauberen MQTT-DISCONNECT neu. Leere Konfiguration nach einer Einrichtung: der nächste Start löscht den
+  anlagengebundenen Zustand und die Treiber-Anmeldungen (A4-07).
+- `sign_off` setzt die Anlage über einen Neustart zurück und läuft auch dann, wenn der Server den Befehl nach dem
+  Neustart erneut zustellt (Befehlsart „wiederholbar“, kleine Ergänzung im Gerätekern).
+- Thermostat: eine Drehung ist ein Bedienwunsch (am Ende der Entprellung, begrenzt auf 15–25 °C, zurückgeschrieben);
+  `system_mode: off` oder ein Soll ≤ 7 °C ist „Soll-Quelle aus“ (Meldung, kein Wunsch); ein noch offener Wunsch wird
+  dabei verworfen und das vorherige Soll bleibt gültig.
+- Updater: Soll-Version aus dem Feld `software` der Konfiguration (`data/software_soll.json`), Ergebnisse über die
+  Laufzeit als `up/result` (`dokument: "software"`); Erreichbarkeit = Broker per TCP (die Uhr zählt dafür nicht mehr);
+  `REQUIRED_HEALTHY = ("runtime",)`; `smartheat_host/device_api.py` → `kanal.py`. Die Host-Dienste (root) lesen vom
+  Container beschreibbare Dateien nur begrenzt und ohne Symlinks zu folgen (`smartheat_host/lesen.py`);
+  `files._write_bytes` schreibt mit `O_NOFOLLOW`, `dir_fd` und `O_EXCL`. **Host-Dienste ändern sich: `install.sh` auf
+  Labor-Gateways erneut ausführen.**
+- LED und Diagnoseseite: neue Zustände `gesperrt` und `update_noetig`; die Seite zeigt Hinweise des Dienstes, eigene
+  Meldungen und eine abgelehnte Konfiguration; QR-Code und Übernahme-Code, solange das Gateway nicht eingerichtet ist.
+- Lokaler Bus nur noch für Zigbee2MQTT (ACL `runtime`/`zigbee2mqtt`); `uhr_synchron` aus `host/status.json`.
 
 ## 0.5.0
 

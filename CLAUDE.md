@@ -21,7 +21,7 @@ released sind. Die Sicherheitsregeln aus `../CLAUDE.md` gelten unverändert.
   `tests/test_device_purity.py`; das Add-on nutzt ihn erst ab 5c, das Gateway ab 0.6.0. `smartheat_core.config_check`
   prüft eine Konfiguration lokal vor dem Übernehmen.
 - `heizungsbruecke/src/heizungsbruecke/` — HA-Host: `HaHost`, REST/WebSocket, Bindings für mypyllant, Weishaupt, Viessmann.
-- `gateway/` — Laufzeit-Host, Agent, Compose (§5a.1–5a.7); `gateway/host/` Host-Dienste, Updater, Installer auf dem
+- `gateway/` — Laufzeit-Host auf dem Gerätekern `smartheat_device` (ein Container `runtime`), Compose (§5a.1–5a.7); `gateway/host/` Host-Dienste, Updater, Installer auf dem
   System-Python des Pi (§5a.8–5a.12); `gateway/image/` Basis-Image mit `rpi-image-gen` (§5a.13); `gateway/release/`
   Bundle und Signatur (§5a.10). Grenzen: `gateway/tests/test_boundaries.py`, `gateway/host/tests/test_boundaries.py`.
 
@@ -32,8 +32,8 @@ scripts/check.sh          # lint, test, contract (--only <schritt> für einzelne
 scripts/check.sh --full   # zusätzlich die Docker-Schritte (Build, Happy-Path, run.sh, Will-ACL, Gateway-Image und Compose-Lauf)
 ```
 `scripts/check.sh` prüft und testet `heizungsbruecke/`, `gateway/`, `gateway/host/` **und** `gateway/release/`; `--full` baut zusätzlich das Gateway-Image
-(lokal nur amd64) und fährt den Compose-Lauf mit dem Dev-Overlay (`tests/test_gateway_docker_build.sh`; dabei Bus-Anmeldung und ACL, Masken, Netz-Wache; die statische
-Prüfung der Compose-Datei steckt in `gateway/tests/test_compose.py`). Drei weitere Docker-Skripte gehören zum Gateway: `tests/test_gateway_install.sh` (Host-Installer zweimal in `debian:trixie`, Plattform per `SHG_INSTALL_PLATFORM`, die CI fährt zusätzlich arm64 im Job `install-arm64`), `tests/test_gateway_updater.sh` (Updater gegen eine lokale Registry mit drei signierten Test-Bundles, Rückweg und Manipulation; Laufzeit rund 6 min, steuert Compose über den Docker-Socket des Hosts) und `tests/test_gateway_firstboot.sh` (Export wie im Image-Bau, Laden ohne Netz in einem Docker mit containerd-Speicher, Start per Index-Digest). Der Image-Bau selbst (`gateway/image/make_image.sh`) braucht einen arm64-Host und gehört nicht zu `check.sh`. Im Dev-Root fährt `scripts/check.sh --only e2e --full`
+(lokal nur amd64) und fährt den Compose-Lauf mit dem Dev-Overlay (`tests/test_gateway_docker_build.sh`; dabei Bootstrap gegen einen Fake, MQTT gegen einen Fake-Broker mit Client-Zertifikat, Fälschungsproben und sauberes Trennen, Bus-Anmeldung und ACL; die statische
+Prüfung der Compose-Datei steckt in `gateway/tests/test_compose.py`). Drei weitere Docker-Skripte gehören zum Gateway: `tests/test_gateway_install.sh` (Host-Installer zweimal in `debian:trixie`, Plattform per `SHG_INSTALL_PLATFORM`, die CI fährt zusätzlich arm64 im Job `install-arm64`), `tests/test_gateway_updater.sh` (Updater gegen eine lokale Registry mit drei signierten Test-Bundles, Soll-Version als Konfigurationsdokument über den Fake-Broker, Rückweg und Manipulation; Laufzeit rund 6 min, steuert Compose über den Docker-Socket des Hosts) und `tests/test_gateway_firstboot.sh` (Export wie im Image-Bau, Laden ohne Netz in einem Docker mit containerd-Speicher, Start per Index-Digest). Der Image-Bau selbst (`gateway/image/make_image.sh`) braucht einen arm64-Host und gehört nicht zu `check.sh`. Im Dev-Root fährt `scripts/check.sh --only e2e --full`
 zusätzlich die Gateway-Modi des Ende-zu-Ende-Tests.
 Direkter Aufruf bleibt möglich: `cd heizungsbruecke && pip install -e ".[dev]" && pytest` bzw.
 `cd gateway && pip install -e ".[dev]" && pytest` (`pyproject.toml`: `testpaths = ["tests"]`, `pythonpath = ["src"]`). Testzahl: siehe CI (Job
@@ -51,8 +51,9 @@ verfolgt. Release-Ablauf, CI-Jobs, Token: `../docs/ci-cd-runbook.md`.
 - `heizungsbruecke/config.yaml` hat einen `schema:`-Block, wird aber **nur** von der Integration befüllt, nie von Hand.
 - **Golden-Master** (`heizungsbruecke/tests/test_golden_master.py`, `tests/golden/addon_scenario.json`) nie neu erzeugen,
   ohne dass ein Plan es verlangt: ändert er sich, ist der Code falsch, nicht die Datei.
-- **Verträge:** Gerätevertrag `gateway/src/smartheat_gateway/agent/wire.py` ↔ `../tools/contracts/shg_device_v1.json` ↔
-  Server `devices_wire.py` nur gemeinsam ändern (Check 44); Status-Event, Hebel-, Rollen- und Optionsnamen, Ports und
+- **Verträge:** Gerätevertrag `heizungsbruecke/src/smartheat_device/wire.py` (wörtliche Kopie des Vertragsteils aus
+  `HeizungssteuerungServer/src/heizungsserver/device_protocol.py`, Test `test_device_wire.py`) ↔
+  `../tools/contracts/geraet_v1.json` nur gemeinsam ändern (Check 49; Topics gegen die IoT-Policies Check 50); Status-Event, Hebel-, Rollen- und Optionsnamen, Ports und
   Sicherheitswert-Schlüssel prüft `python3 ../tools/contract_check.py` (vor jedem Release grün; `architecture.md` §9).
 - **Versionen:** `<addon>/config.yaml`, bei `heizungsbruecke` zusätzlich `ADDON_VERSION` in `src/heizungsbruecke/version.py`
   (Test prüft den Gleichlauf), je Add-on `CHANGELOG.md` mit `## X.Y.Z`; Gateway: `gateway/VERSION` und
