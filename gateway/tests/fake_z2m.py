@@ -74,7 +74,7 @@ class FakeZigbee2Mqtt:
         self.report(ieee, occupied_heating_setpoint=body["occupied_heating_setpoint"], local_temperature=20.0)
 
 
-def main() -> None:  # pragma: no cover - laeuft im Container
+def main() -> None:  # laeuft im Container (E2E gateway2), getestet in test_fake_z2m_main
     from smartheat_gateway.bus import LocalBus, credentials_from_env
     bus = LocalBus(
         os.environ.get("SHG_BUS_HOST", "mosquitto"), int(os.environ.get("SHG_BUS_PORT", "1883")), "fake-z2m",
@@ -87,6 +87,10 @@ def main() -> None:  # pragma: no cover - laeuft im Container
     sensor = os.environ.get("FAKE_Z2M_SENSOR", "0x00124b0000000001")
     z2m.add_sensor(sensor)
     temperature = float(os.environ.get("FAKE_Z2M_TEMPERATURE", "20.0"))
+    thermostat = os.environ.get("FAKE_Z2M_THERMOSTAT")  # E2E gateway2: Bedienwunsch am Thermostat (Plan 5b W)
+    if thermostat:
+        z2m.add_thermostat(thermostat)
+        z2m.report(thermostat, occupied_heating_setpoint=20.0, local_temperature=temperature, battery_low=False)
     while True:
         z2m.report(sensor, temperature=temperature, battery=90, linkquality=120)
         time.sleep(10)
