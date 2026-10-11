@@ -27,7 +27,9 @@ SOFTWARE = {"version": "0.6.1", "manifest_url": "https://x.test/m.json", "manife
 
 @pytest.fixture
 def world(data_dir, monkeypatch, clock):
-    return GatewayWorld(data_dir, monkeypatch, clock)
+    world = GatewayWorld(data_dir, monkeypatch, clock)
+    yield world
+    world.close()
 
 
 def _thermostat_writes(world):

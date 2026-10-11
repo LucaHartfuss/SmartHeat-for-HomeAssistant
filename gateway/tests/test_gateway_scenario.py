@@ -25,7 +25,9 @@ URSPRUNG = {lever: START_LEVERS[lever] for lever in BINDINGS["viessmann_vicare"]
 
 @pytest.fixture
 def world(data_dir, monkeypatch, clock):
-    return GatewayWorld(data_dir, monkeypatch, clock)
+    world = GatewayWorld(data_dir, monkeypatch, clock)
+    yield world
+    world.close()
 
 
 def _led(world: GatewayWorld) -> str:

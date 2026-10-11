@@ -49,6 +49,7 @@ class GatewayWorld:
         self.links: list[FakeLink] = []
         self.restarts = 0
         self.result = self.host = self.geraet = self.device = None
+        self._geraete: list = []  # jeder Prozessstart baut einen neuen Geraete-Host samt Hintergrund-Thread
         monkeypatch.setenv("SHG_ALIVE_FILE", str(data_dir / "alive"))
         monkeypatch.setattr("smartheat_core.wallclock._now", self.wall.now)
         # abo.restart_process: conftest (_kein_prozessneustart) sichert das Original, attach leitet um.
@@ -69,6 +70,7 @@ class GatewayWorld:
         mirror = ZigbeeMirror(self.bus, self.clock)
         mirror.start()
         self.geraet = GatewayDeviceHost(self.paths, mirror, host_dir=self.host_dir, clock=self.clock, wall=self._wall)
+        self._geraete.append(self.geraet)
         self.device = Device(self.geraet, self.paths.data, "https://accounts.example.test", clock=self.clock,
                              wall=self._wall, bootstrap_client=lambda ident: KeinBootstrap(), link_factory=self._link,
                              befehl_fehler=befehle.fehler_uebersetzen)
@@ -81,6 +83,12 @@ class GatewayWorld:
         # Der Fuehler meldet live (retained Werte aus dem Broker-Replay gelten nicht als frisch, Plan G2b-1).
         self.z2m.report(SENSOR, temperature=20.0, battery=90)
         return self.result
+
+    def close(self) -> None:
+        """Teardown: stoppt die Hintergrund-Threads der Befehle aller Prozessstarts und wartet kurz auf ihr Ende (kein
+        Thread ueberlebt den Test, sonst warnt fork() in test_quota)."""
+        for geraet in self._geraete:
+            geraet.hintergrund.stop(timeout=2.0)
 
     def run(self) -> None:
         """Geraetekern und Worker abarbeiten; ein gewollter Neustart startet einen neuen Prozess wie Compose."""

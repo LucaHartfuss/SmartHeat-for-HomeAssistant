@@ -426,11 +426,24 @@ LEVERS = {"curve": 1.4, "level": 3.0, "room_setpoint": 20.0}
 @pytest.fixture
 def regelnde_welt(data_dir, monkeypatch, clock):
     world = GatewayWorld(data_dir, monkeypatch, clock)
-    dokumente_schreiben(world.paths, konfiguration())
-    world.start_runtime()
-    world.connect()
-    assert world.result.store.state.delivery.pending is not None  # Erststart-Tick wartet auf down/setpoints
-    return world
+    try:
+        dokumente_schreiben(world.paths, konfiguration())
+        world.start_runtime()
+        world.connect()
+        assert world.result.store.state.delivery.pending is not None  # Erststart-Tick wartet auf down/setpoints
+        yield world
+    finally:
+        # Ein Test, der vor frei.set() scheitert, laesst den blockierten Aufruf sonst bis zur Sicherung haengen; erst
+        # freigeben, dann den Hintergrund-Thread beenden und die Sicherung (Timer-Thread) abbrechen.
+        for freigabe, sicherung in _FREIGABEN:
+            freigabe.set()
+            sicherung.cancel()
+        _FREIGABEN.clear()
+        world.close()
+
+
+#: (frei, Sicherung) der blockierten Aufrufe des laufenden Tests; die Fixture regelnde_welt raeumt sie im Teardown ab.
+_FREIGABEN: list[tuple[threading.Event, threading.Timer]] = []
 
 
 def _blockieren(monkeypatch, ziel: str, danach) -> tuple[threading.Event, threading.Event]:
@@ -446,6 +459,7 @@ def _blockieren(monkeypatch, ziel: str, danach) -> tuple[threading.Event, thread
     sicherung = threading.Timer(FREIGABE_SPAETESTENS, frei.set)
     sicherung.daemon = True
     sicherung.start()
+    _FREIGABEN.append((frei, sicherung))
     return gestartet, frei
 
 

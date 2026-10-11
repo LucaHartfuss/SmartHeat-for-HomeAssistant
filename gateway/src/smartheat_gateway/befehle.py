@@ -73,7 +73,9 @@ class Hintergrund:
             self._queue.put((future, call))
         return future
 
-    def stop(self) -> None:
+    def stop(self, timeout: float = 0.0) -> None:
+        """Stoppt den Hintergrund. Mit timeout > 0 wartet stop() danach hoechstens so lange auf das Ende des Threads
+        (ein haengender Treiber-Aufruf haelt den Aufrufer nie laenger auf); ohne timeout kehrt es sofort zurueck."""
         with self._lock:
             self._stopped = True
             while True:
@@ -82,8 +84,11 @@ class Hintergrund:
                 except queue.Empty:
                     break
                 future.cancel()
-            if self._thread is not None:
+            thread = self._thread
+            if thread is not None:
                 self._queue.put(None)
+        if thread is not None and timeout > 0:
+            thread.join(timeout)
 
     def _run(self) -> None:
         while (item := self._queue.get()) is not None:

@@ -28,7 +28,9 @@ VICARE = {"id": "vicare_cloud", "parameter": {"installation_id": 2012345, "gatew
 
 @pytest.fixture
 def world(data_dir, monkeypatch, clock):
-    return GatewayWorld(data_dir, monkeypatch, clock)
+    world = GatewayWorld(data_dir, monkeypatch, clock)
+    yield world
+    world.close()
 
 
 def _host(paths, konf, clock, *, bus=None, wait=0.1):
