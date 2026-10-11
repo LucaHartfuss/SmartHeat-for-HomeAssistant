@@ -87,6 +87,10 @@ def main() -> None:  # pragma: no cover - laeuft im Container
     sensor = os.environ.get("FAKE_Z2M_SENSOR", "0x00124b0000000001")
     z2m.add_sensor(sensor)
     temperature = float(os.environ.get("FAKE_Z2M_TEMPERATURE", "20.0"))
+    thermostat = os.environ.get("FAKE_Z2M_THERMOSTAT")  # E2E gateway2: Bedienwunsch am Thermostat (Plan 5b W)
+    if thermostat:
+        z2m.add_thermostat(thermostat)
+        z2m.report(thermostat, occupied_heating_setpoint=20.0, local_temperature=temperature, battery_low=False)
     while True:
         z2m.report(sensor, temperature=temperature, battery=90, linkquality=120)
         time.sleep(10)
