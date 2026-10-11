@@ -303,3 +303,119 @@ def test_thermostat_off_cancels_a_pending_wish(mit_geraet, clock):
     welt.worker.run_pending()
     assert welt.wuensche == [] and _setpoint_writes(welt) == []
     assert welt.aus == [(True, 20.0)] and welt.store.value == 20.0
+
+
+# --- Wiedereinschalten (Review D2, Important 2; Restpunkt 5b-D2-11) ---
+# Zigbee2MQTT laeuft mit cache_state: true, jede Meldung traegt den vollen Zustand, auch das alte Soll.
+
+
+def _melden(welt, mode: str, soll: float) -> None:
+    welt.z2m.report(THERMOSTAT, system_mode=mode, occupied_heating_setpoint=soll, local_temperature=20.0)
+    welt.worker.run_pending()
+
+
+def test_back_on_writes_the_stored_target_so_the_stale_setpoint_is_no_wish(mit_geraet, clock):
+    """(a) Aus -> Bedienung 21 vom Server -> wieder an: das Thermostat bekommt 21, die Routinemeldung mit dem alten
+    Soll 20 ist kein Wunsch und macht die Bedienung nicht rueckgaengig."""
+    welt = mit_geraet
+    welt.z2m.make_sleepy(THERMOSTAT)  # batteriebetrieben: der Schreibbefehl wartet bis zum Aufwachen
+    _melden(welt, "heat", 20.0)
+    _melden(welt, "off", 20.0)
+    welt.worker.post(Event(EV_TARGET_INPUT, {"value": 21.0, "source": "portal"}))
+    welt.worker.run_pending()
+    clock.advance(10)
+    welt.worker.run_pending()
+    assert welt.store.value == 21.0 and _setpoint_writes(welt) == []  # aus: nicht ans Thermostat
+    _melden(welt, "heat", 20.0)  # wieder an, die Meldung traegt noch das alte Soll
+    assert _setpoint_writes(welt) == [21.0]
+    clock.advance(120)  # nach dem Echo-Fenster: Routinemeldung, das Thermostat hat noch nicht uebernommen
+    _melden(welt, "heat", 20.0)
+    clock.advance(10)
+    welt.worker.run_pending()
+    assert welt.wuensche == [] and (welt.store.value, welt.store.source) == (21.0, "portal")
+    assert _setpoint_writes(welt) == [21.0] and welt.aus[-1] == (False, None)
+    welt.z2m.wake(THERMOSTAT)  # bestaetigt 21; danach ist Drehen wieder ein Wunsch
+    welt.worker.run_pending()
+    assert welt.wuensche == [] and welt.store.value == 21.0
+    _melden(welt, "heat", 19.0)
+    clock.advance(10)
+    welt.worker.run_pending()
+    assert welt.wuensche == [19.0]
+
+
+def test_back_on_resyncs_the_display_after_a_discarded_wish(mit_geraet, clock):
+    """Ein Drehwert kurz vor dem Ausschalten wird verworfen (kein Wunsch); beim Wiedereinschalten zeigt das Thermostat
+    wieder das geltende Soll."""
+    welt = mit_geraet
+    _melden(welt, "heat", 17.0)  # Drehen, noch in der Entprellung
+    clock.advance(3)
+    _melden(welt, "off", 17.0)
+    clock.advance(10)
+    welt.worker.run_pending()
+    assert welt.wuensche == [] and welt.store.value == 20.0
+    _melden(welt, "heat", 17.0)
+    clock.advance(10)
+    welt.worker.run_pending()
+    assert _setpoint_writes(welt) == [20.0] and welt.wuensche == [] and welt.store.value == 20.0
+
+
+def test_leaving_the_frost_position_by_turning_the_knob_stays_a_wish(mit_geraet, clock):
+    """(b) Frostschutz verlassen ist eine echte Aenderung am Thermostat: ein Wunsch, kein Zurueckschreiben."""
+    welt = mit_geraet
+    _melden(welt, "heat", 6.0)
+    welt.worker.post(Event(EV_TARGET_INPUT, {"value": 21.0, "source": "portal"}))
+    welt.worker.run_pending()
+    _melden(welt, "heat", 19.0)
+    clock.advance(10)
+    welt.worker.run_pending()
+    assert welt.wuensche == [19.0] and _setpoint_writes(welt) == []
+    assert (welt.store.value, welt.store.source) == (19.0, "thermostat")
+
+
+def test_back_on_while_still_in_the_frost_position_writes_nothing(mit_geraet, clock):
+    welt = mit_geraet
+    _melden(welt, "off", 6.0)
+    _melden(welt, "heat", 6.0)  # an, aber Frostschutz bleibt: Soll-Quelle weiter aus
+    assert _setpoint_writes(welt) == [] and welt.aus == [(True, 20.0)]
+    _melden(welt, "heat", 19.0)  # Drehen aus der Frostschutz-Stellung
+    clock.advance(10)
+    welt.worker.run_pending()
+    assert welt.wuensche == [19.0] and _setpoint_writes(welt) == []
+
+
+def test_back_on_with_the_thermostat_already_showing_the_target_writes_nothing(mit_geraet, clock):
+    """(c) Zeigt das Thermostat schon das geltende Soll, schreibt das Wiedereinschalten nichts (kein doppelter Befehl
+    an ein schlafendes Thermostat)."""
+    welt = mit_geraet
+    _melden(welt, "heat", 20.0)
+    _melden(welt, "off", 20.0)
+    _melden(welt, "heat", 20.0)
+    clock.advance(10)
+    welt.worker.run_pending()
+    assert _setpoint_writes(welt) == [] and welt.wuensche == [] and welt.aus == [(True, 20.0), (False, None)]
+
+
+def test_routine_reports_while_on_write_nothing(mit_geraet, clock):
+    """Jede Meldung traegt system_mode heat: nur der Wechsel von aus auf an schreibt."""
+    welt = mit_geraet
+    for _ in range(3):
+        _melden(welt, "heat", 20.0)
+        clock.advance(60)
+    assert _setpoint_writes(welt) == [] and welt.aus == []
+
+
+def test_back_on_after_two_operations_while_off_treats_the_shown_setpoint_as_stale(mit_geraet, clock):
+    """Zwei Bedienungen waehrend "aus" (20 -> 21 -> 22): das Thermostat zeigt noch 20, nicht den vorigen Speicherwert
+    21; auch 20 gilt bis zur Bestaetigung als alter Wert."""
+    welt = mit_geraet
+    welt.z2m.make_sleepy(THERMOSTAT)
+    _melden(welt, "off", 20.0)
+    for wert in (21.0, 22.0):
+        welt.worker.post(Event(EV_TARGET_INPUT, {"value": wert, "source": "portal"}))
+        welt.worker.run_pending()
+    _melden(welt, "heat", 20.0)
+    clock.advance(120)
+    _melden(welt, "heat", 20.0)
+    clock.advance(10)
+    welt.worker.run_pending()
+    assert welt.wuensche == [] and welt.store.value == 22.0 and _setpoint_writes(welt) == [22.0]

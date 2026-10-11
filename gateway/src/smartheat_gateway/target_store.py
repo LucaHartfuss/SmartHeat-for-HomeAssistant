@@ -53,13 +53,17 @@ class TargetStore:
             return False
         return self._set(float(value), SOURCE_PORTAL)
 
-    def note_own_write(self) -> None:
+    def note_own_write(self, veraltet: float | None = None) -> None:
+        """veraltet: was das Thermostat zuletzt gemeldet hat, falls bekannt (Wiedereinschalten: der Wert vor dem
+        Ausschalten, nicht unbedingt der vorige Wert des Speichers); gilt zusaetzlich als alter Wert."""
         now = self._clock()
         self._echo_until = now + ECHO_WINDOW_SECONDS
         if self._pending is not None and now < self._pending[2]:  # zweiter Befehl vor der Bestaetigung des ersten
             stale = self._pending[1] | {self._pending[0]}
         else:
             stale = frozenset({self._before if self._before is not None else self.value})
+        if veraltet is not None:
+            stale |= {veraltet}
         self._pending = (self.value, stale - {self.value}, now + PENDING_SECONDS)
 
     def apply_thermostat(self, value) -> bool:

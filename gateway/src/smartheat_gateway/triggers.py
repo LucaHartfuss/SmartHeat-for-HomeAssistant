@@ -4,8 +4,11 @@ portal) und das Thermostat ueber Zigbee gehen als EV_TARGET_INPUT in den Worker;
 der Debouncer (10 s) beendet die Eingabe. Ein Thermostat-Wunsch geht erst dann, und nur einmal, an den Geraetekern
 (wunsch: begrenzt auf den Bedienbereich); der begrenzte Wert gilt sofort und wird ans Thermostat zurueckgeschrieben,
 danach EV_LOCAL_CHECK(room_target_fired=True). Soll-Quelle aus (system_mode off oder ein Soll bis FROSTSCHUTZ_BIS, Spec
-3.2): kein Wunsch, Meldung ueber soll_quelle_aus, eine neue Bedienung schreibt das Thermostat nicht. Fuehler-Aenderungen
-posten EV_LOCAL_CHECK(False); die Tagestick-Zeit ebenfalls (wie der Zeit-Trigger in HA)."""
+3.2): kein Wunsch, Meldung ueber soll_quelle_aus, eine neue Bedienung schreibt das Thermostat nicht. Wieder an
+(system_mode nicht mehr off, kein Frostschutz): das geltende Soll geht ans Thermostat, sofern es etwas anderes zeigt, mit
+Echo-Fenster und offenem Schreibbefehl; Zigbee2MQTT (cache_state) meldet sonst das alte Soll als Eingabe und machte eine
+Bedienung waehrend "aus" rueckgaengig (Spec 3.3, Review D2). Frostschutz verlassen durch Drehen bleibt ein Wunsch.
+Fuehler-Aenderungen posten EV_LOCAL_CHECK(False); die Tagestick-Zeit ebenfalls (wie der Zeit-Trigger in HA)."""
 import logging
 import os
 from collections.abc import Callable
@@ -111,6 +114,7 @@ class BusTriggerSource:
 
     def _setze_aus(self, grund: str, aus: bool) -> None:
         vorher = bool(self._aus)
+        war_aus = grund in self._aus
         if aus:
             self._aus.add(grund)
         else:
@@ -119,6 +123,21 @@ class BusTriggerSource:
             if self._aus:
                 self._wunsch_verwerfen()  # Thermostat aus ist kein Wunsch (Spec 5b 3.2): auch ein offener nicht
             self._soll_quelle_aus(bool(self._aus), self._store.value if self._aus else None)
+        if grund == "modus" and war_aus and not self._aus:
+            self._wieder_an()
+
+    def _wieder_an(self) -> None:
+        """system_mode off -> an (ohne Frostschutz): das geltende Soll ans Thermostat. Die naechsten Meldungen mit dem
+        alten Soll (cache_state) fallen in Echo-Fenster und offenen Schreibbefehl statt ein Wunsch zu werden; das
+        Thermostat zeigt wieder das Soll (auch nach einem verworfenen Drehwert). Zeigt es das Soll schon, nichts."""
+        if self._thermostat is None:
+            return
+        angezeigt = self._mirror.payload(self._thermostat).get("occupied_heating_setpoint")
+        if angezeigt == self._store.value:
+            return
+        self._mirror.write_setpoint(self._thermostat, self._store.value)
+        veraltet = float(angezeigt) if isinstance(angezeigt, int | float) and not isinstance(angezeigt, bool) else None
+        self._store.note_own_write(veraltet=veraltet)
 
     def _wunsch_verwerfen(self) -> None:
         if self._wunsch_offen and self._vor_wunsch is not None:
