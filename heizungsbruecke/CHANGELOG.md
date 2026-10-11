@@ -12,6 +12,8 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
 - Neu, vom Add-on noch nicht genutzt (Plan D2): `CommandRegister.register(..., wiederholbar=True)`. Eine so
   eingetragene Befehlsart läuft bei erneuter Zustellung nach einem Neustart noch einmal, statt mit `intern` zu enden
   (`sign_off` des Gateways). Für das Add-on ändert sich nichts.
+- Gerätevertrag 5c (Schema 1, additiv): HA-Bindung, Inventur-Filter und -Felder, Fehlergründe `ha_nicht_erreichbar`
+  und `nicht_unterstuetzt`; ohne Wirkung auf das Add-on.
 
 ## 0.36.0
 

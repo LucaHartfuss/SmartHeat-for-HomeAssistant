@@ -68,6 +68,17 @@ RAUM_FIELDS = ("ist", "soll", "soll_quelle", "ts")
 NOTIFICATIONS_FIELDS = ("schema", "items")
 NOTIFICATION_FIELDS = ("key", "kategorie", "kritisch", "text", "offen", "ts")
 INVENTORY_FIELDS = ("schema", "command_id", "teil", "teile", "daten")
+INVENTUR_FILTER_FIELDS = ("plattformen", "domaenen", "geraeteklassen", "dienste")
+INVENTUR_HA_FIELDS = ("entities", "geraete", "dienste", "einheit_temperatur", "zeitzone")
+INVENTUR_ENTITY_FIELDS = (
+    "entity_id", "plattform", "unique_id", "name", "config_entry", "geraet", "einheit", "device_class", "state_class",
+    "zustand", "attribute", "aktualisiert",
+)
+INVENTUR_ATTRIBUTE = (
+    "temperature", "current_temperature", "temperature_unit", "min", "max", "step", "min_temp", "max_temp",
+    "target_temp_step", "options", "hvac_modes",
+)
+INVENTUR_GERAET_FIELDS = ("id", "name", "modell", "config_entries")
 RESULT_FIELDS = ("schema", "ok", "result", "error")
 RESULT_TARGETS = ("command_id", "dokument", "version")  # entweder command_id oder dokument und version
 ERROR_FIELDS = ("grund", "text")
@@ -88,6 +99,17 @@ KONFIGURATION_FIELDS = (
 )
 KONFIGURATION_OPTIONAL = ("intervalle",)  # fehlt = Standardwerte des Geraets
 BINDUNG_GATEWAY_FIELDS = ("treiber", "thermostat")
+BINDUNG_HA_FIELDS = ("kreis", "rollen", "batterien", "benachrichtigung", "hinweise_aus")
+BINDUNG_HA_OPTIONAL = ("abfrage_s",)  # fehlt = Standardwert des Hebelsatzes (Abfrageintervall der Hersteller-Integration)
+KREIS_FIELDS = ("plattform", "config_entry", "anlage", "nummer")
+HA_ROLLEN = (
+    "room_target", "curve", "room_setpoint", "level", "heat_limit", "min_flow", "mode_select", "setpoint_comfort",
+    "setpoint_setback", "outdoor_temp", "flow_temperature", "flow_setpoint", "return_temperature", "operating_mode",
+    "system_water_pressure", "efficiency_ratio", "generator_hours", "generator_starts", "generator_state",
+    "energy_electrical_heating", "energy_electrical_dhw", "energy_primary_heating", "energy_primary_dhw",
+    "energy_thermal_heating", "energy_thermal_dhw", "energy_electrical_total",
+)
+HA_HINWEISE = ("raumfuehler", "batterie", "manueller_eingriff", "quellwechsel", "schreibbudget", "schreibzaehler")
 TREIBER_FIELDS = ("id", "parameter")
 SOFTWARE_FIELDS = ("version", "manifest_url", "manifest_sha256", "signature")
 INTERVALLE_FIELDS = ("pruefung_s", "telemetrie_s")
@@ -116,7 +138,7 @@ PROBE_CANDIDATE_FIELDS = (
     "sicherheitswarnungen", "details",
 )
 PROBE_LEVER_FIELDS = ("wert", "min", "max", "schritt")
-COMMON_ERRORS = ("ungueltige_nutzlast", "intern")
+COMMON_ERRORS = ("ungueltige_nutzlast", "intern", "nicht_unterstuetzt")
 _DRIVER_ERRORS = ("treiber_unbekannt", "nicht_angemeldet", "kontingent_erschoepft", "anlage_nicht_erreichbar")
 
 
@@ -127,6 +149,7 @@ class Command:
     expires_seconds: int | None  # None = Regel in expires_rule
     errors: tuple[str, ...] = ()
     expires_rule: str | None = None
+    payload_optional: tuple[str, ...] = ()  # fehlt in der Nutzlast = Bedeutung je Befehl (inventory: ohne Filter)
 
 
 COMMANDS: dict[str, Command] = {
@@ -138,8 +161,9 @@ COMMANDS: dict[str, Command] = {
         ("treiber_unbekannt", "login_nicht_noetig", "login_fehlgeschlagen", "anlage_nicht_erreichbar"),
     ),
     "driver_probe": Command(("driver_id",), PROBE_FIELDS, 120, _DRIVER_ERRORS),
-    "inventory": Command(("stunden",), (), None, (*_DRIVER_ERRORS, "nicht_eingerichtet", "keine_bestaetigung"),
-                         "stunden*3600+3600"),
+    "inventory": Command(("stunden",), (), None,
+                         (*_DRIVER_ERRORS, "nicht_eingerichtet", "keine_bestaetigung", "ha_nicht_erreichbar"),
+                         "stunden*3600+3600", ("filter",)),
     "sign_off": Command((), ("zurueckgesetzt", "werte"), 24 * 3600, ("nicht_eingerichtet", "keine_bestaetigung")),
     "new_claim_code": Command((), (), 300, ("bereits_uebernommen",)),
     "diagnostics": Command((), (), 300),
