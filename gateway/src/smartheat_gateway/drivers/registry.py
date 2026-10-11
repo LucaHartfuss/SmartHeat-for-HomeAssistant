@@ -19,7 +19,8 @@ def driver_ids() -> tuple[str, ...]:
 def create(
     driver_id: str, parameter: dict, paths: Paths, *, clock=time.monotonic, writer: bool = False, **extra,
 ) -> Driver:
-    """writer=True nur in der Laufzeit (ein Schreiber je Datei); der Agent liest. KeyError bei unbekannter ID."""
+    """writer=True nur in der Laufzeit (ein Schreiber je Datei); die Befehle des Geraetekerns lesen. KeyError bei
+    unbekannter ID."""
     return DRIVERS[driver_id](parameter, paths, clock=clock, writer=writer, **extra)
 
 

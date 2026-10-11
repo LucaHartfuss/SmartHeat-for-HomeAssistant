@@ -376,7 +376,7 @@ def test_inventory_sample_has_values_but_no_ids_serials_or_models(env):
 
 def test_inventory_sample_without_parameters_finds_the_heating_device(env):
     server, logged_in, paths, clock = env
-    driver = ViCareCloudDriver({}, paths, clock=clock)  # der Agent erzeugt den Treiber ohne Parameter
+    driver = ViCareCloudDriver({}, paths, clock=clock)  # ohne Parameter: der Treiber sucht das Heizgeraet selbst
     assert driver.inventory_sample()["werte"]["level_current"] == 0
 
 

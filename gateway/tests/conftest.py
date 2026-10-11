@@ -1,14 +1,10 @@
 from pathlib import Path
 
 import pytest
-from configs import SENSOR, THERMOSTAT
-from fake_device_api import FakeDeviceApi
+from configs import THERMOSTAT
 from fake_vicare.server import GOOD_CODE, FakeVicare
-from fake_z2m import FakeZigbee2Mqtt
-from fakes import FakeBus
+from fakes import FakeBus, SofortHintergrund
 
-from smartheat_gateway.agent import identity
-from smartheat_gateway.agent.context import AgentContext
 from smartheat_gateway.drivers.vicare_cloud.driver import ViCareCloudDriver
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.zigbee import ZigbeeMirror
@@ -27,6 +23,17 @@ class FakeClock:
 
     def advance(self, seconds: float) -> None:
         self.now += seconds
+
+
+@pytest.fixture(autouse=True)
+def _kein_prozessneustart(tmp_path, monkeypatch):
+    """Nie os.execv im Test (runtime_main.attach leitet abo.restart_process um; monkeypatch stellt das Original nach
+    jedem Test wieder her) und nie das echte Lebenszeichen unter /tmp."""
+    def _neustart():
+        raise SystemExit(0)
+
+    monkeypatch.setattr("smartheat_runtime.abo.restart_process", _neustart)
+    monkeypatch.setenv("SHG_ALIVE_FILE", str(tmp_path / "alive"))
 
 
 @pytest.fixture
@@ -58,18 +65,18 @@ def data_dir(tmp_path):
     return path
 
 
-@pytest.fixture
-def api():
-    server = FakeDeviceApi()
-    server.start()
-    yield server
-    server.stop()
+VICARE_PARAMETER = {"installation_id": 2012345, "gateway_serial": "7637415000000001", "device_id": "0",
+                    "heizkreis": 0, "poll_seconds": 300.0}
 
 
 @pytest.fixture
-def vicare_ctx(data_dir, clock, monkeypatch):
-    """Agent-Kontext mit angemeldetem vicare_cloud-Treiber gegen den Fake-ViCare-Server: (ctx, server, clock).
-    Die Wanduhr des Kontexts folgt der Test-Uhr (ctx.wall = 1_000_000 + clock())."""
+def vicare_kontext(data_dir, clock, monkeypatch):
+    """Befehls-Kontext mit angemeldetem vicare_cloud-Treiber gegen den Fake-ViCare-Server und einer Konfiguration fuer
+    diesen Treiber: (ctx, server, clock). Die Wanduhr folgt der Test-Uhr (ctx.wall = 1_000_000 + clock())."""
+    from configs import konfiguration
+
+    from smartheat_gateway import befehle
+
     server = FakeVicare()
     base = server.start()
     for key, value in {"SHG_TEST_ENDPOINTS": "1", "SHG_VICARE_IAM_BASE": base, "SHG_VICARE_API_BASE": base}.items():
@@ -79,14 +86,12 @@ def vicare_ctx(data_dir, clock, monkeypatch):
     login.login_begin({"client_id": "c", "redirect_uri": "https://portal.test/oauth/callback"})
     login.login_finish({"code": GOOD_CODE, "redirect_uri": "https://portal.test/oauth/callback"})
     bus = FakeBus()
-    z2m = FakeZigbee2Mqtt(bus)
     mirror = ZigbeeMirror(bus, clock)
     mirror.start()
-    z2m.bridge(online=True)
-    z2m.add_sensor(SENSOR)
-    z2m.add_thermostat(THERMOSTAT)
-    context = AgentContext(paths, bus, mirror, identity.load_or_create(paths), clock=clock)
-    context.wall = lambda: 1_000_000 + clock()
-    context.start()
+    konf = konfiguration(bindung={"treiber": {"id": "vicare_cloud", "parameter": VICARE_PARAMETER},
+                                  "thermostat": THERMOSTAT})
+    context = befehle.Kontext(paths, mirror, konfiguration=lambda: konf, runtime_status=lambda: None,
+                              neustart=lambda: None, clock=clock, wall=lambda: 1_000_000 + clock(),
+                              hintergrund=SofortHintergrund())
     yield context, server, clock
     server.stop()

@@ -4,7 +4,7 @@ import pytest
 
 from smartheat_host import bundles
 
-GOOD_COMPOSE = "services:\n  agent:\n    image: ghcr.io/x/gw@sha256:" + "a" * 64 + "\n"
+GOOD_COMPOSE = "services:\n  runtime:\n    image: ghcr.io/x/gw@sha256:" + "a" * 64 + "\n"
 
 
 def _manifest(**over):
@@ -40,11 +40,11 @@ def test_parse_version():
 
 
 @pytest.mark.parametrize("text", [
-    "services:\n  agent:\n    image: ghcr.io/x/gw:latest\n",
-    "services:\n  agent:\n    build: .\n    image: ghcr.io/x/gw@sha256:" + "a" * 64 + "\n",
-    "services:\n  agent:\n    image: ghcr.io/x/gw:latest # @sha256:" + "a" * 64 + "\n",  # Kommentar versteckt kein Tag
-    "services:\n  agent:\n    image: ghcr.io/x/gw@sha256:" + "a" * 64 + "\n  b:\n    image: ghcr.io/x/b:1\n",
-    "services:\n  agent:\n    image: ghcr.io/x/gw@sha256:abc\n",
+    "services:\n  runtime:\n    image: ghcr.io/x/gw:latest\n",
+    "services:\n  runtime:\n    build: .\n    image: ghcr.io/x/gw@sha256:" + "a" * 64 + "\n",
+    "services:\n  runtime:\n    image: ghcr.io/x/gw:latest # @sha256:" + "a" * 64 + "\n",  # Kommentar versteckt kein Tag
+    "services:\n  runtime:\n    image: ghcr.io/x/gw@sha256:" + "a" * 64 + "\n  b:\n    image: ghcr.io/x/b:1\n",
+    "services:\n  runtime:\n    image: ghcr.io/x/gw@sha256:abc\n",
     "services: {}\n",
 ])
 def test_compose_without_digest_or_with_build_is_refused(text):
@@ -54,7 +54,7 @@ def test_compose_without_digest_or_with_build_is_refused(text):
 
 def test_good_compose_passes_and_lists_images():
     bundles.check_compose(GOOD_COMPOSE)
-    quoted = 'services:\n  agent:\n    image: "ghcr.io/x/gw@sha256:' + "a" * 64 + '"\n'
+    quoted = 'services:\n  runtime:\n    image: "ghcr.io/x/gw@sha256:' + "a" * 64 + '"\n'
     bundles.check_compose(quoted)
     assert bundles.compose_images(quoted) == ["ghcr.io/x/gw@sha256:" + "a" * 64]
 
@@ -81,9 +81,10 @@ def test_compose_runner_commands(tmp_path):
 
 
 def test_compose_health_reads_both_output_formats(tmp_path):
-    lines = '{"Service": "agent", "Health": "healthy"}\n{"Service": "mosquitto", "Health": ""}\n'
-    array = '[{"Service": "agent", "Health": "healthy"}, {"Service": "runtime", "Health": "starting"}]'
-    for out, expected in ((lines, {"agent": "healthy"}), (array, {"agent": "healthy", "runtime": "starting"})):
+    lines = '{"Service": "runtime", "Health": "healthy"}\n{"Service": "mosquitto", "Health": ""}\n'
+    array = '[{"Service": "runtime", "Health": "healthy"}, {"Service": "zigbee2mqtt", "Health": "starting"}]'
+    for out, expected in ((lines, {"runtime": "healthy"}),
+                          (array, {"runtime": "healthy", "zigbee2mqtt": "starting"})):
         runner = bundles.ComposeRunner(tmp_path, run=lambda cmd, out=out, **kw: _Done(0, out))
         assert runner.health("0.3.0") == expected
 

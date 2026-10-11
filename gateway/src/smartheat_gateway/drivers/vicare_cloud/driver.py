@@ -102,8 +102,8 @@ class ViCareCloudDriver:
 
     @staticmethod
     def _fail(error: vicare.ViCareError) -> Exception:
-        """ViCare-Fehler -> Vertragsgrund (agent/wire.py) bzw. QuotaExhausted (der Agent meldet kontingent_erschoepft,
-        die Laufzeit behandelt es als Kontingentfehler). Ein abgelehntes Kommando ist ein gewoehnlicher Schreibfehler."""
+        """ViCare-Fehler -> Vertragsgrund (smartheat_device/wire.py) bzw. QuotaExhausted (ein Befehl des Geraetekerns
+        meldet kontingent_erschoepft, die Laufzeit behandelt es als Kontingentfehler). Ein abgelehntes Kommando ist ein gewoehnlicher Schreibfehler."""
         if isinstance(error, vicare.NotAuthenticated):
             return DriverError("nicht_angemeldet", NOT_LOGGED_IN_TEXT)
         if isinstance(error, vicare.RateLimited):
@@ -333,7 +333,7 @@ class ViCareCloudDriver:
         if not (isinstance(client_id, str) and client_id and isinstance(redirect_uri, str) and redirect_uri):
             raise DriverError("login_fehlgeschlagen", LOGIN_INCOMPLETE_TEXT)
         challenge = self._tokens.begin(client_id, redirect_uri)
-        return {"code_challenge": challenge, "code_challenge_method": "S256"}  # nie Verifier oder Token (done.json)
+        return {"code_challenge": challenge, "code_challenge_method": "S256"}  # nie Verifier oder Token (Ergebnis)
 
     def login_finish(self, params: dict) -> None:
         code, redirect_uri = params.get("code"), params.get("redirect_uri")
@@ -370,7 +370,7 @@ class ViCareCloudDriver:
         return {"driver_id": self.driver_id, "kandidaten": found}
 
     def inventory_sample(self) -> dict:
-        """Eine Probe fuer die Inventur des Agenten (Praezisierung 7): nur Zahlenwerte der Rollen, keine Seriennummern,
+        """Eine Probe fuer die Inventur (Befehl inventory, Praezisierung 7): nur Zahlenwerte der Rollen, keine Seriennummern,
         IDs oder Modellnamen."""
         if "installation_id" in self._p and "gateway_serial" in self._p:
             ids = self._ids()

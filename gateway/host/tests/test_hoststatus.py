@@ -41,8 +41,8 @@ def test_timedatectl_is_the_fallback(tmp_path):
     assert data["zeit_synchron"] is True and data["dns"] is False  # ohne Host kein DNS-Test
 
 
-def test_fields_are_the_ones_the_agent_reads(tmp_path):
-    from smartheat_gateway.agent.diagnostics import HOST_FIELDS
+def test_fields_are_the_ones_the_runtime_reads(tmp_path):
+    from smartheat_gateway.geraet_host import HOST_FIELDS
 
     data = hoststatus.collect(route_file=tmp_path / "fehlt", resolve=lambda h, p: [], api_host=None,
                               sync_flag=tmp_path / "fehlt", timedatectl=lambda: None)
@@ -52,5 +52,5 @@ def test_fields_are_the_ones_the_agent_reads(tmp_path):
 def test_write_is_atomic_and_readable(tmp_path):
     hoststatus.write(tmp_path / "host" / "status.json", {"netz": True, "dns": True, "zeit_synchron": True, "ts": "t"})
     assert json.loads((tmp_path / "host" / "status.json").read_text())["netz"] is True
-    assert stat.S_IMODE((tmp_path / "host" / "status.json").stat().st_mode) == 0o644  # Agent (uid 1000) muss lesen
+    assert stat.S_IMODE((tmp_path / "host" / "status.json").stat().st_mode) == 0o644  # Laufzeit (uid 1000) muss lesen
     assert not list((tmp_path / "host").glob("*.tmp"))

@@ -84,9 +84,9 @@ def test_house_model_moves_towards_the_equilibrium(paths, clock):
     assert driver.read_signal("room_temperature") > start
 
 
-def test_agent_instance_does_not_create_the_plant_file(paths, clock):
-    agent = create("simulation", {}, paths, clock=clock, writer=False)
-    agent.probe()
+def test_reader_instance_does_not_create_the_plant_file(paths, clock):
+    reader = create("simulation", {}, paths, clock=clock, writer=False)
+    reader.probe()
     assert not (paths.sim_dir / "plant.json").exists()
 
 

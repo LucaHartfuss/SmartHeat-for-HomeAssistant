@@ -225,6 +225,41 @@ def test_a_waiting_command_is_not_run_again_after_a_restart(tmp_path):
         ["c1", False, None, {"grund": "intern", "text": cmd.UNTERBROCHEN_TEXT}]]
 
 
+def test_a_repeatable_command_runs_again_after_a_restart_and_sends_its_result(tmp_path):
+    sent, calls, clock = Sent(), [], Clock()
+    done = []
+
+    def sign_off(payload):
+        calls.append(1)
+        return cmd.Waiting(lambda: cmd.Done({"n": 1}) if done else None, clock.now + 60)
+
+    first = cmd.CommandRegister(tmp_path, sent, clock=clock)
+    first.register("sign_off", sign_off, wiederholbar=True)
+    first.empfangen(_command("sign_off"))
+    assert json.loads((tmp_path / cmd.STORE_FILE).read_text()) == [["c1", None, None, None]]
+    restarted = cmd.CommandRegister(tmp_path, sent, clock=clock)
+    restarted.register("sign_off", sign_off, wiederholbar=True)
+    restarted.empfangen(_command("sign_off"))  # nach hello erneut zugestellt: der Handler laeuft noch einmal
+    restarted.empfangen(_command("sign_off"))  # weiteres Duplikat waehrend es wartet: nichts
+    assert calls == [1, 1] and sent.results == []
+    assert json.loads((tmp_path / cmd.STORE_FILE).read_text()) == [["c1", None, None, None]]
+    done.append(1)
+    restarted.pruefen()
+    assert sent.results == [_ok(result={"n": 1})]
+    restarted.empfangen(_command("sign_off"))  # fertig: aus dem Speicher beantwortet, nicht noch einmal ausgefuehrt
+    assert calls == [1, 1] and sent.results == [_ok(result={"n": 1})] * 2
+
+
+def test_a_started_command_of_a_kind_that_is_not_repeatable_still_ends_intern(tmp_path):
+    sent, calls = Sent(), []
+    (tmp_path / cmd.STORE_FILE).write_text(json.dumps([["c1", None, None, None]]))
+    register = cmd.CommandRegister(tmp_path, sent)
+    register.register("diagnostics", lambda payload: calls.append(1) or cmd.Done({}))
+    register.register("sign_off", lambda payload: calls.append(2) or cmd.Done({}), wiederholbar=True)
+    register.empfangen(_command("diagnostics"))  # erneut zugestellt als Art ohne wiederholbar: intern
+    assert calls == [] and sent.results == [_fail("intern", cmd.UNTERBROCHEN_TEXT)]
+
+
 def test_a_crash_between_handler_and_result_is_not_run_again(tmp_path):
     sent, calls = Sent(), []
     (tmp_path / cmd.STORE_FILE).write_text(json.dumps([["c1", None, None, None]]))  # Marker ohne Ergebnis

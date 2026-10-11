@@ -18,12 +18,16 @@ sed -i "s/^SHA256_$arch=.*/SHA256_$arch=$(sha256sum /tmp/cloudflared-test.deb | 
 printf 'test-token-AAAAAAAAAAAAAAAAAAAAAAAAAAAA\n' >/tmp/token
 TUNNEL=("$COPY/host/pilot_ssh_tunnel.sh")
 
-# 0. Die Pin-Datei im Repo hat fuer beide Architekturen einen SHA-256 und dieselbe Version wie das Gateway-Image
+# 0. Die Pin-Datei im Repo hat fuer beide Architekturen einen SHA-256 und dieselbe Version wie das Add-on
+# cloudflared_access_mqtt. Bis Gateway 0.5.0 war das Gateway-Image die Referenz; ab 0.6.0 (Spec 5b 5.3) hat es kein
+# cloudflared mehr, das Add-on pinnt dieselbe Version per Digest (ein gemeinsamer Versionsstand im Repo).
 for a in arm64 amd64; do
   grep -Eq "^SHA256_$a=[0-9a-f]{64}$" /src/gateway/host/cloudflared.pin || fail "Pin SHA256_$a fehlt oder ist kein SHA-256"
 done
-grep -q "cloudflare/cloudflared:$(sed -n 's/^VERSION=//p' /src/gateway/host/cloudflared.pin)@" /src/gateway/Dockerfile \
-  || fail "cloudflared-Version in der Pin-Datei weicht vom Gateway-Image ab"
+pin_version="$(sed -n 's/^VERSION=//p' /src/gateway/host/cloudflared.pin)"
+[ -n "$pin_version" ] || fail "cloudflared-Version fehlt in der Pin-Datei"
+grep -q "^FROM cloudflare/cloudflared:$pin_version@sha256:" /src/cloudflared_access_mqtt/Dockerfile \
+  || fail "cloudflared-Version in der Pin-Datei weicht vom Add-on cloudflared_access_mqtt ab"
 # 1. Falsches Paket (Pin passt nicht) wird abgelehnt
 cp /tmp/cloudflared-test.deb /tmp/falsch.deb && printf 'x' >>/tmp/falsch.deb
 bash "${TUNNEL[@]}" install --token-file /tmp/token --deb /tmp/falsch.deb --no-activate >/tmp/t0.log 2>&1 \

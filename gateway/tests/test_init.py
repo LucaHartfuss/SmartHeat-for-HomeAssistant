@@ -25,8 +25,9 @@ def test_first_run_creates_everything_private(tmp_path):
     config = (tmp_path / "zigbee2mqtt" / "configuration.yaml").read_text()
     assert "user: zigbee2mqtt" in config and 'password: "test-pw-' in config and "permit_join" not in config
     assert stat.S_IMODE((tmp_path / "zigbee2mqtt" / "configuration.yaml").stat().st_mode) == 0o600
-    for name in ("device", "agent"):
+    for name in ("device",):
         assert stat.S_IMODE((tmp_path / "data" / name).stat().st_mode) == 0o700
+    assert not (tmp_path / "data" / "agent").exists()
     assert "bus/mosquitto/passwd" in written
 
 
@@ -54,16 +55,29 @@ def test_mosquitto_hash_format():
     assert base64.b64decode(hash_b64) == hashlib.pbkdf2_hmac("sha512", b"test-pw", salt, 101, 64)
 
 
+def _acl_blocks() -> dict[str, list[str]]:
+    """ACL-Bloecke je Benutzer: "user <name>" -> Topic-Zeilen."""
+    blocks = [block.splitlines() for block in init.render_acl().strip().split("\n\n")]
+    return {lines[0]: lines[1:] for lines in blocks}
+
+
 def test_acl_lets_each_service_write_only_its_own_topics():
-    acl = init.render_acl()
-    blocks = {block.splitlines()[0]: block for block in acl.strip().split("\n\n")}
-    assert "topic write shg/cmd/#" in blocks["user agent"]
-    assert "topic write shg/cmd/#" not in blocks["user runtime"] + blocks["user zigbee2mqtt"]
-    assert "topic write shg/status" in blocks["user runtime"]
-    assert "topic write shg/status" not in blocks["user agent"] + blocks["user zigbee2mqtt"]
-    assert blocks["user zigbee2mqtt"].splitlines()[1:] == ["topic readwrite zigbee2mqtt/#"]
-    assert "topic write zigbee2mqtt/+/set" in blocks["user runtime"]
-    assert "topic write zigbee2mqtt/bridge/request/#" in blocks["user agent"]
+    blocks = _acl_blocks()
+    assert set(blocks) == {"user runtime", "user zigbee2mqtt"}
+    # Genau diese Regeln: eine zusaetzliche Schreibregel (z. B. bridge/state, dem die Laufzeit vertraut) faellt auf.
+    assert sorted(blocks["user runtime"]) == sorted([
+        "topic read zigbee2mqtt/#", "topic write zigbee2mqtt/+/set", "topic write zigbee2mqtt/bridge/request/#"])
+    assert blocks["user zigbee2mqtt"] == ["topic readwrite zigbee2mqtt/#"]
+    assert not any("shg/" in line for block in blocks.values() for line in block)
+
+
+def test_a_passwd_from_0_5_0_with_the_agent_user_is_rebuilt(tmp_path):
+    bus = tmp_path / "bus"
+    init.ensure(bus, tmp_path / "z", tmp_path / "data", "ember")
+    passwd = bus / "mosquitto" / "passwd"
+    passwd.write_text(passwd.read_text() + f"agent:{init.mosquitto_hash('alt')}\n")
+    assert "bus/mosquitto/passwd" in init.ensure(bus, tmp_path / "z", tmp_path / "data", "ember")
+    assert not any(line.startswith("agent:") for line in passwd.read_text().splitlines())
 
 
 def test_adapter_from_the_host_file(tmp_path, monkeypatch):
@@ -96,7 +110,7 @@ def test_stale_passwd_is_rebuilt(tmp_path):
 def test_passwd_with_a_missing_user_is_rebuilt(tmp_path):
     _run(tmp_path)
     passwd = tmp_path / "bus" / "mosquitto" / "passwd"
-    passwd.write_text("".join(line + "\n" for line in passwd.read_text().splitlines() if not line.startswith("agent:")))
+    passwd.write_text("".join(line + "\n" for line in passwd.read_text().splitlines() if not line.startswith("runtime:")))
     assert _run(tmp_path) == ["bus/mosquitto/passwd"]
 
 

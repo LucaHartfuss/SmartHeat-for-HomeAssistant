@@ -1,16 +1,16 @@
 """Soll-Speicher (Spec SHG G2 3.3): /data/runtime/room_target.json = {value, source, ts}, geschrieben nur von der
 Laufzeit (im Worker-Thread). Der zuletzt gestellte Wert gilt. Portal: 15-25 °C in 0,5-K-Schritten (Regel 4,
-Nutzer-Entscheidung 2026-10-06; der Agent prueft vorher, hier erneut). Thermostat: nur Plausibilitaet 5-35 °C, kein
+Nutzer-Entscheidung 2026-10-06; der Geraetekern prueft vorher, hier erneut; Bedienung vom Server, Spec 5b 3.2;
+Bedienbereich, keine Sicherheitsgrenze). Thermostat: nur Plausibilitaet 5-35 °C, kein
 Clamp. Nach eigenem Schreiben ans Thermostat gelten dessen Meldungen ECHO_WINDOW_SECONDS lang als Echo; meldet das
 Thermostat das geltende Soll, aendert sich nichts (auch nicht die Quelle). Ein offener Schreibbefehl
 (PENDING_SECONDS) verwirft verspaetete Meldungen des alten Werts, bis das Thermostat den geschriebenen Wert meldet;
 jeder andere Wert gilt als Eingabe am Thermostat (Plan G2b-2 Task 4)."""
 import logging
-import math
 from collections.abc import Callable
 from pathlib import Path
 
-from smartheat_gateway.agent import wire
+from smartheat_device.documents import im_bedienbereich
 from smartheat_gateway.files import read_json, write_json
 from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
 
@@ -23,12 +23,8 @@ PENDING_SECONDS = 1800
 
 
 def is_valid_portal_target(value) -> bool:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
-        return False
-    if not wire.ROOM_TARGET_MIN <= value <= wire.ROOM_TARGET_MAX:
-        return False
-    steps = value / wire.ROOM_TARGET_STEP
-    return abs(steps - round(steps)) < 1e-9
+    """Bedienbereich (Spec 5b 3.2): 15-25 °C in 0,5-K-Schritten, wie Server und Geraetekern."""
+    return im_bedienbereich(value)
 
 
 class TargetStore:
@@ -57,13 +53,17 @@ class TargetStore:
             return False
         return self._set(float(value), SOURCE_PORTAL)
 
-    def note_own_write(self) -> None:
+    def note_own_write(self, veraltet: float | None = None) -> None:
+        """veraltet: was das Thermostat zuletzt gemeldet hat, falls bekannt (Wiedereinschalten: der Wert vor dem
+        Ausschalten, nicht unbedingt der vorige Wert des Speichers); gilt zusaetzlich als alter Wert."""
         now = self._clock()
         self._echo_until = now + ECHO_WINDOW_SECONDS
         if self._pending is not None and now < self._pending[2]:  # zweiter Befehl vor der Bestaetigung des ersten
             stale = self._pending[1] | {self._pending[0]}
         else:
             stale = frozenset({self._before if self._before is not None else self.value})
+        if veraltet is not None:
+            stale |= {veraltet}
         self._pending = (self.value, stale - {self.value}, now + PENDING_SECONDS)
 
     def apply_thermostat(self, value) -> bool:
@@ -92,6 +92,14 @@ class TargetStore:
         if value == self.value:  # Thermostat meldet das geltende Soll (Echo, Wiederholung): keine Aenderung
             return False
         return self._set(value, SOURCE_THERMOSTAT)
+
+    def begrenzen(self, value: float) -> bool:
+        """Begrenzter Thermostat-Wunsch (Spec 5b 3.2): der begrenzte Wert gilt sofort, Quelle bleibt das Thermostat."""
+        return self._set(float(value), SOURCE_THERMOSTAT)
+
+    def wiederherstellen(self, value: float, source: str) -> bool:
+        """Verworfener Thermostat-Wunsch (Thermostat aus, Spec 5b 3.2): zurueck auf den Stand vor dem Wunsch."""
+        return self._set(float(value), source)
 
     def _set(self, value: float, source: str) -> bool:
         if value == self.value and source == self.source:

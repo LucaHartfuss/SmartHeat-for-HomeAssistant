@@ -1,13 +1,14 @@
-"""Diagnoseseite (Spec SHG G2 6.5): nur lesend, ohne Login, ohne Geheimnisse, statisches HTML ohne JavaScript,
-Selbstaktualisierung alle 10 s. QR-Code (segno, SVG) und Uebernahme-Code nur lokal und nur, wenn der Server zuletzt
-`nicht_uebernommen` gemeldet hat (unbekannt, etwa nach einem Neustart ohne Server, zeigt keinen Code). /healthz fuer den
-Updater (G2b).
+"""Diagnoseseite (Spec SHG G2 6.5, Spec 5b 5.3, Plan D2): nur lesend, ohne Login, ohne Geheimnisse, statisches HTML ohne
+JavaScript, Selbstaktualisierung alle 10 s. Zeigt den Zustand des Geraetekerns (wie die LED), Hinweise des Dienstes
+(Befehl hinweis), eigene Meldungen (Wunsch begrenzt, Soll-Quelle aus), eine abgelehnte Konfiguration und, solange das
+Gateway nicht eingerichtet und nicht gesperrt ist, QR-Code (segno, SVG) und Uebernahme-Code - nur lokal. Der
+Uebernahmestatus ist nach dem Bootstrap nur ungefaehr bekannt (Plan D1); ein Uebernahmeversuch eines schon
+uebernommenen Geraets scheitert harmlos am Server. /healthz fuer den Updater (G2b).
 
 Schutz gegen DNS-Rebinding: jede Route antwortet nur, wenn der Host-Header eine IP-Adresse, `localhost` oder ein Name
 aus SHG_DIAG_HOSTNAMES (kommagetrennt) ist; sonst 403 ohne Inhalt. Sonst koennte eine fremde Webseite ueber einen auf
-die LAN-Adresse umgebogenen Namen den Uebernahme-Code im Browser eines Besuchers lesen. Der Befehl `diagnostics` liefert command_snapshot: derselbe Auszug OHNE
-Uebernahme-Code (gehoert nicht in den Befehlsverlauf des Servers). Aus der Host-Statusdatei (G2b) kommen nur die
-bekannten Felder HOST_FIELDS, nie die ganze Datei."""
+die LAN-Adresse umgebogenen Namen den Uebernahme-Code im Browser eines Besuchers lesen. Der Befehl `diagnostics`
+liefert geraet_host.snapshot() OHNE Uebernahme-Code."""
 import html
 import ipaddress
 import json
@@ -15,36 +16,41 @@ import logging
 import threading
 from collections.abc import Callable, Iterable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from urllib.parse import quote
 
 import segno
 
-from smartheat_gateway.agent.context import AgentContext
-from smartheat_gateway.files import read_json
-from smartheat_gateway.version import GATEWAY_VERSION
-
 logger = logging.getLogger(__name__)
 
-HOST_FIELDS = ("netz", "dns", "zeit_synchron")
 REFRESH_SECONDS = 10
+ZUSTAND_TEXTE = {
+    "startet": "Das Gateway startet.",
+    "nicht_uebernommen": "Das Gateway ist noch keinem Konto zugeordnet. Bitte im Portal übernehmen.",
+    "keine_verbindung": "Keine Verbindung zum SmartHeat-Server. Netz und Internetzugang prüfen.",
+    "wartet_auf_einrichtung": "Das Gateway ist übernommen und wartet auf die Einrichtung im Portal.",
+    "regelt": "Das Gateway regelt die Heizung.",
+    "stoerung": "Die Regelung meldet eine Störung; Details im Portal.",
+    "gesperrt": "Dieses Gateway ist gesperrt oder wurde ersetzt und verbindet sich nicht mehr. "
+                "Bitte den Support kontaktieren.",
+    "update_noetig": "Die Software ist zu alt für die Einrichtung; das Gateway aktualisiert sich. "
+                     "Bleibt der Zustand, bitte den Support kontaktieren.",
+}
+OHNE_CODE = ("startet", "gesperrt")
 
 
-def snapshot(ctx: AgentContext, loop, host_status_path: Path) -> dict:
-    """Auszug fuer die lokale Seite, mit Uebernahme-Code (nur hier, nur im LAN)."""
-    host = read_json(host_status_path)
-    state = ctx.device_state
-    return {
-        "geraet": ctx.identity.device_id, "uebernommen": None if state is None else state == "uebernommen",
-        "versionen": {"gateway": GATEWAY_VERSION}, "server_ok": loop.server_ok,
-        "laufzeit": (ctx.runtime_status or {}).get("status"), "zigbee_stick": ctx.mirror.online is True,
-        "host": {key: host[key] for key in HOST_FIELDS if key in host} if isinstance(host, dict) else {},
-        "code": ctx.identity.claim_code if state == "nicht_uebernommen" else None,
-    }
+def seite(geraet, device) -> dict:
+    """Auszug fuer die lokale Seite: geraet_host.snapshot() plus Uebernahme-Code (nur hier, nur im LAN)."""
+    data = geraet.snapshot()
+    zeigen = not data["eingerichtet"] and data["zustand"] not in OHNE_CODE
+    data["code"] = device.identity.claim_code if device is not None and zeigen else None
+    return data
 
 
-def command_snapshot(ctx: AgentContext, loop, host_status_path: Path) -> dict:
-    """Ergebnis des Befehls diagnostics: wie snapshot, aber nie mit Uebernahme-Code."""
-    return {key: value for key, value in snapshot(ctx, loop, host_status_path).items() if key != "code"}
+def qr_url(portal_base: str, device) -> str | None:
+    portal = portal_base.rstrip("/")
+    if not portal or device is None:
+        return None
+    return f"{portal}/#/claim?d={quote(device.identity.device_id)}&c={quote(device.identity.claim_code)}"
 
 
 def parse_hostnames(text: str) -> frozenset[str]:
@@ -91,17 +97,29 @@ def _row(label: str, value) -> str:
     return f"<tr><th>{html.escape(label)}</th><td>{html.escape(text)}</td></tr>"
 
 
+def _liste(titel: str, eintraege: list[str]) -> str:
+    if not eintraege:
+        return ""
+    items = "".join(f"<li>{html.escape(text)}</li>" for text in eintraege)
+    return f"<h2>{html.escape(titel)}</h2><ul>{items}</ul>"
+
+
 def render_html(data: dict, qr_url: str | None) -> str:
     host = data.get("host", {})
+    zustand = data.get("zustand", "startet")
     rows = "".join([
-        _row("Gerät", data["geraet"]), _row("Übernommen", data["uebernommen"]),
-        _row("Version", data["versionen"].get("gateway")), _row("Server erreichbar", data["server_ok"]),
-        _row("Netz", host.get("netz")), _row("DNS", host.get("dns")),
-        _row("Uhrzeit synchron", host.get("zeit_synchron")),
-        _row("Zigbee-Stick erkannt", data["zigbee_stick"]), _row("Regelung", data["laufzeit"]),
+        _row("Gerät", data["geraet"]), _row("Zustand", ZUSTAND_TEXTE.get(zustand, zustand)),
+        _row("Eingerichtet", data["eingerichtet"]), _row("Version", data["versionen"].get("gateway")),
+        _row("Server erreichbar", data["server_ok"]), _row("Netz", host.get("netz")), _row("DNS", host.get("dns")),
+        _row("Uhrzeit synchron", host.get("zeit_synchron")), _row("Zigbee-Stick erkannt", data["zigbee_stick"]),
+        _row("Regelung", data["laufzeit"]),
     ])
+    abgelehnt = data.get("konfiguration_abgelehnt")
+    hinweise = _liste("Hinweise", [eintrag.get("text", "") for eintrag in data.get("hinweise", [])])
+    meldungen = _liste("Meldungen des Geräts", [eintrag.get("text", "") for eintrag in data.get("meldungen", [])])
+    ablehnung = (f"<h2>Einrichtung abgelehnt</h2><p>{html.escape(abgelehnt)}</p>" if abgelehnt else "")
     claim = ""
-    if data["uebernommen"] is False and data.get("code"):
+    if data.get("code"):
         code = html.escape(data["code"])
         qr = segno.make(qr_url, error="m").svg_inline(scale=4) if qr_url else ""
         claim = f"<h2>Gerät übernehmen</h2>{qr}<p>Übernahme-Code: <strong>{code}</strong></p>"
@@ -110,7 +128,8 @@ def render_html(data: dict, qr_url: str | None) -> str:
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f'<meta http-equiv="refresh" content="{REFRESH_SECONDS}"><title>SmartHeat-Gateway</title>'
         "<style>body{font-family:sans-serif;margin:16px;max-width:640px}th{text-align:left;padding-right:12px}</style>"
-        f"</head><body><h1>SmartHeat-Gateway</h1><table>{rows}</table>{claim}</body></html>"
+        f"</head><body><h1>SmartHeat-Gateway</h1><table>{rows}</table>{ablehnung}{hinweise}{meldungen}{claim}"
+        "</body></html>"
     )
 
 
@@ -144,11 +163,11 @@ def start_server(
                 return
             data = snapshot_fn()
             if self.path == "/healthz":
-                body = json.dumps({"server_ok": data["server_ok"], "runtime_status": data["laufzeit"]})
+                body = json.dumps({"server_ok": data["server_ok"], "runtime_status": data["laufzeit"],
+                                   "zustand": data["zustand"]})
                 self._answer(200, body.encode(), "application/json")
                 return
-            claimable = data["uebernommen"] is False and bool(data.get("code"))
-            body = render_html(data, qr_url_fn() if claimable else None)
+            body = render_html(data, qr_url_fn() if data.get("code") else None)
             self._answer(200, body.encode(), "text/html; charset=utf-8")
 
     server = ThreadingHTTPServer(("0.0.0.0", port), Handler)

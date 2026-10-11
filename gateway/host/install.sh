@@ -118,10 +118,10 @@ packages() {
 layout() {
   local path
   dir "$ROOT" 0755 0:0
-  dir "$ROOT/data" 0755 1000:1000          # Agent und Laufzeit lesen/schreiben als uid 1000 (G2a-Restpunkt)
+  dir "$ROOT/data" 0755 1000:1000          # die Laufzeit liest/schreibt als uid 1000 (G2a-Restpunkt)
   # Bind-Quellen vor dem ersten Start mit uid 1000 anlegen: fehlende Quellen legte Docker als root an, der Init-Schritt
   # (uid 1000) koennte dann nichts schreiben (Plan-Praezisierung 4).
-  for path in zigbee2mqtt bus bus/mosquitto bus/credentials bus/credentials/agent bus/credentials/runtime \
+  for path in zigbee2mqtt bus bus/mosquitto bus/credentials bus/credentials/runtime \
               bus/credentials/zigbee2mqtt; do dir "$ROOT/$path" 0700 1000:1000; done
   dir "$ROOT/host" 0755 0:0
   dir "$ROOT/bundles" 0755 0:0
@@ -138,7 +138,7 @@ host_package() {
     name="$(basename "$file")"
     put "$OPT/smartheat_host/$name" 0644 0:0 <"$file"
   done
-  for rel in __init__.py files.py paths.py version.py agent/__init__.py agent/wire.py agent/identity.py; do
+  for rel in __init__.py files.py paths.py version.py; do
     put "$OPT/smartheat_gateway/$rel" 0644 0:0 <"$GW/src/smartheat_gateway/$rel"
   done
   put "$OPT/release.pub" 0644 0:0 <"$HERE/release.pub"

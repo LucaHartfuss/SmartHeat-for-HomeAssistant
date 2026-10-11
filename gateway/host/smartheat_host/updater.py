@@ -1,4 +1,5 @@
-"""Updater des Gateways (Spec G2b-1 4, G2 8.4): fragt alle 15 min die Soll-Version ab, laedt und prueft Manifest
+"""Updater des Gateways (Spec G2b-1 4, G2 8.4): liest alle 15 min die Soll-Version (Feld `software` des
+Konfigurationsdokuments, von der Laufzeit nach data/software_soll.json geschrieben, Spec 5b 5.3), laedt und prueft Manifest
 (https, SHA-256, minisign gegen release.pub, Version, min_updater_version) und Bundle-Dateien, schaltet per Compose um,
 wartet bis zu 10 min auf "gesund" und rollt sonst auf das vorige Bundle zurueck. Nur streng neuere Versionen werden
 geladen (Downgrade-Schutz, Grund version_zu_alt; der Betreiber gibt fuer einen Rueckweg der Flotte den alten Stand als
@@ -20,17 +21,18 @@ rejected gilt nur im Kontext rejected_context (Version des Updaters und Schluess
 darf es neu versuchen).
 
 Umgebung ist kein Fehler des Bundles (Final-Review FW-1/FW-2):
-- Die Gesundheitsfrist ruht, solange der Host die Geraete-API nicht erreicht (je Takt ein signiertes `desired`;
-  DeviceApiError inkl. NotAuthenticated, z. B. Uhr nach dem Stromausfall noch nicht synchron, gilt als nicht
-  erreichbar) - nach einem Stromausfall im ganzen Haus kommt der Router oft erst nach dem Pi. Hoechstens
-  HEALTH_CAP_SECONDS insgesamt; ist der Server dann noch immer nicht erreichbar, geht es zurueck auf das vorige Bundle,
+- Die Gesundheitsfrist ruht, solange der Host den Broker nicht erreicht (je Takt eine TCP-Verbindung zu host:port aus
+  data/device/endpoint.json; fehlt die Datei, gilt er als nicht erreichbar) - nach einem Stromausfall im ganzen Haus
+  kommt der Router oft erst nach dem Pi. Hoechstens HEALTH_CAP_SECONDS insgesamt; ist der Server dann noch immer nicht
+  erreichbar, geht es zurueck auf das vorige Bundle,
   ohne die Version abzulehnen (sie wird erneut versucht, solange der Server sie will), gemeldet als
   rollback/server_unerreichbar (RETRY_REASON; rollback/ungesund heisst dagegen immer abgelehnt).
 - Fehlt ein Geraetepfad aus `devices:` des Ziel-Bundles (Zigbee-Stick abgezogen), wird nicht umgeschaltet
   ("vorlaeufig"); ein unterbrochenes Update wartet in recover() ebenso, statt zurueckzurollen.
 - update_result geht ueber die Warteschlange pending_reports: erst mit dem Zustand gespeichert, dann gesendet; was nicht
-  durchgeht (offline), wird zu Beginn des naechsten Durchlaufs vor allem anderen erneut gesendet, in Reihenfolge
-  (mindestens einmal: ein Stromausfall zwischen Senden und Speichern sendet doppelt)."""
+  geschrieben werden kann (Datentraeger), wird zu Beginn des naechsten Durchlaufs vor allem anderen erneut gesendet, in
+  Reihenfolge (mindestens einmal: ein Stromausfall zwischen Senden und Speichern sendet doppelt). Die Laufzeit sendet
+  jede Meldung als up/result (dokument software) genau einmal je seq (smartheat_host.kanal)."""
 import hashlib
 import http.client
 import json
@@ -48,7 +50,7 @@ from pathlib import Path
 
 from smartheat_gateway.files import write_json
 from smartheat_gateway.version import GATEWAY_VERSION
-from smartheat_host import bundles, device_api, minisign
+from smartheat_host import bundles, kanal, minisign
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +71,7 @@ MAX_REJECTED = 20
 MAX_PENDING_REPORTS = 20
 OFFER_KEYS = ("manifest_url", "manifest_sha256", "signature")
 _HEALTHY, _UNHEALTHY, _UNREACHABLE = "gesund", "ungesund", "unerreichbar"
-REQUIRED_HEALTHY = ("agent", "runtime")
+REQUIRED_HEALTHY = ("runtime",)  # bis 0.5.0 auch "agent"; der Agent geht in der Laufzeit auf
 
 
 class FetchError(Exception):
@@ -149,7 +151,7 @@ def fetch_health(url: str) -> dict | None:
 
 def health_ok(data: dict | None, containers: dict[str, str]) -> bool:
     """Gesund (G2 8.4, Plan G2b-1 Praezisierung 2): Serverkontakt laut /healthz, Laufzeit nicht im Zustand "startet"
-    und die Compose-Healthchecks von Agent und Laufzeit melden "healthy". Der Healthcheck der Laufzeit (Lebenszeichen
+    und der Compose-Healthcheck der Laufzeit meldet "healthy". Der Healthcheck der Laufzeit (Lebenszeichen
     der Konfigurationswache) unterscheidet eine ruhende ("nicht eingerichtet": Status abgeraeumt, runtime_status None)
     von einer abstuerzenden Laufzeit."""
     if not isinstance(data, dict) or data.get("server_ok") is not True or data.get("runtime_status") == "startet":
@@ -177,12 +179,12 @@ def _older_or_equal(version: str, current: str | None) -> bool:
 
 
 class Updater:
-    def __init__(self, *, api_factory: Callable[[], object], store: bundles.BundleStore, compose,
+    def __init__(self, *, kanal: kanal.LokalerKanal, store: bundles.BundleStore, compose,
                  fetch: Callable[[str, int], bytes], public_key_text: str, state_path: Path, version: str,
                  health: Callable[[str], bool], clock: Callable[[], float] = time.monotonic,
                  sleep: Callable[[float], None] = time.sleep, allow_http: bool = False,
                  health_seconds: float = HEALTH_SECONDS, path_exists: Callable[[str], bool] = os.path.exists) -> None:
-        self._api_factory, self._store, self._compose, self._fetch = api_factory, store, compose, fetch
+        self._kanal, self._store, self._compose, self._fetch = kanal, store, compose, fetch
         self._public_key_text, self._state_path, self._version = public_key_text, state_path, version
         self._health, self._clock, self._sleep, self._allow_http = health, clock, sleep, allow_http
         self._health_seconds, self._path_exists = health_seconds, path_exists
@@ -235,8 +237,8 @@ class Updater:
             self._flush(self._load())  # offene Meldungen vor allem anderen
         state = self._load()
         try:
-            desired = self._api_factory().desired()  # type: ignore[attr-defined]
-        except device_api.DeviceApiError as error:  # auch NotAuthenticated (401): vorlaeufig, nie ein Grund zum Ablehnen
+            desired = self._kanal.desired()
+        except kanal.KanalFehler as error:  # Soll-Software noch nicht da oder unlesbar: vorlaeufig, nie ein Grund zum Ablehnen
             logger.info("Soll-Version nicht abrufbar (%s), naechster Durchlauf", error)
             return "vorlaeufig"
         version = desired.get("version")
@@ -343,12 +345,8 @@ class Updater:
         return [path for path in bundles.compose_devices(compose_text) if not self._path_exists(path)]
 
     def _reachable(self) -> bool:
-        """Erreicht der Host die Geraete-API? Signiertes desired (prueft Netz, DNS, TLS und die Uhr in einem)."""
-        try:
-            self._api_factory().desired()  # type: ignore[attr-defined]
-        except device_api.DeviceApiError:
-            return False
-        return True
+        """Erreicht der Host den Broker? (Netz und DNS; das neue Bundle spielt dafuer keine Rolle.)"""
+        return self._kanal.erreichbar()
 
     def _wait_healthy(self, version: str) -> str:
         """gesund | ungesund (Frist abgelaufen) | unerreichbar (Gesamtgrenze erreicht, Server weiter nicht erreichbar).
@@ -383,9 +381,8 @@ class Updater:
         sent = 0
         for entry in state.pending_reports:
             try:
-                self._api_factory().update_result(  # type: ignore[attr-defined]
-                    entry["version"], entry["result"], entry["reason"])
-            except device_api.DeviceApiError as error:
+                self._kanal.update_result(entry["version"], entry["result"], entry["reason"])
+            except kanal.KanalFehler as error:
                 logger.warning("update_result fuer %s nicht gemeldet (%s), naechster Durchlauf", entry["version"],
                                error)
                 break
@@ -452,17 +449,12 @@ def main(argv: list[str] | None = None) -> None:
     root = Path(os.environ.get("SHG_ROOT", "/var/lib/smartheat"))
     allow_http = os.environ.get("SHG_UPDATER_ALLOW_HTTP") == "1"
     health_url = os.environ.get("SHG_UPDATER_HEALTH_URL", "http://127.0.0.1/healthz")
-    base_url = os.environ["SHG_DEVICE_API_URL"]
     public_key_text = Path(os.environ.get("SHG_RELEASE_PUB", "/opt/smartheat/host/release.pub")).read_text()
-
-    def api_factory():
-        # Je Durchlauf neu: der Geraeteschluessel entsteht erst, wenn der Agent laeuft (fehlt er: DeviceApiError).
-        return device_api.DeviceApi(base_url, device_api.load_device_key(root / "data" / "device"))
 
     store = bundles.BundleStore(root)
     compose = bundles.ComposeRunner(root, project=os.environ.get("SHG_COMPOSE_PROJECT", "smartheat"))
     run = Updater(
-        api_factory=api_factory, store=store, compose=compose,
+        kanal=kanal.LokalerKanal(root / "data"), store=store, compose=compose,
         fetch=lambda url, limit: fetch_url(url, limit, allow_http), public_key_text=public_key_text,
         state_path=root / "updater" / "state.json", version=GATEWAY_VERSION,
         health=lambda version: health_ok(fetch_health(health_url), compose.health(version)), allow_http=allow_http,

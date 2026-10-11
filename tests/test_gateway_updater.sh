@@ -1,10 +1,13 @@
 #!/bin/bash
-# Updater-Integrationstest (Spec G2b-1 10, Plan G2b-1 Task 15): echte lokale Registry, drei signierte Test-Bundles
-# (0.9.1 gesund, 0.9.2 gesund, 0.9.3 kaputt), die Fake-Geraete-API als Release-Host und Soll-Versions-Quelle und der
-# echte Updater (python3 -m smartheat_host.updater --once) in einem Debian-13-Container, der docker compose ueber den
+# Updater-Integrationstest (Spec G2b-1 10, Plan G2b-1 Task 15; ab Gateway 0.6.0 Plan 5b D2 Task 10): echte lokale
+# Registry, drei signierte Test-Bundles (0.9.1 gesund, 0.9.2 gesund, 0.9.3 kaputt), der Fake-Bootstrap als Release-Host
+# (/_e2e/files) und Bootstrap des Geraetekerns, der Fake-Broker als Weg der Soll-Version (Konfigurationsdokument mit
+# software, gesendet in der Rolle des Dienstes; die Laufzeit schreibt es nach data/software_soll.json) und der echte
+# Updater (python3 -m smartheat_host.updater --once) in einem Debian-13-Container, der docker compose ueber den
 # Docker-Socket des Hosts steuert. Geprueft: 0.9.1 -> 0.9.2 gelingt, 0.9.3 wird zurueckgerollt, ein manipuliertes
-# Manifest (Signatur einer anderen Version) wird abgelehnt, ohne Container anzufassen (Review Focus 1 und 2).
-# Laufzeit rund 6 min: die Healthchecks (30 s/60 s) und die Gesundheitsfrist (180 s) im Rueckweg-Fall.
+# Manifest (Signatur einer anderen Version) wird abgelehnt, ohne Container anzufassen (Review Focus 1 und 2). Die
+# Meldungen des Updaters (data/software_meldungen.json) kommen als up/result mit dokument "software" am Fake-Broker an.
+# Laufzeit rund 6 min: die Healthchecks (30 s) und die Gesundheitsfrist (180 s) im Rueckweg-Fall.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/.." && pwd)"
@@ -12,7 +15,9 @@ IMAGE="smartheat-gateway-test:local"
 UPDATER_IMAGE="shg-updater-test:local"
 PROJECT="smartheat-updtest"
 NET="shg-upd-wan"
-API="shg-upd-api"
+BOOT="shg-upd-bootstrap"  # Name wie in gateway/host/tests/fixtures/updater-compose.yml (SHG_DEVICE_API_URL)
+BROKER="shg-upd-broker"   # Endpunkt aus der Bootstrap-Antwort, SAN des Broker-Zertifikats (gateway_lib.sh)
+RESULTS="shg-upd-results" # Mitschnitt von up/result am Fake-Broker
 API_URL="http://127.0.0.1:18092"
 REGISTRY="shg-upd-registry"
 PUSHED="localhost:15000/smartheat-gateway:test"
@@ -21,7 +26,11 @@ REGISTRY_IMAGE="registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace
 DEBIAN_IMAGE="debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5"
 BUILDER_IMAGE="python:3.12-slim@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f"
 COMPOSE_IMAGE="docker:29-cli@sha256:b1805116a6a86cc591b5d5f60a910a0715cdcc9d18d866ad68b1457ead25c35c"
+MOSQ_IMAGE="eclipse-mosquitto:2@sha256:38c0da4f2ef84284d47b3b3eeea1cb3bdeabe81ee10caf0cd5c5ff61ee3ea408"
 DATA="$(mktemp -d)"
+PKI="$DATA/pki"  # Test-PKI, je Lauf neu (Regel 6)
+# shellcheck source=tests/gateway_lib.sh
+source "$HERE/gateway_lib.sh"
 REF=""
 FAIL=0
 fail() { echo "FAIL: $1"; FAIL=1; }
@@ -57,7 +66,7 @@ cleanup() {
   [ -n "$ids" ] && docker rm -f -v $ids >/dev/null 2>&1
   # shellcheck disable=SC2086
   [ -n "${volumes// /}" ] && docker volume rm $volumes >/dev/null 2>&1
-  docker rm -f -v "$API" "$REGISTRY" >/dev/null 2>&1
+  docker rm -f -v "$BOOT" "$BROKER" "$RESULTS" "$REGISTRY" >/dev/null 2>&1
   docker network rm "${PROJECT}_bus" >/dev/null 2>&1
   docker network rm "$NET" >/dev/null 2>&1
   docker image rm "$PUSHED" >/dev/null 2>&1
@@ -88,28 +97,33 @@ REF="$(docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$PU
   | grep -m1 '^localhost:15000/smartheat-gateway@sha256:')"
 [ -n "$REF" ] || die "kein Digest nach dem Push"
 
-# 3. Netz und Fake-Geraete-API (zugleich Release-Host: /_e2e/files)
+# 3. Netz, Test-PKI, Fake-Broker und Fake-Bootstrap (zugleich Release-Host: /_e2e/files)
 docker network create "$NET" >/dev/null || die "Netz $NET"
-docker run -d --name "$API" --network "$NET" --security-opt label=disable -p 127.0.0.1:18092:8090 \
-  -v "$REPO/gateway/tests:/gw-tests:ro" -e PYTHONPATH=/app/src "$IMAGE" python /gw-tests/fake_device_api.py >/dev/null \
-  || die "Fake-Geraete-API startet nicht"
+{ make_pki "$PKI" "$BROKER" && broker_conf "$PKI"; } || die "Test-PKI"
+docker run -d --name "$BROKER" --network "$NET" --security-opt label=disable --user "$PKI_USER" -v "$PKI:/pki:ro" \
+  "$MOSQ_IMAGE" mosquitto -c /pki/mosquitto.conf >/dev/null || die "Fake-Broker startet nicht"
+docker run -d --name "$BOOT" --network "$NET" --security-opt label=disable --user "$PKI_USER" -p 127.0.0.1:18092:8090 \
+  -v "$REPO/gateway/tests:/gw-tests:ro" -v "$PKI:/pki:ro" -e PYTHONPATH=/app/src -e SHG_FAKE_CA_DIR=/pki \
+  -e SHG_FAKE_MQTT_HOST="$BROKER" "$IMAGE" python /gw-tests/fake_bootstrap.py >/dev/null \
+  || die "Fake-Bootstrap startet nicht"
 ok=0
 for _ in $(seq 1 30); do curl -fsS "$API_URL/_e2e/state" >/dev/null 2>&1 && { ok=1; break; }; sleep 1; done
-[ "$ok" = 1 ] || die "Fake-Geraete-API antwortet nicht"
+[ "$ok" = 1 ] || die "Fake-Bootstrap antwortet nicht"
 
 # 4. Datenordner wie install.sh (die Container schreiben als uid 1000, daher 777 wie im Compose-Test)
-mkdir -p "$DATA/data" "$DATA/zigbee2mqtt" "$DATA/host" "$DATA/bus/mosquitto" "$DATA/bus/credentials/agent" \
+mkdir -p "$DATA/data" "$DATA/zigbee2mqtt" "$DATA/host" "$DATA/bus/mosquitto" \
          "$DATA/bus/credentials/runtime" "$DATA/bus/credentials/zigbee2mqtt" "$DATA/bundles" "$DATA/updater"
-printf 'SHG_ROOT=%s\nSHG_DEVICE_API_URL=http://%s:8090\nSHG_DIAG_HOSTNAMES=agent\nTZ=Europe/Berlin\n' \
-  "$DATA" "$API" >"$DATA/host/gateway.env"
-chmod -R 777 "$DATA"
+printf 'SHG_ROOT=%s\nSHG_DEVICE_API_URL=http://%s:8090\nSHG_DIAG_HOSTNAMES=runtime\nTZ=Europe/Berlin\n' \
+  "$DATA" "$BOOT" >"$DATA/host/gateway.env"
+# Die Test-PKI bleibt 0700/0600 (gateway_lib.sh): ihre Leser laufen als PKI_USER.
+find "$DATA" -path "$PKI" -prune -o -exec chmod 777 {} +
 
-# 5. Test-Bundles (Wegwerf-Schluessel) bauen und bei der Fake-API ablegen; dazu ein manipuliertes Manifest 0.9.4
+# 5. Test-Bundles (Wegwerf-Schluessel) bauen und beim Fake-Bootstrap ablegen; dazu ein manipuliertes Manifest 0.9.4
 # (Manifest von 0.9.2 mit geaenderter Version, also andere Bytes als die Signatur von 0.9.2).
 run_in_image -v "$REPO/gateway:/gw:ro" -v "$DATA:$DATA" "$BUILDER_IMAGE" sh -c \
   'pip install --quiet --disable-pip-version-check --root-user-action=ignore pyyaml==6.0.3 cryptography==50.0.2 >&2 \
    && python /gw/host/tests/fixtures/make_test_bundles.py "$@"' \
-  sh --image "$REF" --out "$DATA/release" --base-url "http://$API:8090" >"$DATA/bundles.json" \
+  sh --image "$REF" --out "$DATA/release" --base-url "http://$BOOT:8090" >"$DATA/bundles.json" \
   || die "Test-Bundles nicht gebaut"
 py '
 import base64, hashlib, json, sys
@@ -127,9 +141,9 @@ answer_path.write_text(json.dumps(answer))
 print(json.dumps({name: base64.b64encode(data).decode() for name, data in files.items()}))
 ' "$DATA/release" "$DATA/bundles.json" \
   | curl -fsS -X POST -H 'Content-Type: application/json' --data-binary @- "$API_URL/_e2e/files" >/dev/null \
-  || die "Bundle-Dateien nicht bei der Fake-API abgelegt"
+  || die "Bundle-Dateien nicht beim Fake-Bootstrap abgelegt"
 curl -fsS "$API_URL/_e2e/files/0.9.2/docker-compose.yml" | cmp -s - "$DATA/release/0.9.2/docker-compose.yml" \
-  || die "Fake-API liefert die Bundle-Dateien nicht aus"
+  || die "Fake-Bootstrap liefert die Bundle-Dateien nicht aus"
 
 # 6. Erstes Bundle wie install.sh --bundle, Start per Compose
 mkdir -p "$DATA/bundles/0.9.1"
@@ -142,7 +156,15 @@ ok=0
 for _ in $(seq 1 45); do
   curl -fsS "$API_URL/_e2e/state" 2>/dev/null | grep -q '"registrations": [1-9]' && { ok=1; break; }; sleep 2
 done
-[ "$ok" = 1 ] || die "Agent hat sich nicht bei der Fake-Geraete-API registriert"
+[ "$ok" = 1 ] || die "Gateway hat sich nicht beim Fake-Bootstrap registriert"
+DEVICE_ID="$(curl -fsS "$API_URL/_e2e/state" | py 'import json,sys; print(json.load(sys.stdin)["device_ids"][0])')"
+[ -n "$DEVICE_ID" ] || die "Fake-Bootstrap kennt keine Geraete-ID"
+CONFIG_VERSION=0
+# Ergebnisse der Laufzeit am Broker mitschneiden (ab hier bis zum Ende; persistence false: nur was ab jetzt kommt).
+docker run -d --name "$RESULTS" --network "$NET" --security-opt label=disable --user "$PKI_USER" -v "$PKI:/pki:ro" \
+  "$MOSQ_IMAGE" \
+  mosquitto_sub -h "$BROKER" -p 8883 --cafile /pki/ca.pem --cert /pki/dienst.pem --key /pki/dienst.key -q 1 \
+  -t "smartheat/$DEVICE_ID/up/result" >/dev/null || die "Mitschnitt startet nicht"
 echo "PASS: Registry, Bundles, Start mit 0.9.1"
 
 # 7. Updater-Image (nur Docker-Client und Compose-Plugin aus Debian 13, wie auf dem Geraet) und Aufruf
@@ -154,8 +176,8 @@ EOF
 updater() {
   docker run --rm --network "$NET" --security-opt label=disable \
     -v /var/run/docker.sock:/var/run/docker.sock -v "$DATA:$DATA" -v "$REPO/gateway:/gw:ro" \
-    -e PYTHONPATH=/gw/host:/gw/src -e SHG_ROOT="$DATA" -e SHG_DEVICE_API_URL="http://$API:8090" \
-    -e SHG_UPDATER_ALLOW_HTTP=1 -e SHG_UPDATER_HEALTH_URL=http://agent:8080/healthz -e SHG_UPDATER_HEALTH_SECONDS=180 \
+    -e PYTHONPATH=/gw/host:/gw/src -e SHG_ROOT="$DATA" \
+    -e SHG_UPDATER_ALLOW_HTTP=1 -e SHG_UPDATER_HEALTH_URL=http://runtime:8080/healthz -e SHG_UPDATER_HEALTH_SECONDS=180 \
     -e SHG_COMPOSE_PROJECT="$PROJECT" -e SHG_RELEASE_PUB="$DATA/release/test.pub" \
     "$UPDATER_IMAGE" python3 -m smartheat_host.updater --once
 }
@@ -168,22 +190,54 @@ expect_word() {  # $1 erwartetes Ergebnis, $2 Version; Log des Updaters (stderr)
     fail "Updater fuer $2: '$word' statt '$1'"
   fi
 }
-set_desired() {  # Soll-Version $1 mit den Werten aus bundles.json
-  py 'import json, sys; e = json.load(open(sys.argv[1]))[sys.argv[2]]; print(json.dumps({"version": sys.argv[2], **e}))' \
-    "$DATA/bundles.json" "$1" \
-    | curl -fsS -X POST -H 'Content-Type: application/json' --data-binary @- "$API_URL/_e2e/desired" >/dev/null \
-    || die "Soll-Version $1 nicht gesetzt"
+# Leere Konfiguration (anlage null, alle Grundfelder leer wie device_config.leer() des Servers, raumfuehler []) mit der
+# Soll-Version $1 als software, gesendet als Dienst auf down/config. Anders als configs.leer() der Gateway-Tests ohne
+# mindest_software (null): der Test haengt so nicht an der Version des Images. Eine leere Konfiguration wird immer
+# uebernommen, ihr software geht an den Updater; das Gateway bleibt "nicht eingerichtet".
+set_desired() {
+  CONFIG_VERSION=$((CONFIG_VERSION + 1))
+  local body ok=0
+  body="$(py 'import json, sys
+e = json.load(open(sys.argv[1]))[sys.argv[2]]
+leer = dict.fromkeys(("anlage", "profil", "hebelsatz", "verteilsystem", "bindung", "tagestick", "abo",
+                      "mindest_software"))
+print(json.dumps({"schema": 1, "version": int(sys.argv[3]), **leer, "raumfuehler": [],
+                  "software": {"version": sys.argv[2], **e}}))' "$DATA/bundles.json" "$1" "$CONFIG_VERSION")" \
+    || die "Konfiguration fuer $1 nicht gebaut"
+  dienst_pub "$NET" "$PKI" "smartheat/$DEVICE_ID/down/config" "$body" || die "Soll-Version $1 nicht gesendet"
+  for _ in $(seq 1 30); do
+    py 'import json,sys; sys.exit(0 if (json.load(open(sys.argv[1])) or {}).get("version") == sys.argv[2] else 1)' \
+      "$DATA/data/software_soll.json" "$1" 2>/dev/null && { ok=1; break; }
+    sleep 1
+  done
+  [ "$ok" = 1 ] || die "Soll-Version $1 nicht bei der Laufzeit angekommen"
 }
 # state.json pruefen: $1 = Python-Ausdruck ueber s (Zustand); eval nur fuer die festen Ausdruecke dieses Skripts.
 state_is() { py 'import json, sys; s = json.load(open(sys.argv[1])); sys.exit(0 if eval(sys.argv[2]) else 1)' \
   "$DATA/updater/state.json" "$1"; }
-# Meldung an die Fake-API: $1 Version, $2 Ergebnis, $3 Grund
+# up/result (dokument software) am Fake-Broker: $1 Version, $2 ok|rollback, $3 Grund ("" bei ok). Die Laufzeit
+# sendet die Meldungen des Updaters hoechstens alle 10 s (geraet_host.SOFTWARE_SECONDS), daher bis zu 60 s warten.
 reported() {
-  curl -fsS "$API_URL/_e2e/state" | py '
+  local ok=0
+  for _ in $(seq 1 30); do
+    docker logs "$RESULTS" 2>/dev/null | py '
 import json, sys
-results = json.load(sys.stdin)["update_results"]
-sys.exit(0 if any(r.get("version") == sys.argv[1] and r.get("result") == sys.argv[2] and r.get("reason") == sys.argv[3]
-                  for r in results) else 1)' "$1" "$2" "$3"
+version, result, reason = sys.argv[1:4]
+for line in sys.stdin:
+    try:
+        body = json.loads(line)
+    except ValueError:
+        continue
+    if not isinstance(body, dict) or body.get("dokument") != "software" or body.get("version") != version:
+        continue
+    if result == "ok" and body.get("ok") is True:
+        sys.exit(0)
+    if result == "rollback" and body.get("ok") is False and (body.get("error") or {}).get("grund") == reason:
+        sys.exit(0)
+sys.exit(1)' "$1" "$2" "$3" && { ok=1; break; }
+    sleep 2
+  done
+  [ "$ok" = 1 ]
 }
 created_times() {
   local id
@@ -216,7 +270,7 @@ runtime_id="$(service_container runtime)"
 docker inspect -f '{{json .Config.Cmd}}' "$runtime_id" 2>/dev/null | grep -q runtime_main \
   || fail "Laufzeit nach dem Rueckweg nicht mit dem Befehl von 0.9.2"
 ok=0
-for _ in $(seq 1 40); do  # Healthcheck der Laufzeit: interval 60 s, spaetestens nach 3 min gesund
+for _ in $(seq 1 40); do  # Healthcheck der Laufzeit: interval 30 s, spaetestens nach 3 min gesund
   [ "$(docker inspect -f '{{.State.Status}} {{.State.Health.Status}}' "$runtime_id" 2>/dev/null)" = "running healthy" ] \
     && { ok=1; break; }
   sleep 5
@@ -234,7 +288,7 @@ after="$(created_times)"
 if [ -z "$before" ] || [ "$before" != "$after" ]; then
   fail "Container nach der Ablehnung veraendert: $before / $after"
 fi
-printf '%s\n' "$before" | grep -q "${PROJECT}-agent-1 " || fail "Agent-Container nicht im Vergleich"
+printf '%s\n' "$before" | grep -q "${PROJECT}-runtime-1 " || fail "Container runtime nicht im Vergleich"
 state_is 's["current"] == "0.9.2" and "0.9.4" in s["rejected"] and s["in_progress"] is None' \
   || fail "state.json nach der Ablehnung: $(cat "$DATA/updater/state.json")"
 reported 0.9.4 rollback signatur_ungueltig || fail "update_result signatur_ungueltig fuer 0.9.4 fehlt"

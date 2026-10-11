@@ -5,7 +5,7 @@ import pytest
 from fake_vicare.server import DEVICE, GATEWAY, GOOD_CODE, INSTALLATION, FakeVicare
 
 from smartheat_core.binding import BINDINGS
-from smartheat_gateway.agent import wire
+from smartheat_device import wire
 from smartheat_gateway.drivers.base import LEVER_ROLES
 from smartheat_gateway.drivers.registry import DRIVERS, create
 from smartheat_gateway.paths import Paths

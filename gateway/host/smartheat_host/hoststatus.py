@@ -1,6 +1,6 @@
 """Hoststatus (Spec G2b-1 5, Plan-Praezisierung 1): schreibt alle 60 s SHG_ROOT/host/status.json mit Netz (Default-
 Route), DNS (Host der Geraete-API aufloesbar), Zeitsynchronisation und Zeitstempel - die Felder, die die
-Diagnoseseite des Agenten liest (HOST_FIELDS: netz, dns, zeit_synchron)."""
+Diagnoseseite im Container runtime liest (HOST_FIELDS: netz, dns, zeit_synchron)."""
 import os
 import socket
 import subprocess
@@ -47,7 +47,7 @@ def collect(*, route_file: Path = Path("/proc/net/route"), resolve: Callable = s
 
 
 def write(path: Path, data: dict) -> None:
-    """Atomar und 0644: der Dienst laeuft als root, der Agent (uid 1000) liest die Datei."""
+    """Atomar und 0644: der Dienst laeuft als root, die Laufzeit (uid 1000) liest die Datei."""
     write_json(path, data)
 
 

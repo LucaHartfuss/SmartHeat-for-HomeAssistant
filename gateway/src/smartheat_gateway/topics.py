@@ -1,8 +1,3 @@
-"""Topics des lokalen Busses (Spec SHG G2 6.1, Plan G2a Praezisierungen 4 und 5)."""
-STATUS = "shg/status"
-NOTIFY_PREFIX = "shg/notify/"
-NOTIFY_PUSH = "shg/notify_push"
-RAUM = "shg/raum"
-CMD_ROOM_TARGET = "shg/cmd/room_target"
-CMD_RELOAD = "shg/cmd/reload"
+"""Topics des lokalen Busses (ab 0.6.0 nur Zigbee2MQTT; Spec SHG G2 6.1, Spec 5b 5.3). Status, Raum und Meldungen der
+Laufzeit bleiben im Prozess (GeraetZustand), Befehle kommen ueber den Geraetekern."""
 Z2M_BASE = "zigbee2mqtt"

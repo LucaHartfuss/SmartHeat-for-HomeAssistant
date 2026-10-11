@@ -21,7 +21,8 @@ CACHE_MAX_POLLS = 3
 
 
 class DriverError(RuntimeError):
-    """Fehler mit Vertragsgrund (agent/wire.py): nicht_angemeldet, anlage_nicht_erreichbar, login_fehlgeschlagen,
+    """Fehler mit Vertragsgrund (smartheat_device/wire.py; gemeldet vom Geraetekern ueber die Befehle driver_login,
+    driver_probe und inventory, Plan D2 Task 2): nicht_angemeldet, anlage_nicht_erreichbar, login_fehlgeschlagen,
     login_nicht_noetig, kontingent_erschoepft."""
 
     def __init__(self, grund: str, text: str) -> None:
