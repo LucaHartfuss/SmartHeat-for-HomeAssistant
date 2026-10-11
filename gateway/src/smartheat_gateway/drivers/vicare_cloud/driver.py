@@ -333,7 +333,7 @@ class ViCareCloudDriver:
         if not (isinstance(client_id, str) and client_id and isinstance(redirect_uri, str) and redirect_uri):
             raise DriverError("login_fehlgeschlagen", LOGIN_INCOMPLETE_TEXT)
         challenge = self._tokens.begin(client_id, redirect_uri)
-        return {"code_challenge": challenge, "code_challenge_method": "S256"}  # nie Verifier oder Token (done.json)
+        return {"code_challenge": challenge, "code_challenge_method": "S256"}  # nie Verifier oder Token (Ergebnis)
 
     def login_finish(self, params: dict) -> None:
         code, redirect_uri = params.get("code"), params.get("redirect_uri")

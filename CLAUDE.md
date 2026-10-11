@@ -21,9 +21,9 @@ released sind. Die Sicherheitsregeln aus `../CLAUDE.md` gelten unverändert.
   `tests/test_device_purity.py`; das Add-on nutzt ihn erst ab 5c, das Gateway ab 0.6.0. `smartheat_core.config_check`
   prüft eine Konfiguration lokal vor dem Übernehmen.
 - `heizungsbruecke/src/heizungsbruecke/` — HA-Host: `HaHost`, REST/WebSocket, Bindings für mypyllant, Weishaupt, Viessmann.
-- `gateway/` — Laufzeit-Host auf dem Gerätekern `smartheat_device` (ein Container `runtime`), Compose (§5a.1–5a.7); `gateway/host/` Host-Dienste, Updater, Installer auf dem
-  System-Python des Pi (§5a.8–5a.12); `gateway/image/` Basis-Image mit `rpi-image-gen` (§5a.13); `gateway/release/`
-  Bundle und Signatur (§5a.10). Grenzen: `gateway/tests/test_boundaries.py`, `gateway/host/tests/test_boundaries.py`.
+- `gateway/` — Laufzeit-Host auf dem Gerätekern `smartheat_device` (ein Container `runtime`), Compose
+  (§5a.1–5a.7); `gateway/host/` Host-Dienste, Updater, Installer auf dem System-Python des Pi (§5a.8–5a.12);
+  `gateway/image/` Basis-Image mit `rpi-image-gen` (§5a.13); `gateway/release/` Bundle und Signatur (§5a.10). Grenzen: `gateway/tests/test_boundaries.py`, `gateway/host/tests/test_boundaries.py`.
 
 ## Prüfen und Branches
 
