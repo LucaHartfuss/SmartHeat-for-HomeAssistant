@@ -20,8 +20,8 @@ from smartheat_device import wire
 
 _FILES = "/_e2e/files/"
 _REGISTER = wire.ROUTES["register"][1]
-_CERTIFICATE = re.compile("^" + re.escape(wire.ROUTES["certificate"][1]).replace(re.escape("{device_id}"), "[^/]+")
-                          + "$")
+_CERTIFICATE = re.compile("^" + re.escape(wire.ROUTES["certificate"][1]).replace(re.escape("{device_id}"),
+                                                                                  "(?P<device_id>[^/]+)") + "$")
 
 
 class FakeBootstrap:
@@ -60,17 +60,19 @@ class FakeBootstrap:
         self._server.shutdown()
         self._server.server_close()
 
-    def _answer(self, csr_pem) -> dict | None:
+    @staticmethod
+    def _cn(csr_pem) -> str | None:
+        """CN (Geraete-ID) des CSR; None, wenn csr_pem kein CSR mit CN ist."""
         if not isinstance(csr_pem, str):
             return None
         try:
-            pem = self._ca.sign_csr(csr_pem)
+            names = x509.load_pem_x509_csr(csr_pem.encode()).subject.get_attributes_for_oid(NameOID.COMMON_NAME)
         except ValueError:
             return None
-        names = x509.load_pem_x509_certificate(pem.encode()).subject.get_attributes_for_oid(NameOID.COMMON_NAME)
-        if not names:
-            return None
-        device_id = str(names[0].value)  # CN aus dem CSR (Geraete-ID)
+        return str(names[0].value) if names else None
+
+    def _answer(self, csr_pem: str, device_id: str) -> dict:
+        pem = self._ca.sign_csr(csr_pem)  # behaelt das Subjekt des CSR
         with self._lock:
             if device_id not in self.device_ids:
                 self.device_ids.append(device_id)
@@ -100,11 +102,15 @@ class FakeBootstrap:
                 self.files.update({name: base64.b64decode(raw) for name, raw in data.items()})
             return self._send(request, 200, {"ok": True})
         is_register = path == _REGISTER
-        if not (is_register or _CERTIFICATE.match(path)):
+        certificate = _CERTIFICATE.match(path)
+        if not (is_register or certificate):
             return self._send(request, 404, {"error": "unbekannt"})
-        answer = self._answer(data.get("csr"))
-        if answer is None:
+        device_id = self._cn(data.get("csr"))
+        if device_id is None:
             return self._send(request, 400, {"error": "csr fehlt oder ungueltig"})
+        if certificate and certificate["device_id"] != device_id:  # wie der Server: nur fuer das eigene Geraet
+            return self._send(request, 403, {"error": "csr passt nicht zum Geraet"})
+        answer = self._answer(data["csr"], device_id)
         with self._lock:
             if is_register:
                 self.registrations += 1

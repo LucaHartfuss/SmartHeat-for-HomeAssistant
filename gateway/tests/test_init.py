@@ -64,9 +64,9 @@ def _acl_blocks() -> dict[str, list[str]]:
 def test_acl_lets_each_service_write_only_its_own_topics():
     blocks = _acl_blocks()
     assert set(blocks) == {"user runtime", "user zigbee2mqtt"}
-    assert "topic write zigbee2mqtt/+/set" in blocks["user runtime"]
-    assert "topic write zigbee2mqtt/bridge/request/#" in blocks["user runtime"]
-    assert "topic read zigbee2mqtt/#" in blocks["user runtime"]
+    # Genau diese Regeln: eine zusaetzliche Schreibregel (z. B. bridge/state, dem die Laufzeit vertraut) faellt auf.
+    assert sorted(blocks["user runtime"]) == sorted([
+        "topic read zigbee2mqtt/#", "topic write zigbee2mqtt/+/set", "topic write zigbee2mqtt/bridge/request/#"])
     assert blocks["user zigbee2mqtt"] == ["topic readwrite zigbee2mqtt/#"]
     assert not any("shg/" in line for block in blocks.values() for line in block)
 

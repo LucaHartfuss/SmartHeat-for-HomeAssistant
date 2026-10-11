@@ -84,3 +84,12 @@ def test_a_broken_csr_and_an_unknown_device_state_are_400(fake):
         _post(f"{fake.url}/_e2e/device_state", {"device_state": "irgendwas"})
     assert error.value.code == 400
     assert fake.device_state == "uebernommen" and fake.registrations == 0
+
+
+def test_the_certificate_route_refuses_a_csr_for_another_device(fake, tmp_path):
+    ident = identity.load_or_create(tmp_path / "device")
+    other = identity.load_or_create(tmp_path / "other")
+    with pytest.raises(urllib.error.HTTPError) as error:
+        _post(f"{fake.url}/devices/{other.device_id}/certificate", {"csr": identity.csr_pem(ident)})
+    assert error.value.code == 403
+    assert fake.certificates == 0 and fake.device_ids == []

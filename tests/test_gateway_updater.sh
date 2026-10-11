@@ -100,9 +100,9 @@ REF="$(docker inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$PU
 # 3. Netz, Test-PKI, Fake-Broker und Fake-Bootstrap (zugleich Release-Host: /_e2e/files)
 docker network create "$NET" >/dev/null || die "Netz $NET"
 { make_pki "$PKI" "$BROKER" && broker_conf "$PKI"; } || die "Test-PKI"
-docker run -d --name "$BROKER" --network "$NET" --security-opt label=disable -v "$PKI:/pki:ro" "$MOSQ_IMAGE" \
-  mosquitto -c /pki/mosquitto.conf >/dev/null || die "Fake-Broker startet nicht"
-docker run -d --name "$BOOT" --network "$NET" --security-opt label=disable -p 127.0.0.1:18092:8090 \
+docker run -d --name "$BROKER" --network "$NET" --security-opt label=disable --user "$PKI_USER" -v "$PKI:/pki:ro" \
+  "$MOSQ_IMAGE" mosquitto -c /pki/mosquitto.conf >/dev/null || die "Fake-Broker startet nicht"
+docker run -d --name "$BOOT" --network "$NET" --security-opt label=disable --user "$PKI_USER" -p 127.0.0.1:18092:8090 \
   -v "$REPO/gateway/tests:/gw-tests:ro" -v "$PKI:/pki:ro" -e PYTHONPATH=/app/src -e SHG_FAKE_CA_DIR=/pki \
   -e SHG_FAKE_MQTT_HOST="$BROKER" "$IMAGE" python /gw-tests/fake_bootstrap.py >/dev/null \
   || die "Fake-Bootstrap startet nicht"
@@ -115,7 +115,8 @@ mkdir -p "$DATA/data" "$DATA/zigbee2mqtt" "$DATA/host" "$DATA/bus/mosquitto" \
          "$DATA/bus/credentials/runtime" "$DATA/bus/credentials/zigbee2mqtt" "$DATA/bundles" "$DATA/updater"
 printf 'SHG_ROOT=%s\nSHG_DEVICE_API_URL=http://%s:8090\nSHG_DIAG_HOSTNAMES=runtime\nTZ=Europe/Berlin\n' \
   "$DATA" "$BOOT" >"$DATA/host/gateway.env"
-chmod -R 777 "$DATA"
+# Die Test-PKI bleibt 0700/0600 (gateway_lib.sh): ihre Leser laufen als PKI_USER.
+find "$DATA" -path "$PKI" -prune -o -exec chmod 777 {} +
 
 # 5. Test-Bundles (Wegwerf-Schluessel) bauen und beim Fake-Bootstrap ablegen; dazu ein manipuliertes Manifest 0.9.4
 # (Manifest von 0.9.2 mit geaenderter Version, also andere Bytes als die Signatur von 0.9.2).
@@ -160,7 +161,8 @@ DEVICE_ID="$(curl -fsS "$API_URL/_e2e/state" | py 'import json,sys; print(json.l
 [ -n "$DEVICE_ID" ] || die "Fake-Bootstrap kennt keine Geraete-ID"
 CONFIG_VERSION=0
 # Ergebnisse der Laufzeit am Broker mitschneiden (ab hier bis zum Ende; persistence false: nur was ab jetzt kommt).
-docker run -d --name "$RESULTS" --network "$NET" --security-opt label=disable -v "$PKI:/pki:ro" "$MOSQ_IMAGE" \
+docker run -d --name "$RESULTS" --network "$NET" --security-opt label=disable --user "$PKI_USER" -v "$PKI:/pki:ro" \
+  "$MOSQ_IMAGE" \
   mosquitto_sub -h "$BROKER" -p 8883 --cafile /pki/ca.pem --cert /pki/dienst.pem --key /pki/dienst.key -q 1 \
   -t "smartheat/$DEVICE_ID/up/result" >/dev/null || die "Mitschnitt startet nicht"
 echo "PASS: Registry, Bundles, Start mit 0.9.1"
@@ -188,9 +190,10 @@ expect_word() {  # $1 erwartetes Ergebnis, $2 Version; Log des Updaters (stderr)
     fail "Updater fuer $2: '$word' statt '$1'"
   fi
 }
-# Leere Konfiguration (anlage null, alle Grundfelder leer wie device_config.leer() des Servers und configs.leer() der
-# Gateway-Tests) mit der Soll-Version $1 als software, gesendet als Dienst auf down/config. Eine leere Konfiguration
-# wird immer uebernommen, ihr software geht an den Updater; das Gateway bleibt "nicht eingerichtet".
+# Leere Konfiguration (anlage null, alle Grundfelder leer wie device_config.leer() des Servers, raumfuehler []) mit der
+# Soll-Version $1 als software, gesendet als Dienst auf down/config. Anders als configs.leer() der Gateway-Tests ohne
+# mindest_software (null): der Test haengt so nicht an der Version des Images. Eine leere Konfiguration wird immer
+# uebernommen, ihr software geht an den Updater; das Gateway bleibt "nicht eingerichtet".
 set_desired() {
   CONFIG_VERSION=$((CONFIG_VERSION + 1))
   local body ok=0

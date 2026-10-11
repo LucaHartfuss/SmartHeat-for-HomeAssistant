@@ -2,11 +2,13 @@
 # Fake-Zigbee2MQTT statt Zigbee2MQTT (kein Stick), Fake-Bootstrap und Fake-Broker statt Server, Diagnoseseite auf
 # 127.0.0.1:8080, Steuer-Routen des Fake-Bootstraps auf 127.0.0.1:18090. Der Fake-Bootstrap signiert den CSR mit der
 # Test-CA und nennt den Fake-Broker (Mosquitto mit TLS und Client-Zertifikat, ACL wie die Geraete-Policy). Test-PKI
-# vorher anlegen (je Lauf neu, nie einchecken):
+# vorher anlegen (je Lauf neu, nie einchecken; Dateien 0600 des eigenen Benutzers, daher laufen Fake-Bootstrap und
+# Fake-Broker als SHG_FAKE_USER = dieser Benutzer):
 #   source tests/gateway_lib.sh; make_pki "$SHG_FAKE_PKI" fake-broker; broker_conf "$SHG_FAKE_PKI"
 # Start:
-#   SHG_ROOT=$PWD/.dev-data SHG_FAKE_PKI=$PWD/.dev-data/pki SHG_DEVICE_API_URL=http://fake-bootstrap:8090 \
-#     docker compose -f gateway/compose/docker-compose.yml -f gateway/compose/docker-compose.dev.yml up -d
+#   SHG_ROOT=$PWD/.dev-data SHG_FAKE_PKI=$PWD/.dev-data/pki SHG_FAKE_USER="$(id -u):$(id -g)" \
+#     SHG_DEVICE_API_URL=http://fake-bootstrap:8090 docker compose \
+#     -f gateway/compose/docker-compose.yml -f gateway/compose/docker-compose.dev.yml up -d
 # security_opt label:disable: auf SELinux-Hosts (Fedora) duerfen die Container die Bind-Mounts sonst nicht lesen
 # (wie tools/e2e); ergaenzt die Liste der Basisdatei, no-new-privileges bleibt. Ohne SELinux wirkungslos.
 x-fake: &fake
@@ -50,6 +52,7 @@ services:
   fake-bootstrap:
     <<: *fake
     command: ["python", "/gw-tests/fake_bootstrap.py"]
+    user: ${SHG_FAKE_USER:?SHG_FAKE_USER fehlt}
     networks: [wan]
     ports: ["127.0.0.1:18090:8090"]
     environment:
@@ -68,6 +71,7 @@ services:
     image: eclipse-mosquitto:2@sha256:38c0da4f2ef84284d47b3b3eeea1cb3bdeabe81ee10caf0cd5c5ff61ee3ea408
     security_opt: ["label:disable"]
     command: ["mosquitto", "-c", "/pki/mosquitto.conf"]
+    user: ${SHG_FAKE_USER:?SHG_FAKE_USER fehlt}
     networks: [wan]
     volumes:
       - ${SHG_FAKE_PKI:?SHG_FAKE_PKI fehlt}:/pki:ro

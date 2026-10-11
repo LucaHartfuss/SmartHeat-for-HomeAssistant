@@ -37,16 +37,16 @@ docker run --rm "$IMAGE" python -c "import smartheat_gateway.agent" 2>/dev/null 
 docker run --rm "$IMAGE" sh -c "test ! -e /app/src/heizungsbruecke" || fail "HA-Host im Gateway-Image"
 
 # Der Geraetekern bootstrappt beim Fake-Bootstrap des Dev-Overlays (Dienstname fake-bootstrap im Netz wan).
-export SHG_ROOT="$DATA" SHG_DEVICE_API_URL=http://fake-bootstrap:8090 SHG_FAKE_PKI="$PKI"
+export SHG_ROOT="$DATA" SHG_DEVICE_API_URL=http://fake-bootstrap:8090 SHG_FAKE_PKI="$PKI" SHG_FAKE_USER="$PKI_USER"
 if docker compose version >/dev/null 2>&1; then COMPOSE=(docker compose)
 else COMPOSE=(docker run --rm --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock
-              -v "$REPO:$REPO:ro" -v "$DATA:$DATA" -e SHG_ROOT -e SHG_DEVICE_API_URL -e SHG_FAKE_PKI -w "$REPO"
+              -v "$REPO:$REPO:ro" -v "$DATA:$DATA" -e SHG_ROOT -e SHG_DEVICE_API_URL -e SHG_FAKE_PKI -e SHG_FAKE_USER
+              -w "$REPO"
               "$COMPOSE_IMAGE" docker compose); fi
 COMPOSE+=(-p "$PROJECT" -f "$REPO/gateway/compose/docker-compose.yml" -f "$REPO/gateway/compose/docker-compose.dev.yml")
 mkdir -p "$DATA/data" "$DATA/zigbee2mqtt" "$DATA/host"
 mkdir -p "$DATA/bus/mosquitto" "$DATA/bus/credentials/runtime" "$DATA/bus/credentials/zigbee2mqtt"
 chmod -R 777 "$DATA"
-make_pki "$PKI" "$BROKER" && broker_conf "$PKI" || { echo "FAIL: Test-PKI"; exit 1; }
 # Die Container legen Ordner und Dateien als uid 1000 mit 0700/0600 an (device/, secrets/, configuration.yaml); ein
 # Skript unter anderer uid (CI-Runner 1001) kann sie nicht loeschen. Deshalb raeumt ein Wegwerf-Container als root.
 cleanup() {
@@ -55,6 +55,9 @@ cleanup() {
   rm -rf "$DATA"
 }
 trap cleanup EXIT
+# Test-PKI erst nach dem trap: scheitert sie, raeumt cleanup den CA-Schluessel trotzdem weg. Nach dem chmod 777 oben,
+# damit die Schluessel 0600 bleiben.
+{ make_pki "$PKI" "$BROKER" && broker_conf "$PKI"; } || { echo "FAIL: Test-PKI"; exit 1; }
 
 "${COMPOSE[@]}" up -d --build || { echo "FAIL: compose up"; "${COMPOSE[@]}" logs --no-color | tail -n 80; exit 1; }
 ok=0
@@ -107,7 +110,7 @@ pw() {
     python -c "import json,sys; print(json.load(open('/b/credentials/' + sys.argv[1] + '/bus.json'))['password'])" "$1"
 }
 for svc in runtime zigbee2mqtt; do [ -n "$(pw "$svc")" ] || fail "Bus-Zugangsdaten von $svc nicht lesbar"; done
-[ -e "$DATA/bus/credentials/agent/bus.json" ] && fail "init legt noch Zugangsdaten fuer den Agenten an"
+[ -e "$DATA/bus/credentials/agent" ] && fail "init legt noch einen Ordner fuer den Agenten an"
 mosq() { docker run --rm --security-opt label=disable --network "${PROJECT}_bus" "$MOSQ_IMAGE" "$@"; }
 # Anonym abgewiesen, Dienste angemeldet, ACL greift: der Bus traegt nur noch Zigbee2MQTT (Spec 5b 5.3). Die Abos
 # ignorieren retained Nachrichten (-R): Fake-Zigbee2MQTT haelt bridge/* retained, das kaeme sonst vor der Probe an.
@@ -119,13 +122,29 @@ got=$(mosq sh -c "mosquitto_sub -R -h mosquitto -u zigbee2mqtt -P '$(pw zigbee2m
 got=$(mosq sh -c "mosquitto_sub -R -h mosquitto -u zigbee2mqtt -P '$(pw zigbee2mqtt)' -t zigbee2mqtt/bridge/request/permit_join -C 1 -W 6 & sleep 2;
   mosquitto_pub -h mosquitto -u runtime -P '$(pw runtime)' -t zigbee2mqtt/bridge/request/permit_join -m from-runtime; wait" 2>/dev/null)
 [ "$got" = "from-runtime" ] || fail "runtime kann permit_join nicht anfragen (ACL zu streng)"
-# runtime liest, was Zigbee2MQTT meldet, darf es aber nicht faelschen.
+# runtime liest, was Zigbee2MQTT meldet, darf es aber nicht faelschen: bridge/state und bridge/devices nimmt die
+# Laufzeit fuer wahr (zigbee.ZigbeeMirror._on_message), ausserhalb von zigbee2mqtt/ darf sie gar nichts.
 got=$(mosq sh -c "mosquitto_sub -R -h mosquitto -u runtime -P '$(pw runtime)' -t zigbee2mqtt/0x00124b00000000ff -C 1 -W 6 & sleep 2;
   mosquitto_pub -h mosquitto -u zigbee2mqtt -P '$(pw zigbee2mqtt)' -t zigbee2mqtt/0x00124b00000000ff -m from-z2m; wait" 2>/dev/null)
 [ "$got" = "from-z2m" ] || fail "runtime kann zigbee2mqtt/# nicht lesen (ACL zu streng)"
-got=$(mosq sh -c "mosquitto_sub -R -h mosquitto -u zigbee2mqtt -P '$(pw zigbee2mqtt)' -t zigbee2mqtt/bridge/config -C 1 -W 6 & sleep 2;
-  mosquitto_pub -h mosquitto -u runtime -P '$(pw runtime)' -t zigbee2mqtt/bridge/config -m forged; wait" 2>/dev/null)
-[ "$got" = "forged" ] && fail "runtime darf Bridge-Topics von zigbee2mqtt faelschen"
+# forged TOPIC: publiziert als runtime auf TOPIC, Ausgabe = was zigbee2mqtt (liest zigbee2mqtt/#) dort sieht.
+forged() {
+  mosq sh -c "mosquitto_sub -R -h mosquitto -u zigbee2mqtt -P '$(pw zigbee2mqtt)' -t '$1' -C 1 -W 6 & sleep 2;
+    mosquitto_pub -h mosquitto -u runtime -P '$(pw runtime)' -t '$1' -m forged; wait" 2>/dev/null
+}
+for topic in zigbee2mqtt/bridge/state zigbee2mqtt/bridge/devices; do
+  [ "$(forged "$topic")" = "forged" ] && fail "runtime darf $topic faelschen"
+done
+# Reason Code des PUBACK (MQTT 5, QoS 1) fuer einen Publish als runtime: 0 erlaubt, 135 nicht autorisiert. Prueft auch
+# Topics, die kein Bus-Dienst lesen darf (ausserhalb von zigbee2mqtt/). Gegenprobe: zigbee2mqtt/+/set ist erlaubt.
+puback() {
+  mosq mosquitto_pub -d -V mqttv5 -q 1 -h mosquitto -u runtime -P "$(pw runtime)" -t "$1" -m forged 2>&1 \
+    | sed -n 's/.*received PUBACK.*RC:\([0-9]*\).*/\1/p'
+}
+[ "$(puback zigbee2mqtt/0x1/set)" = "0" ] || fail "PUBACK-Probe: erlaubter Publish nicht mit RC 0 bestaetigt"
+for topic in zigbee2mqtt/bridge/state zigbee2mqtt/bridge/devices smartheat/x; do
+  [ "$(puback "$topic")" = "135" ] || fail "runtime darf auf $topic veroeffentlichen (PUBACK nicht 135)"
+done
 # Der Geraetekern im Container runtime schreibt data/device (ab 0.6.0 keine tmpfs-Masken mehr).
 "${COMPOSE[@]}" exec -T runtime sh -c 'test -d /data/device && test -w /data/device' \
   || fail "runtime kann /data/device nicht schreiben"
@@ -142,9 +161,37 @@ clean="Client $device_id( \[[^]]*\])? disconnected\."
 clean_before=$(broker_log | grep -cE "$clean")
 "${COMPOSE[@]}" stop runtime >/dev/null 2>&1 || fail "Laufzeit stoppt nicht"
 [ "$(docker inspect -f '{{.State.ExitCode}}' "$cid")" = "0" ] || fail "runtime endet nach SIGTERM nicht mit Exit 0"
-clean_after=$(broker_log | grep -cE "$clean")
-[ "$clean_after" -gt "$clean_before" ] || fail "Laufzeit trennt beim Stoppen nicht sauber (kein DISCONNECT)"
-broker_log | grep -E "Client $device_id( \[[^]]*\])? (closed its connection|has exceeded timeout)" \
-  && fail "Fake-Broker meldet einen Abbruch der Geraeteverbindung"
+ok=0
+for _ in $(seq 1 10); do  # der Broker schreibt die Zeile womoeglich erst nach dem Ende von compose stop
+  [ "$(broker_log | grep -cE "$clean")" -gt "$clean_before" ] && { ok=1; break; }
+  sleep 0.5
+done
+[ "$ok" = 1 ] || fail "Laufzeit trennt beim Stoppen nicht sauber (kein DISCONNECT)"
+# Jede andere Zeile "Client <id> ..." ist ein Abbruch (closed its connection, exceeded timeout, Socket error,
+# disconnected due to ...). Ausnahme: "session taken over" fuer eine Verbindung, die vorher sauber getrennt hat (die
+# persistente Session wechselt beim Neustart auf die neue Verbindung).
+abbrueche="$(broker_log | python3 -c '
+import re, sys
+device = sys.argv[1]
+line_re = re.compile(r"Client " + re.escape(device) + r"(?: \[([^]]*)\])? (.*)$")
+clean = set()
+for line in sys.stdin:
+    match = line_re.search(line.rstrip())
+    if not match:
+        continue
+    addr, rest = match.groups()
+    if rest == "disconnected.":
+        clean.add(addr)
+    elif rest.startswith("negotiated TLS"):
+        continue
+    elif rest == "disconnected: session taken over." and addr in clean:
+        continue
+    else:
+        print(line.rstrip())
+' "$device_id")"
+[ -z "$abbrueche" ] || fail "Fake-Broker meldet Abbrueche der Geraeteverbindung: $abbrueche"
+# Test-PKI und Konfiguration gehoeren dem Benutzer, als der der Fake-Broker laeuft (0600): keine Warnungen von Mosquitto.
+warnungen="$(broker_log | grep "Warning:")"
+[ -z "$warnungen" ] || fail "Fake-Broker warnt: $warnungen"
 if [ "$FAIL" = 1 ]; then "${COMPOSE[@]}" logs --no-color | tail -n 120; exit 1; fi
 echo "PASS: Gateway-Image und Compose-Lauf"
