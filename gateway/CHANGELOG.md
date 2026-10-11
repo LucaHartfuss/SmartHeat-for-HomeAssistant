@@ -8,8 +8,13 @@ von 0.5.0 gibt es nicht (Spec 5.3). Kein Release-Tag in 5b ohne echten Signiersc
 - Ein Gateway-Container `runtime`: Gerätekern `smartheat_device` (Bootstrap mit Zertifikat, MQTT 5 über TLS zu
   `smartheat/<geräte_id>/…`, Soll-Dokumente, Befehle, Bedienwunsch, Inventur) und Laufzeit in einem Prozess; Tick und
   Telemetrie über denselben Link. Agent-Container, HTTPS-Polling, Tunnel (`cloudflared`) und Netz-Wache entfallen.
-  Compose gibt `runtime` 20 s `stop_grace_period`; der Gerätethread wird beim Beenden abgewartet. Die Soll-Software
-  wird beim Start erneut an den Updater gegeben.
+  Compose gibt `runtime` 20 s `stop_grace_period`; der Gerätethread wird beim Beenden abgewartet und danach noch
+  einmal gestoppt (ein im letzten Takt geöffneter Link wird ebenfalls getrennt). Die Soll-Software wird beim Start
+  erneut an den Updater gegeben.
+- Befehle mit Cloud-Aufrufen (`driver_login`, `driver_probe`, die Proben von `inventory`) laufen in einem eigenen
+  Hintergrund-Thread; der Gerätethread wartet nie auf den Hersteller, `down/setpoints`, Dokumente und `hello` laufen
+  weiter. Antwortet der Treiber bei Anmeldung oder Probe nicht bis zur Frist des Befehls (120 s), endet er mit
+  `anlage_nicht_erreichbar`.
 - Konfiguration und Bedienung kommen als Dokumente; eine laufzeitrelevante neue Konfiguration startet den Prozess nach
   einem sauberen MQTT-DISCONNECT neu. Leere Konfiguration nach einer Einrichtung: der nächste Start löscht den
   anlagengebundenen Zustand und die Treiber-Anmeldungen (A4-07).
@@ -17,7 +22,9 @@ von 0.5.0 gibt es nicht (Spec 5.3). Kein Release-Tag in 5b ohne echten Signiersc
   Neustart erneut zustellt (Befehlsart „wiederholbar“, kleine Ergänzung im Gerätekern).
 - Thermostat: eine Drehung ist ein Bedienwunsch (am Ende der Entprellung, begrenzt auf 15–25 °C, zurückgeschrieben);
   `system_mode: off` oder ein Soll ≤ 7 °C ist „Soll-Quelle aus“ (Meldung, kein Wunsch); ein noch offener Wunsch wird
-  dabei verworfen und das vorherige Soll bleibt gültig.
+  dabei verworfen und das vorherige Soll bleibt gültig. Wieder an (`system_mode` nicht mehr `off`, kein Frostschutz):
+  das geltende Soll geht ans Thermostat, die alte Soll-Meldung danach ist kein Wunsch (eine Bedienung während „aus“
+  bleibt gültig); Frostschutz durch Drehen verlassen bleibt ein Wunsch.
 - Updater: Soll-Version aus dem Feld `software` der Konfiguration (`data/software_soll.json`), Ergebnisse über die
   Laufzeit als `up/result` (`dokument: "software"`); Erreichbarkeit = Broker per TCP (die Uhr zählt dafür nicht mehr);
   `REQUIRED_HEALTHY = ("runtime",)`; `smartheat_host/device_api.py` → `kanal.py`. Die Host-Dienste (root) lesen vom
@@ -27,6 +34,8 @@ von 0.5.0 gibt es nicht (Spec 5.3). Kein Release-Tag in 5b ohne echten Signiersc
 - LED und Diagnoseseite: neue Zustände `gesperrt` und `update_noetig`; die Seite zeigt Hinweise des Dienstes, eigene
   Meldungen und eine abgelehnte Konfiguration; QR-Code und Übernahme-Code, solange das Gateway nicht eingerichtet ist.
 - Lokaler Bus nur noch für Zigbee2MQTT (ACL `runtime`/`zigbee2mqtt`); `uhr_synchron` aus `host/status.json`.
+- Ein dauerhaft scheiterndes Schreiben der LED-Datei loggt nur beim Wechsel der Fehlerart und bei der Erholung; im
+  Ruhezustand geht eine Bedienung nicht mehr an den Worker (sie gilt beim nächsten Start mit Regelung).
 
 ## 0.5.0
 
