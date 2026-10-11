@@ -1,8 +1,12 @@
-# Overlay fuer den Dev-Rechner (Spec SHG G2 7.2): Fake-Zigbee2MQTT statt Zigbee2MQTT (kein Stick), Diagnoseseite auf
-# 127.0.0.1:8080. Fake-Bootstrap und Fake-Broker ergaenzt Plan 5b D2 Task 10; bis dahin startet das Overlay ohne Server,
-# die Seite zeigt keine_verbindung. Start:
-#   SHG_ROOT=$PWD/.dev-data SHG_DEVICE_API_URL=http://127.0.0.1:9 docker compose \
-#     -f gateway/compose/docker-compose.yml -f gateway/compose/docker-compose.dev.yml up -d
+# Overlay fuer den Dev-Rechner (Spec SHG G2 7.2; Fake-Bootstrap und Fake-Broker ab Plan 5b D2 Task 10):
+# Fake-Zigbee2MQTT statt Zigbee2MQTT (kein Stick), Fake-Bootstrap und Fake-Broker statt Server, Diagnoseseite auf
+# 127.0.0.1:8080, Steuer-Routen des Fake-Bootstraps auf 127.0.0.1:18090. Der Fake-Bootstrap signiert den CSR mit der
+# Test-CA und nennt den Fake-Broker (Mosquitto mit TLS und Client-Zertifikat, ACL wie die Geraete-Policy). Test-PKI
+# vorher anlegen (je Lauf neu, nie einchecken):
+#   source tests/gateway_lib.sh; make_pki "$SHG_FAKE_PKI" fake-broker; broker_conf "$SHG_FAKE_PKI"
+# Start:
+#   SHG_ROOT=$PWD/.dev-data SHG_FAKE_PKI=$PWD/.dev-data/pki SHG_DEVICE_API_URL=http://fake-bootstrap:8090 \
+#     docker compose -f gateway/compose/docker-compose.yml -f gateway/compose/docker-compose.dev.yml up -d
 # security_opt label:disable: auf SELinux-Hosts (Fedora) duerfen die Container die Bind-Mounts sonst nicht lesen
 # (wie tools/e2e); ergaenzt die Liste der Basisdatei, no-new-privileges bleibt. Ohne SELinux wirkungslos.
 x-fake: &fake
@@ -24,6 +28,9 @@ services:
   runtime:
     ports: !override ["127.0.0.1:8080:8080"]
     security_opt: ["label:disable"]
+    depends_on:  # ergaenzt die Basisdatei; ohne Fake-Bootstrap wartete der erste Bootstrap-Versuch den Backoff ab
+      fake-bootstrap: {condition: service_healthy}
+      fake-broker: {condition: service_started}
   mosquitto:
     security_opt: ["label:disable"]
   fake-zigbee2mqtt:
@@ -40,3 +47,27 @@ services:
     volumes:
       - ../tests:/gw-tests:ro
       - ${SHG_ROOT:-/var/lib/smartheat}/bus/credentials/zigbee2mqtt:/run/shg-bus:ro
+  fake-bootstrap:
+    <<: *fake
+    command: ["python", "/gw-tests/fake_bootstrap.py"]
+    networks: [wan]
+    ports: ["127.0.0.1:18090:8090"]
+    environment:
+      SHG_FAKE_CA_DIR: /pki
+      SHG_FAKE_MQTT_HOST: fake-broker
+      PYTHONPATH: /app/src
+    volumes:
+      - ../tests:/gw-tests:ro
+      - ${SHG_FAKE_PKI:?SHG_FAKE_PKI fehlt}:/pki:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/_e2e/state', timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+  fake-broker:
+    image: eclipse-mosquitto:2@sha256:38c0da4f2ef84284d47b3b3eeea1cb3bdeabe81ee10caf0cd5c5ff61ee3ea408
+    security_opt: ["label:disable"]
+    command: ["mosquitto", "-c", "/pki/mosquitto.conf"]
+    networks: [wan]
+    volumes:
+      - ${SHG_FAKE_PKI:?SHG_FAKE_PKI fehlt}:/pki:ro

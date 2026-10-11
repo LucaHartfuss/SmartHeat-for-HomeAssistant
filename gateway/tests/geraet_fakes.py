@@ -1,46 +1,15 @@
-"""Fakes fuer den Geraetekern in den Gateway-Tests (Plan 5b D2): Test-CA, Link ohne Netz, ein Bootstrap, der nie
-laufen darf (der Zugang liegt schon vor), und eine Geraetesicht ohne Geraetekern fuer Host-Tests. Gegenstuecke der
-Hilfen in heizungsbruecke/tests (D1), die hier nicht importierbar sind."""
-import datetime
+"""Fakes fuer den Geraetekern in den Gateway-Tests (Plan 5b D2): Zugang von der Test-CA (fake_ca), Link ohne Netz, ein
+Bootstrap, der nie laufen darf (der Zugang liegt schon vor), und eine Geraetesicht ohne Geraetekern fuer Host-Tests.
+Gegenstuecke der Hilfen in heizungsbruecke/tests (D1), die hier nicht importierbar sind."""
 import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+from fake_ca import GeraeteCa
 
 from smartheat_device import bootstrap, identity
 from smartheat_gateway.geraet_host import GatewayDeviceHost
 from smartheat_runtime import dokument_config
-
-
-def _now() -> datetime.datetime:
-    return datetime.datetime.now(datetime.UTC)
-
-
-class GeraeteCa:
-    def __init__(self) -> None:
-        self._key = ec.generate_private_key(ec.SECP256R1())
-        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "smartheat-test-ca")])
-        self._cert = (
-            x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(self._key.public_key())
-            .serial_number(x509.random_serial_number()).not_valid_before(_now() - datetime.timedelta(minutes=1))
-            .not_valid_after(_now() + datetime.timedelta(days=2))
-            .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
-            .sign(self._key, hashes.SHA256()))
-        self.pem = self._cert.public_bytes(serialization.Encoding.PEM).decode()
-
-    def sign_csr(self, csr_pem: str) -> str:
-        csr = x509.load_pem_x509_csr(csr_pem.encode())
-        cert = (
-            x509.CertificateBuilder().subject_name(csr.subject).issuer_name(self._cert.subject)
-            .public_key(csr.public_key()).serial_number(x509.random_serial_number())
-            .not_valid_before(_now() - datetime.timedelta(minutes=1)).not_valid_after(_now() + datetime.timedelta(days=2))
-            .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CLIENT_AUTH]), critical=False)
-            .sign(self._key, hashes.SHA256()))
-        return cert.public_bytes(serialization.Encoding.PEM).decode()
 
 
 def zugang_ablegen(device_dir: Path, ca: GeraeteCa) -> bootstrap.Zugang:

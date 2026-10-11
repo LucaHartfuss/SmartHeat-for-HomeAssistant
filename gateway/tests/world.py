@@ -6,9 +6,10 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from configs import SENSOR, THERMOSTAT
+from fake_ca import GeraeteCa
 from fake_z2m import FakeZigbee2Mqtt
 from fakes import FakeBus
-from geraet_fakes import FakeLink, GeraeteCa, KeinBootstrap, zugang_ablegen
+from geraet_fakes import FakeLink, KeinBootstrap, zugang_ablegen
 
 from smartheat_device.device import Device
 from smartheat_gateway import befehle, runtime_main
