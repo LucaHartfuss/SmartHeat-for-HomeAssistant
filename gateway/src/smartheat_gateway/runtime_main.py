@@ -6,12 +6,14 @@ Neustart: eine laufzeitrelevante neue Konfiguration oder sign_off fordert ihn an
 den Link sauber (MQTT-DISCONNECT; sonst meldet IoT Core DUPLICATE_CLIENTID, wenn der neue Prozess verbindet, und der
 Dienst saehe nach drei Aenderungen eine Kopie, Spec 4.2) und endet dann mit Exit 0; Compose startet neu. SIGTERM
 (docker stop) endet genauso; vor dem Exit schliesst der Geraete-Thread sein laufendes Ereignis ab (beenden), und jeder
-Start reicht die Soll-Software der gespeicherten Konfiguration erneut an den Updater (software_soll_nachholen). Auch die Neustarts der Laufzeit selbst (abo.restart_process: Neupruefung im Ruhezustand
-Konfigurationsfehler, Abo am Fristende wieder aktiv) nehmen diesen Weg statt os.execv, das den Link ohne DISCONNECT
-abrisse. Nach dem Entfernen (Markierung aufraeumen.json) loescht der naechste Start den anlagengebundenen Zustand
-(A4-07), bevor der Geraetekern startet - aber nur, solange die gespeicherte Konfiguration noch leer ist: kam vor dem
-Neustart schon eine neue Einrichtung, bleibt ihre frische Treiber-Anmeldung. Die Konfigurationswache haelt nur noch das
-Lebenszeichen fuer den Compose-Health-Check frisch (G2 7.2)."""
+Start reicht die Soll-Software der gespeicherten Konfiguration erneut an den Updater (software_soll_nachholen). Auch
+die Neustarts der Laufzeit selbst (abo.restart_process: Neupruefung im Ruhezustand Konfigurationsfehler, Abo am
+Fristende wieder aktiv) nehmen diesen Weg statt os.execv, das den Link ohne DISCONNECT abrisse.
+
+Nach dem Entfernen (Markierung aufraeumen.json) loescht der naechste Start den anlagengebundenen Zustand (A4-07), bevor
+der Geraetekern startet - aber nur, solange die gespeicherte Konfiguration noch leer ist: kam vor dem Neustart schon
+eine neue Einrichtung, bleibt ihre frische Treiber-Anmeldung. Die Konfigurationswache haelt nur noch das Lebenszeichen
+fuer den Compose-Health-Check frisch (G2 7.2)."""
 import contextlib
 import logging
 import os
@@ -89,14 +91,21 @@ def software_soll_nachholen(geraet: GatewayDeviceHost, device: Device) -> None:
         logger.error("Soll-Software nicht nachgeholt (%s)", type(error).__name__)
 
 
-def beenden(device, thread: threading.Thread | None, timeout: float = JOIN_SECONDS) -> None:
-    """Ende des Prozesses (Neustart, SIGTERM): erst den Geraetekern stoppen (sauberes Trennen), dann den Geraete-Thread
-    sein laufendes Ereignis abschliessen lassen, z. B. software_soll nach konfiguration_uebernommen."""
+def beenden(device, thread: threading.Thread | None, timeout: float = JOIN_SECONDS, *,
+            hintergrund: befehle.Hintergrund | None = None) -> None:
+    """Ende des Prozesses (Neustart, SIGTERM): erst den Geraetekern stoppen (sauberes Trennen) und wartende Treiber-
+    Aufrufe der Befehle abbrechen, dann den Geraete-Thread sein laufendes Ereignis abschliessen lassen, z. B.
+    software_soll nach konfiguration_uebernommen. Danach noch einmal stop(): Device.run fuehrt nach stop() noch einen
+    Takt aus, und ein Port-Rueckfall oder eine Rettung darin koennte einen neuen Link geoeffnet haben (Restpunkt
+    5b-D2-4, Gateway-Seite); der wird so ebenfalls sauber getrennt."""
     device.stop()
+    if hintergrund is not None:
+        hintergrund.stop()
     if thread is not None:
         thread.join(timeout)
         if thread.is_alive():
             logger.warning("Geraete-Thread nach %.0f s nicht beendet, Prozess endet trotzdem", timeout)
+    device.stop()
 
 
 def start(paths: Paths, bus, mirror: ZigbeeMirror, geraet: GatewayDeviceHost, device: Device, clock=time.monotonic,
@@ -153,7 +162,7 @@ def attach(result: Runtime | app.IdleBridge, host: GatewayHost, geraet: GatewayD
         elif result.reason == STATUS_KONFIGURATIONSFEHLER:
             # bewusst zusaetzlich zur Umleitung von abo.restart_process: haengt nicht an diesem globalen Eingriff
             worker.register(EV_RECHECK, _recheck)
-    geraet.worker_binden(worker)
+    geraet.worker_binden(worker, soll_eingang=isinstance(result, Runtime))  # Ruhezustand: kein Soll-Eingang
 
 
 def _terminate(signum, frame) -> None:
@@ -186,7 +195,7 @@ def main() -> None:  # pragma: no cover - Container-Einstieg
         logger.info("Laufzeit gestartet (%s), Zeitzone %s", type(result).__name__, wallclock.now().tzinfo)
         result.worker.run()
     finally:
-        beenden(device, thread)
+        beenden(device, thread, hintergrund=geraet.hintergrund)
 
 
 if __name__ == "__main__":

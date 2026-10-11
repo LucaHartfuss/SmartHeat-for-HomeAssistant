@@ -70,3 +70,25 @@ class FakeBus:
                     callback(topic, encode(payload), True)
         for hook in self.hooks:
             hook()
+
+
+class SofortHintergrund:
+    """Hintergrund der Befehle (befehle.Hintergrund) ohne Thread: fuehrt den Aufruf sofort aus und liefert ein fertiges
+    Future. Fuer Handler-Tests, die die Ergebnisse ohne Warten pruefen; den echten Thread pruefen eigene Tests."""
+
+    def __init__(self) -> None:
+        self.aufrufe = 0
+
+    def submit(self, call):
+        from concurrent.futures import Future
+
+        self.aufrufe += 1
+        future: Future = Future()
+        try:
+            future.set_result(call())
+        except Exception as error:
+            future.set_exception(error)
+        return future
+
+    def stop(self) -> None:
+        pass

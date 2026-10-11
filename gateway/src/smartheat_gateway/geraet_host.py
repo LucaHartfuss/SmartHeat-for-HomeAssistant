@@ -147,23 +147,31 @@ class GatewayDeviceHost:
         self.device = None  # smartheat_device.device.Device, nach dem Anlegen per verbinden()
         self.letzte_anzeige: Anzeige | None = None
         self._worker: RegulationWorker | None = None
+        self._soll_eingang = True  # False im Ruhezustand (IdleBridge): der Worker hat keinen Soll-Eingang
         self._neustart = False
         self._raum_soll: float | None = None  # letzte Bedienung, bevor der Worker gebunden ist
         self._worker_lock = threading.Lock()  # binden (Hauptthread) gegen Rueckrufe (Geraete-Thread)
         self._datei = ZustandsDatei(paths.agent_state, lambda: _iso(self._wall()), clock)
         self._software_at: float | None = None
+        self._led_fehler: str | None = None  # Fehlerart des letzten gescheiterten Schreibens der LED-Datei
+        #: blockierende Treiber-Aufrufe der Befehle (Cloud-HTTP) neben dem Geraete-Thread; main() stoppt ihn (beenden)
+        self.hintergrund = befehle.Hintergrund()
 
     # --- Verdrahtung ---
 
     def verbinden(self, device) -> None:
         self.device = device
 
-    def worker_binden(self, worker: RegulationWorker) -> None:
+    def worker_binden(self, worker: RegulationWorker, *, soll_eingang: bool = True) -> None:
+        """soll_eingang=False im Ruhezustand (IdleBridge, kein Trigger-Eingang): Bedienungen gehen nicht an den Worker
+        (sonst je Dokument "Kein Handler ... verworfen"); sie bleiben im Geraetekern gespeichert und gelten beim
+        naechsten Start mit Regelung."""
         with self._worker_lock:
             self._worker = worker
-            if self._raum_soll is not None:
+            self._soll_eingang = soll_eingang
+            if self._raum_soll is not None and soll_eingang:
                 worker.post(Event(EV_TARGET_INPUT, {"value": self._raum_soll, "source": SOURCE_PORTAL}))
-                self._raum_soll = None
+            self._raum_soll = None
             if self._neustart:
                 worker.post(Event(EV_RELOAD))
 
@@ -254,7 +262,8 @@ class GatewayDeviceHost:
     def befehle_eintragen(self, register: CommandRegister) -> None:
         befehle.eintragen(register, befehle.Kontext(
             self.paths, self.mirror, konfiguration=self.konfiguration, runtime_status=lambda: self.zustand.status,
-            neustart=self.neustart_anfordern, diagnostics=self.snapshot, clock=self._clock, wall=self._wall))
+            neustart=self.neustart_anfordern, diagnostics=self.snapshot, clock=self._clock, wall=self._wall,
+            hintergrund=self.hintergrund))
 
     def konfiguration_uebernommen(self, alt: dict | None, neu: dict) -> None:
         if dokument_config.eingerichtet(alt) and not dokument_config.eingerichtet(neu):
@@ -270,7 +279,7 @@ class GatewayDeviceHost:
         with self._worker_lock:
             if self._worker is None:
                 self._raum_soll = value  # worker_binden stellt die letzte nach
-            else:
+            elif self._soll_eingang:
                 self._worker.post(Event(EV_TARGET_INPUT, {"value": value, "source": SOURCE_PORTAL}))
 
     def software_soll(self, software: dict | None) -> None:
@@ -288,7 +297,15 @@ class GatewayDeviceHost:
         try:
             self._datei.update(anzeige.zustand)
         except Exception as error:  # die Software-Bruecke haengt nicht an der LED-Datei
-            logger.error("LED-Datei nicht geschrieben (%s)", type(error).__name__)
+            # Die Anzeige kommt jeden Takt: nur beim Wechsel der Fehlerart loggen, nicht jeden Takt.
+            art = type(error).__name__
+            if art != self._led_fehler:
+                logger.error("LED-Datei nicht geschrieben (%s)", art)
+                self._led_fehler = art
+        else:
+            if self._led_fehler is not None:
+                logger.info("LED-Datei wieder geschrieben")
+                self._led_fehler = None
         self._software_ergebnisse()
 
     # --- Software-Bruecke ---

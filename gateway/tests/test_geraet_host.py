@@ -306,3 +306,46 @@ def test_a_failing_led_write_does_not_stop_the_software_results(welt):
     welt.host.anzeigen(_anzeige())
     assert welt.device.ergebnisse == [("0.6.1", True, None, "")]
     assert welt.host.letzte_anzeige is not None
+
+
+def test_a_persistently_failing_led_write_is_logged_once_per_error_type_and_on_recovery(welt, caplog, monkeypatch):
+    """Die Anzeige kommt jeden Takt: ein dauerhaft scheiternder Schreibversuch loggt nur beim Wechsel der Fehlerart
+    einen ERROR und bei der Erholung eine INFO (nur Typnamen, Regel 6)."""
+    fehler: list[Exception] = [OSError("platte voll")]
+
+    def update(zustand):
+        if fehler:
+            raise fehler[0]
+
+    monkeypatch.setattr(welt.host._datei, "update", update)
+    with caplog.at_level("INFO", logger="smartheat_gateway.geraet_host"):
+        for _ in range(3):
+            welt.host.anzeigen(_anzeige())
+        fehler[0] = PermissionError("nur lesbar")
+        for _ in range(2):
+            welt.host.anzeigen(_anzeige())
+        fehler.clear()
+        for _ in range(2):
+            welt.host.anzeigen(_anzeige())
+        fehler.append(OSError("wieder"))
+        welt.host.anzeigen(_anzeige())
+    led = [(r.levelname, r.getMessage()) for r in caplog.records if "LED-Datei" in r.getMessage()]
+    assert led == [
+        ("ERROR", "LED-Datei nicht geschrieben (OSError)"),
+        ("ERROR", "LED-Datei nicht geschrieben (PermissionError)"),
+        ("INFO", "LED-Datei wieder geschrieben"),
+        ("ERROR", "LED-Datei nicht geschrieben (OSError)"),
+    ]
+    assert "platte voll" not in caplog.text
+
+
+def test_an_operation_in_the_idle_state_is_not_posted_to_the_worker(welt, caplog):
+    """Ruhezustand (IdleBridge): der Worker hat keinen Soll-Eingang; die Bedienung bleibt im Geraetekern gespeichert
+    und gilt beim naechsten Start mit Regelung. Kein "Kein Handler ... verworfen" je Dokument."""
+    leerlauf = RegulationWorker(clock=welt.clock)
+    welt.host.bedienung_uebernommen({"modus": "manuell", "raum_soll": 21.0})  # vor dem Binden
+    with caplog.at_level("WARNING"):
+        welt.host.worker_binden(leerlauf, soll_eingang=False)
+        welt.host.bedienung_uebernommen({"modus": "manuell", "raum_soll": 22.5})
+        leerlauf.run_pending()
+    assert "Kein Handler" not in caplog.text

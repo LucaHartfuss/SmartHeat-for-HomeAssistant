@@ -1,16 +1,20 @@
 """Spec 5b 3.4 (Plan D2 Task 2): Befehle des Gateways im Befehlsregister des Geraetekerns. Einmal-Ausfuehrung und
 Gruende-Pruefung testet D1; hier die Handler und die Uebersetzung der Treiber-Fehler."""
 import json
+import threading
+import time
 
 import pytest
-from configs import SENSOR, THERMOSTAT, konfiguration
+from configs import SENSOR, THERMOSTAT, bedienung, dokumente_schreiben, konfiguration
 from fake_z2m import FakeZigbee2Mqtt
-from fakes import FakeBus
+from fakes import FakeBus, SofortHintergrund
+from world import GatewayWorld
 
 from smartheat_device import wire
 from smartheat_device.commands import CommandRegister, Done, Failed, Waiting
 from smartheat_gateway import befehle
 from smartheat_gateway.drivers.base import DriverError
+from smartheat_gateway.drivers.simulation import SimulationDriver
 from smartheat_gateway.files import write_json
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.quota import QuotaExhausted
@@ -38,7 +42,7 @@ def ctx(data_dir, clock):
     context = befehle.Kontext(
         Paths(data_dir), mirror, konfiguration=lambda: umgebung.konf, runtime_status=lambda: umgebung.status,
         neustart=lambda: umgebung.restarts.append(1), diagnostics=lambda: {"geraet": "shg-x"}, clock=clock,
-        wall=lambda: 1_700_000_000.0)
+        wall=lambda: 1_700_000_000.0, hintergrund=SofortHintergrund())
     context.z2m = z2m
     context.umgebung = umgebung
     return context
@@ -407,3 +411,137 @@ def test_an_inventory_whose_samples_are_all_rate_limited_reports_the_quota_at_th
     assert ticks == 4
     assert isinstance(result, Failed) and result.grund == "kontingent_erschoepft"
     assert result.grund in wire.command_errors("inventory")
+
+
+# --- Blockierende Treiber-Aufrufe (Cloud-HTTP) laufen neben dem Geraete-Thread (Review D2, Important 1) ---
+# Bis 0.5.0 liefen Anmeldung, Probe und Inventur im Agenten-Prozess. Im Geraete-Thread wuerde ein Aufruf mit Token-
+# Erneuerung und 401-Wiederholung (bis 80 s) down/setpoints, Dokumente und hello aufhalten; die Laufzeit liefe nach
+# zwei Ack-Timeouts (je 30 s) in den Notbetrieb.
+
+#: Sicherung: gibt ein haengender Test den blockierten Aufruf nach dieser Zeit frei.
+FREIGABE_SPAETESTENS = 5.0
+LEVERS = {"curve": 1.4, "level": 3.0, "room_setpoint": 20.0}
+
+
+@pytest.fixture
+def regelnde_welt(data_dir, monkeypatch, clock):
+    world = GatewayWorld(data_dir, monkeypatch, clock)
+    dokumente_schreiben(world.paths, konfiguration())
+    world.start_runtime()
+    world.connect()
+    assert world.result.store.state.delivery.pending is not None  # Erststart-Tick wartet auf down/setpoints
+    return world
+
+
+def _blockieren(monkeypatch, ziel: str, danach) -> tuple[threading.Event, threading.Event]:
+    """Ersetzt den Treiber-Aufruf `ziel` durch einen, der bis zur Freigabe blockiert und dann `danach(self, ...)` liefert."""
+    gestartet, frei = threading.Event(), threading.Event()
+
+    def blockiert(self, *args):
+        gestartet.set()
+        frei.wait(FREIGABE_SPAETESTENS)
+        return danach(self, *args)
+
+    monkeypatch.setattr(ziel, blockiert)
+    sicherung = threading.Timer(FREIGABE_SPAETESTENS, frei.set)
+    sicherung.daemon = True
+    sicherung.start()
+    return gestartet, frei
+
+
+def _befehl(world, command_id: str, kind: str, payload: dict) -> None:
+    world.server("down/command", {"schema": 1, "command_id": command_id, "kind": kind, "payload": payload,
+                                  "expires_at": "2026-01-17T08:00:00+01:00"})
+
+
+def _ergebnisse(world, **match) -> list[dict]:
+    return [body for link in world.links for body in link.of("up/result")
+            if all(body.get(key) == value for key, value in match.items())]
+
+
+def _bis(world, bedingung, versuche: int = 300):
+    """Geraetekern und Worker abarbeiten, bis der Hintergrund fertig ist (echter Thread, kurze Pausen)."""
+    for _ in range(versuche):
+        world.run()
+        if (wert := bedingung()):
+            return wert
+        time.sleep(0.01)
+    raise AssertionError("Hintergrund-Aufruf nicht fertig geworden")
+
+
+def _geraete_thread_arbeitet_weiter(world, gestartet: threading.Event, starten) -> None:
+    """Startet den Befehl; waehrend sein Treiber-Aufruf blockiert, verarbeitet der Geraetekern down/setpoints (die
+    Laufzeit bekommt ihre Antwort) und eine Bedienung (Ergebnis geht hoch)."""
+    begonnen = time.monotonic()
+    starten()
+    assert gestartet.wait(2.0)
+    world.answer(LEVERS)
+    world.bedienung_senden(bedienung(21.0), 1)
+    assert time.monotonic() - begonnen < FREIGABE_SPAETESTENS / 2  # nichts hat auf den Treiber gewartet
+    assert world.result.store.state.delivery.pending is None  # down/setpoints verarbeitet
+    assert _ergebnisse(world, dokument="bedienung", version=1)[-1]["ok"] is True
+
+
+def test_a_blocking_probe_does_not_stall_the_device_thread(regelnde_welt, monkeypatch):
+    world = regelnde_welt
+    original = SimulationDriver.probe
+    gestartet, frei = _blockieren(monkeypatch, "smartheat_gateway.drivers.simulation.SimulationDriver.probe", original)
+    _geraete_thread_arbeitet_weiter(
+        world, gestartet, lambda: _befehl(world, "c-probe", "driver_probe", {"driver_id": "simulation"}))
+    assert _ergebnisse(world, command_id="c-probe") == []  # Ergebnis erst, wenn der Aufruf fertig ist
+    frei.set()
+    ergebnis = _bis(world, lambda: _ergebnisse(world, command_id="c-probe"))[-1]
+    assert ergebnis["ok"] is True and ergebnis["result"]["driver_id"] == "simulation"
+    assert all("sicherheitswarnungen" in kandidat for kandidat in ergebnis["result"]["kandidaten"])
+
+
+def test_a_blocking_login_does_not_stall_the_device_thread_and_keeps_its_contract_reason(regelnde_welt, monkeypatch):
+    world = regelnde_welt
+
+    def abgelehnt(self, params):
+        raise DriverError("login_fehlgeschlagen", "Der Anmelde-Code ist abgelaufen.")
+
+    gestartet, frei = _blockieren(
+        monkeypatch, "smartheat_gateway.drivers.vicare_cloud.driver.ViCareCloudDriver.login_finish", abgelehnt)
+    payload = {"phase": "finish", "driver_id": "vicare_cloud", "code": "abc", "redirect_uri": "https://portal.test/cb"}
+    _geraete_thread_arbeitet_weiter(world, gestartet, lambda: _befehl(world, "c-login", "driver_login", payload))
+    assert _ergebnisse(world, command_id="c-login") == []
+    frei.set()
+    ergebnis = _bis(world, lambda: _ergebnisse(world, command_id="c-login"))[-1]
+    assert ergebnis["ok"] is False
+    assert ergebnis["error"] == {"grund": "login_fehlgeschlagen", "text": "Der Anmelde-Code ist abgelaufen."}
+
+
+def test_a_blocking_inventory_sample_does_not_stall_the_device_thread(regelnde_welt, monkeypatch):
+    world = regelnde_welt
+    original = SimulationDriver.inventory_sample
+    gestartet, frei = _blockieren(
+        monkeypatch, "smartheat_gateway.drivers.simulation.SimulationDriver.inventory_sample", original)
+    _geraete_thread_arbeitet_weiter(world, gestartet, lambda: _befehl(world, "c-inv", "inventory", {"stunden": 1}))
+    assert json.loads(world.paths.inventur.read_text())["samples"] == []  # die Probe laeuft noch
+    frei.set()
+    _bis(world, lambda: json.loads(world.paths.inventur.read_text())["samples"])  # eingesammelt im naechsten Takt
+    for anzahl in (2, 3, 4):  # Proben bei 900, 1800 und 2700 s, jede im Hintergrund
+        world.advance(befehle.INVENTORY_EVERY_SECONDS)
+        _bis(world, lambda: len(json.loads(world.paths.inventur.read_text())["samples"]) == anzahl)  # noqa: B023
+    world.advance(befehle.INVENTORY_EVERY_SECONDS)  # 3600 s: Fenster zu, Ergebnis
+    ergebnis = _bis(world, lambda: _ergebnisse(world, command_id="c-inv"))[-1]
+    assert ergebnis["ok"] is True
+    proben = world.link.of("up/inventory")[-1]["daten"]["proben"]
+    assert len(proben) == 4  # bei 0, 900, 1800 und 2700 s; bei 3600 s ist das Fenster zu
+
+
+def test_the_background_thread_is_a_daemon_and_stop_cancels_queued_calls():
+    hintergrund = befehle.Hintergrund()
+    frei = threading.Event()
+    erster = hintergrund.submit(lambda: frei.wait(FREIGABE_SPAETESTENS))
+    zweiter = hintergrund.submit(lambda: "nie")
+    threads = [t for t in threading.enumerate() if t.name.startswith(befehle.HINTERGRUND_NAME)]
+    assert threads and all(t.daemon for t in threads)  # haelt das Prozessende nie auf
+    hintergrund.stop()
+    assert zweiter.cancelled()
+    frei.set()
+    assert erster.result(timeout=2.0) is True
+    spaeter = hintergrund.submit(lambda: "nie")
+    with pytest.raises(RuntimeError):
+        spaeter.result(timeout=1.0)

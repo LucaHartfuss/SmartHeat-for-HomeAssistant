@@ -41,6 +41,15 @@ def test_not_configured_is_idle_without_status_and_room(world):
     assert world.status() is None and world.geraet.zustand.raum is None
 
 
+def test_an_operation_while_not_configured_is_not_posted_to_the_idle_worker(world, caplog):
+    world.start_runtime()
+    world.connect()
+    with caplog.at_level("WARNING"):
+        world.bedienung_senden(bedienung(21.0), 1)
+    assert world.device.bedienung()["raum_soll"] == 21.0  # gespeichert; gilt beim naechsten Start mit Regelung
+    assert "Kein Handler" not in caplog.text
+
+
 def test_a_configuration_from_the_server_restarts_into_regulation(world):
     world.start_runtime()
     world.connect()
@@ -218,6 +227,42 @@ def test_the_end_stops_the_device_and_waits_for_its_thread():
 def test_the_end_without_a_started_thread_only_stops():
     gestoppt = threading.Event()
     runtime_main.beenden(SimpleNamespace(stop=gestoppt.set), None)
+    assert gestoppt.is_set()
+
+
+class _Link:
+    def __init__(self) -> None:
+        self.stopped = False
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
+def test_the_end_also_stops_a_link_that_the_last_tick_opened_after_the_first_stop():
+    """Restpunkt 5b-D2-4 (Gateway-Seite): Device.run fuehrt nach stop() noch einen Takt aus; ein offener Port-Rueckfall
+    oder eine Rettung koennte darin einen neuen Link oeffnen. beenden stoppt nach dem Warten erneut."""
+    gestoppt = threading.Event()
+    device = SimpleNamespace(link=_Link())
+
+    def stop():
+        gestoppt.set()
+        device.link.stop()
+
+    device.stop = stop
+
+    def letzter_takt():
+        gestoppt.wait(5)
+        device.link = _Link()  # neuer Link nach dem ersten stop()
+
+    thread = threading.Thread(target=letzter_takt, daemon=True)
+    thread.start()
+    runtime_main.beenden(device, thread)
+    assert not thread.is_alive() and device.link.stopped
+
+
+def test_the_end_stops_the_background_of_the_commands():
+    gestoppt = threading.Event()
+    runtime_main.beenden(SimpleNamespace(stop=lambda: None), None, hintergrund=SimpleNamespace(stop=gestoppt.set))
     assert gestoppt.is_set()
 
 

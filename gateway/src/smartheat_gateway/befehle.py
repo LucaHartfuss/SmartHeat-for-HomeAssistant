@@ -4,12 +4,20 @@ Ausfuehrung, Gruende-Pruefung und Versand macht das Register. Gateway-Befehle: z
 driver_login, driver_probe, inventory (Treiber aus der Konfiguration, Ergebnis als up/inventory), diagnostics und
 sign_off (Markierung, dann startet die Laufzeit als "abgemeldet" neu und setzt die Anlage zurueck). hinweis und
 new_claim_code kann jedes Geraet (Geraetekern). Texte in Kundensprache, nie Geheimnisse; DriverError und
-QuotaExhausted uebersetzt fehler_uebersetzen in Vertragsgruende."""
+QuotaExhausted uebersetzt fehler_uebersetzen in Vertragsgruende.
+
+Blockierende Treiber-Aufrufe (Cloud-HTTP: Anmeldung, Probe, Inventur-Probe; mit Token-Erneuerung und 401-Wiederholung
+bis 80 s) laufen im Hintergrund (ein eigener Daemon-Thread je Kontext), nicht im Geraete-Thread: der Handler liefert
+Waiting, dessen check im Geraete-Thread nur das Future liest. Sonst stuenden down/setpoints, Dokumente und hello still,
+und die Laufzeit liefe nach zwei Ack-Timeouts in den Notbetrieb (bis 0.5.0 lief das im Agenten-Prozess)."""
 import functools
 import logging
+import queue
+import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from concurrent.futures import Future
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from smartheat_device import wire
@@ -37,6 +45,57 @@ QUOTA_TEXT = "Das Abfrage-Kontingent beim Hersteller ist erschöpft, später ern
 NOT_SET_UP_TEXT = "Das Gateway ist nicht eingerichtet."
 DRIVER_UNKNOWN_TEXT = "Dieser Hersteller-Zugang wird vom Gateway nicht unterstützt."
 ZIGBEE_TEXT = "Der Zigbee-Stick ist nicht bereit. Bitte prüfen, ob er eingesteckt ist."
+DRIVER_TIMEOUT_TEXT = "Der Hersteller-Zugang hat nicht rechtzeitig geantwortet, später erneut versuchen."
+HINTERGRUND_NAME = "befehle-hintergrund"
+
+
+class Hintergrund:
+    """Ein Arbeits-Thread fuer blockierende Treiber-Aufrufe (der Reihe nach, wie bis 0.5.0 im Agenten). Daemon: ein
+    laufender Aufruf haelt das Prozessende (Neustart, SIGTERM) nie auf; ThreadPoolExecutor wartet beim Beenden auf
+    seine Threads. Der Thread startet beim ersten Aufruf. stop() bricht wartende Aufrufe ab; ein laufender endet
+    selbst (Zeitgrenzen der Treiber), sein Ergebnis liest niemand mehr."""
+
+    def __init__(self) -> None:
+        self._queue: queue.SimpleQueue = queue.SimpleQueue()
+        self._lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self._stopped = False
+
+    def submit(self, call: Callable[[], object]) -> Future:
+        future: Future = Future()
+        with self._lock:
+            if self._stopped:
+                future.set_exception(RuntimeError("Hintergrund der Befehle ist gestoppt"))
+                return future
+            if self._thread is None:
+                self._thread = threading.Thread(target=self._run, name=HINTERGRUND_NAME, daemon=True)
+                self._thread.start()
+            self._queue.put((future, call))
+        return future
+
+    def stop(self) -> None:
+        with self._lock:
+            self._stopped = True
+            while True:
+                try:
+                    future, _ = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                future.cancel()
+            if self._thread is not None:
+                self._queue.put(None)
+
+    def _run(self) -> None:
+        while (item := self._queue.get()) is not None:
+            future, call = item
+            if not future.set_running_or_notify_cancel():
+                continue
+            try:
+                result = call()
+            except BaseException as error:  # das Future traegt die Ausnahme; check() wirft sie im Geraete-Thread
+                future.set_exception(error)
+            else:
+                future.set_result(result)
 
 
 @dataclass
@@ -49,6 +108,7 @@ class Kontext:
     diagnostics: Callable[[], dict] = dict
     clock: Callable[[], float] = time.monotonic
     wall: Callable[[], float] = time.time
+    hintergrund: Hintergrund = field(default_factory=Hintergrund)
 
 
 Handler = Callable[[Kontext, dict], Outcome]
@@ -94,6 +154,28 @@ def _driver(ctx: Kontext, driver_id, parameter: dict | None = None) -> Driver:
     return registry.create(driver_id, parameter or {}, ctx.paths, clock=ctx.clock, writer=False)
 
 
+def _im_hintergrund(ctx: Kontext, kind: str, call: Callable[[], Done | Failed]) -> Outcome:
+    """Blockierender Aufruf im Hintergrund; check() im Geraete-Thread liest nur das Future. Eine Ausnahme des Aufrufs
+    wirft check() erneut, das Register uebersetzt sie wie bisher (fehler_uebersetzen). Antwortet der Treiber bis zur
+    Frist des Befehls (wire, expires) nicht, endet der Befehl mit anlage_nicht_erreichbar. Ist der Aufruf sofort fertig,
+    kommt das Ergebnis direkt."""
+    future = ctx.hintergrund.submit(call)
+    expires = wire.COMMANDS[kind].expires_seconds
+    assert expires is not None, kind
+    frist = ctx.clock() + expires
+
+    def check() -> Done | Failed | None:
+        if not future.done():
+            if ctx.clock() >= frist:
+                future.cancel()
+                return Failed("anlage_nicht_erreichbar", DRIVER_TIMEOUT_TEXT)
+            return None
+        return future.result()
+
+    sofort = check()
+    return sofort if sofort is not None else Waiting(check, frist)
+
+
 def _zigbee_not_ready(ctx: Kontext) -> Failed | None:
     if ctx.mirror.online is not True:
         return Failed("zigbee_nicht_bereit", ZIGBEE_TEXT)
@@ -137,18 +219,27 @@ def driver_login(ctx: Kontext, payload: dict) -> Outcome:
     driver = _driver(ctx, payload.get("driver_id"))
     if type(driver).login_kind is None:
         raise DriverError("login_nicht_noetig", "Für diesen Zugang ist keine Anmeldung nötig.")
-    if phase == "begin":
-        return Done(driver.login_begin(payload))
-    driver.login_finish(payload)
-    return Done({})
+
+    def anmelden() -> Done:
+        if phase == "begin":
+            return Done(driver.login_begin(payload))
+        driver.login_finish(payload)
+        return Done({})
+
+    return _im_hintergrund(ctx, "driver_login", anmelden)
 
 
 @_handler("driver_probe")
 def driver_probe(ctx: Kontext, payload: dict) -> Outcome:
-    result = _driver(ctx, payload.get("driver_id")).probe()
-    for candidate in result["kandidaten"]:
-        candidate["sicherheitswarnungen"] = safety_warnings.compute(candidate)
-    return Done(result)
+    driver = _driver(ctx, payload.get("driver_id"))
+
+    def pruefen() -> Done:
+        result = driver.probe()
+        for candidate in result["kandidaten"]:
+            candidate["sicherheitswarnungen"] = safety_warnings.compute(candidate)
+        return Done(result)
+
+    return _im_hintergrund(ctx, "driver_probe", pruefen)
 
 
 def forget_inventory(paths: Paths) -> None:
@@ -175,21 +266,31 @@ def inventory(ctx: Kontext, payload: dict) -> Outcome:
     deadline_in = min(max(series["started"] + hours * 3600 - ctx.wall(), 0), hours * 3600)
     ready_at = ctx.clock() + deadline_in
     last_failure = Failed("anlage_nicht_erreichbar", INVENTORY_NO_SAMPLES_TEXT)  # nur fuer eine Reihe ohne Probe
+    laufend: Future | None = None  # Probe im Hintergrund
 
     def check() -> Done | Failed | None:
-        nonlocal last_failure
+        nonlocal last_failure, laufend
         if not _adopt_saved(ctx, series):  # Reihe weg oder ersetzt (Abmelden, Aufraeumen): nichts mehr abrufen
+            if laufend is not None:
+                laufend.cancel()
             return Failed("anlage_nicht_erreichbar", INVENTORY_ABORTED_TEXT)
         now = ctx.wall()
-        if now >= series["next_at"] and now < series["started"] + hours * 3600:
+        if laufend is None and series["next_at"] <= now < series["started"] + hours * 3600:
+            # Zeitpunkt zuerst in der Datei belegen: ein zweiter wartender Befehl derselben Reihe ruft ihn nicht ab.
+            series["next_at"] = now + INVENTORY_EVERY_SECONDS
+            write_json(ctx.paths.inventur, series, private=True)
+            laufend = ctx.hintergrund.submit(driver.inventory_sample)
+        if laufend is not None:
+            if not laufend.done():
+                return None  # auch am Fensterende: die letzte Probe gehoert noch dazu
+            probe, laufend = laufend, None
             try:
-                series["samples"].append(driver.inventory_sample())
+                series["samples"].append(probe.result())
             except (DriverError, QuotaExhausted) as error:
                 # Eine einzelne Probe (5xx, Zeitueberschreitung, 429) beendet die Reihe nicht; nur der Typname ins Log.
                 logger.warning("Inventur-Probe uebersprungen (%s)", type(error).__name__)
                 last_failure = (Failed(error.grund, error.text) if isinstance(error, DriverError)
                                 else Failed("kontingent_erschoepft", QUOTA_TEXT))
-            series["next_at"] = now + INVENTORY_EVERY_SECONDS
             write_json(ctx.paths.inventur, series, private=True)
         if ctx.clock() < ready_at:
             return None

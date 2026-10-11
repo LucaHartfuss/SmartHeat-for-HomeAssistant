@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from configs import THERMOSTAT
 from fake_vicare.server import GOOD_CODE, FakeVicare
-from fakes import FakeBus
+from fakes import FakeBus, SofortHintergrund
 
 from smartheat_gateway.drivers.vicare_cloud.driver import ViCareCloudDriver
 from smartheat_gateway.paths import Paths
@@ -91,6 +91,7 @@ def vicare_kontext(data_dir, clock, monkeypatch):
     konf = konfiguration(bindung={"treiber": {"id": "vicare_cloud", "parameter": VICARE_PARAMETER},
                                   "thermostat": THERMOSTAT})
     context = befehle.Kontext(paths, mirror, konfiguration=lambda: konf, runtime_status=lambda: None,
-                              neustart=lambda: None, clock=clock, wall=lambda: 1_000_000 + clock())
+                              neustart=lambda: None, clock=clock, wall=lambda: 1_000_000 + clock(),
+                              hintergrund=SofortHintergrund())
     yield context, server, clock
     server.stop()
