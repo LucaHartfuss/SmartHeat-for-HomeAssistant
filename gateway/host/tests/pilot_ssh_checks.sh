@@ -18,12 +18,13 @@ sed -i "s/^SHA256_$arch=.*/SHA256_$arch=$(sha256sum /tmp/cloudflared-test.deb | 
 printf 'test-token-AAAAAAAAAAAAAAAAAAAAAAAAAAAA\n' >/tmp/token
 TUNNEL=("$COPY/host/pilot_ssh_tunnel.sh")
 
-# 0. Die Pin-Datei im Repo hat fuer beide Architekturen einen SHA-256 und dieselbe Version wie das Gateway-Image
+# 0. Die Pin-Datei im Repo hat fuer beide Architekturen einen SHA-256 und eine Release-Version. Ab Gateway 0.6.0 (Spec 5b
+# 5.3) enthaelt das Gateway-Image kein cloudflared mehr; die Pin-Datei ist die einzige Quelle der Version.
 for a in arm64 amd64; do
   grep -Eq "^SHA256_$a=[0-9a-f]{64}$" /src/gateway/host/cloudflared.pin || fail "Pin SHA256_$a fehlt oder ist kein SHA-256"
 done
-grep -q "cloudflare/cloudflared:$(sed -n 's/^VERSION=//p' /src/gateway/host/cloudflared.pin)@" /src/gateway/Dockerfile \
-  || fail "cloudflared-Version in der Pin-Datei weicht vom Gateway-Image ab"
+grep -Eq '^VERSION=[0-9]{4}\.[0-9]+\.[0-9]+$' /src/gateway/host/cloudflared.pin \
+  || fail "cloudflared-Version in der Pin-Datei fehlt oder ist keine Release-Version"
 # 1. Falsches Paket (Pin passt nicht) wird abgelehnt
 cp /tmp/cloudflared-test.deb /tmp/falsch.deb && printf 'x' >>/tmp/falsch.deb
 bash "${TUNNEL[@]}" install --token-file /tmp/token --deb /tmp/falsch.deb --no-activate >/tmp/t0.log 2>&1 \

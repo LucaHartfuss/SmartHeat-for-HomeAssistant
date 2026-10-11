@@ -1,4 +1,5 @@
-# cloudflared fuer den Pilot-SSH-Tunnel (Plan G2b-2 Task 8): dieselbe Version wie im Gateway-Image (gateway/Dockerfile).
+# cloudflared fuer den Pilot-SSH-Tunnel (Plan G2b-2 Task 8). Bis Gateway 0.5.0 dieselbe Version wie im Gateway-Image; ab
+# 0.6.0 (Spec 5b 5.3) hat das Image kein cloudflared mehr, diese Datei ist die einzige Quelle.
 # Quelle: https://github.com/cloudflare/cloudflared/releases/download/<VERSION>/cloudflared-linux-<arch>.deb
 VERSION=2025.8.1
 SHA256_arm64=402cb9e2c1c4352f9ca24a0fab95c888d9e62a5433307a29ced40e503e5f5c6e
