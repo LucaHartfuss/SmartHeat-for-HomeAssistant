@@ -4,9 +4,11 @@ Worker. Der Soll-Speicher schreibt, der Debouncer beendet die Eingabe (Gateway 1
 HA-Trigger mit for: 10 s). Erst dann geht ein Wunsch einmal an den Geraetekern (begrenzt auf den Bedienbereich); der
 begrenzte Wert gilt sofort und wird an die Soll-Quelle zurueckgeschrieben, danach EV_LOCAL_CHECK(room_target_fired).
 Eine lokale Eingabe gleicht die Soll-Quelle zusaetzlich an. Soll-Quelle aus (Modus off oder ein Soll bis
-FROSTSCHUTZ_BIS): kein Wunsch, Meldung ueber soll_quelle_aus, eine neue Bedienung wird nicht geschrieben; wieder an:
+FROSTSCHUTZ_BIS): kein Wunsch, auch eine lokale Eingabe wird verworfen (5c F/Q3), Meldung ueber soll_quelle_aus, eine
+neue Bedienung wird nicht geschrieben; wieder an:
 das geltende Soll geht an die Quelle, sofern sie etwas anderes zeigt (Echo-Fenster, offener Schreibbefehl). Die
 Quelle selbst (Zigbee, HA-Entity) liefert der Host ueber SollQuelle."""
+import logging
 from collections.abc import Callable
 from typing import Protocol
 
@@ -14,6 +16,8 @@ from smartheat_runtime.debounce import Debouncer
 from smartheat_runtime.runtime import EV_LOCAL_CHECK
 from smartheat_runtime.soll_speicher import SOURCE_LOKAL, SOURCE_PORTAL, TargetStore
 from smartheat_runtime.worker import Event, RegulationWorker
+
+logger = logging.getLogger(__name__)
 
 EV_TARGET_INPUT = "shg_target_input"
 EV_SOLL_MODUS = "shg_soll_modus"
@@ -105,6 +109,9 @@ class SollEingang:
             if not self._aus and self._store.value != vorher:
                 self._schreiben(self._store.value)
         elif source == SOURCE_LOKAL:
+            if self._aus:
+                logger.info("Lokaler Wunsch verworfen: die Soll-Quelle ist aus (Spec 5c F/Q3)")
+                return
             if not self._store.apply_lokal(value):
                 return
             self._wunsch_offen = self._lokal_offen = True

@@ -136,14 +136,19 @@ def test_stale_source_report_after_clamped_write_back_is_no_wish(tmp_path):
     assert len(a.wuensche) == 1 and a.store.value == 15.0
 
 
-def test_local_wish_while_source_is_off_still_reaches_the_core_but_is_not_written_to_the_source(tmp_path):
+def test_local_wish_while_source_is_off_is_discarded(tmp_path):
+    """5c F/Q3 (2026-10-12): wie der Drehwert am ausgeschalteten Zigbee-Thermostat des Gateways: kein Wunsch, kein
+    Schreiben, kein Drift zwischen Soll-Speicher und Thermostat; der Hinweis soll_quelle_aus bleibt."""
     a = Aufbau(tmp_path)
     a.worker.post(Event(EV_SOLL_MODUS, {"mode": "off"}))
     a.worker.run_pending()
-    assert a.aus == [(True, 21.0)]
-    a.post(22.0, SOURCE_LOKAL, herkunft="smartheat_entity")
-    assert a.wuensche == [(22.0, "smartheat_entity", None)] and a.store.value == 22.0
-    assert a.quelle.geschrieben == [] and a.aus == [(True, 21.0)]  # kein neuer Aus-Wechsel
+    a.post(22.0, SOURCE_LOKAL, herkunft="smartheat_entity", durch="automation")
+    assert a.wuensche == [] and a.store.value == 21.0 and a.quelle.geschrieben == []
+    assert a.aus == [(True, 21.0)] and a.checks == []
+    a.quelle.wert = 21.0
+    a.worker.post(Event(EV_SOLL_MODUS, {"mode": "heat"}))
+    a.worker.run_pending()
+    assert a.wuensche == [] and a.store.value == 21.0  # nach dem Einschalten kommt nichts nach
 
 
 def test_repeated_identical_local_wish_is_not_repeated(tmp_path):
