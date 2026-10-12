@@ -21,8 +21,8 @@ class SupervisorApi:
         return self._get("/host/info")
 
     def discovery_anmelden(self, config: dict) -> str:
-        """POST /discovery (Dienst smartheat); Antwort: UUID der Meldung. Ob HA daraufhin den Flow der Integration
-        startet, bestaetigt die Probe auf einer echten HA-OS-Instanz (W Teil A, noch offen)."""
+        """POST /discovery (Dienst smartheat); Antwort: UUID der Meldung. HA startet daraufhin den Flow der Integration;
+        eine schon vorhandene Meldung dieses Add-ons ersetzt der Supervisor unter derselben UUID (Probe W Teil A)."""
         response = requests.post(f"{self._base}/discovery", json={"service": "smartheat", "config": config},
                                  headers=self._headers, timeout=TIMEOUT_SECONDS)
         response.raise_for_status()
@@ -35,6 +35,6 @@ class SupervisorApi:
 
     def discovery_entfernen(self, uuid: str) -> None:
         response = requests.delete(f"{self._base}/discovery/{uuid}", headers=self._headers, timeout=TIMEOUT_SECONDS)
-        # 404 (neuere) und 400 (aeltere Supervisor-Versionen) fuer eine unbekannte UUID: die Meldung ist schon weg
+        # 404 (Supervisor 2026.09.3, Probe W Teil A) und 400 (aeltere Versionen) fuer eine unbekannte UUID: schon weg
         if response.status_code not in (200, 400, 404):
             response.raise_for_status()

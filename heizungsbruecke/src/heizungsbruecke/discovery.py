@@ -1,14 +1,16 @@
 """Supervisor-Discovery des Add-ons (Spec 5c 1.1): meldet der HA-Instanz Geraete-ID, Uebernahmestand (gesperrt bei
 Sperre) und - solange das Geraet nicht uebernommen ist - den Uebernahme-Code; HA startet daraufhin den Assistenten der
-Integration (async_step_hassio). Die Daten bleiben in der Instanz (Supervisor <-> Core). Die Probe auf einer echten
-HA-OS-Instanz (startet die Meldung den Flow der HACS-Integration?) steht noch aus (W Teil A); scheitert sie, wechselt
-dieses Modul auf die Variante "Ereignis" (HA-Ereignis smartheat_discovery mit denselben Feldern).
+Integration (async_step_hassio). Die Daten bleiben in der Instanz (Supervisor <-> Core). Belegt durch die Probe auf
+einer echten HA-OS-Instanz (W Teil A, 2026-10-12, Spec 5c §8): die Meldung startet den Flow der Integration aus
+custom_components; der Supervisor haelt eine Meldung je Add-on und Dienst und ersetzt sie bei einem neuen POST unter
+derselben UUID.
 
-Neu gemeldet wird nur bei einer Aenderung; die vorige Meldung (auch die eines frueheren Prozesses, UUID in
-discovery.json) wird danach entfernt - gelingt das nicht, bleibt sie vorgemerkt und wird erneut versucht, damit kein
-alter Code im Supervisor stehen bleibt. Wirft nie. Ein Fehler wird fruehestens nach RETRY_SECONDS wiederholt (der
-Aufruf kommt im Sekundentakt des Geraets; der Supervisor wird nicht bestuermt, das Log nicht gefuellt), eine geaenderte
-Meldung geht sofort hinaus. Der Code steht nie im Log und nie in discovery.json (Regel 6)."""
+Neu gemeldet wird nur bei einer Aenderung; vergibt der Supervisor dabei eine neue UUID (die alte Meldung war verloren),
+wird die vorige (auch die eines frueheren Prozesses, UUID in discovery.json) danach entfernt - gelingt das nicht,
+bleibt sie vorgemerkt und wird erneut versucht, damit kein alter Code im Supervisor stehen bleibt. Wirft nie. Ein
+Fehler wird fruehestens nach RETRY_SECONDS wiederholt (der Aufruf kommt im Sekundentakt des Geraets; der Supervisor
+wird nicht bestuermt, das Log nicht gefuellt), eine geaenderte Meldung geht sofort hinaus. Der Code steht nie im Log
+und nie in discovery.json (Regel 6)."""
 import logging
 import time
 from collections.abc import Callable
