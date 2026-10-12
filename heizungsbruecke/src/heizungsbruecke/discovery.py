@@ -22,6 +22,7 @@ DIENST = "smartheat"
 FIELDS = ("geraet_id", "zustand", "claim_code")
 NICHT_UEBERNOMMEN = "nicht_uebernommen"
 RETRY_SECONDS = 60
+MAX_ENTFERNEN_VERSUCHE = 10  # danach gilt eine nicht entfernbare alte Meldung als weg (einmal im Log)
 
 
 class Discovery:
@@ -35,6 +36,9 @@ class Discovery:
         self._uuid: str | None = stored.get("uuid") if isinstance(stored.get("uuid"), str) else None
         veraltet = stored.get("entfernen")
         self._veraltet: list[str] = [u for u in veraltet if isinstance(u, str)] if isinstance(veraltet, list) else []
+        versuche = stored.get("versuche")
+        self._versuche: dict[str, int] = ({u: n for u, n in versuche.items() if isinstance(n, int)}
+                                          if isinstance(versuche, dict) else {})
 
     def aktualisieren(self, geraet_id: str, zustand: str | None, claim_code: str | None) -> None:
         config = {"geraet_id": geraet_id, "zustand": zustand or "startet"}
@@ -66,18 +70,31 @@ class Discovery:
         self._speichern()
 
     def _aufraeumen(self) -> None:
+        """Entfernt vorgemerkte alte Meldungen. Eine, die sich nicht entfernen laesst, haelt die uebrigen nicht auf; nach
+        MAX_ENTFERNEN_VERSUCHEN Fehlschlaegen wird sie aufgegeben (der Supervisor kennt sie evtl. nicht mehr)."""
         if self._clock() < self._aufraeumen_ab:
             return
+        vorher = (list(self._veraltet), dict(self._versuche))
+        gescheitert = False
         for uuid in list(self._veraltet):
             try:
                 self._supervisor.discovery_entfernen(uuid)
             except Exception as error:
-                self._aufraeumen_ab = self._clock() + RETRY_SECONDS
-                logger.warning("Alte Discovery nicht entfernt (%s), neuer Versuch in %d s", type(error).__name__,
-                               RETRY_SECONDS)
-                break
+                gescheitert = True
+                n = self._versuche[uuid] = self._versuche.get(uuid, 0) + 1
+                if n < MAX_ENTFERNEN_VERSUCHE:
+                    logger.warning("Alte Discovery nicht entfernt (%s), neuer Versuch in %d s", type(error).__name__,
+                                   RETRY_SECONDS)
+                    continue
+                logger.warning("Alte Discovery nicht entfernt (%s), nach %d Versuchen aufgegeben",
+                               type(error).__name__, n)
             self._veraltet.remove(uuid)
-        self._speichern()
+            self._versuche.pop(uuid, None)
+        if gescheitert:
+            self._aufraeumen_ab = self._clock() + RETRY_SECONDS
+        if (self._veraltet, self._versuche) != vorher:
+            self._speichern()
 
     def _speichern(self) -> None:
-        write_json(self._pfad, {"uuid": self._uuid, "entfernen": self._veraltet}, private=True)
+        write_json(self._pfad, {"uuid": self._uuid, "entfernen": self._veraltet, "versuche": self._versuche},
+                   private=True)

@@ -71,6 +71,12 @@ def test_discovery_entfernen_deletes_and_tolerates_404(monkeypatch):
     supervisor.SupervisorApi(token="t").discovery_entfernen("u-1")
 
 
+@pytest.mark.parametrize("status", [200, 400, 404])
+def test_discovery_entfernen_counts_an_unknown_uuid_as_removed(monkeypatch, status):
+    monkeypatch.setattr(requests, "delete", lambda url, **kw: Response({}, status=status))
+    supervisor.SupervisorApi(token="t").discovery_entfernen("u-1")
+
+
 def test_discovery_entfernen_other_errors_raise(monkeypatch):
     monkeypatch.setattr(requests, "delete", lambda url, **kw: Response({}, status=500))
     with pytest.raises(requests.HTTPError):

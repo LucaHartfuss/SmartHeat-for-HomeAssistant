@@ -35,5 +35,6 @@ class SupervisorApi:
 
     def discovery_entfernen(self, uuid: str) -> None:
         response = requests.delete(f"{self._base}/discovery/{uuid}", headers=self._headers, timeout=TIMEOUT_SECONDS)
-        if response.status_code not in (200, 404):
+        # 404 (neuere) und 400 (aeltere Supervisor-Versionen) fuer eine unbekannte UUID: die Meldung ist schon weg
+        if response.status_code not in (200, 400, 404):
             response.raise_for_status()

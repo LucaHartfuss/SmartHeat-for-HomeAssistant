@@ -12,6 +12,7 @@ CODE = "ABCDEFGHIJKL"
 class Supervisor:
     def __init__(self):
         self.posts, self.deletes, self.fail, self.fail_delete, self.fixed_uuid = [], [], False, False, None
+        self.stale = set()  # UUIDs, deren Entfernen immer scheitert
         self.post_calls = self.delete_calls = 0
 
     def discovery_anmelden(self, config):
@@ -23,7 +24,7 @@ class Supervisor:
 
     def discovery_entfernen(self, uuid):
         self.delete_calls += 1
-        if self.fail_delete:
+        if self.fail_delete or uuid in self.stale:
             raise OSError("weg")
         self.deletes.append(uuid)
 
@@ -148,6 +149,64 @@ def test_an_old_entry_that_cannot_be_removed_is_retried_and_survives_a_restart(t
     neu.aktualisieren("shg-a", "uebernommen", None)
     assert supervisor.deletes == ["uuid-1", "uuid-2"]  # die vorgemerkte und die des frueheren Prozesses
     assert json.loads((tmp_path / "discovery.json").read_text())["entfernen"] == []
+
+
+def _queue(tmp_path, *uuids):
+    (tmp_path / "discovery.json").write_text(json.dumps({"uuid": "aktuell", "entfernen": list(uuids)}))
+
+
+def test_a_stale_uuid_does_not_block_the_ones_behind_it(tmp_path):
+    supervisor = Supervisor()
+    supervisor.stale = {"alt-1"}
+    _queue(tmp_path, "alt-1", "alt-2")
+    d, _ = _discovery(tmp_path, supervisor)
+    d.aktualisieren("shg-a", "uebernommen", None)
+    assert supervisor.deletes == ["alt-2", "aktuell"]
+    stored = json.loads((tmp_path / "discovery.json").read_text())
+    assert stored["entfernen"] == ["alt-1"]
+
+
+def test_an_unremovable_uuid_is_dropped_after_the_limit_with_one_log_line(tmp_path, caplog):
+    supervisor = Supervisor()
+    supervisor.stale = {"alt-1"}
+    _queue(tmp_path, "alt-1")
+    d, clock = _discovery(tmp_path, supervisor)
+    for _ in range(discovery.MAX_ENTFERNEN_VERSUCHE + 5):
+        d.aktualisieren("shg-a", "uebernommen", None)
+        clock.advance(discovery.RETRY_SECONDS)
+    alt_calls = supervisor.delete_calls
+    assert alt_calls == discovery.MAX_ENTFERNEN_VERSUCHE + 1  # + die eigene Vorgaengermeldung "aktuell"
+    assert sum("aufgegeben" in r.getMessage() for r in caplog.records) == 1
+    stored = json.loads((tmp_path / "discovery.json").read_text())
+    assert stored["entfernen"] == [] and stored["versuche"] == {}
+
+
+def test_the_attempt_count_survives_a_restart(tmp_path):
+    supervisor = Supervisor()
+    supervisor.stale = {"alt-1"}
+    _queue(tmp_path, "alt-1")
+    d, clock = _discovery(tmp_path, supervisor)
+    d.aktualisieren("shg-a", "uebernommen", None)
+    neu, _ = _discovery(tmp_path, supervisor)
+    assert neu._versuche == {"alt-1": 1}
+
+
+def test_the_state_file_is_only_rewritten_when_the_queue_changes(tmp_path, monkeypatch):
+    supervisor = Supervisor()
+    supervisor.stale = {"alt-1"}
+    _queue(tmp_path, "alt-1")
+    d, clock = _discovery(tmp_path, supervisor)
+    d.aktualisieren("shg-a", "uebernommen", None)
+    writes = []
+    monkeypatch.setattr(discovery, "write_json", lambda *a, **kw: writes.append(a))
+    d._aufraeumen()  # Pause: nichts
+    clock.advance(discovery.RETRY_SECONDS)
+    d.aktualisieren("shg-a", "uebernommen", None)  # Versuch zaehlt hoch: aendert den Stand
+    assert len(writes) == 1
+    supervisor.fail_delete = False
+    d._veraltet.clear()
+    d._aufraeumen()  # leere Warteschlange: kein Schreiben
+    assert len(writes) == 1
 
 
 def test_a_corrupt_state_file_counts_as_empty(tmp_path):
