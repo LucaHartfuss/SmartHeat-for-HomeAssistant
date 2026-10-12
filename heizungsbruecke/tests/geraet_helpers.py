@@ -63,9 +63,10 @@ class _NullSink:
 class FakeGeraet:
     """Attrappe des Geraete-Hosts (Task 6): haelt Konfiguration, Bedienung, Abo, gesammelte Wuensche und Status."""
 
-    def __init__(self, konfiguration, *, bedienung=None, abo=entitlement.ACTIVE, ha=None):
-        self._konfiguration, self._bedienung, self._abo = konfiguration, bedienung, abo
+    def __init__(self, konfiguration, *, bedienung=None, dirty=False, abo=entitlement.ACTIVE, ha=None):
+        self._konfiguration, self._bedienung, self._dirty, self._abo = konfiguration, bedienung, dirty, abo
         self.wuensche, self.aus, self.status = [], [], []
+        self.raum = None
         self.sent = Sent()
         self.channel = None
         self.status_sink = self
@@ -76,7 +77,7 @@ class FakeGeraet:
         return self._konfiguration
 
     def bedienung(self):
-        return self._bedienung, False
+        return self._bedienung, self._dirty
 
     def abo_status(self):
         return self._abo
@@ -90,6 +91,9 @@ class FakeGeraet:
 
     def soll_quelle_aus(self, aus, wirksam):
         self.aus.append((aus, wirksam))
+
+    def raum_merken(self, raum):
+        self.raum = raum
 
     def publish(self, event):
         self.status.append(event)

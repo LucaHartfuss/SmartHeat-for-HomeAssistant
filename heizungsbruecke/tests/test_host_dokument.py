@@ -60,20 +60,104 @@ def test_the_target_signal_is_unavailable_until_the_store_is_loaded(env):
     assert host.signals.device_key("climate.a::current_temperature") == "climate.a"
 
 
-def test_the_stored_target_wins_over_the_server_start_value(env):
+def test_the_stored_target_wins_over_the_server_start_value_while_a_local_wish_is_open(env):
     config.ROOM_TARGET_PATH.parent.mkdir(parents=True, exist_ok=True)
     config.ROOM_TARGET_PATH.write_text('{"value": 19.5, "source": "lokal", "ts": "x"}')
-    host = HaHost(FakeGeraet(konfiguration_aus_optionen(OPTIONS), bedienung={"raum_soll": 22.0}), env.ha,
+    host = HaHost(FakeGeraet(konfiguration_aus_optionen(OPTIONS), bedienung={"raum_soll": 22.0}, dirty=True), env.ha,
                   clock=env.clock)
     host.load()
     assert host.signals.get_state(dokument.SOLL_REF) == 19.5
 
 
 def test_without_a_valid_start_value_the_target_defaults(env):
+    env.ha.states[OPTIONS["entity_room_target"]] = 30.0  # ausserhalb des Bedienbereichs
     host = HaHost(FakeGeraet(konfiguration_aus_optionen(OPTIONS), bedienung={"raum_soll": 30.0}), env.ha,
                   clock=env.clock)
     host.load()
     assert host.signals.get_state(dokument.SOLL_REF) == 20.0
+
+
+@pytest.mark.parametrize(("angezeigt", "start"), [(22.5, 22.5), (21.3, 21.3), (14.5, 20.0),
+                                                  (KeyError("weg"), 20.0)])
+def test_without_stored_target_and_operation_the_store_starts_from_the_entity(env, angezeigt, start):
+    """Controller-Entscheid 3a: ohne Datei und ohne Bedienung zeigt die Soll-Entity den Start (im Bedienbereich, ohne
+    Rasterzwang: sonst wuerde das erste Lesen nach dem Verbinden den Wert als Wunsch melden)."""
+    env.ha.states[OPTIONS["entity_room_target"]] = angezeigt
+    host = HaHost(FakeGeraet(konfiguration_aus_optionen(OPTIONS)), env.ha, clock=env.clock)
+    host.load()
+    assert host.store.value == start and host.store.source == "portal"
+
+
+# --- Angleichen der Soll-Entity beim Start (Controller-Entscheid 3b, wie das Gateway) -----------------------------
+
+CLIMATE = "climate.wz"
+CLIMATE_SOLL = f"{CLIMATE}::temperature"
+
+
+def _climate_start(env, *, angezeigt, bedienung, dirty=False, modus="heat", gespeichert=None):
+    env.ha.states.update({CLIMATE: modus, CLIMATE_SOLL: angezeigt})
+    if gespeichert is not None:
+        config.ROOM_TARGET_PATH.parent.mkdir(parents=True, exist_ok=True)
+        config.ROOM_TARGET_PATH.write_text(json.dumps(gespeichert))
+    geraet = FakeGeraet(konfiguration_aus_optionen({**OPTIONS, "entity_room_target": CLIMATE_SOLL}),
+                        bedienung=bedienung, dirty=dirty)
+    host = HaHost(geraet, env.ha, clock=env.clock)
+    loaded = host.load()
+    worker = RegulationWorker(env.clock)
+    client = host.trigger_source(loaded.manifest, worker)
+    return host, geraet, worker, client
+
+
+def _erstes_lesen(env, worker, client, *, angezeigt):
+    """HA meldet beim ersten Verbinden noch den alten Wert (das Thermostat hat den neuen noch nicht uebernommen)."""
+    env.ha.states[CLIMATE_SOLL] = angezeigt
+    client.kwargs["on_connected"]()
+    worker.run_pending()
+
+
+def test_the_operation_is_written_to_the_entity_at_start_and_not_turned_into_a_wish(env):
+    host, geraet, worker, client = _climate_start(env, angezeigt=19.0, bedienung={"raum_soll": 21.5})
+    assert (CLIMATE_SOLL, 21.5) in env.ha.writes and host.store.echo_rest() > 0
+    _erstes_lesen(env, worker, client, angezeigt=19.0)
+    assert geraet.wuensche == [] and host.store.value == 21.5
+
+
+def test_an_operation_that_arrived_during_a_restart_wins_over_the_stored_value(env):
+    host, geraet, worker, client = _climate_start(
+        env, angezeigt=19.5, bedienung={"raum_soll": 22.0},
+        gespeichert={"value": 19.5, "source": "portal", "ts": "x"})
+    assert (host.store.value, host.store.source) == (22.0, "portal")
+    assert (CLIMATE_SOLL, 22.0) in env.ha.writes
+    _erstes_lesen(env, worker, client, angezeigt=19.5)
+    assert geraet.wuensche == [] and host.store.value == 22.0
+
+
+def test_a_pending_local_wish_keeps_the_stored_value_and_writes_nothing(env):
+    host, _, _, _ = _climate_start(env, angezeigt=19.5, bedienung={"raum_soll": 22.0}, dirty=True,
+                                   gespeichert={"value": 19.5, "source": "lokal", "ts": "x"})
+    assert (host.store.value, host.store.source) == (19.5, "lokal") and env.ha.writes == []
+
+
+def test_an_entity_that_already_shows_the_target_is_not_written(env):
+    host, _, _, _ = _climate_start(env, angezeigt=21.5, bedienung={"raum_soll": 21.5})
+    assert env.ha.writes == [] and host.store.echo_rest() == 0
+
+
+def test_a_switched_off_thermostat_is_not_written(env):
+    """Soll-Quelle aus (Spec 5b 3.2): keine Bedienung an die Quelle; beim Wiedereinschalten gleicht der Soll-Eingang an."""
+    host, geraet, worker, client = _climate_start(env, angezeigt=19.0, bedienung={"raum_soll": 21.5}, modus="off")
+    assert env.ha.writes == [] and host.store.echo_rest() == 0
+    _erstes_lesen(env, worker, client, angezeigt=19.0)
+    assert geraet.wuensche == [] and host.store.value == 21.5 and geraet.aus[-1] == (True, 21.5)
+
+
+def test_a_sensor_target_is_never_written(env):
+    env.ha.states[OPTIONS["entity_room_target"]] = 19.0
+    geraet = FakeGeraet(konfiguration_aus_optionen(OPTIONS), bedienung={"raum_soll": 21.5})
+    host = HaHost(geraet, env.ha, clock=env.clock)
+    loaded = host.load()
+    host.trigger_source(loaded.manifest, RegulationWorker(env.clock))
+    assert env.ha.writes == [] and host.store.echo_rest() == 0
 
 
 def test_a_document_without_a_required_role_fails_the_start_instead_of_raising_a_key_error(env):

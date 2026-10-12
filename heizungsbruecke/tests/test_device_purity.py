@@ -1,7 +1,7 @@
 """Grenzen des Geraetekerns (Spec 5b 5.1): smartheat_device importiert die Standardbibliothek, die eigenen Pakete und
 genau drei Drittpakete an genau einer Stelle (cryptography: Identitaet, paho: Link, requests: Bootstrap). wire.py ist
-reine Standardbibliothek. Der HA-Host nutzt den Geraetekern erst ab Teilprojekt 5c (bis dahin kein Einfluss auf
-client1, Spec 5b 10)."""
+reine Standardbibliothek. Ab Teilprojekt 5c ist das HA-Add-on ein Geraet: heizungsbruecke nutzt den Geraetekern
+(Geraete-Host geraet_host.py, Spec 5c 1.3); umgekehrt kennt der Geraetekern keinen Host (erste Pruefung)."""
 import ast
 import sys
 from pathlib import Path
@@ -40,11 +40,7 @@ def test_wire_is_standard_library_only():
     assert all(module.split(".")[0] in sys.stdlib_module_names for module in _imported_modules(DEVICE / "wire.py"))
 
 
-def test_the_ha_host_does_not_use_the_device_core_before_5c():
-    offenders = [
-        f"{path.relative_to(SRC)}: {module}"
-        for path in sorted((SRC / "heizungsbruecke").rglob("*.py"))
-        for module in _imported_modules(path)
-        if module.split(".")[0] == "smartheat_device"
-    ]
-    assert offenders == []
+def test_the_ha_host_uses_the_device_core_from_5c():
+    """Bis 5b verboten (kein Einfluss auf client1), ab 5c der Weg des Add-ons: der Geraete-Host baut auf dem Kern."""
+    modules = _imported_modules(SRC / "heizungsbruecke" / "geraet_host.py")
+    assert any(module.split(".")[0] == "smartheat_device" for module in modules)
