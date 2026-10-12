@@ -1,22 +1,12 @@
-"""Hostneutrale Pruefung der Laufzeit-Optionen (Plan SHG G2a, Praezisierung 1): Transport und Zugangsdaten,
-Hebelsatz und lokale Sicherheitswerte, Accounts-API, Intervalle, Hinweis-Schalter, Abmelden-Flag. Das HA-Add-on
-(heizungsbruecke.config) und das Gateway (smartheat_gateway.config) pruefen mit denselben Funktionen; Optionsnamen =
-Optionen des Add-ons bzw. Schluessel von apply_config (Spec SHG G3 2.5)."""
+"""Hostneutrale Pruefung der Laufzeit-Optionen (Plan SHG G2a, Praezisierung 1): Hebelsatz und lokale
+Sicherheitswerte, Intervalle, Hinweis-Schalter, Abmelden-Flag. Das HA-Add-on (heizungsbruecke.config) und das Gateway
+(smartheat_gateway.config) pruefen mit denselben Funktionen; Optionsnamen = Optionen des Add-ons bzw. Schluessel von
+apply_config (Spec SHG G3 2.5)."""
 import math
-import urllib.parse
 
 from smartheat_core.binding import BINDINGS, BindingDescription, with_poll_interval
 from smartheat_core.safety import LocalSafety, resolve_local_safety
 from smartheat_runtime.notifier import HINT_CATEGORIES
-from smartheat_runtime.texts import HA_TEXTS
-from smartheat_transport.connect import connect_options
-from smartheat_transport.descriptor import (
-    Credential,
-    Descriptor,
-    TransportConfigError,
-    credential_for,
-    parse_descriptor,
-)
 
 # Lokale Checks laufen eventgetrieben; dieser Takt gilt nur noch fuer den Watchdog-Fallback
 # bei getrennter WS-Verbindung (und fuer grace_check/health).
@@ -35,14 +25,6 @@ class ConfigError(ValueError):
     ungueltige Option."""
 
 
-TRANSPORT_OPTION = "transport"
-PASSWORD_CREDENTIAL_OPTIONS = ("mqtt_username", "mqtt_password")
-CERTIFICATE_CREDENTIAL_OPTIONS = ("tls_certificate", "tls_private_key")
-TOKEN_OPTION = "installation_token"
-# Werte, die nie in einem Status, einer Meldung oder einem Log erscheinen duerfen (Regel 6).
-SECRET_OPTIONS = ("mqtt_password", "tls_private_key", TOKEN_OPTION)
-
-OUTDATED_CONFIGURATION = "Konfiguration veraltet – bitte SmartHeat-Einrichtung erneut durchführen"
 RECONFIGURE_HINT = "bitte SmartHeat neu konfigurieren"
 # Plan 3b: Hebelsatz des Bindings (Option lever_set, schreibt die Integration ab Plan 3c). Fehlt sie, gilt Vaillant
 # (Bestandsanlage unveraendert, kein Verhaltenswechsel).
@@ -96,28 +78,6 @@ def is_signed_off(options: dict) -> bool:
     return options.get("abgemeldet") is True
 
 
-def resolve_transport(options: dict) -> tuple[Descriptor, Credential]:
-    """Spec AWS-IoT 5.1: Deskriptor und Zugangsdaten aus den Optionen; Zertifikat, Schluessel und CA werden
-    hier schon geladen, damit ein Widerspruch beim Start als Konfigurationsfehler auffaellt statt als
-    endlose Verbindungsfehler. Fehlt transport oder installation_token, stammt die Konfiguration von vor
-    AWS-2 (keine Kompatibilitaet: neu einrichten)."""
-    for key in (TRANSPORT_OPTION, TOKEN_OPTION):
-        if not options.get(key):
-            raise ConfigError(f"{OUTDATED_CONFIGURATION} (Option '{key}' fehlt)")
-    try:
-        descriptor = parse_descriptor(options[TRANSPORT_OPTION])
-        credential = credential_for(
-            descriptor,
-            username=options.get("mqtt_username") or None, password=options.get("mqtt_password") or None,
-            certificate_pem=options.get("tls_certificate") or None,
-            private_key_pem=options.get("tls_private_key") or None,
-        )
-        connect_options(descriptor, credential)
-    except TransportConfigError as error:
-        raise ConfigError(f"Transport bzw. Zugangsdaten: {error} – {RECONFIGURE_HINT}") from None
-    return descriptor, credential
-
-
 def local_safety(options: dict) -> LocalSafety:
     """Lokale Sicherheitswerte fuer den Hebelsatz des HA-Bindings (Option lever_set) und das Verteilsystem des Profils
     (Regel 4). Die Boost-Werte liegen per check_invariants in den Bereichen (bis 0.29.0 validate_boost_config)."""
@@ -126,19 +86,6 @@ def local_safety(options: dict) -> LocalSafety:
         return resolve_local_safety(lever_set, options.get("verteilsystem"))
     except ValueError as error:
         raise ConfigError(f"Option 'verteilsystem': {error}") from None
-
-
-def resolve_accounts_api_base_url(value, missing_hint: str = HA_TEXTS.accounts_url_missing_hint) -> str:
-    """Basis-URL der accounts-api (Abo-Status). Setzt die Integration bzw. der Gateway-Agent; https-Pflicht, weil
-    der Status ueber das Internet abgefragt wird. missing_hint kommt vom Host (HostTexts)."""
-    if not isinstance(value, str) or not value:
-        raise ConfigError(f"Option 'accounts_api_base_url' fehlt - {missing_hint}")
-    parsed = urllib.parse.urlsplit(value)
-    if parsed.scheme != "https" or not parsed.hostname:
-        raise ConfigError(
-            f"Option 'accounts_api_base_url' ({value!r}) muss mit https:// beginnen und einen Host haben"
-        )
-    return value.rstrip("/")
 
 
 def _is_finite_number(value) -> bool:

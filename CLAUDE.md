@@ -2,9 +2,9 @@
 
 Add-on-Repository: `heizungsbruecke` (ab 1.0.0 ein **SmartHeat-Gerät** für Home Assistant, wie das Gateway auf dem
 Gerätekern: Snapshot und Telemetrie, Boost, Notbetrieb, lokale Sicherheitswerte; `client1` läuft bis zum Umzug 5d noch
-auf 0.36 im Optionsmodus), `cloudflared_access_mqtt` (nur `run.sh` um `cloudflared access tcp`, bleibt bis 5e) und
-`gateway/` (SmartHeat-Gateway ohne Home Assistant, **kein** Add-on). Die Add-ons laufen auf jedem Kunden-Pi inkl.
-`client1`: Änderungen wirken real, sobald sie released sind. Die Sicherheitsregeln aus `../CLAUDE.md` gelten unverändert.
+auf 0.36 im Optionsmodus) und `gateway/` (SmartHeat-Gateway ohne Home Assistant, **kein** Add-on). Das Add-on läuft auf
+jedem Kunden-Pi inkl. `client1`: Änderungen wirken real, sobald sie released sind. Die Sicherheitsregeln aus
+`../CLAUDE.md` gelten unverändert.
 
 ## Struktur (Details: `../docs/architecture.md` §4, §5, §5a)
 
@@ -15,11 +15,13 @@ auf 0.36 im Optionsmodus), `cloudflared_access_mqtt` (nur `run.sh` um `cloudflar
   `status.py` …); dazu `soll_speicher.py` (Soll-Speicher `runtime/room_target.json`, Echo-Fenster, offener Schreibbefehl)
   und `soll_eingang.py` (Bedienung/Soll-Quelle/lokaler Wunsch, Thermostat aus, Rückschreiben), beide für Gateway **und**
   HA-Add-on; Grenzen in `tests/test_runtime_purity.py`: nie `heizungsbruecke` und nie `smartheat_device` (deshalb stehen
-  Datei-Helfer und Bedienbereich dort ein zweites Mal, ein Test hält sie gleich), `paho` nur über
-  `smartheat_transport.mqtt_client`, keine Tenant-IDs. Der Optionsmodus der Laufzeit (`options.py`, `entitlement.py`
-  Abfrage, `mqtt_link.py`) hat keinen Host mehr und bleibt bis 5e als Altpfad stehen (Restpunkt `5c-D-1`).
-- `heizungsbruecke/src/smartheat_transport/` — Transport-Deskriptor, MQTT (`mqtt_client.py` = einzige Stelle mit
-  `paho` im Optionen-Pfad; im Gerätekern nur `smartheat_device/link.py`).
+  Datei-Helfer und Bedienbereich dort ein zweites Mal, ein Test hält sie gleich), keine Drittpakete (nur
+  Standardbibliothek und eigene Pakete), keine Tenant-IDs. Der Optionsmodus (eigene MQTT-Verbindung,
+  Accounts-API-Abfrage, Transport- und Token-Optionen) ist in Phase 1 S1b entfernt; das interne Options-Dict
+  (`options.py`) bleibt bis Phase 2 M2 (Restpunkt `S1b-1`).
+- `heizungsbruecke/src/smartheat_transport/` — Transport-Deskriptor (`descriptor.py`) und TLS-Verbindungsoptionen für
+  den Link (`connect.py`); `paho` steht für die Serververbindung nur in `smartheat_device/link.py` (dazu der lokale
+  Zigbee2MQTT-Bus des Gateways, `gateway/src/smartheat_gateway/bus.py`).
 - `heizungsbruecke/src/smartheat_device/` — Gerätekern (Spec 5b): Vertragskopie `wire.py` (wörtlich aus Server
   `device_protocol.py`), Identität, Bootstrap mit Rettungsweg, die eine MQTT-Verbindung (`link.py`), Dokumentspeicher,
   Befehle, Bedienwunsch, Inventur, `hintergrund.py` (Arbeits-Thread für blockierende Befehle), `host.py` (`DeviceHost`,
@@ -53,7 +55,7 @@ Direkter Aufruf bleibt möglich: `cd heizungsbruecke && pip install -e ".[dev]" 
 
 Feature-Branches (`feat/…`/`fix/…`) zweigen von `develop` ab und werden `--no-ff` nach `develop`
 gemergt — nie direkt nach `main`. `main` bewegt sich nur per Release-Tag
-(`heizungsbruecke-vX.Y.Z`, `cloudflared_access_mqtt-vX.Y.Z` über `release.yml`, `gateway-vX.Y.Z` über
+(`heizungsbruecke-vX.Y.Z` über `release.yml`, `gateway-vX.Y.Z` über
 `release-gateway.yml`; `-dryrun`-Suffix = Probelauf) —
 ein Push nach `main` ist ein Release an alle Kunden-Pis, deren Supervisor den Default-Branch
 verfolgt. Release-Ablauf, CI-Jobs, Token: `../docs/ci-cd-runbook.md`.

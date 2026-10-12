@@ -18,7 +18,7 @@ def test_load_builds_the_runtime_from_the_document(env):
     geraet = FakeGeraet(konfiguration_aus_optionen(OPTIONS))
     host = HaHost(geraet, env.ha, clock=env.clock)
     loaded = host.load()
-    assert loaded.config.tenant_id == OPTIONS["tenant_id"] and loaded.config.descriptor is None
+    assert loaded.config.tenant_id == OPTIONS["tenant_id"]
     assert loaded.manifest.refs["room_target"] == dokument.SOLL_REF
     assert loaded.manifest.refs["curve_current"] == OPTIONS["entity_curve_current"]
     assert host.soll_entity == OPTIONS["entity_room_target"]

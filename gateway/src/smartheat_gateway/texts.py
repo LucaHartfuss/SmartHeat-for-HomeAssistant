@@ -19,5 +19,4 @@ SHG_TEXTS = HostTexts(
         "neu anmelden)."
     ),
     source_unavailable_log="Signalquelle nicht erreichbar",
-    accounts_url_missing_hint="bitte das Gateway im SmartHeat-Portal neu einrichten",
 )

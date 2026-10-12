@@ -26,6 +26,10 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
   (`sign_off` des Gateways). Für das Add-on ändert sich nichts.
 - Gerätevertrag 5c (Schema 1, additiv): HA-Bindung, Inventur-Filter und -Felder, Fehlergründe `ha_nicht_erreichbar`
   und `nicht_unterstuetzt`; ohne Wirkung auf das Add-on.
+- Intern (Phase 1 S1b): Die Laufzeit hat keine eigene MQTT-Verbindung und keine Abo-Abfrage per HTTP mehr; sie nutzt die
+  Verbindung des Geräts (`app.start(mqtt_factory=...)` ist Pflicht), den Abo-Status liefert das Konfigurationsdokument
+  (`RuntimeConfig.abo_source`). Die Transport-Optionen (Mosquitto, Passwort, Installations-Token) entfallen. Für das
+  Add-on 1.0.0 und das Gateway ändert sich nichts.
 
 ## 0.36.0
 

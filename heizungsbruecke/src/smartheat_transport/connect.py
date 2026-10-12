@@ -1,5 +1,5 @@
-"""Verbindungsoptionen fuer einen paho-Client (Spec AWS-IoT 2.4, 5.1): Passwort (Mosquitto hinter
-cloudflared) oder TLS mit CA aus dem Deskriptor, Client-Zertifikat und ALPN bei Port 443."""
+"""Verbindungsoptionen fuer einen paho-Client (Spec AWS-IoT 2.4, 5.1): TLS mit CA aus dem Deskriptor,
+Client-Zertifikat und ALPN bei Port 443."""
 import os
 import socket
 import ssl
@@ -7,7 +7,6 @@ import tempfile
 from dataclasses import dataclass, field
 
 from smartheat_transport.descriptor import (
-    CREDENTIAL_CERTIFICATE,
     CREDENTIAL_FOR_TRANSPORT,
     Credential,
     Descriptor,
@@ -23,10 +22,8 @@ CONNECT_ERROR_UNKNOWN = "unbekannt"
 class ConnectOptions:
     host: str
     port: int
-    client_id: str  # "" = paho erzeugt eine (Mosquitto); bei IoT Core der Thing-Name
-    username: str | None = None
-    password: str | None = field(default=None, repr=False)
-    ssl_context: ssl.SSLContext | None = field(default=None, repr=False)
+    client_id: str  # der Thing-Name
+    ssl_context: ssl.SSLContext = field(repr=False)
 
 
 def _write_private(path: str, content: str) -> None:
@@ -66,23 +63,18 @@ def _tls_context(descriptor: Descriptor, credential: Credential) -> ssl.SSLConte
 def connect_options(descriptor: Descriptor, credential: Credential) -> ConnectOptions:
     if credential.kind != CREDENTIAL_FOR_TRANSPORT[descriptor.kind]:
         raise TransportConfigError(f"Zugangsdaten {credential.kind!r} passen nicht zur Transportart {descriptor.kind!r}")
-    if credential.kind == CREDENTIAL_CERTIFICATE:
-        return ConnectOptions(descriptor.host, descriptor.port, descriptor.client_id or "",
-                              ssl_context=_tls_context(descriptor, credential))
-    return ConnectOptions(descriptor.host, descriptor.port, "", username=credential.username, password=credential.password)
+    return ConnectOptions(descriptor.host, descriptor.port, descriptor.client_id or "",
+                          ssl_context=_tls_context(descriptor, credential))
 
 
 def apply(client, options: ConnectOptions) -> None:
     """Anmeldung auf einen paho-Client setzen (vor connect_async)."""
-    if options.ssl_context is not None:
-        client.tls_set_context(options.ssl_context)
-    else:
-        client.username_pw_set(options.username, options.password)
+    client.tls_set_context(options.ssl_context)
 
 
 def classify_connect_error(error: BaseException | None) -> str:
-    """TLS (Zertifikat abgelehnt, Handshake abgebrochen -- bei IoT Core vermutlich auch ein gesperrtes
-    Zertifikat, Spec AN-1) vs. Netzwerk (Broker oder Tunnel nicht erreichbar). ssl.SSLError ist eine
+    """TLS (Zertifikat abgelehnt, Handshake abgebrochen -- vermutlich auch ein gesperrtes
+    Zertifikat, Spec AN-1) vs. Netzwerk (Broker nicht erreichbar). ssl.SSLError ist eine
     OSError-Unterklasse und wird deshalb zuerst geprueft."""
     if isinstance(error, ssl.SSLError):
         return CONNECT_ERROR_TLS

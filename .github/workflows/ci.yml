@@ -58,7 +58,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        addon: [heizungsbruecke, cloudflared_access_mqtt]
+        addon: [heizungsbruecke]
     name: build-aarch64 (${{ matrix.addon }})
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -96,7 +96,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        addon: [heizungsbruecke, cloudflared_access_mqtt]
+        addon: [heizungsbruecke]
     name: addon-lint (${{ matrix.addon }})
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5

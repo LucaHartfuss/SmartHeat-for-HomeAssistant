@@ -4,35 +4,28 @@ Home Assistant Add-on Repository.
 
 ## Add-ons in this repository
 
-### [Cloudflared Access TCP-Bridge](./cloudflared_access_mqtt)
-
-Makes a private, Cloudflare-Access-protected TCP service (e.g. an MQTT broker) reachable from
-inside Home Assistant OS at `127.0.0.1:<port>` — a thin wrapper around `cloudflared access tcp`.
-
 ### [Heizungsbruecke](./heizungsbruecke)
 
 Generic bridge logic: reads configured Home Assistant entities, reports them to the SmartHeat
-server over MQTT, writes setpoints back (clamped against configured safety limits), and includes
-a local boost failsafe. Requires `cloudflared_access_mqtt` to be installed (the SmartHeat
-integration checks this). With the `mosquitto_cloudflared` transport the MQTT connection goes
-through that tunnel; the address and port come from the transport descriptor the server delivers
-(option `transport`), and the integration writes the same port as `local_port` into
-`cloudflared_access_mqtt`, so neither needs to be edited by hand. With the `iot_core` transport
-the bridge connects to AWS IoT Core directly and the tunnel is stopped. Has no configuration UI
-of its own; see [Installation](#installation) below.
+server through AWS IoT Core (the bridge connects to IoT Core directly with its device
+certificate), writes setpoints back (clamped against configured safety limits), and includes a
+local boost failsafe. Has no configuration UI of its own; see [Installation](#installation)
+below.
 
 ## Installation
 
-Both add-ons in this repository are configured automatically by the separate **SmartHeat** Home
-Assistant integration -- neither needs manual setup in its Configuration tab.
+The add-on in this repository is set up by the separate **SmartHeat** Home Assistant
+integration -- it needs no manual setup in its Configuration tab. Its configuration comes as a
+document from the SmartHeat server.
 
 1. In Home Assistant: Settings -> Add-ons -> Add-on Store -> (top right) -> Repositories.
 2. Add this URL: `https://github.com/LucaHartfuss/SmartHeat-for-HomeAssistant`
-3. The add-ons appear in the store under a new "SmartHeat for Home Assistant" section. Install
-   `Cloudflared Access TCP-Bridge` and `Heizungsbruecke` -- do not configure or start either
-   manually, the integration below does that for you.
+3. The add-on appears in the store under a new "SmartHeat for Home Assistant" section. Install
+   `Heizungsbruecke` -- do not configure or start it manually, the integration below does that
+   for you.
 4. Add the SmartHeat Home Assistant integration's repository as a HACS custom repository and
    install it.
 5. In Home Assistant: Settings -> Devices & Services -> Add Integration -> "SmartHeat", and
-   complete the setup dialog there. The integration writes the configuration into both add-ons
-   and starts them automatically.
+   complete the setup dialog there. The integration starts the add-on and guides you through the
+   setup via the SmartHeat server's setup API; the server then delivers the configuration to the
+   add-on.

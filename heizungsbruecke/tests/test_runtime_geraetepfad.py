@@ -9,7 +9,7 @@ from smartheat_runtime.runtime import Runtime
 
 def test_tick_and_answer_go_over_the_device_link(env):
     bridge = _start_bridge(env)
-    assert isinstance(bridge, Runtime) and bridge.config.descriptor is None
+    assert isinstance(bridge, Runtime)
     bridge.worker.run_pending()
     _set_room_target(env, bridge, 20.5)
     (snapshot,) = env.geraet.sent.of("up/snapshot")

@@ -70,8 +70,7 @@ def runtime_config(konfiguration, *, entitlement_path: Path, abo_source: Callabl
         raise ConfigError("Konfiguration: keine Raumfühler")
     return RuntimeConfig(
         tenant_id=konfiguration["anlage"], setup_id=konfiguration["anlage"], lever_set_id=hebelsatz,
-        local_safety=safety, descriptor=None, credential=None, installation_token=None, accounts_api_base_url=None,
-        daily_trigger_time=daily,
+        local_safety=safety, daily_trigger_time=daily,
         local_check_interval=_intervall(konfiguration, "pruefung_s", options.DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS),
         telemetry_interval=_intervall(konfiguration, "telemetrie_s", options.DEFAULT_TELEMETRY_INTERVAL_SECONDS),
         notify_hints_off=(), room_sensor_refs=tuple(sensors), battery_refs=(), entitlement_path=entitlement_path,

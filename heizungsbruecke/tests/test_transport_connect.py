@@ -16,13 +16,10 @@ from smartheat_transport.connect import (
 )
 from smartheat_transport.descriptor import (
     ALPN_443,
-    CREDENTIAL_PASSWORD,
     KIND_IOT_CORE,
-    KIND_MOSQUITTO,
     Credential,
     Descriptor,
     TransportConfigError,
-    credential_for,
 )
 
 
@@ -41,19 +38,9 @@ def _cert_credential(pki, name="client"):
     return Credential("certificate", certificate_pem=cert, private_key_pem=key)
 
 
-def test_password_mode_has_no_tls_and_a_paho_generated_client_id():
-    options = connect_options(Descriptor(KIND_MOSQUITTO, "127.0.0.1", 18830),
-                              Credential(CREDENTIAL_PASSWORD, username="u", password="p"))
-    assert (options.host, options.port, options.client_id, options.ssl_context) == ("127.0.0.1", 18830, "", None)
-    client = MagicMock()
-    apply(client, options)
-    client.username_pw_set.assert_called_once_with("u", "p")
-    client.tls_set_context.assert_not_called()
-
-
 def test_certificate_mode_uses_tls_and_the_descriptor_client_id(pki):
     options = connect_options(_iot(pki), _cert_credential(pki))
-    assert options.client_id == "client1" and options.username is None
+    assert options.client_id == "client1"
     client = MagicMock()
     apply(client, options)
     client.tls_set_context.assert_called_once_with(options.ssl_context)
@@ -114,12 +101,12 @@ def test_broken_ca_is_a_config_error(pki):
 
 def test_credential_of_the_wrong_kind_is_a_config_error(pki):
     with pytest.raises(TransportConfigError):
-        connect_options(_iot(pki), Credential(CREDENTIAL_PASSWORD, username="u", password="p"))
+        connect_options(_iot(pki), Credential("password"))
 
 
 def test_temporary_key_files_are_removed(pki, tmp_path, monkeypatch):
     monkeypatch.setattr("tempfile.tempdir", str(tmp_path))
-    connect_options(_iot(pki), credential_for(_iot(pki), certificate_pem=pki["client"][1], private_key_pem=pki["client"][0]))
+    connect_options(_iot(pki), Credential("certificate", certificate_pem=pki["client"][1], private_key_pem=pki["client"][0]))
     assert list(tmp_path.iterdir()) == []
 
 

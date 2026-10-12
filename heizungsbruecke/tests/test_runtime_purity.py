@@ -1,6 +1,6 @@
 """Grenzen des hostneutralen Kerns (Spec SHG 3.4 Punkt 4, 2.1 Punkt 4): smartheat_runtime importiert weder
-heizungsbruecke noch gateway noch Home Assistant; requests nur fuer die Accounts-API (entitlement.py). In
-smartheat_core und smartheat_runtime steht keine Tenant-ID."""
+heizungsbruecke noch gateway noch Home Assistant und nutzt keine Drittpakete (nur Standardbibliothek und eigene
+Pakete). In smartheat_core und smartheat_runtime steht keine Tenant-ID."""
 import ast
 import re
 import sys
@@ -9,8 +9,8 @@ from pathlib import Path
 SRC = Path(__file__).resolve().parents[1] / "src"
 RUNTIME = SRC / "smartheat_runtime"
 OWN_PACKAGES = {"smartheat_runtime", "smartheat_core", "smartheat_transport"}
-# Drittpakete nur in genau diesen Dateien.
-THIRD_PARTY_ALLOWED_IN = {"requests": {"entitlement.py"}}
+# Drittpakete nur in genau diesen Dateien (derzeit keine).
+THIRD_PARTY_ALLOWED_IN: dict[str, set[str]] = {}
 TENANT_ID = re.compile(r"\bclient\d+\b|\bzuhause\b", re.IGNORECASE)
 
 
@@ -24,7 +24,7 @@ def _imported_modules(path: Path) -> list[str]:
     return modules
 
 
-def test_runtime_imports_only_stdlib_own_packages_and_requests_for_the_accounts_api():
+def test_runtime_imports_only_stdlib_and_own_packages():
     offenders = []
     for path in sorted(RUNTIME.rglob("*.py")):
         for module in _imported_modules(path):

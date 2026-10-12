@@ -21,7 +21,6 @@ from smartheat_runtime import (
     datentraeger,
     delivery,
     entitlement,
-    mqtt_link,
     regulation,
     roles,
     room_sensors,
@@ -579,10 +578,10 @@ def _prepare_zone(rt: Runtime) -> None:
 
 
 def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
-          mqtt_factory: Callable[[RegulationWorker], MqttChannel] | None = None) -> Runtime | IdleBridge:
+          mqtt_factory: Callable[[RegulationWorker], MqttChannel]) -> Runtime | IdleBridge:
     """Gibt den gestarteten Laufzeit-Kontext zurueck oder den Ruhezustand, wenn gar nicht erst geregelt wird: nicht
-    eingerichtet, abgemeldet, Konfigurationsfehler, Abo-Frist abgeschlossen. mqtt_factory (Geraete-Pfad, Spec 5b 5.2):
-    die Laufzeit nutzt die Verbindung des Geraets statt eines eigenen MQTT-Clients."""
+    eingerichtet, abgemeldet, Konfigurationsfehler, Abo-Frist abgeschlossen. mqtt_factory (Pflicht, Spec 5b 5.2): die
+    Laufzeit nutzt die Verbindung des Geraets; einen eigenen MQTT-Client gibt es nicht."""
     boot = host.boot_info()
     if not boot.signed_off and not boot.configured:
         return _idle(clock, None, IDLE_NOT_CONFIGURED)
@@ -637,8 +636,7 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
     _register_handlers(rt)
     abo_inactive = rt.store.state.abo_inactive_since is not None
     if not abo_inactive:
-        factory = mqtt_factory or functools.partial(mqtt_link.create_mqtt_client, config)
-        rt.mqtt_client = factory(rt.worker)
+        rt.mqtt_client = mqtt_factory(rt.worker)
 
     _prime(rt)
     if rt.mqtt_client is not None:
