@@ -4,6 +4,8 @@
 
 - Die Diagnoseseite zeigt QR-Code und Übernahme-Code nur, solange das Gateway nicht übernommen ist (Spec 5c F1); nach
   dem Entfernen erscheint ein neuer Code.
+- Intern (Phase 1 S1b): Das Image enthält die ungenutzten Module `smartheat_runtime/mqtt_link.py` und
+  `smartheat_transport/mqtt_client.py` nicht mehr (Passwort-Transport entfernt); keine Verhaltensänderung.
 
 ## 0.6.0
 
