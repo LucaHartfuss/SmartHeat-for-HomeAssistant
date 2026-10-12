@@ -1,6 +1,6 @@
-"""Status- und Meldungs-Sinks des HA-Hosts (Spec SHG 3.2): Status als HA-Ereignis `smartheat_status` an die
-Integration, Meldungen als Push an die Notify-Dienste und als persistent_notification. Ereignisname, Titel und
-Benachrichtigungs-IDs sind Cross-Repo-Vertrag mit der Integration (Contract-Check 14)."""
+"""Meldungs-Sink des HA-Hosts (Spec SHG 3.2): Meldungen als Push an die Notify-Dienste und als persistent_notification.
+Das Status-Ereignis `smartheat_status` sendet geraet_status.GeraetStatus. Ereignisname, Titel und Benachrichtigungs-IDs
+sind Cross-Repo-Vertrag mit der Integration (Contract-Check 14)."""
 import logging
 import re
 
@@ -13,14 +13,6 @@ TITLE = "SmartHeat"
 def notification_id(key: str) -> str:
     """Stabile ID je Schluessel: eine neue Meldung ersetzt die vorige, statt sich zu stapeln."""
     return "smartheat_" + re.sub(r"[^a-z0-9_]", "_", key.lower())
-
-
-class HaStatusSink:
-    def __init__(self, ha_api) -> None:
-        self._ha_api = ha_api
-
-    def publish(self, event: dict) -> None:
-        self._ha_api.fire_event(EVENT_TYPE, event)
 
 
 class HaNotifySink:

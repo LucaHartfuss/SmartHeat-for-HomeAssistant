@@ -32,6 +32,17 @@ def runtime_config(**overrides) -> RuntimeConfig:
     return RuntimeConfig(**values)
 
 
+class HaEventSink:
+    """StatusSink der Laufzeit-Tests (StatusReporter): das Ereignis unveraendert an fire_event. Produktiv sendet
+    geraet_status.GeraetStatus (Schema 3); dies ist der Ersatz fuer den entfallenen HaStatusSink."""
+
+    def __init__(self, ha_api) -> None:
+        self._ha_api = ha_api
+
+    def publish(self, event: dict) -> None:
+        self._ha_api.fire_event("smartheat_status", event)
+
+
 class FakeHa:
     token = "tok"
 

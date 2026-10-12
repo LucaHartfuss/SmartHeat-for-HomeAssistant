@@ -6,10 +6,10 @@ from unittest.mock import MagicMock
 
 import pytest
 from conftest import FakeClock
-from fakes import runtime_config
+from fakes import HaEventSink, runtime_config
 
 from heizungsbruecke.ha_binding import HaPlantBinding
-from heizungsbruecke.ha_sinks import HaNotifySink, HaStatusSink
+from heizungsbruecke.ha_sinks import HaNotifySink
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core.levers import LEVER_SETS
 from smartheat_core.pipeline import LeverPipeline
@@ -42,7 +42,7 @@ def _runtime(tmp_path, store, entity_ids=BOTH_ROLES, notify_services=("notify.ha
         override=LeverPipeline(store, HaPlantBinding(ha_api, manifest), SAFETY),
         notifier=Notifier(store, HaNotifySink(ha_api, list(notify_services))),
         status=StatusReporter(
-            HaStatusSink(ha_api), OPTIONS["tenant_id"], None, store, LEVER_SETS["vaillant_vrc720"], ADDON_VERSION,
+            HaEventSink(ha_api), OPTIONS["tenant_id"], None, store, LEVER_SETS["vaillant_vrc720"], ADDON_VERSION,
         ),
         clock=clock or FakeClock(), auth_rejected_queried_at=None, auth_rejected_last_status=None,
         connection_failing_queried_at=None, texts=HA_TEXTS,
