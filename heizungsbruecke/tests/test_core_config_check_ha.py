@@ -1,0 +1,144 @@
+"""Spec 5c 1.3 / 5b 3.1: lokale Pruefung einer HA-Konfiguration (Aufbau rein, HA-Teil ueber den Rueckruf)."""
+import pytest
+
+from smartheat_core import config_check as cc
+from smartheat_device import wire
+from smartheat_runtime import options
+
+
+def _ha(**changes) -> dict:
+    base = {
+        "anlage": "zuhause2", "profil": "vaillant_gastherme_heizkoerper", "hebelsatz": "vaillant_vrc720",
+        "verteilsystem": "Heizkoerper", "tagestick": "12:07", "abo": "aktiv",
+        "raumfuehler": ["sensor.wohnzimmer_thermostat_temperatur"],
+        "bindung": {
+            "kreis": {"plattform": "mypyllant", "config_entry": "e1", "anlage": "S", "nummer": "0"},
+            "rollen": {"room_target": "climate.wohnzimmer_thermostat::temperature",
+                       "curve": "number.zuhause_circuit_0_heating_curve",
+                       "room_setpoint": "climate.zuhause_zone_1_circuit_0_climate"},
+            "batterien": ["sensor.wohnzimmer_thermostat_batterie"], "benachrichtigung": ["notify.mobile_app_handy"],
+            "hinweise_aus": ["batterie"], "abfrage_s": 1800,
+        },
+    }
+    bindung = {**base["bindung"], **changes.pop("bindung", {})}
+    return {**base, **changes, "bindung": bindung}
+
+
+def _pruefen(konfiguration, host_text=None):
+    return cc.pruefen(konfiguration, None, host=cc.HOST_HA, treiber_pruefen=lambda k: host_text)
+
+
+def test_copies_match_the_contract():
+    assert cc.HA_BINDUNG_FELDER == wire.BINDUNG_HA_FIELDS
+    assert cc.HA_ROLLEN == wire.HA_ROLLEN
+    assert cc.HA_HINWEISE == wire.HA_HINWEISE
+    assert cc.KREIS_FELDER == wire.KREIS_FIELDS
+
+
+def test_the_poll_interval_bounds_are_the_bounds_of_the_options():
+    assert cc.ABFRAGE_S == options.POLL_INTERVAL_RANGE
+
+
+def test_valid_ha_configuration_passes_and_the_host_sees_all_of_it():
+    seen = []
+    assert cc.pruefen(_ha(), None, host=cc.HOST_HA, treiber_pruefen=lambda k: seen.append(k)) is None
+    assert seen[0]["raumfuehler"] == ["sensor.wohnzimmer_thermostat_temperatur"] and "bindung" in seen[0]
+
+
+def test_host_text_becomes_role_rejection():
+    ablehnung = cc.pruefen(_ha(), None, host=cc.HOST_HA, treiber_pruefen=lambda k: "Entity fehlt")
+    assert ablehnung == cc.Ablehnung(cc.ROLLE_UNZULAESSIG, "Entity fehlt")
+
+
+def test_the_host_is_asked_only_for_a_structurally_valid_configuration():
+    seen = []
+    assert cc.pruefen(_ha(raumfuehler=["switch.licht"]), None, host=cc.HOST_HA,
+                      treiber_pruefen=lambda k: seen.append(k)).grund == cc.ROLLE_UNZULAESSIG
+    assert seen == []
+
+
+@pytest.mark.parametrize("changes, grund", [
+    ({"bindung": {"rollen": {"curve": "number.c"}}}, cc.ROLLE_UNZULAESSIG),                  # room_target fehlt
+    ({"bindung": {"rollen": {"room_target": "climate.w::temperature", "zigbee": "x.y"}}}, cc.ROLLE_UNZULAESSIG),
+    ({"bindung": {"rollen": {"room_target": "Climate W"}}}, cc.ROLLE_UNZULAESSIG),            # kein Referenzformat
+    ({"bindung": {"rollen": {"room_target": 5}}}, cc.ROLLE_UNZULAESSIG),
+    ({"bindung": {"rollen": []}}, cc.ROLLE_UNZULAESSIG),
+    ({"bindung": {"kreis": {"plattform": "mypyllant"}}}, cc.ROLLE_UNZULAESSIG),
+    ({"bindung": {"kreis": {"plattform": "mypyllant", "config_entry": "e1", "anlage": "", "nummer": "0"}}},
+     cc.ROLLE_UNZULAESSIG),
+    ({"bindung": {"kreis": "x"}}, cc.ROLLE_UNZULAESSIG),
+    ({"raumfuehler": ["switch.licht"]}, cc.ROLLE_UNZULAESSIG),
+    ({"raumfuehler": ["climate.w"]}, cc.ROLLE_UNZULAESSIG),
+    ({"raumfuehler": ["sensor.a", "sensor.a"]}, cc.DOPPELT_BELEGT),
+    ({"bindung": {"rollen": {"room_target": "sensor.a", "curve": "sensor.a"}}}, cc.DOPPELT_BELEGT),
+    ({"bindung": {"batterien": ["light.x"]}}, cc.ROLLE_UNZULAESSIG),
+    ({"bindung": {"batterien": "sensor.x"}}, cc.ROLLE_UNZULAESSIG),
+    ({"bindung": {"benachrichtigung": ["notify.Handy Papa"]}}, cc.ROLLE_UNZULAESSIG),
+    ({"bindung": {"hinweise_aus": ["quatsch"]}}, cc.ROLLE_UNZULAESSIG),
+    ({"bindung": {"hinweise_aus": ["notbetrieb"]}}, cc.ROLLE_UNZULAESSIG),     # kritische Meldungen nie abschaltbar
+    ({"bindung": {"hinweise_aus": ["konfiguration"]}}, cc.ROLLE_UNZULAESSIG),
+    ({"bindung": {"hinweise_aus": ["zugang"]}}, cc.ROLLE_UNZULAESSIG),
+    ({"bindung": {"hinweise_aus": [["batterie"]]}}, cc.ROLLE_UNZULAESSIG),
+    ({"bindung": {"abfrage_s": 5}}, cc.UNGUELTIG),
+    ({"bindung": {"abfrage_s": 3601}}, cc.UNGUELTIG),
+    ({"bindung": {"abfrage_s": True}}, cc.UNGUELTIG),
+    ({"bindung": {"abfrage_s": 60.5}}, cc.UNGUELTIG),
+])
+def test_structural_rules(changes, grund):
+    ablehnung = _pruefen(_ha(**changes))
+    assert ablehnung is not None and ablehnung.grund == grund
+
+
+def test_incomplete_binding_is_a_role_rejection():
+    konfiguration = _ha()
+    del konfiguration["bindung"]["batterien"]
+    assert _pruefen(konfiguration).grund == cc.ROLLE_UNZULAESSIG
+
+
+@pytest.mark.parametrize("bindung", [
+    {"abfrage_s": 10}, {"abfrage_s": 3600}, {"abfrage_s": None}, {"hinweise_aus": []}, {"batterien": []},
+    {"benachrichtigung": []}, {"batterien": ["binary_sensor.fenster_batterie"]},
+    {"kreis": {"plattform": "mypyllant", "config_entry": None, "anlage": "S", "nummer": "0"}},
+    {"kreis": {"plattform": "mypyllant", "anlage": "S", "nummer": "0"}},
+    {"hinweise_aus": list(wire.HA_HINWEISE)},
+])
+def test_accepted_binding_variants(bindung):
+    assert _pruefen(_ha(bindung=bindung)) is None
+
+
+def test_a_missing_poll_interval_is_the_default_of_the_lever_set():
+    konfiguration = _ha()
+    del konfiguration["bindung"]["abfrage_s"]
+    assert _pruefen(konfiguration) is None
+
+
+@pytest.mark.parametrize("rollen, raumfuehler", [
+    # Referenzformen, die der Server je Rolle annimmt (ha_pruefung._ATTRIBUTE): Raumfuehler sensor bare oder
+    # climate::current_temperature, room_target climate::temperature, room_setpoint climate::temperature oder bare,
+    # alle anderen bare (auch weather).
+    ({"room_target": "climate.w::temperature"}, ["sensor.a", "climate.b::current_temperature"]),
+    ({"room_target": "climate.w::temperature", "room_setpoint": "climate.z::temperature"}, ["sensor.a"]),
+    ({"room_target": "climate.w::temperature", "room_setpoint": "number.z"}, ["sensor.a"]),
+    ({"room_target": "climate.w::temperature", "outdoor_temp": "weather.home", "level": "number.l"}, ["sensor.a"]),
+])
+def test_every_reference_form_of_the_server_is_accepted(rollen, raumfuehler):
+    assert _pruefen(_ha(bindung={"rollen": rollen}, raumfuehler=raumfuehler)) is None
+
+
+def test_every_contract_role_is_accepted():
+    rollen = {"room_target": "climate.w::temperature"}
+    rollen.update({rolle: f"sensor.{rolle}" for rolle in wire.HA_ROLLEN if rolle != "room_target"})
+    assert _pruefen(_ha(bindung={"rollen": rollen})) is None
+
+
+def test_gateway_rules_are_unchanged():
+    assert cc.pruefen(_ha(), None, host=cc.HOST_GATEWAY).grund == cc.ROLLE_UNZULAESSIG
+
+
+def test_an_unknown_host_is_rejected():
+    assert cc.pruefen(_ha(), None, host="mars") == cc.Ablehnung(cc.ROLLE_UNZULAESSIG, "Unbekannter Host.")
+
+
+def test_lever_set_lock_applies_to_home_assistant_too():
+    ablehnung = cc.pruefen(_ha(hebelsatz="viessmann_vicare"), _ha(), host=cc.HOST_HA)
+    assert ablehnung.grund == cc.HEBELSATZ_EINGERASTET

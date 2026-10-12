@@ -5,6 +5,11 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
 
 ## Unveröffentlicht
 
+- **1.0.0: Das Add-on ist ein SmartHeat-Gerät** (Spec 5c): Start ohne Optionen, eigene Identität und Zertifikat,
+  direkte MQTT-Verbindung zum SmartHeat-Dienst, Konfiguration und Wunschtemperatur als Soll-Dokumente,
+  Supervisor-Discovery für die Integration, Inventur mit Filter, Bedienwunsch aus der Soll-Entity und der
+  Wunschtemperatur-Entity der Integration, Status-Ereignis Schema 3 mit Hinweisen. Optionen nur noch `bootstrap_url`
+  und `log_level`. Kein Optionsmodus mehr; `client1` bleibt bis zum Umzug (5d) auf 0.36.
 - Neu, vom Add-on noch nicht genutzt (Teilprojekt 5b, Plan D1): Gerätekern `smartheat_device` und
   `smartheat_core.config_check`; die Laufzeit kann aus einem Konfigurationsdokument starten und den Link des Geräts
   nutzen (`dokument_config`, `RuntimeConfig.abo_source`, `app.start(mqtt_factory=...)`). Für das Add-on ändert sich

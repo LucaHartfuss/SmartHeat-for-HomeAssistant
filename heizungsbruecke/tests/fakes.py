@@ -9,11 +9,10 @@ from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime.runtime_config import RuntimeConfig
 from smartheat_transport.descriptor import credential_for, parse_descriptor
 
-# Zugangsoptionen seit AWS-2: Deskriptor (Mosquitto ueber cloudflared) und Installations-Token. Gueltige Test-Optionen
-# mit mqtt_username/mqtt_password tragen beides, sonst meldet der Start "Konfiguration veraltet".
+# Zugang einer von Hand gebauten RuntimeConfig (eigener MQTT-Client der Laufzeit, wie bis 0.36 im Add-on): Deskriptor
+# (Mosquitto ueber cloudflared) und Installations-Token.
 MOSQUITTO_TRANSPORT = '{"kind": "mosquitto_cloudflared", "host": "127.0.0.1", "port": 18830}'
 INSTALLATION_TOKEN = "tok"
-ACCESS_OPTIONS = {"transport": MOSQUITTO_TRANSPORT, "installation_token": INSTALLATION_TOKEN}
 
 
 def runtime_config(**overrides) -> RuntimeConfig:
@@ -30,6 +29,17 @@ def runtime_config(**overrides) -> RuntimeConfig:
     }
     values.update(overrides)
     return RuntimeConfig(**values)
+
+
+class HaEventSink:
+    """StatusSink der Laufzeit-Tests (StatusReporter): das Ereignis unveraendert an fire_event. Produktiv sendet
+    geraet_status.GeraetStatus (Schema 3); dies ist der Ersatz fuer den entfallenen HaStatusSink."""
+
+    def __init__(self, ha_api) -> None:
+        self._ha_api = ha_api
+
+    def publish(self, event: dict) -> None:
+        self._ha_api.fire_event("smartheat_status", event)
 
 
 class FakeHa:
@@ -49,6 +59,13 @@ class FakeHa:
         self.dismissed = []
         self.events = []
         self.write_error = None
+        # Zuordnungspruefung (Spec 5c 1.3): Entity-/Geraete-Registry, Dienste, in HA unbekannte Entities, HA nicht erreichbar
+        self.registry: list[dict] = []
+        self.devices: list[dict] = []
+        self.services: list[dict] = []
+        self.missing: set[str] = set()
+        self.offline = False
+        self.config = {"time_zone": "Europe/Berlin", "state": "RUNNING", "unit_system": {"temperature": "°C"}}
 
     def get_state(self, entity_id):
         value = self.states[entity_id]
@@ -97,7 +114,7 @@ class FakeHa:
         self.dismissed.append(notification_id)
 
     def get_config(self):
-        return {"time_zone": "Europe/Berlin", "state": "RUNNING"}
+        return self.config
 
     def websocket_url(self):
         return "ws://x/api/websocket"
@@ -106,10 +123,41 @@ class FakeHa:
         self.events.append((event_type, copy.deepcopy(data)))
 
     def is_reachable(self):
-        return True
+        return not self.offline
 
     def entity_exists(self, entity_id):
-        return True
+        if self.offline:
+            raise OSError("HA nicht erreichbar")
+        return entity_id not in self.missing
+
+    def _online(self):
+        if self.offline:
+            raise OSError("HA nicht erreichbar")
+
+    def entity_registry(self):
+        self._online()
+        return [dict(entry) for entry in self.registry]
+
+    def device_registry(self):
+        self._online()
+        return [dict(device) for device in self.devices]
+
+    def get_states(self):
+        self._online()
+        result = []
+        for key, value in self.states.items():
+            entity_id, _, attribute = key.partition("::")
+            if attribute or isinstance(value, Exception):
+                continue
+            attributes = {k.partition("::")[2]: v for k, v in self.states.items()
+                          if k.startswith(f"{entity_id}::") and not isinstance(v, Exception)}
+            result.append({"entity_id": entity_id, "state": str(value), "attributes": attributes,
+                           "last_updated": "2026-10-11T10:00:00+00:00"})
+        return result
+
+    def get_services(self):
+        self._online()
+        return [dict(service) for service in self.services]
 
     def get_raw_state(self, entity_id):
         value = self.states[entity_id]

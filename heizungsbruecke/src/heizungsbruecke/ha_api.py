@@ -68,6 +68,31 @@ class HomeAssistantApi:
         finally:
             ws.close()
 
+    def ws_command(self, command: dict):
+        """Ein WebSocket-Kommando mit kurzlebiger Verbindung (wie _call_ws_command, oeffentlich fuer Inventur und
+        Pruefung, Spec 5c 1.3)."""
+        return self._call_ws_command(command)
+
+    def entity_registry(self) -> list[dict]:
+        result = self.ws_command({"type": "config/entity_registry/list"})
+        return result if isinstance(result, list) else []
+
+    def device_registry(self) -> list[dict]:
+        result = self.ws_command({"type": "config/device_registry/list"})
+        return result if isinstance(result, list) else []
+
+    def get_states(self) -> list[dict]:
+        response = requests.get(f"{self._base_url}{self._api_prefix}/states", headers=self._headers, timeout=10)
+        response.raise_for_status()
+        body = response.json()
+        return body if isinstance(body, list) else []
+
+    def get_services(self) -> list[dict]:
+        response = requests.get(f"{self._base_url}{self._api_prefix}/services", headers=self._headers, timeout=10)
+        response.raise_for_status()
+        body = response.json()
+        return body if isinstance(body, list) else []
+
     def get_state(self, entity_id: str) -> float:
         real_entity_id, _, attribute = entity_id.partition("::")
 

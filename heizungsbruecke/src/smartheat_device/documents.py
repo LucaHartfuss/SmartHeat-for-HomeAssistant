@@ -14,6 +14,8 @@ Server schickt eine abgelehnte Version nicht erneut; gespeichert wird daher der 
 abgelehnten Konfiguration bzw. die eigene Software beim unbekannten schema), und update_noetig wird gegen die laufende
 Software ausgewertet: nach einem Update endet es von selbst. Nur eine vollstaendige Konfiguration (alle Felder) setzt den
 Anlass neu; eine wegen fehlender Felder abgelehnte laesst ihn stehen.
+Wirft der Treiber-Rueckruf config_check.NichtPruefbar (HA aus), laeuft empfangen durch: nichts wird gespeichert oder
+abgelehnt, das Geraet haelt das Dokument zurueck und prueft spaeter erneut (device.py).
 Eine kaputte Datei (Stromausfall) gilt als "keine Version": hello meldet 0, der Server stellt neu zu."""
 import json
 import logging

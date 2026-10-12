@@ -2,14 +2,17 @@
 Neu schreiben nur mit GOLDEN_UPDATE=1 und nur in Task 1 des Plans SHG G1
 und in Task 1 des Plans Audit 4 P-C2 (neues backup.json-Feld boost_since)
 und in Task 3 des Plans Audit 4 P-C2 (neue backup.json-Felder setup_id, plant_id)
-und in Task 9 des Plans Audit 4 P-B (Telemetrie ohne waerme_fehlt, Status ohne Hinweis waerme_fehlt, Version 0.36.0)."""
+und in Task 9 des Plans Audit 4 P-B (Telemetrie ohne waerme_fehlt, Status ohne Hinweis waerme_fehlt, Version 0.36.0)
+und in Task 10 des Plans 5c D (Geraete-Pfad, 1.0.0; der Master von 0.36 bleibt als addon_scenario_0_36.json, der
+Unterschied ist auf golden_scenario.ERLAUBT begrenzt)."""
+import json
 import os
 import time
 from datetime import date
 from pathlib import Path
 
 import pytest
-from golden_scenario import render, run_scenario
+from golden_scenario import normalisieren, render, run_scenario
 
 
 @pytest.fixture(autouse=True)
@@ -20,6 +23,7 @@ def _restore_process_timezone():
 
 
 GOLDEN = Path(__file__).resolve().parent / "golden" / "addon_scenario.json"
+GOLDEN_0_36 = GOLDEN.with_name("addon_scenario_0_36.json")
 
 
 def test_scenario_matches_the_golden_master_byte_for_byte(tmp_path, monkeypatch):
@@ -45,3 +49,9 @@ def test_scenario_does_not_depend_on_the_system_timezone(tmp_path, monkeypatch, 
     monkeypatch.setenv("TZ", outer_zone)
     time.tzset()
     assert render(run_scenario(tmp_path, monkeypatch)) == GOLDEN.read_text(encoding="utf-8")
+
+
+def test_only_the_allowed_differences_to_0_36(tmp_path, monkeypatch):
+    neu = run_scenario(tmp_path, monkeypatch)
+    alt = json.loads(GOLDEN_0_36.read_text(encoding="utf-8"))
+    assert normalisieren(neu, alt=False) == normalisieren(alt, alt=True)

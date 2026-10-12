@@ -4,8 +4,9 @@ from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
+from fakes import HaEventSink
 
-from heizungsbruecke.ha_sinks import EVENT_TYPE, HaStatusSink
+from heizungsbruecke.ha_sinks import EVENT_TYPE
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core.levers import LEVER_SETS
 from smartheat_runtime import status
@@ -121,7 +122,7 @@ def test_manual_hint_names_levers(make_store):
 
 
 def test_version():
-    assert ADDON_VERSION == "0.36.0"
+    assert ADDON_VERSION == "1.0.0"
 
 
 @pytest.mark.parametrize("fault,expected", [
@@ -153,7 +154,7 @@ def test_reason_is_only_sent_with_a_state_that_has_one(flags, state, expected):
 
 def test_reporter_publishes_changes_once_but_always_on_publish(make_store):
     ha_api = MagicMock()
-    reporter = StatusReporter(HaStatusSink(ha_api), "client1", "abc", make_store(), VAILLANT, ADDON_VERSION)
+    reporter = StatusReporter(HaEventSink(ha_api), "client1", "abc", make_store(), VAILLANT, ADDON_VERSION)
 
     reporter.publish_if_changed()
     reporter.publish_if_changed()
@@ -170,7 +171,7 @@ def test_reporter_publishes_changes_once_but_always_on_publish(make_store):
 def test_reporter_sees_changes_in_the_store(make_store):
     ha_api = MagicMock()
     store = make_store()
-    reporter = StatusReporter(HaStatusSink(ha_api), "client1", None, store, VAILLANT, ADDON_VERSION)
+    reporter = StatusReporter(HaEventSink(ha_api), "client1", None, store, VAILLANT, ADDON_VERSION)
     reporter.publish()
 
     store.update(boost_active=True)
@@ -182,7 +183,7 @@ def test_reporter_sees_changes_in_the_store(make_store):
 def test_failed_send_is_logged_and_repeated_on_the_next_check(make_store, caplog):
     ha_api = MagicMock()
     ha_api.fire_event.side_effect = [RuntimeError("HA weg"), None]
-    reporter = StatusReporter(HaStatusSink(ha_api), "client1", None, make_store(), VAILLANT, ADDON_VERSION)
+    reporter = StatusReporter(HaEventSink(ha_api), "client1", None, make_store(), VAILLANT, ADDON_VERSION)
 
     with caplog.at_level(logging.WARNING):
         reporter.publish_if_changed()
@@ -193,7 +194,7 @@ def test_failed_send_is_logged_and_repeated_on_the_next_check(make_store, caplog
 
 
 def test_empty_setup_id_is_sent_as_none(make_store):
-    assert StatusReporter(HaStatusSink(MagicMock()), "t", "", make_store(), VAILLANT, ADDON_VERSION).event()["setup_id"] is None
+    assert StatusReporter(HaEventSink(MagicMock()), "t", "", make_store(), VAILLANT, ADDON_VERSION).event()["setup_id"] is None
 
 
 def test_unwritable_disk_is_a_local_data_fault_ranked_after_notbetrieb():

@@ -2,7 +2,8 @@
 Standardbibliothek und smartheat_core. Regeln in dieser Reihenfolge: (1) Aufbau und Wertebereiche, (2) Hebelsatz und
 Verteilsystem haben lokale Sicherheitswerte (safety.py), (3) eingerastet: ein Wechsel von Hebelsatz oder Verteilsystem
 nur ueber "nicht eingerichtet", (4) erlaubte Referenzen je Rolle, (5) keine Doppelbelegung, (6) Treiberparameter prueft
-der Treiber (Rueckruf des Hosts, zuletzt). Eine leere Konfiguration (anlage None) heisst "nicht eingerichtet" und ist
+der Treiber (Rueckruf des Hosts, zuletzt; Gateway: die Bindung, HA: Aufbau der Bindung rein, Entities und Schreibziele ueber den
+Rueckruf des Hosts mit der ganzen Konfiguration). Eine leere Konfiguration (anlage None) heisst "nicht eingerichtet" und ist
 immer gueltig. Die Gruende sind Dokument-Fehlergruende des Vertrags (smartheat_device.wire.DOKUMENT_ERRORS), die Texte
 gehen an Portal und Assistent (Kundensprache). Sicherheitsgrenzen, Boost und Notbetrieb liest diese Pruefung nur
 (G-1, Regel 4)."""
@@ -32,10 +33,36 @@ PRUEFUNG_S = (1, 3600)
 TELEMETRIE_S = (10, 600)
 INTERVALLE = {"pruefung_s": PRUEFUNG_S, "telemetrie_s": TELEMETRIE_S}
 RAUMFUEHLER_MAX = 8
+#: Home Assistant: Kopie aus smartheat_device.wire (BINDUNG_HA_FIELDS, KREIS_FIELDS, HA_ROLLEN, HA_HINWEISE), ein Test
+#: haelt sie gleich; die Pruefung importiert den Geraetekern nicht.
+HA_BINDUNG_FELDER = ("kreis", "rollen", "batterien", "benachrichtigung", "hinweise_aus")
+KREIS_FELDER = ("plattform", "config_entry", "anlage", "nummer")
+HA_ROLLEN = (
+    "room_target", "curve", "room_setpoint", "level", "heat_limit", "min_flow", "mode_select", "setpoint_comfort",
+    "setpoint_setback", "outdoor_temp", "flow_temperature", "flow_setpoint", "return_temperature", "operating_mode",
+    "system_water_pressure", "efficiency_ratio", "generator_hours", "generator_starts", "generator_state",
+    "energy_electrical_heating", "energy_electrical_dhw", "energy_primary_heating", "energy_primary_dhw",
+    "energy_thermal_heating", "energy_thermal_dhw", "energy_electrical_total",
+)
+HA_HINWEISE = ("raumfuehler", "batterie", "manueller_eingriff", "quellwechsel", "schreibbudget", "schreibzaehler")
+#: Referenzen wie die bisherigen entity_*-Optionen des Add-ons (entity_id oder entity_id::attribut); die Form je Rolle
+#: prueft der Host mit der Inventur, hier nur der Aufbau.
+HA_REF = re.compile(r"[a-z_]+\.[a-z0-9_]+(::[a-z_]+)?")
+HA_RAUMFUEHLER = re.compile(r"sensor\.[a-z0-9_]+|climate\.[a-z0-9_]+::current_temperature")
+HA_BATTERIE = re.compile(r"(sensor|binary_sensor)\.[a-z0-9_]+")
+HA_DIENST = re.compile(r"notify\.[a-z0-9_]+")
+#: Abfrageintervall der Hersteller-Integration (Sekunden), Grenzen wie options.POLL_INTERVAL_RANGE; ein Test haelt sie gleich.
+ABFRAGE_S = (10, 3600)
 ANLAGE_MAX_CHARS = 64
 TEXT_MAX_CHARS = 200
 
 TreiberPruefung = Callable[[dict], str | None]
+
+
+class NichtPruefbar(Exception):
+    """Der Treiber-Rueckruf kann jetzt nicht entscheiden (HA nicht erreichbar, faehrt hoch): weder uebernehmen noch
+    ablehnen. Der Server stellt eine abgelehnte Version nie erneut zu; das Geraet haelt das Dokument deshalb zurueck
+    und prueft spaeter erneut (smartheat_device.device). Der Text gehoert nicht in Logs (Regel 6)."""
 
 
 @dataclass(frozen=True)
@@ -73,6 +100,10 @@ def _aufbau(neu: Mapping) -> str | None:
         return "Die Zeit des Tagesticks fehlt oder ist keine Uhrzeit (HH:MM)."
     if neu.get("abo") not in ABO_WERTE:
         return "Der Abo-Status fehlt."
+    abfrage = neu["bindung"].get("abfrage_s")
+    if abfrage is not None and not (isinstance(abfrage, int) and not isinstance(abfrage, bool)
+                                    and ABFRAGE_S[0] <= abfrage <= ABFRAGE_S[1]):
+        return f"Das Abfrageintervall muss zwischen {ABFRAGE_S[0]} und {ABFRAGE_S[1]} Sekunden liegen."
     intervalle = neu.get("intervalle")
     if intervalle is not None:
         if not isinstance(intervalle, Mapping) or not set(intervalle) <= set(INTERVALLE):
@@ -102,6 +133,42 @@ def _gateway_bindung(neu: Mapping) -> Ablehnung | None:
     return None
 
 
+def _ha_bindung(neu: Mapping) -> Ablehnung | None:
+    bindung = neu["bindung"]
+    if not all(key in bindung for key in HA_BINDUNG_FELDER):
+        return Ablehnung(ROLLE_UNZULAESSIG, "Die Zuordnung für Home Assistant ist unvollständig.")
+    kreis = bindung["kreis"]
+    # config_entry darf fehlen oder None sein (Server: Kreis ohne Config-Entry), die uebrigen Felder nicht.
+    if not isinstance(kreis, Mapping) or not all(
+            isinstance(kreis.get(key), str) and kreis[key] for key in KREIS_FELDER if key != "config_entry"):
+        return Ablehnung(ROLLE_UNZULAESSIG, "Der Heizkreis der Zuordnung ist unvollständig.")
+    rollen = bindung["rollen"]
+    if not isinstance(rollen, Mapping) or "room_target" not in rollen:
+        return Ablehnung(ROLLE_UNZULAESSIG, "Die Wunschtemperatur-Entity fehlt.")
+    for rolle, ref in rollen.items():
+        if rolle not in HA_ROLLEN or not isinstance(ref, str) or not HA_REF.fullmatch(ref):
+            return Ablehnung(ROLLE_UNZULAESSIG, f"Die Rolle {rolle} ist nicht zulässig zugeordnet.")
+    seen: set[str] = set()
+    for ref in neu["raumfuehler"]:
+        if not HA_RAUMFUEHLER.fullmatch(ref):
+            return Ablehnung(ROLLE_UNZULAESSIG, f"Raumfühler {ref} ist für Home Assistant nicht zulässig.")
+        if ref in seen:
+            return Ablehnung(DOPPELT_BELEGT, f"Raumfühler {ref} ist doppelt zugeordnet.")
+        seen.add(ref)
+    werte = list(rollen.values())
+    if len(set(werte)) != len(werte):
+        return Ablehnung(DOPPELT_BELEGT, "Eine Entity ist mehreren Rollen zugeordnet.")
+    for key, pattern in (("batterien", HA_BATTERIE), ("benachrichtigung", HA_DIENST)):
+        values = bindung[key]
+        if not isinstance(values, list) or not all(isinstance(v, str) and pattern.fullmatch(v) for v in values):
+            return Ablehnung(ROLLE_UNZULAESSIG, f"Das Feld {key} ist ungültig.")
+    hinweise = bindung["hinweise_aus"]
+    if not isinstance(hinweise, list) or not all(isinstance(h, str) for h in hinweise) or not set(hinweise) <= set(
+            HA_HINWEISE):
+        return Ablehnung(ROLLE_UNZULAESSIG, "Unbekannter Hinweis-Schalter.")
+    return None
+
+
 def pruefen(neu: Mapping, vorher: Mapping | None, *, host: str,
             treiber_pruefen: TreiberPruefung | None = None) -> Ablehnung | None:
     """None = uebernehmen; sonst der erste verletzte Grund. `vorher` ist die zuletzt uebernommene Konfiguration."""
@@ -120,8 +187,13 @@ def pruefen(neu: Mapping, vorher: Mapping | None, *, host: str,
             vorher.get("hebelsatz"), vorher.get("verteilsystem")) != (neu["hebelsatz"], neu["verteilsystem"]):
         return Ablehnung(HEBELSATZ_EINGERASTET, "Hebelsatz und Verteilsystem lassen sich nur ändern, nachdem das Gerät "
                                                 "entfernt und neu eingerichtet wurde.")
+    if host == HOST_HA:
+        ablehnung = _ha_bindung(neu)
+        if ablehnung is None and treiber_pruefen is not None and (text := treiber_pruefen(dict(neu))):
+            ablehnung = Ablehnung(ROLLE_UNZULAESSIG, text)
+        return ablehnung
     if host != HOST_GATEWAY:
-        return Ablehnung(ROLLE_UNZULAESSIG, "Die Bindung für Home Assistant folgt mit Teilprojekt 5c.")
+        return Ablehnung(ROLLE_UNZULAESSIG, "Unbekannter Host.")
     ablehnung = _gateway_bindung(neu)
     if ablehnung is not None:
         return ablehnung

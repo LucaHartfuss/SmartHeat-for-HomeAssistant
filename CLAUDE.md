@@ -1,9 +1,10 @@
 # SmartHeat-for-HomeAssistant — Repo-Kontext
 
-Add-on-Repository: `heizungsbruecke` (Client: Snapshot und Telemetrie, Boost, Notbetrieb, lokale Sicherheitswerte),
-`cloudflared_access_mqtt` (nur `run.sh` um `cloudflared access tcp`) und `gateway/` (SmartHeat-Gateway ohne Home
-Assistant, **kein** Add-on). Die Add-ons laufen auf jedem Kunden-Pi inkl. `client1`: Änderungen wirken real, sobald sie
-released sind. Die Sicherheitsregeln aus `../CLAUDE.md` gelten unverändert.
+Add-on-Repository: `heizungsbruecke` (ab 1.0.0 ein **SmartHeat-Gerät** für Home Assistant, wie das Gateway auf dem
+Gerätekern: Snapshot und Telemetrie, Boost, Notbetrieb, lokale Sicherheitswerte; `client1` läuft bis zum Umzug 5d noch
+auf 0.36 im Optionsmodus), `cloudflared_access_mqtt` (nur `run.sh` um `cloudflared access tcp`, bleibt bis 5e) und
+`gateway/` (SmartHeat-Gateway ohne Home Assistant, **kein** Add-on). Die Add-ons laufen auf jedem Kunden-Pi inkl.
+`client1`: Änderungen wirken real, sobald sie released sind. Die Sicherheitsregeln aus `../CLAUDE.md` gelten unverändert.
 
 ## Struktur (Details: `../docs/architecture.md` §4, §5, §5a)
 
@@ -11,16 +12,26 @@ released sind. Die Sicherheitsregeln aus `../CLAUDE.md` gelten unverändert.
   `safety.py` = lokale Sicherheitswerte je Hebelsatz × Verteilsystem (Regel 4), `pipeline.py` = einzige Stelle, die
   Hebel schreibt, `boost.py`/`emergency_boost.py`.
 - `heizungsbruecke/src/smartheat_runtime/` — hostneutraler Betrieb für Add-on und Gateway (`app.py`, `delivery.py`,
-  `status.py` …); Grenzen in `tests/test_runtime_purity.py`: nie `heizungsbruecke`, `paho` nur über
-  `smartheat_transport.mqtt_client`, keine Tenant-IDs.
+  `status.py` …); dazu `soll_speicher.py` (Soll-Speicher `runtime/room_target.json`, Echo-Fenster, offener Schreibbefehl)
+  und `soll_eingang.py` (Bedienung/Soll-Quelle/lokaler Wunsch, Thermostat aus, Rückschreiben), beide für Gateway **und**
+  HA-Add-on; Grenzen in `tests/test_runtime_purity.py`: nie `heizungsbruecke` und nie `smartheat_device` (deshalb stehen
+  Datei-Helfer und Bedienbereich dort ein zweites Mal, ein Test hält sie gleich), `paho` nur über
+  `smartheat_transport.mqtt_client`, keine Tenant-IDs. Der Optionsmodus der Laufzeit (`options.py`, `entitlement.py`
+  Abfrage, `mqtt_link.py`) hat keinen Host mehr und bleibt bis 5e als Altpfad stehen (Restpunkt `5c-D-1`).
 - `heizungsbruecke/src/smartheat_transport/` — Transport-Deskriptor, MQTT (`mqtt_client.py` = einzige Stelle mit
   `paho` im Optionen-Pfad; im Gerätekern nur `smartheat_device/link.py`).
 - `heizungsbruecke/src/smartheat_device/` — Gerätekern (Spec 5b): Vertragskopie `wire.py` (wörtlich aus Server
   `device_protocol.py`), Identität, Bootstrap mit Rettungsweg, die eine MQTT-Verbindung (`link.py`), Dokumentspeicher,
-  Befehle, Bedienwunsch, Inventur, `device.py` (Thread, hello, Status), `laufzeit.py` (Laufzeit auf dem Link). Grenzen:
-  `tests/test_device_purity.py`; das Add-on nutzt ihn erst ab 5c, das Gateway ab 0.6.0. `smartheat_core.config_check`
-  prüft eine Konfiguration lokal vor dem Übernehmen.
-- `heizungsbruecke/src/heizungsbruecke/` — HA-Host: `HaHost`, REST/WebSocket, Bindings für mypyllant, Weishaupt, Viessmann.
+  Befehle, Bedienwunsch, Inventur, `hintergrund.py` (Arbeits-Thread für blockierende Befehle), `host.py` (`DeviceHost`,
+  `Anzeige`, `MeldungSink`), `device.py` (Thread, hello, Status), `laufzeit.py` (Laufzeit auf dem Link). Grenzen:
+  `tests/test_device_purity.py`; das Add-on nutzt ihn ab 1.0.0, das Gateway ab 0.6.0. `smartheat_core.config_check`
+  prüft eine Konfiguration lokal vor dem Übernehmen (für Host `ha` die ganze HA-Bindung).
+- `heizungsbruecke/src/heizungsbruecke/` — HA-Host in zwei Schichten. Gerät: `__main__.py` (Einstieg, Neustart per
+  `exec`, Aufräumen), `geraet_host.py` (`HaDeviceHost`: Befehle `inventory`/`sign_off`/`diagnostics`, Konfiguration und
+  Bedienung entgegennehmen), `geraet_status.py` (Status-Ereignis Schema 3), `discovery.py` + `supervisor.py`
+  (Supervisor-Discovery mit Übernahme-Code), `inventur.py`, `dokument.py` (Konfigurationsdokument → bisherige Optionen,
+  HA-Teil der lokalen Prüfung), `raum.py`. Laufzeit: `HaHost` (`host.py`), `geraet_trigger.py` (HA-Trigger, Soll-Entity,
+  `smartheat_wunsch`), REST/WebSocket, Bindings für mypyllant, Weishaupt, Viessmann.
 - `gateway/` — Laufzeit-Host auf dem Gerätekern `smartheat_device` (ein Container `runtime`), Compose
   (§5a.1–5a.7); `gateway/host/` Host-Dienste, Updater, Installer auf dem System-Python des Pi (§5a.8–5a.12);
   `gateway/image/` Basis-Image mit `rpi-image-gen` (§5a.13); `gateway/release/` Bundle und Signatur (§5a.10).
@@ -49,23 +60,44 @@ verfolgt. Release-Ablauf, CI-Jobs, Token: `../docs/ci-cd-runbook.md`.
 
 ## Regeln und Fallen
 
-- `heizungsbruecke/config.yaml` hat einen `schema:`-Block, wird aber **nur** von der Integration befüllt, nie von Hand.
+- `heizungsbruecke/config.yaml` hat ab 1.0.0 nur noch die Optionen `bootstrap_url` und `log_level` (beide optional,
+  nur für Labor und Tests); Zuordnung, Zugang und Intervalle kommen als Konfigurationsdokument vom Server, die Integration
+  schreibt keine Optionen mehr. `hassio_api: true` und `discovery: [smartheat]` sind Pflicht (Uhr per `/host/info`,
+  Discovery); `host_network` entfällt. `SMARTHEAT_BOOTSTRAP_URL` (Umgebung) schlägt die Option, nur für Tests und E2E.
+  Eine ungültige `bootstrap_url` oder eine kaputte `options.json` lässt das Add-on **ruhen** (nie auf die Produktion
+  ausweichen); `http` ist erlaubt (Labor im LAN, wie `SHG_DEVICE_API_URL` beim Gateway).
 - **Golden-Master** (`heizungsbruecke/tests/test_golden_master.py`, `tests/golden/addon_scenario.json`) nie neu erzeugen,
   ohne dass ein Plan es verlangt: ändert er sich, ist der Code falsch, nicht die Datei.
 - **Verträge:** Gerätevertrag `heizungsbruecke/src/smartheat_device/wire.py` (wörtliche Kopie des Vertragsteils aus
   `HeizungssteuerungServer/src/heizungsserver/device_protocol.py`, Test `test_device_wire.py`) ↔
   `../tools/contracts/geraet_v1.json` nur gemeinsam ändern (Check 49; Topics gegen die IoT-Policies Check 50); Status-Event, Hebel-, Rollen- und Optionsnamen, Ports und
   Sicherheitswert-Schlüssel prüft `python3 ../tools/contract_check.py` (vor jedem Release grün; `architecture.md` §9).
+  Das Status-Ereignis des Add-ons hat Schema 3 (`geraet_status.EVENT_FIELDS`, Laufzeit-Felder aus
+  `smartheat_runtime/status.py` plus Gerät); die Felder der Supervisor-Discovery (`discovery.FIELDS`) und das Ereignis
+  `smartheat_wunsch` sind Verträge mit der Integration (Plan I). **Bis Plan W Teil B** sind auf `develop` die Checks
+  1, 3, 4, 5, 10, 15, 20, 26, 32, 33 und 48 rot (sie lesen die entfallenen Optionen), ebenso die HA-E2E-Modi; kein
+  Release in diesem Fenster.
 - **Versionen:** `<addon>/config.yaml`, bei `heizungsbruecke` zusätzlich `ADDON_VERSION` in `src/heizungsbruecke/version.py`
   (Test prüft den Gleichlauf), je Add-on `CHANGELOG.md` mit `## X.Y.Z`; Gateway: `gateway/VERSION` und
   `gateway/CHANGELOG.md`.
 - **`gateway/` ist kein Add-on** (keine `config.yaml`): Image aus der Repo-Wurzel (`docker build -f gateway/Dockerfile .`),
   eigener Release-Workflow; ohne echten Schlüssel in `gateway/host/release.pub` lehnt das Gate echte `gateway-v*`-Tags ab.
   Änderungen in `smartheat_core`/`smartheat_runtime` wirken auf beide Clienttypen.
-- **Startfehler** melden mit stabilem Schlüssel `fehler:<key>`, der Grund steht nur im Feld `grund`; Geheimnisse
-  (`config.SECRET_OPTIONS`) werden überall durch `***` ersetzt (`host._without_credentials`).
+- **Startfehler** melden mit stabilem Schlüssel `fehler:<key>`, der Grund steht nur im Feld `grund`. Schlüssel,
+  Zertifikate, Übernahme-Code, Supervisor-Token und Inventur-Inhalte stehen nie in Log, Status-Ereignis oder
+  Diagnose (Regel 6); der Übernahme-Code geht nur in die Discovery (bleibt in der HA-Instanz), ins Log kommt bei
+  Fehlern nur die Fehlerart.
+- **Neustart** (neue laufzeitrelevante Konfiguration, `sign_off`, Abo wieder aktiv): erst sauber trennen
+  (`__main__.beenden`: Gerätekern stoppen, Thread abwarten, noch einmal stoppen), dann `os.execv`; sonst meldet IoT Core
+  `DUPLICATE_CLIENTID`. Ein unerwarteter Startfehler pausiert 60 s und startet dann ebenso neu; SIGTERM endet ohne `exec`.
 - **Endzustände sind ein Ruhezustand**, kein Exit, weil der Supervisor-Watchdog auch Exit 0 neu startet
-  (`tests/test_heizungsbruecke_docker_build.sh`). Kein Last Will, nichts unter `smartheat/<tenant>/status/`.
+  (`tests/test_heizungsbruecke_docker_build.sh`). Kein Last Will, nichts unter `smartheat/<tenant>/status/`. Der
+  Docker-Test startet das Add-on mit `SMARTHEAT_BOOTSTRAP_URL=http://127.0.0.1:9` (ohne Server); das Happy-Path-Skript
+  `tests/test_heizungsbruecke_happy_path.sh` überspringt sich bis Plan W Teil B (Optionsmodus, dann löschen).
+- **Soll-Entity (HA)**: nur Eingang und Anzeige; die Regelung liest den Raum-Soll aus dem Soll-Speicher. Schreiben nur an
+  `climate.*` (Attribut `temperature`); ein gescheitertes Angleichen bleibt offen und wird nachgeholt
+  (`HaSollQuelle.angleichen_offen`, `geraet_trigger.build`), statt den gezeigten Altwert als Wunsch zu nehmen. Änderungen
+  hier immer mit den Tests `test_geraet_trigger.py`/`test_host_dokument.py` (Echo/Wunsch-Schleife ist das Hauptrisiko).
 - **Lock-Datei** `heizungsbruecke/requirements.txt`: das Image installiert nur daraus (`--require-hashes`). Erneuern nur bei
   geänderten `dependencies` in `pyproject.toml` oder bewusstem Bump (dann `--upgrade` vor `--generate-hashes`, Diff lesen),
   im Ordner `heizungsbruecke/`:

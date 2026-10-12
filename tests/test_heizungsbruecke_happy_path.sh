@@ -14,6 +14,11 @@
 # and the minimum flow temperature; both already match the room target, so the start writes
 # nothing to the stub plant.
 set -u
+# Ab 1.0.0 (Spec 5c) kennt das Add-on keinen Optionsmodus mehr: tenant_id, Zugang und entity_* kommen als
+# Konfigurationsdokument ueber den Geraetekern, nicht aus options.json. Dieser Test speist genau diese Optionen ein und
+# greift deshalb nicht mehr. Er bleibt bis zum Ersatz stehen (E2E ha2, Plan W Teil B) und endet vorher mit SKIP.
+echo "SKIP: Optionsmodus entfaellt mit 1.0.0; ersetzt durch E2E ha2 in Plan W Teil B"
+exit 0
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ADDON_DIR="$HERE/../heizungsbruecke"
 FAIL=0

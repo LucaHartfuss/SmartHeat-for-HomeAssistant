@@ -125,3 +125,40 @@ def _remove_obsolete(ha_api, tracking: dict, state_path: Path, tenant_id: str) -
             continue
         if removed is not None:
             logger.info("Alter Hilfssensor %s (%s) entfernt", removed, key)
+
+
+def entfernen(ha_api, tenant_id: str, state_path: Path) -> bool:
+    """Alle vom Add-on angelegten Hilfssensoren loeschen (Entfernen der Anlage, Spec 5c, A4-07): je Helfer erst in HA,
+    dann aus dem Tracking (wie _drop_unused). Wirft nie. Ein nicht loeschbarer Helfer (HA antwortet nicht, Fehler)
+    bleibt im Tracking fuer den naechsten Versuch, ins Log kommt nur die Fehlerart. Kaputte Eintraege ohne Entity-ID
+    fallen weg. True, wenn kein Helfer mehr uebrig ist; dann ist auch die Datei weg."""
+    try:
+        tracking = load_backup(state_path)
+    except (OSError, ValueError) as error:
+        logger.warning("Liste der Hilfssensoren nicht lesbar (%s), verworfen", type(error).__name__)
+        tracking = {}
+    if not isinstance(tracking, dict):
+        tracking = {}
+    delete_helper = functools.partial(ha_api.delete_helper, tenant_id=tenant_id)
+    for key in list(tracking):
+        entry = tracking[key]
+        if not isinstance(entry, dict) or not isinstance(entry.get("entity_id"), str):
+            del tracking[key]
+            continue
+        delete = ha_api.delete_input_number if key in OBSOLETE_INPUT_NUMBERS else delete_helper
+        try:
+            removed = _drop_unused(ha_api, tracking, key, state_path, tenant_id, delete=delete)
+        except Exception as error:
+            logger.warning("Hilfssensor %s (%s) nicht geloescht (%s), neuer Versuch beim naechsten Start",
+                           entry["entity_id"], key, type(error).__name__)
+            continue
+        logger.info("Hilfssensor %s (%s) geloescht", removed, key)
+    try:
+        if tracking:
+            save_backup(state_path, tracking)
+            return False
+        state_path.unlink(missing_ok=True)
+    except OSError as error:
+        logger.warning("Liste der Hilfssensoren nicht gespeichert (%s)", type(error).__name__)
+        return False
+    return True

@@ -22,18 +22,19 @@ from pathlib import Path
 
 from smartheat_device import wire
 from smartheat_device.commands import CommandRegister
-from smartheat_device.host import Anzeige
+from smartheat_device.hintergrund import Hintergrund
+from smartheat_device.host import Anzeige, MeldungSink
 from smartheat_gateway import befehle
 from smartheat_gateway import config as gateway_config
 from smartheat_gateway.drivers import registry
 from smartheat_gateway.drivers.base import KIND_CLOUD
 from smartheat_gateway.files import read_json, write_json
 from smartheat_gateway.paths import Paths
-from smartheat_gateway.target_store import SOURCE_PORTAL
 from smartheat_gateway.triggers import EV_TARGET_INPUT
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime import dokument_config
+from smartheat_runtime.soll_speicher import SOURCE_PORTAL
 from smartheat_runtime.worker import Event, RegulationWorker
 
 logger = logging.getLogger(__name__)
@@ -71,30 +72,6 @@ class StatusSink:
 
     def publish(self, event: dict) -> None:
         self._zustand.status = dict(event)
-
-
-class MeldungSink:
-    """NotifySink der Laufzeit (smartheat_runtime.ports) auf den Geraetekern (up/notifications)."""
-
-    def __init__(self, melden: Callable[..., None]) -> None:
-        self._melden = melden
-        self._offen: dict[str, str] = {}
-        self._lock = threading.Lock()
-
-    def push(self, key: str, message: str) -> None:
-        with self._lock:
-            offen = key in self._offen
-        self._melden(key, message, offen=offen, kritisch=offen)
-
-    def show(self, key: str, message: str) -> None:
-        with self._lock:
-            self._offen[key] = message
-        self._melden(key, message, offen=True, kritisch=True)
-
-    def withdraw(self, key: str) -> None:
-        with self._lock:
-            text = self._offen.pop(key, "")
-        self._melden(key, text, offen=False, kritisch=True)
 
 
 class ZustandsDatei:
@@ -155,7 +132,7 @@ class GatewayDeviceHost:
         self._software_at: float | None = None
         self._led_fehler: str | None = None  # Fehlerart des letzten gescheiterten Schreibens der LED-Datei
         #: blockierende Treiber-Aufrufe der Befehle (Cloud-HTTP) neben dem Geraete-Thread; main() stoppt ihn (beenden)
-        self.hintergrund = befehle.Hintergrund()
+        self.hintergrund = Hintergrund()
 
     # --- Verdrahtung ---
 

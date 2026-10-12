@@ -6,12 +6,9 @@ from smartheat_runtime import options
 
 
 def test_addon_config_reexports_the_shared_functions():
-    for name in (
-        "ConfigError", "resolve_transport", "local_safety", "lever_set_id", "binding_description",
-        "resolve_accounts_api_base_url", "validate", "validate_telemetry_interval", "local_check_interval",
-        "telemetry_interval", "notify_hints_off", "is_signed_off", "TOKEN_OPTION", "SECRET_OPTIONS",
-        "MAX_TELEMETRY_INTERVAL_SECONDS", "DEFAULT_LEVER_SET",
-    ):
+    # Seit 1.0.0 (Spec 5c) nur noch, was das Add-on auf die Optionen des Konfigurationsdokuments anwendet; Transport,
+    # Zugang, Accounts-API und die Abmelde-Option entfielen mit dem Optionsmodus.
+    for name in ("ConfigError", "local_safety", "lever_set_id", "binding_description", "validate", "DEFAULT_LEVER_SET"):
         assert getattr(config, name) is getattr(options, name), name
 
 

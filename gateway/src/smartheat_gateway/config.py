@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from smartheat_device.documents import im_bedienbereich
 from smartheat_gateway.drivers import registry
 from smartheat_gateway.drivers.registry import driver_ids
-from smartheat_gateway.files import read_json, write_json
 from smartheat_gateway.paths import Paths
 from smartheat_runtime import dokument_config, options
 from smartheat_runtime.options import ConfigError
@@ -80,15 +79,9 @@ def raum_soll_start(bedienung_inhalt) -> float:
 
 def abgemeldet(paths: Paths, konfiguration) -> bool:
     """Abmelde-Markierung (sign_off) fuer die Anlage der aktuellen Konfiguration?"""
-    marker = read_json(paths.abgemeldet)
-    anlage = konfiguration.get("anlage") if isinstance(konfiguration, Mapping) else None
-    return isinstance(marker, dict) and anlage is not None and marker.get("anlage") == anlage
+    return dokument_config.abgemeldet(paths.abgemeldet, konfiguration)
 
 
 def abmelden(paths: Paths, anlage: str) -> bool:
     """Markierung setzen (Befehl sign_off); True, wenn sie neu ist (dann startet die Laufzeit neu)."""
-    marker = read_json(paths.abgemeldet)
-    if isinstance(marker, dict) and marker.get("anlage") == anlage:
-        return False
-    write_json(paths.abgemeldet, {"anlage": anlage}, private=True)
-    return True
+    return dokument_config.abmelden(paths.abgemeldet, anlage)

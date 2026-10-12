@@ -38,6 +38,7 @@ STATUS_MIN_SECONDS = 10
 MELDUNGEN_MIN_SECONDS = 10
 MELDUNGEN_JE_NACHRICHT = 50
 SERVER_DOWN_SECONDS = 300
+PRUEFUNG_WIEDERHOLEN_SECONDS = 30
 CLAIM_FAILED_TEXT = "Der Server war nicht erreichbar, bitte später erneut."
 CLAIMED_TEXT = "Das Gerät ist übernommen; ein neuer Code ist erst nach dem Entfernen möglich."
 _RUNNING = ("regelt", "abo_inaktiv")
@@ -116,6 +117,8 @@ class Device:
         self._meldungen_at: float | None = None
         self._status: dict | None = None
         self._status_at: float | None = None
+        self._zurueckgehalten: dict[str, dict] = {}  # Dokument, dessen Pruefung vorlaeufig nicht moeglich war
+        self._pruefung_at = 0.0
         self._started_at = clock()
         self._last_ok: float | None = None
 
@@ -268,6 +271,8 @@ class Device:
                 self._last_ok = now
                 if self._hello_offen and not self._bereit:
                     self._hello_senden()
+        if self._bereit:
+            self._zurueckgehaltene_pruefen(now)
         self.befehle.pruefen()
         self._wunsch_senden()
         self._status_senden(now, force=False)
@@ -391,9 +396,21 @@ class Device:
 
     def _dokument(self, art: str, body: dict) -> None:
         """Erst das Ergebnis und die Uebergabe, dann software: jeder Host-Rueckruf ist einzeln abgesichert, damit ein
-        gescheiterter die anderen nicht verhindert (das Dokument ist dann schon gespeichert)."""
+        gescheiterter die anderen nicht verhindert (das Dokument ist dann schon gespeichert).
+
+        Kann der Host jetzt nicht pruefen (config_check.NichtPruefbar, HA aus): weder Ergebnis noch Uebernahme. Der
+        Server stellt ein Dokument nur einmal je Verbindung zu und eine abgelehnte Version nie erneut; das Geraet haelt
+        es deshalb zurueck und prueft alle PRUEFUNG_WIEDERHOLEN_SECONDS erneut. Eine neue Zustellung ersetzt es."""
+        self._zurueckgehalten.pop(art, None)
         alt = self.documents.inhalt(art)
-        ergebnis = self.documents.empfangen(art, body)
+        try:
+            ergebnis = self.documents.empfangen(art, body)
+        except config_check.NichtPruefbar:
+            logger.warning("%s kann vorerst nicht geprueft werden, neuer Versuch in %s s", art,
+                           PRUEFUNG_WIEDERHOLEN_SECONDS)
+            self._zurueckgehalten[art] = body
+            self._pruefung_at = self._clock() + PRUEFUNG_WIEDERHOLEN_SECONDS
+            return
         if ergebnis is None:
             return
         self._publish("up/result", ergebnis.payload())
@@ -409,6 +426,12 @@ class Device:
         if art == KONFIGURATION and body.get("schema") in wire.SCHEMATA:
             software = body.get("software")
             self._host_rufen("software_soll", self.host.software_soll, software if isinstance(software, dict) else None)
+
+    def _zurueckgehaltene_pruefen(self, now: float) -> None:
+        if not self._zurueckgehalten or now < self._pruefung_at:
+            return
+        for art, body in list(self._zurueckgehalten.items()):
+            self._dokument(art, body)
 
     @staticmethod
     def _host_rufen(name: str, rueckruf: Callable[..., None], *args) -> None:

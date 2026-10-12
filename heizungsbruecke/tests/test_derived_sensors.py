@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from heizungsbruecke.derived_sensors import ensure_all
+from heizungsbruecke.derived_sensors import ensure_all, entfernen
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.helper_templates import outdoor_temperature_template, room_temperature_template
 from smartheat_runtime.backup_store import load_backup, save_backup
@@ -240,3 +240,67 @@ def test_obsolete_helpers_are_deleted_with_the_tenant_for_the_title_check(tmp_pa
     _run(ha_api, state_path)
 
     ha_api.delete_helper.assert_called_once_with(renamed, tenant_id="t1")
+
+
+# --- Entfernen der Anlage (Spec 5c, A4-07): alle Helfer weg, nicht loeschbare bleiben fuer den naechsten Versuch ---
+
+
+def _tracking_with_old_helpers(tmp_path):
+    tracking, _ = _tracking_after_fresh_run(tmp_path, outdoor="weather.forecast_home")
+    tracking["room_day_avg"] = {"entity_id": "input_number.smartheat_t1_tagesmittel"}
+    save_backup(tmp_path / "d.json", tracking)
+    return tracking
+
+
+def test_removing_deletes_every_helper_and_the_list(tmp_path):
+    tracking = _tracking_with_old_helpers(tmp_path)
+    ha_api = _ha_api({entry["entity_id"] for entry in tracking.values()})
+
+    assert entfernen(ha_api, "t1", tmp_path / "d.json") is True
+
+    assert sorted(call.args[0] for call in ha_api.delete_helper.call_args_list) == [OUTDOOR_ID, ROOM_ID]
+    assert all(call.kwargs == {"tenant_id": "t1"} for call in ha_api.delete_helper.call_args_list)
+    ha_api.delete_input_number.assert_called_once_with("input_number.smartheat_t1_tagesmittel")
+    assert not (tmp_path / "d.json").exists()
+
+
+def test_removing_keeps_a_helper_that_could_not_be_deleted(tmp_path, caplog):
+    tracking = _tracking_with_old_helpers(tmp_path)
+    ha_api = _ha_api({entry["entity_id"] for entry in tracking.values()})
+
+    def delete_helper(entity_id, tenant_id):
+        if entity_id == ROOM_ID:
+            raise RuntimeError("geheim")
+
+    ha_api.delete_helper.side_effect = delete_helper
+
+    with caplog.at_level(logging.WARNING):
+        assert entfernen(ha_api, "t1", tmp_path / "d.json") is False
+
+    assert load_backup(tmp_path / "d.json") == {"room_temperature": tracking["room_temperature"]}
+    assert "RuntimeError" in caplog.text and "geheim" not in caplog.text
+
+
+def test_removing_a_helper_that_is_already_gone_only_forgets_it(tmp_path):
+    _tracking_with_old_helpers(tmp_path)
+    ha_api = _ha_api()  # keine der Entities existiert noch
+
+    assert entfernen(ha_api, "t1", tmp_path / "d.json") is True
+
+    ha_api.delete_helper.assert_not_called()
+    assert not (tmp_path / "d.json").exists()
+
+
+@pytest.mark.parametrize("content", ["{kaputt", "[]", '{"room_temperature": "sensor.alt", "x": {"source": "s"}}'])
+def test_removing_with_a_broken_list_never_raises(tmp_path, content):
+    (tmp_path / "d.json").write_text(content)
+    ha_api = _ha_api({"sensor.alt"})
+
+    assert entfernen(ha_api, "t1", tmp_path / "d.json") is True
+
+    ha_api.delete_helper.assert_not_called()
+    assert not (tmp_path / "d.json").exists()
+
+
+def test_removing_without_a_list_is_done(tmp_path):
+    assert entfernen(_ha_api(), "t1", tmp_path / "d.json") is True

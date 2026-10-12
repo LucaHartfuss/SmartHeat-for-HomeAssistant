@@ -1,24 +1,25 @@
-"""Betrieb von __main__ ueber den Regel-Worker (Design-Spec 2026-09-26): Boot,
-Tick-Zustellung, Datenfehler, Notbetrieb, lokale Checks und Abo-Pfade. Getrieben ueber
-_start_bridge mit Fake-Uhr (tests/conftest.py), Fake-HA, Fake-MQTT und Fake-Trigger-Client."""
+"""Betrieb der Laufzeit ueber den Regel-Worker (Design-Spec 2026-09-26) im Geraete-Pfad (Spec 5c 1.3): Boot,
+Tick-Zustellung, Datenfehler, Notbetrieb, lokale Checks und Abo-Pfade. Getrieben ueber _start_bridge (Laufzeit auf dem
+Konfigurationsdokument aus OPTIONS, geraet_helpers.start_bridge) mit Fake-Uhr (tests/conftest.py), Fake-HA,
+Fake-Trigger-Client und dem Link einer Geraete-Attrappe (FakeGeraet) statt eines eigenen MQTT-Clients."""
 import dataclasses
 import itertools
-import json
 import logging
 import sys
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
+import geraet_helpers
 import pytest
-from fakes import ACCESS_OPTIONS, FakeHa
+from fakes import FakeHa
 
-import heizungsbruecke.__main__ as main_module
+from heizungsbruecke import geraet_status
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.enforce import MAX_WRITES_PER_DAY, RETRY_SECONDS
 from smartheat_core.pipeline import LeverPipeline
+from smartheat_device.laufzeit import RuntimeChannel
 from smartheat_runtime import abo, app, backup_store, datentraeger, entitlement, ticks
 from smartheat_runtime.backup_store import load_backup, save_backup
 from smartheat_runtime.delivery import DataFault, DeliveryState
@@ -31,9 +32,6 @@ OPTIONS = {
     "tenant_id": "test_tenant",
     "verteilsystem": "Heizkoerper",  # Clamps 0.4-1.5 / 15-25 (Mindestvorlauf 20-30), Boost 1.5/25
     "daily_trigger_time": "12:00",  # Tagestick 12:00
-    **ACCESS_OPTIONS,
-    "mqtt_username": "u",
-    "mqtt_password": "p",
     "room_sensors": ["sensor.room_actual"],
     "entity_room_target": "sensor.room_target",
     "entity_curve_current": "number.curve_current",
@@ -42,7 +40,6 @@ OPTIONS = {
     "entity_outdoor_temp": "sensor.outdoor_temp",
     "entity_heat_limit": "number.heat_limit",
     "notify_services": ["notify.handy"],
-    "accounts_api_base_url": "https://accounts.example.test",
 }
 
 DERIVED: dict[str, str] = {}
@@ -53,44 +50,48 @@ NOTBETRIEB_ON = "Heizungsbrücke: Server antwortet nicht, Notbetrieb aktiv. Die 
 _OMIT = object()
 
 
-class FakeMqtt:
-    def __init__(self, options=None, tenant_id=None, **kwargs):
-        self.options, self.tenant_id = options, tenant_id
-        self.kwargs = kwargs
-        self.connect_failures = 0
-        self.snapshots = []
-        self.telemetry = []
-        self.setpoints_callback = None
-        self.publish_error = None
-        self.loop_started = False
-        self.stopped = False
-        self.connected = True
+class _Link:
+    """Sicht der Tests auf den Link der Laufzeit (bis 0.36 ein eigener MQTT-Client): gesendete Snapshots und
+    Telemetrie, Antworten des Servers ueber channel.setpoints, Verbindung des Links."""
 
-    def is_connected(self):
-        return self.connected
+    def __init__(self, geraet) -> None:
+        self._geraet = geraet
 
-    def subscribe_setpoints(self, on_message):
-        self.setpoints_callback = on_message
+    @property
+    def snapshots(self):
+        return self._geraet.sent.of("up/snapshot")
 
-    def loop_start(self):
-        self.loop_started = True
+    @property
+    def telemetry(self):
+        return self._geraet.sent.of("telemetry")
 
-    def publish_snapshot(self, payload):
-        if self.publish_error is not None:
-            raise self.publish_error
-        self.snapshots.append(payload)
+    @property
+    def connected(self):
+        return self._geraet.sent.connected
 
-    def publish_telemetry(self, payload):
-        self.telemetry.append(payload)
+    @connected.setter
+    def connected(self, value):
+        self._geraet.sent.connected = value
 
-    def stop(self):
-        self.stopped = True
+    @property
+    def publish_error(self):
+        return self._geraet.sent.publish_error
+
+    @publish_error.setter
+    def publish_error(self, value):
+        self._geraet.sent.publish_error = value
+
+    @property
+    def stopped(self):
+        return self._geraet.channel._stopped
+
+    def verbunden(self):
+        """Der Link des Geraets ist (wieder) verbunden (Geraete-Thread)."""
+        self._geraet.channel.verbunden()
 
     def answer(self, seq, status="ok", curve=0.95, shift=23.0, reason=None, schema=4, heat_limit=16.0, levers=None):
-        """Server-Antwort (Schema 4) ueber den echten paho-Callback einspeisen. levers=None baut die Hebel aus
-        curve/shift/heat_limit (ein Wert _OMIT laesst den Hebel weg); schema=_OMIT bzw. levers=_OMIT: Feld fehlt."""
-        message = MagicMock()
-        message.retain = False
+        """Server-Antwort (Schema 4) ueber den Link einspeisen. levers=None baut die Hebel aus curve/shift/heat_limit
+        (ein Wert _OMIT laesst den Hebel weg); schema=_OMIT bzw. levers=_OMIT: Feld fehlt."""
         if levers is None:
             levers = {
                 name: value for name, value in (("curve", curve), ("room_setpoint", shift), ("heat_limit", heat_limit))
@@ -104,16 +105,12 @@ class FakeMqtt:
             del payload["schema"]
         if levers is _OMIT:
             del payload["levers"]
-        message.payload = json.dumps(payload)
-        self.setpoints_callback(None, None, message)
+        self._geraet.channel.setpoints(payload)
 
     def answer_raw(self, seq, **fields):
-        message = MagicMock()
-        message.retain = False
         payload = {"schema": 4, "seq": seq, "ts": "x", "status": "ok", "reason": None,
                    "levers": {"curve": 0.95, "room_setpoint": 23.0, "heat_limit": 16.0}, "learned": None, **fields}
-        message.payload = json.dumps(payload)
-        self.setpoints_callback(None, None, message)
+        self._geraet.channel.setpoints(payload)
 
 
 class FakeTriggerClient:
@@ -133,47 +130,39 @@ class FakeTriggerClient:
 @pytest.fixture
 def env(tmp_path, monkeypatch, clock):
     paths = {}
-    for name in ("BACKUP_PATH", "FAILSAFE_PATH", "ENTITLEMENT_PATH", "DERIVED_SENSORS_PATH"):
+    for name in ("BACKUP_PATH", "FAILSAFE_PATH", "ENTITLEMENT_PATH", "DERIVED_SENSORS_PATH", "AUFRAEUMEN_PATH"):
         paths[name] = tmp_path / f"{name.lower()}.json"
         monkeypatch.setattr(f"heizungsbruecke.config.{name}", paths[name])
+    runtime_dir = tmp_path / "runtime"
+    for name, value in (("RUNTIME_DIR", runtime_dir), ("ROOM_TARGET_PATH", runtime_dir / "room_target.json"),
+                        ("ABGEMELDET_PATH", runtime_dir / "abgemeldet.json")):
+        paths[name] = value
+        monkeypatch.setattr(f"heizungsbruecke.config.{name}", value)
     env_derived = {"replaced": ()}
     monkeypatch.setattr(
         "heizungsbruecke.derived_sensors.ensure_all",
         lambda **kwargs: DerivedSensors({**DERIVED, "room_actual": "sensor.room_actual"}, env_derived["replaced"], "fp1"),
     )
-    abo = {"status": entitlement.ACTIVE, "queries": 0}
-
-    def _query_status(tenant_id, base_url, token):
-        # Jede Abo-Abfrage (Boot, Tick-Zustellung, abgelehnte Anmeldung, Fristende) nutzt die
-        # Basis-URL aus den Optionen (Spec TP3, 2.5) und das Installations-Token (Spec AWS-IoT 4.3).
-        assert base_url == OPTIONS["accounts_api_base_url"]
-        assert token == OPTIONS["installation_token"]
-        abo["queries"] += 1
-        return abo["status"]
-
-    monkeypatch.setattr("smartheat_runtime.entitlement.query_status", _query_status)
-    mqtt_clients, trigger_clients = [], []
-
-    def _mqtt_factory(*args, **kwargs):
-        mqtt_clients.append(FakeMqtt(*args, **kwargs))
-        return mqtt_clients[-1]
+    # Abo-Status des Konfigurationsdokuments: die Laufzeit liest ihn bei jeder Abo-Pruefung (Boot, Tick-Zustellung,
+    # Fristende) frisch; queries zaehlt diese Pruefungen.
+    abo_state = {"status": entitlement.ACTIVE, "queries": 0}
+    trigger_clients = []
 
     def _trigger_factory(**kwargs):
         trigger_clients.append(FakeTriggerClient(**kwargs))
         return trigger_clients[-1]
 
-    monkeypatch.setattr("smartheat_runtime.mqtt_link.BridgeMqttClient", _mqtt_factory)
-    monkeypatch.setattr("heizungsbruecke.triggers.HaTriggerClient", _trigger_factory)
+    monkeypatch.setattr("heizungsbruecke.geraet_trigger.HaTriggerClient", _trigger_factory)
     return SimpleNamespace(
-        clock=clock, paths=paths, abo=abo, ha=FakeHa(), mqtt_clients=mqtt_clients, trigger_clients=trigger_clients,
-        derived=env_derived,
+        clock=clock, paths=paths, abo=abo_state, ha=FakeHa(), trigger_clients=trigger_clients, derived=env_derived,
+        geraet=None,
     )
 
 
 # --- Harness ---
-# Einzige Stellen dieser Datei, die Interna der Bruecke kennen. Der Umbau (TP5) passt nur
+# Einzige Stellen dieser Datei, die Interna der Bruecke kennen. Der Umbau (TP5, Spec 5c) passt nur
 # diesen Abschnitt und die Fixture `env` an; die Szenarien darunter pruefen nur die
-# Aussensicht: HA-Writes, Pushes, MQTT-Publishes, Dateiinhalte.
+# Aussensicht: HA-Writes, Pushes, Nachrichten des Links, Dateiinhalte.
 
 ABO_ENDED = (
     "SmartHeat: Abo seit 30 Tagen inaktiv. Die Heizungssteuerung ist beendet, "
@@ -181,8 +170,21 @@ ABO_ENDED = (
 )
 
 
+def _abo_status(env):
+    env.abo["queries"] += 1
+    if isinstance(env.abo["status"], Exception):  # die Abo-Quelle wirft unerwartet
+        raise env.abo["status"]
+    return env.abo["status"]
+
+
 def _start_bridge(env, **option_overrides):
-    return main_module._start_bridge({**OPTIONS, **option_overrides}, env.ha, clock=env.clock)
+    bridge, env.geraet = geraet_helpers.start_bridge(env, abo=lambda: _abo_status(env), **option_overrides)
+    return bridge
+
+
+def _links(env):
+    """Die Links, die die Laufzeit seit dem letzten Start gebunden hat (leer: ohne Verbindung zum Server)."""
+    return env.geraet.channels if env.geraet is not None else []
 
 
 def _is_running(bridge) -> bool:
@@ -262,7 +264,7 @@ def _regulation_writes(env):
 
 
 def _mqtt(env):
-    return env.mqtt_clients[-1]
+    return _Link(env.geraet)
 
 
 def _backup(env):
@@ -274,13 +276,26 @@ def _failsafe_file(env):
 
 
 def _trigger(env, bridge, entity_id):
-    env.trigger_clients[-1].kwargs["on_trigger_event"]({"platform": "state", "entity_id": entity_id, "attribute": None})
+    """HA meldet eine Zustandsaenderung (to_state mit dem Wert aus env.ha.states). Die Soll-Entity geht als Eingabe der
+    Soll-Quelle in den Soll-Eingang (Entprellung 0 s: den for: 10 s hat der HA-Trigger schon), alles andere ist ein
+    lokaler Check."""
+    value = env.ha.states.get(entity_id)
+    env.trigger_clients[-1].kwargs["on_trigger_event"]({
+        "platform": "state", "entity_id": entity_id, "attribute": None,
+        "to_state": {"state": value if isinstance(value, int | float | str) else "unavailable"}})
     bridge.worker.run_pending()
 
 
 def _set_room_target(env, bridge, value):
     env.ha.states["sensor.room_target"] = value
     _trigger(env, bridge, "sensor.room_target")
+
+
+def _ha_verbunden(env, bridge):
+    """Der HA-Trigger-Client ist (wieder) verbunden: Soll-Entity lesen, lokaler Check mit frischem Raum-Soll (so kommt
+    nach dem Start der erste Tick; bis 0.36 tat das auch ein Bericht der Soll-Entity ohne Aenderung), voller Status."""
+    env.trigger_clients[-1].kwargs["on_connected"]()
+    bridge.worker.run_pending()
 
 
 def _advance(env, bridge, seconds):
@@ -306,7 +321,7 @@ def test_start_runs_priming_check_before_mqtt_loop_start(env, monkeypatch):
         return read_state(entity_id)
 
     env.ha.get_state = _spy
-    monkeypatch.setattr(FakeMqtt, "loop_start", lambda self: order.append("loop_start"))
+    monkeypatch.setattr(RuntimeChannel, "loop_start", lambda self: order.append("loop_start"))
 
     _start(env)
 
@@ -317,7 +332,7 @@ def test_boot_prepares_zone_before_first_snapshot(env, monkeypatch):
     # Plan-Praezisierung 11: Zone meldet 0 (heizt gerade nicht) und steht nicht auf Manuell.
     env.ha.states.update({"climate.zone": "auto", "climate.zone::temperature": 0.0})
     order = []
-    monkeypatch.setattr(FakeMqtt, "loop_start", lambda self: order.append(list(env.ha.writes)))
+    monkeypatch.setattr(RuntimeChannel, "loop_start", lambda self: order.append(list(env.ha.writes)))
 
     bridge = _start(env, entity_shift_current="climate.zone")
 
@@ -325,7 +340,7 @@ def test_boot_prepares_zone_before_first_snapshot(env, monkeypatch):
     assert env.ha.states["climate.zone::temperature"] == 21.0  # Raum-Soll als Startwert
     assert _backup(env)["restore_point"]["room_setpoint"] == 21.0
 
-    _trigger(env, bridge, "sensor.room_target")  # erster Tick
+    _ha_verbunden(env, bridge)  # erster Tick
 
     assert _mqtt(env).snapshots[0]["levers"]["room_setpoint"] == 21.0
 
@@ -718,15 +733,16 @@ def _last_event(env):
 
 
 def _connect(env, bridge):
-    _mqtt(env).kwargs["on_connected"](None)
+    _mqtt(env).verbunden()
     bridge.worker.run_pending()
 
 
 def test_status_goes_from_startet_to_regelt_when_mqtt_connects(env):
     _quiet_backup(env)
-    bridge = _start(env)
+    bridge = _start(env, verbunden=False)
     assert _status_states(env) == ["startet"]
 
+    _mqtt(env).connected = True
     _connect(env, bridge)
 
     assert _status_states(env) == ["startet", "regelt"]
@@ -739,15 +755,16 @@ def test_status_is_abo_inaktiv_right_after_start_without_mqtt(env):
 
     _start(env)
 
-    assert env.mqtt_clients == []
+    assert _links(env) == []
     assert _status_states(env) == ["startet", "abo_inaktiv"]
 
 
-def test_status_carries_the_setup_id_from_the_options(env):
+def test_status_carries_the_plant_of_the_document_as_setup_id(env):
+    # Spec 5c 1.3 (dokument_config): setup_id = Anlage; die Option setup_id entfiel mit dem Optionsmodus.
     _quiet_backup(env)
-    _start(env, setup_id="wizard-42")
+    _start(env)
 
-    assert env.ha.events[0][1]["setup_id"] == "wizard-42"
+    assert env.ha.events[0][1]["setup_id"] == OPTIONS["tenant_id"]
 
 
 def test_status_is_sent_again_when_the_ha_connection_comes_back(env):
@@ -756,8 +773,7 @@ def test_status_is_sent_again_when_the_ha_connection_comes_back(env):
     _connect(env, bridge)
     before = len(env.ha.events)
 
-    env.trigger_clients[-1].kwargs["on_connected"]()
-    bridge.worker.run_pending()
+    _ha_verbunden(env, bridge)
 
     assert len(env.ha.events) == before + 1
     assert _last_event(env)["status"] == "regelt"
@@ -773,7 +789,7 @@ def test_status_event_carries_the_full_state(env):
 
     event = _last_event(env)
     assert (event["schema"], event["tenant_id"], event["status"], event["boost"], event["abo"]) == (
-        2, "test_tenant", "regelt", "keiner", "aktiv",
+        geraet_status.EVENT_SCHEMA, "test_tenant", "regelt", "keiner", "aktiv",
     )
     assert event["hebelsatz"] == "vaillant_vrc720"
     assert event["hebel"] == {"curve": 0.95, "room_setpoint": 23.0, "heat_limit": 16.0, "min_flow": 20.5}
@@ -815,8 +831,7 @@ def test_open_critical_notifications_are_recreated_when_the_ha_connection_comes_
     pushes_before = list(env.ha.pushes)
     env.ha.persistent.clear()
 
-    env.trigger_clients[-1].kwargs["on_connected"]()
-    bridge.worker.run_pending()
+    _ha_verbunden(env, bridge)
 
     assert env.ha.persistent == [("smartheat_abo", "SmartHeat: Abo inaktiv")]
     assert env.ha.pushes == pushes_before
@@ -857,7 +872,7 @@ def test_answer_writes_values_and_closes_tick(env):
 def test_skipped_answer_is_applied_like_ok(env):
     bridge = _start(env)
     _connect(env, bridge)
-    _trigger(env, bridge, "sensor.room_target")  # erster Tick (noch kein Soll gemeldet)
+    _ha_verbunden(env, bridge)  # erster Tick (noch kein Soll gemeldet)
     _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], status="skipped", curve=1.0, shift=20.5,
             reason="zu_wenig_daten")
     assert (env.ha.states["number.curve_current"], env.ha.states["number.shift_current"]) == (1.0, 20.5)
@@ -1235,8 +1250,7 @@ def test_on_connected_rereads_room_target_and_runs_local_check(env):
     bridge = _start(env)
     env.ha.states["sensor.room_target"] = 22.0
 
-    env.trigger_clients[-1].kwargs["on_connected"]()
-    bridge.worker.run_pending()
+    _ha_verbunden(env, bridge)
 
     assert _stable_target(bridge) == 22.0
     assert _boost_active(bridge) is True
@@ -1258,16 +1272,17 @@ def test_watchdog_runs_local_check_only_while_ws_disconnected(env):
     assert len(_mqtt(env).snapshots) == 1
 
 
-def test_local_check_keeps_cached_target_when_room_target_unreadable(env, caplog):
+def test_local_check_keeps_cached_target_when_room_target_unreadable(env):
+    # Spec 5c 1.3: die Regelung liest den Raum-Soll aus dem Soll-Speicher, nie aus der Entity; ein Bericht ohne Zahl
+    # (unavailable) ist keine Eingabe. Bis 0.36 las der lokale Check die Entity und loggte "room_target nicht lesbar".
     _quiet_backup(env)
     bridge = _start(env)
     env.ha.states["sensor.room_target"] = ValueError("unavailable")
 
-    with caplog.at_level(logging.WARNING):
-        _trigger(env, bridge, "sensor.room_target")
+    _trigger(env, bridge, "sensor.room_target")
 
     assert _stable_target(bridge) == 21.0
-    assert "room_target nicht lesbar" in caplog.text
+    assert _delivery(bridge).datenfehler is None
 
 
 def test_local_check_after_abo_finished_does_nothing(env):
@@ -1331,7 +1346,7 @@ def test_active_status_at_start_clears_stale_inactive_state(env):
     _start(env)
 
     assert not env.paths["ENTITLEMENT_PATH"].exists()
-    assert len(env.mqtt_clients) == 1
+    assert len(_links(env)) == 1
 
 
 def test_abo_reactivation_at_start_notifies_once_and_is_silent_on_next_restart(env):
@@ -1361,7 +1376,7 @@ def test_unknown_status_at_start_keeps_state_and_starts_normally(env):
     _start(env)
 
     assert env.paths["ENTITLEMENT_PATH"].read_text() == before
-    assert len(env.mqtt_clients) == 1
+    assert len(_links(env)) == 1
 
 
 def test_inactive_status_at_start_runs_locally_without_mqtt(env):
@@ -1371,7 +1386,7 @@ def test_inactive_status_at_start_runs_locally_without_mqtt(env):
 
     bridge = _start(env)
 
-    assert env.mqtt_clients == []
+    assert _links(env) == []
     assert bridge.mqtt_client is None
     assert _failsafe_file(env)["failsafe_active"] is True
     assert (env.ha.states["number.curve_current"], env.ha.states["number.shift_current"]) == (1.5, 25.0)
@@ -1388,7 +1403,7 @@ def test_inactive_after_grace_idles_as_abo_beendet_without_writes(env, monkeypat
     bridge = _start_bridge(env)
 
     assert isinstance(bridge, app.IdleBridge) and bridge.reason == "abo_beendet"
-    assert env.mqtt_clients == [] and env.trigger_clients == []
+    assert _links(env) == [] and env.trigger_clients == []
     assert env.ha.writes == [] and env.ha.pushes == []
     assert _status_states(env) == ["startet", "abo_beendet"]
 
@@ -1424,238 +1439,20 @@ def test_closing_start_retries_a_failed_restore_and_reports_it_once(env, monkeyp
     assert env.ha.pushes == [abo.RESTORE_FAILED_MESSAGE, abo.RESTORE_OK_MESSAGE]
 
 
-def test_auth_rejected_with_inactive_abo_enters_abo_mode(env):
-    _quiet_backup(env)
-    bridge = _start(env)
-    env.abo["status"] = entitlement.INACTIVE
-
-    _mqtt(env).kwargs["on_auth_rejected"](_mqtt(env))  # aus dem paho-Thread
-    bridge.worker.run_pending()
-
-    assert _mqtt(env).stopped is True
-    assert _delivery(bridge).notbetrieb is True
-    assert _failsafe_file(env)["failsafe_active"] is True
-    assert len(env.ha.persistent) == 1
-    assert _status_states(env)[-1] == "abo_inaktiv"
-
-
-def test_inactive_rejection_after_unknown_rejection_clears_zugang_abgelehnt_silently(env, monkeypatch):
-    """Fix Review Focus 1, Runde 1: eine erste Ablehnung bei noch unklarem Abo setzt
-    zugang_abgelehnt; eine spaetere Ablehnung mit eindeutig inaktivem Abo wechselt in den
-    Abo-inaktiv-Modus (MQTT ist danach beendet, kein Connect kann die Flagge mehr loeschen) und
-    muss Flagge, Grund und Meldung selbst aufraeumen -- sonst haengt der falsche Rat ("neu
-    anmelden") bis zum Fristende, und der Grund haengt sogar noch im abo_beendet-Event."""
-    _quiet_backup(env)
-    bridge = _start(env)
-    env.abo["status"] = entitlement.UNKNOWN
-
-    _mqtt(env).kwargs["on_auth_rejected"](_mqtt(env))
-    bridge.worker.run_pending()
-
-    assert _status_states(env)[-1] == "zugang_abgelehnt"
-    assert ("smartheat_zugang", HA_TEXTS.access_denied) in env.ha.persistent
-    pushes_before = list(env.ha.pushes)
-
-    env.abo["status"] = entitlement.INACTIVE
-    # T2-12-Drosselung: die erste Ablehnung hat schon abgefragt und zugang_abgelehnt gesetzt,
-    # daher braucht diese zweite Ablehnung 600 s Abstand, um ueberhaupt erneut abzufragen.
-    env.clock.advance(600)
-    _mqtt(env).kwargs["on_auth_rejected"](_mqtt(env))
-    bridge.worker.run_pending()
-
-    assert _status_states(env)[-1] == "abo_inaktiv"
-    assert _last_event(env)["grund"] is None
-    assert "smartheat_zugang" in env.ha.dismissed
-    new_pushes = env.ha.pushes[len(pushes_before):]
-    assert new_pushes == [abo.inactive_message(entitlement.load_inactive_since(env.paths["ENTITLEMENT_PATH"]))]
-    assert HA_TEXTS.access_denied not in new_pushes and abo.ACCESS_OK_MESSAGE not in new_pushes
-
-    monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: True)
-    _advance(env, bridge, 300)
-
-    assert _status_states(env)[-1] == "abo_beendet"
-    assert _last_event(env)["grund"] is None  # nicht mehr der stehengebliebene Zugangsgrund
-
-
-@pytest.mark.parametrize("status", [entitlement.ACTIVE, entitlement.UNKNOWN, entitlement.REJECTED])
-def test_auth_rejected_with_active_or_unknown_abo_reports_zugang_abgelehnt(env, caplog, status):
-    _quiet_backup(env)
-    bridge = _start(env)
-    env.abo["status"] = status
-
-    with caplog.at_level(logging.ERROR):
-        _mqtt(env).kwargs["on_auth_rejected"](_mqtt(env))
-        bridge.worker.run_pending()
-
-    assert _mqtt(env).stopped is False
-    assert "abgelehnt" in caplog.text
-    assert _status_states(env)[-1] == "zugang_abgelehnt"
-    assert _last_event(env)["grund"] == abo.ACCESS_DENIED_REASON
-    assert ("smartheat_zugang", HA_TEXTS.access_denied) in env.ha.persistent
-
-
-def test_rejected_status_at_start_starts_normally(env):
-    # Spec TP8 3.2: REJECTED beim Start wie UNKNOWN -- die MQTT-Anmeldung klaert den Rest.
-    _quiet_backup(env)
-    env.abo["status"] = entitlement.REJECTED
-
-    bridge = _start(env)
-
-    assert _is_running(bridge)
-    assert _abo_inactive_since(bridge) is None
-    assert _mqtt(env).stopped is False
-
-
-def test_rejected_status_when_the_server_is_silent_is_no_abo_mode(env):
-    _quiet_backup(env)
-    bridge = _start(env)
-    _set_room_target(env, bridge, 20.5)
-    env.abo["status"] = entitlement.REJECTED
-
-    _advance(env, bridge, 30)
-    _advance(env, bridge, 30)
-
-    assert _delivery(bridge).notbetrieb is True
-    assert _abo_inactive_since(bridge) is None
-
-
-def test_successful_connect_clears_zugang_abgelehnt(env):
-    _quiet_backup(env)
-    bridge = _start(env)
-    _mqtt(env).kwargs["on_auth_rejected"](_mqtt(env))
-    bridge.worker.run_pending()
-
-    _connect(env, bridge)
-
-    assert _status_states(env)[-2:] == ["zugang_abgelehnt", "regelt"]
-    assert "smartheat_zugang" in env.ha.dismissed
-    assert env.ha.pushes[-1] == abo.ACCESS_OK_MESSAGE
-
-
-def test_repeated_auth_rejections_are_coalesced_into_one_entitlement_query(env):
-    # T10c: paho meldet waehrend seines Backoffs mehrfach; jede Abfrage blockiert den
-    # Worker bis zu 10 s -- noch nicht verarbeitete Meldungen ergeben nur eine Abfrage.
-    _quiet_backup(env)
-    bridge = _start(env)
-    queries_before = env.abo["queries"]
-
-    for _ in range(3):
-        _mqtt(env).kwargs["on_auth_rejected"](_mqtt(env))
-    bridge.worker.run_pending()
-
-    assert env.abo["queries"] == queries_before + 1
-
-
-def test_auth_rejected_in_abo_inactive_mode_does_not_query_again(env):
-    # T10c: nach dem Wechsel in den Abo-inaktiv-Modus ist jede weitere Abfrage sinnlos.
-    _quiet_backup(env)
-    bridge = _start(env)
-    env.abo["status"] = entitlement.INACTIVE
-    _mqtt(env).kwargs["on_auth_rejected"](_mqtt(env))
-    bridge.worker.run_pending()
-    queries_before = env.abo["queries"]
-
-    _mqtt(env).kwargs["on_auth_rejected"](_mqtt(env))
-    bridge.worker.run_pending()
-
-    assert env.abo["queries"] == queries_before
-
-
-def _reject(env, bridge):
-    _mqtt(env).kwargs["on_auth_rejected"](_mqtt(env))
-    bridge.worker.run_pending()
-
-
-def _access_errors(caplog):
-    # nur die Zeilen aus handle_auth_rejected, nicht andere ERRORs aus Takten, die beim Vorstellen der Uhr laufen
-    return [r for r in caplog.records if r.levelno == logging.ERROR and "MQTT-Anmeldung" in r.getMessage()]
-
-
-def test_auth_rejections_query_at_most_every_ten_minutes(env, caplog):
-    _quiet_backup(env)
-    bridge = _start(env)
-    env.abo["status"] = entitlement.REJECTED
-    queries_before = env.abo["queries"]
-
-    with caplog.at_level(logging.ERROR):
-        _reject(env, bridge)
-        env.clock.advance(300)
-        _reject(env, bridge)
-        env.clock.advance(299)
-        _reject(env, bridge)
-
-    assert env.abo["queries"] == queries_before + 1
-    assert len(_access_errors(caplog)) == 1
-
-    env.clock.advance(1)
-    _reject(env, bridge)
-    assert env.abo["queries"] == queries_before + 2
-
-
-def test_error_line_repeats_only_when_the_result_changes(env, caplog):
-    _quiet_backup(env)
-    bridge = _start(env)
-    env.abo["status"] = entitlement.REJECTED
-
-    with caplog.at_level(logging.ERROR):
-        _reject(env, bridge)
-        env.clock.advance(600)
-        _reject(env, bridge)
-        env.abo["status"] = entitlement.UNKNOWN
-        env.clock.advance(600)
-        _reject(env, bridge)
-
-    assert len(_access_errors(caplog)) == 2
-
-
-def test_suspension_during_zugang_abgelehnt_is_seen_after_the_interval(env):
-    _quiet_backup(env)
-    bridge = _start(env)
-    env.abo["status"] = entitlement.REJECTED
-    _reject(env, bridge)
-
-    env.abo["status"] = entitlement.INACTIVE
-    env.clock.advance(600)
-    _reject(env, bridge)
-
-    assert _status_states(env)[-1] == "abo_inaktiv"
-
-
-def test_successful_connect_resets_the_throttle(env, caplog):
-    # Nach einem erfolgreichen Connect ist eine neue Ablehnung wieder "die erste": sofortige
-    # Abfrage und wieder eine ERROR-Zeile, auch bei unveraendertem Ergebnis.
-    _quiet_backup(env)
-    bridge = _start(env)
-    env.abo["status"] = entitlement.REJECTED
-    with caplog.at_level(logging.ERROR):
-        _reject(env, bridge)
-        _connect(env, bridge)
-        queries_before = env.abo["queries"]
-
-        _reject(env, bridge)
-
-    assert env.abo["queries"] == queries_before + 1
-    assert len(_access_errors(caplog)) == 2
-
-
-def test_unexpected_entitlement_query_error_counts_as_unknown(env, monkeypatch):
-    # T10b: eine unerwartet werfende Abo-Abfrage nach dem zweiten Timeout laeuft ueber
-    # _fallback_follow_up als "unbekannt" -- Notbetrieb mit Retry, kein Abo-inaktiv-Modus.
+def test_unexpected_entitlement_query_error_counts_as_unknown(env):
+    # T10b: eine unerwartet werfende Abo-Pruefung nach dem zweiten Timeout laeuft ueber _fallback_follow_up als
+    # "unbekannt" -- Notbetrieb mit Retry, kein Abo-inaktiv-Modus. Im Geraete-Pfad wirft die Abo-Quelle des Dokuments.
     _quiet_backup(env)
     bridge = _start(env)
     _set_room_target(env, bridge, 20.5)
     seq = _mqtt(env).snapshots[0]["seq"]
 
-    def _broken_query(tenant_id, base_url, token):
-        raise RuntimeError("unerwartet")
-
-    monkeypatch.setattr("smartheat_runtime.entitlement.query_status", _broken_query)
+    env.abo["status"] = RuntimeError("unerwartet")
     _advance(env, bridge, 30)
     _advance(env, bridge, 30)
 
     assert _delivery(bridge).notbetrieb is True
     assert _abo_inactive_since(bridge) is None
-    assert _mqtt(env).stopped is False
     assert env.ha.pushes == [NOTBETRIEB_ON]
 
     _advance(env, bridge, 300)
@@ -1734,7 +1531,7 @@ def test_inactive_restart_within_grace_does_not_notify_again(env):
 
     _start(env)
 
-    assert env.mqtt_clients == []
+    assert _links(env) == []
     assert env.ha.pushes == []
     assert env.ha.persistent == []
 
@@ -2077,7 +1874,7 @@ def test_no_snapshot_is_queued_without_broker_and_connect_retries_at_once(env):
     assert _delivery(bridge).notbetrieb is True
 
     _mqtt(env).connected = True
-    _mqtt(env).kwargs["on_connected"](_mqtt(env))  # aus dem paho-Thread
+    _mqtt(env).verbunden()  # aus dem paho-Thread
     bridge.worker.run_pending()
 
     assert len(_mqtt(env).snapshots) == 1
@@ -2095,7 +1892,7 @@ def test_mqtt_connect_while_awaiting_answer_does_not_send_again(env):
     bridge = _start(env)
     _set_room_target(env, bridge, 20.5)
 
-    _mqtt(env).kwargs["on_connected"](_mqtt(env))
+    _mqtt(env).verbunden()
     bridge.worker.run_pending()
 
     assert len(_mqtt(env).snapshots) == 1
@@ -2106,13 +1903,13 @@ def test_open_tick_at_start_is_sent_on_connect_without_waiting_for_the_ack_timeo
     _quiet_backup(env)
     save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": False, "pending": {"seq": "alt-1", "trigger": "daily"}})
     link = {"up": False}
-    monkeypatch.setattr(FakeMqtt, "is_connected", lambda self: link["up"])
+    monkeypatch.setattr(RuntimeChannel, "is_connected", lambda self: link["up"])
 
     bridge = _start(env)
     assert _mqtt(env).snapshots == []
 
     link["up"] = True
-    _mqtt(env).kwargs["on_connected"](_mqtt(env))
+    _mqtt(env).verbunden()
     bridge.worker.run_pending()
 
     assert [s["seq"] for s in _mqtt(env).snapshots] == ["alt-1"]
@@ -2150,7 +1947,7 @@ def test_sign_off_during_emergency_boost_restores_clears_and_idles(env):
     assert {"smartheat_notbetrieb", "smartheat_batterie_sensor_x"} <= set(env.ha.dismissed)
     assert "notify_states" not in _backup(env)
     assert env.ha.pushes == []
-    assert env.mqtt_clients == [] and env.trigger_clients == []
+    assert _links(env) == [] and env.trigger_clients == []
     assert _status_states(env) == ["startet", "abgemeldet"]
     assert _last_event(env)["grund"] is None
     assert env.abo["queries"] == 0
@@ -2191,12 +1988,13 @@ def test_sign_off_with_invalid_configuration_does_not_write(env):
     assert _last_event(env)["grund"] == app.SIGN_OFF_INVALID_CONFIG
 
 
-def test_sign_off_without_mqtt_credentials_still_restores(env):
-    """TP7-Gates: die Integration leert beim Entfernen die Zugangsdaten. Startet der Pi danach
-    neu, waehrend das Zuruecksetzen noch scheitert, muss der Abmelde-Pfad trotzdem laufen."""
+def test_sign_off_during_a_comfort_boost_restores_the_learned_values(env):
+    """Abmelden mit laufendem Comfort-Boost (bis 0.36 zusaetzlich ohne MQTT-Zugangsdaten, die die Integration beim
+    Entfernen leerte; im Geraete-Pfad haelt der Geraetekern den Zugang): die zuletzt gelernten Werte gehen auf die
+    Anlage."""
     _quiet_backup(env, boost_active=True)
 
-    bridge = _start_bridge(env, abgemeldet=True, mqtt_username="", mqtt_password="")
+    bridge = _start_bridge(env, abgemeldet=True)
 
     assert bridge.reason == "abgemeldet"
     assert env.ha.writes == [("number.curve_current", 0.9), ("number.shift_current", 22.0)]
@@ -2518,22 +2316,20 @@ def test_probe_tick_sends_target_change_without_booking_the_target(env):
     assert _backup(env)["last_published_target_rt"] == 21.0
 
 
-def test_unreadable_room_target_at_start_reports_a_local_data_fault_for_the_due_daily_tick(env):
+def test_unreadable_room_target_entity_at_start_does_not_hold_the_due_daily_tick(env):
+    # Spec 5c 1.3: der Raum-Soll kommt aus dem Soll-Speicher (Start aus der Bedienung des Servers), eine beim Start
+    # unlesbare Soll-Entity ist kein Datenfehler mehr (bis 0.36: lokaler Datenfehler room_target, Tick gehalten).
     yesterday = (date.today() - timedelta(days=1)).isoformat()
     _quiet_backup(env, last_daily_trigger_date=yesterday)
     env.ha.states["sensor.room_target"] = ValueError("could not convert string to float: 'unavailable'")
-    bridge = _start(env, daily_trigger_time="00:00")
+    bridge = _start(env, daily_trigger_time="00:00", bedienung={"raum_soll": 21.0})
 
     _trigger(env, bridge, "sensor.room_actual")
 
     assert _delivery(bridge).pending.trigger == "daily"
-    assert _delivery(bridge).datenfehler == DataFault("local", ("room_target",))
-    assert len(env.ha.pushes) == 1
-
-    env.ha.states["sensor.room_target"] = 21.0
-    _advance(env, bridge, 30)  # Daten-Retry derselben seq
-
-    assert [s["trigger"] for s in _mqtt(env).snapshots] == ["daily"]
+    assert _delivery(bridge).datenfehler is None
+    assert env.ha.pushes == []
+    assert [(s["trigger"], s["room_target"]) for s in _mqtt(env).snapshots] == [("daily", 21.0)]
 
 
 # --- TP12b: Verbindungswaechter (AU-033) ---

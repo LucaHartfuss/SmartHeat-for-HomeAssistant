@@ -1,14 +1,10 @@
 """Trigger-Eingang des Gateways (Spec SHG G2 3.4, Vertrag smartheat_runtime.ports.TriggerSource; Spec 5b 3.2/3.3,
 Plan D2). Bus-Thread: stellt nur Ereignisse ein. Soll-Eingang: die Bedienung vom Server (GatewayDeviceHost, Quelle
-portal) und das Thermostat ueber Zigbee gehen als EV_TARGET_INPUT in den Worker; dort schreibt der Soll-Speicher, und
-der Debouncer (10 s) beendet die Eingabe. Ein Thermostat-Wunsch geht erst dann, und nur einmal, an den Geraetekern
-(wunsch: begrenzt auf den Bedienbereich); der begrenzte Wert gilt sofort und wird ans Thermostat zurueckgeschrieben,
-danach EV_LOCAL_CHECK(room_target_fired=True). Soll-Quelle aus (system_mode off oder ein Soll bis FROSTSCHUTZ_BIS, Spec
-3.2): kein Wunsch, Meldung ueber soll_quelle_aus, eine neue Bedienung schreibt das Thermostat nicht. Wieder an
-(system_mode nicht mehr off, kein Frostschutz): das geltende Soll geht ans Thermostat, sofern es etwas anderes zeigt, mit
-Echo-Fenster und offenem Schreibbefehl; Zigbee2MQTT (cache_state) meldet sonst das alte Soll als Eingabe und machte eine
-Bedienung waehrend "aus" rueckgaengig (Spec 3.3, Review D2). Frostschutz verlassen durch Drehen bleibt ein Wunsch.
-Fuehler-Aenderungen posten EV_LOCAL_CHECK(False); die Tagestick-Zeit ebenfalls (wie der Zeit-Trigger in HA)."""
+portal) und das Thermostat ueber Zigbee gehen als EV_TARGET_INPUT in den Worker; die Soll-Logik (Soll-Speicher,
+Entprellen, Wunsch, Rueckschreiben, Soll-Quelle aus/wieder an) ist hostneutral und liegt in
+smartheat_runtime.soll_eingang (SollEingang); das Thermostat ist ihre SollQuelle (_ZigbeeQuelle). Hier bleiben die
+Zigbee-Meldungen, die Tagestick-Zeit und der Verbindungs-Trigger. Fuehler-Aenderungen posten EV_LOCAL_CHECK(False); die
+Tagestick-Zeit ebenfalls (wie der Zeit-Trigger in HA)."""
 import logging
 import os
 from collections.abc import Callable
@@ -17,21 +13,16 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from smartheat_core import wallclock
 from smartheat_gateway.bus import Bus
-from smartheat_gateway.target_store import SOURCE_PORTAL, SOURCE_THERMOSTAT, TargetStore
 from smartheat_gateway.zigbee import ZigbeeMirror
-from smartheat_runtime.debounce import ROOM_TARGET_DEBOUNCE_SECONDS, Debouncer
+from smartheat_runtime.debounce import ROOM_TARGET_DEBOUNCE_SECONDS
 from smartheat_runtime.runtime import EV_LOCAL_CHECK, EV_SOURCE_CONNECTED
+from smartheat_runtime.soll_eingang import EV_SOLL_MODUS, EV_TARGET_INPUT, SollEingang
+from smartheat_runtime.soll_speicher import SOURCE_THERMOSTAT, TargetStore
 from smartheat_runtime.worker import Event, RegulationWorker
 
 logger = logging.getLogger(__name__)
 
-EV_TARGET_INPUT = "shg_target_input"
 EV_DAILY = "shg_daily"
-EV_SOLL_MODUS = "shg_soll_modus"
-DEBOUNCE_KIND = "shg_target_debounce"
-#: Spec 5b 3.2: ein Soll bis zu diesem Wert ist die Frostschutz-Stellung des Thermostats, kein Bedienwunsch.
-FROSTSCHUTZ_BIS = 7.0
-MODUS_AUS = "off"
 
 
 def local_zone(now: datetime | None = None) -> tzinfo:
@@ -58,6 +49,21 @@ def seconds_until(daily_time: str, now: datetime, zone: tzinfo | None = None) ->
     return (target.astimezone(UTC) - now.astimezone(UTC)).total_seconds()
 
 
+class _ZigbeeQuelle:
+    """Das Thermostat ueber Zigbee2MQTT als Soll-Quelle (SollQuelle)."""
+
+    def __init__(self, mirror: ZigbeeMirror, ieee: str) -> None:
+        self._mirror, self._ieee = mirror, ieee
+
+    def schreiben(self, value: float) -> bool:
+        self._mirror.write_setpoint(self._ieee, value)
+        return True
+
+    def angezeigt(self) -> float | None:
+        value = self._mirror.payload(self._ieee).get("occupied_heating_setpoint")
+        return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
+
+
 class BusTriggerSource:
     def __init__(self, bus: Bus, worker: RegulationWorker, mirror: ZigbeeMirror, store: TargetStore, *,
                  thermostat: str | None, sensor_ieees: tuple[str, ...], daily_trigger_time: str | None,
@@ -68,13 +74,9 @@ class BusTriggerSource:
         self._sensor_ieees = frozenset(sensor_ieees)
         self._daily = daily_trigger_time
         self._now = now
-        self._wunsch, self._soll_quelle_aus = wunsch, soll_quelle_aus
-        self._aus: set[str] = set()  # Gruende: "modus", "frost"
-        self._wunsch_offen = False
-        self._vor_wunsch: tuple[float, str] | None = None  # Soll und Quelle vor dem ersten offenen Wunsch
-        self._debouncer = Debouncer(worker, DEBOUNCE_KIND, ROOM_TARGET_DEBOUNCE_SECONDS, self._entprellt)
-        worker.register(EV_TARGET_INPUT, self._on_target_input)
-        worker.register(EV_SOLL_MODUS, self._on_mode)
+        self._eingang = SollEingang(worker, store, _ZigbeeQuelle(mirror, thermostat) if thermostat is not None else None,
+                                    wunsch=lambda value, herkunft, durch: wunsch(value),
+                                    soll_quelle_aus=soll_quelle_aus, entprellen_s=ROOM_TARGET_DEBOUNCE_SECONDS)
         worker.register(EV_DAILY, self._on_daily)
 
     @property
@@ -111,81 +113,6 @@ class BusTriggerSource:
             self._worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=False)
 
     # --- Worker-Thread ---
-
-    def _setze_aus(self, grund: str, aus: bool) -> None:
-        vorher = bool(self._aus)
-        war_aus = grund in self._aus
-        if aus:
-            self._aus.add(grund)
-        else:
-            self._aus.discard(grund)
-        if bool(self._aus) != vorher:
-            if self._aus:
-                self._wunsch_verwerfen()  # Thermostat aus ist kein Wunsch (Spec 5b 3.2): auch ein offener nicht
-            self._soll_quelle_aus(bool(self._aus), self._store.value if self._aus else None)
-        if grund == "modus" and war_aus and not self._aus:
-            self._wieder_an()
-
-    def _wieder_an(self) -> None:
-        """system_mode off -> an (ohne Frostschutz): das geltende Soll ans Thermostat. Die naechsten Meldungen mit dem
-        alten Soll (cache_state) fallen in Echo-Fenster und offenen Schreibbefehl statt ein Wunsch zu werden; das
-        Thermostat zeigt wieder das Soll (auch nach einem verworfenen Drehwert). Zeigt es das Soll schon, nichts."""
-        if self._thermostat is None:
-            return
-        angezeigt = self._mirror.payload(self._thermostat).get("occupied_heating_setpoint")
-        if angezeigt == self._store.value:
-            return
-        self._mirror.write_setpoint(self._thermostat, self._store.value)
-        veraltet = float(angezeigt) if isinstance(angezeigt, int | float) and not isinstance(angezeigt, bool) else None
-        self._store.note_own_write(veraltet=veraltet)
-
-    def _wunsch_verwerfen(self) -> None:
-        if self._wunsch_offen and self._vor_wunsch is not None:
-            self._store.wiederherstellen(*self._vor_wunsch)
-        self._wunsch_offen = False
-        self._vor_wunsch = None
-
-    def _on_mode(self, event: Event) -> None:
-        self._setze_aus("modus", event.data.get("mode") == MODUS_AUS)
-
-    def _on_target_input(self, event: Event) -> None:
-        value, source = event.data["value"], event.data["source"]
-        if source == SOURCE_PORTAL:
-            vorher = self._store.value
-            if not self._store.apply_portal(value):
-                return
-            self._wunsch_offen = False  # die Bedienung des Servers gilt; ein halber Wunsch geht nicht mehr hoch
-            self._vor_wunsch = None
-            if self._thermostat is not None and not self._aus and self._store.value != vorher:
-                self._mirror.write_setpoint(self._thermostat, self._store.value)
-                self._store.note_own_write()
-        else:
-            if isinstance(value, int | float) and not isinstance(value, bool) and value <= FROSTSCHUTZ_BIS:
-                self._setze_aus("frost", True)
-                return
-            self._setze_aus("frost", False)
-            vor_wunsch = (self._store.value, self._store.source)
-            if self._aus or not self._store.apply_thermostat(value):
-                return
-            if not self._wunsch_offen:
-                self._vor_wunsch = vor_wunsch
-            self._wunsch_offen = True
-        self._debouncer.poke()
-
-    def _entprellt(self) -> None:
-        if self._wunsch_offen:
-            self._wunsch_offen = False
-            self._vor_wunsch = None
-            try:
-                begrenzt = self._wunsch(self._store.value)
-            except ValueError:
-                begrenzt = self._store.value
-            if begrenzt != self._store.value:
-                self._store.begrenzen(begrenzt)
-                if self._thermostat is not None:
-                    self._mirror.write_setpoint(self._thermostat, begrenzt)
-                    self._store.note_own_write()
-        self._worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=True)
 
     def _on_daily(self, event: Event) -> None:
         self._worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=False)

@@ -26,6 +26,7 @@ from typing import NoReturn
 from smartheat_core import wallclock
 from smartheat_device.device import Device
 from smartheat_device.documents import KONFIGURATION, DocumentStore
+from smartheat_device.hintergrund import Hintergrund
 from smartheat_gateway import befehle, diagnose
 from smartheat_gateway import geraet_host as geraet_host_module
 from smartheat_gateway.bus import LocalBus, credentials_from_env
@@ -92,7 +93,7 @@ def software_soll_nachholen(geraet: GatewayDeviceHost, device: Device) -> None:
 
 
 def beenden(device, thread: threading.Thread | None, timeout: float = JOIN_SECONDS, *,
-            hintergrund: befehle.Hintergrund | None = None) -> None:
+            hintergrund: Hintergrund | None = None) -> None:
     """Ende des Prozesses (Neustart, SIGTERM): erst den Geraetekern stoppen (sauberes Trennen) und wartende Treiber-
     Aufrufe der Befehle abbrechen, dann den Geraete-Thread sein laufendes Ereignis abschliessen lassen, z. B.
     software_soll nach konfiguration_uebernommen. Danach noch einmal stop(): Device.run fuehrt nach stop() noch einen

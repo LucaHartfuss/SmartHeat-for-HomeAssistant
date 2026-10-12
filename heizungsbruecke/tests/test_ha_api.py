@@ -778,3 +778,30 @@ def test_get_attribute_raises_when_missing_or_empty(attributes):
 
     with patch("heizungsbruecke.ha_api.requests.get", return_value=mock_response), pytest.raises(ValueError):
         api.get_attribute("climate.heizkreis", "preset_mode")
+
+
+def test_registries_use_the_ws_command_and_ignore_other_answers():
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    with patch.object(api, "_call_ws_command", return_value=[{"entity_id": "sensor.a"}]) as call:
+        assert api.entity_registry() == [{"entity_id": "sensor.a"}]
+        call.assert_called_once_with({"type": "config/entity_registry/list"})
+    with patch.object(api, "_call_ws_command", return_value=[{"id": "d1"}]) as call:
+        assert api.device_registry() == [{"id": "d1"}]
+        call.assert_called_once_with({"type": "config/device_registry/list"})
+    with patch.object(api, "_call_ws_command", return_value={"unerwartet": 1}):
+        assert api.entity_registry() == [] and api.device_registry() == []
+
+
+@pytest.mark.parametrize(("method", "path"), [("get_states", "states"), ("get_services", "services")])
+def test_states_and_services_are_read_over_rest(method, path):
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    mock_response = Mock()
+    mock_response.json.return_value = [{"x": 1}]
+    mock_response.raise_for_status.return_value = None
+    with patch("heizungsbruecke.ha_api.requests.get", return_value=mock_response) as mock_get:
+        assert getattr(api, method)() == [{"x": 1}]
+    mock_get.assert_called_once_with(f"http://supervisor/core/api/{path}", headers={"Authorization": "Bearer test-token"},
+                                     timeout=10)
+    mock_response.json.return_value = {"kein": "array"}
+    with patch("heizungsbruecke.ha_api.requests.get", return_value=mock_response):
+        assert getattr(api, method)() == []

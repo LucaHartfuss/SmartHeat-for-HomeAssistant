@@ -1,117 +1,20 @@
 name: "Heizungsbruecke"
-version: "0.36.0"
+version: "1.0.0"
 slug: "heizungsbruecke"
-description: "Generische Bruecken-Logik: liest konfigurierte HA-Entities, meldet sie an den SmartHeat-Server, schreibt Sollwerte zurueck, mit lokalem Boost-Failsafe und Sicherheits-Clamps."
+description: "SmartHeat-Gerät für Home Assistant: verbindet die Heizung über die SmartHeat-Integration mit dem SmartHeat-Dienst; Sicherheit, Boost und Notbetrieb bleiben lokal."
 url: "https://github.com/LucaHartfuss/SmartHeat-for-HomeAssistant"
 arch:
   - aarch64
   - amd64
 startup: services
-host_network: true
 homeassistant_api: true
-options:
-  tenant_id: ""
-  entity_room_target: ""
-  entity_curve_current: ""
-  entity_shift_current: ""
-  entity_min_flow: ""
-  entity_flow_setpoint: ""
-  entity_outdoor_temp: ""
-  entity_heat_limit: ""
-  local_check_interval_seconds: 300
-  telemetry_interval_seconds: 300
-  entity_flow_temperature: ""
-  entity_return_temperature: ""
-  entity_operating_mode: ""
-  entity_generator_hours: ""
-  entity_generator_starts: ""
-  entity_generator_state: ""
-  entity_system_water_pressure: ""
-  entity_efficiency_ratio: ""
-  entity_energy_electrical_heating: ""
-  entity_energy_electrical_dhw: ""
-  entity_energy_primary_heating: ""
-  entity_energy_primary_dhw: ""
-  entity_energy_thermal_heating: ""
-  entity_energy_thermal_dhw: ""
-  entity_energy_electrical_total: ""
-# local_check_interval_seconds/telemetry_interval_seconds must stay optional (`?`): the
-# SmartHeat integration never sends them (it sends tenant_id, profile_params, the access
-# options and the entity_* mappings). Supervisor validates a set-options call against the
-# whole schema, and a missing required field fails the call silently (straight into
-# AddonError). The add-on falls back to its own defaults for these (config.py), so making
-# them optional here changes nothing at runtime.
-# verteilsystem and daily_trigger_time come from the server (profile_params, written by the
-# integration) and accounts_api_base_url (written by the integration). They are optional
-# here and have no entry under options: (an empty default would be invalid for list(...)); the
-# add-on checks them at startup and, if they are missing, stays idle in the state
-# "konfigurationsfehler" (no regulation, re-check after 15 min) -- it never exits.
-# entity_shift_current/entity_min_flow are optional here so that an update with a 0.23.0
-# configuration still starts and reports 'Konfiguration veraltet' instead of Supervisor
-# refusing the start silently.
-# room_sensors, notify_services, battery_entities and setup_id are written by the integration
-# (TP6). They are optional here (list element with `?`) so that an update with an old
-# configuration does not make Supervisor refuse the start silently; the add-on checks them at
-# startup and reports "Konfiguration veraltet" instead.
-# abgemeldet and notify_hints_off are written by the integration (TP7): abgemeldet=true on removal
-# (end a running boost, clear notifications, then idle), notify_hints_off lists the hint
-# categories without push. Both optional, no entry under options:.
-# transport, installation_token and the access credentials are written by the integration (Spec
-# AWS-IoT 5.1, Plan AWS-2). All optional so that an update with an old configuration starts and
-# reports 'Konfiguration veraltet' instead of Supervisor refusing the start silently. Secrets
-# have the type password.
-# lever_set, poll_interval_seconds and the entity options of the other lever sets (level, mode_select,
-# setpoint_comfort/_setback) are written by the integration (Plan 3c). entity_curve_current and entity_heat_limit are
-# optional here because the Weishaupt fallback has no curve and Viessmann has no heat limit; the add-on checks the
-# required entities per lever set at startup (config.REQUIRED_ENTITY_OPTIONS) and reports a configuration error.
+hassio_api: true
+discovery:
+  - smartheat
+# Ab 1.0.0 (Spec 5c 1.2) nur Optionen zum Starten: bootstrap_url (Standard: Produktions-URL der Accounts-API, nur fuer
+# Labor und Tests setzen) und log_level. Zuordnung, Zugang und Intervalle kommen als Konfigurationsdokument vom Server;
+# die Integration schreibt keine Optionen.
+options: {}
 schema:
-  tenant_id: str
-  transport: str?
-  installation_token: password?
-  mqtt_username: str?
-  mqtt_password: password?
-  tls_certificate: str?
-  tls_private_key: password?
-  entity_room_target: str
-  entity_curve_current: str?
-  entity_outdoor_temp: str
-  entity_heat_limit: str?
-  local_check_interval_seconds: int(1,3600)?
-  telemetry_interval_seconds: int(10,600)?
-  entity_flow_temperature: str?
-  entity_return_temperature: str?
-  entity_operating_mode: str?
-  entity_generator_hours: str?
-  entity_generator_starts: str?
-  entity_generator_state: str?
-  entity_system_water_pressure: str?
-  entity_efficiency_ratio: str?
-  entity_energy_electrical_heating: str?
-  entity_energy_electrical_dhw: str?
-  entity_energy_primary_heating: str?
-  entity_energy_primary_dhw: str?
-  entity_energy_thermal_heating: str?
-  entity_energy_thermal_dhw: str?
-  entity_energy_electrical_total: str?
-  entity_shift_current: str?
-  entity_min_flow: str?
-  entity_flow_setpoint: str?
-  lever_set: list(vaillant_vrc720|weishaupt_wwp|weishaupt_wwp_basis|viessmann_vicare)?
-  poll_interval_seconds: int(10,3600)?
-  entity_level_current: str?
-  entity_mode_select: str?
-  entity_setpoint_comfort: str?
-  entity_setpoint_setback: str?
-  verteilsystem: list(Heizkoerper|Fussbodenheizung)?
-  daily_trigger_time: str?
-  accounts_api_base_url: url?
-  notify_services:
-    - str?
-  room_sensors:
-    - str?
-  battery_entities:
-    - str?
-  setup_id: str?
-  abgemeldet: bool?
-  notify_hints_off:
-    - list(raumfuehler|batterie|manueller_eingriff|quellwechsel|schreibbudget|schreibzaehler)?
+  bootstrap_url: url?
+  log_level: list(debug|info|warning|error)?

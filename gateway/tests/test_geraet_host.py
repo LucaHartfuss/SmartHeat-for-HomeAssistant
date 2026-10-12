@@ -14,11 +14,11 @@ from smartheat_device.host import Anzeige
 from smartheat_gateway import geraet_host as gh
 from smartheat_gateway.files import write_json
 from smartheat_gateway.paths import Paths
-from smartheat_gateway.target_store import SOURCE_PORTAL
 from smartheat_gateway.triggers import EV_TARGET_INPUT
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime import dokument_config
+from smartheat_runtime.soll_speicher import SOURCE_PORTAL
 from smartheat_runtime.worker import RegulationWorker
 
 WALL = 1_800_000_000.0
