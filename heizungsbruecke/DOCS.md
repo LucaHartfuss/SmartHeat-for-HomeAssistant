@@ -29,7 +29,7 @@ Konfigurationsfehler) sind ebenfalls ein Ruhezustand, kein Beenden.
 
 | Option | Bedeutung |
 | --- | --- |
-| `bootstrap_url` | Adresse der Accounts-API für die Anmeldung des Geräts (nur `https`). Standard ist der Produktionsdienst; nur für Labor und Tests setzen. |
+| `bootstrap_url` | Adresse der Accounts-API für die Anmeldung des Geräts (`https`, für das Labor im Heimnetz auch `http`). Standard ist der Produktionsdienst; nur für Labor und Tests setzen. Ist die Angabe ungültig oder die Optionsdatei unlesbar, meldet sich das Add-on nicht an und wartet im Ruhezustand (es weicht nie auf den Produktionsdienst aus); im Log steht der Grund, nie die Adresse. |
 | `log_level` | `debug`, `info` (Standard), `warning` oder `error`. |
 
 Alle früheren Optionen (`tenant_id`, `entity_*`, Zugangs-, Abo- und Intervall-Optionen) entfallen; die Integration
@@ -45,6 +45,29 @@ schreibt keine Optionen mehr.
   kaltem Raum).
 - Eine Änderung der Wunschtemperatur wirkt sofort lokal und geht als Bedienwunsch an den Dienst (offline gepuffert).
 
+## Wunschtemperatur und Soll-Entity
+
+Die Regelung führt die Wunschtemperatur im Add-on (Datei `runtime/room_target.json`); die zugeordnete Soll-Entity (ein
+Thermostat, `climate.*`) ist Eingang und Anzeige. Der zuletzt gestellte Wert gilt, ob im Portal, am Thermostat in Home
+Assistant oder über das Ereignis `smartheat_wunsch`.
+
+- **Am Thermostat gedreht:** Der Wert geht nach 10 s Ruhe einmal als Bedienwunsch an den Dienst (15 bis 25 °C in
+  0,5-K-Schritten). Das Add-on schreibt den begrenzten Wert zurück ans Thermostat; die Rückmeldung dieses eigenen
+  Schreibens zählt 60 s lang nicht als neue Eingabe.
+- **Im Portal geändert:** Das Add-on schreibt den neuen Wert ans Thermostat. Ist das Thermostat aus oder im Frostschutz
+  (Soll bis 7 °C), bleibt es unberührt und bekommt den Wert, sobald es wieder heizt.
+- **Ereignis `smartheat_wunsch`:** Eine Automation kann ein Ereignis `smartheat_wunsch` mit dem Feld `raum_soll`
+  (Zahl oder Text mit Zahl, 5 bis 35 °C) senden; es wirkt wie eine Eingabe am Thermostat und wird an das Thermostat
+  angeglichen.
+- **Beim Start** gilt die gespeicherte Wunschtemperatur, sonst die Bedienung des Dienstes, sonst der Wert, den das
+  Thermostat zeigt (15 bis 25 °C), sonst 20 °C. Hat sich das Thermostat während einer Pause des Add-ons verstellt und
+  stimmt der gespeicherte Wert mit der Bedienung des Dienstes überein, wird es beim Start zurückgestellt.
+- **Home Assistant nicht erreichbar:** Gelingt das Schreiben ans Thermostat nicht (etwa beim Neustart von Home
+  Assistant), merkt sich das Add-on die offene Angleichung und holt sie nach, sobald Home Assistant wieder antwortet; ein
+  in der Pause am Thermostat gedrehter Wert verliert dann gegen die neuere Bedienung im Portal. Lehnt Home Assistant das
+  Schreiben dauerhaft ab, bleibt die Angleichung offen (Warnung im Log etwa alle 5 Minuten); das Thermostat kann die
+  Wunschtemperatur dann nicht mehr führen, die Bedienung im Portal gilt weiter.
+
 ## Hersteller-Integrationen
 
 - Vaillant (mypyllant): Die Integration muss ihre Werte **mindestens alle 30 Minuten** abfragen. SmartHeat wartet nach
@@ -55,16 +78,29 @@ schreibt keine Optionen mehr.
 
 ## Daten
 
-Alles liegt im Add-on-Datenordner `/data`: unter `device/` Identität, Zertifikat, Übernahme-Code und die
-Soll-Dokumente; daneben der anlagengebundene Zustand (Sicherung, Notbetrieb, Abo, Laufzeit-Ordner `runtime/`) und die
-Liste der angelegten Hilfssensoren. Schlüssel, Zertifikate und der Übernahme-Code erscheinen nie in Log oder Status.
+Alles liegt im Add-on-Datenordner `/data`: unter `device/` Identität, Zertifikat, Übernahme-Code, die Soll-Dokumente und
+die Kennung der letzten Discovery-Meldung (`discovery.json`, ohne Code); daneben der anlagengebundene Zustand (Sicherung,
+Notbetrieb, Abo, Laufzeit-Ordner `runtime/` mit der Wunschtemperatur) und die Liste der angelegten Hilfssensoren.
+Schlüssel, Zertifikate und der Übernahme-Code erscheinen nie in Log oder Status; der Code steht nur in der Discovery-Meldung
+an Home Assistant.
+
+## Wenn Home Assistant nicht erreichbar ist
+
+Das Add-on startet vor Home Assistant (`startup: services`) und wartet, bis Home Assistant antwortet. Eine neue
+Konfiguration, die in dieser Zeit eintrifft, prüft es erst danach (alle 30 s ein neuer Versuch) und lehnt sie nie
+wegen eines Ausfalls ab. Das Status-Ereignis `smartheat_status` und die Discovery-Meldung wiederholt es höchstens alle
+60 s. Meldungen der Regelung gehen zusätzlich an den SmartHeat-Dienst und erscheinen im Portal.
 
 ## Entfernen
 
 Wird die Anlage im Portal oder über die Integration entfernt, meldet sich das Add-on ab: Ein laufender Boost wird
-beendet und die zuletzt gelernten Werte bleiben eingestellt. Beim nächsten Start löscht es den anlagengebundenen
-Zustand und die angelegten Hilfssensoren, solange keine neue Einrichtung gekommen ist; ist Home Assistant dabei nicht
-bereit, holt ein späterer Start das Löschen der Hilfssensoren nach. Die Geräte-Identität bleibt, das Gerät kann neu
+beendet und die Heizung zurückgegeben. Hebel, die das Add-on verstellt hat, gehen auf ihren ursprünglichen Wert zurück,
+soweit er bekannt ist: bei Vaillant die Heizgrenze (Heizkurve und Parallelverschiebung bleiben auf dem zuletzt gelernten
+Wert), bei Weishaupt Heizkennlinie, Raumsolltemperatur Normal und Sommer-Winter-Umschaltung samt Betriebsart sowie
+Komfort- und Absenk-Sollwert, bei Viessmann Neigung, Niveau, Raumtemperatur Normal und das Heizprogramm. Gelingt das
+Zurückstellen nicht, versucht das Add-on es erneut und meldet es mit den noch eingestellten Werten. Beim nächsten Start
+löscht es den anlagengebundenen Zustand und die angelegten Hilfssensoren, solange keine neue Einrichtung gekommen ist;
+ist Home Assistant dabei nicht bereit, holt ein späterer Start das Löschen der Hilfssensoren nach. Die Geräte-Identität bleibt, das Gerät kann neu
 eingerichtet werden. Zum endgültigen Entfernen das Add-on deinstallieren.
 
 ## Verifizierte Architekturen
