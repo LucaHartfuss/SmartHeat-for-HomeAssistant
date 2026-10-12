@@ -1,4 +1,5 @@
 """Spec 5c 1.3: Bedienwunsch aus Soll-Entity und Ereignis smartheat_wunsch, Thermostat aus, Angleichen ohne Echo."""
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -464,3 +465,20 @@ def test_while_the_websocket_is_up_the_watch_reads_nothing(tmp_path, monkeypatch
     a.clock.advance(600)
     a.run()
     assert a.wuensche == [] and a.store.value == 21.0
+
+
+def test_an_unavailable_target_entity_is_logged_once_without_its_content(tmp_path, monkeypatch, caplog):
+    jetzt = [1000.0]
+    monkeypatch.setattr(geraet_trigger.time, "monotonic", lambda: jetzt[0])
+    a = Aufbau(tmp_path)
+    with caplog.at_level(logging.INFO, logger="heizungsbruecke.geraet_trigger"):
+        a.soll_aenderung("unavailable")
+        a.soll_aenderung(None)  # weiter ohne Zahl: keine zweite Zeile
+        a.soll_aenderung(22.0)
+        a.soll_aenderung("unavailable")  # wieder ohne Zahl, aber innerhalb der Stunde
+        jetzt[0] += geraet_trigger.OHNE_ZAHL_LOG_SECONDS
+        a.soll_aenderung(22.5)
+        a.soll_aenderung("unknown")  # nach einer Zahl und nach der Stunde: neue Zeile
+    zeilen = [r.getMessage() for r in caplog.records if "keinen Zahlenwert" in r.getMessage()]
+    assert len(zeilen) == 2 and all(CLIMATE in z for z in zeilen)
+    assert not any("unavailable" in z or "unknown" in z for z in zeilen)

@@ -24,7 +24,6 @@ from fakes import FakeHa
 
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.version import ADDON_VERSION
-from smartheat_runtime import status
 
 TRIGGER_CLIENT = "heizungsbruecke.geraet_trigger.HaTriggerClient"
 RESTART = "smartheat_runtime.abo.restart_process"
@@ -397,6 +396,8 @@ ERLAUBT = (
 )
 #: Was 0.36 aus den Optionen nahm und 1.0.0 aus dem Dokument bzw. der Version (ERLAUBT, letzte zwei Zeilen).
 ALT_SETUP_ID, ALT_ADDON_VERSION = "setup-golden-1", "0.36.0"
+#: Felder, die Schema 3 dem Status-Ereignis hinzufuegt (ERLAUBT "status"); woertlich, nicht aus geraet_status gelesen.
+SCHEMA_3_GERAET_FELDER = ("geraet_id", "geraet_zustand", "server_verbunden", "raum_soll", "geraet_hinweise")
 
 
 def _neu_benannt(value, *, alt: bool):
@@ -424,12 +425,15 @@ def normalisieren(record: list[dict], *, alt: bool) -> list[dict]:
         for w in schritt["wirkungen"]:
             if w[0] == "accounts" or w[:2] in (["mqtt", "loop_start"], ["mqtt", "stop"]):
                 continue
-            if w[0] == "link":
-                payload = {k: v for k, v in w[2].items() if k != "raum_soll_wirksam"}
-                w = ["mqtt", "snapshot" if w[1] == "up/snapshot" else w[1], payload]
+            if w[:2] == ["link", "up/snapshot"]:
+                w = ["mqtt", "snapshot", {k: v for k, v in w[2].items() if k != "raum_soll_wirksam"}]
+            elif w[0] == "link":
+                w = ["mqtt", w[1], w[2]]
             if w[:3] == ["ha", "event", "smartheat_status"]:
-                data = {k: v for k, v in w[3].items() if k in status.EVENT_FIELDS and k != "schema"}
-                w = ["ha", "event", "smartheat_status", data]
+                # Schema 2 -> 3: nur das Schema und genau die Geraete-Felder von Schema 3 (im neuen Master); ein
+                # spaeter entfallenes Laufzeit-Feld faellt so als Unterschied auf.
+                weg = {"schema"} if alt else {"schema", *SCHEMA_3_GERAET_FELDER}
+                w = ["ha", "event", "smartheat_status", {k: v for k, v in w[3].items() if k not in weg}]
             wirkungen.append(w)
         dateien = {name: inhalt for name, inhalt in schritt["dateien"].items()
                    if Path(name).name not in ("room_target.json", "abgemeldet.json", "discovery.json")}

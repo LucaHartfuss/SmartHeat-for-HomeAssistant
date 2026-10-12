@@ -75,6 +75,9 @@ def test_the_host_is_asked_only_for_a_structurally_valid_configuration():
     ({"bindung": {"batterien": "sensor.x"}}, cc.ROLLE_UNZULAESSIG),
     ({"bindung": {"benachrichtigung": ["notify.Handy Papa"]}}, cc.ROLLE_UNZULAESSIG),
     ({"bindung": {"hinweise_aus": ["quatsch"]}}, cc.ROLLE_UNZULAESSIG),
+    ({"bindung": {"hinweise_aus": ["notbetrieb"]}}, cc.ROLLE_UNZULAESSIG),     # kritische Meldungen nie abschaltbar
+    ({"bindung": {"hinweise_aus": ["konfiguration"]}}, cc.ROLLE_UNZULAESSIG),
+    ({"bindung": {"hinweise_aus": ["zugang"]}}, cc.ROLLE_UNZULAESSIG),
     ({"bindung": {"hinweise_aus": [["batterie"]]}}, cc.ROLLE_UNZULAESSIG),
     ({"bindung": {"abfrage_s": 5}}, cc.UNGUELTIG),
     ({"bindung": {"abfrage_s": 3601}}, cc.UNGUELTIG),

@@ -172,6 +172,8 @@ ABO_ENDED = (
 
 def _abo_status(env):
     env.abo["queries"] += 1
+    if isinstance(env.abo["status"], Exception):  # die Abo-Quelle wirft unerwartet
+        raise env.abo["status"]
     return env.abo["status"]
 
 
@@ -1437,6 +1439,27 @@ def test_closing_start_retries_a_failed_restore_and_reports_it_once(env, monkeyp
     assert env.ha.pushes == [abo.RESTORE_FAILED_MESSAGE, abo.RESTORE_OK_MESSAGE]
 
 
+def test_unexpected_entitlement_query_error_counts_as_unknown(env):
+    # T10b: eine unerwartet werfende Abo-Pruefung nach dem zweiten Timeout laeuft ueber _fallback_follow_up als
+    # "unbekannt" -- Notbetrieb mit Retry, kein Abo-inaktiv-Modus. Im Geraete-Pfad wirft die Abo-Quelle des Dokuments.
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[0]["seq"]
+
+    env.abo["status"] = RuntimeError("unerwartet")
+    _advance(env, bridge, 30)
+    _advance(env, bridge, 30)
+
+    assert _delivery(bridge).notbetrieb is True
+    assert _abo_inactive_since(bridge) is None
+    assert env.ha.pushes == [NOTBETRIEB_ON]
+
+    _advance(env, bridge, 300)
+
+    assert [s["seq"] for s in _mqtt(env).snapshots] == [seq, seq, seq]
+
+
 def test_second_timeout_with_inactive_abo_enters_abo_mode_instead_of_alarm(env):
     _quiet_backup(env)
     bridge = _start(env)
@@ -1965,9 +1988,10 @@ def test_sign_off_with_invalid_configuration_does_not_write(env):
     assert _last_event(env)["grund"] == app.SIGN_OFF_INVALID_CONFIG
 
 
-def test_sign_off_without_mqtt_credentials_still_restores(env):
-    """TP7-Gates: die Integration leert beim Entfernen die Zugangsdaten. Startet der Pi danach
-    neu, waehrend das Zuruecksetzen noch scheitert, muss der Abmelde-Pfad trotzdem laufen."""
+def test_sign_off_during_a_comfort_boost_restores_the_learned_values(env):
+    """Abmelden mit laufendem Comfort-Boost (bis 0.36 zusaetzlich ohne MQTT-Zugangsdaten, die die Integration beim
+    Entfernen leerte; im Geraete-Pfad haelt der Geraetekern den Zugang): die zuletzt gelernten Werte gehen auf die
+    Anlage."""
     _quiet_backup(env, boost_active=True)
 
     bridge = _start_bridge(env, abgemeldet=True)

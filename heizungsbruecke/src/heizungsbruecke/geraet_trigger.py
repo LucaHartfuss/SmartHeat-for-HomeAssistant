@@ -6,6 +6,7 @@ smartheat_entity) und durch (nutzer/automation aus dem HA-Kontext), Thermostat a
 Soll-Entity (nur Climate ist schreibbar) ohne Echo."""
 import logging
 import math
+import time
 from typing import TypeGuard
 
 from heizungsbruecke.config import ConfigError
@@ -29,6 +30,8 @@ EV_SOLL_WACHE = "ha_soll_wache"
 #: Modi, die kein Wechsel des Thermostats sind (Entity gerade nicht erreichbar): weder aus noch wieder an.
 _MODI_OHNE_AUSSAGE = ("unavailable", "unknown")
 NACHLESEN_PUFFER_SECONDS = 1.0
+#: Bericht der Soll-Entity ohne Zahl (unavailable): hoechstens so oft eine Info-Zeile, und nur nach einer Zahl dazwischen.
+OHNE_ZAHL_LOG_SECONDS = 3600.0
 
 EREIGNIS_WUNSCH = "smartheat_wunsch"
 HERKUNFT_SOLL = "soll_entity"
@@ -199,6 +202,17 @@ def build(manifest, options: dict, ha_api, worker: RegulationWorker, store: Targ
     worker.register(EV_SOLL_NACHLESEN, on_nachlesen)
     worker.register(EV_SOLL_LESEN, on_lesen)
 
+    ohne_zahl: list = [False, None]  # (gerade ohne Zahl, Zeitpunkt der letzten Info-Zeile); nur im WS-Thread
+
+    def _ohne_zahl_melden() -> None:
+        """Eine nicht verfuegbare Soll-Entity bleibt sichtbar: Info-Zeile beim Wechsel von Zahl zu keiner Zahl, hoechstens
+        alle OHNE_ZAHL_LOG_SECONDS; ohne den gemeldeten Inhalt."""
+        jetzt = time.monotonic()
+        if not ohne_zahl[0] and (ohne_zahl[1] is None or jetzt - ohne_zahl[1] >= OHNE_ZAHL_LOG_SECONDS):
+            logger.info("Soll-Entity %s meldet keinen Zahlenwert (etwa nicht verfuegbar), kein Bedienwunsch", soll_entity)
+            ohne_zahl[1] = jetzt
+        ohne_zahl[0] = True
+
     def on_soll_entity(trigger: dict) -> bool:
         """True, wenn der Trigger die Soll-Entity betraf (Wunsch oder Modus); ein anderes Attribut derselben Entity
         (etwa current_temperature als Raumfuehler) ist ein lokaler Check."""
@@ -208,8 +222,11 @@ def build(manifest, options: dict, ha_api, worker: RegulationWorker, store: Targ
             value = (to_state.get("attributes") or {}).get(attribute) if attribute else to_state.get("state")
             number = _zustandswert(value)
             if number is not None:
+                ohne_zahl[0] = False
                 worker.post(Event(EV_SOLL_BERICHT, {"value": number,
                                                     "durch": durch_aus_kontext(to_state.get("context"))}))
+            else:
+                _ohne_zahl_melden()
             return True
         if attribute is None and climate:
             worker.post(Event(EV_SOLL_BERICHT, {"mode": to_state.get("state")}))
