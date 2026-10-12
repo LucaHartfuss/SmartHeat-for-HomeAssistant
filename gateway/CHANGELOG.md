@@ -1,5 +1,10 @@
 # Changelog SmartHeat-Gateway
 
+## Unveröffentlicht
+
+- Die Diagnoseseite zeigt QR-Code und Übernahme-Code nur, solange das Gateway nicht übernommen ist (Spec 5c F1); nach
+  dem Entfernen erscheint ein neuer Code.
+
 ## 0.6.0
 
 Spec 5b (Geräteprotokoll über MQTT), Plan D2. Nur für Labor-Gateways; im Feld gibt es keine Gateways, einen Übergang

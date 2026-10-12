@@ -206,9 +206,12 @@ class HaDeviceHost:
             except Exception as error:
                 logger.warning("Status-Ereignis nicht gesendet (%s)", type(error).__name__)
         if self.discovery is not None and self.device is not None:
-            # sendet nur bei Aenderung (und drosselt Wiederholungen nach Fehlern): ein Aufruf je Takt ist billig
+            # sendet nur bei Aenderung (und drosselt Wiederholungen nach Fehlern): ein Aufruf je Takt ist billig.
+            # Gesperrt steht nur im Speicher (device_state bleibt nicht_uebernommen), die Discovery meldet es trotzdem.
+            zustand = "gesperrt" if anzeige.zustand == "gesperrt" else anzeige.device_state
             try:
-                self.discovery.aktualisieren(self.device.identity.device_id, anzeige.device_state, self.claim_code())
+                self.discovery.aktualisieren(self.device.identity.device_id, zustand,
+                                             self.claim_code() if anzeige.code_zeigen else None)
             except Exception as error:
                 logger.warning("Discovery nicht aktualisiert (%s)", type(error).__name__)
 

@@ -114,12 +114,21 @@ def test_bootstrap_url_defaults_to_production(tmp_path, monkeypatch):
     assert main_module.bootstrap_url() == "http://server:5001"
 
 
-def test_bootstrap_url_allows_an_http_lab_like_the_gateway(tmp_path, monkeypatch):
-    """Wie SHG_DEVICE_API_URL beim Gateway: http und https mit Host (Labor im LAN per http)."""
+def test_bootstrap_url_option_must_be_https(tmp_path, monkeypatch, caplog):
+    """5c F/Q4 (2026-10-12): die Option erlaubt nur https (wie das Gateway-Image); kein Klartext-Bootstrap einer
+    Kunden-Installation. Ungueltig heisst Ruhezustand, nie die Produktion."""
     monkeypatch.setattr(config, "OPTIONS_PATH", tmp_path / "options.json")
     monkeypatch.delenv("SMARTHEAT_BOOTSTRAP_URL", raising=False)
     (tmp_path / "options.json").write_text(json.dumps({"bootstrap_url": "http://192.168.1.20:5001"}))
-    assert main_module.bootstrap_url() == "http://192.168.1.20:5001"
+    with caplog.at_level(logging.WARNING):
+        assert main_module.bootstrap_url() is None
+    assert "Schema nicht https" in caplog.text and "192.168.1.20" not in caplog.text
+
+
+def test_only_the_test_environment_may_use_http(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "OPTIONS_PATH", tmp_path / "options.json")
+    monkeypatch.setenv("SMARTHEAT_BOOTSTRAP_URL", "http://accounts-api:5001")
+    assert main_module.bootstrap_url() == "http://accounts-api:5001"
 
 
 @pytest.mark.parametrize("value", ["ftp://labor.example.test", "labor.example.test", "http://", 42, ""])

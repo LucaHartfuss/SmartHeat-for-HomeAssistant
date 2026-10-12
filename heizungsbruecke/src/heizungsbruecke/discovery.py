@@ -1,8 +1,8 @@
-"""Supervisor-Discovery des Add-ons (Spec 5c 1.1): meldet der HA-Instanz Geraete-ID, Uebernahmestand und - solange das
-Geraet nicht uebernommen ist - den Uebernahme-Code; HA startet daraufhin den Assistenten der Integration
-(async_step_hassio). Die Daten bleiben in der Instanz (Supervisor <-> Core). Die Probe auf einer echten HA-OS-Instanz
-(startet die Meldung den Flow der HACS-Integration?) steht noch aus (W Teil A); scheitert sie, wechselt dieses Modul auf
-die Variante "Ereignis" (HA-Ereignis smartheat_discovery mit denselben Feldern).
+"""Supervisor-Discovery des Add-ons (Spec 5c 1.1): meldet der HA-Instanz Geraete-ID, Uebernahmestand (gesperrt bei
+Sperre) und - solange das Geraet nicht uebernommen ist - den Uebernahme-Code; HA startet daraufhin den Assistenten der
+Integration (async_step_hassio). Die Daten bleiben in der Instanz (Supervisor <-> Core). Die Probe auf einer echten
+HA-OS-Instanz (startet die Meldung den Flow der HACS-Integration?) steht noch aus (W Teil A); scheitert sie, wechselt
+dieses Modul auf die Variante "Ereignis" (HA-Ereignis smartheat_discovery mit denselben Feldern).
 
 Neu gemeldet wird nur bei einer Aenderung; die vorige Meldung (auch die eines frueheren Prozesses, UUID in
 discovery.json) wird danach entfernt - gelingt das nicht, bleibt sie vorgemerkt und wird erneut versucht, damit kein
