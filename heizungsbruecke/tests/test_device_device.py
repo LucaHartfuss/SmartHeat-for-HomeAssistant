@@ -628,6 +628,21 @@ def test_three_auth_failures_take_the_rescue_path_and_reconnect_with_a_new_certi
     assert first.stopped and world.link is not first and world.link.zugang == neu and world.link.started
 
 
+def test_a_blocked_device_never_shows_the_claim_code(tmp_path):
+    """Die Sperre steht nur im Speicher; device_state bleibt auf der Platte nicht_uebernommen (Spec 5c F1)."""
+    world = World(tmp_path, access=False)
+    world.client.script["register"] = [bootstrap.Antwort("nicht_uebernommen", world.zugang),
+                                       bootstrap.NotAuthenticated("r")]
+    world.client.script["certificate"] = [bootstrap.NotAuthenticated("c")]
+    world.verbinden()
+    assert world.device.anzeige().code_zeigen is True
+    world.link.ereignis("anmeldung_scheitert")
+    world.device.schritt()
+    anzeige = world.device.anzeige()
+    assert bootstrap.device_state(world.dir) == "nicht_uebernommen"
+    assert (anzeige.zustand, anzeige.code_zeigen) == ("gesperrt", False)
+
+
 def test_a_blocked_device_stops_its_link_shows_blocked_and_retries_after_6_hours(tmp_path):
     world = World(tmp_path)
     world.device.schritt()

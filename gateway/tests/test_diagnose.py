@@ -109,6 +109,8 @@ def test_the_code_is_on_the_page_only_while_not_claimed(geraet):
         (_anzeige("wartet_auf_einrichtung", eingerichtet=False), False),  # uebernommen: Code nutzlos (F1)
         (_anzeige("keine_verbindung", server_ok=False, eingerichtet=False), False),  # uebernommen
         (_anzeige("gesperrt", device_state="gesperrt", eingerichtet=False), False),
+        (_anzeige("gesperrt", device_state="nicht_uebernommen", eingerichtet=False), False),  # Sperre nur im Speicher
+        (_anzeige("startet", device_state="nicht_uebernommen", eingerichtet=False), False),
         (_anzeige("regelt"), False),
     ):
         geraet.letzte_anzeige = anzeige

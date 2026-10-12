@@ -361,8 +361,9 @@ def test_display_reports_to_the_discovery_with_the_code_only_while_it_may_be_sho
     host.anzeigen(Anzeige("nicht_uebernommen", True, "nicht_uebernommen", False, (), (), None))
     host.anzeigen(Anzeige("wartet_auf_einrichtung", True, "uebernommen", False, (), (), None))
     host.anzeigen(Anzeige("regelt", True, None, True, (), (), None))
+    host.anzeigen(Anzeige("gesperrt", False, "nicht_uebernommen", False, (), (), None))  # Sperre nur im Speicher
     assert host.discovery.calls == [("shg-a", "nicht_uebernommen", "ABCDEFGHIJKL"), ("shg-a", "uebernommen", None),
-                                    ("shg-a", None, None)]
+                                    ("shg-a", None, None), ("shg-a", "nicht_uebernommen", None)]
 
 
 def test_a_failing_discovery_never_breaks_the_display(tmp_path, monkeypatch, caplog):

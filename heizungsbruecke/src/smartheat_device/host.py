@@ -52,8 +52,10 @@ class Anzeige:
     @property
     def code_zeigen(self) -> bool:
         """Uebernahme-Code zeigen bzw. melden (Spec 5c 1.1, F1; Gateway-Seite und HA-Discovery gleich): nur solange
-        der Server das Geraet als nicht uebernommen fuehrt."""
-        return self.device_state == "nicht_uebernommen" and not self.eingerichtet
+        der Server das Geraet als nicht uebernommen fuehrt und es weder startet noch gesperrt ist (der Sperrzustand
+        steht nur im Speicher, device_state bleibt auf der Platte nicht_uebernommen)."""
+        return (self.device_state == "nicht_uebernommen" and not self.eingerichtet
+                and self.zustand not in ("startet", "gesperrt"))
 
 
 class DeviceHost(Protocol):
