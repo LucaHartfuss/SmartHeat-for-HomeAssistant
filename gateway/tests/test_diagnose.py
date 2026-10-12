@@ -100,13 +100,14 @@ def test_healthz_and_page_over_http():
         server.server_close()
 
 
-def test_the_code_is_on_the_page_only_while_not_set_up_and_not_blocked(geraet):
+def test_the_code_is_on_the_page_only_while_not_claimed(geraet):
     sicht = geraet.device
     for anzeige, code in (
         (None, False),  # startet: noch keine Anzeige
         (_anzeige("nicht_uebernommen", device_state="nicht_uebernommen", eingerichtet=False), True),
-        (_anzeige("wartet_auf_einrichtung", eingerichtet=False), True),
-        (_anzeige("keine_verbindung", server_ok=False, eingerichtet=False), True),
+        (_anzeige("keine_verbindung", server_ok=False, device_state="nicht_uebernommen", eingerichtet=False), True),
+        (_anzeige("wartet_auf_einrichtung", eingerichtet=False), False),  # uebernommen: Code nutzlos (F1)
+        (_anzeige("keine_verbindung", server_ok=False, eingerichtet=False), False),  # uebernommen
         (_anzeige("gesperrt", device_state="gesperrt", eingerichtet=False), False),
         (_anzeige("regelt"), False),
     ):

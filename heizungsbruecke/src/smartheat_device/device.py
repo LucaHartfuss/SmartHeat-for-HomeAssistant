@@ -3,7 +3,8 @@ laeuft in einem eigenen Thread (run). paho, Host und Laufzeit stellen nur Ereign
 Thread aendert Zustand und ruft den Host.
 
 Ablauf: Identitaet laden; ohne Zugang registrieren (Backoff); Link starten. Nach jedem Verbinden zuerst hello (schemata,
-Versionen, Faehigkeiten, boot_id, uhr_synchron), dann Status, gepufferter Wunsch und offene Meldungen. Dokumente gehen
+Versionen, Faehigkeiten, boot_id, uhr_synchron, bekannter Uebernahmestand; claim_state und new_claim_code setzen ihn,
+Spec 5c F1), dann Status, gepufferter Wunsch und offene Meldungen. Dokumente gehen
 an den Dokumentspeicher, das Ergebnis als up/result, das Uebernommene an den Host; das Feld software jeder Konfiguration
 mit bekanntem Schema geht an den Host, auch wenn die Konfiguration abgelehnt wurde (Plan-Praezisierung). Befehle gehen an
 das Register, down/setpoints an die Laufzeit. Drei Anmeldefehler in Folge am Broker -> Rettungsweg (bootstrap.Bootstrap);
@@ -40,6 +41,7 @@ MELDUNGEN_JE_NACHRICHT = 50
 SERVER_DOWN_SECONDS = 300
 PRUEFUNG_WIEDERHOLEN_SECONDS = 30
 CLAIM_FAILED_TEXT = "Der Server war nicht erreichbar, bitte später erneut."
+CLAIM_STATE_TEXT = "Unbekannter Übernahmestand."
 CLAIMED_TEXT = "Das Gerät ist übernommen; ein neuer Code ist erst nach dem Entfernen möglich."
 _RUNNING = ("regelt", "abo_inaktiv")
 _FAULT = ("notbetrieb", "datenfehler", "konfigurationsfehler", "zugang_abgelehnt", "abo_beendet")
@@ -101,6 +103,7 @@ class Device:
                                                 clock=clock, uebersetzen=befehl_fehler)
         self.befehle.register("hinweis", self.hinweise.handler)
         self.befehle.register("new_claim_code", self._new_claim_code)
+        self.befehle.register("claim_state", self._claim_state)
         host.befehle_eintragen(self.befehle)
         self.wunsch_puffer = wish.WunschPuffer(self._dir)
         self._bootstrap = bootstrap.Bootstrap(
@@ -333,11 +336,15 @@ class Device:
         return self._publish(name, payload) if self._bereit else None
 
     def _hello(self) -> dict:
-        return {"schema": wire.SCHEMA, "schemata": list(wire.SCHEMATA),
-                "konfiguration_version": self.documents.version(KONFIGURATION),
-                "bedienung_version": self.documents.version(BEDIENUNG), "software_version": self.host.version,
-                "host": self.host.host, "faehigkeiten": self.host.faehigkeiten(), "boot_id": self.boot_id,
-                "uhr_synchron": self.host.uhr_synchron() is True}
+        hello = {"schema": wire.SCHEMA, "schemata": list(wire.SCHEMATA),
+                 "konfiguration_version": self.documents.version(KONFIGURATION),
+                 "bedienung_version": self.documents.version(BEDIENUNG), "software_version": self.host.version,
+                 "host": self.host.host, "faehigkeiten": self.host.faehigkeiten(), "boot_id": self.boot_id,
+                 "uhr_synchron": self.host.uhr_synchron() is True}
+        state = bootstrap.device_state(self._dir)
+        if state is not None:
+            hello["device_state"] = state  # Spec 5c F1: der Server gleicht ab
+        return hello
 
     def _verbunden(self) -> None:
         if not self._bootstrap.gesperrt:
@@ -449,6 +456,14 @@ class Device:
         if not self._bereit:
             return False
         return all(self._publish("up/inventory", nachricht) is not None for nachricht in nachrichten)
+
+    def _claim_state(self, payload: dict) -> commands.Outcome:
+        """Uebernahmestand vom Server (Spec 5c F1): Discovery, Seite und Zustand folgen im naechsten Takt."""
+        state = payload.get("device_state")
+        if state not in ("uebernommen", "nicht_uebernommen"):
+            return commands.Failed("ungueltige_nutzlast", CLAIM_STATE_TEXT)
+        bootstrap.device_state_speichern(self._dir, state)
+        return commands.Done({})
 
     def _new_claim_code(self, payload: dict) -> commands.Outcome:
         """Neuer Uebernahme-Code (Spec 3.4): erst beim Server melden (register mit neuem Code-Hash; der Server

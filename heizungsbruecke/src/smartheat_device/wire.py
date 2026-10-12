@@ -59,6 +59,7 @@ HELLO_FIELDS = (
     "schema", "schemata", "konfiguration_version", "bedienung_version", "software_version", "host", "faehigkeiten",
     "boot_id", "uhr_synchron",
 )
+HELLO_OPTIONAL = ("device_state",)  # fehlt = Uebernahmestand des Geraets unbekannt, kein Abgleich (Spec 5c F1)
 STATUS_FIELDS = ("schema", "zustand", "runtime_status", "raum", "ts")
 ZUSTAENDE = (
     "startet", "nicht_uebernommen", "keine_verbindung", "wartet_auf_einrichtung", "regelt", "stoerung", "gesperrt",
@@ -166,6 +167,7 @@ COMMANDS: dict[str, Command] = {
                          "stunden*3600+3600", ("filter",)),
     "sign_off": Command((), ("zurueckgesetzt", "werte"), 24 * 3600, ("nicht_eingerichtet", "keine_bestaetigung")),
     "new_claim_code": Command((), (), 300, ("bereits_uebernommen",)),
+    "claim_state": Command(("device_state",), (), 24 * 3600),
     "diagnostics": Command((), (), 300),
     "hinweis": Command(("key", "stufe", "text"), (), 24 * 3600),
 }

@@ -208,7 +208,8 @@ class HaDeviceHost:
         if self.discovery is not None and self.device is not None:
             # sendet nur bei Aenderung (und drosselt Wiederholungen nach Fehlern): ein Aufruf je Takt ist billig
             try:
-                self.discovery.aktualisieren(self.device.identity.device_id, anzeige.device_state, self.claim_code())
+                self.discovery.aktualisieren(self.device.identity.device_id, anzeige.device_state,
+                                             self.claim_code() if anzeige.code_zeigen else None)
             except Exception as error:
                 logger.warning("Discovery nicht aktualisiert (%s)", type(error).__name__)
 

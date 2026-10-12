@@ -207,10 +207,10 @@ def test_first_start_registers_then_connects_and_says_hello(tmp_path):
     world.link.verbinden()
     world.device.schritt()
     (hello,) = world.link.of("up/hello")
-    assert set(hello) == set(wire.HELLO_FIELDS)
+    assert set(hello) == set(wire.HELLO_FIELDS) | {"device_state"}
     assert hello == {"schema": 1, "schemata": [1], "konfiguration_version": 0, "bedienung_version": 0,
                      "software_version": "0.6.0", "host": "gateway", "faehigkeiten": world.host.faehigkeiten(),
-                     "boot_id": world.device.boot_id, "uhr_synchron": True}
+                     "boot_id": world.device.boot_id, "uhr_synchron": True, "device_state": "nicht_uebernommen"}
     assert world.device.zustand() == "nicht_uebernommen"
 
 
@@ -459,6 +459,50 @@ def test_new_claim_code_only_while_not_claimed(tmp_path):
     results = world.link.of("up/result")
     assert results[0]["ok"] is True and results[1]["error"]["grund"] == "bereits_uebernommen"
     assert world.device.identity.claim_code == new
+
+
+def test_hello_reports_the_claim_state_the_device_knows(tmp_path):
+    world = World(tmp_path, access=False)
+    world.client.script["register"] = [bootstrap.Antwort("nicht_uebernommen", world.zugang)]
+    world.verbinden()
+    (hello,) = world.link.of("up/hello")
+    assert hello["device_state"] == bootstrap.device_state(world.dir) == "nicht_uebernommen"
+    assert set(hello) == set(wire.HELLO_FIELDS) | set(wire.HELLO_OPTIONAL)
+
+
+def test_claim_state_hides_the_code_and_waits_for_setup(tmp_path):
+    """Spec 5c 1.1/F1: nach der Uebernahme ohne Code melden; der Zustand wird wartet_auf_einrichtung."""
+    world = World(tmp_path, access=False)
+    world.client.script["register"] = [bootstrap.Antwort("nicht_uebernommen", world.zugang)]
+    world.verbinden()
+    assert world.device.anzeige().code_zeigen is True
+    world.empfangen("down/command", _command("claim_state", "c1", {"device_state": "uebernommen"}))
+    anzeige = world.device.anzeige()
+    assert (anzeige.device_state, anzeige.code_zeigen, anzeige.zustand) == (
+        "uebernommen", False, "wartet_auf_einrichtung")
+    assert world.link.of("up/result")[-1]["ok"] is True
+
+
+def test_claim_state_with_an_unknown_value_is_refused(tmp_path):
+    world = World(tmp_path, access=False)
+    world.client.script["register"] = [bootstrap.Antwort("nicht_uebernommen", world.zugang)]
+    world.verbinden()
+    world.empfangen("down/command", _command("claim_state", "c1", {"device_state": "gesperrt"}))
+    assert world.link.of("up/result")[-1]["error"]["grund"] == "ungueltige_nutzlast"
+    assert bootstrap.device_state(world.dir) == "nicht_uebernommen"
+
+
+def test_after_release_the_new_code_is_shown_again(tmp_path):
+    """Freigabe: der Server schickt new_claim_code; register antwortet nicht_uebernommen -> neuer Code sichtbar."""
+    world = World(tmp_path, access=False)
+    world.client.script["register"] = [bootstrap.Antwort("nicht_uebernommen", world.zugang),
+                                       bootstrap.Antwort("nicht_uebernommen", world.zugang)]
+    world.verbinden()
+    world.empfangen("down/command", _command("claim_state", "c1", {"device_state": "uebernommen"}))
+    old = world.device.identity.claim_code
+    world.empfangen("down/command", _command("new_claim_code", "c2"))
+    anzeige = world.device.anzeige()
+    assert anzeige.code_zeigen is True and world.device.identity.claim_code != old
 
 
 # --- Bedienwunsch ---

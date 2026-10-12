@@ -34,6 +34,12 @@ def test_the_copy_is_literal():
     assert vertragsteil(Path(wire.__file__).read_text()) == vertragsteil(SERVER_PROTOCOL.read_text())
 
 
+def test_claim_state_contract():
+    assert wire.HELLO_OPTIONAL == ("device_state",)
+    assert wire.COMMANDS["claim_state"].payload == ("device_state",)
+    assert wire.COMMANDS["claim_state"].expires_seconds == 24 * 3600
+
+
 def test_the_copy_ends_with_the_command_errors():
     assert vertragsteil(Path(wire.__file__).read_text()).rstrip().endswith(
         "return COMMANDS[kind].errors + COMMON_ERRORS")

@@ -351,15 +351,18 @@ class _Discovery:
             raise self.error
 
 
-def test_display_reports_to_the_discovery_with_id_state_and_code(tmp_path, monkeypatch):
+def test_display_reports_to_the_discovery_with_the_code_only_while_it_may_be_shown(tmp_path, monkeypatch):
+    """Spec 5c 1.1/F1: Code nur, solange das Geraet nicht uebernommen ist (Anzeige.code_zeigen)."""
     host, device, _ = _host(tmp_path, monkeypatch)
     device.identity = type("I", (), {"device_id": "shg-a"})()
     host.anzeigen(Anzeige("startet", False, "nicht_uebernommen", False, (), (), None))  # ohne Discovery: nichts
     host.discovery = _Discovery()
     host.claim_code = lambda: "ABCDEFGHIJKL"
-    host.anzeigen(Anzeige("startet", False, "nicht_uebernommen", False, (), (), None))
+    host.anzeigen(Anzeige("nicht_uebernommen", True, "nicht_uebernommen", False, (), (), None))
+    host.anzeigen(Anzeige("wartet_auf_einrichtung", True, "uebernommen", False, (), (), None))
     host.anzeigen(Anzeige("regelt", True, None, True, (), (), None))
-    assert host.discovery.calls == [("shg-a", "nicht_uebernommen", "ABCDEFGHIJKL"), ("shg-a", None, "ABCDEFGHIJKL")]
+    assert host.discovery.calls == [("shg-a", "nicht_uebernommen", "ABCDEFGHIJKL"), ("shg-a", "uebernommen", None),
+                                    ("shg-a", None, None)]
 
 
 def test_a_failing_discovery_never_breaks_the_display(tmp_path, monkeypatch, caplog):

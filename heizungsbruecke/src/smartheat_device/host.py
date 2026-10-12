@@ -49,6 +49,12 @@ class Anzeige:
     meldungen: tuple[dict, ...]  # eigene Meldungen des Geraets (wunsch_begrenzt, soll_quelle_aus): {key, text}
     konfiguration_abgelehnt: str | None  # Text der zuletzt abgelehnten Konfiguration
 
+    @property
+    def code_zeigen(self) -> bool:
+        """Uebernahme-Code zeigen bzw. melden (Spec 5c 1.1, F1; Gateway-Seite und HA-Discovery gleich): nur solange
+        der Server das Geraet als nicht uebernommen fuehrt."""
+        return self.device_state == "nicht_uebernommen" and not self.eingerichtet
+
 
 class DeviceHost(Protocol):
     host: str  # wire.HOSTS
