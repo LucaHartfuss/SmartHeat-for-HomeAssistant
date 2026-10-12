@@ -105,3 +105,50 @@ def test_gateway_debounce_still_waits(tmp_path):
     a.clock.advance(10)
     a.worker.run_pending()
     assert a.wuensche == [(22.0, None, None)]
+
+
+def test_clamped_local_wish_keeps_source_lokal_and_writes_back(tmp_path):
+    a = Aufbau(tmp_path)
+    a.post(30.0, SOURCE_LOKAL, herkunft="smartheat_entity")
+    assert a.wuensche == [(30.0, "smartheat_entity", None)]
+    assert a.store.value == 25.0 and a.store.source == SOURCE_LOKAL and a.quelle.geschrieben == [25.0]
+
+
+def test_stale_source_report_after_portal_operation_is_no_wish(tmp_path):
+    a = Aufbau(tmp_path)
+    a.post(22.0, SOURCE_PORTAL)  # Store hielt 21, die Quelle zeigt noch 21
+    assert a.quelle.geschrieben == [22.0]
+    a.post(21.0, SOURCE_THERMOSTAT, herkunft="soll_entity")  # verspaetete Meldung des alten Werts (Echo-Fenster)
+    assert a.wuensche == [] and a.store.value == 22.0
+    a.clock.advance(120)  # Echo-Fenster vorbei, der Schreibbefehl ist noch offen
+    a.post(21.0, SOURCE_THERMOSTAT, herkunft="soll_entity")
+    assert a.wuensche == [] and a.store.value == 22.0
+
+
+def test_stale_source_report_after_clamped_write_back_is_no_wish(tmp_path):
+    a = Aufbau(tmp_path)
+    a.post(14.0, SOURCE_THERMOSTAT, herkunft="soll_entity")  # begrenzt auf 15 und zurueckgeschrieben
+    assert a.quelle.geschrieben == [15.0] and len(a.wuensche) == 1
+    a.post(14.0, SOURCE_THERMOSTAT, herkunft="soll_entity")  # die Quelle meldet noch den eigenen Wert 14
+    assert len(a.wuensche) == 1 and a.store.value == 15.0
+    a.clock.advance(120)
+    a.post(14.0, SOURCE_THERMOSTAT, herkunft="soll_entity")
+    assert len(a.wuensche) == 1 and a.store.value == 15.0
+
+
+def test_local_wish_while_source_is_off_still_reaches_the_core_but_is_not_written_to_the_source(tmp_path):
+    a = Aufbau(tmp_path)
+    a.worker.post(Event(EV_SOLL_MODUS, {"mode": "off"}))
+    a.worker.run_pending()
+    assert a.aus == [(True, 21.0)]
+    a.post(22.0, SOURCE_LOKAL, herkunft="smartheat_entity")
+    assert a.wuensche == [(22.0, "smartheat_entity", None)] and a.store.value == 22.0
+    assert a.quelle.geschrieben == [] and a.aus == [(True, 21.0)]  # kein neuer Aus-Wechsel
+
+
+def test_repeated_identical_local_wish_is_not_repeated(tmp_path):
+    a = Aufbau(tmp_path)
+    a.post(22.0, SOURCE_LOKAL, herkunft="smartheat_entity")
+    assert len(a.wuensche) == 1 and len(a.checks) == 1
+    a.post(22.0, SOURCE_LOKAL, herkunft="smartheat_entity")
+    assert len(a.wuensche) == 1 and len(a.checks) == 1 and a.quelle.geschrieben == [22.0]

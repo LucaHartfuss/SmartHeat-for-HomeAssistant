@@ -152,8 +152,9 @@ class TargetStore:
         return self._set(float(value), SOURCE_LOKAL)
 
     def begrenzen(self, value: float) -> bool:
-        """Begrenzter Thermostat-Wunsch (Spec 5b 3.2): der begrenzte Wert gilt sofort, Quelle bleibt das Thermostat."""
-        return self._set(float(value), SOURCE_THERMOSTAT)
+        """Begrenzter Wunsch (Spec 5b 3.2): der begrenzte Wert gilt sofort, die Quelle bleibt die des Wunsches
+        (thermostat bzw. lokal; der Wunsch hat sie gerade gesetzt)."""
+        return self._set(float(value), self.source)
 
     def wiederherstellen(self, value: float, source: str) -> bool:
         """Verworfener Thermostat-Wunsch (Thermostat aus, Spec 5b 3.2): zurueck auf den Stand vor dem Wunsch."""

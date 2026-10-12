@@ -74,7 +74,7 @@ class BusTriggerSource:
         self._sensor_ieees = frozenset(sensor_ieees)
         self._daily = daily_trigger_time
         self._now = now
-        self._eingang = SollEingang(worker, store, _ZigbeeQuelle(mirror, thermostat) if thermostat else None,
+        self._eingang = SollEingang(worker, store, _ZigbeeQuelle(mirror, thermostat) if thermostat is not None else None,
                                     wunsch=lambda value, herkunft, durch: wunsch(value),
                                     soll_quelle_aus=soll_quelle_aus, entprellen_s=ROOM_TARGET_DEBOUNCE_SECONDS)
         worker.register(EV_DAILY, self._on_daily)

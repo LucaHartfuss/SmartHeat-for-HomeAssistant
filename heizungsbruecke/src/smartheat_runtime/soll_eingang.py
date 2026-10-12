@@ -7,7 +7,6 @@ Eine lokale Eingabe gleicht die Soll-Quelle zusaetzlich an. Soll-Quelle aus (Mod
 FROSTSCHUTZ_BIS): kein Wunsch, Meldung ueber soll_quelle_aus, eine neue Bedienung wird nicht geschrieben; wieder an:
 das geltende Soll geht an die Quelle, sofern sie etwas anderes zeigt (Echo-Fenster, offener Schreibbefehl). Die
 Quelle selbst (Zigbee, HA-Entity) liefert der Host ueber SollQuelle."""
-import logging
 from collections.abc import Callable
 from typing import Protocol
 
@@ -15,8 +14,6 @@ from smartheat_runtime.debounce import Debouncer
 from smartheat_runtime.runtime import EV_LOCAL_CHECK
 from smartheat_runtime.soll_speicher import SOURCE_LOKAL, SOURCE_PORTAL, TargetStore
 from smartheat_runtime.worker import Event, RegulationWorker
-
-logger = logging.getLogger(__name__)
 
 EV_TARGET_INPUT = "shg_target_input"
 EV_SOLL_MODUS = "shg_soll_modus"
