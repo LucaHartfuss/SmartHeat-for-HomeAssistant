@@ -2,10 +2,10 @@
 name = "heizungsbruecke"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["paho-mqtt>=2.1,<3", "requests>=2.31,<3", "websocket-client>=1.8,<2"]
+dependencies = ["paho-mqtt>=2.1,<3", "requests>=2.31,<3", "websocket-client>=1.8,<2", "cryptography>=46,<51"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pyyaml>=6.0,<7", "jinja2>=3.1,<4", "ruff==0.16.9", "pyright==1.1.414", "cryptography>=46,<51"]
+dev = ["pytest>=8.0", "pyyaml>=6.0,<7", "jinja2>=3.1,<4", "ruff==0.16.9", "pyright==1.1.414"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
@@ -29,6 +29,7 @@ ignore = ["E501"]
 "tests/test_runtime_geraetepfad.py" = ["F811"]
 "tests/test_host_dokument.py" = ["F811"]
 "tests/test_geraet_host.py" = ["F811"]
+"tests/test_main_geraet.py" = ["F811"]
 
 [tool.pyright]
 include = ["src"]

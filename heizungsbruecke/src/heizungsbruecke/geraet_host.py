@@ -14,6 +14,8 @@ import time
 from collections.abc import Callable
 
 from heizungsbruecke import config, dokument, inventur
+from heizungsbruecke.discovery import Discovery
+from heizungsbruecke.geraet_status import GeraetStatus
 from heizungsbruecke.ha_sinks import HaNotifySink
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_device.commands import CommandRegister, Done, Failed, Outcome, Waiting
@@ -53,9 +55,9 @@ class HaDeviceHost:
         # Zeitstempel des Raums setzt HaHost aus smartheat_core.wallclock), deshalb nicht gespeichert.
         self._ha, self._supervisor, self._clock = ha_api, supervisor, clock
         self.device = None  # smartheat_device.device.Device, nach dem Anlegen per verbinden()
-        self.status_sink = None  # Task 7/9: GeraetStatus (StatusSink der Laufzeit und Anzeige)
-        self.discovery = None  # Task 9: discovery.Discovery (Supervisor-Meldung, Task 8)
-        self.claim_code: Callable[[], str | None] = lambda: None  # Task 9: Uebernahme-Code des Geraets
+        self.status_sink: GeraetStatus | None = None  # StatusSink der Laufzeit und Anzeige (__main__.verdrahten)
+        self.discovery: Discovery | None = None  # Supervisor-Meldung (__main__.verdrahten)
+        self.claim_code: Callable[[], str | None] = lambda: None  # Uebernahme-Code des Geraets (__main__.verdrahten)
         self.letzte_anzeige: Anzeige | None = None
         #: blockierende HA-Aufrufe der Inventur neben dem Geraete-Thread; main() stoppt ihn (beenden)
         self.hintergrund = Hintergrund()

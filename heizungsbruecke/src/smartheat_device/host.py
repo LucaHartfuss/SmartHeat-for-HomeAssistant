@@ -33,9 +33,10 @@ class DeviceHost(Protocol):
         """Zeitdienst des Systems (Gateway: NTP); None = unbekannt, gilt als nicht synchron (Spec 3.3)."""
         ...
 
-    def treiber_pruefen(self, bindung: dict) -> str | None:
+    def treiber_pruefen(self, bindung: dict, /) -> str | None:
         """Kundentext, wenn die Treiberparameter nicht passen (config_check, Regel 6), sonst None. Gateway: `bindung`; HA: die
-        ganze Konfiguration (Spec 5c)."""
+        ganze Konfiguration (Spec 5c). Nur positional (config_check ruft so), daher darf der Host den Parameter
+        passend benennen."""
         ...
 
     def befehle_eintragen(self, register: CommandRegister) -> None: ...
