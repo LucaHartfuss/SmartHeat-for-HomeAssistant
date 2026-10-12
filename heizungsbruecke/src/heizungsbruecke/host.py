@@ -6,7 +6,7 @@ import logging
 import os
 import time
 
-from heizungsbruecke import config, derived_sensors, dokument, triggers
+from heizungsbruecke import config, derived_sensors, dokument, geraet_trigger
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.ha_binding import binding_for, binding_roles
 from heizungsbruecke.ha_signals import SOLL_REF, GeraetSignale, HaSignalSource
@@ -140,9 +140,12 @@ class HaHost:
                       notices=notices)
 
     def trigger_source(self, manifest: ChannelManifest, worker: RegulationWorker) -> TriggerSource:
-        assert self._effective is not None  # load() lief vorher
-        # Vorlaeufig der bisherige Trigger-Aufbau; Task 5 ersetzt ihn durch geraet_trigger.build.
-        return triggers.build_ha_trigger_client(manifest, self._effective, self._ha_api, worker)
+        assert self._effective is not None and self.store is not None  # load() lief vorher
+        geraet = self._geraet
+        return geraet_trigger.build(
+            manifest, self._effective, self._ha_api, worker, self.store, self.soll_entity,
+            wunsch=lambda wert, herkunft, durch: geraet.wunsch(wert, herkunft=herkunft, durch=durch),
+            soll_quelle_aus=geraet.soll_quelle_aus)
 
 
 def _wait_until_reachable(ha_api) -> None:

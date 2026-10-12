@@ -24,5 +24,5 @@ def test_fires_once_after_the_value_was_stable():
 
 
 def test_the_ha_trigger_keeps_the_same_window():
-    from heizungsbruecke import triggers
-    assert triggers.ROOM_TARGET_DEBOUNCE_SECONDS == ROOM_TARGET_DEBOUNCE_SECONDS == 10
+    from heizungsbruecke import geraet_trigger
+    assert geraet_trigger.ROOM_TARGET_DEBOUNCE_SECONDS == ROOM_TARGET_DEBOUNCE_SECONDS == 10

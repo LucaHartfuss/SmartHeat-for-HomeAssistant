@@ -168,7 +168,7 @@ def env(tmp_path, monkeypatch, clock):
         return trigger_clients[-1]
 
     monkeypatch.setattr("smartheat_runtime.mqtt_link.BridgeMqttClient", _mqtt_factory)
-    monkeypatch.setattr("heizungsbruecke.triggers.HaTriggerClient", _trigger_factory)
+    monkeypatch.setattr("heizungsbruecke.geraet_trigger.HaTriggerClient", _trigger_factory)
     return SimpleNamespace(
         clock=clock, paths=paths, abo=abo, ha=FakeHa(), mqtt_clients=mqtt_clients, trigger_clients=trigger_clients,
         derived=env_derived,

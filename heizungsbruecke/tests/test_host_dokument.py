@@ -11,6 +11,7 @@ from smartheat_runtime import app
 from smartheat_runtime.app import StartFailure
 from smartheat_runtime.ports import SourceUnavailable
 from smartheat_runtime.runtime import Runtime
+from smartheat_runtime.worker import RegulationWorker
 
 
 def test_load_builds_the_runtime_from_the_document(env):
@@ -94,3 +95,17 @@ def test_the_runtime_idles_with_a_config_error_for_a_missing_role(env):
     geraet = FakeGeraet(konfiguration_aus_optionen({**OPTIONS, "lever_set": "weishaupt_wwp"}))
     bridge = app.start(HaHost(geraet, env.ha, clock=env.clock), env.clock, mqtt_factory=geraet.kanal)
     assert not isinstance(bridge, Runtime)
+
+
+def test_trigger_source_is_built_on_the_real_entity_and_wishes_reach_the_device(env):
+    geraet = FakeGeraet(konfiguration_aus_optionen(OPTIONS))
+    host = HaHost(geraet, env.ha, clock=env.clock)
+    loaded = host.load()
+    worker = RegulationWorker(env.clock)
+    client = host.trigger_source(loaded.manifest, worker)
+    assert {"platform": "state", "entity_id": OPTIONS["entity_room_target"],
+            "for": {"seconds": 10}} in client.kwargs["triggers"]
+    client.kwargs["on_trigger_event"]({"platform": "event", "event": {
+        "event_type": "smartheat_wunsch", "data": {"raum_soll": 22.0}, "context": {"parent_id": "p"}}})
+    worker.run_pending()
+    assert geraet.wuensche == [(22.0, "smartheat_entity", "automation")]
