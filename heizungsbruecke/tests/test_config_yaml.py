@@ -27,7 +27,7 @@ def test_slug_and_architectures():
 def test_config_yaml_has_only_start_options():
     data = _load_config_yaml()
     assert data["options"] == {}
-    assert data["schema"] == {"bootstrap_url": "url?", "log_level": "list(debug|info|warning|error)?"}
+    assert data["schema"] == {"bootstrap_url": "match(^https://.+)?", "log_level": "list(debug|info|warning|error)?"}
     with pytest.raises(KeyError):
         data["schema"]["tenant_id"]
 

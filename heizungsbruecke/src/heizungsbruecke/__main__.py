@@ -68,17 +68,17 @@ def _optionen() -> dict | None:
     return raw if isinstance(raw, dict) else None
 
 
-def _url_fehler(value) -> str | None:
-    """Grund, warum value keine Bootstrap-Adresse ist, sonst None. Wie SHG_DEVICE_API_URL beim Gateway: http oder https
-    mit Host (Labor im LAN per http)."""
+def _url_fehler(value, *, http_erlaubt: bool = False) -> str | None:
+    """Grund, warum value keine Bootstrap-Adresse ist, sonst None. Option nur https mit Host (wie das Gateway-Image,
+    5c F/Q4); http nur ueber SMARTHEAT_BOOTSTRAP_URL (E2E/Tests, im Add-on nicht setzbar)."""
     if not isinstance(value, str):
         return "kein Text"
     try:
         parts = urllib.parse.urlsplit(value)
     except ValueError:
         return "nicht lesbar"
-    if parts.scheme not in ("http", "https"):
-        return "Schema nicht http oder https"
+    if parts.scheme not in (("http", "https") if http_erlaubt else ("https",)):
+        return "Schema nicht http oder https" if http_erlaubt else "Schema nicht https"
     if not parts.hostname:
         return "ohne Host"
     return None
@@ -101,7 +101,7 @@ def bootstrap_url() -> str | None:
             return None
         quelle, value = "bootstrap_url", optionen.get("bootstrap_url")
         value = DEFAULT_BOOTSTRAP_URL if value is None else value  # nicht gesetzt (fehlt oder null)
-    grund = _url_fehler(value)
+    grund = _url_fehler(value, http_erlaubt=quelle == "SMARTHEAT_BOOTSTRAP_URL")
     if grund is not None:
         logger.warning("%s ungueltig (%s): das Geraet meldet sich nicht an und bleibt im Ruhezustand", quelle, grund)
         return None

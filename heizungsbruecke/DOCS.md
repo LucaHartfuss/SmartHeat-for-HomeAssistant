@@ -29,7 +29,7 @@ Konfigurationsfehler) sind ebenfalls ein Ruhezustand, kein Beenden.
 
 | Option | Bedeutung |
 | --- | --- |
-| `bootstrap_url` | Adresse der Accounts-API für die Anmeldung des Geräts (`https`, für das Labor im Heimnetz auch `http`). Standard ist der Produktionsdienst; nur für Labor und Tests setzen. Ist die Angabe ungültig oder die Optionsdatei unlesbar, meldet sich das Add-on nicht an und wartet im Ruhezustand (es weicht nie auf den Produktionsdienst aus); im Log steht der Grund, nie die Adresse. |
+| `bootstrap_url` | Adresse der Accounts-API für die Anmeldung des Geräts (nur `https`). Standard ist der Produktionsdienst; nur für Labor und Tests setzen. Ist die Angabe ungültig oder die Optionsdatei unlesbar, meldet sich das Add-on nicht an und wartet im Ruhezustand (es weicht nie auf den Produktionsdienst aus); im Log steht der Grund, nie die Adresse. |
 | `log_level` | `debug`, `info` (Standard), `warning` oder `error`. |
 
 Alle früheren Optionen (`tenant_id`, `entity_*`, Zugangs-, Abo- und Intervall-Optionen) entfallen; die Integration
