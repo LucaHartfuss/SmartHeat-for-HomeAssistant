@@ -10,6 +10,13 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
   Supervisor-Discovery für die Integration, Inventur mit Filter, Bedienwunsch aus der Soll-Entity und der
   Wunschtemperatur-Entity der Integration, Status-Ereignis Schema 3 mit Hinweisen. Optionen nur noch `bootstrap_url`
   und `log_level`. Kein Optionsmodus mehr; `client1` bleibt bis zum Umzug (5d) auf 0.36.
+- Option `bootstrap_url` nur noch mit `https`; `http` geht nur über die Umgebung `SMARTHEAT_BOOTSTRAP_URL` (E2E und
+  Tests).
+- Übernahme-Code nur, solange das Gerät nicht übernommen ist (Spec 5c F1): nach der Übernahme meldet die Discovery
+  keinen Code mehr, nach dem Entfernen gibt es einen neuen Code (der vorige Besitzer kennt den alten); ein gesperrtes
+  Gerät meldet die Discovery als `gesperrt`, ohne Code.
+- Eine lokale Wunschtemperatur (Wunschtemperatur-Entity der Integration), während das Thermostat ausgeschaltet ist,
+  wird verworfen; es gilt weiter das bisherige Soll.
 - Neu, vom Add-on noch nicht genutzt (Teilprojekt 5b, Plan D1): Gerätekern `smartheat_device` und
   `smartheat_core.config_check`; die Laufzeit kann aus einem Konfigurationsdokument starten und den Link des Geräts
   nutzen (`dokument_config`, `RuntimeConfig.abo_source`, `app.start(mqtt_factory=...)`). Für das Add-on ändert sich

@@ -1,8 +1,9 @@
 """Diagnoseseite (Spec SHG G2 6.5, Spec 5b 5.3, Plan D2): nur lesend, ohne Login, ohne Geheimnisse, statisches HTML ohne
 JavaScript, Selbstaktualisierung alle 10 s. Zeigt den Zustand des Geraetekerns (wie die LED), Hinweise des Dienstes
 (Befehl hinweis), eigene Meldungen (Wunsch begrenzt, Soll-Quelle aus), eine abgelehnte Konfiguration und, solange das
-Gateway nicht uebernommen ist (Anzeige.code_zeigen, Spec 5c F1), QR-Code (segno, SVG) und Uebernahme-Code - nur
-lokal. Den Uebernahmestand meldet der Server (claim_state, new_claim_code); bis dahin gilt der Stand des Bootstraps. /healthz fuer den Updater (G2b).
+Gateway nicht uebernommen ist (Anzeige.code_zeigen, Spec 5c F1), QR-Code (segno, SVG) und Uebernahme-Code - nur lokal.
+Den Uebernahmestand meldet der Server (claim_state, new_claim_code); bis dahin gilt der Stand des Bootstraps. /healthz
+fuer den Updater (G2b).
 
 Schutz gegen DNS-Rebinding: jede Route antwortet nur, wenn der Host-Header eine IP-Adresse, `localhost` oder ein Name
 aus SHG_DIAG_HOSTNAMES (kommagetrennt) ist; sonst 403 ohne Inhalt. Sonst koennte eine fremde Webseite ueber einen auf
