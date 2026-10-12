@@ -1,28 +1,32 @@
-"""Golden-Master des ganzen Add-ons (Spec SHG 3.4 Punkt 1). Ein fester Szenario-Lauf mit Fake-HA, Fake-Broker,
-Fake-Accounts-API und fester Uhr zeichnet jede Aussenwirkung auf: schreibende HA-Aufrufe, Push- und HA-Benachrichtigungen,
-HA-Ereignisse, MQTT-Publishes, Start/Stopp von MQTT und Trigger-Client, Abo-Abfragen, Prozess-Neustarts und nach jedem
-Schritt den Inhalt aller Dateien im Datenverzeichnis. Lesende HA-Aufrufe und Logs zaehlen nicht.
+"""Golden-Master des ganzen Add-ons (Spec SHG 3.4 Punkt 1). Ein fester Szenario-Lauf mit Fake-HA, dem Link einer
+Geraete-Attrappe (geraet_helpers.FakeGeraet) und fester Uhr zeichnet jede Aussenwirkung auf: schreibende HA-Aufrufe,
+Push- und HA-Benachrichtigungen, HA-Ereignisse, Nachrichten des Links, Start/Stopp des Trigger-Clients,
+Prozess-Neustarts und nach jedem Schritt den Inhalt aller Dateien im Datenverzeichnis. Lesende HA-Aufrufe und Logs
+zaehlen nicht.
 
-Erzeugt auf dem Stand vor G1 (GOLDEN_UPDATE=1), danach nie neu. Die Konstanten QUERY_STATUS, MQTT_CLIENT,
-TRIGGER_CLIENT, RESTART und install_wall_clock sind die einzigen Stellen, die die G1-Tasks anpassen (Patch-Ziele)."""
+Erzeugt auf dem Stand vor G1 (GOLDEN_UPDATE=1), mit 1.0.0 (Spec 5c, Plan D Task 10) einmal neu im Geraete-Pfad: die
+Laufzeit startet auf dem Konfigurationsdokument aus OPTIONS, das Abo kommt aus dem Dokument, Snapshots und Telemetrie
+gehen ueber den Link. Der Master von 0.36 bleibt als addon_scenario_0_36.json; normalisieren() haelt fest, dass sich
+beide nur in den ERLAUBT genannten Punkten unterscheiden. TRIGGER_CLIENT, RESTART und install_wall_clock sind die
+Patch-Ziele."""
 import copy
 import itertools
 import json
 import time
 import uuid
 from datetime import datetime, timedelta
-from types import SimpleNamespace
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import geraet_helpers
 from conftest import FakeClock
-from fakes import ACCESS_OPTIONS, FakeHa
+from fakes import FakeHa
 
-import heizungsbruecke.__main__ as main_module
 from heizungsbruecke.derived_sensors import DerivedSensors
+from heizungsbruecke.version import ADDON_VERSION
+from smartheat_runtime import status
 
-QUERY_STATUS = "smartheat_runtime.entitlement.query_status"
-MQTT_CLIENT = "smartheat_runtime.mqtt_link.BridgeMqttClient"
-TRIGGER_CLIENT = "heizungsbruecke.triggers.HaTriggerClient"
+TRIGGER_CLIENT = "heizungsbruecke.geraet_trigger.HaTriggerClient"
 RESTART = "smartheat_runtime.abo.restart_process"
 
 BERLIN = ZoneInfo("Europe/Berlin")
@@ -30,15 +34,14 @@ START = datetime(2026, 1, 15, 8, 0, tzinfo=BERLIN)
 FILES = {
     "BACKUP_PATH": "backup.json", "FAILSAFE_PATH": "failsafe_state.json",
     "ENTITLEMENT_PATH": "entitlement_state.json", "DERIVED_SENSORS_PATH": "derived_sensors.json",
+    "AUFRAEUMEN_PATH": "aufraeumen.json", "RUNTIME_DIR": "runtime", "ROOM_TARGET_PATH": "runtime/room_target.json",
+    "ABGEMELDET_PATH": "runtime/abgemeldet.json",
 }
+#: Testdaten; die Laufzeit liest sie als Konfigurationsdokument (geraet_helpers.konfiguration_aus_optionen).
 OPTIONS = {
     "tenant_id": "golden",
-    "setup_id": "setup-golden-1",
     "verteilsystem": "Heizkoerper",
     "daily_trigger_time": "12:00",
-    **ACCESS_OPTIONS,
-    "mqtt_username": "u",
-    "mqtt_password": "p",
     "room_sensors": ["sensor.room_actual"],
     "battery_entities": ["sensor.thermostat_battery"],
     "entity_room_target": "sensor.room_target",
@@ -50,7 +53,6 @@ OPTIONS = {
     "entity_flow_temperature": "sensor.flow_temperature",
     "entity_flow_setpoint": "sensor.flow_setpoint",
     "notify_services": ["notify.handy"],
-    "accounts_api_base_url": "https://accounts.example.test",
 }
 STATES = {
     "climate.zone": "auto", "climate.zone::temperature": 22.0,
@@ -123,35 +125,6 @@ class RecordingHa(FakeHa):
         self._log.append(["ha", "event", event_type, copy.deepcopy(data)])
 
 
-class RecordingMqtt:
-    def __init__(self, log: list, kwargs: dict) -> None:
-        self._log = log
-        self.kwargs = kwargs
-        self.connect_failures = 0
-        self.connected = True
-        self.snapshots: list[dict] = []
-        self.setpoints_callback = None
-
-    def is_connected(self):
-        return self.connected
-
-    def subscribe_setpoints(self, on_message):
-        self.setpoints_callback = on_message
-
-    def loop_start(self):
-        self._log.append(["mqtt", "loop_start"])
-
-    def stop(self):
-        self._log.append(["mqtt", "stop"])
-
-    def publish_snapshot(self, payload):
-        self._log.append(["mqtt", "snapshot", copy.deepcopy(payload)])
-        self.snapshots.append(copy.deepcopy(payload))
-
-    def publish_telemetry(self, payload):
-        self._log.append(["mqtt", "telemetry", copy.deepcopy(payload)])
-
-
 class RecordingTrigger:
     def __init__(self, log: list, kwargs: dict) -> None:
         self._log = log
@@ -175,9 +148,9 @@ class World:
         self.data.mkdir(parents=True)
         self.ha = RecordingHa(self.log)
         self.abo = {"status": "active"}
-        self.mqtt: list[RecordingMqtt] = []
         self.triggers: list[RecordingTrigger] = []
         self.bridge = None
+        self.geraet = None
         self._patch(monkeypatch)
 
     def _patch(self, monkeypatch) -> None:
@@ -187,8 +160,6 @@ class World:
             "heizungsbruecke.derived_sensors.ensure_all",
             lambda **kwargs: DerivedSensors({"room_actual": "sensor.room_actual"}, (), "fp-golden"),
         )
-        monkeypatch.setattr(QUERY_STATUS, self._query_status)
-        monkeypatch.setattr(MQTT_CLIENT, self._new_mqtt)
         monkeypatch.setattr(TRIGGER_CLIENT, self._new_trigger)
         monkeypatch.setattr(RESTART, lambda: self.log.append(["prozess", "neustart"]))
         counter = itertools.count(1)
@@ -197,14 +168,6 @@ class World:
         monkeypatch.setenv("TZ", "Europe/Berlin")
         time.tzset()
         install_wall_clock(monkeypatch, self.wall)
-
-    def _query_status(self, tenant_id, base_url, token):
-        self.log.append(["accounts", "status", tenant_id, base_url])
-        return self.abo["status"]
-
-    def _new_mqtt(self, *args, **kwargs):
-        self.mqtt.append(RecordingMqtt(self.log, kwargs))
-        return self.mqtt[-1]
 
     def _new_trigger(self, **kwargs):
         self.triggers.append(RecordingTrigger(self.log, kwargs))
@@ -220,17 +183,25 @@ class World:
         self.wall.advance(seconds)
         self.run()
 
-    def start_process(self, **overrides) -> None:
-        self.bridge = main_module._start_bridge({**OPTIONS, **overrides}, self.ha, clock=self.clock)
+    def start_process(self, *, abgemeldet: bool = False) -> None:
+        """Neuer Prozess: die Laufzeit auf dem Dokument aus OPTIONS; das Abo liest sie bei jeder Pruefung frisch aus
+        self.abo (das Szenario schaltet es mitten im Lauf um)."""
+        self.bridge, self.geraet = geraet_helpers.start_bridge(
+            self, options=OPTIONS, abo=lambda: self.abo["status"], abgemeldet=abgemeldet, log=self.log)
         self.run()
 
     def connect(self) -> None:
-        self.mqtt[-1].kwargs["on_connected"](None)
+        self.geraet.channel.verbunden()
         self.triggers[-1].kwargs["on_connected"]()
         self.run()
 
     def trigger(self, entity_id: str) -> None:
-        self.triggers[-1].kwargs["on_trigger_event"]({"platform": "state", "entity_id": entity_id, "attribute": None})
+        """HA meldet eine Zustandsaenderung; die Soll-Entity geht in den Soll-Eingang, alles andere ist ein lokaler
+        Check."""
+        value = self.ha.states.get(entity_id)
+        self.triggers[-1].kwargs["on_trigger_event"]({
+            "platform": "state", "entity_id": entity_id, "attribute": None,
+            "to_state": {"state": value if isinstance(value, int | float | str) else "unavailable"}})
         self.run()
 
     def set_room_target(self, value: float) -> None:
@@ -241,8 +212,11 @@ class World:
         self.ha.states["sensor.room_actual"] = value
         self.trigger("sensor.room_actual")
 
+    def snapshots(self) -> list[dict]:
+        return self.geraet.sent.of("up/snapshot")
+
     def last_seq(self) -> str:
-        return self.mqtt[-1].snapshots[-1]["seq"]
+        return self.snapshots()[-1]["seq"]
 
     def answer(self, status="ok", reason=None, curve=0.95, shift=23.0, heat_limit=16.0) -> None:
         payload = {
@@ -250,7 +224,7 @@ class World:
             "levers": {"curve": curve, "room_setpoint": shift, "heat_limit": heat_limit},
             "learned": {"curve": 1.0, "heat_limit": 16.0},
         }
-        self.mqtt[-1].setpoints_callback(None, None, SimpleNamespace(retain=False, payload=json.dumps(payload)))
+        self.geraet.channel.setpoints(payload)
         self.run()
 
     def state(self):
@@ -259,7 +233,8 @@ class World:
     def step(self, name: str, action) -> None:
         self.log.clear()
         action()
-        files = {path.name: json.loads(path.read_text()) for path in sorted(self.data.glob("*.json"))}
+        files = {path.relative_to(self.data).as_posix(): json.loads(path.read_text())
+                 for path in sorted(self.data.rglob("*.json"))}
         self.record.append({"schritt": name, "wirkungen": copy.deepcopy(self.log), "dateien": files})
 
 
@@ -279,7 +254,7 @@ def run_scenario(tmp_path, monkeypatch) -> list[dict]:
     def erster_start():
         w.start_process()
         w.connect()
-        _expect(len(w.mqtt[-1].snapshots) >= 1, "erster Start publiziert einen Snapshot")
+        _expect(len(w.snapshots()) >= 1, "erster Start publiziert einen Snapshot")
 
     def erste_antwort():
         w.answer(curve=0.95, shift=23.0)
@@ -289,12 +264,12 @@ def run_scenario(tmp_path, monkeypatch) -> list[dict]:
         w.wall.set(datetime(2026, 1, 15, 12, 0, 30, tzinfo=BERLIN))
         w.advance(30)
         w.trigger("sensor.room_actual")
-        _expect(w.mqtt[-1].snapshots[-1]["trigger"] == "daily", "Tagestick")
+        _expect(w.snapshots()[-1]["trigger"] == "daily", "Tagestick")
         w.answer(curve=1.0, shift=23.5)
 
     def soll_senken():
         w.set_room_target(20.5)
-        _expect(w.mqtt[-1].snapshots[-1]["trigger"] == "target_change", "Tick bei Soll-Aenderung")
+        _expect(w.snapshots()[-1]["trigger"] == "target_change", "Tick bei Soll-Aenderung")
         w.answer(curve=1.0, shift=23.0)
 
     def soll_erhoehen_komfort_boost():
@@ -407,6 +382,59 @@ def run_scenario(tmp_path, monkeypatch) -> list[dict]:
     ):
         w.step(name, action)
     return w.record
+
+
+#: Spec 5c 5: erlaubte Unterschiede zwischen dem Master von 0.36 und 1.0.0, einzeln; alles andere ist ein Fehler.
+ERLAUBT = (
+    "abo_abfrage: ['accounts', 'status', …] fehlt (Abo aus dem Konfigurationsdokument)",
+    "mqtt_client: ['mqtt', 'loop_start'|'stop'] fehlt (Link des Geraetekerns)",
+    "snapshot: ['mqtt', 'snapshot', p] -> ['link', 'up/snapshot', p + raum_soll_wirksam]",
+    "telemetrie: ['mqtt', 'telemetry', p] -> ['link', 'telemetry', p]",
+    "status: smartheat_status Schema 2 -> 3 (Geraete-Felder dazu, Laufzeit-Felder gleich)",
+    "dateien: runtime/room_target.json und runtime/abgemeldet.json neu; Zugangsoptionen fehlen",
+    "setup_id: 'setup-golden-1' (Option) -> die Anlage 'golden' (dokument_config: setup_id = Anlage)",
+    "addon_version: 0.36.0 -> 1.0.0 (ADDON_VERSION)",
+)
+#: Was 0.36 aus den Optionen nahm und 1.0.0 aus dem Dokument bzw. der Version (ERLAUBT, letzte zwei Zeilen).
+ALT_SETUP_ID, ALT_ADDON_VERSION = "setup-golden-1", "0.36.0"
+
+
+def _neu_benannt(value, *, alt: bool):
+    """Nur im Master von 0.36: setup_id der Option -> Anlage, addon_version -> aktuelle Version (rekursiv)."""
+    if not alt:
+        return value
+    if isinstance(value, dict):
+        result = {k: _neu_benannt(v, alt=alt) for k, v in value.items()}
+        if result.get("setup_id") == ALT_SETUP_ID:
+            result["setup_id"] = OPTIONS["tenant_id"]
+        if result.get("addon_version") == ALT_ADDON_VERSION:
+            result["addon_version"] = ADDON_VERSION
+        return result
+    if isinstance(value, list):
+        return [_neu_benannt(v, alt=alt) for v in value]
+    return value
+
+
+def normalisieren(record: list[dict], *, alt: bool) -> list[dict]:
+    """Bringt beide Master auf eine Form, in der nur noch fachliche Wirkungen stehen (ERLAUBT oben). alt: der Master von
+    0.36 (setup_id und addon_version auf die Werte von 1.0.0 umgeschrieben)."""
+    result = []
+    for schritt in _neu_benannt(record, alt=alt):
+        wirkungen = []
+        for w in schritt["wirkungen"]:
+            if w[0] == "accounts" or w[:2] in (["mqtt", "loop_start"], ["mqtt", "stop"]):
+                continue
+            if w[0] == "link":
+                payload = {k: v for k, v in w[2].items() if k != "raum_soll_wirksam"}
+                w = ["mqtt", "snapshot" if w[1] == "up/snapshot" else w[1], payload]
+            if w[:3] == ["ha", "event", "smartheat_status"]:
+                data = {k: v for k, v in w[3].items() if k in status.EVENT_FIELDS and k != "schema"}
+                w = ["ha", "event", "smartheat_status", data]
+            wirkungen.append(w)
+        dateien = {name: inhalt for name, inhalt in schritt["dateien"].items()
+                   if Path(name).name not in ("room_target.json", "abgemeldet.json", "discovery.json")}
+        result.append({"schritt": schritt["schritt"], "wirkungen": wirkungen, "dateien": dateien})
+    return result
 
 
 def render(record: list[dict]) -> str:

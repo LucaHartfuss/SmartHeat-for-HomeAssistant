@@ -30,6 +30,8 @@ ignore = ["E501"]
 "tests/test_host_dokument.py" = ["F811"]
 "tests/test_geraet_host.py" = ["F811"]
 "tests/test_main_geraet.py" = ["F811"]
+"tests/test_main.py" = ["F811"]
+"tests/test_app_config_error_boost.py" = ["F811"]
 
 [tool.pyright]
 include = ["src"]

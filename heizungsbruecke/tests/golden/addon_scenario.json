@@ -7,10 +7,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "startet",
      "grund": null,
      "notbetrieb": false,
@@ -31,24 +31,23 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": null,
+     "geraet_hinweise": []
     }
-   ],
-   [
-    "accounts",
-    "status",
-    "golden",
-    "https://accounts.example.test"
    ],
    [
     "ha",
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "startet",
      "grund": null,
      "notbetrieb": false,
@@ -69,7 +68,12 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 21.0,
+     "geraet_hinweise": []
     }
    ],
    [
@@ -85,10 +89,6 @@
     21.0
    ],
    [
-    "mqtt",
-    "loop_start"
-   ],
-   [
     "trigger",
     "start"
    ],
@@ -97,10 +97,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "startet",
      "grund": null,
      "notbetrieb": false,
@@ -121,11 +121,16 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 21.0,
+     "geraet_hinweise": []
     }
    ],
    [
-    "mqtt",
+    "link",
     "telemetry",
     {
      "room_actual": 20.0,
@@ -143,10 +148,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -167,12 +172,17 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 21.0,
+     "geraet_hinweise": []
     }
    ],
    [
-    "mqtt",
-    "snapshot",
+    "link",
+    "up/snapshot",
     {
      "schema": 4,
      "seq": "00000000-0000-0000-0000-000000000001",
@@ -184,7 +194,8 @@
       "room_setpoint": 21.0,
       "heat_limit": 16.0
      },
-     "readonly": []
+     "readonly": [],
+     "raum_soll_wirksam": 21.0
     }
    ],
    [
@@ -192,10 +203,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -216,7 +227,12 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 21.0,
+     "geraet_hinweise": []
     }
    ]
   ],
@@ -226,7 +242,7 @@
     "last_published_target_rt": 21.0,
     "boost_active": false,
     "emergency_boost_active": false,
-    "setup_id": "setup-golden-1",
+    "setup_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 0.9,
@@ -243,6 +259,11 @@
      "seq": "00000000-0000-0000-0000-000000000001",
      "trigger": "target_change"
     }
+   },
+   "runtime/room_target.json": {
+    "source": "portal",
+    "ts": "2026-01-15T08:00:00+01:00",
+    "value": 21.0
    }
   }
  },
@@ -272,10 +293,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -299,7 +320,12 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 21.0,
+     "geraet_hinweise": []
     }
    ]
   ],
@@ -310,7 +336,7 @@
     "boost_active": false,
     "emergency_boost_active": false,
     "last_ack_at": "2026-01-15T08:00:00+01:00",
-    "setup_id": "setup-golden-1",
+    "setup_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 0.95,
@@ -329,6 +355,11 @@
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
+   },
+   "runtime/room_target.json": {
+    "source": "portal",
+    "ts": "2026-01-15T08:00:00+01:00",
+    "value": 21.0
    }
   }
  },
@@ -336,8 +367,8 @@
   "schritt": "tagestick",
   "wirkungen": [
    [
-    "mqtt",
-    "snapshot",
+    "link",
+    "up/snapshot",
     {
      "schema": 4,
      "seq": "00000000-0000-0000-0000-000000000002",
@@ -349,7 +380,8 @@
       "room_setpoint": 23.0,
       "heat_limit": 16.0
      },
-     "readonly": []
+     "readonly": [],
+     "raum_soll_wirksam": 21.0
     }
    ],
    [
@@ -369,10 +401,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -396,7 +428,12 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 21.0,
+     "geraet_hinweise": []
     }
    ]
   ],
@@ -408,7 +445,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:01:00+01:00",
-    "setup_id": "setup-golden-1",
+    "setup_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 1.0,
@@ -427,6 +464,11 @@
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
+   },
+   "runtime/room_target.json": {
+    "source": "portal",
+    "ts": "2026-01-15T08:00:00+01:00",
+    "value": 21.0
    }
   }
  },
@@ -440,8 +482,8 @@
     20.5
    ],
    [
-    "mqtt",
-    "snapshot",
+    "link",
+    "up/snapshot",
     {
      "schema": 4,
      "seq": "00000000-0000-0000-0000-000000000003",
@@ -453,7 +495,8 @@
       "room_setpoint": 23.5,
       "heat_limit": 16.0
      },
-     "readonly": []
+     "readonly": [],
+     "raum_soll_wirksam": 20.5
     }
    ],
    [
@@ -461,10 +504,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -488,7 +531,12 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ],
    [
@@ -502,10 +550,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -529,7 +577,12 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ]
   ],
@@ -541,7 +594,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:01:00+01:00",
-    "setup_id": "setup-golden-1",
+    "setup_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 1.0,
@@ -560,6 +613,11 @@
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
+   },
+   "runtime/room_target.json": {
+    "source": "thermostat",
+    "ts": "2026-01-15T12:01:00+01:00",
+    "value": 20.5
    }
   }
  },
@@ -591,8 +649,8 @@
     23.0
    ],
    [
-    "mqtt",
-    "snapshot",
+    "link",
+    "up/snapshot",
     {
      "schema": 4,
      "seq": "00000000-0000-0000-0000-000000000004",
@@ -604,7 +662,8 @@
       "room_setpoint": 25.0,
       "heat_limit": 23.0
      },
-     "readonly": []
+     "readonly": [],
+     "raum_soll_wirksam": 22.0
     }
    ],
    [
@@ -612,10 +671,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -639,7 +698,12 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 22.0,
+     "geraet_hinweise": []
     }
    ],
    [
@@ -647,10 +711,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -674,7 +738,12 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 22.0,
+     "geraet_hinweise": []
     }
    ]
   ],
@@ -687,7 +756,7 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:01:00+01:00",
     "boost_since": "2026-01-15T12:01:00+01:00",
-    "setup_id": "setup-golden-1",
+    "setup_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 1.0,
@@ -706,6 +775,11 @@
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
+   },
+   "runtime/room_target.json": {
+    "source": "thermostat",
+    "ts": "2026-01-15T12:01:00+01:00",
+    "value": 22.0
    }
   }
  },
@@ -735,10 +809,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -762,7 +836,12 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 22.0,
+     "geraet_hinweise": []
     }
    ]
   ],
@@ -774,7 +853,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:01:00+01:00",
-    "setup_id": "setup-golden-1",
+    "setup_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 1.0,
@@ -793,6 +872,11 @@
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
+   },
+   "runtime/room_target.json": {
+    "source": "thermostat",
+    "ts": "2026-01-15T12:01:00+01:00",
+    "value": 22.0
    }
   }
  },
@@ -806,8 +890,8 @@
     21.5
    ],
    [
-    "mqtt",
-    "snapshot",
+    "link",
+    "up/snapshot",
     {
      "schema": 4,
      "seq": "00000000-0000-0000-0000-000000000005",
@@ -819,7 +903,8 @@
       "room_setpoint": 24.0,
       "heat_limit": 16.0
      },
-     "readonly": []
+     "readonly": [],
+     "raum_soll_wirksam": 21.5
     }
    ],
    [
@@ -827,10 +912,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -854,12 +939,17 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 21.5,
+     "geraet_hinweise": []
     }
    ],
    [
-    "mqtt",
-    "snapshot",
+    "link",
+    "up/snapshot",
     {
      "schema": 4,
      "seq": "00000000-0000-0000-0000-000000000005",
@@ -871,14 +961,9 @@
       "room_setpoint": 24.0,
       "heat_limit": 16.0
      },
-     "readonly": []
+     "readonly": [],
+     "raum_soll_wirksam": 21.5
     }
-   ],
-   [
-    "accounts",
-    "status",
-    "golden",
-    "https://accounts.example.test"
    ],
    [
     "ha",
@@ -898,10 +983,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "notbetrieb",
      "grund": null,
      "notbetrieb": true,
@@ -925,7 +1010,12 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 21.5,
+     "geraet_hinweise": []
     }
    ]
   ],
@@ -937,7 +1027,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:01:00+01:00",
-    "setup_id": "setup-golden-1",
+    "setup_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "notify_states": {
      "notbetrieb": "aktiv"
@@ -965,6 +1055,11 @@
      "seq": "00000000-0000-0000-0000-000000000005",
      "trigger": "target_change"
     }
+   },
+   "runtime/room_target.json": {
+    "source": "thermostat",
+    "ts": "2026-01-15T12:01:00+01:00",
+    "value": 21.5
    }
   }
  },
@@ -994,10 +1089,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "notbetrieb",
      "grund": null,
      "notbetrieb": true,
@@ -1021,7 +1116,12 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 21.5,
+     "geraet_hinweise": []
     }
    ]
   ],
@@ -1033,7 +1133,7 @@
     "emergency_boost_active": true,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:01:00+01:00",
-    "setup_id": "setup-golden-1",
+    "setup_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "notify_states": {
      "notbetrieb": "aktiv"
@@ -1061,6 +1161,11 @@
      "seq": "00000000-0000-0000-0000-000000000005",
      "trigger": "target_change"
     }
+   },
+   "runtime/room_target.json": {
+    "source": "thermostat",
+    "ts": "2026-01-15T12:01:00+01:00",
+    "value": 21.5
    }
   }
  },
@@ -1072,10 +1177,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "notbetrieb",
      "grund": null,
      "notbetrieb": true,
@@ -1099,11 +1204,16 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 21.5,
+     "geraet_hinweise": []
     }
    ],
    [
-    "mqtt",
+    "link",
     "telemetry",
     {
      "room_actual": 18.0,
@@ -1117,8 +1227,8 @@
     }
    ],
    [
-    "mqtt",
-    "snapshot",
+    "link",
+    "up/snapshot",
     {
      "schema": 4,
      "seq": "00000000-0000-0000-0000-000000000005",
@@ -1130,7 +1240,8 @@
       "room_setpoint": 25.0,
       "heat_limit": 23.0
      },
-     "readonly": []
+     "readonly": [],
+     "raum_soll_wirksam": 21.5
     }
    ],
    [
@@ -1167,10 +1278,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -1194,7 +1305,12 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 21.5,
+     "geraet_hinweise": []
     }
    ]
   ],
@@ -1206,7 +1322,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:07:00+01:00",
-    "setup_id": "setup-golden-1",
+    "setup_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 1.0,
@@ -1225,6 +1341,11 @@
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
+   },
+   "runtime/room_target.json": {
+    "source": "thermostat",
+    "ts": "2026-01-15T12:01:00+01:00",
+    "value": 21.5
    }
   }
  },
@@ -1255,10 +1376,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "datenfehler",
      "grund": null,
      "notbetrieb": false,
@@ -1287,12 +1408,17 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 21.0,
+     "geraet_hinweise": []
     }
    ],
    [
-    "mqtt",
-    "snapshot",
+    "link",
+    "up/snapshot",
     {
      "schema": 4,
      "seq": "00000000-0000-0000-0000-000000000006",
@@ -1304,7 +1430,8 @@
       "room_setpoint": 23.5,
       "heat_limit": 16.0
      },
-     "readonly": []
+     "readonly": [],
+     "raum_soll_wirksam": 21.0
     }
    ],
    [
@@ -1329,10 +1456,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -1356,7 +1483,12 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 21.0,
+     "geraet_hinweise": []
     }
    ]
   ],
@@ -1368,7 +1500,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:07:30+01:00",
-    "setup_id": "setup-golden-1",
+    "setup_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 1.0,
@@ -1387,6 +1519,11 @@
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
+   },
+   "runtime/room_target.json": {
+    "source": "thermostat",
+    "ts": "2026-01-15T12:07:00+01:00",
+    "value": 21.0
    }
   }
  },
@@ -1400,8 +1537,8 @@
     21.5
    ],
    [
-    "mqtt",
-    "snapshot",
+    "link",
+    "up/snapshot",
     {
      "schema": 4,
      "seq": "00000000-0000-0000-0000-000000000007",
@@ -1413,7 +1550,8 @@
       "room_setpoint": 23.0,
       "heat_limit": 16.0
      },
-     "readonly": []
+     "readonly": [],
+     "raum_soll_wirksam": 21.5
     }
    ],
    [
@@ -1421,10 +1559,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -1448,7 +1586,12 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 21.5,
+     "geraet_hinweise": []
     }
    ],
    [
@@ -1469,10 +1612,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "datenfehler",
      "grund": null,
      "notbetrieb": false,
@@ -1499,7 +1642,12 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 21.5,
+     "geraet_hinweise": []
     }
    ],
    [
@@ -1509,8 +1657,8 @@
     21.0
    ],
    [
-    "mqtt",
-    "snapshot",
+    "link",
+    "up/snapshot",
     {
      "schema": 4,
      "seq": "00000000-0000-0000-0000-000000000008",
@@ -1522,7 +1670,8 @@
       "room_setpoint": 23.0,
       "heat_limit": 16.0
      },
-     "readonly": []
+     "readonly": [],
+     "raum_soll_wirksam": 21.0
     }
    ],
    [
@@ -1530,10 +1679,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "datenfehler",
      "grund": null,
      "notbetrieb": false,
@@ -1560,7 +1709,12 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 21.0,
+     "geraet_hinweise": []
     }
    ],
    [
@@ -1579,10 +1733,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -1606,7 +1760,12 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 21.0,
+     "geraet_hinweise": []
     }
    ]
   ],
@@ -1618,7 +1777,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:07:30+01:00",
-    "setup_id": "setup-golden-1",
+    "setup_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 1.0,
@@ -1637,6 +1796,11 @@
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
+   },
+   "runtime/room_target.json": {
+    "source": "thermostat",
+    "ts": "2026-01-15T12:07:30+01:00",
+    "value": 21.0
    }
   }
  },
@@ -1650,8 +1814,8 @@
     20.5
    ],
    [
-    "mqtt",
-    "snapshot",
+    "link",
+    "up/snapshot",
     {
      "schema": 4,
      "seq": "00000000-0000-0000-0000-000000000009",
@@ -1663,7 +1827,8 @@
       "room_setpoint": 23.0,
       "heat_limit": 16.0
      },
-     "readonly": []
+     "readonly": [],
+     "raum_soll_wirksam": 20.5
     }
    ],
    [
@@ -1671,10 +1836,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -1698,7 +1863,12 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ],
    [
@@ -1726,10 +1896,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "datenfehler",
      "grund": null,
      "notbetrieb": false,
@@ -1758,12 +1928,17 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ],
    [
-    "mqtt",
-    "snapshot",
+    "link",
+    "up/snapshot",
     {
      "schema": 4,
      "seq": "00000000-0000-0000-0000-000000000009",
@@ -1775,7 +1950,8 @@
       "room_setpoint": 23.0,
       "heat_limit": 16.0
      },
-     "readonly": []
+     "readonly": [],
+     "raum_soll_wirksam": 20.5
     }
    ],
    [
@@ -1806,10 +1982,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -1833,7 +2009,12 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ]
   ],
@@ -1845,7 +2026,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
-    "setup_id": "setup-golden-1",
+    "setup_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 1.05,
@@ -1864,6 +2045,11 @@
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
+   },
+   "runtime/room_target.json": {
+    "source": "thermostat",
+    "ts": "2026-01-15T12:07:30+01:00",
+    "value": 20.5
    }
   }
  },
@@ -1875,10 +2061,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -1902,11 +2088,16 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ],
    [
-    "mqtt",
+    "link",
     "telemetry",
     {
      "room_actual": 21.5,
@@ -1924,10 +2115,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -1951,11 +2142,16 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ],
    [
-    "mqtt",
+    "link",
     "telemetry",
     {
      "room_actual": 21.5,
@@ -1973,10 +2169,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2000,11 +2196,16 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ],
    [
-    "mqtt",
+    "link",
     "telemetry",
     {
      "room_actual": 21.5,
@@ -2022,10 +2223,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2049,11 +2250,16 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ],
    [
-    "mqtt",
+    "link",
     "telemetry",
     {
      "room_actual": 21.5,
@@ -2071,10 +2277,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2098,11 +2304,16 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ],
    [
-    "mqtt",
+    "link",
     "telemetry",
     {
      "room_actual": 21.5,
@@ -2120,10 +2331,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2147,11 +2358,16 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ],
    [
-    "mqtt",
+    "link",
     "telemetry",
     {
      "room_actual": 21.5,
@@ -2169,10 +2385,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2196,11 +2412,16 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ],
    [
-    "mqtt",
+    "link",
     "telemetry",
     {
      "room_actual": 21.5,
@@ -2218,10 +2439,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2245,11 +2466,16 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ],
    [
-    "mqtt",
+    "link",
     "telemetry",
     {
      "room_actual": 21.5,
@@ -2267,10 +2493,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2294,11 +2520,16 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ],
    [
-    "mqtt",
+    "link",
     "telemetry",
     {
      "room_actual": 21.5,
@@ -2328,10 +2559,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2362,7 +2593,12 @@
        },
        "erkannt": "2026-01-15T12:53:00+01:00"
       }
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ],
    [
@@ -2370,10 +2606,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2404,11 +2640,16 @@
        },
        "erkannt": "2026-01-15T12:53:00+01:00"
       }
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ],
    [
-    "mqtt",
+    "link",
     "telemetry",
     {
      "room_actual": 21.5,
@@ -2426,10 +2667,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2453,7 +2694,12 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ]
   ],
@@ -2465,7 +2711,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
-    "setup_id": "setup-golden-1",
+    "setup_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 1.05,
@@ -2499,6 +2745,11 @@
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
+   },
+   "runtime/room_target.json": {
+    "source": "thermostat",
+    "ts": "2026-01-15T12:07:30+01:00",
+    "value": 20.5
    }
   }
  },
@@ -2510,10 +2761,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2537,11 +2788,16 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ],
    [
-    "mqtt",
+    "link",
     "telemetry",
     {
      "room_actual": 21.5,
@@ -2565,10 +2821,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2594,7 +2850,12 @@
        "sensor.thermostat_battery"
       ],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ]
   ],
@@ -2606,7 +2867,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
-    "setup_id": "setup-golden-1",
+    "setup_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "notify_states": {
      "batterie:sensor.thermostat_battery": "niedrig"
@@ -2643,6 +2904,11 @@
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
+   },
+   "runtime/room_target.json": {
+    "source": "thermostat",
+    "ts": "2026-01-15T12:07:30+01:00",
+    "value": 20.5
    }
   }
  },
@@ -2654,10 +2920,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "startet",
      "grund": null,
      "notbetrieb": false,
@@ -2683,24 +2949,23 @@
        "sensor.thermostat_battery"
       ],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": null,
+     "geraet_hinweise": []
     }
-   ],
-   [
-    "accounts",
-    "status",
-    "golden",
-    "https://accounts.example.test"
    ],
    [
     "ha",
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "startet",
      "grund": null,
      "notbetrieb": false,
@@ -2726,12 +2991,13 @@
        "sensor.thermostat_battery"
       ],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
-   ],
-   [
-    "mqtt",
-    "loop_start"
    ],
    [
     "trigger",
@@ -2742,10 +3008,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "startet",
      "grund": null,
      "notbetrieb": false,
@@ -2771,11 +3037,16 @@
        "sensor.thermostat_battery"
       ],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ],
    [
-    "mqtt",
+    "link",
     "telemetry",
     {
      "room_actual": 21.5,
@@ -2793,10 +3064,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2822,7 +3093,12 @@
        "sensor.thermostat_battery"
       ],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ],
    [
@@ -2830,10 +3106,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "regelt",
      "grund": null,
      "notbetrieb": false,
@@ -2859,7 +3135,12 @@
        "sensor.thermostat_battery"
       ],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ]
   ],
@@ -2871,7 +3152,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
-    "setup_id": "setup-golden-1",
+    "setup_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "notify_states": {
      "batterie:sensor.thermostat_battery": "niedrig"
@@ -2908,6 +3189,11 @@
     "failsafe_active": false,
     "datenfehler": null,
     "pending": null
+   },
+   "runtime/room_target.json": {
+    "source": "thermostat",
+    "ts": "2026-01-15T12:07:30+01:00",
+    "value": 20.5
    }
   }
  },
@@ -2919,10 +3205,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "startet",
      "grund": null,
      "notbetrieb": false,
@@ -2948,14 +3234,13 @@
        "sensor.thermostat_battery"
       ],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": null,
+     "geraet_hinweise": []
     }
-   ],
-   [
-    "accounts",
-    "status",
-    "golden",
-    "https://accounts.example.test"
    ],
    [
     "ha",
@@ -2979,10 +3264,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "abo_inaktiv",
      "grund": null,
      "notbetrieb": true,
@@ -3008,7 +3293,12 @@
        "sensor.thermostat_battery"
       ],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ]
   ],
@@ -3020,7 +3310,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
-    "setup_id": "setup-golden-1",
+    "setup_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "notify_states": {
      "batterie:sensor.thermostat_battery": "niedrig",
@@ -3063,6 +3353,11 @@
     "failsafe_active": true,
     "datenfehler": null,
     "pending": null
+   },
+   "runtime/room_target.json": {
+    "source": "thermostat",
+    "ts": "2026-01-15T12:07:30+01:00",
+    "value": 20.5
    }
   }
  },
@@ -3074,10 +3369,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "abo_inaktiv",
      "grund": null,
      "notbetrieb": true,
@@ -3103,14 +3398,13 @@
        "sensor.thermostat_battery"
       ],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
-   ],
-   [
-    "accounts",
-    "status",
-    "golden",
-    "https://accounts.example.test"
    ],
    [
     "prozess",
@@ -3125,7 +3419,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
-    "setup_id": "setup-golden-1",
+    "setup_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "notify_states": {
      "batterie:sensor.thermostat_battery": "niedrig",
@@ -3165,6 +3459,11 @@
     "failsafe_active": true,
     "datenfehler": null,
     "pending": null
+   },
+   "runtime/room_target.json": {
+    "source": "thermostat",
+    "ts": "2026-01-15T12:07:30+01:00",
+    "value": 20.5
    }
   }
  },
@@ -3176,10 +3475,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "notbetrieb",
      "grund": null,
      "notbetrieb": true,
@@ -3205,14 +3504,13 @@
        "sensor.thermostat_battery"
       ],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": null,
+     "geraet_hinweise": []
     }
-   ],
-   [
-    "accounts",
-    "status",
-    "golden",
-    "https://accounts.example.test"
    ],
    [
     "trigger",
@@ -3223,10 +3521,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "abo_inaktiv",
      "grund": null,
      "notbetrieb": true,
@@ -3252,7 +3550,12 @@
        "sensor.thermostat_battery"
       ],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ]
   ],
@@ -3264,7 +3567,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
-    "setup_id": "setup-golden-1",
+    "setup_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "notify_states": {
      "batterie:sensor.thermostat_battery": "niedrig",
@@ -3308,6 +3611,11 @@
     "failsafe_active": true,
     "datenfehler": null,
     "pending": null
+   },
+   "runtime/room_target.json": {
+    "source": "thermostat",
+    "ts": "2026-01-15T12:07:30+01:00",
+    "value": 20.5
    }
   }
  },
@@ -3319,10 +3627,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "abo_inaktiv",
      "grund": null,
      "notbetrieb": true,
@@ -3348,14 +3656,13 @@
        "sensor.thermostat_battery"
       ],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
-   ],
-   [
-    "accounts",
-    "status",
-    "golden",
-    "https://accounts.example.test"
    ],
    [
     "ha",
@@ -3397,10 +3704,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "abo_beendet",
      "grund": null,
      "notbetrieb": true,
@@ -3426,7 +3733,12 @@
        "sensor.thermostat_battery"
       ],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": 20.5,
+     "geraet_hinweise": []
     }
    ]
   ],
@@ -3438,7 +3750,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
-    "setup_id": "setup-golden-1",
+    "setup_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "notify_states": {
      "batterie:sensor.thermostat_battery": "niedrig",
@@ -3482,6 +3794,11 @@
     "failsafe_active": true,
     "datenfehler": null,
     "pending": null
+   },
+   "runtime/room_target.json": {
+    "source": "thermostat",
+    "ts": "2026-01-15T12:07:30+01:00",
+    "value": 20.5
    }
   }
  },
@@ -3493,10 +3810,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "notbetrieb",
      "grund": null,
      "notbetrieb": true,
@@ -3522,7 +3839,12 @@
        "sensor.thermostat_battery"
       ],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": null,
+     "geraet_hinweise": []
     }
    ],
    [
@@ -3545,10 +3867,10 @@
     "event",
     "smartheat_status",
     {
-     "schema": 2,
+     "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "setup-golden-1",
-     "addon_version": "0.36.0",
+     "setup_id": "golden",
+     "addon_version": "1.0.0",
      "status": "abgemeldet",
      "grund": null,
      "notbetrieb": true,
@@ -3572,7 +3894,12 @@
       "raumfuehler_ausgefallen": [],
       "batterie_niedrig": [],
       "manueller_eingriff": null
-     }
+     },
+     "geraet_id": "shg-0000000000000001",
+     "geraet_zustand": "startet",
+     "server_verbunden": false,
+     "raum_soll": null,
+     "geraet_hinweise": []
     }
    ]
   ],
@@ -3584,7 +3911,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
-    "setup_id": "setup-golden-1",
+    "setup_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 1.05,
@@ -3620,6 +3947,14 @@
     "failsafe_active": true,
     "datenfehler": null,
     "pending": null
+   },
+   "runtime/abgemeldet.json": {
+    "anlage": "golden"
+   },
+   "runtime/room_target.json": {
+    "source": "thermostat",
+    "ts": "2026-01-15T12:07:30+01:00",
+    "value": 20.5
    }
   }
  }

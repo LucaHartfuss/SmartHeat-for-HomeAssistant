@@ -442,3 +442,25 @@ def test_unavailable_hvac_mode_is_neither_off_nor_back_on(tmp_path):
 def test_a_climate_target_without_attribute_is_refused(tmp_path):
     with pytest.raises(ConfigError, match="climate.wohnzimmer_thermostat::temperature"):
         Aufbau(tmp_path, soll=CLIMATE)
+
+
+def test_while_the_websocket_is_down_the_entity_is_read_every_local_check_interval(tmp_path):
+    """Bis 0.36 las der Watchdog der Laufzeit den Raum-Soll bei getrenntem WebSocket direkt aus HA; im Geraete-Pfad
+    liest die Wache die Soll-Entity im Takt des lokalen Checks und gibt den Wert durch den Soll-Eingang."""
+    a = Aufbau(tmp_path)  # der Client hat nie verbunden
+    a.ha.states[SOLL] = 22.5
+    a.clock.advance(299)
+    a.run()
+    assert a.wuensche == []
+    a.clock.advance(1)
+    a.run()
+    assert a.wuensche == [(22.5, "soll_entity", None)] and a.store.value == 22.5
+
+
+def test_while_the_websocket_is_up_the_watch_reads_nothing(tmp_path, monkeypatch):
+    a = Aufbau(tmp_path)
+    monkeypatch.setattr(type(a.client), "connected", property(lambda self: True))
+    a.ha.states[SOLL] = 22.5
+    a.clock.advance(600)
+    a.run()
+    assert a.wuensche == [] and a.store.value == 21.0

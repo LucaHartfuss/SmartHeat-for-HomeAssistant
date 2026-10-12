@@ -9,11 +9,10 @@ from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime.runtime_config import RuntimeConfig
 from smartheat_transport.descriptor import credential_for, parse_descriptor
 
-# Zugangsoptionen seit AWS-2: Deskriptor (Mosquitto ueber cloudflared) und Installations-Token. Gueltige Test-Optionen
-# mit mqtt_username/mqtt_password tragen beides, sonst meldet der Start "Konfiguration veraltet".
+# Zugang einer von Hand gebauten RuntimeConfig (eigener MQTT-Client der Laufzeit, wie bis 0.36 im Add-on): Deskriptor
+# (Mosquitto ueber cloudflared) und Installations-Token.
 MOSQUITTO_TRANSPORT = '{"kind": "mosquitto_cloudflared", "host": "127.0.0.1", "port": 18830}'
 INSTALLATION_TOKEN = "tok"
-ACCESS_OPTIONS = {"transport": MOSQUITTO_TRANSPORT, "installation_token": INSTALLATION_TOKEN}
 
 
 def runtime_config(**overrides) -> RuntimeConfig:

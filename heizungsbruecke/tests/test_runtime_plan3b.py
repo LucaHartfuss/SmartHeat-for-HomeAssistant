@@ -1,11 +1,12 @@
-"""Betrieb mit den Bindings aus Plan 3b ueber _start_bridge (Harness aus test_runtime.py): Option lever_set waehlt
-Hebelsatz, Binding und lokale Sicherheit; fehlende Pflicht-Entities sind ein Konfigurationsfehler; Vaillant ohne
-lever_set bleibt unveraendert (alle Tests in test_runtime.py)."""
+"""Betrieb mit den Bindings aus Plan 3b ueber _start_bridge (Harness aus test_runtime.py, Geraete-Pfad): der
+Hebelsatz des Konfigurationsdokuments waehlt Binding und lokale Sicherheit; fehlende Pflicht-Rollen sind ein
+Konfigurationsfehler; Vaillant bleibt unveraendert (alle Tests in test_runtime.py)."""
 import logging
 
 from test_runtime import (
     _advance,
     _backup,
+    _ha_verbunden,
     _last_event,
     _mqtt,
     _start,
@@ -38,7 +39,7 @@ VIESSMANN_STATES = {
 
 
 def _first_snapshot(env, bridge):
-    _trigger(env, bridge, "sensor.room_target")
+    _ha_verbunden(env, bridge)  # erster Tick nach dem Start
     return _mqtt(env).snapshots[-1]
 
 
@@ -83,11 +84,10 @@ def test_weishaupt_basis_reports_the_curve_readonly_and_writes_only_the_room_set
 
 def test_weishaupt_without_a_comfort_setpoint_is_a_configuration_error(env):
     env.ha.states.update(WEISHAUPT_STATES)
-    # Eigenes Passwort: das Harness-Passwort "p" wuerde im Grund unkenntlich gemacht (_without_credentials).
-    bridge = _start_bridge(env, **{**WEISHAUPT, "entity_setpoint_comfort": ""}, mqtt_password="x9y8z7")
+    bridge = _start_bridge(env, **{**WEISHAUPT, "entity_setpoint_comfort": ""})
 
     assert bridge.reason == "konfigurationsfehler"
-    assert "entity_setpoint_comfort" in _last_event(env)["grund"]
+    assert "setpoint_comfort" in _last_event(env)["grund"]  # Kundentext nennt die Rolle (dokument.lokal_pruefen)
     assert "weishaupt_wwp" in _last_event(env)["grund"]
     assert env.ha.writes == []
 

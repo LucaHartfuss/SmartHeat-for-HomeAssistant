@@ -121,6 +121,25 @@ def test_soll_entity_on_the_device_of_a_write_target_is_refused():
     assert "Wunschtemperatur" in dokument.zuordnung_pruefen(KONFIGURATION, ha)
 
 
+@pytest.mark.parametrize("room_target, shift", [
+    ("climate.zone::temperature", "climate.zone"),
+    ("climate.zone", "climate.zone::temperature"),
+    ("climate.zone::temperature", "climate.zone::temperature"),
+])
+def test_the_zone_as_room_target_is_refused(room_target, shift):
+    # Final-Review I1 (bis 0.36 Startpruefung der Optionen): das Add-on schriebe die Parallelverschiebung in die Quelle
+    # des Kundenwunsches (Rueckkopplung bis shift_max). Die Pruefung lehnt das Dokument vor dem Uebernehmen ab.
+    konfiguration = _mit_rolle("room_setpoint", shift)
+    konfiguration = {**konfiguration, "bindung": {**konfiguration["bindung"], "rollen": {
+        **konfiguration["bindung"]["rollen"], "room_target": room_target}}}
+    assert "Wunschtemperatur" in dokument.zuordnung_pruefen(konfiguration, _ha())
+
+
+def test_the_current_temperature_of_the_zone_is_a_valid_room_sensor():
+    konfiguration = {**KONFIGURATION, "raumfuehler": ["sensor.room_actual", "climate.zone::current_temperature"]}
+    assert dokument.zuordnung_pruefen(konfiguration, _ha()) is None
+
+
 def test_ha_unreachable_is_not_a_verdict():
     """Eine kurze HA-Stoerung (Neustart des Hosts) darf eine Version nie dauerhaft ablehnen (der Server stellt eine
     abgelehnte Version nicht erneut zu): kein Text, sondern die vorlaeufige Ausnahme."""

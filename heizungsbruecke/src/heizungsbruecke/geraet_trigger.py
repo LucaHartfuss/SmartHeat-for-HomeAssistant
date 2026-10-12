@@ -11,6 +11,7 @@ from typing import TypeGuard
 from heizungsbruecke.config import ConfigError
 from heizungsbruecke.ha_trigger_client import HaTriggerClient
 from smartheat_runtime.debounce import ROOM_TARGET_DEBOUNCE_SECONDS
+from smartheat_runtime.options import local_check_interval
 from smartheat_runtime.runtime import EV_LOCAL_CHECK, EV_SOURCE_CONNECTED
 from smartheat_runtime.soll_eingang import EV_SOLL_MODUS, EV_TARGET_INPUT, SollEingang
 from smartheat_runtime.soll_speicher import SOURCE_LOKAL, SOURCE_THERMOSTAT, TargetStore
@@ -22,6 +23,9 @@ logger = logging.getLogger(__name__)
 EV_SOLL_BERICHT = "ha_soll_bericht"
 EV_SOLL_LESEN = "ha_soll_lesen"
 EV_SOLL_NACHLESEN = "ha_soll_nachlesen"
+#: Ersatz fuer den Trigger, solange der WebSocket getrennt ist (wie der Watchdog der Laufzeit): im Takt des lokalen Checks
+#: Modus und Soll der Soll-Entity lesen.
+EV_SOLL_WACHE = "ha_soll_wache"
 #: Modi, die kein Wechsel des Thermostats sind (Entity gerade nicht erreichbar): weder aus noch wieder an.
 _MODI_OHNE_AUSSAGE = ("unavailable", "unknown")
 NACHLESEN_PUFFER_SECONDS = 1.0
@@ -115,7 +119,9 @@ def build(manifest, options: dict, ha_api, worker: RegulationWorker, store: Targ
     das Echo-Fenster nach dem eigenen Schreiben, verwirft ihn der Soll-Speicher; HA meldet einen unveraenderten Wert
     nie wieder. Deshalb liest EV_SOLL_NACHLESEN die Entity kurz nach dem Fenster einmal erneut und gibt den Wert
     durch denselben Weg (Pending-/Stale-Logik entscheidet). Bei jeder (Re-)Verbindung liest EV_SOLL_LESEN Modus und Soll
-    (Aenderungen waehrend der Trennung, Thermostat schon aus beim Start). Nur HA; das Gateway bleibt unberuehrt."""
+    (Aenderungen waehrend der Trennung, Thermostat schon aus beim Start). Solange der WebSocket getrennt ist, liest
+    EV_SOLL_WACHE im Takt des lokalen Checks dasselbe (bis 0.36 las der Watchdog den Raum-Soll direkt aus HA; jetzt kommt
+    er nur ueber den Soll-Eingang in den Soll-Speicher). Nur HA; das Gateway bleibt unberuehrt."""
     pruefe_soll_ref(soll_ref)
     quelle = HaSollQuelle(ha_api, soll_ref) if soll_ref else None
     SollEingang(worker, store, quelle, wunsch=wunsch, soll_quelle_aus=soll_quelle_aus, entprellen_s=0)
@@ -237,5 +243,15 @@ def build(manifest, options: dict, ha_api, worker: RegulationWorker, store: Targ
         worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=True)
         worker.post_coalesced(EV_SOURCE_CONNECTED)
 
-    return HaTriggerClient(ws_url=ha_api.websocket_url(), token=ha_api.token, triggers=triggers,
-                           on_trigger_event=on_trigger, on_connected=on_connected)
+    client = HaTriggerClient(ws_url=ha_api.websocket_url(), token=ha_api.token, triggers=triggers,
+                             on_trigger_event=on_trigger, on_connected=on_connected)
+    wache_s = local_check_interval(options)
+
+    def on_wache(event: Event) -> None:
+        worker.schedule(wache_s, Event(EV_SOLL_WACHE))  # zuerst: der Takt darf nie abreissen
+        if not client.connected:
+            on_lesen(event)
+
+    worker.register(EV_SOLL_WACHE, on_wache)
+    worker.schedule(wache_s, Event(EV_SOLL_WACHE))
+    return client
