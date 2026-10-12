@@ -19,6 +19,7 @@ import signal
 import sys
 import threading
 import time
+import urllib.parse
 
 from heizungsbruecke import config, derived_sensors
 from heizungsbruecke.discovery import Discovery
@@ -45,6 +46,8 @@ JOIN_SECONDS = 10.0
 #: loeschen; danach startet der Geraetekern trotzdem, und der naechste Start versucht es erneut.
 AUFRAEUMEN_HA_WARTEN_SECONDS = 120.0
 AUFRAEUMEN_HA_TAKT_SECONDS = 5.0
+#: Unerwarteter Fehler im Start: Pause vor dem Neustart (exec), damit ein dauerhafter Fehler keine schnelle Schleife wird.
+FEHLER_PAUSE_SECONDS = 60.0
 
 
 class Neustart(BaseException):
@@ -57,14 +60,39 @@ def _optionen() -> dict:
     return raw if isinstance(raw, dict) else {}
 
 
-def bootstrap_url() -> str:
-    """Umgebung SMARTHEAT_BOOTSTRAP_URL (nur E2E/Tests, auch http) vor der Option bootstrap_url (nur https) vor dem
-    Produktions-Standard."""
-    override = os.environ.get("SMARTHEAT_BOOTSTRAP_URL", "")
-    if override.startswith(("http://", "https://")):
-        return override.rstrip("/")
-    value = _optionen().get("bootstrap_url")
-    return value.rstrip("/") if isinstance(value, str) and value.startswith("https://") else DEFAULT_BOOTSTRAP_URL
+def _url_fehler(value) -> str | None:
+    """Grund, warum value keine Bootstrap-Adresse ist, sonst None. Wie SHG_DEVICE_API_URL beim Gateway: http oder https
+    mit Host (Labor im LAN per http)."""
+    if not isinstance(value, str):
+        return "kein Text"
+    try:
+        parts = urllib.parse.urlsplit(value)
+    except ValueError:
+        return "nicht lesbar"
+    if parts.scheme not in ("http", "https"):
+        return "Schema nicht http oder https"
+    if not parts.hostname:
+        return "ohne Host"
+    return None
+
+
+def bootstrap_url() -> str | None:
+    """Umgebung SMARTHEAT_BOOTSTRAP_URL (nur E2E/Tests) vor der Option bootstrap_url vor dem Produktions-Standard. Der
+    Standard gilt nur, wenn beides fehlt: eine ungueltige Angabe faellt nie auf die Produktion zurueck (ein falsch
+    eingestelltes Labor-Add-on meldete sich sonst dort an), sondern ergibt None. Ins Log kommt nur der Grund, nie die
+    Adresse (sie kann Zugangsdaten tragen)."""
+    override = os.environ.get("SMARTHEAT_BOOTSTRAP_URL")
+    if override:
+        quelle, value = "SMARTHEAT_BOOTSTRAP_URL", override
+    else:
+        quelle, value = "bootstrap_url", _optionen().get("bootstrap_url")
+        value = DEFAULT_BOOTSTRAP_URL if value is None else value  # nicht gesetzt (fehlt oder null)
+    grund = _url_fehler(value)
+    if grund is not None:
+        logger.warning("%s ungueltig (%s): das Geraet meldet sich nicht an und bleibt im Ruhezustand", quelle, grund)
+        return None
+    assert isinstance(value, str)
+    return value.rstrip("/")
 
 
 def log_level() -> int:
@@ -108,10 +136,16 @@ def aufraeumen(ha_api) -> None:
         else:
             fertig = False
             logger.warning("Home Assistant nicht bereit: Hilfssensoren werden beim naechsten Start entfernt")
+    geloescht = False
     for path in (config.BACKUP_PATH, config.FAILSAFE_PATH, config.ENTITLEMENT_PATH):
-        path.unlink(missing_ok=True)
-    shutil.rmtree(config.RUNTIME_DIR, ignore_errors=True)
-    logger.info("Anlagengebundener Zustand geloescht (Add-on nicht mehr eingerichtet)")
+        if path.exists():
+            path.unlink(missing_ok=True)
+            geloescht = True
+    if config.RUNTIME_DIR.exists():
+        shutil.rmtree(config.RUNTIME_DIR, ignore_errors=True)
+        geloescht = True
+    if geloescht:
+        logger.info("Anlagengebundener Zustand geloescht (Add-on nicht mehr eingerichtet)")
     if fertig:
         config.AUFRAEUMEN_PATH.unlink(missing_ok=True)
 
@@ -167,25 +201,39 @@ def start(geraet: HaDeviceHost, device, ha_api, status: GeraetStatus,
     return result, host
 
 
+def _schritt(name: str, aufruf) -> None:
+    try:
+        aufruf()
+    except Exception as error:  # das Ende darf nie scheitern: sonst entfiele das exec nach einem Neustart
+        logger.warning("Beenden: %s gescheitert (%s)", name, type(error).__name__)
+
+
+def _warten(thread: threading.Thread) -> None:
+    thread.join(JOIN_SECONDS)
+    if thread.is_alive():
+        logger.warning("Geraete-Thread nach %.0f s nicht beendet, Prozess endet trotzdem", JOIN_SECONDS)
+
+
 def beenden(device, thread: threading.Thread | None, hintergrund: Hintergrund | None) -> None:
     """Ende des Prozesses (Neustart, SIGTERM): erst den Geraetekern stoppen (sauberes Trennen) und wartende HA-Aufrufe
     der Inventur abbrechen, dann den Geraete-Thread sein laufendes Ereignis abschliessen lassen. Danach noch einmal
-    stop(): ein letzter Takt nach dem ersten stop() koennte einen neuen Link geoeffnet haben (wie beim Gateway)."""
-    device.stop()
+    stop(): ein letzter Takt nach dem ersten stop() koennte einen neuen Link geoeffnet haben (wie beim Gateway). Wirft
+    nie: jeder Schritt einzeln, ins Log nur die Fehlerart."""
+    _schritt("Geraetekern stoppen", device.stop)
     if hintergrund is not None:
-        hintergrund.stop()
+        _schritt("Hintergrund stoppen", hintergrund.stop)
     if thread is not None:
-        thread.join(JOIN_SECONDS)
-        if thread.is_alive():
-            logger.warning("Geraete-Thread nach %.0f s nicht beendet, Prozess endet trotzdem", JOIN_SECONDS)
-    device.stop()
+        _schritt("Geraete-Thread abwarten", lambda: _warten(thread))
+    _schritt("Geraetekern stoppen", device.stop)
 
 
 def laufen(geraet: HaDeviceHost, device, ha_api, status: GeraetStatus, clock=time.monotonic) -> None:
     """Geraete-Thread und Laufzeit bis zum Ende des Prozesses; ein Neustart startet den Prozess erst nach beenden()
-    neu (exec), SIGTERM (SystemExit) endet nach beenden() ohne exec."""
+    neu (exec), SIGTERM (SystemExit) endet nach beenden() ohne exec. Ein unerwarteter Fehler (Start der Laufzeit, Worker)
+    beendet den Prozess nie still: Fehlerart ins Log, sauber trennen, FEHLER_PAUSE_SECONDS warten, dann derselbe
+    Neustart (das Add-on beendet sich nie von selbst; die Pause verhindert eine schnelle Schleife)."""
     thread: threading.Thread | None = None
-    neu = False
+    neu = fehler = False
     try:
         thread = device.start()
         result, _ = start(geraet, device, ha_api, status, clock)
@@ -193,11 +241,24 @@ def laufen(geraet: HaDeviceHost, device, ha_api, status: GeraetStatus, clock=tim
         result.worker.run()
     except Neustart:
         neu = True
+    except Exception as error:
+        logger.error("Unerwarteter Fehler der Laufzeit (%s), Neustart in %.0f s", type(error).__name__,
+                     FEHLER_PAUSE_SECONDS)
+        logger.debug("Fehler der Laufzeit", exc_info=True)
+        neu = fehler = True
     finally:
         beenden(device, thread, geraet.hintergrund)
+    if fehler:
+        time.sleep(FEHLER_PAUSE_SECONDS)
     if neu:
         logger.info("Neustart nach sauberem Trennen")
         _exec()
+
+
+def _ruhen() -> None:
+    """Ruhezustand ohne Geraetekern (ungueltige bootstrap_url): bis SIGTERM nichts tun, nie beenden."""
+    while True:
+        time.sleep(3600)
 
 
 def _terminate(signum, frame) -> None:
@@ -209,11 +270,15 @@ def main() -> None:  # pragma: no cover - Add-on-Einstieg
     token = os.environ["SUPERVISOR_TOKEN"]
     ha_api = HomeAssistantApi(base_url="http://supervisor", token=token)
     supervisor = SupervisorApi(token=token)
+    signal.signal(signal.SIGTERM, _terminate)  # vor dem Geraete-Thread: ein SIGTERM endet immer ueber beenden
+    url = bootstrap_url()
+    if url is None:  # nie auf die Produktion ausweichen: ohne Geraetekern ruhen, bis die Option korrigiert ist
+        _ruhen()
+        return
     aufraeumen(ha_api)  # vor dem Geraetekern: noch schreibt nichts in den anlagengebundenen Zustand
     geraet = HaDeviceHost(ha_api, supervisor)
-    device = Device(geraet, config.DEVICE_DATA_DIR, bootstrap_url())
+    device = Device(geraet, config.DEVICE_DATA_DIR, url)
     status = verdrahten(geraet, device, ha_api, supervisor)
-    signal.signal(signal.SIGTERM, _terminate)  # vor dem Geraete-Thread: ein SIGTERM endet immer ueber beenden
     laufen(geraet, device, ha_api, status)
 
 

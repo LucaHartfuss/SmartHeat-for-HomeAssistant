@@ -106,17 +106,52 @@ def test_bootstrap_url_defaults_to_production(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "OPTIONS_PATH", tmp_path / "options.json")
     monkeypatch.delenv("SMARTHEAT_BOOTSTRAP_URL", raising=False)
     assert main_module.bootstrap_url() == main_module.DEFAULT_BOOTSTRAP_URL == "https://accounts.hartfussha.org"
+    (tmp_path / "options.json").write_text(json.dumps({"bootstrap_url": None, "log_level": "info"}))
+    assert main_module.bootstrap_url() == main_module.DEFAULT_BOOTSTRAP_URL
     (tmp_path / "options.json").write_text(json.dumps({"bootstrap_url": "https://labor.example.test/"}))
     assert main_module.bootstrap_url() == "https://labor.example.test"
     monkeypatch.setenv("SMARTHEAT_BOOTSTRAP_URL", "http://server:5001")
     assert main_module.bootstrap_url() == "http://server:5001"
 
 
-def test_bootstrap_url_option_must_be_https(tmp_path, monkeypatch):
+def test_bootstrap_url_allows_an_http_lab_like_the_gateway(tmp_path, monkeypatch):
+    """Wie SHG_DEVICE_API_URL beim Gateway: http und https mit Host (Labor im LAN per http)."""
     monkeypatch.setattr(config, "OPTIONS_PATH", tmp_path / "options.json")
     monkeypatch.delenv("SMARTHEAT_BOOTSTRAP_URL", raising=False)
-    (tmp_path / "options.json").write_text(json.dumps({"bootstrap_url": "http://labor.example.test"}))
-    assert main_module.bootstrap_url() == main_module.DEFAULT_BOOTSTRAP_URL
+    (tmp_path / "options.json").write_text(json.dumps({"bootstrap_url": "http://192.168.1.20:5001"}))
+    assert main_module.bootstrap_url() == "http://192.168.1.20:5001"
+
+
+@pytest.mark.parametrize("value", ["ftp://labor.example.test", "labor.example.test", "http://", 42, ""])
+def test_an_invalid_bootstrap_url_never_falls_back_to_production(tmp_path, monkeypatch, caplog, value):
+    monkeypatch.setattr(config, "OPTIONS_PATH", tmp_path / "options.json")
+    monkeypatch.delenv("SMARTHEAT_BOOTSTRAP_URL", raising=False)
+    (tmp_path / "options.json").write_text(json.dumps({"bootstrap_url": value}))
+    with caplog.at_level(logging.WARNING):
+        assert main_module.bootstrap_url() is None
+    assert "bootstrap_url" in caplog.text
+    if isinstance(value, str) and value:
+        assert value not in caplog.text  # nur der Grund, nie die Adresse (koennte Zugangsdaten tragen)
+
+
+def test_an_invalid_override_never_falls_back_to_production(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "OPTIONS_PATH", tmp_path / "options.json")
+    monkeypatch.setenv("SMARTHEAT_BOOTSTRAP_URL", "server:5001")
+    assert main_module.bootstrap_url() is None
+
+
+def test_main_with_an_invalid_bootstrap_url_stays_idle_without_the_device_core(geraet_env, monkeypatch):
+    (config.OPTIONS_PATH).write_text(json.dumps({"bootstrap_url": "ftp://labor.example.test"}))
+    monkeypatch.delenv("SMARTHEAT_BOOTSTRAP_URL", raising=False)
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "test-token")
+    monkeypatch.setattr(main_module, "HomeAssistantApi", lambda **kwargs: geraet_env.ha)
+    monkeypatch.setattr(main_module, "SupervisorApi", lambda **kwargs: FakeSupervisor())
+    monkeypatch.setattr(main_module, "Device", lambda *args, **kwargs: pytest.fail("kein Geraetekern"))
+    monkeypatch.setattr(main_module.signal, "signal", lambda *args: None)
+    geruht = []
+    monkeypatch.setattr(main_module, "_ruhen", lambda: geruht.append(True))
+    main_module.main()
+    assert geruht == [True]
 
 
 def test_log_level_from_options(tmp_path, monkeypatch):
@@ -217,6 +252,50 @@ def test_sigterm_ends_without_exec(geraet_env, monkeypatch):
     assert order == ["start", "stop", "join", "stop"]
 
 
+class FailingDevice(FakeDevice):
+    def stop(self):
+        self.order.append("stop")
+        raise OSError("paho")
+
+
+class FailingThread(FakeThread):
+    def join(self, timeout=None):
+        self._order.append("join")
+        raise RuntimeError("join")
+
+
+def test_a_failing_end_still_restarts(geraet_env, monkeypatch, caplog):
+    """beenden wirft nie: auch wenn das Trennen scheitert, folgt auf einen angeforderten Neustart das exec."""
+    order = []
+    device = FailingDevice(order=order)
+    device.start = lambda: order.append("start") or FailingThread(order)
+    geraet, status = _verdrahtet(geraet_env, device)
+    monkeypatch.setattr(main_module, "_exec", lambda: order.append("exec"))
+    geraet.konfiguration_uebernommen(None, {"anlage": "neu", "bindung": {}})
+    with caplog.at_level(logging.WARNING):
+        main_module.laufen(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    assert order == ["start", "stop", "join", "stop", "exec"]
+    assert "OSError" in caplog.text and "paho" not in caplog.text
+
+
+def test_an_unexpected_start_error_restarts_after_a_pause(geraet_env, monkeypatch, caplog):
+    """Ein unerwarteter Fehler im Start beendet den Prozess nie still: Typ ins Log, sauber trennen, Pause, exec."""
+    order = []
+    device = FakeDevice(order=order)
+    geraet, status = _verdrahtet(geraet_env, device)
+    monkeypatch.setattr(main_module, "_exec", lambda: order.append("exec"))
+    monkeypatch.setattr(main_module.time, "sleep", lambda seconds: order.append(("pause", seconds)))
+
+    def kaputt(*args, **kwargs):
+        raise KeyError("geheim")
+
+    monkeypatch.setattr(main_module, "start", kaputt)
+    with caplog.at_level(logging.WARNING):
+        main_module.laufen(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    assert order == ["start", "stop", "join", "stop", ("pause", main_module.FEHLER_PAUSE_SECONDS), "exec"]
+    assert "KeyError" in caplog.text and "geheim" not in caplog.text
+
+
 # --- Aufraeumen nach dem Entfernen ---
 
 
@@ -309,6 +388,18 @@ def test_cleanup_without_helpers_does_not_wait_for_home_assistant(geraet_env, mo
     monkeypatch.setattr(main_module.time, "sleep", lambda seconds: pytest.fail("kein Warten ohne Hilfssensoren"))
     main_module.aufraeumen(DeletingHa(reachable=False))
     assert _anlage_geloescht() and not config.AUFRAEUMEN_PATH.exists()
+
+
+def test_cleanup_logs_the_deletion_only_when_something_was_deleted(geraet_env, caplog):
+    config.AUFRAEUMEN_PATH.write_text(json.dumps({"anlage": "alt"}))
+    with caplog.at_level(logging.INFO):
+        main_module.aufraeumen(DeletingHa())
+    assert "Anlagengebundener Zustand geloescht" not in caplog.text
+    assert not config.AUFRAEUMEN_PATH.exists()
+    _entfernt_vorbereiten()
+    with caplog.at_level(logging.INFO):
+        main_module.aufraeumen(DeletingHa())
+    assert "Anlagengebundener Zustand geloescht" in caplog.text
 
 
 def test_no_marker_no_cleanup(geraet_env):
