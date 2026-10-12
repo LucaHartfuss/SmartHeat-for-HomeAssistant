@@ -15,7 +15,6 @@ discovery:
 # Labor und Tests setzen) und log_level. Zuordnung, Zugang und Intervalle kommen als Konfigurationsdokument vom Server;
 # die Integration schreibt keine Optionen. bootstrap_url nur https; http nur ueber die Umgebung
 # SMARTHEAT_BOOTSTRAP_URL (E2E).
-options: {}
 schema:
   bootstrap_url: "match(^https://.+)?"
   log_level: list(debug|info|warning|error)?

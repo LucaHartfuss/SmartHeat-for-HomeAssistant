@@ -547,11 +547,18 @@ def test_a_blocking_inventory_sample_does_not_stall_the_device_thread(regelnde_w
 
 def test_the_background_thread_is_a_daemon_and_stop_cancels_queued_calls():
     hintergrund = befehle.Hintergrund()
-    frei = threading.Event()
-    erster = hintergrund.submit(lambda: frei.wait(FREIGABE_SPAETESTENS))
+    frei, gestartet = threading.Event(), threading.Event()
+
+    def erster_aufruf():
+        gestartet.set()
+        return frei.wait(FREIGABE_SPAETESTENS)
+
+    erster = hintergrund.submit(erster_aufruf)
     zweiter = hintergrund.submit(lambda: "nie")
     threads = [t for t in threading.enumerate() if t.name.startswith(befehle.HINTERGRUND_NAME)]
     assert threads and all(t.daemon for t in threads)  # haelt das Prozessende nie auf
+    # Erst stoppen, wenn der erste Aufruf laeuft: sonst bricht stop() auch ihn als wartend ab (CI-Runner langsamer)
+    assert gestartet.wait(2.0)
     hintergrund.stop()
     assert zweiter.cancelled()
     frei.set()
