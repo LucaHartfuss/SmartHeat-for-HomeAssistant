@@ -3,6 +3,7 @@ import logging
 import threading
 import time
 
+from conftest import FakeClock
 from fakes import FakeHa
 from geraet_helpers import konfiguration_aus_optionen
 from test_geraet_host import Device, _host, _register
@@ -190,3 +191,86 @@ def test_runtime_event_kept_for_sign_off_completes_the_command(tmp_path, monkeyp
     sink.publish(_runtime_event(status=STATUS_ABGEMELDET, tenant_id=konf["anlage"], grund=None))
     assert host.runtime_status_event["status"] == STATUS_ABGEMELDET
     assert isinstance(outcome.check(), Done)
+
+
+# --- HA nicht erreichbar: Wiederholung mit Pause, eine Log-Zeile je Ausfall (Final-Review I2) ---
+
+
+class _DownHa(FakeHa):
+    """fire_event scheitert, solange down; zaehlt die Versuche."""
+
+    def __init__(self):
+        super().__init__()
+        self.down, self.attempts = True, 0
+
+    def fire_event(self, event_type, data):
+        self.attempts += 1
+        if self.down:
+            raise ConnectionError("HA Core startet")
+        super().fire_event(event_type, data)
+
+
+def _down_status(ha):
+    clock = FakeClock()
+    sink = geraet_status.GeraetStatus(ha, GERAET_ID, lambda: 21.5, laufzeit_merken=lambda e: None, clock=clock)
+    return sink, clock
+
+
+def test_while_ha_is_down_the_device_tick_retries_only_after_a_pause_and_logs_once(caplog):
+    """startup: services startet das Add-on vor HA Core: 120 Takte (1 s) ergeben wenige Versuche und eine Warnung."""
+    ha = _DownHa()
+    sink, clock = _down_status(ha)
+    with caplog.at_level(logging.INFO, logger="heizungsbruecke.geraet_status"):
+        for _ in range(120):
+            sink.anzeige(_anzeige())  # wirft nicht
+            clock.advance(1)
+    assert ha.attempts <= 3 and ha.events == []
+    warnungen = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnungen) == 1 and "ConnectionError" in warnungen[0].getMessage()
+    assert "HA Core startet" not in caplog.text  # nur die Fehlerart
+    ha.down = False
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="heizungsbruecke.geraet_status"):
+        for _ in range(geraet_status.WIEDERHOLEN_SECONDS + 1):
+            sink.anzeige(_anzeige())
+            clock.advance(1)
+    assert len(ha.events) == 1  # nach der Pause gesendet, danach unveraendert: nichts mehr
+    assert [r.levelno for r in caplog.records] == [logging.INFO]  # eine Zeile zur Erholung
+    assert "wieder" in caplog.records[0].getMessage()
+
+
+def test_a_forced_send_during_the_pause_is_tried_at_most_once_per_interval():
+    ha = _DownHa()
+    sink, clock = _down_status(ha)
+    sink.anzeige(_anzeige())  # erster Fehler: Pause beginnt
+    assert ha.attempts == 1
+    clock.advance(5)
+    sink.publish(_runtime_event())  # Laufzeit-Ereignis in der Pause: ein Versuch
+    clock.advance(5)
+    sink.publish(_runtime_event(status="notbetrieb"))  # zweites in derselben Pause: keiner
+    sink.anzeige(_anzeige())
+    assert ha.attempts == 2
+    ha.down = False
+    clock.advance(geraet_status.WIEDERHOLEN_SECONDS)
+    sink.anzeige(_anzeige())  # nach der Pause: der aktuelle Stand (mit dem letzten Laufzeit-Ereignis)
+    assert ha.attempts == 3 and ha.events[-1][1]["status"] == "notbetrieb"
+    sink.publish(_runtime_event(status="regelt"))  # wieder erreichbar: jedes Laufzeit-Ereignis sofort
+    sink.publish(_runtime_event(status="regelt"))
+    assert len(ha.events) == 3
+
+
+def test_the_ha_call_runs_outside_the_state_lock():
+    """Waehrend fire_event laeuft, ist der Zustand frei: laufzeit_merken (sign_off) wartet nie auf HA."""
+    seen = []
+
+    class _Pruefend(FakeHa):
+        def fire_event(self, event_type, data):
+            seen.append(sink._lock.acquire(blocking=False))
+            sink._lock.release()
+            super().fire_event(event_type, data)
+
+    ha = _Pruefend()
+    sink = geraet_status.GeraetStatus(ha, GERAET_ID, lambda: 21.5, laufzeit_merken=lambda e: None)
+    sink.publish(_runtime_event())
+    sink.anzeige(_anzeige())
+    assert seen == [True, True]
