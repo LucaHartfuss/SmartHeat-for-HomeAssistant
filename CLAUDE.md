@@ -2,9 +2,8 @@
 
 Add-on-Repository: `heizungsbruecke` (ab 1.0.0 ein **SmartHeat-Gerät** für Home Assistant, wie das Gateway auf dem
 Gerätekern: Snapshot und Telemetrie, Boost, Notbetrieb, lokale Sicherheitswerte; `client1` läuft bis zum Umzug 5d noch
-auf 0.36 im Optionsmodus), `cloudflared_access_mqtt` (nur `run.sh` um `cloudflared access tcp`, bleibt bis 5e) und
-`gateway/` (SmartHeat-Gateway ohne Home Assistant, **kein** Add-on). Die Add-ons laufen auf jedem Kunden-Pi inkl.
-`client1`: Änderungen wirken real, sobald sie released sind. Die Sicherheitsregeln aus `../CLAUDE.md` gelten unverändert.
+auf 0.36 im Optionsmodus) und `gateway/` (SmartHeat-Gateway ohne Home Assistant, **kein** Add-on). Das Add-on läuft auf
+jedem Kunden-Pi inkl. `client1`: Änderungen wirken real, sobald sie released sind. Die Sicherheitsregeln aus `../CLAUDE.md` gelten unverändert.
 
 ## Struktur (Details: `../docs/architecture.md` §4, §5, §5a)
 
@@ -53,7 +52,7 @@ Direkter Aufruf bleibt möglich: `cd heizungsbruecke && pip install -e ".[dev]" 
 
 Feature-Branches (`feat/…`/`fix/…`) zweigen von `develop` ab und werden `--no-ff` nach `develop`
 gemergt — nie direkt nach `main`. `main` bewegt sich nur per Release-Tag
-(`heizungsbruecke-vX.Y.Z`, `cloudflared_access_mqtt-vX.Y.Z` über `release.yml`, `gateway-vX.Y.Z` über
+(`heizungsbruecke-vX.Y.Z` über `release.yml`, `gateway-vX.Y.Z` über
 `release-gateway.yml`; `-dryrun`-Suffix = Probelauf) —
 ein Push nach `main` ist ein Release an alle Kunden-Pis, deren Supervisor den Default-Branch
 verfolgt. Release-Ablauf, CI-Jobs, Token: `../docs/ci-cd-runbook.md`.

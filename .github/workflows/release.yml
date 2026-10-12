@@ -1,7 +1,7 @@
 name: Release
 on:
   push:
-    tags: ["heizungsbruecke-v*", "cloudflared_access_mqtt-v*"]
+    tags: ["heizungsbruecke-v*"]
 concurrency:
   group: release-${{ github.repository }}
   cancel-in-progress: false
