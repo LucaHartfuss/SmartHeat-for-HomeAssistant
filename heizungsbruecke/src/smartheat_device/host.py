@@ -34,7 +34,8 @@ class DeviceHost(Protocol):
         ...
 
     def treiber_pruefen(self, bindung: dict) -> str | None:
-        """Kundentext, wenn die Treiberparameter nicht passen (config_check, Regel 6), sonst None."""
+        """Kundentext, wenn die Treiberparameter nicht passen (config_check, Regel 6), sonst None. Gateway: `bindung`; HA: die
+        ganze Konfiguration (Spec 5c)."""
         ...
 
     def befehle_eintragen(self, register: CommandRegister) -> None: ...

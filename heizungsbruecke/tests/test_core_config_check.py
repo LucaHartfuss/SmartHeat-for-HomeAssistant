@@ -54,6 +54,7 @@ def test_test_intervals_pass():
 
 def test_interval_bounds_are_the_bounds_of_the_options():
     assert cc.TELEMETRIE_S == (10, options.MAX_TELEMETRY_INTERVAL_SECONDS)
+    assert cc.ABFRAGE_S == options.POLL_INTERVAL_RANGE
     assert cc.PRUEFUNG_S == (1, 3600)
 
 
@@ -129,7 +130,7 @@ def test_the_driver_is_asked_only_for_an_otherwise_valid_configuration():
     assert seen == []
 
 
-def test_home_assistant_bindings_follow_with_5c():
+def test_a_gateway_shaped_configuration_is_not_a_home_assistant_binding():
     assert cc.pruefen(_konfiguration(), None, host=cc.HOST_HA).grund == cc.ROLLE_UNZULAESSIG
 
 
