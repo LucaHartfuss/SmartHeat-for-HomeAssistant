@@ -93,8 +93,9 @@ verfolgt. Release-Ablauf, CI-Jobs, Token: `../docs/ci-cd-runbook.md`.
   `DUPLICATE_CLIENTID`. Ein unerwarteter Startfehler pausiert 60 s und startet dann ebenso neu; SIGTERM endet ohne `exec`.
 - **Endzustände sind ein Ruhezustand**, kein Exit, weil der Supervisor-Watchdog auch Exit 0 neu startet
   (`tests/test_heizungsbruecke_docker_build.sh`). Kein Last Will, nichts unter `smartheat/<tenant>/status/`. Der
-  Docker-Test startet das Add-on mit `SMARTHEAT_BOOTSTRAP_URL=http://127.0.0.1:9` (ohne Server); das Happy-Path-Skript
-  `tests/test_heizungsbruecke_happy_path.sh` überspringt sich bis Plan W Teil B (Optionsmodus, dann löschen).
+  Docker-Test startet das Add-on mit `SMARTHEAT_BOOTSTRAP_URL=http://127.0.0.1:9` (ohne Server). Den Ablauf mit Server,
+  Broker und Fake-HA (Discovery, Einrichtung, Regelbetrieb, Wünsche, Entfernen) prüft der Root-E2E-Modus `ha2`
+  (`tools/e2e/run.sh`, Spec 5c Plan W); das frühere Happy-Path-Skript (Optionsmodus) ist entfallen.
 - **Soll-Entity (HA)**: nur Eingang und Anzeige; die Regelung liest den Raum-Soll aus dem Soll-Speicher. Schreiben nur an
   `climate.*` (Attribut `temperature`); ein gescheitertes Angleichen bleibt offen und wird nachgeholt
   (`HaSollQuelle.angleichen_offen`, `geraet_trigger.build`), statt den gezeigten Altwert als Wunsch zu nehmen. Änderungen

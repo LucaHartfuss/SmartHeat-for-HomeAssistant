@@ -52,7 +52,7 @@ contract() { "$PY" "$DEV/tools/contract_check.py"; }
 docker_tests() {
   local rc=0 script
   for script in test_run_sh.sh test_docker_build.sh test_heizungsbruecke_docker_build.sh \
-                test_heizungsbruecke_reproducible.sh test_heizungsbruecke_happy_path.sh test_mosquitto_will_acl.sh \
+                test_heizungsbruecke_reproducible.sh test_mosquitto_will_acl.sh \
                 test_gateway_docker_build.sh test_gateway_install.sh test_gateway_updater.sh \
                 test_gateway_firstboot.sh; do
     echo "--- tests/$script"
