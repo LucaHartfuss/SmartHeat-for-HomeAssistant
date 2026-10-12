@@ -6,26 +6,18 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from smartheat_core.safety import resolve_local_safety
+from smartheat_runtime import entitlement
 from smartheat_runtime.runtime_config import RuntimeConfig
-from smartheat_transport.descriptor import credential_for, parse_descriptor
-
-# Zugang einer von Hand gebauten RuntimeConfig (eigener MQTT-Client der Laufzeit, wie bis 0.36 im Add-on): Deskriptor
-# (Mosquitto ueber cloudflared) und Installations-Token.
-MOSQUITTO_TRANSPORT = '{"kind": "mosquitto_cloudflared", "host": "127.0.0.1", "port": 18830}'
-INSTALLATION_TOKEN = "tok"
 
 
 def runtime_config(**overrides) -> RuntimeConfig:
     """Gueltige RuntimeConfig fuer Tests, die einen Laufzeit-Kontext von Hand bauen (Plan SHG G1)."""
-    descriptor = parse_descriptor(MOSQUITTO_TRANSPORT)
     values = {
         "tenant_id": "test_tenant", "setup_id": None, "lever_set_id": "vaillant_vrc720",
         "local_safety": resolve_local_safety("vaillant_vrc720", "Heizkoerper"),
-        "descriptor": descriptor, "credential": credential_for(descriptor, username="u", password="p"),
-        "installation_token": INSTALLATION_TOKEN, "accounts_api_base_url": "https://accounts.example.test",
         "daily_trigger_time": "12:00", "local_check_interval": 300, "telemetry_interval": 300,
         "notify_hints_off": (), "room_sensor_refs": ("sensor.room_actual",), "battery_refs": (),
-        "entitlement_path": Path("/nonexistent/entitlement_state.json"),
+        "entitlement_path": Path("/nonexistent/entitlement_state.json"), "abo_source": lambda: entitlement.UNKNOWN,
     }
     values.update(overrides)
     return RuntimeConfig(**values)

@@ -35,7 +35,6 @@ def test_unusable_bindings_are_config_errors(change):
 def test_parse_gives_the_runtime_config_without_transport(tmp_path):
     paths = Paths(tmp_path)
     runtime, bindung = config.parse_dokument(konfiguration(), paths, lambda: entitlement.ACTIVE)
-    assert runtime.descriptor is None and runtime.installation_token is None
     assert runtime.entitlement_path == paths.entitlement and runtime.abo_source() == entitlement.ACTIVE
     assert (runtime.tenant_id, runtime.lever_set_id, bindung.driver_id) == ("test-tenant", "viessmann_vicare",
                                                                             "simulation")

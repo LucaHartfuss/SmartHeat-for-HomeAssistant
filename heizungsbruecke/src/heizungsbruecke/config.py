@@ -1,8 +1,6 @@
 """Add-on-Konfiguration (Spec 5c 1.3): die Einstellungen kommen aus dem Konfigurationsdokument des Geraetekerns
 (dokument.optionen), nicht mehr aus options.json. Hier stehen die festen Pfade, die Pflicht- und Schreibregeln je
 Hebelsatz und die Pruefungen der Sicherheitswerte; options.json bleibt nur fuer bootstrap_url und log_level (Task 9)."""
-import json
-import logging
 import re
 from pathlib import Path
 
@@ -83,27 +81,9 @@ _WRITABLE_BY_LEVER_SET: dict[str, dict[str, tuple[re.Pattern, str]]] = {
     },
 }
 
-logger = logging.getLogger(__name__)
-
-
 def required_entity_options(lever_set: str) -> tuple[str, ...]:
     return REQUIRED_ENTITY_OPTIONS[lever_set]
 
 
 def writable_entity_rules(lever_set: str) -> dict[str, tuple[re.Pattern, str]]:
     return _WRITABLE_ENTITY if lever_set == DEFAULT_LEVER_SET else _WRITABLE_BY_LEVER_SET[lever_set]
-
-
-def load_options_safe(path: Path) -> dict:
-    """{} sowohl ohne Datei (noch nicht eingerichtet) als auch bei kaputter Datei (Stromausfall
-    beim Schreiben): der Start soll sauber melden koennen statt abzustuerzen."""
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text())
-    except (OSError, ValueError) as error:
-        logger.warning(
-            "options.json konnte nicht gelesen werden (%s), starte mit leerer Konfiguration: %s",
-            path, error,
-        )
-        return {}

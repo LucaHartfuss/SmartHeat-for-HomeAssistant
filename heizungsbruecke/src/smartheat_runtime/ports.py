@@ -67,9 +67,9 @@ class TriggerSource(Protocol):
 
 
 class MqttChannel(Protocol):
-    """MQTT-Verbindung der Laufzeit: Snapshot und Telemetrie hoch, Setpoints herunter. Optionen-Pfad:
-    smartheat_transport.mqtt_client.BridgeMqttClient (eigene Verbindung); Geraete-Pfad (Spec 5b 5.2):
-    smartheat_device.laufzeit.RuntimeChannel auf dem Link des Geraets."""
+    """MQTT-Verbindung der Laufzeit: Snapshot und Telemetrie hoch, Setpoints herunter. Die Laufzeit haelt keine eigene
+    Verbindung; app.start bekommt sie vom Host (mqtt_factory): smartheat_device.laufzeit.RuntimeChannel auf dem Link des
+    Geraets (Spec 5b 5.2)."""
 
     @property
     def connect_failures(self) -> int: ...

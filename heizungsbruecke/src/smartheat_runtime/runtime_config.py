@@ -7,7 +7,6 @@ from pathlib import Path
 
 from smartheat_core.levers import LeverSet
 from smartheat_core.safety import LocalSafety
-from smartheat_transport.descriptor import Credential, Descriptor
 
 BATTERY_PERCENT = "prozent"
 BATTERY_LOW_FLAG = "niedrig_flag"
@@ -43,12 +42,6 @@ class RuntimeConfig:
     setup_id: str | None
     lever_set_id: str
     local_safety: LocalSafety
-    # Optionen-Pfad (Add-on bis 5c): Transport, Zugang und Abo-Abruf. Im Geraete-Pfad (Spec 5b 5.2) None: die
-    # MQTT-Verbindung haelt smartheat_device (app.start mqtt_factory), den Abo-Status liefert abo_source.
-    descriptor: Descriptor | None
-    credential: Credential | None
-    installation_token: str | None
-    accounts_api_base_url: str | None
     daily_trigger_time: str | None
     local_check_interval: float
     telemetry_interval: float
@@ -58,6 +51,6 @@ class RuntimeConfig:
     battery_refs: tuple[BatteryRef, ...]
     # Datei der Abo-inaktiv-Frist (entitlement.py).
     entitlement_path: Path
-    # Spec 5b (Plan D1): Abo-Status aus dem Konfigurationsdokument (entitlement.ACTIVE/INACTIVE/UNKNOWN); None = Abruf
-    # GET /tenants/<id>/status mit dem Installations-Token.
-    abo_source: Callable[[], str] | None = None
+    # Spec 5b (Plan D1): Abo-Status aus dem Konfigurationsdokument (entitlement.ACTIVE/INACTIVE/UNKNOWN). Die MQTT-
+    # Verbindung haelt smartheat_device (app.start mqtt_factory), die Laufzeit fragt keinen Server selbst.
+    abo_source: Callable[[], str]

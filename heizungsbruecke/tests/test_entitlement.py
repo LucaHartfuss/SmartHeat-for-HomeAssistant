@@ -1,124 +1,11 @@
 import json
-import logging
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
-import requests
-from fakes import runtime_config
 
 from smartheat_runtime import entitlement
 
 NOW = datetime(2026, 9, 25, 12, 0, tzinfo=timezone(timedelta(hours=2)))
-
-
-class _Response:
-    def __init__(self, status_code=200, body=None, json_error=False):
-        self.status_code = status_code
-        self._body = body
-        self._json_error = json_error
-
-    def json(self):
-        if self._json_error:
-            raise ValueError("kein JSON")
-        return self._body
-
-
-def _patch_get(monkeypatch, response=None, error=None):
-    calls = []
-
-    def fake_get(url, headers, timeout):
-        calls.append((url, headers, timeout))
-        if error is not None:
-            raise error
-        return response
-
-    monkeypatch.setattr("smartheat_runtime.entitlement.requests.get", fake_get)
-    return calls
-
-
-@pytest.mark.parametrize("response,expected", [
-    (_Response(200, {"active": True}), "active"),
-    (_Response(200, {"active": False}), "inactive"),
-    (_Response(404, {"error": "unbekannt"}), "unknown"),
-    (_Response(401, {"error": "Nicht authentifiziert"}), "rejected"),
-    (_Response(500, None), "unknown"),
-    (_Response(503, None), "unknown"),
-    (_Response(429, None), "unknown"),
-    (_Response(200, {}), "unknown"),
-    (_Response(200, {"active": "false"}), "unknown"),
-    (_Response(200, ["active"]), "unknown"),
-    (_Response(200, None, json_error=True), "unknown"),
-])
-def test_query_status_maps_responses(monkeypatch, response, expected):
-    _patch_get(monkeypatch, response=response)
-    assert entitlement.query_status("t1", "https://accounts.example", "tok") == expected
-
-
-@pytest.mark.parametrize("error", [requests.Timeout("zu langsam"), requests.ConnectionError("weg"), OSError("dns")])
-def test_query_status_fails_open_on_network_errors(monkeypatch, error):
-    _patch_get(monkeypatch, error=error)
-    assert entitlement.query_status("t1", "https://accounts.example", "tok") == "unknown"
-
-
-def test_query_sends_the_installation_token_as_bearer(monkeypatch):
-    calls = _patch_get(monkeypatch, _Response(200, {"active": True}))
-    assert entitlement.query_status("client1", "https://accounts.example.test", "tok-123") == entitlement.ACTIVE
-    assert calls == [("https://accounts.example.test/tenants/client1/status",
-                      {"Authorization": "Bearer tok-123"}, 10)]
-
-
-def test_query_uses_the_token_of_the_config(monkeypatch):
-    calls = _patch_get(monkeypatch, response=_Response(200, {"active": False}))
-    config = runtime_config(tenant_id="t1", accounts_api_base_url="https://a.example", installation_token="tok-9")
-
-    assert entitlement.query(config) == entitlement.INACTIVE
-    assert calls == [("https://a.example/tenants/t1/status", {"Authorization": "Bearer tok-9"}, 10)]
-
-
-def test_query_without_token_asks_nothing_and_is_unknown(monkeypatch):
-    calls = _patch_get(monkeypatch, _Response(200, {"active": True}))
-    config = runtime_config(tenant_id="client1", accounts_api_base_url="https://a.example.test", installation_token="")
-    assert entitlement.query(config) == entitlement.UNKNOWN
-    assert calls == []
-
-
-def test_token_is_never_logged(monkeypatch, caplog):
-    _patch_get(monkeypatch, _Response(500))
-    with caplog.at_level(logging.DEBUG):
-        entitlement.query_status("client1", "https://a.example.test", "tok-GEHEIM")
-    assert "tok-GEHEIM" not in caplog.text
-
-
-def test_rejected_and_errors_never_log_the_password(monkeypatch, caplog):
-    _patch_get(monkeypatch, error=requests.ConnectionError("weg"))
-    with caplog.at_level(logging.DEBUG):
-        entitlement.query_status("t1", "https://a.example", "sehr-geheim")
-    assert "sehr-geheim" not in caplog.text
-
-
-def test_rejected_401_logs_a_warning_without_the_password(monkeypatch, caplog):
-    """F4 (finale Review, TP8): eine abgelehnte Anmeldung (401) blieb bisher komplett stumm --
-    fuer eine Diagnose auf dem Kunden-Pi muss zumindest eine Warnung im Log stehen, ohne
-    Zugangsdaten preiszugeben."""
-    _patch_get(monkeypatch, response=_Response(401, {"error": "Nicht authentifiziert"}))
-    with caplog.at_level(logging.DEBUG):
-        result = entitlement.query_status("t1", "https://a.example", "sehr-geheim")
-    assert result == entitlement.REJECTED
-    assert "sehr-geheim" not in caplog.text
-    assert "401" in caplog.text
-
-
-@pytest.mark.parametrize("response", [
-    _Response(404, {"error": "Unbekannter Tenant"}), _Response(404, json_error=True), _Response(404, None),
-])
-def test_every_404_counts_as_unknown(monkeypatch, caplog, response):
-    # Spec TP8 3.1: der Server kennt kein 404 mehr; jeder 404 ist ein fremder Dienst.
-    _patch_get(monkeypatch, response=response)
-
-    with caplog.at_level(logging.WARNING):
-        assert entitlement.query_status("t1", "https://accounts.example.test", "tok") == entitlement.UNKNOWN
-
-    assert "404" in caplog.text
 
 
 def test_mark_inactive_sets_once_and_is_idempotent(tmp_path):
@@ -165,7 +52,3 @@ def test_grace_arithmetic():
     later_utc = (NOW + timedelta(days=31)).astimezone(UTC)
     assert entitlement.grace_expired(NOW, later_utc) is True
 
-
-def test_query_without_installation_token_asks_nobody(monkeypatch):
-    monkeypatch.setattr(entitlement, "query_status", lambda *args: pytest.fail("keine Anfrage ohne Token"))
-    assert entitlement.query(runtime_config(installation_token="")) == entitlement.UNKNOWN
