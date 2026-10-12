@@ -10,6 +10,26 @@ Zustands. Inhalte der Inventur gehoeren nie in Logs (Regel 6)."""
 from smartheat_device import wire
 
 OHNE_REGISTRY = "ohne_registry"
+FILTER_TEXT = "Der Filter der Inventur ist ungültig."
+
+
+def _texte(value) -> bool:
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def filter_pruefen(filter_) -> str | None:
+    """Kundentext, wenn der Filter nicht die Form des Vertrags hat (wire.INVENTUR_FILTER_FIELDS: Listen von Texten,
+    geraeteklassen Paare aus Domaene und Klasse), sonst None. Fehlende Felder sind leer, unbekannte zaehlen nicht."""
+    if not isinstance(filter_, dict):
+        return FILTER_TEXT
+    for key in ("plattformen", "domaenen", "dienste"):
+        if key in filter_ and filter_[key] is not None and not _texte(filter_[key]):
+            return FILTER_TEXT
+    klassen = filter_.get("geraeteklassen")
+    if klassen is not None and not (isinstance(klassen, list)
+                                    and all(_texte(pair) and len(pair) == 2 for pair in klassen)):
+        return FILTER_TEXT
+    return None
 
 
 def _klasse(entry: dict, attributes: dict):
@@ -17,10 +37,11 @@ def _klasse(entry: dict, attributes: dict):
 
 
 def inventur(ha_api, filter_: dict) -> dict:
+    """filter_ hat die Form aus filter_pruefen (der Befehl prueft vorher)."""
     plattformen = set(filter_.get("plattformen") or [])
     domaenen = set(filter_.get("domaenen") or [])
-    klassen = {tuple(pair) for pair in filter_.get("geraeteklassen") or [] if isinstance(pair, list) and len(pair) == 2}
-    praefixe = tuple(p for p in filter_.get("dienste") or [] if isinstance(p, str))
+    klassen = {tuple(pair) for pair in filter_.get("geraeteklassen") or []}
+    praefixe = tuple(filter_.get("dienste") or [])
     registry = {e["entity_id"]: e for e in ha_api.entity_registry() if isinstance(e, dict) and "entity_id" in e}
     states = {s["entity_id"]: s for s in ha_api.get_states() if isinstance(s, dict) and "entity_id" in s}
     entities, geraete_ids = [], set()

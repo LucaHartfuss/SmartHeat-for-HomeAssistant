@@ -22,6 +22,7 @@ from pathlib import Path
 
 from smartheat_device import wire
 from smartheat_device.commands import CommandRegister
+from smartheat_device.hintergrund import Hintergrund
 from smartheat_device.host import Anzeige
 from smartheat_gateway import befehle
 from smartheat_gateway import config as gateway_config
@@ -155,7 +156,7 @@ class GatewayDeviceHost:
         self._software_at: float | None = None
         self._led_fehler: str | None = None  # Fehlerart des letzten gescheiterten Schreibens der LED-Datei
         #: blockierende Treiber-Aufrufe der Befehle (Cloud-HTTP) neben dem Geraete-Thread; main() stoppt ihn (beenden)
-        self.hintergrund = befehle.Hintergrund()
+        self.hintergrund = Hintergrund()
 
     # --- Verdrahtung ---
 

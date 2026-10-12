@@ -48,7 +48,9 @@ class HaDeviceHost:
 
     def __init__(self, ha_api, supervisor, *, clock: Callable[[], float] = time.monotonic,
                  wall: Callable[[], float] = time.time) -> None:
-        self._ha, self._supervisor, self._clock, self._wall = ha_api, supervisor, clock, wall
+        # wall: Teil der Schnittstelle (wie GatewayDeviceHost), hier ungenutzt: der HA-Host braucht keine Wanduhr (den
+        # Zeitstempel des Raums setzt HaHost aus smartheat_core.wallclock), deshalb nicht gespeichert.
+        self._ha, self._supervisor, self._clock = ha_api, supervisor, clock
         self.device = None  # smartheat_device.device.Device, nach dem Anlegen per verbinden()
         self.status_sink = None  # Task 7/9: GeraetStatus (StatusSink der Laufzeit und Anzeige)
         self.letzte_anzeige: Anzeige | None = None
@@ -199,6 +201,8 @@ class HaDeviceHost:
         filter_ = payload.get("filter")
         if not isinstance(filter_, dict):
             return Failed("ungueltige_nutzlast", FILTER_TEXT)
+        if (text := inventur.filter_pruefen(filter_)) is not None:
+            return Failed("ungueltige_nutzlast", text)
         future = self.hintergrund.submit(lambda: inventur.inventur(self._ha, filter_))
         frist = self._clock() + INVENTUR_SECONDS
 

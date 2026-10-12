@@ -30,6 +30,7 @@ from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
 from smartheat_runtime.ports import NotifySink, SignalSource, StatusSink, TriggerSource
 from smartheat_runtime.roles import ChannelManifest, ManifestError
 from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG, BATTERY_PERCENT, BatteryRef, BootInfo
+from smartheat_runtime.soll_eingang import FROSTSCHUTZ_BIS
 from smartheat_runtime.soll_speicher import BEDIENBEREICH_MAX, BEDIENBEREICH_MIN, TargetStore, im_bedienbereich
 from smartheat_runtime.texts import HA_TEXTS, HostTexts
 from smartheat_runtime.worker import Event, RegulationWorker
@@ -187,8 +188,9 @@ class HaHost:
 
     def _soll_entity_angleichen(self) -> None:
         """Spec 5c 1.3 "Bedienung angleichen" beim Start (Gateway: _angleichen): Thermostat, HA und Portal zeigen
-        denselben Wert. Nur wenn die Entity etwas anderes zeigt und nicht aus ist (Soll-Quelle aus: keine Bedienung an
-        die Quelle, Spec 5b 3.2; beim Wiedereinschalten gleicht der Soll-Eingang an). Danach gilt das Echo-Fenster; der
+        denselben Wert. Nur wenn die Entity etwas anderes zeigt und nicht aus ist (HVAC off oder Frostschutz-Stellung bis
+        FROSTSCHUTZ_BIS = Soll-Quelle aus: keine Bedienung an die Quelle, Spec 5b 3.2; beim Wiedereinschalten gleicht
+        der Soll-Eingang an). Danach gilt das Echo-Fenster; der
         zuletzt gezeigte Wert zaehlt als veraltet. Laeuft im Hauptthread vor dem Worker und vor dem Trigger-Client."""
         assert self.store is not None and self.soll_entity is not None
         entity_id = self.soll_entity.partition("::")[0]
@@ -203,6 +205,8 @@ class HaHost:
         angezeigt = quelle.angezeigt()
         if angezeigt == self.store.value:
             return
+        if angezeigt is not None and angezeigt <= FROSTSCHUTZ_BIS:
+            return  # Frostschutz-Stellung ist ebenfalls "Soll-Quelle aus" (Spec 5b 3.2, SollEingang)
         if quelle.schreiben(self.store.value):
             self.store.note_own_write(veraltet=angezeigt)
 

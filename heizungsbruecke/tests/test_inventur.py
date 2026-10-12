@@ -86,6 +86,14 @@ def test_entity_without_registry_entry_still_counts_by_domain():
     assert weather["plattform"] == inventur.OHNE_REGISTRY and weather["config_entry"] is None
 
 
+def test_filter_check():
+    assert inventur.filter_pruefen(FILTER) is None and inventur.filter_pruefen(SERVER_FILTER) is None
+    assert inventur.filter_pruefen({}) is None and inventur.filter_pruefen({"unbekannt": 1, "dienste": None}) is None
+    for kaputt in (None, [], {"plattformen": [["x"]]}, {"domaenen": "climate"}, {"geraeteklassen": [["sensor"]]},
+                   {"geraeteklassen": [["sensor", 1]]}, {"dienste": [None]}):
+        assert inventur.filter_pruefen(kaputt) == inventur.FILTER_TEXT
+
+
 def test_empty_filter_selects_nothing():
     daten = inventur.inventur(_ha(), {})
     assert daten["entities"] == [] and daten["geraete"] == [] and daten["dienste"] == []

@@ -20,7 +20,10 @@ from datetime import UTC, datetime
 
 from smartheat_device import wire
 from smartheat_device.commands import CommandRegister, Done, Failed, InvalidPayload, Outcome, Waiting
-from smartheat_device.hintergrund import HINTERGRUND_NAME, Hintergrund  # noqa: F401  (Rueck-Import: Tests)
+from smartheat_device.hintergrund import (  # noqa: F401  (HINTERGRUND_NAME: Rueck-Import fuer tests/test_befehle.py)
+    HINTERGRUND_NAME,
+    Hintergrund,
+)
 from smartheat_gateway import config as gateway_config
 from smartheat_gateway import safety_warnings
 from smartheat_gateway.drivers import registry

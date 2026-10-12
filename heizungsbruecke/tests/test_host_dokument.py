@@ -151,6 +151,15 @@ def test_a_switched_off_thermostat_is_not_written(env):
     assert geraet.wuensche == [] and host.store.value == 21.5 and geraet.aus[-1] == (True, 21.5)
 
 
+def test_a_thermostat_in_frost_protection_is_not_written(env):
+    """Ein Soll bis FROSTSCHUTZ_BIS (7 °C) ist die Frostschutz-Stellung (Spec 5b 3.2): ein Neustart dreht den bewusst
+    auf 5 °C gestellten Heizkoerper nicht wieder hoch."""
+    host, geraet, worker, client = _climate_start(env, angezeigt=5.0, bedienung={"raum_soll": 21.5})
+    assert env.ha.writes == [] and host.store.echo_rest() == 0
+    _erstes_lesen(env, worker, client, angezeigt=5.0)
+    assert geraet.wuensche == [] and host.store.value == 21.5 and geraet.aus[-1] == (True, 21.5)
+
+
 def test_a_sensor_target_is_never_written(env):
     env.ha.states[OPTIONS["entity_room_target"]] = 19.0
     geraet = FakeGeraet(konfiguration_aus_optionen(OPTIONS), bedienung={"raum_soll": 21.5})

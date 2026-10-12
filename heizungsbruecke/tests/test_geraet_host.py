@@ -162,6 +162,16 @@ def test_inventory_needs_a_filter(tmp_path, monkeypatch):
     assert isinstance(outcome, Failed) and outcome.grund == "ungueltige_nutzlast"
 
 
+@pytest.mark.parametrize("filter_", [
+    {"plattformen": [["liste"]]}, {"domaenen": "climate"}, {"dienste": [1]}, {"geraeteklassen": [["sensor"]]},
+    {"geraeteklassen": [{"a": 1}, ["sensor", "x"]]}, {"geraeteklassen": "sensor"}])
+def test_inventory_with_a_malformed_filter_is_an_invalid_payload(tmp_path, monkeypatch, filter_):
+    host, _, _ = _host(tmp_path, monkeypatch)
+    monkeypatch.setattr(geraet_host.inventur, "inventur", lambda ha, f: pytest.fail("nicht aufgerufen"))
+    outcome = _register(host, tmp_path)._handlers["inventory"]({"stunden": 0, "filter": filter_})
+    assert isinstance(outcome, Failed) and outcome.grund == "ungueltige_nutzlast"
+
+
 def test_inventory_with_ha_down_fails_without_contents_in_the_log(tmp_path, monkeypatch, caplog):
     ha = FakeHa()
     ha.offline = True
@@ -309,7 +319,7 @@ def test_diagnostics(tmp_path, monkeypatch):
             result["uhr_synchron"]) == ("regelt", True, True, "regelt", True)
 
 
-def test_display_goes_to_the_status_sink_and_never_raises(tmp_path, monkeypatch):
+def test_display_goes_to_the_status_sink_and_never_raises(tmp_path, monkeypatch, caplog):
     host, _, _ = _host(tmp_path, monkeypatch)
     anzeige = Anzeige("regelt", True, "uebernommen", True, (), (), None)
     host.anzeigen(anzeige)  # ohne Sink
@@ -322,7 +332,9 @@ def test_display_goes_to_the_status_sink_and_never_raises(tmp_path, monkeypatch)
         raise RuntimeError("weg")
 
     host.status_sink = type("S", (), {"anzeige": lambda self, a: kaputt(a)})()
-    host.anzeigen(anzeige)
+    caplog.clear()
+    host.anzeigen(anzeige)  # wirft nicht
+    assert "Status-Ereignis nicht gesendet (RuntimeError)" in caplog.text and "weg" not in caplog.text
 
 
 def test_runtime_status_and_room(tmp_path, monkeypatch):
