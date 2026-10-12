@@ -8,10 +8,11 @@ from configs import SENSOR, THERMOSTAT
 from fake_z2m import FakeZigbee2Mqtt
 from fakes import FakeBus
 
-from smartheat_gateway.target_store import TargetStore
-from smartheat_gateway.triggers import EV_TARGET_INPUT, FROSTSCHUTZ_BIS, BusTriggerSource, seconds_until
+from smartheat_gateway.triggers import EV_TARGET_INPUT, BusTriggerSource, seconds_until
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime.runtime import EV_LOCAL_CHECK, EV_SOURCE_CONNECTED
+from smartheat_runtime.soll_eingang import FROSTSCHUTZ_BIS
+from smartheat_runtime.soll_speicher import TargetStore
 from smartheat_runtime.worker import Event, RegulationWorker
 
 BERLIN = ZoneInfo("Europe/Berlin")

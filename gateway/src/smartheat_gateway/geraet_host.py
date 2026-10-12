@@ -29,11 +29,11 @@ from smartheat_gateway.drivers import registry
 from smartheat_gateway.drivers.base import KIND_CLOUD
 from smartheat_gateway.files import read_json, write_json
 from smartheat_gateway.paths import Paths
-from smartheat_gateway.target_store import SOURCE_PORTAL
 from smartheat_gateway.triggers import EV_TARGET_INPUT
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime import dokument_config
+from smartheat_runtime.soll_speicher import SOURCE_PORTAL
 from smartheat_runtime.worker import Event, RegulationWorker
 
 logger = logging.getLogger(__name__)

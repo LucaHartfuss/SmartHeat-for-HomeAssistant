@@ -13,8 +13,8 @@ from smartheat_core.binding import BINDINGS
 from smartheat_core.safety import resolve_local_safety
 from smartheat_gateway.drivers.simulation import START_LEVERS
 from smartheat_gateway.files import write_json
-from smartheat_gateway.target_store import ECHO_WINDOW_SECONDS
 from smartheat_runtime.app import IDLE_NOT_CONFIGURED
+from smartheat_runtime.soll_speicher import ECHO_WINDOW_SECONDS
 
 # Gelernte Werte des Dienstes; bewusst ungleich den Ursprungswerten der Simulation (START_LEVERS), auf die sign_off
 # die Hebel aus restore_originals zuruecksetzt: sonst bliebe Schritt 7 gruen, auch wenn nichts zurueckgesetzt wuerde.

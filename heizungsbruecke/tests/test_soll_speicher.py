@@ -1,12 +1,17 @@
 import json
+import os
+import stat
 
 import pytest
 
-from smartheat_gateway.target_store import (
+from smartheat_device import documents
+from smartheat_runtime.soll_speicher import (
     PENDING_SECONDS,
+    SOURCE_LOKAL,
     SOURCE_PORTAL,
     SOURCE_THERMOSTAT,
     TargetStore,
+    im_bedienbereich,
     is_valid_portal_target,
 )
 
@@ -150,3 +155,32 @@ def test_a_limited_wish_keeps_the_thermostat_as_source(tmp_path, clock):
     assert store.apply_thermostat(14.0)
     assert store.begrenzen(15.0) and (store.value, store.source) == (15.0, SOURCE_THERMOSTAT)
     assert not store.begrenzen(15.0)
+
+
+@pytest.mark.parametrize("value", [
+    15, 15.0, 25, 25.0, 21.5, 14.99, 25.01, 14.5, 25.5, 21.3, 0, -1, 1e308, 10**400, True, False, None, "21", [21.0],
+    float("nan"), float("inf"), float("-inf"), *[15 + step * 0.1 for step in range(0, 101)],
+])
+def test_bedienbereich_equals_the_device_rule(value):
+    """Die Laufzeit importiert smartheat_device nicht (Reinheit): die lokale Kopie muss dieselbe Regel sein."""
+    assert im_bedienbereich(value) is documents.im_bedienbereich(value)
+
+
+def test_lokal_applies_at_once_without_echo_check(tmp_path, clock):
+    store = _store(tmp_path, clock)
+    store.note_own_write()  # Echo-Fenster offen: eine lokale Eingabe stammt nicht von der Soll-Quelle
+    assert store.apply_lokal(22.5)
+    assert (store.value, store.source) == (22.5, SOURCE_LOKAL)
+    assert not store.apply_lokal(22.5)  # keine Aenderung
+    assert not store.apply_lokal(40.0) and not store.apply_lokal(True) and store.value == 22.5
+    assert _store(tmp_path, clock, start=19.0).source == SOURCE_LOKAL  # die Quelle lokal wird wieder gelesen
+
+
+def test_room_target_file_is_world_readable_and_not_a_symlink_target(tmp_path, clock):
+    store = _store(tmp_path, clock)
+    path = tmp_path / "runtime" / "room_target.json"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o644
+    (tmp_path / "runtime" / "room_target.json.tmp").symlink_to(tmp_path / "ziel")  # untergeschobener Symlink
+    store.apply_portal(23.0)
+    assert not (tmp_path / "ziel").exists() and json.loads(path.read_text())["value"] == 23.0
+    assert not os.path.islink(path)

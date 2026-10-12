@@ -8,13 +8,13 @@ from fakes import FakeBus
 from smartheat_gateway.drivers.registry import create
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.signals import REF_ROOM_MEAN, REF_ROOM_TARGET, GatewaySignalSource
-from smartheat_gateway.target_store import TargetStore
 from smartheat_gateway.texts import SHG_TEXTS
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime import battery
 from smartheat_runtime.notifier import Notifier
 from smartheat_runtime.ports import SignalNotFound, SourceUnavailable
 from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG, BatteryRef
+from smartheat_runtime.soll_speicher import TargetStore
 from smartheat_runtime.state import StateStore
 
 SECOND = "0x00124b0000000003"

@@ -18,7 +18,6 @@ from smartheat_gateway.geraet_host import GatewayDeviceHost
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.raum import RaumPublisher
 from smartheat_gateway.signals import REF_ROOM_MEAN, REF_ROOM_TARGET, GatewaySignalSource
-from smartheat_gateway.target_store import SOURCE_PORTAL, TargetStore
 from smartheat_gateway.texts import SHG_TEXTS
 from smartheat_gateway.triggers import EV_TARGET_INPUT, BusTriggerSource
 from smartheat_gateway.version import GATEWAY_VERSION
@@ -29,6 +28,7 @@ from smartheat_runtime.options import ConfigError
 from smartheat_runtime.ports import NotifySink, SignalSource, StatusSink, TriggerSource
 from smartheat_runtime.roles import ALL_ROLES, REQUIRED_ROLES_BY_LEVER_SET, ChannelManifest, ManifestError
 from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG, BATTERY_PERCENT, BatteryRef, BootInfo
+from smartheat_runtime.soll_speicher import SOURCE_PORTAL, TargetStore
 from smartheat_runtime.texts import HostTexts
 from smartheat_runtime.worker import Event, RegulationWorker
 
