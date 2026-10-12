@@ -458,9 +458,12 @@ class Device:
         return all(self._publish("up/inventory", nachricht) is not None for nachricht in nachrichten)
 
     def _claim_state(self, payload: dict) -> commands.Outcome:
-        """Uebernahmestand vom Server (Spec 5c F1): Discovery, Seite und Zustand folgen im naechsten Takt."""
+        """Uebernahmestand vom Server (Spec 5c F1): Discovery, Seite und Zustand folgen im naechsten Takt. Gueltig ist
+        nur uebernommen: frei wird das Geraet nur ueber new_claim_code mit neuem Code (der Server sendet claim_state
+        nie anders); nicht_uebernommen zeigte hier den alten Code wieder, den der vorige Besitzer kennt (Final-Review
+        F-3)."""
         state = payload.get("device_state")
-        if state not in ("uebernommen", "nicht_uebernommen"):
+        if state != "uebernommen":
             return commands.Failed("ungueltige_nutzlast", CLAIM_STATE_TEXT)
         bootstrap.device_state_speichern(self._dir, state)
         return commands.Done({})

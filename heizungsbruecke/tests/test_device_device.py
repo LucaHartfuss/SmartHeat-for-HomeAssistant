@@ -483,13 +483,18 @@ def test_claim_state_hides_the_code_and_waits_for_setup(tmp_path):
     assert world.link.of("up/result")[-1]["ok"] is True
 
 
-def test_claim_state_with_an_unknown_value_is_refused(tmp_path):
+@pytest.mark.parametrize("value", ["gesperrt", "nicht_uebernommen"])
+def test_claim_state_accepts_only_uebernommen(tmp_path, value):
+    """Final-Review F-3: frei wird ein Geraet nur ueber new_claim_code (neuer Code); claim_state nicht_uebernommen
+    zeigte sonst nach einer Uebernahme den alten Code wieder an."""
     world = World(tmp_path, access=False)
     world.client.script["register"] = [bootstrap.Antwort("nicht_uebernommen", world.zugang)]
     world.verbinden()
-    world.empfangen("down/command", _command("claim_state", "c1", {"device_state": "gesperrt"}))
+    world.empfangen("down/command", _command("claim_state", "c1", {"device_state": "uebernommen"}))
+    world.empfangen("down/command", _command("claim_state", "c2", {"device_state": value}))
     assert world.link.of("up/result")[-1]["error"]["grund"] == "ungueltige_nutzlast"
-    assert bootstrap.device_state(world.dir) == "nicht_uebernommen"
+    assert bootstrap.device_state(world.dir) == "uebernommen"
+    assert world.device.anzeige().code_zeigen is False
 
 
 def test_after_release_the_new_code_is_shown_again(tmp_path):
