@@ -134,6 +134,36 @@ def test_an_invalid_bootstrap_url_never_falls_back_to_production(tmp_path, monke
         assert value not in caplog.text  # nur der Grund, nie die Adresse (koennte Zugangsdaten tragen)
 
 
+@pytest.mark.parametrize("content", [b"{kaputt", b"[1, 2]", b"\"https://labor\"", b"null", b"\xff\xfe"])
+def test_a_corrupt_options_file_never_falls_back_to_production(tmp_path, monkeypatch, caplog, content):
+    """options.json schreibt der Supervisor immer: unlesbar, kein JSON oder kein Objekt ist kein "nicht gesetzt",
+    sondern wie eine ungueltige bootstrap_url der Ruhezustand (nie die Produktion)."""
+    monkeypatch.setattr(config, "OPTIONS_PATH", tmp_path / "options.json")
+    monkeypatch.delenv("SMARTHEAT_BOOTSTRAP_URL", raising=False)
+    (tmp_path / "options.json").write_bytes(content)
+    with caplog.at_level(logging.WARNING):
+        assert main_module.bootstrap_url() is None
+    assert "options.json" in caplog.text and "labor" not in caplog.text
+    assert main_module.log_level() == logging.INFO  # der Log-Level faellt still auf info
+
+
+def test_an_unreadable_options_file_never_falls_back_to_production(tmp_path, monkeypatch):
+    monkeypatch.setattr(config, "OPTIONS_PATH", tmp_path / "options.json")
+    monkeypatch.delenv("SMARTHEAT_BOOTSTRAP_URL", raising=False)
+    (tmp_path / "options.json").mkdir()  # IsADirectoryError: ein OSError ausser "fehlt"
+    assert main_module.bootstrap_url() is None
+
+
+def test_a_missing_options_file_counts_as_empty_and_uses_production(tmp_path, monkeypatch):
+    """Fehlt die Datei ganz (der Supervisor schreibt sie sonst immer), gilt sie als leer: Produktions-Standard."""
+    monkeypatch.setattr(config, "OPTIONS_PATH", tmp_path / "fehlt" / "options.json")
+    monkeypatch.delenv("SMARTHEAT_BOOTSTRAP_URL", raising=False)
+    assert main_module.bootstrap_url() == main_module.DEFAULT_BOOTSTRAP_URL
+    (tmp_path / "options.json").write_text("{}")
+    monkeypatch.setattr(config, "OPTIONS_PATH", tmp_path / "options.json")
+    assert main_module.bootstrap_url() == main_module.DEFAULT_BOOTSTRAP_URL
+
+
 def test_an_invalid_override_never_falls_back_to_production(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "OPTIONS_PATH", tmp_path / "options.json")
     monkeypatch.setenv("SMARTHEAT_BOOTSTRAP_URL", "server:5001")

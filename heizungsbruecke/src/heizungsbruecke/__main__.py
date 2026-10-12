@@ -12,6 +12,7 @@ nicht zuverlaessig neu, deshalb exec. SIGTERM (Supervisor stoppt das Add-on) end
 
 Nach dem Entfernen (aufraeumen.json) loescht der naechste Start den anlagengebundenen Zustand und die Hilfssensoren,
 bevor der Geraetekern startet - aber nur, solange die gespeicherte Konfiguration noch leer ist."""
+import json
 import logging
 import os
 import shutil
@@ -55,9 +56,16 @@ class Neustart(BaseException):
     Worker faengt in Handlern nur Exception ab, diese hier geht bis laufen() durch."""
 
 
-def _optionen() -> dict:
-    raw = read_json(config.OPTIONS_PATH)
-    return raw if isinstance(raw, dict) else {}
+def _optionen() -> dict | None:
+    """Inhalt von options.json oder None, wenn sie unlesbar, kein JSON oder kein Objekt ist. Der Supervisor schreibt die
+    Datei immer; fehlt sie trotzdem ganz, gilt sie als leer ({}: Produktions-Standard)."""
+    try:
+        raw = json.loads(config.OPTIONS_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError):
+        return None
+    return raw if isinstance(raw, dict) else None
 
 
 def _url_fehler(value) -> str | None:
@@ -78,14 +86,20 @@ def _url_fehler(value) -> str | None:
 
 def bootstrap_url() -> str | None:
     """Umgebung SMARTHEAT_BOOTSTRAP_URL (nur E2E/Tests) vor der Option bootstrap_url vor dem Produktions-Standard. Der
-    Standard gilt nur, wenn beides fehlt: eine ungueltige Angabe faellt nie auf die Produktion zurueck (ein falsch
-    eingestelltes Labor-Add-on meldete sich sonst dort an), sondern ergibt None. Ins Log kommt nur der Grund, nie die
-    Adresse (sie kann Zugangsdaten tragen)."""
+    Standard gilt nur, wenn beides fehlt (Schluessel fehlt oder null, options.json fehlt ganz): eine ungueltige Angabe
+    und eine kaputte options.json fallen nie auf die Produktion zurueck (ein falsch eingestelltes Labor-Add-on meldete
+    sich sonst dort an), sondern ergeben None. Ins Log kommt nur der Grund, nie die Adresse (sie kann Zugangsdaten
+    tragen)."""
     override = os.environ.get("SMARTHEAT_BOOTSTRAP_URL")
     if override:
         quelle, value = "SMARTHEAT_BOOTSTRAP_URL", override
     else:
-        quelle, value = "bootstrap_url", _optionen().get("bootstrap_url")
+        optionen = _optionen()
+        if optionen is None:
+            logger.warning("options.json nicht lesbar oder kein JSON-Objekt: das Geraet meldet sich nicht an und "
+                           "bleibt im Ruhezustand")
+            return None
+        quelle, value = "bootstrap_url", optionen.get("bootstrap_url")
         value = DEFAULT_BOOTSTRAP_URL if value is None else value  # nicht gesetzt (fehlt oder null)
     grund = _url_fehler(value)
     if grund is not None:
@@ -96,7 +110,7 @@ def bootstrap_url() -> str | None:
 
 
 def log_level() -> int:
-    return LOG_LEVELS.get(str(_optionen().get("log_level", "info")), logging.INFO)
+    return LOG_LEVELS.get(str((_optionen() or {}).get("log_level", "info")), logging.INFO)
 
 
 def _exec() -> None:
