@@ -1,6 +1,5 @@
-"""Hostneutrale, gepruefte Konfiguration der Laufzeit (Spec SHG 3.3). Der HA-Host fuellt sie aus options.json
-(heizungsbruecke.config.runtime_config), das SHG aus der Laufzeit-Konfiguration des Agenten, das Gateway ab 0.6.0 aus
-dem Konfigurationsdokument (dokument_config, Spec 5b 5.2)."""
+"""Hostneutrale, gepruefte Konfiguration der Laufzeit (Spec SHG 3.3). Beide Hosts (HA-Add-on und Gateway) fuellen sie
+ueber den Geraetekern aus dem Konfigurationsdokument des Servers (dokument_config.runtime_config, Spec 5b 5.2)."""
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path

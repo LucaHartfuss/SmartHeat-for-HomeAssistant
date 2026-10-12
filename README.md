@@ -14,8 +14,9 @@ below.
 
 ## Installation
 
-The add-on in this repository is configured automatically by the separate **SmartHeat** Home
-Assistant integration -- it needs no manual setup in its Configuration tab.
+The add-on in this repository is set up by the separate **SmartHeat** Home Assistant
+integration -- it needs no manual setup in its Configuration tab. Its configuration comes as a
+document from the SmartHeat server.
 
 1. In Home Assistant: Settings -> Add-ons -> Add-on Store -> (top right) -> Repositories.
 2. Add this URL: `https://github.com/LucaHartfuss/SmartHeat-for-HomeAssistant`
@@ -25,5 +26,6 @@ Assistant integration -- it needs no manual setup in its Configuration tab.
 4. Add the SmartHeat Home Assistant integration's repository as a HACS custom repository and
    install it.
 5. In Home Assistant: Settings -> Devices & Services -> Add Integration -> "SmartHeat", and
-   complete the setup dialog there. The integration writes the configuration into the add-on
-   and starts it automatically.
+   complete the setup dialog there. The integration starts the add-on and guides you through the
+   setup via the SmartHeat server's setup API; the server then delivers the configuration to the
+   add-on.
