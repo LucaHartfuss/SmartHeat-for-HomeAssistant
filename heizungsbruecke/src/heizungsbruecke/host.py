@@ -110,6 +110,7 @@ class HaHost:
             text = dokument.lokal_pruefen(self._konfiguration)
             if text:
                 raise config.ConfigError(text)
+            geraet_trigger.pruefe_soll_ref(dokument.soll_entity(self._konfiguration))
             runtime = dokument_config.runtime_config(
                 self._konfiguration, entitlement_path=config.ENTITLEMENT_PATH, abo_source=self._geraet.abo_status)
             error = config.validate(options)

@@ -5,8 +5,10 @@ entscheidet der Soll-Eingang (smartheat_runtime.soll_eingang, entprellen 0 s): W
 smartheat_entity) und durch (nutzer/automation aus dem HA-Kontext), Thermostat aus/Frostschutz, Angleichen der
 Soll-Entity (nur Climate ist schreibbar) ohne Echo."""
 import logging
+import math
 from typing import TypeGuard
 
+from heizungsbruecke.config import ConfigError
 from heizungsbruecke.ha_trigger_client import HaTriggerClient
 from smartheat_runtime.debounce import ROOM_TARGET_DEBOUNCE_SECONDS
 from smartheat_runtime.runtime import EV_LOCAL_CHECK, EV_SOURCE_CONNECTED
@@ -15,6 +17,14 @@ from smartheat_runtime.soll_speicher import SOURCE_LOKAL, SOURCE_THERMOSTAT, Tar
 from smartheat_runtime.worker import Event, RegulationWorker
 
 logger = logging.getLogger(__name__)
+
+#: Intern (Worker): ein Bericht der Soll-Entity bzw. das (Nach-)Lesen ihres Zustands.
+EV_SOLL_BERICHT = "ha_soll_bericht"
+EV_SOLL_LESEN = "ha_soll_lesen"
+EV_SOLL_NACHLESEN = "ha_soll_nachlesen"
+#: Modi, die kein Wechsel des Thermostats sind (Entity gerade nicht erreichbar): weder aus noch wieder an.
+_MODI_OHNE_AUSSAGE = ("unavailable", "unknown")
+NACHLESEN_PUFFER_SECONDS = 1.0
 
 EREIGNIS_WUNSCH = "smartheat_wunsch"
 HERKUNFT_SOLL = "soll_entity"
@@ -53,6 +63,26 @@ def _zustandswert(value) -> float | None:
         return None
 
 
+def pruefe_soll_ref(soll_ref: str | None) -> None:
+    """Eine Climate-Soll-Entity braucht das Attribut (`climate.x::temperature`): ohne waere der Zustand der HVAC-Modus,
+    kein Soll. Der Server sendet das nie (room_target ist climate::temperature)."""
+    if soll_ref and soll_ref.startswith("climate.") and _split(soll_ref)[1] is None:
+        raise ConfigError(f"Soll-Entity {soll_ref} ohne Attribut: bei einer Climate-Entity ist "
+                          f"{soll_ref}::temperature erforderlich")
+
+
+def _wunschwert(value) -> float | None:
+    """raum_soll aus dem Ereignis smartheat_wunsch: eine endliche Zahl oder ein Text, der eine ist (HA-YAML sendet
+    oft Text, etwa \"22.5\"); alles andere None."""
+    if isinstance(value, bool) or not isinstance(value, int | float | str):
+        return None
+    try:
+        number = float(value)
+    except ValueError:
+        return None
+    return number if math.isfinite(number) else None
+
+
 class HaSollQuelle:
     """Die Soll-Entity als Soll-Quelle (SollQuelle): schreibbar nur als Climate-Entity (Attribut temperature)."""
 
@@ -80,7 +110,13 @@ class HaSollQuelle:
 
 def build(manifest, options: dict, ha_api, worker: RegulationWorker, store: TargetStore, soll_ref: str | None, *,
           wunsch, soll_quelle_aus) -> HaTriggerClient:
-    """soll_ref: die echte Soll-Entity aus der Konfiguration (nicht manifest.refs["room_target"], das ist SOLL_REF)."""
+    """soll_ref: die echte Soll-Entity aus der Konfiguration (nicht manifest.refs["room_target"], das ist SOLL_REF).
+    Der Bericht der Soll-Entity (EV_SOLL_BERICHT) geht als Eingabe der Soll-Quelle in den Soll-Eingang. Faellt er in
+    das Echo-Fenster nach dem eigenen Schreiben, verwirft ihn der Soll-Speicher; HA meldet einen unveraenderten Wert
+    nie wieder. Deshalb liest EV_SOLL_NACHLESEN die Entity kurz nach dem Fenster einmal erneut und gibt den Wert
+    durch denselben Weg (Pending-/Stale-Logik entscheidet). Bei jeder (Re-)Verbindung liest EV_SOLL_LESEN Modus und Soll
+    (Aenderungen waehrend der Trennung, Thermostat schon aus beim Start). Nur HA; das Gateway bleibt unberuehrt."""
+    pruefe_soll_ref(soll_ref)
     quelle = HaSollQuelle(ha_api, soll_ref) if soll_ref else None
     SollEingang(worker, store, quelle, wunsch=wunsch, soll_quelle_aus=soll_quelle_aus, entprellen_s=0)
     soll_entity, soll_attribute = _split(soll_ref) if soll_ref else (None, None)
@@ -105,6 +141,58 @@ def build(manifest, options: dict, ha_api, worker: RegulationWorker, store: Targ
     if options.get("daily_trigger_time"):
         triggers.append({"platform": "time", "at": options["daily_trigger_time"]})
 
+    letzter_bericht: list = [None, None]  # (Wert, durch) des zuletzt verworfenen Berichts im Echo-Fenster
+    nachlesen_offen = [False]
+
+    def eingabe(wert: float, durch: str | None) -> None:
+        worker.post(Event(EV_TARGET_INPUT, {"value": wert, "source": SOURCE_THERMOSTAT, "herkunft": HERKUNFT_SOLL,
+                                            "durch": durch}))
+
+    def modus(mode) -> None:
+        if isinstance(mode, str) and mode not in _MODI_OHNE_AUSSAGE:
+            worker.post(Event(EV_SOLL_MODUS, {"mode": mode}))
+
+    def on_bericht(event: Event) -> None:
+        if "mode" in event.data:  # Modus und Soll gehen durch dieselbe Warteschlange: Reihenfolge der Meldungen bleibt
+            modus(event.data["mode"])
+            return
+        wert, durch = event.data["value"], event.data["durch"]
+        eingabe(wert, durch)
+        rest = store.echo_rest()
+        if rest > 0:
+            letzter_bericht[:] = [wert, durch]
+            if not nachlesen_offen[0]:
+                nachlesen_offen[0] = True
+                worker.schedule(rest + NACHLESEN_PUFFER_SECONDS, Event(EV_SOLL_NACHLESEN))
+
+    def on_nachlesen(event: Event) -> None:
+        rest = store.echo_rest()
+        if rest > 0:  # inzwischen ein neues eigenes Schreiben: nach dessen Fenster
+            worker.schedule(rest + NACHLESEN_PUFFER_SECONDS, Event(EV_SOLL_NACHLESEN))
+            return
+        nachlesen_offen[0] = False
+        wert = quelle.angezeigt() if quelle is not None else None
+        if wert is not None:
+            durch = letzter_bericht[1] if letzter_bericht[0] == wert else None
+            eingabe(wert, durch)
+        letzter_bericht[:] = [None, None]
+
+    def on_lesen(event: Event) -> None:
+        if soll_entity is None or quelle is None:
+            return
+        if climate:
+            try:
+                modus(ha_api.get_raw_state(soll_entity))
+            except Exception as error:
+                logger.warning("HVAC-Modus der Soll-Entity nicht gelesen (%s)", type(error).__name__)
+        wert = quelle.angezeigt()
+        if wert is not None:
+            eingabe(wert, None)
+
+    worker.register(EV_SOLL_BERICHT, on_bericht)
+    worker.register(EV_SOLL_NACHLESEN, on_nachlesen)
+    worker.register(EV_SOLL_LESEN, on_lesen)
+
     def on_soll_entity(trigger: dict) -> bool:
         """True, wenn der Trigger die Soll-Entity betraf (Wunsch oder Modus); ein anderes Attribut derselben Entity
         (etwa current_temperature als Raumfuehler) ist ein lokaler Check."""
@@ -114,12 +202,11 @@ def build(manifest, options: dict, ha_api, worker: RegulationWorker, store: Targ
             value = (to_state.get("attributes") or {}).get(attribute) if attribute else to_state.get("state")
             number = _zustandswert(value)
             if number is not None:
-                worker.post(Event(EV_TARGET_INPUT, {"value": number, "source": SOURCE_THERMOSTAT,
-                                                    "herkunft": HERKUNFT_SOLL,
+                worker.post(Event(EV_SOLL_BERICHT, {"value": number,
                                                     "durch": durch_aus_kontext(to_state.get("context"))}))
             return True
         if attribute is None and climate:
-            worker.post(Event(EV_SOLL_MODUS, {"mode": to_state.get("state")}))
+            worker.post(Event(EV_SOLL_BERICHT, {"mode": to_state.get("state")}))
             return True
         return False
 
@@ -128,10 +215,14 @@ def build(manifest, options: dict, ha_api, worker: RegulationWorker, store: Targ
         if platform == "event":
             event = trigger.get("event") or {}
             value = (event.get("data") or {}).get("raum_soll")
-            if _is_number(value):
-                worker.post(Event(EV_TARGET_INPUT, {"value": float(value), "source": SOURCE_LOKAL,
-                                                    "herkunft": HERKUNFT_SMARTHEAT,
-                                                    "durch": durch_aus_kontext(event.get("context"))}))
+            number = _wunschwert(value)
+            if number is None:
+                logger.warning("Ereignis %s ohne gueltige raum_soll (Typ %s) verworfen", EREIGNIS_WUNSCH,
+                               type(value).__name__)
+                return
+            worker.post(Event(EV_TARGET_INPUT, {"value": number, "source": SOURCE_LOKAL,
+                                                "herkunft": HERKUNFT_SMARTHEAT,
+                                                "durch": durch_aus_kontext(event.get("context"))}))
             return
         if platform == "state" and soll_entity is not None and trigger.get("entity_id") == soll_entity \
                 and on_soll_entity(trigger):
@@ -139,8 +230,10 @@ def build(manifest, options: dict, ha_api, worker: RegulationWorker, store: Targ
         worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=False)
 
     def on_connected() -> None:
-        # Bei jeder (Re-)Verbindung frisch pruefen (eine Aenderung waehrend der Trennung wird sofort verarbeitet) und
-        # den vollen Status neu senden (nach einem HA-Neustart hat die Integration ihn nicht mehr).
+        # Bei jeder (Re-)Verbindung, auch der ersten: Soll und HVAC-Modus der Soll-Entity lesen (eine Aenderung
+        # waehrend der Trennung, etwa eines HA-Neustarts, meldet HA nicht nach), den lokalen Check mit frischem
+        # room_target-Flag und den vollen Status neu senden (nach einem HA-Neustart hat die Integration ihn nicht mehr).
+        worker.post(Event(EV_SOLL_LESEN))
         worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=True)
         worker.post_coalesced(EV_SOURCE_CONNECTED)
 

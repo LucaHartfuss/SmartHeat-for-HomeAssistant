@@ -6,6 +6,7 @@ import pytest
 
 from smartheat_device import documents
 from smartheat_runtime.soll_speicher import (
+    ECHO_WINDOW_SECONDS,
     PENDING_SECONDS,
     SOURCE_LOKAL,
     SOURCE_PORTAL,
@@ -184,3 +185,13 @@ def test_room_target_file_is_world_readable_and_not_a_symlink_target(tmp_path, c
     store.apply_portal(23.0)
     assert not (tmp_path / "ziel").exists() and json.loads(path.read_text())["value"] == 23.0
     assert not os.path.islink(path)
+
+
+def test_echo_rest_counts_down_the_window_after_an_own_write(tmp_path, clock):
+    store = _store(tmp_path, clock)
+    assert store.echo_rest() == 0.0
+    store.note_own_write()
+    clock.advance(20)
+    assert store.echo_rest() == ECHO_WINDOW_SECONDS - 20
+    clock.advance(41)
+    assert store.echo_rest() == 0.0

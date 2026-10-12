@@ -116,6 +116,12 @@ class TargetStore:
             stale |= {veraltet}
         self._pending = (self.value, stale - {self.value}, now + PENDING_SECONDS)
 
+    def echo_rest(self) -> float:
+        """Sekunden, die das Echo-Fenster nach dem eigenen Schreiben noch laeuft (0 = keins)."""
+        if self._echo_until is None:
+            return 0.0
+        return max(self._echo_until - self._clock(), 0.0)
+
     def apply_thermostat(self, value) -> bool:
         if self._echo_until is not None and self._clock() < self._echo_until:
             if self._pending is not None and is_plausible(value, ROOM_TEMP_RANGE) and float(value) == self._pending[0]:

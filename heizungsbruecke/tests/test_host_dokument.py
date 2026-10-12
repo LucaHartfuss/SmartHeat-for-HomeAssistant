@@ -109,3 +109,9 @@ def test_trigger_source_is_built_on_the_real_entity_and_wishes_reach_the_device(
         "event_type": "smartheat_wunsch", "data": {"raum_soll": 22.0}, "context": {"parent_id": "p"}}})
     worker.run_pending()
     assert geraet.wuensche == [(22.0, "smartheat_entity", "automation")]
+
+
+def test_a_climate_target_without_attribute_is_a_start_failure(env):
+    konfiguration = konfiguration_aus_optionen({**OPTIONS, "entity_room_target": "climate.wz"})
+    with pytest.raises(StartFailure, match="climate.wz::temperature"):
+        HaHost(FakeGeraet(konfiguration), env.ha, clock=env.clock).load()

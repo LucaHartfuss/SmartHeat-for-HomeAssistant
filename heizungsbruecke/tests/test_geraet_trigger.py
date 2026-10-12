@@ -8,6 +8,7 @@ from conftest import FakeClock
 from fakes import FakeHa
 
 from heizungsbruecke import geraet_trigger
+from heizungsbruecke.config import ConfigError
 from smartheat_runtime.roles import ChannelManifest
 from smartheat_runtime.runtime import EV_LOCAL_CHECK, EV_SOURCE_CONNECTED
 from smartheat_runtime.soll_eingang import EV_TARGET_INPUT
@@ -149,12 +150,24 @@ def test_unusable_target_states_are_ignored(tmp_path, state):
     assert a.wuensche == [] and a.store.value == 21.0
 
 
-@pytest.mark.parametrize("data", [{}, {"raum_soll": "22"}, {"raum_soll": True}, {"raum_soll": None}])
-def test_event_without_a_number_is_ignored(tmp_path, data):
+@pytest.mark.parametrize("data", [{}, {"raum_soll": "abc"}, {"raum_soll": "nan"}, {"raum_soll": "inf"},
+                                  {"raum_soll": True}, {"raum_soll": None}, {"raum_soll": [22]}])
+def test_event_without_a_finite_number_is_ignored_and_logged(tmp_path, caplog, data):
     a = Aufbau(tmp_path)
-    a.fire({"platform": "event", "event": {"event_type": "smartheat_wunsch", "data": data, "context": {}}})
+    with caplog.at_level("WARNING"):
+        a.fire({"platform": "event", "event": {"event_type": "smartheat_wunsch", "data": data, "context": {}}})
     a.run()
     assert a.wuensche == [] and a.store.value == 21.0
+    assert "smartheat_wunsch ohne gueltige raum_soll" in caplog.text
+    assert "abc" not in caplog.text  # nur der Typ, nie der Inhalt
+
+
+@pytest.mark.parametrize("raw,value", [("22.5", 22.5), (" 23 ", 23.0), (22, 22.0)])
+def test_event_wish_accepts_a_number_given_as_text(tmp_path, raw, value):
+    a = Aufbau(tmp_path)
+    a.ereignis(raw, {"user_id": "u1"})
+    a.run()
+    assert a.wuensche == [(value, "smartheat_entity", "nutzer")]
 
 
 def test_portal_operation_aligns_the_entity_without_a_wish(tmp_path):
@@ -166,6 +179,20 @@ def test_portal_operation_aligns_the_entity_without_a_wish(tmp_path):
     a.soll_aenderung(22.5)
     a.run()
     assert a.wuensche == [] and a.store.value == 22.5 and a.store.source == "portal"
+
+
+def test_the_write_back_after_an_event_wish_is_no_second_wish(tmp_path):
+    a = Aufbau(tmp_path)
+    a.ereignis(22.0, {"user_id": "u1"})
+    a.run()
+    assert (SOLL, 22.0) in a.ha.writes
+    a.ha.states[SOLL] = 22.0
+    a.soll_aenderung(22.0)  # Echo der eigenen Angleichung
+    a.soll_aenderung(21.0)  # und der alte Wert aus dem Cache
+    a.run()
+    a.clock.advance(70)
+    a.run()  # auch das Nachlesen nach dem Fenster ergibt nichts
+    assert a.wuensche == [(22.0, "smartheat_entity", "nutzer")] and a.store.value == 22.0
 
 
 def test_a_stale_entity_report_after_a_portal_operation_is_no_wish(tmp_path):
@@ -279,3 +306,139 @@ def test_build_passes_the_ws_parameters_to_the_client(monkeypatch, tmp_path):
                          SOLL, wunsch=lambda v, h, d: v, soll_quelle_aus=lambda a, w: None)
     assert created[0]["ws_url"] == "ws://x/api/websocket" and created[0]["token"] == "tok"
     assert {"platform": "time", "at": "12:00"} not in created[0]["triggers"]  # ohne Tagestick keiner
+
+
+# --- Echo-Fenster: eine Bedienung an der Entity im Fenster geht nicht verloren ---
+
+def test_a_user_change_inside_the_echo_window_is_picked_up_after_the_window(tmp_path):
+    a = Aufbau(tmp_path)
+    a.worker.post(Event(EV_TARGET_INPUT, {"value": 22.5, "source": "portal"}))
+    a.run()
+    a.clock.advance(11)
+    a.ha.states[SOLL] = 22.5
+    a.soll_aenderung(22.5)  # Bestaetigung des Thermostats
+    a.run()
+    a.clock.advance(30)
+    a.ha.states[SOLL] = 23.0
+    a.soll_aenderung(23.0, {"user_id": "u1"})  # Nutzer im Fenster (+41 s): der Speicher verwirft ihn
+    a.run()
+    assert a.wuensche == [] and a.store.value == 22.5
+    a.clock.advance(21)  # +62 s: Fenster vorbei, Nachlesen
+    a.run()
+    assert a.wuensche == [(23.0, "soll_entity", "nutzer")] and a.store.value == 23.0
+
+
+def test_a_pure_echo_inside_the_window_gives_no_wish_after_it(tmp_path):
+    a = Aufbau(tmp_path)
+    a.worker.post(Event(EV_TARGET_INPUT, {"value": 22.5, "source": "portal"}))
+    a.run()
+    a.clock.advance(5)
+    a.soll_aenderung(21.0)  # alter Wert aus dem Cache
+    a.clock.advance(5)
+    a.ha.states[SOLL] = 22.5
+    a.soll_aenderung(22.5)  # geschriebener Wert
+    a.run()
+    a.clock.advance(61)
+    a.run()
+    assert a.wuensche == [] and a.store.value == 22.5 and a.store.source == "portal"
+
+
+def test_a_thermostat_still_showing_the_old_value_after_the_window_is_no_wish(tmp_path):
+    a = Aufbau(tmp_path)
+    a.worker.post(Event(EV_TARGET_INPUT, {"value": 22.5, "source": "portal"}))
+    a.run()
+    a.clock.advance(5)
+    a.ha.states[SOLL] = 21.0  # der Schreibbefehl ist noch nicht angekommen
+    a.soll_aenderung(21.0)
+    a.run()
+    a.clock.advance(61)
+    a.run()
+    assert a.wuensche == [] and a.store.value == 22.5
+
+
+def test_one_read_per_window_however_many_reports(tmp_path):
+    a = Aufbau(tmp_path)
+    a.worker.post(Event(EV_TARGET_INPUT, {"value": 22.5, "source": "portal"}))
+    a.run()
+    reads = []
+    original = a.ha.get_state
+    a.ha.get_state = lambda ref: reads.append(ref) or original(ref)
+    for _ in range(5):
+        a.clock.advance(3)
+        a.soll_aenderung(22.5)
+        a.run()
+    a.clock.advance(61)
+    a.run()
+    assert reads == [SOLL]
+
+
+# --- (Wieder-)Verbindung: Aenderungen waehrend der Trennung ---
+
+def test_a_value_changed_during_the_outage_becomes_one_wish_after_reconnect(tmp_path):
+    a = Aufbau(tmp_path)
+    a.ha.states[SOLL] = 23.5
+    a.client._on_connected()
+    a.run()
+    a.client._on_connected()  # zweite Verbindung: nichts Neues
+    a.run()
+    assert a.wuensche == [(23.5, "soll_entity", None)] and a.store.value == 23.5
+
+
+def test_an_unchanged_value_gives_no_wish_after_reconnect(tmp_path):
+    a = Aufbau(tmp_path)
+    a.client._on_connected()
+    a.run()
+    assert a.wuensche == [] and a.aus == [] and a.checks[-1] == {"room_target_fired": True}
+
+
+def test_a_thermostat_already_off_at_the_first_connect_reports_the_source_off(tmp_path):
+    a = Aufbau(tmp_path)
+    a.ha.states[CLIMATE] = "off"
+    a.client._on_connected()
+    a.run()
+    assert a.aus == [(True, 21.0)] and a.wuensche == []
+
+
+def test_hvac_back_on_during_the_outage_is_taken_over_at_reconnect(tmp_path):
+    a = Aufbau(tmp_path)
+    a.fire({"platform": "state", "entity_id": CLIMATE, "to_state": {"state": "off"}})
+    a.run()
+    a.client._on_connected()  # Thermostat ist inzwischen wieder an (Zustand heat)
+    a.run()
+    assert a.aus[0] == (True, 21.0) and a.aus[-1] == (False, None)
+
+
+def test_unreadable_entity_state_at_reconnect_changes_nothing(tmp_path):
+    a = Aufbau(tmp_path)
+    a.ha.states[CLIMATE] = "unavailable"
+    a.ha.states[SOLL] = RuntimeError("down")
+    a.client._on_connected()
+    a.run()
+    assert a.wuensche == [] and a.aus == [] and a.store.value == 21.0
+
+
+def test_the_reconnect_read_after_an_own_write_is_no_wish(tmp_path):
+    a = Aufbau(tmp_path)
+    a.worker.post(Event(EV_TARGET_INPUT, {"value": 22.5, "source": "portal"}))
+    a.run()
+    a.client._on_connected()  # die Entity zeigt noch den alten Wert (21.0): Echo-Fenster
+    a.run()
+    assert a.wuensche == [] and a.store.value == 22.5
+
+
+# --- HVAC-Modi ohne Aussage, Soll-Ref ohne Attribut ---
+
+def test_unavailable_hvac_mode_is_neither_off_nor_back_on(tmp_path):
+    a = Aufbau(tmp_path)
+    for mode in ("off", "unavailable", "unknown"):
+        a.fire({"platform": "state", "entity_id": CLIMATE, "to_state": {"state": mode}})
+    a.run()
+    assert a.aus == [(True, 21.0)]
+    a.fire({"platform": "state", "entity_id": CLIMATE, "to_state": {"state": "heat"}})
+    a.run()
+    assert a.aus == [(True, 21.0), (False, None)]
+
+
+def test_a_climate_target_without_attribute_is_refused(tmp_path):
+    with pytest.raises(ConfigError, match="climate.wohnzimmer_thermostat::temperature"):
+        Aufbau(tmp_path, soll=CLIMATE)
