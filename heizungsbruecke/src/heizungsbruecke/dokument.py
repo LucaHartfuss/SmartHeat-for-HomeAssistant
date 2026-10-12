@@ -15,13 +15,13 @@ import logging
 from collections.abc import Mapping
 
 from heizungsbruecke import config
+from heizungsbruecke.ha_signals import SOLL_REF
 from smartheat_core.config_check import NichtPruefbar
 from smartheat_runtime.options import POLL_INTERVAL_OPTION
 from smartheat_runtime.roles import LEVER_ROLES
 
 logger = logging.getLogger(__name__)
 
-SOLL_REF = "smartheat:raum_soll"
 _ROOM_TARGET = "room_target"
 #: Was die Regelung ausser den Hebeln des Hebelsatzes schreibt (Weishaupt/Viessmann: Betriebsart, Hilfs-Sollwerte).
 _WEITERE_SCHREIBZIELE = ("entity_mode_select", "entity_setpoint_comfort", "entity_setpoint_setback")
