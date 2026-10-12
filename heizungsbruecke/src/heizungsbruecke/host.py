@@ -169,12 +169,14 @@ class HaHost:
     def trigger_source(self, manifest: ChannelManifest, worker: RegulationWorker) -> TriggerSource:
         assert self._effective is not None and self.store is not None  # load() lief vorher
         geraet = self._geraet
+        # eine Soll-Quelle fuer Start und Betrieb: scheitert das Angleichen beim Start, holt der Trigger es nach
+        quelle = HaSollQuelle(self._ha_api, self.soll_entity) if self.soll_entity else None
         client = geraet_trigger.build(
             manifest, self._effective, self._ha_api, worker, self.store, self.soll_entity,
             wunsch=lambda wert, herkunft, durch: geraet.wunsch(wert, herkunft=herkunft, durch=durch),
-            soll_quelle_aus=geraet.soll_quelle_aus)
-        if self._angleichen:
-            self._soll_entity_angleichen()
+            soll_quelle_aus=geraet.soll_quelle_aus, quelle=quelle)
+        if self._angleichen and quelle is not None:
+            self._soll_entity_angleichen(quelle)
         raum = self.raum
         assert raum is not None
 
@@ -186,12 +188,14 @@ class HaHost:
         worker.schedule(0, Event(EV_RAUM))
         return client
 
-    def _soll_entity_angleichen(self) -> None:
+    def _soll_entity_angleichen(self, quelle: HaSollQuelle) -> None:
         """Spec 5c 1.3 "Bedienung angleichen" beim Start (Gateway: _angleichen): Thermostat, HA und Portal zeigen
         denselben Wert. Nur wenn die Entity etwas anderes zeigt und nicht aus ist (HVAC off oder Frostschutz-Stellung bis
         FROSTSCHUTZ_BIS = Soll-Quelle aus: keine Bedienung an die Quelle, Spec 5b 3.2; beim Wiedereinschalten gleicht
         der Soll-Eingang an). Danach gilt das Echo-Fenster; der
-        zuletzt gezeigte Wert zaehlt als veraltet. Laeuft im Hauptthread vor dem Worker und vor dem Trigger-Client."""
+        zuletzt gezeigte Wert zaehlt als veraltet. Scheitert das Schreiben, holt der Trigger es beim Verbinden nach
+        (quelle.angleichen_offen, geraet_trigger.build). Laeuft im Hauptthread vor dem Worker und vor dem
+        Trigger-Client."""
         assert self.store is not None and self.soll_entity is not None
         entity_id = self.soll_entity.partition("::")[0]
         if not entity_id.startswith("climate."):
@@ -201,7 +205,6 @@ class HaHost:
                 return
         except Exception as error:
             logger.warning("HVAC-Modus der Soll-Entity nicht gelesen (%s)", type(error).__name__)
-        quelle = HaSollQuelle(self._ha_api, self.soll_entity)
         angezeigt = quelle.angezeigt()
         if angezeigt == self.store.value:
             return

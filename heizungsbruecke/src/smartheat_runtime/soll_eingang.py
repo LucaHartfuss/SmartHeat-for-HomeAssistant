@@ -50,6 +50,11 @@ class SollEingang:
         worker.register(EV_TARGET_INPUT, self._on_target_input)
         worker.register(EV_SOLL_MODUS, self._on_mode)
 
+    @property
+    def aus(self) -> bool:
+        """Soll-Quelle aus (Modus off oder Frostschutz-Stellung): kein Wunsch, keine Bedienung an die Quelle."""
+        return bool(self._aus)
+
     def _schreiben(self, value: float, veraltet: float | None = None) -> None:
         if self._quelle is not None and self._quelle.schreiben(value):
             self._store.note_own_write(veraltet=veraltet)

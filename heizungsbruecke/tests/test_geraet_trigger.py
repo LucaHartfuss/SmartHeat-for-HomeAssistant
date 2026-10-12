@@ -482,3 +482,126 @@ def test_an_unavailable_target_entity_is_logged_once_without_its_content(tmp_pat
     zeilen = [r.getMessage() for r in caplog.records if "keinen Zahlenwert" in r.getMessage()]
     assert len(zeilen) == 2 and all(CLIMATE in z for z in zeilen)
     assert not any("unavailable" in z or "unknown" in z for z in zeilen)
+
+
+# --- Gescheiterte Angleichung (Final-Review I1): nachholen statt den alten Wert als Wunsch zu nehmen ---
+
+def _portal_waehrend_ha_down(a, wert=22.5):
+    a.ha.write_error = RuntimeError("HA Core startet")
+    a.worker.post(Event(EV_TARGET_INPUT, {"value": wert, "source": "portal"}))
+    a.run()
+    assert a.store.value == wert and a.ha.writes == []
+
+
+def test_a_portal_operation_whose_alignment_failed_survives_the_reconnect(tmp_path):
+    """Reproduktion des Final-Reviews: Speicher 21, Portal 22.5 waehrend HA neu startet, das Lesen beim Verbinden sieht
+    21. Vorher: Speicher wieder 21 und ein Wunsch (21.0, soll_entity). Jetzt: die Angleichung wird nachgeholt."""
+    a = Aufbau(tmp_path)
+    _portal_waehrend_ha_down(a)
+    a.ha.write_error = None
+    a.client._on_connected()
+    a.run()
+    assert a.ha.writes == [(SOLL, 22.5)] and a.ha.states[SOLL] == 22.5
+    assert a.store.value == 22.5 and a.store.source == "portal" and a.wuensche == []
+
+
+def test_after_the_owed_write_a_stale_report_is_no_wish_but_a_real_user_change_is(tmp_path):
+    a = Aufbau(tmp_path)
+    _portal_waehrend_ha_down(a)
+    a.ha.write_error = None
+    a.ha.states[SOLL] = 21.0
+    a.client._on_connected()
+    a.run()
+    a.ha.states[SOLL] = 21.0  # das Thermostat zeigt kurz noch den alten Wert
+    a.soll_aenderung(21.0)
+    a.run()
+    a.clock.advance(70)  # nach dem Echo-Fenster: das Nachlesen sieht noch 21 (Schreibbefehl offen, veraltet)
+    a.run()
+    assert a.wuensche == [] and a.store.value == 22.5
+    a.ha.states[SOLL] = 23.0
+    a.soll_aenderung(23.0, {"user_id": "u1"})  # echte Bedienung nach der gelungenen Angleichung
+    a.run()
+    assert a.wuensche == [(23.0, "soll_entity", "nutzer")] and a.store.value == 23.0
+
+
+def test_the_watch_retries_the_owed_alignment_until_it_succeeds(tmp_path):
+    a = Aufbau(tmp_path)  # WebSocket nie verbunden: die Wache liest im Takt des lokalen Checks
+    _portal_waehrend_ha_down(a)
+    a.clock.advance(300)
+    a.run()  # HA weiter nicht beschreibbar: kein Wunsch, Speicher bleibt
+    assert a.ha.writes == [] and a.wuensche == [] and a.store.value == 22.5
+    a.ha.write_error = None
+    a.clock.advance(300)
+    a.run()
+    assert a.ha.writes == [(SOLL, 22.5)] and a.wuensche == [] and a.store.value == 22.5
+    a.clock.advance(300)
+    a.run()  # angeglichen: die Wache schreibt nicht erneut
+    assert a.ha.writes == [(SOLL, 22.5)]
+
+
+def test_the_watch_retries_an_owed_alignment_also_while_connected(tmp_path, monkeypatch):
+    a = Aufbau(tmp_path)
+    monkeypatch.setattr(type(a.client), "connected", property(lambda self: True))
+    _portal_waehrend_ha_down(a)
+    a.ha.write_error = None
+    a.clock.advance(300)
+    a.run()
+    assert a.ha.writes == [(SOLL, 22.5)] and a.wuensche == [] and a.store.value == 22.5
+
+
+def test_a_report_of_the_old_value_while_the_alignment_is_owed_writes_again(tmp_path):
+    """Nach einem HA-Neustart meldet der Trigger den wiederhergestellten alten Wert (unavailable -> 21.0)."""
+    a = Aufbau(tmp_path)
+    _portal_waehrend_ha_down(a)
+    a.ha.write_error = None
+    a.soll_aenderung(21.0)
+    a.run()
+    assert a.ha.writes == [(SOLL, 22.5)] and a.wuensche == [] and a.store.value == 22.5
+
+
+def test_a_failed_write_back_of_a_clamped_wish_is_written_again_not_wished_back(tmp_path):
+    a = Aufbau(tmp_path)
+    a.ha.write_error = RuntimeError("HA Core startet")
+    a.ereignis(30.0, {"user_id": "u1"})  # lokal 30 -> begrenzt 25; das Zurueckschreiben scheitert
+    a.run()
+    assert a.store.value == 25.0 and a.wuensche == [(30.0, "smartheat_entity", "nutzer")]
+    a.ha.write_error = None
+    a.client._on_connected()  # die Entity zeigt noch 21
+    a.run()
+    assert a.ha.writes == [(SOLL, 25.0)] and a.store.value == 25.0
+    assert a.wuensche == [(30.0, "smartheat_entity", "nutzer")]
+
+
+def test_an_owed_alignment_is_not_written_to_a_thermostat_that_is_off_and_follows_when_it_is_on_again(tmp_path):
+    a = Aufbau(tmp_path)
+    _portal_waehrend_ha_down(a)
+    a.ha.write_error = None
+    a.ha.states[CLIMATE] = "off"
+    a.client._on_connected()
+    a.run()
+    assert a.ha.writes == [] and a.wuensche == [] and a.aus == [(True, 22.5)]
+    a.fire({"platform": "state", "entity_id": CLIMATE, "to_state": {"state": "heat"}})
+    a.run()  # wieder an: der Soll-Eingang gleicht an (wie bisher)
+    assert a.ha.writes == [(SOLL, 22.5)] and a.wuensche == [] and a.store.value == 22.5
+
+
+def test_an_owed_alignment_leaves_a_thermostat_in_frost_protection_alone(tmp_path):
+    """Frostschutz-Stellung (bis 7 °C) ist Soll-Quelle aus (Spec 5b 3.2): auch eine geschuldete Angleichung dreht den
+    bewusst heruntergestellten Heizkoerper nicht wieder hoch."""
+    a = Aufbau(tmp_path)
+    _portal_waehrend_ha_down(a)
+    a.ha.write_error = None
+    a.ha.states[SOLL] = 5.0
+    a.client._on_connected()
+    a.run()
+    assert a.ha.writes == [] and a.wuensche == [] and a.aus == [(True, 22.5)] and a.store.value == 22.5
+
+
+def test_a_sensor_target_never_owes_an_alignment(tmp_path):
+    a = Aufbau(tmp_path, soll="input_number.soll")
+    a.ha.states["input_number.soll"] = 21.0
+    a.worker.post(Event(EV_TARGET_INPUT, {"value": 22.5, "source": "portal"}))
+    a.run()
+    a.client._on_connected()  # nicht schreibbar: der gezeigte Wert ist eine Eingabe wie bisher
+    a.run()
+    assert a.ha.writes == [] and a.wuensche == [(21.0, "soll_entity", None)]

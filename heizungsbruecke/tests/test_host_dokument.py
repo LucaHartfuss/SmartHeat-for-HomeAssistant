@@ -122,6 +122,18 @@ def test_the_operation_is_written_to_the_entity_at_start_and_not_turned_into_a_w
     assert geraet.wuensche == [] and host.store.value == 21.5
 
 
+def test_a_failed_start_alignment_is_done_again_on_connect(env):
+    """Final-Review I1: scheitert das Angleichen beim Start (HA lehnt ab), holt das erste Verbinden es nach, statt den
+    alten Wert der Entity als Wunsch zu nehmen."""
+    env.ha.write_error = RuntimeError("HA lehnt ab")
+    host, geraet, worker, client = _climate_start(env, angezeigt=19.0, bedienung={"raum_soll": 21.5})
+    assert env.ha.writes == [] and host.store.echo_rest() == 0
+    env.ha.write_error = None
+    _erstes_lesen(env, worker, client, angezeigt=19.0)
+    assert env.ha.writes == [(CLIMATE_SOLL, 21.5)] and env.ha.states[CLIMATE_SOLL] == 21.5
+    assert geraet.wuensche == [] and host.store.value == 21.5 and host.store.echo_rest() > 0
+
+
 def test_an_operation_that_arrived_during_a_restart_wins_over_the_stored_value(env):
     host, geraet, worker, client = _climate_start(
         env, angezeigt=19.5, bedienung={"raum_soll": 22.0},

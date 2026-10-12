@@ -14,7 +14,7 @@ from heizungsbruecke.ha_trigger_client import HaTriggerClient
 from smartheat_runtime.debounce import ROOM_TARGET_DEBOUNCE_SECONDS
 from smartheat_runtime.options import local_check_interval
 from smartheat_runtime.runtime import EV_LOCAL_CHECK, EV_SOURCE_CONNECTED
-from smartheat_runtime.soll_eingang import EV_SOLL_MODUS, EV_TARGET_INPUT, SollEingang
+from smartheat_runtime.soll_eingang import EV_SOLL_MODUS, EV_TARGET_INPUT, FROSTSCHUTZ_BIS, SollEingang
 from smartheat_runtime.soll_speicher import SOURCE_LOKAL, SOURCE_THERMOSTAT, TargetStore
 from smartheat_runtime.worker import Event, RegulationWorker
 
@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 EV_SOLL_BERICHT = "ha_soll_bericht"
 EV_SOLL_LESEN = "ha_soll_lesen"
 EV_SOLL_NACHLESEN = "ha_soll_nachlesen"
+#: Intern: ein gezeigter Wert, waehrend eine gescheiterte Angleichung offen ist (build: Gescheiterte Angleichung).
+EV_SOLL_NACHHOLEN = "ha_soll_nachholen"
 #: Ersatz fuer den Trigger, solange der WebSocket getrennt ist (wie der Watchdog der Laufzeit): im Takt des lokalen Checks
 #: Modus und Soll der Soll-Entity lesen.
 EV_SOLL_WACHE = "ha_soll_wache"
@@ -91,11 +93,15 @@ def _wunschwert(value) -> float | None:
 
 
 class HaSollQuelle:
-    """Die Soll-Entity als Soll-Quelle (SollQuelle): schreibbar nur als Climate-Entity (Attribut temperature)."""
+    """Die Soll-Entity als Soll-Quelle (SollQuelle): schreibbar nur als Climate-Entity (Attribut temperature).
+    angleichen_offen: das letzte Schreiben an die Climate-Entity ist gescheitert (HA Core startet, HA lehnt ab), die
+    Entity zeigt also nicht das geltende Soll; bis zum naechsten gelungenen Schreiben holt build() die Angleichung nach,
+    statt einen gezeigten Wert als Eingabe zu nehmen (Final-Review I1). Nur Worker-Thread (und der Start davor)."""
 
     def __init__(self, ha_api, soll_ref: str) -> None:
         self._ha, self._ref = ha_api, soll_ref
         self._entity, _ = _split(soll_ref)
+        self.angleichen_offen = False
 
     def schreiben(self, value: float) -> bool:
         if not self._entity.startswith("climate."):
@@ -104,7 +110,9 @@ class HaSollQuelle:
             self._ha.set_climate_temperature(self._entity, value)
         except Exception as error:
             logger.warning("Soll-Entity nicht angeglichen (%s)", type(error).__name__)
+            self.angleichen_offen = True
             return False
+        self.angleichen_offen = False
         return True
 
     def angezeigt(self) -> float | None:
@@ -116,7 +124,7 @@ class HaSollQuelle:
 
 
 def build(manifest, options: dict, ha_api, worker: RegulationWorker, store: TargetStore, soll_ref: str | None, *,
-          wunsch, soll_quelle_aus) -> HaTriggerClient:
+          wunsch, soll_quelle_aus, quelle: HaSollQuelle | None = None) -> HaTriggerClient:
     """soll_ref: die echte Soll-Entity aus der Konfiguration (nicht manifest.refs["room_target"], das ist SOLL_REF).
     Der Bericht der Soll-Entity (EV_SOLL_BERICHT) geht als Eingabe der Soll-Quelle in den Soll-Eingang. Faellt er in
     das Echo-Fenster nach dem eigenen Schreiben, verwirft ihn der Soll-Speicher; HA meldet einen unveraenderten Wert
@@ -124,10 +132,20 @@ def build(manifest, options: dict, ha_api, worker: RegulationWorker, store: Targ
     durch denselben Weg (Pending-/Stale-Logik entscheidet). Bei jeder (Re-)Verbindung liest EV_SOLL_LESEN Modus und Soll
     (Aenderungen waehrend der Trennung, Thermostat schon aus beim Start). Solange der WebSocket getrennt ist, liest
     EV_SOLL_WACHE im Takt des lokalen Checks dasselbe (bis 0.36 las der Watchdog den Raum-Soll direkt aus HA; jetzt kommt
-    er nur ueber den Soll-Eingang in den Soll-Speicher). Nur HA; das Gateway bleibt unberuehrt."""
+    er nur ueber den Soll-Eingang in den Soll-Speicher). Nur HA; das Gateway bleibt unberuehrt.
+
+    Gescheiterte Angleichung (quelle.angleichen_offen: Bedienung vom Server, Angleichen beim Start, Zurueckschreiben
+    eines Wunschs): jeder gezeigte Wert (Bericht, Nachlesen, Lesen beim Verbinden und in der Wache; die Wache liest dann
+    auch bei verbundenem WebSocket) holt sie nach (EV_SOLL_NACHHOLEN), statt Eingabe zu werden: das geltende Soll an
+    die Entity, der gezeigte Wert gilt als veraltet. Erst nach dem gelungenen Schreiben zaehlt eine Bedienung an der
+    Entity wieder als Wunsch; eine Drehung am Thermostat waehrend desselben Ausfalls verliert gegen die neuere
+    Bedienung. Ausnahme Soll-Quelle aus (Modus off, Frostschutz-Stellung): der Wert ist Eingabe wie bisher, beim
+    Wiedereinschalten gleicht der Soll-Eingang an. quelle: die Soll-Quelle, die auch das Angleichen beim Start nutzt
+    (host.HaHost); ohne baut build sie selbst."""
     pruefe_soll_ref(soll_ref)
-    quelle = HaSollQuelle(ha_api, soll_ref) if soll_ref else None
-    SollEingang(worker, store, quelle, wunsch=wunsch, soll_quelle_aus=soll_quelle_aus, entprellen_s=0)
+    if quelle is None and soll_ref:
+        quelle = HaSollQuelle(ha_api, soll_ref)
+    eingang = SollEingang(worker, store, quelle, wunsch=wunsch, soll_quelle_aus=soll_quelle_aus, entprellen_s=0)
     soll_entity, soll_attribute = _split(soll_ref) if soll_ref else (None, None)
     climate = soll_entity is not None and soll_entity.startswith("climate.")
     triggers: list[dict] = []
@@ -157,6 +175,30 @@ def build(manifest, options: dict, ha_api, worker: RegulationWorker, store: Targ
         worker.post(Event(EV_TARGET_INPUT, {"value": wert, "source": SOURCE_THERMOSTAT, "herkunft": HERKUNFT_SOLL,
                                             "durch": durch}))
 
+    def gezeigt(wert: float, durch: str | None) -> bool:
+        """Ein gezeigter Wert der Soll-Entity; True, wenn eine offene Angleichung ihn uebernimmt (dann in der
+        Warteschlange nach einem schon gemeldeten Modus), sonst False (der Aufrufer nimmt ihn als Eingabe)."""
+        if quelle is None or not quelle.angleichen_offen:
+            return False
+        worker.post(Event(EV_SOLL_NACHHOLEN, {"value": wert, "durch": durch}))
+        return True
+
+    def on_nachholen(event: Event) -> None:
+        wert, durch = event.data["value"], event.data["durch"]
+        assert quelle is not None  # nur aus gezeigt()
+        if not quelle.angleichen_offen:  # inzwischen angeglichen: der Wert ist eine Eingabe wie jeder andere
+            eingabe(wert, durch)
+            return
+        if eingang.aus or wert <= FROSTSCHUTZ_BIS:  # Soll-Quelle aus: wie bisher, der Soll-Eingang gleicht beim
+            quelle.angleichen_offen = False  # Wiedereinschalten an; Frostschutz bleibt unangetastet (Spec 5b 3.2)
+            eingabe(wert, durch)
+            return
+        if wert == store.value:  # zeigt das Soll doch (HA hat es trotz Fehler uebernommen)
+            quelle.angleichen_offen = False
+            return
+        if quelle.schreiben(store.value):
+            store.note_own_write(veraltet=wert)
+
     def modus(mode) -> None:
         if isinstance(mode, str) and mode not in _MODI_OHNE_AUSSAGE:
             worker.post(Event(EV_SOLL_MODUS, {"mode": mode}))
@@ -166,6 +208,8 @@ def build(manifest, options: dict, ha_api, worker: RegulationWorker, store: Targ
             modus(event.data["mode"])
             return
         wert, durch = event.data["value"], event.data["durch"]
+        if gezeigt(wert, durch):
+            return
         eingabe(wert, durch)
         rest = store.echo_rest()
         if rest > 0:
@@ -183,7 +227,8 @@ def build(manifest, options: dict, ha_api, worker: RegulationWorker, store: Targ
         wert = quelle.angezeigt() if quelle is not None else None
         if wert is not None:
             durch = letzter_bericht[1] if letzter_bericht[0] == wert else None
-            eingabe(wert, durch)
+            if not gezeigt(wert, durch):
+                eingabe(wert, durch)
         letzter_bericht[:] = [None, None]
 
     def on_lesen(event: Event) -> None:
@@ -195,10 +240,11 @@ def build(manifest, options: dict, ha_api, worker: RegulationWorker, store: Targ
             except Exception as error:
                 logger.warning("HVAC-Modus der Soll-Entity nicht gelesen (%s)", type(error).__name__)
         wert = quelle.angezeigt()
-        if wert is not None:
+        if wert is not None and not gezeigt(wert, None):
             eingabe(wert, None)
 
     worker.register(EV_SOLL_BERICHT, on_bericht)
+    worker.register(EV_SOLL_NACHHOLEN, on_nachholen)
     worker.register(EV_SOLL_NACHLESEN, on_nachlesen)
     worker.register(EV_SOLL_LESEN, on_lesen)
 
@@ -266,7 +312,7 @@ def build(manifest, options: dict, ha_api, worker: RegulationWorker, store: Targ
 
     def on_wache(event: Event) -> None:
         worker.schedule(wache_s, Event(EV_SOLL_WACHE))  # zuerst: der Takt darf nie abreissen
-        if not client.connected:
+        if not client.connected or (quelle is not None and quelle.angleichen_offen):
             on_lesen(event)
 
     worker.register(EV_SOLL_WACHE, on_wache)
