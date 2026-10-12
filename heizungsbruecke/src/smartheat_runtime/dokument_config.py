@@ -13,6 +13,7 @@ from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime import entitlement, options
 from smartheat_runtime.options import ConfigError
 from smartheat_runtime.runtime_config import BootInfo, RuntimeConfig
+from smartheat_runtime.soll_speicher import read_json, write_json
 from smartheat_runtime.windows import validate_daily_trigger_time
 
 FELDER = ("anlage", "profil", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo", "intervalle")
@@ -82,3 +83,20 @@ def laufzeit_relevant(alt, neu) -> bool:
     alt = alt if isinstance(alt, Mapping) else {}
     neu = neu if isinstance(neu, Mapping) else {}
     return any(alt.get(key) != neu.get(key) for key in LAUFZEIT_FELDER)
+
+
+def abgemeldet(pfad: Path, konfiguration) -> bool:
+    """Abmelde-Markierung (Befehl sign_off) fuer die Anlage der aktuellen Konfiguration? (Gateway und HA-Add-on)"""
+    marker = read_json(pfad)
+    anlage = konfiguration.get("anlage") if isinstance(konfiguration, Mapping) else None
+    return isinstance(marker, dict) and anlage is not None and marker.get("anlage") == anlage
+
+
+def abmelden(pfad: Path, anlage: str) -> bool:
+    """Markierung setzen (Modus 0600); True, wenn sie neu ist (dann startet die Laufzeit neu). Die Laufzeit
+    importiert den Geraetekern nicht, die atomaren Datei-Helfer stehen in soll_speicher."""
+    marker = read_json(pfad)
+    if isinstance(marker, dict) and marker.get("anlage") == anlage:
+        return False
+    write_json(pfad, {"anlage": anlage}, mode=0o600)
+    return True

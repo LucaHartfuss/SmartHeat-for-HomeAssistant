@@ -44,7 +44,7 @@ def is_valid_portal_target(value) -> bool:
     return im_bedienbereich(value)
 
 
-def _read_json(path: Path):
+def read_json(path: Path):
     """Inhalt oder None: fehlend oder kaputt (Stromausfall) gilt als leer, nie als Absturz."""
     try:
         return json.loads(path.read_text())
@@ -55,8 +55,8 @@ def _read_json(path: Path):
         return None
 
 
-def _write_json(path: Path, data) -> None:
-    """Atomar (temporaere Datei, fsync, rename, fsync des Ordners), Modus 0644, ohne Symlinks zu folgen: der Ordner wird
+def write_json(path: Path, data, *, mode: int = 0o644) -> None:
+    """Atomar (temporaere Datei, fsync, rename, fsync des Ordners), Modus 0644 (Abmelde-Markierung: 0600), ohne Symlinks zu folgen: der Ordner wird
     mit O_NOFOLLOW geoeffnet, eine alte temporaere Datei per dir_fd entfernt, die neue mit O_EXCL|O_NOFOLLOW angelegt
     (der Host-Dienst schreibt in Ordner, in denen ein Container Symlinks anlegen kann; wie gateway/files.py)."""
     payload = json.dumps(data, ensure_ascii=False, sort_keys=True).encode()
@@ -66,9 +66,9 @@ def _write_json(path: Path, data) -> None:
         tmp = path.name + ".tmp"
         with contextlib.suppress(FileNotFoundError):
             os.unlink(tmp, dir_fd=dir_fd)
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644, dir_fd=dir_fd)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode, dir_fd=dir_fd)
         try:
-            os.fchmod(fd, 0o644)
+            os.fchmod(fd, mode)
             os.write(fd, payload)
             os.fsync(fd)
         finally:
@@ -90,7 +90,7 @@ class TargetStore:
         # (geschrieben, veraltete Werte, Frist) - nur im Speicher
         self._pending: tuple[float, frozenset[float], float] | None = None
         self._before: float | None = None  # Wert vor der letzten Aenderung (= was das Thermostat noch zeigt)
-        stored = _read_json(path)
+        stored = read_json(path)
         if isinstance(stored, dict) and is_plausible(stored.get("value"), ROOM_TEMP_RANGE) and stored.get("source") in _SOURCES:
             self.value, self.source = float(stored["value"]), stored["source"]
         else:
@@ -171,4 +171,4 @@ class TargetStore:
         return True
 
     def _write(self) -> None:
-        _write_json(self._path, {"value": self.value, "source": self.source, "ts": self._now_iso()})
+        write_json(self._path, {"value": self.value, "source": self.source, "ts": self._now_iso()})

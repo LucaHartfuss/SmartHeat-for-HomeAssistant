@@ -120,3 +120,13 @@ def test_the_own_mqtt_client_needs_a_transport(clock):
     config = dc.runtime_config(KONF, entitlement_path=Path("/tmp/e.json"), abo_source=lambda: entitlement.ACTIVE)
     with pytest.raises(ValueError, match="mqtt_factory"):
         mqtt_link.create_mqtt_client(config, RegulationWorker(clock=clock))
+
+
+def test_the_sign_off_marker_binds_to_the_installation_and_is_private(tmp_path):
+    pfad = tmp_path / "runtime" / "abgemeldet.json"
+    assert not dc.abgemeldet(pfad, KONF) and not dc.abgemeldet(pfad, None)
+    assert dc.abmelden(pfad, "kunde3") is True
+    assert dc.abmelden(pfad, "kunde3") is False  # erneute Zustellung: nichts Neues
+    assert dc.abgemeldet(pfad, KONF) and not dc.abgemeldet(pfad, {**KONF, "anlage": "andere"})
+    assert not dc.abgemeldet(pfad, None) and pfad.stat().st_mode & 0o777 == 0o600
+    assert dc.abmelden(pfad, "andere") is True and not dc.abgemeldet(pfad, KONF)

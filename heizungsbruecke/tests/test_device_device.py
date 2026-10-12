@@ -7,6 +7,7 @@ import time
 import pytest
 from device_helpers import GeraeteCa, zertifikat_fuer
 
+from smartheat_core import config_check
 from smartheat_device import bootstrap, commands, device, identity, wire
 from smartheat_runtime.runtime import EV_MQTT_CONNECTED, EV_SETPOINTS
 from smartheat_runtime.worker import RegulationWorker
@@ -262,6 +263,83 @@ def test_a_rejected_configuration_keeps_the_old_one_and_tells_the_display(tmp_pa
                                                          "text": "Heizkreis 7 gibt es nicht."}
     assert world.host.konfigurationen == []
     assert world.host.anzeigen_liste[-1].konfiguration_abgelehnt == "Heizkreis 7 gibt es nicht."
+
+
+class UnpruefbarHost(FakeHost):
+    """Der Treiber-Rueckruf kann nicht entscheiden (HA aus), solange `unpruefbar` gesetzt ist."""
+    unpruefbar = True
+    aufrufe = 0
+
+    def treiber_pruefen(self, bindung):
+        self.aufrufe += 1
+        if self.unpruefbar:
+            raise config_check.NichtPruefbar
+        return self.treiber_text
+
+
+def test_an_unverifiable_configuration_is_neither_taken_nor_refused_and_is_checked_again_later(tmp_path):
+    """Spec 5c 1.3: HA nicht erreichbar -> keine Ablehnung (der Server stellt eine abgelehnte Version nicht erneut zu),
+    das Geraet haelt das Dokument zurueck und prueft nach dem Wiederholabstand erneut, ohne neue Zustellung."""
+    world = World(tmp_path, UnpruefbarHost())
+    world.verbinden()
+    world.empfangen("down/config", _konfiguration())
+    assert world.link.of("up/result") == [] and world.host.konfigurationen == []
+    assert world.device.documents.version("konfiguration") == 0 and world.device.documents.ablehnung("konfiguration") is None
+    world.clock.now += device.PRUEFUNG_WIEDERHOLEN_SECONDS - 1
+    world.device.schritt()
+    assert world.host.aufrufe == 1  # noch zu frueh
+    world.clock.now += 1
+    world.device.schritt()
+    assert world.host.aufrufe == 2 and world.link.of("up/result") == []  # HA noch weg: weiter zurueckgehalten
+    world.host.unpruefbar = False
+    world.clock.now += device.PRUEFUNG_WIEDERHOLEN_SECONDS
+    world.device.schritt()
+    assert world.link.of("up/result") == [{"schema": 1, "dokument": "konfiguration", "version": 1, "ok": True}]
+    assert len(world.host.konfigurationen) == 1 and world.host.software == [None]
+    calls = world.host.aufrufe
+    world.clock.now += 10 * device.PRUEFUNG_WIEDERHOLEN_SECONDS
+    world.device.schritt()
+    assert world.host.aufrufe == calls and len(world.link.of("up/result")) == 1  # erledigt, kein weiterer Versuch
+
+
+def test_an_unverifiable_configuration_that_gets_refused_later_says_so_once(tmp_path):
+    world = World(tmp_path, UnpruefbarHost())
+    world.verbinden()
+    world.empfangen("down/config", _konfiguration())
+    world.host.unpruefbar, world.host.treiber_text = False, "Heizkreis 7 gibt es nicht."
+    world.clock.now += device.PRUEFUNG_WIEDERHOLEN_SECONDS
+    world.device.schritt()
+    (result,) = world.link.of("up/result")
+    assert result["ok"] is False and result["error"]["grund"] == "treiber_parameter"
+
+
+def test_a_redelivery_or_a_newer_version_replaces_the_held_configuration(tmp_path):
+    world = World(tmp_path, UnpruefbarHost())
+    world.verbinden()
+    world.empfangen("down/config", _konfiguration(version=1))
+    world.link.trennen()
+    world.verbinden()  # nach dem Neuverbinden stellt der Server dieselbe Version erneut zu
+    world.host.unpruefbar = False
+    world.empfangen("down/config", _konfiguration(version=2, tagestick="13:00"))
+    assert [r["version"] for r in world.link.of("up/result")] == [2]
+    world.clock.now += 10 * device.PRUEFUNG_WIEDERHOLEN_SECONDS
+    world.device.schritt()
+    assert [r["version"] for r in world.link.of("up/result")] == [2]  # Version 1 wurde ersetzt, nicht nachgeprueft
+    assert world.device.documents.version("konfiguration") == 2
+
+
+def test_a_held_configuration_is_only_rechecked_while_connected(tmp_path):
+    world = World(tmp_path, UnpruefbarHost())
+    world.verbinden()
+    world.empfangen("down/config", _konfiguration())
+    world.host.unpruefbar = False
+    world.link.trennen()
+    world.clock.now += 10 * device.PRUEFUNG_WIEDERHOLEN_SECONDS
+    world.device.schritt()
+    assert world.host.konfigurationen == []
+    world.link.verbinden()
+    world.device.schritt()
+    assert world.link.of("up/result") == [{"schema": 1, "dokument": "konfiguration", "version": 1, "ok": True}]
 
 
 def test_software_reaches_the_host_even_when_the_device_is_too_old(tmp_path):

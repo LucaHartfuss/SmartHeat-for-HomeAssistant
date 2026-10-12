@@ -59,6 +59,12 @@ TEXT_MAX_CHARS = 200
 TreiberPruefung = Callable[[dict], str | None]
 
 
+class NichtPruefbar(Exception):
+    """Der Treiber-Rueckruf kann jetzt nicht entscheiden (HA nicht erreichbar, faehrt hoch): weder uebernehmen noch
+    ablehnen. Der Server stellt eine abgelehnte Version nie erneut zu; das Geraet haelt das Dokument deshalb zurueck
+    und prueft spaeter erneut (smartheat_device.device). Der Text gehoert nicht in Logs (Regel 6)."""
+
+
 @dataclass(frozen=True)
 class Ablehnung:
     grund: str
