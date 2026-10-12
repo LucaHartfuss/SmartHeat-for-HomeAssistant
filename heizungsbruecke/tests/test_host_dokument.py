@@ -8,6 +8,7 @@ from test_runtime import OPTIONS, env  # noqa: F401 - env ist eine Fixture
 from heizungsbruecke import config, dokument
 from heizungsbruecke.host import HaHost
 from smartheat_runtime import app
+from smartheat_runtime.app import StartFailure
 from smartheat_runtime.ports import SourceUnavailable
 from smartheat_runtime.runtime import Runtime
 
@@ -72,3 +73,24 @@ def test_without_a_valid_start_value_the_target_defaults(env):
                   clock=env.clock)
     host.load()
     assert host.signals.get_state(dokument.SOLL_REF) == 20.0
+
+
+def test_a_document_without_a_required_role_fails_the_start_instead_of_raising_a_key_error(env):
+    options = {**OPTIONS, "lever_set": "weishaupt_wwp"}  # Weishaupt braucht mode_select und Sollwerte, die fehlen
+    host = HaHost(FakeGeraet(konfiguration_aus_optionen(options)), env.ha, clock=env.clock)
+    with pytest.raises(StartFailure) as error:
+        host.load()
+    assert "fehlt die Zuordnung" in error.value.grund
+
+
+def test_an_unknown_lever_set_fails_the_start(env):
+    host = HaHost(FakeGeraet(konfiguration_aus_optionen({**OPTIONS, "lever_set": "gibt_es_nicht"})), env.ha,
+                  clock=env.clock)
+    with pytest.raises(StartFailure):
+        host.load()
+
+
+def test_the_runtime_idles_with_a_config_error_for_a_missing_role(env):
+    geraet = FakeGeraet(konfiguration_aus_optionen({**OPTIONS, "lever_set": "weishaupt_wwp"}))
+    bridge = app.start(HaHost(geraet, env.ha, clock=env.clock), env.clock, mqtt_factory=geraet.kanal)
+    assert not isinstance(bridge, Runtime)

@@ -99,6 +99,13 @@ def _lokal(options: dict, lever_set: str, soll: str | None) -> str | None:
     return None
 
 
+def lokal_pruefen(konfiguration) -> str | None:
+    """Der Teil ohne HA fuer das ganze Dokument: Kundentext oder None. Wirft ConfigError bei unbekanntem Hebelsatz
+    (HaHost.load macht daraus einen Konfigurationsfehler, damit der Start nie an einem fehlenden Schluessel stirbt)."""
+    options = optionen(konfiguration)
+    return _lokal(options, config.lever_set_id(options), soll_entity(konfiguration))
+
+
 def _mit_ha(konfiguration, options: dict, lever_set: str, soll: str, ha_api) -> str | None:
     if not ha_api.is_reachable():  # faehrt HA hoch, fehlen die Entities der Integration noch (404): kein Urteil
         raise NichtPruefbar

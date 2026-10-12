@@ -103,12 +103,18 @@ class HaHost:
     def load(self) -> Loaded:
         options = dokument.optionen(self._konfiguration)
         try:
+            # Pflichtrollen und Schreibregeln des Hebelsatzes zuerst: _wait_for_required_entities und die Hilfssensoren
+            # indizieren die Optionen, ein fehlender Schluessel waere sonst ein KeyError statt eines Konfigurationsfehlers.
+            # Muster der Raumfuehler/Aussenquelle/Batterien/Handys und die Hinweise prueft config_check (Task 2) bzw. der
+            # Server, nicht der Host.
+            text = dokument.lokal_pruefen(self._konfiguration)
+            if text:
+                raise config.ConfigError(text)
             runtime = dokument_config.runtime_config(
                 self._konfiguration, entitlement_path=config.ENTITLEMENT_PATH, abo_source=self._geraet.abo_status)
             error = config.validate(options)
             if error:
                 raise config.ConfigError(error)
-            config.local_safety(options)
             _wait_for_required_entities(self._ha_api, options)
             derived = _ensure_derived_sensors_with_retry(self._ha_api, options)
             manifest = build_manifest(options, derived.entity_ids, config.lever_set_id(options))

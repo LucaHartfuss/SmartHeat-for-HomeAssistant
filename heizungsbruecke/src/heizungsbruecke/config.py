@@ -6,7 +6,7 @@ import logging
 import re
 from pathlib import Path
 
-from smartheat_runtime.options import (  # noqa: F401  (Rueck-Import: config.X bleibt Vertrag fuer Host, Tests und Contract-Check)
+from smartheat_runtime.options import (  # noqa: F401  (Rueck-Import: der Host und dokument lesen diese Namen als config.X)
     DEFAULT_LEVER_SET,
     ConfigError,
     binding_description,
