@@ -19,3 +19,21 @@ class SupervisorApi:
 
     def host_info(self) -> dict:
         return self._get("/host/info")
+
+    def discovery_anmelden(self, config: dict) -> str:
+        """POST /discovery (Dienst smartheat); Antwort: UUID der Meldung. Ob HA daraufhin den Flow der Integration
+        startet, bestaetigt die Probe auf einer echten HA-OS-Instanz (W Teil A, noch offen)."""
+        response = requests.post(f"{self._base}/discovery", json={"service": "smartheat", "config": config},
+                                 headers=self._headers, timeout=TIMEOUT_SECONDS)
+        response.raise_for_status()
+        body = response.json()
+        data = body.get("data") if isinstance(body, dict) else None
+        uuid = data.get("uuid") if isinstance(data, dict) else None
+        if not isinstance(uuid, str):
+            raise ValueError("Discovery ohne UUID beantwortet")
+        return uuid
+
+    def discovery_entfernen(self, uuid: str) -> None:
+        response = requests.delete(f"{self._base}/discovery/{uuid}", headers=self._headers, timeout=TIMEOUT_SECONDS)
+        if response.status_code not in (200, 404):
+            response.raise_for_status()

@@ -6,7 +6,8 @@ laufzeitrelevante neue Konfiguration fordert einen Neustart an (EV_RELOAD im Reg
 auf leer markiert das Aufraeumen (A4-07). Eine neue Bedienung geht als Soll-Eingang (portal) an den Worker, der
 Soll-Eingang schreibt sie in den Soll-Speicher und gleicht die Soll-Entity an; kommt sie vor dem Binden, stellt
 worker_binden die letzte nach. Status (runtime_status_event, Task 7) und Raum (raum_merken, HaHost) legt der Worker-Thread
-hier ab, der Geraete-Thread liest sie fuer up/status."""
+hier ab, der Geraete-Thread liest sie fuer up/status. anzeigen meldet Geraete-ID, Uebernahmestand und Code an die
+Supervisor-Discovery (discovery.Discovery)."""
 import logging
 import threading
 import time
@@ -53,6 +54,8 @@ class HaDeviceHost:
         self._ha, self._supervisor, self._clock = ha_api, supervisor, clock
         self.device = None  # smartheat_device.device.Device, nach dem Anlegen per verbinden()
         self.status_sink = None  # Task 7/9: GeraetStatus (StatusSink der Laufzeit und Anzeige)
+        self.discovery = None  # Task 9: discovery.Discovery (Supervisor-Meldung, Task 8)
+        self.claim_code: Callable[[], str | None] = lambda: None  # Task 9: Uebernahme-Code des Geraets
         self.letzte_anzeige: Anzeige | None = None
         #: blockierende HA-Aufrufe der Inventur neben dem Geraete-Thread; main() stoppt ihn (beenden)
         self.hintergrund = Hintergrund()
@@ -191,6 +194,12 @@ class HaDeviceHost:
                 sink.anzeige(anzeige)
             except Exception as error:
                 logger.warning("Status-Ereignis nicht gesendet (%s)", type(error).__name__)
+        if self.discovery is not None and self.device is not None:
+            # sendet nur bei Aenderung (und drosselt Wiederholungen nach Fehlern): ein Aufruf je Takt ist billig
+            try:
+                self.discovery.aktualisieren(self.device.identity.device_id, anzeige.device_state, self.claim_code())
+            except Exception as error:
+                logger.warning("Discovery nicht aktualisiert (%s)", type(error).__name__)
 
     # --- Befehle ---
 

@@ -337,6 +337,37 @@ def test_display_goes_to_the_status_sink_and_never_raises(tmp_path, monkeypatch,
     assert "Status-Ereignis nicht gesendet (RuntimeError)" in caplog.text and "weg" not in caplog.text
 
 
+class _Discovery:
+    def __init__(self, error=None):
+        self.calls, self.error = [], error
+
+    def aktualisieren(self, geraet_id, zustand, claim_code):
+        self.calls.append((geraet_id, zustand, claim_code))
+        if self.error:
+            raise self.error
+
+
+def test_display_reports_to_the_discovery_with_id_state_and_code(tmp_path, monkeypatch):
+    host, device, _ = _host(tmp_path, monkeypatch)
+    device.identity = type("I", (), {"device_id": "shg-a"})()
+    host.anzeigen(Anzeige("startet", False, "nicht_uebernommen", False, (), (), None))  # ohne Discovery: nichts
+    host.discovery = _Discovery()
+    host.claim_code = lambda: "ABCDEFGHIJKL"
+    host.anzeigen(Anzeige("startet", False, "nicht_uebernommen", False, (), (), None))
+    host.anzeigen(Anzeige("regelt", True, None, True, (), (), None))
+    assert host.discovery.calls == [("shg-a", "nicht_uebernommen", "ABCDEFGHIJKL"), ("shg-a", None, "ABCDEFGHIJKL")]
+
+
+def test_a_failing_discovery_never_breaks_the_display(tmp_path, monkeypatch, caplog):
+    host, device, _ = _host(tmp_path, monkeypatch)
+    device.identity = type("I", (), {"device_id": "shg-a"})()
+    host.discovery = _Discovery(error=RuntimeError("geheim"))
+    anzeige = Anzeige("regelt", True, "uebernommen", True, (), (), None)
+    host.anzeigen(anzeige)
+    assert host.letzte_anzeige == anzeige
+    assert "Discovery nicht aktualisiert (RuntimeError)" in caplog.text and "geheim" not in caplog.text
+
+
 def test_runtime_status_and_room(tmp_path, monkeypatch):
     host, _, _ = _host(tmp_path, monkeypatch)
     assert host.runtime_status() is None and host.raum() is None
