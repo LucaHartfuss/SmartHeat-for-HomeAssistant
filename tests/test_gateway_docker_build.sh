@@ -3,7 +3,8 @@
 # 0.6.0 Spec 5b 5.3, Plan 5b D2 Task 10): ein Gateway-Container runtime (Geraetekern, Laufzeit, Diagnoseseite). Der
 # Geraetekern bootstrappt beim Fake-Bootstrap (Test-CA signiert den CSR) und verbindet mit dem Fake-Broker (TLS,
 # Client-Zertifikat, ACL wie die Geraete-Policy), up/hello kommt dort an; Seite und /healthz antworten mit
-# Serverkontakt, Zustand "wartet_auf_einrichtung" und Uebernahme-Code; die Laufzeit ruht "nicht eingerichtet".
+# Serverkontakt und Zustand "wartet_auf_einrichtung", ohne Uebernahme-Code (uebernommen, Spec 5c F1); die Laufzeit
+# ruht "nicht eingerichtet".
 # Zigbee2MQTT (gleiche uid wie das Gateway) darf die vom Init-Schritt geschriebene configuration.yaml lesen und
 # ersetzen; der lokale Bus verlangt Anmeldung, die ACL laesst nur Zigbee2MQTT-Topics zu; runtime schreibt data/device
 # (keine Masken mehr) und hat eine Stopp-Frist ueber JOIN_SECONDS. docker stop trennt den Link sauber (MQTT-DISCONNECT
@@ -70,7 +71,8 @@ device_id="$(curl -fsS http://127.0.0.1:18090/_e2e/state \
   | python3 -c 'import json,sys; ids = json.load(sys.stdin)["device_ids"]; print(ids[0] if ids else "")')"
 [ -n "$device_id" ] || fail "Fake-Bootstrap kennt keine Geraete-ID"
 # Verbunden mit dem Fake-Broker: /healthz meldet Serverkontakt; uebernommen, aber ohne Konfiguration wartet das Gateway
-# auf die Einrichtung, die Laufzeit ruht (nicht eingerichtet) und die Seite zeigt den Uebernahme-Code.
+# auf die Einrichtung, die Laufzeit ruht (nicht eingerichtet) und die Seite zeigt keinen Uebernahme-Code mehr
+# (Anzeige.code_zeigen, Spec 5c F1).
 ok=0
 for _ in $(seq 1 30); do
   curl -fsS http://127.0.0.1:8080/healthz 2>/dev/null | grep -q '"server_ok": true' && { ok=1; break; }; sleep 2
@@ -84,7 +86,7 @@ printf '%s' "$healthz" | grep -q '"runtime_status": null' || fail "/healthz: Lau
 "${COMPOSE[@]}" logs runtime 2>/dev/null | grep -q "noch nicht eingerichtet" || fail "Laufzeit nicht im Ruhezustand"
 page="$(curl -fsS http://127.0.0.1:8080/ 2>/dev/null)"
 printf '%s' "$page" | grep -q "SmartHeat-Gateway" || fail "Diagnoseseite antwortet nicht"
-printf '%s' "$page" | grep -q "Übernahme-Code: <strong>[A-Z0-9]" || fail "Diagnoseseite ohne Uebernahme-Code"
+! printf '%s' "$page" | grep -q "Übernahme-Code" || fail "Diagnoseseite zeigt nach der Uebernahme den Code"
 printf '%s' "$page" | grep -q "übernommen und wartet auf die Einrichtung" || fail "Diagnoseseite ohne Zustandstext"
 unset page
 # up/hello am Fake-Broker (Rolle Dienst): hello ging beim ersten Verbinden vor jedem Abo raus; das Abo laeuft deshalb
