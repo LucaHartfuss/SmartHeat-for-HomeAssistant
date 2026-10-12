@@ -38,6 +38,7 @@ class Doc:
 class Device:
     def __init__(self, konf=None, bed=None, dirty=False):
         self.wuensche, self.aus, self.konf, self.bed, self.dirty = [], [], konf, bed, dirty
+        self.meldungen = []
         self.documents = self
 
     def wunsch(self, wert, *, herkunft, durch=None):
@@ -58,6 +59,9 @@ class Device:
 
     def abo_status(self):
         return "aktiv"
+
+    def meldung(self, key, text, *, offen, kritisch=True):
+        self.meldungen.append((key, text, offen, kritisch))
 
 
 def _paths(tmp_path, monkeypatch):
@@ -381,6 +385,60 @@ def test_notify_sink_sends_to_the_given_services(tmp_path, monkeypatch):
     host, _, _ = _host(tmp_path, monkeypatch, ha=ha)
     host.notify_sink_fuer(["notify.handy"]).push("k", "Hallo")
     assert ha.pushes == ["Hallo"]
+
+
+def test_runtime_messages_go_to_ha_and_to_the_device_core(tmp_path, monkeypatch):
+    """Spec 5c 3 (Portal zeigt HA-Geraete wie Gateways, mit Hinweisen): Meldungen der Laufzeit gehen wie beim Gateway
+    (MeldungSink) als up/notifications an den Geraetekern und weiter an HA (Push, persistent_notification)."""
+    ha = FakeHa()
+    host, device, _ = _host(tmp_path, monkeypatch, ha=ha)
+    sink = host.notify_sink_fuer(["notify.handy"])
+    sink.show("notbetrieb", "Notbetrieb aktiv")
+    sink.push("notbetrieb", "Notbetrieb aktiv")
+    sink.push("batterie:sensor.x", "Batterie schwach")
+    sink.withdraw("notbetrieb")
+    assert device.meldungen == [
+        ("notbetrieb", "Notbetrieb aktiv", True, True), ("notbetrieb", "Notbetrieb aktiv", True, True),
+        ("batterie:sensor.x", "Batterie schwach", False, False), ("notbetrieb", "Notbetrieb aktiv", False, True)]
+    assert ha.pushes == ["Notbetrieb aktiv", "Batterie schwach"]
+    assert ha.persistent == [("smartheat_notbetrieb", "Notbetrieb aktiv")]
+    assert ha.dismissed == ["smartheat_notbetrieb"]
+
+
+def test_a_failing_ha_notification_still_reaches_the_device_core(tmp_path, monkeypatch):
+    class _HaDown(FakeHa):
+        def create_persistent_notification(self, title, message, notification_id):
+            raise ConnectionError("HA Core startet")
+
+        def dismiss_persistent_notification(self, notification_id):
+            raise ConnectionError("HA Core startet")
+
+    host, device, _ = _host(tmp_path, monkeypatch, ha=_HaDown())
+    sink = host.notify_sink_fuer([])
+    with pytest.raises(ConnectionError):  # der Notifier faengt und loggt das (show/withdraw duerfen werfen)
+        sink.show("schreibbudget", "Budget erschoepft")
+    with pytest.raises(ConnectionError):
+        sink.withdraw("schreibbudget")
+    assert device.meldungen == [("schreibbudget", "Budget erschoepft", True, True),
+                                ("schreibbudget", "Budget erschoepft", False, True)]
+
+
+def test_the_notifier_reports_a_critical_runtime_message_to_the_device_core(tmp_path, monkeypatch):
+    """Durch den echten Notifier der Laufzeit: Notbetrieb an, dann wieder ok."""
+    from smartheat_runtime.notifier import Notifier
+    from smartheat_runtime.state import StateStore
+    ha = FakeHa()
+    host, device, _ = _host(tmp_path, monkeypatch, ha=ha)
+    notifier = Notifier(StateStore(tmp_path / "backup.json", tmp_path / "failsafe.json"),
+                        host.notify_sink_fuer(["notify.handy"]))
+    notifier.notify("notbetrieb", "aktiv", "Notbetrieb aktiv", critical=True)
+    notifier.notify("notbetrieb", "ok", "Notbetrieb beendet", critical=True)
+    # Regeln des Gateways (MeldungSink): der Geraetekern sendet je key nur den letzten Stand (Upsert), am Ende geschlossen
+    assert device.meldungen == [("notbetrieb", "Notbetrieb aktiv", False, False),  # Push vor der offenen Meldung
+                                ("notbetrieb", "Notbetrieb aktiv", True, True),
+                                ("notbetrieb", "Notbetrieb beendet", True, True),
+                                ("notbetrieb", "Notbetrieb aktiv", False, True)]
+    assert ha.persistent == [("smartheat_notbetrieb", "Notbetrieb aktiv")] and ha.dismissed == ["smartheat_notbetrieb"]
 
 
 # --- Raum fuer up/status (Controller-Entscheid 2) und Soll-Speicher mit dem echten Geraete-Host -------------------

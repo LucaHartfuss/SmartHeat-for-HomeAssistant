@@ -23,7 +23,7 @@ from pathlib import Path
 from smartheat_device import wire
 from smartheat_device.commands import CommandRegister
 from smartheat_device.hintergrund import Hintergrund
-from smartheat_device.host import Anzeige
+from smartheat_device.host import Anzeige, MeldungSink
 from smartheat_gateway import befehle
 from smartheat_gateway import config as gateway_config
 from smartheat_gateway.drivers import registry
@@ -72,30 +72,6 @@ class StatusSink:
 
     def publish(self, event: dict) -> None:
         self._zustand.status = dict(event)
-
-
-class MeldungSink:
-    """NotifySink der Laufzeit (smartheat_runtime.ports) auf den Geraetekern (up/notifications)."""
-
-    def __init__(self, melden: Callable[..., None]) -> None:
-        self._melden = melden
-        self._offen: dict[str, str] = {}
-        self._lock = threading.Lock()
-
-    def push(self, key: str, message: str) -> None:
-        with self._lock:
-            offen = key in self._offen
-        self._melden(key, message, offen=offen, kritisch=offen)
-
-    def show(self, key: str, message: str) -> None:
-        with self._lock:
-            self._offen[key] = message
-        self._melden(key, message, offen=True, kritisch=True)
-
-    def withdraw(self, key: str) -> None:
-        with self._lock:
-            text = self._offen.pop(key, "")
-        self._melden(key, text, offen=False, kritisch=True)
 
 
 class ZustandsDatei:

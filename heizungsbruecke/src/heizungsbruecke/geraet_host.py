@@ -6,8 +6,9 @@ laufzeitrelevante neue Konfiguration fordert einen Neustart an (EV_RELOAD im Reg
 auf leer markiert das Aufraeumen (A4-07). Eine neue Bedienung geht als Soll-Eingang (portal) an den Worker, der
 Soll-Eingang schreibt sie in den Soll-Speicher und gleicht die Soll-Entity an; kommt sie vor dem Binden, stellt
 worker_binden die letzte nach. Status (runtime_status_event, Task 7) und Raum (raum_merken, HaHost) legt der Worker-Thread
-hier ab, der Geraete-Thread liest sie fuer up/status. anzeigen meldet Geraete-ID, Uebernahmestand und Code an die
-Supervisor-Discovery (discovery.Discovery)."""
+hier ab, der Geraete-Thread liest sie fuer up/status. Meldungen der Laufzeit gehen wie beim Gateway (MeldungSink) als
+up/notifications an den Server und zusaetzlich an HA (notify_sink_fuer). anzeigen meldet Geraete-ID, Uebernahmestand
+und Code an die Supervisor-Discovery (discovery.Discovery)."""
 import logging
 import threading
 import time
@@ -16,12 +17,12 @@ from collections.abc import Callable
 from heizungsbruecke import config, dokument, inventur
 from heizungsbruecke.discovery import Discovery
 from heizungsbruecke.geraet_status import GeraetStatus
-from heizungsbruecke.ha_sinks import HaNotifySink
+from heizungsbruecke.ha_sinks import GeraetUndHaSink, HaNotifySink
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_device.commands import CommandRegister, Done, Failed, Outcome, Waiting
 from smartheat_device.documents import read_json, write_json
 from smartheat_device.hintergrund import Hintergrund
-from smartheat_device.host import Anzeige
+from smartheat_device.host import Anzeige, MeldungSink
 from smartheat_runtime import dokument_config
 from smartheat_runtime.soll_eingang import EV_TARGET_INPUT
 from smartheat_runtime.soll_speicher import SOURCE_PORTAL
@@ -69,6 +70,8 @@ class HaDeviceHost:
         self._neustart = False
         self._raum_soll: float | None = None  # letzte Bedienung, bevor der Worker gebunden ist
         self._uhr: tuple[float, bool | None] | None = None
+        #: Meldungen der Laufzeit an den Geraetekern (up/notifications), wie beim Gateway; einer je Prozess
+        self._meldungen = MeldungSink(self._melden)
 
     # --- Verdrahtung ---
 
@@ -108,8 +111,14 @@ class HaDeviceHost:
     def abo_status(self) -> str:
         return self.device.abo_status() if self.device is not None else dokument_config.abo_status(None)
 
-    def notify_sink_fuer(self, services: list[str]) -> HaNotifySink:
-        return HaNotifySink(self._ha, services)
+    def notify_sink_fuer(self, services: list[str]) -> GeraetUndHaSink:
+        """Meldungen der Laufzeit an den Geraetekern (Portal, Betreiber-Alarm geraetemeldung; Spec 5c 3: HA-Geraete wie
+        Gateways) und an HA (Notify-Dienste, persistent_notification)."""
+        return GeraetUndHaSink(self._meldungen, HaNotifySink(self._ha, services))
+
+    def _melden(self, key: str, text: str, *, offen: bool, kritisch: bool) -> None:
+        if self.device is not None:
+            self.device.meldung(key, text, offen=offen, kritisch=kritisch)
 
     def wunsch(self, wert: float, herkunft: str | None = None, durch: str | None = None) -> float:
         """Bedienwunsch aus HA (Soll-Entity oder smartheat_wunsch): begrenzt vom Geraetekern, der ihn sendet."""
