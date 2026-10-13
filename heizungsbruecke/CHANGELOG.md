@@ -3,13 +3,14 @@
 Wird im Update-Dialog des Supervisors angezeigt. Pro Version ein Abschnitt `## X.Y.Z`; der
 Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Release.
 
-## Unveröffentlicht
+## 1.0.0
 
 - **1.0.0: Das Add-on ist ein SmartHeat-Gerät** (Spec 5c): Start ohne Optionen, eigene Identität und Zertifikat,
   direkte MQTT-Verbindung zum SmartHeat-Dienst, Konfiguration und Wunschtemperatur als Soll-Dokumente,
   Supervisor-Discovery für die Integration, Inventur mit Filter, Bedienwunsch aus der Soll-Entity und der
   Wunschtemperatur-Entity der Integration, Status-Ereignis Schema 3 mit Hinweisen. Optionen nur noch `bootstrap_url`
-  und `log_level`. Kein Optionsmodus mehr; `client1` bleibt bis zum Umzug (5d) auf 0.36.
+  und `log_level`. Kein Optionsmodus mehr. Bestehende Installationen (0.36) ziehen um: Integration 0.16 entfernen,
+  Add-ons 0.36 und `cloudflared_access_mqtt` deinstallieren, 1.0.0 installieren und über die Integration neu einrichten.
 - Option `bootstrap_url` nur noch mit `https`; `http` geht nur über die Umgebung `SMARTHEAT_BOOTSTRAP_URL` (E2E und
   Tests).
 - Übernahme-Code nur, solange das Gerät nicht übernommen ist (Spec 5c F1): nach der Übernahme meldet die Discovery
