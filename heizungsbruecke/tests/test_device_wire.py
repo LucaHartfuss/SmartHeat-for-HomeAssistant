@@ -12,7 +12,8 @@ from smartheat_device import wire
 DEVICE = "shg-aaaaaaaaaaaaaaaa"
 ADDON_REPO = Path(__file__).resolve().parents[2]
 DEV_ROOT = Path(os.environ.get("DEV_ROOT") or ADDON_REPO.parent)
-SERVER_PROTOCOL = DEV_ROOT / "HeizungssteuerungServer" / "src" / "heizungsserver" / "device_protocol.py"
+SERVER_REPO = DEV_ROOT / "HeizungssteuerungServer"
+SERVER_PROTOCOL = SERVER_REPO / "src" / "heizungsserver" / "geraete" / "device_protocol.py"
 MARKER = "# --- Server-Regeln (nicht im Vertrag) ---"
 
 
@@ -29,8 +30,11 @@ def vertragsteil(text: str) -> str:
     return "\n".join(lines).strip() + "\n"
 
 
-@pytest.mark.skipif(not SERVER_PROTOCOL.exists(), reason="Server-Repo nicht unter DEV_ROOT (Contract-Check prueft es)")
+@pytest.mark.skipif(not SERVER_REPO.is_dir(), reason="Server-Repo nicht unter DEV_ROOT (Contract-Check prueft es)")
 def test_the_copy_is_literal():
+    # Nur ein fehlendes Server-Repo ueberspringt den Test; fehlt bei vorhandenem Repo die Quelle (z. B. nach einem
+    # Umzug der Datei), schlaegt er laut fehl statt still zu entfallen.
+    assert SERVER_PROTOCOL.is_file(), f"Quelle des Geraeteprotokolls fehlt im Server-Repo: {SERVER_PROTOCOL}"
     assert vertragsteil(Path(wire.__file__).read_text()) == vertragsteil(SERVER_PROTOCOL.read_text())
 
 
