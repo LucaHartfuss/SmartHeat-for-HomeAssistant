@@ -7,7 +7,8 @@ KIND_IOT_CORE = "iot_core"
 CREDENTIAL_CERTIFICATE = "certificate"
 ALPN_443 = "x-amzn-mqtt-ca"
 IOT_PORTS = (8883, 443)
-# Gegen den Server (broker/wire.py) prueft Contract-Check 41.
+# Der Server liefert die Felder in der Bootstrap-Antwort (geraete/devices_api.py); Contract-Check 41 ist mit Phase 1 S1a
+# entfallen, einen Check fuer den Deskriptor gibt es nicht.
 DESCRIPTOR_KEYS = {
     KIND_IOT_CORE: frozenset({"kind", "host", "port", "alpn", "ca_pem", "client_id"}),
 }

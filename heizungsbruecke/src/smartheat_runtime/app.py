@@ -66,7 +66,7 @@ from smartheat_runtime.worker import Event, RegulationWorker
 CONFIG_RECHECK_SECONDS = 900
 # Verbindungswaechter (TP12b, AU-033): so lange ohne MQTT-Verbindung und ohne offenen Tick, dann
 # klaert ein Pruef-Tick den Server (Notbetrieb ueber dessen Ack-Timeouts). Kurze Abrisse des
-# cloudflared-Tunnels bleiben darunter.
+# Verbindungsabrisse bleiben darunter.
 CONNECTION_LOSS_PROBE_SECONDS = 900
 IDLE_NOT_CONFIGURED = "nicht_eingerichtet"
 CONFIG_OK_MESSAGE = "SmartHeat: Einrichtung in Ordnung, die Heizungssteuerung läuft."

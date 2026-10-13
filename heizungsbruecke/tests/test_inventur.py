@@ -106,7 +106,7 @@ def test_the_inventory_contents_never_reach_the_log(caplog):
 
 
 # --- Gegenprobe gegen den Leser des Servers -------------------------------------------------------------------------
-# Kopie (nicht Import) der Regeln aus HeizungssteuerungServer/src/heizungsserver/generic/ha_inventur.py (lesen,
+# Kopie (nicht Import) der Regeln aus HeizungssteuerungServer/src/heizungsserver/einrichtung/ha_inventur.py (lesen,
 # _eintrag, _geraet, _attribute, _wert, _zustand, _text, _zahl; Stand Plan S, Server 0b5d7b1) und des Filters
 # filter_ha(). Der Server verwirft still, was nicht passt; hier muss alles ankommen.
 

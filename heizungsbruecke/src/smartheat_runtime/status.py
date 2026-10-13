@@ -75,7 +75,7 @@ _STORAGE_FAULT_ROLES = (delivery.ROLE_DATENTRAEGER,)
 def overall_status(flags: Flags, state, storage_failed: bool = False) -> str:
     """Erster zutreffender Zustand (Spec TP7 3.1): Endzustaende und Abo gelten immer, danach
     Notbetrieb und Datenfehler (auch ein nicht beschreibbarer Datentraeger, TP12b), erst dann vor
-    dem ersten abgeschlossenen Start `startet` (sonst stuende ein Add-on, dessen Tunnel nie aufgebaut wird, im Notbetrieb dauerhaft auf `startet`)."""
+    dem ersten abgeschlossenen Start `startet` (sonst stuende ein Add-on, dessen Verbindung nie aufgebaut wird, im Notbetrieb dauerhaft auf `startet`)."""
     if flags.abgemeldet:
         return STATUS_ABGEMELDET
     if flags.konfigurationsfehler:

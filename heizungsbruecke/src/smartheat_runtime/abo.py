@@ -39,10 +39,10 @@ def inactive_message(inactive_since: datetime) -> str:
 
 
 def enter_inactive(rt: Runtime, now: datetime) -> None:
-    """Notbetrieb an (persistiert), MQTT beendet, keine Snapshots/Telemetrie mehr. Gemeldet
+    """Notbetrieb an (persistiert), Kanal des Geraetekerns gestoppt, keine Snapshots/Telemetrie mehr. Gemeldet
     wird nur beim erstmaligen Setzen von inactive_since, nicht bei jedem Neustart.
-    `mqtt_client.stop()` joint den paho-Thread; dessen Callbacks stellen nur ein und
-    blockieren daher nie. Eine vorher gesetzte "zugang_abgelehnt" (eine Ablehnung bei noch
+    `mqtt_client.stop()` schaltet den Kanal der Laufzeit ab (smartheat_device.laufzeit.RuntimeChannel nimmt keine
+    Ereignisse mehr an); den Link betreibt weiter das Geraet. Eine vorher gesetzte "zugang_abgelehnt" (eine Ablehnung bei noch
     unklarem Abo-Status vor dieser eindeutig inaktiven) wird aufgeloest: sonst haengt der
     falsche Rat ("neu anmelden") die ganze Kulanzfrist, und der Grund wuerde sogar noch im
     abo_beendet-Event am Fristende auftauchen."""
@@ -108,10 +108,9 @@ CONNECT_FAILURES_BEFORE_STATUS_QUERY = 3
 
 
 def handle_auth_rejected(rt: Runtime) -> None:
-    """Der Broker hat die Zugangsdaten abgelehnt (beim Suspend widerrufen, ersetzt oder entfernt).
-    Nur ein eindeutiges "inactive" wechselt in den Abo-inaktiv-Modus, sonst "zugang_abgelehnt"
-    und paho verbindet weiter. T2-12: solange zugang_abgelehnt steht, hoechstens alle 600 s eine
-    Abfrage (sie blockiert den Worker bis zu 10 s), ERROR nur beim ersten Mal und bei geaendertem
+    """Ereignis EV_AUTH_REJECTED (abgelehnte Anmeldung). Im Geraete-Pfad postet niemand es mehr (S1b-2); die
+    Abo-Abfrage (`entitlement.query`) liest nur das Konfigurationsdokument. Nur ein eindeutiges "inactive" wechselt in den Abo-inaktiv-Modus, sonst "zugang_abgelehnt". T2-12: solange
+    zugang_abgelehnt steht, hoechstens alle 600 s eine Abfrage, ERROR nur beim ersten Mal und bei geaendertem
     Ergebnis. Im Abo-inaktiv-Modus wird nicht mehr gefragt."""
     if rt.store.state.abo_inactive_since is not None:
         return
@@ -149,10 +148,11 @@ def _report_rejection(rt: Runtime, status: str) -> None:
 def handle_connection_failing(rt: Runtime) -> None:
     """Spec AWS-IoT 5.1: Bei IoT Core endet ein gesperrtes Zertifikat vermutlich im TLS-Aufbau statt mit
     CONNACK 134/135 (AN-1). Fehlt die Verbindung lange und scheitern die Versuche wiederholt
-    (app._on_connection_check), fragt das Add-on deshalb den Abo-Status, gedrosselt wie nach einer
-    abgelehnten Anmeldung. Nur ein eindeutiges Ergebnis wirkt: inactive -> Abo-inaktiv-Modus,
-    rejected -> wie eine abgelehnte Anmeldung; active und unknown aendern nichts (normaler Ausfall, den
-    Notbetrieb und Pruef-Tick abdecken)."""
+    (app._on_connection_check), liest das Add-on deshalb den Abo-Status aus dem Konfigurationsdokument,
+    gedrosselt wie nach einer abgelehnten Anmeldung. Nur ein eindeutiges Ergebnis wirkt: inactive ->
+    Abo-inaktiv-Modus; active und unknown aendern nichts (normaler Ausfall, den Notbetrieb und Pruef-Tick
+    abdecken). Der Zweig rejected ist im Geraete-Pfad unerreichbar (S1b-2): `dokument_config.abo_status`
+    kennt nur aktiv und inaktiv."""
     if rt.store.state.abo_inactive_since is not None:
         return
     now = rt.clock()
@@ -171,10 +171,9 @@ def handle_connection_failing(rt: Runtime) -> None:
 
 
 def check_grace_end(rt: Runtime) -> None:
-    """Fristende waehrend der Laufzeit. Vorher erneut fragen: ein inzwischen reaktiviertes Abo
-    wird nicht zurueckgesetzt, sondern der Prozess startet im Normalbetrieb neu (set-status
-    active stellt seit TP8 widerrufene MQTT-Zugangsdaten wieder her, sofern dafuer ein Hash
-    gespeichert ist - fehlt er, muss die Integration neu eingerichtet werden). Scheitert die
+    """Fristende waehrend der Laufzeit. Vorher erneut fragen (Abo-Status aus dem Konfigurationsdokument): ein
+    inzwischen reaktiviertes Abo wird nicht zurueckgesetzt, sondern der Prozess startet im Normalbetrieb
+    neu. Scheitert die
     Wiederherstellung, laeuft die lokale Regelung weiter und der naechste Check versucht es
     erneut."""
     since = rt.store.state.abo_inactive_since
