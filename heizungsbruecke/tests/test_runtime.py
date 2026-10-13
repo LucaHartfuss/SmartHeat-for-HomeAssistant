@@ -2115,7 +2115,7 @@ def test_rejected_answer_keeps_the_pending_manual_override(env):
 
 def test_manual_override_detected_during_an_open_tick_survives_a_same_seq_retry(env):
     """Fix Runde 1, Befund 2: der Server verarbeitet eine bereits gesehene seq idempotent aus
-    dem Cache (generic/tick.py). Ein zwischen dem ersten Publish und einem Retry derselben seq
+    dem Cache (regelung/tick.py). Ein zwischen dem ersten Publish und einem Retry derselben seq
     neu erkannter Eingriff darf nicht mit dem Retry reisen -- der Server saehe ihn dann nie,
     waehrend die (verspaetete) Antwort ihn beim Client trotzdem als erledigt loeschen wuerde
     (KPI-Verlust). Er muss bis zur naechsten seq warten."""

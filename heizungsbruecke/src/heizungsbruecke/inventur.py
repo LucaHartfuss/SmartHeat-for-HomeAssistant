@@ -3,7 +3,7 @@ Hersteller-Integrationen, Domaenen, Domaene/Geraeteklasse), mit den Feldern des 
 gewaehlte Entity daran haengt; Handys nur mit den genannten Praefixen. Kein Herstellerwissen. Deaktivierte Entities
 fehlen; Entities ohne Registry-Eintrag (YAML, Template ohne unique_id) zaehlen nur ueber Domaene bzw. Geraeteklasse.
 
-Die Felder sind genau die, die der Server liest (heizungsserver.generic.ha_inventur.lesen; Gegenprobe in
+Die Felder sind genau die, die der Server liest (heizungsserver.einrichtung.ha_inventur.lesen; Gegenprobe in
 tests/test_inventur.py): `name` ist der Name der Integration (original_name), an dem der Server die Kreise erkennt,
 nicht der vom Nutzer vergebene. config/entity_registry/list liefert keine device_class; dann zaehlt das Attribut des
 Zustands. Inhalte der Inventur gehoeren nie in Logs (Regel 6)."""

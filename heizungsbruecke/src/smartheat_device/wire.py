@@ -1,5 +1,5 @@
 """Vertrag Geraet <-> Server (Spec 5b Abschnitte 1-3): HTTPS-Bootstrap und MQTT. Woertliche Kopie des Vertragsteils von
-heizungsserver/device_protocol.py (alles ab `SCHEMA = 1` bis einschliesslich `command_errors`; die Importe stehen je
+heizungsserver/geraete/device_protocol.py (alles ab `SCHEMA = 1` bis einschliesslich `command_errors`; die Importe stehen je
 Seite selbst); tools/contract_check.py im Dev-Root vergleicht beide mit tools/contracts/geraet_v1.json (Plan 5b-W).
 Aenderungen nur an allen drei Stellen zugleich. Die Server-Regeln unter dem Vertragsteil (Aushandeln, Ablauf,
 Mindestversion je Host) gibt es nur auf dem Server.

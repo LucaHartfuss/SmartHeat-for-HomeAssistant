@@ -1,4 +1,4 @@
-"""KPI- und Regel-Telemetrie auf smartheat/<tenant>/telemetry. Seit TP11 wertet der Server daraus
+"""KPI- und Regel-Telemetrie auf smartheat/<geraete_id>/telemetry. Seit TP11 wertet der Server daraus
 Regelabweichung und Betriebspunkt aus (room_target, outdoor_temp, flow_setpoint); fehlende Werte
 fuehren dort nur zu 'nicht lernen'. Den Takt gibt der Planeintrag EV_TELEMETRY vor."""
 import logging
@@ -21,7 +21,7 @@ KPI_NUMERIC_ROLES = (
 # Text-Rollen (Rohzustand, ohne Zahlumwandlung): Betriebsart und Status des Waermeerzeugers.
 KPI_TEXT_ROLES = ("operating_mode", "generator_state")
 #: Liefer-Signale fuer die Waermelieferung auf dem Server (Audit 4 P-B). Gegenstueck: heizungsserver
-#: generic/history.TELEMETRY_DELIVERY_FIELDS (Contract-Check "Lieferrollen").
+#: regelung/history.TELEMETRY_DELIVERY_FIELDS (Contract-Check "Lieferrollen").
 DELIVERY_ROLES = ("generator_hours", "generator_starts", "generator_state")
 KPI_ENERGY_ROLES = (
     "energy_electrical_heating", "energy_electrical_dhw",
@@ -31,11 +31,11 @@ KPI_ENERGY_ROLES = (
 )
 
 # Regel-Telemetrie fuer den Regelkern (TP11). Gegenstueck: heizungsserver
-# generic/history.TELEMETRY_REGULATION_FIELDS (Contract-Check 22).
+# regelung/history.TELEMETRY_REGULATION_FIELDS (Contract-Check 22).
 REGULATION_FIELDS = ("room_target", "outdoor_temp", "flow_setpoint")
 
 #: Anstehender Datenfehler fuer den Health-Check des Servers (nur solange einer besteht).
-#: Feldname und Quellen prueft der Contract-Check 21 gegen heizungsserver.generic.history.
+#: Feldname und Quellen prueft der Contract-Check 21 gegen heizungsserver.regelung.history.
 DATENFEHLER_KEY = "datenfehler"
 
 
