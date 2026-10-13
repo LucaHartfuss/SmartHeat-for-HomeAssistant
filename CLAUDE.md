@@ -1,7 +1,7 @@
 # SmartHeat-for-HomeAssistant — Repo-Kontext
 
 Add-on-Repository: `heizungsbruecke` (ab 1.0.0 ein **SmartHeat-Gerät** für Home Assistant, wie das Gateway auf dem
-Gerätekern: Snapshot und Telemetrie, Boost, Notbetrieb, lokale Sicherheitswerte; `client1` läuft bis zum Umzug 5d noch
+Gerätekern: Snapshot und Telemetrie, Boost, Notbetrieb, lokale Sicherheitswerte; `client1` läuft bis Phase 1 Schritt 3 noch
 auf 0.36 im Optionsmodus) und `gateway/` (SmartHeat-Gateway ohne Home Assistant, **kein** Add-on). Das Add-on läuft auf
 jedem Kunden-Pi inkl. `client1`: Änderungen wirken real, sobald sie released sind. Die Sicherheitsregeln aus
 `../CLAUDE.md` gelten unverändert.
@@ -26,7 +26,7 @@ Modul ändert, zieht dessen Datei in `../docs/module/` im selben Merge nach.
 
 ```
 scripts/check.sh          # lint, test, contract (--only <schritt> für einzelne Schritte)
-scripts/check.sh --full   # zusätzlich die Docker-Schritte (Build, Happy-Path, run.sh, Will-ACL, Gateway-Image und Compose-Lauf)
+scripts/check.sh --full   # zusätzlich die Docker-Schritte (Add-on-Image bauen und reproduzierbar, Gateway-Image, Installer, Updater, Erststart)
 ```
 `scripts/check.sh` prüft und testet `heizungsbruecke/`, `gateway/`, `gateway/host/` **und** `gateway/release/`; `--full` baut zusätzlich das Gateway-Image
 (lokal nur amd64) und fährt den Compose-Lauf mit dem Dev-Overlay (`tests/test_gateway_docker_build.sh`; dabei Bootstrap gegen einen Fake, MQTT gegen einen Fake-Broker mit Client-Zertifikat, Fälschungsproben und sauberes Trennen, Bus-Anmeldung und ACL; die statische
