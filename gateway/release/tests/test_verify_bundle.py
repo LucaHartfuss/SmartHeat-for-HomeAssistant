@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -99,7 +100,11 @@ def test_cli_exit_codes(bundle, capsys):
     assert "images.gateway" in capsys.readouterr().err
 
 
+# Ohne PYTHONPATH, aber mit PYTHONUSERBASE, falls gesetzt: dort liegen in der VS-Code-Sandbox (flatpak) die
+# Pakete der Entwicklungsumgebung (PyYAML); CI und Host setzen es nicht.
+_ENV_OHNE_PYTHONPATH = {"PATH": "", **{k: v for k, v in os.environ.items() if k == "PYTHONUSERBASE"}}
+
 def test_script_runs_without_pythonpath(bundle):
     result = subprocess.run([sys.executable, str(SCRIPT), str(bundle), "0.2.0", "--image-repo", REPO],
-                            capture_output=True, text=True, env={"PATH": ""}, check=False)
+                            capture_output=True, text=True, env=_ENV_OHNE_PYTHONPATH, check=False)
     assert result.returncode == 0, result.stderr
