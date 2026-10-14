@@ -63,3 +63,23 @@ def test_a_dangling_symlink_blocks_instead_of_meaning_no_lock(tmp_path):
 def test_only_the_same_pair_fits(hebelsatz, verteilsystem, passt):
     lock = rastung.Rastung("vaillant_vrc720", "Heizkoerper")
     assert rastung.passt(lock, {**KONF, "hebelsatz": hebelsatz, "verteilsystem": verteilsystem}) is passt
+
+
+def _datei_mit_groesse(pfad, groesse):
+    """Gueltiges JSON mit gueltigem Satz und genau `groesse` Bytes (die schliessende Klammer ist das letzte Byte)."""
+    kopf = '{"hebelsatz": "vaillant_vrc720", "verteilsystem": "Heizkoerper", "fuell": "'
+    ende = '"}'
+    pfad.write_text(kopf + "x" * (groesse - len(kopf) - len(ende)) + ende)
+    assert pfad.stat().st_size == groesse
+
+
+@pytest.mark.parametrize(("groesse", "gesperrt"), [
+    (4095, False), (4096, False), (4097, False),  # bis MAX+1 Bytes wird vollstaendig gelesen
+    (4098, True),                                 # das 4098. Byte wird nicht mehr gelesen: abgeschnitten, gesperrt
+])
+def test_the_lock_file_is_read_up_to_a_hard_size_limit(tmp_path, groesse, gesperrt):
+    """Mutationsprobe (Mutanten 0, 3, 4): Grenze des Lesepuffers (4096 + 1 Bytes)."""
+    pfad = tmp_path / rastung.DATEI
+    _datei_mit_groesse(pfad, groesse)
+    erwartet = rastung.UNBEKANNT if gesperrt else rastung.Rastung("vaillant_vrc720", "Heizkoerper")
+    assert rastung.lesen(pfad) == erwartet

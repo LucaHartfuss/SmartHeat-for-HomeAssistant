@@ -1,12 +1,12 @@
 """Durchsetzung (TP11, Spec 5.3)."""
-from datetime import date
+from datetime import date, datetime
 from unittest.mock import MagicMock
 
 import pytest
 from fakes import runtime_config
 
 from heizungsbruecke.ha_binding import HaPlantBinding
-from smartheat_core import enforce
+from smartheat_core import enforce, wallclock
 from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import LocalSafety
@@ -30,6 +30,7 @@ MANIFEST = ChannelManifest(refs={
 })
 POINT = {"curve": 0.9, "room_setpoint": 21.0}
 TODAY = date(2026, 10, 3)
+_ECHTES_HEUTE = enforce._today  # vor der autouse-Fixture _fixed_day gemerkt
 
 
 class Ha:
@@ -543,3 +544,67 @@ def test_state_ok_matches_the_notifier():
     from smartheat_core.enforce import STATE_OK
     from smartheat_runtime.notifier import STATE_OK as NOTIFIER_OK
     assert STATE_OK == NOTIFIER_OK
+
+
+# --- Mutationsprobe Stufe 3 S3 (Task 11) ------------------------------------------------------------------------
+
+def test_today_is_the_wallclock_day(monkeypatch):
+    """Mutationsprobe (Mutant 2): _today() liefert den Tag der Wanduhr, nicht None."""
+    monkeypatch.setattr(wallclock, "_now", lambda: datetime(2026, 10, 14, 23, 59))
+    assert _ECHTES_HEUTE() == date(2026, 10, 14)
+
+
+def test_a_clean_round_resets_the_detection_counter(make_store, clock):
+    """Mutationsprobe (Mutant 107): eine unauffaellige Runde setzt den Zaehler auf 0 zurueck; eine einzelne spaetere
+    Abweichung wird wieder erst nach DETECTION_ROUNDS Runden durchgesetzt."""
+    ha = Ha(curve=1.3)
+    rt = _rt(make_store, clock, ha)
+    _rounds(rt, 1)
+    assert rt.store.state.manual_override_misses == 1
+    ha.states["number.curve"] = 0.9
+    _rounds(rt, 1)
+    assert rt.store.state.manual_override_misses == 0
+    ha.states["number.curve"] = 1.3
+    _rounds(rt, 1)
+    assert ha.writes == []
+
+
+def test_return_to_learned_values_is_reported_quietly_and_not_critical(make_store, clock):
+    """Mutationsprobe (Mutanten 111, 112): die Rueckkehr-Meldung ist weder kritisch noch laut."""
+    ha = Ha(curve=1.3)
+    rt = _rt(make_store, clock, ha)
+    _rounds(rt)
+    ha.states["number.curve"] = 0.9
+    rt.notifier.notify.reset_mock()
+    _rounds(rt, 1)
+    rt.notifier.notify.assert_called_with(enforce.KEY, STATE_OK, enforce.RETURN_MESSAGE, critical=False, silent_ok=True)
+
+
+def test_reset_message_is_not_critical(make_store, clock):
+    """Mutationsprobe (Mutant 121): die Meldung ueber das Zuruecksetzen ist nicht kritisch."""
+    rt = _rt(make_store, clock, Ha(curve=1.3))
+    _rounds(rt)
+    assert _message_calls(rt)[-1].kwargs["critical"] is False
+
+
+def test_zone_mode_deviation_is_recorded_as_zero(make_store, clock):
+    """Mutationsprobe (Mutant 33): die verstellte Betriebsart steht im Eingriff als 0 (nicht aktiv), nicht als 0,5."""
+    rt = _rt(make_store, clock, Ha(mode="auto", reflects_writes=False))
+    _rounds(rt)
+    record = rt.store.state.manual_override
+    assert record["rollen"][enforce.ZONE_MODE] == 0.0
+    assert "zone_mode=0" in record["signatur"].split(",") and "zone_mode=0.5" not in record["signatur"]
+
+
+def test_persisted_kpi_falls_back_to_zero_without_live_value_and_restore_point(make_store, clock):
+    """Mutationsprobe (Mutant 90): ohne Live-Wert und ohne Wiederherstellungspunkt steht im Eintrag 0.0."""
+    rt = _rt(make_store, clock, Ha(curve=1.3, shift=0.0, reflects_writes=False), room_setpoint=None)
+    _rounds(rt)
+    assert rt.store.state.manual_override["levers"]["room_setpoint"] == 0.0
+
+
+def test_kpi_takes_the_live_value_of_a_lever_without_setpoint(make_store, clock):
+    """Mutationsprobe (Mutant 85): ein lesbarer Hebel ohne Sollwert geht mit seinem Live-Wert in den KPI."""
+    rt = _rt(make_store, clock, Ha(curve=1.3, shift=22.0, reflects_writes=False), room_setpoint=None)
+    _rounds(rt)
+    assert rt.store.state.manual_override_pending["levers"]["room_setpoint"] == 22.0

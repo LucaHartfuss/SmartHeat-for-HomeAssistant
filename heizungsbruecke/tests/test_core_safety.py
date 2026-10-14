@@ -80,3 +80,17 @@ def test_floor_heating_has_no_comfort_boost_and_an_emergency_boost_on_every_sent
     safety = resolve_local_safety(lever_set, "Fussbodenheizung")
     assert dict(safety.comfort_boost) == {}
     assert safety.emergency_boost_levers == LEVER_SETS[lever_set].levers
+
+
+def test_a_range_with_equal_minimum_and_maximum_is_valid():
+    """Mutationsprobe (Mutant 69): Minimum == Maximum ist kein Fehler, nur Minimum > Maximum."""
+    safety = LOCAL_SAFETY[("vaillant_vrc720", "Heizkoerper")]
+    fixed = dataclasses.replace(safety, ranges={**safety.ranges, "min_flow": (25.0, 25.0)}, comfort_boost={})
+    check_invariants(fixed, "vaillant_vrc720", "Heizkoerper")
+
+
+def test_a_comfort_boost_value_on_the_lower_range_limit_is_valid():
+    """Mutationsprobe (Mutant 74): der Comfort-Boost-Wert darf auf der unteren Bereichsgrenze liegen."""
+    safety = LOCAL_SAFETY[("vaillant_vrc720", "Heizkoerper")]
+    low = safety.ranges["curve"][0]
+    check_invariants(dataclasses.replace(safety, comfort_boost={"curve": low}), "vaillant_vrc720", "Heizkoerper")
