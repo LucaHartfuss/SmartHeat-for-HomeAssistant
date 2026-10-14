@@ -106,6 +106,10 @@ class GatewayHost:
         self._geraet.ursprungswerte_merken(werte)
 
     def ursprungswerte_server(self) -> dict:
+        """Steht das Zuruecksetzen nach einer leeren Konfiguration aus, gelten die Werte der Markierung -- auch wenn
+        inzwischen eine neue Einrichtung (womoeglich einer anderen Anlage) eingetroffen ist; sonst die aktuelle."""
+        if self._leer_abmelden:
+            return dokument_config.ursprungswerte(self.konfiguration)
         aktuell = self._geraet.konfiguration()
         return dokument_config.ursprungswerte(aktuell if dokument_config.eingerichtet(aktuell) else self.konfiguration)
 

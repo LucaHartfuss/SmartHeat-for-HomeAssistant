@@ -2117,6 +2117,17 @@ def test_reset_after_an_empty_configuration_uses_the_server_originals_of_the_mar
     assert ("number.heat_limit", 15.0) in env.ha.writes
 
 
+def test_a_huge_server_integer_does_not_break_the_sign_off_restore(env):
+    """Bedrohungsmodell: 10**400 in ursprungswerte darf das Zuruecksetzen nicht scheitern lassen; es gilt der lokale Wert."""
+    _quiet_backup(env, boost_active=True, originals={"heat_limit": 17.0},
+                  restore_point={"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 18.0})
+
+    bridge = _start_bridge(env, abgemeldet=True, ursprungswerte={"heat_limit": 10**400})
+
+    assert bridge.reason == "abgemeldet" and _last_event(env)["grund"] is None
+    assert ("number.heat_limit", 17.0) in env.ha.writes
+
+
 def test_the_server_originals_are_clamped_to_the_local_limits_at_sign_off(env):
     _quiet_backup(env, boost_active=True, restore_point={"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 18.0})
 

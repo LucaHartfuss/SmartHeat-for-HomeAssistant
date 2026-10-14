@@ -38,6 +38,8 @@ from smartheat_core.safety import LocalSafety
 
 logger = logging.getLogger(__name__)
 
+# Hilfswerte, die Zahlen sind (Komfort-/Absenk-Soll); alle anderen sind Text (Betriebsart).
+AUX_SETPOINT_ROLES = ("setpoint_comfort", "setpoint_setback")
 _ROW_EMERGENCY = "emergency"
 # Gueltigkeit eines gelesenen Wertebereichs der Anlage (binding.limits).
 LIMITS_TTL_SECONDS = 300.0
@@ -95,7 +97,12 @@ def _row(comfort: bool, emergency: bool) -> str:
 
 
 def _is_finite_number(value) -> TypeGuard[float]:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:  # riesige int (z. B. 10**400) passen in keinen float
+        return False
 
 
 class LeverPipeline:
@@ -328,13 +335,12 @@ class LeverPipeline:
         return werte if isinstance(werte, Mapping) else {}
 
     def _aux_vom_server(self, name: str, wert) -> bool:
-        """Spec 5.2: Zahl nur im lokalen Bereich von room_setpoint (Komfort-/Absenk-Soll), Text nur, wenn das Binding
-        ihn kennt (ein fehlerhafter Server darf keine unbekannte Betriebsart setzen)."""
-        if isinstance(wert, bool):
-            return False
-        if isinstance(wert, int | float):
+        """Spec 5.2: Zahl nur fuer die Sollwert-Rollen (Komfort-/Absenk-Soll) und nur im lokalen Bereich von
+        room_setpoint, Text nur fuer die uebrigen Rollen und nur, wenn das Binding ihn kennt (ein fehlerhafter Server
+        darf keine unbekannte Betriebsart setzen)."""
+        if name in AUX_SETPOINT_ROLES:
             bereich = self._safety.ranges.get("room_setpoint")
-            return bereich is not None and math.isfinite(wert) and bereich[0] <= wert <= bereich[1]
+            return bereich is not None and _is_finite_number(wert) and bereich[0] <= wert <= bereich[1]
         return isinstance(wert, str) and self._binding.aux_zulaessig(name, wert)
 
     def _row_values(self, row: str) -> dict:

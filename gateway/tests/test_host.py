@@ -238,3 +238,12 @@ def test_ursprungswerte_server_falls_back_to_the_marker_while_the_reset_is_pendi
     aufraeumen.markieren(paths.aufraeumen, alt)
     host = _host(paths, {**alt, "anlage": None, "ursprungswerte": {}}, clock)
     assert host.ursprungswerte_server() == {"heat_limit": 16.0}
+
+
+def test_ursprungswerte_server_ignores_a_new_setup_while_the_reset_is_pending(data_dir, clock):
+    paths = Paths(data_dir)
+    alt = {**konfiguration(), "ursprungswerte": {"heat_limit": 16.0}}
+    aufraeumen.markieren(paths.aufraeumen, alt)
+    host = _host(paths, {**alt, "anlage": None, "ursprungswerte": {}}, clock)
+    host._geraet.device.konf = {**alt, "anlage": "andere-anlage", "ursprungswerte": {"heat_limit": 12.0}}
+    assert host.ursprungswerte_server() == {"heat_limit": 16.0}

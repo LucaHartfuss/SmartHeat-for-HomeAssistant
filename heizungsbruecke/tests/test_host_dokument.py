@@ -286,3 +286,14 @@ def test_ursprungswerte_server_falls_back_to_the_marker_while_the_reset_is_pendi
     aufraeumen.markieren(config.AUFRAEUMEN_PATH, konfiguration)
     host = HaHost(FakeGeraet({**konfiguration, "anlage": None, "ursprungswerte": {}}), env.ha, clock=env.clock)
     assert host.ursprungswerte_server() == {"heat_limit": 16.0}
+
+
+def test_ursprungswerte_server_ignores_a_new_setup_while_the_reset_is_pending(env):
+    """Minor 3: eine neue Einrichtung (andere Anlage) trifft ein, bevor das Zuruecksetzen gelang: die Werte der alten
+    Anlage aus der Markierung gelten weiter."""
+    alt = {**konfiguration_aus_optionen(OPTIONS), "ursprungswerte": {"heat_limit": 16.0}}
+    aufraeumen.markieren(config.AUFRAEUMEN_PATH, alt)
+    geraet = FakeGeraet({**alt, "anlage": None, "ursprungswerte": {}})
+    host = HaHost(geraet, env.ha, clock=env.clock)
+    geraet._konfiguration = {**alt, "anlage": "andere_anlage", "ursprungswerte": {"heat_limit": 12.0}}
+    assert host.ursprungswerte_server() == {"heat_limit": 16.0}

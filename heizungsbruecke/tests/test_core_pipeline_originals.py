@@ -185,7 +185,7 @@ def test_server_originals_win_for_levers(make_store, clock):
     assert store.state.restore_point == {"curve": 0.6, "room_setpoint": 20.0, "heat_limit": 16.0}
 
 
-@pytest.mark.parametrize("unsinn", ["0.6", math.nan, math.inf, True, None, [1]])
+@pytest.mark.parametrize("unsinn", ["0.6", math.nan, math.inf, True, None, [1], 10**400, -(10**400)])
 def test_unusable_server_lever_value_falls_back_to_the_local_original(make_store, clock, unsinn):
     pipeline, store, ha, binding = _setup(
         make_store, clock, backup={"originals": {"curve": 0.7}, "restore_point": {"curve": 0.9}},
@@ -219,7 +219,7 @@ def test_local_aux_values_win_over_the_server(make_store, clock):
     assert binding.restored[-1]["mode_select"] == "hz_operationmode_automatic"
 
 
-@pytest.mark.parametrize("unsinn", ["boese; rm -rf", True, math.nan, math.inf, None, [1], 14.9])
+@pytest.mark.parametrize("unsinn", ["boese; rm -rf", True, math.nan, math.inf, None, [1], 14.9, 10**400, -(10**400)])
 def test_unusable_server_aux_values_are_dropped(make_store, clock, unsinn):
     pipeline, store, ha, binding = _setup(
         make_store, clock, backup={"restore_point": {"curve": 0.9}},
@@ -237,8 +237,11 @@ def test_a_failing_or_malformed_server_snapshot_falls_back_to_the_local_values(m
     pipeline._server_originals = kaputt
     assert pipeline.restore_and_clear(always_restore=True)
     assert ha.states["number.hk"] == 0.7
+    assert "Ursprungswerte des Servers nicht lesbar" in caplog.text
+    ha.states["number.hk"] = 0.9
     pipeline._server_originals = lambda: ["kein", "Mapping"]
     assert pipeline.restore_and_clear(always_restore=True)
+    assert ha.states["number.hk"] == 0.7
 
 
 def test_server_values_are_not_used_without_the_callback(make_store, clock):
@@ -246,3 +249,27 @@ def test_server_values_are_not_used_without_the_callback(make_store, clock):
                                           backup={"originals": {"curve": 0.7}, "restore_point": {"curve": 0.9}})
     assert pipeline.restore_and_clear(always_restore=True)
     assert ha.states["number.hk"] == 0.7
+
+
+def test_a_huge_server_integer_does_not_break_the_restore(make_store, clock):
+    """Bedrohungsmodell: ein Server (oder Angreifer) liefert 10**400; math.isfinite wirft dort OverflowError."""
+    pipeline, store, ha, binding = _setup(
+        make_store, clock, backup={"originals": {"curve": 0.7}, "restore_point": {"curve": 0.9}},
+        server={"curve": 10**400, "setpoint_comfort": 10**400, "setpoint_setback": -(10**400)})
+    assert pipeline.restore_and_clear(always_restore=True)
+    assert ha.states["number.hk"] == 0.7
+    assert binding.restored == []
+
+
+@pytest.mark.parametrize(("name", "wert"), [
+    ("mode_select", 20.0),  # Zahl fuer eine Text-Rolle
+    ("setpoint_comfort", "hz_operationmode_comfort"),  # Text fuer eine Sollwert-Rolle
+    ("setpoint_setback", "abc"),
+])
+def test_server_aux_value_of_the_wrong_kind_is_dropped_and_logged_by_name(make_store, clock, caplog, name, wert):
+    pipeline, store, ha, binding = _setup(make_store, clock, backup={"restore_point": {"curve": 0.9}},
+                                          server={name: wert})
+    assert pipeline.restore_and_clear(always_restore=True)
+    assert binding.restored == []
+    assert f"Hilfs-Ursprungswert {name} vom Server verworfen" in caplog.text
+    assert str(wert) not in caplog.text
