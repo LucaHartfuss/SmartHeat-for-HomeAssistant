@@ -30,8 +30,9 @@ from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.host import HaHost
 from heizungsbruecke.supervisor import SupervisorApi
 from heizungsbruecke.version import ADDON_VERSION
+from smartheat_core import dateien
 from smartheat_device.device import DEVICE_DIR, Device
-from smartheat_device.documents import KONFIGURATION, DocumentStore, read_json
+from smartheat_device.documents import KONFIGURATION, DocumentStore
 from smartheat_device.hintergrund import Hintergrund
 from smartheat_runtime import abo, app, dokument_config
 from smartheat_runtime.runtime import EV_RECHECK, Runtime
@@ -141,7 +142,7 @@ def aufraeumen(ha_api) -> None:
         logger.info("Aufraeumen entfaellt: das Add-on ist inzwischen neu eingerichtet")
         config.AUFRAEUMEN_PATH.unlink(missing_ok=True)
         return
-    marker = read_json(config.AUFRAEUMEN_PATH)
+    marker = dateien.lesen_json(config.AUFRAEUMEN_PATH)
     anlage = marker.get("anlage") if isinstance(marker, dict) else None
     fertig = True
     if isinstance(anlage, str) and anlage and config.DERIVED_SENSORS_PATH.exists():

@@ -1,5 +1,5 @@
 """Konfigurations- und Bedienungsdokumente fuer Tests (Testwerte, keine Zugangsdaten)."""
-from smartheat_device import documents as device_documents
+from smartheat_core import dateien
 
 SENSOR = "0x00124b0000000001"
 THERMOSTAT = "0x00124b0000000002"
@@ -33,5 +33,5 @@ def dokumente_schreiben(paths, konfiguration=None, bedienung=None, *, version: i
     """Dokumente direkt im Format des Dokumentspeichers ablegen (wie nach einer Uebernahme, D1 Task 3)."""
     for name, inhalt in (("konfiguration.json", konfiguration), ("bedienung.json", bedienung)):
         if inhalt is not None:
-            device_documents.write_json(paths.device_dir / name, {"version": version, "inhalt": inhalt,
-                                                                  "dirty": False})
+            dateien.schreiben_json(paths.device_dir / name, {"version": version, "inhalt": inhalt, "dirty": False},
+                                   modus=dateien.PRIVAT)

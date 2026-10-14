@@ -11,7 +11,7 @@ from test_runtime import OPTIONS, env  # noqa: F401 - env ist eine Fixture
 
 import heizungsbruecke.__main__ as main_module
 from heizungsbruecke import config
-from smartheat_device import documents as device_documents
+from smartheat_core import dateien
 from smartheat_device.host import Anzeige
 from smartheat_device.laufzeit import RuntimeChannel
 from smartheat_runtime import abo, app, dokument_config
@@ -385,8 +385,8 @@ def test_cleanup_after_removal_deletes_the_plant_state_and_helpers(geraet_env):
 
 def test_cleanup_keeps_a_new_setup(geraet_env):
     _entfernt_vorbereiten()
-    device_documents.write_json(config.DEVICE_DATA_DIR / "device" / "konfiguration.json",
-                                {"version": 2, "inhalt": {"anlage": "neu"}, "dirty": False})
+    dateien.schreiben_json(config.DEVICE_DATA_DIR / "device" / "konfiguration.json",
+                           {"version": 2, "inhalt": {"anlage": "neu"}, "dirty": False}, modus=dateien.PRIVAT)
     ha = DeletingHa()
     main_module.aufraeumen(ha)
     assert ha.deleted == [] and config.BACKUP_PATH.exists() and config.DERIVED_SENSORS_PATH.exists()

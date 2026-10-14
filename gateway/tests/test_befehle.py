@@ -10,12 +10,12 @@ from fake_z2m import FakeZigbee2Mqtt
 from fakes import FakeBus, SofortHintergrund
 from world import GatewayWorld
 
+from smartheat_core import dateien
 from smartheat_device import wire
 from smartheat_device.commands import CommandRegister, Done, Failed, Waiting
 from smartheat_gateway import befehle
 from smartheat_gateway.drivers.base import DriverError
 from smartheat_gateway.drivers.simulation import SimulationDriver
-from smartheat_gateway.files import write_json
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.quota import QuotaExhausted
 from smartheat_gateway.zigbee import ZigbeeMirror
@@ -148,7 +148,7 @@ def test_sign_off_marks_restarts_and_finishes_when_the_runtime_is_signed_off(ctx
     assert outcome.check() is None
     ctx.umgebung.status = {"status": "abgemeldet", "tenant_id": "andere", "grund": None}
     assert outcome.check() is None
-    write_json(ctx.paths.backup, {"restore_point": {"curve": 1.1, "room_setpoint": 21.0}})
+    dateien.schreiben_json(ctx.paths.backup, {"restore_point": {"curve": 1.1, "room_setpoint": 21.0}}, modus=dateien.LESBAR)
     ctx.umgebung.status = {"status": "abgemeldet", "tenant_id": "test-tenant", "grund": None}
     assert outcome.check() == Done({"zurueckgesetzt": True, "werte": {"curve": 1.1, "room_setpoint": 21.0}})
 
@@ -254,8 +254,8 @@ def test_a_restart_in_the_middle_resumes_the_series_instead_of_starting_a_second
 
 def test_a_series_for_another_driver_or_older_than_its_window_starts_fresh(vicare_kontext):
     ctx, server, clock = vicare_kontext
-    write_json(ctx.paths.inventur,
-               {"driver_id": "simulation", "started": 0, "hours": 1, "samples": [{}], "next_at": 0})
+    dateien.schreiben_json(ctx.paths.inventur,
+               {"driver_id": "simulation", "started": 0, "hours": 1, "samples": [{}], "next_at": 0}, modus=dateien.LESBAR)
     outcome = befehle.inventory(ctx, {"stunden": 1})
     outcome.check()
     assert json.loads(ctx.paths.inventur.read_text())["driver_id"] == "vicare_cloud"
@@ -279,10 +279,10 @@ def test_the_saved_series_is_private_free_of_ids_and_not_resampled_within_15_min
 
 def test_a_series_that_starts_in_the_future_after_a_backward_clock_jump_starts_fresh(vicare_kontext):
     ctx, server, clock = vicare_kontext
-    write_json(ctx.paths.inventur, {
+    dateien.schreiben_json(ctx.paths.inventur, {
         "driver_id": "vicare_cloud", "started": ctx.wall() + 90_000, "hours": 1, "samples": [{"ts": 1.0}],
         "next_at": ctx.wall() + 90_000,
-    })
+    }, modus=dateien.LESBAR)
     befehle.inventory(ctx, {"stunden": 1})
     saved = json.loads(ctx.paths.inventur.read_text())
     assert saved["samples"] == [] and saved["started"] == ctx.wall()

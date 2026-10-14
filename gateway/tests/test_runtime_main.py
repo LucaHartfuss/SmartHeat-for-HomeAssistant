@@ -11,9 +11,8 @@ from fakes import FakeBus
 from geraet_fakes import geraet_fuer
 from world import GatewayWorld
 
-from smartheat_device import documents as device_documents
+from smartheat_core import dateien
 from smartheat_gateway import runtime_main
-from smartheat_gateway.files import write_json
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime import app
@@ -131,8 +130,8 @@ def test_a_software_only_configuration_does_not_restart(world):
 def test_the_cleanup_runs_at_the_next_start_after_an_empty_configuration(world):
     for path in (world.paths.backup, world.paths.abgemeldet, world.paths.inventur,
                  world.paths.driver_secrets_dir / "vicare.json"):
-        write_json(path, {"x": 1})
-    write_json(world.paths.aufraeumen, {"anlage": "test-tenant"})
+        dateien.schreiben_json(path, {"x": 1}, modus=dateien.LESBAR)
+    dateien.schreiben_json(world.paths.aufraeumen, {"anlage": "test-tenant"}, modus=dateien.LESBAR)
     world.start_runtime()
     assert not world.paths.backup.exists() and not world.paths.abgemeldet.exists()
     assert not world.paths.inventur.exists() and not (world.paths.driver_secrets_dir / "vicare.json").exists()
@@ -140,7 +139,7 @@ def test_the_cleanup_runs_at_the_next_start_after_an_empty_configuration(world):
 
 
 def test_a_restart_before_any_setup_keeps_the_driver_login(world):
-    write_json(world.paths.driver_secrets_dir / "vicare.json", {"refresh_token": "test-token"})
+    dateien.schreiben_json(world.paths.driver_secrets_dir / "vicare.json", {"refresh_token": "test-token"}, modus=dateien.LESBAR)
     world.start_runtime()
     world.start_runtime()
     assert (world.paths.driver_secrets_dir / "vicare.json").exists()
@@ -148,8 +147,8 @@ def test_a_restart_before_any_setup_keeps_the_driver_login(world):
 
 def test_a_marker_from_before_a_new_setup_deletes_nothing(world):
     """Zwischen Markierung und Neustart kam schon eine neue Einrichtung: die frische Treiber-Anmeldung bleibt."""
-    write_json(world.paths.driver_secrets_dir / "vicare.json", {"refresh_token": "test-token"})
-    write_json(world.paths.aufraeumen, {"anlage": "test-tenant"})
+    dateien.schreiben_json(world.paths.driver_secrets_dir / "vicare.json", {"refresh_token": "test-token"}, modus=dateien.LESBAR)
+    dateien.schreiben_json(world.paths.aufraeumen, {"anlage": "test-tenant"}, modus=dateien.LESBAR)
     dokumente_schreiben(world.paths, konfiguration(anlage="neue-anlage"))
     world.start_runtime()
     assert (world.paths.driver_secrets_dir / "vicare.json").exists()
@@ -198,9 +197,10 @@ def test_no_replay_after_a_rejected_configuration(world):
     """Die zuletzt empfangene Konfiguration wurde abgelehnt (z. B. Mindestversion): ihre Soll-Software steht schon in
     software_soll.json und gilt; die aeltere gespeicherte Konfiguration ueberschreibt sie nicht."""
     dokumente_schreiben(world.paths, konfiguration())
-    device_documents.write_json(world.paths.device_dir / "dokumente.json",
-                                {"update_anlass": None, "abgelehnt": {"konfiguration": [2, "update_noetig", "t"]}})
-    write_json(world.paths.software_soll, SOFTWARE)
+    dateien.schreiben_json(world.paths.device_dir / "dokumente.json",
+                           {"update_anlass": None, "abgelehnt": {"konfiguration": [2, "update_noetig", "t"]}},
+                           modus=dateien.PRIVAT)
+    dateien.schreiben_json(world.paths.software_soll, SOFTWARE, modus=dateien.LESBAR)
     world.start_runtime()
     assert json.loads(world.paths.software_soll.read_text())["version"] == "0.6.1"
 
@@ -296,7 +296,7 @@ def test_the_operation_is_applied_and_the_thermostat_aligned_at_start(world):
 
 
 def test_a_newer_operation_replaces_the_stored_target_at_start(world):
-    write_json(world.paths.room_target, {"value": 20.0, "source": "portal", "ts": "t"})
+    dateien.schreiben_json(world.paths.room_target, {"value": 20.0, "source": "portal", "ts": "t"}, modus=dateien.LESBAR)
     dokumente_schreiben(world.paths, konfiguration(), bedienung(22.5))
     world.start_runtime()
     world.run()

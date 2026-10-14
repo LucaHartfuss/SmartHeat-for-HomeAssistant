@@ -23,8 +23,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from smartheat_core import dateien
 from smartheat_device import wire
-from smartheat_device.documents import read_json, write_json
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ def result_payload(command_id: str, ok: bool, result: dict | None, error: dict |
 
 
 def _load_done(path: Path) -> dict[str, Entry]:
-    entries = read_json(path)
+    entries = dateien.lesen_json(path)
     done: dict[str, Entry] = {}
     if not isinstance(entries, list):
         return done
@@ -221,7 +221,7 @@ class CommandRegister:
         self._done[command_id] = entry
         while len(self._done) > DONE_KEEP:
             del self._done[next(iter(self._done))]
-        write_json(self._path, [[cid, *value] for cid, value in self._done.items()])
+        dateien.schreiben_json(self._path, [[cid, *value] for cid, value in self._done.items()], modus=dateien.PRIVAT)
 
 
 def _valid_hint(key, value) -> bool:
@@ -235,7 +235,7 @@ class Hinweise:
 
     def __init__(self, device_dir: Path) -> None:
         self._path = device_dir / HINWEISE_FILE
-        raw = read_json(self._path)
+        raw = dateien.lesen_json(self._path)
         self._items: dict[str, dict] = (
             {key: value for key, value in raw.items() if _valid_hint(key, value)} if isinstance(raw, dict) else {})
 
@@ -251,7 +251,7 @@ class Hinweise:
             self._items[key] = {"stufe": stufe, "text": text}
         else:
             self._items.pop(key, None)
-        write_json(self._path, self._items)
+        dateien.schreiben_json(self._path, self._items, modus=dateien.PRIVAT)
         return Done({})
 
     def alle(self) -> tuple[dict, ...]:

@@ -8,12 +8,12 @@ importiert den Geraetekern nicht; ein Test haelt beide gleich). Die Bindung (Tre
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
+from smartheat_core import dateien
 from smartheat_core.binding import BINDINGS
 from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime import entitlement, options
 from smartheat_runtime.options import ConfigError
 from smartheat_runtime.runtime_config import BootInfo, RuntimeConfig
-from smartheat_runtime.soll_speicher import read_json, write_json
 from smartheat_runtime.windows import validate_daily_trigger_time
 
 FELDER = ("anlage", "profil", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo", "intervalle")
@@ -86,7 +86,7 @@ def laufzeit_relevant(alt, neu) -> bool:
 
 def abgemeldet(pfad: Path, konfiguration) -> bool:
     """Abmelde-Markierung (Befehl sign_off) fuer die Anlage der aktuellen Konfiguration? (Gateway und HA-Add-on)"""
-    marker = read_json(pfad)
+    marker = dateien.lesen_json(pfad)
     anlage = konfiguration.get("anlage") if isinstance(konfiguration, Mapping) else None
     return isinstance(marker, dict) and anlage is not None and marker.get("anlage") == anlage
 
@@ -94,8 +94,8 @@ def abgemeldet(pfad: Path, konfiguration) -> bool:
 def abmelden(pfad: Path, anlage: str) -> bool:
     """Markierung setzen (Modus 0600); True, wenn sie neu ist (dann startet die Laufzeit neu). Die Laufzeit
     importiert den Geraetekern nicht, die atomaren Datei-Helfer stehen in soll_speicher."""
-    marker = read_json(pfad)
+    marker = dateien.lesen_json(pfad)
     if isinstance(marker, dict) and marker.get("anlage") == anlage:
         return False
-    write_json(pfad, {"anlage": anlage}, mode=0o600)
+    dateien.schreiben_json(pfad, {"anlage": anlage}, modus=dateien.PRIVAT)
     return True

@@ -198,7 +198,7 @@ def test_the_state_file_is_only_rewritten_when_the_queue_changes(tmp_path, monke
     d, clock = _discovery(tmp_path, supervisor)
     d.aktualisieren("shg-a", "uebernommen", None)
     writes = []
-    monkeypatch.setattr(discovery, "write_json", lambda *a, **kw: writes.append(a))
+    monkeypatch.setattr(discovery.dateien, "schreiben_json", lambda *a, **kw: writes.append(a))
     d._aufraeumen()  # Pause: nichts
     clock.advance(discovery.RETRY_SECONDS)
     d.aktualisieren("shg-a", "uebernommen", None)  # Versuch zaehlt hoch: aendert den Stand

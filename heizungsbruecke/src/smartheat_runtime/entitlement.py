@@ -2,10 +2,10 @@
 Die Frist wird in /data/entitlement_state.json persistiert, damit sie Add-on-Neustarts ueberlebt."""
 import json
 import logging
-import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from smartheat_core import dateien
 from smartheat_runtime.runtime_config import RuntimeConfig
 
 logger = logging.getLogger(__name__)
@@ -44,9 +44,7 @@ def mark_inactive(path: Path, now: datetime) -> tuple[datetime, bool]:
     existing = load_inactive_since(path)
     if existing is not None:
         return existing, False
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    tmp_path.write_text(json.dumps({"inactive_since": now.isoformat()}))
-    os.replace(tmp_path, path)
+    dateien.schreiben_json(path, {"inactive_since": now.isoformat()}, modus=dateien.PRIVAT)
     return now, True
 
 

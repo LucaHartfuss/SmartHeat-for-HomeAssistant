@@ -19,8 +19,8 @@ from heizungsbruecke.discovery import Discovery
 from heizungsbruecke.geraet_status import GeraetStatus
 from heizungsbruecke.ha_sinks import GeraetUndHaSink, HaNotifySink
 from heizungsbruecke.version import ADDON_VERSION
+from smartheat_core import dateien
 from smartheat_device.commands import CommandRegister, Done, Failed, Outcome, Waiting
-from smartheat_device.documents import read_json, write_json
 from smartheat_device.hintergrund import Hintergrund
 from smartheat_device.host import Anzeige, MeldungSink
 from smartheat_runtime import dokument_config
@@ -174,7 +174,7 @@ class HaDeviceHost:
     def konfiguration_uebernommen(self, alt: dict | None, neu: dict) -> None:
         if dokument_config.eingerichtet(alt) and not dokument_config.eingerichtet(neu):
             assert alt is not None
-            write_json(config.AUFRAEUMEN_PATH, {"anlage": alt["anlage"]}, private=True)
+            dateien.schreiben_json(config.AUFRAEUMEN_PATH, {"anlage": alt["anlage"]}, modus=dateien.PRIVAT)
         if dokument_config.laufzeit_relevant(alt, neu):
             self.neustart_anfordern()
 
@@ -273,6 +273,6 @@ class HaDeviceHost:
 
 
 def _restore_values() -> dict:
-    backup = read_json(config.BACKUP_PATH)
+    backup = dateien.lesen_json(config.BACKUP_PATH)
     point = backup.get("restore_point") if isinstance(backup, dict) else None
     return dict(point) if isinstance(point, dict) else {}

@@ -8,7 +8,7 @@ frisch."""
 import re
 from pathlib import Path
 
-from smartheat_gateway.files import write_text_private
+from smartheat_core import dateien
 
 TEMPLATE = """\
 version: 4
@@ -41,7 +41,7 @@ def ensure(zigbee_dir: Path, adapter: str, username: str, password: str) -> bool
     path = zigbee_dir / "configuration.yaml"
     if path.exists():
         return False
-    write_text_private(path, render(adapter, username, password))
+    dateien.schreiben_text(path, render(adapter, username, password), modus=dateien.PRIVAT)
     return True
 
 
@@ -98,5 +98,5 @@ def sync_credentials(zigbee_dir: Path, username: str, password: str) -> bool:
             lines.insert(start + 1, f"{indent}{key}: {rendered[key]}\n")
             changed = True
     if changed:
-        write_text_private(path, "".join(lines))
+        dateien.schreiben_text(path, "".join(lines), modus=dateien.PRIVAT)
     return changed

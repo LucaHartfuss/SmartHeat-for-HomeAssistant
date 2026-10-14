@@ -1,5 +1,4 @@
-"""Dokumentspeicher des Geraets (Spec 5b 3 und 5.1) und die einzige Stelle fuer atomares Schreiben im Geraetekern
-(Audit 4, Befund "dreifach": identity, bootstrap, commands, wish und der Gateway-Host schreiben ueber write_bytes).
+"""Dokumentspeicher des Geraets (Spec 5b 3 und 5.1); geschrieben wird ueber smartheat_core.dateien.
 
 Konfiguration und Bedienung liegen je in einer Datei mit Version und Inhalt (ohne schema/version des Vertrags).
 Uebernommen wird jede Version, die von der eigenen abweicht, auch eine kleinere (ein aus dem Backup zurueckgespielter
@@ -17,16 +16,14 @@ Anlass neu; eine wegen fehlender Felder abgelehnte laesst ihn stehen.
 Wirft der Treiber-Rueckruf config_check.NichtPruefbar (HA aus), laeuft empfangen durch: nichts wird gespeichert oder
 abgelehnt, das Geraet haelt das Dokument zurueck und prueft spaeter erneut (device.py).
 Eine kaputte Datei (Stromausfall) gilt als "keine Version": hello meldet 0, der Server stellt neu zu."""
-import json
 import logging
-import os
 import re
 import threading
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TypeGuard
 
-from smartheat_core import config_check
+from smartheat_core import config_check, dateien
 from smartheat_device import wire
 
 logger = logging.getLogger(__name__)
@@ -47,49 +44,6 @@ MODUS_TEXT = "Diese Betriebsart kennt das Gerät nicht."
 QUELLE_TEXT = "Die Bedienung nennt keine gültige Quelle."
 _RESERVIERT = ("schema", "version")
 _VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
-
-
-# --- Dateien ---
-
-def write_bytes(path: Path, data: bytes, *, private: bool = True) -> None:
-    """Atomar: temporaere Datei, fsync, rename, fsync des Ordners (wie gateway/files.py, Spec SHG G2 6.1)."""
-    mode = 0o600 if private else 0o644
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
-    try:
-        os.fchmod(fd, mode)
-        view = memoryview(data)
-        while view:
-            view = view[os.write(fd, view):]
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-    os.replace(tmp, path)
-    dir_fd = os.open(path.parent, os.O_RDONLY)
-    try:
-        os.fsync(dir_fd)
-    finally:
-        os.close(dir_fd)
-
-
-def write_json(path: Path, value, *, private: bool = True) -> None:
-    write_bytes(path, json.dumps(value, ensure_ascii=False, sort_keys=True).encode(), private=private)
-
-
-def write_text(path: Path, text: str, *, private: bool = True) -> None:
-    write_bytes(path, text.encode(), private=private)
-
-
-def read_json(path: Path):
-    """Inhalt oder None: fehlend oder kaputt (Stromausfall) gilt als leer, nie als Absturz."""
-    try:
-        return json.loads(path.read_text())
-    except FileNotFoundError:
-        return None
-    except (OSError, ValueError) as error:
-        logger.warning("%s nicht lesbar (%s), gilt als leer", path.name, type(error).__name__)
-        return None
 
 
 # --- Regeln ---
@@ -174,7 +128,7 @@ class DocumentStore:
         self._host, self._software_version, self._treiber_pruefen = host, software_version, treiber_pruefen
         self._lock = threading.Lock()
         self._docs: dict[str, Dokument | None] = {art: self._laden(art) for art in wire.DOKUMENTE}
-        zustand = read_json(directory / ZUSTAND_DATEI)
+        zustand = dateien.lesen_json(directory / ZUSTAND_DATEI)
         zustand = zustand if isinstance(zustand, dict) else {}
         self._update_anlass = _anlass(zustand.get("update_anlass"))
         roh = zustand.get("abgelehnt")
@@ -193,20 +147,22 @@ class DocumentStore:
         return unter_mindest(self._software_version, anlass[1])
 
     def _laden(self, art: str) -> Dokument | None:
-        raw = read_json(self._dir / DATEIEN[art])
+        raw = dateien.lesen_json(self._dir / DATEIEN[art])
         if not (isinstance(raw, dict) and _is_version(raw.get("version")) and raw["version"] >= 1
                 and isinstance(raw.get("inhalt"), dict)):
             return None
         return Dokument(art, raw["version"], raw["inhalt"], raw.get("dirty") is True)
 
     def _speichern(self, doc: Dokument) -> None:
-        write_json(self._dir / DATEIEN[doc.art], {"version": doc.version, "inhalt": doc.inhalt, "dirty": doc.dirty})
+        dateien.schreiben_json(self._dir / DATEIEN[doc.art],
+                               {"version": doc.version, "inhalt": doc.inhalt, "dirty": doc.dirty}, modus=dateien.PRIVAT)
         self._docs[doc.art] = doc
 
     def _zustand_speichern(self) -> None:
         anlass = list(self._update_anlass) if self._update_anlass is not None else None
-        write_json(self._dir / ZUSTAND_DATEI, {"update_anlass": anlass,
-                                                "abgelehnt": {art: list(v) for art, v in self._abgelehnt.items()}})
+        dateien.schreiben_json(self._dir / ZUSTAND_DATEI,
+                               {"update_anlass": anlass,
+                                "abgelehnt": {art: list(v) for art, v in self._abgelehnt.items()}}, modus=dateien.PRIVAT)
 
     def aktuell(self, art: str) -> Dokument | None:
         return self._docs[art]

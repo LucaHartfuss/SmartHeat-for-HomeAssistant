@@ -53,7 +53,7 @@ def test_two_processes_share_one_counter(tmp_path):
 
 def test_save_goes_through_the_atomic_writer(tmp_path, monkeypatch):
     calls = []
-    monkeypatch.setattr(quota_module, "write_json", lambda path, data, **kw: calls.append((path, data)))
+    monkeypatch.setattr(quota_module.dateien, "schreiben_json", lambda path, data, **kw: calls.append((path, data)))
     guard = make_guard(tmp_path)
     guard.take()
     assert calls and calls[-1][0] == guard._path

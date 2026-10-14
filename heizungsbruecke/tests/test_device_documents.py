@@ -1,7 +1,5 @@
 """Spec 5b 3 und 5.1: Dokumentspeicher des Geraets und atomares Schreiben (Plan D1 Task 3)."""
-import json
 import math
-import stat
 
 import pytest
 
@@ -35,27 +33,6 @@ def _bedienung(version=1, raum_soll=21.0, **changes):
 
 def _store(tmp_path, version="0.6.0"):
     return docs.DocumentStore(tmp_path, host="gateway", software_version=version)
-
-
-# --- Dateien ---
-
-def test_write_json_is_atomic_and_private(tmp_path):
-    path = tmp_path / "a" / "b.json"
-    docs.write_json(path, {"x": "ä"})
-    assert json.loads(path.read_text()) == {"x": "ä"} and stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert not path.with_name("b.json.tmp").exists()
-    docs.write_json(path, [1], private=False)
-    assert stat.S_IMODE(path.stat().st_mode) == 0o644 and json.loads(path.read_text()) == [1]
-
-
-def test_write_text_keeps_the_text(tmp_path):
-    docs.write_text(tmp_path / "t.pem", "-----BEGIN-----\n")
-    assert (tmp_path / "t.pem").read_text() == "-----BEGIN-----\n"
-
-
-def test_read_json_treats_broken_and_missing_files_as_empty(tmp_path):
-    (tmp_path / "kaputt.json").write_text("{")
-    assert docs.read_json(tmp_path / "kaputt.json") is None and docs.read_json(tmp_path / "fehlt.json") is None
 
 
 # --- Konfiguration ---

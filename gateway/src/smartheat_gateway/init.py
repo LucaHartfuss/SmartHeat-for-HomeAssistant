@@ -16,8 +16,8 @@ import secrets
 from collections.abc import Callable
 from pathlib import Path
 
+from smartheat_core import dateien
 from smartheat_gateway import z2m_config
-from smartheat_gateway.files import write_text_private
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +99,7 @@ def _credentials(bus_dir: Path, token: Callable[..., str], written: list[str]) -
         except (OSError, ValueError, KeyError, TypeError):
             pass
         passwords[service] = token(32)
-        write_text_private(path, json.dumps({"username": service, "password": passwords[service]}))
+        dateien.schreiben_text(path, json.dumps({"username": service, "password": passwords[service]}), modus=dateien.PRIVAT)
         written.append(f"bus/credentials/{service}/bus.json")
         created = True
     return passwords, created
@@ -111,11 +111,11 @@ def ensure(bus_dir: Path, zigbee_dir: Path, data_dir: Path, adapter_name: str,
     passwords, created = _credentials(bus_dir, token, written)
     passwd = bus_dir / "mosquitto" / "passwd"
     if created or not _passwd_matches(passwd, passwords):
-        write_text_private(passwd, "".join(f"{s}:{mosquitto_hash(passwords[s])}\n" for s in SERVICES))
+        dateien.schreiben_text(passwd, "".join(f"{s}:{mosquitto_hash(passwords[s])}\n" for s in SERVICES), modus=dateien.PRIVAT)
         written.append("bus/mosquitto/passwd")
     acl = bus_dir / "mosquitto" / "acl"
     if not _acl_matches(acl):
-        write_text_private(acl, render_acl())
+        dateien.schreiben_text(acl, render_acl(), modus=dateien.PRIVAT)
         written.append("bus/mosquitto/acl")
     if z2m_config.ensure(zigbee_dir, adapter_name, "zigbee2mqtt", passwords["zigbee2mqtt"]):
         written.append("zigbee2mqtt/configuration.yaml")
