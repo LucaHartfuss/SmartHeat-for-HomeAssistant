@@ -429,3 +429,14 @@ def test_prepare_with_an_unknown_scheme_raises_without_a_select_call():
         binding.prepare()
     assert [call for call in ha.calls if call[0] == "select"] == []
     assert binding.physical_writes == 0
+
+
+@pytest.mark.parametrize(("name", "wert", "ok"), [
+    ("mode_select", "hz_operationmode_comfort", True),
+    ("mode_select", "heating_circuit_operation_mode_standby", True),
+    ("mode_select", "comfort", False),  # ohne Schema
+    ("mode_select", "hz_operationmode_party", False),
+    ("setpoint_comfort", "hz_operationmode_comfort", False),  # falsche Rolle
+])
+def test_aux_zulaessig_accepts_only_known_modes_of_the_known_schemes(name, wert, ok):
+    assert _binding(FakeHa()).aux_zulaessig(name, wert) is ok

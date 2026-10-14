@@ -224,6 +224,9 @@ class SimulationDriver:
         """Die Simulation hat keinen eigenen Wertebereich; es gelten die lokalen Grenzen."""
         return None
 
+    def aux_zulaessig(self, name: str, wert: str) -> bool:
+        return name in self.description.aux_originals and isinstance(wert, str) and 0 < len(wert) <= 64
+
     def restore_aux(self, values: Mapping[str, str | float], levers: Mapping[str, float] | None = None) -> None:
         plant = self._plant()
         changed = {key: value for key, value in values.items()

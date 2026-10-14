@@ -249,3 +249,8 @@ def test_limits_lets_connection_errors_through_so_the_pipeline_keeps_the_last_ra
 
     with pytest.raises(ConnectionError):
         HaPlantBinding(Broken(), MANIFEST).limits("curve")
+
+
+def test_vaillant_has_no_aux_values_so_no_server_text_is_acceptable():
+    binding = HaPlantBinding(FakeHa(), MANIFEST)
+    assert binding.aux_zulaessig("mode_select", "eco") is False

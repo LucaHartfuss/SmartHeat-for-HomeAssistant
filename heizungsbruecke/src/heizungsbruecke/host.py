@@ -112,6 +112,10 @@ class HaHost:
     def ursprungswerte_melden(self, werte: dict) -> None:
         self._geraet.ursprungswerte_merken(werte)
 
+    def ursprungswerte_server(self) -> dict:
+        aktuell = self._geraet.konfiguration()
+        return dokument_config.ursprungswerte(aktuell if dokument_config.eingerichtet(aktuell) else self._konfiguration)
+
     def sign_off_parts(self) -> RestoreParts | None:
         """Es wird kein Hilfssensor angelegt: fuer das Zuruecksetzen reichen die Hebel und die Clamps."""
         try:

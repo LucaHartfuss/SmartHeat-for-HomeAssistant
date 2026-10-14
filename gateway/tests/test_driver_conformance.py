@@ -96,3 +96,11 @@ def test_probe_follows_the_contract(driver):
 def test_every_driver_declares_the_lever_sets_it_can_serve():
     for driver_class in DRIVERS.values():
         assert driver_class.LEVER_SETS and set(driver_class.LEVER_SETS) <= set(BINDINGS)
+
+
+@pytest.mark.parametrize("driver", CASES, indirect=True)
+def test_aux_zulaessig_exists_and_refuses_names_outside_aux_originals(driver):
+    assert driver.aux_zulaessig("kein_hilfswert", "irgendwas") is False
+    for name in driver.description.aux_originals:
+        assert driver.aux_zulaessig(name, "") is False
+        assert driver.aux_zulaessig(name, "x" * 65) is False

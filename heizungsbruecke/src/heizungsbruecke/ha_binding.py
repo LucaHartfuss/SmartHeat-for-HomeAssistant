@@ -126,12 +126,17 @@ class HaPlantBinding:
     def restore_aux(self, values: Mapping[str, str | float], levers: Mapping[str, float] | None = None) -> None:
         return None
 
+    def aux_zulaessig(self, name: str, wert: str) -> bool:
+        return False  # Vaillant hat keine Hilfswerte
+
 
 # weishaupt_modbus nutzt als Select-Optionen Uebersetzungsschluessel, nicht Texte: 1.x "hz_operationmode_<modus>"
 # (entities.py, MySelectEntity), 2.0 "heating_circuit_operation_mode_<modus>" (modbus/descriptions/myenums.py). Die
 # Modi heissen in beiden gleich (automatic, comfort, normal, lowering, standby); das Schema steht im aktuellen Zustand.
 WEISHAUPT_MODE_SCHEMES = ("hz_operationmode_", "heating_circuit_operation_mode_")
 WEISHAUPT_NORMAL = "normal"
+# Betriebsarten von weishaupt_modbus (in 1.x und 2.0 gleich, nur das Schema unterscheidet sich).
+WEISHAUPT_MODES = ("automatic", "comfort", WEISHAUPT_NORMAL, "lowering", "standby")
 # Statischer Bereich des Raum-Solls Normal je Schema: 1.x PARAMS_ROOMTEMP_MID 16-28 (dazu dynamisch zwischen Absenk und
 # Komfort; das verschiebt _make_room_for_normal, die min/max-Attribute der Entity zeigen bei 1.x die dynamischen
 # Grenzen und taugen deshalb nicht), 2.0 ROOM_TEMP_NORMAL 18-25.
@@ -230,6 +235,10 @@ class WeishauptHaBinding(HaPlantBinding):
             "setpoint_setback": self._number("setpoint_setback"),
         }
 
+    def aux_zulaessig(self, name: str, wert: str) -> bool:
+        return name == "mode_select" and wert in {scheme + mode for scheme in WEISHAUPT_MODE_SCHEMES
+                                                  for mode in WEISHAUPT_MODES}
+
     def restore_aux(self, values: Mapping[str, str | float], levers: Mapping[str, float] | None = None) -> None:
         """Komfort und Absenk zurueck, begrenzt auf das Normal-Soll (Absenk <= Normal <= Komfort bleibt gueltig,
         auch wenn dessen Ursprungswert unbekannt war), danach die Betriebsart. Schreibt nur Abweichungen. Das Normal-Soll
@@ -294,6 +303,9 @@ class ViessmannHaBinding(HaPlantBinding):
 
     def read_aux(self) -> dict[str, str | float]:
         return {"mode_select": self._preset()}
+
+    def aux_zulaessig(self, name: str, wert: str) -> bool:
+        return name == "mode_select" and wert in (*VIESSMANN_FOREIGN_PRESETS, VIESSMANN_NORMAL_PRESET)
 
     def restore_aux(self, values: Mapping[str, str | float], levers: Mapping[str, float] | None = None) -> None:
         """Nur ein beim Start aktives Komfort-/Eco-Programm wird wieder aktiviert; normal/reduziert steuert der

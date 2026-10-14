@@ -1562,6 +1562,18 @@ def test_inactive_after_grace_restores_leftover_boost_once(env, monkeypatch):
     assert _backup(env)["emergency_boost_active"] is False
 
 
+def test_the_end_of_the_subscription_restores_the_server_original(env, monkeypatch):
+    """Spec Stufe 3 S3 5.2: auch die normale Laufzeit-Pipeline (Abschluss-Start, Fristende) kennt die Ursprungswerte."""
+    _quiet_backup(env, emergency_boost_active=True, restore_point={"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 18.0})
+    env.abo["status"] = entitlement.INACTIVE
+    entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
+    monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: True)
+
+    assert _start_bridge(env, ursprungswerte={"heat_limit": 16.0}).reason == "abo_beendet"
+
+    assert env.ha.states["number.heat_limit"] == 16.0
+
+
 def _start_just_before_grace_end(env, monkeypatch):
     _quiet_backup(env, emergency_boost_active=True)
     env.ha.states.update({"number.curve_current": 1.5, "number.shift_current": 25.0})
@@ -2070,6 +2082,47 @@ def test_sign_off_with_invalid_configuration_without_boost_stays_silent(env):
     _start_bridge(env, abgemeldet=True, verteilsystem="Unbekannt")
 
     assert env.ha.pushes == []
+
+
+# --- Ursprungswerte des Servers (Spec Stufe 3 S3 5.2, 5b-W-4) ---
+
+
+def test_sign_off_restores_the_heat_limit_to_the_server_original(env):
+    """Der Ursprungswert vom Server gilt vor dem lokal gemerkten (Ersetzen des Geraets)."""
+    _quiet_backup(env, boost_active=True, originals={"heat_limit": 17.0},
+                  restore_point={"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 18.0})
+
+    bridge = _start_bridge(env, abgemeldet=True, ursprungswerte={"heat_limit": 16.0})
+
+    assert bridge.reason == "abgemeldet"
+    assert ("number.heat_limit", 16.0) in env.ha.writes
+
+
+def test_sign_off_without_server_values_uses_the_local_original(env):
+    _quiet_backup(env, boost_active=True, originals={"heat_limit": 17.0},
+                  restore_point={"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 18.0})
+
+    _start_bridge(env, abgemeldet=True)
+
+    assert ("number.heat_limit", 17.0) in env.ha.writes
+
+
+def test_reset_after_an_empty_configuration_uses_the_server_originals_of_the_marker(env, monkeypatch):
+    """Die Markierung haelt die alte Konfiguration samt ursprungswerte; die leere neue hat keine."""
+    _quiet_backup(env, boost_active=True, restore_point={"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 18.0})
+    monkeypatch.setattr(abo, "restart_process", lambda: None)
+
+    _start_bridge(env, leer_mit_markierung=True, ursprungswerte={"heat_limit": 15.0})
+
+    assert ("number.heat_limit", 15.0) in env.ha.writes
+
+
+def test_the_server_originals_are_clamped_to_the_local_limits_at_sign_off(env):
+    _quiet_backup(env, boost_active=True, restore_point={"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 18.0})
+
+    _start_bridge(env, abgemeldet=True, ursprungswerte={"heat_limit": 99.0})
+
+    assert ("number.heat_limit", 23.0) in env.ha.writes  # Vaillant x Heizkoerper: Heizgrenze bis 23
 
 
 # --- Leer heisst abmelden (Spec Stufe 3 S3 Abschnitt 4, A5-23) ---

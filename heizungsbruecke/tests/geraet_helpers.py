@@ -134,7 +134,7 @@ class FakeGeraet:
 
 
 def start_bridge(env, *, abo=entitlement.ACTIVE, abgemeldet=False, bedienung=None, options=None, log=None,
-                 verbunden=True, leer_mit_markierung=False, **option_overrides):
+                 verbunden=True, leer_mit_markierung=False, ursprungswerte=None, **option_overrides):
     """Startet die Laufzeit auf dem Dokument aus den Test-Optionen (options, sonst test_runtime.OPTIONS; plus
     Overrides). Liefert (bridge, geraet); die gesendeten Nachrichten stehen in geraet.sent, der Kanal in geraet.channel.
     Ohne bedienung ist die Bedienung des Servers der Wert, den die Soll-Entity gerade zeigt (wie nach einem Wunsch,
@@ -143,13 +143,16 @@ def start_bridge(env, *, abo=entitlement.ACTIVE, abgemeldet=False, bedienung=Non
     Optionen (Spec Stufe 3 S3 Abschnitt 4; wie nach HaDeviceHost.konfiguration_uebernommen). Eine schon vorhandene
     Markierung bleibt unveraendert (Neustart mit demselben Stand).
     verbunden=False: der Link ist beim Start der Laufzeit noch nicht verbunden (der Test meldet die Verbindung spaeter,
-    channel.verbunden)."""
+    channel.verbunden).
+    ursprungswerte: Feld `ursprungswerte` der Konfiguration (Spec Stufe 3 S3 5.2)."""
     if options is None:
         from test_runtime import OPTIONS as options  # Kreisimport vermeiden: erst zur Laufzeit
 
     from heizungsbruecke import config
     options = {**options, **option_overrides}
     konfiguration = konfiguration_aus_optionen(options)
+    if ursprungswerte is not None:
+        konfiguration = {**konfiguration, "ursprungswerte": ursprungswerte}
     if abgemeldet:
         dokument_config.abmelden(config.ABGEMELDET_PATH, konfiguration["anlage"])
     if leer_mit_markierung:

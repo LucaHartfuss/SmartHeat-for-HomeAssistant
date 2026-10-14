@@ -116,3 +116,10 @@ def test_a_restore_without_auxiliary_originals_leaves_the_users_program(make_sto
     assert all(call[0] != "preset" for call in ha.calls)
     assert ("number", "number.slope", 1.0) in ha.calls
     assert ha.states["climate.heizkreis::preset_mode"] == "comfort"
+
+
+@pytest.mark.parametrize(("wert", "ok"), [("eco", True), ("home", True), ("comfort", True), ("sleep", False), ("x", False)])
+def test_aux_zulaessig_knows_the_programs_the_binding_handles(wert, ok):
+    binding = _binding(FakeHa())
+    assert binding.aux_zulaessig("mode_select", wert) is ok
+    assert binding.aux_zulaessig("setpoint_comfort", wert) is False

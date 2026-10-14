@@ -7,7 +7,7 @@ die Restart-Policy des Hosts (Supervisor-Watchdog bzw. Container) wuerde auch ei
 import functools
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -152,6 +152,11 @@ class Host(Protocol):
         """Gemerkte Ursprungswerte fuer up/status (Spec Stufe 3 S3 5.1); im Hauptthread, wirft nie."""
         ...
 
+    def ursprungswerte_server(self) -> Mapping[str, object]:
+        """Ursprungswerte der Anlage auf dem Server, frisch aus der gespeicherten Konfiguration (bzw. der Markierung,
+        solange das Zuruecksetzen nach einer leeren Konfiguration aussteht); wirft nie."""
+        ...
+
     def load(self) -> Loaded:
         """Konfiguration pruefen, Signale und Anlage vorbereiten; wirft StartFailure."""
         ...
@@ -239,13 +244,15 @@ def _nach_zuruecksetzen(bridge: IdleBridge, pfad: Path | None, anlage: str) -> N
 
 
 def _sign_off(parts: RestoreParts | None, store, notifier, status, clock, retry_seconds: float, *,
-              aufraeumen_path: Path | None = None, anlage: str) -> IdleBridge:
+              aufraeumen_path: Path | None = None, anlage: str,
+              server_originals: Callable[[], Mapping[str, object]] | None = None) -> IdleBridge:
     """Abmelden (Spec TP7 3.3, die Integration bzw. das Portal entfernt den Client) und leer heisst abmelden (Spec Stufe
     3 S3 Abschnitt 4): laufenden Boost auf den Wiederherstellungspunkt zuruecknehmen, alle Meldungen entfernen, dann
     Ruhezustand `abgemeldet`. Scheitert es, wird es im Takt retry_seconds erneut versucht; der Status bleibt
     `abgemeldet` mit Grund. Gelingt es und steht eine Aufraeum-Markierung dieser Anlage offen, folgt ein Neustart
     (_nach_zuruecksetzen); scheitert es, bleibt sie offen und ein Neustart dazwischen versucht es erneut."""
-    restorer = None if parts is None else LeverPipeline(store, parts.binding, parts.safety, clock=clock)
+    restorer = None if parts is None else LeverPipeline(
+        store, parts.binding, parts.safety, clock=clock, server_originals=server_originals)
     boosting = store.state.boost_active or store.state.emergency_boost_active
     restored = restorer is not None and restorer.restore_and_clear(always_restore=False)
     # Die Meldung zum Zuruecksetzen bleibt: nach dem Entfernen ist sie der einzige Hinweis, dass
@@ -649,7 +656,8 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
     status.publish()
     if boot.signed_off:
         return _sign_off(host.sign_off_parts(), store, notifier, status, clock, boot.local_check_interval,
-                         aufraeumen_path=boot.aufraeumen_path, anlage=boot.tenant_id)
+                         aufraeumen_path=boot.aufraeumen_path, anlage=boot.tenant_id,
+                         server_originals=host.ursprungswerte_server)
     try:
         loaded = host.load()
     except StartFailure as error:
@@ -671,6 +679,7 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
         worker=RegulationWorker(clock=clock), store=store,
         override=LeverPipeline(
             store, loaded.binding, config.local_safety, clock=clock, notify=functools.partial(_hint, notifier),
+            server_originals=host.ursprungswerte_server,
         ),
         notifier=notifier, status=status, clock=clock, texts=host.texts,
     )

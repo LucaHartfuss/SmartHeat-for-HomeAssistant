@@ -270,3 +270,19 @@ def test_sign_off_parts_are_none_with_a_broken_lock(env):
     config.RASTUNG_PATH.write_text("{")
     host = HaHost(FakeGeraet(konfiguration_aus_optionen(OPTIONS)), env.ha, clock=env.clock)
     assert host.sign_off_parts() is None
+
+
+def test_ursprungswerte_server_reads_the_current_configuration_fresh(env):
+    konfiguration = konfiguration_aus_optionen(OPTIONS)
+    geraet = FakeGeraet({**konfiguration, "ursprungswerte": {"heat_limit": 16.0}})
+    host = HaHost(geraet, env.ha, clock=env.clock)
+    assert host.ursprungswerte_server() == {"heat_limit": 16.0}
+    geraet._konfiguration = {**konfiguration, "ursprungswerte": {"heat_limit": 15.0}}  # neue Konfiguration trifft ein
+    assert host.ursprungswerte_server() == {"heat_limit": 15.0}
+
+
+def test_ursprungswerte_server_falls_back_to_the_marker_while_the_reset_is_pending(env):
+    konfiguration = {**konfiguration_aus_optionen(OPTIONS), "ursprungswerte": {"heat_limit": 16.0}}
+    aufraeumen.markieren(config.AUFRAEUMEN_PATH, konfiguration)
+    host = HaHost(FakeGeraet({**konfiguration, "anlage": None, "ursprungswerte": {}}), env.ha, clock=env.clock)
+    assert host.ursprungswerte_server() == {"heat_limit": 16.0}

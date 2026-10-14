@@ -153,3 +153,15 @@ def test_the_lock_check_never_throws_anything_but_config_error(tmp_path):
     with pytest.raises(ConfigError):
         dc.rastung_pruefen(None, pfad)
     dc.rastung_pruefen(None, tmp_path / "fehlt.json")  # ohne Rastung nichts zu pruefen
+
+
+def test_ursprungswerte_of_the_document():
+    assert dc.ursprungswerte({**KONF, "ursprungswerte": {"heat_limit": 16.0}}) == {"heat_limit": 16.0}
+    for ohne in (KONF, None, "x", {**KONF, "ursprungswerte": [1]}, {**KONF, "ursprungswerte": None}):
+        assert dc.ursprungswerte(ohne) == {}
+
+
+def test_arriving_originals_do_not_restart_the_runtime():
+    """Spec 5.2: ursprungswerte steht nicht in LAUFZEIT_FELDER, ihr Eintreffen startet die Laufzeit nicht neu."""
+    assert "ursprungswerte" not in dc.LAUFZEIT_FELDER
+    assert dc.laufzeit_relevant(KONF, {**KONF, "ursprungswerte": {"heat_limit": 16.0}}) is False

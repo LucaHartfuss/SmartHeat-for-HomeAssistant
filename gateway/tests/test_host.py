@@ -222,3 +222,19 @@ def test_abo_comes_from_the_document(data_dir, clock):
 def test_gateway_texts_never_name_home_assistant():
     for value in vars(SHG_TEXTS).values():
         assert "Home Assistant" not in value and "Heizungsbrücke" not in value and "Integration" not in value
+
+
+def test_ursprungswerte_server_reads_the_current_configuration_fresh(data_dir, clock):
+    """Spec Stufe 3 S3 5.2: frisch aus dem Dokument; trifft ein, ohne dass die Laufzeit neu startet."""
+    host = _host(Paths(data_dir), {**konfiguration(), "ursprungswerte": {"heat_limit": 16.0}}, clock)
+    assert host.ursprungswerte_server() == {"heat_limit": 16.0}
+    host._geraet.device.konf = {**konfiguration(), "ursprungswerte": {"heat_limit": 15.0}}
+    assert host.ursprungswerte_server() == {"heat_limit": 15.0}
+
+
+def test_ursprungswerte_server_falls_back_to_the_marker_while_the_reset_is_pending(data_dir, clock):
+    paths = Paths(data_dir)
+    alt = {**konfiguration(), "ursprungswerte": {"heat_limit": 16.0}}
+    aufraeumen.markieren(paths.aufraeumen, alt)
+    host = _host(paths, {**alt, "anlage": None, "ursprungswerte": {}}, clock)
+    assert host.ursprungswerte_server() == {"heat_limit": 16.0}

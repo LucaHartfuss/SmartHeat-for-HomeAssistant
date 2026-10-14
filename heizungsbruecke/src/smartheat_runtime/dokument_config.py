@@ -27,6 +27,12 @@ def eingerichtet(konfiguration) -> bool:
         konfiguration["anlage"])
 
 
+def ursprungswerte(konfiguration) -> dict:
+    """Feld ursprungswerte der Konfiguration (vom Server gespiegelt, Spec Stufe 3 S2 6.1); {} ohne gueltiges Feld."""
+    werte = konfiguration.get("ursprungswerte") if isinstance(konfiguration, Mapping) else None
+    return dict(werte) if isinstance(werte, Mapping) else {}
+
+
 def abo_status(konfiguration) -> str:
     if not eingerichtet(konfiguration):
         return entitlement.UNKNOWN

@@ -132,6 +132,11 @@ class PlantBinding(Protocol):
     def restore_aux(self, values: Mapping[str, str | float], levers: Mapping[str, float] | None = None) -> None: ...
     def limits(self, lever: str) -> tuple[float, float] | None: ...
 
+    def aux_zulaessig(self, name: str, wert: str) -> bool:
+        """Spec Stufe 3 S3 5.2: nimmt das Binding diesen Text als Hilfswert der Rolle an? Nur fuer Werte vom Server
+        (ein fehlerhafter Server darf keine unbekannte Betriebsart setzen); Zahlen prueft die Pipeline."""
+        ...
+
 
 # Vaillant VRC 720 ueber mypyllant (Spec 5.4): Schrittweiten der Anlage; Toleranzen = halber Anlagenschritt
 # (Mindestvorlauf 0,1 > halber Schritt, Begruendung in enforce.py); 35 min Wartezeit (mypyllant fragt die Cloud alle

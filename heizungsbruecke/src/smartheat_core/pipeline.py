@@ -29,6 +29,7 @@ import logging
 import math
 import time
 from collections.abc import Callable, Mapping
+from typing import TypeGuard
 
 from smartheat_core import write_budget
 from smartheat_core.binding import PlantBinding
@@ -93,7 +94,7 @@ def _row(comfort: bool, emergency: bool) -> str:
     return _ROW_RESTORE
 
 
-def _is_finite_number(value) -> bool:
+def _is_finite_number(value) -> TypeGuard[float]:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
@@ -101,6 +102,7 @@ class LeverPipeline:
     def __init__(
         self, store, binding: PlantBinding, safety: LocalSafety, *, clock: Callable[[], float] = time.monotonic,
         notify: Callable[[str, str, str], None] | None = None,
+        server_originals: Callable[[], Mapping[str, object]] | None = None,
     ) -> None:
         self._store = store
         self._binding = binding
@@ -114,6 +116,8 @@ class LeverPipeline:
         self._narrowing_logged: dict[str, tuple[float, float]] = {}
         # Nicht kritischer Hinweis (Schluessel, Zustand, Text); im Add-on Notifier.notify(..., critical=False).
         self._notify = notify
+        # Ursprungswerte der Anlage auf dem Server (Spec Stufe 3 S3 5.2, 5b-W-4); frisch bei jedem Zuruecksetzen gelesen.
+        self._server_originals = server_originals
         # Zeitpunkt (clock) und Wert des letzten erfolgreichen eigenen Schreibens je Hebel, nur Laufzeit: Durchsetzen
         # und Quota-Check vertrauen dem Read erst nach settle_seconds.
         self._last_write_at: dict[str, float] = {}
@@ -260,21 +264,31 @@ class LeverPipeline:
         versucht es erneut. Scheitert danach nur das Speichern, gilt die Wiederherstellung als erfolgt. Plan 3b: danach
         die Hilfs-Ursprungswerte (aux_originals), die anschliessend geleert werden."""
         state = self._store.state
+        server = self._server_snapshot()
         originals: dict[str, float] = {}
         differs = False
         for lever in self._description.restore_originals:
             if not self._binding.has(lever):
                 continue
-            original = state.originals.get(lever)
+            vom_server = server.get(lever)
+            original = vom_server if _is_finite_number(vom_server) else state.originals.get(lever)
             current = state.restore_point.get(lever)
             if original is None:
                 if current is not None:
                     logger.warning("Ursprungswert von %s unbekannt: bleibt auf dem gelernten Wert %s", lever, current)
                 continue
+            original = self._target(lever, original)
             originals[lever] = original
             if current is not None and abs(current - original) > self._description.steps[lever] / 2:
                 differs = True
         aux = dict(state.aux_originals)
+        for name in self._description.aux_originals:
+            if name in aux or name not in server:
+                continue
+            if self._aux_vom_server(name, server[name]):
+                aux[name] = server[name]
+            else:
+                logger.warning("Hilfs-Ursprungswert %s vom Server verworfen", name)
         if not (always_restore or state.boost_active or state.emergency_boost_active or differs or aux):
             return True
         if not write_budget.may_attempt(self._store, write_budget.RESTORE, write_budget.RETURN_STAIRCASE, self._clock()):
@@ -302,6 +316,26 @@ class LeverPipeline:
         except Exception:
             logger.exception("Zuletzt gelernte Werte wiederhergestellt, Boost-Flags konnten aber nicht gespeichert werden")
         return True
+
+    def _server_snapshot(self) -> Mapping[str, object]:
+        if self._server_originals is None:
+            return {}
+        try:
+            werte = self._server_originals()
+        except Exception:
+            logger.exception("Ursprungswerte des Servers nicht lesbar, es gelten die lokalen")
+            return {}
+        return werte if isinstance(werte, Mapping) else {}
+
+    def _aux_vom_server(self, name: str, wert) -> bool:
+        """Spec 5.2: Zahl nur im lokalen Bereich von room_setpoint (Komfort-/Absenk-Soll), Text nur, wenn das Binding
+        ihn kennt (ein fehlerhafter Server darf keine unbekannte Betriebsart setzen)."""
+        if isinstance(wert, bool):
+            return False
+        if isinstance(wert, int | float):
+            bereich = self._safety.ranges.get("room_setpoint")
+            return bereich is not None and math.isfinite(wert) and bereich[0] <= wert <= bereich[1]
+        return isinstance(wert, str) and self._binding.aux_zulaessig(name, wert)
 
     def _row_values(self, row: str) -> dict:
         point = self._store.state.restore_point
