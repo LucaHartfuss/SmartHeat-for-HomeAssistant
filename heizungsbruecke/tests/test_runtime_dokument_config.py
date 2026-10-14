@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from smartheat_core import rastung
 from smartheat_core.safety import resolve_local_safety
 from smartheat_device import wire
 from smartheat_runtime import dokument_config as dc
@@ -48,11 +49,12 @@ def test_boot_info_never_throws(tmp_path):
     assert boot.configured is False and boot.lever_set.id == options.DEFAULT_LEVER_SET
 
 
-def test_runtime_config_from_the_document():
+def test_runtime_config_from_the_document(tmp_path):
     def source():
         return entitlement.ACTIVE
 
-    config = dc.runtime_config(KONF, entitlement_path=Path("/tmp/e.json"), abo_source=source)
+    config = dc.runtime_config(KONF, rastung_pfad=tmp_path / "keine.json", entitlement_path=Path("/tmp/e.json"),
+                               abo_source=source)
     assert (config.tenant_id, config.setup_id, config.lever_set_id) == ("kunde3", "kunde3", "viessmann_vicare")
     assert (config.daily_trigger_time, config.room_sensor_refs, config.battery_refs) == ("12:12", (SENSOR,), ())
     assert config.local_safety == resolve_local_safety("viessmann_vicare", "Heizkoerper")
@@ -61,17 +63,18 @@ def test_runtime_config_from_the_document():
     assert config.abo_source is source and config.entitlement_path == Path("/tmp/e.json")
 
 
-def test_test_intervals_come_from_the_document():
+def test_test_intervals_come_from_the_document(tmp_path):
     config = dc.runtime_config({**KONF, "intervalle": {"pruefung_s": 5, "telemetrie_s": 10}},
-                               entitlement_path=Path("/tmp/e.json"), abo_source=lambda: entitlement.ACTIVE)
+                               rastung_pfad=tmp_path / "keine.json", entitlement_path=Path("/tmp/e.json"), abo_source=lambda: entitlement.ACTIVE)
     assert (config.local_check_interval, config.telemetry_interval) == (5, 10)
 
 
 @pytest.mark.parametrize("konfiguration", [None, {"anlage": None}, {**KONF, "verteilsystem": "Kachelofen"},
                                            {**KONF, "tagestick": None}])
-def test_unusable_documents_are_config_errors(konfiguration):
+def test_unusable_documents_are_config_errors(konfiguration, tmp_path):
     with pytest.raises(ConfigError):
-        dc.runtime_config(konfiguration, entitlement_path=Path("/tmp/e.json"), abo_source=lambda: entitlement.ACTIVE)
+        dc.runtime_config(konfiguration, rastung_pfad=tmp_path / "keine.json", entitlement_path=Path("/tmp/e.json"),
+                          abo_source=lambda: entitlement.ACTIVE)
 
 
 @pytest.mark.parametrize("abo, status", [
@@ -96,8 +99,9 @@ def test_runtime_relevant_changes(change, relevant):
     assert dc.laufzeit_relevant(None, KONF) is True
 
 
-def test_query_uses_the_abo_source():
-    config = dc.runtime_config(KONF, entitlement_path=Path("/tmp/e.json"), abo_source=lambda: entitlement.INACTIVE)
+def test_query_uses_the_abo_source(tmp_path):
+    config = dc.runtime_config(KONF, rastung_pfad=tmp_path / "keine.json", entitlement_path=Path("/tmp/e.json"),
+                               abo_source=lambda: entitlement.INACTIVE)
     assert entitlement.query(config) == entitlement.INACTIVE
 
 
@@ -109,3 +113,43 @@ def test_the_sign_off_marker_binds_to_the_installation_and_is_private(tmp_path):
     assert dc.abgemeldet(pfad, KONF) and not dc.abgemeldet(pfad, {**KONF, "anlage": "andere"})
     assert not dc.abgemeldet(pfad, None) and pfad.stat().st_mode & 0o777 == 0o600
     assert dc.abmelden(pfad, "andere") is True and not dc.abgemeldet(pfad, KONF)
+
+
+def test_runtime_refuses_a_configuration_that_does_not_fit_the_lock(tmp_path):
+    pfad = tmp_path / "sicherheitssatz.json"
+    rastung.schreiben(pfad, rastung.Rastung("viessmann_vicare", "Fussbodenheizung"), "2026-10-14T00:00:00+00:00")
+    with pytest.raises(ConfigError, match="festgelegt"):
+        dc.runtime_config(KONF, rastung_pfad=pfad, entitlement_path=tmp_path / "e.json", abo_source=lambda: "active")
+
+
+def test_runtime_refuses_everything_with_a_broken_lock(tmp_path):
+    (tmp_path / "sicherheitssatz.json").write_text("{")
+    with pytest.raises(ConfigError):
+        dc.runtime_config(KONF, rastung_pfad=tmp_path / "sicherheitssatz.json", entitlement_path=tmp_path / "e.json",
+                          abo_source=lambda: "active")
+
+
+def test_runtime_refuses_everything_with_a_lock_that_is_a_symlink(tmp_path):
+    ziel = tmp_path / "ziel.json"
+    rastung.schreiben(ziel, rastung.Rastung("viessmann_vicare", "Heizkoerper"), "2026-10-14T00:00:00+00:00")
+    (tmp_path / "sicherheitssatz.json").symlink_to(ziel)
+    with pytest.raises(ConfigError, match="festgelegt"):
+        dc.runtime_config(KONF, rastung_pfad=tmp_path / "sicherheitssatz.json", entitlement_path=tmp_path / "e.json",
+                          abo_source=lambda: "active")
+
+
+def test_runtime_starts_without_lock_file_and_with_the_same_pair(tmp_path):
+    assert dc.runtime_config(KONF, rastung_pfad=tmp_path / "fehlt.json", entitlement_path=tmp_path / "e.json",
+                             abo_source=lambda: "active").tenant_id == "kunde3"
+    pfad = tmp_path / "sicherheitssatz.json"
+    rastung.schreiben(pfad, rastung.Rastung("viessmann_vicare", "Heizkoerper"), "2026-10-14T00:00:00+00:00")
+    assert dc.runtime_config(KONF, rastung_pfad=pfad, entitlement_path=tmp_path / "e.json",
+                             abo_source=lambda: "active").tenant_id == "kunde3"
+
+
+def test_the_lock_check_never_throws_anything_but_config_error(tmp_path):
+    pfad = tmp_path / "sicherheitssatz.json"
+    rastung.schreiben(pfad, rastung.Rastung("viessmann_vicare", "Heizkoerper"), "2026-10-14T00:00:00+00:00")
+    with pytest.raises(ConfigError):
+        dc.rastung_pruefen(None, pfad)
+    dc.rastung_pruefen(None, tmp_path / "fehlt.json")  # ohne Rastung nichts zu pruefen

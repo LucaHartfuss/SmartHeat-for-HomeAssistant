@@ -8,7 +8,7 @@ importiert den Geraetekern nicht; ein Test haelt beide gleich). Die Bindung (Tre
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-from smartheat_core import dateien
+from smartheat_core import dateien, rastung
 from smartheat_core.binding import BINDINGS
 from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime import entitlement, options
@@ -55,10 +55,19 @@ def boot_info(konfiguration, *, abgemeldet: bool, client_version: str, backup_pa
     )
 
 
-def runtime_config(konfiguration, *, entitlement_path: Path, abo_source: Callable[[], str]) -> RuntimeConfig:
+def rastung_pruefen(konfiguration, rastung_pfad: Path) -> None:
+    """Zweite Linie (Spec Stufe 3 S3 3.3): die Laufzeit startet bzw. setzt nur zurueck, wenn die Konfiguration zur
+    Rastung passt; der Dokumentspeicher hat das schon geprueft, das hier deckt einen Fehler dort ab. Wirft ConfigError."""
+    if not rastung.passt(rastung.lesen(rastung_pfad), konfiguration if isinstance(konfiguration, Mapping) else {}):
+        raise ConfigError(f"Konfiguration: {rastung.TEXT}")
+
+
+def runtime_config(konfiguration, *, rastung_pfad: Path, entitlement_path: Path,
+                   abo_source: Callable[[], str]) -> RuntimeConfig:
     """Wirft ConfigError (der Host macht daraus StartFailure); config_check hat das Dokument schon geprueft."""
     if not eingerichtet(konfiguration):
         raise ConfigError("Das Gerät ist nicht eingerichtet")
+    rastung_pruefen(konfiguration, rastung_pfad)
     hebelsatz = konfiguration.get("hebelsatz")
     try:
         safety = resolve_local_safety(hebelsatz, konfiguration.get("verteilsystem"))

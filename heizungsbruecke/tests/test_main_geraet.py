@@ -87,6 +87,8 @@ def _anzeige(zustand="nicht_uebernommen", *, eingerichtet=False):
 def geraet_env(env, tmp_path, monkeypatch):  # noqa: F811 - env ist die Fixture aus test_runtime
     """env plus Datenordner des Geraets; start() setzt abo.restart_process global um, monkeypatch stellt es zurueck."""
     monkeypatch.setattr(config, "DEVICE_DATA_DIR", tmp_path / "data")
+    # wo der Dokumentspeicher die Rastung schreibt (device/sicherheitssatz.json), liest sie die Laufzeit
+    monkeypatch.setattr(config, "RASTUNG_PATH", tmp_path / "data" / "device" / "sicherheitssatz.json")
     monkeypatch.setattr(config, "OPTIONS_PATH", tmp_path / "options.json")
     monkeypatch.setattr(abo, "restart_process", abo.restart_process)
     monkeypatch.setattr(main_module.status_holder, "host", None)

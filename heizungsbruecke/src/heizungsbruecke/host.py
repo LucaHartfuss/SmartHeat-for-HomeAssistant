@@ -108,6 +108,7 @@ class HaHost:
     def sign_off_parts(self) -> RestoreParts | None:
         """Es wird kein Hilfssensor angelegt: fuer das Zuruecksetzen reichen die Hebel und die Clamps."""
         try:
+            dokument_config.rastung_pruefen(self._konfiguration, config.RASTUNG_PATH)
             effective = dokument.optionen(self._konfiguration)
             description = config.binding_description(effective)
             safety = config.local_safety(effective)
@@ -130,7 +131,8 @@ class HaHost:
                 raise config.ConfigError(text)
             geraet_trigger.pruefe_soll_ref(dokument.soll_entity(self._konfiguration))
             runtime = dokument_config.runtime_config(
-                self._konfiguration, entitlement_path=config.ENTITLEMENT_PATH, abo_source=self._geraet.abo_status)
+                self._konfiguration, rastung_pfad=config.RASTUNG_PATH, entitlement_path=config.ENTITLEMENT_PATH,
+                abo_source=self._geraet.abo_status)
             error = config.validate(options)
             if error:
                 raise config.ConfigError(error)

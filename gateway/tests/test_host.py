@@ -9,6 +9,7 @@ from fakes import FakeBus
 from geraet_fakes import geraet_fuer
 from world import GatewayWorld
 
+from smartheat_core import rastung
 from smartheat_gateway import config as gateway_config
 from smartheat_gateway.drivers import registry
 from smartheat_gateway.drivers.base import DriverError
@@ -99,6 +100,23 @@ def test_sign_off_with_a_matching_plant_restores_with_the_driver(data_dir, clock
     host = _host(paths, konfiguration(), clock)
     parts = host.sign_off_parts()
     assert isinstance(parts, RestoreParts) and host.driver is not None and parts.binding is host.driver
+
+
+def test_load_refuses_a_configuration_that_does_not_fit_the_lock(data_dir, clock):
+    paths = Paths(data_dir)
+    rastung.schreiben(paths.rastung, rastung.Rastung("viessmann_vicare", "Fussbodenheizung"), "2026-10-14T00:00:00+00:00")
+    with pytest.raises(StartFailure, match="festgelegt") as error:
+        _host(paths, konfiguration(), clock).load()
+    assert error.value.key == "konfiguration"
+
+
+def test_sign_off_parts_are_none_with_a_broken_lock(data_dir, clock):
+    paths = Paths(data_dir)
+    gateway_config.abmelden(paths, "test-tenant")
+    paths.rastung.parent.mkdir(parents=True, exist_ok=True)
+    paths.rastung.write_text("{")
+    host = _host(paths, konfiguration(), clock)
+    assert host.sign_off_parts() is None and host.driver is None
 
 
 def test_manifest_error_is_a_start_failure_with_the_manifest_key(data_dir, clock, monkeypatch):

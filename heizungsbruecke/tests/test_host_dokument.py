@@ -220,3 +220,34 @@ def test_a_climate_target_without_attribute_is_a_start_failure(env):
     konfiguration = konfiguration_aus_optionen({**OPTIONS, "entity_room_target": "climate.wz"})
     with pytest.raises(StartFailure, match="climate.wz::temperature"):
         HaHost(FakeGeraet(konfiguration), env.ha, clock=env.clock).load()
+
+
+def _rastung_schreiben(verteilsystem):
+    from smartheat_core import rastung
+    rastung.schreiben(config.RASTUNG_PATH, rastung.Rastung("vaillant_vrc720", verteilsystem),
+                      "2026-10-14T00:00:00+00:00")
+
+
+def test_rastung_path_is_the_device_lock():
+    from smartheat_core import rastung
+    from smartheat_device.device import DEVICE_DIR
+    assert config.RASTUNG_PATH == config.DEVICE_DATA_DIR / DEVICE_DIR / rastung.DATEI
+
+
+def test_load_refuses_a_configuration_that_does_not_fit_the_lock(env):
+    _rastung_schreiben("Fussbodenheizung")
+    host = HaHost(FakeGeraet(konfiguration_aus_optionen(OPTIONS)), env.ha, clock=env.clock)
+    with pytest.raises(StartFailure, match="festgelegt"):
+        host.load()
+
+
+def test_load_accepts_a_configuration_that_fits_the_lock(env):
+    _rastung_schreiben(OPTIONS["verteilsystem"])
+    HaHost(FakeGeraet(konfiguration_aus_optionen(OPTIONS)), env.ha, clock=env.clock).load()
+
+
+def test_sign_off_parts_are_none_with_a_broken_lock(env):
+    config.RASTUNG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    config.RASTUNG_PATH.write_text("{")
+    host = HaHost(FakeGeraet(konfiguration_aus_optionen(OPTIONS)), env.ha, clock=env.clock)
+    assert host.sign_off_parts() is None

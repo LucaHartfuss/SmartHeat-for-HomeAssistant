@@ -34,7 +34,7 @@ FILES = {
     "BACKUP_PATH": "backup.json", "FAILSAFE_PATH": "failsafe_state.json",
     "ENTITLEMENT_PATH": "entitlement_state.json", "DERIVED_SENSORS_PATH": "derived_sensors.json",
     "AUFRAEUMEN_PATH": "aufraeumen.json", "RUNTIME_DIR": "runtime", "ROOM_TARGET_PATH": "runtime/room_target.json",
-    "ABGEMELDET_PATH": "runtime/abgemeldet.json",
+    "ABGEMELDET_PATH": "runtime/abgemeldet.json", "RASTUNG_PATH": "device/sicherheitssatz.json",
 }
 #: Testdaten; die Laufzeit liest sie als Konfigurationsdokument (geraet_helpers.konfiguration_aus_optionen).
 OPTIONS = {

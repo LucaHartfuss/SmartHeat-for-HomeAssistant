@@ -130,7 +130,8 @@ class FakeTriggerClient:
 @pytest.fixture
 def env(tmp_path, monkeypatch, clock):
     paths = {}
-    for name in ("BACKUP_PATH", "FAILSAFE_PATH", "ENTITLEMENT_PATH", "DERIVED_SENSORS_PATH", "AUFRAEUMEN_PATH"):
+    for name in ("BACKUP_PATH", "FAILSAFE_PATH", "ENTITLEMENT_PATH", "DERIVED_SENSORS_PATH", "AUFRAEUMEN_PATH",
+                 "RASTUNG_PATH"):
         paths[name] = tmp_path / f"{name.lower()}.json"
         monkeypatch.setattr(f"heizungsbruecke.config.{name}", paths[name])
     runtime_dir = tmp_path / "runtime"

@@ -100,6 +100,7 @@ class GatewayHost:
     def sign_off_parts(self) -> RestoreParts | None:
         hebelsatz = self.konfiguration.get("hebelsatz")
         try:
+            dokument_config.rastung_pruefen(self.konfiguration, self._paths.rastung)
             if not isinstance(hebelsatz, str):
                 raise ConfigError("Konfiguration ohne Hebelsatz")
             safety = resolve_local_safety(hebelsatz, self.konfiguration.get("verteilsystem"))

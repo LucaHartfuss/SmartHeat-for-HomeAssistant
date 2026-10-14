@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from configs import SENSOR, THERMOSTAT, bedienung, konfiguration, leer
 
+from smartheat_core import rastung
 from smartheat_device import wire
 from smartheat_device.documents import DocumentStore
 from smartheat_gateway import config
@@ -71,6 +72,7 @@ def test_new_paths():
     paths = Paths(Path("/data"))
     assert (str(paths.inventur), str(paths.abgemeldet), str(paths.aufraeumen)) == (
         "/data/inventur.json", "/data/runtime/abgemeldet.json", "/data/aufraeumen.json")
+    assert str(paths.rastung) == "/data/device/sicherheitssatz.json"
     assert [str(p) for p in (paths.software_soll, paths.software_meldungen, paths.software_quittung)] == [
         "/data/software_soll.json", "/data/software_meldungen.json", "/data/software_quittung.json"]
 
@@ -86,3 +88,17 @@ def test_the_empty_configuration_and_the_test_configuration_are_accepted_by_the_
     ergebnis = store.empfangen("konfiguration", {"schema": wire.SCHEMA, "version": 2, **leer()})
     assert (ergebnis.ok, ergebnis.uebernommen) == (True, True), ergebnis.text
     assert not store.eingerichtet() and not dokument_config.eingerichtet(store.inhalt("konfiguration"))
+
+
+def test_rastung_path_is_where_the_document_store_writes_the_lock(tmp_path):
+    """Die zweite Linie (Spec Stufe 3 S3 3.3) liest die Datei, die der Dokumentspeicher des Geraetekerns schreibt."""
+    paths = Paths(tmp_path)
+    assert paths.rastung == paths.device_dir / rastung.DATEI
+    store = DocumentStore(paths.device_dir, host="gateway", software_version=GATEWAY_VERSION,
+                          treiber_pruefen=lambda bindung: config.treiber_pruefen(paths, bindung))
+    ergebnis = store.empfangen("konfiguration", {"schema": wire.SCHEMA, "version": 1, **konfiguration()})
+    assert ergebnis.ok and paths.rastung.is_file()
+    assert rastung.lesen(paths.rastung) == rastung.Rastung("viessmann_vicare", "Heizkoerper")
+    config.parse_dokument(konfiguration(), paths, lambda: entitlement.ACTIVE)
+    with pytest.raises(ConfigError, match="festgelegt"):
+        config.parse_dokument(konfiguration(verteilsystem="Fussbodenheizung"), paths, lambda: entitlement.ACTIVE)

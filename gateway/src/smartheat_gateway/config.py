@@ -52,7 +52,8 @@ def bindung(konfiguration) -> GatewayBindung:
 
 def parse_dokument(konfiguration, paths: Paths,
                    abo_source: Callable[[], str]) -> tuple[RuntimeConfig, GatewayBindung]:
-    runtime = dokument_config.runtime_config(konfiguration, entitlement_path=paths.entitlement, abo_source=abo_source)
+    runtime = dokument_config.runtime_config(
+        konfiguration, rastung_pfad=paths.rastung, entitlement_path=paths.entitlement, abo_source=abo_source)
     return runtime, bindung(konfiguration)
 
 
