@@ -20,7 +20,7 @@ WS_PING_TIMEOUT_SECONDS = 10
 class HaTriggerClient:
     """Persistent WebSocket connection to HA Core's `subscribe_trigger` command -- the
     same internal mechanism HA-YAML automations and the frontend automation editor use
-    (see docs/superpowers/specs/2026-09-21-heizungsbruecke-eventgetriebene-trigger-design.md).
+    (see docs/archiv/superpowers/specs/2026-09-21-heizungsbruecke-eventgetriebene-trigger-design.md).
     This is NOT a documented/stable public API: if `subscribe_trigger` ever fails or
     changes shape on a future HA Core version, `connected` simply stays False forever
     and the caller's watchdog-loop fallback (see smartheat_runtime/app.py) covers the gap -- this

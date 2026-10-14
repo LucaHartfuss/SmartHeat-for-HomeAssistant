@@ -2,7 +2,7 @@
 
 Anders als test_ha_api.py (das nur `requests` mockt) ruft dieser Test die REST-API
 eines tatsaechlich laufenden HA-Core-Containers auf. Zweck: die in
-docs/superpowers/specs/2026-09-13-heizungsbruecke-config-vereinfachung-design.md,
+docs/archiv/superpowers/specs/2026-09-13-heizungsbruecke-config-vereinfachung-design.md,
 Abschnitt 3.4 als unsicher gekennzeichneten Annahmen ueber Home Assistants
 Config-Entry-Flow- und Helper-Storage-APIs an echtem Verhalten verifizieren, bevor
 darauf aufgebaut wird -- nicht danach.
