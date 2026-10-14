@@ -273,3 +273,56 @@ def test_server_aux_value_of_the_wrong_kind_is_dropped_and_logged_by_name(make_s
     assert binding.restored == []
     assert f"Hilfs-Ursprungswert {name} vom Server verworfen" in caplog.text
     assert str(wert) not in caplog.text
+
+
+SERVER_ALL = {"curve": 0.6, "room_setpoint": 20.0, "heat_limit": 16.0,
+              "mode_select": "hz_operationmode_comfort", "setpoint_comfort": 21.0, "setpoint_setback": 17.0}
+
+
+def test_server_values_do_not_retrigger_a_successful_restore(make_store, clock):
+    """Schluss-Review: die gespiegelten Ursprungswerte bleiben in der Konfiguration. Ob zurueckgesetzt wird, entscheidet
+    nur der lokale Zustand; die Werte des Servers gelten nur, wenn ohnehin geschrieben wird (naechster Start nach dem
+    Abo-Ende oder Abmelden: nichts mehr schreiben)."""
+    pipeline, store, ha, binding = _setup(
+        make_store, clock, backup={"restore_point": {"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 16.0}},
+        server=SERVER_ALL)
+    assert pipeline.restore_and_clear(always_restore=False) is True
+    assert ha.writes == [("number.hk", 0.6), ("number.swu", 16.0)]  # room_setpoint steht schon auf 20,0
+    assert binding.restored == [{"mode_select": "hz_operationmode_comfort", "setpoint_comfort": 21.0,
+                                 "setpoint_setback": 17.0}]
+    ha.states["number.hk"] = 0.8  # danach vom Kunden selbst verstellt
+    binding.aux = {**AUX, "mode_select": "Komfort"}
+    assert pipeline.restore_and_clear(always_restore=False) is True
+    assert ha.writes == [("number.hk", 0.6), ("number.swu", 16.0)]
+    assert len(binding.restored) == 1
+
+
+def test_server_values_do_not_retrigger_a_restore_of_local_aux_values(make_store, clock):
+    """Wie oben mit lokal gemerkten Hilfswerten (die gewinnen); nach dem Leeren duerfen die Serverwerte das
+    Zuruecksetzen nicht neu ausloesen."""
+    pipeline, store, ha, binding = _setup(make_store, clock, server=SERVER_ALL)
+    pipeline.capture_originals()
+    pipeline.apply_server_values({"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 16.0})
+    assert pipeline.restore_and_clear(always_restore=False) is True
+    assert (ha.states["number.hk"], ha.states["number.normal"], ha.states["number.swu"]) == (0.6, 20.0, 16.0)
+    assert binding.restored == [AUX]
+    writes = list(ha.writes)
+    ha.states["number.hk"] = 0.8
+    assert pipeline.restore_and_clear(always_restore=False) is True
+    assert ha.writes == writes
+    assert binding.restored == [AUX]
+
+
+def test_server_lever_values_do_not_retrigger_a_successful_restore(make_store, clock):
+    """Hebelseite: nach dem Erfolg steht der Wiederherstellungspunkt auf dem Ursprungswert des Servers; ein vom Kunden
+    verstellter Hebel loest beim naechsten Aufruf nichts aus."""
+    pipeline, store, ha, binding = _setup(
+        make_store, clock, backup={"restore_point": {"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 18.0}},
+        server={"curve": 0.6, "room_setpoint": 20.0, "heat_limit": 16.0})
+    assert pipeline.restore_and_clear(always_restore=False) is True
+    assert store.state.restore_point == {"curve": 0.6, "room_setpoint": 20.0, "heat_limit": 16.0}
+    writes = list(ha.writes)
+    ha.states.update({"number.hk": 0.8, "number.swu": 19.0})
+    assert pipeline.restore_and_clear(always_restore=False) is True
+    assert ha.writes == writes
+    assert binding.restored == []

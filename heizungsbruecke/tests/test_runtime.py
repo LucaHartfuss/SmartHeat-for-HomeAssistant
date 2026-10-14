@@ -2098,6 +2098,21 @@ def test_sign_off_restores_the_heat_limit_to_the_server_original(env):
     assert ("number.heat_limit", 16.0) in env.ha.writes
 
 
+def test_a_restart_after_the_sign_off_does_not_write_the_server_originals_again(env):
+    """Schluss-Review: die gespiegelten Ursprungswerte bleiben in der Konfiguration; der naechste Start des abgemeldeten
+    Geraets schreibt nichts mehr, auch wenn der Kunde die Heizgrenze inzwischen verstellt hat."""
+    _quiet_backup(env, boost_active=True, restore_point={"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 18.0})
+    _start_bridge(env, abgemeldet=True, ursprungswerte={"heat_limit": 16.0})
+    assert ("number.heat_limit", 16.0) in env.ha.writes
+    env.ha.states["number.heat_limit"] = 20.0
+    writes = list(env.ha.writes)
+
+    bridge = _start_bridge(env, abgemeldet=True, ursprungswerte={"heat_limit": 16.0})
+
+    assert bridge.reason == "abgemeldet" and _last_event(env)["grund"] is None
+    assert env.ha.writes == writes
+
+
 def test_sign_off_without_server_values_uses_the_local_original(env):
     _quiet_backup(env, boost_active=True, originals={"heat_limit": 17.0},
                   restore_point={"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 18.0})

@@ -272,7 +272,8 @@ class LeverPipeline:
         Boost, wenn der Wiederherstellungspunkt davon abweicht; ist der Ursprungswert unbekannt, bleibt der Hebel auf
         dem Wiederherstellungspunkt (Log). False, wenn das Schreiben scheitert: die Flags bleiben, der Aufrufer
         versucht es erneut. Scheitert danach nur das Speichern, gilt die Wiederherstellung als erfolgt. Plan 3b: danach
-        die Hilfs-Ursprungswerte (aux_originals), die anschliessend geleert werden."""
+        die Hilfs-Ursprungswerte (aux_originals), die anschliessend geleert werden. Hilfswerte des Servers (Spec Stufe 3
+        S3 5.2) gelten nur, wenn ohnehin zurueckgesetzt wird; ausloesen koennen sie es nicht."""
         state = self._store.state
         server = self._server_snapshot()
         originals: dict[str, float] = {}
@@ -292,6 +293,12 @@ class LeverPipeline:
             if current is not None and abs(current - original) > self._description.steps[lever] / 2:
                 differs = True
         aux = dict(state.aux_originals)
+        # Ob zurueckgesetzt wird, entscheidet nur der lokale Zustand: die gespiegelten Hilfswerte des Servers bleiben
+        # nach dem Leeren von aux_originals in der Konfiguration und loesten sonst bei jedem weiteren Aufruf (Start
+        # nach Abo-Ende oder Abmelden) erneut eine Wiederherstellung aus. Die Hebel brauchen das nicht: nach einem
+        # Erfolg steht der Wiederherstellungspunkt auf dem Ursprungswert, differs bleibt dann falsch.
+        if not (always_restore or state.boost_active or state.emergency_boost_active or differs or aux):
+            return True
         for name in self._description.aux_originals:
             if name in aux or name not in server:
                 continue
@@ -299,8 +306,6 @@ class LeverPipeline:
                 aux[name] = server[name]
             else:
                 logger.warning("Hilfs-Ursprungswert %s vom Server verworfen", name)
-        if not (always_restore or state.boost_active or state.emergency_boost_active or differs or aux):
-            return True
         if not write_budget.may_attempt(self._store, write_budget.RESTORE, write_budget.RETURN_STAIRCASE, self._clock()):
             logger.info("Wiederherstellung zurueckgestellt: Schreibbudget nach einem Fehlschlag")
             return False

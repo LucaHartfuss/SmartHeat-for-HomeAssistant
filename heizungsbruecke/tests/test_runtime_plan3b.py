@@ -115,6 +115,25 @@ def test_weishaupt_sign_off_restores_levers_and_operating_mode(env):
     ]
 
 
+def test_weishaupt_restart_after_the_sign_off_writes_nothing_despite_server_originals(env):
+    """Schluss-Review: die gespiegelten Ursprungswerte (Hebel und Hilfswerte) bleiben in der Konfiguration; der naechste
+    Start des abgemeldeten Geraets schreibt nichts mehr, auch wenn der Kunde Kurve und Komfort-Soll verstellt hat."""
+    ursprungswerte = {"heat_limit": 16.0, "setpoint_comfort": 21.0, "setpoint_setback": 17.0}
+    env.ha.states.update(WEISHAUPT_STATES)
+    bridge = _start(env, **WEISHAUPT, ursprungswerte=ursprungswerte)
+    snapshot = _first_snapshot(env, bridge)
+    _answer_levers(env, bridge, snapshot["seq"], {"curve": 0.8, "room_setpoint": 23.0, "heat_limit": 17.0})
+    assert _start_bridge(env, **WEISHAUPT, abgemeldet=True, ursprungswerte=ursprungswerte).reason == "abgemeldet"
+    assert ("number.swu", 16.0) in env.ha.writes and ("number.komfort", 22.0) in env.ha.writes  # lokal gewinnt
+    env.ha.states.update({"number.hk": 0.6, "number.komfort": 23.0})
+    env.ha.writes.clear()
+
+    signed_off = _start_bridge(env, **WEISHAUPT, abgemeldet=True, ursprungswerte=ursprungswerte)
+
+    assert signed_off.reason == "abgemeldet" and _last_event(env)["grund"] is None
+    assert env.ha.writes == []
+
+
 def test_viessmann_start_leaves_eco_and_writes_curve_and_level_together(env):
     env.ha.states.update(VIESSMANN_STATES)
     bridge = _start(env, **VIESSMANN)

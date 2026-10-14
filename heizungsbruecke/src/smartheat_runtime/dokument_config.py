@@ -108,7 +108,7 @@ def abgemeldet(pfad: Path, konfiguration) -> bool:
 
 def abmelden(pfad: Path, anlage: str) -> bool:
     """Markierung setzen (Modus 0600); True, wenn sie neu ist (dann startet die Laufzeit neu). Die Laufzeit
-    importiert den Geraetekern nicht, die atomaren Datei-Helfer stehen in soll_speicher."""
+    importiert den Geraetekern nicht, die atomaren Datei-Helfer stehen in smartheat_core.dateien."""
     marker = dateien.lesen_json(pfad)
     if isinstance(marker, dict) and marker.get("anlage") == anlage:
         return False
