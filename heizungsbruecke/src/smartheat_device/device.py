@@ -82,8 +82,13 @@ def _ursprungswert_ok(wert) -> bool:
     if isinstance(wert, bool):
         return False
     if isinstance(wert, int | float):
-        return math.isfinite(wert) and abs(wert) <= URSPRUNG_WERT_MAX
+        # Betrag zuerst: math.isfinite wirft bei riesigen int (OverflowError); NaN faellt beim Vergleich durch.
+        return abs(wert) <= URSPRUNG_WERT_MAX and math.isfinite(wert)
     return isinstance(wert, str) and 0 < len(wert) <= wire.URSPRUNG_HEBEL_MAX_CHARS
+
+
+def _ursprungsname_ok(name) -> bool:
+    return isinstance(name, str) and 0 < len(name) <= wire.URSPRUNG_HEBEL_MAX_CHARS
 
 
 def _vergleichbar(body: dict) -> dict:
@@ -132,6 +137,7 @@ class Device:
         self._meldungen_at: float | None = None
         self._status: dict | None = None
         self._status_at: float | None = None
+        self._ursprung_gewarnt: set[str] = set()  # nicht meldbare Ursprungswerte: je Name einmal loggen (Takt: 1 s)
         self._zurueckgehalten: dict[str, dict] = {}  # Dokument, dessen Pruefung vorlaeufig nicht moeglich war
         self._pruefung_at = 0.0
         self._started_at = clock()
@@ -555,13 +561,21 @@ class Device:
         for name, wert in sorted(self.host.ursprungswerte().items(), key=lambda paar: str(paar[0])):
             if name in bekannt:
                 continue
-            if not (isinstance(name, str) and 0 < len(name) <= wire.URSPRUNG_HEBEL_MAX_CHARS) or not _ursprungswert_ok(wert):
-                logger.warning("Ursprungswert %s nicht meldbar", name if isinstance(name, str) and len(name) <= 64 else "?")
-                continue
-            if len(werte) == wire.URSPRUNG_MAX_HEBEL:
-                break
-            werte[name] = wert
+            if not _ursprungsname_ok(name) or not _ursprungswert_ok(wert):
+                self._ursprung_warnen(name, "nicht meldbar")
+            elif len(werte) >= wire.URSPRUNG_MAX_HEBEL:
+                self._ursprung_warnen(name, f"ueber dem Limit von {wire.URSPRUNG_MAX_HEBEL} Hebeln, nicht gemeldet")
+            else:
+                werte[name] = wert
         return werte
+
+    def _ursprung_warnen(self, name, grund: str) -> None:
+        """Je Name einmal je Prozess, ohne Wert (der Takt ruft das jede Sekunde)."""
+        anzeige = name if _ursprungsname_ok(name) else "?"
+        if anzeige in self._ursprung_gewarnt:
+            return
+        self._ursprung_gewarnt.add(anzeige)
+        logger.warning("Ursprungswert %s %s", anzeige, grund)
 
     def _status_senden(self, now: float, *, force: bool) -> None:
         if not self._bereit:

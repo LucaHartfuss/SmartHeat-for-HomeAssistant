@@ -237,6 +237,23 @@ def test_status_respects_v1_limits(tmp_path):
     assert all(isinstance(v, float) and math.isfinite(v) and abs(v) <= 1e12 for v in werte.values())
 
 
+def test_unreportable_originals_are_logged_once_per_name_without_values(tmp_path, caplog):
+    world = World(tmp_path)
+    world.host.ursprung = {**{f"h{i:02d}": float(i) for i in range(17)}, "leer": "", "gross": 1e13,
+                           "riesig": 10 ** 400, "x" * 65: "geheimerwert"}
+    with caplog.at_level("WARNING", logger=device.logger.name):
+        world.verbinden()
+        for _ in range(5):  # Takt: _status_senden laeuft jede Sekunde
+            world.clock.now += 1
+            world.device.schritt()
+    text = caplog.text
+    for name in ("leer", "gross", "riesig", "h16"):  # h16 ist der 17. gueltige Name: ueber dem Limit
+        assert text.count(f"Ursprungswert {name} ") == 1, name
+    assert "Ursprungswert ? " in text and "geheimerwert" not in text and "1e+13" not in text
+    assert len(caplog.records) == 5  # leer, gross, riesig, ?, h16 - nicht je Takt
+    assert len(world.link.of("up/status")[-1]["ursprungswerte"]) == wire.URSPRUNG_MAX_HEBEL
+
+
 # --- Start, hello ---
 
 def test_first_start_registers_then_connects_and_says_hello(tmp_path):
