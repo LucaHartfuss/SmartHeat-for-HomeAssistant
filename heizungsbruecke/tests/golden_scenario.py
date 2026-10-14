@@ -12,6 +12,7 @@ Patch-Ziele."""
 import copy
 import itertools
 import json
+import re
 import time
 import uuid
 from datetime import datetime, timedelta
@@ -443,3 +444,12 @@ def normalisieren(record: list[dict], *, alt: bool) -> list[dict]:
 
 def render(record: list[dict]) -> str:
     return json.dumps(record, ensure_ascii=False, indent=1) + "\n"
+
+
+_VERSION_RE = re.compile(r'"addon_version": "[^"]+"')
+
+
+def render_ohne_version(record: list[dict]) -> str:
+    """A5-65: die Versionsnummer ist kein Verhalten; ohne sie muss der Master nicht bei jedem Release neu geschrieben
+    werden."""
+    return _VERSION_RE.sub('"addon_version": "<version>"', render(record))

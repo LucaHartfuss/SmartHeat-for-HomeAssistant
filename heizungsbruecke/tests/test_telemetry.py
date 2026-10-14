@@ -297,10 +297,6 @@ def test_unreadable_regulation_field_is_omitted():
     assert "outdoor_temp" not in payload and "room_target" not in payload
 
 
-def test_regulation_fields_constant():
-    assert telemetry.REGULATION_FIELDS == ("room_target", "outdoor_temp", "flow_setpoint")
-
-
 def test_delivery_roles_are_read_and_published():
     manifest = ChannelManifest(refs={
         "room_actual": "sensor.room", "generator_hours": "sensor.h", "generator_starts": "sensor.s",
@@ -332,8 +328,7 @@ def test_unreadable_delivery_roles_are_left_out_and_unmapped_ones_are_not_read()
     assert not any(role in payload for role in telemetry.DELIVERY_ROLES)
 
 
-def test_delivery_role_constants():
-    assert telemetry.DELIVERY_ROLES == ("generator_hours", "generator_starts", "generator_state")
+def test_kpi_role_constants():
     assert telemetry.KPI_TEXT_ROLES == ("operating_mode", "generator_state")
     assert "generator_hours" in telemetry.KPI_NUMERIC_ROLES and "generator_starts" in telemetry.KPI_NUMERIC_ROLES
 

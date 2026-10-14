@@ -85,7 +85,7 @@ def test_register_body_has_exactly_the_contract_fields(tmp_path):
     body = identity.register_body(ident, version="0.6.0", host="gateway",
                                   capabilities={"drivers": ["simulation"], "zigbee": True, "updater": True})
     assert set(body) == set(wire.REGISTER_FIELDS)
-    assert body["claim_code_hash"] == wire.claim_code_hash(ident.device_id, ident.claim_code)
+    assert body["claim_code_hash"] == hashlib.sha256(f"{ident.device_id}:{ident.claim_code}".encode()).hexdigest()
     assert csr_passt(body["csr"], ident) and body["host"] == "gateway"
 
 

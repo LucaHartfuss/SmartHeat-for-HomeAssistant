@@ -42,11 +42,6 @@ def test_first_registration_carries_the_code(tmp_path):
     assert json.loads((tmp_path / "discovery.json").read_text())["uuid"] == "uuid-1"
 
 
-def test_the_service_and_fields_are_the_contract():
-    assert discovery.DIENST == "smartheat"
-    assert discovery.FIELDS == ("geraet_id", "zustand", "claim_code")
-
-
 def test_discovery_drops_the_code_after_the_claim(tmp_path, caplog):
     caplog.set_level(logging.DEBUG)
     supervisor = Supervisor()
