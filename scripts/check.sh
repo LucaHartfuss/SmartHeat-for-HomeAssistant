@@ -41,14 +41,17 @@ docker_host_run() {
   else echo "Docker nicht verfuegbar - Schritt nur mit --full (Sandbox) oder in CI"; return 1; fi
 }
 PY="${PYTHON:-python3}"
-DEV="${DEV_ROOT:-$(cd .. && pwd)}"
+# Dev-Root: in CI aus siblings.sh (DEV_ROOT), lokal der Ordner ueber dem Haupt-Checkout - auch aus einem
+# Worktree unter .devtools/wt/ (git-common-dir zeigt auf .git des Haupt-Checkouts; Audit 5, A5-08).
+DEV="${DEV_ROOT:-$(cd "$(git rev-parse --git-common-dir)/../.." && pwd)}"
 pyright_in() { (cd "$1" && "$PY" -m ruff check . && "$PY" -m pyright --pythonpath "$("$PY" -c 'import sys; print(sys.executable)')"); }
 lint() { pyright_in heizungsbruecke && pyright_in gateway && pyright_in gateway/host && pyright_in gateway/release && "$PY" scripts/ci/pin_check.py --repo "$PWD"; }
 # Kern- und HA-Host-Tests (heizungsbruecke/tests), Gateway-Tests, Host-Dienste des Gateways (Spec SHG 9.1, G2b-1 10),
 # Bundle-Bau (G2b-1 7).
 tests() { (cd heizungsbruecke && "$PY" -m pytest -q) && (cd gateway && "$PY" -m pytest -q) && (cd gateway/host && "$PY" -m pytest -q) \
   && (cd gateway/release && "$PY" -m pytest -q); }
-contract() { "$PY" "$DEV/tools/contract_check.py"; }
+# Das eigene Repo ist dieser Checkout (auch ein Worktree), die Nachbarn kommen aus dem Dev-Root.
+contract() { "$PY" "$DEV/tools/contract_check.py" --addon "$PWD"; }
 docker_tests() {
   local rc=0 script
   for script in test_heizungsbruecke_docker_build.sh test_heizungsbruecke_reproducible.sh \
