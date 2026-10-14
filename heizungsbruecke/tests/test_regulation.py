@@ -1,4 +1,5 @@
 """Lokaler Check und "Tick faellig?" (regulation.py) mit echtem StateStore und Hebel-Pipeline."""
+import dataclasses
 import logging
 from datetime import datetime
 from types import SimpleNamespace
@@ -29,7 +30,7 @@ COMFORT = [("number.curve", 0.5), ("number.shift", 2.0)]
 RESTORE = [("number.curve", 0.3), ("number.shift", 1.0)]
 
 
-def _runtime(store, *, room_actual=20.0, room_target=21.0, entity_ids=ENTITY_IDS, states=None):
+def _runtime(store, *, room_actual=20.0, room_target=21.0, entity_ids=ENTITY_IDS, states=None, safety=SAFETY):
     """`room_target` ist der Stable-Target-Cache (None = nicht befuellt); `states` ergaenzt die
     HA-Werte (eine Exception als Wert wird beim Lesen geworfen)."""
     values = {"sensor.room_actual": room_actual, **(states or {})}
@@ -49,7 +50,7 @@ def _runtime(store, *, room_actual=20.0, room_target=21.0, entity_ids=ENTITY_IDS
     return SimpleNamespace(
         manifest=manifest, signals=ha_api, ha_api=ha_api, config=runtime_config(), store=store,
         states=values,
-        override=LeverPipeline(store, HaPlantBinding(ha_api, manifest), SAFETY),
+        override=LeverPipeline(store, HaPlantBinding(ha_api, manifest), safety),
     )
 
 
@@ -115,6 +116,26 @@ def test_target_raise_starts_comfort_boost(make_store, tmp_path):
 
     assert _writes(rt) == COMFORT
     assert load_backup(tmp_path / "backup.json")["boost_active"] is True
+
+
+def test_thermostat_step_of_half_a_kelvin_starts_comfort_boost(make_store, tmp_path):
+    """A5-07."""
+    rt = _runtime(make_store(backup={"last_room_target": 20.5, **RESTORE_POINT}), room_actual=20.0, room_target=21.0)
+
+    regulation.run_local_check(rt)
+
+    assert _writes(rt) == COMFORT and load_backup(tmp_path / "backup.json")["boost_active"] is True
+
+
+def test_floor_heating_never_starts_comfort_boost_on_a_rise(make_store, tmp_path):
+    """A5-07: ohne Comfort-Boost-Zeile (Fussbodenheizung) startet auch eine echte Erhoehung keinen Boost."""
+    fbh = dataclasses.replace(SAFETY, comfort_boost={})
+    rt = _runtime(make_store(backup={"last_room_target": 20.0, **RESTORE_POINT}), room_actual=18.0, room_target=22.0,
+                  safety=fbh)
+
+    regulation.run_local_check(rt)
+
+    assert _writes(rt) == [] and load_backup(tmp_path / "backup.json").get("boost_active") is not True
 
 
 def test_comfort_boost_ends_on_arrival_and_restores(make_store, tmp_path):

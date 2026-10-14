@@ -470,6 +470,75 @@ def test_curve_tolerance_is_half_a_plant_step(make_store, clock):
     assert rt.store.state.manual_override is None
 
 
+def test_without_room_target_the_min_flow_is_skipped_and_the_rest_enforced(make_store, clock):
+    """A5-24 (a): beim ersten Start ohne Raum-Soll liefert derived.expected None."""
+    ha = Ha(curve=1.3, min_flow=25.0)
+    rt = _rt(make_store, clock, ha)
+    rt.store.update(stable_target=None)
+    _rounds(rt)
+    assert ("number.curve", 0.9) in ha.writes and not [w for w in ha.writes if w[0] == "number.mf"]
+
+
+def test_a_second_change_during_an_open_intervention_extends_it(make_store, clock):
+    """A5-24 (b): neuer Hebel waehrend eines noch nicht zurueckgekehrten Eingriffs -> neue Signatur, neue Meldung,
+    KPI zusammengefuehrt."""
+    ha = Ha(curve=1.2, reflects_writes=False)
+    rt = _rt(make_store, clock, ha)
+    _rounds(rt)
+    assert rt.store.state.manual_override["signatur"] == "curve=1.2"
+    ha.states["climate.zone::temperature"] = 22.0
+    clock.advance(SETTLE + 1)
+    _rounds(rt)
+    assert rt.store.state.manual_override["signatur"] == "curve=1.2,room_setpoint=22"
+    assert [c.args[1] for c in _message_calls(rt)] == ["curve=1.2", "curve=1.2,room_setpoint=22"]
+    pending = rt.store.state.manual_override_pending["levers"]
+    assert pending["curve"] == 1.2 and pending["room_setpoint"] == 22.0
+
+
+def test_after_a_data_fault_detection_needs_two_rounds_again(make_store, clock):
+    """A5-24 (c)."""
+    ha = Ha(curve=1.3)
+    rt = _rt(make_store, clock, ha)
+    enforce.check_manual_override(rt)  # Runde 1 von 2
+    rt.store.set_delivery(DeliveryState(datenfehler=DataFault(SOURCE_LOCAL, ("room_actual",))))
+    enforce.check_manual_override(rt)  # pausiert, setzt zurueck
+    rt.store.set_delivery(DeliveryState())
+    enforce.check_manual_override(rt)
+    assert _curve_writes(rt) == []
+    enforce.check_manual_override(rt)
+    assert _curve_writes(rt) == [("number.curve", 0.9)]
+
+
+@pytest.mark.parametrize(("mode", "shift", "was"), [
+    ("auto", 22.0, "Wunschtemperatur der Zone, Betriebsart der Zone"),
+    ("auto", 21.0, "Betriebsart der Zone"),
+])
+def test_message_names_mode_and_setpoint_correctly(make_store, clock, mode, shift, was):
+    """A5-24 (d), Mutanten 71-73."""
+    ha = Ha(mode=mode, shift=shift)
+    rt = _rt(make_store, clock, ha)
+    _rounds(rt)
+    assert _message_calls(rt)[-1].args[2] == enforce.MESSAGE.format(was=was)
+
+
+def test_limit_message_is_not_critical(make_store, clock):
+    """A5-24 (d), Mutant 123."""
+    ha = Ha(curve=1.3)
+    rt = _rt(make_store, clock, ha)
+    rt.store.update(write_budget={"enforce:curve": {"day": TODAY.isoformat(), "count": 6, "last": 0.0}})
+    _rounds(rt)
+    assert _limit_calls(rt) and _limit_calls(rt)[0].kwargs["critical"] is False
+
+
+@pytest.mark.parametrize(("live", "durchgesetzt"), [(20.6, True), (20.4, True), (20.55, False), (20.5, False)])
+def test_min_flow_deviation_of_one_plant_step_is_enforced(make_store, clock, live, durchgesetzt):
+    """A5-64: Toleranz = halber Anlagenschritt (0,05) wie bei allen Hebeln; Soll = Raum-Soll 20,5."""
+    ha = Ha(min_flow=live)
+    rt = _rt(make_store, clock, ha)
+    _rounds(rt)
+    assert (("number.mf", 20.5) in ha.writes) is durchgesetzt
+
+
 def test_state_ok_matches_the_notifier():
     from smartheat_core.enforce import STATE_OK
     from smartheat_runtime.notifier import STATE_OK as NOTIFIER_OK

@@ -58,8 +58,8 @@ MAX_WRITES_PER_DAY = write_budget.MAX_PER_DAY
 # Eingriff erkannt, aber nie geschrieben und trotzdem gezaehlt/gemeldet. Deshalb gilt der halbe Anlagenschritt
 # (0,025): jede Abweichung um mindestens einen Anlagenschritt wird wie mit 0,01 erkannt, und jede erkannte
 # Abweichung fuehrt zu einem echten Schreibvorgang. Wunschtemperatur (0,25 = halber Schritt 0,5) und Mindestvorlauf
-# (0,1 > halber Schritt 0,05) erfuellen das schon. Die Heizgrenze (Anlagenschritt 0,1) nimmt wie die Steigung den
-# halben Anlagenschritt, 0,05.
+# (0,05 = halber Schritt 0,1, A5-64) folgen derselben Regel. Die Heizgrenze (Anlagenschritt 0,1) nimmt wie die
+# Steigung den halben Anlagenschritt, 0,05.
 ZONE_MODE = "zone_mode"
 _EPSILON = 1e-9  # Gleitkomma-Rest (0.91 - 0.9) zaehlt nicht als Abweichung
 MESSAGE = (

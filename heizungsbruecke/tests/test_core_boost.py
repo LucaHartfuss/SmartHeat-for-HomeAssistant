@@ -1,3 +1,5 @@
+import pytest
+
 from smartheat_core.boost import decide_boost
 
 
@@ -68,3 +70,16 @@ def test_decide_boost_stays_active_across_a_second_target_raise():
         boost_was_active=True, arrival_threshold_k=0.5,
     )
     assert decision is True
+
+
+@pytest.mark.parametrize(("vorher", "nachher", "boost"), [
+    (20.5, 21.0, True),     # ein Thermostat-Schritt 0,5 K
+    (20.5, 20.6, True),     # 0,1-K-Thermostat
+    (20.5, 20.509, False),  # knapp unter der Schwelle 0,01 K
+    (20.5, 20.5, False),
+    (20.5, 20.0, False),    # Senkung
+])
+def test_kleinste_reale_erhoehung_startet_den_boost(vorher, nachher, boost):
+    """A5-07."""
+    assert decide_boost(room_actual=20.0, room_target=nachher, previous_room_target=vorher,
+                        boost_was_active=False, arrival_threshold_k=0.5) is boost

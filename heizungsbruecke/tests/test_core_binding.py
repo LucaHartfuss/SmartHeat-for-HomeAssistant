@@ -18,7 +18,7 @@ def test_vaillant_mypyllant_description():
     d = VAILLANT_MYPYLLANT
     assert d.lever_set == VAILLANT_VRC720
     assert d.steps == {"curve": 0.05, "room_setpoint": 0.5, "heat_limit": 0.1, "min_flow": 0.1}
-    assert d.enforce_tolerance == {"curve": 0.025, "room_setpoint": 0.25, "heat_limit": 0.05, "min_flow": 0.1}
+    assert d.enforce_tolerance == {"curve": 0.025, "room_setpoint": 0.25, "heat_limit": 0.05, "min_flow": 0.05}
     assert d.settle_seconds == 2100
     assert (d.restore_originals, d.optional_restore, d.prepared_lever) == (("heat_limit",), ("heat_limit",), "room_setpoint")
     assert d.labels == {
