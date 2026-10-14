@@ -24,7 +24,7 @@ from heizungsbruecke.raum import RaumPublisher
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core import wallclock
 from smartheat_core.binding import BINDINGS
-from smartheat_runtime import dokument_config
+from smartheat_runtime import aufraeumen, dokument_config
 from smartheat_runtime.app import Loaded, Notice, RestoreParts, StartFailure
 from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
 from smartheat_runtime.ports import NotifySink, SignalSource, StatusSink, TriggerSource
@@ -78,7 +78,10 @@ class HaHost:
 
     def __init__(self, geraet, ha_api, *, clock=time.monotonic) -> None:
         self._geraet, self._ha_api, self._clock = geraet, ha_api, clock
-        self._konfiguration = geraet.konfiguration() or {}
+        # Spec Stufe 3 S3 Abschnitt 4: steht nach einer leeren Konfiguration das Zuruecksetzen aus, laeuft die Laufzeit
+        # mit der alten Konfiguration aus der Aufraeum-Markierung im Modus abgemeldet.
+        self._konfiguration, self._leer_abmelden = aufraeumen.laufzeit_konfiguration(
+            geraet.konfiguration(), config.AUFRAEUMEN_PATH)
         self._effective: dict | None = None
         self.store: TargetStore | None = None
         self.soll_entity: str | None = None
@@ -92,9 +95,10 @@ class HaHost:
         self.texts: HostTexts = HA_TEXTS
 
     def boot_info(self) -> BootInfo:
+        abgemeldet = self._leer_abmelden or dokument_config.abgemeldet(config.ABGEMELDET_PATH, self._konfiguration)
         boot = dokument_config.boot_info(
-            self._konfiguration, abgemeldet=dokument_config.abgemeldet(config.ABGEMELDET_PATH, self._konfiguration),
-            client_version=ADDON_VERSION, backup_path=config.BACKUP_PATH, failsafe_path=config.FAILSAFE_PATH)
+            self._konfiguration, abgemeldet=abgemeldet, client_version=ADDON_VERSION, backup_path=config.BACKUP_PATH,
+            failsafe_path=config.FAILSAFE_PATH, aufraeumen_path=config.AUFRAEUMEN_PATH)
         hints = dokument.optionen(self._konfiguration)["notify_hints_off"] if self._konfiguration else []
         boot = dataclasses.replace(boot, notify_hints_off=tuple(hints))
         if not boot.configured and not boot.signed_off:

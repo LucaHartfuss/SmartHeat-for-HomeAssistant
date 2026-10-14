@@ -18,6 +18,7 @@ from smartheat_gateway.drivers.vicare_cloud.driver import ViCareCloudDriver
 from smartheat_gateway.host import SHG_TEXTS, GatewayHost, build_manifest
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.zigbee import ZigbeeMirror
+from smartheat_runtime import aufraeumen
 from smartheat_runtime.app import IDLE_NOT_CONFIGURED, IdleBridge, RestoreParts, StartFailure
 from smartheat_runtime.roles import ManifestError
 from smartheat_runtime.runtime import Runtime
@@ -100,6 +101,17 @@ def test_sign_off_with_a_matching_plant_restores_with_the_driver(data_dir, clock
     host = _host(paths, konfiguration(), clock)
     parts = host.sign_off_parts()
     assert isinstance(parts, RestoreParts) and host.driver is not None and parts.binding is host.driver
+
+
+def test_empty_configuration_with_pending_reset_boots_signed_off_with_the_old_one(data_dir, clock):
+    """Spec Stufe 3 S3 Abschnitt 4: die Laufzeit setzt mit der Konfiguration der Aufraeum-Markierung zurueck."""
+    paths = Paths(data_dir)
+    aufraeumen.markieren(paths.aufraeumen, konfiguration())
+    host = _host(paths, {**konfiguration(), "anlage": None}, clock)
+    boot = host.boot_info()
+    assert boot.signed_off and not boot.configured and boot.tenant_id == "test-tenant"
+    assert boot.aufraeumen_path == paths.aufraeumen
+    assert isinstance(host.sign_off_parts(), RestoreParts) and host.driver is not None
 
 
 def test_load_refuses_a_configuration_that_does_not_fit_the_lock(data_dir, clock):

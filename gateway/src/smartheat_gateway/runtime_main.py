@@ -10,7 +10,9 @@ Start reicht die Soll-Software der gespeicherten Konfiguration erneut an den Upd
 die Neustarts der Laufzeit selbst (abo.restart_process: Neupruefung im Ruhezustand Konfigurationsfehler, Abo am
 Fristende wieder aktiv) nehmen diesen Weg statt os.execv, das den Link ohne DISCONNECT abrisse.
 
-Nach dem Entfernen (Markierung aufraeumen.json) loescht der naechste Start den anlagengebundenen Zustand (A4-07), bevor
+Nach dem Entfernen (Markierung aufraeumen.json) setzt der naechste Start die Anlage erst zurueck wie sign_off (Laufzeit
+im Modus abgemeldet mit der alten Konfiguration aus der Markierung, die Treiber-Anmeldung braucht es dafuer noch) und
+startet danach neu; erst dieser Start loescht den anlagengebundenen Zustand (A4-07, Spec Stufe 3 S3 Abschnitt 4), bevor
 der Geraetekern startet - aber nur, solange die gespeicherte Konfiguration noch leer ist: kam vor dem Neustart schon
 eine neue Einrichtung, bleibt ihre frische Treiber-Anmeldung. Die Konfigurationswache haelt nur noch das Lebenszeichen
 fuer den Compose-Health-Check frisch (G2 7.2)."""
@@ -35,7 +37,8 @@ from smartheat_gateway.host import GatewayHost
 from smartheat_gateway.paths import Paths, from_env
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_gateway.zigbee import ZigbeeMirror
-from smartheat_runtime import abo, app, dokument_config
+from smartheat_runtime import abo, app
+from smartheat_runtime import aufraeumen as markierung
 from smartheat_runtime.runtime import EV_RECHECK, Runtime
 from smartheat_runtime.status import STATUS_KONFIGURATIONSFEHLER
 from smartheat_runtime.worker import Event
@@ -63,14 +66,21 @@ def _touch_alive() -> None:
 
 def aufraeumen(paths: Paths) -> None:
     """Markierung aufraeumen.json (geraet_host: Wechsel von eingerichtet auf leer) vor dem Start des Geraetekerns
-    auswerten: noch nichts schreibt, und ein driver_login direkt nach hello kann nicht mit dem Loeschen kollidieren.
-    Geloescht wird nur, wenn die gespeicherte Konfiguration noch nicht wieder eingerichtet ist; die Markierung geht in
-    jedem Fall weg."""
+    auswerten: noch nichts schreibt, und ein driver_login direkt nach hello kann nicht mit dem Loeschen kollidieren
+    (Spec Stufe 3 S3 Abschnitt 4). Wieder eingerichtet -> Markierung weg, Zustand bleibt; Zuruecksetzen steht aus ->
+    nichts loeschen (die Laufzeit setzt mit der Konfiguration der Markierung zurueck und startet danach neu);
+    zurueckgesetzt oder ohne Konfiguration (Markierung aus 1.0.0, kaputt) -> vergessen, Markierung weg."""
     if not paths.aufraeumen.exists():
         return
     gespeichert = DocumentStore(paths.device_dir, host=GatewayDeviceHost.host,
                                 software_version=GATEWAY_VERSION).inhalt(KONFIGURATION)
-    if dokument_config.eingerichtet(gespeichert):
+    entscheidung = markierung.entscheiden(paths.aufraeumen, gespeichert)
+    if entscheidung == markierung.KEINE:  # zwischendurch verschwunden
+        return
+    if entscheidung == markierung.ZURUECKSETZEN:
+        logger.info("Anlage wird vor dem Aufraeumen zurueckgesetzt")  # Treiber-Anmeldung wird dafuer noch gebraucht
+        return
+    if entscheidung == markierung.VERWERFEN:
         logger.info("Aufraeumen entfaellt: das Gateway ist inzwischen neu eingerichtet")
     else:
         geraet_host_module.vergessen(paths)

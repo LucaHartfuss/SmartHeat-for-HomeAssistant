@@ -9,6 +9,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from smartheat_core import derived, enforce, wallclock, write_budget
@@ -17,6 +18,7 @@ from smartheat_core.pipeline import LeverPipeline, WriteBudgetExhausted
 from smartheat_core.safety import LocalSafety
 from smartheat_runtime import (
     abo,
+    aufraeumen,
     battery,
     datentraeger,
     delivery,
@@ -33,6 +35,7 @@ from smartheat_runtime.ports import MqttChannel, NotifySink, SignalSource, Statu
 from smartheat_runtime.roles import ChannelManifest
 from smartheat_runtime.runtime import (
     EV_ACK_TIMEOUT,
+    EV_AUFRAEUMEN,
     EV_AUTH_REJECTED,
     EV_CONNECTION_CHECK,
     EV_GRACE_CHECK,
@@ -211,10 +214,33 @@ def _end_boosts(store, parts: RestoreParts | None, clock) -> bool:
     return not (store.state.boost_active or store.state.emergency_boost_active)
 
 
-def _sign_off(parts: RestoreParts | None, store, notifier, status, clock, retry_seconds: float) -> IdleBridge:
-    """Abmelden (Spec TP7 3.3, die Integration bzw. das Portal entfernt den Client): laufenden Boost auf den
-    Wiederherstellungspunkt zuruecknehmen, alle Meldungen entfernen, dann Ruhezustand `abgemeldet`. Scheitert es, wird
-    es im Takt retry_seconds erneut versucht; der Status bleibt `abgemeldet` mit Grund."""
+def _nach_zuruecksetzen(bridge: IdleBridge, pfad: Path | None, anlage: str) -> None:
+    """Spec Stufe 3 S3 Abschnitt 4: war das ein Zuruecksetzen nach einer leeren Konfiguration, die Markierung erledigen
+    und neu starten; der Start danach loescht dann den anlagengebundenen Zustand. Ueber ein Ereignis, damit der Host
+    seinen Neustart (abo.restart_process) schon umgeleitet hat (das Gateway tut das erst nach start). Laesst sich die
+    Markierung nicht schreiben, kein Neustart: ohne `zurueckgesetzt` setzte jeder Start nur erneut zurueck (Kreis); der
+    Zustand bleibt, der naechste Start versucht es erneut."""
+    if pfad is None:
+        return
+    try:
+        erledigt = aufraeumen.zurueckgesetzt(pfad, anlage)
+    except OSError as error:
+        logger.error("Aufraeum-Markierung nicht geschrieben (%s), Zustand bleibt bis zum naechsten Start",
+                     type(error).__name__)
+        return
+    if not erledigt:
+        return
+    bridge.worker.register(EV_AUFRAEUMEN, lambda event: abo.restart_process())
+    bridge.worker.post(Event(EV_AUFRAEUMEN))
+
+
+def _sign_off(parts: RestoreParts | None, store, notifier, status, clock, retry_seconds: float, *,
+              aufraeumen_path: Path | None = None, anlage: str) -> IdleBridge:
+    """Abmelden (Spec TP7 3.3, die Integration bzw. das Portal entfernt den Client) und leer heisst abmelden (Spec Stufe
+    3 S3 Abschnitt 4): laufenden Boost auf den Wiederherstellungspunkt zuruecknehmen, alle Meldungen entfernen, dann
+    Ruhezustand `abgemeldet`. Scheitert es, wird es im Takt retry_seconds erneut versucht; der Status bleibt
+    `abgemeldet` mit Grund. Gelingt es und steht eine Aufraeum-Markierung dieser Anlage offen, folgt ein Neustart
+    (_nach_zuruecksetzen); scheitert es, bleibt sie offen und ein Neustart dazwischen versucht es erneut."""
     restorer = None if parts is None else LeverPipeline(store, parts.binding, parts.safety, clock=clock)
     boosting = store.state.boost_active or store.state.emergency_boost_active
     restored = restorer is not None and restorer.restore_and_clear(always_restore=False)
@@ -233,11 +259,14 @@ def _sign_off(parts: RestoreParts | None, store, notifier, status, clock, retry_
         _report_sign_off_restore(notifier, SIGN_OFF_RESTORE_FAILED_MESSAGE, store.state)
     status.update(abgemeldet=True, grund=grund)
     bridge = _idle(clock, status, STATUS_ABGEMELDET)
+    if restored:
+        _nach_zuruecksetzen(bridge, aufraeumen_path, anlage)
     if restorer is not None and not restored:
         def _retry(event: Event) -> None:
             if restorer.restore_and_clear(always_restore=False):
                 abo.report_restore(notifier, ok=True)
                 status.update(grund=None)
+                _nach_zuruecksetzen(bridge, aufraeumen_path, anlage)
                 return
             bridge.worker.schedule(retry_seconds, Event(EV_RECHECK))
 
@@ -594,7 +623,8 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
     status = StatusReporter(host.status_sink, boot.tenant_id, boot.setup_id, store, boot.lever_set, boot.client_version)
     status.publish()
     if boot.signed_off:
-        return _sign_off(host.sign_off_parts(), store, notifier, status, clock, boot.local_check_interval)
+        return _sign_off(host.sign_off_parts(), store, notifier, status, clock, boot.local_check_interval,
+                         aufraeumen_path=boot.aufraeumen_path, anlage=boot.tenant_id)
     try:
         loaded = host.load()
     except StartFailure as error:

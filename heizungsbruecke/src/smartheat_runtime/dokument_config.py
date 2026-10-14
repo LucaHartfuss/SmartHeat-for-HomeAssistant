@@ -40,7 +40,7 @@ def _intervall(konfiguration, key: str, default: float) -> float:
 
 
 def boot_info(konfiguration, *, abgemeldet: bool, client_version: str, backup_path: Path,
-              failsafe_path: Path) -> BootInfo:
+              failsafe_path: Path, aufraeumen_path: Path | None = None) -> BootInfo:
     """Wirft nie (wie die BootInfo der Hosts): ein unbekannter Hebelsatz faellt fuer das Statusereignis auf den
     Standard zurueck; runtime_config meldet ihn danach als Konfigurationsfehler."""
     anlage = konfiguration["anlage"] if eingerichtet(konfiguration) else None
@@ -51,7 +51,7 @@ def boot_info(konfiguration, *, abgemeldet: bool, client_version: str, backup_pa
         configured=anlage is not None and not abgemeldet, signed_off=anlage is not None and abgemeldet,
         tenant_id=anlage, setup_id=anlage, lever_set=lever_set, client_version=client_version, notify_hints_off=(),
         local_check_interval=_intervall(konfiguration, "pruefung_s", options.DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS),
-        backup_path=backup_path, failsafe_path=failsafe_path,
+        backup_path=backup_path, failsafe_path=failsafe_path, aufraeumen_path=aufraeumen_path,
     )
 
 

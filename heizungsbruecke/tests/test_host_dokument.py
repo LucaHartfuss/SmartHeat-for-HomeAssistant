@@ -7,7 +7,7 @@ from test_runtime import OPTIONS, env  # noqa: F401 - env ist eine Fixture
 
 from heizungsbruecke import config, dokument
 from heizungsbruecke.host import HaHost
-from smartheat_runtime import app
+from smartheat_runtime import app, aufraeumen
 from smartheat_runtime.app import StartFailure
 from smartheat_runtime.ports import SourceUnavailable
 from smartheat_runtime.runtime import Runtime
@@ -44,6 +44,25 @@ def test_sign_off_marker_starts_signed_off(env, tmp_path):
     config.ABGEMELDET_PATH.write_text(json.dumps({"anlage": konfiguration["anlage"]}))
     boot = HaHost(FakeGeraet(konfiguration), env.ha, clock=env.clock).boot_info()
     assert boot.signed_off and not boot.configured
+
+
+def test_empty_configuration_with_pending_reset_boots_signed_off_with_the_old_one(env):
+    """Spec Stufe 3 S3 Abschnitt 4: die Laufzeit setzt mit der Konfiguration der Aufraeum-Markierung zurueck."""
+    konfiguration = konfiguration_aus_optionen(OPTIONS)
+    aufraeumen.markieren(config.AUFRAEUMEN_PATH, konfiguration)
+    host = HaHost(FakeGeraet({**konfiguration, "anlage": None}), env.ha, clock=env.clock)
+    boot = host.boot_info()
+    assert boot.signed_off and not boot.configured and boot.tenant_id == konfiguration["anlage"]
+    assert boot.aufraeumen_path == config.AUFRAEUMEN_PATH
+    assert host.sign_off_parts() is not None
+
+
+def test_empty_configuration_after_the_reset_boots_not_configured(env):
+    konfiguration = konfiguration_aus_optionen(OPTIONS)
+    aufraeumen.markieren(config.AUFRAEUMEN_PATH, konfiguration)
+    aufraeumen.zurueckgesetzt(config.AUFRAEUMEN_PATH, konfiguration["anlage"])
+    boot = HaHost(FakeGeraet({**konfiguration, "anlage": None}), env.ha, clock=env.clock).boot_info()
+    assert not boot.signed_off and not boot.configured
 
 
 def test_runtime_starts_on_the_document(env):

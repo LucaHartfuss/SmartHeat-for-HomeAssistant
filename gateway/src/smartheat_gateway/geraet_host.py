@@ -33,7 +33,7 @@ from smartheat_gateway.paths import Paths
 from smartheat_gateway.triggers import EV_TARGET_INPUT
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_gateway.zigbee import ZigbeeMirror
-from smartheat_runtime import dokument_config
+from smartheat_runtime import aufraeumen, dokument_config
 from smartheat_runtime.soll_speicher import SOURCE_PORTAL
 from smartheat_runtime.worker import Event, RegulationWorker
 
@@ -245,7 +245,7 @@ class GatewayDeviceHost:
     def konfiguration_uebernommen(self, alt: dict | None, neu: dict) -> None:
         if dokument_config.eingerichtet(alt) and not dokument_config.eingerichtet(neu):
             assert alt is not None
-            dateien.schreiben_json(self.paths.aufraeumen, {"anlage": alt["anlage"]}, modus=dateien.PRIVAT)
+            aufraeumen.markieren(self.paths.aufraeumen, alt)  # alte Konfiguration: erst zuruecksetzen (Spec S3 4)
         if dokument_config.laufzeit_relevant(alt, neu):
             self.neustart_anfordern()
 

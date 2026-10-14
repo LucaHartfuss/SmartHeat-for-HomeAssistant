@@ -7,7 +7,7 @@ from heizungsbruecke.geraet_status import GeraetStatus
 from heizungsbruecke.ha_sinks import HaNotifySink
 from heizungsbruecke.host import HaHost
 from smartheat_device.laufzeit import RuntimeChannel
-from smartheat_runtime import app, dokument_config, entitlement
+from smartheat_runtime import app, aufraeumen, dokument_config, entitlement
 from smartheat_runtime.roles import LEVER_ROLES
 
 _HEBEL = {f"entity_{role}": lever for lever, role in LEVER_ROLES.items()}
@@ -130,11 +130,14 @@ class FakeGeraet:
 
 
 def start_bridge(env, *, abo=entitlement.ACTIVE, abgemeldet=False, bedienung=None, options=None, log=None,
-                 verbunden=True, **option_overrides):
+                 verbunden=True, leer_mit_markierung=False, **option_overrides):
     """Startet die Laufzeit auf dem Dokument aus den Test-Optionen (options, sonst test_runtime.OPTIONS; plus
     Overrides). Liefert (bridge, geraet); die gesendeten Nachrichten stehen in geraet.sent, der Kanal in geraet.channel.
     Ohne bedienung ist die Bedienung des Servers der Wert, den die Soll-Entity gerade zeigt (wie nach einem Wunsch,
     den der Server als Bedienung zurueckgibt). abgemeldet setzt die Abmelde-Markierung (Befehl sign_off).
+    leer_mit_markierung: die gespeicherte Konfiguration ist leer, die Aufraeum-Markierung haelt die Konfiguration aus den
+    Optionen (Spec Stufe 3 S3 Abschnitt 4; wie nach HaDeviceHost.konfiguration_uebernommen). Eine schon vorhandene
+    Markierung bleibt unveraendert (Neustart mit demselben Stand).
     verbunden=False: der Link ist beim Start der Laufzeit noch nicht verbunden (der Test meldet die Verbindung spaeter,
     channel.verbunden)."""
     if options is None:
@@ -145,6 +148,10 @@ def start_bridge(env, *, abo=entitlement.ACTIVE, abgemeldet=False, bedienung=Non
     konfiguration = konfiguration_aus_optionen(options)
     if abgemeldet:
         dokument_config.abmelden(config.ABGEMELDET_PATH, konfiguration["anlage"])
+    if leer_mit_markierung:
+        if not config.AUFRAEUMEN_PATH.exists():
+            aufraeumen.markieren(config.AUFRAEUMEN_PATH, konfiguration)
+        konfiguration = {**konfiguration, "anlage": None}
     if bedienung is None:
         angezeigt = env.ha.states.get(options["entity_room_target"], 21.0)
         bedienung = {"raum_soll": angezeigt if isinstance(angezeigt, int | float) else 21.0}

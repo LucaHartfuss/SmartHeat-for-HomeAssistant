@@ -10,8 +10,10 @@ meldet IoT Core DUPLICATE_CLIENTID, wenn der neue Prozess verbindet) und wartet 
 os.execv. Anders als das Gateway (Compose startet nach Exit 0 neu) startet der Supervisor ein sauber beendetes Add-on
 nicht zuverlaessig neu, deshalb exec. SIGTERM (Supervisor stoppt das Add-on) endet ueber beenden() ohne exec.
 
-Nach dem Entfernen (aufraeumen.json) loescht der naechste Start den anlagengebundenen Zustand und die Hilfssensoren,
-bevor der Geraetekern startet - aber nur, solange die gespeicherte Konfiguration noch leer ist."""
+Nach dem Entfernen (aufraeumen.json) setzt der naechste Start die Anlage erst zurueck wie sign_off (Laufzeit im Modus
+abgemeldet mit der alten Konfiguration aus der Markierung) und startet danach neu; erst dieser Start loescht den
+anlagengebundenen Zustand und die Hilfssensoren, bevor der Geraetekern startet - aber nur, solange die gespeicherte
+Konfiguration noch leer ist (Spec Stufe 3 S3 Abschnitt 4)."""
 import json
 import logging
 import os
@@ -30,11 +32,11 @@ from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.host import HaHost
 from heizungsbruecke.supervisor import SupervisorApi
 from heizungsbruecke.version import ADDON_VERSION
-from smartheat_core import dateien
 from smartheat_device.device import DEVICE_DIR, Device
 from smartheat_device.documents import KONFIGURATION, DocumentStore
 from smartheat_device.hintergrund import Hintergrund
-from smartheat_runtime import abo, app, dokument_config
+from smartheat_runtime import abo, app
+from smartheat_runtime import aufraeumen as markierung
 from smartheat_runtime.runtime import EV_RECHECK, Runtime
 from smartheat_runtime.status import STATUS_KONFIGURATIONSFEHLER
 
@@ -131,19 +133,27 @@ def _ha_bereit(ha_api) -> bool:
 
 def aufraeumen(ha_api) -> None:
     """Markierung aufraeumen.json (HaDeviceHost.konfiguration_uebernommen: Wechsel von eingerichtet auf leer) vor dem
-    Start des Geraetekerns auswerten. Geloescht wird nur, wenn die gespeicherte Konfiguration noch nicht wieder
-    eingerichtet ist: Sicherung, Notbetriebs- und Abo-Zustand, Laufzeit-Ordner und die Hilfssensoren in HA. Bleiben
-    Hilfssensoren uebrig (HA nicht bereit oder Fehler), bleibt die Markierung fuer den naechsten Start."""
+    Start des Geraetekerns auswerten (Spec Stufe 3 S3 Abschnitt 4): wieder eingerichtet -> Markierung weg, Zustand
+    bleibt; Zuruecksetzen steht aus -> nichts loeschen (die Laufzeit setzt mit der Konfiguration der Markierung zurueck
+    und startet danach neu); zurueckgesetzt oder ohne Konfiguration (Markierung aus 1.0.0, kaputt) -> Sicherung,
+    Notbetriebs- und Abo-Zustand, Laufzeit-Ordner und die Hilfssensoren in HA loeschen. Bleiben Hilfssensoren uebrig
+    (HA nicht bereit oder Fehler), bleibt die Markierung fuer den naechsten Start."""
     if not config.AUFRAEUMEN_PATH.exists():
         return
     gespeichert = DocumentStore(config.DEVICE_DATA_DIR / DEVICE_DIR, host=HaDeviceHost.host,
                                 software_version=ADDON_VERSION).inhalt(KONFIGURATION)
-    if dokument_config.eingerichtet(gespeichert):
+    entscheidung = markierung.entscheiden(config.AUFRAEUMEN_PATH, gespeichert)
+    if entscheidung == markierung.KEINE:  # zwischendurch verschwunden
+        return
+    if entscheidung == markierung.VERWERFEN:
         logger.info("Aufraeumen entfaellt: das Add-on ist inzwischen neu eingerichtet")
         config.AUFRAEUMEN_PATH.unlink(missing_ok=True)
         return
-    marker = dateien.lesen_json(config.AUFRAEUMEN_PATH)
-    anlage = marker.get("anlage") if isinstance(marker, dict) else None
+    if entscheidung == markierung.ZURUECKSETZEN:
+        logger.info("Anlage wird vor dem Aufraeumen zurueckgesetzt")
+        return
+    gelesen = markierung.lesen(config.AUFRAEUMEN_PATH)
+    anlage = gelesen.anlage if gelesen is not None else None
     fertig = True
     if isinstance(anlage, str) and anlage and config.DERIVED_SENSORS_PATH.exists():
         if _ha_bereit(ha_api):

@@ -15,7 +15,7 @@ from smartheat_core import dateien
 from smartheat_gateway import runtime_main
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.zigbee import ZigbeeMirror
-from smartheat_runtime import app
+from smartheat_runtime import app, aufraeumen
 from smartheat_runtime.app import IDLE_NOT_CONFIGURED, IdleBridge
 from smartheat_runtime.runtime import EV_RECHECK, Runtime
 from smartheat_runtime.status import STATUS_ABGEMELDET
@@ -153,6 +153,46 @@ def test_a_marker_from_before_a_new_setup_deletes_nothing(world):
     world.start_runtime()
     assert (world.paths.driver_secrets_dir / "vicare.json").exists()
     assert not world.paths.aufraeumen.exists()
+
+
+def _offenes_zuruecksetzen(world):
+    """Zustand und Treiber-Anmeldung der eingerichteten Anlage, gespeichert ist schon die leere Konfiguration."""
+    for path in (world.paths.backup, world.paths.inventur, world.paths.driver_secrets_dir / "vicare.json"):
+        dateien.schreiben_json(path, {"x": 1}, modus=dateien.LESBAR)
+    aufraeumen.markieren(world.paths.aufraeumen, konfiguration())
+    dokumente_schreiben(world.paths, {**konfiguration(), "anlage": None})
+
+
+def test_the_cleanup_waits_while_the_reset_is_pending(world):
+    """Spec Stufe 3 S3 Abschnitt 4: vor dem Zuruecksetzen bleiben Laufzeit-Ordner, Treiber-Anmeldung (das Zuruecksetzen
+    braucht sie) und Markierung."""
+    _offenes_zuruecksetzen(world)
+    runtime_main.aufraeumen(world.paths)
+    assert world.paths.runtime_dir.exists() and world.paths.backup.exists()
+    assert (world.paths.driver_secrets_dir / "vicare.json").exists() and world.paths.inventur.exists()
+    assert world.paths.aufraeumen.exists()
+
+
+def test_the_cleanup_after_the_reset_deletes_everything(world):
+    _offenes_zuruecksetzen(world)
+    assert aufraeumen.zurueckgesetzt(world.paths.aufraeumen, "test-tenant")
+    runtime_main.aufraeumen(world.paths)
+    assert not world.paths.runtime_dir.exists() and not world.paths.inventur.exists()
+    assert not (world.paths.driver_secrets_dir / "vicare.json").exists() and not world.paths.aufraeumen.exists()
+
+
+def test_an_empty_configuration_resets_with_the_driver_then_restarts_and_forgets(world):
+    """Leer ohne sign_off: der Start setzt mit dem Treiber zurueck (Status abgemeldet), startet einmal neu, und erst
+    dieser Start vergisst die Anlage samt Treiber-Anmeldung."""
+    _offenes_zuruecksetzen(world)
+    result = world.start_runtime()
+    assert isinstance(result, IdleBridge) and result.reason == STATUS_ABGEMELDET
+    assert world.status()["status"] == "abgemeldet" and world.status()["setup_id"] == "test-tenant"
+    assert (world.paths.driver_secrets_dir / "vicare.json").exists()
+    world.run()
+    assert world.restarts == 2 and world.result.reason == IDLE_NOT_CONFIGURED
+    assert not world.paths.runtime_dir.exists() and not world.paths.aufraeumen.exists()
+    assert not (world.paths.driver_secrets_dir / "vicare.json").exists()
 
 
 def test_unchanged_configuration_keeps_the_alive_file_fresh(world):

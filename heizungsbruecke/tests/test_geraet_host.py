@@ -1,5 +1,6 @@
 """Spec 5c 1.3: das HA-Add-on als DeviceHost (Faehigkeiten, Uhr, Pruefung, Befehle, Dokumente, Wunsch, Raum)."""
 import json
+import stat
 import time
 
 import pytest
@@ -231,7 +232,9 @@ def test_configuration_change_requests_a_restart_and_empty_marks_cleanup(tmp_pat
     host, _, clock = _host(tmp_path, monkeypatch)
     alt = konfiguration_aus_optionen(OPTIONS)
     host.konfiguration_uebernommen(alt, {**alt, "anlage": None})
-    assert json.loads(config.AUFRAEUMEN_PATH.read_text()) == {"anlage": alt["anlage"]} and host._neustart
+    assert json.loads(config.AUFRAEUMEN_PATH.read_text()) == {
+        "anlage": alt["anlage"], "konfiguration": alt, "zurueckgesetzt": False} and host._neustart
+    assert stat.S_IMODE(config.AUFRAEUMEN_PATH.stat().st_mode) == 0o600
     worker = RegulationWorker(clock)
     reloads = []
     worker.register(geraet_host.EV_RELOAD, lambda event: reloads.append(event.kind))

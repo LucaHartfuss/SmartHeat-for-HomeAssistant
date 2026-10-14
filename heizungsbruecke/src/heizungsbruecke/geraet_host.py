@@ -23,7 +23,7 @@ from smartheat_core import dateien
 from smartheat_device.commands import CommandRegister, Done, Failed, Outcome, Waiting
 from smartheat_device.hintergrund import Hintergrund
 from smartheat_device.host import Anzeige, MeldungSink
-from smartheat_runtime import dokument_config
+from smartheat_runtime import aufraeumen, dokument_config
 from smartheat_runtime.soll_eingang import EV_TARGET_INPUT
 from smartheat_runtime.soll_speicher import SOURCE_PORTAL
 from smartheat_runtime.status import STATUS_ABGEMELDET
@@ -174,7 +174,7 @@ class HaDeviceHost:
     def konfiguration_uebernommen(self, alt: dict | None, neu: dict) -> None:
         if dokument_config.eingerichtet(alt) and not dokument_config.eingerichtet(neu):
             assert alt is not None
-            dateien.schreiben_json(config.AUFRAEUMEN_PATH, {"anlage": alt["anlage"]}, modus=dateien.PRIVAT)
+            aufraeumen.markieren(config.AUFRAEUMEN_PATH, alt)  # alte Konfiguration: erst zuruecksetzen (Spec S3 4)
         if dokument_config.laufzeit_relevant(alt, neu):
             self.neustart_anfordern()
 

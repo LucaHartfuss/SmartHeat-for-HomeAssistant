@@ -2,6 +2,7 @@
 Prozess, Meldungen, Neustart bei neuer Konfiguration, Aufraeumen nach dem Entfernen, Software-Bruecke, LED-Datei."""
 import json
 import os
+import stat
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -146,7 +147,9 @@ def test_a_restart_requested_before_the_worker_exists_is_posted_on_binding(welt)
 
 def test_an_empty_configuration_after_a_setup_marks_the_cleanup(welt):
     welt.host.konfiguration_uebernommen(konfiguration(), LEER)
-    assert json.loads(welt.paths.aufraeumen.read_text()) == {"anlage": "test-tenant"}
+    assert json.loads(welt.paths.aufraeumen.read_text()) == {
+        "anlage": "test-tenant", "konfiguration": konfiguration(), "zurueckgesetzt": False}
+    assert stat.S_IMODE(welt.paths.aufraeumen.stat().st_mode) == 0o600
     welt.host.worker_binden(welt.worker)
     assert welt.kinds() == [gh.EV_RELOAD]
 
