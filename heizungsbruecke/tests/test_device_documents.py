@@ -129,6 +129,12 @@ def test_unknown_fields_are_kept_and_ignored(tmp_path):
     assert store.inhalt("konfiguration")["kuenftig"] == {"a": 1}
 
 
+def test_a_configuration_with_origin_values_is_taken(tmp_path):
+    store = _store(tmp_path)
+    assert store.empfangen("konfiguration", _konfiguration(ursprungswerte={"heat_limit": 18.0})).ok
+    assert store.inhalt("konfiguration")["ursprungswerte"] == {"heat_limit": 18.0}
+
+
 @pytest.mark.parametrize("version", [0, -1, "1", True, None, 1.5])
 def test_unreadable_versions_get_no_answer(tmp_path, version):
     assert _store(tmp_path).empfangen("konfiguration", {**_konfiguration(), "version": version}) is None

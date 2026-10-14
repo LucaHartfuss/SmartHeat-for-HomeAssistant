@@ -61,6 +61,7 @@ HELLO_FIELDS = (
 )
 HELLO_OPTIONAL = ("device_state",)  # fehlt = Uebernahmestand des Geraets unbekannt, kein Abgleich (Spec 5c F1)
 STATUS_FIELDS = ("schema", "zustand", "runtime_status", "raum", "ts")
+STATUS_OPTIONAL = ("ursprungswerte",)  # fehlt = keine neuen Ursprungswerte (G-4: Hebel -> Wert vor dem ersten Schreiben)
 ZUSTAENDE = (
     "startet", "nicht_uebernommen", "keine_verbindung", "wartet_auf_einrichtung", "regelt", "stoerung", "gesperrt",
     "update_noetig",
@@ -98,7 +99,7 @@ KONFIGURATION_FIELDS = (
     "schema", "version", "anlage", "profil", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo",
     "mindest_software", "software",
 )
-KONFIGURATION_OPTIONAL = ("intervalle",)  # fehlt = Standardwerte des Geraets
+KONFIGURATION_OPTIONAL = ("intervalle", "ursprungswerte")  # fehlt = Standardwerte bzw. keine Ursprungswerte auf dem Server
 BINDUNG_GATEWAY_FIELDS = ("treiber", "thermostat")
 BINDUNG_HA_FIELDS = ("kreis", "rollen", "batterien", "benachrichtigung", "hinweise_aus")
 BINDUNG_HA_OPTIONAL = ("abfrage_s",)  # fehlt = Standardwert des Hebelsatzes (Abfrageintervall der Hersteller-Integration)
@@ -119,6 +120,7 @@ BEDIENUNG_FIELDS = ("schema", "version", "modus", "raum_soll", "quelle", "ts")
 MODI = ("manuell",)
 QUELLEN = ("portal", "geraet", "auftrag")
 RAUM_SOLL_MIN, RAUM_SOLL_MAX, RAUM_SOLL_STEP = 15.0, 25.0, 0.5
+URSPRUNG_MAX_HEBEL, URSPRUNG_HEBEL_MAX_CHARS = 16, 64  # Ursprungswerte: hoechstens so viele Hebel, Namen so lang
 DOKUMENT_ERRORS = (
     "schema_unbekannt", "ungueltig", "hebelsatz_eingerastet", "sicherheitswerte_fehlen", "rolle_unzulaessig",
     "doppelt_belegt", "treiber_parameter", "update_noetig", "ausserhalb_bereich",
