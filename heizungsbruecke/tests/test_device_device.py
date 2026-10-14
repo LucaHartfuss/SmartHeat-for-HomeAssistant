@@ -58,6 +58,10 @@ class FakeHost:
         self.raum_wert: dict | None = {"ist": 20.0, "soll": 21.0, "soll_quelle": "portal", "ts": "t0"}
         self.treiber_text: str | None = None
         self.handlers: dict = {}
+        self.ursprung: dict = {}
+
+    def ursprungswerte(self):
+        return dict(self.ursprung)
 
     def faehigkeiten(self):
         return {"drivers": ["simulation"], "zigbee": True, "updater": True}
@@ -193,6 +197,44 @@ class World:
     def empfangen(self, name, body):
         self.link.empfangen(name, body)
         self.device.schritt()
+
+
+# --- Ursprungswerte im Status (Spec Stufe 3 S3 5.1, G-4) ---
+
+def test_status_carries_only_originals_the_server_does_not_know(tmp_path):
+    world = World(tmp_path)
+    world.host.ursprung = {"heat_limit": 16.0, "mode_select": "hz_operationmode_automatic"}
+    world.verbinden()
+    assert world.link.of("up/status")[-1]["ursprungswerte"] == world.host.ursprung  # Server kennt noch keinen
+    world.empfangen("down/config", _konfiguration(ursprungswerte={"heat_limit": 16.0}))
+    world.clock.now += device.STATUS_MIN_SECONDS
+    world.device.schritt()
+    assert world.link.of("up/status")[-1]["ursprungswerte"] == {"mode_select": "hz_operationmode_automatic"}
+
+
+def test_status_without_new_originals_has_no_field(tmp_path):
+    world = World(tmp_path)
+    world.host.ursprung = {"heat_limit": 16.0}
+    world.verbinden()
+    world.empfangen("down/config", _konfiguration(ursprungswerte={"heat_limit": 16.0}))
+    world.clock.now += device.STATUS_MIN_SECONDS
+    world.device.schritt()
+    statuses = world.link.of("up/status")
+    assert len(statuses) == 2 and "ursprungswerte" not in statuses[-1]
+    assert set(statuses[-1]) == set(wire.STATUS_FIELDS)
+    world.clock.now += device.STATUS_MIN_SECONDS
+    world.device.schritt()
+    assert len(world.link.of("up/status")) == 2  # kein Sendeschleife, solange nichts neu ist
+
+
+def test_status_respects_v1_limits(tmp_path):
+    world = World(tmp_path)
+    world.host.ursprung = {**{f"h{i:02d}": float(i) for i in range(20)}, "x" * 65: 1.0, "nan": math.nan,
+                           "gross": 1e13, "wahr": True}
+    world.verbinden()
+    werte = world.link.of("up/status")[-1]["ursprungswerte"]
+    assert len(werte) == wire.URSPRUNG_MAX_HEBEL and all(len(k) <= wire.URSPRUNG_HEBEL_MAX_CHARS for k in werte)
+    assert all(isinstance(v, float) and math.isfinite(v) and abs(v) <= 1e12 for v in werte.values())
 
 
 # --- Start, hello ---

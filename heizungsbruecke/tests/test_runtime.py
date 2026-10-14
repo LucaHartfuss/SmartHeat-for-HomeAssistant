@@ -311,6 +311,18 @@ def _answer(env, bridge, seq, **kwargs):
 
 # --- Boot ---
 
+def test_start_reports_originals_to_the_host_only_on_change(env):
+    _quiet_backup(env, originals={"heat_limit": 16.0})
+    bridge = _start(env)
+    assert env.geraet.gemeldet[-1] == {"heat_limit": 16.0}
+    anzahl = len(env.geraet.gemeldet)
+    _advance(env, bridge, 60)  # weiteres Ereignis ohne Aenderung der Ursprungswerte
+    assert len(env.geraet.gemeldet) == anzahl
+    bridge.store.update(aux_originals={"mode_select": "hz_operationmode_automatic"})
+    _advance(env, bridge, 60)  # ein Ereignis danach meldet die Aenderung (der Worker kennt nur einen Rueckruf)
+    assert env.geraet.gemeldet[-1] == {"heat_limit": 16.0, "mode_select": "hz_operationmode_automatic"}
+
+
 def test_start_runs_priming_check_before_mqtt_loop_start(env, monkeypatch):
     _quiet_backup(env)
     order = []

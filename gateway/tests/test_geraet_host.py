@@ -139,6 +139,17 @@ def test_a_runtime_relevant_configuration_requests_a_restart(welt):
     assert welt.kinds() == [gh.EV_RELOAD]
 
 
+def test_remembered_originals_are_handed_to_the_device_as_a_copy(welt):
+    assert welt.host.ursprungswerte() == {}
+    werte = {"heat_limit": 16.0}
+    welt.host.ursprungswerte_merken(werte)
+    werte["mode_select"] = "x"  # die Laufzeit aendert ihr Woerterbuch weiter
+    gelesen = welt.host.ursprungswerte()
+    assert gelesen == {"heat_limit": 16.0}
+    gelesen["x"] = 1.0
+    assert welt.host.ursprungswerte() == {"heat_limit": 16.0}
+
+
 def test_a_restart_requested_before_the_worker_exists_is_posted_on_binding(welt):
     welt.host.neustart_anfordern()
     welt.host.worker_binden(welt.worker)

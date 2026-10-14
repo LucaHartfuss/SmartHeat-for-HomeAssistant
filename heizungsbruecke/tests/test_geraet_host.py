@@ -204,6 +204,18 @@ def test_inventory_that_hangs_ends_at_its_deadline(tmp_path, monkeypatch):
     host.hintergrund.stop(timeout=2)
 
 
+def test_remembered_originals_are_handed_to_the_device_as_a_copy(tmp_path, monkeypatch):
+    host, _, _ = _host(tmp_path, monkeypatch)
+    assert host.ursprungswerte() == {}
+    werte = {"heat_limit": 16.0}
+    host.ursprungswerte_merken(werte)
+    werte["mode_select"] = "x"  # die Laufzeit aendert ihr Woerterbuch weiter
+    gelesen = host.ursprungswerte()
+    assert gelesen == {"heat_limit": 16.0}
+    gelesen["x"] = 1.0
+    assert host.ursprungswerte() == {"heat_limit": 16.0}
+
+
 def test_portal_operation_reaches_the_worker(tmp_path, monkeypatch):
     host, _, clock = _host(tmp_path, monkeypatch)
     worker = RegulationWorker(clock)

@@ -109,6 +109,9 @@ class HaHost:
         _wait_until_reachable(self._ha_api)
         config.RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 
+    def ursprungswerte_melden(self, werte: dict) -> None:
+        self._geraet.ursprungswerte_merken(werte)
+
     def sign_off_parts(self) -> RestoreParts | None:
         """Es wird kein Hilfssensor angelegt: fuer das Zuruecksetzen reichen die Hebel und die Clamps."""
         try:

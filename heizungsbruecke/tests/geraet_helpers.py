@@ -84,6 +84,7 @@ class FakeGeraet:
     def __init__(self, konfiguration, *, bedienung=None, dirty=False, abo=entitlement.ACTIVE, ha=None, log=None):
         self._konfiguration, self._bedienung, self._dirty, self._abo = konfiguration, bedienung, dirty, abo
         self.wuensche, self.aus, self.status = [], [], []
+        self.gemeldet: list[dict] = []  # Ursprungswerte, die die Laufzeit dem Host gab (Spec Stufe 3 S3 5.1)
         self.raum = None
         self.sent = Sent(log)
         self.channel = None
@@ -116,6 +117,9 @@ class FakeGeraet:
 
     def soll_quelle_aus(self, aus, wirksam):
         self.aus.append((aus, wirksam))
+
+    def ursprungswerte_merken(self, werte):
+        self.gemeldet.append(werte)
 
     def raum_merken(self, raum):
         self.raum = raum

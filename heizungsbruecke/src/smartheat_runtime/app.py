@@ -148,6 +148,10 @@ class Host(Protocol):
         """Binding und Sicherheitswerte zum Zuruecksetzen; None bei ungueltiger Konfiguration."""
         ...
 
+    def ursprungswerte_melden(self, werte: dict) -> None:
+        """Gemerkte Ursprungswerte fuer up/status (Spec Stufe 3 S3 5.1); im Hauptthread, wirft nie."""
+        ...
+
     def load(self) -> Loaded:
         """Konfiguration pruefen, Signale und Anlage vorbereiten; wirft StartFailure."""
         ...
@@ -488,7 +492,7 @@ def _unless_idle(rt: Runtime, handler, event: Event) -> None:
         handler(rt, event)
 
 
-def _register_handlers(rt: Runtime) -> None:
+def _register_handlers(rt: Runtime, melder: Callable[[], None]) -> None:
     handlers = {
         EV_LOCAL_CHECK: _on_local_check,
         EV_SETPOINTS: _on_setpoints,
@@ -506,19 +510,40 @@ def _register_handlers(rt: Runtime) -> None:
     for kind, handler in handlers.items():
         rt.worker.register(kind, functools.partial(_unless_idle, rt, handler))
     rt.worker.register(EV_HEARTBEAT, functools.partial(_on_heartbeat, rt))
-    rt.worker.after_each(functools.partial(_after_each, rt))
+    rt.worker.after_each(functools.partial(_after_each, rt, melder))
 
 
-def _after_each(rt: Runtime) -> None:
+def _after_each(rt: Runtime, melder: Callable[[], None]) -> None:
     """Nach jedem Worker-Ereignis: Datentraeger-Meldung (TP12b), dann das Status-Event, falls es
-    sich geaendert hat."""
+    sich geaendert hat. Dazu die Ursprungswerte an den Host (der Worker kennt nur einen Rueckruf)."""
     try:
         datentraeger.report(rt.store, rt.notifier, rt.texts)
     except Exception:
         logger.exception("Datentraeger-Meldung fehlgeschlagen")
+    melder()
     status = rt.status
     assert status is not None  # beim Boot gesetzt
     status.publish_if_changed()
+
+
+def _ursprung_melder(rt: Runtime, host: Host) -> Callable[[], None]:
+    """Nach jedem Ereignis: Hebel aus restore_originals und Hilfswerte an den Host, nur bei Aenderung."""
+    letzte: dict = {}
+
+    def melden() -> None:
+        try:
+            state = rt.store.state
+            restore = rt.override.binding.description.restore_originals
+            werte = {**{k: v for k, v in state.originals.items() if k in restore}, **state.aux_originals}
+            if werte == letzte:
+                return
+            letzte.clear()
+            letzte.update(werte)
+            host.ursprungswerte_melden(dict(werte))
+        except Exception:
+            logger.exception("Ursprungswerte nicht an den Host gegeben")
+
+    return melden
 
 
 # --- Boot ---
@@ -663,12 +688,14 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
             return _finish_at_start(rt, clock)
         abo.enter_inactive(rt, now)
 
-    _register_handlers(rt)
+    melder = _ursprung_melder(rt, host)
+    _register_handlers(rt, melder)
     abo_inactive = rt.store.state.abo_inactive_since is not None
     if not abo_inactive:
         rt.mqtt_client = mqtt_factory(rt.worker)
 
     _prime(rt)
+    melder()
     if rt.mqtt_client is not None:
         rt.mqtt_client.loop_start()
 

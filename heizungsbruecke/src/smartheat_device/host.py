@@ -78,6 +78,10 @@ class DeviceHost(Protocol):
 
     def befehle_eintragen(self, register: CommandRegister) -> None: ...
 
+    def ursprungswerte(self) -> dict:
+        """Gemerkte Ursprungswerte der Laufzeit (Hebel aus restore_originals und Hilfswerte); {} ohne Laufzeit."""
+        ...
+
     def konfiguration_uebernommen(self, alt: dict | None, neu: dict) -> None:
         """Neue Konfiguration (auch leer = nicht eingerichtet, A4-07). Gateway: Laufzeit neu starten, wenn
         dokument_config.laufzeit_relevant."""

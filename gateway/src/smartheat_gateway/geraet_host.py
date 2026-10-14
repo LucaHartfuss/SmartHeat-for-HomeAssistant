@@ -126,6 +126,7 @@ class GatewayDeviceHost:
         self._worker: RegulationWorker | None = None
         self._soll_eingang = True  # False im Ruhezustand (IdleBridge): der Worker hat keinen Soll-Eingang
         self._neustart = False
+        self._ursprungswerte: dict = {}  # Gemerkte Ursprungswerte der Laufzeit (Hauptthread schreibt, Geraet liest)
         self._raum_soll: float | None = None  # letzte Bedienung, bevor der Worker gebunden ist
         self._worker_lock = threading.Lock()  # binden (Hauptthread) gegen Rueckrufe (Geraete-Thread)
         self._datei = ZustandsDatei(paths.agent_state, lambda: _iso(self._wall()), clock)
@@ -151,6 +152,14 @@ class GatewayDeviceHost:
             self._raum_soll = None
             if self._neustart:
                 worker.post(Event(EV_RELOAD))
+
+    def ursprungswerte_merken(self, werte: dict) -> None:
+        with self._worker_lock:
+            self._ursprungswerte = dict(werte)
+
+    def ursprungswerte(self) -> dict:
+        with self._worker_lock:
+            return dict(self._ursprungswerte)
 
     def neustart_anfordern(self) -> None:
         with self._worker_lock:

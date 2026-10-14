@@ -102,6 +102,9 @@ class GatewayHost:
             logger.info("Lokaler Bus noch nicht erreichbar, warte ...")
         self._paths.runtime_dir.mkdir(parents=True, exist_ok=True)
 
+    def ursprungswerte_melden(self, werte: dict) -> None:
+        self._geraet.ursprungswerte_merken(werte)
+
     def sign_off_parts(self) -> RestoreParts | None:
         hebelsatz = self.konfiguration.get("hebelsatz")
         try:
