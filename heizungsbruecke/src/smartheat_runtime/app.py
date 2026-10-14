@@ -623,6 +623,8 @@ def _prepare_zone(rt: Runtime) -> None:
     settle_seconds des Bindings umstellt."""
     if not _may_prepare_zone(rt):
         return
+    rule = write_budget.RETRY_QUOTA
+    write_budget.before_attempt(rt.store, write_budget.ZONE_PREPARE, rule, rt.clock())
     try:
         rt.override.prepare_start(rt.store.state.stable_target)
     except WriteBudgetExhausted as error:
@@ -631,10 +633,10 @@ def _prepare_zone(rt: Runtime) -> None:
         logger.info("Zone nicht vorbereitet: %s, naechster Versuch beim naechsten lokalen Check", error)
         return
     except Exception:
-        write_budget.record_attempt(rt.store, write_budget.ZONE_PREPARE, rt.clock())
+        write_budget.after_failure(rt.store, write_budget.ZONE_PREPARE, rule, rt.clock())
         logger.exception("Zone konnte nicht vorbereitet werden, naechster Versuch beim naechsten lokalen Check")
         return
-    write_budget.record_success(rt.store, write_budget.ZONE_PREPARE)
+    write_budget.after_success(rt.store, write_budget.ZONE_PREPARE, rule)
     rt.zone_prepared = True
 
 

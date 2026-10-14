@@ -167,9 +167,8 @@ def _may_write(rt: EnforceRuntime, lever: str) -> bool:
 
 def _count_attempt(rt: EnforceRuntime, lever: str) -> None:
     """Zaehlt einen Schreibversuch VOR dem Aufruf: auch ein gescheiterter (z. B. 403 "Quota
-    Exceeded") verbraucht Kontingent und darf nicht in jedem Takt wiederholt werden."""
-    key = _budget_key(rt, lever)
-    write_budget.put(rt.store, key, write_budget.counted(write_budget.get(rt.store, key), rt.clock(), _today().isoformat()))
+    Exceeded") verbraucht Kontingent und darf nicht in jedem Takt wiederholt werden (Regel: every_attempt)."""
+    write_budget.before_attempt(rt.store, _budget_key(rt, lever), _rule(rt), rt.clock(), day=_today().isoformat())
 
 
 def _limit_reached_first_time(rt: EnforceRuntime, lever: str) -> bool:

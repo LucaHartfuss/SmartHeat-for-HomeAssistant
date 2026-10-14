@@ -184,16 +184,19 @@ class LeverPipeline:
             if not write_budget.may_attempt(self._store, key, rule, self._clock()):
                 logger.info("Sollwert-Zeile '%s' zurueckgestellt: Schreibbudget nach einem Fehlschlag", new_row)
                 return state.boost_active, state.emergency_boost_active
-            self._budgeted_write(key, self._row_values(new_row))
+            self._budgeted_write(key, rule, self._row_values(new_row))
             logger.warning(_ROW_LOG[new_row])
         self._store.update(boost_active=comfort, emergency_boost_active=emergency)
         return comfort, emergency
 
     def _budgeted_write(
-        self, key: str, values: dict, *, aux: Mapping[str, str | float] | None = None, require_aux: bool = True,
+        self, key: str, rule: write_budget.Rule, values: dict, *,
+        aux: Mapping[str, str | float] | None = None, require_aux: bool = True,
     ) -> None:
-        """Boost-Start/-Ende und Wiederherstellung: vom Tagesbudget ausgenommen (exempt), zaehlen aber mit. `aux`:
-        Hilfs-Ursprungswerte, die nach den Hebeln zurueckgestellt werden (nur Wiederherstellung)."""
+        """Boost-Start/-Ende und Wiederherstellung: vom Tagesbudget ausgenommen (exempt), zaehlen aber nach `rule`
+        im Schreibbudget mit. `aux`: Hilfs-Ursprungswerte, die nach den Hebeln zurueckgestellt werden (nur
+        Wiederherstellung)."""
+        write_budget.before_attempt(self._store, key, rule, self._clock())
         try:
             self._write(values, exempt=True, require_aux=require_aux)
             if aux:
@@ -204,9 +207,9 @@ class LeverPipeline:
                 }
                 self._restore_aux(aux, targets)
         except Exception:
-            write_budget.record_attempt(self._store, key, self._clock())
+            write_budget.after_failure(self._store, key, rule, self._clock())
             raise
-        write_budget.record_success(self._store, key)
+        write_budget.after_success(self._store, key, rule)
 
     def apply_server_values(self, levers: Mapping[str, float]) -> None:
         """Speichert die (begrenzten) Serverwerte als Wiederherstellungspunkt, bevor geschrieben wird, und schreibt sie
@@ -304,7 +307,9 @@ class LeverPipeline:
         values = {**self._row_values(_ROW_RESTORE), **originals}
         try:
             # Rueckweg vor Vollstaendigkeit: ohne gemerkte Hilfswerte wird trotzdem zurueckgestellt (require_aux=False).
-            self._budgeted_write(write_budget.RESTORE, values, aux=aux, require_aux=False)
+            self._budgeted_write(
+                write_budget.RESTORE, write_budget.RETURN_STAIRCASE, values, aux=aux, require_aux=False,
+            )
         except Exception:
             logger.exception(
                 "Zuletzt gelernte Werte konnten nicht wiederhergestellt werden - Boost-Flags "
