@@ -2,6 +2,8 @@
 import pytest
 
 from smartheat_core import config_check as cc
+from smartheat_core import rastung
+from smartheat_core.rastung import Rastung
 from smartheat_device import wire
 from smartheat_runtime import options
 
@@ -20,8 +22,11 @@ def _konfiguration(**changes):
     return value
 
 
-def _pruefen(neu, vorher=None, **kwargs):
-    return cc.pruefen(neu, vorher, host=cc.HOST_GATEWAY, **kwargs)
+LOCK = Rastung("viessmann_vicare", "Heizkoerper")
+
+
+def _pruefen(neu, rastung=None, **kwargs):
+    return cc.pruefen(neu, rastung, host=cc.HOST_GATEWAY, **kwargs)
 
 
 def test_a_valid_gateway_configuration_passes():
@@ -29,7 +34,7 @@ def test_a_valid_gateway_configuration_passes():
 
 
 def test_an_empty_configuration_always_passes():
-    assert _pruefen({"anlage": None, "raumfuehler": []}, _konfiguration()) is None
+    assert _pruefen({"anlage": None, "raumfuehler": []}, LOCK) is None
     assert cc.ist_leer({"anlage": None}) and not cc.ist_leer(_konfiguration())
 
 
@@ -68,16 +73,20 @@ def test_floor_heating_has_safety_values():
 
 
 @pytest.mark.parametrize("change", [{"verteilsystem": "Fussbodenheizung"}, {"hebelsatz": "weishaupt_wwp"}])
-def test_lever_set_and_distribution_are_locked_while_set_up(change):
-    assert _pruefen(_konfiguration(**change), _konfiguration()).grund == cc.HEBELSATZ_EINGERASTET
+def test_lever_set_and_distribution_are_locked(change):
+    assert _pruefen(_konfiguration(**change), LOCK) == cc.Ablehnung(cc.HEBELSATZ_EINGERASTET, rastung.TEXT)
 
 
-def test_a_change_through_not_set_up_is_allowed():
-    assert _pruefen(_konfiguration(verteilsystem="Fussbodenheizung"), {"anlage": None}) is None
+def test_without_lock_the_first_choice_is_free():
+    assert _pruefen(_konfiguration(verteilsystem="Fussbodenheizung"), None) is None
+
+
+def test_a_broken_lock_rejects_even_the_same_pair():
+    assert _pruefen(_konfiguration(), rastung.UNBEKANNT).grund == cc.HEBELSATZ_EINGERASTET
 
 
 def test_reconfiguring_with_the_same_lever_set_is_allowed():
-    assert _pruefen(_konfiguration(raumfuehler=["treiber:room_temperature"]), _konfiguration()) is None
+    assert _pruefen(_konfiguration(raumfuehler=["treiber:room_temperature"]), LOCK) is None
 
 
 @pytest.mark.parametrize("ref", [

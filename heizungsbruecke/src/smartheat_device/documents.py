@@ -15,7 +15,12 @@ Software ausgewertet: nach einem Update endet es von selbst. Nur eine vollstaend
 Anlass neu; eine wegen fehlender Felder abgelehnte laesst ihn stehen.
 Wirft der Treiber-Rueckruf config_check.NichtPruefbar (HA aus), laeuft empfangen durch: nichts wird gespeichert oder
 abgelehnt, das Geraet haelt das Dokument zurueck und prueft spaeter erneut (device.py).
-Eine kaputte Datei (Stromausfall) gilt als "keine Version": hello meldet 0, der Server stellt neu zu."""
+Eine kaputte Datei (Stromausfall) gilt als "keine Version": hello meldet 0, der Server stellt neu zu.
+
+Rastung (Spec Stufe 3 S3 Abschnitt 3, A5-06): Hebelsatz x Verteilsystem der ersten eingerichteten Konfiguration stehen in
+sicherheitssatz.json; kein Dokument loest sie, auch keine leere Konfiguration. Sie wird vor dem Speichern der Konfiguration
+geschrieben. Fehlt die Datei bei gespeicherter eingerichteter Konfiguration (Stand vor dieser Version), rastet der Start.
+Eine kaputte oder manipulierte Datei (auch ein Symlink) lehnt jede eingerichtete Konfiguration ab (rastung.lesen)."""
 import logging
 import re
 import threading
@@ -23,7 +28,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TypeGuard
 
-from smartheat_core import config_check, dateien
+from smartheat_core import config_check, dateien, rastung, wallclock
+from smartheat_core.rastung import Rastung
 from smartheat_device import wire
 
 logger = logging.getLogger(__name__)
@@ -128,6 +134,8 @@ class DocumentStore:
         self._host, self._software_version, self._treiber_pruefen = host, software_version, treiber_pruefen
         self._lock = threading.Lock()
         self._docs: dict[str, Dokument | None] = {art: self._laden(art) for art in wire.DOKUMENTE}
+        self._rastung_pfad = directory / rastung.DATEI
+        self._rastung = self._rastung_laden()
         zustand = dateien.lesen_json(directory / ZUSTAND_DATEI)
         zustand = zustand if isinstance(zustand, dict) else {}
         self._update_anlass = _anlass(zustand.get("update_anlass"))
@@ -145,6 +153,29 @@ class DocumentStore:
         if anlass[0] == SCHEMA_UNBEKANNT:
             return anlass[1] == self._software_version
         return unter_mindest(self._software_version, anlass[1])
+
+    @property
+    def rastung(self) -> Rastung | None:
+        return self._rastung
+
+    def _rastung_laden(self) -> Rastung | None:
+        """Spec 3.3: fehlt die Datei und ist die gespeicherte Konfiguration eingerichtet, gilt deren Paar (Regel "erste
+        eingerichtete Konfiguration", z. B. client1 beim ersten Start mit dieser Version). Eine vorhandene, auch
+        kaputte Datei wird nie ueberschrieben."""
+        gelesen = rastung.lesen(self._rastung_pfad)
+        inhalt = self.inhalt(KONFIGURATION)
+        if gelesen is None and inhalt is not None and not config_check.ist_leer(inhalt):
+            return self._rasten(inhalt)
+        return gelesen
+
+    def _rasten(self, inhalt: dict) -> Rastung | None:
+        hebelsatz, verteilsystem = inhalt.get("hebelsatz"), inhalt.get("verteilsystem")
+        if not (isinstance(hebelsatz, str) and isinstance(verteilsystem, str)):
+            return None
+        neu = Rastung(hebelsatz, verteilsystem)
+        rastung.schreiben(self._rastung_pfad, neu, wallclock.now().isoformat(timespec="seconds"))
+        logger.info("Sicherheitssatz eingerastet")
+        return neu
 
     def _laden(self, art: str) -> Dokument | None:
         raw = dateien.lesen_json(self._dir / DATEIEN[art])
@@ -206,9 +237,11 @@ class DocumentStore:
             if current is not None and current.version == version and not current.dirty:
                 return Ergebnis(art, version, True)
             inhalt = {key: value for key, value in payload.items() if key not in _RESERVIERT}
-            ablehnung = self._pruefen(art, inhalt, current)
+            ablehnung = self._pruefen(art, inhalt)
             if ablehnung is not None:
                 return self._abgelehnt_mit(art, version, ablehnung.grund, ablehnung.text)
+            if art == KONFIGURATION and self._rastung is None and not config_check.ist_leer(inhalt):
+                self._rastung = self._rasten(inhalt)  # vor dem Dokument (Spec 3.2): ein Absturz dazwischen schadet nicht
             self._speichern(Dokument(art, version, inhalt))
             self._abgelehnt.pop(art, None)
             self._zustand_speichern()
@@ -219,7 +252,7 @@ class DocumentStore:
         self._zustand_speichern()
         return Ergebnis(art, version, False, grund, text)
 
-    def _pruefen(self, art: str, inhalt: dict, current: Dokument | None) -> config_check.Ablehnung | None:
+    def _pruefen(self, art: str, inhalt: dict) -> config_check.Ablehnung | None:
         if art == BEDIENUNG:
             return _bedienung_pruefen(inhalt)
         fehlen = [field for field in wire.KONFIGURATION_FIELDS if field not in _RESERVIERT and field not in inhalt]
@@ -232,5 +265,4 @@ class DocumentStore:
         if self._update_anlass is not None:
             return config_check.Ablehnung(UPDATE_NOETIG, UPDATE_TEXT.format(eigene=self._software_version,
                                                                             mindest=mindest))
-        vorher = current.inhalt if current is not None else None
-        return config_check.pruefen(inhalt, vorher, host=self._host, treiber_pruefen=self._treiber_pruefen)
+        return config_check.pruefen(inhalt, self._rastung, host=self._host, treiber_pruefen=self._treiber_pruefen)

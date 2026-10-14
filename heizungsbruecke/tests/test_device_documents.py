@@ -1,8 +1,10 @@
 """Spec 5b 3 und 5.1: Dokumentspeicher des Geraets und atomares Schreiben (Plan D1 Task 3)."""
+import json
 import math
 
 import pytest
 
+from smartheat_core import rastung
 from smartheat_device import documents as docs
 from smartheat_device import wire
 
@@ -36,6 +38,71 @@ def _store(tmp_path, version="0.6.0"):
 
 
 # --- Konfiguration ---
+
+def test_a_empty_configuration_does_not_release_the_lock(tmp_path):
+    """A5-06 (SI-1): leer und danach ein anderes Verteilsystem loeste das Einrasten. Jetzt bleibt die Rastung."""
+    store = _store(tmp_path)
+    store.empfangen("konfiguration", _konfiguration(version=1, verteilsystem="Fussbodenheizung"))
+    assert store.empfangen("konfiguration", _leer(version=2)).uebernommen
+    ergebnis = store.empfangen("konfiguration", _konfiguration(version=3, verteilsystem="Heizkoerper"))
+    assert (ergebnis.ok, ergebnis.grund) == (False, "hebelsatz_eingerastet")
+    assert _store(tmp_path).empfangen("konfiguration", _konfiguration(version=4, verteilsystem="Heizkoerper")).grund \
+        == "hebelsatz_eingerastet"
+    assert _store(tmp_path).empfangen("konfiguration", _konfiguration(version=5, verteilsystem="Fussbodenheizung")).ok
+
+
+def test_the_first_set_up_configuration_locks_before_it_is_stored(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    reihenfolge = []
+    echt_rasten, echt_speichern = store._rasten, store._speichern
+    monkeypatch.setattr(store, "_rasten", lambda inhalt: reihenfolge.append("rasten") or echt_rasten(inhalt))
+    monkeypatch.setattr(store, "_speichern", lambda doc: reihenfolge.append("speichern") or echt_speichern(doc))
+    store.empfangen("konfiguration", _konfiguration())
+    assert reihenfolge == ["rasten", "speichern"]
+    assert json.loads((tmp_path / "sicherheitssatz.json").read_text())["verteilsystem"] == "Heizkoerper"
+
+
+def test_an_empty_configuration_never_creates_a_lock(tmp_path):
+    _store(tmp_path).empfangen("konfiguration", _leer())
+    assert not (tmp_path / "sicherheitssatz.json").exists()
+
+
+def test_a_stored_configuration_without_lock_locks_on_start(tmp_path):
+    _store(tmp_path).empfangen("konfiguration", _konfiguration())
+    (tmp_path / "sicherheitssatz.json").unlink()  # Stand vor dieser Version (client1)
+    store = _store(tmp_path)
+    assert store.rastung == rastung.Rastung("viessmann_vicare", "Heizkoerper")
+    assert (tmp_path / "sicherheitssatz.json").exists()
+
+
+def test_a_broken_lock_file_rejects_every_set_up_configuration(tmp_path):
+    (tmp_path / "sicherheitssatz.json").write_text("kaputt")
+    store = _store(tmp_path)
+    assert store.empfangen("konfiguration", _konfiguration()).grund == "hebelsatz_eingerastet"
+    assert store.empfangen("konfiguration", _leer(version=2)).ok  # leer bleibt moeglich, die Datei bleibt kaputt
+    assert (tmp_path / "sicherheitssatz.json").read_text() == "kaputt"
+
+
+def test_a_symlinked_lock_file_is_neither_followed_nor_replaced(tmp_path):
+    """Review-Fokus 1: ein Symlink sperrt; er wird nicht aus der gespeicherten Konfiguration neu gerastet."""
+    _store(tmp_path).empfangen("konfiguration", _konfiguration())
+    echt = tmp_path / "fremd.json"
+    (tmp_path / "sicherheitssatz.json").replace(echt)
+    (tmp_path / "sicherheitssatz.json").symlink_to(echt)
+    store = _store(tmp_path)
+    assert store.rastung == rastung.UNBEKANNT
+    assert (tmp_path / "sicherheitssatz.json").is_symlink()
+    assert store.empfangen("konfiguration", _konfiguration(version=2)).grund == "hebelsatz_eingerastet"
+    assert (tmp_path / "sicherheitssatz.json").is_symlink()
+
+
+def test_a_dangling_symlinked_lock_file_creates_no_file_at_the_target(tmp_path):
+    ziel = tmp_path / "ziel.json"
+    (tmp_path / "sicherheitssatz.json").symlink_to(ziel)
+    store = _store(tmp_path)
+    assert store.empfangen("konfiguration", _konfiguration()).grund == "hebelsatz_eingerastet"
+    assert not ziel.exists()
+
 
 def test_a_new_configuration_is_taken_and_survives_a_restart(tmp_path):
     store = _store(tmp_path)

@@ -1,16 +1,18 @@
 """Lokale Pruefung einer Konfiguration vor dem Uebernehmen (Spec 5b 3.1, Weichenstellung 1), rein: nur
 Standardbibliothek und smartheat_core. Regeln in dieser Reihenfolge: (1) Aufbau und Wertebereiche, (2) Hebelsatz und
-Verteilsystem haben lokale Sicherheitswerte (safety.py), (3) eingerastet: ein Wechsel von Hebelsatz oder Verteilsystem
-nur ueber "nicht eingerichtet", (4) erlaubte Referenzen je Rolle, (5) keine Doppelbelegung, (6) Treiberparameter prueft
+Verteilsystem haben lokale Sicherheitswerte (safety.py), (3) eingerastet: Hebelsatz und Verteilsystem muessen zur Rastung
+des Geraets passen (smartheat_core.rastung); eine leere Konfiguration loest sie nicht, (4) erlaubte Referenzen je Rolle, (5) keine Doppelbelegung, (6) Treiberparameter prueft
 der Treiber (Rueckruf des Hosts, zuletzt; Gateway: die Bindung, HA: Aufbau der Bindung rein, Entities und Schreibziele ueber den
 Rueckruf des Hosts mit der ganzen Konfiguration). Eine leere Konfiguration (anlage None) heisst "nicht eingerichtet" und ist
-immer gueltig. Die Gruende sind Dokument-Fehlergruende des Vertrags (smartheat_device.wire.DOKUMENT_ERRORS), die Texte
+immer gueltig; sie aendert die Rastung nicht. Die Gruende sind Dokument-Fehlergruende des Vertrags (smartheat_device.wire.DOKUMENT_ERRORS), die Texte
 gehen an Portal und Assistent (Kundensprache). Sicherheitsgrenzen, Boost und Notbetrieb liest diese Pruefung nur
 (G-1, Regel 4)."""
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+from smartheat_core.rastung import TEXT as RASTUNG_TEXT
+from smartheat_core.rastung import Rastung, passt
 from smartheat_core.safety import resolve_local_safety
 
 UNGUELTIG = "ungueltig"
@@ -169,9 +171,9 @@ def _ha_bindung(neu: Mapping) -> Ablehnung | None:
     return None
 
 
-def pruefen(neu: Mapping, vorher: Mapping | None, *, host: str,
+def pruefen(neu: Mapping, rastung: Rastung | None, *, host: str,
             treiber_pruefen: TreiberPruefung | None = None) -> Ablehnung | None:
-    """None = uebernehmen; sonst der erste verletzte Grund. `vorher` ist die zuletzt uebernommene Konfiguration."""
+    """None = uebernehmen; sonst der erste verletzte Grund. `rastung` ist die Rastung des Geraets (None: noch keine)."""
     if not isinstance(neu, Mapping):
         return Ablehnung(UNGUELTIG, "Die Konfiguration ist kein Objekt.")
     if ist_leer(neu):
@@ -183,10 +185,8 @@ def pruefen(neu: Mapping, vorher: Mapping | None, *, host: str,
         resolve_local_safety(neu["hebelsatz"], neu["verteilsystem"])
     except ValueError as error:
         return Ablehnung(SICHERHEITSWERTE_FEHLEN, f"Für diese Anlage fehlen lokale Sicherheitswerte ({error}).")
-    if vorher is not None and not ist_leer(vorher) and (
-            vorher.get("hebelsatz"), vorher.get("verteilsystem")) != (neu["hebelsatz"], neu["verteilsystem"]):
-        return Ablehnung(HEBELSATZ_EINGERASTET, "Hebelsatz und Verteilsystem lassen sich nur ändern, nachdem das Gerät "
-                                                "entfernt und neu eingerichtet wurde.")
+    if not passt(rastung, neu):
+        return Ablehnung(HEBELSATZ_EINGERASTET, RASTUNG_TEXT)
     if host == HOST_HA:
         ablehnung = _ha_bindung(neu)
         if ablehnung is None and treiber_pruefen is not None and (text := treiber_pruefen(dict(neu))):
