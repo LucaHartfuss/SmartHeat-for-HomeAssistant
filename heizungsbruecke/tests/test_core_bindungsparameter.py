@@ -121,7 +121,8 @@ def test_wartezeit(wartezeit, gut):
 @pytest.mark.parametrize(("feld", "wert", "gut"), [
     ("zurueck", ["heat_limit"], True), ("zurueck", ["min_flow"], False), ("zurueck", ["level"], False),
     ("zurueck", ["heat_limit", "heat_limit"], False), ("zurueck", "heat_limit", False),
-    ("zurueck_optional", ["curve"], True), ("zurueck_optional", ["x"], False),
+    ("zurueck_optional", [], True), ("zurueck_optional", ["curve"], False), ("zurueck_optional", ["x"], False),
+    ("nur_lesen", ["x"], False), ("schreibgruppen", {"a": ["curve", "heat_limit"]}, False),
     ("nur_lesen", ["level"], True), ("nur_lesen", ["curve"], False),
     ("schreibgruppen", [["curve", "room_setpoint"]], True), ("schreibgruppen", [["curve"]], False),
     ("schreibgruppen", [["curve", "heat_limit"], ["curve", "room_setpoint"]], False),
@@ -171,3 +172,66 @@ def test_schemata_passen_zum_hebelsatz(hebelsatz, schemata, gut):
 ])
 def test_energie(energie, gut):
     assert gut == (_try(parameter("vaillant_vrc720", energie=energie)) is None)
+
+
+def test_riesenzahlen_sind_ein_wertefehler():
+    werte = parameter("vaillant_vrc720")
+    werte["schritte"]["curve"] = 10**400
+    assert _try(werte)
+    assert _try(parameter("vaillant_vrc720", wartezeit_s=10**400))
+    werte = parameter("weishaupt_wwp")
+    werte["schemata"]["normal_bereich"]["hz_operationmode_"] = [16.0, 10**400]
+    assert _try(werte, "weishaupt_wwp")
+    # ohne lokale Obergrenze ist jeder Wert >= 1 gueltig
+    schutz = {"tag": 10**400, "lebensdauer_hinweis": 10**400, "durchsetzen_tag": 6}
+    assert _try(parameter("vaillant_vrc720", schreibschutz=schutz)) is None
+
+
+def test_zurueck_optional_nur_aus_zurueck():
+    assert _try(parameter("vaillant_vrc720", zurueck=[], zurueck_optional=["heat_limit"]))
+    assert _try(parameter("vaillant_vrc720", zurueck=[], zurueck_optional=[])) is None
+
+
+def _schemata_mit(praefixe, bereich):
+    return {"praefixe": praefixe, "normal_bereich": bereich}
+
+
+@pytest.mark.parametrize(("schemata", "gut"), [
+    (_schemata_mit(["p" * 64], {"p" * 64: [16.0, 28.0]}), True),
+    (_schemata_mit(["p" * 65], {"p" * 65: [16.0, 28.0]}), False),
+    (_schemata_mit([""], {"": [16.0, 28.0]}), False),
+    (_schemata_mit(["a_"], {"a_": [20.0, 20.0]}), True),
+    (_schemata_mit(["a_"], {"a_": [math.nan, 28.0]}), False),
+    (_schemata_mit(["a_"], {"a_": [16.0, 20.0, 28.0]}), False),
+    (_schemata_mit(["a_", "a_"], {"a_": [16.0, 28.0]}), False),
+    ({"praefixe": ["a_"]}, False),
+])
+def test_schemata_randfaelle(schemata, gut):
+    assert gut == (_try(parameter("weishaupt_wwp_basis", schemata=schemata), "weishaupt_wwp_basis") is None)
+
+
+@pytest.mark.parametrize(("schutz", "gut"), [
+    ({"tag": 1, "lebensdauer_hinweis": 1, "durchsetzen_tag": 6}, True),
+    ({"tag": 0, "lebensdauer_hinweis": None, "durchsetzen_tag": 6}, False),
+    ({"tag": None, "lebensdauer_hinweis": 0, "durchsetzen_tag": 6}, False),
+    ({"tag": None, "lebensdauer_hinweis": None, "durchsetzen_tag": 6, "extra": 1}, False),
+])
+def test_schreibschutz_vaillant_randfaelle(schutz, gut):
+    assert gut == (_try(parameter("vaillant_vrc720", schreibschutz=schutz)) is None)
+
+
+def test_energie_einheit_kein_text():
+    assert _try(parameter("vaillant_vrc720", energie={"primary_heating": 5}))
+    assert _try(parameter("vaillant_vrc720", energie={"primary_heating": None}))
+
+
+def test_basis_lehnt_fremden_hebel_ab():
+    assert _try(parameter("weishaupt_wwp_basis", zurueck=["curve"]), "weishaupt_wwp_basis")
+    assert _try(parameter("weishaupt_wwp_basis", nur_lesen=["room_setpoint"]), "weishaupt_wwp_basis")
+
+
+def test_fehlertexte_nicht_doppelt_verpackt():
+    for feld, wert in (("zurueck", ["min_flow"]), ("nur_lesen", ["curve"]), ("energie", {"gas": "kWh"}),
+                       ("schreibgruppen", [["curve"]]), ("zurueck_optional", ["curve"])):
+        text = _try(parameter("vaillant_vrc720", **{feld: wert}))
+        assert text and "ungültig (" not in text, (feld, text)

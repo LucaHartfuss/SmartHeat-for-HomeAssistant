@@ -25,7 +25,12 @@ WARTEZEIT_S = (60, 7200)
 
 
 def _zahl(value) -> bool:
-    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:  # JSON liefert beliebig grosse Ganzzahlen
+        return False
 
 
 def _ganz(value) -> TypeGuard[int]:
@@ -69,7 +74,12 @@ def _schemata(value, verfahren: Verfahren) -> dict:
     if not verfahren.schemata:
         return {}
     praefixe, bereiche = value["praefixe"], value["normal_bereich"]
-    if not isinstance(praefixe, list) or not praefixe or not all(isinstance(p, str) and 0 < len(p) <= 64 for p in praefixe):
+    if (
+        not isinstance(praefixe, list)
+        or not praefixe
+        or not all(isinstance(p, str) and 0 < len(p) <= 64 for p in praefixe)
+        or len(set(praefixe)) != len(praefixe)
+    ):
         raise ValueError("Bindungsparameter schemata.praefixe ist ungültig.")
     if not isinstance(bereiche, Mapping) or set(bereiche) != set(praefixe) or not all(
             isinstance(b, list) and len(b) == 2 and all(_zahl(x) for x in b) and b[0] <= b[1] for b in bereiche.values()):
@@ -108,24 +118,33 @@ def beschreibung(hebelsatz: str, parameter) -> BindingDescription:
     gruppen = parameter["schreibgruppen"]
     if not isinstance(gruppen, list):
         raise ValueError("Bindungsparameter schreibgruppen ist ungültig.")
+    schreibgruppen = tuple(_hebel(g, lever_set.levers, "schreibgruppen") for g in gruppen)
+    if any(len(g) < 2 for g in schreibgruppen) or len({h for g in schreibgruppen for h in g}) != sum(
+        len(g) for g in schreibgruppen
+    ):
+        raise ValueError("Jede Schreibgruppe braucht mindestens zwei Hebel, und kein Hebel steht in zwei Gruppen.")
     if parameter["zaehler"] not in ZAEHLER:
         raise ValueError("Bindungsparameter zaehler ist unbekannt.")
+    zurueck = _hebel(parameter["zurueck"], lever_set.levers, "zurueck")
+    zurueck_optional = _hebel(parameter["zurueck_optional"], lever_set.levers, "zurueck_optional")
+    if not set(zurueck_optional) <= set(zurueck):
+        raise ValueError("Ein optionaler Rückstell-Hebel muss auch unter den zurückzustellenden Hebeln stehen.")
+    nur_lesen = _hebel(parameter["nur_lesen"], tuple(h for h in LEVERS if h not in hebel), "nur_lesen")
+    schemata = _schemata(parameter["schemata"], verfahren)
+    energie = _energie(parameter["energie"])
     schutz = _schreibschutz(parameter["schreibschutz"], verfahren.obergrenze)
-    fremde_hebel = tuple(lever for lever in LEVERS if lever not in hebel)
     try:
         return BindingDescription(
             lever_set=lever_set, steps=schritte, enforce_tolerance=toleranzen, settle_seconds=float(wartezeit),
-            restore_originals=_hebel(parameter["zurueck"], lever_set.levers, "zurueck"),
-            optional_restore=_hebel(parameter["zurueck_optional"], lever_set.levers, "zurueck_optional"),
+            restore_originals=zurueck, optional_restore=zurueck_optional,
             prepared_lever=verfahren.prepared_lever, labels=verfahren.labels,
             preparation_label=verfahren.preparation_label,
             preparation_resets_setpoint=verfahren.preparation_resets_setpoint,
             daily_write_limit=schutz.tag, enforce_per_day=schutz.durchsetzen_tag,
-            write_groups=tuple(_hebel(g, lever_set.levers, "schreibgruppen") for g in gruppen),
+            write_groups=schreibgruppen,
             lifetime_hint_at=schutz.lebensdauer_hinweis, aux_originals=verfahren.aux_originals,
             energy_counters=parameter["zaehler"],
-            readonly_levers=_hebel(parameter["nur_lesen"], fremde_hebel, "nur_lesen"),
-            schemata=_schemata(parameter["schemata"], verfahren), energie=_energie(parameter["energie"]),
+            readonly_levers=nur_lesen, schemata=schemata, energie=energie,
         )
-    except ValueError as error:  # BindingDescription.__post_init__ (z. B. Schreibgruppen)
+    except ValueError as error:  # Rueckhalt: BindingDescription.__post_init__
         raise ValueError(f"Die Bindungsparameter sind ungültig ({error}).") from None
