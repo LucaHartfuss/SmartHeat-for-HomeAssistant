@@ -2,6 +2,7 @@
 Binding. Portiert aus tests/test_override.py; geprueft werden dieselben Werte und Schreibfolgen."""
 import dataclasses
 import logging
+import math
 
 import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT
@@ -1216,3 +1217,88 @@ def test_boost_from_idle_still_saves_g_first_and_writes_the_maximum(make_store):
     assert _heat_writes(ha) == [20.0]
     override.set_boosts(comfort=False, emergency=False)
     assert _heat_writes(ha) == [20.0, 15.0]
+
+
+# --- Mutationsprobe Stufe 3 S4b (A5-22 Rest): Klemmung, Vorbereitung, Bereich beim Start, Neubesetzung ---
+
+def test_server_values_inside_the_limits_log_no_clamping(make_store, caplog):
+    override, _, _ = _setup(make_store)
+    with caplog.at_level(logging.WARNING):
+        override.apply_server_values(_server(0.9, 22.0, 15.0))
+    assert "geclampt" not in caplog.text
+
+
+def test_writing_only_the_curve_does_not_prepare_the_zone(make_store, clock):
+    override, ha = _zone_setup(make_store, clock, {"climate.zone": "auto"})
+    override.write_levers(("curve",))
+    assert ha.writes == [("number.curve", 0.9)]
+    assert [event for event in ha.events if event[0] == "hvac"] == []
+
+
+def test_after_a_switch_only_the_prepared_lever_is_forced(make_store, clock):
+    # Die Kurve steht schon auf dem Ziel (eingeschwungen): sie bleibt trotz Umstellung der Zone ungeschrieben.
+    override, ha = _zone_setup(
+        make_store, clock, {"climate.zone": "auto", "climate.zone::temperature": 22.0, "number.curve": 0.9},
+    )
+    clock.advance(SETTLE + 1)
+    override.write_levers(("curve", "room_setpoint"))
+    assert ("hvac", "climate.zone", "heat_cool") in ha.events
+    assert ha.writes == [("climate.zone", 22.0)]
+
+
+def test_ensure_prepared_without_a_prepared_lever_does_nothing(make_store, clock):
+    store = make_store()
+    ha = RecordingHa({"climate.zone": "auto"})
+    ha.set_hvac_mode = lambda entity, mode: ha.events.append(("hvac", entity, mode))
+    ha.get_raw_state = lambda entity: ha.states[entity]
+    manifest = ChannelManifest(refs={**MANIFEST.refs, "shift_current": "climate.zone::temperature"})
+    description = dataclasses.replace(VAILLANT_MYPYLLANT, prepared_lever=None)
+    override = LeverPipeline(store, HaPlantBinding(ha, manifest, description), SAFETY, clock=clock)
+    assert override.ensure_prepared() is False
+    assert ha.events == []
+
+
+def test_the_zone_is_not_switched_again_until_the_settle_window_has_passed(make_store, clock):
+    override, ha = _zone_setup(make_store, clock, {"climate.zone": "auto"})
+    assert override.ensure_prepared() is True
+    ha.states["climate.zone"] = "auto"  # HA zeigt den alten Modus bis zum naechsten Poll
+    clock.advance(SETTLE)
+    assert override.ensure_prepared() is False
+    assert [event for event in ha.events if event[0] == "hvac"] == [("hvac", "climate.zone", "heat_cool")]
+    clock.advance(1)
+    assert override.ensure_prepared() is True
+    assert len([event for event in ha.events if event[0] == "hvac"]) == 2
+
+
+@pytest.mark.parametrize("live", [15.0, 25.0])  # SAFETY room_setpoint 15-25
+def test_prepare_start_leaves_a_manual_zone_on_the_limits_alone(make_store, clock, live):
+    override, ha = _zone_setup(make_store, clock, {"climate.zone": "heat_cool", "climate.zone::temperature": live})
+    override.prepare_start(20.5)
+    assert ha.writes == []
+
+
+@pytest.mark.parametrize("flags", [{"boost_active": True}, {"emergency_boost_active": True}])
+def test_reseed_from_plant_keeps_the_point_during_a_boost(make_store, flags):
+    override, store, ha = _setup(make_store, backup={**RESTORE_POINT, **flags})
+    override.reseed_from_plant("curve")
+    assert store.state.restore_point == POINT
+    assert ha.reads == []
+
+
+@pytest.mark.parametrize("live", [math.inf, math.nan])
+def test_reseed_from_plant_drops_a_non_finite_live_value(make_store, live):
+    override, store, _ = _setup(make_store, backup=dict(RESTORE_POINT), states={"number.curve": live})
+    override.reseed_from_plant("curve")
+    assert store.state.restore_point == {"room_setpoint": 22.0}
+
+
+def test_missing_restore_point_during_a_boost_is_logged_only_when_something_is_missing(make_store, caplog):
+    override, _, _ = _setup(make_store, backup={**RESTORE_POINT, "boost_active": True})
+    with caplog.at_level(logging.INFO, logger="smartheat_core.pipeline"):
+        override.set_boosts(comfort=True, emergency=True)
+    assert "Wiederherstellungspunkt fehlt" not in caplog.text
+    override, _, _ = _setup(make_store, backup={"restore_point": {"curve": 0.9}, "boost_active": True})
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="smartheat_core.pipeline"):
+        override.set_boosts(comfort=True, emergency=True)
+    assert "Wiederherstellungspunkt fehlt (room_setpoint)" in caplog.text

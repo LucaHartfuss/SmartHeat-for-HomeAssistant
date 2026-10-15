@@ -284,3 +284,42 @@ def test_grosser_schritt_bleibt_in_den_lokalen_grenzen(make_store, clock, wert):
     low, high = pipeline.range_of("curve")
     assert (low, high) == SAFETY.ranges["curve"] == (0.30, 1.00)
     assert low <= pipeline._target("curve", wert) <= high
+
+
+# --- Mutationsprobe Stufe 3 S4b (A5-22 Rest): Gueltigkeit des Bereichs, Beruehrungspunkt, halber Schritt ---
+
+def test_the_device_range_is_read_again_after_exactly_300_seconds(make_store, clock):
+    assert LIMITS_TTL_SECONDS == 300.0
+    pipeline, binding = _counting(make_store, clock, {"room_setpoint": (18.0, 24.0)})
+    pipeline.range_of("room_setpoint")
+    clock.advance(300.0)
+    pipeline.range_of("room_setpoint")
+    assert binding.calls == 2
+
+
+def test_a_device_range_touching_the_local_limit_narrows_to_one_point(make_store, clock, caplog):
+    pipeline, _ = _counting(make_store, clock, {"room_setpoint": (25.0, 28.0)})
+    with caplog.at_level(logging.WARNING):
+        assert pipeline.range_of("room_setpoint") == (25.0, 25.0)
+    assert "ausserhalb der lokalen Grenzen" not in caplog.text
+
+
+# Weishaupt: Schrittweite room_setpoint 0,5, also halber Schritt 0,25 (exakt als float). Der Anlagenbereich 18,25-25
+# legt den Zielwert eines niedrigen Werts neben das Raster (18,0 gerundet, dann auf 18,25 begrenzt).
+
+def test_a_read_exactly_half_a_step_away_counts_as_unchanged(make_store, clock):
+    pipeline, ha = _pipeline(make_store, clock, {})
+    ha.states["number.normal"] = 18.25
+    assert pipeline.write_lever("room_setpoint", 18.5) == 18.5
+    assert ha.writes == []
+
+
+@pytest.mark.parametrize("read_after_write", ["stale", "resting"])
+def test_our_last_write_exactly_half_a_step_away_counts_as_unchanged(make_store, clock, read_after_write):
+    pipeline, ha = _pipeline(make_store, clock, {"room_setpoint": (18.25, 25.0)})
+    assert pipeline.write_lever("room_setpoint", 10.0) == 18.25
+    if read_after_write == "resting":
+        ha.states["number.normal"] = 0.0  # ruhende Zone: read() liefert None, es zaehlt der eigene Schreibwert
+    clock.advance(60)  # innerhalb der Wartezeit (120 s): dem Read allein wird nicht vertraut
+    assert pipeline.write_lever("room_setpoint", 18.5) == 18.5
+    assert ha.writes == [("number.normal", 18.25)]

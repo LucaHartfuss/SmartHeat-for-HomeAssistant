@@ -326,3 +326,46 @@ def test_server_lever_values_do_not_retrigger_a_successful_restore(make_store, c
     assert pipeline.restore_and_clear(always_restore=False) is True
     assert ha.writes == writes
     assert binding.restored == []
+
+
+# --- Mutationsprobe Stufe 3 S4b (A5-22 Rest): halber Schritt beim Ursprungswert, Bereich der Hilfswerte, Zaehlung ---
+
+@pytest.mark.parametrize(("learned", "after"), [
+    (18.25, 18.25),  # genau ein halber Schritt (0,5 / 2) neben dem Ursprungswert: gilt als gleich, kein Zuruecksetzen
+    (18.5, 18.0),  # ein ganzer Schritt: weicht ab, der Ursprungswert wird geschrieben
+])
+def test_a_learned_value_differs_from_the_original_only_beyond_half_a_step(make_store, clock, learned, after):
+    pipeline, store, ha, binding = _setup(make_store, clock, backup={
+        "restore_point": {"curve": 0.75, "room_setpoint": 20.0, "heat_limit": learned},
+        "originals": {"curve": 0.75, "room_setpoint": 20.0, "heat_limit": 18.0},
+    })
+    ha.states["number.swu"] = learned
+    assert pipeline.restore_and_clear(always_restore=False) is True
+    assert store.state.restore_point["heat_limit"] == after
+    assert ha.writes == ([] if after == learned else [("number.swu", 18.0)])
+
+
+def test_server_aux_setpoints_on_the_limits_of_the_room_setpoint_are_accepted(make_store, clock):
+    pipeline, store, ha, binding = _setup(
+        make_store, clock, backup={"restore_point": {"curve": 0.9}},
+        server={"setpoint_comfort": 25.0, "setpoint_setback": 16.0})  # weishaupt_wwp x Heizkoerper: 16-25
+    assert pipeline.restore_and_clear(always_restore=True)
+    assert binding.restored[-1] == {"setpoint_comfort": 25.0, "setpoint_setback": 16.0}
+
+
+def test_incomplete_aux_values_block_the_write_of_the_room_setpoint(make_store, clock):
+    pipeline, store, ha, binding = _setup(make_store, clock)
+    binding.aux = {"mode_select": "Automatik"}
+    with pytest.raises(DeviceWriteError) as error:
+        pipeline.apply_server_values({"curve": 0.8, "room_setpoint": 21.0, "heat_limit": 17.0})
+    assert error.value.lever == "room_setpoint"
+    assert ha.writes == [] and store.state.aux_originals == {}
+
+
+def test_the_aux_restore_counts_once_after_the_lever_writes(make_store, clock):
+    pipeline, store, ha, binding = _setup(make_store, clock)
+    pipeline.apply_server_values({"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 16.0})
+    assert store.state.lifetime_writes == 3
+    assert pipeline.restore_and_clear(always_restore=False) is True
+    assert binding.restored == [AUX]
+    assert store.state.lifetime_writes == 7  # drei Hebel hin, drei zurueck, die Hilfswerte als ein Aufruf

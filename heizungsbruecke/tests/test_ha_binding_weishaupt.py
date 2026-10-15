@@ -443,3 +443,28 @@ def test_prepare_with_an_unknown_scheme_raises_without_a_select_call():
 ])
 def test_aux_zulaessig_accepts_only_known_modes_of_the_known_schemes(name, wert, ok):
     assert _binding(FakeHa()).aux_zulaessig(name, wert) is ok
+
+
+# --- Mutationsprobe Stufe 3 S4b (A5-22 Rest): Vorbereitung verlangt die Hilfswerte und zaehlt einmal ---
+
+def test_preparation_without_readable_auxiliary_values_does_not_switch_the_mode(make_store, clock):
+    # Durchsetzen (ensure_prepared) und der Start (prepare_start) rufen die Vorbereitung mit den Voreinstellungen auf:
+    # auch dann muessen die Hilfs-Ursprungswerte vorher gemerkt sein.
+    ha = FakeHa(**{"number.komfort": float("nan")})
+    pipeline, store = _pipeline(make_store, clock, ha)
+    with pytest.raises(DeviceWriteError):
+        pipeline.ensure_prepared()
+    with pytest.raises(DeviceWriteError):
+        pipeline.prepare_start(21.0)
+    assert ha.calls == [] and store.state.aux_originals == {}
+    assert ha.states["select.betriebsart"] == "hz_operationmode_automatic"
+
+
+def test_a_preparation_after_an_earlier_write_counts_once(make_store, clock, monkeypatch):
+    monkeypatch.setattr(write_budget, "today", lambda: DAY)
+    ha = FakeHa()
+    pipeline, store = _pipeline(make_store, clock, ha)
+    pipeline.write_lever("curve", 0.8)
+    assert _total(store) == 1
+    assert pipeline.ensure_prepared() is True
+    assert _total(store) == 2 and store.state.lifetime_writes == 2
