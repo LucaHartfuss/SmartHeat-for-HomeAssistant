@@ -1,9 +1,10 @@
 """Spec 5c 1.3: Konfigurationsdokument -> bisherige Optionen; HA-Teil der lokalen Pruefung."""
 import bindung_beispiele
 import pytest
+from bindung_beispiele import parameter
 from fakes import FakeHa
 
-from heizungsbruecke import dokument
+from heizungsbruecke import config, dokument
 from smartheat_core import config_check
 
 KONFIGURATION = {
@@ -214,3 +215,14 @@ def test_the_check_runs_through_config_check_as_role_not_allowed():
     ablehnung = config_check.pruefen(KONFIGURATION, None, host=config_check.HOST_HA,
                                      treiber_pruefen=lambda k: dokument.zuordnung_pruefen(k, ha))
     assert ablehnung.grund == config_check.ROLLE_UNZULAESSIG and "number.heat_limit" in ablehnung.text
+
+
+def test_beschreibung_kommt_aus_der_gespeicherten_konfiguration():
+    """Spec Stufe 3 S4b 4.3: Start und Abmelden (HaHost.sign_off_parts) bauen die Beschreibung ueber dokument.optionen
+    aus der gespeicherten Konfiguration -- nicht aus einer Tabelle."""
+    hebelsatz = KONFIGURATION["hebelsatz"]
+    konfiguration = {**KONFIGURATION, "bindungsparameter": parameter(hebelsatz, zurueck=[], zurueck_optional=[])}
+    assert config.binding_description(dokument.optionen(konfiguration)).restore_originals == ()
+    ohne = {**KONFIGURATION, "bindungsparameter": None}
+    with pytest.raises(config.ConfigError):
+        config.binding_description(dokument.optionen(ohne))

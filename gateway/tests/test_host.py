@@ -83,9 +83,11 @@ def test_start_failures_carry_a_stable_key_independent_of_the_text(data_dir, clo
 
 
 def test_load_refuses_missing_binding_parameters_with_the_config_key(data_dir, clock):
+    host = _host(Paths(data_dir), konfiguration(bindungsparameter=None), clock)
     with pytest.raises(StartFailure, match="Bindungsparameter fehlen") as error:
-        _host(Paths(data_dir), konfiguration(bindungsparameter=None), clock).load()
+        host.load()
     assert error.value.key == "konfiguration" and error.value.grund.startswith("Konfiguration: ")
+    assert host.driver is None
 
 
 def test_sign_off_parts_are_none_without_binding_parameters(data_dir, clock, caplog):

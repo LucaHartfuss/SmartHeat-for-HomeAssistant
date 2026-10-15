@@ -84,6 +84,17 @@ def test_verteilsystem_without_safety_values_is_a_configuration_error(env, caplo
     assert "Deckenheizung" in caplog.text
 
 
+def test_alte_konfiguration_ohne_parameter_startet_nicht(env, caplog, sleeps):
+    """Review Focus 1 (Spec Stufe 3 S4b 4.3): gespeicherte Konfiguration aus 1.0.0 ohne bindungsparameter:
+    Konfigurationsfehler statt Absturz, nichts wird geschrieben."""
+    with caplog.at_level(logging.ERROR):
+        result = _start_bridge(env, bindungsparameter=None)
+
+    assert result.reason == "konfigurationsfehler"
+    assert "Bindungsparameter" in caplog.text
+    assert env.ha.writes == []
+
+
 def test_invalid_telemetry_interval_is_a_configuration_error(env, caplog, sleeps):
     with caplog.at_level(logging.ERROR):
         result = _start_bridge(env, **KONFIGURATIONSFEHLER)

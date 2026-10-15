@@ -4,6 +4,7 @@ import dataclasses
 import logging
 from types import SimpleNamespace
 
+import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT, WEISHAUPT_MODBUS
 
 from heizungsbruecke.ha_binding import HaPlantBinding, WeishauptHaBinding
@@ -272,3 +273,14 @@ def test_weishaupt_bereich_vom_server_verengt_nur(make_store, clock):
 def test_weishaupt_bereich_vom_server_verengt(make_store, clock):
     pipeline = _weishaupt_pipeline(make_store, clock, (18.0, 22.0))
     assert pipeline.range_of("room_setpoint") == (18.0, 22.0)
+
+
+@pytest.mark.parametrize("wert", [0.0, 0.31, 0.99, 3.0])
+def test_grosser_schritt_bleibt_in_den_lokalen_grenzen(make_store, clock, wert):
+    """Review Focus 3: Schritt 5 vom Server; clamping.target_value klemmt nach dem Runden."""
+    binding = LimitedBinding(Ha(), {})
+    binding.description = dataclasses.replace(WEISHAUPT_MODBUS, steps={**WEISHAUPT_MODBUS.steps, "curve": 5.0})
+    pipeline = LeverPipeline(make_store(), binding, SAFETY, clock=clock)
+    low, high = pipeline.range_of("curve")
+    assert (low, high) == SAFETY.ranges["curve"] == (0.30, 1.00)
+    assert low <= pipeline._target("curve", wert) <= high
