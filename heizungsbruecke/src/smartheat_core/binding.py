@@ -43,7 +43,9 @@ class BindingDescription:
     (Betriebsart, Komfort-/Absenk-Sollwert); ihre Namen sind Manifest-Rollen des Bindings.
     energy_counters: ENERGY_TOTAL (monoton wachsende Zaehler) oder ENERGY_DAILY (Tageszaehler, Mitternacht = 0).
     readonly_levers: Hebel ausserhalb des Hebelsatzes, die nur gelesen und im Snapshot als `readonly` gemeldet werden
-    (Weishaupt-Basis: Steigung fuer die eingefrorene Steigung des Servers, Spec 3.3/2)."""
+    (Weishaupt-Basis: Steigung fuer die eingefrorene Steigung des Servers, Spec 3.3/2).
+    schemata: Optionsschemata des Verfahrens vom Server (Weishaupt: praefixe, normal_bereich);
+    energie: Kanal -> erwartete Einheit (Spec Stufe 3 S4b 5), ein Kanal ohne Eintrag wird nicht gesendet."""
 
     lever_set: LeverSet
     steps: Mapping[str, float]
@@ -64,6 +66,8 @@ class BindingDescription:
     aux_originals: tuple[str, ...] = ()
     energy_counters: str = ENERGY_TOTAL
     readonly_levers: tuple[str, ...] = ()
+    schemata: Mapping[str, object] = field(default_factory=dict)
+    energie: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         name = self.lever_set.id
