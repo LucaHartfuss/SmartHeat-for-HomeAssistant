@@ -286,6 +286,17 @@ def test_grosser_schritt_bleibt_in_den_lokalen_grenzen(make_store, clock, wert):
     assert low <= pipeline._target("curve", wert) <= high
 
 
+@pytest.mark.parametrize(("wert", "ziel"), [(0.99, 1.0), (1.0, 1.0), (3.0, 1.0), (0.31, 0.6), (0.0, 0.3)])
+def test_runden_ueber_das_maximum_wird_wieder_geklemmt(make_store, clock, wert, ziel):
+    """Bei Schritt 5 rundet jeder Wert auf 0 (nur die untere Seite); Schritt 0,6 traegt das Runden ueber das Maximum:
+    0,99 bzw. 1,0 -> 1,2 -> geklemmt 1,0 (nachgerechnet mit clamping.target_value)."""
+    binding = LimitedBinding(Ha(), {})
+    binding.description = dataclasses.replace(WEISHAUPT_MODBUS, steps={**WEISHAUPT_MODBUS.steps, "curve": 0.6})
+    pipeline = LeverPipeline(make_store(), binding, SAFETY, clock=clock)
+    assert pipeline.range_of("curve") == (0.30, 1.00)
+    assert pipeline._target("curve", wert) == ziel
+
+
 # --- Mutationsprobe Stufe 3 S4b (A5-22 Rest): Gueltigkeit des Bereichs, Beruehrungspunkt, halber Schritt ---
 
 def test_the_device_range_is_read_again_after_exactly_300_seconds(make_store, clock):
@@ -308,6 +319,8 @@ def test_a_device_range_touching_the_local_limit_narrows_to_one_point(make_store
 # legt den Zielwert eines niedrigen Werts neben das Raster (18,0 gerundet, dann auf 18,25 begrenzt).
 
 def test_a_read_exactly_half_a_step_away_counts_as_unchanged(make_store, clock):
+    # Die Toleranz ist inklusiv (Docstring pipeline._matches_the_device: "innerhalb eines halben Schritts"); der Test
+    # haelt nur diese Grenze fest.
     pipeline, ha = _pipeline(make_store, clock, {})
     ha.states["number.normal"] = 18.25
     assert pipeline.write_lever("room_setpoint", 18.5) == 18.5
@@ -316,6 +329,7 @@ def test_a_read_exactly_half_a_step_away_counts_as_unchanged(make_store, clock):
 
 @pytest.mark.parametrize("read_after_write", ["stale", "resting"])
 def test_our_last_write_exactly_half_a_step_away_counts_as_unchanged(make_store, clock, read_after_write):
+    # Inklusive Toleranz wie oben (pipeline._matches_the_device), hier fuer den eigenen letzten Schreibwert.
     pipeline, ha = _pipeline(make_store, clock, {"room_setpoint": (18.25, 25.0)})
     assert pipeline.write_lever("room_setpoint", 10.0) == 18.25
     if read_after_write == "resting":

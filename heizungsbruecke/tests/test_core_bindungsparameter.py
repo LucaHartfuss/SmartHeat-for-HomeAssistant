@@ -311,10 +311,68 @@ def test_ohne_schemata_im_verfahren_ist_schemata_ein_leeres_mapping():
 @pytest.mark.parametrize(("praefix", "text"), [
     ("p", "nicht kennt"),  # Form gueltig (1 Zeichen), dann die Positivliste
     ("p" * 64, "nicht kennt"),  # Form gueltig (64 Zeichen), dann die Positivliste
-    ("p" * 65, "praefixe ist ungültig"),
-    ("", "praefixe ist ungültig"),
-    (5, "praefixe ist ungültig"),
+    ("p" * 65, "praefixe der Bindungsparameter ist ungültig"),
+    ("", "praefixe der Bindungsparameter ist ungültig"),
+    (5, "praefixe der Bindungsparameter ist ungültig"),
 ])
 def test_praefix_form_wird_vor_der_positivliste_geprueft(praefix, text):
     schemata = _schemata_mit([praefix], {praefix: [16.0, 28.0]})
     assert text in _try(parameter("weishaupt_wwp_basis", schemata=schemata), "weishaupt_wwp_basis")
+
+
+def _mit(hebelsatz, **aenderungen):
+    return hebelsatz, parameter(hebelsatz, **aenderungen)
+
+
+def _ohne_min_flow():
+    werte = parameter("vaillant_vrc720")
+    del werte["schritte"]["min_flow"]
+    return "vaillant_vrc720", werte
+
+
+def _kurve(schritt, toleranz):
+    werte = parameter("vaillant_vrc720")
+    werte["schritte"]["curve"], werte["toleranzen"]["curve"] = schritt, toleranz
+    return "vaillant_vrc720", werte
+
+
+_W = "weishaupt_wwp_basis"
+# Je Pruefung in beschreibung ein Verstoss (Abschlussreview Minor 1): jeder Text ist fuer sich verstaendlich und nennt
+# die Bindungsparameter genau einmal (config_check setzt kein Praefix mehr davor).
+_VERSTOESSE = {
+    "hebel": _mit("vaillant_vrc720", zurueck=["min_flow"]),
+    "zahlen_je_hebel": _ohne_min_flow(),
+    "schreibschutz_unvollstaendig": _mit("vaillant_vrc720", schreibschutz={"tag": None, "lebensdauer_hinweis": None}),
+    "durchsetzen": _mit("vaillant_vrc720", schreibschutz={"tag": None, "lebensdauer_hinweis": None,
+                                                           "durchsetzen_tag": 0}),
+    "schreibschutz_locker": _mit("weishaupt_wwp", schreibschutz={"tag": 11, "lebensdauer_hinweis": 50000,
+                                                                  "durchsetzen_tag": 6}),
+    "schemata": _mit("vaillant_vrc720", schemata=WEISHAUPT_SCHEMATA),
+    "praefixe_form": _mit(_W, schemata=_schemata_mit([""], {"": [16.0, 28.0]})),
+    "praefixe_fremd": _mit(_W, schemata=_schemata_mit(["a_"], {"a_": [16.0, 28.0]})),
+    "normal_bereich": _mit(_W, schemata=_schemata_mit([H], {H: [28.0, 16.0]})),
+    "energie": _mit("vaillant_vrc720", energie={"gas": "kWh"}),
+    "hebelsatz": ("gibt_es_nicht", PARAMETER["vaillant_vrc720"]),
+    "fehlen": ("vaillant_vrc720", None),
+    "felder": ("vaillant_vrc720", {}),
+    "schrittweite": _kurve(0, 1e-6),
+    "toleranz": _kurve(0.05, 0.06),
+    "wartezeit": _mit("vaillant_vrc720", wartezeit_s=59),
+    "schreibgruppen_form": _mit("vaillant_vrc720", schreibgruppen={"a": ["curve", "heat_limit"]}),
+    "schreibgruppen_regel": _mit("vaillant_vrc720", schreibgruppen=[["curve"]]),
+    "zaehler": _mit("vaillant_vrc720", zaehler="monthly"),
+    "zurueck_optional": _mit("vaillant_vrc720", zurueck=[], zurueck_optional=["heat_limit"]),
+}
+
+
+@pytest.mark.parametrize("fall", sorted(_VERSTOESSE))
+def test_jeder_fehlertext_nennt_die_bindungsparameter_genau_einmal(fall):
+    hebelsatz, werte = _VERSTOESSE[fall]
+    text = _try(werte, hebelsatz)
+    assert text and text.count("Bindungsparameter") == 1, text
+    assert not text.startswith("Bindungsparameter") and "fuer" not in text, text
+
+
+def test_die_faelle_treffen_verschiedene_pruefungen():
+    texte = {fall: _try(werte, hebelsatz) for fall, (hebelsatz, werte) in _VERSTOESSE.items()}
+    assert len(set(texte.values())) == len(texte), texte

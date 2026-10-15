@@ -225,6 +225,19 @@ def test_without_binding_parameters_the_start_fails_and_with_them_it_runs(env):
     assert HaHost(FakeGeraet(mit), env.ha, clock=env.clock).load().binding.description.settle_seconds == 2100
 
 
+def test_sign_off_without_binding_parameters_does_not_reset_and_logs_it(env, caplog):
+    """Spec Stufe 3 S4b 8: Abmelden ohne Bindungsparameter setzt nicht zurueck (kein Schreiben an HA) und loggt den
+    Grund; Gegenstueck zum Gateway (gateway/tests/test_host.py)."""
+    ohne = konfiguration_aus_optionen({**OPTIONS, "bindungsparameter": None})
+    config.ABGEMELDET_PATH.parent.mkdir(parents=True, exist_ok=True)
+    config.ABGEMELDET_PATH.write_text(json.dumps({"anlage": ohne["anlage"]}))
+    host = HaHost(FakeGeraet(ohne), env.ha, clock=env.clock)
+    assert host.boot_info().signed_off
+    assert host.sign_off_parts() is None
+    assert "Abmelden ohne Zuruecksetzen: Konfiguration: Die Bindungsparameter fehlen." in caplog.text
+    assert env.ha.writes == []
+
+
 def test_the_runtime_idles_with_a_config_error_for_a_missing_role(env):
     geraet = FakeGeraet(konfiguration_aus_optionen({**OPTIONS, "lever_set": "weishaupt_wwp"}))
     bridge = app.start(HaHost(geraet, env.ha, clock=env.clock), env.clock, mqtt_factory=geraet.kanal)

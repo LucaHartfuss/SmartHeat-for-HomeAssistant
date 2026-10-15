@@ -161,7 +161,8 @@ def test_lockerer_schreibschutz_wird_abgelehnt():
     neu = _konfiguration(bindungsparameter=parameter("viessmann_vicare", schreibschutz={
         "tag": None, "lebensdauer_hinweis": None, "durchsetzen_tag": 5}))
     ablehnung = _pruefen(neu)
-    assert ablehnung.grund == cc.UNGUELTIG and ablehnung.text.startswith("Bindungsparameter: ")
+    assert ablehnung.grund == cc.UNGUELTIG
+    assert ablehnung.text == "Durchsetzen je Tag muss in den Bindungsparametern zwischen 1 und 4 liegen."
 
 
 def test_leere_konfiguration_braucht_keine_bindungsparameter():

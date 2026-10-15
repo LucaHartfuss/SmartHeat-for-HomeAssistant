@@ -192,7 +192,7 @@ def pruefen(neu: Mapping, rastung: Rastung | None, *, host: str,
     try:
         beschreibung(neu["hebelsatz"], neu.get("bindungsparameter"))
     except ValueError as error:
-        return Ablehnung(UNGUELTIG, f"Bindungsparameter: {error}")
+        return Ablehnung(UNGUELTIG, str(error))  # der Text nennt die Bindungsparameter selbst
     if host == HOST_HA:
         ablehnung = _ha_bindung(neu)
         if ablehnung is None and treiber_pruefen is not None and (text := treiber_pruefen(dict(neu))):

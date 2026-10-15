@@ -40,22 +40,23 @@ def _ganz(value) -> TypeGuard[int]:
 def _hebel(value, erlaubt, feld: str) -> tuple[str, ...]:
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value) or not set(value) <= set(erlaubt) \
             or len(set(value)) != len(value):
-        raise ValueError(f"Bindungsparameter {feld} ist ungültig.")
+        raise ValueError(f"Das Feld {feld} der Bindungsparameter ist ungültig.")
     return tuple(value)
 
 
 def _zahlen_je_hebel(value, hebel, feld: str) -> dict[str, float]:
     if not isinstance(value, Mapping) or set(value) != set(hebel) or not all(_zahl(v) for v in value.values()):
-        raise ValueError(f"Bindungsparameter {feld} passt nicht zum Hebelsatz.")
+        raise ValueError(f"Das Feld {feld} der Bindungsparameter passt nicht zum Hebelsatz.")
     return {lever: float(v) for lever, v in value.items()}
 
 
 def _schreibschutz(value, grenze: Schreibschutz) -> Schreibschutz:
     if not isinstance(value, Mapping) or set(value) != set(SCHREIBSCHUTZ_FELDER):
-        raise ValueError("Bindungsparameter schreibschutz ist unvollständig.")
+        raise ValueError("Der Schreibschutz in den Bindungsparametern ist unvollständig.")
     durchsetzen = value["durchsetzen_tag"]
     if not (_ganz(durchsetzen) and 1 <= durchsetzen <= grenze.durchsetzen_tag):
-        raise ValueError(f"Durchsetzen je Tag muss zwischen 1 und {grenze.durchsetzen_tag} liegen.")
+        raise ValueError(f"Durchsetzen je Tag muss in den Bindungsparametern zwischen 1 und {grenze.durchsetzen_tag} "
+                         "liegen.")
     werte: dict[str, int | None] = {}
     for feld, obergrenze in (("tag", grenze.tag), ("lebensdauer_hinweis", grenze.lebensdauer_hinweis)):
         wert = value[feld]
@@ -64,13 +65,14 @@ def _schreibschutz(value, grenze: Schreibschutz) -> Schreibschutz:
         elif _ganz(wert) and wert >= 1 and (obergrenze is None or wert <= obergrenze):
             werte[feld] = wert
         else:
-            raise ValueError(f"Schreibschutz {feld} ist ungültig oder lockerer als die lokale Grenze.")
+            raise ValueError(f"Der Schreibschutz {feld} in den Bindungsparametern ist ungültig oder lockerer als die "
+                             "lokale Grenze.")
     return Schreibschutz(durchsetzen, werte["tag"], werte["lebensdauer_hinweis"])
 
 
 def _schemata(value, verfahren: Verfahren) -> dict:
     if not isinstance(value, Mapping) or set(value) != set(verfahren.schemata):
-        raise ValueError("Bindungsparameter schemata passt nicht zum Hebelsatz.")
+        raise ValueError("Das Feld schemata der Bindungsparameter passt nicht zum Hebelsatz.")
     if not verfahren.schemata:
         return {}
     praefixe, bereiche = value["praefixe"], value["normal_bereich"]
@@ -81,19 +83,20 @@ def _schemata(value, verfahren: Verfahren) -> dict:
         or len(set(praefixe)) != len(praefixe)
         or any(a != b and b.startswith(a) for a in praefixe for b in praefixe)  # ein Praefix darf kein anderes verdecken
     ):
-        raise ValueError("Bindungsparameter schemata.praefixe ist ungültig.")
+        raise ValueError("Das Feld schemata.praefixe der Bindungsparameter ist ungültig.")
     if not set(praefixe) <= set(verfahren.praefixe_erlaubt):
-        raise ValueError("Bindungsparameter schemata.praefixe nennt ein Schema, das dieses Gerät nicht kennt.")
+        raise ValueError("Das Feld schemata.praefixe der Bindungsparameter nennt ein Schema, das dieses Gerät "
+                         "nicht kennt.")
     if not isinstance(bereiche, Mapping) or set(bereiche) != set(praefixe) or not all(
             isinstance(b, list) and len(b) == 2 and all(_zahl(x) for x in b) and b[0] <= b[1] for b in bereiche.values()):
-        raise ValueError("Bindungsparameter schemata.normal_bereich ist ungültig.")
+        raise ValueError("Das Feld schemata.normal_bereich der Bindungsparameter ist ungültig.")
     return {"praefixe": tuple(praefixe), "normal_bereich": {p: (float(b[0]), float(b[1])) for p, b in bereiche.items()}}
 
 
 def _energie(value) -> dict[str, str]:
     if not isinstance(value, Mapping) or not set(value) <= set(ENERGIE_KANAELE) or not all(
             isinstance(v, str) and v in EINHEITEN for v in value.values()):
-        raise ValueError("Bindungsparameter energie ist ungültig.")
+        raise ValueError("Das Feld energie der Bindungsparameter ist ungültig.")
     return dict(value)
 
 
@@ -101,7 +104,8 @@ def beschreibung(hebelsatz: str, parameter) -> BindingDescription:
     """Wirksame Beschreibung fuer den Hebelsatz aus den Parametern der Konfiguration; ValueError bei jedem Verstoss."""
     verfahren = VERFAHREN.get(hebelsatz)
     if verfahren is None:
-        raise ValueError(f"Für den Hebelsatz {hebelsatz} gibt es kein lokales Schreibverfahren.")
+        raise ValueError(f"Für den Hebelsatz {hebelsatz} gibt es kein lokales Schreibverfahren; die Bindungsparameter "
+                         "lassen sich nicht prüfen.")
     if not isinstance(parameter, Mapping):
         raise ValueError("Die Bindungsparameter fehlen.")
     if set(parameter) != set(FELDER):
@@ -112,26 +116,31 @@ def beschreibung(hebelsatz: str, parameter) -> BindingDescription:
     toleranzen = _zahlen_je_hebel(parameter["toleranzen"], hebel, "toleranzen")
     for lever in hebel:
         if not 0 < schritte[lever] <= SCHRITT_MAX:
-            raise ValueError(f"Die Schrittweite für {lever} muss größer 0 und höchstens {SCHRITT_MAX:g} sein.")
+            raise ValueError(f"Die Schrittweite für {lever} in den Bindungsparametern muss größer 0 und höchstens "
+                             f"{SCHRITT_MAX:g} sein.")
         if not 0 < toleranzen[lever] <= schritte[lever]:
-            raise ValueError(f"Die Toleranz für {lever} muss größer 0 und höchstens die Schrittweite sein.")
+            raise ValueError(f"Die Toleranz für {lever} in den Bindungsparametern muss größer 0 und höchstens die "
+                             "Schrittweite sein.")
     wartezeit = parameter["wartezeit_s"]
     if not (_zahl(wartezeit) and WARTEZEIT_S[0] <= wartezeit <= WARTEZEIT_S[1]):
-        raise ValueError(f"Die Wartezeit muss zwischen {WARTEZEIT_S[0]} und {WARTEZEIT_S[1]} Sekunden liegen.")
+        raise ValueError(f"Die Wartezeit in den Bindungsparametern muss zwischen {WARTEZEIT_S[0]} und {WARTEZEIT_S[1]} "
+                         "Sekunden liegen.")
     gruppen = parameter["schreibgruppen"]
     if not isinstance(gruppen, list):
-        raise ValueError("Bindungsparameter schreibgruppen ist ungültig.")
+        raise ValueError("Das Feld schreibgruppen der Bindungsparameter ist ungültig.")
     schreibgruppen = tuple(_hebel(g, lever_set.levers, "schreibgruppen") for g in gruppen)
     if any(len(g) < 2 for g in schreibgruppen) or len({h for g in schreibgruppen for h in g}) != sum(
         len(g) for g in schreibgruppen
     ):
-        raise ValueError("Jede Schreibgruppe braucht mindestens zwei Hebel, und kein Hebel steht in zwei Gruppen.")
+        raise ValueError("Jede Schreibgruppe der Bindungsparameter braucht mindestens zwei Hebel, und kein Hebel "
+                         "steht in zwei Gruppen.")
     if parameter["zaehler"] not in ZAEHLER:
-        raise ValueError("Bindungsparameter zaehler ist unbekannt.")
+        raise ValueError("Die Zählerart in den Bindungsparametern ist unbekannt.")
     zurueck = _hebel(parameter["zurueck"], lever_set.levers, "zurueck")
     zurueck_optional = _hebel(parameter["zurueck_optional"], lever_set.levers, "zurueck_optional")
     if not set(zurueck_optional) <= set(zurueck):
-        raise ValueError("Ein optionaler Rückstell-Hebel muss auch unter den zurückzustellenden Hebeln stehen.")
+        raise ValueError("Ein optionaler Rückstell-Hebel der Bindungsparameter muss auch unter den zurückzustellenden "
+                         "Hebeln stehen.")
     nur_lesen = _hebel(parameter["nur_lesen"], tuple(h for h in LEVERS if h not in hebel), "nur_lesen")
     schemata = _schemata(parameter["schemata"], verfahren)
     energie = _energie(parameter["energie"])

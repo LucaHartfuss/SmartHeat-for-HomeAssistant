@@ -163,7 +163,7 @@ def test_invalid_binding_parameters_are_rejected_as_invalid_and_keep_the_previou
                                                            "durchsetzen_tag": 5})
     ergebnis = store.empfangen("konfiguration", _konfiguration(version=2, bindungsparameter=locker))
     assert (ergebnis.ok, ergebnis.grund, ergebnis.uebernommen) == (False, "ungueltig", False)
-    assert ergebnis.text.startswith("Bindungsparameter: ")
+    assert ergebnis.text == "Durchsetzen je Tag muss in den Bindungsparametern zwischen 1 und 4 liegen."
     assert store.version("konfiguration") == 1
     assert store.ablehnung("konfiguration") == (2, "ungueltig", ergebnis.text)
 

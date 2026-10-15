@@ -88,6 +88,7 @@ def test_genau_die_haelfte_ist_rauschen_keine_ruecksetzung():
 
 def test_gleicher_wert_addiert_nichts_auch_negativ():
     # telemetry laesst nur nicht endliche Werte weg; ein negativer Rohwert kommt hier an.
+    # Bewusst Randfall: toetet die Mutation raw >= last; fuer Rohwerte >= 0 ist sie aequivalent.
     sent, _ = _run([-2.0, -2.0])
     assert sent == [-2.0, -2.0]
 
