@@ -387,6 +387,7 @@ def test_on_telemetry_hands_the_energy_normalizer_to_the_tick(make_store, monkey
 
     assert "waerme" not in captured  # Audit 4 P-B: die Erkennung liegt beim Server
     assert callable(captured["energy"])  # Vaillant: Tageszaehler werden normalisiert (Audit 4 P-B, A4-49)
+    assert captured["einheiten"] == VAILLANT_MYPYLLANT.energie  # Spec Stufe 3 S4b 5: erwartete Einheit je Kanal
 
 
 def _prime_rt(monkeypatch, capture):

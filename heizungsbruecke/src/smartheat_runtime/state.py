@@ -135,7 +135,9 @@ def _is_aux(value) -> bool:
 
 
 def _is_energy_entry(value) -> bool:
-    return isinstance(value, dict) and set(value) == {"raw", "sum"} and all(_is_number(v) for v in value.values())
+    """Zustand je Energiekanal; ein Eintrag ohne Einheit (aus 1.0.0) bleibt lesbar und beginnt in normalize neu."""
+    return (isinstance(value, dict) and set(value) in ({"raw", "sum"}, {"raw", "sum", "einheit"})
+            and _is_number(value["raw"]) and _is_number(value["sum"]) and isinstance(value.get("einheit", ""), str))
 
 
 def _parse_budget(raw) -> dict | None:

@@ -43,7 +43,7 @@ def test_new_fields_round_trip(make_store, tmp_path):
     store.update(
         lifetime_writes=12, deferred_levers=("curve", "heat_limit"),
         aux_originals={"mode_select": "Automatik", "setpoint_comfort": 22.0},
-        energy_state={"thermal_heating": {"raw": 4.0, "sum": 10.0}},
+        energy_state={"thermal_heating": {"raw": 4.0, "sum": 10.0, "einheit": "kWh"}},
     )
     backup = load_backup(tmp_path / "backup.json")
     assert backup["lifetime_writes"] == 12 and backup["deferred_levers"] == ["curve", "heat_limit"]
@@ -51,7 +51,7 @@ def test_new_fields_round_trip(make_store, tmp_path):
     assert reloaded.state.lifetime_writes == 12
     assert reloaded.state.deferred_levers == ("curve", "heat_limit")
     assert reloaded.state.aux_originals == {"mode_select": "Automatik", "setpoint_comfort": 22.0}
-    assert reloaded.state.energy_state == {"thermal_heating": {"raw": 4.0, "sum": 10.0}}
+    assert reloaded.state.energy_state == {"thermal_heating": {"raw": 4.0, "sum": 10.0, "einheit": "kWh"}}
 
 
 @pytest.mark.parametrize(("key", "value"), [
@@ -59,6 +59,7 @@ def test_new_fields_round_trip(make_store, tmp_path):
     ("deferred_levers", "curve"), ("deferred_levers", [1]),
     ("aux_originals", {"mode_select": None}), ("aux_originals", ["Normal"]),
     ("energy_state", {"x": {"raw": 1.0}}), ("energy_state", {"x": {"raw": 1.0, "sum": float("nan")}}),
+    ("energy_state", {"x": {"raw": 1.0, "sum": 1.0, "einheit": 3}}),
 ])
 def test_invalid_new_fields_fall_back_to_their_default(make_store, caplog, key, value):
     with caplog.at_level(logging.WARNING):

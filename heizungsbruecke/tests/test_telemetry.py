@@ -2,6 +2,8 @@ from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from smartheat_runtime import telemetry
 from smartheat_runtime.delivery import DataFault
 from smartheat_runtime.roles import ChannelManifest
@@ -82,8 +84,9 @@ def test_electrical_total_is_read_as_energy_channel():
     manifest = ChannelManifest(refs={"energy_electrical_total": "sensor.e_total"})
     ha_api = MagicMock()
     ha_api.get_state.return_value = 12.5
+    ha_api.get_unit.return_value = "kWh"
 
-    fields = telemetry.read_kpi_fields(manifest, ha_api)
+    fields = telemetry.read_kpi_fields(manifest, ha_api, einheiten={"electrical_total": "kWh"})
 
     assert fields["energy"] == {"electrical_total": 12.5}
 
@@ -98,10 +101,12 @@ def test_run_telemetry_tick_builds_energy_subobject_from_configured_channels():
     ha_api.get_state.side_effect = lambda entity_id: {
         "sensor.room_actual": 20.5, "sensor.e_thermal": 1234.5, "sensor.e_elec": 300.1,
     }[entity_id]
+    ha_api.get_unit.return_value = "kWh"
     mqtt_client = MagicMock()
 
     telemetry.run_telemetry_tick(
         manifest, ha_api, mqtt_client, boost_active=False, failsafe_active=False,
+        einheiten={"thermal_heating": "kWh", "electrical_heating": "kWh"},
     )
 
     payload = mqtt_client.publish_telemetry.call_args.args[0]
@@ -170,10 +175,12 @@ def test_run_telemetry_tick_omits_non_finite_kpi_values():
         "sensor.room_actual": 20.5, "sensor.flow": float("nan"), "sensor.ret": 30.0,
         "sensor.e1": float("inf"), "sensor.e2": 12.0,
     }[entity_id]
+    ha_api.get_unit.return_value = "kWh"
     mqtt_client = MagicMock()
 
     telemetry.run_telemetry_tick(
         manifest, ha_api, mqtt_client, boost_active=False, failsafe_active=False,
+        einheiten={"thermal_heating": "kWh", "thermal_dhw": "kWh"},
     )
 
     payload = mqtt_client.publish_telemetry.call_args.args[0]
@@ -197,10 +204,12 @@ def test_run_telemetry_tick_omits_energy_key_when_all_channels_fail():
         raise ValueError("unavailable")
 
     ha_api.get_state.side_effect = fake_get_state
+    ha_api.get_unit.return_value = "kWh"
     mqtt_client = MagicMock()
 
     telemetry.run_telemetry_tick(
         manifest, ha_api, mqtt_client, boost_active=False, failsafe_active=False,
+        einheiten={"thermal_heating": "kWh", "thermal_dhw": "kWh"},
     )
 
     payload = mqtt_client.publish_telemetry.call_args.args[0]
@@ -342,29 +351,119 @@ def test_the_telemetry_no_longer_carries_waerme_fehlt():
 # --- Plan 3b: Energie-Normalisierung (Tageszaehler) ---
 
 ENERGY_MANIFEST = ChannelManifest(refs={"energy_thermal_heating": "sensor.waerme_heute"})
+KWH = {"thermal_heating": "kWh"}
 
 
 def test_daily_energy_is_sent_as_a_growing_sum_and_survives_a_restart(make_store):
     ha_api = MagicMock()
+    ha_api.get_unit.return_value = "kWh"
     store = make_store()
     for raw, expected in ((4.0, 4.0), (6.0, 6.0), (0.5, 6.5)):
         ha_api.get_state.return_value = raw
-        fields = telemetry.read_kpi_fields(ENERGY_MANIFEST, ha_api, telemetry.energy_normalizer(store, "daily"))
+        fields = telemetry.read_kpi_fields(
+            ENERGY_MANIFEST, ha_api, telemetry.energy_normalizer(store, "daily"), einheiten=KWH)
         assert fields["energy"] == {"thermal_heating": expected}
     restarted = make_store()  # backup.json neu eingelesen
     ha_api.get_state.return_value = 1.5
-    fields = telemetry.read_kpi_fields(ENERGY_MANIFEST, ha_api, telemetry.energy_normalizer(restarted, "daily"))
+    fields = telemetry.read_kpi_fields(
+        ENERGY_MANIFEST, ha_api, telemetry.energy_normalizer(restarted, "daily"), einheiten=KWH)
     assert fields["energy"] == {"thermal_heating": 7.5}
 
 
 def test_unreadable_daily_energy_is_left_out_and_keeps_the_state(make_store):
-    store = make_store(backup={"energy_state": {"thermal_heating": {"raw": 4.0, "sum": 10.0}}})
+    store = make_store(backup={"energy_state": {"thermal_heating": {"raw": 4.0, "sum": 10.0, "einheit": "kWh"}}})
     for reader in (MagicMock(side_effect=ValueError("unavailable")), MagicMock(return_value=float("inf"))):
-        ha_api = MagicMock(get_state=reader)
-        fields = telemetry.read_kpi_fields(ENERGY_MANIFEST, ha_api, telemetry.energy_normalizer(store, "daily"))
+        ha_api = MagicMock(get_state=reader, get_unit=MagicMock(return_value="kWh"))
+        fields = telemetry.read_kpi_fields(
+            ENERGY_MANIFEST, ha_api, telemetry.energy_normalizer(store, "daily"), einheiten=KWH)
         assert "energy" not in fields
-    assert store.state.energy_state == {"thermal_heating": {"raw": 4.0, "sum": 10.0}}
+    assert store.state.energy_state == {"thermal_heating": {"raw": 4.0, "sum": 10.0, "einheit": "kWh"}}
+
+
+def test_der_zaehlerzustand_aus_1_0_0_beginnt_neu(make_store):
+    """Zustand ohne Einheit (1.0.0, Wh) ist lesbar und beginnt in kWh neu, statt die Wh-Summe fortzusetzen."""
+    store = make_store(backup={"energy_state": {"thermal_heating": {"raw": 4000.0, "sum": 900000.0}}})
+    ha_api = MagicMock(get_state=MagicMock(return_value=4.5), get_unit=MagicMock(return_value="kWh"))
+    fields = telemetry.read_kpi_fields(
+        ENERGY_MANIFEST, ha_api, telemetry.energy_normalizer(store, "daily"), einheiten=KWH)
+    assert fields["energy"] == {"thermal_heating": 4.5}
+    assert store.state.energy_state == {"thermal_heating": {"raw": 4.5, "sum": 4.5, "einheit": "kWh"}}
+
+
+def test_daily_energy_in_wh_wird_als_kwh_summiert(make_store):
+    store = make_store()
+    ha_api = MagicMock(get_unit=MagicMock(return_value="Wh"))
+    for raw, expected in ((4000.0, 4.0), (6500.0, 6.5)):
+        ha_api.get_state.return_value = raw
+        fields = telemetry.read_kpi_fields(
+            ENERGY_MANIFEST, ha_api, telemetry.energy_normalizer(store, "daily"), einheiten={"thermal_heating": "Wh"})
+        assert fields["energy"] == {"thermal_heating": expected}
+    assert store.state.energy_state["thermal_heating"]["einheit"] == "kWh"
 
 
 def test_total_counters_get_no_normalizer():
     assert telemetry.energy_normalizer(object(), "total") is None
+
+
+# --- Spec Stufe 3 S4b 5 (A5-11): Energie nur mit der erwarteten Einheit ---
+
+@pytest.fixture(autouse=True)
+def _einheit_warnung_zuruecksetzen():
+    telemetry._EINHEIT_GEWARNT.clear()
+    yield
+    telemetry._EINHEIT_GEWARNT.clear()
+
+
+def test_energie_in_wh_wird_als_kwh_gesendet():
+    manifest = ChannelManifest(refs={"energy_primary_heating": "sensor.gas"})
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 2500.0
+    ha_api.get_unit.return_value = "Wh"
+    fields = telemetry.read_kpi_fields(manifest, ha_api, einheiten={"primary_heating": "Wh"})
+    assert fields["energy"] == {"primary_heating": 2.5}
+
+
+def test_fremde_einheit_laesst_den_kanal_weg(caplog):
+    manifest = ChannelManifest(refs={"energy_primary_heating": "sensor.gas", "energy_primary_dhw": "sensor.ww"})
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 2.0
+    ha_api.get_unit.side_effect = lambda ref: {"sensor.gas": "kWh", "sensor.ww": "Wh"}[ref]
+    fields = telemetry.read_kpi_fields(manifest, ha_api, einheiten={"primary_heating": "Wh", "primary_dhw": "Wh"})
+    assert fields["energy"] == {"primary_dhw": 0.002}
+    assert any("primary_heating" in r.getMessage() for r in caplog.records)
+
+
+def test_kanal_ohne_erwartete_einheit_wird_nicht_gelesen():
+    manifest = ChannelManifest(refs={"energy_primary_heating": "sensor.gas"})
+    ha_api = MagicMock()
+    fields = telemetry.read_kpi_fields(manifest, ha_api, einheiten={})
+    assert "energy" not in fields
+    ha_api.get_state.assert_not_called()
+
+
+def test_nicht_lesbare_einheit_laesst_den_kanal_weg():
+    manifest = ChannelManifest(refs={"energy_primary_heating": "sensor.gas"})
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 2.0
+    ha_api.get_unit.side_effect = ValueError("kein Attribut")
+    assert "energy" not in telemetry.read_kpi_fields(manifest, ha_api, einheiten={"primary_heating": "kWh"})
+
+
+def test_die_warnung_zur_fremden_einheit_kommt_einmal_je_wechsel(caplog):
+    manifest = ChannelManifest(refs={"energy_primary_heating": "sensor.gas"})
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 2.0
+    einheiten = {"primary_heating": "kWh"}
+
+    def warnungen():
+        return [r for r in caplog.records if "meldet" in r.getMessage()]
+
+    ha_api.get_unit.return_value = "MJ"
+    for _ in range(3):
+        telemetry.read_kpi_fields(manifest, ha_api, einheiten=einheiten)
+    assert len(warnungen()) == 1
+    ha_api.get_unit.return_value = "kWh"  # passt wieder: Kanal kommt zurueck
+    assert telemetry.read_kpi_fields(manifest, ha_api, einheiten=einheiten)["energy"] == {"primary_heating": 2.0}
+    ha_api.get_unit.return_value = "MJ"  # erneuter Wechsel: neue Warnung
+    telemetry.read_kpi_fields(manifest, ha_api, einheiten=einheiten)
+    assert len(warnungen()) == 2

@@ -58,6 +58,12 @@ def test_one_dead_sensor_keeps_the_mean_none_is_invalid(world):
         source.get_state(REF_ROOM_MEAN)
 
 
+def test_the_gateway_has_no_unit(world):
+    _, _, source = world
+    with pytest.raises(ValueError):
+        source.get_unit(f"zigbee:{SENSOR}:temperature")
+
+
 def test_bool_battery_flag_reads_like_ha(world):
     _, z2m, source = world
     z2m.report(SECOND, battery_low=True)

@@ -64,6 +64,10 @@ class GatewaySignalSource:
             return "on" if value else "off"  # wie HA binary_sensor (Plan G2a Review Focus 2)
         return str(value)
 
+    def get_unit(self, ref: str) -> str:
+        """Das Gateway hat keine Energiekanaele (Spec Stufe 3 S4b 5) und damit keine Einheit hinter einer Referenz."""
+        raise ValueError("Gateway-Signale haben keine Einheit")
+
     def device_key(self, ref: str) -> str:
         match = _ZIGBEE.fullmatch(ref)
         return match.group(1) if match else ref
