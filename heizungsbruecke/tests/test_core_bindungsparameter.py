@@ -159,9 +159,10 @@ def test_schreibschutz_nur_gleich_oder_strenger(hebelsatz, schutz, gut):
 @pytest.mark.parametrize(("hebelsatz", "schemata", "gut"), [
     ("weishaupt_wwp", WEISHAUPT_SCHEMATA, True),
     ("weishaupt_wwp", {}, False),
-    ("weishaupt_wwp", {"praefixe": ["a_"], "normal_bereich": {"a_": [16.0, 28.0]}}, True),
-    ("weishaupt_wwp", {"praefixe": ["a_"], "normal_bereich": {"b_": [16.0, 28.0]}}, False),
-    ("weishaupt_wwp", {"praefixe": ["a_"], "normal_bereich": {"a_": [28.0, 16.0]}}, False),
+    ("weishaupt_wwp", {"praefixe": ["hz_operationmode_"], "normal_bereich": {"hz_operationmode_": [16.0, 28.0]}}, True),
+    ("weishaupt_wwp", {"praefixe": ["hz_operationmode_"], "normal_bereich": {"b_": [16.0, 28.0]}}, False),
+    ("weishaupt_wwp", {"praefixe": ["hz_operationmode_"], "normal_bereich": {"hz_operationmode_": [28.0, 16.0]}}, False),
+    ("weishaupt_wwp", {"praefixe": ["a_"], "normal_bereich": {"a_": [16.0, 28.0]}}, False),  # fremder Praefix
     ("weishaupt_wwp", {"praefixe": [], "normal_bereich": {}}, False),
     ("vaillant_vrc720", {}, True),
     ("vaillant_vrc720", WEISHAUPT_SCHEMATA, False),
@@ -196,22 +197,29 @@ def test_zurueck_optional_nur_aus_zurueck():
     assert _try(parameter("vaillant_vrc720", zurueck=[], zurueck_optional=[])) is None
 
 
+H = "hz_operationmode_"
+V2 = "heating_circuit_operation_mode_"
+
+
 def _schemata_mit(praefixe, bereich):
     return {"praefixe": praefixe, "normal_bereich": bereich}
 
 
 @pytest.mark.parametrize(("schemata", "gut"), [
-    (_schemata_mit(["p" * 64], {"p" * 64: [16.0, 28.0]}), True),
+    (_schemata_mit(["p" * 64], {"p" * 64: [16.0, 28.0]}), False),  # nicht in der lokalen Positivliste
     (_schemata_mit(["p" * 65], {"p" * 65: [16.0, 28.0]}), False),
     (_schemata_mit([""], {"": [16.0, 28.0]}), False),
-    (_schemata_mit(["a_"], {"a_": [20.0, 20.0]}), True),
-    (_schemata_mit(["a_"], {"a_": [math.nan, 28.0]}), False),
-    (_schemata_mit(["a_"], {"a_": [16.0, 20.0, 28.0]}), False),
-    (_schemata_mit(["a_", "a_"], {"a_": [16.0, 28.0]}), False),
+    (_schemata_mit([H], {H: [20.0, 20.0]}), True),
+    (_schemata_mit([H], {H: [math.nan, 28.0]}), False),
+    (_schemata_mit([H], {H: [16.0, 20.0, 28.0]}), False),
+    (_schemata_mit([H, H], {H: [16.0, 28.0]}), False),
+    (_schemata_mit(["a_"], {"a_": [16.0, 28.0]}), False),  # fremder Praefix
+    (_schemata_mit([H, "a_"], {H: [16.0, 28.0], "a_": [16.0, 28.0]}), False),  # eine Teilmenge ist gueltig, mehr nicht
+    (_schemata_mit([V2], {V2: [18.0, 25.0]}), True),  # Teilmenge: nur das zweite Schema
+    (_schemata_mit([V2, H], {V2: [18.0, 25.0], H: [16.0, 28.0]}), True),
     (_schemata_mit(["hz_", "hz_operationmode_"], {"hz_": [16.0, 28.0], "hz_operationmode_": [16.0, 28.0]}), False),
     (_schemata_mit(["hz_operationmode_", "hz_"], {"hz_": [16.0, 28.0], "hz_operationmode_": [16.0, 28.0]}), False),
-    (_schemata_mit(["a_", "b_"], {"a_": [16.0, 28.0], "b_": [16.0, 28.0]}), True),
-    ({"praefixe": ["a_"]}, False),
+    ({"praefixe": [H]}, False),
 ])
 def test_schemata_randfaelle(schemata, gut):
     assert gut == (_try(parameter("weishaupt_wwp_basis", schemata=schemata), "weishaupt_wwp_basis") is None)

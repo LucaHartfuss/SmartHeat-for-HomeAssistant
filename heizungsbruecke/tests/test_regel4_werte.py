@@ -213,3 +213,19 @@ def test_schreibschutz_obergrenzen():
         k: (v.obergrenze.durchsetzen_tag, v.obergrenze.tag, v.obergrenze.lebensdauer_hinweis)
         for k, v in VERFAHREN.items()
     } == SCHREIBSCHUTZ, R4
+
+
+#: Lokale Positivliste der Weishaupt-Optionsschema-Praefixe (weishaupt_modbus 1.x und 2.0). Der Server darf nur eine
+#: Teilmenge senden; ein neues Schema braucht ein Geraete-Update (Regel 4).
+PRAEFIXE_ERLAUBT = {
+    "vaillant_vrc720": (),
+    "weishaupt_wwp": ("hz_operationmode_", "heating_circuit_operation_mode_"),
+    "weishaupt_wwp_basis": ("hz_operationmode_", "heating_circuit_operation_mode_"),
+    "viessmann_vicare": (),
+}
+
+
+def test_weishaupt_praefixe_lokale_positivliste():
+    from smartheat_core.verfahren import VERFAHREN
+
+    assert {k: v.praefixe_erlaubt for k, v in VERFAHREN.items()} == PRAEFIXE_ERLAUBT, R4

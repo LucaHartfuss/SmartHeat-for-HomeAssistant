@@ -82,6 +82,8 @@ def _schemata(value, verfahren: Verfahren) -> dict:
         or any(a != b and b.startswith(a) for a in praefixe for b in praefixe)  # ein Praefix darf kein anderes verdecken
     ):
         raise ValueError("Bindungsparameter schemata.praefixe ist ungültig.")
+    if not set(praefixe) <= set(verfahren.praefixe_erlaubt):
+        raise ValueError("Bindungsparameter schemata.praefixe nennt ein Schema, das dieses Gerät nicht kennt.")
     if not isinstance(bereiche, Mapping) or set(bereiche) != set(praefixe) or not all(
             isinstance(b, list) and len(b) == 2 and all(_zahl(x) for x in b) and b[0] <= b[1] for b in bereiche.values()):
         raise ValueError("Bindungsparameter schemata.normal_bereich ist ungültig.")

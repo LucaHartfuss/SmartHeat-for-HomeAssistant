@@ -26,7 +26,9 @@ class Schreibschutz:
 
 @dataclass(frozen=True)
 class Verfahren:
-    """schemata: Schluessel, die bindungsparameter.schemata fuer diesen Hebelsatz tragen muss."""
+    """schemata: Schluessel, die bindungsparameter.schemata fuer diesen Hebelsatz tragen muss. praefixe_erlaubt: lokale
+    Positivliste der Optionsschema-Praefixe (Weishaupt); der Server darf nur eine Teilmenge senden, damit ein
+    fehlerhafter Server keine Optionsnamen fuer Vorbereitung und Hilfswerte bilden kann (Regel 4)."""
 
     lever_set: LeverSet
     prepared_lever: str | None
@@ -36,11 +38,15 @@ class Verfahren:
     preparation_label: str
     obergrenze: Schreibschutz
     schemata: tuple[str, ...] = ()
+    praefixe_erlaubt: tuple[str, ...] = ()
 
 
 _WEISHAUPT_AUX = ("mode_select", "setpoint_comfort", "setpoint_setback")
 _WEISHAUPT_SCHUTZ = Schreibschutz(MAX_PER_DAY, 10, 50000)  # EEPROM: 10 am Tag, Hinweis ab 50 000 (Grenze 100 000)
 _WEISHAUPT_SCHEMATA = ("praefixe", "normal_bereich")
+# weishaupt_modbus 1.x ("hz_operationmode_") und 2.0 ("heating_circuit_operation_mode_"); ein neues Schema braucht ein
+# Geraete-Update (Regel 4, Tabelle in tests/test_regel4_werte.py).
+_WEISHAUPT_PRAEFIXE = ("hz_operationmode_", "heating_circuit_operation_mode_")
 
 VERFAHREN: dict[str, Verfahren] = {v.lever_set.id: v for v in (
     # Vaillant: Zone auf Manuell; die Umschaltung macht den Sollwert unbrauchbar (ohne Quota-Check neu schreiben).
@@ -50,9 +56,11 @@ VERFAHREN: dict[str, Verfahren] = {v.lever_set.id: v for v in (
     }, "Betriebsart der Zone", Schreibschutz(MAX_PER_DAY, None, None)),
     Verfahren(WEISHAUPT_WWP, "room_setpoint", False, _WEISHAUPT_AUX, {
         "curve": "Heizkennlinie", "room_setpoint": "Raumsolltemperatur Normal", "heat_limit": "Sommer-Winter-Umschaltung",
-    }, "Betriebsart", _WEISHAUPT_SCHUTZ, _WEISHAUPT_SCHEMATA),
+    }, "Betriebsart", _WEISHAUPT_SCHUTZ, _WEISHAUPT_SCHEMATA,
+              _WEISHAUPT_PRAEFIXE),
     Verfahren(WEISHAUPT_WWP_BASIS, "room_setpoint", False, _WEISHAUPT_AUX, {"room_setpoint": "Raumsolltemperatur Normal"},
-              "Betriebsart", _WEISHAUPT_SCHUTZ, _WEISHAUPT_SCHEMATA),
+              "Betriebsart", _WEISHAUPT_SCHUTZ, _WEISHAUPT_SCHEMATA,
+              _WEISHAUPT_PRAEFIXE),
     # Viessmann: Komfort-/Eco-Programm verlassen; Cloud-Kontingent: Durchsetzen hoechstens 4 am Tag.
     Verfahren(VIESSMANN_VICARE, "room_setpoint", False, ("mode_select",), {
         "curve": "Neigung der Heizkurve", "level": "Niveau der Heizkurve", "room_setpoint": "Raumtemperatur Normal",
