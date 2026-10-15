@@ -6,11 +6,11 @@ Simulations-Treiber; Neustarts wie unter Compose."""
 import json
 
 import pytest
+from bindung_beispiele import BINDINGS
 from configs import THERMOSTAT, bedienung, konfiguration, leer
 from world import GatewayWorld
 
 from smartheat_core import dateien
-from smartheat_core.binding import BINDINGS
 from smartheat_core.safety import resolve_local_safety
 from smartheat_gateway.drivers.simulation import START_LEVERS
 from smartheat_runtime.app import IDLE_NOT_CONFIGURED

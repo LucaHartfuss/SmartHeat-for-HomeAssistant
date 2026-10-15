@@ -3,10 +3,12 @@ alles kommt aus den Features (Bereiche und Schrittweiten aus den Kommando-Constr
 keinen garantierten Typ, alles wird defensiv gelesen."""
 import re
 
-from smartheat_core.binding import VIESSMANN_VICARE_BINDING as BINDING
 from smartheat_runtime.roles import LEVER_ROLES
 
 LEVER_SET = "viessmann_vicare"
+#: Erwartete Einstellschritte der Erkennung (bis die Erkennung auf den Server zieht, G-6, Schritt 5); gleich den
+#: Bindungsparametern des Servers fuer viessmann_vicare (Contract-Check 40).
+ERWARTETE_SCHRITTE = {"curve": 0.1, "level": 1.0, "room_setpoint": 1.0}
 REJECTIONS = ("heizkurve_nicht_schreibbar", "kein_normalprogramm", "schrittweite_abweichend", "erzeuger_unbekannt",
               "aussentemperatur_fehlt")
 REJECTION_TEXTS = {
@@ -126,7 +128,7 @@ def _levers(index: dict[str, dict], n: int) -> tuple[dict, str | None]:
     now = {"curve": number_value(curve, "slope"), "level": number_value(curve, "shift"),
            "room_setpoint": number_value(normal, "temperature")}
     ranges = {"curve": slope, "level": shift, "room_setpoint": setpoint}
-    if any(abs(ranges[lever][2] - BINDING.steps[lever]) > 1e-9 for lever in ranges):
+    if any(abs(ranges[lever][2] - ERWARTETE_SCHRITTE[lever]) > 1e-9 for lever in ranges):
         return {}, "schrittweite_abweichend"
     if any(v is None for v in now.values()):
         return {}, "heizkurve_nicht_schreibbar"

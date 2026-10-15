@@ -2,9 +2,9 @@
 BindingDescription wie der HA-Pfad, liefert die Pflicht-Rollen seines Hebelsatzes und ein Probe-Ergebnis nach dem
 Vertrag. G4 ergaenzt PARAMETERS um seine Treiber."""
 import pytest
+from bindung_beispiele import BINDINGS
 from fake_vicare.server import DEVICE, GATEWAY, GOOD_CODE, INSTALLATION, FakeVicare
 
-from smartheat_core.binding import BINDINGS
 from smartheat_device import wire
 from smartheat_gateway.drivers.base import LEVER_ROLES
 from smartheat_gateway.drivers.registry import DRIVERS, create
@@ -33,7 +33,8 @@ def driver(request, data_dir, clock, monkeypatch):
         monkeypatch.setenv("SHG_TEST_ENDPOINTS", "1")
         monkeypatch.setenv("SHG_VICARE_IAM_BASE", base)
         monkeypatch.setenv("SHG_VICARE_API_BASE", base)
-    instance = create(driver_id, parameter, Paths(data_dir), clock=clock, writer=True)
+    instance = create(driver_id, parameter, Paths(data_dir), clock=clock, writer=True,
+                      description=BINDINGS[parameter["lever_set"]])
     if server is not None:
         instance.login_begin({"phase": "begin", "driver_id": driver_id, "client_id": "c", "redirect_uri": REDIRECT,
                               "scope": "x"})
@@ -53,11 +54,9 @@ def test_vaillant_is_among_the_conformance_cases():
 
 
 @pytest.mark.parametrize("driver", CASES, indirect=True)
-def test_binding_description_is_the_one_of_the_ha_path(driver):
-    standard = BINDINGS[driver.description.lever_set.id]
-    assert dict(driver.description.steps) == dict(standard.steps)
-    assert dict(driver.description.enforce_tolerance) == dict(standard.enforce_tolerance)
-    assert driver.description.restore_originals == standard.restore_originals
+def test_binding_description_is_the_one_of_the_configuration(driver):
+    assert driver.description is BINDINGS[driver.description.lever_set.id]
+    assert driver.description.lever_set.id in type(driver).LEVER_SETS
 
 
 @pytest.mark.parametrize("driver", CASES, indirect=True)

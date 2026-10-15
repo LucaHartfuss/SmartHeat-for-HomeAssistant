@@ -40,6 +40,8 @@ class Driver(PlantBinding, Protocol):
     IDENTITY_PARAMETERS: ClassVar[tuple[str, ...]]
     quota: QuotaSpec | None
     poll_seconds: float
+    #: Hebelsatz, den der Treiber bedient (nicht die Beschreibung aus der Konfiguration; Regel-4-Abgleich im Host).
+    lever_set_id: str
 
     def signals(self) -> Mapping[str, str]: ...
     def read_signal(self, role: str) -> float | str: ...

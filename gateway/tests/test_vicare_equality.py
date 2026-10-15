@@ -4,10 +4,10 @@ import importlib.util
 from pathlib import Path
 
 import pytest
+from bindung_beispiele import VIESSMANN_VICARE_BINDING as BINDING
 from fake_vicare.server import GOOD_CODE, FakeVicare
 from heizungsbruecke.ha_binding import ViessmannHaBinding
 
-from smartheat_core.binding import VIESSMANN_VICARE_BINDING as BINDING
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import resolve_local_safety
 from smartheat_gateway.drivers.vicare_cloud.driver import ViCareCloudDriver
@@ -68,7 +68,7 @@ class CloudWorld:
             monkeypatch.setenv(key, value)
         self.driver = ViCareCloudDriver(
             {"installation_id": 2012345, "gateway_serial": "7637415000000001", "device_id": "0", "heizkreis": 0},
-            Paths(tmp_path), clock=clock, writer=True)
+            Paths(tmp_path), clock=clock, writer=True, description=BINDING)
         self.driver.login_begin({"client_id": "c", "redirect_uri": "r"})
         self.driver.login_finish({"code": GOOD_CODE, "redirect_uri": "r"})
         for feature in self.server.features["0"]:

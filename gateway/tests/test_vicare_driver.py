@@ -3,9 +3,9 @@ import json
 import threading
 
 import pytest
+from bindung_beispiele import VIESSMANN_VICARE_BINDING as BINDING
 from fake_vicare.server import GOOD_CODE, FakeVicare
 
-from smartheat_core.binding import VIESSMANN_VICARE_BINDING as BINDING
 from smartheat_gateway.drivers.base import DriverError
 from smartheat_gateway.drivers.vicare_cloud import oauth
 from smartheat_gateway.drivers.vicare_cloud.driver import ViCareCloudDriver
@@ -25,7 +25,7 @@ def env(tmp_path, clock, monkeypatch):
     monkeypatch.setenv("SHG_VICARE_IAM_BASE", base)
     monkeypatch.setenv("SHG_VICARE_API_BASE", base)
     paths = Paths(tmp_path)
-    driver = ViCareCloudDriver(PARAMETER, paths, clock=clock, writer=True)
+    driver = ViCareCloudDriver(PARAMETER, paths, clock=clock, writer=True, description=BINDING)
     challenge = driver.login_begin({"phase": "begin", "driver_id": "vicare_cloud", "client_id": "c",
                                     "redirect_uri": REDIRECT, "scope": "x"})
     assert set(challenge) == {"code_challenge", "code_challenge_method"} and challenge["code_challenge_method"] == "S256"
@@ -49,7 +49,7 @@ def test_parameters_are_checked_by_the_driver(tmp_path):
 def test_the_driver_uses_the_one_binding_of_the_ha_path(env):
     server, driver, paths, clock = env
     assert dict(driver.description.steps) == dict(BINDING.steps)
-    assert driver.description.settle_seconds == 660  # max(2 x 300 + 60, 180)
+    assert driver.description.settle_seconds == 180  # die Wartezeit kommt fertig vom Server (wartezeit_s)
     assert driver.quota.hard_limit == 1200 and driver.poll_seconds == 300.0
 
 

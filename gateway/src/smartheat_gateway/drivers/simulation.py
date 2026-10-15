@@ -9,7 +9,9 @@ import time
 from collections.abc import Mapping
 
 from smartheat_core import dateien
-from smartheat_core.binding import BINDINGS, with_poll_interval
+from smartheat_core.binding import BindingDescription
+from smartheat_core.levers import LEVER_SETS
+from smartheat_core.verfahren import VERFAHREN
 from smartheat_gateway.drivers.base import CACHE_MAX_POLLS, KIND_LOCAL, LEVER_ROLES, DriverError
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.quota import QuotaExhausted
@@ -29,6 +31,14 @@ PLANT_RANGES = {
 }
 GENERATOR = {"vaillant_vrc720": "gastherme", "viessmann_vicare": "gastherme", "weishaupt_wwp": "waermepumpe",
              "weishaupt_wwp_basis": "waermepumpe"}
+# Schrittweiten der simulierten Anlage je Hebelsatz (Probe ohne Konfiguration); gleich den Bindungsparametern des
+# Servers (Contract-Check 40).
+SIM_SCHRITTE = {
+    "vaillant_vrc720": {"curve": 0.05, "room_setpoint": 0.5, "heat_limit": 0.1, "min_flow": 0.1},
+    "weishaupt_wwp": {"curve": 0.05, "room_setpoint": 0.5, "heat_limit": 0.5},
+    "weishaupt_wwp_basis": {"room_setpoint": 0.5},
+    "viessmann_vicare": {"curve": 0.1, "level": 1.0, "room_setpoint": 1.0},
+}
 TAU_SECONDS = 3 * 3600
 
 
@@ -36,7 +46,7 @@ class SimulationDriver:
     driver_id = "simulation"
     kind = KIND_LOCAL
     login_kind = None
-    LEVER_SETS = tuple(BINDINGS)
+    LEVER_SETS = tuple(SIM_SCHRITTE)
     REJECTION_REASONS = ("hebel_fehlt",)
     # Audit 4, A4-08: Parameter, die die Anlage bestimmen (registry.same_plant/plant_id).
     # Achtung (Audit 4, A4-08): Eine Aenderung aendert die plant_id jeder Installation; beim Update gilt das als andere Anlage und setzt den anlagenbezogenen Zustand zurueck.
@@ -44,15 +54,19 @@ class SimulationDriver:
 
     def __init__(
         self, parameter: dict, paths: Paths, *, clock=time.monotonic, writer: bool = False, wall=time.time,
+        description: BindingDescription | None = None,
     ) -> None:
         self._p = {**DEFAULTS, **(parameter or {})}
+        if self._p["lever_set"] not in self.LEVER_SETS:
+            raise ValueError("Hebelsatz der Simulation unbekannt")
         self._paths = paths
         self._clock = clock
         self._wall = wall
         self._writer = writer
         self.poll_seconds = float(self._p["poll_seconds"])
         self.quota = None
-        self.description = with_poll_interval(BINDINGS[self._p["lever_set"]], self.poll_seconds)
+        self.lever_set_id: str = self._p["lever_set"]
+        self._description = description
         self.physical_writes = 0
         self._cache: dict[str, float | str] = {}
         self._cache_at: float | None = None
@@ -63,6 +77,14 @@ class SimulationDriver:
         self._lock = threading.RLock()  # Thread-Vertrag wie die Cloud-Treiber (Plan G4 Praezisierung 9)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
+
+    @property
+    def description(self) -> BindingDescription:
+        """Beschreibung aus der Konfiguration (Spec Stufe 3 S4b); Befehle ohne Konfiguration (Probe, Inventur,
+        Vergessen) duerfen sie nicht brauchen."""
+        if self._description is None:
+            raise RuntimeError("Treiber ohne Konfiguration")
+        return self._description
 
     # --- Anlage ---
 
@@ -88,8 +110,9 @@ class SimulationDriver:
 
     def _levers(self) -> tuple[str, ...]:
         """Alle Hebel der Anlage: gesendete, client-abgeleitete (Vaillant: min_flow) und nur gelesene."""
-        lever_set = self.description.lever_set
-        return lever_set.levers + lever_set.client_derived + self.description.readonly_levers
+        lever_set = LEVER_SETS[self._p["lever_set"]]
+        readonly = self._description.readonly_levers if self._description else ()
+        return lever_set.levers + lever_set.client_derived + readonly
 
     def _visible(self, plant: dict, lever: str) -> float:
         written = plant["geschrieben_um"].get(lever)
@@ -240,7 +263,7 @@ class SimulationDriver:
     # --- Treiber ---
 
     def signals(self) -> Mapping[str, str]:
-        roles = [LEVER_ROLES[lever] for lever in self._levers()] + list(self.description.aux_originals)
+        roles = [LEVER_ROLES[lever] for lever in self._levers()] + list(VERFAHREN[self._p["lever_set"]].aux_originals)
         roles += ["outdoor_temp", "flow_setpoint", "flow_temperature", "room_temperature", "generator_hours"]
         return {role: f"treiber:{role}" for role in roles}
 
@@ -257,12 +280,12 @@ class SimulationDriver:
         if self._control().get("token_expired"):
             raise DriverError("nicht_angemeldet", "Die Anmeldung beim Hersteller ist abgelaufen.")
         plant = self._plant()
-        lever_set = self.description.lever_set.id
+        lever_set = self._p["lever_set"]
         public = {key: self._p[key] for key in ("lever_set", "settle_delay", "poll_seconds")}
         levers = {
             lever: {"wert": self._visible(plant, lever), "min": PLANT_RANGES[lever][0], "max": PLANT_RANGES[lever][1],
-                    "schritt": self.description.steps[lever]}
-            for lever in self.description.lever_set.levers
+                    "schritt": SIM_SCHRITTE[lever_set][lever]}
+            for lever in LEVER_SETS[lever_set].levers
         }
         ok = {
             "kandidat_id": "sim-hk0", "anzeige": "Simulation · Heizkreis 0", "parameter": {**public, "heizkreis": 0},

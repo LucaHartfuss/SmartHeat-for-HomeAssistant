@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
+from bindung_beispiele import VIESSMANN_VICARE_BINDING
 from configs import SENSOR, THERMOSTAT
 from fake_z2m import FakeZigbee2Mqtt
 from fakes import FakeBus
@@ -30,7 +31,8 @@ def world(data_dir, clock):
     z2m.add_sensor(SENSOR)
     z2m.add_sensor(SECOND, battery="flag")
     z2m.add_thermostat(THERMOSTAT)
-    driver = create("simulation", {}, Paths(data_dir), clock=clock, writer=True)
+    driver = create("simulation", {}, Paths(data_dir), clock=clock, writer=True,
+                    description=VIESSMANN_VICARE_BINDING)
     driver.poll_once()
     store = TargetStore(data_dir / "runtime" / "room_target.json", 21.0, clock, lambda: "ts")
     source = GatewaySignalSource(bus, mirror)

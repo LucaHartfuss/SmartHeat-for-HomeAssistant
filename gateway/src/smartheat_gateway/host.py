@@ -9,7 +9,7 @@ import dataclasses
 import logging
 import time
 
-from smartheat_core import wallclock
+from smartheat_core import bindungsparameter, wallclock
 from smartheat_core.safety import resolve_local_safety
 from smartheat_gateway import config as gateway_config
 from smartheat_gateway.bus import Bus
@@ -54,7 +54,7 @@ def build_manifest(driver) -> ChannelManifest:
 
 def check_lever_set(driver, lever_set_id: str) -> None:
     """Binding (Treiber) und lokale Sicherheitswerte (Konfiguration) muessen denselben Hebelsatz meinen (Regel 4)."""
-    driver_set = driver.description.lever_set.id
+    driver_set = driver.lever_set_id
     if driver_set != lever_set_id:
         raise ConfigError(
             f"Hebelsatz des Treibers ({driver_set}) weicht von der Konfiguration ({lever_set_id}) ab – "
@@ -120,10 +120,11 @@ class GatewayHost:
             if not isinstance(hebelsatz, str):
                 raise ConfigError("Konfiguration ohne Hebelsatz")
             safety = resolve_local_safety(hebelsatz, self.konfiguration.get("verteilsystem"))
-            driver = self._create_driver(gateway_config.bindung(self.konfiguration).driver_spec())
+            beschreibung = bindungsparameter.beschreibung(hebelsatz, self.konfiguration.get("bindungsparameter"))
+            driver = self._create_driver(gateway_config.bindung(self.konfiguration).driver_spec(), beschreibung)
             check_lever_set(driver, hebelsatz)
         except (ConfigError, KeyError, TypeError, ValueError) as error:
-            logger.error("Abmelden ohne Zuruecksetzen, Konfiguration ungueltig (%s)", type(error).__name__)
+            logger.error("Abmelden ohne Zuruecksetzen: %s (%s)", error, type(error).__name__)
             return None
         self._activate(driver)
         return RestoreParts(driver, safety)
@@ -134,7 +135,12 @@ class GatewayHost:
         except (ConfigError, KeyError) as error:
             raise StartFailure(str(error), KEY_CONFIG) from error
         try:
-            driver = self._create_driver(bindung.driver_spec())
+            beschreibung = bindungsparameter.beschreibung(
+                runtime.lever_set_id, self.konfiguration.get("bindungsparameter"))
+        except ValueError as error:
+            raise StartFailure(f"Konfiguration: {error}", KEY_CONFIG) from error
+        try:
+            driver = self._create_driver(bindung.driver_spec(), beschreibung)
         except (KeyError, TypeError, ValueError) as error:
             raise StartFailure(f"Treiber '{bindung.driver_id}' nicht startbar ({type(error).__name__})",
                                KEY_DRIVER) from error
@@ -183,9 +189,10 @@ class GatewayHost:
         if self.raum is not None:
             self.raum.publish()
 
-    def _create_driver(self, driver_spec: dict):
+    def _create_driver(self, driver_spec: dict, description=None):
         return registry.create(
             driver_spec["id"], driver_spec.get("parameter") or {}, self._paths, clock=self._clock, writer=True,
+            description=description,
         )
 
     def _activate(self, driver) -> None:

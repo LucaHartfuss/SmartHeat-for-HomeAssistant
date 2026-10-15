@@ -13,7 +13,7 @@ from collections.abc import Mapping
 
 import requests
 
-from smartheat_core.binding import BINDINGS, with_poll_interval
+from smartheat_core.binding import BindingDescription
 from smartheat_gateway.drivers.base import CACHE_MAX_POLLS, KIND_CLOUD, LEVER_ROLES, LOGIN_OAUTH, DriverError
 from smartheat_gateway.drivers.vicare_cloud import api as vicare
 from smartheat_gateway.drivers.vicare_cloud import capabilities as caps
@@ -65,12 +65,14 @@ class ViCareCloudDriver:
     quota = QUOTA
 
     def __init__(self, parameter: dict, paths: Paths, *, clock=time.monotonic, writer: bool = False,
-                 wall=time.time, api: vicare.ViCareApi | None = None) -> None:
+                 wall=time.time, api: vicare.ViCareApi | None = None,
+                 description: BindingDescription | None = None) -> None:
         self._p = dict(parameter or {})
         _check_parameter(self._p)
         self._paths, self._clock, self._wall, self._writer = paths, clock, wall, writer
         self.poll_seconds = float(self._p.get("poll_seconds", 300.0))
-        self.description = with_poll_interval(BINDINGS[caps.LEVER_SET], self.poll_seconds)
+        self._description = description
+        self.lever_set_id = caps.LEVER_SET
         self.physical_writes = 0
         self._tokens = oauth.TokenStore(paths.driver_secrets_dir / "vicare.json", wall=wall)
         self._guard = QuotaGuard(paths.quota_dir / "vicare_cloud.json", QUOTA, now=wall)
@@ -92,6 +94,14 @@ class ViCareCloudDriver:
         self._thread: threading.Thread | None = None
 
     # --- Hilfen ---
+
+    @property
+    def description(self) -> BindingDescription:
+        """Beschreibung aus der Konfiguration (Spec Stufe 3 S4b); Befehle ohne Konfiguration (Probe, Inventur,
+        Vergessen) duerfen sie nicht brauchen."""
+        if self._description is None:
+            raise RuntimeError("Treiber ohne Konfiguration")
+        return self._description
 
     @property
     def _n(self) -> int:
