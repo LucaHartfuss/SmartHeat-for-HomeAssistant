@@ -5,6 +5,7 @@ import math
 import time
 
 import pytest
+from bindung_beispiele import parameter
 from device_helpers import GeraeteCa, zertifikat_fuer
 
 from smartheat_core import config_check
@@ -24,7 +25,7 @@ def _konfiguration(version=1, **changes):
         "verteilsystem": "Heizkoerper",
         "bindung": {"treiber": {"id": "simulation", "parameter": {}}, "thermostat": None},
         "raumfuehler": [SENSOR], "tagestick": "12:12", "abo": "aktiv", "mindest_software": "0.6.0", "software": None,
-        "bindungsparameter": None,
+        "bindungsparameter": parameter("viessmann_vicare"),
     }
     inhalt.update(changes)
     return {"schema": 1, "version": version, **inhalt}

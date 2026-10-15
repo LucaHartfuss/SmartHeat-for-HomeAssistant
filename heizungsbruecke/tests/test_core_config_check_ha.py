@@ -1,5 +1,6 @@
 """Spec 5c 1.3 / 5b 3.1: lokale Pruefung einer HA-Konfiguration (Aufbau rein, HA-Teil ueber den Rueckruf)."""
 import pytest
+from bindung_beispiele import parameter
 
 from smartheat_core import config_check as cc
 from smartheat_core.rastung import Rastung
@@ -10,7 +11,7 @@ def _ha(**changes) -> dict:
     base = {
         "anlage": "zuhause2", "profil": "vaillant_gastherme_heizkoerper", "hebelsatz": "vaillant_vrc720",
         "verteilsystem": "Heizkoerper", "tagestick": "12:07", "abo": "aktiv",
-        "raumfuehler": ["sensor.wohnzimmer_thermostat_temperatur"],
+        "bindungsparameter": parameter("vaillant_vrc720"), "raumfuehler": ["sensor.wohnzimmer_thermostat_temperatur"],
         "bindung": {
             "kreis": {"plattform": "mypyllant", "config_entry": "e1", "anlage": "S", "nummer": "0"},
             "rollen": {"room_target": "climate.wohnzimmer_thermostat::temperature",

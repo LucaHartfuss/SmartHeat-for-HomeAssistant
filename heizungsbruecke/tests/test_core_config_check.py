@@ -1,5 +1,6 @@
 """Spec 5b 3.1: lokale Pruefung der Konfiguration, jede Regel mit Positiv- und Negativfall (Spec 5b 9)."""
 import pytest
+from bindung_beispiele import parameter
 
 from smartheat_core import config_check as cc
 from smartheat_core import rastung
@@ -17,6 +18,7 @@ def _konfiguration(**changes):
         "verteilsystem": "Heizkoerper",
         "bindung": {"treiber": {"id": "simulation", "parameter": {"heizkreis": 0}}, "thermostat": THERMOSTAT},
         "raumfuehler": [SENSOR], "tagestick": "12:12", "abo": "aktiv", "mindest_software": "0.6.0", "software": None,
+        "bindungsparameter": parameter("viessmann_vicare"),
     }
     value.update(changes)
     return value
@@ -35,6 +37,7 @@ def test_a_valid_gateway_configuration_passes():
 
 def test_an_empty_configuration_always_passes():
     assert _pruefen({"anlage": None, "raumfuehler": []}, LOCK) is None
+    assert _pruefen({"anlage": None, "raumfuehler": [], "bindungsparameter": None}) is None
     assert cc.ist_leer({"anlage": None}) and not cc.ist_leer(_konfiguration())
 
 
@@ -145,3 +148,37 @@ def test_a_gateway_shaped_configuration_is_not_a_home_assistant_binding():
 
 def test_reasons_are_contract_reasons():
     assert set(cc.GRUENDE) <= set(wire.DOKUMENT_ERRORS)
+
+
+def test_eingerichtet_ohne_bindungsparameter_wird_abgelehnt():
+    neu = _konfiguration()
+    neu.pop("bindungsparameter")
+    ablehnung = _pruefen(neu)
+    assert ablehnung is not None and ablehnung.grund == cc.UNGUELTIG and "Bindungsparameter" in ablehnung.text
+
+
+def test_lockerer_schreibschutz_wird_abgelehnt():
+    neu = _konfiguration(bindungsparameter=parameter("viessmann_vicare", schreibschutz={
+        "tag": None, "lebensdauer_hinweis": None, "durchsetzen_tag": 5}))
+    ablehnung = _pruefen(neu)
+    assert ablehnung.grund == cc.UNGUELTIG and ablehnung.text.startswith("Bindungsparameter: ")
+
+
+def test_leere_konfiguration_braucht_keine_bindungsparameter():
+    assert _pruefen({"anlage": None, "raumfuehler": [], "bindungsparameter": None}) is None
+
+
+def test_rastung_wird_vor_den_bindungsparametern_geprueft():
+    """Ein fremder Hebelsatz bleibt hebelsatz_eingerastet, auch ohne Parameter (Rastung zuerst, Spec 4.2)."""
+    neu = _konfiguration(hebelsatz="weishaupt_wwp", bindungsparameter=None)
+    assert _pruefen(neu, LOCK) == cc.Ablehnung(cc.HEBELSATZ_EINGERASTET, rastung.TEXT)
+
+
+def test_bindungsparameter_werden_vor_den_rollen_geprueft():
+    neu = _konfiguration(bindungsparameter=None, bindung={"thermostat": None})
+    assert _pruefen(neu).grund == cc.UNGUELTIG
+
+
+def test_bindungsparameter_eines_fremden_hebelsatzes_werden_abgelehnt():
+    neu = _konfiguration(bindungsparameter=parameter("vaillant_vrc720"))
+    assert _pruefen(neu).grund == cc.UNGUELTIG
