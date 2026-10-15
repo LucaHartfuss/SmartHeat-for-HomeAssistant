@@ -111,7 +111,7 @@ ZAEHLER = ("total", "daily")  # Zaehlerart der Energiekanaele: durchlaufende Sum
 ENERGIE_EINHEITEN = ("Wh", "kWh", "m³")  # erwartete Einheit je Energiekanal (Einrichtung); das Geraet sendet kWh bzw. m³
 BINDUNG_GATEWAY_FIELDS = ("treiber", "thermostat")
 BINDUNG_HA_FIELDS = ("kreis", "rollen", "batterien", "benachrichtigung", "hinweise_aus")
-BINDUNG_HA_OPTIONAL = ("abfrage_s",)  # fehlt = Standardwert des Hebelsatzes (Abfrageintervall der Hersteller-Integration)
+BINDUNG_HA_OPTIONAL = ("abfrage_s", "einheiten")  # fehlt = Standardwert des Hebelsatzes bzw. keine Energiekanaele
 KREIS_FIELDS = ("plattform", "config_entry", "anlage", "nummer")
 HA_ROLLEN = (
     "room_target", "curve", "room_setpoint", "level", "heat_limit", "min_flow", "mode_select", "setpoint_comfort",
