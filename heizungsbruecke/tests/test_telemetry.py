@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -6,6 +7,7 @@ import pytest
 
 from smartheat_runtime import telemetry
 from smartheat_runtime.delivery import DataFault
+from smartheat_runtime.ports import SourceUnavailable
 from smartheat_runtime.roles import ChannelManifest
 
 
@@ -441,12 +443,35 @@ def test_kanal_ohne_erwartete_einheit_wird_nicht_gelesen():
     ha_api.get_state.assert_not_called()
 
 
-def test_nicht_lesbare_einheit_laesst_den_kanal_weg():
+def test_fehlende_einheit_warnt_einmal_je_wechsel(caplog):
     manifest = ChannelManifest(refs={"energy_primary_heating": "sensor.gas"})
     ha_api = MagicMock()
     ha_api.get_state.return_value = 2.0
+    einheiten = {"primary_heating": "kWh"}
+
+    def warnungen():
+        return [r for r in caplog.records if r.levelno == logging.WARNING]
+
     ha_api.get_unit.side_effect = ValueError("kein Attribut")
+    for _ in range(3):
+        assert "energy" not in telemetry.read_kpi_fields(manifest, ha_api, einheiten=einheiten)
+    assert len(warnungen()) == 1 and "keine Einheit statt kWh" in warnungen()[0].getMessage()
+    ha_api.get_unit.side_effect = None
+    ha_api.get_unit.return_value = "kWh"  # Attribut da: Kanal kommt zurueck
+    assert telemetry.read_kpi_fields(manifest, ha_api, einheiten=einheiten)["energy"] == {"primary_heating": 2.0}
+    ha_api.get_unit.side_effect = ValueError("kein Attribut")  # wieder weg: erneute Warnung
+    assert "energy" not in telemetry.read_kpi_fields(manifest, ha_api, einheiten=einheiten)
+    assert len(warnungen()) == 2
+
+
+def test_voruebergehender_fehler_beim_lesen_der_einheit_laesst_den_kanal_weg_ohne_wechselwarnung(caplog):
+    manifest = ChannelManifest(refs={"energy_primary_heating": "sensor.gas"})
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = 2.0
+    ha_api.get_unit.side_effect = SourceUnavailable("HA weg")
     assert "energy" not in telemetry.read_kpi_fields(manifest, ha_api, einheiten={"primary_heating": "kWh"})
+    assert telemetry._EINHEIT_GEWARNT == {}
+    assert any("nicht lesbar" in r.getMessage() for r in caplog.records)
 
 
 def test_die_warnung_zur_fremden_einheit_kommt_einmal_je_wechsel(caplog):

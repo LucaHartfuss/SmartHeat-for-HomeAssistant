@@ -42,7 +42,7 @@ DATENFEHLER_KEY = "datenfehler"
 def run_telemetry_tick(
     manifest, signals, mqtt_client, boost_active: bool, failsafe_active: bool,
     datenfehler: DataFault | None = None, room_target: float | None = None,
-    energy: Callable[[dict, dict], dict] | None = None, einheiten: Mapping[str, str] = {},  # noqa: B006
+    energy: Callable[[dict, dict], dict] | None = None, einheiten: Mapping[str, str] | None = None,
 ) -> None:
     """Liest room_actual selbst (lokaler HA-REST-Aufruf, kein Cloud-Roundtrip). `energy` normalisiert die
     Energie-Rohwerte (Plan 3b, Tageszaehler; None = unveraendert), `einheiten` ist je Energiekanal die erwartete
@@ -101,7 +101,7 @@ def read_regulation_fields(manifest, signals, room_target: float | None) -> dict
 
 def read_kpi_fields(
     manifest, signals, normalize_energy: Callable[[dict, dict], dict] | None = None,
-    einheiten: Mapping[str, str] = {},  # noqa: B006  (wird nur gelesen)
+    einheiten: Mapping[str, str] | None = None,
 ) -> dict:
     """Jeder Sensor fuer sich: ein nicht lesbarer oder nicht endlicher Wert wird mit WARNING
     weggelassen und blockiert weder die Kern-Telemetrie noch die anderen Sensoren. `energy`
@@ -109,6 +109,7 @@ def read_kpi_fields(
     erwartete Einheit nennt, und nur gesendet, wenn die Entity genau diese meldet (Wh wird in kWh umgerechnet); sonst
     fehlt er (eine Warnung je Wechsel). normalize_energy(werte, zieleinheiten) (Plan 3b) macht aus Tageszaehlern
     monoton wachsende Summen unter denselben Kanalnamen."""
+    einheiten = einheiten or {}
     kpi_fields: dict = {}
 
     def _read(role, reader) -> tuple[bool, Any]:
@@ -144,13 +145,20 @@ def read_kpi_fields(
         ok, value = _read(role, signals.get_state)
         if not ok:
             continue
-        ok, gemeldet = _read(role, signals.get_unit)
-        if not ok:
+        try:
+            gemeldet = signals.get_unit(manifest.refs[role])
+        except ValueError:
+            gemeldet = ""  # Attribut fehlt oder ist leer (HA, Gateway): gilt als gemeldete Einheit "", warnt je Wechsel
+        except Exception as exc:  # voruebergehend (Quelle nicht erreichbar, Referenz fehlt): wie jeder KPI-Sensor
+            logger.warning("KPI-Sensor '%s' nicht lesbar, Feld wird weggelassen: %s", role, exc)
             continue
         if gemeldet != erwartet:
             if _EINHEIT_GEWARNT.get(kanal) != gemeldet:
                 _EINHEIT_GEWARNT[kanal] = gemeldet
-                logger.warning("Energiekanal '%s' meldet %s statt %s und wird weggelassen", kanal, gemeldet, erwartet)
+                logger.warning(
+                    "Energiekanal '%s' meldet %s statt %s und wird weggelassen",
+                    kanal, f"'{gemeldet}'" if gemeldet else "keine Einheit", erwartet,
+                )
             continue
         _EINHEIT_GEWARNT.pop(kanal, None)
         energy[kanal], ziel[kanal] = energy_core.umrechnen(value, gemeldet)
