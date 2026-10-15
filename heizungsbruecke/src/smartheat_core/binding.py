@@ -132,15 +132,20 @@ class PlantBinding(Protocol):
     def restore_aux(self, values: Mapping[str, str | float], levers: Mapping[str, float] | None = None) -> None: ...
     def limits(self, lever: str) -> tuple[float, float] | None: ...
 
+    def aux_zulaessig(self, name: str, wert: str) -> bool:
+        """Spec Stufe 3 S3 5.2: nimmt das Binding diesen Text als Hilfswert der Rolle an? Nur fuer Werte vom Server
+        (ein fehlerhafter Server darf keine unbekannte Betriebsart setzen); Zahlen prueft die Pipeline."""
+        ...
+
 
 # Vaillant VRC 720 ueber mypyllant (Spec 5.4): Schrittweiten der Anlage; Toleranzen = halber Anlagenschritt
-# (Mindestvorlauf 0,1 > halber Schritt, Begruendung in enforce.py); 35 min Wartezeit (mypyllant fragt die Cloud alle
+# (Begruendung in enforce.py); 35 min Wartezeit (mypyllant fragt die Cloud alle
 # 30 min ab, OWN_WRITE_SETTLE_SECONDS bis Add-on 0.29.0); nur die Heizgrenze geht beim Ende auf ihren Ursprungswert
 # (Nutzer-Entscheidung 2026-09-30).
 VAILLANT_MYPYLLANT = BindingDescription(
     lever_set=VAILLANT_VRC720,
     steps={"curve": 0.05, "room_setpoint": 0.5, "heat_limit": 0.1, "min_flow": 0.1},
-    enforce_tolerance={"curve": 0.025, "room_setpoint": 0.25, "heat_limit": 0.05, "min_flow": 0.1},
+    enforce_tolerance={"curve": 0.025, "room_setpoint": 0.25, "heat_limit": 0.05, "min_flow": 0.05},
     settle_seconds=2100,
     restore_originals=("heat_limit",),
     optional_restore=("heat_limit",),

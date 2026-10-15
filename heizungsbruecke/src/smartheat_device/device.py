@@ -13,6 +13,7 @@ hoechstens alle STATUS_MIN_SECONDS; up/notifications gebuendelt hoechstens alle 
 Dienstes: 20 Nachrichten/min, Plan S2)."""
 import json
 import logging
+import math
 import queue
 import threading
 import time
@@ -43,6 +44,8 @@ PRUEFUNG_WIEDERHOLEN_SECONDS = 30
 CLAIM_FAILED_TEXT = "Der Server war nicht erreichbar, bitte später erneut."
 CLAIM_STATE_TEXT = "Unbekannter Übernahmestand."
 CLAIMED_TEXT = "Das Gerät ist übernommen; ein neuer Code ist erst nach dem Entfernen möglich."
+#: Groesster Betrag eines Ursprungswerts, wie der Server ihn annimmt (geraete/device_checks.URSPRUNG_WERT_MAX).
+URSPRUNG_WERT_MAX = 1e12
 _RUNNING = ("regelt", "abo_inaktiv")
 _FAULT = ("notbetrieb", "datenfehler", "konfigurationsfehler", "zugang_abgelehnt", "abo_beendet")
 
@@ -72,6 +75,20 @@ def derive_zustand(*, gesperrt: bool, update_noetig: bool, server_seen: bool, se
 
 def _iso(wall: float) -> str:
     return datetime.fromtimestamp(wall, UTC).isoformat(timespec="seconds")
+
+
+def _ursprungswert_ok(wert) -> bool:
+    """Wert in den Grenzen von V1 (strenger als der Server: kein bool, keine NaN/Unendlich)."""
+    if isinstance(wert, bool):
+        return False
+    if isinstance(wert, int | float):
+        # Betrag zuerst: math.isfinite wirft bei riesigen int (OverflowError); NaN faellt beim Vergleich durch.
+        return abs(wert) <= URSPRUNG_WERT_MAX and math.isfinite(wert)
+    return isinstance(wert, str) and 0 < len(wert) <= wire.URSPRUNG_HEBEL_MAX_CHARS
+
+
+def _ursprungsname_ok(name) -> bool:
+    return isinstance(name, str) and 0 < len(name) <= wire.URSPRUNG_HEBEL_MAX_CHARS
 
 
 def _vergleichbar(body: dict) -> dict:
@@ -120,6 +137,7 @@ class Device:
         self._meldungen_at: float | None = None
         self._status: dict | None = None
         self._status_at: float | None = None
+        self._ursprung_gewarnt: set[str] = set()  # nicht meldbare Ursprungswerte: je Name einmal loggen (Takt: 1 s)
         self._zurueckgehalten: dict[str, dict] = {}  # Dokument, dessen Pruefung vorlaeufig nicht moeglich war
         self._pruefung_at = 0.0
         self._started_at = clock()
@@ -533,11 +551,40 @@ class Device:
             if self._meldungen_neu.get(item["key"]) is item:
                 del self._meldungen_neu[item["key"]]
 
+    def _ursprungswerte_neu(self) -> dict:
+        """Spec Stufe 3 S3 5.1: nur Namen, die in der Konfiguration (ursprungswerte, vom Server gespiegelt) fehlen, in
+        den Grenzen von V1; was nicht passt, geht nicht hinaus (Log ohne Wert)."""
+        konfiguration = self.konfiguration() or {}
+        bekannt = konfiguration.get("ursprungswerte")
+        bekannt = bekannt if isinstance(bekannt, dict) else {}
+        werte: dict = {}
+        for name, wert in sorted(self.host.ursprungswerte().items(), key=lambda paar: str(paar[0])):
+            if name in bekannt:
+                continue
+            if not _ursprungsname_ok(name) or not _ursprungswert_ok(wert):
+                self._ursprung_warnen(name, "nicht meldbar")
+            elif len(werte) >= wire.URSPRUNG_MAX_HEBEL:
+                self._ursprung_warnen(name, f"ueber dem Limit von {wire.URSPRUNG_MAX_HEBEL} Hebeln, nicht gemeldet")
+            else:
+                werte[name] = wert
+        return werte
+
+    def _ursprung_warnen(self, name, grund: str) -> None:
+        """Je Name einmal je Prozess, ohne Wert (der Takt ruft das jede Sekunde)."""
+        anzeige = name if _ursprungsname_ok(name) else "?"
+        if anzeige in self._ursprung_gewarnt:
+            return
+        self._ursprung_gewarnt.add(anzeige)
+        logger.warning("Ursprungswert %s %s", anzeige, grund)
+
     def _status_senden(self, now: float, *, force: bool) -> None:
         if not self._bereit:
             return
         body = {"schema": wire.SCHEMA, "zustand": self.zustand(), "runtime_status": self.host.runtime_status(),
                 "raum": self.host.raum()}
+        neu = self._ursprungswerte_neu()
+        if neu:
+            body["ursprungswerte"] = neu
         vergleich = _vergleichbar(body)
         if not force:
             if vergleich == self._status:

@@ -2,6 +2,7 @@
 Prozess, Meldungen, Neustart bei neuer Konfiguration, Aufraeumen nach dem Entfernen, Software-Bruecke, LED-Datei."""
 import json
 import os
+import stat
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -9,10 +10,10 @@ import pytest
 from configs import konfiguration
 from fakes import FakeBus
 
+from smartheat_core import dateien
 from smartheat_device import wire
 from smartheat_device.host import Anzeige
 from smartheat_gateway import geraet_host as gh
-from smartheat_gateway.files import write_json
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.triggers import EV_TARGET_INPUT
 from smartheat_gateway.version import GATEWAY_VERSION
@@ -102,13 +103,13 @@ def test_capabilities_and_version(welt):
 def test_clock_sync_comes_from_the_host_status(welt):
     assert welt.host.uhr_synchron() is None
     status = {"netz": True, "dns": True, "zeit_synchron": True, "ts": datetime.fromtimestamp(WALL, UTC).isoformat()}
-    write_json(welt.host_dir / "status.json", status)
+    dateien.schreiben_json(welt.host_dir / "status.json", status, modus=dateien.LESBAR)
     assert welt.host.uhr_synchron() is True
-    write_json(welt.host_dir / "status.json", {**status, "zeit_synchron": False})
+    dateien.schreiben_json(welt.host_dir / "status.json", {**status, "zeit_synchron": False}, modus=dateien.LESBAR)
     assert welt.host.uhr_synchron() is False
     welt.wall["t"] = WALL + gh.UHR_MAX_ALTER_SECONDS + 1
     assert welt.host.uhr_synchron() is None  # veraltet
-    write_json(welt.host_dir / "status.json", {**status, "ts": "gestern"})
+    dateien.schreiben_json(welt.host_dir / "status.json", {**status, "ts": "gestern"}, modus=dateien.LESBAR)
     assert welt.host.uhr_synchron() is None
 
 
@@ -138,6 +139,17 @@ def test_a_runtime_relevant_configuration_requests_a_restart(welt):
     assert welt.kinds() == [gh.EV_RELOAD]
 
 
+def test_remembered_originals_are_handed_to_the_device_as_a_copy(welt):
+    assert welt.host.ursprungswerte() == {}
+    werte = {"heat_limit": 16.0}
+    welt.host.ursprungswerte_merken(werte)
+    werte["mode_select"] = "x"  # die Laufzeit aendert ihr Woerterbuch weiter
+    gelesen = welt.host.ursprungswerte()
+    assert gelesen == {"heat_limit": 16.0}
+    gelesen["x"] = 1.0
+    assert welt.host.ursprungswerte() == {"heat_limit": 16.0}
+
+
 def test_a_restart_requested_before_the_worker_exists_is_posted_on_binding(welt):
     welt.host.neustart_anfordern()
     welt.host.worker_binden(welt.worker)
@@ -146,7 +158,9 @@ def test_a_restart_requested_before_the_worker_exists_is_posted_on_binding(welt)
 
 def test_an_empty_configuration_after_a_setup_marks_the_cleanup(welt):
     welt.host.konfiguration_uebernommen(konfiguration(), LEER)
-    assert json.loads(welt.paths.aufraeumen.read_text()) == {"anlage": "test-tenant"}
+    assert json.loads(welt.paths.aufraeumen.read_text()) == {
+        "anlage": "test-tenant", "konfiguration": konfiguration(), "zurueckgesetzt": False}
+    assert stat.S_IMODE(welt.paths.aufraeumen.stat().st_mode) == 0o600
     welt.host.worker_binden(welt.worker)
     assert welt.kinds() == [gh.EV_RELOAD]
 
@@ -160,7 +174,7 @@ def test_vergessen_removes_the_plant_state_but_keeps_device_and_simulation(welt)
     for path in (welt.paths.backup, welt.paths.failsafe, welt.paths.abgemeldet, welt.paths.room_target,
                  welt.paths.inventur, welt.paths.driver_secrets_dir / "vicare.json",
                  welt.paths.device_dir / "konfiguration.json", welt.paths.sim_dir / "plant.json"):
-        write_json(path, {"x": 1})
+        dateien.schreiben_json(path, {"x": 1}, modus=dateien.LESBAR)
     gh.vergessen(welt.paths)
     assert not welt.paths.runtime_dir.exists() and not welt.paths.inventur.exists()
     assert not (welt.paths.driver_secrets_dir / "vicare.json").exists()
@@ -203,9 +217,9 @@ def test_the_software_target_is_written_for_the_updater(welt):
 
 
 def test_software_results_are_sent_in_order_and_acknowledged(welt, clock):
-    write_json(welt.paths.software_meldungen, {"meldungen": [
+    dateien.schreiben_json(welt.paths.software_meldungen, {"meldungen": [
         {"seq": 2, "version": "0.6.2", "result": "rollback", "reason": "ungesund"},
-        {"seq": 1, "version": "0.6.1", "result": "ok", "reason": ""}]})
+        {"seq": 1, "version": "0.6.1", "result": "ok", "reason": ""}]}, modus=dateien.LESBAR)
     welt.host.anzeigen(_anzeige())
     assert welt.device.ergebnisse == [("0.6.1", True, None, ""), ("0.6.2", False, "ungesund",
                                                                   gh.SOFTWARE_TEXTE["ungesund"])]
@@ -216,8 +230,8 @@ def test_software_results_are_sent_in_order_and_acknowledged(welt, clock):
 
 
 def test_unsent_software_results_wait_for_the_link(welt, clock):
-    write_json(welt.paths.software_meldungen, {"meldungen": [
-        {"seq": 1, "version": "0.6.1", "result": "rollback", "reason": "server_unerreichbar"}]})
+    dateien.schreiben_json(welt.paths.software_meldungen, {"meldungen": [
+        {"seq": 1, "version": "0.6.1", "result": "rollback", "reason": "server_unerreichbar"}]}, modus=dateien.LESBAR)
     welt.device.ergebnis_ok = False
     welt.host.anzeigen(_anzeige())
     assert not welt.paths.software_quittung.exists()
@@ -232,11 +246,11 @@ def test_unsent_software_results_wait_for_the_link(welt, clock):
 def test_software_results_go_up_once_per_seq_across_a_runtime_restart(welt, clock):
     meldungen = [{"seq": 1, "version": "0.6.1", "result": "ok", "reason": ""},
                  {"seq": 2, "version": "0.6.2", "result": "rollback", "reason": "ungesund"}]
-    write_json(welt.paths.software_meldungen, {"meldungen": meldungen})
+    dateien.schreiben_json(welt.paths.software_meldungen, {"meldungen": meldungen}, modus=dateien.LESBAR)
     welt.host.anzeigen(_anzeige())
     assert [e[0] for e in welt.device.ergebnisse] == ["0.6.1", "0.6.2"]
     meldungen.append({"seq": 3, "version": "0.6.3", "result": "ok", "reason": ""})
-    write_json(welt.paths.software_meldungen, {"meldungen": meldungen})
+    dateien.schreiben_json(welt.paths.software_meldungen, {"meldungen": meldungen}, modus=dateien.LESBAR)
     welt.device.ergebnis_ok = False  # Link weg: seq 3 bleibt offen
     clock.advance(gh.SOFTWARE_SECONDS)
     welt.host.anzeigen(_anzeige())
@@ -268,7 +282,7 @@ def test_the_led_file_follows_the_state(welt, clock):
 
 
 def test_snapshot_has_no_claim_code_and_only_known_host_fields(welt):
-    write_json(welt.host_dir / "status.json", {"netz": True, "dns": False, "zeit_synchron": True, "geheim": "x"})
+    dateien.schreiben_json(welt.host_dir / "status.json", {"netz": True, "dns": False, "zeit_synchron": True, "geheim": "x"}, modus=dateien.LESBAR)
     welt.host.anzeigen(_anzeige(hinweise=({"key": "k", "stufe": "info", "text": "t"},)))
     snap = welt.host.snapshot()
     assert snap["geraet"] == "shg-aaaaaaaaaaaaaaaa" and snap["host"] == {"netz": True, "dns": False,
@@ -301,8 +315,8 @@ def test_an_unexpected_driver_error_becomes_a_rejection(welt, caplog):
 
 def test_a_failing_led_write_does_not_stop_the_software_results(welt):
     (welt.paths.agent_state / "belegt").mkdir(parents=True)  # Ziel ist ein Ordner: das Schreiben scheitert
-    write_json(welt.paths.software_meldungen, {"meldungen": [
-        {"seq": 1, "version": "0.6.1", "result": "ok", "reason": ""}]})
+    dateien.schreiben_json(welt.paths.software_meldungen, {"meldungen": [
+        {"seq": 1, "version": "0.6.1", "result": "ok", "reason": ""}]}, modus=dateien.LESBAR)
     welt.host.anzeigen(_anzeige())
     assert welt.device.ergebnisse == [("0.6.1", True, None, "")]
     assert welt.host.letzte_anzeige is not None

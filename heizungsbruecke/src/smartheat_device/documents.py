@@ -1,5 +1,4 @@
-"""Dokumentspeicher des Geraets (Spec 5b 3 und 5.1) und die einzige Stelle fuer atomares Schreiben im Geraetekern
-(Audit 4, Befund "dreifach": identity, bootstrap, commands, wish und der Gateway-Host schreiben ueber write_bytes).
+"""Dokumentspeicher des Geraets (Spec 5b 3 und 5.1); geschrieben wird ueber smartheat_core.dateien.
 
 Konfiguration und Bedienung liegen je in einer Datei mit Version und Inhalt (ohne schema/version des Vertrags).
 Uebernommen wird jede Version, die von der eigenen abweicht, auch eine kleinere (ein aus dem Backup zurueckgespielter
@@ -16,17 +15,21 @@ Software ausgewertet: nach einem Update endet es von selbst. Nur eine vollstaend
 Anlass neu; eine wegen fehlender Felder abgelehnte laesst ihn stehen.
 Wirft der Treiber-Rueckruf config_check.NichtPruefbar (HA aus), laeuft empfangen durch: nichts wird gespeichert oder
 abgelehnt, das Geraet haelt das Dokument zurueck und prueft spaeter erneut (device.py).
-Eine kaputte Datei (Stromausfall) gilt als "keine Version": hello meldet 0, der Server stellt neu zu."""
-import json
+Eine kaputte Datei (Stromausfall) gilt als "keine Version": hello meldet 0, der Server stellt neu zu.
+
+Rastung (Spec Stufe 3 S3 Abschnitt 3, A5-06): Hebelsatz x Verteilsystem der ersten eingerichteten Konfiguration stehen in
+sicherheitssatz.json; kein Dokument loest sie, auch keine leere Konfiguration. Sie wird vor dem Speichern der Konfiguration
+geschrieben. Fehlt die Datei bei gespeicherter eingerichteter Konfiguration (Stand vor dieser Version), rastet der Start.
+Eine kaputte oder manipulierte Datei (auch ein Symlink) lehnt jede eingerichtete Konfiguration ab (rastung.lesen)."""
 import logging
-import os
 import re
 import threading
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TypeGuard
 
-from smartheat_core import config_check
+from smartheat_core import config_check, dateien, rastung, wallclock
+from smartheat_core.rastung import Rastung
 from smartheat_device import wire
 
 logger = logging.getLogger(__name__)
@@ -47,49 +50,6 @@ MODUS_TEXT = "Diese Betriebsart kennt das Gerät nicht."
 QUELLE_TEXT = "Die Bedienung nennt keine gültige Quelle."
 _RESERVIERT = ("schema", "version")
 _VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
-
-
-# --- Dateien ---
-
-def write_bytes(path: Path, data: bytes, *, private: bool = True) -> None:
-    """Atomar: temporaere Datei, fsync, rename, fsync des Ordners (wie gateway/files.py, Spec SHG G2 6.1)."""
-    mode = 0o600 if private else 0o644
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
-    try:
-        os.fchmod(fd, mode)
-        view = memoryview(data)
-        while view:
-            view = view[os.write(fd, view):]
-        os.fsync(fd)
-    finally:
-        os.close(fd)
-    os.replace(tmp, path)
-    dir_fd = os.open(path.parent, os.O_RDONLY)
-    try:
-        os.fsync(dir_fd)
-    finally:
-        os.close(dir_fd)
-
-
-def write_json(path: Path, value, *, private: bool = True) -> None:
-    write_bytes(path, json.dumps(value, ensure_ascii=False, sort_keys=True).encode(), private=private)
-
-
-def write_text(path: Path, text: str, *, private: bool = True) -> None:
-    write_bytes(path, text.encode(), private=private)
-
-
-def read_json(path: Path):
-    """Inhalt oder None: fehlend oder kaputt (Stromausfall) gilt als leer, nie als Absturz."""
-    try:
-        return json.loads(path.read_text())
-    except FileNotFoundError:
-        return None
-    except (OSError, ValueError) as error:
-        logger.warning("%s nicht lesbar (%s), gilt als leer", path.name, type(error).__name__)
-        return None
 
 
 # --- Regeln ---
@@ -174,7 +134,9 @@ class DocumentStore:
         self._host, self._software_version, self._treiber_pruefen = host, software_version, treiber_pruefen
         self._lock = threading.Lock()
         self._docs: dict[str, Dokument | None] = {art: self._laden(art) for art in wire.DOKUMENTE}
-        zustand = read_json(directory / ZUSTAND_DATEI)
+        self._rastung_pfad = directory / rastung.DATEI
+        self._rastung = self._rastung_laden()
+        zustand = dateien.lesen_json(directory / ZUSTAND_DATEI)
         zustand = zustand if isinstance(zustand, dict) else {}
         self._update_anlass = _anlass(zustand.get("update_anlass"))
         roh = zustand.get("abgelehnt")
@@ -192,21 +154,46 @@ class DocumentStore:
             return anlass[1] == self._software_version
         return unter_mindest(self._software_version, anlass[1])
 
+    @property
+    def rastung(self) -> Rastung | None:
+        return self._rastung
+
+    def _rastung_laden(self) -> Rastung | None:
+        """Spec 3.3: fehlt die Datei und ist die gespeicherte Konfiguration eingerichtet, gilt deren Paar (Regel "erste
+        eingerichtete Konfiguration", z. B. client1 beim ersten Start mit dieser Version). Eine vorhandene, auch
+        kaputte Datei wird nie ueberschrieben."""
+        gelesen = rastung.lesen(self._rastung_pfad)
+        inhalt = self.inhalt(KONFIGURATION)
+        if gelesen is None and inhalt is not None and not config_check.ist_leer(inhalt):
+            return self._rasten(inhalt)
+        return gelesen
+
+    def _rasten(self, inhalt: dict) -> Rastung | None:
+        hebelsatz, verteilsystem = inhalt.get("hebelsatz"), inhalt.get("verteilsystem")
+        if not (isinstance(hebelsatz, str) and isinstance(verteilsystem, str)):
+            return None
+        neu = Rastung(hebelsatz, verteilsystem)
+        rastung.schreiben(self._rastung_pfad, neu, wallclock.now().isoformat(timespec="seconds"))
+        logger.info("Sicherheitssatz eingerastet")
+        return neu
+
     def _laden(self, art: str) -> Dokument | None:
-        raw = read_json(self._dir / DATEIEN[art])
+        raw = dateien.lesen_json(self._dir / DATEIEN[art])
         if not (isinstance(raw, dict) and _is_version(raw.get("version")) and raw["version"] >= 1
                 and isinstance(raw.get("inhalt"), dict)):
             return None
         return Dokument(art, raw["version"], raw["inhalt"], raw.get("dirty") is True)
 
     def _speichern(self, doc: Dokument) -> None:
-        write_json(self._dir / DATEIEN[doc.art], {"version": doc.version, "inhalt": doc.inhalt, "dirty": doc.dirty})
+        dateien.schreiben_json(self._dir / DATEIEN[doc.art],
+                               {"version": doc.version, "inhalt": doc.inhalt, "dirty": doc.dirty}, modus=dateien.PRIVAT)
         self._docs[doc.art] = doc
 
     def _zustand_speichern(self) -> None:
         anlass = list(self._update_anlass) if self._update_anlass is not None else None
-        write_json(self._dir / ZUSTAND_DATEI, {"update_anlass": anlass,
-                                                "abgelehnt": {art: list(v) for art, v in self._abgelehnt.items()}})
+        dateien.schreiben_json(self._dir / ZUSTAND_DATEI,
+                               {"update_anlass": anlass,
+                                "abgelehnt": {art: list(v) for art, v in self._abgelehnt.items()}}, modus=dateien.PRIVAT)
 
     def aktuell(self, art: str) -> Dokument | None:
         return self._docs[art]
@@ -250,9 +237,11 @@ class DocumentStore:
             if current is not None and current.version == version and not current.dirty:
                 return Ergebnis(art, version, True)
             inhalt = {key: value for key, value in payload.items() if key not in _RESERVIERT}
-            ablehnung = self._pruefen(art, inhalt, current)
+            ablehnung = self._pruefen(art, inhalt)
             if ablehnung is not None:
                 return self._abgelehnt_mit(art, version, ablehnung.grund, ablehnung.text)
+            if art == KONFIGURATION and self._rastung is None and not config_check.ist_leer(inhalt):
+                self._rastung = self._rasten(inhalt)  # vor dem Dokument (Spec 3.2): ein Absturz dazwischen schadet nicht
             self._speichern(Dokument(art, version, inhalt))
             self._abgelehnt.pop(art, None)
             self._zustand_speichern()
@@ -263,7 +252,7 @@ class DocumentStore:
         self._zustand_speichern()
         return Ergebnis(art, version, False, grund, text)
 
-    def _pruefen(self, art: str, inhalt: dict, current: Dokument | None) -> config_check.Ablehnung | None:
+    def _pruefen(self, art: str, inhalt: dict) -> config_check.Ablehnung | None:
         if art == BEDIENUNG:
             return _bedienung_pruefen(inhalt)
         fehlen = [field for field in wire.KONFIGURATION_FIELDS if field not in _RESERVIERT and field not in inhalt]
@@ -276,5 +265,4 @@ class DocumentStore:
         if self._update_anlass is not None:
             return config_check.Ablehnung(UPDATE_NOETIG, UPDATE_TEXT.format(eigene=self._software_version,
                                                                             mindest=mindest))
-        vorher = current.inhalt if current is not None else None
-        return config_check.pruefen(inhalt, vorher, host=self._host, treiber_pruefen=self._treiber_pruefen)
+        return config_check.pruefen(inhalt, self._rastung, host=self._host, treiber_pruefen=self._treiber_pruefen)

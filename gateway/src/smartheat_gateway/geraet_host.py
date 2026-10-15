@@ -20,6 +20,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
+from smartheat_core import dateien
 from smartheat_device import wire
 from smartheat_device.commands import CommandRegister
 from smartheat_device.hintergrund import Hintergrund
@@ -28,12 +29,11 @@ from smartheat_gateway import befehle
 from smartheat_gateway import config as gateway_config
 from smartheat_gateway.drivers import registry
 from smartheat_gateway.drivers.base import KIND_CLOUD
-from smartheat_gateway.files import read_json, write_json
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.triggers import EV_TARGET_INPUT
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_gateway.zigbee import ZigbeeMirror
-from smartheat_runtime import dokument_config
+from smartheat_runtime import aufraeumen, dokument_config
 from smartheat_runtime.soll_speicher import SOURCE_PORTAL
 from smartheat_runtime.worker import Event, RegulationWorker
 
@@ -90,7 +90,7 @@ class ZustandsDatei:
             return
         if self._last is None or self._last[0] != zustand:
             self._since = self._now_iso()
-        write_json(self._path, {"zustand": zustand, "seit": self._since, "ts": self._now_iso()})
+        dateien.schreiben_json(self._path, {"zustand": zustand, "seit": self._since, "ts": self._now_iso()}, modus=dateien.LESBAR)
         self._last = (zustand, now)
 
 
@@ -126,6 +126,7 @@ class GatewayDeviceHost:
         self._worker: RegulationWorker | None = None
         self._soll_eingang = True  # False im Ruhezustand (IdleBridge): der Worker hat keinen Soll-Eingang
         self._neustart = False
+        self._ursprungswerte: dict = {}  # Gemerkte Ursprungswerte der Laufzeit (Hauptthread schreibt, Geraet liest)
         self._raum_soll: float | None = None  # letzte Bedienung, bevor der Worker gebunden ist
         self._worker_lock = threading.Lock()  # binden (Hauptthread) gegen Rueckrufe (Geraete-Thread)
         self._datei = ZustandsDatei(paths.agent_state, lambda: _iso(self._wall()), clock)
@@ -151,6 +152,14 @@ class GatewayDeviceHost:
             self._raum_soll = None
             if self._neustart:
                 worker.post(Event(EV_RELOAD))
+
+    def ursprungswerte_merken(self, werte: dict) -> None:
+        with self._worker_lock:
+            self._ursprungswerte = dict(werte)
+
+    def ursprungswerte(self) -> dict:
+        with self._worker_lock:
+            return dict(self._ursprungswerte)
 
     def neustart_anfordern(self) -> None:
         with self._worker_lock:
@@ -189,7 +198,7 @@ class GatewayDeviceHost:
     def snapshot(self) -> dict:
         """Auszug fuer Diagnoseseite und Befehl diagnostics, ohne Uebernahme-Code (den fuegt nur die Seite an)."""
         anzeige = self.letzte_anzeige
-        host = read_json(self._host_dir / "status.json")
+        host = dateien.lesen_json(self._host_dir / "status.json")
         return {
             "geraet": self.device.identity.device_id if self.device is not None else None,
             "zustand": anzeige.zustand if anzeige is not None else "startet",
@@ -211,7 +220,7 @@ class GatewayDeviceHost:
 
     def uhr_synchron(self) -> bool | None:
         """Zeitdienst des Hosts (host/status.json, Dienst hoststatus); aelter als 5 min oder unlesbar = unbekannt."""
-        status = read_json(self._host_dir / "status.json")
+        status = dateien.lesen_json(self._host_dir / "status.json")
         if not isinstance(status, dict):
             return None
         raw_ts = status.get("ts")
@@ -245,7 +254,7 @@ class GatewayDeviceHost:
     def konfiguration_uebernommen(self, alt: dict | None, neu: dict) -> None:
         if dokument_config.eingerichtet(alt) and not dokument_config.eingerichtet(neu):
             assert alt is not None
-            write_json(self.paths.aufraeumen, {"anlage": alt["anlage"]}, private=True)
+            aufraeumen.markieren(self.paths.aufraeumen, alt)  # alte Konfiguration: erst zuruecksetzen (Spec S3 4)
         if dokument_config.laufzeit_relevant(alt, neu):
             self.neustart_anfordern()
 
@@ -260,8 +269,8 @@ class GatewayDeviceHost:
                 self._worker.post(Event(EV_TARGET_INPUT, {"value": value, "source": SOURCE_PORTAL}))
 
     def software_soll(self, software: dict | None) -> None:
-        if read_json(self.paths.software_soll) != software or not self.paths.software_soll.exists():
-            write_json(self.paths.software_soll, software)  # 0644: der Updater (root) liest
+        if dateien.lesen_json(self.paths.software_soll) != software or not self.paths.software_soll.exists():
+            dateien.schreiben_json(self.paths.software_soll, software, modus=dateien.LESBAR)  # 0644: der Updater (root) liest
 
     def runtime_status(self) -> dict | None:
         return self.zustand.status
@@ -292,11 +301,11 @@ class GatewayDeviceHost:
         if self.device is None or (self._software_at is not None and now - self._software_at < SOFTWARE_SECONDS):
             return
         self._software_at = now
-        raw = read_json(self.paths.software_meldungen)
+        raw = dateien.lesen_json(self.paths.software_meldungen)
         eintraege = raw.get("meldungen") if isinstance(raw, dict) else None
         if not isinstance(eintraege, list):
             return
-        quittung = read_json(self.paths.software_quittung)
+        quittung = dateien.lesen_json(self.paths.software_quittung)
         gesendet = quittung.get("seq") if isinstance(quittung, dict) and isinstance(quittung.get("seq"), int) else 0
         offen = [e for e in eintraege if isinstance(e, dict) and isinstance(e.get("seq"), int) and e["seq"] > gesendet
                  and isinstance(e.get("version"), str) and e.get("result") in ("ok", "rollback")]
@@ -310,4 +319,4 @@ class GatewayDeviceHost:
                 text = SOFTWARE_TEXTE[grund]
             if not self.device.ergebnis_software(eintrag["version"], ok, grund, text):
                 return
-            write_json(self.paths.software_quittung, {"seq": eintrag["seq"]})
+            dateien.schreiben_json(self.paths.software_quittung, {"seq": eintrag["seq"]}, modus=dateien.LESBAR)

@@ -29,6 +29,7 @@ import logging
 import math
 import time
 from collections.abc import Callable, Mapping
+from typing import TypeGuard
 
 from smartheat_core import write_budget
 from smartheat_core.binding import PlantBinding
@@ -37,6 +38,8 @@ from smartheat_core.safety import LocalSafety
 
 logger = logging.getLogger(__name__)
 
+# Hilfswerte, die Zahlen sind (Komfort-/Absenk-Soll); alle anderen sind Text (Betriebsart).
+AUX_SETPOINT_ROLES = ("setpoint_comfort", "setpoint_setback")
 _ROW_EMERGENCY = "emergency"
 # Gueltigkeit eines gelesenen Wertebereichs der Anlage (binding.limits).
 LIMITS_TTL_SECONDS = 300.0
@@ -93,14 +96,20 @@ def _row(comfort: bool, emergency: bool) -> str:
     return _ROW_RESTORE
 
 
-def _is_finite_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+def _is_finite_number(value) -> TypeGuard[float]:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:  # riesige int (z. B. 10**400) passen in keinen float
+        return False
 
 
 class LeverPipeline:
     def __init__(
         self, store, binding: PlantBinding, safety: LocalSafety, *, clock: Callable[[], float] = time.monotonic,
         notify: Callable[[str, str, str], None] | None = None,
+        server_originals: Callable[[], Mapping[str, object]] | None = None,
     ) -> None:
         self._store = store
         self._binding = binding
@@ -114,6 +123,8 @@ class LeverPipeline:
         self._narrowing_logged: dict[str, tuple[float, float]] = {}
         # Nicht kritischer Hinweis (Schluessel, Zustand, Text); im Add-on Notifier.notify(..., critical=False).
         self._notify = notify
+        # Ursprungswerte der Anlage auf dem Server (Spec Stufe 3 S3 5.2, 5b-W-4); frisch bei jedem Zuruecksetzen gelesen.
+        self._server_originals = server_originals
         # Zeitpunkt (clock) und Wert des letzten erfolgreichen eigenen Schreibens je Hebel, nur Laufzeit: Durchsetzen
         # und Quota-Check vertrauen dem Read erst nach settle_seconds.
         self._last_write_at: dict[str, float] = {}
@@ -173,16 +184,19 @@ class LeverPipeline:
             if not write_budget.may_attempt(self._store, key, rule, self._clock()):
                 logger.info("Sollwert-Zeile '%s' zurueckgestellt: Schreibbudget nach einem Fehlschlag", new_row)
                 return state.boost_active, state.emergency_boost_active
-            self._budgeted_write(key, self._row_values(new_row))
+            self._budgeted_write(key, rule, self._row_values(new_row))
             logger.warning(_ROW_LOG[new_row])
         self._store.update(boost_active=comfort, emergency_boost_active=emergency)
         return comfort, emergency
 
     def _budgeted_write(
-        self, key: str, values: dict, *, aux: Mapping[str, str | float] | None = None, require_aux: bool = True,
+        self, key: str, rule: write_budget.Rule, values: dict, *,
+        aux: Mapping[str, str | float] | None = None, require_aux: bool = True,
     ) -> None:
-        """Boost-Start/-Ende und Wiederherstellung: vom Tagesbudget ausgenommen (exempt), zaehlen aber mit. `aux`:
-        Hilfs-Ursprungswerte, die nach den Hebeln zurueckgestellt werden (nur Wiederherstellung)."""
+        """Boost-Start/-Ende und Wiederherstellung: vom Tagesbudget ausgenommen (exempt), zaehlen aber nach `rule`
+        im Schreibbudget mit. `aux`: Hilfs-Ursprungswerte, die nach den Hebeln zurueckgestellt werden (nur
+        Wiederherstellung)."""
+        write_budget.before_attempt(self._store, key, rule, self._clock())
         try:
             self._write(values, exempt=True, require_aux=require_aux)
             if aux:
@@ -193,9 +207,9 @@ class LeverPipeline:
                 }
                 self._restore_aux(aux, targets)
         except Exception:
-            write_budget.record_attempt(self._store, key, self._clock())
+            write_budget.after_failure(self._store, key, rule, self._clock())
             raise
-        write_budget.record_success(self._store, key)
+        write_budget.after_success(self._store, key, rule)
 
     def apply_server_values(self, levers: Mapping[str, float]) -> None:
         """Speichert die (begrenzten) Serverwerte als Wiederherstellungspunkt, bevor geschrieben wird, und schreibt sie
@@ -258,32 +272,49 @@ class LeverPipeline:
         Boost, wenn der Wiederherstellungspunkt davon abweicht; ist der Ursprungswert unbekannt, bleibt der Hebel auf
         dem Wiederherstellungspunkt (Log). False, wenn das Schreiben scheitert: die Flags bleiben, der Aufrufer
         versucht es erneut. Scheitert danach nur das Speichern, gilt die Wiederherstellung als erfolgt. Plan 3b: danach
-        die Hilfs-Ursprungswerte (aux_originals), die anschliessend geleert werden."""
+        die Hilfs-Ursprungswerte (aux_originals), die anschliessend geleert werden. Hilfswerte des Servers (Spec Stufe 3
+        S3 5.2) gelten nur, wenn ohnehin zurueckgesetzt wird; ausloesen koennen sie es nicht."""
         state = self._store.state
+        server = self._server_snapshot()
         originals: dict[str, float] = {}
         differs = False
         for lever in self._description.restore_originals:
             if not self._binding.has(lever):
                 continue
-            original = state.originals.get(lever)
+            vom_server = server.get(lever)
+            original = vom_server if _is_finite_number(vom_server) else state.originals.get(lever)
             current = state.restore_point.get(lever)
             if original is None:
                 if current is not None:
                     logger.warning("Ursprungswert von %s unbekannt: bleibt auf dem gelernten Wert %s", lever, current)
                 continue
+            original = self._target(lever, original)
             originals[lever] = original
             if current is not None and abs(current - original) > self._description.steps[lever] / 2:
                 differs = True
         aux = dict(state.aux_originals)
+        # Ob zurueckgesetzt wird, entscheidet nur der lokale Zustand: die gespiegelten Hilfswerte des Servers bleiben
+        # nach dem Leeren von aux_originals in der Konfiguration und loesten sonst bei jedem weiteren Aufruf (Start
+        # nach Abo-Ende oder Abmelden) erneut eine Wiederherstellung aus. Die Hebel brauchen das nicht: nach einem
+        # Erfolg steht der Wiederherstellungspunkt auf dem Ursprungswert, differs bleibt dann falsch.
         if not (always_restore or state.boost_active or state.emergency_boost_active or differs or aux):
             return True
+        for name in self._description.aux_originals:
+            if name in aux or name not in server:
+                continue
+            if self._aux_vom_server(name, server[name]):
+                aux[name] = server[name]
+            else:
+                logger.warning("Hilfs-Ursprungswert %s vom Server verworfen", name)
         if not write_budget.may_attempt(self._store, write_budget.RESTORE, write_budget.RETURN_STAIRCASE, self._clock()):
             logger.info("Wiederherstellung zurueckgestellt: Schreibbudget nach einem Fehlschlag")
             return False
         values = {**self._row_values(_ROW_RESTORE), **originals}
         try:
             # Rueckweg vor Vollstaendigkeit: ohne gemerkte Hilfswerte wird trotzdem zurueckgestellt (require_aux=False).
-            self._budgeted_write(write_budget.RESTORE, values, aux=aux, require_aux=False)
+            self._budgeted_write(
+                write_budget.RESTORE, write_budget.RETURN_STAIRCASE, values, aux=aux, require_aux=False,
+            )
         except Exception:
             logger.exception(
                 "Zuletzt gelernte Werte konnten nicht wiederhergestellt werden - Boost-Flags "
@@ -302,6 +333,25 @@ class LeverPipeline:
         except Exception:
             logger.exception("Zuletzt gelernte Werte wiederhergestellt, Boost-Flags konnten aber nicht gespeichert werden")
         return True
+
+    def _server_snapshot(self) -> Mapping[str, object]:
+        if self._server_originals is None:
+            return {}
+        try:
+            werte = self._server_originals()
+        except Exception:
+            logger.exception("Ursprungswerte des Servers nicht lesbar, es gelten die lokalen")
+            return {}
+        return werte if isinstance(werte, Mapping) else {}
+
+    def _aux_vom_server(self, name: str, wert) -> bool:
+        """Spec 5.2: Zahl nur fuer die Sollwert-Rollen (Komfort-/Absenk-Soll) und nur im lokalen Bereich von
+        room_setpoint, Text nur fuer die uebrigen Rollen und nur, wenn das Binding ihn kennt (ein fehlerhafter Server
+        darf keine unbekannte Betriebsart setzen)."""
+        if name in AUX_SETPOINT_ROLES:
+            bereich = self._safety.ranges.get("room_setpoint")
+            return bereich is not None and _is_finite_number(wert) and bereich[0] <= wert <= bereich[1]
+        return isinstance(wert, str) and self._binding.aux_zulaessig(name, wert)
 
     def _row_values(self, row: str) -> dict:
         point = self._store.state.restore_point

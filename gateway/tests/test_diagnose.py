@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 from geraet_fakes import geraet_fuer
 
+from smartheat_core import dateien
 from smartheat_device import wire
 from smartheat_device.host import Anzeige
 from smartheat_gateway import diagnose as diagnostics
@@ -21,7 +22,6 @@ from smartheat_gateway.diagnose import (
     seite,
     start_server,
 )
-from smartheat_gateway.files import write_json
 from smartheat_gateway.paths import Paths
 
 SNAPSHOT = {
@@ -48,8 +48,8 @@ def geraet(data_dir, clock, tmp_path):
     mirror = ZigbeeMirror(bus, clock)
     mirror.start()
     paths = Paths(data_dir)
-    write_json(paths.data.parent / "host" / "status.json",
-               {"netz": True, "dns": True, "zeit_synchron": False, "wlan_passwort": "test-wlan-secret"})
+    dateien.schreiben_json(paths.data.parent / "host" / "status.json",
+               {"netz": True, "dns": True, "zeit_synchron": False, "wlan_passwort": "test-wlan-secret"}, modus=dateien.LESBAR)
     return geraet_fuer(paths, mirror, None)
 
 

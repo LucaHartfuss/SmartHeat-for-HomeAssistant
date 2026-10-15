@@ -18,6 +18,7 @@ from concurrent.futures import Future
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from smartheat_core import dateien
 from smartheat_device import wire
 from smartheat_device.commands import CommandRegister, Done, Failed, InvalidPayload, Outcome, Waiting
 from smartheat_device.hintergrund import (  # noqa: F401  (HINTERGRUND_NAME: Rueck-Import fuer tests/test_befehle.py)
@@ -28,7 +29,6 @@ from smartheat_gateway import config as gateway_config
 from smartheat_gateway import safety_warnings
 from smartheat_gateway.drivers import registry
 from smartheat_gateway.drivers.base import Driver, DriverError
-from smartheat_gateway.files import read_json, write_json
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.quota import QuotaExhausted
 from smartheat_gateway.zigbee import ZigbeeMirror
@@ -230,7 +230,7 @@ def inventory(ctx: Kontext, payload: dict) -> Outcome:
         if laufend is None and series["next_at"] <= now < series["started"] + hours * 3600:
             # Zeitpunkt zuerst in der Datei belegen: ein zweiter wartender Befehl derselben Reihe ruft ihn nicht ab.
             series["next_at"] = now + INVENTORY_EVERY_SECONDS
-            write_json(ctx.paths.inventur, series, private=True)
+            dateien.schreiben_json(ctx.paths.inventur, series, modus=dateien.PRIVAT)
             laufend = ctx.hintergrund.submit(driver.inventory_sample)
         if laufend is not None:
             if not laufend.done():
@@ -243,7 +243,7 @@ def inventory(ctx: Kontext, payload: dict) -> Outcome:
                 logger.warning("Inventur-Probe uebersprungen (%s)", type(error).__name__)
                 last_failure = (Failed(error.grund, error.text) if isinstance(error, DriverError)
                                 else Failed("kontingent_erschoepft", QUOTA_TEXT))
-            write_json(ctx.paths.inventur, series, private=True)
+            dateien.schreiben_json(ctx.paths.inventur, series, modus=dateien.PRIVAT)
         if ctx.clock() < ready_at:
             return None
         if not series["samples"]:
@@ -260,7 +260,7 @@ def _is_number(value) -> bool:
 def _series(ctx: Kontext, driver_id: str, hours: int) -> dict:
     """Reihe fortsetzen (Neustart, erneute Zustellung: nichts doppelt abgerufen) oder neu beginnen: anderer Treiber,
     andere Dauer, abgelaufenes Fenster oder Beginn in der Zukunft (Uhrsprung zurueck)."""
-    saved = read_json(ctx.paths.inventur)
+    saved = dateien.lesen_json(ctx.paths.inventur)
     now = ctx.wall()
     if (
         isinstance(saved, dict) and saved.get("driver_id") == driver_id and saved.get("hours") == hours
@@ -269,14 +269,14 @@ def _series(ctx: Kontext, driver_id: str, hours: int) -> dict:
     ):
         return saved
     series = {"driver_id": driver_id, "started": now, "hours": hours, "samples": [], "next_at": now}
-    write_json(ctx.paths.inventur, series, private=True)
+    dateien.schreiben_json(ctx.paths.inventur, series, modus=dateien.PRIVAT)
     return series
 
 
 def _adopt_saved(ctx: Kontext, series: dict) -> bool:
     """Neuere Proben derselben Reihe aus der Datei uebernehmen; fehlt sie oder gehoert sie zu einer anderen Reihe, ist
     die Einrichtung weg: False, der wartende Befehl legt sie nicht neu an und liefert keine alten Proben."""
-    saved = read_json(ctx.paths.inventur)
+    saved = dateien.lesen_json(ctx.paths.inventur)
     if not (isinstance(saved, dict) and isinstance(saved.get("samples"), list) and _is_number(saved.get("next_at"))
             and all(saved.get(key) == series[key] for key in ("driver_id", "hours", "started"))):
         return False
@@ -290,7 +290,7 @@ def diagnostics(ctx: Kontext, payload: dict) -> Outcome:
 
 
 def _restore_values(ctx: Kontext) -> dict:
-    backup = read_json(ctx.paths.backup)
+    backup = dateien.lesen_json(ctx.paths.backup)
     point = backup.get("restore_point") if isinstance(backup, dict) else None
     return dict(point) if isinstance(point, dict) else {}
 

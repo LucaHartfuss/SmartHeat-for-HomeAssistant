@@ -7,14 +7,15 @@ from types import SimpleNamespace
 
 import pytest
 from geraet_helpers import konfiguration_aus_optionen
-from test_runtime import OPTIONS, env  # noqa: F401 - env ist eine Fixture
+from test_runtime import OPTIONS, _quiet_backup, env  # noqa: F401 - env ist eine Fixture
 
 import heizungsbruecke.__main__ as main_module
 from heizungsbruecke import config
-from smartheat_device import documents as device_documents
+from smartheat_core import dateien
 from smartheat_device.host import Anzeige
 from smartheat_device.laufzeit import RuntimeChannel
 from smartheat_runtime import abo, app, dokument_config
+from smartheat_runtime import aufraeumen as aufraeumen_markierung
 from smartheat_runtime.runtime import Runtime
 
 DEVICE_ID = "shg-aaaaaaaaaaaaaaaa"
@@ -87,6 +88,8 @@ def _anzeige(zustand="nicht_uebernommen", *, eingerichtet=False):
 def geraet_env(env, tmp_path, monkeypatch):  # noqa: F811 - env ist die Fixture aus test_runtime
     """env plus Datenordner des Geraets; start() setzt abo.restart_process global um, monkeypatch stellt es zurueck."""
     monkeypatch.setattr(config, "DEVICE_DATA_DIR", tmp_path / "data")
+    # wo der Dokumentspeicher die Rastung schreibt (device/sicherheitssatz.json), liest sie die Laufzeit
+    monkeypatch.setattr(config, "RASTUNG_PATH", tmp_path / "data" / "device" / "sicherheitssatz.json")
     monkeypatch.setattr(config, "OPTIONS_PATH", tmp_path / "options.json")
     monkeypatch.setattr(abo, "restart_process", abo.restart_process)
     monkeypatch.setattr(main_module.status_holder, "host", None)
@@ -385,8 +388,8 @@ def test_cleanup_after_removal_deletes_the_plant_state_and_helpers(geraet_env):
 
 def test_cleanup_keeps_a_new_setup(geraet_env):
     _entfernt_vorbereiten()
-    device_documents.write_json(config.DEVICE_DATA_DIR / "device" / "konfiguration.json",
-                                {"version": 2, "inhalt": {"anlage": "neu"}, "dirty": False})
+    dateien.schreiben_json(config.DEVICE_DATA_DIR / "device" / "konfiguration.json",
+                           {"version": 2, "inhalt": {"anlage": "neu"}, "dirty": False}, modus=dateien.PRIVAT)
     ha = DeletingHa()
     main_module.aufraeumen(ha)
     assert ha.deleted == [] and config.BACKUP_PATH.exists() and config.DERIVED_SENSORS_PATH.exists()
@@ -439,6 +442,68 @@ def test_cleanup_logs_the_deletion_only_when_something_was_deleted(geraet_env, c
     with caplog.at_level(logging.INFO):
         main_module.aufraeumen(DeletingHa())
     assert "Anlagengebundener Zustand geloescht" in caplog.text
+
+
+ALTE = {"anlage": "alt", "hebelsatz": "vaillant_vrc720", "verteilsystem": "Heizkoerper"}
+
+
+def test_cleanup_waits_while_the_reset_is_pending(geraet_env):
+    """Spec Stufe 3 S3 Abschnitt 4: die Laufzeit setzt mit der Konfiguration der Markierung erst zurueck; bis dahin
+    bleiben Zustand, Hilfssensoren und Markierung."""
+    _entfernt_vorbereiten()
+    aufraeumen_markierung.markieren(config.AUFRAEUMEN_PATH, ALTE)
+    ha = DeletingHa()
+    main_module.aufraeumen(ha)
+    assert ha.deleted == [] and config.BACKUP_PATH.exists() and config.RUNTIME_DIR.exists()
+    assert config.DERIVED_SENSORS_PATH.exists() and config.AUFRAEUMEN_PATH.exists()
+
+
+def test_cleanup_after_the_reset_deletes_everything(geraet_env):
+    _entfernt_vorbereiten()
+    aufraeumen_markierung.markieren(config.AUFRAEUMEN_PATH, ALTE)
+    assert aufraeumen_markierung.zurueckgesetzt(config.AUFRAEUMEN_PATH, "alt")
+    ha = DeletingHa()
+    main_module.aufraeumen(ha)
+    assert sorted(ha.deleted) == [("sensor.smartheat_aussen", "alt"), ("sensor.smartheat_raum", "alt")]
+    assert _anlage_geloescht() and not config.AUFRAEUMEN_PATH.exists()
+
+
+def test_a_new_setup_before_the_reset_discards_the_marker_and_keeps_the_state(geraet_env):
+    """Review Focus 3: derselbe Anlagenzustand lebt weiter."""
+    _entfernt_vorbereiten()
+    aufraeumen_markierung.markieren(config.AUFRAEUMEN_PATH, ALTE)
+    dateien.schreiben_json(config.DEVICE_DATA_DIR / "device" / "konfiguration.json",
+                           {"version": 2, "inhalt": ALTE, "dirty": False}, modus=dateien.PRIVAT)
+    ha = DeletingHa()
+    main_module.aufraeumen(ha)
+    assert ha.deleted == [] and config.BACKUP_PATH.exists() and config.RUNTIME_DIR.exists()
+    assert not config.AUFRAEUMEN_PATH.exists()
+
+
+def test_an_empty_configuration_resets_then_restarts_and_the_next_start_cleans_up(geraet_env):
+    """Spec Stufe 3 S3 Abschnitt 4 im Ablauf von main: leer ohne sign_off bei laufendem Boost -> der Start setzt mit der
+    Konfiguration der Markierung zurueck, der Worker endet mit Neustart, erst der naechste Start loescht."""
+    konfiguration = konfiguration_aus_optionen(OPTIONS)
+    _quiet_backup(geraet_env, boost_active=True)
+    config.DERIVED_SENSORS_PATH.write_text(json.dumps(TRACKING))
+    aufraeumen_markierung.markieren(config.AUFRAEUMEN_PATH, konfiguration)
+    device = FakeDevice({**konfiguration, "anlage": None})
+    ha = DeletingHa()
+
+    main_module.aufraeumen(ha)
+    assert config.BACKUP_PATH.exists() and ha.deleted == []
+    geraet, status = _verdrahtet(geraet_env, device)
+    result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    assert isinstance(result, app.IdleBridge) and result.reason == "abgemeldet"
+    assert geraet_env.ha.writes == [("number.curve_current", 0.9), ("number.shift_current", 22.0)]
+    with pytest.raises(main_module.Neustart):
+        result.worker.run_pending()
+
+    main_module.aufraeumen(ha)
+    assert _anlage_geloescht() and not config.AUFRAEUMEN_PATH.exists() and len(ha.deleted) == 2
+    geraet, status = _verdrahtet(geraet_env, device)
+    result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    assert isinstance(result, app.IdleBridge) and result.reason == app.IDLE_NOT_CONFIGURED
 
 
 def test_no_marker_no_cleanup(geraet_env):

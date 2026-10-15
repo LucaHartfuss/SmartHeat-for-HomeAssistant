@@ -33,6 +33,9 @@ class BootInfo:
     local_check_interval: float
     backup_path: Path
     failsafe_path: Path
+    # Spec Stufe 3 S3 Abschnitt 4: Aufraeum-Markierung des Hosts; nach gelungenem Zuruecksetzen erledigt die Laufzeit
+    # sie und startet neu (None: der Host hat keine).
+    aufraeumen_path: Path | None = None
 
 
 @dataclass(frozen=True)

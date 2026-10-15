@@ -20,7 +20,7 @@ from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.enforce import MAX_WRITES_PER_DAY, RETRY_SECONDS
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_device.laufzeit import RuntimeChannel
-from smartheat_runtime import abo, app, backup_store, datentraeger, entitlement, ticks
+from smartheat_runtime import abo, app, aufraeumen, backup_store, datentraeger, entitlement, ticks
 from smartheat_runtime.backup_store import load_backup, save_backup
 from smartheat_runtime.delivery import DataFault, DeliveryState
 from smartheat_runtime.runtime import Runtime
@@ -130,7 +130,8 @@ class FakeTriggerClient:
 @pytest.fixture
 def env(tmp_path, monkeypatch, clock):
     paths = {}
-    for name in ("BACKUP_PATH", "FAILSAFE_PATH", "ENTITLEMENT_PATH", "DERIVED_SENSORS_PATH", "AUFRAEUMEN_PATH"):
+    for name in ("BACKUP_PATH", "FAILSAFE_PATH", "ENTITLEMENT_PATH", "DERIVED_SENSORS_PATH", "AUFRAEUMEN_PATH",
+                 "RASTUNG_PATH"):
         paths[name] = tmp_path / f"{name.lower()}.json"
         monkeypatch.setattr(f"heizungsbruecke.config.{name}", paths[name])
     runtime_dir = tmp_path / "runtime"
@@ -309,6 +310,18 @@ def _answer(env, bridge, seq, **kwargs):
 
 
 # --- Boot ---
+
+def test_start_reports_originals_to_the_host_only_on_change(env):
+    _quiet_backup(env, originals={"heat_limit": 16.0})
+    bridge = _start(env)
+    assert env.geraet.gemeldet[-1] == {"heat_limit": 16.0}
+    anzahl = len(env.geraet.gemeldet)
+    _advance(env, bridge, 60)  # weiteres Ereignis ohne Aenderung der Ursprungswerte
+    assert len(env.geraet.gemeldet) == anzahl
+    bridge.store.update(aux_originals={"mode_select": "hz_operationmode_automatic"})
+    _advance(env, bridge, 60)  # ein Ereignis danach meldet die Aenderung (der Worker kennt nur einen Rueckruf)
+    assert env.geraet.gemeldet[-1] == {"heat_limit": 16.0, "mode_select": "hz_operationmode_automatic"}
+
 
 def test_start_runs_priming_check_before_mqtt_loop_start(env, monkeypatch):
     _quiet_backup(env)
@@ -1549,6 +1562,18 @@ def test_inactive_after_grace_restores_leftover_boost_once(env, monkeypatch):
     assert _backup(env)["emergency_boost_active"] is False
 
 
+def test_the_end_of_the_subscription_restores_the_server_original(env, monkeypatch):
+    """Spec Stufe 3 S3 5.2: auch die normale Laufzeit-Pipeline (Abschluss-Start, Fristende) kennt die Ursprungswerte."""
+    _quiet_backup(env, emergency_boost_active=True, restore_point={"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 18.0})
+    env.abo["status"] = entitlement.INACTIVE
+    entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
+    monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: True)
+
+    assert _start_bridge(env, ursprungswerte={"heat_limit": 16.0}).reason == "abo_beendet"
+
+    assert env.ha.states["number.heat_limit"] == 16.0
+
+
 def _start_just_before_grace_end(env, monkeypatch):
     _quiet_backup(env, emergency_boost_active=True)
     env.ha.states.update({"number.curve_current": 1.5, "number.shift_current": 25.0})
@@ -2057,6 +2082,163 @@ def test_sign_off_with_invalid_configuration_without_boost_stays_silent(env):
     _start_bridge(env, abgemeldet=True, verteilsystem="Unbekannt")
 
     assert env.ha.pushes == []
+
+
+# --- Ursprungswerte des Servers (Spec Stufe 3 S3 5.2, 5b-W-4) ---
+
+
+def test_sign_off_restores_the_heat_limit_to_the_server_original(env):
+    """Der Ursprungswert vom Server gilt vor dem lokal gemerkten (Ersetzen des Geraets)."""
+    _quiet_backup(env, boost_active=True, originals={"heat_limit": 17.0},
+                  restore_point={"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 18.0})
+
+    bridge = _start_bridge(env, abgemeldet=True, ursprungswerte={"heat_limit": 16.0})
+
+    assert bridge.reason == "abgemeldet"
+    assert ("number.heat_limit", 16.0) in env.ha.writes
+
+
+def test_a_restart_after_the_sign_off_does_not_write_the_server_originals_again(env):
+    """Schluss-Review: die gespiegelten Ursprungswerte bleiben in der Konfiguration; der naechste Start des abgemeldeten
+    Geraets schreibt nichts mehr, auch wenn der Kunde die Heizgrenze inzwischen verstellt hat."""
+    _quiet_backup(env, boost_active=True, restore_point={"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 18.0})
+    _start_bridge(env, abgemeldet=True, ursprungswerte={"heat_limit": 16.0})
+    assert ("number.heat_limit", 16.0) in env.ha.writes
+    env.ha.states["number.heat_limit"] = 20.0
+    writes = list(env.ha.writes)
+
+    bridge = _start_bridge(env, abgemeldet=True, ursprungswerte={"heat_limit": 16.0})
+
+    assert bridge.reason == "abgemeldet" and _last_event(env)["grund"] is None
+    assert env.ha.writes == writes
+
+
+def test_sign_off_without_server_values_uses_the_local_original(env):
+    _quiet_backup(env, boost_active=True, originals={"heat_limit": 17.0},
+                  restore_point={"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 18.0})
+
+    _start_bridge(env, abgemeldet=True)
+
+    assert ("number.heat_limit", 17.0) in env.ha.writes
+
+
+def test_reset_after_an_empty_configuration_uses_the_server_originals_of_the_marker(env, monkeypatch):
+    """Die Markierung haelt die alte Konfiguration samt ursprungswerte; die leere neue hat keine."""
+    _quiet_backup(env, boost_active=True, restore_point={"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 18.0})
+    monkeypatch.setattr(abo, "restart_process", lambda: None)
+
+    _start_bridge(env, leer_mit_markierung=True, ursprungswerte={"heat_limit": 15.0})
+
+    assert ("number.heat_limit", 15.0) in env.ha.writes
+
+
+def test_a_huge_server_integer_does_not_break_the_sign_off_restore(env):
+    """Bedrohungsmodell: 10**400 in ursprungswerte darf das Zuruecksetzen nicht scheitern lassen; es gilt der lokale Wert."""
+    _quiet_backup(env, boost_active=True, originals={"heat_limit": 17.0},
+                  restore_point={"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 18.0})
+
+    bridge = _start_bridge(env, abgemeldet=True, ursprungswerte={"heat_limit": 10**400})
+
+    assert bridge.reason == "abgemeldet" and _last_event(env)["grund"] is None
+    assert ("number.heat_limit", 17.0) in env.ha.writes
+
+
+def test_the_server_originals_are_clamped_to_the_local_limits_at_sign_off(env):
+    _quiet_backup(env, boost_active=True, restore_point={"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 18.0})
+
+    _start_bridge(env, abgemeldet=True, ursprungswerte={"heat_limit": 99.0})
+
+    assert ("number.heat_limit", 23.0) in env.ha.writes  # Vaillant x Heizkoerper: Heizgrenze bis 23
+
+
+# --- Leer heisst abmelden (Spec Stufe 3 S3 Abschnitt 4, A5-23) ---
+
+
+def test_empty_configuration_without_sign_off_restores_then_restarts_once(env, monkeypatch):
+    """A5-23: leer ohne sign_off bei laufendem Comfort-Boost: zuruecksetzen mit der Konfiguration aus der Markierung,
+    danach Markierung erledigt und genau ein Neustart (der Start davor loescht den Zustand)."""
+    _quiet_backup(env, boost_active=True)
+    neustarts = []
+    monkeypatch.setattr(abo, "restart_process", lambda: neustarts.append(1))
+
+    bridge = _start_bridge(env, leer_mit_markierung=True)
+
+    assert isinstance(bridge, app.IdleBridge) and bridge.reason == "abgemeldet"
+    assert env.ha.writes == [("number.curve_current", 0.9), ("number.shift_current", 22.0)]
+    assert _last_event(env)["status"] == "abgemeldet" and _last_event(env)["grund"] is None
+    bridge.worker.run_pending()
+    assert neustarts == [1]
+    pfad = env.paths["AUFRAEUMEN_PATH"]
+    assert aufraeumen.lesen(pfad).zurueckgesetzt
+    assert aufraeumen.entscheiden(pfad, {"anlage": None}) == aufraeumen.LOESCHEN
+
+
+def test_reset_fails_keeps_state_across_restart(env, monkeypatch):
+    """Review Focus 2: scheitert das Zuruecksetzen, bleibt die Markierung offen, kein Neustart, kritische Meldung; der
+    naechste Start (Neustart des Add-ons) versucht es mit demselben Zustand erneut."""
+    _quiet_backup(env, boost_active=True)
+    env.ha.write_error = RuntimeError("Cloud weg")
+    neustarts = []
+    monkeypatch.setattr(abo, "restart_process", lambda: neustarts.append(1))
+
+    bridge = _start_bridge(env, leer_mit_markierung=True)
+    bridge.worker.run_pending()
+
+    pfad = env.paths["AUFRAEUMEN_PATH"]
+    assert neustarts == [] and aufraeumen.entscheiden(pfad, {"anlage": None}) == aufraeumen.ZURUECKSETZEN
+    assert _backup(env)["boost_active"] is True
+    assert _last_event(env)["status"] == "abgemeldet"
+    assert _last_event(env)["grund"] == app.SIGN_OFF_RESTORE_FAILED.format(seconds=300)
+    message = app.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Kurve 0,9, Parallelverschiebung 22")
+    assert ("smartheat_wiederherstellung", message) in env.ha.persistent
+
+    env.ha.write_error = None
+    bridge = _start_bridge(env, leer_mit_markierung=True)  # Neustart: dieselbe offene Markierung
+    bridge.worker.run_pending()
+    assert env.ha.writes == [("number.curve_current", 0.9), ("number.shift_current", 22.0)] and neustarts == [1]
+
+
+def test_retry_success_after_empty_configuration_also_restarts(env, monkeypatch):
+    _quiet_backup(env, boost_active=True)
+    env.ha.write_error = RuntimeError("Cloud weg")
+    neustarts = []
+    monkeypatch.setattr(abo, "restart_process", lambda: neustarts.append(1))
+    bridge = _start_bridge(env, leer_mit_markierung=True)
+
+    env.ha.write_error = None
+    _advance(env, bridge, 300)
+    bridge.worker.run_pending()
+
+    assert neustarts == [1] and aufraeumen.lesen(env.paths["AUFRAEUMEN_PATH"]).zurueckgesetzt
+
+
+def test_an_unwritable_marker_after_the_reset_keeps_the_state_and_does_not_restart(env, monkeypatch, caplog):
+    """Laesst sich die Markierung nach dem Zuruecksetzen nicht schreiben (Datentraeger), bleibt die Laufzeit im
+    Ruhezustand abgemeldet ohne Neustart: kein schneller Neustart-Kreis, der Zustand bleibt, der naechste Start versucht
+    es erneut."""
+    _quiet_backup(env, boost_active=True)
+    aufraeumen.markieren(env.paths["AUFRAEUMEN_PATH"], geraet_helpers.konfiguration_aus_optionen(OPTIONS))
+    neustarts = []
+    monkeypatch.setattr(abo, "restart_process", lambda: neustarts.append(1))
+    monkeypatch.setattr("smartheat_runtime.aufraeumen.dateien.schreiben_json", _raise_oserror)
+
+    with caplog.at_level(logging.ERROR):
+        bridge = _start_bridge(env, leer_mit_markierung=True)
+        bridge.worker.run_pending()
+
+    assert bridge.reason == "abgemeldet" and neustarts == []
+    assert env.ha.writes == [("number.curve_current", 0.9), ("number.shift_current", 22.0)]
+    assert aufraeumen.entscheiden(env.paths["AUFRAEUMEN_PATH"], {"anlage": None}) == aufraeumen.ZURUECKSETZEN
+    assert "OSError" in caplog.text
+
+
+def test_normal_sign_off_without_marker_does_not_restart(env, monkeypatch):
+    _quiet_backup(env, boost_active=True)
+    neustarts = []
+    monkeypatch.setattr(abo, "restart_process", lambda: neustarts.append(1))
+    bridge = _start_bridge(env, abgemeldet=True)
+    bridge.worker.run_pending()
+    assert neustarts == []
 
 
 # --- Durchsetzung: zurueckgesetzter Eingriff reist als KPI mit (TP11, Spec 5.3) ---

@@ -1,17 +1,13 @@
 import json
-import os
 from pathlib import Path
+
+from smartheat_core import dateien
 
 
 def save_backup(path: Path, values: dict) -> None:
-    """Atomar: temporaere Datei schreiben und auf den Datentraeger bringen (fsync), dann umbenennen.
-    Ohne fsync kann nach einem Stromausfall eine leere Datei unter dem alten Namen stehen (AU-035)."""
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp_path, "w") as handle:
-        handle.write(json.dumps(values))
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp_path, path)
+    """Atomar und auf dem Datentraeger (fsync, AU-035) ueber den einen Schreibweg; das Format bleibt json.dumps ohne
+    sort_keys (der Golden Master haengt an der Reihenfolge)."""
+    dateien.schreiben(path, json.dumps(values).encode(), modus=dateien.PRIVAT)
 
 
 def load_backup(path: Path) -> dict:

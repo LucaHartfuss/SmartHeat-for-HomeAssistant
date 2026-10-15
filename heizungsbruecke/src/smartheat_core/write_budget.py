@@ -115,9 +115,19 @@ def may_attempt(store, key: str, rule: Rule, now: float) -> bool:
     return allowed(get(store, key), rule, now, today())
 
 
-def record_attempt(store, key: str, now: float) -> None:
-    put(store, key, counted(get(store, key), now, today()))
+def before_attempt(store, key: str, rule: Rule, now: float, *, day: str | None = None) -> None:
+    """Vor dem Aufruf: bei every_attempt zaehlt jeder Versuch, auch ein spaeter gescheiterter (Kontingent der Cloud)."""
+    if rule.every_attempt:
+        put(store, key, counted(get(store, key), now, day or today()))
 
 
-def record_success(store, key: str) -> None:
-    put(store, key, None)
+def after_success(store, key: str, rule: Rule) -> None:
+    """Ohne every_attempt setzt ein Erfolg zurueck; mit every_attempt bleibt die Zaehlung des Tages."""
+    if not rule.every_attempt:
+        put(store, key, None)
+
+
+def after_failure(store, key: str, rule: Rule, now: float, *, day: str | None = None) -> None:
+    """Ohne every_attempt zaehlt nur der Fehlschlag."""
+    if not rule.every_attempt:
+        put(store, key, counted(get(store, key), now, day or today()))

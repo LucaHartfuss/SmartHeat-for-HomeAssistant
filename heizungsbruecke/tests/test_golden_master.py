@@ -4,7 +4,8 @@ und in Task 1 des Plans Audit 4 P-C2 (neues backup.json-Feld boost_since)
 und in Task 3 des Plans Audit 4 P-C2 (neue backup.json-Felder setup_id, plant_id)
 und in Task 9 des Plans Audit 4 P-B (Telemetrie ohne waerme_fehlt, Status ohne Hinweis waerme_fehlt, Version 0.36.0)
 und in Task 10 des Plans 5c D (Geraete-Pfad, 1.0.0; der Master von 0.36 bleibt als addon_scenario_0_36.json, der
-Unterschied ist auf golden_scenario.ERLAUBT begrenzt)."""
+Unterschied ist auf golden_scenario.ERLAUBT begrenzt)
+und in Task 10 des Plans Stufe 3 S3 (Version normalisiert, A5-65)."""
 import json
 import os
 import time
@@ -12,7 +13,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
-from golden_scenario import normalisieren, render, run_scenario
+from golden_scenario import normalisieren, render_ohne_version, run_scenario
 
 
 @pytest.fixture(autouse=True)
@@ -27,7 +28,7 @@ GOLDEN_0_36 = GOLDEN.with_name("addon_scenario_0_36.json")
 
 
 def test_scenario_matches_the_golden_master_byte_for_byte(tmp_path, monkeypatch):
-    text = render(run_scenario(tmp_path, monkeypatch))
+    text = render_ohne_version(run_scenario(tmp_path, monkeypatch))
     if os.environ.get("GOLDEN_UPDATE") == "1":
         GOLDEN.parent.mkdir(exist_ok=True)
         GOLDEN.write_text(text, encoding="utf-8")
@@ -38,8 +39,8 @@ def test_scenario_matches_the_golden_master_byte_for_byte(tmp_path, monkeypatch)
 
 
 def test_scenario_is_deterministic_and_never_reads_the_real_clock(tmp_path, monkeypatch):
-    first = render(run_scenario(tmp_path / "a", monkeypatch))
-    second = render(run_scenario(tmp_path / "b", monkeypatch))
+    first = render_ohne_version(run_scenario(tmp_path / "a", monkeypatch))
+    second = render_ohne_version(run_scenario(tmp_path / "b", monkeypatch))
     assert first == second
     assert date.today().isoformat() not in first  # echte Systemzeit darf nirgends durchschlagen
 
@@ -48,7 +49,7 @@ def test_scenario_is_deterministic_and_never_reads_the_real_clock(tmp_path, monk
 def test_scenario_does_not_depend_on_the_system_timezone(tmp_path, monkeypatch, outer_zone):
     monkeypatch.setenv("TZ", outer_zone)
     time.tzset()
-    assert render(run_scenario(tmp_path, monkeypatch)) == GOLDEN.read_text(encoding="utf-8")
+    assert render_ohne_version(run_scenario(tmp_path, monkeypatch)) == GOLDEN.read_text(encoding="utf-8")
 
 
 def test_only_the_allowed_differences_to_0_36(tmp_path, monkeypatch):

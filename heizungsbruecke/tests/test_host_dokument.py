@@ -7,7 +7,7 @@ from test_runtime import OPTIONS, env  # noqa: F401 - env ist eine Fixture
 
 from heizungsbruecke import config, dokument
 from heizungsbruecke.host import HaHost
-from smartheat_runtime import app
+from smartheat_runtime import app, aufraeumen
 from smartheat_runtime.app import StartFailure
 from smartheat_runtime.ports import SourceUnavailable
 from smartheat_runtime.runtime import Runtime
@@ -44,6 +44,25 @@ def test_sign_off_marker_starts_signed_off(env, tmp_path):
     config.ABGEMELDET_PATH.write_text(json.dumps({"anlage": konfiguration["anlage"]}))
     boot = HaHost(FakeGeraet(konfiguration), env.ha, clock=env.clock).boot_info()
     assert boot.signed_off and not boot.configured
+
+
+def test_empty_configuration_with_pending_reset_boots_signed_off_with_the_old_one(env):
+    """Spec Stufe 3 S3 Abschnitt 4: die Laufzeit setzt mit der Konfiguration der Aufraeum-Markierung zurueck."""
+    konfiguration = konfiguration_aus_optionen(OPTIONS)
+    aufraeumen.markieren(config.AUFRAEUMEN_PATH, konfiguration)
+    host = HaHost(FakeGeraet({**konfiguration, "anlage": None}), env.ha, clock=env.clock)
+    boot = host.boot_info()
+    assert boot.signed_off and not boot.configured and boot.tenant_id == konfiguration["anlage"]
+    assert boot.aufraeumen_path == config.AUFRAEUMEN_PATH
+    assert host.sign_off_parts() is not None
+
+
+def test_empty_configuration_after_the_reset_boots_not_configured(env):
+    konfiguration = konfiguration_aus_optionen(OPTIONS)
+    aufraeumen.markieren(config.AUFRAEUMEN_PATH, konfiguration)
+    aufraeumen.zurueckgesetzt(config.AUFRAEUMEN_PATH, konfiguration["anlage"])
+    boot = HaHost(FakeGeraet({**konfiguration, "anlage": None}), env.ha, clock=env.clock).boot_info()
+    assert not boot.signed_off and not boot.configured
 
 
 def test_runtime_starts_on_the_document(env):
@@ -220,3 +239,61 @@ def test_a_climate_target_without_attribute_is_a_start_failure(env):
     konfiguration = konfiguration_aus_optionen({**OPTIONS, "entity_room_target": "climate.wz"})
     with pytest.raises(StartFailure, match="climate.wz::temperature"):
         HaHost(FakeGeraet(konfiguration), env.ha, clock=env.clock).load()
+
+
+def _rastung_schreiben(verteilsystem):
+    from smartheat_core import rastung
+    rastung.schreiben(config.RASTUNG_PATH, rastung.Rastung("vaillant_vrc720", verteilsystem),
+                      "2026-10-14T00:00:00+00:00")
+
+
+def test_rastung_path_is_the_device_lock():
+    from smartheat_core import rastung
+    from smartheat_device.device import DEVICE_DIR
+    assert config.RASTUNG_PATH == config.DEVICE_DATA_DIR / DEVICE_DIR / rastung.DATEI
+
+
+def test_load_refuses_a_configuration_that_does_not_fit_the_lock(env):
+    _rastung_schreiben("Fussbodenheizung")
+    host = HaHost(FakeGeraet(konfiguration_aus_optionen(OPTIONS)), env.ha, clock=env.clock)
+    with pytest.raises(StartFailure, match="festgelegt"):
+        host.load()
+
+
+def test_load_accepts_a_configuration_that_fits_the_lock(env):
+    _rastung_schreiben(OPTIONS["verteilsystem"])
+    HaHost(FakeGeraet(konfiguration_aus_optionen(OPTIONS)), env.ha, clock=env.clock).load()
+
+
+def test_sign_off_parts_are_none_with_a_broken_lock(env):
+    config.RASTUNG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    config.RASTUNG_PATH.write_text("{")
+    host = HaHost(FakeGeraet(konfiguration_aus_optionen(OPTIONS)), env.ha, clock=env.clock)
+    assert host.sign_off_parts() is None
+
+
+def test_ursprungswerte_server_reads_the_current_configuration_fresh(env):
+    konfiguration = konfiguration_aus_optionen(OPTIONS)
+    geraet = FakeGeraet({**konfiguration, "ursprungswerte": {"heat_limit": 16.0}})
+    host = HaHost(geraet, env.ha, clock=env.clock)
+    assert host.ursprungswerte_server() == {"heat_limit": 16.0}
+    geraet._konfiguration = {**konfiguration, "ursprungswerte": {"heat_limit": 15.0}}  # neue Konfiguration trifft ein
+    assert host.ursprungswerte_server() == {"heat_limit": 15.0}
+
+
+def test_ursprungswerte_server_falls_back_to_the_marker_while_the_reset_is_pending(env):
+    konfiguration = {**konfiguration_aus_optionen(OPTIONS), "ursprungswerte": {"heat_limit": 16.0}}
+    aufraeumen.markieren(config.AUFRAEUMEN_PATH, konfiguration)
+    host = HaHost(FakeGeraet({**konfiguration, "anlage": None, "ursprungswerte": {}}), env.ha, clock=env.clock)
+    assert host.ursprungswerte_server() == {"heat_limit": 16.0}
+
+
+def test_ursprungswerte_server_ignores_a_new_setup_while_the_reset_is_pending(env):
+    """Minor 3: eine neue Einrichtung (andere Anlage) trifft ein, bevor das Zuruecksetzen gelang: die Werte der alten
+    Anlage aus der Markierung gelten weiter."""
+    alt = {**konfiguration_aus_optionen(OPTIONS), "ursprungswerte": {"heat_limit": 16.0}}
+    aufraeumen.markieren(config.AUFRAEUMEN_PATH, alt)
+    geraet = FakeGeraet({**alt, "anlage": None, "ursprungswerte": {}})
+    host = HaHost(geraet, env.ha, clock=env.clock)
+    geraet._konfiguration = {**alt, "anlage": "andere_anlage", "ursprungswerte": {"heat_limit": 12.0}}
+    assert host.ursprungswerte_server() == {"heat_limit": 16.0}

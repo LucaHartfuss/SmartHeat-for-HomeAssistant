@@ -1,12 +1,13 @@
 """Status-Kanal des Add-ons (Spec TP7 1.1, 3.1)."""
 import logging
+import re
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 from fakes import HaEventSink
 
-from heizungsbruecke.ha_sinks import EVENT_TYPE
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core.levers import LEVER_SETS
 from smartheat_runtime import status
@@ -21,21 +22,10 @@ SINCE = datetime(2026, 10, 1, 8, 0, tzinfo=UTC)
 OVERRIDE = {"levers": {"curve": 1.3, "room_setpoint": 24.5, "heat_limit": 16.0}, "erkannt": "2026-10-01T08:00:00+02:00"}
 
 
-def test_contract_values_match_the_integration():
-    # Gleiche Werte wie const.py der Integration (Contract-Check 14).
-    assert (EVENT_TYPE, status.EVENT_SCHEMA, status.HEARTBEAT_SECONDS) == ("smartheat_status", 2, 300)
-    assert status.STATUS_VALUES == (
-        "startet", "regelt", "konfigurationsfehler", "zugang_abgelehnt", "abo_beendet", "abo_inaktiv",
-        "notbetrieb", "datenfehler", "abgemeldet",
-    )
-    assert status.BOOST_VALUES == ("keiner", "komfort", "notfall")
-    assert status.ABO_VALUES == ("aktiv", "inaktiv", "beendet", "unbekannt")
-    assert status.DATENFEHLER_ARTEN == ("lokal", "server", "anlage")
-    assert status.HINT_FIELDS == ("raumfuehler_ausgefallen", "batterie_niedrig", "manueller_eingriff")
-    assert status.EVENT_FIELDS == (
-        "schema", "tenant_id", "setup_id", "addon_version", "status", "grund", "notbetrieb", "datenfehler",
-        "boost", "letzte_serverantwort", "hebelsatz", "hebel", "gelernt", "abo", "abo_frist_ende", "hinweise",
-    )
+def test_runtime_schema_and_heartbeat():
+    # Event-Name, Felder, Hinweis-Felder und Wertemengen (status, boost, abo, datenfehler.art) prueft Contract-Check 14
+    # gegen die Integration; Schema der Laufzeit und Lebenszeichen-Takt stehen in keinem Contract-Check.
+    assert (status.EVENT_SCHEMA, status.HEARTBEAT_SECONDS) == (2, 300)
 
 
 @pytest.mark.parametrize("flags,state,expected", [
@@ -121,8 +111,10 @@ def test_manual_hint_names_levers(make_store):
                     "erkannt": "2026-10-03T11:00:00+02:00"}
 
 
-def test_version():
-    assert ADDON_VERSION == "1.0.0"
+def test_version_matches_the_addon_manifest():
+    """A5-65: nicht gegen ein Literal, sondern gegen die Version, die der Supervisor ausliefert."""
+    manifest = (Path(__file__).resolve().parents[1] / "config.yaml").read_text()
+    assert re.search(r'^version: "([^"]+)"$', manifest, re.M).group(1) == ADDON_VERSION
 
 
 @pytest.mark.parametrize("fault,expected", [

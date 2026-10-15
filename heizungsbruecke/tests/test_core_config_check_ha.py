@@ -2,6 +2,7 @@
 import pytest
 
 from smartheat_core import config_check as cc
+from smartheat_core.rastung import Rastung
 from smartheat_device import wire
 from smartheat_runtime import options
 
@@ -140,5 +141,6 @@ def test_an_unknown_host_is_rejected():
 
 
 def test_lever_set_lock_applies_to_home_assistant_too():
-    ablehnung = cc.pruefen(_ha(hebelsatz="viessmann_vicare"), _ha(), host=cc.HOST_HA)
+    ablehnung = cc.pruefen(_ha(hebelsatz="viessmann_vicare"), Rastung(_ha()["hebelsatz"], _ha()["verteilsystem"]),
+                            host=cc.HOST_HA)
     assert ablehnung.grund == cc.HEBELSATZ_EINGERASTET

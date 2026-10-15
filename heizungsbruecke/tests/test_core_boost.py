@@ -1,4 +1,9 @@
-from smartheat_core.boost import decide_boost
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from smartheat_core import boost
+from smartheat_core.boost import COMFORT_BOOST_MAX_SECONDS, comfort_boost_expired, decide_boost
 
 
 def test_decide_boost_inactive_on_first_ever_tick_no_previous_target():
@@ -68,3 +73,44 @@ def test_decide_boost_stays_active_across_a_second_target_raise():
         boost_was_active=True, arrival_threshold_k=0.5,
     )
     assert decision is True
+
+
+@pytest.mark.parametrize(("vorher", "nachher", "boost"), [
+    (20.5, 21.0, True),     # ein Thermostat-Schritt 0,5 K
+    (20.5, 20.6, True),     # 0,1-K-Thermostat
+    (20.5, 20.509, False),  # knapp unter der Schwelle 0,01 K
+    (20.5, 20.5, False),
+    (20.5, 20.0, False),    # Senkung
+])
+def test_kleinste_reale_erhoehung_startet_den_boost(vorher, nachher, boost):
+    """A5-07."""
+    assert decide_boost(room_actual=20.0, room_target=nachher, previous_room_target=vorher,
+                        boost_was_active=False, arrival_threshold_k=0.5) is boost
+
+
+# --- Mutationsprobe Stufe 3 S3 (Task 11) ------------------------------------------------------------------------
+
+def test_a_rise_of_exactly_the_epsilon_does_not_start_the_boost():
+    """Mutationsprobe (Mutant 8): die Schwelle gilt strikt (>), eine Erhoehung genau um den Epsilon-Wert startet nichts."""
+    vorher = 20.0
+    nachher = vorher + boost._TARGET_RISE_EPSILON_K
+    assert decide_boost(room_actual=19.0, room_target=nachher, previous_room_target=vorher,
+                        boost_was_active=False, arrival_threshold_k=0.5) is False
+
+
+_BEGINN = datetime(2026, 10, 8, 6, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(("dauer", "abgelaufen"), [
+    (timedelta(0), False),
+    (timedelta(seconds=COMFORT_BOOST_MAX_SECONDS - 1), False),
+    (timedelta(seconds=COMFORT_BOOST_MAX_SECONDS), True),  # genau 4 h: abgelaufen (>=)
+    (timedelta(seconds=COMFORT_BOOST_MAX_SECONDS + 1), True),
+])
+def test_comfort_boost_expires_exactly_at_the_maximum_duration(dauer, abgelaufen):
+    """Mutationsprobe (Mutanten 14, 17, 18): Vorzeichen, Grenze (>=) und Rueckgabe der Hoechstdauer."""
+    assert comfort_boost_expired(_BEGINN, _BEGINN + dauer) is abgelaufen
+
+
+def test_an_unknown_start_never_expires():
+    assert comfort_boost_expired(None, _BEGINN) is False

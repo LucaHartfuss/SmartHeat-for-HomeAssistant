@@ -22,7 +22,7 @@ from smartheat_gateway.texts import SHG_TEXTS
 from smartheat_gateway.triggers import EV_TARGET_INPUT, BusTriggerSource
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_gateway.zigbee import CAP_BATTERY, CAP_BATTERY_LOW, ZigbeeMirror
-from smartheat_runtime import dokument_config, options
+from smartheat_runtime import aufraeumen, dokument_config, options
 from smartheat_runtime.app import Loaded, RestoreParts, StartFailure
 from smartheat_runtime.options import ConfigError
 from smartheat_runtime.ports import NotifySink, SignalSource, StatusSink, TriggerSource
@@ -69,7 +69,11 @@ class GatewayHost:
         self._geraet = geraet
         self._devices_wait = devices_wait_seconds
         self._driver_threads = driver_threads
-        self.konfiguration: dict = geraet.konfiguration() or {}
+        # Spec Stufe 3 S3 Abschnitt 4: steht nach einer leeren Konfiguration das Zuruecksetzen aus, laeuft die Laufzeit
+        # mit der alten Konfiguration aus der Aufraeum-Markierung im Modus abgemeldet (Treiber-Anmeldung noch da).
+        self.konfiguration: dict
+        self.konfiguration, self._leer_abmelden = aufraeumen.laufzeit_konfiguration(
+            geraet.konfiguration(), paths.aufraeumen)
         self.mirror = mirror
         self._signals = GatewaySignalSource(bus, mirror)
         self.signals: SignalSource = self._signals
@@ -85,9 +89,10 @@ class GatewayHost:
         self._angleichen = False
 
     def boot_info(self) -> BootInfo:
+        abgemeldet = self._leer_abmelden or gateway_config.abgemeldet(self._paths, self.konfiguration)
         boot = dokument_config.boot_info(
-            self.konfiguration, abgemeldet=gateway_config.abgemeldet(self._paths, self.konfiguration),
-            client_version=GATEWAY_VERSION, backup_path=self._paths.backup, failsafe_path=self._paths.failsafe)
+            self.konfiguration, abgemeldet=abgemeldet, client_version=GATEWAY_VERSION, backup_path=self._paths.backup,
+            failsafe_path=self._paths.failsafe, aufraeumen_path=self._paths.aufraeumen)
         if not boot.configured and not boot.signed_off:
             logger.info(NOT_CONFIGURED_HINT)
         return boot
@@ -97,9 +102,21 @@ class GatewayHost:
             logger.info("Lokaler Bus noch nicht erreichbar, warte ...")
         self._paths.runtime_dir.mkdir(parents=True, exist_ok=True)
 
+    def ursprungswerte_melden(self, werte: dict) -> None:
+        self._geraet.ursprungswerte_merken(werte)
+
+    def ursprungswerte_server(self) -> dict:
+        """Steht das Zuruecksetzen nach einer leeren Konfiguration aus, gelten die Werte der Markierung -- auch wenn
+        inzwischen eine neue Einrichtung (womoeglich einer anderen Anlage) eingetroffen ist; sonst die aktuelle."""
+        if self._leer_abmelden:
+            return dokument_config.ursprungswerte(self.konfiguration)
+        aktuell = self._geraet.konfiguration()
+        return dokument_config.ursprungswerte(aktuell if dokument_config.eingerichtet(aktuell) else self.konfiguration)
+
     def sign_off_parts(self) -> RestoreParts | None:
         hebelsatz = self.konfiguration.get("hebelsatz")
         try:
+            dokument_config.rastung_pruefen(self.konfiguration, self._paths.rastung)
             if not isinstance(hebelsatz, str):
                 raise ConfigError("Konfiguration ohne Hebelsatz")
             safety = resolve_local_safety(hebelsatz, self.konfiguration.get("verteilsystem"))

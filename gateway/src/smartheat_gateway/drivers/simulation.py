@@ -8,9 +8,9 @@ import threading
 import time
 from collections.abc import Mapping
 
+from smartheat_core import dateien
 from smartheat_core.binding import BINDINGS, with_poll_interval
 from smartheat_gateway.drivers.base import CACHE_MAX_POLLS, KIND_LOCAL, LEVER_ROLES, DriverError
-from smartheat_gateway.files import read_json, write_json
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.quota import QuotaExhausted
 
@@ -67,7 +67,7 @@ class SimulationDriver:
     # --- Anlage ---
 
     def _plant(self) -> dict:
-        plant = read_json(self._paths.sim_dir / "plant.json")
+        plant = dateien.lesen_json(self._paths.sim_dir / "plant.json")
         if isinstance(plant, dict):
             return plant
         levers = {lever: START_LEVERS[lever] for lever in self._levers()}
@@ -75,15 +75,15 @@ class SimulationDriver:
             "hebel": levers, "vorher": {}, "geschrieben_um": {}, "hilfswerte": dict(START_AUX), "vorbereitet": False,
         }
         if self._writer:
-            write_json(self._paths.sim_dir / "plant.json", plant)
+            dateien.schreiben_json(self._paths.sim_dir / "plant.json", plant, modus=dateien.LESBAR)
         return plant
 
     def _save(self, plant: dict) -> None:
         assert self._writer, "nur die Laufzeit schreibt plant.json"
-        write_json(self._paths.sim_dir / "plant.json", plant)
+        dateien.schreiben_json(self._paths.sim_dir / "plant.json", plant, modus=dateien.LESBAR)
 
     def _control(self) -> dict:
-        control = read_json(self._paths.sim_dir / "control.json")
+        control = dateien.lesen_json(self._paths.sim_dir / "control.json")
         return control if isinstance(control, dict) else {}
 
     def _levers(self) -> tuple[str, ...]:
@@ -223,6 +223,9 @@ class SimulationDriver:
     def limits(self, lever: str) -> tuple[float, float] | None:
         """Die Simulation hat keinen eigenen Wertebereich; es gelten die lokalen Grenzen."""
         return None
+
+    def aux_zulaessig(self, name: str, wert: str) -> bool:
+        return name in self.description.aux_originals and isinstance(wert, str) and 0 < len(wert) <= 64
 
     def restore_aux(self, values: Mapping[str, str | float], levers: Mapping[str, float] | None = None) -> None:
         plant = self._plant()

@@ -1,11 +1,10 @@
-"""Atomare Dateien (Spec SHG G2 6.1): temporaere Datei, fsync, rename, fsync des Ordners. Geheimnisse 0600."""
+"""Atomares Schreiben nur fuer den Host-Dienst (root, Paket smartheat_host ohne smartheat_core; install.sh legt diese
+Datei mit ab). Der Gateway-Container und der Geraetekern schreiben ueber smartheat_core.dateien (A5-60); die Logik hier
+ist dieselbe, nur ohne Aufrufer im Container."""
 import contextlib
 import json
-import logging
 import os
 from pathlib import Path
-
-logger = logging.getLogger(__name__)
 
 
 def _write_bytes(path: Path, data: bytes, mode: int) -> None:
@@ -34,17 +33,3 @@ def _write_bytes(path: Path, data: bytes, mode: int) -> None:
 
 def write_json(path: Path, data, *, private: bool = False) -> None:
     _write_bytes(path, json.dumps(data, ensure_ascii=False, sort_keys=True).encode(), 0o600 if private else 0o644)
-
-
-def write_text_private(path: Path, text: str) -> None:
-    _write_bytes(path, text.encode(), 0o600)
-
-
-def read_json(path: Path):
-    try:
-        return json.loads(path.read_text())
-    except FileNotFoundError:
-        return None
-    except (OSError, ValueError) as error:
-        logger.warning("%s nicht lesbar (%s), gilt als leer", path, type(error).__name__)
-        return None

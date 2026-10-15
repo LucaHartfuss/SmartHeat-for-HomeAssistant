@@ -1,4 +1,5 @@
 import json
+import stat
 from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
@@ -52,3 +53,10 @@ def test_grace_arithmetic():
     later_utc = (NOW + timedelta(days=31)).astimezone(UTC)
     assert entitlement.grace_expired(NOW, later_utc) is True
 
+
+
+def test_mark_inactive_writes_privately_and_completely(tmp_path):
+    path = tmp_path / "entitlement_state.json"
+    since, neu = entitlement.mark_inactive(path, datetime(2026, 10, 14, 12, tzinfo=UTC))
+    assert neu and entitlement.load_inactive_since(path) == since
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600 and not path.with_name(path.name + ".tmp").exists()

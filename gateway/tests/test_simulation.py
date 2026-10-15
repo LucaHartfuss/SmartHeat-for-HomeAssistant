@@ -104,3 +104,11 @@ def test_generator_hours_rise_and_stand_still_without_heat(paths, clock):
     driver.poll_once()
     assert driver.read_signal("generator_hours") == second
     assert driver.read_signal("flow_temperature") == 29.5
+
+
+def test_aux_zulaessig_takes_short_texts_for_aux_names_only(paths, clock):
+    driver = _sim(paths, clock)
+    assert driver.aux_zulaessig("mode_select", "eco") is True
+    assert driver.aux_zulaessig("mode_select", "") is False
+    assert driver.aux_zulaessig("mode_select", "x" * 65) is False
+    assert driver.aux_zulaessig("curve", "eco") is False

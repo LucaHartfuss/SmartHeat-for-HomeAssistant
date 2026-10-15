@@ -12,6 +12,7 @@ Patch-Ziele."""
 import copy
 import itertools
 import json
+import re
 import time
 import uuid
 from datetime import datetime, timedelta
@@ -34,7 +35,7 @@ FILES = {
     "BACKUP_PATH": "backup.json", "FAILSAFE_PATH": "failsafe_state.json",
     "ENTITLEMENT_PATH": "entitlement_state.json", "DERIVED_SENSORS_PATH": "derived_sensors.json",
     "AUFRAEUMEN_PATH": "aufraeumen.json", "RUNTIME_DIR": "runtime", "ROOM_TARGET_PATH": "runtime/room_target.json",
-    "ABGEMELDET_PATH": "runtime/abgemeldet.json",
+    "ABGEMELDET_PATH": "runtime/abgemeldet.json", "RASTUNG_PATH": "device/sicherheitssatz.json",
 }
 #: Testdaten; die Laufzeit liest sie als Konfigurationsdokument (geraet_helpers.konfiguration_aus_optionen).
 OPTIONS = {
@@ -443,3 +444,12 @@ def normalisieren(record: list[dict], *, alt: bool) -> list[dict]:
 
 def render(record: list[dict]) -> str:
     return json.dumps(record, ensure_ascii=False, indent=1) + "\n"
+
+
+_VERSION_RE = re.compile(r'"addon_version": "[^"]+"')
+
+
+def render_ohne_version(record: list[dict]) -> str:
+    """A5-65: die Versionsnummer ist kein Verhalten; ohne sie muss der Master nicht bei jedem Release neu geschrieben
+    werden."""
+    return _VERSION_RE.sub('"addon_version": "<version>"', render(record))

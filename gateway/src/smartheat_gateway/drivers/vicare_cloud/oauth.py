@@ -16,7 +16,7 @@ from pathlib import Path
 
 import requests
 
-from smartheat_gateway.files import read_json, write_json
+from smartheat_core import dateien
 
 logger = logging.getLogger(__name__)
 
@@ -85,11 +85,11 @@ class TokenStore:
             os.close(fd)
 
     def _load(self) -> dict:
-        data = read_json(self._path)
+        data = dateien.lesen_json(self._path)
         return data if isinstance(data, dict) else {}
 
     def _save(self, data: dict) -> None:
-        write_json(self._path, data, private=True)
+        dateien.schreiben_json(self._path, data, modus=dateien.PRIVAT)
 
     def logged_in(self) -> bool:
         return bool(self._load().get("refresh_token"))

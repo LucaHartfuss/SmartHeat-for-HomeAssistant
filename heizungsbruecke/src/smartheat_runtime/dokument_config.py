@@ -8,12 +8,12 @@ importiert den Geraetekern nicht; ein Test haelt beide gleich). Die Bindung (Tre
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
+from smartheat_core import dateien, rastung
 from smartheat_core.binding import BINDINGS
 from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime import entitlement, options
 from smartheat_runtime.options import ConfigError
 from smartheat_runtime.runtime_config import BootInfo, RuntimeConfig
-from smartheat_runtime.soll_speicher import read_json, write_json
 from smartheat_runtime.windows import validate_daily_trigger_time
 
 FELDER = ("anlage", "profil", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo", "intervalle")
@@ -25,6 +25,12 @@ ABO = {"aktiv": entitlement.ACTIVE, "inaktiv": entitlement.INACTIVE}
 def eingerichtet(konfiguration) -> bool:
     return isinstance(konfiguration, Mapping) and isinstance(konfiguration.get("anlage"), str) and bool(
         konfiguration["anlage"])
+
+
+def ursprungswerte(konfiguration) -> dict:
+    """Feld ursprungswerte der Konfiguration (vom Server gespiegelt, Spec Stufe 3 S2 6.1); {} ohne gueltiges Feld."""
+    werte = konfiguration.get("ursprungswerte") if isinstance(konfiguration, Mapping) else None
+    return dict(werte) if isinstance(werte, Mapping) else {}
 
 
 def abo_status(konfiguration) -> str:
@@ -40,7 +46,7 @@ def _intervall(konfiguration, key: str, default: float) -> float:
 
 
 def boot_info(konfiguration, *, abgemeldet: bool, client_version: str, backup_path: Path,
-              failsafe_path: Path) -> BootInfo:
+              failsafe_path: Path, aufraeumen_path: Path | None = None) -> BootInfo:
     """Wirft nie (wie die BootInfo der Hosts): ein unbekannter Hebelsatz faellt fuer das Statusereignis auf den
     Standard zurueck; runtime_config meldet ihn danach als Konfigurationsfehler."""
     anlage = konfiguration["anlage"] if eingerichtet(konfiguration) else None
@@ -51,14 +57,23 @@ def boot_info(konfiguration, *, abgemeldet: bool, client_version: str, backup_pa
         configured=anlage is not None and not abgemeldet, signed_off=anlage is not None and abgemeldet,
         tenant_id=anlage, setup_id=anlage, lever_set=lever_set, client_version=client_version, notify_hints_off=(),
         local_check_interval=_intervall(konfiguration, "pruefung_s", options.DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS),
-        backup_path=backup_path, failsafe_path=failsafe_path,
+        backup_path=backup_path, failsafe_path=failsafe_path, aufraeumen_path=aufraeumen_path,
     )
 
 
-def runtime_config(konfiguration, *, entitlement_path: Path, abo_source: Callable[[], str]) -> RuntimeConfig:
+def rastung_pruefen(konfiguration, rastung_pfad: Path) -> None:
+    """Zweite Linie (Spec Stufe 3 S3 3.3): die Laufzeit startet bzw. setzt nur zurueck, wenn die Konfiguration zur
+    Rastung passt; der Dokumentspeicher hat das schon geprueft, das hier deckt einen Fehler dort ab. Wirft ConfigError."""
+    if not rastung.passt(rastung.lesen(rastung_pfad), konfiguration if isinstance(konfiguration, Mapping) else {}):
+        raise ConfigError(f"Konfiguration: {rastung.TEXT}")
+
+
+def runtime_config(konfiguration, *, rastung_pfad: Path, entitlement_path: Path,
+                   abo_source: Callable[[], str]) -> RuntimeConfig:
     """Wirft ConfigError (der Host macht daraus StartFailure); config_check hat das Dokument schon geprueft."""
     if not eingerichtet(konfiguration):
         raise ConfigError("Das Gerät ist nicht eingerichtet")
+    rastung_pruefen(konfiguration, rastung_pfad)
     hebelsatz = konfiguration.get("hebelsatz")
     try:
         safety = resolve_local_safety(hebelsatz, konfiguration.get("verteilsystem"))
@@ -86,16 +101,16 @@ def laufzeit_relevant(alt, neu) -> bool:
 
 def abgemeldet(pfad: Path, konfiguration) -> bool:
     """Abmelde-Markierung (Befehl sign_off) fuer die Anlage der aktuellen Konfiguration? (Gateway und HA-Add-on)"""
-    marker = read_json(pfad)
+    marker = dateien.lesen_json(pfad)
     anlage = konfiguration.get("anlage") if isinstance(konfiguration, Mapping) else None
     return isinstance(marker, dict) and anlage is not None and marker.get("anlage") == anlage
 
 
 def abmelden(pfad: Path, anlage: str) -> bool:
     """Markierung setzen (Modus 0600); True, wenn sie neu ist (dann startet die Laufzeit neu). Die Laufzeit
-    importiert den Geraetekern nicht, die atomaren Datei-Helfer stehen in soll_speicher."""
-    marker = read_json(pfad)
+    importiert den Geraetekern nicht, die atomaren Datei-Helfer stehen in smartheat_core.dateien."""
+    marker = dateien.lesen_json(pfad)
     if isinstance(marker, dict) and marker.get("anlage") == anlage:
         return False
-    write_json(pfad, {"anlage": anlage}, mode=0o600)
+    dateien.schreiben_json(pfad, {"anlage": anlage}, modus=dateien.PRIVAT)
     return True

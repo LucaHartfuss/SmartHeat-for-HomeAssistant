@@ -16,7 +16,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from smartheat_device.documents import read_json, write_json
+from smartheat_core import dateien
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class Discovery:
         self._gemeldet: dict | None = None
         self._melden_ab: tuple[dict, float] | None = None  # (fehlgeschlagene Meldung, fruehester neuer Versuch)
         self._aufraeumen_ab = 0.0
-        stored = read_json(pfad)
+        stored = dateien.lesen_json(pfad)
         stored = stored if isinstance(stored, dict) else {}
         self._uuid: str | None = stored.get("uuid") if isinstance(stored.get("uuid"), str) else None
         veraltet = stored.get("entfernen")
@@ -98,5 +98,5 @@ class Discovery:
             self._speichern()
 
     def _speichern(self) -> None:
-        write_json(self._pfad, {"uuid": self._uuid, "entfernen": self._veraltet, "versuche": self._versuche},
-                   private=True)
+        dateien.schreiben_json(self._pfad, {"uuid": self._uuid, "entfernen": self._veraltet, "versuche": self._versuche},
+                               modus=dateien.PRIVAT)

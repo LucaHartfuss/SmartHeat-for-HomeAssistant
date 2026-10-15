@@ -10,8 +10,8 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from smartheat_core import dateien
 from smartheat_device import wire
-from smartheat_device.documents import read_json, write_json
 
 WUNSCH_FILE = "wunsch.json"
 BEGRENZT_KEY = "wunsch_begrenzt"
@@ -82,7 +82,7 @@ def neu(raum_soll: float, roh: float | None, *, basis_version: int, uhr_synchron
 
 
 def _laden(path: Path) -> Wunsch | None:
-    raw = read_json(path)
+    raw = dateien.lesen_json(path)
     if not isinstance(raw, dict):
         return None
     try:
@@ -109,7 +109,7 @@ class WunschPuffer:
 
     def setzen(self, wunsch: Wunsch) -> None:
         self.wunsch, self._mid = wunsch, None
-        write_json(self._path, asdict(wunsch))
+        dateien.schreiben_json(self._path, asdict(wunsch), modus=dateien.PRIVAT)
 
     def gesendet(self, mid: int | None) -> None:
         self._mid = mid

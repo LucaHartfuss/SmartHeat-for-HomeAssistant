@@ -460,3 +460,11 @@ def test_delivery_signals_are_reported_when_the_cloud_has_the_features(env):
     assert {"generator_hours", "generator_starts", "generator_state", "operating_mode"} <= set(driver.signals())
     assert driver.read_signal("operating_mode") == "dhw" and driver.read_signal("generator_state") == "on"
     assert driver.read_signal("generator_hours") == 4321.0 and driver.read_signal("generator_starts") == 98765.0
+
+
+def test_aux_zulaessig_accepts_only_the_known_programs(env):
+    server, driver, paths, clock = env
+    for program in ("comfort", "eco", "normal"):
+        assert driver.aux_zulaessig("mode_select", program) is True
+    assert driver.aux_zulaessig("mode_select", "reduced; drop") is False
+    assert driver.aux_zulaessig("setpoint_comfort", "eco") is False

@@ -35,6 +35,8 @@ EV_MQTT_CONNECTED = "mqtt_connected"
 EV_SOURCE_CONNECTED = "source_connected"
 EV_HEARTBEAT = "heartbeat"
 EV_RECHECK = "recheck"
+# Spec Stufe 3 S3 Abschnitt 4: nach dem Zuruecksetzen einer leeren Konfiguration neu starten (app._nach_zuruecksetzen).
+EV_AUFRAEUMEN = "aufraeumen"
 
 
 @dataclass

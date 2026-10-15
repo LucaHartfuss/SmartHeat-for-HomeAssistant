@@ -301,6 +301,9 @@ class ViCareCloudDriver:
     def read_aux(self) -> dict[str, str | float]:
         return {"mode_select": str(self._fresh()["mode_select"])}
 
+    def aux_zulaessig(self, name: str, wert: str) -> bool:
+        return name == "mode_select" and wert in (*FOREIGN_PROGRAMS, "normal")
+
     def restore_aux(self, values: Mapping[str, str | float], levers: Mapping[str, float] | None = None) -> None:
         program = values.get("mode_select")
         if program not in FOREIGN_PROGRAMS or self._fresh()["mode_select"] == program:

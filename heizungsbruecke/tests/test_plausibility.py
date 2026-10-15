@@ -2,14 +2,7 @@ import math
 
 import pytest
 
-from smartheat_runtime.plausibility import OUTDOOR_TEMP_RANGE, ROOM_TEMP_RANGE, is_plausible
-
-
-def test_ranges_match_server_r4():
-    # Gleich zu heizungsserver regelung/messages.py::PLAUSIBLE_RANGES (room_target/outdoor_temp); der
-    # Contract-Check prueft das repo-uebergreifend.
-    assert ROOM_TEMP_RANGE == (5.0, 35.0)
-    assert OUTDOOR_TEMP_RANGE == (-40.0, 45.0)
+from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
 
 
 @pytest.mark.parametrize("value,expected", [

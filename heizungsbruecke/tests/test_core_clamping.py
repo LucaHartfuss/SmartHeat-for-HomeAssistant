@@ -1,6 +1,6 @@
 import pytest
 
-from smartheat_core.clamping import clamp
+from smartheat_core.clamping import clamp, round_to_step
 
 
 def test_clamp_within_range_returns_unchanged():
@@ -33,3 +33,9 @@ def test_clamp_still_clamps_positive_infinity_to_maximum():
 
 def test_clamp_still_clamps_negative_infinity_to_minimum():
     assert clamp(float("-inf"), 0.4, 1.5) == 0.4
+
+
+def test_round_to_step_rounds_float_noise_to_six_decimals():
+    """Mutationsprobe (Mutant 7): das Ergebnis wird auf 6 Nachkommastellen gerundet (nicht 7)."""
+    assert round_to_step(0.1234567, 1e-7) == 0.123457
+    assert round_to_step(0.30000000000000004, 0.1) == 0.3

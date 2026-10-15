@@ -15,9 +15,9 @@ from pathlib import Path
 
 import requests
 
+from smartheat_core import dateien
 from smartheat_device import identity as identity_module
 from smartheat_device import wire
-from smartheat_device.documents import read_json, write_json, write_text
 
 logger = logging.getLogger(__name__)
 
@@ -126,27 +126,28 @@ class BootstrapClient:
 
 
 def device_state(device_dir: Path) -> str | None:
-    raw = read_json(device_dir / STATE_FILE)
+    raw = dateien.lesen_json(device_dir / STATE_FILE)
     state = raw.get("device_state") if isinstance(raw, dict) else None
     return state if state in wire.DEVICE_STATES else None
 
 
 def device_state_speichern(device_dir: Path, state: str | None) -> None:
     if state in wire.DEVICE_STATES and state != device_state(device_dir):
-        write_json(device_dir / STATE_FILE, {"device_state": state})
+        dateien.schreiben_json(device_dir / STATE_FILE, {"device_state": state}, modus=dateien.PRIVAT)
 
 
 def speichern(device_dir: Path, antwort: Antwort) -> None:
     """Endpunkt zuerst, Zertifikat danach (seine Datei heisst: Bootstrap fertig), dann der Uebernahmestatus."""
     endpoint = antwort.zugang.endpoint
-    write_json(device_dir / ENDPOINT_FILE,
-               {"host": endpoint.host, "port": endpoint.port, "ca_pem": endpoint.ca_pem, "alpn": endpoint.alpn})
-    write_text(device_dir / CERTIFICATE_FILE, antwort.zugang.certificate_pem)
+    dateien.schreiben_json(device_dir / ENDPOINT_FILE,
+                           {"host": endpoint.host, "port": endpoint.port, "ca_pem": endpoint.ca_pem,
+                            "alpn": endpoint.alpn}, modus=dateien.PRIVAT)
+    dateien.schreiben_text(device_dir / CERTIFICATE_FILE, antwort.zugang.certificate_pem, modus=dateien.PRIVAT)
     device_state_speichern(device_dir, antwort.device_state)
 
 
 def laden(device_dir: Path) -> Zugang | None:
-    raw = read_json(device_dir / ENDPOINT_FILE)
+    raw = dateien.lesen_json(device_dir / ENDPOINT_FILE)
     try:
         cert = (device_dir / CERTIFICATE_FILE).read_text()
     except OSError:

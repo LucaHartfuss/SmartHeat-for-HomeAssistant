@@ -17,8 +17,8 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
+from smartheat_core import dateien
 from smartheat_device import wire
-from smartheat_device.documents import write_text
 
 KEY_FILE = "key.pem"
 ENC_KEY_FILE = "enc_key.pem"
@@ -58,7 +58,7 @@ def _key(path: Path) -> ec.EllipticCurvePrivateKey:
         key = serialization.load_pem_private_key(path.read_bytes(), password=None)
     except FileNotFoundError:
         key = ec.generate_private_key(ec.SECP256R1())
-        write_text(path, _pem(key))
+        dateien.schreiben_text(path, _pem(key), modus=dateien.PRIVAT)
     if not isinstance(key, ec.EllipticCurvePrivateKey):
         raise TypeError(f"{path.name} ist kein EC-Schluessel")
     return key
@@ -77,13 +77,13 @@ def load_or_create(device_dir: Path, randbytes: Callable[[int], bytes] = secrets
         code = code_path.read_text().strip()
     except FileNotFoundError:
         code = new_claim_code(randbytes)
-        write_text(code_path, code)
+        dateien.schreiben_text(code_path, code, modus=dateien.PRIVAT)
     return Identity(device_id_for(signing.public_key()), signing, enc, tls, code)
 
 
 def save_claim_code(device_dir: Path, ident: Identity, code: str) -> Identity:
     """Neuer Uebernahme-Code (Befehl new_claim_code): erst gespeichert, wenn der Server ihn angenommen hat."""
-    write_text(device_dir / CLAIM_CODE_FILE, code)
+    dateien.schreiben_text(device_dir / CLAIM_CODE_FILE, code, modus=dateien.PRIVAT)
     return replace(ident, claim_code=code)
 
 

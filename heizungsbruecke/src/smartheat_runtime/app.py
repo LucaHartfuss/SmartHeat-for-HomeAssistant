@@ -7,8 +7,9 @@ die Restart-Policy des Hosts (Supervisor-Watchdog bzw. Container) wuerde auch ei
 import functools
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from smartheat_core import derived, enforce, wallclock, write_budget
@@ -17,6 +18,7 @@ from smartheat_core.pipeline import LeverPipeline, WriteBudgetExhausted
 from smartheat_core.safety import LocalSafety
 from smartheat_runtime import (
     abo,
+    aufraeumen,
     battery,
     datentraeger,
     delivery,
@@ -33,6 +35,7 @@ from smartheat_runtime.ports import MqttChannel, NotifySink, SignalSource, Statu
 from smartheat_runtime.roles import ChannelManifest
 from smartheat_runtime.runtime import (
     EV_ACK_TIMEOUT,
+    EV_AUFRAEUMEN,
     EV_AUTH_REJECTED,
     EV_CONNECTION_CHECK,
     EV_GRACE_CHECK,
@@ -145,6 +148,15 @@ class Host(Protocol):
         """Binding und Sicherheitswerte zum Zuruecksetzen; None bei ungueltiger Konfiguration."""
         ...
 
+    def ursprungswerte_melden(self, werte: dict) -> None:
+        """Gemerkte Ursprungswerte fuer up/status (Spec Stufe 3 S3 5.1); im Hauptthread, wirft nie."""
+        ...
+
+    def ursprungswerte_server(self) -> Mapping[str, object]:
+        """Ursprungswerte der Anlage auf dem Server, frisch aus der gespeicherten Konfiguration (bzw. der Markierung,
+        solange das Zuruecksetzen nach einer leeren Konfiguration aussteht); wirft nie."""
+        ...
+
     def load(self) -> Loaded:
         """Konfiguration pruefen, Signale und Anlage vorbereiten; wirft StartFailure."""
         ...
@@ -211,11 +223,36 @@ def _end_boosts(store, parts: RestoreParts | None, clock) -> bool:
     return not (store.state.boost_active or store.state.emergency_boost_active)
 
 
-def _sign_off(parts: RestoreParts | None, store, notifier, status, clock, retry_seconds: float) -> IdleBridge:
-    """Abmelden (Spec TP7 3.3, die Integration bzw. das Portal entfernt den Client): laufenden Boost auf den
-    Wiederherstellungspunkt zuruecknehmen, alle Meldungen entfernen, dann Ruhezustand `abgemeldet`. Scheitert es, wird
-    es im Takt retry_seconds erneut versucht; der Status bleibt `abgemeldet` mit Grund."""
-    restorer = None if parts is None else LeverPipeline(store, parts.binding, parts.safety, clock=clock)
+def _nach_zuruecksetzen(bridge: IdleBridge, pfad: Path | None, anlage: str) -> None:
+    """Spec Stufe 3 S3 Abschnitt 4: war das ein Zuruecksetzen nach einer leeren Konfiguration, die Markierung erledigen
+    und neu starten; der Start danach loescht dann den anlagengebundenen Zustand. Ueber ein Ereignis, damit der Host
+    seinen Neustart (abo.restart_process) schon umgeleitet hat (das Gateway tut das erst nach start). Laesst sich die
+    Markierung nicht schreiben, kein Neustart: ohne `zurueckgesetzt` setzte jeder Start nur erneut zurueck (Kreis); der
+    Zustand bleibt, der naechste Start versucht es erneut."""
+    if pfad is None:
+        return
+    try:
+        erledigt = aufraeumen.zurueckgesetzt(pfad, anlage)
+    except OSError as error:
+        logger.error("Aufraeum-Markierung nicht geschrieben (%s), Zustand bleibt bis zum naechsten Start",
+                     type(error).__name__)
+        return
+    if not erledigt:
+        return
+    bridge.worker.register(EV_AUFRAEUMEN, lambda event: abo.restart_process())
+    bridge.worker.post(Event(EV_AUFRAEUMEN))
+
+
+def _sign_off(parts: RestoreParts | None, store, notifier, status, clock, retry_seconds: float, *,
+              aufraeumen_path: Path | None = None, anlage: str,
+              server_originals: Callable[[], Mapping[str, object]] | None = None) -> IdleBridge:
+    """Abmelden (Spec TP7 3.3, die Integration bzw. das Portal entfernt den Client) und leer heisst abmelden (Spec Stufe
+    3 S3 Abschnitt 4): laufenden Boost auf den Wiederherstellungspunkt zuruecknehmen, alle Meldungen entfernen, dann
+    Ruhezustand `abgemeldet`. Scheitert es, wird es im Takt retry_seconds erneut versucht; der Status bleibt
+    `abgemeldet` mit Grund. Gelingt es und steht eine Aufraeum-Markierung dieser Anlage offen, folgt ein Neustart
+    (_nach_zuruecksetzen); scheitert es, bleibt sie offen und ein Neustart dazwischen versucht es erneut."""
+    restorer = None if parts is None else LeverPipeline(
+        store, parts.binding, parts.safety, clock=clock, server_originals=server_originals)
     boosting = store.state.boost_active or store.state.emergency_boost_active
     restored = restorer is not None and restorer.restore_and_clear(always_restore=False)
     # Die Meldung zum Zuruecksetzen bleibt: nach dem Entfernen ist sie der einzige Hinweis, dass
@@ -233,11 +270,14 @@ def _sign_off(parts: RestoreParts | None, store, notifier, status, clock, retry_
         _report_sign_off_restore(notifier, SIGN_OFF_RESTORE_FAILED_MESSAGE, store.state)
     status.update(abgemeldet=True, grund=grund)
     bridge = _idle(clock, status, STATUS_ABGEMELDET)
+    if restored:
+        _nach_zuruecksetzen(bridge, aufraeumen_path, anlage)
     if restorer is not None and not restored:
         def _retry(event: Event) -> None:
             if restorer.restore_and_clear(always_restore=False):
                 abo.report_restore(notifier, ok=True)
                 status.update(grund=None)
+                _nach_zuruecksetzen(bridge, aufraeumen_path, anlage)
                 return
             bridge.worker.schedule(retry_seconds, Event(EV_RECHECK))
 
@@ -459,7 +499,7 @@ def _unless_idle(rt: Runtime, handler, event: Event) -> None:
         handler(rt, event)
 
 
-def _register_handlers(rt: Runtime) -> None:
+def _register_handlers(rt: Runtime, melder: Callable[[], None]) -> None:
     handlers = {
         EV_LOCAL_CHECK: _on_local_check,
         EV_SETPOINTS: _on_setpoints,
@@ -477,19 +517,40 @@ def _register_handlers(rt: Runtime) -> None:
     for kind, handler in handlers.items():
         rt.worker.register(kind, functools.partial(_unless_idle, rt, handler))
     rt.worker.register(EV_HEARTBEAT, functools.partial(_on_heartbeat, rt))
-    rt.worker.after_each(functools.partial(_after_each, rt))
+    rt.worker.after_each(functools.partial(_after_each, rt, melder))
 
 
-def _after_each(rt: Runtime) -> None:
+def _after_each(rt: Runtime, melder: Callable[[], None]) -> None:
     """Nach jedem Worker-Ereignis: Datentraeger-Meldung (TP12b), dann das Status-Event, falls es
-    sich geaendert hat."""
+    sich geaendert hat. Dazu die Ursprungswerte an den Host (der Worker kennt nur einen Rueckruf)."""
     try:
         datentraeger.report(rt.store, rt.notifier, rt.texts)
     except Exception:
         logger.exception("Datentraeger-Meldung fehlgeschlagen")
+    melder()
     status = rt.status
     assert status is not None  # beim Boot gesetzt
     status.publish_if_changed()
+
+
+def _ursprung_melder(rt: Runtime, host: Host) -> Callable[[], None]:
+    """Nach jedem Ereignis: Hebel aus restore_originals und Hilfswerte an den Host, nur bei Aenderung."""
+    letzte: dict = {}
+
+    def melden() -> None:
+        try:
+            state = rt.store.state
+            restore = rt.override.binding.description.restore_originals
+            werte = {**{k: v for k, v in state.originals.items() if k in restore}, **state.aux_originals}
+            if werte == letzte:
+                return
+            letzte.clear()
+            letzte.update(werte)
+            host.ursprungswerte_melden(dict(werte))
+        except Exception:
+            logger.exception("Ursprungswerte nicht an den Host gegeben")
+
+    return melden
 
 
 # --- Boot ---
@@ -562,6 +623,8 @@ def _prepare_zone(rt: Runtime) -> None:
     settle_seconds des Bindings umstellt."""
     if not _may_prepare_zone(rt):
         return
+    rule = write_budget.RETRY_QUOTA
+    write_budget.before_attempt(rt.store, write_budget.ZONE_PREPARE, rule, rt.clock())
     try:
         rt.override.prepare_start(rt.store.state.stable_target)
     except WriteBudgetExhausted as error:
@@ -570,10 +633,10 @@ def _prepare_zone(rt: Runtime) -> None:
         logger.info("Zone nicht vorbereitet: %s, naechster Versuch beim naechsten lokalen Check", error)
         return
     except Exception:
-        write_budget.record_attempt(rt.store, write_budget.ZONE_PREPARE, rt.clock())
+        write_budget.after_failure(rt.store, write_budget.ZONE_PREPARE, rule, rt.clock())
         logger.exception("Zone konnte nicht vorbereitet werden, naechster Versuch beim naechsten lokalen Check")
         return
-    write_budget.record_success(rt.store, write_budget.ZONE_PREPARE)
+    write_budget.after_success(rt.store, write_budget.ZONE_PREPARE, rule)
     rt.zone_prepared = True
 
 
@@ -594,7 +657,9 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
     status = StatusReporter(host.status_sink, boot.tenant_id, boot.setup_id, store, boot.lever_set, boot.client_version)
     status.publish()
     if boot.signed_off:
-        return _sign_off(host.sign_off_parts(), store, notifier, status, clock, boot.local_check_interval)
+        return _sign_off(host.sign_off_parts(), store, notifier, status, clock, boot.local_check_interval,
+                         aufraeumen_path=boot.aufraeumen_path, anlage=boot.tenant_id,
+                         server_originals=host.ursprungswerte_server)
     try:
         loaded = host.load()
     except StartFailure as error:
@@ -616,6 +681,7 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
         worker=RegulationWorker(clock=clock), store=store,
         override=LeverPipeline(
             store, loaded.binding, config.local_safety, clock=clock, notify=functools.partial(_hint, notifier),
+            server_originals=host.ursprungswerte_server,
         ),
         notifier=notifier, status=status, clock=clock, texts=host.texts,
     )
@@ -633,12 +699,14 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
             return _finish_at_start(rt, clock)
         abo.enter_inactive(rt, now)
 
-    _register_handlers(rt)
+    melder = _ursprung_melder(rt, host)
+    _register_handlers(rt, melder)
     abo_inactive = rt.store.state.abo_inactive_since is not None
     if not abo_inactive:
         rt.mqtt_client = mqtt_factory(rt.worker)
 
     _prime(rt)
+    melder()
     if rt.mqtt_client is not None:
         rt.mqtt_client.loop_start()
 

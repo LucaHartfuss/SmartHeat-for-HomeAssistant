@@ -9,6 +9,7 @@ from fakes import FakeBus
 from geraet_fakes import geraet_fuer
 from world import GatewayWorld
 
+from smartheat_core import rastung
 from smartheat_gateway import config as gateway_config
 from smartheat_gateway.drivers import registry
 from smartheat_gateway.drivers.base import DriverError
@@ -17,6 +18,7 @@ from smartheat_gateway.drivers.vicare_cloud.driver import ViCareCloudDriver
 from smartheat_gateway.host import SHG_TEXTS, GatewayHost, build_manifest
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.zigbee import ZigbeeMirror
+from smartheat_runtime import aufraeumen
 from smartheat_runtime.app import IDLE_NOT_CONFIGURED, IdleBridge, RestoreParts, StartFailure
 from smartheat_runtime.roles import ManifestError
 from smartheat_runtime.runtime import Runtime
@@ -99,6 +101,34 @@ def test_sign_off_with_a_matching_plant_restores_with_the_driver(data_dir, clock
     host = _host(paths, konfiguration(), clock)
     parts = host.sign_off_parts()
     assert isinstance(parts, RestoreParts) and host.driver is not None and parts.binding is host.driver
+
+
+def test_empty_configuration_with_pending_reset_boots_signed_off_with_the_old_one(data_dir, clock):
+    """Spec Stufe 3 S3 Abschnitt 4: die Laufzeit setzt mit der Konfiguration der Aufraeum-Markierung zurueck."""
+    paths = Paths(data_dir)
+    aufraeumen.markieren(paths.aufraeumen, konfiguration())
+    host = _host(paths, {**konfiguration(), "anlage": None}, clock)
+    boot = host.boot_info()
+    assert boot.signed_off and not boot.configured and boot.tenant_id == "test-tenant"
+    assert boot.aufraeumen_path == paths.aufraeumen
+    assert isinstance(host.sign_off_parts(), RestoreParts) and host.driver is not None
+
+
+def test_load_refuses_a_configuration_that_does_not_fit_the_lock(data_dir, clock):
+    paths = Paths(data_dir)
+    rastung.schreiben(paths.rastung, rastung.Rastung("viessmann_vicare", "Fussbodenheizung"), "2026-10-14T00:00:00+00:00")
+    with pytest.raises(StartFailure, match="festgelegt") as error:
+        _host(paths, konfiguration(), clock).load()
+    assert error.value.key == "konfiguration"
+
+
+def test_sign_off_parts_are_none_with_a_broken_lock(data_dir, clock):
+    paths = Paths(data_dir)
+    gateway_config.abmelden(paths, "test-tenant")
+    paths.rastung.parent.mkdir(parents=True, exist_ok=True)
+    paths.rastung.write_text("{")
+    host = _host(paths, konfiguration(), clock)
+    assert host.sign_off_parts() is None and host.driver is None
 
 
 def test_manifest_error_is_a_start_failure_with_the_manifest_key(data_dir, clock, monkeypatch):
@@ -192,3 +222,28 @@ def test_abo_comes_from_the_document(data_dir, clock):
 def test_gateway_texts_never_name_home_assistant():
     for value in vars(SHG_TEXTS).values():
         assert "Home Assistant" not in value and "Heizungsbrücke" not in value and "Integration" not in value
+
+
+def test_ursprungswerte_server_reads_the_current_configuration_fresh(data_dir, clock):
+    """Spec Stufe 3 S3 5.2: frisch aus dem Dokument; trifft ein, ohne dass die Laufzeit neu startet."""
+    host = _host(Paths(data_dir), {**konfiguration(), "ursprungswerte": {"heat_limit": 16.0}}, clock)
+    assert host.ursprungswerte_server() == {"heat_limit": 16.0}
+    host._geraet.device.konf = {**konfiguration(), "ursprungswerte": {"heat_limit": 15.0}}
+    assert host.ursprungswerte_server() == {"heat_limit": 15.0}
+
+
+def test_ursprungswerte_server_falls_back_to_the_marker_while_the_reset_is_pending(data_dir, clock):
+    paths = Paths(data_dir)
+    alt = {**konfiguration(), "ursprungswerte": {"heat_limit": 16.0}}
+    aufraeumen.markieren(paths.aufraeumen, alt)
+    host = _host(paths, {**alt, "anlage": None, "ursprungswerte": {}}, clock)
+    assert host.ursprungswerte_server() == {"heat_limit": 16.0}
+
+
+def test_ursprungswerte_server_ignores_a_new_setup_while_the_reset_is_pending(data_dir, clock):
+    paths = Paths(data_dir)
+    alt = {**konfiguration(), "ursprungswerte": {"heat_limit": 16.0}}
+    aufraeumen.markieren(paths.aufraeumen, alt)
+    host = _host(paths, {**alt, "anlage": None, "ursprungswerte": {}}, clock)
+    host._geraet.device.konf = {**alt, "anlage": "andere-anlage", "ursprungswerte": {"heat_limit": 12.0}}
+    assert host.ursprungswerte_server() == {"heat_limit": 16.0}

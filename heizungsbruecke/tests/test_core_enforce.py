@@ -1,12 +1,12 @@
 """Durchsetzung (TP11, Spec 5.3)."""
-from datetime import date
+from datetime import date, datetime
 from unittest.mock import MagicMock
 
 import pytest
 from fakes import runtime_config
 
 from heizungsbruecke.ha_binding import HaPlantBinding
-from smartheat_core import enforce
+from smartheat_core import enforce, wallclock
 from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import LocalSafety
@@ -30,6 +30,7 @@ MANIFEST = ChannelManifest(refs={
 })
 POINT = {"curve": 0.9, "room_setpoint": 21.0}
 TODAY = date(2026, 10, 3)
+_ECHTES_HEUTE = enforce._today  # vor der autouse-Fixture _fixed_day gemerkt
 
 
 class Ha:
@@ -470,7 +471,140 @@ def test_curve_tolerance_is_half_a_plant_step(make_store, clock):
     assert rt.store.state.manual_override is None
 
 
+def test_without_room_target_the_min_flow_is_skipped_and_the_rest_enforced(make_store, clock):
+    """A5-24 (a): beim ersten Start ohne Raum-Soll liefert derived.expected None."""
+    ha = Ha(curve=1.3, min_flow=25.0)
+    rt = _rt(make_store, clock, ha)
+    rt.store.update(stable_target=None)
+    _rounds(rt)
+    assert ("number.curve", 0.9) in ha.writes and not [w for w in ha.writes if w[0] == "number.mf"]
+
+
+def test_a_second_change_during_an_open_intervention_extends_it(make_store, clock):
+    """A5-24 (b): neuer Hebel waehrend eines noch nicht zurueckgekehrten Eingriffs -> neue Signatur, neue Meldung,
+    KPI zusammengefuehrt."""
+    ha = Ha(curve=1.2, reflects_writes=False)
+    rt = _rt(make_store, clock, ha)
+    _rounds(rt)
+    assert rt.store.state.manual_override["signatur"] == "curve=1.2"
+    ha.states["climate.zone::temperature"] = 22.0
+    clock.advance(SETTLE + 1)
+    _rounds(rt)
+    assert rt.store.state.manual_override["signatur"] == "curve=1.2,room_setpoint=22"
+    assert [c.args[1] for c in _message_calls(rt)] == ["curve=1.2", "curve=1.2,room_setpoint=22"]
+    pending = rt.store.state.manual_override_pending["levers"]
+    assert pending["curve"] == 1.2 and pending["room_setpoint"] == 22.0
+
+
+def test_after_a_data_fault_detection_needs_two_rounds_again(make_store, clock):
+    """A5-24 (c)."""
+    ha = Ha(curve=1.3)
+    rt = _rt(make_store, clock, ha)
+    enforce.check_manual_override(rt)  # Runde 1 von 2
+    rt.store.set_delivery(DeliveryState(datenfehler=DataFault(SOURCE_LOCAL, ("room_actual",))))
+    enforce.check_manual_override(rt)  # pausiert, setzt zurueck
+    rt.store.set_delivery(DeliveryState())
+    enforce.check_manual_override(rt)
+    assert _curve_writes(rt) == []
+    enforce.check_manual_override(rt)
+    assert _curve_writes(rt) == [("number.curve", 0.9)]
+
+
+@pytest.mark.parametrize(("mode", "shift", "was"), [
+    ("auto", 22.0, "Wunschtemperatur der Zone, Betriebsart der Zone"),
+    ("auto", 21.0, "Betriebsart der Zone"),
+])
+def test_message_names_mode_and_setpoint_correctly(make_store, clock, mode, shift, was):
+    """A5-24 (d), Mutanten 71-73."""
+    ha = Ha(mode=mode, shift=shift)
+    rt = _rt(make_store, clock, ha)
+    _rounds(rt)
+    assert _message_calls(rt)[-1].args[2] == enforce.MESSAGE.format(was=was)
+
+
+def test_limit_message_is_not_critical(make_store, clock):
+    """A5-24 (d), Mutant 123."""
+    ha = Ha(curve=1.3)
+    rt = _rt(make_store, clock, ha)
+    rt.store.update(write_budget={"enforce:curve": {"day": TODAY.isoformat(), "count": 6, "last": 0.0}})
+    _rounds(rt)
+    assert _limit_calls(rt) and _limit_calls(rt)[0].kwargs["critical"] is False
+
+
+@pytest.mark.parametrize(("live", "durchgesetzt"), [(20.6, True), (20.4, True), (20.55, False), (20.5, False)])
+def test_min_flow_deviation_of_one_plant_step_is_enforced(make_store, clock, live, durchgesetzt):
+    """A5-64: Toleranz = halber Anlagenschritt (0,05) wie bei allen Hebeln; Soll = Raum-Soll 20,5."""
+    ha = Ha(min_flow=live)
+    rt = _rt(make_store, clock, ha)
+    _rounds(rt)
+    assert (("number.mf", 20.5) in ha.writes) is durchgesetzt
+
+
 def test_state_ok_matches_the_notifier():
     from smartheat_core.enforce import STATE_OK
     from smartheat_runtime.notifier import STATE_OK as NOTIFIER_OK
     assert STATE_OK == NOTIFIER_OK
+
+
+# --- Mutationsprobe Stufe 3 S3 (Task 11) ------------------------------------------------------------------------
+
+def test_today_is_the_wallclock_day(monkeypatch):
+    """Mutationsprobe (Mutant 2): _today() liefert den Tag der Wanduhr, nicht None."""
+    monkeypatch.setattr(wallclock, "_now", lambda: datetime(2026, 10, 14, 23, 59))
+    assert _ECHTES_HEUTE() == date(2026, 10, 14)
+
+
+def test_a_clean_round_resets_the_detection_counter(make_store, clock):
+    """Mutationsprobe (Mutant 107): eine unauffaellige Runde setzt den Zaehler auf 0 zurueck; eine einzelne spaetere
+    Abweichung wird wieder erst nach DETECTION_ROUNDS Runden durchgesetzt."""
+    ha = Ha(curve=1.3)
+    rt = _rt(make_store, clock, ha)
+    _rounds(rt, 1)
+    assert rt.store.state.manual_override_misses == 1
+    ha.states["number.curve"] = 0.9
+    _rounds(rt, 1)
+    assert rt.store.state.manual_override_misses == 0
+    ha.states["number.curve"] = 1.3
+    _rounds(rt, 1)
+    assert ha.writes == []
+
+
+def test_return_to_learned_values_is_reported_quietly_and_not_critical(make_store, clock):
+    """Mutationsprobe (Mutanten 111, 112): die Rueckkehr-Meldung ist weder kritisch noch laut."""
+    ha = Ha(curve=1.3)
+    rt = _rt(make_store, clock, ha)
+    _rounds(rt)
+    ha.states["number.curve"] = 0.9
+    rt.notifier.notify.reset_mock()
+    _rounds(rt, 1)
+    rt.notifier.notify.assert_called_with(enforce.KEY, STATE_OK, enforce.RETURN_MESSAGE, critical=False, silent_ok=True)
+
+
+def test_reset_message_is_not_critical(make_store, clock):
+    """Mutationsprobe (Mutant 121): die Meldung ueber das Zuruecksetzen ist nicht kritisch."""
+    rt = _rt(make_store, clock, Ha(curve=1.3))
+    _rounds(rt)
+    assert _message_calls(rt)[-1].kwargs["critical"] is False
+
+
+def test_zone_mode_deviation_is_recorded_as_zero(make_store, clock):
+    """Mutationsprobe (Mutant 33): die verstellte Betriebsart steht im Eingriff als 0 (nicht aktiv), nicht als 0,5."""
+    rt = _rt(make_store, clock, Ha(mode="auto", reflects_writes=False))
+    _rounds(rt)
+    record = rt.store.state.manual_override
+    assert record["rollen"][enforce.ZONE_MODE] == 0.0
+    assert "zone_mode=0" in record["signatur"].split(",") and "zone_mode=0.5" not in record["signatur"]
+
+
+def test_persisted_kpi_falls_back_to_zero_without_live_value_and_restore_point(make_store, clock):
+    """Mutationsprobe (Mutant 90): ohne Live-Wert und ohne Wiederherstellungspunkt steht im Eintrag 0.0."""
+    rt = _rt(make_store, clock, Ha(curve=1.3, shift=0.0, reflects_writes=False), room_setpoint=None)
+    _rounds(rt)
+    assert rt.store.state.manual_override["levers"]["room_setpoint"] == 0.0
+
+
+def test_kpi_takes_the_live_value_of_a_lever_without_setpoint(make_store, clock):
+    """Mutationsprobe (Mutant 85): ein lesbarer Hebel ohne Sollwert geht mit seinem Live-Wert in den KPI."""
+    rt = _rt(make_store, clock, Ha(curve=1.3, shift=22.0, reflects_writes=False), room_setpoint=None)
+    _rounds(rt)
+    assert rt.store.state.manual_override_pending["levers"]["room_setpoint"] == 22.0

@@ -1,5 +1,6 @@
 """Spec 5c 1.3: das HA-Add-on als DeviceHost (Faehigkeiten, Uhr, Pruefung, Befehle, Dokumente, Wunsch, Raum)."""
 import json
+import stat
 import time
 
 import pytest
@@ -65,7 +66,8 @@ class Device:
 
 
 def _paths(tmp_path, monkeypatch):
-    for name in ("RUNTIME_DIR", "ABGEMELDET_PATH", "AUFRAEUMEN_PATH", "ROOM_TARGET_PATH", "BACKUP_PATH"):
+    for name in ("RUNTIME_DIR", "ABGEMELDET_PATH", "AUFRAEUMEN_PATH", "ROOM_TARGET_PATH", "BACKUP_PATH",
+                 "RASTUNG_PATH"):
         monkeypatch.setattr(config, name, tmp_path / getattr(config, name).name)
 
 
@@ -202,6 +204,18 @@ def test_inventory_that_hangs_ends_at_its_deadline(tmp_path, monkeypatch):
     host.hintergrund.stop(timeout=2)
 
 
+def test_remembered_originals_are_handed_to_the_device_as_a_copy(tmp_path, monkeypatch):
+    host, _, _ = _host(tmp_path, monkeypatch)
+    assert host.ursprungswerte() == {}
+    werte = {"heat_limit": 16.0}
+    host.ursprungswerte_merken(werte)
+    werte["mode_select"] = "x"  # die Laufzeit aendert ihr Woerterbuch weiter
+    gelesen = host.ursprungswerte()
+    assert gelesen == {"heat_limit": 16.0}
+    gelesen["x"] = 1.0
+    assert host.ursprungswerte() == {"heat_limit": 16.0}
+
+
 def test_portal_operation_reaches_the_worker(tmp_path, monkeypatch):
     host, _, clock = _host(tmp_path, monkeypatch)
     worker = RegulationWorker(clock)
@@ -230,7 +244,9 @@ def test_configuration_change_requests_a_restart_and_empty_marks_cleanup(tmp_pat
     host, _, clock = _host(tmp_path, monkeypatch)
     alt = konfiguration_aus_optionen(OPTIONS)
     host.konfiguration_uebernommen(alt, {**alt, "anlage": None})
-    assert json.loads(config.AUFRAEUMEN_PATH.read_text()) == {"anlage": alt["anlage"]} and host._neustart
+    assert json.loads(config.AUFRAEUMEN_PATH.read_text()) == {
+        "anlage": alt["anlage"], "konfiguration": alt, "zurueckgesetzt": False} and host._neustart
+    assert stat.S_IMODE(config.AUFRAEUMEN_PATH.stat().st_mode) == 0o600
     worker = RegulationWorker(clock)
     reloads = []
     worker.register(geraet_host.EV_RELOAD, lambda event: reloads.append(event.kind))

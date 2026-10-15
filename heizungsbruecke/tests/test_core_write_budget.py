@@ -70,14 +70,48 @@ def test_put_is_best_effort_and_keeps_memory(make_store, monkeypatch):
     assert store.storage_failed is True
 
 
-def test_record_success_removes_only_an_existing_key(make_store, tmp_path, monkeypatch):
+def test_after_success_removes_only_an_existing_key(make_store, tmp_path, monkeypatch):
     store = make_store()
     saves = []
     monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", lambda path, values: saves.append(values))
 
-    wb.record_success(store, wb.RESTORE)  # nichts da -> kein Schreiben
+    wb.after_success(store, wb.RESTORE, wb.RETRY_QUOTA)  # nichts da -> kein Schreiben
     assert saves == []
 
-    wb.record_attempt(store, wb.RESTORE, 5.0)
-    wb.record_success(store, wb.RESTORE)
+    wb.after_failure(store, wb.RESTORE, wb.RETRY_QUOTA, 5.0)
+    wb.after_success(store, wb.RESTORE, wb.RETRY_QUOTA)
     assert wb.get(store, wb.RESTORE) is None
+
+
+@pytest.mark.parametrize(("rule", "erfolg", "zaehlung"), [
+    (wb.QUOTA, True, 1), (wb.QUOTA, False, 1),
+    (wb.enforce_rule(4), True, 1), (wb.enforce_rule(4), False, 1),
+    (wb.RETRY_QUOTA, True, 0), (wb.RETRY_QUOTA, False, 1),
+    (wb.RETURN_STAIRCASE, True, 0), (wb.RETURN_STAIRCASE, False, 1),
+])
+def test_the_rule_decides_what_counts(make_store, rule, erfolg, zaehlung):
+    store = make_store()
+    wb.before_attempt(store, "k", rule, 10.0)
+    if erfolg:
+        wb.after_success(store, "k", rule)
+    else:
+        wb.after_failure(store, "k", rule, 10.0)
+    assert wb.count_today(wb.get(store, "k"), wb.today()) == zaehlung
+
+
+def test_a_success_resets_only_rules_that_count_failures(make_store):
+    store = make_store()
+    wb.after_failure(store, "k", wb.RETRY_QUOTA, 1.0)
+    wb.after_success(store, "k", wb.RETRY_QUOTA)
+    assert wb.get(store, "k") is None
+    wb.before_attempt(store, "e", wb.QUOTA, 1.0)
+    wb.after_success(store, "e", wb.QUOTA)
+    assert wb.count_today(wb.get(store, "e"), wb.today()) == 1
+
+
+def test_an_explicit_day_is_used_for_counting(make_store):
+    store = make_store()
+    wb.before_attempt(store, "k", wb.QUOTA, 1.0, day=DAY)
+    wb.after_failure(store, "f", wb.RETRY_QUOTA, 1.0, day=DAY)
+    assert wb.get(store, "k") == {"day": DAY, "count": 1, "last": 1.0}
+    assert wb.get(store, "f") == {"day": DAY, "count": 1, "last": 1.0}

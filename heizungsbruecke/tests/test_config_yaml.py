@@ -15,7 +15,7 @@ def _load_config_yaml() -> dict:
 
 
 def test_addon_version_constant_matches_config_yaml():
-    assert _load_config_yaml()["version"] == ADDON_VERSION == "1.0.0"
+    assert _load_config_yaml()["version"] == ADDON_VERSION
 
 
 def test_slug_and_architectures():

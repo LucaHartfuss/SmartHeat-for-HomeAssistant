@@ -58,6 +58,10 @@ class FakeHost:
         self.raum_wert: dict | None = {"ist": 20.0, "soll": 21.0, "soll_quelle": "portal", "ts": "t0"}
         self.treiber_text: str | None = None
         self.handlers: dict = {}
+        self.ursprung: dict = {}
+
+    def ursprungswerte(self):
+        return dict(self.ursprung)
 
     def faehigkeiten(self):
         return {"drivers": ["simulation"], "zigbee": True, "updater": True}
@@ -193,6 +197,61 @@ class World:
     def empfangen(self, name, body):
         self.link.empfangen(name, body)
         self.device.schritt()
+
+
+# --- Ursprungswerte im Status (Spec Stufe 3 S3 5.1, G-4) ---
+
+def test_status_carries_only_originals_the_server_does_not_know(tmp_path):
+    world = World(tmp_path)
+    world.host.ursprung = {"heat_limit": 16.0, "mode_select": "hz_operationmode_automatic"}
+    world.verbinden()
+    assert world.link.of("up/status")[-1]["ursprungswerte"] == world.host.ursprung  # Server kennt noch keinen
+    world.empfangen("down/config", _konfiguration(ursprungswerte={"heat_limit": 16.0}))
+    world.clock.now += device.STATUS_MIN_SECONDS
+    world.device.schritt()
+    assert world.link.of("up/status")[-1]["ursprungswerte"] == {"mode_select": "hz_operationmode_automatic"}
+
+
+def test_status_without_new_originals_has_no_field(tmp_path):
+    world = World(tmp_path)
+    world.host.ursprung = {"heat_limit": 16.0}
+    world.verbinden()
+    world.empfangen("down/config", _konfiguration(ursprungswerte={"heat_limit": 16.0}))
+    world.clock.now += device.STATUS_MIN_SECONDS
+    world.device.schritt()
+    statuses = world.link.of("up/status")
+    assert len(statuses) == 2 and "ursprungswerte" not in statuses[-1]
+    assert set(statuses[-1]) == set(wire.STATUS_FIELDS)
+    world.clock.now += device.STATUS_MIN_SECONDS
+    world.device.schritt()
+    assert len(world.link.of("up/status")) == 2  # kein Sendeschleife, solange nichts neu ist
+
+
+def test_status_respects_v1_limits(tmp_path):
+    world = World(tmp_path)
+    world.host.ursprung = {**{f"h{i:02d}": float(i) for i in range(20)}, "x" * 65: 1.0, "nan": math.nan,
+                           "gross": 1e13, "wahr": True}
+    world.verbinden()
+    werte = world.link.of("up/status")[-1]["ursprungswerte"]
+    assert len(werte) == wire.URSPRUNG_MAX_HEBEL and all(len(k) <= wire.URSPRUNG_HEBEL_MAX_CHARS for k in werte)
+    assert all(isinstance(v, float) and math.isfinite(v) and abs(v) <= 1e12 for v in werte.values())
+
+
+def test_unreportable_originals_are_logged_once_per_name_without_values(tmp_path, caplog):
+    world = World(tmp_path)
+    world.host.ursprung = {**{f"h{i:02d}": float(i) for i in range(17)}, "leer": "", "gross": 1e13,
+                           "riesig": 10 ** 400, "x" * 65: "geheimerwert"}
+    with caplog.at_level("WARNING", logger=device.logger.name):
+        world.verbinden()
+        for _ in range(5):  # Takt: _status_senden laeuft jede Sekunde
+            world.clock.now += 1
+            world.device.schritt()
+    text = caplog.text
+    for name in ("leer", "gross", "riesig", "h16"):  # h16 ist der 17. gueltige Name: ueber dem Limit
+        assert text.count(f"Ursprungswert {name} ") == 1, name
+    assert "Ursprungswert ? " in text and "geheimerwert" not in text and "1e+13" not in text
+    assert len(caplog.records) == 5  # leer, gross, riesig, ?, h16 - nicht je Takt
+    assert len(world.link.of("up/status")[-1]["ursprungswerte"]) == wire.URSPRUNG_MAX_HEBEL
 
 
 # --- Start, hello ---

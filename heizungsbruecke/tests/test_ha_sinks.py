@@ -1,11 +1,7 @@
 """HA-Sinks fuer Status und Meldungen (Plan SHG G1, Praezisierungen 4, 5)."""
 from fakes import FailingServiceHa, FakeHa
 
-from heizungsbruecke.ha_sinks import EVENT_TYPE, HaNotifySink, notification_id
-
-
-def test_event_type_is_the_contract_name():
-    assert EVENT_TYPE == "smartheat_status"
+from heizungsbruecke.ha_sinks import HaNotifySink, notification_id
 
 
 def test_push_goes_to_every_service_even_if_one_fails():

@@ -9,10 +9,10 @@ import pytest
 from configs import THERMOSTAT, bedienung, konfiguration, leer
 from world import GatewayWorld
 
+from smartheat_core import dateien
 from smartheat_core.binding import BINDINGS
 from smartheat_core.safety import resolve_local_safety
 from smartheat_gateway.drivers.simulation import START_LEVERS
-from smartheat_gateway.files import write_json
 from smartheat_runtime.app import IDLE_NOT_CONFIGURED
 from smartheat_runtime.soll_speicher import ECHO_WINDOW_SECONDS
 
@@ -134,12 +134,13 @@ def test_gateway_scenario(world):
     assert {lever: ergebnis["result"]["werte"].get(lever) for lever in URSPRUNG} == URSPRUNG
     assert {lever: _plant(world)[lever] for lever in URSPRUNG} == URSPRUNG
 
-    # 8. leere Konfiguration (entfernt, erst nach dem sign_off-Ergebnis, Spec 5b 5) -> Neustart -> der naechste Start
-    # raeumt auf
-    write_json(world.paths.driver_secrets_dir / "vicare.json", {"refresh_token": "test-token"})
+    # 8. leere Konfiguration (entfernt, erst nach dem sign_off-Ergebnis, Spec 5b 5) -> Neustart -> der Start setzt mit
+    # der Konfiguration der Markierung zurueck (nach dem sign_off nichts mehr zu tun) -> zweiter Neustart -> dieser
+    # Start raeumt auf (Spec Stufe 3 S3 Abschnitt 4)
+    dateien.schreiben_json(world.paths.driver_secrets_dir / "vicare.json", {"refresh_token": "test-token"}, modus=dateien.LESBAR)
     world.konfiguration_senden(leer(), 2)
     assert _ergebnis(world, dokument="konfiguration", version=2)["ok"] is True
-    assert world.restarts == 4 and world.result.reason == IDLE_NOT_CONFIGURED
+    assert world.restarts == 5 and world.result.reason == IDLE_NOT_CONFIGURED
     assert not world.paths.runtime_dir.exists() and not world.paths.aufraeumen.exists()
     assert not (world.paths.driver_secrets_dir / "vicare.json").exists()
     world.connect()
@@ -148,10 +149,10 @@ def test_gateway_scenario(world):
     assert world.device.identity.claim_code == code_vorher  # Identitaet bleibt (der Server gibt frei, Plan S2)
 
     # 9. neu einrichten: eine Treiber-Anmeldung im Assistenten vor der Einrichtung ueberlebt deren Neustart
-    write_json(world.paths.driver_secrets_dir / "vicare.json", {"refresh_token": "test-token"})
+    dateien.schreiben_json(world.paths.driver_secrets_dir / "vicare.json", {"refresh_token": "test-token"}, modus=dateien.LESBAR)
     world.konfiguration_senden(konfiguration(), 3)
     assert _ergebnis(world, dokument="konfiguration", version=3)["ok"] is True
-    assert world.restarts == 5 and (world.paths.driver_secrets_dir / "vicare.json").exists()
+    assert world.restarts == 6 and (world.paths.driver_secrets_dir / "vicare.json").exists()
     world.connect()
     assert world.status()["status"] == "regelt" and _led(world) == "regelt"
 
