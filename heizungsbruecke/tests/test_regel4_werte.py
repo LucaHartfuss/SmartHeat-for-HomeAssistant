@@ -194,3 +194,22 @@ def test_fussbodenheizung_hat_keine_comfort_zeile(make_store, clock, key):
     pipeline, anlage = _pipeline(make_store, clock, key)
     pipeline.set_boosts(comfort=True, emergency=False)
     assert anlage.writes == []
+
+
+#: Spec Stufe 3 S4b 4.2: Obergrenzen des Schreibschutzes (Hebelsatz -> (durchsetzen_tag, tag, lebensdauer_hinweis)).
+#: Der Server darf nur gleich oder strenger senden. Werte unveraendert aus smartheat_core/binding.py bis 1.0.0.
+SCHREIBSCHUTZ = {
+    "vaillant_vrc720": (6, None, None),
+    "weishaupt_wwp": (6, 10, 50000),
+    "weishaupt_wwp_basis": (6, 10, 50000),
+    "viessmann_vicare": (4, None, None),
+}
+
+
+def test_schreibschutz_obergrenzen():
+    from smartheat_core.verfahren import VERFAHREN
+
+    assert {
+        k: (v.obergrenze.durchsetzen_tag, v.obergrenze.tag, v.obergrenze.lebensdauer_hinweis)
+        for k, v in VERFAHREN.items()
+    } == SCHREIBSCHUTZ, R4
