@@ -5,10 +5,11 @@ meldet 0, wenn die Zone gerade nicht heizt. Die Hebel haengen an den Manifest-Ro
 Add-on-Optionen (P2-3)."""
 import logging
 import math
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from typing import cast
 
 from heizungsbruecke import config
-from smartheat_core.binding import VAILLANT_MYPYLLANT, BindingDescription
+from smartheat_core.binding import BindingDescription
 from smartheat_runtime.roles import LEVER_ROLES, ChannelManifest
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ def is_climate(ref: str) -> bool:
 
 
 class HaPlantBinding:
-    def __init__(self, ha_api, manifest: ChannelManifest, description: BindingDescription = VAILLANT_MYPYLLANT) -> None:
+    def __init__(self, ha_api, manifest: ChannelManifest, description: BindingDescription) -> None:
         self._ha_api = ha_api
         self._manifest = manifest
         self.description = description
@@ -133,27 +134,25 @@ class HaPlantBinding:
 # weishaupt_modbus nutzt als Select-Optionen Uebersetzungsschluessel, nicht Texte: 1.x "hz_operationmode_<modus>"
 # (entities.py, MySelectEntity), 2.0 "heating_circuit_operation_mode_<modus>" (modbus/descriptions/myenums.py). Die
 # Modi heissen in beiden gleich (automatic, comfort, normal, lowering, standby); das Schema steht im aktuellen Zustand.
-WEISHAUPT_MODE_SCHEMES = ("hz_operationmode_", "heating_circuit_operation_mode_")
+# Die Praefixe und der statische Normal-Bereich je Schema (1.x PARAMS_ROOMTEMP_MID 16-28, 2.0 ROOM_TEMP_NORMAL 18-25)
+# kommen vom Server (description.schemata, Spec Stufe 3 S4b); die Pipeline schneidet ihn mit den lokalen Grenzen.
 WEISHAUPT_NORMAL = "normal"
 # Betriebsarten von weishaupt_modbus (in 1.x und 2.0 gleich, nur das Schema unterscheidet sich).
 WEISHAUPT_MODES = ("automatic", "comfort", WEISHAUPT_NORMAL, "lowering", "standby")
-# Statischer Bereich des Raum-Solls Normal je Schema: 1.x PARAMS_ROOMTEMP_MID 16-28 (dazu dynamisch zwischen Absenk und
-# Komfort; das verschiebt _make_room_for_normal, die min/max-Attribute der Entity zeigen bei 1.x die dynamischen
-# Grenzen und taugen deshalb nicht), 2.0 ROOM_TEMP_NORMAL 18-25.
-WEISHAUPT_NORMAL_RANGE = {"hz_operationmode_": (16.0, 28.0), "heating_circuit_operation_mode_": (18.0, 25.0)}
 
 
-def weishaupt_scheme(option: str) -> str:
-    """Schema (Praefix) einer Betriebsart-Option; ValueError bei einem unbekannten Schema (nie raten)."""
-    for scheme in WEISHAUPT_MODE_SCHEMES:
+def weishaupt_scheme(option: str, praefixe: tuple[str, ...]) -> str:
+    """Schema (Praefix) einer Betriebsart-Option; ValueError bei einem unbekannten Schema (nie raten). Die Praefixe
+    kommen vom Server (bindungsparameter.schemata, Spec Stufe 3 S4b)."""
+    for scheme in praefixe:
         if option.startswith(scheme):
             return scheme
     raise ValueError(f"Unbekannte Betriebsart von weishaupt_modbus: {option!r}")
 
 
-def weishaupt_option(option: str, scheme: str) -> str:
+def weishaupt_option(option: str, scheme: str, praefixe: tuple[str, ...]) -> str:
     """Dieselbe Betriebsart im Schema `scheme` (Ursprungswert aus 1.x nach einem Update auf 2.0)."""
-    return scheme + option[len(weishaupt_scheme(option)):]
+    return scheme + option[len(weishaupt_scheme(option, praefixe)):]
 
 
 # Hilfs-Sollwerte gelten als unveraendert innerhalb eines halben Geraeteschritts (0,5 K).
@@ -199,6 +198,10 @@ class WeishauptHaBinding(HaPlantBinding):
     def _mode(self) -> str:
         return self._ha_api.get_raw_state(self._manifest.refs["mode_select"])
 
+    @property
+    def _praefixe(self) -> tuple[str, ...]:
+        return tuple(cast(Sequence[str], self.description.schemata["praefixe"]))
+
     def limits(self, lever: str) -> tuple[float, float] | None:
         if lever != "room_setpoint":
             return super().limits(lever)
@@ -207,14 +210,16 @@ class WeishauptHaBinding(HaPlantBinding):
         # Lesefehler (HA nicht erreichbar, nicht verfuegbar) steigen auf: die Pipeline behaelt den letzten guten Bereich.
         mode = self._mode()
         try:
-            return WEISHAUPT_NORMAL_RANGE[weishaupt_scheme(mode)]
-        except ValueError as error:
+            bereiche = cast(Mapping[str, Sequence[float]], self.description.schemata["normal_bereich"])
+            low, high = bereiche[weishaupt_scheme(mode, self._praefixe)]
+            return low, high
+        except (ValueError, KeyError) as error:
             logger.debug("Bereich des Normal-Solls unbekannt: %s", error)
             return None
 
     def is_prepared(self) -> bool:
         mode = self._mode()
-        return mode == weishaupt_scheme(mode) + WEISHAUPT_NORMAL
+        return mode == weishaupt_scheme(mode, self._praefixe) + WEISHAUPT_NORMAL
 
     def prepare(self) -> bool:
         """Betriebsart auf Normal (Uebersetzungsschluessel im Schema des aktuellen Zustands); True, wenn umgestellt
@@ -222,7 +227,7 @@ class WeishauptHaBinding(HaPlantBinding):
         if not self.needs_preparation() or self.is_prepared():
             return False
         entity_id = self._manifest.refs["mode_select"]
-        target = weishaupt_scheme(self._mode()) + WEISHAUPT_NORMAL
+        target = weishaupt_scheme(self._mode(), self._praefixe) + WEISHAUPT_NORMAL
         self._ha_api.select_option(entity_id, target)
         self.physical_writes += 1
         logger.warning("Betriebsart %s auf %s gestellt", entity_id, target)
@@ -236,7 +241,7 @@ class WeishauptHaBinding(HaPlantBinding):
         }
 
     def aux_zulaessig(self, name: str, wert: str) -> bool:
-        return name == "mode_select" and wert in {scheme + mode for scheme in WEISHAUPT_MODE_SCHEMES
+        return name == "mode_select" and wert in {scheme + mode for scheme in self._praefixe
                                                   for mode in WEISHAUPT_MODES}
 
     def restore_aux(self, values: Mapping[str, str | float], levers: Mapping[str, float] | None = None) -> None:
@@ -260,7 +265,7 @@ class WeishauptHaBinding(HaPlantBinding):
             return
         entity_id = self._manifest.refs["mode_select"]
         current = self._mode()
-        target = weishaupt_option(mode, weishaupt_scheme(current))
+        target = weishaupt_option(mode, weishaupt_scheme(current, self._praefixe), self._praefixe)
         if current != target:
             self._ha_api.select_option(entity_id, target)
             self.physical_writes += 1
@@ -330,8 +335,9 @@ _BINDING_CLASSES: dict[str, type[HaPlantBinding]] = {
 
 
 def binding_for(options: dict, ha_api, manifest: ChannelManifest) -> HaPlantBinding:
-    """Binding des gewaehlten Hebelsatzes (Option lever_set, Standard Vaillant) mit der wirksamen Beschreibung
-    (Wartezeit zum Abfrageintervall). Wirft config.ConfigError bei unbekanntem Hebelsatz."""
+    """Binding des gewaehlten Hebelsatzes (Option lever_set, Standard Vaillant) mit der Beschreibung aus den
+    Bindungsparametern der Konfiguration. Wirft config.ConfigError bei unbekanntem Hebelsatz oder fehlenden/ungueltigen
+    Parametern."""
     description = config.binding_description(options)
     return _BINDING_CLASSES[description.lever_set.id](ha_api, manifest, description)
 

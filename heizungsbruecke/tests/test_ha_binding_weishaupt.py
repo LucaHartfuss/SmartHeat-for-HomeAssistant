@@ -2,10 +2,10 @@
 Reihenfolge Komfort/Normal/Absenk, Hilfs-Ursprungswerte, physische Schreibvorgaenge; mit der Pipeline: Fehlschlag mitten in der
 Reihenfolge und Wiederherstellung."""
 import pytest
+from bindung_beispiele import WEISHAUPT_MODBUS
 
 from heizungsbruecke.ha_binding import WeishauptHaBinding, weishaupt_option, weishaupt_scheme
 from smartheat_core import write_budget
-from smartheat_core.binding import WEISHAUPT_MODBUS
 from smartheat_core.pipeline import DeviceWriteError, LeverPipeline, WriteBudgetExhausted
 from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime.roles import ChannelManifest
@@ -398,8 +398,11 @@ def test_the_normal_setpoint_uses_the_static_range_of_the_scheme(mode, expected)
 
 
 def test_scheme_helpers():
-    assert weishaupt_scheme("hz_operationmode_lowering") == "hz_operationmode_"
-    assert weishaupt_option("hz_operationmode_lowering", V2) == V2 + "lowering"
+    praefixe = WEISHAUPT_MODBUS.schemata["praefixe"]
+    assert weishaupt_scheme("hz_operationmode_lowering", praefixe) == "hz_operationmode_"
+    assert weishaupt_option("hz_operationmode_lowering", V2, praefixe) == V2 + "lowering"
+    with pytest.raises(ValueError, match="Unbekannte Betriebsart"):
+        weishaupt_scheme("fremd_lowering", praefixe)
 
 
 def test_a_read_error_of_the_mode_propagates_out_of_limits():

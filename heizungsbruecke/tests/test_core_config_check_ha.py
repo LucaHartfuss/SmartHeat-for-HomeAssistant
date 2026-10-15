@@ -4,7 +4,6 @@ import pytest
 from smartheat_core import config_check as cc
 from smartheat_core.rastung import Rastung
 from smartheat_device import wire
-from smartheat_runtime import options
 
 
 def _ha(**changes) -> dict:
@@ -36,8 +35,8 @@ def test_copies_match_the_contract():
     assert cc.KREIS_FELDER == wire.KREIS_FIELDS
 
 
-def test_the_poll_interval_bounds_are_the_bounds_of_the_options():
-    assert cc.ABFRAGE_S == options.POLL_INTERVAL_RANGE
+def test_the_poll_interval_bounds():
+    assert cc.ABFRAGE_S == (10, 3600)
 
 
 def test_valid_ha_configuration_passes_and_the_host_sees_all_of_it():

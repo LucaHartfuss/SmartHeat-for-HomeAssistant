@@ -3,10 +3,10 @@ Schreibgruppen (Viessmann), zurueckgestellte Serverwerte. Vaillant bleibt unberu
 import dataclasses
 
 import pytest
+from bindung_beispiele import VAILLANT_MYPYLLANT, VIESSMANN_VICARE_BINDING, WEISHAUPT_MODBUS
 
 from heizungsbruecke.ha_binding import HaPlantBinding
 from smartheat_core import write_budget
-from smartheat_core.binding import VAILLANT_MYPYLLANT, VIESSMANN_VICARE_BINDING, WEISHAUPT_MODBUS
 from smartheat_core.pipeline import LIFETIME_KEY, DeviceWriteError, LeverPipeline, WriteBudgetExhausted
 from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime.backup_store import load_backup
@@ -201,7 +201,7 @@ def test_vaillant_counts_nothing_and_never_writes_the_new_fields(make_store, clo
     store = make_store()
     ha = Ha({"number.curve": 0.7, "number.shift": 21.0})
     manifest = ChannelManifest(refs={"curve_current": "number.curve", "shift_current": "number.shift"})
-    pipeline = LeverPipeline(store, HaPlantBinding(ha, manifest), resolve_local_safety("vaillant_vrc720", "Heizkoerper"),
+    pipeline = LeverPipeline(store, HaPlantBinding(ha, manifest, VAILLANT_MYPYLLANT), resolve_local_safety("vaillant_vrc720", "Heizkoerper"),
                              clock=clock)
     pipeline.apply_server_values({"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 16.0})
     assert len(ha.writes) == 2

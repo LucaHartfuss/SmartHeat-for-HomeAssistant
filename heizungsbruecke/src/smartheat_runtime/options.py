@@ -4,7 +4,9 @@ Sicherheitswerte, Intervalle, Hinweis-Schalter, Abmelden-Flag. Das HA-Add-on (he
 apply_config (Spec SHG G3 2.5)."""
 import math
 
-from smartheat_core.binding import BINDINGS, BindingDescription, with_poll_interval
+from smartheat_core.binding import BindingDescription
+from smartheat_core.bindungsparameter import beschreibung
+from smartheat_core.levers import LEVER_SETS
 from smartheat_core.safety import LocalSafety, resolve_local_safety
 from smartheat_runtime.notifier import HINT_CATEGORIES
 
@@ -30,9 +32,8 @@ RECONFIGURE_HINT = "bitte SmartHeat neu konfigurieren"
 # (Bestandsanlage unveraendert, kein Verhaltenswechsel).
 LEVER_SET_OPTION = "lever_set"
 DEFAULT_LEVER_SET = "vaillant_vrc720"
-# Abfrageintervall der Hersteller-Integration (Plan 3b, Wartezeit nach eigenem Schreiben); Grenzen sind eine Annahme.
-POLL_INTERVAL_OPTION = "poll_interval_seconds"
-POLL_INTERVAL_RANGE = (10, 3600)
+# Spec Stufe 3 S4b: Bindungsparameter aus der Konfiguration (dokument.optionen bzw. Gateway-Host); ohne sie kein Start.
+BINDUNGSPARAMETER_OPTION = "bindungsparameter"
 
 
 def lever_set_id(options: dict) -> str:
@@ -41,18 +42,19 @@ def lever_set_id(options: dict) -> str:
     value = options.get(LEVER_SET_OPTION)
     if value is None or value == "":
         return DEFAULT_LEVER_SET
-    if not isinstance(value, str) or value not in BINDINGS:
+    if not isinstance(value, str) or value not in LEVER_SETS:
         raise ConfigError(f"Option '{LEVER_SET_OPTION}' ({value!r}) ist kein bekannter Hebelsatz – {RECONFIGURE_HINT}")
     return value
 
 
 def binding_description(options: dict) -> BindingDescription:
-    """Wirksame Binding-Beschreibung: Standard-Beschreibung des Hebelsatzes mit der Wartezeit zum Abfrageintervall
-    (Option poll_interval_seconds; Vaillant bleibt bei 2100 s). Ein ungueltiges Intervall gilt als fehlend: der Start
-    lehnt es per validate ab, das Abmelden (ohne validate) soll daran nicht scheitern."""
-    interval = options.get(POLL_INTERVAL_OPTION)
-    valid = interval is not None and validate_poll_interval(options) is None
-    return with_poll_interval(BINDINGS[lever_set_id(options)], interval if valid else None)
+    """Wirksame Binding-Beschreibung aus den Bindungsparametern der Konfiguration (Spec Stufe 3 S4b); ConfigError,
+    wenn sie fehlen oder eine lokale Pruefung verletzen. Keine Ersatztabelle."""
+    hebelsatz = lever_set_id(options)  # wirft selbst ConfigError mit eigenem Text
+    try:
+        return beschreibung(hebelsatz, options.get(BINDUNGSPARAMETER_OPTION))
+    except ValueError as error:
+        raise ConfigError(f"Konfiguration: {error}") from None
 
 
 def hints_off_strict(options: dict) -> list[str]:
@@ -137,21 +139,10 @@ def validate_telemetry_interval(options: dict) -> str | None:
     return None
 
 
-def validate_poll_interval(options: dict) -> str | None:
-    """Plan 3b: optionales Abfrageintervall der Hersteller-Integration (Sekunden), Grenzen POLL_INTERVAL_RANGE."""
-    value = options.get(POLL_INTERVAL_OPTION)
-    if value is None:
-        return None
-    low, high = POLL_INTERVAL_RANGE
-    if not _is_interval_number(value) or not low <= value <= high:
-        return f"{POLL_INTERVAL_OPTION} ({value!r}) muss eine Zahl von {low} bis {high} Sekunden sein"
-    return None
-
-
 def validate(options: dict) -> str | None:
     """Erste Fehlermeldung der Startpruefungen, sonst None."""
     for check in (
-        validate_local_check_interval, validate_telemetry_interval, validate_poll_interval,
+        validate_local_check_interval, validate_telemetry_interval,
     ):
         error = check(options)
         if error:

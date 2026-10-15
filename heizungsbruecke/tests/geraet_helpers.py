@@ -3,6 +3,8 @@ Geraete-Hosts und Start der Laufzeit ueber den Link (RuntimeChannel). So laufen 
 ihren Optionen weiter, nur der Weg der Einstellungen ist neu."""
 import json
 
+import bindung_beispiele
+
 from heizungsbruecke.geraet_status import GeraetStatus
 from heizungsbruecke.ha_sinks import HaNotifySink
 from heizungsbruecke.host import HaHost
@@ -24,13 +26,14 @@ def konfiguration_aus_optionen(options: dict) -> dict:
                "rollen": rollen, "batterien": list(options.get("battery_entities", [])),
                "benachrichtigung": list(options.get("notify_services", [])),
                "hinweise_aus": list(options.get("notify_hints_off", []))}
-    if options.get("poll_interval_seconds") is not None:
-        bindung["abfrage_s"] = options["poll_interval_seconds"]
+    hebelsatz = options.get("lever_set") or "vaillant_vrc720"  # ein unbekannter bleibt im Dokument, Parameter: Vaillant
     konfiguration = {
         "anlage": options["tenant_id"], "profil": "vaillant_gastherme_heizkoerper",
-        "hebelsatz": options.get("lever_set") or "vaillant_vrc720", "verteilsystem": options.get("verteilsystem"),
+        "hebelsatz": hebelsatz, "verteilsystem": options.get("verteilsystem"),
         "bindung": bindung, "raumfuehler": list(options.get("room_sensors", [])),
         "tagestick": options.get("daily_trigger_time"), "abo": "aktiv", "mindest_software": "1.0.0", "software": None,
+        "bindungsparameter": options["bindungsparameter"] if "bindungsparameter" in options
+        else bindung_beispiele.parameter(hebelsatz if hebelsatz in bindung_beispiele.PARAMETER else "vaillant_vrc720"),
     }
     intervalle = {k: options[o] for k, o in (("pruefung_s", "local_check_interval_seconds"),
                                               ("telemetrie_s", "telemetry_interval_seconds")) if o in options}

@@ -1,8 +1,9 @@
 """Spec Stufe 3 S4b 4.2: Pruefung der Bindungsparameter; jede Regel knapp gueltig und knapp ungueltig."""
+import dataclasses
 import math
 
 import pytest
-from bindung_beispiele import PARAMETER, WEISHAUPT_SCHEMATA, parameter
+from bindung_beispiele import PARAMETER, VAILLANT_MYPYLLANT, WEISHAUPT_SCHEMATA, parameter
 
 from smartheat_core.binding import ENERGY_DAILY
 from smartheat_core.bindungsparameter import (
@@ -235,3 +236,27 @@ def test_fehlertexte_nicht_doppelt_verpackt():
                        ("schreibgruppen", [["curve"]]), ("zurueck_optional", ["curve"])):
         text = _try(parameter("vaillant_vrc720", **{feld: wert}))
         assert text and "ungültig (" not in text, (feld, text)
+
+
+@pytest.mark.parametrize(("change", "match"), [
+    ({"steps": {"curve": 0.05}}, "Schrittweite"),
+    ({"enforce_tolerance": {"curve": 0.025}}, "Toleranz"),
+    ({"labels": {}}, "Anzeigename"),
+    ({"restore_originals": ("level",)}, "restore_originals"),
+    ({"optional_restore": ("min_flow",)}, "optional_restore"),
+    ({"prepared_lever": "level"}, "prepared_lever"),
+    ({"settle_seconds": 0}, "Wartezeit"),
+    ({"daily_write_limit": 0}, "daily_write_limit"),
+    ({"lifetime_hint_at": 0}, "lifetime_hint_at"),
+    ({"enforce_per_day": 0}, "enforce_per_day"),
+    ({"write_groups": (("curve",),)}, "Schreibgruppe"),
+    ({"write_groups": (("curve", "level"),)}, "Schreibgruppe"),
+    ({"write_groups": (("curve", "room_setpoint"), ("room_setpoint", "heat_limit"))}, "Schreibgruppe"),
+    ({"energy_counters": "monthly"}, "energy_counters"),
+    ({"readonly_levers": ("curve",)}, "readonly_levers"),
+    ({"readonly_levers": ("slope",)}, "readonly_levers"),
+])
+def test_description_is_validated(change, match):
+    """Die Invarianten von BindingDescription (vorher in test_core_binding.py)."""
+    with pytest.raises(ValueError, match=match):
+        dataclasses.replace(VAILLANT_MYPYLLANT, **change)

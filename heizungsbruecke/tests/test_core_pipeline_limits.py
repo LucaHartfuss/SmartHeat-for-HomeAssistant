@@ -1,11 +1,13 @@
 """Hebel-Pipeline, Plan Client2-Bereitschaft: geschrieben wird in der Schnittmenge aus lokalen Grenzen (safety.py) und
 dem Wertebereich der Anlage (binding.limits) -- nur enger, nie weiter."""
+import dataclasses
 import logging
 from types import SimpleNamespace
 
-from heizungsbruecke.ha_binding import HaPlantBinding
+from bindung_beispiele import VAILLANT_MYPYLLANT, WEISHAUPT_MODBUS
+
+from heizungsbruecke.ha_binding import HaPlantBinding, WeishauptHaBinding
 from smartheat_core import derived, enforce
-from smartheat_core.binding import VAILLANT_MYPYLLANT, WEISHAUPT_MODBUS
 from smartheat_core.pipeline import LIMITS_TTL_SECONDS, LeverPipeline
 from smartheat_core.safety import LocalSafety, resolve_local_safety
 from smartheat_runtime.roles import ChannelManifest
@@ -247,3 +249,26 @@ def test_a_wider_or_equal_device_range_logs_no_narrowing(make_store, clock, capl
         clock.advance(LIMITS_TTL_SECONDS + 1)
         pipeline.range_of("room_setpoint")
     assert "verengt" not in caplog.text
+
+
+class ModeHa(Ha):
+    def get_raw_state(self, entity_id):
+        return "hz_operationmode_normal"
+
+
+def _weishaupt_pipeline(make_store, clock, bereich):
+    beschreibung = dataclasses.replace(WEISHAUPT_MODBUS, schemata={
+        "praefixe": ("hz_operationmode_",), "normal_bereich": {"hz_operationmode_": bereich}})
+    manifest = ChannelManifest(refs={**MANIFEST.refs, "mode_select": "select.betriebsart"})
+    return LeverPipeline(make_store(), WeishauptHaBinding(ModeHa(), manifest, beschreibung), SAFETY, clock=clock)
+
+
+def test_weishaupt_bereich_vom_server_verengt_nur(make_store, clock):
+    """Review Focus 5: ein weiter Normal-Bereich vom Server erweitert die lokalen Grenzen nicht (range_of)."""
+    pipeline = _weishaupt_pipeline(make_store, clock, (5.0, 40.0))
+    assert pipeline.range_of("room_setpoint") == (16.0, 25.0)
+
+
+def test_weishaupt_bereich_vom_server_verengt(make_store, clock):
+    pipeline = _weishaupt_pipeline(make_store, clock, (18.0, 22.0))
+    assert pipeline.range_of("room_setpoint") == (18.0, 22.0)

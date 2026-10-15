@@ -368,7 +368,8 @@ def test_check_timezone_survives_failing_config_query(caplog):
 # --- Hostneutrale Handler der Laufzeit ---
 
 def test_on_telemetry_hands_the_energy_normalizer_to_the_tick(make_store, monkeypatch):
-    from smartheat_core.binding import VAILLANT_MYPYLLANT
+    from bindung_beispiele import VAILLANT_MYPYLLANT
+
     from smartheat_runtime.app import _on_telemetry
 
     captured = {}

@@ -3,9 +3,9 @@ Komfort-/Absenk-Soll) -- gemerkt vor dem ersten Schreiben, zurueckgestellt bei A
 import math
 
 import pytest
+from bindung_beispiele import WEISHAUPT_MODBUS
 
 from heizungsbruecke.ha_binding import HaPlantBinding
-from smartheat_core.binding import WEISHAUPT_MODBUS
 from smartheat_core.pipeline import DeviceWriteError, LeverPipeline
 from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime.backup_store import load_backup

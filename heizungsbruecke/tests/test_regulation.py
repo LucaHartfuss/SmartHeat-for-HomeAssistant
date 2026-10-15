@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from bindung_beispiele import VAILLANT_MYPYLLANT
 from fakes import runtime_config
 
 from heizungsbruecke.ha_binding import HaPlantBinding
@@ -50,7 +51,7 @@ def _runtime(store, *, room_actual=20.0, room_target=21.0, entity_ids=ENTITY_IDS
     return SimpleNamespace(
         manifest=manifest, signals=ha_api, ha_api=ha_api, config=runtime_config(), store=store,
         states=values,
-        override=LeverPipeline(store, HaPlantBinding(ha_api, manifest), safety),
+        override=LeverPipeline(store, HaPlantBinding(ha_api, manifest, VAILLANT_MYPYLLANT), safety),
     )
 
 

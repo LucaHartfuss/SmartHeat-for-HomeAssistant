@@ -3,11 +3,11 @@ from datetime import date, datetime
 from unittest.mock import MagicMock
 
 import pytest
+from bindung_beispiele import VAILLANT_MYPYLLANT
 from fakes import runtime_config
 
 from heizungsbruecke.ha_binding import HaPlantBinding
 from smartheat_core import enforce, wallclock
-from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import LocalSafety
 from smartheat_runtime.delivery import SOURCE_LOCAL, DataFault, DeliveryState
@@ -101,7 +101,7 @@ def _rt(make_store, clock, ha, uptime=SETTLE + 1, store=None, manifest=MANIFEST,
     store.update(stable_target=20.5)
     notifier = MagicMock(spec=Notifier)
     notifier.notify.return_value = True
-    override = LeverPipeline(store, HaPlantBinding(ha, manifest), SAFETY, clock=clock)
+    override = LeverPipeline(store, HaPlantBinding(ha, manifest, VAILLANT_MYPYLLANT), SAFETY, clock=clock)
     ha.clock = clock
     clock.advance(uptime)
     return Runtime(

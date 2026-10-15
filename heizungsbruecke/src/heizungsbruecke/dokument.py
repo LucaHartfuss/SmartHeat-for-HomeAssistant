@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from heizungsbruecke import config
 from heizungsbruecke.ha_signals import SOLL_REF
 from smartheat_core.config_check import NichtPruefbar
-from smartheat_runtime.options import POLL_INTERVAL_OPTION
+from smartheat_runtime.options import BINDUNGSPARAMETER_OPTION
 from smartheat_runtime.roles import LEVER_ROLES
 
 logger = logging.getLogger(__name__)
@@ -61,8 +61,7 @@ def optionen(konfiguration) -> dict:
         if rolle != _ROOM_TARGET:
             options[option_fuer(rolle)] = ref
     options["entity_room_target"] = SOLL_REF
-    if isinstance(bindung.get("abfrage_s"), int):
-        options[POLL_INTERVAL_OPTION] = bindung["abfrage_s"]
+    options[BINDUNGSPARAMETER_OPTION] = konfiguration.get("bindungsparameter")
     intervalle = konfiguration.get("intervalle")
     if isinstance(intervalle, Mapping):
         if "pruefung_s" in intervalle:

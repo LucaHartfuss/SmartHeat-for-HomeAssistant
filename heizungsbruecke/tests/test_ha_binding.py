@@ -1,9 +1,11 @@
 import math
 
+import bindung_beispiele
 import pytest
+from bindung_beispiele import VAILLANT_MYPYLLANT
 
+from heizungsbruecke import config
 from heizungsbruecke.ha_binding import MANUAL_HVAC_MODE, ROOM_SETPOINT_READ_MAX, HaPlantBinding, entity_of, is_climate
-from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.clamping import target_value
 from smartheat_runtime.roles import ChannelManifest
 
@@ -49,21 +51,21 @@ class FakeHa:
 
 
 def test_has_and_ref_follow_the_manifest_roles():
-    binding = HaPlantBinding(FakeHa(), MANIFEST)
+    binding = HaPlantBinding(FakeHa(), MANIFEST, VAILLANT_MYPYLLANT)
     assert binding.ref("curve") == "number.curve"
     assert binding.ref("room_setpoint") == "climate.zone::temperature"
     assert binding.has("min_flow") and not binding.has("level")
-    assert not HaPlantBinding(FakeHa(), ChannelManifest(refs={"curve_current": "number.curve"})).has("heat_limit")
+    assert not HaPlantBinding(FakeHa(), ChannelManifest(refs={"curve_current": "number.curve"}), VAILLANT_MYPYLLANT).has("heat_limit")
 
 
 @pytest.mark.parametrize(("raw", "expected"), [(21.5, 21.5), (0.0, None), (4.9, None), (math.nan, None)])
 def test_room_setpoint_below_five_means_zone_inactive(raw, expected):
-    binding = HaPlantBinding(FakeHa({"climate.zone::temperature": raw}), MANIFEST)
+    binding = HaPlantBinding(FakeHa({"climate.zone::temperature": raw}), MANIFEST, VAILLANT_MYPYLLANT)
     assert binding.read("room_setpoint") == expected
 
 
 def test_room_setpoint_above_the_plausible_maximum_is_a_read_error():
-    binding = HaPlantBinding(FakeHa({"climate.zone::temperature": 36.0}), MANIFEST)
+    binding = HaPlantBinding(FakeHa({"climate.zone::temperature": 36.0}), MANIFEST, VAILLANT_MYPYLLANT)
     with pytest.raises(ValueError, match="35"):
         binding.read("room_setpoint")
 
@@ -71,33 +73,33 @@ def test_room_setpoint_above_the_plausible_maximum_is_a_read_error():
 def test_room_setpoint_boundary_values_are_plausible():
     # Ersetzt test_plant.test_read_shift_above_max_raises (Grenzwert gilt noch) und Zonen 20.5 -> 20.5.
     with pytest.raises(ValueError):
-        HaPlantBinding(FakeHa({ZONE: 35.5}), MANIFEST).read("room_setpoint")
-    assert HaPlantBinding(FakeHa({ZONE: ROOM_SETPOINT_READ_MAX}), MANIFEST).read("room_setpoint") == ROOM_SETPOINT_READ_MAX
-    assert HaPlantBinding(FakeHa({ZONE: 20.5}), MANIFEST).read("room_setpoint") == 20.5
+        HaPlantBinding(FakeHa({ZONE: 35.5}), MANIFEST, VAILLANT_MYPYLLANT).read("room_setpoint")
+    assert HaPlantBinding(FakeHa({ZONE: ROOM_SETPOINT_READ_MAX}), MANIFEST, VAILLANT_MYPYLLANT).read("room_setpoint") == ROOM_SETPOINT_READ_MAX
+    assert HaPlantBinding(FakeHa({ZONE: 20.5}), MANIFEST, VAILLANT_MYPYLLANT).read("room_setpoint") == 20.5
 
 
 def test_other_levers_are_read_unfiltered():
-    binding = HaPlantBinding(FakeHa({"number.curve": 1.05, "number.g": 0.0}), MANIFEST)
+    binding = HaPlantBinding(FakeHa({"number.curve": 1.05, "number.g": 0.0}), MANIFEST, VAILLANT_MYPYLLANT)
     assert binding.read("curve") == 1.05
     assert binding.read("heat_limit") == 0.0
 
 
 def test_read_or_falls_back_on_inactive_zone_and_read_errors():
-    assert HaPlantBinding(FakeHa({"climate.zone::temperature": 0.0}), MANIFEST).read_or("room_setpoint", 18.0) == 18.0
+    assert HaPlantBinding(FakeHa({"climate.zone::temperature": 0.0}), MANIFEST, VAILLANT_MYPYLLANT).read_or("room_setpoint", 18.0) == 18.0
     failing = FakeHa({"climate.zone::temperature": RuntimeError("weg")})
-    assert HaPlantBinding(failing, MANIFEST).read_or("room_setpoint", 18.0) == 18.0
-    assert HaPlantBinding(FakeHa({"climate.zone::temperature": 20.0}), MANIFEST).read_or("room_setpoint", 18.0) == 20.0
+    assert HaPlantBinding(failing, MANIFEST, VAILLANT_MYPYLLANT).read_or("room_setpoint", 18.0) == 18.0
+    assert HaPlantBinding(FakeHa({"climate.zone::temperature": 20.0}), MANIFEST, VAILLANT_MYPYLLANT).read_or("room_setpoint", 18.0) == 20.0
 
 
 def test_read_or_falls_back_when_value_above_max_and_keeps_none_fallback():
-    assert HaPlantBinding(FakeHa({ZONE: 40.0}), MANIFEST).read_or("room_setpoint", 21.0) == 21.0
-    assert HaPlantBinding(FakeHa({ZONE: 0.0}), MANIFEST).read_or("room_setpoint", None) is None
-    assert HaPlantBinding(FakeHa({ZONE: 22.5}), MANIFEST).read_or("room_setpoint", 21.0) == 22.5
+    assert HaPlantBinding(FakeHa({ZONE: 40.0}), MANIFEST, VAILLANT_MYPYLLANT).read_or("room_setpoint", 21.0) == 21.0
+    assert HaPlantBinding(FakeHa({ZONE: 0.0}), MANIFEST, VAILLANT_MYPYLLANT).read_or("room_setpoint", None) is None
+    assert HaPlantBinding(FakeHa({ZONE: 22.5}), MANIFEST, VAILLANT_MYPYLLANT).read_or("room_setpoint", 21.0) == 22.5
 
 
 def test_write_checks_availability_and_uses_the_entity_service():
     ha = FakeHa()
-    binding = HaPlantBinding(ha, MANIFEST)
+    binding = HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT)
     binding.write("curve", 1.05)
     binding.write("room_setpoint", 21.5)
     assert ha.calls == [("number", "number.curve", 1.05), ("climate", "climate.zone", 21.5)]
@@ -107,7 +109,7 @@ def test_write_never_switches_the_mode_itself():
     # Ersetzt test_plant.test_write_climate_ensure_mode_false_skips_mode_check und
     # ..._already_manual_only_sets_temperature: der Modus gehoert zu prepare(), write schreibt nur.
     ha = FakeHa({"climate.zone": "auto"})
-    HaPlantBinding(ha, MANIFEST).write("room_setpoint", 25.0)
+    HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT).write("room_setpoint", 25.0)
     assert ha.calls == [("climate", "climate.zone", 25.0)]
 
 
@@ -125,7 +127,7 @@ def test_write_value_matches_the_old_plant_rounding_with_the_binding_steps():
 def test_number_and_climate_write_calls_use_the_right_services():
     # Ersetzt test_plant.test_write_number_rounds_to_role_step (Aufrufe) und ..._switches_to_manual_first (Climate).
     ha = FakeHa()
-    binding = HaPlantBinding(ha, MANIFEST)
+    binding = HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT)
     binding.write("curve", 1.0)
     binding.write("min_flow", 20.5)
     binding.write("room_setpoint", 20.5)
@@ -135,7 +137,7 @@ def test_number_and_climate_write_calls_use_the_right_services():
 def test_write_to_an_unavailable_entity_raises_and_writes_nothing():
     ha = FakeHa({"number.curve": "unavailable"})
     with pytest.raises(ValueError, match="nicht verfuegbar"):
-        HaPlantBinding(ha, MANIFEST).write("curve", 1.05)
+        HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT).write("curve", 1.05)
     assert ha.calls == []
 
 
@@ -143,20 +145,20 @@ def test_write_to_an_unavailable_entity_raises_and_writes_nothing():
 def test_write_refuses_an_unavailable_number_in_either_state(state):
     ha = FakeHa({"number.curve": state})
     with pytest.raises(ValueError, match=state):
-        HaPlantBinding(ha, MANIFEST).write("curve", 1.0)
+        HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT).write("curve", 1.0)
     assert ha.calls == []
 
 
 def test_write_refuses_an_unavailable_zone():
     ha = FakeHa({"climate.zone": "unavailable"})
     with pytest.raises(ValueError):
-        HaPlantBinding(ha, MANIFEST).write("room_setpoint", 20.0)
+        HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT).write("room_setpoint", 20.0)
     assert ha.calls == []
 
 
 def test_prepare_switches_the_zone_to_manual_once():
     ha = FakeHa({"climate.zone": "auto"})
-    binding = HaPlantBinding(ha, MANIFEST)
+    binding = HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT)
     assert binding.needs_preparation() and not binding.is_prepared()
     assert binding.prepare() is True
     assert binding.prepare() is False
@@ -166,14 +168,14 @@ def test_prepare_switches_the_zone_to_manual_once():
 
 def test_prepare_on_an_already_manual_zone_sends_nothing():
     ha = FakeHa({"climate.zone": MANUAL_HVAC_MODE})
-    assert HaPlantBinding(ha, MANIFEST).prepare() is False
+    assert HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT).prepare() is False
     assert ha.calls == []
 
 
 def test_number_entity_as_room_setpoint_needs_no_preparation():
     manifest = ChannelManifest(refs={**MANIFEST.refs, "shift_current": "number.zone"})
     ha = FakeHa()
-    binding = HaPlantBinding(ha, manifest)
+    binding = HaPlantBinding(ha, manifest, VAILLANT_MYPYLLANT)
     assert not binding.needs_preparation()
     assert binding.prepare() is False
     assert ha.calls == []
@@ -197,15 +199,25 @@ def test_is_climate():
 def test_binding_for_picks_the_class_and_description_of_the_lever_set(lever_set, cls):
     from heizungsbruecke.ha_binding import binding_for
 
-    options = {} if lever_set is None else {"lever_set": lever_set}
+    options = {"bindungsparameter": bindung_beispiele.parameter(lever_set or "vaillant_vrc720")}
+    if lever_set is not None:
+        options["lever_set"] = lever_set
     binding = binding_for(options, FakeHa(), MANIFEST)
     assert type(binding).__name__ == cls
     assert binding.description.lever_set.id == (lever_set or "vaillant_vrc720")
 
 
+def test_binding_for_needs_the_binding_parameters():
+    from heizungsbruecke.ha_binding import binding_for
+
+    with pytest.raises(config.ConfigError, match="Konfiguration"):
+        binding_for({"bindungsparameter": None}, FakeHa(), MANIFEST)
+
+
 def test_binding_roles_for_sign_off():
+    from bindung_beispiele import VIESSMANN_VICARE_BINDING, WEISHAUPT_MODBUS
+
     from heizungsbruecke.ha_binding import binding_roles
-    from smartheat_core.binding import VIESSMANN_VICARE_BINDING, WEISHAUPT_MODBUS
 
     assert binding_roles(VAILLANT_MYPYLLANT) == ("curve_current", "shift_current", "heat_limit")
     assert binding_roles(WEISHAUPT_MODBUS) == (
@@ -217,13 +229,13 @@ def test_binding_roles_for_sign_off():
 def test_limits_reads_min_and_max_of_a_number_entity():
     ha = FakeHa()
     ha.attributes = {("number.curve", "min"): "0.1", ("number.curve", "max"): "5"}
-    assert HaPlantBinding(ha, MANIFEST).limits("curve") == (0.1, 5.0)
+    assert HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT).limits("curve") == (0.1, 5.0)
 
 
 def test_limits_reads_min_temp_and_max_temp_of_a_climate_entity():
     ha = FakeHa()
     ha.attributes = {("climate.zone", "min_temp"): "5", ("climate.zone", "max_temp"): "30"}
-    assert HaPlantBinding(ha, MANIFEST).limits("room_setpoint") == (5.0, 30.0)
+    assert HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT).limits("room_setpoint") == (5.0, 30.0)
 
 
 @pytest.mark.parametrize("attributes", [
@@ -235,11 +247,11 @@ def test_limits_reads_min_temp_and_max_temp_of_a_climate_entity():
 def test_limits_is_none_when_the_range_is_not_usable(attributes):
     ha = FakeHa()
     ha.attributes = attributes
-    assert HaPlantBinding(ha, MANIFEST).limits("curve") is None
+    assert HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT).limits("curve") is None
 
 
 def test_limits_is_none_for_an_unmapped_lever():
-    assert HaPlantBinding(FakeHa(), ChannelManifest(refs={"curve_current": "number.curve"})).limits("heat_limit") is None
+    assert HaPlantBinding(FakeHa(), ChannelManifest(refs={"curve_current": "number.curve"}), VAILLANT_MYPYLLANT).limits("heat_limit") is None
 
 
 def test_limits_lets_connection_errors_through_so_the_pipeline_keeps_the_last_range():
@@ -248,9 +260,9 @@ def test_limits_lets_connection_errors_through_so_the_pipeline_keeps_the_last_ra
             raise ConnectionError("ha weg")
 
     with pytest.raises(ConnectionError):
-        HaPlantBinding(Broken(), MANIFEST).limits("curve")
+        HaPlantBinding(Broken(), MANIFEST, VAILLANT_MYPYLLANT).limits("curve")
 
 
 def test_vaillant_has_no_aux_values_so_no_server_text_is_acceptable():
-    binding = HaPlantBinding(FakeHa(), MANIFEST)
+    binding = HaPlantBinding(FakeHa(), MANIFEST, VAILLANT_MYPYLLANT)
     assert binding.aux_zulaessig("mode_select", "eco") is False

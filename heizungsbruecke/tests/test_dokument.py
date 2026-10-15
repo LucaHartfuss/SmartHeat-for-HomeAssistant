@@ -1,4 +1,5 @@
 """Spec 5c 1.3: Konfigurationsdokument -> bisherige Optionen; HA-Teil der lokalen Pruefung."""
+import bindung_beispiele
 import pytest
 from fakes import FakeHa
 
@@ -17,6 +18,7 @@ KONFIGURATION = {
         "batterien": ["sensor.thermostat_battery"], "benachrichtigung": ["notify.handy"], "hinweise_aus": [],
         "abfrage_s": 1800,
     },
+    "bindungsparameter": bindung_beispiele.parameter("vaillant_vrc720"),
 }
 
 
@@ -48,7 +50,8 @@ def test_options_carry_the_old_keys_and_the_target_store():
     assert options["entity_shift_current"] == "climate.zone"
     assert options["entity_room_target"] == dokument.SOLL_REF
     assert options["room_sensors"] == ["sensor.room_actual"]
-    assert options["notify_services"] == ["notify.handy"] and options["poll_interval_seconds"] == 1800
+    assert options["notify_services"] == ["notify.handy"]
+    assert options["bindungsparameter"] is KONFIGURATION["bindungsparameter"]
     assert options["daily_trigger_time"] == "12:07" and options["lever_set"] == "vaillant_vrc720"
     assert dokument.soll_entity(KONFIGURATION) == "sensor.room_target"
 

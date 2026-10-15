@@ -2,8 +2,9 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from bindung_beispiele import VAILLANT_MYPYLLANT
+
 from heizungsbruecke.ha_binding import HaPlantBinding
-from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.pipeline import DeviceWriteError, LeverPipeline
 from smartheat_core.safety import LocalSafety
 from smartheat_runtime import delivery, ticks
@@ -48,7 +49,7 @@ def test_attempt_without_mqtt_client_reports_unsent(monkeypatch):
         manifest=manifest, signals=ha_api,
         mqtt_client=None, store=SimpleNamespace(state=SimpleNamespace(restore_point={"room_setpoint": 21.0})),
         override=SimpleNamespace(
-            settled=lambda lever: True, last_written=lambda lever: None, binding=HaPlantBinding(ha_api, manifest),
+            settled=lambda lever: True, last_written=lambda lever: None, binding=HaPlantBinding(ha_api, manifest, VAILLANT_MYPYLLANT),
         ),
     )
 
@@ -70,7 +71,7 @@ def test_snapshot_uses_restore_point_when_zone_is_off(monkeypatch):
         manifest=manifest, signals=ha_api,
         mqtt_client=None, store=SimpleNamespace(state=SimpleNamespace(restore_point={"room_setpoint": 21.0})),
         override=SimpleNamespace(
-            settled=lambda lever: True, last_written=lambda lever: None, binding=HaPlantBinding(ha_api, manifest),
+            settled=lambda lever: True, last_written=lambda lever: None, binding=HaPlantBinding(ha_api, manifest, VAILLANT_MYPYLLANT),
         ),
     )
     ticks._attempt(rt, "s1", "daily")
@@ -113,7 +114,7 @@ def test_first_start_snapshot_reports_the_written_start_shift_not_the_stale_zone
         "curve_current": "number.curve", "shift_current": "climate.zone::temperature", "min_flow": "number.min_flow",
     })
     ha, store = _StaleZoneHa(), make_store()
-    override = LeverPipeline(store, HaPlantBinding(ha, manifest), _safety(), clock=clock)
+    override = LeverPipeline(store, HaPlantBinding(ha, manifest, VAILLANT_MYPYLLANT), _safety(), clock=clock)
     override.prepare_start(21.0)
     assert ("temperature", "climate.zone", 21.0) in ha.writes
     rt = SimpleNamespace(manifest=manifest, signals=ha, mqtt_client=None, store=store, override=override)
@@ -164,7 +165,7 @@ def test_snapshot_reports_all_own_writes_until_settled_then_the_live_values(monk
         "curve_current": "number.curve", "shift_current": "number.shift", "heat_limit": "number.heat_limit",
     })
     ha, store = _LaggingPlantHa(), make_store()
-    override = LeverPipeline(store, HaPlantBinding(ha, manifest), _safety(heat_limit_max=23.0), clock=clock)
+    override = LeverPipeline(store, HaPlantBinding(ha, manifest, VAILLANT_MYPYLLANT), _safety(heat_limit_max=23.0), clock=clock)
     override.apply_server_values({"curve": 1.2, "room_setpoint": 18.5, "heat_limit": 17.0})
     assert sorted(ha.writes) == [("number.curve", 1.2), ("number.heat_limit", 17.0), ("number.shift", 18.5)]
     rt = SimpleNamespace(manifest=manifest, signals=ha, mqtt_client=None, store=store, override=override)

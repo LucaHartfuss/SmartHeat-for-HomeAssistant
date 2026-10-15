@@ -7,10 +7,10 @@ import math
 from datetime import timedelta
 
 import pytest
+from bindung_beispiele import BINDINGS
 
 from heizungsbruecke import ha_binding
 from smartheat_core import boost, emergency_boost
-from smartheat_core.binding import BINDINGS
 from smartheat_core.clamping import round_to_step
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import LOCAL_SAFETY

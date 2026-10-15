@@ -53,7 +53,7 @@ HA_REF = re.compile(r"[a-z_]+\.[a-z0-9_]+(::[a-z_]+)?")
 HA_RAUMFUEHLER = re.compile(r"sensor\.[a-z0-9_]+|climate\.[a-z0-9_]+::current_temperature")
 HA_BATTERIE = re.compile(r"(sensor|binary_sensor)\.[a-z0-9_]+")
 HA_DIENST = re.compile(r"notify\.[a-z0-9_]+")
-#: Abfrageintervall der Hersteller-Integration (Sekunden), Grenzen wie options.POLL_INTERVAL_RANGE; ein Test haelt sie gleich.
+#: Abfrageintervall der Hersteller-Integration (Sekunden), Grenzen 10-3600 s (Teil von V1).
 ABFRAGE_S = (10, 3600)
 ANLAGE_MAX_CHARS = 64
 TEXT_MAX_CHARS = 200

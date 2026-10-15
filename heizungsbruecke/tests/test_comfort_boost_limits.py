@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from bindung_beispiele import VAILLANT_MYPYLLANT
 from fakes import runtime_config
 
 from heizungsbruecke.ha_binding import HaPlantBinding
@@ -38,7 +39,7 @@ def _rt(tmp_path, values, backup=None):
     ha_api.get_state.side_effect = _get_state
     manifest = ChannelManifest(refs=REFS)
     rt = SimpleNamespace(manifest=manifest, signals=ha_api, ha_api=ha_api, config=runtime_config(), store=store,
-                         override=LeverPipeline(store, HaPlantBinding(ha_api, manifest), SAFETY))
+                         override=LeverPipeline(store, HaPlantBinding(ha_api, manifest, VAILLANT_MYPYLLANT), SAFETY))
     store.update(stable_target=21.0)
     return rt
 

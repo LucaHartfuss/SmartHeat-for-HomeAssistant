@@ -2,6 +2,7 @@ from datetime import datetime
 from unittest.mock import MagicMock
 
 import pytest
+from bindung_beispiele import VAILLANT_MYPYLLANT, WEISHAUPT_MODBUS_BASIS
 
 from heizungsbruecke.ha_binding import HaPlantBinding
 from smartheat_runtime.roles import ChannelManifest
@@ -21,7 +22,7 @@ def _all_roles_manifest():
 
 
 def _read(manifest, ha_api, known=None):
-    return read_snapshot(manifest, ha_api, HaPlantBinding(ha_api, manifest), known or {})
+    return read_snapshot(manifest, ha_api, HaPlantBinding(ha_api, manifest, VAILLANT_MYPYLLANT), known or {})
 
 
 def _states_with(broken: dict):
@@ -183,8 +184,6 @@ def _basis_manifest(**extra):
 
 
 def _basis_read(manifest, ha_api):
-    from smartheat_core.binding import WEISHAUPT_MODBUS_BASIS
-
     return read_snapshot(manifest, ha_api, HaPlantBinding(ha_api, manifest, WEISHAUPT_MODBUS_BASIS), {})
 
 

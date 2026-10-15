@@ -4,9 +4,9 @@ import dataclasses
 import logging
 
 import pytest
+from bindung_beispiele import VAILLANT_MYPYLLANT
 
 from heizungsbruecke.ha_binding import HaPlantBinding
-from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.pipeline import DeviceWriteError, LeverPipeline
 from smartheat_core.safety import LocalSafety
 from smartheat_runtime.backup_store import load_backup
@@ -77,7 +77,7 @@ def _setup(make_store, backup=None, states=None, manifest=MANIFEST, clock=None, 
     store = make_store(backup=backup)
     ha = RecordingHa(states)
     clock_kwargs = {"clock": clock} if clock is not None else {}
-    return LeverPipeline(store, HaPlantBinding(ha, manifest), safety, **clock_kwargs), store, ha
+    return LeverPipeline(store, HaPlantBinding(ha, manifest, VAILLANT_MYPYLLANT), safety, **clock_kwargs), store, ha
 
 
 def _server(curve, shift, heat_limit):
@@ -479,7 +479,7 @@ def test_write_lever_min_flow_is_clamped_rounded_and_timed(make_store, clock):
     # number.min_flow bewusst abweichend vom Zielwert (20.0), sonst wuerde der Quota-Check
     # (_write_lever) den Schreibvorgang als unveraendert ueberspringen.
     ha = RecordingHa({"number.min_flow": 25.0})
-    override = LeverPipeline(store, HaPlantBinding(ha, MANIFEST), SAFETY, clock=clock)
+    override = LeverPipeline(store, HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT), SAFETY, clock=clock)
     assert override.write_lever("min_flow", 19.2) == 20.0
     assert ha.writes == [("number.min_flow", 20.0)]
     clock.advance(60)
@@ -501,7 +501,7 @@ def test_prepare_start_writes_start_shift_when_zone_is_off(make_store):
     ha.set_hvac_mode = lambda entity, mode: ha.events.append(("hvac", entity, mode))
     ha.get_raw_state = lambda entity: ha.states[entity]
     ha.set_climate_temperature = lambda entity, value: ha.events.append(("write", entity, value))
-    LeverPipeline(store, HaPlantBinding(ha, manifest), SAFETY).prepare_start(20.6)
+    LeverPipeline(store, HaPlantBinding(ha, manifest, VAILLANT_MYPYLLANT), SAFETY).prepare_start(20.6)
     assert ("hvac", "climate.zone", "heat_cool") in ha.events
     assert ("climate.zone", 20.5) in ha.writes
     assert store.state.restore_point.get("room_setpoint") == 20.5
@@ -512,7 +512,7 @@ def test_prepare_start_leaves_a_plausible_manual_zone_alone(make_store):
     store = make_store(backup={"restore_point": {"curve": 0.9}})
     ha = RecordingHa({"climate.zone": "heat_cool", "climate.zone::temperature": 21.0})
     ha.get_raw_state = lambda entity: ha.states[entity]
-    LeverPipeline(store, HaPlantBinding(ha, manifest), SAFETY).prepare_start(20.5)
+    LeverPipeline(store, HaPlantBinding(ha, manifest, VAILLANT_MYPYLLANT), SAFETY).prepare_start(20.5)
     assert ha.writes == []
 
 
@@ -588,7 +588,7 @@ def test_write_lever_min_flow_does_not_trust_a_stale_ha_read_after_our_own_recen
     # Settle-Zeit, HA zeigt die ganze Zeit (stale) 21.
     store = make_store()
     ha = RecordingHa({"number.min_flow": 21.0})
-    override = LeverPipeline(store, HaPlantBinding(ha, MANIFEST), SAFETY, clock=clock)
+    override = LeverPipeline(store, HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT), SAFETY, clock=clock)
 
     assert override.write_lever("min_flow", 22.0) == 22.0
     clock.advance(60)
@@ -611,7 +611,7 @@ def test_prepare_start_writes_the_start_value_even_if_the_stale_auto_setpoint_al
     ha.get_raw_state = lambda entity: ha.states[entity]
     ha.set_climate_temperature = lambda entity, value: ha.events.append(("write", entity, value))
 
-    LeverPipeline(store, HaPlantBinding(ha, manifest), SAFETY).prepare_start(21.0)
+    LeverPipeline(store, HaPlantBinding(ha, manifest, VAILLANT_MYPYLLANT), SAFETY).prepare_start(21.0)
 
     assert ("hvac", "climate.zone", "heat_cool") in ha.events
     assert ("climate.zone", 21.0) in ha.writes
@@ -627,7 +627,7 @@ def test_prepare_start_switches_the_mode_exactly_once(make_store):
     ha.get_raw_state = lambda entity: ha.states[entity]
     ha.set_climate_temperature = lambda entity, value: ha.events.append(("write", entity, value))
 
-    LeverPipeline(store, HaPlantBinding(ha, manifest), SAFETY).prepare_start(20.6)
+    LeverPipeline(store, HaPlantBinding(ha, manifest, VAILLANT_MYPYLLANT), SAFETY).prepare_start(20.6)
 
     assert [event for event in ha.events if event[0] == "hvac"] == [("hvac", "climate.zone", "heat_cool")]
 
@@ -642,7 +642,7 @@ def test_write_forces_the_shift_write_when_the_zone_had_to_be_switched(make_stor
     ha.set_hvac_mode = lambda entity, mode: ha.events.append(("hvac", entity, mode))
     ha.get_raw_state = lambda entity: ha.states[entity]
     ha.set_climate_temperature = lambda entity, value: ha.events.append(("write", entity, value))
-    override = LeverPipeline(store, HaPlantBinding(ha, manifest), SAFETY)
+    override = LeverPipeline(store, HaPlantBinding(ha, manifest, VAILLANT_MYPYLLANT), SAFETY)
 
     override.write_levers(("room_setpoint",))
 
@@ -659,7 +659,7 @@ def test_write_switches_mode_before_writing_curve_and_shift_for_a_climate_zone(m
     ha.set_hvac_mode = lambda entity, mode: ha.events.append(("hvac", entity, mode))
     ha.get_raw_state = lambda entity: ha.states[entity]
     ha.set_climate_temperature = lambda entity, value: ha.events.append(("write", entity, value))
-    override = LeverPipeline(store, HaPlantBinding(ha, manifest), SAFETY)
+    override = LeverPipeline(store, HaPlantBinding(ha, manifest, VAILLANT_MYPYLLANT), SAFETY)
 
     override.write_levers(("curve", "room_setpoint"))
 
@@ -685,7 +685,7 @@ def _zone_setup(make_store, clock, states):
     ha.set_hvac_mode = _set_hvac_mode
     ha.get_raw_state = lambda entity: ha.states[entity]
     ha.set_climate_temperature = lambda entity, value: ha.events.append(("write", entity, value))
-    return LeverPipeline(store, HaPlantBinding(ha, manifest), SAFETY, clock=clock), ha
+    return LeverPipeline(store, HaPlantBinding(ha, manifest, VAILLANT_MYPYLLANT), SAFETY, clock=clock), ha
 
 
 def test_write_lever_skips_inside_the_settle_window_when_our_last_write_is_the_target(make_store, clock):
@@ -693,7 +693,7 @@ def test_write_lever_skips_inside_the_settle_window_when_our_last_write_is_the_t
     # Zielwert -- ueberfluessiger Cloud-Aufruf, wird uebersprungen.
     store = make_store()
     ha = RecordingHa({"number.min_flow": 21.0})
-    override = LeverPipeline(store, HaPlantBinding(ha, MANIFEST), SAFETY, clock=clock)
+    override = LeverPipeline(store, HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT), SAFETY, clock=clock)
     override.write_lever("min_flow", 22.0)
     ha.states["number.min_flow"] = 22.0
     clock.advance(60)
@@ -751,7 +751,7 @@ def test_settled_counts_from_the_start_and_from_each_own_write(make_store, clock
     # SETTLE zurueckliegt.
     store = make_store()
     ha = RecordingHa({"number.min_flow": 25.0})
-    override = LeverPipeline(store, HaPlantBinding(ha, MANIFEST), SAFETY, clock=clock)
+    override = LeverPipeline(store, HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT), SAFETY, clock=clock)
     assert override.settled("min_flow") is False
     clock.advance(SETTLE + 1)
     assert override.settled("min_flow") is True
@@ -852,7 +852,7 @@ def _inactive_zone(make_store, clock, backup):
     ha = RecordingHa({"climate.zone": "heat_cool", "climate.zone::temperature": 0.0, "number.curve": 0.9})
     ha.set_hvac_mode = lambda entity, mode: ha.events.append(("hvac", entity, mode))
     ha.set_climate_temperature = lambda entity, value: ha.events.append(("write", entity, value))
-    return LeverPipeline(store, HaPlantBinding(ha, ZONE_MANIFEST), SAFETY, clock=clock), store, ha
+    return LeverPipeline(store, HaPlantBinding(ha, ZONE_MANIFEST, VAILLANT_MYPYLLANT), SAFETY, clock=clock), store, ha
 
 
 def test_inactive_zone_is_not_rewritten_with_the_own_last_value(make_store, clock):

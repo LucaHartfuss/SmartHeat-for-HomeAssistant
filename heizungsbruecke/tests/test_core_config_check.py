@@ -59,7 +59,7 @@ def test_test_intervals_pass():
 
 def test_interval_bounds_are_the_bounds_of_the_options():
     assert cc.TELEMETRIE_S == (10, options.MAX_TELEMETRY_INTERVAL_SECONDS)
-    assert cc.ABFRAGE_S == options.POLL_INTERVAL_RANGE
+    assert cc.ABFRAGE_S == (10, 3600)
     assert cc.PRUEFUNG_S == (1, 3600)
 
 
