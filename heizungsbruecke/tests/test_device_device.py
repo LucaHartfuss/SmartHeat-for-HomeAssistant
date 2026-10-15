@@ -24,6 +24,7 @@ def _konfiguration(version=1, **changes):
         "verteilsystem": "Heizkoerper",
         "bindung": {"treiber": {"id": "simulation", "parameter": {}}, "thermostat": None},
         "raumfuehler": [SENSOR], "tagestick": "12:12", "abo": "aktiv", "mindest_software": "0.6.0", "software": None,
+        "bindungsparameter": None,
     }
     inhalt.update(changes)
     return {"schema": 1, "version": version, **inhalt}

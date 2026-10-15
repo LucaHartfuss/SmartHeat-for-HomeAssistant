@@ -13,7 +13,7 @@ def konfiguration(**changes) -> dict:
         "bindung": {"treiber": {"id": "simulation", "parameter": {"lever_set": "viessmann_vicare", "heizkreis": 0}},
                     "thermostat": THERMOSTAT},
         "raumfuehler": [f"zigbee:{SENSOR}:temperature"], "tagestick": "12:00", "abo": "aktiv",
-        "mindest_software": "0.6.0", "software": None,
+        "mindest_software": "0.6.0", "software": None, "bindungsparameter": None,
     }
     value.update(changes)
     return value

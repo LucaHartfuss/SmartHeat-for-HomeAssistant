@@ -17,6 +17,7 @@ def _konfiguration(version=1, **changes):
         "verteilsystem": "Heizkoerper",
         "bindung": {"treiber": {"id": "simulation", "parameter": {"heizkreis": 0}}, "thermostat": None},
         "raumfuehler": [SENSOR], "tagestick": "12:12", "abo": "aktiv", "mindest_software": "0.6.0", "software": None,
+        "bindungsparameter": None,
     }
     inhalt.update(changes)
     return {"schema": 1, "version": version, **inhalt}
@@ -25,7 +26,7 @@ def _konfiguration(version=1, **changes):
 def _leer(version=1, mindest="0.6.0"):
     return {"schema": 1, "version": version, "anlage": None, "profil": None, "hebelsatz": None, "verteilsystem": None,
             "bindung": None, "raumfuehler": [], "tagestick": None, "abo": None, "mindest_software": mindest,
-            "software": None}
+            "software": None, "bindungsparameter": None}
 
 
 def _bedienung(version=1, raum_soll=21.0, **changes):
