@@ -6,14 +6,14 @@ Simulations-Treiber; Neustarts wie unter Compose."""
 import json
 
 import pytest
-from configs import THERMOSTAT, bedienung, konfiguration, leer
+from bindung_beispiele import BINDINGS
+from configs import THERMOSTAT, bedienung, dokumente_schreiben, konfiguration, leer
 from world import GatewayWorld
 
 from smartheat_core import dateien
-from smartheat_core.binding import BINDINGS
 from smartheat_core.safety import resolve_local_safety
 from smartheat_gateway.drivers.simulation import START_LEVERS
-from smartheat_runtime.app import IDLE_NOT_CONFIGURED
+from smartheat_runtime.app import IDLE_NOT_CONFIGURED, IdleBridge
 from smartheat_runtime.soll_speicher import ECHO_WINDOW_SECONDS
 
 # Gelernte Werte des Dienstes; bewusst ungleich den Ursprungswerten der Simulation (START_LEVERS), auf die sign_off
@@ -168,3 +168,14 @@ def test_a_configuration_below_the_minimum_version_still_reaches_the_updater(wor
     assert ergebnis["ok"] is False and ergebnis["error"]["grund"] == "update_noetig"
     assert json.loads(world.paths.software_soll.read_text()) == software
     assert world.restarts == 1 and _led(world) == "update_noetig"
+
+
+def test_alte_konfiguration_ohne_parameter_startet_nicht(world, caplog):
+    """Review Focus 1 (Spec Stufe 3 S4b 4.3): eine gespeicherte Konfiguration ohne bindungsparameter endet im
+    Konfigurationsfehler (Ruhezustand); der Treiber wird nicht gebaut."""
+    dokumente_schreiben(world.paths, konfiguration(bindungsparameter=None))
+    with caplog.at_level("ERROR"):
+        result = world.start_runtime()
+    assert isinstance(result, IdleBridge) and result.reason == "konfigurationsfehler"
+    assert "Bindungsparameter" in caplog.text
+    assert world.host.driver is None

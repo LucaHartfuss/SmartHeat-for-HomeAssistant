@@ -22,6 +22,9 @@ class HaSignalSource:
     def get_raw_state(self, ref: str) -> str:
         return _translated(self._ha_api.get_raw_state, ref)
 
+    def get_unit(self, ref: str) -> str:
+        return _translated(lambda r: self._ha_api.get_attribute(r.partition("::")[0], "unit_of_measurement"), ref)
+
     def device_key(self, ref: str) -> str:
         return ref.partition("::")[0]
 
@@ -43,6 +46,11 @@ class GeraetSignale:
 
     def get_raw_state(self, ref: str) -> str:
         return str(self.get_state(ref)) if ref == SOLL_REF else self._ha.get_raw_state(ref)
+
+    def get_unit(self, ref: str) -> str:
+        if ref == SOLL_REF:
+            raise ValueError("keine Einheit")
+        return self._ha.get_unit(ref)
 
     def device_key(self, ref: str) -> str:
         return ref if ref == SOLL_REF else self._ha.device_key(ref)

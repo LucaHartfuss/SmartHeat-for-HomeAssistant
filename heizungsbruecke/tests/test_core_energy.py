@@ -1,25 +1,25 @@
 """Energie-Normalisierung (Plan 3b, Spec 6.5): Tageszaehler -> monoton wachsende Summe; Summenzaehler unveraendert."""
 import pytest
 
-from smartheat_core.energy import RESET_FRACTION, normalize
+from smartheat_core.energy import RESET_FRACTION, normalize, umrechnen
 
 
 def _run(values, kind="daily", state=None):
     state = state or {}
     sent = []
     for value in values:
-        out, state = normalize(kind, state, {"thermal_heating": value})
+        out, state = normalize(kind, state, {"thermal_heating": value}, {"thermal_heating": "kWh"})
         sent.append(out.get("thermal_heating"))
     return sent, state
 
 
 def test_total_counters_pass_through_without_state():
-    assert normalize("total", {}, {"primary_heating": 12.5}) == ({"primary_heating": 12.5}, {})
+    assert normalize("total", {}, {"primary_heating": 12.5}, {"primary_heating": "kWh"}) == ({"primary_heating": 12.5}, {})
 
 
 def test_first_daily_value_is_the_base():
     sent, state = _run([3.0])
-    assert sent == [3.0] and state == {"thermal_heating": {"raw": 3.0, "sum": 3.0}}
+    assert sent == [3.0] and state == {"thermal_heating": {"raw": 3.0, "sum": 3.0, "einheit": "kWh"}}
 
 
 def test_daily_counter_grows_and_continues_after_midnight():
@@ -47,16 +47,52 @@ def test_restart_continues_from_the_saved_state():
 
 def test_a_missing_channel_keeps_its_state():
     _, state = _run([3.0])
-    out, after = normalize("daily", state, {"electrical_heating": 1.0})
+    out, after = normalize("daily", state, {"electrical_heating": 1.0}, {"electrical_heating": "kWh"})
     assert out == {"electrical_heating": 1.0}
-    assert after["thermal_heating"] == {"raw": 3.0, "sum": 3.0}
+    assert after["thermal_heating"] == {"raw": 3.0, "sum": 3.0, "einheit": "kWh"}
 
 
 def test_non_finite_values_are_left_out():
-    out, state = normalize("daily", {}, {"thermal_heating": float("nan")})
+    out, state = normalize("daily", {}, {"thermal_heating": float("nan")}, {"thermal_heating": "kWh"})
     assert (out, state) == ({}, {})
 
 
 def test_unknown_kind_is_an_error():
     with pytest.raises(ValueError):
-        normalize("monthly", {}, {})
+        normalize("monthly", {}, {}, {})
+
+
+def test_umrechnen():
+    assert umrechnen(1500.0, "Wh") == (1.5, "kWh")
+    assert umrechnen(2.0, "kWh") == (2.0, "kWh") and umrechnen(3.0, "m³") == (3.0, "m³")
+    with pytest.raises(KeyError):
+        umrechnen(1.0, "MJ")
+
+
+def test_einheitenwechsel_beginnt_die_summe_neu():
+    """Spec 5: der Zustand aus 1.0.0 (Wh, ohne Einheit) laeuft nicht in kWh weiter."""
+    alt = {"primary_heating": {"raw": 5000.0, "sum": 1_234_567.0}}
+    out, state = normalize("daily", alt, {"primary_heating": 5.0}, {"primary_heating": "kWh"})
+    assert out == {"primary_heating": 5.0}
+    assert state["primary_heating"] == {"raw": 5.0, "sum": 5.0, "einheit": "kWh"}
+    out, state = normalize("daily", state, {"primary_heating": 7.0}, {"primary_heating": "m³"})
+    assert out == {"primary_heating": 7.0} and state["primary_heating"]["einheit"] == "m³"
+
+
+# --- Mutationsprobe Stufe 3 S4b (A5-22 Rest) ---
+
+def test_genau_die_haelfte_ist_rauschen_keine_ruecksetzung():
+    sent, state = _run([8.0, 4.0])
+    assert sent == [8.0, 8.0] and state["thermal_heating"]["raw"] == 4.0
+
+
+def test_gleicher_wert_addiert_nichts_auch_negativ():
+    # telemetry laesst nur nicht endliche Werte weg; ein negativer Rohwert kommt hier an.
+    # Bewusst Randfall: toetet die Mutation raw >= last; fuer Rohwerte >= 0 ist sie aequivalent.
+    sent, _ = _run([-2.0, -2.0])
+    assert sent == [-2.0, -2.0]
+
+
+def test_gesendet_wird_auf_6_stellen_gerundet_der_zustand_bleibt_genau():
+    sent, state = _run([0.1234567])
+    assert sent == [0.123457] and state["thermal_heating"]["sum"] == 0.1234567

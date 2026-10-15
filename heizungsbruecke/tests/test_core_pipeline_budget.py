@@ -3,10 +3,10 @@ Schreibgruppen (Viessmann), zurueckgestellte Serverwerte. Vaillant bleibt unberu
 import dataclasses
 
 import pytest
+from bindung_beispiele import VAILLANT_MYPYLLANT, VIESSMANN_VICARE_BINDING, WEISHAUPT_MODBUS
 
 from heizungsbruecke.ha_binding import HaPlantBinding
 from smartheat_core import write_budget
-from smartheat_core.binding import VAILLANT_MYPYLLANT, VIESSMANN_VICARE_BINDING, WEISHAUPT_MODBUS
 from smartheat_core.pipeline import LIFETIME_KEY, DeviceWriteError, LeverPipeline, WriteBudgetExhausted
 from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime.backup_store import load_backup
@@ -201,7 +201,7 @@ def test_vaillant_counts_nothing_and_never_writes_the_new_fields(make_store, clo
     store = make_store()
     ha = Ha({"number.curve": 0.7, "number.shift": 21.0})
     manifest = ChannelManifest(refs={"curve_current": "number.curve", "shift_current": "number.shift"})
-    pipeline = LeverPipeline(store, HaPlantBinding(ha, manifest), resolve_local_safety("vaillant_vrc720", "Heizkoerper"),
+    pipeline = LeverPipeline(store, HaPlantBinding(ha, manifest, VAILLANT_MYPYLLANT), resolve_local_safety("vaillant_vrc720", "Heizkoerper"),
                              clock=clock)
     pipeline.apply_server_values({"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 16.0})
     assert len(ha.writes) == 2
@@ -319,3 +319,94 @@ def test_a_failing_group_write_names_the_first_member_and_counts_nothing(make_st
     assert error.value.lever == "curve"
     assert "curve" not in pipeline._last_written and "level" not in pipeline._last_written
     assert _total(store) == 0
+
+
+# --- Mutationsprobe Stufe 3 S4b (A5-22 Rest): Tagesbudget, Zaehlung, Lebensdauer-Hinweis ---
+
+AT_LIMIT = {write_budget.TOTAL: {"day": DAY, "count": 10}}
+
+
+def test_only_the_levers_of_this_answer_are_deferred(make_store, clock):
+    pipeline, store, ha = _weishaupt(make_store, clock, backup={"write_budget": AT_LIMIT})
+    pipeline.apply_server_values({"curve": 0.8})
+    assert ha.writes == []
+    assert store.state.deferred_levers == ("curve",)
+
+
+@pytest.mark.parametrize("flags", [{"boost_active": True}, {"emergency_boost_active": True}])
+def test_deferred_values_are_not_written_during_a_boost(make_store, clock, flags):
+    pipeline, store, ha = _weishaupt(
+        make_store, clock, backup={"restore_point": {"curve": 0.8, "room_setpoint": 20.0, "heat_limit": 18.0}, **flags},
+    )
+    store.update(deferred_levers=("curve",))
+    assert pipeline.daily_budget_reached() is False
+    pipeline.write_deferred()
+    assert ha.writes == []  # das Boost-Ende uebernimmt
+    assert store.state.deferred_levers == ("curve",)
+
+
+def test_a_write_group_stops_at_the_daily_limit_but_a_boost_does_not(make_store, clock):
+    counted = dataclasses.replace(VIESSMANN, daily_write_limit=10)
+    pipeline, store, ha = _viessmann(make_store, clock, description=counted)
+    store.update(write_budget=AT_LIMIT)
+    pipeline.apply_server_values({"curve": 1.2, "level": -2.0, "room_setpoint": 20.0})
+    assert ha.writes == []
+    assert store.state.deferred_levers == ("curve", "level", "room_setpoint")
+    with pytest.raises(WriteBudgetExhausted) as error:
+        pipeline.write_levers(("level",))
+    assert error.value.lever == "curve"  # die Gruppe meldet ihr erstes Mitglied
+    pipeline.set_boosts(comfort=True, emergency=False)  # vom Tagesbudget ausgenommen
+    assert ha.writes == [("number.slope", 1.4), ("number.shift", 3.0), ("number.normal", 25.0)]
+    assert _total(store) == 12  # Gruppe 1 + Programmtemperatur 1
+
+
+def test_a_failing_group_write_names_the_entity_of_the_first_member(make_store, clock):
+    pipeline, binding, store = _group_pipeline(make_store, clock)
+    binding.group_error = RuntimeError("abgelehnt")
+    with pytest.raises(DeviceWriteError) as error:
+        pipeline.apply_server_values({"curve": 1.2, "level": -2.0, "room_setpoint": 20.0})
+    assert (error.value.lever, error.value.entity_id) == ("curve", "number.slope")
+
+
+def test_a_failing_group_write_after_an_earlier_write_counts_nothing(make_store, clock):
+    counted = dataclasses.replace(VIESSMANN, daily_write_limit=10, lifetime_hint_at=50000)
+    pipeline, binding, store = _group_pipeline(make_store, clock, counted)
+    pipeline.apply_server_values({"room_setpoint": 21.0})
+    assert binding.physical_writes == 1 and _total(store) == 1
+    binding.group_error = RuntimeError("abgelehnt")
+    with pytest.raises(DeviceWriteError):
+        pipeline.apply_server_values({"curve": 1.2, "level": -2.0})
+    assert _total(store) == 1 and store.state.lifetime_writes == 1
+
+
+def test_a_failed_write_neither_creates_the_counter_nor_repeats_the_lifetime_hint(make_store, clock, tmp_path):
+    notes = []
+    pipeline, store, ha = _weishaupt(make_store, clock, backup={"lifetime_writes": 50000}, notify=lambda *a: notes.append(a))
+    ha.failing.add("number.hk")
+    with pytest.raises(DeviceWriteError):
+        pipeline.apply_server_values({"curve": 0.8})
+    assert notes == []
+    assert write_budget.TOTAL not in load_backup(tmp_path / "backup.json").get("write_budget", {})
+    assert store.state.lifetime_writes == 50000
+
+
+def test_no_lifetime_hint_below_the_threshold(make_store, clock):
+    notes = []
+    pipeline, store, ha = _weishaupt(make_store, clock, notify=lambda *a: notes.append(a))
+    pipeline.apply_server_values({"curve": 0.8, "room_setpoint": 21.0, "heat_limit": 17.0})
+    assert store.state.lifetime_writes == 3
+    assert notes == []
+
+
+def test_write_lever_is_not_exempt_from_the_daily_limit(make_store, clock):
+    # Mindestvorlauf (write_lever) und der Startwert in prepare_start zaehlen gegen das Tagesbudget.
+    store = make_store()
+    ha = Ha({"number.curve": 0.7, "number.min_flow": 20.0})
+    manifest = ChannelManifest(refs={"curve_current": "number.curve", "min_flow": "number.min_flow"})
+    limited = dataclasses.replace(VAILLANT_MYPYLLANT, daily_write_limit=1)
+    pipeline = LeverPipeline(store, HaPlantBinding(ha, manifest, limited),
+                             resolve_local_safety("vaillant_vrc720", "Heizkoerper"), clock=clock)
+    assert pipeline.write_lever("min_flow", 22.0) == 22.0
+    with pytest.raises(WriteBudgetExhausted):
+        pipeline.write_lever("min_flow", 25.0)
+    assert ha.writes == [("number.min_flow", 22.0)]

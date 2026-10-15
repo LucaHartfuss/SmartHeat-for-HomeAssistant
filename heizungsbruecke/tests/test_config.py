@@ -5,6 +5,7 @@ Optionspruefung von options.json (resolve_effective_options, Zugang, Transport) 
 der Raumfuehler, Batterien, Handys und Hinweise prueft smartheat_core.config_check (test_core_config_check_ha.py)."""
 import dataclasses
 
+import bindung_beispiele
 import pytest
 from geraet_helpers import konfiguration_aus_optionen
 
@@ -175,7 +176,8 @@ VIESSMANN_OPTIONS = {
 @pytest.mark.parametrize("options", [{}, {"lever_set": None}, {"lever_set": ""}, {"lever_set": "vaillant_vrc720"}])
 def test_missing_lever_set_means_vaillant(options):
     assert config.lever_set_id(options) == "vaillant_vrc720"
-    assert config.binding_description(options).lever_set.id == "vaillant_vrc720"
+    mit_parametern = {**options, "bindungsparameter": bindung_beispiele.PARAMETER["vaillant_vrc720"]}
+    assert config.binding_description(mit_parametern).lever_set.id == "vaillant_vrc720"
 
 
 @pytest.mark.parametrize("value", ["buderus", 3, ["weishaupt_wwp"], True])
@@ -228,22 +230,31 @@ def test_mode_select_is_required_for_weishaupt_and_viessmann(lever_set):
     assert "fehlt die Zuordnung mode_select" in _lokal({**options, "entity_mode_select": ""})
 
 
-@pytest.mark.parametrize(("value", "error"), [
-    (None, False), (30, False), (10, False), (3600, False), (9, True), (3601, True), ("30", True), (True, True),
-    (float("nan"), True), (float("inf"), True), (float("-inf"), True),
-])
-def test_poll_interval_is_validated(value, error):
-    options = {} if value is None else {"poll_interval_seconds": value}
-    assert (config.validate(options) is not None) is error
+# --- Bindungsparameter (Spec Stufe 3 S4b 4.3): keine Ersatztabelle ---
+
+def test_binding_description_comes_from_the_binding_parameters():
+    assert config.binding_description(
+        {"bindungsparameter": bindung_beispiele.PARAMETER["vaillant_vrc720"]}).settle_seconds == 2100
+    weishaupt = {**WEISHAUPT_OPTIONS, "bindungsparameter": bindung_beispiele.PARAMETER["weishaupt_wwp"]}
+    assert config.binding_description(weishaupt).settle_seconds == 120
+    langsam = bindung_beispiele.parameter("weishaupt_wwp", wartezeit_s=240)
+    assert config.binding_description({**weishaupt, "bindungsparameter": langsam}).settle_seconds == 240
 
 
-def test_binding_description_takes_the_poll_interval():
-    assert config.binding_description({**WEISHAUPT_OPTIONS, "poll_interval_seconds": 90}).settle_seconds == 240
-    assert config.binding_description(WEISHAUPT_OPTIONS).settle_seconds == 120
-    assert config.binding_description({**VALID, "poll_interval_seconds": 90}).settle_seconds == 2100
+@pytest.mark.parametrize("options", [{}, {"bindungsparameter": None}, {"bindungsparameter": {}},
+                                     {"lever_set": "weishaupt_wwp", "bindungsparameter": None}])
+def test_binding_description_without_parameters_is_a_configuration_error(options):
+    with pytest.raises(ConfigError, match="Konfiguration"):
+        config.binding_description(options)
 
 
-@pytest.mark.parametrize("value", [float("nan"), float("inf"), 5, 99999, "90", True])
-def test_binding_description_ignores_an_invalid_poll_interval(value):
-    # Das Abmelden laeuft ohne config.validate: ein ungueltiges Intervall gilt dort als fehlend (Standardwert).
-    assert config.binding_description({**WEISHAUPT_OPTIONS, "poll_interval_seconds": value}).settle_seconds == 120
+def test_binding_description_with_invalid_parameters_is_a_configuration_error():
+    zu_lang = bindung_beispiele.parameter("vaillant_vrc720", wartezeit_s=10 ** 6)
+    with pytest.raises(ConfigError, match="Konfiguration"):
+        config.binding_description({"bindungsparameter": zu_lang})
+
+
+def test_the_parameters_do_not_fit_another_lever_set():
+    with pytest.raises(ConfigError, match="Konfiguration"):
+        config.binding_description(
+            {"lever_set": "viessmann_vicare", "bindungsparameter": bindung_beispiele.PARAMETER["vaillant_vrc720"]})

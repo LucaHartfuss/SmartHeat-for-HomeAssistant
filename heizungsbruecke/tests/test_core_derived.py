@@ -1,8 +1,9 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from bindung_beispiele import VAILLANT_MYPYLLANT
+
 from smartheat_core import derived
-from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.safety import LocalSafety
 
 # Bereich des Mindestvorlaufs wie bisher (min_flow_min/min_flow_max 20/30), jetzt aus LocalSafety.
@@ -78,7 +79,7 @@ def test_unsettled_sync_without_own_write_since_start_compares_with_ha():
 
 def test_lever_sets_without_min_flow_derive_nothing():
     """Plan 3b: Weishaupt/Viessmann haben keinen Mindestvorlauf (kein min_flow in client_derived, kein Bereich)."""
-    from smartheat_core.binding import WEISHAUPT_MODBUS
+    from bindung_beispiele import WEISHAUPT_MODBUS
 
     rt = _rt(20.5, 20.0)
     rt.override.binding.description = WEISHAUPT_MODBUS

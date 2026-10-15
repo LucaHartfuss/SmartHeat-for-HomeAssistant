@@ -1,4 +1,6 @@
 """Konfigurations- und Bedienungsdokumente fuer Tests (Testwerte, keine Zugangsdaten)."""
+from bindung_beispiele import PARAMETER, parameter
+
 from smartheat_core import dateien
 
 SENSOR = "0x00124b0000000001"
@@ -13,16 +15,18 @@ def konfiguration(**changes) -> dict:
         "bindung": {"treiber": {"id": "simulation", "parameter": {"lever_set": "viessmann_vicare", "heizkreis": 0}},
                     "thermostat": THERMOSTAT},
         "raumfuehler": [f"zigbee:{SENSOR}:temperature"], "tagestick": "12:00", "abo": "aktiv",
-        "mindest_software": "0.6.0", "software": None,
+        "mindest_software": "0.6.0", "software": None, "bindungsparameter": None,
     }
     value.update(changes)
+    if "bindungsparameter" not in changes and value["hebelsatz"] in PARAMETER:  # eingerichtet: Parameter des Hebelsatzes
+        value["bindungsparameter"] = parameter(value["hebelsatz"])
     return value
 
 
 def leer() -> dict:
     """Leere Konfiguration (Spec 5b 3.1, wie device_config.leer() des Servers): kein Geraet eingerichtet."""
     return {**konfiguration(), "anlage": None, "profil": None, "hebelsatz": None, "verteilsystem": None,
-            "bindung": None, "tagestick": None, "abo": None, "raumfuehler": []}
+            "bindung": None, "tagestick": None, "abo": None, "raumfuehler": [], "bindungsparameter": None}
 
 
 def bedienung(raum_soll: float = 20.0) -> dict:

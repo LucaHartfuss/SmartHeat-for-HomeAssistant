@@ -255,6 +255,17 @@ def test_configuration_change_requests_a_restart_and_empty_marks_cleanup(tmp_pat
     assert reloads == [geraet_host.EV_RELOAD]
 
 
+def test_new_binding_parameters_restart_the_runtime(tmp_path, monkeypatch):
+    """Spec Stufe 3 S4b 4.3: Konfiguration ohne Parameter -> mit Parametern startet die Laufzeit neu; gleiche nicht."""
+    host, _, _ = _host(tmp_path, monkeypatch)
+    alt = {**konfiguration_aus_optionen(OPTIONS), "bindungsparameter": None}
+    neu = konfiguration_aus_optionen(OPTIONS)
+    host.konfiguration_uebernommen(alt, dict(alt))
+    assert not host._neustart
+    host.konfiguration_uebernommen(alt, neu)
+    assert host._neustart
+
+
 def test_an_irrelevant_configuration_change_keeps_running(tmp_path, monkeypatch):
     host, _, _ = _host(tmp_path, monkeypatch)
     alt = konfiguration_aus_optionen(OPTIONS)

@@ -2,7 +2,9 @@
 Startfehler mit stabilem Schluessel, Hebelsatz, Abmelden, Manifest nach der ersten Abfrage, Batterien, Anlagen-Kennung."""
 import time
 
+import bindung_beispiele
 import pytest
+from bindung_beispiele import VIESSMANN_VICARE_BINDING
 from configs import SENSOR, THERMOSTAT, dokumente_schreiben, konfiguration
 from fake_vicare.server import GOOD_CODE, FakeVicare
 from fakes import FakeBus
@@ -80,6 +82,28 @@ def test_start_failures_carry_a_stable_key_independent_of_the_text(data_dir, clo
     assert driver_error.value.key == "treiber"
 
 
+def test_load_refuses_missing_binding_parameters_with_the_config_key(data_dir, clock):
+    host = _host(Paths(data_dir), konfiguration(bindungsparameter=None), clock)
+    with pytest.raises(StartFailure, match="Bindungsparameter fehlen") as error:
+        host.load()
+    assert error.value.key == "konfiguration" and error.value.grund.startswith("Konfiguration: ")
+    assert host.driver is None
+
+
+def test_sign_off_parts_are_none_without_binding_parameters(data_dir, clock, caplog):
+    paths = Paths(data_dir)
+    gateway_config.abmelden(paths, "test-tenant")
+    host = _host(paths, konfiguration(bindungsparameter=None), clock)
+    assert host.sign_off_parts() is None and host.driver is None
+    assert "Abmelden ohne Zuruecksetzen: Die Bindungsparameter fehlen." in caplog.text
+
+
+def test_the_driver_gets_the_description_from_the_configuration(data_dir, clock):
+    parameter = bindung_beispiele.parameter("viessmann_vicare", wartezeit_s=240)
+    loaded = _host(Paths(data_dir), konfiguration(bindungsparameter=parameter), clock).load()
+    assert loaded.binding.description.settle_seconds == 240.0
+
+
 def test_driver_lever_set_must_match_the_configured_lever_set(world):
     dokumente_schreiben(world.paths, konfiguration(hebelsatz="vaillant_vrc720"))  # Treiber simuliert viessmann_vicare
     result = world.start_runtime()
@@ -136,8 +160,8 @@ def test_manifest_error_is_a_start_failure_with_the_manifest_key(data_dir, clock
     create_driver = host._create_driver
     created = []
 
-    def partial_driver(spec):
-        driver = create_driver(spec)
+    def partial_driver(spec, description):
+        driver = create_driver(spec, description)
         created.append(driver)
         driver.signals = lambda: {"outdoor_temp": "treiber:outdoor_temp"}  # Pflicht-Rollen des Hebelsatzes fehlen
         return driver
@@ -201,7 +225,8 @@ def test_same_plant_compares_driver_and_identity_parameters():
 
 
 def test_manifest_requires_the_roles_of_the_lever_set(data_dir, clock):
-    driver = create("simulation", {"lever_set": "viessmann_vicare"}, Paths(data_dir), clock=clock, writer=True)
+    driver = create("simulation", {"lever_set": "viessmann_vicare"}, Paths(data_dir), clock=clock, writer=True,
+                    description=VIESSMANN_VICARE_BINDING)
     assert build_manifest(driver).refs["level_current"] == "treiber:level_current"
 
     class Partial:

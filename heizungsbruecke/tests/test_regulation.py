@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from bindung_beispiele import VAILLANT_MYPYLLANT
 from fakes import runtime_config
 
 from heizungsbruecke.ha_binding import HaPlantBinding
@@ -50,7 +51,7 @@ def _runtime(store, *, room_actual=20.0, room_target=21.0, entity_ids=ENTITY_IDS
     return SimpleNamespace(
         manifest=manifest, signals=ha_api, ha_api=ha_api, config=runtime_config(), store=store,
         states=values,
-        override=LeverPipeline(store, HaPlantBinding(ha_api, manifest), safety),
+        override=LeverPipeline(store, HaPlantBinding(ha_api, manifest, VAILLANT_MYPYLLANT), safety),
     )
 
 
@@ -359,3 +360,28 @@ def test_failed_save_keeps_the_previous_target_in_memory(make_store, monkeypatch
         regulation.run_local_check(rt)
 
     assert rt.store.state.last_room_target == 21.0
+
+
+# --- Mutationsprobe Stufe 3 S4b (A5-22 Rest) ---
+
+@pytest.mark.parametrize("entity_ids", [
+    {"room_target": "sensor.room_target", **{k: v for k, v in ENTITY_IDS.items() if not k.startswith("room_")}},
+    {"room_actual": "sensor.room_actual", **{k: v for k, v in ENTITY_IDS.items() if not k.startswith("room_")}},
+])
+def test_check_needs_both_room_roles(make_store, entity_ids):
+    store = make_store(backup={"last_room_target": 20.0, **RESTORE_POINT})
+    rt = _runtime(store, room_actual=18.0, room_target=21.0, entity_ids=entity_ids)
+
+    regulation.run_local_check(rt)
+
+    rt.ha_api.get_state.assert_not_called()
+    assert _writes(rt) == [] and store.state.room_actual_misses == 0
+
+
+@pytest.mark.parametrize("room_target", [21.0, None])
+def test_claim_due_tick_without_daily_trigger_time_claims_no_daily_tick(make_store, room_target):
+    rt = _runtime(make_store(backup={"last_published_target_rt": 21.0}), room_target=room_target)
+    rt.config = runtime_config(daily_trigger_time=None)
+
+    assert regulation.claim_due_tick(rt, datetime(2026, 9, 17, 12, 5)) is None
+    assert rt.store.state.last_daily_trigger_date is None

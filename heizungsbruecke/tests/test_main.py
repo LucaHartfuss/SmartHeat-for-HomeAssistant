@@ -84,6 +84,17 @@ def test_verteilsystem_without_safety_values_is_a_configuration_error(env, caplo
     assert "Deckenheizung" in caplog.text
 
 
+def test_alte_konfiguration_ohne_parameter_startet_nicht(env, caplog, sleeps):
+    """Review Focus 1 (Spec Stufe 3 S4b 4.3): gespeicherte Konfiguration aus 1.0.0 ohne bindungsparameter:
+    Konfigurationsfehler statt Absturz, nichts wird geschrieben."""
+    with caplog.at_level(logging.ERROR):
+        result = _start_bridge(env, bindungsparameter=None)
+
+    assert result.reason == "konfigurationsfehler"
+    assert "Bindungsparameter" in caplog.text
+    assert env.ha.writes == []
+
+
 def test_invalid_telemetry_interval_is_a_configuration_error(env, caplog, sleeps):
     with caplog.at_level(logging.ERROR):
         result = _start_bridge(env, **KONFIGURATIONSFEHLER)
@@ -368,7 +379,8 @@ def test_check_timezone_survives_failing_config_query(caplog):
 # --- Hostneutrale Handler der Laufzeit ---
 
 def test_on_telemetry_hands_the_energy_normalizer_to_the_tick(make_store, monkeypatch):
-    from smartheat_core.binding import VAILLANT_MYPYLLANT
+    from bindung_beispiele import VAILLANT_MYPYLLANT
+
     from smartheat_runtime.app import _on_telemetry
 
     captured = {}
@@ -386,6 +398,7 @@ def test_on_telemetry_hands_the_energy_normalizer_to_the_tick(make_store, monkey
 
     assert "waerme" not in captured  # Audit 4 P-B: die Erkennung liegt beim Server
     assert callable(captured["energy"])  # Vaillant: Tageszaehler werden normalisiert (Audit 4 P-B, A4-49)
+    assert captured["einheiten"] == VAILLANT_MYPYLLANT.energie  # Spec Stufe 3 S4b 5: erwartete Einheit je Kanal
 
 
 def _prime_rt(monkeypatch, capture):

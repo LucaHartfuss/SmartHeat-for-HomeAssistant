@@ -11,12 +11,12 @@ from types import SimpleNamespace
 
 import geraet_helpers
 import pytest
+from bindung_beispiele import VAILLANT_MYPYLLANT
 from fakes import FakeHa
 
 from heizungsbruecke import geraet_status
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.version import ADDON_VERSION
-from smartheat_core.binding import VAILLANT_MYPYLLANT
 from smartheat_core.enforce import MAX_WRITES_PER_DAY, RETRY_SECONDS
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_device.laufzeit import RuntimeChannel

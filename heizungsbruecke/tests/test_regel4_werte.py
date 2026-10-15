@@ -7,10 +7,10 @@ import math
 from datetime import timedelta
 
 import pytest
+from bindung_beispiele import BINDINGS
 
 from heizungsbruecke import ha_binding
 from smartheat_core import boost, emergency_boost
-from smartheat_core.binding import BINDINGS
 from smartheat_core.clamping import round_to_step
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import LOCAL_SAFETY
@@ -194,3 +194,38 @@ def test_fussbodenheizung_hat_keine_comfort_zeile(make_store, clock, key):
     pipeline, anlage = _pipeline(make_store, clock, key)
     pipeline.set_boosts(comfort=True, emergency=False)
     assert anlage.writes == []
+
+
+#: Spec Stufe 3 S4b 4.2: Obergrenzen des Schreibschutzes (Hebelsatz -> (durchsetzen_tag, tag, lebensdauer_hinweis)).
+#: Der Server darf nur gleich oder strenger senden. Werte unveraendert aus smartheat_core/binding.py bis 1.0.0.
+SCHREIBSCHUTZ = {
+    "vaillant_vrc720": (6, None, None),
+    "weishaupt_wwp": (6, 10, 50000),
+    "weishaupt_wwp_basis": (6, 10, 50000),
+    "viessmann_vicare": (4, None, None),
+}
+
+
+def test_schreibschutz_obergrenzen():
+    from smartheat_core.verfahren import VERFAHREN
+
+    assert {
+        k: (v.obergrenze.durchsetzen_tag, v.obergrenze.tag, v.obergrenze.lebensdauer_hinweis)
+        for k, v in VERFAHREN.items()
+    } == SCHREIBSCHUTZ, R4
+
+
+#: Lokale Positivliste der Weishaupt-Optionsschema-Praefixe (weishaupt_modbus 1.x und 2.0). Der Server darf nur eine
+#: Teilmenge senden; ein neues Schema braucht ein Geraete-Update (Regel 4).
+PRAEFIXE_ERLAUBT = {
+    "vaillant_vrc720": (),
+    "weishaupt_wwp": ("hz_operationmode_", "heating_circuit_operation_mode_"),
+    "weishaupt_wwp_basis": ("hz_operationmode_", "heating_circuit_operation_mode_"),
+    "viessmann_vicare": (),
+}
+
+
+def test_weishaupt_praefixe_lokale_positivliste():
+    from smartheat_core.verfahren import VERFAHREN
+
+    assert {k: v.praefixe_erlaubt for k, v in VERFAHREN.items()} == PRAEFIXE_ERLAUBT, R4

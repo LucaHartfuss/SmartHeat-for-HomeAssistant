@@ -3,11 +3,13 @@ Regelabweichung und Betriebspunkt aus (room_target, outdoor_temp, flow_setpoint)
 fuehren dort nur zu 'nicht lernen'. Den Takt gibt der Planeintrag EV_TELEMETRY vor."""
 import logging
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from typing import Any
 
 from smartheat_core import energy as energy_core
 from smartheat_core import wallclock
 from smartheat_core.binding import ENERGY_TOTAL
+from smartheat_core.bindungsparameter import ENERGIE_KANAELE
 from smartheat_runtime.delivery import DataFault
 
 logger = logging.getLogger(__name__)
@@ -23,12 +25,10 @@ KPI_TEXT_ROLES = ("operating_mode", "generator_state")
 #: Liefer-Signale fuer die Waermelieferung auf dem Server (Audit 4 P-B). Gegenstueck: heizungsserver
 #: regelung/history.TELEMETRY_DELIVERY_FIELDS (Contract-Check "Lieferrollen").
 DELIVERY_ROLES = ("generator_hours", "generator_starts", "generator_state")
-KPI_ENERGY_ROLES = (
-    "energy_electrical_heating", "energy_electrical_dhw",
-    "energy_primary_heating", "energy_primary_dhw",
-    "energy_thermal_heating", "energy_thermal_dhw",
-    "energy_electrical_total",
-)
+KPI_ENERGY_ROLES = tuple(f"energy_{kanal}" for kanal in ENERGIE_KANAELE)
+
+#: Kanal -> zuletzt gemeldete fremde Einheit: eine Warnung je Wechsel, nicht je Tick (Spec Stufe 3 S4b 5).
+_EINHEIT_GEWARNT: dict[str, str] = {}
 
 # Regel-Telemetrie fuer den Regelkern (TP11). Gegenstueck: heizungsserver
 # regelung/history.TELEMETRY_REGULATION_FIELDS (Contract-Check 22).
@@ -42,15 +42,16 @@ DATENFEHLER_KEY = "datenfehler"
 def run_telemetry_tick(
     manifest, signals, mqtt_client, boost_active: bool, failsafe_active: bool,
     datenfehler: DataFault | None = None, room_target: float | None = None,
-    energy: Callable[[dict], dict] | None = None,
+    energy: Callable[[dict, dict], dict] | None = None, einheiten: Mapping[str, str] | None = None,
 ) -> None:
     """Liest room_actual selbst (lokaler HA-REST-Aufruf, kein Cloud-Roundtrip). `energy` normalisiert die
-    Energie-Rohwerte (Plan 3b, Tageszaehler; None = unveraendert). Wirft nie."""
+    Energie-Rohwerte (Plan 3b, Tageszaehler; None = unveraendert), `einheiten` ist je Energiekanal die erwartete
+    Einheit (Spec Stufe 3 S4b 5; ohne Eintrag kein Kanal). Wirft nie."""
     if "room_actual" not in manifest.refs:
         return
     try:
         room_actual = signals.get_state(manifest.refs["room_actual"])
-        kpi_fields = read_kpi_fields(manifest, signals, energy)
+        kpi_fields = read_kpi_fields(manifest, signals, energy, einheiten=einheiten)
         regulation_fields = read_regulation_fields(manifest, signals, room_target)
         publish_telemetry(
             mqtt_client=mqtt_client, room_actual=room_actual,
@@ -98,14 +99,20 @@ def read_regulation_fields(manifest, signals, room_target: float | None) -> dict
     return fields
 
 
-def read_kpi_fields(manifest, signals, normalize_energy: Callable[[dict], dict] | None = None) -> dict:
+def read_kpi_fields(
+    manifest, signals, normalize_energy: Callable[[dict, dict], dict] | None = None,
+    einheiten: Mapping[str, str] | None = None,
+) -> dict:
     """Jeder Sensor fuer sich: ein nicht lesbarer oder nicht endlicher Wert wird mit WARNING
     weggelassen und blockiert weder die Kern-Telemetrie noch die anderen Sensoren. `energy`
-    gibt es nur, wenn mindestens ein Kanal lesbar war. normalize_energy (Plan 3b) macht aus Tageszaehlern
+    gibt es nur, wenn mindestens ein Kanal lesbar war. Ein Energiekanal wird nur gelesen, wenn `einheiten` seine
+    erwartete Einheit nennt, und nur gesendet, wenn die Entity genau diese meldet (Wh wird in kWh umgerechnet); sonst
+    fehlt er (eine Warnung je Wechsel). normalize_energy(werte, zieleinheiten) (Plan 3b) macht aus Tageszaehlern
     monoton wachsende Summen unter denselben Kanalnamen."""
+    einheiten = einheiten or {}
     kpi_fields: dict = {}
 
-    def _read(role, reader):
+    def _read(role, reader) -> tuple[bool, Any]:
         try:
             value = reader(manifest.refs[role])
             # "nan"/"inf" ueberstehen float(), der Server lehnt nicht-endliche Zahlen aber
@@ -129,27 +136,48 @@ def read_kpi_fields(manifest, signals, normalize_energy: Callable[[dict], dict] 
                 kpi_fields[role] = value
 
     energy: dict = {}
+    ziel: dict = {}
     for role in KPI_ENERGY_ROLES:
-        if role in manifest.refs:
-            ok, value = _read(role, signals.get_state)
-            if ok:
-                energy[role.removeprefix("energy_")] = value
+        kanal = role.removeprefix("energy_")
+        erwartet = einheiten.get(kanal)
+        if role not in manifest.refs or erwartet is None:
+            continue  # Spec Stufe 3 S4b 5: ohne erwartete Einheit kein Energiekanal
+        ok, value = _read(role, signals.get_state)
+        if not ok:
+            continue
+        try:
+            gemeldet = signals.get_unit(manifest.refs[role])
+        except ValueError:
+            gemeldet = ""  # Attribut fehlt oder ist leer (HA, Gateway): gilt als gemeldete Einheit "", warnt je Wechsel
+        except Exception as exc:  # voruebergehend (Quelle nicht erreichbar, Referenz fehlt): wie jeder KPI-Sensor
+            logger.warning("KPI-Sensor '%s' nicht lesbar, Feld wird weggelassen: %s", role, exc)
+            continue
+        if gemeldet != erwartet:
+            if _EINHEIT_GEWARNT.get(kanal) != gemeldet:
+                _EINHEIT_GEWARNT[kanal] = gemeldet
+                logger.warning(
+                    "Energiekanal '%s' meldet %s statt %s und wird weggelassen",
+                    kanal, f"'{gemeldet}'" if gemeldet else "keine Einheit", erwartet,
+                )
+            continue
+        _EINHEIT_GEWARNT.pop(kanal, None)
+        energy[kanal], ziel[kanal] = energy_core.umrechnen(value, gemeldet)
     if energy and normalize_energy is not None:
-        energy = normalize_energy(energy)
+        energy = normalize_energy(energy, ziel)
     if energy:
         kpi_fields["energy"] = energy
     return kpi_fields
 
 
-def energy_normalizer(store, kind: str) -> Callable[[dict], dict] | None:
+def energy_normalizer(store, kind: str) -> Callable[[dict, dict], dict] | None:
     """Normalisierer fuer die Zaehlerart des Bindings (BindingDescription.energy_counters); None fuer Summenzaehler
     (Vaillant: unveraendert, kein Zustand). Der Zustand liegt in BridgeState.energy_state (backup.json); scheitert das
     Speichern, gilt er im Speicher weiter (StateStore.update aendert vor dem Schreiben)."""
     if kind == ENERGY_TOTAL:
         return None
 
-    def _normalize(raw: dict) -> dict:
-        sent, state = energy_core.normalize(kind, store.state.energy_state, raw)
+    def _normalize(raw: dict, einheiten: dict) -> dict:
+        sent, state = energy_core.normalize(kind, store.state.energy_state, raw, einheiten)
         if state != store.state.energy_state:
             try:
                 store.update(energy_state=state)

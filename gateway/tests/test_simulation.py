@@ -1,6 +1,7 @@
 import json
 
 import pytest
+from bindung_beispiele import VIESSMANN_VICARE_BINDING
 
 from smartheat_gateway.drivers.base import DriverError
 from smartheat_gateway.drivers.registry import create
@@ -14,7 +15,8 @@ def paths(data_dir):
 
 
 def _sim(paths, clock, **parameter):
-    driver = create("simulation", {"lever_set": "viessmann_vicare", **parameter}, paths, clock=clock, writer=True)
+    driver = create("simulation", {"lever_set": "viessmann_vicare", **parameter}, paths, clock=clock, writer=True,
+                    description=VIESSMANN_VICARE_BINDING)
     driver.poll_once()
     return driver
 
@@ -30,7 +32,8 @@ def test_write_is_read_back_and_counted(paths, clock):
 
 def test_settle_delay_shows_the_old_value(paths, clock):
     walls = [1000.0]
-    driver = create("simulation", {"settle_delay": 60}, paths, clock=clock, writer=True, wall=lambda: walls[0])
+    driver = create("simulation", {"settle_delay": 60}, paths, clock=clock, writer=True, wall=lambda: walls[0],
+                    description=VIESSMANN_VICARE_BINDING)
     driver.poll_once()
     old = driver.read("curve")
     driver.write("curve", old + 0.2)

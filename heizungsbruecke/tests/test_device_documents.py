@@ -3,6 +3,7 @@ import json
 import math
 
 import pytest
+from bindung_beispiele import parameter
 
 from smartheat_core import rastung
 from smartheat_device import documents as docs
@@ -17,6 +18,7 @@ def _konfiguration(version=1, **changes):
         "verteilsystem": "Heizkoerper",
         "bindung": {"treiber": {"id": "simulation", "parameter": {"heizkreis": 0}}, "thermostat": None},
         "raumfuehler": [SENSOR], "tagestick": "12:12", "abo": "aktiv", "mindest_software": "0.6.0", "software": None,
+        "bindungsparameter": parameter("viessmann_vicare"),
     }
     inhalt.update(changes)
     return {"schema": 1, "version": version, **inhalt}
@@ -25,7 +27,7 @@ def _konfiguration(version=1, **changes):
 def _leer(version=1, mindest="0.6.0"):
     return {"schema": 1, "version": version, "anlage": None, "profil": None, "hebelsatz": None, "verteilsystem": None,
             "bindung": None, "raumfuehler": [], "tagestick": None, "abo": None, "mindest_software": mindest,
-            "software": None}
+            "software": None, "bindungsparameter": None}
 
 
 def _bedienung(version=1, raum_soll=21.0, **changes):
@@ -152,6 +154,18 @@ def test_a_rejection_keeps_the_previous_configuration_and_is_remembered(tmp_path
     assert _store(tmp_path).ablehnung("konfiguration") == (2, "hebelsatz_eingerastet", ergebnis.text)
     store.empfangen("konfiguration", _konfiguration(version=3, tagestick="06:00"))
     assert store.ablehnung("konfiguration") is None
+
+
+def test_invalid_binding_parameters_are_rejected_as_invalid_and_keep_the_previous_configuration(tmp_path):
+    store = _store(tmp_path)
+    store.empfangen("konfiguration", _konfiguration())
+    locker = parameter("viessmann_vicare", schreibschutz={"tag": None, "lebensdauer_hinweis": None,
+                                                           "durchsetzen_tag": 5})
+    ergebnis = store.empfangen("konfiguration", _konfiguration(version=2, bindungsparameter=locker))
+    assert (ergebnis.ok, ergebnis.grund, ergebnis.uebernommen) == (False, "ungueltig", False)
+    assert ergebnis.text == "Durchsetzen je Tag muss in den Bindungsparametern zwischen 1 und 4 liegen."
+    assert store.version("konfiguration") == 1
+    assert store.ablehnung("konfiguration") == (2, "ungueltig", ergebnis.text)
 
 
 def test_an_unknown_schema_is_refused_and_means_update_needed(tmp_path):

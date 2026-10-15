@@ -1,4 +1,5 @@
 import pytest
+from bindung_beispiele import VAILLANT_MYPYLLANT
 
 from heizungsbruecke.manifest import build_manifest, entity_ref
 from smartheat_runtime.roles import ManifestError
@@ -108,7 +109,7 @@ def test_every_snapshot_lever_is_mapped_by_the_required_roles():
     # test_snapshot_payload_is_schema_4.
     from heizungsbruecke.ha_binding import HaPlantBinding
 
-    binding = HaPlantBinding(None, build_manifest(BASE, DERIVED))
+    binding = HaPlantBinding(None, build_manifest(BASE, DERIVED), VAILLANT_MYPYLLANT)
     assert [lever for lever in binding.description.lever_set.levers if binding.has(lever)] == [
         "curve", "room_setpoint", "heat_limit",
     ]

@@ -5,11 +5,11 @@ from datetime import date
 from unittest.mock import MagicMock
 
 import pytest
+from bindung_beispiele import VIESSMANN_VICARE_BINDING, WEISHAUPT_MODBUS
 from fakes import runtime_config
 
 from heizungsbruecke.ha_binding import HaPlantBinding
 from smartheat_core import enforce, write_budget
-from smartheat_core.binding import VIESSMANN_VICARE_BINDING, WEISHAUPT_MODBUS
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime.notifier import Notifier

@@ -52,7 +52,7 @@ DETECTION_ROUNDS = 2
 RETRY_SECONDS = write_budget.INTERVAL_SECONDS
 MAX_WRITES_PER_DAY = write_budget.MAX_PER_DAY
 # Toleranzen (Abweichung, ab der durchgesetzt wird) und Anzeigenamen je Hebel: BindingDescription.enforce_tolerance
-# bzw. labels (Vaillant: smartheat_core.binding.VAILLANT_MYPYLLANT). Spec 5.3 nennt fuer die Steigung 0,01; die
+# bzw. labels (Vaillant: smartheat_core.bindungsparameter, Spec Stufe 3 S4b). Spec 5.3 nennt fuer die Steigung 0,01; die
 # Anlage stellt sie aber nur in Schritten von 0,05 dar, und der Quota-Check (LeverPipeline._matches_the_device)
 # ueberspringt ein Schreiben innerhalb eines halben Schritts. Mit 0,01 wuerde ein (theoretischer) Zwischenwert als
 # Eingriff erkannt, aber nie geschrieben und trotzdem gezaehlt/gemeldet. Deshalb gilt der halbe Anlagenschritt

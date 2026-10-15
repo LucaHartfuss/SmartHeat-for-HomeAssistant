@@ -1,7 +1,8 @@
 """Lokale Pruefung einer Konfiguration vor dem Uebernehmen (Spec 5b 3.1, Weichenstellung 1), rein: nur
 Standardbibliothek und smartheat_core. Regeln in dieser Reihenfolge: (1) Aufbau und Wertebereiche, (2) Hebelsatz und
 Verteilsystem haben lokale Sicherheitswerte (safety.py), (3) eingerastet: Hebelsatz und Verteilsystem muessen zur Rastung
-des Geraets passen (smartheat_core.rastung); eine leere Konfiguration loest sie nicht, (4) erlaubte Referenzen je Rolle, (5) keine Doppelbelegung, (6) Treiberparameter prueft
+des Geraets passen (smartheat_core.rastung); eine leere Konfiguration loest sie nicht, (3a) Bindungsparameter gegen die
+lokalen Grenzen (smartheat_core.bindungsparameter), (4) erlaubte Referenzen je Rolle, (5) keine Doppelbelegung, (6) Treiberparameter prueft
 der Treiber (Rueckruf des Hosts, zuletzt; Gateway: die Bindung, HA: Aufbau der Bindung rein, Entities und Schreibziele ueber den
 Rueckruf des Hosts mit der ganzen Konfiguration). Eine leere Konfiguration (anlage None) heisst "nicht eingerichtet" und ist
 immer gueltig; sie aendert die Rastung nicht. Die Gruende sind Dokument-Fehlergruende des Vertrags (smartheat_device.wire.DOKUMENT_ERRORS), die Texte
@@ -11,6 +12,7 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+from smartheat_core.bindungsparameter import beschreibung
 from smartheat_core.rastung import TEXT as RASTUNG_TEXT
 from smartheat_core.rastung import Rastung, passt
 from smartheat_core.safety import resolve_local_safety
@@ -53,7 +55,7 @@ HA_REF = re.compile(r"[a-z_]+\.[a-z0-9_]+(::[a-z_]+)?")
 HA_RAUMFUEHLER = re.compile(r"sensor\.[a-z0-9_]+|climate\.[a-z0-9_]+::current_temperature")
 HA_BATTERIE = re.compile(r"(sensor|binary_sensor)\.[a-z0-9_]+")
 HA_DIENST = re.compile(r"notify\.[a-z0-9_]+")
-#: Abfrageintervall der Hersteller-Integration (Sekunden), Grenzen wie options.POLL_INTERVAL_RANGE; ein Test haelt sie gleich.
+#: Abfrageintervall der Hersteller-Integration (Sekunden), Grenzen 10-3600 s (Teil von V1).
 ABFRAGE_S = (10, 3600)
 ANLAGE_MAX_CHARS = 64
 TEXT_MAX_CHARS = 200
@@ -187,6 +189,10 @@ def pruefen(neu: Mapping, rastung: Rastung | None, *, host: str,
         return Ablehnung(SICHERHEITSWERTE_FEHLEN, f"Für diese Anlage fehlen lokale Sicherheitswerte ({error}).")
     if not passt(rastung, neu):
         return Ablehnung(HEBELSATZ_EINGERASTET, RASTUNG_TEXT)
+    try:
+        beschreibung(neu["hebelsatz"], neu.get("bindungsparameter"))
+    except ValueError as error:
+        return Ablehnung(UNGUELTIG, str(error))  # der Text nennt die Bindungsparameter selbst
     if host == HOST_HA:
         ablehnung = _ha_bindung(neu)
         if ablehnung is None and treiber_pruefen is not None and (text := treiber_pruefen(dict(neu))):

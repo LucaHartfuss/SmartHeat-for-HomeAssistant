@@ -2,10 +2,10 @@
 Reihenfolge Komfort/Normal/Absenk, Hilfs-Ursprungswerte, physische Schreibvorgaenge; mit der Pipeline: Fehlschlag mitten in der
 Reihenfolge und Wiederherstellung."""
 import pytest
+from bindung_beispiele import WEISHAUPT_MODBUS
 
 from heizungsbruecke.ha_binding import WeishauptHaBinding, weishaupt_option, weishaupt_scheme
 from smartheat_core import write_budget
-from smartheat_core.binding import WEISHAUPT_MODBUS
 from smartheat_core.pipeline import DeviceWriteError, LeverPipeline, WriteBudgetExhausted
 from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime.roles import ChannelManifest
@@ -398,8 +398,11 @@ def test_the_normal_setpoint_uses_the_static_range_of_the_scheme(mode, expected)
 
 
 def test_scheme_helpers():
-    assert weishaupt_scheme("hz_operationmode_lowering") == "hz_operationmode_"
-    assert weishaupt_option("hz_operationmode_lowering", V2) == V2 + "lowering"
+    praefixe = WEISHAUPT_MODBUS.schemata["praefixe"]
+    assert weishaupt_scheme("hz_operationmode_lowering", praefixe) == "hz_operationmode_"
+    assert weishaupt_option("hz_operationmode_lowering", V2, praefixe) == V2 + "lowering"
+    with pytest.raises(ValueError, match="Unbekannte Betriebsart"):
+        weishaupt_scheme("fremd_lowering", praefixe)
 
 
 def test_a_read_error_of_the_mode_propagates_out_of_limits():
@@ -440,3 +443,28 @@ def test_prepare_with_an_unknown_scheme_raises_without_a_select_call():
 ])
 def test_aux_zulaessig_accepts_only_known_modes_of_the_known_schemes(name, wert, ok):
     assert _binding(FakeHa()).aux_zulaessig(name, wert) is ok
+
+
+# --- Mutationsprobe Stufe 3 S4b (A5-22 Rest): Vorbereitung verlangt die Hilfswerte und zaehlt einmal ---
+
+def test_preparation_without_readable_auxiliary_values_does_not_switch_the_mode(make_store, clock):
+    # Durchsetzen (ensure_prepared) und der Start (prepare_start) rufen die Vorbereitung mit den Voreinstellungen auf:
+    # auch dann muessen die Hilfs-Ursprungswerte vorher gemerkt sein.
+    ha = FakeHa(**{"number.komfort": float("nan")})
+    pipeline, store = _pipeline(make_store, clock, ha)
+    with pytest.raises(DeviceWriteError):
+        pipeline.ensure_prepared()
+    with pytest.raises(DeviceWriteError):
+        pipeline.prepare_start(21.0)
+    assert ha.calls == [] and store.state.aux_originals == {}
+    assert ha.states["select.betriebsart"] == "hz_operationmode_automatic"
+
+
+def test_a_preparation_after_an_earlier_write_counts_once(make_store, clock, monkeypatch):
+    monkeypatch.setattr(write_budget, "today", lambda: DAY)
+    ha = FakeHa()
+    pipeline, store = _pipeline(make_store, clock, ha)
+    pipeline.write_lever("curve", 0.8)
+    assert _total(store) == 1
+    assert pipeline.ensure_prepared() is True
+    assert _total(store) == 2 and store.state.lifetime_writes == 2

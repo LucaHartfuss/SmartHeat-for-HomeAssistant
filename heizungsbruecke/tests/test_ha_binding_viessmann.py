@@ -1,9 +1,9 @@
 """HA-Binding Viessmann (Plan 3b, HA-Core vicare): Heizprogramm als Vorbereitung, Hilfs-Ursprungswert, mit der Pipeline
 Neigung und Niveau als eine Schreibgruppe."""
 import pytest
+from bindung_beispiele import VIESSMANN_VICARE_BINDING
 
 from heizungsbruecke.ha_binding import VIESSMANN_NORMAL_PRESET, ViessmannHaBinding
-from smartheat_core.binding import VIESSMANN_VICARE_BINDING
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime.roles import ChannelManifest

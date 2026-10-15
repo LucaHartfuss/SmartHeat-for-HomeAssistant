@@ -21,6 +21,10 @@ class SignalSource(Protocol):
 
     def get_raw_state(self, ref: str) -> str: ...
 
+    def get_unit(self, ref: str) -> str:
+        """Einheit hinter der Referenz (HA: Attribut unit_of_measurement); wirft wie get_raw_state, wenn keine da ist."""
+        ...
+
     def device_key(self, ref: str) -> str:
         """Geraet hinter einer Referenz, fuer Meldeschluessel und Kundentexte (HA: Entity-ID ohne ::attribut,
         Gateway: IEEE-Adresse bzw. treiber:<rolle>)."""

@@ -1,14 +1,17 @@
 """Audit 4, A4-09 (GK-1), Nutzer-Entscheidung E2: Comfort-Boost hoechstens 4 h, Ende nach 3 unlesbaren Raumwerten."""
 import contextlib
+import logging
+import time
 from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from bindung_beispiele import VAILLANT_MYPYLLANT
 from fakes import runtime_config
 
 from heizungsbruecke.ha_binding import HaPlantBinding
-from smartheat_core import wallclock
+from smartheat_core import wallclock, write_budget
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime import regulation
@@ -38,7 +41,7 @@ def _rt(tmp_path, values, backup=None):
     ha_api.get_state.side_effect = _get_state
     manifest = ChannelManifest(refs=REFS)
     rt = SimpleNamespace(manifest=manifest, signals=ha_api, ha_api=ha_api, config=runtime_config(), store=store,
-                         override=LeverPipeline(store, HaPlantBinding(ha_api, manifest), SAFETY))
+                         override=LeverPipeline(store, HaPlantBinding(ha_api, manifest, VAILLANT_MYPYLLANT), SAFETY))
     store.update(stable_target=21.0)
     return rt
 
@@ -135,3 +138,47 @@ def test_boost_since_stays_in_memory_when_the_backup_cannot_be_written(tmp_path,
         regulation.run_local_check(rt)
     assert rt.store.state.boost_since == START.isoformat()
     assert rt.store.storage_failed
+
+
+# --- Mutationsprobe Stufe 3 S4b (A5-22 Rest) ---
+
+def test_a_readable_room_value_resets_the_unreadable_count(tmp_path, clock):
+    # "in Folge": ein lesbarer Wert dazwischen beginnt die Zaehlung neu.
+    values = {"sensor.room_actual": 19.0, "number.curve": 1.0, "number.shift": 20.0, "number.heat_limit": 16.0}
+    rt = _rt(tmp_path, values)
+    regulation.run_local_check(rt)
+    for wert in (ValueError("unknown"), ValueError("unknown"), 19.0, ValueError("unknown"), ValueError("unknown")):
+        values["sensor.room_actual"] = wert
+        with contextlib.suppress(ValueError):
+            regulation.run_local_check(rt)
+        if wert == 19.0:
+            assert rt.store.state.room_actual_misses == 0
+    assert rt.store.state.room_actual_misses == 2 and rt.store.state.boost_active
+
+
+def test_a_refused_boost_end_after_unreadable_values_keeps_the_boost_start(tmp_path, clock):
+    # Bremst das Schreibbudget das Boost-Ende, laeuft der Boost weiter -- die 4-h-Grenze zaehlt ab dem alten Start.
+    values = {"sensor.room_actual": ValueError("unknown"), "number.curve": 1.5, "number.shift": 25.0,
+              "number.heat_limit": 23.0}
+    seit = (START - timedelta(hours=1)).isoformat()
+    rt = _rt(tmp_path, values, {"last_room_target": 21.0, "boost_active": True, "boost_since": seit,
+                                "restore_point": {"curve": 1.0, "room_setpoint": 20.0, "heat_limit": 16.0}})
+    write_budget.put(rt.store, write_budget.BOOST_END, {"day": write_budget.today(), "count": 1,
+                                                        "last": time.monotonic()})
+    for _ in range(3):
+        with pytest.raises(ValueError):
+            regulation.run_local_check(rt)
+    assert rt.store.state.boost_active and rt.store.state.boost_since == seit
+
+
+def test_the_maximum_duration_is_logged_only_when_it_ends_the_boost(tmp_path, clock, caplog):
+    values = {"sensor.room_actual": 19.0, "number.curve": 1.0, "number.shift": 20.0, "number.heat_limit": 16.0}
+    rt = _rt(tmp_path, values)
+    with caplog.at_level(logging.INFO, logger="smartheat_runtime.regulation"):
+        regulation.run_local_check(rt)
+        clock["t"] = START + timedelta(hours=3, minutes=59)
+        regulation.run_local_check(rt)
+        assert "Hoechstdauer" not in caplog.text
+        clock["t"] = START + timedelta(hours=4)
+        regulation.run_local_check(rt)
+    assert caplog.text.count("Hoechstdauer") == 1

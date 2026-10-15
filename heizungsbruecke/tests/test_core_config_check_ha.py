@@ -1,17 +1,17 @@
 """Spec 5c 1.3 / 5b 3.1: lokale Pruefung einer HA-Konfiguration (Aufbau rein, HA-Teil ueber den Rueckruf)."""
 import pytest
+from bindung_beispiele import parameter
 
 from smartheat_core import config_check as cc
 from smartheat_core.rastung import Rastung
 from smartheat_device import wire
-from smartheat_runtime import options
 
 
 def _ha(**changes) -> dict:
     base = {
         "anlage": "zuhause2", "profil": "vaillant_gastherme_heizkoerper", "hebelsatz": "vaillant_vrc720",
         "verteilsystem": "Heizkoerper", "tagestick": "12:07", "abo": "aktiv",
-        "raumfuehler": ["sensor.wohnzimmer_thermostat_temperatur"],
+        "bindungsparameter": parameter("vaillant_vrc720"), "raumfuehler": ["sensor.wohnzimmer_thermostat_temperatur"],
         "bindung": {
             "kreis": {"plattform": "mypyllant", "config_entry": "e1", "anlage": "S", "nummer": "0"},
             "rollen": {"room_target": "climate.wohnzimmer_thermostat::temperature",
@@ -36,8 +36,8 @@ def test_copies_match_the_contract():
     assert cc.KREIS_FELDER == wire.KREIS_FIELDS
 
 
-def test_the_poll_interval_bounds_are_the_bounds_of_the_options():
-    assert cc.ABFRAGE_S == options.POLL_INTERVAL_RANGE
+def test_the_poll_interval_bounds():
+    assert cc.ABFRAGE_S == (10, 3600)
 
 
 def test_valid_ha_configuration_passes_and_the_host_sees_all_of_it():

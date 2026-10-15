@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from bindung_beispiele import VAILLANT_MYPYLLANT
 from conftest import FakeClock
 from fakes import HaEventSink, runtime_config
 
@@ -39,7 +40,7 @@ def _runtime(tmp_path, store, entity_ids=BOTH_ROLES, notify_services=("notify.ha
     return SimpleNamespace(
         manifest=manifest, signals=ha_api, ha_api=ha_api, store=store, mqtt_client=MagicMock(),
         config=runtime_config(entitlement_path=tmp_path / "entitlement_state.json"),
-        override=LeverPipeline(store, HaPlantBinding(ha_api, manifest), SAFETY),
+        override=LeverPipeline(store, HaPlantBinding(ha_api, manifest, VAILLANT_MYPYLLANT), SAFETY),
         notifier=Notifier(store, HaNotifySink(ha_api, list(notify_services))),
         status=StatusReporter(
             HaEventSink(ha_api), OPTIONS["tenant_id"], None, store, LEVER_SETS["vaillant_vrc720"], ADDON_VERSION,

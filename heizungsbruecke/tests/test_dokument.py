@@ -1,8 +1,10 @@
 """Spec 5c 1.3: Konfigurationsdokument -> bisherige Optionen; HA-Teil der lokalen Pruefung."""
+import bindung_beispiele
 import pytest
+from bindung_beispiele import parameter
 from fakes import FakeHa
 
-from heizungsbruecke import dokument
+from heizungsbruecke import config, dokument
 from smartheat_core import config_check
 
 KONFIGURATION = {
@@ -17,6 +19,7 @@ KONFIGURATION = {
         "batterien": ["sensor.thermostat_battery"], "benachrichtigung": ["notify.handy"], "hinweise_aus": [],
         "abfrage_s": 1800,
     },
+    "bindungsparameter": bindung_beispiele.parameter("vaillant_vrc720"),
 }
 
 
@@ -48,7 +51,8 @@ def test_options_carry_the_old_keys_and_the_target_store():
     assert options["entity_shift_current"] == "climate.zone"
     assert options["entity_room_target"] == dokument.SOLL_REF
     assert options["room_sensors"] == ["sensor.room_actual"]
-    assert options["notify_services"] == ["notify.handy"] and options["poll_interval_seconds"] == 1800
+    assert options["notify_services"] == ["notify.handy"]
+    assert options["bindungsparameter"] is KONFIGURATION["bindungsparameter"]
     assert options["daily_trigger_time"] == "12:07" and options["lever_set"] == "vaillant_vrc720"
     assert dokument.soll_entity(KONFIGURATION) == "sensor.room_target"
 
@@ -211,3 +215,14 @@ def test_the_check_runs_through_config_check_as_role_not_allowed():
     ablehnung = config_check.pruefen(KONFIGURATION, None, host=config_check.HOST_HA,
                                      treiber_pruefen=lambda k: dokument.zuordnung_pruefen(k, ha))
     assert ablehnung.grund == config_check.ROLLE_UNZULAESSIG and "number.heat_limit" in ablehnung.text
+
+
+def test_beschreibung_kommt_aus_der_gespeicherten_konfiguration():
+    """Spec Stufe 3 S4b 4.3: Start und Abmelden (HaHost.sign_off_parts) bauen die Beschreibung ueber dokument.optionen
+    aus der gespeicherten Konfiguration -- nicht aus einer Tabelle."""
+    hebelsatz = KONFIGURATION["hebelsatz"]
+    konfiguration = {**KONFIGURATION, "bindungsparameter": parameter(hebelsatz, zurueck=[], zurueck_optional=[])}
+    assert config.binding_description(dokument.optionen(konfiguration)).restore_originals == ()
+    ohne = {**KONFIGURATION, "bindungsparameter": None}
+    with pytest.raises(config.ConfigError):
+        config.binding_description(dokument.optionen(ohne))

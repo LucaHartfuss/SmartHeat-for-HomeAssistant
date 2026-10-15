@@ -2,6 +2,7 @@
 import json
 import time
 
+from smartheat_core.binding import BindingDescription
 from smartheat_gateway.drivers.base import Driver
 from smartheat_gateway.drivers.simulation import SimulationDriver
 from smartheat_gateway.drivers.vicare_cloud.driver import ViCareCloudDriver
@@ -17,11 +18,13 @@ def driver_ids() -> tuple[str, ...]:
 
 
 def create(
-    driver_id: str, parameter: dict, paths: Paths, *, clock=time.monotonic, writer: bool = False, **extra,
+    driver_id: str, parameter: dict, paths: Paths, *, clock=time.monotonic, writer: bool = False,
+    description: BindingDescription | None = None, **extra,
 ) -> Driver:
-    """writer=True nur in der Laufzeit (ein Schreiber je Datei); die Befehle des Geraetekerns lesen. KeyError bei
-    unbekannter ID."""
-    return DRIVERS[driver_id](parameter, paths, clock=clock, writer=writer, **extra)
+    """writer=True nur in der Laufzeit (ein Schreiber je Datei); die Befehle des Geraetekerns lesen. description: die
+    Bindungsbeschreibung aus der Konfiguration (Spec Stufe 3 S4b); Probe, Inventur und Vergessen laufen ohne.
+    KeyError bei unbekannter ID."""
+    return DRIVERS[driver_id](parameter, paths, clock=clock, writer=writer, description=description, **extra)
 
 
 def same_plant(old: dict | None, new: dict | None) -> bool:

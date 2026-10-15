@@ -21,6 +21,7 @@ import uuid
 import pytest
 import requests
 import websocket
+from bindung_beispiele import VAILLANT_MYPYLLANT
 
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_binding import HaPlantBinding
@@ -333,7 +334,7 @@ def test_tp12b_write_refuses_an_unavailable_number(real_ha):
     _set_state(api, "number.tp12b_unavailable", "unavailable", {})
 
     with pytest.raises(ValueError, match="unavailable"):
-        HaPlantBinding(api, ChannelManifest(refs={"curve_current": "number.tp12b_unavailable"})).write("curve", 1.0)
+        HaPlantBinding(api, ChannelManifest(refs={"curve_current": "number.tp12b_unavailable"}), VAILLANT_MYPYLLANT).write("curve", 1.0)
 
     # Beleg fuer die Annahme: der direkte Service-Aufruf aendert den Zustand nicht.
     with contextlib.suppress(requests.HTTPError):

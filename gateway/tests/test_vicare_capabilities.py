@@ -3,8 +3,8 @@ import json
 from pathlib import Path
 
 import pytest
+from bindung_beispiele import PARAMETER
 
-from smartheat_core.binding import VIESSMANN_VICARE_BINDING as BINDING
 from smartheat_device import wire
 from smartheat_gateway.drivers.vicare_cloud import capabilities as caps
 
@@ -107,7 +107,7 @@ def test_garbage_features_do_not_raise():
 
 def test_the_steps_come_from_the_binding_not_a_second_table():
     candidate = only(good_features())
-    assert {k: v["schritt"] for k, v in candidate["hebel"].items()} == dict(BINDING.steps)
+    assert {k: v["schritt"] for k, v in candidate["hebel"].items()} == caps.ERWARTETE_SCHRITTE == PARAMETER["viessmann_vicare"]["schritte"]
 
 
 EXPECTED = json.loads((MATRIX / "expected.json").read_text())

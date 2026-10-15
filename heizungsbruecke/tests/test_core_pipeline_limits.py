@@ -1,11 +1,14 @@
 """Hebel-Pipeline, Plan Client2-Bereitschaft: geschrieben wird in der Schnittmenge aus lokalen Grenzen (safety.py) und
 dem Wertebereich der Anlage (binding.limits) -- nur enger, nie weiter."""
+import dataclasses
 import logging
 from types import SimpleNamespace
 
-from heizungsbruecke.ha_binding import HaPlantBinding
+import pytest
+from bindung_beispiele import VAILLANT_MYPYLLANT, WEISHAUPT_MODBUS
+
+from heizungsbruecke.ha_binding import HaPlantBinding, WeishauptHaBinding
 from smartheat_core import derived, enforce
-from smartheat_core.binding import VAILLANT_MYPYLLANT, WEISHAUPT_MODBUS
 from smartheat_core.pipeline import LIMITS_TTL_SECONDS, LeverPipeline
 from smartheat_core.safety import LocalSafety, resolve_local_safety
 from smartheat_runtime.roles import ChannelManifest
@@ -247,3 +250,90 @@ def test_a_wider_or_equal_device_range_logs_no_narrowing(make_store, clock, capl
         clock.advance(LIMITS_TTL_SECONDS + 1)
         pipeline.range_of("room_setpoint")
     assert "verengt" not in caplog.text
+
+
+class ModeHa(Ha):
+    def get_raw_state(self, entity_id):
+        return "hz_operationmode_normal"
+
+
+def _weishaupt_pipeline(make_store, clock, bereich):
+    beschreibung = dataclasses.replace(WEISHAUPT_MODBUS, schemata={
+        "praefixe": ("hz_operationmode_",), "normal_bereich": {"hz_operationmode_": bereich}})
+    manifest = ChannelManifest(refs={**MANIFEST.refs, "mode_select": "select.betriebsart"})
+    return LeverPipeline(make_store(), WeishauptHaBinding(ModeHa(), manifest, beschreibung), SAFETY, clock=clock)
+
+
+def test_weishaupt_bereich_vom_server_verengt_nur(make_store, clock):
+    """Review Focus 5: ein weiter Normal-Bereich vom Server erweitert die lokalen Grenzen nicht (range_of)."""
+    pipeline = _weishaupt_pipeline(make_store, clock, (5.0, 40.0))
+    assert pipeline.range_of("room_setpoint") == (16.0, 25.0)
+
+
+def test_weishaupt_bereich_vom_server_verengt(make_store, clock):
+    pipeline = _weishaupt_pipeline(make_store, clock, (18.0, 22.0))
+    assert pipeline.range_of("room_setpoint") == (18.0, 22.0)
+
+
+@pytest.mark.parametrize("wert", [0.0, 0.31, 0.99, 3.0])
+def test_grosser_schritt_bleibt_in_den_lokalen_grenzen(make_store, clock, wert):
+    """Review Focus 3: Schritt 5 vom Server; clamping.target_value klemmt nach dem Runden."""
+    binding = LimitedBinding(Ha(), {})
+    binding.description = dataclasses.replace(WEISHAUPT_MODBUS, steps={**WEISHAUPT_MODBUS.steps, "curve": 5.0})
+    pipeline = LeverPipeline(make_store(), binding, SAFETY, clock=clock)
+    low, high = pipeline.range_of("curve")
+    assert (low, high) == SAFETY.ranges["curve"] == (0.30, 1.00)
+    assert low <= pipeline._target("curve", wert) <= high
+
+
+@pytest.mark.parametrize(("wert", "ziel"), [(0.99, 1.0), (1.0, 1.0), (3.0, 1.0), (0.31, 0.6), (0.0, 0.3)])
+def test_runden_ueber_das_maximum_wird_wieder_geklemmt(make_store, clock, wert, ziel):
+    """Bei Schritt 5 rundet jeder Wert auf 0 (nur die untere Seite); Schritt 0,6 traegt das Runden ueber das Maximum:
+    0,99 bzw. 1,0 -> 1,2 -> geklemmt 1,0 (nachgerechnet mit clamping.target_value)."""
+    binding = LimitedBinding(Ha(), {})
+    binding.description = dataclasses.replace(WEISHAUPT_MODBUS, steps={**WEISHAUPT_MODBUS.steps, "curve": 0.6})
+    pipeline = LeverPipeline(make_store(), binding, SAFETY, clock=clock)
+    assert pipeline.range_of("curve") == (0.30, 1.00)
+    assert pipeline._target("curve", wert) == ziel
+
+
+# --- Mutationsprobe Stufe 3 S4b (A5-22 Rest): Gueltigkeit des Bereichs, Beruehrungspunkt, halber Schritt ---
+
+def test_the_device_range_is_read_again_after_exactly_300_seconds(make_store, clock):
+    assert LIMITS_TTL_SECONDS == 300.0
+    pipeline, binding = _counting(make_store, clock, {"room_setpoint": (18.0, 24.0)})
+    pipeline.range_of("room_setpoint")
+    clock.advance(300.0)
+    pipeline.range_of("room_setpoint")
+    assert binding.calls == 2
+
+
+def test_a_device_range_touching_the_local_limit_narrows_to_one_point(make_store, clock, caplog):
+    pipeline, _ = _counting(make_store, clock, {"room_setpoint": (25.0, 28.0)})
+    with caplog.at_level(logging.WARNING):
+        assert pipeline.range_of("room_setpoint") == (25.0, 25.0)
+    assert "ausserhalb der lokalen Grenzen" not in caplog.text
+
+
+# Weishaupt: Schrittweite room_setpoint 0,5, also halber Schritt 0,25 (exakt als float). Der Anlagenbereich 18,25-25
+# legt den Zielwert eines niedrigen Werts neben das Raster (18,0 gerundet, dann auf 18,25 begrenzt).
+
+def test_a_read_exactly_half_a_step_away_counts_as_unchanged(make_store, clock):
+    # Die Toleranz ist inklusiv (Docstring pipeline._matches_the_device: "innerhalb eines halben Schritts"); der Test
+    # haelt nur diese Grenze fest.
+    pipeline, ha = _pipeline(make_store, clock, {})
+    ha.states["number.normal"] = 18.25
+    assert pipeline.write_lever("room_setpoint", 18.5) == 18.5
+    assert ha.writes == []
+
+
+@pytest.mark.parametrize("read_after_write", ["stale", "resting"])
+def test_our_last_write_exactly_half_a_step_away_counts_as_unchanged(make_store, clock, read_after_write):
+    # Inklusive Toleranz wie oben (pipeline._matches_the_device), hier fuer den eigenen letzten Schreibwert.
+    pipeline, ha = _pipeline(make_store, clock, {"room_setpoint": (18.25, 25.0)})
+    assert pipeline.write_lever("room_setpoint", 10.0) == 18.25
+    if read_after_write == "resting":
+        ha.states["number.normal"] = 0.0  # ruhende Zone: read() liefert None, es zaehlt der eigene Schreibwert
+    clock.advance(60)  # innerhalb der Wartezeit (120 s): dem Read allein wird nicht vertraut
+    assert pipeline.write_lever("room_setpoint", 18.5) == 18.5
+    assert ha.writes == [("number.normal", 18.25)]

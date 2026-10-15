@@ -23,7 +23,6 @@ from heizungsbruecke.manifest import build_manifest, entity_ref
 from heizungsbruecke.raum import RaumPublisher
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core import wallclock
-from smartheat_core.binding import BINDINGS
 from smartheat_runtime import aufraeumen, dokument_config
 from smartheat_runtime.app import Loaded, Notice, RestoreParts, StartFailure
 from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
@@ -128,7 +127,7 @@ class HaHost:
             description = config.binding_description(effective)
             safety = config.local_safety(effective)
         except config.ConfigError as error:
-            logger.error("Abmelden ohne Zuruecksetzen, Konfiguration ungueltig: %s", error)
+            logger.error("Abmelden ohne Zuruecksetzen: %s", error)
             return None
         roles = [role for role in binding_roles(description) if effective.get(f"entity_{role}")]
         manifest = ChannelManifest(refs={role: entity_ref(role, effective[f"entity_{role}"]) for role in roles})
@@ -148,12 +147,14 @@ class HaHost:
             runtime = dokument_config.runtime_config(
                 self._konfiguration, rastung_pfad=config.RASTUNG_PATH, entitlement_path=config.ENTITLEMENT_PATH,
                 abo_source=self._geraet.abo_status)
+            config.binding_description(options)  # Spec Stufe 3 S4b 4.3: ohne gueltige Bindungsparameter kein Start
             error = config.validate(options)
             if error:
                 raise config.ConfigError(error)
             _wait_for_required_entities(self._ha_api, options)
             derived = _ensure_derived_sensors_with_retry(self._ha_api, options)
             manifest = build_manifest(options, derived.entity_ids, config.lever_set_id(options))
+            binding = binding_for(options, self._ha_api, manifest)
         except StartupError as error:
             raise StartFailure(str(error), error.key) from error
         except (config.ConfigError, ManifestError) as error:
@@ -180,7 +181,7 @@ class HaHost:
                 BatteryRef(entity_id, BATTERY_LOW_FLAG if entity_id.startswith("binary_sensor.") else BATTERY_PERCENT)
                 for entity_id in options["battery_entities"]))
         notices = (Notice("quellwechsel", derived.sources_fingerprint, SOURCE_CHANGE_MESSAGE),) if derived.replaced else ()
-        return Loaded(config=runtime, manifest=manifest, binding=binding_for(options, self._ha_api, manifest),
+        return Loaded(config=runtime, manifest=manifest, binding=binding,
                       notices=notices)
 
     def trigger_source(self, manifest: ChannelManifest, worker: RegulationWorker) -> TriggerSource:
@@ -332,12 +333,3 @@ def _check_timezone(ha_api) -> None:
         )
     else:
         logger.info("Zeitzone: %s", container_time_zone)
-
-
-def _status_lever_set(options: dict):
-    """Hebelsatz fuers Statusereignis. Ein unbekannter Hebelsatz ist ein Konfigurationsfehler (der Start meldet ihn
-    gleich danach); das Statusereignis braucht dann trotzdem einen Satz, es faellt auf den Standard zurueck."""
-    try:
-        return config.binding_description(options).lever_set
-    except config.ConfigError:
-        return BINDINGS[config.DEFAULT_LEVER_SET].lever_set

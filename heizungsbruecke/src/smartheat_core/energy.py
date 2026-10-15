@@ -4,7 +4,11 @@ Audit 4 A4-49, Weishaupt, Viessmann) liefern Tageszaehler ("daily", Rueckgang au
 Kern je Kanal eine monoton wachsende Summe. Fuer einen Hersteller mit durchlaufender Summe bleibt "total" (Werte
 unveraendert durchgereicht, kein Zustand).
 
-Regel "daily" je Kanal mit Zustand {"raw": letzter Rohwert, "sum": Summe}:
+Einheit (Spec Stufe 3 S4b 5, A5-11): die Werte kommen in der Zieleinheit des Kanals an (telemetry rechnet Wh in kWh um).
+Der Zustand traegt sie je Kanal mit; ein Zustand mit anderer oder ohne Einheit (aus 1.0.0: Wh ohne Einheit) beginnt neu,
+Summen verschiedener Einheiten laufen nie ineinander.
+
+Regel "daily" je Kanal mit Zustand {"raw": letzter Rohwert, "sum": Summe, "einheit": Zieleinheit}:
 - erster Wert ohne Zustand: Summe = Rohwert (Basis; der Server rechnet nur Differenzen);
 - Rohwert >= letzter: Summe += Differenz;
 - Rohwert < RESET_FRACTION x letzter: Tagesruecksetzung, Summe += Rohwert;
@@ -15,6 +19,7 @@ import math
 from collections.abc import Mapping
 
 from smartheat_core.binding import ENERGY_DAILY, ENERGY_TOTAL
+from smartheat_core.bindungsparameter import EINHEITEN
 
 # Annahme bis zur Inventur: ein Tageszaehler faellt um Mitternacht auf (nahe) 0, Messrauschen ist viel kleiner.
 # Grenze: myVAILLANT aktualisiert die Energiesensoren nur beim Neuladen der Integration (Audit 4 P-B, D-5); setzt ein
@@ -22,10 +27,17 @@ from smartheat_core.binding import ENERGY_DAILY, ENERGY_TOTAL
 RESET_FRACTION = 0.5
 
 
-def _step(previous: Mapping[str, float] | None, raw: float) -> dict[str, float]:
+def umrechnen(wert: float, einheit: str) -> tuple[float, str]:
+    """(Wert in der Zieleinheit, Zieleinheit): Wh -> kWh, kWh und m³ unveraendert (Spec Stufe 3 S4b 5). KeyError bei
+    einer fremden Einheit."""
+    ziel, faktor = EINHEITEN[einheit]
+    return wert * faktor, ziel
+
+
+def _step(previous: Mapping[str, float | str] | None, raw: float) -> dict[str, float]:
     if previous is None:
         return {"raw": raw, "sum": raw}
-    last, total = previous["raw"], previous["sum"]
+    last, total = float(previous["raw"]), float(previous["sum"])
     if raw >= last:
         return {"raw": raw, "sum": total + raw - last}
     if raw < RESET_FRACTION * last:
@@ -34,9 +46,11 @@ def _step(previous: Mapping[str, float] | None, raw: float) -> dict[str, float]:
 
 
 def normalize(
-    kind: str, state: Mapping[str, Mapping[str, float]], raw: Mapping[str, float],
-) -> tuple[dict[str, float], dict[str, dict[str, float]]]:
-    """(zu sendende Werte je Kanal, neuer Zustand). TOTAL: Rohwerte unveraendert, Zustand unveraendert."""
+    kind: str, state: Mapping[str, Mapping[str, float | str]], raw: Mapping[str, float], einheiten: Mapping[str, str],
+) -> tuple[dict[str, float], dict[str, dict[str, float | str]]]:
+    """(zu sendende Werte je Kanal, neuer Zustand). raw in der Zieleinheit, einheiten: Kanal -> Zieleinheit. TOTAL:
+    Rohwerte unveraendert, Zustand unveraendert. DAILY: ein Zustand mit anderer (oder ohne, aus 1.0.0) Einheit
+    beginnt neu -- Summen verschiedener Einheiten laufen nie ineinander."""
     if kind == ENERGY_TOTAL:
         return dict(raw), {channel: dict(entry) for channel, entry in state.items()}
     if kind != ENERGY_DAILY:
@@ -46,6 +60,9 @@ def normalize(
     for channel, value in raw.items():
         if not math.isfinite(value):
             continue
-        new_state[channel] = _step(state.get(channel), value)
-        sent[channel] = round(new_state[channel]["sum"], 6)
+        previous = state.get(channel)
+        if previous is not None and previous.get("einheit") != einheiten[channel]:
+            previous = None
+        new_state[channel] = {**_step(previous, value), "einheit": einheiten[channel]}
+        sent[channel] = round(float(new_state[channel]["sum"]), 6)
     return sent, new_state

@@ -9,16 +9,19 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from smartheat_core import dateien, rastung
-from smartheat_core.binding import BINDINGS
+from smartheat_core.levers import LEVER_SETS
 from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime import entitlement, options
 from smartheat_runtime.options import ConfigError
 from smartheat_runtime.runtime_config import BootInfo, RuntimeConfig
 from smartheat_runtime.windows import validate_daily_trigger_time
 
-FELDER = ("anlage", "profil", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo", "intervalle")
-#: Aendert sich eines davon, startet der Host die Laufzeit neu (software, mindest_software und profil nicht).
-LAUFZEIT_FELDER = ("anlage", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo", "intervalle")
+FELDER = ("anlage", "profil", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo", "intervalle",
+          "bindungsparameter")
+#: Aendert sich eines davon, startet der Host die Laufzeit neu (software, mindest_software und profil nicht). Die
+#: Bindungsparameter (Spec Stufe 3 S4b) gehoeren dazu: Schritte, Toleranzen, Wartezeit und Schreibschutz kommen nur von dort.
+LAUFZEIT_FELDER = ("anlage", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo", "intervalle",
+                   "bindungsparameter")
 ABO = {"aktiv": entitlement.ACTIVE, "inaktiv": entitlement.INACTIVE}
 
 
@@ -51,8 +54,8 @@ def boot_info(konfiguration, *, abgemeldet: bool, client_version: str, backup_pa
     Standard zurueck; runtime_config meldet ihn danach als Konfigurationsfehler."""
     anlage = konfiguration["anlage"] if eingerichtet(konfiguration) else None
     hebelsatz = konfiguration.get("hebelsatz") if isinstance(konfiguration, Mapping) else None
-    binding = BINDINGS.get(hebelsatz) if isinstance(hebelsatz, str) else None
-    lever_set = (binding or BINDINGS[options.DEFAULT_LEVER_SET]).lever_set
+    lever_set = LEVER_SETS.get(hebelsatz) if isinstance(hebelsatz, str) else None
+    lever_set = lever_set or LEVER_SETS[options.DEFAULT_LEVER_SET]
     return BootInfo(
         configured=anlage is not None and not abgemeldet, signed_off=anlage is not None and abgemeldet,
         tenant_id=anlage, setup_id=anlage, lever_set=lever_set, client_version=client_version, notify_hints_off=(),

@@ -97,12 +97,21 @@ DOKUMENT_SOFTWARE = "software"  # nur in up/result: Ergebnis eines Updates, vers
 DOKUMENT_TOPICS = {"konfiguration": "down/config", "bedienung": "down/operation"}
 KONFIGURATION_FIELDS = (
     "schema", "version", "anlage", "profil", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo",
-    "mindest_software", "software",
+    "mindest_software", "software", "bindungsparameter",
 )
 KONFIGURATION_OPTIONAL = ("intervalle", "ursprungswerte")  # fehlt = Standardwerte bzw. keine Ursprungswerte auf dem Server
+# Spec Stufe 3 S4b 4.1: Herstellerwissen der Bindung (G-7). Pflicht fuer eine eingerichtete Konfiguration, null in einer
+# leeren -- bewusste Ausnahme von der Versionsregel ohne neue Schema-Nummer: Geraete bis 1.0.0 ignorieren das Feld.
+BINDUNGSPARAMETER_FIELDS = (
+    "schritte", "toleranzen", "wartezeit_s", "schreibgruppen", "zurueck", "zurueck_optional", "nur_lesen", "zaehler",
+    "schreibschutz", "schemata", "energie",
+)
+SCHREIBSCHUTZ_FIELDS = ("tag", "lebensdauer_hinweis", "durchsetzen_tag")  # null = kein Tagesbudget bzw. kein Hinweis
+ZAEHLER = ("total", "daily")  # Zaehlerart der Energiekanaele: durchlaufende Summe oder Tageszaehler
+ENERGIE_EINHEITEN = ("Wh", "kWh", "m³")  # erwartete Einheit je Energiekanal (Einrichtung); das Geraet sendet kWh bzw. m³
 BINDUNG_GATEWAY_FIELDS = ("treiber", "thermostat")
 BINDUNG_HA_FIELDS = ("kreis", "rollen", "batterien", "benachrichtigung", "hinweise_aus")
-BINDUNG_HA_OPTIONAL = ("abfrage_s",)  # fehlt = Standardwert des Hebelsatzes (Abfrageintervall der Hersteller-Integration)
+BINDUNG_HA_OPTIONAL = ("abfrage_s", "einheiten")  # fehlt = Standardwert des Hebelsatzes bzw. keine Energiekanaele
 KREIS_FIELDS = ("plattform", "config_entry", "anlage", "nummer")
 HA_ROLLEN = (
     "room_target", "curve", "room_setpoint", "level", "heat_limit", "min_flow", "mode_select", "setpoint_comfort",
