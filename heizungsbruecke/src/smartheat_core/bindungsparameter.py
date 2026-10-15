@@ -79,6 +79,7 @@ def _schemata(value, verfahren: Verfahren) -> dict:
         or not praefixe
         or not all(isinstance(p, str) and 0 < len(p) <= 64 for p in praefixe)
         or len(set(praefixe)) != len(praefixe)
+        or any(a != b and b.startswith(a) for a in praefixe for b in praefixe)  # ein Praefix darf kein anderes verdecken
     ):
         raise ValueError("Bindungsparameter schemata.praefixe ist ungültig.")
     if not isinstance(bereiche, Mapping) or set(bereiche) != set(praefixe) or not all(

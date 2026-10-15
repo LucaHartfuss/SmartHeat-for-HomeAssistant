@@ -93,6 +93,7 @@ def test_abo_of_an_empty_or_missing_configuration_is_unknown():
     ({"software": {"version": "0.6.1"}}, False), ({"mindest_software": "0.6.1"}, False), ({"profil": "x"}, False),
     ({"abo": "inaktiv"}, True), ({"raumfuehler": ["treiber:room_temperature"]}, True), ({"tagestick": "06:00"}, True),
     ({"intervalle": {"pruefung_s": 5}}, True), ({"anlage": None}, True),
+    ({"bindungsparameter": {"wartezeit_s": 240}}, True), ({"bindungsparameter": None}, False),
 ])
 def test_runtime_relevant_changes(change, relevant):
     assert dc.laufzeit_relevant(KONF, {**KONF, **change}) is relevant

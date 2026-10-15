@@ -211,8 +211,18 @@ def test_a_document_without_a_required_role_fails_the_start_instead_of_raising_a
 def test_an_unknown_lever_set_fails_the_start(env):
     host = HaHost(FakeGeraet(konfiguration_aus_optionen({**OPTIONS, "lever_set": "gibt_es_nicht"})), env.ha,
                   clock=env.clock)
-    with pytest.raises(StartFailure):
+    with pytest.raises(StartFailure, match="lever_set"):
         host.load()
+
+
+def test_without_binding_parameters_the_start_fails_and_with_them_it_runs(env):
+    """Spec Stufe 3 S4b 4.3: eine gespeicherte Konfiguration ohne Parameter startet nicht (Konfigurationsfehler statt
+    Absturz); sobald die Konfiguration mit Parametern kommt, laeuft der Start."""
+    ohne = konfiguration_aus_optionen({**OPTIONS, "bindungsparameter": None})
+    with pytest.raises(StartFailure, match="Bindungsparameter"):
+        HaHost(FakeGeraet(ohne), env.ha, clock=env.clock).load()
+    mit = {**ohne, "bindungsparameter": konfiguration_aus_optionen(OPTIONS)["bindungsparameter"]}
+    assert HaHost(FakeGeraet(mit), env.ha, clock=env.clock).load().binding.description.settle_seconds == 2100
 
 
 def test_the_runtime_idles_with_a_config_error_for_a_missing_role(env):

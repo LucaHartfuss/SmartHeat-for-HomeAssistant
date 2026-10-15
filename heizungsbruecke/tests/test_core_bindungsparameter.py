@@ -38,6 +38,9 @@ def test_vaillant_beschreibung_wie_bis_1_0_0():
     d = beschreibung("vaillant_vrc720", PARAMETER["vaillant_vrc720"])
     assert d.steps == {"curve": 0.05, "room_setpoint": 0.5, "heat_limit": 0.1, "min_flow": 0.1}
     assert d.settle_seconds == 2100 and d.enforce_per_day == 6
+    assert d.enforce_tolerance == {"curve": 0.025, "room_setpoint": 0.25, "heat_limit": 0.05, "min_flow": 0.05}
+    assert d.labels == {"curve": "Heizkurve", "room_setpoint": "Wunschtemperatur der Zone",
+                        "heat_limit": "Heizgrenze", "min_flow": "Mindestvorlauftemperatur"}
     assert (d.restore_originals, d.optional_restore, d.prepared_lever) == (("heat_limit",), ("heat_limit",), "room_setpoint")
     assert (d.daily_write_limit, d.lifetime_hint_at, d.write_groups, d.aux_originals) == (None, None, (), ())
     assert d.preparation_resets_setpoint is True and d.preparation_label == "Betriebsart der Zone"
@@ -205,6 +208,9 @@ def _schemata_mit(praefixe, bereich):
     (_schemata_mit(["a_"], {"a_": [math.nan, 28.0]}), False),
     (_schemata_mit(["a_"], {"a_": [16.0, 20.0, 28.0]}), False),
     (_schemata_mit(["a_", "a_"], {"a_": [16.0, 28.0]}), False),
+    (_schemata_mit(["hz_", "hz_operationmode_"], {"hz_": [16.0, 28.0], "hz_operationmode_": [16.0, 28.0]}), False),
+    (_schemata_mit(["hz_operationmode_", "hz_"], {"hz_": [16.0, 28.0], "hz_operationmode_": [16.0, 28.0]}), False),
+    (_schemata_mit(["a_", "b_"], {"a_": [16.0, 28.0], "b_": [16.0, 28.0]}), True),
     ({"praefixe": ["a_"]}, False),
 ])
 def test_schemata_randfaelle(schemata, gut):

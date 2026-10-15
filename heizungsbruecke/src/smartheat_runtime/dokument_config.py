@@ -16,9 +16,12 @@ from smartheat_runtime.options import ConfigError
 from smartheat_runtime.runtime_config import BootInfo, RuntimeConfig
 from smartheat_runtime.windows import validate_daily_trigger_time
 
-FELDER = ("anlage", "profil", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo", "intervalle")
-#: Aendert sich eines davon, startet der Host die Laufzeit neu (software, mindest_software und profil nicht).
-LAUFZEIT_FELDER = ("anlage", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo", "intervalle")
+FELDER = ("anlage", "profil", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo", "intervalle",
+          "bindungsparameter")
+#: Aendert sich eines davon, startet der Host die Laufzeit neu (software, mindest_software und profil nicht). Die
+#: Bindungsparameter (Spec Stufe 3 S4b) gehoeren dazu: Schritte, Toleranzen, Wartezeit und Schreibschutz kommen nur von dort.
+LAUFZEIT_FELDER = ("anlage", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo", "intervalle",
+                   "bindungsparameter")
 ABO = {"aktiv": entitlement.ACTIVE, "inaktiv": entitlement.INACTIVE}
 
 

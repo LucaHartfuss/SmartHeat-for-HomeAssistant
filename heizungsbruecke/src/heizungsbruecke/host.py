@@ -23,7 +23,6 @@ from heizungsbruecke.manifest import build_manifest, entity_ref
 from heizungsbruecke.raum import RaumPublisher
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core import wallclock
-from smartheat_core.levers import LEVER_SETS
 from smartheat_runtime import aufraeumen, dokument_config
 from smartheat_runtime.app import Loaded, Notice, RestoreParts, StartFailure
 from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
@@ -128,7 +127,7 @@ class HaHost:
             description = config.binding_description(effective)
             safety = config.local_safety(effective)
         except config.ConfigError as error:
-            logger.error("Abmelden ohne Zuruecksetzen, Konfiguration ungueltig: %s", error)
+            logger.error("Abmelden ohne Zuruecksetzen: %s", error)
             return None
         roles = [role for role in binding_roles(description) if effective.get(f"entity_{role}")]
         manifest = ChannelManifest(refs={role: entity_ref(role, effective[f"entity_{role}"]) for role in roles})
@@ -334,12 +333,3 @@ def _check_timezone(ha_api) -> None:
         )
     else:
         logger.info("Zeitzone: %s", container_time_zone)
-
-
-def _status_lever_set(options: dict):
-    """Hebelsatz fuers Statusereignis. Ein unbekannter Hebelsatz ist ein Konfigurationsfehler (der Start meldet ihn
-    gleich danach); das Statusereignis braucht dann trotzdem einen Satz, es faellt auf den Standard zurueck."""
-    try:
-        return LEVER_SETS[config.lever_set_id(options)]
-    except config.ConfigError:
-        return LEVER_SETS[config.DEFAULT_LEVER_SET]
