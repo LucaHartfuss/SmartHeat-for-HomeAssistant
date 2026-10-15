@@ -77,3 +77,21 @@ def test_einheitenwechsel_beginnt_die_summe_neu():
     assert state["primary_heating"] == {"raw": 5.0, "sum": 5.0, "einheit": "kWh"}
     out, state = normalize("daily", state, {"primary_heating": 7.0}, {"primary_heating": "m³"})
     assert out == {"primary_heating": 7.0} and state["primary_heating"]["einheit"] == "m³"
+
+
+# --- Mutationsprobe Stufe 3 S4b (A5-22 Rest) ---
+
+def test_genau_die_haelfte_ist_rauschen_keine_ruecksetzung():
+    sent, state = _run([8.0, 4.0])
+    assert sent == [8.0, 8.0] and state["thermal_heating"]["raw"] == 4.0
+
+
+def test_gleicher_wert_addiert_nichts_auch_negativ():
+    # telemetry laesst nur nicht endliche Werte weg; ein negativer Rohwert kommt hier an.
+    sent, _ = _run([-2.0, -2.0])
+    assert sent == [-2.0, -2.0]
+
+
+def test_gesendet_wird_auf_6_stellen_gerundet_der_zustand_bleibt_genau():
+    sent, state = _run([0.1234567])
+    assert sent == [0.123457] and state["thermal_heating"]["sum"] == 0.1234567

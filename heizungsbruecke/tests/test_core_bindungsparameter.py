@@ -274,3 +274,47 @@ def test_description_is_validated(change, match):
     """Die Invarianten von BindingDescription (vorher in test_core_binding.py)."""
     with pytest.raises(ValueError, match=match):
         dataclasses.replace(VAILLANT_MYPYLLANT, **change)
+
+
+# --- Mutationsprobe Stufe 3 S4b (A5-22 Rest): Grenzen als feste Zahlen, Fehlertexte je Pruefung ---
+
+@pytest.mark.parametrize(("schritt", "gut"), [(5.0, True), (5.0001, False), (5.25, False)])
+def test_schrittweite_hoechstens_5_als_zahl(schritt, gut):
+    werte = parameter("vaillant_vrc720")
+    werte["schritte"]["curve"] = schritt
+    werte["toleranzen"]["curve"] = 1e-6
+    text = _try(werte)
+    assert gut == (text is None)
+    if not gut:
+        assert "höchstens 5 sein" in text
+
+
+def test_schrittweite_0_scheitert_an_der_schrittweite_nicht_erst_an_der_toleranz():
+    werte = parameter("vaillant_vrc720")
+    werte["schritte"]["curve"] = 0
+    werte["toleranzen"]["curve"] = 1e-6
+    assert "Schrittweite für curve" in _try(werte)
+
+
+@pytest.mark.parametrize(("wartezeit", "gut"), [(60, True), (59.9, False), (7200, True), (7200.5, False), (7201, False)])
+def test_wartezeit_60_bis_7200_als_zahl(wartezeit, gut):
+    text = _try(parameter("vaillant_vrc720", wartezeit_s=wartezeit))
+    assert gut == (text is None)
+    if not gut:
+        assert "zwischen 60 und 7200 Sekunden" in text
+
+
+def test_ohne_schemata_im_verfahren_ist_schemata_ein_leeres_mapping():
+    assert beschreibung("vaillant_vrc720", PARAMETER["vaillant_vrc720"]).schemata == {}
+
+
+@pytest.mark.parametrize(("praefix", "text"), [
+    ("p", "nicht kennt"),  # Form gueltig (1 Zeichen), dann die Positivliste
+    ("p" * 64, "nicht kennt"),  # Form gueltig (64 Zeichen), dann die Positivliste
+    ("p" * 65, "praefixe ist ungültig"),
+    ("", "praefixe ist ungültig"),
+    (5, "praefixe ist ungültig"),
+])
+def test_praefix_form_wird_vor_der_positivliste_geprueft(praefix, text):
+    schemata = _schemata_mit([praefix], {praefix: [16.0, 28.0]})
+    assert text in _try(parameter("weishaupt_wwp_basis", schemata=schemata), "weishaupt_wwp_basis")
