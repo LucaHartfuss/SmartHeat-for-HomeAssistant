@@ -73,13 +73,13 @@ def test_runtime_environment_and_healthcheck():
 
 
 def test_runtime_stops_only_after_the_device_thread_has_disconnected():
-    """runtime_main trennt beim Ende sauber (MQTT-DISCONNECT) und wartet bis JOIN_SECONDS auf den Geraete-Thread;
+    """prozess.beenden trennt beim Ende sauber (MQTT-DISCONNECT) und wartet bis JOIN_SECONDS auf den Geraete-Thread;
     Dockers Standard-Frist (10 s) ist genau so lang, SIGKILL kaeme dann vor dem Trennen (DUPLICATE_CLIENTID)."""
-    from smartheat_gateway import runtime_main
+    from smartheat_device import prozess
 
     grace = _services()["runtime"]["stop_grace_period"]
     assert re.fullmatch(r"\d+s", grace), grace
-    assert int(grace[:-1]) >= runtime_main.JOIN_SECONDS + 5
+    assert int(grace[:-1]) >= prozess.JOIN_SECONDS + 5
 
 
 def _depends(service: dict) -> dict:

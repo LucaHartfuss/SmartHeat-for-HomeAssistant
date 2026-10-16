@@ -12,6 +12,7 @@ from test_runtime import OPTIONS, _quiet_backup, env  # noqa: F401 - env ist ein
 import heizungsbruecke.__main__ as main_module
 from heizungsbruecke import config
 from smartheat_core import dateien
+from smartheat_device import prozess
 from smartheat_device.host import Anzeige
 from smartheat_device.laufzeit import RuntimeChannel
 from smartheat_runtime import abo, app, dokument_config
@@ -259,7 +260,7 @@ def test_restarts_of_the_runtime_take_the_clean_restart_path(geraet_env):
     device = FakeDevice()
     geraet, status = _verdrahtet(geraet_env, device)
     main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
-    with pytest.raises(main_module.Neustart):
+    with pytest.raises(prozess.Neustart):
         abo.restart_process()
 
 
@@ -334,7 +335,7 @@ def test_an_unexpected_start_error_restarts_after_a_pause(geraet_env, monkeypatc
     monkeypatch.setattr(main_module, "start", kaputt)
     with caplog.at_level(logging.WARNING):
         main_module.laufen(geraet, device, geraet_env.ha, status, geraet_env.clock)
-    assert order == ["start", "stop", "join", "stop", ("pause", main_module.FEHLER_PAUSE_SECONDS), "exec"]
+    assert order == ["start", "stop", "join", "stop", ("pause", prozess.FEHLER_PAUSE_SECONDS), "exec"]
     assert "KeyError" in caplog.text and "geheim" not in caplog.text
 
 
@@ -496,7 +497,7 @@ def test_an_empty_configuration_resets_then_restarts_and_the_next_start_cleans_u
     result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
     assert isinstance(result, app.IdleBridge) and result.reason == "abgemeldet"
     assert geraet_env.ha.writes == [("number.curve_current", 0.9), ("number.shift_current", 22.0)]
-    with pytest.raises(main_module.Neustart):
+    with pytest.raises(prozess.Neustart):
         result.worker.run_pending()
 
     main_module.aufraeumen(ha)

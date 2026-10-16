@@ -2,6 +2,9 @@
 
 ## Unveröffentlicht
 
+- Nach einem unerwarteten Fehler der Laufzeit wartet das Gateway 60 s, trennt vorher sauber und startet dann neu (wie
+  das Add-on); bisher endete der Prozess sofort und Compose startete ihn ohne Pause neu (Stufe 3 S6). Lebenszyklus und
+  Gerätebindung teilen sich Gateway und Add-on jetzt im Gerätekern.
 - Der Befehl `driver_probe` entfällt: die Erkennung der Anlagen ist die Inventur mit `stunden: 0`; das Gateway liefert die
   gekürzten Rohdaten der Hersteller-Schnittstelle, die Bewertung in Kandidaten macht der Server (Stufe 3 S5b, G-6).
 - Die Diagnoseseite zeigt QR-Code und Übernahme-Code nur, solange das Gateway nicht übernommen ist (Spec 5c F1); nach

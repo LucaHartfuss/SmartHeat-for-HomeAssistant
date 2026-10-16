@@ -1,5 +1,5 @@
 """Bausteine fuer Laufzeit- und Szenariotests des Gateways ab 0.6.0 (Plan 5b D2): Geraetekern mit Fake-Link (der Zugang
-liegt schon vor, kein Bootstrap), Gateway-Host, Laufzeit. Ein gewollter Neustart (SystemExit 0) baut wie Compose einen
+liegt schon vor, kein Bootstrap), Gateway-Host, Laufzeit. Ein gewollter Neustart (prozess.Neustart) baut wie Compose einen
 neuen Prozess (neuer Zigbee-Spiegel, Geraetekern, Link und Laufzeit) auf denselben Dateien; der neue Link ist erst nach
 connect() verbunden. start_runtime folgt runtime_main.main(): erst das Aufraeumen, dann der Geraetekern."""
 from datetime import datetime, timedelta
@@ -11,6 +11,7 @@ from fake_z2m import FakeZigbee2Mqtt
 from fakes import FakeBus
 from geraet_fakes import FakeLink, KeinBootstrap, zugang_ablegen
 
+from smartheat_device import prozess
 from smartheat_device.device import Device
 from smartheat_gateway import befehle, runtime_main
 from smartheat_gateway.geraet_host import GatewayDeviceHost
@@ -98,8 +99,8 @@ class GatewayWorld:
                 self.result.worker.run_pending()
                 self.device.schritt()
                 return
-            except SystemExit as stop:
-                assert stop.code in (0, None)
+            except prozess.Neustart:
+                prozess.beenden(self.device, None, None)  # wie prozess.laufen: erst sauber trennen
                 self.start_runtime()
         raise AssertionError("Laufzeit startet staendig neu")
 

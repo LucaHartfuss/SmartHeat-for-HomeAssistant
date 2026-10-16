@@ -1,0 +1,130 @@
+"""Lebenszyklus des Geraeteprozesses (Audit 5 A5-26; Spec Stufe 3 S6 4.2/4.3), fuer beide Hosts gleich: Geraete-Thread
+und Laufzeit bis zum Ende des Prozesses, ein Weg fuer jeden Neustart, sauberes Trennen vor jedem Ende, Aufraeumen beim
+Start. Der Host liefert nur, wie er die Laufzeit startet und wie er neu startet: HA per exec (der Supervisor startet ein
+sauber beendetes Add-on nicht zuverlaessig neu), das Gateway mit Exit 0 (Compose startet neu).
+
+- Neustart (EV_RELOAD aus dem Geraete-Host, abo.restart_process, EV_RECHECK im Konfigurationsfehler): der Worker endet
+  mit Neustart; beenden trennt zuerst den Link (MQTT-DISCONNECT; sonst meldet IoT Core DUPLICATE_CLIENTID, wenn der
+  neue Prozess verbindet), dann der Neustart des Hosts.
+- Unerwarteter Fehler im Start oder im Worker: Fehlerart ins Log, beenden, FEHLER_PAUSE_SECONDS Pause, dann derselbe
+  Neustart (keine schnelle Schleife gegen IoT Core; bis Stufe 3 S6 hatte das Gateway keine Pause).
+- SIGTERM (SystemExit): beenden, kein Neustart; auch waehrend der Pause."""
+import logging
+import threading
+import time
+from collections.abc import Callable
+from pathlib import Path
+
+from smartheat_device.geraet_host_basis import EV_RELOAD
+from smartheat_runtime import abo, app
+from smartheat_runtime import aufraeumen as markierung
+from smartheat_runtime.runtime import EV_RECHECK, Runtime
+from smartheat_runtime.status import STATUS_KONFIGURATIONSFEHLER
+
+logger = logging.getLogger(__name__)
+
+#: Ende des Prozesses: so lange darf der Geraete-Thread sein laufendes Ereignis noch abschliessen.
+JOIN_SECONDS = 10.0
+#: Unerwarteter Fehler: Pause vor dem Neustart, damit ein dauerhafter Fehler keine schnelle Schleife wird.
+FEHLER_PAUSE_SECONDS = 60.0
+
+
+class Neustart(BaseException):
+    """Aus dem Regel-Worker: Prozess nach sauberem Trennen neu starten. BaseException wie SystemExit: der Worker faengt in
+    Handlern nur Exception ab, diese hier geht bis laufen() durch."""
+
+
+def _neustart(anlass: str) -> None:
+    # "Laufzeit startet neu": tools/e2e/drive_gateway2.py (ankuendigungen) zaehlt die Zeile als angekuendigten Neustart
+    logger.info("%s, Laufzeit startet neu", anlass)
+    raise Neustart()
+
+
+def neustarts_umleiten(result) -> None:
+    """Alle Neustarts der Laufzeit auf den Neustart mit sauberem Trennen: EV_RELOAD (Geraete-Host), abo.restart_process
+    (Abo am Fristende wieder aktiv; Neupruefung) und - nicht nur ueber diesen globalen Eingriff - EV_RECHECK im
+    Ruhezustand Konfigurationsfehler. In den Ruhezustaenden abgemeldet und abo_beendet bleibt EV_RECHECK das erneute
+    Zuruecksetzen der Laufzeit."""
+    worker = result.worker
+    abo.restart_process = lambda: _neustart("Neustart der Laufzeit (Abo wieder aktiv oder Neupruefung)")
+    worker.register(EV_RELOAD, lambda event: _neustart("Neue Konfiguration oder Abmelden"))
+    if isinstance(result, app.IdleBridge) and result.reason == STATUS_KONFIGURATIONSFEHLER:
+        worker.register(EV_RECHECK, lambda event: _neustart("Neupruefung nach Konfigurationsfehler"))
+
+
+def _schritt(name: str, aufruf: Callable[[], object]) -> None:
+    try:
+        aufruf()
+    except Exception as error:  # das Ende darf nie scheitern: sonst entfiele der Neustart
+        logger.warning("Beenden: %s gescheitert (%s)", name, type(error).__name__)
+
+
+def _warten(thread: threading.Thread, join_seconds: float) -> None:
+    thread.join(join_seconds)
+    if thread.is_alive():
+        logger.warning("Geraete-Thread nach %.0f s nicht beendet, Prozess endet trotzdem", join_seconds)
+
+
+def beenden(device, thread: threading.Thread | None, hintergrund, *, join_seconds: float = JOIN_SECONDS) -> None:
+    """Ende des Prozesses (Neustart, SIGTERM, Fehler): erst den Geraetekern stoppen (sauberes Trennen) und wartende
+    Host-Aufrufe der Befehle abbrechen, dann den Geraete-Thread sein laufendes Ereignis abschliessen lassen (z. B.
+    software_soll nach konfiguration_uebernommen). Danach noch einmal stop(): Device.run fuehrt nach stop() noch einen
+    Takt aus, und ein Port-Rueckfall oder eine Rettung darin koennte einen neuen Link geoeffnet haben (5b-D2-4). Wirft
+    nie: jeder Schritt einzeln, ins Log nur die Fehlerart."""
+    _schritt("Geraetekern stoppen", device.stop)
+    if hintergrund is not None:
+        _schritt("Hintergrund stoppen", hintergrund.stop)
+    if thread is not None:
+        _schritt("Geraete-Thread abwarten", lambda: _warten(thread, join_seconds))
+    _schritt("Geraetekern stoppen", device.stop)
+
+
+def laufen(device, hintergrund, starten: Callable[[], Runtime | app.IdleBridge], neustart: Callable[[], None], *,
+           sleep: Callable[[float], None] | None = None) -> None:
+    """Geraete-Thread und Laufzeit bis zum Ende des Prozesses. starten() startet die Laufzeit (Runtime oder IdleBridge,
+    Neustarts schon umgeleitet) und bindet den Worker; neustart() ist der Neustart des Hosts. Ein unerwarteter Fehler
+    beendet den Prozess nie still."""
+    thread: threading.Thread | None = None
+    neu = fehler = False
+    try:
+        thread = device.start()
+        result = starten()
+        logger.info("Laufzeit gestartet (%s)", type(result).__name__)
+        result.worker.run()
+    except Neustart:
+        neu = True
+    except Exception as error:
+        logger.error("Unerwarteter Fehler der Laufzeit (%s), Neustart in %.0f s", type(error).__name__,
+                     FEHLER_PAUSE_SECONDS)
+        logger.debug("Fehler der Laufzeit", exc_info=True)
+        neu = fehler = True
+    finally:
+        beenden(device, thread, hintergrund)
+    if fehler:
+        (sleep or time.sleep)(FEHLER_PAUSE_SECONDS)  # zur Laufzeit gelesen: Tests ersetzen time.sleep
+    if neu:
+        logger.info("Neustart nach sauberem Trennen")
+        neustart()
+
+
+def aufraeumen_beim_start(pfad: Path, gespeichert: Callable[[], object], loeschen: Callable[[], bool], *,
+                          wer: str) -> None:
+    """Markierung aufraeumen.json vor dem Start des Geraetekerns auswerten (Spec Stufe 3 S3 Abschnitt 4), beide Hosts:
+    wieder eingerichtet -> Markierung weg, Zustand bleibt; Zuruecksetzen steht aus -> nichts loeschen (die Laufzeit
+    setzt mit der Konfiguration der Markierung zurueck und startet danach neu); sonst loescht der Host den
+    anlagengebundenen Zustand, und die Markierung geht erst, wenn er fertig meldet. gespeichert() liest die
+    gespeicherte Konfiguration nur, wenn es eine Markierung gibt."""
+    if not pfad.exists():
+        return
+    entscheidung = markierung.entscheiden(pfad, gespeichert())
+    if entscheidung == markierung.KEINE:  # zwischendurch verschwunden
+        return
+    if entscheidung == markierung.VERWERFEN:
+        logger.info("Aufraeumen entfaellt: %s ist inzwischen neu eingerichtet", wer)
+        pfad.unlink(missing_ok=True)
+        return
+    if entscheidung == markierung.ZURUECKSETZEN:
+        logger.info("Anlage wird vor dem Aufraeumen zurueckgesetzt")
+        return
+    if loeschen():
+        pfad.unlink(missing_ok=True)
