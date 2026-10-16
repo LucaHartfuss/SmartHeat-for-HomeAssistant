@@ -53,7 +53,6 @@ class GatewayWorld:
         self._geraete: list = []  # jeder Prozessstart baut einen neuen Geraete-Host samt Hintergrund-Thread
         monkeypatch.setenv("SHG_ALIVE_FILE", str(data_dir / "alive"))
         monkeypatch.setattr("smartheat_core.wallclock._now", self.wall.now)
-        # abo.restart_process: conftest (_kein_prozessneustart) sichert das Original, attach leitet um.
 
     def _link(self, *args):
         self.links.append(FakeLink(*args))

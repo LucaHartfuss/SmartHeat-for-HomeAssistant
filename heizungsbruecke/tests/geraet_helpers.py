@@ -83,7 +83,8 @@ class FakeGeraet:
     Test den Status mitten im Lauf wechseln). Mit ha laufen die Status-Ereignisse wie produktiv ueber GeraetStatus
     (Schema 3, smartheat_status an ha.fire_event; ohne Anzeige des Geraete-Threads); das unveraenderte
     Laufzeit-Ereignis steht in status. Jeder Link der Laufzeit steht in channels, der letzte in channel; log zeichnet
-    die Nachrichten des Links als ["link", <topic>, payload] auf (Golden Master)."""
+    die Nachrichten des Links als ["link", <topic>, payload] auf (Golden Master). neustart ist der Rueckruf des Hosts
+    fuer app.start (Spec Stufe 3 S6 4.2) und zaehlt in neustarts."""
 
     def __init__(self, konfiguration, *, bedienung=None, dirty=False, abo=entitlement.ACTIVE, ha=None, log=None):
         self._konfiguration, self._bedienung, self._dirty, self._abo = konfiguration, bedienung, dirty, abo
@@ -93,10 +94,14 @@ class FakeGeraet:
         self.sent = Sent(log)
         self.channel = None
         self.channels = []
+        self.neustarts: list[int] = []
         self.host = None
         self._ha = ha
         self.status_sink = self if ha is None else GeraetStatus(ha, GERAET_ID, self._raum_soll,
                                                                 laufzeit_merken=self.status.append)
+
+    def neustart(self):
+        self.neustarts.append(1)
 
     def _raum_soll(self):
         store = self.host.store if self.host is not None else None
@@ -138,7 +143,7 @@ class FakeGeraet:
 
 
 def start_bridge(env, *, abo=entitlement.ACTIVE, abgemeldet=False, bedienung=None, options=None, log=None,
-                 verbunden=True, leer_mit_markierung=False, ursprungswerte=None, **option_overrides):
+                 verbunden=True, leer_mit_markierung=False, ursprungswerte=None, neustart=None, **option_overrides):
     """Startet die Laufzeit auf dem Dokument aus den Test-Optionen (options, sonst test_runtime.OPTIONS; plus
     Overrides). Liefert (bridge, geraet); die gesendeten Nachrichten stehen in geraet.sent, der Kanal in geraet.channel.
     Ohne bedienung ist die Bedienung des Servers der Wert, den die Soll-Entity gerade zeigt (wie nach einem Wunsch,
@@ -148,7 +153,8 @@ def start_bridge(env, *, abo=entitlement.ACTIVE, abgemeldet=False, bedienung=Non
     Markierung bleibt unveraendert (Neustart mit demselben Stand).
     verbunden=False: der Link ist beim Start der Laufzeit noch nicht verbunden (der Test meldet die Verbindung spaeter,
     channel.verbunden).
-    ursprungswerte: Feld `ursprungswerte` der Konfiguration (Spec Stufe 3 S3 5.2)."""
+    ursprungswerte: Feld `ursprungswerte` der Konfiguration (Spec Stufe 3 S3 5.2).
+    neustart: Rueckruf des Hosts fuer app.start; ohne ihn zaehlt geraet.neustarts die Neustarts."""
     if options is None:
         from test_runtime import OPTIONS as options  # Kreisimport vermeiden: erst zur Laufzeit
 
@@ -169,5 +175,6 @@ def start_bridge(env, *, abo=entitlement.ACTIVE, abgemeldet=False, bedienung=Non
     geraet = FakeGeraet(konfiguration, abo=abo, ha=env.ha, bedienung=bedienung, log=log)
     geraet.sent.connected = verbunden
     geraet.host = HaHost(geraet, env.ha, clock=env.clock)
-    bridge = app.start(geraet.host, env.clock, mqtt_factory=geraet.kanal)
+    bridge = app.start(geraet.host, env.clock, mqtt_factory=geraet.kanal,
+                       neustart=geraet.neustart if neustart is None else neustart)
     return bridge, geraet

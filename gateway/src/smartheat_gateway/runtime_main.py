@@ -3,11 +3,12 @@ Laufzeit (smartheat_runtime, Regel-Worker im Hauptthread). Agent-Container, HTTP
 und Telemetrie laufen ueber den Link des Geraets (mqtt_factory).
 
 Neustart und Ende teilen sich beide Hosts in smartheat_device.prozess: eine laufzeitrelevante neue Konfiguration oder
-sign_off fordert den Neustart an (EV_RELOAD), ebenso die Neustarts der Laufzeit selbst (abo.restart_process: Neupruefung
-im Ruhezustand Konfigurationsfehler, Abo am Fristende wieder aktiv; statt os.execv, das den Link ohne DISCONNECT abrisse).
-Der Worker endet mit prozess.Neustart, beenden trennt zuerst den Link sauber (MQTT-DISCONNECT; sonst meldet IoT Core
-DUPLICATE_CLIENTID, wenn der neue Prozess verbindet, und der Dienst saehe nach drei Aenderungen eine Kopie, Spec 4.2),
-laesst den Geraete-Thread sein laufendes Ereignis abschliessen, und main kehrt zurueck: Exit 0, Compose startet neu.
+sign_off fordert den Neustart an (EV_RELOAD), ebenso die Neustarts der Laufzeit selbst (Rueckruf
+prozess.neustart_der_laufzeit aus app.start: Neupruefung im Ruhezustand Konfigurationsfehler, Abo am Fristende wieder
+aktiv, Neustart nach dem Zuruecksetzen). Der Worker endet mit prozess.Neustart, beenden trennt zuerst den Link sauber
+(MQTT-DISCONNECT; sonst meldet IoT Core DUPLICATE_CLIENTID, wenn der neue Prozess verbindet, und der Dienst saehe nach
+drei Aenderungen eine Kopie, Spec 4.2), laesst den Geraete-Thread sein laufendes Ereignis abschliessen, und main kehrt
+zurueck: Exit 0, Compose startet neu.
 Nach einem unerwarteten Fehler der Laufzeit trennt das Gateway ebenso, wartet 60 s und startet dann neu. SIGTERM
 (docker stop) endet ueber beenden ohne Neustart. Jeder Start reicht die Soll-Software der gespeicherten Konfiguration
 erneut an den Updater (software_soll_nachholen).
@@ -92,14 +93,14 @@ def software_soll_nachholen(geraet: GatewayDeviceHost, device: Device) -> None:
 def start(paths: Paths, bus, mirror: ZigbeeMirror, geraet: GatewayDeviceHost, device: Device, clock=time.monotonic,
           *, driver_threads: bool = True) -> tuple[Runtime | app.IdleBridge, GatewayHost]:
     host = GatewayHost(paths, bus, mirror, geraet, clock=clock, driver_threads=driver_threads)
-    result = app.start(host, clock, mqtt_factory=device.laufzeit_kanal)
+    result = app.start(host, clock, mqtt_factory=device.laufzeit_kanal, neustart=prozess.neustart_der_laufzeit)
     attach(result, host, geraet)
     return result, host
 
 
 def attach(result: Runtime | app.IdleBridge, host: GatewayHost, geraet: GatewayDeviceHost) -> None:
-    """Haengt die Gateway-Ereignisse (Lebenszeichen, Raum) an den Worker; die Neustarts der Laufzeit gehen ueber
-    prozess.neustarts_umleiten."""
+    """Haengt die Gateway-Ereignisse (Lebenszeichen, Raum) an den Worker; EV_RELOAD geht ueber
+    prozess.neustarts_umleiten, die Neustarts der Laufzeit selbst ueber den Rueckruf aus start."""
     worker = result.worker
 
     def _watch(event: Event) -> None:

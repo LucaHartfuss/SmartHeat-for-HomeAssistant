@@ -3,9 +3,10 @@ und Laufzeit bis zum Ende des Prozesses, ein Weg fuer jeden Neustart, sauberes T
 Start. Der Host liefert nur, wie er die Laufzeit startet und wie er neu startet: HA per exec (der Supervisor startet ein
 sauber beendetes Add-on nicht zuverlaessig neu), das Gateway mit Exit 0 (Compose startet neu).
 
-- Neustart (EV_RELOAD aus dem Geraete-Host, abo.restart_process, EV_RECHECK im Konfigurationsfehler): der Worker endet
+- Neustart (EV_RELOAD aus dem Geraete-Host; neustart_der_laufzeit, der Rueckruf, den beide Hosts app.start uebergeben:
+  Abo am Fristende wieder aktiv, Neupruefung im Konfigurationsfehler, Neustart nach dem Zuruecksetzen): der Worker endet
   mit Neustart; beenden trennt zuerst den Link (MQTT-DISCONNECT; sonst meldet IoT Core DUPLICATE_CLIENTID, wenn der
-  neue Prozess verbindet), dann der Neustart des Hosts.
+  neue Prozess verbindet), dann der Neustart des Hosts. Globales wird dafuer nicht ueberschrieben (Spec 4.2).
 - Unerwarteter Fehler im Start oder im Worker: Fehlerart ins Log, beenden, FEHLER_PAUSE_SECONDS Pause, dann derselbe
   Neustart (keine schnelle Schleife gegen IoT Core; bis Stufe 3 S6 hatte das Gateway keine Pause).
 - SIGTERM (SystemExit): beenden, kein Neustart; auch waehrend der Pause."""
@@ -16,10 +17,9 @@ from collections.abc import Callable
 from pathlib import Path
 
 from smartheat_device.geraet_host_basis import EV_RELOAD
-from smartheat_runtime import abo, app
+from smartheat_runtime import app
 from smartheat_runtime import aufraeumen as markierung
-from smartheat_runtime.runtime import EV_RECHECK, Runtime
-from smartheat_runtime.status import STATUS_KONFIGURATIONSFEHLER
+from smartheat_runtime.runtime import Runtime
 
 logger = logging.getLogger(__name__)
 
@@ -40,16 +40,18 @@ def _neustart(anlass: str) -> None:
     raise Neustart()
 
 
+def neustart_der_laufzeit() -> None:
+    """Der Rueckruf neustart fuer app.start (Spec Stufe 3 S6 4.2), beide Hosts: Abo am Fristende wieder aktiv,
+    Neupruefung im Ruhezustand Konfigurationsfehler, Neustart nach dem Zuruecksetzen. Wirft Neustart; laufen trennt dann
+    sauber und ruft den Neustart des Hosts."""
+    _neustart("Neustart der Laufzeit (Abo wieder aktiv oder Neupruefung)")
+
+
 def neustarts_umleiten(result) -> None:
-    """Alle Neustarts der Laufzeit auf den Neustart mit sauberem Trennen: EV_RELOAD (Geraete-Host), abo.restart_process
-    (Abo am Fristende wieder aktiv; Neupruefung) und - nicht nur ueber diesen globalen Eingriff - EV_RECHECK im
-    Ruhezustand Konfigurationsfehler. In den Ruhezustaenden abgemeldet und abo_beendet bleibt EV_RECHECK das erneute
-    Zuruecksetzen der Laufzeit."""
-    worker = result.worker
-    abo.restart_process = lambda: _neustart("Neustart der Laufzeit (Abo wieder aktiv oder Neupruefung)")
-    worker.register(EV_RELOAD, lambda event: _neustart("Neue Konfiguration oder Abmelden"))
-    if isinstance(result, app.IdleBridge) and result.reason == STATUS_KONFIGURATIONSFEHLER:
-        worker.register(EV_RECHECK, lambda event: _neustart("Neupruefung nach Konfigurationsfehler"))
+    """EV_RELOAD aus dem Geraete-Host (neue laufzeitrelevante Konfiguration, sign_off) auf den Neustart mit sauberem
+    Trennen. Die Neustarts der Laufzeit selbst gehen ueber den Rueckruf neustart_der_laufzeit (app.start); in den
+    Ruhezustaenden abgemeldet und abo_beendet bleibt EV_RECHECK das erneute Zuruecksetzen der Laufzeit."""
+    result.worker.register(EV_RELOAD, lambda event: _neustart("Neue Konfiguration oder Abmelden"))
 
 
 def _schritt(name: str, aufruf: Callable[[], object]) -> None:
@@ -82,8 +84,8 @@ def beenden(device, thread: threading.Thread | None, hintergrund, *, join_second
 def laufen(device, hintergrund, starten: Callable[[], Runtime | app.IdleBridge], neustart: Callable[[], None], *,
            sleep: Callable[[float], None] | None = None) -> None:
     """Geraete-Thread und Laufzeit bis zum Ende des Prozesses. starten() startet die Laufzeit (Runtime oder IdleBridge,
-    Neustarts schon umgeleitet) und bindet den Worker; neustart() ist der Neustart des Hosts. Ein unerwarteter Fehler
-    beendet den Prozess nie still."""
+    mit dem Rueckruf neustart_der_laufzeit und EV_RELOAD umgeleitet) und bindet den Worker; neustart() ist der Neustart
+    des Hosts. Ein unerwarteter Fehler beendet den Prozess nie still."""
     thread: threading.Thread | None = None
     neu = fehler = False
     try:

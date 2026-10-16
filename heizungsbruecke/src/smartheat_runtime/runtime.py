@@ -50,6 +50,8 @@ class Runtime:
     store: StateStore
     override: LeverPipeline
     notifier: Notifier
+    # Neustart des Hosts (Spec Stufe 3 S6 4.2), Rueckruf aus app.start; ruft nur der Worker-Thread (abo.check_grace_end).
+    neustart: Callable[[], None]
     mqtt_client: MqttChannel | None = None
     trigger_client: TriggerSource | None = None
     status: StatusReporter | None = None

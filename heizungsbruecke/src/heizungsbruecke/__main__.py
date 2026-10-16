@@ -6,9 +6,10 @@ im Ruhezustand "nicht eingerichtet", in dem die Laufzeit selbst nichts sendet.
 
 Neustart, Ende und Aufraeumen beim Start teilen sich beide Hosts in smartheat_device.prozess (neue laufzeitrelevante
 Konfiguration, sign_off, Abo am Fristende wieder aktiv, Neupruefung im Konfigurationsfehler: der Worker endet mit
-prozess.Neustart, beenden trennt den Link sauber, erst danach os.execv). Anders als das Gateway (Compose startet nach
-Exit 0 neu) startet der Supervisor ein sauber beendetes Add-on nicht zuverlaessig neu, deshalb exec. SIGTERM
-(Supervisor stoppt das Add-on) endet ueber beenden ohne exec.
+prozess.Neustart - die Laufzeit ueber den Rueckruf prozess.neustart_der_laufzeit aus app.start -, beenden trennt den
+Link sauber, erst danach os.execv in _exec). Anders als das Gateway (Compose startet nach Exit 0 neu) startet der
+Supervisor ein sauber beendetes Add-on nicht zuverlaessig neu, deshalb exec. SIGTERM (Supervisor stoppt das Add-on)
+endet ueber beenden ohne exec.
 
 Nach dem Entfernen (aufraeumen.json) setzt der naechste Start die Anlage erst zurueck wie sign_off (Laufzeit im Modus
 abgemeldet mit der alten Konfiguration aus der Markierung) und startet danach neu; erst dieser Start loescht den
@@ -184,11 +185,12 @@ def verdrahten(geraet: HaDeviceHost, device, ha_api, supervisor) -> GeraetStatus
 
 def start(geraet: HaDeviceHost, device, ha_api, status: GeraetStatus,
           clock=time.monotonic) -> tuple[Runtime | app.IdleBridge, HaHost]:
-    """Laufzeit auf dem Link des Geraets starten (mqtt_factory); alle Neustarts gehen ueber prozess.Neustart."""
+    """Laufzeit auf dem Link des Geraets starten (mqtt_factory); alle Neustarts gehen ueber prozess.Neustart (der
+    Rueckruf neustart der Laufzeit und EV_RELOAD des Geraete-Hosts)."""
     geraet.status_sink = status
     host = HaHost(geraet, ha_api, clock=clock)
     status_holder.host = host
-    result = app.start(host, clock, mqtt_factory=device.laufzeit_kanal)
+    result = app.start(host, clock, mqtt_factory=device.laufzeit_kanal, neustart=prozess.neustart_der_laufzeit)
     prozess.neustarts_umleiten(result)
     geraet.worker_binden(result.worker, soll_eingang=isinstance(result, Runtime))  # Ruhezustand: kein Soll-Eingang
     return result, host

@@ -230,11 +230,3 @@ def test_connection_failing_is_silent_in_the_abo_inactive_mode(make_store, tmp_p
     rt.store.update(abo_inactive_since=ABO_NOW)
     monkeypatch.setattr(abo.entitlement, "query", lambda config: pytest.fail("keine Abfrage"))
     abo.handle_connection_failing(rt)
-
-
-def test_restart_process_reexecs_the_original_command(monkeypatch):
-    calls = []
-    monkeypatch.setattr(abo.os, "execv", lambda executable, argv: calls.append((executable, argv)))
-    monkeypatch.setattr(abo.sys, "orig_argv", ["python", "-m", "heizungsbruecke"])
-    abo.restart_process()
-    assert calls == [(abo.sys.executable, [abo.sys.executable, "-m", "heizungsbruecke"])]

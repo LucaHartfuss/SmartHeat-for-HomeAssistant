@@ -9,7 +9,7 @@ from conftest import FakeClock
 
 from smartheat_device import prozess
 from smartheat_device.geraet_host_basis import EV_RELOAD
-from smartheat_runtime import abo, app
+from smartheat_runtime import app
 from smartheat_runtime import aufraeumen as markierung
 from smartheat_runtime.runtime import EV_RECHECK
 from smartheat_runtime.status import STATUS_ABGEMELDET, STATUS_KONFIGURATIONSFEHLER
@@ -48,11 +48,6 @@ def _worker_mit(order, ausloesen):
         order.append("run")
         ausloesen()
     return SimpleNamespace(worker=SimpleNamespace(run=run))
-
-
-@pytest.fixture(autouse=True)
-def _abo_zurueck(monkeypatch):
-    monkeypatch.setattr(abo, "restart_process", abo.restart_process)
 
 
 # --- beenden ---
@@ -187,21 +182,23 @@ def test_ohne_eigene_pause_nimmt_laufen_time_sleep_zur_laufzeit(monkeypatch):
     assert ("pause", 60.0) in order and order[-1] == "neustart"
 
 
-# --- neustarts_umleiten ---
+# --- neustarts_umleiten und der Rueckruf neustart_der_laufzeit ---
 
 def _bridge(reason):
     worker = RegulationWorker(FakeClock())
-    return app.IdleBridge(worker=worker, status=None, reason=reason)
+    return app.IdleBridge(worker=worker, status=None, reason=reason, neustart=prozess.neustart_der_laufzeit)
 
 
-def test_reload_und_abo_fuehren_in_den_neustart():
+def test_reload_und_der_neustart_der_laufzeit_fuehren_in_den_neustart():
+    """EV_RELOAD (Geraete-Host) und der Rueckruf, den die Hosts app.start uebergeben (Abo wieder aktiv, Neupruefung,
+    Neustart nach dem Zuruecksetzen), enden beide mit Neustart; nichts Globales wird dafuer ueberschrieben."""
     bridge = _bridge(app.IDLE_NOT_CONFIGURED)
     prozess.neustarts_umleiten(bridge)
     bridge.worker.post(Event(EV_RELOAD))
     with pytest.raises(prozess.Neustart):
         bridge.worker.run_pending()
     with pytest.raises(prozess.Neustart):
-        abo.restart_process()
+        prozess.neustart_der_laufzeit()
 
 
 def test_jeder_neustart_wird_mit_laufzeit_startet_neu_angekuendigt(caplog):
@@ -212,12 +209,20 @@ def test_jeder_neustart_wird_mit_laufzeit_startet_neu_angekuendigt(caplog):
     with caplog.at_level(logging.INFO), pytest.raises(prozess.Neustart):
         bridge.worker.run_pending()
     assert "Laufzeit startet neu" in caplog.text
+    caplog.clear()
+    with caplog.at_level(logging.INFO), pytest.raises(prozess.Neustart):
+        prozess.neustart_der_laufzeit()
+    assert "Laufzeit startet neu" in caplog.text
 
 
 def test_im_konfigurationsfehler_ist_die_neupruefung_ein_neustart():
-    bridge = _bridge(STATUS_KONFIGURATIONSFEHLER)
+    """Der Ruhezustand Konfigurationsfehler (app._fail_start ueber app._idle) prueft per Rueckruf neustart neu; mit dem
+    Rueckruf der Hosts ist das der Neustart mit sauberem Trennen."""
+    clock = FakeClock()
+    bridge = app._idle(clock, None, STATUS_KONFIGURATIONSFEHLER, neustart=prozess.neustart_der_laufzeit,
+                       recheck_after=app.CONFIG_RECHECK_SECONDS)
     prozess.neustarts_umleiten(bridge)
-    bridge.worker.post(Event(EV_RECHECK))
+    clock.advance(app.CONFIG_RECHECK_SECONDS)
     with pytest.raises(prozess.Neustart):
         bridge.worker.run_pending()
 

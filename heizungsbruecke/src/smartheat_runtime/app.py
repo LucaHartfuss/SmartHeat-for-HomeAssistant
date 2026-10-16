@@ -172,9 +172,13 @@ class IdleBridge:
     worker: RegulationWorker
     status: StatusReporter | None
     reason: str  # IDLE_NOT_CONFIGURED oder ein Status-Wert
+    # Neustart des Hosts (Spec Stufe 3 S6 4.2), Rueckruf aus start; ruft nur der Worker-Thread (Neupruefung im
+    # Konfigurationsfehler, Neustart nach dem Zuruecksetzen).
+    neustart: Callable[[], None]
 
 
-def _idle(clock, status: StatusReporter | None, reason: str, *, recheck_after: float | None = None) -> IdleBridge:
+def _idle(clock, status: StatusReporter | None, reason: str, *, neustart: Callable[[], None],
+          recheck_after: float | None = None) -> IdleBridge:
     worker = RegulationWorker(clock=clock)
     if status is not None:
         worker.register(EV_HEARTBEAT, functools.partial(_idle_heartbeat, worker, status))
@@ -182,10 +186,10 @@ def _idle(clock, status: StatusReporter | None, reason: str, *, recheck_after: f
         worker.schedule(HEARTBEAT_SECONDS, Event(EV_HEARTBEAT))
         status.publish_if_changed()
     if recheck_after is not None:
-        worker.register(EV_RECHECK, lambda event: abo.restart_process())
+        worker.register(EV_RECHECK, lambda event: neustart())
         worker.schedule(recheck_after, Event(EV_RECHECK))
     logger.info("Ruhezustand: %s", reason)
-    return IdleBridge(worker=worker, status=status, reason=reason)
+    return IdleBridge(worker=worker, status=status, reason=reason, neustart=neustart)
 
 
 def _idle_heartbeat(worker: RegulationWorker, status: StatusReporter, event: Event) -> None:
@@ -193,8 +197,8 @@ def _idle_heartbeat(worker: RegulationWorker, status: StatusReporter, event: Eve
     status.publish()
 
 
-def _fail_start(notifier, status, clock, grund: str, key: str | None = None, *, store=None,
-                parts: RestoreParts | None = None) -> IdleBridge:
+def _fail_start(notifier, status, clock, grund: str, key: str | None = None, *, neustart: Callable[[], None],
+                store=None, parts: RestoreParts | None = None) -> IdleBridge:
     """Meldezustand `fehler:<key>` (stabile Identitaet, Standard: der Text selbst); Meldung und
     Status tragen den ausfuehrlichen Grund. Derselbe Fehler wie beim letzten Start pusht nicht
     erneut, legt aber die offene Meldung neu an (in HA fehlt sie nach einem Host-Neustart). Danach
@@ -208,7 +212,7 @@ def _fail_start(notifier, status, clock, grund: str, key: str | None = None, *, 
     if not notifier.notify("konfiguration", f"fehler:{grund if key is None else key}", message, critical=True):
         notifier.refresh_persistent("konfiguration", message)
     status.update(konfigurationsfehler=True, grund=grund)
-    return _idle(clock, status, STATUS_KONFIGURATIONSFEHLER, recheck_after=CONFIG_RECHECK_SECONDS)
+    return _idle(clock, status, STATUS_KONFIGURATIONSFEHLER, neustart=neustart, recheck_after=CONFIG_RECHECK_SECONDS)
 
 
 def _end_boosts(store, parts: RestoreParts | None, clock) -> bool:
@@ -225,10 +229,10 @@ def _end_boosts(store, parts: RestoreParts | None, clock) -> bool:
 
 def _nach_zuruecksetzen(bridge: IdleBridge, pfad: Path | None, anlage: str) -> None:
     """Spec Stufe 3 S3 Abschnitt 4: war das ein Zuruecksetzen nach einer leeren Konfiguration, die Markierung erledigen
-    und neu starten; der Start danach loescht dann den anlagengebundenen Zustand. Ueber ein Ereignis, damit der Host
-    seinen Neustart (abo.restart_process) schon umgeleitet hat (das Gateway tut das erst nach start). Laesst sich die
-    Markierung nicht schreiben, kein Neustart: ohne `zurueckgesetzt` setzte jeder Start nur erneut zurueck (Kreis); der
-    Zustand bleibt, der naechste Start versucht es erneut."""
+    und neu starten; der Start danach loescht dann den anlagengebundenen Zustand. Ueber ein Ereignis wie jeder Neustart
+    der Laufzeit: der Rueckruf des Hosts (bridge.neustart) laeuft erst im Worker, nachdem start zurueckgekehrt ist und
+    der Host den Worker gebunden hat. Laesst sich die Markierung nicht schreiben, kein Neustart: ohne `zurueckgesetzt`
+    setzte jeder Start nur erneut zurueck (Kreis); der Zustand bleibt, der naechste Start versucht es erneut."""
     if pfad is None:
         return
     try:
@@ -239,12 +243,12 @@ def _nach_zuruecksetzen(bridge: IdleBridge, pfad: Path | None, anlage: str) -> N
         return
     if not erledigt:
         return
-    bridge.worker.register(EV_AUFRAEUMEN, lambda event: abo.restart_process())
+    bridge.worker.register(EV_AUFRAEUMEN, lambda event: bridge.neustart())
     bridge.worker.post(Event(EV_AUFRAEUMEN))
 
 
 def _sign_off(parts: RestoreParts | None, store, notifier, status, clock, retry_seconds: float, *,
-              aufraeumen_path: Path | None = None, anlage: str,
+              neustart: Callable[[], None], aufraeumen_path: Path | None = None, anlage: str,
               server_originals: Callable[[], Mapping[str, object]] | None = None) -> IdleBridge:
     """Abmelden (Spec TP7 3.3, die Integration bzw. das Portal entfernt den Client) und leer heisst abmelden (Spec Stufe
     3 S3 Abschnitt 4): laufenden Boost auf den Wiederherstellungspunkt zuruecknehmen, alle Meldungen entfernen, dann
@@ -269,7 +273,7 @@ def _sign_off(parts: RestoreParts | None, store, notifier, status, clock, retry_
         grund = SIGN_OFF_RESTORE_FAILED.format(seconds=retry_seconds)
         _report_sign_off_restore(notifier, SIGN_OFF_RESTORE_FAILED_MESSAGE, store.state)
     status.update(abgemeldet=True, grund=grund)
-    bridge = _idle(clock, status, STATUS_ABGEMELDET)
+    bridge = _idle(clock, status, STATUS_ABGEMELDET, neustart=neustart)
     if restored:
         _nach_zuruecksetzen(bridge, aufraeumen_path, anlage)
     if restorer is not None and not restored:
@@ -319,7 +323,7 @@ def _finish_at_start(rt: Runtime, clock) -> IdleBridge:
     status = rt.status
     assert status is not None  # beim Boot gesetzt
     status.update(abo_beendet=True)
-    bridge = _idle(clock, status, STATUS_ABO_BEENDET)
+    bridge = _idle(clock, status, STATUS_ABO_BEENDET, neustart=rt.neustart)
     retry_seconds = rt.config.local_check_interval
 
     def _attempt(event: Event | None = None) -> None:
@@ -642,13 +646,15 @@ def _prepare_zone(rt: Runtime) -> None:
 
 
 def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
-          mqtt_factory: Callable[[RegulationWorker], MqttChannel]) -> Runtime | IdleBridge:
+          mqtt_factory: Callable[[RegulationWorker], MqttChannel], neustart: Callable[[], None]) -> Runtime | IdleBridge:
     """Gibt den gestarteten Laufzeit-Kontext zurueck oder den Ruhezustand, wenn gar nicht erst geregelt wird: nicht
     eingerichtet, abgemeldet, Konfigurationsfehler, Abo-Frist abgeschlossen. mqtt_factory (Pflicht, Spec 5b 5.2): die
-    Laufzeit nutzt die Verbindung des Geraets; einen eigenen MQTT-Client gibt es nicht."""
+    Laufzeit nutzt die Verbindung des Geraets; einen eigenen MQTT-Client gibt es nicht. neustart (Pflicht, Spec Stufe 3
+    S6 4.2): der Neustart des Hosts; die Laufzeit ruft ihn nur im Worker-Thread (Abo am Fristende wieder aktiv,
+    Neupruefung im Konfigurationsfehler, Neustart nach dem Zuruecksetzen)."""
     boot = host.boot_info()
     if not boot.signed_off and not boot.configured:
-        return _idle(clock, None, IDLE_NOT_CONFIGURED)
+        return _idle(clock, None, IDLE_NOT_CONFIGURED, neustart=neustart)
     # Erst warten, bis die Quelle antwortet: Status und Meldungen sollen ankommen, und ohne sie geht ohnehin nichts.
     host.wait_until_ready()
     assert boot.tenant_id is not None  # configured bzw. signed_off setzen ihn voraus
@@ -659,13 +665,13 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
     status.publish()
     if boot.signed_off:
         return _sign_off(host.sign_off_parts(), store, notifier, status, clock, boot.local_check_interval,
-                         aufraeumen_path=boot.aufraeumen_path, anlage=boot.tenant_id,
+                         neustart=neustart, aufraeumen_path=boot.aufraeumen_path, anlage=boot.tenant_id,
                          server_originals=host.ursprungswerte_server)
     try:
         loaded = host.load()
     except StartFailure as error:
         boosting = store.state.boost_active or store.state.emergency_boost_active
-        return _fail_start(notifier, status, clock, error.grund, error.key, store=store,
+        return _fail_start(notifier, status, clock, error.grund, error.key, neustart=neustart, store=store,
                            parts=host.sign_off_parts() if boosting else None)
 
     notifier.notify("konfiguration", STATE_OK, CONFIG_OK_MESSAGE, critical=True)
@@ -684,7 +690,7 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
             store, loaded.binding, config.local_safety, clock=clock, notify=functools.partial(_hint, notifier),
             server_originals=host.ursprungswerte_server,
         ),
-        notifier=notifier, status=status, clock=clock, texts=host.texts,
+        notifier=notifier, neustart=neustart, status=status, clock=clock, texts=host.texts,
     )
     # Abo-Status erst hier: Abschluss-Start und lokaler Modus brauchen Manifest und Clamps.
     # "unknown" (accounts-api nicht erreichbar) startet normal -- fail-open.

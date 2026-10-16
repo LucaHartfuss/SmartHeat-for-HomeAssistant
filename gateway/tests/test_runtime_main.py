@@ -75,22 +75,20 @@ def test_reload_disconnects_the_link_before_exit(world):
     assert first.stopped
 
 
-def test_the_config_error_recheck_restarts_through_the_reload_path(world, monkeypatch):
-    """Der Ruhezustand Konfigurationsfehler prueft per Neustart neu (app._fail_start); auch der trennt zuerst sauber
-    statt os.execv (sonst DUPLICATE_CLIENTID beim Neuverbinden)."""
+def test_the_config_error_recheck_restarts_through_the_reload_path(world):
+    """Der Ruhezustand Konfigurationsfehler prueft per Neustart neu (app._fail_start, Rueckruf neustart aus
+    runtime_main.start); auch der trennt zuerst sauber (sonst DUPLICATE_CLIENTID beim Neuverbinden)."""
     dokumente_schreiben(world.paths, konfiguration(raumfuehler=["test-falsch"]))
     result = world.start_runtime()
     assert isinstance(result, IdleBridge) and result.reason == "konfigurationsfehler"
     world.connect()
     first = world.link
-    execv = []
-    monkeypatch.setattr("smartheat_runtime.abo.restart_process", lambda: execv.append(1))
     world.clock.advance(app.CONFIG_RECHECK_SECONDS)
     with pytest.raises(prozess.Neustart):
         world.result.worker.run_pending()
     assert not first.stopped  # der Worker trennt nicht selbst
     prozess.beenden(world.device, None, None)
-    assert first.stopped and execv == []
+    assert first.stopped
 
 
 def test_the_sign_off_retry_stays_a_retry(data_dir, clock):
@@ -98,7 +96,7 @@ def test_the_sign_off_retry_stays_a_retry(data_dir, clock):
     worker = RegulationWorker(clock=clock)
     retries = []
     worker.register(EV_RECHECK, retries.append)
-    bridge = IdleBridge(worker=worker, status=None, reason=STATUS_ABGEMELDET)
+    bridge = IdleBridge(worker=worker, status=None, reason=STATUS_ABGEMELDET, neustart=prozess.neustart_der_laufzeit)
     mirror = ZigbeeMirror(FakeBus(), clock)
     geraet = geraet_fuer(Paths(data_dir), mirror, konfiguration())
     runtime_main.attach(bridge, SimpleNamespace(raum=None), geraet)
@@ -291,7 +289,7 @@ def test_a_newer_operation_replaces_the_stored_target_at_start(world):
     assert world.host._store.value == 22.5 and 22.5 in _thermostat_writes(world)
 
 
-def test_sigterm_ends_like_a_restart():
+def test_sigterm_ends_with_exit_0():
     with pytest.raises(SystemExit) as stop:
         runtime_main._terminate(15, None)
     assert stop.value.code == 0

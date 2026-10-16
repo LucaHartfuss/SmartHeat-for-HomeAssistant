@@ -106,7 +106,7 @@ def _rt(make_store, clock, ha, uptime=SETTLE + 1, store=None, manifest=MANIFEST,
     clock.advance(uptime)
     return Runtime(
         manifest=manifest, signals=ha, config=runtime_config(), worker=MagicMock(), store=store,
-        override=override, notifier=notifier, clock=clock,
+        override=override, notifier=notifier, neustart=MagicMock(), clock=clock,
     )
 
 

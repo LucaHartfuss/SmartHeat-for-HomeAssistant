@@ -7,8 +7,8 @@ zaehlen nicht.
 Erzeugt auf dem Stand vor G1 (GOLDEN_UPDATE=1), mit 1.0.0 (Spec 5c, Plan D Task 10) einmal neu im Geraete-Pfad: die
 Laufzeit startet auf dem Konfigurationsdokument aus OPTIONS, das Abo kommt aus dem Dokument, Snapshots und Telemetrie
 gehen ueber den Link. Der Master von 0.36 bleibt als addon_scenario_0_36.json; normalisieren() haelt fest, dass sich
-beide nur in den ERLAUBT genannten Punkten unterscheiden. TRIGGER_CLIENT, RESTART und install_wall_clock sind die
-Patch-Ziele."""
+beide nur in den ERLAUBT genannten Punkten unterscheiden. TRIGGER_CLIENT und install_wall_clock sind die Patch-Ziele;
+den Prozess-Neustart zeichnet der Rueckruf neustart auf, den start_process app.start uebergibt (Spec Stufe 3 S6 4.2)."""
 import copy
 import itertools
 import json
@@ -27,7 +27,6 @@ from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.version import ADDON_VERSION
 
 TRIGGER_CLIENT = "heizungsbruecke.geraet_trigger.HaTriggerClient"
-RESTART = "smartheat_runtime.abo.restart_process"
 
 BERLIN = ZoneInfo("Europe/Berlin")
 START = datetime(2026, 1, 15, 8, 0, tzinfo=BERLIN)
@@ -161,7 +160,6 @@ class World:
             lambda **kwargs: DerivedSensors({"room_actual": "sensor.room_actual"}, (), "fp-golden"),
         )
         monkeypatch.setattr(TRIGGER_CLIENT, self._new_trigger)
-        monkeypatch.setattr(RESTART, lambda: self.log.append(["prozess", "neustart"]))
         counter = itertools.count(1)
         monkeypatch.setattr("uuid.uuid4", lambda: uuid.UUID(int=next(counter)))
         # datetime.now().astimezone() im Add-on liefert die Systemzone: fuer den Lauf fest auf Berlin setzen.
@@ -187,7 +185,8 @@ class World:
         """Neuer Prozess: die Laufzeit auf dem Dokument aus OPTIONS; das Abo liest sie bei jeder Pruefung frisch aus
         self.abo (das Szenario schaltet es mitten im Lauf um)."""
         self.bridge, self.geraet = geraet_helpers.start_bridge(
-            self, options=OPTIONS, abo=lambda: self.abo["status"], abgemeldet=abgemeldet, log=self.log)
+            self, options=OPTIONS, abo=lambda: self.abo["status"], abgemeldet=abgemeldet, log=self.log,
+            neustart=lambda: self.log.append(["prozess", "neustart"]))
         self.run()
 
     def connect(self) -> None:
