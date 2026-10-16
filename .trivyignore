@@ -1,0 +1,2 @@
+# Ausnahmen des Image-Scans (tests/test_image_scan.sh). Je ID eine Kommentarzeile darueber: Image, warum nicht
+# ausnutzbar oder warum noch kein Update, Datum, wer entschieden hat. Ohne Begruendung keine Ausnahme.
