@@ -81,6 +81,11 @@ INVENTUR_ATTRIBUTE = (
     "target_temp_step", "options", "hvac_modes",
 )
 INVENTUR_GERAET_FIELDS = ("id", "name", "modell", "config_entries")
+# Gateway-Inventur `stunden: 0` (Spec Stufe 3 S5 5.1): rohe Features je Anlage, Features auf oberster Ebene (Stueckelung)
+INVENTUR_FILTER_GATEWAY_FIELDS = ("treiber",)
+INVENTUR_GATEWAY_FIELDS = ("treiber", "anlagen", "features")
+INVENTUR_ANLAGE_FIELDS = ("kennung", "sicherheitswarnungen")
+INVENTUR_FEATURE_FIELDS = ("anlage", "feature", "properties", "commands")
 RESULT_FIELDS = ("schema", "ok", "result", "error")
 RESULT_TARGETS = ("command_id", "dokument", "version")  # entweder command_id oder dokument und version
 ERROR_FIELDS = ("grund", "text")
