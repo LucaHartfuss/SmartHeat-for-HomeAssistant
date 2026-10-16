@@ -173,10 +173,14 @@ FROM $DEBIAN_IMAGE
 RUN apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
       python3 python3-cryptography docker-cli docker-compose >/dev/null && rm -rf /var/lib/apt/lists/*
 EOF
+# Vom Kern nur, was install.sh auf das Geraet kopiert (SHIPPED_CORE: smartheat_core/__init__.py und dateien.py).
+CORE="$REPO/heizungsbruecke/src/smartheat_core"
 updater() {
   docker run --rm --network "$NET" --security-opt label=disable \
     -v /var/run/docker.sock:/var/run/docker.sock -v "$DATA:$DATA" -v "$REPO/gateway:/gw:ro" \
-    -e PYTHONPATH=/gw/host:/gw/src -e SHG_ROOT="$DATA" \
+    -v "$CORE/__init__.py:/core/smartheat_core/__init__.py:ro" \
+    -v "$CORE/dateien.py:/core/smartheat_core/dateien.py:ro" \
+    -e PYTHONPATH=/gw/host:/gw/src:/core -e SHG_ROOT="$DATA" \
     -e SHG_UPDATER_ALLOW_HTTP=1 -e SHG_UPDATER_HEALTH_URL=http://runtime:8080/healthz -e SHG_UPDATER_HEALTH_SECONDS=180 \
     -e SHG_COMPOSE_PROJECT="$PROJECT" -e SHG_RELEASE_PUB="$DATA/release/test.pub" \
     "$UPDATER_IMAGE" python3 -m smartheat_host.updater --once
