@@ -18,7 +18,7 @@ import requests
 from smartheat_core import dateien
 from smartheat_device import identity as identity_module
 from smartheat_device import wire
-from smartheat_device.tls import IOT_PORTS
+from smartheat_device.tls import ALPN_443, IOT_PORTS
 
 logger = logging.getLogger(__name__)
 
@@ -76,10 +76,10 @@ def _antwort(body) -> Antwort:
     alpn = body.get("mqtt_alpn")
     if not (isinstance(host, str) and host and isinstance(port, int) and not isinstance(port, bool)
             and port in IOT_PORTS and isinstance(ca, str) and _PEM_CERT in ca and isinstance(cert, str)
-            and _PEM_CERT in cert and (alpn is None or isinstance(alpn, str))):
+            and _PEM_CERT in cert and alpn in (None, ALPN_443)):
         raise Unavailable("Bootstrap-Antwort ungueltig")
     state = body["device_state"] if body["device_state"] in wire.DEVICE_STATES else None
-    return Antwort(state, Zugang(cert, Endpoint(host, port, ca, alpn or None)))
+    return Antwort(state, Zugang(cert, Endpoint(host, port, ca, alpn)))
 
 
 class BootstrapClient:
