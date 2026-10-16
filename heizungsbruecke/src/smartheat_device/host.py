@@ -47,7 +47,7 @@ class Anzeige:
     eingerichtet: bool
     hinweise: tuple[dict, ...]  # Befehl hinweis: {key, stufe, text}
     meldungen: tuple[dict, ...]  # eigene Meldungen des Geraets (wunsch_begrenzt, soll_quelle_aus): {key, text}
-    konfiguration_abgelehnt: str | None  # Text der zuletzt abgelehnten Konfiguration
+    konfiguration_abgelehnt: str | None  # lokaler Hinweis zur zuletzt abgelehnten Konfiguration (Code)
 
     @property
     def code_zeigen(self) -> bool:
@@ -70,10 +70,10 @@ class DeviceHost(Protocol):
         """Zeitdienst des Systems (Gateway: NTP); None = unbekannt, gilt als nicht synchron (Spec 3.3)."""
         ...
 
-    def treiber_pruefen(self, bindung: dict, /) -> str | None:
-        """Kundentext, wenn die Treiberparameter nicht passen (config_check, Regel 6), sonst None. Gateway: `bindung`; HA: die
-        ganze Konfiguration (Spec 5c). Nur positional (config_check ruft so), daher darf der Host den Parameter
-        passend benennen."""
+    def treiber_pruefen(self, bindung: dict, /) -> dict | None:
+        """details (smartheat_device.fehler), wenn die Treiberparameter nicht passen (config_check, Regel 6), sonst None.
+        Gateway: `bindung`; HA: die ganze Konfiguration (Spec 5c). Nur positional (config_check ruft so), daher darf
+        der Host den Parameter passend benennen."""
         ...
 
     def befehle_eintragen(self, register: CommandRegister) -> None: ...

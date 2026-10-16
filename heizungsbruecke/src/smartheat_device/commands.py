@@ -4,11 +4,12 @@ Gateway-Agenten bis 0.5.0). Ein Befehl wird hoechstens einmal ausgefuehrt; sein 
 einem Duplikat (erneute Zustellung nach hello, auch ueber einen Neustart) erneut hoch; der Server behaelt das erste.
 Ueber den Ablauf entscheidet nur der Server (expires_at wird nicht gegen die eigene Uhr geprueft). Jeder gemeldete
 Grund steht in der Liste des Befehls (wire.command_errors), sonst geht `intern` hoch und die Fehlerart ins Log.
+Fehler tragen Grund und details, keine Texte (Spec Stufe 3 S5 6.2): den Text bildet der Server.
 
 Hoechstens einmal gilt auch ueber einen Neustart: bevor ein Handler laeuft, steht in derselben Liste ein Marker
 "gestartet" ([command_id, null, null, null]). Kommt eine so markierte command_id nach einem Neustart erneut (weder
 wartend noch fertig; der Handler lief schon, sein Ergebnis ist unbekannt), laeuft der Handler nicht noch einmal, der
-Befehl endet mit `intern` (UNTERBROCHEN_TEXT) und dieses Ergebnis ersetzt den Marker.
+Befehl endet mit `intern` und dieses Ergebnis ersetzt den Marker.
 Ausnahme: eine Art, die mit wiederholbar=True eingetragen ist (idempotent, z. B. sign_off des Gateways, das den
 Neustart selbst ausloest), laeuft nach einem Neustart bei erneuter Zustellung noch einmal; die Art kommt aus der
 erneut zugestellten Nachricht. Fertige Befehle beantwortet das Register auch dann aus dem Speicher.
@@ -24,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from smartheat_core import dateien
-from smartheat_device import wire
+from smartheat_device import fehler, wire
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +34,6 @@ HINWEISE_FILE = "hinweise.json"
 DONE_KEEP = 500
 COMMAND_ID_MAX_CHARS = 64
 TIMEOUT_GRUND = "keine_bestaetigung"
-TIMEOUT_TEXT = "Das Gerät hat die Änderung nicht rechtzeitig bestätigt."
-INTERN_TEXT = "Interner Fehler im Gerät."
-UNKNOWN_TEXT = "Unbekannter Befehl."
-INVENTUR_TEXT = "Die Inventur ist zu groß für eine Übertragung."
-UNTERBROCHEN_TEXT = "Der Befehl wurde durch einen Neustart des Geräts unterbrochen."
 HINWEIS_KEY_MAX_CHARS = 64
 HINWEIS_TEXT_MAX_CHARS = 1000
 
@@ -51,7 +47,7 @@ class Done:
 @dataclass(frozen=True)
 class Failed:
     grund: str
-    text: str
+    details: dict | None = None  # smartheat_device.fehler; den Text bildet der Server
 
 
 @dataclass(frozen=True)
@@ -66,7 +62,11 @@ Entry = tuple[bool | None, dict | None, dict | None]  # (ok, result, error) wie 
 
 
 class InvalidPayload(ValueError):
-    """Nutzlast passt nicht zum Befehl; der Text geht als ungueltige_nutzlast an den Server."""
+    """Nutzlast passt nicht zum Befehl: ungueltige_nutzlast mit details (Feld, Regel, Zahlen)."""
+
+    def __init__(self, feld: str, regel: str, **zahlen: float) -> None:
+        self.details = fehler.details(feld, regel, **zahlen)
+        super().__init__(f"{feld}: {regel}")
 
 
 def result_payload(command_id: str, ok: bool, result: dict | None, error: dict | None) -> dict:
@@ -82,7 +82,8 @@ def _load_done(path: Path) -> dict[str, Entry]:
     for entry in entries:
         if (isinstance(entry, list) and len(entry) == 4 and isinstance(entry[0], str) and isinstance(entry[1], bool | None)
                 and isinstance(entry[2], dict | None) and isinstance(entry[3], dict | None)):
-            done[entry[0]] = (entry[1], entry[2], entry[3])
+            error = {k: v for k, v in entry[3].items() if k in wire.ERROR_FIELDS} if isinstance(entry[3], dict) else None
+            done[entry[0]] = (entry[1], entry[2], error)
     return done
 
 
@@ -139,7 +140,7 @@ class CommandRegister:
             elif kind in self._wiederholbar:  # gestartet, Neustart: idempotent, noch einmal ausfuehren
                 self._finish_or_wait(command_id, kind, self._execute(command_id, kind, message.get("payload")))
             else:  # gestartet, Ergebnis unbekannt (Neustart): nicht noch einmal ausfuehren
-                self._finish_or_wait(command_id, "", Failed("intern", UNTERBROCHEN_TEXT))
+                self._finish_or_wait(command_id, "", Failed("intern"))
             return
         self._finish_or_wait(command_id, kind, self._execute(command_id, kind, message.get("payload")))
 
@@ -157,34 +158,39 @@ class CommandRegister:
 
     def _execute(self, command_id: str, kind: str, payload) -> Outcome:
         handler = self._handlers.get(kind)
-        if handler is None or not isinstance(payload, dict):
-            return Failed("ungueltige_nutzlast", UNKNOWN_TEXT)
+        if handler is None:
+            return Failed("ungueltige_nutzlast", fehler.details("kind", "unbekannt"))
+        if not isinstance(payload, dict):
+            return Failed("ungueltige_nutzlast", fehler.details("payload", "ungueltig"))
         self._store(command_id, (None, None, None))  # Marker "gestartet" vor dem Handler
         outcome = self._guarded(kind, lambda: handler(payload))
-        return outcome if outcome is not None else Failed("intern", INTERN_TEXT)
+        return outcome if outcome is not None else Failed("intern")
 
     def _guarded(self, kind: str, call):
         """Fuehrt call aus und uebersetzt Ausnahmen in Failed mit einem Grund aus der Liste des Befehls."""
         try:
             outcome = call()
         except InvalidPayload as error:
-            outcome = Failed("ungueltige_nutzlast", str(error))
+            outcome = Failed("ungueltige_nutzlast", error.details)
         except Exception as error:
             outcome = self._uebersetzen(error)
             if outcome is None:
                 # nur Fehlerart und innerster Frame: Meldung und Quelltext koennen Nutzlast-Teile tragen (Regel 6)
                 logger.error("Befehl %s fehlgeschlagen (%s)%s", kind, type(error).__name__, fehlerort(error))
-                return Failed("intern", INTERN_TEXT)
+                return Failed("intern")
+        if isinstance(outcome, Failed) and not fehler.gueltig(outcome.details):
+            logger.error("Befehl %s: details ohne die Form des Vertrags", kind)
+            return Failed("intern")
         if isinstance(outcome, Failed) and kind in wire.COMMANDS and outcome.grund not in wire.command_errors(kind):
             logger.error("Befehl %s: Grund %s steht nicht in der Vertragsliste", kind, outcome.grund)
-            return Failed("intern", INTERN_TEXT)
+            return Failed("intern")
         return outcome
 
     def _timed_out(self, kind: str) -> Failed:
         if kind in wire.COMMANDS and TIMEOUT_GRUND in wire.command_errors(kind):
-            return Failed(TIMEOUT_GRUND, TIMEOUT_TEXT)
+            return Failed(TIMEOUT_GRUND)
         logger.error("Befehl %s: Zeitablauf steht nicht in der Vertragsliste", kind)
-        return Failed("intern", INTERN_TEXT)
+        return Failed("intern")
 
     def _finish_or_wait(self, command_id: str, kind: str, outcome: Outcome) -> None:
         if isinstance(outcome, Waiting):
@@ -198,19 +204,19 @@ class CommandRegister:
         if isinstance(outcome, Done):
             ok, result, error = True, outcome.result, None
         else:
-            ok, result, error = False, None, {"grund": outcome.grund, "text": outcome.text}
+            ok, result, error = False, None, fehler.body(outcome.grund, outcome.details)
         self._store(command_id, (ok, result, error))  # zuerst dauerhaft, dann melden
         self._send_result(result_payload(command_id, ok, result, error))
 
     def _inventur_senden(self, command_id: str, kind: str, done: Done) -> Done | Failed | None:
         assert done.inventur is not None
         if self._send_inventory is None:
-            return Failed("intern", INTERN_TEXT)
+            return Failed("intern")
         try:
             gesendet = self._send_inventory(command_id, done.inventur)
         except ValueError as error:
             logger.error("Inventur zu Befehl %s nicht gesendet (%s)", command_id, type(error).__name__)
-            return Failed("intern", INVENTUR_TEXT)
+            return Failed("intern")
         if gesendet:
             return Done(done.result)
         self._pending[command_id] = (kind, Waiting(lambda: done, float("inf")))
@@ -242,11 +248,11 @@ class Hinweise:
     def handler(self, payload: dict) -> Outcome:
         key, stufe, text = payload.get("key"), payload.get("stufe"), payload.get("text")
         if not (isinstance(key, str) and 0 < len(key) <= HINWEIS_KEY_MAX_CHARS):
-            raise InvalidPayload("key fehlt oder ist zu lang.")
+            raise InvalidPayload("key", "ungueltig")
         if stufe not in wire.HINWEIS_STUFEN:
-            raise InvalidPayload("stufe ist unbekannt.")
+            raise InvalidPayload("stufe", "unbekannt")
         if not isinstance(text, str) or len(text) > HINWEIS_TEXT_MAX_CHARS:
-            raise InvalidPayload("text fehlt oder ist zu lang.")
+            raise InvalidPayload("text", "ungueltig")
         if text:
             self._items[key] = {"stufe": stufe, "text": text}
         else:

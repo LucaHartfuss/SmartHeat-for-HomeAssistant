@@ -149,9 +149,9 @@ def test_a_rejection_keeps_the_previous_configuration_and_is_remembered(tmp_path
     store.empfangen("konfiguration", _konfiguration())
     ergebnis = store.empfangen("konfiguration", _konfiguration(version=2, verteilsystem="Fussbodenheizung"))
     assert (ergebnis.ok, ergebnis.grund, ergebnis.uebernommen) == (False, "hebelsatz_eingerastet", False)
-    assert ergebnis.payload()["error"] == {"grund": "hebelsatz_eingerastet", "text": ergebnis.text} and ergebnis.text
+    assert ergebnis.payload()["error"] == {"grund": "hebelsatz_eingerastet"}
     assert store.version("konfiguration") == 1
-    assert _store(tmp_path).ablehnung("konfiguration") == (2, "hebelsatz_eingerastet", ergebnis.text)
+    assert _store(tmp_path).ablehnung("konfiguration") == (2, "hebelsatz_eingerastet", None)
     store.empfangen("konfiguration", _konfiguration(version=3, tagestick="06:00"))
     assert store.ablehnung("konfiguration") is None
 
@@ -163,9 +163,9 @@ def test_invalid_binding_parameters_are_rejected_as_invalid_and_keep_the_previou
                                                            "durchsetzen_tag": 5})
     ergebnis = store.empfangen("konfiguration", _konfiguration(version=2, bindungsparameter=locker))
     assert (ergebnis.ok, ergebnis.grund, ergebnis.uebernommen) == (False, "ungueltig", False)
-    assert ergebnis.text == "Durchsetzen je Tag muss in den Bindungsparametern zwischen 1 und 4 liegen."
+    assert ergebnis.details == {"feld": "durchsetzen_tag", "regel": "bereich", "min": 1, "max": 4}
     assert store.version("konfiguration") == 1
-    assert store.ablehnung("konfiguration") == (2, "ungueltig", ergebnis.text)
+    assert store.ablehnung("konfiguration") == (2, "ungueltig", ergebnis.details)
 
 
 def test_an_unknown_schema_is_refused_and_means_update_needed(tmp_path):
@@ -178,7 +178,30 @@ def test_missing_fields_are_invalid(tmp_path):
     body = _konfiguration()
     del body["tagestick"]
     ergebnis = _store(tmp_path).empfangen("konfiguration", body)
-    assert ergebnis.grund == "ungueltig" and "tagestick" in ergebnis.text
+    assert ergebnis.grund == "ungueltig"
+    assert ergebnis.details == {"feld": "tagestick", "regel": "fehlt", "anzahl": 1}
+
+
+def test_eine_ablehnung_von_vor_5c_wird_ohne_text_geladen(tmp_path):
+    (tmp_path / docs.ZUSTAND_DATEI).write_text(json.dumps(
+        {"update_anlass": None, "abgelehnt": {"konfiguration": [3, "ungueltig", "Alter Gerätetext"]}}))
+    assert _store(tmp_path).ablehnung("konfiguration") == (3, "ungueltig", None)
+
+
+def test_die_bedienung_nennt_das_feld(tmp_path):
+    store = _store(tmp_path)
+    assert store.empfangen("bedienung", _bedienung(raum_soll=25.5)).details == {
+        "feld": "raum_soll", "regel": "bereich", "min": 15.0, "max": 25.0}
+    assert store.empfangen("bedienung", _bedienung(version=2, modus="programm")).details == {
+        "feld": "modus", "regel": "unbekannt"}
+
+
+def test_ungueltige_details_des_hosts_gehen_nicht_hoch(tmp_path, caplog):
+    store = docs.DocumentStore(tmp_path, host="gateway", software_version="0.6.0",
+                               treiber_pruefen=lambda bindung: {"feld": "sensor.leonies_zimmer"})
+    ergebnis = store.empfangen("konfiguration", _konfiguration())
+    assert ergebnis.payload()["error"] == {"grund": "treiber_parameter"}
+    assert "leonies" not in caplog.text
 
 
 def test_unknown_fields_are_kept_and_ignored(tmp_path):
@@ -202,7 +225,6 @@ def test_a_configuration_below_the_minimum_software_is_refused_with_update_neede
     store = _store(tmp_path, version="0.5.9")
     ergebnis = store.empfangen("konfiguration", _konfiguration())
     assert (ergebnis.ok, ergebnis.grund) == (False, "update_noetig") and store.update_noetig
-    assert "0.5.9" in ergebnis.text and "0.6.0" in ergebnis.text
     assert _store(tmp_path, version="0.5.9").update_noetig  # auch nach einem Neustart
 
 

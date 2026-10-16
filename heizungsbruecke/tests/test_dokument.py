@@ -1,4 +1,6 @@
 """Spec 5c 1.3, Stufe 3 S5 3.2: Konfigurationsdokument -> HaBindung; Rollentabellen; HA-Teil der lokalen Pruefung."""
+import json
+
 import bindung_beispiele
 import pytest
 from bindung_beispiele import parameter
@@ -107,7 +109,8 @@ def test_unbekannter_hebelsatz_ist_ein_konfigurationsfehler(konfiguration, hebel
         dokument.bindung({**konfiguration, "hebelsatz": hebelsatz})
     with pytest.raises(ConfigError):
         dokument.lokal_pruefen({**konfiguration, "hebelsatz": hebelsatz})
-    assert "Hebelsatz" in dokument.zuordnung_pruefen({**konfiguration, "hebelsatz": hebelsatz}, _ha())
+    assert dokument.zuordnung_pruefen({**konfiguration, "hebelsatz": hebelsatz}, _ha()) == {
+        "feld": "hebelsatz", "regel": "unbekannt"}
 
 
 # --- Pflicht- und Schreibregeln des Hebelsatzes (frueher test_config.py) ---
@@ -214,19 +217,19 @@ def test_missing_required_role():
     rollen = dict(KONFIGURATION["bindung"]["rollen"])
     del rollen["heat_limit"]
     konfiguration = {**KONFIGURATION, "bindung": {**KONFIGURATION["bindung"], "rollen": rollen}}
-    assert "heat_limit" in dokument.zuordnung_pruefen(konfiguration, _ha())
+    assert dokument.zuordnung_pruefen(konfiguration, _ha()) == {"feld": "heat_limit", "regel": "fehlt"}
 
 
 def test_unknown_entity_is_refused():
     ha = _ha()
     ha.missing.add("number.heat_limit")
-    assert "number.heat_limit" in dokument.zuordnung_pruefen(KONFIGURATION, ha)
+    assert dokument.zuordnung_pruefen(KONFIGURATION, ha) == {"feld": "heat_limit", "regel": "unbekannt"}
 
 
 def test_write_target_of_another_platform_is_refused():
     ha = _ha()
     _fremd(ha, "number.heat_limit")
-    assert "number.heat_limit" in dokument.zuordnung_pruefen(KONFIGURATION, ha)
+    assert dokument.zuordnung_pruefen(KONFIGURATION, ha) == {"feld": "heat_limit", "regel": "nicht_erlaubt"}
 
 
 def test_the_curve_is_a_write_target_too():
@@ -234,11 +237,11 @@ def test_the_curve_is_a_write_target_too():
     (Spec 1.3, A4-11): ein number.* der Plattform template darf sie nicht sein."""
     ha = _ha()
     _fremd(ha, "number.curve_current")
-    assert "number.curve_current" in dokument.zuordnung_pruefen(KONFIGURATION, ha)
+    assert dokument.zuordnung_pruefen(KONFIGURATION, ha) == {"feld": "curve", "regel": "nicht_erlaubt"}
     ha = _ha()
     ha.registry = [{**e, "config_entry_id": "fremd"} if e["entity_id"] == "number.curve_current" else e
                    for e in ha.registry]
-    assert "number.curve_current" in dokument.zuordnung_pruefen(KONFIGURATION, ha)
+    assert dokument.zuordnung_pruefen(KONFIGURATION, ha) == {"feld": "curve", "regel": "nicht_erlaubt"}
 
 
 def test_every_lever_of_the_binding_is_checked():
@@ -246,7 +249,7 @@ def test_every_lever_of_the_binding_is_checked():
     ha = _ha()
     ha.registry.append({"entity_id": "number.level", "platform": "template", "config_entry_id": None,
                         "device_id": None})
-    assert "number.level" in dokument.zuordnung_pruefen(konfiguration, ha)
+    assert dokument.zuordnung_pruefen(konfiguration, ha) == {"feld": "level", "regel": "nicht_erlaubt"}
 
 
 def test_a_circuit_without_config_entry_checks_only_the_platform():
@@ -255,13 +258,13 @@ def test_a_circuit_without_config_entry_checks_only_the_platform():
     assert dokument.zuordnung_pruefen(konfiguration, _ha()) is None
     ha = _ha()
     _fremd(ha, "number.heat_limit")
-    assert "number.heat_limit" in dokument.zuordnung_pruefen(konfiguration, ha)
+    assert dokument.zuordnung_pruefen(konfiguration, ha) == {"feld": "heat_limit", "regel": "nicht_erlaubt"}
 
 
 def test_soll_entity_on_the_device_of_a_write_target_is_refused():
     ha = _ha()
     ha.registry = [{**e, "device_id": "d-therme"} if e["entity_id"] == "sensor.room_target" else e for e in ha.registry]
-    assert "Wunschtemperatur" in dokument.zuordnung_pruefen(KONFIGURATION, ha)
+    assert dokument.zuordnung_pruefen(KONFIGURATION, ha) == {"feld": "room_target", "regel": "nicht_erlaubt"}
 
 
 @pytest.mark.parametrize("room_target, shift", [
@@ -275,7 +278,7 @@ def test_the_zone_as_room_target_is_refused(room_target, shift):
     konfiguration = _mit_rolle("room_setpoint", shift)
     konfiguration = {**konfiguration, "bindung": {**konfiguration["bindung"], "rollen": {
         **konfiguration["bindung"]["rollen"], "room_target": room_target}}}
-    assert "Wunschtemperatur" in dokument.zuordnung_pruefen(konfiguration, _ha())
+    assert dokument.zuordnung_pruefen(konfiguration, _ha()) == {"feld": "room_target", "regel": "nicht_erlaubt"}
 
 
 def test_the_current_temperature_of_the_zone_is_a_valid_room_sensor():
@@ -298,6 +301,19 @@ def test_ha_still_starting_is_not_a_verdict_either():
     ha.config = {"state": "NOT_RUNNING"}
     ha.is_reachable = lambda: False
     with pytest.raises(config_check.NichtPruefbar):
+        dokument.zuordnung_pruefen(KONFIGURATION, ha)
+
+
+def test_a_contract_violation_in_the_details_is_a_programming_error_not_a_missing_ha(monkeypatch):
+    """fehler.details wirft bei einem Verstoss ValueError; das darf nicht als NichtPruefbar (HA nicht erreichbar, still
+    wiederholen) enden, sondern muss als Fehler sichtbar werden."""
+    def verstoss(*args, **kwargs):
+        raise ValueError("details passen nicht zum Vertrag")
+
+    monkeypatch.setattr(dokument.fehler, "details", verstoss)
+    ha = _ha()
+    ha.missing.add("number.heat_limit")
+    with pytest.raises(ValueError, match="Vertrag"):
         dokument.zuordnung_pruefen(KONFIGURATION, ha)
 
 
@@ -345,7 +361,7 @@ def test_the_local_part_runs_even_for_an_unchanged_binding():
     ohne = {**KONFIGURATION, "bindung": {**KONFIGURATION["bindung"], "rollen": rollen}}
     ha = _ha()
     ha.offline = True
-    assert "heat_limit" in dokument.zuordnung_pruefen(ohne, ha, ohne)
+    assert dokument.zuordnung_pruefen(ohne, ha, ohne) == {"feld": "heat_limit", "regel": "fehlt"}
 
 
 def test_the_check_runs_through_config_check_as_role_not_allowed():
@@ -353,7 +369,15 @@ def test_the_check_runs_through_config_check_as_role_not_allowed():
     _fremd(ha, "number.heat_limit")
     ablehnung = config_check.pruefen(KONFIGURATION, None, host=config_check.HOST_HA,
                                      treiber_pruefen=lambda k: dokument.zuordnung_pruefen(k, ha))
-    assert ablehnung.grund == config_check.ROLLE_UNZULAESSIG and "number.heat_limit" in ablehnung.text
+    assert ablehnung == config_check.Ablehnung(config_check.ROLLE_UNZULAESSIG,
+                                               {"feld": "heat_limit", "regel": "nicht_erlaubt"})
+
+
+def test_die_ablehnung_nennt_die_rolle_nie_die_entity():
+    ha = _ha()
+    ha.missing.add("sensor.room_actual")  # Raumfuehler aus KONFIGURATION fehlt in HA
+    details = dokument.zuordnung_pruefen(KONFIGURATION, ha)
+    assert details == {"feld": "raumfuehler", "regel": "unbekannt"} and "room_actual" not in json.dumps(details)
 
 
 def test_beschreibung_kommt_aus_der_gespeicherten_konfiguration():

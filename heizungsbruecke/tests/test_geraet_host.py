@@ -142,8 +142,7 @@ def test_foreign_commands_are_not_supported(tmp_path, monkeypatch):
     assert {"inventory", "sign_off", "diagnostics", "zigbee_permit_join", "zigbee_devices", "driver_login"} <= register.kinds
     for kind in ("zigbee_permit_join", "zigbee_devices", "driver_login"):
         outcome = register._handlers[kind]({"driver_id": "x"})
-        assert isinstance(outcome, Failed) and outcome.grund == "nicht_unterstuetzt"
-        assert outcome.text == geraet_host.NICHT_UNTERSTUETZT_TEXT
+        assert outcome == Failed("nicht_unterstuetzt")
         assert outcome.grund in wire.command_errors(kind)
 
 
@@ -164,7 +163,14 @@ def test_inventory_runs_in_the_background(tmp_path, monkeypatch):
 def test_inventory_needs_a_filter(tmp_path, monkeypatch):
     host, _, _ = _host(tmp_path, monkeypatch)
     outcome = _register(host, tmp_path)._handlers["inventory"]({"stunden": 0})
-    assert isinstance(outcome, Failed) and outcome.grund == "ungueltige_nutzlast"
+    assert outcome == Failed("ungueltige_nutzlast", {"feld": "filter", "regel": "fehlt"})
+
+
+@pytest.mark.parametrize("filter_", ["climate", ["climate"], 5])
+def test_inventory_with_a_filter_that_is_no_object_is_invalid_not_missing(tmp_path, monkeypatch, filter_):
+    host, _, _ = _host(tmp_path, monkeypatch)
+    outcome = _register(host, tmp_path)._handlers["inventory"]({"stunden": 0, "filter": filter_})
+    assert outcome == Failed("ungueltige_nutzlast", {"feld": "filter", "regel": "ungueltig"})
 
 
 @pytest.mark.parametrize("filter_", [
@@ -174,7 +180,7 @@ def test_inventory_with_a_malformed_filter_is_an_invalid_payload(tmp_path, monke
     host, _, _ = _host(tmp_path, monkeypatch)
     monkeypatch.setattr(geraet_host.inventur, "inventur", lambda ha, f: pytest.fail("nicht aufgerufen"))
     outcome = _register(host, tmp_path)._handlers["inventory"]({"stunden": 0, "filter": filter_})
-    assert isinstance(outcome, Failed) and outcome.grund == "ungueltige_nutzlast"
+    assert outcome == Failed("ungueltige_nutzlast", {"feld": "filter", "regel": "ungueltig"})
 
 
 def test_inventory_with_ha_down_fails_without_contents_in_the_log(tmp_path, monkeypatch, caplog):
@@ -183,7 +189,7 @@ def test_inventory_with_ha_down_fails_without_contents_in_the_log(tmp_path, monk
     host, _, _ = _host(tmp_path, monkeypatch, ha=ha)
     outcome = _register(host, tmp_path)._handlers["inventory"]({"stunden": 0, "filter": {"domaenen": ["climate"]}})
     done = _bis(outcome)
-    assert isinstance(done, Failed) and done.grund == "ha_nicht_erreichbar"
+    assert done == Failed("ha_nicht_erreichbar")
     assert done.grund in wire.command_errors("inventory")
     assert "OSError" in caplog.text and "HA nicht erreichbar" not in caplog.text  # nur die Fehlerart (Regel 6)
     host.hintergrund.stop()
@@ -198,7 +204,7 @@ def test_inventory_that_hangs_ends_at_its_deadline(tmp_path, monkeypatch):
     assert outcome.check() is None
     clock.advance(geraet_host.INVENTUR_SECONDS)
     done = outcome.check()
-    assert isinstance(done, Failed) and done.grund == "ha_nicht_erreichbar"
+    assert done == Failed("ha_nicht_erreichbar")
     frei.set()
     host.hintergrund.stop(timeout=2)
 
@@ -306,9 +312,9 @@ def test_the_ha_check_is_skipped_against_the_accepted_configuration(tmp_path, mo
 def test_the_ha_check_gets_the_accepted_configuration(tmp_path, monkeypatch):
     akzeptiert = konfiguration_aus_optionen(OPTIONS)
     calls = []
-    monkeypatch.setattr(dokument, "zuordnung_pruefen", lambda k, ha, a: calls.append((k, ha, a)) or "Text")
+    monkeypatch.setattr(dokument, "zuordnung_pruefen", lambda k, ha, a: calls.append((k, ha, a)) or {"feld": "kreis", "regel": "ungueltig"})
     host, _, _ = _host(tmp_path, monkeypatch, device=Device(akzeptiert))
-    assert host.treiber_pruefen({"neu": 1}) == "Text"
+    assert host.treiber_pruefen({"neu": 1}) == {"feld": "kreis", "regel": "ungueltig"}
     assert calls == [({"neu": 1}, host._ha, akzeptiert)]
     host.verbinden(Device(None))
     host.treiber_pruefen({"neu": 2})
@@ -334,7 +340,7 @@ def test_sign_off_marks_restarts_and_reports_the_restore_point(tmp_path, monkeyp
 def test_sign_off_without_setup_fails(tmp_path, monkeypatch):
     host, _, _ = _host(tmp_path, monkeypatch)
     outcome = _register(host, tmp_path)._handlers["sign_off"]({})
-    assert isinstance(outcome, Failed) and outcome.grund == "nicht_eingerichtet"
+    assert outcome == Failed("nicht_eingerichtet")
 
 
 def test_diagnostics(tmp_path, monkeypatch):

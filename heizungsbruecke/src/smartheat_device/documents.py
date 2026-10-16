@@ -4,7 +4,7 @@ Konfiguration und Bedienung liegen je in einer Datei mit Version und Inhalt (ohn
 Uebernommen wird jede Version, die von der eigenen abweicht, auch eine kleinere (ein aus dem Backup zurueckgespielter
 Server, Plan S1); dieselbe Version nur, solange die Bedienung "dirty" ist (lokaler Bedienwunsch seit der letzten
 uebernommenen Bedienung, Spec 3.3: der Server schickt eine verlierende Bedienung mit gleicher Version zurueck). Abgelehnt
-wird mit einem Grund aus wire.DOKUMENT_ERRORS; die vorige Version bleibt, die Ablehnung steht in dokumente.json.
+wird mit einem Grund aus wire.DOKUMENT_ERRORS und details; die vorige Version bleibt, die Ablehnung steht in dokumente.json.
 
 Mindestversion (Spec 2.1): liegt die eigene Software unter mindest_software, wird die Konfiguration mit update_noetig
 abgelehnt (das Geraet regelt mit der alten weiter); eine leere Konfiguration (anlage None, "nicht eingerichtet") wird
@@ -30,7 +30,7 @@ from typing import TypeGuard
 
 from smartheat_core import config_check, dateien, rastung, wallclock
 from smartheat_core.rastung import Rastung
-from smartheat_device import wire
+from smartheat_device import fehler, wire
 
 logger = logging.getLogger(__name__)
 
@@ -41,13 +41,6 @@ SCHEMA_UNBEKANNT = "schema_unbekannt"
 UNGUELTIG = "ungueltig"
 UPDATE_NOETIG = "update_noetig"
 AUSSERHALB_BEREICH = "ausserhalb_bereich"
-SCHEMA_TEXT = "Das Gerät kennt diese Protokollversion nicht. Bitte das Gerät aktualisieren."
-FELDER_TEXT = "Der Konfiguration fehlen Felder: {felder}."
-UPDATE_TEXT = ("Die Gerätesoftware {eigene} ist älter als die nötige {mindest}. Bitte das Gerät aktualisieren; es regelt "
-               "bis dahin mit der bisherigen Einrichtung weiter.")
-BEREICH_TEXT = "Die Wunschtemperatur muss zwischen 15 und 25 °C in Schritten von 0,5 K liegen."
-MODUS_TEXT = "Diese Betriebsart kennt das Gerät nicht."
-QUELLE_TEXT = "Die Bedienung nennt keine gültige Quelle."
 _RESERVIERT = ("schema", "version")
 _VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
@@ -89,11 +82,12 @@ def _is_version(value) -> TypeGuard[int]:
 
 def _bedienung_pruefen(inhalt: dict) -> config_check.Ablehnung | None:
     if inhalt.get("modus") not in wire.MODI:
-        return config_check.Ablehnung(UNGUELTIG, MODUS_TEXT)
+        return config_check.Ablehnung(UNGUELTIG, fehler.details("modus", "unbekannt"))
     if inhalt.get("quelle") not in wire.QUELLEN:
-        return config_check.Ablehnung(UNGUELTIG, QUELLE_TEXT)
+        return config_check.Ablehnung(UNGUELTIG, fehler.details("quelle", "unbekannt"))
     if not im_bedienbereich(inhalt.get("raum_soll")):
-        return config_check.Ablehnung(AUSSERHALB_BEREICH, BEREICH_TEXT)
+        return config_check.Ablehnung(AUSSERHALB_BEREICH, fehler.details(
+            "raum_soll", "bereich", min=wire.RAUM_SOLL_MIN, max=wire.RAUM_SOLL_MAX))
     return None
 
 
@@ -110,18 +104,19 @@ class Dokument:
 @dataclass(frozen=True)
 class Ergebnis:
     """Antwort an den Server (up/result) und Wirkung fuer das Geraet: `uebernommen` = neuer Inhalt, der Host wendet ihn
-    an; ok ohne uebernommen = Duplikat (nur das Ergebnis wiederholen)."""
+    an; ok ohne uebernommen = Duplikat (nur das Ergebnis wiederholen). Abgelehnt: Grund und details, kein Text."""
     art: str
     version: int
     ok: bool
     grund: str | None = None
-    text: str | None = None
+    details: dict | None = None
     uebernommen: bool = False
 
     def payload(self) -> dict:
         body = {"schema": wire.SCHEMA, "dokument": self.art, "version": self.version, "ok": self.ok}
         if not self.ok:
-            body["error"] = {"grund": self.grund, "text": self.text or ""}
+            assert self.grund is not None
+            body["error"] = fehler.body(self.grund, self.details)
         return body
 
 
@@ -141,9 +136,10 @@ class DocumentStore:
         self._update_anlass = _anlass(zustand.get("update_anlass"))
         roh = zustand.get("abgelehnt")
         abgelehnt: dict = roh if isinstance(roh, dict) else {}
-        self._abgelehnt: dict[str, tuple[int, str, str]] = {
-            art: (value[0], value[1], value[2]) for art, value in abgelehnt.items()
-            if art in DATEIEN and isinstance(value, list) and len(value) == 3}
+        # eine Ablehnung von vor 5c traegt an Stelle 2 einen Text: sie laedt ohne details
+        self._abgelehnt: dict[str, tuple[int, str, dict | None]] = {
+            art: (value[0], value[1], value[2] if isinstance(value[2], dict) else None)
+            for art, value in abgelehnt.items() if art in DATEIEN and isinstance(value, list) and len(value) == 3}
 
     @property
     def update_noetig(self) -> bool:
@@ -210,7 +206,7 @@ class DocumentStore:
         inhalt = self.inhalt(KONFIGURATION)
         return inhalt is not None and not config_check.ist_leer(inhalt)
 
-    def ablehnung(self, art: str) -> tuple[int, str, str] | None:
+    def ablehnung(self, art: str) -> tuple[int, str, dict | None] | None:
         return self._abgelehnt.get(art)
 
     def mark_dirty(self) -> None:
@@ -232,14 +228,14 @@ class DocumentStore:
             if payload.get("schema") not in wire.SCHEMATA:
                 if art == KONFIGURATION:
                     self._update_anlass = (SCHEMA_UNBEKANNT, self._software_version)
-                return self._abgelehnt_mit(art, version, SCHEMA_UNBEKANNT, SCHEMA_TEXT)
+                return self._abgelehnt_mit(art, version, SCHEMA_UNBEKANNT, None)
             current = self._docs[art]
             if current is not None and current.version == version and not current.dirty:
                 return Ergebnis(art, version, True)
             inhalt = {key: value for key, value in payload.items() if key not in _RESERVIERT}
             ablehnung = self._pruefen(art, inhalt)
             if ablehnung is not None:
-                return self._abgelehnt_mit(art, version, ablehnung.grund, ablehnung.text)
+                return self._abgelehnt_mit(art, version, ablehnung.grund, ablehnung.details)
             if art == KONFIGURATION and self._rastung is None and not config_check.ist_leer(inhalt):
                 self._rastung = self._rasten(inhalt)  # vor dem Dokument (Spec 3.2): ein Absturz dazwischen schadet nicht
             self._speichern(Dokument(art, version, inhalt))
@@ -247,22 +243,24 @@ class DocumentStore:
             self._zustand_speichern()
             return Ergebnis(art, version, True, uebernommen=True)
 
-    def _abgelehnt_mit(self, art: str, version: int, grund: str, text: str) -> Ergebnis:
-        self._abgelehnt[art] = (version, grund, text)
+    def _abgelehnt_mit(self, art: str, version: int, grund: str, details: dict | None) -> Ergebnis:
+        if not fehler.gueltig(details):
+            logger.error("%s abgelehnt (%s): details ohne die Form des Vertrags verworfen", art, grund)
+            details = None
+        self._abgelehnt[art] = (version, grund, details)
         self._zustand_speichern()
-        return Ergebnis(art, version, False, grund, text)
+        return Ergebnis(art, version, False, grund, details)
 
     def _pruefen(self, art: str, inhalt: dict) -> config_check.Ablehnung | None:
         if art == BEDIENUNG:
             return _bedienung_pruefen(inhalt)
         fehlen = [field for field in wire.KONFIGURATION_FIELDS if field not in _RESERVIERT and field not in inhalt]
         if fehlen:
-            return config_check.Ablehnung(UNGUELTIG, FELDER_TEXT.format(felder=", ".join(fehlen)))
+            return config_check.Ablehnung(UNGUELTIG, fehler.details(fehlen[0], "fehlt", anzahl=len(fehlen)))
         mindest = inhalt.get("mindest_software")  # erst eine vollstaendige Konfiguration setzt den Anlass neu
         self._update_anlass = (UPDATE_NOETIG, mindest) if unter_mindest(self._software_version, mindest) else None
         if config_check.ist_leer(inhalt):
             return None
         if self._update_anlass is not None:
-            return config_check.Ablehnung(UPDATE_NOETIG, UPDATE_TEXT.format(eigene=self._software_version,
-                                                                            mindest=mindest))
+            return config_check.Ablehnung(UPDATE_NOETIG)
         return config_check.pruefen(inhalt, self._rastung, host=self._host, treiber_pruefen=self._treiber_pruefen)

@@ -92,7 +92,7 @@ def test_filter_check():
     assert inventur.filter_pruefen({}) is None and inventur.filter_pruefen({"unbekannt": 1, "dienste": None}) is None
     for kaputt in (None, [], {"plattformen": [["x"]]}, {"domaenen": "climate"}, {"geraeteklassen": [["sensor"]]},
                    {"geraeteklassen": [["sensor", 1]]}, {"dienste": [None]}):
-        assert inventur.filter_pruefen(kaputt) == inventur.FILTER_TEXT
+        assert inventur.filter_pruefen(kaputt) == {"feld": "filter", "regel": "ungueltig"}
 
 
 def test_empty_filter_selects_nothing():

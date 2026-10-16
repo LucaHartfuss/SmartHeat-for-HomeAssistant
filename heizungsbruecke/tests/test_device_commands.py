@@ -5,6 +5,7 @@ import json
 import pytest
 
 from smartheat_device import commands as cmd
+from smartheat_device import fehler, wire
 
 
 class Sent:
@@ -34,8 +35,8 @@ def _ok(command_id="c1", result=None):
     return {"schema": 1, "command_id": command_id, "ok": True, "result": result or {}, "error": None}
 
 
-def _fail(grund, text, command_id="c1"):
-    return {"schema": 1, "command_id": command_id, "ok": False, "result": None, "error": {"grund": grund, "text": text}}
+def _fail(grund, details=None, command_id="c1"):
+    return {"schema": 1, "command_id": command_id, "ok": False, "result": None, "error": fehler.body(grund, details)}
 
 
 def test_a_command_runs_once_and_its_result_goes_up(tmp_path):
@@ -71,10 +72,11 @@ def test_an_unsent_result_goes_up_with_the_next_delivery(tmp_path):
 def test_unknown_kinds_and_broken_payloads(tmp_path):
     sent = Sent()
     register = cmd.CommandRegister(tmp_path, sent)
+    register.register("diagnostics", lambda payload: cmd.Done({}))
     register.empfangen(_command("zigbee_devices"))  # nicht eingetragen
     register.empfangen({**_command(command_id="c2"), "payload": [1]})
-    assert sent.results == [_fail("ungueltige_nutzlast", cmd.UNKNOWN_TEXT),
-                            _fail("ungueltige_nutzlast", cmd.UNKNOWN_TEXT, "c2")]
+    assert sent.results == [_fail("ungueltige_nutzlast", {"feld": "kind", "regel": "unbekannt"}),
+                            _fail("ungueltige_nutzlast", {"feld": "payload", "regel": "ungueltig"}, "c2")]
 
 
 @pytest.mark.parametrize("command_id", [None, "", "x" * 65, 5])
@@ -92,9 +94,9 @@ def test_only_contract_kinds_can_be_registered(tmp_path):
 def test_a_reason_outside_the_list_becomes_intern(tmp_path):
     sent = Sent()
     register = cmd.CommandRegister(tmp_path, sent)
-    register.register("diagnostics", lambda payload: cmd.Failed("erfunden", "x"))
+    register.register("diagnostics", lambda payload: cmd.Failed("erfunden"))
     register.empfangen(_command())
-    assert sent.results == [_fail("intern", cmd.INTERN_TEXT)]
+    assert sent.results == [_fail("intern")]
 
 
 def test_exceptions_become_reasons(tmp_path):
@@ -102,10 +104,10 @@ def test_exceptions_become_reasons(tmp_path):
         pass
 
     def uebersetzen(error):
-        return cmd.Failed("anlage_nicht_erreichbar", "Anlage weg.") if isinstance(error, DriverDown) else None
+        return cmd.Failed("anlage_nicht_erreichbar") if isinstance(error, DriverDown) else None
 
     def invalid(payload):
-        raise cmd.InvalidPayload("seconds fehlt.")
+        raise cmd.InvalidPayload("seconds", "fehlt")
 
     def down(payload):
         raise DriverDown()
@@ -121,10 +123,48 @@ def test_exceptions_become_reasons(tmp_path):
     for number, kind in enumerate(("zigbee_permit_join", "inventory", "diagnostics"), start=1):
         register.empfangen(_command(kind, f"c{number}"))
     assert [result["error"] for result in sent.results] == [
-        {"grund": "ungueltige_nutzlast", "text": "seconds fehlt."},
-        {"grund": "anlage_nicht_erreichbar", "text": "Anlage weg."},
-        {"grund": "intern", "text": cmd.INTERN_TEXT},
+        {"grund": "ungueltige_nutzlast", "details": {"feld": "seconds", "regel": "fehlt"}},
+        {"grund": "anlage_nicht_erreichbar"},
+        {"grund": "intern"},
     ]
+
+
+def test_kein_ergebnis_traegt_einen_text(tmp_path):
+    """Spec Stufe 3 S5 8: jeder Fehlerweg des Registers meldet nur Felder aus ERROR_FIELDS."""
+    def zu_gross(command_id, daten):
+        raise ValueError("zu gross")
+
+    def ungueltig(payload):
+        raise cmd.InvalidPayload("seconds", "fehlt")
+
+    def kaputt(payload):
+        raise RuntimeError("kaputt")
+
+    clock, sent = Clock(), Sent()
+    register = cmd.CommandRegister(tmp_path, sent, clock=clock, send_inventory=zu_gross, uebersetzen=lambda error: None)
+    register.register("diagnostics", lambda payload: cmd.Failed("erfunden"))
+    register.register("zigbee_permit_join", ungueltig)
+    register.register("zigbee_devices", kaputt)
+    register.register("inventory", lambda payload: cmd.Done({}, inventur={"x": 1}))
+    register.register("sign_off", lambda payload: cmd.Waiting(lambda: None, clock.now + 1))
+    register.register("hinweis", cmd.Hinweise(tmp_path).handler)
+    for number, (kind, payload) in enumerate([("diagnostics", {}), ("zigbee_permit_join", {}), ("zigbee_devices", {}),
+                                              ("inventory", {"stunden": 0}), ("sign_off", {}), ("hinweis", {}),
+                                              ("erfunden", {}), ("diagnostics", [])]):
+        register.empfangen(_command(kind, f"c{number}", payload))
+    clock.now += 2
+    register.pruefen()
+    fehler_ = [result["error"] for result in sent.results if not result["ok"]]
+    assert len(fehler_) == 8 and all(set(e) <= set(wire.ERROR_FIELDS) and fehler.gueltig(e.get("details"))
+                                     for e in fehler_)
+
+
+def test_ein_gespeichertes_ergebnis_von_vor_5c_geht_ohne_text_hoch(tmp_path):
+    (tmp_path / cmd.STORE_FILE).write_text(json.dumps(
+        [["c1", False, None, {"grund": "intern", "text": "Interner Fehler im Gerät."}]]))
+    sent = Sent()
+    cmd.CommandRegister(tmp_path, sent).empfangen(_command())
+    assert sent.results == [_fail("intern")]
 
 
 def test_a_waiting_command_finishes_later_and_runs_once(tmp_path):
@@ -155,7 +195,7 @@ def test_a_waiting_command_times_out_with_its_contract_reason(tmp_path):
     register.empfangen(_command("diagnostics", "c2"))
     clock.now += 61
     register.pruefen()
-    assert sent.results == [_fail(cmd.TIMEOUT_GRUND, cmd.TIMEOUT_TEXT, "c1"), _fail("intern", cmd.INTERN_TEXT, "c2")]
+    assert sent.results == [_fail(cmd.TIMEOUT_GRUND, None, "c1"), _fail("intern", None, "c2")]
 
 
 def test_inventory_data_goes_out_before_the_result(tmp_path):
@@ -188,7 +228,7 @@ def test_a_too_large_inventory_fails_intern(tmp_path):
     register = cmd.CommandRegister(tmp_path, sent, send_inventory=too_large)
     register.register("inventory", lambda payload: cmd.Done({}, inventur={"k": [1]}))
     register.empfangen(_command("inventory", payload={"stunden": 1}))
-    assert sent.results == [_fail("intern", cmd.INVENTUR_TEXT)]
+    assert sent.results == [_fail("intern")]
 
 
 def test_a_started_marker_is_on_disk_before_the_handler_runs(tmp_path):
@@ -220,9 +260,9 @@ def test_a_waiting_command_is_not_run_again_after_a_restart(tmp_path):
     restarted.empfangen(_command("sign_off"))  # nach hello erneut zugestellt
     restarted.empfangen(_command("sign_off"))  # weiteres Duplikat
     assert calls == [1]
-    assert sent.results == [_fail("intern", cmd.UNTERBROCHEN_TEXT)] * 2
+    assert sent.results == [_fail("intern")] * 2
     assert json.loads((tmp_path / cmd.STORE_FILE).read_text()) == [
-        ["c1", False, None, {"grund": "intern", "text": cmd.UNTERBROCHEN_TEXT}]]
+        ["c1", False, None, {"grund": "intern"}]]
 
 
 def test_a_repeatable_command_runs_again_after_a_restart_and_sends_its_result(tmp_path):
@@ -257,7 +297,7 @@ def test_a_started_command_of_a_kind_that_is_not_repeatable_still_ends_intern(tm
     register.register("diagnostics", lambda payload: calls.append(1) or cmd.Done({}))
     register.register("sign_off", lambda payload: calls.append(2) or cmd.Done({}), wiederholbar=True)
     register.empfangen(_command("diagnostics"))  # erneut zugestellt als Art ohne wiederholbar: intern
-    assert calls == [] and sent.results == [_fail("intern", cmd.UNTERBROCHEN_TEXT)]
+    assert calls == [] and sent.results == [_fail("intern")]
 
 
 def test_a_crash_between_handler_and_result_is_not_run_again(tmp_path):
@@ -266,7 +306,7 @@ def test_a_crash_between_handler_and_result_is_not_run_again(tmp_path):
     register = cmd.CommandRegister(tmp_path, sent)
     register.register("diagnostics", lambda payload: calls.append(1) or cmd.Done({}))
     register.empfangen(_command())
-    assert calls == [] and sent.results == [_fail("intern", cmd.UNTERBROCHEN_TEXT)]
+    assert calls == [] and sent.results == [_fail("intern")]
 
 
 def test_a_handler_crash_logs_kind_type_and_frame_only(tmp_path, caplog):
@@ -315,8 +355,9 @@ def test_a_hint_is_set_persisted_and_cleared(tmp_path):
     {"key": "k", "stufe": "info", "text": 5}, {"key": "k" * 65, "stufe": "info", "text": "x"},
 ])
 def test_invalid_hints_are_refused(tmp_path, payload):
-    with pytest.raises(cmd.InvalidPayload):
+    with pytest.raises(cmd.InvalidPayload) as error:
         cmd.Hinweise(tmp_path).handler(payload)
+    assert error.value.details["feld"] in ("key", "stufe", "text")
 
 
 def test_the_hint_command_through_the_register(tmp_path):

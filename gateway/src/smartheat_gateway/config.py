@@ -1,10 +1,12 @@
 """Konfiguration des Gateways als Dokument vom Server (Spec 5b 3.1/5.2, Plan D2): die Laufzeit-Konfiguration liest
 smartheat_runtime.dokument_config, die Bindung (Treiber, Thermostat, Raumfuehler) dieses Modul. Dazu die Pruefung der
 Treiberparameter fuer config_check, der Startwert des Soll-Speichers und die Abmelde-Markierung (sign_off)."""
+import logging
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+from smartheat_device import fehler
 from smartheat_device.documents import im_bedienbereich
 from smartheat_gateway.drivers import registry
 from smartheat_gateway.drivers.registry import driver_ids
@@ -13,11 +15,11 @@ from smartheat_runtime import dokument_config
 from smartheat_runtime.dokument_config import ConfigError
 from smartheat_runtime.runtime_config import RuntimeConfig
 
+logger = logging.getLogger(__name__)
+
 IEEE = re.compile(r"0x[0-9a-f]{16}")
 ROOM_SENSOR_REF = re.compile(r"zigbee:0x[0-9a-f]{16}:(temperature|local_temperature)|treiber:room_temperature")
 DEFAULT_RAUM_SOLL = 20.0
-DRIVER_UNKNOWN_TEXT = "Diese Anlagenanbindung (Treiber) kennt das Gateway nicht."
-DRIVER_PARAMETER_TEXT = "Die Treiberparameter passen nicht zu dieser Anlagenanbindung ({art})."
 
 
 @dataclass(frozen=True)
@@ -57,18 +59,20 @@ def parse_dokument(konfiguration, paths: Paths,
     return runtime, bindung(konfiguration)
 
 
-def treiber_pruefen(paths: Paths, bindung_inhalt) -> str | None:
+def treiber_pruefen(paths: Paths, bindung_inhalt) -> dict | None:
     """Rueckruf fuer config_check (DeviceHost.treiber_pruefen): der Treiber nimmt die Parameter an. Ohne Schreiben
-    (writer=False, die Simulation legt keine Anlage an), ohne Netz; der Text nennt nur die Fehlerart (Regel 6)."""
+    (writer=False, die Simulation legt keine Anlage an), ohne Netz; details nennen nur das Feld, die Fehlerart steht
+    im Log (Regel 6)."""
     treiber = bindung_inhalt.get("treiber") if isinstance(bindung_inhalt, Mapping) else None
     driver_id = treiber.get("id") if isinstance(treiber, Mapping) else None
     if driver_id not in registry.DRIVERS:
-        return DRIVER_UNKNOWN_TEXT
+        return fehler.details("id", "unbekannt")
     parameter = treiber.get("parameter") if isinstance(treiber, Mapping) else None
     try:
         registry.create(driver_id, dict(parameter or {}), paths, writer=False)
     except (KeyError, TypeError, ValueError) as error:
-        return DRIVER_PARAMETER_TEXT.format(art=type(error).__name__)
+        logger.info("Treiberparameter abgelehnt (%s)", type(error).__name__)
+        return fehler.details("parameter", "ungueltig")
     return None
 
 

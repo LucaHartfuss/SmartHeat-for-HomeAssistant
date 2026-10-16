@@ -44,10 +44,12 @@ def test_parse_gives_the_runtime_config_without_transport(tmp_path):
 def test_the_driver_check_asks_the_driver_without_creating_a_plant(tmp_path):
     paths = Paths(tmp_path)
     assert config.treiber_pruefen(paths, konfiguration()["bindung"]) is None
-    assert "kennt das Gateway nicht" in config.treiber_pruefen(paths, {"treiber": {"id": "x", "parameter": {}}})
-    assert config.treiber_pruefen(paths, {"treiber": {"id": "vicare_cloud", "parameter": {"installation_id": "x"}}})
-    assert config.treiber_pruefen(paths, {"treiber": {"id": "simulation", "parameter": {"lever_set": "erfunden"}}})
-    assert config.treiber_pruefen(paths, {"treiber": "kaputt"}) is not None
+    assert config.treiber_pruefen(paths, {"treiber": {"id": "x", "parameter": {}}}) == {"feld": "id", "regel": "unbekannt"}
+    assert config.treiber_pruefen(paths, {"treiber": {"id": "vicare_cloud", "parameter": {"installation_id": "x"}}}) == {
+        "feld": "parameter", "regel": "ungueltig"}
+    assert config.treiber_pruefen(paths, {"treiber": {"id": "simulation", "parameter": {"lever_set": "erfunden"}}}) == {
+        "feld": "parameter", "regel": "ungueltig"}
+    assert config.treiber_pruefen(paths, {"treiber": "kaputt"}) == {"feld": "id", "regel": "unbekannt"}
     assert not paths.sim_dir.exists()
 
 
@@ -86,7 +88,7 @@ def test_the_empty_configuration_and_the_test_configuration_are_accepted_by_the_
     assert (ergebnis.ok, ergebnis.uebernommen) == (True, True) and dokument_config.eingerichtet(
         store.inhalt("konfiguration"))
     ergebnis = store.empfangen("konfiguration", {"schema": wire.SCHEMA, "version": 2, **leer()})
-    assert (ergebnis.ok, ergebnis.uebernommen) == (True, True), ergebnis.text
+    assert (ergebnis.ok, ergebnis.uebernommen) == (True, True), ergebnis.details
     assert not store.eingerichtet() and not dokument_config.eingerichtet(store.inhalt("konfiguration"))
 
 

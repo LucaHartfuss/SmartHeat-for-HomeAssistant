@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from smartheat_core import config_check
-from smartheat_device import bootstrap, commands, identity, inventory, wire, wish
+from smartheat_device import bootstrap, commands, fehler, identity, inventory, wire, wish
 from smartheat_device.documents import BEDIENUNG, KONFIGURATION, DocumentStore
 from smartheat_device.host import Anzeige, DeviceHost
 from smartheat_device.laufzeit import RuntimeChannel
@@ -41,9 +41,9 @@ MELDUNGEN_MIN_SECONDS = 10
 MELDUNGEN_JE_NACHRICHT = 50
 SERVER_DOWN_SECONDS = 300
 PRUEFUNG_WIEDERHOLEN_SECONDS = 30
-CLAIM_FAILED_TEXT = "Der Server war nicht erreichbar, bitte später erneut."
-CLAIM_STATE_TEXT = "Unbekannter Übernahmestand."
-CLAIMED_TEXT = "Das Gerät ist übernommen; ein neuer Code ist erst nach dem Entfernen möglich."
+#: Lokaler Hinweis bei einer abgelehnten Konfiguration (Spec Stufe 3 S5 6.3, Entscheidung E2 A): den Text der Ablehnung
+#: bildet der Server, das Geraet nennt nur den Code.
+ABLEHNUNG_ANZEIGE = "Die Einrichtung wurde abgelehnt (Code {grund}). Die Begründung zeigt der Einrichtungsassistent."
 #: Groesster Betrag eines Ursprungswerts, wie der Server ihn annimmt (geraete/device_checks.URSPRUNG_WERT_MAX).
 URSPRUNG_WERT_MAX = 1e12
 _RUNNING = ("regelt", "abo_inaktiv")
@@ -191,14 +191,16 @@ class Device:
         self._inbox.put(("meldung", {"key": key, "kategorie": category(key), "kritisch": kritisch, "text": text,
                                      "offen": offen, "ts": _iso(self._wall())}))
 
-    def ergebnis_software(self, version: str, ok: bool, grund: str | None = None, text: str = "") -> bool:
+    def ergebnis_software(self, version: str, ok: bool, grund: str | None = None) -> bool:
         """Ergebnis eines Updates (Spec 5.3: up/result mit dokument software, version = Software-Version). Nur nach
-        hello; False = nicht gesendet (der Host versucht es spaeter erneut). Der Grund muss in SOFTWARE_ERRORS stehen."""
+        hello; False = nicht gesendet (der Host versucht es spaeter erneut). Der Grund muss in SOFTWARE_ERRORS stehen;
+        den Text bildet der Server."""
         if not ok and grund not in wire.SOFTWARE_ERRORS:
             raise ValueError(f"Grund {grund!r} steht nicht in SOFTWARE_ERRORS")
         body = {"schema": wire.SCHEMA, "dokument": wire.DOKUMENT_SOFTWARE, "version": version, "ok": ok}
         if not ok:
-            body["error"] = {"grund": grund, "text": text}
+            assert grund is not None
+            body["error"] = fehler.body(grund, None)
         return self._publish_nach_hello("up/result", body) is not None
 
     def laufzeit_kanal(self, worker: RegulationWorker) -> RuntimeChannel:
@@ -237,7 +239,8 @@ class Device:
             device_state=bootstrap.device_state(self._dir), eingerichtet=self.documents.eingerichtet(),
             hinweise=self.hinweise.alle(),
             meldungen=tuple({"key": key, "text": text} for key, text in sorted(self._eigene.items())),
-            konfiguration_abgelehnt=ablehnung[2] if ablehnung is not None else None)
+            konfiguration_abgelehnt=(ABLEHNUNG_ANZEIGE.format(grund=ablehnung[1]) if ablehnung is not None
+                                     else None))
 
     # --- Geraete-Thread ---
 
@@ -482,7 +485,7 @@ class Device:
         F-3)."""
         state = payload.get("device_state")
         if state != "uebernommen":
-            return commands.Failed("ungueltige_nutzlast", CLAIM_STATE_TEXT)
+            return commands.Failed("ungueltige_nutzlast", fehler.details("device_state", "unbekannt"))
         bootstrap.device_state_speichern(self._dir, state)
         return commands.Done({})
 
@@ -495,10 +498,10 @@ class Device:
             antwort = self._client_for(kandidat).register(**self._register_args())
         except bootstrap.BootstrapError as error:
             logger.warning("Neuer Uebernahme-Code nicht gemeldet (%s)", error)
-            return commands.Failed("intern", CLAIM_FAILED_TEXT)
+            return commands.Failed("intern")
         bootstrap.device_state_speichern(self._dir, antwort.device_state)
         if antwort.device_state != "nicht_uebernommen":
-            return commands.Failed("bereits_uebernommen", CLAIMED_TEXT)
+            return commands.Failed("bereits_uebernommen")
         self.identity = identity.save_claim_code(self._dir, self.identity, code)
         return commands.Done({})
 

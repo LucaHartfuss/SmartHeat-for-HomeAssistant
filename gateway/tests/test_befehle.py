@@ -11,7 +11,7 @@ from fakes import FakeBus, SofortHintergrund
 from world import GatewayWorld
 
 from smartheat_core import dateien
-from smartheat_device import wire
+from smartheat_device import fehler, wire
 from smartheat_device.commands import CommandRegister, Done, Failed, Waiting
 from smartheat_gateway import befehle
 from smartheat_gateway.drivers.base import DriverError
@@ -62,6 +62,36 @@ def _run(register, kind, payload, command_id="c1"):
     register.empfangen({"schema": 1, "command_id": command_id, "kind": kind, "payload": payload,
                         "expires_at": "2027-01-01T00:00:00+00:00"})
     return register.sent[-1] if register.sent else None
+
+
+@pytest.mark.parametrize("kind", sorted(befehle.HANDLERS))
+def test_kein_handler_meldet_einen_text(ctx, register, kind):
+    """Spec Stufe 3 S5 8: jeder Fehler eines Gateway-Befehls traegt nur grund und details aus dem Vertrag."""
+    ctx.umgebung.konf = None  # nicht eingerichtet: inventory stunden >= 1 und sign_off scheitern
+    nutzlasten = [{}, {"seconds": -1}, {"stunden": 0}, {"stunden": 1}, {"stunden": 0, "filter": {"treiber": "erfunden"}},
+                  {"phase": "x"}, {"phase": "begin", "driver_id": "simulation"}]
+    for number, payload in enumerate(nutzlasten):
+        antwort = _run(register, kind, payload, f"c{number}")
+        if antwort is not None and antwort["command_id"] == f"c{number}" and antwort["ok"] is False:
+            assert set(antwort["error"]) <= set(wire.ERROR_FIELDS), antwort
+            assert fehler.gueltig(antwort["error"].get("details")), antwort
+
+
+def test_fehlende_nutzlast_nennt_feld_und_bereich(register):
+    assert _run(register, "zigbee_permit_join", {"seconds": 999})["error"] == {
+        "grund": "ungueltige_nutzlast", "details": {"feld": "seconds", "regel": "bereich", "min": 1, "max": 254}}
+
+
+def test_unbekannte_phase_und_fehlender_treiber_nennen_feld_und_regel(register):
+    assert _run(register, "driver_login", {"phase": "x", "driver_id": "simulation"})["error"] == {
+        "grund": "ungueltige_nutzlast", "details": {"feld": "phase", "regel": "unbekannt"}}
+    fehlt = {"grund": "ungueltige_nutzlast", "details": {"feld": "treiber", "regel": "fehlt"}}
+    ungueltig = {"grund": "ungueltige_nutzlast", "details": {"feld": "treiber", "regel": "ungueltig"}}
+    assert _run(register, "inventory", {"stunden": 0}, "c2")["error"] == fehlt
+    assert _run(register, "inventory", {"stunden": 0, "filter": {}}, "c3")["error"] == fehlt
+    assert _run(register, "inventory", {"stunden": 0, "filter": "simulation"}, "c4")["error"] == ungueltig
+    assert _run(register, "inventory", {"stunden": 0, "filter": {"treiber": 5}}, "c5")["error"] == ungueltig
+    assert _run(register, "inventory", {"stunden": 0, "filter": {"treiber": "simulation", "x": 1}}, "c6")["error"] == ungueltig
 
 
 def test_the_gateway_registers_exactly_its_commands(register):
@@ -155,11 +185,11 @@ def test_inventur_stunden_0_unbekannter_treiber(register):
 
 def test_inventur_stunden_0_mit_treiberfehlern_nutzt_die_vertragsgruende(monkeypatch, register):
     def abgelaufen(self):
-        raise DriverError("nicht_angemeldet", "Die Anmeldung ist abgelaufen.")
+        raise DriverError("nicht_angemeldet")
 
     monkeypatch.setattr("smartheat_gateway.drivers.simulation.SimulationDriver.erkennung", abgelaufen)
     antwort = _run(register, "inventory", {"stunden": 0, "filter": {"treiber": "simulation"}})
-    assert antwort["error"] == {"grund": "nicht_angemeldet", "text": "Die Anmeldung ist abgelaufen."}
+    assert antwort["error"] == {"grund": "nicht_angemeldet"}
 
     def quota(self):
         raise QuotaExhausted("x")
@@ -236,7 +266,7 @@ def test_sign_off_with_a_failed_restore_reports_it(ctx):
 
 def test_sign_off_of_a_device_that_is_not_set_up(ctx):
     ctx.umgebung.konf = {"anlage": None}
-    assert befehle.sign_off(ctx, {}) == Failed("nicht_eingerichtet", befehle.NOT_SET_UP_TEXT)
+    assert befehle.sign_off(ctx, {}) == Failed("nicht_eingerichtet")
     assert ctx.umgebung.restarts == []
 
 
@@ -385,7 +415,7 @@ def _zeitablauf(ctx, clock, outcome, sekunden: float) -> None:
     clock.advance(1)
     result = outcome.check()
     assert isinstance(result, Failed) and result.grund == "anlage_nicht_erreichbar"
-    assert result.text == befehle.DRIVER_TIMEOUT_TEXT and result.grund in wire.command_errors("inventory")
+    assert result == Failed("anlage_nicht_erreichbar") and result.grund in wire.command_errors("inventory")
 
 
 def test_eine_haengende_erkennung_endet_nach_120_s_mit_dem_zeitablauf(ctx, clock):
@@ -476,7 +506,7 @@ def test_an_inventory_without_any_sample_fails_at_the_deadline_with_a_contract_r
     assert result.grund == "anlage_nicht_erreichbar" and result.grund in wire.command_errors("inventory")
     assert json.loads(ctx.paths.inventur.read_text())["samples"] == []
     for secret in ("7637415", "2012345", "access_token", "refresh_token", "Bearer"):
-        assert secret not in _eigene_logs(caplog) and secret not in result.text
+        assert secret not in _eigene_logs(caplog) and secret not in json.dumps(result.details or {})
 
 
 def test_an_inventory_whose_samples_are_all_rate_limited_reports_the_quota_at_the_deadline(vicare_kontext):
@@ -608,7 +638,7 @@ def test_a_blocking_login_does_not_stall_the_device_thread_and_keeps_its_contrac
     world = regelnde_welt
 
     def abgelehnt(self, params):
-        raise DriverError("login_fehlgeschlagen", "Der Anmelde-Code ist abgelaufen.")
+        raise DriverError("login_fehlgeschlagen")
 
     gestartet, frei = _blockieren(
         monkeypatch, "smartheat_gateway.drivers.vicare_cloud.driver.ViCareCloudDriver.login_finish", abgelehnt)
@@ -618,7 +648,7 @@ def test_a_blocking_login_does_not_stall_the_device_thread_and_keeps_its_contrac
     frei.set()
     ergebnis = _bis(world, lambda: _ergebnisse(world, command_id="c-login"))[-1]
     assert ergebnis["ok"] is False
-    assert ergebnis["error"] == {"grund": "login_fehlgeschlagen", "text": "Der Anmelde-Code ist abgelaufen."}
+    assert ergebnis["error"] == {"grund": "login_fehlgeschlagen"}
 
 
 def test_a_blocking_inventory_sample_does_not_stall_the_device_thread(regelnde_welt, monkeypatch):

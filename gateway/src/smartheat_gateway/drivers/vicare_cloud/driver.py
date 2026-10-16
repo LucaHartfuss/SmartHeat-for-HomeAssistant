@@ -26,13 +26,7 @@ logger = logging.getLogger(__name__)
 
 QUOTA = QuotaSpec(limit=1450, hard_limit=1200, window_seconds=86400)
 FOREIGN_PROGRAMS = ("comfort", "eco")
-NOT_LOGGED_IN_TEXT = "Die Anmeldung bei Viessmann ist abgelaufen. Bitte im SmartHeat-Portal die Anmeldung erneuern."
-UNREACHABLE_TEXT = "Die Viessmann-Cloud ist nicht erreichbar."
-READ_REJECTED_TEXT = "Die Viessmann-Cloud hat die Abfrage abgelehnt."
 QUOTA_TEXT = "Das Abfragekontingent bei Viessmann ist erschöpft."
-LOGIN_TIMEOUT_TEXT = "Die Anmeldung wurde nicht rechtzeitig abgeschlossen. Bitte noch einmal anmelden."
-LOGIN_INCOMPLETE_TEXT = "Die Anmeldung konnte nicht vorbereitet werden. Bitte noch einmal anmelden."
-LOGIN_UNREACHABLE_TEXT = "Die Anmeldung bei Viessmann ist gerade nicht erreichbar. Bitte später noch einmal versuchen."
 # Rollen, die signals() immer meldet (Pflichtrollen des Hebelsatzes ohne den Raum); die uebrigen nur, wenn vorhanden.
 ALWAYS_SIGNALS = ("curve_current", "level_current", "shift_current", "mode_select", "outdoor_temp")
 CURVE_LEVERS = ("curve", "level")
@@ -115,14 +109,14 @@ class ViCareCloudDriver:
         """ViCare-Fehler -> Vertragsgrund (smartheat_device/wire.py) bzw. QuotaExhausted (ein Befehl des Geraetekerns
         meldet kontingent_erschoepft, die Laufzeit behandelt es als Kontingentfehler). Ein abgelehntes Kommando ist ein gewoehnlicher Schreibfehler."""
         if isinstance(error, vicare.NotAuthenticated):
-            return DriverError("nicht_angemeldet", NOT_LOGGED_IN_TEXT)
+            return DriverError("nicht_angemeldet")
         if isinstance(error, vicare.RateLimited):
             return QuotaExhausted(QUOTA_TEXT)
         if isinstance(error, vicare.CommandRejected):
             return RuntimeError(error.text)
         if isinstance(error, vicare.ReadFailed):
-            return DriverError("anlage_nicht_erreichbar", READ_REJECTED_TEXT)
-        return DriverError("anlage_nicht_erreichbar", UNREACHABLE_TEXT)  # Unreachable und Unbekanntes
+            return DriverError("anlage_nicht_erreichbar")
+        return DriverError("anlage_nicht_erreichbar")  # Unreachable und Unbekanntes
 
     def _execute(self, feature: str, command: str, params: dict) -> None:
         try:
@@ -218,7 +212,7 @@ class ViCareCloudDriver:
         if self._guard.exhausted():
             raise QuotaExhausted(QUOTA_TEXT)
         if self._tokens.expired() or not self._tokens.logged_in():
-            raise DriverError("nicht_angemeldet", NOT_LOGGED_IN_TEXT)
+            raise DriverError("nicht_angemeldet")
         raise ValueError("Treiber-Cache veraltet")
 
     @staticmethod
@@ -344,22 +338,22 @@ class ViCareCloudDriver:
     def login_begin(self, params: dict) -> dict:
         client_id, redirect_uri = params.get("client_id"), params.get("redirect_uri")
         if not (isinstance(client_id, str) and client_id and isinstance(redirect_uri, str) and redirect_uri):
-            raise DriverError("login_fehlgeschlagen", LOGIN_INCOMPLETE_TEXT)
+            raise DriverError("login_fehlgeschlagen")
         challenge = self._tokens.begin(client_id, redirect_uri)
         return {"code_challenge": challenge, "code_challenge_method": "S256"}  # nie Verifier oder Token (Ergebnis)
 
     def login_finish(self, params: dict) -> None:
         code, redirect_uri = params.get("code"), params.get("redirect_uri")
         if not (isinstance(code, str) and code and isinstance(redirect_uri, str) and redirect_uri):
-            raise DriverError("login_fehlgeschlagen", LOGIN_INCOMPLETE_TEXT)
+            raise DriverError("login_fehlgeschlagen")
         try:
             self._tokens.finish(code, redirect_uri)
         except oauth.LoginRejected as error:
-            raise DriverError("login_fehlgeschlagen", error.text) from error
+            raise DriverError("login_fehlgeschlagen") from error
         except oauth.NotLoggedIn as error:
-            raise DriverError("login_fehlgeschlagen", LOGIN_TIMEOUT_TEXT) from error
+            raise DriverError("login_fehlgeschlagen") from error
         except oauth.TokenUnavailable as error:
-            raise DriverError("anlage_nicht_erreichbar", LOGIN_UNREACHABLE_TEXT) from error
+            raise DriverError("anlage_nicht_erreichbar") from error
 
     def _heating_devices(self) -> list[dict]:
         try:
@@ -400,7 +394,7 @@ class ViCareCloudDriver:
         else:
             devices = self._heating_devices()
             if not devices:
-                raise DriverError("anlage_nicht_erreichbar", "Viessmann meldet kein Heizgerät.")
+                raise DriverError("anlage_nicht_erreichbar")
             ids = (devices[0]["installation_id"], devices[0]["gateway_serial"], devices[0]["device_id"])
         cache, _ = self._extract(self._features(*ids))
         values = {role: value for role, value in cache.items() if isinstance(value, float)}

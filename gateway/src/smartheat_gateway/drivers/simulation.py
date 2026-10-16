@@ -271,15 +271,15 @@ class SimulationDriver:
         return self._fresh()[role]
 
     def login_begin(self, params: dict) -> dict:
-        raise DriverError("login_nicht_noetig", "Die Simulation braucht keine Anmeldung.")
+        raise DriverError("login_nicht_noetig")
 
     def login_finish(self, params: dict) -> None:
-        raise DriverError("login_nicht_noetig", "Die Simulation braucht keine Anmeldung.")
+        raise DriverError("login_nicht_noetig")
 
     def erkennung(self) -> dict:
         """Inventur stunden 0 (Spec Stufe 3 S5 5.1): zwei Heizkreise als Features, einer mit schreibbarer Heizkurve."""
         if self._control().get("token_expired"):
-            raise DriverError("nicht_angemeldet", "Die Anmeldung beim Hersteller ist abgelaufen.")
+            raise DriverError("nicht_angemeldet")
         plant = self._plant()
         lever_set = self._p["lever_set"]
         hebel = {lever: {"wert": self._visible(plant, lever), "min": PLANT_RANGES[lever][0],
