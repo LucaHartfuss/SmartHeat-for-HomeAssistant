@@ -10,7 +10,7 @@ from smartheat_runtime.roles import LEVER_ROLES
 
 __all__ = [
     "CACHE_MAX_POLLS", "KIND_CLOUD", "KIND_LOCAL", "LEVER_ROLES", "LOGIN_OAUTH", "LOGIN_PASSWORD", "Driver",
-    "DriverError",
+    "DRIVER_ERROR_TEXTE", "DriverError",
 ]
 
 KIND_CLOUD = "cloud"
@@ -20,13 +20,26 @@ LOGIN_PASSWORD = "passwort_verschluesselt"
 CACHE_MAX_POLLS = 3
 
 
+#: Lokaler Text je Vertragsgrund fuer die Meldung einer DriverError (Log, Meldungen des Geraets, z. B. ein Schreibfehler
+#: bei abgelaufener Anmeldung). Er geht nie an den Server: dorthin gehen nur grund und details (Spec Stufe 3 S5 6.2/6.3).
+DRIVER_ERROR_TEXTE = {
+    "nicht_angemeldet": "Die Anmeldung beim Hersteller ist abgelaufen. Bitte im SmartHeat-Portal die Anmeldung erneuern.",
+    "anlage_nicht_erreichbar": "Die Anlage oder die Hersteller-Cloud ist nicht erreichbar.",
+    "login_fehlgeschlagen": "Die Anmeldung beim Hersteller ist fehlgeschlagen. Bitte noch einmal anmelden.",
+    "login_nicht_noetig": "Für diesen Zugang ist keine Anmeldung nötig.",
+    "treiber_unbekannt": "Dieser Hersteller-Zugang wird vom Gateway nicht unterstützt.",
+}
+DRIVER_ERROR_TEXT_FALLBACK = "Der Hersteller-Zugang meldet einen Fehler."
+
+
 class DriverError(RuntimeError):
     """Fehler mit Vertragsgrund (smartheat_device/wire.py; gemeldet vom Geraetekern ueber die Befehle driver_login und
     inventory): nicht_angemeldet, anlage_nicht_erreichbar, login_fehlgeschlagen, login_nicht_noetig,
-    treiber_unbekannt. Kein Text: den bildet der Server (Spec Stufe 3 S5 6.2); die Meldung ist der Grund."""
+    treiber_unbekannt. Zum Server gehen nur grund und details (den Text bildet der Server, Spec Stufe 3 S5 6.2); die
+    Meldung der Ausnahme ist ein lokaler Text (DRIVER_ERROR_TEXTE) fuer Log und lokale Meldungen (6.3)."""
 
     def __init__(self, grund: str, details: dict | None = None) -> None:
-        super().__init__(grund)
+        super().__init__(DRIVER_ERROR_TEXTE.get(grund, DRIVER_ERROR_TEXT_FALLBACK))
         self.grund = grund
         self.details = details
 

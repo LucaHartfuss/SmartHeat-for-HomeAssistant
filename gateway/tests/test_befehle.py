@@ -82,6 +82,18 @@ def test_fehlende_nutzlast_nennt_feld_und_bereich(register):
         "grund": "ungueltige_nutzlast", "details": {"feld": "seconds", "regel": "bereich", "min": 1, "max": 254}}
 
 
+def test_unbekannte_phase_und_fehlender_treiber_nennen_feld_und_regel(register):
+    assert _run(register, "driver_login", {"phase": "x", "driver_id": "simulation"})["error"] == {
+        "grund": "ungueltige_nutzlast", "details": {"feld": "phase", "regel": "unbekannt"}}
+    fehlt = {"grund": "ungueltige_nutzlast", "details": {"feld": "treiber", "regel": "fehlt"}}
+    ungueltig = {"grund": "ungueltige_nutzlast", "details": {"feld": "treiber", "regel": "ungueltig"}}
+    assert _run(register, "inventory", {"stunden": 0}, "c2")["error"] == fehlt
+    assert _run(register, "inventory", {"stunden": 0, "filter": {}}, "c3")["error"] == fehlt
+    assert _run(register, "inventory", {"stunden": 0, "filter": "simulation"}, "c4")["error"] == ungueltig
+    assert _run(register, "inventory", {"stunden": 0, "filter": {"treiber": 5}}, "c5")["error"] == ungueltig
+    assert _run(register, "inventory", {"stunden": 0, "filter": {"treiber": "simulation", "x": 1}}, "c6")["error"] == ungueltig
+
+
 def test_the_gateway_registers_exactly_its_commands(register):
     assert set(befehle.HANDLERS) == {"zigbee_permit_join", "zigbee_devices", "driver_login",
                                      "inventory", "diagnostics", "sign_off"}

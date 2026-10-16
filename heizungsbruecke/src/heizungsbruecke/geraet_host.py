@@ -229,7 +229,7 @@ class HaDeviceHost:
         der Befehl mit ha_nicht_erreichbar. Nur die Fehlerart ins Log, nie Inhalte (Regel 6)."""
         filter_ = payload.get("filter")
         if not isinstance(filter_, dict):
-            return Failed("ungueltige_nutzlast", fehler.details("filter", "fehlt"))
+            return Failed("ungueltige_nutzlast", fehler.details("filter", "fehlt" if filter_ is None else "ungueltig"))
         if (details := inventur.filter_pruefen(filter_)) is not None:
             return Failed("ungueltige_nutzlast", details)
         future = self.hintergrund.submit(lambda: inventur.inventur(self._ha, filter_))

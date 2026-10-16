@@ -166,6 +166,13 @@ def test_inventory_needs_a_filter(tmp_path, monkeypatch):
     assert outcome == Failed("ungueltige_nutzlast", {"feld": "filter", "regel": "fehlt"})
 
 
+@pytest.mark.parametrize("filter_", ["climate", ["climate"], 5])
+def test_inventory_with_a_filter_that_is_no_object_is_invalid_not_missing(tmp_path, monkeypatch, filter_):
+    host, _, _ = _host(tmp_path, monkeypatch)
+    outcome = _register(host, tmp_path)._handlers["inventory"]({"stunden": 0, "filter": filter_})
+    assert outcome == Failed("ungueltige_nutzlast", {"feld": "filter", "regel": "ungueltig"})
+
+
 @pytest.mark.parametrize("filter_", [
     {"plattformen": [["liste"]]}, {"domaenen": "climate"}, {"dienste": [1]}, {"geraeteklassen": [["sensor"]]},
     {"geraeteklassen": [{"a": 1}, ["sensor", "x"]]}, {"geraeteklassen": "sensor"}])

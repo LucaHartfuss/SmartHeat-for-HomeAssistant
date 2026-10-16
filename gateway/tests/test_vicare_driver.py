@@ -8,6 +8,7 @@ from fake_vicare.server import GOOD_CODE, FakeVicare
 from test_vicare_capabilities import GARBAGE, good_features, number
 from test_vicare_capabilities import feature as feature_dict
 
+from smartheat_core.pipeline import DeviceWriteError
 from smartheat_device import inventory, wire
 from smartheat_gateway import safety_warnings
 from smartheat_gateway.drivers.base import DriverError
@@ -16,6 +17,7 @@ from smartheat_gateway.drivers.vicare_cloud import oauth
 from smartheat_gateway.drivers.vicare_cloud.driver import ViCareCloudDriver
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.quota import QuotaExhausted
+from smartheat_runtime import delivery
 
 PARAMETER = {"installation_id": 2012345, "gateway_serial": "7637415000000001", "device_id": "0", "heizkreis": 0,
              "poll_seconds": 300.0}
@@ -160,6 +162,18 @@ def test_an_expired_login_is_not_logged_in_and_writes_nothing(env):
     with pytest.raises(DriverError) as error:
         driver.write("curve", 1.2)
     assert error.value.grund == "nicht_angemeldet" and driver.physical_writes == 0 and server.commands == []
+    # Lokale Meldung (Spec Stufe 3 S5 6.3): der Kunde liest einen deutschen Satz, nie den nackten Code.
+    schreibfehler = DeviceWriteError("curve", "treiber:curve", error.value)
+    text = delivery.notification_text(delivery.NOTIFY_DATENFEHLER_WRITE, (str(schreibfehler),), {})
+    assert "Anmeldung" in text and "erneuern" in text and "nicht_angemeldet" not in text
+
+
+@pytest.mark.parametrize("grund", ["nicht_angemeldet", "anlage_nicht_erreichbar", "login_fehlgeschlagen",
+                                   "login_nicht_noetig", "treiber_unbekannt", "erfunden"])
+def test_a_driver_error_carries_a_local_text_and_the_code_for_the_server(grund):
+    error = DriverError(grund, {"feld": "x"})
+    assert error.grund == grund and error.details == {"feld": "x"}
+    assert str(error) != grund and " " in str(error)  # ein Satz, nie der Code
 
 
 def test_a_feature_removed_by_a_firmware_update_makes_read_raise_not_keyerror(env):

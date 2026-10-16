@@ -1,12 +1,11 @@
 """Befehle des Gateways (Spec 5b 3.4; Handler aus dem Agenten bis 0.5.0) fuer das Befehlsregister des Geraetekerns
 (smartheat_device.commands): ein Handler bekommt Kontext und Nutzlast und liefert Done, Failed oder Waiting; Einmal-
 Ausfuehrung, Gruende-Pruefung und Versand macht das Register. Gateway-Befehle: zigbee_permit_join, zigbee_devices,
-driver_login, inventory (stunden 0: Erkennung des Treibers, sonst Messreihe des Treibers aus der
-Konfiguration; Ergebnis jeweils als up/inventory), diagnostics und
-sign_off (Markierung, dann startet die Laufzeit als "abgemeldet" neu und setzt die Anlage zurueck). hinweis und
-new_claim_code kann jedes Geraet (Geraetekern). Fehler als Grund und details, nie Texte oder Geheimnisse
-(Spec Stufe 3 S5 6.2); DriverError und
-QuotaExhausted uebersetzt fehler_uebersetzen in Vertragsgruende.
+driver_login, inventory (stunden 0: Erkennung des Treibers, sonst Messreihe des Treibers aus der Konfiguration;
+Ergebnis jeweils als up/inventory), diagnostics und sign_off (Markierung, dann startet die Laufzeit als "abgemeldet"
+neu und setzt die Anlage zurueck). hinweis und new_claim_code kann jedes Geraet (Geraetekern). Fehler als Grund und
+details, nie Texte oder Geheimnisse (Spec Stufe 3 S5 6.2); DriverError und QuotaExhausted uebersetzt
+fehler_uebersetzen in Vertragsgruende.
 
 Blockierende Treiber-Aufrufe (Cloud-HTTP: Anmeldung, Erkennung, Inventur-Probe; mit Token-Erneuerung und 401-Wiederholung
 bis 80 s) laufen im Hintergrund (ein eigener Daemon-Thread je Kontext), nicht im Geraete-Thread: der Handler liefert
@@ -193,7 +192,8 @@ def _erkennung(ctx: Kontext, payload: dict) -> Outcome:
     treiber = filter_.get("treiber") if isinstance(filter_, dict) and set(filter_) == set(
         wire.INVENTUR_FILTER_GATEWAY_FIELDS) else None
     if not isinstance(treiber, str):
-        raise InvalidPayload("treiber", "fehlt")
+        fehlt = filter_ is None or (isinstance(filter_, dict) and "treiber" not in filter_)
+        raise InvalidPayload("treiber", "fehlt" if fehlt else "ungueltig")
     driver = _driver(ctx, treiber)
     return _im_hintergrund(ctx, "inventory", lambda: Done({}, inventur=driver.erkennung()), frist_s=ERKENNUNG_SECONDS)
 
