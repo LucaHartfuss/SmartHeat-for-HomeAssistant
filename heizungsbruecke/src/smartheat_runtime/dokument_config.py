@@ -4,15 +4,17 @@ Intervalle aus dem Konfigurationsdokument statt aus Optionen. Transport und Zuga
 MQTT-Verbindung), der Abo-Status steht im Dokument (Plan S1, Praezisierung abo; die 30-Tage-Frist bleibt lokal).
 Die Anlage bindet den lokalen Zustand (A4-08): setup_id = Anlage, eine andere Anlage beginnt mit leerem Zustand, eine
 neue Konfiguration derselben Anlage nicht. Feldnamen = smartheat_device.wire.KONFIGURATION_FIELDS (die Laufzeit
-importiert den Geraetekern nicht; ein Test haelt beide gleich). Die Bindung (Treiber, Thermostat) liest der Host."""
+importiert den Geraetekern nicht; ein Test haelt beide gleich). Die Bindung (Treiber, Thermostat) liest der Host.
+Dazu ConfigError, Bindungsbeschreibung und Sicherheitswerte (bis Stufe 3 S5 in options.py)."""
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from smartheat_core import dateien, rastung
+from smartheat_core.binding import BindingDescription
+from smartheat_core.bindungsparameter import beschreibung as _beschreibung
 from smartheat_core.levers import LEVER_SETS
-from smartheat_core.safety import resolve_local_safety
-from smartheat_runtime import entitlement, options
-from smartheat_runtime.options import ConfigError
+from smartheat_core.safety import LocalSafety, resolve_local_safety
+from smartheat_runtime import entitlement
 from smartheat_runtime.runtime_config import BootInfo, RuntimeConfig
 from smartheat_runtime.windows import validate_daily_trigger_time
 
@@ -23,6 +25,43 @@ FELDER = ("anlage", "profil", "hebelsatz", "verteilsystem", "bindung", "raumfueh
 LAUFZEIT_FELDER = ("anlage", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo", "intervalle",
                    "bindungsparameter")
 ABO = {"aktiv": entitlement.ACTIVE, "inaktiv": entitlement.INACTIVE}
+# Lokale Checks laufen eventgetrieben; dieser Takt gilt nur noch fuer den Watchdog-Fallback
+# bei getrennter WS-Verbindung (und fuer grace_check/health).
+DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS = 300
+DEFAULT_TELEMETRY_INTERVAL_SECONDS = 300
+RECONFIGURE_HINT = "bitte SmartHeat neu konfigurieren"
+#: Nur fuer das Statusereignis ohne (gueltige) Konfiguration (boot_info); die Laufzeit kennt keinen Rueckfall.
+_STANDARD_HEBELSATZ = "vaillant_vrc720"
+
+
+class ConfigError(ValueError):
+    """Konfiguriert, aber ungueltig: Ruhezustand `konfigurationsfehler` statt Regelung (kein Exit, Neupruefung nach
+    app.CONFIG_RECHECK_SECONDS). Die Meldung nennt das fehlende oder ungueltige Feld."""
+
+
+def _hebelsatz(konfiguration) -> str:
+    hebelsatz = konfiguration.get("hebelsatz") if isinstance(konfiguration, Mapping) else None
+    if not isinstance(hebelsatz, str) or hebelsatz not in LEVER_SETS:
+        raise ConfigError(f"Hebelsatz {hebelsatz!r} ist unbekannt – {RECONFIGURE_HINT}")
+    return hebelsatz
+
+
+def beschreibung(konfiguration) -> BindingDescription:
+    """Wirksame Binding-Beschreibung aus Hebelsatz und Bindungsparametern (Spec Stufe 3 S4b); keine Ersatztabelle."""
+    hebelsatz = _hebelsatz(konfiguration)
+    try:
+        return _beschreibung(hebelsatz, konfiguration.get("bindungsparameter"))
+    except ValueError as error:
+        raise ConfigError(f"Konfiguration: {error}") from None
+
+
+def sicherheit(konfiguration) -> LocalSafety:
+    """Lokale Sicherheitswerte fuer Hebelsatz und Verteilsystem (Regel 4)."""
+    hebelsatz = _hebelsatz(konfiguration)
+    try:
+        return resolve_local_safety(hebelsatz, konfiguration.get("verteilsystem"))
+    except ValueError as error:
+        raise ConfigError(f"Konfiguration: {error}") from None
 
 
 def eingerichtet(konfiguration) -> bool:
@@ -55,11 +94,11 @@ def boot_info(konfiguration, *, abgemeldet: bool, client_version: str, backup_pa
     anlage = konfiguration["anlage"] if eingerichtet(konfiguration) else None
     hebelsatz = konfiguration.get("hebelsatz") if isinstance(konfiguration, Mapping) else None
     lever_set = LEVER_SETS.get(hebelsatz) if isinstance(hebelsatz, str) else None
-    lever_set = lever_set or LEVER_SETS[options.DEFAULT_LEVER_SET]
+    lever_set = lever_set or LEVER_SETS[_STANDARD_HEBELSATZ]
     return BootInfo(
         configured=anlage is not None and not abgemeldet, signed_off=anlage is not None and abgemeldet,
         tenant_id=anlage, setup_id=anlage, lever_set=lever_set, client_version=client_version, notify_hints_off=(),
-        local_check_interval=_intervall(konfiguration, "pruefung_s", options.DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS),
+        local_check_interval=_intervall(konfiguration, "pruefung_s", DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS),
         backup_path=backup_path, failsafe_path=failsafe_path, aufraeumen_path=aufraeumen_path,
     )
 
@@ -77,9 +116,9 @@ def runtime_config(konfiguration, *, rastung_pfad: Path, entitlement_path: Path,
     if not eingerichtet(konfiguration):
         raise ConfigError("Das Gerät ist nicht eingerichtet")
     rastung_pruefen(konfiguration, rastung_pfad)
-    hebelsatz = konfiguration.get("hebelsatz")
+    hebelsatz = _hebelsatz(konfiguration)
+    safety = sicherheit(konfiguration)
     try:
-        safety = resolve_local_safety(hebelsatz, konfiguration.get("verteilsystem"))
         daily = validate_daily_trigger_time(konfiguration.get("tagestick"))
     except ValueError as error:
         raise ConfigError(f"Konfiguration: {error}") from None
@@ -89,8 +128,8 @@ def runtime_config(konfiguration, *, rastung_pfad: Path, entitlement_path: Path,
     return RuntimeConfig(
         tenant_id=konfiguration["anlage"], setup_id=konfiguration["anlage"], lever_set_id=hebelsatz,
         local_safety=safety, daily_trigger_time=daily,
-        local_check_interval=_intervall(konfiguration, "pruefung_s", options.DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS),
-        telemetry_interval=_intervall(konfiguration, "telemetrie_s", options.DEFAULT_TELEMETRY_INTERVAL_SECONDS),
+        local_check_interval=_intervall(konfiguration, "pruefung_s", DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS),
+        telemetry_interval=_intervall(konfiguration, "telemetrie_s", DEFAULT_TELEMETRY_INTERVAL_SECONDS),
         notify_hints_off=(), room_sensor_refs=tuple(sensors), battery_refs=(), entitlement_path=entitlement_path,
         abo_source=abo_source,
     )

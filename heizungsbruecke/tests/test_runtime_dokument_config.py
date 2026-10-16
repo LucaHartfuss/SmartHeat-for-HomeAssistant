@@ -3,13 +3,15 @@ Abo aus dem Dokument, Neustart nur bei laufzeitrelevanten Aenderungen."""
 from pathlib import Path
 
 import pytest
+from bindung_beispiele import parameter
 
 from smartheat_core import rastung
+from smartheat_core.config_check import INTERVALLE
 from smartheat_core.safety import resolve_local_safety
 from smartheat_device import wire
 from smartheat_runtime import dokument_config as dc
-from smartheat_runtime import entitlement, options
-from smartheat_runtime.options import ConfigError
+from smartheat_runtime import entitlement
+from smartheat_runtime.dokument_config import ConfigError
 
 SENSOR = "zigbee:0x00124b0000000001:temperature"
 KONF = {
@@ -17,6 +19,8 @@ KONF = {
     "verteilsystem": "Heizkoerper", "bindung": {"treiber": {"id": "simulation", "parameter": {}}, "thermostat": None},
     "raumfuehler": [SENSOR], "tagestick": "12:12", "abo": "aktiv", "mindest_software": "0.6.0", "software": None,
 }
+#: Mit Bindungsparametern (die Laufzeit-Tests oben brauchen sie nicht; ein Wechsel auf None waere dort nicht relevant).
+KONF_MIT = {**KONF, "bindungsparameter": parameter("viessmann_vicare")}
 
 
 def _boot(konfiguration, tmp_path, abgemeldet=False):
@@ -33,7 +37,7 @@ def test_boot_info_of_a_set_up_device(tmp_path):
     boot = _boot(KONF, tmp_path)
     assert (boot.configured, boot.signed_off, boot.tenant_id, boot.setup_id) == (True, False, "kunde3", "kunde3")
     assert (boot.lever_set.id, boot.client_version, boot.notify_hints_off) == ("viessmann_vicare", "0.6.0", ())
-    assert boot.local_check_interval == options.DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS
+    assert boot.local_check_interval == dc.DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS
     assert (boot.backup_path, boot.failsafe_path) == (tmp_path / "b.json", tmp_path / "f.json")
 
 
@@ -46,7 +50,7 @@ def test_boot_info_not_set_up_and_signed_off(tmp_path):
 
 def test_boot_info_never_throws(tmp_path):
     boot = _boot({"anlage": 5, "hebelsatz": "unbekannt", "intervalle": "x"}, tmp_path)
-    assert boot.configured is False and boot.lever_set.id == options.DEFAULT_LEVER_SET
+    assert boot.configured is False and boot.lever_set.id == "vaillant_vrc720"
 
 
 def test_runtime_config_from_the_document(tmp_path):
@@ -59,7 +63,7 @@ def test_runtime_config_from_the_document(tmp_path):
     assert (config.daily_trigger_time, config.room_sensor_refs, config.battery_refs) == ("12:12", (SENSOR,), ())
     assert config.local_safety == resolve_local_safety("viessmann_vicare", "Heizkoerper")
     assert (config.local_check_interval, config.telemetry_interval) == (
-        options.DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS, options.DEFAULT_TELEMETRY_INTERVAL_SECONDS)
+        dc.DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS, dc.DEFAULT_TELEMETRY_INTERVAL_SECONDS)
     assert config.abo_source is source and config.entitlement_path == Path("/tmp/e.json")
 
 
@@ -166,3 +170,41 @@ def test_arriving_originals_do_not_restart_the_runtime():
     """Spec 5.2: ursprungswerte steht nicht in LAUFZEIT_FELDER, ihr Eintreffen startet die Laufzeit nicht neu."""
     assert "ursprungswerte" not in dc.LAUFZEIT_FELDER
     assert dc.laufzeit_relevant(KONF, {**KONF, "ursprungswerte": {"heat_limit": 16.0}}) is False
+
+
+def test_beschreibung_aus_hebelsatz_und_bindungsparametern():
+    assert dc.beschreibung(KONF_MIT).lever_set.id == KONF_MIT["hebelsatz"]
+
+
+def test_beschreibung_ohne_bindungsparameter_ist_ein_konfigurationsfehler():
+    with pytest.raises(ConfigError):
+        dc.beschreibung({**KONF_MIT, "bindungsparameter": None})
+
+
+@pytest.mark.parametrize("hebelsatz", ["gibt_es_nicht", None, 5])
+def test_unbekannter_hebelsatz_ist_ein_konfigurationsfehler(hebelsatz):
+    with pytest.raises(ConfigError, match="Hebelsatz"):
+        dc.beschreibung({**KONF, "hebelsatz": hebelsatz})
+    with pytest.raises(ConfigError, match="Hebelsatz"):
+        dc.sicherheit({**KONF, "hebelsatz": hebelsatz})
+
+
+def test_sicherheit_ist_der_satz_von_hebelsatz_und_verteilsystem():
+    assert dc.sicherheit(KONF) == resolve_local_safety("viessmann_vicare", "Heizkoerper")
+
+
+def test_sicherheit_mit_unbekanntem_verteilsystem_ist_ein_konfigurationsfehler():
+    with pytest.raises(ConfigError, match="Konfiguration"):
+        dc.sicherheit({**KONF, "verteilsystem": "Kachelofen"})
+
+
+@pytest.mark.parametrize("key", sorted(INTERVALLE))
+def test_jedes_angenommene_intervall_startet(key, tmp_path):
+    """Spec Stufe 3 S5 3.2: die Grenzen stehen nur in config_check; die Laufzeit uebernimmt jeden angenommenen Wert."""
+    low, high = INTERVALLE[key]
+    feld = {"pruefung_s": "local_check_interval", "telemetrie_s": "telemetry_interval"}[key]
+    for wert in (low, high):
+        runtime = dc.runtime_config(
+            {**KONF, "intervalle": {key: wert}}, rastung_pfad=tmp_path / "keine", entitlement_path=tmp_path / "e",
+            abo_source=lambda: entitlement.ACTIVE)
+        assert getattr(runtime, feld) == wert

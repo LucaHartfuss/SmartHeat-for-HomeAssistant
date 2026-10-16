@@ -33,7 +33,7 @@ from smartheat_gateway.paths import Paths
 from smartheat_gateway.quota import QuotaExhausted
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime import dokument_config
-from smartheat_runtime.options import ConfigError
+from smartheat_runtime.dokument_config import ConfigError
 from smartheat_runtime.status import STATUS_ABGEMELDET
 
 logger = logging.getLogger(__name__)

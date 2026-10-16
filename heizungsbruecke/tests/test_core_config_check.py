@@ -6,7 +6,6 @@ from smartheat_core import config_check as cc
 from smartheat_core import rastung
 from smartheat_core.rastung import Rastung
 from smartheat_device import wire
-from smartheat_runtime import options
 
 SENSOR = "zigbee:0x00124b0000000001:temperature"
 THERMOSTAT = "0x00124b0000000002"
@@ -60,8 +59,8 @@ def test_test_intervals_pass():
     assert _pruefen(_konfiguration(intervalle={"pruefung_s": 5, "telemetrie_s": 10})) is None
 
 
-def test_interval_bounds_are_the_bounds_of_the_options():
-    assert cc.TELEMETRIE_S == (10, options.MAX_TELEMETRY_INTERVAL_SECONDS)
+def test_interval_bounds():
+    assert cc.TELEMETRIE_S == (10, 600)
     assert cc.ABFRAGE_S == (10, 3600)
     assert cc.PRUEFUNG_S == (1, 3600)
 
