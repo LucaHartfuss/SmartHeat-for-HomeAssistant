@@ -75,6 +75,8 @@ def test_signature_string_is_the_g3_scheme():
 
 
 GERAET_QUELLEN = [ADDON_REPO / "heizungsbruecke" / "src", ADDON_REPO / "gateway" / "src"]
+# Der Kern importiert nichts (P4): seine Kopien pinnt dieser Test; nur dessen Pins zaehlen, nicht seine Lesezugriffe.
+PIN_TEST = ADDON_REPO / "heizungsbruecke" / "tests" / "test_core_vertrag_pin.py"
 _VERTRAG_MODUL = "smartheat_device.wire"
 _PIN_PRAEFIX = "_VERTRAG_GEPINNT"
 # V1-Konstanten, die nur der Server braucht; jede Zeile mit Grund. Kein Eintrag ohne Grund.
@@ -83,18 +85,21 @@ NUR_SERVER: set[str] = {
     "MAX_CLOCK_SKEW_SECONDS",  # nur der Server prueft das Zeitfenster der Signatur
     "UNAUTHENTICATED_ERROR",  # Text der 401-Antwort; das Geraet wertet nur den Status 401 (Spec 1: fuer alle Faelle gleich)
 }
-NUR_GEPINNT_GERAET: set[str] = set()  # Kopien im Kern (smartheat_core darf nichts importieren), nur gepinnt (P4)
+NUR_GEPINNT_GERAET: set[str] = {  # Kopien im Kern (smartheat_core darf nichts importieren), nur gepinnt (P4)
+    "ABO",  # config_check.ABO_WERTE
+    "BINDUNGSPARAMETER_FIELDS",  # bindungsparameter.FELDER
+    "BINDUNG_GATEWAY_FIELDS",  # config_check.GATEWAY_BINDUNG_FELDER
+    "BINDUNG_HA_FIELDS",  # config_check.HA_BINDUNG_FELDER
+    "BINDUNG_HA_OPTIONAL",  # config_check.HA_BINDUNG_OPTIONAL
+    "ENERGIE_EINHEITEN",  # bindungsparameter.EINHEITEN
+    "HA_HINWEISE",  # config_check.HA_HINWEISE
+    "HA_ROLLEN",  # config_check.HA_ROLLEN
+    "KREIS_FIELDS",  # config_check.KREIS_FELDER
+    "SCHREIBSCHUTZ_FIELDS",  # bindungsparameter.SCHREIBSCHUTZ_FELDER
+    "TREIBER_FIELDS",  # config_check.TREIBER_FELDER
+    "ZAEHLER",  # bindungsparameter.ZAEHLER
+}
 OFFEN: set[str] = {  # Ist-Stand 2026-10-16; die Tasks 2-6 leeren es, Task 7 prueft OFFEN == set()
-    "ABO",  # Task 5
-    "BEDIENUNG_FIELDS",  # Task 5
-    "BINDUNGSPARAMETER_FIELDS",  # Task 5
-    "BINDUNG_GATEWAY_FIELDS",  # Task 5
-    "BINDUNG_HA_FIELDS",  # Task 5
-    "BINDUNG_HA_OPTIONAL",  # Task 5
-    "DOKUMENT_ERRORS",  # Task 5
-    "ENERGIE_EINHEITEN",  # Task 5
-    "HA_HINWEISE",  # Task 5
-    "HA_ROLLEN",  # Task 5
     "INVENTUR_ANLAGE_FIELDS",  # Task 6
     "INVENTUR_ENTITY_FIELDS",  # Task 6
     "INVENTUR_FEATURE_FIELDS",  # Task 6
@@ -102,12 +107,6 @@ OFFEN: set[str] = {  # Ist-Stand 2026-10-16; die Tasks 2-6 leeren es, Task 7 pru
     "INVENTUR_GATEWAY_FIELDS",  # Task 6
     "INVENTUR_GERAET_FIELDS",  # Task 6
     "INVENTUR_HA_FIELDS",  # Task 6
-    "KONFIGURATION_OPTIONAL",  # Task 5
-    "KREIS_FIELDS",  # Task 5
-    "SCHREIBSCHUTZ_FIELDS",  # Task 5
-    "SOFTWARE_FIELDS",  # Task 5
-    "TREIBER_FIELDS",  # Task 5
-    "ZAEHLER",  # Task 5
     "ZIGBEE_ARTEN",  # Task 6
     "ZIGBEE_DEVICE_FIELDS",  # Task 6
 }
@@ -177,6 +176,7 @@ def _leser_im_geraet() -> tuple[set[str], set[str]]:
                 leser, pins = _zugriffe(path)
                 gelesen |= leser
                 gepinnt |= pins
+    gepinnt |= _zugriffe(PIN_TEST)[1]
     return gelesen, gepinnt
 
 

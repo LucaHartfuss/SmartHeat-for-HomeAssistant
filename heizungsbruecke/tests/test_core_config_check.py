@@ -60,14 +60,6 @@ def test_structure_and_ranges(change):
     assert _pruefen(_konfiguration(**change)).grund == cc.UNGUELTIG
 
 
-@pytest.mark.parametrize("intervalle", [{"pruefung_s": 5, "telemetrie_s": 10}, {"pruefung_s": 0}, [5], "x"])
-def test_intervalle_ist_kein_dokumentfeld_mehr(intervalle):
-    """Plan S8a-1 P2: intervalle steht nicht mehr im Vertrag. Wie jedes unbekannte Feld (Versionsregel Spec 2.1) prueft
-    config_check es nicht; die Laufzeit liest es nicht (test_runtime_dokument_config), die Grenzen gelten fuer
-    SMARTHEAT_E2E_INTERVALLE."""
-    assert _pruefen(_konfiguration(intervalle=intervalle)) is None
-
-
 def test_interval_bounds():
     assert cc.TELEMETRIE_S == (10, 600)
     assert cc.ABFRAGE_S == (10, 3600)
@@ -122,6 +114,18 @@ def test_binding_roles(bindung):
     assert _pruefen(_konfiguration(bindung=bindung)).grund == cc.ROLLE_UNZULAESSIG
 
 
+@pytest.mark.parametrize(("bindung", "details"), [
+    ({"treiber": {"id": "simulation", "parameter": {}}, "thermostat": None, "abfrage_s": 60},
+     {"feld": "bindung", "regel": "unbekannt"}),
+    ({"treiber": {"id": "simulation", "parameter": {}, "extra": 1}, "thermostat": None},
+     {"feld": "treiber", "regel": "unbekannt"}),
+    ({"treiber": {"id": "simulation", "parameter": {}}}, {"feld": "thermostat", "regel": "fehlt"}),
+])
+def test_a_foreign_or_missing_gateway_binding_field_is_a_role_rejection(bindung, details):
+    """V1 ist auf beiden Seiten strikt (Nutzer-Entscheidung 2026-10-16): kein fremdes Feld, der fremde Name geht nicht hoch."""
+    assert _pruefen(_konfiguration(bindung=bindung)) == cc.Ablehnung(cc.ROLLE_UNZULAESSIG, details)
+
+
 def test_without_thermostat():
     assert _pruefen(_konfiguration(bindung={"treiber": {"id": "simulation", "parameter": {}}, "thermostat": None})) is None
 
@@ -153,10 +157,6 @@ def test_the_driver_is_asked_only_for_an_otherwise_valid_configuration():
 
 def test_a_gateway_shaped_configuration_is_not_a_home_assistant_binding():
     assert cc.pruefen(_konfiguration(), None, host=cc.HOST_HA).grund == cc.ROLLE_UNZULAESSIG
-
-
-def test_prueffregeln_gleich_dem_vertrag():
-    assert cc.PRUEF_REGELN == wire.PRUEF_REGELN
 
 
 @pytest.mark.parametrize(("change", "details"), [

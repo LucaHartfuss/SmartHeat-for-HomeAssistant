@@ -11,8 +11,8 @@ abgelehnt (das Geraet regelt mit der alten weiter); eine leere Konfiguration (an
 immer uebernommen. update_noetig gilt auch nach einem Dokument mit unbekanntem schema und uebersteht Neustarts. Der
 Server schickt eine abgelehnte Version nicht erneut; gespeichert wird daher der Anlass (die mindest_software der
 abgelehnten Konfiguration bzw. die eigene Software beim unbekannten schema), und update_noetig wird gegen die laufende
-Software ausgewertet: nach einem Update endet es von selbst. Nur eine vollstaendige Konfiguration (alle Felder) setzt den
-Anlass neu; eine wegen fehlender Felder abgelehnte laesst ihn stehen.
+Software ausgewertet: nach einem Update endet es von selbst. Nur eine Konfiguration mit genau den Feldern des Vertrags
+setzt den Anlass neu; eine wegen fehlender oder fremder Felder abgelehnte laesst ihn stehen (V1 ist strikt, R10).
 Wirft der Treiber-Rueckruf config_check.NichtPruefbar (HA aus), laeuft empfangen durch: nichts wird gespeichert oder
 abgelehnt, das Geraet haelt das Dokument zurueck und prueft spaeter erneut (device.py).
 Eine kaputte Datei (Stromausfall) gilt als "keine Version": hello meldet 0, der Server stellt neu zu.
@@ -43,6 +43,11 @@ UPDATE_NOETIG = "update_noetig"
 AUSSERHALB_BEREICH = "ausserhalb_bereich"
 _RESERVIERT = ("schema", "version")
 _VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+
+
+def _ohne_huelle(felder: tuple[str, ...]) -> tuple[str, ...]:
+    """Die Felder des Dokumentinhalts: der Vertrag zaehlt schema und version mit, der Speicher legt sie anders ab."""
+    return tuple(field for field in felder if field not in _RESERVIERT)
 
 
 # --- Regeln ---
@@ -80,7 +85,33 @@ def _is_version(value) -> TypeGuard[int]:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _form(inhalt: dict, pflicht: tuple[str, ...], optional: tuple[str, ...] = ()) -> config_check.Ablehnung | None:
+    """V1 ist strikt (Nutzer-Entscheidung 2026-10-16, R10): genau die Felder des Vertrags (ohne schema und version),
+    ein fehlendes oder fremdes Feld lehnt ab (Grund ungueltig). Der fremde Name geht nur hoch, wenn er im Vertrag steht."""
+    fehlen = [field for field in pflicht if field not in inhalt]
+    if fehlen:
+        return config_check.Ablehnung(UNGUELTIG, fehler.details(fehlen[0], "fehlt", anzahl=len(fehlen)))
+    if fremd := fehler.fremdes_feld(inhalt, (*pflicht, *optional)):
+        return config_check.Ablehnung(UNGUELTIG, fremd)
+    return None
+
+
+def _software_pruefen(software) -> config_check.Ablehnung | None:
+    """Soll-Software: null (kein Updater oder kein Angebot) oder genau die Felder des Vertrags; Werte prueft der Updater."""
+    if software is None:
+        return None
+    if not isinstance(software, dict):
+        return config_check.Ablehnung(UNGUELTIG, fehler.details("software", "ungueltig"))
+    if set(software) - set(wire.SOFTWARE_FIELDS):
+        return config_check.Ablehnung(UNGUELTIG, fehler.details("software", "unbekannt"))
+    if set(wire.SOFTWARE_FIELDS) - set(software):
+        return config_check.Ablehnung(UNGUELTIG, fehler.details("software", "fehlt"))
+    return None
+
+
 def _bedienung_pruefen(inhalt: dict) -> config_check.Ablehnung | None:
+    if ablehnung := _form(inhalt, _ohne_huelle(wire.BEDIENUNG_FIELDS)):
+        return ablehnung
     if inhalt.get("modus") not in wire.MODI:
         return config_check.Ablehnung(UNGUELTIG, fehler.details("modus", "unbekannt"))
     if inhalt.get("quelle") not in wire.QUELLEN:
@@ -244,6 +275,8 @@ class DocumentStore:
             return Ergebnis(art, version, True, uebernommen=True)
 
     def _abgelehnt_mit(self, art: str, version: int, grund: str, details: dict | None) -> Ergebnis:
+        if grund not in wire.DOKUMENT_ERRORS:
+            raise ValueError("Ablehnungsgrund steht nicht in DOKUMENT_ERRORS")  # Programmierfehler, kein Netzinhalt
         if not fehler.gueltig(details):
             logger.error("%s abgelehnt (%s): details ohne die Form des Vertrags verworfen", art, grund)
             details = None
@@ -254,9 +287,10 @@ class DocumentStore:
     def _pruefen(self, art: str, inhalt: dict) -> config_check.Ablehnung | None:
         if art == BEDIENUNG:
             return _bedienung_pruefen(inhalt)
-        fehlen = [field for field in wire.KONFIGURATION_FIELDS if field not in _RESERVIERT and field not in inhalt]
-        if fehlen:
-            return config_check.Ablehnung(UNGUELTIG, fehler.details(fehlen[0], "fehlt", anzahl=len(fehlen)))
+        ablehnung = (_form(inhalt, _ohne_huelle(wire.KONFIGURATION_FIELDS), wire.KONFIGURATION_OPTIONAL)
+                     or _software_pruefen(inhalt["software"]))
+        if ablehnung is not None:
+            return ablehnung
         mindest = inhalt.get("mindest_software")  # erst eine vollstaendige Konfiguration setzt den Anlass neu
         self._update_anlass = (UPDATE_NOETIG, mindest) if unter_mindest(self._software_version, mindest) else None
         if config_check.ist_leer(inhalt):

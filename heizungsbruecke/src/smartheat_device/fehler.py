@@ -38,6 +38,13 @@ def details(feld: str | None = None, regel: str | None = None, **zahlen: float) 
     return werte
 
 
+def fremdes_feld(inhalt: dict, erlaubt) -> dict | None:
+    """details fuer das erste (alphabetisch) Feld von `inhalt` ausserhalb von `erlaubt`; None, wenn es keines gibt. Der Name
+    kommt vom Netz: er steht nur in details, wenn er ein Feld des Vertrags ist (wire.PRUEF_FELDER), sonst nur die Regel."""
+    fremd = sorted(map(str, set(inhalt) - set(erlaubt)))
+    return details(fremd[0] if fremd[0] in wire.PRUEF_FELDER else None, "unbekannt") if fremd else None
+
+
 def body(grund: str, werte: dict | None) -> dict:
     """error von up/result (wire.ERROR_FIELDS): grund, details nur wenn vorhanden; nie ein Text."""
     return {"grund": grund, "details": dict(werte)} if werte else {"grund": grund}

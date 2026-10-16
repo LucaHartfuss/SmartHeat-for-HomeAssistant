@@ -7,23 +7,15 @@ from bindung_beispiele import PARAMETER, VAILLANT_MYPYLLANT, WEISHAUPT_SCHEMATA,
 
 from smartheat_core.binding import ENERGY_DAILY
 from smartheat_core.bindungsparameter import (
-    EINHEITEN,
     ENERGIE_KANAELE,
-    FELDER,
-    SCHREIBSCHUTZ_FELDER,
     SCHRITT_MAX,
     WARTEZEIT_S,
-    ZAEHLER,
     beschreibung,
 )
 from smartheat_device import wire
 
 
-def test_konstanten_gleich_dem_vertrag():
-    assert FELDER == wire.BINDUNGSPARAMETER_FIELDS
-    assert SCHREIBSCHUTZ_FELDER == wire.SCHREIBSCHUTZ_FIELDS
-    assert ZAEHLER == wire.ZAEHLER
-    assert tuple(EINHEITEN) == wire.ENERGIE_EINHEITEN
+def test_energiekanaele_gleich_den_energierollen():
     assert set(ENERGIE_KANAELE) == {rolle.removeprefix("energy_") for rolle in wire.HA_ROLLEN
                                     if rolle.startswith("energy_")}
 

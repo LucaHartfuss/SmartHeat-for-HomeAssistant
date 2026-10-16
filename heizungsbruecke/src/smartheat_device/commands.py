@@ -88,13 +88,6 @@ def _load_done(path: Path) -> dict[str, Entry]:
     return done
 
 
-def _fremdes_feld(body: dict, erlaubt) -> dict | None:
-    """details fuer das erste (alphabetisch) Feld ausserhalb von erlaubt; None, wenn es keines gibt. Der Name kommt vom
-    Netz: er steht nur in details, wenn er ein Feld des Vertrags ist (wire.PRUEF_FELDER), sonst nur die Regel."""
-    fremd = sorted(map(str, set(body) - set(erlaubt)))
-    return fehler.details(fremd[0] if fremd[0] in wire.PRUEF_FELDER else None, "unbekannt") if fremd else None
-
-
 def fehlerort(error: Exception) -> str:
     """Innerster Frame einer Ausnahme fuer Logs (Datei:Zeile Funktion), ohne Meldung und Quelltext (Regel 6)."""
     frames = traceback.extract_tb(error.__traceback__)
@@ -171,7 +164,7 @@ class CommandRegister:
         for feld in wire.COMMAND_FIELDS:
             if feld not in message:
                 return Failed("ungueltige_nutzlast", fehler.details(feld, "fehlt"))
-        if fremd := _fremdes_feld(message, wire.COMMAND_FIELDS):
+        if fremd := fehler.fremdes_feld(message, wire.COMMAND_FIELDS):
             return Failed("ungueltige_nutzlast", fremd)
         payload = message["payload"]
         handler = self._handlers.get(kind)
@@ -180,7 +173,7 @@ class CommandRegister:
         if not isinstance(payload, dict):
             return Failed("ungueltige_nutzlast", fehler.details("payload", "ungueltig"))
         art = wire.COMMANDS[kind]
-        if fremd := _fremdes_feld(payload, (*art.payload, *art.payload_optional)):
+        if fremd := fehler.fremdes_feld(payload, (*art.payload, *art.payload_optional)):
             return Failed("ungueltige_nutzlast", fremd)
         self._store(command_id, (None, None, None))  # Marker "gestartet" vor dem Handler
         outcome = self._guarded(kind, lambda: handler(payload))
