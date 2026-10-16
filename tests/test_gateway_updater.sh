@@ -1,6 +1,7 @@
 #!/bin/bash
 # Updater-Integrationstest (Spec G2b-1 10, Plan G2b-1 Task 15; ab Gateway 0.6.0 Plan 5b D2 Task 10): echte lokale
-# Registry, drei signierte Test-Bundles (0.9.1 gesund, 0.9.2 gesund, 0.9.3 kaputt), der Fake-Bootstrap als Release-Host
+# Registry, drei signierte Test-Bundles (0.9.1 gesund, 0.9.2 gesund, 0.9.3: die Laufzeit wirft im laufenden Prozess,
+# make_test_bundles.py), der Fake-Bootstrap als Release-Host
 # (/_e2e/files) und Bootstrap des Geraetekerns, der Fake-Broker als Weg der Soll-Version (Konfigurationsdokument mit
 # software, gesendet in der Rolle des Dienstes; die Laufzeit schreibt es nach data/software_soll.json) und der echte
 # Updater (python3 -m smartheat_host.updater --once) in einem Debian-13-Container, der docker compose ueber den
@@ -262,11 +263,13 @@ done
 stage_done "Update auf 0.9.2"
 echo "PASS: Update 0.9.1 -> 0.9.2"
 
-# 9. 0.9.3 (Laufzeit beendet sich sofort): Rueckweg auf 0.9.2
+# 9. 0.9.3 (Regel-Worker wirft 10 s nach dem Start, danach 60 s Pause im Prozess): Rueckweg auf 0.9.2. Die Pause
+# darf dem Updater kein gesundes Gateway zeigen (Abschlussreview S6 I-2).
 set_desired 0.9.3
 start=$SECONDS
 expect_word zurueckgerollt 0.9.3
-echo "    0.9.3: $((SECONDS - start)) s"
+echo "    0.9.3: $((SECONDS - start)) s, Laufzeitfehler: $(wc -l <"$DATA/data/testfehler" 2>/dev/null || echo 0)"
+[ -s "$DATA/data/testfehler" ] || fail "0.9.3: die Laufzeit hat nicht im laufenden Prozess geworfen"
 state_is 's["current"] == "0.9.2" and s["previous"] == "0.9.1" and "0.9.3" in s["rejected"] and s["in_progress"] is None' \
   || fail "state.json nach dem Rueckweg: $(cat "$DATA/updater/state.json")"
 reported 0.9.3 rollback ungesund || fail "update_result rollback/ungesund fuer 0.9.3 fehlt"

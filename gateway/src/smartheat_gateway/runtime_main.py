@@ -9,7 +9,8 @@ aktiv, Neustart nach dem Zuruecksetzen). Der Worker endet mit prozess.Neustart, 
 (MQTT-DISCONNECT; sonst meldet IoT Core DUPLICATE_CLIENTID, wenn der neue Prozess verbindet, und der Dienst saehe nach
 drei Aenderungen eine Kopie, Spec 4.2), laesst den Geraete-Thread sein laufendes Ereignis abschliessen, und main kehrt
 zurueck: Exit 0, Compose startet neu.
-Nach einem unerwarteten Fehler der Laufzeit trennt das Gateway ebenso, wartet 60 s und startet dann neu. SIGTERM
+Nach einem unerwarteten Fehler der Laufzeit trennt das Gateway ebenso, meldet sich ungesund (vor_der_pause), wartet
+60 s und startet dann neu. SIGTERM
 (docker stop) endet ueber beenden ohne Neustart. Jeder Start reicht die Soll-Software der gespeicherten Konfiguration
 erneut an den Updater (software_soll_nachholen).
 
@@ -40,6 +41,7 @@ from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime import app
 from smartheat_runtime.runtime import Runtime
+from smartheat_runtime.status import STATUS_STARTET
 from smartheat_runtime.worker import Event
 
 logger = logging.getLogger(__name__)
@@ -133,6 +135,23 @@ def _starten(paths: Paths, bus, mirror: ZigbeeMirror, geraet: GatewayDeviceHost,
     return result
 
 
+def vor_der_pause(geraet: GatewayDeviceHost) -> None:
+    """Rueckruf vor_pause fuer prozess.laufen (Abschlussreview S6 I-2): nach einem unerwarteten Fehler meldet sich das
+    Gateway fuer die 60-s-Pause ungesund. Sonst bliebe der Prozess mit frischem Lebenszeichen und antwortendem /healthz
+    oben, der Compose-Health-Check meldete "healthy", und der Updater (G2 8.4) behielte ein Update, dessen Laufzeit
+    gleich nach dem Start wirft, statt zurueckzurollen. Das Lebenszeichen geht weg (Compose-Health-Check scheitert), und
+    /healthz meldet die Laufzeit als "startet" (health_ok des Updaters lehnt das ab); der Neustart beginnt ohnehin so."""
+    with contextlib.suppress(OSError):  # ein nicht beschreibbares /tmp darf Pause und Neustart nicht verhindern
+        _alive_file().unlink(missing_ok=True)
+    geraet.zustand.status = {"status": STATUS_STARTET}
+
+
+def laufen(paths: Paths, bus, mirror: ZigbeeMirror, geraet: GatewayDeviceHost, device: Device) -> None:
+    """prozess.laufen mit Exit 0 als Neustart (Compose startet neu) und vor_der_pause (Moduldocstring)."""
+    prozess.laufen(device, geraet.hintergrund, lambda: _starten(paths, bus, mirror, geraet, device), lambda: None,
+                   vor_pause=lambda: vor_der_pause(geraet))
+
+
 def _terminate(signum, frame) -> None:
     raise SystemExit(0)
 
@@ -156,7 +175,7 @@ def main() -> None:  # pragma: no cover - Container-Einstieg
     )
     software_soll_nachholen(geraet, device)  # vor dem Geraete-Thread: kein Rennen mit einer neuen Konfiguration
     signal.signal(signal.SIGTERM, _terminate)  # vor dem Geraete-Thread: ein SIGTERM endet immer ueber beenden
-    prozess.laufen(device, geraet.hintergrund, lambda: _starten(paths, bus, mirror, geraet, device), lambda: None)
+    laufen(paths, bus, mirror, geraet, device)
 
 
 if __name__ == "__main__":

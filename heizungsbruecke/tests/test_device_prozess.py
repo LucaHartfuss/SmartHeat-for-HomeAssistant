@@ -200,6 +200,48 @@ def test_ein_normal_endender_worker_trennt_ohne_neustart():
     assert order == ["start", "run", "stop", "join", "stop"]
 
 
+def test_vor_der_pause_ruft_laufen_den_rueckruf_des_hosts_nach_dem_trennen():
+    """Abschlussreview S6 I-2: das Gateway meldet sich vor der Pause ungesund (runtime_main.vor_der_pause)."""
+    order = []
+
+    def ausloesen():
+        raise RuntimeError("kaputt")
+
+    prozess.laufen(_Device(order), None, lambda: _worker_mit(order, ausloesen), lambda: order.append("neustart"),
+                   vor_pause=lambda: order.append("vor_pause"), sleep=lambda s: order.append(("pause", s)))
+    assert order == ["start", "run", "stop", "join", "stop", "vor_pause", ("pause", 60.0), "neustart"]
+
+
+@pytest.mark.parametrize("ausloesen", [prozess.Neustart(), None], ids=["neustart", "normales_ende"])
+def test_ohne_fehler_kein_rueckruf_vor_der_pause(ausloesen):
+    order = []
+
+    def run():
+        if ausloesen is not None:
+            raise ausloesen
+
+    prozess.laufen(_Device(order), None, lambda: _worker_mit(order, run), lambda: order.append("neustart"),
+                   vor_pause=lambda: order.append("vor_pause"), sleep=lambda s: order.append(("pause", s)))
+    assert "vor_pause" not in order and not any(isinstance(schritt, tuple) for schritt in order)
+
+
+def test_ein_scheiternder_rueckruf_vor_der_pause_laesst_pause_und_neustart(caplog):
+    order = []
+
+    def vor_pause():
+        order.append("vor_pause")
+        raise OSError("geheim")
+
+    def starten():
+        raise KeyError("x")
+
+    with caplog.at_level(logging.WARNING):
+        prozess.laufen(_Device(order), None, starten, lambda: order.append("neustart"), vor_pause=vor_pause,
+                       sleep=lambda s: order.append(("pause", s)))
+    assert order[-3:] == ["vor_pause", ("pause", 60.0), "neustart"]
+    assert "OSError" in caplog.text and "geheim" not in caplog.text
+
+
 def test_ohne_eigene_pause_nimmt_laufen_time_sleep_zur_laufzeit(monkeypatch):
     order = []
     monkeypatch.setattr(prozess.time, "sleep", lambda s: order.append(("pause", s)))

@@ -289,6 +289,49 @@ def test_a_newer_operation_replaces_the_stored_target_at_start(world):
     assert world.host._store.value == 22.5 and 22.5 in _thermostat_writes(world)
 
 
+def test_an_unexpected_error_reports_the_gateway_unhealthy_during_the_pause(world, monkeypatch):
+    """Abschlussreview S6 I-2: in der 60-s-Pause nach einem unerwarteten Fehler ist das Lebenszeichen weg (der
+    Compose-Health-Check scheitert) und /healthz meldet die Laufzeit "startet" (health_ok des Updaters lehnt ab). Sonst
+    behielte der Updater ein Update, dessen Laufzeit gleich nach dem Start wirft. Echter Ablauf ueber runtime_main.laufen
+    mit Geraete-Thread; nur der Worker wirft."""
+    dokumente_schreiben(world.paths, konfiguration())
+    world.start_runtime()
+    world.connect()
+    alive = world.paths.data / "alive"
+    vorher = world.geraet.snapshot()
+    assert alive.exists() and vorher["server_ok"] is True and vorher["laufzeit"] not in (None, "startet")
+
+    def kaputt():
+        raise RuntimeError("Testfehler")
+
+    monkeypatch.setattr(world.result.worker, "run", kaputt)
+    monkeypatch.setattr(runtime_main, "_starten", lambda *args: world.result)
+    in_der_pause = []
+    echt = prozess.laufen
+
+    def laufen(*args, **kwargs):
+        echt(*args, **kwargs, sleep=lambda s: in_der_pause.append((s, alive.exists(), world.geraet.snapshot())))
+
+    monkeypatch.setattr(prozess, "laufen", laufen)
+    runtime_main.laufen(world.paths, world.bus, None, world.geraet, world.device)
+    [(sekunden, lebenszeichen, snapshot)] = in_der_pause
+    assert sekunden == 60.0 and not lebenszeichen and snapshot["laufzeit"] == "startet"
+
+
+def test_before_the_pause_a_missing_alive_file_is_no_error(world, monkeypatch):
+    geraet = SimpleNamespace(zustand=SimpleNamespace(status={"status": "regelt"}))
+    runtime_main.vor_der_pause(geraet)  # world setzt SHG_ALIVE_FILE, die Datei gibt es noch nicht
+    assert geraet.zustand.status == {"status": "startet"}
+
+    def unlink(self, missing_ok=False):
+        raise PermissionError("read-only file system")
+
+    monkeypatch.setattr("pathlib.Path.unlink", unlink)
+    geraet.zustand.status = None
+    runtime_main.vor_der_pause(geraet)
+    assert geraet.zustand.status == {"status": "startet"}
+
+
 def test_sigterm_ends_with_exit_0():
     with pytest.raises(SystemExit) as stop:
         runtime_main._terminate(15, None)

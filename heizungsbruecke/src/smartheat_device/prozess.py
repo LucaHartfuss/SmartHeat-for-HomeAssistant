@@ -8,7 +8,9 @@ sauber beendetes Add-on nicht zuverlaessig neu), das Gateway mit Exit 0 (Compose
   mit Neustart; beenden trennt zuerst den Link (MQTT-DISCONNECT; sonst meldet IoT Core DUPLICATE_CLIENTID, wenn der
   neue Prozess verbindet), dann der Neustart des Hosts. Globales wird dafuer nicht ueberschrieben (Spec 4.2).
 - Unerwarteter Fehler im Start oder im Worker: Fehlerart ins Log, beenden, FEHLER_PAUSE_SECONDS Pause, dann derselbe
-  Neustart (keine schnelle Schleife gegen IoT Core; bis Stufe 3 S6 hatte das Gateway keine Pause).
+  Neustart (keine schnelle Schleife gegen IoT Core; bis Stufe 3 S6 hatte das Gateway keine Pause). Vor der Pause ruft
+  laufen den optionalen Rueckruf vor_pause des Hosts: das Gateway meldet sich darin ungesund, damit der Updater ein
+  Update, dessen Laufzeit gleich nach dem Start wirft, weiter zurueckrollt (Abschlussreview S6 I-2); HA hat keinen.
 - SIGTERM (SystemExit): beenden, kein Neustart; auch waehrend der Pause."""
 import logging
 import threading
@@ -83,10 +85,11 @@ def beenden(device, thread: threading.Thread | None, hintergrund, *, join_second
 
 
 def laufen(device, hintergrund, starten: Callable[[], Runtime | app.IdleBridge], neustart: Callable[[], None], *,
-           sleep: Callable[[float], None] | None = None) -> None:
+           vor_pause: Callable[[], None] | None = None, sleep: Callable[[float], None] | None = None) -> None:
     """Geraete-Thread und Laufzeit bis zum Ende des Prozesses. starten() startet die Laufzeit (Runtime oder IdleBridge,
     mit dem Rueckruf neustart_der_laufzeit und EV_RELOAD umgeleitet) und bindet den Worker; neustart() ist der Neustart
-    des Hosts. Ein unerwarteter Fehler beendet den Prozess nie still."""
+    des Hosts; vor_pause() laeuft nach einem unerwarteten Fehler nach beenden und vor der Pause (darf scheitern, Pause
+    und Neustart bleiben). Ein unerwarteter Fehler beendet den Prozess nie still."""
     thread: threading.Thread | None = None
     neu = fehler = False
     try:
@@ -104,6 +107,11 @@ def laufen(device, hintergrund, starten: Callable[[], Runtime | app.IdleBridge],
     finally:
         beenden(device, thread, hintergrund)
     if fehler:
+        if vor_pause is not None:
+            try:
+                vor_pause()
+            except Exception as error:  # Pause und Neustart duerfen nie entfallen
+                logger.warning("Vor der Pause: Rueckruf des Hosts gescheitert (%s)", type(error).__name__)
         (sleep or time.sleep)(FEHLER_PAUSE_SECONDS)  # zur Laufzeit gelesen: Tests ersetzen time.sleep
     if neu:
         logger.info("Neustart nach sauberem Trennen")
