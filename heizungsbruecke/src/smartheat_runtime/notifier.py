@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 STATE_OK = "ok"
 
-# Abschaltbare Hinweis-Kategorien (Spec TP7 3.4). Muss zu smartheat_device.wire.HA_HINWEISE und zu const.py der
-# Integration passen (Contract-Check 15).
+# Abschaltbare Hinweis-Kategorien (Spec TP7 3.4). Gleich smartheat_device.wire.HA_HINWEISE samt Reihenfolge (gepinnt in
+# tests/test_core_vertrag_pin.py).
 HINT_CATEGORIES = (
     "raumfuehler", "batterie", "manueller_eingriff", "quellwechsel", "schreibbudget", "schreibzaehler",
 )
