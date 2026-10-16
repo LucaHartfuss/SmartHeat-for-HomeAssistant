@@ -154,3 +154,22 @@ def test_garbage_features_do_not_raise_in_gekuerzt_and_hebelstand():
     assert caps.hebelstand(index, 0) is None and caps.lever_ranges(index, 0) == {
         "curve": None, "level": None, "room_setpoint": None}
     assert caps.generator_signals(index) == {} and caps.mode_signal(index, 0) is None
+
+
+def test_command_range_braucht_ein_ausfuehrbares_kommando_und_alle_drei_grenzen():
+    # Abschlussreview S5b (Mutationsprobe): isExecutable False allein genuegt zur Ablehnung, ebenso jede einzelne fehlende
+    # Grenze; ohne isExecutable und mit allen Grenzen gilt das Kommando.
+    def mit(**kommando):
+        return feature("heating.circuits.0.heating.curve", {}, {"setCurve": {"params": {"slope": constraint(0.2, 3.5, 0.1)}, **kommando}})
+
+    assert caps.command_range(mit(isExecutable=True), "setCurve", "slope") == (0.2, 3.5, 0.1)
+    assert caps.command_range(mit(), "setCurve", "slope") == (0.2, 3.5, 0.1)
+    assert caps.command_range(mit(isExecutable=False), "setCurve", "slope") is None
+    for fehlt in ("min", "max", "stepping"):
+        constraints = {"min": 0.2, "max": 3.5, "stepping": 0.1}
+        del constraints[fehlt]
+        roh = feature("heating.circuits.0.heating.curve", {}, {"setCurve": {
+            "isExecutable": True, "params": {"slope": {"constraints": constraints}}}})
+        assert caps.command_range(roh, "setCurve", "slope") is None, fehlt
+    index = caps.by_name(good_features())
+    assert caps.lever_ranges(index, 0)["curve"] == (0.2, 3.5, 0.1)

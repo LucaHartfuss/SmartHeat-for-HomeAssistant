@@ -367,6 +367,46 @@ def test_a_pending_inventory_does_not_recreate_its_series_after_the_setup_was_re
 # --- Inventur: eine fehlgeschlagene Probe darf die Reihe nicht beenden ---
 
 
+class _HaengtImHintergrund:
+    """Hintergrund, dessen Aufruf nie fertig wird (ein haengender Cloud-Aufruf); die Uhr der Testwelt laeuft weiter."""
+
+    def submit(self, call):
+        from concurrent.futures import Future
+
+        return Future()
+
+
+def _zeitablauf(ctx, clock, outcome, sekunden: float) -> None:
+    """Vor der Frist nichts, genau an der Frist der Zeitablauf-Fehler (Treiber haengt, Uhr der Testwelt)."""
+    assert isinstance(outcome, Waiting) and outcome.deadline == clock() + sekunden
+    assert outcome.check() is None
+    clock.advance(sekunden - 1)
+    assert outcome.check() is None  # eine Sekunde vor der Frist
+    clock.advance(1)
+    result = outcome.check()
+    assert isinstance(result, Failed) and result.grund == "anlage_nicht_erreichbar"
+    assert result.text == befehle.DRIVER_TIMEOUT_TEXT and result.grund in wire.command_errors("inventory")
+
+
+def test_eine_haengende_erkennung_endet_nach_120_s_mit_dem_zeitablauf(ctx, clock):
+    # Abschlussreview S5b I3: die Server-Frist fuer stunden 0 ist 3600 s, diese Grenze haelt den Cloud-Aufruf kurz.
+    assert befehle.ERKENNUNG_SECONDS == 120
+    ctx.hintergrund = _HaengtImHintergrund()
+    outcome = befehle.inventory(ctx, {"stunden": 0, "filter": {"treiber": "simulation"}})
+    _zeitablauf(ctx, clock, outcome, 120)
+
+
+def test_eine_haengende_anmeldung_endet_an_der_frist_des_befehls(ctx, clock):
+    ctx.hintergrund = _HaengtImHintergrund()
+    outcome = befehle.driver_login(ctx, {"phase": "begin", "driver_id": "vicare_cloud"})
+    frist = wire.COMMANDS["driver_login"].expires_seconds
+    assert outcome.deadline == clock() + frist
+    clock.advance(frist - 1)
+    assert outcome.check() is None
+    clock.advance(1)
+    assert outcome.check().grund == "anlage_nicht_erreichbar"
+
+
 def _eigene_logs(caplog) -> str:
     """Was das Gateway loggt; urllib3 loggt auf DEBUG die URL (mit Anlagen- und Seriennummer aus den Treiber-Parametern)
     selbst, das prueft dieser Test nicht."""
