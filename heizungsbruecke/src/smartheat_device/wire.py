@@ -7,9 +7,9 @@ Mindestversion je Host) gibt es nur auf dem Server.
 Versionsregeln (Stufe 3 S8a-1, ersetzt Spec 2.1): V1 wird auf beiden Seiten strikt geprueft; ein fehlendes oder
 fremdes Feld und ein falscher Typ werden abgelehnt. Ein neues Feld Server -> Geraet gibt es deshalb erst nach einem
 Geraete-Update, ein neues Feld Geraet -> Server zuerst auf dem Server (als *_OPTIONAL mit der Bedeutung bei Fehlen im
-Kommentar). Ausnahme ist das Tick-Drahtformat (Snapshot-Leser des Servers, Antwort down/setpoints im Geraet): es
-ignoriert unbekannte Felder. Unbekannte Topics ignorieren beide Seiten. Eine neue Schema-Nummer gibt es nur fuer einen
-Bruch."""
+Kommentar). Ausnahme ist das Tick-Drahtformat (Snapshot- und Telemetrie-Leser des Servers, Antwort down/setpoints im
+Geraet): es ignoriert unbekannte Felder. Unbekannte Topics ignorieren beide Seiten. Eine neue Schema-Nummer gibt es nur
+fuer einen Bruch."""
 import hashlib
 import re
 from dataclasses import dataclass
