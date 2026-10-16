@@ -113,13 +113,21 @@ def aufraeumen_beim_start(pfad: Path, gespeichert: Callable[[], object], loesche
                           wer: str) -> None:
     """Markierung aufraeumen.json vor dem Start des Geraetekerns auswerten (Spec Stufe 3 S3 Abschnitt 4), beide Hosts:
     wieder eingerichtet -> Markierung weg, Zustand bleibt; Zuruecksetzen steht aus -> nichts loeschen (die Laufzeit
-    setzt mit der Konfiguration der Markierung zurueck und startet danach neu); sonst loescht der Host den
+    setzt mit der Konfiguration der Markierung zurueck und startet danach neu); Markierung unlesbar (EIO, EACCES) ->
+    nichts loeschen, der Start geht weiter, der naechste versucht es erneut (S3S3-Marker); sonst loescht der Host den
     anlagengebundenen Zustand, und die Markierung geht erst, wenn er fertig meldet. gespeichert() liest die
     gespeicherte Konfiguration nur, wenn es eine Markierung gibt."""
-    if not pfad.exists():
+    try:
+        if not pfad.exists():
+            return
+    except OSError as error:  # Path.exists wirft bei EIO/EACCES im stat: Markierung bleibt, nichts wird geloescht
+        logger.warning("%s nicht pruefbar (%s): Markierung bleibt, nichts wird geloescht", pfad.name,
+                       type(error).__name__)
         return
     entscheidung = markierung.entscheiden(pfad, gespeichert())
     if entscheidung == markierung.KEINE:  # zwischendurch verschwunden
+        return
+    if entscheidung == markierung.BEHALTEN:  # unlesbar: nichts loeschen, der naechste Start versucht es erneut
         return
     if entscheidung == markierung.VERWERFEN:
         logger.info("Aufraeumen entfaellt: %s ist inzwischen neu eingerichtet", wer)

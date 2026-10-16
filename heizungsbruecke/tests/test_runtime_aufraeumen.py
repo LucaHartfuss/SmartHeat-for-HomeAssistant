@@ -1,5 +1,10 @@
 """Spec Stufe 3 S3 Abschnitt 4: leer heisst abmelden."""
+import errno
+import os
 import stat
+from pathlib import Path
+
+import pytest
 
 from smartheat_runtime import aufraeumen
 
@@ -56,3 +61,52 @@ def test_marker_whose_configuration_names_another_plant_is_ignored(tmp_path):
     pfad.write_text('{"anlage": "kunde1", "konfiguration": {"anlage": "kunde9"}, "zurueckgesetzt": false}')
     assert aufraeumen.lesen(pfad).konfiguration is None
     assert aufraeumen.entscheiden(pfad, LEER) == aufraeumen.LOESCHEN
+
+
+@pytest.mark.parametrize("code", [errno.EIO, errno.EACCES])
+def test_an_unreadable_marker_is_kept_and_nothing_is_deleted(tmp_path, monkeypatch, caplog, code):
+    """S3S3-Marker: vorhanden, aber unlesbar -> behalten und loggen, nie wie eine fehlende werten."""
+    pfad = tmp_path / "aufraeumen.json"
+    aufraeumen.markieren(pfad, ALT)
+    echt = Path.read_bytes
+
+    def lesen(self):
+        if self == pfad:
+            raise OSError(code, "geheim")
+        return echt(self)
+
+    monkeypatch.setattr(Path, "read_bytes", lesen)
+    monkeypatch.setattr(Path, "read_text", lambda self, *a, **k: lesen(self).decode())
+    assert aufraeumen.entscheiden(pfad, LEER) == aufraeumen.BEHALTEN
+    art = type(OSError(code, "")).__name__  # EACCES wird zu PermissionError, EIO bleibt OSError
+    assert "aufraeumen.json" in caplog.text and art in caplog.text and "geheim" not in caplog.text
+
+
+def test_a_broken_marker_is_still_deleted_as_before(tmp_path):
+    pfad = tmp_path / "aufraeumen.json"
+    pfad.write_text("{kaputt")
+    assert aufraeumen.entscheiden(pfad, LEER) == aufraeumen.LOESCHEN
+
+
+def test_a_new_setup_discards_even_an_unreadable_marker(tmp_path, monkeypatch):
+    pfad = tmp_path / "aufraeumen.json"
+    aufraeumen.markieren(pfad, ALT)
+    monkeypatch.setattr(Path, "read_bytes", lambda self: (_ for _ in ()).throw(OSError(errno.EIO, "x")))
+    assert aufraeumen.entscheiden(pfad, ALT) == aufraeumen.VERWERFEN  # Zustand bleibt ohnehin
+
+
+def test_a_marker_whose_existence_cannot_be_determined_is_kept(tmp_path, monkeypatch, caplog):
+    """Path.exists wirft bei EIO/EACCES im stat (nicht nur bei fehlender Datei): auch das darf den Start nicht kippen
+    und nichts loeschen."""
+    pfad = tmp_path / "aufraeumen.json"
+    aufraeumen.markieren(pfad, ALT)
+    echt = os.stat
+
+    def stat_(p, *a, **k):
+        if Path(p) == pfad:
+            raise OSError(errno.EIO, "geheim")
+        return echt(p, *a, **k)
+
+    monkeypatch.setattr(os, "stat", stat_)
+    assert aufraeumen.entscheiden(pfad, LEER) == aufraeumen.BEHALTEN
+    assert "aufraeumen.json" in caplog.text and "OSError" in caplog.text and "geheim" not in caplog.text

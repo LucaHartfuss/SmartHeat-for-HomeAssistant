@@ -1,5 +1,6 @@
 """Lebenszyklus des Geraeteprozesses, beide Hosts (Spec Stufe 3 S6 4.2/4.3). Die Host-Einstiege pruefen
 test_main_geraet.py (HA) und gateway/tests/test_runtime_main.py."""
+import errno
 import logging
 import threading
 from types import SimpleNamespace
@@ -274,3 +275,22 @@ def test_unfertiges_loeschen_behaelt_die_markierung_fuer_den_naechsten_start(tmp
     markierung.markieren(pfad, ALT)
     markierung.zurueckgesetzt(pfad, "kunde1")
     assert _aufraeumen(pfad, {"anlage": None}, fertig=False)[1] == [1] and pfad.exists()
+
+
+def test_eine_unlesbare_markierung_bleibt_und_es_wird_nichts_geloescht(tmp_path, monkeypatch):
+    pfad = tmp_path / "aufraeumen.json"
+    markierung.markieren(pfad, ALT)
+    monkeypatch.setattr(markierung, "entscheiden", lambda p, g: markierung.BEHALTEN)
+    assert _aufraeumen(pfad, {"anlage": None})[1] == [] and pfad.exists()
+
+
+def test_eine_markierung_mit_unbekannter_existenz_kippt_den_start_nicht(tmp_path, monkeypatch):
+    """Path.exists wirft bei EIO im stat: der Start geht weiter, nichts wird gelesen oder geloescht."""
+    pfad = tmp_path / "aufraeumen.json"
+    markierung.markieren(pfad, ALT)
+
+    def kaputt(self, **kwargs):
+        raise OSError(errno.EIO, "geheim")
+
+    monkeypatch.setattr(type(pfad), "exists", kaputt)
+    assert _aufraeumen(pfad, {"anlage": None}) == ([], [])
