@@ -5,7 +5,6 @@ from collections.abc import Mapping
 from typing import ClassVar, Protocol
 
 from smartheat_core.binding import PlantBinding
-from smartheat_gateway.quota import QuotaSpec
 from smartheat_runtime.roles import LEVER_ROLES
 
 __all__ = [
@@ -50,7 +49,6 @@ class Driver(PlantBinding, Protocol):
     login_kind: ClassVar[str | None]
     LEVER_SETS: ClassVar[tuple[str, ...]]
     IDENTITY_PARAMETERS: ClassVar[tuple[str, ...]]
-    quota: QuotaSpec | None
     poll_seconds: float
     #: Hebelsatz, den der Treiber bedient (nicht die Beschreibung aus der Konfiguration; Regel-4-Abgleich im Host).
     lever_set_id: str

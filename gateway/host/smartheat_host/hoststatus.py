@@ -10,7 +10,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-from smartheat_gateway.files import write_json
+from smartheat_core import dateien
 
 PERIOD_SECONDS = 60
 
@@ -48,7 +48,7 @@ def collect(*, route_file: Path = Path("/proc/net/route"), resolve: Callable = s
 
 def write(path: Path, data: dict) -> None:
     """Atomar und 0644: der Dienst laeuft als root, die Laufzeit (uid 1000) liest die Datei."""
-    write_json(path, data)
+    dateien.schreiben_json(path, data, modus=dateien.LESBAR)
 
 
 def main() -> None:  # pragma: no cover - systemd-Einstieg

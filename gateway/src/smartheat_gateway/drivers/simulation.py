@@ -48,7 +48,7 @@ class SimulationDriver:
     kind = KIND_LOCAL
     login_kind = None
     LEVER_SETS = tuple(SIM_SCHRITTE)
-    # Audit 4, A4-08: Parameter, die die Anlage bestimmen (registry.same_plant/plant_id).
+    # Audit 4, A4-08: Parameter, die die Anlage bestimmen (registry.plant_id).
     # Achtung (Audit 4, A4-08): Eine Aenderung aendert die plant_id jeder Installation; beim Update gilt das als andere Anlage und setzt den anlagenbezogenen Zustand zurueck.
     IDENTITY_PARAMETERS = ("lever_set", "heizkreis")
 
@@ -64,7 +64,6 @@ class SimulationDriver:
         self._wall = wall
         self._writer = writer
         self.poll_seconds = float(self._p["poll_seconds"])
-        self.quota = None
         self.lever_set_id: str = self._p["lever_set"]
         self._description = description
         self.physical_writes = 0

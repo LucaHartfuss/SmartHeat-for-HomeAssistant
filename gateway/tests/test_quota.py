@@ -5,7 +5,7 @@ import pytest
 import smartheat_gateway.quota as quota_module
 from smartheat_gateway.quota import QuotaExhausted, QuotaGuard, QuotaSpec
 
-SPEC = QuotaSpec(limit=5, hard_limit=3, window_seconds=100)
+SPEC = QuotaSpec(hard_limit=3, window_seconds=100)
 
 
 def make_guard(tmp_path):
@@ -35,7 +35,7 @@ def test_rate_limit_blocks_until_the_window_is_free(tmp_path):
 
 
 def _take_many(path, count):
-    guard = QuotaGuard(path, QuotaSpec(limit=1000, hard_limit=1000, window_seconds=3600))
+    guard = QuotaGuard(path, QuotaSpec(hard_limit=1000, window_seconds=3600))
     for _ in range(count):
         guard.take()
 
@@ -69,7 +69,7 @@ def test_corrupt_or_foreign_file_counts_as_empty(tmp_path):
 
 def test_a_forward_clock_jump_at_boot_lets_old_calls_expire_early_but_never_blocks(tmp_path):
     now = [1_000_000.0]
-    guard = QuotaGuard(tmp_path / "q.json", QuotaSpec(10, 5, 86400), now=lambda: now[0])
+    guard = QuotaGuard(tmp_path / "q.json", QuotaSpec(5, 86400), now=lambda: now[0])
     for _ in range(5):
         guard.take()
     assert guard.exhausted()
@@ -79,7 +79,7 @@ def test_a_forward_clock_jump_at_boot_lets_old_calls_expire_early_but_never_bloc
 
 def test_a_backward_clock_jump_drops_calls_from_the_future_at_once(tmp_path):
     now = [1_000_000.0]
-    guard = QuotaGuard(tmp_path / "q.json", QuotaSpec(10, 5, 86400), now=lambda: now[0])
+    guard = QuotaGuard(tmp_path / "q.json", QuotaSpec(5, 86400), now=lambda: now[0])
     for _ in range(5):
         guard.take()
     now[0] -= 3 * 86400  # Sprung zurueck: die Eintraege liegen jetzt in der Zukunft

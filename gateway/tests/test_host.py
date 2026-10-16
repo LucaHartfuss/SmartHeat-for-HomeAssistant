@@ -216,14 +216,6 @@ def test_load_reports_the_plant_identity_of_the_driver(data_dir, clock):
         {"id": "simulation", "parameter": {"lever_set": "viessmann_vicare", "heizkreis": 0}})
 
 
-def test_same_plant_compares_driver_and_identity_parameters():
-    base = {"id": "simulation", "parameter": {"lever_set": "viessmann_vicare", "heizkreis": 0, "poll_seconds": 60}}
-    assert registry.same_plant(base, {**base, "parameter": {**base["parameter"], "poll_seconds": 300}})
-    assert not registry.same_plant(base, {**base, "parameter": {**base["parameter"], "heizkreis": 1}})
-    assert not registry.same_plant(base, {"id": "vicare_cloud", "parameter": base["parameter"]})
-    assert not registry.same_plant(None, base)
-
-
 def test_manifest_requires_the_roles_of_the_lever_set(data_dir, clock):
     driver = create("simulation", {"lever_set": "viessmann_vicare"}, Paths(data_dir), clock=clock, writer=True,
                     description=VIESSMANN_VICARE_BINDING)

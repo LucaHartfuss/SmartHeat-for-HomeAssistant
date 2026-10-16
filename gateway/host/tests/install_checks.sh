@@ -83,7 +83,7 @@ dpkg-query -W -f='${Status}' ca-certificates 2>/dev/null | grep -q "install ok i
   || fail "ca-certificates nicht installiert (Updater-HTTPS, docker pull)"
 grep -q "WARNUNG: ohne --pilot-ssh" /tmp/run1.log && fail "SSH-Warnung trotz --pilot-ssh"
 [ "$(stat -c '%a' /root/.ssh/authorized_keys)" = "600" ] || fail "authorized_keys"
-PYTHONPATH=/opt/smartheat/host python3 -c "import smartheat_host.updater, smartheat_host.led, smartheat_host.hoststatus, smartheat_host.minisign" \
+PYTHONPATH=/opt/smartheat/host python3 -c "import smartheat_host.updater, smartheat_host.led, smartheat_host.hoststatus, smartheat_host.minisign, smartheat_core.dateien" \
   || fail "Host-Dienste mit dem System-Python nicht importierbar"
 PYTHONPATH=/opt/smartheat/host python3 -c "
 from pathlib import Path

@@ -13,6 +13,7 @@ from smartheat_device import inventory, wire
 from smartheat_gateway import safety_warnings
 from smartheat_gateway.drivers.base import DriverError
 from smartheat_gateway.drivers.vicare_cloud import capabilities as caps
+from smartheat_gateway.drivers.vicare_cloud import driver as vicare_driver
 from smartheat_gateway.drivers.vicare_cloud import oauth
 from smartheat_gateway.drivers.vicare_cloud.driver import ViCareCloudDriver
 from smartheat_gateway.paths import Paths
@@ -57,7 +58,7 @@ def test_the_driver_uses_the_one_binding_of_the_ha_path(env):
     server, driver, paths, clock = env
     assert dict(driver.description.steps) == dict(BINDING.steps)
     assert driver.description.settle_seconds == 180  # die Wartezeit kommt fertig vom Server (wartezeit_s)
-    assert driver.quota.hard_limit == 1200 and driver.poll_seconds == 300.0
+    assert vicare_driver.QUOTA.hard_limit == 1200 and driver.poll_seconds == 300.0
 
 
 def test_reads_come_from_the_cache_without_a_new_api_call(env):

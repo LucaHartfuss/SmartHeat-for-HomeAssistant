@@ -20,7 +20,7 @@ def world(tmp_path):
     tokens = oauth.TokenStore(tmp_path / "vicare.json", iam=base)
     tokens.begin("c", "r")
     tokens.finish(GOOD_CODE, "r")
-    guard = QuotaGuard(tmp_path / "quota" / "vicare_cloud.json", QuotaSpec(1450, 3, 86400))
+    guard = QuotaGuard(tmp_path / "quota" / "vicare_cloud.json", QuotaSpec(3, 86400))
     client = vicare.ViCareApi(tokens, guard, base=base)
     yield server, client, guard, tokens
     server.stop()
