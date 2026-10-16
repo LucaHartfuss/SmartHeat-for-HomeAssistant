@@ -21,14 +21,14 @@ CACHE_MAX_POLLS = 3
 
 
 class DriverError(RuntimeError):
-    """Fehler mit Vertragsgrund (smartheat_device/wire.py; gemeldet vom Geraetekern ueber die Befehle driver_login
-    und inventory, Plan D2 Task 2): nicht_angemeldet, anlage_nicht_erreichbar, login_fehlgeschlagen,
-    login_nicht_noetig, kontingent_erschoepft."""
+    """Fehler mit Vertragsgrund (smartheat_device/wire.py; gemeldet vom Geraetekern ueber die Befehle driver_login und
+    inventory): nicht_angemeldet, anlage_nicht_erreichbar, login_fehlgeschlagen, login_nicht_noetig,
+    treiber_unbekannt. Kein Text: den bildet der Server (Spec Stufe 3 S5 6.2); die Meldung ist der Grund."""
 
-    def __init__(self, grund: str, text: str) -> None:
-        super().__init__(text)
+    def __init__(self, grund: str, details: dict | None = None) -> None:
+        super().__init__(grund)
         self.grund = grund
-        self.text = text
+        self.details = details
 
 
 class Driver(PlantBinding, Protocol):

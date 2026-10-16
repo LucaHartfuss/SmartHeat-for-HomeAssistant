@@ -4,7 +4,8 @@ Ausfuehrung, Gruende-Pruefung und Versand macht das Register. Gateway-Befehle: z
 driver_login, inventory (stunden 0: Erkennung des Treibers, sonst Messreihe des Treibers aus der
 Konfiguration; Ergebnis jeweils als up/inventory), diagnostics und
 sign_off (Markierung, dann startet die Laufzeit als "abgemeldet" neu und setzt die Anlage zurueck). hinweis und
-new_claim_code kann jedes Geraet (Geraetekern). Texte in Kundensprache, nie Geheimnisse; DriverError und
+new_claim_code kann jedes Geraet (Geraetekern). Fehler als Grund und details, nie Texte oder Geheimnisse
+(Spec Stufe 3 S5 6.2); DriverError und
 QuotaExhausted uebersetzt fehler_uebersetzen in Vertragsgruende.
 
 Blockierende Treiber-Aufrufe (Cloud-HTTP: Anmeldung, Erkennung, Inventur-Probe; mit Token-Erneuerung und 401-Wiederholung
@@ -41,14 +42,7 @@ logger = logging.getLogger(__name__)
 INVENTORY_EVERY_SECONDS = 900
 ERKENNUNG_SECONDS = 120
 SIGN_OFF_WAIT_SECONDS = 24 * 3600
-INVENTORY_ABORTED_TEXT = "Die Inventur wurde abgebrochen, weil sich die Einrichtung des Gateways geändert hat."
-INVENTORY_NO_SAMPLES_TEXT = "Die Inventur konnte keine einzige Probe abrufen, weil die Anlage nicht erreichbar war."
 ZIGBEE_VALUE_FIELDS = ("temperature", "local_temperature", "occupied_heating_setpoint", "humidity")
-QUOTA_TEXT = "Das Abfrage-Kontingent beim Hersteller ist erschöpft, später erneut versuchen."
-NOT_SET_UP_TEXT = "Das Gateway ist nicht eingerichtet."
-DRIVER_UNKNOWN_TEXT = "Dieser Hersteller-Zugang wird vom Gateway nicht unterstützt."
-ZIGBEE_TEXT = "Der Zigbee-Stick ist nicht bereit. Bitte prüfen, ob er eingesteckt ist."
-DRIVER_TIMEOUT_TEXT = "Der Hersteller-Zugang hat nicht rechtzeitig geantwortet, später erneut versuchen."
 
 
 @dataclass
@@ -88,22 +82,22 @@ def eintragen(register: CommandRegister, ctx: Kontext) -> None:
 def fehler_uebersetzen(error: Exception) -> Failed | None:
     """Fuer CommandRegister(uebersetzen=...): Treiber-Fehler tragen ihren Vertragsgrund."""
     if isinstance(error, DriverError):
-        return Failed(error.grund, error.text)
+        return Failed(error.grund, error.details)
     if isinstance(error, QuotaExhausted):
-        return Failed("kontingent_erschoepft", QUOTA_TEXT)
+        return Failed("kontingent_erschoepft")
     return None
 
 
 def _int(payload: dict, key: str, low: int, high: int) -> int:
     value = payload.get(key)
     if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
-        raise InvalidPayload(f"{key} muss eine ganze Zahl von {low} bis {high} sein.")
+        raise InvalidPayload(key, "bereich", min=low, max=high)
     return value
 
 
 def _driver(ctx: Kontext, driver_id, parameter: dict | None = None) -> Driver:
     if driver_id not in registry.DRIVERS:
-        raise DriverError("treiber_unbekannt", DRIVER_UNKNOWN_TEXT)
+        raise DriverError("treiber_unbekannt")
     return registry.create(driver_id, parameter or {}, ctx.paths, clock=ctx.clock, writer=False)
 
 
@@ -122,7 +116,7 @@ def _im_hintergrund(ctx: Kontext, kind: str, call: Callable[[], Done | Failed],
         if not future.done():
             if ctx.clock() >= frist:
                 future.cancel()
-                return Failed("anlage_nicht_erreichbar", DRIVER_TIMEOUT_TEXT)
+                return Failed("anlage_nicht_erreichbar")
             return None
         return future.result()
 
@@ -132,7 +126,7 @@ def _im_hintergrund(ctx: Kontext, kind: str, call: Callable[[], Done | Failed],
 
 def _zigbee_not_ready(ctx: Kontext) -> Failed | None:
     if ctx.mirror.online is not True:
-        return Failed("zigbee_nicht_bereit", ZIGBEE_TEXT)
+        return Failed("zigbee_nicht_bereit")
     return None
 
 
@@ -169,10 +163,10 @@ def zigbee_devices(ctx: Kontext, payload: dict) -> Outcome:
 def driver_login(ctx: Kontext, payload: dict) -> Outcome:
     phase = payload.get("phase")
     if phase not in wire.DRIVER_LOGIN_PHASES:
-        raise InvalidPayload("phase muss begin, finish oder password sein.")
+        raise InvalidPayload("phase", "unbekannt")
     driver = _driver(ctx, payload.get("driver_id"))
     if type(driver).login_kind is None:
-        raise DriverError("login_nicht_noetig", "Für diesen Zugang ist keine Anmeldung nötig.")
+        raise DriverError("login_nicht_noetig")
 
     def anmelden() -> Done:
         if phase == "begin":
@@ -199,7 +193,7 @@ def _erkennung(ctx: Kontext, payload: dict) -> Outcome:
     treiber = filter_.get("treiber") if isinstance(filter_, dict) and set(filter_) == set(
         wire.INVENTUR_FILTER_GATEWAY_FIELDS) else None
     if not isinstance(treiber, str):
-        raise InvalidPayload("Die Erkennung braucht filter.treiber.")
+        raise InvalidPayload("treiber", "fehlt")
     driver = _driver(ctx, treiber)
     return _im_hintergrund(ctx, "inventory", lambda: Done({}, inventur=driver.erkennung()), frist_s=ERKENNUNG_SECONDS)
 
@@ -211,16 +205,16 @@ def inventory(ctx: Kontext, payload: dict) -> Outcome:
         return _erkennung(ctx, payload)
     konfiguration = ctx.konfiguration()
     if not dokument_config.eingerichtet(konfiguration):
-        return Failed("nicht_eingerichtet", NOT_SET_UP_TEXT)
+        return Failed("nicht_eingerichtet")
     try:
         spec = gateway_config.bindung(konfiguration).driver_spec()
     except ConfigError:
-        raise DriverError("treiber_unbekannt", DRIVER_UNKNOWN_TEXT) from None
+        raise DriverError("treiber_unbekannt") from None
     driver = _driver(ctx, spec["id"], spec["parameter"])
     series = _series(ctx, driver.driver_id, hours)
     deadline_in = min(max(series["started"] + hours * 3600 - ctx.wall(), 0), hours * 3600)
     ready_at = ctx.clock() + deadline_in
-    last_failure = Failed("anlage_nicht_erreichbar", INVENTORY_NO_SAMPLES_TEXT)  # nur fuer eine Reihe ohne Probe
+    last_failure = Failed("anlage_nicht_erreichbar")  # nur fuer eine Reihe ohne Probe
     laufend: Future | None = None  # Probe im Hintergrund
 
     def check() -> Done | Failed | None:
@@ -228,7 +222,7 @@ def inventory(ctx: Kontext, payload: dict) -> Outcome:
         if not _adopt_saved(ctx, series):  # Reihe weg oder ersetzt (Abmelden, Aufraeumen): nichts mehr abrufen
             if laufend is not None:
                 laufend.cancel()
-            return Failed("anlage_nicht_erreichbar", INVENTORY_ABORTED_TEXT)
+            return Failed("anlage_nicht_erreichbar")
         now = ctx.wall()
         if laufend is None and series["next_at"] <= now < series["started"] + hours * 3600:
             # Zeitpunkt zuerst in der Datei belegen: ein zweiter wartender Befehl derselben Reihe ruft ihn nicht ab.
@@ -244,8 +238,8 @@ def inventory(ctx: Kontext, payload: dict) -> Outcome:
             except (DriverError, QuotaExhausted) as error:
                 # Eine einzelne Probe (5xx, Zeitueberschreitung, 429) beendet die Reihe nicht; nur der Typname ins Log.
                 logger.warning("Inventur-Probe uebersprungen (%s)", type(error).__name__)
-                last_failure = (Failed(error.grund, error.text) if isinstance(error, DriverError)
-                                else Failed("kontingent_erschoepft", QUOTA_TEXT))
+                last_failure = (Failed(error.grund, error.details) if isinstance(error, DriverError)
+                                else Failed("kontingent_erschoepft"))
             dateien.schreiben_json(ctx.paths.inventur, series, modus=dateien.PRIVAT)
         if ctx.clock() < ready_at:
             return None
@@ -307,7 +301,7 @@ def sign_off(ctx: Kontext, payload: dict) -> Outcome:
     ist der Wiederherstellungspunkt danach."""
     konfiguration = ctx.konfiguration()
     if not dokument_config.eingerichtet(konfiguration):
-        return Failed("nicht_eingerichtet", NOT_SET_UP_TEXT)
+        return Failed("nicht_eingerichtet")
     assert konfiguration is not None
     anlage = konfiguration["anlage"]
     if gateway_config.abmelden(ctx.paths, anlage):

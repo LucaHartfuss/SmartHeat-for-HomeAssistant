@@ -200,6 +200,6 @@ def test_results_are_read_by_the_device_host_exactly_as_written(tmp_path):
     k.update_result("0.6.2", "rollback", "ungesund")
     k.update_result("0.6.3", "rollback", "server_unerreichbar")
     welt.host._software_ergebnisse()
-    assert [(v, ok, grund) for v, ok, grund, _text in welt.device.ergebnisse] == [
+    assert [(v, ok, grund) for v, ok, grund in welt.device.ergebnisse] == [
         ("0.6.1", True, None), ("0.6.2", False, "ungesund"), ("0.6.3", False, "server_unerreichbar")]
     assert json.loads(welt.paths.software_quittung.read_text()) == {"seq": 3}

@@ -361,7 +361,7 @@ def test_login_phases_map_every_failure_to_a_contract_reason_without_secrets(tmp
         assert isinstance(unreachable.value.__cause__, oauth.TokenUnavailable)
         pending = json.loads((Paths(tmp_path).driver_secrets_dir / "vicare.json").read_text())["pending"]
         for error in (not_begun.value, rejected.value, unreachable.value):
-            assert pending["verifier"] not in error.text and GOOD_CODE not in error.text
+            assert pending["verifier"] not in str(error) and GOOD_CODE not in str(error)
         with pytest.raises(DriverError) as missing:
             driver.login_begin({"phase": "begin", "driver_id": "vicare_cloud"})
         assert missing.value.grund == "login_fehlgeschlagen"
