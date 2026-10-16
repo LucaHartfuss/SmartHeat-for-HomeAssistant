@@ -91,7 +91,8 @@ def test_unbekannte_phase_und_fehlender_treiber_nennen_feld_und_regel(register):
     assert _run(register, "inventory", {"stunden": 0, "filter": {}}, "c3")["error"] == fehlt
     assert _run(register, "inventory", {"stunden": 0, "filter": "simulation"}, "c4")["error"] == ungueltig
     assert _run(register, "inventory", {"stunden": 0, "filter": {"treiber": 5}}, "c5")["error"] == ungueltig
-    assert _run(register, "inventory", {"stunden": 0, "filter": {"treiber": "simulation", "x": 1}}, "c6")["error"] == ungueltig
+    assert _run(register, "inventory", {"stunden": 0, "filter": {"treiber": "simulation", "x": 1}}, "c6")["error"] == {
+        "grund": "ungueltige_nutzlast", "details": {"regel": "unbekannt"}}  # fremder Schluessel: strikt, ohne freien Namen
 
 
 def test_the_gateway_registers_exactly_its_commands(register):
@@ -113,6 +114,20 @@ def test_permit_join_and_device_list(ctx, register):
     assert sensor["art"] == "fuehler" and sensor["werte"]["temperature"] == 20.5 and sensor["batterie"] == 80
     assert set(sensor) == set(wire.ZIGBEE_DEVICE_FIELDS)
     assert sensor["last_seen"] == "2023-11-14T22:13:20+00:00"
+
+
+def test_zigbee_geraete_mit_vertragsbruch_enden_mit_intern_ohne_werte_im_log(monkeypatch, register, caplog):
+    monkeypatch.setattr(wire, "ZIGBEE_DEVICE_FIELDS", wire.ZIGBEE_DEVICE_FIELDS[:-1])
+    antwort = _run(register, "zigbee_devices", {})
+    assert antwort["error"] == {"grund": "intern"}
+    assert "Vertragsfehler" in caplog.text and SENSOR not in caplog.text
+
+
+def test_zigbee_art_ausserhalb_des_vertrags_endet_mit_intern(monkeypatch, register, caplog):
+    monkeypatch.setattr(wire, "ZIGBEE_ARTEN", ("thermostat", "sonstig"))  # "fuehler" fehlt: der Sensor bricht den Vertrag
+    antwort = _run(register, "zigbee_devices", {})
+    assert antwort["error"] == {"grund": "intern"}
+    assert "Vertragsfehler" in caplog.text and SENSOR not in caplog.text
 
 
 def test_zigbee_not_ready(ctx, register):
@@ -176,6 +191,26 @@ def test_inventur_stunden_0_geht_vor_und_nach_der_einrichtung(ctx, konf):
 ])
 def test_inventur_stunden_0_ohne_treiber_ist_ungueltig(register, payload):
     assert _run(register, "inventory", payload)["error"]["grund"] == "ungueltige_nutzlast"
+
+
+@pytest.mark.parametrize("filter_, details", [
+    ({"treiber": "simulation", "plattformen": ["x"]}, {"feld": "plattformen", "regel": "unbekannt"}),
+    ({"treiber": "simulation", "geheim": 1}, {"regel": "unbekannt"}),
+])
+def test_inventur_stunden_0_mit_fremdem_filterschluessel_nennt_nur_vertragsnamen(register, filter_, details):
+    """V1 ist beidseitig strikt (Nutzer 2026-10-16): G-6-Format, ein fremder Name steht nur in details, wenn er im
+    Vertrag steht."""
+    antwort = _run(register, "inventory", {"stunden": 0, "filter": filter_})
+    assert antwort["error"] == {"grund": "ungueltige_nutzlast", "details": details}
+
+
+def test_inventur_stunden_0_mit_vertragsbruch_der_erkennung_endet_mit_intern(monkeypatch, register, caplog):
+    """Eine Erkennung, die nicht zu den Feldlisten des Vertrags passt (Programmierfehler oder fremde Daten), endet mit
+    intern; im Log stehen Fehlerart und Ort, nie ein Wert."""
+    monkeypatch.setattr(wire, "INVENTUR_ANLAGE_FIELDS", wire.INVENTUR_ANLAGE_FIELDS[:-1])
+    antwort = _run(register, "inventory", {"stunden": 0, "filter": {"treiber": "simulation"}})
+    assert antwort["error"] == {"grund": "intern"}
+    assert "Vertragsfehler" in caplog.text and "lever_set" not in caplog.text and "settle_delay" not in caplog.text
 
 
 def test_inventur_stunden_0_unbekannter_treiber(register):

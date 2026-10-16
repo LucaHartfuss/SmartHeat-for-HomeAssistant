@@ -99,17 +99,6 @@ NUR_GEPINNT_GERAET: set[str] = {  # Kopien im Kern (smartheat_core darf nichts i
     "TREIBER_FIELDS",  # config_check.TREIBER_FELDER
     "ZAEHLER",  # bindungsparameter.ZAEHLER
 }
-OFFEN: set[str] = {  # Ist-Stand 2026-10-16; die Tasks 2-6 leeren es, Task 7 prueft OFFEN == set()
-    "INVENTUR_ANLAGE_FIELDS",  # Task 6
-    "INVENTUR_ENTITY_FIELDS",  # Task 6
-    "INVENTUR_FEATURE_FIELDS",  # Task 6
-    "INVENTUR_FILTER_FIELDS",  # Task 6
-    "INVENTUR_GATEWAY_FIELDS",  # Task 6
-    "INVENTUR_GERAET_FIELDS",  # Task 6
-    "INVENTUR_HA_FIELDS",  # Task 6
-    "ZIGBEE_ARTEN",  # Task 6
-    "ZIGBEE_DEVICE_FIELDS",  # Task 6
-}
 
 
 def _vertragsnamen() -> set[str]:
@@ -183,7 +172,7 @@ def _leser_im_geraet() -> tuple[set[str], set[str]]:
 def test_jede_vertragskonstante_hat_einen_leser_im_geraet():
     gelesen, gepinnt = _leser_im_geraet()
     ohne = _vertragsnamen() - gelesen
-    assert ohne - gepinnt == NUR_SERVER | OFFEN
+    assert ohne - gepinnt == NUR_SERVER
     assert ohne & gepinnt == NUR_GEPINNT_GERAET
 
 

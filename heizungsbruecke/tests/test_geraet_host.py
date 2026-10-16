@@ -184,6 +184,38 @@ def test_inventory_with_a_malformed_filter_is_an_invalid_payload(tmp_path, monke
     assert outcome == Failed("ungueltige_nutzlast", {"feld": "filter", "regel": "ungueltig"})
 
 
+@pytest.mark.parametrize("filter_", [{"domaenen": ["climate"], "treiber": "simulation"}, {"geheim": 1}])
+def test_inventory_with_a_foreign_filter_key_is_invalid(tmp_path, monkeypatch, filter_):
+    host, _, _ = _host(tmp_path, monkeypatch)
+    monkeypatch.setattr(geraet_host.inventur, "inventur", lambda ha, f: pytest.fail("nicht aufgerufen"))
+    outcome = _register(host, tmp_path)._handlers["inventory"]({"stunden": 0, "filter": filter_})
+    assert isinstance(outcome, Failed) and outcome.grund == "ungueltige_nutzlast"
+    assert outcome.details in ({"feld": "treiber", "regel": "unbekannt"}, {"regel": "unbekannt"})
+
+
+def test_an_inventory_that_breaks_the_contract_ends_with_intern_and_no_values_in_the_log(tmp_path, monkeypatch, caplog):
+    """Programmierfehler (Feldliste und Erzeuger passen nicht zusammen) oder fremde Daten: intern, kein Wert in Log und
+    Ergebnis (Regel 6); die Fehlerart steht im Log."""
+    ha = FakeHa()
+    ha.states = {"climate.wz": "GEHEIMER-ZUSTAND", "climate.wz::friendly_name": "GEHEIMER-NAME"}
+    ha.registry = [{"entity_id": "climate.wz", "platform": "zha", "original_name": "GEHEIMER-NAME"}]
+    host, _, clock = _host(tmp_path, monkeypatch, ha=ha)
+    monkeypatch.setattr(wire, "INVENTUR_ENTITY_FIELDS", wire.INVENTUR_ENTITY_FIELDS[:-1])
+    ergebnisse = []
+    register = CommandRegister(tmp_path, lambda body: ergebnisse.append(body) or True, clock=clock)
+    host.befehle_eintragen(register)
+    register.empfangen({"schema": 1, "command_id": "c1", "kind": "inventory", "expires_at": "2027-01-01T00:00:00+00:00",
+                        "payload": {"stunden": 0, "filter": {"domaenen": ["climate"]}}})
+    for _ in range(200):
+        register.pruefen()
+        if ergebnisse:
+            break
+        time.sleep(0.01)
+    assert ergebnisse[-1]["ok"] is False and ergebnisse[-1]["error"] == {"grund": "intern"}
+    assert "Vertragsfehler" in caplog.text and "GEHEIM" not in caplog.text
+    host.hintergrund.stop()
+
+
 def test_inventory_with_ha_down_fails_without_contents_in_the_log(tmp_path, monkeypatch, caplog):
     ha = FakeHa()
     ha.offline = True

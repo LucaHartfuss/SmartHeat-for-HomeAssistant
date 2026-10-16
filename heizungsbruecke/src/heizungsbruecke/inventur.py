@@ -3,7 +3,8 @@ Hersteller-Integrationen, Domaenen, Domaene/Geraeteklasse), mit den Feldern des 
 gewaehlte Entity daran haengt; Handys nur mit den genannten Praefixen. Kein Herstellerwissen. Deaktivierte Entities
 fehlen; Entities ohne Registry-Eintrag (YAML, Template ohne unique_id) zaehlen nur ueber Domaene bzw. Geraeteklasse.
 
-Die Felder sind genau die, die der Server liest (heizungsserver.einrichtung.ha_inventur.lesen; Gegenprobe in
+Die Felder sind genau die des Vertrags (wire.INVENTUR_*_FIELDS; pruefen() setzt es beim Bauen durch, ein Abweichen ist
+ein Vertragsfehler mit Feldnamen) und die, die der Server liest (heizungsserver.einrichtung.ha_inventur.lesen; Gegenprobe in
 tests/test_inventur.py): `name` ist der Name der Integration (original_name), an dem der Server die Kreise erkennt,
 nicht der vom Nutzer vergebene. config/entity_registry/list liefert keine device_class; dann zaehlt das Attribut des
 Zustands. Inhalte der Inventur gehoeren nie in Logs (Regel 6).
@@ -15,6 +16,7 @@ import logging
 from collections import Counter
 
 from smartheat_device import fehler, wire
+from smartheat_device.nachrichten import pruefen
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +36,13 @@ def _texte(value) -> bool:
 
 
 def filter_pruefen(filter_) -> dict | None:
-    """details, wenn der Filter nicht die Form des Vertrags hat (wire.INVENTUR_FILTER_FIELDS: Listen von Texten,
-    geraeteklassen Paare aus Domaene und Klasse), sonst None. Fehlende Felder sind leer, unbekannte zaehlen nicht."""
+    """details, wenn der Filter nicht die Form des Vertrags hat (genau die Felder wire.INVENTUR_FILTER_FIELDS: Listen
+    von Texten, geraeteklassen Paare aus Domaene und Klasse), sonst None. Fehlende Felder sind leer, ein Schluessel
+    ausserhalb der Liste lehnt den Filter ab (V1 ist beidseitig strikt, Nutzer 2026-10-16)."""
     if not isinstance(filter_, dict):
         return fehler.details("filter", "ungueltig")
+    if (fremd := fehler.fremdes_feld(filter_, wire.INVENTUR_FILTER_FIELDS)) is not None:
+        return fremd
     for key in ("plattformen", "domaenen", "dienste"):
         if key in filter_ and filter_[key] is not None and not _texte(filter_[key]):
             return fehler.details("filter", "ungueltig")
@@ -93,16 +98,17 @@ def inventur(ha_api, filter_: dict) -> dict:
             continue
         if entry.get("device_id"):
             geraete_ids.add(entry["device_id"])
-        entities.append({
+        entities.append(pruefen("inventur.entity", {
             "entity_id": entity_id, "plattform": plattform, "unique_id": entry.get("unique_id"),
             "name": entry.get("original_name"), "config_entry": entry.get("config_entry_id"),
             "geraet": entry.get("device_id"), "einheit": attributes.get("unit_of_measurement"),
             "device_class": klasse, "state_class": attributes.get("state_class"), "zustand": state.get("state"),
             "attribute": {k: attributes[k] for k in wire.INVENTUR_ATTRIBUTE if k in attributes},
             "aktualisiert": state.get("last_updated"),
-        })
-    geraete = [{"id": d["id"], "name": d.get("name_by_user") or d.get("name"), "modell": d.get("model"),
-                "config_entries": list(d.get("config_entries") or [])}
+        }, wire.INVENTUR_ENTITY_FIELDS))
+    geraete = [pruefen("inventur.geraet", {"id": d["id"], "name": d.get("name_by_user") or d.get("name"),
+                                           "modell": d.get("model"), "config_entries": list(d.get("config_entries") or [])},
+                       wire.INVENTUR_GERAET_FIELDS)
                for d in ha_api.device_registry() if isinstance(d, dict) and d.get("id") in geraete_ids]
     if verworfen:
         logger.info("Inventur: %d Entities ausserhalb der Positivliste verworfen (%s)", sum(verworfen.values()),
@@ -113,5 +119,6 @@ def inventur(ha_api, filter_: dict) -> dict:
                      if f"notify.{name}".startswith(praefixe) and f"notify.{name}".startswith(DIENST_PRAEFIX))
     config = ha_api.get_config()
     units = config.get("unit_system") if isinstance(config.get("unit_system"), dict) else {}
-    return {"entities": entities, "geraete": geraete, "dienste": dienste,
-            "einheit_temperatur": units.get("temperature"), "zeitzone": config.get("time_zone")}
+    return pruefen("inventur", {"entities": entities, "geraete": geraete, "dienste": dienste,
+                                "einheit_temperatur": units.get("temperature"), "zeitzone": config.get("time_zone")},
+                   wire.INVENTUR_HA_FIELDS)

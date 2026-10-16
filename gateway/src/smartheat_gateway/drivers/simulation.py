@@ -13,7 +13,7 @@ from smartheat_core.binding import BindingDescription
 from smartheat_core.levers import LEVER_SETS
 from smartheat_core.verfahren import VERFAHREN
 from smartheat_gateway import safety_warnings
-from smartheat_gateway.drivers.base import CACHE_MAX_POLLS, KIND_LOCAL, LEVER_ROLES, DriverError
+from smartheat_gateway.drivers.base import CACHE_MAX_POLLS, KIND_LOCAL, LEVER_ROLES, DriverError, erkennung_daten
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.quota import QuotaExhausted
 
@@ -293,8 +293,8 @@ class SimulationDriver:
 
         kennung = {key: self._p[key] for key in ("lever_set", "settle_delay", "poll_seconds")}
         warnungen = safety_warnings.compute({"lever_set": lever_set, "hebel": hebel})
-        return {"treiber": self.driver_id, "anlagen": [{"kennung": kennung, "sicherheitswarnungen": {"0": warnungen}}],
-                "features": [feature(0, True), feature(1, False)]}
+        return erkennung_daten(self.driver_id, [{"kennung": kennung, "sicherheitswarnungen": {"0": warnungen}}],
+                               [feature(0, True), feature(1, False)])
 
     def inventory_sample(self) -> dict:
         return {"hebel": dict(self._plant()["hebel"])}

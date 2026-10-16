@@ -15,7 +15,14 @@ import requests
 
 from smartheat_core.binding import BindingDescription
 from smartheat_gateway import safety_warnings
-from smartheat_gateway.drivers.base import CACHE_MAX_POLLS, KIND_CLOUD, LEVER_ROLES, LOGIN_OAUTH, DriverError
+from smartheat_gateway.drivers.base import (
+    CACHE_MAX_POLLS,
+    KIND_CLOUD,
+    LEVER_ROLES,
+    LOGIN_OAUTH,
+    DriverError,
+    erkennung_daten,
+)
 from smartheat_gateway.drivers.vicare_cloud import api as vicare
 from smartheat_gateway.drivers.vicare_cloud import capabilities as caps
 from smartheat_gateway.drivers.vicare_cloud import oauth
@@ -383,7 +390,7 @@ class ViCareCloudDriver:
                                         "poll_seconds": self.poll_seconds},
                             "sicherheitswarnungen": warnungen})
             features += [{"anlage": nummer, **f} for f in map(caps.gekuerzt, roh) if f is not None]
-        return {"treiber": self.driver_id, "anlagen": anlagen, "features": features}
+        return erkennung_daten(self.driver_id, anlagen, features)
 
     def inventory_sample(self) -> dict:
         """Eine Probe fuer die Inventur (Befehl inventory, Praezisierung 7): nur Zahlenwerte der Rollen, keine Seriennummern,
