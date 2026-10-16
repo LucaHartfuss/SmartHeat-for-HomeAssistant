@@ -304,6 +304,19 @@ def test_ha_still_starting_is_not_a_verdict_either():
         dokument.zuordnung_pruefen(KONFIGURATION, ha)
 
 
+def test_a_contract_violation_in_the_details_is_a_programming_error_not_a_missing_ha(monkeypatch):
+    """fehler.details wirft bei einem Verstoss ValueError; das darf nicht als NichtPruefbar (HA nicht erreichbar, still
+    wiederholen) enden, sondern muss als Fehler sichtbar werden."""
+    def verstoss(*args, **kwargs):
+        raise ValueError("details passen nicht zum Vertrag")
+
+    monkeypatch.setattr(dokument.fehler, "details", verstoss)
+    ha = _ha()
+    ha.missing.add("number.heat_limit")
+    with pytest.raises(ValueError, match="Vertrag"):
+        dokument.zuordnung_pruefen(KONFIGURATION, ha)
+
+
 def test_a_broken_ha_answer_is_not_a_verdict():
     class Broken(FakeHa):
         def entity_registry(self):

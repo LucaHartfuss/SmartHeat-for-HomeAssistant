@@ -159,7 +159,9 @@ def lokal_pruefen(konfiguration) -> str | None:
     return befund.text if befund is not None else None
 
 
-def _mit_ha(b: HaBindung, ha_api) -> dict | None:
+def _mit_ha(b: HaBindung, ha_api) -> tuple[str, str] | None:
+    """Der Teil mit HA: (feld, regel) des ersten Verstosses oder None. Bildet keine details (fehler.details kann bei
+    einem Programmierfehler ValueError werfen, der in zuordnung_pruefen nicht als „HA nicht erreichbar“ gelten darf)."""
     if not ha_api.is_reachable():  # faehrt HA hoch, fehlen die Entities der Integration noch (404): kein Urteil
         raise NichtPruefbar
     registry = {e.get("entity_id"): e for e in ha_api.entity_registry() if isinstance(e, Mapping)}
@@ -168,19 +170,19 @@ def _mit_ha(b: HaBindung, ha_api) -> dict | None:
             *(("raumfuehler", ref) for ref in b.raumfuehler), *(("batterien", ref) for ref in b.batterien)]
     for feld, ref in refs:
         if not ha_api.entity_exists(_entity(ref)):
-            return fehler.details(feld, "unbekannt")
+            return feld, "unbekannt"
     ziele = _schreibziel_rollen(b)
     for rolle, ref in ziele:
         entry = registry.get(_entity(ref)) or {}
         # Kreis ohne Config-Entry (config_entry None): nur die Plattform bindet
         if entry.get("platform") != b.kreis.get("plattform") or (
                 b.kreis.get("config_entry") is not None and entry.get("config_entry_id") != b.kreis["config_entry"]):
-            return fehler.details(v1_rolle(rolle), "nicht_erlaubt")
+            return v1_rolle(rolle), "nicht_erlaubt"
     soll_entry = registry.get(_entity(b.soll_entity)) or {}
     geraete = {(registry.get(_entity(ref)) or {}).get("device_id") for _, ref in ziele} - {None}
     if _entity(b.soll_entity) in {_entity(ref) for _, ref in ziele} or (
             soll_entry.get("device_id") is not None and soll_entry.get("device_id") in geraete):
-        return fehler.details("room_target", "nicht_erlaubt")
+        return "room_target", "nicht_erlaubt"
     return None
 
 
@@ -203,9 +205,11 @@ def zuordnung_pruefen(konfiguration, ha_api, akzeptiert=None) -> dict | None:
     if _unveraendert(konfiguration, akzeptiert):
         return None
     try:
-        return _mit_ha(b, ha_api)
+        fund = _mit_ha(b, ha_api)
     except NichtPruefbar:
         raise
     except Exception as error:  # HA nicht erreichbar, unerwartete Antwort: spaeter erneut, nie eine Ablehnung
         logger.warning("Zuordnung vorerst nicht pruefbar (%s)", type(error).__name__)
         raise NichtPruefbar from None
+    # ausserhalb des try: ein Verstoss gegen den Vertrag (ValueError) ist ein Programmierfehler und bleibt sichtbar
+    return fehler.details(*fund) if fund is not None else None

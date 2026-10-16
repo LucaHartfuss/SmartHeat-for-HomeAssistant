@@ -29,3 +29,20 @@ def test_body_ohne_text():
 def test_gueltig_lehnt_fremde_schluessel_und_texte_ab():
     assert not fehler.gueltig({"text": "frei"}) and not fehler.gueltig("frei")
     assert not fehler.gueltig({"feld": "<script>"}) and fehler.gueltig({"feld": "pruefung_s", "max": 3600})
+
+
+def test_ueberlange_ganzzahl_ist_ungueltig_und_wirft_nicht_beim_pruefen():
+    # JSON liefert beliebig grosse Ganzzahlen; math.isfinite laeuft dabei ueber (OverflowError) und zaehlt als ungueltig
+    for key in ("min", "max", "wert", "anzahl"):
+        assert fehler.gueltig({key: 10**400}) is False
+        with pytest.raises(ValueError):
+            fehler.details("raumfuehler", "anzahl", **{key: 10**400})
+    assert fehler.gueltig({"anzahl": 10**15}) is True
+
+
+def test_alle_sechs_felder_zugleich_sind_gueltig():
+    voll = {"feld": "raumfuehler", "regel": "anzahl", "min": 1, "max": 8, "wert": -0.5, "anzahl": 9}
+    assert set(voll) == set(wire.DETAIL_FIELDS)
+    assert fehler.gueltig(voll)
+    assert fehler.details("raumfuehler", "anzahl", min=1, max=8, wert=-0.5, anzahl=9) == voll
+    assert fehler.body("ungueltig", voll) == {"grund": "ungueltig", "details": voll}
