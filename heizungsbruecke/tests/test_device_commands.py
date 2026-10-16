@@ -134,6 +134,47 @@ def test_a_foreign_payload_field_is_refused_and_does_not_run(tmp_path, kind, pay
     assert calls == [] and sent.results == [_fail("ungueltige_nutzlast", erwartet)]
 
 
+@pytest.mark.parametrize("kind, payload, feld", [
+    ("claim_state", {}, "device_state"),
+    ("zigbee_permit_join", {}, "seconds"),
+    ("inventory", {"filter": {"treiber": "simulation"}}, "stunden"),
+    ("hinweis", {"key": "k", "stufe": "info"}, "text"),
+    ("hinweis", {"stufe": "info", "text": "t"}, "key"),
+])
+def test_a_missing_required_payload_field_is_refused_and_does_not_run(tmp_path, kind, payload, feld):
+    sent, calls = Sent(), []
+    register = cmd.CommandRegister(tmp_path, sent)
+    register.register(kind, lambda nutzlast: calls.append(1) or cmd.Done({}))
+    register.empfangen(_command(kind, payload=payload))
+    assert calls == [] and sent.results == [_fail("ungueltige_nutzlast", {"feld": feld, "regel": "fehlt"})]
+
+
+@pytest.mark.parametrize("kind, payload", [
+    ("claim_state", {"device_state": "uebernommen"}), ("new_claim_code", {}), ("sign_off", {}), ("diagnostics", {}),
+    ("hinweis", {"key": "k", "stufe": "info", "text": "t"}), ("inventory", {"stunden": 0}),
+    ("inventory", {"stunden": 1, "filter": {"treiber": "simulation"}}), ("zigbee_permit_join", {"seconds": 60}),
+    ("zigbee_devices", {}),
+])
+def test_every_server_payload_shape_is_accepted(tmp_path, kind, payload):
+    """Die Nutzlasten der Server-Erzeuger (Check 72) bleiben angenommen: alle Pflichtfelder, optionale nach Bedarf."""
+    sent, calls = Sent(), []
+    register = cmd.CommandRegister(tmp_path, sent)
+    register.register(kind, lambda nutzlast: calls.append(1) or cmd.Done({}))
+    register.empfangen(_command(kind, payload=payload))
+    assert calls == [1] and sent.results == [_ok()]
+
+
+@pytest.mark.parametrize("payload", [{}, {"phase": "begin"}, {"phase": "x", "driver_id": "y"}])
+def test_a_phase_command_leaves_the_required_fields_to_its_handler(tmp_path, payload):
+    """driver_login: Command.payload ist die Vereinigung aller Phasen; die Annahme verlangt davon keines."""
+    sent, calls = Sent(), []
+    register = cmd.CommandRegister(tmp_path, sent)
+    register.register("driver_login", lambda nutzlast: calls.append(nutzlast) or cmd.Done({}))
+    register.empfangen(_command("driver_login", payload=payload))
+    assert calls == [payload] and sent.results == [_ok()]
+    assert set(cmd.PHASENBEFEHLE) == {"driver_login"}
+
+
 def test_the_optional_payload_field_of_a_kind_is_accepted(tmp_path):
     sent, calls = Sent(), []
     register = cmd.CommandRegister(tmp_path, sent)
@@ -201,8 +242,9 @@ def test_exceptions_become_reasons(tmp_path):
     register.register("zigbee_permit_join", invalid)
     register.register("inventory", down)
     register.register("diagnostics", broken)
-    for number, kind in enumerate(("zigbee_permit_join", "inventory", "diagnostics"), start=1):
-        register.empfangen(_command(kind, f"c{number}"))
+    nutzlasten = {"zigbee_permit_join": {"seconds": 60}, "inventory": {"stunden": 1}, "diagnostics": {}}
+    for number, (kind, nutzlast) in enumerate(nutzlasten.items(), start=1):
+        register.empfangen(_command(kind, f"c{number}", nutzlast))
     assert [result["error"] for result in sent.results] == [
         {"grund": "ungueltige_nutzlast", "details": {"feld": "seconds", "regel": "fehlt"}},
         {"grund": "anlage_nicht_erreichbar"},

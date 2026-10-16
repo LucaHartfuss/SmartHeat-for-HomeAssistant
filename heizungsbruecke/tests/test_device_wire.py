@@ -83,7 +83,7 @@ _PIN_PRAEFIX = "_VERTRAG_GEPINNT"
 NUR_SERVER: set[str] = {
     "MAX_BODY_BYTES",  # nur der Server begrenzt den Bootstrap-Body; die Bausteine liefern wenige hundert Bytes
     "MAX_CLOCK_SKEW_SECONDS",  # nur der Server prueft das Zeitfenster der Signatur
-    "UNAUTHENTICATED_ERROR",  # Text der 401-Antwort; das Geraet wertet nur den Status 401 (Spec 1: fuer alle Faelle gleich)
+    "UNAUTHENTICATED_ERROR",  # Text der 401-Antwort; das Geraet wertet nur den Status 401 (Spec 1: immer gleich)
 }
 NUR_GEPINNT_GERAET: set[str] = {  # Kopien im Kern (smartheat_core darf nichts importieren), nur gepinnt (P4)
     "ABO",  # config_check.ABO_WERTE
@@ -108,9 +108,14 @@ def _vertragsnamen() -> set[str]:
     for node in tree.body:
         if node.lineno >= ende:
             break
-        ziele = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
+        ziele = []
+        if isinstance(node, ast.Assign):
+            ziele = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            ziele = [node.target]
         for ziel in ziele:
-            namen |= {n.id for n in ast.walk(ziel) if isinstance(n, ast.Name) and re.fullmatch(r"[A-Z][A-Z0-9_]+", n.id)}
+            namen |= {n.id for n in ast.walk(ziel)
+                      if isinstance(n, ast.Name) and re.fullmatch(r"[A-Z][A-Z0-9_]+", n.id)}
     return namen
 
 

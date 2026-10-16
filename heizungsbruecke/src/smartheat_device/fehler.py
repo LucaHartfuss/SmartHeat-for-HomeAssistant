@@ -2,6 +2,7 @@
 aus wire.DETAIL_FIELDS -- feld aus wire.PRUEF_FELDER, regel aus wire.PRUEF_REGELN, die uebrigen endliche Zahlen. Den
 Text bildet der Server (geraete/texte.py); lokale Anzeigen (Meldungen, Diagnoseseite, Log) haben eigene Texte."""
 import math
+from collections.abc import Iterable
 
 from smartheat_device import wire
 
@@ -38,9 +39,10 @@ def details(feld: str | None = None, regel: str | None = None, **zahlen: float) 
     return werte
 
 
-def fremdes_feld(inhalt: dict, erlaubt) -> dict | None:
-    """details fuer das erste (alphabetisch) Feld von `inhalt` ausserhalb von `erlaubt`; None, wenn es keines gibt. Der Name
-    kommt vom Netz: er steht nur in details, wenn er ein Feld des Vertrags ist (wire.PRUEF_FELDER), sonst nur die Regel."""
+def fremdes_feld(inhalt: dict, erlaubt: Iterable[str]) -> dict | None:
+    """details fuer das erste (alphabetisch) Feld von `inhalt` ausserhalb von `erlaubt`; None, wenn es keines gibt.
+    Der Name kommt vom Netz: er steht nur in details, wenn er ein Feld des Vertrags ist (wire.PRUEF_FELDER), sonst
+    nur die Regel."""
     fremd = sorted(map(str, set(inhalt) - set(erlaubt)))
     return details(fremd[0] if fremd[0] in wire.PRUEF_FELDER else None, "unbekannt") if fremd else None
 

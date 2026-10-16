@@ -93,8 +93,8 @@ def _base64(daten: bytes) -> str:
     return base64.b64encode(daten).decode()
 
 
-#: Kodierungen des Vertrags (wire.SIGNATURE_ENCODING, wire.PUBLIC_KEY_ENCODING). Nennt der Vertrag eine andere, scheitert
-#: das Geraet laut (KeyError) statt still falsch zu kodieren.
+#: Kodierungen des Vertrags (wire.SIGNATURE_ENCODING, wire.PUBLIC_KEY_ENCODING). Nennt der Vertrag eine andere,
+#: scheitert das Geraet laut (KeyError) statt still falsch zu kodieren.
 _KODIERUNGEN = {"base64url_unpadded": _base64url_ohne_padding, "base64_der_spki": _base64}
 assert {wire.SIGNATURE_ENCODING, wire.PUBLIC_KEY_ENCODING} <= set(_KODIERUNGEN), "Kodierung des Vertrags unbekannt"
 

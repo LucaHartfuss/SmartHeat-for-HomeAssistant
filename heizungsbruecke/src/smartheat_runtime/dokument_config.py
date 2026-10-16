@@ -105,14 +105,11 @@ def _e2e_intervalle() -> dict:
     return werte
 
 
-def _intervall(key: str, default: float) -> float:
-    return _e2e_intervalle().get(key, default)
-
-
 def boot_info(konfiguration, *, abgemeldet: bool, client_version: str, backup_path: Path,
               failsafe_path: Path, aufraeumen_path: Path | None = None) -> BootInfo:
     """Wirft nie (wie die BootInfo der Hosts): ein unbekannter Hebelsatz faellt fuer das Statusereignis auf den
     Standard zurueck; runtime_config meldet ihn danach als Konfigurationsfehler."""
+    intervalle = _e2e_intervalle()  # einmal je Aufruf lesen (und loggen)
     anlage = konfiguration["anlage"] if eingerichtet(konfiguration) else None
     hebelsatz = konfiguration.get("hebelsatz") if isinstance(konfiguration, Mapping) else None
     lever_set = LEVER_SETS.get(hebelsatz) if isinstance(hebelsatz, str) else None
@@ -120,7 +117,7 @@ def boot_info(konfiguration, *, abgemeldet: bool, client_version: str, backup_pa
     return BootInfo(
         configured=anlage is not None and not abgemeldet, signed_off=anlage is not None and abgemeldet,
         tenant_id=anlage, lever_set=lever_set, client_version=client_version, notify_hints_off=(),
-        local_check_interval=_intervall("pruefung_s", DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS),
+        local_check_interval=intervalle.get("pruefung_s", DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS),
         backup_path=backup_path, failsafe_path=failsafe_path, aufraeumen_path=aufraeumen_path,
     )
 
@@ -147,11 +144,12 @@ def runtime_config(konfiguration, *, rastung_pfad: Path, entitlement_path: Path,
     sensors = konfiguration.get("raumfuehler")
     if not isinstance(sensors, list) or not sensors or not all(isinstance(ref, str) for ref in sensors):
         raise ConfigError("Konfiguration: keine Raumfühler")
+    intervalle = _e2e_intervalle()  # einmal je Aufruf lesen (und loggen)
     return RuntimeConfig(
         tenant_id=konfiguration["anlage"], lever_set_id=hebelsatz,
         local_safety=safety, daily_trigger_time=daily,
-        local_check_interval=_intervall("pruefung_s", DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS),
-        telemetry_interval=_intervall("telemetrie_s", DEFAULT_TELEMETRY_INTERVAL_SECONDS),
+        local_check_interval=intervalle.get("pruefung_s", DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS),
+        telemetry_interval=intervalle.get("telemetrie_s", DEFAULT_TELEMETRY_INTERVAL_SECONDS),
         notify_hints_off=(), room_sensor_refs=tuple(sensors), battery_refs=(), entitlement_path=entitlement_path,
         abo_source=abo_source,
     )

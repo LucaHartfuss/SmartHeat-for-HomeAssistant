@@ -384,8 +384,8 @@ class Device:
         try:
             hello = self._hello()
         except Exception as error:
-            # Host-Rueckruf gescheitert oder Vertragsverstoss: Fehlerart und Ort, nie die Meldung (Regel 6); der naechste
-            # Takt versucht es erneut. Je Fehlerart und Ort einmal loggen (der Takt ruft das jede Sekunde).
+            # Host-Rueckruf gescheitert oder Vertragsverstoss: Fehlerart und Ort, nie die Meldung (Regel 6); der
+            # naechste Takt versucht es erneut. Je Fehlerart und Ort einmal loggen (der Takt ruft das jede Sekunde).
             art = f"{type(error).__name__}{commands.fehlerort(error)}"
             if art != self._hello_fehler:
                 self._hello_fehler = art
@@ -457,8 +457,8 @@ class Device:
             else:
                 self._host_rufen("bedienung_uebernommen", self.host.bedienung_uebernommen, neu)
         if art == KONFIGURATION and body.get("schema") in wire.SCHEMATA and "software" in body:
-            # Das Angebot geht auch aus einer abgelehnten Konfiguration an den Host (ein Update kann der Ausweg sein), aber
-            # nur, wenn es selbst gueltig ist (R15): sonst bleibt das vorherige Angebot bestehen.
+            # Das Angebot geht auch aus einer abgelehnten Konfiguration an den Host (ein Update kann der Ausweg sein),
+            # aber nur, wenn es selbst gueltig ist (R15): sonst bleibt das vorherige Angebot bestehen.
             if software_pruefen(body["software"]) is not None:
                 logger.warning("Soll-Software ungueltig, das vorherige Angebot bleibt")
             else:

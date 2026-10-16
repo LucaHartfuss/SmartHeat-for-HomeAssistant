@@ -36,6 +36,9 @@ COMMAND_ID_MAX_CHARS = 64
 TIMEOUT_GRUND = "keine_bestaetigung"
 HINWEIS_KEY_MAX_CHARS = 64
 HINWEIS_TEXT_MAX_CHARS = 1000
+#: Arten, deren Pflichtfelder die Phase bestimmt (Command.payload ist dort die Vereinigung aller Phasen,
+#: wire.DRIVER_LOGIN_PHASES): die Annahme prueft nur fremde Felder, die Phasenregel steht im Handler des Hosts.
+PHASENBEFEHLE = ("driver_login",)
 
 
 @dataclass(frozen=True)
@@ -159,8 +162,9 @@ class CommandRegister:
 
     def _execute(self, command_id: str, kind: str, message: dict) -> Outcome:
         # Strenge Annahme (V1 auf beiden Seiten strikt, Nutzer 2026-10-16): genau die Felder des Vertrags
-        # (wire.COMMAND_FIELDS), in der Nutzlast nur die der Art (Command.payload + payload_optional). Sonst laeuft kein
-        # Handler. Ein fremder Name steht nur in details, wenn er in wire.PRUEF_FELDER steht (G-6: nie freier Text).
+        # (wire.COMMAND_FIELDS), in der Nutzlast alle Pflichtfelder der Art (Command.payload) und sonst nur
+        # payload_optional. Sonst laeuft kein Handler. Ein fremder Name steht nur in details, wenn er in
+        # wire.PRUEF_FELDER steht (G-6: nie freier Text).
         for feld in wire.COMMAND_FIELDS:
             if feld not in message:
                 return Failed("ungueltige_nutzlast", fehler.details(feld, "fehlt"))
@@ -175,6 +179,10 @@ class CommandRegister:
         art = wire.COMMANDS[kind]
         if fremd := fehler.fremdes_feld(payload, (*art.payload, *art.payload_optional)):
             return Failed("ungueltige_nutzlast", fremd)
+        if kind not in PHASENBEFEHLE:
+            for feld in art.payload:
+                if feld not in payload and feld not in art.payload_optional:
+                    return Failed("ungueltige_nutzlast", fehler.details(feld, "fehlt"))
         self._store(command_id, (None, None, None))  # Marker "gestartet" vor dem Handler
         outcome = self._guarded(kind, lambda: handler(payload))
         return outcome if outcome is not None else Failed("intern")

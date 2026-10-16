@@ -20,7 +20,6 @@ def test_keys_and_code_are_created_once_and_private(tmp_path):
         assert stat.S_IMODE((tmp_path / name).stat().st_mode) == 0o600, name
 
 
-
 def test_kein_verschluesselungsschluessel_mehr(tmp_path):
     """Plan S8a-1 P3: das Geraet erzeugt enc_key.pem nicht mehr; eine vorhandene Datei bleibt liegen und wird nicht
     gelesen (Loeschen beim Live-Abbau)."""
@@ -33,6 +32,7 @@ def test_kein_verschluesselungsschluessel_mehr(tmp_path):
     identity.load_or_create(alt)
     assert (alt / "enc_key.pem").read_text() == "kein PEM"
     assert not hasattr(identity, "ENC_KEY_FILE")
+
 
 def test_device_id_is_derived_from_the_signing_key(tmp_path):
     ident = identity.load_or_create(tmp_path)

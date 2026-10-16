@@ -277,7 +277,8 @@ def test_a_rejected_request_is_retried_later_and_not_blocked(tmp_path, ident):
 
 def test_a_request_outside_the_contract_is_retried_later_and_not_blocked_and_logged_without_text(
         tmp_path, ident, caplog):
-    flow = _flow(tmp_path, ident, ScriptedClient(register=[nachrichten.Vertragsfehler("register: fremd ['GEHEIM-FELD']")]))
+    fehler = nachrichten.Vertragsfehler("register: fremd ['GEHEIM-FELD']")
+    flow = _flow(tmp_path, ident, ScriptedClient(register=[fehler]))
     assert flow.holen(rettung=False) is None and not flow.gesperrt and not flow.faellig()
     assert "Anfrage nicht gebaut (Vertragsfehler)" in caplog.text and "GEHEIM-FELD" not in caplog.text
 

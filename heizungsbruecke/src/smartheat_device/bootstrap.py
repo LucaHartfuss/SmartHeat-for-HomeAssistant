@@ -31,7 +31,7 @@ RETRY_MAX_SECONDS = 900
 TIMEOUT_SECONDS = 10.0
 _TRANSIENT_4XX = (408, 429)
 _PEM_CERT = "-----BEGIN CERTIFICATE-----"
-(_ALPN,) = wire.BOOTSTRAP_OPTIONAL  # fehlt = kein Rueckfall auf Port 443; bei einer Drift des Vertrags scheitert der Import
+(_ALPN,) = wire.BOOTSTRAP_OPTIONAL  # fehlt = kein Rueckfall auf Port 443; bei einer Drift scheitert der Import
 
 
 class BootstrapError(Exception):

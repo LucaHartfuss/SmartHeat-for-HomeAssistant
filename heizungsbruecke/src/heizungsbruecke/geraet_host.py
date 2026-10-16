@@ -142,8 +142,8 @@ class HaDeviceHost(GeraetHostBasis):
     def _inventory(self, payload: dict) -> Outcome:
         """Momentaufnahme nach dem Filter des Servers (stunden 0, Spec 5c 1.3) im Hintergrund: die HA-API (Registry per
         WebSocket, Zustaende, Dienste) haelt den Geraete-Thread nie auf. Antwortet HA bis INVENTUR_SECONDS nicht, endet
-        der Befehl mit ha_nicht_erreichbar. Nur die Fehlerart ins Log, nie Inhalte (Regel 6). Verletzt die Inventur den Vertrag
-        (Vertragsfehler: nur Feldnamen), endet der Befehl mit intern."""
+        der Befehl mit ha_nicht_erreichbar. Nur die Fehlerart ins Log, nie Inhalte (Regel 6). Verletzt die Inventur
+        den Vertrag (Vertragsfehler: nur Feldnamen), endet der Befehl mit intern."""
         filter_ = payload.get("filter")
         if not isinstance(filter_, dict):
             return Failed("ungueltige_nutzlast", fehler.details("filter", "fehlt" if filter_ is None else "ungueltig"))

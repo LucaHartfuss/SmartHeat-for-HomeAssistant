@@ -1,10 +1,11 @@
 """Bausteine der Geraetenachrichten (Audit 5 A5-34; Spec Stufe 3 S8 Abschnitt 6; Plan S8a-1 P1): jede Nachricht des
 Geraets entsteht hier und hat genau die Felder des Vertrags (wire.py). Eine Abweichung ist ein Programmierfehler:
-Vertragsfehler (ein ValueError) mit Nachricht und Feldnamen, nie mit Werten (Regel 6); die Aufrufer im Geraete-Thread loggen nur die
-Fehlerart. tools/contract_check.py ruft dieselben Bausteine fuer die Round-Trips mit dem Server.
+Vertragsfehler (ein ValueError) mit Nachricht und Feldnamen, nie mit Werten (Regel 6); die Aufrufer im
+Geraete-Thread loggen nur die Fehlerart. tools/contract_check.py ruft dieselben Bausteine fuer die Round-Trips mit
+dem Server.
 
-Ausser den Feldmengen setzen die Bausteine nur Vertragsregeln durch, die ohne Wert pruefbar sind: host aus HOSTS, zustand
-aus ZUSTAENDE, die Felder von raum und faehigkeiten, die Groesse des CSR."""
+Ausser den Feldmengen setzen die Bausteine nur Vertragsregeln durch, die ohne Wert pruefbar sind: host aus HOSTS,
+zustand aus ZUSTAENDE, die Felder von raum und faehigkeiten, die Groesse des CSR."""
 from collections.abc import Iterable
 
 from smartheat_device import wire
@@ -72,7 +73,8 @@ def ergebnis_dokument(dokument: str, version, ok: bool, error: dict | None = Non
     body = {"schema": wire.SCHEMA, "dokument": dokument, "version": version, "ok": ok}
     if error is not None:
         body["error"] = error
-    return pruefen("ergebnis", body, ("schema", "ok", "dokument", "version"), (*wire.RESULT_FIELDS, *wire.RESULT_TARGETS))
+    return pruefen("ergebnis", body, ("schema", "ok", "dokument", "version"),
+                   (*wire.RESULT_FIELDS, *wire.RESULT_TARGETS))
 
 
 def _csr(name: str, csr) -> None:

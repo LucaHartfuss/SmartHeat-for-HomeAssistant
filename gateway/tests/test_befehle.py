@@ -92,7 +92,7 @@ def test_unbekannte_phase_und_fehlender_treiber_nennen_feld_und_regel(register):
     assert _run(register, "inventory", {"stunden": 0, "filter": "simulation"}, "c4")["error"] == ungueltig
     assert _run(register, "inventory", {"stunden": 0, "filter": {"treiber": 5}}, "c5")["error"] == ungueltig
     assert _run(register, "inventory", {"stunden": 0, "filter": {"treiber": "simulation", "x": 1}}, "c6")["error"] == {
-        "grund": "ungueltige_nutzlast", "details": {"regel": "unbekannt"}}  # fremder Schluessel: strikt, ohne freien Namen
+        "grund": "ungueltige_nutzlast", "details": {"regel": "unbekannt"}}  # fremder Schluessel: strikt, ohne Namen
 
 
 def test_the_gateway_registers_exactly_its_commands(register):
@@ -124,7 +124,7 @@ def test_zigbee_geraete_mit_vertragsbruch_enden_mit_intern_ohne_werte_im_log(mon
 
 
 def test_zigbee_art_ausserhalb_des_vertrags_endet_mit_intern(monkeypatch, register, caplog):
-    monkeypatch.setattr(wire, "ZIGBEE_ARTEN", ("thermostat", "sonstig"))  # "fuehler" fehlt: der Sensor bricht den Vertrag
+    monkeypatch.setattr(wire, "ZIGBEE_ARTEN", ("thermostat", "sonstig"))  # "fuehler" fehlt: der Sensor bricht ihn
     antwort = _run(register, "zigbee_devices", {})
     assert antwort["error"] == {"grund": "intern"}
     assert "Vertragsfehler" in caplog.text and SENSOR not in caplog.text
@@ -142,11 +142,43 @@ def test_erkennung_traegt_die_sicherheitswarnungen_je_anlage(ctx):
     assert all("sicherheitswarnungen" in anlage for anlage in daten["anlagen"])
 
 
+def _login_nutzlast(phase="begin", **aenderung) -> dict:
+    """Nutzlast des Befehls driver_login mit genau den Feldern der Phase (wire.DRIVER_LOGIN_PHASES)."""
+    werte = {"driver_id": "simulation", "client_id": "c", "redirect_uri": "https://portal.test/cb", "scope": "s",
+             "code": "x", "ciphertext": "y"}
+    return {"phase": phase, **{feld: werte[feld] for feld in wire.DRIVER_LOGIN_PHASES[phase] if feld != "phase"},
+            **aenderung}
+
+
 def test_unknown_driver_and_login_not_needed(register):
-    assert _run(register, "driver_login", {"phase": "begin", "driver_id": "erfunden"})["error"]["grund"] == \
+    assert _run(register, "driver_login", _login_nutzlast(driver_id="erfunden"))["error"]["grund"] == \
         "treiber_unbekannt"
-    login = _run(register, "driver_login", {"phase": "begin", "driver_id": "simulation"}, "c2")
+    login = _run(register, "driver_login", _login_nutzlast(), "c2")
     assert login["error"]["grund"] == "login_nicht_noetig"
+    for number, phase in enumerate(wire.DRIVER_LOGIN_PHASES, start=3):  # jede Phase mit ihren Feldern wird angenommen
+        antwort = _run(register, "driver_login", _login_nutzlast(phase), f"c{number}")
+        assert antwort["error"]["grund"] == "login_nicht_noetig", phase
+
+
+@pytest.mark.parametrize("phase", sorted(wire.DRIVER_LOGIN_PHASES))
+def test_driver_login_verlangt_genau_die_felder_der_phase(register, phase):
+    gut = _login_nutzlast(phase)
+    for number, feld in enumerate(f for f in gut if f != "phase"):
+        fehlt = {k: v for k, v in gut.items() if k != feld}
+        assert _run(register, "driver_login", fehlt, f"f{number}")["error"] == {
+            "grund": "ungueltige_nutzlast", "details": {"feld": feld, "regel": "fehlt"}}, feld
+    fremd = next(f for f in wire.COMMANDS["driver_login"].payload if f not in wire.DRIVER_LOGIN_PHASES[phase])
+    assert _run(register, "driver_login", {**gut, fremd: "x"}, "fremd")["error"] == {
+        "grund": "ungueltige_nutzlast", "details": {"feld": fremd, "regel": "unbekannt"}}
+    assert _run(register, "driver_login", {**gut, "zukunft": 1}, "zukunft")["error"] == {
+        "grund": "ungueltige_nutzlast", "details": {"regel": "unbekannt"}}  # kein Name des Vertrags: nie in details
+
+
+@pytest.mark.parametrize("phase, erwartet", [(None, "fehlt"), (5, "ungueltig"), ([], "ungueltig"), ("x", "unbekannt")])
+def test_driver_login_ohne_gueltige_phase(register, phase, erwartet):
+    nutzlast = {"driver_id": "simulation"} if phase is None else {"phase": phase, "driver_id": "simulation"}
+    assert _run(register, "driver_login", nutzlast)["error"] == {
+        "grund": "ungueltige_nutzlast", "details": {"feld": "phase", "regel": erwartet}}
 
 
 def test_inventory_needs_a_configuration(ctx, register):
@@ -463,7 +495,7 @@ def test_eine_haengende_erkennung_endet_nach_120_s_mit_dem_zeitablauf(ctx, clock
 
 def test_eine_haengende_anmeldung_endet_an_der_frist_des_befehls(ctx, clock):
     ctx.hintergrund = _HaengtImHintergrund()
-    outcome = befehle.driver_login(ctx, {"phase": "begin", "driver_id": "vicare_cloud"})
+    outcome = befehle.driver_login(ctx, _login_nutzlast(driver_id="vicare_cloud"))
     frist = wire.COMMANDS["driver_login"].expires_seconds
     assert outcome.deadline == clock() + frist
     clock.advance(frist - 1)

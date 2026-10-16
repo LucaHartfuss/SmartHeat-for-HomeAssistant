@@ -18,14 +18,14 @@ def _register_felder() -> dict:
 
 def test_pruefen_laesst_genau_den_vertrag_durch():
     assert nachrichten.pruefen("x", {"a": 1, "b": 2}, ("a",), ("b",)) == {"a": 1, "b": 2}
-    with pytest.raises(ValueError, match="x.*fehlt.*a"):
+    with pytest.raises(nachrichten.Vertragsfehler, match="x.*fehlt.*a"):
         nachrichten.pruefen("x", {"b": 2}, ("a",), ("b",))
-    with pytest.raises(ValueError, match="x.*fremd.*c"):
+    with pytest.raises(nachrichten.Vertragsfehler, match="x.*fremd.*c"):
         nachrichten.pruefen("x", {"a": 1, "c": 3}, ("a",), ("b",))
 
 
 def test_pruefen_nennt_nie_werte():
-    with pytest.raises(ValueError) as fehler:
+    with pytest.raises(nachrichten.Vertragsfehler) as fehler:
         nachrichten.pruefen("x", {"geheim": "WERT-123"}, ("a",))
     assert "WERT-123" not in str(fehler.value)
 
@@ -41,10 +41,10 @@ def test_hello_mit_device_state():
 
 
 def test_hello_prueft_host_und_faehigkeiten_ohne_werte():
-    with pytest.raises(ValueError, match="hello.*host"):
+    with pytest.raises(nachrichten.Vertragsfehler, match="hello.*host"):
         nachrichten.hello(**(_hello_felder() | {"host": "GEHEIM-HOST"}))
     for faehigkeiten in ({**FAEHIGKEITEN, "GEHEIM-FELD": 1}, {"drivers": []}, None):
-        with pytest.raises(ValueError, match="faehigkeiten"):
+        with pytest.raises(nachrichten.Vertragsfehler, match="faehigkeiten"):
             nachrichten.hello(**(_hello_felder() | {"faehigkeiten": faehigkeiten}))
     for optional in wire.CAPABILITY_OPTIONAL:
         nachrichten.hello(**(_hello_felder() | {"faehigkeiten": {**FAEHIGKEITEN, optional: True}}))
@@ -70,21 +70,21 @@ def test_status_prueft_zustand_und_raum_ohne_werte():
     assert nachrichten.status(zustand="regelt", runtime_status=None, raum=RAUM, ts="t")["raum"] == RAUM
     for zustand in wire.ZUSTAENDE:
         nachrichten.status(zustand=zustand, runtime_status=None, raum=None, ts="t")
-    with pytest.raises(ValueError, match="status.*zustand"):
+    with pytest.raises(nachrichten.Vertragsfehler, match="status.*zustand"):
         nachrichten.status(zustand="GEHEIM-ZUSTAND", runtime_status=None, raum=None, ts="t")
     for raum in ({**RAUM, "GEHEIM-FELD": 1}, {"ist": 20.0}, [1]):
-        with pytest.raises(ValueError, match="raum"):
+        with pytest.raises(nachrichten.Vertragsfehler, match="raum"):
             nachrichten.status(zustand="regelt", runtime_status=None, raum=raum, ts="t")
 
 
 def test_register_prueft_host_faehigkeiten_und_csr_groesse():
-    with pytest.raises(ValueError, match="register.*host"):
+    with pytest.raises(nachrichten.Vertragsfehler, match="register.*host"):
         nachrichten.register(**(_register_felder() | {"host": "x"}))
-    with pytest.raises(ValueError, match="capabilities"):
+    with pytest.raises(nachrichten.Vertragsfehler, match="capabilities"):
         nachrichten.register(**(_register_felder() | {"capabilities": {"zigbee": True}}))
-    with pytest.raises(ValueError, match="csr"):
+    with pytest.raises(nachrichten.Vertragsfehler, match="csr"):
         nachrichten.register(**(_register_felder() | {"csr": "x" * (wire.CSR_MAX_BYTES + 1)}))
-    with pytest.raises(ValueError, match="csr"):
+    with pytest.raises(nachrichten.Vertragsfehler, match="csr"):
         nachrichten.zertifikat("x" * (wire.CSR_MAX_BYTES + 1))
     assert nachrichten.zertifikat("x" * wire.CSR_MAX_BYTES) == {"csr": "x" * wire.CSR_MAX_BYTES}
 

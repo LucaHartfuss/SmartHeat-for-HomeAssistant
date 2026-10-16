@@ -122,7 +122,8 @@ def test_binding_roles(bindung):
     ({"treiber": {"id": "simulation", "parameter": {}}}, {"feld": "thermostat", "regel": "fehlt"}),
 ])
 def test_a_foreign_or_missing_gateway_binding_field_is_a_role_rejection(bindung, details):
-    """V1 ist auf beiden Seiten strikt (Nutzer-Entscheidung 2026-10-16): kein fremdes Feld, der fremde Name geht nicht hoch."""
+    """V1 ist auf beiden Seiten strikt (Nutzer-Entscheidung 2026-10-16): kein fremdes Feld, der fremde Name geht nicht
+    hoch."""
     assert _pruefen(_konfiguration(bindung=bindung)) == cc.Ablehnung(cc.ROLLE_UNZULAESSIG, details)
 
 

@@ -4,10 +4,10 @@ gewaehlte Entity daran haengt; Handys nur mit den genannten Praefixen. Kein Hers
 fehlen; Entities ohne Registry-Eintrag (YAML, Template ohne unique_id) zaehlen nur ueber Domaene bzw. Geraeteklasse.
 
 Die Felder sind genau die des Vertrags (wire.INVENTUR_*_FIELDS; pruefen() setzt es beim Bauen durch, ein Abweichen ist
-ein Vertragsfehler mit Feldnamen) und die, die der Server liest (heizungsserver.einrichtung.ha_inventur.lesen; Gegenprobe in
-tests/test_inventur.py): `name` ist der Name der Integration (original_name), an dem der Server die Kreise erkennt,
-nicht der vom Nutzer vergebene. config/entity_registry/list liefert keine device_class; dann zaehlt das Attribut des
-Zustands. Inhalte der Inventur gehoeren nie in Logs (Regel 6).
+ein Vertragsfehler mit Feldnamen) und die, die der Server liest (heizungsserver.einrichtung.ha_inventur.lesen;
+Gegenprobe in tests/test_inventur.py): `name` ist der Name der Integration (original_name), an dem der Server die
+Kreise erkennt, nicht der vom Nutzer vergebene. config/entity_registry/list liefert keine device_class; dann zaehlt
+das Attribut des Zustands. Inhalte der Inventur gehoeren nie in Logs (Regel 6).
 
 Positivliste (Spec Stufe 3 S5 3.1, A5-30): nach dem Filter des Servers prueft der Host lokal, was ueberhaupt
 herausgehen darf; ein kompromittierter Server kann so keine Schloesser, Personen oder Standorte abziehen. Verworfenes
@@ -107,7 +107,8 @@ def inventur(ha_api, filter_: dict) -> dict:
             "aktualisiert": state.get("last_updated"),
         }, wire.INVENTUR_ENTITY_FIELDS))
     geraete = [pruefen("inventur.geraet", {"id": d["id"], "name": d.get("name_by_user") or d.get("name"),
-                                           "modell": d.get("model"), "config_entries": list(d.get("config_entries") or [])},
+                                           "modell": d.get("model"),
+                                           "config_entries": list(d.get("config_entries") or [])},
                        wire.INVENTUR_GERAET_FIELDS)
                for d in ha_api.device_registry() if isinstance(d, dict) and d.get("id") in geraete_ids]
     if verworfen:

@@ -7,8 +7,9 @@ der Treiber (Rueckruf des Hosts, zuletzt; Gateway: die Bindung, HA: Aufbau der B
 Rueckruf des Hosts mit der ganzen Konfiguration). Eine leere Konfiguration (anlage None) heisst "nicht eingerichtet" und ist
 immer gueltig; sie aendert die Rastung nicht. Die Gruende sind Dokument-Fehlergruende des Vertrags (smartheat_device.wire.DOKUMENT_ERRORS). Ablehnungen
 tragen Grund und details (Feld, Regel, Zahlen; Spec Stufe 3 S5 6.1), den Text bildet der Server. Sicherheitsgrenzen, Boost und Notbetrieb liest diese Pruefung nur
-(G-1, Regel 4). V1 ist strikt (R10): fremde Felder in Bindung, Treiber und Kreis lehnt diese Pruefung ab; die oberste Ebene
-der Konfiguration, die Software und die Bedienung prueft smartheat_device.documents gegen den Vertrag."""
+(G-1, Regel 4). V1 ist strikt (R10): fremde Felder in Bindung, Treiber und Kreis lehnt diese Pruefung ab; die
+oberste Ebene der Konfiguration, die Software und die Bedienung prueft smartheat_device.documents gegen den
+Vertrag."""
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -131,8 +132,8 @@ def _aufbau(neu: Mapping) -> dict | None:
 
 
 def _fremd(inhalt: Mapping, erlaubt: tuple[str, ...], feld: str) -> Ablehnung | None:
-    """V1 ist strikt (R10): ein Feld ausserhalb von `erlaubt` lehnt ab. Gemeldet wird das Feld, in dem es steht; der fremde
-    Name geht nicht hoch."""
+    """V1 ist strikt (R10): ein Feld ausserhalb von `erlaubt` lehnt ab. Gemeldet wird das Feld, in dem es steht; der
+    fremde Name geht nicht hoch."""
     if set(inhalt) - set(erlaubt):
         return Ablehnung(ROLLE_UNZULAESSIG, befund(feld, "unbekannt"))
     return None

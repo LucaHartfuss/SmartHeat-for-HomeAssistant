@@ -87,7 +87,8 @@ def _is_version(value) -> TypeGuard[int]:
 
 def _form(inhalt: dict, pflicht: tuple[str, ...], optional: tuple[str, ...] = ()) -> config_check.Ablehnung | None:
     """V1 ist strikt (Nutzer-Entscheidung 2026-10-16, R10): genau die Felder des Vertrags (ohne schema und version),
-    ein fehlendes oder fremdes Feld lehnt ab (Grund ungueltig). Der fremde Name geht nur hoch, wenn er im Vertrag steht."""
+    ein fehlendes oder fremdes Feld lehnt ab (Grund ungueltig). Der fremde Name geht nur hoch, wenn er im Vertrag
+    steht."""
     fehlen = [field for field in pflicht if field not in inhalt]
     if fehlen:
         return config_check.Ablehnung(UNGUELTIG, fehler.details(fehlen[0], "fehlt", anzahl=len(fehlen)))
@@ -97,8 +98,8 @@ def _form(inhalt: dict, pflicht: tuple[str, ...], optional: tuple[str, ...] = ()
 
 
 def software_pruefen(software) -> config_check.Ablehnung | None:
-    """Soll-Software: null (kein Updater oder kein Angebot) oder genau die Felder des Vertrags; Werte prueft der Updater.
-    Oeffentlich: das Geraet reicht ein Angebot nur an den Host, wenn es diese Pruefung besteht (R15)."""
+    """Soll-Software: null (kein Updater oder kein Angebot) oder genau die Felder des Vertrags; Werte prueft der
+    Updater. Oeffentlich: das Geraet reicht ein Angebot nur an den Host, wenn es diese Pruefung besteht (R15)."""
     if software is None:
         return None
     if not isinstance(software, dict):

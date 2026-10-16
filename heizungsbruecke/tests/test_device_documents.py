@@ -249,7 +249,8 @@ def test_a_rejected_foreign_field_changes_neither_the_accepted_document_nor_the_
     assert (ergebnis.ok, ergebnis.grund) == (False, "ungueltig")
     assert store.aktuell("konfiguration") == vorher and not store.update_noetig
     # ein gesetzter Ausloeser bleibt ebenfalls: die fremde Konfiguration mit niedriger Mindestversion loest ihn nicht
-    assert store.empfangen("konfiguration", _konfiguration(version=3, mindest_software="9.9.9")).grund == "update_noetig"
+    abgelehnt = store.empfangen("konfiguration", _konfiguration(version=3, mindest_software="9.9.9"))
+    assert abgelehnt.grund == "update_noetig"
     assert store.update_noetig
     store.empfangen("konfiguration", _konfiguration(version=4, mindest_software="0.1.0", kuenftig=1))
     assert store.update_noetig and store.aktuell("konfiguration") == vorher

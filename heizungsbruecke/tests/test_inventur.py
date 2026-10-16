@@ -54,14 +54,18 @@ def test_only_filtered_candidates_with_contract_fields():
     assert (daten["einheit_temperatur"], daten["zeitzone"]) == ("°C", "Europe/Berlin")
 
 
-@pytest.mark.parametrize("liste", ["INVENTUR_HA_FIELDS", "INVENTUR_ENTITY_FIELDS", "INVENTUR_GERAET_FIELDS"])
-def test_die_inventur_wird_gegen_den_vertrag_gebaut_und_nennt_nur_feldnamen(monkeypatch, liste):
+@pytest.mark.parametrize("liste, nachricht", [("INVENTUR_HA_FIELDS", "inventur"),
+                                              ("INVENTUR_ENTITY_FIELDS", "inventur.entity"),
+                                              ("INVENTUR_GERAET_FIELDS", "inventur.geraet")])
+def test_die_inventur_wird_gegen_den_vertrag_gebaut_und_nennt_nur_feldnamen(monkeypatch, liste, nachricht):
     """Die Erzeuger lesen die Feldlisten des Vertrags: eine Liste ohne ein Feld, das der Erzeuger setzt, ist ein
     Vertragsfehler mit Feldnamen, nie mit Werten aus HA (Regel 6)."""
-    monkeypatch.setattr(wire, liste, getattr(wire, liste)[:-1])
+    felder = getattr(wire, liste)
+    monkeypatch.setattr(wire, liste, felder[:-1])
     with pytest.raises(nachrichten.Vertragsfehler) as fehler:
         inventur.inventur(_ha(), FILTER)
-    assert "fremd" in str(fehler.value) and "Heating Curve" not in str(fehler.value)
+    assert str(fehler.value) == f"{nachricht}: fehlt [], fremd [{felder[-1]!r}]"
+    assert "Heating Curve" not in str(fehler.value)
     assert "mobile_app_handy" not in str(fehler.value) and "ecoTEC" not in str(fehler.value)
 
 

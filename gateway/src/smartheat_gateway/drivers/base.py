@@ -35,8 +35,9 @@ DRIVER_ERROR_TEXT_FALLBACK = "Der Hersteller-Zugang meldet einen Fehler."
 
 def erkennung_daten(treiber: str, anlagen: list[dict], features: list[dict]) -> dict:
     """Ergebnis von Driver.erkennung() mit genau den Feldern des Vertrags (wire.INVENTUR_GATEWAY_FIELDS, je Anlage
-    INVENTUR_ANLAGE_FIELDS, je Feature INVENTUR_FEATURE_FIELDS). Jeder Treiber baut seine Erkennung hier; eine Abweichung
-    ist ein Vertragsfehler mit Feldnamen, nie mit Werten aus der Cloud (Regel 6): der Befehl endet mit intern."""
+    INVENTUR_ANLAGE_FIELDS, je Feature INVENTUR_FEATURE_FIELDS). Jeder Treiber baut seine Erkennung hier; eine
+    Abweichung ist ein Vertragsfehler mit Feldnamen, nie mit Werten aus der Cloud (Regel 6): der Befehl endet mit
+    intern."""
     for anlage in anlagen:
         pruefen("inventur.anlage", anlage, wire.INVENTUR_ANLAGE_FIELDS)
     for feature in features:

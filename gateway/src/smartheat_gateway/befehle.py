@@ -170,9 +170,21 @@ def _zigbee_geraet(eintrag: dict) -> dict:
 
 @_handler("driver_login")
 def driver_login(ctx: Kontext, payload: dict) -> Outcome:
-    phase = payload.get("phase")
+    # Phasengenau (V1 strikt): genau die Felder von wire.DRIVER_LOGIN_PHASES[phase]; die Annahme des Registers
+    # (commands.PHASENBEFEHLE) prueft davon nur fremde Namen ausserhalb aller Phasen.
+    if "phase" not in payload:
+        raise InvalidPayload("phase", "fehlt")
+    phase = payload["phase"]
+    if not isinstance(phase, str):
+        raise InvalidPayload("phase", "ungueltig")
     if phase not in wire.DRIVER_LOGIN_PHASES:
         raise InvalidPayload("phase", "unbekannt")
+    erlaubt = wire.DRIVER_LOGIN_PHASES[phase]
+    if fremd := fehler.fremdes_feld(payload, erlaubt):
+        return Failed("ungueltige_nutzlast", fremd)
+    for feld in erlaubt:
+        if feld not in payload:
+            raise InvalidPayload(feld, "fehlt")
     driver = _driver(ctx, payload.get("driver_id"))
     if type(driver).login_kind is None:
         raise DriverError("login_nicht_noetig")

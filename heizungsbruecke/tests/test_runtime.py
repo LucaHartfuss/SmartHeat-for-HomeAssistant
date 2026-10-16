@@ -259,10 +259,10 @@ def _start(env, **option_overrides):
     return bridge
 
 
-
 def _pruefintervall(monkeypatch, sekunden):
     """Kurzes Pruefintervall wie in der E2E (Plan S8a-1 P2: Umgebung des Geraets, nicht das Konfigurationsdokument)."""
     monkeypatch.setenv(dokument_config.E2E_INTERVALLE_ENV, json.dumps({"pruefung_s": sekunden}))
+
 
 def _regulation_writes(env):
     """Schreibvorgaenge ohne den Mindestvorlauf, der jeder Raum-Soll-Aenderung folgt (min_flow.py)."""

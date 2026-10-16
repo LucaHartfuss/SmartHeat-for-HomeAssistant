@@ -453,6 +453,15 @@ def test_a_configuration_without_the_software_field_leaves_the_offer_alone(tmp_p
     assert world.host.software == [SOFTWARE]
 
 
+def test_software_null_withdraws_a_previously_delivered_offer(tmp_path):
+    world = World(tmp_path)
+    world.verbinden()
+    world.empfangen("down/config", _konfiguration(software=SOFTWARE))
+    world.empfangen("down/config", _konfiguration(version=2, software=None))
+    assert world.host.software == [SOFTWARE, None]
+    assert [r["ok"] for r in world.link.of("up/result")] == [True, True]
+
+
 def test_an_empty_configuration_is_handed_over(tmp_path):
     world = World(tmp_path)
     world.verbinden()

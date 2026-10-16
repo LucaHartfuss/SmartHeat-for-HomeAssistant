@@ -73,8 +73,8 @@ PRUEFUNG_STANDARD, TELEMETRIE_STANDARD = dc.DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS
 
 
 def _intervalle(tmp_path, konfiguration=KONF):
-    config = dc.runtime_config(konfiguration, rastung_pfad=tmp_path / "keine.json", entitlement_path=Path("/tmp/e.json"),
-                               abo_source=lambda: entitlement.ACTIVE)
+    config = dc.runtime_config(konfiguration, rastung_pfad=tmp_path / "keine.json",
+                               entitlement_path=Path("/tmp/e.json"), abo_source=lambda: entitlement.ACTIVE)
     return config.local_check_interval, config.telemetry_interval
 
 
@@ -102,6 +102,19 @@ def test_ein_ungueltiges_e2e_objekt_gilt_ganz_nicht(monkeypatch, tmp_path, caplo
     monkeypatch.setenv(dc.E2E_INTERVALLE_ENV, roh)
     assert _intervalle(tmp_path) == (PRUEFUNG_STANDARD, TELEMETRIE_STANDARD)
     assert roh == "" or (dc.E2E_INTERVALLE_ENV in caplog.text and roh not in caplog.text)  # Log ohne Wert
+
+
+def test_ein_ungueltiger_wert_wird_je_aufruf_nur_einmal_geloggt(monkeypatch, tmp_path, caplog):
+    """Review-Minor S8a-1: die Umgebungsvariable wird je runtime_config bzw. boot_info einmal gelesen, nicht je Feld."""
+    monkeypatch.setenv(dc.E2E_INTERVALLE_ENV, '{"pruefung_s": 0}')
+
+    def warnungen(aufruf):
+        caplog.clear()
+        aufruf()
+        return [r for r in caplog.records if dc.E2E_INTERVALLE_ENV in r.getMessage()]
+
+    assert len(warnungen(lambda: _boot(KONF, tmp_path))) == 1
+    assert len(warnungen(lambda: _intervalle(tmp_path))) == 1
 
 
 def test_intervalle_im_dokument_wirken_nicht_mehr(monkeypatch, tmp_path):
