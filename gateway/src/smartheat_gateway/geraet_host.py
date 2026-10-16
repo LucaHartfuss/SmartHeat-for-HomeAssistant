@@ -6,15 +6,14 @@ Status und Raum der Laufzeit liegen im Prozess (GeraetZustand; bis 0.5.0 retaine
 Agenten). Meldungen der Laufzeit gehen als up/notifications an den Server (MeldungSink, Regeln wie der Agent bis 0.5.0:
 show = offene kritische Meldung, withdraw = geschlossen, push = Ereignis). Die LED-Datei data/agent_state.json (Name aus
 0.5.0) schreibt die ZustandsDatei bei jedem Wechsel und mindestens jede Minute. Eine laufzeitrelevante neue
-Konfiguration fordert einen Neustart an (EV_RELOAD im Regel-Worker), eine neue Bedienung geht als Soll-Eingang an den
-Worker; kommt beides, bevor main() den Worker bindet (der Geraete-Thread laeuft schon), stellt worker_binden den
-Neustart bzw. die letzte Bedienung nach (Spec 3.3). Der Wechsel von eingerichtet auf leer markiert das
+Konfiguration fordert einen Neustart an (geraet_host_basis.EV_RELOAD im Regel-Worker), eine neue Bedienung geht als
+Soll-Eingang an den Worker; kommt beides, bevor main() den Worker bindet (der Geraete-Thread laeuft schon), stellt
+worker_binden den Neustart bzw. die letzte Bedienung nach (Spec 3.3). Der Wechsel von eingerichtet auf leer markiert das
 Aufraeumen (A4-07), das der naechste Start ausfuehrt (vergessen). Die Software-Bruecke sendet die Meldungen des
 Updaters (software_meldungen.json, fortlaufende seq) als up/result mit dokument software und quittiert die zuletzt
 gesendete seq in software_quittung.json."""
 import logging
 import shutil
-import threading
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -23,23 +22,18 @@ from pathlib import Path
 from smartheat_core import dateien
 from smartheat_device import fehler, wire
 from smartheat_device.commands import CommandRegister
-from smartheat_device.hintergrund import Hintergrund
-from smartheat_device.host import Anzeige, MeldungSink
+from smartheat_device.geraet_host_basis import GeraetHostBasis
+from smartheat_device.host import Anzeige
 from smartheat_gateway import befehle
 from smartheat_gateway import config as gateway_config
 from smartheat_gateway.drivers import registry
 from smartheat_gateway.drivers.base import KIND_CLOUD
 from smartheat_gateway.paths import Paths
-from smartheat_gateway.triggers import EV_TARGET_INPUT
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_gateway.zigbee import ZigbeeMirror
-from smartheat_runtime import aufraeumen, dokument_config
-from smartheat_runtime.soll_speicher import SOURCE_PORTAL
-from smartheat_runtime.worker import Event, RegulationWorker
 
 logger = logging.getLogger(__name__)
 
-EV_RELOAD = "shg_reload"
 UHR_MAX_ALTER_SECONDS = 300
 SOFTWARE_SECONDS = 10
 HOST_FIELDS = ("netz", "dns", "zeit_synchron")
@@ -101,90 +95,26 @@ def vergessen(paths: Paths) -> None:
     logger.info("Anlagengebundener Zustand geloescht (Gateway nicht mehr eingerichtet)")
 
 
-class GatewayDeviceHost:
+class GatewayDeviceHost(GeraetHostBasis):
     host = "gateway"
     version = GATEWAY_VERSION
+    wunsch_herkunft = "thermostat"
 
     def __init__(self, paths: Paths, mirror: ZigbeeMirror, *, host_dir: Path,
                  clock: Callable[[], float] = time.monotonic, wall: Callable[[], float] = time.time) -> None:
+        super().__init__()
         self.paths, self.mirror, self._host_dir = paths, mirror, host_dir
         self._clock, self._wall = clock, wall
         self.zustand = GeraetZustand()
         self.status_sink = StatusSink(self.zustand)
-        self.notify_sink = MeldungSink(self._melden)
-        self.device = None  # smartheat_device.device.Device, nach dem Anlegen per verbinden()
-        self.letzte_anzeige: Anzeige | None = None
-        self._worker: RegulationWorker | None = None
-        self._soll_eingang = True  # False im Ruhezustand (IdleBridge): der Worker hat keinen Soll-Eingang
-        self._neustart = False
-        self._ursprungswerte: dict = {}  # Gemerkte Ursprungswerte der Laufzeit (Hauptthread schreibt, Geraet liest)
-        self._raum_soll: float | None = None  # letzte Bedienung, bevor der Worker gebunden ist
-        self._worker_lock = threading.Lock()  # binden (Hauptthread) gegen Rueckrufe (Geraete-Thread)
         self._datei = ZustandsDatei(paths.agent_state, lambda: _iso(self._wall()), clock)
         self._software_at: float | None = None
         self._led_fehler: str | None = None  # Fehlerart des letzten gescheiterten Schreibens der LED-Datei
-        #: blockierende Treiber-Aufrufe der Befehle (Cloud-HTTP) neben dem Geraete-Thread; main() stoppt ihn (beenden)
-        self.hintergrund = Hintergrund()
 
-    # --- Verdrahtung ---
-
-    def verbinden(self, device) -> None:
-        self.device = device
-
-    def worker_binden(self, worker: RegulationWorker, *, soll_eingang: bool = True) -> None:
-        """soll_eingang=False im Ruhezustand (IdleBridge, kein Trigger-Eingang): Bedienungen gehen nicht an den Worker
-        (sonst je Dokument "Kein Handler ... verworfen"); sie bleiben im Geraetekern gespeichert und gelten beim
-        naechsten Start mit Regelung."""
-        with self._worker_lock:
-            self._worker = worker
-            self._soll_eingang = soll_eingang
-            if self._raum_soll is not None and soll_eingang:
-                worker.post(Event(EV_TARGET_INPUT, {"value": self._raum_soll, "source": SOURCE_PORTAL}))
-            self._raum_soll = None
-            if self._neustart:
-                worker.post(Event(EV_RELOAD))
-
-    def ursprungswerte_merken(self, werte: dict) -> None:
-        with self._worker_lock:
-            self._ursprungswerte = dict(werte)
-
-    def ursprungswerte(self) -> dict:
-        with self._worker_lock:
-            return dict(self._ursprungswerte)
-
-    def neustart_anfordern(self) -> None:
-        with self._worker_lock:
-            self._neustart = True
-            if self._worker is not None:
-                self._worker.post(Event(EV_RELOAD))
-
-    def _melden(self, key: str, text: str, *, offen: bool, kritisch: bool) -> None:
-        if self.device is not None:
-            self.device.meldung(key, text, offen=offen, kritisch=kritisch)
+    def aufraeumen_pfad(self) -> Path:
+        return self.paths.aufraeumen
 
     # --- Sicht der Laufzeit (host.GatewayHost) ---
-
-    def konfiguration(self) -> dict | None:
-        return self.device.konfiguration() if self.device is not None else None
-
-    def bedienung(self) -> tuple[dict | None, bool]:
-        if self.device is None:
-            return None, False
-        doc = self.device.documents.aktuell("bedienung")
-        return self.device.bedienung(), bool(doc is not None and doc.dirty)
-
-    def abo_status(self) -> str:
-        return self.device.abo_status() if self.device is not None else dokument_config.abo_status(None)
-
-    def wunsch(self, wert: float) -> float:
-        """Thermostat-Wunsch (Spec 3.3): begrenzt vom Geraetekern, der ihn sendet; ohne Geraet unveraendert."""
-        if self.device is None:
-            return wert
-        return self.device.wunsch(wert, herkunft="thermostat")
-
-    def soll_quelle_aus(self, aus: bool, wirksam: float | None) -> None:
-        if self.device is not None:
-            self.device.soll_quelle_aus(aus, wirksam)
 
     def snapshot(self) -> dict:
         """Auszug fuer Diagnoseseite und Befehl diagnostics, ohne Uebernahme-Code (den fuegt nur die Seite an)."""
@@ -241,23 +171,6 @@ class GatewayDeviceHost:
             self.paths, self.mirror, konfiguration=self.konfiguration, runtime_status=lambda: self.zustand.status,
             neustart=self.neustart_anfordern, diagnostics=self.snapshot, clock=self._clock, wall=self._wall,
             hintergrund=self.hintergrund))
-
-    def konfiguration_uebernommen(self, alt: dict | None, neu: dict) -> None:
-        if dokument_config.eingerichtet(alt) and not dokument_config.eingerichtet(neu):
-            assert alt is not None
-            aufraeumen.markieren(self.paths.aufraeumen, alt)  # alte Konfiguration: erst zuruecksetzen (Spec S3 4)
-        if dokument_config.laufzeit_relevant(alt, neu):
-            self.neustart_anfordern()
-
-    def bedienung_uebernommen(self, inhalt: dict) -> None:
-        value = inhalt.get("raum_soll")
-        if not isinstance(value, int | float) or isinstance(value, bool):
-            return
-        with self._worker_lock:
-            if self._worker is None:
-                self._raum_soll = value  # worker_binden stellt die letzte nach
-            elif self._soll_eingang:
-                self._worker.post(Event(EV_TARGET_INPUT, {"value": value, "source": SOURCE_PORTAL}))
 
     def software_soll(self, software: dict | None) -> None:
         if dateien.lesen_json(self.paths.software_soll) != software or not self.paths.software_soll.exists():

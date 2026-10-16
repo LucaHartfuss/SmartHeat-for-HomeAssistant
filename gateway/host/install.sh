@@ -138,8 +138,15 @@ host_package() {
     name="$(basename "$file")"
     put "$OPT/smartheat_host/$name" 0644 0:0 <"$file"
   done
-  for rel in __init__.py files.py paths.py version.py; do
+  for rel in __init__.py paths.py version.py; do
     put "$OPT/smartheat_gateway/$rel" 0644 0:0 <"$GW/src/smartheat_gateway/$rel"
+  done
+  # Ein Schreibweg fuer Container und Host (Stufe 3 S6, S3S3-Host): smartheat_core/dateien.py (nur Standardbibliothek).
+  # Im Repo liegt es unter heizungsbruecke/src, in der Stage von prepare.sh unter gateway/src.
+  local core="$GW/src/smartheat_core"
+  [ -d "$core" ] || core="$GW/../heizungsbruecke/src/smartheat_core"
+  for rel in __init__.py dateien.py; do
+    put "$OPT/smartheat_core/$rel" 0644 0:0 <"$core/$rel"
   done
   put "$OPT/release.pub" 0644 0:0 <"$HERE/release.pub"
   put "$OPT/VERSION" 0644 0:0 <"$GW/VERSION"

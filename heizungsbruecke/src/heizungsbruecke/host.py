@@ -20,7 +20,6 @@ from heizungsbruecke.geraet_trigger import HaSollQuelle
 from heizungsbruecke.ha_binding import binding_for, binding_roles
 from heizungsbruecke.ha_signals import SOLL_REF, GeraetSignale, HaSignalSource
 from heizungsbruecke.manifest import build_manifest, entity_ref
-from heizungsbruecke.raum import RaumPublisher
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core import wallclock
 from smartheat_runtime import aufraeumen, dokument_config
@@ -28,10 +27,17 @@ from smartheat_runtime.app import Loaded, Notice, RestoreParts, StartFailure
 from smartheat_runtime.dokument_config import ConfigError
 from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
 from smartheat_runtime.ports import NotifySink, SignalSource, StatusSink, TriggerSource
+from smartheat_runtime.raum import RaumPublisher
 from smartheat_runtime.roles import ChannelManifest, ManifestError
 from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG, BATTERY_PERCENT, BatteryRef, BootInfo, RuntimeConfig
 from smartheat_runtime.soll_eingang import FROSTSCHUTZ_BIS
-from smartheat_runtime.soll_speicher import BEDIENBEREICH_MAX, BEDIENBEREICH_MIN, TargetStore, im_bedienbereich
+from smartheat_runtime.soll_speicher import (
+    BEDIENBEREICH_MAX,
+    BEDIENBEREICH_MIN,
+    DEFAULT_RAUM_SOLL,
+    TargetStore,
+    bedienung_start,
+)
 from smartheat_runtime.texts import HA_TEXTS, HostTexts
 from smartheat_runtime.worker import Event, RegulationWorker
 
@@ -41,9 +47,6 @@ from smartheat_runtime.worker import Event, RegulationWorker
 # danach ist es ein Startfehler (Spec TP6 3.6).
 HA_REACHABILITY_DELAYS_SECONDS = (5, 10, 20, 40, 60)
 DERIVED_SENSORS_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60, 60, 60)
-#: Start des Soll-Speichers, wenn weder eine gespeicherte Datei noch eine Bedienung vom Server noch ein lesbarer Wert der
-#: Soll-Entity vorliegt.
-DEFAULT_RAUM_SOLL = 20.0
 #: Raum fuer up/status (wie das Gateway): Takt im Worker zusaetzlich zu jeder Soll-Aenderung.
 EV_RAUM = "ha_raum"
 RAUM_SECONDS = 30
@@ -175,8 +178,7 @@ class HaHost:
         self.soll_entity = b.soll_entity
         assert self.soll_entity is not None  # lokal_pruefen verlangt sie
         bedienung, dirty = self._geraet.bedienung()
-        start = bedienung.get("raum_soll") if isinstance(bedienung, dict) else None
-        bedient = float(start) if isinstance(start, int | float) and im_bedienbereich(start) else None
+        bedient = bedienung_start(bedienung)
         start_value = bedient if bedient is not None else _angezeigter_start(self._ha_api, self.soll_entity)
         self.store = TargetStore(config.ROOM_TARGET_PATH, start_value, self._clock, lambda: wallclock.now().isoformat(),
                                  on_change=self._raum_changed)

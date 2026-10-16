@@ -1,4 +1,4 @@
-"""Baut drei Test-Bundles (gesund, gesund, kaputt) mit Wegwerf-Schluessel fuer tests/test_gateway_updater.sh.
+"""Baut drei Test-Bundles (gesund, gesund, Laufzeit wirft) mit Wegwerf-Schluessel fuer tests/test_gateway_updater.sh.
 Aufruf (Python mit pyyaml und cryptography): python3 make_test_bundles.py --image REF --out DIR --base-url URL
 Ausgabe: DIR/<version>/{docker-compose.yml,mosquitto.conf,manifest.json,manifest.json.minisig}, DIR/test.pub und auf
 stdout JSON {version: {"manifest_url", "manifest_sha256", "signature"}}."""
@@ -17,7 +17,14 @@ sys.path[:0] = [str(HERE.parent), str(GATEWAY / "host"), str(GATEWAY / "release"
 from build_bundle import build  # noqa: E402
 from minisign_helper import keypair, sign  # noqa: E402
 
-VERSIONS = ("0.9.1", "0.9.2", "0.9.3")  # 0.9.3: Laufzeit beendet sich sofort -> ungesund -> Rueckweg
+VERSIONS = ("0.9.1", "0.9.2", "0.9.3")  # 0.9.3: Laufzeit wirft im laufenden Prozess -> ungesund -> Rueckweg
+# 0.9.3: der Regel-Worker wirft 10 s nach dem Start (Geraetekern verbunden, Lebenszeichen frisch); prozess.laufen
+# trennt, pausiert 60 s und startet neu. In der Pause muss sich das Gateway ungesund melden (Abschlussreview S6 I-2),
+# sonst behielte der Updater das Update. Die Datei data/testfehler belegt dem Testskript, dass dieser Weg lief.
+BROKEN_RUNTIME = ("import time; from smartheat_runtime.worker import RegulationWorker; "
+                  "RegulationWorker.run = lambda self: "
+                  "(time.sleep(10), open('/data/testfehler', 'a').write('x\\n'), 1 / 0); "
+                  "from smartheat_gateway import runtime_main; runtime_main.main()")
 
 
 def main() -> int:
@@ -32,7 +39,7 @@ def main() -> int:
     compose = HERE / "updater-compose.yml"
     broken = args.out / "broken-compose.yml"
     data = yaml.safe_load(compose.read_text())
-    data["services"]["runtime"]["command"] = ["python", "-c", "import sys; sys.exit(3)"]
+    data["services"]["runtime"]["command"] = ["python", "-c", BROKEN_RUNTIME]
     broken.write_text(yaml.safe_dump(data, sort_keys=False))
     answer = {}
     for version in VERSIONS:

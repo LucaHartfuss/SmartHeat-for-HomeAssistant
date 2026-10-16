@@ -48,7 +48,8 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from smartheat_gateway.files import write_json
+from smartheat_core import dateien
+
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_host import bundles, kanal, minisign
 
@@ -123,7 +124,7 @@ class State:
             return cls()
 
     def save(self, path: Path) -> None:
-        write_json(path, asdict(self))
+        dateien.schreiben_json(path, asdict(self), modus=dateien.LESBAR)
 
 
 def fetch_url(url: str, max_bytes: int, allow_http: bool) -> bytes:

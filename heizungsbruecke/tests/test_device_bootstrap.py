@@ -113,6 +113,46 @@ def test_broken_answers_are_unavailable(ident, ca, change):
         _client(ident, FakeSession(FakeResponse(200, {**_body(ident, ca), **change}))).register(**ARGS)
 
 
+def test_an_empty_endpoint_host_is_rejected(ident, ca):
+    with pytest.raises(bootstrap.Unavailable, match="ungueltig"):
+        _client(ident, FakeSession(FakeResponse(200, {**_body(ident, ca), "mqtt_endpoint": ""}))).register(**ARGS)
+
+
+@pytest.mark.parametrize("port", [1883, 8884, 80, 0, 65535])
+def test_only_the_iot_core_ports_are_accepted(ident, ca, port):
+    with pytest.raises(bootstrap.Unavailable, match="ungueltig"):
+        _client(ident, FakeSession(FakeResponse(200, _body(ident, ca, port=port)))).register(**ARGS)
+
+
+@pytest.mark.parametrize("port", [8883, 443])
+def test_the_iot_core_ports_are_accepted(ident, ca, port):
+    session = FakeSession(FakeResponse(200, _body(ident, ca, port=port)))
+    assert _client(ident, session).register(**ARGS).zugang.endpoint.port == port
+
+
+def test_without_alpn_the_endpoint_has_none(ident, ca):
+    session = FakeSession(FakeResponse(200, _body(ident, ca)))
+    assert _client(ident, session).register(**ARGS).zugang.endpoint.alpn is None
+
+
+@pytest.mark.parametrize("alpn", [
+    "http/1.1", "", "X-AMZN-MQTT-CA", "x" * 300, "x-amzn-mqtt-c\u00e4", 443, ["x-amzn-mqtt-ca"],
+])
+def test_an_alpn_other_than_none_or_x_amzn_mqtt_ca_is_rejected(ident, ca, alpn):
+    """Der Server sendet ALPN nur als "x-amzn-mqtt-ca" (device_ca.ALPN_443) oder gar nicht. Alles andere, auch
+    ein ueberlanger oder nicht-ASCII-String, den set_alpn_protocols mit ValueError/UnicodeEncodeError ablehnen wuerde,
+    wird vor dem TLS abgewiesen (Bedrohungsmodell: Server-Eingabe wird geprueft)."""
+    body = {**_body(ident, ca), "mqtt_alpn": alpn}
+    with pytest.raises(bootstrap.Unavailable, match="ungueltig"):
+        _client(ident, FakeSession(FakeResponse(200, body))).register(**ARGS)
+
+
+@pytest.mark.parametrize("ca_pem", ["kein PEM", "", None])
+def test_a_broker_ca_without_a_pem_certificate_is_rejected(ident, ca, ca_pem):
+    with pytest.raises(bootstrap.Unavailable, match="ungueltig"):
+        _client(ident, FakeSession(FakeResponse(200, {**_body(ident, ca), "mqtt_ca": ca_pem}))).register(**ARGS)
+
+
 def test_a_non_json_answer_is_unavailable(ident):
     with pytest.raises(bootstrap.Unavailable):
         _client(ident, FakeSession(FakeResponse(200, None))).register(**ARGS)

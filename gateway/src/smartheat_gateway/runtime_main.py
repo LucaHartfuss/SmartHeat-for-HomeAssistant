@@ -2,13 +2,17 @@
 Laufzeit (smartheat_runtime, Regel-Worker im Hauptthread). Agent-Container, HTTPS-Polling und Tunnel entfallen; Tick
 und Telemetrie laufen ueber den Link des Geraets (mqtt_factory).
 
-Neustart: eine laufzeitrelevante neue Konfiguration oder sign_off fordert ihn an (EV_RELOAD). Der Worker trennt zuerst
-den Link sauber (MQTT-DISCONNECT; sonst meldet IoT Core DUPLICATE_CLIENTID, wenn der neue Prozess verbindet, und der
-Dienst saehe nach drei Aenderungen eine Kopie, Spec 4.2) und endet dann mit Exit 0; Compose startet neu. SIGTERM
-(docker stop) endet genauso; vor dem Exit schliesst der Geraete-Thread sein laufendes Ereignis ab (beenden), und jeder
-Start reicht die Soll-Software der gespeicherten Konfiguration erneut an den Updater (software_soll_nachholen). Auch
-die Neustarts der Laufzeit selbst (abo.restart_process: Neupruefung im Ruhezustand Konfigurationsfehler, Abo am
-Fristende wieder aktiv) nehmen diesen Weg statt os.execv, das den Link ohne DISCONNECT abrisse.
+Neustart und Ende teilen sich beide Hosts in smartheat_device.prozess: eine laufzeitrelevante neue Konfiguration oder
+sign_off fordert den Neustart an (EV_RELOAD), ebenso die Neustarts der Laufzeit selbst (Rueckruf
+prozess.neustart_der_laufzeit aus app.start: Neupruefung im Ruhezustand Konfigurationsfehler, Abo am Fristende wieder
+aktiv, Neustart nach dem Zuruecksetzen). Der Worker endet mit prozess.Neustart, beenden trennt zuerst den Link sauber
+(MQTT-DISCONNECT; sonst meldet IoT Core DUPLICATE_CLIENTID, wenn der neue Prozess verbindet, und der Dienst saehe nach
+drei Aenderungen eine Kopie, Spec 4.2), laesst den Geraete-Thread sein laufendes Ereignis abschliessen, und main kehrt
+zurueck: Exit 0, Compose startet neu.
+Nach einem unerwarteten Fehler der Laufzeit trennt das Gateway ebenso, meldet sich ungesund (vor_der_pause), wartet
+60 s und startet dann neu. SIGTERM
+(docker stop) endet ueber beenden ohne Neustart. Jeder Start reicht die Soll-Software der gespeicherten Konfiguration
+erneut an den Updater (software_soll_nachholen).
 
 Nach dem Entfernen (Markierung aufraeumen.json) setzt der naechste Start die Anlage erst zurueck wie sign_off (Laufzeit
 im Modus abgemeldet mit der alten Konfiguration aus der Markierung, die Treiber-Anmeldung braucht es dafuer noch) und
@@ -20,15 +24,13 @@ import contextlib
 import logging
 import os
 import signal
-import threading
 import time
 from pathlib import Path
-from typing import NoReturn
 
 from smartheat_core import wallclock
+from smartheat_device import prozess
 from smartheat_device.device import Device
 from smartheat_device.documents import KONFIGURATION, DocumentStore
-from smartheat_device.hintergrund import Hintergrund
 from smartheat_gateway import befehle, diagnose
 from smartheat_gateway import geraet_host as geraet_host_module
 from smartheat_gateway.bus import LocalBus, credentials_from_env
@@ -37,21 +39,17 @@ from smartheat_gateway.host import GatewayHost
 from smartheat_gateway.paths import Paths, from_env
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_gateway.zigbee import ZigbeeMirror
-from smartheat_runtime import abo, app
-from smartheat_runtime import aufraeumen as markierung
-from smartheat_runtime.runtime import EV_RECHECK, Runtime
-from smartheat_runtime.status import STATUS_KONFIGURATIONSFEHLER
+from smartheat_runtime import app
+from smartheat_runtime.runtime import Runtime
+from smartheat_runtime.status import STATUS_STARTET
 from smartheat_runtime.worker import Event
 
 logger = logging.getLogger(__name__)
 
-EV_RELOAD = geraet_host_module.EV_RELOAD
 EV_CONFIG_WATCH = "shg_config_watch"
 EV_RAUM = "shg_raum"
 CONFIG_WATCH_SECONDS = 30
 RAUM_SECONDS = 30
-#: Ende des Prozesses: so lange darf der Geraete-Thread sein laufendes Ereignis noch abschliessen.
-JOIN_SECONDS = 10.0
 
 
 def _alive_file() -> Path:
@@ -65,26 +63,18 @@ def _touch_alive() -> None:
 
 
 def aufraeumen(paths: Paths) -> None:
-    """Markierung aufraeumen.json (geraet_host: Wechsel von eingerichtet auf leer) vor dem Start des Geraetekerns
-    auswerten: noch nichts schreibt, und ein driver_login direkt nach hello kann nicht mit dem Loeschen kollidieren
-    (Spec Stufe 3 S3 Abschnitt 4). Wieder eingerichtet -> Markierung weg, Zustand bleibt; Zuruecksetzen steht aus ->
-    nichts loeschen (die Laufzeit setzt mit der Konfiguration der Markierung zurueck und startet danach neu);
-    zurueckgesetzt oder ohne Konfiguration (Markierung aus 1.0.0, kaputt) -> vergessen, Markierung weg."""
-    if not paths.aufraeumen.exists():
-        return
-    gespeichert = DocumentStore(paths.device_dir, host=GatewayDeviceHost.host,
-                                software_version=GATEWAY_VERSION).inhalt(KONFIGURATION)
-    entscheidung = markierung.entscheiden(paths.aufraeumen, gespeichert)
-    if entscheidung == markierung.KEINE:  # zwischendurch verschwunden
-        return
-    if entscheidung == markierung.ZURUECKSETZEN:
-        logger.info("Anlage wird vor dem Aufraeumen zurueckgesetzt")  # Treiber-Anmeldung wird dafuer noch gebraucht
-        return
-    if entscheidung == markierung.VERWERFEN:
-        logger.info("Aufraeumen entfaellt: das Gateway ist inzwischen neu eingerichtet")
-    else:
-        geraet_host_module.vergessen(paths)
-    paths.aufraeumen.unlink(missing_ok=True)
+    """Markierung aufraeumen.json vor dem Start des Geraetekerns (prozess.aufraeumen_beim_start): noch nichts schreibt,
+    und ein driver_login direkt nach hello kann nicht mit dem Loeschen kollidieren. Geloescht wird mit vergessen."""
+    prozess.aufraeumen_beim_start(
+        paths.aufraeumen,
+        lambda: DocumentStore(paths.device_dir, host=GatewayDeviceHost.host,
+                              software_version=GATEWAY_VERSION).inhalt(KONFIGURATION),
+        lambda: _vergessen(paths), wer="das Gateway")
+
+
+def _vergessen(paths: Paths) -> bool:
+    geraet_host_module.vergessen(paths)  # wirft nie
+    return True
 
 
 def software_soll_nachholen(geraet: GatewayDeviceHost, device: Device) -> None:
@@ -102,58 +92,24 @@ def software_soll_nachholen(geraet: GatewayDeviceHost, device: Device) -> None:
         logger.error("Soll-Software nicht nachgeholt (%s)", type(error).__name__)
 
 
-def beenden(device, thread: threading.Thread | None, timeout: float = JOIN_SECONDS, *,
-            hintergrund: Hintergrund | None = None) -> None:
-    """Ende des Prozesses (Neustart, SIGTERM): erst den Geraetekern stoppen (sauberes Trennen) und wartende Treiber-
-    Aufrufe der Befehle abbrechen, dann den Geraete-Thread sein laufendes Ereignis abschliessen lassen, z. B.
-    software_soll nach konfiguration_uebernommen. Danach noch einmal stop(): Device.run fuehrt nach stop() noch einen
-    Takt aus, und ein Port-Rueckfall oder eine Rettung darin koennte einen neuen Link geoeffnet haben (Restpunkt
-    5b-D2-4, Gateway-Seite); der wird so ebenfalls sauber getrennt."""
-    device.stop()
-    if hintergrund is not None:
-        hintergrund.stop()
-    if thread is not None:
-        thread.join(timeout)
-        if thread.is_alive():
-            logger.warning("Geraete-Thread nach %.0f s nicht beendet, Prozess endet trotzdem", timeout)
-    device.stop()
-
-
 def start(paths: Paths, bus, mirror: ZigbeeMirror, geraet: GatewayDeviceHost, device: Device, clock=time.monotonic,
           *, driver_threads: bool = True) -> tuple[Runtime | app.IdleBridge, GatewayHost]:
     host = GatewayHost(paths, bus, mirror, geraet, clock=clock, driver_threads=driver_threads)
-    result = app.start(host, clock, mqtt_factory=device.laufzeit_kanal)
-    attach(result, host, geraet, device)
+    result = app.start(host, clock, mqtt_factory=device.laufzeit_kanal, neustart=prozess.neustart_der_laufzeit)
+    attach(result, host, geraet)
     return result, host
 
 
-def _neustart(device: Device, anlass: str) -> NoReturn:
-    logger.info("%s, Laufzeit startet neu", anlass)
-    device.stop()  # zuerst sauber trennen (MQTT-DISCONNECT); main() wartet danach auf den Geraete-Thread (beenden)
-    raise SystemExit(0)
-
-
-def attach(result: Runtime | app.IdleBridge, host: GatewayHost, geraet: GatewayDeviceHost, device: Device) -> None:
-    """Haengt die Gateway-Ereignisse an den Worker und leitet die Neustarts der Laufzeit (abo.restart_process, auch im
-    Ruhezustand Konfigurationsfehler ueber EV_RECHECK) auf den Neustart mit sauberem Trennen um. Im Ruhezustand
-    abgemeldet bzw. abo_beendet bleibt EV_RECHECK das erneute Zuruecksetzen."""
+def attach(result: Runtime | app.IdleBridge, host: GatewayHost, geraet: GatewayDeviceHost) -> None:
+    """Haengt die Gateway-Ereignisse (Lebenszeichen, Raum) an den Worker; EV_RELOAD geht ueber
+    prozess.reload_anhaengen, die Neustarts der Laufzeit selbst ueber den Rueckruf aus start."""
     worker = result.worker
-
-    def _reload(event: Event) -> None:
-        _neustart(device, "Neue Konfiguration oder Abmelden")
-
-    def _recheck(event: Event) -> None:
-        _neustart(device, "Neupruefung nach Konfigurationsfehler")
-
-    def _laufzeit_neustart() -> None:
-        _neustart(device, "Neustart der Laufzeit (Abo wieder aktiv)")
 
     def _watch(event: Event) -> None:
         worker.schedule(CONFIG_WATCH_SECONDS, Event(EV_CONFIG_WATCH))  # zuerst: die Wache darf nie abreissen
         _touch_alive()
 
-    abo.restart_process = _laufzeit_neustart  # statt os.execv: das risse den Link ohne DISCONNECT ab
-    worker.register(EV_RELOAD, _reload)
+    prozess.reload_anhaengen(result)
     worker.register(EV_CONFIG_WATCH, _watch)
     worker.schedule(CONFIG_WATCH_SECONDS, Event(EV_CONFIG_WATCH))
     _touch_alive()
@@ -170,10 +126,31 @@ def attach(result: Runtime | app.IdleBridge, host: GatewayHost, geraet: GatewayD
         geraet.zustand.raum = None  # Ruhezustand: kein Raum der vorigen Einrichtung
         if result.reason == app.IDLE_NOT_CONFIGURED:
             geraet.zustand.status = None
-        elif result.reason == STATUS_KONFIGURATIONSFEHLER:
-            # bewusst zusaetzlich zur Umleitung von abo.restart_process: haengt nicht an diesem globalen Eingriff
-            worker.register(EV_RECHECK, _recheck)
     geraet.worker_binden(worker, soll_eingang=isinstance(result, Runtime))  # Ruhezustand: kein Soll-Eingang
+
+
+def _starten(paths: Paths, bus, mirror: ZigbeeMirror, geraet: GatewayDeviceHost, device: Device):
+    result, _ = start(paths, bus, mirror, geraet, device)
+    logger.info("Zeitzone %s", wallclock.now().tzinfo)
+    return result
+
+
+def vor_der_pause(geraet: GatewayDeviceHost) -> None:
+    """Rueckruf vor_pause fuer prozess.laufen (Abschlussreview S6 I-2): nach einem unerwarteten Fehler meldet sich das
+    Gateway fuer die 60-s-Pause ungesund, damit der Updater (G2 8.4) ein Update, dessen Laufzeit gleich nach dem Start
+    wirft, zurueckrollt. Der Prozess bleibt in der Pause oben: das Lebenszeichen waere frisch (Compose-Health-Check
+    "healthy"), und /healthz hinge nur an server_ok aus dem letzten Takt des Geraete-Threads. Deshalb geht das
+    Lebenszeichen weg (der Health-Check scheitert), und /healthz meldet die Laufzeit als "startet" (health_ok des
+    Updaters lehnt das ab); der Neustart beginnt ohnehin so."""
+    with contextlib.suppress(OSError):  # ein nicht beschreibbares /tmp darf Pause und Neustart nicht verhindern
+        _alive_file().unlink(missing_ok=True)
+    geraet.zustand.status = {"status": STATUS_STARTET}
+
+
+def laufen(paths: Paths, bus, mirror: ZigbeeMirror, geraet: GatewayDeviceHost, device: Device) -> None:
+    """prozess.laufen mit Exit 0 als Neustart (Compose startet neu) und vor_der_pause (Moduldocstring)."""
+    prozess.laufen(device, geraet.hintergrund, lambda: _starten(paths, bus, mirror, geraet, device), lambda: None,
+                   vor_pause=lambda: vor_der_pause(geraet))
 
 
 def _terminate(signum, frame) -> None:
@@ -199,14 +176,7 @@ def main() -> None:  # pragma: no cover - Container-Einstieg
     )
     software_soll_nachholen(geraet, device)  # vor dem Geraete-Thread: kein Rennen mit einer neuen Konfiguration
     signal.signal(signal.SIGTERM, _terminate)  # vor dem Geraete-Thread: ein SIGTERM endet immer ueber beenden
-    thread: threading.Thread | None = None
-    try:
-        thread = device.start()
-        result, _ = start(paths, bus, mirror, geraet, device)
-        logger.info("Laufzeit gestartet (%s), Zeitzone %s", type(result).__name__, wallclock.now().tzinfo)
-        result.worker.run()
-    finally:
-        beenden(device, thread, hintergrund=geraet.hintergrund)
+    laufen(paths, bus, mirror, geraet, device)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,6 @@ WORKDIR /app
 COPY gateway/requirements.txt ./
 RUN pip install --no-cache-dir --require-hashes -r requirements.txt
 COPY heizungsbruecke/src/smartheat_core ./src/smartheat_core
-COPY heizungsbruecke/src/smartheat_transport ./src/smartheat_transport
 COPY heizungsbruecke/src/smartheat_runtime ./src/smartheat_runtime
 COPY heizungsbruecke/src/smartheat_device ./src/smartheat_device
 COPY gateway/src/smartheat_gateway ./src/smartheat_gateway

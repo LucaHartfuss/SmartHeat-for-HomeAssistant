@@ -26,13 +26,8 @@ class FakeClock:
 
 
 @pytest.fixture(autouse=True)
-def _kein_prozessneustart(tmp_path, monkeypatch):
-    """Nie os.execv im Test (runtime_main.attach leitet abo.restart_process um; monkeypatch stellt das Original nach
-    jedem Test wieder her) und nie das echte Lebenszeichen unter /tmp."""
-    def _neustart():
-        raise SystemExit(0)
-
-    monkeypatch.setattr("smartheat_runtime.abo.restart_process", _neustart)
+def _kein_echtes_lebenszeichen(tmp_path, monkeypatch):
+    """Nie das echte Lebenszeichen unter /tmp (runtime_main beruehrt es bei jedem Start)."""
     monkeypatch.setenv("SHG_ALIVE_FILE", str(tmp_path / "alive"))
 
 

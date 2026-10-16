@@ -2,6 +2,19 @@
 
 ## Unveröffentlicht
 
+- Nach einem unerwarteten Fehler der Laufzeit wartet das Gateway 60 s, trennt vorher sauber und startet dann neu (wie
+  das Add-on); bisher endete der Prozess sofort und Compose startete ihn ohne Pause neu (Stufe 3 S6). Lebenszyklus und
+  Gerätebindung teilen sich Gateway und Add-on jetzt im Gerätekern. Während der Pause meldet sich das Gateway ungesund
+  (Lebenszeichen gelöscht, `/healthz` meldet die Laufzeit als `startet`): ein Update, dessen Laufzeit gleich nach dem
+  Start scheitert, rollt der Updater weiter zurück.
+- Die Wunschtemperatur `raum_soll` aus der Bedienung gilt als Kommazahl, auch wenn sie als ganze Zahl kommt (wie im
+  Add-on, Stufe 3 S6).
+- Beim Start gleicht das Gateway das Thermostat nur an, wenn eine gültige Bedienung (`raum_soll`) vorliegt; ohne sie
+  bleibt das Thermostat unberührt (bisher auf den Standard von 20 °C, Stufe 3 S6).
+- Die Bootstrap-Antwort wird strenger geprüft: Port nur 8883 oder 443, ALPN nur fehlend oder `x-amzn-mqtt-ca`; eine
+  andere Antwort gilt als ungültig, der Bootstrap wird später wiederholt (Stufe 3 S6).
+- Intern: Image-Scan (`trivy`) über Gateway-Image und Fremd-Images der Compose-Datei in `scripts/check.sh --full`; ein
+  kritischer Befund mit Korrektur ist rot (Stufe 3 S6).
 - Der Befehl `driver_probe` entfällt: die Erkennung der Anlagen ist die Inventur mit `stunden: 0`; das Gateway liefert die
   gekürzten Rohdaten der Hersteller-Schnittstelle, die Bewertung in Kandidaten macht der Server (Stufe 3 S5b, G-6).
 - Die Diagnoseseite zeigt QR-Code und Übernahme-Code nur, solange das Gateway nicht übernommen ist (Spec 5c F1); nach

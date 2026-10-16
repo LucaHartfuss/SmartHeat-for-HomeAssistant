@@ -17,6 +17,6 @@ known-first-party = ["smartheat_host", "smartheat_gateway"]
 
 [tool.pyright]
 include = ["smartheat_host"]
-extraPaths = ["../src"]
+extraPaths = ["../src", "../../heizungsbruecke/src"]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"

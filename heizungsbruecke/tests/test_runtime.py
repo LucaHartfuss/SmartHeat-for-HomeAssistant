@@ -5,7 +5,6 @@ Fake-Trigger-Client und dem Link einer Geraete-Attrappe (FakeGeraet) statt eines
 import dataclasses
 import itertools
 import logging
-import sys
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
@@ -1581,21 +1580,21 @@ def _start_just_before_grace_end(env, monkeypatch):
     entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
     answers = iter([False])  # Startpruefung, danach ist die Frist abgelaufen
     monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: next(answers, True))
-    exec_calls = []
-    monkeypatch.setattr("os.execv", lambda path, args: exec_calls.append((path, args)))
-    monkeypatch.setattr("sys.orig_argv", ["python", "-m", "heizungsbruecke"])  # Add-on-Start (restart_process)
-    bridge = _start_bridge(env)
-    return bridge, exec_calls
+    neustarts = []
+    bridge = _start_bridge(env, neustart=lambda: neustarts.append(1))
+    return bridge, neustarts
 
 
-def test_grace_end_with_reactivated_abo_restarts_instead_of_restoring(env, monkeypatch):
+def test_grace_end_with_reactivated_abo_restarts_instead_of_restoring(env, monkeypatch, caplog):
     # T2-5: kein faelschliches Zuruecksetzen am Fristende, wenn das Abo wieder aktiv ist.
-    bridge, exec_calls = _start_just_before_grace_end(env, monkeypatch)
+    bridge, neustarts = _start_just_before_grace_end(env, monkeypatch)
     env.abo["status"] = entitlement.ACTIVE
 
-    bridge.worker.run_pending()
+    with caplog.at_level(logging.INFO):
+        bridge.worker.run_pending()
 
-    assert exec_calls == [(sys.executable, [sys.executable, "-m", "heizungsbruecke"])]
+    assert neustarts == [1]  # der Rueckruf neustart des Hosts (Spec Stufe 3 S6 4.2)
+    assert "Abo wieder aktiv, Neustart im Normalbetrieb" in caplog.text  # der Anlass je Ursache im Log
     assert not env.paths["ENTITLEMENT_PATH"].exists()
     assert (env.ha.states["number.curve_current"], env.ha.states["number.shift_current"]) == (1.5, 25.0)
     assert all(message != ABO_ENDED for _, message in env.ha.persistent)
@@ -1603,12 +1602,12 @@ def test_grace_end_with_reactivated_abo_restarts_instead_of_restoring(env, monke
 
 @pytest.mark.parametrize("status", [entitlement.INACTIVE, entitlement.UNKNOWN])
 def test_grace_end_finishes_when_abo_not_active(env, monkeypatch, status):
-    bridge, exec_calls = _start_just_before_grace_end(env, monkeypatch)
+    bridge, neustarts = _start_just_before_grace_end(env, monkeypatch)
     env.abo["status"] = status
 
     bridge.worker.run_pending()
     assert bridge.idle is True
-    assert exec_calls == []
+    assert neustarts == []
     assert (env.ha.states["number.curve_current"], env.ha.states["number.shift_current"]) == (0.9, 22.0)
 
 
@@ -2125,7 +2124,6 @@ def test_sign_off_without_server_values_uses_the_local_original(env):
 def test_reset_after_an_empty_configuration_uses_the_server_originals_of_the_marker(env, monkeypatch):
     """Die Markierung haelt die alte Konfiguration samt ursprungswerte; die leere neue hat keine."""
     _quiet_backup(env, boost_active=True, restore_point={"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 18.0})
-    monkeypatch.setattr(abo, "restart_process", lambda: None)
 
     _start_bridge(env, leer_mit_markierung=True, ursprungswerte={"heat_limit": 15.0})
 
@@ -2159,9 +2157,8 @@ def test_empty_configuration_without_sign_off_restores_then_restarts_once(env, m
     danach Markierung erledigt und genau ein Neustart (der Start davor loescht den Zustand)."""
     _quiet_backup(env, boost_active=True)
     neustarts = []
-    monkeypatch.setattr(abo, "restart_process", lambda: neustarts.append(1))
 
-    bridge = _start_bridge(env, leer_mit_markierung=True)
+    bridge = _start_bridge(env, neustart=lambda: neustarts.append(1), leer_mit_markierung=True)
 
     assert isinstance(bridge, app.IdleBridge) and bridge.reason == "abgemeldet"
     assert env.ha.writes == [("number.curve_current", 0.9), ("number.shift_current", 22.0)]
@@ -2179,9 +2176,8 @@ def test_reset_fails_keeps_state_across_restart(env, monkeypatch):
     _quiet_backup(env, boost_active=True)
     env.ha.write_error = RuntimeError("Cloud weg")
     neustarts = []
-    monkeypatch.setattr(abo, "restart_process", lambda: neustarts.append(1))
 
-    bridge = _start_bridge(env, leer_mit_markierung=True)
+    bridge = _start_bridge(env, neustart=lambda: neustarts.append(1), leer_mit_markierung=True)
     bridge.worker.run_pending()
 
     pfad = env.paths["AUFRAEUMEN_PATH"]
@@ -2193,7 +2189,8 @@ def test_reset_fails_keeps_state_across_restart(env, monkeypatch):
     assert ("smartheat_wiederherstellung", message) in env.ha.persistent
 
     env.ha.write_error = None
-    bridge = _start_bridge(env, leer_mit_markierung=True)  # Neustart: dieselbe offene Markierung
+    # Neustart: dieselbe offene Markierung
+    bridge = _start_bridge(env, neustart=lambda: neustarts.append(1), leer_mit_markierung=True)
     bridge.worker.run_pending()
     assert env.ha.writes == [("number.curve_current", 0.9), ("number.shift_current", 22.0)] and neustarts == [1]
 
@@ -2202,8 +2199,7 @@ def test_retry_success_after_empty_configuration_also_restarts(env, monkeypatch)
     _quiet_backup(env, boost_active=True)
     env.ha.write_error = RuntimeError("Cloud weg")
     neustarts = []
-    monkeypatch.setattr(abo, "restart_process", lambda: neustarts.append(1))
-    bridge = _start_bridge(env, leer_mit_markierung=True)
+    bridge = _start_bridge(env, neustart=lambda: neustarts.append(1), leer_mit_markierung=True)
 
     env.ha.write_error = None
     _advance(env, bridge, 300)
@@ -2219,11 +2215,10 @@ def test_an_unwritable_marker_after_the_reset_keeps_the_state_and_does_not_resta
     _quiet_backup(env, boost_active=True)
     aufraeumen.markieren(env.paths["AUFRAEUMEN_PATH"], geraet_helpers.konfiguration_aus_optionen(OPTIONS))
     neustarts = []
-    monkeypatch.setattr(abo, "restart_process", lambda: neustarts.append(1))
     monkeypatch.setattr("smartheat_runtime.aufraeumen.dateien.schreiben_json", _raise_oserror)
 
     with caplog.at_level(logging.ERROR):
-        bridge = _start_bridge(env, leer_mit_markierung=True)
+        bridge = _start_bridge(env, neustart=lambda: neustarts.append(1), leer_mit_markierung=True)
         bridge.worker.run_pending()
 
     assert bridge.reason == "abgemeldet" and neustarts == []
@@ -2235,8 +2230,7 @@ def test_an_unwritable_marker_after_the_reset_keeps_the_state_and_does_not_resta
 def test_normal_sign_off_without_marker_does_not_restart(env, monkeypatch):
     _quiet_backup(env, boost_active=True)
     neustarts = []
-    monkeypatch.setattr(abo, "restart_process", lambda: neustarts.append(1))
-    bridge = _start_bridge(env, abgemeldet=True)
+    bridge = _start_bridge(env, neustart=lambda: neustarts.append(1), abgemeldet=True)
     bridge.worker.run_pending()
     assert neustarts == []
 

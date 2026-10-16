@@ -1,7 +1,6 @@
 """Plan 5b D2 Task 5: ein Prozess aus Geraetekern und Laufzeit - Neustart bei neuer Konfiguration mit sauberem
 Trennen, Aufraeumen nach dem Entfernen, Raum im Prozess, Bedienung beim Start, Lebenszeichen."""
 import json
-import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,6 +11,7 @@ from geraet_fakes import geraet_fuer
 from world import GatewayWorld
 
 from smartheat_core import dateien
+from smartheat_device import prozess
 from smartheat_gateway import runtime_main
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.zigbee import ZigbeeMirror
@@ -68,25 +68,27 @@ def test_reload_disconnects_the_link_before_exit(world):
     world.connect()
     first = world.link
     world.geraet.neustart_anfordern()
-    with pytest.raises(SystemExit) as stop:
+    with pytest.raises(prozess.Neustart):
         world.result.worker.run_pending()
-    assert stop.value.code == 0 and first.stopped
+    assert not first.stopped  # der Worker trennt nicht selbst
+    prozess.beenden(world.device, None, None)
+    assert first.stopped
 
 
-def test_the_config_error_recheck_restarts_through_the_reload_path(world, monkeypatch):
-    """Der Ruhezustand Konfigurationsfehler prueft per Neustart neu (app._fail_start); auch der trennt zuerst sauber
-    statt os.execv (sonst DUPLICATE_CLIENTID beim Neuverbinden)."""
+def test_the_config_error_recheck_restarts_through_the_reload_path(world):
+    """Der Ruhezustand Konfigurationsfehler prueft per Neustart neu (app._fail_start, Rueckruf neustart aus
+    runtime_main.start); auch der trennt zuerst sauber (sonst DUPLICATE_CLIENTID beim Neuverbinden)."""
     dokumente_schreiben(world.paths, konfiguration(raumfuehler=["test-falsch"]))
     result = world.start_runtime()
     assert isinstance(result, IdleBridge) and result.reason == "konfigurationsfehler"
     world.connect()
     first = world.link
-    execv = []
-    monkeypatch.setattr("smartheat_runtime.abo.restart_process", lambda: execv.append(1))
     world.clock.advance(app.CONFIG_RECHECK_SECONDS)
-    with pytest.raises(SystemExit) as stop:
+    with pytest.raises(prozess.Neustart):
         world.result.worker.run_pending()
-    assert stop.value.code == 0 and first.stopped and execv == []
+    assert not first.stopped  # der Worker trennt nicht selbst
+    prozess.beenden(world.device, None, None)
+    assert first.stopped
 
 
 def test_the_sign_off_retry_stays_a_retry(data_dir, clock):
@@ -94,10 +96,10 @@ def test_the_sign_off_retry_stays_a_retry(data_dir, clock):
     worker = RegulationWorker(clock=clock)
     retries = []
     worker.register(EV_RECHECK, retries.append)
-    bridge = IdleBridge(worker=worker, status=None, reason=STATUS_ABGEMELDET)
+    bridge = IdleBridge(worker=worker, status=None, reason=STATUS_ABGEMELDET, neustart=prozess.neustart_der_laufzeit)
     mirror = ZigbeeMirror(FakeBus(), clock)
     geraet = geraet_fuer(Paths(data_dir), mirror, konfiguration())
-    runtime_main.attach(bridge, SimpleNamespace(raum=None), geraet, geraet.device)
+    runtime_main.attach(bridge, SimpleNamespace(raum=None), geraet)
     worker.post(Event(EV_RECHECK))
     worker.run_pending()
     assert len(retries) == 1 and not geraet.device.stopped
@@ -113,9 +115,11 @@ def test_abo_reactivation_restarts_through_the_reload_path(world, monkeypatch):
     monkeypatch.setattr(world.device, "abo_status", lambda: "active")
     world.wall.advance(31 * 86400)
     world.clock.advance(31 * 86400)
-    with pytest.raises(SystemExit) as stop:
+    with pytest.raises(prozess.Neustart):
         world.result.worker.run_pending()
-    assert stop.value.code == 0 and first.stopped
+    assert not first.stopped  # der Worker trennt nicht selbst
+    prozess.beenden(world.device, None, None)
+    assert first.stopped
 
 
 def test_a_software_only_configuration_does_not_restart(world):
@@ -250,64 +254,6 @@ def test_no_replay_without_a_stored_configuration(world):
     assert not world.paths.software_soll.exists()
 
 
-def test_the_end_stops_the_device_and_waits_for_its_thread():
-    """Ende des Prozesses: erst stoppen (sauberes Trennen), dann den Geraete-Thread sein laufendes Ereignis beenden
-    lassen (z. B. software_soll nach konfiguration_uebernommen), dann erst Exit."""
-    gestoppt, fertig = threading.Event(), []
-    device = SimpleNamespace(stop=gestoppt.set)
-
-    def laufendes_ereignis():
-        gestoppt.wait(5)
-        fertig.append("software_soll")
-
-    thread = threading.Thread(target=laufendes_ereignis, daemon=True)
-    thread.start()
-    runtime_main.beenden(device, thread)
-    assert gestoppt.is_set() and fertig == ["software_soll"] and not thread.is_alive()
-
-
-def test_the_end_without_a_started_thread_only_stops():
-    gestoppt = threading.Event()
-    runtime_main.beenden(SimpleNamespace(stop=gestoppt.set), None)
-    assert gestoppt.is_set()
-
-
-class _Link:
-    def __init__(self) -> None:
-        self.stopped = False
-
-    def stop(self) -> None:
-        self.stopped = True
-
-
-def test_the_end_also_stops_a_link_that_the_last_tick_opened_after_the_first_stop():
-    """Restpunkt 5b-D2-4 (Gateway-Seite): Device.run fuehrt nach stop() noch einen Takt aus; ein offener Port-Rueckfall
-    oder eine Rettung koennte darin einen neuen Link oeffnen. beenden stoppt nach dem Warten erneut."""
-    gestoppt = threading.Event()
-    device = SimpleNamespace(link=_Link())
-
-    def stop():
-        gestoppt.set()
-        device.link.stop()
-
-    device.stop = stop
-
-    def letzter_takt():
-        gestoppt.wait(5)
-        device.link = _Link()  # neuer Link nach dem ersten stop()
-
-    thread = threading.Thread(target=letzter_takt, daemon=True)
-    thread.start()
-    runtime_main.beenden(device, thread)
-    assert not thread.is_alive() and device.link.stopped
-
-
-def test_the_end_stops_the_background_of_the_commands():
-    gestoppt = threading.Event()
-    runtime_main.beenden(SimpleNamespace(stop=lambda: None), None, hintergrund=SimpleNamespace(stop=gestoppt.set))
-    assert gestoppt.is_set()
-
-
 def test_room_is_kept_in_the_process_on_a_new_operation(world):
     dokumente_schreiben(world.paths, konfiguration())
     world.start_runtime()
@@ -343,7 +289,59 @@ def test_a_newer_operation_replaces_the_stored_target_at_start(world):
     assert world.host._store.value == 22.5 and 22.5 in _thermostat_writes(world)
 
 
-def test_sigterm_ends_like_a_restart():
+def test_an_unexpected_error_reports_the_gateway_unhealthy_during_the_pause(world, monkeypatch):
+    """Abschlussreview S6 I-2: in der 60-s-Pause nach einem unerwarteten Fehler ist das Lebenszeichen weg (der
+    Compose-Health-Check scheitert) und /healthz meldet die Laufzeit "startet" (health_ok des Updaters lehnt ab). Sonst
+    behielte der Updater ein Update, dessen Laufzeit gleich nach dem Start wirft. Echter Ablauf ueber
+    runtime_main.laufen mit Geraete-Thread; nur der Worker wirft."""
+    dokumente_schreiben(world.paths, konfiguration())
+    world.start_runtime()
+    world.connect()
+    alive = world.paths.data / "alive"
+    vorher = world.geraet.snapshot()
+    assert alive.exists() and vorher["server_ok"] is True and vorher["laufzeit"] not in (None, "startet")
+
+    def kaputt():
+        raise RuntimeError("Testfehler")
+
+    monkeypatch.setattr(world.result.worker, "run", kaputt)
+    monkeypatch.setattr(runtime_main, "_starten", lambda *args: world.result)
+    in_der_pause = []
+    echt = prozess.laufen
+
+    def laufen(*args, **kwargs):
+        echt(*args, **kwargs, sleep=lambda s: in_der_pause.append((s, alive.exists(), world.geraet.snapshot())))
+
+    monkeypatch.setattr(prozess, "laufen", laufen)
+    runtime_main.laufen(world.paths, world.bus, None, world.geraet, world.device)
+    [(sekunden, lebenszeichen, snapshot)] = in_der_pause
+    assert sekunden == 60.0 and not lebenszeichen and snapshot["laufzeit"] == "startet"
+
+
+def test_before_the_pause_a_missing_alive_file_is_no_error(world, monkeypatch):
+    geraet = SimpleNamespace(zustand=SimpleNamespace(status={"status": "regelt"}))
+    runtime_main.vor_der_pause(geraet)  # world setzt SHG_ALIVE_FILE, die Datei gibt es noch nicht
+    assert geraet.zustand.status == {"status": "startet"}
+
+    def unlink(self, missing_ok=False):
+        raise PermissionError("read-only file system")
+
+    monkeypatch.setattr("pathlib.Path.unlink", unlink)
+    geraet.zustand.status = None
+    runtime_main.vor_der_pause(geraet)
+    assert geraet.zustand.status == {"status": "startet"}
+
+
+def test_sigterm_ends_with_exit_0():
     with pytest.raises(SystemExit) as stop:
         runtime_main._terminate(15, None)
     assert stop.value.code == 0
+
+
+def test_an_operation_without_a_valid_target_does_not_align_the_thermostat_at_start(world):
+    """Spec Stufe 3 S6 4.3 (c): wie der HA-Host gleicht das Gateway nur mit einem gueltigen raum_soll an; sonst gilt
+    der Standard, und das Thermostat bleibt unberuehrt."""
+    dokumente_schreiben(world.paths, konfiguration(), {**bedienung(), "raum_soll": 30.0})
+    world.start_runtime()
+    world.run()
+    assert world.host._store.value == 20.0 and _thermostat_writes(world) == []

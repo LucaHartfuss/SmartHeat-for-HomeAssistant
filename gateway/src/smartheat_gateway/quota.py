@@ -16,7 +16,6 @@ from smartheat_core import dateien
 
 @dataclass(frozen=True)
 class QuotaSpec:
-    limit: int          # Grenze des Herstellers (Anzeige/Diagnose)
     hard_limit: int     # eigene harte Grenze: ab hier "erschoepft"
     window_seconds: float
 

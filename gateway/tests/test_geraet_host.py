@@ -11,6 +11,7 @@ from configs import konfiguration
 from fakes import FakeBus
 
 from smartheat_core import dateien
+from smartheat_device.geraet_host_basis import EV_RELOAD
 from smartheat_device.host import Anzeige
 from smartheat_gateway import geraet_host as gh
 from smartheat_gateway.paths import Paths
@@ -74,7 +75,7 @@ class Welt:
         self.host.verbinden(self.device)
         self.worker = RegulationWorker(clock=clock)
         self.events: list = []
-        self.worker.register(gh.EV_RELOAD, self.events.append)
+        self.worker.register(EV_RELOAD, self.events.append)
         self.worker.register(EV_TARGET_INPUT, self.events.append)
 
     def kinds(self):
@@ -135,7 +136,7 @@ def test_a_runtime_relevant_configuration_requests_a_restart(welt):
     welt.host.konfiguration_uebernommen(konfiguration(), konfiguration(software={"version": "0.6.1"}))
     assert welt.kinds() == []
     welt.host.konfiguration_uebernommen(konfiguration(), konfiguration(abo="inaktiv"))
-    assert welt.kinds() == [gh.EV_RELOAD]
+    assert welt.kinds() == [EV_RELOAD]
 
 
 def test_remembered_originals_are_handed_to_the_device_as_a_copy(welt):
@@ -152,7 +153,7 @@ def test_remembered_originals_are_handed_to_the_device_as_a_copy(welt):
 def test_a_restart_requested_before_the_worker_exists_is_posted_on_binding(welt):
     welt.host.neustart_anfordern()
     welt.host.worker_binden(welt.worker)
-    assert welt.kinds() == [gh.EV_RELOAD]
+    assert welt.kinds() == [EV_RELOAD]
 
 
 def test_an_empty_configuration_after_a_setup_marks_the_cleanup(welt):
@@ -161,7 +162,7 @@ def test_an_empty_configuration_after_a_setup_marks_the_cleanup(welt):
         "anlage": "test-tenant", "konfiguration": konfiguration(), "zurueckgesetzt": False}
     assert stat.S_IMODE(welt.paths.aufraeumen.stat().st_mode) == 0o600
     welt.host.worker_binden(welt.worker)
-    assert welt.kinds() == [gh.EV_RELOAD]
+    assert welt.kinds() == [EV_RELOAD]
 
 
 def test_the_first_empty_configuration_marks_nothing(welt):

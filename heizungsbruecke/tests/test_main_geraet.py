@@ -12,9 +12,10 @@ from test_runtime import OPTIONS, _quiet_backup, env  # noqa: F401 - env ist ein
 import heizungsbruecke.__main__ as main_module
 from heizungsbruecke import config
 from smartheat_core import dateien
+from smartheat_device import prozess
 from smartheat_device.host import Anzeige
 from smartheat_device.laufzeit import RuntimeChannel
-from smartheat_runtime import abo, app, dokument_config
+from smartheat_runtime import app, dokument_config
 from smartheat_runtime import aufraeumen as aufraeumen_markierung
 from smartheat_runtime.runtime import Runtime
 
@@ -86,12 +87,11 @@ def _anzeige(zustand="nicht_uebernommen", *, eingerichtet=False):
 
 @pytest.fixture
 def geraet_env(env, tmp_path, monkeypatch):  # noqa: F811 - env ist die Fixture aus test_runtime
-    """env plus Datenordner des Geraets; start() setzt abo.restart_process global um, monkeypatch stellt es zurueck."""
+    """env plus Datenordner des Geraets."""
     monkeypatch.setattr(config, "DEVICE_DATA_DIR", tmp_path / "data")
     # wo der Dokumentspeicher die Rastung schreibt (device/sicherheitssatz.json), liest sie die Laufzeit
     monkeypatch.setattr(config, "RASTUNG_PATH", tmp_path / "data" / "device" / "sicherheitssatz.json")
     monkeypatch.setattr(config, "OPTIONS_PATH", tmp_path / "options.json")
-    monkeypatch.setattr(abo, "restart_process", abo.restart_process)
     monkeypatch.setattr(main_module.status_holder, "host", None)
     return env
 
@@ -254,13 +254,22 @@ def test_start_with_document_regulates_and_wires_status_and_operations(geraet_en
 
 
 def test_restarts_of_the_runtime_take_the_clean_restart_path(geraet_env):
-    """abo.restart_process (Abo am Fristende wieder aktiv, Neupruefung) beendet den Worker ueber Neustart statt os.execv,
-    das den Link ohne DISCONNECT abrisse."""
+    """Der Rueckruf neustart, den start der Laufzeit uebergibt (Abo am Fristende wieder aktiv, Neupruefung, Neustart
+    nach dem Zuruecksetzen), beendet den Worker ueber Neustart statt os.execv, das den Link ohne DISCONNECT abrisse."""
     device = FakeDevice()
     geraet, status = _verdrahtet(geraet_env, device)
-    main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
-    with pytest.raises(main_module.Neustart):
-        abo.restart_process()
+    result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+    with pytest.raises(prozess.Neustart):
+        result.neustart()
+
+
+def test_exec_starts_the_same_command_again(monkeypatch):
+    """Der Neustart des HA-Hosts fuer prozess.laufen: derselbe Befehl (python -m heizungsbruecke) als neuer Prozess."""
+    calls = []
+    monkeypatch.setattr(main_module.os, "execv", lambda executable, argv: calls.append((executable, argv)))
+    monkeypatch.setattr(main_module.sys, "orig_argv", ["python", "-m", "heizungsbruecke"])
+    main_module._exec()
+    assert calls == [(main_module.sys.executable, [main_module.sys.executable, "-m", "heizungsbruecke"])]
 
 
 # --- Neustart und Ende (Review Focus 4) ---
@@ -334,7 +343,7 @@ def test_an_unexpected_start_error_restarts_after_a_pause(geraet_env, monkeypatc
     monkeypatch.setattr(main_module, "start", kaputt)
     with caplog.at_level(logging.WARNING):
         main_module.laufen(geraet, device, geraet_env.ha, status, geraet_env.clock)
-    assert order == ["start", "stop", "join", "stop", ("pause", main_module.FEHLER_PAUSE_SECONDS), "exec"]
+    assert order == ["start", "stop", "join", "stop", ("pause", prozess.FEHLER_PAUSE_SECONDS), "exec"]
     assert "KeyError" in caplog.text and "geheim" not in caplog.text
 
 
@@ -496,7 +505,7 @@ def test_an_empty_configuration_resets_then_restarts_and_the_next_start_cleans_u
     result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
     assert isinstance(result, app.IdleBridge) and result.reason == "abgemeldet"
     assert geraet_env.ha.writes == [("number.curve_current", 0.9), ("number.shift_current", 22.0)]
-    with pytest.raises(main_module.Neustart):
+    with pytest.raises(prozess.Neustart):
         result.worker.run_pending()
 
     main_module.aufraeumen(ha)

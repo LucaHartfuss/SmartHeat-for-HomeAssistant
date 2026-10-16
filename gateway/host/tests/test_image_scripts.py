@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from test_boundaries import SHIPPED, TENANT_ID
+from test_boundaries import SHIPPED, SHIPPED_CORE, TENANT_ID
 
 GW = Path(__file__).resolve().parents[2]
 IMAGE = GW / "image"
@@ -151,6 +151,9 @@ def test_prepare_builds_the_stage(tmp_path, pilot):
     shipped = {str(p.relative_to(installer / "src" / "smartheat_gateway")) for p in
                (installer / "src" / "smartheat_gateway").rglob("*") if p.is_file()}
     assert shipped == set(SHIPPED)  # genau das, was install.sh ablegt: nichts fehlt, nichts kommt dazu
+    core = {str(p.relative_to(installer / "src" / "smartheat_core")) for p in
+            (installer / "src" / "smartheat_core").rglob("*") if p.is_file()}
+    assert core == set(SHIPPED_CORE)
     assert (installer / "VERSION").read_text() == (GW / "VERSION").read_text()
     for name in ("docker-compose.yml", "mosquitto.conf", "manifest.json", "manifest.json.minisig"):
         assert (stage / "bundle" / name).is_file(), name

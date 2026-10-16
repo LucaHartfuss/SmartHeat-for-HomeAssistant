@@ -24,7 +24,7 @@ from smartheat_gateway.quota import QuotaExhausted, QuotaGuard, QuotaSpec
 
 logger = logging.getLogger(__name__)
 
-QUOTA = QuotaSpec(limit=1450, hard_limit=1200, window_seconds=86400)
+QUOTA = QuotaSpec(hard_limit=1200, window_seconds=86400)
 FOREIGN_PROGRAMS = ("comfort", "eco")
 QUOTA_TEXT = "Das Abfragekontingent bei Viessmann ist erschöpft."
 # Rollen, die signals() immer meldet (Pflichtrollen des Hebelsatzes ohne den Raum); die uebrigen nur, wenn vorhanden.
@@ -53,10 +53,9 @@ class ViCareCloudDriver:
     kind = KIND_CLOUD
     login_kind = LOGIN_OAUTH
     LEVER_SETS = (caps.LEVER_SET,)
-    # Audit 4, A4-08: Parameter, die die Anlage bestimmen (registry.same_plant/plant_id).
+    # Audit 4, A4-08: Parameter, die die Anlage bestimmen (registry.plant_id).
     # Achtung (Audit 4, A4-08): Eine Aenderung aendert die plant_id jeder Installation; beim Update gilt das als andere Anlage und setzt den anlagenbezogenen Zustand zurueck.
     IDENTITY_PARAMETERS = ("installation_id", "gateway_serial", "device_id", "heizkreis")
-    quota = QUOTA
 
     def __init__(self, parameter: dict, paths: Paths, *, clock=time.monotonic, writer: bool = False,
                  wall=time.time, api: vicare.ViCareApi | None = None,

@@ -3,7 +3,6 @@ options.json): Konfigurationsfehler mit Ruhezustand, Neupruefung und Meldezustan
 Entities und Hilfssensoren, Zeitzone; dazu hostneutrale Handler der Laufzeit (Telemetrie, _prime,
 Verbindungswaechter). Der Einstieg main() selbst steht in test_main_geraet.py."""
 import logging
-import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -104,14 +103,13 @@ def test_invalid_daily_trigger_time_is_a_configuration_error(env, caplog, sleeps
     assert "Tagestick" in caplog.text
 
 
-def test_configuration_error_idles_with_heartbeat_and_rechecks_without_second_push(env, monkeypatch, sleeps):
-    """Review Focus 1: kein Exit (Watchdog-Karussell), Lebenszeichen, nach 900 s Neupruefung per os.execv, derselbe
-    Fehler meldet nicht erneut. Bis 0.36 ausgeloest von veralteten Optionen, jetzt von einem ungueltigen Dokument."""
-    execs = []
-    monkeypatch.setattr("os.execv", lambda path, args: execs.append(args))
-    monkeypatch.setattr("sys.orig_argv", ["python", "-m", "heizungsbruecke"])  # Add-on-Start (restart_process)
+def test_configuration_error_idles_with_heartbeat_and_rechecks_without_second_push(env, sleeps):
+    """Review Focus 1: kein Exit (Watchdog-Karussell), Lebenszeichen, nach 900 s Neupruefung per Neustart des Hosts
+    (Rueckruf neustart, Spec Stufe 3 S6 4.2), derselbe Fehler meldet nicht erneut. Bis 0.36 ausgeloest von veralteten
+    Optionen, jetzt von einem ungueltigen Dokument."""
+    neustarts = []
 
-    bridge = _start_bridge(env, **KONFIGURATIONSFEHLER)
+    bridge = _start_bridge(env, neustart=lambda: neustarts.append(1), **KONFIGURATIONSFEHLER)
 
     assert bridge.reason == "konfigurationsfehler"
     assert len(env.ha.pushes) == 1
@@ -120,12 +118,12 @@ def test_configuration_error_idles_with_heartbeat_and_rechecks_without_second_pu
     bridge.worker.run_pending()
     assert len(_status_events(env)) == sent + 1
     assert _status_events(env)[-1]["status"] == "konfigurationsfehler"
-    assert execs == []
+    assert neustarts == []
 
     env.clock.advance(600)
     bridge.worker.run_pending()
 
-    assert execs == [[sys.executable, "-m", "heizungsbruecke"]]
+    assert neustarts == [1]
     assert _start_bridge(env, **KONFIGURATIONSFEHLER).reason == "konfigurationsfehler"  # neuer Prozess
     assert len(env.ha.pushes) == 1
     assert env.ha.writes == []

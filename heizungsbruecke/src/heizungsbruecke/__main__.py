@@ -4,11 +4,12 @@ log_level); Konfiguration und Bedienung kommen als Soll-Dokumente. Status-Ereign
 Uebernahme-Code haengt verdrahten() an den Geraete-Host; der Geraete-Thread meldet sie in jedem Takt (anzeigen), auch
 im Ruhezustand "nicht eingerichtet", in dem die Laufzeit selbst nichts sendet.
 
-Neustart (neue laufzeitrelevante Konfiguration, sign_off, Abo am Fristende wieder aktiv, Neupruefung im
-Konfigurationsfehler): der Worker endet mit Neustart, dann trennt beenden() den Link sauber (MQTT-DISCONNECT; sonst
-meldet IoT Core DUPLICATE_CLIENTID, wenn der neue Prozess verbindet) und wartet auf den Geraete-Thread, erst danach
-os.execv. Anders als das Gateway (Compose startet nach Exit 0 neu) startet der Supervisor ein sauber beendetes Add-on
-nicht zuverlaessig neu, deshalb exec. SIGTERM (Supervisor stoppt das Add-on) endet ueber beenden() ohne exec.
+Neustart, Ende und Aufraeumen beim Start teilen sich beide Hosts in smartheat_device.prozess (neue laufzeitrelevante
+Konfiguration, sign_off, Abo am Fristende wieder aktiv, Neupruefung im Konfigurationsfehler: der Worker endet mit
+prozess.Neustart - die Laufzeit ueber den Rueckruf prozess.neustart_der_laufzeit aus app.start -, beenden trennt den
+Link sauber, erst danach os.execv in _exec). Anders als das Gateway (Compose startet nach Exit 0 neu) startet der
+Supervisor ein sauber beendetes Add-on nicht zuverlaessig neu, deshalb exec. SIGTERM (Supervisor stoppt das Add-on)
+endet ueber beenden ohne exec.
 
 Nach dem Entfernen (aufraeumen.json) setzt der naechste Start die Anlage erst zurueck wie sign_off (Laufzeit im Modus
 abgemeldet mit der alten Konfiguration aus der Markierung) und startet danach neu; erst dieser Start loescht den
@@ -20,43 +21,32 @@ import os
 import shutil
 import signal
 import sys
-import threading
 import time
 import urllib.parse
 
 from heizungsbruecke import config, derived_sensors
 from heizungsbruecke.discovery import Discovery
-from heizungsbruecke.geraet_host import EV_RELOAD, HaDeviceHost
+from heizungsbruecke.geraet_host import HaDeviceHost
 from heizungsbruecke.geraet_status import GeraetStatus
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.host import HaHost
 from heizungsbruecke.supervisor import SupervisorApi
 from heizungsbruecke.version import ADDON_VERSION
+from smartheat_device import prozess
 from smartheat_device.device import DEVICE_DIR, Device
 from smartheat_device.documents import KONFIGURATION, DocumentStore
-from smartheat_device.hintergrund import Hintergrund
-from smartheat_runtime import abo, app
+from smartheat_runtime import app
 from smartheat_runtime import aufraeumen as markierung
-from smartheat_runtime.runtime import EV_RECHECK, Runtime
-from smartheat_runtime.status import STATUS_KONFIGURATIONSFEHLER
+from smartheat_runtime.runtime import Runtime
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_BOOTSTRAP_URL = "https://accounts.hartfussha.org"
 LOG_LEVELS = {"debug": logging.DEBUG, "info": logging.INFO, "warning": logging.WARNING, "error": logging.ERROR}
-#: Ende des Prozesses: so lange darf der Geraete-Thread sein laufendes Ereignis noch abschliessen.
-JOIN_SECONDS = 10.0
 #: Aufraeumen beim Start (startup: services, HA evtl. noch nicht bereit): so lange auf HA warten, um die Hilfssensoren zu
 #: loeschen; danach startet der Geraetekern trotzdem, und der naechste Start versucht es erneut.
 AUFRAEUMEN_HA_WARTEN_SECONDS = 120.0
 AUFRAEUMEN_HA_TAKT_SECONDS = 5.0
-#: Unerwarteter Fehler im Start: Pause vor dem Neustart (exec), damit ein dauerhafter Fehler keine schnelle Schleife wird.
-FEHLER_PAUSE_SECONDS = 60.0
-
-
-class Neustart(BaseException):
-    """Aus dem Regel-Worker: Prozess nach sauberem Trennen neu starten. BaseException wie SystemExit beim Gateway: der
-    Worker faengt in Handlern nur Exception ab, diese hier geht bis laufen() durch."""
 
 
 def _optionen() -> dict | None:
@@ -117,8 +107,8 @@ def log_level() -> int:
 
 
 def _exec() -> None:
-    """Ersetzt den Prozess durch einen frischen Start mit demselben Befehl (`python -m heizungsbruecke`); wie
-    abo.restart_process, das start() fuer die Laufzeit auf den sauberen Neustart umleitet."""
+    """Ersetzt den Prozess durch einen frischen Start mit demselben Befehl (`python -m heizungsbruecke`); der
+    Neustart des Hosts fuer prozess.laufen."""
     os.execv(sys.executable, [sys.executable, *sys.orig_argv[1:]])
 
 
@@ -132,26 +122,17 @@ def _ha_bereit(ha_api) -> bool:
 
 
 def aufraeumen(ha_api) -> None:
-    """Markierung aufraeumen.json (HaDeviceHost.konfiguration_uebernommen: Wechsel von eingerichtet auf leer) vor dem
-    Start des Geraetekerns auswerten (Spec Stufe 3 S3 Abschnitt 4): wieder eingerichtet -> Markierung weg, Zustand
-    bleibt; Zuruecksetzen steht aus -> nichts loeschen (die Laufzeit setzt mit der Konfiguration der Markierung zurueck
-    und startet danach neu); zurueckgesetzt oder ohne Konfiguration (Markierung aus 1.0.0, kaputt) -> Sicherung,
-    Notbetriebs- und Abo-Zustand, Laufzeit-Ordner und die Hilfssensoren in HA loeschen. Bleiben Hilfssensoren uebrig
+    """Markierung aufraeumen.json vor dem Start des Geraetekerns (prozess.aufraeumen_beim_start); geloescht werden
+    Sicherung, Notbetriebs- und Abo-Zustand, Laufzeit-Ordner und die Hilfssensoren in HA. Bleiben Hilfssensoren uebrig
     (HA nicht bereit oder Fehler), bleibt die Markierung fuer den naechsten Start."""
-    if not config.AUFRAEUMEN_PATH.exists():
-        return
-    gespeichert = DocumentStore(config.DEVICE_DATA_DIR / DEVICE_DIR, host=HaDeviceHost.host,
-                                software_version=ADDON_VERSION).inhalt(KONFIGURATION)
-    entscheidung = markierung.entscheiden(config.AUFRAEUMEN_PATH, gespeichert)
-    if entscheidung == markierung.KEINE:  # zwischendurch verschwunden
-        return
-    if entscheidung == markierung.VERWERFEN:
-        logger.info("Aufraeumen entfaellt: das Add-on ist inzwischen neu eingerichtet")
-        config.AUFRAEUMEN_PATH.unlink(missing_ok=True)
-        return
-    if entscheidung == markierung.ZURUECKSETZEN:
-        logger.info("Anlage wird vor dem Aufraeumen zurueckgesetzt")
-        return
+    prozess.aufraeumen_beim_start(
+        config.AUFRAEUMEN_PATH,
+        lambda: DocumentStore(config.DEVICE_DATA_DIR / DEVICE_DIR, host=HaDeviceHost.host,
+                              software_version=ADDON_VERSION).inhalt(KONFIGURATION),
+        lambda: _anlage_loeschen(ha_api), wer="das Add-on")
+
+
+def _anlage_loeschen(ha_api) -> bool:
     gelesen = markierung.lesen(config.AUFRAEUMEN_PATH)
     anlage = gelesen.anlage if gelesen is not None else None
     fertig = True
@@ -171,8 +152,7 @@ def aufraeumen(ha_api) -> None:
         geloescht = True
     if geloescht:
         logger.info("Anlagengebundener Zustand geloescht (Add-on nicht mehr eingerichtet)")
-    if fertig:
-        config.AUFRAEUMEN_PATH.unlink(missing_ok=True)
+    return fertig
 
 
 class _Laufzeit:
@@ -205,79 +185,20 @@ def verdrahten(geraet: HaDeviceHost, device, ha_api, supervisor) -> GeraetStatus
 
 def start(geraet: HaDeviceHost, device, ha_api, status: GeraetStatus,
           clock=time.monotonic) -> tuple[Runtime | app.IdleBridge, HaHost]:
-    """Laufzeit auf dem Link des Geraets starten (mqtt_factory) und ihre Neustarts auf den sauberen Neustart umleiten:
-    EV_RELOAD (Geraete-Host), abo.restart_process (Abo wieder aktiv; Neupruefung im Konfigurationsfehler) und - nicht
-    nur ueber diesen globalen Eingriff - EV_RECHECK im Konfigurationsfehler."""
+    """Laufzeit auf dem Link des Geraets starten (mqtt_factory); alle Neustarts gehen ueber prozess.Neustart (der
+    Rueckruf neustart der Laufzeit und EV_RELOAD des Geraete-Hosts)."""
     geraet.status_sink = status
-
-    def _neustart(anlass: str) -> None:
-        logger.info("%s, Add-on startet neu", anlass)
-        raise Neustart()
-
-    abo.restart_process = lambda: _neustart("Neustart der Laufzeit (Abo wieder aktiv oder Neupruefung)")
     host = HaHost(geraet, ha_api, clock=clock)
     status_holder.host = host
-    result = app.start(host, clock, mqtt_factory=device.laufzeit_kanal)
-    worker = result.worker
-    worker.register(EV_RELOAD, lambda event: _neustart("Neue Konfiguration oder Abmelden"))
-    if isinstance(result, app.IdleBridge) and result.reason == STATUS_KONFIGURATIONSFEHLER:
-        worker.register(EV_RECHECK, lambda event: _neustart("Neupruefung nach Konfigurationsfehler"))
-    geraet.worker_binden(worker, soll_eingang=isinstance(result, Runtime))  # Ruhezustand: kein Soll-Eingang
+    result = app.start(host, clock, mqtt_factory=device.laufzeit_kanal, neustart=prozess.neustart_der_laufzeit)
+    prozess.reload_anhaengen(result)
+    geraet.worker_binden(result.worker, soll_eingang=isinstance(result, Runtime))  # Ruhezustand: kein Soll-Eingang
     return result, host
 
 
-def _schritt(name: str, aufruf) -> None:
-    try:
-        aufruf()
-    except Exception as error:  # das Ende darf nie scheitern: sonst entfiele das exec nach einem Neustart
-        logger.warning("Beenden: %s gescheitert (%s)", name, type(error).__name__)
-
-
-def _warten(thread: threading.Thread) -> None:
-    thread.join(JOIN_SECONDS)
-    if thread.is_alive():
-        logger.warning("Geraete-Thread nach %.0f s nicht beendet, Prozess endet trotzdem", JOIN_SECONDS)
-
-
-def beenden(device, thread: threading.Thread | None, hintergrund: Hintergrund | None) -> None:
-    """Ende des Prozesses (Neustart, SIGTERM): erst den Geraetekern stoppen (sauberes Trennen) und wartende HA-Aufrufe
-    der Inventur abbrechen, dann den Geraete-Thread sein laufendes Ereignis abschliessen lassen. Danach noch einmal
-    stop(): ein letzter Takt nach dem ersten stop() koennte einen neuen Link geoeffnet haben (wie beim Gateway). Wirft
-    nie: jeder Schritt einzeln, ins Log nur die Fehlerart."""
-    _schritt("Geraetekern stoppen", device.stop)
-    if hintergrund is not None:
-        _schritt("Hintergrund stoppen", hintergrund.stop)
-    if thread is not None:
-        _schritt("Geraete-Thread abwarten", lambda: _warten(thread))
-    _schritt("Geraetekern stoppen", device.stop)
-
-
 def laufen(geraet: HaDeviceHost, device, ha_api, status: GeraetStatus, clock=time.monotonic) -> None:
-    """Geraete-Thread und Laufzeit bis zum Ende des Prozesses; ein Neustart startet den Prozess erst nach beenden()
-    neu (exec), SIGTERM (SystemExit) endet nach beenden() ohne exec. Ein unerwarteter Fehler (Start der Laufzeit, Worker)
-    beendet den Prozess nie still: Fehlerart ins Log, sauber trennen, FEHLER_PAUSE_SECONDS warten, dann derselbe
-    Neustart (das Add-on beendet sich nie von selbst; die Pause verhindert eine schnelle Schleife)."""
-    thread: threading.Thread | None = None
-    neu = fehler = False
-    try:
-        thread = device.start()
-        result, _ = start(geraet, device, ha_api, status, clock)
-        logger.info("Laufzeit gestartet (%s)", type(result).__name__)
-        result.worker.run()
-    except Neustart:
-        neu = True
-    except Exception as error:
-        logger.error("Unerwarteter Fehler der Laufzeit (%s), Neustart in %.0f s", type(error).__name__,
-                     FEHLER_PAUSE_SECONDS)
-        logger.debug("Fehler der Laufzeit", exc_info=True)
-        neu = fehler = True
-    finally:
-        beenden(device, thread, geraet.hintergrund)
-    if fehler:
-        time.sleep(FEHLER_PAUSE_SECONDS)
-    if neu:
-        logger.info("Neustart nach sauberem Trennen")
-        _exec()
+    """prozess.laufen mit exec als Neustart (Moduldocstring)."""
+    prozess.laufen(device, geraet.hintergrund, lambda: start(geraet, device, ha_api, status, clock)[0], _exec)
 
 
 def _ruhen() -> None:

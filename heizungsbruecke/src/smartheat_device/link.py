@@ -1,6 +1,6 @@
 """Die eine MQTT-Verbindung des Geraets (Spec 5b 5.1, Weichenstellung 2): MQTT 5, Client-ID = Geraete-ID (= Thing),
 persistente Session (clean_start=False, Ablauf 3600 s, AN-9), TLS mit dem Geraete-Zertifikat aus dem Bootstrap ueber
-smartheat_transport.connect (derselbe TLS-Weg wie im Add-on). Nach jedem Verbinden abonniert der Link genau den Filter
+smartheat_device.tls (derselbe TLS-Weg wie im Add-on). Nach jedem Verbinden abonniert der Link genau den Filter
 down/# (AN-6) und meldet "verbunden" (das Geraet schickt dann hello). Nachrichten auf fremden Topics und retained
 Nachrichten werden verworfen. Gesendet wird nur bei bestehender Verbindung (sonst None: paho staute QoS-1-Nachrichten
 unbegrenzt, AU-035); was ausfaellt, gleicht hello aus.
@@ -23,14 +23,17 @@ from paho.mqtt.properties import Properties
 
 from smartheat_device import wire
 from smartheat_device.bootstrap import Zugang
-from smartheat_transport.connect import (
+from smartheat_device.tls import (
     CONNECT_ERROR_NETWORK,
     CONNECT_ERROR_TLS,
+    CREDENTIAL_CERTIFICATE,
+    KIND_IOT_CORE,
+    Credential,
+    Descriptor,
     apply,
     classify_connect_error,
     connect_options,
 )
-from smartheat_transport.descriptor import CREDENTIAL_CERTIFICATE, KIND_IOT_CORE, Credential, Descriptor
 
 logger = logging.getLogger(__name__)
 

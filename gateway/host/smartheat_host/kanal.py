@@ -15,7 +15,8 @@ import stat
 from collections.abc import Callable
 from pathlib import Path
 
-from smartheat_gateway.files import write_json
+from smartheat_core import dateien
+
 from smartheat_host.lesen import read_bytes, read_json
 
 SOLL_FILE = "software_soll.json"
@@ -59,7 +60,9 @@ class LokalerKanal:
                      + [_seq(quittung.get("seq")) if isinstance(quittung, dict) else 0])
         meldungen.append({"seq": letzte + 1, "version": version, "result": result, "reason": reason})
         try:
-            write_json(self._data / MELDUNGEN_FILE, {"meldungen": meldungen[-MELDUNGEN_MAX:]})  # 0644: Laufzeit liest
+            # LESBAR (0644): die Laufzeit im Container liest die Meldungen
+            dateien.schreiben_json(self._data / MELDUNGEN_FILE, {"meldungen": meldungen[-MELDUNGEN_MAX:]},
+                                   modus=dateien.LESBAR)
         except OSError as error:
             raise KanalFehler(f"Meldung nicht schreibbar ({type(error).__name__})") from None
 

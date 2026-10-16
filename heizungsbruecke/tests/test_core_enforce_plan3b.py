@@ -58,7 +58,7 @@ def _rt(make_store, clock, description, manifest, states, point, backup=None):
     override = LeverPipeline(store, HaPlantBinding(ha, manifest, description), safety, clock=clock)
     clock.advance(description.settle_seconds + 1)
     return Runtime(manifest=manifest, signals=ha, config=runtime_config(), worker=MagicMock(), store=store, override=override,
-                   notifier=notifier, clock=clock)
+                   notifier=notifier, neustart=MagicMock(), clock=clock)
 
 
 def _rounds(rt):

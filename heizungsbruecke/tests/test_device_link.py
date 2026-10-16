@@ -8,7 +8,7 @@ from tls_helpers import ca_pem, issue, make_ca
 
 from smartheat_device import link as link_module
 from smartheat_device.bootstrap import Endpoint, Zugang
-from smartheat_transport.descriptor import TransportConfigError
+from smartheat_device.tls import TransportConfigError
 
 DEVICE = "shg-aaaaaaaaaaaaaaaa"
 

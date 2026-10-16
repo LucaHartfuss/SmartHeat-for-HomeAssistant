@@ -70,7 +70,8 @@ def test_empty_configuration_after_the_reset_boots_not_configured(env):
 
 def test_runtime_starts_on_the_document(env):
     geraet = FakeGeraet(konfiguration_aus_optionen(OPTIONS))
-    bridge = app.start(HaHost(geraet, env.ha, clock=env.clock), env.clock, mqtt_factory=geraet.kanal)
+    bridge = app.start(HaHost(geraet, env.ha, clock=env.clock), env.clock, mqtt_factory=geraet.kanal,
+                       neustart=geraet.neustart)
     assert isinstance(bridge, Runtime)
 
 
@@ -243,7 +244,8 @@ def test_sign_off_without_binding_parameters_does_not_reset_and_logs_it(env, cap
 
 def test_the_runtime_idles_with_a_config_error_for_a_missing_role(env):
     geraet = FakeGeraet(konfiguration_aus_optionen({**OPTIONS, "lever_set": "weishaupt_wwp"}))
-    bridge = app.start(HaHost(geraet, env.ha, clock=env.clock), env.clock, mqtt_factory=geraet.kanal)
+    bridge = app.start(HaHost(geraet, env.ha, clock=env.clock), env.clock, mqtt_factory=geraet.kanal,
+                       neustart=geraet.neustart)
     assert not isinstance(bridge, Runtime)
 
 

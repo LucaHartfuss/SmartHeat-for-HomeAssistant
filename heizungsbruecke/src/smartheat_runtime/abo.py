@@ -1,7 +1,5 @@
 """Abo-inaktiv-Modus (Notbetrieb ohne Server bis zum Fristende) und Fristende."""
 import logging
-import os
-import sys
 from dataclasses import replace
 from datetime import datetime
 
@@ -182,7 +180,7 @@ def check_grace_end(rt: Runtime) -> None:
     if entitlement.query(rt.config) == entitlement.ACTIVE:
         entitlement.clear(rt.config.entitlement_path)
         logger.warning("Abo wieder aktiv, Neustart im Normalbetrieb")
-        restart_process()
+        rt.neustart()
         return
     if finish_grace(rt, always_restore=True, final_notice=True):
         report_restore(rt.notifier, ok=True)
@@ -207,8 +205,3 @@ def _enter_idle(rt: Runtime) -> None:
         except Exception:
             logger.exception("Verbindung konnte beim Wechsel in den Ruhezustand nicht sauber beendet werden")
 
-
-def restart_process() -> None:
-    """Ersetzt den Prozess durch einen frischen Start mit demselben Befehl (Abo wieder aktiv, Neupruefung im
-    Konfigurationsfehler). Im Add-on ist das `python -m heizungsbruecke`. Unabhaengig vom Watchdog des Hosts."""
-    os.execv(sys.executable, [sys.executable, *sys.orig_argv[1:]])
