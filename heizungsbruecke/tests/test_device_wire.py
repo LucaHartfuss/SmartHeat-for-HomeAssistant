@@ -3,6 +3,7 @@ zusaetzlich der Contract-Check im Dev-Root (Plan 5b-W Teil A)."""
 import ast
 import hashlib
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -71,3 +72,153 @@ def test_signature_string_is_the_g3_scheme():
     digest = hashlib.sha256(b"{}").hexdigest()
     assert wire.canonical_string("POST", "/devices/register", 7, b"{}") == (
         f"SHG1\nPOST\n/devices/register\n7\n{digest}".encode())
+
+
+GERAET_QUELLEN = [ADDON_REPO / "heizungsbruecke" / "src", ADDON_REPO / "gateway" / "src"]
+_VERTRAG_MODUL = "smartheat_device.wire"
+_PIN_PRAEFIX = "_VERTRAG_GEPINNT"
+# V1-Konstanten, die nur der Server braucht; jede Zeile mit Grund. Kein Eintrag ohne Grund.
+NUR_SERVER: set[str] = set()
+NUR_GEPINNT_GERAET: set[str] = set()  # Kopien im Kern (smartheat_core darf nichts importieren), nur gepinnt (P4)
+OFFEN: set[str] = {  # Ist-Stand 2026-10-16; die Tasks 2-6 leeren es, Task 7 prueft OFFEN == set()
+    "ABO",  # Task 5
+    "BEDIENUNG_FIELDS",  # Task 5
+    "BINDUNGSPARAMETER_FIELDS",  # Task 5
+    "BINDUNG_GATEWAY_FIELDS",  # Task 5
+    "BINDUNG_HA_FIELDS",  # Task 5
+    "BINDUNG_HA_OPTIONAL",  # Task 5
+    "BOOTSTRAP_OPTIONAL",  # Task 3
+    "CAPABILITY_FIELDS",  # Task 6
+    "CAPABILITY_OPTIONAL",  # Task 6
+    "CERTIFICATE_FIELDS",  # Task 3
+    "COMMAND_FIELDS",  # Task 4
+    "CSR_MAX_BYTES",  # Task 3
+    "DOKUMENT_ERRORS",  # Task 5
+    "DOKUMENT_TOPICS",  # Task 5
+    "DOWN_TOPICS",  # Task 4
+    "ENERGIE_EINHEITEN",  # Task 5
+    "HA_HINWEISE",  # Task 5
+    "HA_ROLLEN",  # Task 5
+    "HELLO_FIELDS",  # Task 3
+    "HELLO_OPTIONAL",  # Task 3
+    "HOSTS",  # Task 3
+    "INTERVALLE_FIELDS",  # Task 2
+    "INVENTORY_FIELDS",  # Task 4
+    "INVENTUR_ANLAGE_FIELDS",  # Task 6
+    "INVENTUR_ENTITY_FIELDS",  # Task 6
+    "INVENTUR_FEATURE_FIELDS",  # Task 6
+    "INVENTUR_FILTER_FIELDS",  # Task 6
+    "INVENTUR_GATEWAY_FIELDS",  # Task 6
+    "INVENTUR_GERAET_FIELDS",  # Task 6
+    "INVENTUR_HA_FIELDS",  # Task 6
+    "KONFIGURATION_OPTIONAL",  # Task 5
+    "KREIS_FIELDS",  # Task 5
+    "MAX_BODY_BYTES",  # Task 3
+    "MAX_CLOCK_SKEW_SECONDS",  # Task 3
+    "MELDUNGEN",  # Task 3
+    "NOTIFICATIONS_FIELDS",  # Task 3
+    "NOTIFICATION_FIELDS",  # Task 3
+    "PUBLIC_KEY_ENCODING",  # Task 3
+    "RAUM_FIELDS",  # Task 3
+    "REGISTER_FIELDS",  # Task 3
+    "REGISTER_OPTIONAL",  # Task 3
+    "RESULT_FIELDS",  # Task 3
+    "RESULT_TARGETS",  # Task 3
+    "SCHREIBSCHUTZ_FIELDS",  # Task 5
+    "SIGNATURE_ENCODING",  # Task 3
+    "SNAPSHOT_EXTRA",  # Task 2
+    "SOFTWARE_FIELDS",  # Task 5
+    "STATUS_FIELDS",  # Task 3
+    "STATUS_OPTIONAL",  # Task 3
+    "TELEMETRY_EXTRA",  # Task 2
+    "TREIBER_FIELDS",  # Task 5
+    "UNAUTHENTICATED_ERROR",  # Task 3
+    "WISH_FIELDS",  # Task 4
+    "WISH_WERTE",  # Task 4
+    "ZAEHLER",  # Task 5
+    "ZIGBEE_ARTEN",  # Task 6
+    "ZIGBEE_DEVICE_FIELDS",  # Task 6
+    "ZUSTAENDE",  # Task 3
+}
+
+
+def _vertragsnamen() -> set[str]:
+    tree = ast.parse(Path(wire.__file__).read_text())
+    ende = next(n.lineno for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "command_errors")
+    namen: set[str] = set()
+    for node in tree.body:
+        if node.lineno >= ende:
+            break
+        ziele = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
+        for ziel in ziele:
+            namen |= {n.id for n in ast.walk(ziel) if isinstance(n, ast.Name) and re.fullmatch(r"[A-Z][A-Z0-9_]+", n.id)}
+    return namen
+
+
+def _funktionsleser() -> dict[str, set[str]]:
+    """Je Funktion des Vertragsteils (canonical_string, topic, command_errors, ...) die Konstanten, die sie liest: wer
+    die Funktion aufruft, liest sie mit."""
+    tree = ast.parse(Path(wire.__file__).read_text())
+    namen = _vertragsnamen()
+    return {node.name: {n.id for n in ast.walk(node) if isinstance(n, ast.Name) and n.id in namen}
+            for node in tree.body if isinstance(node, ast.FunctionDef)}
+
+
+def _zugriffe(path: Path) -> tuple[set[str], set[str]]:
+    """(gelesen, gepinnt) wie der Server-Test: `wire.NAME` (from smartheat_device import wire [as x]), `from
+    smartheat_device.wire import NAME`; Aufruf einer Vertragsfunktion liest deren Konstanten; Zuweisungen an
+    `_VERTRAG_GEPINNT*` sind gepinnt."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    aliase: set[str] = set()
+    direkt: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "smartheat_device":
+            aliase |= {a.asname or a.name for a in node.names if a.name == "wire"}
+        elif isinstance(node, ast.ImportFrom) and node.module == _VERTRAG_MODUL:
+            direkt |= {a.name for a in node.names}
+    funktionen = _funktionsleser()
+
+    def zugriffe(wurzel: ast.AST) -> set[str]:
+        found = set()
+        for n in ast.walk(wurzel):
+            if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id in aliase:
+                found.add(n.attr)
+                found |= funktionen.get(n.attr, set())
+        return found
+
+    gelesen = {name for name in direkt} | {k for name in direkt for k in funktionen.get(name, set())}
+    gepinnt: set[str] = set()
+    for node in tree.body:
+        ziele = node.targets if isinstance(node, ast.Assign) else []
+        if any(isinstance(z, ast.Name) and z.id.startswith(_PIN_PRAEFIX) for z in ziele):
+            gepinnt |= zugriffe(node)
+        else:
+            gelesen |= zugriffe(node)
+    return gelesen, gepinnt
+
+
+def _leser_im_geraet() -> tuple[set[str], set[str]]:
+    gelesen: set[str] = set()
+    gepinnt: set[str] = set()
+    for quelle in GERAET_QUELLEN:
+        for path in quelle.rglob("*.py"):
+            if path.name != "wire.py" and "__pycache__" not in path.parts:
+                leser, pins = _zugriffe(path)
+                gelesen |= leser
+                gepinnt |= pins
+    return gelesen, gepinnt
+
+
+def test_jede_vertragskonstante_hat_einen_leser_im_geraet():
+    gelesen, gepinnt = _leser_im_geraet()
+    ohne = _vertragsnamen() - gelesen
+    assert ohne - gepinnt == NUR_SERVER | OFFEN
+    assert ohne & gepinnt == NUR_GEPINNT_GERAET
+
+
+def test_der_leser_erkennt_alias_direktimport_funktionen_und_pins(tmp_path):
+    datei = tmp_path / "m.py"
+    datei.write_text("from smartheat_device import wire as w\nfrom smartheat_device.wire import QOS\n"
+                     "# wire.KOMMENTAR\nX = w.SCHEMA\nY = w.topic('a', 'b')\n_VERTRAG_GEPINNT = {'A': w.HOSTS}\n")
+    gelesen, gepinnt = _zugriffe(datei)
+    assert {"QOS", "SCHEMA", "TOPIC_PREFIX"} <= gelesen and gepinnt == {"HOSTS"}
