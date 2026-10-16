@@ -5,8 +5,7 @@
 - Das Status-Ereignis (Schema bleibt 3) trägt kein Feld `setup_id` mehr: es war seit 1.0.0 immer gleich `tenant_id`. Der
   Zustand (`backup.json`) speichert die Einrichtung als `tenant_id`; ein vorhandener Zustand mit `setup_id` wird beim
   Laden übernommen (keine neue Einrichtung, nichts geht verloren), der alte Schlüssel verschwindet beim nächsten
-  Schreiben. Ein Add-on vor dieser Fassung liest im neuen `backup.json` kein `setup_id` und richtet sich einmal neu ein
-  (Zustellung beginnt neu, Ursprungswerte bleiben). Stufe 3 S7, A5-63.
+  Schreiben. Stufe 3 S7, A5-63.
 - Nach einem unerwarteten Fehler der Laufzeit wartet das Gateway 60 s, trennt vorher sauber und startet dann neu (wie
   das Add-on); bisher endete der Prozess sofort und Compose startete ihn ohne Pause neu (Stufe 3 S6). Lebenszyklus und
   Gerätebindung teilen sich Gateway und Add-on jetzt im Gerätekern. Während der Pause meldet sich das Gateway ungesund
