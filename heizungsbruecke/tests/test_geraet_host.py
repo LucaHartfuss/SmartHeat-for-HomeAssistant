@@ -139,9 +139,8 @@ def test_software_is_ignored(tmp_path, monkeypatch):
 def test_foreign_commands_are_not_supported(tmp_path, monkeypatch):
     host, _, _ = _host(tmp_path, monkeypatch)
     register = _register(host, tmp_path)
-    assert {"inventory", "sign_off", "diagnostics", "zigbee_permit_join", "zigbee_devices", "driver_login",
-            "driver_probe"} <= register.kinds
-    for kind in ("zigbee_permit_join", "zigbee_devices", "driver_login", "driver_probe"):
+    assert {"inventory", "sign_off", "diagnostics", "zigbee_permit_join", "zigbee_devices", "driver_login"} <= register.kinds
+    for kind in ("zigbee_permit_join", "zigbee_devices", "driver_login"):
         outcome = register._handlers[kind]({"driver_id": "x"})
         assert isinstance(outcome, Failed) and outcome.grund == "nicht_unterstuetzt"
         assert outcome.text == geraet_host.NICHT_UNTERSTUETZT_TEXT

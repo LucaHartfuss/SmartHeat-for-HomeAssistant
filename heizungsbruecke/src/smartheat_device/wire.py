@@ -81,6 +81,11 @@ INVENTUR_ATTRIBUTE = (
     "target_temp_step", "options", "hvac_modes",
 )
 INVENTUR_GERAET_FIELDS = ("id", "name", "modell", "config_entries")
+# Gateway-Inventur `stunden: 0` (Spec Stufe 3 S5 5.1): rohe Features je Anlage, Features auf oberster Ebene (Stueckelung)
+INVENTUR_FILTER_GATEWAY_FIELDS = ("treiber",)
+INVENTUR_GATEWAY_FIELDS = ("treiber", "anlagen", "features")
+INVENTUR_ANLAGE_FIELDS = ("kennung", "sicherheitswarnungen")
+INVENTUR_FEATURE_FIELDS = ("anlage", "feature", "properties", "commands")
 RESULT_FIELDS = ("schema", "ok", "result", "error")
 RESULT_TARGETS = ("command_id", "dokument", "version")  # entweder command_id oder dokument und version
 ERROR_FIELDS = ("grund", "text")
@@ -144,12 +149,6 @@ MELDUNGEN = ("wunsch_begrenzt", "soll_quelle_aus", "geraet_doppelt", "update_noe
 COMMAND_FIELDS = ("schema", "command_id", "kind", "payload", "expires_at")
 ZIGBEE_DEVICE_FIELDS = ("ieee", "model", "vendor", "art", "werte", "batterie", "faehigkeiten", "last_seen")
 ZIGBEE_ARTEN = ("fuehler", "thermostat", "sonstig")
-PROBE_FIELDS = ("driver_id", "kandidaten")
-PROBE_CANDIDATE_FIELDS = (
-    "kandidat_id", "anzeige", "parameter", "erzeuger_typ", "lever_set", "ablehnung", "hebel", "signale",
-    "sicherheitswarnungen", "details",
-)
-PROBE_LEVER_FIELDS = ("wert", "min", "max", "schritt")
 COMMON_ERRORS = ("ungueltige_nutzlast", "intern", "nicht_unterstuetzt")
 _DRIVER_ERRORS = ("treiber_unbekannt", "nicht_angemeldet", "kontingent_erschoepft", "anlage_nicht_erreichbar")
 
@@ -172,7 +171,6 @@ COMMANDS: dict[str, Command] = {
         ("code_challenge", "code_challenge_method"), 120,
         ("treiber_unbekannt", "login_nicht_noetig", "login_fehlgeschlagen", "anlage_nicht_erreichbar"),
     ),
-    "driver_probe": Command(("driver_id",), PROBE_FIELDS, 120, _DRIVER_ERRORS),
     "inventory": Command(("stunden",), (), None,
                          (*_DRIVER_ERRORS, "nicht_eingerichtet", "keine_bestaetigung", "ha_nicht_erreichbar"),
                          "stunden*3600+3600", ("filter",)),

@@ -1,15 +1,8 @@
-"""capabilities.candidates gegen synthetische Faelle und die Matrix (Spec G4 3)."""
+"""Feature-Lesehilfen des Treibers und die Kuerzung fuer die Erkennung (Spec G4 3, Stufe 3 S5b). Die Klassifikation in
+Kandidaten und die Matrix der Aufzeichnungen liegen auf dem Server (tests/test_gateway_erkennung.py)."""
 import json
-from pathlib import Path
 
-import pytest
-from bindung_beispiele import PARAMETER
-
-from smartheat_device import wire
 from smartheat_gateway.drivers.vicare_cloud import capabilities as caps
-
-MATRIX = Path(__file__).parent / "vicare_matrix"
-IDS = {"installation_id": 1, "gateway_serial": "G1", "device_id": "0", "poll_seconds": 300.0}
 
 
 def feature(name, properties=None, commands=None):
@@ -47,94 +40,6 @@ def good_features(*, slope_step=0.1, with_normal=True, with_curve_command=True, 
     return features
 
 
-def only(features, **overrides):
-    result = caps.candidates(features, **{**IDS, **overrides})
-    assert len(result) == 1
-    return result[0]
-
-
-def test_a_gas_boiler_with_a_writable_curve_gives_a_full_candidate():
-    candidate = only(good_features())
-    assert tuple(candidate) == wire.PROBE_CANDIDATE_FIELDS
-    assert candidate["ablehnung"] is None and candidate["lever_set"] == "viessmann_vicare"
-    assert candidate["erzeuger_typ"] == "gastherme"
-    assert candidate["hebel"] == {
-        "curve": {"wert": 1.4, "min": 0.2, "max": 3.5, "schritt": 0.1},
-        "level": {"wert": 0, "min": -13, "max": 40, "schritt": 1},
-        "room_setpoint": {"wert": 20, "min": 3, "max": 37, "schritt": 1},
-    }
-    assert candidate["parameter"] == {"installation_id": 1, "gateway_serial": "G1", "device_id": "0", "heizkreis": 0,
-                                      "poll_seconds": 300.0, "lever_set": "viessmann_vicare"}
-    assert {"outdoor_temp", "curve_current", "level_current", "shift_current", "mode_select"} <= set(candidate["signale"])
-    assert candidate["sicherheitswarnungen"] == {}
-
-
-@pytest.mark.parametrize(("kwargs", "reason"), [
-    ({"with_curve_command": False}, "heizkurve_nicht_schreibbar"),
-    ({"with_normal": False}, "kein_normalprogramm"),
-    ({"slope_step": 0.5}, "schrittweite_abweichend"),
-    ({"burner": False}, "erzeuger_unbekannt"),
-    ({"burner": True, "compressor": True}, "erzeuger_unbekannt"),
-    ({"outside": False}, "aussentemperatur_fehlt"),
-])
-def test_each_rejection_has_its_reason_and_a_customer_text(kwargs, reason):
-    candidate = only(good_features(**kwargs))
-    assert candidate["lever_set"] is None and candidate["hebel"] == {} and candidate["signale"] == []
-    assert candidate["ablehnung"] == {"grund": reason, "text": caps.REJECTION_TEXTS[reason]}
-
-
-def test_every_reason_has_a_text_and_the_driver_list_matches():
-    assert set(caps.REJECTION_TEXTS) == set(caps.REJECTIONS)
-
-
-def test_a_non_writable_second_circuit_is_rejected_while_the_first_stays_valid():
-    features = good_features(circuits=(0,)) + [
-        feature("heating.circuits.1.heating.curve", {"shift": number(0), "slope": number(1)})]
-    first, second = caps.candidates(features, **IDS)
-    assert first["ablehnung"] is None and second["ablehnung"]["grund"] == "heizkurve_nicht_schreibbar"
-    assert (first["kandidat_id"], second["kandidat_id"]) == ("vicare-1-G1-0-hk0", "vicare-1-G1-0-hk1")
-
-
-def test_a_device_without_any_heating_circuit_gives_no_candidate():
-    assert caps.candidates([feature("heating.burners.0")], **IDS) == []
-
-
-def test_garbage_features_do_not_raise():
-    garbage = [None, 5, {"feature": 3},
-               {"feature": "heating.circuits.0.heating.curve", "properties": "x", "commands": []}]
-    assert all(c["ablehnung"] for c in caps.candidates(garbage, **IDS))
-
-
-def test_the_steps_come_from_the_binding_not_a_second_table():
-    candidate = only(good_features())
-    assert {k: v["schritt"] for k, v in candidate["hebel"].items()} == caps.ERWARTETE_SCHRITTE == PARAMETER["viessmann_vicare"]["schritte"]
-
-
-EXPECTED = json.loads((MATRIX / "expected.json").read_text())
-RECORDINGS = sorted(p for p in (MATRIX / "recordings").glob("*.json"))
-
-
-def test_every_recording_has_an_expectation_and_vice_versa():
-    assert {p.name for p in RECORDINGS} == set(EXPECTED), "neue Aufzeichnung ohne Erwartung (oder umgekehrt)"
-
-
-@pytest.mark.parametrize("path", RECORDINGS, ids=lambda p: p.name)
-def test_matrix(path):
-    features = json.loads(path.read_text()).get("data", [])
-    result = caps.candidates(features, **IDS)
-    actual = [{"heizkreis": c["parameter"]["heizkreis"], "lever_set": c["lever_set"],
-               "grund": (c["ablehnung"] or {}).get("grund"), "erzeuger_typ": c["erzeuger_typ"]} for c in result]
-    assert actual == EXPECTED[path.name]
-
-
-def test_the_signal_feature_names_exist_in_at_least_one_recording():
-    seen = set()
-    for path in RECORDINGS:
-        seen |= {f.get("feature") for f in json.loads(path.read_text()).get("data", [])}
-    for role, (template, _prop) in caps.SIGNAL_FEATURES.items():
-        assert template.format(n=0) in seen, f"{role}: {template} kommt in keiner Aufzeichnung vor"
-
-
 def test_generator_signals_from_the_burner_features():
     # Audit 4 P-B (W-1): Liefer-Signale aus den Brenner-Features
     index = caps.by_name([
@@ -163,11 +68,108 @@ def test_generator_signals_ignore_garbage_and_missing_features():
     assert caps.generator_signals({}) == {} and caps.mode_signal({}, 0) is None
 
 
-def test_the_probe_lists_the_delivery_roles_that_are_present():
-    features = good_features() + [
-        feature("heating.burners.0.statistics", {"hours": number(10), "starts": number(3)}),
-        feature("heating.circuits.0.operating.modes.active", {"value": {"type": "string", "value": "heating"}})]
-    signals = only(features)["signale"]
-    assert {"generator_hours", "generator_starts", "operating_mode"} <= set(signals)
-    assert "generator_state" not in signals  # kein Eigenschaft active am Brenner
-    assert not {"generator_hours", "generator_starts", "operating_mode"} & set(only(good_features())["signale"])
+# --- Erkennung (Stufe 3 S5b): gekuerzte Features und Hebelstand fuer die Inventur ---
+
+
+def test_gekuerzt_keeps_only_name_properties_and_command_params_and_drops_uris():
+    roh = {"feature": "heating.circuits.0.heating.curve", "apiVersion": 1, "deviceId": "0", "gatewayId": "G1",
+           "uri": "https://x/installations/123", "isEnabled": True, "components": [],
+           "properties": {"slope": number(1.4)},
+           "commands": {"setCurve": {"isExecutable": True, "name": "setCurve", "uri": "https://x/installations/123",
+                                     "params": {"slope": constraint(0.2, 3.5, 0.1)}}}}
+    assert caps.gekuerzt(roh) == {
+        "feature": "heating.circuits.0.heating.curve", "properties": {"slope": number(1.4)},
+        "commands": {"setCurve": {"isExecutable": True, "params": {"slope": constraint(0.2, 3.5, 0.1)}}}}
+
+
+def test_gekuerzt_drops_features_outside_the_prefix_list_and_garbage():
+    for name in ("heating.dhw.temperature", "device.messages.errors.raw", "heating.circuits", "x"):
+        assert caps.gekuerzt(feature(name, {"value": number(1)})) is None
+    for garbage in (None, 5, "heating.circuits.0", {}, {"feature": 7}, {"feature": None}):
+        assert caps.gekuerzt(garbage) is None
+    assert caps.gekuerzt({"feature": "heating.burners.0", "properties": "x", "commands": [1]}) == {
+        "feature": "heating.burners.0", "properties": {}, "commands": {}}
+    assert caps.gekuerzt({"feature": "heating.boiler.sensors.temperature.main",
+                          "commands": {"c": "x", 5: {"isExecutable": True}}})["commands"] == {
+        "c": {"isExecutable": None, "params": {}}}
+
+
+def test_gekuerzt_drops_personal_data_of_the_customer():
+    """G-9: freier Text (Kreisname), Seriennummer, Zeitprogramme (Anwesenheitsmuster) und Urlaubsdaten gehen nie hoch."""
+    zeitprogramm = {"type": "Schedule", "value": {"mon": [{"start": "06:00", "end": "22:00", "mode": "normal"}]}}
+    assert caps.gekuerzt(feature("heating.circuits.0", {"active": {"type": "boolean", "value": True},
+                                                        "name": {"type": "string", "value": "Leonies Zimmer"}})
+                         )["properties"] == {"active": {"type": "boolean", "value": True}}
+    assert caps.gekuerzt(feature("heating.boiler.serial", {"value": {"type": "string", "value": "7637415"}})) is None
+    assert caps.gekuerzt(feature("heating.circuits.0.operating.programs.holiday", {
+        "active": {"type": "boolean", "value": False}, "start": {"type": "string", "value": "2026-12-24"},
+        "end": {"type": "string", "value": "2027-01-02"}}))["properties"] == {"active": {"type": "boolean", "value": False}}
+    assert caps.gekuerzt(feature("heating.circuits.0.heating.schedule", {"entries": zeitprogramm}))["properties"] == {}
+
+
+def test_gekuerzt_einer_ganzen_anlage_hat_nichts_persoenliches_und_keine_uri():
+    zeitprogramm = {"type": "Schedule", "value": {"mon": [{"start": "06:00", "end": "22:00", "mode": "normal"}]}}
+    roh = good_features(circuits=(0, 1)) + [
+        feature("heating.circuits.0", {"name": {"type": "string", "value": "Leonies Zimmer"}, "active": {"value": True}}),
+        feature("heating.circuits.0.heating.schedule", {"entries": zeitprogramm}),
+        feature("heating.circuits.0.operating.programs.holiday", {"start": {"value": "2026-12-24"}, "end": {"value": "x"}}),
+        feature("heating.boiler.serial", {"value": {"type": "string", "value": "7637415"}}),
+        feature("heating.dhw.temperature", {"value": number(50)}),
+        feature("device.messages.errors.raw", {"entries": {"type": "array", "value": []}}),
+    ]
+    for eintrag in roh:
+        eintrag["uri"] = "https://api.viessmann.example/iot/v2/features/installations/123"
+        eintrag["commands"] = {key: {**cmd, "uri": "https://x/installations/123", "name": key}
+                               for key, cmd in eintrag["commands"].items()}
+    kurz = [k for k in map(caps.gekuerzt, roh) if k is not None]
+    assert len(kurz) == len(roh) - 3  # Seriennummer, Warmwasser und Meldungen liegen ausserhalb der Positivliste
+    for eintrag in kurz:
+        assert set(eintrag) == {"feature", "properties", "commands"}
+        assert not set(caps.PERSOENLICH) & set(eintrag["properties"]), eintrag["feature"]
+        assert all(prop.get("type") != "Schedule" for prop in eintrag["properties"].values())
+        assert all(set(cmd) == {"isExecutable", "params"} for cmd in eintrag["commands"].values())
+        assert "http" not in json.dumps(eintrag), eintrag["feature"]
+    assert not any(k["feature"].endswith(".serial") for k in kurz)
+
+
+def test_hebelstand_is_none_when_a_lever_is_missing():
+    index = caps.by_name(good_features())
+    assert set(caps.hebelstand(index, 0)) == {"curve", "level", "room_setpoint"}
+    assert caps.hebelstand(index, 1) is None  # kein Heizkreis 1
+    assert caps.hebelstand(caps.by_name(good_features(with_normal=False)), 0) is None
+    assert caps.hebelstand(caps.by_name(good_features(with_curve_command=False)), 0) is None
+
+
+GARBAGE = [None, 5, "x", [], {"feature": 3}, {"feature": "heating.circuits.0.heating.curve", "properties": "x", "commands": []},
+           {"feature": "heating.circuits.0.heating.curve", "properties": {"slope": 5, "shift": None}, "commands": {"setCurve": 7}},
+           {"feature": "heating.circuits.0.operating.programs.normal", "properties": {"temperature": {"value": "warm"}},
+            "commands": {"setTemperature": {"isExecutable": True, "params": {"targetTemperature": {"constraints": []}}}}}]
+
+
+def test_garbage_features_do_not_raise_in_gekuerzt_and_hebelstand():
+    for roh in GARBAGE:
+        caps.gekuerzt(roh)
+    index = caps.by_name(GARBAGE)
+    assert caps.circuit_numbers(index) == [0]
+    assert caps.hebelstand(index, 0) is None and caps.lever_ranges(index, 0) == {
+        "curve": None, "level": None, "room_setpoint": None}
+    assert caps.generator_signals(index) == {} and caps.mode_signal(index, 0) is None
+
+
+def test_command_range_braucht_ein_ausfuehrbares_kommando_und_alle_drei_grenzen():
+    # Abschlussreview S5b (Mutationsprobe): isExecutable False allein genuegt zur Ablehnung, ebenso jede einzelne fehlende
+    # Grenze; ohne isExecutable und mit allen Grenzen gilt das Kommando.
+    def mit(**kommando):
+        return feature("heating.circuits.0.heating.curve", {}, {"setCurve": {"params": {"slope": constraint(0.2, 3.5, 0.1)}, **kommando}})
+
+    assert caps.command_range(mit(isExecutable=True), "setCurve", "slope") == (0.2, 3.5, 0.1)
+    assert caps.command_range(mit(), "setCurve", "slope") == (0.2, 3.5, 0.1)
+    assert caps.command_range(mit(isExecutable=False), "setCurve", "slope") is None
+    for fehlt in ("min", "max", "stepping"):
+        constraints = {"min": 0.2, "max": 3.5, "stepping": 0.1}
+        del constraints[fehlt]
+        roh = feature("heating.circuits.0.heating.curve", {}, {"setCurve": {
+            "isExecutable": True, "params": {"slope": {"constraints": constraints}}}})
+        assert caps.command_range(roh, "setCurve", "slope") is None, fehlt
+    index = caps.by_name(good_features())
+    assert caps.lever_ranges(index, 0)["curve"] == (0.2, 3.5, 0.1)

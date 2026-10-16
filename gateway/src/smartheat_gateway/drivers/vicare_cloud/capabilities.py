@@ -1,25 +1,17 @@
-"""Feature-Liste einer Viessmann-Anlage -> Probe-Kandidaten (Spec SHG G4 1.3). Rein, ohne I/O, ohne Modellverzweigung:
-alles kommt aus den Features (Bereiche und Schrittweiten aus den Kommando-Constraints). Features haben von der Cloud
-keinen garantierten Typ, alles wird defensiv gelesen."""
+"""Features einer Viessmann-Anlage lesen (Bereiche und Schrittweiten aus den Kommando-Constraints) und fuer die
+Erkennung auf dem Server kuerzen (Spec Stufe 3 S5 5.1). Rein, ohne I/O, ohne Modellverzweigung: alles kommt aus den
+Features; die Klassifikation in Kandidaten macht der Server (einrichtung/gateway_erkennung.py). Features haben von der
+Cloud keinen garantierten Typ, alles wird defensiv gelesen."""
 import re
 
-from smartheat_runtime.roles import LEVER_ROLES
-
 LEVER_SET = "viessmann_vicare"
-#: Erwartete Einstellschritte der Erkennung (bis die Erkennung auf den Server zieht, G-6, Schritt 5); gleich den
-#: Bindungsparametern des Servers fuer viessmann_vicare (Contract-Check 40).
-ERWARTETE_SCHRITTE = {"curve": 0.1, "level": 1.0, "room_setpoint": 1.0}
-REJECTIONS = ("heizkurve_nicht_schreibbar", "kein_normalprogramm", "schrittweite_abweichend", "erzeuger_unbekannt",
-              "aussentemperatur_fehlt")
-REJECTION_TEXTS = {
-    "heizkurve_nicht_schreibbar":
-        "Die Heizkurve dieses Heizkreises lässt sich über die Viessmann-Schnittstelle nicht ändern.",
-    "kein_normalprogramm": "Dieser Heizkreis hat kein einstellbares Normalprogramm (Wunschtemperatur).",
-    "schrittweite_abweichend":
-        "Die Einstellschritte dieser Anlage weichen von den erwarteten ab; sie wird noch nicht unterstützt.",
-    "erzeuger_unbekannt": "Der Wärmeerzeuger dieser Anlage (Hybrid oder unbekannt) wird noch nicht unterstützt.",
-    "aussentemperatur_fehlt": "Die Anlage meldet keine Außentemperatur.",
-}
+#: Features, die die Erkennung hochlaedt (Positivliste, G-9): alles andere (Warmwasser, Meldungen, Geraeteangaben) bleibt
+#: auf dem Gateway.
+PRAEFIXE = ("heating.circuits.", "heating.sensors.", "heating.burners.", "heating.compressors.", "heating.boiler.")
+#: Eigenschaften mit Personenbezug, die nie hochgehen (G-9): Kreisname (freier Text des Kunden) und die Daten des
+#: Urlaubsprogramms; dazu jede Eigenschaft vom Typ Schedule (Zeitprogramm = Anwesenheitsmuster) und jedes Feature
+#: `*.serial` (Seriennummer des Geraets, z. B. heating.boiler.serial).
+PERSOENLICH = ("name", "start", "end")
 CURVE = "heating.circuits.{n}.heating.curve"
 NORMAL = "heating.circuits.{n}.operating.programs.normal"
 ACTIVE = "heating.circuits.{n}.operating.programs.active"
@@ -100,73 +92,37 @@ def command_range(feature: dict | None, command: str, param: str) -> tuple[float
     return low, high, step
 
 
-def generator(index: dict[str, dict]) -> str | None:
-    burner = any(name.startswith("heating.burners.") for name in index)
-    compressor = any(name.startswith("heating.compressors.") for name in index)
-    if burner == compressor:  # weder noch (unbekannt) oder beides (Hybrid)
-        return None
-    return "gastherme" if burner else "waermepumpe"
-
-
 def lever_ranges(index: dict[str, dict], n: int) -> dict[str, tuple[float, float, float] | None]:
-    """(min, max, stepping) je Hebel aus den Kommando-Constraints des Heizkreises n; gemeinsam fuer die Probe (`hebel`)
-    und den Wertebereich des Treibers (PlantBinding.limits, Plan G4 Praezisierung 13)."""
+    """(min, max, stepping) je Hebel aus den Kommando-Constraints des Heizkreises n; gemeinsam fuer die Sicherheitswarnungen
+    der Erkennung (`hebelstand`) und den Wertebereich des Treibers (PlantBinding.limits, Plan G4 Praezisierung 13)."""
     curve, normal = index.get(CURVE.format(n=n)), index.get(NORMAL.format(n=n))
     return {"curve": command_range(curve, "setCurve", "slope"), "level": command_range(curve, "setCurve", "shift"),
             "room_setpoint": command_range(normal, "setTemperature", "targetTemperature")}
 
 
-def _levers(index: dict[str, dict], n: int) -> tuple[dict, str | None]:
-    """(hebel, ablehnungsgrund). Reihenfolge der Pruefungen = Reihenfolge von REJECTIONS."""
+def gekuerzt(feature: dict) -> dict | None:
+    """Feature fuer die Inventur (G-9): nur Name, Eigenschaften und Kommandos (ausfuehrbar, Parameter), ohne URIs,
+    Geraete- und Gateway-Kennungen und ohne persoenliche Eigenschaften; None ausserhalb der Positivliste."""
+    name = feature.get("feature") if isinstance(feature, dict) else None
+    if not isinstance(name, str) or not name.startswith(PRAEFIXE) or name.endswith(".serial"):
+        return None
+    commands = _dict(feature.get("commands"))
+    properties = {key: prop for key, prop in _dict(feature.get("properties")).items()
+                  if key not in PERSOENLICH and _dict(prop).get("type") != "Schedule"}
+    return {"feature": name, "properties": properties,
+            "commands": {key: {"isExecutable": _dict(cmd).get("isExecutable"), "params": _dict(_dict(cmd).get("params"))}
+                         for key, cmd in commands.items() if isinstance(key, str)}}
+
+
+def hebelstand(index: dict[str, dict], n: int) -> dict[str, dict] | None:
+    """Aktueller Wert und Anlagenbereich der drei Hebel des Heizkreises n (fuer die Sicherheitswarnungen im Geraet,
+    G-1); None, wenn einer fehlt."""
     curve, normal = index.get(CURVE.format(n=n)), index.get(NORMAL.format(n=n))
-    found = lever_ranges(index, n)
-    slope, shift, setpoint = found["curve"], found["level"], found["room_setpoint"]
-    if slope is None or shift is None:
-        return {}, "heizkurve_nicht_schreibbar"
-    if setpoint is None:
-        return {}, "kein_normalprogramm"
     now = {"curve": number_value(curve, "slope"), "level": number_value(curve, "shift"),
            "room_setpoint": number_value(normal, "temperature")}
-    ranges = {"curve": slope, "level": shift, "room_setpoint": setpoint}
-    if any(abs(ranges[lever][2] - ERWARTETE_SCHRITTE[lever]) > 1e-9 for lever in ranges):
-        return {}, "schrittweite_abweichend"
-    if any(v is None for v in now.values()):
-        return {}, "heizkurve_nicht_schreibbar"
-    return {lever: {"wert": now[lever], "min": ranges[lever][0], "max": ranges[lever][1], "schritt": ranges[lever][2]}
-            for lever in ("curve", "level", "room_setpoint")}, None
-
-
-def signals_for(index: dict[str, dict], n: int) -> list[str]:
-    roles = [LEVER_ROLES[lever] for lever in ("curve", "level", "room_setpoint")] + ["mode_select"]
-    for role, (template, prop) in SIGNAL_FEATURES.items():
-        if number_value(index.get(template.format(n=n)), prop) is not None:
-            roles.append(role)
-    roles += sorted(generator_signals(index))
-    if mode_signal(index, n) is not None:
-        roles.append("operating_mode")
-    return sorted(roles)
-
-
-def candidates(features, *, installation_id: int, gateway_serial: str, device_id: str,
-               poll_seconds: float) -> list[dict]:
-    index = by_name(features)
-    kind = generator(index)
-    result = []
-    for n in circuit_numbers(index):
-        levers, reason = _levers(index, n)
-        if reason is None and kind is None:
-            reason = "erzeuger_unbekannt"
-        if reason is None and number_value(index.get(OUTSIDE), "value") is None:
-            reason = "aussentemperatur_fehlt"
-        result.append({
-            "kandidat_id": f"vicare-{installation_id}-{gateway_serial}-{device_id}-hk{n}",
-            "anzeige": f"Viessmann · Heizkreis {n}",
-            "parameter": {"installation_id": installation_id, "gateway_serial": gateway_serial,
-                          "device_id": device_id, "heizkreis": n, "poll_seconds": poll_seconds,
-                          "lever_set": LEVER_SET},
-            "erzeuger_typ": kind or "unbekannt", "lever_set": None if reason else LEVER_SET,
-            "ablehnung": {"grund": reason, "text": REJECTION_TEXTS[reason]} if reason else None,
-            "hebel": {} if reason else levers, "signale": [] if reason else signals_for(index, n),
-            "sicherheitswarnungen": {}, "details": {"modell_hinweis": None},
-        })
-    return result
+    stand = {}
+    for lever, bereich in lever_ranges(index, n).items():
+        if bereich is None or now[lever] is None:
+            return None
+        stand[lever] = {"wert": now[lever], "min": bereich[0], "max": bereich[1]}
+    return stand

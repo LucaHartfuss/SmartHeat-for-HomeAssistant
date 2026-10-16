@@ -1,5 +1,5 @@
 """Treiber-Protokoll (Spec SHG G2 4.1): ein Treiber IST ein PlantBinding aus smartheat_core mit derselben
-BindingDescription wie der HA-Pfad, plus Signale, Abfrage-Thread, Login, Probe und Inventur. Lesen kommt aus dem Cache;
+BindingDescription wie der HA-Pfad, plus Signale, Abfrage-Thread, Login, Erkennung und Inventur. Lesen kommt aus dem Cache;
 aelter als CACHE_MAX_POLLS x poll_seconds (monotone Uhr) -> ValueError, die Datenfehler-Logik der Laufzeit greift."""
 from collections.abc import Mapping
 from typing import ClassVar, Protocol
@@ -21,8 +21,8 @@ CACHE_MAX_POLLS = 3
 
 
 class DriverError(RuntimeError):
-    """Fehler mit Vertragsgrund (smartheat_device/wire.py; gemeldet vom Geraetekern ueber die Befehle driver_login,
-    driver_probe und inventory, Plan D2 Task 2): nicht_angemeldet, anlage_nicht_erreichbar, login_fehlgeschlagen,
+    """Fehler mit Vertragsgrund (smartheat_device/wire.py; gemeldet vom Geraetekern ueber die Befehle driver_login
+    und inventory, Plan D2 Task 2): nicht_angemeldet, anlage_nicht_erreichbar, login_fehlgeschlagen,
     login_nicht_noetig, kontingent_erschoepft."""
 
     def __init__(self, grund: str, text: str) -> None:
@@ -36,7 +36,6 @@ class Driver(PlantBinding, Protocol):
     kind: ClassVar[str]
     login_kind: ClassVar[str | None]
     LEVER_SETS: ClassVar[tuple[str, ...]]
-    REJECTION_REASONS: ClassVar[tuple[str, ...]]
     IDENTITY_PARAMETERS: ClassVar[tuple[str, ...]]
     quota: QuotaSpec | None
     poll_seconds: float
@@ -50,7 +49,7 @@ class Driver(PlantBinding, Protocol):
     def stop(self) -> None: ...
     def login_begin(self, params: dict) -> dict: ...
     def login_finish(self, params: dict) -> None: ...
-    def probe(self) -> dict: ...
+    def erkennung(self) -> dict: ...
     def inventory_sample(self) -> dict: ...
     def inventory(self, hours: int, samples: list[dict]) -> dict: ...
     def forget_credentials(self) -> None: ...

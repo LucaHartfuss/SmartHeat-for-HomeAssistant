@@ -1,4 +1,4 @@
-"""Sicherheitswarnungen je Verteilsystem fuer einen Probe-Kandidaten (Spec SHG G3 2.4): ein Hebel ist zu warnen, wenn
+"""Sicherheitswarnungen je Verteilsystem fuer einen Heizkreis der Erkennung (Spec SHG G3 2.4): ein Hebel ist zu warnen, wenn
 sein aktueller Anlagenwert ausserhalb der lokalen Sicherheitswerte liegt oder der Anlagenbereich die lokalen Grenzen
 nicht abdeckt (dann kann der Notfall-Boost bzw. das Clamp-Ziel nicht geschrieben werden). Die lokalen Werte bleiben auf
 dem Client (smartheat_core.safety)."""

@@ -1,4 +1,4 @@
-"""Spec Stufe 3 S4b: Gateway-Treiber nutzen die Beschreibung aus der Konfiguration; ohne Konfiguration (Probe,
+"""Spec Stufe 3 S4b: Gateway-Treiber nutzen die Beschreibung aus der Konfiguration; ohne Konfiguration (Erkennung,
 Inventur, Vergessen) haben sie keine."""
 import pytest
 from bindung_beispiele import PARAMETER, VIESSMANN_VICARE_BINDING
@@ -15,9 +15,9 @@ def test_ohne_beschreibung_wirft_der_zugriff(driver_id, data_dir):
 
 
 @pytest.mark.parametrize("hebelsatz", sorted(PARAMETER))
-def test_simulation_probe_ohne_beschreibung(hebelsatz, data_dir):
+def test_simulation_erkennung_ohne_beschreibung(hebelsatz, data_dir):
     driver = registry.create("simulation", {"lever_set": hebelsatz}, Paths(data_dir))
-    hebel = driver.probe()["kandidaten"][0]["hebel"]
+    hebel = driver.erkennung()["features"][0]["properties"]["hebel"]["value"]
     assert hebel
     for name, wert in hebel.items():
         assert wert["schritt"] == PARAMETER[hebelsatz]["schritte"][name]

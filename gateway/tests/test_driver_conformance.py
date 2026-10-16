@@ -1,5 +1,5 @@
 """Treiber-Konformitaet (Spec SHG G2 7.3): jeder Treiber der Registry erfuellt PlantBinding mit derselben
-BindingDescription wie der HA-Pfad, liefert die Pflicht-Rollen seines Hebelsatzes und ein Probe-Ergebnis nach dem
+BindingDescription wie der HA-Pfad, liefert die Pflicht-Rollen seines Hebelsatzes und eine Erkennung nach dem
 Vertrag. G4 ergaenzt PARAMETERS um seine Treiber."""
 import pytest
 from bindung_beispiele import BINDINGS
@@ -12,7 +12,7 @@ from smartheat_gateway.paths import Paths
 from smartheat_runtime.roles import REQUIRED_ROLES_BY_LEVER_SET
 
 # Treiber -> Parametersaetze, unter denen er im Test laeuft (ein Satz je Hebelsatz, den er bedienen kann).
-# Wie `parameter` eines Probe-Kandidaten (capabilities.candidates), also auch mit lever_set.
+# Wie `parameter` eines Kandidaten der Erkennung (Server, gateway_erkennung.kandidaten), also auch mit lever_set.
 PARAMETER_BASIS = {"installation_id": INSTALLATION, "gateway_serial": GATEWAY, "device_id": DEVICE, "heizkreis": 0,
                    "lever_set": "viessmann_vicare"}
 PARAMETERS = {
@@ -80,16 +80,15 @@ def test_signals_cover_the_required_roles_except_the_room(driver):
 
 
 @pytest.mark.parametrize("driver", CASES, indirect=True)
-def test_probe_follows_the_contract(driver):
-    result = driver.probe()
-    assert tuple(result) == wire.PROBE_FIELDS
-    for candidate in result["kandidaten"]:
-        assert tuple(candidate) == wire.PROBE_CANDIDATE_FIELDS
-        assert (candidate["lever_set"] is None) != (candidate["ablehnung"] is None)
-        if candidate["ablehnung"] is not None:
-            assert candidate["ablehnung"]["grund"] in type(driver).REJECTION_REASONS
-        for lever in candidate["hebel"].values():
-            assert tuple(lever) == wire.PROBE_LEVER_FIELDS
+def test_erkennung_follows_the_contract(driver):
+    daten = driver.erkennung()
+    assert tuple(daten) == wire.INVENTUR_GATEWAY_FIELDS and daten["treiber"] == driver.driver_id
+    for anlage in daten["anlagen"]:
+        assert tuple(anlage) == wire.INVENTUR_ANLAGE_FIELDS
+        assert "heizkreis" not in anlage["kennung"] and anlage["kennung"]["poll_seconds"] == driver.poll_seconds
+    for feature in daten["features"]:
+        assert tuple(feature) == wire.INVENTUR_FEATURE_FIELDS
+        assert 0 <= feature["anlage"] < len(daten["anlagen"])
 
 
 def test_every_driver_declares_the_lever_sets_it_can_serve():
