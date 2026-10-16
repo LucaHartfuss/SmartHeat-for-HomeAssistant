@@ -41,6 +41,9 @@ MELDUNGEN_MIN_SECONDS = 10
 MELDUNGEN_JE_NACHRICHT = 50
 SERVER_DOWN_SECONDS = 300
 PRUEFUNG_WIEDERHOLEN_SECONDS = 30
+#: Lokaler Hinweis bei einer abgelehnten Konfiguration (Spec Stufe 3 S5 6.3, Entscheidung E2 A): den Text der Ablehnung
+#: bildet der Server, das Geraet nennt nur den Code.
+ABLEHNUNG_ANZEIGE = "Die Einrichtung wurde abgelehnt (Code {grund}). Die Begründung zeigt der Einrichtungsassistent."
 CLAIM_FAILED_TEXT = "Der Server war nicht erreichbar, bitte später erneut."
 CLAIM_STATE_TEXT = "Unbekannter Übernahmestand."
 CLAIMED_TEXT = "Das Gerät ist übernommen; ein neuer Code ist erst nach dem Entfernen möglich."
@@ -237,7 +240,8 @@ class Device:
             device_state=bootstrap.device_state(self._dir), eingerichtet=self.documents.eingerichtet(),
             hinweise=self.hinweise.alle(),
             meldungen=tuple({"key": key, "text": text} for key, text in sorted(self._eigene.items())),
-            konfiguration_abgelehnt=ablehnung[2] if ablehnung is not None else None)
+            konfiguration_abgelehnt=(ABLEHNUNG_ANZEIGE.format(grund=ablehnung[1]) if ablehnung is not None
+                                     else None))
 
     # --- Geraete-Thread ---
 

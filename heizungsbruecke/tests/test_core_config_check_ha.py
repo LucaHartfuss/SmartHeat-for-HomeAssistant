@@ -4,7 +4,7 @@ from bindung_beispiele import parameter
 
 from smartheat_core import config_check as cc
 from smartheat_core.rastung import Rastung
-from smartheat_device import wire
+from smartheat_device import fehler, wire
 
 
 def _ha(**changes) -> dict:
@@ -25,8 +25,16 @@ def _ha(**changes) -> dict:
     return {**base, **changes, "bindung": bindung}
 
 
-def _pruefen(konfiguration, host_text=None):
-    return cc.pruefen(konfiguration, None, host=cc.HOST_HA, treiber_pruefen=lambda k: host_text)
+def _geprueft(*args, **kwargs):
+    """cc.pruefen; jede Ablehnung hat die Form des Vertrags (Grund und details, kein Text)."""
+    ablehnung = cc.pruefen(*args, **kwargs)
+    if ablehnung is not None:
+        assert not hasattr(ablehnung, "text") and fehler.gueltig(ablehnung.details), ablehnung
+    return ablehnung
+
+
+def _pruefen(konfiguration, host_details=None):
+    return _geprueft(konfiguration, None, host=cc.HOST_HA, treiber_pruefen=lambda k: host_details)
 
 
 def test_copies_match_the_contract():
@@ -42,18 +50,19 @@ def test_the_poll_interval_bounds():
 
 def test_valid_ha_configuration_passes_and_the_host_sees_all_of_it():
     seen = []
-    assert cc.pruefen(_ha(), None, host=cc.HOST_HA, treiber_pruefen=lambda k: seen.append(k)) is None
+    assert _geprueft(_ha(), None, host=cc.HOST_HA, treiber_pruefen=lambda k: seen.append(k)) is None
     assert seen[0]["raumfuehler"] == ["sensor.wohnzimmer_thermostat_temperatur"] and "bindung" in seen[0]
 
 
-def test_host_text_becomes_role_rejection():
-    ablehnung = cc.pruefen(_ha(), None, host=cc.HOST_HA, treiber_pruefen=lambda k: "Entity fehlt")
-    assert ablehnung == cc.Ablehnung(cc.ROLLE_UNZULAESSIG, "Entity fehlt")
+def test_host_details_become_role_rejection():
+    details = {"feld": "heat_limit", "regel": "unbekannt"}
+    ablehnung = _geprueft(_ha(), None, host=cc.HOST_HA, treiber_pruefen=lambda k: details)
+    assert ablehnung == cc.Ablehnung(cc.ROLLE_UNZULAESSIG, details)
 
 
 def test_the_host_is_asked_only_for_a_structurally_valid_configuration():
     seen = []
-    assert cc.pruefen(_ha(raumfuehler=["switch.licht"]), None, host=cc.HOST_HA,
+    assert _geprueft(_ha(raumfuehler=["switch.licht"]), None, host=cc.HOST_HA,
                       treiber_pruefen=lambda k: seen.append(k)).grund == cc.ROLLE_UNZULAESSIG
     assert seen == []
 
@@ -133,14 +142,14 @@ def test_every_contract_role_is_accepted():
 
 
 def test_gateway_rules_are_unchanged():
-    assert cc.pruefen(_ha(), None, host=cc.HOST_GATEWAY).grund == cc.ROLLE_UNZULAESSIG
+    assert _geprueft(_ha(), None, host=cc.HOST_GATEWAY).grund == cc.ROLLE_UNZULAESSIG
 
 
 def test_an_unknown_host_is_rejected():
-    assert cc.pruefen(_ha(), None, host="mars") == cc.Ablehnung(cc.ROLLE_UNZULAESSIG, "Unbekannter Host.")
+    assert _geprueft(_ha(), None, host="mars") == cc.Ablehnung(cc.ROLLE_UNZULAESSIG)
 
 
 def test_lever_set_lock_applies_to_home_assistant_too():
-    ablehnung = cc.pruefen(_ha(hebelsatz="viessmann_vicare"), Rastung(_ha()["hebelsatz"], _ha()["verteilsystem"]),
+    ablehnung = _geprueft(_ha(hebelsatz="viessmann_vicare"), Rastung(_ha()["hebelsatz"], _ha()["verteilsystem"]),
                             host=cc.HOST_HA)
     assert ablehnung.grund == cc.HEBELSATZ_EINGERASTET

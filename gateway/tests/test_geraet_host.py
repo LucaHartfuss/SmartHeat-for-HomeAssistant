@@ -308,8 +308,8 @@ def test_the_driver_check_and_commands(welt, tmp_path):
 def test_an_unexpected_driver_error_becomes_a_rejection(welt, caplog):
     # float(10**400) im Simulations-Treiber: OverflowError, den config.treiber_pruefen nicht kennt
     bindung = {"treiber": {"id": "simulation", "parameter": {"lever_set": "viessmann_vicare", "poll_seconds": 10**400}}}
-    text = welt.host.treiber_pruefen(bindung)
-    assert text == gh.gateway_config.DRIVER_PARAMETER_TEXT.format(art="OverflowError")
+    details = welt.host.treiber_pruefen(bindung)
+    assert details == {"feld": "parameter", "regel": "ungueltig"}
     assert "OverflowError" in caplog.text and str(10**400)[:20] not in caplog.text
 
 

@@ -164,11 +164,11 @@ class HaDeviceHost:
         self._uhr = (now, result)
         return result
 
-    def treiber_pruefen(self, konfiguration: dict) -> str | None:
-        """HA-Teil der Pruefung (config_check gibt fuer Host ha die ganze Konfiguration). Gegen die uebernommene
-        Konfiguration (Dokumentspeicher, ohne Sperre lesbar): bleiben Bindung, Raumfuehler und Hebelsatz gleich,
-        entfaellt der HA-Teil. Wirft NichtPruefbar, wenn HA gerade nicht antwortet (der Geraetekern prueft spaeter
-        erneut)."""
+    def treiber_pruefen(self, konfiguration: dict) -> dict | None:
+        """HA-Teil der Pruefung (config_check gibt fuer Host ha die ganze Konfiguration): details oder None. Gegen die
+        uebernommene Konfiguration (Dokumentspeicher, ohne Sperre lesbar): bleiben Bindung, Raumfuehler und Hebelsatz
+        gleich, entfaellt der HA-Teil. Wirft NichtPruefbar, wenn HA gerade nicht antwortet (der Geraetekern prueft
+        spaeter erneut)."""
         return dokument.zuordnung_pruefen(konfiguration, self._ha, self.konfiguration())
 
     def befehle_eintragen(self, register: CommandRegister) -> None:

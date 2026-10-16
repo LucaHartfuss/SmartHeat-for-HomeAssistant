@@ -58,7 +58,7 @@ class FakeHost:
         self.konfigurationen, self.bedienungen, self.software, self.anzeigen_liste = [], [], [], []
         self.status: dict | None = {"status": "regelt"}
         self.raum_wert: dict | None = {"ist": 20.0, "soll": 21.0, "soll_quelle": "portal", "ts": "t0"}
-        self.treiber_text: str | None = None
+        self.treiber_details: dict | None = None
         self.handlers: dict = {}
         self.ursprung: dict = {}
 
@@ -72,7 +72,7 @@ class FakeHost:
         return self.synchron
 
     def treiber_pruefen(self, bindung):
-        return self.treiber_text
+        return self.treiber_details
 
     def befehle_eintragen(self, register):
         for kind, handler in self.handlers.items():
@@ -317,13 +317,25 @@ def test_a_configuration_is_taken_reported_and_handed_to_the_host(tmp_path):
 def test_a_rejected_configuration_keeps_the_old_one_and_tells_the_display(tmp_path):
     world = World(tmp_path)
     world.verbinden()
-    world.host.treiber_text = "Heizkreis 7 gibt es nicht."
+    world.host.treiber_details = {"feld": "parameter", "regel": "ungueltig"}
     world.empfangen("down/config", _konfiguration())
     (result,) = world.link.of("up/result")
-    assert result["ok"] is False and result["error"] == {"grund": "treiber_parameter",
-                                                         "text": "Heizkreis 7 gibt es nicht."}
+    assert result["ok"] is False and result["error"] == {
+        "grund": "treiber_parameter", "details": {"feld": "parameter", "regel": "ungueltig"}}
     assert world.host.konfigurationen == []
-    assert world.host.anzeigen_liste[-1].konfiguration_abgelehnt == "Heizkreis 7 gibt es nicht."
+    assert world.host.anzeigen_liste[-1].konfiguration_abgelehnt == device.ABLEHNUNG_ANZEIGE.format(
+        grund="treiber_parameter")
+
+
+def test_a_rejection_from_before_5c_shows_the_local_hint_with_the_code_and_reports_no_text(tmp_path):
+    """dokumente.json von vor 5c traegt einen Text an Stelle 2: der lokale Hinweis nennt nur den Code (Spec 6.3, E2 A)."""
+    (tmp_path / device.DEVICE_DIR).mkdir(parents=True)
+    (tmp_path / device.DEVICE_DIR / "dokumente.json").write_text(json.dumps(
+        {"update_anlass": None, "abgelehnt": {"konfiguration": [3, "ungueltig", "Alter Gerätetext"]}}))
+    world = World(tmp_path)
+    hinweis = world.device.anzeige().konfiguration_abgelehnt
+    assert hinweis == device.ABLEHNUNG_ANZEIGE.format(grund="ungueltig") and "Alter" not in hinweis
+    assert world.device.documents.ablehnung("konfiguration") == (3, "ungueltig", None)
 
 
 class UnpruefbarHost(FakeHost):
@@ -335,7 +347,7 @@ class UnpruefbarHost(FakeHost):
         self.aufrufe += 1
         if self.unpruefbar:
             raise config_check.NichtPruefbar
-        return self.treiber_text
+        return self.treiber_details
 
 
 def test_an_unverifiable_configuration_is_neither_taken_nor_refused_and_is_checked_again_later(tmp_path):
@@ -367,7 +379,7 @@ def test_an_unverifiable_configuration_that_gets_refused_later_says_so_once(tmp_
     world = World(tmp_path, UnpruefbarHost())
     world.verbinden()
     world.empfangen("down/config", _konfiguration())
-    world.host.unpruefbar, world.host.treiber_text = False, "Heizkreis 7 gibt es nicht."
+    world.host.unpruefbar, world.host.treiber_details = False, {"feld": "parameter", "regel": "ungueltig"}
     world.clock.now += device.PRUEFUNG_WIEDERHOLEN_SECONDS
     world.device.schritt()
     (result,) = world.link.of("up/result")

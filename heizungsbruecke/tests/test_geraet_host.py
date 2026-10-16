@@ -306,9 +306,9 @@ def test_the_ha_check_is_skipped_against_the_accepted_configuration(tmp_path, mo
 def test_the_ha_check_gets_the_accepted_configuration(tmp_path, monkeypatch):
     akzeptiert = konfiguration_aus_optionen(OPTIONS)
     calls = []
-    monkeypatch.setattr(dokument, "zuordnung_pruefen", lambda k, ha, a: calls.append((k, ha, a)) or "Text")
+    monkeypatch.setattr(dokument, "zuordnung_pruefen", lambda k, ha, a: calls.append((k, ha, a)) or {"feld": "kreis", "regel": "ungueltig"})
     host, _, _ = _host(tmp_path, monkeypatch, device=Device(akzeptiert))
-    assert host.treiber_pruefen({"neu": 1}) == "Text"
+    assert host.treiber_pruefen({"neu": 1}) == {"feld": "kreis", "regel": "ungueltig"}
     assert calls == [({"neu": 1}, host._ha, akzeptiert)]
     host.verbinden(Device(None))
     host.treiber_pruefen({"neu": 2})

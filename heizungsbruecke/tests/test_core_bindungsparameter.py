@@ -376,3 +376,17 @@ def test_jeder_fehlertext_nennt_die_bindungsparameter_genau_einmal(fall):
 def test_die_faelle_treffen_verschiedene_pruefungen():
     texte = {fall: _try(werte, hebelsatz) for fall, (hebelsatz, werte) in _VERSTOESSE.items()}
     assert len(set(texte.values())) == len(texte), texte
+
+
+def test_jeder_fehler_traegt_details_des_vertrags():
+    from smartheat_core.bindungsparameter import Fehler
+    from smartheat_device import fehler
+    kaputt = [None, {**parameter("vaillant_vrc720"), "wartezeit_s": 1},
+              {**parameter("vaillant_vrc720"), "zaehler": "x"}, {**parameter("vaillant_vrc720"), "energie": 5}]
+    for werte in kaputt:
+        with pytest.raises(Fehler) as info:
+            beschreibung("vaillant_vrc720", werte)
+        assert fehler.gueltig(info.value.details) and info.value.details["feld"] in wire.PRUEF_FELDER
+    with pytest.raises(Fehler) as info:
+        beschreibung("erfunden", parameter("vaillant_vrc720"))
+    assert info.value.details == {"feld": "hebelsatz", "regel": "unbekannt"}

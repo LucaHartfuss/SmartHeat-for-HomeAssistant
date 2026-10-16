@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from smartheat_core import dateien
-from smartheat_device import wire
+from smartheat_device import fehler, wire
 from smartheat_device.commands import CommandRegister
 from smartheat_device.hintergrund import Hintergrund
 from smartheat_device.host import Anzeige, MeldungSink
@@ -235,7 +235,7 @@ class GatewayDeviceHost:
         value = status.get("zeit_synchron")
         return value if isinstance(value, bool) else None
 
-    def treiber_pruefen(self, bindung: dict) -> str | None:
+    def treiber_pruefen(self, bindung: dict) -> dict | None:
         """Jede unerwartete Ausnahme des Treibers (z. B. OverflowError) wird eine Ablehnung: sonst bekaeme die
         Konfiguration keine Antwort und software_soll liefe nie (Review Focus 4). Nur der Typname, Regel 6."""
         try:
@@ -243,7 +243,7 @@ class GatewayDeviceHost:
         except Exception as error:
             art = type(error).__name__
             logger.error("Treiberpruefung gescheitert (%s), Konfiguration abgelehnt", art)
-            return gateway_config.DRIVER_PARAMETER_TEXT.format(art=art)
+            return fehler.details("parameter", "ungueltig")
 
     def befehle_eintragen(self, register: CommandRegister) -> None:
         befehle.eintragen(register, befehle.Kontext(

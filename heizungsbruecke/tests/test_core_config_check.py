@@ -5,7 +5,7 @@ from bindung_beispiele import parameter
 from smartheat_core import config_check as cc
 from smartheat_core import rastung
 from smartheat_core.rastung import Rastung
-from smartheat_device import wire
+from smartheat_device import fehler, wire
 
 SENSOR = "zigbee:0x00124b0000000001:temperature"
 THERMOSTAT = "0x00124b0000000002"
@@ -26,8 +26,14 @@ def _konfiguration(**changes):
 LOCK = Rastung("viessmann_vicare", "Heizkoerper")
 
 
+def _form(ablehnung):
+    if ablehnung is not None:
+        assert not hasattr(ablehnung, "text") and fehler.gueltig(ablehnung.details), ablehnung
+    return ablehnung
+
+
 def _pruefen(neu, rastung=None, **kwargs):
-    return cc.pruefen(neu, rastung, host=cc.HOST_GATEWAY, **kwargs)
+    return _form(cc.pruefen(neu, rastung, host=cc.HOST_GATEWAY, **kwargs))
 
 
 def test_a_valid_gateway_configuration_passes():
@@ -76,7 +82,7 @@ def test_floor_heating_has_safety_values():
 
 @pytest.mark.parametrize("change", [{"verteilsystem": "Fussbodenheizung"}, {"hebelsatz": "weishaupt_wwp"}])
 def test_lever_set_and_distribution_are_locked(change):
-    assert _pruefen(_konfiguration(**change), LOCK) == cc.Ablehnung(cc.HEBELSATZ_EINGERASTET, rastung.TEXT)
+    assert _pruefen(_konfiguration(**change), LOCK) == cc.Ablehnung(cc.HEBELSATZ_EINGERASTET)
 
 
 def test_without_lock_the_first_choice_is_free():
@@ -119,7 +125,8 @@ def test_without_thermostat():
 
 def test_a_room_sensor_twice_is_a_double_assignment():
     ablehnung = _pruefen(_konfiguration(raumfuehler=[SENSOR, SENSOR]))
-    assert ablehnung.grund == cc.DOPPELT_BELEGT and SENSOR in ablehnung.text
+    assert ablehnung.grund == cc.DOPPELT_BELEGT
+    assert ablehnung.details == {"feld": "raumfuehler", "regel": "doppelt"}
 
 
 def test_driver_parameters_are_checked_by_the_host():
@@ -127,11 +134,11 @@ def test_driver_parameters_are_checked_by_the_host():
 
     def treiber(bindung):
         seen.append(bindung["treiber"]["id"])
-        return "Heizkreis 7 gibt es an dieser Anlage nicht."
+        return {"feld": "parameter", "regel": "ungueltig"}
 
     ablehnung = _pruefen(_konfiguration(), treiber_pruefen=treiber)
-    assert (ablehnung.grund, ablehnung.text, seen) == (
-        cc.TREIBER_PARAMETER, "Heizkreis 7 gibt es an dieser Anlage nicht.", ["simulation"])
+    assert (ablehnung.grund, ablehnung.details, seen) == (
+        cc.TREIBER_PARAMETER, {"feld": "parameter", "regel": "ungueltig"}, ["simulation"])
     assert _pruefen(_konfiguration(), treiber_pruefen=lambda bindung: None) is None
 
 
@@ -145,6 +152,27 @@ def test_a_gateway_shaped_configuration_is_not_a_home_assistant_binding():
     assert cc.pruefen(_konfiguration(), None, host=cc.HOST_HA).grund == cc.ROLLE_UNZULAESSIG
 
 
+def test_prueffregeln_gleich_dem_vertrag():
+    assert cc.PRUEF_REGELN == wire.PRUEF_REGELN
+
+
+@pytest.mark.parametrize(("change", "details"), [
+    ({"tagestick": "25:00"}, {"feld": "tagestick", "regel": "format"}),
+    ({"raumfuehler": [SENSOR] * 9}, {"feld": "raumfuehler", "regel": "anzahl", "min": 1, "max": 8, "anzahl": 9}),
+    ({"intervalle": {"telemetrie_s": 601}}, {"feld": "telemetrie_s", "regel": "bereich", "min": 10, "max": 600}),
+    ({"abo": "vielleicht"}, {"feld": "abo", "regel": "unbekannt"}),
+])
+def test_aufbau_nennt_feld_und_regel(change, details):
+    assert _pruefen(_konfiguration(**change)) == cc.Ablehnung(cc.UNGUELTIG, details)
+
+
+@pytest.mark.parametrize(("hebelsatz", "verteilsystem", "feld"), [
+    ("unbekannt", "Heizkoerper", "hebelsatz"), ("viessmann_vicare", "Kachelofen", "verteilsystem")])
+def test_fehlende_sicherheitswerte_nennen_das_feld(hebelsatz, verteilsystem, feld):
+    assert _pruefen(_konfiguration(hebelsatz=hebelsatz, verteilsystem=verteilsystem)).details == {
+        "feld": feld, "regel": "unbekannt"}
+
+
 def test_reasons_are_contract_reasons():
     assert set(cc.GRUENDE) <= set(wire.DOKUMENT_ERRORS)
 
@@ -153,7 +181,8 @@ def test_eingerichtet_ohne_bindungsparameter_wird_abgelehnt():
     neu = _konfiguration()
     neu.pop("bindungsparameter")
     ablehnung = _pruefen(neu)
-    assert ablehnung is not None and ablehnung.grund == cc.UNGUELTIG and "Bindungsparameter" in ablehnung.text
+    assert ablehnung is not None and ablehnung.grund == cc.UNGUELTIG
+    assert ablehnung.details["feld"] == "bindungsparameter"
 
 
 def test_lockerer_schreibschutz_wird_abgelehnt():
@@ -161,7 +190,7 @@ def test_lockerer_schreibschutz_wird_abgelehnt():
         "tag": None, "lebensdauer_hinweis": None, "durchsetzen_tag": 5}))
     ablehnung = _pruefen(neu)
     assert ablehnung.grund == cc.UNGUELTIG
-    assert ablehnung.text == "Durchsetzen je Tag muss in den Bindungsparametern zwischen 1 und 4 liegen."
+    assert ablehnung.details == {"feld": "durchsetzen_tag", "regel": "bereich", "min": 1, "max": 4}
 
 
 def test_leere_konfiguration_braucht_keine_bindungsparameter():
@@ -171,7 +200,7 @@ def test_leere_konfiguration_braucht_keine_bindungsparameter():
 def test_rastung_wird_vor_den_bindungsparametern_geprueft():
     """Ein fremder Hebelsatz bleibt hebelsatz_eingerastet, auch ohne Parameter (Rastung zuerst, Spec 4.2)."""
     neu = _konfiguration(hebelsatz="weishaupt_wwp", bindungsparameter=None)
-    assert _pruefen(neu, LOCK) == cc.Ablehnung(cc.HEBELSATZ_EINGERASTET, rastung.TEXT)
+    assert _pruefen(neu, LOCK) == cc.Ablehnung(cc.HEBELSATZ_EINGERASTET)
 
 
 def test_bindungsparameter_werden_vor_den_rollen_geprueft():

@@ -9,7 +9,8 @@ Hebelsatzes) nur von Plattform und Config-Entry des Kreises (A4-11), Soll-Entity
 Ist HA nicht erreichbar oder faehrt gerade hoch, ist das kein Urteil: der Server stellt eine abgelehnte Version nicht
 erneut zu, ein Neustart des Hosts haette das Geraet sonst festgesetzt. zuordnung_pruefen wirft dann NichtPruefbar (das
 Geraet haelt das Dokument zurueck und prueft spaeter erneut). Bleiben Bindung, Raumfuehler und Hebelsatz gegenueber der
-uebernommenen Konfiguration gleich (z. B. nur das Abo oder der Tagestick aendert sich), entfaellt der HA-Teil."""
+uebernommenen Konfiguration gleich (z. B. nur das Abo oder der Tagestick aendert sich), entfaellt der HA-Teil.
+Ablehnungen sind details (Rollen, nie Entity-IDs; Spec Stufe 3 S5 6.1), nur lokal_pruefen liefert den lokalen Text."""
 import logging
 import re
 from collections.abc import Mapping
@@ -17,6 +18,7 @@ from dataclasses import dataclass
 
 from smartheat_core.config_check import NichtPruefbar
 from smartheat_core.levers import LEVER_SETS
+from smartheat_device import fehler
 from smartheat_runtime.dokument_config import RECONFIGURE_HINT, ConfigError
 from smartheat_runtime.roles import LEVER_ROLES
 
@@ -106,53 +108,79 @@ def _entity(ref: str) -> str:
     return ref.partition("::")[0]
 
 
-def schreibziele(b: HaBindung) -> list[str]:
-    """Jede Rolle der Bindung, die die Regelung schreibt: Schreibregeln des Hebelsatzes, alle Hebelrollen (auch die
+_V1_ROLLE = {laufzeit: v1 for v1, laufzeit in LEVER_ROLES.items()}
+
+
+def v1_rolle(rolle: str) -> str:
+    """Rolle des Manifests -> Rolle der HA-Bindung (V1 HA_ROLLEN), Umkehrung von laufzeit_rolle."""
+    return _V1_ROLLE.get(rolle, rolle)
+
+
+@dataclass(frozen=True)
+class Befund:
+    """HA-Pruefung: details fuer den Server (config_check, V1) und der lokale Text fuer den Konfigurationsfehler beim
+    Start (lokal_pruefen, Spec Stufe 3 S5 6.3). details nennen Rollen, nie Entity-IDs (Regel 6)."""
+    details: dict
+    text: str
+
+
+def _schreibziel_rollen(b: HaBindung) -> list[tuple[str, str]]:
+    """Rollen der Bindung, die die Regelung schreibt: Schreibregeln des Hebelsatzes, alle Hebelrollen (auch die
     Heizkurve, die bei vaillant_vrc720 keine Schreibregel hat) und Betriebsart/Hilfs-Sollwerte."""
     rollen = dict.fromkeys([*SCHREIBREGELN[b.hebelsatz], *LEVER_ROLES.values(), *WEITERE_SCHREIBZIELE])
-    return [b.rollen[rolle] for rolle in rollen if b.rollen.get(rolle)]
+    return [(rolle, b.rollen[rolle]) for rolle in rollen if b.rollen.get(rolle)]
 
 
-def _lokal(b: HaBindung) -> str | None:
+def schreibziele(b: HaBindung) -> list[str]:
+    """Jede Rolle der Bindung, die die Regelung schreibt (siehe _schreibziel_rollen)."""
+    return [ref for _, ref in _schreibziel_rollen(b)]
+
+
+def _lokal(b: HaBindung) -> Befund | None:
     """Der Teil ohne HA: Pflichtrollen und Entity-Art der Schreibziele."""
     missing = [rolle for rolle in PFLICHT_ROLLEN[b.hebelsatz] if not b.rollen.get(rolle)]
     if missing:
-        return f"Für die Ansteuerung {b.hebelsatz} fehlt die Zuordnung {missing[0]}."
+        return Befund(fehler.details(v1_rolle(missing[0]), "fehlt"),
+                      f"Für die Ansteuerung {b.hebelsatz} fehlt die Zuordnung {missing[0]}.")
     for rolle, (pattern, expected) in SCHREIBREGELN[b.hebelsatz].items():
         value = b.rollen.get(rolle)
         if value is not None and not pattern.fullmatch(value):
-            return f"{value} muss {expected} sein."
+            return Befund(fehler.details(v1_rolle(rolle), "format"), f"{value} muss {expected} sein.")
     if b.soll_entity is None:
-        return "Die Wunschtemperatur-Entity fehlt."
+        return Befund(fehler.details("room_target", "fehlt"), "Die Wunschtemperatur-Entity fehlt.")
     return None
 
 
 def lokal_pruefen(konfiguration) -> str | None:
-    """Der Teil ohne HA fuer das ganze Dokument: Kundentext oder None. Wirft ConfigError bei unbekanntem Hebelsatz
-    (HaHost.load macht daraus einen Konfigurationsfehler, damit der Start nie an einem fehlenden Schluessel stirbt)."""
-    return _lokal(bindung(konfiguration))
+    """Der Teil ohne HA fuer das ganze Dokument: lokaler Text oder None (Konfigurationsfehler beim Start). Wirft
+    ConfigError bei unbekanntem Hebelsatz (HaHost.load macht daraus einen Konfigurationsfehler, damit der Start nie an
+    einem fehlenden Schluessel stirbt)."""
+    befund = _lokal(bindung(konfiguration))
+    return befund.text if befund is not None else None
 
 
-def _mit_ha(b: HaBindung, ha_api) -> str | None:
+def _mit_ha(b: HaBindung, ha_api) -> dict | None:
     if not ha_api.is_reachable():  # faehrt HA hoch, fehlen die Entities der Integration noch (404): kein Urteil
         raise NichtPruefbar
     registry = {e.get("entity_id"): e for e in ha_api.entity_registry() if isinstance(e, Mapping)}
     assert b.soll_entity is not None
-    for ref in (b.soll_entity, *b.rollen.values(), *b.raumfuehler, *b.batterien):
+    refs = [("room_target", b.soll_entity), *((v1_rolle(rolle), ref) for rolle, ref in b.rollen.items()),
+            *(("raumfuehler", ref) for ref in b.raumfuehler), *(("batterien", ref) for ref in b.batterien)]
+    for feld, ref in refs:
         if not ha_api.entity_exists(_entity(ref)):
-            return f"Die Entity {_entity(ref)} gibt es in Home Assistant nicht."
-    ziele = schreibziele(b)
-    for ref in ziele:
+            return fehler.details(feld, "unbekannt")
+    ziele = _schreibziel_rollen(b)
+    for rolle, ref in ziele:
         entry = registry.get(_entity(ref)) or {}
         # Kreis ohne Config-Entry (config_entry None): nur die Plattform bindet
         if entry.get("platform") != b.kreis.get("plattform") or (
                 b.kreis.get("config_entry") is not None and entry.get("config_entry_id") != b.kreis["config_entry"]):
-            return f"{_entity(ref)} gehört nicht zur gewählten Heizungs-Integration."
+            return fehler.details(v1_rolle(rolle), "nicht_erlaubt")
     soll_entry = registry.get(_entity(b.soll_entity)) or {}
-    geraete = {(registry.get(_entity(ref)) or {}).get("device_id") for ref in ziele} - {None}
-    if _entity(b.soll_entity) in {_entity(ref) for ref in ziele} or (
+    geraete = {(registry.get(_entity(ref)) or {}).get("device_id") for _, ref in ziele} - {None}
+    if _entity(b.soll_entity) in {_entity(ref) for _, ref in ziele} or (
             soll_entry.get("device_id") is not None and soll_entry.get("device_id") in geraete):
-        return "Die Wunschtemperatur darf kein Wert der Heizungsanlage selbst sein."
+        return fehler.details("room_target", "nicht_erlaubt")
     return None
 
 
@@ -161,17 +189,19 @@ def _unveraendert(konfiguration, akzeptiert) -> bool:
         key in akzeptiert and akzeptiert[key] == konfiguration.get(key) for key in _HA_FELDER)
 
 
-def zuordnung_pruefen(konfiguration, ha_api, akzeptiert=None) -> str | None:
-    """None = in Ordnung; sonst ein Kundentext (Grund rolle_unzulaessig). `akzeptiert` ist die uebernommene
-    Konfiguration (None, wenn es keine gibt). Wirft NichtPruefbar, wenn HA gerade nicht antwortet (siehe oben), sonst
-    nie."""
+def zuordnung_pruefen(konfiguration, ha_api, akzeptiert=None) -> dict | None:
+    """None = in Ordnung; sonst details (Grund rolle_unzulaessig, Spec Stufe 3 S5 6.1). `akzeptiert` ist die
+    uebernommene Konfiguration (None, wenn es keine gibt). Wirft NichtPruefbar, wenn HA gerade nicht antwortet (siehe
+    oben), sonst nie."""
     try:
         b = bindung(konfiguration)
-        text = _lokal(b)
-    except ConfigError as error:
-        return str(error)
-    if text is not None or b.soll_entity is None or _unveraendert(konfiguration, akzeptiert):
-        return text
+    except ConfigError:
+        return fehler.details("hebelsatz", "unbekannt")
+    befund = _lokal(b)
+    if befund is not None:
+        return befund.details
+    if _unveraendert(konfiguration, akzeptiert):
+        return None
     try:
         return _mit_ha(b, ha_api)
     except NichtPruefbar:

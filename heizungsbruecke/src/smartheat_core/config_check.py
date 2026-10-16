@@ -5,15 +5,16 @@ des Geraets passen (smartheat_core.rastung); eine leere Konfiguration loest sie 
 lokalen Grenzen (smartheat_core.bindungsparameter), (4) erlaubte Referenzen je Rolle, (5) keine Doppelbelegung, (6) Treiberparameter prueft
 der Treiber (Rueckruf des Hosts, zuletzt; Gateway: die Bindung, HA: Aufbau der Bindung rein, Entities und Schreibziele ueber den
 Rueckruf des Hosts mit der ganzen Konfiguration). Eine leere Konfiguration (anlage None) heisst "nicht eingerichtet" und ist
-immer gueltig; sie aendert die Rastung nicht. Die Gruende sind Dokument-Fehlergruende des Vertrags (smartheat_device.wire.DOKUMENT_ERRORS), die Texte
-gehen an Portal und Assistent (Kundensprache). Sicherheitsgrenzen, Boost und Notbetrieb liest diese Pruefung nur
+immer gueltig; sie aendert die Rastung nicht. Die Gruende sind Dokument-Fehlergruende des Vertrags (smartheat_device.wire.DOKUMENT_ERRORS). Ablehnungen
+tragen Grund und details (Feld, Regel, Zahlen; Spec Stufe 3 S5 6.1), den Text bildet der Server. Sicherheitsgrenzen, Boost und Notbetrieb liest diese Pruefung nur
 (G-1, Regel 4)."""
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+from smartheat_core.bindungsparameter import Fehler as BindungsparameterFehler
 from smartheat_core.bindungsparameter import beschreibung
-from smartheat_core.rastung import TEXT as RASTUNG_TEXT
+from smartheat_core.levers import LEVER_SETS
 from smartheat_core.rastung import Rastung, passt
 from smartheat_core.safety import resolve_local_safety
 
@@ -62,7 +63,11 @@ ABFRAGE_S = (10, 3600)
 ANLAGE_MAX_CHARS = 64
 TEXT_MAX_CHARS = 200
 
-TreiberPruefung = Callable[[dict], str | None]
+#: Kopie aus smartheat_device.wire (PRUEF_REGELN), ein Test haelt sie gleich; Feldnamen sind Namen aus
+#: wire.PRUEF_FELDER (ein Test prueft jede Ablehnung).
+PRUEF_REGELN = ("fehlt", "ungueltig", "anzahl", "bereich", "format", "doppelt", "unbekannt", "nicht_erlaubt")
+
+TreiberPruefung = Callable[[dict], dict | None]
 
 
 class NichtPruefbar(Exception):
@@ -73,8 +78,14 @@ class NichtPruefbar(Exception):
 
 @dataclass(frozen=True)
 class Ablehnung:
+    """Grund aus wire.DOKUMENT_ERRORS und details (wire.DETAIL_FIELDS); keine Texte (Spec Stufe 3 S5 6.2)."""
     grund: str
-    text: str
+    details: dict | None = None
+
+
+def befund(feld: str | None = None, regel: str | None = None, **zahlen: float) -> dict:
+    assert regel is None or regel in PRUEF_REGELN, regel
+    return {**({"feld": feld} if feld else {}), **({"regel": regel} if regel else {}), **zahlen}
 
 
 def ist_leer(inhalt) -> bool:
@@ -90,34 +101,37 @@ def _zahl(value) -> bool:
     return isinstance(value, int | float) and not isinstance(value, bool)
 
 
-def _aufbau(neu: Mapping) -> str | None:
+def _aufbau(neu: Mapping) -> dict | None:
+    """details des ersten Verstosses gegen Aufbau und Wertebereiche (Grund ungueltig), sonst None."""
     if not _text(neu.get("anlage"), ANLAGE_MAX_CHARS):
-        return "Die Anlage fehlt oder ist ungültig."
+        return befund("anlage", "ungueltig")
     for key in ("profil", "hebelsatz", "verteilsystem"):
         if not _text(neu.get(key)):
-            return f"Das Feld {key} fehlt oder ist ungültig."
+            return befund(key, "ungueltig")
     if not isinstance(neu.get("bindung"), Mapping):
-        return "Die Bindung fehlt."
+        return befund("bindung", "fehlt")
     sensors = neu.get("raumfuehler")
-    if not isinstance(sensors, list) or not 0 < len(sensors) <= RAUMFUEHLER_MAX or not all(map(_text, sensors)):
-        return f"Es braucht einen bis {RAUMFUEHLER_MAX} Raumfühler."
+    if not isinstance(sensors, list) or not all(map(_text, sensors)):
+        return befund("raumfuehler", "ungueltig")
+    if not 0 < len(sensors) <= RAUMFUEHLER_MAX:
+        return befund("raumfuehler", "anzahl", min=1, max=RAUMFUEHLER_MAX, anzahl=len(sensors))
     tick = neu.get("tagestick")
     if not isinstance(tick, str) or not TAGESTICK.fullmatch(tick):
-        return "Die Zeit des Tagesticks fehlt oder ist keine Uhrzeit (HH:MM)."
+        return befund("tagestick", "format")
     if neu.get("abo") not in ABO_WERTE:
-        return "Der Abo-Status fehlt."
+        return befund("abo", "unbekannt")
     abfrage = neu["bindung"].get("abfrage_s")
     if abfrage is not None and not (isinstance(abfrage, int) and not isinstance(abfrage, bool)
                                     and ABFRAGE_S[0] <= abfrage <= ABFRAGE_S[1]):
-        return f"Das Abfrageintervall muss zwischen {ABFRAGE_S[0]} und {ABFRAGE_S[1]} Sekunden liegen."
+        return befund("abfrage_s", "bereich", min=ABFRAGE_S[0], max=ABFRAGE_S[1])
     intervalle = neu.get("intervalle")
     if intervalle is not None:
         if not isinstance(intervalle, Mapping) or not set(intervalle) <= set(INTERVALLE):
-            return "Die Intervalle sind ungültig."
+            return befund("intervalle", "ungueltig")
         for key, (low, high) in INTERVALLE.items():
             value = intervalle.get(key)
             if value is not None and not (_zahl(value) and low <= value <= high):
-                return f"Das Intervall {key} muss zwischen {low} und {high} Sekunden liegen."
+                return befund(key, "bereich", min=low, max=high)
     return None
 
 
@@ -125,53 +139,58 @@ def _gateway_bindung(neu: Mapping) -> Ablehnung | None:
     bindung = neu["bindung"]
     treiber = bindung.get("treiber")
     if not (isinstance(treiber, Mapping) and _text(treiber.get("id")) and isinstance(treiber.get("parameter"), Mapping)):
-        return Ablehnung(ROLLE_UNZULAESSIG, "Die Bindung braucht einen Treiber mit Parametern.")
+        return Ablehnung(ROLLE_UNZULAESSIG, befund("treiber", "ungueltig"))
     thermostat = bindung.get("thermostat")
     if thermostat is not None and not (isinstance(thermostat, str) and IEEE.fullmatch(thermostat)):
-        return Ablehnung(ROLLE_UNZULAESSIG, "Das Thermostat ist kein Zigbee-Gerät.")
+        return Ablehnung(ROLLE_UNZULAESSIG, befund("thermostat", "format"))
     seen: set[str] = set()
     for ref in neu["raumfuehler"]:
         if not GATEWAY_RAUMFUEHLER.fullmatch(ref):
-            return Ablehnung(ROLLE_UNZULAESSIG, f"Raumfühler {ref} ist für das Gateway nicht zulässig.")
+            return Ablehnung(ROLLE_UNZULAESSIG, befund("raumfuehler", "nicht_erlaubt"))
         if ref in seen:
-            return Ablehnung(DOPPELT_BELEGT, f"Raumfühler {ref} ist doppelt zugeordnet.")
+            return Ablehnung(DOPPELT_BELEGT, befund("raumfuehler", "doppelt"))
         seen.add(ref)
     return None
 
 
 def _ha_bindung(neu: Mapping) -> Ablehnung | None:
     bindung = neu["bindung"]
-    if not all(key in bindung for key in HA_BINDUNG_FELDER):
-        return Ablehnung(ROLLE_UNZULAESSIG, "Die Zuordnung für Home Assistant ist unvollständig.")
+    fehlend = next((key for key in HA_BINDUNG_FELDER if key not in bindung), None)
+    if fehlend is not None:
+        return Ablehnung(ROLLE_UNZULAESSIG, befund(fehlend, "fehlt"))
     kreis = bindung["kreis"]
     # config_entry darf fehlen oder None sein (Server: Kreis ohne Config-Entry), die uebrigen Felder nicht.
     if not isinstance(kreis, Mapping) or not all(
             isinstance(kreis.get(key), str) and kreis[key] for key in KREIS_FELDER if key != "config_entry"):
-        return Ablehnung(ROLLE_UNZULAESSIG, "Der Heizkreis der Zuordnung ist unvollständig.")
+        return Ablehnung(ROLLE_UNZULAESSIG, befund("kreis", "ungueltig"))
     rollen = bindung["rollen"]
-    if not isinstance(rollen, Mapping) or "room_target" not in rollen:
-        return Ablehnung(ROLLE_UNZULAESSIG, "Die Wunschtemperatur-Entity fehlt.")
+    if not isinstance(rollen, Mapping):
+        return Ablehnung(ROLLE_UNZULAESSIG, befund("rollen", "ungueltig"))
+    if "room_target" not in rollen:
+        return Ablehnung(ROLLE_UNZULAESSIG, befund("room_target", "fehlt"))
     for rolle, ref in rollen.items():
-        if rolle not in HA_ROLLEN or not isinstance(ref, str) or not HA_REF.fullmatch(ref):
-            return Ablehnung(ROLLE_UNZULAESSIG, f"Die Rolle {rolle} ist nicht zulässig zugeordnet.")
+        if rolle not in HA_ROLLEN:
+            return Ablehnung(ROLLE_UNZULAESSIG, befund("rollen", "unbekannt"))  # der fremde Name geht nicht hoch
+        if not isinstance(ref, str) or not HA_REF.fullmatch(ref):
+            return Ablehnung(ROLLE_UNZULAESSIG, befund(rolle, "format"))
     seen: set[str] = set()
     for ref in neu["raumfuehler"]:
         if not HA_RAUMFUEHLER.fullmatch(ref):
-            return Ablehnung(ROLLE_UNZULAESSIG, f"Raumfühler {ref} ist für Home Assistant nicht zulässig.")
+            return Ablehnung(ROLLE_UNZULAESSIG, befund("raumfuehler", "format"))
         if ref in seen:
-            return Ablehnung(DOPPELT_BELEGT, f"Raumfühler {ref} ist doppelt zugeordnet.")
+            return Ablehnung(DOPPELT_BELEGT, befund("raumfuehler", "doppelt"))
         seen.add(ref)
     werte = list(rollen.values())
     if len(set(werte)) != len(werte):
-        return Ablehnung(DOPPELT_BELEGT, "Eine Entity ist mehreren Rollen zugeordnet.")
+        return Ablehnung(DOPPELT_BELEGT, befund("rollen", "doppelt"))
     for key, pattern in (("batterien", HA_BATTERIE), ("benachrichtigung", HA_DIENST)):
         values = bindung[key]
         if not isinstance(values, list) or not all(isinstance(v, str) and pattern.fullmatch(v) for v in values):
-            return Ablehnung(ROLLE_UNZULAESSIG, f"Das Feld {key} ist ungültig.")
+            return Ablehnung(ROLLE_UNZULAESSIG, befund(key, "format"))
     hinweise = bindung["hinweise_aus"]
     if not isinstance(hinweise, list) or not all(isinstance(h, str) for h in hinweise) or not set(hinweise) <= set(
             HA_HINWEISE):
-        return Ablehnung(ROLLE_UNZULAESSIG, "Unbekannter Hinweis-Schalter.")
+        return Ablehnung(ROLLE_UNZULAESSIG, befund("hinweise_aus", "unbekannt"))
     return None
 
 
@@ -179,7 +198,7 @@ def pruefen(neu: Mapping, rastung: Rastung | None, *, host: str,
             treiber_pruefen: TreiberPruefung | None = None) -> Ablehnung | None:
     """None = uebernehmen; sonst der erste verletzte Grund. `rastung` ist die Rastung des Geraets (None: noch keine)."""
     if not isinstance(neu, Mapping):
-        return Ablehnung(UNGUELTIG, "Die Konfiguration ist kein Objekt.")
+        return Ablehnung(UNGUELTIG)
     if ist_leer(neu):
         return None
     problem = _aufbau(neu)
@@ -187,26 +206,25 @@ def pruefen(neu: Mapping, rastung: Rastung | None, *, host: str,
         return Ablehnung(UNGUELTIG, problem)
     try:
         resolve_local_safety(neu["hebelsatz"], neu["verteilsystem"])
-    except ValueError as error:
-        return Ablehnung(SICHERHEITSWERTE_FEHLEN, f"Für diese Anlage fehlen lokale Sicherheitswerte ({error}).")
+    except ValueError:
+        feld = "hebelsatz" if neu["hebelsatz"] not in LEVER_SETS else "verteilsystem"
+        return Ablehnung(SICHERHEITSWERTE_FEHLEN, befund(feld, "unbekannt"))
     if not passt(rastung, neu):
-        return Ablehnung(HEBELSATZ_EINGERASTET, RASTUNG_TEXT)
+        return Ablehnung(HEBELSATZ_EINGERASTET)
     try:
         beschreibung(neu["hebelsatz"], neu.get("bindungsparameter"))
-    except ValueError as error:
-        return Ablehnung(UNGUELTIG, str(error))  # der Text nennt die Bindungsparameter selbst
+    except BindungsparameterFehler as error:
+        return Ablehnung(UNGUELTIG, error.details)
     if host == HOST_HA:
         ablehnung = _ha_bindung(neu)
-        if ablehnung is None and treiber_pruefen is not None and (text := treiber_pruefen(dict(neu))):
-            ablehnung = Ablehnung(ROLLE_UNZULAESSIG, text)
+        if ablehnung is None and treiber_pruefen is not None and (details := treiber_pruefen(dict(neu))) is not None:
+            ablehnung = Ablehnung(ROLLE_UNZULAESSIG, details)
         return ablehnung
     if host != HOST_GATEWAY:
-        return Ablehnung(ROLLE_UNZULAESSIG, "Unbekannter Host.")
+        return Ablehnung(ROLLE_UNZULAESSIG)
     ablehnung = _gateway_bindung(neu)
     if ablehnung is not None:
         return ablehnung
-    if treiber_pruefen is not None:
-        text = treiber_pruefen(dict(neu["bindung"]))
-        if text:
-            return Ablehnung(TREIBER_PARAMETER, text)
+    if treiber_pruefen is not None and (details := treiber_pruefen(dict(neu["bindung"]))) is not None:
+        return Ablehnung(TREIBER_PARAMETER, details)
     return None
