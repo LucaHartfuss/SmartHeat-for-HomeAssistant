@@ -23,6 +23,15 @@ def test_simulation_probe_ohne_beschreibung(hebelsatz, data_dir):
         assert wert["schritt"] == PARAMETER[hebelsatz]["schritte"][name]
 
 
+@pytest.mark.parametrize("hebelsatz", sorted(PARAMETER))
+def test_simulation_erkennung_ohne_beschreibung(hebelsatz, data_dir):
+    driver = registry.create("simulation", {"lever_set": hebelsatz}, Paths(data_dir))
+    hebel = driver.erkennung()["features"][0]["properties"]["hebel"]["value"]
+    assert hebel
+    for name, wert in hebel.items():
+        assert wert["schritt"] == PARAMETER[hebelsatz]["schritte"][name]
+
+
 def test_simulation_signale_und_inventur_ohne_beschreibung(data_dir):
     driver = registry.create("simulation", {"lever_set": "viessmann_vicare"}, Paths(data_dir))
     assert "outdoor_temp" in driver.signals()

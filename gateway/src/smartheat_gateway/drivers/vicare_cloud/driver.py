@@ -14,6 +14,7 @@ from collections.abc import Mapping
 import requests
 
 from smartheat_core.binding import BindingDescription
+from smartheat_gateway import safety_warnings
 from smartheat_gateway.drivers.base import CACHE_MAX_POLLS, KIND_CLOUD, LEVER_ROLES, LOGIN_OAUTH, DriverError
 from smartheat_gateway.drivers.vicare_cloud import api as vicare
 from smartheat_gateway.drivers.vicare_cloud import capabilities as caps
@@ -381,6 +382,25 @@ class ViCareCloudDriver:
                                      gateway_serial=device["gateway_serial"], device_id=device["device_id"],
                                      poll_seconds=self.poll_seconds)
         return {"driver_id": self.driver_id, "kandidaten": found}
+
+    def erkennung(self) -> dict:
+        """Inventur stunden 0 (Spec Stufe 3 S5 5.1): rohe, gekuerzte Features je Heizgeraet; Sicherheitswarnungen je
+        Heizkreis mit den lokalen Werten (G-1). Die Klassifikation macht der Server."""
+        anlagen, features = [], []
+        for nummer, device in enumerate(self._heating_devices()):
+            roh = self._features(device["installation_id"], device["gateway_serial"], device["device_id"])
+            index = caps.by_name(roh)
+            warnungen = {}
+            for n in caps.circuit_numbers(index):
+                stand = caps.hebelstand(index, n)
+                if stand is not None:
+                    warnungen[str(n)] = safety_warnings.compute({"lever_set": caps.LEVER_SET, "hebel": stand})
+            anlagen.append({"kennung": {"installation_id": device["installation_id"],
+                                        "gateway_serial": device["gateway_serial"], "device_id": device["device_id"],
+                                        "poll_seconds": self.poll_seconds},
+                            "sicherheitswarnungen": warnungen})
+            features += [{"anlage": nummer, **f} for f in map(caps.gekuerzt, roh) if f is not None]
+        return {"treiber": self.driver_id, "anlagen": anlagen, "features": features}
 
     def inventory_sample(self) -> dict:
         """Eine Probe fuer die Inventur (Befehl inventory, Praezisierung 7): nur Zahlenwerte der Rollen, keine Seriennummern,

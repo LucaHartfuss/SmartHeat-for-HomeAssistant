@@ -12,6 +12,7 @@ from smartheat_core import dateien
 from smartheat_core.binding import BindingDescription
 from smartheat_core.levers import LEVER_SETS
 from smartheat_core.verfahren import VERFAHREN
+from smartheat_gateway import safety_warnings
 from smartheat_gateway.drivers.base import CACHE_MAX_POLLS, KIND_LOCAL, LEVER_ROLES, DriverError
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.quota import QuotaExhausted
@@ -299,6 +300,27 @@ class SimulationDriver:
             "hebel": {}, "signale": [], "sicherheitswarnungen": {}, "details": {"simulation": True},
         }
         return {"driver_id": self.driver_id, "kandidaten": [ok, rejected]}
+
+    def erkennung(self) -> dict:
+        """Inventur stunden 0 (Spec Stufe 3 S5 5.1): zwei Heizkreise als Features, einer mit schreibbarer Heizkurve."""
+        if self._control().get("token_expired"):
+            raise DriverError("nicht_angemeldet", "Die Anmeldung beim Hersteller ist abgelaufen.")
+        plant = self._plant()
+        lever_set = self._p["lever_set"]
+        hebel = {lever: {"wert": self._visible(plant, lever), "min": PLANT_RANGES[lever][0],
+                         "max": PLANT_RANGES[lever][1], "schritt": SIM_SCHRITTE[lever_set][lever]}
+                 for lever in LEVER_SETS[lever_set].levers}
+
+        def feature(n: int, schreibbar: bool) -> dict:
+            properties = {"schreibbar": {"value": schreibbar}, "erzeuger_typ": {"value": GENERATOR[lever_set]}}
+            if schreibbar:
+                properties |= {"hebel": {"value": hebel}, "signale": {"value": sorted(self.signals())}}
+            return {"anlage": 0, "feature": f"simulation.heizkreis.{n}", "properties": properties, "commands": {}}
+
+        kennung = {key: self._p[key] for key in ("lever_set", "settle_delay", "poll_seconds")}
+        warnungen = safety_warnings.compute({"lever_set": lever_set, "hebel": hebel})
+        return {"treiber": self.driver_id, "anlagen": [{"kennung": kennung, "sicherheitswarnungen": {"0": warnungen}}],
+                "features": [feature(0, True), feature(1, False)]}
 
     def inventory_sample(self) -> dict:
         return {"hebel": dict(self._plant()["hebel"])}

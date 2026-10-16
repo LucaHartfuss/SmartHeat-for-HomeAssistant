@@ -136,6 +136,59 @@ def test_inventory_of_the_simulation_goes_up_as_inventory_data(ctx, clock):
     assert len(done.inventur["proben"]) == 1
 
 
+def test_inventur_stunden_0_ist_die_erkennung_des_treibers(ctx):
+    outcome = befehle.inventory(ctx, {"stunden": 0, "filter": {"treiber": "simulation"}})
+    assert isinstance(outcome, Done) and outcome.result == {}  # kein Warten auf eine Messreihe
+    daten = outcome.inventur
+    assert tuple(daten) == wire.INVENTUR_GATEWAY_FIELDS and daten["treiber"] == "simulation"
+    assert all(tuple(a) == wire.INVENTUR_ANLAGE_FIELDS for a in daten["anlagen"])
+    assert all(f["anlage"] == 0 for f in daten["features"]) and len(daten["features"]) == 2
+    assert not ctx.paths.inventur.exists()  # keine Reihe angelegt
+
+
+@pytest.mark.parametrize("konf", [None, {"anlage": None}, "eingerichtet"])
+def test_inventur_stunden_0_geht_vor_und_nach_der_einrichtung(ctx, konf):
+    if konf != "eingerichtet":
+        ctx.umgebung.konf = konf
+    outcome = befehle.inventory(ctx, {"stunden": 0, "filter": {"treiber": "simulation"}})
+    assert isinstance(outcome, Done) and outcome.inventur["treiber"] == "simulation"
+
+
+@pytest.mark.parametrize("payload", [
+    {"stunden": 0}, {"stunden": 0, "filter": None}, {"stunden": 0, "filter": {}}, {"stunden": 0, "filter": []},
+    {"stunden": 0, "filter": {"treiber": 5}}, {"stunden": 0, "filter": {"treiber": None}},
+    {"stunden": 0, "filter": {"treiber": "simulation", "plattformen": ["x"]}},
+    {"stunden": 0, "filter": {"domaenen": ["x"]}}, {"stunden": -1}, {"stunden": 49}, {"stunden": False},
+])
+def test_inventur_stunden_0_ohne_treiber_ist_ungueltig(register, payload):
+    assert _run(register, "inventory", payload)["error"]["grund"] == "ungueltige_nutzlast"
+
+
+def test_inventur_stunden_0_unbekannter_treiber(register):
+    assert _run(register, "inventory", {"stunden": 0, "filter": {"treiber": "erfunden"}})["error"]["grund"] == \
+        "treiber_unbekannt"
+
+
+def test_inventur_stunden_0_mit_treiberfehlern_nutzt_die_vertragsgruende(monkeypatch, register):
+    def abgelaufen(self):
+        raise DriverError("nicht_angemeldet", "Die Anmeldung ist abgelaufen.")
+
+    monkeypatch.setattr("smartheat_gateway.drivers.simulation.SimulationDriver.erkennung", abgelaufen)
+    antwort = _run(register, "inventory", {"stunden": 0, "filter": {"treiber": "simulation"}})
+    assert antwort["error"] == {"grund": "nicht_angemeldet", "text": "Die Anmeldung ist abgelaufen."}
+
+    def quota(self):
+        raise QuotaExhausted("x")
+
+    monkeypatch.setattr("smartheat_gateway.drivers.simulation.SimulationDriver.erkennung", quota)
+    antwort = _run(register, "inventory", {"stunden": 0, "filter": {"treiber": "simulation"}}, "c2")
+    assert antwort["error"]["grund"] == "kontingent_erschoepft"
+
+
+def test_inventur_stunden_1_und_mehr_bleibt_die_messreihe(ctx):
+    assert isinstance(befehle.inventory(ctx, {"stunden": 1, "filter": {"treiber": "simulation"}}), Waiting)
+
+
 def test_diagnostics_is_the_snapshot_without_secrets(register):
     result = _run(register, "diagnostics", {})["result"]
     assert result == {"geraet": "shg-x"}
@@ -494,6 +547,23 @@ def _geraete_thread_arbeitet_weiter(world, gestartet: threading.Event, starten) 
     assert time.monotonic() - begonnen < FREIGABE_SPAETESTENS / 2  # nichts hat auf den Treiber gewartet
     assert world.result.store.state.delivery.pending is None  # down/setpoints verarbeitet
     assert _ergebnisse(world, dokument="bedienung", version=1)[-1]["ok"] is True
+
+
+def test_die_erkennung_geht_als_up_inventory_vor_dem_ergebnis_und_wird_gestueckelt(regelnde_welt, monkeypatch):
+    world = regelnde_welt
+    eintraege = [{"anlage": 0, "feature": f"heating.circuits.{n}.sensors.temperature.supply",
+                  "properties": {"value": {"type": "number", "value": 35.5, "unit": "celsius", "notiz": "x" * 400}},
+                  "commands": {}} for n in range(1000)]  # rund 500 KB: mehr als eine Nachricht
+    daten = {"treiber": "simulation", "anlagen": [{"kennung": {}, "sicherheitswarnungen": {}}], "features": eintraege}
+    monkeypatch.setattr("smartheat_gateway.drivers.simulation.SimulationDriver.erkennung", lambda self: daten)
+    _befehl(world, "c-erk", "inventory", {"stunden": 0, "filter": {"treiber": "simulation"}})
+    ergebnis = _bis(world, lambda: _ergebnisse(world, command_id="c-erk"))[-1]
+    assert ergebnis["ok"] is True
+    teile = [body for link in world.links for body in link.of("up/inventory") if body.get("command_id") == "c-erk"]
+    assert len(teile) > 1 and [t["teil"] for t in teile] == list(range(1, len(teile) + 1))
+    assert all(t["teile"] == len(teile) for t in teile)
+    assert [f for t in teile for f in t["daten"].get("features", [])] == eintraege
+    assert teile[0]["daten"]["treiber"] == "simulation" and teile[0]["daten"]["anlagen"] == daten["anlagen"]
 
 
 def test_a_blocking_probe_does_not_stall_the_device_thread(regelnde_welt, monkeypatch):

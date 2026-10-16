@@ -92,6 +92,18 @@ def test_probe_follows_the_contract(driver):
             assert tuple(lever) == wire.PROBE_LEVER_FIELDS
 
 
+@pytest.mark.parametrize("driver", CASES, indirect=True)
+def test_erkennung_follows_the_contract(driver):
+    daten = driver.erkennung()
+    assert tuple(daten) == wire.INVENTUR_GATEWAY_FIELDS and daten["treiber"] == driver.driver_id
+    for anlage in daten["anlagen"]:
+        assert tuple(anlage) == wire.INVENTUR_ANLAGE_FIELDS
+        assert "heizkreis" not in anlage["kennung"] and anlage["kennung"]["poll_seconds"] == driver.poll_seconds
+    for feature in daten["features"]:
+        assert tuple(feature) == wire.INVENTUR_FEATURE_FIELDS
+        assert 0 <= feature["anlage"] < len(daten["anlagen"])
+
+
 def test_every_driver_declares_the_lever_sets_it_can_serve():
     for driver_class in DRIVERS.values():
         assert driver_class.LEVER_SETS and set(driver_class.LEVER_SETS) <= set(BINDINGS)

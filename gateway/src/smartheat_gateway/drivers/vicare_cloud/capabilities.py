@@ -1,6 +1,7 @@
-"""Feature-Liste einer Viessmann-Anlage -> Probe-Kandidaten (Spec SHG G4 1.3). Rein, ohne I/O, ohne Modellverzweigung:
-alles kommt aus den Features (Bereiche und Schrittweiten aus den Kommando-Constraints). Features haben von der Cloud
-keinen garantierten Typ, alles wird defensiv gelesen."""
+"""Feature-Liste einer Viessmann-Anlage -> Probe-Kandidaten (Spec SHG G4 1.3) und gekuerzte Features fuer die Erkennung
+auf dem Server (Spec Stufe 3 S5 5.1). Rein, ohne I/O, ohne Modellverzweigung: alles kommt aus den Features (Bereiche
+und Schrittweiten aus den Kommando-Constraints). Features haben von der Cloud keinen garantierten Typ, alles wird
+defensiv gelesen."""
 import re
 
 from smartheat_runtime.roles import LEVER_ROLES
@@ -20,6 +21,13 @@ REJECTION_TEXTS = {
     "erzeuger_unbekannt": "Der Wärmeerzeuger dieser Anlage (Hybrid oder unbekannt) wird noch nicht unterstützt.",
     "aussentemperatur_fehlt": "Die Anlage meldet keine Außentemperatur.",
 }
+#: Features, die die Erkennung hochlaedt (Positivliste, G-9): alles andere (Warmwasser, Meldungen, Geraeteangaben) bleibt
+#: auf dem Gateway.
+PRAEFIXE = ("heating.circuits.", "heating.sensors.", "heating.burners.", "heating.compressors.", "heating.boiler.")
+#: Eigenschaften mit Personenbezug, die nie hochgehen (G-9): Kreisname (freier Text des Kunden) und die Daten des
+#: Urlaubsprogramms; dazu jede Eigenschaft vom Typ Schedule (Zeitprogramm = Anwesenheitsmuster) und jedes Feature
+#: `*.serial` (Seriennummer des Geraets, z. B. heating.boiler.serial).
+PERSOENLICH = ("name", "start", "end")
 CURVE = "heating.circuits.{n}.heating.curve"
 NORMAL = "heating.circuits.{n}.operating.programs.normal"
 ACTIVE = "heating.circuits.{n}.operating.programs.active"
@@ -114,6 +122,34 @@ def lever_ranges(index: dict[str, dict], n: int) -> dict[str, tuple[float, float
     curve, normal = index.get(CURVE.format(n=n)), index.get(NORMAL.format(n=n))
     return {"curve": command_range(curve, "setCurve", "slope"), "level": command_range(curve, "setCurve", "shift"),
             "room_setpoint": command_range(normal, "setTemperature", "targetTemperature")}
+
+
+def gekuerzt(feature: dict) -> dict | None:
+    """Feature fuer die Inventur (G-9): nur Name, Eigenschaften und Kommandos (ausfuehrbar, Parameter), ohne URIs,
+    Geraete- und Gateway-Kennungen und ohne persoenliche Eigenschaften; None ausserhalb der Positivliste."""
+    name = feature.get("feature") if isinstance(feature, dict) else None
+    if not isinstance(name, str) or not name.startswith(PRAEFIXE) or name.endswith(".serial"):
+        return None
+    commands = _dict(feature.get("commands"))
+    properties = {key: prop for key, prop in _dict(feature.get("properties")).items()
+                  if key not in PERSOENLICH and _dict(prop).get("type") != "Schedule"}
+    return {"feature": name, "properties": properties,
+            "commands": {key: {"isExecutable": _dict(cmd).get("isExecutable"), "params": _dict(_dict(cmd).get("params"))}
+                         for key, cmd in commands.items() if isinstance(key, str)}}
+
+
+def hebelstand(index: dict[str, dict], n: int) -> dict[str, dict] | None:
+    """Aktueller Wert und Anlagenbereich der drei Hebel des Heizkreises n (fuer die Sicherheitswarnungen im Geraet,
+    G-1); None, wenn einer fehlt."""
+    curve, normal = index.get(CURVE.format(n=n)), index.get(NORMAL.format(n=n))
+    now = {"curve": number_value(curve, "slope"), "level": number_value(curve, "shift"),
+           "room_setpoint": number_value(normal, "temperature")}
+    stand = {}
+    for lever, bereich in lever_ranges(index, n).items():
+        if bereich is None or now[lever] is None:
+            return None
+        stand[lever] = {"wert": now[lever], "min": bereich[0], "max": bereich[1]}
+    return stand
 
 
 def _levers(index: dict[str, dict], n: int) -> tuple[dict, str | None]:

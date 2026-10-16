@@ -3,8 +3,11 @@ import json
 import pytest
 from bindung_beispiele import VIESSMANN_VICARE_BINDING
 
+from smartheat_device import wire
+from smartheat_gateway import safety_warnings
 from smartheat_gateway.drivers.base import DriverError
 from smartheat_gateway.drivers.registry import create
+from smartheat_gateway.drivers.simulation import SIM_SCHRITTE
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.quota import QuotaExhausted
 
@@ -77,6 +80,44 @@ def test_probe_offers_one_candidate_and_rejects_the_other(paths, clock):
     ok, rejected = result["kandidaten"]
     assert ok["lever_set"] == "viessmann_vicare" and ok["ablehnung"] is None
     assert rejected["lever_set"] is None and rejected["ablehnung"]["grund"] == "hebel_fehlt"
+
+
+def test_erkennung_hat_zwei_features_und_eine_kennung_ohne_heizkreis(paths, clock):
+    daten = _sim(paths, clock).erkennung()
+    assert tuple(daten) == wire.INVENTUR_GATEWAY_FIELDS and daten["treiber"] == "simulation"
+    (anlage,) = daten["anlagen"]
+    assert tuple(anlage) == wire.INVENTUR_ANLAGE_FIELDS
+    assert anlage["kennung"] == {"lever_set": "viessmann_vicare", "settle_delay": 0.0, "poll_seconds": 60.0}
+    schreibbar, nicht = daten["features"]
+    assert (schreibbar["feature"], nicht["feature"]) == ("simulation.heizkreis.0", "simulation.heizkreis.1")
+    assert all(tuple(f) == ("anlage", "feature", "properties", "commands") and f["anlage"] == 0 for f in (schreibbar, nicht))
+    assert schreibbar["properties"]["schreibbar"] == {"value": True}
+    assert nicht["properties"]["schreibbar"] == {"value": False} and "hebel" not in nicht["properties"]
+    hebel = schreibbar["properties"]["hebel"]["value"]
+    assert set(hebel) == {"curve", "level", "room_setpoint"} and hebel["curve"]["schritt"] == 0.1
+    assert schreibbar["properties"]["erzeuger_typ"] == {"value": "gastherme"}
+    assert "outdoor_temp" in schreibbar["properties"]["signale"]["value"]
+
+
+@pytest.mark.parametrize("hebelsatz", sorted(SIM_SCHRITTE))
+def test_erkennung_warnungen_gleichen_denen_der_alten_probe(paths, clock, hebelsatz):
+    driver = _sim(paths, clock, lever_set=hebelsatz)
+    warnungen = driver.erkennung()["anlagen"][0]["sicherheitswarnungen"]
+    ok = driver.probe()["kandidaten"][0]
+    assert warnungen == {"0": safety_warnings.compute(ok)} and warnungen["0"]
+
+
+def test_erkennung_mit_abgelaufener_anmeldung_ist_nicht_angemeldet(paths, clock):
+    driver = _sim(paths, clock)
+    (paths.sim_dir / "control.json").write_text(json.dumps({"token_expired": True}))
+    with pytest.raises(DriverError) as error:
+        driver.erkennung()
+    assert error.value.grund == "nicht_angemeldet"
+
+
+def test_erkennung_of_a_reader_instance_does_not_create_the_plant_file(paths, clock):
+    create("simulation", {}, paths, clock=clock, writer=False).erkennung()
+    assert not (paths.sim_dir / "plant.json").exists()
 
 
 def test_house_model_moves_towards_the_equilibrium(paths, clock):

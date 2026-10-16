@@ -1,7 +1,8 @@
 """Befehle des Gateways (Spec 5b 3.4; Handler aus dem Agenten bis 0.5.0) fuer das Befehlsregister des Geraetekerns
 (smartheat_device.commands): ein Handler bekommt Kontext und Nutzlast und liefert Done, Failed oder Waiting; Einmal-
 Ausfuehrung, Gruende-Pruefung und Versand macht das Register. Gateway-Befehle: zigbee_permit_join, zigbee_devices,
-driver_login, driver_probe, inventory (Treiber aus der Konfiguration, Ergebnis als up/inventory), diagnostics und
+driver_login, driver_probe, inventory (stunden 0: Erkennung des Treibers, sonst Messreihe des Treibers aus der
+Konfiguration; Ergebnis jeweils als up/inventory), diagnostics und
 sign_off (Markierung, dann startet die Laufzeit als "abgemeldet" neu und setzt die Anlage zurueck). hinweis und
 new_claim_code kann jedes Geraet (Geraetekern). Texte in Kundensprache, nie Geheimnisse; DriverError und
 QuotaExhausted uebersetzt fehler_uebersetzen in Vertragsgruende.
@@ -39,6 +40,7 @@ from smartheat_runtime.status import STATUS_ABGEMELDET
 logger = logging.getLogger(__name__)
 
 INVENTORY_EVERY_SECONDS = 900
+ERKENNUNG_SECONDS = 120  # wie bisher driver_probe
 SIGN_OFF_WAIT_SECONDS = 24 * 3600
 INVENTORY_ABORTED_TEXT = "Die Inventur wurde abgebrochen, weil sich die Einrichtung des Gateways geändert hat."
 INVENTORY_NO_SAMPLES_TEXT = "Die Inventur konnte keine einzige Probe abrufen, weil die Anlage nicht erreichbar war."
@@ -106,13 +108,14 @@ def _driver(ctx: Kontext, driver_id, parameter: dict | None = None) -> Driver:
     return registry.create(driver_id, parameter or {}, ctx.paths, clock=ctx.clock, writer=False)
 
 
-def _im_hintergrund(ctx: Kontext, kind: str, call: Callable[[], Done | Failed]) -> Outcome:
+def _im_hintergrund(ctx: Kontext, kind: str, call: Callable[[], Done | Failed],
+                    frist_s: float | None = None) -> Outcome:
     """Blockierender Aufruf im Hintergrund; check() im Geraete-Thread liest nur das Future. Eine Ausnahme des Aufrufs
     wirft check() erneut, das Register uebersetzt sie wie bisher (fehler_uebersetzen). Antwortet der Treiber bis zur
-    Frist des Befehls (wire, expires) nicht, endet der Befehl mit anlage_nicht_erreichbar. Ist der Aufruf sofort fertig,
-    kommt das Ergebnis direkt."""
+    Frist des Befehls (wire, expires; frist_s, wenn die Frist von der Nutzlast abhaengt) nicht, endet der Befehl mit
+    anlage_nicht_erreichbar. Ist der Aufruf sofort fertig, kommt das Ergebnis direkt."""
     future = ctx.hintergrund.submit(call)
-    expires = wire.COMMANDS[kind].expires_seconds
+    expires = frist_s if frist_s is not None else wire.COMMANDS[kind].expires_seconds
     assert expires is not None, kind
     frist = ctx.clock() + expires
 
@@ -203,9 +206,23 @@ def forget_inventory(paths: Paths) -> None:
             logger.error("Inventur-Proben nicht gelöscht (%s)", type(error).__name__)
 
 
+def _erkennung(ctx: Kontext, payload: dict) -> Outcome:
+    """Inventur stunden 0 (Spec Stufe 3 S5 5.1): Erkennung des Treibers aus dem Filter, vor und nach der Einrichtung;
+    die Daten gehen als up/inventory vor dem Ergebnis."""
+    filter_ = payload.get("filter")
+    treiber = filter_.get("treiber") if isinstance(filter_, dict) and set(filter_) == set(
+        wire.INVENTUR_FILTER_GATEWAY_FIELDS) else None
+    if not isinstance(treiber, str):
+        raise InvalidPayload("Die Erkennung braucht filter.treiber.")
+    driver = _driver(ctx, treiber)
+    return _im_hintergrund(ctx, "inventory", lambda: Done({}, inventur=driver.erkennung()), frist_s=ERKENNUNG_SECONDS)
+
+
 @_handler("inventory")
 def inventory(ctx: Kontext, payload: dict) -> Outcome:
-    hours = _int(payload, "stunden", 1, 48)
+    hours = _int(payload, "stunden", 0, 48)
+    if hours == 0:
+        return _erkennung(ctx, payload)
     konfiguration = ctx.konfiguration()
     if not dokument_config.eingerichtet(konfiguration):
         return Failed("nicht_eingerichtet", NOT_SET_UP_TEXT)
