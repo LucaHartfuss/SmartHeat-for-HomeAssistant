@@ -26,7 +26,7 @@ import urllib.parse
 
 from heizungsbruecke import config, derived_sensors
 from heizungsbruecke.discovery import Discovery
-from heizungsbruecke.geraet_host import EV_RELOAD, HaDeviceHost
+from heizungsbruecke.geraet_host import HaDeviceHost
 from heizungsbruecke.geraet_status import GeraetStatus
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.host import HaHost
@@ -34,6 +34,7 @@ from heizungsbruecke.supervisor import SupervisorApi
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_device.device import DEVICE_DIR, Device
 from smartheat_device.documents import KONFIGURATION, DocumentStore
+from smartheat_device.geraet_host_basis import EV_RELOAD
 from smartheat_device.hintergrund import Hintergrund
 from smartheat_runtime import abo, app
 from smartheat_runtime import aufraeumen as markierung

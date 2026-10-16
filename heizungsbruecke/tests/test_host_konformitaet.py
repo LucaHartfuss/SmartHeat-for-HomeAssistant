@@ -9,6 +9,7 @@ from host_konformitaet import Welt, parameter
 from test_runtime import OPTIONS
 
 from heizungsbruecke import config, geraet_host
+from smartheat_device.geraet_host_basis import EV_RELOAD
 
 ABWEICHUNGEN: dict[str, str] = {}
 
@@ -21,7 +22,7 @@ def welt(tmp_path, monkeypatch):
     clock = FakeClock()
     host = geraet_host.HaDeviceHost(FakeHa(), SimpleNamespace(host_info=lambda: {"dt_synchronized": True}),
                                     clock=clock)
-    return Welt(host=host, clock=clock, reload_kind=geraet_host.EV_RELOAD, aufraeumen_pfad=config.AUFRAEUMEN_PATH,
+    return Welt(host=host, clock=clock, reload_kind=EV_RELOAD, aufraeumen_pfad=config.AUFRAEUMEN_PATH,
                 konfiguration=konfiguration_aus_optionen(OPTIONS), wunsch_herkunft="soll_entity")
 
 

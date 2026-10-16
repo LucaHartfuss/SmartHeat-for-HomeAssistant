@@ -28,6 +28,7 @@ from typing import NoReturn
 from smartheat_core import wallclock
 from smartheat_device.device import Device
 from smartheat_device.documents import KONFIGURATION, DocumentStore
+from smartheat_device.geraet_host_basis import EV_RELOAD
 from smartheat_device.hintergrund import Hintergrund
 from smartheat_gateway import befehle, diagnose
 from smartheat_gateway import geraet_host as geraet_host_module
@@ -45,7 +46,6 @@ from smartheat_runtime.worker import Event
 
 logger = logging.getLogger(__name__)
 
-EV_RELOAD = geraet_host_module.EV_RELOAD
 EV_CONFIG_WATCH = "shg_config_watch"
 EV_RAUM = "shg_raum"
 CONFIG_WATCH_SECONDS = 30

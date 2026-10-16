@@ -14,6 +14,7 @@ from heizungsbruecke.host import EV_RAUM, RAUM_SECONDS, HaHost
 from smartheat_core.config_check import NichtPruefbar
 from smartheat_device import wire
 from smartheat_device.commands import CommandRegister, Done, Failed, Waiting
+from smartheat_device.geraet_host_basis import EV_RELOAD
 from smartheat_device.host import Anzeige
 from smartheat_runtime.soll_eingang import EV_TARGET_INPUT
 from smartheat_runtime.status import STATUS_ABGEMELDET
@@ -254,10 +255,10 @@ def test_configuration_change_requests_a_restart_and_empty_marks_cleanup(tmp_pat
     assert stat.S_IMODE(config.AUFRAEUMEN_PATH.stat().st_mode) == 0o600
     worker = RegulationWorker(clock)
     reloads = []
-    worker.register(geraet_host.EV_RELOAD, lambda event: reloads.append(event.kind))
+    worker.register(EV_RELOAD, lambda event: reloads.append(event.kind))
     host.worker_binden(worker)  # vor dem Binden angefordert: nachgestellt
     worker.run_pending()
-    assert reloads == [geraet_host.EV_RELOAD]
+    assert reloads == [EV_RELOAD]
 
 
 def test_new_binding_parameters_restart_the_runtime(tmp_path, monkeypatch):
