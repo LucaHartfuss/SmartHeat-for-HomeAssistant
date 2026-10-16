@@ -110,3 +110,17 @@ def test_a_marker_whose_existence_cannot_be_determined_is_kept(tmp_path, monkeyp
     monkeypatch.setattr(os, "stat", stat_)
     assert aufraeumen.entscheiden(pfad, LEER) == aufraeumen.BEHALTEN
     assert "aufraeumen.json" in caplog.text and "OSError" in caplog.text and "geheim" not in caplog.text
+
+
+def test_a_marker_that_vanishes_between_exists_and_reading_is_decided_by_lesen(tmp_path, monkeypatch):
+    """Rennen: exists() sah die Markierung, read_bytes() nicht mehr (FileNotFoundError). Das ist kein Lesefehler
+    (nicht BEHALTEN), sondern eine fehlende Markierung: lesen() findet keine Konfiguration, also LOESCHEN wie bisher."""
+    pfad = tmp_path / "aufraeumen.json"
+    aufraeumen.markieren(pfad, ALT)
+
+    def verschwunden(self):
+        pfad.unlink()
+        raise FileNotFoundError(pfad.name)
+
+    monkeypatch.setattr(Path, "read_bytes", verschwunden)
+    assert aufraeumen.entscheiden(pfad, LEER) == aufraeumen.LOESCHEN

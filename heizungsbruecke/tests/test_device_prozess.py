@@ -73,6 +73,34 @@ def test_beenden_wirft_nie_und_loggt_nur_die_fehlerart(caplog):
     assert "OSError" in caplog.text and "RuntimeError" in caplog.text and "geheim" not in caplog.text
 
 
+def test_beenden_wartet_standardmaessig_10_s_auf_den_geraete_thread():
+    """JOIN_SECONDS liegt unter der stop_grace_period von 20 s im Gateway-Compose (gateway/tests/test_compose.py hat
+    dafuer nur die Untergrenze JOIN_SECONDS + 5); beenden reicht den Wert unveraendert an thread.join weiter."""
+    assert prozess.JOIN_SECONDS == 10.0
+    fristen = []
+
+    class _Aufzeichnend(_Thread):
+        def join(self, timeout=None):
+            fristen.append(timeout)
+
+    prozess.beenden(_Device([]), _Aufzeichnend([]), None)
+    prozess.beenden(_Device([]), _Aufzeichnend([]), None, join_seconds=3.0)
+    assert fristen == [10.0, 3.0]
+
+
+def test_beenden_warnt_nur_bei_einem_nach_dem_join_noch_lebenden_thread(caplog):
+    class _Haengt(_Thread):
+        def is_alive(self):
+            return True
+
+    with caplog.at_level(logging.WARNING):
+        prozess.beenden(_Device([]), _Thread([]), None)
+    assert "nicht beendet" not in caplog.text
+    with caplog.at_level(logging.WARNING):
+        prozess.beenden(_Device([]), _Haengt([]), None, join_seconds=2.0)
+    assert "Geraete-Thread nach 2 s nicht beendet" in caplog.text
+
+
 def test_beenden_ohne_geraete_thread_stoppt_nur():
     gestoppt = threading.Event()
     prozess.beenden(SimpleNamespace(stop=gestoppt.set), None, None)
@@ -318,3 +346,32 @@ def test_eine_markierung_mit_unbekannter_existenz_kippt_den_start_nicht(tmp_path
 
     monkeypatch.setattr(type(pfad), "exists", kaputt)
     assert _aufraeumen(pfad, {"anlage": None}) == ([], [])
+
+
+def test_eine_zwischen_entscheidung_und_loeschen_verschwundene_markierung_kippt_den_start_nicht(tmp_path, monkeypatch):
+    """Rennen im Zweig VERWERFEN: die Markierung ist nach entscheiden() schon weg; das Loeschen wirft nicht."""
+    pfad = tmp_path / "aufraeumen.json"
+    markierung.markieren(pfad, ALT)
+
+    def verschwindet(p, gespeichert):
+        p.unlink()
+        return markierung.VERWERFEN
+
+    monkeypatch.setattr(markierung, "entscheiden", verschwindet)
+    assert _aufraeumen(pfad, {**ALT, "anlage": "kunde2"})[1] == [] and not pfad.exists()
+
+
+def test_entfernt_der_loeschen_rueckruf_die_markierung_selbst_ist_das_kein_fehler(tmp_path):
+    """Rennen im Zweig LOESCHEN: der Rueckruf des Hosts hat die Markierung schon entfernt und meldet fertig."""
+    pfad = tmp_path / "aufraeumen.json"
+    markierung.markieren(pfad, ALT)
+    markierung.zurueckgesetzt(pfad, "kunde1")
+    geloescht = []
+
+    def loeschen():
+        pfad.unlink()
+        geloescht.append(1)
+        return True
+
+    prozess.aufraeumen_beim_start(pfad, lambda: {"anlage": None}, loeschen, wer="das Geraet")
+    assert geloescht == [1] and not pfad.exists()
