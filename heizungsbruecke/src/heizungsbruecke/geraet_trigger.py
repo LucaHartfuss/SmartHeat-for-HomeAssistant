@@ -9,10 +9,9 @@ import math
 import time
 from typing import TypeGuard
 
-from heizungsbruecke.config import ConfigError
 from heizungsbruecke.ha_trigger_client import HaTriggerClient
 from smartheat_runtime.debounce import ROOM_TARGET_DEBOUNCE_SECONDS
-from smartheat_runtime.options import local_check_interval
+from smartheat_runtime.dokument_config import ConfigError
 from smartheat_runtime.runtime import EV_LOCAL_CHECK, EV_SOURCE_CONNECTED
 from smartheat_runtime.soll_eingang import EV_SOLL_MODUS, EV_TARGET_INPUT, FROSTSCHUTZ_BIS, SollEingang
 from smartheat_runtime.soll_speicher import SOURCE_LOKAL, SOURCE_THERMOSTAT, TargetStore
@@ -123,9 +122,11 @@ class HaSollQuelle:
         return float(value) if _is_number(value) else None
 
 
-def build(manifest, options: dict, ha_api, worker: RegulationWorker, store: TargetStore, soll_ref: str | None, *,
-          wunsch, soll_quelle_aus, quelle: HaSollQuelle | None = None) -> HaTriggerClient:
+def build(manifest, ha_api, worker: RegulationWorker, store: TargetStore, soll_ref: str | None, *,
+          tagestick: str | None, wache_s: float, wunsch, soll_quelle_aus,
+          quelle: HaSollQuelle | None = None) -> HaTriggerClient:
     """soll_ref: die echte Soll-Entity aus der Konfiguration (nicht manifest.refs["room_target"], das ist SOLL_REF).
+    tagestick: Uhrzeit des taeglichen Ticks (HH:MM) oder None; wache_s: Takt des lokalen Checks (RuntimeConfig).
     Der Bericht der Soll-Entity (EV_SOLL_BERICHT) geht als Eingabe der Soll-Quelle in den Soll-Eingang. Faellt er in
     das Echo-Fenster nach dem eigenen Schreiben, verwirft ihn der Soll-Speicher; HA meldet einen unveraenderten Wert
     nie wieder. Deshalb liest EV_SOLL_NACHLESEN die Entity kurz nach dem Fenster einmal erneut und gibt den Wert
@@ -165,8 +166,8 @@ def build(manifest, options: dict, ha_api, worker: RegulationWorker, store: Targ
             trigger["attribute"] = attribute
         triggers.append(trigger)
     triggers.append({"platform": "event", "event_type": EREIGNIS_WUNSCH})
-    if options.get("daily_trigger_time"):
-        triggers.append({"platform": "time", "at": options["daily_trigger_time"]})
+    if tagestick:
+        triggers.append({"platform": "time", "at": tagestick})
 
     letzter_bericht: list = [None, None]  # (Wert, durch) des zuletzt verworfenen Berichts im Echo-Fenster
     nachlesen_offen = [False]
@@ -308,7 +309,6 @@ def build(manifest, options: dict, ha_api, worker: RegulationWorker, store: Targ
 
     client = HaTriggerClient(ws_url=ha_api.websocket_url(), token=ha_api.token, triggers=triggers,
                              on_trigger_event=on_trigger, on_connected=on_connected)
-    wache_s = local_check_interval(options)
 
     def on_wache(event: Event) -> None:
         worker.schedule(wache_s, Event(EV_SOLL_WACHE))  # zuerst: der Takt darf nie abreissen

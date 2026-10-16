@@ -25,10 +25,11 @@ from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core import wallclock
 from smartheat_runtime import aufraeumen, dokument_config
 from smartheat_runtime.app import Loaded, Notice, RestoreParts, StartFailure
+from smartheat_runtime.dokument_config import ConfigError
 from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
 from smartheat_runtime.ports import NotifySink, SignalSource, StatusSink, TriggerSource
 from smartheat_runtime.roles import ChannelManifest, ManifestError
-from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG, BATTERY_PERCENT, BatteryRef, BootInfo
+from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG, BATTERY_PERCENT, BatteryRef, BootInfo, RuntimeConfig
 from smartheat_runtime.soll_eingang import FROSTSCHUTZ_BIS
 from smartheat_runtime.soll_speicher import BEDIENBEREICH_MAX, BEDIENBEREICH_MIN, TargetStore, im_bedienbereich
 from smartheat_runtime.texts import HA_TEXTS, HostTexts
@@ -73,7 +74,7 @@ class _MissingEntities(Exception):
 class HaHost:
     """Host der Laufzeit im HA-Add-on ab 1.0.0 (Spec 5c 1.3): Konfiguration aus dem Konfigurationsdokument des
     Geraetekerns (geraet), Signale ueber die HA-API mit dem Soll-Speicher als Raum-Soll, Hersteller-Bindings und
-    Hilfssensoren wie bisher (Optionen aus dokument.optionen), Trigger ueber den HA-WebSocket."""
+    Hilfssensoren wie bisher (Bindung aus dokument.bindung), Trigger ueber den HA-WebSocket."""
 
     def __init__(self, geraet, ha_api, *, clock=time.monotonic) -> None:
         self._geraet, self._ha_api, self._clock = geraet, ha_api, clock
@@ -81,7 +82,8 @@ class HaHost:
         # mit der alten Konfiguration aus der Aufraeum-Markierung im Modus abgemeldet.
         self._konfiguration, self._leer_abmelden = aufraeumen.laufzeit_konfiguration(
             geraet.konfiguration(), config.AUFRAEUMEN_PATH)
-        self._effective: dict | None = None
+        self._bindung: dokument.HaBindung | None = None
+        self._runtime: RuntimeConfig | None = None
         self.store: TargetStore | None = None
         self.soll_entity: str | None = None
         self.raum: RaumPublisher | None = None
@@ -89,17 +91,27 @@ class HaHost:
         # Als Port-Typen deklariert: Attribute eines Protocols sind invariant (pyright).
         self.signals: SignalSource = GeraetSignale(HaSignalSource(ha_api), lambda: self.store)
         self.status_sink: StatusSink = geraet.status_sink
-        self.notify_sink: NotifySink = geraet.notify_sink_fuer(
-            dokument.optionen(self._konfiguration)["notify_services"] if self._konfiguration else [])
+        vorab = self._bindung_oder_none()
+        self.notify_sink: NotifySink = geraet.notify_sink_fuer(list(vorab.benachrichtigung) if vorab else [])
         self.texts: HostTexts = HA_TEXTS
+
+    def _bindung_oder_none(self) -> dokument.HaBindung | None:
+        """Die Bindung fuer Meldedienste und Hinweise vor dem Laden: ohne Konfiguration oder mit unbekanntem Hebelsatz
+        None. Der Host wirft hier nie, load meldet den Konfigurationsfehler."""
+        if not self._konfiguration:
+            return None
+        try:
+            return dokument.bindung(self._konfiguration)
+        except ConfigError:
+            return None
 
     def boot_info(self) -> BootInfo:
         abgemeldet = self._leer_abmelden or dokument_config.abgemeldet(config.ABGEMELDET_PATH, self._konfiguration)
         boot = dokument_config.boot_info(
             self._konfiguration, abgemeldet=abgemeldet, client_version=ADDON_VERSION, backup_path=config.BACKUP_PATH,
             failsafe_path=config.FAILSAFE_PATH, aufraeumen_path=config.AUFRAEUMEN_PATH)
-        hints = dokument.optionen(self._konfiguration)["notify_hints_off"] if self._konfiguration else []
-        boot = dataclasses.replace(boot, notify_hints_off=tuple(hints))
+        vorab = self._bindung_oder_none()
+        boot = dataclasses.replace(boot, notify_hints_off=vorab.hinweise_aus if vorab else ())
         if not boot.configured and not boot.signed_off:
             logger.info(NOT_CONFIGURED_HINT)
         return boot
@@ -123,46 +135,44 @@ class HaHost:
         """Es wird kein Hilfssensor angelegt: fuer das Zuruecksetzen reichen die Hebel und die Clamps."""
         try:
             dokument_config.rastung_pruefen(self._konfiguration, config.RASTUNG_PATH)
-            effective = dokument.optionen(self._konfiguration)
-            description = config.binding_description(effective)
-            safety = config.local_safety(effective)
-        except config.ConfigError as error:
+            b = dokument.bindung(self._konfiguration)
+            description = dokument_config.beschreibung(self._konfiguration)
+            safety = dokument_config.sicherheit(self._konfiguration)
+        except ConfigError as error:
             logger.error("Abmelden ohne Zuruecksetzen: %s", error)
             return None
-        roles = [role for role in binding_roles(description) if effective.get(f"entity_{role}")]
-        manifest = ChannelManifest(refs={role: entity_ref(role, effective[f"entity_{role}"]) for role in roles})
-        return RestoreParts(binding_for(effective, self._ha_api, manifest), safety)
+        roles = [role for role in binding_roles(description) if b.rollen.get(role)]
+        manifest = ChannelManifest(refs={role: entity_ref(role, b.rollen[role]) for role in roles})
+        return RestoreParts(binding_for(description, self._ha_api, manifest), safety)
 
     def load(self) -> Loaded:
-        options = dokument.optionen(self._konfiguration)
         try:
             # Pflichtrollen und Schreibregeln des Hebelsatzes zuerst: _wait_for_required_entities und die Hilfssensoren
-            # indizieren die Optionen, ein fehlender Schluessel waere sonst ein KeyError statt eines Konfigurationsfehlers.
+            # indizieren die Rollen, ein fehlender Schluessel waere sonst ein KeyError statt eines Konfigurationsfehlers.
             # Muster der Raumfuehler/Aussenquelle/Batterien/Handys und die Hinweise prueft config_check (Task 2) bzw. der
             # Server, nicht der Host.
             text = dokument.lokal_pruefen(self._konfiguration)
             if text:
-                raise config.ConfigError(text)
-            geraet_trigger.pruefe_soll_ref(dokument.soll_entity(self._konfiguration))
+                raise ConfigError(text)
+            b = dokument.bindung(self._konfiguration)
+            geraet_trigger.pruefe_soll_ref(b.soll_entity)
             runtime = dokument_config.runtime_config(
                 self._konfiguration, rastung_pfad=config.RASTUNG_PATH, entitlement_path=config.ENTITLEMENT_PATH,
                 abo_source=self._geraet.abo_status)
-            config.binding_description(options)  # Spec Stufe 3 S4b 4.3: ohne gueltige Bindungsparameter kein Start
-            error = config.validate(options)
-            if error:
-                raise config.ConfigError(error)
-            _wait_for_required_entities(self._ha_api, options)
-            derived = _ensure_derived_sensors_with_retry(self._ha_api, options)
-            manifest = build_manifest(options, derived.entity_ids, config.lever_set_id(options))
-            binding = binding_for(options, self._ha_api, manifest)
+            # Spec Stufe 3 S4b 4.3: ohne gueltige Bindungsparameter kein Start
+            description = dokument_config.beschreibung(self._konfiguration)
+            _wait_for_required_entities(self._ha_api, b)
+            derived = _ensure_derived_sensors_with_retry(self._ha_api, b, runtime.tenant_id)
+            manifest = build_manifest({**b.rollen, "room_target": SOLL_REF}, derived.entity_ids, b.hebelsatz)
+            binding = binding_for(description, self._ha_api, manifest)
         except StartupError as error:
             raise StartFailure(str(error), error.key) from error
-        except (config.ConfigError, ManifestError) as error:
+        except (ConfigError, ManifestError) as error:
             # Pruefungstexte sind deterministisch: der Text ist zugleich die Identitaet.
             raise StartFailure(str(error)) from error
         _check_timezone(self._ha_api)
-        self._effective = options
-        self.soll_entity = dokument.soll_entity(self._konfiguration)
+        self._bindung, self._runtime = b, runtime
+        self.soll_entity = b.soll_entity
         assert self.soll_entity is not None  # lokal_pruefen verlangt sie
         bedienung, dirty = self._geraet.bedienung()
         start = bedienung.get("raum_soll") if isinstance(bedienung, dict) else None
@@ -176,21 +186,22 @@ class HaHost:
         self.raum = RaumPublisher(self._geraet.raum_merken, self.signals, self.store, manifest.refs.get("room_actual"),
                                   lambda: wallclock.now().isoformat())
         runtime = dataclasses.replace(
-            runtime, notify_hints_off=tuple(options["notify_hints_off"]),
+            runtime, notify_hints_off=b.hinweise_aus,
             battery_refs=tuple(
                 BatteryRef(entity_id, BATTERY_LOW_FLAG if entity_id.startswith("binary_sensor.") else BATTERY_PERCENT)
-                for entity_id in options["battery_entities"]))
+                for entity_id in b.batterien))
         notices = (Notice("quellwechsel", derived.sources_fingerprint, SOURCE_CHANGE_MESSAGE),) if derived.replaced else ()
         return Loaded(config=runtime, manifest=manifest, binding=binding,
                       notices=notices)
 
     def trigger_source(self, manifest: ChannelManifest, worker: RegulationWorker) -> TriggerSource:
-        assert self._effective is not None and self.store is not None  # load() lief vorher
+        assert self._bindung is not None and self._runtime is not None and self.store is not None  # load() lief vorher
         geraet = self._geraet
         # eine Soll-Quelle fuer Start und Betrieb: scheitert das Angleichen beim Start, holt der Trigger es nach
         quelle = HaSollQuelle(self._ha_api, self.soll_entity) if self.soll_entity else None
         client = geraet_trigger.build(
-            manifest, self._effective, self._ha_api, worker, self.store, self.soll_entity,
+            manifest, self._ha_api, worker, self.store, self.soll_entity,
+            tagestick=self._runtime.daily_trigger_time, wache_s=self._runtime.local_check_interval,
             wunsch=lambda wert, herkunft, durch: geraet.wunsch(wert, herkunft=herkunft, durch=durch),
             soll_quelle_aus=geraet.soll_quelle_aus, quelle=quelle)
         if self._angleichen and quelle is not None:
@@ -277,11 +288,10 @@ def _retry_with_budget(ha_api, attempt, describe, *, identify=None):
             used += 1
 
 
-def _wait_for_required_entities(ha_api, options: dict) -> None:
+def _wait_for_required_entities(ha_api, b: dokument.HaBindung) -> None:
     """Pflicht-Entities muessen existieren; `unavailable` ist kein Startfehler (das behandeln
     Datenfehler und Notbetrieb im Betrieb)."""
-    keys = config.required_entity_options(config.lever_set_id(options))
-    refs = [options[key] for key in keys if options[key] != SOLL_REF] + list(options["room_sensors"])
+    refs = [b.rollen[rolle] for rolle in dokument.PFLICHT_ROLLEN[b.hebelsatz]] + list(b.raumfuehler)
     entity_ids = sorted({ref.partition("::")[0] for ref in refs})
 
     def _check():
@@ -302,14 +312,14 @@ def _wait_for_required_entities(ha_api, options: dict) -> None:
     _retry_with_budget(ha_api, _check, _describe, identify=_identify)
 
 
-def _ensure_derived_sensors_with_retry(ha_api, options: dict) -> DerivedSensors:
+def _ensure_derived_sensors_with_retry(ha_api, b: dokument.HaBindung, tenant_id: str) -> DerivedSensors:
     return _retry_with_budget(
         ha_api,
         lambda: derived_sensors.ensure_all(
             ha_api=ha_api,
-            tenant_id=options["tenant_id"],
-            room_sensors=options["room_sensors"],
-            outdoor_source=options["entity_outdoor_temp"],
+            tenant_id=tenant_id,
+            room_sensors=list(b.raumfuehler),
+            outdoor_source=b.rollen["outdoor_temp"],
             state_path=config.DERIVED_SENSORS_PATH,
         ),
         lambda error: f"Hilfs-Entities konnten nicht angelegt werden: {error}",

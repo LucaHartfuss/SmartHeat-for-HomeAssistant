@@ -74,7 +74,7 @@ def test_bindung_traegt_die_ha_teile_des_dokuments(konfiguration):
     assert b.raumfuehler == ("sensor.room_actual",) and b.batterien == ("sensor.thermostat_battery",)
     assert b.benachrichtigung == ("notify.handy",) and b.hinweise_aus == ()
     assert b.kreis == konfiguration["bindung"]["kreis"] and b.kreis is not konfiguration["bindung"]["kreis"]
-    assert dokument.soll_entity(konfiguration) == "sensor.room_target"
+    assert b.soll_entity == "sensor.room_target"
 
 
 def test_weitere_hebel_und_kennzahl_rollen_kommen_in_der_bindung_an():
@@ -176,6 +176,10 @@ def test_the_target_entity_is_required():
 @pytest.mark.parametrize("missing", dokument.PFLICHT_ROLLEN["weishaupt_wwp"])
 def test_every_weishaupt_role_is_required(missing):
     assert f"weishaupt_wwp fehlt die Zuordnung {missing}" in _lokal("weishaupt_wwp", WEISHAUPT, **{missing: ""})
+
+
+def test_the_valid_weishaupt_document_passes():
+    assert _lokal("weishaupt_wwp", WEISHAUPT) is None
 
 
 def test_basis_does_not_need_curve_or_heat_limit():

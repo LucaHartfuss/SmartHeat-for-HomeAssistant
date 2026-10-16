@@ -2,13 +2,12 @@
 Alles mypyllant-Spezifische steht hier (vorher plant.py): die Zonen-Wunschtemperatur ist eine Climate-Entity, die
 nur im Modus "Manuell" (HA heat_cool, sonst Quick-Veto) wirkt und ueber ihr Attribut `temperature` gelesen wird; sie
 meldet 0, wenn die Zone gerade nicht heizt. Die Hebel haengen an den Manifest-Rollen der unveraenderten
-Add-on-Optionen (P2-3)."""
+Rollen des Manifests (P2-3)."""
 import logging
 import math
 from collections.abc import Mapping, Sequence
 from typing import cast
 
-from heizungsbruecke import config
 from smartheat_core.binding import BindingDescription
 from smartheat_runtime.roles import LEVER_ROLES, ChannelManifest
 
@@ -334,11 +333,8 @@ _BINDING_CLASSES: dict[str, type[HaPlantBinding]] = {
 }
 
 
-def binding_for(options: dict, ha_api, manifest: ChannelManifest) -> HaPlantBinding:
-    """Binding des gewaehlten Hebelsatzes (Option lever_set, Standard Vaillant) mit der Beschreibung aus den
-    Bindungsparametern der Konfiguration. Wirft config.ConfigError bei unbekanntem Hebelsatz oder fehlenden/ungueltigen
-    Parametern."""
-    description = config.binding_description(options)
+def binding_for(description: BindingDescription, ha_api, manifest: ChannelManifest) -> HaPlantBinding:
+    """Binding des Hebelsatzes der Beschreibung (dokument_config.beschreibung)."""
     return _BINDING_CLASSES[description.lever_set.id](ha_api, manifest, description)
 
 

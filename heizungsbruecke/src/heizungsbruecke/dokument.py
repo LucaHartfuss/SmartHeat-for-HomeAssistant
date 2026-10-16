@@ -102,12 +102,6 @@ def bindung(konfiguration) -> HaBindung:
         kreis=dict(_mapping(raw.get("kreis"))))
 
 
-def soll_entity(konfiguration) -> str | None:
-    rollen = _mapping(_mapping(_mapping(konfiguration).get("bindung")).get("rollen"))
-    value = rollen.get(_ROOM_TARGET)
-    return value if isinstance(value, str) and value else None
-
-
 def _entity(ref: str) -> str:
     return ref.partition("::")[0]
 

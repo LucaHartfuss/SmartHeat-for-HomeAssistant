@@ -17,7 +17,8 @@ GERAET_ID = "shg-0000000000000001"
 
 
 def konfiguration_aus_optionen(options: dict) -> dict:
-    """Umkehrung von dokument.optionen fuer die alten Test-Optionen; entity_room_target wird rollen.room_target."""
+    """Alte Test-Optionen als Konfigurationsdokument (Bindung wie dokument.bindung sie liest); entity_room_target wird
+    rollen.room_target."""
     rollen = {"room_target": options["entity_room_target"]}
     for key, value in options.items():
         if key.startswith("entity_") and key != "entity_room_target" and value:

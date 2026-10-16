@@ -95,7 +95,7 @@ def test_weishaupt_without_a_comfort_setpoint_is_a_configuration_error(env):
 def test_an_unknown_lever_set_is_a_configuration_error_not_vaillant(env):
     bridge = _start_bridge(env, lever_set="buderus")
     assert bridge.reason == "konfigurationsfehler"
-    assert "lever_set" in _last_event(env)["grund"]
+    assert "buderus" in _last_event(env)["grund"]
     assert env.ha.writes == []
 
 

@@ -1,16 +1,19 @@
 """Spec 5c 1.3 / 5b 5.2: HaHost liest das Konfigurationsdokument; der Raum-Soll kommt aus dem Soll-Speicher."""
 import json
+from unittest.mock import MagicMock
 
 import pytest
 from geraet_helpers import FakeGeraet, konfiguration_aus_optionen
 from test_runtime import OPTIONS, env  # noqa: F401 - env ist eine Fixture
 
-from heizungsbruecke import config, dokument
+from heizungsbruecke import config
+from heizungsbruecke.ha_signals import SOLL_REF
 from heizungsbruecke.host import HaHost
 from smartheat_runtime import app, aufraeumen
 from smartheat_runtime.app import StartFailure
 from smartheat_runtime.ports import SourceUnavailable
 from smartheat_runtime.runtime import Runtime
+from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG, BATTERY_PERCENT
 from smartheat_runtime.worker import RegulationWorker
 
 
@@ -19,7 +22,7 @@ def test_load_builds_the_runtime_from_the_document(env):
     host = HaHost(geraet, env.ha, clock=env.clock)
     loaded = host.load()
     assert loaded.config.tenant_id == OPTIONS["tenant_id"]
-    assert loaded.manifest.refs["room_target"] == dokument.SOLL_REF
+    assert loaded.manifest.refs["room_target"] == SOLL_REF
     assert loaded.manifest.refs["curve_current"] == OPTIONS["entity_curve_current"]
     assert host.soll_entity == OPTIONS["entity_room_target"]
 
@@ -29,7 +32,7 @@ def test_room_target_reads_the_store_not_the_entity(env):
     host = HaHost(geraet, env.ha, clock=env.clock)
     host.load()
     env.ha.states[OPTIONS["entity_room_target"]] = 18.0
-    assert host.signals.get_state(dokument.SOLL_REF) == 21.5
+    assert host.signals.get_state(SOLL_REF) == 21.5
 
 
 def test_without_document_the_host_waits_unconfigured(env):
@@ -74,8 +77,8 @@ def test_runtime_starts_on_the_document(env):
 def test_the_target_signal_is_unavailable_until_the_store_is_loaded(env):
     host = HaHost(FakeGeraet(konfiguration_aus_optionen(OPTIONS)), env.ha, clock=env.clock)
     with pytest.raises(SourceUnavailable):
-        host.signals.get_state(dokument.SOLL_REF)
-    assert host.signals.device_key(dokument.SOLL_REF) == dokument.SOLL_REF
+        host.signals.get_state(SOLL_REF)
+    assert host.signals.device_key(SOLL_REF) == SOLL_REF
     assert host.signals.device_key("climate.a::current_temperature") == "climate.a"
 
 
@@ -85,7 +88,7 @@ def test_the_stored_target_wins_over_the_server_start_value_while_a_local_wish_i
     host = HaHost(FakeGeraet(konfiguration_aus_optionen(OPTIONS), bedienung={"raum_soll": 22.0}, dirty=True), env.ha,
                   clock=env.clock)
     host.load()
-    assert host.signals.get_state(dokument.SOLL_REF) == 19.5
+    assert host.signals.get_state(SOLL_REF) == 19.5
 
 
 def test_without_a_valid_start_value_the_target_defaults(env):
@@ -93,7 +96,7 @@ def test_without_a_valid_start_value_the_target_defaults(env):
     host = HaHost(FakeGeraet(konfiguration_aus_optionen(OPTIONS), bedienung={"raum_soll": 30.0}), env.ha,
                   clock=env.clock)
     host.load()
-    assert host.signals.get_state(dokument.SOLL_REF) == 20.0
+    assert host.signals.get_state(SOLL_REF) == 20.0
 
 
 @pytest.mark.parametrize(("angezeigt", "start"), [(22.5, 22.5), (21.3, 21.3), (14.5, 20.0),
@@ -211,7 +214,7 @@ def test_a_document_without_a_required_role_fails_the_start_instead_of_raising_a
 def test_an_unknown_lever_set_fails_the_start(env):
     host = HaHost(FakeGeraet(konfiguration_aus_optionen({**OPTIONS, "lever_set": "gibt_es_nicht"})), env.ha,
                   clock=env.clock)
-    with pytest.raises(StartFailure, match="lever_set"):
+    with pytest.raises(StartFailure, match="Hebelsatz 'gibt_es_nicht' ist für Home Assistant unbekannt"):
         host.load()
 
 
@@ -320,3 +323,44 @@ def test_ursprungswerte_server_ignores_a_new_setup_while_the_reset_is_pending(en
     host = HaHost(geraet, env.ha, clock=env.clock)
     geraet._konfiguration = {**alt, "anlage": "andere_anlage", "ursprungswerte": {"heat_limit": 12.0}}
     assert host.ursprungswerte_server() == {"heat_limit": 16.0}
+
+
+@pytest.fixture
+def host_mit_klima_zone(env):
+    """Vaillant mit einer climate-Zone als Parallelverschiebung (shift_current)."""
+    konfiguration = konfiguration_aus_optionen({**OPTIONS, "entity_shift_current": "climate.zone"})
+    return HaHost(FakeGeraet(konfiguration), env.ha, clock=env.clock)
+
+
+def test_abmelden_stellt_dieselben_rollen_zurueck_wie_der_hebelsatz(host_mit_klima_zone):
+    """Spec Stufe 3 S5 Review: sign_off_parts nach dem Umbau, auch fuer eine climate-Zone (::temperature)."""
+    parts = host_mit_klima_zone.sign_off_parts()
+    assert parts is not None
+    binding = parts.binding
+    gesendet = [lever for lever in binding.description.lever_set.levers if binding.has(lever)]
+    assert gesendet == list(binding.description.lever_set.levers) == ["curve", "room_setpoint", "heat_limit"]
+    assert binding.ref("room_setpoint") == "climate.zone::temperature"
+    assert binding.ref("curve") == OPTIONS["entity_curve_current"]
+    assert binding.ref("heat_limit") == OPTIONS["entity_heat_limit"]
+
+
+def test_host_ohne_bekannten_hebelsatz_wirft_im_konstruktor_nicht(env):
+    """Meldedienste und Hinweise kommen aus der Bindung; ein unbekannter Hebelsatz meldet erst load()."""
+    konfiguration = konfiguration_aus_optionen({**OPTIONS, "lever_set": "gibt_es_nicht"})
+    host = HaHost(FakeGeraet(konfiguration), env.ha, clock=env.clock)
+    assert host.boot_info().notify_hints_off == ()
+
+
+def test_hinweise_batterien_und_meldedienste_kommen_aus_der_bindung(env):
+    options = {**OPTIONS, "notify_hints_off": ["batterie"],
+               "battery_entities": ["sensor.thermostat_battery", "binary_sensor.thermostat_battery_low"]}
+    geraet = FakeGeraet(konfiguration_aus_optionen(options))
+    dienste = []
+    geraet.notify_sink_fuer = lambda services: dienste.append(services) or MagicMock()
+    host = HaHost(geraet, env.ha, clock=env.clock)
+    assert dienste == [["notify.handy"]]
+    assert host.boot_info().notify_hints_off == ("batterie",)
+    runtime = host.load().config
+    assert runtime.notify_hints_off == ("batterie",)
+    assert [(ref.ref, ref.art) for ref in runtime.battery_refs] == [
+        ("sensor.thermostat_battery", BATTERY_PERCENT), ("binary_sensor.thermostat_battery_low", BATTERY_LOW_FLAG)]
