@@ -185,6 +185,18 @@ DRIVER_LOGIN_PHASES: dict[str, tuple[str, ...]] = {
     "finish": ("phase", "driver_id", "code", "redirect_uri"),
     "password": ("phase", "driver_id", "ciphertext"),
 }
+# Spec Stufe 3 S5 6.1 (G-6): Fehler tragen Code und details, keine Texte. details nur mit diesen Schluesseln: `feld`
+# aus PRUEF_FELDER, `regel` aus PRUEF_REGELN, die uebrigen endliche Zahlen; freie Texte gibt es darin nicht.
+DETAIL_FIELDS = ("feld", "regel", "min", "max", "wert", "anzahl")
+PRUEF_REGELN = ("fehlt", "ungueltig", "anzahl", "bereich", "format", "doppelt", "unbekannt", "nicht_erlaubt")
+#: Pruefbare Felder: die Namen aus den Feldlisten dieses Vertrags (abgeleitet: ein neues Feld ist ohne zweite Liste
+#: pruefbar).
+PRUEF_FELDER = tuple(dict.fromkeys((
+    *KONFIGURATION_FIELDS, *KONFIGURATION_OPTIONAL, *BINDUNGSPARAMETER_FIELDS, *SCHREIBSCHUTZ_FIELDS,
+    *BINDUNG_GATEWAY_FIELDS, *TREIBER_FIELDS, *BINDUNG_HA_FIELDS, *BINDUNG_HA_OPTIONAL, *KREIS_FIELDS, *HA_ROLLEN,
+    *INTERVALLE_FIELDS, *BEDIENUNG_FIELDS, *COMMAND_FIELDS, *INVENTUR_FILTER_FIELDS, *INVENTUR_FILTER_GATEWAY_FIELDS,
+    *(feld for command in COMMANDS.values() for feld in (*command.payload, *command.payload_optional)),
+)))
 _SEGMENT_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 
