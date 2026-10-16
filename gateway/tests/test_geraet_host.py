@@ -11,7 +11,6 @@ from configs import konfiguration
 from fakes import FakeBus
 
 from smartheat_core import dateien
-from smartheat_device import wire
 from smartheat_device.host import Anzeige
 from smartheat_gateway import geraet_host as gh
 from smartheat_gateway.paths import Paths
@@ -57,8 +56,8 @@ class FakeDevice:
     def meldung(self, key, text, *, offen, kritisch=True):
         self.meldungen.append((key, text, offen, kritisch))
 
-    def ergebnis_software(self, version, ok, grund=None, text=""):
-        self.ergebnisse.append((version, ok, grund, text))
+    def ergebnis_software(self, version, ok, grund=None):
+        self.ergebnisse.append((version, ok, grund))
         return self.ergebnis_ok
 
 
@@ -221,8 +220,7 @@ def test_software_results_are_sent_in_order_and_acknowledged(welt, clock):
         {"seq": 2, "version": "0.6.2", "result": "rollback", "reason": "ungesund"},
         {"seq": 1, "version": "0.6.1", "result": "ok", "reason": ""}]}, modus=dateien.LESBAR)
     welt.host.anzeigen(_anzeige())
-    assert welt.device.ergebnisse == [("0.6.1", True, None, ""), ("0.6.2", False, "ungesund",
-                                                                  gh.SOFTWARE_TEXTE["ungesund"])]
+    assert welt.device.ergebnisse == [("0.6.1", True, None), ("0.6.2", False, "ungesund")]
     assert json.loads(welt.paths.software_quittung.read_text()) == {"seq": 2}
     clock.advance(gh.SOFTWARE_SECONDS)
     welt.host.anzeigen(_anzeige())
@@ -262,12 +260,8 @@ def test_software_results_go_up_once_per_seq_across_a_runtime_restart(welt, cloc
     neu.anzeigen(_anzeige())
     clock.advance(gh.SOFTWARE_SECONDS)
     neu.anzeigen(_anzeige())
-    assert geraet.ergebnisse == [("0.6.3", True, None, "")]
+    assert geraet.ergebnisse == [("0.6.3", True, None)]
     assert json.loads(welt.paths.software_quittung.read_text()) == {"seq": 3}
-
-
-def test_every_software_error_has_a_text():
-    assert set(gh.SOFTWARE_TEXTE) == set(wire.SOFTWARE_ERRORS)
 
 
 def test_the_led_file_follows_the_state(welt, clock):
@@ -318,7 +312,7 @@ def test_a_failing_led_write_does_not_stop_the_software_results(welt):
     dateien.schreiben_json(welt.paths.software_meldungen, {"meldungen": [
         {"seq": 1, "version": "0.6.1", "result": "ok", "reason": ""}]}, modus=dateien.LESBAR)
     welt.host.anzeigen(_anzeige())
-    assert welt.device.ergebnisse == [("0.6.1", True, None, "")]
+    assert welt.device.ergebnisse == [("0.6.1", True, None)]
     assert welt.host.letzte_anzeige is not None
 
 

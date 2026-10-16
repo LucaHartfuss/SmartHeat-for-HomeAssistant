@@ -14,12 +14,11 @@ erscheint im Log nur als Anzahl je Domaene."""
 import logging
 from collections import Counter
 
-from smartheat_device import wire
+from smartheat_device import fehler, wire
 
 logger = logging.getLogger(__name__)
 
 OHNE_REGISTRY = "ohne_registry"
-FILTER_TEXT = "Der Filter der Inventur ist ungültig."
 
 #: Lokale Positivliste (Spec Stufe 3 S5 3.1, A5-30): was der Server-Filter darueber hinaus verlangt, faellt weg. Keine
 #: Plattformliste (G-7): ein Sensor ohne passende Klasse bleibt nur, wenn seine Plattform etwas Einstellbares liefert.
@@ -34,18 +33,18 @@ def _texte(value) -> bool:
     return isinstance(value, list) and all(isinstance(item, str) for item in value)
 
 
-def filter_pruefen(filter_) -> str | None:
-    """Kundentext, wenn der Filter nicht die Form des Vertrags hat (wire.INVENTUR_FILTER_FIELDS: Listen von Texten,
+def filter_pruefen(filter_) -> dict | None:
+    """details, wenn der Filter nicht die Form des Vertrags hat (wire.INVENTUR_FILTER_FIELDS: Listen von Texten,
     geraeteklassen Paare aus Domaene und Klasse), sonst None. Fehlende Felder sind leer, unbekannte zaehlen nicht."""
     if not isinstance(filter_, dict):
-        return FILTER_TEXT
+        return fehler.details("filter", "ungueltig")
     for key in ("plattformen", "domaenen", "dienste"):
         if key in filter_ and filter_[key] is not None and not _texte(filter_[key]):
-            return FILTER_TEXT
+            return fehler.details("filter", "ungueltig")
     klassen = filter_.get("geraeteklassen")
     if klassen is not None and not (isinstance(klassen, list)
                                     and all(_texte(pair) and len(pair) == 2 for pair in klassen)):
-        return FILTER_TEXT
+        return fehler.details("filter", "ungueltig")
     return None
 
 

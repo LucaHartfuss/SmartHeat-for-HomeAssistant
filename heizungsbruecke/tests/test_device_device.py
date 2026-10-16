@@ -499,11 +499,11 @@ def test_host_exceptions_become_contract_reasons(tmp_path):
     world = World(tmp_path, host)
     world.device = device.Device(host, tmp_path, "https://accounts.example.test", clock=world.clock, wall=lambda: WALL,
                                  bootstrap_client=lambda ident: world.client, link_factory=world._link,
-                                 befehl_fehler=lambda error: commands.Failed("anlage_nicht_erreichbar", "Anlage weg.")
+                                 befehl_fehler=lambda error: commands.Failed("anlage_nicht_erreichbar")
                                  if isinstance(error, DriverDown) else None)
     world.verbinden()
     world.empfangen("down/command", _command("inventory", payload={"stunden": 0, "filter": {"treiber": "simulation"}}))
-    assert world.link.of("up/result")[0]["error"] == {"grund": "anlage_nicht_erreichbar", "text": "Anlage weg."}
+    assert world.link.of("up/result")[0]["error"] == {"grund": "anlage_nicht_erreichbar"}
 
 
 def test_software_results_go_up_only_after_hello(tmp_path):
@@ -511,9 +511,9 @@ def test_software_results_go_up_only_after_hello(tmp_path):
     world.device.schritt()
     assert world.device.ergebnis_software("0.6.1", True) is False
     world.verbinden()
-    assert world.device.ergebnis_software("0.6.1", False, "ungesund", "Update zurückgerollt.") is True
+    assert world.device.ergebnis_software("0.6.1", False, "ungesund") is True
     assert world.link.of("up/result") == [{"schema": 1, "dokument": "software", "version": "0.6.1", "ok": False,
-                                           "error": {"grund": "ungesund", "text": "Update zurückgerollt."}}]
+                                           "error": {"grund": "ungesund"}}]
     with pytest.raises(ValueError):
         world.device.ergebnis_software("0.6.1", False, "erfunden")
 
@@ -565,7 +565,8 @@ def test_claim_state_accepts_only_uebernommen(tmp_path, value):
     world.verbinden()
     world.empfangen("down/command", _command("claim_state", "c1", {"device_state": "uebernommen"}))
     world.empfangen("down/command", _command("claim_state", "c2", {"device_state": value}))
-    assert world.link.of("up/result")[-1]["error"]["grund"] == "ungueltige_nutzlast"
+    assert world.link.of("up/result")[-1]["error"] == {
+        "grund": "ungueltige_nutzlast", "details": {"feld": "device_state", "regel": "unbekannt"}}
     assert bootstrap.device_state(world.dir) == "uebernommen"
     assert world.device.anzeige().code_zeigen is False
 

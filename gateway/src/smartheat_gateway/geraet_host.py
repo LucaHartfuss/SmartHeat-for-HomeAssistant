@@ -43,15 +43,6 @@ EV_RELOAD = "shg_reload"
 UHR_MAX_ALTER_SECONDS = 300
 SOFTWARE_SECONDS = 10
 HOST_FIELDS = ("netz", "dns", "zeit_synchron")
-SOFTWARE_TEXTE = {
-    "manifest_ungueltig": "Das Update ist ungültig (Manifest); das Gateway bleibt auf der bisherigen Version.",
-    "signatur_ungueltig": "Die Signatur des Updates ist ungültig; das Gateway bleibt auf der bisherigen Version.",
-    "updater_zu_alt": "Der Updater des Gateways ist für dieses Update zu alt.",
-    "version_zu_alt": "Die angebotene Version ist nicht neuer als die installierte.",
-    "start_fehlgeschlagen": "Die neue Version ließ sich nicht starten; das Gateway läuft mit der vorigen.",
-    "ungesund": "Die neue Version lief nicht fehlerfrei; das Gateway läuft mit der vorigen.",
-    "server_unerreichbar": "Der Server war während der Prüfung nicht erreichbar; das Update wird erneut versucht.",
-}
 
 
 def _iso(wall: float) -> str:
@@ -312,11 +303,9 @@ class GatewayDeviceHost:
         for eintrag in sorted(offen, key=lambda e: e["seq"]):
             ok = eintrag["result"] == "ok"
             grund: str | None = None
-            text = ""
             if not ok:
                 reason = eintrag.get("reason")
                 grund = reason if isinstance(reason, str) and reason in wire.SOFTWARE_ERRORS else "ungesund"
-                text = SOFTWARE_TEXTE[grund]
-            if not self.device.ergebnis_software(eintrag["version"], ok, grund, text):
+            if not self.device.ergebnis_software(eintrag["version"], ok, grund):
                 return
             dateien.schreiben_json(self.paths.software_quittung, {"seq": eintrag["seq"]}, modus=dateien.LESBAR)

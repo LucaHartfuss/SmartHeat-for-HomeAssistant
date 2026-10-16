@@ -20,6 +20,7 @@ from heizungsbruecke.geraet_status import GeraetStatus
 from heizungsbruecke.ha_sinks import GeraetUndHaSink, HaNotifySink
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core import dateien
+from smartheat_device import fehler
 from smartheat_device.commands import CommandRegister, Done, Failed, Outcome, Waiting
 from smartheat_device.hintergrund import Hintergrund
 from smartheat_device.host import Anzeige, MeldungSink
@@ -35,15 +36,11 @@ EV_RELOAD = "ha_reload"
 UHR_CACHE_SECONDS = 60
 INVENTUR_SECONDS = 120
 SIGN_OFF_WAIT_SECONDS = 24 * 3600
-NICHT_UNTERSTUETZT_TEXT = "Dieser Befehl gilt nicht für Home Assistant."
-NOT_SET_UP_TEXT = "Das Gerät ist nicht eingerichtet."
-FILTER_TEXT = "Die Inventur braucht einen Filter."
-HA_TEXT = "Home Assistant war nicht erreichbar."
 _FREMD = ("zigbee_permit_join", "zigbee_devices", "driver_login")
 
 
 def _nicht_unterstuetzt(payload: dict) -> Failed:
-    return Failed("nicht_unterstuetzt", NICHT_UNTERSTUETZT_TEXT)
+    return Failed("nicht_unterstuetzt")
 
 
 class HaDeviceHost:
@@ -232,9 +229,9 @@ class HaDeviceHost:
         der Befehl mit ha_nicht_erreichbar. Nur die Fehlerart ins Log, nie Inhalte (Regel 6)."""
         filter_ = payload.get("filter")
         if not isinstance(filter_, dict):
-            return Failed("ungueltige_nutzlast", FILTER_TEXT)
-        if (text := inventur.filter_pruefen(filter_)) is not None:
-            return Failed("ungueltige_nutzlast", text)
+            return Failed("ungueltige_nutzlast", fehler.details("filter", "fehlt"))
+        if (details := inventur.filter_pruefen(filter_)) is not None:
+            return Failed("ungueltige_nutzlast", details)
         future = self.hintergrund.submit(lambda: inventur.inventur(self._ha, filter_))
         frist = self._clock() + INVENTUR_SECONDS
 
@@ -242,13 +239,13 @@ class HaDeviceHost:
             if not future.done():
                 if self._clock() >= frist:
                     future.cancel()
-                    return Failed("ha_nicht_erreichbar", HA_TEXT)
+                    return Failed("ha_nicht_erreichbar")
                 return None
             try:
                 return Done({}, inventur=future.result())
             except Exception as error:
                 logger.warning("Inventur gescheitert (%s)", type(error).__name__)
-                return Failed("ha_nicht_erreichbar", HA_TEXT)
+                return Failed("ha_nicht_erreichbar")
 
         return Waiting(check, frist)
 
@@ -258,7 +255,7 @@ class HaDeviceHost:
         werte ist der Wiederherstellungspunkt danach."""
         konfiguration = self.konfiguration()
         if not dokument_config.eingerichtet(konfiguration):
-            return Failed("nicht_eingerichtet", NOT_SET_UP_TEXT)
+            return Failed("nicht_eingerichtet")
         assert konfiguration is not None
         anlage = konfiguration["anlage"]
         if dokument_config.abmelden(config.ABGEMELDET_PATH, anlage):
