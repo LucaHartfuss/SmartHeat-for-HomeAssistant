@@ -7,6 +7,7 @@ Gemessen wird kompakt mit ensure_ascii=False (UTF-8-Bytes); der Sender muss gena
 import json
 
 from smartheat_device import wire
+from smartheat_device.nachrichten import pruefen
 
 TEILE_MAX = 8
 RESERVE_BYTES = 1024
@@ -51,8 +52,10 @@ def teilen(daten: dict, limit: int = LIMIT_BYTES) -> list[dict]:
     return teile
 
 
-def nachrichten(command_id: str | None, daten: dict) -> list[dict]:
+def nachrichten(command_id: str, daten: dict) -> list[dict]:
+    """Die Teile als up/inventory (wire.INVENTORY_FIELDS); eine Inventur beantwortet immer einen Befehl. Eine
+    Abweichung vom Vertrag ist ein Vertragsfehler (ein ValueError wie InventurZuGross)."""
     teile = teilen(daten)
-    kopf = {"command_id": command_id} if command_id else {}
-    return [{"schema": wire.SCHEMA, **kopf, "teil": nummer, "teile": len(teile), "daten": teil}
+    return [pruefen("inventory", {"schema": wire.SCHEMA, "command_id": command_id, "teil": nummer, "teile": len(teile),
+                                  "daten": teil}, wire.INVENTORY_FIELDS)
             for nummer, teil in enumerate(teile, start=1)]

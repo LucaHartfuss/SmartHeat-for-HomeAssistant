@@ -11,6 +11,7 @@ from configs import konfiguration
 from fakes import FakeBus
 
 from smartheat_core import dateien
+from smartheat_device import nachrichten, wire
 from smartheat_device.geraet_host_basis import EV_RELOAD
 from smartheat_device.host import Anzeige
 from smartheat_gateway import geraet_host as gh
@@ -98,6 +99,12 @@ def _anzeige(zustand="regelt", **changes):
 def test_capabilities_and_version(welt):
     assert (welt.host.host, welt.host.version) == ("gateway", GATEWAY_VERSION)
     assert welt.host.faehigkeiten() == {"drivers": ["simulation", "vicare_cloud"], "zigbee": True, "updater": True}
+
+
+def test_capabilities_are_built_against_the_contract(welt, monkeypatch):
+    monkeypatch.setattr(wire, "CAPABILITY_OPTIONAL", ("programm",))  # updater kennt der Vertrag dann nicht
+    with pytest.raises(nachrichten.Vertragsfehler, match="faehigkeiten"):
+        welt.host.faehigkeiten()
 
 
 def test_clock_sync_comes_from_the_host_status(welt):

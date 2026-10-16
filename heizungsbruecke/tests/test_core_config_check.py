@@ -54,15 +54,10 @@ def test_no_object_is_invalid():
     {"anlage": ""}, {"anlage": 5}, {"anlage": "x" * 65}, {"profil": None}, {"hebelsatz": None},
     {"verteilsystem": 3}, {"bindung": []}, {"raumfuehler": []}, {"raumfuehler": "x"}, {"raumfuehler": [5]},
     {"raumfuehler": [SENSOR] * 9}, {"tagestick": "25:00"}, {"tagestick": None}, {"abo": "vielleicht"},
-    {"abo": None}, {"intervalle": {"pruefung_s": 0}}, {"intervalle": {"telemetrie_s": 601}},
-    {"intervalle": {"telemetrie_s": True}}, {"intervalle": {"anders": 5}}, {"intervalle": [5]},
+    {"abo": None},
 ])
 def test_structure_and_ranges(change):
     assert _pruefen(_konfiguration(**change)).grund == cc.UNGUELTIG
-
-
-def test_test_intervals_pass():
-    assert _pruefen(_konfiguration(intervalle={"pruefung_s": 5, "telemetrie_s": 10})) is None
 
 
 def test_interval_bounds():
@@ -119,6 +114,19 @@ def test_binding_roles(bindung):
     assert _pruefen(_konfiguration(bindung=bindung)).grund == cc.ROLLE_UNZULAESSIG
 
 
+@pytest.mark.parametrize(("bindung", "details"), [
+    ({"treiber": {"id": "simulation", "parameter": {}}, "thermostat": None, "abfrage_s": 60},
+     {"feld": "bindung", "regel": "unbekannt"}),
+    ({"treiber": {"id": "simulation", "parameter": {}, "extra": 1}, "thermostat": None},
+     {"feld": "treiber", "regel": "unbekannt"}),
+    ({"treiber": {"id": "simulation", "parameter": {}}}, {"feld": "thermostat", "regel": "fehlt"}),
+])
+def test_a_foreign_or_missing_gateway_binding_field_is_a_role_rejection(bindung, details):
+    """V1 ist auf beiden Seiten strikt (Nutzer-Entscheidung 2026-10-16): kein fremdes Feld, der fremde Name geht nicht
+    hoch."""
+    assert _pruefen(_konfiguration(bindung=bindung)) == cc.Ablehnung(cc.ROLLE_UNZULAESSIG, details)
+
+
 def test_without_thermostat():
     assert _pruefen(_konfiguration(bindung={"treiber": {"id": "simulation", "parameter": {}}, "thermostat": None})) is None
 
@@ -152,14 +160,9 @@ def test_a_gateway_shaped_configuration_is_not_a_home_assistant_binding():
     assert cc.pruefen(_konfiguration(), None, host=cc.HOST_HA).grund == cc.ROLLE_UNZULAESSIG
 
 
-def test_prueffregeln_gleich_dem_vertrag():
-    assert cc.PRUEF_REGELN == wire.PRUEF_REGELN
-
-
 @pytest.mark.parametrize(("change", "details"), [
     ({"tagestick": "25:00"}, {"feld": "tagestick", "regel": "format"}),
     ({"raumfuehler": [SENSOR] * 9}, {"feld": "raumfuehler", "regel": "anzahl", "min": 1, "max": 8, "anzahl": 9}),
-    ({"intervalle": {"telemetrie_s": 601}}, {"feld": "telemetrie_s", "regel": "bereich", "min": 10, "max": 600}),
     ({"abo": "vielleicht"}, {"feld": "abo", "regel": "unbekannt"}),
 ])
 def test_aufbau_nennt_feld_und_regel(change, details):

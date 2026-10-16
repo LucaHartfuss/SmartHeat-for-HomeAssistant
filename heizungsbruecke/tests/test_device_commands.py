@@ -5,7 +5,7 @@ import json
 import pytest
 
 from smartheat_device import commands as cmd
-from smartheat_device import fehler, wire
+from smartheat_device import fehler, nachrichten, wire
 
 
 class Sent:
@@ -79,6 +79,128 @@ def test_unknown_kinds_and_broken_payloads(tmp_path):
                             _fail("ungueltige_nutzlast", {"feld": "payload", "regel": "ungueltig"}, "c2")]
 
 
+def test_the_result_has_exactly_the_contract_fields():
+    for payload in (cmd.result_payload("c", True, {}, None),
+                    cmd.result_payload("c", False, None, fehler.body("intern", None))):
+        assert set(payload) == set(wire.RESULT_FIELDS) | {"command_id"}
+    assert cmd.result_payload("c", False, {"x": 1}, fehler.body("intern", None))["result"] is None
+    assert cmd.result_payload("c", True, {"x": 1}, fehler.body("intern", None))["error"] is None
+
+
+def test_a_result_that_leaves_the_contract_is_a_contract_error(monkeypatch):
+    monkeypatch.setattr(wire, "RESULT_FIELDS", (*wire.RESULT_FIELDS, "neu"))
+    with pytest.raises(nachrichten.Vertragsfehler) as fehlt:
+        cmd.result_payload("c", True, {}, None)
+    assert "neu" in str(fehlt.value)
+
+
+def test_the_register_reasons_are_in_the_common_list_of_every_kind():
+    for kind in wire.COMMANDS:
+        assert {"ungueltige_nutzlast", "intern"} <= set(wire.command_errors(kind))
+
+
+@pytest.mark.parametrize("feld", [f for f in wire.COMMAND_FIELDS if f != "command_id"])
+def test_a_command_missing_a_contract_field_is_refused_and_does_not_run(tmp_path, feld):
+    sent, calls = Sent(), []
+    register = cmd.CommandRegister(tmp_path, sent)
+    register.register("diagnostics", lambda payload: calls.append(1) or cmd.Done({}))
+    register.empfangen({key: value for key, value in _command().items() if key != feld})
+    assert calls == [] and sent.results == [_fail("ungueltige_nutzlast", {"feld": feld, "regel": "fehlt"})]
+
+
+@pytest.mark.parametrize("feld, erwartet", [
+    ("zukunft", {"regel": "unbekannt"}),  # kein Name des Vertrags: nie als Wert in details
+    ("stunden", {"feld": "stunden", "regel": "unbekannt"}),  # Name des Vertrags (PRUEF_FELDER)
+])
+def test_a_foreign_field_in_a_command_is_refused_and_does_not_run(tmp_path, feld, erwartet):
+    sent, calls = Sent(), []
+    register = cmd.CommandRegister(tmp_path, sent)
+    register.register("diagnostics", lambda payload: calls.append(1) or cmd.Done({}))
+    register.empfangen({**_command(), feld: 1})
+    assert calls == [] and sent.results == [_fail("ungueltige_nutzlast", erwartet)]
+
+
+@pytest.mark.parametrize("kind, payload, erwartet", [
+    ("diagnostics", {"zukunft": 1}, {"regel": "unbekannt"}),
+    ("diagnostics", {"stunden": 1}, {"feld": "stunden", "regel": "unbekannt"}),
+    ("inventory", {"stunden": 1, "extra": 2}, {"regel": "unbekannt"}),
+    ("hinweis", {"key": "k", "stufe": "info", "text": "t", "zukunft": 1}, {"regel": "unbekannt"}),
+])
+def test_a_foreign_payload_field_is_refused_and_does_not_run(tmp_path, kind, payload, erwartet):
+    sent, calls = Sent(), []
+    register = cmd.CommandRegister(tmp_path, sent)
+    register.register(kind, lambda nutzlast: calls.append(1) or cmd.Done({}))
+    register.empfangen(_command(kind, payload=payload))
+    assert calls == [] and sent.results == [_fail("ungueltige_nutzlast", erwartet)]
+
+
+@pytest.mark.parametrize("kind, payload, feld", [
+    ("claim_state", {}, "device_state"),
+    ("zigbee_permit_join", {}, "seconds"),
+    ("inventory", {"filter": {"treiber": "simulation"}}, "stunden"),
+    ("hinweis", {"key": "k", "stufe": "info"}, "text"),
+    ("hinweis", {"stufe": "info", "text": "t"}, "key"),
+])
+def test_a_missing_required_payload_field_is_refused_and_does_not_run(tmp_path, kind, payload, feld):
+    sent, calls = Sent(), []
+    register = cmd.CommandRegister(tmp_path, sent)
+    register.register(kind, lambda nutzlast: calls.append(1) or cmd.Done({}))
+    register.empfangen(_command(kind, payload=payload))
+    assert calls == [] and sent.results == [_fail("ungueltige_nutzlast", {"feld": feld, "regel": "fehlt"})]
+
+
+@pytest.mark.parametrize("kind, payload", [
+    ("claim_state", {"device_state": "uebernommen"}), ("new_claim_code", {}), ("sign_off", {}), ("diagnostics", {}),
+    ("hinweis", {"key": "k", "stufe": "info", "text": "t"}), ("inventory", {"stunden": 0}),
+    ("inventory", {"stunden": 1, "filter": {"treiber": "simulation"}}), ("zigbee_permit_join", {"seconds": 60}),
+    ("zigbee_devices", {}),
+])
+def test_every_server_payload_shape_is_accepted(tmp_path, kind, payload):
+    """Die Nutzlasten der Server-Erzeuger (Check 72) bleiben angenommen: alle Pflichtfelder, optionale nach Bedarf."""
+    sent, calls = Sent(), []
+    register = cmd.CommandRegister(tmp_path, sent)
+    register.register(kind, lambda nutzlast: calls.append(1) or cmd.Done({}))
+    register.empfangen(_command(kind, payload=payload))
+    assert calls == [1] and sent.results == [_ok()]
+
+
+@pytest.mark.parametrize("payload", [{}, {"phase": "begin"}, {"phase": "x", "driver_id": "y"}])
+def test_a_phase_command_leaves_the_required_fields_to_its_handler(tmp_path, payload):
+    """driver_login: Command.payload ist die Vereinigung aller Phasen; die Annahme verlangt davon keines."""
+    sent, calls = Sent(), []
+    register = cmd.CommandRegister(tmp_path, sent)
+    register.register("driver_login", lambda nutzlast: calls.append(nutzlast) or cmd.Done({}))
+    register.empfangen(_command("driver_login", payload=payload))
+    assert calls == [payload] and sent.results == [_ok()]
+    assert set(cmd.PHASENBEFEHLE) == {"driver_login"}
+
+
+def test_the_optional_payload_field_of_a_kind_is_accepted(tmp_path):
+    sent, calls = Sent(), []
+    register = cmd.CommandRegister(tmp_path, sent)
+    register.register("inventory", lambda nutzlast: calls.append(1) or cmd.Done({}))
+    register.empfangen(_command("inventory", payload={"stunden": 0, "filter": {"treiber": "simulation"}}))
+    assert calls == [1] and sent.results == [_ok()]
+
+
+def test_no_foreign_name_reaches_the_details(tmp_path):
+    sent = Sent()
+    register = cmd.CommandRegister(tmp_path, sent)
+    register.register("diagnostics", lambda payload: cmd.Done({}))
+    register.empfangen({**_command(), "GEHEIMER-NAME": 1})
+    register.empfangen(_command(command_id="c2", payload={"GEHEIMER-NAME": 1}))
+    assert "GEHEIMER-NAME" not in json.dumps(sent.results) and len(sent.results) == 2
+
+
+def test_a_malformed_duplicate_does_not_replace_the_stored_result(tmp_path):
+    sent = Sent()
+    register = cmd.CommandRegister(tmp_path, sent)
+    register.register("diagnostics", lambda payload: cmd.Done({"a": 1}))
+    register.empfangen(_command())
+    register.empfangen({key: value for key, value in _command().items() if key != "expires_at"})
+    assert sent.results == [_ok(result={"a": 1})] * 2
+
+
 @pytest.mark.parametrize("command_id", [None, "", "x" * 65, 5])
 def test_commands_without_a_valid_id_are_dropped(tmp_path, command_id):
     sent = Sent()
@@ -120,8 +242,9 @@ def test_exceptions_become_reasons(tmp_path):
     register.register("zigbee_permit_join", invalid)
     register.register("inventory", down)
     register.register("diagnostics", broken)
-    for number, kind in enumerate(("zigbee_permit_join", "inventory", "diagnostics"), start=1):
-        register.empfangen(_command(kind, f"c{number}"))
+    nutzlasten = {"zigbee_permit_join": {"seconds": 60}, "inventory": {"stunden": 1}, "diagnostics": {}}
+    for number, (kind, nutzlast) in enumerate(nutzlasten.items(), start=1):
+        register.empfangen(_command(kind, f"c{number}", nutzlast))
     assert [result["error"] for result in sent.results] == [
         {"grund": "ungueltige_nutzlast", "details": {"feld": "seconds", "regel": "fehlt"}},
         {"grund": "anlage_nicht_erreichbar"},

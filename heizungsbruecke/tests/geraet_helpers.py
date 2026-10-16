@@ -36,10 +36,6 @@ def konfiguration_aus_optionen(options: dict) -> dict:
         "bindungsparameter": options["bindungsparameter"] if "bindungsparameter" in options
         else bindung_beispiele.parameter(hebelsatz if hebelsatz in bindung_beispiele.PARAMETER else "vaillant_vrc720"),
     }
-    intervalle = {k: options[o] for k, o in (("pruefung_s", "local_check_interval_seconds"),
-                                              ("telemetrie_s", "telemetry_interval_seconds")) if o in options}
-    if intervalle:
-        konfiguration["intervalle"] = intervalle
     return konfiguration
 
 

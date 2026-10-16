@@ -1,15 +1,19 @@
 """Laufzeit aus dem Konfigurationsdokument (Spec 5b 5.2, Plan D1): sobald ein Host smartheat_device nutzt (Gateway ab
-0.6.0, HA-Add-on ab 5c), liest die Laufzeit Anlage, Hebelsatz, Verteilsystem, Raumfuehler, Tagestick, Abo und
-Intervalle aus dem Konfigurationsdokument statt aus Optionen. Transport und Zugang haelt der Geraetekern (eine
+0.6.0, HA-Add-on ab 5c), liest die Laufzeit Anlage, Hebelsatz, Verteilsystem, Raumfuehler, Tagestick und Abo aus dem
+Konfigurationsdokument statt aus Optionen; kurze Intervalle gibt es nur fuer die E2E aus der Umgebung
+(SMARTHEAT_E2E_INTERVALLE, Stufe 3 S8a-1 P2). Transport und Zugang haelt der Geraetekern (eine
 MQTT-Verbindung), der Abo-Status steht im Dokument (Plan S1, Praezisierung abo; die 30-Tage-Frist bleibt lokal).
 Die Anlage bindet den lokalen Zustand (A4-08) ueber tenant_id: eine andere Anlage beginnt mit leerem Zustand, eine
 neue Konfiguration derselben Anlage nicht. Feldnamen = smartheat_device.wire.KONFIGURATION_FIELDS (die Laufzeit
 importiert den Geraetekern nicht; ein Test haelt beide gleich). Die Bindung (Treiber, Thermostat) liest der Host.
 Dazu ConfigError, Bindungsbeschreibung und Sicherheitswerte (bis Stufe 3 S5 in options.py)."""
+import json
+import logging
+import os
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-from smartheat_core import dateien, rastung
+from smartheat_core import config_check, dateien, rastung
 from smartheat_core.binding import BindingDescription
 from smartheat_core.bindungsparameter import beschreibung as _beschreibung
 from smartheat_core.levers import LEVER_SETS
@@ -18,11 +22,11 @@ from smartheat_runtime import entitlement
 from smartheat_runtime.runtime_config import BootInfo, RuntimeConfig
 from smartheat_runtime.windows import validate_daily_trigger_time
 
-FELDER = ("anlage", "profil", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo", "intervalle",
+FELDER = ("anlage", "profil", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo",
           "bindungsparameter")
 #: Aendert sich eines davon, startet der Host die Laufzeit neu (software, mindest_software und profil nicht). Die
 #: Bindungsparameter (Spec Stufe 3 S4b) gehoeren dazu: Schritte, Toleranzen, Wartezeit und Schreibschutz kommen nur von dort.
-LAUFZEIT_FELDER = ("anlage", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo", "intervalle",
+LAUFZEIT_FELDER = ("anlage", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo",
                    "bindungsparameter")
 ABO = {"aktiv": entitlement.ACTIVE, "inaktiv": entitlement.INACTIVE}
 # Lokale Checks laufen eventgetrieben; dieser Takt gilt nur noch fuer den Watchdog-Fallback
@@ -32,6 +36,8 @@ DEFAULT_TELEMETRY_INTERVAL_SECONDS = 300
 RECONFIGURE_HINT = "bitte SmartHeat neu konfigurieren"
 #: Nur fuer das Statusereignis ohne (gueltige) Konfiguration (boot_info); die Laufzeit kennt keinen Rueckfall.
 _STANDARD_HEBELSATZ = "vaillant_vrc720"
+E2E_INTERVALLE_ENV = "SMARTHEAT_E2E_INTERVALLE"
+logger = logging.getLogger(__name__)
 
 
 class ConfigError(ValueError):
@@ -81,16 +87,29 @@ def abo_status(konfiguration) -> str:
     return ABO.get(konfiguration.get("abo"), entitlement.UNKNOWN)
 
 
-def _intervall(konfiguration, key: str, default: float) -> float:
-    werte = konfiguration.get("intervalle") if isinstance(konfiguration, Mapping) else None
-    value = werte.get(key) if isinstance(werte, Mapping) else None
-    return value if isinstance(value, int | float) and not isinstance(value, bool) else default
+def _e2e_intervalle() -> dict:
+    """Nur fuer die E2E (Plan S8a-1 P2; frueher das Dokumentfeld intervalle): JSON-Objekt mit pruefung_s/telemetrie_s
+    in den Grenzen von config_check.INTERVALLE; sonst {} (Standardwerte), Log ohne Wert."""
+    roh = os.environ.get(E2E_INTERVALLE_ENV)
+    if not roh:
+        return {}
+    try:
+        werte = json.loads(roh)
+    except (ValueError, RecursionError):  # zu tief verschachtelt: Standardwerte statt Startfehler
+        werte = None
+    if not isinstance(werte, dict) or not set(werte) <= set(config_check.INTERVALLE) or not all(
+            isinstance(werte[k], int | float) and not isinstance(werte[k], bool)
+            and config_check.INTERVALLE[k][0] <= werte[k] <= config_check.INTERVALLE[k][1] for k in werte):
+        logger.warning("%s ungueltig, es gelten die Standardintervalle", E2E_INTERVALLE_ENV)
+        return {}
+    return werte
 
 
 def boot_info(konfiguration, *, abgemeldet: bool, client_version: str, backup_path: Path,
               failsafe_path: Path, aufraeumen_path: Path | None = None) -> BootInfo:
     """Wirft nie (wie die BootInfo der Hosts): ein unbekannter Hebelsatz faellt fuer das Statusereignis auf den
     Standard zurueck; runtime_config meldet ihn danach als Konfigurationsfehler."""
+    intervalle = _e2e_intervalle()  # einmal je Aufruf lesen (und loggen)
     anlage = konfiguration["anlage"] if eingerichtet(konfiguration) else None
     hebelsatz = konfiguration.get("hebelsatz") if isinstance(konfiguration, Mapping) else None
     lever_set = LEVER_SETS.get(hebelsatz) if isinstance(hebelsatz, str) else None
@@ -98,7 +117,7 @@ def boot_info(konfiguration, *, abgemeldet: bool, client_version: str, backup_pa
     return BootInfo(
         configured=anlage is not None and not abgemeldet, signed_off=anlage is not None and abgemeldet,
         tenant_id=anlage, lever_set=lever_set, client_version=client_version, notify_hints_off=(),
-        local_check_interval=_intervall(konfiguration, "pruefung_s", DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS),
+        local_check_interval=intervalle.get("pruefung_s", DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS),
         backup_path=backup_path, failsafe_path=failsafe_path, aufraeumen_path=aufraeumen_path,
     )
 
@@ -125,11 +144,12 @@ def runtime_config(konfiguration, *, rastung_pfad: Path, entitlement_path: Path,
     sensors = konfiguration.get("raumfuehler")
     if not isinstance(sensors, list) or not sensors or not all(isinstance(ref, str) for ref in sensors):
         raise ConfigError("Konfiguration: keine Raumfühler")
+    intervalle = _e2e_intervalle()  # einmal je Aufruf lesen (und loggen)
     return RuntimeConfig(
         tenant_id=konfiguration["anlage"], lever_set_id=hebelsatz,
         local_safety=safety, daily_trigger_time=daily,
-        local_check_interval=_intervall(konfiguration, "pruefung_s", DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS),
-        telemetry_interval=_intervall(konfiguration, "telemetrie_s", DEFAULT_TELEMETRY_INTERVAL_SECONDS),
+        local_check_interval=intervalle.get("pruefung_s", DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS),
+        telemetry_interval=intervalle.get("telemetrie_s", DEFAULT_TELEMETRY_INTERVAL_SECONDS),
         notify_hints_off=(), room_sensor_refs=tuple(sensors), battery_refs=(), entitlement_path=entitlement_path,
         abo_source=abo_source,
     )

@@ -20,12 +20,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from smartheat_core import dateien
-from smartheat_device import wire
+from smartheat_device import fehler, wire
 from smartheat_device.commands import CommandRegister, Done, Failed, InvalidPayload, Outcome, Waiting
 from smartheat_device.hintergrund import (  # noqa: F401  (HINTERGRUND_NAME: Rueck-Import fuer tests/test_befehle.py)
     HINTERGRUND_NAME,
     Hintergrund,
 )
+from smartheat_device.nachrichten import Vertragsfehler, pruefen
 from smartheat_gateway import config as gateway_config
 from smartheat_gateway.drivers import registry
 from smartheat_gateway.drivers.base import Driver, DriverError
@@ -149,20 +150,41 @@ def zigbee_devices(ctx: Kontext, payload: dict) -> Outcome:
         data = ctx.mirror.payload(device.ieee)
         seen = ctx.mirror.last_seen(device.ieee)
         last_seen = None if seen is None else datetime.fromtimestamp(ctx.wall() - (ctx.clock() - seen), UTC).isoformat()
-        devices.append({
+        devices.append(_zigbee_geraet({
             "ieee": device.ieee, "model": device.model, "vendor": device.vendor, "art": device.art,
             "werte": {key: data[key] for key in ZIGBEE_VALUE_FIELDS if key in data},
             "batterie": data.get("battery", data.get("battery_low")),
             "faehigkeiten": sorted(device.faehigkeiten), "last_seen": last_seen,
-        })
+        }))
     return Done({"devices": devices})
+
+
+def _zigbee_geraet(eintrag: dict) -> dict:
+    """Ein Geraet der Liste mit genau den Feldern des Vertrags (wire.ZIGBEE_DEVICE_FIELDS), art aus ZIGBEE_ARTEN. Eine
+    Abweichung ist ein Vertragsfehler ohne Werte (Regel 6): der Befehl endet mit intern."""
+    pruefen("zigbee_devices.device", eintrag, wire.ZIGBEE_DEVICE_FIELDS)
+    if eintrag["art"] not in wire.ZIGBEE_ARTEN:
+        raise Vertragsfehler("zigbee_devices.device: art steht nicht in ZIGBEE_ARTEN")
+    return eintrag
 
 
 @_handler("driver_login")
 def driver_login(ctx: Kontext, payload: dict) -> Outcome:
-    phase = payload.get("phase")
+    # Phasengenau (V1 strikt): genau die Felder von wire.DRIVER_LOGIN_PHASES[phase]; die Annahme des Registers
+    # (commands.PHASENBEFEHLE) prueft davon nur fremde Namen ausserhalb aller Phasen.
+    if "phase" not in payload:
+        raise InvalidPayload("phase", "fehlt")
+    phase = payload["phase"]
+    if not isinstance(phase, str):
+        raise InvalidPayload("phase", "ungueltig")
     if phase not in wire.DRIVER_LOGIN_PHASES:
         raise InvalidPayload("phase", "unbekannt")
+    erlaubt = wire.DRIVER_LOGIN_PHASES[phase]
+    if fremd := fehler.fremdes_feld(payload, erlaubt):
+        return Failed("ungueltige_nutzlast", fremd)
+    for feld in erlaubt:
+        if feld not in payload:
+            raise InvalidPayload(feld, "fehlt")
     driver = _driver(ctx, payload.get("driver_id"))
     if type(driver).login_kind is None:
         raise DriverError("login_nicht_noetig")
@@ -189,8 +211,9 @@ def _erkennung(ctx: Kontext, payload: dict) -> Outcome:
     """Inventur stunden 0 (Spec Stufe 3 S5 5.1): Erkennung des Treibers aus dem Filter, vor und nach der Einrichtung;
     die Daten gehen als up/inventory vor dem Ergebnis."""
     filter_ = payload.get("filter")
-    treiber = filter_.get("treiber") if isinstance(filter_, dict) and set(filter_) == set(
-        wire.INVENTUR_FILTER_GATEWAY_FIELDS) else None
+    if isinstance(filter_, dict) and (fremd := fehler.fremdes_feld(filter_, wire.INVENTUR_FILTER_GATEWAY_FIELDS)):
+        return Failed("ungueltige_nutzlast", fremd)  # V1 ist beidseitig strikt (Nutzer 2026-10-16)
+    treiber = filter_.get("treiber") if isinstance(filter_, dict) else None
     if not isinstance(treiber, str):
         fehlt = filter_ is None or (isinstance(filter_, dict) and "treiber" not in filter_)
         raise InvalidPayload("treiber", "fehlt" if fehlt else "ungueltig")

@@ -37,13 +37,6 @@ def _pruefen(konfiguration, host_details=None):
     return _geprueft(konfiguration, None, host=cc.HOST_HA, treiber_pruefen=lambda k: host_details)
 
 
-def test_copies_match_the_contract():
-    assert cc.HA_BINDUNG_FELDER == wire.BINDUNG_HA_FIELDS
-    assert cc.HA_ROLLEN == wire.HA_ROLLEN
-    assert cc.HA_HINWEISE == wire.HA_HINWEISE
-    assert cc.KREIS_FELDER == wire.KREIS_FIELDS
-
-
 def test_the_poll_interval_bounds():
     assert cc.ABFRAGE_S == (10, 3600)
 
@@ -99,6 +92,16 @@ def test_structural_rules(changes, grund):
     assert ablehnung is not None and ablehnung.grund == grund
 
 
+@pytest.mark.parametrize(("changes", "details"), [
+    ({"bindung": {"extra": 1}}, {"feld": "bindung", "regel": "unbekannt"}),
+    ({"bindung": {"kreis": {"plattform": "mypyllant", "config_entry": "e1", "anlage": "S", "nummer": "0", "extra": 1}}},
+     {"feld": "kreis", "regel": "unbekannt"}),
+])
+def test_a_foreign_field_in_the_ha_binding_is_a_role_rejection(changes, details):
+    """V1 ist auf beiden Seiten strikt (Nutzer-Entscheidung 2026-10-16); der fremde Name geht nicht hoch."""
+    assert _pruefen(_ha(**changes)) == cc.Ablehnung(cc.ROLLE_UNZULAESSIG, details)
+
+
 def test_incomplete_binding_is_a_role_rejection():
     konfiguration = _ha()
     del konfiguration["bindung"]["batterien"]
@@ -110,7 +113,7 @@ def test_incomplete_binding_is_a_role_rejection():
     {"benachrichtigung": []}, {"batterien": ["binary_sensor.fenster_batterie"]},
     {"kreis": {"plattform": "mypyllant", "config_entry": None, "anlage": "S", "nummer": "0"}},
     {"kreis": {"plattform": "mypyllant", "anlage": "S", "nummer": "0"}},
-    {"hinweise_aus": list(wire.HA_HINWEISE)},
+    {"hinweise_aus": list(wire.HA_HINWEISE)}, {"einheiten": {"energy_electrical_total": "kWh"}},
 ])
 def test_accepted_binding_variants(bindung):
     assert _pruefen(_ha(bindung=bindung)) is None

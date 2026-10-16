@@ -8,7 +8,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from device_helpers import GeraeteCa, csr_passt, zertifikat_fuer
 
-from smartheat_device import bootstrap, identity, wire
+from smartheat_device import bootstrap, identity, nachrichten, wire
 
 NOW = 1_800_000_000
 BASE = "https://accounts.example.test"
@@ -273,6 +273,52 @@ def test_an_unavailable_server_backs_off_up_to_15_minutes(tmp_path, ident):
 def test_a_rejected_request_is_retried_later_and_not_blocked(tmp_path, ident):
     flow = _flow(tmp_path, ident, ScriptedClient(register=[bootstrap.Rejected("register: HTTP 400")]))
     assert flow.holen(rettung=False) is None and not flow.gesperrt and not flow.faellig()
+
+
+def test_a_request_outside_the_contract_is_retried_later_and_not_blocked_and_logged_without_text(
+        tmp_path, ident, caplog):
+    fehler = nachrichten.Vertragsfehler("register: fremd ['GEHEIM-FELD']")
+    flow = _flow(tmp_path, ident, ScriptedClient(register=[fehler]))
+    assert flow.holen(rettung=False) is None and not flow.gesperrt and not flow.faellig()
+    assert "Anfrage nicht gebaut (Vertragsfehler)" in caplog.text and "GEHEIM-FELD" not in caplog.text
+
+
+def test_a_host_callback_value_error_is_not_logged_with_its_text_and_is_retried_later(tmp_path, ident, caplog):
+    def args() -> dict:
+        raise ValueError("geheimer Parameter")  # z. B. host.faehigkeiten()
+
+    flow = bootstrap.Bootstrap(tmp_path, ScriptedClient(register=[]), register_args=args, uhr_synchron=lambda: True,
+                               identity=lambda: ident, clock=Clock())
+    assert flow.holen(rettung=False) is None and not flow.gesperrt and not flow.faellig()  # Backoff, nicht weiterwerfen
+    assert "unerwarteter Fehler (ValueError) in " in caplog.text and "args" in caplog.text
+    assert "geheimer Parameter" not in caplog.text
+
+
+def test_a_failing_host_callback_in_the_rescue_after_401_is_retried_later_too(tmp_path, ident, caplog):
+    """Rettung: certificate -> 401 -> register baut seine Argumente (Host-Rueckruf) und scheitert: Backoff, keine Sperre."""
+    def args() -> dict:
+        raise ValueError("geheimer Parameter")
+
+    client = ScriptedClient(register=[], certificate=[bootstrap.NotAuthenticated("certificate")])
+    flow = bootstrap.Bootstrap(tmp_path, client, register_args=args, uhr_synchron=lambda: True,
+                               identity=lambda: ident, clock=Clock())
+    assert flow.holen(rettung=True) is None and not flow.gesperrt and not flow.faellig()
+    assert "geheimer Parameter" not in caplog.text
+
+
+@pytest.mark.parametrize("feld", wire.BOOTSTRAP_RESPONSE)
+def test_an_answer_without_a_required_field_is_unavailable(ident, ca, feld):
+    body = _body(ident, ca)
+    del body[feld]
+    with pytest.raises(bootstrap.Unavailable, match="unvollstaendig"):
+        _client(ident, FakeSession(FakeResponse(200, body))).register(**ARGS)
+
+
+def test_register_with_capabilities_outside_the_contract_is_not_built(ident):
+    session = FakeSession(FakeResponse(200, {}))
+    with pytest.raises(ValueError, match="capabilities"):
+        _client(ident, session).register(**{**ARGS, "capabilities": {"drivers": [], "zigbee": True, "frei": 1}})
+    assert session.calls == []
 
 
 def test_a_certificate_for_another_key_is_not_stored(tmp_path, ident, ca):

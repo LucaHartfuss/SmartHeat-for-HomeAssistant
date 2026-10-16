@@ -204,10 +204,76 @@ def test_ungueltige_details_des_hosts_gehen_nicht_hoch(tmp_path, caplog):
     assert "leonies" not in caplog.text
 
 
-def test_unknown_fields_are_kept_and_ignored(tmp_path):
+SOFTWARE = {"version": "0.7.0", "manifest_url": "https://example.invalid/m.json", "manifest_sha256": "a" * 64,
+            "signature": "c2ln"}
+
+
+@pytest.mark.parametrize(("fremd", "details"), [
+    ({"kuenftig": {"a": 1}}, {"regel": "unbekannt"}),
+    ({"intervalle": {"pruefung_s": 5}}, {"regel": "unbekannt"}),
+    ({"treiber": "x"}, {"feld": "treiber", "regel": "unbekannt"}),  # steht im Vertrag, aber nicht in der Konfiguration
+])
+def test_a_foreign_configuration_field_is_rejected(tmp_path, fremd, details):
+    """V1 ist auf beiden Seiten strikt (Nutzer-Entscheidung 2026-10-16, R10); der Name geht nur hoch, wenn er im Vertrag
+    steht (wire.PRUEF_FELDER)."""
     store = _store(tmp_path)
-    assert store.empfangen("konfiguration", _konfiguration(kuenftig={"a": 1})).ok
-    assert store.inhalt("konfiguration")["kuenftig"] == {"a": 1}
+    ergebnis = store.empfangen("konfiguration", _konfiguration(**fremd))
+    assert (ergebnis.ok, ergebnis.grund, ergebnis.details) == (False, "ungueltig", details)
+    assert store.inhalt("konfiguration") is None
+
+
+def test_a_foreign_field_in_an_empty_configuration_is_rejected_too(tmp_path):
+    assert _store(tmp_path).empfangen("konfiguration", {**_leer(), "kuenftig": 1}).grund == "ungueltig"
+
+
+@pytest.mark.parametrize("software", [SOFTWARE, None])
+def test_the_target_software_is_taken_with_exactly_the_contract_fields(tmp_path, software):
+    assert _store(tmp_path).empfangen("konfiguration", _konfiguration(software=software)).ok
+
+
+@pytest.mark.parametrize(("software", "regel"), [
+    ({**SOFTWARE, "extra": 1}, "unbekannt"), ({k: v for k, v in SOFTWARE.items() if k != "signature"}, "fehlt"),
+    ([], "ungueltig"), ("0.7.0", "ungueltig"), ({}, "fehlt"),
+])
+def test_the_target_software_must_have_exactly_the_contract_fields(tmp_path, software, regel):
+    ergebnis = _store(tmp_path).empfangen("konfiguration", _konfiguration(software=software))
+    assert (ergebnis.ok, ergebnis.grund) == (False, "ungueltig")
+    assert ergebnis.details["feld"] == "software" and ergebnis.details["regel"] == regel
+
+
+def test_a_rejected_foreign_field_changes_neither_the_accepted_document_nor_the_update_trigger(tmp_path):
+    store = _store(tmp_path)
+    assert store.empfangen("konfiguration", _konfiguration(version=1)).uebernommen
+    vorher = store.aktuell("konfiguration")
+    ergebnis = store.empfangen("konfiguration", _konfiguration(version=2, mindest_software="9.9.9", kuenftig=1))
+    assert (ergebnis.ok, ergebnis.grund) == (False, "ungueltig")
+    assert store.aktuell("konfiguration") == vorher and not store.update_noetig
+    # ein gesetzter Ausloeser bleibt ebenfalls: die fremde Konfiguration mit niedriger Mindestversion loest ihn nicht
+    abgelehnt = store.empfangen("konfiguration", _konfiguration(version=3, mindest_software="9.9.9"))
+    assert abgelehnt.grund == "update_noetig"
+    assert store.update_noetig
+    store.empfangen("konfiguration", _konfiguration(version=4, mindest_software="0.1.0", kuenftig=1))
+    assert store.update_noetig and store.aktuell("konfiguration") == vorher
+
+
+def test_a_foreign_operation_field_is_rejected(tmp_path):
+    store = _store(tmp_path)
+    ergebnis = store.empfangen("bedienung", _bedienung(kuenftig=1))
+    assert (ergebnis.ok, ergebnis.grund, ergebnis.details) == (False, "ungueltig", {"regel": "unbekannt"})
+    assert store.inhalt("bedienung") is None
+
+
+def test_an_operation_without_a_contract_field_is_rejected(tmp_path):
+    bedienung = _bedienung()
+    del bedienung["ts"]
+    ergebnis = _store(tmp_path).empfangen("bedienung", bedienung)
+    assert (ergebnis.ok, ergebnis.grund, ergebnis.details) == (False, "ungueltig", {"feld": "ts", "regel": "fehlt",
+                                                                                     "anzahl": 1})
+
+
+def test_a_reason_outside_the_contract_is_a_programming_error(tmp_path):
+    with pytest.raises(ValueError, match="DOKUMENT_ERRORS"):
+        _store(tmp_path)._abgelehnt_mit("konfiguration", 1, "gibt_es_nicht", None)
 
 
 def test_a_configuration_with_origin_values_is_taken(tmp_path):

@@ -8,7 +8,7 @@ import pytest
 from fakes import FakeHa
 
 from heizungsbruecke import inventur
-from smartheat_device import wire
+from smartheat_device import nachrichten, wire
 
 FILTER = {"plattformen": ["mypyllant"], "domaenen": ["climate", "weather"],
           "geraeteklassen": [["sensor", "temperature"], ["sensor", "battery"]], "dienste": ["notify.mobile_app_"]}
@@ -54,6 +54,21 @@ def test_only_filtered_candidates_with_contract_fields():
     assert (daten["einheit_temperatur"], daten["zeitzone"]) == ("°C", "Europe/Berlin")
 
 
+@pytest.mark.parametrize("liste, nachricht", [("INVENTUR_HA_FIELDS", "inventur"),
+                                              ("INVENTUR_ENTITY_FIELDS", "inventur.entity"),
+                                              ("INVENTUR_GERAET_FIELDS", "inventur.geraet")])
+def test_die_inventur_wird_gegen_den_vertrag_gebaut_und_nennt_nur_feldnamen(monkeypatch, liste, nachricht):
+    """Die Erzeuger lesen die Feldlisten des Vertrags: eine Liste ohne ein Feld, das der Erzeuger setzt, ist ein
+    Vertragsfehler mit Feldnamen, nie mit Werten aus HA (Regel 6)."""
+    felder = getattr(wire, liste)
+    monkeypatch.setattr(wire, liste, felder[:-1])
+    with pytest.raises(nachrichten.Vertragsfehler) as fehler:
+        inventur.inventur(_ha(), FILTER)
+    assert str(fehler.value) == f"{nachricht}: fehlt [], fremd [{felder[-1]!r}]"
+    assert "Heating Curve" not in str(fehler.value)
+    assert "mobile_app_handy" not in str(fehler.value) and "ecoTEC" not in str(fehler.value)
+
+
 def test_entity_fields_come_from_registry_and_state():
     daten = inventur.inventur(_ha(), FILTER)
     by_id = {e["entity_id"]: e for e in daten["entities"]}
@@ -89,10 +104,18 @@ def test_entity_without_registry_entry_still_counts_by_domain():
 
 def test_filter_check():
     assert inventur.filter_pruefen(FILTER) is None and inventur.filter_pruefen(SERVER_FILTER) is None
-    assert inventur.filter_pruefen({}) is None and inventur.filter_pruefen({"unbekannt": 1, "dienste": None}) is None
+    assert inventur.filter_pruefen({}) is None and inventur.filter_pruefen({"dienste": None}) is None
     for kaputt in (None, [], {"plattformen": [["x"]]}, {"domaenen": "climate"}, {"geraeteklassen": [["sensor"]]},
                    {"geraeteklassen": [["sensor", 1]]}, {"dienste": [None]}):
         assert inventur.filter_pruefen(kaputt) == {"feld": "filter", "regel": "ungueltig"}
+
+
+def test_ein_fremder_filterschluessel_ist_unbekannt_und_traegt_nur_vertragsnamen():
+    """V1 ist beidseitig strikt (Nutzer 2026-10-16): ein Schluessel ausserhalb von INVENTUR_FILTER_FIELDS lehnt den
+    Filter ab; sein Name steht nur in details, wenn er ein Feld des Vertrags ist (G-6)."""
+    assert inventur.filter_pruefen({**FILTER, "geheim": 1}) == {"regel": "unbekannt"}
+    assert inventur.filter_pruefen({**FILTER, "treiber": "simulation"}) == {"feld": "treiber", "regel": "unbekannt"}
+    assert inventur.filter_pruefen({"treiber": "simulation"}) == {"feld": "treiber", "regel": "unbekannt"}
 
 
 def test_empty_filter_selects_nothing():

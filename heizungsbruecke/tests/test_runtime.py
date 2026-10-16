@@ -4,6 +4,7 @@ Konfigurationsdokument aus OPTIONS, geraet_helpers.start_bridge) mit Fake-Uhr (t
 Fake-Trigger-Client und dem Link einer Geraete-Attrappe (FakeGeraet) statt eines eigenen MQTT-Clients."""
 import dataclasses
 import itertools
+import json
 import logging
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
@@ -19,7 +20,7 @@ from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core.enforce import MAX_WRITES_PER_DAY, RETRY_SECONDS
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_device.laufzeit import RuntimeChannel
-from smartheat_runtime import abo, app, aufraeumen, backup_store, datentraeger, entitlement, ticks
+from smartheat_runtime import abo, app, aufraeumen, backup_store, datentraeger, dokument_config, entitlement, ticks
 from smartheat_runtime.backup_store import load_backup, save_backup
 from smartheat_runtime.delivery import DataFault, DeliveryState
 from smartheat_runtime.runtime import Runtime
@@ -256,6 +257,11 @@ def _start(env, **option_overrides):
     assert _is_running(bridge)
     bridge.worker.run_pending()
     return bridge
+
+
+def _pruefintervall(monkeypatch, sekunden):
+    """Kurzes Pruefintervall wie in der E2E (Plan S8a-1 P2: Umgebung des Geraets, nicht das Konfigurationsdokument)."""
+    monkeypatch.setenv(dokument_config.E2E_INTERVALLE_ENV, json.dumps({"pruefung_s": sekunden}))
 
 
 def _regulation_writes(env):
@@ -2290,14 +2296,15 @@ def test_rejected_answer_keeps_the_pending_manual_override(env):
     assert _backup(env)["manual_override_pending"] == OVERRIDE
 
 
-def test_manual_override_detected_during_an_open_tick_survives_a_same_seq_retry(env):
+def test_manual_override_detected_during_an_open_tick_survives_a_same_seq_retry(env, monkeypatch):
     """Fix Runde 1, Befund 2: der Server verarbeitet eine bereits gesehene seq idempotent aus
     dem Cache (regelung/tick.py). Ein zwischen dem ersten Publish und einem Retry derselben seq
     neu erkannter Eingriff darf nicht mit dem Retry reisen -- der Server saehe ihn dann nie,
     waehrend die (verspaetete) Antwort ihn beim Client trotzdem als erledigt loeschen wuerde
     (KPI-Verlust). Er muss bis zur naechsten seq warten."""
     _quiet_backup(env)
-    bridge = _start(env, local_check_interval_seconds=5)
+    _pruefintervall(monkeypatch, 5)
+    bridge = _start(env)
     _settle(env, bridge)
     _set_room_target(env, bridge, 20.5)  # erster Tick, seq X, noch ohne Eingriff
     seq = _mqtt(env).snapshots[0]["seq"]
@@ -2317,12 +2324,13 @@ def test_manual_override_detected_during_an_open_tick_survives_a_same_seq_retry(
     assert _backup(env)["manual_override_pending"]["levers"]["curve"] == 1.3  # ueberlebt, der Server hat ihn nie gesehen
 
 
-def test_manual_override_detected_while_a_tick_is_open_survives_its_answer(env):
+def test_manual_override_detected_while_a_tick_is_open_survives_its_answer(env, monkeypatch):
     """Fix Runde 1, Befund 3c: ein zwischen Publish und Antwort neu erkannter Eingriff (noch ohne
     Retry) darf die Antwort auf den urspruenglichen, eingriffslosen Versuch nicht loeschen
     (sent=None schuetzt ihn ueber die Praezisierung-4-Pruefung in _clear_sent_manual_override)."""
     _quiet_backup(env)
-    bridge = _start(env, local_check_interval_seconds=5)
+    _pruefintervall(monkeypatch, 5)
+    bridge = _start(env)
     _settle(env, bridge)
     _set_room_target(env, bridge, 20.5)  # seq X, noch ohne Eingriff
     seq = _mqtt(env).snapshots[-1]["seq"]

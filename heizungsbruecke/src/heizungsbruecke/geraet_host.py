@@ -21,7 +21,7 @@ from heizungsbruecke.geraet_status import GeraetStatus
 from heizungsbruecke.ha_sinks import GeraetUndHaSink, HaNotifySink
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core import dateien
-from smartheat_device import fehler
+from smartheat_device import fehler, nachrichten, wire
 from smartheat_device.commands import CommandRegister, Done, Failed, Outcome, Waiting
 from smartheat_device.geraet_host_basis import GeraetHostBasis
 from smartheat_device.host import Anzeige
@@ -75,7 +75,8 @@ class HaDeviceHost(GeraetHostBasis):
     # --- DeviceHost ---
 
     def faehigkeiten(self) -> dict:
-        return {"drivers": [], "zigbee": False}
+        return nachrichten.pruefen("faehigkeiten", {"drivers": [], "zigbee": False}, wire.CAPABILITY_FIELDS,
+                                   wire.CAPABILITY_OPTIONAL)
 
     def uhr_synchron(self) -> bool | None:
         """dt_synchronized aus GET /host/info; kein bool oder Fehler = unbekannt (gilt als nicht synchron). Der Aufruf
@@ -141,7 +142,8 @@ class HaDeviceHost(GeraetHostBasis):
     def _inventory(self, payload: dict) -> Outcome:
         """Momentaufnahme nach dem Filter des Servers (stunden 0, Spec 5c 1.3) im Hintergrund: die HA-API (Registry per
         WebSocket, Zustaende, Dienste) haelt den Geraete-Thread nie auf. Antwortet HA bis INVENTUR_SECONDS nicht, endet
-        der Befehl mit ha_nicht_erreichbar. Nur die Fehlerart ins Log, nie Inhalte (Regel 6)."""
+        der Befehl mit ha_nicht_erreichbar. Nur die Fehlerart ins Log, nie Inhalte (Regel 6). Verletzt die Inventur
+        den Vertrag (Vertragsfehler: nur Feldnamen), endet der Befehl mit intern."""
         filter_ = payload.get("filter")
         if not isinstance(filter_, dict):
             return Failed("ungueltige_nutzlast", fehler.details("filter", "fehlt" if filter_ is None else "ungueltig"))
@@ -158,6 +160,8 @@ class HaDeviceHost(GeraetHostBasis):
                 return None
             try:
                 return Done({}, inventur=future.result())
+            except nachrichten.Vertragsfehler:
+                raise  # Programmierfehler: das Register meldet intern, Fehlerart und Ort stehen im Log (kein Wert)
             except Exception as error:
                 logger.warning("Inventur gescheitert (%s)", type(error).__name__)
                 return Failed("ha_nicht_erreichbar")

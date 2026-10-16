@@ -1,7 +1,7 @@
 """Die Laufzeit (smartheat_runtime) auf dem Link des Geraets (Spec 5b 5.1/5.2, Weichenstellung 2): Tick und Telemetrie
 gehen ueber dieselbe MQTT-Verbindung wie Dokumente und Befehle, die Antwort down/setpoints kommt ueber den Link zurueck.
-Der Snapshot traegt zusaetzlich raum_soll_wirksam (Spec 2/3.2): im Modus manuell (Schema 1) ist das das Raum-Soll des
-Ticks, also die Bedienung bzw. ein lokaler Wunsch. stop() (Abo inaktiv, Ruhezustand der Laufzeit) schaltet nur die
+Der Snapshot geht unveraendert hoch (raum_soll_wirksam entfiel mit Stufe 3 S8a-1, A5-43: im Modus manuell war es nur
+room_target). stop() (Abo inaktiv, Ruhezustand der Laufzeit) schaltet nur die
 Laufzeit stumm; der Link bleibt, Dokumente und Befehle laufen weiter. Die paho-Thread-Regel gilt: Ereignisse gehen nur
 per post in den Regel-Worker."""
 from collections.abc import Callable
@@ -35,7 +35,7 @@ class RuntimeChannel:
 
     def publish_snapshot(self, payload: dict) -> None:
         if not self._stopped:
-            self._publish("up/snapshot", {**payload, "raum_soll_wirksam": payload.get("room_target")})
+            self._publish("up/snapshot", payload)
 
     def publish_telemetry(self, payload: dict) -> None:
         if not self._stopped:

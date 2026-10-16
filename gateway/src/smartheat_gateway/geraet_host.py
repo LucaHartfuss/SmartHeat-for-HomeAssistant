@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from smartheat_core import dateien
-from smartheat_device import fehler, wire
+from smartheat_device import fehler, nachrichten, wire
 from smartheat_device.commands import CommandRegister
 from smartheat_device.geraet_host_basis import GeraetHostBasis
 from smartheat_device.host import Anzeige
@@ -137,7 +137,8 @@ class GatewayDeviceHost(GeraetHostBasis):
     # --- DeviceHost ---
 
     def faehigkeiten(self) -> dict:
-        return {"drivers": list(registry.driver_ids()), "zigbee": True, "updater": True}
+        return nachrichten.pruefen("faehigkeiten", {"drivers": list(registry.driver_ids()), "zigbee": True,
+                                                    "updater": True}, wire.CAPABILITY_FIELDS, wire.CAPABILITY_OPTIONAL)
 
     def uhr_synchron(self) -> bool | None:
         """Zeitdienst des Hosts (host/status.json, Dienst hoststatus); aelter als 5 min oder unlesbar = unbekannt."""

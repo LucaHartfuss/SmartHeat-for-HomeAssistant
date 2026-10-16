@@ -387,7 +387,7 @@ def run_scenario(tmp_path, monkeypatch) -> list[dict]:
 ERLAUBT = (
     "abo_abfrage: ['accounts', 'status', …] fehlt (Abo aus dem Konfigurationsdokument)",
     "mqtt_client: ['mqtt', 'loop_start'|'stop'] fehlt (Link des Geraetekerns)",
-    "snapshot: ['mqtt', 'snapshot', p] -> ['link', 'up/snapshot', p + raum_soll_wirksam]",
+    "snapshot: ['mqtt', 'snapshot', p] -> ['link', 'up/snapshot', p]",
     "telemetrie: ['mqtt', 'telemetry', p] -> ['link', 'telemetry', p]",
     "status: smartheat_status Schema 2 -> 3 (Geraete-Felder dazu, Laufzeit-Felder gleich)",
     "dateien: runtime/room_target.json und runtime/abgemeldet.json neu; Zugangsoptionen fehlen",
@@ -429,7 +429,7 @@ def normalisieren(record: list[dict], *, alt: bool) -> list[dict]:
             if w[0] == "accounts" or w[:2] in (["mqtt", "loop_start"], ["mqtt", "stop"]):
                 continue
             if w[:2] == ["link", "up/snapshot"]:
-                w = ["mqtt", "snapshot", {k: v for k, v in w[2].items() if k != "raum_soll_wirksam"}]
+                w = ["mqtt", "snapshot", w[2]]
             elif w[0] == "link":
                 w = ["mqtt", w[1], w[2]]
             if w[:3] == ["ha", "event", "smartheat_status"]:

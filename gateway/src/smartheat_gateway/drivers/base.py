@@ -5,11 +5,13 @@ from collections.abc import Mapping
 from typing import ClassVar, Protocol
 
 from smartheat_core.binding import PlantBinding
+from smartheat_device import wire
+from smartheat_device.nachrichten import pruefen
 from smartheat_runtime.roles import LEVER_ROLES
 
 __all__ = [
     "CACHE_MAX_POLLS", "KIND_CLOUD", "KIND_LOCAL", "LEVER_ROLES", "LOGIN_OAUTH", "LOGIN_PASSWORD", "Driver",
-    "DRIVER_ERROR_TEXTE", "DriverError",
+    "DRIVER_ERROR_TEXTE", "DriverError", "erkennung_daten",
 ]
 
 KIND_CLOUD = "cloud"
@@ -29,6 +31,19 @@ DRIVER_ERROR_TEXTE = {
     "treiber_unbekannt": "Dieser Hersteller-Zugang wird vom Gateway nicht unterstützt.",
 }
 DRIVER_ERROR_TEXT_FALLBACK = "Der Hersteller-Zugang meldet einen Fehler."
+
+
+def erkennung_daten(treiber: str, anlagen: list[dict], features: list[dict]) -> dict:
+    """Ergebnis von Driver.erkennung() mit genau den Feldern des Vertrags (wire.INVENTUR_GATEWAY_FIELDS, je Anlage
+    INVENTUR_ANLAGE_FIELDS, je Feature INVENTUR_FEATURE_FIELDS). Jeder Treiber baut seine Erkennung hier; eine
+    Abweichung ist ein Vertragsfehler mit Feldnamen, nie mit Werten aus der Cloud (Regel 6): der Befehl endet mit
+    intern."""
+    for anlage in anlagen:
+        pruefen("inventur.anlage", anlage, wire.INVENTUR_ANLAGE_FIELDS)
+    for feature in features:
+        pruefen("inventur.feature", feature, wire.INVENTUR_FEATURE_FIELDS)
+    return pruefen("inventur", {"treiber": treiber, "anlagen": anlagen, "features": features},
+                   wire.INVENTUR_GATEWAY_FIELDS)
 
 
 class DriverError(RuntimeError):

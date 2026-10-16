@@ -12,7 +12,7 @@ from test_runtime import OPTIONS, env  # noqa: F401 - env ist eine Fixture
 from heizungsbruecke import config, dokument, geraet_host
 from heizungsbruecke.host import EV_RAUM, RAUM_SECONDS, HaHost
 from smartheat_core.config_check import NichtPruefbar
-from smartheat_device import wire
+from smartheat_device import nachrichten, wire
 from smartheat_device.commands import CommandRegister, Done, Failed, Waiting
 from smartheat_device.geraet_host_basis import EV_RELOAD
 from smartheat_device.host import Anzeige
@@ -88,14 +88,19 @@ def _register(host, tmp_path):
     return register
 
 
-def _bis(outcome, schritte=200):
-    """Wartet (echte Zeit, Hintergrund-Thread) auf das Ergebnis eines Waiting."""
+def _warten(pruefen, schritte=200):
+    """Ruft pruefen() (echte Zeit, Hintergrund-Thread), bis es etwas anderes als None liefert."""
     for _ in range(schritte):
-        done = outcome.check()
-        if done is not None:
-            return done
+        ergebnis = pruefen()
+        if ergebnis is not None:
+            return ergebnis
         time.sleep(0.01)
     raise AssertionError("kein Ergebnis")
+
+
+def _bis(outcome, schritte=200):
+    """Wartet auf das Ergebnis eines Waiting."""
+    return _warten(outcome.check, schritte)
 
 
 def test_host_identity():
@@ -113,6 +118,13 @@ def test_capabilities_and_clock(tmp_path, monkeypatch):
     assert host.uhr_synchron() is None  # kein bool: unbekannt
     host, _, _ = _host(tmp_path, monkeypatch, Supervisor(info={"dt_synchronized": False}))
     assert host.uhr_synchron() is False
+
+
+def test_capabilities_are_built_against_the_contract(tmp_path, monkeypatch):
+    host, _, _ = _host(tmp_path, monkeypatch)
+    monkeypatch.setattr(wire, "CAPABILITY_FIELDS", (*wire.CAPABILITY_FIELDS, "neu"))  # der Vertrag verlangt mehr
+    with pytest.raises(nachrichten.Vertragsfehler, match="faehigkeiten.*neu"):
+        host.faehigkeiten()
 
 
 def test_clock_is_cached_for_a_minute(tmp_path, monkeypatch):
@@ -182,6 +194,44 @@ def test_inventory_with_a_malformed_filter_is_an_invalid_payload(tmp_path, monke
     monkeypatch.setattr(geraet_host.inventur, "inventur", lambda ha, f: pytest.fail("nicht aufgerufen"))
     outcome = _register(host, tmp_path)._handlers["inventory"]({"stunden": 0, "filter": filter_})
     assert outcome == Failed("ungueltige_nutzlast", {"feld": "filter", "regel": "ungueltig"})
+
+
+@pytest.mark.parametrize("filter_, details", [
+    ({"domaenen": ["climate"], "treiber": "simulation"}, {"feld": "treiber", "regel": "unbekannt"}),  # Vertragsname
+    ({"geheim": 1}, {"regel": "unbekannt"}),  # kein Name des Vertrags: nie in details
+])
+def test_inventory_with_a_foreign_filter_key_is_invalid(tmp_path, monkeypatch, filter_, details):
+    host, _, _ = _host(tmp_path, monkeypatch)
+    monkeypatch.setattr(geraet_host.inventur, "inventur", lambda ha, f: pytest.fail("nicht aufgerufen"))
+    outcome = _register(host, tmp_path)._handlers["inventory"]({"stunden": 0, "filter": filter_})
+    assert outcome == Failed("ungueltige_nutzlast", details)
+
+
+def test_an_inventory_that_breaks_the_contract_ends_with_intern_and_no_values_in_the_log(tmp_path, monkeypatch, caplog):
+    """Programmierfehler (Feldliste und Erzeuger passen nicht zusammen) oder fremde Daten: intern, kein Wert in Log und
+    Ergebnis (Regel 6); die Fehlerart steht im Log."""
+    ha = FakeHa()
+    ha.states = {"climate.wz": "GEHEIMER-ZUSTAND", "climate.wz::friendly_name": "GEHEIMER-NAME"}
+    ha.registry = [{"entity_id": "climate.wz", "platform": "zha", "original_name": "GEHEIMER-NAME"}]
+    host, _, clock = _host(tmp_path, monkeypatch, ha=ha)
+    monkeypatch.setattr(wire, "INVENTUR_ENTITY_FIELDS", wire.INVENTUR_ENTITY_FIELDS[:-1])
+    ergebnisse = []
+    register = CommandRegister(tmp_path, lambda body: ergebnisse.append(body) or True, clock=clock)
+    host.befehle_eintragen(register)
+    try:
+        register.empfangen({"schema": 1, "command_id": "c1", "kind": "inventory",
+                            "expires_at": "2027-01-01T00:00:00+00:00",
+                            "payload": {"stunden": 0, "filter": {"domaenen": ["climate"]}}})
+
+        def abgeschlossen():
+            register.pruefen()
+            return ergebnisse[-1] if ergebnisse else None
+
+        ergebnis = _warten(abgeschlossen)
+        assert ergebnis["ok"] is False and ergebnis["error"] == {"grund": "intern"}
+        assert "Vertragsfehler" in caplog.text and "GEHEIM" not in caplog.text
+    finally:
+        host.hintergrund.stop()
 
 
 def test_inventory_with_ha_down_fails_without_contents_in_the_log(tmp_path, monkeypatch, caplog):

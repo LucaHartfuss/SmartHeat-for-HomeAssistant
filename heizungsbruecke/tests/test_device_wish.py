@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from smartheat_device import wire, wish
+from smartheat_device import nachrichten, wire, wish
 
 WALL = 1_800_000_000.0  # 2027-01-15T08:00:00+00:00
 
@@ -34,6 +34,22 @@ def test_payload_has_the_contract_fields_and_omits_unknown_extras():
     assert set(limited.payload()) == set(wire.WISH_FIELDS) | set(wire.WISH_OPTIONAL)
     assert (limited.payload()["roh"], limited.payload()["uhr_synchron"]) == (14.0, False)
     assert len(plain.wish_id) <= 64 and plain.wish_id != limited.wish_id
+
+
+def test_the_values_have_exactly_the_contract_keys():
+    assert set(_wunsch().payload()["werte"]) == set(wire.WISH_WERTE)
+
+
+@pytest.mark.parametrize("feld, wert", [("WISH_FIELDS", "neu"), ("WISH_WERTE", "neu")])
+def test_a_wish_outside_the_contract_is_a_contract_error(monkeypatch, feld, wert):
+    monkeypatch.setattr(wire, feld, (*getattr(wire, feld), wert))
+    with pytest.raises(nachrichten.Vertragsfehler) as fehlt:
+        _wunsch().payload()
+    assert wert in str(fehlt.value) and "21" not in str(fehlt.value)  # Feldnamen, nie Werte
+
+
+def test_the_local_messages_of_the_wish_are_contract_keys():
+    assert {wish.BEGRENZT_KEY, wish.SOLL_QUELLE_AUS_KEY} <= set(wire.MELDUNGEN)
 
 
 @pytest.mark.parametrize("herkunft, durch", [("app", None), (None, "katze")])

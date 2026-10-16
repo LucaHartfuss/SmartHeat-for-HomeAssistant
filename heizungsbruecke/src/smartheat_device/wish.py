@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from smartheat_core import dateien
-from smartheat_device import wire
+from smartheat_device import nachrichten, wire
 
 WUNSCH_FILE = "wunsch.json"
 BEGRENZT_KEY = "wunsch_begrenzt"
@@ -62,13 +62,14 @@ class Wunsch:
     durch: str | None = None
 
     def payload(self) -> dict:
+        werte = nachrichten.pruefen("wunsch.werte", {"raum_soll": self.raum_soll}, wire.WISH_WERTE)
         body = {"schema": wire.SCHEMA, "wish_id": self.wish_id, "basis_version": self.basis_version, "ts": self.ts,
-                "uhr_synchron": self.uhr_synchron, "werte": {"raum_soll": self.raum_soll}}
+                "uhr_synchron": self.uhr_synchron, "werte": werte}
         for key in wire.WISH_OPTIONAL:
             value = getattr(self, key)
             if value is not None:
                 body[key] = value
-        return body
+        return nachrichten.pruefen("wunsch", body, wire.WISH_FIELDS, wire.WISH_OPTIONAL)
 
 
 def neu(raum_soll: float, roh: float | None, *, basis_version: int, uhr_synchron: bool, herkunft: str | None,

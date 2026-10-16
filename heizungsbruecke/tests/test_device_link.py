@@ -7,6 +7,7 @@ import pytest
 from tls_helpers import ca_pem, issue, make_ca
 
 from smartheat_device import link as link_module
+from smartheat_device import wire
 from smartheat_device.bootstrap import Endpoint, Zugang
 from smartheat_device.tls import TransportConfigError
 
@@ -114,7 +115,8 @@ def test_subscribes_the_down_filter_after_each_connect_and_reports(tls):
     clients[-1].connack()
     clients[-1].drop()
     clients[-1].connack()
-    assert clients[-1].subscribed == [(f"smartheat/{DEVICE}/down/#", 1)] * 2
+    assert clients[-1].subscribed == [(wire.topic(DEVICE, wire.DEVICE_SUBSCRIPTION), wire.QOS)] * 2
+    assert wire.topic(DEVICE, wire.DEVICE_SUBSCRIPTION) == f"smartheat/{DEVICE}/down/#"
     assert events == [("verbunden",), ("getrennt",), ("verbunden",)]
 
 

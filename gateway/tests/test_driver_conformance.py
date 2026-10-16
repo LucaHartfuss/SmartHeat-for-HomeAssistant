@@ -6,6 +6,7 @@ from bindung_beispiele import BINDINGS
 from fake_vicare.server import DEVICE, GATEWAY, GOOD_CODE, INSTALLATION, FakeVicare
 
 from smartheat_device import wire
+from smartheat_device.nachrichten import Vertragsfehler
 from smartheat_gateway.drivers.base import LEVER_ROLES
 from smartheat_gateway.drivers.registry import DRIVERS, create
 from smartheat_gateway.paths import Paths
@@ -89,6 +90,18 @@ def test_erkennung_follows_the_contract(driver):
     for feature in daten["features"]:
         assert tuple(feature) == wire.INVENTUR_FEATURE_FIELDS
         assert 0 <= feature["anlage"] < len(daten["anlagen"])
+
+
+@pytest.mark.parametrize("liste", ["INVENTUR_GATEWAY_FIELDS", "INVENTUR_ANLAGE_FIELDS", "INVENTUR_FEATURE_FIELDS"])
+@pytest.mark.parametrize("driver", CASES, indirect=True)
+def test_erkennung_is_built_against_the_contract_and_names_no_values(driver, monkeypatch, liste):
+    """Jeder Treiber baut seine Erkennung ueber die Feldlisten des Vertrags: fehlt dort ein Feld, das der Treiber setzt,
+    ist das ein Vertragsfehler mit Feldnamen, nie mit Werten aus der Anlage (Regel 6)."""
+    monkeypatch.setattr(wire, liste, getattr(wire, liste)[:-1])
+    with pytest.raises(Vertragsfehler) as fehler:
+        driver.erkennung()
+    for wert in (INSTALLATION, GATEWAY):
+        assert str(wert) not in str(fehler.value)
 
 
 def test_every_driver_declares_the_lever_sets_it_can_serve():

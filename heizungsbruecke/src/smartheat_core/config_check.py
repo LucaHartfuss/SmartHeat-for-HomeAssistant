@@ -7,7 +7,9 @@ der Treiber (Rueckruf des Hosts, zuletzt; Gateway: die Bindung, HA: Aufbau der B
 Rueckruf des Hosts mit der ganzen Konfiguration). Eine leere Konfiguration (anlage None) heisst "nicht eingerichtet" und ist
 immer gueltig; sie aendert die Rastung nicht. Die Gruende sind Dokument-Fehlergruende des Vertrags (smartheat_device.wire.DOKUMENT_ERRORS). Ablehnungen
 tragen Grund und details (Feld, Regel, Zahlen; Spec Stufe 3 S5 6.1), den Text bildet der Server. Sicherheitsgrenzen, Boost und Notbetrieb liest diese Pruefung nur
-(G-1, Regel 4)."""
+(G-1, Regel 4). V1 ist strikt (R10): fremde Felder in Bindung, Treiber und Kreis lehnt diese Pruefung ab; die
+oberste Ebene der Konfiguration, die Software und die Bedienung prueft smartheat_device.documents gegen den
+Vertrag."""
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -28,21 +30,27 @@ GRUENDE = (UNGUELTIG, HEBELSATZ_EINGERASTET, SICHERHEITSWERTE_FEHLEN, ROLLE_UNZU
            TREIBER_PARAMETER)
 HOST_GATEWAY = "gateway"
 HOST_HA = "ha"
-ABO_WERTE = ("aktiv", "inaktiv")
+ABO_WERTE = ("aktiv", "inaktiv")  # Kopie aus wire.ABO (test_core_vertrag_pin.py)
 #: Gateway: Raumfuehler aus Zigbee (Temperatur bzw. Isttemperatur eines Thermostats) oder vom Treiber (SHG G2 3.2).
 GATEWAY_RAUMFUEHLER = re.compile(r"zigbee:0x[0-9a-f]{16}:(temperature|local_temperature)|treiber:room_temperature")
 IEEE = re.compile(r"0x[0-9a-f]{16}")
 TAGESTICK = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
-#: Intervalle (nur E2E); die Grenzen stehen nur hier, die Laufzeit uebernimmt jeden angenommenen Wert (ein Test
-#: startet sie an beiden Grenzen). Obergrenze Telemetrie (Regel 4, TP12e, AU-022): der Server wertet Luecken ab
+#: Intervalle (nur E2E, Umgebung SMARTHEAT_E2E_INTERVALLE, smartheat_runtime.dokument_config; seit Stufe 3 S8a-1 kein
+#: Dokumentfeld mehr); die Grenzen stehen nur hier, die Laufzeit uebernimmt jeden Wert darin (ein Test startet sie an
+#: beiden Grenzen). Obergrenze Telemetrie (Regel 4, TP12e, AU-022): der Server wertet Luecken ab
 #: samples.MAX_GAP (15 min) als Pause; 600 s lassen Reserve (Contract-Check 33: <= 0,8 x MAX_GAP).
 PRUEFUNG_S = (1, 3600)
 TELEMETRIE_S = (10, 600)
 INTERVALLE = {"pruefung_s": PRUEFUNG_S, "telemetrie_s": TELEMETRIE_S}
 RAUMFUEHLER_MAX = 8
-#: Home Assistant: Kopie aus smartheat_device.wire (BINDUNG_HA_FIELDS, KREIS_FIELDS, HA_ROLLEN, HA_HINWEISE), ein Test
-#: haelt sie gleich; die Pruefung importiert den Geraetekern nicht.
+#: Gateway: Kopie aus smartheat_device.wire (BINDUNG_GATEWAY_FIELDS, TREIBER_FIELDS); test_core_vertrag_pin.py haelt sie
+#: gleich, die Pruefung importiert den Geraetekern nicht. Die Bindung hat genau diese Felder (V1 ist strikt, R10).
+GATEWAY_BINDUNG_FELDER = ("treiber", "thermostat")
+TREIBER_FELDER = ("id", "parameter")
+#: Home Assistant: Kopie aus smartheat_device.wire (BINDUNG_HA_FIELDS, BINDUNG_HA_OPTIONAL, KREIS_FIELDS, HA_ROLLEN,
+#: HA_HINWEISE), ebenfalls in test_core_vertrag_pin.py gehalten.
 HA_BINDUNG_FELDER = ("kreis", "rollen", "batterien", "benachrichtigung", "hinweise_aus")
+HA_BINDUNG_OPTIONAL = ("abfrage_s", "einheiten")
 KREIS_FELDER = ("plattform", "config_entry", "anlage", "nummer")
 HA_ROLLEN = (
     "room_target", "curve", "room_setpoint", "level", "heat_limit", "min_flow", "mode_select", "setpoint_comfort",
@@ -63,7 +71,7 @@ ABFRAGE_S = (10, 3600)
 ANLAGE_MAX_CHARS = 64
 TEXT_MAX_CHARS = 200
 
-#: Kopie aus smartheat_device.wire (PRUEF_REGELN), ein Test haelt sie gleich; Feldnamen sind Namen aus
+#: Kopie aus smartheat_device.wire (PRUEF_REGELN), test_core_vertrag_pin.py haelt sie gleich; Feldnamen sind Namen aus
 #: wire.PRUEF_FELDER (ein Test prueft jede Ablehnung).
 PRUEF_REGELN = ("fehlt", "ungueltig", "anzahl", "bereich", "format", "doppelt", "unbekannt", "nicht_erlaubt")
 
@@ -97,10 +105,6 @@ def _text(value, limit: int = TEXT_MAX_CHARS) -> bool:
     return isinstance(value, str) and 0 < len(value) <= limit
 
 
-def _zahl(value) -> bool:
-    return isinstance(value, int | float) and not isinstance(value, bool)
-
-
 def _aufbau(neu: Mapping) -> dict | None:
     """details des ersten Verstosses gegen Aufbau und Wertebereiche (Grund ungueltig), sonst None."""
     if not _text(neu.get("anlage"), ANLAGE_MAX_CHARS):
@@ -124,23 +128,30 @@ def _aufbau(neu: Mapping) -> dict | None:
     if abfrage is not None and not (isinstance(abfrage, int) and not isinstance(abfrage, bool)
                                     and ABFRAGE_S[0] <= abfrage <= ABFRAGE_S[1]):
         return befund("abfrage_s", "bereich", min=ABFRAGE_S[0], max=ABFRAGE_S[1])
-    intervalle = neu.get("intervalle")
-    if intervalle is not None:
-        if not isinstance(intervalle, Mapping) or not set(intervalle) <= set(INTERVALLE):
-            return befund("intervalle", "ungueltig")
-        for key, (low, high) in INTERVALLE.items():
-            value = intervalle.get(key)
-            if value is not None and not (_zahl(value) and low <= value <= high):
-                return befund(key, "bereich", min=low, max=high)
+    return None
+
+
+def _fremd(inhalt: Mapping, erlaubt: tuple[str, ...], feld: str) -> Ablehnung | None:
+    """V1 ist strikt (R10): ein Feld ausserhalb von `erlaubt` lehnt ab. Gemeldet wird das Feld, in dem es steht; der
+    fremde Name geht nicht hoch."""
+    if set(inhalt) - set(erlaubt):
+        return Ablehnung(ROLLE_UNZULAESSIG, befund(feld, "unbekannt"))
     return None
 
 
 def _gateway_bindung(neu: Mapping) -> Ablehnung | None:
     bindung = neu["bindung"]
-    treiber = bindung.get("treiber")
+    if ablehnung := _fremd(bindung, GATEWAY_BINDUNG_FELDER, "bindung"):
+        return ablehnung
+    fehlend = next((key for key in GATEWAY_BINDUNG_FELDER if key not in bindung), None)
+    if fehlend is not None:
+        return Ablehnung(ROLLE_UNZULAESSIG, befund(fehlend, "fehlt"))
+    treiber = bindung["treiber"]
     if not (isinstance(treiber, Mapping) and _text(treiber.get("id")) and isinstance(treiber.get("parameter"), Mapping)):
         return Ablehnung(ROLLE_UNZULAESSIG, befund("treiber", "ungueltig"))
-    thermostat = bindung.get("thermostat")
+    if ablehnung := _fremd(treiber, TREIBER_FELDER, "treiber"):
+        return ablehnung
+    thermostat = bindung["thermostat"]
     if thermostat is not None and not (isinstance(thermostat, str) and IEEE.fullmatch(thermostat)):
         return Ablehnung(ROLLE_UNZULAESSIG, befund("thermostat", "format"))
     seen: set[str] = set()
@@ -155,6 +166,8 @@ def _gateway_bindung(neu: Mapping) -> Ablehnung | None:
 
 def _ha_bindung(neu: Mapping) -> Ablehnung | None:
     bindung = neu["bindung"]
+    if ablehnung := _fremd(bindung, (*HA_BINDUNG_FELDER, *HA_BINDUNG_OPTIONAL), "bindung"):
+        return ablehnung
     fehlend = next((key for key in HA_BINDUNG_FELDER if key not in bindung), None)
     if fehlend is not None:
         return Ablehnung(ROLLE_UNZULAESSIG, befund(fehlend, "fehlt"))
@@ -163,6 +176,8 @@ def _ha_bindung(neu: Mapping) -> Ablehnung | None:
     if not isinstance(kreis, Mapping) or not all(
             isinstance(kreis.get(key), str) and kreis[key] for key in KREIS_FELDER if key != "config_entry"):
         return Ablehnung(ROLLE_UNZULAESSIG, befund("kreis", "ungueltig"))
+    if ablehnung := _fremd(kreis, KREIS_FELDER, "kreis"):
+        return ablehnung
     rollen = bindung["rollen"]
     if not isinstance(rollen, Mapping):
         return Ablehnung(ROLLE_UNZULAESSIG, befund("rollen", "ungueltig"))

@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from smartheat_core import dateien
-from smartheat_device import fehler, wire
+from smartheat_device import fehler, nachrichten, wire
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,9 @@ COMMAND_ID_MAX_CHARS = 64
 TIMEOUT_GRUND = "keine_bestaetigung"
 HINWEIS_KEY_MAX_CHARS = 64
 HINWEIS_TEXT_MAX_CHARS = 1000
+#: Arten, deren Pflichtfelder die Phase bestimmt (Command.payload ist dort die Vereinigung aller Phasen,
+#: wire.DRIVER_LOGIN_PHASES): die Annahme prueft nur fremde Felder, die Phasenregel steht im Handler des Hosts.
+PHASENBEFEHLE = ("driver_login",)
 
 
 @dataclass(frozen=True)
@@ -70,8 +73,9 @@ class InvalidPayload(ValueError):
 
 
 def result_payload(command_id: str, ok: bool, result: dict | None, error: dict | None) -> dict:
-    return {"schema": wire.SCHEMA, "command_id": command_id, "ok": ok, "result": result if ok else None,
-            "error": None if ok else error}
+    return nachrichten.pruefen(
+        "ergebnis", {"schema": wire.SCHEMA, "command_id": command_id, "ok": ok, "result": result if ok else None,
+                     "error": None if ok else error}, (*wire.RESULT_FIELDS, nachrichten.ZIEL_BEFEHL))
 
 
 def _load_done(path: Path) -> dict[str, Entry]:
@@ -138,11 +142,11 @@ class CommandRegister:
             if ok is not None:
                 self._send_result(result_payload(command_id, ok, result, error))
             elif kind in self._wiederholbar:  # gestartet, Neustart: idempotent, noch einmal ausfuehren
-                self._finish_or_wait(command_id, kind, self._execute(command_id, kind, message.get("payload")))
+                self._finish_or_wait(command_id, kind, self._execute(command_id, kind, message))
             else:  # gestartet, Ergebnis unbekannt (Neustart): nicht noch einmal ausfuehren
                 self._finish_or_wait(command_id, "", Failed("intern"))
             return
-        self._finish_or_wait(command_id, kind, self._execute(command_id, kind, message.get("payload")))
+        self._finish_or_wait(command_id, kind, self._execute(command_id, kind, message))
 
     def pruefen(self) -> None:
         """Wartende Befehle (Takt des Geraets): fertig, gescheitert oder Frist abgelaufen."""
@@ -156,12 +160,29 @@ class CommandRegister:
 
     # --- intern ---
 
-    def _execute(self, command_id: str, kind: str, payload) -> Outcome:
+    def _execute(self, command_id: str, kind: str, message: dict) -> Outcome:
+        # Strenge Annahme (V1 auf beiden Seiten strikt, Nutzer 2026-10-16): genau die Felder des Vertrags
+        # (wire.COMMAND_FIELDS), in der Nutzlast alle Pflichtfelder der Art (Command.payload) und sonst nur
+        # payload_optional. Sonst laeuft kein Handler. Ein fremder Name steht nur in details, wenn er in
+        # wire.PRUEF_FELDER steht (G-6: nie freier Text).
+        for feld in wire.COMMAND_FIELDS:
+            if feld not in message:
+                return Failed("ungueltige_nutzlast", fehler.details(feld, "fehlt"))
+        if fremd := fehler.fremdes_feld(message, wire.COMMAND_FIELDS):
+            return Failed("ungueltige_nutzlast", fremd)
+        payload = message["payload"]
         handler = self._handlers.get(kind)
         if handler is None:
             return Failed("ungueltige_nutzlast", fehler.details("kind", "unbekannt"))
         if not isinstance(payload, dict):
             return Failed("ungueltige_nutzlast", fehler.details("payload", "ungueltig"))
+        art = wire.COMMANDS[kind]
+        if fremd := fehler.fremdes_feld(payload, (*art.payload, *art.payload_optional)):
+            return Failed("ungueltige_nutzlast", fremd)
+        if kind not in PHASENBEFEHLE:
+            for feld in art.payload:
+                if feld not in payload and feld not in art.payload_optional:
+                    return Failed("ungueltige_nutzlast", fehler.details(feld, "fehlt"))
         self._store(command_id, (None, None, None))  # Marker "gestartet" vor dem Handler
         outcome = self._guarded(kind, lambda: handler(payload))
         return outcome if outcome is not None else Failed("intern")

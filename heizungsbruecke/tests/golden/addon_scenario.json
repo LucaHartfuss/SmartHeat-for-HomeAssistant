@@ -190,8 +190,7 @@
       "room_setpoint": 21.0,
       "heat_limit": 16.0
      },
-     "readonly": [],
-     "raum_soll_wirksam": 21.0
+     "readonly": []
     }
    ],
    [
@@ -374,8 +373,7 @@
       "room_setpoint": 23.0,
       "heat_limit": 16.0
      },
-     "readonly": [],
-     "raum_soll_wirksam": 21.0
+     "readonly": []
     }
    ],
    [
@@ -488,8 +486,7 @@
       "room_setpoint": 23.5,
       "heat_limit": 16.0
      },
-     "readonly": [],
-     "raum_soll_wirksam": 20.5
+     "readonly": []
     }
    ],
    [
@@ -653,8 +650,7 @@
       "room_setpoint": 25.0,
       "heat_limit": 23.0
      },
-     "readonly": [],
-     "raum_soll_wirksam": 22.0
+     "readonly": []
     }
    ],
    [
@@ -891,8 +887,7 @@
       "room_setpoint": 24.0,
       "heat_limit": 16.0
      },
-     "readonly": [],
-     "raum_soll_wirksam": 21.5
+     "readonly": []
     }
    ],
    [
@@ -948,8 +943,7 @@
       "room_setpoint": 24.0,
       "heat_limit": 16.0
      },
-     "readonly": [],
-     "raum_soll_wirksam": 21.5
+     "readonly": []
     }
    ],
    [
@@ -1224,8 +1218,7 @@
       "room_setpoint": 25.0,
       "heat_limit": 23.0
      },
-     "readonly": [],
-     "raum_soll_wirksam": 21.5
+     "readonly": []
     }
    ],
    [
@@ -1412,8 +1405,7 @@
       "room_setpoint": 23.5,
       "heat_limit": 16.0
      },
-     "readonly": [],
-     "raum_soll_wirksam": 21.0
+     "readonly": []
     }
    ],
    [
@@ -1531,8 +1523,7 @@
       "room_setpoint": 23.0,
       "heat_limit": 16.0
      },
-     "readonly": [],
-     "raum_soll_wirksam": 21.5
+     "readonly": []
     }
    ],
    [
@@ -1649,8 +1640,7 @@
       "room_setpoint": 23.0,
       "heat_limit": 16.0
      },
-     "readonly": [],
-     "raum_soll_wirksam": 21.0
+     "readonly": []
     }
    ],
    [
@@ -1804,8 +1794,7 @@
       "room_setpoint": 23.0,
       "heat_limit": 16.0
      },
-     "readonly": [],
-     "raum_soll_wirksam": 20.5
+     "readonly": []
     }
    ],
    [
@@ -1925,8 +1914,7 @@
       "room_setpoint": 23.0,
       "heat_limit": 16.0
      },
-     "readonly": [],
-     "raum_soll_wirksam": 20.5
+     "readonly": []
     }
    ],
    [

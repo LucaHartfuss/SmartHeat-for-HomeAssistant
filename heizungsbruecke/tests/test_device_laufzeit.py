@@ -20,8 +20,7 @@ def _channel(link):
 def test_snapshot_carries_the_effective_room_target():
     link = Link()
     _channel(link).publish_snapshot({"schema": 4, "seq": "s", "room_target": 21.5, "levers": {}})
-    assert link.sent == [("up/snapshot", {"schema": 4, "seq": "s", "room_target": 21.5, "levers": {},
-                                          "raum_soll_wirksam": 21.5})]
+    assert link.sent == [("up/snapshot", {"schema": 4, "seq": "s", "room_target": 21.5, "levers": {}})]
 
 
 def test_telemetry_goes_to_the_telemetry_topic():
