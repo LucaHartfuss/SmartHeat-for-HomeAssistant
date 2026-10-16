@@ -1,7 +1,9 @@
 """Konformitaet der Geraete-Hosts (V2; Audit 5 A5-58; Spec Stufe 3 S6 4.1): dieselben Pruefungen fuer HaDeviceHost und
 GatewayDeviceHost. Jeder Host baut eine Welt (Fixture in seiner Testdatei); die Pruefungen kennen nur die gemeinsame
 Sicht: Binden des Workers, Nachstellen von Neustart und Bedienung, Ursprungswerte, Dokumentsicht, Aufraeum-Markierung,
-Bedienwunsch. Rueckrufe des Geraetekerns werfen nie."""
+Bedienwunsch. Rueckrufe des Geraetekerns werfen nie, bis auf eine bekannte Ausnahme (Restpunkt S3S6-Markierung: ein
+Schreibfehler der Markierung in konfiguration_uebernommen geht an Device._host_rufen, der Neustart entfaellt); die
+Suite prueft das nicht."""
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path

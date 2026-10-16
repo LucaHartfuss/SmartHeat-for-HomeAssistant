@@ -3,7 +3,9 @@ Neustart und Bedienung, die vor dem Binden kamen, gemerkte Ursprungswerte, die S
 Soll-Dokumente, Bedienwunsch und Aufraeum-Markierung. HaDeviceHost und GatewayDeviceHost erben davon und liefern nur
 ihre Hostteile (Faehigkeiten, Uhr, Treiberpruefung, Befehle, Anzeige, Software). Rueckrufe des Geraetekerns laufen im
 Geraete-Thread, worker_binden im Hauptthread; die Sperre trennt beide. Kein Rueckruf wirft (V2, Konformitaetssuite
-testhilfen/host_konformitaet.py)."""
+testhilfen/host_konformitaet.py), bis auf eine bekannte Ausnahme (Restpunkt S3S6-Markierung): scheitert in
+konfiguration_uebernommen das Schreiben der Markierung, geht der OSError an Device._host_rufen, und der Neustart
+entfaellt."""
 import threading
 from pathlib import Path
 
