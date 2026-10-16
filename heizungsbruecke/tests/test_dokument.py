@@ -1,11 +1,14 @@
-"""Spec 5c 1.3: Konfigurationsdokument -> bisherige Optionen; HA-Teil der lokalen Pruefung."""
+"""Spec 5c 1.3, Stufe 3 S5 3.2: Konfigurationsdokument -> HaBindung; Rollentabellen; HA-Teil der lokalen Pruefung."""
 import bindung_beispiele
 import pytest
 from bindung_beispiele import parameter
 from fakes import FakeHa
 
-from heizungsbruecke import config, dokument
+from heizungsbruecke import dokument
 from smartheat_core import config_check
+from smartheat_runtime import dokument_config
+from smartheat_runtime.dokument_config import ConfigError
+from smartheat_runtime.roles import LEVER_ROLES
 
 KONFIGURATION = {
     "anlage": "zuhause2", "profil": "vaillant_gastherme_heizkoerper", "hebelsatz": "vaillant_vrc720",
@@ -40,31 +43,163 @@ def _mit_rolle(rolle, ref):
     return {**KONFIGURATION, "bindung": {**KONFIGURATION["bindung"], "rollen": rollen}}
 
 
+def _mit_rolle_in(rolle, ref, konfiguration):
+    rollen = {**konfiguration["bindung"]["rollen"], rolle: ref}
+    return {**konfiguration, "bindung": {**konfiguration["bindung"], "rollen": rollen}}
+
+
 def _fremd(ha, entity_id, platform="template"):
     ha.registry = [{**e, "platform": platform} if e["entity_id"] == entity_id else e for e in ha.registry]
 
 
-def test_options_carry_the_old_keys_and_the_target_store():
-    options = dokument.optionen(KONFIGURATION)
-    assert options["tenant_id"] == options["setup_id"] == "zuhause2"
-    assert options["entity_curve_current"] == "number.curve_current"
-    assert options["entity_shift_current"] == "climate.zone"
-    assert options["entity_room_target"] == dokument.SOLL_REF
-    assert options["room_sensors"] == ["sensor.room_actual"]
-    assert options["notify_services"] == ["notify.handy"]
-    assert options["bindungsparameter"] is KONFIGURATION["bindungsparameter"]
-    assert options["daily_trigger_time"] == "12:07" and options["lever_set"] == "vaillant_vrc720"
-    assert dokument.soll_entity(KONFIGURATION) == "sensor.room_target"
+@pytest.fixture
+def konfiguration():
+    return KONFIGURATION
 
 
-def test_intervals_and_other_levers_reach_the_options():
-    konfiguration = {**KONFIGURATION, "intervalle": {"pruefung_s": 5, "telemetrie_s": 30}}
-    konfiguration = {**konfiguration, "bindung": {**konfiguration["bindung"], "rollen": {
-        **konfiguration["bindung"]["rollen"], "level": "number.level", "flow_temperature": "sensor.vl"}}}
-    options = dokument.optionen(konfiguration)
-    assert options["local_check_interval_seconds"] == 5 and options["telemetry_interval_seconds"] == 30
-    assert options["entity_level_current"] == "number.level" and options["entity_flow_temperature"] == "sensor.vl"
-    assert dokument.option_fuer("min_flow") == "entity_min_flow" and dokument.option_fuer("outdoor_temp") == "entity_outdoor_temp"
+def test_bindung_bildet_rollen_auf_laufzeitrollen_ab(konfiguration):
+    b = dokument.bindung(konfiguration)
+    assert "room_target" not in b.rollen and b.soll_entity == konfiguration["bindung"]["rollen"]["room_target"]
+    assert b.rollen["curve_current"] == konfiguration["bindung"]["rollen"]["curve"]
+    assert b.rollen["shift_current"] == konfiguration["bindung"]["rollen"]["room_setpoint"]
+    assert b.raumfuehler == tuple(konfiguration["raumfuehler"])
+
+
+def test_bindung_traegt_die_ha_teile_des_dokuments(konfiguration):
+    b = dokument.bindung(konfiguration)
+    assert b.hebelsatz == "vaillant_vrc720"
+    assert b.rollen == {"curve_current": "number.curve_current", "shift_current": "climate.zone",
+                        "min_flow": "number.min_flow", "heat_limit": "number.heat_limit",
+                        "outdoor_temp": "sensor.outdoor_temp"}
+    assert b.raumfuehler == ("sensor.room_actual",) and b.batterien == ("sensor.thermostat_battery",)
+    assert b.benachrichtigung == ("notify.handy",) and b.hinweise_aus == ()
+    assert b.kreis == konfiguration["bindung"]["kreis"] and b.kreis is not konfiguration["bindung"]["kreis"]
+    assert dokument.soll_entity(konfiguration) == "sensor.room_target"
+
+
+def test_weitere_hebel_und_kennzahl_rollen_kommen_in_der_bindung_an():
+    konfiguration = _mit_rolle("level", "number.level")
+    konfiguration = _mit_rolle_in("flow_temperature", "sensor.vl", konfiguration)
+    b = dokument.bindung(konfiguration)
+    assert b.rollen["level_current"] == "number.level" and b.rollen["flow_temperature"] == "sensor.vl"
+    assert dokument.laufzeit_rolle("min_flow") == "min_flow" and dokument.laufzeit_rolle("curve") == "curve_current"
+    assert dokument.laufzeit_rolle("outdoor_temp") == "outdoor_temp"
+
+
+def test_leere_und_falsche_teile_des_dokuments_sind_leer_statt_ein_fehler():
+    b = dokument.bindung({"hebelsatz": "vaillant_vrc720", "bindung": {"rollen": {"curve": "", "min_flow": 5},
+                                                                      "batterien": "x", "kreis": None},
+                          "raumfuehler": ["sensor.a", 3]})
+    assert b.rollen == {} and b.soll_entity is None and b.batterien == () and b.kreis == {}
+    assert b.raumfuehler == ("sensor.a",)
+
+
+def test_tabellen_decken_dieselben_hebelsaetze():
+    assert set(dokument.PFLICHT_ROLLEN) == set(dokument.SCHREIBREGELN)
+    for hebelsatz, rollen in dokument.PFLICHT_ROLLEN.items():
+        assert "room_target" not in rollen
+        assert set(dokument.SCHREIBREGELN[hebelsatz]) <= set(rollen) | set(dokument.WEITERE_SCHREIBZIELE)
+
+
+@pytest.mark.parametrize("hebelsatz", [None, "", "gibt_es_nicht", 3, ["weishaupt_wwp"]])
+def test_unbekannter_hebelsatz_ist_ein_konfigurationsfehler(konfiguration, hebelsatz):
+    with pytest.raises(ConfigError, match="Hebelsatz"):
+        dokument.bindung({**konfiguration, "hebelsatz": hebelsatz})
+    with pytest.raises(ConfigError):
+        dokument.lokal_pruefen({**konfiguration, "hebelsatz": hebelsatz})
+    assert "Hebelsatz" in dokument.zuordnung_pruefen({**konfiguration, "hebelsatz": hebelsatz}, _ha())
+
+
+# --- Pflicht- und Schreibregeln des Hebelsatzes (frueher test_config.py) ---
+
+def _konf(hebelsatz, **rollen):
+    """Dokument des Hebelsatzes mit genau diesen Rollen (Laufzeitrollen; room_target ist immer da). Ein leerer Wert
+    laesst die Rolle weg."""
+    bindung_rollen = {"room_target": "sensor.t"}
+    umkehr = {laufzeit: rolle for rolle, laufzeit in LEVER_ROLES.items()}
+    for laufzeit, ref in rollen.items():
+        if ref:
+            bindung_rollen[umkehr.get(laufzeit, laufzeit)] = ref
+    return {**KONFIGURATION, "hebelsatz": hebelsatz, "bindung": {**KONFIGURATION["bindung"], "rollen": bindung_rollen}}
+
+
+VAILLANT = {"curve_current": "number.c", "shift_current": "climate.zone", "min_flow": "number.mf",
+            "outdoor_temp": "sensor.o", "heat_limit": "number.hl"}
+WEISHAUPT = {"curve_current": "number.hk", "shift_current": "number.normal", "heat_limit": "number.swu",
+             "outdoor_temp": "sensor.o", "mode_select": "select.betriebsart", "setpoint_comfort": "number.komfort",
+             "setpoint_setback": "number.absenk"}
+VIESSMANN = {"curve_current": "number.slope", "level_current": "number.shift", "shift_current": "number.normal_temperature",
+             "outdoor_temp": "sensor.o", "mode_select": "climate.heizkreis"}
+
+
+def _lokal(hebelsatz, rollen, **aenderung):
+    return dokument.lokal_pruefen(_konf(hebelsatz, **{**rollen, **aenderung}))
+
+
+def test_the_valid_vaillant_document_passes():
+    assert _lokal("vaillant_vrc720", VAILLANT) is None
+
+
+@pytest.mark.parametrize("rolle, value", [
+    ("shift_current", "sensor.zone_temperature"),
+    ("shift_current", "input_number.shift"),
+    ("shift_current", "climate.zone::current_temperature"),
+    ("min_flow", "climate.zone"),
+    ("min_flow", "input_number.min_flow"),
+    ("min_flow", "sensor.min_flow"),
+    ("heat_limit", "sensor.heizgrenze"),
+    ("heat_limit", "input_number.heizgrenze"),
+])
+def test_unwritable_entity_domain_is_refused(rolle, value):
+    # Spec 5.6: Zonen-Entity muss schreibbar sein; HaPlantBinding.write kennt climate.set_temperature und
+    # number.set_value.
+    assert f"{value} muss" in _lokal("vaillant_vrc720", VAILLANT, **{rolle: value})
+
+
+@pytest.mark.parametrize("shift", ["climate.zone", "climate.zone::temperature", "number.shift"])
+def test_writable_shift_domains_are_accepted(shift):
+    assert _lokal("vaillant_vrc720", VAILLANT, shift_current=shift) is None
+
+
+@pytest.mark.parametrize("missing", dokument.PFLICHT_ROLLEN["vaillant_vrc720"])
+def test_every_vaillant_role_is_required(missing):
+    assert f"Für die Ansteuerung vaillant_vrc720 fehlt die Zuordnung {missing}." == _lokal(
+        "vaillant_vrc720", VAILLANT, **{missing: ""})
+
+
+def test_the_target_entity_is_required():
+    konfiguration = _konf("vaillant_vrc720", **VAILLANT)
+    del konfiguration["bindung"]["rollen"]["room_target"]
+    assert dokument.lokal_pruefen(konfiguration) == "Die Wunschtemperatur-Entity fehlt."
+
+
+@pytest.mark.parametrize("missing", dokument.PFLICHT_ROLLEN["weishaupt_wwp"])
+def test_every_weishaupt_role_is_required(missing):
+    assert f"weishaupt_wwp fehlt die Zuordnung {missing}" in _lokal("weishaupt_wwp", WEISHAUPT, **{missing: ""})
+
+
+def test_basis_does_not_need_curve_or_heat_limit():
+    assert _lokal("weishaupt_wwp_basis", WEISHAUPT, curve_current="", heat_limit="") is None
+
+
+@pytest.mark.parametrize(("rolle", "value"), [
+    ("mode_select", "input_select.betriebsart"), ("setpoint_comfort", "sensor.komfort"),
+    ("shift_current", "climate.zone"),
+])
+def test_weishaupt_entities_must_be_writable(rolle, value):
+    assert f"{value} muss" in _lokal("weishaupt_wwp", WEISHAUPT, **{rolle: value})
+
+
+def test_viessmann_program_must_be_a_climate_entity():
+    assert _lokal("viessmann_vicare", VIESSMANN) is None
+    assert "select.programm muss" in _lokal("viessmann_vicare", VIESSMANN, mode_select="select.programm")
+
+
+@pytest.mark.parametrize("hebelsatz, rollen", [("weishaupt_wwp", WEISHAUPT), ("viessmann_vicare", VIESSMANN)])
+def test_mode_select_is_required_for_weishaupt_and_viessmann(hebelsatz, rollen):
+    # Ohne Betriebsart/Heizprogramm wirft read_aux einen KeyError (Review Task 8/9): Ablehnung vor dem Start.
+    assert "mode_select" in dokument.PFLICHT_ROLLEN[hebelsatz]
+    assert "fehlt die Zuordnung mode_select" in _lokal(hebelsatz, rollen, mode_select="")
 
 
 def test_the_client1_like_mapping_passes():
@@ -91,7 +226,7 @@ def test_write_target_of_another_platform_is_refused():
 
 
 def test_the_curve_is_a_write_target_too():
-    """Die Heizkurve ist bei vaillant_vrc720 kein Teil von writable_entity_rules, wird aber jeden Takt geschrieben
+    """Die Heizkurve ist bei vaillant_vrc720 kein Teil von SCHREIBREGELN, wird aber jeden Takt geschrieben
     (Spec 1.3, A4-11): ein number.* der Plattform template darf sie nicht sein."""
     ha = _ha()
     _fremd(ha, "number.curve_current")
@@ -218,11 +353,11 @@ def test_the_check_runs_through_config_check_as_role_not_allowed():
 
 
 def test_beschreibung_kommt_aus_der_gespeicherten_konfiguration():
-    """Spec Stufe 3 S4b 4.3: Start und Abmelden (HaHost.sign_off_parts) bauen die Beschreibung ueber dokument.optionen
-    aus der gespeicherten Konfiguration -- nicht aus einer Tabelle."""
+    """Spec Stufe 3 S4b 4.3: Start und Abmelden (HaHost.sign_off_parts) bauen die Beschreibung ueber
+    dokument_config.beschreibung aus der gespeicherten Konfiguration -- nicht aus einer Tabelle."""
     hebelsatz = KONFIGURATION["hebelsatz"]
     konfiguration = {**KONFIGURATION, "bindungsparameter": parameter(hebelsatz, zurueck=[], zurueck_optional=[])}
-    assert config.binding_description(dokument.optionen(konfiguration)).restore_originals == ()
+    assert dokument_config.beschreibung(konfiguration).restore_originals == ()
     ohne = {**KONFIGURATION, "bindungsparameter": None}
-    with pytest.raises(config.ConfigError):
-        config.binding_description(dokument.optionen(ohne))
+    with pytest.raises(ConfigError):
+        dokument_config.beschreibung(ohne)
