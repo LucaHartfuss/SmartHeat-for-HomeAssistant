@@ -293,3 +293,12 @@ def test_sigterm_ends_with_exit_0():
     with pytest.raises(SystemExit) as stop:
         runtime_main._terminate(15, None)
     assert stop.value.code == 0
+
+
+def test_an_operation_without_a_valid_target_does_not_align_the_thermostat_at_start(world):
+    """Spec Stufe 3 S6 4.3 (c): wie der HA-Host gleicht das Gateway nur mit einem gueltigen raum_soll an; sonst gilt
+    der Standard, und das Thermostat bleibt unberuehrt."""
+    dokumente_schreiben(world.paths, konfiguration(), {**bedienung(), "raum_soll": 30.0})
+    world.start_runtime()
+    world.run()
+    assert world.host._store.value == 20.0 and _thermostat_writes(world) == []

@@ -11,7 +11,7 @@ als Eingabe an der Quelle (Plan G2b-2 Task 4).
 Die Laufzeit importiert smartheat_device nicht (tests/test_runtime_purity.py); der Bedienbereich
 steht deshalb hier (Gleichheit mit smartheat_device.documents.im_bedienbereich sichert test_soll_speicher.py)."""
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from smartheat_core import dateien
@@ -36,6 +36,17 @@ def im_bedienbereich(value) -> bool:
         return False
     steps = value / BEDIENBEREICH_STEP
     return abs(steps - round(steps)) < 1e-9
+
+
+#: Startwert ohne gueltige Bedienung (Spec 5b 3.2), beide Hosts
+DEFAULT_RAUM_SOLL = 20.0
+
+
+def bedienung_start(bedienung) -> float | None:
+    """Startwert aus der Bedienung (Spec 5b 3.3, 5c 1.3): raum_soll, wenn im Bedienbereich, sonst None. Nur mit einem
+    solchen Wert gleicht ein Host beim Start an (Spec Stufe 3 S6 4.3)."""
+    value = bedienung.get("raum_soll") if isinstance(bedienung, Mapping) else None
+    return float(value) if isinstance(value, int | float) and im_bedienbereich(value) else None
 
 
 def is_valid_portal_target(value) -> bool:

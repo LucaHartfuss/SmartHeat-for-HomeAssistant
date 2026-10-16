@@ -3,7 +3,7 @@ Konfigurationsdokument."""
 from pathlib import Path
 
 import pytest
-from configs import SENSOR, THERMOSTAT, bedienung, konfiguration, leer
+from configs import SENSOR, THERMOSTAT, konfiguration, leer
 
 from smartheat_core import rastung
 from smartheat_device import wire
@@ -51,14 +51,6 @@ def test_the_driver_check_asks_the_driver_without_creating_a_plant(tmp_path):
         "feld": "parameter", "regel": "ungueltig"}
     assert config.treiber_pruefen(paths, {"treiber": "kaputt"}) == {"feld": "id", "regel": "unbekannt"}
     assert not paths.sim_dir.exists()
-
-
-@pytest.mark.parametrize("inhalt, start", [
-    (bedienung(22.5), 22.5), (None, config.DEFAULT_RAUM_SOLL), (bedienung(30.0), config.DEFAULT_RAUM_SOLL),
-    ({"modus": "manuell"}, config.DEFAULT_RAUM_SOLL),
-])
-def test_start_target_comes_from_the_operation(inhalt, start):
-    assert config.raum_soll_start(inhalt) == start
 
 
 def test_sign_off_marker_belongs_to_one_plant(tmp_path):

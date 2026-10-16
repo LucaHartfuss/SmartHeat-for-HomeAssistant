@@ -16,7 +16,6 @@ from smartheat_gateway.bus import Bus
 from smartheat_gateway.drivers import registry
 from smartheat_gateway.geraet_host import GatewayDeviceHost
 from smartheat_gateway.paths import Paths
-from smartheat_gateway.raum import RaumPublisher
 from smartheat_gateway.signals import REF_ROOM_MEAN, REF_ROOM_TARGET, GatewaySignalSource
 from smartheat_gateway.texts import SHG_TEXTS
 from smartheat_gateway.triggers import EV_TARGET_INPUT, BusTriggerSource
@@ -26,9 +25,10 @@ from smartheat_runtime import aufraeumen, dokument_config
 from smartheat_runtime.app import Loaded, RestoreParts, StartFailure
 from smartheat_runtime.dokument_config import ConfigError
 from smartheat_runtime.ports import NotifySink, SignalSource, StatusSink, TriggerSource
+from smartheat_runtime.raum import RaumPublisher
 from smartheat_runtime.roles import ALL_ROLES, REQUIRED_ROLES_BY_LEVER_SET, ChannelManifest, ManifestError
 from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG, BATTERY_PERCENT, BatteryRef, BootInfo
-from smartheat_runtime.soll_speicher import SOURCE_PORTAL, TargetStore
+from smartheat_runtime.soll_speicher import DEFAULT_RAUM_SOLL, SOURCE_PORTAL, TargetStore, bedienung_start
 from smartheat_runtime.texts import HostTexts
 from smartheat_runtime.worker import Event, RegulationWorker
 
@@ -156,15 +156,18 @@ class GatewayHost:
             self.driver = None
             raise StartFailure(str(error), KEY_MANIFEST) from error
         bedienung, dirty = self._geraet.bedienung()
-        start = gateway_config.raum_soll_start(bedienung)
+        bedient = bedienung_start(bedienung)
+        start = bedient if bedient is not None else DEFAULT_RAUM_SOLL
         store = TargetStore(self._paths.room_target, start, self._clock, lambda: wallclock.now().isoformat(),
                             on_change=self._raum_changed)
-        self._angleichen = bedienung is not None and not dirty
+        self._angleichen = bedient is not None and not dirty
         self._bedienung_start = start if self._angleichen and store.value != start else None
         self._signals.bind(driver, store, bindung.room_sensors)
         runtime = dataclasses.replace(runtime, battery_refs=self._battery_refs(bindung))
         self._store, self._bindung, self._runtime_config = store, bindung, runtime
-        self.raum = RaumPublisher(self._geraet.zustand, self.signals, store, lambda: wallclock.now().isoformat())
+        zustand = self._geraet.zustand
+        self.raum = RaumPublisher(lambda raum: setattr(zustand, "raum", raum), self.signals, store, REF_ROOM_MEAN,
+                                  lambda: wallclock.now().isoformat())
         return Loaded(config=runtime, manifest=manifest, binding=driver,
                       plant_id=registry.plant_id(bindung.driver_spec()))
 

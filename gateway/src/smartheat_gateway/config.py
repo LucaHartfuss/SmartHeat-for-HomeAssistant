@@ -7,7 +7,6 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from smartheat_device import fehler
-from smartheat_device.documents import im_bedienbereich
 from smartheat_gateway.drivers import registry
 from smartheat_gateway.drivers.registry import driver_ids
 from smartheat_gateway.paths import Paths
@@ -19,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 IEEE = re.compile(r"0x[0-9a-f]{16}")
 ROOM_SENSOR_REF = re.compile(r"zigbee:0x[0-9a-f]{16}:(temperature|local_temperature)|treiber:room_temperature")
-DEFAULT_RAUM_SOLL = 20.0
 
 
 @dataclass(frozen=True)
@@ -74,12 +72,6 @@ def treiber_pruefen(paths: Paths, bindung_inhalt) -> dict | None:
         logger.info("Treiberparameter abgelehnt (%s)", type(error).__name__)
         return fehler.details("parameter", "ungueltig")
     return None
-
-
-def raum_soll_start(bedienung_inhalt) -> float:
-    """Startwert des Soll-Speichers: die Bedienung, sonst 20 °C (Bedienbereich, Spec 3.2)."""
-    value = bedienung_inhalt.get("raum_soll") if isinstance(bedienung_inhalt, Mapping) else None
-    return float(value) if isinstance(value, int | float) and im_bedienbereich(value) else DEFAULT_RAUM_SOLL
 
 
 def abgemeldet(paths: Paths, konfiguration) -> bool:
