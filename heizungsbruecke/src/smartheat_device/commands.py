@@ -88,6 +88,13 @@ def _load_done(path: Path) -> dict[str, Entry]:
     return done
 
 
+def _fremdes_feld(body: dict, erlaubt) -> dict | None:
+    """details fuer das erste (alphabetisch) Feld ausserhalb von erlaubt; None, wenn es keines gibt. Der Name kommt vom
+    Netz: er steht nur in details, wenn er ein Feld des Vertrags ist (wire.PRUEF_FELDER), sonst nur die Regel."""
+    fremd = sorted(map(str, set(body) - set(erlaubt)))
+    return fehler.details(fremd[0] if fremd[0] in wire.PRUEF_FELDER else None, "unbekannt") if fremd else None
+
+
 def fehlerort(error: Exception) -> str:
     """Innerster Frame einer Ausnahme fuer Logs (Datei:Zeile Funktion), ohne Meldung und Quelltext (Regel 6)."""
     frames = traceback.extract_tb(error.__traceback__)
@@ -158,17 +165,23 @@ class CommandRegister:
     # --- intern ---
 
     def _execute(self, command_id: str, kind: str, message: dict) -> Outcome:
-        # Annahme gegen den Vertrag (wire.COMMAND_FIELDS): fehlt ein Feld, laeuft kein Handler. Fremde Felder ignoriert
-        # das Geraet wie bisher (Spec 2.1); der Server sendet genau die Felder des Vertrags.
+        # Strenge Annahme (V1 auf beiden Seiten strikt, Nutzer 2026-10-16): genau die Felder des Vertrags
+        # (wire.COMMAND_FIELDS), in der Nutzlast nur die der Art (Command.payload + payload_optional). Sonst laeuft kein
+        # Handler. Ein fremder Name steht nur in details, wenn er in wire.PRUEF_FELDER steht (G-6: nie freier Text).
         for feld in wire.COMMAND_FIELDS:
             if feld not in message:
                 return Failed("ungueltige_nutzlast", fehler.details(feld, "fehlt"))
+        if fremd := _fremdes_feld(message, wire.COMMAND_FIELDS):
+            return Failed("ungueltige_nutzlast", fremd)
         payload = message["payload"]
         handler = self._handlers.get(kind)
         if handler is None:
             return Failed("ungueltige_nutzlast", fehler.details("kind", "unbekannt"))
         if not isinstance(payload, dict):
             return Failed("ungueltige_nutzlast", fehler.details("payload", "ungueltig"))
+        art = wire.COMMANDS[kind]
+        if fremd := _fremdes_feld(payload, (*art.payload, *art.payload_optional)):
+            return Failed("ungueltige_nutzlast", fremd)
         self._store(command_id, (None, None, None))  # Marker "gestartet" vor dem Handler
         outcome = self._guarded(kind, lambda: handler(payload))
         return outcome if outcome is not None else Failed("intern")

@@ -108,13 +108,47 @@ def test_a_command_missing_a_contract_field_is_refused_and_does_not_run(tmp_path
     assert calls == [] and sent.results == [_fail("ungueltige_nutzlast", {"feld": feld, "regel": "fehlt"})]
 
 
-def test_a_foreign_field_in_a_command_is_ignored_like_before(tmp_path):
-    # Spec 2.1: unbekannte Felder ignorieren; das Geraet lockert nichts, sondern prueft nur, dass alles da ist
+@pytest.mark.parametrize("feld, erwartet", [
+    ("zukunft", {"regel": "unbekannt"}),  # kein Name des Vertrags: nie als Wert in details
+    ("stunden", {"feld": "stunden", "regel": "unbekannt"}),  # Name des Vertrags (PRUEF_FELDER)
+])
+def test_a_foreign_field_in_a_command_is_refused_and_does_not_run(tmp_path, feld, erwartet):
     sent, calls = Sent(), []
     register = cmd.CommandRegister(tmp_path, sent)
     register.register("diagnostics", lambda payload: calls.append(1) or cmd.Done({}))
-    register.empfangen({**_command(), "zukunft": 1})
+    register.empfangen({**_command(), feld: 1})
+    assert calls == [] and sent.results == [_fail("ungueltige_nutzlast", erwartet)]
+
+
+@pytest.mark.parametrize("kind, payload, erwartet", [
+    ("diagnostics", {"zukunft": 1}, {"regel": "unbekannt"}),
+    ("diagnostics", {"stunden": 1}, {"feld": "stunden", "regel": "unbekannt"}),
+    ("inventory", {"stunden": 1, "extra": 2}, {"regel": "unbekannt"}),
+    ("hinweis", {"key": "k", "stufe": "info", "text": "t", "zukunft": 1}, {"regel": "unbekannt"}),
+])
+def test_a_foreign_payload_field_is_refused_and_does_not_run(tmp_path, kind, payload, erwartet):
+    sent, calls = Sent(), []
+    register = cmd.CommandRegister(tmp_path, sent)
+    register.register(kind, lambda nutzlast: calls.append(1) or cmd.Done({}))
+    register.empfangen(_command(kind, payload=payload))
+    assert calls == [] and sent.results == [_fail("ungueltige_nutzlast", erwartet)]
+
+
+def test_the_optional_payload_field_of_a_kind_is_accepted(tmp_path):
+    sent, calls = Sent(), []
+    register = cmd.CommandRegister(tmp_path, sent)
+    register.register("inventory", lambda nutzlast: calls.append(1) or cmd.Done({}))
+    register.empfangen(_command("inventory", payload={"stunden": 0, "filter": {"treiber": "simulation"}}))
     assert calls == [1] and sent.results == [_ok()]
+
+
+def test_no_foreign_name_reaches_the_details(tmp_path):
+    sent = Sent()
+    register = cmd.CommandRegister(tmp_path, sent)
+    register.register("diagnostics", lambda payload: cmd.Done({}))
+    register.empfangen({**_command(), "GEHEIMER-NAME": 1})
+    register.empfangen(_command(command_id="c2", payload={"GEHEIMER-NAME": 1}))
+    assert "GEHEIMER-NAME" not in json.dumps(sent.results) and len(sent.results) == 2
 
 
 def test_a_malformed_duplicate_does_not_replace_the_stored_result(tmp_path):
