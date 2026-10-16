@@ -88,7 +88,7 @@ INVENTUR_ANLAGE_FIELDS = ("kennung", "sicherheitswarnungen")
 INVENTUR_FEATURE_FIELDS = ("anlage", "feature", "properties", "commands")
 RESULT_FIELDS = ("schema", "ok", "result", "error")
 RESULT_TARGETS = ("command_id", "dokument", "version")  # entweder command_id oder dokument und version
-ERROR_FIELDS = ("grund", "text")
+ERROR_FIELDS = ("grund", "details")
 WISH_FIELDS = ("schema", "wish_id", "basis_version", "ts", "uhr_synchron", "werte")
 WISH_OPTIONAL = ("roh", "herkunft", "durch")  # fehlt = nicht begrenzt bzw. unbekannt
 WISH_WERTE = ("raum_soll",)
