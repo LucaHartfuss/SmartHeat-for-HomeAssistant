@@ -27,8 +27,9 @@ from heizungsbruecke.host import (
 )
 from smartheat_runtime import app
 
-#: Ungueltiges Telemetrie-Intervall im Konfigurationsdokument: ein Konfigurationsfehler beim Start.
-KONFIGURATIONSFEHLER = {"telemetry_interval_seconds": 5}
+#: Ungueltiger Tagestick im Konfigurationsdokument: ein Konfigurationsfehler beim Start. (Die Grenzen der Intervalle
+#: prueft nur noch config_check beim Annehmen des Dokuments, nicht mehr der Host.)
+KONFIGURATIONSFEHLER = {"daily_trigger_time": "25:00"}
 
 
 @pytest.fixture
@@ -46,8 +47,8 @@ def _reachable(*answers):
     return ha_api
 
 
-def _options(**overrides):
-    """Die Optionen, die der Host aus dem Konfigurationsdokument liest (dokument.optionen)."""
+def _bindung(**overrides):
+    """Die HA-Bindung, die der Host aus dem Konfigurationsdokument liest (dokument.bindung)."""
     options = {
         "tenant_id": "test_tenant",
         "verteilsystem": "Heizkoerper",
@@ -61,7 +62,7 @@ def _options(**overrides):
         "entity_heat_limit": "number.heat_limit",
         **overrides,
     }
-    return dokument.optionen(konfiguration_aus_optionen(options))
+    return dokument.bindung(konfiguration_aus_optionen(options))
 
 
 def _status_events(env):
@@ -95,12 +96,12 @@ def test_alte_konfiguration_ohne_parameter_startet_nicht(env, caplog, sleeps):
     assert env.ha.writes == []
 
 
-def test_invalid_telemetry_interval_is_a_configuration_error(env, caplog, sleeps):
+def test_invalid_daily_trigger_time_is_a_configuration_error(env, caplog, sleeps):
     with caplog.at_level(logging.ERROR):
         result = _start_bridge(env, **KONFIGURATIONSFEHLER)
 
     assert result.reason == "konfigurationsfehler"
-    assert "telemetry_interval_seconds" in caplog.text
+    assert "Tagestick" in caplog.text
 
 
 def test_configuration_error_idles_with_heartbeat_and_rechecks_without_second_push(env, monkeypatch, sleeps):
@@ -188,7 +189,7 @@ def test_start_waits_for_ha_before_reporting(env, sleeps):
 
 # --- Budget fuer fehlende Entities und Hilfssensoren ---
 
-_DERIVED_OPTIONS = {"tenant_id": "t1", "room_sensors": ["sensor.rt"], "entity_outdoor_temp": "sensor.outdoor"}
+_DERIVED_BINDUNG = _bindung(room_sensors=["sensor.rt"], entity_outdoor_temp="sensor.outdoor")
 
 
 def test_retry_with_budget_returns_first_success(sleeps):
@@ -249,7 +250,7 @@ def test_budget_only_counts_once_ha_is_running(monkeypatch, sleeps, booting_stat
         ha_api, "entity_exists", lambda entity_id: ha["booting_checks"] == 0 or entity_id != "number.heat_limit",
     )
 
-    _wait_for_required_entities(ha_api, _options())
+    _wait_for_required_entities(ha_api, _bindung())
 
     assert len(sleeps) == 29  # nur Warten auf RUNNING, kein Budget verbraucht
     assert ha["booting_checks"] == 0
@@ -261,7 +262,7 @@ def test_budget_expires_when_entity_stays_missing_while_ha_is_running(monkeypatc
     monkeypatch.setattr(ha_api, "entity_exists", lambda entity_id: entity_id != "number.heat_limit")
 
     with pytest.raises(StartupError, match="number.heat_limit"):
-        _wait_for_required_entities(ha_api, _options())
+        _wait_for_required_entities(ha_api, _bindung())
 
     assert sleeps == list(DERIVED_SENSORS_RETRY_DELAYS_SECONDS)
 
@@ -278,7 +279,7 @@ def test_missing_entity_is_tolerated_within_budget(sleeps):
 
     ha_api.entity_exists.side_effect = _exists
 
-    _wait_for_required_entities(ha_api, _options())
+    _wait_for_required_entities(ha_api, _bindung())
 
     assert sleeps == [5, 10]
 
@@ -288,7 +289,7 @@ def test_missing_entity_after_budget_names_the_entity(sleeps):
     ha_api.entity_exists.side_effect = lambda entity_id: entity_id != "number.heat_limit"
 
     with pytest.raises(StartupError, match="number.heat_limit"):
-        _wait_for_required_entities(ha_api, _options())
+        _wait_for_required_entities(ha_api, _bindung())
 
 
 def test_required_entities_include_every_room_sensor_without_attribute_suffix(sleeps):
@@ -296,7 +297,7 @@ def test_required_entities_include_every_room_sensor_without_attribute_suffix(sl
     checked = []
     ha_api.entity_exists.side_effect = lambda entity_id: checked.append(entity_id) or True
 
-    _wait_for_required_entities(ha_api, _options(
+    _wait_for_required_entities(ha_api, _bindung(
         room_sensors=["sensor.a", "climate.wz::current_temperature"], entity_room_target="climate.wz::temperature",
     ))
 
@@ -309,7 +310,7 @@ def test_required_entities_include_zone_and_min_flow(sleeps):
     checked = []
     ha_api.entity_exists.side_effect = lambda entity_id: checked.append(entity_id) or True
 
-    _wait_for_required_entities(ha_api, _options())
+    _wait_for_required_entities(ha_api, _bindung())
 
     assert {"climate.zone", "number.min_flow"} <= set(checked)
     assert "number.offset_current" not in checked
@@ -322,23 +323,27 @@ def test_helper_creation_failure_after_budget_is_a_start_error(monkeypatch, slee
     monkeypatch.setattr("heizungsbruecke.derived_sensors.ensure_all", _broken)
 
     with pytest.raises(StartupError, match="Hilfs-Entities konnten nicht angelegt werden"):
-        _ensure_derived_sensors_with_retry(_reachable(), {**_DERIVED_OPTIONS})
+        _ensure_derived_sensors_with_retry(_reachable(), _DERIVED_BINDUNG, "t1")
 
 
 def test_ensure_derived_sensors_with_retry_recovers_after_transient_failures(monkeypatch, sleeps):
     expected = DerivedSensors({"room_actual": "sensor.smartheat_t1_raumtemperatur"}, (), "f")
     attempts = {"count": 0}
+    aufrufe = []
 
     def flaky_ensure_all(**kwargs):
         attempts["count"] += 1
+        aufrufe.append(kwargs)
         if attempts["count"] < 3:
             raise ConnectionError("HA Core noch nicht erreichbar")
         return expected
 
     monkeypatch.setattr("heizungsbruecke.derived_sensors.ensure_all", flaky_ensure_all)
 
-    assert _ensure_derived_sensors_with_retry(_reachable(), _DERIVED_OPTIONS) == expected
+    assert _ensure_derived_sensors_with_retry(_reachable(), _DERIVED_BINDUNG, "t1") == expected
     assert sleeps == [5, 10]
+    assert (aufrufe[-1]["tenant_id"], aufrufe[-1]["room_sensors"], aufrufe[-1]["outdoor_source"]) == (
+        "t1", ["sensor.rt"], "sensor.outdoor")
 
 
 # --- Zeitzone ---

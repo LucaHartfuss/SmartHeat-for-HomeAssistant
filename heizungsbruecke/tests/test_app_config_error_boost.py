@@ -1,10 +1,10 @@
 """Audit 4, A4-10 (GK-4): Konfigurationsfehler bei laufendem Boost (Geraete-Pfad: Konfigurationsdokument mit
-ungueltigem Telemetrie-Intervall)."""
+ungueltigem Tagestick)."""
 from test_runtime import _start_bridge, env  # noqa: F401 - env ist eine Fixture
 
 from smartheat_runtime.backup_store import load_backup, save_backup
 
-FEHLER = {"entity_shift_current": "climate.zone", "telemetry_interval_seconds": 5}  # ungueltig -> Konfigurationsfehler
+FEHLER = {"entity_shift_current": "climate.zone", "daily_trigger_time": "25:00"}  # ungueltig -> Konfigurationsfehler
 
 
 def _boost(env):

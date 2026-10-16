@@ -22,9 +22,9 @@ from smartheat_gateway.texts import SHG_TEXTS
 from smartheat_gateway.triggers import EV_TARGET_INPUT, BusTriggerSource
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_gateway.zigbee import CAP_BATTERY, CAP_BATTERY_LOW, ZigbeeMirror
-from smartheat_runtime import aufraeumen, dokument_config, options
+from smartheat_runtime import aufraeumen, dokument_config
 from smartheat_runtime.app import Loaded, RestoreParts, StartFailure
-from smartheat_runtime.options import ConfigError
+from smartheat_runtime.dokument_config import ConfigError
 from smartheat_runtime.ports import NotifySink, SignalSource, StatusSink, TriggerSource
 from smartheat_runtime.roles import ALL_ROLES, REQUIRED_ROLES_BY_LEVER_SET, ChannelManifest, ManifestError
 from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG, BATTERY_PERCENT, BatteryRef, BootInfo
@@ -58,7 +58,7 @@ def check_lever_set(driver, lever_set_id: str) -> None:
     if driver_set != lever_set_id:
         raise ConfigError(
             f"Hebelsatz des Treibers ({driver_set}) weicht von der Konfiguration ({lever_set_id}) ab – "
-            f"{options.RECONFIGURE_HINT}"
+            f"{dokument_config.RECONFIGURE_HINT}"
         )
 
 

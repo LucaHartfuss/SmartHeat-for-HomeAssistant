@@ -9,8 +9,8 @@ from smartheat_device.documents import im_bedienbereich
 from smartheat_gateway.drivers import registry
 from smartheat_gateway.drivers.registry import driver_ids
 from smartheat_gateway.paths import Paths
-from smartheat_runtime import dokument_config, options
-from smartheat_runtime.options import ConfigError
+from smartheat_runtime import dokument_config
+from smartheat_runtime.dokument_config import ConfigError
 from smartheat_runtime.runtime_config import RuntimeConfig
 
 IEEE = re.compile(r"0x[0-9a-f]{16}")
@@ -39,14 +39,14 @@ def bindung(konfiguration) -> GatewayBindung:
     driver_id = treiber.get("id") if isinstance(treiber, Mapping) else None
     parameter = treiber.get("parameter") if isinstance(treiber, Mapping) else None
     if driver_id not in driver_ids() or not isinstance(parameter, Mapping):
-        raise ConfigError(f"Treiber {driver_id!r} unbekannt oder ohne Parameter – {options.RECONFIGURE_HINT}")
+        raise ConfigError(f"Treiber {driver_id!r} unbekannt oder ohne Parameter – {dokument_config.RECONFIGURE_HINT}")
     sensors = konfiguration.get("raumfuehler")
     if not isinstance(sensors, list) or not sensors or any(
             not isinstance(ref, str) or not ROOM_SENSOR_REF.fullmatch(ref) for ref in sensors):
-        raise ConfigError(f"Raumfühler ({sensors!r}) ungültig – {options.RECONFIGURE_HINT}")
+        raise ConfigError(f"Raumfühler ({sensors!r}) ungültig – {dokument_config.RECONFIGURE_HINT}")
     thermostat = raw.get("thermostat") if isinstance(raw, Mapping) else None
     if thermostat is not None and (not isinstance(thermostat, str) or not IEEE.fullmatch(thermostat)):
-        raise ConfigError(f"Thermostat ({thermostat!r}) ist keine IEEE-Adresse – {options.RECONFIGURE_HINT}")
+        raise ConfigError(f"Thermostat ({thermostat!r}) ist keine IEEE-Adresse – {dokument_config.RECONFIGURE_HINT}")
     return GatewayBindung(driver_id, dict(parameter), tuple(sensors), thermostat)
 
 

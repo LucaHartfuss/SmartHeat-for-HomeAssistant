@@ -12,7 +12,7 @@ from smartheat_gateway import config
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_runtime import dokument_config, entitlement
-from smartheat_runtime.options import ConfigError
+from smartheat_runtime.dokument_config import ConfigError
 
 PARAMETER = {"lever_set": "viessmann_vicare", "heizkreis": 0}
 

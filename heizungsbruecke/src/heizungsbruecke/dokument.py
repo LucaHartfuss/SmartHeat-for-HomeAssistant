@@ -1,6 +1,5 @@
-"""Konfigurationsdokument des HA-Add-ons (Spec 5c 1.3): die HA-Bindung ergibt genau die bisherigen Optionen
-(entity_* je Rolle, Raumfuehler, Batterien, Handys, Hinweis-Schalter, Abfrageintervall), damit Binding, Manifest,
-Hilfssensoren und Pruefungen des Add-ons unveraendert bleiben (Golden Master). Der Raum-Soll der Regelung kommt aus
+"""Konfigurationsdokument des HA-Add-ons (Spec 5c 1.3, Stufe 3 S5 3.2): `bindung` liest die HA-Bindung direkt (Rollen
+der Laufzeit, Raumfuehler, Batterien, Handys, Hinweise); kein Zwischenformat mehr. Der Raum-Soll der Regelung kommt aus
 dem Soll-Speicher (SOLL_REF), die Soll-Entity ist nur Eingang und Anzeige. zuordnung_pruefen ist der HA-Teil der
 lokalen Pruefung (config_check ruft ihn ueber DeviceHost.treiber_pruefen, Spec 5b 3.1): Pflicht-Entities und
 Schreibbarkeit je Hebelsatz, Entities vorhanden, Schreibziele (jeder Hebel der Bindung, nicht nur die Schreibregeln des
@@ -12,88 +11,118 @@ erneut zu, ein Neustart des Hosts haette das Geraet sonst festgesetzt. zuordnung
 Geraet haelt das Dokument zurueck und prueft spaeter erneut). Bleiben Bindung, Raumfuehler und Hebelsatz gegenueber der
 uebernommenen Konfiguration gleich (z. B. nur das Abo oder der Tagestick aendert sich), entfaellt der HA-Teil."""
 import logging
+import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 
-from heizungsbruecke import config
-from heizungsbruecke.ha_signals import SOLL_REF
 from smartheat_core.config_check import NichtPruefbar
-from smartheat_runtime.options import BINDUNGSPARAMETER_OPTION
+from smartheat_core.levers import LEVER_SETS
+from smartheat_runtime.dokument_config import RECONFIGURE_HINT, ConfigError
 from smartheat_runtime.roles import LEVER_ROLES
 
 logger = logging.getLogger(__name__)
 
 _ROOM_TARGET = "room_target"
 #: Was die Regelung ausser den Hebeln des Hebelsatzes schreibt (Weishaupt/Viessmann: Betriebsart, Hilfs-Sollwerte).
-_WEITERE_SCHREIBZIELE = ("entity_mode_select", "entity_setpoint_comfort", "entity_setpoint_setback")
+WEITERE_SCHREIBZIELE = ("mode_select", "setpoint_comfort", "setpoint_setback")
 #: Felder, deren Aenderung eine erneute Pruefung gegen HA braucht.
 _HA_FELDER = ("bindung", "raumfuehler", "hebelsatz")
+#: Pflichtrollen je Hebelsatz (Laufzeitrollen, ohne room_target: das ist der Soll-Speicher, SOLL_REF).
+PFLICHT_ROLLEN: dict[str, tuple[str, ...]] = {
+    "vaillant_vrc720": ("curve_current", "shift_current", "min_flow", "heat_limit", "outdoor_temp"),
+    "weishaupt_wwp": ("curve_current", "shift_current", "heat_limit", "outdoor_temp", "mode_select",
+                      "setpoint_comfort", "setpoint_setback"),
+    "weishaupt_wwp_basis": ("shift_current", "outdoor_temp", "mode_select", "setpoint_comfort", "setpoint_setback"),
+    "viessmann_vicare": ("curve_current", "level_current", "shift_current", "outdoor_temp", "mode_select"),
+}
+_NUMBER = (re.compile(r"number\.[a-z0-9_]+"), "eine number.*-Entity")
+#: Schreibbarkeit je Hebelsatz (Spec 5.6 "schreibbar"): HaPlantBinding.write kennt nur climate.set_temperature und
+#: number.set_value; Weishaupt-Betriebsart ist ein select, das Viessmann-Heizprogramm eine climate-Entity.
+SCHREIBREGELN: dict[str, dict[str, tuple[re.Pattern, str]]] = {
+    "vaillant_vrc720": {
+        "shift_current": (re.compile(r"climate\.[a-z0-9_]+(::temperature)?|number\.[a-z0-9_]+"),
+                          "eine climate.*- oder number.*-Entity"),
+        "min_flow": _NUMBER, "heat_limit": _NUMBER,
+    },
+    "weishaupt_wwp": {
+        "curve_current": _NUMBER, "shift_current": _NUMBER, "heat_limit": _NUMBER, "setpoint_comfort": _NUMBER,
+        "setpoint_setback": _NUMBER, "mode_select": (re.compile(r"select\.[a-z0-9_]+"), "eine select.*-Entity"),
+    },
+    "weishaupt_wwp_basis": {
+        "shift_current": _NUMBER, "setpoint_comfort": _NUMBER, "setpoint_setback": _NUMBER,
+        "mode_select": (re.compile(r"select\.[a-z0-9_]+"), "eine select.*-Entity"),
+    },
+    "viessmann_vicare": {
+        "curve_current": _NUMBER, "level_current": _NUMBER, "shift_current": _NUMBER,
+        "mode_select": (re.compile(r"climate\.[a-z0-9_]+"), "eine climate.*-Entity"),
+    },
+}
 
 
-def option_fuer(rolle: str) -> str:
-    return f"entity_{LEVER_ROLES.get(rolle, rolle)}"
+def laufzeit_rolle(rolle: str) -> str:
+    """Rolle der HA-Bindung (V1 HA_ROLLEN) -> Rolle des Manifests (Hebel ueber LEVER_ROLES, sonst gleich)."""
+    return LEVER_ROLES.get(rolle, rolle)
 
 
-def _bindung(konfiguration) -> Mapping:
-    bindung = konfiguration.get("bindung") if isinstance(konfiguration, Mapping) else None
-    return bindung if isinstance(bindung, Mapping) else {}
+@dataclass(frozen=True)
+class HaBindung:
+    hebelsatz: str
+    rollen: dict[str, str]
+    soll_entity: str | None
+    raumfuehler: tuple[str, ...]
+    batterien: tuple[str, ...]
+    benachrichtigung: tuple[str, ...]
+    hinweise_aus: tuple[str, ...]
+    kreis: dict
 
 
-def soll_entity(konfiguration) -> str | None:
-    rollen = _bindung(konfiguration).get("rollen")
-    value = rollen.get(_ROOM_TARGET) if isinstance(rollen, Mapping) else None
-    return value if isinstance(value, str) and value else None
+def _mapping(value) -> Mapping:
+    return value if isinstance(value, Mapping) else {}
 
 
-def optionen(konfiguration) -> dict:
-    bindung = _bindung(konfiguration)
-    rollen = bindung.get("rollen")
-    rollen = rollen if isinstance(rollen, Mapping) else {}
-    options: dict = {
-        "tenant_id": konfiguration.get("anlage"), "setup_id": konfiguration.get("anlage"),
-        "lever_set": konfiguration.get("hebelsatz"), "verteilsystem": konfiguration.get("verteilsystem"),
-        "daily_trigger_time": konfiguration.get("tagestick"),
-        "room_sensors": list(konfiguration.get("raumfuehler") or []),
-        "battery_entities": list(bindung.get("batterien") or []),
-        "notify_services": list(bindung.get("benachrichtigung") or []),
-        "notify_hints_off": list(bindung.get("hinweise_aus") or []),
-    }
-    for rolle, ref in rollen.items():
-        if rolle != _ROOM_TARGET:
-            options[option_fuer(rolle)] = ref
-    options["entity_room_target"] = SOLL_REF
-    options[BINDUNGSPARAMETER_OPTION] = konfiguration.get("bindungsparameter")
-    intervalle = konfiguration.get("intervalle")
-    if isinstance(intervalle, Mapping):
-        if "pruefung_s" in intervalle:
-            options["local_check_interval_seconds"] = intervalle["pruefung_s"]
-        if "telemetrie_s" in intervalle:
-            options["telemetry_interval_seconds"] = intervalle["telemetrie_s"]
-    return options
+def _texte(value) -> tuple[str, ...]:
+    return tuple(item for item in value if isinstance(item, str)) if isinstance(value, list) else ()
+
+
+def bindung(konfiguration) -> HaBindung:
+    """HA-Bindung aus dem Dokument; config_check hat die Form geprueft. Wirft ConfigError bei einem Hebelsatz, den der
+    HA-Host nicht kennt."""
+    konfiguration = _mapping(konfiguration)
+    hebelsatz = konfiguration.get("hebelsatz")
+    if not isinstance(hebelsatz, str) or hebelsatz not in LEVER_SETS or hebelsatz not in PFLICHT_ROLLEN:
+        raise ConfigError(f"Hebelsatz {hebelsatz!r} ist für Home Assistant unbekannt – {RECONFIGURE_HINT}")
+    raw = _mapping(konfiguration.get("bindung"))
+    rollen = {laufzeit_rolle(rolle): ref for rolle, ref in _mapping(raw.get("rollen")).items()
+              if rolle != _ROOM_TARGET and isinstance(ref, str) and ref}
+    soll = _mapping(raw.get("rollen")).get(_ROOM_TARGET)
+    return HaBindung(
+        hebelsatz=hebelsatz, rollen=rollen, soll_entity=soll if isinstance(soll, str) and soll else None,
+        raumfuehler=_texte(konfiguration.get("raumfuehler")), batterien=_texte(raw.get("batterien")),
+        benachrichtigung=_texte(raw.get("benachrichtigung")), hinweise_aus=_texte(raw.get("hinweise_aus")),
+        kreis=dict(_mapping(raw.get("kreis"))))
 
 
 def _entity(ref: str) -> str:
     return ref.partition("::")[0]
 
 
-def _schreibziele(options: dict, lever_set: str) -> list[str]:
-    """Jede Rolle der Bindung, die die Regelung schreibt: die Schreibregeln des Hebelsatzes, alle Hebelrollen (auch die
-    Heizkurve, die bei vaillant_vrc720 keine Schreibregel hat) und die Betriebsart/Hilfs-Sollwerte."""
-    keys = dict.fromkeys([*config.writable_entity_rules(lever_set), *(option_fuer(r) for r in LEVER_ROLES),
-                          *_WEITERE_SCHREIBZIELE])
-    return [options[key] for key in keys if options.get(key)]
+def schreibziele(b: HaBindung) -> list[str]:
+    """Jede Rolle der Bindung, die die Regelung schreibt: Schreibregeln des Hebelsatzes, alle Hebelrollen (auch die
+    Heizkurve, die bei vaillant_vrc720 keine Schreibregel hat) und Betriebsart/Hilfs-Sollwerte."""
+    rollen = dict.fromkeys([*SCHREIBREGELN[b.hebelsatz], *LEVER_ROLES.values(), *WEITERE_SCHREIBZIELE])
+    return [b.rollen[rolle] for rolle in rollen if b.rollen.get(rolle)]
 
 
-def _lokal(options: dict, lever_set: str, soll: str | None) -> str | None:
+def _lokal(b: HaBindung) -> str | None:
     """Der Teil ohne HA: Pflichtrollen und Entity-Art der Schreibziele."""
-    missing = [key for key in config.required_entity_options(lever_set)
-               if key != "entity_room_target" and not options.get(key)]
+    missing = [rolle for rolle in PFLICHT_ROLLEN[b.hebelsatz] if not b.rollen.get(rolle)]
     if missing:
-        return f"Für die Ansteuerung {lever_set} fehlt die Zuordnung {missing[0].removeprefix('entity_')}."
-    for key, (pattern, expected) in config.writable_entity_rules(lever_set).items():
-        value = options.get(key)
+        return f"Für die Ansteuerung {b.hebelsatz} fehlt die Zuordnung {missing[0]}."
+    for rolle, (pattern, expected) in SCHREIBREGELN[b.hebelsatz].items():
+        value = b.rollen.get(rolle)
         if value is not None and not pattern.fullmatch(value):
             return f"{value} muss {expected} sein."
-    if soll is None:
+    if b.soll_entity is None:
         return "Die Wunschtemperatur-Entity fehlt."
     return None
 
@@ -101,30 +130,27 @@ def _lokal(options: dict, lever_set: str, soll: str | None) -> str | None:
 def lokal_pruefen(konfiguration) -> str | None:
     """Der Teil ohne HA fuer das ganze Dokument: Kundentext oder None. Wirft ConfigError bei unbekanntem Hebelsatz
     (HaHost.load macht daraus einen Konfigurationsfehler, damit der Start nie an einem fehlenden Schluessel stirbt)."""
-    options = optionen(konfiguration)
-    return _lokal(options, config.lever_set_id(options), soll_entity(konfiguration))
+    return _lokal(bindung(konfiguration))
 
 
-def _mit_ha(konfiguration, options: dict, lever_set: str, soll: str, ha_api) -> str | None:
+def _mit_ha(b: HaBindung, ha_api) -> str | None:
     if not ha_api.is_reachable():  # faehrt HA hoch, fehlen die Entities der Integration noch (404): kein Urteil
         raise NichtPruefbar
     registry = {e.get("entity_id"): e for e in ha_api.entity_registry() if isinstance(e, Mapping)}
-    refs = [soll, *(v for k, v in options.items() if k.startswith("entity_") and v != SOLL_REF),
-            *options["room_sensors"], *options["battery_entities"]]
-    for ref in refs:
+    assert b.soll_entity is not None
+    for ref in (b.soll_entity, *b.rollen.values(), *b.raumfuehler, *b.batterien):
         if not ha_api.entity_exists(_entity(ref)):
             return f"Die Entity {_entity(ref)} gibt es in Home Assistant nicht."
-    kreis = _bindung(konfiguration).get("kreis") or {}
-    schreibziele = _schreibziele(options, lever_set)
-    for ref in schreibziele:
+    ziele = schreibziele(b)
+    for ref in ziele:
         entry = registry.get(_entity(ref)) or {}
         # Kreis ohne Config-Entry (config_entry None): nur die Plattform bindet
-        if entry.get("platform") != kreis.get("plattform") or (
-                kreis.get("config_entry") is not None and entry.get("config_entry_id") != kreis["config_entry"]):
+        if entry.get("platform") != b.kreis.get("plattform") or (
+                b.kreis.get("config_entry") is not None and entry.get("config_entry_id") != b.kreis["config_entry"]):
             return f"{_entity(ref)} gehört nicht zur gewählten Heizungs-Integration."
-    soll_entry = registry.get(_entity(soll)) or {}
-    geraete = {(registry.get(_entity(ref)) or {}).get("device_id") for ref in schreibziele} - {None}
-    if _entity(soll) in {_entity(ref) for ref in schreibziele} or (
+    soll_entry = registry.get(_entity(b.soll_entity)) or {}
+    geraete = {(registry.get(_entity(ref)) or {}).get("device_id") for ref in ziele} - {None}
+    if _entity(b.soll_entity) in {_entity(ref) for ref in ziele} or (
             soll_entry.get("device_id") is not None and soll_entry.get("device_id") in geraete):
         return "Die Wunschtemperatur darf kein Wert der Heizungsanlage selbst sein."
     return None
@@ -140,16 +166,14 @@ def zuordnung_pruefen(konfiguration, ha_api, akzeptiert=None) -> str | None:
     Konfiguration (None, wenn es keine gibt). Wirft NichtPruefbar, wenn HA gerade nicht antwortet (siehe oben), sonst
     nie."""
     try:
-        options = optionen(konfiguration)
-        lever_set = config.lever_set_id(options)
-        soll = soll_entity(konfiguration)
-        text = _lokal(options, lever_set, soll)
-    except config.ConfigError as error:
+        b = bindung(konfiguration)
+        text = _lokal(b)
+    except ConfigError as error:
         return str(error)
-    if text is not None or soll is None or _unveraendert(konfiguration, akzeptiert):
+    if text is not None or b.soll_entity is None or _unveraendert(konfiguration, akzeptiert):
         return text
     try:
-        return _mit_ha(konfiguration, options, lever_set, soll, ha_api)
+        return _mit_ha(b, ha_api)
     except NichtPruefbar:
         raise
     except Exception as error:  # HA nicht erreichbar, unerwartete Antwort: spaeter erneut, nie eine Ablehnung

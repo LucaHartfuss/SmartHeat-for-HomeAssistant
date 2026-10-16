@@ -19,12 +19,12 @@ def test_validate_daily_trigger_time_returns_the_value():
 
 
 @pytest.mark.parametrize("value", [None, ""])
-def test_validate_daily_trigger_time_names_missing_option(value):
-    with pytest.raises(ValueError, match="Option 'daily_trigger_time' fehlt"):
+def test_validate_daily_trigger_time_names_missing_tagestick(value):
+    with pytest.raises(ValueError, match="Tagestick fehlt"):
         validate_daily_trigger_time(value)
 
 
-def test_validate_daily_trigger_time_names_the_option_for_a_bad_time():
-    with pytest.raises(ValueError, match="Option 'daily_trigger_time': '25:00' ist keine Uhrzeit"):
+def test_validate_daily_trigger_time_names_the_tagestick_for_a_bad_time():
+    with pytest.raises(ValueError, match="Tagestick: '25:00' ist keine Uhrzeit"):
         validate_daily_trigger_time("25:00")
 

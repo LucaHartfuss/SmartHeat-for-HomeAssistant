@@ -1,15 +1,18 @@
 """Spec 5b 5.2: Laufzeit aus dem Konfigurationsdokument (Plan D1 Task 9): BootInfo, RuntimeConfig ohne Transport,
 Abo aus dem Dokument, Neustart nur bei laufzeitrelevanten Aenderungen."""
+import dataclasses
 from pathlib import Path
 
 import pytest
+from bindung_beispiele import parameter
 
-from smartheat_core import rastung
-from smartheat_core.safety import resolve_local_safety
+from smartheat_core import config_check, rastung
+from smartheat_core.config_check import INTERVALLE
+from smartheat_core.safety import LOCAL_SAFETY, resolve_local_safety
 from smartheat_device import wire
 from smartheat_runtime import dokument_config as dc
-from smartheat_runtime import entitlement, options
-from smartheat_runtime.options import ConfigError
+from smartheat_runtime import entitlement
+from smartheat_runtime.dokument_config import ConfigError
 
 SENSOR = "zigbee:0x00124b0000000001:temperature"
 KONF = {
@@ -17,6 +20,8 @@ KONF = {
     "verteilsystem": "Heizkoerper", "bindung": {"treiber": {"id": "simulation", "parameter": {}}, "thermostat": None},
     "raumfuehler": [SENSOR], "tagestick": "12:12", "abo": "aktiv", "mindest_software": "0.6.0", "software": None,
 }
+#: Mit Bindungsparametern (die Laufzeit-Tests oben brauchen sie nicht; ein Wechsel auf None waere dort nicht relevant).
+KONF_MIT = {**KONF, "bindungsparameter": parameter("viessmann_vicare")}
 
 
 def _boot(konfiguration, tmp_path, abgemeldet=False):
@@ -33,7 +38,7 @@ def test_boot_info_of_a_set_up_device(tmp_path):
     boot = _boot(KONF, tmp_path)
     assert (boot.configured, boot.signed_off, boot.tenant_id, boot.setup_id) == (True, False, "kunde3", "kunde3")
     assert (boot.lever_set.id, boot.client_version, boot.notify_hints_off) == ("viessmann_vicare", "0.6.0", ())
-    assert boot.local_check_interval == options.DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS
+    assert boot.local_check_interval == dc.DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS
     assert (boot.backup_path, boot.failsafe_path) == (tmp_path / "b.json", tmp_path / "f.json")
 
 
@@ -46,7 +51,7 @@ def test_boot_info_not_set_up_and_signed_off(tmp_path):
 
 def test_boot_info_never_throws(tmp_path):
     boot = _boot({"anlage": 5, "hebelsatz": "unbekannt", "intervalle": "x"}, tmp_path)
-    assert boot.configured is False and boot.lever_set.id == options.DEFAULT_LEVER_SET
+    assert boot.configured is False and boot.lever_set.id == "vaillant_vrc720"
 
 
 def test_runtime_config_from_the_document(tmp_path):
@@ -59,7 +64,7 @@ def test_runtime_config_from_the_document(tmp_path):
     assert (config.daily_trigger_time, config.room_sensor_refs, config.battery_refs) == ("12:12", (SENSOR,), ())
     assert config.local_safety == resolve_local_safety("viessmann_vicare", "Heizkoerper")
     assert (config.local_check_interval, config.telemetry_interval) == (
-        options.DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS, options.DEFAULT_TELEMETRY_INTERVAL_SECONDS)
+        dc.DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS, dc.DEFAULT_TELEMETRY_INTERVAL_SECONDS)
     assert config.abo_source is source and config.entitlement_path == Path("/tmp/e.json")
 
 
@@ -166,3 +171,120 @@ def test_arriving_originals_do_not_restart_the_runtime():
     """Spec 5.2: ursprungswerte steht nicht in LAUFZEIT_FELDER, ihr Eintreffen startet die Laufzeit nicht neu."""
     assert "ursprungswerte" not in dc.LAUFZEIT_FELDER
     assert dc.laufzeit_relevant(KONF, {**KONF, "ursprungswerte": {"heat_limit": 16.0}}) is False
+
+
+def test_beschreibung_aus_hebelsatz_und_bindungsparametern():
+    assert dc.beschreibung(KONF_MIT).lever_set.id == KONF_MIT["hebelsatz"]
+
+
+def test_beschreibung_ohne_bindungsparameter_ist_ein_konfigurationsfehler():
+    with pytest.raises(ConfigError):
+        dc.beschreibung({**KONF_MIT, "bindungsparameter": None})
+
+
+@pytest.mark.parametrize("hebelsatz", ["gibt_es_nicht", None, 5])
+def test_unbekannter_hebelsatz_ist_ein_konfigurationsfehler(hebelsatz):
+    with pytest.raises(ConfigError, match="Hebelsatz"):
+        dc.beschreibung({**KONF, "hebelsatz": hebelsatz})
+    with pytest.raises(ConfigError, match="Hebelsatz"):
+        dc.sicherheit({**KONF, "hebelsatz": hebelsatz})
+
+
+def test_sicherheit_ist_der_satz_von_hebelsatz_und_verteilsystem():
+    assert dc.sicherheit(KONF) == resolve_local_safety("viessmann_vicare", "Heizkoerper")
+
+
+def test_sicherheit_mit_unbekanntem_verteilsystem_ist_ein_konfigurationsfehler():
+    with pytest.raises(ConfigError, match="Konfiguration"):
+        dc.sicherheit({**KONF, "verteilsystem": "Kachelofen"})
+
+
+@pytest.mark.parametrize("key", sorted(INTERVALLE))
+def test_jedes_angenommene_intervall_startet(key, tmp_path):
+    """Spec Stufe 3 S5 3.2: die Grenzen stehen nur in config_check; die Laufzeit uebernimmt jeden angenommenen Wert."""
+    low, high = INTERVALLE[key]
+    feld = {"pruefung_s": "local_check_interval", "telemetrie_s": "telemetry_interval"}[key]
+    for wert in (low, high):
+        # dieselbe Grenze nimmt config_check an (Quelle der Grenzen), erst dann gilt "angenommen"
+        assert config_check.pruefen({**KONF_MIT, "intervalle": {key: wert}}, None,
+                                    host=config_check.HOST_GATEWAY) is None
+        runtime = dc.runtime_config(
+            {**KONF, "intervalle": {key: wert}}, rastung_pfad=tmp_path / "keine", entitlement_path=tmp_path / "e",
+            abo_source=lambda: entitlement.ACTIVE)
+        assert getattr(runtime, feld) == wert
+
+
+# --- Sicherheitswerte und Bindungsparameter aus dem Dokument (frueher in test_config.py des HA-Hosts) ---
+
+VAILLANT = {"hebelsatz": "vaillant_vrc720", "verteilsystem": "Heizkoerper"}
+
+
+def test_boost_values_outside_the_ranges_are_a_configuration_error(monkeypatch):
+    """Boost-Werte ausserhalb der Bereiche sind ein Startfehler statt still geclampt (der Boost ist der einzige
+    Schreibpfad ohne Server-Aufsicht). Geprueft wird in smartheat_core.safety.check_invariants (test_core_safety::
+    test_invariants); hier der Weg bis zum Konfigurationsfehler."""
+    safety = dict(LOCAL_SAFETY)
+    heizkoerper = safety[("vaillant_vrc720", "Heizkoerper")]
+    for comfort_boost in ({**heizkoerper.comfort_boost, "curve": 99.0}, {**heizkoerper.comfort_boost, "curve": -1.0},
+                          {**heizkoerper.comfort_boost, "room_setpoint": 999.0},
+                          {**heizkoerper.comfort_boost, "room_setpoint": 26.0}):
+        safety[("vaillant_vrc720", "Heizkoerper")] = dataclasses.replace(heizkoerper, comfort_boost=comfort_boost)
+        monkeypatch.setattr("smartheat_core.safety.LOCAL_SAFETY", safety)
+        with pytest.raises(ConfigError, match="Comfort-Boost"):
+            dc.sicherheit(VAILLANT)
+
+
+def test_boost_values_on_the_range_boundaries_are_accepted(monkeypatch):
+    safety = dict(LOCAL_SAFETY)
+    heizkoerper = safety[("vaillant_vrc720", "Heizkoerper")]
+    low, high = heizkoerper.ranges["curve"]
+    for curve in (low, high):
+        boosted = dataclasses.replace(heizkoerper, comfort_boost={**heizkoerper.comfort_boost, "curve": curve})
+        safety[("vaillant_vrc720", "Heizkoerper")] = boosted
+        monkeypatch.setattr("smartheat_core.safety.LOCAL_SAFETY", safety)
+        assert dc.sicherheit(VAILLANT).comfort_boost["curve"] == curve
+
+
+def test_the_document_carries_the_local_safety_values():
+    safety = dc.sicherheit(VAILLANT)
+    assert safety.ranges["curve"] == (0.4, 1.5)
+    assert safety.ranges["room_setpoint"] == (15.0, 25.0)
+    assert safety.ranges["min_flow"] == (20.0, 30.0)
+    assert safety.ranges["heat_limit"] == (5.0, 23.0)
+    assert safety.arrival_threshold_k == 0.5
+    assert (safety.comfort_boost["curve"], safety.comfort_boost["room_setpoint"]) == (1.5, 25.0)
+    assert safety.comfort_boost["heat_limit"] == 23.0  # bis 0.29.0: Boost-Heizgrenze = heat_limit_max
+
+
+def test_weishaupt_has_its_own_safety_values():
+    weishaupt = {"hebelsatz": "weishaupt_wwp", "verteilsystem": "Heizkoerper"}
+    assert dc.sicherheit(weishaupt).ranges == {
+        "curve": (0.30, 1.00), "room_setpoint": (16.0, 25.0), "heat_limit": (5.0, 23.0),
+    }
+    assert dc.sicherheit({**weishaupt, "verteilsystem": "Fussbodenheizung"}).comfort_boost == {}
+
+
+@pytest.mark.parametrize("verteilsystem", [None, "", "Deckenheizung", "Unbekannt"])
+def test_an_unknown_verteilsystem_has_no_safety_values(verteilsystem):
+    with pytest.raises(ConfigError, match="Verteilsystem"):
+        dc.sicherheit({**VAILLANT, "verteilsystem": verteilsystem})
+
+
+def test_beschreibung_uebernimmt_die_bindungsparameter():
+    vaillant = {**VAILLANT, "bindungsparameter": parameter("vaillant_vrc720")}
+    assert dc.beschreibung(vaillant).settle_seconds == 2100
+    weishaupt = {"hebelsatz": "weishaupt_wwp", "bindungsparameter": parameter("weishaupt_wwp")}
+    assert dc.beschreibung(weishaupt).settle_seconds == 120
+    langsam = {**weishaupt, "bindungsparameter": parameter("weishaupt_wwp", wartezeit_s=240)}
+    assert dc.beschreibung(langsam).settle_seconds == 240
+
+
+@pytest.mark.parametrize("konfiguration", [
+    {"hebelsatz": "vaillant_vrc720"}, {"hebelsatz": "vaillant_vrc720", "bindungsparameter": {}},
+    {"hebelsatz": "weishaupt_wwp", "bindungsparameter": None},
+    {"hebelsatz": "vaillant_vrc720", "bindungsparameter": parameter("vaillant_vrc720", wartezeit_s=10 ** 6)},
+    {"hebelsatz": "viessmann_vicare", "bindungsparameter": parameter("vaillant_vrc720")},
+])
+def test_beschreibung_ohne_passende_bindungsparameter_ist_ein_konfigurationsfehler(konfiguration):
+    with pytest.raises(ConfigError, match="Konfiguration"):
+        dc.beschreibung(konfiguration)

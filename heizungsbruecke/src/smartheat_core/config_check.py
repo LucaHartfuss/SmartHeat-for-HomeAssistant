@@ -32,7 +32,9 @@ ABO_WERTE = ("aktiv", "inaktiv")
 GATEWAY_RAUMFUEHLER = re.compile(r"zigbee:0x[0-9a-f]{16}:(temperature|local_temperature)|treiber:room_temperature")
 IEEE = re.compile(r"0x[0-9a-f]{16}")
 TAGESTICK = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
-#: Intervalle (nur E2E) mit den Grenzen der Add-on-Optionen (smartheat_runtime.options, TP12e); ein Test haelt sie gleich.
+#: Intervalle (nur E2E); die Grenzen stehen nur hier, die Laufzeit uebernimmt jeden angenommenen Wert (ein Test
+#: startet sie an beiden Grenzen). Obergrenze Telemetrie (Regel 4, TP12e, AU-022): der Server wertet Luecken ab
+#: samples.MAX_GAP (15 min) als Pause; 600 s lassen Reserve (Contract-Check 33: <= 0,8 x MAX_GAP).
 PRUEFUNG_S = (1, 3600)
 TELEMETRIE_S = (10, 600)
 INTERVALLE = {"pruefung_s": PRUEFUNG_S, "telemetrie_s": TELEMETRIE_S}

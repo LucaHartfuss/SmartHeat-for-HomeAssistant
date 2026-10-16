@@ -4,9 +4,9 @@ import bindung_beispiele
 import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT
 
-from heizungsbruecke import config
 from heizungsbruecke.ha_binding import MANUAL_HVAC_MODE, ROOM_SETPOINT_READ_MAX, HaPlantBinding, entity_of, is_climate
 from smartheat_core.clamping import target_value
+from smartheat_runtime import dokument_config
 from smartheat_runtime.roles import ChannelManifest
 
 MANIFEST = ChannelManifest(refs={
@@ -199,19 +199,12 @@ def test_is_climate():
 def test_binding_for_picks_the_class_and_description_of_the_lever_set(lever_set, cls):
     from heizungsbruecke.ha_binding import binding_for
 
-    options = {"bindungsparameter": bindung_beispiele.parameter(lever_set or "vaillant_vrc720")}
-    if lever_set is not None:
-        options["lever_set"] = lever_set
-    binding = binding_for(options, FakeHa(), MANIFEST)
+    hebelsatz = lever_set or "vaillant_vrc720"
+    description = dokument_config.beschreibung(
+        {"hebelsatz": hebelsatz, "bindungsparameter": bindung_beispiele.parameter(hebelsatz)})
+    binding = binding_for(description, FakeHa(), MANIFEST)
     assert type(binding).__name__ == cls
-    assert binding.description.lever_set.id == (lever_set or "vaillant_vrc720")
-
-
-def test_binding_for_needs_the_binding_parameters():
-    from heizungsbruecke.ha_binding import binding_for
-
-    with pytest.raises(config.ConfigError, match="Konfiguration"):
-        binding_for({"bindungsparameter": None}, FakeHa(), MANIFEST)
+    assert binding.description is description
 
 
 def test_binding_roles_for_sign_off():

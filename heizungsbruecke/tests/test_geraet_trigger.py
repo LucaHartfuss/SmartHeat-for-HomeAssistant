@@ -9,7 +9,7 @@ from conftest import FakeClock
 from fakes import FakeHa
 
 from heizungsbruecke import geraet_trigger
-from heizungsbruecke.config import ConfigError
+from smartheat_runtime.dokument_config import ConfigError
 from smartheat_runtime.roles import ChannelManifest
 from smartheat_runtime.runtime import EV_LOCAL_CHECK, EV_SOURCE_CONNECTED
 from smartheat_runtime.soll_eingang import EV_TARGET_INPUT
@@ -31,7 +31,7 @@ class Aufbau:
         self.worker.register(EV_LOCAL_CHECK, lambda event: self.checks.append(event.data))
         manifest = ChannelManifest(refs={"room_target": "smartheat:raum_soll", "room_actual": room_actual})
         self.client = geraet_trigger.build(
-            manifest, {"daily_trigger_time": "12:00"}, self.ha, self.worker, self.store, soll,
+            manifest, self.ha, self.worker, self.store, soll, tagestick="12:00", wache_s=300,
             wunsch=lambda v, h, d: self.wuensche.append((v, h, d)) or min(max(v, 15.0), 25.0),
             soll_quelle_aus=lambda aus, wirksam: self.aus.append((aus, wirksam)))
         self.fire = self.client._on_trigger_event
@@ -226,8 +226,8 @@ def test_event_wish_reaches_the_device_core_buffer_without_a_connection(tmp_path
 
     a = Aufbau(tmp_path)
     manifest = ChannelManifest(refs={"room_actual": "sensor.raum"})
-    client = geraet_trigger.build(manifest, {}, a.ha, a.worker, a.store, SOLL, wunsch=wunsch,
-                                  soll_quelle_aus=lambda aus, wirksam: None)
+    client = geraet_trigger.build(manifest, a.ha, a.worker, a.store, SOLL, tagestick=None, wache_s=300,
+                                  wunsch=wunsch, soll_quelle_aus=lambda aus, wirksam: None)
     client._on_trigger_event({"platform": "event", "event": {
         "event_type": "smartheat_wunsch", "data": {"raum_soll": 23.0}, "context": {"user_id": "u1"}}})
     a.run()
@@ -302,9 +302,9 @@ def test_build_passes_the_ws_parameters_to_the_client(monkeypatch, tmp_path):
                         lambda **kwargs: created.append(kwargs) or SimpleNamespace(**kwargs))
     ha = MagicMock(token="tok")
     ha.websocket_url.return_value = "ws://x/api/websocket"
-    geraet_trigger.build(ChannelManifest(refs={"room_actual": "sensor.raum"}), {}, ha,
+    geraet_trigger.build(ChannelManifest(refs={"room_actual": "sensor.raum"}), ha,
                          RegulationWorker(FakeClock()), TargetStore(tmp_path / "s.json", 21.0, FakeClock(), lambda: "t"),
-                         SOLL, wunsch=lambda v, h, d: v, soll_quelle_aus=lambda a, w: None)
+                         SOLL, tagestick=None, wache_s=300, wunsch=lambda v, h, d: v, soll_quelle_aus=lambda a, w: None)
     assert created[0]["ws_url"] == "ws://x/api/websocket" and created[0]["token"] == "tok"
     assert {"platform": "time", "at": "12:00"} not in created[0]["triggers"]  # ohne Tagestick keiner
 
