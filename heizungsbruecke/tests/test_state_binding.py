@@ -73,3 +73,20 @@ def test_ein_alter_zustand_mit_setup_id_laedt_als_tenant_id_ohne_neue_einrichtun
     raw = json.loads((tmp_path / "backup.json").read_text())
     assert "setup_id" not in raw and raw["tenant_id"] == "s1"
     assert raw["restore_point"] == {"curve": 1.0}
+
+
+def test_bei_setup_id_und_tenant_id_gewinnt_die_tenant_id(tmp_path):
+    store = _store(tmp_path, {**OLD, "setup_id": "alt", "tenant_id": "s1", "plant_id": "anlage-a"})
+    assert store.state.tenant_id == "s1"
+    store.update(last_ack_at="2026-10-08T12:00:00+02:00")
+    raw = json.loads((tmp_path / "backup.json").read_text())
+    assert "setup_id" not in raw and raw["tenant_id"] == "s1"
+
+
+def test_eine_setup_id_mit_falschem_typ_gilt_wie_ein_anderes_textfeld_als_ungueltig(tmp_path):
+    store = _store(tmp_path, {**OLD, "setup_id": 5, "plant_id": "anlage-a"})
+    assert store.state.tenant_id is None and store.state.plant_id == "anlage-a"
+    assert store.state.restore_point == OLD["restore_point"]
+    store.update(last_ack_at="2026-10-08T12:00:00+02:00")
+    raw = json.loads((tmp_path / "backup.json").read_text())
+    assert "setup_id" not in raw and raw.get("tenant_id") is None
