@@ -78,6 +78,8 @@ def test_importe_folgen_der_grenztabelle():
 
 def test_jedes_paket_hat_eine_zeile_und_es_gibt_kein_fremdes_paket():
     assert set(ERLAUBT) == set(QUELLEN) == set(DRITTE)
+    for paket, ordner in QUELLEN.items():  # sonst prueft rglob ein verschobenes Paket still nicht mehr
+        assert ordner.is_dir() and (ordner / "__init__.py").exists(), paket
     kern_pakete = {p.name for p in (REPO / "heizungsbruecke" / "src").iterdir()
                    if p.is_dir() and (p / "__init__.py").exists()}
     assert kern_pakete == {"smartheat_core", "smartheat_runtime", "smartheat_device", "heizungsbruecke"}
