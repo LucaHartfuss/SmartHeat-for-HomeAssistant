@@ -78,7 +78,11 @@ GERAET_QUELLEN = [ADDON_REPO / "heizungsbruecke" / "src", ADDON_REPO / "gateway"
 _VERTRAG_MODUL = "smartheat_device.wire"
 _PIN_PRAEFIX = "_VERTRAG_GEPINNT"
 # V1-Konstanten, die nur der Server braucht; jede Zeile mit Grund. Kein Eintrag ohne Grund.
-NUR_SERVER: set[str] = set()
+NUR_SERVER: set[str] = {
+    "MAX_BODY_BYTES",  # nur der Server begrenzt den Bootstrap-Body; die Bausteine liefern wenige hundert Bytes
+    "MAX_CLOCK_SKEW_SECONDS",  # nur der Server prueft das Zeitfenster der Signatur
+    "UNAUTHENTICATED_ERROR",  # Text der 401-Antwort; das Geraet wertet nur den Status 401 (Spec 1: fuer alle Faelle gleich)
+}
 NUR_GEPINNT_GERAET: set[str] = set()  # Kopien im Kern (smartheat_core darf nichts importieren), nur gepinnt (P4)
 OFFEN: set[str] = {  # Ist-Stand 2026-10-16; die Tasks 2-6 leeren es, Task 7 prueft OFFEN == set()
     "ABO",  # Task 5
@@ -87,21 +91,13 @@ OFFEN: set[str] = {  # Ist-Stand 2026-10-16; die Tasks 2-6 leeren es, Task 7 pru
     "BINDUNG_GATEWAY_FIELDS",  # Task 5
     "BINDUNG_HA_FIELDS",  # Task 5
     "BINDUNG_HA_OPTIONAL",  # Task 5
-    "BOOTSTRAP_OPTIONAL",  # Task 3
-    "CAPABILITY_FIELDS",  # Task 6
-    "CAPABILITY_OPTIONAL",  # Task 6
-    "CERTIFICATE_FIELDS",  # Task 3
     "COMMAND_FIELDS",  # Task 4
-    "CSR_MAX_BYTES",  # Task 3
     "DOKUMENT_ERRORS",  # Task 5
     "DOKUMENT_TOPICS",  # Task 5
     "DOWN_TOPICS",  # Task 4
     "ENERGIE_EINHEITEN",  # Task 5
     "HA_HINWEISE",  # Task 5
     "HA_ROLLEN",  # Task 5
-    "HELLO_FIELDS",  # Task 3
-    "HELLO_OPTIONAL",  # Task 3
-    "HOSTS",  # Task 3
     "INVENTORY_FIELDS",  # Task 4
     "INVENTUR_ANLAGE_FIELDS",  # Task 6
     "INVENTUR_ENTITY_FIELDS",  # Task 6
@@ -112,30 +108,14 @@ OFFEN: set[str] = {  # Ist-Stand 2026-10-16; die Tasks 2-6 leeren es, Task 7 pru
     "INVENTUR_HA_FIELDS",  # Task 6
     "KONFIGURATION_OPTIONAL",  # Task 5
     "KREIS_FIELDS",  # Task 5
-    "MAX_BODY_BYTES",  # Task 3
-    "MAX_CLOCK_SKEW_SECONDS",  # Task 3
-    "MELDUNGEN",  # Task 3
-    "NOTIFICATIONS_FIELDS",  # Task 3
-    "NOTIFICATION_FIELDS",  # Task 3
-    "PUBLIC_KEY_ENCODING",  # Task 3
-    "RAUM_FIELDS",  # Task 3
-    "REGISTER_FIELDS",  # Task 3
-    "REGISTER_OPTIONAL",  # Task 3
-    "RESULT_FIELDS",  # Task 3
-    "RESULT_TARGETS",  # Task 3
     "SCHREIBSCHUTZ_FIELDS",  # Task 5
-    "SIGNATURE_ENCODING",  # Task 3
     "SOFTWARE_FIELDS",  # Task 5
-    "STATUS_FIELDS",  # Task 3
-    "STATUS_OPTIONAL",  # Task 3
     "TREIBER_FIELDS",  # Task 5
-    "UNAUTHENTICATED_ERROR",  # Task 3
     "WISH_FIELDS",  # Task 4
     "WISH_WERTE",  # Task 4
     "ZAEHLER",  # Task 5
     "ZIGBEE_ARTEN",  # Task 6
     "ZIGBEE_DEVICE_FIELDS",  # Task 6
-    "ZUSTAENDE",  # Task 3
 }
 
 

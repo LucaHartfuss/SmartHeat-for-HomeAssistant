@@ -19,7 +19,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
 from smartheat_core import dateien
-from smartheat_device import wire
+from smartheat_device import nachrichten, wire
 
 KEY_FILE = "key.pem"
 TLS_KEY_FILE = "tls_key.pem"
@@ -44,7 +44,7 @@ def device_id_for(public_key) -> str:
 
 
 def public_key_b64(key: ec.EllipticCurvePrivateKey) -> str:
-    return base64.b64encode(_der(key.public_key())).decode()
+    return _KODIERUNGEN[wire.PUBLIC_KEY_ENCODING](_der(key.public_key()))
 
 
 def _pem(key: ec.EllipticCurvePrivateKey) -> str:
@@ -85,9 +85,22 @@ def save_claim_code(device_dir: Path, ident: Identity, code: str) -> Identity:
     return replace(ident, claim_code=code)
 
 
+def _base64url_ohne_padding(daten: bytes) -> str:
+    return base64.urlsafe_b64encode(daten).decode().rstrip("=")
+
+
+def _base64(daten: bytes) -> str:
+    return base64.b64encode(daten).decode()
+
+
+#: Kodierungen des Vertrags (wire.SIGNATURE_ENCODING, wire.PUBLIC_KEY_ENCODING). Nennt der Vertrag eine andere, scheitert
+#: das Geraet laut (KeyError) statt still falsch zu kodieren.
+_KODIERUNGEN = {"base64url_unpadded": _base64url_ohne_padding, "base64_der_spki": _base64}
+
+
 def sign(key: ec.EllipticCurvePrivateKey, method: str, path: str, timestamp: int, body: bytes) -> str:
     der = key.sign(wire.canonical_string(method, path, timestamp, body), ec.ECDSA(hashes.SHA256()))
-    return base64.urlsafe_b64encode(der).decode().rstrip("=")
+    return _KODIERUNGEN[wire.SIGNATURE_ENCODING](der)
 
 
 def csr_pem(ident: Identity) -> str:
@@ -110,15 +123,10 @@ def passt_zum_schluessel(ident: Identity, certificate_pem: str) -> bool:
 
 
 def register_body(ident: Identity, *, version: str, host: str, capabilities: dict) -> dict:
-    return {
-        "device_id": ident.device_id,
-        "public_key": public_key_b64(ident.signing_key),
-        "claim_code_hash": wire.claim_code_hash(ident.device_id, ident.claim_code),
-        "version": version,
-        "host": host,
-        "capabilities": capabilities,
-        "csr": csr_pem(ident),
-    }
+    return nachrichten.register(
+        device_id=ident.device_id, public_key=public_key_b64(ident.signing_key),
+        claim_code_hash=wire.claim_code_hash(ident.device_id, ident.claim_code), version=version, host=host,
+        capabilities=capabilities, csr=csr_pem(ident))
 
 
 def new_boot_id() -> str:

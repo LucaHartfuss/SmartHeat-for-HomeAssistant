@@ -30,7 +30,7 @@ from typing import TypeGuard
 
 from smartheat_core import config_check, dateien, rastung, wallclock
 from smartheat_core.rastung import Rastung
-from smartheat_device import fehler, wire
+from smartheat_device import fehler, nachrichten, wire
 
 logger = logging.getLogger(__name__)
 
@@ -113,11 +113,11 @@ class Ergebnis:
     uebernommen: bool = False
 
     def payload(self) -> dict:
-        body = {"schema": wire.SCHEMA, "dokument": self.art, "version": self.version, "ok": self.ok}
+        error = None
         if not self.ok:
             assert self.grund is not None
-            body["error"] = fehler.body(self.grund, self.details)
-        return body
+            error = fehler.body(self.grund, self.details)
+        return nachrichten.ergebnis_dokument(self.art, self.version, self.ok, error)
 
 
 class DocumentStore:

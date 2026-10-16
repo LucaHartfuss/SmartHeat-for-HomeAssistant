@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from smartheat_core import config_check
-from smartheat_device import bootstrap, commands, fehler, identity, inventory, wire, wish
+from smartheat_device import bootstrap, commands, fehler, identity, inventory, nachrichten, wire, wish
 from smartheat_device.documents import BEDIENUNG, KONFIGURATION, DocumentStore
 from smartheat_device.host import Anzeige, DeviceHost
 from smartheat_device.laufzeit import RuntimeChannel
@@ -137,6 +137,7 @@ class Device:
         self._meldungen_at: float | None = None
         self._status: dict | None = None
         self._status_at: float | None = None
+        self._status_fehler: str | None = None  # letzter Vertragsverstoss beim Bauen (je Text einmal loggen)
         self._ursprung_gewarnt: set[str] = set()  # nicht meldbare Ursprungswerte: je Name einmal loggen (Takt: 1 s)
         self._zurueckgehalten: dict[str, dict] = {}  # Dokument, dessen Pruefung vorlaeufig nicht moeglich war
         self._pruefung_at = 0.0
@@ -188,8 +189,8 @@ class Device:
 
     def meldung(self, key: str, text: str, *, offen: bool, kritisch: bool = True) -> None:
         """Meldung der Laufzeit (NotifySink des Hosts): Upsert je key ueber up/notifications."""
-        self._inbox.put(("meldung", {"key": key, "kategorie": category(key), "kritisch": kritisch, "text": text,
-                                     "offen": offen, "ts": _iso(self._wall())}))
+        self._inbox.put(("meldung", nachrichten.meldung(key=key, kategorie=category(key), kritisch=kritisch, text=text,
+                                                        offen=offen, ts=_iso(self._wall()))))
 
     def ergebnis_software(self, version: str, ok: bool, grund: str | None = None) -> bool:
         """Ergebnis eines Updates (Spec 5.3: up/result mit dokument software, version = Software-Version). Nur nach
@@ -197,10 +198,11 @@ class Device:
         den Text bildet der Server."""
         if not ok and grund not in wire.SOFTWARE_ERRORS:
             raise ValueError(f"Grund {grund!r} steht nicht in SOFTWARE_ERRORS")
-        body = {"schema": wire.SCHEMA, "dokument": wire.DOKUMENT_SOFTWARE, "version": version, "ok": ok}
+        error = None
         if not ok:
             assert grund is not None
-            body["error"] = fehler.body(grund, None)
+            error = fehler.body(grund, None)
+        body = nachrichten.ergebnis_dokument(wire.DOKUMENT_SOFTWARE, version, ok, error)
         return self._publish_nach_hello("up/result", body) is not None
 
     def laufzeit_kanal(self, worker: RegulationWorker) -> RuntimeChannel:
@@ -357,15 +359,12 @@ class Device:
         return self._publish(name, payload) if self._bereit else None
 
     def _hello(self) -> dict:
-        hello = {"schema": wire.SCHEMA, "schemata": list(wire.SCHEMATA),
-                 "konfiguration_version": self.documents.version(KONFIGURATION),
-                 "bedienung_version": self.documents.version(BEDIENUNG), "software_version": self.host.version,
-                 "host": self.host.host, "faehigkeiten": self.host.faehigkeiten(), "boot_id": self.boot_id,
-                 "uhr_synchron": self.host.uhr_synchron() is True}
-        state = bootstrap.device_state(self._dir)
-        if state is not None:
-            hello["device_state"] = state  # Spec 5c F1: der Server gleicht ab
-        return hello
+        # device_state: Spec 5c F1, der Server gleicht ab
+        return nachrichten.hello(
+            konfiguration_version=self.documents.version(KONFIGURATION),
+            bedienung_version=self.documents.version(BEDIENUNG), software_version=self.host.version,
+            host=self.host.host, faehigkeiten=self.host.faehigkeiten(), boot_id=self.boot_id,
+            uhr_synchron=self.host.uhr_synchron() is True, device_state=bootstrap.device_state(self._dir))
 
     def _verbunden(self) -> None:
         if not self._bootstrap.gesperrt:
@@ -525,13 +524,15 @@ class Device:
             self.wunsch_puffer.gesendet(self._publish("up/wish", wunsch.payload()))
 
     def _eigene_meldung(self, key: str, text: str | None) -> None:
+        if key not in wire.MELDUNGEN:
+            raise ValueError("eigene Meldung: key steht nicht in MELDUNGEN")
         if self._eigene.get(key) == text:
             return
         vorher = self._eigene.pop(key, None)
         if text is not None:
             self._eigene[key] = text
-        self._meldung_merken({"key": key, "kategorie": key, "kritisch": False, "text": text or vorher or "",
-                              "offen": text is not None, "ts": _iso(self._wall())})
+        self._meldung_merken(nachrichten.meldung(key=key, kategorie=key, kritisch=False, text=text or vorher or "",
+                                                 offen=text is not None, ts=_iso(self._wall())))
 
     def _meldung_merken(self, item: dict) -> None:
         key = item["key"]
@@ -547,7 +548,7 @@ class Device:
         if self._meldungen_at is not None and now - self._meldungen_at < MELDUNGEN_MIN_SECONDS:
             return
         items = list(self._meldungen_neu.values())[:MELDUNGEN_JE_NACHRICHT]
-        if self._publish("up/notifications", {"schema": wire.SCHEMA, "items": items}) is None:
+        if self._publish("up/notifications", nachrichten.notifications(items)) is None:
             return
         self._meldungen_at = now
         for item in items:
@@ -583,16 +584,23 @@ class Device:
     def _status_senden(self, now: float, *, force: bool) -> None:
         if not self._bereit:
             return
-        body = {"schema": wire.SCHEMA, "zustand": self.zustand(), "runtime_status": self.host.runtime_status(),
-                "raum": self.host.raum()}
-        neu = self._ursprungswerte_neu()
-        if neu:
-            body["ursprungswerte"] = neu
-        vergleich = _vergleichbar(body)
+        felder = {"zustand": self.zustand(), "runtime_status": self.host.runtime_status(), "raum": self.host.raum(),
+                  "ursprungswerte": self._ursprungswerte_neu() or None}
+        try:
+            body = nachrichten.status(**felder, ts=_iso(self._wall()))
+        except ValueError as error:
+            # Vertragsverstoss der Rueckruf-Ergebnisse (Baustein: nur Feldnamen im Text, nie Werte); je Text einmal
+            # loggen, der Takt ruft das jede Sekunde
+            if str(error) != self._status_fehler:
+                self._status_fehler = str(error)
+                logger.error("up/status nicht gebaut: %s", error)
+            return
+        self._status_fehler = None
+        vergleich = _vergleichbar({k: v for k, v in body.items() if k != "ts"})
         if not force:
             if vergleich == self._status:
                 return
             if self._status_at is not None and now - self._status_at < STATUS_MIN_SECONDS:
                 return
-        if self._publish("up/status", {**body, "ts": _iso(self._wall())}) is not None:
+        if self._publish("up/status", body) is not None:
             self._status, self._status_at = vergleich, now

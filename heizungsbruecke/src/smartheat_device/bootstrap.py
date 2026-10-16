@@ -17,7 +17,7 @@ import requests
 
 from smartheat_core import dateien
 from smartheat_device import identity as identity_module
-from smartheat_device import wire
+from smartheat_device import nachrichten, wire
 from smartheat_device.tls import ALPN_443, IOT_PORTS
 
 logger = logging.getLogger(__name__)
@@ -72,13 +72,15 @@ class Antwort:
 def _antwort(body) -> Antwort:
     if not isinstance(body, dict) or any(key not in body for key in wire.BOOTSTRAP_RESPONSE):
         raise Unavailable("Bootstrap-Antwort unvollstaendig")
-    host, port, ca, cert = body["mqtt_endpoint"], body["mqtt_port"], body["mqtt_ca"], body["certificate"]
-    alpn = body.get("mqtt_alpn")
+    # Pflichtfelder und optionale Felder des Vertrags; was der Vertrag nicht nennt, ignoriert das Geraet (Spec 2.1)
+    bekannt = {key: body.get(key) for key in (*wire.BOOTSTRAP_RESPONSE, *wire.BOOTSTRAP_OPTIONAL)}
+    host, port, ca, cert = bekannt["mqtt_endpoint"], bekannt["mqtt_port"], bekannt["mqtt_ca"], bekannt["certificate"]
+    alpn = bekannt["mqtt_alpn"]
     if not (isinstance(host, str) and host and isinstance(port, int) and not isinstance(port, bool)
             and port in IOT_PORTS and isinstance(ca, str) and _PEM_CERT in ca and isinstance(cert, str)
             and _PEM_CERT in cert and alpn in (None, ALPN_443)):
         raise Unavailable("Bootstrap-Antwort ungueltig")
-    state = body["device_state"] if body["device_state"] in wire.DEVICE_STATES else None
+    state = bekannt["device_state"] if bekannt["device_state"] in wire.DEVICE_STATES else None
     return Antwort(state, Zugang(cert, Endpoint(host, port, ca, alpn)))
 
 
@@ -96,7 +98,7 @@ class BootstrapClient:
         return _antwort(self._request("register", body))
 
     def certificate(self) -> Antwort:
-        return _antwort(self._request("certificate", {"csr": identity_module.csr_pem(self._ident)}))
+        return _antwort(self._request("certificate", nachrichten.zertifikat(identity_module.csr_pem(self._ident))))
 
     def _request(self, route: str, body: dict):
         method, template = wire.ROUTES[route]
@@ -194,6 +196,10 @@ class Bootstrap:
             return self._nicht_angemeldet()
         except BootstrapError as error:
             logger.warning("Bootstrap gescheitert (%s), naechster Versuch spaeter", error)
+            return self._spaeter()
+        except ValueError as error:
+            # Anfrage verletzt den Vertrag (nachrichten: nur Feldnamen im Text, nie Werte), z. B. Faehigkeiten des Hosts
+            logger.error("Bootstrap: Anfrage nicht gebaut (%s), naechster Versuch spaeter", error)
             return self._spaeter()
         if not identity_module.passt_zum_schluessel(self._identity(), antwort.zugang.certificate_pem):
             logger.error("Bootstrap: Zertifikat passt nicht zum eigenen Schluessel, verworfen")

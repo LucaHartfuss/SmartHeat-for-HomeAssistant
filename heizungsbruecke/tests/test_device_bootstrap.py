@@ -275,6 +275,19 @@ def test_a_rejected_request_is_retried_later_and_not_blocked(tmp_path, ident):
     assert flow.holen(rettung=False) is None and not flow.gesperrt and not flow.faellig()
 
 
+def test_a_request_outside_the_contract_is_retried_later_and_not_blocked(tmp_path, ident, caplog):
+    flow = _flow(tmp_path, ident, ScriptedClient(register=[ValueError("register: fremd ['GEHEIM-FELD']")]))
+    assert flow.holen(rettung=False) is None and not flow.gesperrt and not flow.faellig()
+    assert "Anfrage nicht gebaut" in caplog.text
+
+
+def test_register_with_capabilities_outside_the_contract_is_not_built(ident):
+    session = FakeSession(FakeResponse(200, {}))
+    with pytest.raises(ValueError, match="capabilities"):
+        _client(ident, session).register(**{**ARGS, "capabilities": {"drivers": [], "zigbee": True, "frei": 1}})
+    assert session.calls == []
+
+
 def test_a_certificate_for_another_key_is_not_stored(tmp_path, ident, ca):
     other = identity.load_or_create(tmp_path / "anderes")
     client = ScriptedClient(register=[_ok(ident, ca, cert=zertifikat_fuer(other, ca))])

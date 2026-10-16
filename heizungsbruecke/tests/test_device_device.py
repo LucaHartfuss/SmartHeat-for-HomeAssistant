@@ -836,6 +836,52 @@ def test_a_failing_capabilities_callback_sends_hello_on_a_later_tick(tmp_path, c
     assert "geheimer Parameter" not in caplog.text
 
 
+class FaehigkeitenAusserhalbHost(FakeHost):
+    """Faehigkeiten mit einem Feld ausserhalb des Vertrags (nur, solange `kaputt` gesetzt ist)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.kaputt = True
+
+    def faehigkeiten(self):
+        return {**super().faehigkeiten(), "GEHEIMES-FELD": "WERT-123"} if self.kaputt else super().faehigkeiten()
+
+
+def test_capabilities_outside_the_contract_block_hello_until_they_are_valid(tmp_path, caplog):
+    world = World(tmp_path, FaehigkeitenAusserhalbHost())
+    world.verbinden()
+    world.device.schritt()
+    assert world.link.of("up/hello") == [] and world.link.topics() == []
+    assert "hello nicht gebaut (ValueError)" in caplog.text and "WERT-123" not in caplog.text
+    world.host.kaputt = False
+    world.device.schritt()  # der Geraete-Thread lebt: der naechste Takt sendet
+    assert world.link.topics()[0] == "up/hello" and len(world.link.of("up/hello")) == 1
+    assert set(world.link.of("up/hello")[0]) >= set(wire.HELLO_FIELDS)
+
+
+def test_a_status_outside_the_contract_is_not_sent_and_the_next_valid_one_is(tmp_path, caplog):
+    world = World(tmp_path)
+    world.verbinden()
+    anzahl = len(world.link.of("up/status"))
+    world.clock.now += 60
+    world.host.raum_wert = {"ist": 20.0, "GEHEIM": "WERT-123"}
+    world.device.schritt()
+    world.device.schritt()
+    assert len(world.link.of("up/status")) == anzahl and world.link.topics()[0] == "up/hello"
+    assert caplog.text.count("up/status nicht gebaut") == 1 and "WERT-123" not in caplog.text  # je Text einmal
+    world.host.raum_wert = {"ist": 20.0, "soll": 22.0, "soll_quelle": "portal", "ts": "t1"}
+    world.device.schritt()
+    assert len(world.link.of("up/status")) == anzahl + 1
+
+
+def test_an_own_message_outside_the_contract_keys_is_logged_not_raised(tmp_path, caplog):
+    world = World(tmp_path)
+    world.verbinden()
+    world.device._inbox.put(("eigene", "frei_erfunden", "Text"))
+    world.device.schritt()
+    assert "ValueError" in caplog.text and world.link.of("up/notifications") == []
+
+
 # --- Laufzeit-Kanal ---
 
 def test_setpoints_reach_the_runtime_and_snapshots_the_link(tmp_path):

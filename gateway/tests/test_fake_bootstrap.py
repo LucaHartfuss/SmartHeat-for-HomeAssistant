@@ -37,7 +37,7 @@ def _post(url: str, body: dict) -> dict:
 
 def test_register_signs_the_csr_and_names_the_broker(fake, tmp_path, ca_dir):
     ident = identity.load_or_create(tmp_path / "device")
-    body = identity.register_body(ident, version="0.6.0", host="gateway", capabilities={"zigbee": True})
+    body = identity.register_body(ident, version="0.6.0", host="gateway", capabilities={"drivers": [], "zigbee": True})
     answer = _post(f"{fake.url}/devices/register", body)
     assert set(answer) == set(wire.BOOTSTRAP_RESPONSE)  # genau der Vertrag, kein poll_after
     assert answer["device_state"] == "uebernommen" and answer["mqtt_endpoint"] == "fake-broker"
