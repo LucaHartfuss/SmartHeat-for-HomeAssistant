@@ -292,8 +292,8 @@ def test_a_newer_operation_replaces_the_stored_target_at_start(world):
 def test_an_unexpected_error_reports_the_gateway_unhealthy_during_the_pause(world, monkeypatch):
     """Abschlussreview S6 I-2: in der 60-s-Pause nach einem unerwarteten Fehler ist das Lebenszeichen weg (der
     Compose-Health-Check scheitert) und /healthz meldet die Laufzeit "startet" (health_ok des Updaters lehnt ab). Sonst
-    behielte der Updater ein Update, dessen Laufzeit gleich nach dem Start wirft. Echter Ablauf ueber runtime_main.laufen
-    mit Geraete-Thread; nur der Worker wirft."""
+    behielte der Updater ein Update, dessen Laufzeit gleich nach dem Start wirft. Echter Ablauf ueber
+    runtime_main.laufen mit Geraete-Thread; nur der Worker wirft."""
     dokumente_schreiben(world.paths, konfiguration())
     world.start_runtime()
     world.connect()

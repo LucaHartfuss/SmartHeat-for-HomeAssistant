@@ -61,7 +61,9 @@ find "$inst/host" -name __pycache__ -type d -prune -exec rm -rf {} +
 cp "$HERE/rootfs_checks.sh" "$HERE/own_url.sh" "$HERE/customize.sh" "$inst/image/"
 cp "$GW/VERSION" "$inst/VERSION"
 for rel in "${SHIPPED[@]}"; do cp "$GW/src/smartheat_gateway/$rel" "$inst/src/smartheat_gateway/$rel"; done
-for rel in "${SHIPPED_CORE[@]}"; do cp "$GW/../heizungsbruecke/src/smartheat_core/$rel" "$inst/src/smartheat_core/$rel"; done
+for rel in "${SHIPPED_CORE[@]}"; do
+  cp "$GW/../heizungsbruecke/src/smartheat_core/$rel" "$inst/src/smartheat_core/$rel"
+done
 cp "$BUNDLE"/{docker-compose.yml,mosquitto.conf,manifest.json,manifest.json.minisig} "$STAGE/bundle/"
 # 4. Container-Images: jede Referenz einmal (init und runtime teilen sich das Gateway-Image)
 mapfile -t refs < <(PYTHONPATH="$GW/host" python3 -c 'import sys

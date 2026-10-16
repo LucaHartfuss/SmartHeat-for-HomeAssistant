@@ -32,8 +32,8 @@ FEHLER_PAUSE_SECONDS = 60.0
 
 
 class Neustart(BaseException):
-    """Aus dem Regel-Worker: Prozess nach sauberem Trennen neu starten. BaseException wie SystemExit: der Worker faengt in
-    Handlern nur Exception ab, diese hier geht bis laufen() durch."""
+    """Aus dem Regel-Worker: Prozess nach sauberem Trennen neu starten. BaseException wie SystemExit: der Worker faengt
+    in Handlern nur Exception ab, diese hier geht bis laufen() durch."""
 
 
 def _neustart(anlass: str) -> None:
@@ -52,8 +52,9 @@ def neustart_der_laufzeit() -> None:
 
 def reload_anhaengen(result) -> None:
     """Haengt EV_RELOAD aus dem Geraete-Host (neue laufzeitrelevante Konfiguration, sign_off) an den Worker: Neustart
-    mit sauberem Trennen. Die Neustarts der Laufzeit selbst gehen ueber den Rueckruf neustart_der_laufzeit (app.start); in den
-    Ruhezustaenden abgemeldet und abo_beendet bleibt EV_RECHECK das erneute Zuruecksetzen der Laufzeit."""
+    mit sauberem Trennen. Die Neustarts der Laufzeit selbst gehen ueber den Rueckruf neustart_der_laufzeit
+    (app.start); in den Ruhezustaenden abgemeldet und abo_beendet bleibt EV_RECHECK das erneute Zuruecksetzen der
+    Laufzeit."""
     result.worker.register(EV_RELOAD, lambda event: _neustart("Neue Konfiguration oder Abmelden"))
 
 

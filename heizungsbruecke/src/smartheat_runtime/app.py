@@ -652,7 +652,8 @@ def _prepare_zone(rt: Runtime) -> None:
 
 
 def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
-          mqtt_factory: Callable[[RegulationWorker], MqttChannel], neustart: Callable[[], None]) -> Runtime | IdleBridge:
+          mqtt_factory: Callable[[RegulationWorker], MqttChannel],
+          neustart: Callable[[], None]) -> Runtime | IdleBridge:
     """Gibt den gestarteten Laufzeit-Kontext zurueck oder den Ruhezustand, wenn gar nicht erst geregelt wird: nicht
     eingerichtet, abgemeldet, Konfigurationsfehler, Abo-Frist abgeschlossen. mqtt_factory (Pflicht, Spec 5b 5.2): die
     Laufzeit nutzt die Verbindung des Geraets; einen eigenen MQTT-Client gibt es nicht. neustart (Pflicht, Spec Stufe 3

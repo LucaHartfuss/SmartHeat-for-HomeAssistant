@@ -137,10 +137,11 @@ def _starten(paths: Paths, bus, mirror: ZigbeeMirror, geraet: GatewayDeviceHost,
 
 def vor_der_pause(geraet: GatewayDeviceHost) -> None:
     """Rueckruf vor_pause fuer prozess.laufen (Abschlussreview S6 I-2): nach einem unerwarteten Fehler meldet sich das
-    Gateway fuer die 60-s-Pause ungesund. Sonst bliebe der Prozess mit frischem Lebenszeichen und antwortendem /healthz
-    oben, der Compose-Health-Check meldete "healthy", und der Updater (G2 8.4) behielte ein Update, dessen Laufzeit
-    gleich nach dem Start wirft, statt zurueckzurollen. Das Lebenszeichen geht weg (Compose-Health-Check scheitert), und
-    /healthz meldet die Laufzeit als "startet" (health_ok des Updaters lehnt das ab); der Neustart beginnt ohnehin so."""
+    Gateway fuer die 60-s-Pause ungesund, damit der Updater (G2 8.4) ein Update, dessen Laufzeit gleich nach dem Start
+    wirft, zurueckrollt. Der Prozess bleibt in der Pause oben: das Lebenszeichen waere frisch (Compose-Health-Check
+    "healthy"), und /healthz hinge nur an server_ok aus dem letzten Takt des Geraete-Threads. Deshalb geht das
+    Lebenszeichen weg (der Health-Check scheitert), und /healthz meldet die Laufzeit als "startet" (health_ok des
+    Updaters lehnt das ab); der Neustart beginnt ohnehin so."""
     with contextlib.suppress(OSError):  # ein nicht beschreibbares /tmp darf Pause und Neustart nicht verhindern
         _alive_file().unlink(missing_ok=True)
     geraet.zustand.status = {"status": STATUS_STARTET}

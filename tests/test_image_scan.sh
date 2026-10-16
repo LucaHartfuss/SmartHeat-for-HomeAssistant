@@ -17,10 +17,13 @@ mapfile -t FREMD < <(sed -n 's/^[[:space:]]*image:[[:space:]]*\([^[:space:]#]*@s
 rc=0
 for image in smartheat-scan-addon smartheat-scan-gateway "${FREMD[@]}"; do
   echo "--- trivy $image ---"
-  # label=disable: auf SELinux-Hosts (Fedora) duerfen Container die Bind-Mounts sonst nicht lesen (wie die anderen Skripte).
-  docker run --rm --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock -v "$CACHE:/root/.cache/trivy" \
+  # label=disable: auf SELinux-Hosts (Fedora) duerfen Container die Bind-Mounts sonst nicht lesen (wie die anderen
+  # Skripte).
+  docker run --rm --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock \
+    -v "$CACHE:/root/.cache/trivy" \
     -v "$REPO/.trivyignore:/.trivyignore:ro" "$TRIVY" image --quiet --scanners vuln --severity CRITICAL \
     --ignore-unfixed --ignorefile /.trivyignore --exit-code 1 "$image" || rc=1
 done
-[ "$rc" = 0 ] && echo "PASS: image scan" || echo "FAIL: image scan (Befunde oben; Ausnahme nur begruendet in .trivyignore)"
+if [ "$rc" = 0 ]; then echo "PASS: image scan"
+else echo "FAIL: image scan (Befunde oben; Ausnahme nur begruendet in .trivyignore)"; fi
 exit "$rc"

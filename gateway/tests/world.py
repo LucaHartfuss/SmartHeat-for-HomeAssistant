@@ -1,7 +1,7 @@
 """Bausteine fuer Laufzeit- und Szenariotests des Gateways ab 0.6.0 (Plan 5b D2): Geraetekern mit Fake-Link (der Zugang
-liegt schon vor, kein Bootstrap), Gateway-Host, Laufzeit. Ein gewollter Neustart (prozess.Neustart) baut wie Compose einen
-neuen Prozess (neuer Zigbee-Spiegel, Geraetekern, Link und Laufzeit) auf denselben Dateien; der neue Link ist erst nach
-connect() verbunden. start_runtime folgt runtime_main.main(): erst das Aufraeumen, dann der Geraetekern."""
+liegt schon vor, kein Bootstrap), Gateway-Host, Laufzeit. Ein gewollter Neustart (prozess.Neustart) baut wie Compose
+einen neuen Prozess (neuer Zigbee-Spiegel, Geraetekern, Link und Laufzeit) auf denselben Dateien; der neue Link ist erst
+nach connect() verbunden. start_runtime folgt runtime_main.main(): erst das Aufraeumen, dann der Geraetekern."""
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 

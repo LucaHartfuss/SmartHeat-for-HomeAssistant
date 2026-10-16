@@ -254,8 +254,8 @@ def test_start_with_document_regulates_and_wires_status_and_operations(geraet_en
 
 
 def test_restarts_of_the_runtime_take_the_clean_restart_path(geraet_env):
-    """Der Rueckruf neustart, den start der Laufzeit uebergibt (Abo am Fristende wieder aktiv, Neupruefung, Neustart nach
-    dem Zuruecksetzen), beendet den Worker ueber Neustart statt os.execv, das den Link ohne DISCONNECT abrisse."""
+    """Der Rueckruf neustart, den start der Laufzeit uebergibt (Abo am Fristende wieder aktiv, Neupruefung, Neustart
+    nach dem Zuruecksetzen), beendet den Worker ueber Neustart statt os.execv, das den Link ohne DISCONNECT abrisse."""
     device = FakeDevice()
     geraet, status = _verdrahtet(geraet_env, device)
     result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
