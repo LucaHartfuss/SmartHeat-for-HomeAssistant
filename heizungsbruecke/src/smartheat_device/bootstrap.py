@@ -16,8 +16,8 @@ from pathlib import Path
 import requests
 
 from smartheat_core import dateien
+from smartheat_device import commands, nachrichten, wire
 from smartheat_device import identity as identity_module
-from smartheat_device import nachrichten, wire
 from smartheat_device.tls import ALPN_443, IOT_PORTS
 
 logger = logging.getLogger(__name__)
@@ -31,6 +31,7 @@ RETRY_MAX_SECONDS = 900
 TIMEOUT_SECONDS = 10.0
 _TRANSIENT_4XX = (408, 429)
 _PEM_CERT = "-----BEGIN CERTIFICATE-----"
+(_ALPN,) = wire.BOOTSTRAP_OPTIONAL  # fehlt = kein Rueckfall auf Port 443; bei einer Drift des Vertrags scheitert der Import
 
 
 class BootstrapError(Exception):
@@ -72,15 +73,13 @@ class Antwort:
 def _antwort(body) -> Antwort:
     if not isinstance(body, dict) or any(key not in body for key in wire.BOOTSTRAP_RESPONSE):
         raise Unavailable("Bootstrap-Antwort unvollstaendig")
-    # Pflichtfelder und optionale Felder des Vertrags; was der Vertrag nicht nennt, ignoriert das Geraet (Spec 2.1)
-    bekannt = {key: body.get(key) for key in (*wire.BOOTSTRAP_RESPONSE, *wire.BOOTSTRAP_OPTIONAL)}
-    host, port, ca, cert = bekannt["mqtt_endpoint"], bekannt["mqtt_port"], bekannt["mqtt_ca"], bekannt["certificate"]
-    alpn = bekannt["mqtt_alpn"]
+    host, port, ca, cert = body["mqtt_endpoint"], body["mqtt_port"], body["mqtt_ca"], body["certificate"]
+    alpn = body.get(_ALPN)
     if not (isinstance(host, str) and host and isinstance(port, int) and not isinstance(port, bool)
             and port in IOT_PORTS and isinstance(ca, str) and _PEM_CERT in ca and isinstance(cert, str)
             and _PEM_CERT in cert and alpn in (None, ALPN_443)):
         raise Unavailable("Bootstrap-Antwort ungueltig")
-    state = bekannt["device_state"] if bekannt["device_state"] in wire.DEVICE_STATES else None
+    state = body["device_state"] if body["device_state"] in wire.DEVICE_STATES else None
     return Antwort(state, Zugang(cert, Endpoint(host, port, ca, alpn)))
 
 
@@ -197,9 +196,10 @@ class Bootstrap:
         except BootstrapError as error:
             logger.warning("Bootstrap gescheitert (%s), naechster Versuch spaeter", error)
             return self._spaeter()
-        except ValueError as error:
-            # Anfrage verletzt den Vertrag (nachrichten: nur Feldnamen im Text, nie Werte), z. B. Faehigkeiten des Hosts
-            logger.error("Bootstrap: Anfrage nicht gebaut (%s), naechster Versuch spaeter", error)
+        except nachrichten.Vertragsfehler as error:
+            # Anfrage verletzt den Vertrag (z. B. Faehigkeiten des Hosts); nur Art und Ort, nie der Text (Regel 6)
+            logger.error("Bootstrap: Anfrage nicht gebaut (%s)%s, naechster Versuch spaeter", type(error).__name__,
+                         commands.fehlerort(error))
             return self._spaeter()
         if not identity_module.passt_zum_schluessel(self._identity(), antwort.zugang.certificate_pem):
             logger.error("Bootstrap: Zertifikat passt nicht zum eigenen Schluessel, verworfen")

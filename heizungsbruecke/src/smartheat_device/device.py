@@ -137,6 +137,7 @@ class Device:
         self._meldungen_at: float | None = None
         self._status: dict | None = None
         self._status_at: float | None = None
+        self._hello_fehler: str | None = None  # letzte Fehlerart beim Bauen von hello (je Art einmal loggen)
         self._status_fehler: str | None = None  # letzter Vertragsverstoss beim Bauen (je Text einmal loggen)
         self._ursprung_gewarnt: set[str] = set()  # nicht meldbare Ursprungswerte: je Name einmal loggen (Takt: 1 s)
         self._zurueckgehalten: dict[str, dict] = {}  # Dokument, dessen Pruefung vorlaeufig nicht moeglich war
@@ -380,10 +381,14 @@ class Device:
         try:
             hello = self._hello()
         except Exception as error:
-            # Host-Rueckruf gescheitert: Fehlerart und Ort, nie die Meldung (Regel 6); der naechste Takt versucht es erneut
-            logger.error("hello nicht gebaut (%s)%s, erneuter Versuch im naechsten Takt", type(error).__name__,
-                         commands.fehlerort(error))
+            # Host-Rueckruf gescheitert oder Vertragsverstoss: Fehlerart und Ort, nie die Meldung (Regel 6); der naechste
+            # Takt versucht es erneut. Je Fehlerart und Ort einmal loggen (der Takt ruft das jede Sekunde).
+            art = f"{type(error).__name__}{commands.fehlerort(error)}"
+            if art != self._hello_fehler:
+                self._hello_fehler = art
+                logger.error("hello nicht gebaut (%s), erneuter Versuch im naechsten Takt", art)
             return
+        self._hello_fehler = None
         if self._publish("up/hello", hello) is None:
             return  # schon wieder getrennt: das naechste "verbunden" schickt hello
         self._hello_offen = False
@@ -525,7 +530,7 @@ class Device:
 
     def _eigene_meldung(self, key: str, text: str | None) -> None:
         if key not in wire.MELDUNGEN:
-            raise ValueError("eigene Meldung: key steht nicht in MELDUNGEN")
+            raise nachrichten.Vertragsfehler("eigene Meldung: key steht nicht in MELDUNGEN")
         if self._eigene.get(key) == text:
             return
         vorher = self._eigene.pop(key, None)
@@ -588,7 +593,7 @@ class Device:
                   "ursprungswerte": self._ursprungswerte_neu() or None}
         try:
             body = nachrichten.status(**felder, ts=_iso(self._wall()))
-        except ValueError as error:
+        except nachrichten.Vertragsfehler as error:
             # Vertragsverstoss der Rueckruf-Ergebnisse (Baustein: nur Feldnamen im Text, nie Werte); je Text einmal
             # loggen, der Takt ruft das jede Sekunde
             if str(error) != self._status_fehler:

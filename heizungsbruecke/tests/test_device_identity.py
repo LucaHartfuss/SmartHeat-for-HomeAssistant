@@ -106,3 +106,7 @@ def test_register_body_has_exactly_the_contract_fields(tmp_path):
 def test_boot_ids_differ_and_fit():
     first, second = identity.new_boot_id(), identity.new_boot_id()
     assert first != second and 0 < len(first) <= 64
+
+
+def test_the_encodings_of_the_contract_are_implemented():
+    assert {wire.SIGNATURE_ENCODING, wire.PUBLIC_KEY_ENCODING} <= set(identity._KODIERUNGEN)

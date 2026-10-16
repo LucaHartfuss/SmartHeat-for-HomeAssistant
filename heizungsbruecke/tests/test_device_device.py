@@ -851,8 +851,10 @@ def test_capabilities_outside_the_contract_block_hello_until_they_are_valid(tmp_
     world = World(tmp_path, FaehigkeitenAusserhalbHost())
     world.verbinden()
     world.device.schritt()
+    world.device.schritt()
     assert world.link.of("up/hello") == [] and world.link.topics() == []
-    assert "hello nicht gebaut (ValueError)" in caplog.text and "WERT-123" not in caplog.text
+    assert "hello nicht gebaut (Vertragsfehler" in caplog.text and "WERT-123" not in caplog.text
+    assert caplog.text.count("hello nicht gebaut") == 1  # je Fehlerart und Ort einmal, nicht jeden Takt
     world.host.kaputt = False
     world.device.schritt()  # der Geraete-Thread lebt: der naechste Takt sendet
     assert world.link.topics()[0] == "up/hello" and len(world.link.of("up/hello")) == 1
@@ -879,7 +881,7 @@ def test_an_own_message_outside_the_contract_keys_is_logged_not_raised(tmp_path,
     world.verbinden()
     world.device._inbox.put(("eigene", "frei_erfunden", "Text"))
     world.device.schritt()
-    assert "ValueError" in caplog.text and world.link.of("up/notifications") == []
+    assert "Vertragsfehler" in caplog.text and world.link.of("up/notifications") == []
 
 
 # --- Laufzeit-Kanal ---

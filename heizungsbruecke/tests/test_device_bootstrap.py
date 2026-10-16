@@ -8,7 +8,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 from device_helpers import GeraeteCa, csr_passt, zertifikat_fuer
 
-from smartheat_device import bootstrap, identity, wire
+from smartheat_device import bootstrap, identity, nachrichten, wire
 
 NOW = 1_800_000_000
 BASE = "https://accounts.example.test"
@@ -275,10 +275,29 @@ def test_a_rejected_request_is_retried_later_and_not_blocked(tmp_path, ident):
     assert flow.holen(rettung=False) is None and not flow.gesperrt and not flow.faellig()
 
 
-def test_a_request_outside_the_contract_is_retried_later_and_not_blocked(tmp_path, ident, caplog):
-    flow = _flow(tmp_path, ident, ScriptedClient(register=[ValueError("register: fremd ['GEHEIM-FELD']")]))
+def test_a_request_outside_the_contract_is_retried_later_and_not_blocked_and_logged_without_text(
+        tmp_path, ident, caplog):
+    flow = _flow(tmp_path, ident, ScriptedClient(register=[nachrichten.Vertragsfehler("register: fremd ['GEHEIM-FELD']")]))
     assert flow.holen(rettung=False) is None and not flow.gesperrt and not flow.faellig()
-    assert "Anfrage nicht gebaut" in caplog.text
+    assert "Anfrage nicht gebaut (Vertragsfehler)" in caplog.text and "GEHEIM-FELD" not in caplog.text
+
+
+def test_a_host_callback_value_error_is_not_logged_with_its_text_and_not_swallowed(tmp_path, ident):
+    def args() -> dict:
+        raise ValueError("geheimer Parameter")  # z. B. host.faehigkeiten()
+
+    flow = bootstrap.Bootstrap(tmp_path, ScriptedClient(register=[]), register_args=args, uhr_synchron=lambda: True,
+                               identity=lambda: ident, clock=Clock())
+    with pytest.raises(ValueError, match="geheimer Parameter"):  # wie vor Task 3: nach oben, der Geraete-Thread loggt
+        flow.holen(rettung=False)
+
+
+@pytest.mark.parametrize("feld", wire.BOOTSTRAP_RESPONSE)
+def test_an_answer_without_a_required_field_is_unavailable(ident, ca, feld):
+    body = _body(ident, ca)
+    del body[feld]
+    with pytest.raises(bootstrap.Unavailable, match="unvollstaendig"):
+        _client(ident, FakeSession(FakeResponse(200, body))).register(**ARGS)
 
 
 def test_register_with_capabilities_outside_the_contract_is_not_built(ident):
