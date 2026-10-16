@@ -43,7 +43,7 @@ def _runtime(tmp_path, store, entity_ids=BOTH_ROLES, notify_services=("notify.ha
         override=LeverPipeline(store, HaPlantBinding(ha_api, manifest, VAILLANT_MYPYLLANT), SAFETY),
         notifier=Notifier(store, HaNotifySink(ha_api, list(notify_services))),
         status=StatusReporter(
-            HaEventSink(ha_api), OPTIONS["tenant_id"], None, store, LEVER_SETS["vaillant_vrc720"], ADDON_VERSION,
+            HaEventSink(ha_api), OPTIONS["tenant_id"], store, LEVER_SETS["vaillant_vrc720"], ADDON_VERSION,
         ),
         clock=clock or FakeClock(), auth_rejected_queried_at=None, auth_rejected_last_status=None,
         connection_failing_queried_at=None, texts=HA_TEXTS,

@@ -3,6 +3,14 @@
 Wird im Update-Dialog des Supervisors angezeigt. Pro Version ein Abschnitt `## X.Y.Z`; der
 Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Release.
 
+## Unveröffentlicht
+
+- Das Status-Ereignis (Schema bleibt 3) trägt kein Feld `setup_id` mehr: es war seit 1.0.0 immer gleich `tenant_id`. Der
+  Zustand (`backup.json`) speichert die Einrichtung als `tenant_id`; ein vorhandener Zustand mit `setup_id` wird beim
+  Laden übernommen (keine neue Einrichtung, nichts geht verloren), der alte Schlüssel verschwindet beim nächsten
+  Schreiben. Ein Add-on vor dieser Fassung liest im neuen `backup.json` kein `setup_id` und richtet sich einmal neu ein
+  (Zustellung beginnt neu, Ursprungswerte bleiben). Stufe 3 S7, A5-63.
+
 ## 1.0.0
 
 - **1.0.0: Das Add-on ist ein SmartHeat-Gerät** (Spec 5c): Start ohne Optionen, eigene Identität und Zertifikat,

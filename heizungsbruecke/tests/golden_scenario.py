@@ -391,23 +391,26 @@ ERLAUBT = (
     "telemetrie: ['mqtt', 'telemetry', p] -> ['link', 'telemetry', p]",
     "status: smartheat_status Schema 2 -> 3 (Geraete-Felder dazu, Laufzeit-Felder gleich)",
     "dateien: runtime/room_target.json und runtime/abgemeldet.json neu; Zugangsoptionen fehlen",
-    "setup_id: 'setup-golden-1' (Option) -> die Anlage 'golden' (dokument_config: setup_id = Anlage)",
+    "setup_id: Statusfeld entfaellt (Stufe 3 S7); in backup.json heisst das Feld tenant_id (= Anlage 'golden')",
     "addon_version: 0.36.0 -> 1.0.0 (ADDON_VERSION)",
 )
 #: Was 0.36 aus den Optionen nahm und 1.0.0 aus dem Dokument bzw. der Version (ERLAUBT, letzte zwei Zeilen).
-ALT_SETUP_ID, ALT_ADDON_VERSION = "setup-golden-1", "0.36.0"
+ALT_ADDON_VERSION = "0.36.0"
 #: Felder, die Schema 3 dem Status-Ereignis hinzufuegt (ERLAUBT "status"); woertlich, nicht aus geraet_status gelesen.
 SCHEMA_3_GERAET_FELDER = ("geraet_id", "geraet_zustand", "server_verbunden", "raum_soll", "geraet_hinweise")
 
 
 def _neu_benannt(value, *, alt: bool):
-    """Nur im Master von 0.36: setup_id der Option -> Anlage, addon_version -> aktuelle Version (rekursiv)."""
+    """Nur im Master von 0.36: setup_id entfaellt (in backup.json, erkennbar an plant_id: -> tenant_id = Anlage),
+    addon_version -> aktuelle Version (rekursiv)."""
     if not alt:
         return value
     if isinstance(value, dict):
         result = {k: _neu_benannt(v, alt=alt) for k, v in value.items()}
-        if result.get("setup_id") == ALT_SETUP_ID:
-            result["setup_id"] = OPTIONS["tenant_id"]
+        if "setup_id" in result:
+            del result["setup_id"]
+            if "plant_id" in result:
+                result["tenant_id"] = OPTIONS["tenant_id"]
         if result.get("addon_version") == ALT_ADDON_VERSION:
             result["addon_version"] = ADDON_VERSION
         return result

@@ -5,7 +5,8 @@ und in Task 3 des Plans Audit 4 P-C2 (neue backup.json-Felder setup_id, plant_id
 und in Task 9 des Plans Audit 4 P-B (Telemetrie ohne waerme_fehlt, Status ohne Hinweis waerme_fehlt, Version 0.36.0)
 und in Task 10 des Plans 5c D (Geraete-Pfad, 1.0.0; der Master von 0.36 bleibt als addon_scenario_0_36.json, der
 Unterschied ist auf golden_scenario.ERLAUBT begrenzt)
-und in Task 10 des Plans Stufe 3 S3 (Version normalisiert, A5-65)."""
+und in Task 10 des Plans Stufe 3 S3 (Version normalisiert, A5-65)
+und in Task 3 des Plans Stufe 3 S7 (setup_id entfaellt, A5-63: per Skript entfernt bzw. in backup.json zu tenant_id, nicht neu erzeugt)."""
 import json
 import os
 import time

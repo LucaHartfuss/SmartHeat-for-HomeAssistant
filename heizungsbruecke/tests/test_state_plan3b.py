@@ -86,3 +86,9 @@ def test_invalid_learned_falls_back_to_empty(make_store, caplog):
         store = make_store(backup={**V030_BACKUP, "learned": {"curve": "x"}})
     assert store.state.learned == {}
     assert "learned" in caplog.text
+
+
+def test_lifetime_writes_null_ist_gueltig_und_wird_nicht_beanstandet(make_store, caplog):
+    with caplog.at_level(logging.WARNING):
+        store = make_store(backup={**V030_BACKUP, "lifetime_writes": 0})
+    assert store.state.lifetime_writes == 0 and "lifetime_writes" not in caplog.text

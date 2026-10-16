@@ -251,7 +251,7 @@ def test_401_with_an_unsynchronised_clock_is_not_blocked(tmp_path, ident, synchr
     client = ScriptedClient(certificate=[bootstrap.NotAuthenticated("c")], register=[bootstrap.NotAuthenticated("r")])
     flow = _flow(tmp_path, ident, client, synchron=synchron, clock=clock)
     assert flow.holen(rettung=True) is None
-    assert not flow.gesperrt and flow.uhr_ungewiss
+    assert not flow.gesperrt
     clock.now += bootstrap.RETRY_MIN_SECONDS
     assert flow.faellig()
 
@@ -295,9 +295,9 @@ def test_success_resets_the_backoff(tmp_path, ident):
     clock = Clock()
     client = ScriptedClient(certificate=[bootstrap.NotAuthenticated("c")], register=[bootstrap.NotAuthenticated("r")])
     flow = _flow(tmp_path, ident, client, synchron=False, clock=clock)
-    assert flow.holen(rettung=True) is None and flow.uhr_ungewiss and not flow.faellig()
+    assert flow.holen(rettung=True) is None and not flow.faellig()
     flow.erfolg()  # der Link verbindet mit dem bisherigen Zugang
-    assert flow.faellig() and not flow.uhr_ungewiss and not flow.gesperrt
+    assert flow.faellig() and not flow.gesperrt
 
 
 def test_an_unusable_access_counts_as_a_failure_with_backoff(tmp_path, ident, ca):

@@ -6,7 +6,7 @@ import pytest
 from smartheat_runtime import backup_store
 from smartheat_runtime.backup_store import load_backup, save_backup
 from smartheat_runtime.delivery import SOURCE_LOCAL, DataFault, DeliveryState, PendingTick
-from smartheat_runtime.state import BridgeState, StateStore, StorageError
+from smartheat_runtime.state import BridgeState, StateStore, StorageError, _is_override
 
 # Vollstaendige backup.json, wie 0.16.0 sie schreibt (vor TP11: die Parallelverschiebung hiess
 # noch "offset_current", target_history gab es noch als aktiv gefuehrtes Feld).
@@ -547,3 +547,63 @@ def test_fields_from_029_are_no_longer_interpreted_but_kept(make_store, tmp_path
     written = json.loads((tmp_path / "backup.json").read_text())
     for key in ("curve_current", "shift_current", "heat_limit", "heat_limit_original"):
         assert written[key] == old[key]
+
+
+def test_ein_write_budget_mit_anzahl_null_ist_gueltig(make_store):
+    assert make_store(backup={"write_budget": {"x": {"day": "d", "count": 0}}}).state.write_budget == {
+        "x": {"day": "d", "count": 0}}
+
+
+def test_is_override_gibt_bei_einem_formfehler_false_zurueck():
+    assert _is_override("kein dict") is False
+    assert _is_override({"levers": {"curve": 1.0}}) is False  # erkannt fehlt
+    assert _is_override({"levers": {"curve": 1.0}, "erkannt": "2026-10-01T08:00:00+02:00"}) is True
+
+
+def test_revert_to_saved_setzt_hebelfelder_ohne_gespeicherten_wert_auf_leer(make_store, monkeypatch):
+    store = make_store()
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
+    with pytest.raises(OSError):
+        store.update(restore_point={"curve": 1.0}, originals={"heat_limit": 15.0}, learned={"curve": 1.1})
+
+    store.revert_to_saved("restore_point", "originals", "learned")
+
+    assert (store.state.restore_point, store.state.originals, store.state.learned) == ({}, {}, {})
+
+
+def test_revert_to_saved_gibt_eine_kopie_des_gespeicherten_hebelfelds_zurueck(make_store, monkeypatch):
+    store = make_store(backup={"originals": {"heat_limit": 15.0}})
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
+    with pytest.raises(OSError):
+        store.update(originals={"heat_limit": 16.0})
+    store.revert_to_saved("originals")
+    assert store.state.originals == {"heat_limit": 15.0}
+    store.state.originals["heat_limit"] = 99.0  # darf den gespeicherten Stand nicht veraendern
+    store.revert_to_saved("originals")
+
+    assert store.state.originals == {"heat_limit": 15.0}
+
+
+def test_revert_to_saved_laesst_andere_felder_und_skalare_unveraendert(make_store, monkeypatch):
+    store = make_store(backup={"last_room_target": 21.0, "boost_active": True})
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
+    with pytest.raises(OSError):
+        store.update(last_room_target=22.0, boost_active=False)
+
+    store.revert_to_saved("last_room_target")
+
+    assert store.state.last_room_target == 21.0 and store.state.boost_active is False
+
+
+def test_revert_to_saved_loescht_die_schreibmarke_nur_wenn_nichts_mehr_fehlt(make_store, monkeypatch):
+    store = make_store(backup={"last_room_target": 21.0, "boost_active": True})
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
+    with pytest.raises(OSError):
+        store.update(last_room_target=22.0, boost_active=False)
+    assert store.storage_failed
+
+    store.revert_to_saved("last_room_target")
+    assert store.storage_failed  # boost_active ist noch nicht gespeichert
+
+    store.revert_to_saved("boost_active")
+    assert not store.storage_failed

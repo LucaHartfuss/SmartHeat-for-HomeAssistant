@@ -771,12 +771,13 @@ def test_status_is_abo_inaktiv_right_after_start_without_mqtt(env):
     assert _status_states(env) == ["startet", "abo_inaktiv"]
 
 
-def test_status_carries_the_plant_of_the_document_as_setup_id(env):
-    # Spec 5c 1.3 (dokument_config): setup_id = Anlage; die Option setup_id entfiel mit dem Optionsmodus.
+def test_status_carries_the_plant_of_the_document_as_tenant_id_only(env):
+    # Spec 5c 1.3 (dokument_config): tenant_id = Anlage; setup_id entfiel mit Stufe 3 S7 (A5-63).
     _quiet_backup(env)
     _start(env)
 
-    assert env.ha.events[0][1]["setup_id"] == OPTIONS["tenant_id"]
+    assert env.ha.events[0][1]["tenant_id"] == OPTIONS["tenant_id"]
+    assert "setup_id" not in env.ha.events[0][1]
 
 
 def test_status_is_sent_again_when_the_ha_connection_comes_back(env):

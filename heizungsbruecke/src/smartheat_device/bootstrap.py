@@ -172,7 +172,6 @@ class Bootstrap:
         self._dir, self._client, self._register_args = device_dir, client, register_args
         self._uhr_synchron, self._identity, self._clock = uhr_synchron, identity, clock
         self.gesperrt = False
-        self.uhr_ungewiss = False
         self._failures = 0
         self._next = 0.0
         self._fremdes_zertifikat = False
@@ -208,7 +207,7 @@ class Bootstrap:
     def erfolg(self) -> None:
         """Der Zugang funktioniert (neu geholt oder der Link hat mit dem bisherigen verbunden): Backoff zuruecksetzen.
         Eine Sperre hebt nur ein neu geholter Zugang auf."""
-        self.uhr_ungewiss = self._fremdes_zertifikat = False
+        self._fremdes_zertifikat = False
         self._failures, self._next = 0, 0.0
 
     def spaeter(self) -> None:
@@ -218,7 +217,6 @@ class Bootstrap:
 
     def _nicht_angemeldet(self) -> None:
         if self._uhr_synchron() is not True:
-            self.uhr_ungewiss = True
             logger.warning("Bootstrap: nicht authentifiziert, Uhr nicht synchron - kein Urteil, erneuter Versuch spaeter")
             return self._spaeter()
         self.gesperrt = True

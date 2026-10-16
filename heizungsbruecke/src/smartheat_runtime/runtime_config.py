@@ -26,7 +26,6 @@ class BootInfo:
     configured: bool
     signed_off: bool
     tenant_id: str | None
-    setup_id: str | None
     lever_set: LeverSet
     client_version: str
     notify_hints_off: tuple[str, ...]
@@ -41,7 +40,6 @@ class BootInfo:
 @dataclass(frozen=True)
 class RuntimeConfig:
     tenant_id: str
-    setup_id: str | None
     lever_set_id: str
     local_safety: LocalSafety
     daily_trigger_time: str | None

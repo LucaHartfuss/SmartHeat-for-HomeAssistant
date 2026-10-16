@@ -36,7 +36,7 @@ def test_fields_are_contract_fields():
 
 def test_boot_info_of_a_set_up_device(tmp_path):
     boot = _boot(KONF, tmp_path)
-    assert (boot.configured, boot.signed_off, boot.tenant_id, boot.setup_id) == (True, False, "kunde3", "kunde3")
+    assert (boot.configured, boot.signed_off, boot.tenant_id) == (True, False, "kunde3")
     assert (boot.lever_set.id, boot.client_version, boot.notify_hints_off) == ("viessmann_vicare", "0.6.0", ())
     assert boot.local_check_interval == dc.DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS
     assert (boot.backup_path, boot.failsafe_path) == (tmp_path / "b.json", tmp_path / "f.json")
@@ -60,7 +60,7 @@ def test_runtime_config_from_the_document(tmp_path):
 
     config = dc.runtime_config(KONF, rastung_pfad=tmp_path / "keine.json", entitlement_path=Path("/tmp/e.json"),
                                abo_source=source)
-    assert (config.tenant_id, config.setup_id, config.lever_set_id) == ("kunde3", "kunde3", "viessmann_vicare")
+    assert (config.tenant_id, config.lever_set_id) == ("kunde3", "viessmann_vicare")
     assert (config.daily_trigger_time, config.room_sensor_refs, config.battery_refs) == ("12:12", (SENSOR,), ())
     assert config.local_safety == resolve_local_safety("viessmann_vicare", "Heizkoerper")
     assert (config.local_check_interval, config.telemetry_interval) == (

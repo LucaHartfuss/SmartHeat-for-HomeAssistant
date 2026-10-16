@@ -50,7 +50,7 @@ _FAULT_ART = dict(
 
 HINT_FIELDS = ("raumfuehler_ausgefallen", "batterie_niedrig", "manueller_eingriff")
 EVENT_FIELDS = (
-    "schema", "tenant_id", "setup_id", "addon_version", "status", "grund", "notbetrieb", "datenfehler",
+    "schema", "tenant_id", "addon_version", "status", "grund", "notbetrieb", "datenfehler",
     "boost", "letzte_serverantwort", "hebelsatz", "hebel", "gelernt", "abo", "abo_frist_ende", "hinweise",
 )
 
@@ -145,7 +145,7 @@ def _levers(state, lever_set) -> dict:
 
 
 def build_event(
-    tenant_id: str, setup_id: str | None, flags: Flags, state, lever_set, client_version: str,
+    tenant_id: str, flags: Flags, state, lever_set, client_version: str,
     storage_failed: bool = False,
 ) -> dict:
     status = overall_status(flags, state, storage_failed)
@@ -153,7 +153,6 @@ def build_event(
     return {
         "schema": EVENT_SCHEMA,
         "tenant_id": tenant_id,
-        "setup_id": setup_id,
         "addon_version": client_version,
         "status": status,
         "grund": flags.grund if status in _STATUS_WITH_REASON else None,
@@ -185,11 +184,10 @@ class StatusReporter:
     StateStore; Module aendern nur Flags bzw. BridgeState, gesendet wird zentral."""
 
     def __init__(
-        self, sink: StatusSink, tenant_id: str, setup_id: str | None, store, lever_set, client_version: str,
+        self, sink: StatusSink, tenant_id: str, store, lever_set, client_version: str,
     ) -> None:
         self._sink = sink
         self._tenant_id = tenant_id
-        self._setup_id = setup_id if isinstance(setup_id, str) and setup_id else None
         self._store = store
         self._lever_set = lever_set
         self._client_version = client_version
@@ -202,7 +200,7 @@ class StatusReporter:
 
     def event(self) -> dict:
         return build_event(
-            self._tenant_id, self._setup_id, self.flags, self._store.state, self._lever_set,
+            self._tenant_id, self.flags, self._store.state, self._lever_set,
             self._client_version, self._store.storage_failed,
         )
 

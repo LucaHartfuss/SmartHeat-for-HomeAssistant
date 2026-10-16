@@ -55,7 +55,7 @@ def test_configured_start_regulates_with_gateway_texts_and_batteries(world):
     result = world.start_runtime()
     assert isinstance(result, Runtime)
     world.connect()
-    assert world.status()["status"] == "regelt" and world.status()["setup_id"] == "test-tenant"
+    assert world.status()["status"] == "regelt" and world.status()["tenant_id"] == "test-tenant"
     assert result.texts is SHG_TEXTS
     assert set(result.config.battery_refs) == {
         BatteryRef(f"zigbee:{SENSOR}:battery", BATTERY_PERCENT),

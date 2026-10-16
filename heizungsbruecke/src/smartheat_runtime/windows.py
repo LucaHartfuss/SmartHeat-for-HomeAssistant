@@ -12,7 +12,7 @@ def parse_hhmm_minutes(value) -> int:
 
 
 def validate_daily_trigger_time(value) -> str:
-    """HH:MM wie profiles.validate_daily_trigger_time im Server. Wirft ValueError."""
+    """HH:MM wie profiles._hhmm_minutes im Server. Wirft ValueError."""
     if value is None or value == "":
         raise ValueError("Tagestick fehlt")
     try:
