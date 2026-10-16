@@ -116,9 +116,9 @@ def test_exceptions_become_reasons(tmp_path):
     sent = Sent()
     register = cmd.CommandRegister(tmp_path, sent, uebersetzen=uebersetzen)
     register.register("zigbee_permit_join", invalid)
-    register.register("driver_probe", down)
+    register.register("inventory", down)
     register.register("diagnostics", broken)
-    for number, kind in enumerate(("zigbee_permit_join", "driver_probe", "diagnostics"), start=1):
+    for number, kind in enumerate(("zigbee_permit_join", "inventory", "diagnostics"), start=1):
         register.empfangen(_command(kind, f"c{number}"))
     assert [result["error"] for result in sent.results] == [
         {"grund": "ungueltige_nutzlast", "text": "seconds fehlt."},

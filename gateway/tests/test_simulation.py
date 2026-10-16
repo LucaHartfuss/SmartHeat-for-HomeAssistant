@@ -71,15 +71,8 @@ def test_fault_injection(paths, clock):
         driver.read("curve")
     control.write_text(json.dumps({"token_expired": True}))
     with pytest.raises(DriverError) as error:
-        driver.probe()
+        driver.erkennung()
     assert error.value.grund == "nicht_angemeldet"
-
-
-def test_probe_offers_one_candidate_and_rejects_the_other(paths, clock):
-    result = _sim(paths, clock).probe()
-    ok, rejected = result["kandidaten"]
-    assert ok["lever_set"] == "viessmann_vicare" and ok["ablehnung"] is None
-    assert rejected["lever_set"] is None and rejected["ablehnung"]["grund"] == "hebel_fehlt"
 
 
 def test_erkennung_hat_zwei_features_und_eine_kennung_ohne_heizkreis(paths, clock):
@@ -100,11 +93,11 @@ def test_erkennung_hat_zwei_features_und_eine_kennung_ohne_heizkreis(paths, cloc
 
 
 @pytest.mark.parametrize("hebelsatz", sorted(SIM_SCHRITTE))
-def test_erkennung_warnungen_gleichen_denen_der_alten_probe(paths, clock, hebelsatz):
-    driver = _sim(paths, clock, lever_set=hebelsatz)
-    warnungen = driver.erkennung()["anlagen"][0]["sicherheitswarnungen"]
-    ok = driver.probe()["kandidaten"][0]
-    assert warnungen == {"0": safety_warnings.compute(ok)} and warnungen["0"]
+def test_erkennung_warnungen_kommen_aus_dem_hebelstand_des_ersten_kreises(paths, clock, hebelsatz):
+    daten = _sim(paths, clock, lever_set=hebelsatz).erkennung()
+    hebel = daten["features"][0]["properties"]["hebel"]["value"]
+    warnungen = daten["anlagen"][0]["sicherheitswarnungen"]
+    assert warnungen == {"0": safety_warnings.compute({"lever_set": hebelsatz, "hebel": hebel})} and warnungen["0"]
 
 
 def test_erkennung_mit_abgelaufener_anmeldung_ist_nicht_angemeldet(paths, clock):
@@ -130,7 +123,7 @@ def test_house_model_moves_towards_the_equilibrium(paths, clock):
 
 def test_reader_instance_does_not_create_the_plant_file(paths, clock):
     reader = create("simulation", {}, paths, clock=clock, writer=False)
-    reader.probe()
+    reader.erkennung()
     assert not (paths.sim_dir / "plant.json").exists()
 
 

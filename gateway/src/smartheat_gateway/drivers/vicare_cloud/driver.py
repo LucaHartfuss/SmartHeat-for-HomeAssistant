@@ -59,7 +59,6 @@ class ViCareCloudDriver:
     kind = KIND_CLOUD
     login_kind = LOGIN_OAUTH
     LEVER_SETS = (caps.LEVER_SET,)
-    REJECTION_REASONS = caps.REJECTIONS
     # Audit 4, A4-08: Parameter, die die Anlage bestimmen (registry.same_plant/plant_id).
     # Achtung (Audit 4, A4-08): Eine Aenderung aendert die plant_id jeder Installation; beim Update gilt das als andere Anlage und setzt den anlagenbezogenen Zustand zurueck.
     IDENTITY_PARAMETERS = ("installation_id", "gateway_serial", "device_id", "heizkreis")
@@ -373,15 +372,6 @@ class ViCareCloudDriver:
             return self._api.features(installation_id, gateway_serial, device_id)
         except vicare.ViCareError as error:
             raise self._fail(error) from error
-
-    def probe(self) -> dict:
-        found = []
-        for device in self._heating_devices():
-            features = self._features(device["installation_id"], device["gateway_serial"], device["device_id"])
-            found += caps.candidates(features, installation_id=device["installation_id"],
-                                     gateway_serial=device["gateway_serial"], device_id=device["device_id"],
-                                     poll_seconds=self.poll_seconds)
-        return {"driver_id": self.driver_id, "kandidaten": found}
 
     def erkennung(self) -> dict:
         """Inventur stunden 0 (Spec Stufe 3 S5 5.1): rohe, gekuerzte Features je Heizgeraet; Sicherheitswarnungen je

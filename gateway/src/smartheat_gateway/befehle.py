@@ -1,13 +1,13 @@
 """Befehle des Gateways (Spec 5b 3.4; Handler aus dem Agenten bis 0.5.0) fuer das Befehlsregister des Geraetekerns
 (smartheat_device.commands): ein Handler bekommt Kontext und Nutzlast und liefert Done, Failed oder Waiting; Einmal-
 Ausfuehrung, Gruende-Pruefung und Versand macht das Register. Gateway-Befehle: zigbee_permit_join, zigbee_devices,
-driver_login, driver_probe, inventory (stunden 0: Erkennung des Treibers, sonst Messreihe des Treibers aus der
+driver_login, inventory (stunden 0: Erkennung des Treibers, sonst Messreihe des Treibers aus der
 Konfiguration; Ergebnis jeweils als up/inventory), diagnostics und
 sign_off (Markierung, dann startet die Laufzeit als "abgemeldet" neu und setzt die Anlage zurueck). hinweis und
 new_claim_code kann jedes Geraet (Geraetekern). Texte in Kundensprache, nie Geheimnisse; DriverError und
 QuotaExhausted uebersetzt fehler_uebersetzen in Vertragsgruende.
 
-Blockierende Treiber-Aufrufe (Cloud-HTTP: Anmeldung, Probe, Inventur-Probe; mit Token-Erneuerung und 401-Wiederholung
+Blockierende Treiber-Aufrufe (Cloud-HTTP: Anmeldung, Erkennung, Inventur-Probe; mit Token-Erneuerung und 401-Wiederholung
 bis 80 s) laufen im Hintergrund (ein eigener Daemon-Thread je Kontext), nicht im Geraete-Thread: der Handler liefert
 Waiting, dessen check im Geraete-Thread nur das Future liest. Sonst stuenden down/setpoints, Dokumente und hello still,
 und die Laufzeit liefe nach zwei Ack-Timeouts in den Notbetrieb (bis 0.5.0 lief das im Agenten-Prozess)."""
@@ -27,7 +27,6 @@ from smartheat_device.hintergrund import (  # noqa: F401  (HINTERGRUND_NAME: Rue
     Hintergrund,
 )
 from smartheat_gateway import config as gateway_config
-from smartheat_gateway import safety_warnings
 from smartheat_gateway.drivers import registry
 from smartheat_gateway.drivers.base import Driver, DriverError
 from smartheat_gateway.paths import Paths
@@ -40,7 +39,7 @@ from smartheat_runtime.status import STATUS_ABGEMELDET
 logger = logging.getLogger(__name__)
 
 INVENTORY_EVERY_SECONDS = 900
-ERKENNUNG_SECONDS = 120  # wie bisher driver_probe
+ERKENNUNG_SECONDS = 120
 SIGN_OFF_WAIT_SECONDS = 24 * 3600
 INVENTORY_ABORTED_TEXT = "Die Inventur wurde abgebrochen, weil sich die Einrichtung des Gateways geändert hat."
 INVENTORY_NO_SAMPLES_TEXT = "Die Inventur konnte keine einzige Probe abrufen, weil die Anlage nicht erreichbar war."
@@ -182,19 +181,6 @@ def driver_login(ctx: Kontext, payload: dict) -> Outcome:
         return Done({})
 
     return _im_hintergrund(ctx, "driver_login", anmelden)
-
-
-@_handler("driver_probe")
-def driver_probe(ctx: Kontext, payload: dict) -> Outcome:
-    driver = _driver(ctx, payload.get("driver_id"))
-
-    def pruefen() -> Done:
-        result = driver.probe()
-        for candidate in result["kandidaten"]:
-            candidate["sicherheitswarnungen"] = safety_warnings.compute(candidate)
-        return Done(result)
-
-    return _im_hintergrund(ctx, "driver_probe", pruefen)
 
 
 def forget_inventory(paths: Paths) -> None:

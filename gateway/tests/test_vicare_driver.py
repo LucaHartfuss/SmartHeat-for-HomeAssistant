@@ -5,6 +5,8 @@ import threading
 import pytest
 from bindung_beispiele import VIESSMANN_VICARE_BINDING as BINDING
 from fake_vicare.server import GOOD_CODE, FakeVicare
+from test_vicare_capabilities import feature as feature_dict
+from test_vicare_capabilities import good_features, number
 
 from smartheat_device import inventory, wire
 from smartheat_gateway import safety_warnings
@@ -170,26 +172,6 @@ def test_a_feature_removed_by_a_firmware_update_makes_read_raise_not_keyerror(en
     assert driver.read("room_setpoint") == 20  # die uebrigen Hebel bleiben lesbar
 
 
-def test_probe_lists_candidates_and_never_leaks_tokens(env):
-    server, driver, paths, clock = env
-    result = driver.probe()
-    assert result["driver_id"] == "vicare_cloud" and result["kandidaten"][0]["ablehnung"] is None
-    text = json.dumps(result)
-    assert json.loads((paths.driver_secrets_dir / "vicare.json").read_text())["access_token"] not in text
-
-
-def test_probe_of_an_unreachable_cloud_and_of_an_expired_login_use_the_contract_reasons(env):
-    server, driver, paths, clock = env
-    server.control({"offline": True})
-    with pytest.raises(DriverError) as offline:
-        driver.probe()
-    assert offline.value.grund == "anlage_nicht_erreichbar"
-    server.control({"reset": True})
-    with pytest.raises(DriverError) as expired:
-        driver.probe()
-    assert expired.value.grund == "nicht_angemeldet"
-
-
 def test_erkennung_liefert_gekuerzte_features_mit_praefix(env):
     server, driver, paths, clock = env
     daten = driver.erkennung()
@@ -211,8 +193,21 @@ def test_erkennung_hat_die_sicherheitswarnungen_je_heizkreis_aus_dem_aktuellen_s
     server, driver, paths, clock = env
     (anlage,) = driver.erkennung()["anlagen"]
     assert list(anlage["sicherheitswarnungen"]) == ["0"]
-    assert anlage["sicherheitswarnungen"]["0"] == safety_warnings.compute(
-        driver.probe()["kandidaten"][0])
+    stand = caps.hebelstand(caps.by_name(server.features["0"]), 0)
+    assert anlage["sicherheitswarnungen"]["0"] == safety_warnings.compute({"lever_set": "viessmann_vicare", "hebel": stand})
+
+
+def test_erkennung_warnt_je_heizkreis_wenn_ein_hebel_ausserhalb_der_lokalen_werte_liegt(tmp_path, clock):
+    """G-1: die Warnung entsteht im Geraet aus dem aktuellen Stand; ein Heizkreis ohne alle drei Hebel bekommt keine."""
+    features = good_features(circuits=(0, 1))
+    for roh in features:
+        if roh["feature"] == "heating.circuits.1.heating.curve":
+            roh["properties"]["slope"]["value"] = 3.4  # ueber den lokalen Grenzen
+    features.append(feature_dict("heating.circuits.2.heating.curve", {"shift": number(0), "slope": number(1.4)}))
+    driver = ViCareCloudDriver({}, Paths(tmp_path), clock=clock, api=_EinGeraet(features))  # type: ignore[arg-type]
+    warnungen = driver.erkennung()["anlagen"][0]["sicherheitswarnungen"]
+    assert set(warnungen) == {"0", "1"}  # Kreis 2 hat weder Kommandos noch Normalprogramm
+    assert warnungen["0"] != warnungen["1"] and any(warnungen["1"].values())
 
 
 def test_erkennung_funktioniert_ohne_parameter_und_ohne_beschreibung(env):
@@ -394,17 +389,14 @@ class _Installations:
         return self._features
 
 
-def test_probe_of_several_installations_gives_one_candidate_per_heating_device_with_unique_ids(tmp_path, clock):
-    """Review Focus 7: getrennte Kandidaten mit eindeutiger kandidat_id; ein Geraet ohne Heizung erzeugt keinen."""
-    from fake_vicare.server import DEFAULT
-
-    api = _Installations(DEFAULT)
+def test_erkennung_mehrerer_installationen_gibt_eine_anlage_je_heizgeraet(tmp_path, clock):
+    """Review Focus 7: getrennte Anlagen mit eigener Kennung und eigenem Index; ein Geraet ohne Heizung zaehlt nicht."""
+    api = _Installations(good_features())
     driver = ViCareCloudDriver({}, Paths(tmp_path), clock=clock, api=api)  # type: ignore[arg-type]
-    result = driver.probe()
-    ids = [candidate["kandidat_id"] for candidate in result["kandidaten"]]
-    assert len(ids) == 2 and len(set(ids)) == 2
-    assert [c["parameter"]["installation_id"] for c in result["kandidaten"]] == [1, 2]
-    assert ("e" not in {call[2] for call in api.feature_calls})
+    daten = driver.erkennung()
+    assert [a["kennung"]["installation_id"] for a in daten["anlagen"]] == [1, 2]
+    assert {f["anlage"] for f in daten["features"]} == {0, 1}
+    assert "e" not in {call[2] for call in api.feature_calls}
 
 
 class _EinGeraet(_Installations):
@@ -414,28 +406,8 @@ class _EinGeraet(_Installations):
         return [{"installation_id": 1, "gateway_serial": "S1", "device_id": "0", "device_type": "heating"}]
 
 
-def _matrix_aufzeichnungen():
-    from pathlib import Path
-
-    return sorted((Path(__file__).parent / "vicare_matrix" / "recordings").glob("*.json"))
-
-
-@pytest.mark.parametrize("path", _matrix_aufzeichnungen(), ids=lambda p: p.name)
-def test_erkennung_warnungen_gleichen_denen_der_alten_probe_fuer_angenommene_heizkreise(tmp_path, clock, path):
-    features = json.loads(path.read_text()).get("data", [])
-    driver = ViCareCloudDriver({}, Paths(tmp_path), clock=clock, api=_EinGeraet(features))  # type: ignore[arg-type]
-    warnungen = driver.erkennung()["anlagen"][0]["sicherheitswarnungen"]
-    for kandidat in driver.probe()["kandidaten"]:
-        if kandidat["ablehnung"] is None:
-            kreis = str(kandidat["parameter"]["heizkreis"])
-            assert warnungen[kreis] == safety_warnings.compute(kandidat)
-
-
 def test_erkennung_einer_grossen_anlage_wird_in_teile_gestueckelt(tmp_path, clock):
-    from pathlib import Path
-
-    gross = json.loads((Path(__file__).parent / "vicare_matrix" / "recordings" / "Vitocal252A.json").read_text())["data"]
-    features = gross * 12
+    features = good_features(circuits=range(30)) * 6
     driver = ViCareCloudDriver({}, Paths(tmp_path), clock=clock, api=_EinGeraet(features))  # type: ignore[arg-type]
     daten = driver.erkennung()
     assert inventory.groesse(daten) > inventory.LIMIT_BYTES

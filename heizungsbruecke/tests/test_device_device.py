@@ -479,18 +479,18 @@ def test_host_exceptions_become_contract_reasons(tmp_path):
     class DriverDown(Exception):
         pass
 
-    def probe(payload):
+    def erkennung(payload):
         raise DriverDown()
 
     host = FakeHost()
-    host.handlers = {"driver_probe": probe}
+    host.handlers = {"inventory": erkennung}
     world = World(tmp_path, host)
     world.device = device.Device(host, tmp_path, "https://accounts.example.test", clock=world.clock, wall=lambda: WALL,
                                  bootstrap_client=lambda ident: world.client, link_factory=world._link,
                                  befehl_fehler=lambda error: commands.Failed("anlage_nicht_erreichbar", "Anlage weg.")
                                  if isinstance(error, DriverDown) else None)
     world.verbinden()
-    world.empfangen("down/command", _command("driver_probe", payload={"driver_id": "simulation"}))
+    world.empfangen("down/command", _command("inventory", payload={"stunden": 0, "filter": {"treiber": "simulation"}}))
     assert world.link.of("up/result")[0]["error"] == {"grund": "anlage_nicht_erreichbar", "text": "Anlage weg."}
 
 

@@ -39,7 +39,7 @@ NICHT_UNTERSTUETZT_TEXT = "Dieser Befehl gilt nicht für Home Assistant."
 NOT_SET_UP_TEXT = "Das Gerät ist nicht eingerichtet."
 FILTER_TEXT = "Die Inventur braucht einen Filter."
 HA_TEXT = "Home Assistant war nicht erreichbar."
-_FREMD = ("zigbee_permit_join", "zigbee_devices", "driver_login", "driver_probe")
+_FREMD = ("zigbee_permit_join", "zigbee_devices", "driver_login")
 
 
 def _nicht_unterstuetzt(payload: dict) -> Failed:

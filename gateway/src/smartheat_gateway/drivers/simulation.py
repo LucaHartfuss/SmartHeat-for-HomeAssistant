@@ -25,14 +25,14 @@ DEFAULTS = {
 }
 START_LEVERS = {"curve": 1.0, "room_setpoint": 20.0, "level": 0.0, "heat_limit": 16.0, "min_flow": 20.0}
 START_AUX = {"mode_select": "normal", "setpoint_comfort": 22.0, "setpoint_setback": 18.0}
-# Bereiche und Erzeuger der simulierten Anlage (fuer probe; die lokalen Sicherheitswerte liegen in safety.py).
+# Bereiche und Erzeuger der simulierten Anlage (fuer die Erkennung; die lokalen Sicherheitswerte liegen in safety.py).
 PLANT_RANGES = {
     "curve": (0.2, 3.5), "room_setpoint": (10.0, 30.0), "level": (-13.0, 40.0), "heat_limit": (10.0, 25.0),
     "min_flow": (15.0, 80.0),
 }
 GENERATOR = {"vaillant_vrc720": "gastherme", "viessmann_vicare": "gastherme", "weishaupt_wwp": "waermepumpe",
              "weishaupt_wwp_basis": "waermepumpe"}
-# Schrittweiten der simulierten Anlage je Hebelsatz (Probe ohne Konfiguration); gleich den Bindungsparametern des
+# Schrittweiten der simulierten Anlage je Hebelsatz (Erkennung ohne Konfiguration); gleich den Bindungsparametern des
 # Servers (Contract-Check 40).
 SIM_SCHRITTE = {
     "vaillant_vrc720": {"curve": 0.05, "room_setpoint": 0.5, "heat_limit": 0.1, "min_flow": 0.1},
@@ -48,7 +48,6 @@ class SimulationDriver:
     kind = KIND_LOCAL
     login_kind = None
     LEVER_SETS = tuple(SIM_SCHRITTE)
-    REJECTION_REASONS = ("hebel_fehlt",)
     # Audit 4, A4-08: Parameter, die die Anlage bestimmen (registry.same_plant/plant_id).
     # Achtung (Audit 4, A4-08): Eine Aenderung aendert die plant_id jeder Installation; beim Update gilt das als andere Anlage und setzt den anlagenbezogenen Zustand zurueck.
     IDENTITY_PARAMETERS = ("lever_set", "heizkreis")
@@ -81,7 +80,7 @@ class SimulationDriver:
 
     @property
     def description(self) -> BindingDescription:
-        """Beschreibung aus der Konfiguration (Spec Stufe 3 S4b); Befehle ohne Konfiguration (Probe, Inventur,
+        """Beschreibung aus der Konfiguration (Spec Stufe 3 S4b); Befehle ohne Konfiguration (Erkennung, Inventur,
         Vergessen) duerfen sie nicht brauchen."""
         if self._description is None:
             raise RuntimeError("Treiber ohne Konfiguration")
@@ -276,30 +275,6 @@ class SimulationDriver:
 
     def login_finish(self, params: dict) -> None:
         raise DriverError("login_nicht_noetig", "Die Simulation braucht keine Anmeldung.")
-
-    def probe(self) -> dict:
-        if self._control().get("token_expired"):
-            raise DriverError("nicht_angemeldet", "Die Anmeldung beim Hersteller ist abgelaufen.")
-        plant = self._plant()
-        lever_set = self._p["lever_set"]
-        public = {key: self._p[key] for key in ("lever_set", "settle_delay", "poll_seconds")}
-        levers = {
-            lever: {"wert": self._visible(plant, lever), "min": PLANT_RANGES[lever][0], "max": PLANT_RANGES[lever][1],
-                    "schritt": SIM_SCHRITTE[lever_set][lever]}
-            for lever in LEVER_SETS[lever_set].levers
-        }
-        ok = {
-            "kandidat_id": "sim-hk0", "anzeige": "Simulation · Heizkreis 0", "parameter": {**public, "heizkreis": 0},
-            "erzeuger_typ": GENERATOR[lever_set], "lever_set": lever_set, "ablehnung": None, "hebel": levers,
-            "signale": sorted(self.signals()), "sicherheitswarnungen": {}, "details": {"simulation": True},
-        }
-        rejected = {
-            "kandidat_id": "sim-hk1", "anzeige": "Simulation · Heizkreis 1", "parameter": {**public, "heizkreis": 1},
-            "erzeuger_typ": GENERATOR[lever_set], "lever_set": None,
-            "ablehnung": {"grund": "hebel_fehlt", "text": "Heizkreis 1 hat keine schreibbare Heizkurve."},
-            "hebel": {}, "signale": [], "sicherheitswarnungen": {}, "details": {"simulation": True},
-        }
-        return {"driver_id": self.driver_id, "kandidaten": [ok, rejected]}
 
     def erkennung(self) -> dict:
         """Inventur stunden 0 (Spec Stufe 3 S5 5.1): zwei Heizkreise als Features, einer mit schreibbarer Heizkurve."""
