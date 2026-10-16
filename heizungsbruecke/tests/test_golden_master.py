@@ -6,7 +6,9 @@ und in Task 9 des Plans Audit 4 P-B (Telemetrie ohne waerme_fehlt, Status ohne H
 und in Task 10 des Plans 5c D (Geraete-Pfad, 1.0.0; der Master von 0.36 bleibt als addon_scenario_0_36.json, der
 Unterschied ist auf golden_scenario.ERLAUBT begrenzt)
 und in Task 10 des Plans Stufe 3 S3 (Version normalisiert, A5-65)
-und in Task 3 des Plans Stufe 3 S7 (setup_id entfaellt, A5-63: per Skript entfernt bzw. in backup.json zu tenant_id, nicht neu erzeugt)."""
+und in Task 3 des Plans Stufe 3 S7 (setup_id entfaellt, A5-63: per Skript entfernt bzw. in backup.json zu tenant_id, nicht neu erzeugt)
+und in Task 2 des Plans Stufe 3 S8a-1 (raum_soll_wirksam entfaellt aus dem Snapshot, A5-43: per Skript entfernt, nicht neu
+erzeugt)."""
 import json
 import os
 import time

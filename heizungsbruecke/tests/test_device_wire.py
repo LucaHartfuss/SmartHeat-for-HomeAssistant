@@ -102,7 +102,6 @@ OFFEN: set[str] = {  # Ist-Stand 2026-10-16; die Tasks 2-6 leeren es, Task 7 pru
     "HELLO_FIELDS",  # Task 3
     "HELLO_OPTIONAL",  # Task 3
     "HOSTS",  # Task 3
-    "INTERVALLE_FIELDS",  # Task 2
     "INVENTORY_FIELDS",  # Task 4
     "INVENTUR_ANLAGE_FIELDS",  # Task 6
     "INVENTUR_ENTITY_FIELDS",  # Task 6
@@ -126,11 +125,9 @@ OFFEN: set[str] = {  # Ist-Stand 2026-10-16; die Tasks 2-6 leeren es, Task 7 pru
     "RESULT_TARGETS",  # Task 3
     "SCHREIBSCHUTZ_FIELDS",  # Task 5
     "SIGNATURE_ENCODING",  # Task 3
-    "SNAPSHOT_EXTRA",  # Task 2
     "SOFTWARE_FIELDS",  # Task 5
     "STATUS_FIELDS",  # Task 3
     "STATUS_OPTIONAL",  # Task 3
-    "TELEMETRY_EXTRA",  # Task 2
     "TREIBER_FIELDS",  # Task 5
     "UNAUTHENTICATED_ERROR",  # Task 3
     "WISH_FIELDS",  # Task 4

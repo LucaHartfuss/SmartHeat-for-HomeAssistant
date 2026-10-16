@@ -33,8 +33,9 @@ ABO_WERTE = ("aktiv", "inaktiv")
 GATEWAY_RAUMFUEHLER = re.compile(r"zigbee:0x[0-9a-f]{16}:(temperature|local_temperature)|treiber:room_temperature")
 IEEE = re.compile(r"0x[0-9a-f]{16}")
 TAGESTICK = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
-#: Intervalle (nur E2E); die Grenzen stehen nur hier, die Laufzeit uebernimmt jeden angenommenen Wert (ein Test
-#: startet sie an beiden Grenzen). Obergrenze Telemetrie (Regel 4, TP12e, AU-022): der Server wertet Luecken ab
+#: Intervalle (nur E2E, Umgebung SMARTHEAT_E2E_INTERVALLE, smartheat_runtime.dokument_config; seit Stufe 3 S8a-1 kein
+#: Dokumentfeld mehr); die Grenzen stehen nur hier, die Laufzeit uebernimmt jeden Wert darin (ein Test startet sie an
+#: beiden Grenzen). Obergrenze Telemetrie (Regel 4, TP12e, AU-022): der Server wertet Luecken ab
 #: samples.MAX_GAP (15 min) als Pause; 600 s lassen Reserve (Contract-Check 33: <= 0,8 x MAX_GAP).
 PRUEFUNG_S = (1, 3600)
 TELEMETRIE_S = (10, 600)
@@ -97,10 +98,6 @@ def _text(value, limit: int = TEXT_MAX_CHARS) -> bool:
     return isinstance(value, str) and 0 < len(value) <= limit
 
 
-def _zahl(value) -> bool:
-    return isinstance(value, int | float) and not isinstance(value, bool)
-
-
 def _aufbau(neu: Mapping) -> dict | None:
     """details des ersten Verstosses gegen Aufbau und Wertebereiche (Grund ungueltig), sonst None."""
     if not _text(neu.get("anlage"), ANLAGE_MAX_CHARS):
@@ -124,14 +121,6 @@ def _aufbau(neu: Mapping) -> dict | None:
     if abfrage is not None and not (isinstance(abfrage, int) and not isinstance(abfrage, bool)
                                     and ABFRAGE_S[0] <= abfrage <= ABFRAGE_S[1]):
         return befund("abfrage_s", "bereich", min=ABFRAGE_S[0], max=ABFRAGE_S[1])
-    intervalle = neu.get("intervalle")
-    if intervalle is not None:
-        if not isinstance(intervalle, Mapping) or not set(intervalle) <= set(INTERVALLE):
-            return befund("intervalle", "ungueltig")
-        for key, (low, high) in INTERVALLE.items():
-            value = intervalle.get(key)
-            if value is not None and not (_zahl(value) and low <= value <= high):
-                return befund(key, "bereich", min=low, max=high)
     return None
 
 

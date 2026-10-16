@@ -28,7 +28,7 @@ def test_body_ohne_text():
 
 def test_gueltig_lehnt_fremde_schluessel_und_texte_ab():
     assert not fehler.gueltig({"text": "frei"}) and not fehler.gueltig("frei")
-    assert not fehler.gueltig({"feld": "<script>"}) and fehler.gueltig({"feld": "pruefung_s", "max": 3600})
+    assert not fehler.gueltig({"feld": "<script>"}) and fehler.gueltig({"feld": "abfrage_s", "max": 3600})
 
 
 def test_ueberlange_ganzzahl_ist_ungueltig_und_wirft_nicht_beim_pruefen():

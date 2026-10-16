@@ -16,9 +16,23 @@ def test_keys_and_code_are_created_once_and_private(tmp_path):
     first = identity.load_or_create(tmp_path)
     second = identity.load_or_create(tmp_path)
     assert (first.device_id, first.claim_code) == (second.device_id, second.claim_code)
-    for name in (identity.KEY_FILE, identity.ENC_KEY_FILE, identity.TLS_KEY_FILE, identity.CLAIM_CODE_FILE):
+    for name in (identity.KEY_FILE, identity.TLS_KEY_FILE, identity.CLAIM_CODE_FILE):
         assert stat.S_IMODE((tmp_path / name).stat().st_mode) == 0o600, name
 
+
+
+def test_kein_verschluesselungsschluessel_mehr(tmp_path):
+    """Plan S8a-1 P3: das Geraet erzeugt enc_key.pem nicht mehr; eine vorhandene Datei bleibt liegen und wird nicht
+    gelesen (Loeschen beim Live-Abbau)."""
+    identity.load_or_create(tmp_path / "neu")
+    assert sorted(p.name for p in (tmp_path / "neu").iterdir()) == sorted(
+        (identity.KEY_FILE, identity.TLS_KEY_FILE, identity.CLAIM_CODE_FILE))
+    alt = tmp_path / "alt"
+    alt.mkdir()
+    (alt / "enc_key.pem").write_text("kein PEM")  # gelesen wuerde das scheitern
+    identity.load_or_create(alt)
+    assert (alt / "enc_key.pem").read_text() == "kein PEM"
+    assert not hasattr(identity, "ENC_KEY_FILE")
 
 def test_device_id_is_derived_from_the_signing_key(tmp_path):
     ident = identity.load_or_create(tmp_path)
@@ -84,7 +98,7 @@ def test_register_body_has_exactly_the_contract_fields(tmp_path):
     ident = identity.load_or_create(tmp_path)
     body = identity.register_body(ident, version="0.6.0", host="gateway",
                                   capabilities={"drivers": ["simulation"], "zigbee": True, "updater": True})
-    assert set(body) == set(wire.REGISTER_FIELDS)
+    assert set(body) == set(wire.REGISTER_FIELDS) and "enc_public_key" not in body
     assert body["claim_code_hash"] == hashlib.sha256(f"{ident.device_id}:{ident.claim_code}".encode()).hexdigest()
     assert csr_passt(body["csr"], ident) and body["host"] == "gateway"
 

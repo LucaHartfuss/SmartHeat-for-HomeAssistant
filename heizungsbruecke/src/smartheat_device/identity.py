@@ -1,7 +1,8 @@
 """Identitaet des Geraets (Spec 5b 1, aus gateway agent/identity.py): Signierschluessel ECDSA P-256 (Geraete-ID und
-signierte Bootstrap-Anfragen), Verschluesselungsschluessel ECDH P-256 (Geheimnisse in Befehlen, G4), eigener
-TLS-Schluessel fuer das MQTT-Zertifikat (CSR mit CN = Geraete-ID) und Uebernahme-Code (12 Zeichen Base32, 60 Bit), alle
-unter <daten>/device/ (0600, gleiche Dateinamen wie der Gateway-Agent bis 0.5.0). Geraete-ID = shg- + die ersten 16
+signierte Bootstrap-Anfragen), eigener TLS-Schluessel fuer das MQTT-Zertifikat (CSR mit CN = Geraete-ID) und
+Uebernahme-Code (12 Zeichen Base32, 60 Bit), alle unter <daten>/device/ (0600, gleiche Dateinamen wie der Gateway-Agent
+bis 0.5.0). Den Verschluesselungsschluessel enc_key.pem erzeugt das Geraet seit Stufe 3 S8a-1 nicht mehr (P3); eine
+vorhandene Datei bleibt liegen und wird nicht gelesen. Geraete-ID = shg- + die ersten 16
 Zeichen von Base32(SHA-256(DER-SPKI)) in Kleinbuchstaben (unveraendert). boot_id: neu je Prozessstart (Erkennung doppelt
 laufender Geraete, Spec 4.2). Schluessel und Code erscheinen nie in einem Log (Regel 6)."""
 import base64
@@ -21,7 +22,6 @@ from smartheat_core import dateien
 from smartheat_device import wire
 
 KEY_FILE = "key.pem"
-ENC_KEY_FILE = "enc_key.pem"
 TLS_KEY_FILE = "tls_key.pem"
 CLAIM_CODE_FILE = "claim_code"
 
@@ -30,7 +30,6 @@ CLAIM_CODE_FILE = "claim_code"
 class Identity:
     device_id: str
     signing_key: ec.EllipticCurvePrivateKey = field(repr=False)
-    enc_key: ec.EllipticCurvePrivateKey = field(repr=False)
     tls_key: ec.EllipticCurvePrivateKey = field(repr=False)
     claim_code: str = field(repr=False)
 
@@ -70,7 +69,6 @@ def new_claim_code(randbytes: Callable[[int], bytes] = secrets.token_bytes) -> s
 
 def load_or_create(device_dir: Path, randbytes: Callable[[int], bytes] = secrets.token_bytes) -> Identity:
     signing = _key(device_dir / KEY_FILE)
-    enc = _key(device_dir / ENC_KEY_FILE)
     tls = _key(device_dir / TLS_KEY_FILE)
     code_path = device_dir / CLAIM_CODE_FILE
     try:
@@ -78,7 +76,7 @@ def load_or_create(device_dir: Path, randbytes: Callable[[int], bytes] = secrets
     except FileNotFoundError:
         code = new_claim_code(randbytes)
         dateien.schreiben_text(code_path, code, modus=dateien.PRIVAT)
-    return Identity(device_id_for(signing.public_key()), signing, enc, tls, code)
+    return Identity(device_id_for(signing.public_key()), signing, tls, code)
 
 
 def save_claim_code(device_dir: Path, ident: Identity, code: str) -> Identity:
@@ -115,7 +113,6 @@ def register_body(ident: Identity, *, version: str, host: str, capabilities: dic
     return {
         "device_id": ident.device_id,
         "public_key": public_key_b64(ident.signing_key),
-        "enc_public_key": public_key_b64(ident.enc_key),
         "claim_code_hash": wire.claim_code_hash(ident.device_id, ident.claim_code),
         "version": version,
         "host": host,

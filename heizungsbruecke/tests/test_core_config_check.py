@@ -54,15 +54,18 @@ def test_no_object_is_invalid():
     {"anlage": ""}, {"anlage": 5}, {"anlage": "x" * 65}, {"profil": None}, {"hebelsatz": None},
     {"verteilsystem": 3}, {"bindung": []}, {"raumfuehler": []}, {"raumfuehler": "x"}, {"raumfuehler": [5]},
     {"raumfuehler": [SENSOR] * 9}, {"tagestick": "25:00"}, {"tagestick": None}, {"abo": "vielleicht"},
-    {"abo": None}, {"intervalle": {"pruefung_s": 0}}, {"intervalle": {"telemetrie_s": 601}},
-    {"intervalle": {"telemetrie_s": True}}, {"intervalle": {"anders": 5}}, {"intervalle": [5]},
+    {"abo": None},
 ])
 def test_structure_and_ranges(change):
     assert _pruefen(_konfiguration(**change)).grund == cc.UNGUELTIG
 
 
-def test_test_intervals_pass():
-    assert _pruefen(_konfiguration(intervalle={"pruefung_s": 5, "telemetrie_s": 10})) is None
+@pytest.mark.parametrize("intervalle", [{"pruefung_s": 5, "telemetrie_s": 10}, {"pruefung_s": 0}, [5], "x"])
+def test_intervalle_ist_kein_dokumentfeld_mehr(intervalle):
+    """Plan S8a-1 P2: intervalle steht nicht mehr im Vertrag. Wie jedes unbekannte Feld (Versionsregel Spec 2.1) prueft
+    config_check es nicht; die Laufzeit liest es nicht (test_runtime_dokument_config), die Grenzen gelten fuer
+    SMARTHEAT_E2E_INTERVALLE."""
+    assert _pruefen(_konfiguration(intervalle=intervalle)) is None
 
 
 def test_interval_bounds():
@@ -159,7 +162,6 @@ def test_prueffregeln_gleich_dem_vertrag():
 @pytest.mark.parametrize(("change", "details"), [
     ({"tagestick": "25:00"}, {"feld": "tagestick", "regel": "format"}),
     ({"raumfuehler": [SENSOR] * 9}, {"feld": "raumfuehler", "regel": "anzahl", "min": 1, "max": 8, "anzahl": 9}),
-    ({"intervalle": {"telemetrie_s": 601}}, {"feld": "telemetrie_s", "regel": "bereich", "min": 10, "max": 600}),
     ({"abo": "vielleicht"}, {"feld": "abo", "regel": "unbekannt"}),
 ])
 def test_aufbau_nennt_feld_und_regel(change, details):

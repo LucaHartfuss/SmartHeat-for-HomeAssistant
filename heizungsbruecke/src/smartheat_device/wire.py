@@ -34,7 +34,7 @@ ROUTES: dict[str, tuple[str, str]] = {
 }
 HOSTS = ("gateway", "ha")
 REGISTER_FIELDS = (
-    "device_id", "public_key", "enc_public_key", "claim_code_hash", "version", "host", "capabilities", "csr",
+    "device_id", "public_key", "claim_code_hash", "version", "host", "capabilities", "csr",
 )
 REGISTER_OPTIONAL = ("werks_nachweis",)  # fehlt = kein Nachweis (Pruefung: eigene Spec vor der Freischaltung)
 CERTIFICATE_FIELDS = ("csr",)
@@ -94,8 +94,6 @@ WISH_OPTIONAL = ("roh", "herkunft", "durch")  # fehlt = nicht begrenzt bzw. unbe
 WISH_WERTE = ("raum_soll",)
 HERKUNFT = ("thermostat", "soll_entity", "smartheat_entity")
 DURCH = ("nutzer", "automation")
-SNAPSHOT_EXTRA = ("raum_soll_wirksam",)  # zusaetzlich zum Tick Schema 4 (Server generic/messages.py)
-TELEMETRY_EXTRA = ("nachgeliefert",)  # fehlt = live gemessen (A4-21)
 
 DOKUMENTE = ("konfiguration", "bedienung")
 DOKUMENT_SOFTWARE = "software"  # nur in up/result: Ergebnis eines Updates, version = Software-Version (Text)
@@ -104,7 +102,7 @@ KONFIGURATION_FIELDS = (
     "schema", "version", "anlage", "profil", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo",
     "mindest_software", "software", "bindungsparameter",
 )
-KONFIGURATION_OPTIONAL = ("intervalle", "ursprungswerte")  # fehlt = Standardwerte bzw. keine Ursprungswerte auf dem Server
+KONFIGURATION_OPTIONAL = ("ursprungswerte",)  # fehlt = keine Ursprungswerte auf dem Server
 # Spec Stufe 3 S4b 4.1: Herstellerwissen der Bindung (G-7). Pflicht fuer eine eingerichtete Konfiguration, null in einer
 # leeren -- bewusste Ausnahme von der Versionsregel ohne neue Schema-Nummer: Geraete bis 1.0.0 ignorieren das Feld.
 BINDUNGSPARAMETER_FIELDS = (
@@ -128,7 +126,6 @@ HA_ROLLEN = (
 HA_HINWEISE = ("raumfuehler", "batterie", "manueller_eingriff", "quellwechsel", "schreibbudget", "schreibzaehler")
 TREIBER_FIELDS = ("id", "parameter")
 SOFTWARE_FIELDS = ("version", "manifest_url", "manifest_sha256", "signature")
-INTERVALLE_FIELDS = ("pruefung_s", "telemetrie_s")
 ABO = ("aktiv", "inaktiv")
 BEDIENUNG_FIELDS = ("schema", "version", "modus", "raum_soll", "quelle", "ts")
 MODI = ("manuell",)
@@ -194,7 +191,7 @@ PRUEF_REGELN = ("fehlt", "ungueltig", "anzahl", "bereich", "format", "doppelt", 
 PRUEF_FELDER = tuple(dict.fromkeys((
     *KONFIGURATION_FIELDS, *KONFIGURATION_OPTIONAL, *BINDUNGSPARAMETER_FIELDS, *SCHREIBSCHUTZ_FIELDS,
     *BINDUNG_GATEWAY_FIELDS, *TREIBER_FIELDS, *BINDUNG_HA_FIELDS, *BINDUNG_HA_OPTIONAL, *KREIS_FIELDS, *HA_ROLLEN,
-    *INTERVALLE_FIELDS, *BEDIENUNG_FIELDS, *COMMAND_FIELDS, *INVENTUR_FILTER_FIELDS, *INVENTUR_FILTER_GATEWAY_FIELDS,
+    *BEDIENUNG_FIELDS, *COMMAND_FIELDS, *INVENTUR_FILTER_FIELDS, *INVENTUR_FILTER_GATEWAY_FIELDS,
     *(feld for command in COMMANDS.values() for feld in (*command.payload, *command.payload_optional)),
 )))
 _SEGMENT_RE = re.compile(r"[A-Za-z0-9_-]+")

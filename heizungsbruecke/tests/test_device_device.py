@@ -849,7 +849,7 @@ def test_setpoints_reach_the_runtime_and_snapshots_the_link(tmp_path):
     worker.run_pending()
     assert [event.data["payload"] for event in seen] == [{"seq": "s1"}]
     channel.publish_snapshot({"room_target": 21.0})
-    assert world.link.of("up/snapshot") == [{"room_target": 21.0, "raum_soll_wirksam": 21.0}]
+    assert world.link.of("up/snapshot") == [{"room_target": 21.0}]
 
 
 def test_runtime_messages_wait_for_hello(tmp_path):

@@ -1,12 +1,13 @@
 """Spec 5b 5.2: Laufzeit aus dem Konfigurationsdokument (Plan D1 Task 9): BootInfo, RuntimeConfig ohne Transport,
 Abo aus dem Dokument, Neustart nur bei laufzeitrelevanten Aenderungen."""
 import dataclasses
+import json
 from pathlib import Path
 
 import pytest
 from bindung_beispiele import parameter
 
-from smartheat_core import config_check, rastung
+from smartheat_core import rastung
 from smartheat_core.config_check import INTERVALLE
 from smartheat_core.safety import LOCAL_SAFETY, resolve_local_safety
 from smartheat_device import wire
@@ -68,10 +69,47 @@ def test_runtime_config_from_the_document(tmp_path):
     assert config.abo_source is source and config.entitlement_path == Path("/tmp/e.json")
 
 
-def test_test_intervals_come_from_the_document(tmp_path):
-    config = dc.runtime_config({**KONF, "intervalle": {"pruefung_s": 5, "telemetrie_s": 10}},
-                               rastung_pfad=tmp_path / "keine.json", entitlement_path=Path("/tmp/e.json"), abo_source=lambda: entitlement.ACTIVE)
-    assert (config.local_check_interval, config.telemetry_interval) == (5, 10)
+PRUEFUNG_STANDARD, TELEMETRIE_STANDARD = dc.DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS, dc.DEFAULT_TELEMETRY_INTERVAL_SECONDS
+
+
+def _intervalle(tmp_path, konfiguration=KONF):
+    config = dc.runtime_config(konfiguration, rastung_pfad=tmp_path / "keine.json", entitlement_path=Path("/tmp/e.json"),
+                               abo_source=lambda: entitlement.ACTIVE)
+    return config.local_check_interval, config.telemetry_interval
+
+
+@pytest.mark.parametrize(("roh", "erwartet"), [
+    (None, (PRUEFUNG_STANDARD, TELEMETRIE_STANDARD)),
+    ('{"pruefung_s": 5, "telemetrie_s": 10}', (5, 10)),
+    ('{"pruefung_s": 0}', (PRUEFUNG_STANDARD, TELEMETRIE_STANDARD)),  # unter der Grenze
+    ('{"telemetrie_s": 999999}', (PRUEFUNG_STANDARD, TELEMETRIE_STANDARD)),  # ueber der Grenze
+    ('[1, 2]', (PRUEFUNG_STANDARD, TELEMETRIE_STANDARD)), ('kaputt', (PRUEFUNG_STANDARD, TELEMETRIE_STANDARD)),
+])
+def test_intervalle_nur_aus_der_e2e_umgebung_mit_den_grenzen(monkeypatch, tmp_path, roh, erwartet):
+    """Plan S8a-1 P2, Review Focus 3: SMARTHEAT_E2E_INTERVALLE (JSON-Objekt) in den Grenzen von config_check.INTERVALLE;
+    sonst gelten die Standardwerte, ohne Teiluebernahme, und kein Start scheitert."""
+    if roh is None:
+        monkeypatch.delenv(dc.E2E_INTERVALLE_ENV, raising=False)
+    else:
+        monkeypatch.setenv(dc.E2E_INTERVALLE_ENV, roh)
+    assert _intervalle(tmp_path) == erwartet
+
+
+@pytest.mark.parametrize("roh", ['{"pruefung_s": 5, "telemetrie_s": 0}', '{"pruefung_s": 5, "anders": 1}',
+                                 '{"pruefung_s": true}', '{"pruefung_s": "5"}', '{"pruefung_s": NaN}',
+                                 '{"telemetrie_s": Infinity}', '"5"', pytest.param("[" * 100_000, id="zu_tief"), ""])
+def test_ein_ungueltiges_e2e_objekt_gilt_ganz_nicht(monkeypatch, tmp_path, caplog, roh):
+    monkeypatch.setenv(dc.E2E_INTERVALLE_ENV, roh)
+    assert _intervalle(tmp_path) == (PRUEFUNG_STANDARD, TELEMETRIE_STANDARD)
+    assert roh == "" or (dc.E2E_INTERVALLE_ENV in caplog.text and roh not in caplog.text)  # Log ohne Wert
+
+
+def test_intervalle_im_dokument_wirken_nicht_mehr(monkeypatch, tmp_path):
+    """Plan S8a-1 P2: intervalle ist kein Dokumentfeld mehr; ein Server, der es noch schickt, aendert nichts."""
+    monkeypatch.delenv(dc.E2E_INTERVALLE_ENV, raising=False)
+    assert _intervalle(tmp_path, {**KONF, "intervalle": {"pruefung_s": 5, "telemetrie_s": 10}}) == (
+        PRUEFUNG_STANDARD, TELEMETRIE_STANDARD)
+    assert "intervalle" not in dc.FELDER + dc.LAUFZEIT_FELDER
 
 
 @pytest.mark.parametrize("konfiguration", [None, {"anlage": None}, {**KONF, "verteilsystem": "Kachelofen"},
@@ -97,7 +135,7 @@ def test_abo_of_an_empty_or_missing_configuration_is_unknown():
 @pytest.mark.parametrize("change, relevant", [
     ({"software": {"version": "0.6.1"}}, False), ({"mindest_software": "0.6.1"}, False), ({"profil": "x"}, False),
     ({"abo": "inaktiv"}, True), ({"raumfuehler": ["treiber:room_temperature"]}, True), ({"tagestick": "06:00"}, True),
-    ({"intervalle": {"pruefung_s": 5}}, True), ({"anlage": None}, True),
+    ({"intervalle": {"pruefung_s": 5}}, False), ({"anlage": None}, True),
     ({"bindungsparameter": {"wartezeit_s": 240}}, True), ({"bindungsparameter": None}, False),
 ])
 def test_runtime_relevant_changes(change, relevant):
@@ -200,18 +238,17 @@ def test_sicherheit_mit_unbekanntem_verteilsystem_ist_ein_konfigurationsfehler()
 
 
 @pytest.mark.parametrize("key", sorted(INTERVALLE))
-def test_jedes_angenommene_intervall_startet(key, tmp_path):
-    """Spec Stufe 3 S5 3.2: die Grenzen stehen nur in config_check; die Laufzeit uebernimmt jeden angenommenen Wert."""
+def test_jedes_angenommene_intervall_startet(key, monkeypatch, tmp_path):
+    """Spec Stufe 3 S5 3.2: die Grenzen stehen nur in config_check; die Laufzeit uebernimmt jeden Wert an beiden
+    Grenzen (seit Plan S8a-1 P2 aus SMARTHEAT_E2E_INTERVALLE), einen knapp ausserhalb nicht."""
     low, high = INTERVALLE[key]
     feld = {"pruefung_s": "local_check_interval", "telemetrie_s": "telemetry_interval"}[key]
-    for wert in (low, high):
-        # dieselbe Grenze nimmt config_check an (Quelle der Grenzen), erst dann gilt "angenommen"
-        assert config_check.pruefen({**KONF_MIT, "intervalle": {key: wert}}, None,
-                                    host=config_check.HOST_GATEWAY) is None
-        runtime = dc.runtime_config(
-            {**KONF, "intervalle": {key: wert}}, rastung_pfad=tmp_path / "keine", entitlement_path=tmp_path / "e",
-            abo_source=lambda: entitlement.ACTIVE)
-        assert getattr(runtime, feld) == wert
+    standard = {"pruefung_s": PRUEFUNG_STANDARD, "telemetrie_s": TELEMETRIE_STANDARD}[key]
+    for wert, erwartet in ((low, low), (high, high), (low - 1, standard), (high + 1, standard)):
+        monkeypatch.setenv(dc.E2E_INTERVALLE_ENV, json.dumps({key: wert}))
+        runtime = dc.runtime_config(KONF, rastung_pfad=tmp_path / "keine", entitlement_path=tmp_path / "e",
+                                    abo_source=lambda: entitlement.ACTIVE)
+        assert getattr(runtime, feld) == erwartet, wert
 
 
 # --- Sicherheitswerte und Bindungsparameter aus dem Dokument (frueher in test_config.py des HA-Hosts) ---
