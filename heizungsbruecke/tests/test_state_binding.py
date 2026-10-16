@@ -100,3 +100,12 @@ def test_eine_setup_id_mit_falschem_typ_gilt_wie_ein_anderes_textfeld_als_unguel
     store.update(last_ack_at="2026-10-08T12:00:00+02:00")
     raw = json.loads((tmp_path / "backup.json").read_text())
     assert "setup_id" not in raw and raw.get("tenant_id") is None
+
+
+def test_ein_bestand_mit_anlage_aber_ohne_einrichtung_ist_eine_neue_einrichtung(tmp_path):
+    # Rueckwegfall: tenant_id fehlt, plant_id ist gesetzt -> nicht "bestand" (sonst bliebe der Erstkontakt-Tick aus)
+    store = _store(tmp_path, {**OLD, "plant_id": "anlage-a"})
+    assert store.state.tenant_id is None and store.state.plant_id == "anlage-a"
+    assert bind_to_tenant(store, "s2", "anlage-a") == "neue_einrichtung"
+    assert store.state.tenant_id == "s2" and store.state.originals == {"heat_limit": 16.0}
+    assert store.state.last_published_target_rt is None and store.state.last_daily_trigger_date is None
