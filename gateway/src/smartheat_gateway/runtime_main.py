@@ -100,14 +100,14 @@ def start(paths: Paths, bus, mirror: ZigbeeMirror, geraet: GatewayDeviceHost, de
 
 def attach(result: Runtime | app.IdleBridge, host: GatewayHost, geraet: GatewayDeviceHost) -> None:
     """Haengt die Gateway-Ereignisse (Lebenszeichen, Raum) an den Worker; EV_RELOAD geht ueber
-    prozess.neustarts_umleiten, die Neustarts der Laufzeit selbst ueber den Rueckruf aus start."""
+    prozess.reload_anhaengen, die Neustarts der Laufzeit selbst ueber den Rueckruf aus start."""
     worker = result.worker
 
     def _watch(event: Event) -> None:
         worker.schedule(CONFIG_WATCH_SECONDS, Event(EV_CONFIG_WATCH))  # zuerst: die Wache darf nie abreissen
         _touch_alive()
 
-    prozess.neustarts_umleiten(result)
+    prozess.reload_anhaengen(result)
     worker.register(EV_CONFIG_WATCH, _watch)
     worker.schedule(CONFIG_WATCH_SECONDS, Event(EV_CONFIG_WATCH))
     _touch_alive()

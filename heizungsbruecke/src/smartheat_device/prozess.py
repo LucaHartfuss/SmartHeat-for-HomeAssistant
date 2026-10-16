@@ -43,13 +43,14 @@ def _neustart(anlass: str) -> None:
 def neustart_der_laufzeit() -> None:
     """Der Rueckruf neustart fuer app.start (Spec Stufe 3 S6 4.2), beide Hosts: Abo am Fristende wieder aktiv,
     Neupruefung im Ruhezustand Konfigurationsfehler, Neustart nach dem Zuruecksetzen. Wirft Neustart; laufen trennt dann
-    sauber und ruft den Neustart des Hosts."""
-    _neustart("Neustart der Laufzeit (Abo wieder aktiv oder Neupruefung)")
+    sauber und ruft den Neustart des Hosts. Den Anlass loggt die Laufzeit an der Aufrufstelle (abo.check_grace_end,
+    app._idle, app._nach_zuruecksetzen) unmittelbar davor."""
+    _neustart("Neustart der Laufzeit")
 
 
-def neustarts_umleiten(result) -> None:
-    """EV_RELOAD aus dem Geraete-Host (neue laufzeitrelevante Konfiguration, sign_off) auf den Neustart mit sauberem
-    Trennen. Die Neustarts der Laufzeit selbst gehen ueber den Rueckruf neustart_der_laufzeit (app.start); in den
+def reload_anhaengen(result) -> None:
+    """Haengt EV_RELOAD aus dem Geraete-Host (neue laufzeitrelevante Konfiguration, sign_off) an den Worker: Neustart
+    mit sauberem Trennen. Die Neustarts der Laufzeit selbst gehen ueber den Rueckruf neustart_der_laufzeit (app.start); in den
     Ruhezustaenden abgemeldet und abo_beendet bleibt EV_RECHECK das erneute Zuruecksetzen der Laufzeit."""
     result.worker.register(EV_RELOAD, lambda event: _neustart("Neue Konfiguration oder Abmelden"))
 

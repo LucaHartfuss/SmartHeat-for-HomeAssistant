@@ -191,7 +191,7 @@ def start(geraet: HaDeviceHost, device, ha_api, status: GeraetStatus,
     host = HaHost(geraet, ha_api, clock=clock)
     status_holder.host = host
     result = app.start(host, clock, mqtt_factory=device.laufzeit_kanal, neustart=prozess.neustart_der_laufzeit)
-    prozess.neustarts_umleiten(result)
+    prozess.reload_anhaengen(result)
     geraet.worker_binden(result.worker, soll_eingang=isinstance(result, Runtime))  # Ruhezustand: kein Soll-Eingang
     return result, host
 

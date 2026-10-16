@@ -1585,14 +1585,16 @@ def _start_just_before_grace_end(env, monkeypatch):
     return bridge, neustarts
 
 
-def test_grace_end_with_reactivated_abo_restarts_instead_of_restoring(env, monkeypatch):
+def test_grace_end_with_reactivated_abo_restarts_instead_of_restoring(env, monkeypatch, caplog):
     # T2-5: kein faelschliches Zuruecksetzen am Fristende, wenn das Abo wieder aktiv ist.
     bridge, neustarts = _start_just_before_grace_end(env, monkeypatch)
     env.abo["status"] = entitlement.ACTIVE
 
-    bridge.worker.run_pending()
+    with caplog.at_level(logging.INFO):
+        bridge.worker.run_pending()
 
     assert neustarts == [1]  # der Rueckruf neustart des Hosts (Spec Stufe 3 S6 4.2)
+    assert "Abo wieder aktiv, Neustart im Normalbetrieb" in caplog.text  # der Anlass je Ursache im Log
     assert not env.paths["ENTITLEMENT_PATH"].exists()
     assert (env.ha.states["number.curve_current"], env.ha.states["number.shift_current"]) == (1.5, 25.0)
     assert all(message != ABO_ENDED for _, message in env.ha.persistent)

@@ -14,7 +14,7 @@ from smartheat_runtime.soll_eingang import EV_TARGET_INPUT
 from smartheat_runtime.soll_speicher import SOURCE_PORTAL
 from smartheat_runtime.worker import Event, RegulationWorker
 
-#: Neustart der Laufzeit (neue laufzeitrelevante Konfiguration, sign_off); prozess.neustarts_umleiten haengt ihn an.
+#: Neustart der Laufzeit (neue laufzeitrelevante Konfiguration, sign_off); prozess.reload_anhaengen haengt ihn an.
 EV_RELOAD = "geraet_reload"
 
 

@@ -183,7 +183,7 @@ def test_ohne_eigene_pause_nimmt_laufen_time_sleep_zur_laufzeit(monkeypatch):
     assert ("pause", 60.0) in order and order[-1] == "neustart"
 
 
-# --- neustarts_umleiten und der Rueckruf neustart_der_laufzeit ---
+# --- reload_anhaengen und der Rueckruf neustart_der_laufzeit ---
 
 def _bridge(reason):
     worker = RegulationWorker(FakeClock())
@@ -194,7 +194,7 @@ def test_reload_und_der_neustart_der_laufzeit_fuehren_in_den_neustart():
     """EV_RELOAD (Geraete-Host) und der Rueckruf, den die Hosts app.start uebergeben (Abo wieder aktiv, Neupruefung,
     Neustart nach dem Zuruecksetzen), enden beide mit Neustart; nichts Globales wird dafuer ueberschrieben."""
     bridge = _bridge(app.IDLE_NOT_CONFIGURED)
-    prozess.neustarts_umleiten(bridge)
+    prozess.reload_anhaengen(bridge)
     bridge.worker.post(Event(EV_RELOAD))
     with pytest.raises(prozess.Neustart):
         bridge.worker.run_pending()
@@ -205,7 +205,7 @@ def test_reload_und_der_neustart_der_laufzeit_fuehren_in_den_neustart():
 def test_jeder_neustart_wird_mit_laufzeit_startet_neu_angekuendigt(caplog):
     """tools/e2e/drive_gateway2.py zaehlt diese Zeile; ohne sie gilt jeder Neustart des Gateways dort als Absturz."""
     bridge = _bridge(app.IDLE_NOT_CONFIGURED)
-    prozess.neustarts_umleiten(bridge)
+    prozess.reload_anhaengen(bridge)
     bridge.worker.post(Event(EV_RELOAD))
     with caplog.at_level(logging.INFO), pytest.raises(prozess.Neustart):
         bridge.worker.run_pending()
@@ -222,17 +222,41 @@ def test_im_konfigurationsfehler_ist_die_neupruefung_ein_neustart():
     clock = FakeClock()
     bridge = app._idle(clock, None, STATUS_KONFIGURATIONSFEHLER, neustart=prozess.neustart_der_laufzeit,
                        recheck_after=app.CONFIG_RECHECK_SECONDS)
-    prozess.neustarts_umleiten(bridge)
     clock.advance(app.CONFIG_RECHECK_SECONDS)
     with pytest.raises(prozess.Neustart):
         bridge.worker.run_pending()
+
+
+def test_anlass_konfigurationsfehler_steht_vor_der_neustart_zeile_im_log(caplog):
+    """Der Anlass steht vor dem Rueckruf, dessen Zeile auf "Laufzeit startet neu" endet (tools/e2e/drive_gateway2.py
+    zaehlt sie). Ins Log nur der Anlass, keine Inhalte."""
+    clock = FakeClock()
+    bridge = app._idle(clock, None, STATUS_KONFIGURATIONSFEHLER, neustart=prozess.neustart_der_laufzeit,
+                       recheck_after=app.CONFIG_RECHECK_SECONDS)
+    clock.advance(app.CONFIG_RECHECK_SECONDS)
+    with caplog.at_level(logging.INFO), pytest.raises(prozess.Neustart):
+        bridge.worker.run_pending()
+    assert [r.getMessage() for r in caplog.records][-2:] == [
+        "Neupruefung nach Konfigurationsfehler", "Neustart der Laufzeit, Laufzeit startet neu"]
+
+
+def test_anlass_zuruecksetzen_steht_vor_der_neustart_zeile_im_log(tmp_path, caplog):
+    """Der dritte Anlass, Abo wieder aktiv, steht in test_runtime.py (abo.check_grace_end)."""
+    pfad = tmp_path / "aufraeumen.json"
+    markierung.markieren(pfad, ALT)
+    bridge = _bridge(STATUS_ABGEMELDET)
+    app._nach_zuruecksetzen(bridge, pfad, "kunde1")
+    with caplog.at_level(logging.INFO), pytest.raises(prozess.Neustart):
+        bridge.worker.run_pending()
+    assert [r.getMessage() for r in caplog.records] == [
+        "Zuruecksetzen nach leerer Konfiguration erledigt", "Neustart der Laufzeit, Laufzeit startet neu"]
 
 
 def test_im_ruhezustand_abgemeldet_bleibt_die_neupruefung_ein_erneutes_zuruecksetzen():
     bridge = _bridge(STATUS_ABGEMELDET)
     retries = []
     bridge.worker.register(EV_RECHECK, retries.append)
-    prozess.neustarts_umleiten(bridge)
+    prozess.reload_anhaengen(bridge)
     bridge.worker.post(Event(EV_RECHECK))
     bridge.worker.run_pending()
     assert len(retries) == 1

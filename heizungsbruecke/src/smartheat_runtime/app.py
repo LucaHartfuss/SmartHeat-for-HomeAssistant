@@ -186,7 +186,10 @@ def _idle(clock, status: StatusReporter | None, reason: str, *, neustart: Callab
         worker.schedule(HEARTBEAT_SECONDS, Event(EV_HEARTBEAT))
         status.publish_if_changed()
     if recheck_after is not None:
-        worker.register(EV_RECHECK, lambda event: neustart())
+        def _neu_pruefen(event: Event) -> None:
+            logger.info("Neupruefung nach Konfigurationsfehler")  # Anlass je Ursache; der Host loggt den Neustart
+            neustart()
+        worker.register(EV_RECHECK, _neu_pruefen)
         worker.schedule(recheck_after, Event(EV_RECHECK))
     logger.info("Ruhezustand: %s", reason)
     return IdleBridge(worker=worker, status=status, reason=reason, neustart=neustart)
@@ -243,7 +246,10 @@ def _nach_zuruecksetzen(bridge: IdleBridge, pfad: Path | None, anlage: str) -> N
         return
     if not erledigt:
         return
-    bridge.worker.register(EV_AUFRAEUMEN, lambda event: bridge.neustart())
+    def _neu_starten(event: Event) -> None:
+        logger.info("Zuruecksetzen nach leerer Konfiguration erledigt")  # Anlass je Ursache
+        bridge.neustart()
+    bridge.worker.register(EV_AUFRAEUMEN, _neu_starten)
     bridge.worker.post(Event(EV_AUFRAEUMEN))
 
 
