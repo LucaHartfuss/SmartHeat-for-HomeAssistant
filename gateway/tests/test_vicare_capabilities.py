@@ -138,3 +138,19 @@ def test_hebelstand_is_none_when_a_lever_is_missing():
     assert caps.hebelstand(index, 1) is None  # kein Heizkreis 1
     assert caps.hebelstand(caps.by_name(good_features(with_normal=False)), 0) is None
     assert caps.hebelstand(caps.by_name(good_features(with_curve_command=False)), 0) is None
+
+
+GARBAGE = [None, 5, "x", [], {"feature": 3}, {"feature": "heating.circuits.0.heating.curve", "properties": "x", "commands": []},
+           {"feature": "heating.circuits.0.heating.curve", "properties": {"slope": 5, "shift": None}, "commands": {"setCurve": 7}},
+           {"feature": "heating.circuits.0.operating.programs.normal", "properties": {"temperature": {"value": "warm"}},
+            "commands": {"setTemperature": {"isExecutable": True, "params": {"targetTemperature": {"constraints": []}}}}}]
+
+
+def test_garbage_features_do_not_raise_in_gekuerzt_and_hebelstand():
+    for roh in GARBAGE:
+        caps.gekuerzt(roh)
+    index = caps.by_name(GARBAGE)
+    assert caps.circuit_numbers(index) == [0]
+    assert caps.hebelstand(index, 0) is None and caps.lever_ranges(index, 0) == {
+        "curve": None, "level": None, "room_setpoint": None}
+    assert caps.generator_signals(index) == {} and caps.mode_signal(index, 0) is None

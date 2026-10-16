@@ -1,6 +1,6 @@
 """Anmeldung bei Viessmann per OAuth2 mit PKCE (Spec SHG G4 1.4, Variante A). Der Server sieht nur den kurzlebigen Code;
 Verifier, Access- und Refresh-Token liegen nur in der privaten Datei des Geraets. Erneuert wird unter flock und mit
-Nachlesen: das Refresh-Token rotiert, ein zweiter Leser (Befehl des Geraetekerns bei einer Probe, Laufzeit im Takt;
+Nachlesen: das Refresh-Token rotiert, ein zweiter Leser (Befehl des Geraetekerns bei der Erkennung, Laufzeit im Takt;
 je ein eigener flock) darf nie mit dem alten erneuern. Ein abgelehntes Refresh-Token (invalid_grant) loescht die Tokens
 und merkt `abgelaufen`; ein unerreichbares oder voruebergehend ueberlastetes IAM ist kein Abmelden."""
 import base64

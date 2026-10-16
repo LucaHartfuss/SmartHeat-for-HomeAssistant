@@ -97,7 +97,7 @@ class ViCareCloudDriver:
 
     @property
     def description(self) -> BindingDescription:
-        """Beschreibung aus der Konfiguration (Spec Stufe 3 S4b); Befehle ohne Konfiguration (Probe, Inventur,
+        """Beschreibung aus der Konfiguration (Spec Stufe 3 S4b); Befehle ohne Konfiguration (Erkennung, Inventur,
         Vergessen) duerfen sie nicht brauchen."""
         if self._description is None:
             raise RuntimeError("Treiber ohne Konfiguration")

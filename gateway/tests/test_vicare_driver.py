@@ -5,8 +5,8 @@ import threading
 import pytest
 from bindung_beispiele import VIESSMANN_VICARE_BINDING as BINDING
 from fake_vicare.server import GOOD_CODE, FakeVicare
+from test_vicare_capabilities import GARBAGE, good_features, number
 from test_vicare_capabilities import feature as feature_dict
-from test_vicare_capabilities import good_features, number
 
 from smartheat_device import inventory, wire
 from smartheat_gateway import safety_warnings
@@ -404,6 +404,13 @@ class _EinGeraet(_Installations):
 
     def installations(self):
         return [{"installation_id": 1, "gateway_serial": "S1", "device_id": "0", "device_type": "heating"}]
+
+
+def test_erkennung_mit_muell_features_wirft_nicht(tmp_path, clock):
+    driver = ViCareCloudDriver({}, Paths(tmp_path), clock=clock, api=_EinGeraet(GARBAGE))  # type: ignore[arg-type]
+    daten = driver.erkennung()
+    assert daten["anlagen"][0]["sicherheitswarnungen"] == {}
+    assert all(f["feature"].startswith(caps.PRAEFIXE) for f in daten["features"])
 
 
 def test_erkennung_einer_grossen_anlage_wird_in_teile_gestueckelt(tmp_path, clock):
