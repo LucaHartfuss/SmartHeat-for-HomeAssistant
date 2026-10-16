@@ -187,6 +187,25 @@ def test_jede_vertragskonstante_hat_einen_leser_im_geraet():
     assert ohne & gepinnt == NUR_GEPINNT_GERAET
 
 
+def test_jeder_pin_vergleicht_den_vertrag_mit_einer_kopie_aus_kern_oder_laufzeit():
+    """Ein Pin `(wire.X, wire.X)` oder `(wire.X, ("a", "b"))` pinnt nichts: das zweite Element muss ein Attribut eines
+    Moduls aus smartheat_core oder smartheat_runtime lesen (auch in tuple(...)) und darf wire nicht erwaehnen."""
+    tree = ast.parse(PIN_TEST.read_text(encoding="utf-8"))
+    module = {a.asname or a.name for n in tree.body if isinstance(n, ast.ImportFrom)
+              and n.module in ("smartheat_core", "smartheat_runtime") for a in n.names}
+    pins = [n for n in tree.body if isinstance(n, ast.Assign) and any(
+        isinstance(z, ast.Name) and z.id.startswith(_PIN_PRAEFIX) for z in n.targets)]
+    assert module and pins
+    for pin in pins:
+        assert isinstance(pin.value, ast.Tuple) and len(pin.value.elts) == 2, ast.unparse(pin)
+        vertrag, kopie = pin.value.elts
+        assert isinstance(vertrag, ast.Attribute) and isinstance(vertrag.value, ast.Name) and vertrag.value.id == "wire"
+        namen = {n.id for n in ast.walk(kopie) if isinstance(n, ast.Name)}
+        assert "wire" not in namen, ast.unparse(pin)
+        assert any(isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id in module
+                   for n in ast.walk(kopie)), ast.unparse(pin)
+
+
 def test_der_leser_erkennt_alias_direktimport_funktionen_und_pins(tmp_path):
     datei = tmp_path / "m.py"
     datei.write_text("from smartheat_device import wire as w\nfrom smartheat_device.wire import QOS\n"

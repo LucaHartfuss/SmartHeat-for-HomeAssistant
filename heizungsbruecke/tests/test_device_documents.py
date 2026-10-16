@@ -241,6 +241,20 @@ def test_the_target_software_must_have_exactly_the_contract_fields(tmp_path, sof
     assert ergebnis.details["feld"] == "software" and ergebnis.details["regel"] == regel
 
 
+def test_a_rejected_foreign_field_changes_neither_the_accepted_document_nor_the_update_trigger(tmp_path):
+    store = _store(tmp_path)
+    assert store.empfangen("konfiguration", _konfiguration(version=1)).uebernommen
+    vorher = store.aktuell("konfiguration")
+    ergebnis = store.empfangen("konfiguration", _konfiguration(version=2, mindest_software="9.9.9", kuenftig=1))
+    assert (ergebnis.ok, ergebnis.grund) == (False, "ungueltig")
+    assert store.aktuell("konfiguration") == vorher and not store.update_noetig
+    # ein gesetzter Ausloeser bleibt ebenfalls: die fremde Konfiguration mit niedriger Mindestversion loest ihn nicht
+    assert store.empfangen("konfiguration", _konfiguration(version=3, mindest_software="9.9.9")).grund == "update_noetig"
+    assert store.update_noetig
+    store.empfangen("konfiguration", _konfiguration(version=4, mindest_software="0.1.0", kuenftig=1))
+    assert store.update_noetig and store.aktuell("konfiguration") == vorher
+
+
 def test_a_foreign_operation_field_is_rejected(tmp_path):
     store = _store(tmp_path)
     ergebnis = store.empfangen("bedienung", _bedienung(kuenftig=1))

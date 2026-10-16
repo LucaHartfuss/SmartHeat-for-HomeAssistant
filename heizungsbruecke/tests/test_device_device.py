@@ -424,6 +424,35 @@ def test_software_reaches_the_host_even_when_the_device_is_too_old(tmp_path):
     assert world.device.zustand() == "update_noetig"
 
 
+def test_a_valid_software_offer_reaches_the_host_from_a_rejected_configuration(tmp_path):
+    """R15: ein Update kann der Ausweg aus einer Ablehnung sein."""
+    world = World(tmp_path)
+    world.verbinden()
+    world.empfangen("down/config", _konfiguration(hebelsatz="gibt_es_nicht", software=SOFTWARE))
+    assert world.link.of("up/result")[0]["ok"] is False
+    assert world.host.software == [SOFTWARE] and world.host.konfigurationen == []
+
+
+@pytest.mark.parametrize("software", [{**SOFTWARE, "extra": 1}, {"version": "0.6.1"}, "0.6.1", ["x"]])
+def test_an_invalid_software_offer_does_not_reach_the_host_and_keeps_the_previous_one(tmp_path, software):
+    world = World(tmp_path)
+    world.verbinden()
+    world.empfangen("down/config", _konfiguration(software=SOFTWARE))
+    world.empfangen("down/config", _konfiguration(version=2, software=software))
+    assert [r["error"]["grund"] for r in world.link.of("up/result") if not r["ok"]] == ["ungueltig"]
+    assert world.host.software == [SOFTWARE]
+
+
+def test_a_configuration_without_the_software_field_leaves_the_offer_alone(tmp_path):
+    world = World(tmp_path)
+    world.verbinden()
+    world.empfangen("down/config", _konfiguration(software=SOFTWARE))
+    konfiguration = _konfiguration(version=2)
+    del konfiguration["software"]
+    world.empfangen("down/config", konfiguration)
+    assert world.host.software == [SOFTWARE]
+
+
 def test_an_empty_configuration_is_handed_over(tmp_path):
     world = World(tmp_path)
     world.verbinden()

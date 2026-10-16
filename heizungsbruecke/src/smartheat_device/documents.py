@@ -96,8 +96,9 @@ def _form(inhalt: dict, pflicht: tuple[str, ...], optional: tuple[str, ...] = ()
     return None
 
 
-def _software_pruefen(software) -> config_check.Ablehnung | None:
-    """Soll-Software: null (kein Updater oder kein Angebot) oder genau die Felder des Vertrags; Werte prueft der Updater."""
+def software_pruefen(software) -> config_check.Ablehnung | None:
+    """Soll-Software: null (kein Updater oder kein Angebot) oder genau die Felder des Vertrags; Werte prueft der Updater.
+    Oeffentlich: das Geraet reicht ein Angebot nur an den Host, wenn es diese Pruefung besteht (R15)."""
     if software is None:
         return None
     if not isinstance(software, dict):
@@ -288,7 +289,7 @@ class DocumentStore:
         if art == BEDIENUNG:
             return _bedienung_pruefen(inhalt)
         ablehnung = (_form(inhalt, _ohne_huelle(wire.KONFIGURATION_FIELDS), wire.KONFIGURATION_OPTIONAL)
-                     or _software_pruefen(inhalt["software"]))
+                     or software_pruefen(inhalt["software"]))
         if ablehnung is not None:
             return ablehnung
         mindest = inhalt.get("mindest_software")  # erst eine vollstaendige Konfiguration setzt den Anlass neu

@@ -24,7 +24,7 @@ from pathlib import Path
 
 from smartheat_core import config_check
 from smartheat_device import bootstrap, commands, fehler, identity, inventory, nachrichten, wire, wish
-from smartheat_device.documents import BEDIENUNG, KONFIGURATION, DocumentStore
+from smartheat_device.documents import BEDIENUNG, KONFIGURATION, DocumentStore, software_pruefen
 from smartheat_device.host import Anzeige, DeviceHost
 from smartheat_device.laufzeit import RuntimeChannel
 from smartheat_device.link import ANMELDUNG_SCHEITERT, GESENDET, GETRENNT, NACHRICHT, VERBUNDEN, Link
@@ -456,9 +456,13 @@ class Device:
                 self._host_rufen("konfiguration_uebernommen", self.host.konfiguration_uebernommen, alt, neu)
             else:
                 self._host_rufen("bedienung_uebernommen", self.host.bedienung_uebernommen, neu)
-        if art == KONFIGURATION and body.get("schema") in wire.SCHEMATA:
-            software = body.get("software")
-            self._host_rufen("software_soll", self.host.software_soll, software if isinstance(software, dict) else None)
+        if art == KONFIGURATION and body.get("schema") in wire.SCHEMATA and "software" in body:
+            # Das Angebot geht auch aus einer abgelehnten Konfiguration an den Host (ein Update kann der Ausweg sein), aber
+            # nur, wenn es selbst gueltig ist (R15): sonst bleibt das vorherige Angebot bestehen.
+            if software_pruefen(body["software"]) is not None:
+                logger.warning("Soll-Software ungueltig, das vorherige Angebot bleibt")
+            else:
+                self._host_rufen("software_soll", self.host.software_soll, body["software"])
 
     def _zurueckgehaltene_pruefen(self, now: float) -> None:
         if not self._zurueckgehalten or now < self._pruefung_at:
