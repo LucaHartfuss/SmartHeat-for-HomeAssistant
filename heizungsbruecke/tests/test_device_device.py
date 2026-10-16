@@ -451,6 +451,33 @@ def test_unknown_topics_and_broken_messages_are_ignored(tmp_path):
     assert world.link.of("up/result") == [] and world.host.konfigurationen == []
 
 
+@pytest.mark.parametrize("name", wire.DOWN_TOPICS)
+def test_every_contract_down_topic_is_assigned(tmp_path, name):
+    world = World(tmp_path)
+    world.verbinden()
+    seen = []
+    world.device._dokument = lambda art, body: seen.append(("dokument", art))
+    world.device.befehle.empfangen = lambda body: seen.append(("befehl", None))
+    world.device._channel = type("Kanal", (), {"setpoints": lambda self, body: seen.append(("sollwerte", None))})()
+    world.empfangen(name, {"x": 1})
+    erwartet = {topic: ("dokument", art) for art, topic in wire.DOKUMENT_TOPICS.items()}
+    erwartet.update({"down/command": ("befehl", None), "down/setpoints": ("sollwerte", None)})
+    assert seen == [erwartet[name]]
+
+
+def test_a_foreign_down_topic_reaches_nobody(tmp_path, caplog):
+    world = World(tmp_path)
+    world.verbinden()
+    seen = []
+    world.device._dokument = lambda art, body: seen.append(art)
+    world.device.befehle.empfangen = seen.append
+    with caplog.at_level("WARNING", logger=device.logger.name):
+        world.empfangen("down/zukunft", _command())
+        world.link.ereignis("nachricht", "down/zukunft", b"{kaputt")
+        world.device.schritt()
+    assert seen == [] and caplog.text == ""  # unbekannt: weder gelesen noch beanstandet
+
+
 # --- Befehle ---
 
 def test_commands_run_once_across_reconnects(tmp_path):
@@ -485,6 +512,18 @@ def test_inventory_parts_go_up_before_the_result(tmp_path):
     assert names.index("up/inventory") < names.index("up/result")
     assert world.link.of("up/inventory") == [{"schema": 1, "command_id": "c1", "teil": 1, "teile": 1,
                                               "daten": {"kandidaten": [1, 2]}}]
+
+
+def test_an_inventory_outside_the_contract_fails_intern_without_a_value(tmp_path, caplog, monkeypatch):
+    host = FakeHost()
+    host.handlers = {"inventory": lambda payload: commands.Done({}, inventur={"kandidaten": ["WERT-123"]})}
+    world = World(tmp_path, host)
+    world.verbinden()
+    monkeypatch.setattr(wire, "INVENTORY_FIELDS", (*wire.INVENTORY_FIELDS, "neu"))
+    world.empfangen("down/command", _command("inventory", payload={"stunden": 1}))
+    assert world.link.of("up/inventory") == []
+    assert world.link.of("up/result")[0]["error"] == {"grund": "intern"}
+    assert "Vertragsfehler" in caplog.text and "WERT-123" not in caplog.text
 
 
 def test_host_exceptions_become_contract_reasons(tmp_path):
@@ -627,6 +666,24 @@ def test_a_wish_within_the_range_clears_the_limit_message(tmp_path):
     world.device.wunsch(21.0, herkunft="thermostat")
     world.device.schritt()
     assert world.host.anzeigen_liste[-1].meldungen == ()
+
+
+def test_a_wish_outside_the_contract_is_logged_once_and_the_tick_goes_on(tmp_path, caplog, monkeypatch):
+    world = World(tmp_path)
+    world.verbinden()
+    monkeypatch.setattr(wire, "WISH_FIELDS", (*wire.WISH_FIELDS, "neu"))
+    world.device.wunsch(22.5, herkunft="thermostat")
+    anzahl = len(world.link.of("up/status"))
+    world.clock.now += device.STATUS_MIN_SECONDS
+    world.host.raum_wert = {"ist": 20.0, "soll": 22.5, "soll_quelle": "geraet", "ts": "t1"}
+    world.device.schritt()
+    world.device.schritt()
+    assert world.link.of("up/wish") == [] and caplog.text.count("up/wish nicht gebaut") == 1
+    assert "22.5" not in caplog.text
+    assert len(world.link.of("up/status")) == anzahl + 1  # der Rest des Takts laeuft weiter
+    monkeypatch.undo()
+    world.device.schritt()
+    assert len(world.link.of("up/wish")) == 1  # der gepufferte Wunsch geht beim naechsten gueltigen Takt hoch
 
 
 def test_wishes_that_are_no_number_are_refused(tmp_path):

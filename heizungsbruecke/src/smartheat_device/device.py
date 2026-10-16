@@ -46,6 +46,8 @@ PRUEFUNG_WIEDERHOLEN_SECONDS = 30
 ABLEHNUNG_ANZEIGE = "Die Einrichtung wurde abgelehnt (Code {grund}). Die Begründung zeigt der Einrichtungsassistent."
 #: Groesster Betrag eines Ursprungswerts, wie der Server ihn annimmt (geraete/device_checks.URSPRUNG_WERT_MAX).
 URSPRUNG_WERT_MAX = 1e12
+#: Down-Topic eines Dokuments -> Dokumentart (wire.DOKUMENT_TOPICS umgekehrt)
+_DOKUMENT_ART = {topic: art for art, topic in wire.DOKUMENT_TOPICS.items()}
 _RUNNING = ("regelt", "abo_inaktiv")
 _FAULT = ("notbetrieb", "datenfehler", "konfigurationsfehler", "zugang_abgelehnt", "abo_beendet")
 
@@ -139,6 +141,7 @@ class Device:
         self._status_at: float | None = None
         self._hello_fehler: str | None = None  # letzte Fehlerart beim Bauen von hello (je Art einmal loggen)
         self._status_fehler: str | None = None  # letzter Vertragsverstoss beim Bauen (je Text einmal loggen)
+        self._wunsch_fehler: str | None = None  # dito beim Bauen von up/wish
         self._ursprung_gewarnt: set[str] = set()  # nicht meldbare Ursprungswerte: je Name einmal loggen (Takt: 1 s)
         self._zurueckgehalten: dict[str, dict] = {}  # Dokument, dessen Pruefung vorlaeufig nicht moeglich war
         self._pruefung_at = 0.0
@@ -404,6 +407,9 @@ class Device:
             self._channel.verbunden()
 
     def _nachricht(self, name: str, raw: bytes) -> None:
+        if name not in wire.DOWN_TOPICS:  # Spec 2.1: unbekannte Topics ignorieren, ohne die Nachricht zu lesen
+            logger.debug("Topic %s unbekannt, ignoriert (Spec 2.1)", name)
+            return
         if len(raw) > wire.MAX_MESSAGE_BYTES:
             logger.warning("%s zu gross, verworfen", name)
             return
@@ -414,17 +420,12 @@ class Device:
             return
         if not isinstance(body, dict):
             return
-        if name == "down/config":
-            self._dokument(KONFIGURATION, body)
-        elif name == "down/operation":
-            self._dokument(BEDIENUNG, body)
+        if name in _DOKUMENT_ART:
+            self._dokument(_DOKUMENT_ART[name], body)
         elif name == "down/command":
             self.befehle.empfangen(body)
-        elif name == "down/setpoints":
-            if self._channel is not None:
-                self._channel.setpoints(body)
-        else:
-            logger.debug("Topic %s unbekannt, ignoriert (Spec 2.1)", name)
+        elif name == "down/setpoints" and self._channel is not None:
+            self._channel.setpoints(body)
 
     def _dokument(self, art: str, body: dict) -> None:
         """Erst das Ergebnis und die Uebergabe, dann software: jeder Host-Rueckruf ist einzeln abgesichert, damit ein
@@ -526,7 +527,17 @@ class Device:
     def _wunsch_senden(self) -> None:
         wunsch = self.wunsch_puffer.wunsch
         if self._bereit and wunsch is not None and self.wunsch_puffer.offen():
-            self.wunsch_puffer.gesendet(self._publish("up/wish", wunsch.payload()))
+            try:
+                body = wunsch.payload()
+            except nachrichten.Vertragsfehler as error:
+                # Programmierfehler (Baustein: nur Feldnamen im Text, nie Werte); der Wunsch bleibt gepuffert, der
+                # Takt ruft das jede Sekunde: je Text einmal loggen, der Rest des Takts laeuft weiter
+                if str(error) != self._wunsch_fehler:
+                    self._wunsch_fehler = str(error)
+                    logger.error("up/wish nicht gebaut: %s", error)
+                return
+            self._wunsch_fehler = None
+            self.wunsch_puffer.gesendet(self._publish("up/wish", body))
 
     def _eigene_meldung(self, key: str, text: str | None) -> None:
         if key not in wire.MELDUNGEN:

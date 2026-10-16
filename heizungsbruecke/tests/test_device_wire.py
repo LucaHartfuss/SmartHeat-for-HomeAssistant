@@ -91,14 +91,10 @@ OFFEN: set[str] = {  # Ist-Stand 2026-10-16; die Tasks 2-6 leeren es, Task 7 pru
     "BINDUNG_GATEWAY_FIELDS",  # Task 5
     "BINDUNG_HA_FIELDS",  # Task 5
     "BINDUNG_HA_OPTIONAL",  # Task 5
-    "COMMAND_FIELDS",  # Task 4
     "DOKUMENT_ERRORS",  # Task 5
-    "DOKUMENT_TOPICS",  # Task 5
-    "DOWN_TOPICS",  # Task 4
     "ENERGIE_EINHEITEN",  # Task 5
     "HA_HINWEISE",  # Task 5
     "HA_ROLLEN",  # Task 5
-    "INVENTORY_FIELDS",  # Task 4
     "INVENTUR_ANLAGE_FIELDS",  # Task 6
     "INVENTUR_ENTITY_FIELDS",  # Task 6
     "INVENTUR_FEATURE_FIELDS",  # Task 6
@@ -111,8 +107,6 @@ OFFEN: set[str] = {  # Ist-Stand 2026-10-16; die Tasks 2-6 leeren es, Task 7 pru
     "SCHREIBSCHUTZ_FIELDS",  # Task 5
     "SOFTWARE_FIELDS",  # Task 5
     "TREIBER_FIELDS",  # Task 5
-    "WISH_FIELDS",  # Task 4
-    "WISH_WERTE",  # Task 4
     "ZAEHLER",  # Task 5
     "ZIGBEE_ARTEN",  # Task 6
     "ZIGBEE_DEVICE_FIELDS",  # Task 6

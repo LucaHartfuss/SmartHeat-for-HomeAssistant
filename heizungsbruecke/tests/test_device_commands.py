@@ -5,7 +5,7 @@ import json
 import pytest
 
 from smartheat_device import commands as cmd
-from smartheat_device import fehler, wire
+from smartheat_device import fehler, nachrichten, wire
 
 
 class Sent:
@@ -77,6 +77,53 @@ def test_unknown_kinds_and_broken_payloads(tmp_path):
     register.empfangen({**_command(command_id="c2"), "payload": [1]})
     assert sent.results == [_fail("ungueltige_nutzlast", {"feld": "kind", "regel": "unbekannt"}),
                             _fail("ungueltige_nutzlast", {"feld": "payload", "regel": "ungueltig"}, "c2")]
+
+
+def test_the_result_has_exactly_the_contract_fields():
+    for payload in (cmd.result_payload("c", True, {}, None),
+                    cmd.result_payload("c", False, None, fehler.body("intern", None))):
+        assert set(payload) == set(wire.RESULT_FIELDS) | {"command_id"}
+    assert cmd.result_payload("c", False, {"x": 1}, fehler.body("intern", None))["result"] is None
+    assert cmd.result_payload("c", True, {"x": 1}, fehler.body("intern", None))["error"] is None
+
+
+def test_a_result_that_leaves_the_contract_is_a_contract_error(monkeypatch):
+    monkeypatch.setattr(wire, "RESULT_FIELDS", (*wire.RESULT_FIELDS, "neu"))
+    with pytest.raises(nachrichten.Vertragsfehler) as fehlt:
+        cmd.result_payload("c", True, {}, None)
+    assert "neu" in str(fehlt.value)
+
+
+def test_the_register_reasons_are_in_the_common_list_of_every_kind():
+    for kind in wire.COMMANDS:
+        assert {"ungueltige_nutzlast", "intern"} <= set(wire.command_errors(kind))
+
+
+@pytest.mark.parametrize("feld", [f for f in wire.COMMAND_FIELDS if f != "command_id"])
+def test_a_command_missing_a_contract_field_is_refused_and_does_not_run(tmp_path, feld):
+    sent, calls = Sent(), []
+    register = cmd.CommandRegister(tmp_path, sent)
+    register.register("diagnostics", lambda payload: calls.append(1) or cmd.Done({}))
+    register.empfangen({key: value for key, value in _command().items() if key != feld})
+    assert calls == [] and sent.results == [_fail("ungueltige_nutzlast", {"feld": feld, "regel": "fehlt"})]
+
+
+def test_a_foreign_field_in_a_command_is_ignored_like_before(tmp_path):
+    # Spec 2.1: unbekannte Felder ignorieren; das Geraet lockert nichts, sondern prueft nur, dass alles da ist
+    sent, calls = Sent(), []
+    register = cmd.CommandRegister(tmp_path, sent)
+    register.register("diagnostics", lambda payload: calls.append(1) or cmd.Done({}))
+    register.empfangen({**_command(), "zukunft": 1})
+    assert calls == [1] and sent.results == [_ok()]
+
+
+def test_a_malformed_duplicate_does_not_replace_the_stored_result(tmp_path):
+    sent = Sent()
+    register = cmd.CommandRegister(tmp_path, sent)
+    register.register("diagnostics", lambda payload: cmd.Done({"a": 1}))
+    register.empfangen(_command())
+    register.empfangen({key: value for key, value in _command().items() if key != "expires_at"})
+    assert sent.results == [_ok(result={"a": 1})] * 2
 
 
 @pytest.mark.parametrize("command_id", [None, "", "x" * 65, 5])

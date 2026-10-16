@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from smartheat_device import inventory, wire
+from smartheat_device import inventory, nachrichten, wire
 
 
 def _gesendet(message) -> int:
@@ -29,8 +29,17 @@ def test_a_small_inventory_is_one_part():
         {"schema": 1, "command_id": "c1", "teil": 1, "teile": 1, "daten": {"k": [1]}}]
 
 
-def test_without_command_id():
-    assert "command_id" not in inventory.nachrichten(None, {"k": [1]})[0]
+def test_every_part_has_exactly_the_contract_fields():
+    daten = {"proben": [{"i": i, "x": "y" * 1000} for i in range(300)]}
+    teile = inventory.nachrichten("c1", daten)
+    assert len(teile) > 1 and all(set(teil) == set(wire.INVENTORY_FIELDS) for teil in teile)
+
+
+def test_an_inventory_part_outside_the_contract_is_a_contract_error(monkeypatch):
+    monkeypatch.setattr(wire, "INVENTORY_FIELDS", (*wire.INVENTORY_FIELDS, "neu"))
+    with pytest.raises(nachrichten.Vertragsfehler) as fehlt:
+        inventory.nachrichten("c1", {"k": [1]})
+    assert isinstance(fehlt.value, ValueError) and "neu" in str(fehlt.value)
 
 
 def test_large_lists_are_split_and_single_values_stay_in_the_first_part():
