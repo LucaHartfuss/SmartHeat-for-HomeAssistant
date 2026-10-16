@@ -8,7 +8,7 @@ from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 DEVICE = SRC / "smartheat_device"
-OWN_PACKAGES = {"smartheat_device", "smartheat_core", "smartheat_runtime", "smartheat_transport"}
+OWN_PACKAGES = {"smartheat_device", "smartheat_core", "smartheat_runtime"}
 THIRD_PARTY_ALLOWED_IN = {"cryptography": {"identity.py"}, "paho": {"link.py"}, "requests": {"bootstrap.py"}}
 
 

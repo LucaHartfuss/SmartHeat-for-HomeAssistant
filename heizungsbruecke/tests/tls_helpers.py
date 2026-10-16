@@ -1,4 +1,4 @@
-"""Test-PKI fuer smartheat_transport (nur Tests; cryptography steht im Extra dev). Die Erweiterungen
+"""Test-PKI fuer smartheat_device.tls (nur Tests; cryptography steht im Extra dev). Die Erweiterungen
 genuegen dem strengen X.509-Modus von Python 3.13 (Key Identifier, Key Usage)."""
 import datetime
 import ipaddress

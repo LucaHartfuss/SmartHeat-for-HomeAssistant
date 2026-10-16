@@ -113,6 +113,29 @@ def test_broken_answers_are_unavailable(ident, ca, change):
         _client(ident, FakeSession(FakeResponse(200, {**_body(ident, ca), **change}))).register(**ARGS)
 
 
+def test_an_empty_endpoint_host_is_rejected(ident, ca):
+    with pytest.raises(bootstrap.Unavailable, match="ungueltig"):
+        _client(ident, FakeSession(FakeResponse(200, {**_body(ident, ca), "mqtt_endpoint": ""}))).register(**ARGS)
+
+
+@pytest.mark.parametrize("port", [1883, 8884, 80, 0, 65535])
+def test_only_the_iot_core_ports_are_accepted(ident, ca, port):
+    with pytest.raises(bootstrap.Unavailable, match="ungueltig"):
+        _client(ident, FakeSession(FakeResponse(200, _body(ident, ca, port=port)))).register(**ARGS)
+
+
+@pytest.mark.parametrize("port", [8883, 443])
+def test_the_iot_core_ports_are_accepted(ident, ca, port):
+    session = FakeSession(FakeResponse(200, _body(ident, ca, port=port)))
+    assert _client(ident, session).register(**ARGS).zugang.endpoint.port == port
+
+
+@pytest.mark.parametrize("ca_pem", ["kein PEM", "", None])
+def test_a_broker_ca_without_a_pem_certificate_is_rejected(ident, ca, ca_pem):
+    with pytest.raises(bootstrap.Unavailable, match="ungueltig"):
+        _client(ident, FakeSession(FakeResponse(200, {**_body(ident, ca), "mqtt_ca": ca_pem}))).register(**ARGS)
+
+
 def test_a_non_json_answer_is_unavailable(ident):
     with pytest.raises(bootstrap.Unavailable):
         _client(ident, FakeSession(FakeResponse(200, None))).register(**ARGS)

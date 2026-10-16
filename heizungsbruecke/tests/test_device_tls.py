@@ -6,21 +6,22 @@ from unittest.mock import MagicMock
 import pytest
 from tls_helpers import ca_pem, issue, make_ca
 
-from smartheat_transport.connect import (
+from smartheat_device.tls import (
+    ALPN_443,
     CONNECT_ERROR_NETWORK,
     CONNECT_ERROR_TLS,
     CONNECT_ERROR_UNKNOWN,
-    apply,
-    classify_connect_error,
-    connect_options,
-)
-from smartheat_transport.descriptor import (
-    ALPN_443,
+    CREDENTIAL_CERTIFICATE,
     KIND_IOT_CORE,
     Credential,
     Descriptor,
     TransportConfigError,
+    apply,
+    classify_connect_error,
+    connect_options,
 )
+
+CA = "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n"
 
 
 @pytest.fixture(scope="module")
@@ -128,8 +129,8 @@ def _boom(*args, **kwargs):
     raise OSError("Platte voll: GEHEIM-PFAD")
 
 
-@pytest.mark.parametrize("target", ["smartheat_transport.connect.tempfile.TemporaryDirectory",
-                                    "smartheat_transport.connect.os.open"])
+@pytest.mark.parametrize("target", ["smartheat_device.tls.tempfile.TemporaryDirectory",
+                                    "smartheat_device.tls.os.open"])
 def test_unwritable_temp_storage_is_a_config_error_without_leaking_the_message(pki, monkeypatch, target):
     monkeypatch.setattr(target, _boom)
     with pytest.raises(TransportConfigError, match=r"nicht ablegbar \(OSError\)") as info:
@@ -142,3 +143,10 @@ def test_nul_byte_inside_the_key_is_a_config_error(pki):
     broken = key[:60] + "\x00" + key[60:]
     with pytest.raises(TransportConfigError):
         connect_options(_iot(pki), Credential("certificate", certificate_pem=cert, private_key_pem=broken))
+
+
+def test_secrets_are_not_in_the_repr():
+    credential = Credential(CREDENTIAL_CERTIFICATE, certificate_pem="CERT", private_key_pem="KEY-GEHEIM")
+    descriptor = Descriptor(KIND_IOT_CORE, "h", 8883, None, CA, "client1")
+    text = repr(credential) + repr(descriptor)
+    assert "KEY-GEHEIM" not in text and "AAAA" not in text

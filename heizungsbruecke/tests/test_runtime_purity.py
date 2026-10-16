@@ -8,7 +8,7 @@ from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 RUNTIME = SRC / "smartheat_runtime"
-OWN_PACKAGES = {"smartheat_runtime", "smartheat_core", "smartheat_transport"}
+OWN_PACKAGES = {"smartheat_runtime", "smartheat_core"}
 # Drittpakete nur in genau diesen Dateien (derzeit keine).
 THIRD_PARTY_ALLOWED_IN: dict[str, set[str]] = {}
 TENANT_ID = re.compile(r"\bclient\d+\b|\bzuhause\b", re.IGNORECASE)

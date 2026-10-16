@@ -1,17 +1,41 @@
-"""Verbindungsoptionen fuer einen paho-Client (Spec AWS-IoT 2.4, 5.1): TLS mit CA aus dem Deskriptor,
-Client-Zertifikat und ALPN bei Port 443."""
+"""TLS-Weg des Geraete-Links zu AWS IoT Core (Spec AWS-IoT 2.4, 4.2, 5.1; Audit 5 A5-57, bis Stufe 3 S6 das Paket
+smartheat_transport): Deskriptor und Zugangsdaten, SSL-Kontext mit der CA aus dem Bootstrap, Client-Zertifikat und ALPN
+bei Port 443, Einordnung von Verbindungsfehlern. paho bekommt den Kontext ueber apply(); dieses Modul importiert paho
+nicht. Den Deskriptor baut link.py aus dem Bootstrap-Zugang."""
 import os
 import socket
 import ssl
 import tempfile
 from dataclasses import dataclass, field
 
-from smartheat_transport.descriptor import (
-    CREDENTIAL_FOR_TRANSPORT,
-    Credential,
-    Descriptor,
-    TransportConfigError,
-)
+KIND_IOT_CORE = "iot_core"
+CREDENTIAL_CERTIFICATE = "certificate"
+ALPN_443 = "x-amzn-mqtt-ca"
+IOT_PORTS = (8883, 443)  # bootstrap.py prueft den Port der Server-Antwort dagegen
+CREDENTIAL_FOR_TRANSPORT = {KIND_IOT_CORE: CREDENTIAL_CERTIFICATE}
+
+
+class TransportConfigError(ValueError):
+    """Deskriptor oder Zugangsdaten fehlen, sind kaputt oder passen nicht zusammen. Der Text nennt nie
+    einen geheimen Wert."""
+
+
+@dataclass(frozen=True)
+class Descriptor:
+    kind: str
+    host: str
+    port: int
+    alpn: str | None = None
+    ca_pem: str | None = field(default=None, repr=False)
+    client_id: str | None = None
+
+
+@dataclass(frozen=True)
+class Credential:
+    kind: str
+    certificate_pem: str | None = field(default=None, repr=False)
+    private_key_pem: str | None = field(default=None, repr=False)
+
 
 CONNECT_ERROR_TLS = "tls"
 CONNECT_ERROR_NETWORK = "netzwerk"
