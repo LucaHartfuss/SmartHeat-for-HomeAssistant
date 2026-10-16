@@ -21,9 +21,9 @@ Dev-Roots, nicht hier:
 
 Paketgrenzen erzwingt `heizungsbruecke/tests/test_modulgrenzen.py` (Tabellen `ERLAUBT` und `DRITTE`: erlaubte Importe je
 Paket, Drittpakete je Datei, das Gateway-Image kopiert jedes Kernpaket); dazu `test_runtime_purity.py` und
-`test_device_purity.py` (Tenant-IDs, `wire.py`), `gateway/tests/test_boundaries.py` und `gateway/host/tests/test_boundaries.py`
-(Host-Dienste: nur Standardbibliothek, `cryptography`, `paths`, `version` und `smartheat_core.dateien`). Wer ein Modul ändert,
-zieht dessen Datei in `../docs/module/` im selben Merge nach.
+`test_device_purity.py` (Tenant-IDs, `wire.py`), `gateway/tests/test_boundaries.py` und
+`gateway/host/tests/test_boundaries.py` (Host-Dienste: nur Standardbibliothek, `cryptography`, `paths`, `version` und
+`smartheat_core.dateien`). Wer ein Modul ändert, zieht dessen Datei in `../docs/module/` im selben Merge nach.
 
 ## Prüfen und Branches
 
@@ -76,11 +76,13 @@ verfolgt. Release-Ablauf, CI-Jobs, Token: `../docs/ci-cd-runbook.md`.
   Fehlern nur die Fehlerart.
 - **Neustart** (neue laufzeitrelevante Konfiguration, `sign_off`, Abo wieder aktiv, Neuprüfung im Konfigurationsfehler):
   ein Lebenszyklus für beide Hosts in `smartheat_device/prozess.py`. Erst sauber trennen (`prozess.beenden`: Gerätekern
-  stoppen, Thread abwarten, noch einmal stoppen; sonst meldet IoT Core `DUPLICATE_CLIENTID`), dann der Neustart des Hosts
-  (HA `__main__._exec` mit `os.execv`, das Gateway kehrt aus `main` zurück). Die Laufzeit meldet ihren Neustart über den
-  Pflicht-Rückruf `neustart` von `app.start` (`prozess.neustart_der_laufzeit`), nichts wird global überschrieben. Ein
-  unerwarteter Fehler pausiert 60 s (in beiden Hosts) und startet dann ebenso neu; SIGTERM endet ohne Neustart. Jede
-  gewollte Neustart-Logzeile endet auf „, Laufzeit startet neu“ (der E2E `gateway2` zählt sie).
+  stoppen, Thread abwarten, noch einmal stoppen; sonst meldet IoT Core `DUPLICATE_CLIENTID`), dann der Neustart des
+  Hosts (HA `__main__._exec` mit `os.execv`, das Gateway kehrt aus `main` zurück). Die Laufzeit meldet ihren Neustart
+  über den Pflicht-Rückruf `neustart` von `app.start` (`prozess.neustart_der_laufzeit`), nichts wird global
+  überschrieben. Ein unerwarteter Fehler pausiert 60 s (in beiden Hosts) und startet dann ebenso neu; davor meldet sich
+  das Gateway ungesund (Rückruf `vor_pause`: Lebenszeichen weg, Laufzeit `startet`), damit der Updater ein solches
+  Update zurückrollt. SIGTERM endet ohne Neustart. Jede gewollte Neustart-Logzeile endet auf „, Laufzeit startet neu“
+  (der E2E `gateway2` zählt sie).
 - **Gemeinsamer Teil der Hosts:** `smartheat_device/geraet_host_basis.py` (Eltern von `HaDeviceHost` und
   `GatewayDeviceHost`) und `smartheat_runtime/raum.py`. Ein Verhalten, das beide Hosts teilen, gehört dorthin, nicht
   doppelt in die Hosts; es wird zuerst in den Konformitätssuiten festgehalten (`testhilfen/host_konformitaet.py`,
