@@ -283,14 +283,27 @@ def test_a_request_outside_the_contract_is_retried_later_and_not_blocked_and_log
     assert "Anfrage nicht gebaut (Vertragsfehler)" in caplog.text and "GEHEIM-FELD" not in caplog.text
 
 
-def test_a_host_callback_value_error_is_not_logged_with_its_text_and_not_swallowed(tmp_path, ident):
+def test_a_host_callback_value_error_is_not_logged_with_its_text_and_is_retried_later(tmp_path, ident, caplog):
     def args() -> dict:
         raise ValueError("geheimer Parameter")  # z. B. host.faehigkeiten()
 
     flow = bootstrap.Bootstrap(tmp_path, ScriptedClient(register=[]), register_args=args, uhr_synchron=lambda: True,
                                identity=lambda: ident, clock=Clock())
-    with pytest.raises(ValueError, match="geheimer Parameter"):  # wie vor Task 3: nach oben, der Geraete-Thread loggt
-        flow.holen(rettung=False)
+    assert flow.holen(rettung=False) is None and not flow.gesperrt and not flow.faellig()  # Backoff, nicht weiterwerfen
+    assert "unerwarteter Fehler (ValueError) in " in caplog.text and "args" in caplog.text
+    assert "geheimer Parameter" not in caplog.text
+
+
+def test_a_failing_host_callback_in_the_rescue_after_401_is_retried_later_too(tmp_path, ident, caplog):
+    """Rettung: certificate -> 401 -> register baut seine Argumente (Host-Rueckruf) und scheitert: Backoff, keine Sperre."""
+    def args() -> dict:
+        raise ValueError("geheimer Parameter")
+
+    client = ScriptedClient(register=[], certificate=[bootstrap.NotAuthenticated("certificate")])
+    flow = bootstrap.Bootstrap(tmp_path, client, register_args=args, uhr_synchron=lambda: True,
+                               identity=lambda: ident, clock=Clock())
+    assert flow.holen(rettung=True) is None and not flow.gesperrt and not flow.faellig()
+    assert "geheimer Parameter" not in caplog.text
 
 
 @pytest.mark.parametrize("feld", wire.BOOTSTRAP_RESPONSE)

@@ -201,6 +201,12 @@ class Bootstrap:
             logger.error("Bootstrap: Anfrage nicht gebaut (%s)%s, naechster Versuch spaeter", type(error).__name__,
                          commands.fehlerort(error))
             return self._spaeter()
+        except Exception as error:
+            # Jede andere Ausnahme (z. B. aus dem Host-Rueckruf faehigkeiten() in _register_args): nur Art und Ort, nie
+            # der Text (Regel 6). Mit Backoff statt ohne: sonst loggte der Geraete-Thread jede Sekunde neu.
+            logger.error("Bootstrap: unerwarteter Fehler (%s)%s, naechster Versuch spaeter", type(error).__name__,
+                         commands.fehlerort(error))
+            return self._spaeter()
         if not identity_module.passt_zum_schluessel(self._identity(), antwort.zugang.certificate_pem):
             logger.error("Bootstrap: Zertifikat passt nicht zum eigenen Schluessel, verworfen")
             self._fremdes_zertifikat = True

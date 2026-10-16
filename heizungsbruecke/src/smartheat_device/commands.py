@@ -75,7 +75,7 @@ class InvalidPayload(ValueError):
 def result_payload(command_id: str, ok: bool, result: dict | None, error: dict | None) -> dict:
     return nachrichten.pruefen(
         "ergebnis", {"schema": wire.SCHEMA, "command_id": command_id, "ok": ok, "result": result if ok else None,
-                     "error": None if ok else error}, (*wire.RESULT_FIELDS, "command_id"))
+                     "error": None if ok else error}, (*wire.RESULT_FIELDS, nachrichten.ZIEL_BEFEHL))
 
 
 def _load_done(path: Path) -> dict[str, Entry]:

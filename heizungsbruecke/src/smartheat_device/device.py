@@ -482,10 +482,10 @@ class Device:
         return self._publish_nach_hello("up/result", body) is not None
 
     def _inventur_senden(self, command_id: str, daten: dict) -> bool:
-        nachrichten = inventory.nachrichten(command_id, daten)  # ValueError (zu gross) wertet das Register aus
+        teile = inventory.nachrichten(command_id, daten)  # ValueError (zu gross) wertet das Register aus
         if not self._bereit:
             return False
-        return all(self._publish("up/inventory", nachricht) is not None for nachricht in nachrichten)
+        return all(self._publish("up/inventory", nachricht) is not None for nachricht in teile)
 
     def _claim_state(self, payload: dict) -> commands.Outcome:
         """Uebernahmestand vom Server (Spec 5c F1): Discovery, Seite und Zustand folgen im naechsten Takt. Gueltig ist
