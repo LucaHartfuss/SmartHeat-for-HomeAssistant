@@ -2,6 +2,17 @@
 
 ## Unveröffentlicht
 
+- Jede Nachricht des Geräts entsteht über eine Stelle, die sie gegen den Vertrag prüft (`smartheat_device/nachrichten.py`),
+  und das Gerät liest jede Vertragskonstante an der Stelle, die sie braucht (Stufe 3 S8a-1, A5-34). V1 gilt jetzt auf
+  beiden Seiten strikt: Konfiguration, Bedienung und Befehle mit fehlendem oder fremdem Feld lehnt das Gerät ab. Der
+  Befehl `driver_login` verlangt genau die Felder seiner Phase (`begin`, `finish`, `password`); Erkennung (Anlagen,
+  Features) und Zigbee-Liste entstehen gegen den Vertrag. Neue Felder des Servers kommen damit erst nach einem
+  Geräte-Update. **Das Gateway braucht den Server mit Stufe 3 S8a-1** (`S3S8a-Live`): Server und Gerät im selben
+  Wartungsfenster, der Server zuerst; ein Server davor verlangt bei der Registrierung noch `enc_public_key`.
+- Entfallen (Stufe 3 S8a-1, A5-43, A5-50): `enc_public_key` bei der Registrierung und die Datei `enc_key.pem` (eine
+  vorhandene Datei bleibt liegen und wird nicht gelesen), `raum_soll_wirksam` im Snapshot und das Konfigurationsfeld
+  `intervalle` (nur noch für die E2E über `SMARTHEAT_E2E_INTERVALLE`, ein JSON-Objekt; ein ungültiger Wert wird
+  ignoriert).
 - Das Status-Ereignis (Schema bleibt 3) trägt kein Feld `setup_id` mehr: es war seit 1.0.0 immer gleich `tenant_id`. Der
   Zustand (`backup.json`) speichert die Einrichtung als `tenant_id`; ein vorhandener Zustand mit `setup_id` wird beim
   Laden übernommen (keine neue Einrichtung, nichts geht verloren), der alte Schlüssel verschwindet beim nächsten
