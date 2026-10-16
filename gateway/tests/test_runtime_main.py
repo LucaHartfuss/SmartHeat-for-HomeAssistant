@@ -58,7 +58,7 @@ def test_a_configuration_from_the_server_restarts_into_regulation(world):
     assert world.restarts == 2 and isinstance(world.result, Runtime)
     assert world.links[0].stopped  # alter Prozess hat sauber getrennt
     world.connect()
-    assert world.status()["status"] == "regelt" and world.status()["setup_id"] == "test-tenant"
+    assert world.status()["status"] == "regelt" and world.status()["tenant_id"] == "test-tenant"
     assert world.link.of("up/hello")[0]["konfiguration_version"] == 1
 
 
@@ -191,7 +191,7 @@ def test_an_empty_configuration_resets_with_the_driver_then_restarts_and_forgets
     _offenes_zuruecksetzen(world)
     result = world.start_runtime()
     assert isinstance(result, IdleBridge) and result.reason == STATUS_ABGEMELDET
-    assert world.status()["status"] == "abgemeldet" and world.status()["setup_id"] == "test-tenant"
+    assert world.status()["status"] == "abgemeldet" and world.status()["tenant_id"] == "test-tenant"
     assert (world.paths.driver_secrets_dir / "vicare.json").exists()
     world.run()
     assert world.restarts == 2 and world.result.reason == IDLE_NOT_CONFIGURED

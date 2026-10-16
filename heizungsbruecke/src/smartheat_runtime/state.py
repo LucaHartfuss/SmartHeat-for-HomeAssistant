@@ -22,7 +22,7 @@ class StorageError(OSError):
 
 _NUMBER_FIELDS = ("last_room_target", "last_published_target_rt")
 _FLAG_FIELDS = ("boost_active", "emergency_boost_active")
-_TEXT_FIELDS = ("last_daily_trigger_date", "last_ack_at", "boost_since", "setup_id", "plant_id")
+_TEXT_FIELDS = ("last_daily_trigger_date", "last_ack_at", "boost_since", "tenant_id", "plant_id")
 _TEXT_MAP_FIELDS = ("notify_states", "notify_messages")
 _LEVER_MAP_FIELDS = ("restore_point", "originals", "learned")
 _OVERRIDE_FIELDS = ("manual_override", "manual_override_pending")
@@ -37,7 +37,9 @@ BACKUP_FIELDS = (
 _OMITTED_WHEN_EMPTY = _TEXT_MAP_FIELDS + _LEVER_MAP_FIELDS + ("write_budget",) + _PLAN3B_FIELDS
 # Audit 4 P-B: Schluessel, die Add-on 0.35.0 noch schrieb und die seit 0.36.0 ohne Bedeutung sind; sie werden beim Laden
 # verworfen statt als unbekannte Schluessel weitergeschrieben.
-_DROPPED_KEYS = ("waerme_fehlt_seit",)
+# Stufe 3 S7 (A5-63): setup_id (immer = tenant_id) heisst jetzt tenant_id; _parse_backup uebernimmt den alten Wert, der
+# Schluessel verschwindet beim naechsten Schreiben.
+_DROPPED_KEYS = ("waerme_fehlt_seit", "setup_id")
 
 
 @dataclass(frozen=True)
@@ -60,8 +62,8 @@ class BridgeState:
     last_room_target: float | None = None
     last_published_target_rt: float | None = None
     last_daily_trigger_date: str | None = None
-    # Audit 4, A4-08: Einrichtung und Anlage, zu denen der Zustand gehoert (bind_to_setup).
-    setup_id: str | None = None
+    # Audit 4, A4-08: Einrichtung (tenant_id) und Anlage, zu denen der Zustand gehoert (bind_to_tenant).
+    tenant_id: str | None = None
     plant_id: str | None = None
     delivery: DeliveryState = field(default_factory=DeliveryState)
     # Zuletzt gemeldeter Zustand je Meldeschluessel (notifier.py); fehlender Schluessel = "ok".
@@ -162,6 +164,8 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
     """Liest die bekannten Felder tolerant: ein Feld mit falschem Typ faellt auf seinen
     Standardwert zurueck, die anderen bleiben. Unbekannte Schluessel werden unveraendert
     mitgefuehrt (spaetere Versionen; Felder bis 0.29.0 seit Audit 4 P-E ebenso)."""
+    if "setup_id" in raw and "tenant_id" not in raw:  # bis Stufe 3 S7 hiess das Feld setup_id (immer = tenant_id)
+        raw = {**raw, "tenant_id": raw["setup_id"]}
     values = {}
 
     def _invalid(key):
@@ -401,24 +405,24 @@ _PLANT_BOUND = (
 _SETUP_BOUND = ("last_published_target_rt", "last_daily_trigger_date")
 
 
-def bind_to_setup(store: "StateStore", setup_id: str | None, plant_id: str) -> str:
+def bind_to_tenant(store: "StateStore", tenant_id: str | None, plant_id: str) -> str:
     """Bindet den Zustand an Einrichtung und Anlage. Ein Bestand ohne Bindung (bis Add-on 0.34.0) gilt als gebunden
     (nichts verwerfen, Review Focus 1). Andere Anlage: anlagenbezogene Felder auf den Standardwert. Neue Einrichtung
     derselben Anlage: Ursprungswerte bleiben, nur Tick-Buchung und Zustellung beginnen neu."""
     state, defaults = store.state, BridgeState()
-    if state.setup_id is None and state.plant_id is None:
-        store.update(setup_id=setup_id, plant_id=plant_id)
+    if state.tenant_id is None and state.plant_id is None:
+        store.update(tenant_id=tenant_id, plant_id=plant_id)
         return "bestand"
     if state.plant_id != plant_id:
         logger.warning("Andere Anlage als in backup.json: anlagenbezogener Zustand wird verworfen")
         # Zustellung zuerst: set_delivery wirft nicht, update bei einem Schreibfehler (StorageError) schon
         store.set_delivery(DeliveryState())
         store.update(**{key: getattr(defaults, key) for key in _PLANT_BOUND + _SETUP_BOUND},
-                     setup_id=setup_id, plant_id=plant_id)
+                     tenant_id=tenant_id, plant_id=plant_id)
         return "andere_anlage"
-    if state.setup_id != setup_id:
+    if state.tenant_id != tenant_id:
         logger.info("Neue Einrichtung derselben Anlage: Ursprungswerte bleiben, Erstkontakt-Tick folgt")
         store.set_delivery(DeliveryState())
-        store.update(**{key: getattr(defaults, key) for key in _SETUP_BOUND}, setup_id=setup_id)
+        store.update(**{key: getattr(defaults, key) for key in _SETUP_BOUND}, tenant_id=tenant_id)
         return "neue_einrichtung"
     return "unveraendert"

@@ -52,7 +52,7 @@ from smartheat_runtime.runtime import (
     Runtime,
 )
 from smartheat_runtime.runtime_config import BootInfo, RuntimeConfig
-from smartheat_runtime.state import StateStore, StorageError, bind_to_setup
+from smartheat_runtime.state import StateStore, StorageError, bind_to_tenant
 from smartheat_runtime.status import (
     ABO_AKTIV,
     HEARTBEAT_SECONDS,
@@ -668,7 +668,7 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
     store = StateStore(boot.backup_path, boot.failsafe_path)
     notifier = Notifier(store, host.notify_sink, boot.notify_hints_off)
     ticks.seed_notices(notifier, store.state.delivery)
-    status = StatusReporter(host.status_sink, boot.tenant_id, boot.setup_id, store, boot.lever_set, boot.client_version)
+    status = StatusReporter(host.status_sink, boot.tenant_id, store, boot.lever_set, boot.client_version)
     status.publish()
     if boot.signed_off:
         return _sign_off(host.sign_off_parts(), store, notifier, status, clock, boot.local_check_interval,
@@ -687,7 +687,7 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
     config = loaded.config
     # Audit 4, A4-08: Zustand an Einrichtung und Anlage binden, bevor irgendetwas daraus gelesen wird.
     try:
-        bind_to_setup(store, boot.setup_id, loaded.plant_id or roles.lever_refs_identity(loaded.manifest))
+        bind_to_tenant(store, boot.tenant_id, loaded.plant_id or roles.lever_refs_identity(loaded.manifest))
     except StorageError:
         logger.warning("Bindung an Einrichtung und Anlage nicht gespeichert, gilt bis zum naechsten Schreiben", exc_info=True)
     rt = Runtime(

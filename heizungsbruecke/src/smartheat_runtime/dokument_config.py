@@ -2,7 +2,7 @@
 0.6.0, HA-Add-on ab 5c), liest die Laufzeit Anlage, Hebelsatz, Verteilsystem, Raumfuehler, Tagestick, Abo und
 Intervalle aus dem Konfigurationsdokument statt aus Optionen. Transport und Zugang haelt der Geraetekern (eine
 MQTT-Verbindung), der Abo-Status steht im Dokument (Plan S1, Praezisierung abo; die 30-Tage-Frist bleibt lokal).
-Die Anlage bindet den lokalen Zustand (A4-08): setup_id = Anlage, eine andere Anlage beginnt mit leerem Zustand, eine
+Die Anlage bindet den lokalen Zustand (A4-08) ueber tenant_id: eine andere Anlage beginnt mit leerem Zustand, eine
 neue Konfiguration derselben Anlage nicht. Feldnamen = smartheat_device.wire.KONFIGURATION_FIELDS (die Laufzeit
 importiert den Geraetekern nicht; ein Test haelt beide gleich). Die Bindung (Treiber, Thermostat) liest der Host.
 Dazu ConfigError, Bindungsbeschreibung und Sicherheitswerte (bis Stufe 3 S5 in options.py)."""
@@ -97,7 +97,7 @@ def boot_info(konfiguration, *, abgemeldet: bool, client_version: str, backup_pa
     lever_set = lever_set or LEVER_SETS[_STANDARD_HEBELSATZ]
     return BootInfo(
         configured=anlage is not None and not abgemeldet, signed_off=anlage is not None and abgemeldet,
-        tenant_id=anlage, setup_id=anlage, lever_set=lever_set, client_version=client_version, notify_hints_off=(),
+        tenant_id=anlage, lever_set=lever_set, client_version=client_version, notify_hints_off=(),
         local_check_interval=_intervall(konfiguration, "pruefung_s", DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS),
         backup_path=backup_path, failsafe_path=failsafe_path, aufraeumen_path=aufraeumen_path,
     )
@@ -126,7 +126,7 @@ def runtime_config(konfiguration, *, rastung_pfad: Path, entitlement_path: Path,
     if not isinstance(sensors, list) or not sensors or not all(isinstance(ref, str) for ref in sensors):
         raise ConfigError("Konfiguration: keine Raumfühler")
     return RuntimeConfig(
-        tenant_id=konfiguration["anlage"], setup_id=konfiguration["anlage"], lever_set_id=hebelsatz,
+        tenant_id=konfiguration["anlage"], lever_set_id=hebelsatz,
         local_safety=safety, daily_trigger_time=daily,
         local_check_interval=_intervall(konfiguration, "pruefung_s", DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS),
         telemetry_interval=_intervall(konfiguration, "telemetrie_s", DEFAULT_TELEMETRY_INTERVAL_SECONDS),

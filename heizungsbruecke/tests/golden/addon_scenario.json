@@ -9,7 +9,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "startet",
      "grund": null,
@@ -46,7 +45,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "startet",
      "grund": null,
@@ -99,7 +97,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "startet",
      "grund": null,
@@ -150,7 +147,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -205,7 +201,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -242,7 +237,7 @@
     "last_published_target_rt": 21.0,
     "boost_active": false,
     "emergency_boost_active": false,
-    "setup_id": "golden",
+    "tenant_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 0.9,
@@ -295,7 +290,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -336,7 +330,7 @@
     "boost_active": false,
     "emergency_boost_active": false,
     "last_ack_at": "2026-01-15T08:00:00+01:00",
-    "setup_id": "golden",
+    "tenant_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 0.95,
@@ -403,7 +397,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -445,7 +438,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:01:00+01:00",
-    "setup_id": "golden",
+    "tenant_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 1.0,
@@ -506,7 +499,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -552,7 +544,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -594,7 +585,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:01:00+01:00",
-    "setup_id": "golden",
+    "tenant_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 1.0,
@@ -673,7 +664,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -713,7 +703,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -756,7 +745,7 @@
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:01:00+01:00",
     "boost_since": "2026-01-15T12:01:00+01:00",
-    "setup_id": "golden",
+    "tenant_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 1.0,
@@ -811,7 +800,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -853,7 +841,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:01:00+01:00",
-    "setup_id": "golden",
+    "tenant_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 1.0,
@@ -914,7 +902,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -985,7 +972,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "notbetrieb",
      "grund": null,
@@ -1027,7 +1013,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:01:00+01:00",
-    "setup_id": "golden",
+    "tenant_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "notify_states": {
      "notbetrieb": "aktiv"
@@ -1091,7 +1077,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "notbetrieb",
      "grund": null,
@@ -1133,7 +1118,7 @@
     "emergency_boost_active": true,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:01:00+01:00",
-    "setup_id": "golden",
+    "tenant_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "notify_states": {
      "notbetrieb": "aktiv"
@@ -1179,7 +1164,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "notbetrieb",
      "grund": null,
@@ -1280,7 +1264,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -1322,7 +1305,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:07:00+01:00",
-    "setup_id": "golden",
+    "tenant_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 1.0,
@@ -1378,7 +1361,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "datenfehler",
      "grund": null,
@@ -1458,7 +1440,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -1500,7 +1481,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:07:30+01:00",
-    "setup_id": "golden",
+    "tenant_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 1.0,
@@ -1561,7 +1542,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -1614,7 +1594,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "datenfehler",
      "grund": null,
@@ -1681,7 +1660,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "datenfehler",
      "grund": null,
@@ -1735,7 +1713,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -1777,7 +1754,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:07:30+01:00",
-    "setup_id": "golden",
+    "tenant_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 1.0,
@@ -1838,7 +1815,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -1898,7 +1874,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "datenfehler",
      "grund": null,
@@ -1984,7 +1959,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -2026,7 +2000,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
-    "setup_id": "golden",
+    "tenant_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 1.05,
@@ -2063,7 +2037,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -2117,7 +2090,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -2171,7 +2143,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -2225,7 +2196,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -2279,7 +2249,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -2333,7 +2302,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -2387,7 +2355,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -2441,7 +2408,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -2495,7 +2461,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -2561,7 +2526,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -2608,7 +2572,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -2669,7 +2632,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -2711,7 +2673,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
-    "setup_id": "golden",
+    "tenant_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 1.05,
@@ -2763,7 +2725,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -2823,7 +2784,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -2867,7 +2827,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
-    "setup_id": "golden",
+    "tenant_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "notify_states": {
      "batterie:sensor.thermostat_battery": "niedrig"
@@ -2922,7 +2882,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "startet",
      "grund": null,
@@ -2964,7 +2923,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "startet",
      "grund": null,
@@ -3010,7 +2968,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "startet",
      "grund": null,
@@ -3066,7 +3023,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -3108,7 +3064,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "regelt",
      "grund": null,
@@ -3152,7 +3107,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
-    "setup_id": "golden",
+    "tenant_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "notify_states": {
      "batterie:sensor.thermostat_battery": "niedrig"
@@ -3207,7 +3162,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "startet",
      "grund": null,
@@ -3266,7 +3220,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "abo_inaktiv",
      "grund": null,
@@ -3310,7 +3263,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
-    "setup_id": "golden",
+    "tenant_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "notify_states": {
      "batterie:sensor.thermostat_battery": "niedrig",
@@ -3371,7 +3324,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "abo_inaktiv",
      "grund": null,
@@ -3419,7 +3371,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
-    "setup_id": "golden",
+    "tenant_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "notify_states": {
      "batterie:sensor.thermostat_battery": "niedrig",
@@ -3477,7 +3429,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "notbetrieb",
      "grund": null,
@@ -3523,7 +3474,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "abo_inaktiv",
      "grund": null,
@@ -3567,7 +3517,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
-    "setup_id": "golden",
+    "tenant_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "notify_states": {
      "batterie:sensor.thermostat_battery": "niedrig",
@@ -3629,7 +3579,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "abo_inaktiv",
      "grund": null,
@@ -3706,7 +3655,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "abo_beendet",
      "grund": null,
@@ -3750,7 +3698,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
-    "setup_id": "golden",
+    "tenant_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "notify_states": {
      "batterie:sensor.thermostat_battery": "niedrig",
@@ -3812,7 +3760,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "notbetrieb",
      "grund": null,
@@ -3869,7 +3816,6 @@
     {
      "schema": 3,
      "tenant_id": "golden",
-     "setup_id": "golden",
      "addon_version": "<version>",
      "status": "abgemeldet",
      "grund": null,
@@ -3911,7 +3857,7 @@
     "emergency_boost_active": false,
     "last_daily_trigger_date": "2026-01-15",
     "last_ack_at": "2026-01-15T12:08:00+01:00",
-    "setup_id": "golden",
+    "tenant_id": "golden",
     "plant_id": "{\"curve\": \"number.curve_current\", \"heat_limit\": \"number.heat_limit\", \"min_flow\": \"number.min_flow\", \"room_setpoint\": \"climate.zone::temperature\"}",
     "restore_point": {
      "curve": 1.05,
