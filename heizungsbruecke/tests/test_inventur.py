@@ -207,3 +207,63 @@ def test_the_server_command_payload_is_accepted_by_the_contract():
     assert set(SERVER_BEFEHL["filter"]) == set(wire.INVENTUR_FILTER_FIELDS)
     command = wire.COMMANDS["inventory"]
     assert set(SERVER_BEFEHL) <= set(command.payload) | set(command.payload_optional)
+
+
+WEIT = {"plattformen": ["mypyllant", "mobile_app", "nuki", "zha"], "domaenen": ["lock", "person", "device_tracker"],
+        "geraeteklassen": [["binary_sensor", "door"], ["binary_sensor", "battery"]],
+        "dienste": ["notify."]}
+
+
+def _ha_weit():
+    """Ein Server-Filter, der mehr verlangt als die Positivliste erlaubt (A5-30)."""
+    ha = _ha()
+    ha.states.update({
+        "sensor.mypyllant_betriebsart": "heating",  # ohne Klasse, Plattform liefert number.curve
+        "sensor.handy_ort": "Hauptstr. 1",  # mobile_app, ohne Klasse
+        "sensor.handy_akku": 80, "sensor.handy_akku::device_class": "battery",
+        "lock.haustuer": "locked", "person.luca": "home", "device_tracker.handy": "home",
+        "binary_sensor.tuer": "off", "binary_sensor.tuer::device_class": "door",
+        "binary_sensor.wz_batt": "off", "binary_sensor.wz_batt::device_class": "battery",
+        "sensor.zha_lqi": 200,
+    })
+    ha.registry += [
+        {"entity_id": "sensor.mypyllant_betriebsart", "platform": "mypyllant", "config_entry_id": "e1"},
+        {"entity_id": "sensor.handy_ort", "platform": "mobile_app"},
+        {"entity_id": "sensor.handy_akku", "platform": "mobile_app"},
+        {"entity_id": "lock.haustuer", "platform": "nuki"},
+        {"entity_id": "person.luca", "platform": "person"},
+        {"entity_id": "device_tracker.handy", "platform": "mobile_app"},
+        {"entity_id": "binary_sensor.tuer", "platform": "zha"},
+        {"entity_id": "binary_sensor.wz_batt", "platform": "zha"},
+        {"entity_id": "sensor.zha_lqi", "platform": "zha"},
+    ]
+    return ha
+
+
+def test_positivliste_laesst_nur_heizungsdaten_durch():
+    ids = {e["entity_id"] for e in inventur.inventur(_ha_weit(), WEIT)["entities"]}
+    assert "sensor.mypyllant_betriebsart" in ids  # Plattform mit einstellbarer Entity (number.curve)
+    assert "sensor.handy_akku" in ids  # Klasse battery
+    assert "binary_sensor.wz_batt" in ids
+    assert "sensor.zha_lqi" in ids  # zha liefert climate.wz: einstellbare Plattform
+    for verboten in ("sensor.handy_ort", "lock.haustuer", "person.luca", "device_tracker.handy", "binary_sensor.tuer"):
+        assert verboten not in ids
+
+
+def test_positivliste_begrenzt_die_dienste():
+    assert inventur.inventur(_ha_weit(), WEIT)["dienste"] == ["notify.mobile_app_handy"]
+
+
+def test_verworfenes_steht_nur_als_anzahl_im_log(caplog):
+    caplog.set_level(logging.INFO)
+    inventur.inventur(_ha_weit(), WEIT)
+    text = caplog.text
+    assert "lock=1" in text and "person=1" in text and "device_tracker=1" in text
+    for name in ("haustuer", "handy_ort", "Hauptstr", "luca"):
+        assert name not in text
+
+
+def test_der_normale_filter_verliert_nichts():
+    """Der Filter des Servers (filter_ha) verlangt nichts ausserhalb der Liste: dieselben Entities wie ohne Liste."""
+    ids = {e["entity_id"] for e in inventur.inventur(_ha(), FILTER)["entities"]}
+    assert ids == {"number.curve", "climate.wz", "sensor.t"}
