@@ -1,5 +1,5 @@
 """Batterieueberwachung der Raumfuehler/Thermostate (Spec TP6 3.5). Die Batterie-Entities hat der
-Wizard ermittelt (Option battery_entities). Prozent-Sensor: < 20 -> niedrig, >= 25 -> ok,
+Wizard ermittelt (Feld bindung.batterien). Prozent-Sensor: < 20 -> niedrig, >= 25 -> ok,
 dazwischen bleibt der letzte Zustand. binary_sensor: on -> niedrig, off -> ok. unavailable/
 unknown aendert nichts. Gemeldet wird nur beim Wechsel (notifier), nicht kritisch."""
 import logging

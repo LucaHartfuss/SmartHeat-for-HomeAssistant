@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from bindung_beispiele import parameter
 
-from smartheat_core import rastung
+from smartheat_core import config_check, rastung
 from smartheat_core.config_check import INTERVALLE
 from smartheat_core.safety import LOCAL_SAFETY, resolve_local_safety
 from smartheat_device import wire
@@ -205,6 +205,9 @@ def test_jedes_angenommene_intervall_startet(key, tmp_path):
     low, high = INTERVALLE[key]
     feld = {"pruefung_s": "local_check_interval", "telemetrie_s": "telemetry_interval"}[key]
     for wert in (low, high):
+        # dieselbe Grenze nimmt config_check an (Quelle der Grenzen), erst dann gilt "angenommen"
+        assert config_check.pruefen({**KONF_MIT, "intervalle": {key: wert}}, None,
+                                    host=config_check.HOST_GATEWAY) is None
         runtime = dc.runtime_config(
             {**KONF, "intervalle": {key: wert}}, rastung_pfad=tmp_path / "keine", entitlement_path=tmp_path / "e",
             abo_source=lambda: entitlement.ACTIVE)

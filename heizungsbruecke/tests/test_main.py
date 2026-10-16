@@ -101,7 +101,7 @@ def test_invalid_daily_trigger_time_is_a_configuration_error(env, caplog, sleeps
         result = _start_bridge(env, **KONFIGURATIONSFEHLER)
 
     assert result.reason == "konfigurationsfehler"
-    assert "daily_trigger_time" in caplog.text
+    assert "Tagestick" in caplog.text
 
 
 def test_configuration_error_idles_with_heartbeat_and_rechecks_without_second_push(env, monkeypatch, sleeps):

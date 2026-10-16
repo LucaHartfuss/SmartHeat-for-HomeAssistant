@@ -4,6 +4,7 @@ import math
 import re
 from collections.abc import Mapping
 
+import pytest
 from fakes import FakeHa
 
 from heizungsbruecke import inventur
@@ -267,3 +268,80 @@ def test_der_normale_filter_verliert_nichts():
     """Der Filter des Servers (filter_ha) verlangt nichts ausserhalb der Liste: dieselben Entities wie ohne Liste."""
     ids = {e["entity_id"] for e in inventur.inventur(_ha(), FILTER)["entities"]}
     assert ids == {"number.curve", "climate.wz", "sensor.t"}
+
+
+# --- Randfaelle der Positivliste und der Eingaben (Abschlussreview Stufe 3 S5a, Mutationsprobe) ---
+
+
+class _RohHa(FakeHa):
+    """FakeHa, dessen Registry- und Zustandslisten roh bleiben (auch Eintraege, die keine Objekte sind)."""
+
+    def __init__(self, registry, states, devices=(), services=()):
+        super().__init__()
+        self._roh_registry, self._roh_states = registry, states
+        self.devices, self.services = list(devices), list(services)
+
+    def entity_registry(self):
+        return self._roh_registry
+
+    def get_states(self):
+        return self._roh_states
+
+
+def _zustand(entity_id, wert="1", **attribute):
+    return {"entity_id": entity_id, "state": wert, "attributes": attribute, "last_updated": "t"}
+
+
+def test_entities_ohne_registry_schalten_sich_nicht_gegenseitig_frei():
+    """Eine climate ohne Registry-Eintrag macht ihre "Plattform" (ohne_registry) nicht einstellbar: ein klassenloser
+    Sensor ohne Registry fliegt trotz Filter raus (sonst oeffnete ein Template-Sensor die Positivliste)."""
+    ha = FakeHa()
+    ha.states = {"climate.x": "heat", "sensor.y": 5}
+    filter_ = {"plattformen": [inventur.OHNE_REGISTRY], "domaenen": ["climate"]}
+    ids = {e["entity_id"] for e in inventur.inventur(ha, filter_)["entities"]}
+    assert ids == {"climate.x"}
+
+
+@pytest.mark.parametrize("domaene, klasse", [("weather", None), ("binary_sensor", "battery")])
+def test_plattform_nur_mit_wetter_oder_binaersensor_ist_nicht_einstellbar(domaene, klasse):
+    """Einstellbar machen nur climate, number und select; weather und binary_sensor schalten klassenlose Sensoren
+    ihrer Plattform nicht frei."""
+    ha = FakeHa()
+    ha.states = {f"{domaene}.a": "x", "sensor.b": 1}
+    if klasse:
+        ha.states[f"{domaene}.a::device_class"] = klasse
+    ha.registry = [{"entity_id": f"{domaene}.a", "platform": "wx"}, {"entity_id": "sensor.b", "platform": "wx"}]
+    ids = {e["entity_id"] for e in inventur.inventur(ha, {"plattformen": ["wx"]})["entities"]}
+    assert ids == {f"{domaene}.a"}
+
+
+def test_registry_und_zustandseintraege_ohne_entity_id_werden_uebersprungen():
+    registry = ["kein objekt", {"platform": "mypyllant"}, None, {"entity_id": "number.curve", "platform": "mypyllant"}]
+    states = [42, {"state": "1"}, ["number.curve"], _zustand("number.curve")]
+    daten = inventur.inventur(_RohHa(registry, states), FILTER)
+    assert [e["entity_id"] for e in daten["entities"]] == ["number.curve"]
+
+
+def test_deaktivierte_entity_mit_zustand_faellt_raus():
+    ha = _ha()
+    ha.states["number.aus"] = 3
+    ha.registry.append({"entity_id": "number.aus", "platform": "mypyllant", "disabled_by": "user"})
+    ids = {e["entity_id"] for e in inventur.inventur(ha, FILTER)["entities"]}
+    assert "number.aus" not in ids and "number.curve" in ids
+
+
+def test_config_entries_des_geraets_sind_eine_liste():
+    ha = _ha()
+    ha.devices[0] = {**ha.devices[0], "config_entries": None}
+    ha.devices[1] = {k: v for k, v in ha.devices[1].items() if k != "config_entries"}
+    geraete = {g["id"]: g for g in inventur.inventur(ha, FILTER)["geraete"]}
+    assert geraete["d1"]["config_entries"] == [] and geraete["d2"]["config_entries"] == []
+    assert {g["id"]: g["config_entries"] for g in inventur.inventur(_ha(), FILTER)["geraete"]} == {
+        "d1": ["e1"], "d2": ["e2"]}
+
+
+def test_nur_notify_dienste_erscheinen_in_der_ausgabe():
+    ha = _ha()
+    ha.services = [{"domain": "light", "services": {"mobile_app_x": {}}},
+                   {"domain": "notify", "services": {"mobile_app_handy": {}}}]
+    assert inventur.inventur(ha, FILTER)["dienste"] == ["notify.mobile_app_handy"]
