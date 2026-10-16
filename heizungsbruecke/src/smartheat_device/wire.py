@@ -4,9 +4,12 @@ Seite selbst); tools/contract_check.py im Dev-Root vergleicht beide mit tools/co
 Aenderungen nur an allen drei Stellen zugleich. Die Server-Regeln unter dem Vertragsteil (Aushandeln, Ablauf,
 Mindestversion je Host) gibt es nur auf dem Server.
 
-Versionsregeln (Spec 2.1): beide Seiten ignorieren unbekannte Felder und Topics; neue Felder sind optional und haben
-eine festgelegte Bedeutung bei Fehlen; eine neue Schema-Nummer gibt es nur fuer einen Bruch. Felder, deren Fehlen
-etwas bedeutet, stehen in *_OPTIONAL mit der Bedeutung im Kommentar."""
+Versionsregeln (Stufe 3 S8a-1, ersetzt Spec 2.1): V1 wird auf beiden Seiten strikt geprueft; ein fehlendes oder
+fremdes Feld und ein falscher Typ werden abgelehnt. Ein neues Feld Server -> Geraet gibt es deshalb erst nach einem
+Geraete-Update, ein neues Feld Geraet -> Server zuerst auf dem Server (als *_OPTIONAL mit der Bedeutung bei Fehlen im
+Kommentar). Ausnahme ist das Tick-Drahtformat (Snapshot-Leser des Servers, Antwort down/setpoints im Geraet): es
+ignoriert unbekannte Felder. Unbekannte Topics ignorieren beide Seiten. Eine neue Schema-Nummer gibt es nur fuer einen
+Bruch."""
 import hashlib
 import re
 from dataclasses import dataclass
