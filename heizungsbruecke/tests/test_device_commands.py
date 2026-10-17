@@ -156,7 +156,8 @@ def test_a_missing_required_payload_field_is_refused_and_does_not_run(tmp_path, 
     ("zigbee_devices", {}),
 ])
 def test_every_server_payload_shape_is_accepted(tmp_path, kind, payload):
-    """Die Nutzlasten der Server-Erzeuger (Contract-Check, Vertrag V1) bleiben angenommen: alle Pflichtfelder, optionale nach Bedarf."""
+    """Die Nutzlasten der Server-Erzeuger (Contract-Check, Vertrag V1) bleiben angenommen: alle Pflichtfelder, optionale
+    nach Bedarf."""
     sent, calls = Sent(), []
     register = cmd.CommandRegister(tmp_path, sent)
     register.register(kind, lambda nutzlast: calls.append(1) or cmd.Done({}))

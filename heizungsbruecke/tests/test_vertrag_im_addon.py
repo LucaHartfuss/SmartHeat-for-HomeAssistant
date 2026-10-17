@@ -1,7 +1,8 @@
 """Stufe 3 S8a-2 (A5-16, Audit 5 p5-ci): Vertragspruefungen, die nur Module des Add-ons (Kern, Laufzeit, HA-Host,
 Geraetekern) lesen. Frueher Checks des Contract-Checks im Dev-Root (tools/contract_check.py): ganz Check 42, dazu der
 Add-on-Teil von 4, 30 und 56; was dort ueber Repo-Grenzen geht, bleibt im Contract-Check. Je Pruefung eine Funktion
-`_probleme_<nr>` auf den Modulen, ein Test auf den echten Modulen und Gegenproben, die zeigen, dass sie rot werden kann.
+`_probleme_<nr>` auf den Modulen, ein Test auf den echten Modulen und Gegenproben, die zeigen, dass sie rot werden kann;
+nur Check 56 ist eine Einzelzusicherung (ein Mengenvergleich zweier Konstanten) und steht als einzelner Test.
 
 Schon strenger als Modul-Tests vorhanden, darum hier ohne Kopie:
 - Check 15 (Hinweis-Kategorien) und die Kopie config_check.HA_ROLLEN aus Check 4: test_core_vertrag_pin.py (Gleichheit
@@ -31,8 +32,8 @@ def _mit(module, **overrides):
 
 
 def _probleme_4(wire, laufzeit_rolle, roles) -> list[str]:
-    """Spec 5c: jede Rolle der HA-Bindung (wire.HA_ROLLEN) bildet das Add-on (dokument.laufzeit_rolle) auf eine Rolle der
-    Laufzeit (roles.ALL_ROLES) ab. Das Hebel-Vokabular Server = Kern prueft weiter der Contract-Check 4."""
+    """Spec 5c: jede Rolle der HA-Bindung (wire.HA_ROLLEN) bildet das Add-on (dokument.laufzeit_rolle) auf eine Rolle
+    der Laufzeit (roles.ALL_ROLES) ab. Das Hebel-Vokabular Server = Kern prueft weiter der Contract-Check 4."""
     all_roles = set(roles.ALL_ROLES)
     return [f"Rolle {rolle} -> {laufzeit_rolle(rolle)!r} ist keine Laufzeit-Rolle (roles.ALL_ROLES)"
             for rolle in wire.HA_ROLLEN if laufzeit_rolle(rolle) not in all_roles]
@@ -88,7 +89,9 @@ def _probleme_30(claim_due_tick, delivery, ticks) -> list[str]:
     if not returned:
         problems.append("claim_due_tick: keine Trigger-Rueckgabe im Quelltext gefunden")
     elif not returned <= triggers:
-        problems.append(f"claim_due_tick liefert {sorted(returned - triggers)}, delivery.TRIGGERS ist {sorted(triggers)}")
+        problems.append(
+            f"claim_due_tick liefert {sorted(returned - triggers)}, delivery.TRIGGERS ist {sorted(triggers)}"
+        )
     if ticks.PROBE_TRIGGER not in triggers:
         problems.append(f"ticks.PROBE_TRIGGER {ticks.PROBE_TRIGGER!r} ist kein Trigger {sorted(triggers)}")
     return problems
@@ -137,7 +140,8 @@ def _probleme_42(roles, levers, wire) -> list[str]:
         problems.append(f"roles.LEVER_ROLES {sorted(lever_roles)} != Hebel des Kerns {sorted(levers.LEVERS)}")
     problems += [f"Hebel {lever}: Rolle {role!r} nicht in roles.ALL_ROLES"
                  for lever, role in lever_roles.items() if role not in all_roles]
-    problems += [f"Hebel {lever} ist keine Rolle der HA-Bindung (HA_ROLLEN)" for lever in lever_roles if lever not in contract]
+    problems += [f"Hebel {lever} ist keine Rolle der HA-Bindung (HA_ROLLEN)"
+                 for lever in lever_roles if lever not in contract]
     return problems
 
 

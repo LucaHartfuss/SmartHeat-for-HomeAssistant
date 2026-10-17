@@ -1,8 +1,8 @@
 """Stufe 3 S8a-2 (A5-16, Audit 5 p5-ci): Vertragspruefungen, die nur Module des Gateways und des Geraetekerns lesen.
-Frueher Teile der Checks 52 und 53 des Contract-Checks im Dev-Root (tools/contract_check.py); was dort ueber Repo-Grenzen
-geht (Einstellschritte der Simulation gegen den Rundweg des Servers, Entdeckung und Kennung gegen die Erkennung des
-Servers), bleibt im Contract-Check. Je Pruefung eine Funktion `_probleme_<nr>`, ein Test auf den echten Modulen und
-Gegenproben, die zeigen, dass sie rot werden kann.
+Frueher Teile der Checks 52 und 53 des Contract-Checks im Dev-Root (tools/contract_check.py); was dort ueber
+Repo-Grenzen geht (Einstellschritte der Simulation gegen den Rundweg des Servers, Entdeckung und Kennung gegen die
+Erkennung des Servers), bleibt im Contract-Check. Je Pruefung eine Funktion `_probleme_<nr>`, ein Test auf den echten
+Modulen und Gegenproben, die zeigen, dass sie rot werden kann.
 
 Schon als Modul-Tests vorhanden, darum hier ohne Kopie (Check 52): LED-Muster je Zustand
 (gateway/host/tests/test_led.py::test_patterns_cover_exactly_the_device_states) und Texte der Diagnoseseite je Zustand
@@ -54,7 +54,8 @@ def test_check_52_jeder_befehl_hat_genau_einen_handler():
 
 
 def test_check_52_das_laufende_gateway_traegt_jeden_befehl_ein(world):
-    """Die Liste GERAETEKERN_BEFEHLE stimmt: Geraetekern und Gateway zusammen tragen genau die Befehle des Vertrags ein."""
+    """Die Liste GERAETEKERN_BEFEHLE stimmt: Geraetekern und Gateway zusammen tragen genau die Befehle des Vertrags
+    ein."""
     world.start_runtime()
     assert world.device.befehle.kinds == set(wire.COMMANDS)
 
@@ -113,11 +114,13 @@ def test_check_53_treiberparameter_klingen_nicht_nach_geheimnissen():
 def test_check_53_meldet_einen_geheimen_identifizierenden_parameter():
     fake = type("FakeDriver", (), {"IDENTITY_PARAMETERS": ("heizkreis", "api_key")})
     assert _probleme_53({**registry.DRIVERS, "fake": fake}) == [
-        "Gateway-Treiber fake: Parametername 'api_key' klingt nach einem Geheimnis (Geraetedokumente bleiben frei davon)"]
+        "Gateway-Treiber fake: Parametername 'api_key' klingt nach einem Geheimnis "
+        "(Geraetedokumente bleiben frei davon)"]
 
 
 def test_check_53_meldet_einen_geheimen_standardwert(monkeypatch):
-    monkeypatch.setitem(sys.modules, "fake_treiber", SimpleNamespace(DEFAULTS={"poll_seconds": 60, "refresh_token": ""}))
+    defaults = {"poll_seconds": 60, "refresh_token": ""}
+    monkeypatch.setitem(sys.modules, "fake_treiber", SimpleNamespace(DEFAULTS=defaults))
     fake = type("FakeDriver", (), {"IDENTITY_PARAMETERS": ("heizkreis",), "__module__": "fake_treiber"})
     assert _probleme_53({"fake": fake}) == [
         "Gateway-Treiber fake: Parametername 'refresh_token' klingt nach einem Geheimnis (Geraetedokumente bleiben "

@@ -1,8 +1,9 @@
 """Stufe 3 S8a-2 (A5-16, Audit 5 p5-ci): Vertragspruefung der Host-Dienste des Gateways, frueher Check 47 des
 Contract-Checks im Dev-Root (tools/contract_check.py). Der Check las updater.py als Text gegen SOFTWARE_ERRORS des
 Servers; hier gegen die Kopie im Geraetekern (smartheat_device.wire), die zeichengleich zum Server bleibt
-(test_device_wire.py::test_the_copy_is_literal und Contract-Check 49). Der Test importiert den Updater, er laeuft auf dem
-System-Python des Pi und braucht nur die Standardbibliothek."""
+(test_device_wire.py::test_the_copy_is_literal und Contract-Check 49). Der Test importiert den Updater, und der
+importiert smartheat_core, smartheat_gateway und smartheat_host; er braucht also den Quellbaum des Gateways, nicht nur
+die Standardbibliothek."""
 from types import SimpleNamespace
 
 from smartheat_device import wire

@@ -58,8 +58,9 @@ logger = logging.getLogger(__name__)
 #: Grund eines Rueckwegs ohne Ablehnung: der Server war waehrend der ganzen Gesundheitspruefung nicht erreichbar, die
 #: Version wird erneut versucht (G3-Restpunkt; der Server zeigt ihn dem Betreiber als "wird erneut versucht").
 RETRY_REASON = "server_unerreichbar"
-#: Gruende einer Ablehnung oder eines Rueckwegs (wire.SOFTWARE_ERRORS des Vertrags, test_vertrag_im_host.py). Der Updater
-#: meldet nur diese Namen, nie ein Literal (A5-85, test_updater.py::test_der_updater_meldet_nur_gruende_aus_reasons).
+#: Gruende einer Ablehnung oder eines Rueckwegs (wire.SOFTWARE_ERRORS des Vertrags, test_vertrag_im_host.py). Der
+#: Updater meldet nur diese Namen, nie ein Literal (A5-85,
+#: test_updater.py::test_der_updater_meldet_nur_gruende_aus_reasons).
 MANIFEST_UNGUELTIG = "manifest_ungueltig"
 SIGNATUR_UNGUELTIG = "signatur_ungueltig"
 UPDATER_ZU_ALT = "updater_zu_alt"

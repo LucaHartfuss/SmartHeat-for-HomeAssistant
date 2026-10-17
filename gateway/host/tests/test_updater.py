@@ -745,18 +745,28 @@ def test_downgrade_reason_is_in_the_fixed_list():
 
 
 def test_der_updater_meldet_nur_gruende_aus_reasons():
-    """A5-85: Jeder Grund, den der Updater an _Refused, _reject oder _rollback gibt, ist ein Name aus REASONS oder ein
-    durchgereichter Wert, nie ein Literal; so meldet er nur Gruende, die test_vertrag_im_host.py gegen den Vertrag
-    prueft."""
+    """A5-85: Jeder Grund, den der Updater an _Refused, _reject, _rollback oder _queue gibt, ist ein Name aus REASONS
+    oder ein durchgereichter Wert, nie ein Literal; so meldet er nur Gruende, die test_vertrag_im_host.py gegen den
+    Vertrag prueft. Ausnahme: _queue meldet das Ergebnis "ok" mit leerem Grund."""
     tree = ast.parse(Path(updater.__file__).read_text(encoding="utf-8"))
     by_value = {name: getattr(updater, name) for name in dir(updater) if name.isupper()}
-    position = {"_Refused": 0, "_reject": 2, "_rollback": 2}
+    position = {"_Refused": 0, "_reject": 2, "_rollback": 2, "_queue": 3}  # Argument-Index ohne self
     seen = set()
     for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
         name = call.func.attr if isinstance(call.func, ast.Attribute) else getattr(call.func, "id", None)
         if name not in position:
             continue
-        reason = call.args[position[name]]
+        if len(call.args) > position[name]:
+            reason = call.args[position[name]]
+        else:
+            keywords = [keyword.value for keyword in call.keywords if keyword.arg == "reason"]
+            assert keywords, f"Zeile {call.lineno}: {name} ohne erkennbaren Grund (weder Position noch reason=)"
+            reason = keywords[0]
+        if name == "_queue" and isinstance(reason, ast.Constant) and reason.value == "":
+            assert isinstance(call.args[2], ast.Constant) and call.args[2].value == "ok", (
+                f"Zeile {call.lineno}: leerer Grund nur beim Ergebnis \"ok\""
+            )
+            continue
         assert not isinstance(reason, ast.Constant), f"Zeile {call.lineno}: Grund als Literal {reason.value!r}"
         if isinstance(reason, ast.Name) and reason.id in by_value:
             assert by_value[reason.id] in updater.REASONS, f"Zeile {call.lineno}: {reason.id} nicht in REASONS"
