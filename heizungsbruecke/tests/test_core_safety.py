@@ -2,13 +2,17 @@ import dataclasses
 
 import pytest
 
-from smartheat_core.safety import LOCAL_SAFETY, check_invariants, resolve_local_safety, verteilsysteme
+from smartheat_core.safety import LOCAL_SAFETY, check_invariants, resolve_local_safety
+
+
+def _verteilsysteme() -> tuple[str, ...]:
+    return tuple(sorted({verteilsystem for _, verteilsystem in LOCAL_SAFETY}))
 
 
 def test_verteilsysteme_cover_both_distribution_systems():
     """Plan 3b: Spiegel von VERTEILSYSTEME_MIT_LOKALEN_SICHERHEITSWERTEN im Server (dort gepinnt in
     tests/generic/test_profiles.py; je Profil eine lokale Zeile meldet ein Contract-Check (Vertrag V4))."""
-    assert verteilsysteme() == ("Fussbodenheizung", "Heizkoerper")
+    assert _verteilsysteme() == ("Fussbodenheizung", "Heizkoerper")
 
 
 @pytest.mark.parametrize(("lever_set", "verteilsystem"), [
@@ -60,7 +64,7 @@ def test_every_entry_is_consistent_and_boost_inside_the_ranges():
 def test_every_combination_of_lever_set_and_distribution_system_has_values():
     from smartheat_core.levers import LEVER_SETS
 
-    assert set(LOCAL_SAFETY) == {(lever_set, system) for lever_set in LEVER_SETS for system in verteilsysteme()}
+    assert set(LOCAL_SAFETY) == {(lever_set, system) for lever_set in LEVER_SETS for system in _verteilsysteme()}
 
 
 @pytest.mark.parametrize("key", sorted(

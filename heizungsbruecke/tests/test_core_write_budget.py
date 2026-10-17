@@ -3,10 +3,12 @@ import pytest
 
 from smartheat_core import write_budget as wb
 
+# Durchsetzen mit dem Standard-Tageslimit (frueher write_budget.QUOTA).
+QUOTA = wb.enforce_rule(wb.MAX_PER_DAY)
 DAY = "2026-10-01"
 
 
-@pytest.mark.parametrize("rule", [wb.QUOTA, wb.RETRY_QUOTA, wb.RETURN_STAIRCASE])
+@pytest.mark.parametrize("rule", [QUOTA, wb.RETRY_QUOTA, wb.RETURN_STAIRCASE])
 def test_first_attempt_is_always_allowed(rule):
     assert wb.allowed(None, rule, 0.0, DAY) is True
 
@@ -23,7 +25,7 @@ def test_return_staircase_has_no_daily_limit():
     assert wb.allowed(entry, wb.RETURN_STAIRCASE, 1800.0, DAY) is True
 
 
-@pytest.mark.parametrize("rule", [wb.QUOTA, wb.RETRY_QUOTA])
+@pytest.mark.parametrize("rule", [QUOTA, wb.RETRY_QUOTA])
 def test_quota_rules_wait_30_minutes_and_stop_at_six_a_day(rule):
     assert wb.allowed({"day": DAY, "count": 1, "last": 0.0}, rule, 1799.0, DAY) is False
     assert wb.allowed({"day": DAY, "count": 1, "last": 0.0}, rule, 1800.0, DAY) is True
@@ -32,13 +34,13 @@ def test_quota_rules_wait_30_minutes_and_stop_at_six_a_day(rule):
 
 def test_new_day_starts_fresh():
     entry = {"day": "2026-09-30", "count": 6, "last": 5000.0}
-    assert wb.allowed(entry, wb.QUOTA, 5001.0, DAY) is True
+    assert wb.allowed(entry, QUOTA, 5001.0, DAY) is True
     assert wb.counted(entry, 5001.0, DAY) == {"day": DAY, "count": 1, "last": 5001.0}
 
 
 def test_loaded_entry_without_last_keeps_the_daily_limit():
-    assert wb.allowed({"day": DAY, "count": 6}, wb.QUOTA, 0.0, DAY) is False
-    assert wb.allowed({"day": DAY, "count": 2}, wb.QUOTA, 0.0, DAY) is True
+    assert wb.allowed({"day": DAY, "count": 6}, QUOTA, 0.0, DAY) is False
+    assert wb.allowed({"day": DAY, "count": 2}, QUOTA, 0.0, DAY) is True
 
 
 def test_restart_keeps_the_staircase_position_but_not_the_wait():
@@ -51,8 +53,8 @@ def test_restart_keeps_the_staircase_position_but_not_the_wait():
 
 def test_limit_first_reached_only_once_a_day():
     entry = {"day": DAY, "count": 6, "last": 0.0}
-    assert wb.limit_first_reached(entry, wb.QUOTA, DAY) is True
-    assert wb.limit_first_reached({**entry, "limit_notified": DAY}, wb.QUOTA, DAY) is False
+    assert wb.limit_first_reached(entry, QUOTA, DAY) is True
+    assert wb.limit_first_reached({**entry, "limit_notified": DAY}, QUOTA, DAY) is False
     assert wb.limit_first_reached(entry, wb.RETURN_STAIRCASE, DAY) is False
 
 
@@ -84,7 +86,7 @@ def test_after_success_removes_only_an_existing_key(make_store, tmp_path, monkey
 
 
 @pytest.mark.parametrize(("rule", "erfolg", "zaehlung"), [
-    (wb.QUOTA, True, 1), (wb.QUOTA, False, 1),
+    (QUOTA, True, 1), (QUOTA, False, 1),
     (wb.enforce_rule(4), True, 1), (wb.enforce_rule(4), False, 1),
     (wb.RETRY_QUOTA, True, 0), (wb.RETRY_QUOTA, False, 1),
     (wb.RETURN_STAIRCASE, True, 0), (wb.RETURN_STAIRCASE, False, 1),
@@ -104,14 +106,18 @@ def test_a_success_resets_only_rules_that_count_failures(make_store):
     wb.after_failure(store, "k", wb.RETRY_QUOTA, 1.0)
     wb.after_success(store, "k", wb.RETRY_QUOTA)
     assert wb.get(store, "k") is None
-    wb.before_attempt(store, "e", wb.QUOTA, 1.0)
-    wb.after_success(store, "e", wb.QUOTA)
+    wb.before_attempt(store, "e", QUOTA, 1.0)
+    wb.after_success(store, "e", QUOTA)
     assert wb.count_today(wb.get(store, "e"), wb.today()) == 1
 
 
 def test_an_explicit_day_is_used_for_counting(make_store):
     store = make_store()
-    wb.before_attempt(store, "k", wb.QUOTA, 1.0, day=DAY)
+    wb.before_attempt(store, "k", QUOTA, 1.0, day=DAY)
     wb.after_failure(store, "f", wb.RETRY_QUOTA, 1.0, day=DAY)
     assert wb.get(store, "k") == {"day": DAY, "count": 1, "last": 1.0}
     assert wb.get(store, "f") == {"day": DAY, "count": 1, "last": 1.0}
+
+
+def test_enforce_rule_with_the_standard_limit_is_every_attempt_one_per_interval_six_per_day():
+    assert (QUOTA.every_attempt, QUOTA.waits, QUOTA.max_per_day) == (True, (wb.INTERVAL_SECONDS,), 6)

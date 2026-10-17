@@ -26,8 +26,6 @@ class Rule:
     max_per_day: int | None  # None: kein Tageslimit
 
 
-# Durchsetzung (bestehende Regel): jeder Versuch, 1/30 min, 6/Tag.
-QUOTA = Rule(every_attempt=True, waits=(INTERVAL_SECONDS,), max_per_day=MAX_PER_DAY)
 # Boost-Start und Zonenvorbereitung: nur Fehlschlaege, 1/30 min, 6/Tag. Ein Erfolg kostet nichts.
 RETRY_QUOTA = Rule(every_attempt=False, waits=(INTERVAL_SECONDS,), max_per_day=MAX_PER_DAY)
 # Rueckkehr zu den Regelwerten (Boost-Ende, Wiederherstellung): 5/15/30 min, dann alle 30 min, nie
@@ -67,7 +65,7 @@ def counted(entry: dict | None, now: float, day: str) -> dict:
 
 
 def enforce_rule(per_day: int) -> Rule:
-    """Durchsetzungs-Regel mit dem Tageslimit des Bindings (BindingDescription.enforce_per_day); 6 ergibt QUOTA."""
+    """Durchsetzungs-Regel mit dem Tageslimit des Bindings (BindingDescription.enforce_per_day)."""
     return Rule(every_attempt=True, waits=(INTERVAL_SECONDS,), max_per_day=per_day)
 
 

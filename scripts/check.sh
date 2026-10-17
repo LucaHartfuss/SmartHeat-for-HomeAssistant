@@ -49,7 +49,8 @@ pyright_in() { (cd "$1" && "$PY" -m ruff check . && "$PY" -m pyright --pythonpat
 # offenen Vertragsbefunden (vulture_vertragsbefunde.py). Kern und Gateway in einem Lauf: das Gateway baut auf dem Kern
 # auf, der Kern ruft dessen Treiber- und Host-Methoden ueber Protocols, das Gateway liest Vertragsnamen des Kerns.
 # Grenze: vulture vergleicht nur Namen. Ein gleich geschriebener Name im anderen Paket verdeckt toten Code (Beispiele
-# write_budget.QUOTA und QuotaGuard.used); solche Faelle stehen trotzdem begruendet in den Ausnahmen.
+# bis Stufe 4 write_budget.QUOTA neben dem QUOTA des ViCare-Treibers); solche Faelle stehen trotzdem begruendet in
+# den Ausnahmen.
 vulture_in() { (cd "$1" && shift && "$PY" -m vulture "$@" --min-confidence 60); }
 toter_code() {
   vulture_in heizungsbruecke src ../gateway/src vulture_ausnahmen.py vulture_vertragsbefunde.py \
