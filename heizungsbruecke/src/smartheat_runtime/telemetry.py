@@ -23,7 +23,7 @@ KPI_NUMERIC_ROLES = (
 # Text-Rollen (Rohzustand, ohne Zahlumwandlung): Betriebsart und Status des Waermeerzeugers.
 KPI_TEXT_ROLES = ("operating_mode", "generator_state")
 #: Liefer-Signale fuer die Waermelieferung auf dem Server (Audit 4 P-B). Gegenstueck: heizungsserver
-#: regelung/history.TELEMETRY_DELIVERY_FIELDS (Contract-Check "Lieferrollen").
+#: regelung/history.TELEMETRY_DELIVERY_FIELDS (Contract-Check (Vertrag V1b)).
 DELIVERY_ROLES = ("generator_hours", "generator_starts", "generator_state")
 KPI_ENERGY_ROLES = tuple(f"energy_{kanal}" for kanal in ENERGIE_KANAELE)
 
@@ -31,11 +31,11 @@ KPI_ENERGY_ROLES = tuple(f"energy_{kanal}" for kanal in ENERGIE_KANAELE)
 _EINHEIT_GEWARNT: dict[str, str] = {}
 
 # Regel-Telemetrie fuer den Regelkern (TP11). Gegenstueck: heizungsserver
-# regelung/history.TELEMETRY_REGULATION_FIELDS (Contract-Check 22).
+# regelung/history.TELEMETRY_REGULATION_FIELDS (Contract-Check (Vertrag V1b)).
 REGULATION_FIELDS = ("room_target", "outdoor_temp", "flow_setpoint")
 
 #: Anstehender Datenfehler fuer den Health-Check des Servers (nur solange einer besteht).
-#: Feldname und Quellen prueft der Contract-Check 21 gegen heizungsserver.regelung.history.
+#: Feldname und Quellen prueft ein Contract-Check (Vertrag V1b) gegen heizungsserver.regelung.history.
 DATENFEHLER_KEY = "datenfehler"
 
 

@@ -23,8 +23,8 @@ OVERRIDE = {"levers": {"curve": 1.3, "room_setpoint": 24.5, "heat_limit": 16.0},
 
 
 def test_runtime_schema_and_heartbeat():
-    # Event-Name, Felder, Hinweis-Felder und Wertemengen (status, boost, abo, datenfehler.art) prueft Contract-Check 14
-    # gegen die Integration; Schema der Laufzeit und Lebenszeichen-Takt stehen in keinem Contract-Check.
+    # Event-Name, Felder, Hinweis-Felder und Wertemengen (status, boost, abo, datenfehler.art) prueft ein Contract-Check
+    # (Vertrag V5) gegen die Integration; Schema der Laufzeit und Lebenszeichen-Takt stehen in keinem Contract-Check.
     assert (status.EVENT_SCHEMA, status.HEARTBEAT_SECONDS) == (2, 300)
 
 

@@ -59,7 +59,9 @@ verfolgt. Release-Ablauf, CI-Jobs, Token: `../docs/ci-cd-runbook.md`.
   ohne dass ein Plan es verlangt: ändert er sich, ist der Code falsch, nicht die Datei.
 - **Verträge:** Gerätevertrag `heizungsbruecke/src/smartheat_device/wire.py` (wörtliche Kopie des Vertragsteils aus
   `HeizungssteuerungServer/src/heizungsserver/geraete/device_protocol.py`, Test `test_device_wire.py`) ↔
-  `../tools/contracts/geraet_v1.json` nur gemeinsam ändern (Check 49; Topics gegen die IoT-Policies Check 50); Status-Event, Hebel-, Rollen- und Optionsnamen, Ports und
+  `../tools/contracts/geraet_v1.json` nur gemeinsam ändern (Contract-Check, Vertrag V1, Liste: `python3
+  ../tools/contract_check.py --liste`; Topics gegen die IoT-Policies: Server-Test `tests/test_vertrag_im_server.py`);
+  Status-Event, Hebel-, Rollen- und Optionsnamen, Ports und
   Sicherheitswert-Schlüssel prüft `python3 ../tools/contract_check.py` (vor jedem Release grün; Übersicht der Verträge `../docs/module/README.md`).
   Das Status-Ereignis des Add-ons hat Schema 3 (`geraet_status.EVENT_FIELDS`, Laufzeit-Felder aus
   `smartheat_runtime/status.py` plus Gerät); die Felder der Supervisor-Discovery (`discovery.FIELDS`) und das Ereignis

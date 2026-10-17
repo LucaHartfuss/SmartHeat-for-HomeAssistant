@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 SNAPSHOT_SCHEMA_VERSION = 4
 
 # Durchsetzen (smartheat_core.enforce): zurueckgesetzter Eingriff, nur KPI. Muss zu messages.MANUAL_OVERRIDE_* auf dem
-# Server passen (Contract-Check 16).
+# Server passen (Contract-Check (Vertrag V1b)); der Server liest die Felder ueber seine MANUAL_OVERRIDE_FIELDS.
 MANUAL_OVERRIDE_KEY = "manual_override"
 MANUAL_OVERRIDE_FIELDS = ("levers", "erkannt")
 

@@ -33,7 +33,7 @@ PLANT_RANGES = {
 GENERATOR = {"vaillant_vrc720": "gastherme", "viessmann_vicare": "gastherme", "weishaupt_wwp": "waermepumpe",
              "weishaupt_wwp_basis": "waermepumpe"}
 # Schrittweiten der simulierten Anlage je Hebelsatz (Erkennung ohne Konfiguration); gleich den Bindungsparametern des
-# Servers (Contract-Check 40).
+# Servers (Contract-Check (Vertrag V4)).
 SIM_SCHRITTE = {
     "vaillant_vrc720": {"curve": 0.05, "room_setpoint": 0.5, "heat_limit": 0.1, "min_flow": 0.1},
     "weishaupt_wwp": {"curve": 0.05, "room_setpoint": 0.5, "heat_limit": 0.5},

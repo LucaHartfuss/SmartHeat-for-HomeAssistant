@@ -58,8 +58,17 @@ logger = logging.getLogger(__name__)
 #: Grund eines Rueckwegs ohne Ablehnung: der Server war waehrend der ganzen Gesundheitspruefung nicht erreichbar, die
 #: Version wird erneut versucht (G3-Restpunkt; der Server zeigt ihn dem Betreiber als "wird erneut versucht").
 RETRY_REASON = "server_unerreichbar"
-REASONS = ("manifest_ungueltig", "signatur_ungueltig", "updater_zu_alt", "version_zu_alt",
-           "start_fehlgeschlagen", "ungesund", RETRY_REASON)
+#: Gruende einer Ablehnung oder eines Rueckwegs (wire.SOFTWARE_ERRORS des Vertrags, test_vertrag_im_host.py). Der
+#: Updater meldet nur diese Namen, nie ein Literal (A5-85,
+#: test_updater.py::test_der_updater_meldet_nur_gruende_aus_reasons).
+MANIFEST_UNGUELTIG = "manifest_ungueltig"
+SIGNATUR_UNGUELTIG = "signatur_ungueltig"
+UPDATER_ZU_ALT = "updater_zu_alt"
+VERSION_ZU_ALT = "version_zu_alt"
+START_FEHLGESCHLAGEN = "start_fehlgeschlagen"
+UNGESUND = "ungesund"
+REASONS = (MANIFEST_UNGUELTIG, SIGNATUR_UNGUELTIG, UPDATER_ZU_ALT, VERSION_ZU_ALT, START_FEHLGESCHLAGEN, UNGESUND,
+           RETRY_REASON)
 HEALTH_SECONDS = 600
 HEALTH_POLL_SECONDS = 10
 HEALTH_CAP_SECONDS = 3600  # Gesamtgrenze der Gesundheitspruefung, wenn die Frist wegen Unerreichbarkeit ruht
@@ -225,7 +234,7 @@ class Updater:
             self._compose.up(version)
         except bundles.ComposeError as error:
             logger.error("Start von %s gescheitert: %s", version, error)
-            self._rollback(state, version, "start_fehlgeschlagen")
+            self._rollback(state, version, START_FEHLGESCHLAGEN)
             return
         self._settle(state, version)
 
@@ -249,7 +258,7 @@ class Updater:
             return "aktuell"
         if _older_or_equal(version, state.current):
             logger.error("Soll-Version %s ist nicht neuer als %s, abgelehnt (Downgrade-Schutz)", version, state.current)
-            self._reject(state, version, "version_zu_alt")
+            self._reject(state, version, VERSION_ZU_ALT)
             return "abgelehnt"
         try:
             files = self._download(desired, version)
@@ -276,7 +285,7 @@ class Updater:
             self._compose.up(version)
         except bundles.ComposeError as error:
             logger.error("Start von %s gescheitert: %s", version, error)
-            return "zurueckgerollt" if self._rollback(state, version, "start_fehlgeschlagen") else "vorlaeufig"
+            return "zurueckgerollt" if self._rollback(state, version, START_FEHLGESCHLAGEN) else "vorlaeufig"
         return self._settle(state, version)
 
     def _settle(self, state: State, version: str) -> str:
@@ -289,7 +298,7 @@ class Updater:
             logger.error("Server nach %d s nicht erreichbar, %s wird spaeter erneut versucht", HEALTH_CAP_SECONDS,
                          version)
         if outcome == _UNHEALTHY:
-            done = self._rollback(state, version, "ungesund")
+            done = self._rollback(state, version, UNGESUND)
         else:
             done = self._rollback(state, version, RETRY_REASON, reject=False)
         return "zurueckgerollt" if done else "vorlaeufig"
@@ -300,44 +309,44 @@ class Updater:
         """Prueft und laedt; liefert die Bundle-Dateien plus Manifest und Signatur (alles fuer bundles/<version>/)."""
         url, expected_sha, signature = (desired.get(key) for key in OFFER_KEYS)
         if not isinstance(url, str):
-            raise _Refused("manifest_ungueltig", "Manifest-URL fehlt oder ist kein Text")
+            raise _Refused(MANIFEST_UNGUELTIG, "Manifest-URL fehlt oder ist kein Text")
         try:
             parts = urllib.parse.urlsplit(url)
         except ValueError:
-            raise _Refused("manifest_ungueltig", f"Manifest-URL unlesbar: {url!r}") from None
+            raise _Refused(MANIFEST_UNGUELTIG, f"Manifest-URL unlesbar: {url!r}") from None
         if parts.scheme != "https" and not (self._allow_http and parts.scheme == "http"):
-            raise _Refused("manifest_ungueltig", f"Manifest-URL muss https sein: {url}")
+            raise _Refused(MANIFEST_UNGUELTIG, f"Manifest-URL muss https sein: {url}")
         if not parts.hostname:
-            raise _Refused("manifest_ungueltig", f"Manifest-URL ohne Host: {url}")
+            raise _Refused(MANIFEST_UNGUELTIG, f"Manifest-URL ohne Host: {url}")
         if not (isinstance(expected_sha, str) and len(expected_sha) == 64):
-            raise _Refused("manifest_ungueltig", "manifest_sha256 fehlt oder ist kein SHA-256")
+            raise _Refused(MANIFEST_UNGUELTIG, "manifest_sha256 fehlt oder ist kein SHA-256")
         if not isinstance(signature, str):
-            raise _Refused("signatur_ungueltig", "Signatur fehlt oder ist kein Text")
+            raise _Refused(SIGNATUR_UNGUELTIG, "Signatur fehlt oder ist kein Text")
         raw = self._fetch(url, MAX_MANIFEST_BYTES)
         if hashlib.sha256(raw).hexdigest() != expected_sha.lower():
-            raise _Refused("manifest_ungueltig", "SHA-256 des Manifests passt nicht")
+            raise _Refused(MANIFEST_UNGUELTIG, "SHA-256 des Manifests passt nicht")
         try:
             minisign.verify(minisign.load_public_key(self._public_key_text), raw, signature)
         except minisign.SignatureError as error:
-            raise _Refused("signatur_ungueltig", str(error)) from None
+            raise _Refused(SIGNATUR_UNGUELTIG, str(error)) from None
         try:
             manifest = bundles.parse_manifest(raw)
         except bundles.ManifestError as error:
-            raise _Refused("manifest_ungueltig", str(error)) from None
+            raise _Refused(MANIFEST_UNGUELTIG, str(error)) from None
         if manifest.version != version:
-            raise _Refused("manifest_ungueltig", f"Manifest nennt {manifest.version}, Soll ist {version}")
+            raise _Refused(MANIFEST_UNGUELTIG, f"Manifest nennt {manifest.version}, Soll ist {version}")
         if bundles.parse_version(manifest.min_updater_version) > bundles.parse_version(self._version):
-            raise _Refused("updater_zu_alt", f"Bundle verlangt Updater {manifest.min_updater_version}")
+            raise _Refused(UPDATER_ZU_ALT, f"Bundle verlangt Updater {manifest.min_updater_version}")
         files = {}
         for name, sha in manifest.files.items():
             data = self._fetch(urllib.parse.urljoin(url, name), MAX_FILE_BYTES)
             if hashlib.sha256(data).hexdigest() != sha:
-                raise _Refused("manifest_ungueltig", f"SHA-256 von {name} passt nicht")
+                raise _Refused(MANIFEST_UNGUELTIG, f"SHA-256 von {name} passt nicht")
             files[name] = data
         try:
             bundles.check_compose(files["docker-compose.yml"].decode("utf-8"))
         except (bundles.ManifestError, UnicodeDecodeError) as error:
-            raise _Refused("manifest_ungueltig", str(error)) from None
+            raise _Refused(MANIFEST_UNGUELTIG, str(error)) from None
         files[bundles.MANIFEST_NAME] = raw
         files[bundles.SIGNATURE_NAME] = signature.encode()
         return files
