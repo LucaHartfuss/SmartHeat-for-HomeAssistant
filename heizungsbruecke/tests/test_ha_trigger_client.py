@@ -3,6 +3,8 @@ import threading
 import time
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from heizungsbruecke.ha_trigger_client import HaTriggerClient
 
 
@@ -68,6 +70,7 @@ def _patch_ws_app(captured):
     return patch("heizungsbruecke.ha_trigger_client.websocket.WebSocketApp", side_effect=_factory)
 
 
+@pytest.mark.ws
 def test_auth_handshake_sends_auth_then_subscribes_with_full_trigger_list():
     captured = {}
     triggers = [
@@ -98,6 +101,7 @@ def test_auth_handshake_sends_auth_then_subscribes_with_full_trigger_list():
         _stop_and_join(client)
 
 
+@pytest.mark.ws
 def test_connected_becomes_true_only_after_subscribe_result_success():
     captured = {}
     with _patch_ws_app(captured):
@@ -120,6 +124,7 @@ def test_connected_becomes_true_only_after_subscribe_result_success():
         _stop_and_join(client)
 
 
+@pytest.mark.ws
 def test_connected_becomes_false_after_on_close():
     captured = {}
     with _patch_ws_app(captured):
@@ -142,6 +147,7 @@ def test_connected_becomes_false_after_on_close():
         _stop_and_join(client)
 
 
+@pytest.mark.ws
 def test_dispatches_event_trigger_payload_to_callback():
     captured = {}
     on_trigger_event = MagicMock()
@@ -170,6 +176,7 @@ def test_dispatches_event_trigger_payload_to_callback():
         _stop_and_join(client)
 
 
+@pytest.mark.ws
 def test_malformed_event_payload_is_ignored_without_crashing():
     captured = {}
     on_trigger_event = MagicMock()
@@ -190,6 +197,7 @@ def test_malformed_event_payload_is_ignored_without_crashing():
         _stop_and_join(client)
 
 
+@pytest.mark.ws
 def test_callback_exception_does_not_crash_the_dispatch_thread():
     captured = {}
     on_trigger_event = MagicMock(side_effect=ValueError("boom"))
@@ -247,6 +255,7 @@ def test_stop_closes_the_current_websocket_connection():
         assert not client._thread.is_alive()
 
 
+@pytest.mark.ws
 def test_on_connected_callback_fires_when_subscribe_result_succeeds():
     """Re-Review final-review-report.md: der einzig verlaessliche Hook-Punkt fuer einen
     Reconnect/Erstverbindung ist `_handle_subscribe_result`, nicht ein von aussen per
@@ -311,6 +320,7 @@ def test_on_connected_callback_fires_again_on_a_second_successful_subscribe():
     assert on_connected.call_count == 2
 
 
+@pytest.mark.ws
 def test_on_connected_callback_not_called_when_subscribe_fails():
     captured = {}
     on_connected = MagicMock()
@@ -334,6 +344,7 @@ def test_on_connected_callback_not_called_when_subscribe_fails():
         _stop_and_join(client)
 
 
+@pytest.mark.ws
 def test_on_connected_callback_exception_does_not_crash_the_ws_thread():
     """Mirrors test_callback_exception_does_not_crash_the_dispatch_thread above --
     `on_connected` is invoked from the same background WS-callback thread as
@@ -424,6 +435,7 @@ def test_successful_subscribe_resets_attempt_counter():
     assert client._attempt == 0
 
 
+@pytest.mark.ws
 def test_connection_is_kept_alive_with_ws_pings():
     captured = {}
     with _patch_ws_app(captured):
