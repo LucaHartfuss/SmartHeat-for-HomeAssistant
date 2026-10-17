@@ -12,6 +12,11 @@ target-version = "py312"
 select = ["E", "F", "W", "I", "B", "UP", "SIM"]
 ignore = ["E501"]
 
+[tool.ruff.lint.per-file-ignores]
+# vulture-Whitelist-Format: nackte Ausdruecke auf dem undefinierten Namen _ (scripts/check.sh, Schritt lint).
+"vulture_ausnahmen.py" = ["B018", "F821"]
+"vulture_vertragsbefunde.py" = ["B018", "F821"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["smartheat_host", "smartheat_gateway"]
 

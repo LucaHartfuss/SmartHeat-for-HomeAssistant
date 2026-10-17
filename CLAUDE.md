@@ -1,10 +1,9 @@
 # SmartHeat-for-HomeAssistant — Repo-Kontext
 
 Add-on-Repository: `heizungsbruecke` (ab 1.0.0 ein **SmartHeat-Gerät** für Home Assistant, wie das Gateway auf dem
-Gerätekern: Snapshot und Telemetrie, Boost, Notbetrieb, lokale Sicherheitswerte; `client1` läuft bis Phase 1 Schritt 3 noch
-auf 0.36 im Optionsmodus) und `gateway/` (SmartHeat-Gateway ohne Home Assistant, **kein** Add-on). Das Add-on läuft auf
-jedem Kunden-Pi inkl. `client1`: Änderungen wirken real, sobald sie released sind. Die Sicherheitsregeln aus
-`../CLAUDE.md` gelten unverändert.
+Gerätekern: Snapshot und Telemetrie, Boost, Notbetrieb, lokale Sicherheitswerte) und `gateway/` (SmartHeat-Gateway
+ohne Home Assistant, **kein** Add-on). Das Add-on läuft auf jedem Kunden-Pi inkl. `client1`: Änderungen wirken real,
+sobald sie released sind. Die Sicherheitsregeln aus `../CLAUDE.md` gelten unverändert.
 
 ## Struktur und Module
 
@@ -28,16 +27,22 @@ Paket, Drittpakete je Datei, das Gateway-Image kopiert jedes Kernpaket); dazu `t
 ## Prüfen und Branches
 
 ```
-scripts/check.sh          # lint, test, contract (--only <schritt> für einzelne Schritte)
+scripts/check.sh          # lint (mit vulture), test, contract (--only <schritt> für einzelne Schritte)
 scripts/check.sh --full   # zusätzlich die Docker-Schritte (Add-on-Image bauen und reproduzierbar, Gateway-Image, Installer, Updater, Erststart)
 ```
 `scripts/check.sh` prüft und testet `heizungsbruecke/`, `gateway/`, `gateway/host/` **und** `gateway/release/`; `--full` baut zusätzlich das Gateway-Image
 (lokal nur amd64) und fährt den Compose-Lauf mit dem Dev-Overlay (`tests/test_gateway_docker_build.sh`; dabei Bootstrap gegen einen Fake, MQTT gegen einen Fake-Broker mit Client-Zertifikat, Fälschungsproben und sauberes Trennen, Bus-Anmeldung und ACL; die statische
 Prüfung der Compose-Datei steckt in `gateway/tests/test_compose.py`). Der Image-Scan `tests/test_image_scan.sh` (`trivy` in einem gepinnten Container über Add-on-Image, Gateway-Image und die Fremd-Images der Compose-Datei; CRITICAL mit Korrektur ist rot, Ausnahmen begründet in `.trivyignore`; braucht Netz, Datenbank im Docker-Volume `smartheat-trivy-cache`) läuft im selben Schritt. Drei weitere Docker-Skripte gehören zum Gateway: `tests/test_gateway_install.sh` (Host-Installer zweimal in `debian:trixie`, Plattform per `SHG_INSTALL_PLATFORM`, die CI fährt zusätzlich arm64 im Job `install-arm64`), `tests/test_gateway_updater.sh` (Updater gegen eine lokale Registry mit drei signierten Test-Bundles, Soll-Version als Konfigurationsdokument über den Fake-Broker, Rückweg und Manipulation; Laufzeit rund 6 min, steuert Compose über den Docker-Socket des Hosts) und `tests/test_gateway_firstboot.sh` (Export wie im Image-Bau, Laden ohne Netz in einem Docker mit containerd-Speicher, Start per Index-Digest). Der Image-Bau selbst (`gateway/image/make_image.sh`) braucht einen arm64-Host und gehört nicht zu `check.sh`. Im Dev-Root fährt `scripts/check.sh --only e2e --full`
 zusätzlich die Gateway-Modi des Ende-zu-Ende-Tests.
+Toter Code: `lint` ruft `vulture --min-confidence 60` je Paket (Kern und Gateway in einem Lauf, `gateway/host`,
+`gateway/release`); Ausnahmen mit Grund je Zeile in `vulture_ausnahmen.py` des Pakets, Vertragsnamen nur mit
+Contract-Check- oder Pin-Leser als offene Befunde in `vulture_vertragsbefunde.py` (`S3S8b-Vertragsleser`, Dev-Root
+`docs/offene-punkte.md`). Ein neuer Treffer wird gelöscht oder mit Grund eingetragen.
 Direkter Aufruf bleibt möglich: `cd heizungsbruecke && pip install -e ".[dev]" && pytest` bzw.
 `cd gateway && pip install -e ".[dev]" && pytest` (`pyproject.toml`: `testpaths = ["tests"]`, `pythonpath = ["src"]`). Testzahl: siehe CI (Job
-`test`). Shell-Integrationstests liegen im Repo-Root unter `tests/` (`run_all.sh`).
+`test`). Shell-Integrationstests liegen im Repo-Root unter `tests/`; die Docker-Skripte ruft der Schritt `docker`
+von `scripts/check.sh --full` auf (`run_all.sh` und `test_heizungsbruecke_pytest.sh` haben keinen Aufrufer mehr,
+`S3S8b-Altskripte`).
 
 Feature-Branches (`feat/…`/`fix/…`) zweigen von `develop` ab und werden `--no-ff` nach `develop`
 gemergt — nie direkt nach `main`. `main` bewegt sich nur per Release-Tag

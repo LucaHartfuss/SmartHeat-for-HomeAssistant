@@ -131,11 +131,6 @@ def _schreibziel_rollen(b: HaBindung) -> list[tuple[str, str]]:
     return [(rolle, b.rollen[rolle]) for rolle in rollen if b.rollen.get(rolle)]
 
 
-def schreibziele(b: HaBindung) -> list[str]:
-    """Jede Rolle der Bindung, die die Regelung schreibt (siehe _schreibziel_rollen)."""
-    return [ref for _, ref in _schreibziel_rollen(b)]
-
-
 def _lokal(b: HaBindung) -> Befund | None:
     """Der Teil ohne HA: Pflichtrollen und Entity-Art der Schreibziele."""
     missing = [rolle for rolle in PFLICHT_ROLLEN[b.hebelsatz] if not b.rollen.get(rolle)]

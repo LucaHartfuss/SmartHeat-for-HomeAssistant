@@ -41,9 +41,6 @@ class RuntimeChannel:
         if not self._stopped:
             self._publish("telemetry", payload)
 
-    def subscribe_setpoints(self, on_message) -> None:
-        """Ohne Wirkung: die Antworten kommen ueber setpoints() vom Geraet."""
-
     def loop_start(self) -> None:
         """Ohne Wirkung: den Link startet das Geraet."""
 
