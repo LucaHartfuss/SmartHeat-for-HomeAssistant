@@ -34,9 +34,10 @@ MSYS_NO_PATHCONV=1 docker run -d --name "$CONTAINER_NAME" \
   -v "$DATA_DIR_HOST:/data:Z" "$IMAGE_TAG" >/dev/null \
   || { echo "FAIL: container start"; exit 1; }
 
-# Seit TP7 (Ruhezustand statt Exit, siehe smartheat_runtime/app.py::_idle/IdleBridge, IDLE_NOT_CONFIGURED)
-# beendet sich der Prozess ohne Einrichtung nicht: er bleibt im Ruhezustand "nicht_eingerichtet" am Leben, weil der
-# Supervisor-Watchdog einen Exit 0 ohnehin sofort neu starten wuerde (siehe SmartHeat-for-HomeAssistant/CLAUDE.md).
+# Ruhezustand statt Exit (smartheat_runtime/app.py::_idle/IdleBridge, IDLE_NOT_CONFIGURED): ohne Einrichtung
+# beendet sich der Prozess nicht, er bleibt im Ruhezustand "nicht_eingerichtet" am Leben, weil der Supervisor ein
+# sauber beendetes Add-on nicht zuverlaessig neu startet (heizungsbruecke/__main__.py; Dev-Root docs/module/ha-host.md,
+# "Start, Neustart, Aufraeumen").
 # Ab 1.0.0 laeuft daneben der Geraetekern; SMARTHEAT_BOOTSTRAP_URL zeigt auf eine nicht erreichbare Adresse, damit
 # der Test sich nie beim Produktionsdienst anmeldet. Erwartet wird: der Container laeuft nach kurzer Wartezeit noch,
 # hat seine Geraete-Identitaet angelegt, und das Log zeigt den Ruhezustand-Hinweis.

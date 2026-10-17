@@ -2,8 +2,8 @@
 HaTriggerClient. Verifiziert die undokumentierte `subscribe_trigger`-WS-Schnittstelle
 end-to-end -- Payload-Form fuer state-/time-Trigger, Mehrfach-Trigger in einer
 Subscription, und dass HaTriggerClient tatsaechlich `connected` wird und Events an
-seinen Callback durchreicht. Siehe docs/superpowers/specs/2026-09-21-heizungsbruecke-
-eventgetriebene-trigger-design.md, Abschnitt "Testbarkeit", fuer den Hintergrund.
+seinen Callback durchreicht. Hintergrund: Dev-Root
+docs/archiv/superpowers/specs/2026-09-21-heizungsbruecke-eventgetriebene-trigger-design.md, Abschnitt "Testbarkeit".
 
 Standardmaessig uebersprungen (braucht Docker, dauert ~30-90s Containerstart):
 mit RUN_REAL_HA_TESTS=1 aktivieren, z.B.:
