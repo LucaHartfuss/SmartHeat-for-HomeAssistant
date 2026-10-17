@@ -10,6 +10,7 @@ from heizungsbruecke.ha_binding import HaPlantBinding
 from smartheat_core import enforce, wallclock, write_budget
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import LocalSafety
+from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_runtime.delivery import SOURCE_LOCAL, DataFault, DeliveryState
 from smartheat_runtime.notifier import STATE_OK, Notifier
 from smartheat_runtime.roles import ChannelManifest
@@ -145,6 +146,13 @@ def test_no_deviation_no_write(make_store, clock):
     assert rt.signals.writes == []
 
 
+@pytest.mark.parametrize("huge", [10**400, -10**400], ids=["gross-positiv", "gross-negativ"])
+def test_integer_beyond_float_range_from_ha_is_unreadable_not_an_error(make_store, clock, huge):
+    rt = _rt(make_store, clock, Ha(curve=huge))
+    _rounds(rt)
+    assert rt.signals.writes == []
+
+
 def test_manual_curve_change_is_written_back_and_reported(make_store, clock):
     rt = _rt(make_store, clock, Ha(curve=1.3))
     _rounds(rt)
@@ -228,7 +236,7 @@ def test_record_with_an_inactive_zone_and_no_restore_point_survives_a_reload(mak
     _rounds(rt)
     override = rt.store.state.manual_override
     assert override is not None
-    assert enforce._is_number(override["levers"]["curve"]) and enforce._is_number(override["levers"]["room_setpoint"])
+    assert ist_endliche_zahl(override["levers"]["curve"]) and ist_endliche_zahl(override["levers"]["room_setpoint"])
     assert override["gemeldet"] == override["signatur"]
 
     # Neustart: derselbe backup.json-Pfad, frisch eingelesen.

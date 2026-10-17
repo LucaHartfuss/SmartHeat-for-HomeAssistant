@@ -37,6 +37,16 @@ def test_start_value_is_written_once(tmp_path, clock):
     assert _store(tmp_path, clock, start=22.0).value == 20.0  # vorhandener Wert gilt
 
 
+@pytest.mark.parametrize("huge", [10**400, -10**400], ids=["gross-positiv", "gross-negativ"])
+def test_stored_value_beyond_float_range_falls_back_to_the_start_value(tmp_path, clock, huge):
+    # die Datei ist JSON: eine riesige Ganzzahl ist ein unbrauchbarer Wert, kein Absturz beim Start
+    path = tmp_path / "runtime" / "room_target.json"
+    path.parent.mkdir()
+    path.write_text(json.dumps({"value": huge, "source": "portal"}))
+
+    assert _store(tmp_path, clock, start=20.0).value == 20.0
+
+
 def test_last_set_value_wins(tmp_path, clock):
     changes = []
     store = _store(tmp_path, clock, changes=changes)

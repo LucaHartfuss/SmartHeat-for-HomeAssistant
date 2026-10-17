@@ -70,6 +70,19 @@ def test_read_snapshot_marks_non_finite_value_invalid(bad):
     assert read.room_target is None
 
 
+@pytest.mark.parametrize("huge", [10**400, -10**400], ids=["gross-positiv", "gross-negativ"])
+def test_read_snapshot_marks_integer_beyond_float_range_invalid(huge):
+    # JSON liefert beliebig grosse Ganzzahlen: wie nicht endlich ungueltig, keine Ausnahme
+    ha_api = MagicMock()
+    ha_api.get_state.side_effect = _states_with({"sensor.room_target": huge, "sensor.heat_limit": huge})
+
+    read = _read(_all_roles_manifest(), ha_api)
+
+    assert read.invalid == ("heat_limit", "room_target")
+    assert read.room_target is None
+    assert "heat_limit" not in read.levers
+
+
 def test_read_snapshot_checks_room_actual_but_never_sends_it():
     ha_api = MagicMock()
     ha_api.get_state.side_effect = _states_with({"sensor.room_actual": ValueError("unavailable")})

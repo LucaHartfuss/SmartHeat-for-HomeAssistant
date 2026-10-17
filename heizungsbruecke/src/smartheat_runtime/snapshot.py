@@ -1,12 +1,11 @@
 """Snapshot fuer den Server (Schema 4, Hersteller-Abstraktion Spec 4.1, Plan 2 P2-8): Raum-Soll und die Hebel des
 Hebelsatzes lesen, pruefen und als eine Nachricht publizieren."""
 import logging
-import math
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TypeGuard
 
 from smartheat_core import wallclock
+from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_runtime.roles import ChannelManifest
 
 logger = logging.getLogger(__name__)
@@ -21,10 +20,6 @@ MANUAL_OVERRIDE_FIELDS = ("levers", "erkannt")
 TARGET_ROLE = "room_target"
 # Nur auf Gueltigkeit geprueft, nicht gesendet: ohne gueltiges room_actual scheitern Comfort- und Notfall-Boost still.
 VALIDITY_ONLY_ROLES = ("room_actual",)
-
-
-def _is_finite_number(value) -> TypeGuard[float]:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
 
 
 @dataclass(frozen=True)
@@ -47,7 +42,7 @@ def _read_role(manifest: ChannelManifest, signals, role: str, invalid: list[str]
         logger.warning("Sensor fuer Rolle '%s' (%s) liefert keinen gueltigen Wert: %s", role, entity_id, error)
         invalid.append(role)
         return None
-    if not _is_finite_number(value):
+    if not ist_endliche_zahl(value):
         logger.warning("Sensor fuer Rolle '%s' (%s) liefert keinen endlichen Wert: %r", role, entity_id, value)
         invalid.append(role)
         return None
@@ -73,7 +68,7 @@ def read_snapshot(manifest: ChannelManifest, signals, binding, known: Mapping[st
                 logger.warning("Hebel '%s' (%s) liefert keinen gueltigen Wert: %s", lever, binding.ref(lever), error)
                 invalid.append(lever)
                 continue
-        if not _is_finite_number(value):
+        if not ist_endliche_zahl(value):
             logger.warning("Hebel '%s' (%s) liefert keinen endlichen Wert: %r", lever, binding.ref(lever), value)
             invalid.append(lever)
             continue
@@ -88,7 +83,7 @@ def read_snapshot(manifest: ChannelManifest, signals, binding, known: Mapping[st
         except Exception as error:
             logger.warning("Nur lesbarer Hebel '%s' (%s) nicht lesbar, wird weggelassen: %s", lever, binding.ref(lever), error)
             continue
-        if not _is_finite_number(value):
+        if not ist_endliche_zahl(value):
             logger.warning("Nur lesbarer Hebel '%s' (%s) nicht endlich, wird weggelassen: %r", lever, binding.ref(lever), value)
             continue
         levers[lever] = value
