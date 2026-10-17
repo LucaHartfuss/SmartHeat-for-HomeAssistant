@@ -18,7 +18,8 @@ _.HINWEIS_FIELDS  # heizungsbruecke/geraet_status.py; contract_check (Hinweis-Fe
 
 # --- Kern und Laufzeit ---
 _.GRUENDE  # smartheat_core/config_check.py; contract_check (Teilmenge von DOKUMENT_ERRORS), test_core_config_check
-_.HINT_CATEGORIES  # smartheat_runtime/notifier.py; Pin wire.HA_HINWEISE (test_core_vertrag_pin), test_notifier
+_.HINT_CATEGORIES  # smartheat_runtime/notifier.py; Pin wire.HA_HINWEISE (test_core_vertrag_pin), test_notifier;
+#                    Loeschkandidat: Duplikat von config_check.HA_HINWEISE, nur Pin-Test
 _.STATUS_VALUES  # smartheat_runtime/status.py; contract_check (Integration, Portal-Statustexte)
 _.BOOST_VALUES  # smartheat_runtime/status.py; contract_check (Integration)
 _.ABO_VALUES  # smartheat_runtime/status.py; contract_check (Integration)
