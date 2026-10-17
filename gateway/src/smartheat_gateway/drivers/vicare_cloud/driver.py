@@ -14,6 +14,7 @@ from collections.abc import Mapping
 import requests
 
 from smartheat_core.binding import BindingDescription
+from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_gateway import safety_warnings
 from smartheat_gateway.drivers.base import (
     CACHE_MAX_POLLS,
@@ -43,7 +44,8 @@ MIN_POLL_SECONDS = 120.0  # Abfrage + Inventur + Schreiben bleiben unter dem Tag
 def _check_parameter(parameter: dict) -> None:
     """Prueft nur vorhandene Schluessel; ein leerer Parameter (Anmeldedaten vergessen) ist erlaubt."""
     poll = parameter.get("poll_seconds")
-    if poll is not None and (isinstance(poll, bool) or not isinstance(poll, int | float) or poll < MIN_POLL_SECONDS):
+    # ist_endliche_zahl: JSON liest NaN, Infinity und beliebig grosse Ganzzahlen; NaN besteht jeden Vergleich mit <
+    if poll is not None and (not ist_endliche_zahl(poll) or poll < MIN_POLL_SECONDS):
         raise ValueError(f"poll_seconds muss mindestens {MIN_POLL_SECONDS:g} s sein")
     for key in ("installation_id", "heizkreis"):
         value = parameter.get(key)

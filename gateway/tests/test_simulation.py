@@ -24,6 +24,15 @@ def _sim(paths, clock, **parameter):
     return driver
 
 
+@pytest.mark.parametrize("wert", [float("nan"), float("inf"), float("-inf"), 10**400, -10**400],
+                         ids=["nan", "inf", "minus-inf", "gross-positiv", "gross-negativ"])
+@pytest.mark.parametrize("schluessel", ["poll_seconds", "settle_delay", "aussen_mittel", "aussen_amplitude", "rauschen",
+                                        "raum_start"])
+def test_a_numeric_parameter_that_is_not_finite_is_refused(paths, clock, schluessel, wert):
+    with pytest.raises(ValueError):
+        create("simulation", {"lever_set": "viessmann_vicare", schluessel: wert}, paths, clock=clock, writer=True)
+
+
 def test_write_is_read_back_and_counted(paths, clock):
     driver = _sim(paths, clock)
     before = driver.physical_writes

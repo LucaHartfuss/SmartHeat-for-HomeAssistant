@@ -54,6 +54,13 @@ def test_parameters_are_checked_by_the_driver(tmp_path):
     assert ViCareCloudDriver({**PARAMETER, "poll_seconds": 120}, Paths(tmp_path)).poll_seconds == 120.0
 
 
+@pytest.mark.parametrize("wert", [float("nan"), float("inf"), float("-inf"), 10**400, -10**400],
+                         ids=["nan", "inf", "minus-inf", "gross-positiv", "gross-negativ"])
+def test_a_poll_interval_that_is_not_a_finite_number_is_refused_like_any_invalid_parameter(tmp_path, wert):
+    with pytest.raises(ValueError):
+        ViCareCloudDriver({**PARAMETER, "poll_seconds": wert}, Paths(tmp_path))
+
+
 def test_the_driver_uses_the_one_binding_of_the_ha_path(env):
     server, driver, paths, clock = env
     assert dict(driver.description.steps) == dict(BINDING.steps)

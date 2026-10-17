@@ -53,6 +53,26 @@ def test_the_driver_check_asks_the_driver_without_creating_a_plant(tmp_path):
     assert not paths.sim_dir.exists()
 
 
+NICHT_ENDLICH = [pytest.param(float("nan"), id="nan"), pytest.param(float("inf"), id="inf"),
+                 pytest.param(float("-inf"), id="minus-inf"), pytest.param(10**400, id="gross-positiv"),
+                 pytest.param(-10**400, id="gross-negativ")]
+
+
+@pytest.mark.parametrize("wert", NICHT_ENDLICH)
+@pytest.mark.parametrize(("treiber", "schluessel"), [
+    ("vicare_cloud", "poll_seconds"),
+    *[("simulation", key) for key in ("poll_seconds", "settle_delay", "aussen_mittel", "aussen_amplitude", "rauschen",
+                                      "raum_start")],
+])
+def test_a_driver_parameter_that_is_not_a_finite_number_is_refused(tmp_path, treiber, schluessel, wert):
+    # JSON liest NaN, Infinity und beliebig grosse Ganzzahlen. NaN liess die Abfrage ohne Pause laufen (Event.wait(NaN)
+    # kehrt sofort zurueck, Cloud-Kontingent leer), Infinity den Abfrage-Thread sterben und nie den Cache altern.
+    paths = Paths(tmp_path)
+    ablehnung = config.treiber_pruefen(paths, {"treiber": {"id": treiber, "parameter": {schluessel: wert}}})
+    assert ablehnung == {"feld": "parameter", "regel": "ungueltig"}
+    assert not paths.sim_dir.exists()
+
+
 def test_sign_off_marker_belongs_to_one_plant(tmp_path):
     paths = Paths(tmp_path)
     assert not config.abgemeldet(paths, konfiguration())

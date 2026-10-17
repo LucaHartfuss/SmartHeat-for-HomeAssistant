@@ -41,6 +41,19 @@ SIM_SCHRITTE = {
     "viessmann_vicare": {"curve": 0.1, "level": 1.0, "room_setpoint": 1.0},
 }
 TAU_SECONDS = 3 * 3600
+# Zahlenparameter: JSON liest NaN, Infinity und beliebig grosse Ganzzahlen; sie liessen die Abfrage ohne Pause laufen
+# (Event.wait(NaN)) bzw. den Abfrage-Thread sterben und verfaelschten das Hausmodell.
+ZAHL_PARAMETER = ("settle_delay", "aussen_mittel", "aussen_amplitude", "rauschen", "poll_seconds", "raum_start")
+
+
+def _pruefe_zahlen(parameter: Mapping) -> None:
+    for key in ZAHL_PARAMETER:
+        try:
+            ok = math.isfinite(float(parameter[key]))
+        except (TypeError, ValueError, OverflowError):
+            ok = False
+        if not ok:
+            raise ValueError(f"{key} muss eine endliche Zahl sein")
 
 
 class SimulationDriver:
@@ -59,6 +72,7 @@ class SimulationDriver:
         self._p = {**DEFAULTS, **(parameter or {})}
         if self._p["lever_set"] not in self.LEVER_SETS:
             raise ValueError("Hebelsatz der Simulation unbekannt")
+        _pruefe_zahlen(self._p)
         self._paths = paths
         self._clock = clock
         self._wall = wall

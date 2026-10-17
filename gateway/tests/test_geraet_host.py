@@ -15,6 +15,7 @@ from smartheat_device import nachrichten, wire
 from smartheat_device.geraet_host_basis import EV_RELOAD
 from smartheat_device.host import Anzeige
 from smartheat_gateway import geraet_host as gh
+from smartheat_gateway.drivers import registry
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.triggers import EV_TARGET_INPUT
 from smartheat_gateway.version import GATEWAY_VERSION
@@ -307,12 +308,20 @@ def test_the_driver_check_and_commands(welt, tmp_path):
     assert {"sign_off", "inventory", "diagnostics"} <= register.kinds
 
 
-def test_an_unexpected_driver_error_becomes_a_rejection(welt, caplog):
-    # float(10**400) im Simulations-Treiber: OverflowError, den config.treiber_pruefen nicht kennt
-    bindung = {"treiber": {"id": "simulation", "parameter": {"lever_set": "viessmann_vicare", "poll_seconds": 10**400}}}
+def test_an_unexpected_driver_error_becomes_a_rejection(welt, caplog, monkeypatch):
+    # Ein Fehler, den config.treiber_pruefen nicht kennt (hier ein OverflowError aus dem Treiber): Ablehnung statt keiner
+    # Antwort; im Log nur der Typname, nie der Text oder die Parameter (Regel 6).
+    class Kaputt:
+        IDENTITY_PARAMETERS = ()
+
+        def __init__(self, parameter, *args, **kwargs):
+            raise OverflowError(f"geheim: {parameter}")
+
+    monkeypatch.setitem(registry.DRIVERS, "simulation", Kaputt)
+    bindung = {"treiber": {"id": "simulation", "parameter": {"lever_set": "viessmann_vicare", "token": "geheim-wert-1"}}}
     details = welt.host.treiber_pruefen(bindung)
     assert details == {"feld": "parameter", "regel": "ungueltig"}
-    assert "OverflowError" in caplog.text and str(10**400)[:20] not in caplog.text
+    assert "OverflowError" in caplog.text and "geheim" not in caplog.text
 
 
 def test_a_failing_led_write_does_not_stop_the_software_results(welt):
