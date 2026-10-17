@@ -428,6 +428,29 @@ def test_erkennung_mit_muell_features_wirft_nicht(tmp_path, clock):
     assert all(f["feature"].startswith(caps.PRAEFIXE) for f in daten["features"])
 
 
+@pytest.mark.parametrize("huge", [10**400, -10**400], ids=["gross-positiv", "gross-negativ"])
+def test_erkennung_ueberspringt_nur_den_heizkreis_mit_einem_wert_ausserhalb_des_zahlenbereichs(tmp_path, clock, huge):
+    features = good_features(circuits=(0, 1))
+    assert features[0]["feature"] == "heating.circuits.0.heating.curve"
+    features[0]["properties"]["slope"]["value"] = huge
+    driver = ViCareCloudDriver({}, Paths(tmp_path), clock=clock, api=_EinGeraet(features))  # type: ignore[arg-type]
+    warnungen = driver.erkennung()["anlagen"][0]["sicherheitswarnungen"]
+    assert set(warnungen) == {"1"}  # Heizkreis 0 wie bei einem nichtnumerischen Wert uebersprungen, 1 bleibt
+
+
+@pytest.mark.parametrize("huge", [10**400, -10**400], ids=["gross-positiv", "gross-negativ"])
+def test_poll_keeps_the_other_roles_when_one_value_is_beyond_float_range(tmp_path, clock, huge):
+    features = good_features()
+    features[0]["properties"]["slope"]["value"] = huge  # Heizkurve des Heizkreises 0
+    features[0]["commands"]["setCurve"]["params"]["shift"]["constraints"]["max"] = huge
+    driver = ViCareCloudDriver(PARAMETER, Paths(tmp_path), clock=clock, api=_EinGeraet(features))  # type: ignore[arg-type]
+    driver.poll_once()
+    assert driver.read_signal("outdoor_temp") == 5 and driver.read("room_setpoint") == 20 and driver.read("level") == 0
+    with pytest.raises(ValueError):  # die Rolle fehlt wie bei einem nichtnumerischen Wert
+        driver.read("curve")
+    assert driver.limits("level") is None and driver.limits("curve") is not None
+
+
 def test_erkennung_einer_grossen_anlage_wird_in_teile_gestueckelt(tmp_path, clock):
     features = good_features(circuits=range(30)) * 6
     driver = ViCareCloudDriver({}, Paths(tmp_path), clock=clock, api=_EinGeraet(features))  # type: ignore[arg-type]

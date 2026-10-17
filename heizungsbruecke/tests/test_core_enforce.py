@@ -148,6 +148,8 @@ def test_no_deviation_no_write(make_store, clock):
 
 @pytest.mark.parametrize("huge", [10**400, -10**400], ids=["gross-positiv", "gross-negativ"])
 def test_integer_beyond_float_range_from_ha_is_unreadable_not_an_error(make_store, clock, huge):
+    # Die echten Adapter liefern keine so grosse Ganzzahl mehr (get_state wirft ValueError); der Test haelt die
+    # Invariante der Pruefung selbst fest.
     rt = _rt(make_store, clock, Ha(curve=huge))
     _rounds(rt)
     assert rt.signals.writes == []

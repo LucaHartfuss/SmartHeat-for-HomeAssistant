@@ -315,6 +315,21 @@ def _melden(welt, mode: str, soll: float) -> None:
     welt.worker.run_pending()
 
 
+@pytest.mark.parametrize("huge", [10**400, -10**400], ids=["gross-positiv", "gross-negativ"])
+def test_back_on_with_a_setpoint_beyond_float_range_still_writes_the_stored_target(mit_geraet, clock, caplog, huge):
+    """Ein Thermostat-Soll als riesige JSON-Ganzzahl ist ein unbrauchbarer Wert wie Text: die Quelle zeigt nichts, das
+    geltende Soll geht trotzdem an das Thermostat (kein OverflowError im Worker, der das Zurueckschreiben verschluckt)."""
+    welt = mit_geraet
+    _melden(welt, "heat", 20.0)
+    _melden(welt, "off", 20.0)
+    welt.worker.post(Event(EV_TARGET_INPUT, {"value": 21.0, "source": "portal"}))
+    welt.worker.run_pending()
+    with caplog.at_level("ERROR"):
+        _melden(welt, "heat", huge)
+    assert _setpoint_writes(welt) == [21.0]
+    assert [r.getMessage() for r in caplog.records if r.name == "smartheat_runtime.worker"] == []
+
+
 def test_back_on_writes_the_stored_target_so_the_stale_setpoint_is_no_wish(mit_geraet, clock):
     """(a) Aus -> Bedienung 21 vom Server -> wieder an: das Thermostat bekommt 21, die Routinemeldung mit dem alten
     Soll 20 ist kein Wunsch und macht die Bedienung nicht rueckgaengig."""
