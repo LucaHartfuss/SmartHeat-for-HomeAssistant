@@ -25,6 +25,7 @@ integration:
   and starts `Heizungsbruecke` and guides you through the setup via the SmartHeat server's setup
   API; the server then delivers the configuration to the add-on.
 - **Add-on first:** in Home Assistant: Settings -> Add-ons -> Add-on Store -> (top right) ->
-  Repositories, add `https://github.com/LucaHartfuss/SmartHeat-for-HomeAssistant`, install and
-  start `Heizungsbruecke`. Home Assistant then reports "SmartHeat" as discovered; with the
+  Repositories, add `https://github.com/LucaHartfuss/SmartHeat-for-HomeAssistant`; the add-on
+  appears in the store under a new "SmartHeat for Home Assistant" section. Install and start
+  `Heizungsbruecke`. Home Assistant then reports "SmartHeat" as discovered; with the
   SmartHeat integration installed (HACS, as above), confirm it to start the same setup dialog.
