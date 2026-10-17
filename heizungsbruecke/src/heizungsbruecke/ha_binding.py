@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 MANUAL_HVAC_MODE = "heat_cool"
 # Darunter ist die Wunschtemperatur kein Sollwert, sondern "Zone inaktiv" (Plan-Praezisierung 11, TP11).
 ROOM_SETPOINT_READ_MIN = 5.0
-# Server-Plausibilitaet fuer room_setpoint (messages.PLAUSIBLE_RANGES, Contract-Check 11): darueber ist der Wert ein
-# Lesefehler und wird nie gemeldet.
+# Server-Plausibilitaet fuer room_setpoint (messages.PLAUSIBLE_RANGES, Contract-Check (Vertrag V1b)): darueber ist der
+# Wert ein Lesefehler und wird nie gemeldet.
 ROOM_SETPOINT_READ_MAX = 35.0
 
 

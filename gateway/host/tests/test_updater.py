@@ -1,8 +1,10 @@
+import ast
 import hashlib
 import http.server
 import json
 import stat
 import threading
+from pathlib import Path
 
 import pytest
 from minisign_helper import keypair, sign
@@ -740,6 +742,26 @@ def test_unreadable_current_version_does_not_block_updates(tmp_path):
 def test_downgrade_reason_is_in_the_fixed_list():
     assert "version_zu_alt" in updater.REASONS
     assert updater.RETRY_REASON in updater.REASONS
+
+
+def test_der_updater_meldet_nur_gruende_aus_reasons():
+    """A5-85: Jeder Grund, den der Updater an _Refused, _reject oder _rollback gibt, ist ein Name aus REASONS oder ein
+    durchgereichter Wert, nie ein Literal; so meldet er nur Gruende, die test_vertrag_im_host.py gegen den Vertrag
+    prueft."""
+    tree = ast.parse(Path(updater.__file__).read_text(encoding="utf-8"))
+    by_value = {name: getattr(updater, name) for name in dir(updater) if name.isupper()}
+    position = {"_Refused": 0, "_reject": 2, "_rollback": 2}
+    seen = set()
+    for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+        name = call.func.attr if isinstance(call.func, ast.Attribute) else getattr(call.func, "id", None)
+        if name not in position:
+            continue
+        reason = call.args[position[name]]
+        assert not isinstance(reason, ast.Constant), f"Zeile {call.lineno}: Grund als Literal {reason.value!r}"
+        if isinstance(reason, ast.Name) and reason.id in by_value:
+            assert by_value[reason.id] in updater.REASONS, f"Zeile {call.lineno}: {reason.id} nicht in REASONS"
+            seen.add(by_value[reason.id])
+    assert seen == set(updater.REASONS)
 
 
 def test_reachability_is_the_broker_not_the_bundle(tmp_path):

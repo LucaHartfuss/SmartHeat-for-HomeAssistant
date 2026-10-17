@@ -1,6 +1,6 @@
 """Stufe 3 S8a-2 (A5-16, Audit 5 p5-ci): Vertragspruefungen, die nur Module des Add-ons (Kern, Laufzeit, HA-Host,
 Geraetekern) lesen. Frueher Checks des Contract-Checks im Dev-Root (tools/contract_check.py): ganz Check 42, dazu der
-Add-on-Teil von 4 und 30; was dort ueber Repo-Grenzen geht, bleibt im Contract-Check. Je Pruefung eine Funktion
+Add-on-Teil von 4, 30 und 56; was dort ueber Repo-Grenzen geht, bleibt im Contract-Check. Je Pruefung eine Funktion
 `_probleme_<nr>` auf den Modulen, ein Test auf den echten Modulen und Gegenproben, die zeigen, dass sie rot werden kann.
 
 Schon strenger als Modul-Tests vorhanden, darum hier ohne Kopie:
@@ -16,7 +16,7 @@ import inspect
 import textwrap
 from types import SimpleNamespace
 
-from heizungsbruecke import dokument
+from heizungsbruecke import discovery, dokument
 from smartheat_core import levers
 from smartheat_device import wire
 from smartheat_runtime import delivery, regulation, roles, ticks
@@ -160,3 +160,13 @@ def test_check_42_meldet_eine_rolle_ausserhalb_der_laufzeit():
 def test_check_42_meldet_einen_hebel_ausserhalb_des_vertrags():
     vertrag = _mit(wire, HA_ROLLEN=tuple(r for r in wire.HA_ROLLEN if r != "min_flow"))
     assert _probleme_42(roles, levers, vertrag) == ["Hebel min_flow ist keine Rolle der HA-Bindung (HA_ROLLEN)"]
+
+
+# --- Check 56 (Add-on-Teil): Zustand vor der Uebernahme ------------------------------------------------------------
+
+
+def test_check_56_der_zustand_vor_der_uebernahme_ist_ein_zustand_des_vertrags():
+    """Spec 5c 1.1: Die Discovery meldet den Code nur im Zustand discovery.NICHT_UEBERNOMMEN; der ist ein Zustand des
+    Geraetevertrags (wire.ZUSTAENDE). Bis Stufe 3 S8a-2 im Contract-Check, dort zusammen mit der Kopie der Integration,
+    die sie nicht liest (A5-85)."""
+    assert discovery.NICHT_UEBERNOMMEN in wire.ZUSTAENDE

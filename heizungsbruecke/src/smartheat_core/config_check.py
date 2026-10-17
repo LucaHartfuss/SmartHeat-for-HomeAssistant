@@ -38,7 +38,8 @@ TAGESTICK = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
 #: Intervalle (nur E2E, Umgebung SMARTHEAT_E2E_INTERVALLE, smartheat_runtime.dokument_config; seit Stufe 3 S8a-1 kein
 #: Dokumentfeld mehr); die Grenzen stehen nur hier, die Laufzeit uebernimmt jeden Wert darin (ein Test startet sie an
 #: beiden Grenzen). Obergrenze Telemetrie (Regel 4, TP12e, AU-022): der Server wertet Luecken ab
-#: samples.MAX_GAP (15 min) als Pause; 600 s lassen Reserve (Contract-Check 33: <= 0,8 x MAX_GAP).
+#: samples.MAX_GAP (15 min) als Pause; 600 s lassen Reserve (Contract-Check (Vertrag Domaene): <= 0,8 x
+#: MAX_GAP).
 PRUEFUNG_S = (1, 3600)
 TELEMETRIE_S = (10, 600)
 INTERVALLE = {"pruefung_s": PRUEFUNG_S, "telemetrie_s": TELEMETRIE_S}

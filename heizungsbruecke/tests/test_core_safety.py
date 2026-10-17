@@ -7,7 +7,7 @@ from smartheat_core.safety import LOCAL_SAFETY, check_invariants, resolve_local_
 
 def test_verteilsysteme_cover_both_distribution_systems():
     """Plan 3b: Spiegel von VERTEILSYSTEME_MIT_LOKALEN_SICHERHEITSWERTEN im Server (dort gepinnt in
-    tests/generic/test_profiles.py; je Profil eine lokale Zeile meldet Contract-Check 40)."""
+    tests/generic/test_profiles.py; je Profil eine lokale Zeile meldet ein Contract-Check (Vertrag V4))."""
     assert verteilsysteme() == ("Fussbodenheizung", "Heizkoerper")
 
 

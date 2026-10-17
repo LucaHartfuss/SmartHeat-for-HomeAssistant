@@ -1,7 +1,7 @@
 """Meldungs-Sink des HA-Hosts (Spec SHG 3.2): Meldungen als Push an die Notify-Dienste und als persistent_notification;
 im Geraete-Pfad (Spec 5c 3) zuerst als up/notifications an den Geraetekern (GeraetUndHaSink, wie das Gateway).
 Das Status-Ereignis `smartheat_status` sendet geraet_status.GeraetStatus. Ereignisname, Titel und Benachrichtigungs-IDs
-sind Cross-Repo-Vertrag mit der Integration (Contract-Check 14)."""
+sind Cross-Repo-Vertrag mit der Integration (Contract-Check (Vertrag V5))."""
 import logging
 import re
 

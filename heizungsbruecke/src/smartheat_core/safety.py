@@ -1,6 +1,6 @@
 """Lokale Sicherheitswerte je (Hebelsatz x Verteilsystem) (Spec 5.3, Regel 4). Bleiben bewusst auf dem Client und
 kommen nie vom Server. Jedes Profil des Servers hat hier eine Zeile, und seine Server-Bereiche liegen innerhalb
-(Contract-Check 40); die Verteilsysteme spiegeln VERTEILSYSTEME_MIT_LOKALEN_SICHERHEITSWERTEN im Server (je Seite
+(Contract-Check (Vertrag V4)); die Verteilsysteme spiegeln VERTEILSYSTEME_MIT_LOKALEN_SICHERHEITSWERTEN im Server (je Seite
 gepinnt: tests/test_core_safety.py, Server tests/generic/test_profiles.py). Fehlen Werte, verweigert der Client den
 Start, bis der Nutzer Werte freigibt."""
 from collections.abc import Mapping
