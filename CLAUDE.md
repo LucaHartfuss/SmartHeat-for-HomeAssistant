@@ -1,112 +1,90 @@
 # SmartHeat-for-HomeAssistant — Repo-Kontext
 
-Add-on-Repository: `heizungsbruecke` (ab 1.0.0 ein **SmartHeat-Gerät** für Home Assistant, wie das Gateway auf dem
-Gerätekern: Snapshot und Telemetrie, Boost, Notbetrieb, lokale Sicherheitswerte) und `gateway/` (SmartHeat-Gateway
-ohne Home Assistant, **kein** Add-on). Das Add-on läuft auf jedem Kunden-Pi inkl. `client1`: Änderungen wirken real,
-sobald sie released sind. Die Sicherheitsregeln aus `../CLAUDE.md` gelten unverändert.
+Add-on-Repository: `heizungsbruecke` (ein **SmartHeat-Gerät** für Home Assistant, wie das Gateway auf dem Gerätekern:
+Snapshot und Telemetrie, Boost, Notbetrieb, lokale Sicherheitswerte) und `gateway/` (SmartHeat-Gateway ohne Home
+Assistant, **kein** Add-on). Das Add-on läuft auf jedem Kunden-Pi inkl. `client1`: Änderungen wirken real, sobald sie
+released sind. Die Sicherheitsregeln aus `../CLAUDE.md` gelten unverändert.
 
 ## Struktur und Module
 
 Dateien, Schnittstellen, Daten, Invarianten (Regel 4, Boost, Notbetrieb) und Tests je Modul stehen in der Modul-Doku des
 Dev-Roots, nicht hier:
 
-- Modulkarte, Verträge V1–V5: `../docs/module/README.md`
+- Modulkarte, Verträge V1–V5, Paketgrenzen („Abhängigkeiten im Geräte-Repo“): `../docs/module/README.md`
 - Client-Kern (`heizungsbruecke/src/smartheat_{core,runtime,device}`, hostfrei; lokale Sicherheit in
-  `smartheat_core/safety.py`, `pipeline.py` ist die einzige Stelle, die Hebel schreibt): `../docs/module/client-kern.md`
+  `smartheat_core/safety.py`, `pipeline.py` ist die einzige Stelle, die Hebel schreibt; Grenztests unter „Tests“):
+  `../docs/module/client-kern.md`
 - Gateway-Host (`gateway/`, kein Add-on): `../docs/module/gateway-host.md`
 - HA-Host (`heizungsbruecke/src/heizungsbruecke/`, Discovery, Bindings) und Integration als Oberfläche:
   `../docs/module/ha-host.md`
-- Überblick, Datenflüsse, Deployment: `../docs/architecture.md`
+- Überblick, Datenflüsse, Deployment: `../docs/architecture.md`; Branches, Releases, Versionen, CI, Pins:
+  `../docs/ci-cd-runbook.md`
 
-Paketgrenzen erzwingt `heizungsbruecke/tests/test_modulgrenzen.py` (Tabellen `ERLAUBT` und `DRITTE`: erlaubte Importe je
-Paket, Drittpakete je Datei, das Gateway-Image kopiert jedes Kernpaket); dazu `test_runtime_purity.py` und
-`test_device_purity.py` (Tenant-IDs, `wire.py`), `gateway/tests/test_boundaries.py` und
-`gateway/host/tests/test_boundaries.py` (Host-Dienste: nur Standardbibliothek, `cryptography`, `paths`, `version` und
-`smartheat_core.dateien`). Wer ein Modul ändert, zieht dessen Datei in `../docs/module/` im selben Merge nach.
-
-## Prüfen und Branches
+## Prüfen
 
 ```
 scripts/check.sh          # lint (mit vulture), test, contract (--only <schritt> für einzelne Schritte)
-scripts/check.sh --full   # zusätzlich die Docker-Schritte (Add-on-Image bauen und reproduzierbar, Gateway-Image, Installer, Updater, Erststart)
+scripts/check.sh --full   # zusätzlich der Schritt docker (Liste: docker_tests in scripts/check.sh)
 ```
-`scripts/check.sh` prüft und testet `heizungsbruecke/`, `gateway/`, `gateway/host/` **und** `gateway/release/`; `--full` baut zusätzlich das Gateway-Image
-(lokal nur amd64) und fährt den Compose-Lauf mit dem Dev-Overlay (`tests/test_gateway_docker_build.sh`; dabei Bootstrap gegen einen Fake, MQTT gegen einen Fake-Broker mit Client-Zertifikat, Fälschungsproben und sauberes Trennen, Bus-Anmeldung und ACL; die statische
-Prüfung der Compose-Datei steckt in `gateway/tests/test_compose.py`). Der Image-Scan `tests/test_image_scan.sh` (`trivy` in einem gepinnten Container über Add-on-Image, Gateway-Image und die Fremd-Images der Compose-Datei; CRITICAL mit Korrektur ist rot, Ausnahmen begründet in `.trivyignore`; braucht Netz, Datenbank im Docker-Volume `smartheat-trivy-cache`) läuft im selben Schritt. Drei weitere Docker-Skripte gehören zum Gateway: `tests/test_gateway_install.sh` (Host-Installer zweimal in `debian:trixie`, Plattform per `SHG_INSTALL_PLATFORM`, die CI fährt zusätzlich arm64 im Job `install-arm64`), `tests/test_gateway_updater.sh` (Updater gegen eine lokale Registry mit drei signierten Test-Bundles, Soll-Version als Konfigurationsdokument über den Fake-Broker, Rückweg und Manipulation; Laufzeit rund 6 min, steuert Compose über den Docker-Socket des Hosts) und `tests/test_gateway_firstboot.sh` (Export wie im Image-Bau, Laden ohne Netz in einem Docker mit containerd-Speicher, Start per Index-Digest). Der Image-Bau selbst (`gateway/image/make_image.sh`) braucht einen arm64-Host und gehört nicht zu `check.sh`. Im Dev-Root fährt `scripts/check.sh --only e2e --full`
-zusätzlich die Gateway-Modi des Ende-zu-Ende-Tests.
-Toter Code: `lint` ruft `vulture --min-confidence 60` je Paket (Kern und Gateway in einem Lauf, `gateway/host`,
-`gateway/release`); Ausnahmen mit Grund je Zeile in `vulture_ausnahmen.py` des Pakets, Vertragsnamen nur mit
-Contract-Check- oder Pin-Leser als offene Befunde in `vulture_vertragsbefunde.py` (`S3S8b-Vertragsleser`, Dev-Root
-`docs/offene-punkte.md`). Ein neuer Treffer wird gelöscht oder mit Grund eingetragen.
-Direkter Aufruf bleibt möglich: `cd heizungsbruecke && pip install -e ".[dev]" && pytest` bzw.
-`cd gateway && pip install -e ".[dev]" && pytest` (`pyproject.toml`: `testpaths = ["tests"]`, `pythonpath = ["src"]`). Testzahl: siehe CI (Job
-`test`). Shell-Integrationstests liegen im Repo-Root unter `tests/`; die Docker-Skripte ruft der Schritt `docker`
-von `scripts/check.sh --full` auf (`run_all.sh` und `test_heizungsbruecke_pytest.sh` haben keinen Aufrufer mehr,
-`S3S8b-Altskripte`).
 
-Feature-Branches (`feat/…`/`fix/…`) zweigen von `develop` ab und werden `--no-ff` nach `develop`
-gemergt — nie direkt nach `main`. `main` bewegt sich nur per Release-Tag
-(`heizungsbruecke-vX.Y.Z` über `release.yml`, `gateway-vX.Y.Z` über
-`release-gateway.yml`; `-dryrun`-Suffix = Probelauf) —
-ein Push nach `main` ist ein Release an alle Kunden-Pis, deren Supervisor den Default-Branch
-verfolgt. Release-Ablauf, CI-Jobs, Token: `../docs/ci-cd-runbook.md`.
+`scripts/check.sh` prüft und testet `heizungsbruecke/`, `gateway/`, `gateway/host/` **und** `gateway/release/`. Toter
+Code (vulture, `vulture_ausnahmen.py`, `vulture_vertragsbefunde.py`): `../docs/ci-cd-runbook.md` §3; Image-Scan
+(`tests/test_image_scan.sh`, `.trivyignore`, Volume `smartheat-trivy-cache`): §12. Die übrigen Docker-Skripte
+(Shell-Tests im Repo-Root unter `tests/`):
+
+| Skript | Prüft |
+| --- | --- |
+| `test_heizungsbruecke_docker_build.sh`, `test_heizungsbruecke_reproducible.sh` | Add-on-Image bauen (Start ohne Server mit `SMARTHEAT_BOOTSTRAP_URL=http://127.0.0.1:9`, Ruhezustand) und reproduzierbar |
+| `test_gateway_docker_build.sh` | Gateway-Image (lokal nur amd64) und Compose-Lauf mit Dev-Overlay: Bootstrap gegen einen Fake, MQTT gegen einen Fake-Broker mit Client-Zertifikat, Fälschungsproben, sauberes Trennen, Bus-Anmeldung und ACL; statisch prüft `gateway/tests/test_compose.py` |
+| `test_gateway_install.sh` | Host-Installer zweimal in `debian:trixie`, Plattform per `SHG_INSTALL_PLATFORM` (arm64 nur in der CI, Job `install-arm64`) |
+| `test_gateway_updater.sh` | Updater gegen eine lokale Registry mit drei signierten Test-Bundles, Soll-Version als Konfigurationsdokument über den Fake-Broker, Rückweg und Manipulation; rund 6 min, steuert Compose über den Docker-Socket des Hosts |
+| `test_gateway_firstboot.sh` | Export wie im Image-Bau, Laden ohne Netz in einem Docker mit containerd-Speicher, Start per Index-Digest |
+
+Der Image-Bau selbst (`gateway/image/make_image.sh`) braucht einen arm64-Host und gehört nicht zu `check.sh`.
+Ende zu Ende (Server, Broker, Fake-HA bzw. Gateway: Discovery, Einrichtung, Regelbetrieb, Wünsche, Entfernen) fährt der
+Dev-Root (`tools/e2e/run.sh`, Modi `gateway2`, `gateway2_vicare`, `ha2`; `scripts/check.sh --only e2e --full`).
+
+Direkter Aufruf: `cd heizungsbruecke && pip install -e ".[dev]" && pytest` (`pyproject.toml`: `pythonpath = ["src",
+"testhilfen"]`) bzw. `cd gateway && pip install -e ".[dev]" && pytest` (`pythonpath = ["src", "../heizungsbruecke/src",
+"../heizungsbruecke/testhilfen"]`); `gateway/host` und `gateway/release` setzen eigene Pfade in ihrer `pyproject.toml`.
+
+Release-Tags: `heizungsbruecke-vX.Y.Z` (`release.yml`), `gateway-vX.Y.Z` (`release-gateway.yml`), Suffix `-dryrun` =
+Probelauf. Ein Push nach `main` ist ein Release an alle Kunden-Pis, deren Supervisor den Default-Branch verfolgt.
 
 ## Regeln und Fallen
 
-- `heizungsbruecke/config.yaml` hat ab 1.0.0 nur noch die Optionen `bootstrap_url` und `log_level` (beide optional,
-  nur für Labor und Tests); Zuordnung, Zugang und Intervalle kommen als Konfigurationsdokument vom Server, die Integration
-  schreibt keine Optionen mehr. `hassio_api: true` und `discovery: [smartheat]` sind Pflicht (Uhr per `/host/info`,
-  Discovery); `host_network` entfällt. `SMARTHEAT_BOOTSTRAP_URL` (Umgebung) schlägt die Option, nur für Tests und E2E.
-  Eine ungültige `bootstrap_url` oder eine kaputte `options.json` lässt das Add-on **ruhen** (nie auf die Produktion
-  ausweichen). Die Option nimmt nur `https` (Spec 5c F/Q4); `http` geht nur über die Umgebung
-  `SMARTHEAT_BOOTSTRAP_URL` (E2E und Tests, im Add-on nicht setzbar).
-- **Golden-Master** (`heizungsbruecke/tests/test_golden_master.py`, `tests/golden/addon_scenario.json`) nie neu erzeugen,
-  ohne dass ein Plan es verlangt: ändert er sich, ist der Code falsch, nicht die Datei.
-- **Verträge:** Gerätevertrag `heizungsbruecke/src/smartheat_device/wire.py` (wörtliche Kopie des Vertragsteils aus
-  `HeizungssteuerungServer/src/heizungsserver/geraete/device_protocol.py`, Test `test_device_wire.py`) ↔
-  `../tools/contracts/geraet_v1.json` nur gemeinsam ändern (Contract-Check, Vertrag V1, Liste: `python3
-  ../tools/contract_check.py --liste`; Topics gegen die IoT-Policies: Server-Test `tests/test_vertrag_im_server.py`);
-  Status-Event, Hebel-, Rollen- und Optionsnamen, Ports und
-  Sicherheitswert-Schlüssel prüft `python3 ../tools/contract_check.py` (vor jedem Release grün; Übersicht der Verträge `../docs/module/README.md`).
-  Das Status-Ereignis des Add-ons hat Schema 3 (`geraet_status.EVENT_FIELDS`, Laufzeit-Felder aus
-  `smartheat_runtime/status.py` plus Gerät); die Felder der Supervisor-Discovery (`discovery.FIELDS`) und das Ereignis
-  `smartheat_wunsch` sind Verträge mit der Integration (Plan I).
-- **Versionen:** `<addon>/config.yaml`, bei `heizungsbruecke` zusätzlich `ADDON_VERSION` in `src/heizungsbruecke/version.py`
-  (Test prüft den Gleichlauf), je Add-on `CHANGELOG.md` mit `## X.Y.Z`; Gateway: `gateway/VERSION` und
-  `gateway/CHANGELOG.md`.
-- **`gateway/` ist kein Add-on** (keine `config.yaml`): Image aus der Repo-Wurzel (`docker build -f gateway/Dockerfile .`),
-  eigener Release-Workflow; ohne echten Schlüssel in `gateway/host/release.pub` lehnt das Gate echte `gateway-v*`-Tags ab.
-  Änderungen in `smartheat_core`/`smartheat_runtime` wirken auf beide Clienttypen.
+- **Optionen** (`heizungsbruecke/config.yaml`): nur `bootstrap_url` und `log_level`, beide nur für Labor und Tests
+  (Pflichtfelder der `config.yaml` und Startweg: `../docs/module/ha-host.md`). Eine ungültige `bootstrap_url` oder eine
+  kaputte `options.json` lässt das Add-on **ruhen**, nie auf die Produktion ausweichen. Die Option nimmt nur `https`;
+  `http` geht nur über die Umgebung `SMARTHEAT_BOOTSTRAP_URL` (E2E und Tests, im Add-on nicht setzbar).
+- **Golden-Master** (`heizungsbruecke/tests/test_golden_master.py`, `heizungsbruecke/tests/golden/addon_scenario.json`
+  und `addon_scenario_0_36.json`) nie neu erzeugen, ohne dass ein Plan es verlangt: ändert er sich, ist der Code falsch,
+  nicht die Datei.
+- **Verträge:** `heizungsbruecke/src/smartheat_device/wire.py` und `../tools/contracts/geraet_v1.json` nur gemeinsam
+  ändern (V1, `../docs/module/README.md`); `python3 ../tools/contract_check.py` vor jedem Release grün (Liste:
+  `--liste`). Verträge mit der Integration: Status-Ereignis Schema 3 (`geraet_status.EVENT_FIELDS`), Felder der
+  Supervisor-Discovery (`discovery.FIELDS`), Ereignis `smartheat_wunsch`.
+- **`gateway/` ist kein Add-on** (keine `config.yaml`): Image aus der Repo-Wurzel
+  (`docker build -f gateway/Dockerfile .`), eigener Release-Workflow; ohne echten Schlüssel in
+  `gateway/host/release.pub` lehnt das Gate echte `gateway-v*`-Tags ab. Änderungen in
+  `smartheat_core`/`smartheat_runtime` wirken auf beide Clienttypen.
 - **Startfehler** melden mit stabilem Schlüssel `fehler:<key>`, der Grund steht nur im Feld `grund`. Schlüssel,
   Zertifikate, Übernahme-Code, Supervisor-Token und Inventur-Inhalte stehen nie in Log, Status-Ereignis oder
   Diagnose (Regel 6); der Übernahme-Code geht nur in die Discovery (bleibt in der HA-Instanz), ins Log kommt bei
   Fehlern nur die Fehlerart.
-- **Neustart** (neue laufzeitrelevante Konfiguration, `sign_off`, Abo wieder aktiv, Neuprüfung im Konfigurationsfehler):
-  ein Lebenszyklus für beide Hosts in `smartheat_device/prozess.py`. Erst sauber trennen (`prozess.beenden`: Gerätekern
-  stoppen, Thread abwarten, noch einmal stoppen; sonst meldet IoT Core `DUPLICATE_CLIENTID`), dann der Neustart des
-  Hosts (HA `__main__._exec` mit `os.execv`, das Gateway kehrt aus `main` zurück). Die Laufzeit meldet ihren Neustart
-  über den Pflicht-Rückruf `neustart` von `app.start` (`prozess.neustart_der_laufzeit`), nichts wird global
-  überschrieben. Ein unerwarteter Fehler pausiert 60 s (in beiden Hosts) und startet dann ebenso neu; davor meldet sich
-  das Gateway ungesund (Rückruf `vor_pause`: Lebenszeichen weg, Laufzeit `startet`), damit der Updater ein solches
-  Update zurückrollt. SIGTERM endet ohne Neustart. Jede gewollte Neustart-Logzeile endet auf „, Laufzeit startet neu“
-  (der E2E `gateway2` zählt sie).
-- **Gemeinsamer Teil der Hosts:** `smartheat_device/geraet_host_basis.py` (Eltern von `HaDeviceHost` und
-  `GatewayDeviceHost`) und `smartheat_runtime/raum.py`. Ein Verhalten, das beide Hosts teilen, gehört dorthin, nicht
-  doppelt in die Hosts; es wird zuerst in den Konformitätssuiten festgehalten (`testhilfen/host_konformitaet.py`,
-  `testhilfen/trigger_konformitaet.py`, je ein Adapter in `heizungsbruecke/tests` und `gateway/tests`). Eine bewusste
-  Abweichung eines Hosts steht begründet in `ABWEICHUNGEN` seines Adapters.
-- **Endzustände sind ein Ruhezustand**, kein Exit, weil der Supervisor-Watchdog auch Exit 0 neu startet
-  (`tests/test_heizungsbruecke_docker_build.sh`). Kein Last Will, nichts unter `smartheat/<tenant>/status/`. Der
-  Docker-Test startet das Add-on mit `SMARTHEAT_BOOTSTRAP_URL=http://127.0.0.1:9` (ohne Server). Den Ablauf mit Server,
-  Broker und Fake-HA (Discovery, Einrichtung, Regelbetrieb, Wünsche, Entfernen) prüft der Root-E2E-Modus `ha2`
-  (`tools/e2e/run.sh`, Spec 5c Plan W); das frühere Happy-Path-Skript (Optionsmodus) ist entfallen.
-- **Soll-Entity (HA)**: nur Eingang und Anzeige; die Regelung liest den Raum-Soll aus dem Soll-Speicher. Schreiben nur an
-  `climate.*` (Attribut `temperature`); ein gescheitertes Angleichen bleibt offen und wird nachgeholt
-  (`HaSollQuelle.angleichen_offen`, `geraet_trigger.build`), statt den gezeigten Altwert als Wunsch zu nehmen. Änderungen
-  hier immer mit den Tests `test_geraet_trigger.py`/`test_host_dokument.py` (Echo/Wunsch-Schleife ist das Hauptrisiko).
-- **Lock-Datei** `heizungsbruecke/requirements.txt`: das Image installiert nur daraus (`--require-hashes`). Erneuern nur bei
-  geänderten `dependencies` in `pyproject.toml` oder bewusstem Bump (dann `--upgrade` vor `--generate-hashes`, Diff lesen),
-  im Ordner `heizungsbruecke/`:
+- **Neustart und Ende:** ein Lebenszyklus für beide Hosts (`smartheat_device/prozess.py`,
+  `../docs/module/client-kern.md` „Gemeinsamer Teil der Hosts“). Falle: jede gewollte Neustart-Logzeile endet auf
+  „, Laufzeit startet neu“, der E2E `gateway2` zählt sie.
+- **Gemeinsamer Teil der Hosts:** ein Verhalten, das beide Hosts teilen, gehört in
+  `smartheat_device/geraet_host_basis.py` bzw. `smartheat_runtime/raum.py`, nicht doppelt in die Hosts; es wird zuerst
+  in den Konformitätssuiten festgehalten (`client-kern.md`, „Konformität“).
+- **Endzustände sind ein Ruhezustand**, kein Exit, weil der Supervisor ein sauber beendetes Add-on nicht zuverlässig neu
+  startet (`heizungsbruecke/src/heizungsbruecke/__main__.py`). Kein Last Will (`link.py`).
+- **Soll-Entity (HA):** Ablauf in `ha-host.md` („Soll-Entity und Wunschtemperatur“). Änderungen dort immer mit den Tests
+  `test_geraet_trigger.py`/`test_host_dokument.py` (Echo/Wunsch-Schleife ist das Hauptrisiko).
+- **Lock-Datei** `heizungsbruecke/requirements.txt`: das Image installiert nur daraus (`--require-hashes`). Erneuern nur
+  bei geänderten `dependencies` in `pyproject.toml` oder bewusstem Bump (dann `--upgrade` vor `--generate-hashes`, Diff
+  lesen), im Ordner `heizungsbruecke/`:
 
   ```
   tar cf - pyproject.toml requirements.txt | docker run --rm -i \
