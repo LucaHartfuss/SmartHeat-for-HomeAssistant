@@ -2,14 +2,14 @@
 heizungsserver regelung/messages.py::PLAUSIBLE_RANGES (room_target/outdoor_temp) uebereinstimmen; den Lesebereich des
 Raum-Solls der Anlage (room_setpoint) deckt `ha_binding` ab. tools/contract_check.py prueft das (Vertrag V1b); die
 Integration prueft seit 1.0.0 keine Werte mehr."""
-import math
+from smartheat_core.zahlen import ist_endliche_zahl
 
 ROOM_TEMP_RANGE = (5.0, 35.0)
 OUTDOOR_TEMP_RANGE = (-40.0, 45.0)
 
 
 def is_plausible(value, bounds: tuple[float, float]) -> bool:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    if not ist_endliche_zahl(value):
         return False
     low, high = bounds
     return low <= value <= high

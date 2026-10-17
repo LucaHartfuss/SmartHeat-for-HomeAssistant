@@ -54,6 +54,13 @@ def test_parameters_are_checked_by_the_driver(tmp_path):
     assert ViCareCloudDriver({**PARAMETER, "poll_seconds": 120}, Paths(tmp_path)).poll_seconds == 120.0
 
 
+@pytest.mark.parametrize("wert", [float("nan"), float("inf"), float("-inf"), 10**400, -10**400],
+                         ids=["nan", "inf", "minus-inf", "gross-positiv", "gross-negativ"])
+def test_a_poll_interval_that_is_not_a_finite_number_is_refused_like_any_invalid_parameter(tmp_path, wert):
+    with pytest.raises(ValueError):
+        ViCareCloudDriver({**PARAMETER, "poll_seconds": wert}, Paths(tmp_path))
+
+
 def test_the_driver_uses_the_one_binding_of_the_ha_path(env):
     server, driver, paths, clock = env
     assert dict(driver.description.steps) == dict(BINDING.steps)
@@ -426,6 +433,29 @@ def test_erkennung_mit_muell_features_wirft_nicht(tmp_path, clock):
     daten = driver.erkennung()
     assert daten["anlagen"][0]["sicherheitswarnungen"] == {}
     assert all(f["feature"].startswith(caps.PRAEFIXE) for f in daten["features"])
+
+
+@pytest.mark.parametrize("huge", [10**400, -10**400], ids=["gross-positiv", "gross-negativ"])
+def test_erkennung_ueberspringt_nur_den_heizkreis_mit_einem_wert_ausserhalb_des_zahlenbereichs(tmp_path, clock, huge):
+    features = good_features(circuits=(0, 1))
+    assert features[0]["feature"] == "heating.circuits.0.heating.curve"
+    features[0]["properties"]["slope"]["value"] = huge
+    driver = ViCareCloudDriver({}, Paths(tmp_path), clock=clock, api=_EinGeraet(features))  # type: ignore[arg-type]
+    warnungen = driver.erkennung()["anlagen"][0]["sicherheitswarnungen"]
+    assert set(warnungen) == {"1"}  # Heizkreis 0 wie bei einem nichtnumerischen Wert uebersprungen, 1 bleibt
+
+
+@pytest.mark.parametrize("huge", [10**400, -10**400], ids=["gross-positiv", "gross-negativ"])
+def test_poll_keeps_the_other_roles_when_one_value_is_beyond_float_range(tmp_path, clock, huge):
+    features = good_features()
+    features[0]["properties"]["slope"]["value"] = huge  # Heizkurve des Heizkreises 0
+    features[0]["commands"]["setCurve"]["params"]["shift"]["constraints"]["max"] = huge
+    driver = ViCareCloudDriver(PARAMETER, Paths(tmp_path), clock=clock, api=_EinGeraet(features))  # type: ignore[arg-type]
+    driver.poll_once()
+    assert driver.read_signal("outdoor_temp") == 5 and driver.read("room_setpoint") == 20 and driver.read("level") == 0
+    with pytest.raises(ValueError):  # die Rolle fehlt wie bei einem nichtnumerischen Wert
+        driver.read("curve")
+    assert driver.limits("level") is None and driver.limits("curve") is not None
 
 
 def test_erkennung_einer_grossen_anlage_wird_in_teile_gestueckelt(tmp_path, clock):

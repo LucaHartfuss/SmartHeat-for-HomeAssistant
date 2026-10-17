@@ -4,6 +4,8 @@ Features; die Klassifikation in Kandidaten macht der Server (einrichtung/gateway
 Cloud keinen garantierten Typ, alles wird defensiv gelesen."""
 import re
 
+from smartheat_core.zahlen import ist_endliche_zahl
+
 LEVER_SET = "viessmann_vicare"
 #: Features, die die Erkennung hochlaedt (Positivliste, G-9): alles andere (Warmwasser, Meldungen, Geraeteangaben) bleibt
 #: auf dem Gateway.
@@ -52,7 +54,7 @@ def value(feature: dict | None, prop: str):
 
 
 def _number(raw) -> float | None:
-    return float(raw) if isinstance(raw, int | float) and not isinstance(raw, bool) else None
+    return float(raw) if ist_endliche_zahl(raw) else None
 
 
 def number_value(feature: dict | None, prop: str) -> float | None:

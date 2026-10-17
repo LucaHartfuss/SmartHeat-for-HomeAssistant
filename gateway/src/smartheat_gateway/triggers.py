@@ -12,6 +12,7 @@ from datetime import UTC, datetime, time, timedelta, tzinfo
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from smartheat_core import wallclock
+from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_gateway.bus import Bus
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime.debounce import ROOM_TARGET_DEBOUNCE_SECONDS
@@ -61,7 +62,7 @@ class _ZigbeeQuelle:
 
     def angezeigt(self) -> float | None:
         value = self._mirror.payload(self._ieee).get("occupied_heating_setpoint")
-        return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
+        return float(value) if ist_endliche_zahl(value) else None
 
 
 class BusTriggerSource:

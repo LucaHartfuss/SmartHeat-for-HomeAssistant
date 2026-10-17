@@ -10,6 +10,7 @@ from smartheat_core import energy as energy_core
 from smartheat_core import wallclock
 from smartheat_core.binding import ENERGY_TOTAL
 from smartheat_core.bindungsparameter import ENERGIE_KANAELE
+from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_runtime.delivery import DataFault
 
 logger = logging.getLogger(__name__)
@@ -94,7 +95,7 @@ def read_regulation_fields(manifest, signals, room_target: float | None) -> dict
         except Exception as exc:
             logger.warning("Regel-Telemetrie '%s' nicht lesbar, Feld wird weggelassen: %s", role, exc)
             continue
-        if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+        if ist_endliche_zahl(value):
             fields[role] = value
     return fields
 

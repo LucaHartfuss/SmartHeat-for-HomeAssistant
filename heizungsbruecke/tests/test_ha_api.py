@@ -81,6 +81,19 @@ def test_get_state_with_attribute_reference_reads_named_attribute():
     )
 
 
+@pytest.mark.parametrize("huge", [10**400, -10**400], ids=["gross-positiv", "gross-negativ"])
+def test_get_state_with_attribute_beyond_float_range_is_a_value_error(huge):
+    # JSON-Ganzzahl ausserhalb des float-Bereichs: wie jeder unbrauchbare Wert ein ValueError, kein OverflowError
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    mock_response = Mock(spec=requests.Response)
+    mock_response.json.return_value = {"state": "heat", "attributes": {"temperature": huge}}
+    mock_response.raise_for_status.return_value = None
+
+    with (patch("heizungsbruecke.ha_api.requests.get", autospec=True, return_value=mock_response),
+          pytest.raises(ValueError)):
+        api.get_state("climate.wohnzimmer_thermostat::temperature")
+
+
 def test_get_state_with_target_attribute_reference_reads_temperature():
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
     mock_response = Mock()

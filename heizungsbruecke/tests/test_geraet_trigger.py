@@ -151,8 +151,18 @@ def test_unusable_target_states_are_ignored(tmp_path, state):
     assert a.wuensche == [] and a.store.value == 21.0
 
 
+@pytest.mark.parametrize("huge", [10**400, -10**400], ids=["gross-positiv", "gross-negativ"])
+def test_target_attribute_beyond_float_range_is_ignored(tmp_path, huge):
+    a = Aufbau(tmp_path)
+    a.soll_aenderung(huge)
+    a.run()
+    assert a.wuensche == [] and a.store.value == 21.0
+
+
 @pytest.mark.parametrize("data", [{}, {"raum_soll": "abc"}, {"raum_soll": "nan"}, {"raum_soll": "inf"},
-                                  {"raum_soll": True}, {"raum_soll": None}, {"raum_soll": [22]}])
+                                  {"raum_soll": True}, {"raum_soll": None}, {"raum_soll": [22]},
+                                  pytest.param({"raum_soll": 10**400}, id="gross-positiv"),
+                                  pytest.param({"raum_soll": -10**400}, id="gross-negativ")])
 def test_event_without_a_finite_number_is_ignored_and_logged(tmp_path, caplog, data):
     a = Aufbau(tmp_path)
     with caplog.at_level("WARNING"):

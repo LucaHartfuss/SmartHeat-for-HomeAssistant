@@ -4,11 +4,11 @@ Der Zustand wird nur im Worker-Thread gelesen und geaendert, deshalb ohne Lock. 
 Dateien werden beim Start genau einmal gelesen und danach nur geschrieben, wenn sich ihr
 Inhalt aendert: jeder Schreibvorgang geht auf den Datentraeger des Pi."""
 import logging
-import math
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 
+from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_runtime import backup_store
 from smartheat_runtime.delivery import DeliveryState, from_persisted, to_persisted
 
@@ -117,10 +117,6 @@ def parse_since(value) -> datetime | None:
     return parsed if parsed.tzinfo is not None else None
 
 
-def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
-
-
 def _is_override(value) -> bool:
     """KPI-Eintrag eines Eingriffs: `levers` ein nicht leeres Dict aus endlichen Zahlen je Hebel, `erkannt` Text."""
     if not isinstance(value, dict) or not isinstance(value.get("erkannt"), str):
@@ -128,18 +124,18 @@ def _is_override(value) -> bool:
     levers = value.get("levers")
     return (
         isinstance(levers, dict) and bool(levers)
-        and all(isinstance(lever, str) and _is_number(number) for lever, number in levers.items())
+        and all(isinstance(lever, str) and ist_endliche_zahl(number) for lever, number in levers.items())
     )
 
 
 def _is_aux(value) -> bool:
-    return isinstance(value, str) or _is_number(value)
+    return isinstance(value, str) or ist_endliche_zahl(value)
 
 
 def _is_energy_entry(value) -> bool:
     """Zustand je Energiekanal; ein Eintrag ohne Einheit (aus 1.0.0) bleibt lesbar und beginnt in normalize neu."""
     return (isinstance(value, dict) and set(value) in ({"raw", "sum"}, {"raw", "sum", "einheit"})
-            and _is_number(value["raw"]) and _is_number(value["sum"]) and isinstance(value.get("einheit", ""), str))
+            and ist_endliche_zahl(value["raw"]) and ist_endliche_zahl(value["sum"]) and isinstance(value.get("einheit", ""), str))
 
 
 def _parse_budget(raw) -> dict | None:
@@ -174,7 +170,7 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
     for key in _NUMBER_FIELDS:
         if raw.get(key) is None:
             continue
-        if _is_number(raw[key]):
+        if ist_endliche_zahl(raw[key]):
             values[key] = raw[key]
         else:
             _invalid(key)
@@ -207,7 +203,7 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
         if key not in raw:
             continue
         mapping = raw[key]
-        if isinstance(mapping, dict) and all(isinstance(k, str) and _is_number(v) for k, v in mapping.items()):
+        if isinstance(mapping, dict) and all(isinstance(k, str) and ist_endliche_zahl(v) for k, v in mapping.items()):
             values[key] = dict(mapping)
         else:
             _invalid(key)
@@ -344,7 +340,7 @@ class StateStore:
         """Der zuletzt erfolgreich gespeicherte Wiederherstellungspunkt, wenn er alle `required` Hebel hat, sonst None
         (N6; die Hebel aus optional_restore duerfen fehlen)."""
         point = self._backup_saved.get("restore_point") or {}
-        return dict(point) if all(_is_number(point.get(lever)) for lever in required) else None
+        return dict(point) if all(ist_endliche_zahl(point.get(lever)) for lever in required) else None
 
     def revert_to_saved(self, *keys: str) -> None:
         """Setzt Felder im Speicher auf den zuletzt gespeicherten Stand zurueck, ohne zu schreiben (N6)."""

@@ -56,7 +56,10 @@ class GatewaySignalSource:
         value = self._raw(ref)
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError(f"{ref} liefert keine Zahl: {value!r}")
-        return float(value)
+        try:
+            return float(value)
+        except OverflowError:  # JSON liefert beliebig grosse Ganzzahlen
+            raise ValueError(f"{ref} liegt ausserhalb des Zahlenbereichs") from None
 
     def get_raw_state(self, ref: str) -> str:
         value = self._raw(ref)

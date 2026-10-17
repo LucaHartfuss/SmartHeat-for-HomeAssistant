@@ -140,6 +140,8 @@ def test_failsafe_file_without_object_is_warned_and_ignored(make_store, tmp_path
 @pytest.mark.parametrize("key,value", [
     ("restore_point", {"curve": "0.9"}), ("restore_point", {"curve": float("nan")}),
     ("restore_point", {"room_setpoint": True}),
+    pytest.param("restore_point", {"curve": 10**400}, id="gross-positiv"),
+    pytest.param("restore_point", {"curve": -10**400}, id="gross-negativ"),
     ("boost_active", "ja"), ("emergency_boost_active", 1), ("last_room_target", [21]),
     ("last_published_target_rt", {}), ("last_daily_trigger_date", 20260926),
 ])
@@ -518,6 +520,15 @@ def test_heat_limit_fields_round_trip_through_backup(make_store):
 def test_invalid_heat_limit_in_backup_falls_back_to_none(make_store):
     store = make_store(backup={"restore_point": {"heat_limit": "hoch"}, "originals": {"heat_limit": float("nan")}})
     assert (store.state.restore_point.get("heat_limit"), store.state.originals.get("heat_limit")) == (None, None)
+
+
+@pytest.mark.parametrize("huge", [10**400, -10**400], ids=["gross-positiv", "gross-negativ"])
+def test_integer_beyond_float_range_in_backup_is_invalid_not_an_error(make_store, huge):
+    # backup.json kann beliebig grosse Ganzzahlen tragen (JSON): wie ein unbrauchbarer Wert verwerfen, Start geht weiter
+    store = make_store(backup={"restore_point": {"heat_limit": huge}, "originals": {"heat_limit": huge},
+                               "learned": {"curve": huge}})
+    assert (store.state.restore_point.get("heat_limit"), store.state.originals.get("heat_limit")) == (None, None)
+    assert store.state.learned == {}
 
 
 @pytest.mark.parametrize("raw", [5, "abc", "2026-10-08T06:00:00"])

@@ -983,6 +983,11 @@ def test_rejected_answer_reports_server_fault_once_and_retries_same_seq(env):
     {"status": "maybe"},
     {"status": "ok", "curve": float("nan")},
     {"status": "ok", "curve": None},
+    # JSON liefert beliebig grosse Ganzzahlen; sie passen in keinen float und gelten als ungueltig (kein OverflowError)
+    pytest.param({"status": "ok", "curve": 10**400}, id="curve-gross-positiv"),
+    pytest.param({"status": "ok", "curve": -10**400}, id="curve-gross-negativ"),
+    pytest.param({"status": "ok", "shift": 10**400}, id="shift-gross-positiv"),
+    pytest.param({"status": "ok", "heat_limit": -10**400}, id="heat_limit-gross-negativ"),
 ])
 def test_invalid_answer_counts_as_server_fault_without_writing(env, answer):
     _quiet_backup(env)
@@ -995,7 +1000,7 @@ def test_invalid_answer_counts_as_server_fault_without_writing(env, answer):
     assert "ungültige Serverantwort" in env.ha.pushes[-1]
 
 
-@pytest.mark.parametrize("bad", [_OMIT, None, "16", float("nan"), True])
+@pytest.mark.parametrize("bad", [_OMIT, None, "16", float("nan"), True, pytest.param(10**400, id="gross")])
 def test_answer_without_a_valid_heat_limit_is_invalid_and_writes_nothing(env, bad):
     # Antwort eines alten Servers (Feld fehlt) oder unbrauchbarer Wert: nichts schreiben, Datenfehler.
     _quiet_backup(env)
@@ -1021,7 +1026,11 @@ def test_learned_values_of_the_answer_are_stored(env):
     assert load_backup(env.paths["BACKUP_PATH"])["learned"] == {"curve": 1.1, "heat_limit": 15.4}
 
 
-@pytest.mark.parametrize("learned", [None, "x", {}, {"curve": float("nan")}, {"curve": True}, {"foo": 1.0}])
+@pytest.mark.parametrize("learned", [None, "x", {}, {"curve": float("nan")}, {"curve": True}, {"foo": 1.0},
+    pytest.param({"curve": 10**400}, id="curve-gross-positiv"),
+    pytest.param({"curve": -10**400}, id="curve-gross-negativ"),
+    pytest.param({"curve": 1.0, "heat_limit": 10**400}, id="heat_limit-gross"),
+])
 def test_invalid_learned_values_are_ignored_without_fault(env, learned):
     _quiet_backup(env)
     bridge = _start(env)
@@ -1030,6 +1039,24 @@ def test_invalid_learned_values_are_ignored_without_fault(env, learned):
     _mqtt(env).answer_raw(_mqtt(env).snapshots[0]["seq"], learned=learned)
     bridge.worker.run_pending()
 
+    assert bridge.store.state.learned == {}
+    assert _delivery(bridge).datenfehler is None
+    assert ("number.curve_current", 0.95) in _regulation_writes(env)
+
+
+@pytest.mark.parametrize("huge", [10**400, -10**400], ids=["gross-positiv", "gross-negativ"])
+def test_learned_integer_beyond_float_range_is_ignored_without_an_error(env, caplog, huge):
+    # JSON-Ganzzahl ausserhalb des float-Bereichs: wie jeder ungueltige Lernwert uebergangen. Die Wirkung allein
+    # (nichts gespeichert) zeigt es nicht -- der Worker faengt eine Ausnahme ab --, daher auch kein ERROR im Log.
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+
+    with caplog.at_level(logging.ERROR):
+        _mqtt(env).answer_raw(_mqtt(env).snapshots[0]["seq"], learned={"curve": huge})
+        bridge.worker.run_pending()
+
+    assert [r.getMessage() for r in caplog.records if r.name == "smartheat_runtime.worker"] == []
     assert bridge.store.state.learned == {}
     assert _delivery(bridge).datenfehler is None
     assert ("number.curve_current", 0.95) in _regulation_writes(env)

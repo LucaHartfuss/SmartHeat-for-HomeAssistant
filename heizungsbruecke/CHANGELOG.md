@@ -5,6 +5,7 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
 
 ## Unveröffentlicht
 
+- Eine Ganzzahl außerhalb des Zahlenbereichs (JSON erlaubt beliebig große, z. B. in einer Serverantwort, einem Home-Assistant-Wert oder einer Zustandsdatei) gilt jetzt als ungültiger Wert wie NaN, statt in einen `OverflowError` zu laufen: eine Antwort mit so einem Hebelwert zählt als Datenfehler vom Server, nichts wird geschrieben (Client-Kern, beide Hosts). Im Gateway gilt das auch für Werte aus der Viessmann-Cloud (ein solcher Wert lässt nur seine Rolle bzw. seinen Heizkreis aus, der Abruf läuft weiter), für die Token-Antwort und -Datei sowie für das Thermostat-Soll aus Zigbee2MQTT. Treiberparameter, die keine endliche Zahl sind (`poll_seconds` und die Zahlenparameter der Simulation mit NaN, Infinity oder riesiger Ganzzahl), lehnt das Gerät wie jeden ungültigen Treiberparameter ab, statt mit ihnen ohne Pause zu pollen oder den Abfrage-Thread zu beenden.
 - Jede Nachricht des Geräts entsteht über eine Stelle, die sie gegen den Vertrag prüft (`smartheat_device/nachrichten.py`),
   und das Gerät liest jede Vertragskonstante an der Stelle, die sie braucht (Stufe 3 S8a-1, A5-34). V1 gilt jetzt auf
   beiden Seiten strikt: Konfiguration, Bedienung und Befehle mit fehlendem oder fremdem Feld lehnt das Gerät ab

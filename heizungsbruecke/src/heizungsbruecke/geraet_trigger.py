@@ -63,11 +63,11 @@ def _is_number(value) -> TypeGuard[int | float]:
 
 def _zustandswert(value) -> float | None:
     """Zahl aus einem Zustand (Text) oder Attribut (Zahl); unavailable, unknown und Unlesbares sind None."""
-    if _is_number(value):
-        return float(value)
     try:
+        if _is_number(value):
+            return float(value)
         return float(value) if isinstance(value, str) else None
-    except ValueError:
+    except (ValueError, OverflowError):  # OverflowError: JSON liefert beliebig grosse Ganzzahlen
         return None
 
 
@@ -86,7 +86,7 @@ def _wunschwert(value) -> float | None:
         return None
     try:
         number = float(value)
-    except ValueError:
+    except (ValueError, OverflowError):  # OverflowError: JSON liefert beliebig grosse Ganzzahlen
         return None
     return number if math.isfinite(number) else None
 

@@ -1,12 +1,12 @@
 """Tick-Zustellung ausfuehren: die Aktionen der Zustandsmaschine `delivery` (Versuch,
 Abo-Abfrage, Zeitplan, Meldungen) und die Server-Antworten."""
 import logging
-import math
 import uuid
 from typing import TypeGuard
 
 from smartheat_core import wallclock
 from smartheat_core.pipeline import DeviceWriteError
+from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_runtime import abo, delivery, entitlement
 from smartheat_runtime.notifier import STATE_OK
 from smartheat_runtime.runtime import EV_ACK_TIMEOUT, EV_RETRY_DUE, Runtime
@@ -19,10 +19,6 @@ logger = logging.getLogger(__name__)
 _SETPOINT_STATUSES_WITH_VALUES = (delivery.STATUS_OK, delivery.STATUS_SKIPPED)
 
 
-def _is_finite_number(value) -> TypeGuard[float]:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
-
-
 _LEARNED_KEYS = frozenset({"curve", "heat_limit"})
 
 
@@ -31,7 +27,7 @@ def _store_learned(rt: Runtime, learned) -> None:
     ignoriert, ein Speicherfehler bricht die Antwort nicht ab (der Regelpfad ist schon durch)."""
     if not (
         isinstance(learned, dict) and learned and set(learned) <= _LEARNED_KEYS
-        and all(_is_finite_number(value) for value in learned.values())
+        and all(ist_endliche_zahl(value) for value in learned.values())
     ):
         logger.info("Serverantwort ohne gueltige Lernwerte (%r), Anzeige unveraendert", learned)
         return
@@ -250,7 +246,7 @@ def _valid_levers(levers, expected: tuple[str, ...]) -> TypeGuard[dict[str, floa
     fremdem Hebel ist ungueltig, geschrieben wird dann nichts."""
     return (
         isinstance(levers, dict) and set(levers) == set(expected)
-        and all(_is_finite_number(value) for value in levers.values())
+        and all(ist_endliche_zahl(value) for value in levers.values())
     )
 
 

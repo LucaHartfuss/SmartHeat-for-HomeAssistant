@@ -104,9 +104,11 @@ class HomeAssistantApi:
         response.raise_for_status()
         body = response.json()
 
-        if attribute:
-            return float(body["attributes"][attribute])
-        return float(body["state"])
+        raw = body["attributes"][attribute] if attribute else body["state"]
+        try:
+            return float(raw)
+        except OverflowError:  # JSON liefert beliebig grosse Ganzzahlen; wie jeder unbrauchbare Wert ein ValueError
+            raise ValueError(f"{entity_id} liegt ausserhalb des Zahlenbereichs") from None
 
     def get_raw_state(self, entity_id: str) -> str:
         """Returns the entity's state string as-is (no float cast), for text sensors

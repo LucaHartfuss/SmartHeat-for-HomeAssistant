@@ -17,6 +17,7 @@ from pathlib import Path
 import requests
 
 from smartheat_core import dateien
+from smartheat_core.zahlen import ist_endliche_zahl
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,16 @@ class LoginRejected(Exception):
     def __init__(self, text: str = LOGIN_FAILED_TEXT) -> None:
         super().__init__(text)
         self.text = text
+
+
+def _lebensdauer(value) -> float | None:
+    """expires_in der Token-Antwort in Sekunden; fehlt es, gelten 3600. Alles Unbrauchbare (kein Zahlenwert, nicht endlich,
+    auch eine JSON-Ganzzahl ausserhalb des float-Bereichs) ist None."""
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return seconds if ist_endliche_zahl(seconds) else None
 
 
 def new_pair() -> tuple[str, str]:
@@ -118,7 +129,8 @@ class TokenStore:
             data = self._load()
             pending = data.get("pending")
             if (not isinstance(pending, dict) or pending.get("redirect_uri") != redirect_uri
-                    or self._wall() - float(pending.get("created", 0)) > PENDING_SECONDS):
+                    or not ist_endliche_zahl(pending.get("created"))
+                    or self._wall() - pending["created"] > PENDING_SECONDS):
                 raise NotLoggedIn("Es wurde keine Anmeldung vorbereitet (oder sie ist abgelaufen).")
             body = self._token_request({
                 "grant_type": "authorization_code", "client_id": pending["client_id"], "code": code,
@@ -154,16 +166,21 @@ class TokenStore:
             return data["access_token"]
 
     def _fresh(self, data: dict) -> bool:
-        expires_at = float(data.get("expires_at", 0))
+        expires_at = data.get("expires_at")
+        if not ist_endliche_zahl(expires_at):  # fehlt oder unbrauchbar (Datei ist JSON): wie abgelaufen, es wird erneuert
+            return False
         return bool(data.get("access_token")) and expires_at - self._wall() > RENEW_BEFORE_SECONDS
 
     def _with_tokens(self, data: dict, body: dict) -> dict:
         # "pending" bleibt: eine Erneuerung waehrend einer neuen Anmeldung darf deren PKCE-Zustand nicht loeschen
         # (finish baut die Daten ohne "pending" neu auf).
         data = {k: v for k, v in data.items() if k != "abgelaufen"}
+        lifetime = _lebensdauer(body.get("expires_in", 3600))
+        if lifetime is None:  # _token_request liefert nur Antworten mit brauchbarer Lebensdauer
+            raise TokenUnavailable()
         data.update({"access_token": body["access_token"],
                      "refresh_token": body.get("refresh_token") or data.get("refresh_token"),
-                     "expires_at": self._wall() + float(body.get("expires_in", 3600))})
+                     "expires_at": self._wall() + lifetime})
         return data
 
     def _token_request(self, form: dict, *, revoked_only: bool = False) -> dict | None:
@@ -183,7 +200,8 @@ class TokenStore:
         except ValueError:
             body = None
         if status == 200:
-            if isinstance(body, dict) and isinstance(body.get("access_token"), str):
+            if (isinstance(body, dict) and isinstance(body.get("access_token"), str)
+                    and _lebensdauer(body.get("expires_in", 3600)) is not None):
                 return body
             logger.warning("Viessmann-IAM: unbrauchbare Antwort")
             raise TokenUnavailable()

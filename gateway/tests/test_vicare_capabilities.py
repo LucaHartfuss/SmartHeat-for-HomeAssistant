@@ -2,6 +2,8 @@
 Kandidaten und die Matrix der Aufzeichnungen liegen auf dem Server (tests/test_gateway_erkennung.py)."""
 import json
 
+import pytest
+
 from smartheat_gateway.drivers.vicare_cloud import capabilities as caps
 
 
@@ -154,6 +156,20 @@ def test_garbage_features_do_not_raise_in_gekuerzt_and_hebelstand():
     assert caps.hebelstand(index, 0) is None and caps.lever_ranges(index, 0) == {
         "curve": None, "level": None, "room_setpoint": None}
     assert caps.generator_signals(index) == {} and caps.mode_signal(index, 0) is None
+
+
+@pytest.mark.parametrize("huge", [10**400, -10**400], ids=["gross-positiv", "gross-negativ"])
+def test_integer_beyond_float_range_is_no_number_like_any_non_numeric_value(huge):
+    # JSON liefert beliebig grosse Ganzzahlen; float(10**400) wirft OverflowError und brach den ganzen Abruf ab
+    assert caps.number_value(feature("f", {"value": number(huge)}), "value") is None
+    index = caps.by_name([
+        feature("heating.burners.0.statistics", {"hours": number(huge), "starts": number(98765)}),
+        feature("heating.compressors.0.statistics", {"hours": number(huge)}),
+    ])
+    assert caps.generator_signals(index) == {"generator_starts": 98765.0}
+    roh = feature("heating.circuits.0.heating.curve", {}, {"setCurve": {
+        "isExecutable": True, "params": {"slope": constraint(0.2, huge, 0.1)}}})
+    assert caps.command_range(roh, "setCurve", "slope") is None
 
 
 def test_command_range_braucht_ein_ausfuehrbares_kommando_und_alle_drei_grenzen():

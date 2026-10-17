@@ -24,13 +24,13 @@ Pruefung still nachgeholt (LeverPipeline.write_deferred). Ein offener Datenfehle
 Pruefung (die Anlage kann nach einem gescheiterten Schreiben legitim auf alten Werten stehen).
 Meldet die Zone Wunschtemperatur 0 (heizt gerade nicht), ist das keine Abweichung."""
 import logging
-import math
 from collections.abc import Callable
 from datetime import date
 from typing import Any, Protocol
 
 from smartheat_core import derived, wallclock, write_budget
 from smartheat_core.pipeline import WriteBudgetExhausted
+from smartheat_core.zahlen import ist_endliche_zahl
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +75,6 @@ def _today() -> date:
     return wallclock.today()
 
 
-def _is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
-
-
 def _set_misses(rt: EnforceRuntime, misses: int) -> None:
     if rt.store.state.manual_override_misses != misses:
         rt.store.update(manual_override_misses=misses)
@@ -97,7 +93,7 @@ def _read(rt: EnforceRuntime, lever: str) -> float | None:
     except Exception as error:
         logger.info("Eingriff nicht pruefbar, %s nicht lesbar: %s", lever, error)
         return None
-    return value if _is_number(value) else None
+    return value if ist_endliche_zahl(value) else None
 
 
 def _zone_not_manual(rt: EnforceRuntime) -> bool:
@@ -243,7 +239,7 @@ def _kpi_value(rt: EnforceRuntime, lever: str, entries: dict, expected: dict, un
     Live-Wert."""
     if lever in entries:
         return entries[lever]
-    if unsent is not None and _is_number(unsent["levers"].get(lever)):
+    if unsent is not None and ist_endliche_zahl(unsent["levers"].get(lever)):
         return unsent["levers"][lever]
     if lever in expected:
         return expected[lever]
@@ -258,10 +254,10 @@ def _persisted_kpi_value(rt: EnforceRuntime, lever: str, value):
     rollen/signatur/gemeldet gingen verloren, derselbe Eingriff wuerde nach dem Neustart erneut
     gemeldet. Der ungefilterte KPI-Wert (kann None sein) bleibt fuer manual_override_pending
     massgeblich, das nur gesetzt wird, wenn jeder Hebel eine Zahl hat."""
-    if _is_number(value):
+    if ist_endliche_zahl(value):
         return value
     fallback = rt.store.state.restore_point.get(lever)
-    return fallback if _is_number(fallback) else 0.0
+    return fallback if ist_endliche_zahl(fallback) else 0.0
 
 
 def _record(rt: EnforceRuntime, expected: dict, deviating: dict) -> dict:
@@ -289,7 +285,7 @@ def _record(rt: EnforceRuntime, expected: dict, deviating: dict) -> dict:
         "gemeldet": previous.get("gemeldet") if previous is not None else None,
     }
     changes: dict = {"manual_override": record}
-    if all(_is_number(value) for value in kpi_levers.values()):
+    if all(ist_endliche_zahl(value) for value in kpi_levers.values()):
         changes["manual_override_pending"] = {"levers": kpi_levers, "erkannt": now}
     rt.store.update(**changes)
     return record

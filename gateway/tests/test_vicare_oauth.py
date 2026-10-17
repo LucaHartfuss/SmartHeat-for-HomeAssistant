@@ -307,6 +307,62 @@ def test_a_pending_login_survives_a_revoked_refresh_token(tmp_path):
     assert tokens.logged_in() and not tokens.expired()
 
 
+class _Resp:
+    def __init__(self, status, body):
+        self.status_code, self._body = status, body
+
+    def json(self):
+        return self._body
+
+
+def _tokens_with_stub(tmp_path, body, grants=None):
+    """TokenStore mit einem IAM-Ersatz, der immer `body` (200) liefert und die Grant-Arten mitschreibt."""
+    def post(url, data, timeout):
+        if grants is not None:
+            grants.append(data["grant_type"])
+        return _Resp(200, body)
+
+    return oauth.TokenStore(tmp_path / "vicare.json", wall=lambda: 5000.0, iam="https://iam.test", post=post)
+
+
+@pytest.mark.parametrize("huge", [10**400, -10**400], ids=["gross-positiv", "gross-negativ"])
+def test_a_token_lifetime_beyond_float_range_is_an_unusable_response_not_a_logout(tmp_path, huge):
+    tokens = _tokens_with_stub(tmp_path, {"access_token": "a2", "refresh_token": "r2", "expires_in": huge})
+    tokens._save({"client_id": "c", "access_token": "a1", "refresh_token": "r1", "expires_at": 0})
+    with pytest.raises(oauth.TokenUnavailable):
+        tokens.access_token()
+    assert tokens.logged_in() and not tokens.expired()
+    assert json.loads((tmp_path / "vicare.json").read_text())["access_token"] == "a1"  # nichts uebernommen
+
+
+@pytest.mark.parametrize("huge", [10**400, -10**400], ids=["gross-positiv", "gross-negativ"])
+def test_a_login_with_a_token_lifetime_beyond_float_range_is_not_stored(tmp_path, huge):
+    tokens = _tokens_with_stub(tmp_path, {"access_token": "a2", "refresh_token": "r2", "expires_in": huge})
+    tokens.begin("c", "r")
+    with pytest.raises(oauth.TokenUnavailable):
+        tokens.finish("code", "r")
+    assert not tokens.logged_in()
+
+
+@pytest.mark.parametrize("huge", [10**400, -10**400], ids=["gross-positiv", "gross-negativ"])
+def test_an_expiry_beyond_float_range_in_the_token_file_means_renew(tmp_path, huge):
+    grants = []
+    tokens = _tokens_with_stub(tmp_path, {"access_token": "a2", "refresh_token": "r2", "expires_in": 3600}, grants)
+    tokens._save({"client_id": "c", "access_token": "a1", "refresh_token": "r1", "expires_at": huge})
+    assert tokens.access_token() == "a2" and grants == ["refresh_token"]
+
+
+@pytest.mark.parametrize("huge", [10**400, -10**400], ids=["gross-positiv", "gross-negativ"])
+def test_a_pending_login_with_a_creation_time_beyond_float_range_is_refused(tmp_path, huge):
+    tokens = _tokens_with_stub(tmp_path, {"access_token": "a2", "refresh_token": "r2", "expires_in": 3600})
+    tokens.begin("c", "r")
+    data = json.loads((tmp_path / "vicare.json").read_text())
+    data["pending"]["created"] = huge
+    tokens._save(data)
+    with pytest.raises(oauth.NotLoggedIn):
+        tokens.finish("code", "r")
+
+
 def test_not_logged_in_without_a_file(tmp_path):
     tokens = oauth.TokenStore(tmp_path / "vicare.json", iam="http://127.0.0.1:1")
     assert not tokens.logged_in() and not tokens.expired()

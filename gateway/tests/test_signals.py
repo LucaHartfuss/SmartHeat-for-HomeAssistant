@@ -58,6 +58,17 @@ def test_one_dead_sensor_keeps_the_mean_none_is_invalid(world):
         source.get_state(REF_ROOM_MEAN)
 
 
+@pytest.mark.parametrize("huge", [10**400, -10**400], ids=["gross-positiv", "gross-negativ"])
+def test_integer_beyond_float_range_is_no_number_and_leaves_the_mean_to_the_others(world, huge):
+    # Zigbee2MQTT liefert JSON; eine Ganzzahl ausserhalb des float-Bereichs ist ein ungueltiger Wert (ValueError)
+    _, z2m, source = world
+    z2m.report(SENSOR, temperature=huge)
+    z2m.report(SECOND, temperature=21.0)
+    with pytest.raises(ValueError):
+        source.get_state(f"zigbee:{SENSOR}:temperature")
+    assert source.get_state(REF_ROOM_MEAN) == 21.0
+
+
 def test_the_gateway_has_no_unit(world):
     _, _, source = world
     with pytest.raises(ValueError):
