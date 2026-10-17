@@ -21,11 +21,3 @@ _.userdata  # smartheat_device/link.py: Parameter der paho-Callback-Signatur
 _.schritt  # smartheat_device/device.py Device.schritt: ein Durchlauf ohne Warten (gateway/tests/world.py, Szenarien)
 _.run_pending  # smartheat_runtime/worker.py RegulationWorker.run_pending: Takt mit Fake-Uhr (Tests im Add-on und Gateway)
 _.kinds  # smartheat_device/commands.py CommandRegister.kinds: registrierte Befehlsarten (test_geraet_host, test_befehle)
-
-# --- testgebunden, Regel-4-Dateien (nicht loeschen) ---
-_.verteilsysteme  # smartheat_core/safety.py: Verteilsysteme der lokalen Sicherheitswerte; test_core_safety pinnt die
-#                   Tabelle LOCAL_SAFETY ueber alle Hebelsaetze x Verteilsysteme (Spiegel: Server-Test test_profiles)
-_.MAX_WRITES_PER_DAY  # smartheat_core/enforce.py: Tagesgrenze des Durchsetzens (= write_budget.MAX_PER_DAY); die
-#                       Tests test_core_enforce und test_runtime zaehlen die Schreibvorgaenge dagegen
-_.QUOTA  # smartheat_core/write_budget.py: Schreibgrenze des Durchsetzens (1/30 min, 6/Tag); nur
-#          test_core_write_budget liest sie (das QUOTA des ViCare-Treibers ist ein anderer Name, gleich geschrieben)

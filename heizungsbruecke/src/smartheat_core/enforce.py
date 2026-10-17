@@ -16,7 +16,7 @@ wird er genau einmal, und erst wenn tatsaechlich zurueckgeschrieben wurde -- ueb
 Rueckschreiben nicht oder scheitert es teilweise, bleibt es bei dieser einen Meldung
 (Plan-Praezisierung "Durchsetzungs-Meldung"). Kontingent-Schutz der Hersteller-Cloud (myVAILLANT
 sperrt bei zu vielen Aufrufen ~2 h): je Hebel hoechstens ein Schreibversuch (auch ein gescheiterter)
-pro RETRY_SECONDS und BindingDescription.enforce_per_day am Tag (Vaillant MAX_WRITES_PER_DAY, Viessmann 4; eine
+pro RETRY_SECONDS und BindingDescription.enforce_per_day am Tag (Vaillant write_budget.MAX_PER_DAY, Viessmann 4; eine
 Schreibgruppe wie Viessmann curve+level teilt ein Kontingent); danach bis zum naechsten Tag nur noch eine
 Limit-Meldung. Plan 3b: Ist das Tagesbudget der Pipeline erreicht (Weishaupt), wird weder geschrieben noch gezaehlt;
 wegen des Budgets zurueckgestellte Serverwerte (deferred_levers) sind offen, kein Eingriff, und werden zu Beginn jeder
@@ -50,7 +50,6 @@ KEY = "manueller_eingriff"
 STATE_OK = "ok"
 DETECTION_ROUNDS = 2
 RETRY_SECONDS = write_budget.INTERVAL_SECONDS
-MAX_WRITES_PER_DAY = write_budget.MAX_PER_DAY
 # Toleranzen (Abweichung, ab der durchgesetzt wird) und Anzeigenamen je Hebel: BindingDescription.enforce_tolerance
 # bzw. labels (Vaillant: smartheat_core.bindungsparameter, Spec Stufe 3 S4b). Spec 5.3 nennt fuer die Steigung 0,01; die
 # Anlage stellt sie aber nur in Schritten von 0,05 dar, und der Quota-Check (LeverPipeline._matches_the_device)
@@ -155,7 +154,7 @@ def _budget_key(rt: EnforceRuntime, lever: str) -> str:
 
 
 def _rule(rt: EnforceRuntime) -> write_budget.Rule:
-    """Kontingent des Bindings: 1/RETRY_SECONDS, enforce_per_day am Tag (Vaillant 6 = write_budget.QUOTA)."""
+    """Kontingent des Bindings: 1/RETRY_SECONDS, enforce_per_day am Tag (Vaillant 6 = write_budget.MAX_PER_DAY)."""
     return write_budget.enforce_rule(rt.override.binding.description.enforce_per_day)
 
 

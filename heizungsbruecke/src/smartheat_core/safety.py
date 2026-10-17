@@ -86,10 +86,6 @@ LOCAL_SAFETY: dict[tuple[str, str], LocalSafety] = {
 }
 
 
-def verteilsysteme() -> tuple[str, ...]:
-    return tuple(sorted({verteilsystem for _, verteilsystem in LOCAL_SAFETY}))
-
-
 def check_invariants(safety: LocalSafety, lever_set_id: str, verteilsystem: str) -> None:
     label = f"Hebelsatz '{lever_set_id}', Verteilsystem '{verteilsystem}'"
     lever_set = LEVER_SETS.get(lever_set_id)

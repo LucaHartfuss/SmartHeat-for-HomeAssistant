@@ -7,7 +7,7 @@ from bindung_beispiele import VAILLANT_MYPYLLANT
 from fakes import runtime_config
 
 from heizungsbruecke.ha_binding import HaPlantBinding
-from smartheat_core import enforce, wallclock
+from smartheat_core import enforce, wallclock, write_budget
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import LocalSafety
 from smartheat_runtime.delivery import SOURCE_LOCAL, DataFault, DeliveryState
@@ -268,12 +268,12 @@ def test_after_a_restart_enforcement_waits_for_the_settle_window(make_store, clo
 
 def test_enforcement_rate_limited_per_day(make_store, clock):
     # Review Focus 2: mypyllant uebernimmt das Rueckschreiben nicht -- hoechstens
-    # MAX_WRITES_PER_DAY Schreibvorgaenge, genau eine Eingriffs- und eine Limit-Meldung.
+    # MAX_PER_DAY Schreibvorgaenge, genau eine Eingriffs- und eine Limit-Meldung.
     rt = _rt(make_store, clock, Ha(curve=1.3, reflects_writes=False))
     for _ in range(20):
         clock.advance(SETTLE + 1)
         _rounds(rt)
-    assert len(_curve_writes(rt)) == enforce.MAX_WRITES_PER_DAY
+    assert len(_curve_writes(rt)) == write_budget.MAX_PER_DAY
     assert len(_message_calls(rt)) == 1
     assert len(_limit_calls(rt)) == 1
     assert [c for c in rt.notifier.notify.call_args_list if c.args[1] == STATE_OK] == []
@@ -316,7 +316,7 @@ def test_may_write_respects_the_retry_interval(make_store, clock, ago, allowed):
 def test_may_write_respects_the_daily_limit(make_store, clock):
     rt = _rt(make_store, clock, Ha())
     day = TODAY.isoformat()
-    rt.store.update(write_budget={"enforce:curve": {"day": day, "count": enforce.MAX_WRITES_PER_DAY,
+    rt.store.update(write_budget={"enforce:curve": {"day": day, "count": write_budget.MAX_PER_DAY,
                                                     "last": clock() - 10 * enforce.RETRY_SECONDS}})
     assert enforce._may_write(rt, "curve") is False
     assert enforce._may_write(rt, "room_setpoint") is True
@@ -344,7 +344,7 @@ def test_counter_resets_next_day(make_store, clock, monkeypatch):
         rt.signals.states["number.curve"] = 1.3
         clock.advance(SETTLE + 1)
         _rounds(rt)
-    assert len(_curve_writes(rt)) == enforce.MAX_WRITES_PER_DAY
+    assert len(_curve_writes(rt)) == write_budget.MAX_PER_DAY
     monkeypatch.setattr(enforce, "_today", lambda: date(2026, 10, 4))
     rt.signals.states["number.curve"] = 1.3
     clock.advance(SETTLE + 1)
@@ -380,7 +380,7 @@ def test_unreadable_zone_mode_is_no_deviation(make_store, clock):
 
 def test_failed_write_backs_respect_the_quota(make_store, clock):
     # IMPORTANT 1: myVAILLANT lehnt ab (403) -- jeder VERSUCH zaehlt: hoechstens einer pro
-    # RETRY_SECONDS und MAX_WRITES_PER_DAY am Tag; kein "zurueckgesetzt", genau eine Limit-Meldung.
+    # RETRY_SECONDS und MAX_PER_DAY am Tag; kein "zurueckgesetzt", genau eine Limit-Meldung.
     ha = Ha(curve=1.3)
     ha.failing.add("number.curve")
     rt = _rt(make_store, clock, ha)
@@ -388,7 +388,7 @@ def test_failed_write_backs_respect_the_quota(make_store, clock):
         clock.advance(300)
         enforce.check_manual_override(rt)
     times = [at for entity, _, at in ha.attempts if entity == "number.curve"]
-    assert len(times) == enforce.MAX_WRITES_PER_DAY
+    assert len(times) == write_budget.MAX_PER_DAY
     assert all(later - earlier >= enforce.RETRY_SECONDS for earlier, later in zip(times, times[1:], strict=False))
     assert _message_calls(rt) == []
     assert len(_limit_calls(rt)) == 1
@@ -437,12 +437,12 @@ def test_detection_at_the_daily_limit_only_sends_the_limit_message(make_store, c
     # MINOR 1: der 7. Eingriff am Tag wird nicht mehr zurueckgesetzt -- nur die Limit-Meldung,
     # kein "... und zurueckgesetzt".
     rt = _rt(make_store, clock, Ha(curve=1.3))
-    for _ in range(enforce.MAX_WRITES_PER_DAY):
+    for _ in range(write_budget.MAX_PER_DAY):
         rt.signals.states["number.curve"] = 1.3
         clock.advance(SETTLE + 1)
         _rounds(rt)
         enforce.check_manual_override(rt)  # Rueckkehr
-    assert len(_curve_writes(rt)) == enforce.MAX_WRITES_PER_DAY
+    assert len(_curve_writes(rt)) == write_budget.MAX_PER_DAY
     rt.notifier.notify.reset_mock()
     rt.signals.states["number.curve"] = 1.3
     clock.advance(SETTLE + 1)

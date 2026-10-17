@@ -17,8 +17,9 @@ from fakes import FakeHa
 from heizungsbruecke import geraet_status
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.version import ADDON_VERSION
-from smartheat_core.enforce import MAX_WRITES_PER_DAY, RETRY_SECONDS
+from smartheat_core.enforce import RETRY_SECONDS
 from smartheat_core.pipeline import LeverPipeline
+from smartheat_core.write_budget import MAX_PER_DAY
 from smartheat_device.laufzeit import RuntimeChannel
 from smartheat_runtime import abo, app, aufraeumen, backup_store, datentraeger, dokument_config, entitlement, ticks
 from smartheat_runtime.backup_store import load_backup, save_backup
@@ -491,7 +492,7 @@ def test_failing_zone_preparation_is_retried_at_most_every_30_min_and_6_times_a_
     with caplog.at_level(logging.WARNING, logger="smartheat_runtime.app"):
         _local_checks(env, bridge, hours=12)
 
-    assert len(attempts) == MAX_WRITES_PER_DAY  # Start + 5 Wiederholungen
+    assert len(attempts) == MAX_PER_DAY  # Start + 5 Wiederholungen
     assert all(later - earlier >= RETRY_SECONDS for earlier, later in itertools.pairwise(attempts))
     assert sum("Tageslimit" in record.getMessage() for record in caplog.records) == 1
 
