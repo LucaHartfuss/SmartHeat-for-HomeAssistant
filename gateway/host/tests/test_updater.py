@@ -763,6 +763,9 @@ def test_der_updater_meldet_nur_gruende_aus_reasons():
             assert keywords, f"Zeile {call.lineno}: {name} ohne erkennbaren Grund (weder Position noch reason=)"
             reason = keywords[0]
         if name == "_queue" and isinstance(reason, ast.Constant) and reason.value == "":
+            assert len(call.args) > 2, (
+                f"Zeile {call.lineno}: _queue mit leerem Grund braucht das Ergebnis auf Position 2"
+            )
             assert isinstance(call.args[2], ast.Constant) and call.args[2].value == "ok", (
                 f"Zeile {call.lineno}: leerer Grund nur beim Ergebnis \"ok\""
             )
