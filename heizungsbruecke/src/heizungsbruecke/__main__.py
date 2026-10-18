@@ -149,10 +149,10 @@ def _anlage_loeschen(ha_api) -> bool:
     def datei_weg(path) -> None:
         path.unlink(missing_ok=True)  # zwischen exists und unlink verschwunden: weg
 
-    # backup.json (Bindung an Einrichtung und Anlage) zuletzt und nur, wenn alles andere weg ist: bleibt etwas liegen,
-    # verwirft bind_to_tenant es bei der Einrichtung einer anderen Anlage. Scheitert ein Loeschen (EACCES, EIO), bleibt
-    # die Markierung fuer den naechsten Start; der Start geht weiter wie bei nicht loeschbaren Hilfssensoren. exists()
-    # steht mit im try (wirft bei EIO/EACCES im stat).
+    # backup.json (Bindung an Einrichtung und Anlage) zuletzt und nur, wenn alle anderen Dateien geloescht sind (die
+    # Hilfssensoren zaehlen nicht): bleibt etwas liegen, verwirft bind_to_tenant es bei der Einrichtung einer anderen
+    # Anlage. Scheitert ein Loeschen (EACCES, EIO), bleibt die Markierung fuer den naechsten Start; der Start geht
+    # weiter wie bei nicht loeschbaren Hilfssensoren. exists() steht mit im try (wirft bei EIO/EACCES im stat).
     for path, entfernen in ((config.FAILSAFE_PATH, datei_weg), (config.ENTITLEMENT_PATH, datei_weg),
                             (config.RUNTIME_DIR, shutil.rmtree), (config.BACKUP_PATH, datei_weg)):
         if gescheitert and path == config.BACKUP_PATH:

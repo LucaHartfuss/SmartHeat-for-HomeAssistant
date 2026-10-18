@@ -64,6 +64,7 @@ def test_the_claim_code_comes_from_the_randomness_of_the_operating_system(tmp_pa
     assert identity.new_claim_code(lambda n: bytes(n)) == "AAAAAAAAAAAA"
     assert identity.new_claim_code(lambda n: bytes([255]) * n) == "777777777777"
     assert identity.new_claim_code(lambda n: bytes(range(n))) == "AAAQEAYEAUDA"
+    assert identity.load_or_create(tmp_path / "c", lambda n: bytes(n)).claim_code == "AAAAAAAAAAAA"
     codes = {identity.new_claim_code() for _ in range(2)}
     assert len(codes) == 2
     assert identity.load_or_create(tmp_path / "a").claim_code != identity.load_or_create(tmp_path / "b").claim_code

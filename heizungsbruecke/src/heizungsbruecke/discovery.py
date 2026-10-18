@@ -10,13 +10,13 @@ wird die vorige (auch die eines frueheren Prozesses, UUID in discovery.json) dan
 bleibt sie vorgemerkt und wird erneut versucht, nie aufgegeben (5c-D-9): der Abstand waechst je Fehlversuch von
 RETRY_SECONDS bis ENTFERNEN_MAX_SECONDS, damit kein alter Code im Supervisor stehen bleibt (hoechstens VERALTET_MAX
 vorgemerkt). Wirft nie. Eine gescheiterte Meldung wird fruehestens nach RETRY_SECONDS wiederholt (der Aufruf kommt im
-Sekundentakt des Geraets; der Supervisor wird nicht bestuermt, das Log nicht gefuellt); die Drossel merkt sich jede gescheiterte Meldung (hoechstens
-DROSSEL_MAX, die aelteste faellt heraus), eine andere Meldung geht sofort hinaus.
+Sekundentakt des Geraets; der Supervisor wird nicht bestuermt, das Log nicht gefuellt); die Drossel merkt sich jede
+gescheiterte Meldung (hoechstens DROSSEL_MAX, die aelteste faellt heraus), eine andere Meldung geht sofort hinaus.
 
 Stuerzt der Prozess zwischen POST und Speichern der UUID ab, bleibt keine verwaiste Meldung: der Supervisor haelt eine
 Meldung je Add-on und Dienst und ersetzt sie beim ersten POST des naechsten Starts unter derselben UUID (Probe
-2026-10-12); GET /discovery, mit dem sich fremde Meldungen auflisten liessen, ist dem Add-on verwehrt. Der Code steht nie
-im Log und nie in discovery.json (Regel 6)."""
+2026-10-12); GET /discovery, mit dem sich fremde Meldungen auflisten liessen, ist dem Add-on verwehrt. Der Code steht
+nie im Log und nie in discovery.json (Regel 6)."""
 import logging
 import time
 from collections.abc import Callable
@@ -91,8 +91,9 @@ class Discovery:
         self._speichern()
 
     def _begrenzen(self) -> None:
-        """Hoechstens VERALTET_MAX vorgemerkte alte Meldungen (vergibt der Supervisor immer neue UUIDs und scheitert jedes
-        Entfernen, wuechse die Liste sonst ohne Grenze): die aeltesten fallen samt Zaehler weg, mit einer Warnung."""
+        """Hoechstens VERALTET_MAX vorgemerkte alte Meldungen (vergibt der Supervisor immer neue UUIDs und scheitert
+        jedes Entfernen, wuechse die Liste sonst ohne Grenze): die aeltesten fallen samt Zaehler weg, mit einer
+        Warnung."""
         while len(self._veraltet) > VERALTET_MAX:
             uuid = self._veraltet.pop(0)
             self._versuche.pop(uuid, None)
@@ -130,5 +131,6 @@ class Discovery:
             self._speichern()
 
     def _speichern(self) -> None:
-        dateien.schreiben_json(self._pfad, {"uuid": self._uuid, "entfernen": self._veraltet, "versuche": self._versuche},
+        dateien.schreiben_json(self._pfad,
+                               {"uuid": self._uuid, "entfernen": self._veraltet, "versuche": self._versuche},
                                modus=dateien.PRIVAT)
