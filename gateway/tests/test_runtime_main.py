@@ -1,6 +1,7 @@
 """Plan 5b D2 Task 5: ein Prozess aus Geraetekern und Laufzeit - Neustart bei neuer Konfiguration mit sauberem
 Trennen, Aufraeumen nach dem Entfernen, Raum im Prozess, Bedienung beim Start, Lebenszeichen."""
 import json
+import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -330,6 +331,97 @@ def test_before_the_pause_a_missing_alive_file_is_no_error(world, monkeypatch):
     geraet.zustand.status = None
     runtime_main.vor_der_pause(geraet)
     assert geraet.zustand.status == {"status": "startet"}
+
+
+# --- Fehler vor laufen (S3S6-Startabbruch) ---
+
+
+@pytest.fixture
+def vor_dem_start(world, monkeypatch):
+    """Umgebung von main() bis zum Start; die Pause wird aufgezeichnet. Das Lebenszeichen ist noch frisch wie aus einem
+    vorigen Lauf im selben Container (in Compose leert der tmpfs auf /tmp es beim Neustart ohnehin; ohne tmpfs bliebe
+    es)."""
+    monkeypatch.setenv("SHG_HOST_DIR", str(world.host_dir))
+    monkeypatch.setenv("SHG_DEVICE_API_URL", "https://accounts.example.test")
+    monkeypatch.setenv("SHG_DIAG_PORT", "0")
+    pausen = []
+    monkeypatch.setattr(prozess.time, "sleep", pausen.append)
+    alive = world.paths.data / "alive"
+    alive.touch()
+    return SimpleNamespace(mirror=ZigbeeMirror(world.bus, world.clock), pausen=pausen, alive=alive)
+
+
+def test_an_unwritable_data_dir_during_cleanup_pauses_unhealthy_and_exits(world, vor_dem_start, monkeypatch, caplog):
+    """Die Markierung einer neuen Einrichtung (VERWERFEN) laesst sich im nicht beschreibbaren Datenordner nicht
+    loeschen. Bis S3S6-Startabbruch endete das Gateway dann mit dem Traceback (Compose startete schnell neu); jetzt
+    ERROR mit Fehlerart, Lebenszeichen weg (Compose-Health-Check und health_ok scheitern; /healthz antwortet ohne
+    Diagnoseserver gar nicht), 60 s Pause, None (main endet mit Exit 0, Compose startet neu)."""
+    dateien.schreiben_json(world.paths.aufraeumen, {"anlage": "test-tenant"}, modus=dateien.LESBAR)
+    dokumente_schreiben(world.paths, konfiguration(anlage="neue-anlage"))
+    echt = Path.unlink
+
+    def unlink(self, missing_ok=False):
+        if self == world.paths.aufraeumen:
+            raise PermissionError(13, "geheim")
+        return echt(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    assert vor_dem_start.alive.exists()
+    with caplog.at_level("WARNING"):
+        assert runtime_main.vorbereiten(world.paths, vor_dem_start.mirror) is None
+    assert vor_dem_start.pausen == [60.0] and not vor_dem_start.alive.exists()
+    assert world.paths.aufraeumen.exists()
+    assert "PermissionError" in caplog.text and "geheim" not in caplog.text
+
+
+def test_a_failing_document_store_during_cleanup_pauses_unhealthy_and_exits(world, vor_dem_start, monkeypatch,
+                                                                             caplog):
+    dateien.schreiben_json(world.paths.aufraeumen, {"anlage": "test-tenant"}, modus=dateien.LESBAR)
+
+    def kaputt(*args, **kwargs):
+        raise OSError(5, "geheim")
+
+    monkeypatch.setattr(runtime_main, "DocumentStore", kaputt)
+    with caplog.at_level("WARNING"):
+        assert runtime_main.vorbereiten(world.paths, vor_dem_start.mirror) is None
+    assert vor_dem_start.pausen == [60.0] and not vor_dem_start.alive.exists()
+    assert world.paths.aufraeumen.exists()
+    assert "OSError" in caplog.text and "geheim" not in caplog.text
+
+
+def test_a_start_error_after_the_device_host_reports_the_runtime_starting(world, vor_dem_start, monkeypatch):
+    """Scheitert der Start erst nach dem Geraete-Host (hier: Diagnoseport belegt), meldet /healthz die Laufzeit als
+    "startet" (health_ok des Updaters lehnt ab), falls die Seite antwortet; das Lebenszeichen ist weg."""
+    seiten = []
+
+    def belegt(port, snapshot_fn, *args):
+        seiten.append(snapshot_fn)
+        raise OSError(98, "Address already in use")
+
+    monkeypatch.setattr(runtime_main.diagnose, "start_server", belegt)
+    assert runtime_main.vorbereiten(world.paths, vor_dem_start.mirror) is None
+    [seite] = seiten
+    assert vor_dem_start.pausen == [60.0] and not vor_dem_start.alive.exists()
+    assert seite()["laufzeit"] == "startet"
+
+
+def test_vorbereiten_returns_host_and_device_with_the_diagnosis_page_up(world, vor_dem_start, monkeypatch):
+    """Ohne Fehler: Geraete-Host und Geraetekern verbunden, die Diagnoseseite antwortet, keine Pause, das Lebenszeichen
+    bleibt (erst die Wache in laufen erneuert es)."""
+    server = []
+    echt = runtime_main.diagnose.start_server
+    monkeypatch.setattr(runtime_main.diagnose, "start_server", lambda *args: server.append(echt(*args)) or server[-1])
+    try:
+        geraet, device = runtime_main.vorbereiten(world.paths, vor_dem_start.mirror)
+        assert geraet.device is device and device.host is geraet
+        port = server[0].server_address[1]
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=5) as antwort:
+            assert json.loads(antwort.read())["server_ok"] is False  # Geraete-Thread laeuft noch nicht
+    finally:
+        for s in server:
+            s.shutdown()
+            s.server_close()
+    assert vor_dem_start.pausen == [] and vor_dem_start.alive.exists()
 
 
 def test_sigterm_ends_with_exit_0():

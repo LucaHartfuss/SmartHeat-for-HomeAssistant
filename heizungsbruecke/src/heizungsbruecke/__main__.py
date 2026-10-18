@@ -9,7 +9,8 @@ Konfiguration, sign_off, Abo am Fristende wieder aktiv, Neupruefung im Konfigura
 prozess.Neustart - die Laufzeit ueber den Rueckruf prozess.neustart_der_laufzeit aus app.start -, beenden trennt den
 Link sauber, erst danach os.execv in _exec). Anders als das Gateway (Compose startet nach Exit 0 neu) startet der
 Supervisor ein sauber beendetes Add-on nicht zuverlaessig neu, deshalb exec. SIGTERM (Supervisor stoppt das Add-on)
-endet ueber beenden ohne exec.
+endet ueber beenden ohne exec. Ein Fehler in den Schritten davor (_vorbereiten: Aufraeumen, Geraete-Host, Geraetekern)
+endet ueber prozess.starten in derselben 60-s-Pause und demselben exec (S3S6-Startabbruch).
 
 Nach dem Entfernen (aufraeumen.json) setzt der naechste Start die Anlage erst zurueck wie sign_off (Laufzeit im Modus
 abgemeldet mit der alten Konfiguration aus der Markierung) und startet danach neu; erst dieser Start loescht den
@@ -211,20 +212,29 @@ def _terminate(signum, frame) -> None:
     raise SystemExit(0)
 
 
-def main() -> None:  # pragma: no cover - Add-on-Einstieg
-    logging.basicConfig(level=log_level())
-    token = os.environ["SUPERVISOR_TOKEN"]
-    ha_api = HomeAssistantApi(base_url="http://supervisor", token=token)
-    supervisor = SupervisorApi(token=token)
-    signal.signal(signal.SIGTERM, _terminate)  # vor dem Geraete-Thread: ein SIGTERM endet immer ueber beenden
-    url = bootstrap_url()
-    if url is None:  # nie auf die Produktion ausweichen: ohne Geraetekern ruhen, bis die Option korrigiert ist
-        _ruhen()
-        return
+def _vorbereiten(ha_api, supervisor, url: str) -> tuple[HaDeviceHost, Device, GeraetStatus]:
+    """Die Host-Schritte vor laufen; eine Ausnahme darin endet ueber prozess.starten in Pause und exec."""
     aufraeumen(ha_api)  # vor dem Geraetekern: noch schreibt nichts in den anlagengebundenen Zustand
     geraet = HaDeviceHost(ha_api, supervisor)
     device = Device(geraet, config.DEVICE_DATA_DIR, url)
     status = verdrahten(geraet, device, ha_api, supervisor)
+    return geraet, device, status
+
+
+def main() -> None:  # pragma: no cover - Add-on-Einstieg (Startfehler und Ruhezustand: test_main_geraet.py)
+    signal.signal(signal.SIGTERM, _terminate)  # vor allem anderen: ein SIGTERM endet immer ueber SystemExit
+    logging.basicConfig(level=log_level())
+    token = os.environ["SUPERVISOR_TOKEN"]
+    ha_api = HomeAssistantApi(base_url="http://supervisor", token=token)
+    supervisor = SupervisorApi(token=token)
+    url = bootstrap_url()
+    if url is None:  # nie auf die Produktion ausweichen: ohne Geraetekern ruhen, bis die Option korrigiert ist
+        _ruhen()
+        return
+    teile = prozess.starten(lambda: _vorbereiten(ha_api, supervisor, url), _exec)
+    if teile is None:  # Startfehler: Pause und exec sind gelaufen (nur in Tests kehrt exec zurueck)
+        return
+    geraet, device, status = teile
     laufen(geraet, device, ha_api, status)
 
 

@@ -10,9 +10,9 @@ aktiv, Neustart nach dem Zuruecksetzen). Der Worker endet mit prozess.Neustart, 
 drei Aenderungen eine Kopie, Spec 4.2), laesst den Geraete-Thread sein laufendes Ereignis abschliessen, und main kehrt
 zurueck: Exit 0, Compose startet neu.
 Nach einem unerwarteten Fehler der Laufzeit trennt das Gateway ebenso, meldet sich ungesund (vor_der_pause), wartet
-60 s und startet dann neu. SIGTERM
-(docker stop) endet ueber beenden ohne Neustart. Jeder Start reicht die Soll-Software der gespeicherten Konfiguration
-erneut an den Updater (software_soll_nachholen).
+60 s und startet dann neu; ebenso nach einem Fehler in den Schritten davor (vorbereiten: Aufraeumen, Geraete-Host,
+Geraetekern, Diagnoseserver; S3S6-Startabbruch). SIGTERM (docker stop) endet ueber beenden ohne Neustart. Jeder Start
+reicht die Soll-Software der gespeicherten Konfiguration erneut an den Updater (software_soll_nachholen).
 
 Nach dem Entfernen (Markierung aufraeumen.json) setzt der naechste Start die Anlage erst zurueck wie sign_off (Laufzeit
 im Modus abgemeldet mit der alten Konfiguration aus der Markierung, die Treiber-Anmeldung braucht es dafuer noch) und
@@ -25,6 +25,7 @@ import logging
 import os
 import signal
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from smartheat_core import wallclock
@@ -135,16 +136,19 @@ def _starten(paths: Paths, bus, mirror: ZigbeeMirror, geraet: GatewayDeviceHost,
     return result
 
 
-def vor_der_pause(geraet: GatewayDeviceHost) -> None:
-    """Rueckruf vor_pause fuer prozess.laufen (Abschlussreview S6 I-2): nach einem unerwarteten Fehler meldet sich das
-    Gateway fuer die 60-s-Pause ungesund, damit der Updater (G2 8.4) ein Update, dessen Laufzeit gleich nach dem Start
-    wirft, zurueckrollt. Der Prozess bleibt in der Pause oben: das Lebenszeichen waere frisch (Compose-Health-Check
-    "healthy"), und /healthz hinge nur an server_ok aus dem letzten Takt des Geraete-Threads. Deshalb geht das
+def vor_der_pause(geraet: GatewayDeviceHost | None) -> None:
+    """Rueckruf vor_pause fuer prozess.laufen und prozess.starten (Abschlussreview S6 I-2, S3S6-Startabbruch): nach einem
+    unerwarteten Fehler meldet sich das Gateway fuer die 60-s-Pause ungesund, damit der Updater (G2 8.4) ein Update,
+    dessen Laufzeit gleich nach dem Start wirft, zurueckrollt. Der Prozess bleibt in der Pause oben: das Lebenszeichen
+    waere frisch (Compose-Health-Check "healthy"; im Start nur ohne tmpfs auf /tmp aus dem vorigen Lauf im selben
+    Container, Compose legt /tmp als tmpfs an), und /healthz hinge nur an server_ok aus dem letzten Takt des Geraete-Threads. Deshalb geht das
     Lebenszeichen weg (der Health-Check scheitert), und /healthz meldet die Laufzeit als "startet" (health_ok des
-    Updaters lehnt das ab); der Neustart beginnt ohnehin so."""
+    Updaters lehnt das ab); der Neustart beginnt ohnehin so. Ohne Geraete-Host (Fehler davor, geraet None) laeuft auch
+    der Diagnoseserver noch nicht: /healthz antwortet nicht, und health_ok lehnt ebenso ab."""
     with contextlib.suppress(OSError):  # ein nicht beschreibbares /tmp darf Pause und Neustart nicht verhindern
         _alive_file().unlink(missing_ok=True)
-    geraet.zustand.status = {"status": STATUS_STARTET}
+    if geraet is not None:
+        geraet.zustand.status = {"status": STATUS_STARTET}
 
 
 def laufen(paths: Paths, bus, mirror: ZigbeeMirror, geraet: GatewayDeviceHost, device: Device) -> None:
@@ -157,16 +161,12 @@ def _terminate(signum, frame) -> None:
     raise SystemExit(0)
 
 
-def main() -> None:  # pragma: no cover - Container-Einstieg
-    logging.basicConfig(level=logging.INFO)
-    paths = from_env()
-    bus = LocalBus(os.environ.get("SHG_BUS_HOST", "mosquitto"), int(os.environ.get("SHG_BUS_PORT", "1883")),
-                   "shg-runtime", credentials=credentials_from_env())
-    mirror = ZigbeeMirror(bus, time.monotonic)
-    mirror.start()
-    bus.start()
+def _vorbereiten(paths: Paths, mirror: ZigbeeMirror,
+                 angelegt: Callable[[GatewayDeviceHost], None]) -> tuple[GatewayDeviceHost, Device]:
+    """Die Host-Schritte vor laufen; angelegt bekommt den Geraete-Host, sobald es ihn gibt (fuer vor_der_pause)."""
     aufraeumen(paths)  # vor dem Geraetekern: kein Rennen mit driver_login oder inventory nach hello
     geraet = GatewayDeviceHost(paths, mirror, host_dir=Path(os.environ.get("SHG_HOST_DIR", "/host")))
+    angelegt(geraet)
     device = Device(geraet, paths.data, os.environ["SHG_DEVICE_API_URL"], befehl_fehler=befehle.fehler_uebersetzen)
     geraet.verbinden(device)
     portal = os.environ.get("SHG_PORTAL_BASE_URL", "")
@@ -175,7 +175,30 @@ def main() -> None:  # pragma: no cover - Container-Einstieg
         lambda: diagnose.qr_url(portal, device), diagnose.parse_hostnames(os.environ.get("SHG_DIAG_HOSTNAMES", "")),
     )
     software_soll_nachholen(geraet, device)  # vor dem Geraete-Thread: kein Rennen mit einer neuen Konfiguration
-    signal.signal(signal.SIGTERM, _terminate)  # vor dem Geraete-Thread: ein SIGTERM endet immer ueber beenden
+    return geraet, device
+
+
+def vorbereiten(paths: Paths, mirror: ZigbeeMirror) -> tuple[GatewayDeviceHost, Device] | None:
+    """prozess.starten mit _vorbereiten, Exit 0 als Neustart und vor_der_pause: ein Fehler vor laufen (Aufraeumen,
+    DocumentStore, Geraete-Host, Diagnoseport) endet ungesund in der 60-s-Pause, dann None (S3S6-Startabbruch)."""
+    angelegt: list[GatewayDeviceHost] = []
+    return prozess.starten(lambda: _vorbereiten(paths, mirror, angelegt.append), lambda: None,
+                           vor_pause=lambda: vor_der_pause(angelegt[0] if angelegt else None))
+
+
+def main() -> None:  # pragma: no cover - Container-Einstieg
+    logging.basicConfig(level=logging.INFO)
+    signal.signal(signal.SIGTERM, _terminate)  # vor dem Start: ein SIGTERM endet immer ueber SystemExit bzw. beenden
+    paths = from_env()
+    bus = LocalBus(os.environ.get("SHG_BUS_HOST", "mosquitto"), int(os.environ.get("SHG_BUS_PORT", "1883")),
+                   "shg-runtime", credentials=credentials_from_env())
+    mirror = ZigbeeMirror(bus, time.monotonic)
+    mirror.start()
+    bus.start()
+    teile = vorbereiten(paths, mirror)
+    if teile is None:  # Startfehler: ungesund, Pause gelaufen; Exit 0, Compose startet neu
+        return
+    geraet, device = teile
     laufen(paths, bus, mirror, geraet, device)
 
 

@@ -148,6 +148,17 @@ def neustart_vor_dem_binden_kommt_beim_binden(w: Welt) -> None:
     assert seen == [(w.reload_kind, None)]
 
 
+def im_ruhezustand_kommt_ein_neustart_vor_dem_binden_beim_binden(w: Welt) -> None:
+    """Die Ersteinrichtung im Ruhezustand haengt daran (S3S6-Reste 1): soll_eingang=False haelt nur die Bedienung
+    zurueck, nie die Neustart-Anforderung."""
+    w.verbunden()
+    w.host.neustart_anfordern()
+    worker, seen = w.worker()
+    w.host.worker_binden(worker, soll_eingang=False)
+    worker.run_pending()
+    assert seen == [(w.reload_kind, None)]
+
+
 def neustart_nach_dem_binden_kommt_sofort(w: Welt) -> None:
     w.verbunden()
     worker, seen = w.worker()
@@ -245,7 +256,8 @@ PRUEFUNGEN = (
     ohne_geraet_gelten_feste_leerwerte, dokumentsicht_fuer_die_laufzeit, bedienung_vor_dem_binden_wird_nachgestellt,
     nur_die_letzte_bedienung_vor_dem_binden_zaehlt, bedienung_nach_dem_binden_geht_sofort_an_den_worker,
     ungueltige_bedienung_wird_still_ignoriert, im_ruhezustand_geht_keine_bedienung_an_den_worker,
-    neustart_vor_dem_binden_kommt_beim_binden, neustart_nach_dem_binden_kommt_sofort, ursprungswerte_sind_kopien,
+    neustart_vor_dem_binden_kommt_beim_binden, im_ruhezustand_kommt_ein_neustart_vor_dem_binden_beim_binden,
+    neustart_nach_dem_binden_kommt_sofort, ursprungswerte_sind_kopien,
     vorbereiten_leer_nach_eingerichtet_markiert_aufraeumen, vorbereiten_ohne_wechsel_auf_leer_markiert_nichts,
     vorbereiten_wirft_wenn_die_markierung_nicht_geschrieben_werden_kann,
     uebernommen_leer_nach_eingerichtet_startet_neu_ohne_markierung, die_erste_leere_konfiguration_markiert_nichts,

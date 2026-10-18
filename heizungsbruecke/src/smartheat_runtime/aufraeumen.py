@@ -11,6 +11,7 @@ Bedrohungsmodell (Spec 2): die Markierung schreibt das Geraet selbst aus seiner 
 Konfiguration; der Server liefert hier nichts. Nennt die Konfiguration der Markierung eine andere Anlage als die
 Markierung, gilt sie als fehlend (loeschen wie bisher), und die Laufzeit prueft sie vor dem Zuruecksetzen ohnehin gegen
 die Rastung (sign_off_parts)."""
+import json
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -37,7 +38,11 @@ def markieren(pfad: Path, alt: Mapping) -> None:
 
 
 def lesen(pfad: Path) -> Markierung | None:
-    roh = dateien.lesen_json(pfad)
+    return _auswerten(dateien.lesen_json(pfad))
+
+
+def _auswerten(roh) -> Markierung | None:
+    """Markierung aus dem gelesenen JSON-Inhalt, None bei fehlender, kaputter oder fremder Form (lesen, entscheiden)."""
     if not isinstance(roh, dict) or not isinstance(roh.get("anlage"), str) or not roh["anlage"]:
         return None
     konfiguration = roh.get("konfiguration")
@@ -45,24 +50,11 @@ def lesen(pfad: Path) -> Markierung | None:
     return Markierung(roh["anlage"], konfiguration if passend else None, roh.get("zurueckgesetzt") is True)
 
 
-def _lesbar(pfad: Path) -> bool:
-    """False, wenn die Markierung da ist, aber nicht gelesen werden kann (EIO, EACCES): dann bleibt sie, und nichts
-    wird geloescht (S3S3-Marker). Verschwindet sie zwischendurch, entscheidet lesen() wie bisher."""
-    try:
-        pfad.read_bytes()
-    except FileNotFoundError:
-        return True
-    except OSError as error:
-        logger.warning("%s nicht lesbar (%s): Markierung bleibt, nichts wird geloescht", pfad.name,
-                       type(error).__name__)
-        return False
-    return True
-
-
 def entscheiden(pfad: Path, gespeichert) -> str:
     """Vor dem Start des Geraetekerns: KEINE, VERWERFEN (wieder eingerichtet, Zustand bleibt), ZURUECKSETZEN (Markierung
     bleibt, die Laufzeit setzt zurueck), LOESCHEN (Zustand und Markierung weg) oder BEHALTEN (Markierung unlesbar:
-    nichts loeschen)."""
+    nichts loeschen). Die Markierung wird genau einmal gelesen (S3S6-Reste 3): verschwunden heisst KEINE, ein Lesefehler
+    BEHALTEN; ein zweites Lesen koennte einen voruebergehenden Fehler sonst als kaputte Markierung (LOESCHEN) werten."""
     try:
         da = pfad.exists()  # wirft bei EIO/EACCES im stat (nur fehlende Datei ergibt False)
     except OSError as error:
@@ -73,9 +65,20 @@ def entscheiden(pfad: Path, gespeichert) -> str:
         return KEINE
     if eingerichtet(gespeichert):
         return VERWERFEN
-    if not _lesbar(pfad):
+    try:
+        inhalt = pfad.read_bytes()
+    except FileNotFoundError:  # zwischen exists und dem Lesen verschwunden
+        return KEINE
+    except OSError as error:
+        logger.warning("%s nicht lesbar (%s): Markierung bleibt, nichts wird geloescht", pfad.name,
+                       type(error).__name__)
         return BEHALTEN
-    markierung = lesen(pfad)
+    try:
+        roh = json.loads(inhalt)
+    except ValueError as error:  # kaputt (Stromausfall, kein UTF-8): wie dateien.lesen_json leer
+        logger.warning("%s nicht lesbar (%s), gilt als leer", pfad.name, type(error).__name__)
+        roh = None
+    markierung = _auswerten(roh)
     if markierung is None or markierung.konfiguration is None or markierung.zurueckgesetzt:
         return LOESCHEN
     return ZURUECKSETZEN

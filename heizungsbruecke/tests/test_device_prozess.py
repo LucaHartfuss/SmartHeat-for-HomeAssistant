@@ -253,6 +253,90 @@ def test_ohne_eigene_pause_nimmt_laufen_time_sleep_zur_laufzeit(monkeypatch):
     assert ("pause", 60.0) in order and order[-1] == "neustart"
 
 
+# --- starten: die Host-Schritte vor laufen (S3S6-Startabbruch) ---
+
+@pytest.mark.parametrize("fehler", [OSError(errno.EROFS, "geheim"), RuntimeError("geheim")], ids=["oserror", "runtime"])
+def test_ein_fehler_im_start_pausiert_60_s_und_startet_neu(caplog, fehler):
+    """Ein Fehler in den Host-Schritten vor laufen (Aufraeumen, DocumentStore, Geraete-Host) endet wie einer in laufen:
+    ERROR mit Fehlerart, Rueckruf vor_pause, 60 s Pause, Neustart; starten gibt None."""
+    order = []
+
+    def vorbereiten():
+        order.append("vorbereiten")
+        raise fehler
+
+    with caplog.at_level(logging.INFO):
+        ergebnis = prozess.starten(vorbereiten, lambda: order.append("neustart"),
+                                   vor_pause=lambda: order.append("vor_pause"), sleep=lambda s: order.append(("pause", s)))
+    assert ergebnis is None
+    assert order == ["vorbereiten", "vor_pause", ("pause", 60.0), "neustart"]
+    [fehlerzeile] = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert type(fehler).__name__ in fehlerzeile.getMessage() and "geheim" not in caplog.text
+
+
+def test_ohne_fehler_gibt_starten_das_ergebnis_ohne_pause_und_neustart():
+    order = []
+    teile = object()
+    ergebnis = prozess.starten(lambda: teile, lambda: order.append("neustart"),
+                               vor_pause=lambda: order.append("vor_pause"), sleep=lambda s: order.append(("pause", s)))
+    assert ergebnis is teile and order == []
+
+
+def test_ein_scheiternder_rueckruf_vor_der_pause_im_start_laesst_pause_und_neustart(caplog):
+    order = []
+
+    def vor_pause():
+        order.append("vor_pause")
+        raise OSError("geheim")
+
+    def vorbereiten():
+        raise KeyError("x")
+
+    with caplog.at_level(logging.WARNING):
+        assert prozess.starten(vorbereiten, lambda: order.append("neustart"), vor_pause=vor_pause,
+                               sleep=lambda s: order.append(("pause", s))) is None
+    assert order == ["vor_pause", ("pause", 60.0), "neustart"]
+    assert "OSError" in caplog.text and "geheim" not in caplog.text
+
+
+def test_sigterm_in_der_startpause_endet_ohne_neustart():
+    """Review Focus 3: ein SIGTERM (SystemExit) in der Pause nach einem Startfehler beendet wie in laufen."""
+    order = []
+
+    def pause(seconds):
+        order.append(("pause", seconds))
+        raise SystemExit(0)
+
+    def vorbereiten():
+        raise OSError("x")
+
+    with pytest.raises(SystemExit):
+        prozess.starten(vorbereiten, lambda: order.append("neustart"), sleep=pause)
+    assert order == [("pause", 60.0)]
+
+
+def test_sigterm_im_start_selbst_geht_ohne_pause_durch():
+    order = []
+
+    def vorbereiten():
+        raise SystemExit(0)
+
+    with pytest.raises(SystemExit):
+        prozess.starten(vorbereiten, lambda: order.append("neustart"), sleep=lambda s: order.append(("pause", s)))
+    assert order == []
+
+
+def test_ohne_eigene_pause_nimmt_starten_time_sleep_zur_laufzeit(monkeypatch):
+    order = []
+    monkeypatch.setattr(prozess.time, "sleep", lambda s: order.append(("pause", s)))
+
+    def vorbereiten():
+        raise ValueError("x")
+
+    prozess.starten(vorbereiten, lambda: order.append("neustart"))
+    assert order == [("pause", 60.0), "neustart"]
+
+
 # --- reload_anhaengen und der Rueckruf neustart_der_laufzeit ---
 
 def _bridge(reason):

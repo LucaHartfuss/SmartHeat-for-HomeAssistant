@@ -3,6 +3,7 @@ sauberem Trennen; Aufraeumen nach dem Entfernen. Die frueheren Tests des Options
 (Task 10 ordnet sie ein)."""
 import json
 import logging
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -345,6 +346,72 @@ def test_an_unexpected_start_error_restarts_after_a_pause(geraet_env, monkeypatc
         main_module.laufen(geraet, device, geraet_env.ha, status, geraet_env.clock)
     assert order == ["start", "stop", "join", "stop", ("pause", prozess.FEHLER_PAUSE_SECONDS), "exec"]
     assert "KeyError" in caplog.text and "geheim" not in caplog.text
+
+
+# --- Fehler vor laufen (S3S6-Startabbruch) ---
+
+
+def _main_ohne_supervisor(geraet_env, monkeypatch, order):
+    """main() mit gueltiger bootstrap_url bis zum Start; Supervisor-Grenzen, Signal, exec und Pause aufgezeichnet. Ein
+    Startfehler darf keinen Geraetekern mehr bauen."""
+    config.OPTIONS_PATH.write_text(json.dumps({"bootstrap_url": "https://labor.example.test"}))
+    monkeypatch.delenv("SMARTHEAT_BOOTSTRAP_URL", raising=False)
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "test-token")
+    monkeypatch.setattr(main_module, "HomeAssistantApi", lambda **kwargs: geraet_env.ha)
+    monkeypatch.setattr(main_module, "SupervisorApi", lambda **kwargs: FakeSupervisor())
+    monkeypatch.setattr(main_module.signal, "signal", lambda *args: order.append("signal"))
+    monkeypatch.setattr(main_module, "_exec", lambda: order.append("exec"))
+    monkeypatch.setattr(main_module.time, "sleep", lambda seconds: order.append(("pause", seconds)))
+    monkeypatch.setattr(main_module, "Device", lambda *args, **kwargs: pytest.fail("kein Geraetekern"))
+
+
+def test_an_unwritable_data_dir_during_cleanup_pauses_and_execs(geraet_env, monkeypatch, caplog):
+    """Die Markierung einer neuen Einrichtung (VERWERFEN) laesst sich in einem nicht beschreibbaren Datenordner nicht
+    loeschen: bis S3S6-Startabbruch endete main dann mit dem Traceback (der Supervisor startet das Add-on nicht
+    zuverlaessig neu); jetzt ERROR mit Fehlerart, 60 s Pause, exec."""
+    order = []
+    _main_ohne_supervisor(geraet_env, monkeypatch, order)
+    _entfernt_vorbereiten()
+    dateien.schreiben_json(config.DEVICE_DATA_DIR / "device" / "konfiguration.json",
+                           {"version": 2, "inhalt": {"anlage": "neu"}, "dirty": False}, modus=dateien.PRIVAT)
+    echt = Path.unlink
+
+    def unlink(self, missing_ok=False):
+        if self == config.AUFRAEUMEN_PATH:
+            order.append("unlink")
+            raise PermissionError(13, "geheim")
+        return echt(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    with caplog.at_level(logging.WARNING):
+        main_module.main()
+    # SIGTERM steht vor dem Aufraeumen (bis zu 120 s Warten auf HA): ein Stopp darin endet ueber SystemExit
+    assert order == ["signal", "unlink", ("pause", 60.0), "exec"]
+    assert config.AUFRAEUMEN_PATH.exists() and config.BACKUP_PATH.exists()  # nichts geloescht
+    assert "PermissionError" in caplog.text and "geheim" not in caplog.text
+
+
+def test_a_failing_document_store_during_cleanup_pauses_and_execs(geraet_env, monkeypatch, caplog):
+    order = []
+    _main_ohne_supervisor(geraet_env, monkeypatch, order)
+    _entfernt_vorbereiten()
+
+    def kaputt(*args, **kwargs):
+        raise OSError(5, "geheim")
+
+    monkeypatch.setattr(main_module, "DocumentStore", kaputt)
+    with caplog.at_level(logging.WARNING):
+        main_module.main()
+    assert order == ["signal", ("pause", 60.0), "exec"]
+    assert config.AUFRAEUMEN_PATH.exists() and config.BACKUP_PATH.exists()
+    assert "OSError" in caplog.text and "geheim" not in caplog.text
+
+
+def test_vorbereiten_wires_device_and_host_without_starting_the_device(geraet_env):
+    """_vorbereiten: aufraeumen, Geraete-Host, Geraetekern, verdrahten; der Geraete-Thread startet erst in laufen."""
+    geraet, device, status = main_module._vorbereiten(geraet_env.ha, FakeSupervisor(), "https://labor.example.test")
+    assert geraet.device is device and device.host is geraet and geraet.status_sink is status
+    assert geraet.claim_code() == device.identity.claim_code
 
 
 # --- Aufraeumen nach dem Entfernen ---

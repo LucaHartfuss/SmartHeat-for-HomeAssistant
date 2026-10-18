@@ -7,10 +7,12 @@ sauber beendetes Add-on nicht zuverlaessig neu), das Gateway mit Exit 0 (Compose
   Abo am Fristende wieder aktiv, Neupruefung im Konfigurationsfehler, Neustart nach dem Zuruecksetzen): der Worker endet
   mit Neustart; beenden trennt zuerst den Link (MQTT-DISCONNECT; sonst meldet IoT Core DUPLICATE_CLIENTID, wenn der
   neue Prozess verbindet), dann der Neustart des Hosts. Globales wird dafuer nicht ueberschrieben (Spec 4.2).
-- Unerwarteter Fehler im Start oder im Worker: Fehlerart ins Log, beenden, FEHLER_PAUSE_SECONDS Pause, dann derselbe
-  Neustart (keine schnelle Schleife gegen IoT Core; bis Stufe 3 S6 hatte das Gateway keine Pause). Vor der Pause ruft
-  laufen den optionalen Rueckruf vor_pause des Hosts: das Gateway meldet sich darin ungesund, damit der Updater ein
-  Update, dessen Laufzeit gleich nach dem Start wirft, weiter zurueckrollt (Abschlussreview S6 I-2); HA hat keinen.
+- Unerwarteter Fehler im Start der Laufzeit oder im Worker: Fehlerart ins Log, beenden, FEHLER_PAUSE_SECONDS Pause,
+  dann derselbe Neustart (keine schnelle Schleife gegen IoT Core; bis Stufe 3 S6 hatte das Gateway keine Pause). Vor
+  der Pause ruft laufen den optionalen Rueckruf vor_pause des Hosts: das Gateway meldet sich darin ungesund, damit der
+  Updater ein Update, dessen Laufzeit gleich nach dem Start wirft, weiter zurueckrollt (Abschlussreview S6 I-2); HA
+  hat keinen. Ein Fehler in den Host-Schritten davor (Aufraeumen, Geraete-Host, Geraetekern) endet ueber starten in
+  derselben Pause und demselben Neustart (S3S6-Startabbruch).
 - SIGTERM (SystemExit): beenden, kein Neustart; auch waehrend der Pause."""
 import logging
 import threading
@@ -108,15 +110,39 @@ def laufen(device, hintergrund, starten: Callable[[], Runtime | app.IdleBridge],
     finally:
         beenden(device, thread, hintergrund)
     if fehler:
-        if vor_pause is not None:
-            try:
-                vor_pause()
-            except Exception as error:  # Pause und Neustart duerfen nie entfallen
-                logger.warning("Vor der Pause: Rueckruf des Hosts gescheitert (%s)", type(error).__name__)
-        (sleep or time.sleep)(FEHLER_PAUSE_SECONDS)  # zur Laufzeit gelesen: Tests ersetzen time.sleep
+        _pause(vor_pause, sleep)
     if neu:
         logger.info("Neustart nach sauberem Trennen")
         neustart()
+
+
+def starten[T](vorbereiten: Callable[[], T], neustart: Callable[[], None], *,
+               vor_pause: Callable[[], None] | None = None, sleep: Callable[[float], None] | None = None) -> T | None:
+    """Die Host-Schritte vor laufen (aufraeumen_beim_start, Geraete-Host, Geraetekern, Verdrahtung): ihr Ergebnis, oder
+    nach einer Ausnahme darin dieselbe Folge wie nach einem unerwarteten Fehler in laufen (Fehlerart ins Log,
+    vor_pause, FEHLER_PAUSE_SECONDS Pause, neustart()) und None (S3S6-Startabbruch). Getrennt wird nichts: der
+    Geraete-Thread laeuft erst in laufen. SIGTERM (SystemExit) geht durch, auch in der Pause, ohne Neustart."""
+    try:
+        return vorbereiten()
+    except Exception as error:
+        logger.error("Unerwarteter Fehler im Start (%s), Neustart in %.0f s", type(error).__name__,
+                     FEHLER_PAUSE_SECONDS)
+        logger.debug("Fehler im Start", exc_info=True)
+    _pause(vor_pause, sleep)
+    logger.info("Neustart nach Fehler im Start")
+    neustart()
+    return None
+
+
+def _pause(vor_pause: Callable[[], None] | None, sleep: Callable[[float], None] | None) -> None:
+    """Nach einem unerwarteten Fehler (laufen, starten): Rueckruf vor_pause des Hosts (darf scheitern, Pause und
+    Neustart bleiben), dann FEHLER_PAUSE_SECONDS Pause."""
+    if vor_pause is not None:
+        try:
+            vor_pause()
+        except Exception as error:  # Pause und Neustart duerfen nie entfallen
+            logger.warning("Vor der Pause: Rueckruf des Hosts gescheitert (%s)", type(error).__name__)
+    (sleep or time.sleep)(FEHLER_PAUSE_SECONDS)  # zur Laufzeit gelesen: Tests ersetzen time.sleep
 
 
 def aufraeumen_beim_start(pfad: Path, gespeichert: Callable[[], object], loeschen: Callable[[], bool], *,
