@@ -224,6 +224,8 @@ def _vorbereiten(ha_api, supervisor, url: str) -> tuple[HaDeviceHost, Device, Ge
 def main() -> None:  # pragma: no cover - Add-on-Einstieg (Startfehler und Ruhezustand: test_main_geraet.py)
     signal.signal(signal.SIGTERM, _terminate)  # vor allem anderen: ein SIGTERM endet immer ueber SystemExit
     logging.basicConfig(level=log_level())
+    # Token und API-Aufbau bewusst vor prozess.starten: ein Fehler hier beendet das Add-on ohne Pause (noch kein
+    # Geraetekern, IoT Core unberuehrt)
     token = os.environ["SUPERVISOR_TOKEN"]
     ha_api = HomeAssistantApi(base_url="http://supervisor", token=token)
     supervisor = SupervisorApi(token=token)

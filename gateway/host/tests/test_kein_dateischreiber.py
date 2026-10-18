@@ -2,6 +2,7 @@
 ist smartheat_core.dateien (install.sh legt ihn mit ab, test_boundaries.py); eine zweite Kopie liefe auseinander
 (Rechte, fsync, .tmp). Gesucht wird textuell (auch in Kommentaren), Ausnahmen stehen mit Begruendung in AUSNAHMEN."""
 import re
+import shutil
 from collections import Counter
 from pathlib import Path
 
@@ -25,8 +26,8 @@ MUSTER = {
 #: (Datei, Art) -> (Anzahl, Begruendung). Jede weitere Fundstelle derselben Art in derselben Datei ist neu und rot.
 AUSNAHMEN = {
     ("bundles.py", "open schreibend"): (
-        1, "BundleStore.install (um Zeile 147): schreibt die Dateien eines Bundles in einen temporaeren Ordner, fsync je "
-           "Datei; dateien.schreiben ersetzt einzelne Dateien, kein ganzes Verzeichnis"),
+        1, "BundleStore.install (um Zeile 147): schreibt die Dateien eines Bundles in einen temporaeren Ordner, "
+           "fsync je Datei; dateien.schreiben ersetzt einzelne Dateien, kein ganzes Verzeichnis"),
     ("bundles.py", "os.replace"): (
         1, "BundleStore.install (um Zeile 153): atomarer Tausch des ganzen Bundle-Verzeichnisses, nicht ueber "
            "dateien.schreiben abbildbar"),
@@ -61,6 +62,13 @@ def verstoesse(paket: Path) -> list[str]:
             name, art = schluessel
             ergebnis.append(f"{name}:{zeilen.get(schluessel, [])} {art}: {gezaehlt[schluessel]} statt {erlaubt}")
     return ergebnis
+
+
+def _kopie(tmp_path: Path) -> Path:
+    """Der ganze Baum des Pakets (verstoesse sucht rekursiv), ohne Bytecode."""
+    kopie = tmp_path / "smartheat_host"
+    shutil.copytree(PAKET, kopie, ignore=shutil.ignore_patterns("__pycache__"))
+    return kopie
 
 
 def test_das_host_paket_hat_keinen_eigenen_datei_schreiber():
@@ -105,10 +113,7 @@ def test_lesende_aufrufe_sind_keine_fundstelle():
 def test_eine_neue_fundstelle_ausserhalb_der_tabelle_macht_den_waechter_rot(tmp_path):
     """Gegenprobe am echten Paket: eine Kopie mit einem neuen Schreiber in einer neuen Datei und einem vierten
     write_text in led.py meldet beide; die echten Ausnahmen bleiben still."""
-    kopie = tmp_path / "smartheat_host"
-    kopie.mkdir()
-    for datei in PAKET.glob("*.py"):
-        (kopie / datei.name).write_text(datei.read_text(encoding="utf-8"), encoding="utf-8")
+    kopie = _kopie(tmp_path)
     assert verstoesse(kopie) == []
     (kopie / "neu.py").write_text("import os\n\nos.replace('a.tmp', 'a')\n", encoding="utf-8")
     led = kopie / "led.py"
@@ -120,9 +125,6 @@ def test_eine_neue_fundstelle_ausserhalb_der_tabelle_macht_den_waechter_rot(tmp_
 
 
 def test_eine_entfallene_ausnahme_muss_aus_der_tabelle(tmp_path):
-    kopie = tmp_path / "smartheat_host"
-    kopie.mkdir()
-    for datei in PAKET.glob("*.py"):
-        if datei.name != "led.py":
-            (kopie / datei.name).write_text(datei.read_text(encoding="utf-8"), encoding="utf-8")
+    kopie = _kopie(tmp_path)
+    (kopie / "led.py").unlink()
     assert verstoesse(kopie) == ["led.py:[] write_text: 0 statt 3"]

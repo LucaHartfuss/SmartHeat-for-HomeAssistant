@@ -137,14 +137,15 @@ def _starten(paths: Paths, bus, mirror: ZigbeeMirror, geraet: GatewayDeviceHost,
 
 
 def vor_der_pause(geraet: GatewayDeviceHost | None) -> None:
-    """Rueckruf vor_pause fuer prozess.laufen und prozess.starten (Abschlussreview S6 I-2, S3S6-Startabbruch): nach einem
-    unerwarteten Fehler meldet sich das Gateway fuer die 60-s-Pause ungesund, damit der Updater (G2 8.4) ein Update,
-    dessen Laufzeit gleich nach dem Start wirft, zurueckrollt. Der Prozess bleibt in der Pause oben: das Lebenszeichen
-    waere frisch (Compose-Health-Check "healthy"; im Start nur ohne tmpfs auf /tmp aus dem vorigen Lauf im selben
-    Container, Compose legt /tmp als tmpfs an), und /healthz hinge nur an server_ok aus dem letzten Takt des Geraete-Threads. Deshalb geht das
-    Lebenszeichen weg (der Health-Check scheitert), und /healthz meldet die Laufzeit als "startet" (health_ok des
-    Updaters lehnt das ab); der Neustart beginnt ohnehin so. Ohne Geraete-Host (Fehler davor, geraet None) laeuft auch
-    der Diagnoseserver noch nicht: /healthz antwortet nicht, und health_ok lehnt ebenso ab."""
+    """Rueckruf vor_pause fuer prozess.laufen und prozess.starten (Abschlussreview S6 I-2, S3S6-Startabbruch): nach
+    einem unerwarteten Fehler meldet sich das Gateway fuer die 60-s-Pause ungesund, damit der Updater (G2 8.4) ein
+    Update, dessen Laufzeit gleich nach dem Start wirft, zurueckrollt. Der Prozess bleibt in der Pause oben: das
+    Lebenszeichen waere frisch (Compose-Health-Check "healthy"; im Start nur ohne tmpfs auf /tmp aus dem vorigen Lauf
+    im selben Container, Compose legt /tmp als tmpfs an), und /healthz hinge nur an server_ok aus dem letzten Takt des
+    Geraete-Threads. Deshalb geht das Lebenszeichen weg (der Health-Check scheitert), und /healthz meldet die Laufzeit
+    als "startet" (health_ok des Updaters lehnt das ab); der Neustart beginnt ohnehin so. Ohne Geraete-Host (Fehler
+    davor, geraet None) laeuft auch der Diagnoseserver noch nicht: /healthz antwortet nicht, und health_ok lehnt ebenso
+    ab."""
     with contextlib.suppress(OSError):  # ein nicht beschreibbares /tmp darf Pause und Neustart nicht verhindern
         _alive_file().unlink(missing_ok=True)
     if geraet is not None:
@@ -189,6 +190,8 @@ def vorbereiten(paths: Paths, mirror: ZigbeeMirror) -> tuple[GatewayDeviceHost, 
 def main() -> None:  # pragma: no cover - Container-Einstieg
     logging.basicConfig(level=logging.INFO)
     signal.signal(signal.SIGTERM, _terminate)  # vor dem Start: ein SIGTERM endet immer ueber SystemExit bzw. beenden
+    # Bus, Spiegel und Zugangsdaten bewusst vor prozess.starten: ein Fehler hier endet ohne Pause (Compose-Backoff;
+    # noch kein Geraetekern, IoT Core unberuehrt)
     paths = from_env()
     bus = LocalBus(os.environ.get("SHG_BUS_HOST", "mosquitto"), int(os.environ.get("SHG_BUS_PORT", "1883")),
                    "shg-runtime", credentials=credentials_from_env())

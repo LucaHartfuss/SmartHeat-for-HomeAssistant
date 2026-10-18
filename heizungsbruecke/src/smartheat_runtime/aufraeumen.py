@@ -38,11 +38,26 @@ def markieren(pfad: Path, alt: Mapping) -> None:
 
 
 def lesen(pfad: Path) -> Markierung | None:
-    return _auswerten(dateien.lesen_json(pfad))
+    """Wie dateien.lesen_json: fehlend oder unlesbar gilt als keine Markierung; ausgewertet wie in entscheiden."""
+    try:
+        inhalt = pfad.read_bytes()
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        logger.warning("%s nicht lesbar (%s), gilt als leer", pfad.name, type(error).__name__)
+        return None
+    return _auswerten(pfad.name, inhalt)
 
 
-def _auswerten(roh) -> Markierung | None:
-    """Markierung aus dem gelesenen JSON-Inhalt, None bei fehlender, kaputter oder fremder Form (lesen, entscheiden)."""
+def _auswerten(name: str, inhalt: bytes) -> Markierung | None:
+    """Der eine Weg von den gelesenen Bytes zur Markierung (lesen, entscheiden): als UTF-8 dekodieren (so schreibt sie
+    markieren, so liest dateien.lesen_json auf den Geraeten), dann JSON; ein BOM, UTF-16 oder kaputtes JSON gilt als
+    leer. None bei fehlender, kaputter oder fremder Form."""
+    try:
+        roh = json.loads(inhalt.decode("utf-8"))
+    except ValueError as error:  # auch UnicodeDecodeError; ein BOM ergibt JSONDecodeError
+        logger.warning("%s nicht lesbar (%s), gilt als leer", name, type(error).__name__)
+        return None
     if not isinstance(roh, dict) or not isinstance(roh.get("anlage"), str) or not roh["anlage"]:
         return None
     konfiguration = roh.get("konfiguration")
@@ -73,12 +88,7 @@ def entscheiden(pfad: Path, gespeichert) -> str:
         logger.warning("%s nicht lesbar (%s): Markierung bleibt, nichts wird geloescht", pfad.name,
                        type(error).__name__)
         return BEHALTEN
-    try:
-        roh = json.loads(inhalt)
-    except ValueError as error:  # kaputt (Stromausfall, kein UTF-8): wie dateien.lesen_json leer
-        logger.warning("%s nicht lesbar (%s), gilt als leer", pfad.name, type(error).__name__)
-        roh = None
-    markierung = _auswerten(roh)
+    markierung = _auswerten(pfad.name, inhalt)
     if markierung is None or markierung.konfiguration is None or markierung.zurueckgesetzt:
         return LOESCHEN
     return ZURUECKSETZEN

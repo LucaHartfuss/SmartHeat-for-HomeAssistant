@@ -185,3 +185,16 @@ def test_an_unreadable_marker_is_read_once_and_kept(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "read_text", lambda self, *a, **k: gelesen.append("text") or "{}")
     assert aufraeumen.entscheiden(pfad, LEER) == aufraeumen.BEHALTEN
     assert gelesen == ["bytes"]
+
+
+@pytest.mark.parametrize("kodierung", ["utf-8-sig", "utf-16"], ids=["bom", "utf16"])
+def test_entscheiden_and_lesen_decode_the_marker_alike(tmp_path, kodierung):
+    """entscheiden und lesen (damit laufzeit_konfiguration) dekodieren gleich: eine offene Markierung mit UTF-8-BOM oder
+    in UTF-16 ist fuer beide kaputt. Sonst ergaebe entscheiden ZURUECKSETZEN, die Laufzeit faende aber keine Markierung
+    und setzte nie zurueck."""
+    pfad = tmp_path / "aufraeumen.json"
+    aufraeumen.markieren(pfad, ALT)
+    pfad.write_bytes(pfad.read_text(encoding="utf-8").encode(kodierung))
+    assert aufraeumen.lesen(pfad) is None
+    assert aufraeumen.laufzeit_konfiguration(LEER, pfad) == (LEER, False)
+    assert aufraeumen.entscheiden(pfad, LEER) == aufraeumen.LOESCHEN

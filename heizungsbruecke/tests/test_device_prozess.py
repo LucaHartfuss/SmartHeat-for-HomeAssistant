@@ -267,7 +267,8 @@ def test_ein_fehler_im_start_pausiert_60_s_und_startet_neu(caplog, fehler):
 
     with caplog.at_level(logging.INFO):
         ergebnis = prozess.starten(vorbereiten, lambda: order.append("neustart"),
-                                   vor_pause=lambda: order.append("vor_pause"), sleep=lambda s: order.append(("pause", s)))
+                                   vor_pause=lambda: order.append("vor_pause"),
+                                   sleep=lambda s: order.append(("pause", s)))
     assert ergebnis is None
     assert order == ["vorbereiten", "vor_pause", ("pause", 60.0), "neustart"]
     [fehlerzeile] = [r for r in caplog.records if r.levelno == logging.ERROR]
