@@ -10,6 +10,7 @@ from smartheat_core.bindungsparameter import (
     ENERGIE_KANAELE,
     SCHRITT_MAX,
     WARTEZEIT_S,
+    Fehler,
     beschreibung,
 )
 from smartheat_device import wire
@@ -225,6 +226,22 @@ def test_schemata_randfaelle(schemata, gut):
 ])
 def test_schreibschutz_vaillant_randfaelle(schutz, gut):
     assert gut == (_try(parameter("vaillant_vrc720", schreibschutz=schutz)) is None)
+
+
+def _vaillant_durchsetzen(durchsetzen_tag):
+    return beschreibung("vaillant_vrc720", parameter("vaillant_vrc720", schreibschutz={
+        "tag": None, "lebensdauer_hinweis": None, "durchsetzen_tag": durchsetzen_tag}))
+
+
+def test_vaillant_durchsetzen_tag_6_auf_der_lokalen_obergrenze_wird_angenommen():
+    """Lokale Obergrenze des Vaillant-Schreibschutzes: 6 Durchsetzungen je Tag (Spec Stufe 3 S4b 4.2)."""
+    assert _vaillant_durchsetzen(6).enforce_per_day == 6
+
+
+def test_vaillant_durchsetzen_tag_7_knapp_ueber_der_lokalen_obergrenze_wird_abgelehnt():
+    with pytest.raises(Fehler) as info:
+        _vaillant_durchsetzen(7)
+    assert info.value.details == {"feld": "durchsetzen_tag", "regel": "bereich", "min": 1, "max": 6}
 
 
 def test_energie_einheit_kein_text():

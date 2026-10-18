@@ -362,6 +362,20 @@ def test_a_certificate_for_another_key_is_not_stored(tmp_path, ident, ca):
     assert _flow(tmp_path, ident, client).holen(rettung=False) is None and bootstrap.laden(tmp_path) is None
 
 
+def test_broker_host_und_vertrauensanker_kommen_ohne_pinning_aus_der_bootstrap_antwort(tmp_path, ident, ca):
+    """Heutiges Verhalten, Restpunkt A5-61 (vor dem ersten fremden Kunden): das Geraet hat keinen eigenen Anker. Ein
+    beliebiger Broker-Host und eine fremde CA aus der Bootstrap-Antwort werden uebernommen und gespeichert. Kommt das
+    Pinning, kehrt sich diese Zusicherung um."""
+    fremde_ca = GeraeteCa("fremde-ca")
+    body = {**_body(ident, fremde_ca), "mqtt_endpoint": "broker.fremd.example"}
+    assert fremde_ca.pem != ca.pem and bootstrap.laden(tmp_path) is None
+    client = _client(ident, FakeSession(FakeResponse(200, body)))
+    zugang = _flow(tmp_path, ident, lambda: client).holen(rettung=False)
+    assert zugang is not None
+    assert (zugang.endpoint.host, zugang.endpoint.ca_pem) == ("broker.fremd.example", fremde_ca.pem)
+    assert bootstrap.laden(tmp_path) == zugang
+
+
 def test_after_a_foreign_certificate_from_register_the_next_try_renews_for_the_own_csr(tmp_path, ident, ca):
     clock = Clock()
     other = identity.load_or_create(tmp_path / "anderes")

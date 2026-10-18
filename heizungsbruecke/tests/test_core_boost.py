@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from geraet_helpers import ankunftsschwelle_der_laufzeit
 
 from smartheat_core import boost
 from smartheat_core.boost import COMFORT_BOOST_MAX_SECONDS, comfort_boost_expired, decide_boost
@@ -63,6 +64,20 @@ def test_decide_boost_exits_once_within_arrival_threshold():
         boost_was_active=True, arrival_threshold_k=0.4,
     )
     assert decision is False
+
+
+@pytest.mark.parametrize(("raum_ist", "bleibt_aktiv"), [
+    pytest.param(20.51, False, id="abstand-0.49"), pytest.param(20.5, False, id="abstand-0.5"),
+    pytest.param(20.49, True, id="abstand-0.51"),
+])
+def test_comfort_boost_endet_an_der_echten_ankunftsschwelle(tmp_path, raum_ist, bleibt_aktiv):
+    """Schwelle aus der echten RuntimeConfig (Vaillant x Heizkoerper, 0,5 K): beim Soll 21,0 bleibt ein laufender
+    Comfort-Boost nur bei ist < soll - 0,5 aktiv; bei 0,49 und genau 0,5 K Abstand endet er."""
+    decision = decide_boost(
+        room_actual=raum_ist, room_target=21.0, previous_room_target=21.0,
+        boost_was_active=True, arrival_threshold_k=ankunftsschwelle_der_laufzeit(tmp_path),
+    )
+    assert decision is bleibt_aktiv
 
 
 def test_decide_boost_stays_active_across_a_second_target_raise():
