@@ -143,12 +143,42 @@ class State:
         dateien.schreiben_json(path, asdict(self), modus=dateien.LESBAR)
 
 
-def fetch_url(url: str, max_bytes: int, allow_http: bool) -> bytes:
+_REDIRECT_REFUSED = "Weiterleitung auf ein Schema, das nicht erlaubt ist (nur https)"
+
+
+def _scheme_allowed(url: str, allow_http: bool) -> bool:
     scheme = urllib.parse.urlsplit(url).scheme
-    if scheme != "https" and not (allow_http and scheme == "http"):
+    return scheme == "https" or (allow_http and scheme == "http")
+
+
+class _SchemeCheckedRedirects(urllib.request.HTTPRedirectHandler):
+    """urllib folgt auch einer Weiterleitung von https auf http. Ein Ziel, dessen Schema nicht erlaubt ist, wird abgelehnt,
+    bevor es angefragt wird (ein kompromittierter Server soll keinen Abruf ins LAN des Kunden ausloesen)."""
+
+    def __init__(self, allow_http: bool) -> None:
+        super().__init__()
+        self._allow_http = allow_http
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not _scheme_allowed(newurl, self._allow_http):
+            fp.close()  # urllib schliesst die 302-Antwort erst nach einem erfolgreichen redirect_request
+            raise FetchError(f"{req.full_url}: {_REDIRECT_REFUSED}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def checked_opener(allow_http: bool) -> urllib.request.OpenerDirector:
+    return urllib.request.build_opener(_SchemeCheckedRedirects(allow_http))
+
+
+def fetch_url(url: str, max_bytes: int, allow_http: bool) -> bytes:
+    if not _scheme_allowed(url, allow_http):
         raise FetchError(f"nur https erlaubt: {url}")
     try:
-        with urllib.request.urlopen(url, timeout=30) as response:
+        with checked_opener(allow_http).open(url, timeout=30) as response:
+            # zweite Sicherung: die Adresse, von der der Inhalt kam, gilt wie die angefragte; der Inhalt wird danach
+            # zusaetzlich nur nach SHA-256 und Signatur angenommen
+            if not _scheme_allowed(response.geturl(), allow_http):
+                raise FetchError(f"{url}: {_REDIRECT_REFUSED}")
             data = response.read(max_bytes + 1)
     except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as error:
         raise FetchError(f"{url}: {type(error).__name__}") from None

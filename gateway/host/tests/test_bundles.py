@@ -179,6 +179,15 @@ def test_compose_devices_lists_host_paths(text, paths):
     assert bundles.compose_devices(text) == paths
 
 
+def test_compose_devices_does_not_see_a_multiline_flow_list():
+    """Dokumentierte Grenze (Docstring von compose_devices): nur die Flussliste in einer Zeile wird erkannt, die
+    mehrzeilige nicht - ein fehlender Stick bliebe dann unbemerkt. Verhalten festgehalten, nicht gutgeheissen."""
+    one_line = "services:\n  z:\n    devices: [\"/dev/ttyACM9:/dev/zigbee\"]\n"
+    multi_line = "services:\n  z:\n    devices: [\n      \"/dev/ttyACM9:/dev/zigbee\",\n    ]\n"
+    assert bundles.compose_devices(one_line) == ["/dev/ttyACM9"]  # Gegenprobe: derselbe Stick, eine Zeile
+    assert bundles.compose_devices(multi_line) == []
+
+
 def test_store_keeps_manifest_and_signature(tmp_path):
     store = bundles.BundleStore(tmp_path)
     store.install("0.3.0", {"docker-compose.yml": GOOD_COMPOSE.encode(), "mosquitto.conf": b"x",

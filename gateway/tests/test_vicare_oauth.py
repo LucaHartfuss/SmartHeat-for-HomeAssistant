@@ -6,6 +6,7 @@ import logging
 import os
 import stat
 import threading
+from unittest import mock
 
 import pytest
 import requests
@@ -361,6 +362,105 @@ def test_a_pending_login_with_a_creation_time_beyond_float_range_is_refused(tmp_
     tokens._save(data)
     with pytest.raises(oauth.NotLoggedIn):
         tokens.finish("code", "r")
+
+
+def _antwort_text(expires_in: str) -> str:
+    return '{"access_token": "a2", "refresh_token": "r2", "expires_in": ' + expires_in + "}"
+
+
+def _tokens_mit_antwort(tmp_path, body_text: str):
+    """TokenStore, dessen IAM-Antwort der JSON-Text `body_text` ist (so kommen NaN und Infinity ins Gateway)."""
+    antwort = mock.create_autospec(requests.Response, instance=True)
+    antwort.status_code = 200
+    antwort.json.side_effect = lambda: json.loads(body_text)
+    post = mock.create_autospec(requests.post, return_value=antwort)
+    return oauth.TokenStore(tmp_path / "vicare.json", wall=lambda: 5000.0, iam="https://iam.test", post=post), post
+
+
+# Entscheidung 22: expires_in <= 0 ist eine unbrauchbare Antwort (nicht "sofort abgelaufen")
+@pytest.mark.parametrize("lebensdauer", ["0", "0.0", "-1", "-0.5"])
+def test_a_token_lifetime_of_zero_or_less_is_an_unusable_response(tmp_path, caplog, lebensdauer):
+    tokens, post = _tokens_mit_antwort(tmp_path, _antwort_text(lebensdauer))
+    tokens._save({"client_id": "c", "access_token": "a1", "refresh_token": "r1", "expires_at": 0})
+    vorher = (tmp_path / "vicare.json").read_bytes()
+    caplog.set_level(logging.WARNING)
+    with pytest.raises(oauth.TokenUnavailable):
+        tokens.access_token()
+    assert "unbrauchbare Antwort" in caplog.text
+    assert tokens.logged_in() and not tokens.expired()
+    assert (tmp_path / "vicare.json").read_bytes() == vorher  # die Datei ist Byte fuer Byte unveraendert
+    assert post.call_count == 1
+
+
+def test_a_login_with_a_token_lifetime_of_zero_or_less_is_not_stored(tmp_path, caplog):
+    caplog.set_level(logging.WARNING)
+    for lebensdauer in ("0", "-1", "-0.5"):
+        tokens, _ = _tokens_mit_antwort(tmp_path, _antwort_text(lebensdauer))
+        tokens.begin("c", "r")
+        with pytest.raises(oauth.TokenUnavailable):
+            tokens.finish("code", "r")
+        assert not tokens.logged_in(), lebensdauer
+    assert "unbrauchbare Antwort" in caplog.text
+
+
+def test_a_token_lifetime_of_one_second_is_taken_and_a_missing_one_means_an_hour(tmp_path):
+    tokens, _ = _tokens_mit_antwort(tmp_path, '{"access_token": "a2", "refresh_token": "r2", "expires_in": 1}')
+    tokens.begin("c", "r")
+    tokens.finish("code", "r")
+    assert json.loads((tmp_path / "vicare.json").read_text())["expires_at"] == 5001.0
+    tokens, _ = _tokens_mit_antwort(tmp_path, '{"access_token": "a3", "refresh_token": "r3"}')
+    tokens.begin("c", "r")
+    tokens.finish("code", "r")
+    assert json.loads((tmp_path / "vicare.json").read_text())["expires_at"] == 8600.0
+
+
+@pytest.mark.parametrize("nicht_endlich", ["NaN", "Infinity", "-Infinity"])
+def test_expires_in_as_nan_or_infinity_in_the_json_text_is_an_unusable_response(tmp_path, caplog, nicht_endlich):
+    tokens, post = _tokens_mit_antwort(tmp_path, _antwort_text(nicht_endlich))
+    tokens._save({"client_id": "c", "access_token": "a1", "refresh_token": "r1", "expires_at": 0})
+    vorher = (tmp_path / "vicare.json").read_bytes()
+    caplog.set_level(logging.WARNING)
+    with pytest.raises(oauth.TokenUnavailable):
+        tokens.access_token()
+    assert "unbrauchbare Antwort" in caplog.text
+    assert post.call_count == 1
+    assert (tmp_path / "vicare.json").read_bytes() == vorher  # die Datei ist Byte fuer Byte unveraendert
+
+
+@pytest.mark.parametrize("nicht_endlich", ["NaN", "Infinity", "-Infinity"])
+def test_a_login_with_expires_in_as_nan_or_infinity_is_not_stored(tmp_path, caplog, nicht_endlich):
+    tokens, post = _tokens_mit_antwort(tmp_path, _antwort_text(nicht_endlich))
+    assert not tokens.logged_in()  # frischer Store: vorher kein Token
+    tokens.begin("c", "r")
+    caplog.set_level(logging.WARNING)
+    with pytest.raises(oauth.TokenUnavailable):
+        tokens.finish("code", "r")
+    assert "unbrauchbare Antwort" in caplog.text and post.call_count == 1
+    assert not tokens.logged_in()
+    assert "access_token" not in json.loads((tmp_path / "vicare.json").read_text())  # nur der vorbereitete Zustand
+
+
+@pytest.mark.parametrize("nicht_endlich", ["NaN", "Infinity", "-Infinity"])
+def test_expires_at_as_nan_or_infinity_in_the_token_file_means_renew(tmp_path, nicht_endlich):
+    tokens, post = _tokens_mit_antwort(tmp_path, '{"access_token": "a2", "refresh_token": "r2", "expires_in": 3600}')
+    (tmp_path / "vicare.json").write_text(
+        '{"client_id": "c", "access_token": "a1", "refresh_token": "r1", "expires_at": ' + nicht_endlich + "}")
+    assert tokens.access_token() == "a2"
+    assert post.call_count == 1 and post.call_args.kwargs["data"]["grant_type"] == "refresh_token"
+
+
+@pytest.mark.parametrize("nicht_endlich", ["NaN", "Infinity", "-Infinity"])
+def test_created_as_nan_or_infinity_in_the_token_file_makes_the_pending_login_void(tmp_path, nicht_endlich):
+    tokens, post = _tokens_mit_antwort(tmp_path, '{"access_token": "a2", "refresh_token": "r2", "expires_in": 3600}')
+    tokens.begin("c", "r")
+    daten = json.loads((tmp_path / "vicare.json").read_text())
+    daten["pending"]["created"] = 0
+    (tmp_path / "vicare.json").write_text(
+        json.dumps(daten).replace('"created": 0', '"created": ' + nicht_endlich))
+    assert '"created": ' + nicht_endlich in (tmp_path / "vicare.json").read_text()
+    with pytest.raises(oauth.NotLoggedIn):
+        tokens.finish("code", "r")
+    assert post.call_count == 0 and not tokens.logged_in()
 
 
 def test_not_logged_in_without_a_file(tmp_path):

@@ -12,6 +12,7 @@ from smartheat_core import dateien
 from smartheat_core.binding import BindingDescription
 from smartheat_core.levers import LEVER_SETS
 from smartheat_core.verfahren import VERFAHREN
+from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_gateway import safety_warnings
 from smartheat_gateway.drivers.base import CACHE_MAX_POLLS, KIND_LOCAL, LEVER_ROLES, DriverError, erkennung_daten
 from smartheat_gateway.paths import Paths
@@ -43,10 +44,17 @@ SIM_SCHRITTE = {
 TAU_SECONDS = 3 * 3600
 # Zahlenparameter: JSON liest NaN, Infinity und beliebig grosse Ganzzahlen; sie liessen die Abfrage ohne Pause laufen
 # (Event.wait(NaN)) bzw. den Abfrage-Thread sterben und verfaelschten das Hausmodell.
-ZAHL_PARAMETER = ("settle_delay", "aussen_mittel", "aussen_amplitude", "rauschen", "poll_seconds", "raum_start")
+ZAHL_PARAMETER = ("settle_delay", "aussen_mittel", "aussen_amplitude", "rauschen", "raum_start")
+# Entscheidung 22: poll_seconds wie bei ViCare strenger (keine bool, kein Text) und mit Grenzen; unter 1 s lief die
+# Abfrage fast ohne Pause, ueber einem Tag wirft Event.wait bei sehr grossen Werten OverflowError.
+MIN_POLL_SECONDS = 1.0
+MAX_POLL_SECONDS = 86400.0
 
 
 def _pruefe_zahlen(parameter: Mapping) -> None:
+    poll = parameter["poll_seconds"]
+    if not ist_endliche_zahl(poll) or not MIN_POLL_SECONDS <= poll <= MAX_POLL_SECONDS:
+        raise ValueError(f"poll_seconds muss zwischen {MIN_POLL_SECONDS:g} und {MAX_POLL_SECONDS:g} s liegen")
     for key in ZAHL_PARAMETER:
         try:
             ok = math.isfinite(float(parameter[key]))

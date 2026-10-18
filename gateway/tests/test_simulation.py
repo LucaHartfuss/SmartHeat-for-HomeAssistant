@@ -33,6 +33,21 @@ def test_a_numeric_parameter_that_is_not_finite_is_refused(paths, clock, schlues
         create("simulation", {"lever_set": "viessmann_vicare", schluessel: wert}, paths, clock=clock, writer=True)
 
 
+# Entscheidung 22: poll_seconds der Simulation liegt zwischen 1 und 86400 s, beide Grenzen eingeschlossen; kein bool,
+# kein Text. Dieselben Literale pruefen der Server (test_gateway_erkennung.py) und der Root (test_treibergrenzen_gleichlauf.py).
+@pytest.mark.parametrize(("wert", "angenommen"), [
+    (0.999, False), (1, True), (1.0, True), (60, True), (86400, True), (86400.0, True), (86400.5, False),
+    (86401, False), (0, False), (-1, False), (1e300, False), (float("nan"), False), (float("inf"), False),
+    (float("-inf"), False), (True, False), (False, False), ("60", False)])
+def test_the_poll_interval_of_the_simulation_lies_between_1_and_86400_seconds(paths, clock, wert, angenommen):
+    parameter = {"lever_set": "viessmann_vicare", "poll_seconds": wert}
+    if angenommen:
+        assert create("simulation", parameter, paths, clock=clock, writer=True).poll_seconds == float(wert)
+    else:
+        with pytest.raises(ValueError, match="zwischen 1 und 86400 s"):
+            create("simulation", parameter, paths, clock=clock, writer=True)
+
+
 def test_write_is_read_back_and_counted(paths, clock):
     driver = _sim(paths, clock)
     before = driver.physical_writes
@@ -61,6 +76,19 @@ def test_stale_cache_raises(paths, clock):
     clock.advance(3 * driver.poll_seconds + 1)
     with pytest.raises(ValueError, match="veraltet"):
         driver.read("curve")
+
+
+@pytest.mark.parametrize(("poll", "alter_s", "frisch"), [
+    (60, 179, True), (60, 180, True), (60, 181, False),
+    (1, 2, True), (1, 3, True), (1, 4, False)])
+def test_the_cache_is_fresh_up_to_exactly_three_poll_intervals(paths, clock, poll, alter_s, frisch):
+    driver = _sim(paths, clock, poll_seconds=poll)
+    clock.advance(alter_s)
+    if frisch:
+        assert driver.read("curve") is not None
+    else:
+        with pytest.raises(ValueError, match="veraltet"):
+            driver.read("curve")
 
 
 def test_fault_injection(paths, clock):

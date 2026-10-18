@@ -57,6 +57,37 @@ def test_broken_signature_texts_are_rejected(text):
         minisign.verify(minisign.load_public_key(public), DATA, text)
 
 
+def _with_algorithm(signature_text: str, algorithm: bytes) -> str:
+    lines = signature_text.splitlines()
+    raw = bytearray(base64.b64decode(lines[1]))
+    raw[0:2] = algorithm
+    lines[1] = base64.b64encode(bytes(raw)).decode()
+    return "\n".join(lines) + "\n"
+
+
+@pytest.mark.parametrize("algorithm", [b"XX", b"ed", b"eD", b"E\x00", b"\x00\x00"])
+def test_unknown_algorithm_is_rejected(algorithm):
+    """Weder `Ed` noch `ED`: abgelehnt, auch wenn Schluessel-ID und Signatur sonst stimmen (die Signatur ist hier ueber
+    den Hash gebildet, wie bei `ED`; allein die Kennung ist unbekannt)."""
+    secret, key_id, public = keypair()
+    key = minisign.load_public_key(public)
+    valid = sign(secret, key_id, DATA, "gw 0.2.0", prehash=True)
+    assert minisign.verify(key, DATA, valid) == "gw 0.2.0"  # Gegenprobe: unveraendert gueltig
+    with pytest.raises(minisign.SignatureError, match="Algorithmus"):
+        minisign.verify(key, DATA, _with_algorithm(valid, algorithm))
+
+
+def test_global_signature_that_is_not_base64_is_rejected():
+    secret, key_id, public = keypair()
+    key = minisign.load_public_key(public)
+    valid = sign(secret, key_id, DATA, "gw 0.2.0")
+    lines = valid.splitlines()
+    assert minisign.verify(key, DATA, valid) == "gw 0.2.0"  # Gegenprobe: unveraendert gueltig
+    broken = "\n".join([*lines[:3], "!" * len(lines[3])]) + "\n"
+    with pytest.raises(minisign.SignatureError, match="Globale Signatur: kein Base64"):
+        minisign.verify(key, DATA, broken)
+
+
 def test_placeholder_public_key_refuses_everything():
     placeholder = (Path(__file__).resolve().parents[1] / "release.pub").read_text()
     with pytest.raises(minisign.SignatureError, match="Platzhalter"):

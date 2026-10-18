@@ -1,6 +1,7 @@
 """Spec 5b 3.4 (Plan D2 Task 2): Befehle des Gateways im Befehlsregister des Geraetekerns. Einmal-Ausfuehrung und
 Gruende-Pruefung testet D1; hier die Handler und die Uebersetzung der Treiber-Fehler."""
 import json
+import math
 import threading
 import time
 
@@ -104,6 +105,128 @@ def test_the_gateway_registers_exactly_its_commands(register):
 def test_bad_payloads(register):
     assert _run(register, "zigbee_permit_join", {"seconds": 999})["error"]["grund"] == "ungueltige_nutzlast"
     assert _run(register, "zigbee_permit_join", {"seconds": True}, "c2")["error"]["grund"] == "ungueltige_nutzlast"
+
+
+@pytest.mark.parametrize(("sekunden", "angenommen"), [
+    (0, False), (1, True), (254, True), (255, False), (-1, False), (1.5, False), (60.0, False), (None, False),
+    ("60", False)])
+def test_permit_join_takes_exactly_1_to_254_whole_seconds(ctx, register, sekunden, angenommen):
+    antwort = _run(register, "zigbee_permit_join", {"seconds": sekunden})
+    if angenommen:
+        assert antwort["ok"] is True and ctx.z2m.permit_join_requests == [sekunden]
+    else:
+        assert antwort["error"] == {"grund": "ungueltige_nutzlast",
+                                    "details": {"feld": "seconds", "regel": "bereich", "min": 1, "max": 254}}
+        assert ctx.z2m.permit_join_requests == []  # nichts an Zigbee2MQTT gesendet
+
+
+NICHT_ENDLICH = [float("nan"), math.inf, -math.inf, 10**400]
+NICHT_ENDLICH_IDS = ["nan", "inf", "minus-inf", "gross"]
+
+
+def _ohne_nan_sendbar(antwort) -> None:
+    """So sendet link.publish: allow_nan=False, sonst ValueError."""
+    json.dumps(antwort, allow_nan=False)
+
+
+@pytest.mark.parametrize("wert", NICHT_ENDLICH, ids=NICHT_ENDLICH_IDS)
+@pytest.mark.parametrize("feld", ["temperature", "local_temperature", "occupied_heating_setpoint", "humidity"])
+def test_the_device_list_leaves_out_a_value_that_is_not_finite(ctx, register, feld, wert):
+    """Ein Zigbee-Wert, der nicht endlich ist (json.loads liest NaN, Infinity), bleibt aus `werte` weg wie ein Feld, das
+    das Geraet nicht meldet; die uebrigen Werte und die Batterie bleiben, die Antwort ist sendbar."""
+    werte = {"temperature": 20.5, "humidity": 45.0}
+    ctx.z2m.report(SENSOR, battery=80, **{**werte, feld: wert})
+    antwort = _run(register, "zigbee_devices", {})
+    assert antwort["ok"] is True
+    _ohne_nan_sendbar(antwort)
+    sensor = next(d for d in antwort["result"]["devices"] if d["ieee"] == SENSOR)
+    erwartet = {key: value for key, value in werte.items() if key != feld}
+    assert sensor["werte"] == erwartet and sensor["batterie"] == 80
+
+
+@pytest.mark.parametrize("wert", NICHT_ENDLICH, ids=NICHT_ENDLICH_IDS)
+def test_the_device_list_reports_no_battery_when_the_level_is_not_finite(ctx, register, wert):
+    ctx.z2m.report(SENSOR, temperature=20.5, battery=wert)
+    antwort = _run(register, "zigbee_devices", {})
+    _ohne_nan_sendbar(antwort)
+    sensor = next(d for d in antwort["result"]["devices"] if d["ieee"] == SENSOR)
+    assert sensor["batterie"] is None and sensor["werte"] == {"temperature": 20.5}
+
+
+def test_the_device_list_leaves_out_a_nested_value_with_a_non_finite_number_and_keeps_the_flag(ctx, register):
+    ctx.z2m.report(SENSOR, temperature=[float("nan")], humidity={"x": math.inf}, battery_low=True)
+    antwort = _run(register, "zigbee_devices", {})
+    _ohne_nan_sendbar(antwort)
+    sensor = next(d for d in antwort["result"]["devices"] if d["ieee"] == SENSOR)
+    assert sensor["werte"] == {} and sensor["batterie"] is True  # Gegenprobe: ein Wahrheitswert bleibt
+
+
+def _verschachtelt(ebenen: int) -> list:
+    wert: list = []
+    for _ in range(ebenen - 1):
+        wert = [wert]
+    return wert
+
+
+@pytest.mark.parametrize("feld", ["temperature", "battery"])
+@pytest.mark.parametrize(("ebenen", "bleibt"), [(32, True), (33, False), (5000, False)])
+def test_a_value_nested_deeper_than_32_levels_is_left_out_of_the_device_list(ctx, register, feld, ebenen, bleibt):
+    """Zigbee2MQTT liefert flache Werte: bis 32 Ebenen aus Listen bleiben, ab 33 fallen sie weg (`werte` ohne das Feld,
+    `batterie` None), die Antwort ist in jedem Fall sendbar. Der Wert geht den oeffentlichen Weg: Bus-Nachricht, `decode`,
+    Spiegel. 5000 statt 100000: json.loads liest unter pytest bis rund 9980 Ebenen (im blanken Interpreter bis 9998), 5000 liest
+    es sicher; schon dort wirft json.dumps nicht, die Regel muss also nicht erst am Rekursionslimit greifen."""
+    wert = _verschachtelt(ebenen)
+    ctx.z2m.report(SENSOR, **{feld: wert})
+    antwort = _run(register, "zigbee_devices", {})
+    assert antwort["ok"] is True
+    _ohne_nan_sendbar(antwort)
+    sensor = next(d for d in antwort["result"]["devices"] if d["ieee"] == SENSOR)
+    if feld == "temperature":
+        assert sensor["werte"] == ({feld: wert} if bleibt else {}) and sensor["batterie"] is None
+    else:
+        assert sensor["batterie"] == (wert if bleibt else None) and sensor["werte"] == {}
+
+
+def _verschachtelt_objekt(ebenen: int) -> dict:
+    wert: dict = {}
+    for _ in range(ebenen - 1):
+        wert = {"k": wert}
+    return wert
+
+
+def _verschachtelt_gemischt(ebenen: int):
+    """Abwechselnd Objekt und Liste, das innerste Glied ist ein leeres Objekt."""
+    wert: dict | list = {}
+    for stufe in range(ebenen - 1):
+        wert = [wert] if stufe % 2 == 0 else {"k": wert}
+    return wert
+
+
+@pytest.mark.parametrize("bauen", [_verschachtelt_objekt, _verschachtelt_gemischt], ids=["objekt", "gemischt"])
+@pytest.mark.parametrize("feld", ["temperature", "battery"])
+@pytest.mark.parametrize(("ebenen", "bleibt"), [(32, True), (33, False), (5000, False)])
+def test_an_object_or_mixed_value_nested_deeper_than_32_levels_is_left_out_of_the_device_list(
+    ctx, register, bauen, feld, ebenen, bleibt
+):
+    """Die Tiefenregel gilt fuer Objekte wie fuer Listen und fuer beide gemischt: 32 Ebenen bleiben, 33 fallen weg (`werte`
+    ohne das Feld, `batterie` None), die Antwort ist sendbar."""
+    wert = bauen(ebenen)
+    ctx.z2m.report(SENSOR, **{feld: wert})
+    antwort = _run(register, "zigbee_devices", {})
+    assert antwort["ok"] is True
+    _ohne_nan_sendbar(antwort)
+    sensor = next(d for d in antwort["result"]["devices"] if d["ieee"] == SENSOR)
+    if feld == "temperature":
+        assert sensor["werte"] == ({feld: wert} if bleibt else {}) and sensor["batterie"] is None
+    else:
+        assert sensor["batterie"] == (wert if bleibt else None) and sensor["werte"] == {}
+
+
+@pytest.mark.parametrize("wert", [{"a": {"b": [1, {"c": 2}]}}, [[1.5, [2]], "x"], {}, []], ids=["gemischt", "liste", "leeres-objekt", "leere-liste"])
+def test_flat_and_mixed_nested_values_stay_in_the_device_list(ctx, register, wert):
+    ctx.z2m.report(SENSOR, temperature=wert)
+    sensor = next(d for d in _run(register, "zigbee_devices", {})["result"]["devices"] if d["ieee"] == SENSOR)
+    assert sensor["werte"] == {"temperature": wert}
 
 
 def test_permit_join_and_device_list(ctx, register):
@@ -758,3 +881,16 @@ def test_the_background_thread_is_a_daemon_and_stop_cancels_queued_calls():
     spaeter = hintergrund.submit(lambda: "nie")
     with pytest.raises(RuntimeError):
         spaeter.result(timeout=1.0)
+
+
+@pytest.mark.parametrize("wert", [float("nan"), math.inf, -math.inf], ids=["nan", "inf", "minus-inf"])
+def test_a_sensor_with_a_non_finite_value_still_gets_its_device_list_to_the_server(regelnde_welt, wert):
+    """Ende zu Ende ueber Device._publish: der Link sendet wie das echte (allow_nan=False). Ohne die Filterung wirft der
+    Link, das Ergebnis geht nie hoch und die Einrichtung sieht keine Geraeteliste."""
+    world = regelnde_welt
+    world.z2m.report(SENSOR, temperature=wert, local_temperature=wert, humidity=wert, battery=wert)
+    _befehl(world, "c-geraete", "zigbee_devices", {})
+    [ergebnis] = _ergebnisse(world, command_id="c-geraete")
+    assert ergebnis["ok"] is True
+    sensor = next(d for d in ergebnis["result"]["devices"] if d["ieee"] == SENSOR)
+    assert sensor["werte"] == {} and sensor["batterie"] is None

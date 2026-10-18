@@ -1,13 +1,53 @@
+import logging
+import math
+
 import pytest
 from fakes import FakeBus
+from paho.mqtt.packettypes import PacketTypes
+from paho.mqtt.reasoncodes import ReasonCode
 
 from smartheat_gateway.bus import LocalBus, decode
+from smartheat_gateway.zigbee import ZigbeeMirror
 
 
 def test_decode():
     assert decode(b"") is None
     assert decode(b'{"a": 1}') == {"a": 1}
     assert decode(b"online") == "online"
+
+
+def test_decode_hands_non_json_over_as_text_and_never_raises_on_it():
+    assert decode(b"kein json{") == "kein json{"
+    assert decode(b"\xff\xfe") == "\ufffd\ufffd"  # kein UTF-8: ersetzt statt UnicodeDecodeError
+    assert decode(b"[1, 2]") == [1, 2] and decode(b"42") == 42 and decode(b"null") is None
+
+
+def test_deeply_nested_json_raises_recursion_error_in_decode_and_the_bus_catches_it_per_message(clock, caplog):
+    """Festgehalten: `decode` faengt nur ValueError; eine tief verschachtelte Nachricht (100000 Klammern) wirft
+    RecursionError. LocalBus._on_message faengt jede Ausnahme eines Rueckrufs, loggt sie mit Traceback und der Spiegel
+    bleibt heil, die naechste Nachricht kommt an. Ein Teilnehmer am lokalen Bus (angemeldet, ACL) kann so das Log fuellen
+    (eine Zeile mit Traceback je Nachricht); hingenommen."""
+    with pytest.raises(RecursionError):
+        decode(b"[" * 100000)
+    bus, stub = _local_bus()
+    mirror = ZigbeeMirror(bus, clock)
+    mirror.start()
+    bus._on_message(stub, None, _Msg("zigbee2mqtt/0xabc", b"[" * 100000))
+    assert "Fehler beim Verarbeiten von zigbee2mqtt/0xabc" in caplog.text and "RecursionError" in caplog.text
+    assert mirror.payload("0xabc") == {}  # nichts abgelegt
+    bus._on_message(stub, None, _Msg("zigbee2mqtt/0xabc", b'{"temperature": 21.0}'))
+    assert mirror.payload("0xabc") == {"temperature": 21.0}  # Gegenprobe: die naechste Nachricht kommt an
+
+
+def test_decode_reads_the_non_finite_numbers_that_python_json_accepts():
+    """Festgehalten (Testoffensive T5', F-gateway-host-26): json.loads liest NaN, Infinity und 1e999 als float, `decode`
+    prueft nichts davon. Die Pruefung liegt bei den Lesern (signals.py, room_mean); das Verhalten beschreibt
+    test_signals.py."""
+    assert math.isnan(decode(b'{"temperature": NaN}')["temperature"])
+    assert decode(b'{"temperature": Infinity}') == {"temperature": math.inf}
+    assert decode(b'{"temperature": -Infinity}') == {"temperature": -math.inf}
+    assert decode(b'{"temperature": 1e999}') == {"temperature": math.inf}
+    assert decode(b'{"temperature": 21.5}') == {"temperature": 21.5}  # Gegenprobe: eine gewoehnliche Zahl bleibt eine
 
 
 def test_fake_bus_replays_retained_and_matches_wildcards():
@@ -91,6 +131,30 @@ def test_failing_connect_hook_does_not_block_the_others():
     bus.on_connected(lambda: calls.append("ok"))
     bus._on_connect(stub, None, None, _ConnectReason(), None)
     assert calls == ["ok"] and bus.connected
+
+
+def test_a_connection_the_broker_refuses_stays_disconnected_and_is_logged(caplog):
+    caplog.set_level(logging.WARNING, logger="smartheat_gateway.bus")
+    bus, stub = _local_bus()
+    hooks = []
+    bus.on_connected(lambda: hooks.append("verbunden"))
+    bus.subscribe("a/#", lambda *a: None)
+    bus._on_connect(stub, None, None, ReasonCode(PacketTypes.CONNACK, identifier=135), None)  # Not authorized
+    assert not bus.connected and stub.subscribed == [] and hooks == []
+    assert "Lokaler Bus lehnt die Verbindung ab: Not authorized" in caplog.text
+    # Gegenprobe: dieselbe Verbindung mit Erfolg ist verbunden, abonniert und ruft den Hook
+    bus._on_connect(stub, None, None, ReasonCode(PacketTypes.CONNACK, identifier=0), None)
+    assert bus.connected and stub.subscribed == ["a/#"] and hooks == ["verbunden"]
+
+
+def test_a_refusal_after_a_lost_connection_keeps_the_bus_disconnected_without_subscribing_again():
+    bus, stub = _local_bus()
+    bus.subscribe("a/#", lambda *a: None)
+    bus._on_connect(stub, None, None, ReasonCode(PacketTypes.CONNACK, identifier=0), None)
+    bus._on_disconnect(stub, None, None, ReasonCode(PacketTypes.DISCONNECT, identifier=0), None)
+    assert not bus.connected and stub.subscribed == ["a/#"]
+    bus._on_connect(stub, None, None, ReasonCode(PacketTypes.CONNACK, identifier=135), None)
+    assert not bus.connected and stub.subscribed == ["a/#"]
 
 
 def test_credentials_from_env(tmp_path, monkeypatch):
