@@ -1,9 +1,14 @@
 """Fakes fuer die Bruecken-Tests: FakeHa (einfach), LaggingFakeHa (realistisches HA-/mypyllant-Modell)
 und WallClock (Wanduhr). Plain-Import (`from fakes import ...`), tests/ hat kein __init__.py."""
 import copy
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
 from zoneinfo import ZoneInfo
+
+import requests
+import websocket
 
 from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime import entitlement
@@ -341,3 +346,69 @@ class WallClock:
 
     def advance(self, seconds: float) -> None:
         self._utc += timedelta(seconds=seconds)  # UTC-Arithmetik: ueber die Zeitumstellung hinweg absolut
+
+
+def ha_antwort(body=None, *, fehler=None):
+    """HTTP-Antwort an der requests-Grenze der HA-API (Attrappe mit spec der echten Klasse)."""
+    response = Mock(spec=requests.Response)
+    response.status_code = 200
+    response.json.return_value = body
+    if fehler is None:
+        response.raise_for_status.return_value = None
+    else:
+        response.raise_for_status.side_effect = fehler
+    return response
+
+
+class HaWebSocket:
+    """Gegenstelle am websocket-Rand (`websocket.create_connection`): je Verbindung `auth_required`, nach dem Token
+    `auth_ok` (ein anderes Token: `auth_invalid`), je Kommando die naechste Antwort aus `ergebnisse`. Zeichnet die
+    Adressen der Verbindungen und die gesendeten Kommandos auf."""
+
+    def __init__(self, *ergebnisse, token="test-token"):
+        self._ergebnisse = list(ergebnisse)
+        self._token = token
+        self.urls: list[str] = []
+        self.kommandos: list[dict] = []
+
+    def _verbinden(self, url, timeout=None, **_optionen):
+        self.urls.append(url)
+        ws = MagicMock(spec=websocket.WebSocket)
+        ausgang = [{"type": "auth_required"}]
+
+        def senden(text):
+            nachricht = json.loads(text)
+            if nachricht.get("type") == "auth":
+                angemeldet = nachricht.get("access_token") == self._token
+                ausgang.append({"type": "auth_ok" if angemeldet else "auth_invalid"})
+                return
+            self.kommandos.append(nachricht)
+            ausgang.append({"id": nachricht["id"], "type": "result", "success": True,
+                            "result": self._ergebnisse.pop(0)})
+
+        ws.send.side_effect = senden
+        ws.recv.side_effect = lambda: json.dumps(ausgang.pop(0))
+        return ws
+
+    def angeschlossen(self):
+        return patch("heizungsbruecke.ha_api.websocket.create_connection", autospec=True, side_effect=self._verbinden)
+
+
+class HttpAntwort:
+    """HTTP-Antwort an der requests-Grenze (Supervisor-HTTP): json, status_code und raise_for_status wie
+    requests.Response; ein Status ab 400 wirft requests.HTTPError."""
+
+    def __init__(self, body, status=200):
+        self._body, self.status_code = body, status
+
+    def json(self):
+        return self._body
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(response=self)
+
+
+def nachricht_bytes(nachricht) -> int:
+    """Bytes einer Nachricht so, wie der Link sie sendet (kompakt, UTF-8; inventory.groesse)."""
+    return len(json.dumps(nachricht, separators=(",", ":"), ensure_ascii=False).encode())

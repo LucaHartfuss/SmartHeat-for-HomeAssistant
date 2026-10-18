@@ -1,12 +1,11 @@
 """Spec 5c 1.3 (G-9): Inventur nur nach Filter, Felder nach dem Vertrag; der Server liest sie (ha_inventur.lesen)."""
-import json
 import logging
 import math
 import re
 from collections.abc import Mapping
 
 import pytest
-from fakes import FakeHa
+from fakes import FakeHa, nachricht_bytes
 
 from heizungsbruecke import inventur
 from smartheat_device import inventory, nachrichten, wire
@@ -397,17 +396,13 @@ class _GrosseHa(FakeHa):
         return [dict(zustand) for zustand in self._zustaende]
 
 
-def _bytes(nachricht) -> int:
-    return len(json.dumps(nachricht, separators=(",", ":"), ensure_ascii=False).encode())
-
-
 def test_a_large_installation_stays_under_the_message_limit():
     """5000 Entities, davon 50 nach dem Filter: die Inventur ist eine Nachricht unter der Grenze des Links (120 KB =
     122 880 Bytes)."""
     daten = inventur.inventur(_GrosseHa(passend=50), FILTER)
     assert len(daten["entities"]) == 50 and len(daten["geraete"]) == 50
     teile = inventory.nachrichten("c1", daten)
-    assert len(teile) == 1 and _bytes(teile[0]) <= 122_880
+    assert len(teile) == 1 and nachricht_bytes(teile[0]) <= 122_880
 
 
 def test_an_inventory_too_large_for_eight_messages_is_refused_instead_of_crossing_the_limit():
@@ -417,4 +412,4 @@ def test_an_inventory_too_large_for_eight_messages_is_refused_instead_of_crossin
     with pytest.raises(inventory.InventurZuGross):
         inventory.nachrichten("c1", inventur.inventur(_GrosseHa(passend=5000), FILTER))
     teile = inventory.nachrichten("c1", inventur.inventur(_GrosseHa(passend=1000), FILTER))
-    assert 1 < len(teile) <= 8 and all(_bytes(teil) <= 122_880 for teil in teile)
+    assert 1 < len(teile) <= 8 and all(nachricht_bytes(teil) <= 122_880 for teil in teile)

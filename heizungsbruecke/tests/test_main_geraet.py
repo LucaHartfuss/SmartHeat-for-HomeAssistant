@@ -23,7 +23,10 @@ from smartheat_device.host import Anzeige
 from smartheat_device.laufzeit import RuntimeChannel
 from smartheat_runtime import app, dokument_config
 from smartheat_runtime import aufraeumen as aufraeumen_markierung
+from smartheat_runtime.backup_store import save_backup
+from smartheat_runtime.delivery import SOURCE_LOCAL, DataFault, DeliveryState, PendingTick
 from smartheat_runtime.runtime import Runtime
+from smartheat_runtime.state import StateStore, bind_to_tenant
 
 DEVICE_ID = "shg-aaaaaaaaaaaaaaaa"
 CLAIM_CODE = "ABCDEFGHIJKL"
@@ -527,34 +530,52 @@ def test_cleanup_keeps_helpers_it_could_not_delete_for_the_next_start(geraet_env
     assert not config.DERIVED_SENSORS_PATH.exists() and not config.AUFRAEUMEN_PATH.exists()
 
 
-@pytest.mark.parametrize("fehler, art", [(errno.EACCES, "PermissionError"), (errno.EIO, "OSError")])
-def test_a_state_file_that_cannot_be_deleted_keeps_the_marker_and_the_start_goes_on(geraet_env, monkeypatch, caplog,
-                                                                                    fehler, art):
-    """Scheitert das Loeschen einer Zustandsdatei (Rechte, EIO; per monkeypatch, nie per chmod), wirft das Aufraeumen
-    nicht (der Geraetekern startet trotzdem, wie bei nicht loeschbaren Hilfssensoren): die Datei und die Markierung
-    bleiben fuer den naechsten Start, der uebrige Zustand ist weg; im Log stehen Datei und Fehlerart. Der naechste Start
-    loescht den Rest und die Markierung."""
-    _entfernt_vorbereiten()
+def _unlink_scheitert_fuer(monkeypatch, pfad, fehler):
+    """Fehlerinjektion: Path.unlink scheitert fuer pfad mit fehler (per monkeypatch, nie per chmod)."""
     echt = Path.unlink
 
     def unlink(self, missing_ok=False):
-        if self == config.FAILSAFE_PATH:
+        if self == pfad:
             raise OSError(fehler, os.strerror(fehler))
         echt(self, missing_ok=missing_ok)
 
     monkeypatch.setattr(Path, "unlink", unlink)
-    main_module.aufraeumen(DeletingHa())  # wirft nicht
-    assert config.FAILSAFE_PATH.exists() and config.AUFRAEUMEN_PATH.exists()
-    assert not config.BACKUP_PATH.exists() and not config.ENTITLEMENT_PATH.exists() and not config.RUNTIME_DIR.exists()
+    return echt
+
+
+@pytest.mark.parametrize("fehler, art", [(errno.EACCES, "PermissionError"), (errno.EIO, "OSError")])
+def test_a_state_file_that_cannot_be_deleted_keeps_the_marker_and_the_backup_and_the_start_goes_on(
+        geraet_env, monkeypatch, caplog, fehler, art):
+    """Scheitert das Loeschen einer Zustandsdatei (Rechte, EIO), wirft das Aufraeumen nicht (der Geraetekern startet
+    trotzdem, wie bei nicht loeschbaren Hilfssensoren): die Datei, die Markierung und backup.json (der Bindungsanker,
+    zuletzt und nur nach allem anderen geloescht) bleiben fuer den naechsten Start, der uebrige Zustand ist weg; im Log
+    Datei und Fehlerart, keine Erfolgsmeldung. Der naechste Start loescht den Rest, backup.json und die Markierung."""
+    _entfernt_vorbereiten()
+    echt = _unlink_scheitert_fuer(monkeypatch, config.FAILSAFE_PATH, fehler)
+    with caplog.at_level(logging.INFO):
+        main_module.aufraeumen(DeletingHa())  # wirft nicht
+    assert config.FAILSAFE_PATH.exists() and config.AUFRAEUMEN_PATH.exists() and config.BACKUP_PATH.exists()
+    assert not config.ENTITLEMENT_PATH.exists() and not config.RUNTIME_DIR.exists()
     assert f"{config.FAILSAFE_PATH.name} nicht geloescht ({art})" in caplog.text
+    assert "Anlagengebundener Zustand geloescht" not in caplog.text
     monkeypatch.setattr(Path, "unlink", echt)
     main_module.aufraeumen(DeletingHa())
     assert _anlage_geloescht() and not config.AUFRAEUMEN_PATH.exists()
 
 
-def test_a_runtime_folder_that_cannot_be_removed_keeps_the_marker(geraet_env, monkeypatch, caplog):
-    """Laesst sich der Laufzeit-Ordner nicht ganz entfernen (EACCES), bleibt die Markierung: der naechste Start versucht
-    es erneut, statt den Rest des Ordners fuer immer liegen zu lassen."""
+def test_a_backup_that_cannot_be_deleted_keeps_the_marker(geraet_env, monkeypatch, caplog):
+    """Scheitert nur das Loeschen von backup.json, ist der uebrige Zustand weg und die Markierung bleibt."""
+    _entfernt_vorbereiten()
+    _unlink_scheitert_fuer(monkeypatch, config.BACKUP_PATH, errno.EIO)
+    main_module.aufraeumen(DeletingHa())
+    assert config.BACKUP_PATH.exists() and config.AUFRAEUMEN_PATH.exists()
+    assert not config.FAILSAFE_PATH.exists() and not config.ENTITLEMENT_PATH.exists() and not config.RUNTIME_DIR.exists()
+    assert f"{config.BACKUP_PATH.name} nicht geloescht (OSError)" in caplog.text
+
+
+def test_a_runtime_folder_that_cannot_be_removed_keeps_the_marker_and_the_backup(geraet_env, monkeypatch, caplog):
+    """Laesst sich der Laufzeit-Ordner nicht ganz entfernen (EACCES), bleiben Markierung und backup.json: der naechste
+    Start versucht es erneut, statt den Rest des Ordners fuer immer liegen zu lassen."""
     _entfernt_vorbereiten()
     (config.RUNTIME_DIR / "soll.json").write_text("{}")
 
@@ -564,7 +585,28 @@ def test_a_runtime_folder_that_cannot_be_removed_keeps_the_marker(geraet_env, mo
     monkeypatch.setattr(main_module.shutil, "rmtree", rmtree)
     main_module.aufraeumen(DeletingHa())
     assert (config.RUNTIME_DIR / "soll.json").exists() and config.AUFRAEUMEN_PATH.exists()
+    assert config.BACKUP_PATH.exists()
     assert f"{config.RUNTIME_DIR.name} nicht geloescht (PermissionError)" in caplog.text
+
+
+def test_leftover_state_of_a_partial_cleanup_is_discarded_when_another_plant_is_set_up(geraet_env, monkeypatch):
+    """Bleibt nach einem Teil-Scheitern Zustand liegen (hier failsafe_state.json mit Notbetrieb, offenem Tick und
+    Datenfehler), steht auch backup.json mit der Bindung der alten Anlage noch da: richtet der Nutzer danach eine andere
+    Anlage ein, verwirft bind_to_tenant den Zustand der alten (Zustellung und anlagengebundene Felder)."""
+    _entfernt_vorbereiten()
+    save_backup(config.BACKUP_PATH, {"tenant_id": "s-alt", "plant_id": "anlage-alt", "lifetime_writes": 7})
+    alt = DeliveryState(notbetrieb=True, server_failures=3, pending=PendingTick("seq-1", "daily", stage=2),
+                        datenfehler=DataFault(SOURCE_LOCAL, ("room_actual",)))
+    StateStore(config.BACKUP_PATH, config.FAILSAFE_PATH).set_delivery(alt)
+    _unlink_scheitert_fuer(monkeypatch, config.FAILSAFE_PATH, errno.EACCES)
+    main_module.aufraeumen(DeletingHa())
+    store = StateStore(config.BACKUP_PATH, config.FAILSAFE_PATH)
+    liegt = store.state.delivery  # vorher: fremder Zustand liegt da (gespeichert ohne Stufe und Fehlerzaehler)
+    assert liegt.notbetrieb and liegt.pending is not None and liegt.datenfehler == alt.datenfehler
+    assert store.state.plant_id == "anlage-alt"
+    assert bind_to_tenant(store, "s-neu", "anlage-neu") == "andere_anlage"
+    assert store.state.delivery == DeliveryState() and store.state.lifetime_writes == 0
+    assert StateStore(config.BACKUP_PATH, config.FAILSAFE_PATH).state.delivery == DeliveryState()
 
 
 def test_cleanup_waits_a_limited_time_for_home_assistant(geraet_env, monkeypatch):

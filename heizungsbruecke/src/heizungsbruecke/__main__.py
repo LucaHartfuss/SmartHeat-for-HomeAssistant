@@ -144,24 +144,29 @@ def _anlage_loeschen(ha_api) -> bool:
         else:
             fertig = False
             logger.warning("Home Assistant nicht bereit: Hilfssensoren werden beim naechsten Start entfernt")
-    geloescht = False
+    geloescht = gescheitert = False
 
     def datei_weg(path) -> None:
         path.unlink(missing_ok=True)  # zwischen exists und unlink verschwunden: weg
 
-    for path, entfernen in ((config.BACKUP_PATH, datei_weg), (config.FAILSAFE_PATH, datei_weg),
-                            (config.ENTITLEMENT_PATH, datei_weg), (config.RUNTIME_DIR, shutil.rmtree)):
-        # Scheitert das Loeschen (EACCES, EIO), bleibt die Markierung fuer den naechsten Start; der Start geht weiter
-        # wie bei nicht loeschbaren Hilfssensoren. exists() steht mit im try (wirft bei EIO/EACCES im stat).
+    # backup.json (Bindung an Einrichtung und Anlage) zuletzt und nur, wenn alles andere weg ist: bleibt etwas liegen,
+    # verwirft bind_to_tenant es bei der Einrichtung einer anderen Anlage. Scheitert ein Loeschen (EACCES, EIO), bleibt
+    # die Markierung fuer den naechsten Start; der Start geht weiter wie bei nicht loeschbaren Hilfssensoren. exists()
+    # steht mit im try (wirft bei EIO/EACCES im stat).
+    for path, entfernen in ((config.FAILSAFE_PATH, datei_weg), (config.ENTITLEMENT_PATH, datei_weg),
+                            (config.RUNTIME_DIR, shutil.rmtree), (config.BACKUP_PATH, datei_weg)):
+        if gescheitert and path == config.BACKUP_PATH:
+            break
         try:
             if path.exists():
                 entfernen(path)
                 geloescht = True
         except OSError as error:
-            fertig = False
+            gescheitert = True
             logger.warning("%s nicht geloescht (%s), neuer Versuch beim naechsten Start", path.name,
                            type(error).__name__)
-    if geloescht:
+    fertig = fertig and not gescheitert
+    if geloescht and fertig:
         logger.info("Anlagengebundener Zustand geloescht (Add-on nicht mehr eingerichtet)")
     return fertig
 

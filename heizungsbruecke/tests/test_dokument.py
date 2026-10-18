@@ -6,8 +6,7 @@ import bindung_beispiele
 import pytest
 import requests
 from bindung_beispiele import parameter
-from fakes import FakeHa
-from test_ha_api import _antwort, _HaWebSocket
+from fakes import FakeHa, HaWebSocket, ha_antwort
 
 from heizungsbruecke import dokument
 from heizungsbruecke.ha_api import HomeAssistantApi
@@ -335,7 +334,7 @@ def test_a_hanging_ha_ends_the_check_at_the_first_timeout_without_a_verdict():
 
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
     with patch("heizungsbruecke.ha_api.requests.get", autospec=True, side_effect=haengt), \
-            _HaWebSocket().angeschlossen() as verbinden, pytest.raises(config_check.NichtPruefbar):
+            HaWebSocket().angeschlossen() as verbinden, pytest.raises(config_check.NichtPruefbar):
         dokument.zuordnung_pruefen(KONFIGURATION, api)
     assert aufrufe == [("/config", 10)] and verbinden.call_count == 0
 
@@ -343,11 +342,11 @@ def test_a_hanging_ha_ends_the_check_at_the_first_timeout_without_a_verdict():
 
     def config_antwortet(url, **kw):
         if url.endswith("/config"):
-            return _antwort({"state": "RUNNING"})
+            return ha_antwort({"state": "RUNNING"})
         return haengt(url, **kw)
 
     with patch("heizungsbruecke.ha_api.requests.get", autospec=True, side_effect=config_antwortet), \
-            _HaWebSocket(_ha().registry).angeschlossen(), pytest.raises(config_check.NichtPruefbar):
+            HaWebSocket(_ha().registry).angeschlossen(), pytest.raises(config_check.NichtPruefbar):
         dokument.zuordnung_pruefen(KONFIGURATION, api)
     assert aufrufe == [("/states/sensor.room_target", 10)]
 

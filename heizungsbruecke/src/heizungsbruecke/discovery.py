@@ -8,9 +8,9 @@ derselben UUID.
 Neu gemeldet wird nur bei einer Aenderung; vergibt der Supervisor dabei eine neue UUID (die alte Meldung war verloren),
 wird die vorige (auch die eines frueheren Prozesses, UUID in discovery.json) danach entfernt - gelingt das nicht,
 bleibt sie vorgemerkt und wird erneut versucht, nie aufgegeben (5c-D-9): der Abstand waechst je Fehlversuch von
-RETRY_SECONDS bis ENTFERNEN_MAX_SECONDS, damit kein alter Code im Supervisor stehen bleibt. Wirft nie. Eine
-gescheiterte Meldung wird fruehestens nach RETRY_SECONDS wiederholt (der Aufruf kommt im Sekundentakt des Geraets; der
-Supervisor wird nicht bestuermt, das Log nicht gefuellt); die Drossel merkt sich jede gescheiterte Meldung (hoechstens
+RETRY_SECONDS bis ENTFERNEN_MAX_SECONDS, damit kein alter Code im Supervisor stehen bleibt (hoechstens VERALTET_MAX
+vorgemerkt). Wirft nie. Eine gescheiterte Meldung wird fruehestens nach RETRY_SECONDS wiederholt (der Aufruf kommt im
+Sekundentakt des Geraets; der Supervisor wird nicht bestuermt, das Log nicht gefuellt); die Drossel merkt sich jede gescheiterte Meldung (hoechstens
 DROSSEL_MAX, die aelteste faellt heraus), eine andere Meldung geht sofort hinaus.
 
 Stuerzt der Prozess zwischen POST und Speichern der UUID ab, bleibt keine verwaiste Meldung: der Supervisor haelt eine
@@ -32,6 +32,7 @@ NICHT_UEBERNOMMEN = "nicht_uebernommen"
 RETRY_SECONDS = 60
 ENTFERNEN_MAX_SECONDS = 3600  # groesster Abstand zwischen zwei Versuchen, eine alte Meldung zu entfernen
 DROSSEL_MAX = 16  # so viele gescheiterte Meldungen merkt sich die Drossel
+VERALTET_MAX = 16  # so viele alte Meldungen bleiben zum Entfernen vorgemerkt, die aelteste faellt mit einer Warnung weg
 
 
 def _schluessel(config: dict) -> tuple:
@@ -57,6 +58,7 @@ class Discovery:
         versuche = stored.get("versuche")
         self._versuche: dict[str, int] = ({u: n for u, n in versuche.items() if isinstance(n, int)}
                                           if isinstance(versuche, dict) else {})
+        self._begrenzen()
 
     def aktualisieren(self, geraet_id: str, zustand: str | None, claim_code: str | None) -> None:
         werte = {"geraet_id": geraet_id, "zustand": zustand or "startet",
@@ -85,7 +87,17 @@ class Discovery:
         if alt and alt != uuid and alt not in self._veraltet:
             self._veraltet.append(alt)
         self._veraltet = [u for u in self._veraltet if u != uuid]
+        self._begrenzen()
         self._speichern()
+
+    def _begrenzen(self) -> None:
+        """Hoechstens VERALTET_MAX vorgemerkte alte Meldungen (vergibt der Supervisor immer neue UUIDs und scheitert jedes
+        Entfernen, wuechse die Liste sonst ohne Grenze): die aeltesten fallen samt Zaehler weg, mit einer Warnung."""
+        while len(self._veraltet) > VERALTET_MAX:
+            uuid = self._veraltet.pop(0)
+            self._versuche.pop(uuid, None)
+            self._entfernen_ab.pop(uuid, None)
+            logger.warning("Alte Discovery verworfen: mehr als %d nicht entfernte Meldungen vorgemerkt", VERALTET_MAX)
 
     def _drosseln(self, schluessel: tuple, bis: float) -> None:
         self._gedrosselt.pop(schluessel, None)

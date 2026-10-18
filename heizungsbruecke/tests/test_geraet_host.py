@@ -6,7 +6,7 @@ import time
 import pytest
 import requests
 from conftest import FakeClock
-from fakes import FakeHa
+from fakes import FakeHa, HttpAntwort, nachricht_bytes
 from geraet_helpers import konfiguration_aus_optionen
 from test_runtime import OPTIONS, env  # noqa: F401 - env ist eine Fixture
 
@@ -155,20 +155,6 @@ def test_clock_error_logs_only_the_kind(tmp_path, monkeypatch, caplog):
     assert "OSError" in caplog.text and "geheim" not in caplog.text
 
 
-class _Antwort:
-    """HTTP-Antwort an der requests-Grenze fuer die echte SupervisorApi."""
-
-    def __init__(self, body, status=200):
-        self._body, self.status_code = body, status
-
-    def json(self):
-        return self._body
-
-    def raise_for_status(self):
-        if self.status_code >= 400:
-            raise requests.HTTPError(response=self)
-
-
 @pytest.mark.parametrize("fehler", [requests.Timeout("Bearer geheim"), requests.ConnectionError("Bearer geheim")])
 def test_a_supervisor_timeout_or_broken_connection_leaves_the_clock_unknown(tmp_path, monkeypatch, caplog, fehler):
     """Echte SupervisorApi, Zeitlimit bzw. Verbindungsabbruch am requests-Rand: die Uhr ist unbekannt (None), im Log
@@ -180,7 +166,7 @@ def test_a_supervisor_timeout_or_broken_connection_leaves_the_clock_unknown(tmp_
     host, _, clock = _host(tmp_path, monkeypatch, SupervisorApi(token="geheim"))
     assert host.uhr_synchron() is None
     assert f"Uhrzeit des Hosts unbekannt ({type(fehler).__name__})" in caplog.text and "geheim" not in caplog.text
-    monkeypatch.setattr(requests, "get", lambda url, **kw: _Antwort({"result": "ok", "data": {"dt_synchronized": True}}))
+    monkeypatch.setattr(requests, "get", lambda url, **kw: HttpAntwort({"result": "ok", "data": {"dt_synchronized": True}}))
     clock.advance(60)
     assert host.uhr_synchron() is True
 
@@ -188,10 +174,10 @@ def test_a_supervisor_timeout_or_broken_connection_leaves_the_clock_unknown(tmp_
 def test_a_clock_answer_without_dt_synchronized_counts_as_not_synchronized(tmp_path, monkeypatch):
     """Antwort des Supervisors ohne den Schluessel dt_synchronized (echte SupervisorApi): unbekannt (None), der
     Geraetekern behandelt das wie nicht synchron. Gegenprobe: mit dem Schluessel True."""
-    monkeypatch.setattr(requests, "get", lambda url, **kw: _Antwort({"result": "ok", "data": {"timezone": "UTC"}}))
+    monkeypatch.setattr(requests, "get", lambda url, **kw: HttpAntwort({"result": "ok", "data": {"timezone": "UTC"}}))
     host, _, clock = _host(tmp_path, monkeypatch, SupervisorApi(token="t"))
     assert host.uhr_synchron() is None
-    monkeypatch.setattr(requests, "get", lambda url, **kw: _Antwort({"result": "ok", "data": {"dt_synchronized": True}}))
+    monkeypatch.setattr(requests, "get", lambda url, **kw: HttpAntwort({"result": "ok", "data": {"dt_synchronized": True}}))
     clock.advance(60)
     assert host.uhr_synchron() is True
 
@@ -228,11 +214,6 @@ def test_inventory_runs_in_the_background(tmp_path, monkeypatch):
     host.hintergrund.stop()
 
 
-def _groesse(nachricht) -> int:
-    """Bytes einer Nachricht so, wie der Link sie sendet (kompakt, UTF-8)."""
-    return len(json.dumps(nachricht, separators=(",", ":"), ensure_ascii=False).encode())
-
-
 def test_a_filter_with_ten_thousand_entries_is_not_limited_and_the_answer_stays_under_the_message_limit(
         tmp_path, monkeypatch):
     """Heutiges Verhalten (kompromittierter Server): die Laenge der Filterlisten ist nicht begrenzt, ein Filter mit je
@@ -253,7 +234,7 @@ def test_a_filter_with_ten_thousand_entries_is_not_limited_and_the_answer_stays_
     assert isinstance(done, Done)
     assert [entity["entity_id"] for entity in done.inventur["entities"]] == ["climate.wz"]  # Licht: Positivliste
     teile = inventory.nachrichten("c1", done.inventur)
-    assert len(teile) == 1 and _groesse(teile[0]) <= 122_880
+    assert len(teile) == 1 and nachricht_bytes(teile[0]) <= 122_880
     host.hintergrund.stop()
 
 

@@ -5,7 +5,7 @@ import logging
 import pytest
 import requests
 from conftest import FakeClock
-from fakes import datei_stand
+from fakes import HttpAntwort, datei_stand
 
 from heizungsbruecke import discovery
 from heizungsbruecke.supervisor import SupervisorApi
@@ -212,23 +212,11 @@ class SupervisorHttp:
         assert url == "http://supervisor/discovery" and json["service"] == "smartheat"
         uuid = next(iter(self.meldungen), None) or next(self._uuids)
         self.meldungen[uuid] = json["config"]
-        return _Antwort({"result": "ok", "data": {"uuid": uuid}})
+        return HttpAntwort({"result": "ok", "data": {"uuid": uuid}})
 
     def delete(self, url, *, headers, timeout):
         uuid = url.rsplit("/", 1)[1]
-        return _Antwort({}, 200 if self.meldungen.pop(uuid, None) is not None else 404)
-
-
-class _Antwort:
-    def __init__(self, body, status=200):
-        self._body, self.status_code = body, status
-
-    def json(self):
-        return self._body
-
-    def raise_for_status(self):
-        if self.status_code >= 400:
-            raise requests.HTTPError(response=self)
+        return HttpAntwort({}, 200 if self.meldungen.pop(uuid, None) is not None else 404)
 
 
 class _Absturz(BaseException):
@@ -352,6 +340,33 @@ def test_a_new_old_entry_is_removed_at_once_while_another_waits(tmp_path):
     d.aktualisieren("shg-a", "uebernommen", None)  # alt-1 scheitert, "aktuell" ist weg
     d.aktualisieren("shg-a", "nicht_uebernommen", None)  # neue UUID: uuid-1 wird vorgemerkt
     assert supervisor.deletes == ["aktuell", "uuid-1"]
+
+
+def test_at_most_sixteen_old_entries_are_kept_and_the_oldest_is_dropped_with_a_warning(tmp_path, caplog):
+    """Vergibt der Supervisor immer neue UUIDs und scheitert jedes Entfernen, waechst die Liste nicht ohne Grenze:
+    16 alte Meldungen bleiben vorgemerkt, die 17. verdraengt die aelteste (samt Zaehler) mit einer Warnung."""
+    supervisor = Supervisor()
+    supervisor.fail_delete = True
+    d, _ = _discovery(tmp_path, supervisor)
+    for n in range(17):  # 17 Meldungen: uuid-1 bis uuid-16 werden alt
+        d.aktualisieren("shg-a", "nicht_uebernommen" if n % 2 else "uebernommen", None)
+    stored = json.loads((tmp_path / "discovery.json").read_text())
+    assert stored["entfernen"] == [f"uuid-{n}" for n in range(1, 17)]
+    assert not any("verworfen" in r.getMessage() for r in caplog.records)
+    d.aktualisieren("shg-a", "gesperrt", None)  # uuid-17 wird alt: uuid-1 faellt heraus
+    stored = json.loads((tmp_path / "discovery.json").read_text())
+    assert stored["entfernen"] == [f"uuid-{n}" for n in range(2, 18)] and "uuid-1" not in stored["versuche"]
+    assert sum("Alte Discovery verworfen" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_a_longer_list_from_the_state_file_is_cut_to_the_newest_sixteen(tmp_path):
+    _queue(tmp_path, *[f"alt-{n}" for n in range(20)])
+    supervisor = Supervisor()
+    supervisor.fail_delete = True
+    d, _ = _discovery(tmp_path, supervisor)
+    d.aktualisieren("shg-a", "uebernommen", None)  # "aktuell" wird alt, die aeltesten fallen heraus
+    stored = json.loads((tmp_path / "discovery.json").read_text())
+    assert stored["entfernen"] == [f"alt-{n}" for n in range(5, 20)] + ["aktuell"]
 
 
 def test_the_attempt_count_survives_a_restart(tmp_path):

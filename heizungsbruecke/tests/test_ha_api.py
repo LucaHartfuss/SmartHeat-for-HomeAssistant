@@ -6,58 +6,13 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 import requests
 import websocket
+from fakes import HaWebSocket, ha_antwort
 
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_signals import HaSignalSource
 from smartheat_runtime.ports import SourceUnavailable
 
 FLOW_URL = "http://supervisor/core/api/config/config_entries/flow"
-
-
-def _antwort(body=None, *, fehler=None):
-    """HTTP-Antwort an der requests-Grenze (Attrappe mit spec der echten Klasse)."""
-    response = Mock(spec=requests.Response)
-    response.status_code = 200
-    response.json.return_value = body
-    if fehler is None:
-        response.raise_for_status.return_value = None
-    else:
-        response.raise_for_status.side_effect = fehler
-    return response
-
-
-class _HaWebSocket:
-    """Gegenstelle am websocket-Rand (`websocket.create_connection`): je Verbindung `auth_required`, nach dem Token
-    `auth_ok` (ein anderes Token: `auth_invalid`), je Kommando die naechste Antwort aus `ergebnisse`. Zeichnet die
-    Adressen der Verbindungen und die gesendeten Kommandos auf."""
-
-    def __init__(self, *ergebnisse, token="test-token"):
-        self._ergebnisse = list(ergebnisse)
-        self._token = token
-        self.urls: list[str] = []
-        self.kommandos: list[dict] = []
-
-    def _verbinden(self, url, timeout=None, **_optionen):
-        self.urls.append(url)
-        ws = MagicMock(spec=websocket.WebSocket)
-        ausgang = [{"type": "auth_required"}]
-
-        def senden(text):
-            nachricht = json.loads(text)
-            if nachricht.get("type") == "auth":
-                angemeldet = nachricht.get("access_token") == self._token
-                ausgang.append({"type": "auth_ok" if angemeldet else "auth_invalid"})
-                return
-            self.kommandos.append(nachricht)
-            ausgang.append({"id": nachricht["id"], "type": "result", "success": True,
-                            "result": self._ergebnisse.pop(0)})
-
-        ws.send.side_effect = senden
-        ws.recv.side_effect = lambda: json.dumps(ausgang.pop(0))
-        return ws
-
-    def angeschlossen(self):
-        return patch("heizungsbruecke.ha_api.websocket.create_connection", autospec=True, side_effect=self._verbinden)
 
 
 def test_get_state_returns_parsed_float():
@@ -395,7 +350,7 @@ def test_advance_config_flow_filters_fields_per_step_until_flow_completes():
     }
     final_response = {"type": "create_entry", "result": {"entry_id": "e1"}}
 
-    antworten = [_antwort(step2_response), _antwort(step3_response), _antwort(final_response)]
+    antworten = [ha_antwort(step2_response), ha_antwort(step3_response), ha_antwort(final_response)]
     with patch("heizungsbruecke.ha_api.requests.post", autospec=True, side_effect=antworten) as mock_post:
         result = api._advance_config_flow(step1_response, all_fields)
 
@@ -425,7 +380,7 @@ def test_find_entity_by_config_entry_returns_matching_entity_id():
         {"entity_id": "sensor.dart", "config_entry_id": "e1"},
     ]
 
-    ha_ws = _HaWebSocket(entries)
+    ha_ws = HaWebSocket(entries)
     with ha_ws.angeschlossen():
         result = api._find_entity_by_config_entry("e1")
 
@@ -436,7 +391,7 @@ def test_find_entity_by_config_entry_returns_matching_entity_id():
 def test_find_entity_by_config_entry_raises_when_not_found():
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
 
-    with _HaWebSocket([]).angeschlossen(), pytest.raises(RuntimeError, match="Keine Entity"):
+    with HaWebSocket([]).angeschlossen(), pytest.raises(RuntimeError, match="Keine Entity"):
         api._find_entity_by_config_entry("missing")
 
 
@@ -536,7 +491,7 @@ def test_advance_config_flow_follows_a_menu_step_then_the_form():
     fields = {"next_step_id": "sensor", "name": "N", "state": "{{ 1 }}", "unit_of_measurement": "°C"}
 
     with patch("heizungsbruecke.ha_api.requests.post", autospec=True,
-               side_effect=[_antwort(form), _antwort(done)]) as mock_post:
+               side_effect=[ha_antwort(form), ha_antwort(done)]) as mock_post:
         result = api._advance_config_flow(menu, fields)
 
     assert result == done
@@ -554,10 +509,10 @@ def test_create_template_sensor_runs_template_flow_with_temperature_fields():
         {"name": "state_class"}, {"name": "device_id"},
     ]}
     done = {"type": "create_entry", "result": {"entry_id": "e7"}}
-    ha_ws = _HaWebSocket([{"entity_id": "sensor.other", "config_entry_id": "e1"},
+    ha_ws = HaWebSocket([{"entity_id": "sensor.other", "config_entry_id": "e1"},
                           {"entity_id": "sensor.smartheat_t1_raumtemperatur", "config_entry_id": "e7"}])
     with patch("heizungsbruecke.ha_api.requests.post", autospec=True,
-               side_effect=[_antwort(menu), _antwort(form), _antwort(done)]) as mock_post, ha_ws.angeschlossen():
+               side_effect=[ha_antwort(menu), ha_antwort(form), ha_antwort(done)]) as mock_post, ha_ws.angeschlossen():
         entity_id = api.create_template_sensor(name="SmartHeat t1 Raumtemperatur", template="{{ 20 }}")
 
     assert entity_id == "sensor.smartheat_t1_raumtemperatur"
@@ -579,7 +534,7 @@ def test_delete_helper_deletes_the_config_entry_of_the_entity(platform):
     ]
     mock_response = Mock(spec=requests.Response)
     mock_response.raise_for_status.return_value = None
-    with _HaWebSocket(registry).angeschlossen(), \
+    with HaWebSocket(registry).angeschlossen(), \
          patch("heizungsbruecke.ha_api.requests.delete", autospec=True, return_value=mock_response) as mock_delete:
         api.delete_helper("sensor.smartheat_t1_dart")
 
@@ -592,7 +547,7 @@ def test_delete_helper_deletes_the_config_entry_of_the_entity(platform):
 def test_delete_helper_raises_for_entity_without_config_entry():
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
     registry = [{"entity_id": "sensor.smartheat_t1_x", "config_entry_id": None, "platform": "template"}]
-    with _HaWebSocket(registry).angeschlossen(), \
+    with HaWebSocket(registry).angeschlossen(), \
          patch("heizungsbruecke.ha_api.requests.delete", autospec=True) as mock_delete, pytest.raises(RuntimeError):
         api.delete_helper("sensor.smartheat_t1_x")
 
@@ -608,7 +563,7 @@ def test_delete_helper_refuses_config_entries_of_other_integrations(platform):
     if platform is not None:
         entry["platform"] = platform
     with (
-        _HaWebSocket([entry]).angeschlossen(),
+        HaWebSocket([entry]).angeschlossen(),
         patch("heizungsbruecke.ha_api.requests.delete", autospec=True) as mock_delete,
         pytest.raises(RuntimeError, match="kein SmartHeat-Hilfssensor"),
     ):
@@ -622,7 +577,7 @@ def test_delete_helper_refuses_entities_without_smartheat_prefix(entity_id):
     """Wie delete_input_number: nur Entities mit dem Objekt-Teil-Praefix `smartheat_`, auch wenn
     eine fremde Entity zufaellig auf der Plattform template/statistics liegt."""
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
-    ha_ws = _HaWebSocket([{"entity_id": entity_id, "config_entry_id": "e_fremd", "platform": "template"}])
+    ha_ws = HaWebSocket([{"entity_id": entity_id, "config_entry_id": "e_fremd", "platform": "template"}])
     with (
         ha_ws.angeschlossen(),
         patch("heizungsbruecke.ha_api.requests.delete", autospec=True) as mock_delete,
@@ -662,7 +617,7 @@ def test_fire_event_raises_on_http_error():
 def test_is_reachable_true_when_ha_is_running():
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
     with patch("heizungsbruecke.ha_api.requests.get", autospec=True,
-               return_value=_antwort({"time_zone": "UTC", "state": "RUNNING"})) as mock_get:
+               return_value=ha_antwort({"time_zone": "UTC", "state": "RUNNING"})) as mock_get:
         assert api.is_reachable() is True
     assert mock_get.call_args.args == ("http://supervisor/core/api/config",)
 
@@ -674,7 +629,7 @@ def test_is_reachable_false_while_ha_is_not_running(config):
     """HAs HTTP-Server antwortet schon frueh im Bootstrap; Integrationen wie mypyllant laden erst
     danach. Das Start-Budget darf erst bei RUNNING zaehlen (sonst Startfehler bei langsamer Cloud)."""
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
-    with patch("heizungsbruecke.ha_api.requests.get", autospec=True, return_value=_antwort(config)):
+    with patch("heizungsbruecke.ha_api.requests.get", autospec=True, return_value=ha_antwort(config)):
         assert api.is_reachable() is False
 
 
@@ -682,7 +637,7 @@ def test_is_reachable_false_while_ha_is_not_running(config):
 def test_is_reachable_false_on_any_error(fehler):
     # Der Koerper meldet RUNNING: nur der Fehler macht die Antwort unbrauchbar.
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
-    antwort = _antwort({"time_zone": "UTC", "state": "RUNNING"})
+    antwort = ha_antwort({"time_zone": "UTC", "state": "RUNNING"})
     if fehler in ("502", "401 falsches Token"):
         antwort.raise_for_status.side_effect = requests.HTTPError(fehler)
     elif fehler == "kein JSON":
@@ -726,7 +681,7 @@ def test_set_hvac_mode_posts_correct_payload():
 
 def test_delete_input_number_sends_ws_command():
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
-    ha_ws = _HaWebSocket(None)
+    ha_ws = HaWebSocket(None)
     with ha_ws.angeschlossen():
         api.delete_input_number("input_number.smartheat_x_tagesmittel")
 
@@ -736,7 +691,7 @@ def test_delete_input_number_sends_ws_command():
 
 def test_delete_input_number_refuses_non_input_number_entities():
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
-    ha_ws = _HaWebSocket(None)
+    ha_ws = HaWebSocket(None)
     with ha_ws.angeschlossen(), pytest.raises(RuntimeError):
         api.delete_input_number("sensor.smartheat_x_tagesmittel")
 
@@ -747,7 +702,7 @@ def test_delete_input_number_refuses_entities_without_smartheat_prefix():
     """Wie delete_helper(): nur SmartHeat-eigene Helfer werden geloescht, kein fremder
     input_number-Helfer wird versehentlich getroffen."""
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
-    ha_ws = _HaWebSocket(None)
+    ha_ws = HaWebSocket(None)
     with ha_ws.angeschlossen(), pytest.raises(RuntimeError, match="kein SmartHeat-Hilfssensor"):
         api.delete_input_number("input_number.fremder_helfer")
 
@@ -761,7 +716,7 @@ def test_delete_helper_deletes_a_renamed_helper_by_its_config_entry_title():
     entries = [{"entry_id": "e1", "title": "Zuhause"}, {"entry_id": "e2", "title": "SmartHeat t1 DAT"}]
     mock_response = Mock(spec=requests.Response)
     mock_response.raise_for_status.return_value = None
-    ha_ws = _HaWebSocket(registry, entries)
+    ha_ws = HaWebSocket(registry, entries)
     with ha_ws.angeschlossen(), \
          patch("heizungsbruecke.ha_api.requests.delete", autospec=True, return_value=mock_response) as mock_delete:
         api.delete_helper("sensor.heizraum_zuhause_smartheat_t1_dat", tenant_id="t1")
@@ -779,7 +734,7 @@ def test_delete_helper_refuses_a_renamed_helper_with_a_foreign_title(title):
     registry = [{"entity_id": "sensor.umbenannt", "config_entry_id": "e2", "platform": "statistics"}]
     entries = [] if title is None else [{"entry_id": "e2", "title": title}]
     with (
-        _HaWebSocket(registry, entries).angeschlossen(),
+        HaWebSocket(registry, entries).angeschlossen(),
         patch("heizungsbruecke.ha_api.requests.delete", autospec=True) as mock_delete,
         pytest.raises(RuntimeError, match="kein SmartHeat-Hilfssensor"),
     ):
@@ -869,17 +824,17 @@ def test_get_attribute_raises_when_missing_or_empty(attributes):
 
 def test_registries_use_the_ws_command_and_ignore_other_answers():
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
-    with _HaWebSocket([{"entity_id": "sensor.a"}], [{"id": "d1"}]).angeschlossen():
+    with HaWebSocket([{"entity_id": "sensor.a"}], [{"id": "d1"}]).angeschlossen():
         assert api.entity_registry() == [{"entity_id": "sensor.a"}]
         assert api.device_registry() == [{"id": "d1"}]
-    with _HaWebSocket({"unerwartet": 1}, {"unerwartet": 1}).angeschlossen():
+    with HaWebSocket({"unerwartet": 1}, {"unerwartet": 1}).angeschlossen():
         assert api.entity_registry() == []
         assert api.device_registry() == []
 
 
 def test_registry_queries_go_out_as_websocket_commands():
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
-    ha_ws = _HaWebSocket([], [])
+    ha_ws = HaWebSocket([], [])
     with ha_ws.angeschlossen():
         api.entity_registry()
         api.device_registry()
@@ -908,7 +863,7 @@ def test_states_and_services_are_read_over_rest(method, path):
 def test_get_state_without_a_number_is_a_value_error(zustand):
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
     with (
-        patch("heizungsbruecke.ha_api.requests.get", autospec=True, return_value=_antwort({"state": zustand})),
+        patch("heizungsbruecke.ha_api.requests.get", autospec=True, return_value=ha_antwort({"state": zustand})),
         pytest.raises(ValueError),
     ):
         api.get_state("sensor.vorlauf")
