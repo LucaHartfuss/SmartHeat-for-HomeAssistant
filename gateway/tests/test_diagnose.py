@@ -308,16 +308,33 @@ def test_fifty_silent_connections_leave_healthz_answering(lan_server):
     assert time.monotonic() - beginn < 2
 
 
-def test_fifty_simultaneous_requests_are_all_answered(lan_server):
+def test_fifty_simultaneous_requests_are_all_answered():
+    """50 Anfragen auf /healthz, deren Zustandslesen erst endet, wenn alle 50 zugleich im Handler sind (Barriere): ein
+    Server mit nur einem Faden lieferte nie alle 50 und scheitert an der Frist; alle bekommen 200."""
+    barriere = threading.Barrier(50, timeout=10)
+
+    def snapshot() -> dict:
+        barriere.wait()
+        return SNAPSHOT
+
+    server = start_server(0, snapshot, lambda: None)
+    port = server.server_address[1]
     ergebnisse: list[int] = []
 
     def frage() -> None:
-        ergebnisse.append(_anfrage(lan_server.port, "GET", "/healthz", timeout=10)[0])
+        try:
+            ergebnisse.append(_anfrage(port, "GET", "/healthz", timeout=15)[0])
+        except (OSError, http.client.HTTPException):
+            ergebnisse.append(-1)
 
     faeden = [threading.Thread(target=frage) for _ in range(50)]
-    for faden in faeden:
-        faden.start()
-    for faden in faeden:
-        faden.join(timeout=15)
-    assert ergebnisse == [200] * 50
-    assert len(lan_server.calls) == 50
+    try:
+        for faden in faeden:
+            faden.start()
+        for faden in faeden:
+            faden.join(timeout=30)
+        assert ergebnisse == [200] * 50
+    finally:
+        barriere.abort()
+        server.shutdown()
+        server.server_close()

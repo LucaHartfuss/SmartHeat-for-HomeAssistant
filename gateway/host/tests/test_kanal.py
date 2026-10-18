@@ -5,6 +5,7 @@ import os
 import re
 import socket
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -169,7 +170,7 @@ def test_read_stat_reads_exactly_64_kib_and_refuses_one_byte_more(tmp_path, groe
 def test_read_stat_counts_the_bytes_it_read_when_the_reported_size_is_too_small(tmp_path, monkeypatch, groesse,
                                                                               erlaubt):
     """Meldet `fstat` eine zu kleine Groesse (Datei waechst, Sonderdatei), zaehlt trotzdem, was wirklich gelesen wurde:
-    65537 gelesene Bytes werden abgelehnt, 65536 geliefert (Attrappe nur an der Betriebssystem-Grenze `os.fstat`)."""
+    65537 gelesene Bytes werden abgelehnt, 65536 geliefert (Attrappe nur an der Betriebssystem-Grenze `fstat`, nur im Namensraum von `lesen`)."""
     datei = tmp_path / "waechst.json"
     datei.write_bytes(b"y" * groesse)
     echtes_fstat = os.fstat
@@ -178,7 +179,8 @@ def test_read_stat_counts_the_bytes_it_read_when_the_reported_size_is_too_small(
         info = echtes_fstat(fd)
         return os.stat_result((*tuple(info)[:6], 10, *tuple(info)[7:]))  # Index 6 = st_size
 
-    monkeypatch.setattr(lesen.os, "fstat", zu_klein)
+    # nur im Namensraum von `lesen` (nicht im Modul os selbst): `lesen` ruft os.fstat ueber sein Modul-Attribut `os` auf
+    monkeypatch.setattr(lesen, "os", SimpleNamespace(**{**vars(os), "fstat": zu_klein}))
     if erlaubt:
         assert lesen.read_stat(datei)[0] == b"y" * groesse
     else:
