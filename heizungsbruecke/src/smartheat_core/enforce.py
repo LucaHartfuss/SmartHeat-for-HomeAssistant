@@ -30,7 +30,7 @@ from typing import Any, Protocol
 
 from smartheat_core import derived, wallclock, write_budget
 from smartheat_core.pipeline import WriteBudgetExhausted
-from smartheat_core.zahlen import ist_endliche_zahl
+from smartheat_core.zahlen import GLEITKOMMA_REST, ist_endliche_zahl
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,6 @@ RETRY_SECONDS = write_budget.INTERVAL_SECONDS
 # (0,05 = halber Schritt 0,1, A5-64) folgen derselben Regel. Die Heizgrenze (Anlagenschritt 0,1) nimmt wie die
 # Steigung den halben Anlagenschritt, 0,05.
 ZONE_MODE = "zone_mode"
-_EPSILON = 1e-9  # Gleitkomma-Rest (0.91 - 0.9) zaehlt nicht als Abweichung
 MESSAGE = (
     "SmartHeat: Die Heizungseinstellung wurde in der App verstellt ({was}) und zurückgesetzt. "
     "Einstellungen bitte nur über das Raumthermostat."
@@ -124,7 +123,7 @@ def _deviations(rt: EnforceRuntime) -> tuple[dict, dict, set]:
         if lever in pending:
             continue
         live = _read(rt, lever)
-        if live is None or abs(live - value) <= tolerance[lever] + _EPSILON:
+        if live is None or abs(live - value) <= tolerance[lever] + GLEITKOMMA_REST:
             continue
         if rt.override.settled(lever):
             deviating[lever] = live

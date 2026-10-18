@@ -81,15 +81,17 @@ class FakeMqttChannel:
         self.stopped = True
 
 
-def datei_stand(path: Path) -> tuple[int, int] | None:
-    """Kennung einer Datei auf dem Datentraeger (Inode, Aenderungszeit in ns), None ohne Datei. Jedes Schreiben geht
-    atomar ueber eine neue Datei (dateien.schreiben, os.replace) und aendert die Inode: gleicher Stand heisst, die Datei
-    wurde nicht geschrieben (Wirkung auf dem Datentraeger statt eines Spions auf dem Store, A5-25)."""
+def datei_stand(path: Path) -> tuple[int, int, bytes] | None:
+    """Stand einer Datei auf dem Datentraeger (Inode, Aenderungszeit in ns, Inhalt), None ohne Datei. Jedes Schreiben
+    geht atomar ueber eine neue Datei (dateien.schreiben, os.replace) und aendert die Inode; der Inhalt ist mit dabei,
+    damit eine wiederverwendete Inode bei gleicher Aenderungszeit kein "ungeschrieben" vortaeuscht. Gleicher Stand
+    heisst: die Datei wurde nicht geschrieben (Wirkung auf dem Datentraeger statt eines Spions auf dem Store, A5-25)."""
     try:
         stat = path.stat()
+        inhalt = path.read_bytes()
     except FileNotFoundError:
         return None
-    return stat.st_ino, stat.st_mtime_ns
+    return stat.st_ino, stat.st_mtime_ns, inhalt
 
 
 class FakeHa:

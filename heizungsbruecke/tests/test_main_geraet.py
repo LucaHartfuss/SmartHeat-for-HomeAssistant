@@ -3,6 +3,7 @@ sauberem Trennen; Aufraeumen nach dem Entfernen. Die frueheren Tests des Options
 (Task 10 ordnet sie ein)."""
 import json
 import logging
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -192,11 +193,29 @@ def test_main_with_an_invalid_bootstrap_url_stays_idle_without_the_device_core(g
     monkeypatch.setattr(main_module, "HomeAssistantApi", lambda **kwargs: geraet_env.ha)
     monkeypatch.setattr(main_module, "SupervisorApi", lambda **kwargs: FakeSupervisor())
     monkeypatch.setattr(main_module.signal, "signal", lambda *args: None)
-    geruht = []
-    monkeypatch.setattr(main_module, "_ruhen", lambda: geruht.append(True))
-    main_module.main()
-    assert geruht == [True]
-    assert not (config.DEVICE_DATA_DIR / "device" / "key.pem").exists()  # kein Geraetekern: keine Identitaet angelegt
+    pausen = []
+
+    def _sleep(seconds):  # Uhr: die Ruhe endet wie beim SIGTERM des Supervisors (SystemExit aus dem Signal-Handler)
+        pausen.append(seconds)
+        raise SystemExit(0)
+
+    monkeypatch.setattr(main_module.time, "sleep", _sleep)
+    ende = []
+
+    def _main():
+        try:
+            main_module.main()
+        except SystemExit as error:
+            ende.append(error.code)
+
+    # main in einem eigenen Thread: baut eine Regression doch den Geraetekern, blockiert laufen (der Worker wartet ohne
+    # Zeitlimit auf Ereignisse); der Test wird dann nach 5 s rot statt zu haengen.
+    thread = threading.Thread(target=_main, daemon=True)
+    thread.start()
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert ende == [0] and pausen == [3600]  # in der Ruhe (_ruhen schlaeft je 3600 s), nicht in der 60-s-Startpause
+    assert _kein_geraetekern()  # keine Identitaet angelegt
 
 
 def test_log_level_from_options(tmp_path, monkeypatch):

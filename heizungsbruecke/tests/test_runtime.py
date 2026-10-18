@@ -167,6 +167,22 @@ def env(tmp_path, monkeypatch, clock):
     )
 
 
+# --- Port-Fakes am Link (RuntimeChannel); ihre Signaturen bindet test_fake_gleichlauf.py an die echte Klasse ---
+
+def loop_start_aufzeichnen(order, wert):
+    """Ersatz fuer RuntimeChannel.loop_start: haelt beim MQTT-Start `wert()` in order fest (Reihenfolge am Port)."""
+    def loop_start(self):
+        order.append(wert())
+    return loop_start
+
+
+def verbindung_aus(link):
+    """Ersatz fuer RuntimeChannel.is_connected: die Verbindung des Links steht in link["up"]."""
+    def is_connected(self):
+        return link["up"]
+    return is_connected
+
+
 # --- Harness ---
 # Einzige Stellen dieser Datei, die Interna der Bruecke kennen. Der Umbau (TP5, Spec 5c) passt nur
 # diesen Abschnitt und die Fixture `env` an; die Szenarien darunter pruefen nur die
@@ -372,7 +388,7 @@ def test_start_runs_priming_check_before_mqtt_loop_start(env, monkeypatch):
         return read_state(entity_id)
 
     env.ha.get_state = _spy
-    monkeypatch.setattr(RuntimeChannel, "loop_start", lambda self: order.append("loop_start"))
+    monkeypatch.setattr(RuntimeChannel, "loop_start", loop_start_aufzeichnen(order, lambda: "loop_start"))
 
     _start(env)
 
@@ -383,7 +399,7 @@ def test_boot_prepares_zone_before_first_snapshot(env, monkeypatch):
     # Plan-Praezisierung 11: Zone meldet 0 (heizt gerade nicht) und steht nicht auf Manuell.
     env.ha.states.update({"climate.zone": "auto", "climate.zone::temperature": 0.0})
     order = []
-    monkeypatch.setattr(RuntimeChannel, "loop_start", lambda self: order.append(list(env.ha.writes)))
+    monkeypatch.setattr(RuntimeChannel, "loop_start", loop_start_aufzeichnen(order, lambda: list(env.ha.writes)))
 
     bridge = _start(env, entity_shift_current="climate.zone")
 
@@ -752,7 +768,7 @@ def test_reactivated_abo_restart_ends_a_running_emergency_boost_during_priming(e
     entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
     env.ha.states.update({"number.curve_current": 1.5, "number.shift_current": 25.0, "sensor.room_actual": 19.5})
     order = []
-    monkeypatch.setattr(RuntimeChannel, "loop_start", lambda self: order.append(list(env.ha.writes)))
+    monkeypatch.setattr(RuntimeChannel, "loop_start", loop_start_aufzeichnen(order, lambda: list(env.ha.writes)))
 
     bridge = _start(env)
 
@@ -2309,7 +2325,7 @@ def test_open_tick_at_start_is_sent_on_connect_without_waiting_for_the_ack_timeo
     _quiet_backup(env)
     save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": False, "pending": {"seq": "alt-1", "trigger": "daily"}})
     link = {"up": False}
-    monkeypatch.setattr(RuntimeChannel, "is_connected", lambda self: link["up"])
+    monkeypatch.setattr(RuntimeChannel, "is_connected", verbindung_aus(link))
 
     bridge = _start(env)
     assert _mqtt(env).snapshots == []

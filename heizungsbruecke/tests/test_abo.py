@@ -218,9 +218,13 @@ def test_connection_failing_is_throttled_like_auth_rejection(make_store, tmp_pat
     queries = []  # Abfragen der Abo-Quelle (Rueckruf des Hosts)
     rt = _runtime(tmp_path, make_store(), abo_source=lambda: queries.append(1) or entitlement.UNKNOWN)
     abo.handle_connection_failing(rt)
-    abo.handle_connection_failing(rt)
-    rt.clock.advance(abo.AUTH_REJECTED_QUERY_INTERVAL_SECONDS)
-    abo.handle_connection_failing(rt)
+    abo.handle_connection_failing(rt)  # sofort danach: gedrosselt
+    assert len(queries) == 1
+    rt.clock.advance(599)
+    abo.handle_connection_failing(rt)  # 599 s nach der Abfrage: noch gedrosselt
+    assert len(queries) == 1
+    rt.clock.advance(1)
+    abo.handle_connection_failing(rt)  # genau 600 s: wieder abgefragt
     assert len(queries) == 2
 
 
