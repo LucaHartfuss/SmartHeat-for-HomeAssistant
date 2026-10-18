@@ -191,12 +191,12 @@ def test_main_with_an_invalid_bootstrap_url_stays_idle_without_the_device_core(g
     monkeypatch.setenv("SUPERVISOR_TOKEN", "test-token")
     monkeypatch.setattr(main_module, "HomeAssistantApi", lambda **kwargs: geraet_env.ha)
     monkeypatch.setattr(main_module, "SupervisorApi", lambda **kwargs: FakeSupervisor())
-    monkeypatch.setattr(main_module, "Device", lambda *args, **kwargs: pytest.fail("kein Geraetekern"))
     monkeypatch.setattr(main_module.signal, "signal", lambda *args: None)
     geruht = []
     monkeypatch.setattr(main_module, "_ruhen", lambda: geruht.append(True))
     main_module.main()
     assert geruht == [True]
+    assert not (config.DEVICE_DATA_DIR / "device" / "key.pem").exists()  # kein Geraetekern: keine Identitaet angelegt
 
 
 def test_log_level_from_options(tmp_path, monkeypatch):
@@ -284,7 +284,7 @@ def test_reload_disconnects_before_exec(geraet_env, monkeypatch):
     order = []
     device = FakeDevice(order=order)
     geraet, status = _verdrahtet(geraet_env, device)
-    monkeypatch.setattr(main_module, "_exec", lambda: order.append("exec"))
+    monkeypatch.setattr(main_module.os, "execv", lambda executable, argv: order.append("exec"))
     geraet.konfiguration_uebernommen(None, {"anlage": "neu", "bindung": {}})
     main_module.laufen(geraet, device, geraet_env.ha, status, geraet_env.clock)
     assert order == ["start", "stop", "join", "stop", "exec"]
@@ -294,7 +294,7 @@ def test_sigterm_ends_without_exec(geraet_env, monkeypatch):
     order = []
     device = FakeDevice(order=order)
     geraet, status = _verdrahtet(geraet_env, device)
-    monkeypatch.setattr(main_module, "_exec", lambda: order.append("exec"))
+    monkeypatch.setattr(main_module.os, "execv", lambda executable, argv: order.append("exec"))
 
     def run():
         raise SystemExit(0)
@@ -324,7 +324,7 @@ def test_a_failing_end_still_restarts(geraet_env, monkeypatch, caplog):
     device = FailingDevice(order=order)
     device.start = lambda: order.append("start") or FailingThread(order)
     geraet, status = _verdrahtet(geraet_env, device)
-    monkeypatch.setattr(main_module, "_exec", lambda: order.append("exec"))
+    monkeypatch.setattr(main_module.os, "execv", lambda executable, argv: order.append("exec"))
     geraet.konfiguration_uebernommen(None, {"anlage": "neu", "bindung": {}})
     with caplog.at_level(logging.WARNING):
         main_module.laufen(geraet, device, geraet_env.ha, status, geraet_env.clock)
@@ -337,7 +337,7 @@ def test_an_unexpected_start_error_restarts_after_a_pause(geraet_env, monkeypatc
     order = []
     device = FakeDevice(order=order)
     geraet, status = _verdrahtet(geraet_env, device)
-    monkeypatch.setattr(main_module, "_exec", lambda: order.append("exec"))
+    monkeypatch.setattr(main_module.os, "execv", lambda executable, argv: order.append("exec"))
     monkeypatch.setattr(main_module.time, "sleep", lambda seconds: order.append(("pause", seconds)))
 
     def kaputt(*args, **kwargs):
@@ -354,17 +354,21 @@ def test_an_unexpected_start_error_restarts_after_a_pause(geraet_env, monkeypatc
 
 
 def _main_ohne_supervisor(geraet_env, monkeypatch, order):
-    """main() mit gueltiger bootstrap_url bis zum Start; Supervisor-Grenzen, Signal, exec und Pause aufgezeichnet. Ein
-    Startfehler darf keinen Geraetekern mehr bauen."""
+    """main() mit gueltiger bootstrap_url bis zum Start; Supervisor-Grenzen, Signal, exec (os.execv) und Pause
+    aufgezeichnet. Ein Startfehler darf keinen Geraetekern mehr bauen (_kein_geraetekern)."""
     config.OPTIONS_PATH.write_text(json.dumps({"bootstrap_url": "https://labor.example.test"}))
     monkeypatch.delenv("SMARTHEAT_BOOTSTRAP_URL", raising=False)
     monkeypatch.setenv("SUPERVISOR_TOKEN", "test-token")
     monkeypatch.setattr(main_module, "HomeAssistantApi", lambda **kwargs: geraet_env.ha)
     monkeypatch.setattr(main_module, "SupervisorApi", lambda **kwargs: FakeSupervisor())
     monkeypatch.setattr(main_module.signal, "signal", lambda *args: order.append("signal"))
-    monkeypatch.setattr(main_module, "_exec", lambda: order.append("exec"))
+    monkeypatch.setattr(main_module.os, "execv", lambda executable, argv: order.append("exec"))
     monkeypatch.setattr(main_module.time, "sleep", lambda seconds: order.append(("pause", seconds)))
-    monkeypatch.setattr(main_module, "Device", lambda *args, **kwargs: pytest.fail("kein Geraetekern"))
+
+
+def _kein_geraetekern():
+    """Der Geraetekern legt beim Bau seine Identitaet an (identity.load_or_create): ohne key.pem gab es keinen."""
+    return not (config.DEVICE_DATA_DIR / "device" / "key.pem").exists()
 
 
 def test_an_unwritable_data_dir_during_cleanup_pauses_and_execs(geraet_env, monkeypatch, caplog):
@@ -390,6 +394,7 @@ def test_an_unwritable_data_dir_during_cleanup_pauses_and_execs(geraet_env, monk
     # SIGTERM steht vor dem Aufraeumen (bis zu 120 s Warten auf HA): ein Stopp darin endet ueber SystemExit
     assert order == ["signal", "unlink", ("pause", 60.0), "exec"]
     assert config.AUFRAEUMEN_PATH.exists() and config.BACKUP_PATH.exists()  # nichts geloescht
+    assert _kein_geraetekern()
     assert "PermissionError" in caplog.text and "geheim" not in caplog.text
 
 
@@ -406,6 +411,7 @@ def test_a_failing_document_store_during_cleanup_pauses_and_execs(geraet_env, mo
         main_module.main()
     assert order == ["signal", ("pause", 60.0), "exec"]
     assert config.AUFRAEUMEN_PATH.exists() and config.BACKUP_PATH.exists()
+    assert _kein_geraetekern()
     assert "OSError" in caplog.text and "geheim" not in caplog.text
 
 

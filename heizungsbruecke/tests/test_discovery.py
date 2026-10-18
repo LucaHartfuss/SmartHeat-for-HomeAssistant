@@ -3,6 +3,7 @@ import json
 import logging
 
 from conftest import FakeClock
+from fakes import datei_stand
 
 from heizungsbruecke import discovery
 
@@ -195,22 +196,26 @@ def test_the_attempt_count_survives_a_restart(tmp_path):
     assert neu._versuche == {"alt-1": 1}
 
 
-def test_the_state_file_is_only_rewritten_when_the_queue_changes(tmp_path, monkeypatch):
+def test_the_state_file_is_only_rewritten_when_the_queue_changes(tmp_path):
+    """Geschrieben heisst: discovery.json hat einen neuen Stand auf dem Datentraeger (fakes.datei_stand)."""
     supervisor = Supervisor()
     supervisor.stale = {"alt-1"}
     _queue(tmp_path, "alt-1")
     d, clock = _discovery(tmp_path, supervisor)
     d.aktualisieren("shg-a", "uebernommen", None)
-    writes = []
-    monkeypatch.setattr(discovery.dateien, "schreiben_json", lambda *a, **kw: writes.append(a))
+    pfad = tmp_path / "discovery.json"
+    stand = datei_stand(pfad)
     d._aufraeumen()  # Pause: nichts
+    assert datei_stand(pfad) == stand
     clock.advance(discovery.RETRY_SECONDS)
     d.aktualisieren("shg-a", "uebernommen", None)  # Versuch zaehlt hoch: aendert den Stand
-    assert len(writes) == 1
+    assert datei_stand(pfad) != stand and json.loads(pfad.read_text())["versuche"] == {"alt-1": 2}
+    stand = datei_stand(pfad)
     supervisor.fail_delete = False
     d._veraltet.clear()
+    clock.advance(discovery.RETRY_SECONDS)  # nach der Pause laeuft das Aufraeumen wirklich
     d._aufraeumen()  # leere Warteschlange: kein Schreiben
-    assert len(writes) == 1
+    assert datei_stand(pfad) == stand
 
 
 def test_a_corrupt_state_file_counts_as_empty(tmp_path):

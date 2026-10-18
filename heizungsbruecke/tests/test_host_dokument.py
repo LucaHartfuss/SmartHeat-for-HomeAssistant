@@ -1,8 +1,8 @@
 """Spec 5c 1.3 / 5b 5.2: HaHost liest das Konfigurationsdokument; der Raum-Soll kommt aus dem Soll-Speicher."""
 import json
-from unittest.mock import MagicMock
 
 import pytest
+from fakes import FakeHa
 from geraet_helpers import FakeGeraet, konfiguration_aus_optionen
 from test_runtime import OPTIONS, env  # noqa: F401 - env ist eine Fixture
 
@@ -353,14 +353,24 @@ def test_host_ohne_bekannten_hebelsatz_wirft_im_konstruktor_nicht(env):
     assert host.boot_info().notify_hints_off == ()
 
 
+class _DiensteHa(FakeHa):
+    """Fake-HA, die zu jedem Push den Notify-Dienst festhaelt (Grenze HA)."""
+
+    def __init__(self):
+        super().__init__()
+        self.dienste: list[tuple[str, str]] = []
+
+    def send_notification(self, service, message):
+        self.dienste.append((service, message))
+
+
 def test_hinweise_batterien_und_meldedienste_kommen_aus_der_bindung(env):
     options = {**OPTIONS, "notify_hints_off": ["batterie"],
                "battery_entities": ["sensor.thermostat_battery", "binary_sensor.thermostat_battery_low"]}
-    geraet = FakeGeraet(konfiguration_aus_optionen(options))
-    dienste = []
-    geraet.notify_sink_fuer = lambda services: dienste.append(services) or MagicMock()
-    host = HaHost(geraet, env.ha, clock=env.clock)
-    assert dienste == [["notify.handy"]]
+    ha = _DiensteHa()
+    host = HaHost(FakeGeraet(konfiguration_aus_optionen(options), ha=ha), ha, clock=env.clock)
+    host.notify_sink.push("test", "Text")  # der Sink des Hosts schickt an die Meldedienste der Bindung
+    assert ha.dienste == [("notify.handy", "Text")]
     assert host.boot_info().notify_hints_off == ("batterie",)
     runtime = host.load().config
     assert runtime.notify_hints_off == ("batterie",)

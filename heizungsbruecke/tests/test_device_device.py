@@ -623,16 +623,19 @@ def test_every_contract_down_topic_reaches_exactly_its_receiver_and_takes_effect
 
 
 def test_a_foreign_down_topic_reaches_nobody(tmp_path, caplog):
+    """Ein unbekanntes Topic mit einem gueltigen Befehl bzw. kaputtem Inhalt: kein Dokument, kein Befehl, kein Ergebnis
+    am Link, nichts beim Host und nichts im Log (unbekannt: weder gelesen noch beanstandet)."""
     world = World(tmp_path)
     world.verbinden()
-    seen = []
-    world.device._dokument = lambda art, body: seen.append(art)
-    world.device.befehle.empfangen = seen.append
     with caplog.at_level("WARNING", logger=device.logger.name):
-        world.empfangen("down/zukunft", _command())
+        world.empfangen("down/zukunft", _command("hinweis", payload={"key": "geraet_doppelt", "stufe": "kritisch",
+                                                                     "text": "Kopie stoppen"}))
         world.link.ereignis("nachricht", "down/zukunft", b"{kaputt")
         world.device.schritt()
-    assert seen == [] and caplog.text == ""  # unbekannt: weder gelesen noch beanstandet
+    assert world.link.of("up/result") == []
+    assert (world.device.konfiguration(), world.device.bedienung(), world.device.hinweise.alle()) == (None, None, ())
+    assert world.host.konfigurationen == [] and world.host.bedienungen == []
+    assert caplog.text == ""
 
 
 # --- Befehle ---
