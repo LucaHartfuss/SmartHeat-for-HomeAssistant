@@ -61,6 +61,20 @@ def test_a_poll_interval_that_is_not_a_finite_number_is_refused_like_any_invalid
         ViCareCloudDriver({**PARAMETER, "poll_seconds": wert}, Paths(tmp_path))
 
 
+# Entscheidung 22: poll_seconds von ViCare liegt zwischen 120 und 86400 s, beide Grenzen eingeschlossen. Dieselben
+# Literale prueft test_gateway_erkennung.py auf dem Server und tools/tests/test_treibergrenzen_gleichlauf.py im Root.
+@pytest.mark.parametrize(("wert", "angenommen"), [
+    (119.999, False), (120, True), (120.0, True), (86400, True), (86400.0, True), (86400.5, False), (86401, False),
+    (1e300, False), (float("nan"), False), (float("inf"), False), (float("-inf"), False), (True, False),
+    ("300", False), (0, False), (-120, False)])
+def test_the_poll_interval_of_vicare_lies_between_120_and_86400_seconds(tmp_path, wert, angenommen):
+    if angenommen:
+        assert ViCareCloudDriver({**PARAMETER, "poll_seconds": wert}, Paths(tmp_path)).poll_seconds == float(wert)
+    else:
+        with pytest.raises(ValueError, match="zwischen 120 und 86400 s"):
+            ViCareCloudDriver({**PARAMETER, "poll_seconds": wert}, Paths(tmp_path))
+
+
 def test_the_driver_uses_the_one_binding_of_the_ha_path(env):
     server, driver, paths, clock = env
     assert dict(driver.description.steps) == dict(BINDING.steps)

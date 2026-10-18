@@ -39,14 +39,15 @@ QUOTA_TEXT = "Das Abfragekontingent bei Viessmann ist erschöpft."
 ALWAYS_SIGNALS = ("curve_current", "level_current", "shift_current", "mode_select", "outdoor_temp")
 CURVE_LEVERS = ("curve", "level")
 MIN_POLL_SECONDS = 120.0  # Abfrage + Inventur + Schreiben bleiben unter dem Tageskontingent (Audit 4, A4-34)
+MAX_POLL_SECONDS = 86400.0  # Entscheidung 22: ein Tag; Event.wait(1e300) wirft OverflowError, der Abfrage-Thread stirbt
 
 
 def _check_parameter(parameter: dict) -> None:
     """Prueft nur vorhandene Schluessel; ein leerer Parameter (Anmeldedaten vergessen) ist erlaubt."""
     poll = parameter.get("poll_seconds")
     # ist_endliche_zahl: JSON liest NaN, Infinity und beliebig grosse Ganzzahlen; NaN besteht jeden Vergleich mit <
-    if poll is not None and (not ist_endliche_zahl(poll) or poll < MIN_POLL_SECONDS):
-        raise ValueError(f"poll_seconds muss mindestens {MIN_POLL_SECONDS:g} s sein")
+    if poll is not None and (not ist_endliche_zahl(poll) or not MIN_POLL_SECONDS <= poll <= MAX_POLL_SECONDS):
+        raise ValueError(f"poll_seconds muss zwischen {MIN_POLL_SECONDS:g} und {MAX_POLL_SECONDS:g} s liegen")
     for key in ("installation_id", "heizkreis"):
         value = parameter.get(key)
         if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value < 0):
