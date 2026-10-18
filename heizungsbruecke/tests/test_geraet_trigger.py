@@ -1,14 +1,17 @@
 """Spec 5c 1.3: Bedienwunsch aus Soll-Entity und Ereignis smartheat_wunsch, Thermostat aus, Angleichen ohne Echo."""
+import json
 import logging
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
+import websocket
 from conftest import FakeClock
 from fakes import FakeHa
 
-from heizungsbruecke import geraet_trigger
+from heizungsbruecke import geraet_trigger, ha_trigger_client
+from heizungsbruecke.ha_api import HomeAssistantApi
 from smartheat_runtime.dokument_config import ConfigError
 from smartheat_runtime.roles import ChannelManifest
 from smartheat_runtime.runtime import EV_LOCAL_CHECK, EV_SOURCE_CONNECTED
@@ -17,6 +20,8 @@ from smartheat_runtime.soll_speicher import TargetStore
 from smartheat_runtime.worker import Event, RegulationWorker
 
 CLIMATE = "climate.wohnzimmer_thermostat"
+# Die echte Klasse fuer spec: waehrend des patch ist websocket.WebSocketApp selbst die Attrappe.
+WebSocketApp = websocket.WebSocketApp
 SOLL = f"{CLIMATE}::temperature"
 
 
@@ -307,16 +312,39 @@ def test_ha_soll_quelle_writes_only_climate_and_reads_the_shown_value():
 
 
 def test_build_passes_the_ws_parameters_to_the_client(monkeypatch, tmp_path):
-    created = []
-    monkeypatch.setattr("heizungsbruecke.geraet_trigger.HaTriggerClient",
-                        lambda **kwargs: created.append(kwargs) or SimpleNamespace(**kwargs))
-    ha = MagicMock(token="tok")
-    ha.websocket_url.return_value = "ws://x/api/websocket"
-    geraet_trigger.build(ChannelManifest(refs={"room_actual": "sensor.raum"}), ha,
-                         RegulationWorker(FakeClock()), TargetStore(tmp_path / "s.json", 21.0, FakeClock(), lambda: "t"),
-                         SOLL, tagestick=None, wache_s=300, wunsch=lambda v, h, d: v, soll_quelle_aus=lambda a, w: None)
-    assert created[0]["ws_url"] == "ws://x/api/websocket" and created[0]["token"] == "tok"
-    assert {"platform": "time", "at": "12:00"} not in created[0]["triggers"]  # ohne Tagestick keiner
+    """Adresse und Token der HA-API kommen am WebSocket an (Fake-WebSocketApp an der Bibliotheksgrenze): die
+    Verbindung geht an die WebSocket-URL der API, die Anmeldung traegt deren Token, das Abonnement die Trigger."""
+    urls, gesendet = [], []
+
+    def websocket_app(url, on_message=None, on_close=None, on_error=None):
+        urls.append(url)
+        app = MagicMock(spec=WebSocketApp)
+        app.send.side_effect = lambda text: gesendet.append(json.loads(text))
+
+        def run_forever(**_kwargs):
+            on_message(app, json.dumps({"type": "auth_required"}))
+            on_message(app, json.dumps({"type": "auth_ok"}))
+
+        app.run_forever.side_effect = run_forever
+        return app
+
+    ha = HomeAssistantApi(base_url="http://supervisor", token="tok-der-api")
+    client = geraet_trigger.build(
+        ChannelManifest(refs={"room_actual": "sensor.raum"}), ha, RegulationWorker(FakeClock()),
+        TargetStore(tmp_path / "s.json", 21.0, FakeClock(), lambda: "t"), SOLL, tagestick=None, wache_s=300,
+        wunsch=lambda v, h, d: v, soll_quelle_aus=lambda a, w: None)
+    # Nach dem Ende der Verbindung beendet der erste Backoff-Schlaf den Client (kein Wiederverbinden im Test).
+    monkeypatch.setattr(ha_trigger_client, "time", SimpleNamespace(sleep=lambda _s: client.stop()))
+    with patch("heizungsbruecke.ha_trigger_client.websocket.WebSocketApp", autospec=True, side_effect=websocket_app):
+        client.start()
+        client._thread.join(timeout=5)
+    assert not client._thread.is_alive()
+
+    assert urls == ["ws://supervisor/core/api/websocket"]
+    assert gesendet[0] == {"type": "auth", "access_token": "tok-der-api"}
+    assert gesendet[1]["type"] == "subscribe_trigger"
+    assert {"platform": "state", "entity_id": "sensor.raum"} in gesendet[1]["trigger"]
+    assert {"platform": "time", "at": "12:00"} not in gesendet[1]["trigger"]  # ohne Tagestick keiner
 
 
 # --- Echo-Fenster: eine Bedienung an der Entity im Fenster geht nicht verloren ---
