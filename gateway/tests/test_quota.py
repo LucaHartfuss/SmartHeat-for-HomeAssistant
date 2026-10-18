@@ -98,6 +98,8 @@ def test_the_counter_survives_a_crash_while_saving(tmp_path, monkeypatch, abbruc
     guard.take()
     guard.take()
     vorher = guard._path.read_bytes()
+    # Die Attrappen an os.fsync/os.replace (autospec) sind die Dateisystem-Grenze (Nr. 23): sie spielen den Ausfall des
+    # Systems nach; geprueft wird die Wirkung auf die Datei, nicht der Aufruf.
     assert guard.used() == 2
     with monkeypatch.context() as patch:
         patch.setattr(os, abbruch, mock.create_autospec(getattr(os, abbruch), side_effect=OSError(5, "Abbruch")))

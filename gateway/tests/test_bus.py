@@ -7,6 +7,7 @@ from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.reasoncodes import ReasonCode
 
 from smartheat_gateway.bus import LocalBus, decode
+from smartheat_gateway.zigbee import ZigbeeMirror
 
 
 def test_decode():
@@ -15,10 +16,27 @@ def test_decode():
     assert decode(b"online") == "online"
 
 
-def test_decode_hands_non_json_over_as_text_and_never_raises():
+def test_decode_hands_non_json_over_as_text_and_never_raises_on_it():
     assert decode(b"kein json{") == "kein json{"
     assert decode(b"\xff\xfe") == "\ufffd\ufffd"  # kein UTF-8: ersetzt statt UnicodeDecodeError
     assert decode(b"[1, 2]") == [1, 2] and decode(b"42") == 42 and decode(b"null") is None
+
+
+def test_deeply_nested_json_raises_recursion_error_in_decode_and_the_bus_catches_it_per_message(clock, caplog):
+    """Festgehalten: `decode` faengt nur ValueError; eine tief verschachtelte Nachricht (100000 Klammern) wirft
+    RecursionError. LocalBus._on_message faengt jede Ausnahme eines Rueckrufs, loggt sie mit Traceback und der Spiegel
+    bleibt heil, die naechste Nachricht kommt an. Ein Teilnehmer am lokalen Bus (angemeldet, ACL) kann so das Log fuellen
+    (eine Zeile mit Traceback je Nachricht); hingenommen."""
+    with pytest.raises(RecursionError):
+        decode(b"[" * 100000)
+    bus, stub = _local_bus()
+    mirror = ZigbeeMirror(bus, clock)
+    mirror.start()
+    bus._on_message(stub, None, _Msg("zigbee2mqtt/0xabc", b"[" * 100000))
+    assert "Fehler beim Verarbeiten von zigbee2mqtt/0xabc" in caplog.text and "RecursionError" in caplog.text
+    assert mirror.payload("0xabc") == {}  # nichts abgelegt
+    bus._on_message(stub, None, _Msg("zigbee2mqtt/0xabc", b'{"temperature": 21.0}'))
+    assert mirror.payload("0xabc") == {"temperature": 21.0}  # Gegenprobe: die naechste Nachricht kommt an
 
 
 def test_decode_reads_the_non_finite_numbers_that_python_json_accepts():

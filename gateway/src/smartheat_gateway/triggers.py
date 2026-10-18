@@ -40,12 +40,13 @@ def local_zone(now: datetime | None = None) -> tzinfo:
 
 def seconds_until(daily_time: str, now: datetime, zone: tzinfo | None = None) -> float:
     """Sekunden bis zur naechsten Tageszeit HH:MM in der Ortszeit der Zone; rechnet ueber UTC, damit der Wechsel
-    Sommer-/Winterzeit stimmt (Plan G2b-1, Restpunkt 6)."""
+    Sommer-/Winterzeit stimmt (Plan G2b-1, Restpunkt 6). Immer groesser 0: zur ersten Ortszeit der Tageszeit (in der
+    doppelten Stunde der Rueckstellung feuert der Tick nur beim ersten Durchlauf), danach erst am Folgetag."""
     zone = zone or local_zone(now)
     hour, minute = (int(part) for part in daily_time.split(":")[:2])
     local = now.astimezone(zone)
     target = datetime.combine(local.date(), time(hour, minute), tzinfo=zone)
-    if target <= local:
+    if target.astimezone(UTC) <= now.astimezone(UTC):  # in UTC: gleich gezonte Zeiten verglichen Python naiv (fold-blind)
         target = datetime.combine(local.date() + timedelta(days=1), time(hour, minute), tzinfo=zone)
     return (target.astimezone(UTC) - now.astimezone(UTC)).total_seconds()
 
@@ -118,4 +119,4 @@ class BusTriggerSource:
     def _on_daily(self, event: Event) -> None:
         self._worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=False)
         if self._daily:
-            self._worker.schedule(seconds_until(self._daily, self._now()) or 86400, Event(EV_DAILY))
+            self._worker.schedule(seconds_until(self._daily, self._now()), Event(EV_DAILY))

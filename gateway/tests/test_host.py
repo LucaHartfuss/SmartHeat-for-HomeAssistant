@@ -270,24 +270,29 @@ def test_ursprungswerte_server_ignores_a_new_setup_while_the_reset_is_pending(da
 class _SpaeterBus(FakeBus):
     """Der lokale Bus ist erst nach `fehlversuche` Wartefristen da (Mosquitto startet noch)."""
 
-    def __init__(self, fehlversuche: int) -> None:
+    def __init__(self, fehlversuche: int, runtime_dir=None) -> None:
         super().__init__()
         self.fehlversuche = fehlversuche
         self.versuche = 0
+        self.runtime_dir = runtime_dir
+        self.ordner_beim_warten: list[bool] = []  # stand der Laufzeitordner schon, als der Host auf den Bus wartete?
 
     def wait_connected(self, timeout=None) -> bool:
         self.versuche += 1
+        if self.runtime_dir is not None:
+            self.ordner_beim_warten.append(self.runtime_dir.exists())
         return self.versuche > self.fehlversuche
 
 
 def test_wait_until_ready_waits_for_the_bus_and_logs_each_wait(data_dir, clock, caplog):
     caplog.set_level(logging.INFO, logger="smartheat_gateway.host")
     paths = Paths(data_dir)
-    bus = _SpaeterBus(fehlversuche=2)
+    bus = _SpaeterBus(fehlversuche=2, runtime_dir=paths.runtime_dir)
     host = _host(paths, konfiguration(), clock, bus=bus)
     assert not paths.runtime_dir.exists()
     host.wait_until_ready()
     assert bus.versuche == 3  # zwei Fristen ohne Bus, die dritte mit
+    assert bus.ordner_beim_warten == [False, False, False]  # bei jeder Frist fehlte der Ordner noch
     assert caplog.text.count("Lokaler Bus noch nicht erreichbar, warte") == 2
     assert paths.runtime_dir.is_dir()  # erst nach dem Bus angelegt
 
@@ -336,3 +341,18 @@ def test_a_sensor_value_that_is_not_plausible_never_becomes_the_room_temperature
     world.z2m.report(SENSOR, temperature=21.0)
     world.advance(30)
     assert world.geraet.zustand.raum["ist"] == 21.0
+
+
+@pytest.mark.parametrize(("dirty", "schreibt"), [(False, [22.5]), (True, [])],
+                         ids=["Thermostat wird angeglichen", "offene lokale Aenderung: nichts ans Thermostat"])
+def test_the_operation_equal_to_the_stored_target_aligns_the_thermostat_only_without_an_open_local_change(
+        world, dirty, schreibt):
+    """Der zweite Pfad des Angleichens: die Bedienung des Servers entspricht schon dem gespeicherten Soll (kein
+    Portal-Ereignis), das Thermostat bekommt es direkt, ausser eine lokale Aenderung ist offen."""
+    dateien.schreiben_json(world.paths.room_target, {"value": 22.5, "source": "portal", "ts": "t"}, modus=dateien.LESBAR)
+    dokumente_schreiben(world.paths, konfiguration())
+    dateien.schreiben_json(world.paths.device_dir / "bedienung.json",
+                           {"version": 1, "inhalt": bedienung(22.5), "dirty": dirty}, modus=dateien.PRIVAT)
+    world.start_runtime()
+    world.run()
+    assert world.host._store.value == 22.5 and _thermostat_writes(world) == schreibt

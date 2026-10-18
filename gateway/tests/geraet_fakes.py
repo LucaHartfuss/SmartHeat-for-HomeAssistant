@@ -45,7 +45,8 @@ class FakeLink:
     def publish(self, name, payload):
         if not self.connected:
             return None
-        self.sent.append((name, json.loads(json.dumps(payload))))
+        # allow_nan=False wie link.Link.publish: NaN/Inf gehen nie hinaus, json wirft ValueError (Device._publish faengt es)
+        self.sent.append((name, json.loads(json.dumps(payload, allow_nan=False))))
         return len(self.sent)
 
     def port_wechseln_falls_noetig(self):
