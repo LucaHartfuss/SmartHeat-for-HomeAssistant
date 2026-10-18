@@ -308,6 +308,14 @@ def test_regulation_fields_and_local_ts():
     assert datetime.fromisoformat(payload["ts"]).tzinfo is not None
 
 
+def test_read_regulation_fields_liest_aussentemperatur_und_vorlaufsoll_aus_den_signalen():
+    manifest = SimpleNamespace(refs={"outdoor_temp": "sensor.o", "flow_setpoint": "sensor.vl", "room_target": "x.y"})
+    signals = MagicMock()
+    signals.get_state.side_effect = {"sensor.o": 3.5, "sensor.vl": 41.0}.__getitem__  # room_target wird nie gelesen
+    assert telemetry.read_regulation_fields(manifest, signals, 20.5) == {
+        "room_target": 20.5, "outdoor_temp": 3.5, "flow_setpoint": 41.0}
+
+
 def test_unreadable_regulation_field_is_omitted():
     manifest = SimpleNamespace(refs={"room_actual": "sensor.r", "outdoor_temp": "sensor.o"})
     ha = MagicMock()

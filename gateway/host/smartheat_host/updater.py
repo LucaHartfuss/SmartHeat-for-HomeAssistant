@@ -99,11 +99,18 @@ def _text_or_none(value) -> str | None:
 
 
 def _report_entries(value) -> list[dict]:
+    """Vorgemerkte Meldungen aus der Zustandsdatei (lokale Eingabe): unbrauchbare und solche mit einem Grund ausserhalb
+    REASONS (ausser result "ok") entfallen; wirft nie, der Rueckweg darf an einer Meldung nicht scheitern."""
     if not isinstance(value, list):
         return []
     keys = ("version", "result", "reason")
-    return [{key: item[key] for key in keys} for item in value
-            if isinstance(item, dict) and all(isinstance(item.get(key), str) for key in keys)]
+    entries = [{key: item[key] for key in keys} for item in value
+               if isinstance(item, dict) and all(isinstance(item.get(key), str) for key in keys)]
+    valid = [entry for entry in entries if entry["result"] == "ok" or entry["reason"] in REASONS]
+    if len(valid) != len(entries):
+        logger.warning("%d vorgemerkte Meldung(en) mit einem Grund ausserhalb REASONS verworfen",
+                       len(entries) - len(valid))
+    return valid
 
 
 @dataclass

@@ -155,12 +155,22 @@ def _levers(state, lever_set) -> dict:
     return levers
 
 
+def _im_vertrag(feld: str, wert: str, erlaubt: tuple[str, ...], ersatz: str) -> str:
+    """Wert eines Ereignisfelds aus der Wertemenge des Vertrags (Integration, Contract-Check V5); ein anderer wird
+    geloggt (Feldname, nie der Wert) und ersetzt. Wirft nie: das Ereignis wird in Start und Worker ausserhalb eines try
+    gebaut (StatusReporter.publish)."""
+    if wert in erlaubt:
+        return wert
+    logger.error("Status-Ereignis: Wert des Feldes %s ausserhalb der Wertemenge des Vertrags, ersetzt", feld)
+    return ersatz
+
+
 def build_event(
     tenant_id: str, flags: Flags, state, lever_set, client_version: str,
     storage_failed: bool = False,
 ) -> dict:
-    status = overall_status(flags, state, storage_failed)
-    abo = _abo(flags, state)
+    status = _im_vertrag("status", overall_status(flags, state, storage_failed), STATUS_VALUES, STATUS_DATENFEHLER)
+    abo = _im_vertrag("abo", _abo(flags, state), ABO_VALUES, ABO_UNBEKANNT)
     return {
         "schema": EVENT_SCHEMA,
         "tenant_id": tenant_id,
@@ -173,7 +183,7 @@ def build_event(
             else {"art": _FAULT_ART[delivery.SOURCE_LOCAL], "rollen": list(_STORAGE_FAULT_ROLES)} if storage_failed
             else None
         ),
-        "boost": _boost(state),
+        "boost": _im_vertrag("boost", _boost(state), BOOST_VALUES, BOOST_KEINER),
         "letzte_serverantwort": state.last_ack_at,
         "hebelsatz": lever_set.id,
         "hebel": _levers(state, lever_set),
@@ -182,11 +192,11 @@ def build_event(
         "abo_frist_ende": (
             entitlement.grace_end(state.abo_inactive_since).date().isoformat() if abo == ABO_INAKTIV else None
         ),
-        "hinweise": {
-            "raumfuehler_ausgefallen": _open_keys(state, "raumfuehler", room_sensors.STATE_FAILED),
-            "batterie_niedrig": _open_keys(state, "batterie", battery.STATE_LOW),
-            "manueller_eingriff": _manual(state),
-        },
+        "hinweise": dict(zip(HINT_FIELDS, (
+            _open_keys(state, "raumfuehler", room_sensors.STATE_FAILED),
+            _open_keys(state, "batterie", battery.STATE_LOW),
+            _manual(state),
+        ), strict=True)),
     }
 
 

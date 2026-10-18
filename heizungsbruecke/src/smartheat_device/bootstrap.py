@@ -102,8 +102,11 @@ class BootstrapClient:
     def _request(self, route: str, body: dict):
         method, template = wire.ROUTES[route]
         path = template.format(device_id=self._ident.device_id)
-        # allow_nan=False (Testoffensive T2, Nr. 17): ValueError faengt Bootstrap.holen (Backoff) bzw. der Befehls-Handler
+        # allow_nan=False (Testoffensive T2, Nr. 17) und MAX_BODY_BYTES (V1): ein ValueError faengt Bootstrap.holen
+        # (Backoff) bzw. der Befehls-Handler (_new_claim_code, commands._guarded); gesendet wird dann nichts
         data = json.dumps(body, separators=(",", ":"), sort_keys=True, allow_nan=False).encode()
+        if len(data) > wire.MAX_BODY_BYTES:
+            raise ValueError(f"{route}: Koerper hat {len(data)} Bytes, erlaubt {wire.MAX_BODY_BYTES}")
         timestamp = int(self._now())
         headers = {
             wire.HEADER_DEVICE: self._ident.device_id,

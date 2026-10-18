@@ -26,6 +26,9 @@ KPI_TEXT_ROLES = ("operating_mode", "generator_state")
 #: Liefer-Signale fuer die Waermelieferung auf dem Server (Audit 4 P-B). Gegenstueck: heizungsserver
 #: regelung/history.TELEMETRY_DELIVERY_FIELDS (Contract-Check (Vertrag V1b)).
 DELIVERY_ROLES = ("generator_hours", "generator_starts", "generator_state")
+# Die Liefer-Signale gehen ueber die KPI-Rollen hinaus (read_kpi_fields); ein Liefer-Signal ohne Leser haelt den Import an.
+if not set(DELIVERY_ROLES) <= {*KPI_NUMERIC_ROLES, *KPI_TEXT_ROLES}:
+    raise RuntimeError("telemetry: DELIVERY_ROLES nennt eine Rolle ausserhalb der KPI-Rollen")
 KPI_ENERGY_ROLES = tuple(f"energy_{kanal}" for kanal in ENERGIE_KANAELE)
 
 #: Kanal -> zuletzt gemeldete fremde Einheit: eine Warnung je Wechsel, nicht je Tick (Spec Stufe 3 S4b 5).
@@ -91,7 +94,7 @@ def read_regulation_fields(manifest, signals, room_target: float | None) -> dict
     fields: dict = {}
     if room_target is not None and math.isfinite(room_target):
         fields["room_target"] = room_target
-    for role in ("outdoor_temp", "flow_setpoint"):
+    for role in (rolle for rolle in REGULATION_FIELDS if rolle != "room_target"):  # room_target ist das Argument
         entity_id = manifest.refs.get(role)
         if entity_id is None:
             continue

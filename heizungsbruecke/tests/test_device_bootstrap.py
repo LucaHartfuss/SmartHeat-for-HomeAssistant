@@ -87,6 +87,21 @@ def test_der_bootstrap_sendet_nie_eine_nicht_endliche_zahl(ident, ca, wert):
     assert _client(ident, session).register(**ARGS).zugang.endpoint.port == 8883    # Gegenprobe: endlich geht
 
 
+def test_ein_zu_grosser_koerper_wird_nicht_gesendet(ident, ca):
+    """V1 MAX_BODY_BYTES = 65536: der Bootstrap sendet keinen groesseren Koerper (ValueError wie bei allow_nan=False)."""
+    session = FakeSession(FakeResponse(200, _body(ident, ca)))
+    gross = {**ARGS, "capabilities": {**ARGS["capabilities"], "drivers": ["d" * 60] * 1200}}  # > 65536 Bytes
+    with pytest.raises(ValueError):
+        _client(ident, session).register(**gross)
+    assert session.calls == []  # an der HTTP-Grenze kam nichts an
+
+
+def test_ein_normaler_koerper_wird_gesendet(ident, ca):  # Gegenprobe
+    session = FakeSession(FakeResponse(200, _body(ident, ca)))
+    _client(ident, session).register(**ARGS)
+    assert len(session.calls) == 1
+
+
 def test_certificate_route_uses_the_device_path(ident, ca):
     session = FakeSession(FakeResponse(200, _body(ident, ca, state="uebernommen")))
     antwort = _client(ident, session).certificate()

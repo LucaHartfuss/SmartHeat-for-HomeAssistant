@@ -28,7 +28,7 @@ scripts/check.sh --full   # zusätzlich der Schritt docker (Liste: docker_tests 
 ```
 
 `scripts/check.sh` prüft und testet `heizungsbruecke/`, `gateway/`, `gateway/host/` **und** `gateway/release/`. Toter
-Code (vulture, `vulture_ausnahmen.py`, `vulture_vertragsbefunde.py`): `../docs/ci-cd-runbook.md` §3; Image-Scan
+Code (vulture, `vulture_ausnahmen.py`): `../docs/ci-cd-runbook.md` §3; Image-Scan
 (`tests/test_image_scan.sh`, `.trivyignore`, Volume `smartheat-trivy-cache`): §12. Die übrigen Docker-Skripte
 (Shell-Tests im Repo-Root unter `tests/`):
 

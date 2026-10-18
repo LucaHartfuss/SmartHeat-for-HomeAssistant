@@ -94,6 +94,13 @@ def test_hints_messages_rejection_and_update_become_device_hints():
     assert keys["geraet_doppelt"]["stufe"] == "kritisch" and keys["wunsch_begrenzt"]["stufe"] == "warnung"
 
 
+def test_jeder_hinweis_hat_genau_key_stufe_und_text():
+    anzeige = _anzeige(zustand="gesperrt", hinweise=({"key": "geraet_doppelt", "stufe": "kritisch", "text": "x"},),
+                       meldungen=({"key": "wunsch_begrenzt", "text": "y"},), konfiguration_abgelehnt="z")
+    eintraege = geraet_status.hinweise(anzeige)
+    assert len(eintraege) == 4 and all(set(eintrag) == {"key", "stufe", "text"} for eintrag in eintraege)  # Literal V5
+
+
 def test_locked_device_gets_a_critical_hint_and_malformed_entries_are_dropped():
     ha = FakeHa()
     sink, _ = _status(ha)

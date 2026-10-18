@@ -10,6 +10,7 @@ tragen Grund und details (Feld, Regel, Zahlen; Spec Stufe 3 S5 6.1), den Text bi
 (G-1, Regel 4). V1 ist strikt (R10): fremde Felder in Bindung, Treiber und Kreis lehnt diese Pruefung ab; die
 oberste Ebene der Konfiguration, die Software und die Bedienung prueft smartheat_device.documents gegen den
 Vertrag."""
+import logging
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -19,6 +20,8 @@ from smartheat_core.bindungsparameter import beschreibung
 from smartheat_core.levers import LEVER_SETS
 from smartheat_core.rastung import Rastung, passt
 from smartheat_core.safety import resolve_local_safety
+
+logger = logging.getLogger(__name__)
 
 UNGUELTIG = "ungueltig"
 HEBELSATZ_EINGERASTET = "hebelsatz_eingerastet"
@@ -215,7 +218,18 @@ def _ha_bindung(neu: Mapping) -> Ablehnung | None:
 
 def pruefen(neu: Mapping, rastung: Rastung | None, *, host: str,
             treiber_pruefen: TreiberPruefung | None = None) -> Ablehnung | None:
-    """None = uebernehmen; sonst der erste verletzte Grund. `rastung` ist die Rastung des Geraets (None: noch keine)."""
+    """None = uebernehmen; sonst der erste verletzte Grund (immer aus GRUENDE, Vertrag: Teilmenge von DOKUMENT_ERRORS).
+    `rastung` ist die Rastung des Geraets (None: noch keine). Ein Grund ausserhalb GRUENDE wirft nicht in den
+    Dokumentpfad, sondern gilt als ungueltig (Log ohne den Grund)."""
+    ablehnung = _pruefen(neu, rastung, host=host, treiber_pruefen=treiber_pruefen)
+    if ablehnung is not None and ablehnung.grund not in GRUENDE:
+        logger.error("config_check: Grund ausserhalb GRUENDE, als ungueltig gemeldet")
+        return Ablehnung(UNGUELTIG)
+    return ablehnung
+
+
+def _pruefen(neu: Mapping, rastung: Rastung | None, *, host: str,
+             treiber_pruefen: TreiberPruefung | None = None) -> Ablehnung | None:
     if not isinstance(neu, Mapping):
         return Ablehnung(UNGUELTIG)
     if ist_leer(neu):

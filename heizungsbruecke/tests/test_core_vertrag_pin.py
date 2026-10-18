@@ -9,7 +9,7 @@ import pytest
 
 from smartheat_core import bindungsparameter, config_check
 from smartheat_device import wire
-from smartheat_runtime import dokument_config, notifier
+from smartheat_runtime import dokument_config
 
 _VERTRAG_GEPINNT_ABO = (wire.ABO, config_check.ABO_WERTE)
 _VERTRAG_GEPINNT_BINDUNG_GATEWAY_FIELDS = (wire.BINDUNG_GATEWAY_FIELDS, config_check.GATEWAY_BINDUNG_FELDER)
@@ -27,7 +27,6 @@ _VERTRAG_GEPINNT_ZAEHLER = (wire.ZAEHLER, bindungsparameter.ZAEHLER)
 _VERTRAG_GEPINNT_ENERGIE_EINHEITEN = (wire.ENERGIE_EINHEITEN, tuple(bindungsparameter.EINHEITEN))
 
 _VERTRAG_GEPINNT_ABO_LAUFZEIT = (wire.ABO, tuple(dokument_config.ABO))  # Schluessel der Abbildung auf entitlement
-_VERTRAG_GEPINNT_HA_HINWEISE_LAUFZEIT = (wire.HA_HINWEISE, notifier.HINT_CATEGORIES)  # auch die Reihenfolge
 
 PINS = {name: wert for name, wert in sorted(globals().items()) if name.startswith("_VERTRAG_GEPINNT_")}
 

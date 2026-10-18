@@ -80,6 +80,29 @@ def test_event_carries_every_field():
     }
 
 
+@pytest.mark.parametrize("helfer, wert, feld, ersatz", [
+    ("overall_status", "frei", "status", "datenfehler"), ("_boost", "turbo", "boost", "keiner"),
+    ("_abo", "vielleicht", "abo", "unbekannt"),
+])
+def test_ereignis_mit_wert_ausserhalb_des_vertrags_wird_ersetzt_und_geloggt(monkeypatch, caplog, helfer, wert, feld,
+                                                                            ersatz):
+    """Das Ereignis wird ausserhalb des try des Reporters gebaut (Start, Worker): build_event wirft nie."""
+    monkeypatch.setattr(status, helfer, lambda *a, **k: wert)  # Fehlerinjektion, Zusicherung auf build_event
+    event = build_event("client1", Flags(gestartet=True, abo="aktiv"), BridgeState(), VAILLANT, ADDON_VERSION)
+    assert event[feld] == ersatz and feld in caplog.text and wert not in caplog.text
+
+
+def test_ein_wert_innerhalb_des_vertrags_bleibt_unveraendert(caplog):  # Gegenprobe
+    event = build_event("client1", Flags(gestartet=True, abo="aktiv"), BridgeState(emergency_boost_active=True),
+                        VAILLANT, ADDON_VERSION)
+    assert (event["status"], event["boost"], event["abo"]) == ("regelt", "notfall", "aktiv") and not caplog.text
+
+
+def test_die_hinweise_haben_genau_die_felder_des_vertrags():
+    event = build_event("client1", Flags(gestartet=True), BridgeState(), VAILLANT, ADDON_VERSION)
+    assert set(event["hinweise"]) == {"raumfuehler_ausgefallen", "batterie_niedrig", "manueller_eingriff"}
+
+
 def test_event_carries_levers_of_the_lever_set_and_derived_min_flow(make_store):
     store = make_store()
     store.update(restore_point={"curve": 1.05, "room_setpoint": 21.0, "heat_limit": 16.0},

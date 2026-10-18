@@ -8,7 +8,7 @@ HA haelt persistent_notifications nur im Speicher. Deshalb bleibt der Text jeder
 Meldung in BridgeState.notify_messages, und republish_persistent() legt sie nach einem HA-Neustart
 neu an -- ohne erneuten Push.
 
-Die sechs Hinweis-Kategorien (HINT_CATEGORIES, Feld bindung.hinweise_aus) lassen sich einzeln
+Die sechs Hinweis-Kategorien (config_check.HA_HINWEISE, Feld bindung.hinweise_aus) lassen sich einzeln
 abschalten: der Zustand wird weiter verfolgt und geloggt (Grundlage der Hinweise im Status), nur
 der Push entfaellt. Kritische Meldungen sind nie abschaltbar."""
 import logging
@@ -18,12 +18,6 @@ from smartheat_runtime.ports import NotifySink
 logger = logging.getLogger(__name__)
 
 STATE_OK = "ok"
-
-# Abschaltbare Hinweis-Kategorien (Spec TP7 3.4). Gleich smartheat_device.wire.HA_HINWEISE samt Reihenfolge (gepinnt in
-# tests/test_core_vertrag_pin.py).
-HINT_CATEGORIES = (
-    "raumfuehler", "batterie", "manueller_eingriff", "quellwechsel", "schreibbudget", "schreibzaehler",
-)
 
 
 def category(key: str) -> str:
