@@ -4,15 +4,17 @@ Worker. Der Soll-Speicher schreibt, der Debouncer beendet die Eingabe (Gateway 1
 HA-Trigger mit for: 10 s). Erst dann geht ein Wunsch einmal an den Geraetekern (begrenzt auf den Bedienbereich); der
 begrenzte Wert gilt sofort und wird an die Soll-Quelle zurueckgeschrieben, danach EV_LOCAL_CHECK(room_target_fired).
 Eine lokale Eingabe gleicht die Soll-Quelle zusaetzlich an. Soll-Quelle aus (Modus off oder ein Soll bis
-FROSTSCHUTZ_BIS): kein Wunsch, auch eine lokale Eingabe wird verworfen (5c F/Q3), Meldung ueber soll_quelle_aus, eine
-neue Bedienung wird nicht geschrieben; wieder an:
+FROSTSCHUTZ_BIS; ein unbrauchbarer Wert der Quelle setzt oder beendet das nicht): kein Wunsch, auch eine lokale
+Eingabe wird verworfen (5c F/Q3), Meldung ueber soll_quelle_aus, eine neue Bedienung wird nicht geschrieben; wieder an:
 das geltende Soll geht an die Quelle, sofern sie etwas anderes zeigt (Echo-Fenster, offener Schreibbefehl). Die
 Quelle selbst (Zigbee, HA-Entity) liefert der Host ueber SollQuelle."""
 import logging
 from collections.abc import Callable
 from typing import Protocol
 
+from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_runtime.debounce import Debouncer
+from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
 from smartheat_runtime.runtime import EV_LOCAL_CHECK
 from smartheat_runtime.soll_speicher import SOURCE_LOKAL, SOURCE_PORTAL, TargetStore
 from smartheat_runtime.worker import Event, RegulationWorker
@@ -118,8 +120,13 @@ class SollEingang:
             self._vor_wunsch = None
             self._herkunft = (herkunft, durch)
         else:
-            if isinstance(value, int | float) and not isinstance(value, bool) and value <= FROSTSCHUTZ_BIS:
+            if ist_endliche_zahl(value) and value <= FROSTSCHUTZ_BIS:
                 self._setze_aus("frost", True)
+                return
+            if not is_plausible(value, ROOM_TEMP_RANGE):
+                # Unbrauchbar (nicht endlich, Text, bool, None, ueber dem Raumbereich): aendert die Frostschutz-Stellung
+                # nicht, ist kein Wunsch (Fund M4 aus T5'); vorher hob ein einziger solcher Wert die Stellung auf.
+                logger.warning("Wunschtemperatur %r vom Thermostat unplausibel, verworfen", value)
                 return
             self._setze_aus("frost", False)
             vor_wunsch = (self._store.value, self._store.source)

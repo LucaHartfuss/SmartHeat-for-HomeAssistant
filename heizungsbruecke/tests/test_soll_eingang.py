@@ -1,6 +1,7 @@
 """Spec 5c 1.3 / 5b 3.2-3.3: Soll-Eingang hostneutral (Gateway und HA-Add-on)."""
 from pathlib import Path
 
+import pytest
 from conftest import FakeClock
 
 from smartheat_runtime.runtime import EV_LOCAL_CHECK
@@ -197,3 +198,63 @@ def test_portal_confirming_an_open_thermostat_wish_with_the_same_value_keeps_the
     a.worker.run_pending()
     assert a.wuensche == [(22.0, "soll_entity", "nutzer")]
     assert (a.store.source, a.quelle.geschrieben) == (SOURCE_THERMOSTAT, [])
+
+
+UNBRAUCHBAR = [float("nan"), float("inf"), float("-inf"), "abc", True, None, 35.1]
+
+
+def _in_frost(tmp_path):
+    a = Aufbau(tmp_path)
+    a.post(7.0, SOURCE_THERMOSTAT, herkunft="soll_entity")
+    assert a.eingang.aus and a.aus == [(True, 21.0)]
+    return a
+
+
+@pytest.mark.parametrize("wert", UNBRAUCHBAR, ids=["nan", "+inf", "-inf", "text", "bool", "none", "35.1"])
+def test_an_unusable_thermostat_value_keeps_the_frost_position(tmp_path, wert):
+    """Fund M4 (T5'): ein unbrauchbarer Wert der Soll-Quelle (nicht endlich, Text, bool, None, ueber dem Raumbereich
+    5..35 °C) hebt die Frostschutz-Stellung nicht auf: kein Wunsch, kein Schreiben, keine Meldung; der naechste gueltige
+    Wert ueber 7 °C hebt sie auf (Gegenprobe)."""
+    a = _in_frost(tmp_path)
+    a.post(wert, SOURCE_THERMOSTAT, herkunft="soll_entity")
+    assert a.eingang.aus and a.aus == [(True, 21.0)]
+    assert a.wuensche == [] and a.quelle.geschrieben == [] and a.store.value == 21.0 and a.checks == []
+
+    a.post(22.0, SOURCE_THERMOSTAT, herkunft="soll_entity")
+    assert not a.eingang.aus and a.aus == [(True, 21.0), (False, None)]
+    assert a.wuensche == [(22.0, "soll_entity", None)] and a.store.value == 22.0
+
+
+@pytest.mark.parametrize("wert", UNBRAUCHBAR, ids=["nan", "+inf", "-inf", "text", "bool", "none", "35.1"])
+def test_an_unusable_thermostat_value_does_not_set_the_frost_position(tmp_path, wert):
+    """Auch umgekehrt (bis T4' setzte -inf die Frostschutz-Stellung): die Soll-Quelle bleibt an, kein Wunsch."""
+    a = Aufbau(tmp_path)
+    a.post(wert, SOURCE_THERMOSTAT, herkunft="soll_entity")
+    assert not a.eingang.aus and a.aus == []
+    assert a.wuensche == [] and a.quelle.geschrieben == [] and a.store.value == 21.0
+
+
+def test_the_frost_limit_is_seven_degrees_inclusive(tmp_path):
+    """Grenze FROSTSCHUTZ_BIS: 7.0 setzt bzw. haelt die Frostschutz-Stellung, 7.1 hebt sie auf (und ist ein Wunsch)."""
+    a = _in_frost(tmp_path)
+    a.post(7.0, SOURCE_THERMOSTAT, herkunft="soll_entity")
+    assert a.eingang.aus and a.aus == [(True, 21.0)] and a.wuensche == []
+    a.post(7.1, SOURCE_THERMOSTAT, herkunft="soll_entity")
+    assert not a.eingang.aus and a.aus == [(True, 21.0), (False, None)]
+    assert a.wuensche == [(7.1, "soll_entity", None)]
+
+
+def test_the_top_of_the_room_range_still_ends_the_frost_position(tmp_path):
+    """Obere Grenze des Raumbereichs: 35.0 ist brauchbar und hebt die Frostschutz-Stellung auf (35.1 nicht, oben)."""
+    a = _in_frost(tmp_path)
+    a.post(35.0, SOURCE_THERMOSTAT, herkunft="soll_entity")
+    assert not a.eingang.aus and a.aus == [(True, 21.0), (False, None)]
+    assert a.wuensche == [(35.0, "soll_entity", None)]
+
+
+def test_the_current_target_shown_again_ends_the_frost_position(tmp_path):
+    """Zurueck auf das geltende Soll (apply_thermostat nimmt es nicht als Aenderung): die Frostschutz-Stellung endet
+    trotzdem, ohne Wunsch."""
+    a = _in_frost(tmp_path)
+    a.post(21.0, SOURCE_THERMOSTAT, herkunft="soll_entity")
+    assert not a.eingang.aus and a.aus == [(True, 21.0), (False, None)] and a.wuensche == []

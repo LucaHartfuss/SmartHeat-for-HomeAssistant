@@ -671,6 +671,22 @@ def test_an_owed_alignment_leaves_a_thermostat_in_frost_protection_alone(tmp_pat
     assert a.ha.writes == [] and a.wuensche == [] and a.aus == [(True, 22.5)] and a.store.value == 22.5
 
 
+@pytest.mark.parametrize("wert", ["nan", "inf", "-inf"])
+def test_a_non_finite_target_from_home_assistant_keeps_the_frost_position(tmp_path, wert):
+    """Fund M4 (T5') ueber den HA-Trigger: ein Text wie "nan" wird eine nicht endliche Zahl; sie hebt die
+    Frostschutz-Stellung nicht auf (kein Wunsch, kein Schreiben). Der naechste gueltige Wert hebt sie auf."""
+    a = Aufbau(tmp_path)
+    a.soll_aenderung(5.0)
+    a.run()
+    assert a.aus == [(True, 21.0)]
+    a.soll_aenderung(wert)
+    a.run()
+    assert a.aus == [(True, 21.0)] and a.wuensche == [] and a.ha.writes == []
+    a.soll_aenderung(22.0)
+    a.run()
+    assert a.aus == [(True, 21.0), (False, None)] and a.wuensche == [(22.0, "soll_entity", None)]
+
+
 def test_a_sensor_target_never_owes_an_alignment(tmp_path):
     a = Aufbau(tmp_path, soll="input_number.soll")
     a.ha.states["input_number.soll"] = 21.0

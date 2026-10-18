@@ -1,9 +1,12 @@
 """Spec 5b 5.1/5.3 (Plan D2 Task 3): der Gateway als Host des Geraetekerns - Faehigkeiten, Uhr, Status und Raum im
 Prozess, Meldungen, Neustart bei neuer Konfiguration, Aufraeumen nach dem Entfernen, Software-Bruecke, LED-Datei."""
+import errno
 import json
+import logging
 import os
 import stat
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -192,7 +195,7 @@ def test_vergessen_removes_the_plant_state_but_keeps_device_and_simulation(welt)
                  welt.paths.inventur, welt.paths.driver_secrets_dir / "vicare.json",
                  welt.paths.device_dir / "konfiguration.json", welt.paths.sim_dir / "plant.json"):
         dateien.schreiben_json(path, {"x": 1}, modus=dateien.LESBAR)
-    gh.vergessen(welt.paths)
+    assert gh.vergessen(welt.paths) is True
     assert not welt.paths.runtime_dir.exists() and not welt.paths.inventur.exists()
     assert not (welt.paths.driver_secrets_dir / "vicare.json").exists()
     assert (welt.paths.device_dir / "konfiguration.json").exists() and (welt.paths.sim_dir / "plant.json").exists()
@@ -217,6 +220,132 @@ def test_vergessen_keeps_the_lever_set_lock(welt, anders):
     ergebnis = store.empfangen("konfiguration", _dokument(konfiguration(**anders), 3))
     assert (ergebnis.ok, ergebnis.grund) == (False, "hebelsatz_eingerastet")
     assert store.empfangen("konfiguration", _dokument(konfiguration(), 4)).uebernommen
+
+
+def _unlink_scheitert_fuer(monkeypatch, pfad, fehler):
+    """Fehlerinjektion: Path.unlink scheitert fuer pfad mit fehler (per monkeypatch, nie per chmod)."""
+    echt = Path.unlink
+
+    def unlink(self, missing_ok=False):
+        if self == pfad:
+            raise OSError(fehler, os.strerror(fehler))
+        echt(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    return echt
+
+
+def _entfernt_vorbereiten(paths) -> bytes:
+    """Eingerichtet, dann leer (Rastung liegt), Zustand der Anlage, Markierung wie nach "leer ohne sign_off" nach dem
+    Zuruecksetzen; gibt den Inhalt der Rastung zurueck."""
+    store = DocumentStore(paths.device_dir, host="gateway", software_version=GATEWAY_VERSION)
+    assert store.empfangen("konfiguration", _dokument(konfiguration(), 1)).uebernommen
+    assert store.empfangen("konfiguration", _dokument(LEER, 2)).uebernommen
+    for path in (paths.backup, paths.failsafe, paths.entitlement, paths.room_target, paths.abgemeldet,
+                 paths.inventur, paths.driver_secrets_dir / "vicare.json"):
+        dateien.schreiben_json(path, {"x": 1}, modus=dateien.LESBAR)
+    dateien.schreiben_json(paths.aufraeumen, {"anlage": "test-tenant"}, modus=dateien.LESBAR)
+    return paths.rastung.read_bytes()
+
+
+def _alles_weg(paths) -> bool:
+    return (not paths.runtime_dir.exists() and not paths.inventur.exists()
+            and not (paths.driver_secrets_dir / "vicare.json").exists() and not paths.aufraeumen.exists())
+
+
+@pytest.mark.parametrize("fehler, art", [(errno.EACCES, "PermissionError"), (errno.EIO, "OSError")])
+def test_a_state_file_that_cannot_be_deleted_keeps_the_marker_and_the_binding_and_the_start_goes_on(
+        world, monkeypatch, caplog, fehler, art):
+    """Wie im Add-on (Task 11): scheitert das Loeschen einer Zustandsdatei, startet das Gateway trotzdem; die Datei,
+    die Markierung und runtime/backup.json (der Bindungsanker, zuletzt und nur nach allem anderen geloescht) bleiben,
+    der uebrige Zustand ist weg, im Log Datei und Fehlerart, keine Erfolgsmeldung. Der naechste Start loescht den Rest
+    samt Markierung. Die Rastung bleibt in jedem Fall (G-1)."""
+    rastung = _entfernt_vorbereiten(world.paths)
+    echt = _unlink_scheitert_fuer(monkeypatch, world.paths.failsafe, fehler)
+    with caplog.at_level(logging.INFO):
+        world.start_runtime()  # wirft nicht
+    assert world.result is not None
+    assert world.paths.failsafe.exists() and world.paths.backup.exists() and world.paths.aufraeumen.exists()
+    assert not world.paths.entitlement.exists() and not world.paths.room_target.exists()
+    assert not world.paths.abgemeldet.exists() and not world.paths.inventur.exists()
+    assert not (world.paths.driver_secrets_dir / "vicare.json").exists()
+    assert f"{world.paths.failsafe.name} nicht geloescht ({art})" in caplog.text
+    assert "Anlagengebundener Zustand geloescht" not in caplog.text
+    assert world.paths.rastung.read_bytes() == rastung
+
+    monkeypatch.setattr(Path, "unlink", echt)
+    world.start_runtime()
+    assert _alles_weg(world.paths)
+    assert world.paths.rastung.read_bytes() == rastung
+
+
+@pytest.mark.parametrize("pfad", ["inventur", "zugang"])
+def test_leftover_inventory_or_driver_login_keeps_the_marker_and_the_binding(welt, monkeypatch, caplog, pfad):
+    """Inventur-Proben und Treiber-Anmeldung der alten Anlage zaehlen mit: bleiben sie liegen, meldet vergessen keinen
+    Erfolg, backup.json und die Markierung bleiben; ohne Fehler raeumt der naechste Start alles weg."""
+    rastung = _entfernt_vorbereiten(welt.paths)
+    ziel = welt.paths.inventur if pfad == "inventur" else welt.paths.driver_secrets_dir / "vicare.json"
+    echt = _unlink_scheitert_fuer(monkeypatch, ziel, errno.EIO)
+    assert runtime_main._vergessen(welt.paths) is False
+    runtime_main.aufraeumen(welt.paths)
+    assert ziel.exists() and welt.paths.backup.exists() and welt.paths.aufraeumen.exists()
+    assert not welt.paths.failsafe.exists() and not welt.paths.room_target.exists()
+    assert "Anlagengebundener Zustand geloescht" not in caplog.text
+    monkeypatch.setattr(Path, "unlink", echt)
+    runtime_main.aufraeumen(welt.paths)
+    assert _alles_weg(welt.paths) and welt.paths.rastung.read_bytes() == rastung
+
+
+def test_a_binding_that_cannot_be_deleted_keeps_the_marker(welt, monkeypatch, caplog):
+    """Scheitert nur das Loeschen von backup.json, ist der uebrige Zustand weg und die Markierung bleibt."""
+    rastung = _entfernt_vorbereiten(welt.paths)
+    _unlink_scheitert_fuer(monkeypatch, welt.paths.backup, errno.EIO)
+    runtime_main.aufraeumen(welt.paths)
+    assert welt.paths.backup.exists() and welt.paths.aufraeumen.exists()
+    assert not welt.paths.failsafe.exists() and not welt.paths.inventur.exists()
+    assert not (welt.paths.driver_secrets_dir / "vicare.json").exists()
+    assert f"{welt.paths.backup.name} nicht geloescht (OSError)" in caplog.text
+    assert welt.paths.rastung.read_bytes() == rastung
+
+
+def test_a_runtime_folder_that_cannot_be_removed_keeps_the_marker(welt, monkeypatch, caplog):
+    """Laesst sich der Laufzeit-Ordner zuletzt nicht entfernen (EACCES), bleibt die Markierung: der naechste Start
+    versucht es erneut, statt den Ordner fuer immer liegen zu lassen."""
+    _entfernt_vorbereiten(welt.paths)
+    echt = gh.shutil.rmtree
+
+    def rmtree(path, *args, **kwargs):
+        if path == welt.paths.runtime_dir:
+            raise PermissionError(errno.EACCES, "verweigert")
+        echt(path, *args, **kwargs)
+
+    monkeypatch.setattr(gh.shutil, "rmtree", rmtree)
+    runtime_main.aufraeumen(welt.paths)
+    assert welt.paths.runtime_dir.exists() and welt.paths.aufraeumen.exists()
+    assert f"{welt.paths.runtime_dir.name} nicht geloescht (PermissionError)" in caplog.text
+    monkeypatch.setattr(gh.shutil, "rmtree", echt)
+    runtime_main.aufraeumen(welt.paths)
+    assert _alles_weg(welt.paths)
+
+
+def test_an_unreadable_runtime_folder_keeps_the_marker_and_the_binding(welt, monkeypatch, caplog):
+    """Ist der Laufzeit-Ordner nicht lesbar (EIO beim Auflisten), wird dort nichts geloescht und kein Erfolg
+    gemeldet."""
+    _entfernt_vorbereiten(welt.paths)
+    echt = Path.iterdir
+
+    def iterdir(self):
+        if self == welt.paths.runtime_dir:
+            raise OSError(errno.EIO, os.strerror(errno.EIO))
+        return echt(self)
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+    runtime_main.aufraeumen(welt.paths)
+    assert welt.paths.failsafe.exists() and welt.paths.backup.exists() and welt.paths.aufraeumen.exists()
+    assert f"{welt.paths.runtime_dir.name} nicht geloescht (OSError)" in caplog.text
+    monkeypatch.setattr(Path, "iterdir", echt)
+    runtime_main.aufraeumen(welt.paths)
+    assert _alles_weg(welt.paths)
 
 
 @pytest.fixture

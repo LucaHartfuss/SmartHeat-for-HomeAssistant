@@ -74,8 +74,7 @@ def aufraeumen(paths: Paths) -> None:
 
 
 def _vergessen(paths: Paths) -> bool:
-    geraet_host_module.vergessen(paths)  # wirft nie
-    return True
+    return geraet_host_module.vergessen(paths)  # wirft nie; False laesst die Markierung fuer den naechsten Start
 
 
 def software_soll_nachholen(geraet: GatewayDeviceHost, device: Device) -> None:
