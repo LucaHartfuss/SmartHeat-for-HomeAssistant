@@ -1,5 +1,7 @@
 import json
 import os
+import signal
+import threading
 import time
 
 import pytest
@@ -126,3 +128,41 @@ def test_unsafe_state_files_are_stoerung_and_never_block(tmp_path, plant):
     path = tmp_path / "agent_state.json"
     plant(path)
     assert led.state_from_file(path) == "stoerung"
+
+
+def test_sigterm_ends_the_service_and_gives_the_trigger_back(tmp_path, monkeypatch):
+    """`main` wie von systemd gestartet: die LED laeuft mit Trigger `none`; SIGTERM beendet mit Code 0, der vorherige
+    Trigger (`mmc0`) steht wieder in der Datei. Das Signal geht an den eigenen Prozess; der Test setzt vorher einen
+    Handler, der bei einem fehlenden Handler von `main` laut fehlschlaegt statt den Prozess zu beenden."""
+    led_dir = tmp_path / "ACT"
+    led_dir.mkdir()
+    (led_dir / "trigger").write_text("none [mmc0] heartbeat\n")
+    (led_dir / "brightness").write_text("0")
+    (tmp_path / "data").mkdir()
+    _state(tmp_path / "data", "startet")
+    monkeypatch.setenv("SHG_LED", str(led_dir))
+    monkeypatch.setenv("SHG_ROOT", str(tmp_path))
+    gesehen: list[str] = []
+
+    def sende_sigterm_sobald_die_led_laeuft() -> None:
+        frist = time.monotonic() + 10
+        while (led_dir / "trigger").read_text() != "none" and time.monotonic() < frist:
+            time.sleep(0.01)
+        gesehen.append((led_dir / "trigger").read_text())
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    def ohne_handler_von_main(signum, frame):
+        raise RuntimeError("main hat keinen eigenen SIGTERM-Handler gesetzt")
+
+    alt = signal.signal(signal.SIGTERM, ohne_handler_von_main)
+    sender = threading.Thread(target=sende_sigterm_sobald_die_led_laeuft)
+    try:
+        sender.start()
+        with pytest.raises(SystemExit) as ende:
+            led.main()
+    finally:
+        sender.join(timeout=15)
+        signal.signal(signal.SIGTERM, alt)
+    assert ende.value.code == 0
+    assert gesehen == ["none"]  # Gegenprobe: waehrend des Betriebs war der Trigger uebernommen
+    assert (led_dir / "trigger").read_text() == "mmc0"

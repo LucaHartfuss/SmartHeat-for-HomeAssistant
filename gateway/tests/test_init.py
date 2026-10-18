@@ -2,6 +2,7 @@
 import base64
 import hashlib
 import json
+import logging
 import stat
 
 from smartheat_gateway import init
@@ -149,3 +150,31 @@ def test_binary_corrupt_acl_is_rewritten(tmp_path):
     acl.write_bytes(b"\xff\xfe\x00\x80 kaputt")
     assert _run(tmp_path) == ["bus/mosquitto/acl"]
     assert acl.read_text() == init.render_acl()
+
+
+def test_the_init_step_never_logs_a_password(tmp_path, monkeypatch, caplog, capsys):
+    """Erster Lauf, Heilung (Zugangsdatei fehlt, neues Passwort) und zweiter Lauf: im Log und auf den Ausgaben steht nie
+    ein Passwort aus den Zugangsdateien der Dienste, nur Dateinamen (das Passwort in der Zigbee2MQTT-Konfiguration ist
+    dasselbe wie in der Zugangsdatei von `zigbee2mqtt`)."""
+    for variable, ordner in (("SHG_BUS_DIR", "bus"), ("SHG_ZIGBEE_DIR", "zigbee2mqtt"), ("SHG_DATA_DIR", "data"),
+                             ("SHG_HOST_DIR", "host")):
+        monkeypatch.setenv(variable, str(tmp_path / ordner))
+    caplog.set_level(logging.DEBUG)
+
+    def passwoerter() -> set[str]:
+        return {json.loads((tmp_path / "bus" / "credentials" / s / "bus.json").read_text())["password"]
+                for s in init.SERVICES}
+
+    init.main()
+    erster = passwoerter()
+    assert len(erster) == len(init.SERVICES) and all(len(p) >= 32 for p in erster)
+    assert "bus/credentials/runtime/bus.json" in caplog.text  # Gegenprobe: der Lauf hat etwas geloggt, nur Dateinamen
+    (tmp_path / "bus" / "credentials" / "zigbee2mqtt" / "bus.json").unlink()
+    init.main()
+    zweiter = passwoerter()
+    assert zweiter != erster  # das neue Passwort ist erzeugt und steht in den Dateien
+    init.main()
+    ausgabe = capsys.readouterr()
+    for passwort in erster | zweiter:
+        assert passwort not in caplog.text and passwort not in ausgabe.out and passwort not in ausgabe.err
+    assert "nichts zu tun" in caplog.text

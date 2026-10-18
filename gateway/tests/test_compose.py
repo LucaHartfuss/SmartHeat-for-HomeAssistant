@@ -48,6 +48,16 @@ def test_networks_ports_and_mounts():
     assert networks["bus"]["internal"] is True
 
 
+def test_only_the_runtime_publishes_a_port_and_only_80_to_8080():
+    """Docker-Ports laufen per DNAT an der input-Kette der Firewall vorbei: ueber alle Dienste der Compose-Datei (nicht
+    nur die bekannten) hat nur `runtime` `ports`, genau `80:8080`; Mosquitto, Zigbee2MQTT und init veroeffentlichen
+    nichts."""
+    services = _services()
+    assert {name for name, service in services.items() if "ports" in service} == {"runtime"}
+    assert services["runtime"]["ports"] == ["80:8080"]
+    assert {"init", "mosquitto", "zigbee2mqtt"} <= set(services)
+
+
 def test_third_party_images_are_pinned():
     for name in ("mosquitto", "zigbee2mqtt"):
         assert "@sha256:" in _services()[name]["image"]

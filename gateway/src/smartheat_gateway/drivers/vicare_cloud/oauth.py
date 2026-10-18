@@ -61,12 +61,12 @@ class LoginRejected(Exception):
 
 def _lebensdauer(value) -> float | None:
     """expires_in der Token-Antwort in Sekunden; fehlt es, gelten 3600. Alles Unbrauchbare (kein Zahlenwert, nicht endlich,
-    auch eine JSON-Ganzzahl ausserhalb des float-Bereichs) ist None."""
+    auch eine JSON-Ganzzahl ausserhalb des float-Bereichs, und alles bis 0 s, Entscheidung 22) ist None."""
     try:
         seconds = float(value)
     except (TypeError, ValueError, OverflowError):
         return None
-    return seconds if ist_endliche_zahl(seconds) else None
+    return seconds if ist_endliche_zahl(seconds) and seconds > 0 else None
 
 
 def new_pair() -> tuple[str, str]:

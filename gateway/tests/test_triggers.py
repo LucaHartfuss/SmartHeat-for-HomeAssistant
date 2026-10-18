@@ -1,5 +1,5 @@
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -145,6 +145,81 @@ def test_daily_tick_zone_comes_from_tz(monkeypatch):
     monkeypatch.setenv("TZ", "Europe/Berlin")
     now = datetime(2026, 10, 24, 12, 12, tzinfo=timezone(timedelta(hours=2)))
     assert seconds_until("12:12", now) == 25 * 3600
+
+
+@pytest.mark.parametrize(("tageszeit", "jetzt", "erwartet_s"), [
+    ("00:00", datetime(2026, 1, 15, 12, 0, tzinfo=BERLIN), 12 * 3600),
+    ("00:00", datetime(2026, 1, 15, 23, 59, tzinfo=BERLIN), 60),
+    ("00:00", datetime(2026, 1, 15, 0, 0, tzinfo=BERLIN), 24 * 3600),      # genau jetzt: erst morgen
+    ("00:00", datetime(2026, 1, 15, 0, 1, tzinfo=BERLIN), 24 * 3600 - 60),
+    ("23:59", datetime(2026, 1, 15, 12, 0, tzinfo=BERLIN), 11 * 3600 + 59 * 60),
+    ("23:59", datetime(2026, 1, 15, 23, 58, tzinfo=BERLIN), 60),
+    ("23:59", datetime(2026, 1, 15, 23, 59, tzinfo=BERLIN), 24 * 3600),    # genau jetzt: erst morgen
+    ("23:59", datetime(2026, 1, 15, 23, 59, 30, tzinfo=BERLIN), 24 * 3600 - 30),
+])
+def test_the_daily_tick_around_midnight(tageszeit, jetzt, erwartet_s):
+    assert seconds_until(tageszeit, jetzt, BERLIN) == erwartet_s
+
+
+def _berlin(tag, stunde, minute, fold=0, monat=10):
+    return datetime(2026, monat, tag, stunde, minute, tzinfo=BERLIN, fold=fold)
+
+
+# 2026-10-25: um 03:00 MESZ springt die Uhr auf 02:00 MEZ zurueck, die Stunde 02:00-02:59 gibt es zweimal (fold 0, fold 1).
+# Der Tagestick feuert zur ersten Ortszeit der Tageszeit, also genau einmal je Tag; danach ist der naechste in einem Tag.
+@pytest.mark.parametrize(("tageszeit", "jetzt", "erwartet_s"), [
+    ("02:30", _berlin(25, 1, 30), 3600),
+    ("02:30", _berlin(25, 2, 10), 1200),
+    ("02:30", _berlin(25, 2, 10, fold=1), 87600),   # zweiter Durchlauf der Stunde: der Tick von 02:30 MESZ ist schon vorbei
+    ("02:30", _berlin(25, 2, 30), 90000),            # genau auf der Tageszeit: erst morgen, der Tag hat 25 Stunden
+    ("02:30", _berlin(25, 2, 40), 89400),
+    ("02:30", _berlin(25, 2, 40, fold=1), 85800),
+    ("02:30", _berlin(25, 3, 0), 84600),
+    ("02:00", _berlin(25, 2, 10), 89400),
+    ("02:00", _berlin(25, 2, 30, fold=1), 84600),
+    ("03:00", _berlin(25, 2, 10, fold=1), 3000),      # Gegenprobe: eine Zeit ausserhalb der doppelten Stunde bleibt heute
+])
+def test_the_daily_tick_on_the_day_the_clock_is_set_back(tageszeit, jetzt, erwartet_s):
+    assert seconds_until(tageszeit, jetzt, BERLIN) == erwartet_s
+
+
+def test_the_daily_tick_is_never_zero_or_negative_around_the_clock_changes():
+    """Rasterprobe ueber beide Zeitumstellungen und die Nachbartage (Minutenraster): nie <= 0, nie mehr als 25 Stunden."""
+    for start in (datetime(2026, 10, 24, 12, 0, tzinfo=UTC), datetime(2026, 3, 28, 12, 0, tzinfo=UTC)):
+        for minute in range(0, 3 * 24 * 60, 7):
+            jetzt = start + timedelta(minutes=minute)
+            for tageszeit in ("00:00", "01:59", "02:00", "02:30", "02:59", "03:00", "23:59"):
+                wert = seconds_until(tageszeit, jetzt, BERLIN)
+                assert 0 < wert <= 25 * 3600, (tageszeit, jetzt, wert)
+
+
+def test_the_daily_tick_is_planned_again_after_it_fired(tmp_path, clock):
+    """Die Uhr steht genau auf der Tageszeit: seconds_until liefert dann einen vollen Tag, nie 0 (kein Dauerfeuer);
+    nach dem Feuern ist der naechste Tick wieder in 24 Stunden geplant, und so weiter."""
+    bus = FakeBus()
+    mirror = ZigbeeMirror(bus, clock)
+    mirror.start()
+    worker = RegulationWorker(clock=clock)
+    checks = []
+    worker.register(EV_LOCAL_CHECK, lambda event: checks.append(event.data.get("room_target_fired")))
+    worker.register(EV_SOURCE_CONNECTED, lambda event: None)
+    store = TargetStore(tmp_path / "room_target.json", 20.0, clock, lambda: "ts")
+    BusTriggerSource(bus, worker, mirror, store, thermostat=None, sensor_ieees=(), daily_trigger_time="12:00",
+                     now=lambda: datetime(2026, 1, 15, 12, 0, tzinfo=BERLIN)).start()
+    worker.run_pending()
+    checks.clear()  # der Verbindungs-Check beim Start
+    clock.advance(24 * 3600 - 1)
+    worker.run_pending()
+    assert checks == []  # eine Sekunde vor dem ersten Tick
+    clock.advance(1)
+    worker.run_pending()
+    assert checks == [False]
+    clock.advance(24 * 3600 - 1)
+    worker.run_pending()
+    assert checks == [False]  # der zweite Tick ist erst in einem vollen Tag faellig, kein Dauerfeuer
+    clock.advance(1)
+    worker.run_pending()
+    assert checks == [False, False]
 
 
 def test_sleepy_thermostat_does_not_overwrite_the_portal_target(world, clock):

@@ -54,11 +54,41 @@ def test_parameters_are_checked_by_the_driver(tmp_path):
     assert ViCareCloudDriver({**PARAMETER, "poll_seconds": 120}, Paths(tmp_path)).poll_seconds == 120.0
 
 
+@pytest.mark.parametrize(("schluessel", "wert"), [
+    ("installation_id", -1), ("installation_id", 2012345.0), ("installation_id", 1.5), ("installation_id", "2012345"),
+    ("heizkreis", -1), ("heizkreis", 0.0), ("heizkreis", 1.5), ("heizkreis", "0"),
+    ("device_id", ""), ("device_id", 0), ("gateway_serial", ""), ("gateway_serial", 7637415000000001)])
+def test_identity_parameters_of_the_wrong_kind_are_refused_naming_the_field(tmp_path, schluessel, wert):
+    with pytest.raises(ValueError, match=schluessel):
+        ViCareCloudDriver({**PARAMETER, schluessel: wert}, Paths(tmp_path))
+
+
+def test_identity_parameters_on_their_limits_are_accepted(tmp_path):
+    """Gegenprobe zu den abgelehnten Werten: 0 ist erlaubt (nicht negativ), ein Text mit einem Zeichen auch."""
+    driver = ViCareCloudDriver({**PARAMETER, "installation_id": 0, "heizkreis": 0, "device_id": "0",
+                                "gateway_serial": "x"}, Paths(tmp_path))
+    assert driver.poll_seconds == 300.0
+
+
 @pytest.mark.parametrize("wert", [float("nan"), float("inf"), float("-inf"), 10**400, -10**400],
                          ids=["nan", "inf", "minus-inf", "gross-positiv", "gross-negativ"])
 def test_a_poll_interval_that_is_not_a_finite_number_is_refused_like_any_invalid_parameter(tmp_path, wert):
     with pytest.raises(ValueError):
         ViCareCloudDriver({**PARAMETER, "poll_seconds": wert}, Paths(tmp_path))
+
+
+# Entscheidung 22: poll_seconds von ViCare liegt zwischen 120 und 86400 s, beide Grenzen eingeschlossen. Dieselben
+# Literale prueft test_gateway_erkennung.py auf dem Server und tools/tests/test_treibergrenzen_gleichlauf.py im Root.
+@pytest.mark.parametrize(("wert", "angenommen"), [
+    (119.999, False), (120, True), (120.0, True), (86400, True), (86400.0, True), (86400.5, False), (86401, False),
+    (1e300, False), (float("nan"), False), (float("inf"), False), (float("-inf"), False), (True, False),
+    ("300", False), (0, False), (-120, False)])
+def test_the_poll_interval_of_vicare_lies_between_120_and_86400_seconds(tmp_path, wert, angenommen):
+    if angenommen:
+        assert ViCareCloudDriver({**PARAMETER, "poll_seconds": wert}, Paths(tmp_path)).poll_seconds == float(wert)
+    else:
+        with pytest.raises(ValueError, match="zwischen 120 und 86400 s"):
+            ViCareCloudDriver({**PARAMETER, "poll_seconds": wert}, Paths(tmp_path))
 
 
 def test_the_driver_uses_the_one_binding_of_the_ha_path(env):
@@ -159,6 +189,18 @@ def test_a_stale_cache_raises_value_error_and_under_an_exhausted_quota_quota_exh
         driver.read("curve")
     with pytest.raises(QuotaExhausted):
         driver.write("curve", 1.2)
+
+
+@pytest.mark.parametrize(("alter_s", "frisch"), [(899, True), (900, True), (901, False)])
+def test_the_cache_is_fresh_up_to_exactly_three_poll_intervals(env, alter_s, frisch):
+    """poll_seconds ist 300: der Cache gilt bis 3 x 300 s einschliesslich, eine Sekunde mehr und er ist veraltet."""
+    server, driver, paths, clock = env
+    clock.advance(alter_s)
+    if frisch:
+        assert driver.read("curve") is not None
+    else:
+        with pytest.raises(ValueError, match="veraltet"):
+            driver.read("curve")
 
 
 def test_an_expired_login_is_not_logged_in_and_writes_nothing(env):

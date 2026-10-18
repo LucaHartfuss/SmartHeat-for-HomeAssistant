@@ -1,4 +1,6 @@
 import multiprocessing
+import os
+from unittest import mock
 
 import pytest
 
@@ -84,3 +86,26 @@ def test_a_backward_clock_jump_drops_calls_from_the_future_at_once(tmp_path):
         guard.take()
     now[0] -= 3 * 86400  # Sprung zurueck: die Eintraege liegen jetzt in der Zukunft
     assert guard.used() == 0  # quota._load behaelt nur now - window < ts <= now + 1 (Praezisierung 8)
+
+
+@pytest.mark.parametrize("abbruch", ["fsync", "replace"])
+def test_the_counter_survives_a_crash_while_saving(tmp_path, monkeypatch, abbruch):
+    """Atomar mit fsync (Plan G2b-1, Restpunkt 8): bricht das Schreiben ab (Stromausfall, volle Platte), bleibt die alte Datei
+    unveraendert lesbar, der Zaehler also bei zwei Aufrufen; der Abbruch erreicht den Aufrufer, danach zaehlt der naechste
+    Aufruf normal weiter (die Sperre ist freigegeben, ein Rest der Zwischendatei stoert nicht). Bricht schon der fsync der
+    Zwischendatei ab, ist sie noch nicht an ihren Platz getreten: erst fsync, dann replace."""
+    guard = make_guard(tmp_path)
+    guard.take()
+    guard.take()
+    vorher = guard._path.read_bytes()
+    # Die Attrappen an os.fsync/os.replace (autospec) sind die Dateisystem-Grenze (Nr. 23): sie spielen den Ausfall des
+    # Systems nach; geprueft wird die Wirkung auf die Datei, nicht der Aufruf.
+    assert guard.used() == 2
+    with monkeypatch.context() as patch:
+        patch.setattr(os, abbruch, mock.create_autospec(getattr(os, abbruch), side_effect=OSError(5, "Abbruch")))
+        with pytest.raises(OSError, match="Abbruch"):
+            guard.take()
+    assert guard._path.read_bytes() == vorher
+    assert make_guard(tmp_path).used() == 2  # frische Instanz liest die alte Datei
+    guard.take()  # Gegenprobe: ohne Abbruch zaehlt es wieder, die Sperre haengt nicht
+    assert make_guard(tmp_path).used() == 3

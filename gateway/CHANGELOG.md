@@ -2,6 +2,18 @@
 
 ## Unveröffentlicht
 
+- Treibergrenzen (Nutzer-Entscheidung 22): `poll_seconds` darf höchstens 86400 s sein (ViCare mindestens 120 s wie bisher,
+  Simulation mindestens 1 s und nur eine Zahl, kein Wahrheitswert und kein Text); eine Token-Antwort der Viessmann-IAM mit
+  `expires_in` kleiner oder gleich 0 gilt als unbrauchbare Antwort. Der Server prüft dieselben Grenzen bei der Erkennung.
+- Der Updater lehnt eine Weiterleitung beim Laden von Manifest und Dateien ab, wenn das Ziel nicht `https` ist (mit dem
+  Labor-Schalter auch `http`; nie `ftp` oder `file`): das Ziel wird nicht angefragt, der Abruf gilt als nicht ladbar
+  und wird im nächsten Durchlauf wiederholt. Bisher folgte `urllib` auch einer Weiterleitung von `https` auf `http`.
+- Die Geräteliste der Einrichtung (`zigbee_devices`) lässt Messwerte weg, die der Link nicht senden kann: NaN, Unendlich,
+  Ganzzahlen außerhalb des Zahlbereichs und Werte, die tiefer als 32 Ebenen verschachtelt sind; eine solche Batterie
+  meldet sie als „unbekannt“. Bisher scheiterte die ganze Antwort, und die Geräteliste der Einrichtung blieb leer.
+- Der Tagestick (`seconds_until`) feuert bei der Rückstellung der Uhr (Winterzeit, doppelte Stunde) nur einmal zur ersten
+  Ortszeit der Tageszeit; bisher rechnete er in der zweiten Stunde mit einer negativen Wartezeit und feuerte bis zu eine
+  Stunde lang dauernd.
 - Jede Nachricht des Geräts entsteht über eine Stelle, die sie gegen den Vertrag prüft (`smartheat_device/nachrichten.py`),
   und das Gerät liest jede Vertragskonstante an der Stelle, die sie braucht (Stufe 3 S8a-1, A5-34). V1 gilt jetzt auf
   beiden Seiten strikt: Konfiguration, Bedienung und Befehle mit fehlendem oder fremdem Feld lehnt das Gerät ab. Der

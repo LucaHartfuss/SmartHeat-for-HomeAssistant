@@ -5,10 +5,11 @@ import os
 import re
 import socket
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from smartheat_host import kanal
+from smartheat_host import kanal, lesen
 
 SOFTWARE = {"version": "0.6.1", "manifest_url": "https://x.test/m.json", "manifest_sha256": "a" * 64,
             "signature": "sig"}
@@ -149,6 +150,57 @@ def _symlink(path: Path) -> None:
 
 def _huge(path: Path) -> None:
     path.write_text(json.dumps({"version": "0.6.1", "fuell": "x" * 200_000}))
+
+
+@pytest.mark.parametrize(("groesse", "erlaubt"), [(65535, True), (65536, True), (65537, False)])
+def test_read_stat_reads_exactly_64_kib_and_refuses_one_byte_more(tmp_path, groesse, erlaubt):
+    """Lesegrenze 65536 Bytes (Standard von `read_stat`): genau darauf und eins darunter wird gelesen, eins darueber
+    abgelehnt (`UnsichereDatei`, ein `OSError`); die Datei wird nie teilweise geliefert."""
+    datei = tmp_path / "grenze.json"
+    datei.write_bytes(b"x" * groesse)
+    if erlaubt:
+        daten, info = lesen.read_stat(datei)
+        assert daten == b"x" * groesse and info.st_size == groesse
+    else:
+        with pytest.raises(lesen.UnsichereDatei, match="zu gross"):
+            lesen.read_stat(datei)
+
+
+@pytest.mark.parametrize(("groesse", "erlaubt"), [(65536, True), (65537, False)])
+def test_read_stat_counts_the_bytes_it_read_when_the_reported_size_is_too_small(tmp_path, monkeypatch, groesse,
+                                                                              erlaubt):
+    """Meldet `fstat` eine zu kleine Groesse (Datei waechst, Sonderdatei), zaehlt trotzdem, was wirklich gelesen wurde:
+    65537 gelesene Bytes werden abgelehnt, 65536 geliefert (Attrappe nur an der Betriebssystem-Grenze `fstat`, nur im Namensraum von `lesen`)."""
+    datei = tmp_path / "waechst.json"
+    datei.write_bytes(b"y" * groesse)
+    echtes_fstat = os.fstat
+
+    def zu_klein(fd):
+        info = echtes_fstat(fd)
+        return os.stat_result((*tuple(info)[:6], 10, *tuple(info)[7:]))  # Index 6 = st_size
+
+    # nur im Namensraum von `lesen` (nicht im Modul os selbst): `lesen` ruft os.fstat ueber sein Modul-Attribut `os` auf
+    monkeypatch.setattr(lesen, "os", SimpleNamespace(**{**vars(os), "fstat": zu_klein}))
+    if erlaubt:
+        assert lesen.read_stat(datei)[0] == b"y" * groesse
+    else:
+        with pytest.raises(lesen.UnsichereDatei, match="zu gross"):
+            lesen.read_stat(datei)
+
+
+@pytest.mark.parametrize(("fuell", "erlaubt"), [(65536, True), (65537, False)])
+def test_the_desired_file_is_accepted_up_to_exactly_64_kib(tmp_path, fuell, erlaubt):
+    """Dieselbe Grenze am Kanal: ein gueltiges Dokument von genau 65536 Bytes ist die Soll-Software, eins mehr ist
+    vorlaeufig (`KanalFehler`)."""
+    rumpf = json.dumps({"version": "0.6.1", "fuell": ""})
+    dokument = json.dumps({"version": "0.6.1", "fuell": "x" * (fuell - len(rumpf))})
+    assert len(dokument.encode()) == fuell
+    (tmp_path / "software_soll.json").write_text(dokument)
+    if erlaubt:
+        assert kanal.LokalerKanal(tmp_path).desired()["version"] == "0.6.1"
+    else:
+        with pytest.raises(kanal.KanalFehler):
+            kanal.LokalerKanal(tmp_path).desired()
 
 
 @pytest.mark.parametrize("plant", [_fifo, _symlink, _huge])

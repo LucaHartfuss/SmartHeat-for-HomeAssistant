@@ -12,6 +12,7 @@ bis 80 s) laufen im Hintergrund (ein eigener Daemon-Thread je Kontext), nicht im
 Waiting, dessen check im Geraete-Thread nur das Future liest. Sonst stuenden down/setpoints, Dokumente und hello still,
 und die Laufzeit liefe nach zwei Ack-Timeouts in den Notbetrieb (bis 0.5.0 lief das im Agenten-Prozess)."""
 import functools
+import json
 import logging
 import time
 from collections.abc import Callable
@@ -20,6 +21,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from smartheat_core import dateien
+from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_device import fehler, wire
 from smartheat_device.commands import CommandRegister, Done, Failed, InvalidPayload, Outcome, Waiting
 from smartheat_device.hintergrund import (  # noqa: F401  (HINTERGRUND_NAME: Rueck-Import fuer tests/test_befehle.py)
@@ -43,6 +45,7 @@ INVENTORY_EVERY_SECONDS = 900
 ERKENNUNG_SECONDS = 120
 SIGN_OFF_WAIT_SECONDS = 24 * 3600
 ZIGBEE_VALUE_FIELDS = ("temperature", "local_temperature", "occupied_heating_setpoint", "humidity")
+MAX_WERT_EBENEN = 32  # tiefer verschachtelte Werte der Zigbee-Geraeteliste fallen weg (Testoffensive T5', Task 4)
 
 
 @dataclass
@@ -152,11 +155,52 @@ def zigbee_devices(ctx: Kontext, payload: dict) -> Outcome:
         last_seen = None if seen is None else datetime.fromtimestamp(ctx.wall() - (ctx.clock() - seen), UTC).isoformat()
         devices.append(_zigbee_geraet({
             "ieee": device.ieee, "model": device.model, "vendor": device.vendor, "art": device.art,
-            "werte": {key: data[key] for key in ZIGBEE_VALUE_FIELDS if key in data},
-            "batterie": data.get("battery", data.get("battery_low")),
+            "werte": {key: data[key] for key in ZIGBEE_VALUE_FIELDS if key in data and _sendbar(data[key])},
+            "batterie": _batterie(data),
             "faehigkeiten": sorted(device.faehigkeiten), "last_seen": last_seen,
         }))
     return Done({"devices": devices})
+
+
+def _tiefer_als(wert, grenze: int) -> bool:
+    """Ist der Wert mehr als `grenze` Ebenen aus Listen und Objekten tief verschachtelt? Iterativ, ohne Rekursion: der Wert
+    kommt als JSON vom Bus, und json.loads liest bis rund 9998 Ebenen."""
+    offen = [(wert, 0)]
+    while offen:
+        eintrag, ebene = offen.pop()
+        if isinstance(eintrag, dict):
+            kinder = list(eintrag.values())
+        elif isinstance(eintrag, list | tuple):
+            kinder = list(eintrag)
+        else:
+            continue
+        if ebene + 1 > grenze:
+            return True
+        offen.extend((kind, ebene + 1) for kind in kinder)
+    return False
+
+
+def _sendbar(wert) -> bool:
+    """Kann der Wert in die Antwort an den Server? Der Link sendet mit allow_nan=False: NaN und Unendlich (json.loads liest
+    sie vom Bus) liessen die ganze Antwort scheitern und die Geraeteliste der Einrichtung leer. Eine Zahl muss endlich sein
+    (auch eine Ganzzahl ausserhalb des float-Bereichs gilt als nicht endlich), ein verschachtelter Wert darf keine enthalten.
+    Zigbee2MQTT liefert flache Werte: tiefer als MAX_WERT_EBENEN verschachtelt faellt weg (json.dumps wirft sonst bei rund
+    9998 Ebenen RecursionError, kein ValueError, und die Antwort legt noch Ebenen um den Wert)."""
+    if isinstance(wert, int | float) and not isinstance(wert, bool):
+        return ist_endliche_zahl(wert)
+    if _tiefer_als(wert, MAX_WERT_EBENEN):
+        return False
+    try:
+        json.dumps(wert, allow_nan=False)
+    except (ValueError, TypeError, RecursionError):  # RecursionError: Guertel, nicht erreichbar bei Tiefengrenze 32
+        return False
+    return True
+
+
+def _batterie(daten: dict):
+    """Batteriestand wie gemeldet (Prozent oder Warnflagge); ein nicht sendbarer Wert ist wie keine Angabe None."""
+    wert = daten.get("battery", daten.get("battery_low"))
+    return wert if _sendbar(wert) else None
 
 
 def _zigbee_geraet(eintrag: dict) -> dict:

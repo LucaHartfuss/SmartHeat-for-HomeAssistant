@@ -87,7 +87,7 @@ def _terminate(signum, frame) -> None:  # pragma: no cover - Signalhandler
     raise SystemExit(0)
 
 
-def main() -> None:  # pragma: no cover - systemd-Einstieg
+def main() -> None:  # systemd-Einstieg
     base = Path(os.environ["SHG_LED"]) if os.environ.get("SHG_LED") else find_led()
     if base is None:
         raise SystemExit("Keine LED gefunden (/sys/class/leds/ACT oder led0)")

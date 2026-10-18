@@ -3,6 +3,9 @@ abgelehnte Konfiguration, QR-Code nur solange nicht eingerichtet. Schutz gegen D
 bis 0.5.0 (Tests unten unveraendert portiert)."""
 import http.client
 import json
+import socket
+import threading
+import time
 import urllib.request
 from types import SimpleNamespace
 
@@ -210,3 +213,128 @@ def test_dns_rebinding_host_is_refused_on_every_route(path):
 ])
 def test_host_allowed(header, allowed):
     assert host_allowed(header, parse_hostnames(" shg.lan , ,")) is allowed
+
+
+# --- Angreifer im LAN: nur lesend, kein Zustand aendert sich, langsame und viele Verbindungen blockieren nicht ---
+
+
+@pytest.fixture(scope="module")
+def _lan_server_module():
+    """Ein Server fuer alle Tests dieses Abschnitts (das Binden dauert wegen getfqdn rund 1,4 s)."""
+    calls: list[int] = []
+
+    def snapshot() -> dict:
+        calls.append(1)
+        return SNAPSHOT
+
+    server = start_server(0, snapshot, lambda: "https://portal.example.test/#/claim")
+    try:
+        yield SimpleNamespace(port=server.server_address[1], calls=calls)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.fixture
+def lan_server(_lan_server_module):
+    """Echter Server auf 127.0.0.1; `calls` zaehlt, wie oft der Zustand der Seite gelesen wurde (nur GET auf / und
+    /healthz); `sockets` sind offene Verbindungen des Tests, die danach geschlossen werden."""
+    _lan_server_module.calls.clear()
+    sockets: list[socket.socket] = []
+    try:
+        yield SimpleNamespace(port=_lan_server_module.port, calls=_lan_server_module.calls, sockets=sockets)
+    finally:
+        for offen in sockets:
+            offen.close()
+
+
+def _anfrage(port: int, method: str, path: str, body: bytes | None = None, timeout: float = 5) -> tuple[int, bytes]:
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+    try:
+        connection.request(method, path, body=body, headers={"Content-Type": "application/json"} if body else {})
+        response = connection.getresponse()
+        return response.status, response.read()
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize("path", ["/", "/healthz"])
+@pytest.mark.parametrize(("method", "body"), [
+    ("POST", b'{"zustand": "regelt"}'), ("PUT", b'{"zustand": "regelt"}'), ("DELETE", None),
+    ("PATCH", b'{"zustand": "regelt"}'), ("HEAD", None), ("OPTIONS", None)])
+def test_other_methods_than_get_are_not_executed(lan_server, method, body, path):
+    """POST, PUT, DELETE, PATCH, HEAD und OPTIONS: 501 ohne Zustandslesen und ohne den Uebernahme-Code; derselbe Pfad
+    mit GET antwortet 200 und liest den Zustand (Gegenprobe: vorher war nichts gelesen)."""
+    assert lan_server.calls == []
+    status, antwort = _anfrage(lan_server.port, method, path, body)
+    assert status == 501
+    assert b"ABCDEFGHJKLM" not in antwort and b"shg-abcdefghijklmnop" not in antwort
+    assert lan_server.calls == []
+    assert _anfrage(lan_server.port, "GET", path)[0] == 200
+    assert lan_server.calls == [1]
+
+
+@pytest.mark.parametrize("path", ["/x", "/healthz/", "/index.html", "/admin", "/HEALTHZ", "/../etc/passwd",
+                                  "/%2e%2e/etc/passwd"])
+def test_unknown_paths_answer_404_without_content_and_without_reading_the_state(lan_server, path):
+    assert _anfrage(lan_server.port, "GET", path) == (404, b"")
+    assert lan_server.calls == []
+    assert _anfrage(lan_server.port, "GET", "/healthz")[0] == 200
+    assert lan_server.calls == [1]
+
+
+def test_a_silent_or_half_sent_connection_does_not_block_a_second_request(lan_server):
+    """Ein Client, der nichts sendet, und einer, der die Anfrage nie beendet: die naechste Anfrage wird trotzdem
+    beantwortet (Frist 2 s; ein Server mit nur einem Faden bliebe am ersten Client haengen)."""
+    lan_server.sockets.append(socket.create_connection(("127.0.0.1", lan_server.port), timeout=5))
+    halb = socket.create_connection(("127.0.0.1", lan_server.port), timeout=5)
+    lan_server.sockets.append(halb)
+    halb.sendall(b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\n")  # kein Zeilenende am Kopf: nie fertig
+    beginn = time.monotonic()
+    status, antwort = _anfrage(lan_server.port, "GET", "/healthz", timeout=2)
+    assert status == 200 and json.loads(antwort)["zustand"] == "nicht_uebernommen"
+    assert time.monotonic() - beginn < 2
+    halb.sendall(b"\r\n")  # der langsame Client darf seine Anfrage beenden und wird ebenfalls beantwortet
+    assert halb.recv(12).startswith(b"HTTP/1.0 200")
+
+
+def test_fifty_silent_connections_leave_healthz_answering(lan_server):
+    """Eine Flut von 50 gleichzeitigen Verbindungen ohne Anfrage haelt den Server nicht von /healthz ab."""
+    for _ in range(50):
+        lan_server.sockets.append(socket.create_connection(("127.0.0.1", lan_server.port), timeout=5))
+    beginn = time.monotonic()
+    status, antwort = _anfrage(lan_server.port, "GET", "/healthz", timeout=2)
+    assert status == 200 and json.loads(antwort)["server_ok"] is True
+    assert time.monotonic() - beginn < 2
+
+
+def test_fifty_simultaneous_requests_are_all_answered():
+    """50 Anfragen auf /healthz, deren Zustandslesen erst endet, wenn alle 50 zugleich im Handler sind (Barriere): ein
+    Server mit nur einem Faden lieferte nie alle 50 und scheitert an der Frist; alle bekommen 200."""
+    barriere = threading.Barrier(50, timeout=10)
+
+    def snapshot() -> dict:
+        barriere.wait()
+        return SNAPSHOT
+
+    server = start_server(0, snapshot, lambda: None)
+    port = server.server_address[1]
+    ergebnisse: list[int] = []
+
+    def frage() -> None:
+        try:
+            ergebnisse.append(_anfrage(port, "GET", "/healthz", timeout=15)[0])
+        except (OSError, http.client.HTTPException):
+            ergebnisse.append(-1)
+
+    faeden = [threading.Thread(target=frage) for _ in range(50)]
+    try:
+        for faden in faeden:
+            faden.start()
+        for faden in faeden:
+            faden.join(timeout=30)
+        assert ergebnisse == [200] * 50
+    finally:
+        barriere.abort()
+        server.shutdown()
+        server.server_close()

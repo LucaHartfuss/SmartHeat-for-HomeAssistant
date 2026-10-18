@@ -33,6 +33,24 @@ def test_unusable_bindings_are_config_errors(change):
         config.bindung(konfiguration(**change))
 
 
+def test_an_ieee_address_in_capitals_is_refused_as_thermostat_and_as_sensor():
+    """Zigbee2MQTT meldet Kleinbuchstaben (`0x00124b...`); die Regex kennt nur diese. Eine Adresse mit Grossbuchstaben
+    waere ein anderer Schluessel im Spiegel und fiele dort nie auf ein Geraet (Festhalten, Testoffensive T5')."""
+    gross = THERMOSTAT.upper().replace("0X", "0x")  # 0x00124B0000000002
+    assert gross != THERMOSTAT and gross.startswith("0x")
+    klein_ok = config.bindung(konfiguration())  # Gegenprobe: die Kleinbuchstaben-Form wird angenommen
+    assert klein_ok.thermostat == THERMOSTAT and klein_ok.room_sensors == (f"zigbee:{SENSOR}:temperature",)
+    treiber = {"id": "simulation", "parameter": PARAMETER}
+    with pytest.raises(ConfigError, match="keine IEEE-Adresse"):
+        config.bindung(konfiguration(bindung={"treiber": treiber, "thermostat": gross}))
+    sensor_gross = SENSOR.upper().replace("0X", "0x")
+    for ref in (f"zigbee:{sensor_gross}:temperature", f"zigbee:{sensor_gross}:local_temperature"):
+        with pytest.raises(ConfigError, match="Raumf"):
+            config.bindung(konfiguration(raumfuehler=[ref]))
+    with pytest.raises(ConfigError, match="Raumf"):  # ein einziger grossgeschriebener unter gueltigen genuegt
+        config.bindung(konfiguration(raumfuehler=[f"zigbee:{SENSOR}:temperature", f"zigbee:{sensor_gross}:temperature"]))
+
+
 def test_parse_gives_the_runtime_config_without_transport(tmp_path):
     paths = Paths(tmp_path)
     runtime, bindung = config.parse_dokument(konfiguration(), paths, lambda: entitlement.ACTIVE)
