@@ -1,6 +1,8 @@
 import stat
 
-from smartheat_gateway.z2m_config import ensure, sync_credentials
+import yaml
+
+from smartheat_gateway.z2m_config import ensure, render, sync_credentials
 
 
 def test_written_once_and_never_again(tmp_path):
@@ -74,3 +76,16 @@ def test_sync_comment_first_line_does_not_set_the_indent(tmp_path):
     assert sync_credentials(tmp_path, "zigbee2mqtt", "test-pw")
     assert path.read_text() == ('mqtt:\n  user: zigbee2mqtt\n  password: "test-pw"\n'
                                 "      # tief eingerueckter Kommentar\n  server: mqtt://mosquitto:1883\n")
+
+
+def test_the_template_switches_the_frontend_and_the_home_assistant_link_off(tmp_path):
+    """Ausgabe der Vorlage, als YAML gelesen (nicht der Dateitext): kein Frontend von Zigbee2MQTT im Netz, keine
+    Anbindung an Home Assistant; das gilt auch fuer die Datei, die `ensure` schreibt."""
+    gerendert = yaml.safe_load(render("ember", "zigbee2mqtt", "test-pw"))
+    assert gerendert["frontend"] == {"enabled": False}
+    assert gerendert["homeassistant"] == {"enabled": False}
+    assert ensure(tmp_path, "ember", "zigbee2mqtt", "test-pw")
+    geschrieben = yaml.safe_load((tmp_path / "configuration.yaml").read_text())
+    assert geschrieben["frontend"] == {"enabled": False}
+    assert geschrieben["homeassistant"] == {"enabled": False}
+    assert geschrieben["mqtt"]["server"] == "mqtt://mosquitto:1883"  # Gegenprobe: die Datei ist sonst wie gelesen
