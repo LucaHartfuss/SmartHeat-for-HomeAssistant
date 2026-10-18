@@ -1,6 +1,8 @@
 """Spec 5b 1: Identitaet des Geraets (aus gateway agent/identity.py) mit TLS-Schluessel und CSR."""
 import base64
 import hashlib
+import inspect
+import secrets
 import stat
 
 from cryptography import x509
@@ -52,6 +54,19 @@ def test_an_existing_agent_key_keeps_its_device_id(tmp_path):
 def test_claim_code_is_12_base32_characters():
     code = identity.new_claim_code(lambda n: bytes(range(n)))
     assert len(code) == 12 and set(code) <= set("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")  # Literal aus V1
+
+
+def test_the_claim_code_comes_from_the_randomness_of_the_operating_system(tmp_path):
+    """Der Standard ist bei der Definition an `secrets.token_bytes` gebunden (Angriff: Code nicht erratbar); der Code
+    folgt genau der Quelle und haengt von nichts anderem ab als von ihr."""
+    for funktion in (identity.new_claim_code, identity.load_or_create):
+        assert inspect.signature(funktion).parameters["randbytes"].default is secrets.token_bytes, funktion.__name__
+    assert identity.new_claim_code(lambda n: bytes(n)) == "AAAAAAAAAAAA"
+    assert identity.new_claim_code(lambda n: bytes([255]) * n) == "777777777777"
+    assert identity.new_claim_code(lambda n: bytes(range(n))) == "AAAQEAYEAUDA"
+    codes = {identity.new_claim_code() for _ in range(2)}
+    assert len(codes) == 2
+    assert identity.load_or_create(tmp_path / "a").claim_code != identity.load_or_create(tmp_path / "b").claim_code
 
 
 def test_a_new_claim_code_is_saved_only_on_request(tmp_path):
