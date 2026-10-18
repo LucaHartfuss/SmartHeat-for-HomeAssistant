@@ -9,6 +9,7 @@ import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT
 from fakes import datei_stand, runtime_config
 
+from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_binding import HaPlantBinding
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import LocalSafety
@@ -35,7 +36,7 @@ def _runtime(store, *, room_actual=20.0, room_target=21.0, entity_ids=ENTITY_IDS
     """`room_target` ist der Stable-Target-Cache (None = nicht befuellt); `states` ergaenzt die
     HA-Werte (eine Exception als Wert wird beim Lesen geworfen)."""
     values = {"sensor.room_actual": room_actual, **(states or {})}
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     ha_api.get_attribute.side_effect = ValueError("kein Wertebereich")  # wie eine Entity ohne min/max
 
     def _get_state(entity_id):
