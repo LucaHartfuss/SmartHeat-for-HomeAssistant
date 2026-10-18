@@ -10,7 +10,10 @@ env:
   SELF: SmartHeat-for-HomeAssistant
 jobs:
   ci:
+    # Volle Stufe (Docker, Real-HA-Container-Tests); der Push-Lauf faehrt nur die Standardstufe (Spec Nr. 30).
     uses: ./.github/workflows/ci.yml
+    with:
+      stufe: voll
     secrets: inherit
     permissions:
       contents: read
