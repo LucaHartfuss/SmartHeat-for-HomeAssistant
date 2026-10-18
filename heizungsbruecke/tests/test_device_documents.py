@@ -512,3 +512,54 @@ def test_operations_rejections_and_duplicates_skip_the_preparation(tmp_path):
     assert store.empfangen("konfiguration", _leer(version=4)).uebernommen  # Gegenprobe: uebernommen -> gerufen
     assert store.empfangen("konfiguration", _leer(version=4)).ok  # Duplikat
     assert gesehen == [_ohne_huelle(_leer())]
+
+
+@pytest.mark.parametrize("dazwischen", ["abgelehnt", "angenommen", "duplikat"])
+def test_after_a_result_for_another_configuration_a_new_failure_is_logged_again(tmp_path, caplog, dazwischen):
+    """Nr. 38: ein Ergebnis fuer eine Konfiguration (Ablehnung, Annahme einer anderen, Duplikat der gespeicherten)
+    beendet das Zurueckhalten; scheitert danach eine neue Zustellung, ist das ein neues Zurueckhalten mit eigener
+    ERROR-Zeile."""
+    def vorbereiten(alt, neu):
+        if not neu.get("anlage"):
+            raise OSError("Datentraeger")
+
+    store = _vorbereitender_store(tmp_path, vorbereiten)
+    store.empfangen("konfiguration", _konfiguration(version=1))
+    with caplog.at_level("DEBUG", logger="smartheat_device"):
+        with pytest.raises(config_check.NichtPruefbar):
+            store.empfangen("konfiguration", _leer(version=2))
+        assert [r.levelname for r in caplog.records].count("ERROR") == 1
+        if dazwischen == "abgelehnt":
+            assert store.empfangen("konfiguration", _konfiguration(version=3, kuenftig=1)).grund == "ungueltig"
+        elif dazwischen == "angenommen":
+            assert store.empfangen("konfiguration", _konfiguration(version=3, tagestick="13:00")).uebernommen
+        else:
+            ergebnis = store.empfangen("konfiguration", _konfiguration(version=1))
+            assert ergebnis.ok and not ergebnis.uebernommen
+        with pytest.raises(config_check.NichtPruefbar):
+            store.empfangen("konfiguration", _leer(version=4))
+    assert [r.levelname for r in caplog.records].count("ERROR") == 2
+
+
+def test_a_host_that_changes_its_arguments_does_not_change_the_documents(tmp_path):
+    """Der Host bekommt Kopien (alt und neu): ein fehlerhafter Host aendert weder das zu speichernde noch das schon
+    gespeicherte Dokument."""
+    def vorbereiten(alt, neu):
+        leer = neu.get("anlage") is None
+        neu["anlage"] = "fremd"
+        neu["raumfuehler"].append("zigbee:0xdead:temperature")
+        if alt is not None:
+            alt["anlage"] = "fremd"
+            alt["raumfuehler"].clear()
+        if leer:
+            raise OSError("Datentraeger")  # zurueckgehalten: das gespeicherte Dokument bleibt im Speicher stehen
+
+    store = _vorbereitender_store(tmp_path, vorbereiten)
+    store.empfangen("konfiguration", _konfiguration(version=1))
+    assert store.inhalt("konfiguration") == _ohne_huelle(_konfiguration())
+    store.empfangen("konfiguration", _konfiguration(version=2, tagestick="13:00"))
+    with pytest.raises(config_check.NichtPruefbar):
+        store.empfangen("konfiguration", _leer(version=3))
+    assert store.inhalt("konfiguration") == _ohne_huelle(_konfiguration(tagestick="13:00"))
+    assert json.loads((tmp_path / "konfiguration.json").read_text())["inhalt"] == store.inhalt("konfiguration")
+    assert _store(tmp_path).inhalt("konfiguration") == _ohne_huelle(_konfiguration(tagestick="13:00"))

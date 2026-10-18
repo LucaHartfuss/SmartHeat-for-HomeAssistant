@@ -438,7 +438,8 @@ def _leer(version):
 
 
 class BasisHost(GeraetHostBasis, FakeHost):
-    """FakeHost mit den echten Rueckrufen des gemeinsamen Teils (Markierung, Neustart); aufraeumen.json im Testordner."""
+    """FakeHost mit den echten Rueckrufen des gemeinsamen Teils (Markierung, Neustart); aufraeumen.json im
+    Testordner."""
 
     def __init__(self, pfad) -> None:
         FakeHost.__init__(self)
@@ -452,7 +453,8 @@ class BasisHost(GeraetHostBasis, FakeHost):
 def test_a_failing_cleanup_marker_holds_the_empty_configuration_back_until_it_can_be_written(tmp_path, monkeypatch,
                                                                                                caplog):
     """Review Focus 1 (Spec Testoffensive 12.6, Nr. 38): laesst sich die Aufraeum-Markierung nicht schreiben, bleibt die
-    alte Konfiguration gespeichert (die Laufzeit regelt mit ihr weiter), kein up/result, keine Markierung, kein Neustart;
+    alte Konfiguration gespeichert (die Laufzeit regelt mit ihr weiter), kein up/result, keine Markierung, kein
+    Neustart;
     eine ERROR-Zeile je Zurueckhalten. Ist der Ordner wieder beschreibbar, uebernimmt die Wiederholung nach 30 s,
     markiert und fordert den Neustart an."""
     pfad = tmp_path / "aufraeumen.json"
@@ -477,7 +479,8 @@ def test_a_failing_cleanup_marker_holds_the_empty_configuration_back_until_it_ca
         world.empfangen("down/config", _leer(version=2))
         worker.run_pending()
         assert [r["version"] for r in world.link.of("up/result")] == [1]
-        assert world.device.konfiguration()["anlage"] == "kunde3" and world.device.documents.version("konfiguration") == 1
+        assert world.device.konfiguration()["anlage"] == "kunde3"
+        assert world.device.documents.version("konfiguration") == 1
         assert not pfad.exists() and neustarts == []
 
         def versuche():  # je zurueckgehaltenem Versuch eine Warnung des Geraets

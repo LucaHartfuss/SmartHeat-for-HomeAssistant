@@ -15,14 +15,16 @@ Software ausgewertet: nach einem Update endet es von selbst. Nur eine Konfigurat
 setzt den Anlass neu; eine wegen fehlender oder fremder Felder abgelehnte laesst ihn stehen (V1 ist strikt, R10).
 Wirft der Treiber-Rueckruf config_check.NichtPruefbar (HA aus), laeuft empfangen durch: nichts wird gespeichert oder
 abgelehnt, das Geraet haelt das Dokument zurueck und prueft spaeter erneut (device.py). Ebenso, wenn die Vorbereitung
-vor dem Speichern einer geprueften Konfiguration scheitert (vor_speichern, der Host schreibt dort die Aufraeum-Markierung;
-Spec Testoffensive 12.6, Nr. 38): jede Ausnahme wird zu NichtPruefbar, eine ERROR-Zeile je Zurueckhalten.
+vor dem Speichern einer geprueften Konfiguration scheitert (vor_speichern, der Host schreibt dort die
+Aufraeum-Markierung; Spec Testoffensive 12.6, Nr. 38): jede Ausnahme wird zu NichtPruefbar, eine ERROR-Zeile je
+Zurueckhalten (erst ein Ergebnis fuer eine Konfiguration, Annahme oder Ablehnung, beendet das Zurueckhalten).
 Eine kaputte Datei (Stromausfall) gilt als "keine Version": hello meldet 0, der Server stellt neu zu.
 
 Rastung (Spec Stufe 3 S3 Abschnitt 3, A5-06): Hebelsatz x Verteilsystem der ersten eingerichteten Konfiguration stehen in
 sicherheitssatz.json; kein Dokument loest sie, auch keine leere Konfiguration. Sie wird vor dem Speichern der Konfiguration
 geschrieben. Fehlt die Datei bei gespeicherter eingerichteter Konfiguration (Stand vor dieser Version), rastet der Start.
 Eine kaputte oder manipulierte Datei (auch ein Symlink) lehnt jede eingerichtete Konfiguration ab (rastung.lesen)."""
+import copy
 import logging
 import re
 import threading
@@ -272,6 +274,8 @@ class DocumentStore:
                 return self._abgelehnt_mit(art, version, SCHEMA_UNBEKANNT, None)
             current = self._docs[art]
             if current is not None and current.version == version and not current.dirty:
+                if art == KONFIGURATION:
+                    self._vorbereitung_gemeldet = False  # Ergebnis: ein spaeteres Scheitern ist ein neues Zurueckhalten
                 return Ergebnis(art, version, True)
             inhalt = {key: value for key, value in payload.items() if key not in _RESERVIERT}
             ablehnung = self._pruefen(art, inhalt)
@@ -290,12 +294,12 @@ class DocumentStore:
         """Vor Rastung und Speichern: scheitert der Host (Markierung nicht schreibbar), wird nichts gespeichert, und das
         Geraet haelt das Dokument zurueck wie bei NichtPruefbar aus dem Treiber-Rueckruf. _pruefen hat _update_anlass
         dann schon im Speicher gesetzt, ohne ihn zu speichern; das ist dieselbe Lage wie dort, die Wiederholung setzt
-        ihn gleich."""
+        ihn gleich. Der Host bekommt Kopien: er kann weder das zu speichernde noch das gespeicherte Dokument aendern."""
         if self._vor_speichern is None:
             return
         try:
-            self._vor_speichern(self.inhalt(KONFIGURATION), inhalt)
-        except Exception as error:  # jede Ausnahme: nichts speichern, zurueckhalten statt die Konfiguration zu verlieren
+            self._vor_speichern(copy.deepcopy(self.inhalt(KONFIGURATION)), copy.deepcopy(inhalt))
+        except Exception as error:  # jede Ausnahme: nichts speichern, zurueckhalten statt die Konfiguration verlieren
             if not self._vorbereitung_gemeldet:  # je Zurueckhalten einmal (das Geraet wiederholt alle 30 s)
                 logger.error("Konfiguration zurueckgehalten: Vorbereitung gescheitert (%s)", type(error).__name__)
                 self._vorbereitung_gemeldet = True
@@ -309,6 +313,8 @@ class DocumentStore:
             logger.error("%s abgelehnt (%s): details ohne die Form des Vertrags verworfen", art, grund)
             details = None
         self._abgelehnt[art] = (version, grund, details)
+        if art == KONFIGURATION:
+            self._vorbereitung_gemeldet = False  # Ergebnis: ein spaeteres Scheitern ist ein neues Zurueckhalten
         self._zustand_speichern()
         return Ergebnis(art, version, False, grund, details)
 

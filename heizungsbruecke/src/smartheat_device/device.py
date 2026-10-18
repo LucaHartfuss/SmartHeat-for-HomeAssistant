@@ -114,7 +114,8 @@ class Device:
         self.identity = identity.load_or_create(self._dir)
         self.boot_id = identity.new_boot_id()
         self.documents = DocumentStore(self._dir, host=host.host, software_version=host.version,
-                                       treiber_pruefen=host.treiber_pruefen, vor_speichern=host.konfiguration_vorbereiten)
+                                       treiber_pruefen=host.treiber_pruefen,
+                                       vor_speichern=host.konfiguration_vorbereiten)
         self.hinweise = commands.Hinweise(self._dir)
         self.befehle = commands.CommandRegister(self._dir, self._ergebnis_senden, send_inventory=self._inventur_senden,
                                                 clock=clock, uebersetzen=befehl_fehler)
