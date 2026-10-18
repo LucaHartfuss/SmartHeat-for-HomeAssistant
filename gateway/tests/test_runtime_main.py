@@ -265,6 +265,36 @@ def test_the_offer_of_a_rejected_configuration_is_replayed_after_a_restart(world
     assert _soll_software(world) == SOFTWARE
 
 
+def test_a_write_error_while_replaying_the_offer_is_logged_and_the_start_goes_on(world, monkeypatch, caplog):
+    """F-gateway-host-31: scheitert das Schreiben von software_soll.json beim Nachholen (Datentraeger voll, nur lesbar),
+    loggt der Start den Fehler nur mit seiner Art und laeuft weiter; der naechste Start holt das Angebot nach.
+    Die Attrappe sitzt an der Dateisystem-Grenze (dateien.schreiben_json, Nr. 23)."""
+    world.start_runtime()
+    world.connect()
+    world.konfiguration_senden(konfiguration(mindest_software="9.0.0", software=SOFTWARE), 1)
+    world.paths.software_soll.unlink()
+    schreiben = dateien.schreiben_json
+
+    def voll(pfad, *args, **kwargs):
+        if pfad == world.paths.software_soll:
+            raise OSError(28, "No space left on device: GEHEIM")
+        return schreiben(pfad, *args, **kwargs)
+
+    monkeypatch.setattr(dateien, "schreiben_json", voll)
+    starts_vorher = world.restarts
+    with caplog.at_level("ERROR"):
+        _neustart(world)
+    # der Start ging weiter: neuer Prozess wie ohne Fehler (die Konfiguration verlangt 9.0.0 und ist abgelehnt, daher
+    # Ruhezustand statt Regelung)
+    assert world.restarts == starts_vorher + 1
+    assert isinstance(world.result, IdleBridge) and world.result.reason == IDLE_NOT_CONFIGURED
+    assert _soll_software(world) == "fehlt"
+    assert "Soll-Software nicht nachgeholt (OSError)" in caplog.text and "GEHEIM" not in caplog.text
+    monkeypatch.setattr(dateien, "schreiben_json", schreiben)
+    _neustart(world)
+    assert _soll_software(world) == SOFTWARE  # der naechste Start holt das Angebot nach
+
+
 def test_a_later_invalid_offer_or_an_empty_configuration_without_software_keeps_the_replayed_offer(world):
     world.start_runtime()
     world.connect()
