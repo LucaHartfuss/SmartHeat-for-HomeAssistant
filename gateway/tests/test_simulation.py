@@ -38,7 +38,7 @@ def test_a_numeric_parameter_that_is_not_finite_is_refused(paths, clock, schlues
 @pytest.mark.parametrize(("wert", "angenommen"), [
     (0.999, False), (1, True), (1.0, True), (60, True), (86400, True), (86400.0, True), (86400.5, False),
     (86401, False), (0, False), (-1, False), (1e300, False), (float("nan"), False), (float("inf"), False),
-    (True, False), (False, False), ("60", False)])
+    (float("-inf"), False), (True, False), (False, False), ("60", False)])
 def test_the_poll_interval_of_the_simulation_lies_between_1_and_86400_seconds(paths, clock, wert, angenommen):
     parameter = {"lever_set": "viessmann_vicare", "poll_seconds": wert}
     if angenommen:
