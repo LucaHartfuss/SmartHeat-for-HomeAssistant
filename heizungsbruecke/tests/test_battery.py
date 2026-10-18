@@ -6,6 +6,7 @@ import pytest
 import requests
 from fakes import runtime_config
 
+from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_signals import HaSignalSource
 from heizungsbruecke.ha_sinks import HaNotifySink
 from smartheat_runtime.battery import STATE_LOW, check_batteries, next_state
@@ -43,14 +44,14 @@ def test_art_comes_from_the_host_not_from_the_prefix():
 
 
 def _http_error(status_code):
-    response = MagicMock(status_code=status_code)
+    response = MagicMock(spec=requests.Response, status_code=status_code)
     error = requests.HTTPError(f"{status_code}")
     error.response = response
     return error
 
 
 def _rt(make_store, raw_states, battery_entities=("sensor.wz_battery",)):
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
 
     def _raw(entity_id):
         value = raw_states[entity_id]

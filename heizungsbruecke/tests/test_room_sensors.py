@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import requests
 from fakes import runtime_config
 
+from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_signals import HaSignalSource
 from heizungsbruecke.ha_sinks import HaNotifySink
 from smartheat_runtime.notifier import Notifier
@@ -13,14 +14,14 @@ from smartheat_runtime.texts import HA_TEXTS
 
 
 def _http_error(status_code):
-    response = MagicMock(status_code=status_code)
+    response = MagicMock(spec=requests.Response, status_code=status_code)
     error = requests.HTTPError(f"{status_code}")
     error.response = response
     return error
 
 
 def _rt(make_store, values, room_sensors, store=None):
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     store = store if store is not None else make_store()
 
     def _get_state(ref):

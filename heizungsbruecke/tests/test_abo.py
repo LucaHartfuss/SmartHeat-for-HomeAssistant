@@ -9,6 +9,7 @@ from bindung_beispiele import VAILLANT_MYPYLLANT
 from conftest import FakeClock
 from fakes import HaEventSink, runtime_config
 
+from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_binding import HaPlantBinding
 from heizungsbruecke.ha_sinks import HaNotifySink
 from heizungsbruecke.version import ADDON_VERSION
@@ -18,6 +19,7 @@ from smartheat_core.safety import LocalSafety
 from smartheat_runtime import abo, entitlement
 from smartheat_runtime.backup_store import load_backup
 from smartheat_runtime.notifier import Notifier
+from smartheat_runtime.ports import MqttChannel
 from smartheat_runtime.roles import ChannelManifest
 from smartheat_runtime.status import StatusReporter
 from smartheat_runtime.texts import HA_TEXTS
@@ -37,10 +39,10 @@ def _runtime(tmp_path, store, entity_ids=BOTH_ROLES, notify_services=("notify.ha
              abo_source=lambda: entitlement.UNKNOWN):
     """`abo_source` ist die Abo-Quelle des Konfigurationsdokuments (Rueckruf des Hosts, RuntimeConfig)."""
     manifest = ChannelManifest(refs=entity_ids)
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     ha_api.get_attribute.side_effect = ValueError("kein Wertebereich")  # wie eine Entity ohne min/max
     return SimpleNamespace(
-        manifest=manifest, signals=ha_api, ha_api=ha_api, store=store, mqtt_client=MagicMock(),
+        manifest=manifest, signals=ha_api, ha_api=ha_api, store=store, mqtt_client=MagicMock(spec=MqttChannel),
         config=runtime_config(entitlement_path=tmp_path / "entitlement_state.json", abo_source=abo_source),
         override=LeverPipeline(store, HaPlantBinding(ha_api, manifest, VAILLANT_MYPYLLANT), SAFETY),
         notifier=Notifier(store, HaNotifySink(ha_api, list(notify_services))),
