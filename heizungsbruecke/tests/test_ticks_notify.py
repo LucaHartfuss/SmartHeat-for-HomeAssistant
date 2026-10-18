@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_sinks import HaNotifySink
 from smartheat_runtime import delivery
 from smartheat_runtime.notifier import Notifier
@@ -30,7 +31,7 @@ def test_notice_rejects_unknown_kind():
 
 
 def test_seed_notices_takes_over_persisted_notbetrieb_and_fault(make_store):
-    notifier = Notifier(make_store(), HaNotifySink(MagicMock(), []))
+    notifier = Notifier(make_store(), HaNotifySink(MagicMock(spec=HomeAssistantApi), []))
     state = delivery.DeliveryState(
         notbetrieb=True, datenfehler=delivery.DataFault(delivery.SOURCE_SERVER, ("unplausibel: 99",)),
     )
@@ -42,7 +43,7 @@ def test_seed_notices_takes_over_persisted_notbetrieb_and_fault(make_store):
 
 
 def test_seed_notices_leaves_a_clean_state_alone(make_store):
-    notifier = Notifier(make_store(), HaNotifySink(MagicMock(), []))
+    notifier = Notifier(make_store(), HaNotifySink(MagicMock(spec=HomeAssistantApi), []))
 
     seed_notices(notifier, delivery.DeliveryState())
 

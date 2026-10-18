@@ -1,6 +1,9 @@
 """Spec Stufe 3 S3 Abschnitt 3: Rastung des Sicherheitssatzes; eine kaputte Datei sperrt."""
+import contextlib
 import json
+import os
 import stat
+import threading
 
 import pytest
 
@@ -83,3 +86,38 @@ def test_the_lock_file_is_read_up_to_a_hard_size_limit(tmp_path, groesse, gesper
     _datei_mit_groesse(pfad, groesse)
     erwartet = rastung.UNBEKANNT if gesperrt else rastung.Rastung("vaillant_vrc720", "Heizkoerper")
     assert rastung.lesen(pfad) == erwartet
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="keine FIFOs auf dieser Plattform")
+def test_a_fifo_as_the_lock_file_does_not_block_and_counts_as_broken(tmp_path):
+    """S3S3-Reste: open auf eine FIFO ohne Schreiber haengt ohne O_NONBLOCK; sie gilt als kaputt (jede eingerichtete
+    Konfiguration abgelehnt). Daemon-Thread, damit die Suite auch bei einem Rueckfall nie haengt."""
+    pfad = tmp_path / rastung.DATEI
+    os.mkfifo(pfad)
+    ergebnis: list = []
+    thread = threading.Thread(target=lambda: ergebnis.append(rastung.lesen(pfad)), daemon=True)
+    thread.start()
+    try:
+        thread.join(2)
+        assert not thread.is_alive()
+    finally:
+        if thread.is_alive():  # Teardown: ein Schreiber loest das blockierte open
+            with contextlib.suppress(OSError):
+                os.close(os.open(pfad, os.O_WRONLY | os.O_NONBLOCK))
+            thread.join(2)
+    assert ergebnis == [rastung.UNBEKANNT]
+    assert not rastung.passt(ergebnis[0], KONF)
+    assert not rastung.passt(ergebnis[0], {**KONF, "verteilsystem": "Fussbodenheizung"})
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="keine FIFOs auf dieser Plattform")
+def test_only_a_regular_file_counts_even_if_a_fifo_delivers_a_valid_lock(tmp_path):
+    """Ein gueltiger Inhalt aus einer FIFO ist kein Sicherheitssatz auf dem Datentraeger: S_ISREG, nicht nur Parsen."""
+    pfad = tmp_path / rastung.DATEI
+    os.mkfifo(pfad)
+    halter = os.open(pfad, os.O_RDWR | os.O_NONBLOCK)  # haelt Leser und Schreiber, nichts blockiert
+    try:
+        os.write(halter, b'{"hebelsatz": "vaillant_vrc720", "verteilsystem": "Heizkoerper"}')
+        assert rastung.lesen(pfad) == rastung.UNBEKANNT
+    finally:
+        os.close(halter)

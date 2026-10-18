@@ -6,6 +6,7 @@ from bindung_beispiele import VAILLANT_MYPYLLANT, WEISHAUPT_MODBUS_BASIS
 
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_binding import HaPlantBinding
+from smartheat_runtime.ports import MqttChannel
 from smartheat_runtime.roles import ChannelManifest
 from smartheat_runtime.snapshot import SnapshotRead, publish_snapshot, read_snapshot
 
@@ -39,7 +40,7 @@ def _states_with(broken: dict):
 
 def test_read_snapshot_reads_levers_and_room_target_and_checks_room_actual():
     manifest = _all_roles_manifest()
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     ha_api.get_state.return_value = 20.0
 
     read = _read(manifest, ha_api)
@@ -50,7 +51,7 @@ def test_read_snapshot_reads_levers_and_room_target_and_checks_room_actual():
 
 
 def test_read_snapshot_marks_unreadable_lever_invalid_and_reads_the_others():
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     ha_api.get_state.side_effect = _states_with({"sensor.heat_limit": ValueError("unavailable")})
 
     read = _read(_all_roles_manifest(), ha_api)
@@ -62,7 +63,7 @@ def test_read_snapshot_marks_unreadable_lever_invalid_and_reads_the_others():
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
 def test_read_snapshot_marks_non_finite_value_invalid(bad):
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     ha_api.get_state.side_effect = _states_with({"sensor.room_target": bad})
 
     read = _read(_all_roles_manifest(), ha_api)
@@ -86,7 +87,7 @@ def test_read_snapshot_marks_integer_beyond_float_range_invalid(huge):
 
 
 def test_read_snapshot_checks_room_actual_but_never_sends_it():
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     ha_api.get_state.side_effect = _states_with({"sensor.room_actual": ValueError("unavailable")})
 
     read = _read(_all_roles_manifest(), ha_api)
@@ -97,7 +98,7 @@ def test_read_snapshot_checks_room_actual_but_never_sends_it():
 
 def test_read_snapshot_skips_unmapped_levers_without_marking_them_invalid():
     manifest = ChannelManifest(refs={"heat_limit": "number.h", "room_target": "sensor.t"})
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     ha_api.get_state.return_value = 16.0
 
     assert _read(manifest, ha_api) == SnapshotRead(room_target=16.0, levers={"heat_limit": 16.0}, invalid=())
@@ -105,7 +106,7 @@ def test_read_snapshot_skips_unmapped_levers_without_marking_them_invalid():
 
 def test_read_snapshot_never_sends_notifications():
     # T2-13: Meldungen kommen nur noch aus der Zustellung (einmal pro Fehlerbeginn).
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     ha_api.get_state.side_effect = ValueError("unavailable")
 
     read = _read(_all_roles_manifest(), ha_api)
@@ -115,7 +116,7 @@ def test_read_snapshot_never_sends_notifications():
 
 
 def test_publish_snapshot_sends_one_schema_4_message():
-    mqtt_client = MagicMock()
+    mqtt_client = MagicMock(spec=MqttChannel)
 
     publish_snapshot(mqtt_client, seq="s1", trigger="daily", room_target=20.5, levers={"heat_limit": 4.0})
 
@@ -130,7 +131,7 @@ def test_publish_snapshot_sends_one_schema_4_message():
 
 
 def test_publish_snapshot_schema_4():
-    fake_mqtt = MagicMock()
+    fake_mqtt = MagicMock(spec=MqttChannel)
     publish_snapshot(fake_mqtt, seq="s", trigger="daily", room_target=20.5,
                      levers={"curve": 1.0, "room_setpoint": 17.5, "heat_limit": 16.0},
                      manual_override={"levers": {"curve": 1.2}, "erkannt": "2026-10-03T09:00:00+02:00", "rollen": {}})
@@ -142,7 +143,7 @@ def test_publish_snapshot_schema_4():
 
 
 def test_snapshot_carries_a_manual_override_only_when_given():
-    client = MagicMock()
+    client = MagicMock(spec=MqttChannel)
 
     publish_snapshot(client, seq="s", trigger="daily", room_target=20.0, levers={"heat_limit": 1.0})
     assert "manual_override" not in client.publish_snapshot.call_args.args[0]
@@ -203,7 +204,7 @@ def _basis_read(manifest, ha_api):
 
 
 def test_basis_reports_the_mapped_curve_as_readonly():
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     ha_api.get_state.side_effect = _states_with({"sensor.curve_current": 0.75})
 
     read = _basis_read(_basis_manifest(curve_current="sensor.curve_current", heat_limit="sensor.heat_limit"), ha_api)
@@ -214,7 +215,7 @@ def test_basis_reports_the_mapped_curve_as_readonly():
 
 
 def test_basis_without_curve_mapping_reports_nothing_readonly():
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     ha_api.get_state.return_value = 20.0
     read = _basis_read(_basis_manifest(), ha_api)
     assert (read.levers, read.readonly) == ({"room_setpoint": 20.0}, ())
@@ -222,14 +223,14 @@ def test_basis_without_curve_mapping_reports_nothing_readonly():
 
 @pytest.mark.parametrize("bad", [ValueError("unavailable"), float("nan")])
 def test_an_unreadable_readonly_lever_is_left_out_without_a_data_fault(bad):
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     ha_api.get_state.side_effect = _states_with({"sensor.curve_current": bad})
     read = _basis_read(_basis_manifest(curve_current="sensor.curve_current"), ha_api)
     assert (read.levers, read.readonly, read.invalid) == ({"room_setpoint": 20.0}, (), ())
 
 
 def test_publish_snapshot_carries_readonly():
-    mqtt = MagicMock()
+    mqtt = MagicMock(spec=MqttChannel)
     publish_snapshot(mqtt, "s1", "daily", 21.0, {"room_setpoint": 20.0, "curve": 0.75}, readonly=("curve",))
     payload = mqtt.publish_snapshot.call_args.args[0]
     assert payload["readonly"] == ["curve"]

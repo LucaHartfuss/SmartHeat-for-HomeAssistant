@@ -1,14 +1,17 @@
 """Spec 5c 1.3: Bedienwunsch aus Soll-Entity und Ereignis smartheat_wunsch, Thermostat aus, Angleichen ohne Echo."""
+import json
 import logging
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
+import websocket
 from conftest import FakeClock
 from fakes import FakeHa
 
-from heizungsbruecke import geraet_trigger
+from heizungsbruecke import geraet_trigger, ha_trigger_client
+from heizungsbruecke.ha_api import HomeAssistantApi
 from smartheat_runtime.dokument_config import ConfigError
 from smartheat_runtime.roles import ChannelManifest
 from smartheat_runtime.runtime import EV_LOCAL_CHECK, EV_SOURCE_CONNECTED
@@ -17,6 +20,8 @@ from smartheat_runtime.soll_speicher import TargetStore
 from smartheat_runtime.worker import Event, RegulationWorker
 
 CLIMATE = "climate.wohnzimmer_thermostat"
+# Die echte Klasse fuer spec: waehrend des patch ist websocket.WebSocketApp selbst die Attrappe.
+WebSocketApp = websocket.WebSocketApp
 SOLL = f"{CLIMATE}::temperature"
 
 
@@ -307,16 +312,39 @@ def test_ha_soll_quelle_writes_only_climate_and_reads_the_shown_value():
 
 
 def test_build_passes_the_ws_parameters_to_the_client(monkeypatch, tmp_path):
-    created = []
-    monkeypatch.setattr("heizungsbruecke.geraet_trigger.HaTriggerClient",
-                        lambda **kwargs: created.append(kwargs) or SimpleNamespace(**kwargs))
-    ha = MagicMock(token="tok")
-    ha.websocket_url.return_value = "ws://x/api/websocket"
-    geraet_trigger.build(ChannelManifest(refs={"room_actual": "sensor.raum"}), ha,
-                         RegulationWorker(FakeClock()), TargetStore(tmp_path / "s.json", 21.0, FakeClock(), lambda: "t"),
-                         SOLL, tagestick=None, wache_s=300, wunsch=lambda v, h, d: v, soll_quelle_aus=lambda a, w: None)
-    assert created[0]["ws_url"] == "ws://x/api/websocket" and created[0]["token"] == "tok"
-    assert {"platform": "time", "at": "12:00"} not in created[0]["triggers"]  # ohne Tagestick keiner
+    """Adresse und Token der HA-API kommen am WebSocket an (Fake-WebSocketApp an der Bibliotheksgrenze): die
+    Verbindung geht an die WebSocket-URL der API, die Anmeldung traegt deren Token, das Abonnement die Trigger."""
+    urls, gesendet = [], []
+
+    def websocket_app(url, on_message=None, on_close=None, on_error=None):
+        urls.append(url)
+        app = MagicMock(spec=WebSocketApp)
+        app.send.side_effect = lambda text: gesendet.append(json.loads(text))
+
+        def run_forever(**_kwargs):
+            on_message(app, json.dumps({"type": "auth_required"}))
+            on_message(app, json.dumps({"type": "auth_ok"}))
+
+        app.run_forever.side_effect = run_forever
+        return app
+
+    ha = HomeAssistantApi(base_url="http://supervisor", token="tok-der-api")
+    client = geraet_trigger.build(
+        ChannelManifest(refs={"room_actual": "sensor.raum"}), ha, RegulationWorker(FakeClock()),
+        TargetStore(tmp_path / "s.json", 21.0, FakeClock(), lambda: "t"), SOLL, tagestick=None, wache_s=300,
+        wunsch=lambda v, h, d: v, soll_quelle_aus=lambda a, w: None)
+    # Nach dem Ende der Verbindung beendet der erste Backoff-Schlaf den Client (kein Wiederverbinden im Test).
+    monkeypatch.setattr(ha_trigger_client, "time", SimpleNamespace(sleep=lambda _s: client.stop()))
+    with patch("heizungsbruecke.ha_trigger_client.websocket.WebSocketApp", autospec=True, side_effect=websocket_app):
+        client.start()
+        client._thread.join(timeout=5)
+    assert not client._thread.is_alive()
+
+    assert urls == ["ws://supervisor/core/api/websocket"]
+    assert gesendet[0] == {"type": "auth", "access_token": "tok-der-api"}
+    assert gesendet[1]["type"] == "subscribe_trigger"
+    assert {"platform": "state", "entity_id": "sensor.raum"} in gesendet[1]["trigger"]
+    assert {"platform": "time", "at": "12:00"} not in gesendet[1]["trigger"]  # ohne Tagestick keiner
 
 
 # --- Echo-Fenster: eine Bedienung an der Entity im Fenster geht nicht verloren ---
@@ -549,6 +577,42 @@ def test_the_watch_retries_the_owed_alignment_until_it_succeeds(tmp_path):
     assert a.ha.writes == [(SOLL, 22.5)]
 
 
+def test_a_permanently_refused_alignment_stays_owed_with_a_warning_every_five_minutes(tmp_path, caplog):
+    """Heutiges Verhalten, Restpunkt 5c-D-8 (a): lehnt HA das Schreiben an die Soll-Entity dauerhaft ab, bleibt die
+    Angleichung offen; die Wache versucht sie im Takt des lokalen Checks (300 s) und warnt je Versuch einmal (299 s
+    nach einem Versuch nichts, nach 300 s der naechste). Kein Wunsch, der Speicher behaelt die Bedienung, das Thermostat
+    zeigt weiter den alten Wert."""
+    a = Aufbau(tmp_path)
+    _portal_waehrend_ha_down(a)  # erster gescheiterter Versuch beim Eintreffen der Bedienung
+
+    def warnungen():
+        return sum("Soll-Entity nicht angeglichen (RuntimeError)" in r.getMessage() for r in caplog.records)
+
+    assert warnungen() == 1
+    for runde in range(1, 7):  # 30 Minuten
+        a.clock.advance(299)
+        a.run()
+        assert warnungen() == runde
+        a.clock.advance(1)
+        a.run()
+        assert warnungen() == runde + 1
+    assert a.ha.writes == [] and a.ha.states[SOLL] == 21.0 and a.wuensche == [] and a.store.value == 22.5
+
+
+def test_a_value_turned_during_the_ha_pause_loses_against_the_newer_operation(tmp_path):
+    """Heutiges Verhalten, Restpunkt 5c-D-8 (b): waehrend HA nicht beschreibbar ist, kommt eine Bedienung des Portals
+    (22,5) und der Nutzer dreht das Thermostat auf 23; nach der Pause zeigt HA die 23, die offene Angleichung
+    schreibt 22,5 darueber, die Drehung wird kein Wunsch."""
+    a = Aufbau(tmp_path)
+    _portal_waehrend_ha_down(a)
+    a.ha.write_error = None
+    a.ha.states[SOLL] = 23.0
+    a.client._on_connected()
+    a.run()
+    assert a.ha.writes == [(SOLL, 22.5)] and a.ha.states[SOLL] == 22.5
+    assert a.wuensche == [] and a.store.value == 22.5
+
+
 def test_the_watch_retries_an_owed_alignment_also_while_connected(tmp_path, monkeypatch):
     a = Aufbau(tmp_path)
     monkeypatch.setattr(type(a.client), "connected", property(lambda self: True))
@@ -605,6 +669,22 @@ def test_an_owed_alignment_leaves_a_thermostat_in_frost_protection_alone(tmp_pat
     a.client._on_connected()
     a.run()
     assert a.ha.writes == [] and a.wuensche == [] and a.aus == [(True, 22.5)] and a.store.value == 22.5
+
+
+@pytest.mark.parametrize("wert", ["nan", "inf", "-inf"])
+def test_a_non_finite_target_from_home_assistant_keeps_the_frost_position(tmp_path, wert):
+    """Fund M4 (T5') ueber den HA-Trigger: ein Text wie "nan" wird eine nicht endliche Zahl; sie hebt die
+    Frostschutz-Stellung nicht auf (kein Wunsch, kein Schreiben). Der naechste gueltige Wert hebt sie auf."""
+    a = Aufbau(tmp_path)
+    a.soll_aenderung(5.0)
+    a.run()
+    assert a.aus == [(True, 21.0)]
+    a.soll_aenderung(wert)
+    a.run()
+    assert a.aus == [(True, 21.0)] and a.wuensche == [] and a.ha.writes == []
+    a.soll_aenderung(22.0)
+    a.run()
+    assert a.aus == [(True, 21.0), (False, None)] and a.wuensche == [(22.0, "soll_entity", None)]
 
 
 def test_a_sensor_target_never_owes_an_alignment(tmp_path):

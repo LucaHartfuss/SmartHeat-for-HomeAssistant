@@ -119,7 +119,8 @@ class Loaded:
     manifest: ChannelManifest
     binding: PlantBinding
     notices: tuple[Notice, ...] = ()
-    # Audit 4, A4-08: Anlagen-Kennung des Hosts; None = aus den Hebel-Referenzen des Manifests (roles.lever_refs_identity).
+    # Audit 4, A4-08: Anlagen-Kennung des Hosts; None = aus den Hebel-Referenzen des Manifests
+    # (roles.lever_refs_identity).
     plant_id: str | None = None
 
 
@@ -314,7 +315,8 @@ def _restore_values_text(state) -> str:
     parts = [
         f"{label} {value:g}".replace(".", ",")
         for label, value in (
-            ("Kurve", state.restore_point.get("curve")), ("Parallelverschiebung", state.restore_point.get("room_setpoint")),
+            ("Kurve", state.restore_point.get("curve")),
+            ("Parallelverschiebung", state.restore_point.get("room_setpoint")),
         )
         if value is not None
     ]
@@ -337,12 +339,11 @@ def _finish_at_start(rt: Runtime, clock) -> IdleBridge:
             abo.report_restore(rt.notifier, ok=True)
             status.update(grund=None)
             return
-        abo.report_restore(rt.notifier, ok=False)
-        status.update(grund=abo.RESTORE_FAILED_REASON)
-        logger.error(
-            "Abo-inaktiv-Frist abgelaufen, Boost-Werte konnten nicht zurueckgesetzt werden - "
+        abo.log_restore_failure(
+            rt, "Abo-inaktiv-Frist abgelaufen, Boost-Werte konnten nicht zurueckgesetzt werden - "
             "erneuter Versuch in %s s", retry_seconds,
         )
+        status.update(grund=abo.RESTORE_FAILED_REASON)
         bridge.worker.schedule(retry_seconds, Event(EV_RECHECK))
 
     bridge.worker.register(EV_RECHECK, _attempt)
@@ -462,6 +463,8 @@ def _on_health(rt: Runtime, event: Event) -> None:
         rt.store.flush()
     except StorageError as error:
         logger.warning("Datentraeger weiterhin nicht beschreibbar: %s", error)
+    else:
+        ticks.deliver(rt, delivery.StorageWritable())  # wartet ein Tick am Datentraeger, jetzt erneut (TP12b)
     if rt.store.state.abo_finished:
         return
     for check in (battery.check_batteries, room_sensors.check_room_sensors, enforce.check_manual_override):
@@ -592,7 +595,8 @@ def _prime(rt: Runtime) -> None:
     try:
         regulation.run_local_check(rt)
     except Exception:
-        logger.exception("Fehler beim initialen lokalen Check vor MQTT-Start, wird beim naechsten Ereignis erneut versucht")
+        logger.exception(
+            "Fehler beim initialen lokalen Check vor MQTT-Start, wird beim naechsten Ereignis erneut versucht")
 
 
 def _first_start(rt: Runtime) -> None:
@@ -639,7 +643,9 @@ def _prepare_zone(rt: Runtime) -> None:
     try:
         rt.override.prepare_start(rt.store.state.stable_target)
     except WriteBudgetExhausted as error:
-        # Plan 3b (Weishaupt): Tagesbudget erreicht, kein Fehlschlag der Anlage -- kein Versuch im Kontingent, der
+        # Plan 3b (Weishaupt): Tagesbudget erreicht, kein Fehlschlag der Anlage -- nichts im Kontingent: RETRY_QUOTA
+        # zaehlt nur Fehlschlaege (every_attempt False; before_attempt zaehlt also nicht), und after_failure ruft
+        # dieser Zweig nicht auf. Haette die Regel every_attempt, zaehlte before_attempt diesen Versuch schon mit. Der
         # naechste lokale Check (spaetestens am naechsten Tag) versucht es erneut; den Hinweis gibt die Pipeline.
         logger.info("Zone nicht vorbereitet: %s, naechster Versuch beim naechsten lokalen Check", error)
         return
@@ -689,7 +695,8 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
     try:
         bind_to_tenant(store, boot.tenant_id, loaded.plant_id or roles.lever_refs_identity(loaded.manifest))
     except StorageError:
-        logger.warning("Bindung an Einrichtung und Anlage nicht gespeichert, gilt bis zum naechsten Schreiben", exc_info=True)
+        logger.warning(
+            "Bindung an Einrichtung und Anlage nicht gespeichert, gilt bis zum naechsten Schreiben", exc_info=True)
     rt = Runtime(
         manifest=loaded.manifest, signals=host.signals, config=config,
         worker=RegulationWorker(clock=clock), store=store,
@@ -718,6 +725,10 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
     abo_inactive = rt.store.state.abo_inactive_since is not None
     if not abo_inactive:
         rt.mqtt_client = mqtt_factory(rt.worker)
+    stale_notbetrieb = not abo_inactive and _is_stale_notbetrieb(rt)
+    if stale_notbetrieb:
+        # vor _prime: dessen lokaler Check startete sonst einen Notfall-Boost (TP12b)
+        _end_stale_notbetrieb(rt, beenden=abo_status == entitlement.ACTIVE)
 
     _prime(rt)
     melder()
@@ -735,22 +746,31 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
     else:
         # Offenen Tick aus failsafe_state.json sofort mit derselben seq erneut versuchen.
         ticks.deliver(rt, delivery.Boot())
-        _resolve_stale_notbetrieb(rt, abo_status)
+        if stale_notbetrieb:
+            ticks.start_probe_tick(rt, "Notbetrieb ohne offenen Tick beim Start")
     status.publish_if_changed()
     return rt
 
 
-def _resolve_stale_notbetrieb(rt: Runtime, abo_status: str) -> None:
-    """Notbetrieb ohne offenen Tick endet nie von selbst (Spec TP12b 1.2): im Betrieb hat er immer
-    einen Tick, dessen Ack ihn beendet. Bei aktivem Abo still beenden -- nach dem stillen seed wurde
-    er nie gemeldet, eine Entwarnung waere falsch --, in jedem Fall per Pruef-Tick klaeren."""
+def _is_stale_notbetrieb(rt: Runtime) -> bool:
+    """Notbetrieb ohne offenen Tick endet nie von selbst (Spec TP12b 1.2): im Betrieb hat er immer einen Tick, dessen
+    Ack ihn beendet. Er stammt aus dem Abo-inaktiv-Modus (oder einer failsafe_state.json von 0.15.0); der Start klaert
+    ihn in jedem Fall per Pruef-Tick."""
     state = rt.store.state.delivery
-    if not state.notbetrieb or state.pending is not None:
-        return
-    if abo_status == entitlement.ACTIVE:
+    return state.notbetrieb and state.pending is None
+
+
+def _end_stale_notbetrieb(rt: Runtime, *, beenden: bool) -> None:
+    """`beenden` (Abo aktiv): den Notbetrieb still beenden, und zwar vor dem ersten lokalen Check, sonst schriebe der
+    Notfall-Boost bis zum naechsten Check seine Werte (TP12b); die Meldung geht still auf ok, wie bisher. Sonst (Abo
+    unbekannt) laeuft der Notbetrieb weiter: eine gemeldete Meldung bleibt stehen und entwarnt mit der Antwort. Nur ein
+    nie erschienener Notbetrieb (seed_notices hat den Zustand des Abo-inaktiv-Modus ohne Text uebernommen, dort meldet
+    die Abo-Meldung) geht still auf ok, sonst entwarnte die Antwort ihn mit "Notbetrieb beendet" (TP12b)."""
+    if beenden:
         ticks.deliver(rt, delivery.ClearStaleNotbetrieb())
-        rt.notifier.notify(
-            "notbetrieb", STATE_OK, delivery.notification_text(delivery.NOTIFY_NOTBETRIEB_OFF, (), {}, rt.texts),
-            critical=True, silent_ok=True,
-        )
-    ticks.start_probe_tick(rt, "Notbetrieb ohne offenen Tick beim Start")
+    elif "notbetrieb" in rt.store.state.notify_messages:
+        return
+    rt.notifier.notify(
+        "notbetrieb", STATE_OK, delivery.notification_text(delivery.NOTIFY_NOTBETRIEB_OFF, (), {}, rt.texts),
+        critical=True, silent_ok=True,
+    )

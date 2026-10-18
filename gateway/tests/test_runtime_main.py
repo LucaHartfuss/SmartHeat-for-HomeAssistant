@@ -1,11 +1,12 @@
 """Plan 5b D2 Task 5: ein Prozess aus Geraetekern und Laufzeit - Neustart bei neuer Konfiguration mit sauberem
 Trennen, Aufraeumen nach dem Entfernen, Raum im Prozess, Bedienung beim Start, Lebenszeichen."""
 import json
+import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from configs import THERMOSTAT, bedienung, dokumente_schreiben, konfiguration
+from configs import THERMOSTAT, bedienung, dokumente_schreiben, konfiguration, leer
 from fakes import FakeBus
 from geraet_fakes import geraet_fuer
 from world import GatewayWorld
@@ -143,7 +144,8 @@ def test_the_cleanup_runs_at_the_next_start_after_an_empty_configuration(world):
 
 
 def test_a_restart_before_any_setup_keeps_the_driver_login(world):
-    dateien.schreiben_json(world.paths.driver_secrets_dir / "vicare.json", {"refresh_token": "test-token"}, modus=dateien.LESBAR)
+    dateien.schreiben_json(world.paths.driver_secrets_dir / "vicare.json", {"refresh_token": "test-token"},
+                           modus=dateien.LESBAR)
     world.start_runtime()
     world.start_runtime()
     assert (world.paths.driver_secrets_dir / "vicare.json").exists()
@@ -151,7 +153,8 @@ def test_a_restart_before_any_setup_keeps_the_driver_login(world):
 
 def test_a_marker_from_before_a_new_setup_deletes_nothing(world):
     """Zwischen Markierung und Neustart kam schon eine neue Einrichtung: die frische Treiber-Anmeldung bleibt."""
-    dateien.schreiben_json(world.paths.driver_secrets_dir / "vicare.json", {"refresh_token": "test-token"}, modus=dateien.LESBAR)
+    dateien.schreiben_json(world.paths.driver_secrets_dir / "vicare.json", {"refresh_token": "test-token"},
+                           modus=dateien.LESBAR)
     dateien.schreiben_json(world.paths.aufraeumen, {"anlage": "test-tenant"}, modus=dateien.LESBAR)
     dokumente_schreiben(world.paths, konfiguration(anlage="neue-anlage"))
     world.start_runtime()
@@ -175,6 +178,17 @@ def test_the_cleanup_waits_while_the_reset_is_pending(world):
     assert world.paths.runtime_dir.exists() and world.paths.backup.exists()
     assert (world.paths.driver_secrets_dir / "vicare.json").exists() and world.paths.inventur.exists()
     assert world.paths.aufraeumen.exists()
+
+
+def test_the_cleanup_reads_the_stored_configuration_without_writing_the_lock(world):
+    """S3S3-Reste: Nur-Lese-Aufbau; die Rastung einer gespeicherten Konfiguration ohne Rastung schreibt erst der
+    Geraetekern."""
+    aufraeumen.markieren(world.paths.aufraeumen, konfiguration())
+    dokumente_schreiben(world.paths, konfiguration(anlage="neue-anlage"))
+    assert not (world.paths.device_dir / "sicherheitssatz.json").exists()
+    runtime_main.aufraeumen(world.paths)
+    assert not world.paths.aufraeumen.exists()  # Neueinrichtung: Markierung verworfen
+    assert not (world.paths.device_dir / "sicherheitssatz.json").exists()
 
 
 def test_the_cleanup_after_the_reset_deletes_everything(world):
@@ -229,24 +243,63 @@ def test_a_failing_alive_file_does_not_stop_the_config_watch(world, monkeypatch)
     assert alive.exists() and world.restarts == 1
 
 
-def test_the_target_software_of_the_stored_configuration_is_replayed_at_start(world):
-    """Ein Neustart kann den Prozess beenden, bevor der Geraete-Thread software_soll.json schrieb (der Server stellt
-    eine bestaetigte Version nicht erneut zu); der naechste Start holt es nach."""
+def _neustart(world) -> None:
+    """Prozessende und neuer Start auf denselben Dateien (wie Compose nach Exit 0)."""
+    prozess.beenden(world.device, None, None)
+    world.start_runtime()
+
+
+def _soll_software(world):
+    return json.loads(world.paths.software_soll.read_text()) if world.paths.software_soll.exists() else "fehlt"
+
+
+def test_the_offer_of_a_rejected_configuration_is_replayed_after_a_restart(world):
+    """5b-D2-3 (Review Focus 5): software_soll.json ging verloren (Neustart vor dem Schreiben, Stromausfall); der Server
+    stellt die abgelehnte Version nicht erneut zu, der naechste Start bietet genau das gemerkte Angebot an."""
+    world.start_runtime()
+    world.connect()
+    world.konfiguration_senden(konfiguration(mindest_software="9.0.0", software=SOFTWARE), 1)
+    assert world.link.of("up/result")[-1]["error"]["grund"] == "update_noetig" and _soll_software(world) == SOFTWARE
+    world.paths.software_soll.unlink()
+    _neustart(world)
+    assert _soll_software(world) == SOFTWARE
+
+
+def test_a_later_invalid_offer_or_an_empty_configuration_without_software_keeps_the_replayed_offer(world):
+    world.start_runtime()
+    world.connect()
+    world.konfiguration_senden(konfiguration(mindest_software="9.0.0", software=SOFTWARE), 1)
+    world.konfiguration_senden(konfiguration(software={**SOFTWARE, "extra": 1}), 2)
+    ohne_software = leer()
+    del ohne_software["software"]
+    world.konfiguration_senden(ohne_software, 3)
+    assert [r["error"]["grund"] for r in world.link.of("up/result")] == ["update_noetig", "ungueltig", "ungueltig"]
+    world.paths.software_soll.unlink()
+    _neustart(world)
+    assert _soll_software(world) == SOFTWARE
+
+
+def test_a_withdrawn_offer_is_replayed_as_null(world):
+    """software null zieht das Angebot zurueck und wird gemerkt: ging das Schreiben von null verloren (die alte
+    software_soll.json mit dem Angebot steht noch), schreibt der naechste Start null; der Updater liest null als "kein
+    Angebot" (belegt in gateway/host/tests/test_kanal.py::test_no_software_in_the_configuration_offers_nothing, eigener
+    pythonpath, daher hier nicht importiert)."""
+    world.start_runtime()
+    world.connect()
+    world.konfiguration_senden(konfiguration(mindest_software="9.0.0", software=SOFTWARE), 1)
+    world.konfiguration_senden(konfiguration(mindest_software="9.0.0", software=None), 2)
+    assert _soll_software(world) is None  # der Geraete-Thread gab null an den Updater
+    dateien.schreiben_json(world.paths.software_soll, SOFTWARE, modus=dateien.LESBAR)  # Schreiben von null verloren
+    _neustart(world)
+    assert _soll_software(world) is None  # null = kein Angebot fuer den Updater (kanal.desired() -> {})
+
+
+def test_a_stored_configuration_without_a_remembered_offer_is_not_replayed(world):
+    """Kein Kompatibilitaetspfad: eine gespeicherte Konfiguration mit software, aber ohne software_angebot in
+    dokumente.json (Stand vor 5b-D2-3), ruft den Updater beim Start nicht."""
     dokumente_schreiben(world.paths, konfiguration(software=SOFTWARE))
     world.start_runtime()
-    assert json.loads(world.paths.software_soll.read_text())["version"] == "0.6.1"
-
-
-def test_no_replay_after_a_rejected_configuration(world):
-    """Die zuletzt empfangene Konfiguration wurde abgelehnt (z. B. Mindestversion): ihre Soll-Software steht schon in
-    software_soll.json und gilt; die aeltere gespeicherte Konfiguration ueberschreibt sie nicht."""
-    dokumente_schreiben(world.paths, konfiguration())
-    dateien.schreiben_json(world.paths.device_dir / "dokumente.json",
-                           {"update_anlass": None, "abgelehnt": {"konfiguration": [2, "update_noetig", "t"]}},
-                           modus=dateien.PRIVAT)
-    dateien.schreiben_json(world.paths.software_soll, SOFTWARE, modus=dateien.LESBAR)
-    world.start_runtime()
-    assert json.loads(world.paths.software_soll.read_text())["version"] == "0.6.1"
+    assert _soll_software(world) == "fehlt"
 
 
 def test_no_replay_without_a_stored_configuration(world):
@@ -282,7 +335,8 @@ def test_the_operation_is_applied_and_the_thermostat_aligned_at_start(world):
 
 
 def test_a_newer_operation_replaces_the_stored_target_at_start(world):
-    dateien.schreiben_json(world.paths.room_target, {"value": 20.0, "source": "portal", "ts": "t"}, modus=dateien.LESBAR)
+    dateien.schreiben_json(world.paths.room_target, {"value": 20.0, "source": "portal", "ts": "t"},
+                           modus=dateien.LESBAR)
     dokumente_schreiben(world.paths, konfiguration(), bedienung(22.5))
     world.start_runtime()
     world.run()
@@ -330,6 +384,97 @@ def test_before_the_pause_a_missing_alive_file_is_no_error(world, monkeypatch):
     geraet.zustand.status = None
     runtime_main.vor_der_pause(geraet)
     assert geraet.zustand.status == {"status": "startet"}
+
+
+# --- Fehler vor laufen (S3S6-Startabbruch) ---
+
+
+@pytest.fixture
+def vor_dem_start(world, monkeypatch):
+    """Umgebung von main() bis zum Start; die Pause wird aufgezeichnet. Das Lebenszeichen ist noch frisch wie aus einem
+    vorigen Lauf im selben Container (in Compose leert der tmpfs auf /tmp es beim Neustart ohnehin; ohne tmpfs bliebe
+    es)."""
+    monkeypatch.setenv("SHG_HOST_DIR", str(world.host_dir))
+    monkeypatch.setenv("SHG_DEVICE_API_URL", "https://accounts.example.test")
+    monkeypatch.setenv("SHG_DIAG_PORT", "0")
+    pausen = []
+    monkeypatch.setattr(prozess.time, "sleep", pausen.append)
+    alive = world.paths.data / "alive"
+    alive.touch()
+    return SimpleNamespace(mirror=ZigbeeMirror(world.bus, world.clock), pausen=pausen, alive=alive)
+
+
+def test_an_unwritable_data_dir_during_cleanup_pauses_unhealthy_and_exits(world, vor_dem_start, monkeypatch, caplog):
+    """Die Markierung einer neuen Einrichtung (VERWERFEN) laesst sich im nicht beschreibbaren Datenordner nicht
+    loeschen. Bis S3S6-Startabbruch endete das Gateway dann mit dem Traceback (Compose startete schnell neu); jetzt
+    ERROR mit Fehlerart, Lebenszeichen weg (Compose-Health-Check und health_ok scheitern; /healthz antwortet ohne
+    Diagnoseserver gar nicht), 60 s Pause, None (main endet mit Exit 0, Compose startet neu)."""
+    dateien.schreiben_json(world.paths.aufraeumen, {"anlage": "test-tenant"}, modus=dateien.LESBAR)
+    dokumente_schreiben(world.paths, konfiguration(anlage="neue-anlage"))
+    echt = Path.unlink
+
+    def unlink(self, missing_ok=False):
+        if self == world.paths.aufraeumen:
+            raise PermissionError(13, "geheim")
+        return echt(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    assert vor_dem_start.alive.exists()
+    with caplog.at_level("WARNING"):
+        assert runtime_main.vorbereiten(world.paths, vor_dem_start.mirror) is None
+    assert vor_dem_start.pausen == [60.0] and not vor_dem_start.alive.exists()
+    assert world.paths.aufraeumen.exists()
+    assert "PermissionError" in caplog.text and "geheim" not in caplog.text
+
+
+def test_a_failing_document_store_during_cleanup_pauses_unhealthy_and_exits(world, vor_dem_start, monkeypatch,
+                                                                             caplog):
+    dateien.schreiben_json(world.paths.aufraeumen, {"anlage": "test-tenant"}, modus=dateien.LESBAR)
+
+    def kaputt(*args, **kwargs):
+        raise OSError(5, "geheim")
+
+    monkeypatch.setattr(runtime_main, "DocumentStore", kaputt)
+    with caplog.at_level("WARNING"):
+        assert runtime_main.vorbereiten(world.paths, vor_dem_start.mirror) is None
+    assert vor_dem_start.pausen == [60.0] and not vor_dem_start.alive.exists()
+    assert world.paths.aufraeumen.exists()
+    assert "OSError" in caplog.text and "geheim" not in caplog.text
+
+
+def test_a_start_error_after_the_device_host_reports_the_runtime_starting(world, vor_dem_start, monkeypatch):
+    """Scheitert der Start erst nach dem Geraete-Host (hier: Diagnoseport belegt), meldet /healthz die Laufzeit als
+    "startet" (health_ok des Updaters lehnt ab), falls die Seite antwortet; das Lebenszeichen ist weg."""
+    seiten = []
+
+    def belegt(port, snapshot_fn, *args):
+        seiten.append(snapshot_fn)
+        raise OSError(98, "Address already in use")
+
+    monkeypatch.setattr(runtime_main.diagnose, "start_server", belegt)
+    assert runtime_main.vorbereiten(world.paths, vor_dem_start.mirror) is None
+    [seite] = seiten
+    assert vor_dem_start.pausen == [60.0] and not vor_dem_start.alive.exists()
+    assert seite()["laufzeit"] == "startet"
+
+
+def test_vorbereiten_returns_host_and_device_with_the_diagnosis_page_up(world, vor_dem_start, monkeypatch):
+    """Ohne Fehler: Geraete-Host und Geraetekern verbunden, die Diagnoseseite antwortet, keine Pause, das Lebenszeichen
+    bleibt (erst die Wache in laufen erneuert es)."""
+    server = []
+    echt = runtime_main.diagnose.start_server
+    monkeypatch.setattr(runtime_main.diagnose, "start_server", lambda *args: server.append(echt(*args)) or server[-1])
+    try:
+        geraet, device = runtime_main.vorbereiten(world.paths, vor_dem_start.mirror)
+        assert geraet.device is device and device.host is geraet
+        port = server[0].server_address[1]
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=5) as antwort:
+            assert json.loads(antwort.read())["server_ok"] is False  # Geraete-Thread laeuft noch nicht
+    finally:
+        for s in server:
+            s.shutdown()
+            s.server_close()
+    assert vor_dem_start.pausen == [] and vor_dem_start.alive.exists()
 
 
 def test_sigterm_ends_with_exit_0():

@@ -1,8 +1,8 @@
 """Spec 5c 1.3 / 5b 5.2: HaHost liest das Konfigurationsdokument; der Raum-Soll kommt aus dem Soll-Speicher."""
 import json
-from unittest.mock import MagicMock
 
 import pytest
+from fakes import FakeHa
 from geraet_helpers import FakeGeraet, konfiguration_aus_optionen
 from test_runtime import OPTIONS, env  # noqa: F401 - env ist eine Fixture
 
@@ -142,6 +142,17 @@ def test_the_operation_is_written_to_the_entity_at_start_and_not_turned_into_a_w
     host, geraet, worker, client = _climate_start(env, angezeigt=19.0, bedienung={"raum_soll": 21.5})
     assert (CLIMATE_SOLL, 21.5) in env.ha.writes and host.store.echo_rest() > 0
     _erstes_lesen(env, worker, client, angezeigt=19.0)
+    assert geraet.wuensche == [] and host.store.value == 21.5
+
+
+def test_a_thermostat_change_during_the_addon_pause_is_overwritten_at_start(env):
+    """Heutiges Verhalten, Restpunkt 5c-D-8 (c): waehrend das Add-on stand, drehte der Nutzer das Thermostat auf 23;
+    gespeichert und Bedienung sind gleich (21,5, nicht dirty): der Start schreibt 21,5 an die Entity, das erste Lesen
+    (noch 23) wird kein Wunsch."""
+    host, geraet, worker, client = _climate_start(env, angezeigt=23.0, bedienung={"raum_soll": 21.5},
+                                                  gespeichert={"value": 21.5, "source": "portal", "ts": "x"})
+    assert env.ha.writes == [(CLIMATE_SOLL, 21.5)]
+    _erstes_lesen(env, worker, client, angezeigt=23.0)
     assert geraet.wuensche == [] and host.store.value == 21.5
 
 
@@ -353,16 +364,42 @@ def test_host_ohne_bekannten_hebelsatz_wirft_im_konstruktor_nicht(env):
     assert host.boot_info().notify_hints_off == ()
 
 
+class _DiensteHa(FakeHa):
+    """Fake-HA, die zu jedem Push den Notify-Dienst festhaelt (Grenze HA)."""
+
+    def __init__(self):
+        super().__init__()
+        self.dienste: list[tuple[str, str]] = []
+
+    def send_notification(self, service, message):
+        self.dienste.append((service, message))
+
+
 def test_hinweise_batterien_und_meldedienste_kommen_aus_der_bindung(env):
     options = {**OPTIONS, "notify_hints_off": ["batterie"],
                "battery_entities": ["sensor.thermostat_battery", "binary_sensor.thermostat_battery_low"]}
-    geraet = FakeGeraet(konfiguration_aus_optionen(options))
-    dienste = []
-    geraet.notify_sink_fuer = lambda services: dienste.append(services) or MagicMock()
-    host = HaHost(geraet, env.ha, clock=env.clock)
-    assert dienste == [["notify.handy"]]
+    ha = _DiensteHa()
+    host = HaHost(FakeGeraet(konfiguration_aus_optionen(options), ha=ha), ha, clock=env.clock)
+    host.notify_sink.push("test", "Text")  # der Sink des Hosts schickt an die Meldedienste der Bindung
+    assert ha.dienste == [("notify.handy", "Text")]
     assert host.boot_info().notify_hints_off == ("batterie",)
     runtime = host.load().config
     assert runtime.notify_hints_off == ("batterie",)
     assert [(ref.ref, ref.art) for ref in runtime.battery_refs] == [
         ("sensor.thermostat_battery", BATTERY_PERCENT), ("binary_sensor.thermostat_battery_low", BATTERY_LOW_FLAG)]
+
+
+def test_while_the_reset_is_pending_the_messages_go_to_the_services_of_the_marker(env):
+    """Leere Konfiguration nach dem Entfernen, das Zuruecksetzen steht aus: die Meldedienste kommen aus der
+    Konfiguration der Aufraeum-Markierung, nicht aus der leeren, sodass eine Meldung (etwa die kritische bei
+    gescheitertem Zuruecksetzen) die Handys erreicht. Gegenprobe: ohne Markierung hat die leere Konfiguration keine."""
+    konfiguration = konfiguration_aus_optionen(OPTIONS)
+    leer = {**konfiguration, "anlage": None, "bindung": {**konfiguration["bindung"], "benachrichtigung": []}}
+    ha = _DiensteHa()
+    HaHost(FakeGeraet(leer, ha=ha), ha, clock=env.clock).notify_sink.push("wiederherstellung", "Text")
+    assert ha.dienste == []
+    aufraeumen.markieren(config.AUFRAEUMEN_PATH, konfiguration)
+    host = HaHost(FakeGeraet(leer, ha=ha), ha, clock=env.clock)
+    assert host.boot_info().signed_off
+    host.notify_sink.push("wiederherstellung", "Text")
+    assert ha.dienste == [("notify.handy", "Text")]

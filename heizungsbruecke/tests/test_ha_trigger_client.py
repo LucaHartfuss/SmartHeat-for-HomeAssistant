@@ -1,11 +1,22 @@
 import json
+import logging
 import threading
 import time
 from unittest.mock import MagicMock, patch
 
 import pytest
+import websocket
 
+from heizungsbruecke import ha_trigger_client
 from heizungsbruecke.ha_trigger_client import HaTriggerClient
+
+WEBSOCKET_APP = "heizungsbruecke.ha_trigger_client.websocket.WebSocketApp"
+# Die echte Klasse fuer spec: waehrend des patch ist websocket.WebSocketApp selbst die Attrappe.
+WebSocketApp = websocket.WebSocketApp
+
+
+def _ignorieren(_trigger) -> None:
+    """Rueckruf on_trigger_event fuer Tests, die keine Ereignisse pruefen."""
 
 
 def _wait_until(predicate, timeout=2.0):
@@ -58,8 +69,8 @@ def _patch_ws_app(captured):
     directly, and lets the background thread's reconnect loop actually run.
     """
     def _factory(url, on_message=None, on_close=None, on_error=None):
-        fake_app = MagicMock()
-        fake_app.run_forever = MagicMock(return_value=None)
+        fake_app = MagicMock(spec=WebSocketApp)
+        fake_app.run_forever.return_value = None
         captured["calls"] = captured.get("calls", 0) + 1
         captured["url"] = url
         captured["on_message"] = on_message
@@ -67,7 +78,7 @@ def _patch_ws_app(captured):
         captured["on_error"] = on_error
         captured["app"] = fake_app
         return fake_app
-    return patch("heizungsbruecke.ha_trigger_client.websocket.WebSocketApp", side_effect=_factory)
+    return patch(WEBSOCKET_APP, autospec=True, side_effect=_factory)
 
 
 @pytest.mark.ws
@@ -80,7 +91,7 @@ def test_auth_handshake_sends_auth_then_subscribes_with_full_trigger_list():
     ]
     with _patch_ws_app(captured):
         client = HaTriggerClient(
-            ws_url="ws://x/api/websocket", token="tok123", triggers=triggers, on_trigger_event=MagicMock(),
+            ws_url="ws://x/api/websocket", token="tok123", triggers=triggers, on_trigger_event=_ignorieren,
         )
         client.start()
         _wait_until(lambda: "on_message" in captured)
@@ -107,7 +118,7 @@ def test_connected_becomes_true_only_after_subscribe_result_success():
     with _patch_ws_app(captured):
         client = HaTriggerClient(
             ws_url="ws://x", token="t", triggers=[{"platform": "time", "at": "12:00"}],
-            on_trigger_event=MagicMock(),
+            on_trigger_event=_ignorieren,
         )
         client.start()
         _wait_until(lambda: "on_message" in captured)
@@ -130,7 +141,7 @@ def test_connected_becomes_false_after_on_close():
     with _patch_ws_app(captured):
         client = HaTriggerClient(
             ws_url="ws://x", token="t", triggers=[{"platform": "time", "at": "12:00"}],
-            on_trigger_event=MagicMock(),
+            on_trigger_event=_ignorieren,
         )
         client.start()
         _wait_until(lambda: "on_message" in captured)
@@ -150,11 +161,11 @@ def test_connected_becomes_false_after_on_close():
 @pytest.mark.ws
 def test_dispatches_event_trigger_payload_to_callback():
     captured = {}
-    on_trigger_event = MagicMock()
+    ereignisse = []
     with _patch_ws_app(captured):
         client = HaTriggerClient(
             ws_url="ws://x", token="t", triggers=[{"platform": "state", "entity_id": "sensor.a"}],
-            on_trigger_event=on_trigger_event,
+            on_trigger_event=ereignisse.append,
         )
         client.start()
         _wait_until(lambda: "on_message" in captured)
@@ -172,18 +183,18 @@ def test_dispatches_event_trigger_payload_to_callback():
             "id": 1, "type": "event", "event": {"variables": {"trigger": trigger_payload}, "context": {}},
         }))
 
-        on_trigger_event.assert_called_once_with(trigger_payload)
+        assert ereignisse == [trigger_payload]
         _stop_and_join(client)
 
 
 @pytest.mark.ws
 def test_malformed_event_payload_is_ignored_without_crashing():
     captured = {}
-    on_trigger_event = MagicMock()
+    ereignisse = []
     with _patch_ws_app(captured):
         client = HaTriggerClient(
             ws_url="ws://x", token="t", triggers=[{"platform": "time", "at": "12:00"}],
-            on_trigger_event=on_trigger_event,
+            on_trigger_event=ereignisse.append,
         )
         client.start()
         _wait_until(lambda: "on_message" in captured)
@@ -193,14 +204,19 @@ def test_malformed_event_payload_is_ignored_without_crashing():
         on_message(fake_app, "not valid json {{{")  # must not raise
         on_message(fake_app, json.dumps({"type": "event", "event": {}}))  # missing variables.trigger
 
-        on_trigger_event.assert_not_called()
+        assert ereignisse == []
         _stop_and_join(client)
 
 
 @pytest.mark.ws
 def test_callback_exception_does_not_crash_the_dispatch_thread():
     captured = {}
-    on_trigger_event = MagicMock(side_effect=ValueError("boom"))
+    ereignisse = []
+
+    def on_trigger_event(trigger):
+        ereignisse.append(trigger)
+        raise ValueError("boom")
+
     with _patch_ws_app(captured):
         client = HaTriggerClient(
             ws_url="ws://x", token="t", triggers=[{"platform": "time", "at": "12:00"}],
@@ -216,7 +232,7 @@ def test_callback_exception_does_not_crash_the_dispatch_thread():
             "event": {"variables": {"trigger": {"platform": "time", "now": "x"}}, "context": None},
         }))  # must not raise despite the callback raising internally
 
-        on_trigger_event.assert_called_once()
+        assert ereignisse == [{"platform": "time", "now": "x"}]
         _stop_and_join(client)
 
 
@@ -232,17 +248,17 @@ def test_stop_closes_the_current_websocket_connection():
     blocked = threading.Event()
 
     def _factory(url, on_message=None, on_close=None, on_error=None):
-        fake_app = MagicMock()
+        fake_app = MagicMock(spec=WebSocketApp)
         fake_app.close.side_effect = lambda: blocked.set()
         fake_app.run_forever.side_effect = lambda **kwargs: blocked.wait(timeout=2.0)
         captured["app"] = fake_app
         captured["on_message"] = on_message
         return fake_app
 
-    with patch("heizungsbruecke.ha_trigger_client.websocket.WebSocketApp", side_effect=_factory):
+    with patch(WEBSOCKET_APP, autospec=True, side_effect=_factory):
         client = HaTriggerClient(
             ws_url="ws://x", token="t", triggers=[{"platform": "time", "at": "12:00"}],
-            on_trigger_event=MagicMock(),
+            on_trigger_event=_ignorieren,
         )
         client.start()
         _wait_until(lambda: "app" in captured)
@@ -265,11 +281,11 @@ def test_on_connected_callback_fires_when_subscribe_result_succeeds():
     (also `connected` von False auf True wechselt) -- nicht davor.
     """
     captured = {}
-    on_connected = MagicMock()
+    verbunden = []
     with _patch_ws_app(captured):
         client = HaTriggerClient(
             ws_url="ws://x", token="t", triggers=[{"platform": "time", "at": "12:00"}],
-            on_trigger_event=MagicMock(), on_connected=on_connected,
+            on_trigger_event=_ignorieren, on_connected=lambda: verbunden.append(client.connected),
         )
         client.start()
         _wait_until(lambda: "on_message" in captured)
@@ -278,11 +294,11 @@ def test_on_connected_callback_fires_when_subscribe_result_succeeds():
 
         on_message(fake_app, json.dumps({"type": "auth_required"}))
         on_message(fake_app, json.dumps({"type": "auth_ok"}))
-        on_connected.assert_not_called()  # subscribe result not received yet
+        assert verbunden == []  # subscribe result not received yet
 
         on_message(fake_app, json.dumps({"id": 1, "type": "result", "success": True, "result": None}))
         assert client.connected is True
-        on_connected.assert_called_once()
+        assert verbunden == [True]  # einmal, und erst nach connected
 
         _stop_and_join(client)
 
@@ -300,16 +316,16 @@ def test_on_connected_callback_fires_again_on_a_second_successful_subscribe():
     asserts `on_connected` fires once per success, matching `_connected`'s own
     set/clear/set cycle.
     """
-    on_connected = MagicMock()
+    verbunden = []
     client = HaTriggerClient(
         ws_url="ws://x", token="t", triggers=[{"platform": "time", "at": "12:00"}],
-        on_trigger_event=MagicMock(), on_connected=on_connected,
+        on_trigger_event=_ignorieren, on_connected=lambda: verbunden.append(True),
     )
-    fake_ws = MagicMock()
+    fake_ws = MagicMock(spec=WebSocketApp)
 
     client._handle_subscribe_result(fake_ws, {"success": True})
     assert client.connected is True
-    on_connected.assert_called_once()
+    assert len(verbunden) == 1
 
     # Simulate a disconnect followed by a reconnect, mirroring what
     # _run_forever_with_reconnect does around each new connection attempt.
@@ -317,17 +333,17 @@ def test_on_connected_callback_fires_again_on_a_second_successful_subscribe():
     client._subscribed = False
     client._handle_subscribe_result(fake_ws, {"success": True})
     assert client.connected is True
-    assert on_connected.call_count == 2
+    assert len(verbunden) == 2
 
 
 @pytest.mark.ws
 def test_on_connected_callback_not_called_when_subscribe_fails():
     captured = {}
-    on_connected = MagicMock()
+    verbunden = []
     with _patch_ws_app(captured):
         client = HaTriggerClient(
             ws_url="ws://x", token="t", triggers=[{"platform": "time", "at": "12:00"}],
-            on_trigger_event=MagicMock(), on_connected=on_connected,
+            on_trigger_event=_ignorieren, on_connected=lambda: verbunden.append(True),
         )
         client.start()
         _wait_until(lambda: "on_message" in captured)
@@ -339,7 +355,7 @@ def test_on_connected_callback_not_called_when_subscribe_fails():
         on_message(fake_app, json.dumps({"id": 1, "type": "result", "success": False, "error": "boom"}))
 
         assert client.connected is False
-        on_connected.assert_not_called()
+        assert verbunden == []
 
         _stop_and_join(client)
 
@@ -352,12 +368,16 @@ def test_on_connected_callback_exception_does_not_crash_the_ws_thread():
     background thread" guarantee applies to it just the same.
     """
     captured = {}
-    on_connected = MagicMock(side_effect=ValueError("boom"))
-    on_trigger_event = MagicMock()
+    verbunden, ereignisse = [], []
+
+    def on_connected():
+        verbunden.append(True)
+        raise ValueError("boom")
+
     with _patch_ws_app(captured):
         client = HaTriggerClient(
             ws_url="ws://x", token="t", triggers=[{"platform": "time", "at": "12:00"}],
-            on_trigger_event=on_trigger_event, on_connected=on_connected,
+            on_trigger_event=ereignisse.append, on_connected=on_connected,
         )
         client.start()
         _wait_until(lambda: "on_message" in captured)
@@ -368,7 +388,7 @@ def test_on_connected_callback_exception_does_not_crash_the_ws_thread():
         on_message(fake_app, json.dumps({"type": "auth_ok"}))
         on_message(fake_app, json.dumps({"id": 1, "type": "result", "success": True, "result": None}))  # must not raise
 
-        on_connected.assert_called_once()
+        assert verbunden == [True]
         assert client.connected is True  # _connected.set() ran before the callback raised
 
         # Thread survived the exception and can still dispatch a subsequent event.
@@ -376,7 +396,7 @@ def test_on_connected_callback_exception_does_not_crash_the_ws_thread():
         on_message(fake_app, json.dumps({
             "id": 1, "type": "event", "event": {"variables": {"trigger": trigger_payload}, "context": {}},
         }))
-        on_trigger_event.assert_called_once_with(trigger_payload)
+        assert ereignisse == [trigger_payload]
 
         _stop_and_join(client)
 
@@ -388,7 +408,7 @@ def test_reconnect_uses_increasing_backoff_and_resubscribes(monkeypatch):
     with _patch_ws_app(captured):
         client = HaTriggerClient(
             ws_url="ws://x", token="t", triggers=[{"platform": "time", "at": "12:00"}],
-            on_trigger_event=MagicMock(),
+            on_trigger_event=_ignorieren,
         )
         client.start()
         _wait_until(lambda: len(sleep_calls) >= 3)
@@ -404,20 +424,20 @@ def test_backoff_restarts_at_one_second_after_successful_subscribe(monkeypatch):
     monkeypatch.setattr("heizungsbruecke.ha_trigger_client.time.sleep", lambda s: sleep_calls.append(s))
 
     def _factory(url, on_message=None, on_close=None, on_error=None):
-        fake_app = MagicMock()
+        fake_app = MagicMock(spec=WebSocketApp)
 
         def _connect_subscribe_and_drop(**kwargs):
             on_message(fake_app, json.dumps({"type": "auth_required"}))
             on_message(fake_app, json.dumps({"type": "auth_ok"}))
             on_message(fake_app, json.dumps({"id": 1, "type": "result", "success": True, "result": None}))
 
-        fake_app.run_forever = MagicMock(side_effect=_connect_subscribe_and_drop)
+        fake_app.run_forever.side_effect = _connect_subscribe_and_drop
         return fake_app
 
-    with patch("heizungsbruecke.ha_trigger_client.websocket.WebSocketApp", side_effect=_factory):
+    with patch(WEBSOCKET_APP, autospec=True, side_effect=_factory):
         client = HaTriggerClient(
             ws_url="ws://x", token="t", triggers=[{"platform": "time", "at": "12:00"}],
-            on_trigger_event=MagicMock(),
+            on_trigger_event=_ignorieren,
         )
         client.start()
         _wait_until(lambda: len(sleep_calls) >= 3)
@@ -427,10 +447,10 @@ def test_backoff_restarts_at_one_second_after_successful_subscribe(monkeypatch):
 
 
 def test_successful_subscribe_resets_attempt_counter():
-    client = HaTriggerClient(ws_url="ws://x", token="t", triggers=[], on_trigger_event=MagicMock())
+    client = HaTriggerClient(ws_url="ws://x", token="t", triggers=[], on_trigger_event=_ignorieren)
     client._attempt = 4
 
-    client._handle_subscribe_result(MagicMock(), {"success": True})
+    client._handle_subscribe_result(MagicMock(spec=WebSocketApp), {"success": True})
 
     assert client._attempt == 0
 
@@ -441,7 +461,7 @@ def test_connection_is_kept_alive_with_ws_pings():
     with _patch_ws_app(captured):
         client = HaTriggerClient(
             ws_url="ws://x", token="t", triggers=[{"platform": "time", "at": "12:00"}],
-            on_trigger_event=MagicMock(),
+            on_trigger_event=_ignorieren,
         )
         client.start()
         _wait_until(lambda: "app" in captured and captured["app"].run_forever.called)
@@ -449,3 +469,115 @@ def test_connection_is_kept_alive_with_ws_pings():
         captured["app"].run_forever.assert_called_with(ping_interval=30, ping_timeout=10)
 
         _stop_and_join(client)
+
+
+# --- Halb offene Verbindung und falsches Token: Wiederverbinden auf der Fake-Uhr ---
+
+class _Uhr:
+    """Ersetzt das Modul `time` in ha_trigger_client: `sleep` rueckt die Zeit vor, statt zu warten. `grenze`: ab dieser
+    Zeit beendet der naechste Schlaf den Client (Ende des Beobachtungsfensters)."""
+
+    def __init__(self, grenze: float):
+        self.jetzt = 0.0
+        self.schlaefe: list[float] = []
+        self.grenze = grenze
+        self.client: HaTriggerClient | None = None
+
+    def sleep(self, sekunden: float) -> None:
+        self.schlaefe.append(sekunden)
+        self.jetzt += sekunden
+        if self.jetzt >= self.grenze and self.client is not None:
+            self.client.stop()
+
+
+class _HaGegenstelle:
+    """Fake `WebSocketApp`: `run_forever` spielt eine Verbindung zu HA so durch, wie websocket-client sie meldet
+    (Rueckrufe mit der App als erstem Argument, `on_close` beim Abbau) und kehrt zurueck, wenn sie endet.
+
+    `token`: das gueltige Token (ein anderes beantwortet HA mit `auth_invalid`). `halb_offen`: Verbindungsnummern
+    (ab 1), deren Gegenstelle nach dem Abonnement stumm bleibt (kein Pong). Die Bibliothek bemerkt das nur mit
+    gesetzten Ping-Argumenten: nach `ping_interval` + `ping_timeout` meldet sie `on_error` mit
+    `WebSocketTimeoutException` und `on_close`; ohne Ping haengt `run_forever` bis zum `close`."""
+
+    def __init__(self, uhr: _Uhr, *, token: str, halb_offen=()):
+        self.uhr = uhr
+        self.token = token
+        self.halb_offen = set(halb_offen)
+        self.beginn: list[float] = []  # Zeit je Verbindungsaufbau
+        self.geschlossen: list[int] = []  # Nummer der Verbindung je close des Clients
+
+    def __call__(self, url, on_message=None, on_close=None, on_error=None):
+        nummer = len(self.beginn) + 1
+        self.beginn.append(self.uhr.jetzt)
+        app = MagicMock(spec=WebSocketApp)
+        zu = threading.Event()
+
+        def close():
+            self.geschlossen.append(nummer)
+            zu.set()
+
+        def senden(text):
+            nachricht = json.loads(text)
+            if nachricht["type"] == "auth":
+                angemeldet = nachricht["access_token"] == self.token
+                antwort = {"type": "auth_ok"} if angemeldet else {"type": "auth_invalid", "message": "Invalid access token"}
+                on_message(app, json.dumps(antwort))
+            elif nachricht["type"] == "subscribe_trigger":
+                on_message(app, json.dumps({"id": nachricht["id"], "type": "result", "success": True, "result": None}))
+
+        def run_forever(ping_interval=0, ping_timeout=None, **_rest):
+            on_message(app, json.dumps({"type": "auth_required"}))
+            if not zu.is_set() and nummer in self.halb_offen and ping_interval and ping_timeout:
+                self.uhr.jetzt += ping_interval + ping_timeout
+                on_error(app, websocket.WebSocketTimeoutException("ping/pong timed out"))
+            else:
+                zu.wait(timeout=5)  # gesunde Verbindung bzw. ohne Ping: bis zum close
+            on_close(app, None, None)
+
+        app.close.side_effect = close
+        app.send.side_effect = senden
+        app.run_forever.side_effect = run_forever
+        return app
+
+
+def test_a_half_open_connection_is_noticed_without_pong_and_the_client_reconnects(monkeypatch):
+    uhr = _Uhr(grenze=float("inf"))
+    monkeypatch.setattr(ha_trigger_client, "time", uhr)
+    ha = _HaGegenstelle(uhr, token="tok", halb_offen={1})
+    verbunden = []
+    with patch(WEBSOCKET_APP, autospec=True, side_effect=ha):
+        client = HaTriggerClient(ws_url="ws://x", token="tok", triggers=[{"platform": "time", "at": "12:00"}],
+                                 on_trigger_event=_ignorieren, on_connected=lambda: verbunden.append(uhr.jetzt))
+        client.start()
+        _wait_until(lambda: len(verbunden) == 2)
+        assert client.connected is True
+        _stop_and_join(client)
+
+    # Ping alle 30 s, Zeitlimit 10 s: die stumme Verbindung faellt nach 40 s, 1 s spaeter steht die neue.
+    assert verbunden == [0, 41]
+    assert ha.beginn == [0, 41]
+    assert uhr.schlaefe == [1]
+
+
+def test_a_wrong_token_closes_logs_and_backs_off_without_rapid_reconnects(monkeypatch, caplog):
+    uhr = _Uhr(grenze=70)
+    monkeypatch.setattr(ha_trigger_client, "time", uhr)
+    ha = _HaGegenstelle(uhr, token="richtig")
+    verbunden = []
+    with patch(WEBSOCKET_APP, autospec=True, side_effect=ha), caplog.at_level(logging.DEBUG):
+        client = HaTriggerClient(ws_url="ws://x", token="falsch-geheim", triggers=[{"platform": "time", "at": "12:00"}],
+                                 on_trigger_event=_ignorieren, on_connected=lambda: verbunden.append(uhr.jetzt))
+        uhr.client = client
+        client.start()
+        client._thread.join(timeout=5)
+        assert not client._thread.is_alive()
+
+    # In 70 s genau ein Versuch je Backoff-Stufe (1, 2, 5, 10, 20, 30 s), kein Dauerfeuer.
+    assert ha.beginn == [0, 1, 3, 8, 18, 38, 68]
+    assert uhr.schlaefe == [1, 2, 5, 10, 20, 30, 30]
+    # Jede abgewiesene Verbindung schliesst der Client selbst; das letzte close kommt von stop() am Fensterende.
+    assert ha.geschlossen == [1, 2, 3, 4, 5, 6, 7, 7]
+    fehler = [r.getMessage() for r in caplog.records if "WS-Authentifizierung fehlgeschlagen" in r.getMessage()]
+    assert len(fehler) == 7
+    assert "falsch-geheim" not in caplog.text  # auf keiner Stufe (DEBUG bis ERROR)
+    assert verbunden == []  # nie verbunden

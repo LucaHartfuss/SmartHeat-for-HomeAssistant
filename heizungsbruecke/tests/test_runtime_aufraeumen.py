@@ -1,5 +1,6 @@
 """Spec Stufe 3 S3 Abschnitt 4: leer heisst abmelden."""
 import errno
+import json
 import os
 import stat
 from pathlib import Path
@@ -48,6 +49,16 @@ def test_new_setup_before_reset_discards_marker(tmp_path):
     assert aufraeumen.laufzeit_konfiguration(ALT, pfad) == (ALT, False)
 
 
+def test_a_new_setup_of_another_plant_discards_the_open_marker_and_keeps_the_state(tmp_path):
+    """S3S3-Reste: auch eine andere Anlage als die der Markierung beendet das Abmelden; nichts wird geloescht."""
+    pfad = tmp_path / "aufraeumen.json"
+    aufraeumen.markieren(pfad, ALT)
+    andere = {**ALT, "anlage": "kunde2"}
+    assert aufraeumen.entscheiden(pfad, andere) == aufraeumen.VERWERFEN
+    assert aufraeumen.laufzeit_konfiguration(andere, pfad) == (andere, False)
+    assert aufraeumen.lesen(pfad) == aufraeumen.Markierung("kunde1", ALT, False)  # die Markierung wird nicht angefasst
+
+
 def test_marker_without_configuration_is_deleted_as_before(tmp_path):
     pfad = tmp_path / "aufraeumen.json"
     pfad.write_text('{"anlage": "kunde1"}')  # Markierung aus 1.0.0
@@ -88,6 +99,20 @@ def test_a_broken_marker_is_still_deleted_as_before(tmp_path):
     assert aufraeumen.entscheiden(pfad, LEER) == aufraeumen.LOESCHEN
 
 
+@pytest.mark.parametrize("roh", [
+    [{"anlage": "kunde1"}], "kunde1", {"konfiguration": {"anlage": "kunde1"}},
+    {"anlage": "", "konfiguration": {"anlage": ""}}, {"anlage": 5, "konfiguration": {"anlage": 5}},
+    {"anlage": None, "konfiguration": {"anlage": None}},
+], ids=["liste", "text", "ohne_anlage", "anlage_leer", "anlage_zahl", "anlage_none"])
+def test_a_marker_of_a_foreign_form_counts_as_broken(tmp_path, roh):
+    """Gueltiges JSON in fremder Form (kein Objekt, `anlage` fehlt, leer oder kein Text) ist keine Markierung: lesen
+    gibt None, entscheiden loescht wie bei kaputtem JSON (auch wenn die Konfiguration zur `anlage` passt)."""
+    pfad = tmp_path / "aufraeumen.json"
+    pfad.write_text(json.dumps(roh), encoding="utf-8")
+    assert aufraeumen.lesen(pfad) is None
+    assert aufraeumen.entscheiden(pfad, LEER) == aufraeumen.LOESCHEN
+
+
 def test_a_new_setup_discards_even_an_unreadable_marker(tmp_path, monkeypatch):
     pfad = tmp_path / "aufraeumen.json"
     aufraeumen.markieren(pfad, ALT)
@@ -112,9 +137,9 @@ def test_a_marker_whose_existence_cannot_be_determined_is_kept(tmp_path, monkeyp
     assert "aufraeumen.json" in caplog.text and "OSError" in caplog.text and "geheim" not in caplog.text
 
 
-def test_a_marker_that_vanishes_between_exists_and_reading_is_decided_by_lesen(tmp_path, monkeypatch):
-    """Rennen: exists() sah die Markierung, read_bytes() nicht mehr (FileNotFoundError). Das ist kein Lesefehler
-    (nicht BEHALTEN), sondern eine fehlende Markierung: lesen() findet keine Konfiguration, also LOESCHEN wie bisher."""
+def test_a_marker_that_vanishes_between_exists_and_reading_counts_as_missing(tmp_path, monkeypatch):
+    """Rennen: exists() sah die Markierung, das Lesen nicht mehr (FileNotFoundError). Das ist kein Lesefehler (nicht
+    BEHALTEN) und auch keine kaputte Markierung (nicht LOESCHEN), sondern keine: KEINE (S3S6-Reste 3)."""
     pfad = tmp_path / "aufraeumen.json"
     aufraeumen.markieren(pfad, ALT)
 
@@ -123,4 +148,78 @@ def test_a_marker_that_vanishes_between_exists_and_reading_is_decided_by_lesen(t
         raise FileNotFoundError(pfad.name)
 
     monkeypatch.setattr(Path, "read_bytes", verschwunden)
+    assert aufraeumen.entscheiden(pfad, LEER) == aufraeumen.KEINE
+
+
+def _lesezaehler(monkeypatch, pfad, *, text_fehler=None):
+    """Zaehlt die Lesezugriffe auf pfad ueber beide Wege (read_bytes; read_text ist der Weg von dateien.lesen_json);
+    text_fehler: read_text wirft ihn fuer pfad (vorubergehender EIO genau beim zweiten Lesen)."""
+    gelesen = []
+    echt_bytes, echt_text = Path.read_bytes, Path.read_text
+
+    def read_bytes(self):
+        if self == pfad:
+            gelesen.append("bytes")
+        return echt_bytes(self)
+
+    def read_text(self, *args, **kwargs):
+        if self == pfad:
+            gelesen.append("text")
+            if text_fehler is not None:
+                raise text_fehler
+        return echt_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    monkeypatch.setattr(Path, "read_text", read_text)
+    return gelesen
+
+
+def test_entscheiden_reads_the_marker_exactly_once(tmp_path, monkeypatch):
+    """S3S6-Reste 3: ein vorubergehender EIO beim zweiten Lesen ergab LOESCHEN (die Markierung galt als kaputt), obwohl
+    das erste Lesen sie fand. entscheiden liest einmal und wertet die gelesenen Bytes aus."""
+    pfad = tmp_path / "aufraeumen.json"
+    aufraeumen.markieren(pfad, ALT)
+    gelesen = _lesezaehler(monkeypatch, pfad, text_fehler=OSError(errno.EIO, "geheim"))
+    assert aufraeumen.entscheiden(pfad, LEER) == aufraeumen.ZURUECKSETZEN
+    assert len(gelesen) == 1
+
+
+@pytest.mark.parametrize("inhalt, erwartet", [
+    (None, aufraeumen.ZURUECKSETZEN), ('{"anlage": "kunde1"}', aufraeumen.LOESCHEN), ("{kaputt", aufraeumen.LOESCHEN),
+], ids=["offen", "ohne_konfiguration", "kaputt"])
+def test_every_decision_that_reads_reads_once(tmp_path, monkeypatch, inhalt, erwartet):
+    pfad = tmp_path / "aufraeumen.json"
+    aufraeumen.markieren(pfad, ALT)
+    if inhalt is not None:
+        pfad.write_text(inhalt)
+    gelesen = _lesezaehler(monkeypatch, pfad)
+    assert aufraeumen.entscheiden(pfad, LEER) == erwartet
+    assert len(gelesen) == 1
+
+
+def test_an_unreadable_marker_is_read_once_and_kept(tmp_path, monkeypatch):
+    pfad = tmp_path / "aufraeumen.json"
+    aufraeumen.markieren(pfad, ALT)
+    gelesen = []
+
+    def read_bytes(self):
+        gelesen.append("bytes")
+        raise OSError(errno.EIO, "geheim")
+
+    monkeypatch.setattr(Path, "read_bytes", read_bytes)
+    monkeypatch.setattr(Path, "read_text", lambda self, *a, **k: gelesen.append("text") or "{}")
+    assert aufraeumen.entscheiden(pfad, LEER) == aufraeumen.BEHALTEN
+    assert gelesen == ["bytes"]
+
+
+@pytest.mark.parametrize("kodierung", ["utf-8-sig", "utf-16"], ids=["bom", "utf16"])
+def test_entscheiden_and_lesen_decode_the_marker_alike(tmp_path, kodierung):
+    """entscheiden und lesen (damit laufzeit_konfiguration) dekodieren gleich: eine offene Markierung mit UTF-8-BOM oder
+    in UTF-16 ist fuer beide kaputt. Sonst ergaebe entscheiden ZURUECKSETZEN, die Laufzeit faende aber keine Markierung
+    und setzte nie zurueck."""
+    pfad = tmp_path / "aufraeumen.json"
+    aufraeumen.markieren(pfad, ALT)
+    pfad.write_bytes(pfad.read_text(encoding="utf-8").encode(kodierung))
+    assert aufraeumen.lesen(pfad) is None
+    assert aufraeumen.laufzeit_konfiguration(LEER, pfad) == (LEER, False)
     assert aufraeumen.entscheiden(pfad, LEER) == aufraeumen.LOESCHEN

@@ -5,12 +5,13 @@ from fakes import FakeHa
 from geraet_helpers import FakeGeraet, konfiguration_aus_optionen
 from test_runtime import OPTIONS, _start_bridge, env  # noqa: F401  (Fixture)
 
+from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.host import HaHost
 from smartheat_runtime.app import IdleBridge
 
 
 def test_boot_info_without_a_document_is_not_configured():
-    boot = HaHost(FakeGeraet(None), MagicMock()).boot_info()
+    boot = HaHost(FakeGeraet(None), MagicMock(spec=HomeAssistantApi)).boot_info()
     assert not boot.configured and not boot.signed_off
 
 

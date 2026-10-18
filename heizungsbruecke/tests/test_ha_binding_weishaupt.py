@@ -468,3 +468,14 @@ def test_a_preparation_after_an_earlier_write_counts_once(make_store, clock, mon
     assert _total(store) == 1
     assert pipeline.ensure_prepared() is True
     assert _total(store) == 2 and store.state.lifetime_writes == 2
+
+
+def test_restore_aux_does_not_check_the_mode_against_the_known_modes():
+    """Heutiges Verhalten, Restpunkt S3S4b-2: der lokal gelesene Ursprungswert der Betriebsart wird beim Zurueckstellen
+    nicht gegen WEISHAUPT_MODES geprueft; ein unbekannter Modus im bekannten Schema geht an HA (HA lehnt eine unbekannte
+    Option ab). Gegenprobe: dieselbe Option gilt als Hilfswert vom Server nicht als zulaessig."""
+    ha = FakeHa(**{"select.betriebsart": "hz_operationmode_normal"})
+    binding = _binding(ha)
+    binding.restore_aux({"mode_select": "hz_operationmode_party"})
+    assert ha.calls == [("select", "select.betriebsart", "hz_operationmode_party")]
+    assert not binding.aux_zulaessig("mode_select", "hz_operationmode_party")

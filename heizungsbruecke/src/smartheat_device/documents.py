@@ -3,8 +3,9 @@
 Konfiguration und Bedienung liegen je in einer Datei mit Version und Inhalt (ohne schema/version des Vertrags).
 Uebernommen wird jede Version, die von der eigenen abweicht, auch eine kleinere (ein aus dem Backup zurueckgespielter
 Server, Plan S1); dieselbe Version nur, solange die Bedienung "dirty" ist (lokaler Bedienwunsch seit der letzten
-uebernommenen Bedienung, Spec 3.3: der Server schickt eine verlierende Bedienung mit gleicher Version zurueck). Abgelehnt
-wird mit einem Grund aus wire.DOKUMENT_ERRORS und details; die vorige Version bleibt, die Ablehnung steht in dokumente.json.
+uebernommenen Bedienung, Spec 3.3: der Server schickt eine verlierende Bedienung mit gleicher Version zurueck).
+Abgelehnt wird mit einem Grund aus wire.DOKUMENT_ERRORS und details; die vorige Version bleibt, die Ablehnung steht in
+dokumente.json.
 
 Mindestversion (Spec 2.1): liegt die eigene Software unter mindest_software, wird die Konfiguration mit update_noetig
 abgelehnt (das Geraet regelt mit der alten weiter); eine leere Konfiguration (anlage None, "nicht eingerichtet") wird
@@ -14,16 +15,31 @@ abgelehnten Konfiguration bzw. die eigene Software beim unbekannten schema), und
 Software ausgewertet: nach einem Update endet es von selbst. Nur eine Konfiguration mit genau den Feldern des Vertrags
 setzt den Anlass neu; eine wegen fehlender oder fremder Felder abgelehnte laesst ihn stehen (V1 ist strikt, R10).
 Wirft der Treiber-Rueckruf config_check.NichtPruefbar (HA aus), laeuft empfangen durch: nichts wird gespeichert oder
-abgelehnt, das Geraet haelt das Dokument zurueck und prueft spaeter erneut (device.py).
+abgelehnt, das Geraet haelt das Dokument zurueck und prueft spaeter erneut (device.py). Ebenso, wenn die Vorbereitung
+vor dem Speichern einer geprueften Konfiguration scheitert (vor_speichern, der Host schreibt dort die
+Aufraeum-Markierung; Spec Testoffensive 12.6, Nr. 38): jede Ausnahme wird zu NichtPruefbar, eine ERROR-Zeile je
+Zurueckhalten (erst ein Ergebnis fuer eine Konfiguration, Annahme oder Ablehnung, beendet das Zurueckhalten).
 Eine kaputte Datei (Stromausfall) gilt als "keine Version": hello meldet 0, der Server stellt neu zu.
 
-Rastung (Spec Stufe 3 S3 Abschnitt 3, A5-06): Hebelsatz x Verteilsystem der ersten eingerichteten Konfiguration stehen in
-sicherheitssatz.json; kein Dokument loest sie, auch keine leere Konfiguration. Sie wird vor dem Speichern der Konfiguration
-geschrieben. Fehlt die Datei bei gespeicherter eingerichteter Konfiguration (Stand vor dieser Version), rastet der Start.
-Eine kaputte oder manipulierte Datei (auch ein Symlink) lehnt jede eingerichtete Konfiguration ab (rastung.lesen)."""
+Software-Angebot (5b-D2-3): das Feld software jeder Konfiguration mit bekanntem Schema, die ein Ergebnis bekommt (auch
+eine abgelehnte oder erneut zugestellte), steht in dokumente.json (software_angebot), sofern es die Vertragsform hat
+(angebot_aus, software_pruefen, R15). null ist ein gemerktes zurueckgezogenes Angebot (Angebot(None)), nicht "nichts
+gemerkt": der Updater soll nach einem verlorenen Schreibvorgang keine zurueckgezogene Version installieren. Ein
+ungueltiges oder fehlendes Feld laesst das gemerkte Angebot stehen. Das ist dasselbe Angebot, das das Geraet dem Host
+uebergibt; software_soll_nachholen des Gateways bietet es nach einem Neustart erneut an. Fehlt der Schluessel in
+dokumente.json oder hat sein Wert nicht die Vertragsform, ist nichts gemerkt (kein Kompatibilitaetspfad).
+
+Rastung (Spec Stufe 3 S3 Abschnitt 3, A5-06): Hebelsatz x Verteilsystem der ersten eingerichteten Konfiguration stehen
+in sicherheitssatz.json; kein Dokument loest sie, auch keine leere Konfiguration. Sie wird vor dem Speichern der
+Konfiguration geschrieben. Fehlt die Datei bei gespeicherter eingerichteter Konfiguration (Stand vor dieser Version),
+rastet der Start (nicht in der Nur-Lese-Verwendung, rasten=False). Scheitert das Schreiben erst nach dem Ersetzen (fsync
+des Ordners), gilt die Rastung vom Datentraeger. Eine kaputte oder manipulierte Datei (auch ein Symlink) lehnt jede
+eingerichtete Konfiguration ab (rastung.lesen)."""
+import copy
 import logging
 import re
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TypeGuard
@@ -111,6 +127,23 @@ def software_pruefen(software) -> config_check.Ablehnung | None:
     return None
 
 
+@dataclass(frozen=True)
+class Angebot:
+    """Software-Angebot einer Konfiguration: software None = zurueckgezogen (der Host bekommt null)."""
+    software: dict | None
+
+
+def angebot_aus(art: str, payload: dict) -> Angebot | None:
+    """Das Software-Angebot, das ein Dokument dem Host gibt und das der Speicher merkt: nur eine Konfiguration mit
+    bekanntem Schema und einem Feld software in der Vertragsform (R15); None = das Dokument aendert das Angebot nicht.
+    Fuer eine abgelehnte Konfiguration ebenso (ein Update kann der Ausweg aus der Ablehnung sein)."""
+    if art != KONFIGURATION or payload.get("schema") not in wire.SCHEMATA or "software" not in payload:
+        return None
+    if software_pruefen(payload["software"]) is not None:
+        return None
+    return Angebot(copy.deepcopy(payload["software"]))
+
+
 def _bedienung_pruefen(inhalt: dict) -> config_check.Ablehnung | None:
     if ablehnung := _form(inhalt, _ohne_huelle(wire.BEDIENUNG_FIELDS)):
         return ablehnung
@@ -157,9 +190,18 @@ class DocumentStore:
     """Schreibt nur im Geraete-Thread; lesen duerfen alle (die Laufzeit liest den Abo-Status)."""
 
     def __init__(self, directory: Path, *, host: str, software_version: str,
-                 treiber_pruefen: config_check.TreiberPruefung | None = None) -> None:
+                 treiber_pruefen: config_check.TreiberPruefung | None = None,
+                 vor_speichern: Callable[[dict | None, dict], None] | None = None, rasten: bool = True) -> None:
+        """vor_speichern(alt, neu): DeviceHost.konfiguration_vorbereiten; die Nur-Lese-Verwendungen (Aufraeumen beim
+        Start) uebergeben keinen und rasten=False: der Konstruktor schreibt dann keine Rastung nach (sie fehlt bei
+        gespeicherter eingerichteter Konfiguration), auch nicht bei einem Fehler im Ordner; rastung bleibt None. Ein
+        solcher Store ist nur zum Lesen: empfangen einer eingerichteten Konfiguration, die rasten muesste, wirft
+        RuntimeError (Programmierfehler), bevor etwas gespeichert wird."""
         self._dir = directory
+        self._rasten_erlaubt = rasten
         self._host, self._software_version, self._treiber_pruefen = host, software_version, treiber_pruefen
+        self._vor_speichern = vor_speichern
+        self._vorbereitung_gemeldet = False  # Zurueckhalten nach gescheiterter Vorbereitung schon geloggt
         self._lock = threading.Lock()
         self._docs: dict[str, Dokument | None] = {art: self._laden(art) for art in wire.DOKUMENTE}
         self._rastung_pfad = directory / rastung.DATEI
@@ -167,6 +209,10 @@ class DocumentStore:
         zustand = dateien.lesen_json(directory / ZUSTAND_DATEI)
         zustand = zustand if isinstance(zustand, dict) else {}
         self._update_anlass = _anlass(zustand.get("update_anlass"))
+        # Schluessel fehlt: nichts gemerkt; null: zurueckgezogen gemerkt; sonst nur in der Vertragsform
+        angebot = zustand.get("software_angebot")
+        self._software_angebot: Angebot | None = (
+            Angebot(angebot) if "software_angebot" in zustand and software_pruefen(angebot) is None else None)
         roh = zustand.get("abgelehnt")
         abgelehnt: dict = roh if isinstance(roh, dict) else {}
         # eine Ablehnung von vor 5c traegt an Stelle 2 einen Text: sie laedt ohne details
@@ -193,16 +239,24 @@ class DocumentStore:
         kaputte Datei wird nie ueberschrieben."""
         gelesen = rastung.lesen(self._rastung_pfad)
         inhalt = self.inhalt(KONFIGURATION)
-        if gelesen is None and inhalt is not None and not config_check.ist_leer(inhalt):
+        if self._rasten_erlaubt and gelesen is None and inhalt is not None and not config_check.ist_leer(inhalt):
             return self._rasten(inhalt)
         return gelesen
 
     def _rasten(self, inhalt: dict) -> Rastung | None:
+        if not self._rasten_erlaubt:  # Programmierfehler: ein Nur-Lese-Store (rasten=False) empfaengt keine Dokumente
+            raise RuntimeError("DocumentStore mit rasten=False schreibt keine Rastung")
         hebelsatz, verteilsystem = inhalt.get("hebelsatz"), inhalt.get("verteilsystem")
         if not (isinstance(hebelsatz, str) and isinstance(verteilsystem, str)):
             return None
         neu = Rastung(hebelsatz, verteilsystem)
-        rastung.schreiben(self._rastung_pfad, neu, wallclock.now().isoformat(timespec="seconds"))
+        try:
+            rastung.schreiben(self._rastung_pfad, neu, wallclock.now().isoformat(timespec="seconds"))
+        except BaseException:
+            # os.replace kann gelungen und erst der fsync des Ordners gescheitert sein: was auf dem Datentraeger steht,
+            # gilt auch in diesem Prozess (sonst wuerde bis zum Neustart ein anderes Paar angenommen)
+            self._rastung = rastung.lesen(self._rastung_pfad)
+            raise
         logger.info("Sicherheitssatz eingerastet")
         return neu
 
@@ -220,9 +274,10 @@ class DocumentStore:
 
     def _zustand_speichern(self) -> None:
         anlass = list(self._update_anlass) if self._update_anlass is not None else None
-        dateien.schreiben_json(self._dir / ZUSTAND_DATEI,
-                               {"update_anlass": anlass,
-                                "abgelehnt": {art: list(v) for art, v in self._abgelehnt.items()}}, modus=dateien.PRIVAT)
+        zustand: dict = {"update_anlass": anlass, "abgelehnt": {art: list(v) for art, v in self._abgelehnt.items()}}
+        if self._software_angebot is not None:  # ohne Schluessel: nichts gemerkt
+            zustand["software_angebot"] = self._software_angebot.software
+        dateien.schreiben_json(self._dir / ZUSTAND_DATEI, zustand, modus=dateien.PRIVAT)
 
     def aktuell(self, art: str) -> Dokument | None:
         return self._docs[art]
@@ -241,6 +296,11 @@ class DocumentStore:
 
     def ablehnung(self, art: str) -> tuple[int, str, dict | None] | None:
         return self._abgelehnt.get(art)
+
+    def software_angebot(self) -> Angebot | None:
+        """Zuletzt gueltiges Software-Angebot (Kopie; Angebot(None) = zurueckgezogen), None = nichts gemerkt
+        (Moduldocstring, 5b-D2-3)."""
+        return copy.deepcopy(self._software_angebot)
 
     def mark_dirty(self) -> None:
         """Lokaler Bedienwunsch (Spec 3.3): die naechste Bedienung wird auch mit gleicher Version uebernommen."""
@@ -262,19 +322,58 @@ class DocumentStore:
                 if art == KONFIGURATION:
                     self._update_anlass = (SCHEMA_UNBEKANNT, self._software_version)
                 return self._abgelehnt_mit(art, version, SCHEMA_UNBEKANNT, None)
-            current = self._docs[art]
-            if current is not None and current.version == version and not current.dirty:
-                return Ergebnis(art, version, True)
-            inhalt = {key: value for key, value in payload.items() if key not in _RESERVIERT}
-            ablehnung = self._pruefen(art, inhalt)
-            if ablehnung is not None:
-                return self._abgelehnt_mit(art, version, ablehnung.grund, ablehnung.details)
-            if art == KONFIGURATION and self._rastung is None and not config_check.ist_leer(inhalt):
-                self._rastung = self._rasten(inhalt)  # vor dem Dokument (Spec 3.2): ein Absturz dazwischen schadet nicht
-            self._speichern(Dokument(art, version, inhalt))
-            self._abgelehnt.pop(art, None)
-            self._zustand_speichern()
-            return Ergebnis(art, version, True, uebernommen=True)
+            vorher = self._software_angebot
+            angebot = angebot_aus(art, payload)
+            if angebot is not None:
+                # vor dem Ergebnis gesetzt, damit es mit Ablehnung bzw. Uebernahme in einem Schreiben steht; ein
+                # ungueltiges oder fehlendes Feld laesst das gemerkte Angebot stehen (R15)
+                self._software_angebot = angebot
+            try:
+                ergebnis = self._empfangen_bekannt(art, version, payload)
+                if ergebnis.ok and not ergebnis.uebernommen and self._software_angebot != vorher:
+                    self._zustand_speichern()  # Duplikat: schreibt sonst nichts
+            except BaseException:
+                self._software_angebot = vorher  # kein Ergebnis (NichtPruefbar, Schreibfehler): auch kein Angebot
+                raise
+            if angebot is None and art == KONFIGURATION and "software" in payload:
+                logger.warning("Soll-Software ungueltig, das vorherige Angebot bleibt")
+            return ergebnis
+
+    def _empfangen_bekannt(self, art: str, version: int, payload: dict) -> Ergebnis:
+        """empfangen fuer ein Dokument mit bekanntem Schema (unter der Sperre)."""
+        current = self._docs[art]
+        if current is not None and current.version == version and not current.dirty:
+            if art == KONFIGURATION:
+                self._vorbereitung_gemeldet = False  # Ergebnis: ein spaeteres Scheitern ist ein neues Zurueckhalten
+            return Ergebnis(art, version, True)
+        inhalt = {key: value for key, value in payload.items() if key not in _RESERVIERT}
+        ablehnung = self._pruefen(art, inhalt)
+        if ablehnung is not None:
+            return self._abgelehnt_mit(art, version, ablehnung.grund, ablehnung.details)
+        if art == KONFIGURATION:
+            self._vorbereiten(inhalt)
+        if art == KONFIGURATION and self._rastung is None and not config_check.ist_leer(inhalt):
+            self._rastung = self._rasten(inhalt)  # vor dem Dokument (Spec 3.2): ein Absturz dazwischen schadet nicht
+        self._speichern(Dokument(art, version, inhalt))
+        self._abgelehnt.pop(art, None)
+        self._zustand_speichern()
+        return Ergebnis(art, version, True, uebernommen=True)
+
+    def _vorbereiten(self, inhalt: dict) -> None:
+        """Vor Rastung und Speichern: scheitert der Host (Markierung nicht schreibbar), wird nichts gespeichert, und das
+        Geraet haelt das Dokument zurueck wie bei NichtPruefbar aus dem Treiber-Rueckruf. _pruefen hat _update_anlass
+        dann schon im Speicher gesetzt, ohne ihn zu speichern; das ist dieselbe Lage wie dort, die Wiederholung setzt
+        ihn gleich. Der Host bekommt Kopien: er kann weder das zu speichernde noch das gespeicherte Dokument aendern."""
+        if self._vor_speichern is None:
+            return
+        try:
+            self._vor_speichern(copy.deepcopy(self.inhalt(KONFIGURATION)), copy.deepcopy(inhalt))
+        except Exception as error:  # jede Ausnahme: nichts speichern, zurueckhalten statt die Konfiguration verlieren
+            if not self._vorbereitung_gemeldet:  # je Zurueckhalten einmal (das Geraet wiederholt alle 30 s)
+                logger.error("Konfiguration zurueckgehalten: Vorbereitung gescheitert (%s)", type(error).__name__)
+                self._vorbereitung_gemeldet = True
+            raise config_check.NichtPruefbar from None
+        self._vorbereitung_gemeldet = False
 
     def _abgelehnt_mit(self, art: str, version: int, grund: str, details: dict | None) -> Ergebnis:
         if grund not in wire.DOKUMENT_ERRORS:
@@ -283,11 +382,13 @@ class DocumentStore:
             logger.error("%s abgelehnt (%s): details ohne die Form des Vertrags verworfen", art, grund)
             details = None
         self._abgelehnt[art] = (version, grund, details)
+        if art == KONFIGURATION:
+            self._vorbereitung_gemeldet = False  # Ergebnis: ein spaeteres Scheitern ist ein neues Zurueckhalten
         self._zustand_speichern()
         return Ergebnis(art, version, False, grund, details)
 
     def _pruefen(self, art: str, inhalt: dict) -> config_check.Ablehnung | None:
-        if not fehler.kodierbar(inhalt):  # ein einzelnes Surrogat liesse sich nicht speichern (Ausnahme statt Ablehnung)
+        if not fehler.kodierbar(inhalt):  # ein einzelnes Surrogat liesse sich nicht speichern (sonst Ausnahme)
             return config_check.Ablehnung(UNGUELTIG)
         if art == BEDIENUNG:
             return _bedienung_pruefen(inhalt)

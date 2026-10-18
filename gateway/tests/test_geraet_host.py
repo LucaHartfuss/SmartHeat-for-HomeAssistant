@@ -1,26 +1,33 @@
 """Spec 5b 5.1/5.3 (Plan D2 Task 3): der Gateway als Host des Geraetekerns - Faehigkeiten, Uhr, Status und Raum im
 Prozess, Meldungen, Neustart bei neuer Konfiguration, Aufraeumen nach dem Entfernen, Software-Bruecke, LED-Datei."""
+import errno
 import json
+import logging
 import os
 import stat
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from configs import konfiguration
+from configs import dokumente_schreiben, konfiguration
 from fakes import FakeBus
+from world import GatewayWorld
 
 from smartheat_core import dateien
 from smartheat_device import nachrichten, wire
+from smartheat_device.documents import DocumentStore
 from smartheat_device.geraet_host_basis import EV_RELOAD
 from smartheat_device.host import Anzeige
 from smartheat_gateway import geraet_host as gh
+from smartheat_gateway import runtime_main
 from smartheat_gateway.drivers import registry
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.triggers import EV_TARGET_INPUT
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime import dokument_config
+from smartheat_runtime.runtime import Runtime
 from smartheat_runtime.soll_speicher import SOURCE_PORTAL
 from smartheat_runtime.worker import RegulationWorker
 
@@ -165,15 +172,20 @@ def test_a_restart_requested_before_the_worker_exists_is_posted_on_binding(welt)
 
 
 def test_an_empty_configuration_after_a_setup_marks_the_cleanup(welt):
-    welt.host.konfiguration_uebernommen(konfiguration(), LEER)
+    """Die Markierung schreibt konfiguration_vorbereiten (vor dem Speichern, Nr. 38), den Neustart fordert
+    konfiguration_uebernommen an."""
+    welt.host.konfiguration_vorbereiten(konfiguration(), LEER)
     assert json.loads(welt.paths.aufraeumen.read_text()) == {
         "anlage": "test-tenant", "konfiguration": konfiguration(), "zurueckgesetzt": False}
     assert stat.S_IMODE(welt.paths.aufraeumen.stat().st_mode) == 0o600
     welt.host.worker_binden(welt.worker)
+    assert welt.kinds() == []
+    welt.host.konfiguration_uebernommen(konfiguration(), LEER)
     assert welt.kinds() == [EV_RELOAD]
 
 
 def test_the_first_empty_configuration_marks_nothing(welt):
+    welt.host.konfiguration_vorbereiten(None, LEER)
     welt.host.konfiguration_uebernommen(None, LEER)
     assert not welt.paths.aufraeumen.exists()
 
@@ -183,10 +195,189 @@ def test_vergessen_removes_the_plant_state_but_keeps_device_and_simulation(welt)
                  welt.paths.inventur, welt.paths.driver_secrets_dir / "vicare.json",
                  welt.paths.device_dir / "konfiguration.json", welt.paths.sim_dir / "plant.json"):
         dateien.schreiben_json(path, {"x": 1}, modus=dateien.LESBAR)
-    gh.vergessen(welt.paths)
+    assert gh.vergessen(welt.paths) is True
     assert not welt.paths.runtime_dir.exists() and not welt.paths.inventur.exists()
     assert not (welt.paths.driver_secrets_dir / "vicare.json").exists()
     assert (welt.paths.device_dir / "konfiguration.json").exists() and (welt.paths.sim_dir / "plant.json").exists()
+
+
+def _dokument(inhalt: dict, version: int) -> dict:
+    return {"schema": 1, "version": version, **inhalt}
+
+
+@pytest.mark.parametrize("anders", [{"verteilsystem": "Fussbodenheizung"}, {"hebelsatz": "vaillant_vrc720"}])
+def test_vergessen_keeps_the_lever_set_lock(welt, anders):
+    """G-1, Angriff (ck F-client-kern-47): das Aufraeumen nach "leer ohne sign_off" (runtime_main._vergessen) loescht
+    den anlagengebundenen Zustand, aber nicht device/sicherheitssatz.json; ein neuer Dokumentspeicher lehnt ein anderes
+    Paar weiter ab, dasselbe Paar nimmt er an."""
+    store = DocumentStore(welt.paths.device_dir, host="gateway", software_version=GATEWAY_VERSION)
+    assert store.empfangen("konfiguration", _dokument(konfiguration(), 1)).uebernommen
+    assert store.empfangen("konfiguration", _dokument(LEER, 2)).uebernommen
+    dateien.schreiben_json(welt.paths.backup, {"x": 1}, modus=dateien.LESBAR)
+    assert runtime_main._vergessen(welt.paths)
+    assert not welt.paths.runtime_dir.exists()  # das Aufraeumen lief
+    store = DocumentStore(welt.paths.device_dir, host="gateway", software_version=GATEWAY_VERSION)
+    ergebnis = store.empfangen("konfiguration", _dokument(konfiguration(**anders), 3))
+    assert (ergebnis.ok, ergebnis.grund) == (False, "hebelsatz_eingerastet")
+    assert store.empfangen("konfiguration", _dokument(konfiguration(), 4)).uebernommen
+
+
+def _unlink_scheitert_fuer(monkeypatch, pfad, fehler):
+    """Fehlerinjektion: Path.unlink scheitert fuer pfad mit fehler (per monkeypatch, nie per chmod)."""
+    echt = Path.unlink
+
+    def unlink(self, missing_ok=False):
+        if self == pfad:
+            raise OSError(fehler, os.strerror(fehler))
+        echt(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    return echt
+
+
+def _entfernt_vorbereiten(paths) -> bytes:
+    """Eingerichtet, dann leer (Rastung liegt), Zustand der Anlage, Markierung wie nach "leer ohne sign_off" nach dem
+    Zuruecksetzen; gibt den Inhalt der Rastung zurueck."""
+    store = DocumentStore(paths.device_dir, host="gateway", software_version=GATEWAY_VERSION)
+    assert store.empfangen("konfiguration", _dokument(konfiguration(), 1)).uebernommen
+    assert store.empfangen("konfiguration", _dokument(LEER, 2)).uebernommen
+    for path in (paths.backup, paths.failsafe, paths.entitlement, paths.room_target, paths.abgemeldet,
+                 paths.inventur, paths.driver_secrets_dir / "vicare.json"):
+        dateien.schreiben_json(path, {"x": 1}, modus=dateien.LESBAR)
+    dateien.schreiben_json(paths.aufraeumen, {"anlage": "test-tenant"}, modus=dateien.LESBAR)
+    return paths.rastung.read_bytes()
+
+
+def _alles_weg(paths) -> bool:
+    return (not paths.runtime_dir.exists() and not paths.inventur.exists()
+            and not (paths.driver_secrets_dir / "vicare.json").exists() and not paths.aufraeumen.exists())
+
+
+@pytest.mark.parametrize("fehler, art", [(errno.EACCES, "PermissionError"), (errno.EIO, "OSError")])
+def test_a_state_file_that_cannot_be_deleted_keeps_the_marker_and_the_binding_and_the_start_goes_on(
+        world, monkeypatch, caplog, fehler, art):
+    """Wie im Add-on (Task 11): scheitert das Loeschen einer Zustandsdatei, startet das Gateway trotzdem; die Datei,
+    die Markierung und runtime/backup.json (der Bindungsanker, zuletzt und nur nach allem anderen geloescht) bleiben,
+    der uebrige Zustand ist weg, im Log Datei und Fehlerart, keine Erfolgsmeldung. Der naechste Start loescht den Rest
+    samt Markierung. Die Rastung bleibt in jedem Fall (G-1)."""
+    rastung = _entfernt_vorbereiten(world.paths)
+    echt = _unlink_scheitert_fuer(monkeypatch, world.paths.failsafe, fehler)
+    with caplog.at_level(logging.INFO):
+        world.start_runtime()  # wirft nicht
+    assert world.result is not None
+    assert world.paths.failsafe.exists() and world.paths.backup.exists() and world.paths.aufraeumen.exists()
+    assert not world.paths.entitlement.exists() and not world.paths.room_target.exists()
+    assert not world.paths.abgemeldet.exists() and not world.paths.inventur.exists()
+    assert not (world.paths.driver_secrets_dir / "vicare.json").exists()
+    assert f"{world.paths.failsafe.name} nicht geloescht ({art})" in caplog.text
+    assert "Anlagengebundener Zustand geloescht" not in caplog.text
+    assert world.paths.rastung.read_bytes() == rastung
+
+    monkeypatch.setattr(Path, "unlink", echt)
+    world.start_runtime()
+    assert _alles_weg(world.paths)
+    assert world.paths.rastung.read_bytes() == rastung
+
+
+@pytest.mark.parametrize("pfad", ["inventur", "zugang"])
+def test_leftover_inventory_or_driver_login_keeps_the_marker_and_the_binding(welt, monkeypatch, caplog, pfad):
+    """Inventur-Proben und Treiber-Anmeldung der alten Anlage zaehlen mit: bleiben sie liegen, meldet vergessen keinen
+    Erfolg, backup.json und die Markierung bleiben; ohne Fehler raeumt der naechste Start alles weg."""
+    rastung = _entfernt_vorbereiten(welt.paths)
+    ziel = welt.paths.inventur if pfad == "inventur" else welt.paths.driver_secrets_dir / "vicare.json"
+    echt = _unlink_scheitert_fuer(monkeypatch, ziel, errno.EIO)
+    with caplog.at_level(logging.INFO):
+        assert runtime_main._vergessen(welt.paths) is False
+        runtime_main.aufraeumen(welt.paths)
+    assert ziel.exists() and welt.paths.backup.exists() and welt.paths.aufraeumen.exists()
+    assert not welt.paths.failsafe.exists() and not welt.paths.entitlement.exists()
+    assert not welt.paths.room_target.exists() and not welt.paths.abgemeldet.exists()
+    assert "Anlagengebundener Zustand geloescht" not in caplog.text
+    monkeypatch.setattr(Path, "unlink", echt)
+    with caplog.at_level(logging.INFO):
+        runtime_main.aufraeumen(welt.paths)
+    assert _alles_weg(welt.paths) and welt.paths.rastung.read_bytes() == rastung
+    assert "Anlagengebundener Zustand geloescht" in caplog.text  # Gegenprobe: bei vollem Erfolg steht die Zeile da
+
+
+def test_a_binding_that_cannot_be_deleted_keeps_the_marker(welt, monkeypatch, caplog):
+    """Scheitert nur das Loeschen von backup.json, ist der uebrige Zustand weg und die Markierung bleibt."""
+    rastung = _entfernt_vorbereiten(welt.paths)
+    _unlink_scheitert_fuer(monkeypatch, welt.paths.backup, errno.EIO)
+    runtime_main.aufraeumen(welt.paths)
+    assert welt.paths.backup.exists() and welt.paths.aufraeumen.exists()
+    assert not welt.paths.failsafe.exists() and not welt.paths.inventur.exists()
+    assert not (welt.paths.driver_secrets_dir / "vicare.json").exists()
+    assert f"{welt.paths.backup.name} nicht geloescht (OSError)" in caplog.text
+    assert welt.paths.rastung.read_bytes() == rastung
+
+
+def test_a_runtime_folder_that_cannot_be_removed_keeps_the_marker(welt, monkeypatch, caplog):
+    """Laesst sich der Laufzeit-Ordner zuletzt nicht entfernen (EACCES), bleibt die Markierung: der naechste Start
+    versucht es erneut, statt den Ordner fuer immer liegen zu lassen."""
+    _entfernt_vorbereiten(welt.paths)
+    echt = gh.shutil.rmtree
+
+    def rmtree(path, *args, **kwargs):
+        if path == welt.paths.runtime_dir:
+            raise PermissionError(errno.EACCES, "verweigert")
+        echt(path, *args, **kwargs)
+
+    monkeypatch.setattr(gh.shutil, "rmtree", rmtree)
+    runtime_main.aufraeumen(welt.paths)
+    assert welt.paths.runtime_dir.exists() and welt.paths.aufraeumen.exists()
+    assert f"{welt.paths.runtime_dir.name} nicht geloescht (PermissionError)" in caplog.text
+    monkeypatch.setattr(gh.shutil, "rmtree", echt)
+    runtime_main.aufraeumen(welt.paths)
+    assert _alles_weg(welt.paths)
+
+
+def test_an_unreadable_runtime_folder_keeps_the_marker_and_the_binding(welt, monkeypatch, caplog):
+    """Ist der Laufzeit-Ordner nicht lesbar (EIO beim Auflisten), wird dort nichts geloescht und kein Erfolg
+    gemeldet."""
+    _entfernt_vorbereiten(welt.paths)
+    echt = Path.iterdir
+
+    def iterdir(self):
+        if self == welt.paths.runtime_dir:
+            raise OSError(errno.EIO, os.strerror(errno.EIO))
+        return echt(self)
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+    runtime_main.aufraeumen(welt.paths)
+    assert welt.paths.failsafe.exists() and welt.paths.backup.exists() and welt.paths.aufraeumen.exists()
+    assert f"{welt.paths.runtime_dir.name} nicht geloescht (OSError)" in caplog.text
+    monkeypatch.setattr(Path, "iterdir", echt)
+    runtime_main.aufraeumen(welt.paths)
+    assert _alles_weg(welt.paths)
+
+
+@pytest.fixture
+def world(data_dir, monkeypatch, clock):
+    world = GatewayWorld(data_dir, monkeypatch, clock)
+    yield world
+    world.close()
+
+
+def test_the_sign_off_ends_only_with_a_new_version_of_the_same_plant(world):
+    """5b-D2-7, Review Focus 2, ganzer Weg (Geraetekern, Dokumentspeicher, Host): abgemeldet bleibt bei erneuter
+    Zustellung derselben Version (kein Neustart); eine neue Version mit gleichem Inhalt hebt die Markierung auf, und der
+    Neustart regelt wieder."""
+    dokumente_schreiben(world.paths, konfiguration(), version=1)
+    dokument_config.abmelden(world.paths.abgemeldet, "test-tenant")
+    world.start_runtime()
+    world.connect()
+    assert world.status()["status"] == "abgemeldet"
+
+    world.konfiguration_senden(konfiguration(), 1)  # erneute Zustellung nach dem Neuverbinden
+    assert world.restarts == 1 and world.status()["status"] == "abgemeldet"
+    assert json.loads(world.paths.abgemeldet.read_text()) == {"anlage": "test-tenant"}
+
+    world.konfiguration_senden(konfiguration(), 2)
+    assert not world.paths.abgemeldet.exists()
+    assert world.restarts == 2 and isinstance(world.result, Runtime)
+    world.connect()
+    assert world.status()["status"] == "regelt" and world.status()["tenant_id"] == "test-tenant"
 
 
 def test_an_operation_goes_to_the_worker_as_target_input(welt):

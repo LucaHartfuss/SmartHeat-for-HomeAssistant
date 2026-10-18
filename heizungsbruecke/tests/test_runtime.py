@@ -3,7 +3,6 @@ Tick-Zustellung, Datenfehler, Notbetrieb, lokale Checks und Abo-Pfade. Getrieben
 Konfigurationsdokument aus OPTIONS, geraet_helpers.start_bridge) mit Fake-Uhr (tests/conftest.py), Fake-HA,
 Fake-Trigger-Client und dem Link einer Geraete-Attrappe (FakeGeraet) statt eines eigenen MQTT-Clients."""
 import dataclasses
-import itertools
 import json
 import logging
 from datetime import date, datetime, timedelta
@@ -12,14 +11,13 @@ from types import SimpleNamespace
 import geraet_helpers
 import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT
-from fakes import FakeHa
+from fakes import VIESSMANN_OPTIONEN, VIESSMANN_ZUSTAND, FakeHa, trigger_klasse
 
 from heizungsbruecke import geraet_status
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core.enforce import RETRY_SECONDS
 from smartheat_core.pipeline import LeverPipeline
-from smartheat_core.write_budget import MAX_PER_DAY
 from smartheat_device.laufzeit import RuntimeChannel
 from smartheat_runtime import abo, app, aufraeumen, backup_store, datentraeger, dokument_config, entitlement, ticks
 from smartheat_runtime.backup_store import load_backup, save_backup
@@ -75,6 +73,14 @@ class _Link:
         self._geraet.sent.connected = value
 
     @property
+    def connect_failures(self):
+        return self._geraet.sent.failures
+
+    @connect_failures.setter
+    def connect_failures(self, value):
+        self._geraet.sent.failures = value
+
+    @property
     def publish_error(self):
         return self._geraet.sent.publish_error
 
@@ -114,20 +120,6 @@ class _Link:
         self._geraet.channel.setpoints(payload)
 
 
-class FakeTriggerClient:
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
-        self.connected = True
-        self.started = False
-        self.stopped = False
-
-    def start(self):
-        self.started = True
-
-    def stop(self):
-        self.stopped = True
-
-
 @pytest.fixture
 def env(tmp_path, monkeypatch, clock):
     paths = {}
@@ -149,16 +141,27 @@ def env(tmp_path, monkeypatch, clock):
     # Fristende) frisch; queries zaehlt diese Pruefungen.
     abo_state = {"status": entitlement.ACTIVE, "queries": 0}
     trigger_clients = []
-
-    def _trigger_factory(**kwargs):
-        trigger_clients.append(FakeTriggerClient(**kwargs))
-        return trigger_clients[-1]
-
-    monkeypatch.setattr("heizungsbruecke.geraet_trigger.HaTriggerClient", _trigger_factory)
+    monkeypatch.setattr("heizungsbruecke.geraet_trigger.HaTriggerClient", trigger_klasse(trigger_clients))
     return SimpleNamespace(
         clock=clock, paths=paths, abo=abo_state, ha=FakeHa(), trigger_clients=trigger_clients, derived=env_derived,
         geraet=None,
     )
+
+
+# --- Port-Fakes am Link (RuntimeChannel); ihre Signaturen bindet test_fake_gleichlauf.py an die echte Klasse ---
+
+def loop_start_aufzeichnen(order, wert):
+    """Ersatz fuer RuntimeChannel.loop_start: haelt beim MQTT-Start `wert()` in order fest (Reihenfolge am Port)."""
+    def loop_start(self):
+        order.append(wert())
+    return loop_start
+
+
+def verbindung_aus(link):
+    """Ersatz fuer RuntimeChannel.is_connected: die Verbindung des Links steht in link["up"]."""
+    def is_connected(self):
+        return link["up"]
+    return is_connected
 
 
 # --- Harness ---
@@ -317,6 +320,32 @@ def _answer(env, bridge, seq, **kwargs):
 
 # --- Boot ---
 
+def test_start_captures_the_heat_limit_original_before_any_write(env):
+    """TP12h: der Start merkt den Ursprungswert der Heizgrenze, auch wenn danach nichts geschrieben wird."""
+    _quiet_backup(env)
+    _start(env)
+    assert env.ha.writes == []
+    assert _backup(env)["originals"] == {"heat_limit": 16.0}
+
+
+def test_a_failing_capture_of_the_heat_limit_original_does_not_stop_the_start(env, monkeypatch, caplog):
+    """Scheitert das Merken beim Start (Speicherfehler), laeuft der Start weiter: der lokale Check danach startet den
+    Notfall-Boost (Notbetrieb, Raum 1,5 K unter dem Soll)."""
+    echt = LeverPipeline.capture_originals
+    fehler = [ticks.StorageError("Datentraeger voll")]
+
+    def _beim_start_kaputt(self):  # Fehlerinjektion: nur der erste Aufruf (im Start) scheitert
+        if fehler:
+            raise fehler.pop()
+        return echt(self)
+
+    monkeypatch.setattr(LeverPipeline, "capture_originals", _beim_start_kaputt)
+    with caplog.at_level(logging.ERROR, logger="smartheat_runtime.app"):
+        _start_in_notbetrieb_with_emergency_boost(env)  # prueft die Notfall-Boost-Werte 1,5/25 auf der Anlage
+    assert fehler == []
+    assert "Ursprungswert der Heizgrenze beim Start nicht gespeichert" in caplog.text
+
+
 def test_start_reports_originals_to_the_host_only_on_change(env):
     _quiet_backup(env, originals={"heat_limit": 16.0})
     bridge = _start(env)
@@ -340,7 +369,7 @@ def test_start_runs_priming_check_before_mqtt_loop_start(env, monkeypatch):
         return read_state(entity_id)
 
     env.ha.get_state = _spy
-    monkeypatch.setattr(RuntimeChannel, "loop_start", lambda self: order.append("loop_start"))
+    monkeypatch.setattr(RuntimeChannel, "loop_start", loop_start_aufzeichnen(order, lambda: "loop_start"))
 
     _start(env)
 
@@ -351,7 +380,7 @@ def test_boot_prepares_zone_before_first_snapshot(env, monkeypatch):
     # Plan-Praezisierung 11: Zone meldet 0 (heizt gerade nicht) und steht nicht auf Manuell.
     env.ha.states.update({"climate.zone": "auto", "climate.zone::temperature": 0.0})
     order = []
-    monkeypatch.setattr(RuntimeChannel, "loop_start", lambda self: order.append(list(env.ha.writes)))
+    monkeypatch.setattr(RuntimeChannel, "loop_start", loop_start_aufzeichnen(order, lambda: list(env.ha.writes)))
 
     bridge = _start(env, entity_shift_current="climate.zone")
 
@@ -465,18 +494,48 @@ def test_zone_preparation_failed_at_start_is_retried_on_the_next_local_check(env
     assert ("climate.zone", "heat_cool") not in env.ha.writes[writes:]
 
 
-def _failing_zone_preparation(env, monkeypatch, failures=None):
-    """LeverPipeline.prepare_start scheitert (z. B. 403 "Quota Exceeded"); gibt die Versuchszeitpunkte
-    (Fake-Uhr) zurueck. failures=None: scheitert immer, sonst nur die ersten `failures` Versuche."""
-    attempts = []
+def test_zone_preparation_retried_after_the_own_switch_still_writes_the_start_value(env):
+    """O-TP12e-1: der erste Versuch stellt die Zone auf Manuell, das Schreiben des Startwerts scheitert. Die
+    Wiederholung nach 1800 s liegt im Fenster nach dem eigenen Wechsel (2100 s, keine zweite Umstellung) und die
+    Zone meldet noch 0: der Startwert wird trotzdem geschrieben, nicht uebersprungen."""
+    env.ha.states.update({"climate.zone": "auto", "climate.zone::temperature": 0.0})
+    env.ha.write_error = RuntimeError("Cloud nicht erreichbar")  # set_hvac_mode gelingt, die Temperatur nicht
+    bridge = _start(env, entity_shift_current="climate.zone")
+    assert env.ha.writes == [("climate.zone", "heat_cool")]
+    assert bridge.zone_prepared is False
 
-    def _prepare_start(self, start_value):
-        attempts.append(env.clock())
-        if failures is None or len(attempts) <= failures:
+    env.ha.write_error = None
+    env.clock.advance(1800)  # Wiederholungs-Kontingent: 30 min nach dem Fehlschlag
+    _trigger(env, bridge, "sensor.room_actual")
+
+    assert env.ha.writes == [("climate.zone", "heat_cool"), ("climate.zone::temperature", 21.0)]
+    assert _backup(env)["restore_point"]["room_setpoint"] == 21.0
+    assert bridge.zone_prepared is True
+
+
+class _QuotaZoneHa(FakeHa):
+    """Zone im Zeitprogramm (auto, meldet 0); das Umstellen auf Manuell scheitert an der Hersteller-Cloud (403 "Quota
+    Exceeded"). `attempts` haelt jeden Aufruf an der HA-Grenze mit der Zeit der Fake-Uhr fest. failures=None: scheitert
+    immer, sonst nur die ersten `failures` Versuche."""
+
+    def __init__(self, clock, failures=None):
+        super().__init__()
+        self._clock, self._failures = clock, failures
+        self.attempts: list[float] = []
+        self.states.update({"climate.zone": "auto", "climate.zone::temperature": 0.0})
+
+    def set_hvac_mode(self, entity_id, mode):
+        self.attempts.append(self._clock())
+        if self._failures is None or len(self.attempts) <= self._failures:
             raise RuntimeError("403 Quota Exceeded")
+        super().set_hvac_mode(entity_id, mode)
 
-    monkeypatch.setattr(LeverPipeline, "prepare_start", _prepare_start)
-    return attempts
+
+def _failing_zone_preparation(env, failures=None):
+    """Die Vorbereitung der Zone (climate.zone) scheitert an HA; gibt die Versuchszeitpunkte zurueck. Danach mit
+    `_start(env, entity_shift_current="climate.zone")` starten."""
+    env.ha = _QuotaZoneHa(env.clock, failures)
+    return env.ha.attempts
 
 
 def _local_checks(env, bridge, hours):
@@ -485,26 +544,25 @@ def _local_checks(env, bridge, hours):
         _trigger(env, bridge, "sensor.room_actual")
 
 
-def test_failing_zone_preparation_is_retried_at_most_every_30_min_and_6_times_a_day(env, monkeypatch, caplog):
-    attempts = _failing_zone_preparation(env, monkeypatch)
-    bridge = _start(env)
+def test_failing_zone_preparation_is_retried_at_most_every_30_min_and_6_times_a_day(env, caplog):
+    attempts = _failing_zone_preparation(env)
+    bridge = _start(env, entity_shift_current="climate.zone")
 
     with caplog.at_level(logging.WARNING, logger="smartheat_runtime.app"):
         _local_checks(env, bridge, hours=12)
 
-    assert len(attempts) == MAX_PER_DAY  # Start + 5 Wiederholungen
-    assert all(later - earlier >= RETRY_SECONDS for earlier, later in itertools.pairwise(attempts))
+    assert [later - attempts[0] for later in attempts] == [0, 1800, 3600, 5400, 7200, 9000]  # Start + 5 Wiederholungen
     assert sum("Tageslimit" in record.getMessage() for record in caplog.records) == 1
 
 
-def test_zone_preparation_stops_retrying_after_success(env, monkeypatch):
-    attempts = _failing_zone_preparation(env, monkeypatch, failures=2)
-    bridge = _start(env)
+def test_zone_preparation_stops_retrying_after_success(env):
+    attempts = _failing_zone_preparation(env, failures=2)
+    bridge = _start(env, entity_shift_current="climate.zone")
 
     _local_checks(env, bridge, hours=6)
 
-    assert len(attempts) == 3
-    assert attempts[2] - attempts[1] >= RETRY_SECONDS
+    assert [later - attempts[0] for later in attempts] == [0, 1800, 3600]
+    assert env.ha.states["climate.zone"] == "heat_cool" and bridge.zone_prepared is True
 
 
 def test_boot_writes_min_flow_when_it_differs_from_the_room_target(env):
@@ -606,9 +664,13 @@ def test_restart_after_notbetrieb_ended_restores_device_during_priming(env):
 
 
 def test_restart_during_notbetrieb_continues_emergency_hysteresis(env):
-    # Final-Review C1, Szenario B/C: 0.8 K unter Soll liegt zwischen Exit- (0.5) und Einstiegsschwelle (1.0).
+    # Final-Review C1, Szenario B/C: 0.8 K unter Soll liegt zwischen Exit- (0.5) und Einstiegsschwelle (1.0). Ein
+    # Notbetrieb im Betrieb hat immer einen offenen Tick (ohne ihn stammt er aus dem Abo-inaktiv-Modus und endet bei
+    # aktivem Abo vor dem ersten Check, TP12b).
     _quiet_backup(env, emergency_boost_active=True)
-    save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": True})
+    save_backup(env.paths["FAILSAFE_PATH"], {
+        "failsafe_active": True, "datenfehler": None, "pending": {"seq": "alt-1", "trigger": "daily"},
+    })
     env.ha.states.update({"number.curve_current": 1.5, "number.shift_current": 25.0, "sensor.room_actual": 20.2})
 
     bridge = _start(env)
@@ -661,7 +723,44 @@ def test_reactivated_abo_restart_ends_notbetrieb_silently_and_probes(env):
     assert env.ha.pushes == []
 
 
-def test_stale_notbetrieb_with_unknown_abo_stays_until_the_probe_is_answered(env):
+def test_reactivated_abo_restart_writes_no_emergency_boost(env):
+    """TP12b (1): nach dem Abo-inaktiv-Modus (Notbetrieb ohne offenen Tick) startet die Laufzeit mit wieder aktivem
+    Abo; 1,5 K unter dem Soll (ueber der Einstiegsschwelle 1,0 K) darf kein kurzer Notfall-Boost auf die Anlage."""
+    _quiet_backup(env)
+    save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": True, "datenfehler": None, "pending": None})
+    entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
+    env.ha.states["sensor.room_actual"] = 19.5
+
+    bridge = _start(env)
+    _trigger(env, bridge, "sensor.room_actual")  # naechster lokaler Check
+
+    assert _delivery(bridge).notbetrieb is False
+    assert _backup(env)["emergency_boost_active"] is False
+    assert env.ha.writes == []
+    assert (env.ha.states["number.curve_current"], env.ha.states["number.shift_current"]) == (0.9, 22.0)
+
+
+def test_reactivated_abo_restart_ends_a_running_emergency_boost_during_priming(env, monkeypatch):
+    """TP12b (1), Fix-Runde 1: lief im Abo-inaktiv-Modus schon ein Notfall-Boost (Anlage auf 1,5/25), endet er beim
+    Neustart mit aktivem Abo schon im Priming und der Wiederherstellungspunkt wird geschrieben, obwohl der Raum 1,5 K
+    unter dem Soll liegt (die Hysterese gilt nur im Notbetrieb)."""
+    _quiet_backup(env, emergency_boost_active=True)
+    save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": True, "datenfehler": None, "pending": None})
+    entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
+    env.ha.states.update({"number.curve_current": 1.5, "number.shift_current": 25.0, "sensor.room_actual": 19.5})
+    order = []
+    monkeypatch.setattr(RuntimeChannel, "loop_start", loop_start_aufzeichnen(order, lambda: list(env.ha.writes)))
+
+    bridge = _start(env)
+
+    assert order == [[("number.curve_current", 0.9), ("number.shift_current", 22.0)]]  # vor dem MQTT-Start
+    assert _backup(env)["emergency_boost_active"] is False
+    assert _delivery(bridge).notbetrieb is False
+
+
+def test_stale_notbetrieb_with_unknown_abo_stays_until_the_probe_is_answered_without_an_end_push(env):
+    """TP12b (3): der Notbetrieb aus dem Abo-inaktiv-Modus wurde nie als Notbetrieb gemeldet (dort meldet die
+    Abo-Meldung); bei Abo-Status UNKNOWN bleibt er bis zur Antwort, die ihn ohne "Notbetrieb beendet" beendet."""
     _quiet_backup(env)
     save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": True, "datenfehler": None, "pending": None})
     env.abo["status"] = entitlement.UNKNOWN
@@ -671,7 +770,38 @@ def test_stale_notbetrieb_with_unknown_abo_stays_until_the_probe_is_answered(env
     assert _delivery(bridge).notbetrieb is True
     _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], curve=0.9, shift=22.0)
     assert _delivery(bridge).notbetrieb is False
+    assert env.ha.pushes == []
+
+
+def _reported_stale_notbetrieb(env):
+    """Notbetrieb ohne offenen Tick, dessen "Notbetrieb aktiv" vor dem Abo-inaktiv-Modus erschienen ist (Meldezustand
+    und Text in backup.json), Start mit Abo-Status UNKNOWN."""
+    _quiet_backup(env, notify_states={"notbetrieb": "aktiv"}, notify_messages={"notbetrieb": NOTBETRIEB_ON})
+    save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": True, "datenfehler": None, "pending": None})
+    env.abo["status"] = entitlement.UNKNOWN
+    return _start(env)
+
+
+def test_reported_stale_notbetrieb_keeps_its_notification_while_the_probe_stays_unanswered(env):
+    # TP12b (3), Fix-Runde 1 (a): die gemeldete Meldung bleibt stehen, solange der Notbetrieb laeuft.
+    bridge = _reported_stale_notbetrieb(env)
+    _advance(env, bridge, 30)
+    _advance(env, bridge, 30)  # zwei Ack-Timeouts ohne Antwort
+
+    assert _delivery(bridge).notbetrieb is True
+    assert "smartheat_notbetrieb" not in env.ha.dismissed
+    assert bridge.notifier.state("notbetrieb") == "aktiv"
+    assert env.ha.pushes == []
+
+
+def test_reported_stale_notbetrieb_ends_with_one_end_push_on_the_answer(env):
+    # TP12b (3), Fix-Runde 1 (b): wie vor Task 6 entwarnt die Antwort einmal.
+    bridge = _reported_stale_notbetrieb(env)
+    _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], curve=0.9, shift=22.0)
+
+    assert _delivery(bridge).notbetrieb is False
     assert env.ha.pushes == ["Heizungsbrücke: Serververbindung wiederhergestellt, Notbetrieb beendet."]
+    assert env.ha.dismissed.count("smartheat_notbetrieb") == 1
 
 
 def test_persisted_pending_tick_is_resumed_with_same_seq_and_ends_notbetrieb(env):
@@ -1134,15 +1264,6 @@ def test_answer_with_null_levers_is_a_server_fault_without_writing(env):
     assert "ungültige Serverantwort" in env.ha.pushes[-1]
 
 
-# Hebelsatz mit `level` (Viessmann; wie test_runtime_plan3b.py, das test_runtime importiert und daher nicht zurueck)
-VIESSMANN_OPTIONEN = {
-    "lever_set": "viessmann_vicare", "entity_curve_current": "number.slope", "entity_level_current": "number.shift",
-    "entity_shift_current": "number.normal_temperature", "entity_mode_select": "climate.heizkreis",
-    "entity_heat_limit": "", "entity_min_flow": "",
-}
-VIESSMANN_ZUSTAND = {
-    "number.slope": 1.0, "number.shift": 0.0, "number.normal_temperature": 20.0, "climate.heizkreis::preset_mode": "eco",
-}
 # (Name, Optionen, Zustand der Fake-HA, Hebel des Satzes): Vaillant ohne `level`, Viessmann mit `level`
 HEBELSAETZE = {
     "vaillant": ({}, {}, ("curve", "room_setpoint", "heat_limit")),
@@ -1216,8 +1337,9 @@ def test_huge_integer_as_level_is_a_server_fault(env, gross, caplog):
 
 @pytest.mark.parametrize("ort", ["room_setpoint", "learned_heat_limit"])
 def test_negative_huge_integer_as_room_setpoint_and_learned_heat_limit(env, ort, caplog):
-    """-10**400 (nur das positive Vorzeichen war belegt): als Raum-Soll der Hebel ein Serverfehler ohne Schreiben, als
-    gelernte Heizgrenze uebergangen (kein Datenfehler, kein Fehler im Worker), die Hebelwerte werden geschrieben."""
+    """-10**400 (nur das positive Vorzeichen war belegt): als Raum-Soll der Hebel ein Serverfehler ohne Schreiben; als
+    gelernte Heizgrenze verwirft er die ganzen Lernwerte der Antwort (der Lernstand bleibt leer, kein Datenfehler, kein
+    Fehler im Worker), die Hebelwerte der Antwort werden geschrieben."""
     _quiet_backup(env)
     bridge = _start(env)
     _set_room_target(env, bridge, 20.5)
@@ -1254,7 +1376,6 @@ def test_minus_infinity_as_lever_value_is_a_server_fault(env, hebel):
     _answer(env, bridge, seq, levers={**levers, hebel: float("-inf")})
 
     _ist_serverfehler_ohne_schreiben(env, bridge, vorher)
-
 
 
 def test_snapshot_payload_is_schema_4(env):
@@ -1694,6 +1815,97 @@ def test_grace_end_with_failing_restore_keeps_running_and_retries(env, monkeypat
     assert len(ended) == 1
 
 
+def _restore_logs(caplog, levelno):
+    """Logzeilen der gescheiterten Wiederherstellung am Fristende (abo.log_restore_failure: Betrieb und Start nach
+    Fristende)."""
+    return [r for r in caplog.records if r.name == "smartheat_runtime.abo" and r.levelno == levelno
+            and "Abo-inaktiv-Frist abgelaufen" in r.getMessage()]
+
+
+def _grace_end_during_runtime_with_failing_restore(env, monkeypatch, **backup):
+    _quiet_backup(env, emergency_boost_active=True, **backup)
+    env.ha.states.update({"number.curve_current": 1.5, "number.shift_current": 25.0})  # Notfall-Zeile steht
+    env.abo["status"] = entitlement.INACTIVE
+    entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
+    answers = iter([False])  # Startpruefung, danach ist die Frist abgelaufen
+    monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: next(answers, True))
+    bridge = _start_bridge(env)
+    env.ha.write_error = RuntimeError("HA nicht erreichbar")
+    return bridge
+
+
+def _closing_start_with_failing_restore(env, monkeypatch, **backup):
+    _quiet_backup(env, emergency_boost_active=True, **backup)
+    env.abo["status"] = entitlement.INACTIVE
+    entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
+    monkeypatch.setattr("smartheat_runtime.entitlement.grace_expired", lambda since, now: True)
+    env.ha.states.update({"number.curve_current": 1.5, "number.shift_current": 25.0})  # Notfall-Zeile steht
+    env.ha.write_error = RuntimeError("HA nicht erreichbar")
+    return _start_bridge(env)
+
+
+_RESTORE_FAILED_BEFORE = {"notify_states": {"wiederherstellung": "fehlgeschlagen"},
+                          "notify_messages": {"wiederherstellung": abo.RESTORE_FAILED_MESSAGE}}
+
+
+def test_grace_end_with_a_deferred_restore_logs_one_error_not_one_per_check(env, monkeypatch, caplog):
+    """TP12b (4): scheitert die Wiederherstellung am Fristende, stellt das Schreibbudget (Rueckkehr-Staffel 300, 900,
+    1800 s) die folgenden Versuche zurueck; der Takt (300 s) loggt das nicht jedes Mal als ERROR, sondern einmal je
+    gescheiterter Wiederherstellung (wie die Meldung)."""
+    with caplog.at_level(logging.DEBUG):
+        bridge = _grace_end_during_runtime_with_failing_restore(env, monkeypatch)
+        bridge.worker.run_pending()
+        assert len(_restore_logs(caplog, logging.ERROR)) == 1
+        for _ in range(12):  # eine Stunde im Takt 300 s, darin zurueckgestellte und gescheiterte Versuche
+            _advance(env, bridge, 300)
+
+    assert bridge.idle is False
+    assert (len(_restore_logs(caplog, logging.ERROR)), len(_restore_logs(caplog, logging.WARNING))) == (1, 0)
+    assert env.ha.pushes.count(abo.RESTORE_FAILED_MESSAGE) == 1
+
+    env.ha.write_error = None
+    _advance(env, bridge, 1800)  # spaetestens nach der letzten Stufe der Rueckkehr-Staffel
+    assert bridge.idle is True
+    assert env.ha.pushes[-1] == abo.RESTORE_OK_MESSAGE
+
+
+def test_grace_end_with_a_deferred_restore_after_a_restart_logs_one_warning(env, monkeypatch, caplog):
+    # TP12b (4), Fix-Runde 1: nach einem Neustart steht der Meldezustand schon; die Episode bleibt einmal sichtbar
+    # (WARNING, im INFO-Log), ohne neuen Push und ohne ERROR je Takt.
+    with caplog.at_level(logging.DEBUG):
+        bridge = _grace_end_during_runtime_with_failing_restore(env, monkeypatch, **_RESTORE_FAILED_BEFORE)
+        for _ in range(12):
+            _advance(env, bridge, 300)
+
+    assert bridge.idle is False
+    assert (len(_restore_logs(caplog, logging.ERROR)), len(_restore_logs(caplog, logging.WARNING))) == (0, 1)
+    assert abo.RESTORE_FAILED_MESSAGE not in env.ha.pushes
+
+
+def test_closing_start_with_a_deferred_restore_logs_one_error_not_one_per_retry(env, monkeypatch, caplog):
+    # TP12b (4) im Startpfad (_finish_at_start): Takt 300 s, Rueckkehr-Staffel stellt zurueck.
+    with caplog.at_level(logging.DEBUG):
+        bridge = _closing_start_with_failing_restore(env, monkeypatch)
+        for _ in range(12):
+            _advance(env, bridge, 300)
+
+    assert bridge.reason == "abo_beendet"
+    assert (len(_restore_logs(caplog, logging.ERROR)), len(_restore_logs(caplog, logging.WARNING))) == (1, 0)
+    assert env.ha.pushes.count(abo.RESTORE_FAILED_MESSAGE) == 1
+
+
+def test_closing_start_with_a_deferred_restore_after_a_restart_logs_one_warning(env, monkeypatch, caplog):
+    # TP12b (4), Fix-Runde 1, Startpfad.
+    with caplog.at_level(logging.DEBUG):
+        bridge = _closing_start_with_failing_restore(env, monkeypatch, **_RESTORE_FAILED_BEFORE)
+        for _ in range(12):
+            _advance(env, bridge, 300)
+
+    assert bridge.reason == "abo_beendet"
+    assert (len(_restore_logs(caplog, logging.ERROR)), len(_restore_logs(caplog, logging.WARNING))) == (0, 1)
+    assert abo.RESTORE_FAILED_MESSAGE not in env.ha.pushes
+
+
 def test_inactive_restart_within_grace_does_not_notify_again(env):
     _quiet_backup(env)
     env.abo["status"] = entitlement.INACTIVE
@@ -2085,7 +2297,7 @@ def test_open_tick_at_start_is_sent_on_connect_without_waiting_for_the_ack_timeo
     _quiet_backup(env)
     save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": False, "pending": {"seq": "alt-1", "trigger": "daily"}})
     link = {"up": False}
-    monkeypatch.setattr(RuntimeChannel, "is_connected", lambda self: link["up"])
+    monkeypatch.setattr(RuntimeChannel, "is_connected", verbindung_aus(link))
 
     bridge = _start(env)
     assert _mqtt(env).snapshots == []
@@ -2612,6 +2824,60 @@ def test_pure_disk_fault_cycle_adds_no_data_fault_push(env, monkeypatch):
     assert _delivery(bridge).datenfehler is None
 
 
+def test_repaired_disk_reaches_the_delivery_in_the_next_health_tick(env, monkeypatch):
+    """TP12b (2): die Antwort scheitert vier Mal am Datentraeger (Daten-Wiederholungen 30, 300, 900 s, danach wartet
+    der Tick 3600 s). Nach der Reparatur holt der naechste Takt EV_HEALTH (300 s, Pruefintervall) die Antwort, nicht
+    erst der Daten-Retry bis zu 60 min spaeter."""
+    _quiet_backup(env)
+    bridge = _start(env)
+    _connect(env, bridge)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[0]["seq"]
+    with monkeypatch.context() as patch:
+        _break_backup_writes(patch)
+        _answer(env, bridge, seq)
+        for wait in (30, 300, 900):
+            _advance(env, bridge, wait)
+            assert _mqtt(env).snapshots[-1]["seq"] == seq
+            _answer(env, bridge, seq)
+        assert _delivery(bridge).pending.stage == 4  # naechste Wartezeit 3600 s
+        assert _delivery(bridge).datenfehler == DataFault("local", ("datentraeger",))
+    sent = len(_mqtt(env).snapshots)
+
+    # Der letzte Takt EV_HEALTH lief beim Vorspulen um 900 s mit, der naechste folgt 300 s danach (Pruefintervall,
+    # dokument_config.DEFAULT_LOCAL_CHECK_INTERVAL_SECONDS). Repariert, aber 1 s vor dem Takt: die Zustellung wartet.
+    _advance(env, bridge, 299)
+    assert len(_mqtt(env).snapshots) == sent
+
+    _advance(env, bridge, 1)  # Takt EV_HEALTH: flush gelingt, der Tick geht sofort
+
+    assert [s["seq"] for s in _mqtt(env).snapshots[sent:]] == [seq]
+    _answer(env, bridge, seq)
+    assert _delivery(bridge).pending is None
+    assert _delivery(bridge).datenfehler is None
+    assert _last_event(env)["status"] == "regelt"
+
+
+def test_permanently_missing_outdoor_temperature_is_no_data_fault_and_telemetry_omits_it(env):
+    """Heutiges Verhalten, Restpunkt R3-1: faellt eine Pflicht-Rolle dauerhaft aus (client1 2026-10-07: Aussentemperatur
+    37 min unavailable), entsteht ohne Tick kein Datenfehler, und die Telemetrie laesst das Feld still weg."""
+    _quiet_backup(env)
+    bridge = _start(env)
+    _connect(env, bridge)
+    assert _mqtt(env).telemetry[-1]["outdoor_temp"] == 5.0  # vorher gemeldet
+
+    env.ha.states["sensor.outdoor_temp"] = ValueError("could not convert string to float: 'unavailable'")
+    sent = len(_mqtt(env).telemetry)
+    for _ in range(8):  # 40 min im Takt 300 s
+        _advance(env, bridge, 300)
+
+    payloads = _mqtt(env).telemetry[sent:]
+    assert len(payloads) >= 7
+    assert all("outdoor_temp" not in p and "datenfehler" not in p for p in payloads)
+    assert _delivery(bridge).datenfehler is None
+    assert (_last_event(env)["status"], _last_event(env)["datenfehler"]) == ("regelt", None)
+
+
 def test_telemetry_reports_the_unwritable_disk_as_local_data_fault(env, monkeypatch):
     _quiet_backup(env)
     bridge = _start(env)
@@ -2749,6 +3015,90 @@ def test_telemetry_is_not_published_without_connection(env):
     _advance(env, bridge, 300)
 
     assert len(_mqtt(env).telemetry) == sent
+
+
+def test_vaillant_daily_energy_reaches_the_server_as_a_growing_sum(env):
+    """Der Tageszaehler der Bindung (Vaillant: daily) geht als wachsende Summe hinaus (A4-49); die Waerme-Erkennung
+    liegt beim Server (Audit 4 P-B)."""
+    env.ha.states.update({"sensor.waerme_heute": 8.0, "sensor.waerme_heute::unit_of_measurement": "kWh"})
+    bridge = _start(env, entity_energy_thermal_heating="sensor.waerme_heute")
+    assert _mqtt(env).telemetry[-1]["energy"] == {"thermal_heating": 8.0}
+
+    env.ha.states["sensor.waerme_heute"] = 0.5  # Mitternacht
+    _advance(env, bridge, 300)
+
+    assert _mqtt(env).telemetry[-1]["energy"] == {"thermal_heating": 8.5}
+    assert "waerme" not in _mqtt(env).telemetry[-1]
+
+
+def test_vaillant_energy_in_a_foreign_unit_is_left_out(env, caplog):
+    """Es gilt die erwartete Einheit der Bindung (Vaillant: kWh, Spec Stufe 3 S4b 5): ein Wh-Tageszaehler fehlt."""
+    env.ha.states.update({"sensor.waerme_heute": 8000.0, "sensor.waerme_heute::unit_of_measurement": "Wh"})
+    with caplog.at_level(logging.WARNING):
+        _start(env, entity_energy_thermal_heating="sensor.waerme_heute")
+
+    assert _mqtt(env).telemetry and "energy" not in _mqtt(env).telemetry[-1]
+    assert "Energiekanal 'thermal_heating' meldet 'Wh' statt kWh und wird weggelassen" in caplog.text
+
+
+def _ausfall_mit_fehlversuchen(env, failures):
+    """Laufende Laufzeit; dann faellt der Link aus und `failures` Verbindungsversuche scheitern. Der erste Lauf des
+    Verbindungswaechters (300 s) merkt den Beginn des Ausfalls."""
+    _quiet_backup(env)
+    bridge = _start(env)
+    _mqtt(env).connected = False
+    _mqtt(env).connect_failures = failures
+    _advance(env, bridge, 300)
+    return bridge
+
+
+@pytest.mark.parametrize(("failures", "down_seconds", "queried"), [
+    (3, 900, True), (2, 900, False), (3, 899, False), (0, 2000, False),
+], ids=["3-fehlversuche-900s", "2-fehlversuche", "899s", "ohne-fehlversuche"])
+def test_a_long_outage_with_repeated_connect_failures_reads_the_abo_status_once(env, failures, down_seconds, queried):
+    bridge = _ausfall_mit_fehlversuchen(env, failures)
+    before = env.abo["queries"]
+
+    _advance(env, bridge, down_seconds)
+
+    assert env.abo["queries"] - before == (1 if queried else 0)  # Abfragen der Abo-Quelle des Dokuments
+
+
+def test_an_inactive_abo_found_during_an_outage_starts_no_probe_tick(env):
+    bridge = _ausfall_mit_fehlversuchen(env, 3)
+    env.abo["status"] = entitlement.INACTIVE
+    assert _abo_inactive_since(bridge) is None
+
+    _advance(env, bridge, 900)
+
+    assert _abo_inactive_since(bridge) is not None
+    assert _delivery(bridge).pending is None
+
+
+@pytest.mark.parametrize("status", [entitlement.ACTIVE, entitlement.UNKNOWN])
+def test_an_active_or_unclear_abo_during_an_outage_still_starts_the_probe_tick(env, status):
+    """Regression: ein normaler Ausfall (Abo aktiv oder Abfrage unklar) darf den Notbetrieb nicht verhindern."""
+    bridge = _ausfall_mit_fehlversuchen(env, 3)
+    env.abo["status"] = status
+    pushes = list(env.ha.pushes)
+    assert _delivery(bridge).pending is None
+
+    _advance(env, bridge, 900)
+
+    assert _delivery(bridge).pending is not None and _delivery(bridge).pending.trigger == "target_change"  # Pruef-Tick
+    assert _abo_inactive_since(bridge) is None
+    assert env.ha.pushes == pushes  # keine Meldung an den Kunden
+
+
+def test_a_reconnect_resets_the_throttle_of_the_abo_query(env):
+    bridge = _ausfall_mit_fehlversuchen(env, 3)
+    _advance(env, bridge, 900)
+    assert bridge.connection_failing_queried_at is not None
+
+    _mqtt(env).connected = True
+    _connect(env, bridge)
+
+    assert bridge.connection_failing_queried_at is None
 
 
 def test_successful_zone_preparation_costs_no_quota_across_restarts(env):

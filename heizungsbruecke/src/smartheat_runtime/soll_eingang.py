@@ -4,15 +4,17 @@ Worker. Der Soll-Speicher schreibt, der Debouncer beendet die Eingabe (Gateway 1
 HA-Trigger mit for: 10 s). Erst dann geht ein Wunsch einmal an den Geraetekern (begrenzt auf den Bedienbereich); der
 begrenzte Wert gilt sofort und wird an die Soll-Quelle zurueckgeschrieben, danach EV_LOCAL_CHECK(room_target_fired).
 Eine lokale Eingabe gleicht die Soll-Quelle zusaetzlich an. Soll-Quelle aus (Modus off oder ein Soll bis
-FROSTSCHUTZ_BIS): kein Wunsch, auch eine lokale Eingabe wird verworfen (5c F/Q3), Meldung ueber soll_quelle_aus, eine
-neue Bedienung wird nicht geschrieben; wieder an:
+FROSTSCHUTZ_BIS; ein unbrauchbarer Wert der Quelle setzt oder beendet das nicht): kein Wunsch, auch eine lokale
+Eingabe wird verworfen (5c F/Q3), Meldung ueber soll_quelle_aus, eine neue Bedienung wird nicht geschrieben; wieder an:
 das geltende Soll geht an die Quelle, sofern sie etwas anderes zeigt (Echo-Fenster, offener Schreibbefehl). Die
 Quelle selbst (Zigbee, HA-Entity) liefert der Host ueber SollQuelle."""
 import logging
 from collections.abc import Callable
 from typing import Protocol
 
+from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_runtime.debounce import Debouncer
+from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
 from smartheat_runtime.runtime import EV_LOCAL_CHECK
 from smartheat_runtime.soll_speicher import SOURCE_LOKAL, SOURCE_PORTAL, TargetStore
 from smartheat_runtime.worker import Event, RegulationWorker
@@ -50,6 +52,7 @@ class SollEingang:
         self._lokal_offen = False
         self._herkunft: tuple[str | None, str | None] = (None, None)
         self._vor_wunsch: tuple[float, str] | None = None  # Soll und Quelle vor dem ersten offenen Wunsch
+        self._unbrauchbar_gemeldet: set[str] = set()  # Fehlerarten mit WARNING seit dem letzten brauchbaren Wert
         self._debouncer = Debouncer(worker, DEBOUNCE_KIND, entprellen_s, self._entprellt)
         worker.register(EV_TARGET_INPUT, self._on_target_input)
         worker.register(EV_SOLL_MODUS, self._on_mode)
@@ -118,9 +121,16 @@ class SollEingang:
             self._vor_wunsch = None
             self._herkunft = (herkunft, durch)
         else:
-            if isinstance(value, int | float) and not isinstance(value, bool) and value <= FROSTSCHUTZ_BIS:
+            if ist_endliche_zahl(value) and value <= FROSTSCHUTZ_BIS:
+                self._unbrauchbar_gemeldet.clear()
                 self._setze_aus("frost", True)
                 return
+            if not is_plausible(value, ROOM_TEMP_RANGE):
+                # Unbrauchbar (nicht endlich, Text, bool, None, ueber dem Raumbereich): aendert die Frostschutz-Stellung
+                # nicht, ist kein Wunsch (Fund M4 aus T5'); vorher hob ein einziger solcher Wert die Stellung auf.
+                self._unbrauchbar_melden(value)
+                return
+            self._unbrauchbar_gemeldet.clear()
             self._setze_aus("frost", False)
             vor_wunsch = (self._store.value, self._store.source)
             if self._aus or not self._store.apply_thermostat(value):
@@ -131,6 +141,23 @@ class SollEingang:
             self._lokal_offen = False
             self._herkunft = (herkunft, durch)
         self._debouncer.poke()
+
+    def _unbrauchbar_melden(self, value: object) -> None:
+        """Je Fehlerart eine WARNING bis zum naechsten brauchbaren Wert, danach DEBUG: das Gateway reicht jede
+        Zigbee-Meldung mit occupied_heating_setpoint durch, ein dauerhaft unbrauchbarer Wert flutete sonst das Log.
+        Ohne den Wert (Text aus HA oder Zigbee)."""
+        if not isinstance(value, int | float) or isinstance(value, bool):
+            art = f"kein Zahlenwert ({type(value).__name__})"
+        elif not ist_endliche_zahl(value):
+            art = "nicht endlich"
+        else:
+            art = "ausserhalb des Raumbereichs"
+        if art in self._unbrauchbar_gemeldet:
+            logger.debug("Wunschtemperatur vom Thermostat unbrauchbar (%s), verworfen", art)
+            return
+        self._unbrauchbar_gemeldet.add(art)
+        logger.warning("Wunschtemperatur vom Thermostat unbrauchbar (%s), verworfen; weitere gleiche nur im DEBUG-Log "
+                       "bis zu einem brauchbaren Wert", art)
 
     def _entprellt(self) -> None:
         if self._wunsch_offen:

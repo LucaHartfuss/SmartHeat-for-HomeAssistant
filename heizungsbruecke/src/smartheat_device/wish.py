@@ -45,9 +45,10 @@ def begrenzt_text(roh: float, begrenzt: float, herkunft: str | None) -> str:
     return f"{quelle} auf {_zahl(roh)} °C gestellt, SmartHeat regelt auf {_zahl(begrenzt)} °C"
 
 
-def soll_quelle_aus_text(wirksam: float) -> str:
-    return (f"Thermostat ist aus, SmartHeat regelt weiter auf {_zahl(wirksam)} °C; Heizung aus über die Sommersperre "
-            "bzw. im Portal")
+def soll_quelle_aus_text(wirksam: float | None) -> str:
+    """Ohne wirksames Soll (unbekannt) nennt der Text keinen Wert; die Meldung bleibt trotzdem offen (5b-D1-4)."""
+    regelt = "SmartHeat regelt weiter" if wirksam is None else f"SmartHeat regelt weiter auf {_zahl(wirksam)} °C"
+    return f"Thermostat ist aus, {regelt}; Heizung aus über die Sommersperre bzw. im Portal"
 
 
 @dataclass(frozen=True)
@@ -72,12 +73,18 @@ class Wunsch:
         return nachrichten.pruefen("wunsch", body, wire.WISH_FIELDS, wire.WISH_OPTIONAL)
 
 
+def pruefen_herkunft(herkunft: str | None, durch: str | None) -> None:
+    """ValueError, wenn herkunft oder durch kein Vertragswert ist (None = nicht angegeben). Device.wunsch prueft so
+    schon im aufrufenden Thread, wie bei einer nicht endlichen Zahl (5b-D1-4)."""
+    if herkunft is not None and herkunft not in wire.HERKUNFT:
+        raise ValueError("herkunft unbekannt")
+    if durch is not None and durch not in wire.DURCH:
+        raise ValueError("durch unbekannt")
+
+
 def neu(raum_soll: float, roh: float | None, *, basis_version: int, uhr_synchron: bool, herkunft: str | None,
         durch: str | None, wall: float) -> Wunsch:
-    if herkunft is not None and herkunft not in wire.HERKUNFT:
-        raise ValueError(f"herkunft {herkunft!r} unbekannt")
-    if durch is not None and durch not in wire.DURCH:
-        raise ValueError(f"durch {durch!r} unbekannt")
+    pruefen_herkunft(herkunft, durch)
     ts = datetime.fromtimestamp(wall, UTC).isoformat(timespec="seconds")
     return Wunsch(uuid.uuid4().hex, basis_version, ts, uhr_synchron, raum_soll, roh, herkunft, durch)
 

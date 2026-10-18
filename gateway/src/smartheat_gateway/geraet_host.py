@@ -6,8 +6,9 @@ Status und Raum der Laufzeit liegen im Prozess (GeraetZustand; bis 0.5.0 retaine
 Agenten). Meldungen der Laufzeit gehen als up/notifications an den Server (MeldungSink, Regeln wie der Agent bis 0.5.0:
 show = offene kritische Meldung, withdraw = geschlossen, push = Ereignis). Die LED-Datei data/agent_state.json (Name aus
 0.5.0) schreibt die ZustandsDatei bei jedem Wechsel und mindestens jede Minute. Eine laufzeitrelevante neue
-Konfiguration fordert einen Neustart an (geraet_host_basis.EV_RELOAD im Regel-Worker), eine neue Bedienung geht als
-Soll-Eingang an den Worker; kommt beides, bevor main() den Worker bindet (der Geraete-Thread laeuft schon), stellt
+Konfiguration fordert einen Neustart an (geraet_host_basis.EV_RELOAD im Regel-Worker), ebenso eine neue, nicht leere
+Konfiguration derselben Anlage, die die Abmelde-Markierung aufhebt (5b-D2-7); eine neue Bedienung geht als Soll-Eingang
+an den Worker; kommt beides, bevor main() den Worker bindet (der Geraete-Thread laeuft schon), stellt
 worker_binden den Neustart bzw. die letzte Bedienung nach (Spec 3.3). Der Wechsel von eingerichtet auf leer markiert das
 Aufraeumen (A4-07), das der naechste Start ausfuehrt (vergessen). Die Software-Bruecke sendet die Meldungen des
 Updaters (software_meldungen.json, fortlaufende seq) als up/result mit dokument software und quittiert die zuletzt
@@ -75,24 +76,70 @@ class ZustandsDatei:
             return
         if self._last is None or self._last[0] != zustand:
             self._since = self._now_iso()
-        dateien.schreiben_json(self._path, {"zustand": zustand, "seit": self._since, "ts": self._now_iso()}, modus=dateien.LESBAR)
+        dateien.schreiben_json(self._path, {"zustand": zustand, "seit": self._since, "ts": self._now_iso()},
+                               modus=dateien.LESBAR)
         self._last = (zustand, now)
 
 
-def vergessen(paths: Paths) -> None:
+def vergessen(paths: Paths) -> bool:
     """Leere Konfiguration nach einer Einrichtung (A4-07): Laufzeit-Ordner (Ursprungswerte, Notbetrieb, Abo-Frist,
     Soll-Speicher, Abmelde-Markierung), Inventur-Proben und die Anmeldedaten aller Cloud-Treiber weg; Geraetekern
-    (device/) und Simulation bleiben. Beim Start eines frischen Prozesses, bevor die Laufzeit liest. Wirft nie."""
-    shutil.rmtree(paths.runtime_dir, ignore_errors=True)
+    (device/, auch die Rastung) und Simulation bleiben. Beim Start eines frischen Prozesses, bevor die Laufzeit liest.
+    Wirft nie; True nur, wenn alles weg ist. runtime/backup.json (Bindung an Einrichtung und Anlage) zuletzt und nur,
+    wenn alles andere weg ist: bleibt etwas liegen, verwirft bind_to_tenant es bei der Einrichtung einer anderen Anlage.
+    Scheitert ein Loeschen (EACCES, EIO), bleibt die Aufraeum-Markierung fuer den naechsten Start (wie im Add-on);
+    exists() steht mit im try (wirft bei EIO/EACCES im stat)."""
+    gescheitert = False
+
+    def entfernen(path: Path, wie: Callable[[Path], object]) -> None:
+        nonlocal gescheitert
+        try:
+            if path.exists():
+                wie(path)
+        except OSError as error:
+            gescheitert = True
+            logger.warning("%s nicht geloescht (%s), neuer Versuch beim naechsten Start", path.name,
+                           type(error).__name__)
+
+    def datei_weg(path: Path) -> None:
+        path.unlink(missing_ok=True)  # zwischen exists und unlink verschwunden: weg
+
+    def eintrag_weg(path: Path) -> None:
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
+
+    eintraege: list[Path] = []
+    try:
+        if paths.runtime_dir.exists():
+            eintraege = sorted(path for path in paths.runtime_dir.iterdir() if path != paths.backup)
+    except OSError as error:
+        gescheitert = True
+        logger.warning("%s nicht geloescht (%s), neuer Versuch beim naechsten Start", paths.runtime_dir.name,
+                       type(error).__name__)
+    for path in eintraege:
+        entfernen(path, eintrag_weg)
     befehle.forget_inventory(paths)
+    for path in (paths.inventur, paths.inventur.with_name(paths.inventur.name + ".tmp")):
+        entfernen(path, datei_weg)  # noch da (forget_inventory gescheitert): zweiter Versuch, sonst Teil-Scheitern
     for driver_id, driver_type in registry.DRIVERS.items():
         if driver_type.kind != KIND_CLOUD:
             continue
         try:
             registry.create(driver_id, {}, paths, writer=False).forget_credentials()
         except Exception as error:
+            gescheitert = True
             logger.error("Anmeldedaten von %s nicht geloescht (%s)", driver_id, type(error).__name__)
+    # Erst backup.json, dann der (bis auf Neues) leere Ordner; jeder Schritt nur nach vollem Erfolg der vorigen.
+    for path, wie in ((paths.backup, datei_weg), (paths.runtime_dir, shutil.rmtree)):
+        if gescheitert:
+            return False
+        entfernen(path, wie)
+    if gescheitert:
+        return False
     logger.info("Anlagengebundener Zustand geloescht (Gateway nicht mehr eingerichtet)")
+    return True
 
 
 class GatewayDeviceHost(GeraetHostBasis):
@@ -113,6 +160,9 @@ class GatewayDeviceHost(GeraetHostBasis):
 
     def aufraeumen_pfad(self) -> Path:
         return self.paths.aufraeumen
+
+    def abgemeldet_pfad(self) -> Path:
+        return self.paths.abgemeldet
 
     # --- Sicht der Laufzeit (host.GatewayHost) ---
 
@@ -175,7 +225,8 @@ class GatewayDeviceHost(GeraetHostBasis):
 
     def software_soll(self, software: dict | None) -> None:
         if dateien.lesen_json(self.paths.software_soll) != software or not self.paths.software_soll.exists():
-            dateien.schreiben_json(self.paths.software_soll, software, modus=dateien.LESBAR)  # 0644: der Updater (root) liest
+            # 0644: der Updater (root) liest
+            dateien.schreiben_json(self.paths.software_soll, software, modus=dateien.LESBAR)
 
     def runtime_status(self) -> dict | None:
         return self.zustand.status

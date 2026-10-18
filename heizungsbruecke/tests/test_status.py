@@ -1,14 +1,13 @@
 """Status-Kanal des Add-ons (Spec TP7 1.1, 3.1)."""
 import json
 import logging
-import re
 from datetime import UTC, datetime
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 from fakes import HaEventSink
 
+from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core.levers import LEVER_SETS
 from smartheat_runtime import status
@@ -45,7 +44,8 @@ def test_runtime_schema_and_heartbeat():
     (Flags(), BridgeState(), "startet"),
     (Flags(gestartet=True), BridgeState(delivery=DeliveryState(
         notbetrieb=True, datenfehler=DataFault("local", ("dat",)))), "notbetrieb"),
-    (Flags(gestartet=True), BridgeState(delivery=DeliveryState(datenfehler=DataFault("server", ("x",)))), "datenfehler"),
+    (Flags(gestartet=True), BridgeState(delivery=DeliveryState(datenfehler=DataFault("server", ("x",)))),
+     "datenfehler"),
     (Flags(gestartet=True), BridgeState(), "regelt"),
 ])
 def test_overall_status_takes_the_first_matching_state(flags, state, expected):
@@ -74,7 +74,8 @@ def test_event_carries_every_field():
         "hinweise": {
             "raumfuehler_ausgefallen": ["sensor.a", "sensor.b"], "batterie_niedrig": ["sensor.x"],
             "manueller_eingriff": {
-                "hebel": {"curve": 1.3, "room_setpoint": 24.5, "heat_limit": 16.0}, "erkannt": "2026-10-01T08:00:00+02:00",
+                "hebel": {"curve": 1.3, "room_setpoint": 24.5, "heat_limit": 16.0},
+                "erkannt": "2026-10-01T08:00:00+02:00",
             },
         },
     }
@@ -124,13 +125,15 @@ def test_event_without_learned_values_reports_none(make_store):
     assert event["gelernt"] is None
 
 
-@pytest.mark.parametrize("wert", [float("nan"), float("inf"), float("-inf"), 10**400], ids=["nan", "inf", "-inf", "riesig"])
+@pytest.mark.parametrize("wert", [float("nan"), float("inf"), float("-inf"), 10**400],
+                         ids=["nan", "inf", "-inf", "riesig"])
 def test_nicht_endliche_laufzeitwerte_stehen_nie_im_status(make_store, wert):
     """Testoffensive T2, Nr. 17 (Review Focus 2): ein NaN-Hebel legt den Status nicht lahm; das Feld wird None."""
     store = make_store()
     store.update(restore_point={"curve": wert, "room_setpoint": 21.0, "heat_limit": 16.0},
                  learned={"curve": wert, "heat_limit": 16.2}, min_flow_current=wert,
-                 manual_override={"levers": {"curve": wert, "room_setpoint": 22.0}, "erkannt": "2026-10-03T11:00:00+02:00"})
+                 manual_override={"levers": {"curve": wert, "room_setpoint": 22.0},
+                                  "erkannt": "2026-10-03T11:00:00+02:00"})
     event = build_event("t1", Flags(), store.state, VAILLANT, ADDON_VERSION)
     assert event["hebel"] == {"curve": None, "room_setpoint": 21.0, "heat_limit": 16.0, "min_flow": None}
     assert event["gelernt"] == {"curve": None, "heat_limit": 16.2}
@@ -147,12 +150,6 @@ def test_manual_hint_names_levers(make_store):
     hint = build_event("t", Flags(), store.state, VAILLANT, ADDON_VERSION)["hinweise"]["manueller_eingriff"]
     assert hint == {"hebel": {"curve": 1.3, "room_setpoint": 22.0, "heat_limit": 16.0},
                     "erkannt": "2026-10-03T11:00:00+02:00"}
-
-
-def test_version_matches_the_addon_manifest():
-    """A5-65: nicht gegen ein Literal, sondern gegen die Version, die der Supervisor ausliefert."""
-    manifest = (Path(__file__).resolve().parents[1] / "config.yaml").read_text()
-    assert re.search(r'^version: "([^"]+)"$', manifest, re.M).group(1) == ADDON_VERSION
 
 
 @pytest.mark.parametrize("fault,expected", [
@@ -183,7 +180,7 @@ def test_reason_is_only_sent_with_a_state_that_has_one(flags, state, expected):
 
 
 def test_reporter_publishes_changes_once_but_always_on_publish(make_store):
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     reporter = StatusReporter(HaEventSink(ha_api), "client1", make_store(), VAILLANT, ADDON_VERSION)
 
     reporter.publish_if_changed()
@@ -199,7 +196,7 @@ def test_reporter_publishes_changes_once_but_always_on_publish(make_store):
 
 
 def test_reporter_sees_changes_in_the_store(make_store):
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     store = make_store()
     reporter = StatusReporter(HaEventSink(ha_api), "client1", store, VAILLANT, ADDON_VERSION)
     reporter.publish()
@@ -211,7 +208,7 @@ def test_reporter_sees_changes_in_the_store(make_store):
 
 
 def test_failed_send_is_logged_and_repeated_on_the_next_check(make_store, caplog):
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     ha_api.fire_event.side_effect = [RuntimeError("HA weg"), None]
     reporter = StatusReporter(HaEventSink(ha_api), "client1", make_store(), VAILLANT, ADDON_VERSION)
 

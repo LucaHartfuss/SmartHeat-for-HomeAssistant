@@ -1,15 +1,16 @@
 """Konformitaet der Geraete-Hosts (V2; Audit 5 A5-58; Spec Stufe 3 S6 4.1): dieselben Pruefungen fuer HaDeviceHost und
 GatewayDeviceHost. Jeder Host baut eine Welt (Fixture in seiner Testdatei); die Pruefungen kennen nur die gemeinsame
 Sicht: Binden des Workers, Nachstellen von Neustart und Bedienung, Ursprungswerte, Dokumentsicht, Aufraeum-Markierung,
-Bedienwunsch. Rueckrufe des Geraetekerns werfen nie, bis auf eine bekannte Ausnahme (Restpunkt S3S6-Markierung: ein
-Schreibfehler der Markierung in konfiguration_uebernommen geht an Device._host_rufen, der Neustart entfaellt); die
-Suite prueft das nicht."""
+Abmelde-Markierung (verfaellt mit einer neuen Konfiguration derselben Anlage, 5b-D2-7), Bedienwunsch. Rueckrufe des
+Geraetekerns werfen nie, bis auf konfiguration_vorbereiten (vor dem Speichern, Spec Testoffensive 12.6, Nr. 38): laesst
+sich die Markierung nicht schreiben, geht der OSError an den Geraetekern, der das Dokument zurueckhaelt."""
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
 from smartheat_core import dateien
+from smartheat_device.commands import CommandRegister
 from smartheat_runtime import dokument_config
 from smartheat_runtime.soll_eingang import EV_TARGET_INPUT
 from smartheat_runtime.soll_speicher import SOURCE_PORTAL
@@ -55,6 +56,7 @@ class Welt:
     clock: Callable[[], float]
     reload_kind: str
     aufraeumen_pfad: Path
+    abgemeldet_pfad: Path  # wohin sign_off die Abmelde-Markierung schreibt (Host)
     konfiguration: dict  # eine eingerichtete Konfiguration des Hosts
     wunsch_herkunft: str  # herkunft, mit der host.wunsch(wert) den Geraetekern ruft
 
@@ -148,6 +150,17 @@ def neustart_vor_dem_binden_kommt_beim_binden(w: Welt) -> None:
     assert seen == [(w.reload_kind, None)]
 
 
+def im_ruhezustand_kommt_ein_neustart_vor_dem_binden_beim_binden(w: Welt) -> None:
+    """Die Ersteinrichtung im Ruhezustand haengt daran (S3S6-Reste 1): soll_eingang=False haelt nur die Bedienung
+    zurueck, nie die Neustart-Anforderung."""
+    w.verbunden()
+    w.host.neustart_anfordern()
+    worker, seen = w.worker()
+    w.host.worker_binden(worker, soll_eingang=False)
+    worker.run_pending()
+    assert seen == [(w.reload_kind, None)]
+
+
 def neustart_nach_dem_binden_kommt_sofort(w: Welt) -> None:
     w.verbunden()
     worker, seen = w.worker()
@@ -166,12 +179,47 @@ def ursprungswerte_sind_kopien(w: Welt) -> None:
     assert w.host.ursprungswerte() == {"heat_limit": 18.0}
 
 
-def leer_nach_eingerichtet_markiert_aufraeumen_und_startet_neu(w: Welt) -> None:
+def vorbereiten_leer_nach_eingerichtet_markiert_aufraeumen(w: Welt) -> None:
+    """Die Markierung entsteht vor dem Speichern; den Neustart fordert erst konfiguration_uebernommen an."""
+    w.verbunden()
+    alt = dict(w.konfiguration)
+    assert not w.aufraeumen_pfad.exists()
+    w.host.konfiguration_vorbereiten(alt, {**alt, "anlage": None})
+    assert dateien.lesen_json(w.aufraeumen_pfad) == {"anlage": alt["anlage"], "konfiguration": alt,
+                                                     "zurueckgesetzt": False}
+    worker, seen = w.worker()
+    w.host.worker_binden(worker)
+    worker.run_pending()
+    assert seen == []
+
+
+def vorbereiten_ohne_wechsel_auf_leer_markiert_nichts(w: Welt) -> None:
+    w.verbunden()
+    alt = dict(w.konfiguration)
+    leer = {**alt, "anlage": None}
+    for vorher, nachher in ((None, leer), (leer, leer), (alt, alt), (alt, {**alt, "profil": "anderes"}),
+                            (leer, alt)):
+        w.host.konfiguration_vorbereiten(vorher, nachher)
+    assert not w.aufraeumen_pfad.exists()
+
+
+def vorbereiten_wirft_wenn_die_markierung_nicht_geschrieben_werden_kann(w: Welt) -> None:
+    w.verbunden()
+    alt = dict(w.konfiguration)
+    w.aufraeumen_pfad.mkdir(parents=True)  # ein Ordner an der Stelle der Datei: os.replace scheitert (auch als root)
+    try:
+        w.host.konfiguration_vorbereiten(alt, {**alt, "anlage": None})
+    except OSError:
+        pass
+    else:
+        raise AssertionError("konfiguration_vorbereiten muss den OSError an den Geraetekern geben")
+
+
+def uebernommen_leer_nach_eingerichtet_startet_neu_ohne_markierung(w: Welt) -> None:
     w.verbunden()
     alt = dict(w.konfiguration)
     w.host.konfiguration_uebernommen(alt, {**alt, "anlage": None})
-    assert dateien.lesen_json(w.aufraeumen_pfad) == {"anlage": alt["anlage"], "konfiguration": alt,
-                                                     "zurueckgesetzt": False}
+    assert not w.aufraeumen_pfad.exists()
     worker, seen = w.worker()
     w.host.worker_binden(worker)
     worker.run_pending()
@@ -180,6 +228,7 @@ def leer_nach_eingerichtet_markiert_aufraeumen_und_startet_neu(w: Welt) -> None:
 
 def die_erste_leere_konfiguration_markiert_nichts(w: Welt) -> None:
     w.verbunden()
+    w.host.konfiguration_vorbereiten(None, {"anlage": None})
     w.host.konfiguration_uebernommen(None, {"anlage": None})
     assert not w.aufraeumen_pfad.exists()
 
@@ -192,6 +241,78 @@ def eine_unerhebliche_aenderung_startet_nicht_neu(w: Welt) -> None:
     w.host.worker_binden(worker)
     worker.run_pending()
     assert seen == []
+
+
+def _abmelden(w: Welt, anlage: str) -> None:
+    """Abmelde-Markierung wie nach einem sign_off (Inhalt und Modus wie dokument_config.abmelden)."""
+    dateien.schreiben_json(w.abgemeldet_pfad, {"anlage": anlage}, modus=dateien.PRIVAT)
+
+
+def eine_neue_konfiguration_derselben_anlage_hebt_die_abmeldung_auf(w: Welt) -> None:
+    """5b-D2-7 (Spec Testoffensive 12.7): das Geraet folgt dem Server. Auch ohne laufzeitrelevante Aenderung (gleicher
+    Inhalt in neuer Version, nur das Profil anders) faellt die Markierung, und der Neustart verlaesst "abgemeldet"."""
+    w.verbunden()
+    alt = dict(w.konfiguration)
+    worker, seen = w.worker()
+    w.host.worker_binden(worker)
+    for neu in (dict(alt), {**alt, "profil": "anderes_profil"}):
+        _abmelden(w, alt["anlage"])
+        assert dokument_config.abgemeldet(w.abgemeldet_pfad, neu)
+        w.host.konfiguration_uebernommen(alt, neu)
+        assert not dokument_config.abgemeldet(w.abgemeldet_pfad, neu)
+        assert not w.abgemeldet_pfad.exists()
+        worker.run_pending()
+        assert seen == [(w.reload_kind, None)]
+        seen.clear()
+
+
+def ein_sign_off_nach_der_neuen_konfiguration_meldet_wieder_ab(w: Welt) -> None:
+    device = w.verbunden()
+    alt = dict(w.konfiguration)
+    neu = {**alt, "profil": "anderes_profil"}
+    _abmelden(w, alt["anlage"])
+    w.host.konfiguration_uebernommen(alt, neu)
+    device.konf = neu
+    assert not dokument_config.abgemeldet(w.abgemeldet_pfad, neu)
+    worker, seen = w.worker()
+    w.host.worker_binden(worker)
+    worker.run_pending()
+    seen.clear()
+    gesendet: list = []
+    register = CommandRegister(w.abgemeldet_pfad.parent / "befehle", lambda body: gesendet.append(body) or True,
+                               clock=w.clock)
+    w.host.befehle_eintragen(register)
+    register.empfangen({"schema": 1, "command_id": "c1", "kind": "sign_off", "payload": {},
+                        "expires_at": "2027-01-01T00:00:00+00:00"})  # down/command wie vom Server
+    assert gesendet == []  # wartet auf den Status "abgemeldet" (Waiting), kein Fehlerergebnis
+    assert dateien.lesen_json(w.abgemeldet_pfad) == {"anlage": alt["anlage"]}
+    assert dokument_config.abgemeldet(w.abgemeldet_pfad, neu)
+    worker.run_pending()
+    assert seen == [(w.reload_kind, None)]
+
+
+def eine_leere_oder_fremde_konfiguration_laesst_die_abmeldung_stehen(w: Welt) -> None:
+    w.verbunden()
+    alt = dict(w.konfiguration)
+    _abmelden(w, alt["anlage"])
+    for neu in ({**alt, "anlage": None}, {**alt, "anlage": ""}, {**alt, "anlage": "andere_anlage"}):
+        w.host.konfiguration_uebernommen(alt, neu)
+        assert dateien.lesen_json(w.abgemeldet_pfad) == {"anlage": alt["anlage"]}
+    assert dokument_config.abgemeldet(w.abgemeldet_pfad, alt)
+
+
+def ohne_eigene_abmeldung_startet_dieselbe_konfiguration_nicht_neu(w: Welt) -> None:
+    """Gegenstueck: ohne Markierung bzw. mit der Markierung einer anderen Anlage bleibt es bei laufzeit_relevant."""
+    w.verbunden()
+    alt = dict(w.konfiguration)
+    worker, seen = w.worker()
+    w.host.worker_binden(worker)
+    w.host.konfiguration_uebernommen(alt, dict(alt))
+    _abmelden(w, "andere_anlage")
+    w.host.konfiguration_uebernommen(alt, dict(alt))
+    worker.run_pending()
+    assert seen == []
+    assert dateien.lesen_json(w.abgemeldet_pfad) == {"anlage": "andere_anlage"}
 
 
 def wunsch_und_soll_quelle_gehen_an_das_geraet(w: Welt) -> None:
@@ -209,9 +330,16 @@ PRUEFUNGEN = (
     ohne_geraet_gelten_feste_leerwerte, dokumentsicht_fuer_die_laufzeit, bedienung_vor_dem_binden_wird_nachgestellt,
     nur_die_letzte_bedienung_vor_dem_binden_zaehlt, bedienung_nach_dem_binden_geht_sofort_an_den_worker,
     ungueltige_bedienung_wird_still_ignoriert, im_ruhezustand_geht_keine_bedienung_an_den_worker,
-    neustart_vor_dem_binden_kommt_beim_binden, neustart_nach_dem_binden_kommt_sofort, ursprungswerte_sind_kopien,
-    leer_nach_eingerichtet_markiert_aufraeumen_und_startet_neu, die_erste_leere_konfiguration_markiert_nichts,
-    eine_unerhebliche_aenderung_startet_nicht_neu, wunsch_und_soll_quelle_gehen_an_das_geraet, host_und_version,
+    neustart_vor_dem_binden_kommt_beim_binden, im_ruhezustand_kommt_ein_neustart_vor_dem_binden_beim_binden,
+    neustart_nach_dem_binden_kommt_sofort, ursprungswerte_sind_kopien,
+    vorbereiten_leer_nach_eingerichtet_markiert_aufraeumen, vorbereiten_ohne_wechsel_auf_leer_markiert_nichts,
+    vorbereiten_wirft_wenn_die_markierung_nicht_geschrieben_werden_kann,
+    uebernommen_leer_nach_eingerichtet_startet_neu_ohne_markierung, die_erste_leere_konfiguration_markiert_nichts,
+    eine_unerhebliche_aenderung_startet_nicht_neu, eine_neue_konfiguration_derselben_anlage_hebt_die_abmeldung_auf,
+    ein_sign_off_nach_der_neuen_konfiguration_meldet_wieder_ab,
+    eine_leere_oder_fremde_konfiguration_laesst_die_abmeldung_stehen,
+    ohne_eigene_abmeldung_startet_dieselbe_konfiguration_nicht_neu, wunsch_und_soll_quelle_gehen_an_das_geraet,
+    host_und_version,
 )
 
 

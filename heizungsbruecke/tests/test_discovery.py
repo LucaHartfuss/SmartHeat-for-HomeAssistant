@@ -2,9 +2,13 @@
 import json
 import logging
 
+import pytest
+import requests
 from conftest import FakeClock
+from fakes import HttpAntwort, datei_stand
 
 from heizungsbruecke import discovery
+from heizungsbruecke.supervisor import SupervisorApi
 
 CODE = "ABCDEFGHIJKL"
 
@@ -140,6 +144,111 @@ def test_a_changed_announcement_is_sent_at_once_even_during_the_pause(tmp_path):
     assert supervisor.posts == [{"geraet_id": "shg-a", "zustand": "uebernommen"}]
 
 
+def test_two_alternately_failing_announcements_are_both_throttled(tmp_path):
+    """5c-D-9 Teil 2: die Drossel merkt sich jede gescheiterte Meldung, nicht nur die letzte. Wechselt die Anzeige jede
+    Sekunde zwischen zwei Meldungen, wird jede hoechstens einmal je 60 s versucht (59 s nichts, nach 60 s erneut)."""
+    supervisor = Supervisor()
+    supervisor.fail = True
+    d, clock = _discovery(tmp_path, supervisor)
+    for _ in range(60):  # Sekunde 0 bis 59
+        d.aktualisieren("shg-a", "nicht_uebernommen", CODE)
+        d.aktualisieren("shg-a", "gesperrt", None)
+        clock.advance(1)
+    assert supervisor.post_calls == 2
+    d.aktualisieren("shg-a", "nicht_uebernommen", CODE)  # Sekunde 60
+    assert supervisor.post_calls == 3
+    d.aktualisieren("shg-a", "gesperrt", None)
+    assert supervisor.post_calls == 4
+
+
+def test_a_success_releases_only_its_own_announcement(tmp_path):
+    """Gelingt eine Meldung, bleibt eine andere gescheiterte in ihrer Pause (sie scheiterte vielleicht an sich selbst)."""
+    supervisor = Supervisor()
+    supervisor.fail = True
+    d, clock = _discovery(tmp_path, supervisor)
+    d.aktualisieren("shg-a", "gesperrt", None)
+    clock.advance(10)
+    d.aktualisieren("shg-a", "nicht_uebernommen", CODE)
+    supervisor.fail = False
+    clock.advance(50)  # Sekunde 60 nach "gesperrt", 50 nach der Meldung mit Code
+    d.aktualisieren("shg-a", "gesperrt", None)
+    assert supervisor.posts == [{"geraet_id": "shg-a", "zustand": "gesperrt"}]
+    d.aktualisieren("shg-a", "nicht_uebernommen", CODE)  # noch in ihrer Pause
+    assert supervisor.post_calls == 3
+    clock.advance(10)
+    d.aktualisieren("shg-a", "nicht_uebernommen", CODE)
+    assert supervisor.posts[-1] == {"geraet_id": "shg-a", "zustand": "nicht_uebernommen", "claim_code": CODE}
+
+
+def test_the_throttle_remembers_sixteen_failed_announcements(tmp_path):
+    """Die Drossel ist begrenzt: 16 gescheiterte Meldungen bleiben gedrosselt; eine 17. verdraengt die aelteste, die
+    danach sofort wieder versucht wird."""
+    supervisor = Supervisor()
+    supervisor.fail = True
+    d, _ = _discovery(tmp_path, supervisor)
+    for n in range(16):
+        d.aktualisieren(f"shg-{n}", "uebernommen", None)
+    for n in range(16):
+        d.aktualisieren(f"shg-{n}", "uebernommen", None)
+    assert supervisor.post_calls == 16
+    d.aktualisieren("shg-16", "uebernommen", None)  # die 17.: shg-0 faellt aus der Drossel
+    assert supervisor.post_calls == 17
+    d.aktualisieren("shg-1", "uebernommen", None)
+    assert supervisor.post_calls == 17
+    d.aktualisieren("shg-0", "uebernommen", None)
+    assert supervisor.post_calls == 18
+
+
+class SupervisorHttp:
+    """Grenze Supervisor-HTTP (requests) wie der echte Supervisor (Probe 2026-10-12, docs/module/ha-host.md): eine
+    Meldung je Add-on und Dienst, ein neuer POST ersetzt ihre config unter derselben UUID; GET /discovery ist dem
+    Add-on verwehrt. meldungen: UUID -> config."""
+
+    def __init__(self):
+        self.meldungen: dict[str, dict] = {}
+        self._uuids = iter(f"u-{n}" for n in range(1, 100))
+
+    def post(self, url, *, json, headers, timeout):
+        assert url == "http://supervisor/discovery" and json["service"] == "smartheat"
+        uuid = next(iter(self.meldungen), None) or next(self._uuids)
+        self.meldungen[uuid] = json["config"]
+        return HttpAntwort({"result": "ok", "data": {"uuid": uuid}})
+
+    def delete(self, url, *, headers, timeout):
+        uuid = url.rsplit("/", 1)[1]
+        return HttpAntwort({}, 200 if self.meldungen.pop(uuid, None) is not None else 404)
+
+
+class _Absturz(BaseException):
+    """Der Prozess endet zwischen POST und Speichern (kein Exception: aktualisieren faengt sie nicht)."""
+
+
+def test_a_crash_between_post_and_saving_the_uuid_leaves_no_entry_with_the_code(tmp_path, monkeypatch):
+    """5c-D-9 Teil 1: stuerzt der Prozess nach dem POST ab, bevor die UUID gespeichert ist, meldet der naechste Start
+    sofort; der Supervisor ersetzt die Meldung unter derselben UUID, nach der Uebernahme steht kein Code mehr im
+    Supervisor und keine zweite Meldung."""
+    http = SupervisorHttp()
+    monkeypatch.setattr(requests, "post", http.post)
+    monkeypatch.setattr(requests, "delete", http.delete)
+    api = SupervisorApi(token="t")
+    pfad = tmp_path / "discovery.json"
+    echt = discovery.dateien.schreiben_json
+
+    def absturz(*args, **kwargs):
+        raise _Absturz
+
+    monkeypatch.setattr(discovery.dateien, "schreiben_json", absturz)
+    with pytest.raises(_Absturz):
+        discovery.Discovery(api, pfad, clock=FakeClock()).aktualisieren("shg-a", "nicht_uebernommen", CODE)
+    assert http.meldungen == {"u-1": {"geraet_id": "shg-a", "zustand": "nicht_uebernommen", "claim_code": CODE}}
+    assert not pfad.exists()
+    monkeypatch.setattr(discovery.dateien, "schreiben_json", echt)
+    neu = discovery.Discovery(api, pfad, clock=FakeClock())  # Neustart ohne gespeicherte UUID
+    neu.aktualisieren("shg-a", "uebernommen", None)
+    assert http.meldungen == {"u-1": {"geraet_id": "shg-a", "zustand": "uebernommen"}}
+    assert json.loads(pfad.read_text())["uuid"] == "u-1"
+
+
 def test_an_old_entry_that_cannot_be_removed_is_retried_and_survives_a_restart(tmp_path):
     supervisor = Supervisor()
     d, _ = _discovery(tmp_path, supervisor)
@@ -170,19 +279,94 @@ def test_a_stale_uuid_does_not_block_the_ones_behind_it(tmp_path):
     assert stored["entfernen"] == ["alt-1"]
 
 
-def test_an_unremovable_uuid_is_dropped_after_the_limit_with_one_log_line(tmp_path, caplog):
+def test_an_unremovable_uuid_is_never_given_up_and_retried_with_a_growing_pause(tmp_path, caplog):
+    """5c-D-9 Teil 3: keine Aufgabe nach 10 Fehlversuchen; der Abstand waechst je Fehlversuch (60, 120, 240, 480, 960,
+    1920 s) bis hoechstens 3600 s. Je Versuch eine Logzeile, nie "aufgegeben"."""
     supervisor = Supervisor()
     supervisor.stale = {"alt-1"}
     _queue(tmp_path, "alt-1")
     d, clock = _discovery(tmp_path, supervisor)
-    for _ in range(discovery.MAX_ENTFERNEN_VERSUCHE + 5):
+    start = clock()
+    versuche = []
+    for _ in range(30_000):  # 30 000 s im Sekundentakt der Anzeige
+        vorher = supervisor.delete_calls
         d.aktualisieren("shg-a", "uebernommen", None)
-        clock.advance(discovery.RETRY_SECONDS)
-    alt_calls = supervisor.delete_calls
-    assert alt_calls == discovery.MAX_ENTFERNEN_VERSUCHE + 1  # + die eigene Vorgaengermeldung "aktuell"
-    assert sum("aufgegeben" in r.getMessage() for r in caplog.records) == 1
+        if supervisor.delete_calls > vorher:
+            versuche.append(clock() - start)
+        clock.advance(1)
+    # der erste Aufruf entfernt zusaetzlich die eigene Vorgaengermeldung "aktuell"
+    assert versuche == [0, 60, 180, 420, 900, 1860, 3780, 7380, 10980, 14580, 18180, 21780, 25380, 28980]
+    assert sum("Alte Discovery nicht entfernt" in r.getMessage() for r in caplog.records) == 14
+    assert not any("aufgegeben" in r.getMessage() for r in caplog.records)
+    stored = json.loads((tmp_path / "discovery.json").read_text())
+    assert stored["entfernen"] == ["alt-1"] and stored["versuche"] == {"alt-1": 14}
+    supervisor.stale = set()  # der Supervisor nimmt sie wieder an: beim naechsten faelligen Versuch weg
+    clock.advance(28980 + 3600 - (clock() - start))
+    d.aktualisieren("shg-a", "uebernommen", None)
+    assert supervisor.deletes[-1] == "alt-1"
     stored = json.loads((tmp_path / "discovery.json").read_text())
     assert stored["entfernen"] == [] and stored["versuche"] == {}
+
+
+def test_the_pause_before_the_next_removal_is_due_exactly_on_time(tmp_path):
+    """Grenze der wachsenden Pause: nach dem ersten Fehlversuch 59 s nichts, nach 60 s der zweite; danach 119 s nichts,
+    nach 120 s der dritte."""
+    supervisor = Supervisor()
+    supervisor.stale = {"alt-1"}
+    _queue(tmp_path, "alt-1")
+    d, clock = _discovery(tmp_path, supervisor)
+    d.aktualisieren("shg-a", "uebernommen", None)
+    erste = supervisor.delete_calls  # alt-1 und die Vorgaengermeldung "aktuell"
+    clock.advance(59)
+    d.aktualisieren("shg-a", "uebernommen", None)
+    assert supervisor.delete_calls == erste
+    clock.advance(1)
+    d.aktualisieren("shg-a", "uebernommen", None)
+    assert supervisor.delete_calls == erste + 1
+    clock.advance(119)
+    d.aktualisieren("shg-a", "uebernommen", None)
+    assert supervisor.delete_calls == erste + 1
+    clock.advance(1)
+    d.aktualisieren("shg-a", "uebernommen", None)
+    assert supervisor.delete_calls == erste + 2
+
+
+def test_a_new_old_entry_is_removed_at_once_while_another_waits(tmp_path):
+    """Die Pause gilt je alte Meldung: eine neu vorgemerkte wartet nicht auf die Pause einer anderen."""
+    supervisor = Supervisor()
+    supervisor.stale = {"alt-1"}
+    _queue(tmp_path, "alt-1")
+    d, clock = _discovery(tmp_path, supervisor)
+    d.aktualisieren("shg-a", "uebernommen", None)  # alt-1 scheitert, "aktuell" ist weg
+    d.aktualisieren("shg-a", "nicht_uebernommen", None)  # neue UUID: uuid-1 wird vorgemerkt
+    assert supervisor.deletes == ["aktuell", "uuid-1"]
+
+
+def test_at_most_sixteen_old_entries_are_kept_and_the_oldest_is_dropped_with_a_warning(tmp_path, caplog):
+    """Vergibt der Supervisor immer neue UUIDs und scheitert jedes Entfernen, waechst die Liste nicht ohne Grenze:
+    16 alte Meldungen bleiben vorgemerkt, die 17. verdraengt die aelteste (samt Zaehler) mit einer Warnung."""
+    supervisor = Supervisor()
+    supervisor.fail_delete = True
+    d, _ = _discovery(tmp_path, supervisor)
+    for n in range(17):  # 17 Meldungen: uuid-1 bis uuid-16 werden alt
+        d.aktualisieren("shg-a", "nicht_uebernommen" if n % 2 else "uebernommen", None)
+    stored = json.loads((tmp_path / "discovery.json").read_text())
+    assert stored["entfernen"] == [f"uuid-{n}" for n in range(1, 17)]
+    assert not any("verworfen" in r.getMessage() for r in caplog.records)
+    d.aktualisieren("shg-a", "gesperrt", None)  # uuid-17 wird alt: uuid-1 faellt heraus
+    stored = json.loads((tmp_path / "discovery.json").read_text())
+    assert stored["entfernen"] == [f"uuid-{n}" for n in range(2, 18)] and "uuid-1" not in stored["versuche"]
+    assert sum("Alte Discovery verworfen" in r.getMessage() for r in caplog.records) == 1
+
+
+def test_a_longer_list_from_the_state_file_is_cut_to_the_newest_sixteen(tmp_path):
+    _queue(tmp_path, *[f"alt-{n}" for n in range(20)])
+    supervisor = Supervisor()
+    supervisor.fail_delete = True
+    d, _ = _discovery(tmp_path, supervisor)
+    d.aktualisieren("shg-a", "uebernommen", None)  # "aktuell" wird alt, die aeltesten fallen heraus
+    stored = json.loads((tmp_path / "discovery.json").read_text())
+    assert stored["entfernen"] == [f"alt-{n}" for n in range(5, 20)] + ["aktuell"]
 
 
 def test_the_attempt_count_survives_a_restart(tmp_path):
@@ -195,22 +379,26 @@ def test_the_attempt_count_survives_a_restart(tmp_path):
     assert neu._versuche == {"alt-1": 1}
 
 
-def test_the_state_file_is_only_rewritten_when_the_queue_changes(tmp_path, monkeypatch):
+def test_the_state_file_is_only_rewritten_when_the_queue_changes(tmp_path):
+    """Geschrieben heisst: discovery.json hat einen neuen Stand auf dem Datentraeger (fakes.datei_stand)."""
     supervisor = Supervisor()
     supervisor.stale = {"alt-1"}
     _queue(tmp_path, "alt-1")
     d, clock = _discovery(tmp_path, supervisor)
     d.aktualisieren("shg-a", "uebernommen", None)
-    writes = []
-    monkeypatch.setattr(discovery.dateien, "schreiben_json", lambda *a, **kw: writes.append(a))
+    pfad = tmp_path / "discovery.json"
+    stand = datei_stand(pfad)
     d._aufraeumen()  # Pause: nichts
+    assert datei_stand(pfad) == stand
     clock.advance(discovery.RETRY_SECONDS)
     d.aktualisieren("shg-a", "uebernommen", None)  # Versuch zaehlt hoch: aendert den Stand
-    assert len(writes) == 1
+    assert datei_stand(pfad) != stand and json.loads(pfad.read_text())["versuche"] == {"alt-1": 2}
+    stand = datei_stand(pfad)
     supervisor.fail_delete = False
     d._veraltet.clear()
+    clock.advance(discovery.RETRY_SECONDS)  # nach der Pause laeuft das Aufraeumen wirklich
     d._aufraeumen()  # leere Warteschlange: kein Schreiben
-    assert len(writes) == 1
+    assert datei_stand(pfad) == stand
 
 
 def test_a_corrupt_state_file_counts_as_empty(tmp_path):
@@ -241,3 +429,27 @@ def test_the_code_never_reaches_the_log(tmp_path, caplog):
     supervisor.fail_delete = True
     d.aktualisieren("shg-a", "uebernommen", None)
     assert caplog.records and CODE not in caplog.text
+
+
+def test_a_supervisor_timeout_is_retried_after_the_pause(tmp_path, monkeypatch, caplog):
+    """Echte SupervisorApi, Zeitlimit am requests-Rand: aktualisieren wirft nicht, im Log nur die Fehlerart; 59 s
+    spaeter kein neuer Versuch, nach 60 s geht die Meldung hinaus."""
+    http = SupervisorHttp()
+    versuche = []
+
+    def haengt(url, **kw):
+        versuche.append(url)
+        raise requests.Timeout("Bearer geheim")
+
+    monkeypatch.setattr(requests, "post", haengt)
+    clock = FakeClock()
+    d = discovery.Discovery(SupervisorApi(token="geheim"), tmp_path / "discovery.json", clock=clock)
+    d.aktualisieren("shg-a", "uebernommen", None)
+    assert len(versuche) == 1 and "Discovery nicht gemeldet (Timeout)" in caplog.text and "geheim" not in caplog.text
+    clock.advance(59)
+    d.aktualisieren("shg-a", "uebernommen", None)
+    assert len(versuche) == 1
+    monkeypatch.setattr(requests, "post", http.post)
+    clock.advance(1)
+    d.aktualisieren("shg-a", "uebernommen", None)
+    assert http.meldungen == {"u-1": {"geraet_id": "shg-a", "zustand": "uebernommen"}}

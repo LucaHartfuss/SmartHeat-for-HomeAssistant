@@ -168,9 +168,11 @@ def laden(device_dir: Path) -> Zugang | None:
 
 class Bootstrap:
     """Ablauf im Geraete-Thread: holen(rettung=False) beim ersten Start (register), holen(rettung=True) als Rettungsweg
-    (certificate, bei 401 register). Ein neuer Zugang wird gespeichert und zurueckgegeben; None heisst: spaeter erneut
-    (faellig() sagt wann). Lieferte register ein Zertifikat fuer einen fremden Schluessel, nimmt der naechste Versuch den
-    Rettungsweg (certificate stellt fuer den eigenen CSR aus), sonst kaeme bei jedem Versuch dasselbe Zertifikat."""
+    (certificate, bei 401 register). uhr_synchron darf nicht werfen (das Geraet reicht seinen abgesicherten Rueckruf:
+    gescheitert gilt als None, also kein Urteil "gesperrt"). Ein neuer Zugang wird gespeichert und zurueckgegeben; None
+    heisst: spaeter erneut (faellig() sagt wann). Lieferte register ein Zertifikat fuer einen fremden Schluessel, nimmt
+    der naechste Versuch den Rettungsweg (certificate stellt fuer den eigenen CSR aus), sonst kaeme bei jedem Versuch
+    dasselbe Zertifikat."""
 
     def __init__(self, device_dir: Path, client: Callable[[], BootstrapClient], *, register_args: Callable[[], dict],
                  uhr_synchron: Callable[[], bool | None], identity: Callable[[], identity_module.Identity],
@@ -185,17 +187,20 @@ class Bootstrap:
     def faellig(self) -> bool:
         return self._clock() >= self._next
 
-    def holen(self, *, rettung: bool) -> Zugang | None:
+    def holen(self, *, rettung: bool, register_args: dict | None = None) -> Zugang | None:
+        """register_args: schon gebaute Argumente fuer register (das Geraet hat die Faehigkeiten gerade geprueft),
+        sonst der Rueckruf aus dem Konstruktor."""
         client = self._client()
+        args = self._register_args if register_args is None else (lambda: register_args)
         try:
             if rettung or self._fremdes_zertifikat:
                 try:
                     antwort = client.certificate()
                 except NotAuthenticated:
                     logger.warning("Zertifikat erneuern: nicht authentifiziert, registriere neu")
-                    antwort = client.register(**self._register_args())
+                    antwort = client.register(**args())
             else:
-                antwort = client.register(**self._register_args())
+                antwort = client.register(**args())
         except NotAuthenticated:
             return self._nicht_angemeldet()
         except BootstrapError as error:
@@ -234,7 +239,8 @@ class Bootstrap:
 
     def _nicht_angemeldet(self) -> None:
         if self._uhr_synchron() is not True:
-            logger.warning("Bootstrap: nicht authentifiziert, Uhr nicht synchron - kein Urteil, erneuter Versuch spaeter")
+            logger.warning(
+                "Bootstrap: nicht authentifiziert, Uhr nicht synchron - kein Urteil, erneuter Versuch spaeter")
             return self._spaeter()
         self.gesperrt = True
         self._next = self._clock() + GESPERRT_SECONDS

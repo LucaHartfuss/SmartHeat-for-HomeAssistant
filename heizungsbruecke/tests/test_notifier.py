@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from fakes import FailingServiceHa
 
+from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_sinks import HaNotifySink, notification_id
 from smartheat_core import pipeline
 from smartheat_core.config_check import HA_HINWEISE
@@ -16,7 +17,7 @@ SERVICES = ["notify.mobile_app_a", "notify.mobile_app_b"]
 
 @pytest.fixture
 def ha_api():
-    return MagicMock()
+    return MagicMock(spec=HomeAssistantApi)
 
 
 def _notifier(store, ha_api, services=SERVICES):

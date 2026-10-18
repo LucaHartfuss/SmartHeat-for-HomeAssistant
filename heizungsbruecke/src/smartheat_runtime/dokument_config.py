@@ -176,3 +176,20 @@ def abmelden(pfad: Path, anlage: str) -> bool:
         return False
     dateien.schreiben_json(pfad, {"anlage": anlage}, modus=dateien.PRIVAT)
     return True
+
+
+def abmeldung_aufheben(pfad: Path, anlage: str) -> bool:
+    """Neue, nicht leere Konfiguration derselben Anlage (Spec Testoffensive 12.7, 5b-D2-7): das Geraet folgt dem
+    Server, die Abmelde-Markierung verfaellt. True, wenn sie entfernt wurde; ein OSError laesst sie stehen (Warnung mit
+    Fehlerart, ohne Pfad)."""
+    marker = dateien.lesen_json(pfad)
+    if not (isinstance(marker, dict) and marker.get("anlage") == anlage):
+        return False
+    try:
+        pfad.unlink()
+    except FileNotFoundError:
+        return False
+    except OSError as error:
+        logger.warning("Abmelde-Markierung nicht entfernt (%s)", type(error).__name__)
+        return False
+    return True

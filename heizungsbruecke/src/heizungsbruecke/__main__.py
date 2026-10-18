@@ -9,7 +9,8 @@ Konfiguration, sign_off, Abo am Fristende wieder aktiv, Neupruefung im Konfigura
 prozess.Neustart - die Laufzeit ueber den Rueckruf prozess.neustart_der_laufzeit aus app.start -, beenden trennt den
 Link sauber, erst danach os.execv in _exec). Anders als das Gateway (Compose startet nach Exit 0 neu) startet der
 Supervisor ein sauber beendetes Add-on nicht zuverlaessig neu, deshalb exec. SIGTERM (Supervisor stoppt das Add-on)
-endet ueber beenden ohne exec.
+endet ueber beenden ohne exec. Ein Fehler in den Schritten davor (_vorbereiten: Aufraeumen, Geraete-Host, Geraetekern)
+endet ueber prozess.starten in derselben 60-s-Pause und demselben exec (S3S6-Startabbruch).
 
 Nach dem Entfernen (aufraeumen.json) setzt der naechste Start die Anlage erst zurueck wie sign_off (Laufzeit im Modus
 abgemeldet mit der alten Konfiguration aus der Markierung) und startet danach neu; erst dieser Start loescht den
@@ -43,8 +44,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BOOTSTRAP_URL = "https://accounts.hartfussha.org"
 LOG_LEVELS = {"debug": logging.DEBUG, "info": logging.INFO, "warning": logging.WARNING, "error": logging.ERROR}
-#: Aufraeumen beim Start (startup: services, HA evtl. noch nicht bereit): so lange auf HA warten, um die Hilfssensoren zu
-#: loeschen; danach startet der Geraetekern trotzdem, und der naechste Start versucht es erneut.
+#: Aufraeumen beim Start (startup: services, HA evtl. noch nicht bereit): so lange auf HA warten, um die Hilfssensoren
+#: zu loeschen; danach startet der Geraetekern trotzdem, und der naechste Start versucht es erneut.
 AUFRAEUMEN_HA_WARTEN_SECONDS = 120.0
 AUFRAEUMEN_HA_TAKT_SECONDS = 5.0
 
@@ -123,12 +124,13 @@ def _ha_bereit(ha_api) -> bool:
 
 def aufraeumen(ha_api) -> None:
     """Markierung aufraeumen.json vor dem Start des Geraetekerns (prozess.aufraeumen_beim_start); geloescht werden
-    Sicherung, Notbetriebs- und Abo-Zustand, Laufzeit-Ordner und die Hilfssensoren in HA. Bleiben Hilfssensoren uebrig
-    (HA nicht bereit oder Fehler), bleibt die Markierung fuer den naechsten Start."""
+    Sicherung, Notbetriebs- und Abo-Zustand, Laufzeit-Ordner und die Hilfssensoren in HA. Bleibt etwas uebrig
+    (HA nicht bereit, Fehler beim Loeschen eines Helfers oder einer Datei), bleibt die Markierung fuer den naechsten
+    Start; der Start geht weiter."""
     prozess.aufraeumen_beim_start(
         config.AUFRAEUMEN_PATH,
         lambda: DocumentStore(config.DEVICE_DATA_DIR / DEVICE_DIR, host=HaDeviceHost.host,
-                              software_version=ADDON_VERSION).inhalt(KONFIGURATION),
+                              software_version=ADDON_VERSION, rasten=False).inhalt(KONFIGURATION),
         lambda: _anlage_loeschen(ha_api), wer="das Add-on")
 
 
@@ -142,15 +144,29 @@ def _anlage_loeschen(ha_api) -> bool:
         else:
             fertig = False
             logger.warning("Home Assistant nicht bereit: Hilfssensoren werden beim naechsten Start entfernt")
-    geloescht = False
-    for path in (config.BACKUP_PATH, config.FAILSAFE_PATH, config.ENTITLEMENT_PATH):
-        if path.exists():
-            path.unlink(missing_ok=True)
-            geloescht = True
-    if config.RUNTIME_DIR.exists():
-        shutil.rmtree(config.RUNTIME_DIR, ignore_errors=True)
-        geloescht = True
-    if geloescht:
+    geloescht = gescheitert = False
+
+    def datei_weg(path) -> None:
+        path.unlink(missing_ok=True)  # zwischen exists und unlink verschwunden: weg
+
+    # backup.json (Bindung an Einrichtung und Anlage) zuletzt und nur, wenn alle anderen Dateien geloescht sind (die
+    # Hilfssensoren zaehlen nicht): bleibt etwas liegen, verwirft bind_to_tenant es bei der Einrichtung einer anderen
+    # Anlage. Scheitert ein Loeschen (EACCES, EIO), bleibt die Markierung fuer den naechsten Start; der Start geht
+    # weiter wie bei nicht loeschbaren Hilfssensoren. exists() steht mit im try (wirft bei EIO/EACCES im stat).
+    for path, entfernen in ((config.FAILSAFE_PATH, datei_weg), (config.ENTITLEMENT_PATH, datei_weg),
+                            (config.RUNTIME_DIR, shutil.rmtree), (config.BACKUP_PATH, datei_weg)):
+        if gescheitert and path == config.BACKUP_PATH:
+            break
+        try:
+            if path.exists():
+                entfernen(path)
+                geloescht = True
+        except OSError as error:
+            gescheitert = True
+            logger.warning("%s nicht geloescht (%s), neuer Versuch beim naechsten Start", path.name,
+                           type(error).__name__)
+    fertig = fertig and not gescheitert
+    if geloescht and fertig:
         logger.info("Anlagengebundener Zustand geloescht (Add-on nicht mehr eingerichtet)")
     return fertig
 
@@ -211,20 +227,31 @@ def _terminate(signum, frame) -> None:
     raise SystemExit(0)
 
 
-def main() -> None:  # pragma: no cover - Add-on-Einstieg
-    logging.basicConfig(level=log_level())
-    token = os.environ["SUPERVISOR_TOKEN"]
-    ha_api = HomeAssistantApi(base_url="http://supervisor", token=token)
-    supervisor = SupervisorApi(token=token)
-    signal.signal(signal.SIGTERM, _terminate)  # vor dem Geraete-Thread: ein SIGTERM endet immer ueber beenden
-    url = bootstrap_url()
-    if url is None:  # nie auf die Produktion ausweichen: ohne Geraetekern ruhen, bis die Option korrigiert ist
-        _ruhen()
-        return
+def _vorbereiten(ha_api, supervisor, url: str) -> tuple[HaDeviceHost, Device, GeraetStatus]:
+    """Die Host-Schritte vor laufen; eine Ausnahme darin endet ueber prozess.starten in Pause und exec."""
     aufraeumen(ha_api)  # vor dem Geraetekern: noch schreibt nichts in den anlagengebundenen Zustand
     geraet = HaDeviceHost(ha_api, supervisor)
     device = Device(geraet, config.DEVICE_DATA_DIR, url)
     status = verdrahten(geraet, device, ha_api, supervisor)
+    return geraet, device, status
+
+
+def main() -> None:  # pragma: no cover - Add-on-Einstieg (Startfehler und Ruhezustand: test_main_geraet.py)
+    signal.signal(signal.SIGTERM, _terminate)  # vor allem anderen: ein SIGTERM endet immer ueber SystemExit
+    logging.basicConfig(level=log_level())
+    # Token und API-Aufbau bewusst vor prozess.starten: ein Fehler hier beendet das Add-on ohne Pause (noch kein
+    # Geraetekern, IoT Core unberuehrt)
+    token = os.environ["SUPERVISOR_TOKEN"]
+    ha_api = HomeAssistantApi(base_url="http://supervisor", token=token)
+    supervisor = SupervisorApi(token=token)
+    url = bootstrap_url()
+    if url is None:  # nie auf die Produktion ausweichen: ohne Geraetekern ruhen, bis die Option korrigiert ist
+        _ruhen()
+        return
+    teile = prozess.starten(lambda: _vorbereiten(ha_api, supervisor, url), _exec)
+    if teile is None:  # Startfehler: Pause und exec sind gelaufen (nur in Tests kehrt exec zurueck)
+        return
+    geraet, device, status = teile
     laufen(geraet, device, ha_api, status)
 
 

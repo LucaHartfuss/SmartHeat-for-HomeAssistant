@@ -4,15 +4,17 @@ import stat
 import time
 
 import pytest
+import requests
 from conftest import FakeClock
-from fakes import FakeHa
+from fakes import FakeHa, HttpAntwort, nachricht_bytes
 from geraet_helpers import konfiguration_aus_optionen
 from test_runtime import OPTIONS, env  # noqa: F401 - env ist eine Fixture
 
-from heizungsbruecke import config, dokument, geraet_host
+from heizungsbruecke import config, discovery, geraet_host
 from heizungsbruecke.host import EV_RAUM, RAUM_SECONDS, HaHost
+from heizungsbruecke.supervisor import SupervisorApi
 from smartheat_core.config_check import NichtPruefbar
-from smartheat_device import nachrichten, wire
+from smartheat_device import inventory, nachrichten, wire
 from smartheat_device.commands import CommandRegister, Done, Failed, Waiting
 from smartheat_device.geraet_host_basis import EV_RELOAD
 from smartheat_device.host import Anzeige
@@ -22,14 +24,24 @@ from smartheat_runtime.worker import RegulationWorker
 
 
 class Supervisor:
+    """Grenze Supervisor-HTTP: host_info (Uhr) und die Discovery-Meldungen (gemeldet, in Reihenfolge)."""
+
     def __init__(self, info=None, error=None):
         self.info, self.error, self.calls = info or {"dt_synchronized": True}, error, 0
+        self.gemeldet: list[dict] = []
 
     def host_info(self):
         self.calls += 1
         if self.error:
             raise self.error
         return self.info
+
+    def discovery_anmelden(self, config_):
+        self.gemeldet.append(dict(config_))
+        return f"uuid-{len(self.gemeldet)}"
+
+    def discovery_entfernen(self, uuid):
+        pass
 
 
 class Doc:
@@ -143,6 +155,33 @@ def test_clock_error_logs_only_the_kind(tmp_path, monkeypatch, caplog):
     assert "OSError" in caplog.text and "geheim" not in caplog.text
 
 
+@pytest.mark.parametrize("fehler", [requests.Timeout("Bearer geheim"), requests.ConnectionError("Bearer geheim")])
+def test_a_supervisor_timeout_or_broken_connection_leaves_the_clock_unknown(tmp_path, monkeypatch, caplog, fehler):
+    """Echte SupervisorApi, Zeitlimit bzw. Verbindungsabbruch am requests-Rand: die Uhr ist unbekannt (None), im Log
+    nur die Fehlerart; nach der Minute fragt der Host erneut und uebernimmt die Antwort."""
+    def werfen(url, **kw):
+        raise fehler
+
+    monkeypatch.setattr(requests, "get", werfen)
+    host, _, clock = _host(tmp_path, monkeypatch, SupervisorApi(token="geheim"))
+    assert host.uhr_synchron() is None
+    assert f"Uhrzeit des Hosts unbekannt ({type(fehler).__name__})" in caplog.text and "geheim" not in caplog.text
+    monkeypatch.setattr(requests, "get", lambda url, **kw: HttpAntwort({"result": "ok", "data": {"dt_synchronized": True}}))
+    clock.advance(60)
+    assert host.uhr_synchron() is True
+
+
+def test_a_clock_answer_without_dt_synchronized_counts_as_not_synchronized(tmp_path, monkeypatch):
+    """Antwort des Supervisors ohne den Schluessel dt_synchronized (echte SupervisorApi): unbekannt (None), der
+    Geraetekern behandelt das wie nicht synchron. Gegenprobe: mit dem Schluessel True."""
+    monkeypatch.setattr(requests, "get", lambda url, **kw: HttpAntwort({"result": "ok", "data": {"timezone": "UTC"}}))
+    host, _, clock = _host(tmp_path, monkeypatch, SupervisorApi(token="t"))
+    assert host.uhr_synchron() is None
+    monkeypatch.setattr(requests, "get", lambda url, **kw: HttpAntwort({"result": "ok", "data": {"dt_synchronized": True}}))
+    clock.advance(60)
+    assert host.uhr_synchron() is True
+
+
 def test_software_is_ignored(tmp_path, monkeypatch):
     host, _, _ = _host(tmp_path, monkeypatch)
     host.software_soll({"version": "9.9.9"})  # Updates kommen ueber Supervisor und Add-on-Store
@@ -160,16 +199,42 @@ def test_foreign_commands_are_not_supported(tmp_path, monkeypatch):
 
 
 def test_inventory_runs_in_the_background(tmp_path, monkeypatch):
-    host, _, clock = _host(tmp_path, monkeypatch)
-    seen = []
-    monkeypatch.setattr(geraet_host.inventur, "inventur", lambda ha, f: seen.append(f) or {
-        "entities": [], "geraete": [], "dienste": [], "einheit_temperatur": "°C", "zeitzone": "x"})
+    """Die echte Inventur auf Fake-HA: der Filter des Befehls entscheidet (nur die Plattform mypyllant)."""
+    ha = FakeHa()
+    ha.states = {"climate.wz": "heat", "climate.fremd": "heat"}
+    ha.registry = [{"entity_id": "climate.wz", "platform": "mypyllant"},
+                   {"entity_id": "climate.fremd", "platform": "zha"}]
+    host, _, clock = _host(tmp_path, monkeypatch, ha=ha)
     register = _register(host, tmp_path)
     outcome = register._handlers["inventory"]({"stunden": 0, "filter": {"plattformen": ["mypyllant"]}})
     assert isinstance(outcome, Waiting)
     done = _bis(outcome)
     assert isinstance(done, Done) and done.inventur["einheit_temperatur"] == "°C" and done.result == {}
-    assert seen == [{"plattformen": ["mypyllant"]}]
+    assert [entity["entity_id"] for entity in done.inventur["entities"]] == ["climate.wz"]
+    host.hintergrund.stop()
+
+
+def test_a_filter_with_ten_thousand_entries_is_not_limited_and_the_answer_stays_under_the_message_limit(
+        tmp_path, monkeypatch):
+    """Heutiges Verhalten (kompromittierter Server): die Laenge der Filterlisten ist nicht begrenzt, ein Filter mit je
+    10 000 Eintraegen wird angenommen; die Antwort enthaelt trotzdem nur, was in HA passt und die Positivliste
+    durchlaesst, und bleibt eine Nachricht unter der Grenze des Links (120 KB = 122 880 Bytes). Einen Befehl ueber der
+    Grenze verwirft schon der Geraetekern (client-kern.md)."""
+    ha = FakeHa()
+    ha.states = {"climate.wz": "heat", "light.flur": "on"}
+    ha.registry = [{"entity_id": "climate.wz", "platform": "mypyllant"}, {"entity_id": "light.flur", "platform": "hue"}]
+    host, _, _ = _host(tmp_path, monkeypatch, ha=ha)
+    viele = [f"x{n:04d}" for n in range(9_999)]
+    filter_ = {"plattformen": ["mypyllant", *viele], "domaenen": ["light", *viele],
+               "geraeteklassen": [["sensor", name] for name in viele] + [["light", "x"]],
+               "dienste": ["notify.mobile_app_", *viele]}
+    assert all(len(liste) == 10_000 for liste in filter_.values())
+    outcome = _register(host, tmp_path)._handlers["inventory"]({"stunden": 0, "filter": filter_})
+    done = _bis(outcome)
+    assert isinstance(done, Done)
+    assert [entity["entity_id"] for entity in done.inventur["entities"]] == ["climate.wz"]  # Licht: Positivliste
+    teile = inventory.nachrichten("c1", done.inventur)
+    assert len(teile) == 1 and nachricht_bytes(teile[0]) <= 122_880
     host.hintergrund.stop()
 
 
@@ -191,7 +256,6 @@ def test_inventory_with_a_filter_that_is_no_object_is_invalid_not_missing(tmp_pa
     {"geraeteklassen": [{"a": 1}, ["sensor", "x"]]}, {"geraeteklassen": "sensor"}])
 def test_inventory_with_a_malformed_filter_is_an_invalid_payload(tmp_path, monkeypatch, filter_):
     host, _, _ = _host(tmp_path, monkeypatch)
-    monkeypatch.setattr(geraet_host.inventur, "inventur", lambda ha, f: pytest.fail("nicht aufgerufen"))
     outcome = _register(host, tmp_path)._handlers["inventory"]({"stunden": 0, "filter": filter_})
     assert outcome == Failed("ungueltige_nutzlast", {"feld": "filter", "regel": "ungueltig"})
 
@@ -202,7 +266,6 @@ def test_inventory_with_a_malformed_filter_is_an_invalid_payload(tmp_path, monke
 ])
 def test_inventory_with_a_foreign_filter_key_is_invalid(tmp_path, monkeypatch, filter_, details):
     host, _, _ = _host(tmp_path, monkeypatch)
-    monkeypatch.setattr(geraet_host.inventur, "inventur", lambda ha, f: pytest.fail("nicht aufgerufen"))
     outcome = _register(host, tmp_path)._handlers["inventory"]({"stunden": 0, "filter": filter_})
     assert outcome == Failed("ungueltige_nutzlast", details)
 
@@ -297,11 +360,15 @@ def test_in_the_idle_state_operations_do_not_reach_the_worker(tmp_path, monkeypa
 
 
 def test_configuration_change_requests_a_restart_and_empty_marks_cleanup(tmp_path, monkeypatch):
+    """Die Markierung schreibt konfiguration_vorbereiten (vor dem Speichern, Nr. 38), den Neustart fordert
+    konfiguration_uebernommen an."""
     host, _, clock = _host(tmp_path, monkeypatch)
     alt = konfiguration_aus_optionen(OPTIONS)
-    host.konfiguration_uebernommen(alt, {**alt, "anlage": None})
+    host.konfiguration_vorbereiten(alt, {**alt, "anlage": None})
     assert json.loads(config.AUFRAEUMEN_PATH.read_text()) == {
-        "anlage": alt["anlage"], "konfiguration": alt, "zurueckgesetzt": False} and host._neustart
+        "anlage": alt["anlage"], "konfiguration": alt, "zurueckgesetzt": False} and not host._neustart
+    host.konfiguration_uebernommen(alt, {**alt, "anlage": None})
+    assert host._neustart
     assert stat.S_IMODE(config.AUFRAEUMEN_PATH.stat().st_mode) == 0o600
     worker = RegulationWorker(clock)
     reloads = []
@@ -361,15 +428,18 @@ def test_the_ha_check_is_skipped_against_the_accepted_configuration(tmp_path, mo
 
 
 def test_the_ha_check_gets_the_accepted_configuration(tmp_path, monkeypatch):
+    """Die echte Zuordnungspruefung: ihr Befund geht unveraendert zurueck, verglichen wird mit der uebernommenen
+    Konfiguration des verbundenen Geraetekerns; ohne uebernommene braucht dieselbe Konfiguration den HA-Teil."""
+    ha = FakeHa()
     akzeptiert = konfiguration_aus_optionen(OPTIONS)
-    calls = []
-    monkeypatch.setattr(dokument, "zuordnung_pruefen", lambda k, ha, a: calls.append((k, ha, a)) or {"feld": "kreis", "regel": "ungueltig"})
-    host, _, _ = _host(tmp_path, monkeypatch, device=Device(akzeptiert))
-    assert host.treiber_pruefen({"neu": 1}) == {"feld": "kreis", "regel": "ungueltig"}
-    assert calls == [({"neu": 1}, host._ha, akzeptiert)]
+    host, _, _ = _host(tmp_path, monkeypatch, ha=ha, device=Device(akzeptiert))
+    assert host.treiber_pruefen({**akzeptiert, "hebelsatz": "gibt_es_nicht"}) == {"feld": "hebelsatz",
+                                                                                   "regel": "unbekannt"}
+    ha.offline = True
+    assert host.treiber_pruefen(akzeptiert) is None  # unveraendert gegen die uebernommene: HA nicht noetig
     host.verbinden(Device(None))
-    host.treiber_pruefen({"neu": 2})
-    assert calls[-1][2] is None
+    with pytest.raises(NichtPruefbar):  # keine uebernommene mehr: der HA-Teil ist noetig, HA antwortet nicht
+        host.treiber_pruefen(akzeptiert)
 
 
 def test_sign_off_marks_restarts_and_reports_the_restore_point(tmp_path, monkeypatch):
@@ -386,6 +456,28 @@ def test_sign_off_marks_restarts_and_reports_the_restore_point(tmp_path, monkeyp
     host._neustart = False  # erneut zugestellt: dieselbe Markierung, kein zweiter Neustart
     register._handlers["sign_off"]({})
     assert not host._neustart
+
+
+def test_sign_off_ends_after_its_deadline_of_a_day(tmp_path, monkeypatch):
+    """Wartegrenze von sign_off 86 400 s (24 h) auf der Uhr des Hosts: zeigt der Status bis dahin nicht abgemeldet,
+    endet der Befehl nach der Frist mit keine_bestaetigung (auf der Frist noch offen, eine Sekunde danach beendet)."""
+    konf = konfiguration_aus_optionen(OPTIONS)
+    host, _, clock = _host(tmp_path, monkeypatch, device=Device(konf))
+    ergebnisse = []
+    register = CommandRegister(tmp_path, lambda body: ergebnisse.append(body) or True, clock=clock)
+    host.befehle_eintragen(register)
+    register.empfangen({"schema": 1, "command_id": "c-abmelden", "kind": "sign_off", "payload": {},
+                        "expires_at": "2027-01-15T09:00:00+00:00"})
+    clock.advance(86_400)
+    register.pruefen()
+    assert ergebnisse == []
+    clock.advance(1)
+    register.pruefen()
+    assert [(e["command_id"], e["ok"], e["error"]["grund"]) for e in ergebnisse] == [
+        ("c-abmelden", False, "keine_bestaetigung")]
+    host.runtime_status_event = {"status": STATUS_ABGEMELDET, "tenant_id": konf["anlage"], "grund": None}
+    register.pruefen()  # zu spaet: der Befehl ist beendet, kein zweites Ergebnis
+    assert len(ergebnisse) == 1
 
 
 def test_sign_off_without_setup_fails(tmp_path, monkeypatch):
@@ -424,36 +516,42 @@ def test_display_goes_to_the_status_sink_and_never_raises(tmp_path, monkeypatch,
     assert "Status-Ereignis nicht gesendet (RuntimeError)" in caplog.text and "weg" not in caplog.text
 
 
-class _Discovery:
-    def __init__(self, error=None):
-        self.calls, self.error = [], error
+class _KaputteDiscovery:
+    """Fehlerinjektion: eine Discovery, die wirft (die echte faengt alles selbst; der Host sichert trotzdem ab)."""
 
     def aktualisieren(self, geraet_id, zustand, claim_code):
-        self.calls.append((geraet_id, zustand, claim_code))
-        if self.error:
-            raise self.error
+        raise RuntimeError("geheim")
 
 
 def test_display_reports_to_the_discovery_with_the_code_only_while_it_may_be_shown(tmp_path, monkeypatch):
-    """Spec 5c 1.1/F1: Code nur, solange das Geraet nicht uebernommen ist (Anzeige.code_zeigen)."""
-    host, device, _ = _host(tmp_path, monkeypatch)
+    """Spec 5c 1.1/F1: Code nur, solange das Geraet nicht uebernommen ist (Anzeige.code_zeigen); die echte Discovery
+    meldet an den Supervisor (Grenze)."""
+    supervisor = Supervisor()
+    host, device, clock = _host(tmp_path, monkeypatch, supervisor)
     device.identity = type("I", (), {"device_id": "shg-a"})()
     host.anzeigen(Anzeige("startet", False, "nicht_uebernommen", False, (), (), None))  # ohne Discovery: nichts
-    host.discovery = _Discovery()
+    assert supervisor.gemeldet == []
+    host.discovery = discovery.Discovery(supervisor, tmp_path / "discovery.json", clock=clock)
     host.claim_code = lambda: "ABCDEFGHIJKL"
+    host.anzeigen(Anzeige("startet", True, "nicht_uebernommen", False, (), (), None))  # startet: noch kein Code
     host.anzeigen(Anzeige("nicht_uebernommen", True, "nicht_uebernommen", False, (), (), None))
     host.anzeigen(Anzeige("wartet_auf_einrichtung", True, "uebernommen", False, (), (), None))
     host.anzeigen(Anzeige("regelt", True, None, True, (), (), None))
     # Sperre nur im Speicher (device_state bleibt nicht_uebernommen): die Discovery meldet gesperrt, ohne Code
     host.anzeigen(Anzeige("gesperrt", False, "nicht_uebernommen", False, (), (), None))
-    assert host.discovery.calls == [("shg-a", "nicht_uebernommen", "ABCDEFGHIJKL"), ("shg-a", "uebernommen", None),
-                                    ("shg-a", None, None), ("shg-a", "gesperrt", None)]
+    assert supervisor.gemeldet == [
+        {"geraet_id": "shg-a", "zustand": "nicht_uebernommen"},
+        {"geraet_id": "shg-a", "zustand": "nicht_uebernommen", "claim_code": "ABCDEFGHIJKL"},
+        {"geraet_id": "shg-a", "zustand": "uebernommen"},
+        {"geraet_id": "shg-a", "zustand": "startet"},
+        {"geraet_id": "shg-a", "zustand": "gesperrt"},
+    ]
 
 
 def test_a_failing_discovery_never_breaks_the_display(tmp_path, monkeypatch, caplog):
     host, device, _ = _host(tmp_path, monkeypatch)
     device.identity = type("I", (), {"device_id": "shg-a"})()
-    host.discovery = _Discovery(error=RuntimeError("geheim"))
+    host.discovery = _KaputteDiscovery()
     anzeige = Anzeige("regelt", True, "uebernommen", True, (), (), None)
     host.anzeigen(anzeige)
     assert host.letzte_anzeige == anzeige

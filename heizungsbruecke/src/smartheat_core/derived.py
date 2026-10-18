@@ -6,6 +6,7 @@ import logging
 from typing import Any, Protocol
 
 from smartheat_core.clamping import clamp, round_to_step
+from smartheat_core.zahlen import GLEITKOMMA_REST
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,7 @@ class DerivedRuntime(Protocol):
     override: Any
 
 
-TOLERANCE = 0.05
+TOLERANCE = 0.05  # genau TOLERANCE schreibt nicht (zahlen.GLEITKOMMA_REST)
 
 
 def expected(rt: DerivedRuntime) -> float | None:
@@ -51,7 +52,7 @@ def sync(rt: DerivedRuntime) -> None:
         except Exception as error:
             logger.warning("Mindestvorlauf nicht lesbar (%s), wird neu geschrieben", error)
             current = None
-    if current is not None and abs(current - value) <= TOLERANCE:
+    if current is not None and abs(current - value) <= TOLERANCE + GLEITKOMMA_REST:
         rt.store.update(min_flow_current=value)
         return
     try:

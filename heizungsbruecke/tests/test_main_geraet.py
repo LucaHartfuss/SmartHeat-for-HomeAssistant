@@ -1,8 +1,12 @@
 """Spec 5c 1.1/1.2: Start ohne Optionen als Geraet (Geraetekern und Laufzeit in einem Prozess); Neustart erst nach
 sauberem Trennen; Aufraeumen nach dem Entfernen. Die frueheren Tests des Optionsmodus stehen noch in test_main.py
 (Task 10 ordnet sie ein)."""
+import errno
 import json
 import logging
+import os
+import threading
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -11,13 +15,18 @@ from test_runtime import OPTIONS, _quiet_backup, env  # noqa: F401 - env ist ein
 
 import heizungsbruecke.__main__ as main_module
 from heizungsbruecke import config
-from smartheat_core import dateien
+from heizungsbruecke.version import ADDON_VERSION
+from smartheat_core import dateien, rastung
 from smartheat_device import prozess
+from smartheat_device.documents import DocumentStore
 from smartheat_device.host import Anzeige
 from smartheat_device.laufzeit import RuntimeChannel
 from smartheat_runtime import app, dokument_config
 from smartheat_runtime import aufraeumen as aufraeumen_markierung
+from smartheat_runtime.backup_store import save_backup
+from smartheat_runtime.delivery import SOURCE_LOCAL, DataFault, DeliveryState, PendingTick
 from smartheat_runtime.runtime import Runtime
+from smartheat_runtime.state import StateStore, bind_to_tenant
 
 DEVICE_ID = "shg-aaaaaaaaaaaaaaaa"
 CLAIM_CODE = "ABCDEFGHIJKL"
@@ -188,12 +197,30 @@ def test_main_with_an_invalid_bootstrap_url_stays_idle_without_the_device_core(g
     monkeypatch.setenv("SUPERVISOR_TOKEN", "test-token")
     monkeypatch.setattr(main_module, "HomeAssistantApi", lambda **kwargs: geraet_env.ha)
     monkeypatch.setattr(main_module, "SupervisorApi", lambda **kwargs: FakeSupervisor())
-    monkeypatch.setattr(main_module, "Device", lambda *args, **kwargs: pytest.fail("kein Geraetekern"))
     monkeypatch.setattr(main_module.signal, "signal", lambda *args: None)
-    geruht = []
-    monkeypatch.setattr(main_module, "_ruhen", lambda: geruht.append(True))
-    main_module.main()
-    assert geruht == [True]
+    pausen = []
+
+    def _sleep(seconds):  # Uhr: die Ruhe endet wie beim SIGTERM des Supervisors (SystemExit aus dem Signal-Handler)
+        pausen.append(seconds)
+        raise SystemExit(0)
+
+    monkeypatch.setattr(main_module.time, "sleep", _sleep)
+    ende = []
+
+    def _main():
+        try:
+            main_module.main()
+        except SystemExit as error:
+            ende.append(error.code)
+
+    # main in einem eigenen Thread: baut eine Regression doch den Geraetekern, blockiert laufen (der Worker wartet ohne
+    # Zeitlimit auf Ereignisse); der Test wird dann nach 5 s rot statt zu haengen.
+    thread = threading.Thread(target=_main, daemon=True)
+    thread.start()
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert ende == [0] and pausen == [3600]  # in der Ruhe (_ruhen schlaeft je 3600 s), nicht in der 60-s-Startpause
+    assert _kein_geraetekern()  # keine Identitaet angelegt
 
 
 def test_log_level_from_options(tmp_path, monkeypatch):
@@ -281,7 +308,7 @@ def test_reload_disconnects_before_exec(geraet_env, monkeypatch):
     order = []
     device = FakeDevice(order=order)
     geraet, status = _verdrahtet(geraet_env, device)
-    monkeypatch.setattr(main_module, "_exec", lambda: order.append("exec"))
+    monkeypatch.setattr(main_module.os, "execv", lambda executable, argv: order.append("exec"))
     geraet.konfiguration_uebernommen(None, {"anlage": "neu", "bindung": {}})
     main_module.laufen(geraet, device, geraet_env.ha, status, geraet_env.clock)
     assert order == ["start", "stop", "join", "stop", "exec"]
@@ -291,7 +318,7 @@ def test_sigterm_ends_without_exec(geraet_env, monkeypatch):
     order = []
     device = FakeDevice(order=order)
     geraet, status = _verdrahtet(geraet_env, device)
-    monkeypatch.setattr(main_module, "_exec", lambda: order.append("exec"))
+    monkeypatch.setattr(main_module.os, "execv", lambda executable, argv: order.append("exec"))
 
     def run():
         raise SystemExit(0)
@@ -321,7 +348,7 @@ def test_a_failing_end_still_restarts(geraet_env, monkeypatch, caplog):
     device = FailingDevice(order=order)
     device.start = lambda: order.append("start") or FailingThread(order)
     geraet, status = _verdrahtet(geraet_env, device)
-    monkeypatch.setattr(main_module, "_exec", lambda: order.append("exec"))
+    monkeypatch.setattr(main_module.os, "execv", lambda executable, argv: order.append("exec"))
     geraet.konfiguration_uebernommen(None, {"anlage": "neu", "bindung": {}})
     with caplog.at_level(logging.WARNING):
         main_module.laufen(geraet, device, geraet_env.ha, status, geraet_env.clock)
@@ -334,7 +361,7 @@ def test_an_unexpected_start_error_restarts_after_a_pause(geraet_env, monkeypatc
     order = []
     device = FakeDevice(order=order)
     geraet, status = _verdrahtet(geraet_env, device)
-    monkeypatch.setattr(main_module, "_exec", lambda: order.append("exec"))
+    monkeypatch.setattr(main_module.os, "execv", lambda executable, argv: order.append("exec"))
     monkeypatch.setattr(main_module.time, "sleep", lambda seconds: order.append(("pause", seconds)))
 
     def kaputt(*args, **kwargs):
@@ -345,6 +372,78 @@ def test_an_unexpected_start_error_restarts_after_a_pause(geraet_env, monkeypatc
         main_module.laufen(geraet, device, geraet_env.ha, status, geraet_env.clock)
     assert order == ["start", "stop", "join", "stop", ("pause", prozess.FEHLER_PAUSE_SECONDS), "exec"]
     assert "KeyError" in caplog.text and "geheim" not in caplog.text
+
+
+# --- Fehler vor laufen (S3S6-Startabbruch) ---
+
+
+def _main_ohne_supervisor(geraet_env, monkeypatch, order):
+    """main() mit gueltiger bootstrap_url bis zum Start; Supervisor-Grenzen, Signal, exec (os.execv) und Pause
+    aufgezeichnet. Ein Startfehler darf keinen Geraetekern mehr bauen (_kein_geraetekern)."""
+    config.OPTIONS_PATH.write_text(json.dumps({"bootstrap_url": "https://labor.example.test"}))
+    monkeypatch.delenv("SMARTHEAT_BOOTSTRAP_URL", raising=False)
+    monkeypatch.setenv("SUPERVISOR_TOKEN", "test-token")
+    monkeypatch.setattr(main_module, "HomeAssistantApi", lambda **kwargs: geraet_env.ha)
+    monkeypatch.setattr(main_module, "SupervisorApi", lambda **kwargs: FakeSupervisor())
+    monkeypatch.setattr(main_module.signal, "signal", lambda *args: order.append("signal"))
+    monkeypatch.setattr(main_module.os, "execv", lambda executable, argv: order.append("exec"))
+    monkeypatch.setattr(main_module.time, "sleep", lambda seconds: order.append(("pause", seconds)))
+
+
+def _kein_geraetekern():
+    """Der Geraetekern legt beim Bau seine Identitaet an (identity.load_or_create): ohne key.pem gab es keinen."""
+    return not (config.DEVICE_DATA_DIR / "device" / "key.pem").exists()
+
+
+def test_an_unwritable_data_dir_during_cleanup_pauses_and_execs(geraet_env, monkeypatch, caplog):
+    """Die Markierung einer neuen Einrichtung (VERWERFEN) laesst sich in einem nicht beschreibbaren Datenordner nicht
+    loeschen: bis S3S6-Startabbruch endete main dann mit dem Traceback (der Supervisor startet das Add-on nicht
+    zuverlaessig neu); jetzt ERROR mit Fehlerart, 60 s Pause, exec."""
+    order = []
+    _main_ohne_supervisor(geraet_env, monkeypatch, order)
+    _entfernt_vorbereiten()
+    dateien.schreiben_json(config.DEVICE_DATA_DIR / "device" / "konfiguration.json",
+                           {"version": 2, "inhalt": {"anlage": "neu"}, "dirty": False}, modus=dateien.PRIVAT)
+    echt = Path.unlink
+
+    def unlink(self, missing_ok=False):
+        if self == config.AUFRAEUMEN_PATH:
+            order.append("unlink")
+            raise PermissionError(13, "geheim")
+        return echt(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    with caplog.at_level(logging.WARNING):
+        main_module.main()
+    # SIGTERM steht vor dem Aufraeumen (bis zu 120 s Warten auf HA): ein Stopp darin endet ueber SystemExit
+    assert order == ["signal", "unlink", ("pause", 60.0), "exec"]
+    assert config.AUFRAEUMEN_PATH.exists() and config.BACKUP_PATH.exists()  # nichts geloescht
+    assert _kein_geraetekern()
+    assert "PermissionError" in caplog.text and "geheim" not in caplog.text
+
+
+def test_a_failing_document_store_during_cleanup_pauses_and_execs(geraet_env, monkeypatch, caplog):
+    order = []
+    _main_ohne_supervisor(geraet_env, monkeypatch, order)
+    _entfernt_vorbereiten()
+
+    def kaputt(*args, **kwargs):
+        raise OSError(5, "geheim")
+
+    monkeypatch.setattr(main_module, "DocumentStore", kaputt)
+    with caplog.at_level(logging.WARNING):
+        main_module.main()
+    assert order == ["signal", ("pause", 60.0), "exec"]
+    assert config.AUFRAEUMEN_PATH.exists() and config.BACKUP_PATH.exists()
+    assert _kein_geraetekern()
+    assert "OSError" in caplog.text and "geheim" not in caplog.text
+
+
+def test_vorbereiten_wires_device_and_host_without_starting_the_device(geraet_env):
+    """_vorbereiten: aufraeumen, Geraete-Host, Geraetekern, verdrahten; der Geraete-Thread startet erst in laufen."""
+    geraet, device, status = main_module._vorbereiten(geraet_env.ha, FakeSupervisor(), "https://labor.example.test")
+    assert geraet.device is device and device.host is geraet and geraet.status_sink is status
+    assert geraet.claim_code() == device.identity.claim_code
 
 
 # --- Aufraeumen nach dem Entfernen ---
@@ -405,6 +504,18 @@ def test_cleanup_keeps_a_new_setup(geraet_env):
     assert not config.AUFRAEUMEN_PATH.exists()
 
 
+def test_cleanup_reads_the_stored_configuration_without_writing_the_lock(geraet_env):
+    """S3S3-Reste: das Aufraeumen beim Start ist Nur-Lese-Aufbau; eine gespeicherte eingerichtete Konfiguration ohne
+    Rastung (Stand vor dieser Version) rastet erst der Geraetekern, nicht das Aufraeumen."""
+    _entfernt_vorbereiten()
+    neue = {"anlage": "neu", "hebelsatz": "vaillant_vrc720", "verteilsystem": "Heizkoerper"}
+    dateien.schreiben_json(config.DEVICE_DATA_DIR / "device" / "konfiguration.json",
+                           {"version": 2, "inhalt": neue, "dirty": False}, modus=dateien.PRIVAT)
+    main_module.aufraeumen(DeletingHa())
+    assert not config.AUFRAEUMEN_PATH.exists() and config.BACKUP_PATH.exists()  # Neueinrichtung: Markierung verworfen
+    assert not (config.DEVICE_DATA_DIR / "device" / "sicherheitssatz.json").exists()
+
+
 def test_cleanup_keeps_helpers_it_could_not_delete_for_the_next_start(geraet_env):
     _entfernt_vorbereiten()
     main_module.aufraeumen(DeletingHa(failing={"sensor.smartheat_aussen"}))
@@ -417,6 +528,85 @@ def test_cleanup_keeps_helpers_it_could_not_delete_for_the_next_start(geraet_env
     main_module.aufraeumen(ha)
     assert ha.deleted == [("sensor.smartheat_aussen", "alt")]
     assert not config.DERIVED_SENSORS_PATH.exists() and not config.AUFRAEUMEN_PATH.exists()
+
+
+def _unlink_scheitert_fuer(monkeypatch, pfad, fehler):
+    """Fehlerinjektion: Path.unlink scheitert fuer pfad mit fehler (per monkeypatch, nie per chmod)."""
+    echt = Path.unlink
+
+    def unlink(self, missing_ok=False):
+        if self == pfad:
+            raise OSError(fehler, os.strerror(fehler))
+        echt(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    return echt
+
+
+@pytest.mark.parametrize("fehler, art", [(errno.EACCES, "PermissionError"), (errno.EIO, "OSError")])
+def test_a_state_file_that_cannot_be_deleted_keeps_the_marker_and_the_backup_and_the_start_goes_on(
+        geraet_env, monkeypatch, caplog, fehler, art):
+    """Scheitert das Loeschen einer Zustandsdatei (Rechte, EIO), wirft das Aufraeumen nicht (der Geraetekern startet
+    trotzdem, wie bei nicht loeschbaren Hilfssensoren): die Datei, die Markierung und backup.json (der Bindungsanker,
+    zuletzt und nur nach allem anderen geloescht) bleiben fuer den naechsten Start, der uebrige Zustand ist weg; im Log
+    Datei und Fehlerart, keine Erfolgsmeldung. Der naechste Start loescht den Rest, backup.json und die Markierung."""
+    _entfernt_vorbereiten()
+    echt = _unlink_scheitert_fuer(monkeypatch, config.FAILSAFE_PATH, fehler)
+    with caplog.at_level(logging.INFO):
+        main_module.aufraeumen(DeletingHa())  # wirft nicht
+    assert config.FAILSAFE_PATH.exists() and config.AUFRAEUMEN_PATH.exists() and config.BACKUP_PATH.exists()
+    assert not config.ENTITLEMENT_PATH.exists() and not config.RUNTIME_DIR.exists()
+    assert f"{config.FAILSAFE_PATH.name} nicht geloescht ({art})" in caplog.text
+    assert "Anlagengebundener Zustand geloescht" not in caplog.text
+    monkeypatch.setattr(Path, "unlink", echt)
+    main_module.aufraeumen(DeletingHa())
+    assert _anlage_geloescht() and not config.AUFRAEUMEN_PATH.exists()
+
+
+def test_a_backup_that_cannot_be_deleted_keeps_the_marker(geraet_env, monkeypatch, caplog):
+    """Scheitert nur das Loeschen von backup.json, ist der uebrige Zustand weg und die Markierung bleibt."""
+    _entfernt_vorbereiten()
+    _unlink_scheitert_fuer(monkeypatch, config.BACKUP_PATH, errno.EIO)
+    main_module.aufraeumen(DeletingHa())
+    assert config.BACKUP_PATH.exists() and config.AUFRAEUMEN_PATH.exists()
+    assert not config.FAILSAFE_PATH.exists() and not config.ENTITLEMENT_PATH.exists() and not config.RUNTIME_DIR.exists()
+    assert f"{config.BACKUP_PATH.name} nicht geloescht (OSError)" in caplog.text
+
+
+def test_a_runtime_folder_that_cannot_be_removed_keeps_the_marker_and_the_backup(geraet_env, monkeypatch, caplog):
+    """Laesst sich der Laufzeit-Ordner nicht ganz entfernen (EACCES), bleiben Markierung und backup.json: der naechste
+    Start versucht es erneut, statt den Rest des Ordners fuer immer liegen zu lassen."""
+    _entfernt_vorbereiten()
+    (config.RUNTIME_DIR / "soll.json").write_text("{}")
+
+    def rmtree(path, *args, **kwargs):
+        raise PermissionError(errno.EACCES, "verweigert")
+
+    monkeypatch.setattr(main_module.shutil, "rmtree", rmtree)
+    main_module.aufraeumen(DeletingHa())
+    assert (config.RUNTIME_DIR / "soll.json").exists() and config.AUFRAEUMEN_PATH.exists()
+    assert config.BACKUP_PATH.exists()
+    assert f"{config.RUNTIME_DIR.name} nicht geloescht (PermissionError)" in caplog.text
+
+
+def test_leftover_state_of_a_partial_cleanup_is_discarded_when_another_plant_is_set_up(geraet_env, monkeypatch):
+    """Bleibt nach einem Teil-Scheitern Zustand liegen (hier failsafe_state.json mit Notbetrieb, offenem Tick und
+    Datenfehler), steht auch backup.json mit der Bindung der alten Anlage noch da: richtet der Nutzer danach eine andere
+    Anlage ein, verwirft bind_to_tenant den Zustand der alten (Zustellung und anlagengebundene Felder)."""
+    _entfernt_vorbereiten()
+    save_backup(config.BACKUP_PATH, {"tenant_id": "s-alt", "plant_id": "anlage-alt", "lifetime_writes": 7})
+    alt = DeliveryState(notbetrieb=True, server_failures=3, pending=PendingTick("seq-1", "daily", stage=2),
+                        datenfehler=DataFault(SOURCE_LOCAL, ("room_actual",)))
+    StateStore(config.BACKUP_PATH, config.FAILSAFE_PATH).set_delivery(alt)
+    _unlink_scheitert_fuer(monkeypatch, config.FAILSAFE_PATH, errno.EACCES)
+    main_module.aufraeumen(DeletingHa())
+    store = StateStore(config.BACKUP_PATH, config.FAILSAFE_PATH)
+    liegt = store.state.delivery  # vorher: fremder Zustand liegt da (gespeichert ohne Stufe und Fehlerzaehler)
+    assert liegt.notbetrieb and liegt.pending is not None and liegt.datenfehler == alt.datenfehler
+    assert store.state.plant_id == "anlage-alt"
+    assert bind_to_tenant(store, "s-neu", "anlage-neu") == "andere_anlage"
+    assert store.state.delivery == DeliveryState() and store.state.lifetime_writes == 0
+    assert StateStore(config.BACKUP_PATH, config.FAILSAFE_PATH).state.delivery == DeliveryState()
 
 
 def test_cleanup_waits_a_limited_time_for_home_assistant(geraet_env, monkeypatch):
@@ -513,6 +703,70 @@ def test_an_empty_configuration_resets_then_restarts_and_the_next_start_cleans_u
     geraet, status = _verdrahtet(geraet_env, device)
     result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
     assert isinstance(result, app.IdleBridge) and result.reason == app.IDLE_NOT_CONFIGURED
+
+
+@pytest.mark.parametrize("rastung_datei", ["anderes_verteilsystem", "kaputt"])
+def test_a_marker_that_does_not_fit_the_lock_stays_on_reset_and_nothing_is_deleted(geraet_env, rastung_datei):
+    """G-1, Angriff (gesperrt statt geloescht, client-kern.md "Leer heisst abmelden"): passt die Konfiguration der
+    Markierung nicht zur abweichenden bzw. kaputten Rastung, setzt die Laufzeit nicht zurueck (sign_off_parts None),
+    die Markierung bleibt auf Zuruecksetzen, und weder dieser noch der naechste Start loescht den anlagengebundenen
+    Zustand; das Geraet bleibt abgemeldet, ohne Neustart und ohne erneuten Versuch."""
+    konfiguration = konfiguration_aus_optionen(OPTIONS)  # vaillant_vrc720 x Heizkoerper
+    _quiet_backup(geraet_env, boost_active=True)
+    config.DERIVED_SENSORS_PATH.write_text(json.dumps(TRACKING))
+    aufraeumen_markierung.markieren(config.AUFRAEUMEN_PATH, konfiguration)
+    config.RASTUNG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if rastung_datei == "kaputt":
+        config.RASTUNG_PATH.write_text("{kaputt")
+    else:
+        rastung.schreiben(config.RASTUNG_PATH, rastung.Rastung("vaillant_vrc720", "Fussbodenheizung"),
+                          "2026-10-18T00:00:00+02:00")
+    device = FakeDevice({**konfiguration, "anlage": None})
+    ha = DeletingHa()
+
+    for _ in range(2):  # zweiter Durchgang: Neustart des Add-ons mit demselben Stand
+        main_module.aufraeumen(ha)
+        geraet, status = _verdrahtet(geraet_env, device)
+        result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+        assert isinstance(result, app.IdleBridge) and result.reason == "abgemeldet"
+        geraet_env.clock.advance(3 * 300)
+        result.worker.run_pending()  # ein Neustart wuerde hier prozess.Neustart werfen
+        events = [data for kind, data in geraet_env.ha.events if kind == "smartheat_status"]
+        assert events[-1]["status"] == "abgemeldet" and events[-1]["grund"] == app.SIGN_OFF_INVALID_CONFIG
+        assert geraet_env.ha.writes == [] and ha.deleted == []
+        gelesen = aufraeumen_markierung.lesen(config.AUFRAEUMEN_PATH)
+        assert gelesen is not None and gelesen.zurueckgesetzt is False
+        assert config.BACKUP_PATH.exists() and config.DERIVED_SENSORS_PATH.exists()
+        assert json.loads(config.BACKUP_PATH.read_text())["boost_active"] is True
+
+
+def _dokument(inhalt: dict, version: int) -> dict:
+    return {"schema": 1, "version": version, **inhalt}
+
+
+@pytest.mark.parametrize("anders", [{"verteilsystem": "Fussbodenheizung"}, {"hebelsatz": "viessmann_vicare"}])
+def test_the_cleanup_keeps_the_lever_set_lock(geraet_env, anders):
+    """G-1, Angriff (ck F-client-kern-47): das Aufraeumen nach "leer ohne sign_off" (_anlage_loeschen) loescht den
+    anlagengebundenen Zustand, aber nicht device/sicherheitssatz.json; ein neuer Dokumentspeicher lehnt ein anderes Paar
+    weiter ab, dasselbe Paar nimmt er an."""
+    konfiguration = konfiguration_aus_optionen(OPTIONS)  # vaillant_vrc720 x Heizkoerper
+    leer = {**konfiguration, "anlage": None, "profil": None, "hebelsatz": None, "verteilsystem": None, "bindung": None,
+            "raumfuehler": [], "tagestick": None, "abo": None, "bindungsparameter": None}
+    device_dir = config.DEVICE_DATA_DIR / "device"
+    store = DocumentStore(device_dir, host="ha", software_version=ADDON_VERSION)
+    assert store.empfangen("konfiguration", _dokument(konfiguration, 1)).uebernommen
+    assert store.empfangen("konfiguration", _dokument(leer, 2)).uebernommen
+    _entfernt_vorbereiten()
+    aufraeumen_markierung.markieren(config.AUFRAEUMEN_PATH, konfiguration)
+    assert aufraeumen_markierung.zurueckgesetzt(config.AUFRAEUMEN_PATH, konfiguration["anlage"])
+
+    main_module.aufraeumen(DeletingHa())
+    assert _anlage_geloescht() and not config.AUFRAEUMEN_PATH.exists()  # das Aufraeumen lief
+
+    store = DocumentStore(device_dir, host="ha", software_version=ADDON_VERSION)
+    ergebnis = store.empfangen("konfiguration", _dokument({**konfiguration, **anders}, 3))
+    assert (ergebnis.ok, ergebnis.grund) == (False, "hebelsatz_eingerastet")
+    assert store.empfangen("konfiguration", _dokument(konfiguration, 4)).uebernommen
 
 
 def test_no_marker_no_cleanup(geraet_env):

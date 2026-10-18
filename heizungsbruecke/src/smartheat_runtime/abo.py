@@ -92,13 +92,27 @@ def finish_grace(rt: Runtime, *, always_restore: bool, final_notice: bool) -> bo
     return True
 
 
-def report_restore(notifier, ok: bool) -> None:
+def report_restore(notifier, ok: bool) -> bool:
     """T2-7: eine dauerhaft scheiternde Wiederherstellung am Fristende wird einmal gemeldet
-    (kritisch), die spaetere Rueckkehr ebenfalls. Gelingt sie gleich, bleibt es still."""
+    (kritisch), die spaetere Rueckkehr ebenfalls. Gelingt sie gleich, bleibt es still. True bei einem
+    Zustandswechsel: die Aufrufer loggen ERROR nur dann, nicht bei jedem zurueckgestellten Versuch (TP12b)."""
     if ok:
-        notifier.notify(RESTORE_KEY, STATE_OK, RESTORE_OK_MESSAGE, critical=True)
+        return notifier.notify(RESTORE_KEY, STATE_OK, RESTORE_OK_MESSAGE, critical=True)
+    return notifier.notify(RESTORE_KEY, RESTORE_FAILED_STATE, RESTORE_FAILED_MESSAGE, critical=True)
+
+
+def log_restore_failure(rt: Runtime, message: str, *args) -> None:
+    """Gescheiterte bzw. vom Schreibbudget zurueckgestellte Wiederherstellung am Fristende melden (report_restore) und
+    loggen, hoechstens einmal je Episode sichtbar (TP12b): ERROR beim Wechsel des Meldezustands, WARNING beim ersten
+    Versuch dieses Prozesses, wenn der Zustand schon vor dem Neustart stand, danach im Takt nur DEBUG."""
+    if report_restore(rt.notifier, ok=False):
+        log = logger.error
+    elif not rt.restore_failure_logged:
+        log = logger.warning
     else:
-        notifier.notify(RESTORE_KEY, RESTORE_FAILED_STATE, RESTORE_FAILED_MESSAGE, critical=True)
+        log = logger.debug
+    rt.restore_failure_logged = True
+    log(message, *args)
 
 
 AUTH_REJECTED_QUERY_INTERVAL_SECONDS = 600.0
@@ -186,10 +200,10 @@ def check_grace_end(rt: Runtime) -> None:
         report_restore(rt.notifier, ok=True)
         _enter_idle(rt)
         return
-    report_restore(rt.notifier, ok=False)
-    logger.error(
+    log_restore_failure(
+        rt,
         "Abo-inaktiv-Frist abgelaufen, zuletzt gelernte Werte konnten nicht wiederhergestellt "
-        "werden - Notbetrieb laeuft weiter, erneuter Versuch beim naechsten Check"
+        "werden - Notbetrieb laeuft weiter, erneuter Versuch beim naechsten Check",
     )
 
 

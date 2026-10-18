@@ -1,9 +1,14 @@
 """Fakes fuer die Bruecken-Tests: FakeHa (einfach), LaggingFakeHa (realistisches HA-/mypyllant-Modell)
 und WallClock (Wanduhr). Plain-Import (`from fakes import ...`), tests/ hat kein __init__.py."""
 import copy
+import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
 from zoneinfo import ZoneInfo
+
+import requests
+import websocket
 
 from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime import entitlement
@@ -23,6 +28,18 @@ def runtime_config(**overrides) -> RuntimeConfig:
     return RuntimeConfig(**values)
 
 
+# Hebelsatz mit `level` (Viessmann) fuer die Laufzeit-Tests: Optionen des Add-ons und Ausgangszustand der Fake-HA
+# (Eingaben; test_runtime.py und test_runtime_plan3b.py)
+VIESSMANN_OPTIONEN = {
+    "lever_set": "viessmann_vicare", "entity_curve_current": "number.slope", "entity_level_current": "number.shift",
+    "entity_shift_current": "number.normal_temperature", "entity_mode_select": "climate.heizkreis",
+    "entity_heat_limit": "", "entity_min_flow": "",
+}
+VIESSMANN_ZUSTAND = {
+    "number.slope": 1.0, "number.shift": 0.0, "number.normal_temperature": 20.0, "climate.heizkreis::preset_mode": "eco",
+}
+
+
 class HaEventSink:
     """StatusSink der Laufzeit-Tests (StatusReporter): das Ereignis unveraendert an fire_event. Produktiv sendet
     geraet_status.GeraetStatus (Schema 3); dies ist der Ersatz fuer den entfallenen HaStatusSink."""
@@ -32,6 +49,96 @@ class HaEventSink:
 
     def publish(self, event: dict) -> None:
         self._ha_api.fire_event("smartheat_status", event)
+
+
+class FakeNotifySink:
+    """NotifySink der Laufzeit-Tests (Grenze zum Kunden, A5-25): der echte Notifier entscheidet ueber Entprellung,
+    Hinweis-Schalter und offene Meldungen; der Sink haelt nur fest, was beim Kunden ankommt."""
+
+    def __init__(self) -> None:
+        self.pushes: list[tuple[str, str]] = []  # (Schluessel, Text) je Push
+        self.shown: dict[str, str] = {}  # offene kritische Meldungen je Schluessel
+        self.withdrawn: list[str] = []
+
+    def push(self, key: str, message: str) -> None:
+        self.pushes.append((key, message))
+
+    def show(self, key: str, message: str) -> None:
+        self.shown[key] = message
+
+    def withdraw(self, key: str) -> None:
+        self.shown.pop(key, None)
+        self.withdrawn.append(key)
+
+
+class FakeMqttChannel:
+    """MqttChannel der Laufzeit-Tests (Port, smartheat_runtime.ports): haelt die gesendeten Nachrichten fest."""
+
+    def __init__(self, connected: bool = True) -> None:
+        self.connected = connected
+        self.connect_failures = 0
+        self.snapshots: list[dict] = []
+        self.telemetry: list[dict] = []
+        self.started = False
+        self.stopped = False
+
+    def is_connected(self) -> bool:
+        return self.connected
+
+    def publish_snapshot(self, payload: dict) -> None:
+        self.snapshots.append(copy.deepcopy(payload))
+
+    def publish_telemetry(self, payload: dict) -> None:
+        self.telemetry.append(copy.deepcopy(payload))
+
+    def loop_start(self) -> None:
+        self.started = True
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
+
+class FakeTriggerClient:
+    """Fake des Grenz-Adapters zum HA-WebSocket (`heizungsbruecke.geraet_trigger.HaTriggerClient`, Controller-Ruling
+    Task 10): verbindet nichts, haelt die Konstruktor-Argumente in `kwargs` fest (die Tests rufen daraus
+    `on_trigger_event`/`on_connected`). Konstruktor, `start` und `stop` haben die Signatur des echten Clients
+    (test_fake_gleichlauf.py). Einsetzen per `monkeypatch.setattr(..., trigger_klasse(ablage))`: jede Umgebung bekommt
+    eine eigene Unterklasse, deren Instanzen in `ablage` landen."""
+
+    erzeugt: list  # gesetzt von trigger_klasse
+
+    def __init__(self, ws_url, token, triggers, on_trigger_event, on_connected=None):
+        self.kwargs = {"ws_url": ws_url, "token": token, "triggers": triggers,
+                       "on_trigger_event": on_trigger_event, "on_connected": on_connected}
+        self.connected = True
+        self.started = False
+        self.stopped = False
+        type(self).erzeugt.append(self)
+
+    def start(self) -> None:
+        self.started = True
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
+def trigger_klasse(ablage: list, basis: type[FakeTriggerClient] = FakeTriggerClient, **attribute) -> type:
+    """Unterklasse von `basis` fuer eine Umgebung: erzeugte Clients landen in `ablage`; `attribute` setzt weitere
+    Klassenattribute (z. B. ein Log)."""
+    return type(basis.__name__, (basis,), {"erzeugt": ablage, **attribute})
+
+def datei_stand(path: Path) -> tuple[int, int, bytes] | None:
+    """Stand einer Datei auf dem Datentraeger (Inode, Aenderungszeit in ns, Inhalt), None ohne Datei. Jedes Schreiben
+    geht atomar ueber eine neue Datei (dateien.schreiben, os.replace) und aendert die Inode; der Inhalt ist mit dabei,
+    damit eine wiederverwendete Inode bei gleicher Aenderungszeit kein "ungeschrieben" vortaeuscht. Gleicher Stand
+    heisst: die Datei wurde nicht geschrieben (Wirkung auf dem Datentraeger statt eines Spions auf dem Store, A5-25)."""
+    try:
+        stat = path.stat()
+        inhalt = path.read_bytes()
+    except FileNotFoundError:
+        return None
+    return stat.st_ino, stat.st_mtime_ns, inhalt
 
 
 class FakeHa:
@@ -251,3 +358,69 @@ class WallClock:
 
     def advance(self, seconds: float) -> None:
         self._utc += timedelta(seconds=seconds)  # UTC-Arithmetik: ueber die Zeitumstellung hinweg absolut
+
+
+def ha_antwort(body=None, *, fehler=None):
+    """HTTP-Antwort an der requests-Grenze der HA-API (Attrappe mit spec der echten Klasse)."""
+    response = Mock(spec=requests.Response)
+    response.status_code = 200
+    response.json.return_value = body
+    if fehler is None:
+        response.raise_for_status.return_value = None
+    else:
+        response.raise_for_status.side_effect = fehler
+    return response
+
+
+class HaWebSocket:
+    """Gegenstelle am websocket-Rand (`websocket.create_connection`): je Verbindung `auth_required`, nach dem Token
+    `auth_ok` (ein anderes Token: `auth_invalid`), je Kommando die naechste Antwort aus `ergebnisse`. Zeichnet die
+    Adressen der Verbindungen und die gesendeten Kommandos auf."""
+
+    def __init__(self, *ergebnisse, token="test-token"):
+        self._ergebnisse = list(ergebnisse)
+        self._token = token
+        self.urls: list[str] = []
+        self.kommandos: list[dict] = []
+
+    def _verbinden(self, url, timeout=None, **_optionen):
+        self.urls.append(url)
+        ws = MagicMock(spec=websocket.WebSocket)
+        ausgang = [{"type": "auth_required"}]
+
+        def senden(text):
+            nachricht = json.loads(text)
+            if nachricht.get("type") == "auth":
+                angemeldet = nachricht.get("access_token") == self._token
+                ausgang.append({"type": "auth_ok" if angemeldet else "auth_invalid"})
+                return
+            self.kommandos.append(nachricht)
+            ausgang.append({"id": nachricht["id"], "type": "result", "success": True,
+                            "result": self._ergebnisse.pop(0)})
+
+        ws.send.side_effect = senden
+        ws.recv.side_effect = lambda: json.dumps(ausgang.pop(0))
+        return ws
+
+    def angeschlossen(self):
+        return patch("heizungsbruecke.ha_api.websocket.create_connection", autospec=True, side_effect=self._verbinden)
+
+
+class HttpAntwort:
+    """HTTP-Antwort an der requests-Grenze (Supervisor-HTTP): json, status_code und raise_for_status wie
+    requests.Response; ein Status ab 400 wirft requests.HTTPError."""
+
+    def __init__(self, body, status=200):
+        self._body, self.status_code = body, status
+
+    def json(self):
+        return self._body
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(response=self)
+
+
+def nachricht_bytes(nachricht) -> int:
+    """Bytes einer Nachricht so, wie der Link sie sendet (kompakt, UTF-8; inventory.groesse)."""
+    return len(json.dumps(nachricht, separators=(",", ":"), ensure_ascii=False).encode())

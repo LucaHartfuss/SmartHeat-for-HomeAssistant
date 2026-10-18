@@ -2,8 +2,8 @@ import json
 import logging
 
 import pytest
+from fakes import datei_stand
 
-from smartheat_runtime import backup_store
 from smartheat_runtime.backup_store import load_backup, save_backup
 from smartheat_runtime.delivery import SOURCE_LOCAL, DataFault, DeliveryState, PendingTick
 from smartheat_runtime.state import BridgeState, StateStore, StorageError, _is_override
@@ -28,16 +28,14 @@ def _raise_oserror(*args, **kwargs):
     raise OSError("Datentraeger kaputt")
 
 
-def _count_saves(monkeypatch) -> list:
-    saves = []
-    original = backup_store.save_backup
+def _geschrieben(tmp_path, vorher: dict) -> list:
+    """Namen der Dateien, deren Stand (Inode, Aenderungszeit) sich seit `vorher` geaendert hat: das Schreiben wirkt auf
+    dem Datentraeger (fakes.datei_stand), kein Spion auf dem Store."""
+    return sorted(name for name, stand in vorher.items() if datei_stand(tmp_path / name) != stand)
 
-    def _spy(path, values):
-        saves.append(path.name)
-        original(path, values)
 
-    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _spy)
-    return saves
+def _stand(tmp_path) -> dict:
+    return {name: datei_stand(tmp_path / name) for name in ("backup.json", "failsafe_state.json")}
 
 
 # --- Laden ---
@@ -258,18 +256,18 @@ def test_round_trip_through_a_new_store(make_store, tmp_path):
     assert reloaded.state == store.state
 
 
-def test_update_writes_only_when_persisted_content_changes(make_store, monkeypatch):
+def test_update_writes_only_when_persisted_content_changes(make_store, tmp_path):
     store = make_store(backup=V016_BACKUP)
-    saves = _count_saves(monkeypatch)
+    vorher = _stand(tmp_path)
 
     store.update(boost_active=True)  # unveraendert
     store.update(stable_target=22.0, abo_finished=True)  # nur Laufzeit
 
-    assert saves == []
+    assert _geschrieben(tmp_path, vorher) == []
 
     store.update(last_room_target=22.0)
 
-    assert saves == ["backup.json"]
+    assert _geschrieben(tmp_path, vorher) == ["backup.json"]
 
 
 def test_update_rejects_delivery(make_store):
@@ -328,18 +326,18 @@ def test_runtime_only_update_never_retries_a_failed_write(make_store, monkeypatc
     assert store.state.stable_target == 21.0
 
 
-def test_set_delivery_writes_only_on_persisted_change(make_store, tmp_path, monkeypatch):
-    store = make_store()
-    saves = _count_saves(monkeypatch)
+def test_set_delivery_writes_only_on_persisted_change(make_store, tmp_path):
+    store = make_store(backup={}, failsafe={})
+    vorher = _stand(tmp_path)
 
     store.set_delivery(DeliveryState(server_failures=1))  # nur fluechtige Felder
 
-    assert saves == []
+    assert _geschrieben(tmp_path, vorher) == []
     assert store.state.delivery.server_failures == 1
 
     store.set_delivery(DeliveryState(notbetrieb=True))
 
-    assert saves == ["failsafe_state.json"]
+    assert _geschrieben(tmp_path, vorher) == ["failsafe_state.json"]
     assert load_backup(tmp_path / "failsafe_state.json") == {"failsafe_active": True, "datenfehler": None, "pending": None}
 
 
@@ -419,13 +417,14 @@ def test_invalid_status_and_r6_fields_fall_back(make_store, caplog, key, value):
     assert key in caplog.text
 
 
-def test_manual_override_misses_is_runtime_only(make_store, monkeypatch):
-    store = make_store()
-    saves = _count_saves(monkeypatch)
+def test_manual_override_misses_is_runtime_only(make_store, tmp_path):
+    store = make_store(backup={}, failsafe={})
+    vorher = _stand(tmp_path)
 
     store.update(manual_override_misses=1)
 
-    assert saves == []
+    assert store.state.manual_override_misses == 1
+    assert _geschrieben(tmp_path, vorher) == []
 
 
 def test_failed_backup_write_raises_storage_error_and_sets_storage_failed(make_store, monkeypatch):
@@ -466,13 +465,13 @@ def test_flush_writes_dirty_files_and_clears_storage_failed(make_store, tmp_path
     assert load_backup(tmp_path / "failsafe_state.json")["failsafe_active"] is True
 
 
-def test_flush_without_dirty_files_writes_nothing(make_store, monkeypatch):
-    store = make_store(backup=V016_BACKUP)
-    saves = _count_saves(monkeypatch)
+def test_flush_without_dirty_files_writes_nothing(make_store, tmp_path):
+    store = make_store(backup=V016_BACKUP, failsafe={})
+    vorher = _stand(tmp_path)
 
     store.flush()
 
-    assert saves == []
+    assert _geschrieben(tmp_path, vorher) == []
 
 
 def test_write_budget_survives_a_restart_without_the_monotonic_time(make_store, tmp_path):

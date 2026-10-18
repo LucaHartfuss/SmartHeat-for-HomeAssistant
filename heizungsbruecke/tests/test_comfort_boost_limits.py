@@ -10,6 +10,7 @@ import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT
 from fakes import runtime_config
 
+from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_binding import HaPlantBinding
 from smartheat_core import wallclock, write_budget
 from smartheat_core.pipeline import LeverPipeline
@@ -29,7 +30,7 @@ def _rt(tmp_path, values, backup=None):
     save_backup(tmp_path / "backup.json", backup or {
         "last_room_target": 20.0, "restore_point": {"curve": 1.0, "room_setpoint": 20.0, "heat_limit": 16.0}})
     store = StateStore(tmp_path / "backup.json", tmp_path / "failsafe_state.json")
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     ha_api.get_attribute.side_effect = ValueError("kein Wertebereich")
 
     def _get_state(entity_id):

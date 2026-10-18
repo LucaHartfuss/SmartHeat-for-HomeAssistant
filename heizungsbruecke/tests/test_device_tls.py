@@ -4,6 +4,7 @@ import threading
 from unittest.mock import MagicMock
 
 import pytest
+from paho.mqtt import client as mqtt
 from tls_helpers import ca_pem, issue, make_ca
 
 from smartheat_device.tls import (
@@ -42,7 +43,7 @@ def _cert_credential(pki, name="client"):
 def test_certificate_mode_uses_tls_and_the_descriptor_client_id(pki):
     options = connect_options(_iot(pki), _cert_credential(pki))
     assert options.client_id == "client1"
-    client = MagicMock()
+    client = MagicMock(spec=mqtt.Client)
     apply(client, options)
     client.tls_set_context.assert_called_once_with(options.ssl_context)
     client.username_pw_set.assert_not_called()

@@ -1,8 +1,11 @@
 """Schnittstelle Host <-> Geraetekern (Spec 5b 5.1): was der Host dem Paket liefert (Soll-Quelle, Uhr, Inventur,
 Befehle, Anzeige) und wie das Paket ihm Dokumente uebergibt. Gateway (Plan D2) und HA-Add-on (5c) setzen sie um. Alle
 Rueckrufe laufen im Geraete-Thread, duerfen nicht lange blockieren (Befehle mit Wartezeit liefern Waiting) und keine
-Ausnahme werfen: das Geraet faengt sie zwar ab und loggt nur Fehlerart und Ort, aber die Wirkung des Rueckrufs fehlt dann
-(z. B. eine nicht angewandte Konfiguration bis zur naechsten Version, ein spaeteres hello)."""
+Ausnahme werfen: das Geraet faengt sie zwar ab und loggt nur Fehlerart und Ort (die Rueckrufe des Takts je Rueckruf und
+Fehlerart einmal), aber die Wirkung des Rueckrufs fehlt dann (z. B. eine nicht angewandte Konfiguration bis zur
+naechsten Version, Registrierung und hello erst in einem spaeteren Takt, kein up/status in diesem Takt, uhr_synchron
+gilt als None, ursprungswerte als {}, die Anzeige entfaellt). Einzige Ausnahme: konfiguration_vorbereiten darf werfen;
+dann speichert das Geraet nichts und haelt das Dokument zurueck."""
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -82,8 +85,14 @@ class DeviceHost(Protocol):
         """Gemerkte Ursprungswerte der Laufzeit (Hebel aus restore_originals und Hilfswerte); {} ohne Laufzeit."""
         ...
 
+    def konfiguration_vorbereiten(self, alt: dict | None, neu: dict) -> None:
+        """Vor dem Speichern einer geprueften Konfiguration (Spec Testoffensive 12.6, Nr. 38): eingerichtet -> leer
+        schreibt die Aufraeum-Markierung. Der einzige Rueckruf, der werfen darf: dann speichert das Geraet nichts und
+        haelt das Dokument zurueck wie bei config_check.NichtPruefbar."""
+        ...
+
     def konfiguration_uebernommen(self, alt: dict | None, neu: dict) -> None:
-        """Neue Konfiguration (auch leer = nicht eingerichtet, A4-07). Gateway: Laufzeit neu starten, wenn
+        """Neue Konfiguration (auch leer = nicht eingerichtet, A4-07), schon gespeichert: Laufzeit neu starten, wenn
         dokument_config.laufzeit_relevant."""
         ...
 

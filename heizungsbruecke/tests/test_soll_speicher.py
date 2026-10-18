@@ -205,3 +205,33 @@ def test_echo_rest_counts_down_the_window_after_an_own_write(tmp_path, clock):
     assert store.echo_rest() == ECHO_WINDOW_SECONDS - 20
     clock.advance(41)
     assert store.echo_rest() == 0.0
+
+
+def test_portal_confirming_the_same_value_keeps_the_source(tmp_path, clock):
+    """Nr. 40 (Restpunkt 5c-W-12): bestaetigt der Server mit apply_portal den geltenden Wert, bleibt die Soll-Quelle;
+    nur ein anderer Wert setzt sie auf portal."""
+    changes = []
+    store = _store(tmp_path, clock, changes=changes)
+    assert store.apply_thermostat(21.5)
+    assert (store.source, len(changes)) == (SOURCE_THERMOSTAT, 1)
+
+    assert not store.apply_portal(21.5)        # derselbe Wert: keine Aenderung, kein Rueckruf
+    assert (store.value, store.source, len(changes)) == (21.5, SOURCE_THERMOSTAT, 1)
+    assert json.loads((tmp_path / "runtime" / "room_target.json").read_text())["source"] == SOURCE_THERMOSTAT
+
+    assert store.apply_portal(22.0)            # anderer Wert: die Bedienung des Servers gilt
+    assert (store.value, store.source, len(changes)) == (22.0, SOURCE_PORTAL, 2)
+
+
+def test_portal_confirming_a_local_wish_keeps_the_source_lokal(tmp_path, clock):
+    changes = []
+    store = _store(tmp_path, clock, changes=changes)
+    assert store.apply_lokal(22.5)
+    assert (store.source, len(changes)) == (SOURCE_LOKAL, 1)
+
+    assert not store.apply_portal(22.5)        # derselbe Wert: keine Aenderung, kein Rueckruf
+    assert (store.value, store.source, len(changes)) == (22.5, SOURCE_LOKAL, 1)
+    assert json.loads((tmp_path / "runtime" / "room_target.json").read_text())["source"] == SOURCE_LOKAL
+
+    assert store.apply_portal(23.0)            # anderer Wert: die Bedienung des Servers gilt
+    assert (store.value, store.source, len(changes)) == (23.0, SOURCE_PORTAL, 2)

@@ -96,6 +96,26 @@ def test_ein_zu_grosser_koerper_wird_nicht_gesendet(ident, ca):
     assert session.calls == []  # an der HTTP-Grenze kam nichts an
 
 
+def test_ein_koerper_von_genau_65536_bytes_wird_gesendet_ein_byte_mehr_nicht(ident, ca, monkeypatch):
+    """MAX_BODY_BYTES = 65536 als Literal aus V1 (nicht ueber die Konstante), gemessen am Koerper an der HTTP-Grenze."""
+    csr = identity.csr_pem(ident)
+    monkeypatch.setattr(identity, "csr_pem", lambda _ident: csr)  # ECDSA: sonst schwankt die Laenge der CSR je Aufruf
+
+    def args(laenge):
+        return {**ARGS, "capabilities": {**CAPS, "drivers": ["d" * laenge]}}
+
+    probe = FakeSession(FakeResponse(200, _body(ident, ca)))
+    _client(ident, probe).register(**args(1000))
+    laenge = 1000 + 65536 - len(probe.calls[0][2])
+    genau = FakeSession(FakeResponse(200, _body(ident, ca)))
+    _client(ident, genau).register(**args(laenge))
+    assert len(genau.calls[0][2]) == 65536
+    drueber = FakeSession(FakeResponse(200, _body(ident, ca)))
+    with pytest.raises(ValueError):
+        _client(ident, drueber).register(**args(laenge + 1))
+    assert drueber.calls == []
+
+
 def test_ein_normaler_koerper_wird_gesendet(ident, ca):  # Gegenprobe
     session = FakeSession(FakeResponse(200, _body(ident, ca)))
     _client(ident, session).register(**ARGS)
@@ -362,6 +382,20 @@ def test_a_certificate_for_another_key_is_not_stored(tmp_path, ident, ca):
     assert _flow(tmp_path, ident, client).holen(rettung=False) is None and bootstrap.laden(tmp_path) is None
 
 
+def test_broker_host_und_vertrauensanker_kommen_ohne_pinning_aus_der_bootstrap_antwort(tmp_path, ident, ca):
+    """Heutiges Verhalten, Restpunkt A5-61 (vor dem ersten fremden Kunden): das Geraet hat keinen eigenen Anker. Ein
+    beliebiger Broker-Host und eine fremde CA aus der Bootstrap-Antwort werden uebernommen und gespeichert. Kommt das
+    Pinning, kehrt sich diese Zusicherung um."""
+    fremde_ca = GeraeteCa("fremde-ca")
+    body = {**_body(ident, fremde_ca), "mqtt_endpoint": "broker.fremd.example"}
+    assert fremde_ca.pem != ca.pem and bootstrap.laden(tmp_path) is None
+    client = _client(ident, FakeSession(FakeResponse(200, body)))
+    zugang = _flow(tmp_path, ident, lambda: client).holen(rettung=False)
+    assert zugang is not None
+    assert (zugang.endpoint.host, zugang.endpoint.ca_pem) == ("broker.fremd.example", fremde_ca.pem)
+    assert bootstrap.laden(tmp_path) == zugang
+
+
 def test_after_a_foreign_certificate_from_register_the_next_try_renews_for_the_own_csr(tmp_path, ident, ca):
     clock = Clock()
     other = identity.load_or_create(tmp_path / "anderes")
@@ -391,7 +425,10 @@ def test_an_unusable_access_counts_as_a_failure_with_backoff(tmp_path, ident, ca
     assert flow.faellig()
 
 
-@pytest.mark.parametrize("feld, wert", [("mqtt_endpoint", "h\ud800"), ("mqtt_ca", "-----BEGIN CERTIFICATE-----\udfff")])
+@pytest.mark.parametrize("feld, wert", [
+    ("mqtt_endpoint", "h\ud800"), ("mqtt_ca", "-----BEGIN CERTIFICATE-----\udfff"),
+    ("certificate", "-----BEGIN CERTIFICATE-----\ud800"),
+])
 def test_a_response_with_a_lone_surrogate_is_unusable_and_backs_off(tmp_path, ident, ca, feld, wert):
     """speichern() koennte ein einzelnes Surrogat (json.loads aus "\\ud800") nicht schreiben: UnicodeEncodeError
     ausserhalb des try in holen, kein Backoff, register in jedem Takt (Testoffensive T2, Task 13, Fix-Runde 1)."""

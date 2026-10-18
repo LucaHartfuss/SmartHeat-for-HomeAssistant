@@ -2,11 +2,10 @@
 Tagesbudget und zurueckgestellte Serverwerte. Vaillant: test_core_enforce.py (unveraendert)."""
 import dataclasses
 from datetime import date
-from unittest.mock import MagicMock
 
 import pytest
 from bindung_beispiele import VIESSMANN_VICARE_BINDING, WEISHAUPT_MODBUS
-from fakes import runtime_config
+from fakes import FakeNotifySink, runtime_config
 
 from heizungsbruecke.ha_binding import HaPlantBinding
 from smartheat_core import enforce, write_budget
@@ -15,6 +14,7 @@ from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime.notifier import Notifier
 from smartheat_runtime.roles import ChannelManifest
 from smartheat_runtime.runtime import Runtime
+from smartheat_runtime.worker import RegulationWorker
 
 TODAY = date(2026, 10, 3)
 VIESSMANN = dataclasses.replace(VIESSMANN_VICARE_BINDING, aux_originals=())
@@ -53,12 +53,13 @@ def _rt(make_store, clock, description, manifest, states, point, backup=None):
     store = make_store(backup={"restore_point": point, **(backup or {})})
     ha = Ha(states)
     safety = resolve_local_safety(description.lever_set.id, "Heizkoerper")
-    notifier = MagicMock(spec=Notifier)
-    notifier.notify.return_value = True
+    kunde = FakeNotifySink()  # echter Notifier, der Sink haelt fest, was beim Kunden ankommt (A5-25)
     override = LeverPipeline(store, HaPlantBinding(ha, manifest, description), safety, clock=clock)
     clock.advance(description.settle_seconds + 1)
-    return Runtime(manifest=manifest, signals=ha, config=runtime_config(), worker=MagicMock(), store=store, override=override,
-                   notifier=notifier, neustart=MagicMock(), clock=clock)
+    rt = Runtime(manifest=manifest, signals=ha, config=runtime_config(), worker=RegulationWorker(clock), store=store,
+                 override=override, notifier=Notifier(store, kunde), neustart=lambda: None, clock=clock)
+    rt.kunde = kunde  # type: ignore[attr-defined]  # nur Test: Sicht auf den Sink
+    return rt
 
 
 def _rounds(rt):
@@ -75,8 +76,9 @@ def test_viessmann_rewrites_the_whole_curve_group_under_one_budget_key(make_stor
     _rounds(rt)
     assert rt.signals.writes == [("number.slope", 1.0), ("number.shift", -2.0)]
     assert set(rt.store.state.write_budget) == {"enforce:curve+level"}
-    message = rt.notifier.notify.call_args.args[2]
-    assert "Niveau der Heizkurve" in message and "Neigung" not in message
+    assert rt.kunde.pushes == [("manueller_eingriff",
+                                "SmartHeat: Die Heizungseinstellung wurde in der App verstellt (Niveau der Heizkurve) "
+                                "und zurückgesetzt. Einstellungen bitte nur über das Raumthermostat.")]
 
 
 def test_viessmann_both_group_members_deviating_write_once(make_store, clock):
@@ -121,7 +123,7 @@ def test_deferred_server_values_are_no_manual_override_and_are_written_silently(
     assert rt.signals.writes == [("number.hk", 0.8), ("number.normal", 21.0), ("number.swu", 17.0)]
     assert rt.store.state.deferred_levers == ()
     assert rt.store.state.manual_override is None
-    assert all(call.args[1] == "ok" for call in rt.notifier.notify.call_args_list)
+    assert rt.kunde.pushes == [] and rt.notifier.state("manueller_eingriff") == "ok"  # still, keine Eingriffsmeldung
 
 
 def test_weishaupt_budget_used_up_within_the_tick_stops_without_counting_or_error(make_store, clock, caplog):

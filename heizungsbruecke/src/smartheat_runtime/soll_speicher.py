@@ -4,9 +4,9 @@ vom Server (portal): 15-25 °C in 0,5-K-Schritten (Bedienbereich, keine Sicherhe
 Geraetekern prueft vorher, hier erneut). Soll-Quelle (thermostat; HA: Soll-Entity) und lokale Eingabe (lokal; HA:
 Ereignis smartheat_wunsch): nur Plausibilitaet 5-35 °C, kein Clamp (den Bedienbereich setzt der Wunsch des
 Geraetekerns). Nach eigenem Schreiben an die Soll-Quelle gelten deren Meldungen ECHO_WINDOW_SECONDS lang als Echo;
-meldet sie das geltende Soll, aendert sich nichts (auch nicht die Quelle). Ein offener Schreibbefehl (PENDING_SECONDS)
-verwirft verspaetete Meldungen des alten Werts, bis die Quelle den geschriebenen Wert meldet; jeder andere Wert gilt
-als Eingabe an der Quelle (Plan G2b-2 Task 4).
+meldet sie das geltende Soll, aendert sich nichts (auch nicht die Quelle); ebenso, wenn der Server das geltende Soll
+bestaetigt (Nr. 40). Ein offener Schreibbefehl (PENDING_SECONDS) verwirft verspaetete Meldungen des alten Werts, bis
+die Quelle den geschriebenen Wert meldet; jeder andere Wert gilt als Eingabe an der Quelle (Plan G2b-2 Task 4).
 
 Die Laufzeit importiert smartheat_device nicht (tests/test_runtime_purity.py); der Bedienbereich
 steht deshalb hier (Gleichheit mit smartheat_device.documents.im_bedienbereich sichert test_soll_speicher.py)."""
@@ -74,6 +74,8 @@ class TargetStore:
     def apply_portal(self, value) -> bool:
         if not is_valid_portal_target(value):
             logger.warning("Wunschtemperatur %r aus dem Portal verworfen (erlaubt 15-25 °C in 0,5-K-Schritten)", value)
+            return False
+        if float(value) == self.value:  # Bestaetigung des geltenden Solls: die Quelle bleibt (Nr. 40, 5c-W-12)
             return False
         return self._set(float(value), SOURCE_PORTAL)
 

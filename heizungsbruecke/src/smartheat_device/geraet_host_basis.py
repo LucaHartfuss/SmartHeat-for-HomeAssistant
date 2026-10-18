@@ -1,11 +1,11 @@
 """Gemeinsamer Teil der Geraete-Hosts (Audit 5 A5-26; Spec Stufe 3 S6 4.2): Bindung des Regel-Workers, Nachstellen von
 Neustart und Bedienung, die vor dem Binden kamen, gemerkte Ursprungswerte, die Sicht der Laufzeit auf die
-Soll-Dokumente, Bedienwunsch und Aufraeum-Markierung. HaDeviceHost und GatewayDeviceHost erben davon und liefern nur
-ihre Hostteile (Faehigkeiten, Uhr, Treiberpruefung, Befehle, Anzeige, Software). Rueckrufe des Geraetekerns laufen im
-Geraete-Thread, worker_binden im Hauptthread; die Sperre trennt beide. Kein Rueckruf wirft (V2, Konformitaetssuite
-testhilfen/host_konformitaet.py), bis auf eine bekannte Ausnahme (Restpunkt S3S6-Markierung): scheitert in
-konfiguration_uebernommen das Schreiben der Markierung, geht der OSError an Device._host_rufen, und der Neustart
-entfaellt."""
+Soll-Dokumente, Bedienwunsch, Aufraeum-Markierung und das Aufheben der Abmelde-Markierung (5b-D2-7). HaDeviceHost und
+GatewayDeviceHost erben davon und liefern nur ihre Hostteile (Faehigkeiten, Uhr, Treiberpruefung, Befehle, Anzeige,
+Software, Pfade der Markierungen). Rueckrufe des Geraetekerns laufen im Geraete-Thread, worker_binden im Hauptthread;
+die Sperre trennt beide. Kein Rueckruf wirft (V2, Konformitaetssuite testhilfen/host_konformitaet.py) ausser
+konfiguration_vorbereiten: scheitert dort das Schreiben der Markierung (vor dem Speichern), geht der OSError an den
+Dokumentspeicher, und das Geraet haelt das Dokument zurueck (Spec Testoffensive 12.6, Nr. 38)."""
 import threading
 from pathlib import Path
 
@@ -41,7 +41,12 @@ class GeraetHostBasis:
         self._raum_soll: float | None = None  # letzte Bedienung, bevor der Worker gebunden ist
 
     def aufraeumen_pfad(self) -> Path:
-        """Wohin konfiguration_uebernommen die Markierung aufraeumen.json schreibt (Host)."""
+        """Wohin konfiguration_vorbereiten die Markierung aufraeumen.json schreibt (Host)."""
+        raise NotImplementedError
+
+    def abgemeldet_pfad(self) -> Path:
+        """Wo sign_off die Abmelde-Markierung abgemeldet.json schreibt (Host); konfiguration_uebernommen hebt sie
+        auf."""
         raise NotImplementedError
 
     # --- Verdrahtung ---
@@ -107,11 +112,18 @@ class GeraetHostBasis:
 
     # --- Rueckrufe des Geraetekerns (DeviceHost) ---
 
-    def konfiguration_uebernommen(self, alt: dict | None, neu: dict) -> None:
+    def konfiguration_vorbereiten(self, alt: dict | None, neu: dict) -> None:
         if dokument_config.eingerichtet(alt) and not dokument_config.eingerichtet(neu):
             assert alt is not None
-            aufraeumen.markieren(self.aufraeumen_pfad(), alt)  # alte Konfiguration: erst zuruecksetzen (Spec S3 4)
-        if dokument_config.laufzeit_relevant(alt, neu):
+            aufraeumen.markieren(self.aufraeumen_pfad(), alt)  # vor dem Speichern (Spec S3 4, Testoffensive 12.6)
+
+    def konfiguration_uebernommen(self, alt: dict | None, neu: dict) -> None:
+        """Neustart bei laufzeitrelevanter Aenderung und wenn eine neue, nicht leere Konfiguration derselben Anlage die
+        Abmelde-Markierung aufhebt (5b-D2-7: das Geraet folgt dem Server und verlaesst "abgemeldet"). Eine leere
+        Konfiguration oder eine andere Anlage laesst die Markierung stehen; dieselbe Version erneut ruft hier nicht."""
+        aufgehoben = (dokument_config.eingerichtet(neu)
+                      and dokument_config.abmeldung_aufheben(self.abgemeldet_pfad(), neu["anlage"]))
+        if aufgehoben or dokument_config.laufzeit_relevant(alt, neu):
             self.neustart_anfordern()
 
     def bedienung_uebernommen(self, inhalt: dict) -> None:

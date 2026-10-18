@@ -11,7 +11,8 @@ from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime.backup_store import load_backup
 from smartheat_runtime.roles import ChannelManifest
 
-MANIFEST = ChannelManifest(refs={"curve_current": "number.hk", "shift_current": "number.normal", "heat_limit": "number.swu"})
+MANIFEST = ChannelManifest(
+    refs={"curve_current": "number.hk", "shift_current": "number.normal", "heat_limit": "number.swu"})
 SAFETY = resolve_local_safety("weishaupt_wwp", "Heizkoerper")
 AUX = {"mode_select": "Automatik", "setpoint_comfort": 22.0, "setpoint_setback": 18.0}
 
@@ -121,7 +122,9 @@ def test_restore_with_unknown_originals_keeps_the_learned_values_without_crashin
     assert pipeline.restore_and_clear(always_restore=True) is True
     assert ha.writes == [("number.hk", 0.9), ("number.normal", 22.0), ("number.swu", 16.0)]
     assert binding.restored == []
-    assert "Ursprungswert von curve unbekannt" in caplog.text
+    assert [record.getMessage() for record in caplog.records] == [  # Regel 6: kein Wert (0.9, 22.0, 16.0) im Log
+        f"Ursprungswert von {hebel} unbekannt: bleibt auf dem gelernten Wert"
+        for hebel in ("curve", "room_setpoint", "heat_limit")]
 
 
 def test_restore_runs_even_when_the_aux_values_cannot_be_read(make_store, clock):
@@ -295,6 +298,23 @@ def test_server_values_do_not_retrigger_a_successful_restore(make_store, clock):
     assert pipeline.restore_and_clear(always_restore=False) is True
     assert ha.writes == [("number.hk", 0.6), ("number.swu", 16.0)]
     assert len(binding.restored) == 1
+
+
+def test_replacement_device_without_local_values_does_not_restore_the_server_aux_values(make_store, clock):
+    """Heutiges Verhalten, Restpunkt S3S3-Ersatz: ein Ersatzgeraet, das vor seinem ersten regulaeren Start abgemeldet
+    wird (kein lokal gemerkter Wert, kein Boost, Hebel auf dem Ursprungswert), stellt die Hilfswerte des Servers nicht
+    wieder her; die Anlage steht dabei auf einer anderen Betriebsart als der Server-Ursprungswert."""
+    pipeline, store, ha, binding = _setup(
+        make_store, clock, backup={"restore_point": {"curve": 0.6, "room_setpoint": 20.0, "heat_limit": 16.0}},
+        server=SERVER_ALL)
+    ha.states.update({"number.hk": 0.6, "number.swu": 16.0})
+    binding.aux = {**AUX, "mode_select": "hz_operationmode_automatic"}
+    assert store.state.aux_originals == {} and store.state.originals == {}
+
+    assert pipeline.restore_and_clear(always_restore=False) is True
+
+    assert ha.writes == []
+    assert binding.restored == []
 
 
 def test_server_values_do_not_retrigger_a_restore_of_local_aux_values(make_store, clock):

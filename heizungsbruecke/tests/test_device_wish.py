@@ -49,6 +49,8 @@ def test_a_wish_outside_the_contract_is_a_contract_error(monkeypatch, feld, wert
 
 
 def test_the_local_messages_of_the_wish_are_contract_keys():
+    assert wish.soll_quelle_aus_text(None) == (
+        "Thermostat ist aus, SmartHeat regelt weiter; Heizung aus über die Sommersperre bzw. im Portal")
     assert {wish.BEGRENZT_KEY, wish.SOLL_QUELLE_AUS_KEY} <= set(wire.MELDUNGEN)
 
 
@@ -56,6 +58,14 @@ def test_the_local_messages_of_the_wish_are_contract_keys():
 def test_origin_and_actor_are_contract_values(herkunft, durch):
     with pytest.raises(ValueError):
         wish.neu(21.0, None, basis_version=0, uhr_synchron=True, herkunft=herkunft, durch=durch, wall=WALL)
+    with pytest.raises(ValueError):
+        wish.pruefen_herkunft(herkunft, durch)
+
+
+@pytest.mark.parametrize("herkunft", [None, "thermostat", "soll_entity", "smartheat_entity"])
+@pytest.mark.parametrize("durch", [None, "nutzer", "automation"])
+def test_every_contract_origin_and_actor_passes_the_check(herkunft, durch):
+    assert wish.pruefen_herkunft(herkunft, durch) is None
 
 
 def _wunsch(value=21.0):
@@ -114,4 +124,6 @@ def test_texts():
         "Wunschtemperatur auf 20,3 °C gestellt, SmartHeat regelt auf 20,5 °C")
     assert wish.soll_quelle_aus_text(21.0) == (
         "Thermostat ist aus, SmartHeat regelt weiter auf 21 °C; Heizung aus über die Sommersperre bzw. im Portal")
+    assert wish.soll_quelle_aus_text(None) == (
+        "Thermostat ist aus, SmartHeat regelt weiter; Heizung aus über die Sommersperre bzw. im Portal")
     assert {wish.BEGRENZT_KEY, wish.SOLL_QUELLE_AUS_KEY} <= set(wire.MELDUNGEN)

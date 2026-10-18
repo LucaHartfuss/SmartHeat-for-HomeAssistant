@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 
 import geraet_helpers
 from conftest import FakeClock
-from fakes import FakeHa
+from fakes import FakeHa, FakeTriggerClient, trigger_klasse
 
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.version import ADDON_VERSION
@@ -124,17 +124,16 @@ class RecordingHa(FakeHa):
         self._log.append(["ha", "event", event_type, copy.deepcopy(data)])
 
 
-class RecordingTrigger:
-    def __init__(self, log: list, kwargs: dict) -> None:
-        self._log = log
-        self.kwargs = kwargs
-        self.connected = True
+class RecordingTrigger(FakeTriggerClient):
+    """Fake-Trigger-Client des Szenarios: schreibt start/stop ins Protokoll (`log` setzt trigger_klasse)."""
 
-    def start(self):
-        self._log.append(["trigger", "start"])
+    log: list
 
-    def stop(self):
-        self._log.append(["trigger", "stop"])
+    def start(self) -> None:
+        self.log.append(["trigger", "start"])
+
+    def stop(self) -> None:
+        self.log.append(["trigger", "stop"])
 
 
 class World:
@@ -159,17 +158,13 @@ class World:
             "heizungsbruecke.derived_sensors.ensure_all",
             lambda **kwargs: DerivedSensors({"room_actual": "sensor.room_actual"}, (), "fp-golden"),
         )
-        monkeypatch.setattr(TRIGGER_CLIENT, self._new_trigger)
+        monkeypatch.setattr(TRIGGER_CLIENT, trigger_klasse(self.triggers, RecordingTrigger, log=self.log))
         counter = itertools.count(1)
         monkeypatch.setattr("uuid.uuid4", lambda: uuid.UUID(int=next(counter)))
         # datetime.now().astimezone() im Add-on liefert die Systemzone: fuer den Lauf fest auf Berlin setzen.
         monkeypatch.setenv("TZ", "Europe/Berlin")
         time.tzset()
         install_wall_clock(monkeypatch, self.wall)
-
-    def _new_trigger(self, **kwargs):
-        self.triggers.append(RecordingTrigger(self.log, kwargs))
-        return self.triggers[-1]
 
     # --- Bausteine der Schritte ---
 

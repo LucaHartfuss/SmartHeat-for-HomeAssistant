@@ -23,7 +23,8 @@ def welt(tmp_path, monkeypatch):
     host = geraet_host.HaDeviceHost(FakeHa(), SimpleNamespace(host_info=lambda: {"dt_synchronized": True}),
                                     clock=clock)
     return Welt(host=host, clock=clock, reload_kind=EV_RELOAD, aufraeumen_pfad=config.AUFRAEUMEN_PATH,
-                konfiguration=konfiguration_aus_optionen(OPTIONS), wunsch_herkunft="soll_entity")
+                abgemeldet_pfad=config.ABGEMELDET_PATH, konfiguration=konfiguration_aus_optionen(OPTIONS),
+                wunsch_herkunft="soll_entity")
 
 
 @pytest.mark.parametrize("pruefung", parameter(ABWEICHUNGEN))

@@ -94,6 +94,24 @@ def test_changed_weather_source_recreates_the_outdoor_template(tmp_path):
     assert result.replaced == ("outdoor_temperature",)
 
 
+def test_a_helper_without_a_remembered_source_is_recreated_and_reported(tmp_path):
+    """Heutiges Verhalten (Uebergangscode „Bestand vor TP6“, Altlast fuer Audit 6): ein Helfer, dessen Eintrag keine
+    Quelle kennt, gilt als Quellwechsel: er wird geloescht und neu angelegt, die Quelle danach gemerkt, und der Wechsel
+    zaehlt als ersetzt (Meldung „quellwechsel“). Gegenprobe: mit gemerkter gleicher Quelle bleibt er."""
+    save_backup(tmp_path / "d.json", {"room_temperature": {"entity_id": ROOM_ID}})
+    ha_api = _ha_api(existing={ROOM_ID})
+
+    result = _run(ha_api, tmp_path / "d.json")
+
+    ha_api.delete_helper.assert_called_once_with(ROOM_ID, tenant_id="t1")
+    ha_api.create_template_sensor.assert_called_once_with(name="SmartHeat t1 Raumtemperatur", template=ROOM_TEMPLATE)
+    assert result.replaced == ("room_temperature",)
+    assert load_backup(tmp_path / "d.json") == {"room_temperature": {"entity_id": ROOM_ID, "source": ROOM_TEMPLATE}}
+    ha_api = _ha_api(existing={ROOM_ID})
+    assert _run(ha_api, tmp_path / "d.json").replaced == ()
+    ha_api.delete_helper.assert_not_called()
+
+
 def test_tracked_helper_deleted_by_the_user_is_recreated_without_counting_as_replaced(tmp_path):
     _, existing = _tracking_after_fresh_run(tmp_path)
     ha_api = _ha_api(existing - {ROOM_ID})

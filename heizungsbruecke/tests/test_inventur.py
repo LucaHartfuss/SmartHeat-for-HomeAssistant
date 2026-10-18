@@ -5,10 +5,10 @@ import re
 from collections.abc import Mapping
 
 import pytest
-from fakes import FakeHa
+from fakes import FakeHa, nachricht_bytes
 
 from heizungsbruecke import inventur
-from smartheat_device import nachrichten, wire
+from smartheat_device import inventory, nachrichten, wire
 
 FILTER = {"plattformen": ["mypyllant"], "domaenen": ["climate", "weather"],
           "geraeteklassen": [["sensor", "temperature"], ["sensor", "battery"]], "dienste": ["notify.mobile_app_"]}
@@ -368,3 +368,48 @@ def test_nur_notify_dienste_erscheinen_in_der_ausgabe():
     ha.services = [{"domain": "light", "services": {"mobile_app_x": {}}},
                    {"domain": "notify", "services": {"mobile_app_handy": {}}}]
     assert inventur.inventur(ha, FILTER)["dienste"] == ["notify.mobile_app_handy"]
+
+
+class _GrosseHa(FakeHa):
+    """Fake-HA mit 5000 Entities: passend viele Raumfuehler (zha, Klasse temperature, je ein Geraet), der Rest Lampen
+    (hue). get_states liefert die vorgebauten Zustaende (die Attribut-Suche von FakeHa waere hier quadratisch)."""
+
+    def __init__(self, passend: int, gesamt: int = 5000):
+        super().__init__()
+        self._zustaende, self.registry, self.devices = [], [], []
+        for n in range(gesamt):
+            if n < passend:
+                entity_id = f"sensor.raum_{n:04d}_temperatur"
+                self._zustaende.append({"entity_id": entity_id, "state": "20.5", "last_updated": "2026-10-11T10:00:00",
+                                        "attributes": {"device_class": "temperature", "unit_of_measurement": "°C",
+                                                       "state_class": "measurement"}})
+                self.registry.append({"entity_id": entity_id, "platform": "zha", "unique_id": f"zha-{n:08d}",
+                                      "original_name": "Temperatur", "config_entry_id": "e2", "device_id": f"d{n}"})
+                self.devices.append({"id": f"d{n}", "name": f"Thermostat {n}", "model": "eTRV",
+                                     "config_entries": ["e2"]})
+            else:
+                entity_id = f"light.lampe_{n:04d}"
+                self._zustaende.append({"entity_id": entity_id, "state": "on", "attributes": {}})
+                self.registry.append({"entity_id": entity_id, "platform": "hue"})
+
+    def get_states(self):
+        return [dict(zustand) for zustand in self._zustaende]
+
+
+def test_a_large_installation_stays_under_the_message_limit():
+    """5000 Entities, davon 50 nach dem Filter: die Inventur ist eine Nachricht unter der Grenze des Links (120 KB =
+    122 880 Bytes)."""
+    daten = inventur.inventur(_GrosseHa(passend=50), FILTER)
+    assert len(daten["entities"]) == 50 and len(daten["geraete"]) == 50
+    teile = inventory.nachrichten("c1", daten)
+    assert len(teile) == 1 and nachricht_bytes(teile[0]) <= 122_880
+
+
+def test_an_inventory_too_large_for_eight_messages_is_refused_instead_of_crossing_the_limit():
+    """Waehlt der Filter alle 5000 Entities, passt die Inventur nicht in 8 Nachrichten unter der Grenze: sie wird
+    abgelehnt (InventurZuGross, der Befehl endet mit intern, client-kern.md), nie eine Nachricht ueber der Grenze.
+    Gegenprobe: 1000 passende Entities gehen in mehreren Teilen, jeder unter der Grenze."""
+    with pytest.raises(inventory.InventurZuGross):
+        inventory.nachrichten("c1", inventur.inventur(_GrosseHa(passend=5000), FILTER))
+    teile = inventory.nachrichten("c1", inventur.inventur(_GrosseHa(passend=1000), FILTER))
+    assert 1 < len(teile) <= 8 and all(nachricht_bytes(teil) <= 122_880 for teil in teile)
