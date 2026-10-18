@@ -1,6 +1,7 @@
 import ast
 import hashlib
 import http.server
+import importlib
 import json
 import os
 import random
@@ -365,11 +366,9 @@ def test_an_offer_that_names_other_files_is_refused_and_touches_nothing_outside_
         tmp_path, extra, replace):
     """F-gateway-host-43: ein Angebot kann Host-Dienste nicht ersetzen (5b-D2-1: das geht nur mit neuem Image oder
     Installer). Das signierte Manifest darf genau docker-compose.yml und mosquitto.conf nennen; jeder andere Name
-    (Pfad aus dem Bundle heraus, absolut, URL), zusaetzlich oder an Stelle einer der beiden, wird abgelehnt."""
+    (Pfad aus dem Bundle heraus, absolut, URL), zusaetzlich oder an Stelle einer der beiden, wird abgelehnt, bevor eine
+    Datei abgerufen wird. Dass ein gelungenes Update ausserhalb der Bundle-Ablage nichts schreibt, zeigt der Folgetest."""
     world = World(tmp_path)
-    _host_files(tmp_path)
-    before = _tree(tmp_path)
-    assert before  # die Probe sieht die Dateien
     evil = b"# ersetzt den Host-Dienst\n"
     files = json.loads(world.served[BASE + "manifest.json"])["files"]
     if replace:
@@ -381,8 +380,7 @@ def test_an_offer_that_names_other_files_is_refused_and_touches_nothing_outside_
     assert world.updater.run_once() == "abgelehnt"
     assert world.api.results == [("0.3.0", "rollback", "manifest_ungueltig")]
     assert world.fetched == [BASE + "manifest.json"]
-    _assert_nothing_installed(world)
-    assert _tree(tmp_path) == before
+    _assert_nothing_installed(world)  # und von den angebotenen Dateien wurde keine einzige abgerufen (`fetched`)
 
 
 def test_a_complete_update_changes_only_the_bundle_store_and_the_state(tmp_path):
@@ -908,8 +906,8 @@ def test_fetch_refuses_http_unless_allowed():
 
 
 def _redirected_response(final_url: str, body: bytes = b"inhalt"):
-    """Antwort von urllib.request.urlopen, nachdem urllib einer Weiterleitung gefolgt ist: `geturl()` nennt die
-    Adresse, von der der Inhalt tatsaechlich kam (urllib folgt auch einer Weiterleitung von https auf http)."""
+    """Antwort des Openers, nachdem urllib einer Weiterleitung gefolgt ist: `geturl()` nennt die Adresse, von der der
+    Inhalt tatsaechlich kam."""
     response = create_autospec(http.client.HTTPResponse, instance=True)
     response.__enter__.return_value = response
     response.geturl.return_value = final_url
@@ -917,26 +915,84 @@ def _redirected_response(final_url: str, body: bytes = b"inhalt"):
     return response
 
 
-def test_fetch_refuses_a_redirect_from_https_to_http_unless_allowed(monkeypatch):
-    """F-gateway-host-02: ein Angreifer im Netz (oder ein kompromittierter Server) leitet einen https-Abruf auf http um.
-    Die Attrappe steht an der Grenze, `urllib.request.urlopen`; die Adresse der Antwort entscheidet."""
-    opened = create_autospec(urllib.request.urlopen, return_value=_redirected_response("http://evil.test/x"))
-    monkeypatch.setattr(urllib.request, "urlopen", opened)
-    with pytest.raises(updater.FetchError, match="https"):
+@pytest.mark.parametrize("final_url", ["http://evil.test/x", "file:///etc/passwd", "ftp://evil.test/x"])
+def test_fetch_refuses_an_answer_from_a_scheme_that_is_not_allowed_without_reading_it(monkeypatch, final_url):
+    """Zweite Sicherung (der Redirect-Handler ist die erste): kommt die Antwort trotzdem von einer Adresse mit nicht
+    erlaubtem Schema, wird sie verworfen, ungelesen. Attrappe an der Grenze, dem Opener von urllib (autospec): ein echter
+    Server kann die Weiterleitung nicht an der ersten Sicherung vorbei erzwingen."""
+    response = _redirected_response(final_url)
+    opener = create_autospec(urllib.request.OpenerDirector, instance=True)
+    opener.open.return_value = response
+    monkeypatch.setattr(urllib.request, "build_opener", create_autospec(urllib.request.build_opener, return_value=opener))
+    with pytest.raises(updater.FetchError, match="Weiterleitung auf ein Schema"):
         updater.fetch_url("https://release.example.test/x", 100, allow_http=False)
-    # Gegenprobe: dieselbe Antwort wird mit dem Schalter (Labor) angenommen, ...
-    assert updater.fetch_url("https://release.example.test/x", 100, allow_http=True) == b"inhalt"
-    # ... und ohne Weiterleitung (Antwort von https) auch ohne ihn.
-    opened.return_value = _redirected_response("https://cdn.example.test/x")
+    response.read.assert_not_called()
+    # Gegenproben: eine Antwort von https wird gelesen; http nur mit dem Schalter (Labor)
+    opener.open.return_value = _redirected_response("https://cdn.example.test/x")
     assert updater.fetch_url("https://release.example.test/x", 100, allow_http=False) == b"inhalt"
+    if final_url.startswith("http:"):
+        opener.open.return_value = _redirected_response(final_url)
+        assert updater.fetch_url("https://release.example.test/x", 100, allow_http=True) == b"inhalt"
 
 
-@pytest.mark.parametrize("final_url", ["file:///etc/passwd", "ftp://evil.test/x"])
-def test_fetch_refuses_a_redirect_to_other_schemes_even_when_http_is_allowed(monkeypatch, final_url):
-    opened = create_autospec(urllib.request.urlopen, return_value=_redirected_response(final_url))
-    monkeypatch.setattr(urllib.request, "urlopen", opened)
-    with pytest.raises(updater.FetchError, match="erlaubt"):
-        updater.fetch_url("https://release.example.test/x", 100, allow_http=True)
+@pytest.fixture
+def redirecting_servers():
+    """Zwei lokale HTTP-Server: der erste antwortet mit 302 auf den zweiten, der zweite haelt jede Anfrage fest."""
+    seen = []
+
+    class Target(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.append(self.path)
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ziel")
+
+        def log_message(self, *args):
+            pass
+
+    target = http.server.HTTPServer(("127.0.0.1", 0), Target)
+    target_url = f"http://127.0.0.1:{target.server_port}/ziel"
+
+    class Redirector(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", target_url)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    redirector = http.server.HTTPServer(("127.0.0.1", 0), Redirector)
+    servers = [target, redirector]
+    threads = [threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+               for server in servers]
+    for thread in threads:
+        thread.start()
+    yield f"http://127.0.0.1:{redirector.server_port}/start", seen
+    for server in servers:
+        server.shutdown()
+        server.server_close()
+    for thread in threads:
+        thread.join()
+
+
+def test_the_opener_refuses_a_redirect_to_a_scheme_that_is_not_allowed_before_asking(redirecting_servers):
+    """Der erste Server ist http (der Test braucht dafuer einen Abruf ohne die Eingangspruefung von fetch_url): der Opener
+    von `fetch_url` folgt der Weiterleitung auf die zweite http-Adresse nicht; der zweite Server sieht keine Anfrage."""
+    start, seen = redirecting_servers
+    with pytest.raises(updater.FetchError, match="Weiterleitung auf ein Schema"):
+        updater.checked_opener(allow_http=False).open(start, timeout=5)
+    assert seen == []
+    # Gegenprobe: mit dem Schalter folgt der Opener, und der zweite Server sieht genau eine Anfrage
+    with updater.checked_opener(allow_http=True).open(start, timeout=5) as response:
+        assert response.read() == b"ziel"
+    assert seen == ["/ziel"]
+
+
+def test_fetch_url_follows_a_redirect_when_http_is_allowed(redirecting_servers):
+    start, seen = redirecting_servers
+    assert updater.fetch_url(start, 100, allow_http=True) == b"ziel"
+    assert seen == ["/ziel"]
 
 
 @pytest.fixture
@@ -1020,39 +1076,48 @@ def test_healthz_over_64_kib_is_not_healthy_but_exactly_64_kib_is_read(healthz_b
     bodies["/genau"], bodies["/zuviel"] = _healthz_object(65536), _healthz_object(65537)
     assert len(bodies["/genau"]) == 65536 and len(bodies["/zuviel"]) == 65537
     assert updater.fetch_health(url + "/genau") == {"server_ok": True, "runtime_status": None}
+    assert updater.health_ok(updater.fetch_health(url + "/genau"), {"runtime": "healthy"}) is True
     assert updater.fetch_health(url + "/zuviel") is None  # abgeschnitten: kein gueltiges JSON mehr
+    assert updater.health_ok(updater.fetch_health(url + "/zuviel"), {"runtime": "healthy"}) is False
 
 
-def test_the_health_deadline_follows_the_monotonic_clock_not_the_wall_clock(tmp_path, monkeypatch):
-    """F-gateway-host-07: die Wanduhr springt beim Boot. Sprunghaft vorlaufende `time.time()` waehrend der Gesundheits-
-    pruefung darf die Frist nicht verkuerzen: der Updater (Standarduhr) wartet die Frist auf der monotonen Uhr ab. Die
-    Attrappe von `time.time` ist die Grenze zur Systemuhr; ausserhalb des Wartens laeuft sie echt."""
-    world = World(tmp_path, healthy=False)
-    wall = {"jump": False, "calls": 0}
-    real_time = time.time
+@pytest.fixture
+def reload_updater(monkeypatch):
+    """Laedt `updater` neu (die Standard-Uhr `clock=time.monotonic` wird beim Import gebunden) und stellt das Modul nach
+    dem Test mit den echten Uhren wieder her."""
+    yield lambda: importlib.reload(updater)
+    monkeypatch.undo()
+    importlib.reload(updater)
+
+
+def test_the_health_deadline_follows_the_monotonic_clock_not_the_wall_clock(tmp_path, monkeypatch, reload_updater):
+    """F-gateway-host-07: die Wanduhr springt beim Boot. `time.monotonic` ist eine steuerbare Uhr (sie laeuft mit
+    `sleep`), `time.time` springt bei jeder Abfrage um einen Tag. Der Updater wird unter diesen Attrappen neu geladen und
+    ohne eigene Uhr gebaut: seine Standard-Uhr bestimmt die Frist. Sie muss auf der monotonen Uhr ablaufen (drei Takte zu
+    10 s bis 30 s); eine Standard-Uhr `time.time` liefe sofort ab (0 Takte) oder, ohne Sprung, nie."""
+    monotonic = [0.0]
+    wall = [0]
 
     def jumping_time():
-        if wall["jump"]:
-            wall["calls"] += 1
-            return real_time() + 86400.0 * wall["calls"]  # jeder Blick auf die Wanduhr: einen Tag spaeter
-        return real_time()
+        wall[0] += 1
+        return 1.7e9 + 86400.0 * wall[0]
 
+    monkeypatch.setattr(time, "monotonic", create_autospec(time.monotonic, side_effect=lambda: monotonic[0]))
+    monkeypatch.setattr(time, "time", create_autospec(time.time, side_effect=jumping_time))
+    reload_updater()
+    world = World(tmp_path, healthy=False)
     waits = []
 
     def sleep(seconds):
         waits.append(seconds)
-        assert len(waits) < 500, "Die Frist endet nicht"
-        time.sleep(0.01)
+        assert len(waits) < 100, "Die Frist endet nicht"
+        monotonic[0] += seconds
 
-    monkeypatch.setattr(time, "time", create_autospec(time.time, side_effect=jumping_time))
-    world.compose.on_up = lambda version: wall.update(jump=version == "0.3.0")  # Sprung erst nach dem Umschalten
     short = updater.Updater(kanal=world.api, store=world.store, compose=world.compose, fetch=world.fetch,
                             public_key_text=world.public, state_path=world.state_path, version="0.2.0",
-                            health=lambda version: False, sleep=sleep, health_seconds=0.1)  # Standarduhr
-    started = time.monotonic()
+                            health=lambda version: False, sleep=sleep, health_seconds=30)  # Standard-Uhr
     assert short.run_once() == "zurueckgerollt"
-    assert time.monotonic() - started >= 0.1  # die Frist ist auf der monotonen Uhr abgelaufen
-    assert len(waits) >= 5  # die Pruefung lief ueber viele Takte, obwohl die Wanduhr (falls befragt) Tage vorsprang
+    assert waits == [10, 10, 10] and monotonic[0] == 30.0
 
 
 def test_state_file_survives_a_failure_while_it_is_written(tmp_path, monkeypatch):
@@ -1124,6 +1189,9 @@ def test_main_waits_120_seconds_then_runs_every_900_plus_up_to_300_seconds(tmp_p
     real_recover, real_run_once = updater.Updater.recover, updater.Updater.run_once
 
     def recover(self):
+        # Nur beobachtet, die echte Methode laeuft: dass recover() vor dem ersten Warten kommt, ist die Reihenfolge, die
+        # ein unterbrochenes Update nach dem Neustart braucht (up und Gesundheit, bevor ein neuer Durchlauf beginnt).
+        # Ein unterbrochenes in_progress braeuchte ein echtes ComposeRunner/docker, das main baut: hier nicht nachstellbar.
         events.append("recover")
         real_recover(self)
 
@@ -1146,6 +1214,17 @@ def test_main_waits_120_seconds_then_runs_every_900_plus_up_to_300_seconds(tmp_p
         updater.main([])
     assert events == ["recover", "warten:120.0", "durchlauf:vorlaeufig", "warten:1200.0",
                       "durchlauf:vorlaeufig", "warten:900.0", "durchlauf:vorlaeufig", "warten:1050.0"]
+
+
+def test_main_keeps_the_state_and_the_data_under_shg_root(tmp_path, monkeypatch, capsys):
+    """F-gateway-host-01: `SHG_ROOT` ist die Wurzel von Zustand (`updater/state.json`), Soll- und Meldungsdatei (`data/`)."""
+    offer = {"version": "0.3.0", "manifest_url": "http://127.0.0.1:1/manifest.json", "manifest_sha256": "a" * 64,
+             "signature": "x"}
+    _main_environment(monkeypatch, tmp_path, offer=offer)
+    updater.main(["--once"])
+    assert capsys.readouterr().out == "abgelehnt\n"
+    assert json.loads((tmp_path / "updater" / "state.json").read_text())["rejected"] == ["0.3.0"]
+    assert json.loads((tmp_path / "data" / "software_meldungen.json").read_text())["meldungen"][0]["version"] == "0.3.0"
 
 
 def test_main_once_recovers_runs_once_and_does_not_wait(tmp_path, monkeypatch, capsys):
