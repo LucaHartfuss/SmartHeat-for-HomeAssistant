@@ -43,9 +43,9 @@ class Discovery:
                                           if isinstance(versuche, dict) else {})
 
     def aktualisieren(self, geraet_id: str, zustand: str | None, claim_code: str | None) -> None:
-        config = {"geraet_id": geraet_id, "zustand": zustand or "startet"}
-        if zustand == NICHT_UEBERNOMMEN and claim_code:
-            config["claim_code"] = claim_code
+        werte = {"geraet_id": geraet_id, "zustand": zustand or "startet",
+                 "claim_code": claim_code if zustand == NICHT_UEBERNOMMEN and claim_code else None}
+        config = {feld: werte[feld] for feld in FIELDS if werte[feld] is not None}
         try:
             if config != self._gemeldet:
                 self._melden(config)

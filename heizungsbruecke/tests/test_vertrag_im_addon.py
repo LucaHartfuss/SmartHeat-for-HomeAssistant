@@ -6,7 +6,7 @@ nur Check 56 ist eine Einzelzusicherung (ein Mengenvergleich zweier Konstanten) 
 
 Schon strenger als Modul-Tests vorhanden, darum hier ohne Kopie:
 - Check 15 (Hinweis-Kategorien) und die Kopie config_check.HA_ROLLEN aus Check 4: test_core_vertrag_pin.py (Gleichheit
-  samt Reihenfolge von wire.HA_HINWEISE mit config_check.HA_HINWEISE und notifier.HINT_CATEGORIES, von wire.HA_ROLLEN
+  samt Reihenfolge von wire.HA_HINWEISE mit config_check.HA_HINWEISE, von wire.HA_ROLLEN
   mit config_check.HA_ROLLEN).
 - Check 57 (Add-on-Optionen nur zum Starten): test_config_yaml.py (genau bootstrap_url und log_level, beide optional,
   kein options, hassio_api).

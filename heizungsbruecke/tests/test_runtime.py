@@ -1134,6 +1134,129 @@ def test_answer_with_null_levers_is_a_server_fault_without_writing(env):
     assert "ungültige Serverantwort" in env.ha.pushes[-1]
 
 
+# Hebelsatz mit `level` (Viessmann; wie test_runtime_plan3b.py, das test_runtime importiert und daher nicht zurueck)
+VIESSMANN_OPTIONEN = {
+    "lever_set": "viessmann_vicare", "entity_curve_current": "number.slope", "entity_level_current": "number.shift",
+    "entity_shift_current": "number.normal_temperature", "entity_mode_select": "climate.heizkreis",
+    "entity_heat_limit": "", "entity_min_flow": "",
+}
+VIESSMANN_ZUSTAND = {
+    "number.slope": 1.0, "number.shift": 0.0, "number.normal_temperature": 20.0, "climate.heizkreis::preset_mode": "eco",
+}
+# (Name, Optionen, Zustand der Fake-HA, Hebel des Satzes): Vaillant ohne `level`, Viessmann mit `level`
+HEBELSAETZE = {
+    "vaillant": ({}, {}, ("curve", "room_setpoint", "heat_limit")),
+    "viessmann": (VIESSMANN_OPTIONEN, VIESSMANN_ZUSTAND, ("curve", "level", "room_setpoint")),
+}
+
+
+def _erster_tick(env, satz):
+    """Laufzeit des Hebelsatzes starten und den ersten Snapshot erzeugen; liefert (bridge, seq)."""
+    optionen, zustand, _ = HEBELSAETZE[satz]
+    env.ha.states.update(zustand)
+    bridge = _start(env, **optionen)
+    _ha_verbunden(env, bridge)
+    assert _awaiting_ack(bridge) and _delivery(bridge).datenfehler is None  # Ausgangslage: offener Tick, kein Fehler
+    return bridge, _mqtt(env).snapshots[-1]["seq"]
+
+
+def _ist_serverfehler_ohne_schreiben(env, bridge, vorher):
+    assert env.ha.writes == vorher
+    assert "ungültige Serverantwort" in env.ha.pushes[-1]
+    assert _delivery(bridge).datenfehler is not None and _delivery(bridge).datenfehler.source == "server"
+
+
+def test_answer_ignores_unknown_top_level_fields(env):
+    """V1b ist tolerant: ein unbekanntes Feld der obersten Ebene aendert weder Schreiben noch Zustellung."""
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    assert _awaiting_ack(bridge)
+
+    _mqtt(env).answer_raw(_mqtt(env).snapshots[0]["seq"], fremd=1, **{"naechstes": {"a": [1, 2]}})
+    bridge.worker.run_pending()
+
+    assert _regulation_writes(env) == [
+        ("number.curve_current", 0.95), ("number.shift_current", 23.0), ("number.heat_limit", 16.0),
+    ]
+    assert _delivery(bridge).pending is None and _delivery(bridge).datenfehler is None
+    assert env.ha.pushes == []
+
+
+@pytest.mark.parametrize("schlecht", ["1.0", True, [1.0]], ids=["text", "bool", "liste"])
+@pytest.mark.parametrize(("satz", "hebel"), [
+    ("vaillant", "curve"), ("vaillant", "room_setpoint"),
+    ("viessmann", "curve"), ("viessmann", "level"), ("viessmann", "room_setpoint"),
+])
+def test_wrong_lever_types_are_a_server_fault_for_every_lever(env, satz, hebel, schlecht):
+    """F-client-kern-27/-47: ein Hebel mit falschem Typ (Text, JSON true, Liste) ergibt einen Serverfehler, die uebrigen
+    Hebel bleiben gueltig und es wird nichts geschrieben (auch nicht die gueltigen)."""
+    bridge, seq = _erster_tick(env, satz)
+    gueltig = {name: wert for name, wert in _mqtt(env).snapshots[-1]["levers"].items() if name in HEBELSAETZE[satz][2]}
+    assert set(gueltig) == set(HEBELSAETZE[satz][2]) and hebel in gueltig  # Gegenprobe: der Hebel gehoert zum Satz
+    vorher = list(env.ha.writes)
+
+    _answer(env, bridge, seq, levers={**gueltig, hebel: schlecht})
+
+    _ist_serverfehler_ohne_schreiben(env, bridge, vorher)
+
+
+@pytest.mark.parametrize("gross", [10**400, -10**400], ids=["positiv", "negativ"])
+def test_huge_integer_as_level_is_a_server_fault(env, gross, caplog):
+    """Riesige Ganzzahl fuer `level` (Hebelsatz mit `level`): Serverfehler ohne Schreiben und ohne Fehler im Worker."""
+    bridge, seq = _erster_tick(env, "viessmann")
+    vorher = list(env.ha.writes)
+
+    with caplog.at_level(logging.ERROR):
+        _answer(env, bridge, seq, levers={"curve": 1.0, "level": gross, "room_setpoint": 21.0})
+
+    assert [r.getMessage() for r in caplog.records if r.name == "smartheat_runtime.worker"] == []
+    _ist_serverfehler_ohne_schreiben(env, bridge, vorher)
+
+
+@pytest.mark.parametrize("ort", ["room_setpoint", "learned_heat_limit"])
+def test_negative_huge_integer_as_room_setpoint_and_learned_heat_limit(env, ort, caplog):
+    """-10**400 (nur das positive Vorzeichen war belegt): als Raum-Soll der Hebel ein Serverfehler ohne Schreiben, als
+    gelernte Heizgrenze uebergangen (kein Datenfehler, kein Fehler im Worker), die Hebelwerte werden geschrieben."""
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[0]["seq"]
+    vorher = list(env.ha.writes)
+
+    with caplog.at_level(logging.ERROR):
+        if ort == "room_setpoint":
+            _answer(env, bridge, seq, shift=-10**400)
+        else:
+            _mqtt(env).answer_raw(seq, learned={"curve": 1.0, "heat_limit": -10**400})
+            bridge.worker.run_pending()
+
+    assert [r.getMessage() for r in caplog.records if r.name == "smartheat_runtime.worker"] == []
+    if ort == "room_setpoint":
+        _ist_serverfehler_ohne_schreiben(env, bridge, vorher)
+    else:
+        assert bridge.store.state.learned == {}
+        assert _delivery(bridge).datenfehler is None
+        assert env.ha.writes[len(vorher):] == [
+            ("number.curve_current", 0.95), ("number.shift_current", 23.0), ("number.heat_limit", 16.0)]
+
+
+@pytest.mark.parametrize("hebel", ["curve", "room_setpoint", "heat_limit"])
+def test_minus_infinity_as_lever_value_is_a_server_fault(env, hebel):
+    """-Inf als Hebelwert (nur +Inf war belegt): Serverfehler, nichts geschrieben."""
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[0]["seq"]
+    vorher = list(env.ha.writes)
+    levers = {"curve": 0.95, "room_setpoint": 23.0, "heat_limit": 16.0}
+
+    _answer(env, bridge, seq, levers={**levers, hebel: float("-inf")})
+
+    _ist_serverfehler_ohne_schreiben(env, bridge, vorher)
+
+
+
 def test_snapshot_payload_is_schema_4(env):
     _quiet_backup(env)
     bridge = _start(env)

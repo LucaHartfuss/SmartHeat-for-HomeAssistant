@@ -91,7 +91,9 @@ class Link:
     def publish(self, name: str, payload: dict) -> int | None:
         if name not in wire.UP_TOPICS:
             raise ValueError(f"{name} ist kein Topic des Geraets")
-        raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode()
+        # allow_nan=False: nie NaN/Inf hinaus (Testoffensive T2, Nr. 17); json wirft dann ValueError (Text ohne Werte), den
+        # der einzige Aufrufer Device._publish faengt. Die Bausteine setzen nicht endliche Zahlen schon vorher zu None.
+        raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()
         if len(raw) > wire.MAX_MESSAGE_BYTES:
             raise ValueError(f"{name}: {len(raw)} Bytes, erlaubt {wire.MAX_MESSAGE_BYTES}")
         client = self._client

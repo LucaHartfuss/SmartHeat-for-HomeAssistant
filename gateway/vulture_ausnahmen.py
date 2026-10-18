@@ -1,7 +1,7 @@
 # Ausnahmen fuer vulture (scripts/check.sh, Schritt lint; Stufe 3 S8b, A5-87, K4), Whitelist-Format von vulture.
 # vulture zaehlt jeden Namen hier als benutzt. Jede Zeile nennt den Grund; keine Zeile ohne Grund. Der Lauf nimmt
 # heizungsbruecke/src mit (der Kern ruft die Treiber- und Host-Methoden des Gateways ueber seine Protocols) und deren
-# Ausnahmen (heizungsbruecke/vulture_ausnahmen.py, vulture_vertragsbefunde.py).
+# Ausnahmen (heizungsbruecke/vulture_ausnahmen.py).
 
 # --- Befehls-Handler: Decorator @_handler traegt sie in befehle.HANDLERS ein (Register des Geraetekerns) ---
 _.zigbee_permit_join  # smartheat_gateway/befehle.py

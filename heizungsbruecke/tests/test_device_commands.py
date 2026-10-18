@@ -490,3 +490,28 @@ def test_the_hint_command_through_the_register(tmp_path):
     register.register("hinweis", cmd.Hinweise(tmp_path).handler)
     register.empfangen(_command("hinweis", payload={"key": "k", "stufe": "laut", "text": "x"}))
     assert sent.results[0]["error"]["grund"] == "ungueltige_nutzlast"
+
+
+def test_a_command_id_with_a_lone_surrogate_is_dropped_like_an_invalid_one(tmp_path):
+    """Das Ergebnis steht unter der command_id in befehle.json: ein einzelnes Surrogat liesse sich nicht speichern
+    (UnicodeEncodeError aus empfangen). Es gilt wie jede ungueltige ID (Testoffensive T2, Task 13)."""
+    sent, calls = Sent(), []
+    register = cmd.CommandRegister(tmp_path, sent)
+    register.register("diagnostics", lambda payload: calls.append(payload) or cmd.Done({}))
+    register.empfangen(_command(command_id="c\ud800"))
+    assert calls == [] and sent.results == [] and not (tmp_path / cmd.STORE_FILE).exists()
+    register.empfangen(_command(command_id="c1"))  # Gegenprobe: eine gueltige ID laeuft
+    assert calls == [{}] and len(sent.results) == 1
+
+
+def test_a_hint_with_a_lone_surrogate_is_refused_and_does_not_poison_the_stored_hints(tmp_path):
+    """Der Befehl hinweis legte den Hinweis erst in den Speicher und scheiterte dann beim Schreiben; jeder spaetere Hinweis
+    scheiterte mit (Testoffensive T2, Task 13)."""
+    sent = Sent()
+    register, hinweise = cmd.CommandRegister(tmp_path, sent), cmd.Hinweise(tmp_path)
+    register.register("hinweis", hinweise.handler)
+    register.empfangen(_command("hinweis", "c1", {"key": "k", "stufe": "info", "text": "a\ud800"}))
+    register.empfangen(_command("hinweis", "c2", {"key": "k", "stufe": "info", "text": "gut"}))
+    assert [(r["command_id"], r["ok"]) for r in sent.results] == [("c1", False), ("c2", True)]
+    assert sent.results[0]["error"]["grund"] == "ungueltige_nutzlast"
+    assert hinweise.alle() == ({"key": "k", "stufe": "info", "text": "gut"},)

@@ -113,7 +113,8 @@ class FakeLink:
     def publish(self, name, payload):
         if not self.connected:
             return None
-        self.sent.append((name, json.loads(json.dumps(payload))))
+        # wie der echte Link: nie NaN/Inf hinaus (Testoffensive T2, Nr. 17), json wirft dann ValueError
+        self.sent.append((name, json.loads(json.dumps(payload, allow_nan=False))))
         return len(self.sent)
 
     def port_wechseln_falls_noetig(self):
@@ -237,6 +238,16 @@ def test_status_respects_v1_limits(tmp_path):
     werte = world.link.of("up/status")[-1]["ursprungswerte"]
     assert len(werte) == wire.URSPRUNG_MAX_HEBEL and all(len(k) <= wire.URSPRUNG_HEBEL_MAX_CHARS for k in werte)
     assert all(isinstance(v, float) and math.isfinite(v) and abs(v) <= 1e12 for v in werte.values())
+
+
+def test_ursprungswert_genau_auf_der_grenze_von_1e12(tmp_path):
+    """URSPRUNG_WERT_MAX = 1e12 als Literal aus der Spec (nicht ueber die Konstante): beide Vorzeichen gehen hinaus,
+    ein Hauch darueber nicht."""
+    assert wire.URSPRUNG_WERT_MAX == 1e12
+    world = World(tmp_path)
+    world.host.ursprung = {"plus": 1e12, "minus": -1e12, "plus_drueber": 1.0000001e12, "minus_drueber": -1.0000001e12}
+    world.verbinden()
+    assert world.link.of("up/status")[-1]["ursprungswerte"] == {"plus": 1e12, "minus": -1e12}
 
 
 def test_unreportable_originals_are_logged_once_per_name_without_values(tmp_path, caplog):
@@ -611,6 +622,30 @@ def test_new_claim_code_only_while_not_claimed(tmp_path):
     assert world.device.identity.claim_code == new
 
 
+def test_new_claim_code_mit_zu_grossem_koerper_endet_als_intern_und_sendet_nichts(tmp_path, caplog):
+    """MAX_BODY_BYTES (V1): der ValueError der Bootstrap-Anfrage laeuft durch den Befehls-Waechter zu Failed("intern");
+    der Geraete-Thread lebt weiter, an der HTTP-Grenze kommt nichts an, der Code bleibt unveraendert."""
+    class Session:
+        calls: list = []
+
+        def request(self, *args, **kwargs):
+            self.calls.append(args)
+
+    world = World(tmp_path)
+    world.verbinden()
+    session = Session()
+    world.device._client_for = lambda ident: bootstrap.BootstrapClient(
+        "https://accounts.example.test", ident, session=session)
+    gross = {"version": "0.6.0", "host": "gateway", "capabilities": {"drivers": ["d" * 60] * 1200, "zigbee": True}}
+    world.device._register_args = lambda: gross
+    alt = world.device.identity.claim_code
+    world.empfangen("down/command", _command("new_claim_code", "c1"))
+    assert world.link.of("up/result")[-1]["error"] == {"grund": "intern"}
+    assert session.calls == [] and world.device.identity.claim_code == alt
+    assert "d" * 60 not in caplog.text
+    world.device.schritt()  # der Takt laeuft weiter
+
+
 def test_hello_reports_the_claim_state_the_device_knows(tmp_path):
     world = World(tmp_path, access=False)
     world.client.script["register"] = [bootstrap.Antwort("nicht_uebernommen", world.zugang)]
@@ -971,6 +1006,26 @@ def test_a_status_outside_the_contract_is_not_sent_and_the_next_valid_one_is(tmp
     assert len(world.link.of("up/status")) == anzahl + 1
 
 
+def test_ein_nicht_endlicher_wert_im_status_wird_nicht_gesendet_der_takt_lebt_weiter(tmp_path, caplog):
+    """Testoffensive T2, Nr. 17: allow_nan=False des Links ist der letzte Riegel; Device._publish faengt den ValueError
+    (Text ohne Werte), sendet nichts und der naechste gueltige Status geht hinaus."""
+    world = World(tmp_path)
+    world.verbinden()
+    anzahl = len(world.link.of("up/status"))
+    world.clock.now += 60
+    world.host.raum_wert = {"ist": float("nan"), "soll": 22.0, "soll_quelle": "portal", "ts": "t1"}
+    world.device.schritt()
+    assert len(world.link.of("up/status")) == anzahl and "up/status nicht gesendet" in caplog.text
+    for _ in range(5):    # der Takt versucht es jede Sekunde: genau eine Fehlerzeile, keine Flut
+        world.clock.now += 1
+        world.device.schritt()
+    assert caplog.text.count("up/status nicht gesendet") == 1 and len(world.link.of("up/status")) == anzahl
+    world.clock.now += 60
+    world.host.raum_wert = {"ist": None, "soll": 22.0, "soll_quelle": "portal", "ts": "t2"}
+    world.device.schritt()
+    assert world.link.of("up/status")[-1]["raum"]["ist"] is None and len(world.link.of("up/status")) == anzahl + 1
+
+
 def test_an_own_message_outside_the_contract_keys_is_logged_not_raised(tmp_path, caplog):
     world = World(tmp_path)
     world.verbinden()
@@ -1061,3 +1116,18 @@ def test_host_errors_are_logged_without_their_message(tmp_path, caplog):
     assert "RuntimeError" in caplog.text and "test_device_device.py" in caplog.text
     assert "geheim" not in caplog.text and "Traceback" not in caplog.text
     assert all(record.exc_info is None for record in caplog.records)
+
+
+def test_nach_dem_wegfall_der_ursache_wird_ein_erneuter_fehler_wieder_geloggt(tmp_path, caplog):
+    """Die Drosselung des Logs gilt je Ursache: nach einem erfolgreichen Senden meldet ein neuer Fehler sich wieder."""
+    world = World(tmp_path)
+    world.verbinden()
+    for runde in range(2):
+        world.clock.now += 60
+        world.host.raum_wert = {"ist": float("nan"), "soll": 22.0, "soll_quelle": "portal", "ts": f"n{runde}"}
+        world.device.schritt()
+        world.device.schritt()
+        world.clock.now += 60
+        world.host.raum_wert = {"ist": 20.0, "soll": 22.0, "soll_quelle": "portal", "ts": f"g{runde}"}
+        world.device.schritt()
+    assert caplog.text.count("up/status nicht gesendet") == 2

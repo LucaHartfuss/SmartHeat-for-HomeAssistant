@@ -1,4 +1,5 @@
 """Status-Kanal des Add-ons (Spec TP7 1.1, 3.1)."""
+import json
 import logging
 import re
 from datetime import UTC, datetime
@@ -79,6 +80,29 @@ def test_event_carries_every_field():
     }
 
 
+@pytest.mark.parametrize("helfer, wert, feld, ersatz", [
+    ("overall_status", "frei", "status", "datenfehler"), ("_boost", "turbo", "boost", "keiner"),
+    ("_abo", "vielleicht", "abo", "unbekannt"),
+])
+def test_ereignis_mit_wert_ausserhalb_des_vertrags_wird_ersetzt_und_geloggt(monkeypatch, caplog, helfer, wert, feld,
+                                                                            ersatz):
+    """Das Ereignis wird ausserhalb des try des Reporters gebaut (Start, Worker): build_event wirft nie."""
+    monkeypatch.setattr(status, helfer, lambda *a, **k: wert)  # Fehlerinjektion, Zusicherung auf build_event
+    event = build_event("client1", Flags(gestartet=True, abo="aktiv"), BridgeState(), VAILLANT, ADDON_VERSION)
+    assert event[feld] == ersatz and feld in caplog.text and wert not in caplog.text
+
+
+def test_ein_wert_innerhalb_des_vertrags_bleibt_unveraendert(caplog):  # Gegenprobe
+    event = build_event("client1", Flags(gestartet=True, abo="aktiv"), BridgeState(emergency_boost_active=True),
+                        VAILLANT, ADDON_VERSION)
+    assert (event["status"], event["boost"], event["abo"]) == ("regelt", "notfall", "aktiv") and not caplog.text
+
+
+def test_die_hinweise_haben_genau_die_felder_des_vertrags():
+    event = build_event("client1", Flags(gestartet=True), BridgeState(), VAILLANT, ADDON_VERSION)
+    assert set(event["hinweise"]) == {"raumfuehler_ausgefallen", "batterie_niedrig", "manueller_eingriff"}
+
+
 def test_event_carries_levers_of_the_lever_set_and_derived_min_flow(make_store):
     store = make_store()
     store.update(restore_point={"curve": 1.05, "room_setpoint": 21.0, "heat_limit": 16.0},
@@ -98,6 +122,20 @@ def test_event_without_learned_values_reports_none(make_store):
     assert event["hebelsatz"] == "viessmann_vicare"
     assert event["hebel"] == {"curve": 1.0, "level": -2.0, "room_setpoint": 20.0}
     assert event["gelernt"] is None
+
+
+@pytest.mark.parametrize("wert", [float("nan"), float("inf"), float("-inf"), 10**400], ids=["nan", "inf", "-inf", "riesig"])
+def test_nicht_endliche_laufzeitwerte_stehen_nie_im_status(make_store, wert):
+    """Testoffensive T2, Nr. 17 (Review Focus 2): ein NaN-Hebel legt den Status nicht lahm; das Feld wird None."""
+    store = make_store()
+    store.update(restore_point={"curve": wert, "room_setpoint": 21.0, "heat_limit": 16.0},
+                 learned={"curve": wert, "heat_limit": 16.2}, min_flow_current=wert,
+                 manual_override={"levers": {"curve": wert, "room_setpoint": 22.0}, "erkannt": "2026-10-03T11:00:00+02:00"})
+    event = build_event("t1", Flags(), store.state, VAILLANT, ADDON_VERSION)
+    assert event["hebel"] == {"curve": None, "room_setpoint": 21.0, "heat_limit": 16.0, "min_flow": None}
+    assert event["gelernt"] == {"curve": None, "heat_limit": 16.2}
+    assert event["hinweise"]["manueller_eingriff"]["hebel"] == {"curve": None, "room_setpoint": 22.0}
+    json.dumps(event, allow_nan=False)    # das ganze Ereignis ist ein gueltiges JSON ohne NaN
 
 
 def test_manual_hint_names_levers(make_store):

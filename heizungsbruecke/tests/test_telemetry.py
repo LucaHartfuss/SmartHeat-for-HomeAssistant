@@ -42,6 +42,21 @@ def test_run_telemetry_tick_reads_room_actual_and_publishes():
     assert payload["failsafe_active"] is False
 
 
+@pytest.mark.parametrize("wert", [float("nan"), float("inf"), float("-inf")])
+def test_run_telemetry_tick_sendet_kein_nicht_endliches_room_actual(wert, caplog):
+    """Testoffensive T2, Nr. 17: room_actual ist Pflicht der Telemetrie (der Server lehnt sie sonst ab); ein
+    nicht endlicher Wert wird nicht gesendet (Warnung), der naechste Tick liest erneut."""
+    manifest = ChannelManifest(refs={"room_actual": "sensor.room_actual"})
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = wert
+    mqtt_client = MagicMock()
+
+    telemetry.run_telemetry_tick(manifest, ha_api, mqtt_client, boost_active=False, failsafe_active=False)
+
+    mqtt_client.publish_telemetry.assert_not_called()
+    assert "room_actual" in caplog.text
+
+
 def test_run_telemetry_tick_includes_configured_optional_kpi_fields():
     manifest = ChannelManifest(refs={
         "room_actual": "sensor.room_actual",
@@ -291,6 +306,15 @@ def test_regulation_fields_and_local_ts():
     payload = mqtt.publish_telemetry.call_args.args[0]
     assert (payload["room_target"], payload["outdoor_temp"], payload["flow_setpoint"]) == (20.5, 3.5, 41.0)
     assert datetime.fromisoformat(payload["ts"]).tzinfo is not None
+
+
+def test_read_regulation_fields_liest_aussentemperatur_und_vorlaufsoll_aus_den_signalen():
+    manifest = SimpleNamespace(refs={"outdoor_temp": "sensor.o", "flow_setpoint": "sensor.vl", "room_target": "x.y"})
+    signals = MagicMock()
+    signals.get_state.side_effect = {"sensor.o": 3.5, "sensor.vl": 41.0, "x.y": 99.0}.__getitem__
+    assert telemetry.read_regulation_fields(manifest, signals, 20.5) == {
+        "room_target": 20.5, "outdoor_temp": 3.5, "flow_setpoint": 41.0}  # room_target aus dem Argument, nicht 99.0
+    assert sorted(call.args[0] for call in signals.get_state.call_args_list) == ["sensor.o", "sensor.vl"]  # nie "x.y"
 
 
 def test_unreadable_regulation_field_is_omitted():

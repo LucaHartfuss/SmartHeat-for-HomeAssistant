@@ -91,6 +91,10 @@ INVENTUR_ANLAGE_FIELDS = ("kennung", "sicherheitswarnungen")
 INVENTUR_FEATURE_FIELDS = ("anlage", "feature", "properties", "commands")
 RESULT_FIELDS = ("schema", "ok", "result", "error")
 RESULT_TARGETS = ("command_id", "dokument", "version")  # entweder command_id oder dokument und version
+#: Pflicht je Ziel (Testoffensive T2): ein Befehls-Ergebnis traegt alle RESULT_FIELDS (result und error null je nach
+#: ok); ein Dokument- oder Software-Ergebnis traegt nie result, error nur bei ok false.
+RESULT_PFLICHT_DOKUMENT = ("schema", "ok")
+RESULT_OPTIONAL_DOKUMENT = ("error",)
 ERROR_FIELDS = ("grund", "details")
 WISH_FIELDS = ("schema", "wish_id", "basis_version", "ts", "uhr_synchron", "werte")
 WISH_OPTIONAL = ("roh", "herkunft", "durch")  # fehlt = nicht begrenzt bzw. unbekannt
@@ -118,7 +122,8 @@ ENERGIE_EINHEITEN = ("Wh", "kWh", "m³")  # erwartete Einheit je Energiekanal (E
 BINDUNG_GATEWAY_FIELDS = ("treiber", "thermostat")
 BINDUNG_HA_FIELDS = ("kreis", "rollen", "batterien", "benachrichtigung", "hinweise_aus")
 BINDUNG_HA_OPTIONAL = ("abfrage_s", "einheiten")  # fehlt = Standardwert des Hebelsatzes bzw. keine Energiekanaele
-KREIS_FIELDS = ("plattform", "config_entry", "anlage", "nummer")
+KREIS_FIELDS = ("plattform", "anlage", "nummer")
+KREIS_OPTIONAL = ("config_entry",)  # fehlt = Kreis ohne Config-Entry (dann kein Schreibziel, ha_pruefung)
 HA_ROLLEN = (
     "room_target", "curve", "room_setpoint", "level", "heat_limit", "min_flow", "mode_select", "setpoint_comfort",
     "setpoint_setback", "outdoor_temp", "flow_temperature", "flow_setpoint", "return_temperature", "operating_mode",
@@ -135,6 +140,7 @@ MODI = ("manuell",)
 QUELLEN = ("portal", "geraet", "auftrag")
 RAUM_SOLL_MIN, RAUM_SOLL_MAX, RAUM_SOLL_STEP = 15.0, 25.0, 0.5
 URSPRUNG_MAX_HEBEL, URSPRUNG_HEBEL_MAX_CHARS = 16, 64  # Ursprungswerte: hoechstens so viele Hebel, Namen so lang
+URSPRUNG_WERT_MAX = 1e12  # groesster Betrag einer Zahl in ursprungswerte
 DOKUMENT_ERRORS = (
     "schema_unbekannt", "ungueltig", "hebelsatz_eingerastet", "sicherheitswerte_fehlen", "rolle_unzulaessig",
     "doppelt_belegt", "treiber_parameter", "update_noetig", "ausserhalb_bereich",
@@ -193,7 +199,8 @@ PRUEF_REGELN = ("fehlt", "ungueltig", "anzahl", "bereich", "format", "doppelt", 
 #: pruefbar).
 PRUEF_FELDER = tuple(dict.fromkeys((
     *KONFIGURATION_FIELDS, *KONFIGURATION_OPTIONAL, *BINDUNGSPARAMETER_FIELDS, *SCHREIBSCHUTZ_FIELDS,
-    *BINDUNG_GATEWAY_FIELDS, *TREIBER_FIELDS, *BINDUNG_HA_FIELDS, *BINDUNG_HA_OPTIONAL, *KREIS_FIELDS, *HA_ROLLEN,
+    *BINDUNG_GATEWAY_FIELDS, *TREIBER_FIELDS, *BINDUNG_HA_FIELDS, *BINDUNG_HA_OPTIONAL, *KREIS_FIELDS, *KREIS_OPTIONAL,
+    *HA_ROLLEN,
     *BEDIENUNG_FIELDS, *COMMAND_FIELDS, *INVENTUR_FILTER_FIELDS, *INVENTUR_FILTER_GATEWAY_FIELDS,
     *(feld for command in COMMANDS.values() for feld in (*command.payload, *command.payload_optional)),
 )))

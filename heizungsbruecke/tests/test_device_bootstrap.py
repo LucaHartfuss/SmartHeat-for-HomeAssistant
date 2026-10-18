@@ -77,6 +77,31 @@ def test_register_sends_a_signed_body_with_csr(ident, ca):
     assert antwort.zugang.endpoint == bootstrap.Endpoint("mqtt.e2e.test", 8883, ca.pem, None)
 
 
+@pytest.mark.parametrize("wert", [float("nan"), float("inf"), float("-inf")])
+def test_der_bootstrap_sendet_nie_eine_nicht_endliche_zahl(ident, ca, wert):
+    """Testoffensive T2, Nr. 17: allow_nan=False; Bootstrap.holen faengt die Ausnahme (Backoff), die Anfrage geht nie raus."""
+    session = FakeSession(FakeResponse(200, _body(ident, ca)))
+    with pytest.raises(ValueError):
+        _client(ident, session).register(**{**ARGS, "capabilities": {"drivers": [], "zigbee": wert}})
+    assert session.calls == []
+    assert _client(ident, session).register(**ARGS).zugang.endpoint.port == 8883    # Gegenprobe: endlich geht
+
+
+def test_ein_zu_grosser_koerper_wird_nicht_gesendet(ident, ca):
+    """V1 MAX_BODY_BYTES = 65536: der Bootstrap sendet keinen groesseren Koerper (ValueError wie bei allow_nan=False)."""
+    session = FakeSession(FakeResponse(200, _body(ident, ca)))
+    gross = {**ARGS, "capabilities": {**ARGS["capabilities"], "drivers": ["d" * 60] * 1200}}  # > 65536 Bytes
+    with pytest.raises(ValueError):
+        _client(ident, session).register(**gross)
+    assert session.calls == []  # an der HTTP-Grenze kam nichts an
+
+
+def test_ein_normaler_koerper_wird_gesendet(ident, ca):  # Gegenprobe
+    session = FakeSession(FakeResponse(200, _body(ident, ca)))
+    _client(ident, session).register(**ARGS)
+    assert len(session.calls) == 1
+
+
 def test_certificate_route_uses_the_device_path(ident, ca):
     session = FakeSession(FakeResponse(200, _body(ident, ca, state="uebernommen")))
     antwort = _client(ident, session).certificate()
@@ -294,6 +319,16 @@ def test_a_host_callback_value_error_is_not_logged_with_its_text_and_is_retried_
     assert "geheimer Parameter" not in caplog.text
 
 
+def test_ein_zu_grosser_koerper_wird_spaeter_wiederholt_nicht_gesperrt_und_nicht_gesendet(tmp_path, ident, ca, caplog):
+    """MAX_BODY_BYTES (V1) mit dem echten Client: Bootstrap.holen faengt den ValueError (Backoff), gesendet wird nichts."""
+    session = FakeSession()
+    gross = {**ARGS, "capabilities": {**ARGS["capabilities"], "drivers": ["d" * 60] * 1200}}
+    flow = bootstrap.Bootstrap(tmp_path, lambda: _client(ident, session), register_args=lambda: gross,
+                               uhr_synchron=lambda: True, identity=lambda: ident, clock=Clock())
+    assert flow.holen(rettung=False) is None and not flow.gesperrt and not flow.faellig()
+    assert session.calls == [] and "d" * 60 not in caplog.text
+
+
 def test_a_failing_host_callback_in_the_rescue_after_401_is_retried_later_too(tmp_path, ident, caplog):
     """Rettung: certificate -> 401 -> register baut seine Argumente (Host-Rueckruf) und scheitert: Backoff, keine Sperre."""
     def args() -> dict:
@@ -354,3 +389,17 @@ def test_an_unusable_access_counts_as_a_failure_with_backoff(tmp_path, ident, ca
     assert not flow.faellig() and not flow.gesperrt
     clock.now += bootstrap.RETRY_MIN_SECONDS
     assert flow.faellig()
+
+
+@pytest.mark.parametrize("feld, wert", [("mqtt_endpoint", "h\ud800"), ("mqtt_ca", "-----BEGIN CERTIFICATE-----\udfff")])
+def test_a_response_with_a_lone_surrogate_is_unusable_and_backs_off(tmp_path, ident, ca, feld, wert):
+    """speichern() koennte ein einzelnes Surrogat (json.loads aus "\\ud800") nicht schreiben: UnicodeEncodeError
+    ausserhalb des try in holen, kein Backoff, register in jedem Takt (Testoffensive T2, Task 13, Fix-Runde 1)."""
+    antwort = {**_body(ident, ca), feld: wert}
+    with pytest.raises(bootstrap.Unavailable):
+        _client(ident, FakeSession(FakeResponse(200, antwort))).register(**ARGS)
+    flow = bootstrap.Bootstrap(tmp_path, lambda: _client(ident, FakeSession(FakeResponse(200, antwort))),
+                               register_args=lambda: dict(ARGS), uhr_synchron=lambda: True, identity=lambda: ident,
+                               clock=Clock())
+    assert flow.holen(rettung=False) is None and not flow.gesperrt and not flow.faellig()  # Backoff
+    assert not (tmp_path / bootstrap.ENDPOINT_FILE).exists() and not (tmp_path / bootstrap.CERTIFICATE_FILE).exists()

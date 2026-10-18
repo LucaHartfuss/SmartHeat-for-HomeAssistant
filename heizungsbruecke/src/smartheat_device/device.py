@@ -44,8 +44,6 @@ PRUEFUNG_WIEDERHOLEN_SECONDS = 30
 #: Lokaler Hinweis bei einer abgelehnten Konfiguration (Spec Stufe 3 S5 6.3, Entscheidung E2 A): den Text der Ablehnung
 #: bildet der Server, das Geraet nennt nur den Code.
 ABLEHNUNG_ANZEIGE = "Die Einrichtung wurde abgelehnt (Code {grund}). Die Begründung zeigt der Einrichtungsassistent."
-#: Groesster Betrag eines Ursprungswerts, wie der Server ihn annimmt (geraete/device_checks.URSPRUNG_WERT_MAX).
-URSPRUNG_WERT_MAX = 1e12
 #: Down-Topic eines Dokuments -> Dokumentart (wire.DOKUMENT_TOPICS umgekehrt)
 _DOKUMENT_ART = {topic: art for art, topic in wire.DOKUMENT_TOPICS.items()}
 _RUNNING = ("regelt", "abo_inaktiv")
@@ -85,7 +83,7 @@ def _ursprungswert_ok(wert) -> bool:
         return False
     if isinstance(wert, int | float):
         # Betrag zuerst: math.isfinite wirft bei riesigen int (OverflowError); NaN faellt beim Vergleich durch.
-        return abs(wert) <= URSPRUNG_WERT_MAX and math.isfinite(wert)
+        return abs(wert) <= wire.URSPRUNG_WERT_MAX and math.isfinite(wert)
     return isinstance(wert, str) and 0 < len(wert) <= wire.URSPRUNG_HEBEL_MAX_CHARS
 
 
@@ -142,6 +140,7 @@ class Device:
         self._hello_fehler: str | None = None  # letzte Fehlerart beim Bauen von hello (je Art einmal loggen)
         self._status_fehler: str | None = None  # letzter Vertragsverstoss beim Bauen (je Text einmal loggen)
         self._wunsch_fehler: str | None = None  # dito beim Bauen von up/wish
+        self._publish_fehler: dict[str, str] = {}  # Topic -> letzter Text, mit dem der Link das Senden verweigerte
         self._ursprung_gewarnt: set[str] = set()  # nicht meldbare Ursprungswerte: je Name einmal loggen (Takt: 1 s)
         self._zurueckgehalten: dict[str, dict] = {}  # Dokument, dessen Pruefung vorlaeufig nicht moeglich war
         self._pruefung_at = 0.0
@@ -353,10 +352,15 @@ class Device:
         if link is None:
             return None
         try:
-            return link.publish(name, payload)
+            mid = link.publish(name, payload)
         except ValueError as error:
-            logger.error("%s nicht gesendet: %s", name, error)
+            # Der Takt versucht es erneut (Status, Wunsch, hello): je Topic und Text einmal loggen, nicht jede Sekunde
+            if self._publish_fehler.get(name) != str(error):
+                self._publish_fehler[name] = str(error)
+                logger.error("%s nicht gesendet: %s", name, error)
             return None
+        self._publish_fehler.pop(name, None)
+        return mid
 
     def _publish_nach_hello(self, name: str, payload: dict) -> int | None:
         """Laufzeit-Nachrichten (Snapshot, Telemetrie) erst nach hello (Spec 5b 5.1: hello zuerst)."""

@@ -29,18 +29,22 @@ ZUSTAND_TEXTE = {
 }
 
 
+def _hinweis(key: str, stufe: str, text: str) -> dict:
+    return dict(zip(HINWEIS_FIELDS, (key, stufe, text), strict=True))
+
+
 def hinweise(anzeige: Anzeige) -> list[dict]:
     """Hinweise der Anzeige als {key, stufe, text}: Hinweise des Servers, eigene Meldungen des Geraets, abgelehnte
     Konfiguration und die Zustaende update_noetig/gesperrt. Bei update_noetig mit abgelehnter Konfiguration stehen
     bewusst beide Hinweise da (Brief-Test): der Grund der Ablehnung und die Handlungsanweisung."""
-    result = [{"key": str(h["key"]), "stufe": h.get("stufe") or "warnung", "text": h.get("text") or ""}
+    result = [_hinweis(str(h["key"]), h.get("stufe") or "warnung", h.get("text") or "")
               for h in anzeige.hinweise if isinstance(h, dict) and h.get("key")]
-    result += [{"key": str(m["key"]), "stufe": "warnung", "text": m.get("text") or ""}
+    result += [_hinweis(str(m["key"]), "warnung", m.get("text") or "")
                for m in anzeige.meldungen if isinstance(m, dict) and m.get("key")]
     if anzeige.konfiguration_abgelehnt:
-        result.append({"key": KONFIGURATION_ABGELEHNT, "stufe": "kritisch", "text": anzeige.konfiguration_abgelehnt})
+        result.append(_hinweis(KONFIGURATION_ABGELEHNT, "kritisch", anzeige.konfiguration_abgelehnt))
     if anzeige.zustand in ZUSTAND_TEXTE:
-        result.append({"key": anzeige.zustand, "stufe": "kritisch", "text": ZUSTAND_TEXTE[anzeige.zustand]})
+        result.append(_hinweis(anzeige.zustand, "kritisch", ZUSTAND_TEXTE[anzeige.zustand]))
     return result
 
 

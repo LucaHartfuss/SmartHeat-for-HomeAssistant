@@ -3,6 +3,8 @@ Braucht hassio_api: true in config.yaml; die Rolle default darf /host/info, /dis
 das den Dienst in config.yaml erklaert. Logs nennen nie das Token (Regel 6)."""
 import requests
 
+from heizungsbruecke import discovery
+
 TIMEOUT_SECONDS = 5
 
 
@@ -21,9 +23,9 @@ class SupervisorApi:
         return self._get("/host/info")
 
     def discovery_anmelden(self, config: dict) -> str:
-        """POST /discovery (Dienst smartheat); Antwort: UUID der Meldung. HA startet daraufhin den Flow der Integration;
+        """POST /discovery (Dienst discovery.DIENST); Antwort: UUID der Meldung. HA startet daraufhin den Flow der Integration;
         eine schon vorhandene Meldung dieses Add-ons ersetzt der Supervisor unter derselben UUID (Probe W Teil A)."""
-        response = requests.post(f"{self._base}/discovery", json={"service": "smartheat", "config": config},
+        response = requests.post(f"{self._base}/discovery", json={"service": discovery.DIENST, "config": config},
                                  headers=self._headers, timeout=TIMEOUT_SECONDS)
         response.raise_for_status()
         body = response.json()

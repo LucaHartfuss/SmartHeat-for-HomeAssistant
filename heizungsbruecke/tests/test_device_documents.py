@@ -389,3 +389,15 @@ def test_configuration_and_operation_do_not_influence_each_other(tmp_path):
 
 def test_documents_are_the_contract_documents():
     assert (docs.KONFIGURATION, docs.BEDIENUNG) == wire.DOKUMENTE
+
+
+@pytest.mark.parametrize("art, inhalt", [("konfiguration", _konfiguration(anlage="a\ud800b")),
+                                          ("bedienung", _bedienung(ts="\udfff"))])
+def test_a_document_with_a_lone_surrogate_is_rejected_and_nothing_is_stored(tmp_path, art, inhalt):
+    """json.loads liefert aus "\\ud800" ein einzelnes Surrogat; schreiben_json koennte es nicht kodieren. Statt einer
+    Ausnahme aus empfangen() (ohne Antwort an den Server) gibt es eine Ablehnung `ungueltig` (Testoffensive T2, Task 13)."""
+    store = _store(tmp_path)
+    ergebnis = store.empfangen(art, inhalt)
+    assert (ergebnis.ok, ergebnis.grund, ergebnis.details) == (False, "ungueltig", None)
+    assert store.inhalt(art) is None and _store(tmp_path).ablehnung(art) == (1, "ungueltig", None)
+    assert store.empfangen(art, _konfiguration() if art == "konfiguration" else _bedienung()).uebernommen  # Gegenprobe

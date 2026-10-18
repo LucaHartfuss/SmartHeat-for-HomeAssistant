@@ -10,6 +10,7 @@ tragen Grund und details (Feld, Regel, Zahlen; Spec Stufe 3 S5 6.1), den Text bi
 (G-1, Regel 4). V1 ist strikt (R10): fremde Felder in Bindung, Treiber und Kreis lehnt diese Pruefung ab; die
 oberste Ebene der Konfiguration, die Software und die Bedienung prueft smartheat_device.documents gegen den
 Vertrag."""
+import logging
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -19,6 +20,8 @@ from smartheat_core.bindungsparameter import beschreibung
 from smartheat_core.levers import LEVER_SETS
 from smartheat_core.rastung import Rastung, passt
 from smartheat_core.safety import resolve_local_safety
+
+logger = logging.getLogger(__name__)
 
 UNGUELTIG = "ungueltig"
 HEBELSATZ_EINGERASTET = "hebelsatz_eingerastet"
@@ -48,11 +51,12 @@ RAUMFUEHLER_MAX = 8
 #: gleich, die Pruefung importiert den Geraetekern nicht. Die Bindung hat genau diese Felder (V1 ist strikt, R10).
 GATEWAY_BINDUNG_FELDER = ("treiber", "thermostat")
 TREIBER_FELDER = ("id", "parameter")
-#: Home Assistant: Kopie aus smartheat_device.wire (BINDUNG_HA_FIELDS, BINDUNG_HA_OPTIONAL, KREIS_FIELDS, HA_ROLLEN,
-#: HA_HINWEISE), ebenfalls in test_core_vertrag_pin.py gehalten.
+#: Home Assistant: Kopie aus smartheat_device.wire (BINDUNG_HA_FIELDS, BINDUNG_HA_OPTIONAL, KREIS_FIELDS, KREIS_OPTIONAL,
+#: HA_ROLLEN, HA_HINWEISE), ebenfalls in test_core_vertrag_pin.py gehalten.
 HA_BINDUNG_FELDER = ("kreis", "rollen", "batterien", "benachrichtigung", "hinweise_aus")
 HA_BINDUNG_OPTIONAL = ("abfrage_s", "einheiten")
-KREIS_FELDER = ("plattform", "config_entry", "anlage", "nummer")
+KREIS_FELDER = ("plattform", "anlage", "nummer")
+KREIS_OPTIONAL = ("config_entry",)
 HA_ROLLEN = (
     "room_target", "curve", "room_setpoint", "level", "heat_limit", "min_flow", "mode_select", "setpoint_comfort",
     "setpoint_setback", "outdoor_temp", "flow_temperature", "flow_setpoint", "return_temperature", "operating_mode",
@@ -173,12 +177,14 @@ def _ha_bindung(neu: Mapping) -> Ablehnung | None:
     if fehlend is not None:
         return Ablehnung(ROLLE_UNZULAESSIG, befund(fehlend, "fehlt"))
     kreis = bindung["kreis"]
-    # config_entry darf fehlen oder None sein (Server: Kreis ohne Config-Entry), die uebrigen Felder nicht.
-    if not isinstance(kreis, Mapping) or not all(
-            isinstance(kreis.get(key), str) and kreis[key] for key in KREIS_FELDER if key != "config_entry"):
+    if not isinstance(kreis, Mapping):
         return Ablehnung(ROLLE_UNZULAESSIG, befund("kreis", "ungueltig"))
-    if ablehnung := _fremd(kreis, KREIS_FELDER, "kreis"):
+    if ablehnung := _fremd(kreis, (*KREIS_FELDER, *KREIS_OPTIONAL), "kreis"):
         return ablehnung
+    # Pflichtfelder und config_entry (wenn vorhanden) sind nicht leere Texte; ein Kreis ohne config_entry hat keins.
+    if not all(isinstance(kreis.get(key), str) and kreis[key] for key in KREIS_FELDER) or any(
+            not (isinstance(kreis[key], str) and kreis[key]) for key in KREIS_OPTIONAL if key in kreis):
+        return Ablehnung(ROLLE_UNZULAESSIG, befund("kreis", "ungueltig"))
     rollen = bindung["rollen"]
     if not isinstance(rollen, Mapping):
         return Ablehnung(ROLLE_UNZULAESSIG, befund("rollen", "ungueltig"))
@@ -212,7 +218,18 @@ def _ha_bindung(neu: Mapping) -> Ablehnung | None:
 
 def pruefen(neu: Mapping, rastung: Rastung | None, *, host: str,
             treiber_pruefen: TreiberPruefung | None = None) -> Ablehnung | None:
-    """None = uebernehmen; sonst der erste verletzte Grund. `rastung` ist die Rastung des Geraets (None: noch keine)."""
+    """None = uebernehmen; sonst der erste verletzte Grund (immer aus GRUENDE, Vertrag: Teilmenge von DOKUMENT_ERRORS).
+    `rastung` ist die Rastung des Geraets (None: noch keine). Ein Grund ausserhalb GRUENDE wirft nicht in den
+    Dokumentpfad, sondern gilt als ungueltig (Log ohne den Grund)."""
+    ablehnung = _pruefen(neu, rastung, host=host, treiber_pruefen=treiber_pruefen)
+    if ablehnung is not None and ablehnung.grund not in GRUENDE:
+        logger.error("config_check: Grund ausserhalb GRUENDE, als ungueltig gemeldet")
+        return Ablehnung(UNGUELTIG)
+    return ablehnung
+
+
+def _pruefen(neu: Mapping, rastung: Rastung | None, *, host: str,
+             treiber_pruefen: TreiberPruefung | None = None) -> Ablehnung | None:
     if not isinstance(neu, Mapping):
         return Ablehnung(UNGUELTIG)
     if ist_leer(neu):

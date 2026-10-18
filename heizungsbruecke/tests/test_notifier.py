@@ -7,7 +7,8 @@ from fakes import FailingServiceHa
 
 from heizungsbruecke.ha_sinks import HaNotifySink, notification_id
 from smartheat_core import pipeline
-from smartheat_runtime.notifier import HINT_CATEGORIES, STATE_OK, Notifier, category
+from smartheat_core.config_check import HA_HINWEISE
+from smartheat_runtime.notifier import STATE_OK, Notifier, category
 from smartheat_runtime.state import StateStore
 
 SERVICES = ["notify.mobile_app_a", "notify.mobile_app_b"]
@@ -298,9 +299,6 @@ def test_refresh_persistent_does_nothing_for_an_ok_key(make_store, ha_api):
 def test_category_is_the_key_prefix():
     assert category("raumfuehler:sensor.wz") == "raumfuehler"
     assert category("quellwechsel") == "quellwechsel"
-    assert HINT_CATEGORIES == (
-        "raumfuehler", "batterie", "manueller_eingriff", "quellwechsel", "schreibbudget", "schreibzaehler",
-    )
 
 
 def test_switched_off_hint_category_is_tracked_and_logged_but_not_pushed(make_store, ha_api, caplog):
@@ -315,7 +313,7 @@ def test_switched_off_hint_category_is_tracked_and_logged_but_not_pushed(make_st
 
 
 def test_write_budget_hints_are_switchable():
-    assert HINT_CATEGORIES[-2:] == ("schreibbudget", "schreibzaehler")
+    assert HA_HINWEISE[-2:] == ("schreibbudget", "schreibzaehler")
     assert category(pipeline.BUDGET_KEY) == "schreibbudget"
     assert category(pipeline.LIFETIME_KEY) == "schreibzaehler"
 
@@ -339,7 +337,7 @@ def test_other_hint_categories_are_still_pushed(make_store, ha_api):
 
 
 def test_critical_messages_ignore_the_hint_switches(make_store, ha_api):
-    notifier = Notifier(make_store(), HaNotifySink(ha_api, SERVICES), hints_off=list(HINT_CATEGORIES))
+    notifier = Notifier(make_store(), HaNotifySink(ha_api, SERVICES), hints_off=list(HA_HINWEISE))
 
     notifier.notify("batterie:sensor.x", "niedrig", "Batterie kritisch niedrig", critical=True)
 

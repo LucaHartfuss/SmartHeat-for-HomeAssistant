@@ -287,6 +287,8 @@ class DocumentStore:
         return Ergebnis(art, version, False, grund, details)
 
     def _pruefen(self, art: str, inhalt: dict) -> config_check.Ablehnung | None:
+        if not fehler.kodierbar(inhalt):  # ein einzelnes Surrogat liesse sich nicht speichern (Ausnahme statt Ablehnung)
+            return config_check.Ablehnung(UNGUELTIG)
         if art == BEDIENUNG:
             return _bedienung_pruefen(inhalt)
         ablehnung = (_form(inhalt, _ohne_huelle(wire.KONFIGURATION_FIELDS), wire.KONFIGURATION_OPTIONAL)

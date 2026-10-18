@@ -45,17 +45,18 @@ PY="${PYTHON:-python3}"
 # Worktree unter .devtools/wt/ (git-common-dir zeigt auf .git des Haupt-Checkouts; Audit 5, A5-08).
 DEV="${DEV_ROOT:-$(cd "$(git rev-parse --git-common-dir)/../.." && pwd)}"
 pyright_in() { (cd "$1" && "$PY" -m ruff check . && "$PY" -m pyright --pythonpath "$("$PY" -c 'import sys; print(sys.executable)')"); }
-# Toter Code (Stufe 3 S8b, A5-87): je Paket mit seinen Ausnahmen (vulture_ausnahmen.py, jede Zeile begruendet) und den
-# offenen Vertragsbefunden (vulture_vertragsbefunde.py). Kern und Gateway in einem Lauf: das Gateway baut auf dem Kern
-# auf, der Kern ruft dessen Treiber- und Host-Methoden ueber Protocols, das Gateway liest Vertragsnamen des Kerns.
+# Toter Code (Stufe 3 S8b, A5-87): je Paket mit seinen Ausnahmen (vulture_ausnahmen.py, jede Zeile begruendet;
+# Vertragsnamen nur mit Leser auf der Gegenseite der Kopie, S3S8b-Vertragsleser). Kern und Gateway in einem Lauf: das
+# Gateway baut auf dem Kern auf, der Kern ruft dessen Treiber- und Host-Methoden ueber Protocols, das Gateway liest
+# Vertragsnamen des Kerns.
 # Grenze: vulture vergleicht nur Namen. Ein gleich geschriebener Name im anderen Paket verdeckt toten Code (Beispiele
 # bis Stufe 4 write_budget.QUOTA neben dem QUOTA des ViCare-Treibers); solche Faelle stehen trotzdem begruendet in
 # den Ausnahmen.
 vulture_in() { (cd "$1" && shift && "$PY" -m vulture "$@" --min-confidence 60); }
 toter_code() {
-  vulture_in heizungsbruecke src ../gateway/src vulture_ausnahmen.py vulture_vertragsbefunde.py \
+  vulture_in heizungsbruecke src ../gateway/src vulture_ausnahmen.py \
     ../gateway/vulture_ausnahmen.py \
-  && vulture_in gateway/host smartheat_host vulture_ausnahmen.py vulture_vertragsbefunde.py \
+  && vulture_in gateway/host smartheat_host vulture_ausnahmen.py \
   && vulture_in gateway/release build_bundle.py verify_bundle.py changelog_section.py vulture_ausnahmen.py
 }
 lint() { pyright_in heizungsbruecke && pyright_in gateway && pyright_in gateway/host && pyright_in gateway/release && toter_code \

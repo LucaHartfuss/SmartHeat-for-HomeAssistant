@@ -81,7 +81,6 @@ _VERTRAG_MODUL = "smartheat_device.wire"
 _PIN_PRAEFIX = "_VERTRAG_GEPINNT"
 # V1-Konstanten, die nur der Server braucht; jede Zeile mit Grund. Kein Eintrag ohne Grund.
 NUR_SERVER: set[str] = {
-    "MAX_BODY_BYTES",  # nur der Server begrenzt den Bootstrap-Body; die Bausteine liefern wenige hundert Bytes
     "MAX_CLOCK_SKEW_SECONDS",  # nur der Server prueft das Zeitfenster der Signatur
     "UNAUTHENTICATED_ERROR",  # Text der 401-Antwort; das Geraet wertet nur den Status 401 (Spec 1: immer gleich)
 }
@@ -95,6 +94,7 @@ NUR_GEPINNT_GERAET: set[str] = {  # Kopien im Kern (smartheat_core darf nichts i
     "HA_HINWEISE",  # config_check.HA_HINWEISE
     "HA_ROLLEN",  # config_check.HA_ROLLEN
     "KREIS_FIELDS",  # config_check.KREIS_FELDER
+    "KREIS_OPTIONAL",  # config_check.KREIS_OPTIONAL
     "SCHREIBSCHUTZ_FIELDS",  # bindungsparameter.SCHREIBSCHUTZ_FELDER
     "TREIBER_FIELDS",  # config_check.TREIBER_FELDER
     "ZAEHLER",  # bindungsparameter.ZAEHLER

@@ -42,6 +42,15 @@ def test_first_registration_carries_the_code(tmp_path):
     assert json.loads((tmp_path / "discovery.json").read_text())["uuid"] == "uuid-1"
 
 
+def test_die_meldung_hat_genau_die_felder_der_discovery(tmp_path):
+    supervisor = Supervisor()
+    meldung, _ = _discovery(tmp_path, supervisor)
+    meldung.aktualisieren("shg-a", "nicht_uebernommen", CODE)
+    assert set(supervisor.posts[-1]) == {"geraet_id", "zustand", "claim_code"}  # Literal des Vertrags
+    meldung.aktualisieren("shg-a", "uebernommen", None)
+    assert set(supervisor.posts[-1]) == {"geraet_id", "zustand"}
+
+
 def test_discovery_drops_the_code_after_the_claim(tmp_path, caplog):
     caplog.set_level(logging.DEBUG)
     supervisor = Supervisor()

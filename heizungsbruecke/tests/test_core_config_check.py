@@ -36,6 +36,20 @@ def _pruefen(neu, rastung=None, **kwargs):
     return _form(cc.pruefen(neu, rastung, host=cc.HOST_GATEWAY, **kwargs))
 
 
+def test_grund_ausserhalb_des_vertrags_wird_ungueltig_und_geloggt(monkeypatch, caplog):
+    # Fehlerinjektion: der innere Pruefschritt liefert einen fremden Grund; die Zusicherung liegt auf pruefen
+    monkeypatch.setattr(cc, "_pruefen", lambda *a, **k: cc.Ablehnung("frei_erfunden"))
+    assert cc.pruefen({}, None, host=cc.HOST_HA) == cc.Ablehnung(cc.UNGUELTIG)
+    assert "frei_erfunden" not in caplog.text and "GRUENDE" in caplog.text
+
+
+def test_ein_grund_aus_gruende_geht_unveraendert_durch(monkeypatch, caplog):  # Gegenprobe
+    for grund in cc.GRUENDE:
+        monkeypatch.setattr(cc, "_pruefen", lambda *a, _g=grund, **k: cc.Ablehnung(_g))
+        assert cc.pruefen({}, None, host=cc.HOST_HA) == cc.Ablehnung(grund)
+    assert caplog.records == []
+
+
 def test_a_valid_gateway_configuration_passes():
     assert _pruefen(_konfiguration()) is None
 

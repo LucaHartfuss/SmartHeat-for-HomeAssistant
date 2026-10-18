@@ -153,6 +153,19 @@ def test_publish_refuses_foreign_topics_and_oversized_messages(tls):
         link.publish("up/inventory", {"x": "y" * 130_000})
 
 
+@pytest.mark.parametrize("wert", [float("nan"), float("inf"), float("-inf")])
+def test_publish_sendet_nie_eine_nicht_endliche_zahl(tls, wert):
+    """Testoffensive T2, Nr. 17: allow_nan=False ist der letzte Riegel; der Aufrufer (Device._publish) faengt ValueError."""
+    link, clients, _ = _link(tls)
+    clients[-1].connack()
+    with pytest.raises(ValueError):
+        link.publish("up/status", {"x": wert})
+    with pytest.raises(ValueError):
+        link.publish("up/status", {"verschachtelt": {"x": [1.0, wert]}})
+    assert clients[-1].published == []    # an der MQTT-Grenze kam nichts an
+    assert link.publish("up/status", {"x": 1.5}) == 1    # Gegenprobe: ein endlicher Wert geht hinaus
+
+
 def test_three_auth_failures_ask_for_rescue_once(tls):
     link, clients, events = _link(tls)
     client = clients[-1]
