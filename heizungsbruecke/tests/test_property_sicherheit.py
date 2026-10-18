@@ -196,30 +196,51 @@ def _satz_mit(werte_strategie):
         st.fixed_dictionaries({lever: werte_strategie for lever in _hebel(key)})))
 
 
+def _ist_nan(wert) -> bool:
+    return isinstance(wert, float) and math.isnan(wert)
+
+
+def _ist_riesig(wert) -> bool:
+    """Ganzzahl ausserhalb des float-Bereichs (als Literal: ab 2**1024 - 2**970 rundet sie auf Unendlich)."""
+    return isinstance(wert, int) and not isinstance(wert, bool) and abs(wert) >= 2**1024 - 2**970
+
+
 def test_kein_eingabewert_und_keine_schrittweite_ergibt_einen_schreibwert_ausserhalb_der_lokalen_grenze():
     """Beliebige Hebelwerte (auch ±Inf, NaN, 2**1100) mit Schrittweiten 0,05 bis 5 durch Begrenzen, Runden und erneutes
     Begrenzen der Pipeline: jeder Schreibwert liegt in der lokalen Grenze; abgelehnt (ValueError/OverflowError) wird
-    nur eine nicht endliche Eingabe. Gegenprobe je Art: ±Inf wird (geklemmt) geschrieben, NaN und eine Ganzzahl
-    ueber dem float-Bereich werden abgelehnt."""
-    zaehler = {"geschrieben": 0, "inf_geschrieben": 0, "nan_abgelehnt": 0, "riesig_abgelehnt": 0}
+    nur eine nicht endliche Eingabe: ein ValueError nur, wenn ein Wert NaN ist, ein OverflowError nur bei einer Ganzzahl
+    ausserhalb des float-Bereichs. Gegenprobe je Art: +Inf und -Inf werden je (geklemmt) geschrieben, NaN und eine
+    Ganzzahl ueber dem float-Bereich je abgelehnt."""
+    zaehler = {"geschrieben": 0, "plus_inf_geschrieben": 0, "minus_inf_geschrieben": 0, "nan_abgelehnt": 0,
+               "riesig_abgelehnt": 0}
+
+    vaillant = ("vaillant_vrc720", HK)
+    schritte = {"curve": 0.05, "room_setpoint": 0.5, "heat_limit": 0.1, "min_flow": 0.1}
 
     @EINSTELLUNG
     @given(_satz_mit(WERT))
+    # je Vorzeichen erzwungen (die Ziehung trifft +Inf sonst nicht): jeder Hebel +Inf bzw. -Inf
+    @example((vaillant, schritte, dict.fromkeys(schritte, math.inf)))
+    @example((vaillant, schritte, dict.fromkeys(schritte, -math.inf)))
     def pruefen(fall):
         key, schritte, werte = fall
         with tempfile.TemporaryDirectory() as verzeichnis:
             pipeline, anlage = _pipeline(Path(verzeichnis), key, description=_mit_schritten(key[0], schritte))
             try:
                 _schreiben(pipeline, werte)
-            except (ValueError, OverflowError) as fehler_:
-                assert not all(_endlich(wert) for wert in werte.values()), werte
-                zaehler["nan_abgelehnt"] += isinstance(fehler_, ValueError)
-                zaehler["riesig_abgelehnt"] += isinstance(fehler_, OverflowError)
+            except ValueError:
+                assert any(_ist_nan(wert) for wert in werte.values()), werte
+                zaehler["nan_abgelehnt"] += 1
+            except OverflowError:
+                assert any(_ist_riesig(wert) for wert in werte.values()), werte
+                zaehler["riesig_abgelehnt"] += 1
             else:
                 geschrieben = {lever for lever, _ in anlage.writes}
-                zaehler["inf_geschrieben"] += sum(
-                    1 for lever, wert in werte.items() if isinstance(wert, float) and math.isinf(wert)
-                    and lever in geschrieben)
+                for lever, wert in werte.items():
+                    if lever in geschrieben and wert == math.inf:
+                        zaehler["plus_inf_geschrieben"] += 1
+                    elif lever in geschrieben and wert == -math.inf:
+                        zaehler["minus_inf_geschrieben"] += 1
             _alle_in_den_lokalen_grenzen(key, anlage.writes)
             zaehler["geschrieben"] += len(anlage.writes)
 
@@ -238,8 +259,10 @@ def _arten(bereich) -> set[str]:
         return {"keiner"}
     floats = [x for x in bereich if isinstance(x, float)]
     arten = {"nan"} if any(math.isnan(x) for x in floats) else set()
-    if any(math.isinf(x) for x in floats):
-        arten.add("inf")
+    if math.inf in floats:
+        arten.add("plus_inf")
+    if -math.inf in floats:
+        arten.add("minus_inf")
     if "nan" not in arten and bereich[0] > bereich[1]:
         arten.add("min_ueber_max")
     return arten
@@ -248,12 +271,17 @@ def _arten(bereich) -> set[str]:
 def test_jeder_anlagenbereich_ergibt_einen_schreibbereich_innerhalb_der_lokalen_grenzen():
     """Wertebereich der Anlage je Hebel beliebig (NaN, ±Inf, Minimum ueber Maximum, riesige Ganzzahl, enger, weiter,
     ohne Schnittmenge): range_of liegt in der lokalen Grenze, und jeder geschriebene Wert auch."""
-    zaehler = {"geschrieben": 0, "nan": 0, "inf": 0, "min_ueber_max": 0, "keiner": 0}
+    zaehler = {"geschrieben": 0, "nan": 0, "plus_inf": 0, "minus_inf": 0, "min_ueber_max": 0, "keiner": 0}
 
     @EINSTELLUNG
     @given(st.sampled_from(sorted(TABELLE)).flatmap(lambda key: st.tuples(
         st.just(key), st.fixed_dictionaries({lever: ANLAGENBEREICH for lever in _hebel(key)}),
         st.fixed_dictionaries({lever: st.floats(-1e6, 1e6) | st.integers(-50, 50) for lever in _hebel(key)}))))
+    # je Vorzeichen erzwungen (die Ziehung trifft +Inf sonst nicht): +Inf und -Inf je als Minimum und als Maximum
+    @example((("vaillant_vrc720", HK),
+              {"curve": (0.5, math.inf), "room_setpoint": (-math.inf, math.inf), "heat_limit": (math.inf, 10.0),
+               "min_flow": (-math.inf, 25.0)},
+              {"curve": 2.0, "room_setpoint": 30.0, "heat_limit": 0.0, "min_flow": 40.0}))
     def pruefen(fall):
         key, device, werte = fall
         with tempfile.TemporaryDirectory() as verzeichnis:
