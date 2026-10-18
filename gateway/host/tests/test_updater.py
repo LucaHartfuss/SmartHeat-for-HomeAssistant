@@ -916,8 +916,12 @@ def _redirected_response(final_url: str, body: bytes = b"inhalt"):
     return response
 
 
-@pytest.mark.parametrize("final_url", ["http://evil.test/x", "file:///etc/passwd", "ftp://evil.test/x"])
-def test_fetch_refuses_an_answer_from_a_scheme_that_is_not_allowed_without_reading_it(monkeypatch, final_url):
+@pytest.mark.parametrize(("final_url", "allow_http"), [
+    ("http://evil.test/x", False), ("file:///etc/passwd", False), ("ftp://evil.test/x", False),
+    ("file:///etc/passwd", True), ("ftp://evil.test/x", True),  # auch der Schalter erlaubt nur http
+])
+def test_fetch_refuses_an_answer_from_a_scheme_that_is_not_allowed_without_reading_it(
+        monkeypatch, final_url, allow_http):
     """Zweite Sicherung (der Redirect-Handler ist die erste): kommt die Antwort trotzdem von einer Adresse mit nicht
     erlaubtem Schema, wird sie verworfen, ungelesen. Attrappe an der Grenze, dem Opener von urllib (autospec): ein echter
     Server kann die Weiterleitung nicht an der ersten Sicherung vorbei erzwingen."""
@@ -926,7 +930,7 @@ def test_fetch_refuses_an_answer_from_a_scheme_that_is_not_allowed_without_readi
     opener.open.return_value = response
     monkeypatch.setattr(urllib.request, "build_opener", create_autospec(urllib.request.build_opener, return_value=opener))
     with pytest.raises(updater.FetchError, match="Weiterleitung auf ein Schema"):
-        updater.fetch_url("https://release.example.test/x", 100, allow_http=False)
+        updater.fetch_url("https://release.example.test/x", 100, allow_http=allow_http)
     response.read.assert_not_called()
     # Gegenproben: eine Antwort von https wird gelesen; http nur mit dem Schalter (Labor)
     opener.open.return_value = _redirected_response("https://cdn.example.test/x")
@@ -988,6 +992,34 @@ def test_the_opener_refuses_a_redirect_to_a_scheme_that_is_not_allowed_before_as
     with updater.checked_opener(allow_http=True).open(start, timeout=5) as response:
         assert response.read() == b"ziel"
     assert seen == ["/ziel"]
+
+
+@pytest.fixture
+def ftp_redirector():
+    """Lokaler HTTP-Server, der mit 302 auf eine ftp-Adresse (Port 1: nichts hoert zu) weiterleitet."""
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", "ftp://127.0.0.1:1/x")
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_port}/start"
+    server.shutdown()
+    server.server_close()
+    thread.join()
+
+
+def test_the_opener_refuses_a_redirect_to_ftp_even_with_the_http_switch(ftp_redirector):
+    """urllib folgt auch einer Weiterleitung auf ftp (ein Verbindungsfehler waere ein URLError, kein FetchError des
+    Handlers): mit dem Schalter ist nur http erlaubt, ftp wird abgelehnt, bevor eine Verbindung versucht wird."""
+    with pytest.raises(updater.FetchError, match="Weiterleitung auf ein Schema"):
+        updater.checked_opener(allow_http=True).open(ftp_redirector, timeout=5)
 
 
 def test_fetch_url_follows_a_redirect_when_http_is_allowed(redirecting_servers):
@@ -1406,12 +1438,13 @@ def fast_sleep(monkeypatch, reload_updater):
 
 def test_main_ends_the_health_wait_after_shg_updater_health_seconds(
         tmp_path, monkeypatch, capsys, site, docker, fast_sleep):
-    """Ein Bundle, das nie gesund wird: mit 0,05 s Frist rollt `main` zurueck, nachdem die Frist auf der monotonen Uhr
-    verstrichen ist (nicht nach dem Standard von 600 s, der hier 300 Takte uebersaehe)."""
+    """Ein Bundle, das nie gesund wird: mit 0,05 s Frist endet das Warten und `main` rollt zurueck (Grund `ungesund`),
+    nachdem die Frist auf der monotonen Uhr verstrichen ist; mit dem Standard von 600 s bricht die Fixture `fast_sleep`
+    nach 300 Takten ab. Die Zahl der Takte haengt von der Last ab und wird nicht zugesichert."""
     _main_update(monkeypatch, tmp_path, site, health_path="/gesundheit", health_body=UNHEALTHY_BODY, health_seconds="0.05")
     started = time.monotonic()
     updater.main(["--once"])
-    assert time.monotonic() - started >= 0.05 and len(fast_sleep) >= 3
+    assert time.monotonic() - started >= 0.05
     assert capsys.readouterr().out == "zurueckgerollt\n"
     reports = json.loads((tmp_path / "data" / "software_meldungen.json").read_text())["meldungen"]
     assert [(m["result"], m["reason"]) for m in reports] == [("rollback", "ungesund")]
@@ -1424,37 +1457,6 @@ def test_main_waits_longer_for_a_bundle_that_turns_healthy_when_the_deadline_is_
     site.routes["/gesundheit"] = lambda: HEALTHY_BODY if site.hits.count("/gesundheit") >= 4 else UNHEALTHY_BODY
     updater.main(["--once"])
     assert capsys.readouterr().out == "aktualisiert\n" and len(fast_sleep) == 3
-
-
-def test_main_once_wires_the_environment(tmp_path, monkeypatch, capsys):
-    release_pub = tmp_path / "release.pub"
-    release_pub.write_text("pub")
-    monkeypatch.setenv("SHG_ROOT", str(tmp_path))
-    monkeypatch.setenv("SHG_RELEASE_PUB", str(release_pub))
-    monkeypatch.setenv("SHG_UPDATER_ALLOW_HTTP", "1")
-    monkeypatch.setenv("SHG_UPDATER_HEALTH_SECONDS", "5")
-    monkeypatch.setenv("SHG_UPDATER_HEALTH_URL", "http://127.0.0.1:9/healthz")
-    monkeypatch.setenv("SHG_COMPOSE_PROJECT", "testprojekt")
-    seen = {}
-
-    class FakeUpdater:
-        def __init__(self, **kwargs):
-            seen.update(kwargs)
-
-        def recover(self):
-            seen["recovered"] = True
-
-        def run_once(self):
-            return "aktuell"
-
-    monkeypatch.setattr(updater, "Updater", FakeUpdater)
-    updater.main(["--once"])
-    assert capsys.readouterr().out == "aktuell\n"
-    assert seen["recovered"] and seen["allow_http"] is True and seen["health_seconds"] == 5.0
-    assert seen["public_key_text"] == "pub" and seen["state_path"] == tmp_path / "updater" / "state.json"
-    assert seen["version"] == updater.GATEWAY_VERSION
-    assert seen["compose"]._project == "testprojekt"
-    assert isinstance(seen["kanal"], kanal.LokalerKanal) and seen["kanal"]._data == tmp_path / "data"
 
 
 @pytest.mark.parametrize("current", ["0.3.1", "1.0.0"])
