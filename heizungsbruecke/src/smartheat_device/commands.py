@@ -130,7 +130,8 @@ class CommandRegister:
     def empfangen(self, message: dict) -> None:
         """down/command: einmal ausfuehren; ein Duplikat wiederholt nur das gespeicherte Ergebnis."""
         command_id = message.get("command_id")
-        if not isinstance(command_id, str) or not 0 < len(command_id) <= COMMAND_ID_MAX_CHARS:
+        if (not isinstance(command_id, str) or not 0 < len(command_id) <= COMMAND_ID_MAX_CHARS
+                or not fehler.kodierbar(command_id)):  # das Ergebnis steht unter der ID in befehle.json
             logger.warning("Befehl ohne gueltige command_id verworfen")
             return
         if command_id in self._pending:
@@ -165,6 +166,8 @@ class CommandRegister:
         # (wire.COMMAND_FIELDS), in der Nutzlast alle Pflichtfelder der Art (Command.payload) und sonst nur
         # payload_optional. Sonst laeuft kein Handler. Ein fremder Name steht nur in details, wenn er in
         # wire.PRUEF_FELDER steht (G-6: nie freier Text).
+        if not fehler.kodierbar(message):  # ein einzelnes Surrogat liesse sich nicht speichern (Hinweise, Handler)
+            return Failed("ungueltige_nutzlast", fehler.details("payload", "ungueltig"))
         for feld in wire.COMMAND_FIELDS:
             if feld not in message:
                 return Failed("ungueltige_nutzlast", fehler.details(feld, "fehlt"))
