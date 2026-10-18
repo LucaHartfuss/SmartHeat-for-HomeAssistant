@@ -1,10 +1,31 @@
 name: CI
+# Pruefstufen (Root-Runbook Abschnitt 3, Spec Testoffensive Nr. 30/35): Push (alle Branches, oeffentliches Repo ohne
+# Minutenkosten) und der Tageslauf fahren die Standardstufe: lint, test ohne Real-HA-Container, addon-lint, contract;
+# audit nur im Tageslauf. Docker (Schritt docker, aarch64-Build, Gateway-Image, Host-Installer arm64) und die
+# Real-HA-Container-Tests (RUN_REAL_HA_TESTS mit HA_IMAGE) laufen nur in der vollen Stufe: Release-Workflows mit
+# stufe: voll oder von Hand per workflow_dispatch -f stufe=voll. Die Pflicht-Checks des Rulesets (lint, test, docker,
+# build-aarch64 (heizungsbruecke), addon-lint (heizungsbruecke), contract) bleiben Jobs ohne Job-if: die Stufe sitzt
+# auf ihren Docker-Schritten, damit der Push-Lauf sie unter dem aufgeloesten Namen mit success meldet (sonst scheitert
+# der Fast-Forward von main mit GH013). tools/tests/test_workflows.py (Root) haelt diese Regeln fest.
 on:
   push:
     branches: ["**"]
+  workflow_dispatch:
+    inputs:
+      stufe:
+        description: "Prüfstufe: standard (Lint, Tests, Contract) oder voll (zusätzlich Docker und Real-HA-Container-Tests)"
+        type: string
+        required: false
+        default: standard
   schedule:
     - cron: "37 3 * * *"
   workflow_call:
+    inputs:
+      stufe:
+        description: "Prüfstufe: standard (Lint, Tests, Contract) oder voll (zusätzlich Docker und Real-HA-Container-Tests)"
+        type: string
+        required: false
+        default: standard
     secrets:
       CROSS_REPO_TOKEN:
         required: true
@@ -15,7 +36,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'push' }}
 env:
   CHECKOUT_REF: ${{ github.event_name == 'schedule' && 'develop' || '' }}
-  # Push-Laeufe: HA-Version von client1 (HomeAssistantPapa/.HA_VERSION); taeglich: stable (Spec 2.2).
+  # HA-Version von client1 (HomeAssistantPapa/.HA_VERSION, tools/ha_version_check.py liest die Zeile); stable nur bei
+  # schedule, wo die Real-HA-Container-Tests seit T6-frueh nicht mehr laufen (nur in der vollen Stufe).
   HA_IMAGE: ${{ github.event_name == 'schedule' && 'ghcr.io/home-assistant/home-assistant:stable' || 'ghcr.io/home-assistant/home-assistant:2026.9.4' }}
 jobs:
   lint:
@@ -43,15 +65,23 @@ jobs:
       - run: pip install -e "./heizungsbruecke[dev]" -e "./gateway[dev]"  # pin-check: ungehasht (CI ohne Schreibrecht)
       # Kreuztest smartheat_host.minisign gegen das echte Programm (gateway/host/tests/test_minisign.py).
       - run: sudo apt-get update -qq && sudo apt-get install -y -qq minisign
-      - run: RUN_REAL_HA_TESTS=1 PYTHON=python bash scripts/check.sh --only test
+      # Real-HA-Container-Tests (Docker, HA_IMAGE) nur in der vollen Stufe; sonst ueberspringt pytest sie.
+      - name: test
+        env:
+          RUN_REAL_HA_TESTS: ${{ inputs.stufe == 'voll' && '1' || '0' }}
+        run: PYTHON=python bash scripts/check.sh --only test
   docker:
+    # Pflicht-Check: kein Job-if; der Docker-Schritt laeuft nur in der vollen Stufe, sonst meldet der Job success.
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ env.CHECKOUT_REF }}
-      - run: bash scripts/check.sh --only docker
+      - if: inputs.stufe == 'voll'
+        run: bash scripts/check.sh --only docker
+      - if: inputs.stufe != 'voll'
+        run: echo "Docker nur in der vollen Stufe (Release)"
   build-aarch64:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -59,18 +89,25 @@ jobs:
       fail-fast: false
       matrix:
         addon: [heizungsbruecke]
+    # Pflicht-Check unter dem aufgeloesten Namen: kein Job-if (sonst meldet GitHub den Namen womoeglich unaufgeloest);
+    # die Docker-Schritte laufen nur in der vollen Stufe.
     name: build-aarch64 (${{ matrix.addon }})
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ env.CHECKOUT_REF }}
-      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      - env:
+      - if: inputs.stufe == 'voll'
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - if: inputs.stufe == 'voll'
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - if: inputs.stufe == 'voll'
+        env:
           ADDON: ${{ matrix.addon }}
         run: docker buildx build --platform linux/arm64 --tag "ci/$ADDON:arm64" "$ADDON"
   build-gateway:
     # Gateway-Image fuer amd64 und arm64 (Spec SHG G2 7.4); der Compose-Lauf (amd64) steckt im Job docker.
+    # Kein Pflicht-Check: nur in der vollen Stufe.
+    if: inputs.stufe == 'voll'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -82,6 +119,8 @@ jobs:
       - run: docker buildx build --platform linux/amd64,linux/arm64 -f gateway/Dockerfile .
   install-arm64:
     # Host-Installer auch auf arm64 (QEMU), Spec G2b-1 10; amd64 laeuft im Job docker (scripts/check.sh).
+    # Kein Pflicht-Check: nur in der vollen Stufe.
+    if: inputs.stufe == 'voll'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -91,6 +130,7 @@ jobs:
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
       - run: SHG_INSTALL_PLATFORM=linux/arm64 bash tests/test_gateway_install.sh
   addon-lint:
+    # Pflicht-Check; die Linter-Action ist eine Container-Action, gehoert aber ausdruecklich zur Standardstufe.
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:
