@@ -51,7 +51,7 @@ class Sent:
     def publish(self, name, payload):
         if self.publish_error is not None and name == "up/snapshot":
             raise self.publish_error
-        payload = json.loads(json.dumps(payload))
+        payload = json.loads(json.dumps(payload, allow_nan=False))  # wie der echte Link (Testoffensive T2, Nr. 17)
         self.messages.append((name, payload))
         if self._log is not None:
             self._log.append(["link", name, json.loads(json.dumps(payload))])

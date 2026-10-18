@@ -42,6 +42,21 @@ def test_run_telemetry_tick_reads_room_actual_and_publishes():
     assert payload["failsafe_active"] is False
 
 
+@pytest.mark.parametrize("wert", [float("nan"), float("inf"), float("-inf")])
+def test_run_telemetry_tick_sendet_kein_nicht_endliches_room_actual(wert, caplog):
+    """Testoffensive T2, Nr. 17: room_actual ist Pflicht der Telemetrie (der Server lehnt sie sonst ab); ein
+    nicht endlicher Wert wird nicht gesendet (Warnung), der naechste Tick liest erneut."""
+    manifest = ChannelManifest(refs={"room_actual": "sensor.room_actual"})
+    ha_api = MagicMock()
+    ha_api.get_state.return_value = wert
+    mqtt_client = MagicMock()
+
+    telemetry.run_telemetry_tick(manifest, ha_api, mqtt_client, boost_active=False, failsafe_active=False)
+
+    mqtt_client.publish_telemetry.assert_not_called()
+    assert "room_actual" in caplog.text
+
+
 def test_run_telemetry_tick_includes_configured_optional_kpi_fields():
     manifest = ChannelManifest(refs={
         "room_actual": "sensor.room_actual",

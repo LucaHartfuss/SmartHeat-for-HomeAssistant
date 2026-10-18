@@ -7,6 +7,7 @@ aus, meldet sie das selbst. Felder und Wertemengen sind Cross-Repo-Vertrag mit c
 import logging
 from dataclasses import dataclass, replace
 
+from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_runtime import battery, delivery, entitlement, room_sensors
 from smartheat_runtime.ports import StatusSink
 
@@ -129,18 +130,28 @@ def _open_keys(state, prefix: str, value: str) -> list[str]:
     )
 
 
+def _zahl(value) -> float | None:
+    """Eine nicht endliche Zahl (NaN, Inf, Ganzzahl ausserhalb des float-Bereichs) geht nie in den Status, sondern als
+    None des Feldes (Testoffensive T2, Nr. 17): ein Laufzeitwert legt das Ereignis und damit up/status nicht lahm."""
+    return value if ist_endliche_zahl(value) else None
+
+
+def _zahlen(values: dict) -> dict:
+    return {key: _zahl(value) for key, value in values.items()}
+
+
 def _manual(state) -> dict | None:
     override = state.manual_override
     if override is None:
         return None
-    return {"hebel": dict(override["levers"]), "erkannt": override["erkannt"]}
+    return {"hebel": _zahlen(override["levers"]), "erkannt": override["erkannt"]}
 
 
 def _levers(state, lever_set) -> dict:
     """Stand je Hebel (Wiederherstellungspunkt = zuletzt bestaetigt) plus die vom Client abgeleiteten (Mindestvorlauf)."""
-    levers = {lever: state.restore_point.get(lever) for lever in lever_set.levers}
+    levers = {lever: _zahl(state.restore_point.get(lever)) for lever in lever_set.levers}
     if "min_flow" in lever_set.client_derived:
-        levers["min_flow"] = state.min_flow_current
+        levers["min_flow"] = _zahl(state.min_flow_current)
     return levers
 
 
@@ -166,7 +177,7 @@ def build_event(
         "letzte_serverantwort": state.last_ack_at,
         "hebelsatz": lever_set.id,
         "hebel": _levers(state, lever_set),
-        "gelernt": dict(state.learned) or None,
+        "gelernt": _zahlen(state.learned) or None,
         "abo": abo,
         "abo_frist_ende": (
             entitlement.grace_end(state.abo_inactive_since).date().isoformat() if abo == ABO_INAKTIV else None

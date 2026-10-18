@@ -77,6 +77,16 @@ def test_register_sends_a_signed_body_with_csr(ident, ca):
     assert antwort.zugang.endpoint == bootstrap.Endpoint("mqtt.e2e.test", 8883, ca.pem, None)
 
 
+@pytest.mark.parametrize("wert", [float("nan"), float("inf"), float("-inf")])
+def test_der_bootstrap_sendet_nie_eine_nicht_endliche_zahl(ident, ca, wert):
+    """Testoffensive T2, Nr. 17: allow_nan=False; Bootstrap.holen faengt die Ausnahme (Backoff), die Anfrage geht nie raus."""
+    session = FakeSession(FakeResponse(200, _body(ident, ca)))
+    with pytest.raises(ValueError):
+        _client(ident, session).register(**{**ARGS, "capabilities": {"drivers": [], "zigbee": wert}})
+    assert session.calls == []
+    assert _client(ident, session).register(**ARGS).zugang.endpoint.port == 8883    # Gegenprobe: endlich geht
+
+
 def test_certificate_route_uses_the_device_path(ident, ca):
     session = FakeSession(FakeResponse(200, _body(ident, ca, state="uebernommen")))
     antwort = _client(ident, session).certificate()

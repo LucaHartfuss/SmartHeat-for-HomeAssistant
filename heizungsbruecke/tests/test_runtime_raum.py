@@ -32,6 +32,33 @@ def test_ohne_fuehler_kein_ist():
     assert abgelegt[0]["ist"] is None
 
 
+_NICHT_ENDLICH = [float("nan"), float("inf"), float("-inf"), 10**400]
+_IDS = ["nan", "inf", "-inf", "riesig"]
+
+
+class _FesterStore:
+    def __init__(self, value, source="portal"):
+        self.value, self.source = value, source
+
+
+@pytest.mark.parametrize("wert", _NICHT_ENDLICH, ids=_IDS)
+def test_ein_nicht_endliches_ist_wird_zu_none_die_uebrigen_felder_bleiben(wert):
+    """Testoffensive T2, Nr. 17 (Review Focus 2): ein Fuehler mit NaN/Inf legt den Raum nicht lahm, nur ist faellt weg."""
+    class Signals:
+        def get_state(self, ref):
+            return wert
+    abgelegt = []
+    RaumPublisher(abgelegt.append, Signals(), _Store(), "sensor.raum", lambda: "ts").publish()
+    assert abgelegt == [{"ist": None, "soll": 21.5, "soll_quelle": "portal", "ts": "ts"}]
+
+
+@pytest.mark.parametrize("wert", _NICHT_ENDLICH, ids=_IDS)
+def test_ein_nicht_endliches_soll_wird_zu_none_ist_und_quelle_bleiben(wert):
+    abgelegt = []
+    RaumPublisher(abgelegt.append, _Signals(), _FesterStore(wert), "sensor.raum", lambda: "ts").publish()
+    assert abgelegt == [{"ist": 20.4, "soll": None, "soll_quelle": "portal", "ts": "ts"}]
+
+
 @pytest.mark.parametrize(("inhalt", "start"), [
     ({"raum_soll": 22}, 22.0), ({"raum_soll": 22.5}, 22.5), ({"raum_soll": 15.0}, 15.0), ({"raum_soll": 25.0}, 25.0),
     ({"raum_soll": 30.0}, None), ({"raum_soll": 14.5}, None), ({"raum_soll": 22.3}, None), ({"raum_soll": True}, None),

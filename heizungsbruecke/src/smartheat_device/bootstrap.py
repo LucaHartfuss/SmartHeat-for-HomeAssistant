@@ -102,7 +102,8 @@ class BootstrapClient:
     def _request(self, route: str, body: dict):
         method, template = wire.ROUTES[route]
         path = template.format(device_id=self._ident.device_id)
-        data = json.dumps(body, separators=(",", ":"), sort_keys=True).encode()
+        # allow_nan=False (Testoffensive T2, Nr. 17): ValueError faengt Bootstrap.holen (Backoff) bzw. der Befehls-Handler
+        data = json.dumps(body, separators=(",", ":"), sort_keys=True, allow_nan=False).encode()
         timestamp = int(self._now())
         headers = {
             wire.HEADER_DEVICE: self._ident.device_id,

@@ -113,7 +113,8 @@ class FakeLink:
     def publish(self, name, payload):
         if not self.connected:
             return None
-        self.sent.append((name, json.loads(json.dumps(payload))))
+        # wie der echte Link: nie NaN/Inf hinaus (Testoffensive T2, Nr. 17), json wirft dann ValueError
+        self.sent.append((name, json.loads(json.dumps(payload, allow_nan=False))))
         return len(self.sent)
 
     def port_wechseln_falls_noetig(self):
@@ -979,6 +980,22 @@ def test_a_status_outside_the_contract_is_not_sent_and_the_next_valid_one_is(tmp
     world.host.raum_wert = {"ist": 20.0, "soll": 22.0, "soll_quelle": "portal", "ts": "t1"}
     world.device.schritt()
     assert len(world.link.of("up/status")) == anzahl + 1
+
+
+def test_ein_nicht_endlicher_wert_im_status_wird_nicht_gesendet_der_takt_lebt_weiter(tmp_path, caplog):
+    """Testoffensive T2, Nr. 17: allow_nan=False des Links ist der letzte Riegel; Device._publish faengt den ValueError
+    (Text ohne Werte), sendet nichts und der naechste gueltige Status geht hinaus."""
+    world = World(tmp_path)
+    world.verbinden()
+    anzahl = len(world.link.of("up/status"))
+    world.clock.now += 60
+    world.host.raum_wert = {"ist": float("nan"), "soll": 22.0, "soll_quelle": "portal", "ts": "t1"}
+    world.device.schritt()
+    assert len(world.link.of("up/status")) == anzahl and "up/status nicht gesendet" in caplog.text
+    world.clock.now += 60
+    world.host.raum_wert = {"ist": None, "soll": 22.0, "soll_quelle": "portal", "ts": "t2"}
+    world.device.schritt()
+    assert world.link.of("up/status")[-1]["raum"]["ist"] is None and len(world.link.of("up/status")) == anzahl + 1
 
 
 def test_an_own_message_outside_the_contract_keys_is_logged_not_raised(tmp_path, caplog):

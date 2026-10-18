@@ -52,6 +52,11 @@ def run_telemetry_tick(
         return
     try:
         room_actual = signals.get_state(manifest.refs["room_actual"])
+        if not ist_endliche_zahl(room_actual):
+            # Pflichtfeld der Telemetrie (der Server lehnt sie sonst ab, Testoffensive T2, Nr. 17): kein Senden, der
+            # naechste Tick liest erneut
+            logger.warning("Telemetrie nicht gesendet: room_actual ist keine endliche Zahl")
+            return
         kpi_fields = read_kpi_fields(manifest, signals, energy, einheiten=einheiten)
         regulation_fields = read_regulation_fields(manifest, signals, room_target)
         publish_telemetry(

@@ -1,4 +1,5 @@
 """Status-Kanal des Add-ons (Spec TP7 1.1, 3.1)."""
+import json
 import logging
 import re
 from datetime import UTC, datetime
@@ -98,6 +99,20 @@ def test_event_without_learned_values_reports_none(make_store):
     assert event["hebelsatz"] == "viessmann_vicare"
     assert event["hebel"] == {"curve": 1.0, "level": -2.0, "room_setpoint": 20.0}
     assert event["gelernt"] is None
+
+
+@pytest.mark.parametrize("wert", [float("nan"), float("inf"), float("-inf"), 10**400], ids=["nan", "inf", "-inf", "riesig"])
+def test_nicht_endliche_laufzeitwerte_stehen_nie_im_status(make_store, wert):
+    """Testoffensive T2, Nr. 17 (Review Focus 2): ein NaN-Hebel legt den Status nicht lahm; das Feld wird None."""
+    store = make_store()
+    store.update(restore_point={"curve": wert, "room_setpoint": 21.0, "heat_limit": 16.0},
+                 learned={"curve": wert, "heat_limit": 16.2}, min_flow_current=wert,
+                 manual_override={"levers": {"curve": wert, "room_setpoint": 22.0}, "erkannt": "2026-10-03T11:00:00+02:00"})
+    event = build_event("t1", Flags(), store.state, VAILLANT, ADDON_VERSION)
+    assert event["hebel"] == {"curve": None, "room_setpoint": 21.0, "heat_limit": 16.0, "min_flow": None}
+    assert event["gelernt"] == {"curve": None, "heat_limit": 16.2}
+    assert event["hinweise"]["manueller_eingriff"]["hebel"] == {"curve": None, "room_setpoint": 22.0}
+    json.dumps(event, allow_nan=False)    # das ganze Ereignis ist ein gueltiges JSON ohne NaN
 
 
 def test_manual_hint_names_levers(make_store):
