@@ -76,7 +76,8 @@ class ZustandsDatei:
             return
         if self._last is None or self._last[0] != zustand:
             self._since = self._now_iso()
-        dateien.schreiben_json(self._path, {"zustand": zustand, "seit": self._since, "ts": self._now_iso()}, modus=dateien.LESBAR)
+        dateien.schreiben_json(self._path, {"zustand": zustand, "seit": self._since, "ts": self._now_iso()},
+                               modus=dateien.LESBAR)
         self._last = (zustand, now)
 
 
@@ -179,7 +180,8 @@ class GatewayDeviceHost(GeraetHostBasis):
 
     def software_soll(self, software: dict | None) -> None:
         if dateien.lesen_json(self.paths.software_soll) != software or not self.paths.software_soll.exists():
-            dateien.schreiben_json(self.paths.software_soll, software, modus=dateien.LESBAR)  # 0644: der Updater (root) liest
+            # 0644: der Updater (root) liest
+            dateien.schreiben_json(self.paths.software_soll, software, modus=dateien.LESBAR)
 
     def runtime_status(self) -> dict | None:
         return self.zustand.status

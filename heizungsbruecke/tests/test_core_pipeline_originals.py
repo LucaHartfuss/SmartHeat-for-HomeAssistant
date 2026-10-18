@@ -11,7 +11,8 @@ from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime.backup_store import load_backup
 from smartheat_runtime.roles import ChannelManifest
 
-MANIFEST = ChannelManifest(refs={"curve_current": "number.hk", "shift_current": "number.normal", "heat_limit": "number.swu"})
+MANIFEST = ChannelManifest(
+    refs={"curve_current": "number.hk", "shift_current": "number.normal", "heat_limit": "number.swu"})
 SAFETY = resolve_local_safety("weishaupt_wwp", "Heizkoerper")
 AUX = {"mode_select": "Automatik", "setpoint_comfort": 22.0, "setpoint_setback": 18.0}
 
@@ -121,7 +122,9 @@ def test_restore_with_unknown_originals_keeps_the_learned_values_without_crashin
     assert pipeline.restore_and_clear(always_restore=True) is True
     assert ha.writes == [("number.hk", 0.9), ("number.normal", 22.0), ("number.swu", 16.0)]
     assert binding.restored == []
-    assert "Ursprungswert von curve unbekannt" in caplog.text
+    assert [record.getMessage() for record in caplog.records] == [  # Regel 6: kein Wert (0.9, 22.0, 16.0) im Log
+        f"Ursprungswert von {hebel} unbekannt: bleibt auf dem gelernten Wert"
+        for hebel in ("curve", "room_setpoint", "heat_limit")]
 
 
 def test_restore_runs_even_when_the_aux_values_cannot_be_read(make_store, clock):

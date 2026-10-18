@@ -12,8 +12,8 @@ Sollwert-Zeile (Vorrang von oben nach unten):
 
 Ursprungswerte (P2-5): die Hebel aus BindingDescription.restore_originals merkt capture_originals vor dem ersten eigenen
 Schreiben; restore_and_clear (Abo-Ende, Abmelden) stellt sie wieder her. Plan 3b: zusaetzlich die Hilfswerte aus
-BindingDescription.aux_originals (Betriebsart, Komfort-/Absenk-Soll), gemerkt vor der ersten Vorbereitung bzw. dem ersten
-Schreiben des prepared_lever und nach den Hebeln zurueckgestellt.
+BindingDescription.aux_originals (Betriebsart, Komfort-/Absenk-Soll), gemerkt vor der ersten Vorbereitung bzw. dem
+ersten Schreiben des prepared_lever und nach den Hebeln zurueckgestellt.
 
 Geschrieben wird nur bei tatsaechlicher Aenderung (Quota-Check, jeder Schreibvorgang kann ein Cloud-Aufruf sein), jeder
 Wert auf die lokalen Grenzen begrenzt und auf die Schrittweite der Anlage gerundet. Client-abgeleitete Hebel
@@ -123,7 +123,8 @@ class LeverPipeline:
         self._narrowing_logged: dict[str, tuple[float, float]] = {}
         # Nicht kritischer Hinweis (Schluessel, Zustand, Text); im Add-on Notifier.notify(..., critical=False).
         self._notify = notify
-        # Ursprungswerte der Anlage auf dem Server (Spec Stufe 3 S3 5.2, 5b-W-4); frisch bei jedem Zuruecksetzen gelesen.
+        # Ursprungswerte der Anlage auf dem Server (Spec Stufe 3 S3 5.2, 5b-W-4); frisch bei jedem Zuruecksetzen
+        # gelesen.
         self._server_originals = server_originals
         # Zeitpunkt (clock) und Wert des letzten erfolgreichen eigenen Schreibens je Hebel, nur Laufzeit: Durchsetzen
         # und Quota-Check vertrauen dem Read erst nach settle_seconds.
@@ -201,7 +202,8 @@ class LeverPipeline:
             self._write(values, exempt=True, require_aux=require_aux)
             if aux:
                 # Zielwerte der Hebel, nicht der Read: der zeigt einen eigenen Schreibvorgang erst nach settle_seconds.
-                # Uebersprungen (Quota-Check) heisst, die Anlage steht schon darauf; gescheitert, kommt man nicht hierher.
+                # Uebersprungen (Quota-Check) heisst, die Anlage steht schon darauf; gescheitert, kommt man nicht
+                # hierher.
                 targets = {
                     lever: self._target(lever, value) for lever, value in values.items() if self._binding.has(lever)
                 }
@@ -213,7 +215,8 @@ class LeverPipeline:
 
     def apply_server_values(self, levers: Mapping[str, float]) -> None:
         """Speichert die (begrenzten) Serverwerte als Wiederherstellungspunkt, bevor geschrieben wird, und schreibt sie
-        nur, wenn kein Boost laeuft; sonst uebernimmt sie das Boost-Ende. Vorher werden offene Ursprungswerte gemerkt."""
+        nur, wenn kein Boost laeuft; sonst uebernimmt sie das Boost-Ende. Vorher werden offene Ursprungswerte
+        gemerkt."""
         self.capture_originals()
         clamped = {}
         for lever in self._description.lever_set.levers:
@@ -231,7 +234,8 @@ class LeverPipeline:
         logger.info("Serverwerte gespeichert: %s", clamped)
         state = self._store.state
         if state.boost_active or state.emergency_boost_active:
-            logger.info("Serverwerte waehrend aktivem (Notfall-)Boost nur gespeichert, die Anlage bleibt auf den Boost-Werten.")
+            logger.info(
+                "Serverwerte waehrend aktivem (Notfall-)Boost nur gespeichert, die Anlage bleibt auf den Boost-Werten.")
             return
         try:
             self._write(clamped)
@@ -242,7 +246,8 @@ class LeverPipeline:
         """Tageslimit erreicht: alle Hebel dieser Serverantwort bleiben im Wiederherstellungspunkt und werden mit
         write_deferred nachgeholt (ein schon geschriebener ueberspringt dann der Quota-Check); Durchsetzen wertet diese
         Hebel nicht als Eingriff."""
-        pending = [lever for lever in self._description.lever_set.levers if lever in values and self._binding.has(lever)]
+        pending = [lever for lever in self._description.lever_set.levers
+                   if lever in values and self._binding.has(lever)]
         deferred = tuple(dict.fromkeys((*self._store.state.deferred_levers, *pending)))
         logger.warning("Tageslimit erreicht: %s erst nach dem Tageswechsel", ", ".join(pending))
         try:
@@ -286,7 +291,7 @@ class LeverPipeline:
             current = state.restore_point.get(lever)
             if original is None:
                 if current is not None:
-                    logger.warning("Ursprungswert von %s unbekannt: bleibt auf dem gelernten Wert %s", lever, current)
+                    logger.warning("Ursprungswert von %s unbekannt: bleibt auf dem gelernten Wert", lever)
                 continue
             original = self._target(lever, original)
             originals[lever] = original
@@ -306,7 +311,8 @@ class LeverPipeline:
                 aux[name] = server[name]
             else:
                 logger.warning("Hilfs-Ursprungswert %s vom Server verworfen", name)
-        if not write_budget.may_attempt(self._store, write_budget.RESTORE, write_budget.RETURN_STAIRCASE, self._clock()):
+        if not write_budget.may_attempt(
+                self._store, write_budget.RESTORE, write_budget.RETURN_STAIRCASE, self._clock()):
             logger.info("Wiederherstellung zurueckgestellt: Schreibbudget nach einem Fehlschlag")
             return False
         values = {**self._row_values(_ROW_RESTORE), **originals}
@@ -331,7 +337,8 @@ class LeverPipeline:
                 aux_originals={},
             )
         except Exception:
-            logger.exception("Zuletzt gelernte Werte wiederhergestellt, Boost-Flags konnten aber nicht gespeichert werden")
+            logger.exception(
+                "Zuletzt gelernte Werte wiederhergestellt, Boost-Flags konnten aber nicht gespeichert werden")
         return True
 
     def _server_snapshot(self) -> Mapping[str, object]:
@@ -439,7 +446,8 @@ class LeverPipeline:
         except Exception as error:
             if lever not in self._limits_unreadable:
                 self._limits_unreadable.add(lever)
-                logger.info("Wertebereich der Anlage fuer %s nicht lesbar (%s), letzter Wert bzw. lokale Grenzen", lever, error)
+                logger.info("Wertebereich der Anlage fuer %s nicht lesbar (%s), letzter Wert bzw. lokale Grenzen",
+                            lever, error)
             device = cached[1] if cached is not None else None
         else:
             self._limits_unreadable.discard(lever)
@@ -515,8 +523,9 @@ class LeverPipeline:
         if prepared_lever is not None and prepared_lever in values and self._binding.has(prepared_lever):
             if require_aux:
                 self._require_aux(prepared_lever)
-            # Ohne Pflicht zu Hilfswerten (nur die Wiederherstellung) nicht vorbereiten, wenn das Binding Hilfswerte hat:
-            # die Betriebsart geht ueber restore_aux zurueck, ohne gemerkte Werte bliebe eine Umstellung fuer immer.
+            # Ohne Pflicht zu Hilfswerten (nur die Wiederherstellung) nicht vorbereiten, wenn das Binding Hilfswerte
+            # hat: die Betriebsart geht ueber restore_aux zurueck, ohne gemerkte Werte bliebe eine Umstellung fuer
+            # immer.
             # Vaillant (keine Hilfswerte) bereitet wie bisher vor.
             if self._binding.needs_preparation() and (require_aux or not self._description.aux_originals):
                 switched = self.ensure_prepared(exempt=exempt, require_aux=require_aux)
@@ -587,9 +596,11 @@ class LeverPipeline:
         except Exception as error:
             logger.warning("Lebensdauerzaehler nicht gespeichert (%s), gilt bis zum Neustart", error)
         if total >= description.lifetime_hint_at and self._notify is not None:
-            reached = description.lifetime_hint_at + (total - description.lifetime_hint_at) // LIFETIME_STEP * LIFETIME_STEP
+            reached = (description.lifetime_hint_at
+                       + (total - description.lifetime_hint_at) // LIFETIME_STEP * LIFETIME_STEP)
             try:
-                self._notify(LIFETIME_KEY, str(reached), LIFETIME_MESSAGE.format(count=f"{reached:,}".replace(",", ".")))
+                self._notify(LIFETIME_KEY, str(reached),
+                             LIFETIME_MESSAGE.format(count=f"{reached:,}".replace(",", ".")))
             except Exception:
                 logger.exception("Hinweis zum Lebensdauerzaehler fehlgeschlagen")
 

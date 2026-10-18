@@ -418,8 +418,8 @@ class Device:
 
     def _verbunden(self) -> None:
         if not self._bootstrap.gesperrt:
-            # der bisherige Zugang funktioniert: ein noch offener Rettungsversuch (gescheitert, z. B. Uhr nicht synchron)
-            # ist hinfaellig, sonst holte der naechste Backoff ein neues Zertifikat und braeche den Link ab
+            # der bisherige Zugang funktioniert: ein noch offener Rettungsversuch (gescheitert, z. B. Uhr nicht
+            # synchron) ist hinfaellig, sonst holte der naechste Backoff ein neues Zertifikat und braeche den Link ab
             self._rettung = False
             self._bootstrap.erfolg()
         self._bereit = False

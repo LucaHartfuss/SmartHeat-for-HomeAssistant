@@ -7,6 +7,7 @@ Standardbibliothek und smartheat_core."""
 import json
 import logging
 import os
+import stat
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,9 +39,12 @@ def _gesperrt(grund: str) -> Rastung:
 
 
 def _json(pfad: Path):
-    """Folgt keinem Symlink am letzten Namen (O_NOFOLLOW: ELOOP, auch bei einem ins Leere zeigenden Link)."""
-    fd = os.open(pfad, os.O_RDONLY | os.O_NOFOLLOW)
+    """Folgt keinem Symlink am letzten Namen (O_NOFOLLOW: ELOOP, auch bei einem ins Leere zeigenden Link). O_NONBLOCK:
+    eine FIFO ohne Schreiber blockierte sonst das open (und den Start); nur eine regulaere Datei zaehlt."""
+    fd = os.open(pfad, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as datei:
+        if not stat.S_ISREG(os.fstat(datei.fileno()).st_mode):
+            raise OSError("keine regulaere Datei")
         return json.loads(datei.read(_MAX_BYTES + 1).decode())
 
 

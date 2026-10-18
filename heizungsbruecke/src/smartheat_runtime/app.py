@@ -119,7 +119,8 @@ class Loaded:
     manifest: ChannelManifest
     binding: PlantBinding
     notices: tuple[Notice, ...] = ()
-    # Audit 4, A4-08: Anlagen-Kennung des Hosts; None = aus den Hebel-Referenzen des Manifests (roles.lever_refs_identity).
+    # Audit 4, A4-08: Anlagen-Kennung des Hosts; None = aus den Hebel-Referenzen des Manifests
+    # (roles.lever_refs_identity).
     plant_id: str | None = None
 
 
@@ -314,7 +315,8 @@ def _restore_values_text(state) -> str:
     parts = [
         f"{label} {value:g}".replace(".", ",")
         for label, value in (
-            ("Kurve", state.restore_point.get("curve")), ("Parallelverschiebung", state.restore_point.get("room_setpoint")),
+            ("Kurve", state.restore_point.get("curve")),
+            ("Parallelverschiebung", state.restore_point.get("room_setpoint")),
         )
         if value is not None
     ]
@@ -592,7 +594,8 @@ def _prime(rt: Runtime) -> None:
     try:
         regulation.run_local_check(rt)
     except Exception:
-        logger.exception("Fehler beim initialen lokalen Check vor MQTT-Start, wird beim naechsten Ereignis erneut versucht")
+        logger.exception(
+            "Fehler beim initialen lokalen Check vor MQTT-Start, wird beim naechsten Ereignis erneut versucht")
 
 
 def _first_start(rt: Runtime) -> None:
@@ -639,7 +642,9 @@ def _prepare_zone(rt: Runtime) -> None:
     try:
         rt.override.prepare_start(rt.store.state.stable_target)
     except WriteBudgetExhausted as error:
-        # Plan 3b (Weishaupt): Tagesbudget erreicht, kein Fehlschlag der Anlage -- kein Versuch im Kontingent, der
+        # Plan 3b (Weishaupt): Tagesbudget erreicht, kein Fehlschlag der Anlage -- nichts im Kontingent: RETRY_QUOTA
+        # zaehlt nur Fehlschlaege (every_attempt False; before_attempt zaehlt also nicht), und after_failure ruft
+        # dieser Zweig nicht auf. Haette die Regel every_attempt, zaehlte before_attempt diesen Versuch schon mit. Der
         # naechste lokale Check (spaetestens am naechsten Tag) versucht es erneut; den Hinweis gibt die Pipeline.
         logger.info("Zone nicht vorbereitet: %s, naechster Versuch beim naechsten lokalen Check", error)
         return
@@ -689,7 +694,8 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
     try:
         bind_to_tenant(store, boot.tenant_id, loaded.plant_id or roles.lever_refs_identity(loaded.manifest))
     except StorageError:
-        logger.warning("Bindung an Einrichtung und Anlage nicht gespeichert, gilt bis zum naechsten Schreiben", exc_info=True)
+        logger.warning(
+            "Bindung an Einrichtung und Anlage nicht gespeichert, gilt bis zum naechsten Schreiben", exc_info=True)
     rt = Runtime(
         manifest=loaded.manifest, signals=host.signals, config=config,
         worker=RegulationWorker(clock=clock), store=store,

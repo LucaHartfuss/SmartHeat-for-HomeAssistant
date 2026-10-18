@@ -3,8 +3,9 @@
 Konfiguration und Bedienung liegen je in einer Datei mit Version und Inhalt (ohne schema/version des Vertrags).
 Uebernommen wird jede Version, die von der eigenen abweicht, auch eine kleinere (ein aus dem Backup zurueckgespielter
 Server, Plan S1); dieselbe Version nur, solange die Bedienung "dirty" ist (lokaler Bedienwunsch seit der letzten
-uebernommenen Bedienung, Spec 3.3: der Server schickt eine verlierende Bedienung mit gleicher Version zurueck). Abgelehnt
-wird mit einem Grund aus wire.DOKUMENT_ERRORS und details; die vorige Version bleibt, die Ablehnung steht in dokumente.json.
+uebernommenen Bedienung, Spec 3.3: der Server schickt eine verlierende Bedienung mit gleicher Version zurueck).
+Abgelehnt wird mit einem Grund aus wire.DOKUMENT_ERRORS und details; die vorige Version bleibt, die Ablehnung steht in
+dokumente.json.
 
 Mindestversion (Spec 2.1): liegt die eigene Software unter mindest_software, wird die Konfiguration mit update_noetig
 abgelehnt (das Geraet regelt mit der alten weiter); eine leere Konfiguration (anlage None, "nicht eingerichtet") wird
@@ -28,10 +29,12 @@ ungueltiges oder fehlendes Feld laesst das gemerkte Angebot stehen. Das ist dass
 uebergibt; software_soll_nachholen des Gateways bietet es nach einem Neustart erneut an. Fehlt der Schluessel in
 dokumente.json oder hat sein Wert nicht die Vertragsform, ist nichts gemerkt (kein Kompatibilitaetspfad).
 
-Rastung (Spec Stufe 3 S3 Abschnitt 3, A5-06): Hebelsatz x Verteilsystem der ersten eingerichteten Konfiguration stehen in
-sicherheitssatz.json; kein Dokument loest sie, auch keine leere Konfiguration. Sie wird vor dem Speichern der Konfiguration
-geschrieben. Fehlt die Datei bei gespeicherter eingerichteter Konfiguration (Stand vor dieser Version), rastet der Start.
-Eine kaputte oder manipulierte Datei (auch ein Symlink) lehnt jede eingerichtete Konfiguration ab (rastung.lesen)."""
+Rastung (Spec Stufe 3 S3 Abschnitt 3, A5-06): Hebelsatz x Verteilsystem der ersten eingerichteten Konfiguration stehen
+in sicherheitssatz.json; kein Dokument loest sie, auch keine leere Konfiguration. Sie wird vor dem Speichern der
+Konfiguration geschrieben. Fehlt die Datei bei gespeicherter eingerichteter Konfiguration (Stand vor dieser Version),
+rastet der Start (nicht in der Nur-Lese-Verwendung, rasten=False). Scheitert das Schreiben erst nach dem Ersetzen (fsync
+des Ordners), gilt die Rastung vom Datentraeger. Eine kaputte oder manipulierte Datei (auch ein Symlink) lehnt jede
+eingerichtete Konfiguration ab (rastung.lesen)."""
 import copy
 import logging
 import re
@@ -188,10 +191,12 @@ class DocumentStore:
 
     def __init__(self, directory: Path, *, host: str, software_version: str,
                  treiber_pruefen: config_check.TreiberPruefung | None = None,
-                 vor_speichern: Callable[[dict | None, dict], None] | None = None) -> None:
+                 vor_speichern: Callable[[dict | None, dict], None] | None = None, rasten: bool = True) -> None:
         """vor_speichern(alt, neu): DeviceHost.konfiguration_vorbereiten; die Nur-Lese-Verwendungen (Aufraeumen beim
-        Start) uebergeben keinen."""
+        Start) uebergeben keinen und rasten=False: der Konstruktor schreibt dann keine Rastung nach (sie fehlt bei
+        gespeicherter eingerichteter Konfiguration), auch nicht bei einem Fehler im Ordner; rastung bleibt None."""
         self._dir = directory
+        self._rasten_erlaubt = rasten
         self._host, self._software_version, self._treiber_pruefen = host, software_version, treiber_pruefen
         self._vor_speichern = vor_speichern
         self._vorbereitung_gemeldet = False  # Zurueckhalten nach gescheiterter Vorbereitung schon geloggt
@@ -232,7 +237,7 @@ class DocumentStore:
         kaputte Datei wird nie ueberschrieben."""
         gelesen = rastung.lesen(self._rastung_pfad)
         inhalt = self.inhalt(KONFIGURATION)
-        if gelesen is None and inhalt is not None and not config_check.ist_leer(inhalt):
+        if self._rasten_erlaubt and gelesen is None and inhalt is not None and not config_check.ist_leer(inhalt):
             return self._rasten(inhalt)
         return gelesen
 
@@ -241,7 +246,13 @@ class DocumentStore:
         if not (isinstance(hebelsatz, str) and isinstance(verteilsystem, str)):
             return None
         neu = Rastung(hebelsatz, verteilsystem)
-        rastung.schreiben(self._rastung_pfad, neu, wallclock.now().isoformat(timespec="seconds"))
+        try:
+            rastung.schreiben(self._rastung_pfad, neu, wallclock.now().isoformat(timespec="seconds"))
+        except BaseException:
+            # os.replace kann gelungen und erst der fsync des Ordners gescheitert sein: was auf dem Datentraeger steht,
+            # gilt auch in diesem Prozess (sonst wuerde bis zum Neustart ein anderes Paar angenommen)
+            self._rastung = rastung.lesen(self._rastung_pfad)
+            raise
         logger.info("Sicherheitssatz eingerastet")
         return neu
 
@@ -373,7 +384,7 @@ class DocumentStore:
         return Ergebnis(art, version, False, grund, details)
 
     def _pruefen(self, art: str, inhalt: dict) -> config_check.Ablehnung | None:
-        if not fehler.kodierbar(inhalt):  # ein einzelnes Surrogat liesse sich nicht speichern (Ausnahme statt Ablehnung)
+        if not fehler.kodierbar(inhalt):  # ein einzelnes Surrogat liesse sich nicht speichern (sonst Ausnahme)
             return config_check.Ablehnung(UNGUELTIG)
         if art == BEDIENUNG:
             return _bedienung_pruefen(inhalt)

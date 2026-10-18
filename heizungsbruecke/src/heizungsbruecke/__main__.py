@@ -44,8 +44,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BOOTSTRAP_URL = "https://accounts.hartfussha.org"
 LOG_LEVELS = {"debug": logging.DEBUG, "info": logging.INFO, "warning": logging.WARNING, "error": logging.ERROR}
-#: Aufraeumen beim Start (startup: services, HA evtl. noch nicht bereit): so lange auf HA warten, um die Hilfssensoren zu
-#: loeschen; danach startet der Geraetekern trotzdem, und der naechste Start versucht es erneut.
+#: Aufraeumen beim Start (startup: services, HA evtl. noch nicht bereit): so lange auf HA warten, um die Hilfssensoren
+#: zu loeschen; danach startet der Geraetekern trotzdem, und der naechste Start versucht es erneut.
 AUFRAEUMEN_HA_WARTEN_SECONDS = 120.0
 AUFRAEUMEN_HA_TAKT_SECONDS = 5.0
 
@@ -129,7 +129,7 @@ def aufraeumen(ha_api) -> None:
     prozess.aufraeumen_beim_start(
         config.AUFRAEUMEN_PATH,
         lambda: DocumentStore(config.DEVICE_DATA_DIR / DEVICE_DIR, host=HaDeviceHost.host,
-                              software_version=ADDON_VERSION).inhalt(KONFIGURATION),
+                              software_version=ADDON_VERSION, rasten=False).inhalt(KONFIGURATION),
         lambda: _anlage_loeschen(ha_api), wer="das Add-on")
 
 

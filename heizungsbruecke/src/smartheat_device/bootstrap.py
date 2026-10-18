@@ -239,7 +239,8 @@ class Bootstrap:
 
     def _nicht_angemeldet(self) -> None:
         if self._uhr_synchron() is not True:
-            logger.warning("Bootstrap: nicht authentifiziert, Uhr nicht synchron - kein Urteil, erneuter Versuch spaeter")
+            logger.warning(
+                "Bootstrap: nicht authentifiziert, Uhr nicht synchron - kein Urteil, erneuter Versuch spaeter")
             return self._spaeter()
         self.gesperrt = True
         self._next = self._clock() + GESPERRT_SECONDS

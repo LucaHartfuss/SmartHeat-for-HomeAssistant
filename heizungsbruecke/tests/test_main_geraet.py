@@ -474,6 +474,18 @@ def test_cleanup_keeps_a_new_setup(geraet_env):
     assert not config.AUFRAEUMEN_PATH.exists()
 
 
+def test_cleanup_reads_the_stored_configuration_without_writing_the_lock(geraet_env):
+    """S3S3-Reste: das Aufraeumen beim Start ist Nur-Lese-Aufbau; eine gespeicherte eingerichtete Konfiguration ohne
+    Rastung (Stand vor dieser Version) rastet erst der Geraetekern, nicht das Aufraeumen."""
+    _entfernt_vorbereiten()
+    neue = {"anlage": "neu", "hebelsatz": "vaillant_vrc720", "verteilsystem": "Heizkoerper"}
+    dateien.schreiben_json(config.DEVICE_DATA_DIR / "device" / "konfiguration.json",
+                           {"version": 2, "inhalt": neue, "dirty": False}, modus=dateien.PRIVAT)
+    main_module.aufraeumen(DeletingHa())
+    assert not config.AUFRAEUMEN_PATH.exists() and config.BACKUP_PATH.exists()  # Neueinrichtung: Markierung verworfen
+    assert not (config.DEVICE_DATA_DIR / "device" / "sicherheitssatz.json").exists()
+
+
 def test_cleanup_keeps_helpers_it_could_not_delete_for_the_next_start(geraet_env):
     _entfernt_vorbereiten()
     main_module.aufraeumen(DeletingHa(failing={"sensor.smartheat_aussen"}))

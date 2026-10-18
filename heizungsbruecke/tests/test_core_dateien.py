@@ -52,3 +52,37 @@ def test_large_data_is_written_completely(tmp_path):
 def test_read_json_treats_missing_and_broken_files_as_none(tmp_path):
     (tmp_path / "kaputt.json").write_text("{")
     assert dateien.lesen_json(tmp_path / "kaputt.json") is None and dateien.lesen_json(tmp_path / "fehlt.json") is None
+
+
+@pytest.mark.parametrize("ausfall", ["write", "replace"])
+def test_a_failure_while_writing_or_replacing_leaves_no_temp_file_and_the_target_unchanged(tmp_path, monkeypatch,
+                                                                                         ausfall):
+    """S3S3-Reste: die urspruengliche Ausnahme geht durch, die Temp-Datei bleibt nicht liegen, das Ziel ist das alte."""
+    ziel = tmp_path / "x.json"
+    dateien.schreiben_text(ziel, "alt", modus=dateien.PRIVAT)
+
+    def datentraeger(*args, **kwargs):
+        raise OSError("Datentraeger voll")
+
+    monkeypatch.setattr(dateien.os, ausfall, datentraeger)
+    with pytest.raises(OSError, match="Datentraeger voll"):
+        dateien.schreiben_text(ziel, "neu", modus=dateien.PRIVAT)
+    monkeypatch.undo()
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["x.json"] and ziel.read_text() == "alt"
+
+
+def test_a_failure_of_the_cleanup_itself_does_not_hide_the_original_error(tmp_path, monkeypatch):
+    echt = dateien.os.unlink
+
+    def unlink(pfad, *args, **kwargs):
+        if pfad == "x.json.tmp" and (tmp_path / "x.json.tmp").exists():  # das Aufraeumen, nicht das Entfernen vorab
+            raise PermissionError("nicht loeschbar")
+        return echt(pfad, *args, **kwargs)
+
+    def datentraeger(*args, **kwargs):
+        raise OSError("Datentraeger voll")
+
+    monkeypatch.setattr(dateien.os, "write", datentraeger)
+    monkeypatch.setattr(dateien.os, "unlink", unlink)
+    with pytest.raises(OSError, match="Datentraeger voll"):
+        dateien.schreiben_text(tmp_path / "x.json", "neu", modus=dateien.PRIVAT)

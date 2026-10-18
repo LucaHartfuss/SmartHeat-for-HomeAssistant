@@ -1,6 +1,7 @@
 """Der eine atomare Schreibweg (Audit 5, A5-60; Spec Stufe 3 S3 Abschnitt 7.1), rein (Standardbibliothek): temporaere
 Datei mit O_EXCL|O_NOFOLLOW im per O_NOFOLLOW geoeffneten Ordner, vollstaendig schreiben, fsync, os.replace (ersetzt
-einen Symlink am Zielnamen, statt ihm zu folgen), fsync des Ordners. Der Modus ist Pflicht: kein Aufrufer bekommt je
+einen Symlink am Zielnamen, statt ihm zu folgen), fsync des Ordners. Scheitert etwas vor dem Ersetzen, bleibt keine
+Temp-Datei liegen und die urspruengliche Ausnahme geht durch. Der Modus ist Pflicht: kein Aufrufer bekommt je
 nach Host 0600 oder 0644. Kern, Laufzeit, Geraetekern und der Gateway-Container schreiben nur hierueber."""
 import contextlib
 import json
@@ -23,14 +24,20 @@ def schreiben(path: Path, data: bytes, *, modus: int) -> None:
             os.unlink(tmp, dir_fd=dir_fd)
         fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, modus, dir_fd=dir_fd)
         try:
-            os.fchmod(fd, modus)
-            view = memoryview(data)
-            while view:
-                view = view[os.write(fd, view):]
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-        os.replace(tmp, path.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+            try:
+                os.fchmod(fd, modus)
+                view = memoryview(data)
+                while view:
+                    view = view[os.write(fd, view):]
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            os.replace(tmp, path.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        except BaseException:
+            # keine Temp-Datei zuruecklassen; scheitert auch das Aufraeumen, geht die urspruengliche Ausnahme durch
+            with contextlib.suppress(OSError):
+                os.unlink(tmp, dir_fd=dir_fd)
+            raise
         os.fsync(dir_fd)
     finally:
         os.close(dir_fd)

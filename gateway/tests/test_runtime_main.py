@@ -144,7 +144,8 @@ def test_the_cleanup_runs_at_the_next_start_after_an_empty_configuration(world):
 
 
 def test_a_restart_before_any_setup_keeps_the_driver_login(world):
-    dateien.schreiben_json(world.paths.driver_secrets_dir / "vicare.json", {"refresh_token": "test-token"}, modus=dateien.LESBAR)
+    dateien.schreiben_json(world.paths.driver_secrets_dir / "vicare.json", {"refresh_token": "test-token"},
+                           modus=dateien.LESBAR)
     world.start_runtime()
     world.start_runtime()
     assert (world.paths.driver_secrets_dir / "vicare.json").exists()
@@ -152,7 +153,8 @@ def test_a_restart_before_any_setup_keeps_the_driver_login(world):
 
 def test_a_marker_from_before_a_new_setup_deletes_nothing(world):
     """Zwischen Markierung und Neustart kam schon eine neue Einrichtung: die frische Treiber-Anmeldung bleibt."""
-    dateien.schreiben_json(world.paths.driver_secrets_dir / "vicare.json", {"refresh_token": "test-token"}, modus=dateien.LESBAR)
+    dateien.schreiben_json(world.paths.driver_secrets_dir / "vicare.json", {"refresh_token": "test-token"},
+                           modus=dateien.LESBAR)
     dateien.schreiben_json(world.paths.aufraeumen, {"anlage": "test-tenant"}, modus=dateien.LESBAR)
     dokumente_schreiben(world.paths, konfiguration(anlage="neue-anlage"))
     world.start_runtime()
@@ -176,6 +178,17 @@ def test_the_cleanup_waits_while_the_reset_is_pending(world):
     assert world.paths.runtime_dir.exists() and world.paths.backup.exists()
     assert (world.paths.driver_secrets_dir / "vicare.json").exists() and world.paths.inventur.exists()
     assert world.paths.aufraeumen.exists()
+
+
+def test_the_cleanup_reads_the_stored_configuration_without_writing_the_lock(world):
+    """S3S3-Reste: Nur-Lese-Aufbau; die Rastung einer gespeicherten Konfiguration ohne Rastung schreibt erst der
+    Geraetekern."""
+    aufraeumen.markieren(world.paths.aufraeumen, konfiguration())
+    dokumente_schreiben(world.paths, konfiguration(anlage="neue-anlage"))
+    assert not (world.paths.device_dir / "sicherheitssatz.json").exists()
+    runtime_main.aufraeumen(world.paths)
+    assert not world.paths.aufraeumen.exists()  # Neueinrichtung: Markierung verworfen
+    assert not (world.paths.device_dir / "sicherheitssatz.json").exists()
 
 
 def test_the_cleanup_after_the_reset_deletes_everything(world):
@@ -322,7 +335,8 @@ def test_the_operation_is_applied_and_the_thermostat_aligned_at_start(world):
 
 
 def test_a_newer_operation_replaces_the_stored_target_at_start(world):
-    dateien.schreiben_json(world.paths.room_target, {"value": 20.0, "source": "portal", "ts": "t"}, modus=dateien.LESBAR)
+    dateien.schreiben_json(world.paths.room_target, {"value": 20.0, "source": "portal", "ts": "t"},
+                           modus=dateien.LESBAR)
     dokumente_schreiben(world.paths, konfiguration(), bedienung(22.5))
     world.start_runtime()
     world.run()

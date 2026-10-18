@@ -48,6 +48,16 @@ def test_new_setup_before_reset_discards_marker(tmp_path):
     assert aufraeumen.laufzeit_konfiguration(ALT, pfad) == (ALT, False)
 
 
+def test_a_new_setup_of_another_plant_discards_the_open_marker_and_keeps_the_state(tmp_path):
+    """S3S3-Reste: auch eine andere Anlage als die der Markierung beendet das Abmelden; nichts wird geloescht."""
+    pfad = tmp_path / "aufraeumen.json"
+    aufraeumen.markieren(pfad, ALT)
+    andere = {**ALT, "anlage": "kunde2"}
+    assert aufraeumen.entscheiden(pfad, andere) == aufraeumen.VERWERFEN
+    assert aufraeumen.laufzeit_konfiguration(andere, pfad) == (andere, False)
+    assert aufraeumen.lesen(pfad) == aufraeumen.Markierung("kunde1", ALT, False)  # die Markierung wird nicht angefasst
+
+
 def test_marker_without_configuration_is_deleted_as_before(tmp_path):
     pfad = tmp_path / "aufraeumen.json"
     pfad.write_text('{"anlage": "kunde1"}')  # Markierung aus 1.0.0

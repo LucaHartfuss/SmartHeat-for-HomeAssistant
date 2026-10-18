@@ -1,6 +1,8 @@
 """Spec 5b 3 und 5.1: Dokumentspeicher des Geraets und atomares Schreiben (Plan D1 Task 3)."""
 import json
 import math
+import os
+import stat
 
 import pytest
 from bindung_beispiele import parameter
@@ -81,6 +83,50 @@ def test_an_abort_after_the_lock_leaves_the_lock_without_the_document(tmp_path, 
     monkeypatch.undo()
     assert rastung.lesen(tmp_path / "sicherheitssatz.json") == rastung.Rastung("viessmann_vicare", "Heizkoerper")
     assert not (tmp_path / "konfiguration.json").exists() and _store(tmp_path).version("konfiguration") == 0
+
+
+def test_a_failed_folder_sync_after_the_lock_replace_still_locks_the_pair_in_this_process(tmp_path, monkeypatch):
+    """S3S3-Reste: os.replace gelang, der fsync des Ordners warf. Die Rastung steht auf dem Datentraeger, also muss
+    derselbe Prozess sie kennen: ein anderes Paar wird abgelehnt, das gleiche angenommen."""
+    store = _store(tmp_path)
+    echt = dateien.os.fsync
+
+    def fsync(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError("Datentraeger")
+        return echt(fd)
+
+    monkeypatch.setattr(dateien.os, "fsync", fsync)
+    with pytest.raises(OSError, match="Datentraeger"):
+        store.empfangen("konfiguration", _konfiguration(version=1, verteilsystem="Fussbodenheizung"))
+    monkeypatch.undo()
+    assert store.rastung == rastung.Rastung("viessmann_vicare", "Fussbodenheizung")
+    assert store.empfangen("konfiguration", _konfiguration(version=2, verteilsystem="Heizkoerper")).grund \
+        == "hebelsatz_eingerastet"
+    assert store.empfangen("konfiguration", _konfiguration(version=3, verteilsystem="Fussbodenheizung")).ok
+
+
+def test_a_read_only_store_neither_writes_nor_creates_the_lock(tmp_path):
+    """S3S3-Reste: die Nur-Lese-Verwendungen (Aufraeumen beim Start) rasten nicht nach, auch nicht bei gespeicherter
+    Konfiguration ohne Rastung; sie lesen nur."""
+    _store(tmp_path).empfangen("konfiguration", _konfiguration())
+    (tmp_path / "sicherheitssatz.json").unlink()
+    nur_lesen = docs.DocumentStore(tmp_path, host="gateway", software_version="0.6.0", rasten=False)
+    assert nur_lesen.rastung is None and nur_lesen.inhalt("konfiguration")["anlage"] == "kunde3"
+    assert not (tmp_path / "sicherheitssatz.json").exists()
+
+
+def test_a_read_only_store_survives_a_folder_that_refuses_the_lock(tmp_path, monkeypatch):
+    _store(tmp_path).empfangen("konfiguration", _konfiguration())
+    (tmp_path / "sicherheitssatz.json").unlink()
+
+    def verweigert(*args, **kwargs):
+        raise OSError("schreibgeschuetzt")
+
+    monkeypatch.setattr(rastung.dateien, "schreiben_json", verweigert)
+    assert docs.DocumentStore(tmp_path, host="gateway", software_version="0.6.0", rasten=False).eingerichtet()
+    with pytest.raises(OSError, match="schreibgeschuetzt"):  # Gegenprobe: der Normalfall rastet und scheitert hier
+        _store(tmp_path)
 
 
 def test_an_empty_configuration_never_creates_a_lock(tmp_path):
@@ -293,7 +339,8 @@ def test_an_empty_configuration_without_software_keeps_the_remembered_offer(tmp_
 
 
 def test_software_null_in_a_valid_configuration_is_remembered_as_withdrawn(tmp_path):
-    """null ist ein gemerktes, zurueckgezogenes Angebot (nicht "nichts gemerkt"): der Start reicht es als null weiter."""
+    """null ist ein gemerktes, zurueckgezogenes Angebot (nicht "nichts gemerkt"): der Start reicht es als null
+    weiter."""
     store = _store(tmp_path)
     store.empfangen("konfiguration", _konfiguration(version=1, software=SOFTWARE))
     assert store.empfangen("konfiguration", _konfiguration(version=2, software=None)).uebernommen
@@ -346,7 +393,8 @@ def test_only_a_stored_key_in_the_contract_form_is_a_remembered_offer(tmp_path, 
 
 
 def test_a_store_without_an_offer_writes_no_key(tmp_path):
-    """Eine Konfiguration ohne Feld software (abgelehnt, dokumente.json wird geschrieben) merkt nichts: kein Schluessel."""
+    """Eine Konfiguration ohne Feld software (abgelehnt, dokumente.json wird geschrieben) merkt nichts: kein
+    Schluessel."""
     store = _store(tmp_path)
     ohne_software = _konfiguration()
     del ohne_software["software"]
@@ -518,7 +566,8 @@ def test_documents_are_the_contract_documents():
                                           ("bedienung", _bedienung(ts="\udfff"))])
 def test_a_document_with_a_lone_surrogate_is_rejected_and_nothing_is_stored(tmp_path, art, inhalt):
     """json.loads liefert aus "\\ud800" ein einzelnes Surrogat; schreiben_json koennte es nicht kodieren. Statt einer
-    Ausnahme aus empfangen() (ohne Antwort an den Server) gibt es eine Ablehnung `ungueltig` (Testoffensive T2, Task 13)."""
+    Ausnahme aus empfangen() (ohne Antwort an den Server) gibt es eine Ablehnung `ungueltig` (Testoffensive T2,
+    Task 13)."""
     store = _store(tmp_path)
     ergebnis = store.empfangen(art, inhalt)
     assert (ergebnis.ok, ergebnis.grund, ergebnis.details) == (False, "ungueltig", None)

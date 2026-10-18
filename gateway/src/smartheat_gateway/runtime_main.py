@@ -69,7 +69,7 @@ def aufraeumen(paths: Paths) -> None:
     prozess.aufraeumen_beim_start(
         paths.aufraeumen,
         lambda: DocumentStore(paths.device_dir, host=GatewayDeviceHost.host,
-                              software_version=GATEWAY_VERSION).inhalt(KONFIGURATION),
+                              software_version=GATEWAY_VERSION, rasten=False).inhalt(KONFIGURATION),
         lambda: _vergessen(paths), wer="das Gateway")
 
 
@@ -91,7 +91,7 @@ def software_soll_nachholen(geraet: GatewayDeviceHost, device: Device) -> None:
         return
     try:
         geraet.software_soll(angebot.software)
-    except Exception as error:  # ein Schreibfehler darf den Start nicht verhindern; der naechste Start versucht es erneut
+    except Exception as error:  # ein Schreibfehler darf den Start nicht verhindern; der naechste versucht es erneut
         logger.error("Soll-Software nicht nachgeholt (%s)", type(error).__name__)
 
 
