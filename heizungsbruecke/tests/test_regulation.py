@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT
-from fakes import runtime_config
+from fakes import datei_stand, runtime_config
 
 from heizungsbruecke.ha_binding import HaPlantBinding
 from smartheat_core.pipeline import LeverPipeline
@@ -150,18 +150,17 @@ def test_comfort_boost_ends_on_arrival_and_restores(make_store, tmp_path):
     assert load_backup(tmp_path / "backup.json")["boost_active"] is False
 
 
-def test_steady_state_check_does_not_write_backup(make_store, monkeypatch):
-    # Datentraeger: ein Check ohne Aenderung schreibt nichts.
+def test_steady_state_check_does_not_write_backup(make_store, tmp_path):
+    # Datentraeger: ein Check ohne Aenderung schreibt nichts (Inode und Aenderungszeit von backup.json bleiben).
     store = make_store(backup={
         "last_room_target": 20.0, "boost_active": False, "last_published_target_rt": 20.0,
     })
     rt = _runtime(store, room_actual=20.0, room_target=20.0)
-    saves = []
-    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", lambda path, values: saves.append(path))
+    vorher = datei_stand(tmp_path / "backup.json")
 
     regulation.run_local_check(rt)
 
-    assert saves == []
+    assert vorher is not None and datei_stand(tmp_path / "backup.json") == vorher
 
 
 @pytest.mark.parametrize("notbetrieb,expected", [(True, EMERGENCY), (False, [])])

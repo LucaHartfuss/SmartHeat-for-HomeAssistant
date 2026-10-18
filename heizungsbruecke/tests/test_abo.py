@@ -33,13 +33,15 @@ SAFETY = LocalSafety(
 BOTH_ROLES = {"curve_current": "number.curve", "shift_current": "number.shift"}
 
 
-def _runtime(tmp_path, store, entity_ids=BOTH_ROLES, notify_services=("notify.handy",), clock=None):
+def _runtime(tmp_path, store, entity_ids=BOTH_ROLES, notify_services=("notify.handy",), clock=None,
+             abo_source=lambda: entitlement.UNKNOWN):
+    """`abo_source` ist die Abo-Quelle des Konfigurationsdokuments (Rueckruf des Hosts, RuntimeConfig)."""
     manifest = ChannelManifest(refs=entity_ids)
     ha_api = MagicMock()
     ha_api.get_attribute.side_effect = ValueError("kein Wertebereich")  # wie eine Entity ohne min/max
     return SimpleNamespace(
         manifest=manifest, signals=ha_api, ha_api=ha_api, store=store, mqtt_client=MagicMock(),
-        config=runtime_config(entitlement_path=tmp_path / "entitlement_state.json"),
+        config=runtime_config(entitlement_path=tmp_path / "entitlement_state.json", abo_source=abo_source),
         override=LeverPipeline(store, HaPlantBinding(ha_api, manifest, VAILLANT_MYPYLLANT), SAFETY),
         notifier=Notifier(store, HaNotifySink(ha_api, list(notify_services))),
         status=StatusReporter(
@@ -195,9 +197,8 @@ def test_finish_grace_without_forced_restore_and_without_flags_writes_nothing(ma
     (entitlement.ACTIVE, False, False),
     (entitlement.UNKNOWN, False, False),
 ])
-def test_connection_failing_acts_only_on_a_clear_answer(make_store, tmp_path, monkeypatch, status, expect_inactive, expect_rejected):
-    rt = _runtime(tmp_path, make_store())
-    monkeypatch.setattr(abo.entitlement, "query", lambda config: status)
+def test_connection_failing_acts_only_on_a_clear_answer(make_store, tmp_path, status, expect_inactive, expect_rejected):
+    rt = _runtime(tmp_path, make_store(), abo_source=lambda: status)
     abo.handle_connection_failing(rt)
     assert (rt.store.state.abo_inactive_since is not None) is expect_inactive
     assert rt.status.flags.zugang_abgelehnt is expect_rejected
@@ -206,18 +207,16 @@ def test_connection_failing_acts_only_on_a_clear_answer(make_store, tmp_path, mo
         rt.ha_api.create_persistent_notification.assert_not_called()
 
 
-def test_connection_failing_rejected_notifies_like_an_auth_rejection(make_store, tmp_path, monkeypatch):
-    rt = _runtime(tmp_path, make_store())
-    monkeypatch.setattr(abo.entitlement, "query", lambda config: entitlement.REJECTED)
+def test_connection_failing_rejected_notifies_like_an_auth_rejection(make_store, tmp_path):
+    rt = _runtime(tmp_path, make_store(), abo_source=lambda: entitlement.REJECTED)
     abo.handle_connection_failing(rt)
     rt.ha_api.send_notification.assert_called_once_with("notify.handy", HA_TEXTS.access_denied)
     assert rt.auth_rejected_queried_at == rt.clock()
 
 
-def test_connection_failing_is_throttled_like_auth_rejection(make_store, tmp_path, monkeypatch):
-    rt = _runtime(tmp_path, make_store())
-    queries = []
-    monkeypatch.setattr(abo.entitlement, "query", lambda config: queries.append(1) or entitlement.UNKNOWN)
+def test_connection_failing_is_throttled_like_auth_rejection(make_store, tmp_path):
+    queries = []  # Abfragen der Abo-Quelle (Rueckruf des Hosts)
+    rt = _runtime(tmp_path, make_store(), abo_source=lambda: queries.append(1) or entitlement.UNKNOWN)
     abo.handle_connection_failing(rt)
     abo.handle_connection_failing(rt)
     rt.clock.advance(abo.AUTH_REJECTED_QUERY_INTERVAL_SECONDS)
@@ -225,8 +224,11 @@ def test_connection_failing_is_throttled_like_auth_rejection(make_store, tmp_pat
     assert len(queries) == 2
 
 
-def test_connection_failing_is_silent_in_the_abo_inactive_mode(make_store, tmp_path, monkeypatch):
-    rt = _runtime(tmp_path, make_store())
+def test_connection_failing_is_silent_in_the_abo_inactive_mode(make_store, tmp_path):
+    queries = []
+    rt = _runtime(tmp_path, make_store(), abo_source=lambda: queries.append(1) or entitlement.ACTIVE)
     rt.store.update(abo_inactive_since=ABO_NOW)
-    monkeypatch.setattr(abo.entitlement, "query", lambda config: pytest.fail("keine Abfrage"))
     abo.handle_connection_failing(rt)
+    assert queries == []  # keine Abfrage der Abo-Quelle
+    assert rt.connection_failing_queried_at is None and rt.store.state.abo_inactive_since == ABO_NOW
+    rt.ha_api.send_notification.assert_not_called()

@@ -1,5 +1,6 @@
 """Schreibbudget fuer Cloud-Schreibvorgaenge (TP12b, Spec 3.1)."""
 import pytest
+from fakes import datei_stand
 
 from smartheat_core import write_budget as wb
 
@@ -72,13 +73,12 @@ def test_put_is_best_effort_and_keeps_memory(make_store, monkeypatch):
     assert store.storage_failed is True
 
 
-def test_after_success_removes_only_an_existing_key(make_store, tmp_path, monkeypatch):
-    store = make_store()
-    saves = []
-    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", lambda path, values: saves.append(values))
+def test_after_success_removes_only_an_existing_key(make_store, tmp_path):
+    store = make_store(backup={})
+    vorher = datei_stand(tmp_path / "backup.json")
 
     wb.after_success(store, wb.RESTORE, wb.RETRY_QUOTA)  # nichts da -> kein Schreiben
-    assert saves == []
+    assert vorher is not None and datei_stand(tmp_path / "backup.json") == vorher
 
     wb.after_failure(store, wb.RESTORE, wb.RETRY_QUOTA, 5.0)
     wb.after_success(store, wb.RESTORE, wb.RETRY_QUOTA)
