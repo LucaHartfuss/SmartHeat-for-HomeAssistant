@@ -165,15 +165,20 @@ def test_a_restart_requested_before_the_worker_exists_is_posted_on_binding(welt)
 
 
 def test_an_empty_configuration_after_a_setup_marks_the_cleanup(welt):
-    welt.host.konfiguration_uebernommen(konfiguration(), LEER)
+    """Die Markierung schreibt konfiguration_vorbereiten (vor dem Speichern, Nr. 38), den Neustart fordert
+    konfiguration_uebernommen an."""
+    welt.host.konfiguration_vorbereiten(konfiguration(), LEER)
     assert json.loads(welt.paths.aufraeumen.read_text()) == {
         "anlage": "test-tenant", "konfiguration": konfiguration(), "zurueckgesetzt": False}
     assert stat.S_IMODE(welt.paths.aufraeumen.stat().st_mode) == 0o600
     welt.host.worker_binden(welt.worker)
+    assert welt.kinds() == []
+    welt.host.konfiguration_uebernommen(konfiguration(), LEER)
     assert welt.kinds() == [EV_RELOAD]
 
 
 def test_the_first_empty_configuration_marks_nothing(welt):
+    welt.host.konfiguration_vorbereiten(None, LEER)
     welt.host.konfiguration_uebernommen(None, LEER)
     assert not welt.paths.aufraeumen.exists()
 

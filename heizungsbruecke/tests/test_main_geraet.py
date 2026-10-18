@@ -11,7 +11,7 @@ from test_runtime import OPTIONS, _quiet_backup, env  # noqa: F401 - env ist ein
 
 import heizungsbruecke.__main__ as main_module
 from heizungsbruecke import config
-from smartheat_core import dateien
+from smartheat_core import dateien, rastung
 from smartheat_device import prozess
 from smartheat_device.host import Anzeige
 from smartheat_device.laufzeit import RuntimeChannel
@@ -513,6 +513,41 @@ def test_an_empty_configuration_resets_then_restarts_and_the_next_start_cleans_u
     geraet, status = _verdrahtet(geraet_env, device)
     result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
     assert isinstance(result, app.IdleBridge) and result.reason == app.IDLE_NOT_CONFIGURED
+
+
+@pytest.mark.parametrize("rastung_datei", ["anderes_verteilsystem", "kaputt"])
+def test_a_marker_that_does_not_fit_the_lock_stays_on_reset_and_nothing_is_deleted(geraet_env, rastung_datei):
+    """G-1, Angriff (gesperrt statt geloescht, client-kern.md "Leer heisst abmelden"): passt die Konfiguration der
+    Markierung nicht zur abweichenden bzw. kaputten Rastung, setzt die Laufzeit nicht zurueck (sign_off_parts None),
+    die Markierung bleibt auf Zuruecksetzen, und weder dieser noch der naechste Start loescht den anlagengebundenen
+    Zustand; das Geraet bleibt abgemeldet, ohne Neustart und ohne erneuten Versuch."""
+    konfiguration = konfiguration_aus_optionen(OPTIONS)  # vaillant_vrc720 x Heizkoerper
+    _quiet_backup(geraet_env, boost_active=True)
+    config.DERIVED_SENSORS_PATH.write_text(json.dumps(TRACKING))
+    aufraeumen_markierung.markieren(config.AUFRAEUMEN_PATH, konfiguration)
+    config.RASTUNG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if rastung_datei == "kaputt":
+        config.RASTUNG_PATH.write_text("{kaputt")
+    else:
+        rastung.schreiben(config.RASTUNG_PATH, rastung.Rastung("vaillant_vrc720", "Fussbodenheizung"),
+                          "2026-10-18T00:00:00+02:00")
+    device = FakeDevice({**konfiguration, "anlage": None})
+    ha = DeletingHa()
+
+    for _ in range(2):  # zweiter Durchgang: Neustart des Add-ons mit demselben Stand
+        main_module.aufraeumen(ha)
+        geraet, status = _verdrahtet(geraet_env, device)
+        result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
+        assert isinstance(result, app.IdleBridge) and result.reason == "abgemeldet"
+        geraet_env.clock.advance(3 * 300)
+        result.worker.run_pending()  # ein Neustart wuerde hier prozess.Neustart werfen
+        events = [data for kind, data in geraet_env.ha.events if kind == "smartheat_status"]
+        assert events[-1]["status"] == "abgemeldet" and events[-1]["grund"] == app.SIGN_OFF_INVALID_CONFIG
+        assert geraet_env.ha.writes == [] and ha.deleted == []
+        gelesen = aufraeumen_markierung.lesen(config.AUFRAEUMEN_PATH)
+        assert gelesen is not None and gelesen.zurueckgesetzt is False
+        assert config.BACKUP_PATH.exists() and config.DERIVED_SENSORS_PATH.exists()
+        assert json.loads(config.BACKUP_PATH.read_text())["boost_active"] is True
 
 
 def test_no_marker_no_cleanup(geraet_env):

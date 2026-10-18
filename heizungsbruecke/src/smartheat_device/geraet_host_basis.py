@@ -3,9 +3,9 @@ Neustart und Bedienung, die vor dem Binden kamen, gemerkte Ursprungswerte, die S
 Soll-Dokumente, Bedienwunsch und Aufraeum-Markierung. HaDeviceHost und GatewayDeviceHost erben davon und liefern nur
 ihre Hostteile (Faehigkeiten, Uhr, Treiberpruefung, Befehle, Anzeige, Software). Rueckrufe des Geraetekerns laufen im
 Geraete-Thread, worker_binden im Hauptthread; die Sperre trennt beide. Kein Rueckruf wirft (V2, Konformitaetssuite
-testhilfen/host_konformitaet.py), bis auf eine bekannte Ausnahme (Restpunkt S3S6-Markierung): scheitert in
-konfiguration_uebernommen das Schreiben der Markierung, geht der OSError an Device._host_rufen, und der Neustart
-entfaellt."""
+testhilfen/host_konformitaet.py) ausser konfiguration_vorbereiten: scheitert dort das Schreiben der Markierung (vor dem
+Speichern), geht der OSError an den Dokumentspeicher, und das Geraet haelt das Dokument zurueck (Spec Testoffensive
+12.6, Nr. 38)."""
 import threading
 from pathlib import Path
 
@@ -41,7 +41,7 @@ class GeraetHostBasis:
         self._raum_soll: float | None = None  # letzte Bedienung, bevor der Worker gebunden ist
 
     def aufraeumen_pfad(self) -> Path:
-        """Wohin konfiguration_uebernommen die Markierung aufraeumen.json schreibt (Host)."""
+        """Wohin konfiguration_vorbereiten die Markierung aufraeumen.json schreibt (Host)."""
         raise NotImplementedError
 
     # --- Verdrahtung ---
@@ -107,10 +107,12 @@ class GeraetHostBasis:
 
     # --- Rueckrufe des Geraetekerns (DeviceHost) ---
 
-    def konfiguration_uebernommen(self, alt: dict | None, neu: dict) -> None:
+    def konfiguration_vorbereiten(self, alt: dict | None, neu: dict) -> None:
         if dokument_config.eingerichtet(alt) and not dokument_config.eingerichtet(neu):
             assert alt is not None
-            aufraeumen.markieren(self.aufraeumen_pfad(), alt)  # alte Konfiguration: erst zuruecksetzen (Spec S3 4)
+            aufraeumen.markieren(self.aufraeumen_pfad(), alt)  # vor dem Speichern (Spec S3 4, Testoffensive 12.6)
+
+    def konfiguration_uebernommen(self, alt: dict | None, neu: dict) -> None:
         if dokument_config.laufzeit_relevant(alt, neu):
             self.neustart_anfordern()
 

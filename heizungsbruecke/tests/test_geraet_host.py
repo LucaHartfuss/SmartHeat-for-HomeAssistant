@@ -297,11 +297,15 @@ def test_in_the_idle_state_operations_do_not_reach_the_worker(tmp_path, monkeypa
 
 
 def test_configuration_change_requests_a_restart_and_empty_marks_cleanup(tmp_path, monkeypatch):
+    """Die Markierung schreibt konfiguration_vorbereiten (vor dem Speichern, Nr. 38), den Neustart fordert
+    konfiguration_uebernommen an."""
     host, _, clock = _host(tmp_path, monkeypatch)
     alt = konfiguration_aus_optionen(OPTIONS)
-    host.konfiguration_uebernommen(alt, {**alt, "anlage": None})
+    host.konfiguration_vorbereiten(alt, {**alt, "anlage": None})
     assert json.loads(config.AUFRAEUMEN_PATH.read_text()) == {
-        "anlage": alt["anlage"], "konfiguration": alt, "zurueckgesetzt": False} and host._neustart
+        "anlage": alt["anlage"], "konfiguration": alt, "zurueckgesetzt": False} and not host._neustart
+    host.konfiguration_uebernommen(alt, {**alt, "anlage": None})
+    assert host._neustart
     assert stat.S_IMODE(config.AUFRAEUMEN_PATH.stat().st_mode) == 0o600
     worker = RegulationWorker(clock)
     reloads = []

@@ -8,8 +8,10 @@ import pytest
 from bindung_beispiele import parameter
 from device_helpers import GeraeteCa, zertifikat_fuer
 
-from smartheat_core import config_check
+from smartheat_core import config_check, dateien
 from smartheat_device import bootstrap, commands, device, identity, wire
+from smartheat_device.geraet_host_basis import EV_RELOAD, GeraetHostBasis
+from smartheat_runtime import aufraeumen
 from smartheat_runtime.runtime import EV_MQTT_CONNECTED, EV_SETPOINTS
 from smartheat_runtime.worker import RegulationWorker
 
@@ -77,6 +79,9 @@ class FakeHost:
     def befehle_eintragen(self, register):
         for kind, handler in self.handlers.items():
             register.register(kind, handler)
+
+    def konfiguration_vorbereiten(self, alt, neu):
+        pass
 
     def konfiguration_uebernommen(self, alt, neu):
         self.konfigurationen.append((alt, neu))
@@ -424,6 +429,82 @@ def test_a_held_configuration_is_only_rechecked_while_connected(tmp_path):
     world.link.verbinden()
     world.device.schritt()
     assert world.link.of("up/result") == [{"schema": 1, "dokument": "konfiguration", "version": 1, "ok": True}]
+
+
+def _leer(version):
+    return {"schema": 1, "version": version, "anlage": None, "profil": None, "hebelsatz": None, "verteilsystem": None,
+            "bindung": None, "raumfuehler": [], "tagestick": None, "abo": None, "mindest_software": "0.6.0",
+            "software": None, "bindungsparameter": None}
+
+
+class BasisHost(GeraetHostBasis, FakeHost):
+    """FakeHost mit den echten Rueckrufen des gemeinsamen Teils (Markierung, Neustart); aufraeumen.json im Testordner."""
+
+    def __init__(self, pfad) -> None:
+        FakeHost.__init__(self)
+        GeraetHostBasis.__init__(self)
+        self.pfad = pfad
+
+    def aufraeumen_pfad(self):
+        return self.pfad
+
+
+def test_a_failing_cleanup_marker_holds_the_empty_configuration_back_until_it_can_be_written(tmp_path, monkeypatch,
+                                                                                               caplog):
+    """Review Focus 1 (Spec Testoffensive 12.6, Nr. 38): laesst sich die Aufraeum-Markierung nicht schreiben, bleibt die
+    alte Konfiguration gespeichert (die Laufzeit regelt mit ihr weiter), kein up/result, keine Markierung, kein Neustart;
+    eine ERROR-Zeile je Zurueckhalten. Ist der Ordner wieder beschreibbar, uebernimmt die Wiederholung nach 30 s,
+    markiert und fordert den Neustart an."""
+    pfad = tmp_path / "aufraeumen.json"
+    world = World(tmp_path, BasisHost(pfad))
+    worker, neustarts = RegulationWorker(world.clock), []
+    worker.register(EV_RELOAD, lambda event: neustarts.append(event.kind))
+    world.host.worker_binden(worker)
+    world.verbinden()
+    world.empfangen("down/config", _konfiguration(version=1))
+    worker.run_pending()
+    neustarts.clear()  # die erste Einrichtung startet neu; hier zaehlt nur der Wechsel auf leer
+    echt = dateien.schreiben_json
+    kaputt = [True]
+
+    def schreiben(ziel, *args, **kwargs):
+        if ziel == pfad and kaputt[0]:
+            raise OSError(f"{ziel} geheim")
+        return echt(ziel, *args, **kwargs)
+
+    monkeypatch.setattr(aufraeumen.dateien, "schreiben_json", schreiben)
+    with caplog.at_level("DEBUG", logger="smartheat_device"):
+        world.empfangen("down/config", _leer(version=2))
+        worker.run_pending()
+        assert [r["version"] for r in world.link.of("up/result")] == [1]
+        assert world.device.konfiguration()["anlage"] == "kunde3" and world.device.documents.version("konfiguration") == 1
+        assert not pfad.exists() and neustarts == []
+
+        def versuche():  # je zurueckgehaltenem Versuch eine Warnung des Geraets
+            return sum("vorerst nicht geprueft" in r.getMessage() for r in caplog.records)
+
+        assert versuche() == 1
+        world.clock.now += 29
+        world.device.schritt()
+        assert versuche() == 1
+        world.clock.now += 1  # 30 s nach dem Zurueckhalten: zweiter Versuch, scheitert wieder
+        world.device.schritt()
+        worker.run_pending()
+        assert [r["version"] for r in world.link.of("up/result")] == [1] and not pfad.exists() and neustarts == []
+        assert versuche() == 2 and [r.levelname for r in caplog.records].count("ERROR") == 1  # nicht je Wiederholung
+        kaputt[0] = False
+        world.clock.now += 29
+        world.device.schritt()
+        assert len(world.link.of("up/result")) == 1 and versuche() == 2  # vor Ablauf der 30 s kein Versuch
+        world.clock.now += 1
+        world.device.schritt()
+    worker.run_pending()
+    assert world.link.of("up/result")[-1] == {"schema": 1, "dokument": "konfiguration", "version": 2, "ok": True}
+    assert world.device.konfiguration()["anlage"] is None and world.device.documents.version("konfiguration") == 2
+    alt = {key: value for key, value in _konfiguration(version=1).items() if key not in ("schema", "version")}
+    assert json.loads(pfad.read_text()) == {"anlage": "kunde3", "konfiguration": alt, "zurueckgesetzt": False}
+    assert neustarts == [EV_RELOAD]
+    assert [r.levelname for r in caplog.records].count("ERROR") == 1 and "geheim" not in caplog.text
 
 
 def test_software_reaches_the_host_even_when_the_device_is_too_old(tmp_path):

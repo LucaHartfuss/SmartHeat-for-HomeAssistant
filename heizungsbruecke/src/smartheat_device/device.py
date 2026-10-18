@@ -114,7 +114,7 @@ class Device:
         self.identity = identity.load_or_create(self._dir)
         self.boot_id = identity.new_boot_id()
         self.documents = DocumentStore(self._dir, host=host.host, software_version=host.version,
-                                       treiber_pruefen=host.treiber_pruefen)
+                                       treiber_pruefen=host.treiber_pruefen, vor_speichern=host.konfiguration_vorbereiten)
         self.hinweise = commands.Hinweise(self._dir)
         self.befehle = commands.CommandRegister(self._dir, self._ergebnis_senden, send_inventory=self._inventur_senden,
                                                 clock=clock, uebersetzen=befehl_fehler)
@@ -435,7 +435,8 @@ class Device:
         """Erst das Ergebnis und die Uebergabe, dann software: jeder Host-Rueckruf ist einzeln abgesichert, damit ein
         gescheiterter die anderen nicht verhindert (das Dokument ist dann schon gespeichert).
 
-        Kann der Host jetzt nicht pruefen (config_check.NichtPruefbar, HA aus): weder Ergebnis noch Uebernahme. Der
+        Kann der Host jetzt nicht pruefen (config_check.NichtPruefbar, HA aus) oder scheitert seine Vorbereitung vor dem
+        Speichern (konfiguration_vorbereiten, Aufraeum-Markierung): weder Ergebnis noch Uebernahme. Der
         Server stellt ein Dokument nur einmal je Verbindung zu und eine abgelehnte Version nie erneut; das Geraet haelt
         es deshalb zurueck und prueft alle PRUEFUNG_WIEDERHOLEN_SECONDS erneut. Eine neue Zustellung ersetzt es."""
         self._zurueckgehalten.pop(art, None)

@@ -1,9 +1,9 @@
 """Konformitaet der Geraete-Hosts (V2; Audit 5 A5-58; Spec Stufe 3 S6 4.1): dieselben Pruefungen fuer HaDeviceHost und
 GatewayDeviceHost. Jeder Host baut eine Welt (Fixture in seiner Testdatei); die Pruefungen kennen nur die gemeinsame
 Sicht: Binden des Workers, Nachstellen von Neustart und Bedienung, Ursprungswerte, Dokumentsicht, Aufraeum-Markierung,
-Bedienwunsch. Rueckrufe des Geraetekerns werfen nie, bis auf eine bekannte Ausnahme (Restpunkt S3S6-Markierung: ein
-Schreibfehler der Markierung in konfiguration_uebernommen geht an Device._host_rufen, der Neustart entfaellt); die
-Suite prueft das nicht."""
+Bedienwunsch. Rueckrufe des Geraetekerns werfen nie, bis auf konfiguration_vorbereiten (vor dem Speichern, Spec
+Testoffensive 12.6, Nr. 38): laesst sich die Markierung nicht schreiben, geht der OSError an den Geraetekern, der das
+Dokument zurueckhaelt."""
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -166,12 +166,47 @@ def ursprungswerte_sind_kopien(w: Welt) -> None:
     assert w.host.ursprungswerte() == {"heat_limit": 18.0}
 
 
-def leer_nach_eingerichtet_markiert_aufraeumen_und_startet_neu(w: Welt) -> None:
+def vorbereiten_leer_nach_eingerichtet_markiert_aufraeumen(w: Welt) -> None:
+    """Die Markierung entsteht vor dem Speichern; den Neustart fordert erst konfiguration_uebernommen an."""
+    w.verbunden()
+    alt = dict(w.konfiguration)
+    assert not w.aufraeumen_pfad.exists()
+    w.host.konfiguration_vorbereiten(alt, {**alt, "anlage": None})
+    assert dateien.lesen_json(w.aufraeumen_pfad) == {"anlage": alt["anlage"], "konfiguration": alt,
+                                                     "zurueckgesetzt": False}
+    worker, seen = w.worker()
+    w.host.worker_binden(worker)
+    worker.run_pending()
+    assert seen == []
+
+
+def vorbereiten_ohne_wechsel_auf_leer_markiert_nichts(w: Welt) -> None:
+    w.verbunden()
+    alt = dict(w.konfiguration)
+    leer = {**alt, "anlage": None}
+    for vorher, nachher in ((None, leer), (leer, leer), (alt, alt), (alt, {**alt, "profil": "anderes"}),
+                            (leer, alt)):
+        w.host.konfiguration_vorbereiten(vorher, nachher)
+    assert not w.aufraeumen_pfad.exists()
+
+
+def vorbereiten_wirft_wenn_die_markierung_nicht_geschrieben_werden_kann(w: Welt) -> None:
+    w.verbunden()
+    alt = dict(w.konfiguration)
+    w.aufraeumen_pfad.mkdir(parents=True)  # ein Ordner an der Stelle der Datei: os.replace scheitert (auch als root)
+    try:
+        w.host.konfiguration_vorbereiten(alt, {**alt, "anlage": None})
+    except OSError:
+        pass
+    else:
+        raise AssertionError("konfiguration_vorbereiten muss den OSError an den Geraetekern geben")
+
+
+def uebernommen_leer_nach_eingerichtet_startet_neu_ohne_markierung(w: Welt) -> None:
     w.verbunden()
     alt = dict(w.konfiguration)
     w.host.konfiguration_uebernommen(alt, {**alt, "anlage": None})
-    assert dateien.lesen_json(w.aufraeumen_pfad) == {"anlage": alt["anlage"], "konfiguration": alt,
-                                                     "zurueckgesetzt": False}
+    assert not w.aufraeumen_pfad.exists()
     worker, seen = w.worker()
     w.host.worker_binden(worker)
     worker.run_pending()
@@ -180,6 +215,7 @@ def leer_nach_eingerichtet_markiert_aufraeumen_und_startet_neu(w: Welt) -> None:
 
 def die_erste_leere_konfiguration_markiert_nichts(w: Welt) -> None:
     w.verbunden()
+    w.host.konfiguration_vorbereiten(None, {"anlage": None})
     w.host.konfiguration_uebernommen(None, {"anlage": None})
     assert not w.aufraeumen_pfad.exists()
 
@@ -210,7 +246,9 @@ PRUEFUNGEN = (
     nur_die_letzte_bedienung_vor_dem_binden_zaehlt, bedienung_nach_dem_binden_geht_sofort_an_den_worker,
     ungueltige_bedienung_wird_still_ignoriert, im_ruhezustand_geht_keine_bedienung_an_den_worker,
     neustart_vor_dem_binden_kommt_beim_binden, neustart_nach_dem_binden_kommt_sofort, ursprungswerte_sind_kopien,
-    leer_nach_eingerichtet_markiert_aufraeumen_und_startet_neu, die_erste_leere_konfiguration_markiert_nichts,
+    vorbereiten_leer_nach_eingerichtet_markiert_aufraeumen, vorbereiten_ohne_wechsel_auf_leer_markiert_nichts,
+    vorbereiten_wirft_wenn_die_markierung_nicht_geschrieben_werden_kann,
+    uebernommen_leer_nach_eingerichtet_startet_neu_ohne_markierung, die_erste_leere_konfiguration_markiert_nichts,
     eine_unerhebliche_aenderung_startet_nicht_neu, wunsch_und_soll_quelle_gehen_an_das_geraet, host_und_version,
 )
 

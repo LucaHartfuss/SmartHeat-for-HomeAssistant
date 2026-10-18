@@ -14,7 +14,9 @@ abgelehnten Konfiguration bzw. die eigene Software beim unbekannten schema), und
 Software ausgewertet: nach einem Update endet es von selbst. Nur eine Konfiguration mit genau den Feldern des Vertrags
 setzt den Anlass neu; eine wegen fehlender oder fremder Felder abgelehnte laesst ihn stehen (V1 ist strikt, R10).
 Wirft der Treiber-Rueckruf config_check.NichtPruefbar (HA aus), laeuft empfangen durch: nichts wird gespeichert oder
-abgelehnt, das Geraet haelt das Dokument zurueck und prueft spaeter erneut (device.py).
+abgelehnt, das Geraet haelt das Dokument zurueck und prueft spaeter erneut (device.py). Ebenso, wenn die Vorbereitung
+vor dem Speichern einer geprueften Konfiguration scheitert (vor_speichern, der Host schreibt dort die Aufraeum-Markierung;
+Spec Testoffensive 12.6, Nr. 38): jede Ausnahme wird zu NichtPruefbar, eine ERROR-Zeile je Zurueckhalten.
 Eine kaputte Datei (Stromausfall) gilt als "keine Version": hello meldet 0, der Server stellt neu zu.
 
 Rastung (Spec Stufe 3 S3 Abschnitt 3, A5-06): Hebelsatz x Verteilsystem der ersten eingerichteten Konfiguration stehen in
@@ -24,6 +26,7 @@ Eine kaputte oder manipulierte Datei (auch ein Symlink) lehnt jede eingerichtete
 import logging
 import re
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TypeGuard
@@ -157,9 +160,14 @@ class DocumentStore:
     """Schreibt nur im Geraete-Thread; lesen duerfen alle (die Laufzeit liest den Abo-Status)."""
 
     def __init__(self, directory: Path, *, host: str, software_version: str,
-                 treiber_pruefen: config_check.TreiberPruefung | None = None) -> None:
+                 treiber_pruefen: config_check.TreiberPruefung | None = None,
+                 vor_speichern: Callable[[dict | None, dict], None] | None = None) -> None:
+        """vor_speichern(alt, neu): DeviceHost.konfiguration_vorbereiten; die Nur-Lese-Verwendungen (Aufraeumen beim
+        Start) uebergeben keinen."""
         self._dir = directory
         self._host, self._software_version, self._treiber_pruefen = host, software_version, treiber_pruefen
+        self._vor_speichern = vor_speichern
+        self._vorbereitung_gemeldet = False  # Zurueckhalten nach gescheiterter Vorbereitung schon geloggt
         self._lock = threading.Lock()
         self._docs: dict[str, Dokument | None] = {art: self._laden(art) for art in wire.DOKUMENTE}
         self._rastung_pfad = directory / rastung.DATEI
@@ -269,12 +277,30 @@ class DocumentStore:
             ablehnung = self._pruefen(art, inhalt)
             if ablehnung is not None:
                 return self._abgelehnt_mit(art, version, ablehnung.grund, ablehnung.details)
+            if art == KONFIGURATION:
+                self._vorbereiten(inhalt)
             if art == KONFIGURATION and self._rastung is None and not config_check.ist_leer(inhalt):
                 self._rastung = self._rasten(inhalt)  # vor dem Dokument (Spec 3.2): ein Absturz dazwischen schadet nicht
             self._speichern(Dokument(art, version, inhalt))
             self._abgelehnt.pop(art, None)
             self._zustand_speichern()
             return Ergebnis(art, version, True, uebernommen=True)
+
+    def _vorbereiten(self, inhalt: dict) -> None:
+        """Vor Rastung und Speichern: scheitert der Host (Markierung nicht schreibbar), wird nichts gespeichert, und das
+        Geraet haelt das Dokument zurueck wie bei NichtPruefbar aus dem Treiber-Rueckruf. _pruefen hat _update_anlass
+        dann schon im Speicher gesetzt, ohne ihn zu speichern; das ist dieselbe Lage wie dort, die Wiederholung setzt
+        ihn gleich."""
+        if self._vor_speichern is None:
+            return
+        try:
+            self._vor_speichern(self.inhalt(KONFIGURATION), inhalt)
+        except Exception as error:  # jede Ausnahme: nichts speichern, zurueckhalten statt die Konfiguration zu verlieren
+            if not self._vorbereitung_gemeldet:  # je Zurueckhalten einmal (das Geraet wiederholt alle 30 s)
+                logger.error("Konfiguration zurueckgehalten: Vorbereitung gescheitert (%s)", type(error).__name__)
+                self._vorbereitung_gemeldet = True
+            raise config_check.NichtPruefbar from None
+        self._vorbereitung_gemeldet = False
 
     def _abgelehnt_mit(self, art: str, version: int, grund: str, details: dict | None) -> Ergebnis:
         if grund not in wire.DOKUMENT_ERRORS:

@@ -5,7 +5,7 @@ import math
 import pytest
 from bindung_beispiele import parameter
 
-from smartheat_core import rastung
+from smartheat_core import config_check, dateien, rastung
 from smartheat_device import documents as docs
 from smartheat_device import wire
 
@@ -53,15 +53,34 @@ def test_a_empty_configuration_does_not_release_the_lock(tmp_path):
     assert _store(tmp_path).empfangen("konfiguration", _konfiguration(version=5, verteilsystem="Fussbodenheizung")).ok
 
 
-def test_the_first_set_up_configuration_locks_before_it_is_stored(tmp_path, monkeypatch):
-    store = _store(tmp_path)
-    reihenfolge = []
-    echt_rasten, echt_speichern = store._rasten, store._speichern
-    monkeypatch.setattr(store, "_rasten", lambda inhalt: reihenfolge.append("rasten") or echt_rasten(inhalt))
-    monkeypatch.setattr(store, "_speichern", lambda doc: reihenfolge.append("speichern") or echt_speichern(doc))
-    store.empfangen("konfiguration", _konfiguration())
-    assert reihenfolge == ["rasten", "speichern"]
-    assert json.loads((tmp_path / "sicherheitssatz.json").read_text())["verteilsystem"] == "Heizkoerper"
+def test_the_first_set_up_configuration_creates_the_lock(tmp_path):
+    assert not (tmp_path / "sicherheitssatz.json").exists()
+    _store(tmp_path).empfangen("konfiguration", _konfiguration())
+    gespeichert = json.loads((tmp_path / "sicherheitssatz.json").read_text())
+    assert (gespeichert["hebelsatz"], gespeichert["verteilsystem"]) == ("viessmann_vicare", "Heizkoerper")
+
+
+def _scheitert_fuer(monkeypatch, name: str) -> None:
+    """dateien.schreiben_json scheitert fuer die Datei `name` (Stromausfall bzw. Datentraeger), alle anderen gehen."""
+    echt = dateien.schreiben_json
+
+    def schreiben(pfad, *args, **kwargs):
+        if pfad.name == name:
+            raise OSError("Datentraeger")
+        return echt(pfad, *args, **kwargs)
+
+    monkeypatch.setattr(docs.dateien, "schreiben_json", schreiben)
+
+
+def test_an_abort_after_the_lock_leaves_the_lock_without_the_document(tmp_path, monkeypatch):
+    """Spec 3.2: die Rastung steht vor dem Dokument; ein Abbruch dazwischen hinterlaesst die Rastung ohne Dokument
+    (der Server stellt neu zu, die Rastung passt dazu)."""
+    _scheitert_fuer(monkeypatch, "konfiguration.json")
+    with pytest.raises(OSError):
+        _store(tmp_path).empfangen("konfiguration", _konfiguration())
+    monkeypatch.undo()
+    assert rastung.lesen(tmp_path / "sicherheitssatz.json") == rastung.Rastung("viessmann_vicare", "Heizkoerper")
+    assert not (tmp_path / "konfiguration.json").exists() and _store(tmp_path).version("konfiguration") == 0
 
 
 def test_an_empty_configuration_never_creates_a_lock(tmp_path):
@@ -401,3 +420,95 @@ def test_a_document_with_a_lone_surrogate_is_rejected_and_nothing_is_stored(tmp_
     assert (ergebnis.ok, ergebnis.grund, ergebnis.details) == (False, "ungueltig", None)
     assert store.inhalt(art) is None and _store(tmp_path).ablehnung(art) == (1, "ungueltig", None)
     assert store.empfangen(art, _konfiguration() if art == "konfiguration" else _bedienung()).uebernommen  # Gegenprobe
+
+
+# --- Vorbereitung vor dem Speichern (Spec Testoffensive 12.6, Nr. 38: Aufraeum-Markierung) ---
+
+def _ohne_huelle(body: dict) -> dict:
+    return {key: value for key, value in body.items() if key not in ("schema", "version")}
+
+
+def _vorbereitender_store(tmp_path, vorbereiten):
+    return docs.DocumentStore(tmp_path, host="gateway", software_version="0.6.0", vor_speichern=vorbereiten)
+
+
+def test_the_preparation_gets_old_and_new_before_the_configuration_is_written(tmp_path):
+    gesehen = []
+
+    def vorbereiten(alt, neu):
+        datei = tmp_path / "konfiguration.json"
+        gesehen.append((alt, neu, json.loads(datei.read_text())["version"] if datei.exists() else None))
+
+    store = _vorbereitender_store(tmp_path, vorbereiten)
+    assert store.empfangen("konfiguration", _konfiguration(version=1)).uebernommen
+    assert store.empfangen("konfiguration", _leer(version=2)).uebernommen
+    assert gesehen == [(None, _ohne_huelle(_konfiguration()), None),
+                       (_ohne_huelle(_konfiguration()), _ohne_huelle(_leer()), 1)]  # im Rueckruf: noch die alte Datei
+    assert store.version("konfiguration") == 2
+
+
+@pytest.mark.parametrize("fehler", [OSError("/data/aufraeumen.json"), RuntimeError("unerwartet")])
+def test_a_failing_preparation_holds_the_configuration_back_and_stores_nothing(tmp_path, fehler):
+    """Nr. 38: scheitert die Vorbereitung (OSError beim Schreiben der Markierung, aber auch jede andere Ausnahme), ist
+    die Konfiguration nicht pruefbar: nichts gespeichert, nichts abgelehnt, das Geraet haelt sie zurueck (device.py)."""
+    def vorbereiten(alt, neu):
+        if not neu.get("anlage"):
+            raise fehler
+
+    store = _vorbereitender_store(tmp_path, vorbereiten)
+    store.empfangen("konfiguration", _konfiguration(version=1))
+    vorher = {name: (tmp_path / name).read_bytes() for name in ("konfiguration.json", "dokumente.json")}
+    with pytest.raises(config_check.NichtPruefbar):
+        store.empfangen("konfiguration", _leer(version=2))
+    assert {name: (tmp_path / name).read_bytes() for name in vorher} == vorher
+    assert store.version("konfiguration") == 1 and store.eingerichtet() and store.ablehnung("konfiguration") is None
+    assert _store(tmp_path).version("konfiguration") == 1
+
+
+def test_a_failing_preparation_of_the_first_configuration_does_not_lock(tmp_path):
+    def vorbereiten(alt, neu):
+        raise OSError("Datentraeger")
+
+    with pytest.raises(config_check.NichtPruefbar):
+        _vorbereitender_store(tmp_path, vorbereiten).empfangen("konfiguration", _konfiguration())
+    assert not (tmp_path / "sicherheitssatz.json").exists() and not (tmp_path / "konfiguration.json").exists()
+
+
+def test_a_held_back_configuration_is_logged_once_until_a_preparation_succeeds(tmp_path, caplog):
+    """Eine ERROR-Zeile je Zurueckhalten (das Geraet wiederholt alle 30 s), Fehlerart ohne Pfad und Text; nach einem
+    Erfolg meldet ein neues Scheitern sich wieder."""
+    kaputt = [True]
+
+    def vorbereiten(alt, neu):
+        if kaputt[0]:
+            raise OSError("/data/aufraeumen.json geheim")
+
+    store = _vorbereitender_store(tmp_path, vorbereiten)
+    with caplog.at_level("DEBUG", logger="smartheat_device"):
+        for _ in range(2):
+            with pytest.raises(config_check.NichtPruefbar):
+                store.empfangen("konfiguration", _konfiguration(version=1))
+        assert [r.levelname for r in caplog.records] == ["ERROR"]
+        kaputt[0] = False
+        assert store.empfangen("konfiguration", _konfiguration(version=1)).uebernommen
+        kaputt[0] = True
+        with pytest.raises(config_check.NichtPruefbar):
+            store.empfangen("konfiguration", _leer(version=2))
+    fehler = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert len(fehler) == 2 and all("OSError" in r.getMessage() for r in fehler)
+    assert "geheim" not in caplog.text and "aufraeumen" not in caplog.text
+
+
+def test_operations_rejections_and_duplicates_skip_the_preparation(tmp_path):
+    gesehen = []
+    store = docs.DocumentStore(tmp_path, host="gateway", software_version="0.6.0",
+                               treiber_pruefen=lambda bindung: {"feld": "parameter", "regel": "ungueltig"},
+                               vor_speichern=lambda alt, neu: gesehen.append(neu))
+    assert store.empfangen("bedienung", _bedienung()).uebernommen
+    assert store.empfangen("konfiguration", _konfiguration(version=1)).grund == "treiber_parameter"
+    assert store.empfangen("konfiguration", {**_konfiguration(version=2), "schema": 99}).grund == "schema_unbekannt"
+    assert store.empfangen("konfiguration", _konfiguration(version=3, anlage=None, abo="x", kuenftig=1)).grund \
+        == "ungueltig"
+    assert store.empfangen("konfiguration", _leer(version=4)).uebernommen  # Gegenprobe: uebernommen -> gerufen
+    assert store.empfangen("konfiguration", _leer(version=4)).ok  # Duplikat
+    assert gesehen == [_ohne_huelle(_leer())]
