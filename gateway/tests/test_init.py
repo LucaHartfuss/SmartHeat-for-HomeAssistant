@@ -154,7 +154,8 @@ def test_binary_corrupt_acl_is_rewritten(tmp_path):
 
 def test_the_init_step_never_logs_a_password(tmp_path, monkeypatch, caplog, capsys):
     """Erster Lauf, Heilung (Zugangsdatei fehlt, neues Passwort) und zweiter Lauf: im Log und auf den Ausgaben steht nie
-    ein Passwort (weder aus den Zugangsdateien noch aus der Zigbee2MQTT-Konfiguration), nur Dateinamen."""
+    ein Passwort aus den Zugangsdateien der Dienste, nur Dateinamen (das Passwort in der Zigbee2MQTT-Konfiguration ist
+    dasselbe wie in der Zugangsdatei von `zigbee2mqtt`)."""
     for variable, ordner in (("SHG_BUS_DIR", "bus"), ("SHG_ZIGBEE_DIR", "zigbee2mqtt"), ("SHG_DATA_DIR", "data"),
                              ("SHG_HOST_DIR", "host")):
         monkeypatch.setenv(variable, str(tmp_path / ordner))

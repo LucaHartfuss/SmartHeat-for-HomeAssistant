@@ -192,7 +192,7 @@ def _sendbar(wert) -> bool:
         return False
     try:
         json.dumps(wert, allow_nan=False)
-    except (ValueError, TypeError, RecursionError):
+    except (ValueError, TypeError, RecursionError):  # RecursionError: Guertel, nicht erreichbar bei Tiefengrenze 32
         return False
     return True
 

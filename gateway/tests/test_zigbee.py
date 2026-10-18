@@ -142,10 +142,15 @@ def test_junk_on_a_device_topic_changes_nothing_and_raises_nothing(world, junk):
 def test_bytes_that_are_no_utf8_on_a_device_topic_change_nothing(world):
     bus, z2m, mirror = world
     z2m.report(SENSOR, temperature=20.5)
+    seen = []
+    mirror.on_device_message(lambda ieee, payload: seen.append(ieee))
     before = _state_of(mirror)
     [(_, callback)] = [(topic, cb) for topic, cb in bus.subscriptions if topic == "zigbee2mqtt/#"]
     callback(f"zigbee2mqtt/{SENSOR}", b"\xff\xfe", False)
-    assert _state_of(mirror) == before
+    assert _state_of(mirror) == before and seen == []
+    # Gegenprobe: eine gueltige Meldung auf demselben Topic aendert den Zustand und ruft den Hook
+    z2m.report(SENSOR, temperature=19.0)
+    assert _state_of(mirror) != before and seen == [SENSOR]
 
 
 def test_bridge_devices_skips_what_is_no_object_and_the_coordinator(world):

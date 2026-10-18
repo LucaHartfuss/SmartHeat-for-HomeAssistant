@@ -16,6 +16,7 @@ from unittest.mock import create_autospec
 import pytest
 from minisign_helper import keypair, sign
 
+from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_host import bundles, kanal, updater
 
 COMPOSE = ("services:\n  runtime:\n    image: ghcr.io/x/gw@sha256:" + "a" * 64 + "\n").encode()
@@ -994,6 +995,27 @@ def test_the_opener_refuses_a_redirect_to_a_scheme_that_is_not_allowed_before_as
     assert seen == ["/ziel"]
 
 
+def test_a_refused_redirect_closes_the_answer_that_carried_it():
+    """Wirft `redirect_request`, schliesst urllib die 302-Antwort nicht (das tut es erst nach einem Erfolg): der Handler
+    schliesst sie selbst, sonst bleibt der Socket bis zur Muellsammlung offen. Attrappe an der Grenze, der Antwort `fp`."""
+    class Antwort:
+        closed = 0
+
+        def close(self):
+            self.closed += 1
+
+    request = urllib.request.Request("https://release.example.test/x")
+    handler = updater._SchemeCheckedRedirects(allow_http=False)
+    refused = Antwort()
+    with pytest.raises(updater.FetchError, match="Weiterleitung auf ein Schema"):
+        handler.redirect_request(request, refused, 302, "Found", {}, "http://evil.test/x")
+    assert refused.closed == 1
+    # Gegenprobe: ein erlaubtes Ziel liefert die Folgeanfrage, die Antwort schliesst dann urllib selbst (nicht der Handler)
+    followed = Antwort()
+    follow_up = handler.redirect_request(request, followed, 302, "Found", {}, "https://cdn.example.test/x")
+    assert follow_up.full_url == "https://cdn.example.test/x" and followed.closed == 0
+
+
 @pytest.fixture
 def ftp_redirector():
     """Lokaler HTTP-Server, der mit 302 auf eine ftp-Adresse (Port 1: nichts hoert zu) weiterleitet."""
@@ -1359,13 +1381,14 @@ UNHEALTHY_BODY = json.dumps({"server_ok": False, "runtime_status": None}).encode
 
 
 def _main_update(monkeypatch, root, site, *, signed_by_other_key=False, release_pub_of_other_key=False,
-                 health_path="/healthz", health_body=HEALTHY_BODY, project=None, health_seconds=None):
+                 health_path="/healthz", health_body=HEALTHY_BODY, project=None, health_seconds=None,
+                 min_updater_version="0.1.0"):
     """Bereitet einen echten `main --once` vor: ein signiertes Bundle 0.3.0 auf dem lokalen Server, das Angebot in
     `data/software_soll.json`, `release.pub`, ein erreichbarer Broker (der Server selbst) und die Umgebung."""
     secret, key_id, public = keypair()
     other_secret, other_id, other_public = keypair()
     files = {"docker-compose.yml": COMPOSE, "mosquitto.conf": MOSQ}
-    raw = json.dumps({"version": "0.3.0", "min_updater_version": "0.1.0",
+    raw = json.dumps({"version": "0.3.0", "min_updater_version": min_updater_version,
                       "files": {name: hashlib.sha256(data).hexdigest() for name, data in files.items()},
                       "images": {"gateway": "ghcr.io/x/gw@sha256:" + "a" * 64}}).encode()
     signature = sign(*((other_secret, other_id) if signed_by_other_key else (secret, key_id)), raw)
@@ -1396,6 +1419,26 @@ def test_main_verifies_the_bundle_with_the_key_of_shg_release_pub(
     reports = json.loads((tmp_path / "data" / "software_meldungen.json").read_text())["meldungen"]
     if outcome == "abgelehnt":
         assert started == [] and [(m["result"], m["reason"]) for m in reports] == [("rollback", "signatur_ungueltig")]
+    else:
+        assert len(started) == 1 and [(m["result"], m["reason"]) for m in reports] == [("ok", "")]
+
+
+@pytest.mark.parametrize(("hoeher", "outcome"), [(False, "aktualisiert"), (True, "abgelehnt")])
+def test_main_runs_the_updater_with_the_gateway_version_as_its_own(
+        tmp_path, monkeypatch, capsys, site, docker, fast_sleep, hoeher, outcome):
+    """Die laufende Version des Updaters ist `GATEWAY_VERSION` (nicht die des Bundles, nicht ein fester Wert): ein Bundle,
+    das genau diese Version verlangt, wird angenommen, eines, das eine Patch-Stelle mehr verlangt, ist `updater_zu_alt` und
+    wird nie gestartet. Das Bundle selbst ist 0.3.0 (ueber 0.1.0, unter 0.6.0): eine Verwechslung mit seiner Version oder
+    mit einem festen kleinen Wert faellt in je einer der beiden Zeilen auf."""
+    major, minor, patch = (int(part) for part in GATEWAY_VERSION.split("."))
+    verlangt = f"{major}.{minor}.{patch + 1}" if hoeher else GATEWAY_VERSION
+    _main_update(monkeypatch, tmp_path, site, min_updater_version=verlangt)
+    updater.main(["--once"])
+    assert capsys.readouterr().out == outcome + "\n"
+    started = [call for call in docker.calls if "up" in call]
+    reports = json.loads((tmp_path / "data" / "software_meldungen.json").read_text())["meldungen"]
+    if hoeher:
+        assert started == [] and [(m["result"], m["reason"]) for m in reports] == [("rollback", "updater_zu_alt")]
     else:
         assert len(started) == 1 and [(m["result"], m["reason"]) for m in reports] == [("ok", "")]
 

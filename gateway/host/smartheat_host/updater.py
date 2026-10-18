@@ -161,6 +161,7 @@ class _SchemeCheckedRedirects(urllib.request.HTTPRedirectHandler):
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         if not _scheme_allowed(newurl, self._allow_http):
+            fp.close()  # urllib schliesst die 302-Antwort erst nach einem erfolgreichen redirect_request
             raise FetchError(f"{req.full_url}: {_REDIRECT_REFUSED}")
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 

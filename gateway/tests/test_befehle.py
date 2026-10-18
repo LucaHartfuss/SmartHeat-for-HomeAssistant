@@ -187,6 +187,41 @@ def test_a_value_nested_deeper_than_32_levels_is_left_out_of_the_device_list(ctx
         assert sensor["batterie"] == (wert if bleibt else None) and sensor["werte"] == {}
 
 
+def _verschachtelt_objekt(ebenen: int) -> dict:
+    wert: dict = {}
+    for _ in range(ebenen - 1):
+        wert = {"k": wert}
+    return wert
+
+
+def _verschachtelt_gemischt(ebenen: int):
+    """Abwechselnd Objekt und Liste, das innerste Glied ist ein leeres Objekt."""
+    wert: dict | list = {}
+    for stufe in range(ebenen - 1):
+        wert = [wert] if stufe % 2 == 0 else {"k": wert}
+    return wert
+
+
+@pytest.mark.parametrize("bauen", [_verschachtelt_objekt, _verschachtelt_gemischt], ids=["objekt", "gemischt"])
+@pytest.mark.parametrize("feld", ["temperature", "battery"])
+@pytest.mark.parametrize(("ebenen", "bleibt"), [(32, True), (33, False), (5000, False)])
+def test_an_object_or_mixed_value_nested_deeper_than_32_levels_is_left_out_of_the_device_list(
+    ctx, register, bauen, feld, ebenen, bleibt
+):
+    """Die Tiefenregel gilt fuer Objekte wie fuer Listen und fuer beide gemischt: 32 Ebenen bleiben, 33 fallen weg (`werte`
+    ohne das Feld, `batterie` None), die Antwort ist sendbar."""
+    wert = bauen(ebenen)
+    ctx.z2m.report(SENSOR, **{feld: wert})
+    antwort = _run(register, "zigbee_devices", {})
+    assert antwort["ok"] is True
+    _ohne_nan_sendbar(antwort)
+    sensor = next(d for d in antwort["result"]["devices"] if d["ieee"] == SENSOR)
+    if feld == "temperature":
+        assert sensor["werte"] == ({feld: wert} if bleibt else {}) and sensor["batterie"] is None
+    else:
+        assert sensor["batterie"] == (wert if bleibt else None) and sensor["werte"] == {}
+
+
 @pytest.mark.parametrize("wert", [{"a": {"b": [1, {"c": 2}]}}, [[1.5, [2]], "x"], {}, []], ids=["gemischt", "liste", "leeres-objekt", "leere-liste"])
 def test_flat_and_mixed_nested_values_stay_in_the_device_list(ctx, register, wert):
     ctx.z2m.report(SENSOR, temperature=wert)

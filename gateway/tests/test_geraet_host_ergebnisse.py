@@ -115,6 +115,9 @@ def test_a_skipped_entry_does_not_hold_back_later_ones_and_is_not_acknowledged_w
     assert _quittung(world) == {"seq": 2}
 
 
+# --- Hilfen fuer die LED-Tests unten: Host ohne Geraet, Anzeige, Zeitsprung ---
+
+
 class LedWelt:
     """Host ohne Geraet: die Anzeige schreibt nur die LED-Datei."""
 
