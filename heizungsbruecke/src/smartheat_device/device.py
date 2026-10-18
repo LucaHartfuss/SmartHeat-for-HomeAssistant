@@ -7,12 +7,13 @@ Versionen, Faehigkeiten, boot_id, uhr_synchron, bekannter Uebernahmestand; claim
 Spec 5c F1), dann Status, gepufferter Wunsch und offene Meldungen. Host-Rueckrufe des Takts laufen ueber _host_wert
 (5b-D1-4: ein werfender Rueckruf verschiebt Registrierung bzw. hello, laesst up/status dieses Takts aus (runtime_status,
 raum), gilt bei uhr_synchron als None und bei ursprungswerte als {}, die Anzeige entfaellt; je Rueckruf und Fehlerart
-eine Logzeile). Dokumente gehen an den Dokumentspeicher, das Ergebnis als up/result, das Uebernommene an den Host; das Feld software jeder Konfiguration
-mit bekanntem Schema geht an den Host, auch wenn die Konfiguration abgelehnt wurde (Plan-Praezisierung). Befehle gehen an
-das Register, down/setpoints an die Laufzeit. Drei Anmeldefehler in Folge am Broker -> Rettungsweg (bootstrap.Bootstrap);
-gesperrt -> Link aus, neuer Versuch nach 6 h. up/status nur bei inhaltlicher Aenderung (ohne Zeitstempel, A4-35),
-hoechstens alle STATUS_MIN_SECONDS; up/notifications gebuendelt hoechstens alle MELDUNGEN_MIN_SECONDS (Drossel des
-Dienstes: 20 Nachrichten/min, Plan S2)."""
+eine Logzeile). Dokumente gehen an den Dokumentspeicher, das Ergebnis als up/result, das Uebernommene an den Host;
+das Software-Angebot jeder Konfiguration mit bekanntem Schema (documents.angebot_aus) geht an den Host, auch wenn die
+Konfiguration abgelehnt wurde (Plan-Praezisierung). Befehle gehen an das Register, down/setpoints an die Laufzeit.
+Drei Anmeldefehler in Folge am Broker -> Rettungsweg (bootstrap.Bootstrap); gesperrt -> Link aus, neuer Versuch nach
+6 h. up/status nur bei inhaltlicher Aenderung (ohne Zeitstempel, A4-35), hoechstens alle STATUS_MIN_SECONDS;
+up/notifications gebuendelt hoechstens alle MELDUNGEN_MIN_SECONDS (Drossel des Dienstes: 20 Nachrichten/min, Plan
+S2)."""
 import json
 import logging
 import math
@@ -27,7 +28,7 @@ from typing import TypeVar
 
 from smartheat_core import config_check
 from smartheat_device import bootstrap, commands, fehler, identity, inventory, nachrichten, wire, wish
-from smartheat_device.documents import BEDIENUNG, KONFIGURATION, DocumentStore, software_pruefen
+from smartheat_device.documents import BEDIENUNG, KONFIGURATION, DocumentStore, angebot_aus
 from smartheat_device.host import Anzeige, DeviceHost
 from smartheat_device.laufzeit import RuntimeChannel
 from smartheat_device.link import ANMELDUNG_SCHEITERT, GESENDET, GETRENNT, NACHRICHT, VERBUNDEN, Link
@@ -148,6 +149,7 @@ class Device:
         self._hello_fehler: str | None = None  # letzte Fehlerart beim Bauen von hello (je Art einmal loggen)
         self._status_fehler: str | None = None  # letzter Vertragsverstoss beim Bauen (je Text einmal loggen)
         self._wunsch_fehler: str | None = None  # dito beim Bauen von up/wish
+        self._wunsch_abgelehnt: set[str] = set()  # Gruende abgelehnter Bedienwuensche, schon geloggt (Host-Thread)
         self._publish_fehler: dict[str, str] = {}  # Topic -> letzter Text, mit dem der Link das Senden verweigerte
         self._ursprung_gewarnt: set[str] = set()  # nicht meldbare Ursprungswerte: je Name einmal loggen (Takt: 1 s)
         self._host_fehler: set[tuple[str, str]] = set()  # (Rueckruf, Fehlerart) gescheiterter Host-Werte, schon geloggt
@@ -192,9 +194,16 @@ class Device:
     def wunsch(self, wert, *, herkunft: str | None, durch: str | None = None) -> float:
         """Lokaler Sollwert vom Host: sofort begrenzt zurueck (der Host wendet ihn an), Versand im Geraete-Thread.
         ValueError, wenn der Wert keine endliche Zahl ist oder herkunft bzw. durch kein Vertragswert (dann kommt nichts
-        in die Inbox)."""
-        wish.pruefen_herkunft(herkunft, durch)
-        begrenzt, roh = wish.begrenzen(wert)
+        in die Inbox). Geloggt wird je Grund einmal, ohne den Wert (der Host kann wiederholen)."""
+        try:
+            wish.pruefen_herkunft(herkunft, durch)
+            begrenzt, roh = wish.begrenzen(wert)
+        except ValueError as error:
+            grund = str(error)  # feste Texte aus wish ohne Wert
+            if grund not in self._wunsch_abgelehnt:
+                self._wunsch_abgelehnt.add(grund)
+                logger.error("Bedienwunsch verworfen (%s)", grund)
+            raise
         self._inbox.put(("wunsch", begrenzt, roh, herkunft, durch))
         return begrenzt
 
@@ -327,17 +336,20 @@ class Device:
         self._meldungen_senden(now)
         self._host_wert("anzeigen", self.host.anzeigen, self.anzeige())  # gescheitert: diese Anzeige entfaellt
 
-    def _register_args(self) -> dict:
-        return {"version": self.host.version, "host": self.host.host, "capabilities": self.host.faehigkeiten()}
+    def _register_args(self, faehigkeiten: dict | None = None) -> dict:
+        """faehigkeiten: schon geprueft (_link_aufbauen), sonst ruft es den Host."""
+        return {"version": self.host.version, "host": self.host.host,
+                "capabilities": self.host.faehigkeiten() if faehigkeiten is None else faehigkeiten}
 
     def _link_aufbauen(self) -> None:
         zugang = bootstrap.laden(self._dir)
         if zugang is None:
             if not self._bootstrap.faellig():
                 return
-            if self._host_wert("faehigkeiten", self.host.faehigkeiten)[1]:
+            faehigkeiten, gescheitert = self._host_wert("faehigkeiten", self.host.faehigkeiten)
+            if gescheitert:
                 return  # Registrierung verschieben, der naechste Takt versucht es erneut (ohne Backoff)
-            zugang = self._bootstrap.holen(rettung=False)
+            zugang = self._bootstrap.holen(rettung=False, register_args=self._register_args(faehigkeiten))
             if zugang is None:
                 return
         self._link_starten(zugang)
@@ -493,13 +505,10 @@ class Device:
                 self._host_rufen("konfiguration_uebernommen", self.host.konfiguration_uebernommen, alt, neu)
             else:
                 self._host_rufen("bedienung_uebernommen", self.host.bedienung_uebernommen, neu)
-        if art == KONFIGURATION and body.get("schema") in wire.SCHEMATA and "software" in body:
-            # Das Angebot geht auch aus einer abgelehnten Konfiguration an den Host (ein Update kann der Ausweg sein),
-            # aber nur, wenn es selbst gueltig ist (R15): sonst bleibt das vorherige Angebot bestehen.
-            if software_pruefen(body["software"]) is not None:
-                logger.warning("Soll-Software ungueltig, das vorherige Angebot bleibt")
-            else:
-                self._host_rufen("software_soll", self.host.software_soll, body["software"])
+        if (angebot := angebot_aus(art, body)) is not None:
+            # dasselbe Angebot, das der Speicher merkt, auch aus einer abgelehnten Konfiguration (ein Update kann der
+            # Ausweg sein); ein ungueltiges laesst das vorherige stehen (R15, documents.angebot_aus)
+            self._host_rufen("software_soll", self.host.software_soll, angebot.software)
 
     def _zurueckgehaltene_pruefen(self, now: float) -> None:
         if not self._zurueckgehalten or now < self._pruefung_at:

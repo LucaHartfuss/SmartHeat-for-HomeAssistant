@@ -266,15 +266,19 @@ def test_a_later_invalid_offer_or_an_empty_configuration_without_software_keeps_
     assert _soll_software(world) == SOFTWARE
 
 
-def test_software_null_replaces_the_offer_and_nothing_is_replayed(world):
+def test_a_withdrawn_offer_is_replayed_as_null(world):
+    """software null zieht das Angebot zurueck und wird gemerkt: ging das Schreiben von null verloren (die alte
+    software_soll.json mit dem Angebot steht noch), schreibt der naechste Start null; der Updater liest null als "kein
+    Angebot" (belegt in gateway/host/tests/test_kanal.py::test_no_software_in_the_configuration_offers_nothing, eigener
+    pythonpath, daher hier nicht importiert)."""
     world.start_runtime()
     world.connect()
     world.konfiguration_senden(konfiguration(mindest_software="9.0.0", software=SOFTWARE), 1)
     world.konfiguration_senden(konfiguration(mindest_software="9.0.0", software=None), 2)
     assert _soll_software(world) is None  # der Geraete-Thread gab null an den Updater
-    world.paths.software_soll.unlink()
+    dateien.schreiben_json(world.paths.software_soll, SOFTWARE, modus=dateien.LESBAR)  # Schreiben von null verloren
     _neustart(world)
-    assert _soll_software(world) == "fehlt"  # ohne gemerktes Angebot wird der Updater nicht gerufen
+    assert _soll_software(world) is None  # null = kein Angebot fuer den Updater (kanal.desired() -> {})
 
 
 def test_a_stored_configuration_without_a_remembered_offer_is_not_replayed(world):

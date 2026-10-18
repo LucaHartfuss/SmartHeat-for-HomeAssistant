@@ -159,7 +159,6 @@ def test_repeated_identical_local_wish_is_not_repeated(tmp_path):
     assert len(a.wuensche) == 1 and len(a.checks) == 1 and a.quelle.geschrieben == [22.0]
 
 
-
 class AblehnenderAufbau(Aufbau):
     def _wunsch(self, value, herkunft, durch):
         """Wie Device.wunsch bei einer Ablehnung (Fehlerinjektion an der Grenze zum Geraetekern)."""

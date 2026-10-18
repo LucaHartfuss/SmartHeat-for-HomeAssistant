@@ -83,12 +83,14 @@ def software_soll_nachholen(geraet: GatewayDeviceHost, device: Device) -> None:
     bevor der Geraete-Thread laeuft: ein Neustart (EV_RELOAD aus konfiguration_uebernommen) oder ein verlorener
     Schreibvorgang kann software_soll.json fehlen lassen, und der Server stellt eine bestaetigte oder abgelehnte Version
     nicht erneut zu (Review Focus 4). Gemerkt ist das zuletzt gueltige Angebot, auch aus einer abgelehnten
-    Konfiguration; ohne gemerktes Angebot (auch nach software null) wird der Updater nicht gerufen."""
+    Konfiguration; ein zurueckgezogenes (software null) geht als null weiter (der Updater liest es als "kein Angebot"),
+    damit keine zurueckgezogene Version aus einer alten software_soll.json installiert wird. Ohne gemerktes Angebot
+    (dokumente.json ohne software_angebot) wird der Updater nicht gerufen."""
     angebot = device.documents.software_angebot()
     if angebot is None:
         return
     try:
-        geraet.software_soll(angebot)
+        geraet.software_soll(angebot.software)
     except Exception as error:  # ein Schreibfehler darf den Start nicht verhindern; der naechste Start versucht es erneut
         logger.error("Soll-Software nicht nachgeholt (%s)", type(error).__name__)
 

@@ -263,15 +263,16 @@ def test_the_target_software_must_have_exactly_the_contract_fields(tmp_path, sof
 # --- Gemerktes Software-Angebot (5b-D2-3, Review Focus 5) ---
 
 SOFTWARE_NEU = {**SOFTWARE, "version": "0.7.1"}
+ANGEBOT, ANGEBOT_NEU, ZURUECKGEZOGEN = docs.Angebot(SOFTWARE), docs.Angebot(SOFTWARE_NEU), docs.Angebot(None)
 
 
 def test_a_valid_offer_of_a_rejected_configuration_is_remembered_across_a_restart(tmp_path):
     store = _store(tmp_path, version="0.5.9")
     assert store.software_angebot() is None
     assert store.empfangen("konfiguration", _konfiguration(software=SOFTWARE)).grund == "update_noetig"
-    assert store.software_angebot() == SOFTWARE
+    assert store.software_angebot() == ANGEBOT
     assert json.loads((tmp_path / docs.ZUSTAND_DATEI).read_text())["software_angebot"] == SOFTWARE
-    assert _store(tmp_path, version="0.5.9").software_angebot() == SOFTWARE  # Neustart
+    assert _store(tmp_path, version="0.5.9").software_angebot() == ANGEBOT  # Neustart
 
 
 @pytest.mark.parametrize("software", [{**SOFTWARE, "extra": 1}, {"version": "0.7.0"}, "0.7.0", [], {}])
@@ -279,7 +280,7 @@ def test_an_invalid_offer_of_a_later_configuration_keeps_the_remembered_one(tmp_
     store = _store(tmp_path)
     store.empfangen("konfiguration", _konfiguration(version=1, software=SOFTWARE))
     assert store.empfangen("konfiguration", _konfiguration(version=2, software=software)).grund == "ungueltig"
-    assert store.software_angebot() == SOFTWARE and _store(tmp_path).software_angebot() == SOFTWARE
+    assert store.software_angebot() == ANGEBOT and _store(tmp_path).software_angebot() == ANGEBOT
 
 
 def test_an_empty_configuration_without_software_keeps_the_remembered_offer(tmp_path):
@@ -288,14 +289,16 @@ def test_an_empty_configuration_without_software_keeps_the_remembered_offer(tmp_
     leer = _leer(version=2)
     del leer["software"]
     assert store.empfangen("konfiguration", leer).grund == "ungueltig"
-    assert store.software_angebot() == SOFTWARE and _store(tmp_path).software_angebot() == SOFTWARE
+    assert store.software_angebot() == ANGEBOT and _store(tmp_path).software_angebot() == ANGEBOT
 
 
-def test_software_null_in_a_valid_configuration_replaces_the_offer(tmp_path):
+def test_software_null_in_a_valid_configuration_is_remembered_as_withdrawn(tmp_path):
+    """null ist ein gemerktes, zurueckgezogenes Angebot (nicht "nichts gemerkt"): der Start reicht es als null weiter."""
     store = _store(tmp_path)
     store.empfangen("konfiguration", _konfiguration(version=1, software=SOFTWARE))
     assert store.empfangen("konfiguration", _konfiguration(version=2, software=None)).uebernommen
-    assert store.software_angebot() is None and _store(tmp_path).software_angebot() is None
+    assert store.software_angebot() == ZURUECKGEZOGEN and _store(tmp_path).software_angebot() == ZURUECKGEZOGEN
+    assert json.loads((tmp_path / docs.ZUSTAND_DATEI).read_text())["software_angebot"] is None
 
 
 def test_a_newer_valid_offer_replaces_the_remembered_one_also_from_a_repeated_version(tmp_path):
@@ -304,7 +307,7 @@ def test_a_newer_valid_offer_replaces_the_remembered_one_also_from_a_repeated_ve
     store = _store(tmp_path)
     store.empfangen("konfiguration", _konfiguration(version=1, software=SOFTWARE))
     assert store.empfangen("konfiguration", _konfiguration(version=1, software=SOFTWARE_NEU)).ok
-    assert _store(tmp_path).software_angebot() == SOFTWARE_NEU
+    assert _store(tmp_path).software_angebot() == ANGEBOT_NEU
 
 
 def test_an_unknown_schema_or_an_operation_does_not_touch_the_offer(tmp_path):
@@ -313,7 +316,7 @@ def test_an_unknown_schema_or_an_operation_does_not_touch_the_offer(tmp_path):
     assert store.empfangen("konfiguration", {**_konfiguration(version=2, software=SOFTWARE_NEU), "schema": 99}).grund \
         == "schema_unbekannt"
     store.empfangen("bedienung", _bedienung(software=SOFTWARE_NEU))
-    assert _store(tmp_path).software_angebot() == SOFTWARE
+    assert _store(tmp_path).software_angebot() == ANGEBOT
 
 
 def test_a_held_back_configuration_remembers_no_offer(tmp_path):
@@ -328,22 +331,37 @@ def test_a_held_back_configuration_remembers_no_offer(tmp_path):
     assert store.software_angebot() is None and _store(tmp_path).software_angebot() is None
 
 
-@pytest.mark.parametrize("gespeichert", [{"update_anlass": None, "abgelehnt": {}},
-                                         {"update_anlass": None, "abgelehnt": {}, "software_angebot": None},
-                                         {"software_angebot": {"version": "0.7.0"}},
-                                         {"software_angebot": "0.7.0"}])
-def test_without_a_valid_remembered_offer_there_is_none(tmp_path, gespeichert):
-    """Kein Kompatibilitaetspfad: ein dokumente.json ohne das Feld (Stand vor 5b-D2-3) oder mit einem Wert ausserhalb
-    des Vertrags heisst kein Angebot."""
+@pytest.mark.parametrize("gespeichert, erwartet", [
+    ({"update_anlass": None, "abgelehnt": {}}, None),
+    ({"update_anlass": None, "abgelehnt": {}, "software_angebot": None}, docs.Angebot(None)),
+    ({"software_angebot": SOFTWARE}, docs.Angebot(SOFTWARE)),
+    ({"software_angebot": {"version": "0.7.0"}}, None),
+    ({"software_angebot": "0.7.0"}, None),
+])
+def test_only_a_stored_key_in_the_contract_form_is_a_remembered_offer(tmp_path, gespeichert, erwartet):
+    """Kein Kompatibilitaetspfad: ein dokumente.json ohne den Schluessel (Stand vor 5b-D2-3) oder mit einem Wert
+    ausserhalb des Vertrags heisst nichts gemerkt; null heisst zurueckgezogen gemerkt."""
     (tmp_path / docs.ZUSTAND_DATEI).write_text(json.dumps(gespeichert))
+    assert _store(tmp_path).software_angebot() == erwartet
+
+
+def test_a_store_without_an_offer_writes_no_key(tmp_path):
+    """Eine Konfiguration ohne Feld software (abgelehnt, dokumente.json wird geschrieben) merkt nichts: kein Schluessel."""
+    store = _store(tmp_path)
+    ohne_software = _konfiguration()
+    del ohne_software["software"]
+    assert store.empfangen("konfiguration", ohne_software).grund == "ungueltig"
+    assert "software_angebot" not in json.loads((tmp_path / docs.ZUSTAND_DATEI).read_text())
     assert _store(tmp_path).software_angebot() is None
 
 
 def test_the_returned_offer_is_a_copy(tmp_path):
     store = _store(tmp_path)
     store.empfangen("konfiguration", _konfiguration(software=SOFTWARE))
-    store.software_angebot()["version"] = "9.9.9"
-    assert store.software_angebot() == SOFTWARE
+    angebot = store.software_angebot()
+    assert angebot is not None and angebot.software is not None
+    angebot.software["version"] = "9.9.9"
+    assert store.software_angebot() == ANGEBOT
 
 
 def test_a_rejected_foreign_field_changes_neither_the_accepted_document_nor_the_update_trigger(tmp_path):

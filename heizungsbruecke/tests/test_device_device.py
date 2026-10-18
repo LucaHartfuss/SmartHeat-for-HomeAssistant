@@ -899,6 +899,19 @@ def test_a_wish_with_an_unknown_origin_or_actor_is_refused_in_the_calling_thread
     assert [w["werte"] for w in world.link.of("up/wish")] == [{"raum_soll": 22.0}]
 
 
+def test_refused_wishes_are_logged_once_per_reason_without_the_value(tmp_path, caplog):
+    world = World(tmp_path)
+    for _ in range(3):
+        for herkunft, durch, wert in (("app-geheim", None, 21.0), (None, "katze-geheim", 21.0),
+                                      ("thermostat", None, math.nan)):
+            with pytest.raises(ValueError):
+                world.device.wunsch(wert, herkunft=herkunft, durch=durch)
+    zeilen = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
+    assert zeilen == ["Bedienwunsch verworfen (herkunft unbekannt)", "Bedienwunsch verworfen (durch unbekannt)",
+                      "Bedienwunsch verworfen (Wunsch ist keine endliche Zahl)"]
+    assert "geheim" not in caplog.text and "nan" not in caplog.text
+
+
 def test_setpoint_source_off_without_a_value_keeps_the_message_open(tmp_path):
     """5b-D1-4: soll_quelle_aus(True) ohne wirksames Soll schliesst die Meldung nicht, sie bleibt offen (Text ohne
     Wert); erst soll_quelle_aus(False) schliesst sie."""
@@ -1128,8 +1141,10 @@ class WerfenderHost(FakeHost):
         super().__init__()
         self.werfen = set(werfen)
         self.anzeigen_versuche = 0
+        self.aufrufe: dict[str, int] = {}
 
     def _pruefen(self, name: str) -> None:
+        self.aufrufe[name] = self.aufrufe.get(name, 0) + 1
         if name in self.werfen:
             raise RuntimeError(f"geheimer Parameter {name}")
 
@@ -1184,8 +1199,10 @@ def test_failing_capabilities_postpone_the_registration_to_a_later_tick(tmp_path
     assert len(world.host.anzeigen_liste) == 5  # der Takt laeuft weiter
     _genau_eine_zeile(caplog, "faehigkeiten")
     world.host.werfen.clear()
+    world.host.aufrufe.clear()
     world.device.schritt()  # der naechste Takt registriert, ohne Backoff
     assert [call[0] for call in world.client.calls] == ["register"] and world.link.started
+    assert world.host.aufrufe["faehigkeiten"] == 1  # der gepruefte Wert geht in die Registrierung, kein zweiter Aufruf
     assert world.client.calls[0][1]["capabilities"] == world.host.faehigkeiten()
 
 

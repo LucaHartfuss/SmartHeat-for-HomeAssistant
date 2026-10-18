@@ -22,9 +22,11 @@ Eine kaputte Datei (Stromausfall) gilt als "keine Version": hello meldet 0, der 
 
 Software-Angebot (5b-D2-3): das Feld software jeder Konfiguration mit bekanntem Schema, die ein Ergebnis bekommt (auch
 eine abgelehnte oder erneut zugestellte), steht in dokumente.json (software_angebot), sofern es die Vertragsform hat
-(software_pruefen, R15; null = kein Angebot). Ein ungueltiges oder fehlendes Feld laesst das gemerkte Angebot stehen.
-Das ist dasselbe Angebot, das das Geraet dem Host uebergibt; software_soll_nachholen des Gateways bietet es nach einem
-Neustart erneut an. Fehlt das Feld in dokumente.json oder hat es nicht die Vertragsform, gilt "kein Angebot".
+(angebot_aus, software_pruefen, R15). null ist ein gemerktes zurueckgezogenes Angebot (Angebot(None)), nicht "nichts
+gemerkt": der Updater soll nach einem verlorenen Schreibvorgang keine zurueckgezogene Version installieren. Ein
+ungueltiges oder fehlendes Feld laesst das gemerkte Angebot stehen. Das ist dasselbe Angebot, das das Geraet dem Host
+uebergibt; software_soll_nachholen des Gateways bietet es nach einem Neustart erneut an. Fehlt der Schluessel in
+dokumente.json oder hat sein Wert nicht die Vertragsform, ist nichts gemerkt (kein Kompatibilitaetspfad).
 
 Rastung (Spec Stufe 3 S3 Abschnitt 3, A5-06): Hebelsatz x Verteilsystem der ersten eingerichteten Konfiguration stehen in
 sicherheitssatz.json; kein Dokument loest sie, auch keine leere Konfiguration. Sie wird vor dem Speichern der Konfiguration
@@ -122,6 +124,23 @@ def software_pruefen(software) -> config_check.Ablehnung | None:
     return None
 
 
+@dataclass(frozen=True)
+class Angebot:
+    """Software-Angebot einer Konfiguration: software None = zurueckgezogen (der Host bekommt null)."""
+    software: dict | None
+
+
+def angebot_aus(art: str, payload: dict) -> Angebot | None:
+    """Das Software-Angebot, das ein Dokument dem Host gibt und das der Speicher merkt: nur eine Konfiguration mit
+    bekanntem Schema und einem Feld software in der Vertragsform (R15); None = das Dokument aendert das Angebot nicht.
+    Fuer eine abgelehnte Konfiguration ebenso (ein Update kann der Ausweg aus der Ablehnung sein)."""
+    if art != KONFIGURATION or payload.get("schema") not in wire.SCHEMATA or "software" not in payload:
+        return None
+    if software_pruefen(payload["software"]) is not None:
+        return None
+    return Angebot(copy.deepcopy(payload["software"]))
+
+
 def _bedienung_pruefen(inhalt: dict) -> config_check.Ablehnung | None:
     if ablehnung := _form(inhalt, _ohne_huelle(wire.BEDIENUNG_FIELDS)):
         return ablehnung
@@ -183,9 +202,10 @@ class DocumentStore:
         zustand = dateien.lesen_json(directory / ZUSTAND_DATEI)
         zustand = zustand if isinstance(zustand, dict) else {}
         self._update_anlass = _anlass(zustand.get("update_anlass"))
+        # Schluessel fehlt: nichts gemerkt; null: zurueckgezogen gemerkt; sonst nur in der Vertragsform
         angebot = zustand.get("software_angebot")
-        self._software_angebot: dict | None = (
-            angebot if isinstance(angebot, dict) and software_pruefen(angebot) is None else None)
+        self._software_angebot: Angebot | None = (
+            Angebot(angebot) if "software_angebot" in zustand and software_pruefen(angebot) is None else None)
         roh = zustand.get("abgelehnt")
         abgelehnt: dict = roh if isinstance(roh, dict) else {}
         # eine Ablehnung von vor 5c traegt an Stelle 2 einen Text: sie laedt ohne details
@@ -239,10 +259,10 @@ class DocumentStore:
 
     def _zustand_speichern(self) -> None:
         anlass = list(self._update_anlass) if self._update_anlass is not None else None
-        dateien.schreiben_json(self._dir / ZUSTAND_DATEI,
-                               {"update_anlass": anlass,
-                                "abgelehnt": {art: list(v) for art, v in self._abgelehnt.items()},
-                                "software_angebot": self._software_angebot}, modus=dateien.PRIVAT)
+        zustand: dict = {"update_anlass": anlass, "abgelehnt": {art: list(v) for art, v in self._abgelehnt.items()}}
+        if self._software_angebot is not None:  # ohne Schluessel: nichts gemerkt
+            zustand["software_angebot"] = self._software_angebot.software
+        dateien.schreiben_json(self._dir / ZUSTAND_DATEI, zustand, modus=dateien.PRIVAT)
 
     def aktuell(self, art: str) -> Dokument | None:
         return self._docs[art]
@@ -262,8 +282,9 @@ class DocumentStore:
     def ablehnung(self, art: str) -> tuple[int, str, dict | None] | None:
         return self._abgelehnt.get(art)
 
-    def software_angebot(self) -> dict | None:
-        """Zuletzt gueltiges Software-Angebot (Kopie), None = keins (Moduldocstring, 5b-D2-3)."""
+    def software_angebot(self) -> Angebot | None:
+        """Zuletzt gueltiges Software-Angebot (Kopie; Angebot(None) = zurueckgezogen), None = nichts gemerkt
+        (Moduldocstring, 5b-D2-3)."""
         return copy.deepcopy(self._software_angebot)
 
     def mark_dirty(self) -> None:
@@ -287,10 +308,11 @@ class DocumentStore:
                     self._update_anlass = (SCHEMA_UNBEKANNT, self._software_version)
                 return self._abgelehnt_mit(art, version, SCHEMA_UNBEKANNT, None)
             vorher = self._software_angebot
-            if art == KONFIGURATION and "software" in payload and software_pruefen(payload["software"]) is None:
+            angebot = angebot_aus(art, payload)
+            if angebot is not None:
                 # vor dem Ergebnis gesetzt, damit es mit Ablehnung bzw. Uebernahme in einem Schreiben steht; ein
                 # ungueltiges oder fehlendes Feld laesst das gemerkte Angebot stehen (R15)
-                self._software_angebot = copy.deepcopy(payload["software"])
+                self._software_angebot = angebot
             try:
                 ergebnis = self._empfangen_bekannt(art, version, payload)
                 if ergebnis.ok and not ergebnis.uebernommen and self._software_angebot != vorher:
@@ -298,6 +320,8 @@ class DocumentStore:
             except BaseException:
                 self._software_angebot = vorher  # kein Ergebnis (NichtPruefbar, Schreibfehler): auch kein Angebot
                 raise
+            if angebot is None and art == KONFIGURATION and "software" in payload:
+                logger.warning("Soll-Software ungueltig, das vorherige Angebot bleibt")
             return ergebnis
 
     def _empfangen_bekannt(self, art: str, version: int, payload: dict) -> Ergebnis:
