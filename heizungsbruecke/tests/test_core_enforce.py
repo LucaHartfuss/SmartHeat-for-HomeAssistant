@@ -1,10 +1,10 @@
 """Durchsetzung (TP11, Spec 5.3)."""
+import logging
 from datetime import date, datetime
-from unittest.mock import MagicMock
 
 import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT
-from fakes import runtime_config
+from fakes import FakeNotifySink, runtime_config
 
 from heizungsbruecke.ha_binding import HaPlantBinding
 from smartheat_core import enforce, wallclock, write_budget
@@ -12,9 +12,10 @@ from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import LocalSafety
 from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_runtime.delivery import SOURCE_LOCAL, DataFault, DeliveryState
-from smartheat_runtime.notifier import STATE_OK, Notifier
+from smartheat_runtime.notifier import Notifier
 from smartheat_runtime.roles import ChannelManifest
 from smartheat_runtime.runtime import Runtime
+from smartheat_runtime.worker import RegulationWorker
 
 SETTLE = VAILLANT_MYPYLLANT.settle_seconds
 SAFETY = LocalSafety(
@@ -95,20 +96,22 @@ def _rt(make_store, clock, ha, uptime=SETTLE + 1, store=None, manifest=MANIFEST,
     """Runtime mit `uptime` Sekunden Laufzeit seit dem Start (Default: Schonfrist nach dem Start
     vorbei, HA gilt ohne eigenes Schreiben als eingeschwungen). `store` wiederverwendet einen
     vorhandenen StateStore (Neustart-Simulation: derselbe backup.json-Pfad, frisch eingelesen)
-    statt den Wiederherstellungspunkt POINT (geaendert um `point`, None = fehlt) neu zu schreiben."""
+    statt den Wiederherstellungspunkt POINT (geaendert um `point`, None = fehlt) neu zu schreiben.
+    Echte Teile (A5-25): Notifier mit Fake-Sink (`rt.kunde`: was beim Kunden ankommt), Worker, Pipeline."""
     if store is None:
         restore_point = {lever: value for lever, value in {**POINT, **point}.items() if value is not None}
         store = make_store(backup={"restore_point": restore_point})
     store.update(stable_target=20.5)
-    notifier = MagicMock(spec=Notifier)
-    notifier.notify.return_value = True
+    kunde = FakeNotifySink()
     override = LeverPipeline(store, HaPlantBinding(ha, manifest, VAILLANT_MYPYLLANT), SAFETY, clock=clock)
     ha.clock = clock
     clock.advance(uptime)
-    return Runtime(
-        manifest=manifest, signals=ha, config=runtime_config(), worker=MagicMock(), store=store,
-        override=override, notifier=notifier, neustart=MagicMock(), clock=clock,
+    rt = Runtime(
+        manifest=manifest, signals=ha, config=runtime_config(), worker=RegulationWorker(clock), store=store,
+        override=override, notifier=Notifier(store, kunde), neustart=lambda: None, clock=clock,
     )
+    rt.kunde = kunde  # type: ignore[attr-defined]  # nur Test: Sicht auf den Sink
+    return rt
 
 
 MANIFEST_G = ChannelManifest(refs={**MANIFEST.refs, "heat_limit": "number.hl"})
@@ -129,15 +132,33 @@ def _curve_writes(rt):
     return [w for w in rt.signals.writes if w[0] == "number.curve"]
 
 
-def _limit_calls(rt):
-    return [c for c in rt.notifier.notify.call_args_list if str(c.args[1]).startswith("limit")]
+# Kundentexte der Meldung `manueller_eingriff` (enforce.MESSAGE, LIMIT_MESSAGE) als Literal.
+def _meldung(was):
+    return (f"SmartHeat: Die Heizungseinstellung wurde in der App verstellt ({was}) und zurückgesetzt. "
+            "Einstellungen bitte nur über das Raumthermostat.")
 
 
-def _message_calls(rt):
-    return [
-        c for c in rt.notifier.notify.call_args_list
-        if c.args[1] != STATE_OK and not str(c.args[1]).startswith("limit")
-    ]
+def _limit_meldung(was):
+    return (f"SmartHeat: Die Heizungseinstellung wird immer wieder verstellt ({was}). SmartHeat setzt sie heute "
+            "nicht mehr zurück, um das Abrufkontingent der Hersteller-Cloud zu schonen, und versucht es morgen erneut.")
+
+
+def _pushes(rt):
+    """Push-Texte des Schluessels manueller_eingriff, die beim Kunden ankommen (Fake-Sink des echten Notifiers)."""
+    return [text for key, text in rt.kunde.pushes if key == "manueller_eingriff"]
+
+
+def _limit_pushes(rt):
+    return [text for text in _pushes(rt) if text.startswith("SmartHeat: Die Heizungseinstellung wird immer wieder")]
+
+
+def _message_pushes(rt):
+    return [text for text in _pushes(rt) if text.startswith("SmartHeat: Die Heizungseinstellung wurde in der App")]
+
+
+def _meldezustand(rt):
+    """Zustand des Meldeschluessels im Notifier (backup.json); \"ok\" = keine offene Meldung."""
+    return rt.notifier.state("manueller_eingriff")
 
 
 def test_no_deviation_no_write(make_store, clock):
@@ -160,7 +181,7 @@ def test_manual_curve_change_is_written_back_and_reported(make_store, clock):
     _rounds(rt)
     assert rt.signals.writes == [("number.curve", 0.9)]
     assert rt.store.state.manual_override_pending["levers"]["curve"] == 1.3
-    assert rt.notifier.notify.call_args.args[0] == enforce.KEY
+    assert rt.kunde.pushes == [("manueller_eingriff", _meldung("Heizkurve"))]
 
 
 def test_heat_limit_changed_in_the_app_is_written_back_and_reported(make_store, clock):
@@ -168,7 +189,7 @@ def test_heat_limit_changed_in_the_app_is_written_back_and_reported(make_store, 
     _rounds(rt)
     assert ("number.hl", 15.0) in rt.signals.writes
     assert rt.store.state.manual_override_pending is not None
-    assert "Heizgrenze" in rt.notifier.notify.call_args.args[2]
+    assert _pushes(rt) == [_meldung("Heizgrenze")]
 
 
 def test_heat_limit_within_half_a_step_is_no_deviation(make_store, clock):
@@ -210,7 +231,9 @@ def test_zone_mode_restore_does_not_switch_again_while_ha_lags(make_store, clock
         _rounds(rt)
     assert [w for w in rt.signals.writes if w[1] == "heat_cool"] == [("climate.zone", "heat_cool")]
     assert rt.store.state.manual_override is not None
-    assert [c for c in rt.notifier.notify.call_args_list if c.args[1] == STATE_OK] == []
+    # kein "wieder in Ordnung" dazwischen: eine Meldung, der Meldezustand steht weiter auf dem Eingriff
+    assert _message_pushes(rt) == [_meldung("Betriebsart der Zone")]
+    assert _meldezustand(rt) == rt.store.state.manual_override["signatur"]
 
 
 def test_min_flow_deviation_is_written_back(make_store, clock):
@@ -248,7 +271,7 @@ def test_record_with_an_inactive_zone_and_no_restore_point_survives_a_reload(mak
     rt2 = _rt(make_store, clock, ha, store=reloaded)
     _rounds(rt2)
 
-    assert _message_calls(rt2) == []  # derselbe Eingriff wird nicht erneut gemeldet
+    assert _message_pushes(rt2) == []  # derselbe Eingriff wird nicht erneut gemeldet
 
 
 def test_pause_after_own_write(make_store, clock):
@@ -268,25 +291,31 @@ def test_after_a_restart_enforcement_waits_for_the_settle_window(make_store, clo
     clock.advance(SETTLE - 60)
     _rounds(rt)
     assert rt.signals.writes == []
-    assert rt.notifier.notify.call_args_list == []
+    assert rt.kunde.pushes == [] and _meldezustand(rt) == "ok"
     assert rt.store.state.manual_override is None
     clock.advance(61)
     _rounds(rt)
     assert rt.signals.writes == [("number.curve", 0.9)]
-    assert len(_message_calls(rt)) == 1
+    assert _message_pushes(rt) == [_meldung("Heizkurve")]
 
 
-def test_enforcement_rate_limited_per_day(make_store, clock):
+def test_enforcement_rate_limited_per_day(make_store, clock, monkeypatch):
     # Review Focus 2: mypyllant uebernimmt das Rueckschreiben nicht -- hoechstens
     # MAX_PER_DAY Schreibvorgaenge, genau eine Eingriffs- und eine Limit-Meldung.
     rt = _rt(make_store, clock, Ha(curve=1.3, reflects_writes=False))
     for _ in range(20):
         clock.advance(SETTLE + 1)
         _rounds(rt)
-    assert len(_curve_writes(rt)) == write_budget.MAX_PER_DAY
-    assert len(_message_calls(rt)) == 1
-    assert len(_limit_calls(rt)) == 1
-    assert [c for c in rt.notifier.notify.call_args_list if c.args[1] == STATE_OK] == []
+    assert len(_curve_writes(rt)) == 6
+    # genau eine Eingriffs- und eine Limit-Meldung, dazwischen kein "wieder in Ordnung"
+    assert _pushes(rt) == [_meldung("Heizkurve"), _limit_meldung("Heizkurve")]
+    assert _meldezustand(rt) == "limit:2026-10-03:Heizkurve"
+    # Am naechsten Tag wird derselbe, nie zurueckgekehrte Eingriff wieder zurueckgesetzt, aber nicht neu gemeldet.
+    monkeypatch.setattr(enforce, "_today", lambda: date(2026, 10, 4))
+    clock.advance(SETTLE + 1)
+    _rounds(rt)
+    assert len(_curve_writes(rt)) == 7
+    assert _pushes(rt) == [_meldung("Heizkurve"), _limit_meldung("Heizkurve")]
 
 
 def test_ignored_write_is_reported_once_until_the_return(make_store, clock):
@@ -297,12 +326,14 @@ def test_ignored_write_is_reported_once_until_the_return(make_store, clock):
     for _ in range(3):
         clock.advance(SETTLE + 1)
         _rounds(rt)
-    assert len(_message_calls(rt)) == 1
+    assert _pushes(rt) == [_meldung("Heizkurve")]
+    assert _meldezustand(rt) == "curve=1.3"  # die Meldung bleibt stehen
     rt.signals.states["number.curve"] = 0.9  # die Anlage uebernimmt den Wert endlich
     clock.advance(SETTLE + 1)
     _rounds(rt)
     assert rt.store.state.manual_override is None
-    assert rt.notifier.notify.call_args.args[1] == STATE_OK
+    assert _meldezustand(rt) == "ok"
+    assert _pushes(rt) == [_meldung("Heizkurve")]  # die Entwarnung ist still
 
 
 def test_retry_interval_between_writes(make_store, clock):
@@ -342,9 +373,10 @@ def test_open_data_fault_pauses(make_store, clock):
 def test_return_clears_hint(make_store, clock):
     rt = _rt(make_store, clock, Ha(curve=1.3))
     _rounds(rt)
+    assert _meldezustand(rt) == "curve=1.3"
     enforce.check_manual_override(rt)  # Anlage steht wieder richtig
     assert rt.store.state.manual_override is None
-    assert rt.notifier.notify.call_args.args[1] == STATE_OK
+    assert _meldezustand(rt) == "ok"
 
 
 def test_counter_resets_next_day(make_store, clock, monkeypatch):
@@ -400,8 +432,7 @@ def test_failed_write_backs_respect_the_quota(make_store, clock):
     times = [at for entity, _, at in ha.attempts if entity == "number.curve"]
     assert len(times) == write_budget.MAX_PER_DAY
     assert all(later - earlier >= enforce.RETRY_SECONDS for earlier, later in zip(times, times[1:], strict=False))
-    assert _message_calls(rt) == []
-    assert len(_limit_calls(rt)) == 1
+    assert _pushes(rt) == [_limit_meldung("Heizkurve")]  # kein "zurueckgesetzt", genau eine Limit-Meldung
     assert rt.store.state.manual_override_pending["levers"]["curve"] == 1.3
 
 
@@ -422,7 +453,7 @@ def test_partial_write_back_is_one_intervention(make_store, clock):
         _rounds(rt)
         clock.advance(300)
     assert ("climate.zone", 21.0) in ha.writes
-    assert len(_message_calls(rt)) == 1
+    assert _message_pushes(rt) == [_meldung("Heizkurve")]
     pending = rt.store.state.manual_override_pending
     assert pending["levers"] == {"curve": 1.3, "room_setpoint": 23.0}
     assert pending is first  # derselbe Eingriff: KPI nicht neu geschrieben (kein erneutes Senden)
@@ -452,13 +483,12 @@ def test_detection_at_the_daily_limit_only_sends_the_limit_message(make_store, c
         clock.advance(SETTLE + 1)
         _rounds(rt)
         enforce.check_manual_override(rt)  # Rueckkehr
-    assert len(_curve_writes(rt)) == write_budget.MAX_PER_DAY
-    rt.notifier.notify.reset_mock()
+    assert len(_curve_writes(rt)) == 6
+    assert _pushes(rt) == [_meldung("Heizkurve")] * 6  # je Eingriff eine Meldung, jeder ist zurueckgekehrt
     rt.signals.states["number.curve"] = 1.3
     clock.advance(SETTLE + 1)
     _rounds(rt)
-    assert _message_calls(rt) == []
-    assert len(_limit_calls(rt)) == 1
+    assert _pushes(rt)[6:] == [_limit_meldung("Heizkurve")]
     assert rt.store.state.manual_override is not None
 
 
@@ -468,7 +498,7 @@ def test_zone_mode_without_shift_target_switches_the_zone_only(make_store, clock
     rt = _rt(make_store, clock, Ha(mode="auto"), room_setpoint=None)
     _rounds(rt)
     assert rt.signals.writes == [("climate.zone", "heat_cool")]
-    assert len(_message_calls(rt)) == 1
+    assert _message_pushes(rt) == [_meldung("Betriebsart der Zone")]
 
 
 def test_curve_tolerance_is_half_a_plant_step(make_store, clock):
@@ -501,7 +531,8 @@ def test_a_second_change_during_an_open_intervention_extends_it(make_store, cloc
     clock.advance(SETTLE + 1)
     _rounds(rt)
     assert rt.store.state.manual_override["signatur"] == "curve=1.2,room_setpoint=22"
-    assert [c.args[1] for c in _message_calls(rt)] == ["curve=1.2", "curve=1.2,room_setpoint=22"]
+    assert _message_pushes(rt) == [_meldung("Heizkurve"), _meldung("Heizkurve, Wunschtemperatur der Zone")]
+    assert _meldezustand(rt) == "curve=1.2,room_setpoint=22"
     pending = rt.store.state.manual_override_pending["levers"]
     assert pending["curve"] == 1.2 and pending["room_setpoint"] == 22.0
 
@@ -529,7 +560,7 @@ def test_message_names_mode_and_setpoint_correctly(make_store, clock, mode, shif
     ha = Ha(mode=mode, shift=shift)
     rt = _rt(make_store, clock, ha)
     _rounds(rt)
-    assert _message_calls(rt)[-1].args[2] == enforce.MESSAGE.format(was=was)
+    assert _message_pushes(rt) == [_meldung(was)]
 
 
 def test_limit_message_is_not_critical(make_store, clock):
@@ -538,7 +569,8 @@ def test_limit_message_is_not_critical(make_store, clock):
     rt = _rt(make_store, clock, ha)
     rt.store.update(write_budget={"enforce:curve": {"day": TODAY.isoformat(), "count": 6, "last": 0.0}})
     _rounds(rt)
-    assert _limit_calls(rt) and _limit_calls(rt)[0].kwargs["critical"] is False
+    assert _pushes(rt) == [_limit_meldung("Heizkurve")]
+    assert rt.kunde.shown == {}  # nicht kritisch: keine offene Meldung
 
 
 @pytest.mark.parametrize(("live", "durchgesetzt"), [(20.6, True), (20.4, True), (20.55, False), (20.5, False)])
@@ -579,22 +611,29 @@ def test_a_clean_round_resets_the_detection_counter(make_store, clock):
     assert ha.writes == []
 
 
-def test_return_to_learned_values_is_reported_quietly_and_not_critical(make_store, clock):
+def test_return_to_learned_values_is_reported_quietly_and_not_critical(make_store, clock, caplog):
     """Mutationsprobe (Mutanten 111, 112): die Rueckkehr-Meldung ist weder kritisch noch laut."""
     ha = Ha(curve=1.3)
     rt = _rt(make_store, clock, ha)
     _rounds(rt)
+    assert _meldezustand(rt) == "curve=1.3"
     ha.states["number.curve"] = 0.9
-    rt.notifier.notify.reset_mock()
-    _rounds(rt, 1)
-    rt.notifier.notify.assert_called_with(enforce.KEY, STATE_OK, enforce.RETURN_MESSAGE, critical=False, silent_ok=True)
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="smartheat_runtime.notifier"):
+        _rounds(rt, 1)
+    assert _meldezustand(rt) == "ok"
+    assert rt.kunde.pushes == [("manueller_eingriff", _meldung("Heizkurve"))]  # still: kein Push
+    assert rt.kunde.shown == {} and rt.kunde.withdrawn == []  # nicht kritisch: keine offene Meldung angefasst
+    assert [(r.levelno, r.getMessage()) for r in caplog.records if r.name == "smartheat_runtime.notifier"] == [
+        (logging.INFO, "SmartHeat: Die Heizungseinstellung steht wieder auf den gelernten Werten.")]
 
 
 def test_reset_message_is_not_critical(make_store, clock):
     """Mutationsprobe (Mutant 121): die Meldung ueber das Zuruecksetzen ist nicht kritisch."""
     rt = _rt(make_store, clock, Ha(curve=1.3))
     _rounds(rt)
-    assert _message_calls(rt)[-1].kwargs["critical"] is False
+    assert _message_pushes(rt) == [_meldung("Heizkurve")]
+    assert rt.kunde.shown == {}  # nicht kritisch: keine offene Meldung
 
 
 def test_zone_mode_deviation_is_recorded_as_zero(make_store, clock):

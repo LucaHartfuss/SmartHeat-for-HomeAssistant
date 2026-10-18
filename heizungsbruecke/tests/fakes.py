@@ -34,6 +34,64 @@ class HaEventSink:
         self._ha_api.fire_event("smartheat_status", event)
 
 
+class FakeNotifySink:
+    """NotifySink der Laufzeit-Tests (Grenze zum Kunden, A5-25): der echte Notifier entscheidet ueber Entprellung,
+    Hinweis-Schalter und offene Meldungen; der Sink haelt nur fest, was beim Kunden ankommt."""
+
+    def __init__(self) -> None:
+        self.pushes: list[tuple[str, str]] = []  # (Schluessel, Text) je Push
+        self.shown: dict[str, str] = {}  # offene kritische Meldungen je Schluessel
+        self.withdrawn: list[str] = []
+
+    def push(self, key: str, message: str) -> None:
+        self.pushes.append((key, message))
+
+    def show(self, key: str, message: str) -> None:
+        self.shown[key] = message
+
+    def withdraw(self, key: str) -> None:
+        self.shown.pop(key, None)
+        self.withdrawn.append(key)
+
+
+class FakeMqttChannel:
+    """MqttChannel der Laufzeit-Tests (Port, smartheat_runtime.ports): haelt die gesendeten Nachrichten fest."""
+
+    def __init__(self, connected: bool = True) -> None:
+        self.connected = connected
+        self.connect_failures = 0
+        self.snapshots: list[dict] = []
+        self.telemetry: list[dict] = []
+        self.started = False
+        self.stopped = False
+
+    def is_connected(self) -> bool:
+        return self.connected
+
+    def publish_snapshot(self, payload: dict) -> None:
+        self.snapshots.append(copy.deepcopy(payload))
+
+    def publish_telemetry(self, payload: dict) -> None:
+        self.telemetry.append(copy.deepcopy(payload))
+
+    def loop_start(self) -> None:
+        self.started = True
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
+def datei_stand(path: Path) -> tuple[int, int] | None:
+    """Kennung einer Datei auf dem Datentraeger (Inode, Aenderungszeit in ns), None ohne Datei. Jedes Schreiben geht
+    atomar ueber eine neue Datei (dateien.schreiben, os.replace) und aendert die Inode: gleicher Stand heisst, die Datei
+    wurde nicht geschrieben (Wirkung auf dem Datentraeger statt eines Spions auf dem Store, A5-25)."""
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return None
+    return stat.st_ino, stat.st_mtime_ns
+
+
 class FakeHa:
     token = "tok"
 

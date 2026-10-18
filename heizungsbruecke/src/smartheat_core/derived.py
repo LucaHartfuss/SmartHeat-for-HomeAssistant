@@ -18,6 +18,9 @@ class DerivedRuntime(Protocol):
 
 
 TOLERANCE = 0.05
+# Gleitkomma-Rest (21.05 - 21.0 = 0.0500000000000007): eine Abweichung von genau TOLERANCE schreibt nicht (wie
+# enforce._EPSILON).
+_EPSILON = 1e-9
 
 
 def expected(rt: DerivedRuntime) -> float | None:
@@ -51,7 +54,7 @@ def sync(rt: DerivedRuntime) -> None:
         except Exception as error:
             logger.warning("Mindestvorlauf nicht lesbar (%s), wird neu geschrieben", error)
             current = None
-    if current is not None and abs(current - value) <= TOLERANCE:
+    if current is not None and abs(current - value) <= TOLERANCE + _EPSILON:
         rt.store.update(min_flow_current=value)
         return
     try:
