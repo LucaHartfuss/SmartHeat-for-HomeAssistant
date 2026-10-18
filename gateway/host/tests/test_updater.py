@@ -6,6 +6,7 @@ import json
 import os
 import random
 import stat
+import subprocess
 import threading
 import time
 import urllib.request
@@ -1171,7 +1172,9 @@ def _main_environment(monkeypatch, root: Path, *, offer=None, allow_http=None):
     (root / "release.pub").write_text("untrusted comment: x\nAAAA\n")
     monkeypatch.setenv("SHG_ROOT", str(root))
     monkeypatch.setenv("SHG_RELEASE_PUB", str(root / "release.pub"))
-    monkeypatch.delenv("SHG_UPDATER_ALLOW_HTTP", raising=False)
+    for name in ("SHG_UPDATER_ALLOW_HTTP", "SHG_UPDATER_HEALTH_URL", "SHG_UPDATER_HEALTH_SECONDS",
+                 "SHG_COMPOSE_PROJECT"):
+        monkeypatch.delenv(name, raising=False)
     if allow_http is not None:
         monkeypatch.setenv("SHG_UPDATER_ALLOW_HTTP", allow_http)
 
@@ -1254,6 +1257,173 @@ def test_main_accepts_an_http_offer_only_with_the_switch_set_to_1(tmp_path, monk
             ("0.3.0", "manifest_ungueltig")]
     else:  # der Abruf scheiterte am Netz: vorlaeufig, nichts gemeldet
         assert not reports.exists()
+
+
+class _Site:
+    """Lokaler HTTP-Server: `routes` bildet einen Pfad auf Bytes oder eine Funktion `() -> bytes` ab; `hits` haelt jede
+    angefragte Adresse fest."""
+
+    def __init__(self):
+        self.routes, self.hits = {}, []
+        site = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                site.hits.append(self.path)
+                body = site.routes.get(self.path)
+                if body is None:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(body() if callable(body) else body)
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.port = self.server.server_port
+        self.url = f"http://127.0.0.1:{self.port}"
+        self.thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+        self.thread.start()
+
+
+@pytest.fixture
+def site():
+    site = _Site()
+    yield site
+    site.server.shutdown()
+    site.server.server_close()
+    site.thread.join()
+
+
+@pytest.fixture
+def docker(monkeypatch):
+    """`docker` an der Unterprozess-Grenze: `subprocess.run` (autospec) wird vor dem Neuladen von `bundles` ersetzt, weil
+    `ComposeRunner` es beim Import als Standard bindet. `docker.calls` haelt jeden Aufruf, `docker.runtime_health` ist die
+    Antwort von `docker compose ps`."""
+    class Docker:
+        calls: list = []
+        runtime_health = "healthy"
+
+    def run(command, **kwargs):
+        Docker.calls.append(list(command))
+        stdout = ""
+        if "ps" in command:
+            stdout = json.dumps([{"Service": "runtime", "Health": Docker.runtime_health}])
+        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+
+    Docker.calls = []
+    monkeypatch.setattr(subprocess, "run", create_autospec(subprocess.run, side_effect=run))
+    importlib.reload(bundles)
+    yield Docker
+    monkeypatch.undo()
+    importlib.reload(bundles)
+
+
+HEALTHY_BODY = json.dumps({"server_ok": True, "runtime_status": None}).encode()
+UNHEALTHY_BODY = json.dumps({"server_ok": False, "runtime_status": None}).encode()
+
+
+def _main_update(monkeypatch, root, site, *, signed_by_other_key=False, release_pub_of_other_key=False,
+                 health_path="/healthz", health_body=HEALTHY_BODY, project=None, health_seconds=None):
+    """Bereitet einen echten `main --once` vor: ein signiertes Bundle 0.3.0 auf dem lokalen Server, das Angebot in
+    `data/software_soll.json`, `release.pub`, ein erreichbarer Broker (der Server selbst) und die Umgebung."""
+    secret, key_id, public = keypair()
+    other_secret, other_id, other_public = keypair()
+    files = {"docker-compose.yml": COMPOSE, "mosquitto.conf": MOSQ}
+    raw = json.dumps({"version": "0.3.0", "min_updater_version": "0.1.0",
+                      "files": {name: hashlib.sha256(data).hexdigest() for name, data in files.items()},
+                      "images": {"gateway": "ghcr.io/x/gw@sha256:" + "a" * 64}}).encode()
+    signature = sign(*((other_secret, other_id) if signed_by_other_key else (secret, key_id)), raw)
+    site.routes.update({"/0.3.0/manifest.json": raw, **{f"/0.3.0/{name}": data for name, data in files.items()},
+                        health_path: health_body})
+    offer = {"version": "0.3.0", "manifest_url": site.url + "/0.3.0/manifest.json", "signature": signature,
+             "manifest_sha256": hashlib.sha256(raw).hexdigest()}
+    _main_environment(monkeypatch, root, offer=offer, allow_http="1")
+    (root / "release.pub").write_text(other_public if release_pub_of_other_key else public)
+    (root / "data" / "device").mkdir()
+    (root / "data" / "device" / "endpoint.json").write_text(json.dumps({"host": "127.0.0.1", "port": site.port}))
+    monkeypatch.setenv("SHG_UPDATER_HEALTH_URL", site.url + health_path)
+    if project is not None:
+        monkeypatch.setenv("SHG_COMPOSE_PROJECT", project)
+    if health_seconds is not None:
+        monkeypatch.setenv("SHG_UPDATER_HEALTH_SECONDS", health_seconds)
+
+
+@pytest.mark.parametrize(("release_pub_of_other_key", "outcome"), [(False, "aktualisiert"), (True, "abgelehnt")])
+def test_main_verifies_the_bundle_with_the_key_of_shg_release_pub(
+        tmp_path, monkeypatch, capsys, site, docker, fast_sleep, release_pub_of_other_key, outcome):
+    """`SHG_RELEASE_PUB` nennt den Schluessel: ein Bundle, das ein anderer Schluessel signiert hat (hier: die Datei traegt
+    einen anderen oeffentlichen Schluessel), wird abgelehnt und nie gestartet, mit dem richtigen angenommen."""
+    _main_update(monkeypatch, tmp_path, site, release_pub_of_other_key=release_pub_of_other_key)
+    updater.main(["--once"])
+    assert capsys.readouterr().out == outcome + "\n"
+    started = [call for call in docker.calls if "up" in call]
+    reports = json.loads((tmp_path / "data" / "software_meldungen.json").read_text())["meldungen"]
+    if outcome == "abgelehnt":
+        assert started == [] and [(m["result"], m["reason"]) for m in reports] == [("rollback", "signatur_ungueltig")]
+    else:
+        assert len(started) == 1 and [(m["result"], m["reason"]) for m in reports] == [("ok", "")]
+
+
+@pytest.mark.parametrize(("project", "expected"), [("testprojekt", "testprojekt"), (None, "smartheat")])
+def test_main_passes_shg_compose_project_to_every_docker_compose_call(
+        tmp_path, monkeypatch, capsys, site, docker, fast_sleep, project, expected):
+    _main_update(monkeypatch, tmp_path, site, project=project)
+    updater.main(["--once"])
+    assert capsys.readouterr().out == "aktualisiert\n"
+    compose_calls = [call for call in docker.calls if call[:2] == ["docker", "compose"]]
+    assert {call[call.index("-p") + 1] for call in compose_calls} == {expected}
+    assert {word for call in compose_calls for word in call if word in ("pull", "up", "ps")} == {"pull", "up", "ps"}
+
+
+def test_main_asks_exactly_the_address_of_shg_updater_health_url(
+        tmp_path, monkeypatch, capsys, site, docker, fast_sleep):
+    _main_update(monkeypatch, tmp_path, site, health_path="/gesundheit")
+    site.routes["/healthz"] = UNHEALTHY_BODY  # die Standardadresse waere ungesund: sie darf nicht gefragt werden
+    updater.main(["--once"])
+    assert capsys.readouterr().out == "aktualisiert\n"
+    assert "/gesundheit" in site.hits and "/healthz" not in site.hits
+
+
+@pytest.fixture
+def fast_sleep(monkeypatch, reload_updater):
+    """Die Takte der Gesundheitspruefung (10 s) laufen in 10 ms; eine Frist, die nicht endet, bricht nach 300 Takten ab.
+    `updater` wird neu geladen, weil `Updater` `time.sleep` beim Import als Standard bindet."""
+    real_sleep, calls = time.sleep, []
+
+    def sleep(seconds):
+        calls.append(seconds)
+        assert len(calls) < 300, "Die Frist endet nicht"
+        real_sleep(0.01)
+
+    monkeypatch.setattr(time, "sleep", create_autospec(time.sleep, side_effect=sleep))
+    reload_updater()
+    return calls
+
+
+def test_main_ends_the_health_wait_after_shg_updater_health_seconds(
+        tmp_path, monkeypatch, capsys, site, docker, fast_sleep):
+    """Ein Bundle, das nie gesund wird: mit 0,05 s Frist rollt `main` zurueck, nachdem die Frist auf der monotonen Uhr
+    verstrichen ist (nicht nach dem Standard von 600 s, der hier 300 Takte uebersaehe)."""
+    _main_update(monkeypatch, tmp_path, site, health_path="/gesundheit", health_body=UNHEALTHY_BODY, health_seconds="0.05")
+    started = time.monotonic()
+    updater.main(["--once"])
+    assert time.monotonic() - started >= 0.05 and len(fast_sleep) >= 3
+    assert capsys.readouterr().out == "zurueckgerollt\n"
+    reports = json.loads((tmp_path / "data" / "software_meldungen.json").read_text())["meldungen"]
+    assert [(m["result"], m["reason"]) for m in reports] == [("rollback", "ungesund")]
+
+
+def test_main_waits_longer_for_a_bundle_that_turns_healthy_when_the_deadline_is_long(
+        tmp_path, monkeypatch, capsys, site, docker, fast_sleep):
+    """Gegenprobe zum vorigen Test: dasselbe Bundle, ab der vierten Anfrage gesund, mit 1000 s Frist: aktualisiert."""
+    _main_update(monkeypatch, tmp_path, site, health_path="/gesundheit", health_seconds="1000")
+    site.routes["/gesundheit"] = lambda: HEALTHY_BODY if site.hits.count("/gesundheit") >= 4 else UNHEALTHY_BODY
+    updater.main(["--once"])
+    assert capsys.readouterr().out == "aktualisiert\n" and len(fast_sleep) == 3
 
 
 def test_main_once_wires_the_environment(tmp_path, monkeypatch, capsys):
