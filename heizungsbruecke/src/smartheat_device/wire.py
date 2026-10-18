@@ -91,6 +91,10 @@ INVENTUR_ANLAGE_FIELDS = ("kennung", "sicherheitswarnungen")
 INVENTUR_FEATURE_FIELDS = ("anlage", "feature", "properties", "commands")
 RESULT_FIELDS = ("schema", "ok", "result", "error")
 RESULT_TARGETS = ("command_id", "dokument", "version")  # entweder command_id oder dokument und version
+#: Pflicht je Ziel (Testoffensive T2): ein Befehls-Ergebnis traegt alle RESULT_FIELDS (result und error null je nach
+#: ok); ein Dokument- oder Software-Ergebnis traegt nie result, error nur bei ok false.
+RESULT_PFLICHT_DOKUMENT = ("schema", "ok")
+RESULT_OPTIONAL_DOKUMENT = ("error",)
 ERROR_FIELDS = ("grund", "details")
 WISH_FIELDS = ("schema", "wish_id", "basis_version", "ts", "uhr_synchron", "werte")
 WISH_OPTIONAL = ("roh", "herkunft", "durch")  # fehlt = nicht begrenzt bzw. unbekannt

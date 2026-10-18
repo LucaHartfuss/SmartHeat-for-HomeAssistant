@@ -1,7 +1,7 @@
 """Bausteine der Geraetenachrichten (Plan S8a-1 P1): jede Nachricht hat genau die Felder des Vertrags."""
 import pytest
 
-from smartheat_device import nachrichten, wire
+from smartheat_device import commands, nachrichten, wire
 
 FAEHIGKEITEN = {"drivers": [], "zigbee": False}
 RAUM = {"ist": 20.5, "soll": 21.0, "soll_quelle": "portal", "ts": "t"}
@@ -93,3 +93,16 @@ def test_ergebnis_dokument_mit_fehler():
     body = nachrichten.ergebnis_dokument("konfiguration", 2, False, {"grund": "ungueltig", "details": None})
     assert body == {"schema": 1, "dokument": "konfiguration", "version": 2, "ok": False,
                     "error": {"grund": "ungueltig", "details": None}}
+
+
+def test_befehls_ergebnis_hat_genau_die_pflichtfelder_des_befehls():
+    # Bruchtest (K2): Literal aus der Spec
+    body = commands.result_payload("c" * 32, True, {"devices": []}, None)
+    assert set(body) == {"schema", "ok", "result", "error", "command_id"}
+
+
+def test_dokument_ergebnis_hat_nie_result_und_error_nur_bei_ablehnung():
+    ok = nachrichten.ergebnis_dokument("bedienung", 2, True)
+    abgelehnt = nachrichten.ergebnis_dokument("konfiguration", 3, False, {"grund": "ungueltig"})
+    assert set(ok) == {"schema", "ok", "dokument", "version"}
+    assert set(abgelehnt) == {"schema", "ok", "dokument", "version", "error"}

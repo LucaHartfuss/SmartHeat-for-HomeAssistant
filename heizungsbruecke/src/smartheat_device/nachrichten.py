@@ -69,10 +69,8 @@ def notifications(items: list[dict]) -> dict:
     return pruefen("notifications", {"schema": wire.SCHEMA, "items": items}, wire.NOTIFICATIONS_FIELDS)
 
 
-# up/result: schema und ok sind immer da, result und error fehlen bei einem Dokument-Ergebnis. Das Ziel ist command_id
-# (Befehl) oder dokument und version (Dokument); beide Ziele stehen in RESULT_TARGETS.
-ERGEBNIS_OPTIONAL = ("result", "error")
-ERGEBNIS_PFLICHT = tuple(feld for feld in wire.RESULT_FIELDS if feld not in ERGEBNIS_OPTIONAL)
+# up/result: Pflicht je Ziel steht in wire.RESULT_PFLICHT_DOKUMENT (Dokument, Software) und RESULT_FIELDS (Befehl).
+# Das Ziel ist command_id (Befehl) oder dokument und version (Dokument); beide Ziele stehen in RESULT_TARGETS.
 ZIEL_BEFEHL, *ZIELE_DOKUMENT = wire.RESULT_TARGETS
 
 
@@ -80,7 +78,7 @@ def ergebnis_dokument(dokument: str, version, ok: bool, error: dict | None = Non
     body = {"schema": wire.SCHEMA, "dokument": dokument, "version": version, "ok": ok}
     if error is not None:
         body["error"] = error
-    return pruefen("ergebnis", body, (*ERGEBNIS_PFLICHT, *ZIELE_DOKUMENT), ERGEBNIS_OPTIONAL)
+    return pruefen("ergebnis", body, (*wire.RESULT_PFLICHT_DOKUMENT, *ZIELE_DOKUMENT), wire.RESULT_OPTIONAL_DOKUMENT)
 
 
 def _csr(name: str, csr) -> None:
