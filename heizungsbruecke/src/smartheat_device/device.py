@@ -44,8 +44,6 @@ PRUEFUNG_WIEDERHOLEN_SECONDS = 30
 #: Lokaler Hinweis bei einer abgelehnten Konfiguration (Spec Stufe 3 S5 6.3, Entscheidung E2 A): den Text der Ablehnung
 #: bildet der Server, das Geraet nennt nur den Code.
 ABLEHNUNG_ANZEIGE = "Die Einrichtung wurde abgelehnt (Code {grund}). Die Begründung zeigt der Einrichtungsassistent."
-#: Groesster Betrag eines Ursprungswerts, wie der Server ihn annimmt (geraete/device_checks.URSPRUNG_WERT_MAX).
-URSPRUNG_WERT_MAX = 1e12
 #: Down-Topic eines Dokuments -> Dokumentart (wire.DOKUMENT_TOPICS umgekehrt)
 _DOKUMENT_ART = {topic: art for art, topic in wire.DOKUMENT_TOPICS.items()}
 _RUNNING = ("regelt", "abo_inaktiv")
@@ -85,7 +83,7 @@ def _ursprungswert_ok(wert) -> bool:
         return False
     if isinstance(wert, int | float):
         # Betrag zuerst: math.isfinite wirft bei riesigen int (OverflowError); NaN faellt beim Vergleich durch.
-        return abs(wert) <= URSPRUNG_WERT_MAX and math.isfinite(wert)
+        return abs(wert) <= wire.URSPRUNG_WERT_MAX and math.isfinite(wert)
     return isinstance(wert, str) and 0 < len(wert) <= wire.URSPRUNG_HEBEL_MAX_CHARS
 
 

@@ -239,6 +239,16 @@ def test_status_respects_v1_limits(tmp_path):
     assert all(isinstance(v, float) and math.isfinite(v) and abs(v) <= 1e12 for v in werte.values())
 
 
+def test_ursprungswert_genau_auf_der_grenze_von_1e12(tmp_path):
+    """URSPRUNG_WERT_MAX = 1e12 als Literal aus der Spec (nicht ueber die Konstante): beide Vorzeichen gehen hinaus,
+    ein Hauch darueber nicht."""
+    assert wire.URSPRUNG_WERT_MAX == 1e12
+    world = World(tmp_path)
+    world.host.ursprung = {"plus": 1e12, "minus": -1e12, "plus_drueber": 1.0000001e12, "minus_drueber": -1.0000001e12}
+    world.verbinden()
+    assert world.link.of("up/status")[-1]["ursprungswerte"] == {"plus": 1e12, "minus": -1e12}
+
+
 def test_unreportable_originals_are_logged_once_per_name_without_values(tmp_path, caplog):
     world = World(tmp_path)
     world.host.ursprung = {**{f"h{i:02d}": float(i) for i in range(17)}, "leer": "", "gross": 1e13,

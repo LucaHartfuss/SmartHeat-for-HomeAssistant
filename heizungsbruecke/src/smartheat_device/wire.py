@@ -140,6 +140,7 @@ MODI = ("manuell",)
 QUELLEN = ("portal", "geraet", "auftrag")
 RAUM_SOLL_MIN, RAUM_SOLL_MAX, RAUM_SOLL_STEP = 15.0, 25.0, 0.5
 URSPRUNG_MAX_HEBEL, URSPRUNG_HEBEL_MAX_CHARS = 16, 64  # Ursprungswerte: hoechstens so viele Hebel, Namen so lang
+URSPRUNG_WERT_MAX = 1e12  # groesster Betrag einer Zahl in ursprungswerte
 DOKUMENT_ERRORS = (
     "schema_unbekannt", "ungueltig", "hebelsatz_eingerastet", "sicherheitswerte_fehlen", "rolle_unzulaessig",
     "doppelt_belegt", "treiber_parameter", "update_noetig", "ausserhalb_bereich",
