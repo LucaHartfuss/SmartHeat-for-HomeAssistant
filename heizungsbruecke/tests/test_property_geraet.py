@@ -14,13 +14,13 @@ from pathlib import Path
 import pytest
 from conftest import FakeClock
 from device_helpers import GeraeteCa, zertifikat_fuer
-from fakes import FakeHa, trigger_klasse
+from fakes import VIESSMANN_OPTIONEN, VIESSMANN_ZUSTAND, FakeHa, trigger_klasse
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from test_device_bootstrap import FakeResponse, FakeSession
 from test_device_commands import Sent, _command
 from test_device_documents import _bedienung, _konfiguration, _leer, _store
-from test_runtime import OPTIONS, VIESSMANN_OPTIONEN, VIESSMANN_ZUSTAND, _ha_verbunden, _mqtt, _start
+from test_runtime import OPTIONS, _ha_verbunden, _mqtt, _start
 from test_runtime_plan3b import WEISHAUPT, WEISHAUPT_STATES
 
 from heizungsbruecke.derived_sensors import DerivedSensors

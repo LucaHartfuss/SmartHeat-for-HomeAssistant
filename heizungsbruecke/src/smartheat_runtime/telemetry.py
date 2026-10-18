@@ -33,6 +33,9 @@ KPI_ENERGY_ROLES = tuple(f"energy_{kanal}" for kanal in ENERGIE_KANAELE)
 
 #: Kanal -> zuletzt gemeldete fremde Einheit: eine Warnung je Wechsel, nicht je Tick (Spec Stufe 3 S4b 5).
 _EINHEIT_GEWARNT: dict[str, str] = {}
+#: Pflichtfelder, deren Ausfall seit der letzten gesendeten Telemetrie schon gewarnt ist: eine WARNING je Ausfall,
+#: weitere Takte nur DEBUG, eine INFO-Zeile bei der Wiederaufnahme (Testoffensive T4').
+_AUSFALL_GEWARNT: set[str] = set()
 
 # Regel-Telemetrie fuer den Regelkern (TP11). Gegenstueck: heizungsserver
 # regelung/history.TELEMETRY_REGULATION_FIELDS (Contract-Check (Vertrag V1b)).
@@ -58,8 +61,16 @@ def run_telemetry_tick(
         if not ist_endliche_zahl(room_actual):
             # Pflichtfeld der Telemetrie (der Server lehnt sie sonst ab, Testoffensive T2, Nr. 17): kein Senden, der
             # naechste Tick liest erneut
-            logger.warning("Telemetrie nicht gesendet: room_actual ist keine endliche Zahl")
+            if "room_actual" in _AUSFALL_GEWARNT:
+                logger.debug("Telemetrie nicht gesendet: room_actual ist weiterhin keine endliche Zahl")
+            else:
+                _AUSFALL_GEWARNT.add("room_actual")
+                logger.warning("Telemetrie nicht gesendet: room_actual ist keine endliche Zahl; weitere Takte nur im "
+                               "DEBUG-Log bis zur Wiederaufnahme")
             return
+        if "room_actual" in _AUSFALL_GEWARNT:
+            _AUSFALL_GEWARNT.discard("room_actual")
+            logger.info("Telemetrie wieder aufgenommen: room_actual ist wieder eine endliche Zahl")
         kpi_fields = read_kpi_fields(manifest, signals, energy, einheiten=einheiten)
         regulation_fields = read_regulation_fields(manifest, signals, room_target)
         publish_telemetry(

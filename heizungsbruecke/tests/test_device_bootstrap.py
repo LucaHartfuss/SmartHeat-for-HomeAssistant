@@ -405,7 +405,10 @@ def test_an_unusable_access_counts_as_a_failure_with_backoff(tmp_path, ident, ca
     assert flow.faellig()
 
 
-@pytest.mark.parametrize("feld, wert", [("mqtt_endpoint", "h\ud800"), ("mqtt_ca", "-----BEGIN CERTIFICATE-----\udfff")])
+@pytest.mark.parametrize("feld, wert", [
+    ("mqtt_endpoint", "h\ud800"), ("mqtt_ca", "-----BEGIN CERTIFICATE-----\udfff"),
+    ("certificate", "-----BEGIN CERTIFICATE-----\ud800"),
+])
 def test_a_response_with_a_lone_surrogate_is_unusable_and_backs_off(tmp_path, ident, ca, feld, wert):
     """speichern() koennte ein einzelnes Surrogat (json.loads aus "\\ud800") nicht schreiben: UnicodeEncodeError
     ausserhalb des try in holen, kein Backoff, register in jedem Takt (Testoffensive T2, Task 13, Fix-Runde 1)."""

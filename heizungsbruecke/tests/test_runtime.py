@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import geraet_helpers
 import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT
-from fakes import FakeHa, trigger_klasse
+from fakes import VIESSMANN_OPTIONEN, VIESSMANN_ZUSTAND, FakeHa, trigger_klasse
 
 from heizungsbruecke import geraet_status
 from heizungsbruecke.derived_sensors import DerivedSensors
@@ -1264,15 +1264,6 @@ def test_answer_with_null_levers_is_a_server_fault_without_writing(env):
     assert "ungültige Serverantwort" in env.ha.pushes[-1]
 
 
-# Hebelsatz mit `level` (Viessmann; wie test_runtime_plan3b.py, das test_runtime importiert und daher nicht zurueck)
-VIESSMANN_OPTIONEN = {
-    "lever_set": "viessmann_vicare", "entity_curve_current": "number.slope", "entity_level_current": "number.shift",
-    "entity_shift_current": "number.normal_temperature", "entity_mode_select": "climate.heizkreis",
-    "entity_heat_limit": "", "entity_min_flow": "",
-}
-VIESSMANN_ZUSTAND = {
-    "number.slope": 1.0, "number.shift": 0.0, "number.normal_temperature": 20.0, "climate.heizkreis::preset_mode": "eco",
-}
 # (Name, Optionen, Zustand der Fake-HA, Hebel des Satzes): Vaillant ohne `level`, Viessmann mit `level`
 HEBELSAETZE = {
     "vaillant": ({}, {}, ("curve", "room_setpoint", "heat_limit")),
@@ -1346,8 +1337,9 @@ def test_huge_integer_as_level_is_a_server_fault(env, gross, caplog):
 
 @pytest.mark.parametrize("ort", ["room_setpoint", "learned_heat_limit"])
 def test_negative_huge_integer_as_room_setpoint_and_learned_heat_limit(env, ort, caplog):
-    """-10**400 (nur das positive Vorzeichen war belegt): als Raum-Soll der Hebel ein Serverfehler ohne Schreiben, als
-    gelernte Heizgrenze uebergangen (kein Datenfehler, kein Fehler im Worker), die Hebelwerte werden geschrieben."""
+    """-10**400 (nur das positive Vorzeichen war belegt): als Raum-Soll der Hebel ein Serverfehler ohne Schreiben; als
+    gelernte Heizgrenze verwirft er die ganzen Lernwerte der Antwort (der Lernstand bleibt leer, kein Datenfehler, kein
+    Fehler im Worker), die Hebelwerte der Antwort werden geschrieben."""
     _quiet_backup(env)
     bridge = _start(env)
     _set_room_target(env, bridge, 20.5)
@@ -1384,7 +1376,6 @@ def test_minus_infinity_as_lever_value_is_a_server_fault(env, hebel):
     _answer(env, bridge, seq, levers={**levers, hebel: float("-inf")})
 
     _ist_serverfehler_ohne_schreiben(env, bridge, vorher)
-
 
 
 def test_snapshot_payload_is_schema_4(env):

@@ -3,6 +3,7 @@ Hebelsatz des Konfigurationsdokuments waehlt Binding und lokale Sicherheit; fehl
 Konfigurationsfehler; Vaillant bleibt unveraendert (alle Tests in test_runtime.py)."""
 import logging
 
+from fakes import VIESSMANN_OPTIONEN, VIESSMANN_ZUSTAND
 from test_runtime import (
     _advance,
     _backup,
@@ -28,14 +29,6 @@ WEISHAUPT = {
 WEISHAUPT_STATES = {
     "number.hk": 0.75, "number.normal": 20.0, "number.swu": 18.0, "select.betriebsart": "hz_operationmode_automatic",
     "number.komfort": 22.0, "number.absenk": 18.0,
-}
-VIESSMANN = {
-    "lever_set": "viessmann_vicare", "entity_curve_current": "number.slope", "entity_level_current": "number.shift",
-    "entity_shift_current": "number.normal_temperature", "entity_mode_select": "climate.heizkreis",
-    "entity_heat_limit": "", "entity_min_flow": "",
-}
-VIESSMANN_STATES = {
-    "number.slope": 1.0, "number.shift": 0.0, "number.normal_temperature": 20.0, "climate.heizkreis::preset_mode": "eco",
 }
 
 
@@ -136,8 +129,8 @@ def test_weishaupt_restart_after_the_sign_off_writes_nothing_despite_server_orig
 
 
 def test_viessmann_start_leaves_eco_and_writes_curve_and_level_together(env):
-    env.ha.states.update(VIESSMANN_STATES)
-    bridge = _start(env, **VIESSMANN)
+    env.ha.states.update(VIESSMANN_ZUSTAND)
+    bridge = _start(env, **VIESSMANN_OPTIONEN)
 
     assert env.ha.writes == [("climate.heizkreis::preset_mode", "home")]
     snapshot = _first_snapshot(env, bridge)

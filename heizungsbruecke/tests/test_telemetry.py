@@ -1,5 +1,7 @@
+import importlib.util
 import logging
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -9,6 +11,16 @@ from smartheat_runtime import telemetry
 from smartheat_runtime.delivery import DataFault
 from smartheat_runtime.ports import MqttChannel, SignalSource, SourceUnavailable
 from smartheat_runtime.roles import ChannelManifest
+
+
+@pytest.fixture(autouse=True)
+def _warnzustand_zuruecksetzen():
+    """Die Warn-Zustaende sind modulweit (eine Warnung je Wechsel bzw. Ausfall), je Test frisch."""
+    telemetry._EINHEIT_GEWARNT.clear()
+    telemetry._AUSFALL_GEWARNT.clear()
+    yield
+    telemetry._EINHEIT_GEWARNT.clear()
+    telemetry._AUSFALL_GEWARNT.clear()
 
 
 def test_publish_telemetry_publishes_payload():
@@ -55,6 +67,34 @@ def test_run_telemetry_tick_sendet_kein_nicht_endliches_room_actual(wert, caplog
 
     mqtt_client.publish_telemetry.assert_not_called()
     assert "room_actual" in caplog.text
+
+
+def test_ein_ausfall_von_room_actual_warnt_einmal_und_die_wiederaufnahme_meldet_eine_info_zeile(caplog):
+    """Je Takt eine Telemetrie; faellt room_actual aus (NaN), entfaellt sie: eine WARNING beim Ausfall, weitere
+    Ausfall-Takte nur DEBUG, bei der Wiederaufnahme eine INFO-Zeile und wieder eine Telemetrie je Takt."""
+    manifest = ChannelManifest(refs={"room_actual": "sensor.room_actual"})
+    ha_api = MagicMock(spec=SignalSource)
+    mqtt_client = MagicMock(spec=MqttChannel)
+
+    def takt(wert):
+        ha_api.get_state.return_value = wert
+        telemetry.run_telemetry_tick(manifest, ha_api, mqtt_client, boost_active=False, failsafe_active=False)
+        return mqtt_client.publish_telemetry.call_count
+
+    def zeilen(stufe):
+        return [r.getMessage() for r in caplog.records if r.levelno == stufe and "room_actual" in r.getMessage()]
+
+    with caplog.at_level(logging.DEBUG, logger="smartheat_runtime.telemetry"):
+        assert [takt(20.5), takt(20.6)] == [1, 2]
+        assert zeilen(logging.WARNING) == [] and zeilen(logging.INFO) == []
+        assert [takt(float("nan")), takt(float("nan")), takt(float("inf"))] == [2, 2, 2]
+        assert len(zeilen(logging.WARNING)) == 1 and len(zeilen(logging.DEBUG)) == 2
+        assert zeilen(logging.INFO) == []
+        assert [takt(20.7), takt(20.8)] == [3, 4]
+        assert len(zeilen(logging.INFO)) == 1 and len(zeilen(logging.WARNING)) == 1
+        assert takt(float("nan")) == 4  # ein neuer Ausfall warnt wieder
+        assert len(zeilen(logging.WARNING)) == 2
+    assert mqtt_client.publish_telemetry.call_args.args[0]["room_actual"] == 20.8
 
 
 def test_run_telemetry_tick_includes_configured_optional_kpi_fields():
@@ -363,6 +403,26 @@ def test_unreadable_delivery_roles_are_left_out_and_unmapped_ones_are_not_read()
     assert not any(role in payload for role in telemetry.DELIVERY_ROLES)
 
 
+def _telemetrie_aus_quelle(tmp_path, alt: str, neu: str):
+    """Fuehrt die Quelle von telemetry.py als eigenes Modul aus, mit `alt` durch `neu` ersetzt."""
+    quelle = Path(telemetry.__file__).read_text()
+    assert alt in quelle
+    kopie = tmp_path / "telemetrie_kopie.py"
+    kopie.write_text(quelle.replace(alt, neu))
+    spec = importlib.util.spec_from_file_location("telemetrie_kopie", kopie)
+    modul = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modul)
+    return modul
+
+
+def test_ein_liefer_signal_ohne_kpi_leser_haelt_den_import_an(tmp_path):
+    alt = 'DELIVERY_ROLES = ("generator_hours", "generator_starts", "generator_state")'
+    assert _telemetrie_aus_quelle(tmp_path, alt, alt).DELIVERY_ROLES == (  # Gegenprobe: unveraendert laedt sie
+        "generator_hours", "generator_starts", "generator_state")
+    with pytest.raises(RuntimeError, match="DELIVERY_ROLES nennt eine Rolle ausserhalb der KPI-Rollen"):
+        _telemetrie_aus_quelle(tmp_path, alt, alt.replace('"generator_state"', '"generator_state", "brenner_takte"'))
+
+
 def test_kpi_role_constants():
     assert telemetry.KPI_TEXT_ROLES == ("operating_mode", "generator_state")
     assert "generator_hours" in telemetry.KPI_NUMERIC_ROLES and "generator_starts" in telemetry.KPI_NUMERIC_ROLES
@@ -437,13 +497,6 @@ def test_total_counters_get_no_normalizer():
 
 
 # --- Spec Stufe 3 S4b 5 (A5-11): Energie nur mit der erwarteten Einheit ---
-
-@pytest.fixture(autouse=True)
-def _einheit_warnung_zuruecksetzen():
-    telemetry._EINHEIT_GEWARNT.clear()
-    yield
-    telemetry._EINHEIT_GEWARNT.clear()
-
 
 def test_energie_in_wh_wird_als_kwh_gesendet():
     manifest = ChannelManifest(refs={"energy_primary_heating": "sensor.gas"})

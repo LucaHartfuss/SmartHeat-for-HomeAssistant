@@ -28,6 +28,18 @@ def runtime_config(**overrides) -> RuntimeConfig:
     return RuntimeConfig(**values)
 
 
+# Hebelsatz mit `level` (Viessmann) fuer die Laufzeit-Tests: Optionen des Add-ons und Ausgangszustand der Fake-HA
+# (Eingaben; test_runtime.py und test_runtime_plan3b.py)
+VIESSMANN_OPTIONEN = {
+    "lever_set": "viessmann_vicare", "entity_curve_current": "number.slope", "entity_level_current": "number.shift",
+    "entity_shift_current": "number.normal_temperature", "entity_mode_select": "climate.heizkreis",
+    "entity_heat_limit": "", "entity_min_flow": "",
+}
+VIESSMANN_ZUSTAND = {
+    "number.slope": 1.0, "number.shift": 0.0, "number.normal_temperature": 20.0, "climate.heizkreis::preset_mode": "eco",
+}
+
+
 class HaEventSink:
     """StatusSink der Laufzeit-Tests (StatusReporter): das Ereignis unveraendert an fire_event. Produktiv sendet
     geraet_status.GeraetStatus (Schema 3); dies ist der Ersatz fuer den entfallenen HaStatusSink."""

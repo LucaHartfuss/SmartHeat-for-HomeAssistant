@@ -28,16 +28,16 @@ def test_unwritable_disk_no_longer_blocks_ticks_silently(env, monkeypatch):
     _quiet_backup(env)
     bridge = _start(env)
     pushes, persistent = len(env.ha.pushes), len(env.ha.persistent)
-    status_before = env.ha.events[-1][1]["status"]
+    assert env.ha.events[-1][1]["status"] == "regelt"
     _break_backup_writes(monkeypatch)
 
     _set_room_target(env, bridge, 20.5)  # Soll-Aenderung -> target_change-Tick waere faellig
     _advance(env, bridge, 300)
 
-    sent = len(_mqtt(env).snapshots) > 0
-    reported = len(env.ha.pushes) > pushes or len(env.ha.persistent) > persistent
-    status_changed = env.ha.events[-1][1]["status"] != status_before
-    assert sent or reported or status_changed
+    assert _mqtt(env).snapshots == []  # die Regelung pausiert: kein Tick ohne gespeicherten Stand
+    assert [key for key, _text in env.ha.persistent[persistent:]] == ["smartheat_datentraeger"]
+    assert len(env.ha.pushes) == pushes + 1
+    assert env.ha.events[-1][1]["status"] == "datenfehler"
 
 
 def test_unwritable_disk_on_answer_is_not_diagnosed_as_server_outage(env, monkeypatch):
@@ -64,8 +64,8 @@ def test_unreadable_room_target_at_start_no_longer_suppresses_the_due_daily_tick
     _trigger(env, bridge, "sensor.room_actual")
     _advance(env, bridge, 300)  # Watchdog/Health-Takt
 
-    attempted = len(_mqtt(env).snapshots) > 0 or _delivery(bridge).pending is not None
-    assert attempted or _delivery(bridge).datenfehler is not None
+    assert [snapshot["trigger"] for snapshot in _mqtt(env).snapshots][:1] == ["daily"]
+    assert _delivery(bridge).datenfehler is None
 
 
 def test_reactivated_abo_restart_no_longer_keeps_notbetrieb_until_next_tick(env):
@@ -74,11 +74,10 @@ def test_reactivated_abo_restart_no_longer_keeps_notbetrieb_until_next_tick(env)
     env.abo["status"] = entitlement.ACTIVE
 
     bridge = _start(env)
+    assert _delivery(bridge).notbetrieb is False  # schon beim Start, nicht erst mit dem naechsten Tick
     _advance(env, bridge, 300)
 
-    ended = _delivery(bridge).notbetrieb is False
-    tick_started = len(_mqtt(env).snapshots) > 0
-    assert ended or tick_started
+    assert _delivery(bridge).notbetrieb is False
 
 
 def _count_curve_write_attempts(env):
@@ -108,7 +107,7 @@ def test_failing_boost_end_write_follows_the_return_staircase(env):
         _advance(env, bridge, 60)
         _trigger(env, bridge, "sensor.room_actual")
 
-    assert len(attempts) <= 2  # Rueckkehr-Staffel: sofort, dann fruehestens nach 300 s (vorher: 6)
+    assert attempts == [0.9, 0.9]  # Rueckkehr-Staffel: sofort, dann fruehestens nach 300 s (vorher: 6)
 
 
 def test_old_manual_override_format_is_dropped_by_the_first_backup_write(tmp_path):
