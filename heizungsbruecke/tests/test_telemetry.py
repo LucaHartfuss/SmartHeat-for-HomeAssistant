@@ -13,16 +13,6 @@ from smartheat_runtime.ports import MqttChannel, SignalSource, SourceUnavailable
 from smartheat_runtime.roles import ChannelManifest
 
 
-@pytest.fixture(autouse=True)
-def _warnzustand_zuruecksetzen():
-    """Die Warn-Zustaende sind modulweit (eine Warnung je Wechsel bzw. Ausfall), je Test frisch."""
-    telemetry._EINHEIT_GEWARNT.clear()
-    telemetry._AUSFALL_GEWARNT.clear()
-    yield
-    telemetry._EINHEIT_GEWARNT.clear()
-    telemetry._AUSFALL_GEWARNT.clear()
-
-
 def test_publish_telemetry_publishes_payload():
     mqtt_client = MagicMock(spec=MqttChannel)
 
@@ -71,7 +61,8 @@ def test_run_telemetry_tick_sendet_kein_nicht_endliches_room_actual(wert, caplog
 
 def test_ein_ausfall_von_room_actual_warnt_einmal_und_die_wiederaufnahme_meldet_eine_info_zeile(caplog):
     """Je Takt eine Telemetrie; faellt room_actual aus (NaN), entfaellt sie: eine WARNING beim Ausfall, weitere
-    Ausfall-Takte nur DEBUG, bei der Wiederaufnahme eine INFO-Zeile und wieder eine Telemetrie je Takt."""
+    Ausfall-Takte nur DEBUG, bei der Wiederaufnahme eine INFO-Zeile (erst nach gelungenem Senden) und wieder eine
+    Telemetrie je Takt."""
     manifest = ChannelManifest(refs={"room_actual": "sensor.room_actual"})
     ha_api = MagicMock(spec=SignalSource)
     mqtt_client = MagicMock(spec=MqttChannel)
@@ -90,9 +81,13 @@ def test_ein_ausfall_von_room_actual_warnt_einmal_und_die_wiederaufnahme_meldet_
         assert [takt(float("nan")), takt(float("nan")), takt(float("inf"))] == [2, 2, 2]
         assert len(zeilen(logging.WARNING)) == 1 and len(zeilen(logging.DEBUG)) == 2
         assert zeilen(logging.INFO) == []
-        assert [takt(20.7), takt(20.8)] == [3, 4]
+        mqtt_client.publish_telemetry.side_effect = OSError("Verbindung weg")
+        assert takt(20.7) == 3
+        assert zeilen(logging.INFO) == []  # Senden gescheitert: noch keine Wiederaufnahme
+        mqtt_client.publish_telemetry.side_effect = None
+        assert [takt(20.7), takt(20.8)] == [4, 5]
         assert len(zeilen(logging.INFO)) == 1 and len(zeilen(logging.WARNING)) == 1
-        assert takt(float("nan")) == 4  # ein neuer Ausfall warnt wieder
+        assert takt(float("nan")) == 5  # ein neuer Ausfall warnt wieder
         assert len(zeilen(logging.WARNING)) == 2
     assert mqtt_client.publish_telemetry.call_args.args[0]["room_actual"] == 20.8
 

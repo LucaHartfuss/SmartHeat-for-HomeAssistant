@@ -96,6 +96,26 @@ def test_ein_zu_grosser_koerper_wird_nicht_gesendet(ident, ca):
     assert session.calls == []  # an der HTTP-Grenze kam nichts an
 
 
+def test_ein_koerper_von_genau_65536_bytes_wird_gesendet_ein_byte_mehr_nicht(ident, ca, monkeypatch):
+    """MAX_BODY_BYTES = 65536 als Literal aus V1 (nicht ueber die Konstante), gemessen am Koerper an der HTTP-Grenze."""
+    csr = identity.csr_pem(ident)
+    monkeypatch.setattr(identity, "csr_pem", lambda _ident: csr)  # ECDSA: sonst schwankt die Laenge der CSR je Aufruf
+
+    def args(laenge):
+        return {**ARGS, "capabilities": {**CAPS, "drivers": ["d" * laenge]}}
+
+    probe = FakeSession(FakeResponse(200, _body(ident, ca)))
+    _client(ident, probe).register(**args(1000))
+    laenge = 1000 + 65536 - len(probe.calls[0][2])
+    genau = FakeSession(FakeResponse(200, _body(ident, ca)))
+    _client(ident, genau).register(**args(laenge))
+    assert len(genau.calls[0][2]) == 65536
+    drueber = FakeSession(FakeResponse(200, _body(ident, ca)))
+    with pytest.raises(ValueError):
+        _client(ident, drueber).register(**args(laenge + 1))
+    assert drueber.calls == []
+
+
 def test_ein_normaler_koerper_wird_gesendet(ident, ca):  # Gegenprobe
     session = FakeSession(FakeResponse(200, _body(ident, ca)))
     _client(ident, session).register(**ARGS)

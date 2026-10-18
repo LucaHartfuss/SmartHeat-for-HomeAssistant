@@ -51,7 +51,7 @@ def test_an_existing_agent_key_keeps_its_device_id(tmp_path):
 
 def test_claim_code_is_12_base32_characters():
     code = identity.new_claim_code(lambda n: bytes(range(n)))
-    assert len(code) == wire.CLAIM_CODE_CHARS and set(code) <= set("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
+    assert len(code) == 12 and set(code) <= set("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")  # Literal aus V1
 
 
 def test_a_new_claim_code_is_saved_only_on_request(tmp_path):

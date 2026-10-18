@@ -1523,6 +1523,7 @@ def test_the_device_thread_waits_one_second_per_tick_and_is_a_daemon(tmp_path):
             world.device.stop()
             raise queue.Empty
 
+    assert isinstance(world.device._inbox, queue.Queue)  # eine Umbenennung wird rot, statt dass run() haengt
     world.device._inbox = Inbox()
     world.device.run()
     assert timeouts == [1.0]

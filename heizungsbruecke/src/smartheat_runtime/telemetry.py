@@ -68,9 +68,6 @@ def run_telemetry_tick(
                 logger.warning("Telemetrie nicht gesendet: room_actual ist keine endliche Zahl; weitere Takte nur im "
                                "DEBUG-Log bis zur Wiederaufnahme")
             return
-        if "room_actual" in _AUSFALL_GEWARNT:
-            _AUSFALL_GEWARNT.discard("room_actual")
-            logger.info("Telemetrie wieder aufgenommen: room_actual ist wieder eine endliche Zahl")
         kpi_fields = read_kpi_fields(manifest, signals, energy, einheiten=einheiten)
         regulation_fields = read_regulation_fields(manifest, signals, room_target)
         publish_telemetry(
@@ -78,6 +75,9 @@ def run_telemetry_tick(
             boost_active=boost_active, failsafe_active=failsafe_active,
             kpi_fields=kpi_fields, datenfehler=datenfehler, regulation_fields=regulation_fields,
         )
+        if "room_actual" in _AUSFALL_GEWARNT:  # erst nach dem gelungenen Senden
+            _AUSFALL_GEWARNT.discard("room_actual")
+            logger.info("Telemetrie wieder aufgenommen: room_actual ist wieder eine endliche Zahl")
     except Exception:
         logger.exception("Fehler beim Veroeffentlichen der KPI-Telemetrie, wird beim naechsten Tick erneut versucht")
 

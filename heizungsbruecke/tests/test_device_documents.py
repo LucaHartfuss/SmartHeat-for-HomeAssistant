@@ -210,7 +210,7 @@ def test_a_new_configuration_is_taken_and_survives_a_restart(tmp_path):
 def test_without_documents_the_versions_are_zero(tmp_path):
     store = _store(tmp_path)
     assert (store.version("konfiguration"), store.version("bedienung"), store.eingerichtet()) == (0, 0, False)
-    assert store.update_noetig is False
+    assert not store.update_noetig
 
 
 def test_a_broken_document_file_counts_as_no_version(tmp_path):

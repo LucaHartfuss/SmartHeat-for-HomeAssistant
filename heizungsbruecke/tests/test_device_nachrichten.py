@@ -82,11 +82,15 @@ def test_register_prueft_host_faehigkeiten_und_csr_groesse():
         nachrichten.register(**(_register_felder() | {"host": "x"}))
     with pytest.raises(nachrichten.Vertragsfehler, match="capabilities"):
         nachrichten.register(**(_register_felder() | {"capabilities": {"zigbee": True}}))
+    # CSR_MAX_BYTES = 8192 als Literal aus V1 (nicht ueber die Konstante): genau 8192 Bytes gehen, 8193 nicht
     with pytest.raises(nachrichten.Vertragsfehler, match="csr"):
-        nachrichten.register(**(_register_felder() | {"csr": "x" * (wire.CSR_MAX_BYTES + 1)}))
+        nachrichten.register(**(_register_felder() | {"csr": "x" * 8193}))
     with pytest.raises(nachrichten.Vertragsfehler, match="csr"):
-        nachrichten.zertifikat("x" * (wire.CSR_MAX_BYTES + 1))
-    assert nachrichten.zertifikat("x" * wire.CSR_MAX_BYTES) == {"csr": "x" * wire.CSR_MAX_BYTES}
+        nachrichten.zertifikat("x" * 8193)
+    assert nachrichten.zertifikat("x" * 8192) == {"csr": "x" * 8192}
+    assert nachrichten.register(**(_register_felder() | {"csr": "x" * 8192}))["csr"] == "x" * 8192
+    with pytest.raises(nachrichten.Vertragsfehler, match="csr"):
+        nachrichten.zertifikat("ä" * 4097)  # 8194 Bytes in UTF-8 bei 4097 Zeichen: gezaehlt werden Bytes
 
 
 def test_ergebnis_dokument_mit_fehler():
