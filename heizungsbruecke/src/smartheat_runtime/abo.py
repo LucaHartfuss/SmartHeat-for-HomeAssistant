@@ -101,6 +101,20 @@ def report_restore(notifier, ok: bool) -> bool:
     return notifier.notify(RESTORE_KEY, RESTORE_FAILED_STATE, RESTORE_FAILED_MESSAGE, critical=True)
 
 
+def log_restore_failure(rt: Runtime, message: str, *args) -> None:
+    """Gescheiterte bzw. vom Schreibbudget zurueckgestellte Wiederherstellung am Fristende melden (report_restore) und
+    loggen, hoechstens einmal je Episode sichtbar (TP12b): ERROR beim Wechsel des Meldezustands, WARNING beim ersten
+    Versuch dieses Prozesses, wenn der Zustand schon vor dem Neustart stand, danach im Takt nur DEBUG."""
+    if report_restore(rt.notifier, ok=False):
+        log = logger.error
+    elif not rt.restore_failure_logged:
+        log = logger.warning
+    else:
+        log = logger.debug
+    rt.restore_failure_logged = True
+    log(message, *args)
+
+
 AUTH_REJECTED_QUERY_INTERVAL_SECONDS = 600.0
 CONNECT_FAILURES_BEFORE_STATUS_QUERY = 3
 
@@ -186,11 +200,10 @@ def check_grace_end(rt: Runtime) -> None:
         report_restore(rt.notifier, ok=True)
         _enter_idle(rt)
         return
-    # ERROR einmal je gescheiterter Wiederherstellung, danach (Schreibbudget stellt zurueck) nur debug (TP12b)
-    log = logger.error if report_restore(rt.notifier, ok=False) else logger.debug
-    log(
+    log_restore_failure(
+        rt,
         "Abo-inaktiv-Frist abgelaufen, zuletzt gelernte Werte konnten nicht wiederhergestellt "
-        "werden - Notbetrieb laeuft weiter, erneuter Versuch beim naechsten Check"
+        "werden - Notbetrieb laeuft weiter, erneuter Versuch beim naechsten Check",
     )
 
 

@@ -82,5 +82,8 @@ class Runtime:
     # Verbindungswaechter (TP12b, AU-033): seit wann (clock) die MQTT-Verbindung ununterbrochen
     # fehlt, None bei Verbindung. Nicht persistiert.
     mqtt_down_since: float | None = None
+    # Gescheiterte Wiederherstellung am Fristende (abo.log_restore_failure): in diesem Prozess schon geloggt. Nicht
+    # persistiert: nach einem Neustart erscheint die Zeile einmal als WARNING (TP12b).
+    restore_failure_logged: bool = False
     # Kundentexte des Hosts (Spec SHG G2 2.1); Standard = HA-Texte.
     texts: HostTexts = HA_TEXTS

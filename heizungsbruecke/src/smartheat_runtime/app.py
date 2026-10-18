@@ -339,13 +339,11 @@ def _finish_at_start(rt: Runtime, clock) -> IdleBridge:
             abo.report_restore(rt.notifier, ok=True)
             status.update(grund=None)
             return
-        # ERROR einmal je gescheiterter Wiederherstellung, danach (Schreibbudget stellt zurueck) nur debug (TP12b)
-        log = logger.error if abo.report_restore(rt.notifier, ok=False) else logger.debug
-        status.update(grund=abo.RESTORE_FAILED_REASON)
-        log(
-            "Abo-inaktiv-Frist abgelaufen, Boost-Werte konnten nicht zurueckgesetzt werden - "
+        abo.log_restore_failure(
+            rt, "Abo-inaktiv-Frist abgelaufen, Boost-Werte konnten nicht zurueckgesetzt werden - "
             "erneuter Versuch in %s s", retry_seconds,
         )
+        status.update(grund=abo.RESTORE_FAILED_REASON)
         bridge.worker.schedule(retry_seconds, Event(EV_RECHECK))
 
     bridge.worker.register(EV_RECHECK, _attempt)
@@ -763,13 +761,15 @@ def _is_stale_notbetrieb(rt: Runtime) -> bool:
 
 
 def _end_stale_notbetrieb(rt: Runtime, *, beenden: bool) -> None:
-    """Im Abo-inaktiv-Modus meldet die Abo-Meldung, nicht "Notbetrieb aktiv" (seed_notices hat den Meldezustand still
-    uebernommen): den Meldezustand still auf ok, sonst entwarnte die Antwort auf den Pruef-Tick bei Abo-Status UNKNOWN
-    einen nie gemeldeten Notbetrieb (TP12b); eine vor dem Abo-inaktiv-Modus offene Meldung wird dabei zurueckgezogen.
-    `beenden` (Abo aktiv): den Notbetrieb selbst still beenden, und zwar vor dem ersten lokalen Check, sonst schriebe
-    der Notfall-Boost bis zum naechsten Check seine Werte (TP12b)."""
+    """`beenden` (Abo aktiv): den Notbetrieb still beenden, und zwar vor dem ersten lokalen Check, sonst schriebe der
+    Notfall-Boost bis zum naechsten Check seine Werte (TP12b); die Meldung geht still auf ok, wie bisher. Sonst (Abo
+    unbekannt) laeuft der Notbetrieb weiter: eine gemeldete Meldung bleibt stehen und entwarnt mit der Antwort. Nur ein
+    nie erschienener Notbetrieb (seed_notices hat den Zustand des Abo-inaktiv-Modus ohne Text uebernommen, dort meldet
+    die Abo-Meldung) geht still auf ok, sonst entwarnte die Antwort ihn mit "Notbetrieb beendet" (TP12b)."""
     if beenden:
         ticks.deliver(rt, delivery.ClearStaleNotbetrieb())
+    elif "notbetrieb" in rt.store.state.notify_messages:
+        return
     rt.notifier.notify(
         "notbetrieb", STATE_OK, delivery.notification_text(delivery.NOTIFY_NOTBETRIEB_OFF, (), {}, rt.texts),
         critical=True, silent_ok=True,

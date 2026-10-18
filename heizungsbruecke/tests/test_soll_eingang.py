@@ -175,3 +175,25 @@ def test_a_wish_the_device_refuses_keeps_the_entered_value_without_write_back(tm
     assert a.wuensche == [(22.5, "app", "nutzer")]
     assert a.store.value == 22.5 and a.quelle.geschrieben == []
     assert a.checks and a.checks[-1]["room_target_fired"] is True
+
+
+def test_portal_confirming_an_open_thermostat_wish_with_the_same_value_keeps_the_wish(tmp_path):
+    """Nr. 40 im Soll-Eingang: bestaetigt der Server waehrend der Entprellung genau den Wert des offenen
+    Thermostat-Wunschs, aendert sich nichts (apply_portal ohne Wirkung); der Wunsch geht nach der Entprellung einmal an
+    den Geraetekern (bis Task 6 verwarf die Bestaetigung ihn als Bedienung des Servers). Eine Bestaetigung danach loest
+    keinen weiteren Wunsch aus."""
+    a = Aufbau(tmp_path, entprellen_s=10.0)
+    a.post(22.0, SOURCE_THERMOSTAT, herkunft="soll_entity", durch="nutzer")
+    a.clock.advance(5)
+    a.post(22.0, SOURCE_PORTAL)  # Bestaetigung mit gleichem Wert im Entprellfenster
+    assert a.wuensche == [] and (a.store.value, a.store.source) == (22.0, SOURCE_THERMOSTAT)
+
+    a.clock.advance(10)
+    a.worker.run_pending()
+    assert a.wuensche == [(22.0, "soll_entity", "nutzer")]
+
+    a.post(22.0, SOURCE_PORTAL)
+    a.clock.advance(10)
+    a.worker.run_pending()
+    assert a.wuensche == [(22.0, "soll_entity", "nutzer")]
+    assert (a.store.source, a.quelle.geschrieben) == (SOURCE_THERMOSTAT, [])
