@@ -253,7 +253,7 @@ def test_every_lever_of_the_binding_is_checked():
 
 
 def test_a_circuit_without_config_entry_checks_only_the_platform():
-    kreis = {**KONFIGURATION["bindung"]["kreis"], "config_entry": None}
+    kreis = {k: v for k, v in KONFIGURATION["bindung"]["kreis"].items() if k != "config_entry"}
     konfiguration = {**KONFIGURATION, "bindung": {**KONFIGURATION["bindung"], "kreis": kreis}}
     assert dokument.zuordnung_pruefen(konfiguration, _ha()) is None
     ha = _ha()

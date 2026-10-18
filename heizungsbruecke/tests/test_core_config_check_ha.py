@@ -111,7 +111,6 @@ def test_incomplete_binding_is_a_role_rejection():
 @pytest.mark.parametrize("bindung", [
     {"abfrage_s": 10}, {"abfrage_s": 3600}, {"abfrage_s": None}, {"hinweise_aus": []}, {"batterien": []},
     {"benachrichtigung": []}, {"batterien": ["binary_sensor.fenster_batterie"]},
-    {"kreis": {"plattform": "mypyllant", "config_entry": None, "anlage": "S", "nummer": "0"}},
     {"kreis": {"plattform": "mypyllant", "anlage": "S", "nummer": "0"}},
     {"hinweise_aus": list(wire.HA_HINWEISE)}, {"einheiten": {"energy_electrical_total": "kWh"}},
 ])
@@ -156,3 +155,22 @@ def test_lever_set_lock_applies_to_home_assistant_too():
     ablehnung = _geprueft(_ha(hebelsatz="viessmann_vicare"), Rastung(_ha()["hebelsatz"], _ha()["verteilsystem"]),
                             host=cc.HOST_HA)
     assert ablehnung.grund == cc.HEBELSATZ_EINGERASTET
+
+
+_KREIS = {"plattform": "mypyllant", "anlage": "S", "nummer": "0"}
+
+
+@pytest.mark.parametrize("kreis", [
+    {"plattform": "mypyllant", "anlage": "S"},
+    {**_KREIS, "fremd": "x"},
+    {**_KREIS, "config_entry": None},
+    {**_KREIS, "config_entry": ""},
+    {**_KREIS, "nummer": 0},
+])
+def test_kaputter_kreis_wird_abgelehnt(kreis):
+    ablehnung = _pruefen(_ha(bindung={"kreis": kreis}))
+    assert ablehnung is not None and ablehnung.grund == cc.ROLLE_UNZULAESSIG
+
+
+def test_kreis_ohne_config_entry_wird_angenommen():
+    assert _pruefen(_ha(bindung={"kreis": dict(_KREIS)})) is None

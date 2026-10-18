@@ -95,6 +95,7 @@ NUR_GEPINNT_GERAET: set[str] = {  # Kopien im Kern (smartheat_core darf nichts i
     "HA_HINWEISE",  # config_check.HA_HINWEISE
     "HA_ROLLEN",  # config_check.HA_ROLLEN
     "KREIS_FIELDS",  # config_check.KREIS_FELDER
+    "KREIS_OPTIONAL",  # config_check.KREIS_OPTIONAL
     "SCHREIBSCHUTZ_FIELDS",  # bindungsparameter.SCHREIBSCHUTZ_FELDER
     "TREIBER_FIELDS",  # config_check.TREIBER_FELDER
     "ZAEHLER",  # bindungsparameter.ZAEHLER

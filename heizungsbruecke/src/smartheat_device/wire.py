@@ -122,7 +122,8 @@ ENERGIE_EINHEITEN = ("Wh", "kWh", "m³")  # erwartete Einheit je Energiekanal (E
 BINDUNG_GATEWAY_FIELDS = ("treiber", "thermostat")
 BINDUNG_HA_FIELDS = ("kreis", "rollen", "batterien", "benachrichtigung", "hinweise_aus")
 BINDUNG_HA_OPTIONAL = ("abfrage_s", "einheiten")  # fehlt = Standardwert des Hebelsatzes bzw. keine Energiekanaele
-KREIS_FIELDS = ("plattform", "config_entry", "anlage", "nummer")
+KREIS_FIELDS = ("plattform", "anlage", "nummer")
+KREIS_OPTIONAL = ("config_entry",)  # fehlt = Kreis ohne Config-Entry (dann kein Schreibziel, ha_pruefung)
 HA_ROLLEN = (
     "room_target", "curve", "room_setpoint", "level", "heat_limit", "min_flow", "mode_select", "setpoint_comfort",
     "setpoint_setback", "outdoor_temp", "flow_temperature", "flow_setpoint", "return_temperature", "operating_mode",
@@ -197,7 +198,8 @@ PRUEF_REGELN = ("fehlt", "ungueltig", "anzahl", "bereich", "format", "doppelt", 
 #: pruefbar).
 PRUEF_FELDER = tuple(dict.fromkeys((
     *KONFIGURATION_FIELDS, *KONFIGURATION_OPTIONAL, *BINDUNGSPARAMETER_FIELDS, *SCHREIBSCHUTZ_FIELDS,
-    *BINDUNG_GATEWAY_FIELDS, *TREIBER_FIELDS, *BINDUNG_HA_FIELDS, *BINDUNG_HA_OPTIONAL, *KREIS_FIELDS, *HA_ROLLEN,
+    *BINDUNG_GATEWAY_FIELDS, *TREIBER_FIELDS, *BINDUNG_HA_FIELDS, *BINDUNG_HA_OPTIONAL, *KREIS_FIELDS, *KREIS_OPTIONAL,
+    *HA_ROLLEN,
     *BEDIENUNG_FIELDS, *COMMAND_FIELDS, *INVENTUR_FILTER_FIELDS, *INVENTUR_FILTER_GATEWAY_FIELDS,
     *(feld for command in COMMANDS.values() for feld in (*command.payload, *command.payload_optional)),
 )))

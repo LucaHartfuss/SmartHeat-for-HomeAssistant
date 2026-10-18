@@ -169,7 +169,7 @@ def _mit_ha(b: HaBindung, ha_api) -> tuple[str, str] | None:
     ziele = _schreibziel_rollen(b)
     for rolle, ref in ziele:
         entry = registry.get(_entity(ref)) or {}
-        # Kreis ohne Config-Entry (config_entry None): nur die Plattform bindet
+        # Kreis ohne Config-Entry (Feld fehlt): nur die Plattform bindet
         if entry.get("platform") != b.kreis.get("plattform") or (
                 b.kreis.get("config_entry") is not None and entry.get("config_entry_id") != b.kreis["config_entry"]):
             return v1_rolle(rolle), "nicht_erlaubt"
