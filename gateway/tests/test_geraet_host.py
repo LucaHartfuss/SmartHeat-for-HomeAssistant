@@ -286,14 +286,18 @@ def test_leftover_inventory_or_driver_login_keeps_the_marker_and_the_binding(wel
     rastung = _entfernt_vorbereiten(welt.paths)
     ziel = welt.paths.inventur if pfad == "inventur" else welt.paths.driver_secrets_dir / "vicare.json"
     echt = _unlink_scheitert_fuer(monkeypatch, ziel, errno.EIO)
-    assert runtime_main._vergessen(welt.paths) is False
-    runtime_main.aufraeumen(welt.paths)
+    with caplog.at_level(logging.INFO):
+        assert runtime_main._vergessen(welt.paths) is False
+        runtime_main.aufraeumen(welt.paths)
     assert ziel.exists() and welt.paths.backup.exists() and welt.paths.aufraeumen.exists()
-    assert not welt.paths.failsafe.exists() and not welt.paths.room_target.exists()
+    assert not welt.paths.failsafe.exists() and not welt.paths.entitlement.exists()
+    assert not welt.paths.room_target.exists() and not welt.paths.abgemeldet.exists()
     assert "Anlagengebundener Zustand geloescht" not in caplog.text
     monkeypatch.setattr(Path, "unlink", echt)
-    runtime_main.aufraeumen(welt.paths)
+    with caplog.at_level(logging.INFO):
+        runtime_main.aufraeumen(welt.paths)
     assert _alles_weg(welt.paths) and welt.paths.rastung.read_bytes() == rastung
+    assert "Anlagengebundener Zustand geloescht" in caplog.text  # Gegenprobe: bei vollem Erfolg steht die Zeile da
 
 
 def test_a_binding_that_cannot_be_deleted_keeps_the_marker(welt, monkeypatch, caplog):

@@ -52,6 +52,7 @@ class SollEingang:
         self._lokal_offen = False
         self._herkunft: tuple[str | None, str | None] = (None, None)
         self._vor_wunsch: tuple[float, str] | None = None  # Soll und Quelle vor dem ersten offenen Wunsch
+        self._unbrauchbar_gemeldet: set[str] = set()  # Fehlerarten mit WARNING seit dem letzten brauchbaren Wert
         self._debouncer = Debouncer(worker, DEBOUNCE_KIND, entprellen_s, self._entprellt)
         worker.register(EV_TARGET_INPUT, self._on_target_input)
         worker.register(EV_SOLL_MODUS, self._on_mode)
@@ -121,13 +122,15 @@ class SollEingang:
             self._herkunft = (herkunft, durch)
         else:
             if ist_endliche_zahl(value) and value <= FROSTSCHUTZ_BIS:
+                self._unbrauchbar_gemeldet.clear()
                 self._setze_aus("frost", True)
                 return
             if not is_plausible(value, ROOM_TEMP_RANGE):
                 # Unbrauchbar (nicht endlich, Text, bool, None, ueber dem Raumbereich): aendert die Frostschutz-Stellung
                 # nicht, ist kein Wunsch (Fund M4 aus T5'); vorher hob ein einziger solcher Wert die Stellung auf.
-                logger.warning("Wunschtemperatur %r vom Thermostat unplausibel, verworfen", value)
+                self._unbrauchbar_melden(value)
                 return
+            self._unbrauchbar_gemeldet.clear()
             self._setze_aus("frost", False)
             vor_wunsch = (self._store.value, self._store.source)
             if self._aus or not self._store.apply_thermostat(value):
@@ -138,6 +141,23 @@ class SollEingang:
             self._lokal_offen = False
             self._herkunft = (herkunft, durch)
         self._debouncer.poke()
+
+    def _unbrauchbar_melden(self, value: object) -> None:
+        """Je Fehlerart eine WARNING bis zum naechsten brauchbaren Wert, danach DEBUG: das Gateway reicht jede
+        Zigbee-Meldung mit occupied_heating_setpoint durch, ein dauerhaft unbrauchbarer Wert flutete sonst das Log.
+        Ohne den Wert (Text aus HA oder Zigbee)."""
+        if not isinstance(value, int | float) or isinstance(value, bool):
+            art = f"kein Zahlenwert ({type(value).__name__})"
+        elif not ist_endliche_zahl(value):
+            art = "nicht endlich"
+        else:
+            art = "ausserhalb des Raumbereichs"
+        if art in self._unbrauchbar_gemeldet:
+            logger.debug("Wunschtemperatur vom Thermostat unbrauchbar (%s), verworfen", art)
+            return
+        self._unbrauchbar_gemeldet.add(art)
+        logger.warning("Wunschtemperatur vom Thermostat unbrauchbar (%s), verworfen; weitere gleiche nur im DEBUG-Log "
+                       "bis zu einem brauchbaren Wert", art)
 
     def _entprellt(self) -> None:
         if self._wunsch_offen:

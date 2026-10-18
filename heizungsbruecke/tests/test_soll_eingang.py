@@ -1,4 +1,5 @@
 """Spec 5c 1.3 / 5b 3.2-3.3: Soll-Eingang hostneutral (Gateway und HA-Add-on)."""
+import logging
 from pathlib import Path
 
 import pytest
@@ -258,3 +259,39 @@ def test_the_current_target_shown_again_ends_the_frost_position(tmp_path):
     a = _in_frost(tmp_path)
     a.post(21.0, SOURCE_THERMOSTAT, herkunft="soll_entity")
     assert not a.eingang.aus and a.aus == [(True, 21.0), (False, None)] and a.wuensche == []
+
+
+def _warnungen(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING and "unbrauchbar" in r.getMessage()]
+
+
+def test_a_lasting_unusable_thermostat_value_warns_once_per_kind_until_a_usable_value(tmp_path, caplog):
+    """Das Gateway reicht jede Zigbee-Meldung durch: zehn gleiche unbrauchbare Werte ergeben eine WARNING (der Rest
+    DEBUG), eine andere Fehlerart ihre eigene; nach einem brauchbaren Wert warnt ein neuer unbrauchbarer wieder. Im Log
+    steht die Fehlerart, nicht der Wert."""
+    a = Aufbau(tmp_path)
+    with caplog.at_level(logging.DEBUG):
+        for _ in range(10):
+            a.post(None, SOURCE_THERMOSTAT)
+        assert _warnungen(caplog) == [
+            "Wunschtemperatur vom Thermostat unbrauchbar (kein Zahlenwert (NoneType)), verworfen; weitere gleiche nur "
+            "im DEBUG-Log bis zu einem brauchbaren Wert"]
+        assert sum("unbrauchbar" in r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG) == 9
+        a.post(float("nan"), SOURCE_THERMOSTAT)
+        a.post(36.0, SOURCE_THERMOSTAT)
+        assert len(_warnungen(caplog)) == 3
+        assert "nicht endlich" in _warnungen(caplog)[1] and "ausserhalb des Raumbereichs" in _warnungen(caplog)[2]
+
+        a.post(22.0, SOURCE_THERMOSTAT)  # brauchbar
+        a.post(None, SOURCE_THERMOSTAT)
+        a.post(None, SOURCE_THERMOSTAT)
+        assert len(_warnungen(caplog)) == 4 and "NoneType" in _warnungen(caplog)[3]
+
+
+def test_a_frost_value_also_counts_as_usable_for_the_warning(tmp_path, caplog):
+    a = Aufbau(tmp_path)
+    with caplog.at_level(logging.INFO):
+        a.post("abc", SOURCE_THERMOSTAT)
+        a.post(7.0, SOURCE_THERMOSTAT)  # Frostschutz-Stellung: brauchbar
+        a.post("abc", SOURCE_THERMOSTAT)
+    assert len(_warnungen(caplog)) == 2 and "abc" not in caplog.text
