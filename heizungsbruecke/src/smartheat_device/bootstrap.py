@@ -16,7 +16,7 @@ from pathlib import Path
 import requests
 
 from smartheat_core import dateien
-from smartheat_device import commands, nachrichten, wire
+from smartheat_device import commands, fehler, nachrichten, wire
 from smartheat_device import identity as identity_module
 from smartheat_device.tls import ALPN_443, IOT_PORTS
 
@@ -77,7 +77,8 @@ def _antwort(body) -> Antwort:
     alpn = body.get(_ALPN)
     if not (isinstance(host, str) and host and isinstance(port, int) and not isinstance(port, bool)
             and port in IOT_PORTS and isinstance(ca, str) and _PEM_CERT in ca and isinstance(cert, str)
-            and _PEM_CERT in cert and alpn in (None, ALPN_443)):
+            and _PEM_CERT in cert and alpn in (None, ALPN_443)
+            and fehler.kodierbar((host, ca, cert))):  # speichern() koennte ein Surrogat nicht schreiben
         raise Unavailable("Bootstrap-Antwort ungueltig")
     state = body["device_state"] if body["device_state"] in wire.DEVICE_STATES else None
     return Antwort(state, Zugang(cert, Endpoint(host, port, ca, alpn)))

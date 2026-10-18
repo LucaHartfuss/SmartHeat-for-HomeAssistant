@@ -34,7 +34,7 @@ from smartheat_runtime import entitlement
 EINSTELLUNG = settings(max_examples=50, derandomize=True, database=None, deadline=None)
 JSON_WERT = st.recursive(
     st.none() | st.booleans() | st.integers() | st.floats(allow_nan=True, allow_infinity=True)
-    | st.text(max_size=300) | st.just(10**400),
+    | st.text(max_size=300) | st.just(10**400) | st.sampled_from(["\ud800", "a\udfffb", "-----BEGIN CERTIFICATE-----\ud800"]),
     lambda kinder: st.lists(kinder, max_size=5) | st.dictionaries(st.text(max_size=20), kinder, max_size=5),
     max_leaves=30,
 )
@@ -176,7 +176,8 @@ def test_bootstrap_speichert_genau_dann_wenn_es_einen_zugang_gibt(ident, gute_an
 
 
 SONDERWERTE = [None, True, False, 0, 1, -1, 443, 8883, 65536, 1.5, float("nan"), float("inf"), "", "x", "8883", " ",
-               "-----BEGIN CERTIFICATE-----", ALPN_443, "alpn", [], {}, [8883], {"a": 1}, 10**400, -(10**400)]
+               "-----BEGIN CERTIFICATE-----", ALPN_443, "alpn", [], {}, [8883], {"a": 1}, 10**400, -(10**400),
+               "h\ud800", "-----BEGIN CERTIFICATE-----\udfff"]  # Surrogate: schreiben_json koennte sie nicht kodieren
 
 
 def _zugang_ist_vertragsgemaess(antwort):
@@ -203,6 +204,10 @@ def test_jeder_sonderwert_an_jeder_stelle_der_bootstrap_antwort_wird_abgelehnt_o
                 continue
             _zugang_ist_vertragsgemaess(antwort)
             gelesen += 1
+            with tempfile.TemporaryDirectory() as verzeichnis:  # und der ganze Ablauf: speichern wirft nicht
+                client = _client(ident, FakeResponse(200, _ersetze(gute_antwort, pfad, wert)))
+                assert _ablauf(verzeichnis, ident, client).holen(rettung=False) is not None or not any(
+                    Path(verzeichnis).iterdir())
     assert gelesen > 0 and abgelehnt > 0
 
 
@@ -259,9 +264,11 @@ def test_fremdes_feld_in_einem_gueltigen_dokument_ist_ungueltig(dokument, feld, 
         return
     with tempfile.TemporaryDirectory() as verzeichnis:
         store = _store(Path(verzeichnis))
-        ergebnis = store.empfangen(art, {**gut, feld: wert})
+        assert store.empfangen(art, gut).uebernommen  # das vorige gueltige Dokument
+        vorher = (store.version(art), store.inhalt(art))
+        ergebnis = store.empfangen(art, {**gut, "version": 2, feld: wert})
         assert (ergebnis.ok, ergebnis.grund) == (False, "ungueltig")
-        assert store.inhalt(art) is None and store.version(art) == 0
+        assert (store.version(art), store.inhalt(art)) == vorher
 
 
 @pytest.mark.parametrize("dokument", DOKUMENTE, ids=[dokument[0] for dokument in DOKUMENTE])
@@ -305,9 +312,13 @@ def test_fehlendes_feld_an_einer_stelle_lehnt_ab_oder_liest(stelle):
     (_name, art, gut, _optional), pfad = stelle
     with tempfile.TemporaryDirectory() as verzeichnis:
         store = _store(Path(verzeichnis))
-        ergebnis = store.empfangen(art, _ersetze(gut, pfad, _WEG))
+        assert store.empfangen(art, gut).uebernommen  # das vorige gueltige Dokument
+        vorher = (store.version(art), store.inhalt(art))
+        ergebnis = store.empfangen(art, _ersetze({**gut, "version": 2}, pfad, _WEG))
         if ergebnis is not None:
             _ergebnis_ist_wohlgeformt(ergebnis)
+        if ergebnis is None or not ergebnis.ok:
+            assert (store.version(art), store.inhalt(art)) == vorher
         if len(pfad) == 1 and pfad[0] not in KONFIG_OPTIONAL and pfad[0] != "version":
             assert ergebnis is None or not ergebnis.ok  # ein fehlendes Pflichtfeld der obersten Ebene wird nie angenommen
 
@@ -316,7 +327,7 @@ _NICHT_ENDLICH = [float("nan"), float("inf"), float("-inf"), 10**400, -(10**400)
 _FORMEN = [lambda zahl: zahl, lambda zahl: [zahl], lambda zahl: {"x": zahl}, lambda zahl: {"x": [zahl]}]
 
 
-#: Felder, die der Leser nicht auf Typ und Zahl prueft (Befund Task 13, niedrig, Restpunkt T2-Feldtypen): `mindest_software`
+#: Felder, die der Leser nicht auf Typ und Zahl prueft (Befund Task 13, niedrig, Restpunkt TO-client-kern-T8): `mindest_software`
 #: und `ts` liest im Geraet keine Stelle als Zahl; `ursprungswerte` liest nur die Pipeline und filtert dort jede nicht
 #: endliche Zahl (`_is_finite_number`, Rueckweg auf den lokalen Wert) und klemmt auf die lokalen Grenzen. Eine leere Konfiguration ist "immer gueltig" (nur `anlage` None zaehlt):
 #: sie fehlt in dieser Aufzaehlung ganz.
@@ -379,11 +390,24 @@ def _register(verzeichnis, sent, aufrufe):
     return register
 
 
+def _utf8_speicherbar(wert) -> bool:
+    """Unabhaengig von fehler.kodierbar: so, wie schreiben_json speichert (ein einzelnes Surrogat scheitert)."""
+    try:
+        json.dumps(wert, ensure_ascii=False).encode()
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def _soll_laufen(nachricht) -> bool:
     """Unabhaengige Aussage der Annahmeregeln (Befehle: genau die Felder des Vertrags, die Nutzlast ein Objekt mit allen
-    Pflichtfeldern der Art und sonst nur deren optionalen Feldern); der Wert von `schema` prueft die Annahme nicht."""
+    Pflichtfeldern der Art und sonst nur deren optionalen Feldern). Schreibt das HEUTIGE Verhalten fest, kein Sollwert:
+    der Wert von `schema` prueft die Annahme nicht (Dokumente pruefen ihn gegen wire.SCHEMATA), Restpunkt
+    TO-client-kern-T8; kommt die Pruefung, wird das Orakel angepasst."""
     command_id, kind, payload = nachricht.get("command_id"), nachricht.get("kind"), nachricht.get("payload")
     if not (isinstance(command_id, str) and 0 < len(command_id) <= 64) or set(nachricht) != set(COMMAND_FELDER):
+        return False
+    if not _utf8_speicherbar(nachricht):
         return False
     if not isinstance(kind, str) or kind not in wire.COMMANDS or not isinstance(payload, dict):
         return False
@@ -410,7 +434,8 @@ def test_beliebiger_befehl_fuehrt_nur_bei_gueltiger_form_einen_handler_aus(nachr
         _register(verzeichnis, sent, aufrufe).empfangen(nachricht)
         assert len(aufrufe) == int(_soll_laufen(nachricht))
         assert len(sent.results) == int(isinstance(nachricht.get("command_id"), str)
-                                        and 0 < len(nachricht["command_id"]) <= 64)
+                                        and 0 < len(nachricht["command_id"]) <= 64
+                                        and _utf8_speicherbar(nachricht["command_id"]))
         _ergebnisse_sind_wohlgeformt(sent)
 
 
@@ -491,8 +516,11 @@ SAETZE = {
                                                 "number.normal_temperature": "room_setpoint"}),
     "weishaupt_wwp": (
         WEISHAUPT, WEISHAUPT_STATES, {"number.hk": "curve", "number.normal": "room_setpoint",
-                                      "number.komfort": "room_setpoint", "number.swu": "heat_limit"}),
+                                      "number.komfort": "room_setpoint", "number.absenk": "room_setpoint",
+                                      "number.swu": "heat_limit"}),
 }
+#: Ziele ohne Zahl (Auswahl- und Betriebsart-Entities): jedes andere Ziel muss in der Zuordnung stehen
+NICHT_NUMERISCH = {"select.betriebsart", "climate.heizkreis::preset_mode"}
 ALLE_HEBEL = ["curve", "room_setpoint", "level", "heat_limit", "min_flow"]
 
 
@@ -614,9 +642,10 @@ def test_beliebige_serverantwort_schreibt_nichts_ausserhalb_der_lokalen_grenzen_
                 assert neu == []  # ungueltige Antwort: nichts geschrieben
             zaehler["angenommen"] += int(gueltig)
             for entity, wert in neu:
-                hebel = entities.get(entity)
-                if hebel is None:
-                    continue  # Betriebsart und Hilfswerte (Text), keine Hebel des Servers
+                if entity in NICHT_NUMERISCH:
+                    continue
+                assert entity in entities, entity  # ein unbekanntes Schreibziel faellt auf, statt uebergangen zu werden
+                hebel = entities[entity]
                 zaehler["geschrieben"] += 1
                 assert bereiche[hebel][0] <= wert <= bereiche[hebel][1], (entity, wert)
             if bridge.store.state.learned:

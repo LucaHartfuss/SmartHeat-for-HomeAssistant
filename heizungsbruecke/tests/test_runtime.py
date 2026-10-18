@@ -1202,13 +1202,15 @@ def test_wrong_lever_types_are_a_server_fault_for_every_lever(env, satz, hebel, 
 
 
 @pytest.mark.parametrize("gross", [10**400, -10**400], ids=["positiv", "negativ"])
-def test_huge_integer_as_level_is_a_server_fault(env, gross):
+def test_huge_integer_as_level_is_a_server_fault(env, gross, caplog):
     """Riesige Ganzzahl fuer `level` (Hebelsatz mit `level`): Serverfehler ohne Schreiben und ohne Fehler im Worker."""
     bridge, seq = _erster_tick(env, "viessmann")
     vorher = list(env.ha.writes)
 
-    _answer(env, bridge, seq, levers={"curve": 1.0, "level": gross, "room_setpoint": 21.0})
+    with caplog.at_level(logging.ERROR):
+        _answer(env, bridge, seq, levers={"curve": 1.0, "level": gross, "room_setpoint": 21.0})
 
+    assert [r.getMessage() for r in caplog.records if r.name == "smartheat_runtime.worker"] == []
     _ist_serverfehler_ohne_schreiben(env, bridge, vorher)
 
 

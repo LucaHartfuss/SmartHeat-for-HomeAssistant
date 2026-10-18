@@ -389,3 +389,17 @@ def test_an_unusable_access_counts_as_a_failure_with_backoff(tmp_path, ident, ca
     assert not flow.faellig() and not flow.gesperrt
     clock.now += bootstrap.RETRY_MIN_SECONDS
     assert flow.faellig()
+
+
+@pytest.mark.parametrize("feld, wert", [("mqtt_endpoint", "h\ud800"), ("mqtt_ca", "-----BEGIN CERTIFICATE-----\udfff")])
+def test_a_response_with_a_lone_surrogate_is_unusable_and_backs_off(tmp_path, ident, ca, feld, wert):
+    """speichern() koennte ein einzelnes Surrogat (json.loads aus "\\ud800") nicht schreiben: UnicodeEncodeError
+    ausserhalb des try in holen, kein Backoff, register in jedem Takt (Testoffensive T2, Task 13, Fix-Runde 1)."""
+    antwort = {**_body(ident, ca), feld: wert}
+    with pytest.raises(bootstrap.Unavailable):
+        _client(ident, FakeSession(FakeResponse(200, antwort))).register(**ARGS)
+    flow = bootstrap.Bootstrap(tmp_path, lambda: _client(ident, FakeSession(FakeResponse(200, antwort))),
+                               register_args=lambda: dict(ARGS), uhr_synchron=lambda: True, identity=lambda: ident,
+                               clock=Clock())
+    assert flow.holen(rettung=False) is None and not flow.gesperrt and not flow.faellig()  # Backoff
+    assert not (tmp_path / bootstrap.ENDPOINT_FILE).exists() and not (tmp_path / bootstrap.CERTIFICATE_FILE).exists()
