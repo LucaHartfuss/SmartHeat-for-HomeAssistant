@@ -106,6 +106,19 @@ def test_bad_payloads(register):
     assert _run(register, "zigbee_permit_join", {"seconds": True}, "c2")["error"]["grund"] == "ungueltige_nutzlast"
 
 
+@pytest.mark.parametrize(("sekunden", "angenommen"), [
+    (0, False), (1, True), (254, True), (255, False), (-1, False), (1.5, False), (60.0, False), (None, False),
+    ("60", False)])
+def test_permit_join_takes_exactly_1_to_254_whole_seconds(ctx, register, sekunden, angenommen):
+    antwort = _run(register, "zigbee_permit_join", {"seconds": sekunden})
+    if angenommen:
+        assert antwort["ok"] is True and ctx.z2m.permit_join_requests == [sekunden]
+    else:
+        assert antwort["error"] == {"grund": "ungueltige_nutzlast",
+                                    "details": {"feld": "seconds", "regel": "bereich", "min": 1, "max": 254}}
+        assert ctx.z2m.permit_join_requests == []  # nichts an Zigbee2MQTT gesendet
+
+
 def test_permit_join_and_device_list(ctx, register):
     assert _run(register, "zigbee_permit_join", {"seconds": 120})["ok"] is True
     assert ctx.z2m.permit_join_requests == [120]

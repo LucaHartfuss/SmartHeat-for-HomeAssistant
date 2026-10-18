@@ -110,3 +110,80 @@ def test_live_message_after_retained_counts(clock):
     bus.deliver("zigbee2mqtt/0xabc", {"temperature": 21.7})
     assert mirror.value("0xabc", "temperature") == 21.7
     assert mirror.last_seen("0xabc") == clock()
+
+
+def _state_of(mirror):
+    return (mirror.online, mirror.devices(), mirror.payload(SENSOR), mirror.payload(THERMOSTAT),
+            mirror.last_seen(SENSOR))
+
+
+JUNK_ON_A_DEVICE_TOPIC = [
+    ("kein JSON", "kein json{"), ("Zahl", "42"), ("Text als JSON", '"online"'), ("Liste", "[1, 2]"), ("null", "null"),
+    ("leer", ""),
+]
+
+
+@pytest.mark.parametrize("junk", [roh for _, roh in JUNK_ON_A_DEVICE_TOPIC], ids=[n for n, _ in JUNK_ON_A_DEVICE_TOPIC])
+def test_junk_on_a_device_topic_changes_nothing_and_raises_nothing(world, junk):
+    bus, z2m, mirror = world
+    z2m.report(SENSOR, temperature=20.5, battery=80)
+    seen = []
+    mirror.on_device_message(lambda ieee, payload: seen.append(ieee))
+    before = _state_of(mirror)
+    bus.publish(f"zigbee2mqtt/{SENSOR}", junk)  # roher Text; FakeBus ruft den Rueckruf des Spiegels ohne Fangnetz
+    bus.publish(f"zigbee2mqtt/{THERMOSTAT}", junk)
+    assert _state_of(mirror) == before and seen == []
+    assert mirror.value(SENSOR, "temperature") == 20.5
+    # Gegenprobe: eine gueltige Meldung auf demselben Topic aendert den Zustand und ruft den Hook
+    z2m.report(SENSOR, temperature=19.0, battery=80)
+    assert _state_of(mirror) != before and mirror.value(SENSOR, "temperature") == 19.0 and seen == [SENSOR]
+
+
+def test_bytes_that_are_no_utf8_on_a_device_topic_change_nothing(world):
+    bus, z2m, mirror = world
+    z2m.report(SENSOR, temperature=20.5)
+    before = _state_of(mirror)
+    [(_, callback)] = [(topic, cb) for topic, cb in bus.subscriptions if topic == "zigbee2mqtt/#"]
+    callback(f"zigbee2mqtt/{SENSOR}", b"\xff\xfe", False)
+    assert _state_of(mirror) == before
+
+
+def test_bridge_devices_skips_what_is_no_object_and_the_coordinator(world):
+    bus, _, mirror = world
+    sensor = {"ieee_address": SENSOR, "type": "EndDevice", "definition": {
+        "model": "S", "vendor": "V", "exposes": [{"name": "temperature", "property": "temperature", "access": 1}]}}
+    coordinator = {"ieee_address": "0x00124b00000000aa", "type": "Coordinator", "definition": None}
+    bus.publish("zigbee2mqtt/bridge/devices", [5, "text", None, [sensor], coordinator, sensor, 1.5])
+    assert [device.ieee for device in mirror.devices()] == [SENSOR]
+    assert mirror.device("0x00124b00000000aa") is None
+    # Gegenprobe: ohne den Koordinator-Eintrag zaehlt der Eintrag mit anderem Typ als Geraet
+    bus.publish("zigbee2mqtt/bridge/devices", [{**coordinator, "type": "Router"}, 5])
+    assert [device.ieee for device in mirror.devices()] == ["0x00124b00000000aa"]
+
+
+@pytest.mark.parametrize("body", ["kein json{", "{}", '{"ieee_address": "x"}', "42", '"liste"', "null"],
+                         ids=["kein JSON", "leeres Objekt", "Objekt", "Zahl", "Text", "null"])
+def test_a_bridge_devices_message_that_is_no_list_leaves_the_device_list_alone(world, body):
+    bus, _, mirror = world
+    before = mirror.devices()
+    assert [device.ieee for device in before] == [SENSOR, THERMOSTAT]
+    bus.publish("zigbee2mqtt/bridge/devices", body)
+    assert mirror.devices() == before
+
+
+@pytest.mark.parametrize(("roh", "online"), [
+    ('{"state": "online"}', True), ('{"state": "offline"}', False), ("online", True), ("offline", False),
+    ("kaputt{", False), ("[1]", False), ('{"x": 1}', None), ("null", None), ("", None)])
+def test_what_the_bridge_state_makes_of_a_message(world, roh, online):
+    """Festgehalten: anders als auf Geraetetopics zaehlt Muell auf bridge/state als offline (nur ein fehlender Zustand
+    laesst `online` unbekannt); offline macht alle Werte ungueltig, bis die naechste Meldung online sagt."""
+    bus, z2m, mirror = world
+    z2m.report(SENSOR, temperature=20.5)
+    assert mirror.online is True and mirror.value(SENSOR, "temperature") == 20.5
+    bus.publish("zigbee2mqtt/bridge/state", roh)
+    assert mirror.online is online
+    if online is False:
+        with pytest.raises(ValueError, match="offline"):
+            mirror.value(SENSOR, "temperature")
+    z2m.bridge(online=True)  # Gegenprobe: ein gueltiges online stellt den Spiegel wieder her
+    assert mirror.online is True and mirror.value(SENSOR, "temperature") == 20.5

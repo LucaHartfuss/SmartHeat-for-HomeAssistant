@@ -147,6 +147,49 @@ def test_daily_tick_zone_comes_from_tz(monkeypatch):
     assert seconds_until("12:12", now) == 25 * 3600
 
 
+@pytest.mark.parametrize(("tageszeit", "jetzt", "erwartet_s"), [
+    ("00:00", datetime(2026, 1, 15, 12, 0, tzinfo=BERLIN), 12 * 3600),
+    ("00:00", datetime(2026, 1, 15, 23, 59, tzinfo=BERLIN), 60),
+    ("00:00", datetime(2026, 1, 15, 0, 0, tzinfo=BERLIN), 24 * 3600),      # genau jetzt: erst morgen
+    ("00:00", datetime(2026, 1, 15, 0, 1, tzinfo=BERLIN), 24 * 3600 - 60),
+    ("23:59", datetime(2026, 1, 15, 12, 0, tzinfo=BERLIN), 11 * 3600 + 59 * 60),
+    ("23:59", datetime(2026, 1, 15, 23, 58, tzinfo=BERLIN), 60),
+    ("23:59", datetime(2026, 1, 15, 23, 59, tzinfo=BERLIN), 24 * 3600),    # genau jetzt: erst morgen
+    ("23:59", datetime(2026, 1, 15, 23, 59, 30, tzinfo=BERLIN), 24 * 3600 - 30),
+])
+def test_the_daily_tick_around_midnight(tageszeit, jetzt, erwartet_s):
+    assert seconds_until(tageszeit, jetzt, BERLIN) == erwartet_s
+
+
+def test_the_daily_tick_is_planned_again_after_it_fired(tmp_path, clock):
+    """Die Uhr steht genau auf der Tageszeit: seconds_until liefert dann einen vollen Tag, nie 0 (kein Dauerfeuer);
+    nach dem Feuern ist der naechste Tick wieder in 24 Stunden geplant, und so weiter."""
+    bus = FakeBus()
+    mirror = ZigbeeMirror(bus, clock)
+    mirror.start()
+    worker = RegulationWorker(clock=clock)
+    checks = []
+    worker.register(EV_LOCAL_CHECK, lambda event: checks.append(event.data.get("room_target_fired")))
+    worker.register(EV_SOURCE_CONNECTED, lambda event: None)
+    store = TargetStore(tmp_path / "room_target.json", 20.0, clock, lambda: "ts")
+    BusTriggerSource(bus, worker, mirror, store, thermostat=None, sensor_ieees=(), daily_trigger_time="12:00",
+                     now=lambda: datetime(2026, 1, 15, 12, 0, tzinfo=BERLIN)).start()
+    worker.run_pending()
+    checks.clear()  # der Verbindungs-Check beim Start
+    clock.advance(24 * 3600 - 1)
+    worker.run_pending()
+    assert checks == []  # eine Sekunde vor dem ersten Tick
+    clock.advance(1)
+    worker.run_pending()
+    assert checks == [False]
+    clock.advance(24 * 3600 - 1)
+    worker.run_pending()
+    assert checks == [False]  # der zweite Tick ist erst in einem vollen Tag faellig, kein Dauerfeuer
+    clock.advance(1)
+    worker.run_pending()
+    assert checks == [False, False]
+
+
 def test_sleepy_thermostat_does_not_overwrite_the_portal_target(world, clock):
     bus, z2m, worker, store, _ = world
     z2m.report(THERMOSTAT, occupied_heating_setpoint=20.0, local_temperature=20.0)  # Ausgangszustand = Soll 20

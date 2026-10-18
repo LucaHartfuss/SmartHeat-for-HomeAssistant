@@ -1,17 +1,18 @@
 """Laufzeit-Host des Gateways ab 0.6.0 (Spec SHG G2 3.1, Spec 5b Plan D2 Task 5): Start aus dem Konfigurationsdokument,
 Startfehler mit stabilem Schluessel, Hebelsatz, Abmelden, Manifest nach der ersten Abfrage, Batterien, Anlagen-Kennung."""
+import logging
 import time
 
 import bindung_beispiele
 import pytest
 from bindung_beispiele import VIESSMANN_VICARE_BINDING
-from configs import SENSOR, THERMOSTAT, dokumente_schreiben, konfiguration
+from configs import SENSOR, THERMOSTAT, bedienung, dokumente_schreiben, konfiguration
 from fake_vicare.server import GOOD_CODE, FakeVicare
 from fakes import FakeBus
 from geraet_fakes import geraet_fuer
 from world import GatewayWorld
 
-from smartheat_core import rastung
+from smartheat_core import dateien, rastung
 from smartheat_gateway import config as gateway_config
 from smartheat_gateway.drivers import registry
 from smartheat_gateway.drivers.base import DriverError
@@ -264,3 +265,74 @@ def test_ursprungswerte_server_ignores_a_new_setup_while_the_reset_is_pending(da
     host = _host(paths, {**alt, "anlage": None, "ursprungswerte": {}}, clock)
     host._geraet.device.konf = {**alt, "anlage": "andere-anlage", "ursprungswerte": {"heat_limit": 12.0}}
     assert host.ursprungswerte_server() == {"heat_limit": 16.0}
+
+
+class _SpaeterBus(FakeBus):
+    """Der lokale Bus ist erst nach `fehlversuche` Wartefristen da (Mosquitto startet noch)."""
+
+    def __init__(self, fehlversuche: int) -> None:
+        super().__init__()
+        self.fehlversuche = fehlversuche
+        self.versuche = 0
+
+    def wait_connected(self, timeout=None) -> bool:
+        self.versuche += 1
+        return self.versuche > self.fehlversuche
+
+
+def test_wait_until_ready_waits_for_the_bus_and_logs_each_wait(data_dir, clock, caplog):
+    caplog.set_level(logging.INFO, logger="smartheat_gateway.host")
+    paths = Paths(data_dir)
+    bus = _SpaeterBus(fehlversuche=2)
+    host = _host(paths, konfiguration(), clock, bus=bus)
+    assert not paths.runtime_dir.exists()
+    host.wait_until_ready()
+    assert bus.versuche == 3  # zwei Fristen ohne Bus, die dritte mit
+    assert caplog.text.count("Lokaler Bus noch nicht erreichbar, warte") == 2
+    assert paths.runtime_dir.is_dir()  # erst nach dem Bus angelegt
+
+
+def test_wait_until_ready_with_the_bus_already_there_logs_nothing_and_prepares_the_runtime_folder(data_dir, clock, caplog):
+    caplog.set_level(logging.INFO, logger="smartheat_gateway.host")
+    paths = Paths(data_dir)
+    host = _host(paths, konfiguration(), clock, bus=_SpaeterBus(fehlversuche=0))
+    host.wait_until_ready()
+    assert "noch nicht erreichbar" not in caplog.text and paths.runtime_dir.is_dir()
+
+
+def _thermostat_writes(world):
+    return [body["occupied_heating_setpoint"] for topic, body in world.bus.decoded()
+            if topic == f"zigbee2mqtt/{THERMOSTAT}/set"]
+
+
+@pytest.mark.parametrize(("dirty", "soll", "schreibt"), [(False, 22.5, [22.5]), (True, 20.0, [])],
+                         ids=["Bedienung gilt und gleicht das Thermostat an", "offene lokale Aenderung gilt vor"])
+def test_an_open_local_change_keeps_the_start_from_aligning_the_thermostat(world, dirty, soll, schreibt):
+    """Die Bedienung des Servers (22,5) weicht vom gespeicherten Soll (20,0) ab. Ohne offene lokale Aenderung gilt sie
+    und das Thermostat wird beim Start angeglichen; mit offener Aenderung (dirty) bleibt das lokale Soll, nichts geht
+    ans Thermostat."""
+    dateien.schreiben_json(world.paths.room_target, {"value": 20.0, "source": "portal", "ts": "t"}, modus=dateien.LESBAR)
+    dokumente_schreiben(world.paths, konfiguration())
+    dateien.schreiben_json(world.paths.device_dir / "bedienung.json",
+                           {"version": 1, "inhalt": bedienung(22.5), "dirty": dirty}, modus=dateien.PRIVAT)
+    world.start_runtime()
+    world.run()
+    assert world.host._store.value == soll and _thermostat_writes(world) == schreibt
+
+
+@pytest.mark.parametrize("wert", [float("nan"), float("inf"), float("-inf"), 1e308], ids=["nan", "inf", "-inf", "1e308"])
+def test_a_sensor_value_that_is_not_plausible_never_becomes_the_room_temperature(world, wert):
+    """F-gateway-host-26: die Signalquelle reicht den Zigbee-Wert unveraendert weiter (wie der HA-Host `float(state)`);
+    die gemeinsame Laufzeit (room_mean) zaehlt nur plausible endliche Werte. Der Raum im Status zeigt dann keinen Ist-Wert,
+    und sobald wieder ein gueltiger Wert kommt, den gueltigen."""
+    dokumente_schreiben(world.paths, konfiguration())
+    world.start_runtime()
+    world.connect()
+    world.advance(30)
+    assert world.geraet.zustand.raum["ist"] == 20.0  # vorher anders
+    world.z2m.report(SENSOR, temperature=wert)
+    world.advance(30)
+    assert world.geraet.zustand.raum["ist"] is None
+    world.z2m.report(SENSOR, temperature=21.0)
+    world.advance(30)
+    assert world.geraet.zustand.raum["ist"] == 21.0

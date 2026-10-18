@@ -78,6 +78,19 @@ def test_stale_cache_raises(paths, clock):
         driver.read("curve")
 
 
+@pytest.mark.parametrize(("poll", "alter_s", "frisch"), [
+    (60, 179, True), (60, 180, True), (60, 181, False),
+    (1, 2, True), (1, 3, True), (1, 4, False)])
+def test_the_cache_is_fresh_up_to_exactly_three_poll_intervals(paths, clock, poll, alter_s, frisch):
+    driver = _sim(paths, clock, poll_seconds=poll)
+    clock.advance(alter_s)
+    if frisch:
+        assert driver.read("curve") is not None
+    else:
+        with pytest.raises(ValueError, match="veraltet"):
+            driver.read("curve")
+
+
 def test_fault_injection(paths, clock):
     driver = _sim(paths, clock)
     control = paths.sim_dir / "control.json"

@@ -1,3 +1,4 @@
+import math
 from types import SimpleNamespace
 
 import pytest
@@ -67,6 +68,28 @@ def test_integer_beyond_float_range_is_no_number_and_leaves_the_mean_to_the_othe
     with pytest.raises(ValueError):
         source.get_state(f"zigbee:{SENSOR}:temperature")
     assert source.get_state(REF_ROOM_MEAN) == 21.0
+
+
+ROH_NICHT_PLAUSIBEL = [("NaN", math.isnan), ("Infinity", lambda v: v == math.inf), ("-Infinity", lambda v: v == -math.inf),
+                       ("1e999", lambda v: v == math.inf), ("1e308", lambda v: v == 1e308)]
+
+
+@pytest.mark.parametrize(("roh", "erwartet"), ROH_NICHT_PLAUSIBEL, ids=[roh for roh, _ in ROH_NICHT_PLAUSIBEL])
+def test_a_non_finite_or_implausible_sensor_value_is_passed_on_like_the_ha_host_and_dropped_by_the_room_mean(
+        world, roh, erwartet):
+    """F-gateway-host-26, festgehalten: Zigbee2MQTT-JSON mit NaN, Infinity, 1e999 oder 1e308 (Bus-Weg: `bus.decode` mit
+    json.loads) kommt als float aus `get_state`, genau wie `float(state)` im HA-Host (ha_api.get_state). Die Pruefung auf
+    Endlichkeit und Plausibilitaet (5 bis 35 Grad) liegt hinter der Signalquelle: das Raummittel (room_mean, in beiden Hosts
+    dieselbe Funktion) zaehlt solche Werte nicht. Der zweite Fuehler bestimmt das Mittel allein."""
+    bus, z2m, source = world
+    bus.publish(f"zigbee2mqtt/{SENSOR}", '{"temperature": ' + roh + "}")  # roher Text wie vom Broker
+    z2m.report(SECOND, temperature=21.0)
+    value = source.get_state(f"zigbee:{SENSOR}:temperature")
+    assert isinstance(value, float) and erwartet(value)
+    assert source.get_state(REF_ROOM_MEAN) == 21.0  # Gegenprobe: ein plausibler Wert zaehlt (21,0 allein)
+    z2m.report(SECOND, temperature=float("nan"))
+    with pytest.raises(ValueError, match="kein Raumf"):
+        source.get_state(REF_ROOM_MEAN)  # beide Fuehler unbrauchbar: kein Mittel, kein erfundener Wert
 
 
 def test_the_gateway_has_no_unit(world):
