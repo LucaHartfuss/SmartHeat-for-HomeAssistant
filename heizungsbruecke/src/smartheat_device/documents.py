@@ -194,7 +194,9 @@ class DocumentStore:
                  vor_speichern: Callable[[dict | None, dict], None] | None = None, rasten: bool = True) -> None:
         """vor_speichern(alt, neu): DeviceHost.konfiguration_vorbereiten; die Nur-Lese-Verwendungen (Aufraeumen beim
         Start) uebergeben keinen und rasten=False: der Konstruktor schreibt dann keine Rastung nach (sie fehlt bei
-        gespeicherter eingerichteter Konfiguration), auch nicht bei einem Fehler im Ordner; rastung bleibt None."""
+        gespeicherter eingerichteter Konfiguration), auch nicht bei einem Fehler im Ordner; rastung bleibt None. Ein
+        solcher Store ist nur zum Lesen: empfangen einer eingerichteten Konfiguration, die rasten muesste, wirft
+        RuntimeError (Programmierfehler), bevor etwas gespeichert wird."""
         self._dir = directory
         self._rasten_erlaubt = rasten
         self._host, self._software_version, self._treiber_pruefen = host, software_version, treiber_pruefen
@@ -242,6 +244,8 @@ class DocumentStore:
         return gelesen
 
     def _rasten(self, inhalt: dict) -> Rastung | None:
+        if not self._rasten_erlaubt:  # Programmierfehler: ein Nur-Lese-Store (rasten=False) empfaengt keine Dokumente
+            raise RuntimeError("DocumentStore mit rasten=False schreibt keine Rastung")
         hebelsatz, verteilsystem = inhalt.get("hebelsatz"), inhalt.get("verteilsystem")
         if not (isinstance(hebelsatz, str) and isinstance(verteilsystem, str)):
             return None

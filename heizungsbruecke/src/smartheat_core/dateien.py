@@ -1,6 +1,6 @@
 """Der eine atomare Schreibweg (Audit 5, A5-60; Spec Stufe 3 S3 Abschnitt 7.1), rein (Standardbibliothek): temporaere
 Datei mit O_EXCL|O_NOFOLLOW im per O_NOFOLLOW geoeffneten Ordner, vollstaendig schreiben, fsync, os.replace (ersetzt
-einen Symlink am Zielnamen, statt ihm zu folgen), fsync des Ordners. Scheitert etwas vor dem Ersetzen, bleibt keine
+einen Symlink am Zielnamen, statt ihm zu folgen), fsync des Ordners. Scheitert das Schreiben oder Ersetzen, bleibt keine
 Temp-Datei liegen und die urspruengliche Ausnahme geht durch. Der Modus ist Pflicht: kein Aufrufer bekommt je
 nach Host 0600 oder 0644. Kern, Laufzeit, Geraetekern und der Gateway-Container schreiben nur hierueber."""
 import contextlib

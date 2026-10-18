@@ -71,6 +71,18 @@ def test_a_failure_while_writing_or_replacing_leaves_no_temp_file_and_the_target
     assert sorted(path.name for path in tmp_path.iterdir()) == ["x.json"] and ziel.read_text() == "alt"
 
 
+@pytest.mark.parametrize("ausfall", ["write", "replace"])
+def test_a_failure_on_a_new_file_creates_neither_the_target_nor_a_temp_file(tmp_path, monkeypatch, ausfall):
+    def datentraeger(*args, **kwargs):
+        raise OSError("Datentraeger voll")
+
+    monkeypatch.setattr(dateien.os, ausfall, datentraeger)
+    with pytest.raises(OSError, match="Datentraeger voll"):
+        dateien.schreiben_text(tmp_path / "neu.json", "neu", modus=dateien.PRIVAT)
+    monkeypatch.undo()
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_a_failure_of_the_cleanup_itself_does_not_hide_the_original_error(tmp_path, monkeypatch):
     echt = dateien.os.unlink
 
@@ -86,3 +98,4 @@ def test_a_failure_of_the_cleanup_itself_does_not_hide_the_original_error(tmp_pa
     monkeypatch.setattr(dateien.os, "unlink", unlink)
     with pytest.raises(OSError, match="Datentraeger voll"):
         dateien.schreiben_text(tmp_path / "x.json", "neu", modus=dateien.PRIVAT)
+    assert not (tmp_path / "x.json").exists()  # kein Ziel (die Temp-Datei bleibt)

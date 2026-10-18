@@ -116,6 +116,16 @@ def test_a_read_only_store_neither_writes_nor_creates_the_lock(tmp_path):
     assert not (tmp_path / "sicherheitssatz.json").exists()
 
 
+def test_a_read_only_store_refuses_a_configuration_that_would_lock(tmp_path):
+    """Ein Store mit rasten=False ist nur zum Lesen: eine einzurastende Konfiguration ist ein Programmierfehler und
+    wird laut abgelehnt, bevor etwas gespeichert wird."""
+    nur_lesen = docs.DocumentStore(tmp_path, host="gateway", software_version="0.6.0", rasten=False)
+    with pytest.raises(RuntimeError, match="rasten=False"):
+        nur_lesen.empfangen("konfiguration", _konfiguration())
+    assert not (tmp_path / "sicherheitssatz.json").exists() and not (tmp_path / "konfiguration.json").exists()
+    assert nur_lesen.version("konfiguration") == 0 and nur_lesen.rastung is None
+
+
 def test_a_read_only_store_survives_a_folder_that_refuses_the_lock(tmp_path, monkeypatch):
     _store(tmp_path).empfangen("konfiguration", _konfiguration())
     (tmp_path / "sicherheitssatz.json").unlink()
