@@ -81,6 +81,36 @@ class FakeMqttChannel:
         self.stopped = True
 
 
+
+class FakeTriggerClient:
+    """Fake des Grenz-Adapters zum HA-WebSocket (`heizungsbruecke.geraet_trigger.HaTriggerClient`, Controller-Ruling
+    Task 10): verbindet nichts, haelt die Konstruktor-Argumente in `kwargs` fest (die Tests rufen daraus
+    `on_trigger_event`/`on_connected`). Konstruktor, `start` und `stop` haben die Signatur des echten Clients
+    (test_fake_gleichlauf.py). Einsetzen per `monkeypatch.setattr(..., trigger_klasse(ablage))`: jede Umgebung bekommt
+    eine eigene Unterklasse, deren Instanzen in `ablage` landen."""
+
+    erzeugt: list  # gesetzt von trigger_klasse
+
+    def __init__(self, ws_url, token, triggers, on_trigger_event, on_connected=None):
+        self.kwargs = {"ws_url": ws_url, "token": token, "triggers": triggers,
+                       "on_trigger_event": on_trigger_event, "on_connected": on_connected}
+        self.connected = True
+        self.started = False
+        self.stopped = False
+        type(self).erzeugt.append(self)
+
+    def start(self) -> None:
+        self.started = True
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
+def trigger_klasse(ablage: list, basis: type[FakeTriggerClient] = FakeTriggerClient, **attribute) -> type:
+    """Unterklasse von `basis` fuer eine Umgebung: erzeugte Clients landen in `ablage`; `attribute` setzt weitere
+    Klassenattribute (z. B. ein Log)."""
+    return type(basis.__name__, (basis,), {"erzeugt": ablage, **attribute})
+
 def datei_stand(path: Path) -> tuple[int, int, bytes] | None:
     """Stand einer Datei auf dem Datentraeger (Inode, Aenderungszeit in ns, Inhalt), None ohne Datei. Jedes Schreiben
     geht atomar ueber eine neue Datei (dateien.schreiben, os.replace) und aendert die Inode; der Inhalt ist mit dabei,

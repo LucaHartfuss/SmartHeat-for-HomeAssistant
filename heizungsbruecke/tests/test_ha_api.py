@@ -916,15 +916,17 @@ def test_get_state_without_a_number_is_a_value_error(zustand):
 
 # --- Zeitlimit und Abbruch auf den Leseaufrufen: eine definierte Ausnahme, am Port kein Lesewert ---
 
+# Leseaufruf der HA-API -> derselbe Lesepfad am Port (HaSignalSource): get_unit liest das Attribut unit_of_measurement.
 LESEAUFRUFE = {
-    "get_state": lambda api: api.get_state("sensor.vorlauf"),
-    "get_raw_state": lambda api: api.get_raw_state("sensor.vorlauf"),
-    "get_attribute": lambda api: api.get_attribute("sensor.vorlauf", "unit_of_measurement"),
+    "get_state": (lambda api: api.get_state("sensor.vorlauf"), lambda port: port.get_state("sensor.vorlauf")),
+    "get_raw_state": (lambda api: api.get_raw_state("sensor.vorlauf"), lambda port: port.get_raw_state("sensor.vorlauf")),
+    "get_attribute": (lambda api: api.get_attribute("sensor.vorlauf", "unit_of_measurement"),
+                      lambda port: port.get_unit("sensor.vorlauf")),
 }
 
 
-@pytest.mark.parametrize("lesen", LESEAUFRUFE.values(), ids=LESEAUFRUFE.keys())
-def test_a_time_limit_on_a_read_raises_timeout_and_gives_no_value(lesen):
+@pytest.mark.parametrize(("lesen", "am_port"), LESEAUFRUFE.values(), ids=LESEAUFRUFE.keys())
+def test_a_time_limit_on_a_read_raises_timeout_and_gives_no_value(lesen, am_port):
     # So meldet requests das abgelaufene Lese-Zeitlimit (timeout=10); ein echtes Warten von 10 s ersetzt die Attrappe.
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
     with patch("heizungsbruecke.ha_api.requests.get", autospec=True,
@@ -932,7 +934,7 @@ def test_a_time_limit_on_a_read_raises_timeout_and_gives_no_value(lesen):
         with pytest.raises(requests.Timeout):
             lesen(api)
         with pytest.raises(SourceUnavailable):
-            HaSignalSource(api).get_state("sensor.vorlauf")
+            am_port(HaSignalSource(api))
 
 
 @pytest.fixture
@@ -950,7 +952,12 @@ def abbrechender_server(request):
             except TimeoutError:
                 continue
             with verbindung:
-                verbindung.recv(65536)
+                anfrage = b""
+                while b"\r\n\r\n" not in anfrage:  # die ganze Anfrage lesen: Schliessen mit FIN, nicht RST
+                    teil = verbindung.recv(65536)
+                    if not teil:
+                        break
+                    anfrage += teil
                 if request.param == "halber_koerper":
                     verbindung.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 64\r\n"
                                        b"\r\n{\"state\": \"2")
@@ -967,10 +974,10 @@ def abbrechender_server(request):
     ("ohne_antwort", requests.ConnectionError),
     ("halber_koerper", requests.exceptions.ChunkedEncodingError),
 ], indirect=["abbrechender_server"])
-@pytest.mark.parametrize("lesen", LESEAUFRUFE.values(), ids=LESEAUFRUFE.keys())
-def test_an_abort_in_the_middle_of_the_answer_raises_and_gives_no_value(abbrechender_server, fehler, lesen):
+@pytest.mark.parametrize(("lesen", "am_port"), LESEAUFRUFE.values(), ids=LESEAUFRUFE.keys())
+def test_an_abort_in_the_middle_of_the_answer_raises_and_gives_no_value(abbrechender_server, fehler, lesen, am_port):
     api = HomeAssistantApi(base_url=abbrechender_server, token="test-token", api_prefix="/api")
     with pytest.raises(fehler):
         lesen(api)
     with pytest.raises(SourceUnavailable):
-        HaSignalSource(api).get_state("sensor.vorlauf")
+        am_port(HaSignalSource(api))

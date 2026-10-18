@@ -563,9 +563,10 @@ def test_a_wrong_token_closes_logs_and_backs_off_without_rapid_reconnects(monkey
     uhr = _Uhr(grenze=70)
     monkeypatch.setattr(ha_trigger_client, "time", uhr)
     ha = _HaGegenstelle(uhr, token="richtig")
-    with patch(WEBSOCKET_APP, autospec=True, side_effect=ha), caplog.at_level(logging.ERROR):
+    verbunden = []
+    with patch(WEBSOCKET_APP, autospec=True, side_effect=ha), caplog.at_level(logging.DEBUG):
         client = HaTriggerClient(ws_url="ws://x", token="falsch-geheim", triggers=[{"platform": "time", "at": "12:00"}],
-                                 on_trigger_event=_ignorieren)
+                                 on_trigger_event=_ignorieren, on_connected=lambda: verbunden.append(uhr.jetzt))
         uhr.client = client
         client.start()
         client._thread.join(timeout=5)
@@ -578,5 +579,5 @@ def test_a_wrong_token_closes_logs_and_backs_off_without_rapid_reconnects(monkey
     assert ha.geschlossen == [1, 2, 3, 4, 5, 6, 7, 7]
     fehler = [r.getMessage() for r in caplog.records if "WS-Authentifizierung fehlgeschlagen" in r.getMessage()]
     assert len(fehler) == 7
-    assert "falsch-geheim" not in caplog.text
-    assert client.connected is False
+    assert "falsch-geheim" not in caplog.text  # auf keiner Stufe (DEBUG bis ERROR)
+    assert verbunden == []  # nie verbunden

@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import geraet_helpers
 import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT
-from fakes import FakeHa
+from fakes import FakeHa, trigger_klasse
 
 from heizungsbruecke import geraet_status
 from heizungsbruecke.derived_sensors import DerivedSensors
@@ -120,20 +120,6 @@ class _Link:
         self._geraet.channel.setpoints(payload)
 
 
-class FakeTriggerClient:
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
-        self.connected = True
-        self.started = False
-        self.stopped = False
-
-    def start(self):
-        self.started = True
-
-    def stop(self):
-        self.stopped = True
-
-
 @pytest.fixture
 def env(tmp_path, monkeypatch, clock):
     paths = {}
@@ -155,12 +141,7 @@ def env(tmp_path, monkeypatch, clock):
     # Fristende) frisch; queries zaehlt diese Pruefungen.
     abo_state = {"status": entitlement.ACTIVE, "queries": 0}
     trigger_clients = []
-
-    def _trigger_factory(**kwargs):
-        trigger_clients.append(FakeTriggerClient(**kwargs))
-        return trigger_clients[-1]
-
-    monkeypatch.setattr("heizungsbruecke.geraet_trigger.HaTriggerClient", _trigger_factory)
+    monkeypatch.setattr("heizungsbruecke.geraet_trigger.HaTriggerClient", trigger_klasse(trigger_clients))
     return SimpleNamespace(
         clock=clock, paths=paths, abo=abo_state, ha=FakeHa(), trigger_clients=trigger_clients, derived=env_derived,
         geraet=None,

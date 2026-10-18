@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from conftest import FakeClock
 from device_helpers import GeraeteCa, zertifikat_fuer
-from fakes import FakeHa
+from fakes import FakeHa, trigger_klasse
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from test_device_bootstrap import FakeResponse, FakeSession
@@ -539,19 +539,7 @@ def _frische_umgebung(verzeichnis: Path, mp):
     mp.setattr("heizungsbruecke.derived_sensors.ensure_all",
                lambda **kwargs: DerivedSensors({"room_actual": "sensor.room_actual"}, (), "fp1"))
     trigger = []
-
-    class _Trigger:
-        def __init__(self, **kwargs):
-            self.kwargs, self.connected = kwargs, True
-            trigger.append(self)
-
-        def start(self):
-            pass
-
-        def stop(self):
-            pass
-
-    mp.setattr("heizungsbruecke.geraet_trigger.HaTriggerClient", _Trigger)
+    mp.setattr("heizungsbruecke.geraet_trigger.HaTriggerClient", trigger_klasse(trigger))
     from types import SimpleNamespace
     return SimpleNamespace(clock=FakeClock(), paths=paths, abo={"status": entitlement.ACTIVE, "queries": 0},
                            ha=FakeHa(), trigger_clients=trigger, derived={"replaced": ()}, geraet=None)
