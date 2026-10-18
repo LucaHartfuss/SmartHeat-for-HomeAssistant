@@ -1,5 +1,6 @@
 """config.yaml ab 1.0.0 (Spec 5c 1.1/1.2): nur Optionen zum Starten, Supervisor-Discovery, kein Optionsmodus mehr. Die
 Pruefungen der frueheren Rollen-, Zugangs- und Intervall-Optionen entfallen mit dem Optionsmodus."""
+import ast
 from pathlib import Path
 
 import pytest
@@ -46,3 +47,57 @@ def test_log_levels_match_the_entry_point():
     from heizungsbruecke.__main__ import LOG_LEVELS
     values = _load_config_yaml()["schema"]["log_level"].removeprefix("list(").removesuffix(")?").split("|")
     assert set(values) == set(LOG_LEVELS)
+
+
+DOCKERFILE_PATH = Path(__file__).resolve().parents[1] / "Dockerfile"
+SRC_PATH = Path(__file__).resolve().parents[1] / "src"
+
+
+def _offene_ports(config: dict, dockerfile: str) -> list[str]:
+    """Was einen Port nach aussen oeffnen wuerde: Schluessel der config.yaml und EXPOSE im Dockerfile."""
+    funde = [key for key in ("ports", "ports_description", "host_network") if key in config]
+    return funde + [zeile.strip() for zeile in dockerfile.splitlines() if zeile.strip().upper().startswith("EXPOSE")]
+
+
+def test_neither_config_yaml_nor_dockerfile_declare_a_port():
+    """Angreifer im LAN (F-ha-host-32): config.yaml ohne ports, ports_description und host_network, das Dockerfile ohne
+    EXPOSE. Gegenprobe: eine Beispiel-Konfiguration mit Port und ein Dockerfile mit EXPOSE werden erkannt."""
+    assert _offene_ports(_load_config_yaml(), DOCKERFILE_PATH.read_text()) == []
+    beispiel = {"ports": {"8080/tcp": 8080}, "ports_description": {"8080/tcp": "Web"}}
+    assert _offene_ports(beispiel, "FROM python\nexpose 8080\n") == ["ports", "ports_description", "expose 8080"]
+
+
+_SERVER_MODULE = ("http.server", "socketserver", "aiohttp", "wsgiref", "xmlrpc.server")
+_SERVER_AUFRUFE = ("bind", "listen", "serve_forever", "start_server", "create_server", "make_server")
+
+
+def _server_stellen(quelltext: str) -> list[str]:
+    """Stellen im Quelltext, an denen ein Server-Socket entstuende: Import eines Server-Moduls, Aufruf von bind, listen,
+    serve_forever, start_server, create_server oder make_server, die Klasse HTTPServer. Kommentare zaehlen nicht."""
+    funde = []
+    for knoten in ast.walk(ast.parse(quelltext)):
+        if isinstance(knoten, ast.Import):
+            funde += [alias.name for alias in knoten.names if alias.name.startswith(_SERVER_MODULE)]
+        elif isinstance(knoten, ast.ImportFrom) and (knoten.module or "").startswith(_SERVER_MODULE):
+            funde.append(knoten.module or "")
+        elif isinstance(knoten, ast.Call) and isinstance(knoten.func, ast.Attribute) and knoten.func.attr in _SERVER_AUFRUFE:
+            funde.append(knoten.func.attr)
+        elif isinstance(knoten, ast.Name | ast.Attribute) and "HTTPServer" in (getattr(knoten, "id", None) or
+                                                                               getattr(knoten, "attr", "")):
+            funde.append("HTTPServer")
+    return funde
+
+
+def test_no_server_socket_in_the_addon_code():
+    """Angreifer im LAN (F-ha-host-32): kein Modul unter heizungsbruecke/src horcht (kein HTTP-Server, kein Listener).
+    Gegenprobe: ein Beispieltext mit jedem dieser Bausteine wird erkannt, ein Kommentar nicht."""
+    dateien = sorted(SRC_PATH.rglob("*.py"))
+    assert len(dateien) > 40  # der ganze Quelltext (heizungsbruecke, smartheat_core, _device, _runtime)
+    funde = {str(pfad.relative_to(SRC_PATH)): stellen for pfad in dateien
+             if (stellen := _server_stellen(pfad.read_text()))}
+    assert funde == {}
+    beispiel = ("import socket\nimport socketserver\nfrom http.server import HTTPServer\nfrom aiohttp import web\n"
+                "s = socket.socket()\ns.bind(('', 80))\ns.listen()\nHTTPServer(('', 8080), None).serve_forever()\n"
+                "# s.bind(('', 81)) nur ein Kommentar\n")
+    assert sorted(_server_stellen(beispiel)) == sorted(
+        ["socketserver", "http.server", "aiohttp", "bind", "listen", "HTTPServer", "serve_forever"])

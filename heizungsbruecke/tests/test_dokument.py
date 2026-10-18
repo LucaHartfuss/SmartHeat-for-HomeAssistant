@@ -261,6 +261,21 @@ def test_a_circuit_without_config_entry_checks_only_the_platform():
     assert dokument.zuordnung_pruefen(konfiguration, ha) == {"feld": "heat_limit", "regel": "nicht_erlaubt"}
 
 
+def test_the_platform_of_the_write_targets_comes_from_the_server_document():
+    """Heutiges Verhalten, Restpunkt A5-70 (Regel 4: eine lokale Positivliste der Plattformen nur mit Go des Nutzers):
+    nennt ein kompromittierter Server als Kreis die Plattform einer beliebigen anderen Integration (hier shelly, ein
+    fremdes Geraet), nimmt die Pruefung die number-Entities dieser Plattform als Schreibziele an. Gegenprobe: dieselbe
+    Bindung mit dem echten Kreis (mypyllant) wird abgelehnt."""
+    fremd = {"number.curve_current", "climate.zone", "number.min_flow", "number.heat_limit", "sensor.outdoor_temp"}
+    ha = _ha()
+    ha.registry = [{**e, "platform": "shelly", "config_entry_id": "e-shelly", "device_id": "d-shelly"}
+                   if e["entity_id"] in fremd else e for e in ha.registry]
+    assert dokument.zuordnung_pruefen(KONFIGURATION, ha) == {"feld": "room_setpoint", "regel": "nicht_erlaubt"}
+    kreis = {**KONFIGURATION["bindung"]["kreis"], "plattform": "shelly", "config_entry": "e-shelly"}
+    vom_server = {**KONFIGURATION, "bindung": {**KONFIGURATION["bindung"], "kreis": kreis}}
+    assert dokument.zuordnung_pruefen(vom_server, ha) is None
+
+
 def test_soll_entity_on_the_device_of_a_write_target_is_refused():
     ha = _ha()
     ha.registry = [{**e, "device_id": "d-therme"} if e["entity_id"] == "sensor.room_target" else e for e in ha.registry]

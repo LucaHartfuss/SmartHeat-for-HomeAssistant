@@ -12,7 +12,7 @@ from test_runtime import OPTIONS, env  # noqa: F401 - env ist eine Fixture
 from heizungsbruecke import config, discovery, geraet_host
 from heizungsbruecke.host import EV_RAUM, RAUM_SECONDS, HaHost
 from smartheat_core.config_check import NichtPruefbar
-from smartheat_device import nachrichten, wire
+from smartheat_device import inventory, nachrichten, wire
 from smartheat_device.commands import CommandRegister, Done, Failed, Waiting
 from smartheat_device.geraet_host_basis import EV_RELOAD
 from smartheat_device.host import Anzeige
@@ -182,6 +182,35 @@ def test_inventory_runs_in_the_background(tmp_path, monkeypatch):
     done = _bis(outcome)
     assert isinstance(done, Done) and done.inventur["einheit_temperatur"] == "°C" and done.result == {}
     assert [entity["entity_id"] for entity in done.inventur["entities"]] == ["climate.wz"]
+    host.hintergrund.stop()
+
+
+def _groesse(nachricht) -> int:
+    """Bytes einer Nachricht so, wie der Link sie sendet (kompakt, UTF-8)."""
+    return len(json.dumps(nachricht, separators=(",", ":"), ensure_ascii=False).encode())
+
+
+def test_a_filter_with_ten_thousand_entries_is_not_limited_and_the_answer_stays_under_the_message_limit(
+        tmp_path, monkeypatch):
+    """Heutiges Verhalten (kompromittierter Server): die Laenge der Filterlisten ist nicht begrenzt, ein Filter mit je
+    10 000 Eintraegen wird angenommen; die Antwort enthaelt trotzdem nur, was in HA passt und die Positivliste
+    durchlaesst, und bleibt eine Nachricht unter der Grenze des Links (120 KB = 122 880 Bytes). Einen Befehl ueber der
+    Grenze verwirft schon der Geraetekern (client-kern.md)."""
+    ha = FakeHa()
+    ha.states = {"climate.wz": "heat", "light.flur": "on"}
+    ha.registry = [{"entity_id": "climate.wz", "platform": "mypyllant"}, {"entity_id": "light.flur", "platform": "hue"}]
+    host, _, _ = _host(tmp_path, monkeypatch, ha=ha)
+    viele = [f"x{n:04d}" for n in range(9_999)]
+    filter_ = {"plattformen": ["mypyllant", *viele], "domaenen": ["light", *viele],
+               "geraeteklassen": [["sensor", name] for name in viele] + [["light", "x"]],
+               "dienste": ["notify.mobile_app_", *viele]}
+    assert all(len(liste) == 10_000 for liste in filter_.values())
+    outcome = _register(host, tmp_path)._handlers["inventory"]({"stunden": 0, "filter": filter_})
+    done = _bis(outcome)
+    assert isinstance(done, Done)
+    assert [entity["entity_id"] for entity in done.inventur["entities"]] == ["climate.wz"]  # Licht: Positivliste
+    teile = inventory.nachrichten("c1", done.inventur)
+    assert len(teile) == 1 and _groesse(teile[0]) <= 122_880
     host.hintergrund.stop()
 
 
