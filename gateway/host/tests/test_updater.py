@@ -2,9 +2,14 @@ import ast
 import hashlib
 import http.server
 import json
+import os
+import random
 import stat
 import threading
+import time
+import urllib.request
 from pathlib import Path
+from unittest.mock import create_autospec
 
 import pytest
 from minisign_helper import keypair, sign
@@ -83,6 +88,7 @@ class World:
         self.state_path = tmp_path / "updater" / "state.json"
         updater.State(current="0.2.0").save(self.state_path)
         self.healthy = healthy
+        self.fetched = []
         self.clock = [0.0]
         self.extra = {} if health_seconds is None else {"health_seconds": health_seconds}
         self.context = {"updater": version, "key": self.key_id.hex()}
@@ -97,8 +103,12 @@ class World:
         )
 
     def fetch(self, url, max_bytes):
+        """Wie `fetch_url`: eine Antwort ueber `max_bytes` ist ein FetchError; `fetched` haelt jede Anfrage fest."""
+        self.fetched.append(url)
         if url not in self.served:
             raise updater.FetchError(url)
+        if len(self.served[url]) > max_bytes:
+            raise updater.FetchError(f"{url}: zu gross")
         return self.served[url]
 
     def sleep(self, seconds):
@@ -209,6 +219,223 @@ def test_http_manifest_is_loaded_when_allowed(tmp_path):
         world.served["http://release.example.test/0.3.0/" + name] = world.served[BASE + name]
     world.updater._allow_http = True
     assert world.updater.run_once() == "aktualisiert"
+
+
+def _serve_manifest(world, raw, *, signed=None):
+    """Bietet `raw` als Manifest an: die SHA-256 im Angebot passt zu `raw`, die Signatur gilt `signed` (Standard `raw`)."""
+    world.served[BASE + "manifest.json"] = raw
+    world.api.desired_answer["manifest_sha256"] = hashlib.sha256(raw).hexdigest()
+    world.api.desired_answer["signature"] = sign(world.secret, world.key_id, raw if signed is None else signed)
+
+
+def _manifest_with(world, **changes):
+    manifest = json.loads(world.served[BASE + "manifest.json"])
+    manifest.update(changes)
+    return json.dumps(manifest).encode()
+
+
+def _assert_nothing_installed(world, version="0.3.0"):
+    assert not any(call[0] in ("pull", "up") for call in world.compose.calls)
+    assert not world.store.exists(version) and not world.store.dir(version).exists()  # auch kein halbes Bundle
+    assert not (world.store.root / "bundles" / f".tmp-{version}").exists()
+
+
+EVIL_COMPOSE = b"services:\n  runtime:\n    image: ghcr.io/evil/gw@sha256:" + b"c" * 64 + b"\n"
+
+
+@pytest.mark.parametrize("attack", ["images", "compose"])
+def test_manifest_changed_after_signing_is_refused_even_with_a_matching_sha(tmp_path, attack):
+    """F-gateway-host-05/-43: ein Angreifer mit dem Server (Angebot, Manifest, Dateien) ersetzt das Manifest nach dem
+    Signieren und zieht die SHA-256 im Angebot nach; "compose" tauscht zusaetzlich die Compose-Datei samt SHA im Manifest
+    aus (in sich stimmig, mit Digest). Allein die Signatur ueber die urspruenglichen Bytes haelt ihn auf."""
+    world = World(tmp_path)
+    original = world.served[BASE + "manifest.json"]
+    if attack == "images":
+        changed = _manifest_with(world, images={"gateway": "ghcr.io/evil/gw@sha256:" + "c" * 64})
+    else:
+        files = json.loads(original)["files"] | {"docker-compose.yml": hashlib.sha256(EVIL_COMPOSE).hexdigest()}
+        changed = _manifest_with(world, files=files)
+        world.served[BASE + "docker-compose.yml"] = EVIL_COMPOSE
+    assert changed != original
+    _serve_manifest(world, changed, signed=original)
+    assert world.updater.run_once() == "abgelehnt"
+    assert world.api.results == [("0.3.0", "rollback", "signatur_ungueltig")]
+    assert "signatur_ungueltig" in updater.REASONS  # Grund aus der festen Liste
+    assert world.fetched == [BASE + "manifest.json"]  # keine Bundle-Datei geladen
+    _assert_nothing_installed(world)
+    assert world.state().rejected == ["0.3.0"] and world.state().current == "0.2.0"
+    # Gegenprobe: dieselben Bytes, mit dem Schluessel signiert, werden angenommen - allein die Signatur trennt
+    (tmp_path / "zwei").mkdir()
+    signed = World(tmp_path / "zwei")
+    if attack == "compose":
+        signed.served[BASE + "docker-compose.yml"] = EVIL_COMPOSE
+    _serve_manifest(signed, changed)
+    assert signed.updater.run_once() == "aktualisiert"
+
+
+MANIFEST_LIMIT = 65536  # Byte, Spec G2b-1 (64 KiB)
+FILE_LIMIT = 1048576  # Byte (1 MiB)
+
+
+def _padded(raw: bytes, size: int) -> bytes:
+    assert len(raw) <= size
+    return raw + b" " * (size - len(raw))  # Leerraum am Ende bleibt gueltiges JSON
+
+
+def test_manifest_of_exactly_64_kib_is_accepted(tmp_path):
+    world = World(tmp_path)
+    raw = _padded(world.served[BASE + "manifest.json"], MANIFEST_LIMIT)
+    assert len(raw) == 65536
+    _serve_manifest(world, raw)
+    assert world.updater.run_once() == "aktualisiert"
+    assert (world.store.dir("0.3.0") / "manifest.json").stat().st_size == 65536
+
+
+def test_manifest_one_byte_over_64_kib_is_temporary_and_nothing_is_unpacked(tmp_path):
+    """Uebergroesse ist ein Abruffehler (FetchError): "vorlaeufig", nicht abgelehnt, keine Meldung, keine weitere Datei."""
+    world = World(tmp_path)
+    raw = _padded(world.served[BASE + "manifest.json"], MANIFEST_LIMIT + 1)
+    assert len(raw) == 65537
+    _serve_manifest(world, raw)  # SHA und Signatur passen: allein die Groesse haelt es auf
+    assert world.updater.run_once() == "vorlaeufig"
+    assert world.fetched == [BASE + "manifest.json"]
+    assert world.api.results == [] and world.state().rejected == []
+    _assert_nothing_installed(world)
+
+
+def _padded_file(base: bytes, size: int) -> bytes:
+    assert len(base) + 2 <= size
+    return base + b"#" + b"x" * (size - len(base) - 2) + b"\n"  # Kommentarzeile: Compose und Konfiguration bleiben gueltig
+
+
+def _serve_file(world, name, data):
+    files = json.loads(world.served[BASE + "manifest.json"])["files"] | {name: hashlib.sha256(data).hexdigest()}
+    world.served[BASE + name] = data
+    _serve_manifest(world, _manifest_with(world, files=files))
+
+
+FILE_BASES = {"docker-compose.yml": COMPOSE, "mosquitto.conf": MOSQ}
+
+
+@pytest.mark.parametrize("name", FILE_BASES)
+def test_bundle_file_of_exactly_1_mib_is_accepted(tmp_path, name):
+    world = World(tmp_path)
+    data = _padded_file(FILE_BASES[name], FILE_LIMIT)
+    assert len(data) == 1048576
+    _serve_file(world, name, data)
+    assert world.updater.run_once() == "aktualisiert"
+    assert (world.store.dir("0.3.0") / name).stat().st_size == 1048576
+
+
+@pytest.mark.parametrize(("name", "fetched"), [
+    ("docker-compose.yml", ["manifest.json", "docker-compose.yml"]),
+    ("mosquitto.conf", ["manifest.json", "docker-compose.yml", "mosquitto.conf"]),
+])
+def test_bundle_file_one_byte_over_1_mib_is_temporary_and_nothing_is_unpacked(tmp_path, name, fetched):
+    world = World(tmp_path)
+    data = _padded_file(FILE_BASES[name], FILE_LIMIT + 1)
+    assert len(data) == 1048577
+    _serve_file(world, name, data)  # SHA im Manifest und Signatur passen: allein die Groesse haelt es auf
+    assert world.updater.run_once() == "vorlaeufig"
+    assert world.fetched == [BASE + item for item in fetched]  # danach wird nichts mehr geladen
+    assert world.api.results == [] and world.state().rejected == []
+    assert world.state().current == "0.2.0" and world.state().in_progress is None
+    _assert_nothing_installed(world)
+
+
+def _tree(root: Path, skip=("bundles", "updater")) -> dict[str, bytes]:
+    return {str(path.relative_to(root)): path.read_bytes() for path in sorted(root.rglob("*"))
+            if path.is_file() and path.relative_to(root).parts[0] not in skip}
+
+
+def _host_files(root: Path):
+    """Dateien ausserhalb der Bundle-Ablage, die ein Angebot nie ersetzen darf: Host-Dienste, Umgebung, Daten."""
+    for name, content in (("host/gateway.env", b"SECRET=1\n"), ("host/smartheat_host/updater.py", b"# host\n"),
+                          ("data/software_soll.json", b"{}"), ("etc/passwd", b"root:x:0:0\n")):
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_bytes(content)
+
+
+@pytest.mark.parametrize("extra", [
+    "../host/gateway.env", "host/gateway.env", "../../host/smartheat_host/updater.py", "smartheat_host/updater.py",
+    "/etc/passwd", "https://evil.test/updater.py",
+])
+@pytest.mark.parametrize("replace", [False, True])
+def test_an_offer_that_names_other_files_is_refused_and_touches_nothing_outside_the_bundle_store(
+        tmp_path, extra, replace):
+    """F-gateway-host-43: ein Angebot kann Host-Dienste nicht ersetzen (5b-D2-1: das geht nur mit neuem Image oder
+    Installer). Das signierte Manifest darf genau docker-compose.yml und mosquitto.conf nennen; jeder andere Name
+    (Pfad aus dem Bundle heraus, absolut, URL), zusaetzlich oder an Stelle einer der beiden, wird abgelehnt."""
+    world = World(tmp_path)
+    _host_files(tmp_path)
+    before = _tree(tmp_path)
+    assert before  # die Probe sieht die Dateien
+    evil = b"# ersetzt den Host-Dienst\n"
+    files = json.loads(world.served[BASE + "manifest.json"])["files"]
+    if replace:
+        del files["mosquitto.conf"]
+    files[extra] = hashlib.sha256(evil).hexdigest()
+    for url in (BASE + extra, "https://release.example.test/host/gateway.env", "https://release.example.test" + extra):
+        world.served[url] = evil
+    _serve_manifest(world, _manifest_with(world, files=files))
+    assert world.updater.run_once() == "abgelehnt"
+    assert world.api.results == [("0.3.0", "rollback", "manifest_ungueltig")]
+    assert world.fetched == [BASE + "manifest.json"]
+    _assert_nothing_installed(world)
+    assert _tree(tmp_path) == before
+
+
+def test_a_complete_update_changes_only_the_bundle_store_and_the_state(tmp_path):
+    """Gegenprobe zum vorigen Test: auch ein gelungenes Update schreibt nur unter bundles/ und updater/."""
+    world = World(tmp_path)
+    _host_files(tmp_path)
+    before = _tree(tmp_path)
+    assert world.updater.run_once() == "aktualisiert"
+    assert _tree(tmp_path) == before
+    assert sorted(path.name for path in world.store.dir("0.3.0").iterdir()) == [
+        "docker-compose.yml", "manifest.json", "manifest.json.minisig", "mosquitto.conf"]
+
+
+def test_the_running_version_is_current_without_download_report_or_state_change(tmp_path):
+    """F-gateway-host-01/-06/-43: ein vollstaendiges Angebot fuer die laufende Version (0.2.0) ist "aktuell"."""
+    world = World(tmp_path)
+    offer = dict(world.api.desired_answer)
+    world.api.desired_answer = offer | {"version": "0.2.0"}
+    state_before = world.state_path.read_bytes()
+    assert world.updater.run_once() == "aktuell"
+    assert world.fetched == [] and world.compose.calls == [] and world.api.results == []
+    assert world.state_path.read_bytes() == state_before and world.api.desired_calls == 1
+    # Gegenprobe: dasselbe Angebot fuer eine neuere Version wird geladen
+    world.api.desired_answer = offer
+    assert world.updater.run_once() == "aktualisiert"
+    assert world.fetched != []
+
+
+@pytest.mark.parametrize("offer", [
+    {"version": "0.3.0"},
+    {"version": "0.3.0", "manifest_url": None, "manifest_sha256": "", "signature": None},
+])
+def test_a_newer_version_without_any_bundle_field_is_current_without_download(tmp_path, offer):
+    world = World(tmp_path)
+    world.api.desired_answer = offer
+    state_before = world.state_path.read_bytes()
+    assert world.updater.run_once() == "aktuell"
+    assert world.fetched == [] and world.compose.calls == [] and world.api.results == []
+    assert world.state_path.read_bytes() == state_before
+
+
+@pytest.mark.parametrize(("field", "value", "reason"), [
+    ("manifest_url", BASE + "manifest.json", "manifest_ungueltig"),
+    ("manifest_sha256", "a" * 64, "manifest_ungueltig"),
+    ("signature", "x", "manifest_ungueltig"),
+])
+def test_one_bundle_field_alone_makes_the_version_an_offer(tmp_path, field, value, reason):
+    """Gegenprobe zum vorigen Test: schon ein einziges Bundle-Feld ist ein Angebot (und hier ein unvollstaendiges)."""
+    world = World(tmp_path)
+    world.api.desired_answer = {"version": "0.3.0", field: value}
+    assert world.updater.run_once() == "abgelehnt"
+    assert world.api.results == [("0.3.0", "rollback", reason)]
+    assert world.fetched == [] and world.compose.calls == []
 
 
 def test_wrong_signature_is_refused(tmp_path):
@@ -589,6 +816,20 @@ def test_recover_waits_for_a_missing_device_instead_of_rolling_back(tmp_path):
     assert world.state().current == "0.3.0" and world.state().in_progress is None
 
 
+def test_a_missing_device_in_a_multiline_flow_list_is_not_noticed(tmp_path):
+    """Dokumentierte Grenze (bundles.compose_devices): der fehlende Stick in einer mehrzeiligen Flussliste haelt das
+    Update nicht zurueck; dasselbe Bundle mit der einzeiligen Flussliste wartet (Gegenprobe)."""
+    stick = tmp_path / "zigbee"  # fehlt
+    service = f"  zigbee2mqtt:\n    image: koenkk/z2m@sha256:{'b' * 64}\n    devices"
+    one_line = (COMPOSE.decode() + f"{service}: [\"{stick}:/dev/zigbee\"]\n").encode()
+    multi_line = (COMPOSE.decode() + f"{service}: [\n      \"{stick}:/dev/zigbee\",\n    ]\n").encode()
+    assert World(tmp_path, compose=one_line).updater.run_once() == "vorlaeufig"
+    (tmp_path / "zwei").mkdir()
+    world = World(tmp_path / "zwei", compose=multi_line)
+    assert world.updater.run_once() == "aktualisiert"
+    assert ("up", "0.3.0") in world.compose.calls
+
+
 # --- Felder von desired (FW-5, FW-6) ---
 
 
@@ -666,6 +907,38 @@ def test_fetch_refuses_http_unless_allowed():
         updater.fetch_url("file:///etc/passwd", 10, allow_http=True)
 
 
+def _redirected_response(final_url: str, body: bytes = b"inhalt"):
+    """Antwort von urllib.request.urlopen, nachdem urllib einer Weiterleitung gefolgt ist: `geturl()` nennt die
+    Adresse, von der der Inhalt tatsaechlich kam (urllib folgt auch einer Weiterleitung von https auf http)."""
+    response = create_autospec(http.client.HTTPResponse, instance=True)
+    response.__enter__.return_value = response
+    response.geturl.return_value = final_url
+    response.read.return_value = body
+    return response
+
+
+def test_fetch_refuses_a_redirect_from_https_to_http_unless_allowed(monkeypatch):
+    """F-gateway-host-02: ein Angreifer im Netz (oder ein kompromittierter Server) leitet einen https-Abruf auf http um.
+    Die Attrappe steht an der Grenze, `urllib.request.urlopen`; die Adresse der Antwort entscheidet."""
+    opened = create_autospec(urllib.request.urlopen, return_value=_redirected_response("http://evil.test/x"))
+    monkeypatch.setattr(urllib.request, "urlopen", opened)
+    with pytest.raises(updater.FetchError, match="https"):
+        updater.fetch_url("https://release.example.test/x", 100, allow_http=False)
+    # Gegenprobe: dieselbe Antwort wird mit dem Schalter (Labor) angenommen, ...
+    assert updater.fetch_url("https://release.example.test/x", 100, allow_http=True) == b"inhalt"
+    # ... und ohne Weiterleitung (Antwort von https) auch ohne ihn.
+    opened.return_value = _redirected_response("https://cdn.example.test/x")
+    assert updater.fetch_url("https://release.example.test/x", 100, allow_http=False) == b"inhalt"
+
+
+@pytest.mark.parametrize("final_url", ["file:///etc/passwd", "ftp://evil.test/x"])
+def test_fetch_refuses_a_redirect_to_other_schemes_even_when_http_is_allowed(monkeypatch, final_url):
+    opened = create_autospec(urllib.request.urlopen, return_value=_redirected_response(final_url))
+    monkeypatch.setattr(urllib.request, "urlopen", opened)
+    with pytest.raises(updater.FetchError, match="erlaubt"):
+        updater.fetch_url("https://release.example.test/x", 100, allow_http=True)
+
+
 @pytest.fixture
 def local_server():
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -701,6 +974,207 @@ def test_fetch_url_network_errors_are_fetch_errors():
 def test_fetch_health(local_server):
     assert updater.fetch_health(local_server + "/healthz") == {"server_ok": True, "runtime_status": None}
     assert updater.fetch_health("http://127.0.0.1:1/healthz") is None
+
+
+@pytest.fixture
+def healthz_bodies():
+    """Server, der je Pfad einen vorgegebenen Koerper liefert (Status 200)."""
+    bodies = {}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(bodies[self.path])
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_port}", bodies
+    server.shutdown()
+    server.server_close()
+    thread.join()
+
+
+def _healthz_object(size: int) -> bytes:
+    raw = json.dumps({"server_ok": True, "runtime_status": None}).encode()
+    return raw[:-1] + b" " * (size - len(raw)) + b"}"  # Leerraum vor der Klammer: gueltiges JSON
+
+
+@pytest.mark.parametrize("body", [b"", b"<html>502</html>", b"{\"server_ok\": true", b"[1, 2]", b"\"server_ok\"", b"null",
+                                  b"true", b"42"])
+def test_healthz_that_is_not_a_json_object_is_not_healthy(healthz_bodies, body):
+    url, bodies = healthz_bodies
+    bodies["/ok"], bodies["/x"] = _healthz_object(100), body
+    assert updater.fetch_health(url + "/ok") == {"server_ok": True, "runtime_status": None}  # Gegenprobe
+    assert updater.health_ok(updater.fetch_health(url + "/ok"), {"runtime": "healthy"}) is True
+    assert updater.fetch_health(url + "/x") is None
+    assert updater.health_ok(updater.fetch_health(url + "/x"), {"runtime": "healthy"}) is False
+
+
+def test_healthz_over_64_kib_is_not_healthy_but_exactly_64_kib_is_read(healthz_bodies):
+    url, bodies = healthz_bodies
+    bodies["/genau"], bodies["/zuviel"] = _healthz_object(65536), _healthz_object(65537)
+    assert len(bodies["/genau"]) == 65536 and len(bodies["/zuviel"]) == 65537
+    assert updater.fetch_health(url + "/genau") == {"server_ok": True, "runtime_status": None}
+    assert updater.fetch_health(url + "/zuviel") is None  # abgeschnitten: kein gueltiges JSON mehr
+
+
+def test_the_health_deadline_follows_the_monotonic_clock_not_the_wall_clock(tmp_path, monkeypatch):
+    """F-gateway-host-07: die Wanduhr springt beim Boot. Sprunghaft vorlaufende `time.time()` waehrend der Gesundheits-
+    pruefung darf die Frist nicht verkuerzen: der Updater (Standarduhr) wartet die Frist auf der monotonen Uhr ab. Die
+    Attrappe von `time.time` ist die Grenze zur Systemuhr; ausserhalb des Wartens laeuft sie echt."""
+    world = World(tmp_path, healthy=False)
+    wall = {"jump": False, "calls": 0}
+    real_time = time.time
+
+    def jumping_time():
+        if wall["jump"]:
+            wall["calls"] += 1
+            return real_time() + 86400.0 * wall["calls"]  # jeder Blick auf die Wanduhr: einen Tag spaeter
+        return real_time()
+
+    waits = []
+
+    def sleep(seconds):
+        waits.append(seconds)
+        assert len(waits) < 500, "Die Frist endet nicht"
+        time.sleep(0.01)
+
+    monkeypatch.setattr(time, "time", create_autospec(time.time, side_effect=jumping_time))
+    world.compose.on_up = lambda version: wall.update(jump=version == "0.3.0")  # Sprung erst nach dem Umschalten
+    short = updater.Updater(kanal=world.api, store=world.store, compose=world.compose, fetch=world.fetch,
+                            public_key_text=world.public, state_path=world.state_path, version="0.2.0",
+                            health=lambda version: False, sleep=sleep, health_seconds=0.1)  # Standarduhr
+    started = time.monotonic()
+    assert short.run_once() == "zurueckgerollt"
+    assert time.monotonic() - started >= 0.1  # die Frist ist auf der monotonen Uhr abgelaufen
+    assert len(waits) >= 5  # die Pruefung lief ueber viele Takte, obwohl die Wanduhr (falls befragt) Tage vorsprang
+
+
+def test_state_file_survives_a_failure_while_it_is_written(tmp_path, monkeypatch):
+    """F-gateway-host-08: bricht das Schreiben ab (Stromausfall, Datentraeger voll), bleibt die alte Datei stehen und
+    laedt. `os.replace`/`os.fsync` sind die Dateisystem-Grenze (Attrappen mit autospec; die Schreibfunktion testet
+    client-kern.md)."""
+    path = tmp_path / "updater" / "state.json"
+    old = updater.State(current="0.2.0", previous="0.1.0", rejected=["0.1.5"])
+    old.save(path)
+    before = path.read_bytes()
+    new = updater.State(current="0.3.0", previous="0.2.0")
+    for name in ("fsync", "replace"):
+        with monkeypatch.context() as patch:
+            patch.setattr(os, name, create_autospec(getattr(os, name), side_effect=OSError("Stromausfall")))
+            with pytest.raises(OSError, match="Stromausfall"):
+                new.save(path)
+        assert path.read_bytes() == before and updater.State.load(path) == old
+    new.save(path)  # Gegenprobe: ohne Fehler ersetzt das Schreiben die Datei
+    assert updater.State.load(path) == new and path.read_bytes() != before
+
+
+def test_the_report_queue_holds_20_entries_and_the_oldest_falls_out(tmp_path):
+    """F-gateway-host-10: 21 abgelehnte Versionen in Folge, der Kanal nimmt nichts an (Datentraeger nicht schreibbar)."""
+    world = World(tmp_path)
+    world.api.broken = True
+    offer = dict(world.api.desired_answer)
+
+    def reject(number):
+        world.api.desired_answer = offer | {"version": f"0.3.{number}", "manifest_sha256": "0" * 64}
+        assert world.updater.run_once() == "abgelehnt"
+
+    for number in range(1, 21):
+        reject(number)
+    assert [entry["version"] for entry in world.state().pending_reports] == [f"0.3.{n}" for n in range(1, 21)]
+    reject(21)  # die 21. Meldung
+    pending = world.state().pending_reports
+    assert len(pending) == 20
+    assert pending[0] == {"version": "0.3.2", "result": "rollback", "reason": "manifest_ungueltig"}  # 0.3.1 fiel weg
+    assert pending[-1] == {"version": "0.3.21", "result": "rollback", "reason": "manifest_ungueltig"}
+    world.api.broken = False  # der Kanal kommt zurueck: die 20 gehen in Reihenfolge hinaus
+    world.api.desired_answer = {"version": "0.2.0"}
+    assert world.updater.run_once() == "aktuell"
+    assert [version for version, _, _ in world.api.results] == [f"0.3.{n}" for n in range(2, 22)]
+    assert world.state().pending_reports == []
+
+
+def _main_environment(monkeypatch, root: Path, *, offer=None, allow_http=None):
+    (root / "data").mkdir(parents=True, exist_ok=True)
+    if offer is not None:
+        (root / "data" / "software_soll.json").write_text(json.dumps(offer))
+    (root / "release.pub").write_text("untrusted comment: x\nAAAA\n")
+    monkeypatch.setenv("SHG_ROOT", str(root))
+    monkeypatch.setenv("SHG_RELEASE_PUB", str(root / "release.pub"))
+    monkeypatch.delenv("SHG_UPDATER_ALLOW_HTTP", raising=False)
+    if allow_http is not None:
+        monkeypatch.setenv("SHG_UPDATER_ALLOW_HTTP", allow_http)
+
+
+class _Stop(Exception):
+    pass
+
+
+def test_main_waits_120_seconds_then_runs_every_900_plus_up_to_300_seconds(tmp_path, monkeypatch):
+    """F-gateway-host-01: Takt des Dienstes. Echte `Updater`, echter lokaler Kanal (ohne Soll-Datei: "vorlaeufig");
+    Uhr (`time.sleep`) und Zufall (`random.uniform`) sind die Grenze: die Folge der Ereignisse und der Wartezeiten ist
+    das Ergebnis. Der Zufall liefert erst die obere, dann die untere Schranke seines Bereichs."""
+    _main_environment(monkeypatch, tmp_path)
+    events = []
+    real_recover, real_run_once = updater.Updater.recover, updater.Updater.run_once
+
+    def recover(self):
+        events.append("recover")
+        real_recover(self)
+
+    def run_once(self):
+        result = real_run_once(self)
+        events.append(f"durchlauf:{result}")
+        return result
+
+    def sleep(seconds):
+        events.append(f"warten:{float(seconds)}")
+        if len([event for event in events if event.startswith("warten")]) == 4:
+            raise _Stop
+
+    bounds = iter([lambda low, high: high, lambda low, high: low, lambda low, high: (low + high) / 2])
+    monkeypatch.setattr(updater.Updater, "recover", recover)
+    monkeypatch.setattr(updater.Updater, "run_once", run_once)
+    monkeypatch.setattr(time, "sleep", create_autospec(time.sleep, side_effect=sleep))
+    monkeypatch.setattr(random, "uniform", create_autospec(random.uniform, side_effect=lambda a, b: next(bounds)(a, b)))
+    with pytest.raises(_Stop):
+        updater.main([])
+    assert events == ["recover", "warten:120.0", "durchlauf:vorlaeufig", "warten:1200.0",
+                      "durchlauf:vorlaeufig", "warten:900.0", "durchlauf:vorlaeufig", "warten:1050.0"]
+
+
+def test_main_once_recovers_runs_once_and_does_not_wait(tmp_path, monkeypatch, capsys):
+    _main_environment(monkeypatch, tmp_path)
+    events = []
+    real_recover = updater.Updater.recover
+    monkeypatch.setattr(updater.Updater, "recover", lambda self: (events.append("recover"), real_recover(self)))
+    monkeypatch.setattr(time, "sleep", create_autospec(time.sleep, side_effect=_Stop))
+    updater.main(["--once"])
+    assert events == ["recover"] and capsys.readouterr().out == "vorlaeufig\n"
+
+
+@pytest.mark.parametrize(("allow", "outcome"), [
+    ("1", "vorlaeufig"),  # http erlaubt: der Abruf wird versucht (Port 1: keine Verbindung)
+    (None, "abgelehnt"), ("0", "abgelehnt"), ("", "abgelehnt"), ("true", "abgelehnt"), ("yes", "abgelehnt"),
+])
+def test_main_accepts_an_http_offer_only_with_the_switch_set_to_1(tmp_path, monkeypatch, capsys, allow, outcome):
+    """F-gateway-host-01: der Produktivwert ist "aus"; nur genau "1" schaltet http frei (Labor)."""
+    offer = {"version": "0.3.0", "manifest_url": "http://127.0.0.1:1/manifest.json", "manifest_sha256": "a" * 64,
+             "signature": "x"}
+    _main_environment(monkeypatch, tmp_path, offer=offer, allow_http=allow)
+    updater.main(["--once"])
+    assert capsys.readouterr().out == outcome + "\n"
+    reports = tmp_path / "data" / "software_meldungen.json"
+    if outcome == "abgelehnt":  # die http-Adresse wurde ohne Abruf abgelehnt und gemeldet
+        assert [(m["version"], m["reason"]) for m in json.loads(reports.read_text())["meldungen"]] == [
+            ("0.3.0", "manifest_ungueltig")]
+    else:  # der Abruf scheiterte am Netz: vorlaeufig, nichts gemeldet
+        assert not reports.exists()
 
 
 def test_main_once_wires_the_environment(tmp_path, monkeypatch, capsys):
