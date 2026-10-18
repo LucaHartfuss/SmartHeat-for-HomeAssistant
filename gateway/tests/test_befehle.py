@@ -168,43 +168,30 @@ def _verschachtelt(ebenen: int) -> list:
     return wert
 
 
-def _tiefste_ebene_fuer_dumps() -> int:
-    """Die tiefste Verschachtelung, die json.dumps an dieser Stelle des Stapels noch schreibt (das Limit der C-Rekursion
-    haengt von der Stapeltiefe ab: rund 9998 im blanken Interpreter, rund 9980 unter pytest)."""
-    unten, oben = 1, 20000
-    while unten < oben:
-        mitte = (unten + oben + 1) // 2
-        try:
-            json.dumps(_verschachtelt(mitte), allow_nan=False)
-            unten = mitte
-        except RecursionError:
-            oben = mitte - 1
-    return unten
-
-
 @pytest.mark.parametrize("feld", ["temperature", "battery"])
-def test_a_value_nested_to_the_recursion_limit_never_makes_the_answer_unsendable(ctx, feld):
-    """Auch ein Wert, den json.loads vom Bus gerade noch liest (im blanken Interpreter bis rund 9998 Ebenen; hier wird er
-    im Spiegel abgelegt, weil pytest das Lesen schon bei rund 9980 abbricht), darf die Antwort nicht scheitern lassen:
-    json.dumps wirft bei der Tiefe RecursionError, schon ohne die vier bis fuenf Ebenen der Antwort darum. Er faellt weg wie
-    jeder nicht sendbare Wert (`werte` ohne das Feld, `batterie` None), ein flacherer bleibt. Geprueft wird jede Tiefe von
-    150 Ebenen unter bis zur Grenze, die dieser Stapel noch schreibt, die Antwort muss jedes Mal sendbar sein."""
-    grenze = _tiefste_ebene_fuer_dumps()
-    assert grenze > 9900  # sonst ist die Sonde unbrauchbar
-    behandler = befehle.HANDLERS["zigbee_devices"]
-    for ebenen in range(grenze - 150, grenze + 1):
-        # ZigbeeMirror hat keinen Weg, einen Wert ohne json.loads abzulegen; der Test setzt die Nutzlast direkt
-        ctx.mirror._payloads[SENSOR] = ({feld: _verschachtelt(ebenen)}, ctx.clock())
-        antwort = behandler(ctx, {})
-        assert isinstance(antwort, Done)
-        json.dumps(antwort.result, allow_nan=False)  # sendbar (RecursionError und ValueError wuerden hier scheitern)
-        sensor = next(d for d in antwort.result["devices"] if d["ieee"] == SENSOR)
-        behalten = sensor["werte"] == {feld: _verschachtelt(ebenen)} if feld == "temperature" \
-            else sensor["batterie"] == _verschachtelt(ebenen)
-        if ebenen == grenze - 150:
-            assert behalten  # Gegenprobe: ein klar flacherer Wert bleibt
-        if ebenen >= grenze - 50:
-            assert not behalten and (sensor["werte"] == {} if feld == "temperature" else sensor["batterie"] is None)
+@pytest.mark.parametrize(("ebenen", "bleibt"), [(32, True), (33, False), (5000, False)])
+def test_a_value_nested_deeper_than_32_levels_is_left_out_of_the_device_list(ctx, register, feld, ebenen, bleibt):
+    """Zigbee2MQTT liefert flache Werte: bis 32 Ebenen aus Listen bleiben, ab 33 fallen sie weg (`werte` ohne das Feld,
+    `batterie` None), die Antwort ist in jedem Fall sendbar. Der Wert geht den oeffentlichen Weg: Bus-Nachricht, `decode`,
+    Spiegel. 5000 statt 100000: json.loads liest unter pytest bis rund 9980 Ebenen (im blanken Interpreter bis 9998), 5000 liest
+    es sicher; schon dort wirft json.dumps nicht, die Regel muss also nicht erst am Rekursionslimit greifen."""
+    wert = _verschachtelt(ebenen)
+    ctx.z2m.report(SENSOR, **{feld: wert})
+    antwort = _run(register, "zigbee_devices", {})
+    assert antwort["ok"] is True
+    _ohne_nan_sendbar(antwort)
+    sensor = next(d for d in antwort["result"]["devices"] if d["ieee"] == SENSOR)
+    if feld == "temperature":
+        assert sensor["werte"] == ({feld: wert} if bleibt else {}) and sensor["batterie"] is None
+    else:
+        assert sensor["batterie"] == (wert if bleibt else None) and sensor["werte"] == {}
+
+
+@pytest.mark.parametrize("wert", [{"a": {"b": [1, {"c": 2}]}}, [[1.5, [2]], "x"], {}, []], ids=["gemischt", "liste", "leeres-objekt", "leere-liste"])
+def test_flat_and_mixed_nested_values_stay_in_the_device_list(ctx, register, wert):
+    ctx.z2m.report(SENSOR, temperature=wert)
+    sensor = next(d for d in _run(register, "zigbee_devices", {})["result"]["devices"] if d["ieee"] == SENSOR)
+    assert sensor["werte"] == {"temperature": wert}
 
 
 def test_permit_join_and_device_list(ctx, register):

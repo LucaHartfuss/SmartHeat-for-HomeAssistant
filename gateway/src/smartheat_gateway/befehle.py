@@ -45,7 +45,7 @@ INVENTORY_EVERY_SECONDS = 900
 ERKENNUNG_SECONDS = 120
 SIGN_OFF_WAIT_SECONDS = 24 * 3600
 ZIGBEE_VALUE_FIELDS = ("temperature", "local_temperature", "occupied_heating_setpoint", "humidity")
-SENDE_RESERVE = 100  # Ebenen um einen Wert der Geraeteliste, die die Pruefung auf Sendbarkeit freihaelt (Antwort, Stapel)
+MAX_WERT_EBENEN = 32  # tiefer verschachtelte Werte der Zigbee-Geraeteliste fallen weg (Testoffensive T5', Task 4)
 
 
 @dataclass
@@ -162,20 +162,36 @@ def zigbee_devices(ctx: Kontext, payload: dict) -> Outcome:
     return Done({"devices": devices})
 
 
+def _tiefer_als(wert, grenze: int) -> bool:
+    """Ist der Wert mehr als `grenze` Ebenen aus Listen und Objekten tief verschachtelt? Iterativ, ohne Rekursion: der Wert
+    kommt als JSON vom Bus, und json.loads liest bis rund 9998 Ebenen."""
+    offen = [(wert, 0)]
+    while offen:
+        eintrag, ebene = offen.pop()
+        if isinstance(eintrag, dict):
+            kinder = list(eintrag.values())
+        elif isinstance(eintrag, list | tuple):
+            kinder = list(eintrag)
+        else:
+            continue
+        if ebene + 1 > grenze:
+            return True
+        offen.extend((kind, ebene + 1) for kind in kinder)
+    return False
+
+
 def _sendbar(wert) -> bool:
     """Kann der Wert in die Antwort an den Server? Der Link sendet mit allow_nan=False: NaN und Unendlich (json.loads liest
     sie vom Bus) liessen die ganze Antwort scheitern und die Geraeteliste der Einrichtung leer. Eine Zahl muss endlich sein
     (auch eine Ganzzahl ausserhalb des float-Bereichs gilt als nicht endlich), ein verschachtelter Wert darf keine enthalten.
-    json.loads liest vom Bus Werte bis rund 9998 Ebenen tief; json.dumps wirft dort RecursionError (kein ValueError), und
-    die Antwort legt noch Ebenen um den Wert. Geprueft wird deshalb mit SENDE_RESERVE Ebenen Reserve darum: ein Wert, der
-    mit der Reserve nicht mehr geschrieben werden kann, faellt weg."""
+    Zigbee2MQTT liefert flache Werte: tiefer als MAX_WERT_EBENEN verschachtelt faellt weg (json.dumps wirft sonst bei rund
+    9998 Ebenen RecursionError, kein ValueError, und die Antwort legt noch Ebenen um den Wert)."""
     if isinstance(wert, int | float) and not isinstance(wert, bool):
         return ist_endliche_zahl(wert)
-    probe = wert
-    for _ in range(SENDE_RESERVE):
-        probe = [probe]
+    if _tiefer_als(wert, MAX_WERT_EBENEN):
+        return False
     try:
-        json.dumps(probe, allow_nan=False)
+        json.dumps(wert, allow_nan=False)
     except (ValueError, TypeError, RecursionError):
         return False
     return True
