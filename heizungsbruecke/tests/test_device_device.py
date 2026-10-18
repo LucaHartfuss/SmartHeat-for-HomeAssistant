@@ -622,6 +622,30 @@ def test_new_claim_code_only_while_not_claimed(tmp_path):
     assert world.device.identity.claim_code == new
 
 
+def test_new_claim_code_mit_zu_grossem_koerper_endet_als_intern_und_sendet_nichts(tmp_path, caplog):
+    """MAX_BODY_BYTES (V1): der ValueError der Bootstrap-Anfrage laeuft durch den Befehls-Waechter zu Failed("intern");
+    der Geraete-Thread lebt weiter, an der HTTP-Grenze kommt nichts an, der Code bleibt unveraendert."""
+    class Session:
+        calls: list = []
+
+        def request(self, *args, **kwargs):
+            self.calls.append(args)
+
+    world = World(tmp_path)
+    world.verbinden()
+    session = Session()
+    world.device._client_for = lambda ident: bootstrap.BootstrapClient(
+        "https://accounts.example.test", ident, session=session)
+    gross = {"version": "0.6.0", "host": "gateway", "capabilities": {"drivers": ["d" * 60] * 1200, "zigbee": True}}
+    world.device._register_args = lambda: gross
+    alt = world.device.identity.claim_code
+    world.empfangen("down/command", _command("new_claim_code", "c1"))
+    assert world.link.of("up/result")[-1]["error"] == {"grund": "intern"}
+    assert session.calls == [] and world.device.identity.claim_code == alt
+    assert "d" * 60 not in caplog.text
+    world.device.schritt()  # der Takt laeuft weiter
+
+
 def test_hello_reports_the_claim_state_the_device_knows(tmp_path):
     world = World(tmp_path, access=False)
     world.client.script["register"] = [bootstrap.Antwort("nicht_uebernommen", world.zugang)]

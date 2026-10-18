@@ -534,7 +534,7 @@ def test_pending_reports_keep_their_order_while_offline(tmp_path):
     assert world.api.results == [("0.2.8", "rollback", "ungesund"), ("0.2.9", "ok", "")]
 
 
-def test_updater_verwirft_fremde_gruende_beim_laden(tmp_path):
+def test_updater_verwirft_fremde_gruende_beim_laden(tmp_path, caplog):
     """Die Zustandsdatei ist lokale Eingabe: eine vorgemerkte Meldung mit fremdem Grund geht nie an den Server, das Laden
     wirft nicht (der Rueckweg darf an einer Meldung nicht scheitern)."""
     gueltig = {"version": "0.2.8", "result": "rollback", "reason": "ungesund"}
@@ -543,8 +543,10 @@ def test_updater_verwirft_fremde_gruende_beim_laden(tmp_path):
         gueltig, {"version": "0.2.9", "result": "rollback", "reason": "frei"},
         {"version": "0.3.0", "result": "ok", "reason": ""}]}))
     assert updater.State.load(path).pending_reports == [gueltig, {"version": "0.3.0", "result": "ok", "reason": ""}]
+    assert "REASONS" in caplog.text and "frei" not in caplog.text  # ein Hinweis, nie der fremde Grund
+    caplog.clear()
     path.write_text(json.dumps({"current": "0.2.0", "pending_reports": [gueltig]}))  # Gegenprobe: ohne den fremden
-    assert updater.State.load(path).pending_reports == [gueltig]
+    assert updater.State.load(path).pending_reports == [gueltig] and caplog.records == []
 
 
 def test_unusable_pending_reports_are_dropped_on_load(tmp_path):

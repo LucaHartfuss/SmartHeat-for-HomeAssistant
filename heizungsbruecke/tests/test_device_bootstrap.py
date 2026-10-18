@@ -319,6 +319,16 @@ def test_a_host_callback_value_error_is_not_logged_with_its_text_and_is_retried_
     assert "geheimer Parameter" not in caplog.text
 
 
+def test_ein_zu_grosser_koerper_wird_spaeter_wiederholt_nicht_gesperrt_und_nicht_gesendet(tmp_path, ident, ca, caplog):
+    """MAX_BODY_BYTES (V1) mit dem echten Client: Bootstrap.holen faengt den ValueError (Backoff), gesendet wird nichts."""
+    session = FakeSession()
+    gross = {**ARGS, "capabilities": {**ARGS["capabilities"], "drivers": ["d" * 60] * 1200}}
+    flow = bootstrap.Bootstrap(tmp_path, lambda: _client(ident, session), register_args=lambda: gross,
+                               uhr_synchron=lambda: True, identity=lambda: ident, clock=Clock())
+    assert flow.holen(rettung=False) is None and not flow.gesperrt and not flow.faellig()
+    assert session.calls == [] and "d" * 60 not in caplog.text
+
+
 def test_a_failing_host_callback_in_the_rescue_after_401_is_retried_later_too(tmp_path, ident, caplog):
     """Rettung: certificate -> 401 -> register baut seine Argumente (Host-Rueckruf) und scheitert: Backoff, keine Sperre."""
     def args() -> dict:

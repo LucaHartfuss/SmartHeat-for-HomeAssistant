@@ -47,7 +47,7 @@ def test_ein_grund_aus_gruende_geht_unveraendert_durch(monkeypatch, caplog):  # 
     for grund in cc.GRUENDE:
         monkeypatch.setattr(cc, "_pruefen", lambda *a, _g=grund, **k: cc.Ablehnung(_g))
         assert cc.pruefen({}, None, host=cc.HOST_HA) == cc.Ablehnung(grund)
-    assert "GRUENDE" not in caplog.text
+    assert caplog.records == []
 
 
 def test_a_valid_gateway_configuration_passes():
