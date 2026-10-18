@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from bindung_beispiele import BINDINGS, parameter
 from conftest import FakeClock
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 from test_core_config_check import _konfiguration as gateway_konfiguration
 from test_core_config_check_ha import _ha as ha_konfiguration
@@ -71,7 +71,8 @@ def test_resolve_local_safety_liefert_einen_satz_in_den_invarianten_oder_einen_f
     bekanntes Paar ergibt einen Satz, der check_invariants besteht und die Invarianten auch unabhaengig erfuellt
     (Bereiche genau fuer die Hebel, endlich, Minimum <= Maximum, Comfort-Boost im Bereich und nur auf gesendeten Hebeln,
     Notfall-Hebel gesendet, Schwelle positiv); jedes andere ist ein ValueError, nie ein Rueckfall auf einen Satz."""
-    zaehler = {"bekannt": 0, "unbekannt": 0}
+    zaehler = {"unbekannt": 0}
+    je_paar = dict.fromkeys(TABELLE, 0)
 
     @EINSTELLUNG
     @given(st.sampled_from(HEBELSAETZE) | st.text(max_size=30), st.sampled_from((HK, FBH)) | JSON_WERT)
@@ -83,7 +84,7 @@ def test_resolve_local_safety_liefert_einen_satz_in_den_invarianten_oder_einen_f
             zaehler["unbekannt"] += 1
             return
         assert _bekannt(hebelsatz, verteilsystem), (hebelsatz, verteilsystem)
-        zaehler["bekannt"] += 1
+        je_paar[(hebelsatz, verteilsystem)] += 1
         check_invariants(satz, hebelsatz, verteilsystem)
         gesendet = BINDINGS[hebelsatz].lever_set.levers
         assert set(satz.ranges) == set(TABELLE[(hebelsatz, verteilsystem)][0])
@@ -94,8 +95,11 @@ def test_resolve_local_safety_liefert_einen_satz_in_den_invarianten_oder_einen_f
         assert set(satz.emergency_boost_levers) <= set(gesendet)
         assert math.isfinite(satz.arrival_threshold_k) and satz.arrival_threshold_k > 0
 
+    for paar in sorted(TABELLE):  # jedes der 8 Paare deterministisch, zusaetzlich zu den gezogenen Beispielen
+        pruefen = example(*paar)(pruefen)
     pruefen()
-    assert zaehler["bekannt"] > 0 and zaehler["unbekannt"] > 0  # Gegenprobe: beide Wege wurden gezogen
+    assert all(anzahl > 0 for anzahl in je_paar.values()), je_paar  # Gegenprobe: jedes Paar ergab einen Satz
+    assert zaehler["unbekannt"] > 0  # und unbekannte Paare wurden abgelehnt
 
 
 # --- Pipeline mit einer Tabellen-Anlage (F-client-kern-02, F-client-kern-07) ---
@@ -174,7 +178,9 @@ def test_obere_grenze_genau_und_ein_anlagenschritt_innen_und_aussen(tmp_path, ke
 
 
 #: beliebiger Serverwert: endliche Zahlen in jeder Groesse, NaN, ±Inf, Ganzzahlen ueber dem float-Bereich
-WERT = st.floats(allow_nan=True, allow_infinity=True) | st.floats(-60, 60) | st.integers(-50, 50) | st.sampled_from(RIESEN)
+NICHT_ENDLICH = [math.nan, math.inf, -math.inf]
+WERT = (st.floats(allow_nan=True, allow_infinity=True) | st.floats(-60, 60) | st.integers(-50, 50)
+        | st.sampled_from([*NICHT_ENDLICH, *RIESEN]))
 
 
 def _mit_schritten(hebelsatz: str, schritte: dict):
@@ -192,9 +198,10 @@ def _satz_mit(werte_strategie):
 
 def test_kein_eingabewert_und_keine_schrittweite_ergibt_einen_schreibwert_ausserhalb_der_lokalen_grenze():
     """Beliebige Hebelwerte (auch ±Inf, NaN, 2**1100) mit Schrittweiten 0,05 bis 5 durch Begrenzen, Runden und erneutes
-    Begrenzen der Pipeline: jeder Schreibwert liegt in der lokalen Grenze; abgelehnt (ValueError/OverflowError, nichts
-    geschrieben) wird nur eine nicht endliche Eingabe."""
-    zaehler = {"geschrieben": 0, "abgelehnt": 0}
+    Begrenzen der Pipeline: jeder Schreibwert liegt in der lokalen Grenze; abgelehnt (ValueError/OverflowError) wird
+    nur eine nicht endliche Eingabe. Gegenprobe je Art: ±Inf wird (geklemmt) geschrieben, NaN und eine Ganzzahl
+    ueber dem float-Bereich werden abgelehnt."""
+    zaehler = {"geschrieben": 0, "inf_geschrieben": 0, "nan_abgelehnt": 0, "riesig_abgelehnt": 0}
 
     @EINSTELLUNG
     @given(_satz_mit(WERT))
@@ -204,25 +211,44 @@ def test_kein_eingabewert_und_keine_schrittweite_ergibt_einen_schreibwert_ausser
             pipeline, anlage = _pipeline(Path(verzeichnis), key, description=_mit_schritten(key[0], schritte))
             try:
                 _schreiben(pipeline, werte)
-            except (ValueError, OverflowError):
+            except (ValueError, OverflowError) as fehler_:
                 assert not all(_endlich(wert) for wert in werte.values()), werte
-                zaehler["abgelehnt"] += 1
+                zaehler["nan_abgelehnt"] += isinstance(fehler_, ValueError)
+                zaehler["riesig_abgelehnt"] += isinstance(fehler_, OverflowError)
+            else:
+                geschrieben = {lever for lever, _ in anlage.writes}
+                zaehler["inf_geschrieben"] += sum(
+                    1 for lever, wert in werte.items() if isinstance(wert, float) and math.isinf(wert)
+                    and lever in geschrieben)
             _alle_in_den_lokalen_grenzen(key, anlage.writes)
             zaehler["geschrieben"] += len(anlage.writes)
 
     pruefen()
-    assert zaehler["geschrieben"] > 0 and zaehler["abgelehnt"] > 0  # Gegenprobe
+    assert all(anzahl > 0 for anzahl in zaehler.values()), zaehler  # Gegenprobe je Art
 
 
 GRENZWERT = (st.floats(allow_nan=True, allow_infinity=True) | st.floats(-60, 60) | st.integers(-50, 50)
-             | st.sampled_from(RIESEN))
+             | st.sampled_from([*NICHT_ENDLICH, *RIESEN]))
 ANLAGENBEREICH = st.none() | st.tuples(GRENZWERT, GRENZWERT)
+
+
+def _arten(bereich) -> set[str]:
+    """Arten eines rohen Anlagenbereichs fuer die Gegenprobe (Zaehler je Art)."""
+    if bereich is None:
+        return {"keiner"}
+    floats = [x for x in bereich if isinstance(x, float)]
+    arten = {"nan"} if any(math.isnan(x) for x in floats) else set()
+    if any(math.isinf(x) for x in floats):
+        arten.add("inf")
+    if "nan" not in arten and bereich[0] > bereich[1]:
+        arten.add("min_ueber_max")
+    return arten
 
 
 def test_jeder_anlagenbereich_ergibt_einen_schreibbereich_innerhalb_der_lokalen_grenzen():
     """Wertebereich der Anlage je Hebel beliebig (NaN, ±Inf, Minimum ueber Maximum, riesige Ganzzahl, enger, weiter,
     ohne Schnittmenge): range_of liegt in der lokalen Grenze, und jeder geschriebene Wert auch."""
-    zaehler = {"geschrieben": 0}
+    zaehler = {"geschrieben": 0, "nan": 0, "inf": 0, "min_ueber_max": 0, "keiner": 0}
 
     @EINSTELLUNG
     @given(st.sampled_from(sorted(TABELLE)).flatmap(lambda key: st.tuples(
@@ -236,12 +262,14 @@ def test_jeder_anlagenbereich_ergibt_einen_schreibbereich_innerhalb_der_lokalen_
                 low, high = TABELLE[key][0][lever]
                 bereich = pipeline.range_of(lever)
                 assert low <= bereich[0] <= bereich[1] <= high, (lever, device[lever], bereich)
+                for art in _arten(device[lever]):
+                    zaehler[art] += 1
             _schreiben(pipeline, werte)
             _alle_in_den_lokalen_grenzen(key, anlage.writes)
             zaehler["geschrieben"] += len(anlage.writes)
 
     pruefen()
-    assert zaehler["geschrieben"] > 0  # Gegenprobe
+    assert all(anzahl > 0 for anzahl in zaehler.values()), zaehler  # Gegenprobe je Art
 
 
 # --- ueber die echte Laufzeit wie handle_setpoints (F-client-kern-47) ---
@@ -263,7 +291,7 @@ def test_serverantwort_mit_beliebigen_schrittweiten_und_anlagenbereichen_schreib
     bereiche = TABELLE[(hebelsatz, HK)][0]
     erwartet = tuple(sorted(set(entities.values()) - {"min_flow"}))
     alle = _hebel((hebelsatz, HK))
-    zaehler = {"geschrieben": 0}
+    zaehler = {"angenommen": 0, "geschrieben": 0}
 
     @EINSTELLUNG
     @given(st.fixed_dictionaries({lever: SCHRITT for lever in alle}),
@@ -286,6 +314,7 @@ def test_serverantwort_mit_beliebigen_schrittweiten_und_anlagenbereichen_schreib
                 bridge = _start(env, **optionen, bindungsparameter=parameter_neu)
                 _ha_verbunden(env, bridge)
                 snapshot = _mqtt(env).snapshots[-1]
+                vorher = len(env.ha.writes)
                 antwort = {"seq": snapshot["seq"], "schema": 4, "ts": "x", "status": "ok", "reason": None,
                            "levers": levers, "learned": None}
                 env.geraet.channel.setpoints(json.loads(json.dumps(antwort)))
@@ -293,16 +322,21 @@ def test_serverantwort_mit_beliebigen_schrittweiten_und_anlagenbereichen_schreib
             finally:
                 worker_log.removeHandler(log)
             assert log.eintraege == []
-            for entity, wert in env.ha.writes:
+            for entity, wert in env.ha.writes:  # alle Schreibwerte seit dem Start
                 if entity in NICHT_NUMERISCH:
                     continue
                 assert entity in entities, entity
                 low, high = bereiche[entities[entity]]
                 assert low <= wert <= high, (entity, wert, schritte, attribute)
-                zaehler["geschrieben"] += 1
+            gueltig = sorted(levers) == sorted(snapshot["levers"]) and all(_endlich(w) for w in levers.values())
+            if not gueltig:
+                assert env.ha.writes[vorher:] == []  # ungueltige Antwort: nichts geschrieben
+            zaehler["angenommen"] += int(gueltig)
+            zaehler["geschrieben"] += len(env.ha.writes[vorher:])
 
     pruefen()
-    assert zaehler["geschrieben"] > 0  # Gegenprobe: es wurde geschrieben
+    # Gegenprobe wie test_property_geraet.py: gueltige Antworten wurden angenommen und geschrieben
+    assert zaehler["angenommen"] > 0 and zaehler["geschrieben"] > 0, zaehler
 
 
 # --- config_check.pruefen (F-client-kern-04) ---

@@ -176,13 +176,13 @@ def start_bridge(env, *, abo=entitlement.ACTIVE, abgemeldet=False, bedienung=Non
     return bridge, geraet
 
 
-def ankunftsschwelle_der_laufzeit(verzeichnis, **option_overrides) -> float:
+def ankunftsschwelle_der_laufzeit(verzeichnis) -> float:
     """Ankunftsschwelle des Comfort-Boosts (zugleich Austrittsschwelle des Notfall-Boosts, regulation.run_local_check)
     aus der echten RuntimeConfig (dokument_config.runtime_config) des Dokuments aus test_runtime.OPTIONS (Vaillant x
-    Heizkoerper wie client1) plus Overrides; verzeichnis ohne Rastung."""
+    Heizkoerper wie client1); verzeichnis ohne Rastung."""
     from test_runtime import OPTIONS  # Kreisimport vermeiden: erst zur Laufzeit
 
-    konfiguration = konfiguration_aus_optionen({**OPTIONS, **option_overrides})
+    konfiguration = konfiguration_aus_optionen(OPTIONS)
     runtime = dokument_config.runtime_config(konfiguration, rastung_pfad=verzeichnis / "rastung.json",
                                              entitlement_path=verzeichnis / "entitlement.json",
                                              abo_source=lambda: entitlement.ACTIVE)
