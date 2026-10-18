@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 from fakes import HaEventSink
 
+from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core.levers import LEVER_SETS
 from smartheat_runtime import status
@@ -179,7 +180,7 @@ def test_reason_is_only_sent_with_a_state_that_has_one(flags, state, expected):
 
 
 def test_reporter_publishes_changes_once_but_always_on_publish(make_store):
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     reporter = StatusReporter(HaEventSink(ha_api), "client1", make_store(), VAILLANT, ADDON_VERSION)
 
     reporter.publish_if_changed()
@@ -195,7 +196,7 @@ def test_reporter_publishes_changes_once_but_always_on_publish(make_store):
 
 
 def test_reporter_sees_changes_in_the_store(make_store):
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     store = make_store()
     reporter = StatusReporter(HaEventSink(ha_api), "client1", store, VAILLANT, ADDON_VERSION)
     reporter.publish()
@@ -207,7 +208,7 @@ def test_reporter_sees_changes_in_the_store(make_store):
 
 
 def test_failed_send_is_logged_and_repeated_on_the_next_check(make_store, caplog):
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     ha_api.fire_event.side_effect = [RuntimeError("HA weg"), None]
     reporter = StatusReporter(HaEventSink(ha_api), "client1", make_store(), VAILLANT, ADDON_VERSION)
 

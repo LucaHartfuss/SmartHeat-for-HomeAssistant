@@ -36,7 +36,7 @@ def sleeps(monkeypatch):
 
 def _reachable(*answers):
     """ha_api, dessen is_reachable nacheinander `answers` liefert und danach True."""
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     sequence = list(answers)
     ha_api.is_reachable.side_effect = lambda: sequence.pop(0) if sequence else True
     return ha_api
@@ -217,7 +217,7 @@ def test_unreachable_ha_never_becomes_a_start_error(sleeps):
             raise ConnectionError("HA startet noch")
         return "ok"
 
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     ha_api.is_reachable.side_effect = _is_reachable
 
     assert _retry_with_budget(ha_api, _attempt, lambda error: "x") == "ok"
@@ -352,7 +352,7 @@ def test_ensure_derived_sensors_with_retry_recovers_after_transient_failures(mon
 
 def test_check_timezone_warns_on_mismatch(monkeypatch, caplog):
     monkeypatch.setenv("TZ", "UTC")
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     ha_api.get_config.return_value = {"time_zone": "Europe/Berlin"}
 
     with caplog.at_level(logging.WARNING):
@@ -364,7 +364,7 @@ def test_check_timezone_warns_on_mismatch(monkeypatch, caplog):
 
 def test_check_timezone_is_quiet_when_matching(monkeypatch, caplog):
     monkeypatch.setenv("TZ", "Europe/Berlin")
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     ha_api.get_config.return_value = {"time_zone": "Europe/Berlin"}
 
     with caplog.at_level(logging.WARNING):
@@ -374,7 +374,7 @@ def test_check_timezone_is_quiet_when_matching(monkeypatch, caplog):
 
 
 def test_check_timezone_survives_failing_config_query(caplog):
-    ha_api = MagicMock()
+    ha_api = MagicMock(spec=HomeAssistantApi)
     ha_api.get_config.side_effect = requests.ConnectionError("HA nicht erreichbar")
 
     with caplog.at_level(logging.WARNING):
