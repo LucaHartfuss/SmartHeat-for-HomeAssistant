@@ -25,7 +25,7 @@ import pytest
 from geraet_helpers import konfiguration_aus_optionen
 from test_device_device import World
 from test_main_geraet import FakeSupervisor, geraet_env  # noqa: F401 - geraet_env ist eine Fixture
-from test_property_geraet import NICHT_NUMERISCH, SAETZE, _endlich
+from test_property_geraet import NICHT_NUMERISCH, SAETZE
 from test_regel4_werte import HK, TABELLE
 from test_runtime import OPTIONS, _set_room_target, _trigger, env  # noqa: F401 - env: Fixture
 
@@ -246,7 +246,9 @@ def test_eine_befehlsflut_haelt_die_regelung_nicht_an_und_den_speicher_bei_500(
     assert all(eintrag[1] is not None for eintrag in gespeichert)  # fertige Ergebnisse, keine Marker "gestartet"
 
     # jede gueltige ID wurde beantwortet, ein Duplikat mit dem ersten Ergebnis (der Server behaelt das erste)
-    ergebnisse = [m for m in anlage.link.of("up/result") if "command_id" in m]
+    alle_ergebnisse = anlage.link.of("up/result")  # alle, auch solche ohne "command_id": keines ohne gueltige String-ID
+    assert all(isinstance(m.get("command_id"), str) and m["command_id"] in set(gueltige) for m in alle_ergebnisse)
+    ergebnisse = alle_ergebnisse
     je_id: dict[str, list[dict]] = {}
     for ergebnis in ergebnisse:
         je_id.setdefault(ergebnis["command_id"], []).append(ergebnis)
@@ -403,7 +405,9 @@ def test_100_kaputte_dokumente_und_antworten_im_wechsel_mit_ticks_aendern_die_ko
     # jedes gelesene kaputte Dokument wurde mit up/result abgelehnt (die ungelesenen schweigen), keines uebernommen
     abgelehnt = [m for m in anlage.link.of("up/result") if "dokument" in m and not m["ok"]]
     assert len(abgelehnt) == gelesen == 57
-    assert {m["error"]["grund"] for m in abgelehnt} <= {g for g in wire.DOKUMENT_ERRORS}
+    assert {(m["dokument"], m["error"]["grund"]) for m in abgelehnt} == {
+        ("konfiguration", "ungueltig"), ("konfiguration", "hebelsatz_eingerastet"),
+        ("bedienung", "ungueltig"), ("bedienung", "ausserhalb_bereich")}
     # die gespeicherte Konfiguration und Bedienung sind unveraendert die gueltigen, auch von der Platte gelesen
     assert store.inhalt("konfiguration") == konfiguration
     assert store.inhalt("bedienung")["raum_soll"] == 21.0
@@ -416,11 +420,12 @@ def test_100_kaputte_dokumente_und_antworten_im_wechsel_mit_ticks_aendern_die_ko
     # Schreibwerte nur in den Grenzen; die gueltigen Antworten wurden geschrieben und geklemmt
     assert _alle_schreibwerte_in_den_grenzen(env.ha) > schreibwerte_vorher
     assert all(anzahl > 0 for anzahl in laeufe.values()), laeufe  # Boost und Notbetrieb liefen mit (kein leeres Szenario)
-    # die Antworten ausserhalb der Grenzen kamen als Grenzwert an (die unteren Werte schreibt sonst nichts)
+    # zu niedrige Antwortwerte kamen als unterer Grenzwert an (den schreibt sonst nichts); die obere Seite deckt
+    # _alle_schreibwerte_in_den_grenzen ab (der Comfort-Boost schreibt dort ohnehin das Maximum)
     for entity, hebel in (("number.curve_current", "curve"), ("number.shift_current", "room_setpoint"),
                           ("number.heat_limit", "heat_limit")):
-        assert (entity, BEREICHE[hebel][0]) in env.ha.writes and (entity, BEREICHE[hebel][1]) in env.ha.writes, hebel
-    assert all(_endlich(wert) for wert in anlage.bridge.store.state.learned.values())  # nichts Nichtendliches gelernt
+        assert (entity, BEREICHE[hebel][0]) in env.ha.writes, hebel
+    assert anlage.bridge.store.state.learned == {}  # die gueltigen Antworten lernen nichts, die kaputten bleiben ohne Wirkung
     # Gegenprobe: das Geraet nimmt nach der Flut ein gueltiges Dokument an
     anlage.senden("down/operation", {"schema": 1, "version": 500, "modus": "manuell", "raum_soll": 22.0,
                                      "quelle": "portal", "ts": "2027-01-15T07:00:00+00:00"})
