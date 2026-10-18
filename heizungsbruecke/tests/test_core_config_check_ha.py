@@ -172,5 +172,21 @@ def test_kaputter_kreis_wird_abgelehnt(kreis):
     assert ablehnung is not None and ablehnung.grund == cc.ROLLE_UNZULAESSIG
 
 
+@pytest.mark.parametrize("feld", ["plattform", "anlage", "nummer"])  # die Pflichtfelder als Literal, nicht die Konstante
+@pytest.mark.parametrize("wert", ["fehlt", ""])
+def test_jedes_pflichtfeld_des_kreises_fehlt_oder_ist_leer(feld, wert):
+    kreis = {k: v for k, v in _KREIS.items() if k != feld}
+    if wert == "":
+        kreis[feld] = wert
+    ablehnung = _pruefen(_ha(bindung={"kreis": kreis}))
+    assert ablehnung is not None and ablehnung.grund == cc.ROLLE_UNZULAESSIG
+
+
+def test_config_entry_ist_das_einzige_optionale_feld_des_kreises():
+    assert _pruefen(_ha(bindung={"kreis": {**_KREIS, "config_entry": "e1"}})) is None
+    assert _pruefen(_ha(bindung={"kreis": dict(_KREIS)})) is None
+    assert _pruefen(_ha(bindung={"kreis": {**_KREIS, "fremd": "x"}})) is not None
+
+
 def test_kreis_ohne_config_entry_wird_angenommen():
     assert _pruefen(_ha(bindung={"kreis": dict(_KREIS)})) is None
