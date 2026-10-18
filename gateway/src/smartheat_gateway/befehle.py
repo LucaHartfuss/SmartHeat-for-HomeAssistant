@@ -45,6 +45,7 @@ INVENTORY_EVERY_SECONDS = 900
 ERKENNUNG_SECONDS = 120
 SIGN_OFF_WAIT_SECONDS = 24 * 3600
 ZIGBEE_VALUE_FIELDS = ("temperature", "local_temperature", "occupied_heating_setpoint", "humidity")
+SENDE_RESERVE = 100  # Ebenen um einen Wert der Geraeteliste, die die Pruefung auf Sendbarkeit freihaelt (Antwort, Stapel)
 
 
 @dataclass
@@ -164,12 +165,18 @@ def zigbee_devices(ctx: Kontext, payload: dict) -> Outcome:
 def _sendbar(wert) -> bool:
     """Kann der Wert in die Antwort an den Server? Der Link sendet mit allow_nan=False: NaN und Unendlich (json.loads liest
     sie vom Bus) liessen die ganze Antwort scheitern und die Geraeteliste der Einrichtung leer. Eine Zahl muss endlich sein
-    (auch eine Ganzzahl ausserhalb des float-Bereichs gilt als nicht endlich), ein verschachtelter Wert darf keine enthalten."""
+    (auch eine Ganzzahl ausserhalb des float-Bereichs gilt als nicht endlich), ein verschachtelter Wert darf keine enthalten.
+    json.loads liest vom Bus Werte bis rund 9998 Ebenen tief; json.dumps wirft dort RecursionError (kein ValueError), und
+    die Antwort legt noch Ebenen um den Wert. Geprueft wird deshalb mit SENDE_RESERVE Ebenen Reserve darum: ein Wert, der
+    mit der Reserve nicht mehr geschrieben werden kann, faellt weg."""
     if isinstance(wert, int | float) and not isinstance(wert, bool):
         return ist_endliche_zahl(wert)
+    probe = wert
+    for _ in range(SENDE_RESERVE):
+        probe = [probe]
     try:
-        json.dumps(wert, allow_nan=False)
-    except (ValueError, TypeError):
+        json.dumps(probe, allow_nan=False)
+    except (ValueError, TypeError, RecursionError):
         return False
     return True
 

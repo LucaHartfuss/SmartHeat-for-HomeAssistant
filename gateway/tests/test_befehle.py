@@ -161,6 +161,52 @@ def test_the_device_list_leaves_out_a_nested_value_with_a_non_finite_number_and_
     assert sensor["werte"] == {} and sensor["batterie"] is True  # Gegenprobe: ein Wahrheitswert bleibt
 
 
+def _verschachtelt(ebenen: int) -> list:
+    wert: list = []
+    for _ in range(ebenen - 1):
+        wert = [wert]
+    return wert
+
+
+def _tiefste_ebene_fuer_dumps() -> int:
+    """Die tiefste Verschachtelung, die json.dumps an dieser Stelle des Stapels noch schreibt (das Limit der C-Rekursion
+    haengt von der Stapeltiefe ab: rund 9998 im blanken Interpreter, rund 9980 unter pytest)."""
+    unten, oben = 1, 20000
+    while unten < oben:
+        mitte = (unten + oben + 1) // 2
+        try:
+            json.dumps(_verschachtelt(mitte), allow_nan=False)
+            unten = mitte
+        except RecursionError:
+            oben = mitte - 1
+    return unten
+
+
+@pytest.mark.parametrize("feld", ["temperature", "battery"])
+def test_a_value_nested_to_the_recursion_limit_never_makes_the_answer_unsendable(ctx, feld):
+    """Auch ein Wert, den json.loads vom Bus gerade noch liest (im blanken Interpreter bis rund 9998 Ebenen; hier wird er
+    im Spiegel abgelegt, weil pytest das Lesen schon bei rund 9980 abbricht), darf die Antwort nicht scheitern lassen:
+    json.dumps wirft bei der Tiefe RecursionError, schon ohne die vier bis fuenf Ebenen der Antwort darum. Er faellt weg wie
+    jeder nicht sendbare Wert (`werte` ohne das Feld, `batterie` None), ein flacherer bleibt. Geprueft wird jede Tiefe von
+    150 Ebenen unter bis zur Grenze, die dieser Stapel noch schreibt, die Antwort muss jedes Mal sendbar sein."""
+    grenze = _tiefste_ebene_fuer_dumps()
+    assert grenze > 9900  # sonst ist die Sonde unbrauchbar
+    behandler = befehle.HANDLERS["zigbee_devices"]
+    for ebenen in range(grenze - 150, grenze + 1):
+        # ZigbeeMirror hat keinen Weg, einen Wert ohne json.loads abzulegen; der Test setzt die Nutzlast direkt
+        ctx.mirror._payloads[SENSOR] = ({feld: _verschachtelt(ebenen)}, ctx.clock())
+        antwort = behandler(ctx, {})
+        assert isinstance(antwort, Done)
+        json.dumps(antwort.result, allow_nan=False)  # sendbar (RecursionError und ValueError wuerden hier scheitern)
+        sensor = next(d for d in antwort.result["devices"] if d["ieee"] == SENSOR)
+        behalten = sensor["werte"] == {feld: _verschachtelt(ebenen)} if feld == "temperature" \
+            else sensor["batterie"] == _verschachtelt(ebenen)
+        if ebenen == grenze - 150:
+            assert behalten  # Gegenprobe: ein klar flacherer Wert bleibt
+        if ebenen >= grenze - 50:
+            assert not behalten and (sensor["werte"] == {} if feld == "temperature" else sensor["batterie"] is None)
+
+
 def test_permit_join_and_device_list(ctx, register):
     assert _run(register, "zigbee_permit_join", {"seconds": 120})["ok"] is True
     assert ctx.z2m.permit_join_requests == [120]
