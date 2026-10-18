@@ -20,6 +20,12 @@ Aufraeum-Markierung; Spec Testoffensive 12.6, Nr. 38): jede Ausnahme wird zu Nic
 Zurueckhalten (erst ein Ergebnis fuer eine Konfiguration, Annahme oder Ablehnung, beendet das Zurueckhalten).
 Eine kaputte Datei (Stromausfall) gilt als "keine Version": hello meldet 0, der Server stellt neu zu.
 
+Software-Angebot (5b-D2-3): das Feld software jeder Konfiguration mit bekanntem Schema, die ein Ergebnis bekommt (auch
+eine abgelehnte oder erneut zugestellte), steht in dokumente.json (software_angebot), sofern es die Vertragsform hat
+(software_pruefen, R15; null = kein Angebot). Ein ungueltiges oder fehlendes Feld laesst das gemerkte Angebot stehen.
+Das ist dasselbe Angebot, das das Geraet dem Host uebergibt; software_soll_nachholen des Gateways bietet es nach einem
+Neustart erneut an. Fehlt das Feld in dokumente.json oder hat es nicht die Vertragsform, gilt "kein Angebot".
+
 Rastung (Spec Stufe 3 S3 Abschnitt 3, A5-06): Hebelsatz x Verteilsystem der ersten eingerichteten Konfiguration stehen in
 sicherheitssatz.json; kein Dokument loest sie, auch keine leere Konfiguration. Sie wird vor dem Speichern der Konfiguration
 geschrieben. Fehlt die Datei bei gespeicherter eingerichteter Konfiguration (Stand vor dieser Version), rastet der Start.
@@ -177,6 +183,9 @@ class DocumentStore:
         zustand = dateien.lesen_json(directory / ZUSTAND_DATEI)
         zustand = zustand if isinstance(zustand, dict) else {}
         self._update_anlass = _anlass(zustand.get("update_anlass"))
+        angebot = zustand.get("software_angebot")
+        self._software_angebot: dict | None = (
+            angebot if isinstance(angebot, dict) and software_pruefen(angebot) is None else None)
         roh = zustand.get("abgelehnt")
         abgelehnt: dict = roh if isinstance(roh, dict) else {}
         # eine Ablehnung von vor 5c traegt an Stelle 2 einen Text: sie laedt ohne details
@@ -232,7 +241,8 @@ class DocumentStore:
         anlass = list(self._update_anlass) if self._update_anlass is not None else None
         dateien.schreiben_json(self._dir / ZUSTAND_DATEI,
                                {"update_anlass": anlass,
-                                "abgelehnt": {art: list(v) for art, v in self._abgelehnt.items()}}, modus=dateien.PRIVAT)
+                                "abgelehnt": {art: list(v) for art, v in self._abgelehnt.items()},
+                                "software_angebot": self._software_angebot}, modus=dateien.PRIVAT)
 
     def aktuell(self, art: str) -> Dokument | None:
         return self._docs[art]
@@ -251,6 +261,10 @@ class DocumentStore:
 
     def ablehnung(self, art: str) -> tuple[int, str, dict | None] | None:
         return self._abgelehnt.get(art)
+
+    def software_angebot(self) -> dict | None:
+        """Zuletzt gueltiges Software-Angebot (Kopie), None = keins (Moduldocstring, 5b-D2-3)."""
+        return copy.deepcopy(self._software_angebot)
 
     def mark_dirty(self) -> None:
         """Lokaler Bedienwunsch (Spec 3.3): die naechste Bedienung wird auch mit gleicher Version uebernommen."""
@@ -272,23 +286,39 @@ class DocumentStore:
                 if art == KONFIGURATION:
                     self._update_anlass = (SCHEMA_UNBEKANNT, self._software_version)
                 return self._abgelehnt_mit(art, version, SCHEMA_UNBEKANNT, None)
-            current = self._docs[art]
-            if current is not None and current.version == version and not current.dirty:
-                if art == KONFIGURATION:
-                    self._vorbereitung_gemeldet = False  # Ergebnis: ein spaeteres Scheitern ist ein neues Zurueckhalten
-                return Ergebnis(art, version, True)
-            inhalt = {key: value for key, value in payload.items() if key not in _RESERVIERT}
-            ablehnung = self._pruefen(art, inhalt)
-            if ablehnung is not None:
-                return self._abgelehnt_mit(art, version, ablehnung.grund, ablehnung.details)
+            vorher = self._software_angebot
+            if art == KONFIGURATION and "software" in payload and software_pruefen(payload["software"]) is None:
+                # vor dem Ergebnis gesetzt, damit es mit Ablehnung bzw. Uebernahme in einem Schreiben steht; ein
+                # ungueltiges oder fehlendes Feld laesst das gemerkte Angebot stehen (R15)
+                self._software_angebot = copy.deepcopy(payload["software"])
+            try:
+                ergebnis = self._empfangen_bekannt(art, version, payload)
+                if ergebnis.ok and not ergebnis.uebernommen and self._software_angebot != vorher:
+                    self._zustand_speichern()  # Duplikat: schreibt sonst nichts
+            except BaseException:
+                self._software_angebot = vorher  # kein Ergebnis (NichtPruefbar, Schreibfehler): auch kein Angebot
+                raise
+            return ergebnis
+
+    def _empfangen_bekannt(self, art: str, version: int, payload: dict) -> Ergebnis:
+        """empfangen fuer ein Dokument mit bekanntem Schema (unter der Sperre)."""
+        current = self._docs[art]
+        if current is not None and current.version == version and not current.dirty:
             if art == KONFIGURATION:
-                self._vorbereiten(inhalt)
-            if art == KONFIGURATION and self._rastung is None and not config_check.ist_leer(inhalt):
-                self._rastung = self._rasten(inhalt)  # vor dem Dokument (Spec 3.2): ein Absturz dazwischen schadet nicht
-            self._speichern(Dokument(art, version, inhalt))
-            self._abgelehnt.pop(art, None)
-            self._zustand_speichern()
-            return Ergebnis(art, version, True, uebernommen=True)
+                self._vorbereitung_gemeldet = False  # Ergebnis: ein spaeteres Scheitern ist ein neues Zurueckhalten
+            return Ergebnis(art, version, True)
+        inhalt = {key: value for key, value in payload.items() if key not in _RESERVIERT}
+        ablehnung = self._pruefen(art, inhalt)
+        if ablehnung is not None:
+            return self._abgelehnt_mit(art, version, ablehnung.grund, ablehnung.details)
+        if art == KONFIGURATION:
+            self._vorbereiten(inhalt)
+        if art == KONFIGURATION and self._rastung is None and not config_check.ist_leer(inhalt):
+            self._rastung = self._rasten(inhalt)  # vor dem Dokument (Spec 3.2): ein Absturz dazwischen schadet nicht
+        self._speichern(Dokument(art, version, inhalt))
+        self._abgelehnt.pop(art, None)
+        self._zustand_speichern()
+        return Ergebnis(art, version, True, uebernommen=True)
 
     def _vorbereiten(self, inhalt: dict) -> None:
         """Vor Rastung und Speichern: scheitert der Host (Markierung nicht schreibbar), wird nichts gespeichert, und das

@@ -168,7 +168,8 @@ def laden(device_dir: Path) -> Zugang | None:
 
 class Bootstrap:
     """Ablauf im Geraete-Thread: holen(rettung=False) beim ersten Start (register), holen(rettung=True) als Rettungsweg
-    (certificate, bei 401 register). Ein neuer Zugang wird gespeichert und zurueckgegeben; None heisst: spaeter erneut
+    (certificate, bei 401 register). uhr_synchron darf nicht werfen (das Geraet reicht seinen abgesicherten Rueckruf:
+    gescheitert gilt als None, also kein Urteil "gesperrt"). Ein neuer Zugang wird gespeichert und zurueckgegeben; None heisst: spaeter erneut
     (faellig() sagt wann). Lieferte register ein Zertifikat fuer einen fremden Schluessel, nimmt der naechste Versuch den
     Rettungsweg (certificate stellt fuer den eigenen CSR aus), sonst kaeme bei jedem Versuch dasselbe Zertifikat."""
 

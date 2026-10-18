@@ -260,6 +260,92 @@ def test_the_target_software_must_have_exactly_the_contract_fields(tmp_path, sof
     assert ergebnis.details["feld"] == "software" and ergebnis.details["regel"] == regel
 
 
+# --- Gemerktes Software-Angebot (5b-D2-3, Review Focus 5) ---
+
+SOFTWARE_NEU = {**SOFTWARE, "version": "0.7.1"}
+
+
+def test_a_valid_offer_of_a_rejected_configuration_is_remembered_across_a_restart(tmp_path):
+    store = _store(tmp_path, version="0.5.9")
+    assert store.software_angebot() is None
+    assert store.empfangen("konfiguration", _konfiguration(software=SOFTWARE)).grund == "update_noetig"
+    assert store.software_angebot() == SOFTWARE
+    assert json.loads((tmp_path / docs.ZUSTAND_DATEI).read_text())["software_angebot"] == SOFTWARE
+    assert _store(tmp_path, version="0.5.9").software_angebot() == SOFTWARE  # Neustart
+
+
+@pytest.mark.parametrize("software", [{**SOFTWARE, "extra": 1}, {"version": "0.7.0"}, "0.7.0", [], {}])
+def test_an_invalid_offer_of_a_later_configuration_keeps_the_remembered_one(tmp_path, software):
+    store = _store(tmp_path)
+    store.empfangen("konfiguration", _konfiguration(version=1, software=SOFTWARE))
+    assert store.empfangen("konfiguration", _konfiguration(version=2, software=software)).grund == "ungueltig"
+    assert store.software_angebot() == SOFTWARE and _store(tmp_path).software_angebot() == SOFTWARE
+
+
+def test_an_empty_configuration_without_software_keeps_the_remembered_offer(tmp_path):
+    store = _store(tmp_path)
+    store.empfangen("konfiguration", _konfiguration(version=1, software=SOFTWARE))
+    leer = _leer(version=2)
+    del leer["software"]
+    assert store.empfangen("konfiguration", leer).grund == "ungueltig"
+    assert store.software_angebot() == SOFTWARE and _store(tmp_path).software_angebot() == SOFTWARE
+
+
+def test_software_null_in_a_valid_configuration_replaces_the_offer(tmp_path):
+    store = _store(tmp_path)
+    store.empfangen("konfiguration", _konfiguration(version=1, software=SOFTWARE))
+    assert store.empfangen("konfiguration", _konfiguration(version=2, software=None)).uebernommen
+    assert store.software_angebot() is None and _store(tmp_path).software_angebot() is None
+
+
+def test_a_newer_valid_offer_replaces_the_remembered_one_also_from_a_repeated_version(tmp_path):
+    """Wie die Uebergabe an den Host (device.py): jede Konfiguration mit bekanntem Schema und gueltigem Angebot, auch
+    eine erneut zugestellte Version."""
+    store = _store(tmp_path)
+    store.empfangen("konfiguration", _konfiguration(version=1, software=SOFTWARE))
+    assert store.empfangen("konfiguration", _konfiguration(version=1, software=SOFTWARE_NEU)).ok
+    assert _store(tmp_path).software_angebot() == SOFTWARE_NEU
+
+
+def test_an_unknown_schema_or_an_operation_does_not_touch_the_offer(tmp_path):
+    store = _store(tmp_path)
+    store.empfangen("konfiguration", _konfiguration(version=1, software=SOFTWARE))
+    assert store.empfangen("konfiguration", {**_konfiguration(version=2, software=SOFTWARE_NEU), "schema": 99}).grund \
+        == "schema_unbekannt"
+    store.empfangen("bedienung", _bedienung(software=SOFTWARE_NEU))
+    assert _store(tmp_path).software_angebot() == SOFTWARE
+
+
+def test_a_held_back_configuration_remembers_no_offer(tmp_path):
+    """NichtPruefbar (Treiber-Rueckruf): weder Ergebnis noch Angebot; das Geraet reicht es dann auch nicht an den
+    Host, und die Wiederholung merkt es."""
+    def treiber_pruefen(bindung):
+        raise config_check.NichtPruefbar
+
+    store = docs.DocumentStore(tmp_path, host="gateway", software_version="0.6.0", treiber_pruefen=treiber_pruefen)
+    with pytest.raises(config_check.NichtPruefbar):
+        store.empfangen("konfiguration", _konfiguration(software=SOFTWARE))
+    assert store.software_angebot() is None and _store(tmp_path).software_angebot() is None
+
+
+@pytest.mark.parametrize("gespeichert", [{"update_anlass": None, "abgelehnt": {}},
+                                         {"update_anlass": None, "abgelehnt": {}, "software_angebot": None},
+                                         {"software_angebot": {"version": "0.7.0"}},
+                                         {"software_angebot": "0.7.0"}])
+def test_without_a_valid_remembered_offer_there_is_none(tmp_path, gespeichert):
+    """Kein Kompatibilitaetspfad: ein dokumente.json ohne das Feld (Stand vor 5b-D2-3) oder mit einem Wert ausserhalb
+    des Vertrags heisst kein Angebot."""
+    (tmp_path / docs.ZUSTAND_DATEI).write_text(json.dumps(gespeichert))
+    assert _store(tmp_path).software_angebot() is None
+
+
+def test_the_returned_offer_is_a_copy(tmp_path):
+    store = _store(tmp_path)
+    store.empfangen("konfiguration", _konfiguration(software=SOFTWARE))
+    store.software_angebot()["version"] = "9.9.9"
+    assert store.software_angebot() == SOFTWARE
+
+
 def test_a_rejected_foreign_field_changes_neither_the_accepted_document_nor_the_update_trigger(tmp_path):
     store = _store(tmp_path)
     assert store.empfangen("konfiguration", _konfiguration(version=1)).uebernommen

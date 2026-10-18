@@ -157,3 +157,22 @@ def test_repeated_identical_local_wish_is_not_repeated(tmp_path):
     assert len(a.wuensche) == 1 and len(a.checks) == 1
     a.post(22.0, SOURCE_LOKAL, herkunft="smartheat_entity")
     assert len(a.wuensche) == 1 and len(a.checks) == 1 and a.quelle.geschrieben == [22.0]
+
+
+
+class AblehnenderAufbau(Aufbau):
+    def _wunsch(self, value, herkunft, durch):
+        """Wie Device.wunsch bei einer Ablehnung (Fehlerinjektion an der Grenze zum Geraetekern)."""
+        self.wuensche.append((value, herkunft, durch))
+        raise ValueError("herkunft unbekannt")
+
+
+def test_a_wish_the_device_refuses_keeps_the_entered_value_without_write_back(tmp_path):
+    """Device.wunsch lehnt mit ValueError ab (keine endliche Zahl, herkunft oder durch kein Vertragswert, 5b-D1-4):
+    der Soll-Eingang faengt das, der eingegebene Wert gilt lokal, nichts wird an die Quelle zurueckgeschrieben, und
+    die lokale Pruefung laeuft."""
+    a = AblehnenderAufbau(tmp_path)
+    a.post(22.5, SOURCE_THERMOSTAT, herkunft="app", durch="nutzer")
+    assert a.wuensche == [(22.5, "app", "nutzer")]
+    assert a.store.value == 22.5 and a.quelle.geschrieben == []
+    assert a.checks and a.checks[-1]["room_target_fired"] is True

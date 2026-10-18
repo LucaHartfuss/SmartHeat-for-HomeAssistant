@@ -2,6 +2,8 @@
 Laufzeit-Kanal. Link und Bootstrap-Server sind Fakes; die Wire-Formate sind die des Vertrags."""
 import json
 import math
+import queue
+import threading
 import time
 
 import pytest
@@ -588,17 +590,36 @@ def test_unknown_topics_and_broken_messages_are_ignored(tmp_path):
 
 
 @pytest.mark.parametrize("name", wire.DOWN_TOPICS)
-def test_every_contract_down_topic_is_assigned(tmp_path, name):
+def test_every_contract_down_topic_reaches_exactly_its_receiver_and_takes_effect(tmp_path, name):
+    """ck F-client-kern-43: je Down-Topic des Vertrags die Wirkung genau eines Empfaengers (gespeichertes Dokument,
+    Befehlsergebnis, EV_SETPOINTS ueber den echten Laufzeit-Kanal); die anderen bleiben unberuehrt. Ein neues Topic
+    ohne Eintrag in `koerper` scheitert hier mit KeyError."""
     world = World(tmp_path)
+    worker, sollwerte = RegulationWorker(clock=world.clock), []
+    worker.register(EV_SETPOINTS, sollwerte.append)
+    worker.register(EV_MQTT_CONNECTED, lambda event: None)
+    world.device.laufzeit_kanal(worker)
     world.verbinden()
-    seen = []
-    world.device._dokument = lambda art, body: seen.append(("dokument", art))
-    world.device.befehle.empfangen = lambda body: seen.append(("befehl", None))
-    world.device._channel = type("Kanal", (), {"setpoints": lambda self, body: seen.append(("sollwerte", None))})()
-    world.empfangen(name, {"x": 1})
-    erwartet = {topic: ("dokument", art) for art, topic in wire.DOKUMENT_TOPICS.items()}
-    erwartet.update({"down/command": ("befehl", None), "down/setpoints": ("sollwerte", None)})
-    assert seen == [erwartet[name]]
+    koerper = {"down/config": _konfiguration(version=1), "down/operation": _bedienung(version=3),
+               "down/command": _command("hinweis", payload={"key": "geraet_doppelt", "stufe": "kritisch",
+                                                            "text": "Kopie stoppen"}),
+               "down/setpoints": {"seq": "s1"}}
+    assert (world.device.konfiguration(), world.device.bedienung(), world.link.of("up/result")) == (None, None, [])
+    world.empfangen(name, koerper[name])
+    worker.run_pending()
+    ergebnisse = world.link.of("up/result")
+    wirkung = {
+        "konfiguration": world.device.konfiguration() is not None and world.host.konfigurationen != []
+        and [e.get("dokument") for e in ergebnisse] == ["konfiguration"],
+        "bedienung": world.device.bedienung() is not None and world.host.bedienungen != []
+        and [e.get("dokument") for e in ergebnisse] == ["bedienung"],
+        "befehl": [(e.get("command_id"), e.get("ok")) for e in ergebnisse] == [("c1", True)]
+        and world.device.hinweise.alle() != (),
+        "sollwerte": [event.data["payload"] for event in sollwerte] == [{"seq": "s1"}],
+    }
+    erwartet = {"down/config": "konfiguration", "down/operation": "bedienung", "down/command": "befehl",
+                "down/setpoints": "sollwerte"}
+    assert [art for art, wirkt in wirkung.items() if wirkt] == [erwartet[name]]
 
 
 def test_a_foreign_down_topic_reaches_nobody(tmp_path, caplog):
@@ -862,6 +883,53 @@ def test_setpoint_source_off_is_shown_and_cleared(tmp_path):
     assert world.host.anzeigen_liste[-1].meldungen == ()
 
 
+@pytest.mark.parametrize("herkunft, durch", [("app", None), (None, "katze"), ("app", "katze")])
+def test_a_wish_with_an_unknown_origin_or_actor_is_refused_in_the_calling_thread(tmp_path, herkunft, durch):
+    """5b-D1-4: wie eine nicht endliche Zahl schon im aufrufenden Thread (der Host wendet den Wert sonst an, als waere
+    er angenommen); nichts kommt in die Inbox, kein up/wish."""
+    world = World(tmp_path)
+    world.verbinden()
+    with pytest.raises(ValueError):
+        world.device.wunsch(22.0, herkunft=herkunft, durch=durch)
+    assert world.device._inbox.empty()
+    world.device.schritt()
+    assert world.link.of("up/wish") == [] and world.device.wunsch_puffer.wunsch is None
+    assert world.device.wunsch(22.0, herkunft="thermostat", durch="nutzer") == 22.0  # Gegenprobe: gueltig geht hoch
+    world.device.schritt()
+    assert [w["werte"] for w in world.link.of("up/wish")] == [{"raum_soll": 22.0}]
+
+
+def test_setpoint_source_off_without_a_value_keeps_the_message_open(tmp_path):
+    """5b-D1-4: soll_quelle_aus(True) ohne wirksames Soll schliesst die Meldung nicht, sie bleibt offen (Text ohne
+    Wert); erst soll_quelle_aus(False) schliesst sie."""
+    ohne_wert = "Thermostat ist aus, SmartHeat regelt weiter; Heizung aus über die Sommersperre bzw. im Portal"
+    world = World(tmp_path)
+    world.verbinden()
+    world.device.soll_quelle_aus(True, 21.0)
+    world.device.schritt()
+    assert [m["key"] for m in world.host.anzeigen_liste[-1].meldungen] == ["soll_quelle_aus"]
+    world.device.soll_quelle_aus(True)
+    world.clock.now += 10
+    world.device.schritt()
+    assert world.host.anzeigen_liste[-1].meldungen == ({"key": "soll_quelle_aus", "text": ohne_wert},)
+    (item,) = world.link.of("up/notifications")[-1]["items"]
+    assert (item["key"], item["offen"], item["text"]) == ("soll_quelle_aus", True, ohne_wert)
+    world.device.soll_quelle_aus(False)
+    world.clock.now += 10
+    world.device.schritt()
+    assert world.host.anzeigen_liste[-1].meldungen == ()
+    assert [(i["key"], i["offen"]) for i in world.link.of("up/notifications")[-1]["items"]] == [
+        ("soll_quelle_aus", False)]
+
+
+def test_setpoint_source_off_without_a_value_opens_the_message_without_a_value(tmp_path):
+    world = World(tmp_path)
+    world.device.soll_quelle_aus(True)
+    world.device.schritt()
+    assert world.host.anzeigen_liste[-1].meldungen == ({"key": "soll_quelle_aus", "text": (
+        "Thermostat ist aus, SmartHeat regelt weiter; Heizung aus über die Sommersperre bzw. im Portal")},)
+
+
 # --- Status und Meldungen ---
 
 def test_status_only_on_change_and_at_most_every_10_seconds(tmp_path):
@@ -1053,6 +1121,168 @@ def test_a_failing_capabilities_callback_sends_hello_on_a_later_tick(tmp_path, c
     assert "geheimer Parameter" not in caplog.text
 
 
+class WerfenderHost(FakeHost):
+    """Host, dessen Rueckrufe in `werfen` bei jedem Aufruf werfen (5b-D1-4, Review Focus 4); der Text ist geheim."""
+
+    def __init__(self, *werfen: str) -> None:
+        super().__init__()
+        self.werfen = set(werfen)
+        self.anzeigen_versuche = 0
+
+    def _pruefen(self, name: str) -> None:
+        if name in self.werfen:
+            raise RuntimeError(f"geheimer Parameter {name}")
+
+    def faehigkeiten(self):
+        self._pruefen("faehigkeiten")
+        return super().faehigkeiten()
+
+    def uhr_synchron(self):
+        self._pruefen("uhr_synchron")
+        return super().uhr_synchron()
+
+    def runtime_status(self):
+        self._pruefen("runtime_status")
+        return super().runtime_status()
+
+    def ursprungswerte(self):
+        self._pruefen("ursprungswerte")
+        return super().ursprungswerte()
+
+    def raum(self):
+        self._pruefen("raum")
+        return super().raum()
+
+    def anzeigen(self, anzeige):
+        self.anzeigen_versuche += 1
+        self._pruefen("anzeigen")
+        super().anzeigen(anzeige)
+
+
+def _fuenf_takte(world) -> None:
+    for _ in range(5):
+        world.clock.now += 1
+        world.device.schritt()
+
+
+def _fehlerzeilen(caplog) -> list[str]:
+    return [record.getMessage() for record in caplog.records if record.levelname == "ERROR"]
+
+
+def _genau_eine_zeile(caplog, name: str) -> None:
+    """Je Rueckruf und Fehlerart genau eine ERROR-Zeile ueber alle Takte, ohne den Text der Ausnahme (Regel 6)."""
+    assert _fehlerzeilen(caplog) == [z for z in _fehlerzeilen(caplog) if z.startswith(f"Host-Rueckruf {name} ")]
+    assert len(_fehlerzeilen(caplog)) == 1 and "RuntimeError" in _fehlerzeilen(caplog)[0]
+    assert "geheimer Parameter" not in caplog.text
+
+
+def test_failing_capabilities_postpone_the_registration_to_a_later_tick(tmp_path, caplog):
+    world = World(tmp_path, WerfenderHost("faehigkeiten"), access=False)
+    world.client.script["register"] = [bootstrap.Antwort("nicht_uebernommen", world.zugang)]
+    _fuenf_takte(world)
+    assert world.client.calls == [] and world.links == []  # keine Registrierung mit erfundenen Faehigkeiten
+    assert len(world.host.anzeigen_liste) == 5  # der Takt laeuft weiter
+    _genau_eine_zeile(caplog, "faehigkeiten")
+    world.host.werfen.clear()
+    world.device.schritt()  # der naechste Takt registriert, ohne Backoff
+    assert [call[0] for call in world.client.calls] == ["register"] and world.link.started
+    assert world.client.calls[0][1]["capabilities"] == world.host.faehigkeiten()
+
+
+def test_failing_capabilities_postpone_hello_without_a_line_per_tick(tmp_path, caplog):
+    world = World(tmp_path, WerfenderHost("faehigkeiten"))
+    world.verbinden()
+    _fuenf_takte(world)
+    assert world.link.sent == [] and len(world.host.anzeigen_liste) == 7  # verbinden: 2 Takte, dann 5
+    _genau_eine_zeile(caplog, "faehigkeiten")
+    world.host.werfen.clear()
+    world.device.schritt()
+    assert world.link.topics()[:2] == ["up/hello", "up/status"]
+
+
+def test_a_failing_clock_callback_counts_as_unsynchronised_in_hello_and_wish(tmp_path, caplog):
+    world = World(tmp_path, WerfenderHost("uhr_synchron"))
+    world.verbinden()
+    world.device.wunsch(22.0, herkunft="thermostat")
+    _fuenf_takte(world)
+    assert [h["uhr_synchron"] for h in world.link.of("up/hello")] == [False]
+    assert [w["uhr_synchron"] for w in world.link.of("up/wish")] == [False]
+    assert len(world.host.anzeigen_liste) == 7
+    _genau_eine_zeile(caplog, "uhr_synchron")
+    world.host.werfen.clear()  # Gegenprobe: dieselbe Lage mit funktionierender Uhr meldet synchron
+    world.link.trennen()
+    world.link.verbinden()
+    world.device.schritt()
+    assert world.link.of("up/hello")[-1]["uhr_synchron"] is True
+
+
+def test_a_failing_clock_callback_counts_as_unsynchronised_for_the_bootstrap(tmp_path, caplog):
+    """401 auf register mit werfender Uhr: kein Urteil "gesperrt", Backoff wie bei unsynchroner Uhr (sonst wuerde der
+    Takt jede Sekunde neu registrieren)."""
+    world = World(tmp_path, WerfenderHost("uhr_synchron"), access=False)
+    world.client.script["register"] = [bootstrap.NotAuthenticated("register")]
+    _fuenf_takte(world)
+    assert [call[0] for call in world.client.calls] == ["register"]
+    assert world.device.zustand() != "gesperrt" and len(world.host.anzeigen_liste) == 5
+    _genau_eine_zeile(caplog, "uhr_synchron")
+
+
+def test_a_failing_runtime_status_skips_the_status_of_that_tick(tmp_path, caplog):
+    world = World(tmp_path, WerfenderHost())
+    world.verbinden()
+    world.empfangen("down/config", _konfiguration())
+    assert world.host.anzeigen_liste[-1].zustand == "regelt"
+    gesendet = len(world.link.sent)
+    world.host.werfen.add("runtime_status")
+    world.host.status = {"status": "notbetrieb"}
+    world.clock.now += 10
+    _fuenf_takte(world)
+    assert len(world.link.sent) == gesendet  # kein Status mit erfundenem Laufzeitstatus
+    assert len(world.host.anzeigen_liste) == 8 and world.host.anzeigen_liste[-1].zustand == "startet"
+    _genau_eine_zeile(caplog, "runtime_status")
+    world.host.werfen.clear()
+    world.device.schritt()
+    status = world.link.of("up/status")[-1]
+    assert status["runtime_status"] == {"status": "notbetrieb"} and status["zustand"] == "stoerung"
+
+
+def test_a_failing_room_callback_skips_the_status_of_that_tick(tmp_path, caplog):
+    world = World(tmp_path, WerfenderHost("raum"))
+    world.verbinden()
+    _fuenf_takte(world)
+    assert world.link.topics() == ["up/hello"] and len(world.host.anzeigen_liste) == 7
+    _genau_eine_zeile(caplog, "raum")
+    world.host.werfen.clear()
+    world.device.schritt()
+    assert world.link.of("up/status")[-1]["raum"] == world.host.raum_wert
+
+
+def test_failing_originals_are_sent_as_none(tmp_path, caplog):
+    world = World(tmp_path, WerfenderHost("ursprungswerte"))
+    world.host.ursprung = {"heat_limit": 16.0}
+    world.verbinden()
+    _fuenf_takte(world)
+    (status,) = world.link.of("up/status")
+    assert "ursprungswerte" not in status and status["runtime_status"] == {"status": "regelt"}
+    _genau_eine_zeile(caplog, "ursprungswerte")
+    world.host.werfen.clear()
+    world.clock.now += 10
+    world.device.schritt()
+    assert world.link.of("up/status")[-1]["ursprungswerte"] == {"heat_limit": 16.0}
+
+
+def test_a_failing_display_is_skipped_and_the_tick_goes_on(tmp_path, caplog):
+    world = World(tmp_path, WerfenderHost("anzeigen"))
+    world.verbinden()
+    world.host.status = {"status": "notbetrieb"}
+    _fuenf_takte(world)
+    world.clock.now += 10
+    world.device.schritt()
+    assert world.host.anzeigen_versuche == 8 and world.host.anzeigen_liste == []
+    assert [s["runtime_status"]["status"] for s in world.link.of("up/status")] == ["regelt", "notbetrieb"]
+    _genau_eine_zeile(caplog, "anzeigen")
+
+
 class FaehigkeitenAusserhalbHost(FakeHost):
     """Faehigkeiten mit einem Feld ausserhalb des Vertrags (nur, solange `kaputt` gesetzt ist)."""
 
@@ -1155,6 +1385,8 @@ def test_runtime_messages_wait_for_hello(tmp_path):
     ({"server_seen": False}, "startet"),
     ({"server_seen": False, "server_down_seconds": 301}, "keine_verbindung"),
     ({"server_down_seconds": 301}, "keine_verbindung"),
+    ({"server_down_seconds": 300}, "regelt"),
+    ({"server_seen": False, "server_down_seconds": 300}, "startet"),
     ({"eingerichtet": False, "device_state": "nicht_uebernommen"}, "nicht_uebernommen"),
     ({"eingerichtet": False, "device_state": "uebernommen"}, "wartet_auf_einrichtung"),
     ({"runtime_status": None}, "wartet_auf_einrichtung"),
@@ -1177,6 +1409,43 @@ def test_no_connection_for_five_minutes_shows_no_connection(tmp_path):
     assert world.device.zustand() == "startet"
     world.clock.now += device.SERVER_DOWN_SECONDS + 1
     assert world.device.zustand() == "keine_verbindung"
+
+
+def test_the_device_counts_no_connection_only_after_more_than_300_seconds(tmp_path):
+    """ck F-client-kern-46: Grenze als Literal (Spec: laenger als 300 s), genau auf der Grenze und eins daneben."""
+    world = World(tmp_path)
+    world.device.schritt()
+    world.clock.now += 300
+    assert world.device.zustand() == "startet"
+    world.clock.now += 1
+    assert world.device.zustand() == "keine_verbindung"
+
+
+class WartendeInbox(queue.Queue):
+    """Teststeuerung: meldet, sobald der Geraete-Thread auf das naechste Ereignis wartet."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.wartet = threading.Event()
+
+    def get(self, block=True, timeout=None):
+        self.wartet.set()
+        return super().get(block, timeout)
+
+
+def test_a_stop_while_waiting_for_the_inbox_runs_no_further_tick(tmp_path, monkeypatch):
+    """5b-D2-4: stop() waehrend run auf die Inbox wartet; das naechste Ereignis weckt den Thread, aber es folgt kein
+    Takt mehr (er koennte nach dem DISCONNECT einen neuen Link oeffnen), und run endet."""
+    monkeypatch.setattr(device, "TICK_SECONDS", 30.0)  # kein Takt durch Zeitablauf, solange der Test laeuft
+    world = World(tmp_path)
+    inbox = world.device._inbox = WartendeInbox()
+    thread = world.device.start()
+    assert inbox.wartet.wait(timeout=5)
+    world.device.stop()
+    world.device.soll_quelle_aus(False)  # weckt den wartenden Thread
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert world.host.anzeigen_liste == [] and world.links == []
 
 
 def test_the_thread_runs_and_stops(tmp_path):

@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from configs import THERMOSTAT, bedienung, dokumente_schreiben, konfiguration
+from configs import THERMOSTAT, bedienung, dokumente_schreiben, konfiguration, leer
 from fakes import FakeBus
 from geraet_fakes import geraet_fuer
 from world import GatewayWorld
@@ -230,24 +230,59 @@ def test_a_failing_alive_file_does_not_stop_the_config_watch(world, monkeypatch)
     assert alive.exists() and world.restarts == 1
 
 
-def test_the_target_software_of_the_stored_configuration_is_replayed_at_start(world):
-    """Ein Neustart kann den Prozess beenden, bevor der Geraete-Thread software_soll.json schrieb (der Server stellt
-    eine bestaetigte Version nicht erneut zu); der naechste Start holt es nach."""
+def _neustart(world) -> None:
+    """Prozessende und neuer Start auf denselben Dateien (wie Compose nach Exit 0)."""
+    prozess.beenden(world.device, None, None)
+    world.start_runtime()
+
+
+def _soll_software(world):
+    return json.loads(world.paths.software_soll.read_text()) if world.paths.software_soll.exists() else "fehlt"
+
+
+def test_the_offer_of_a_rejected_configuration_is_replayed_after_a_restart(world):
+    """5b-D2-3 (Review Focus 5): software_soll.json ging verloren (Neustart vor dem Schreiben, Stromausfall); der Server
+    stellt die abgelehnte Version nicht erneut zu, der naechste Start bietet genau das gemerkte Angebot an."""
+    world.start_runtime()
+    world.connect()
+    world.konfiguration_senden(konfiguration(mindest_software="9.0.0", software=SOFTWARE), 1)
+    assert world.link.of("up/result")[-1]["error"]["grund"] == "update_noetig" and _soll_software(world) == SOFTWARE
+    world.paths.software_soll.unlink()
+    _neustart(world)
+    assert _soll_software(world) == SOFTWARE
+
+
+def test_a_later_invalid_offer_or_an_empty_configuration_without_software_keeps_the_replayed_offer(world):
+    world.start_runtime()
+    world.connect()
+    world.konfiguration_senden(konfiguration(mindest_software="9.0.0", software=SOFTWARE), 1)
+    world.konfiguration_senden(konfiguration(software={**SOFTWARE, "extra": 1}), 2)
+    ohne_software = leer()
+    del ohne_software["software"]
+    world.konfiguration_senden(ohne_software, 3)
+    assert [r["error"]["grund"] for r in world.link.of("up/result")] == ["update_noetig", "ungueltig", "ungueltig"]
+    world.paths.software_soll.unlink()
+    _neustart(world)
+    assert _soll_software(world) == SOFTWARE
+
+
+def test_software_null_replaces_the_offer_and_nothing_is_replayed(world):
+    world.start_runtime()
+    world.connect()
+    world.konfiguration_senden(konfiguration(mindest_software="9.0.0", software=SOFTWARE), 1)
+    world.konfiguration_senden(konfiguration(mindest_software="9.0.0", software=None), 2)
+    assert _soll_software(world) is None  # der Geraete-Thread gab null an den Updater
+    world.paths.software_soll.unlink()
+    _neustart(world)
+    assert _soll_software(world) == "fehlt"  # ohne gemerktes Angebot wird der Updater nicht gerufen
+
+
+def test_a_stored_configuration_without_a_remembered_offer_is_not_replayed(world):
+    """Kein Kompatibilitaetspfad: eine gespeicherte Konfiguration mit software, aber ohne software_angebot in
+    dokumente.json (Stand vor 5b-D2-3), ruft den Updater beim Start nicht."""
     dokumente_schreiben(world.paths, konfiguration(software=SOFTWARE))
     world.start_runtime()
-    assert json.loads(world.paths.software_soll.read_text())["version"] == "0.6.1"
-
-
-def test_no_replay_after_a_rejected_configuration(world):
-    """Die zuletzt empfangene Konfiguration wurde abgelehnt (z. B. Mindestversion): ihre Soll-Software steht schon in
-    software_soll.json und gilt; die aeltere gespeicherte Konfiguration ueberschreibt sie nicht."""
-    dokumente_schreiben(world.paths, konfiguration())
-    dateien.schreiben_json(world.paths.device_dir / "dokumente.json",
-                           {"update_anlass": None, "abgelehnt": {"konfiguration": [2, "update_noetig", "t"]}},
-                           modus=dateien.PRIVAT)
-    dateien.schreiben_json(world.paths.software_soll, SOFTWARE, modus=dateien.LESBAR)
-    world.start_runtime()
-    assert json.loads(world.paths.software_soll.read_text())["version"] == "0.6.1"
+    assert _soll_software(world) == "fehlt"
 
 
 def test_no_replay_without_a_stored_configuration(world):

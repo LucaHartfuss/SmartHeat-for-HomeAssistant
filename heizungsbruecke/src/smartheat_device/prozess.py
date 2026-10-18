@@ -76,9 +76,9 @@ def _warten(thread: threading.Thread, join_seconds: float) -> None:
 def beenden(device, thread: threading.Thread | None, hintergrund, *, join_seconds: float = JOIN_SECONDS) -> None:
     """Ende des Prozesses (Neustart, SIGTERM, Fehler): erst den Geraetekern stoppen (sauberes Trennen) und wartende
     Host-Aufrufe der Befehle abbrechen, dann den Geraete-Thread sein laufendes Ereignis abschliessen lassen (z. B.
-    software_soll nach konfiguration_uebernommen). Danach noch einmal stop(): Device.run fuehrt nach stop() noch einen
-    Takt aus, und ein Port-Rueckfall oder eine Rettung darin koennte einen neuen Link geoeffnet haben (5b-D2-4). Wirft
-    nie: jeder Schritt einzeln, ins Log nur die Fehlerart."""
+    software_soll nach konfiguration_uebernommen). Device.run beginnt nach stop() keinen Takt mehr (5b-D2-4); das zweite
+    stop() bleibt als zweite Linie: ein Takt, der beim ersten stop() schon lief, koennte mit einem Port-Rueckfall oder
+    einer Rettung einen neuen Link geoeffnet haben. Wirft nie: jeder Schritt einzeln, ins Log nur die Fehlerart."""
     _schritt("Geraetekern stoppen", device.stop)
     if hintergrund is not None:
         _schritt("Hintergrund stoppen", hintergrund.stop)

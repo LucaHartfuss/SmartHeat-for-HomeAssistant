@@ -12,7 +12,7 @@ zurueck: Exit 0, Compose startet neu.
 Nach einem unerwarteten Fehler der Laufzeit trennt das Gateway ebenso, meldet sich ungesund (vor_der_pause), wartet
 60 s und startet dann neu; ebenso nach einem Fehler in den Schritten davor (vorbereiten: Aufraeumen, Geraete-Host,
 Geraetekern, Diagnoseserver; S3S6-Startabbruch). SIGTERM (docker stop) endet ueber beenden ohne Neustart. Jeder Start
-reicht die Soll-Software der gespeicherten Konfiguration erneut an den Updater (software_soll_nachholen).
+reicht das gemerkte Software-Angebot erneut an den Updater (software_soll_nachholen).
 
 Nach dem Entfernen (Markierung aufraeumen.json) setzt der naechste Start die Anlage erst zurueck wie sign_off (Laufzeit
 im Modus abgemeldet mit der alten Konfiguration aus der Markierung, die Treiber-Anmeldung braucht es dafuer noch) und
@@ -79,16 +79,16 @@ def _vergessen(paths: Paths) -> bool:
 
 
 def software_soll_nachholen(geraet: GatewayDeviceHost, device: Device) -> None:
-    """Soll-Software der gespeicherten Konfiguration erneut an den Updater (idempotent), bevor der Geraete-Thread
-    laeuft: ein Neustart (EV_RELOAD aus konfiguration_uebernommen) kann den Prozess beenden, bevor der Geraete-Thread
-    software_soll.json schrieb, und der Server stellt eine bestaetigte Version nicht erneut zu (Review Focus 4). Nicht
-    nach einer abgelehnten Konfiguration: deren Soll-Software steht schon dort (ohne Neustart geschrieben) und gilt."""
-    konfiguration = device.konfiguration()
-    if konfiguration is None or device.documents.ablehnung(KONFIGURATION) is not None:
+    """Das gemerkte Software-Angebot (DocumentStore.software_angebot, 5b-D2-3) erneut an den Updater (idempotent),
+    bevor der Geraete-Thread laeuft: ein Neustart (EV_RELOAD aus konfiguration_uebernommen) oder ein verlorener
+    Schreibvorgang kann software_soll.json fehlen lassen, und der Server stellt eine bestaetigte oder abgelehnte Version
+    nicht erneut zu (Review Focus 4). Gemerkt ist das zuletzt gueltige Angebot, auch aus einer abgelehnten
+    Konfiguration; ohne gemerktes Angebot (auch nach software null) wird der Updater nicht gerufen."""
+    angebot = device.documents.software_angebot()
+    if angebot is None:
         return
-    software = konfiguration.get("software")
     try:
-        geraet.software_soll(software if isinstance(software, dict) else None)
+        geraet.software_soll(angebot)
     except Exception as error:  # ein Schreibfehler darf den Start nicht verhindern; der naechste Start versucht es erneut
         logger.error("Soll-Software nicht nachgeholt (%s)", type(error).__name__)
 

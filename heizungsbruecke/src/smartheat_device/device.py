@@ -4,8 +4,10 @@ Thread aendert Zustand und ruft den Host.
 
 Ablauf: Identitaet laden; ohne Zugang registrieren (Backoff); Link starten. Nach jedem Verbinden zuerst hello (schemata,
 Versionen, Faehigkeiten, boot_id, uhr_synchron, bekannter Uebernahmestand; claim_state und new_claim_code setzen ihn,
-Spec 5c F1), dann Status, gepufferter Wunsch und offene Meldungen. Dokumente gehen
-an den Dokumentspeicher, das Ergebnis als up/result, das Uebernommene an den Host; das Feld software jeder Konfiguration
+Spec 5c F1), dann Status, gepufferter Wunsch und offene Meldungen. Host-Rueckrufe des Takts laufen ueber _host_wert
+(5b-D1-4: ein werfender Rueckruf verschiebt Registrierung bzw. hello, laesst up/status dieses Takts aus (runtime_status,
+raum), gilt bei uhr_synchron als None und bei ursprungswerte als {}, die Anzeige entfaellt; je Rueckruf und Fehlerart
+eine Logzeile). Dokumente gehen an den Dokumentspeicher, das Ergebnis als up/result, das Uebernommene an den Host; das Feld software jeder Konfiguration
 mit bekanntem Schema geht an den Host, auch wenn die Konfiguration abgelehnt wurde (Plan-Praezisierung). Befehle gehen an
 das Register, down/setpoints an die Laufzeit. Drei Anmeldefehler in Folge am Broker -> Rettungsweg (bootstrap.Bootstrap);
 gesperrt -> Link aus, neuer Versuch nach 6 h. up/status nur bei inhaltlicher Aenderung (ohne Zeitstempel, A4-35),
@@ -21,6 +23,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TypeVar
 
 from smartheat_core import config_check
 from smartheat_device import bootstrap, commands, fehler, identity, inventory, nachrichten, wire, wish
@@ -48,6 +51,10 @@ ABLEHNUNG_ANZEIGE = "Die Einrichtung wurde abgelehnt (Code {grund}). Die Begrün
 _DOKUMENT_ART = {topic: art for art, topic in wire.DOKUMENT_TOPICS.items()}
 _RUNNING = ("regelt", "abo_inaktiv")
 _FAULT = ("notbetrieb", "datenfehler", "konfigurationsfehler", "zugang_abgelehnt", "abo_beendet")
+#: Laufzeitstatus, solange der Rueckruf runtime_status scheitert (nur fuer Zustand und Anzeige, nie im up/status):
+#: wie eine startende Laufzeit, kein erfundener Betriebszustand.
+_LAUFZEIT_UNBEKANNT = {"status": "startet"}
+_T = TypeVar("_T")
 
 
 def derive_zustand(*, gesperrt: bool, update_noetig: bool, server_seen: bool, server_down_seconds: float | None,
@@ -126,7 +133,7 @@ class Device:
         self.wunsch_puffer = wish.WunschPuffer(self._dir)
         self._bootstrap = bootstrap.Bootstrap(
             self._dir, lambda: self._client_for(self.identity), register_args=self._register_args,
-            uhr_synchron=host.uhr_synchron, identity=lambda: self.identity, clock=clock)
+            uhr_synchron=self._uhr_synchron, identity=lambda: self.identity, clock=clock)
         self.link: Link | None = None
         self._bereit = False  # verbunden und hello gesendet
         self._hello_offen = False  # verbunden, hello noch nicht gesendet (Takt versucht es erneut)
@@ -143,6 +150,7 @@ class Device:
         self._wunsch_fehler: str | None = None  # dito beim Bauen von up/wish
         self._publish_fehler: dict[str, str] = {}  # Topic -> letzter Text, mit dem der Link das Senden verweigerte
         self._ursprung_gewarnt: set[str] = set()  # nicht meldbare Ursprungswerte: je Name einmal loggen (Takt: 1 s)
+        self._host_fehler: set[tuple[str, str]] = set()  # (Rueckruf, Fehlerart) gescheiterter Host-Werte, schon geloggt
         self._zurueckgehalten: dict[str, dict] = {}  # Dokument, dessen Pruefung vorlaeufig nicht moeglich war
         self._pruefung_at = 0.0
         self._started_at = clock()
@@ -167,6 +175,8 @@ class Device:
                 item = self._inbox.get(timeout=TICK_SECONDS)
             except queue.Empty:
                 item = None
+            if self._stop.is_set():  # 5b-D2-4: nach stop() kein Takt mehr (er koennte einen neuen Link oeffnen)
+                break
             self._sicher(item)
 
     def schritt(self) -> None:
@@ -181,14 +191,17 @@ class Device:
 
     def wunsch(self, wert, *, herkunft: str | None, durch: str | None = None) -> float:
         """Lokaler Sollwert vom Host: sofort begrenzt zurueck (der Host wendet ihn an), Versand im Geraete-Thread.
-        ValueError, wenn der Wert keine endliche Zahl ist."""
+        ValueError, wenn der Wert keine endliche Zahl ist oder herkunft bzw. durch kein Vertragswert (dann kommt nichts
+        in die Inbox)."""
+        wish.pruefen_herkunft(herkunft, durch)
         begrenzt, roh = wish.begrenzen(wert)
         self._inbox.put(("wunsch", begrenzt, roh, herkunft, durch))
         return begrenzt
 
     def soll_quelle_aus(self, aus: bool, wirksam: float | None = None) -> None:
-        """Soll-Quelle aus (Thermostat aus/Frostschutz, Spec 3.2): kein Wunsch, nur die Meldung soll_quelle_aus."""
-        text = wish.soll_quelle_aus_text(wirksam) if aus and wirksam is not None else None
+        """Soll-Quelle aus (Thermostat aus/Frostschutz, Spec 3.2): kein Wunsch, nur die Meldung soll_quelle_aus. Ohne
+        wirksames Soll bleibt sie offen, nur ohne Wert im Text; schliessen kann sie nur aus=False."""
+        text = wish.soll_quelle_aus_text(wirksam) if aus else None
         self._inbox.put(("eigene", wish.SOLL_QUELLE_AUS_KEY, text))
 
     def meldung(self, key: str, text: str, *, offen: bool, kritisch: bool = True) -> None:
@@ -229,6 +242,11 @@ class Device:
         return dokument_config.abo_status(self.konfiguration())
 
     def zustand(self) -> str:
+        """Scheitert der Rueckruf runtime_status, gilt die Laufzeit als startend (_LAUFZEIT_UNBEKANNT)."""
+        status, gescheitert = self._host_wert("runtime_status", self.host.runtime_status)
+        return self._zustand(_LAUFZEIT_UNBEKANNT if gescheitert else status)
+
+    def _zustand(self, runtime_status: dict | None) -> str:
         connected = (link := self.link) is not None and link.connected
         since = self._last_ok if self._last_ok is not None else self._started_at
         return derive_zustand(
@@ -236,7 +254,7 @@ class Device:
             server_seen=self._last_ok is not None,
             server_down_seconds=None if connected else self._clock() - since,
             eingerichtet=self.documents.eingerichtet(), device_state=bootstrap.device_state(self._dir),
-            runtime_status=self.host.runtime_status())
+            runtime_status=runtime_status)
 
     def anzeige(self) -> Anzeige:
         ablehnung = self.documents.ablehnung(KONFIGURATION)
@@ -307,7 +325,7 @@ class Device:
         self._wunsch_senden()
         self._status_senden(now, force=False)
         self._meldungen_senden(now)
-        self.host.anzeigen(self.anzeige())
+        self._host_wert("anzeigen", self.host.anzeigen, self.anzeige())  # gescheitert: diese Anzeige entfaellt
 
     def _register_args(self) -> dict:
         return {"version": self.host.version, "host": self.host.host, "capabilities": self.host.faehigkeiten()}
@@ -317,6 +335,8 @@ class Device:
         if zugang is None:
             if not self._bootstrap.faellig():
                 return
+            if self._host_wert("faehigkeiten", self.host.faehigkeiten)[1]:
+                return  # Registrierung verschieben, der naechste Takt versucht es erneut (ohne Backoff)
             zugang = self._bootstrap.holen(rettung=False)
             if zugang is None:
                 return
@@ -367,13 +387,22 @@ class Device:
         """Laufzeit-Nachrichten (Snapshot, Telemetrie) erst nach hello (Spec 5b 5.1: hello zuerst)."""
         return self._publish(name, payload) if self._bereit else None
 
-    def _hello(self) -> dict:
+    def _hello(self) -> dict | None:
+        """None: der Rueckruf faehigkeiten ist gescheitert (geloggt), hello wartet auf einen spaeteren Takt."""
+        faehigkeiten, gescheitert = self._host_wert("faehigkeiten", self.host.faehigkeiten)
+        if gescheitert:
+            return None
         # device_state: Spec 5c F1, der Server gleicht ab
         return nachrichten.hello(
             konfiguration_version=self.documents.version(KONFIGURATION),
             bedienung_version=self.documents.version(BEDIENUNG), software_version=self.host.version,
-            host=self.host.host, faehigkeiten=self.host.faehigkeiten(), boot_id=self.boot_id,
-            uhr_synchron=self.host.uhr_synchron() is True, device_state=bootstrap.device_state(self._dir))
+            host=self.host.host, faehigkeiten=faehigkeiten, boot_id=self.boot_id,
+            uhr_synchron=self._uhr_synchron() is True, device_state=bootstrap.device_state(self._dir))
+
+    def _uhr_synchron(self) -> bool | None:
+        """Rueckruf uhr_synchron; gescheitert gilt als None (unbekannt = nicht synchron), auch fuer Bootstrap."""
+        synchron, gescheitert = self._host_wert("uhr_synchron", self.host.uhr_synchron)
+        return None if gescheitert else synchron
 
     def _verbunden(self) -> None:
         if not self._bootstrap.gesperrt:
@@ -397,6 +426,8 @@ class Device:
                 logger.error("hello nicht gebaut (%s), erneuter Versuch im naechsten Takt", art)
             return
         self._hello_fehler = None
+        if hello is None:
+            return
         if self._publish("up/hello", hello) is None:
             return  # schon wieder getrennt: das naechste "verbunden" schickt hello
         self._hello_offen = False
@@ -484,6 +515,22 @@ class Device:
             # nur Fehlerart und innerster Frame: die Meldung kann Treiberparameter tragen (Regel 6)
             logger.error("Host-Rueckruf %s gescheitert (%s)%s", name, type(error).__name__, commands.fehlerort(error))
 
+    def _host_wert(self, name: str, rueckruf: Callable[..., _T], *args) -> tuple[_T | None, bool]:
+        """Host-Rueckruf im Takt (5b-D1-4): (Wert, gescheitert). Gescheitert loggt je Rueckruf und Fehlerart einmal
+        (der Takt ruft jede Sekunde, Regel 6: nur Art und Ort); nach einem Erfolg meldet sich ein neuer Fehler wieder.
+        Was ein gescheiterter Rueckruf bedeutet, entscheidet die Aufrufstelle (nie ein erfundener Wert zum Server)."""
+        try:
+            wert = rueckruf(*args)
+        except Exception as error:
+            art = f"{type(error).__name__}{commands.fehlerort(error)}"
+            if (name, art) not in self._host_fehler:
+                self._host_fehler.add((name, art))
+                logger.error("Host-Rueckruf %s gescheitert (%s), weiter im Takt", name, art)
+            return None, True
+        if self._host_fehler:
+            self._host_fehler = {eintrag for eintrag in self._host_fehler if eintrag[0] != name}
+        return wert, False
+
     def _ergebnis_senden(self, body: dict) -> bool:
         return self._publish_nach_hello("up/result", body) is not None
 
@@ -521,13 +568,9 @@ class Device:
         return commands.Done({})
 
     def _wunsch(self, begrenzt: float, roh: float | None, herkunft: str | None, durch: str | None) -> None:
-        try:
-            neu = wish.neu(begrenzt, roh, basis_version=self.documents.version(BEDIENUNG),
-                           uhr_synchron=self.host.uhr_synchron() is True, herkunft=herkunft, durch=durch,
-                           wall=self._wall())
-        except ValueError as error:
-            logger.error("Bedienwunsch verworfen: %s", error)
-            return
+        # herkunft und durch hat Device.wunsch schon geprueft (wish.pruefen_herkunft)
+        neu = wish.neu(begrenzt, roh, basis_version=self.documents.version(BEDIENUNG),
+                       uhr_synchron=self._uhr_synchron() is True, herkunft=herkunft, durch=durch, wall=self._wall())
         self.wunsch_puffer.setzen(neu)
         self.documents.mark_dirty()
         text = wish.begrenzt_text(roh, begrenzt, herkunft) if roh is not None else None
@@ -588,7 +631,10 @@ class Device:
         bekannt = konfiguration.get("ursprungswerte")
         bekannt = bekannt if isinstance(bekannt, dict) else {}
         werte: dict = {}
-        for name, wert in sorted(self.host.ursprungswerte().items(), key=lambda paar: str(paar[0])):
+        gemerkt, gescheitert = self._host_wert("ursprungswerte", self.host.ursprungswerte)
+        if gescheitert or not isinstance(gemerkt, dict):
+            return {}  # Rueckruf gescheitert: keine Ursprungswerte in diesem Status
+        for name, wert in sorted(gemerkt.items(), key=lambda paar: str(paar[0])):
             if name in bekannt:
                 continue
             if not _ursprungsname_ok(name) or not _ursprungswert_ok(wert):
@@ -610,7 +656,11 @@ class Device:
     def _status_senden(self, now: float, *, force: bool) -> None:
         if not self._bereit:
             return
-        felder = {"zustand": self.zustand(), "runtime_status": self.host.runtime_status(), "raum": self.host.raum(),
+        runtime_status, gescheitert = self._host_wert("runtime_status", self.host.runtime_status)
+        raum, raum_gescheitert = self._host_wert("raum", self.host.raum)
+        if gescheitert or raum_gescheitert:
+            return  # kein Status mit erfundenem Laufzeitstatus oder Raum; der naechste Takt versucht es erneut
+        felder = {"zustand": self._zustand(runtime_status), "runtime_status": runtime_status, "raum": raum,
                   "ursprungswerte": self._ursprungswerte_neu() or None}
         try:
             body = nachrichten.status(**felder, ts=_iso(self._wall()))
