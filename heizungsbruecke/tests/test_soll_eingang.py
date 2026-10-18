@@ -161,6 +161,41 @@ def test_repeated_identical_local_wish_is_not_repeated(tmp_path):
     assert len(a.wuensche) == 1 and len(a.checks) == 1 and a.quelle.geschrieben == [22.0]
 
 
+def _modus(a, mode):
+    a.worker.post(Event(EV_SOLL_MODUS, {"mode": mode}))
+    a.worker.run_pending()
+
+
+def test_switching_off_during_a_second_thermostat_wish_restores_the_first_wish(tmp_path):
+    """Ein beendeter Wunsch ist abgeschlossen: der naechste Drehwert merkt wieder das Soll davor, und Modus off vor dem
+    Entprellen stellt genau dieses wieder her (nicht das Soll vor dem ersten Wunsch, nicht den offenen Wert)."""
+    a = Aufbau(tmp_path, entprellen_s=10.0)
+    a.post(22.5, SOURCE_THERMOSTAT)
+    a.clock.advance(10)
+    a.worker.run_pending()
+    assert a.wuensche == [(22.5, None, None)] and a.store.value == 22.5
+    a.post(23.5, SOURCE_THERMOSTAT)
+    assert a.store.value == 23.5  # Gegenprobe: der zweite Drehwert gilt vorlaeufig
+    _modus(a, "off")
+    assert a.store.value == 22.5 and a.store.source == SOURCE_THERMOSTAT
+    a.clock.advance(10)
+    a.worker.run_pending()
+    assert a.wuensche == [(22.5, None, None)]  # der verworfene zweite Wunsch geht nicht hinaus
+
+
+def test_switching_off_during_an_open_local_wish_keeps_the_local_value_without_a_wish(tmp_path):
+    """Ein lokaler Wunsch merkt kein Soll davor: Modus off vor dem Entprellen verwirft ihn als Wunsch, der lokale Wert
+    bleibt stehen (wie heute)."""
+    a = Aufbau(tmp_path, entprellen_s=10.0)
+    a.post(23.0, SOURCE_LOKAL, herkunft="smartheat_entity")
+    assert a.store.value == 23.0 and a.wuensche == []
+    _modus(a, "off")
+    assert a.store.value == 23.0 and a.store.source == SOURCE_LOKAL and a.aus == [(True, 23.0)]
+    a.clock.advance(10)
+    a.worker.run_pending()
+    assert a.wuensche == []
+
+
 class AblehnenderAufbau(Aufbau):
     def _wunsch(self, value, herkunft, durch):
         """Wie Device.wunsch bei einer Ablehnung (Fehlerinjektion an der Grenze zum Geraetekern)."""

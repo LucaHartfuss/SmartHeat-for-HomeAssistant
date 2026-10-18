@@ -1507,3 +1507,277 @@ def test_nach_dem_wegfall_der_ursache_wird_ein_erneuter_fehler_wieder_geloggt(tm
         world.host.raum_wert = {"ist": 20.0, "soll": 22.0, "soll_quelle": "portal", "ts": f"g{runde}"}
         world.device.schritt()
     assert caplog.text.count("up/status nicht gesendet") == 2
+
+
+# --- Mutationsprobe T4' (Task 12): Grenzen und Zustaende des Takts ---
+
+def test_the_device_thread_waits_one_second_per_tick_and_is_a_daemon(tmp_path):
+    """Der Takt wartet hoechstens 1 s auf ein Ereignis (Literal aus der Spec, nicht TICK_SECONDS); der Geraete-Thread
+    haelt das Prozessende nicht auf."""
+    world = World(tmp_path)
+    timeouts = []
+
+    class Inbox(queue.Queue):
+        def get(self, block=True, timeout=None):
+            timeouts.append(timeout)
+            world.device.stop()
+            raise queue.Empty
+
+    world.device._inbox = Inbox()
+    world.device.run()
+    assert timeouts == [1.0]
+    world.device._stop.clear()
+    thread = world.device.start()
+    try:
+        assert thread.daemon is True and thread.name == "geraet"
+    finally:
+        world.device.stop()
+        thread.join(timeout=5)
+    assert not thread.is_alive()
+
+
+def test_the_status_waits_ten_seconds_between_two_changes(tmp_path):
+    world = World(tmp_path)
+    world.verbinden()
+    assert len(world.link.of("up/status")) == 1
+    world.host.status = {"status": "notbetrieb"}
+    world.clock.now += 9
+    world.device.schritt()
+    assert len(world.link.of("up/status")) == 1
+    world.clock.now += 1  # genau 10 s nach dem letzten Status
+    world.device.schritt()
+    assert len(world.link.of("up/status")) == 2
+    assert world.link.of("up/status")[-1]["runtime_status"] == {"status": "notbetrieb"}
+
+
+def test_the_status_carries_the_wall_clock_as_iso_timestamp(tmp_path):
+    world = World(tmp_path)
+    world.verbinden()
+    assert world.link.of("up/status")[-1]["ts"] == "2027-01-15T08:00:00+00:00"  # WALL = 1 800 000 000
+
+
+def test_at_most_fifty_notifications_go_in_one_message(tmp_path):
+    world = World(tmp_path)
+    world.verbinden()
+    for i in range(51):
+        world.device.meldung(f"raumfuehler:0x{i:02x}", "Fühler weg", offen=True, kritisch=False)
+    world.device.schritt()
+    assert [len(batch["items"]) for batch in world.link.of("up/notifications")] == [50]
+    world.clock.now += 10
+    world.device.schritt()
+    assert [len(batch["items"]) for batch in world.link.of("up/notifications")] == [50, 1]
+
+
+def test_an_own_notification_of_the_device_is_not_critical(tmp_path):
+    world = World(tmp_path)
+    world.verbinden()
+    world.device.soll_quelle_aus(True, 21.0)
+    world.device.schritt()
+    (item,) = world.link.of("up/notifications")[-1]["items"]
+    assert (item["key"], item["kritisch"], item["offen"]) == ("soll_quelle_aus", False, True)
+
+
+@pytest.mark.parametrize(("ursprung", "erwartet"), [
+    ({"wahr": True, "zahl": 1.0}, {"zahl": 1.0}),
+    ({"none": None, "zahl": 1.0}, {"zahl": 1.0}),
+    ({"liste": ["x"], "zahl": 1.0}, {"zahl": 1.0}),
+    ({"leer": "", "zahl": 1.0}, {"zahl": 1.0}),
+    ({"eins": "a", "max": "m" * 64, "drueber": "d" * 65}, {"eins": "a", "max": "m" * 64}),
+    ({"": 1.0, "a": 2.0, "n" * 64: 3.0, "u" * 65: 4.0}, {"a": 2.0, "n" * 64: 3.0}),
+], ids=["bool", "none", "liste", "leerer_text", "textlaenge_1_64_65", "namenslaenge_0_1_64_65"])
+def test_originals_in_the_status_follow_the_v1_limits_per_value_and_name(tmp_path, ursprung, erwartet):
+    """Texte und Namen 1 bis 64 Zeichen (Literal aus V1), kein bool, kein None, keine Liste."""
+    world = World(tmp_path)
+    world.host.ursprung = ursprung
+    world.verbinden()
+    assert world.link.of("up/status")[-1]["ursprungswerte"] == erwartet
+
+
+@pytest.mark.parametrize("gemerkt", [None, ["heat_limit"], "heat_limit"], ids=["none", "liste", "text"])
+def test_originals_that_are_no_mapping_leave_the_field_out(tmp_path, caplog, gemerkt):
+    class Host(FakeHost):
+        def ursprungswerte(self):
+            return gemerkt
+
+    world = World(tmp_path, Host())
+    world.verbinden()
+    status = world.link.of("up/status")[-1]
+    assert "ursprungswerte" not in status and set(status) == set(wire.STATUS_FIELDS)
+    assert _fehlerzeilen(caplog) == []
+
+
+def test_hello_goes_out_only_after_the_connected_event(tmp_path):
+    """paho meldet `connected` vor dem Ereignis: weder vor dem ersten noch nach einem Trennen geht etwas hinaus, bevor
+    das Ereignis `verbunden` verarbeitet ist; danach zuerst hello."""
+    world = World(tmp_path)
+    world.device.schritt()
+    world.link.connected = True
+    world.device.schritt()
+    assert world.link.sent == []
+    world.link.ereignis("verbunden")
+    world.device.schritt()
+    assert world.link.topics()[0] == "up/hello" and len(world.link.of("up/hello")) == 1
+    world.link.trennen()
+    world.device.schritt()
+    gesendet = len(world.link.sent)
+    world.link.connected = True
+    world.clock.now += 60
+    world.device.schritt()
+    assert len(world.link.sent) == gesendet
+    world.link.ereignis("verbunden")
+    world.device.schritt()
+    assert world.link.topics()[gesendet] == "up/hello" and len(world.link.of("up/hello")) == 2
+
+
+def test_after_a_reconnect_the_status_follows_hello_at_once(tmp_path):
+    """Nach hello geht der Status sofort hinaus, auch binnen 10 s nach dem letzten (sonst saehe der Server bis zur
+    naechsten Aenderung keinen)."""
+    world = World(tmp_path)
+    world.verbinden()
+    world.link.trennen()
+    world.link.verbinden()
+    world.device.schritt()
+    assert world.link.topics()[-2:] == ["up/hello", "up/status"]
+
+
+def test_after_the_rescue_the_new_link_sends_nothing_before_hello_and_no_second_certificate(tmp_path):
+    world = World(tmp_path)
+    world.verbinden()
+    first = world.link
+    world.client.script["certificate"] = [bootstrap.Antwort("uebernommen", world.neuer_zugang())]
+    first.ereignis("anmeldung_scheitert")
+    world.device.schritt()
+    assert world.link is not first and [call[0] for call in world.client.calls] == ["certificate"]
+    world.link.connected = True  # neuer Link verbunden, Ereignis steht noch aus
+    world.host.status = {"status": "notbetrieb"}  # ein neuer Status waere faellig
+    for _ in range(3):
+        world.clock.now += bootstrap.RETRY_MIN_SECONDS
+        world.device.schritt()
+    assert world.link.sent == [] and [call[0] for call in world.client.calls] == ["certificate"]
+    world.link.ereignis("verbunden")
+    world.device.schritt()
+    assert world.link.topics()[0] == "up/hello"
+
+
+def test_a_blocked_device_sends_nothing_on_the_next_link_before_hello(tmp_path):
+    world = World(tmp_path)
+    world.verbinden()
+    world.client.script["certificate"] = [bootstrap.NotAuthenticated("c"), bootstrap.Antwort("uebernommen",
+                                                                                              world.zugang)]
+    world.client.script["register"] = [bootstrap.NotAuthenticated("r")]
+    world.link.ereignis("anmeldung_scheitert")
+    world.device.schritt()
+    assert world.device.zustand() == "gesperrt"
+    world.clock.now += bootstrap.GESPERRT_SECONDS
+    world.device.schritt()
+    assert len(world.links) == 2
+    world.link.connected = True
+    world.host.status = {"status": "notbetrieb"}  # ein neuer Status waere faellig
+    world.clock.now += 60
+    world.device.schritt()
+    assert world.link.sent == []
+
+
+def test_the_runtime_channel_counts_no_failures_without_a_link(tmp_path):
+    world = World(tmp_path)
+    channel = world.device.laufzeit_kanal(RegulationWorker(clock=world.clock))
+    assert channel.connect_failures == 0
+    world.device.schritt()
+    world.link.connect_failures = 3
+    assert channel.connect_failures == 3
+
+
+def test_a_message_of_exactly_120_kib_is_read_one_byte_more_is_dropped(tmp_path, caplog):
+    """MAX_MESSAGE_BYTES = 120 * 1024 = 122880 (Literal aus V1, AN-10)."""
+    world = World(tmp_path)
+    world.verbinden()
+
+    def befehl(command_id, laenge):
+        body = _command(command_id=command_id, payload={"pad": ""})
+        body["payload"]["pad"] = "x" * (laenge - len(json.dumps(body).encode()))
+        assert len(json.dumps(body).encode()) == laenge
+        return body
+
+    world.empfangen("down/command", befehl("c1", 122880))
+    assert [r["command_id"] for r in world.link.of("up/result")] == ["c1"]
+    world.empfangen("down/command", befehl("c2", 122881))
+    assert [r["command_id"] for r in world.link.of("up/result")] == ["c1"] and "zu gross" in caplog.text
+
+
+def test_setpoints_without_a_runtime_channel_are_ignored_without_an_error(tmp_path, caplog):
+    world = World(tmp_path)
+    world.verbinden()
+    world.empfangen("down/setpoints", {"seq": "s1"})
+    assert _fehlerzeilen(caplog) == []
+
+
+def test_a_set_up_configuration_marks_the_device_as_claimed_an_empty_one_does_not(tmp_path):
+    world = World(tmp_path, access=False)
+    world.client.script["register"] = [bootstrap.Antwort("nicht_uebernommen", world.zugang)]
+    world.verbinden()
+    world.empfangen("down/config", _leer(version=1))
+    assert bootstrap.device_state(world.dir) == "nicht_uebernommen"
+    world.empfangen("down/config", _konfiguration(version=2))
+    assert bootstrap.device_state(world.dir) == "uebernommen"
+
+
+def test_a_host_callback_failing_again_after_a_success_is_logged_again(tmp_path, caplog):
+    world = World(tmp_path, WerfenderHost("runtime_status"))
+    world.verbinden()
+    _fuenf_takte(world)
+    assert len(_fehlerzeilen(caplog)) == 1
+    world.host.werfen.clear()
+    world.clock.now += 1
+    world.device.schritt()
+    world.host.werfen.add("runtime_status")
+    _fuenf_takte(world)
+    assert _fehlerzeilen(caplog) == [_fehlerzeilen(caplog)[0]] * 2
+
+
+def test_an_inventory_finished_before_hello_goes_up_after_hello(tmp_path):
+    host = FakeHost()
+    host.handlers = {"inventory": lambda payload: commands.Done({}, inventur={"kandidaten": [1]})}
+    world = World(tmp_path, host)
+    world.device.schritt()
+    world.link.empfangen("down/command", _command("inventory", payload={"stunden": 1}))  # vor dem Verbinden
+    world.device.schritt()
+    assert world.link.sent == []
+    world.link.verbinden()
+    world.device.schritt()
+    assert [p["daten"] for p in world.link.of("up/inventory")] == [{"kandidaten": [1]}]
+    assert [(r["command_id"], r["ok"]) for r in world.link.of("up/result")] == [("c1", True)]
+
+
+def test_a_new_claim_code_the_server_cannot_be_told_about_fails_intern(tmp_path):
+    world = World(tmp_path)
+    world.client.script["register"] = [bootstrap.Unavailable("register: HTTP 503")]
+    alt = world.device.identity.claim_code
+    world.verbinden()
+    world.empfangen("down/command", _command("new_claim_code", "c1"))
+    assert world.link.of("up/result")[-1]["error"] == {"grund": "intern"}
+    assert world.device.identity.claim_code == alt and identity.load_or_create(world.dir).claim_code == alt
+
+
+def test_a_wish_with_a_synchronised_clock_says_so(tmp_path):
+    world = World(tmp_path)
+    world.verbinden()
+    world.device.wunsch(22.0, herkunft="thermostat")
+    world.device.schritt()
+    assert [w["uhr_synchron"] for w in world.link.of("up/wish")] == [True]
+
+
+def test_a_blocked_device_does_not_recheck_a_held_configuration(tmp_path):
+    """Gesperrt (Link gestoppt): wie getrennt, eine zurueckgehaltene Konfiguration wird erst mit hello wieder geprueft."""
+    world = World(tmp_path, UnpruefbarHost())
+    world.verbinden()
+    world.empfangen("down/config", _konfiguration())
+    world.host.unpruefbar = False
+    world.client.script["certificate"] = [bootstrap.NotAuthenticated("c")]
+    world.client.script["register"] = [bootstrap.NotAuthenticated("r")]
+    world.link.ereignis("anmeldung_scheitert")
+    world.device.schritt()
+    assert world.device.zustand() == "gesperrt" and world.host.aufrufe == 1
+    world.clock.now += 10 * 30  # zehn Wiederholabstaende, weit vor dem naechsten Versuch nach 6 h
+    world.device.schritt()
+    assert world.host.aufrufe == 1 and world.host.konfigurationen == []
+    assert world.device.documents.version("konfiguration") == 0

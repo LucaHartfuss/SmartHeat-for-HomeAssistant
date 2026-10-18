@@ -2,6 +2,7 @@
 Abo aus dem Dokument, Neustart nur bei laufzeitrelevanten Aenderungen."""
 import dataclasses
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -131,6 +132,14 @@ def test_unusable_documents_are_config_errors(konfiguration, tmp_path):
     with pytest.raises(ConfigError):
         dc.runtime_config(konfiguration, rastung_pfad=tmp_path / "keine.json", entitlement_path=Path("/tmp/e.json"),
                           abo_source=lambda: entitlement.ACTIVE)
+
+
+@pytest.mark.parametrize("raumfuehler", [[], [5], [SENSOR, None], SENSOR, None],
+                         ids=["leer", "zahl", "mit_none", "text_statt_liste", "none"])
+def test_raumfuehler_ohne_liste_von_texten_sind_ein_konfigurationsfehler(raumfuehler, tmp_path):
+    with pytest.raises(ConfigError, match="Konfiguration: keine Raumfühler"):
+        dc.runtime_config({**KONF, "raumfuehler": raumfuehler}, rastung_pfad=tmp_path / "keine.json",
+                          entitlement_path=Path("/tmp/e.json"), abo_source=lambda: entitlement.ACTIVE)
 
 
 @pytest.mark.parametrize("abo, status", [
@@ -276,9 +285,12 @@ def test_beschreibung_ohne_bindungsparameter_ist_ein_konfigurationsfehler():
 
 @pytest.mark.parametrize("hebelsatz", ["gibt_es_nicht", None, 5])
 def test_unbekannter_hebelsatz_ist_ein_konfigurationsfehler(hebelsatz):
-    with pytest.raises(ConfigError, match="Hebelsatz"):
+    """Genau die eigene Meldung (mit dem Hinweis zum Neu-Einrichten), nicht ein Folgefehler aus Bindung oder
+    Sicherheitswerten."""
+    meldung = re.escape(f"Hebelsatz {hebelsatz!r} ist unbekannt – ")
+    with pytest.raises(ConfigError, match=meldung):
         dc.beschreibung({**KONF, "hebelsatz": hebelsatz})
-    with pytest.raises(ConfigError, match="Hebelsatz"):
+    with pytest.raises(ConfigError, match=meldung):
         dc.sicherheit({**KONF, "hebelsatz": hebelsatz})
 
 

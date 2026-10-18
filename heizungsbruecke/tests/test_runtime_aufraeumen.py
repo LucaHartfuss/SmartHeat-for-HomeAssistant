@@ -1,5 +1,6 @@
 """Spec Stufe 3 S3 Abschnitt 4: leer heisst abmelden."""
 import errno
+import json
 import os
 import stat
 from pathlib import Path
@@ -95,6 +96,20 @@ def test_an_unreadable_marker_is_kept_and_nothing_is_deleted(tmp_path, monkeypat
 def test_a_broken_marker_is_still_deleted_as_before(tmp_path):
     pfad = tmp_path / "aufraeumen.json"
     pfad.write_text("{kaputt")
+    assert aufraeumen.entscheiden(pfad, LEER) == aufraeumen.LOESCHEN
+
+
+@pytest.mark.parametrize("roh", [
+    [{"anlage": "kunde1"}], "kunde1", {"konfiguration": {"anlage": "kunde1"}},
+    {"anlage": "", "konfiguration": {"anlage": ""}}, {"anlage": 5, "konfiguration": {"anlage": 5}},
+    {"anlage": None, "konfiguration": {"anlage": None}},
+], ids=["liste", "text", "ohne_anlage", "anlage_leer", "anlage_zahl", "anlage_none"])
+def test_a_marker_of_a_foreign_form_counts_as_broken(tmp_path, roh):
+    """Gueltiges JSON in fremder Form (kein Objekt, `anlage` fehlt, leer oder kein Text) ist keine Markierung: lesen
+    gibt None, entscheiden loescht wie bei kaputtem JSON (auch wenn die Konfiguration zur `anlage` passt)."""
+    pfad = tmp_path / "aufraeumen.json"
+    pfad.write_text(json.dumps(roh), encoding="utf-8")
+    assert aufraeumen.lesen(pfad) is None
     assert aufraeumen.entscheiden(pfad, LEER) == aufraeumen.LOESCHEN
 
 

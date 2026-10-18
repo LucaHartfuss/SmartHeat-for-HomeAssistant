@@ -179,6 +179,18 @@ def test_ein_unerwarteter_fehler_trennt_pausiert_und_startet_neu(caplog):
     assert "KeyError" in caplog.text and "geheim" not in caplog.text
 
 
+def test_die_ausnahme_eines_unerwarteten_fehlers_steht_nur_im_debug_log(caplog):
+    """ERROR nur mit der Fehlerart; die Ausnahme selbst (Traceback) haengt allein an der DEBUG-Zeile."""
+    def starten():
+        raise KeyError("geheim")
+
+    with caplog.at_level(logging.DEBUG, logger="smartheat_device.prozess"):
+        prozess.laufen(_Device([]), None, starten, lambda: None, sleep=lambda s: None)
+    [debug] = [r for r in caplog.records if r.getMessage() == "Fehler der Laufzeit"]
+    assert debug.levelno == logging.DEBUG and debug.exc_info is not None and debug.exc_info[0] is KeyError
+    assert all(r.exc_info is None for r in caplog.records if r is not debug)
+
+
 def test_sigterm_in_der_pause_endet_sofort_ohne_neustart():
     order = []
 
@@ -273,6 +285,17 @@ def test_ein_fehler_im_start_pausiert_60_s_und_startet_neu(caplog, fehler):
     assert order == ["vorbereiten", "vor_pause", ("pause", 60.0), "neustart"]
     [fehlerzeile] = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert type(fehler).__name__ in fehlerzeile.getMessage() and "geheim" not in caplog.text
+
+
+def test_die_ausnahme_eines_fehlers_im_start_steht_nur_im_debug_log(caplog):
+    def vorbereiten():
+        raise RuntimeError("geheim")
+
+    with caplog.at_level(logging.DEBUG, logger="smartheat_device.prozess"):
+        prozess.starten(vorbereiten, lambda: None, sleep=lambda s: None)
+    [debug] = [r for r in caplog.records if r.getMessage() == "Fehler im Start"]
+    assert debug.levelno == logging.DEBUG and debug.exc_info is not None and debug.exc_info[0] is RuntimeError
+    assert all(r.exc_info is None for r in caplog.records if r is not debug)
 
 
 def test_ohne_fehler_gibt_starten_das_ergebnis_ohne_pause_und_neustart():

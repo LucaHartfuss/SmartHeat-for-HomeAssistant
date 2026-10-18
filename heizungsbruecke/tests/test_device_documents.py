@@ -1,5 +1,6 @@
 """Spec 5b 3 und 5.1: Dokumentspeicher des Geraets und atomares Schreiben (Plan D1 Task 3)."""
 import json
+import logging
 import math
 import os
 import stat
@@ -152,6 +153,20 @@ def test_a_stored_configuration_without_lock_locks_on_start(tmp_path):
     assert (tmp_path / "sicherheitssatz.json").exists()
 
 
+@pytest.mark.parametrize("feld", ["hebelsatz", "verteilsystem"])
+def test_a_stored_configuration_without_a_text_pair_does_not_lock_on_start(tmp_path, feld):
+    """Rastung aus einer gespeicherten Konfiguration nur mit Hebelsatz UND Verteilsystem als Text (z. B. eine von Hand
+    veraenderte Datei); sonst keine Rastung und keine Datei."""
+    _store(tmp_path).empfangen("konfiguration", _konfiguration())
+    (tmp_path / "sicherheitssatz.json").unlink()
+    datei = tmp_path / docs.DATEIEN["konfiguration"]
+    gespeichert = json.loads(datei.read_text())
+    gespeichert["inhalt"][feld] = None
+    datei.write_text(json.dumps(gespeichert))
+    store = _store(tmp_path)
+    assert store.rastung is None and not (tmp_path / "sicherheitssatz.json").exists()
+
+
 def test_a_broken_lock_file_rejects_every_set_up_configuration(tmp_path):
     (tmp_path / "sicherheitssatz.json").write_text("kaputt")
     store = _store(tmp_path)
@@ -195,6 +210,7 @@ def test_a_new_configuration_is_taken_and_survives_a_restart(tmp_path):
 def test_without_documents_the_versions_are_zero(tmp_path):
     store = _store(tmp_path)
     assert (store.version("konfiguration"), store.version("bedienung"), store.eingerichtet()) == (0, 0, False)
+    assert store.update_noetig is False
 
 
 def test_a_broken_document_file_counts_as_no_version(tmp_path):
@@ -210,6 +226,16 @@ def test_the_same_version_again_only_repeats_the_result(tmp_path):
     again = store.empfangen("konfiguration", _konfiguration(raumfuehler=["treiber:room_temperature"]))
     assert again == docs.Ergebnis("konfiguration", 1, True)
     assert store.inhalt("konfiguration")["raumfuehler"] == [SENSOR]
+
+
+def test_a_repeated_version_writes_nothing_and_works_on_a_disk_that_refuses_writes(tmp_path, monkeypatch):
+    """Eine erneut zugestellte Version (gleiches Angebot) schreibt weder Dokument noch Zustand: auch wenn der
+    Datentraeger jedes Schreiben verweigert, kommt das Ergebnis wieder."""
+    store = _store(tmp_path)
+    assert store.empfangen("konfiguration", _konfiguration()).uebernommen
+    for name in ("konfiguration.json", docs.ZUSTAND_DATEI, "sicherheitssatz.json"):
+        _scheitert_fuer(monkeypatch, name)
+    assert store.empfangen("konfiguration", _konfiguration()) == docs.Ergebnis("konfiguration", 1, True)
 
 
 def test_any_other_version_is_taken_also_a_smaller_one(tmp_path):
@@ -261,6 +287,24 @@ def test_eine_ablehnung_von_vor_5c_wird_ohne_text_geladen(tmp_path):
     (tmp_path / docs.ZUSTAND_DATEI).write_text(json.dumps(
         {"update_anlass": None, "abgelehnt": {"konfiguration": [3, "ungueltig", "Alter Gerätetext"]}}))
     assert _store(tmp_path).ablehnung("konfiguration") == (3, "ungueltig", None)
+
+
+@pytest.mark.parametrize("abgelehnt", [
+    {"konfiguration": "kaputt"}, {"konfiguration": 7}, {"konfiguration": [3, "ungueltig"]},
+    {"bedienung": [3, "ungueltig", None, "zu viel"]},
+], ids=["text", "zahl", "zwei_stellen", "vier_stellen"])
+def test_eine_gespeicherte_ablehnung_fremder_form_wird_nicht_geladen(tmp_path, abgelehnt):
+    """Nur [Version, Grund, details] je Dokumentart: alles andere ist keine Ablehnung, der Start scheitert nicht."""
+    (tmp_path / docs.ZUSTAND_DATEI).write_text(json.dumps({"update_anlass": None, "abgelehnt": abgelehnt}))
+    store = _store(tmp_path)
+    assert (store.ablehnung("konfiguration"), store.ablehnung("bedienung")) == (None, None)
+
+
+def test_eine_gespeicherte_ablehnung_einer_fremden_art_wird_nicht_geladen(tmp_path):
+    (tmp_path / docs.ZUSTAND_DATEI).write_text(json.dumps(
+        {"update_anlass": None, "abgelehnt": {"fremd": [3, "ungueltig", None], "bedienung": [2, "ungueltig", None]}}))
+    store = _store(tmp_path)
+    assert store.ablehnung("fremd") is None and store.ablehnung("bedienung") == (2, "ungueltig", None)
 
 
 def test_die_bedienung_nennt_das_feld(tmp_path):
@@ -346,6 +390,26 @@ def test_an_empty_configuration_without_software_keeps_the_remembered_offer(tmp_
     del leer["software"]
     assert store.empfangen("konfiguration", leer).grund == "ungueltig"
     assert store.software_angebot() == ANGEBOT and _store(tmp_path).software_angebot() == ANGEBOT
+
+
+def test_only_an_invalid_target_software_of_a_configuration_warns(tmp_path, caplog):
+    """Die WARNING "Soll-Software ungueltig" nur bei einer Konfiguration mit ungueltigem `software`: nicht bei einem
+    gueltigen Angebot (auch null), nicht ohne den Schluessel, nicht bei einer Bedienung mit dem Feld."""
+    store = _store(tmp_path)
+
+    def warnungen():
+        return [r for r in caplog.records if "Soll-Software ungueltig" in r.getMessage()]
+
+    with caplog.at_level(logging.WARNING, logger="smartheat_device.documents"):
+        store.empfangen("konfiguration", _konfiguration(version=1, software=SOFTWARE))
+        store.empfangen("konfiguration", _konfiguration(version=2, software=None))
+        leer = _leer(version=3)
+        del leer["software"]
+        store.empfangen("konfiguration", leer)
+        store.empfangen("bedienung", _bedienung(software={"version": "0.7.0"}))
+        assert warnungen() == []
+        store.empfangen("konfiguration", _konfiguration(version=4, software={"version": "0.7.0"}))
+    assert [r.levelno for r in warnungen()] == [logging.WARNING]
 
 
 def test_software_null_in_a_valid_configuration_is_remembered_as_withdrawn(tmp_path):
