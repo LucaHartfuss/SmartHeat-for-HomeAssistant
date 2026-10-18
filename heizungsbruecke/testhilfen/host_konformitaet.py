@@ -1,16 +1,16 @@
 """Konformitaet der Geraete-Hosts (V2; Audit 5 A5-58; Spec Stufe 3 S6 4.1): dieselben Pruefungen fuer HaDeviceHost und
 GatewayDeviceHost. Jeder Host baut eine Welt (Fixture in seiner Testdatei); die Pruefungen kennen nur die gemeinsame
 Sicht: Binden des Workers, Nachstellen von Neustart und Bedienung, Ursprungswerte, Dokumentsicht, Aufraeum-Markierung,
-Abmelde-Markierung (verfaellt mit einer neuen Konfiguration derselben Anlage, 5b-D2-7), Bedienwunsch. Rueckrufe des Geraetekerns werfen nie, bis auf konfiguration_vorbereiten (vor dem Speichern, Spec
-Testoffensive 12.6, Nr. 38): laesst sich die Markierung nicht schreiben, geht der OSError an den Geraetekern, der das
-Dokument zurueckhaelt."""
+Abmelde-Markierung (verfaellt mit einer neuen Konfiguration derselben Anlage, 5b-D2-7), Bedienwunsch. Rueckrufe des
+Geraetekerns werfen nie, bis auf konfiguration_vorbereiten (vor dem Speichern, Spec Testoffensive 12.6, Nr. 38): laesst
+sich die Markierung nicht schreiben, geht der OSError an den Geraetekern, der das Dokument zurueckhaelt."""
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
 from smartheat_core import dateien
-from smartheat_device.commands import CommandRegister, Waiting
+from smartheat_device.commands import CommandRegister
 from smartheat_runtime import dokument_config
 from smartheat_runtime.soll_eingang import EV_TARGET_INPUT
 from smartheat_runtime.soll_speicher import SOURCE_PORTAL
@@ -278,9 +278,13 @@ def ein_sign_off_nach_der_neuen_konfiguration_meldet_wieder_ab(w: Welt) -> None:
     w.host.worker_binden(worker)
     worker.run_pending()
     seen.clear()
-    register = CommandRegister(w.abgemeldet_pfad.parent, lambda body: True)
+    gesendet: list = []
+    register = CommandRegister(w.abgemeldet_pfad.parent / "befehle", lambda body: gesendet.append(body) or True,
+                               clock=w.clock)
     w.host.befehle_eintragen(register)
-    assert isinstance(register._handlers["sign_off"]({}), Waiting)
+    register.empfangen({"schema": 1, "command_id": "c1", "kind": "sign_off", "payload": {},
+                        "expires_at": "2027-01-01T00:00:00+00:00"})  # down/command wie vom Server
+    assert gesendet == []  # wartet auf den Status "abgemeldet" (Waiting), kein Fehlerergebnis
     assert dateien.lesen_json(w.abgemeldet_pfad) == {"anlage": alt["anlage"]}
     assert dokument_config.abgemeldet(w.abgemeldet_pfad, neu)
     worker.run_pending()

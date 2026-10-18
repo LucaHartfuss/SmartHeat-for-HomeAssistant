@@ -7,8 +7,8 @@ Agenten). Meldungen der Laufzeit gehen als up/notifications an den Server (Meldu
 show = offene kritische Meldung, withdraw = geschlossen, push = Ereignis). Die LED-Datei data/agent_state.json (Name aus
 0.5.0) schreibt die ZustandsDatei bei jedem Wechsel und mindestens jede Minute. Eine laufzeitrelevante neue
 Konfiguration fordert einen Neustart an (geraet_host_basis.EV_RELOAD im Regel-Worker), ebenso eine neue, nicht leere
-derselben Anlage, die die Abmelde-Markierung aufhebt (5b-D2-7); eine neue Bedienung geht als Soll-Eingang an den
-Worker; kommt beides, bevor main() den Worker bindet (der Geraete-Thread laeuft schon), stellt
+Konfiguration derselben Anlage, die die Abmelde-Markierung aufhebt (5b-D2-7); eine neue Bedienung geht als Soll-Eingang
+an den Worker; kommt beides, bevor main() den Worker bindet (der Geraete-Thread laeuft schon), stellt
 worker_binden den Neustart bzw. die letzte Bedienung nach (Spec 3.3). Der Wechsel von eingerichtet auf leer markiert das
 Aufraeumen (A4-07), das der naechste Start ausfuehrt (vergessen). Die Software-Bruecke sendet die Meldungen des
 Updaters (software_meldungen.json, fortlaufende seq) als up/result mit dokument software und quittiert die zuletzt

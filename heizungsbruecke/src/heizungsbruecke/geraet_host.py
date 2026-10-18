@@ -4,8 +4,8 @@ diagnostics; HA-fremde Befehle nicht_unterstuetzt) und nimmt Konfiguration und B
 im Geraete-Thread und werfen nicht (ausser NichtPruefbar aus treiber_pruefen, siehe dokument.zuordnung_pruefen, und
 einem OSError der Markierung aus konfiguration_vorbereiten, siehe geraet_host_basis). Eine laufzeitrelevante neue
 Konfiguration fordert einen Neustart an (geraet_host_basis.EV_RELOAD im Regel-Worker), ebenso eine neue, nicht leere
-derselben Anlage, die die Abmelde-Markierung aufhebt (5b-D2-7); der Wechsel von eingerichtet auf leer markiert das
-Aufraeumen vor dem Speichern (A4-07).
+Konfiguration derselben Anlage, die die Abmelde-Markierung aufhebt (5b-D2-7); der Wechsel von eingerichtet auf leer
+markiert das Aufraeumen vor dem Speichern (A4-07).
 Eine neue Bedienung geht als Soll-Eingang (portal) an den Worker, der Soll-Eingang schreibt sie in den Soll-Speicher und
 gleicht die Soll-Entity an; kommt sie vor dem Binden, stellt worker_binden die letzte nach. Status
 (runtime_status_event, Task 7) und Raum (raum_merken, HaHost) legt der Worker-Thread hier ab, der Geraete-Thread liest
@@ -182,7 +182,7 @@ class HaDeviceHost(GeraetHostBasis):
             return Failed("nicht_eingerichtet")
         assert konfiguration is not None
         anlage = konfiguration["anlage"]
-        if dokument_config.abmelden(config.ABGEMELDET_PATH, anlage):
+        if dokument_config.abmelden(self.abgemeldet_pfad(), anlage):  # dieselbe Quelle wie konfiguration_uebernommen
             self.neustart_anfordern()
 
         def check() -> Done | None:

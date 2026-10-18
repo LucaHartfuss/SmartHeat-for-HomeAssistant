@@ -45,7 +45,8 @@ class GeraetHostBasis:
         raise NotImplementedError
 
     def abgemeldet_pfad(self) -> Path:
-        """Wo sign_off die Abmelde-Markierung abgemeldet.json schreibt (Host); konfiguration_uebernommen hebt sie auf."""
+        """Wo sign_off die Abmelde-Markierung abgemeldet.json schreibt (Host); konfiguration_uebernommen hebt sie
+        auf."""
         raise NotImplementedError
 
     # --- Verdrahtung ---
