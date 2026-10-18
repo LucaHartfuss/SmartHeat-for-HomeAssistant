@@ -17,7 +17,8 @@ from test_runtime import (
 
 from heizungsbruecke import __main__ as main_module
 from smartheat_core import write_budget
-from smartheat_core.pipeline import BUDGET_KEY, BUDGET_MESSAGE, LeverPipeline, WriteBudgetExhausted
+from smartheat_core.pipeline import BUDGET_KEY, BUDGET_MESSAGE
+from smartheat_runtime.backup_store import save_backup
 
 WEISHAUPT = {
     "lever_set": "weishaupt_wwp", "entity_curve_current": "number.hk", "entity_shift_current": "number.normal",
@@ -177,27 +178,23 @@ def test_daily_limit_notice_goes_through_the_notifier_once_a_day(env):
     assert bridge.store.state.notify_states[BUDGET_KEY] == write_budget.today()
 
 
-def test_zone_preparation_at_the_daily_limit_is_a_budget_stop_not_a_failed_attempt(env, monkeypatch, caplog):
+def test_zone_preparation_at_the_daily_limit_is_a_budget_stop_not_a_failed_attempt(env, caplog):
     # Weishaupt-Tageslimit: kein Stacktrace "Zone konnte nicht vorbereitet werden", kein Versuch im Kontingent.
-    attempts = []
-
-    def _prepare_start(self, start_value):
-        attempts.append(env.clock())
-        raise WriteBudgetExhausted("room_setpoint", 10)
-
-    monkeypatch.setattr(LeverPipeline, "prepare_start", _prepare_start)
+    # Das Budget ist schon beim Start aufgebraucht (10 Schreibvorgaenge heute, gespeichert wie von einem Lauf vorher).
+    save_backup(env.paths["BACKUP_PATH"], {"write_budget": {"writes:total": {"day": write_budget.today(), "count": 10}}})
     env.ha.states.update(WEISHAUPT_STATES)
     with caplog.at_level(logging.INFO, logger="smartheat_runtime.app"):
         bridge = _start(env, **WEISHAUPT)
         _trigger(env, bridge, "sensor.room_actual")
 
-    assert len(attempts) == 2  # kein Wiederholungs-Kontingent verbraucht: der naechste lokale Check versucht es erneut
+    # kein Wiederholungs-Kontingent verbraucht: der naechste lokale Check (ohne 1800 s Pause) versucht es erneut
+    stopps = [record for record in caplog.records if record.getMessage().startswith("Zone nicht vorbereitet")]
+    assert [record.levelno for record in stopps] == [logging.INFO, logging.INFO]
+    assert all("Tageslimit von 10 Schreibvorgaengen erreicht" in record.getMessage() for record in stopps)
+    assert env.ha.states["select.betriebsart"] == "hz_operationmode_automatic" and env.ha.writes == []
     assert bridge.zone_prepared is False
     assert write_budget.get(bridge.store, write_budget.ZONE_PREPARE) is None
     assert not any("Zone konnte nicht vorbereitet werden" in record.getMessage() for record in caplog.records)
-    assert any(
-        record.levelno == logging.INFO and "Tageslimit" in record.getMessage() for record in caplog.records
-    )
 
 
 def test_weishaupt_daily_energy_reaches_the_server_as_a_growing_sum(env):

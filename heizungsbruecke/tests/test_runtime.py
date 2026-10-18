@@ -3,7 +3,6 @@ Tick-Zustellung, Datenfehler, Notbetrieb, lokale Checks und Abo-Pfade. Getrieben
 Konfigurationsdokument aus OPTIONS, geraet_helpers.start_bridge) mit Fake-Uhr (tests/conftest.py), Fake-HA,
 Fake-Trigger-Client und dem Link einer Geraete-Attrappe (FakeGeraet) statt eines eigenen MQTT-Clients."""
 import dataclasses
-import itertools
 import json
 import logging
 from datetime import date, datetime, timedelta
@@ -19,7 +18,6 @@ from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core.enforce import RETRY_SECONDS
 from smartheat_core.pipeline import LeverPipeline
-from smartheat_core.write_budget import MAX_PER_DAY
 from smartheat_device.laufzeit import RuntimeChannel
 from smartheat_runtime import abo, app, aufraeumen, backup_store, datentraeger, dokument_config, entitlement, ticks
 from smartheat_runtime.backup_store import load_backup, save_backup
@@ -73,6 +71,14 @@ class _Link:
     @connected.setter
     def connected(self, value):
         self._geraet.sent.connected = value
+
+    @property
+    def connect_failures(self):
+        return self._geraet.sent.failures
+
+    @connect_failures.setter
+    def connect_failures(self, value):
+        self._geraet.sent.failures = value
 
     @property
     def publish_error(self):
@@ -317,6 +323,32 @@ def _answer(env, bridge, seq, **kwargs):
 
 # --- Boot ---
 
+def test_start_captures_the_heat_limit_original_before_any_write(env):
+    """TP12h: der Start merkt den Ursprungswert der Heizgrenze, auch wenn danach nichts geschrieben wird."""
+    _quiet_backup(env)
+    _start(env)
+    assert env.ha.writes == []
+    assert _backup(env)["originals"] == {"heat_limit": 16.0}
+
+
+def test_a_failing_capture_of_the_heat_limit_original_does_not_stop_the_start(env, monkeypatch, caplog):
+    """Scheitert das Merken beim Start (Speicherfehler), laeuft der Start weiter: der lokale Check danach startet den
+    Notfall-Boost (Notbetrieb, Raum 1,5 K unter dem Soll)."""
+    echt = LeverPipeline.capture_originals
+    fehler = [ticks.StorageError("Datentraeger voll")]
+
+    def _beim_start_kaputt(self):  # Fehlerinjektion: nur der erste Aufruf (im Start) scheitert
+        if fehler:
+            raise fehler.pop()
+        return echt(self)
+
+    monkeypatch.setattr(LeverPipeline, "capture_originals", _beim_start_kaputt)
+    with caplog.at_level(logging.ERROR, logger="smartheat_runtime.app"):
+        _start_in_notbetrieb_with_emergency_boost(env)  # prueft die Notfall-Boost-Werte 1,5/25 auf der Anlage
+    assert fehler == []
+    assert "Ursprungswert der Heizgrenze beim Start nicht gespeichert" in caplog.text
+
+
 def test_start_reports_originals_to_the_host_only_on_change(env):
     _quiet_backup(env, originals={"heat_limit": 16.0})
     bridge = _start(env)
@@ -484,18 +516,29 @@ def test_zone_preparation_retried_after_the_own_switch_still_writes_the_start_va
     assert bridge.zone_prepared is True
 
 
-def _failing_zone_preparation(env, monkeypatch, failures=None):
-    """LeverPipeline.prepare_start scheitert (z. B. 403 "Quota Exceeded"); gibt die Versuchszeitpunkte
-    (Fake-Uhr) zurueck. failures=None: scheitert immer, sonst nur die ersten `failures` Versuche."""
-    attempts = []
+class _QuotaZoneHa(FakeHa):
+    """Zone im Zeitprogramm (auto, meldet 0); das Umstellen auf Manuell scheitert an der Hersteller-Cloud (403 "Quota
+    Exceeded"). `attempts` haelt jeden Aufruf an der HA-Grenze mit der Zeit der Fake-Uhr fest. failures=None: scheitert
+    immer, sonst nur die ersten `failures` Versuche."""
 
-    def _prepare_start(self, start_value):
-        attempts.append(env.clock())
-        if failures is None or len(attempts) <= failures:
+    def __init__(self, clock, failures=None):
+        super().__init__()
+        self._clock, self._failures = clock, failures
+        self.attempts: list[float] = []
+        self.states.update({"climate.zone": "auto", "climate.zone::temperature": 0.0})
+
+    def set_hvac_mode(self, entity_id, mode):
+        self.attempts.append(self._clock())
+        if self._failures is None or len(self.attempts) <= self._failures:
             raise RuntimeError("403 Quota Exceeded")
+        super().set_hvac_mode(entity_id, mode)
 
-    monkeypatch.setattr(LeverPipeline, "prepare_start", _prepare_start)
-    return attempts
+
+def _failing_zone_preparation(env, failures=None):
+    """Die Vorbereitung der Zone (climate.zone) scheitert an HA; gibt die Versuchszeitpunkte zurueck. Danach mit
+    `_start(env, entity_shift_current="climate.zone")` starten."""
+    env.ha = _QuotaZoneHa(env.clock, failures)
+    return env.ha.attempts
 
 
 def _local_checks(env, bridge, hours):
@@ -504,26 +547,25 @@ def _local_checks(env, bridge, hours):
         _trigger(env, bridge, "sensor.room_actual")
 
 
-def test_failing_zone_preparation_is_retried_at_most_every_30_min_and_6_times_a_day(env, monkeypatch, caplog):
-    attempts = _failing_zone_preparation(env, monkeypatch)
-    bridge = _start(env)
+def test_failing_zone_preparation_is_retried_at_most_every_30_min_and_6_times_a_day(env, caplog):
+    attempts = _failing_zone_preparation(env)
+    bridge = _start(env, entity_shift_current="climate.zone")
 
     with caplog.at_level(logging.WARNING, logger="smartheat_runtime.app"):
         _local_checks(env, bridge, hours=12)
 
-    assert len(attempts) == MAX_PER_DAY  # Start + 5 Wiederholungen
-    assert all(later - earlier >= RETRY_SECONDS for earlier, later in itertools.pairwise(attempts))
+    assert [later - attempts[0] for later in attempts] == [0, 1800, 3600, 5400, 7200, 9000]  # Start + 5 Wiederholungen
     assert sum("Tageslimit" in record.getMessage() for record in caplog.records) == 1
 
 
-def test_zone_preparation_stops_retrying_after_success(env, monkeypatch):
-    attempts = _failing_zone_preparation(env, monkeypatch, failures=2)
-    bridge = _start(env)
+def test_zone_preparation_stops_retrying_after_success(env):
+    attempts = _failing_zone_preparation(env, failures=2)
+    bridge = _start(env, entity_shift_current="climate.zone")
 
     _local_checks(env, bridge, hours=6)
 
-    assert len(attempts) == 3
-    assert attempts[2] - attempts[1] >= RETRY_SECONDS
+    assert [later - attempts[0] for later in attempts] == [0, 1800, 3600]
+    assert env.ha.states["climate.zone"] == "heat_cool" and bridge.zone_prepared is True
 
 
 def test_boot_writes_min_flow_when_it_differs_from_the_room_target(env):
@@ -2985,6 +3027,90 @@ def test_telemetry_is_not_published_without_connection(env):
     _advance(env, bridge, 300)
 
     assert len(_mqtt(env).telemetry) == sent
+
+
+def test_vaillant_daily_energy_reaches_the_server_as_a_growing_sum(env):
+    """Der Tageszaehler der Bindung (Vaillant: daily) geht als wachsende Summe hinaus (A4-49); die Waerme-Erkennung
+    liegt beim Server (Audit 4 P-B)."""
+    env.ha.states.update({"sensor.waerme_heute": 8.0, "sensor.waerme_heute::unit_of_measurement": "kWh"})
+    bridge = _start(env, entity_energy_thermal_heating="sensor.waerme_heute")
+    assert _mqtt(env).telemetry[-1]["energy"] == {"thermal_heating": 8.0}
+
+    env.ha.states["sensor.waerme_heute"] = 0.5  # Mitternacht
+    _advance(env, bridge, 300)
+
+    assert _mqtt(env).telemetry[-1]["energy"] == {"thermal_heating": 8.5}
+    assert "waerme" not in _mqtt(env).telemetry[-1]
+
+
+def test_vaillant_energy_in_a_foreign_unit_is_left_out(env, caplog):
+    """Es gilt die erwartete Einheit der Bindung (Vaillant: kWh, Spec Stufe 3 S4b 5): ein Wh-Tageszaehler fehlt."""
+    env.ha.states.update({"sensor.waerme_heute": 8000.0, "sensor.waerme_heute::unit_of_measurement": "Wh"})
+    with caplog.at_level(logging.WARNING):
+        _start(env, entity_energy_thermal_heating="sensor.waerme_heute")
+
+    assert _mqtt(env).telemetry and "energy" not in _mqtt(env).telemetry[-1]
+    assert "Energiekanal 'thermal_heating' meldet 'Wh' statt kWh und wird weggelassen" in caplog.text
+
+
+def _ausfall_mit_fehlversuchen(env, failures):
+    """Laufende Laufzeit; dann faellt der Link aus und `failures` Verbindungsversuche scheitern. Der erste Lauf des
+    Verbindungswaechters (300 s) merkt den Beginn des Ausfalls."""
+    _quiet_backup(env)
+    bridge = _start(env)
+    _mqtt(env).connected = False
+    _mqtt(env).connect_failures = failures
+    _advance(env, bridge, 300)
+    return bridge
+
+
+@pytest.mark.parametrize(("failures", "down_seconds", "queried"), [
+    (3, 900, True), (2, 900, False), (3, 899, False), (0, 2000, False),
+], ids=["3-fehlversuche-900s", "2-fehlversuche", "899s", "ohne-fehlversuche"])
+def test_a_long_outage_with_repeated_connect_failures_reads_the_abo_status_once(env, failures, down_seconds, queried):
+    bridge = _ausfall_mit_fehlversuchen(env, failures)
+    before = env.abo["queries"]
+
+    _advance(env, bridge, down_seconds)
+
+    assert env.abo["queries"] - before == (1 if queried else 0)  # Abfragen der Abo-Quelle des Dokuments
+
+
+def test_an_inactive_abo_found_during_an_outage_starts_no_probe_tick(env):
+    bridge = _ausfall_mit_fehlversuchen(env, 3)
+    env.abo["status"] = entitlement.INACTIVE
+    assert _abo_inactive_since(bridge) is None
+
+    _advance(env, bridge, 900)
+
+    assert _abo_inactive_since(bridge) is not None
+    assert _delivery(bridge).pending is None
+
+
+@pytest.mark.parametrize("status", [entitlement.ACTIVE, entitlement.UNKNOWN])
+def test_an_active_or_unclear_abo_during_an_outage_still_starts_the_probe_tick(env, status):
+    """Regression: ein normaler Ausfall (Abo aktiv oder Abfrage unklar) darf den Notbetrieb nicht verhindern."""
+    bridge = _ausfall_mit_fehlversuchen(env, 3)
+    env.abo["status"] = status
+    pushes = list(env.ha.pushes)
+    assert _delivery(bridge).pending is None
+
+    _advance(env, bridge, 900)
+
+    assert _delivery(bridge).pending is not None and _delivery(bridge).pending.trigger == "target_change"  # Pruef-Tick
+    assert _abo_inactive_since(bridge) is None
+    assert env.ha.pushes == pushes  # keine Meldung an den Kunden
+
+
+def test_a_reconnect_resets_the_throttle_of_the_abo_query(env):
+    bridge = _ausfall_mit_fehlversuchen(env, 3)
+    _advance(env, bridge, 900)
+    assert bridge.connection_failing_queried_at is not None
+
+    _mqtt(env).connected = True
+    _connect(env, bridge)
+
+    assert bridge.connection_failing_queried_at is None
 
 
 def test_successful_zone_preparation_costs_no_quota_across_restarts(env):

@@ -1,21 +1,18 @@
 """Start, Startfehler und Start-Hilfen des HA-Hosts im Geraete-Pfad (bis 0.36 ueber __main__._start_bridge mit
 options.json): Konfigurationsfehler mit Ruhezustand, Neupruefung und Meldezustand, Warten auf HA, Budget fuer fehlende
-Entities und Hilfssensoren, Zeitzone; dazu hostneutrale Handler der Laufzeit (Telemetrie, _prime,
-Verbindungswaechter). Der Einstieg main() selbst steht in test_main_geraet.py."""
+Entities und Hilfssensoren, Zeitzone. Die hostneutralen Handler der Laufzeit (Telemetrie, _prime, Verbindungswaechter)
+stehen mit der echten Laufzeit in test_runtime.py, der Einstieg main() in test_main_geraet.py."""
 import logging
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call
 
 import pytest
 import requests
-from conftest import FakeClock
-from fakes import runtime_config
 from geraet_helpers import konfiguration_aus_optionen
 from test_runtime import _start_bridge, env  # noqa: F401  (Fixture)
 
-from heizungsbruecke import dokument
-from heizungsbruecke.derived_sensors import DerivedSensors
+from heizungsbruecke import config, dokument
 from heizungsbruecke.ha_api import HomeAssistantApi
+from heizungsbruecke.helper_templates import outdoor_temperature_template, room_temperature_template
 from heizungsbruecke.host import (
     DERIVED_SENSORS_RETRY_DELAYS_SECONDS,
     StartupError,
@@ -24,7 +21,6 @@ from heizungsbruecke.host import (
     _retry_with_budget,
     _wait_for_required_entities,
 )
-from smartheat_runtime import app
 
 #: Ungueltiger Tagestick im Konfigurationsdokument: ein Konfigurationsfehler beim Start. (Die Grenzen der Intervalle
 #: prueft nur noch config_check beim Annehmen des Dokuments, nicht mehr der Host.)
@@ -324,24 +320,32 @@ def test_helper_creation_failure_after_budget_is_a_start_error(monkeypatch, slee
         _ensure_derived_sensors_with_retry(_reachable(), _DERIVED_BINDUNG, "t1")
 
 
-def test_ensure_derived_sensors_with_retry_recovers_after_transient_failures(monkeypatch, sleeps):
-    expected = DerivedSensors({"room_actual": "sensor.smartheat_t1_raumtemperatur"}, (), "f")
-    attempts = {"count": 0}
-    aufrufe = []
+def test_ensure_derived_sensors_with_retry_recovers_after_transient_failures(monkeypatch, sleeps, tmp_path):
+    """Die echten Hilfssensoren (derived_sensors.ensure_all) an einer HA-Grenze, die zweimal nicht erreichbar ist: nach
+    5 und 10 s Pause legt der dritte Versuch Raum- und Aussen-Vorlage aus Raumfuehler, Wetter-Entity und Anlage an."""
+    monkeypatch.setattr(config, "DERIVED_SENSORS_PATH", tmp_path / "derived_sensors.json")
+    ha_api = MagicMock(spec=HomeAssistantApi)
+    ha_api.is_reachable.return_value = True
+    ha_api.entity_exists.return_value = False
+    fehlversuche = [ConnectionError("HA Core noch nicht erreichbar")] * 2
 
-    def flaky_ensure_all(**kwargs):
-        attempts["count"] += 1
-        aufrufe.append(kwargs)
-        if attempts["count"] < 3:
-            raise ConnectionError("HA Core noch nicht erreichbar")
-        return expected
+    def _create(name, template):
+        if fehlversuche:
+            raise fehlversuche.pop()
+        return "sensor.smartheat_t1_aussentemperatur" if "Außentemperatur" in name else "sensor.smartheat_t1_raumtemperatur"
 
-    monkeypatch.setattr("heizungsbruecke.derived_sensors.ensure_all", flaky_ensure_all)
+    ha_api.create_template_sensor.side_effect = _create
+    bindung = _bindung(room_sensors=["sensor.rt"], entity_outdoor_temp="weather.home")
 
-    assert _ensure_derived_sensors_with_retry(_reachable(), _DERIVED_BINDUNG, "t1") == expected
+    result = _ensure_derived_sensors_with_retry(ha_api, bindung, "t1")
+
+    assert result.entity_ids == {"room_actual": "sensor.smartheat_t1_raumtemperatur",
+                                 "outdoor_temp": "sensor.smartheat_t1_aussentemperatur"}
     assert sleeps == [5, 10]
-    assert (aufrufe[-1]["tenant_id"], aufrufe[-1]["room_sensors"], aufrufe[-1]["outdoor_source"]) == (
-        "t1", ["sensor.rt"], "sensor.outdoor")
+    assert ha_api.create_template_sensor.call_args_list[-2:] == [  # Wirkung als Aufruf an der HA-Grenze
+        call(name="SmartHeat t1 Raumtemperatur", template=room_temperature_template(["sensor.rt"])),
+        call(name="SmartHeat t1 Außentemperatur", template=outdoor_temperature_template("weather.home")),
+    ]
 
 
 # --- Zeitzone ---
@@ -377,134 +381,3 @@ def test_check_timezone_survives_failing_config_query(caplog):
         _check_timezone(ha_api)  # darf nicht werfen
 
     assert "Zeitzone" in caplog.text
-
-
-# --- Hostneutrale Handler der Laufzeit ---
-
-def test_on_telemetry_hands_the_energy_normalizer_to_the_tick(make_store, monkeypatch):
-    from bindung_beispiele import VAILLANT_MYPYLLANT
-
-    from smartheat_runtime.app import _on_telemetry
-
-    captured = {}
-    monkeypatch.setattr(
-        "smartheat_runtime.app.telemetry.run_telemetry_tick", lambda *args, **kwargs: captured.update(kwargs),
-    )
-    rt = SimpleNamespace(
-        worker=MagicMock(), config=runtime_config(), store=make_store(), mqtt_client=MagicMock(),
-        manifest=MagicMock(), signals=MagicMock(), notifier=MagicMock(), status=MagicMock(),
-        override=SimpleNamespace(binding=SimpleNamespace(description=VAILLANT_MYPYLLANT)),
-    )
-    rt.mqtt_client.is_connected.return_value = True
-
-    _on_telemetry(rt, None)
-
-    assert "waerme" not in captured  # Audit 4 P-B: die Erkennung liegt beim Server
-    assert callable(captured["energy"])  # Vaillant: Tageszaehler werden normalisiert (Audit 4 P-B, A4-49)
-    assert captured["einheiten"] == VAILLANT_MYPYLLANT.energie  # Spec Stufe 3 S4b 5: erwartete Einheit je Kanal
-
-
-def _prime_rt(monkeypatch, capture):
-    """Laufzeit-Attrappe fuer _prime: nur Heizgrenzen-Erfassung unter Test, alles Uebrige still."""
-    monkeypatch.setattr(app.regulation, "read_room_target_live", lambda rt: 20.5)
-    monkeypatch.setattr(app.regulation, "run_local_check", lambda rt: None)
-    monkeypatch.setattr(app.derived, "sync", lambda rt: None)
-    monkeypatch.setattr(app, "_prepare_zone", lambda rt: None)
-    return SimpleNamespace(
-        override=SimpleNamespace(capture_originals=capture),
-        store=SimpleNamespace(
-            state=SimpleNamespace(restore_point={"room_setpoint": 21.0}, stable_target=None), update=lambda **kw: None,
-        ),
-    )
-
-
-def test_prime_captures_the_heat_limit_original(monkeypatch):
-    capture = MagicMock()
-    rt = _prime_rt(monkeypatch, capture)
-
-    app._prime(rt)
-
-    capture.assert_called_once_with()
-
-
-def test_prime_heat_limit_capture_failure_does_not_abort_startup(monkeypatch, caplog):
-    capture = MagicMock(side_effect=RuntimeError("Speicher voll"))
-    rt = _prime_rt(monkeypatch, capture)
-    ran = []
-    monkeypatch.setattr(app.regulation, "run_local_check", lambda rt: ran.append(True))
-
-    with caplog.at_level(logging.ERROR):
-        app._prime(rt)
-
-    assert ran == [True]
-    assert "Heizgrenze" in caplog.text
-
-
-@pytest.mark.parametrize("failures, down_seconds, expect_query", [
-    (3, 900, True), (2, 900, False), (3, 899, False), (0, 2000, False),
-])
-def test_connection_check_queries_the_status_after_long_repeated_failures(failures, down_seconds, expect_query, monkeypatch):
-    rt = SimpleNamespace(
-        worker=MagicMock(), config=runtime_config(), clock=FakeClock(), mqtt_down_since=None,
-        mqtt_client=MagicMock(), store=SimpleNamespace(state=SimpleNamespace(
-            abo_inactive_since=None, delivery=SimpleNamespace(pending="offen"))),
-    )
-    rt.mqtt_client.is_connected.return_value = False
-    rt.mqtt_client.connect_failures = failures
-    called = []
-    monkeypatch.setattr(app.abo, "handle_connection_failing", lambda runtime: called.append(runtime))
-    app._on_connection_check(rt, None)  # setzt mqtt_down_since
-    rt.clock.advance(down_seconds)
-    app._on_connection_check(rt, None)
-    assert bool(called) is expect_query
-
-
-def test_mqtt_connected_resets_the_connection_failing_throttle():
-    rt = SimpleNamespace(
-        status=MagicMock(), notifier=MagicMock(), auth_rejected_queried_at=5.0, auth_rejected_last_status="x",
-        connection_failing_queried_at=7.0,
-    )
-    rt.status.flags.zugang_abgelehnt = False
-    rt.status.flags.gestartet = True
-    with patch.object(app.ticks, "deliver"):
-        app._on_mqtt_connected(rt, None)
-    assert rt.connection_failing_queried_at is None
-
-
-def test_connection_check_starts_no_probe_tick_when_the_query_found_the_abo_inactive(monkeypatch):
-    state = SimpleNamespace(abo_inactive_since=None, delivery=SimpleNamespace(pending=None))
-    rt = SimpleNamespace(
-        worker=MagicMock(), config=runtime_config(), clock=FakeClock(), mqtt_down_since=None,
-        mqtt_client=MagicMock(), store=SimpleNamespace(state=state),
-    )
-    rt.mqtt_client.is_connected.return_value = False
-    rt.mqtt_client.connect_failures = 3
-    monkeypatch.setattr(app.abo, "handle_connection_failing",
-                        lambda runtime: setattr(state, "abo_inactive_since", "jetzt"))
-    probes = []
-    monkeypatch.setattr(app.ticks, "start_probe_tick", lambda *args: probes.append(args))
-    app._on_connection_check(rt, None)
-    rt.clock.advance(900)
-    app._on_connection_check(rt, None)
-    assert probes == []
-
-
-@pytest.mark.parametrize("status", [app.abo.entitlement.ACTIVE, app.abo.entitlement.UNKNOWN])
-def test_connection_check_still_starts_the_probe_tick_after_an_unclear_or_active_query(status, monkeypatch):
-    """Regression: ein normaler Ausfall (Abo aktiv oder Abfrage unklar) darf den Notbetrieb nicht verhindern."""
-    state = SimpleNamespace(abo_inactive_since=None, delivery=SimpleNamespace(pending=None))
-    rt = SimpleNamespace(
-        worker=MagicMock(), config=runtime_config(), clock=FakeClock(), mqtt_down_since=None, connection_failing_queried_at=None,
-        mqtt_client=MagicMock(), store=SimpleNamespace(state=state), ha_api=MagicMock(),
-    )
-    rt.mqtt_client.is_connected.return_value = False
-    rt.mqtt_client.connect_failures = 3
-    monkeypatch.setattr(app.abo.entitlement, "query", lambda config: status)
-    probes = []
-    monkeypatch.setattr(app.ticks, "start_probe_tick", lambda *args: probes.append(args))
-    app._on_connection_check(rt, None)
-    rt.clock.advance(900)
-    app._on_connection_check(rt, None)
-    assert len(probes) == 1
-    assert state.abo_inactive_since is None
-    rt.ha_api.send_notification.assert_not_called()

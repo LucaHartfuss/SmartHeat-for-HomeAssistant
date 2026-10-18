@@ -41,10 +41,11 @@ def konfiguration_aus_optionen(options: dict) -> dict:
 
 class Sent:
     """Was die Laufzeit ueber den Link des Geraets sendet. publish_error: der naechste Snapshot scheitert (wie frueher
-    der paho-Client der Tests); connected: Verbindung des Links."""
+    der paho-Client der Tests); connected: Verbindung des Links; failures: gescheiterte Verbindungsversuche seit der
+    letzten Verbindung (MqttChannel.connect_failures)."""
 
     def __init__(self, log=None):
-        self.messages, self.connected = [], True
+        self.messages, self.connected, self.failures = [], True, 0
         self.publish_error = None
         self._log = log
 
@@ -133,7 +134,7 @@ class FakeGeraet:
         self.status.append(event)
 
     def kanal(self, worker):
-        self.channel = RuntimeChannel(self.sent.publish, lambda: self.sent.connected, lambda: 0)
+        self.channel = RuntimeChannel(self.sent.publish, lambda: self.sent.connected, lambda: self.sent.failures)
         self.channels.append(self.channel)
         return self.channel.binden(worker)
 
