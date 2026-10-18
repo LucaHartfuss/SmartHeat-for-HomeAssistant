@@ -3,8 +3,9 @@ updater), Uhr aus dem Supervisor, den HA-Teil der Konfigurationspruefung, die Be
 diagnostics; HA-fremde Befehle nicht_unterstuetzt) und nimmt Konfiguration und Bedienung entgegen. Alle Rueckrufe laufen
 im Geraete-Thread und werfen nicht (ausser NichtPruefbar aus treiber_pruefen, siehe dokument.zuordnung_pruefen, und
 einem OSError der Markierung aus konfiguration_vorbereiten, siehe geraet_host_basis). Eine laufzeitrelevante neue
-Konfiguration fordert einen Neustart an (geraet_host_basis.EV_RELOAD im Regel-Worker); der Wechsel von eingerichtet auf
-leer markiert das Aufraeumen vor dem Speichern (A4-07).
+Konfiguration fordert einen Neustart an (geraet_host_basis.EV_RELOAD im Regel-Worker), ebenso eine neue, nicht leere
+derselben Anlage, die die Abmelde-Markierung aufhebt (5b-D2-7); der Wechsel von eingerichtet auf leer markiert das
+Aufraeumen vor dem Speichern (A4-07).
 Eine neue Bedienung geht als Soll-Eingang (portal) an den Worker, der Soll-Eingang schreibt sie in den Soll-Speicher und
 gleicht die Soll-Entity an; kommt sie vor dem Binden, stellt worker_binden die letzte nach. Status
 (runtime_status_event, Task 7) und Raum (raum_merken, HaHost) legt der Worker-Thread hier ab, der Geraete-Thread liest
@@ -61,6 +62,9 @@ class HaDeviceHost(GeraetHostBasis):
 
     def aufraeumen_pfad(self) -> Path:
         return config.AUFRAEUMEN_PATH
+
+    def abgemeldet_pfad(self) -> Path:
+        return config.ABGEMELDET_PATH
 
     # --- Sicht der Laufzeit (HaHost) ---
 

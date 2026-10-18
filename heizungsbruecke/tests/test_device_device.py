@@ -438,8 +438,8 @@ def _leer(version):
 
 
 class BasisHost(GeraetHostBasis, FakeHost):
-    """FakeHost mit den echten Rueckrufen des gemeinsamen Teils (Markierung, Neustart); aufraeumen.json im
-    Testordner."""
+    """FakeHost mit den echten Rueckrufen des gemeinsamen Teils (Markierung, Neustart); aufraeumen.json und
+    abgemeldet.json im Testordner."""
 
     def __init__(self, pfad) -> None:
         FakeHost.__init__(self)
@@ -448,6 +448,9 @@ class BasisHost(GeraetHostBasis, FakeHost):
 
     def aufraeumen_pfad(self):
         return self.pfad
+
+    def abgemeldet_pfad(self):
+        return self.pfad.parent / "abgemeldet.json"
 
 
 def test_a_failing_cleanup_marker_holds_the_empty_configuration_back_until_it_can_be_written(tmp_path, monkeypatch,

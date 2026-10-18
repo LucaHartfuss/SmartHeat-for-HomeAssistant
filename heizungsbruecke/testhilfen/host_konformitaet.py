@@ -1,7 +1,7 @@
 """Konformitaet der Geraete-Hosts (V2; Audit 5 A5-58; Spec Stufe 3 S6 4.1): dieselben Pruefungen fuer HaDeviceHost und
 GatewayDeviceHost. Jeder Host baut eine Welt (Fixture in seiner Testdatei); die Pruefungen kennen nur die gemeinsame
 Sicht: Binden des Workers, Nachstellen von Neustart und Bedienung, Ursprungswerte, Dokumentsicht, Aufraeum-Markierung,
-Bedienwunsch. Rueckrufe des Geraetekerns werfen nie, bis auf konfiguration_vorbereiten (vor dem Speichern, Spec
+Abmelde-Markierung (verfaellt mit einer neuen Konfiguration derselben Anlage, 5b-D2-7), Bedienwunsch. Rueckrufe des Geraetekerns werfen nie, bis auf konfiguration_vorbereiten (vor dem Speichern, Spec
 Testoffensive 12.6, Nr. 38): laesst sich die Markierung nicht schreiben, geht der OSError an den Geraetekern, der das
 Dokument zurueckhaelt."""
 from collections.abc import Callable
@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from smartheat_core import dateien
+from smartheat_device.commands import CommandRegister, Waiting
 from smartheat_runtime import dokument_config
 from smartheat_runtime.soll_eingang import EV_TARGET_INPUT
 from smartheat_runtime.soll_speicher import SOURCE_PORTAL
@@ -55,6 +56,7 @@ class Welt:
     clock: Callable[[], float]
     reload_kind: str
     aufraeumen_pfad: Path
+    abgemeldet_pfad: Path  # wohin sign_off die Abmelde-Markierung schreibt (Host)
     konfiguration: dict  # eine eingerichtete Konfiguration des Hosts
     wunsch_herkunft: str  # herkunft, mit der host.wunsch(wert) den Geraetekern ruft
 
@@ -241,6 +243,74 @@ def eine_unerhebliche_aenderung_startet_nicht_neu(w: Welt) -> None:
     assert seen == []
 
 
+def _abmelden(w: Welt, anlage: str) -> None:
+    """Abmelde-Markierung wie nach einem sign_off (Inhalt und Modus wie dokument_config.abmelden)."""
+    dateien.schreiben_json(w.abgemeldet_pfad, {"anlage": anlage}, modus=dateien.PRIVAT)
+
+
+def eine_neue_konfiguration_derselben_anlage_hebt_die_abmeldung_auf(w: Welt) -> None:
+    """5b-D2-7 (Spec Testoffensive 12.7): das Geraet folgt dem Server. Auch ohne laufzeitrelevante Aenderung (gleicher
+    Inhalt in neuer Version, nur das Profil anders) faellt die Markierung, und der Neustart verlaesst "abgemeldet"."""
+    w.verbunden()
+    alt = dict(w.konfiguration)
+    worker, seen = w.worker()
+    w.host.worker_binden(worker)
+    for neu in (dict(alt), {**alt, "profil": "anderes_profil"}):
+        _abmelden(w, alt["anlage"])
+        assert dokument_config.abgemeldet(w.abgemeldet_pfad, neu)
+        w.host.konfiguration_uebernommen(alt, neu)
+        assert not dokument_config.abgemeldet(w.abgemeldet_pfad, neu)
+        assert not w.abgemeldet_pfad.exists()
+        worker.run_pending()
+        assert seen == [(w.reload_kind, None)]
+        seen.clear()
+
+
+def ein_sign_off_nach_der_neuen_konfiguration_meldet_wieder_ab(w: Welt) -> None:
+    device = w.verbunden()
+    alt = dict(w.konfiguration)
+    neu = {**alt, "profil": "anderes_profil"}
+    _abmelden(w, alt["anlage"])
+    w.host.konfiguration_uebernommen(alt, neu)
+    device.konf = neu
+    assert not dokument_config.abgemeldet(w.abgemeldet_pfad, neu)
+    worker, seen = w.worker()
+    w.host.worker_binden(worker)
+    worker.run_pending()
+    seen.clear()
+    register = CommandRegister(w.abgemeldet_pfad.parent, lambda body: True)
+    w.host.befehle_eintragen(register)
+    assert isinstance(register._handlers["sign_off"]({}), Waiting)
+    assert dateien.lesen_json(w.abgemeldet_pfad) == {"anlage": alt["anlage"]}
+    assert dokument_config.abgemeldet(w.abgemeldet_pfad, neu)
+    worker.run_pending()
+    assert seen == [(w.reload_kind, None)]
+
+
+def eine_leere_oder_fremde_konfiguration_laesst_die_abmeldung_stehen(w: Welt) -> None:
+    w.verbunden()
+    alt = dict(w.konfiguration)
+    _abmelden(w, alt["anlage"])
+    for neu in ({**alt, "anlage": None}, {**alt, "anlage": ""}, {**alt, "anlage": "andere_anlage"}):
+        w.host.konfiguration_uebernommen(alt, neu)
+        assert dateien.lesen_json(w.abgemeldet_pfad) == {"anlage": alt["anlage"]}
+    assert dokument_config.abgemeldet(w.abgemeldet_pfad, alt)
+
+
+def ohne_eigene_abmeldung_startet_dieselbe_konfiguration_nicht_neu(w: Welt) -> None:
+    """Gegenstueck: ohne Markierung bzw. mit der Markierung einer anderen Anlage bleibt es bei laufzeit_relevant."""
+    w.verbunden()
+    alt = dict(w.konfiguration)
+    worker, seen = w.worker()
+    w.host.worker_binden(worker)
+    w.host.konfiguration_uebernommen(alt, dict(alt))
+    _abmelden(w, "andere_anlage")
+    w.host.konfiguration_uebernommen(alt, dict(alt))
+    worker.run_pending()
+    assert seen == []
+    assert dateien.lesen_json(w.abgemeldet_pfad) == {"anlage": "andere_anlage"}
+
+
 def wunsch_und_soll_quelle_gehen_an_das_geraet(w: Welt) -> None:
     device = w.verbunden()
     assert w.host.wunsch(30.0) == 25.0
@@ -261,7 +331,11 @@ PRUEFUNGEN = (
     vorbereiten_leer_nach_eingerichtet_markiert_aufraeumen, vorbereiten_ohne_wechsel_auf_leer_markiert_nichts,
     vorbereiten_wirft_wenn_die_markierung_nicht_geschrieben_werden_kann,
     uebernommen_leer_nach_eingerichtet_startet_neu_ohne_markierung, die_erste_leere_konfiguration_markiert_nichts,
-    eine_unerhebliche_aenderung_startet_nicht_neu, wunsch_und_soll_quelle_gehen_an_das_geraet, host_und_version,
+    eine_unerhebliche_aenderung_startet_nicht_neu, eine_neue_konfiguration_derselben_anlage_hebt_die_abmeldung_auf,
+    ein_sign_off_nach_der_neuen_konfiguration_meldet_wieder_ab,
+    eine_leere_oder_fremde_konfiguration_laesst_die_abmeldung_stehen,
+    ohne_eigene_abmeldung_startet_dieselbe_konfiguration_nicht_neu, wunsch_und_soll_quelle_gehen_an_das_geraet,
+    host_und_version,
 )
 
 

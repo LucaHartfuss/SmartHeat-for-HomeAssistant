@@ -17,7 +17,7 @@ def welt(tmp_path, clock):
     paths = Paths(tmp_path / "data")
     host = gh.GatewayDeviceHost(paths, ZigbeeMirror(FakeBus(), clock), host_dir=tmp_path / "host", clock=clock)
     return Welt(host=host, clock=clock, reload_kind=EV_RELOAD, aufraeumen_pfad=paths.aufraeumen,
-                konfiguration=konfiguration(), wunsch_herkunft="thermostat")
+                abgemeldet_pfad=paths.abgemeldet, konfiguration=konfiguration(), wunsch_herkunft="thermostat")
 
 
 @pytest.mark.parametrize("pruefung", parameter(ABWEICHUNGEN))

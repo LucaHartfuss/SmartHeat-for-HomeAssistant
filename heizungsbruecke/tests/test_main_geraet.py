@@ -12,8 +12,10 @@ from test_runtime import OPTIONS, _quiet_backup, env  # noqa: F401 - env ist ein
 
 import heizungsbruecke.__main__ as main_module
 from heizungsbruecke import config
+from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core import dateien, rastung
 from smartheat_device import prozess
+from smartheat_device.documents import DocumentStore
 from smartheat_device.host import Anzeige
 from smartheat_device.laufzeit import RuntimeChannel
 from smartheat_runtime import app, dokument_config
@@ -615,6 +617,35 @@ def test_a_marker_that_does_not_fit_the_lock_stays_on_reset_and_nothing_is_delet
         assert gelesen is not None and gelesen.zurueckgesetzt is False
         assert config.BACKUP_PATH.exists() and config.DERIVED_SENSORS_PATH.exists()
         assert json.loads(config.BACKUP_PATH.read_text())["boost_active"] is True
+
+
+def _dokument(inhalt: dict, version: int) -> dict:
+    return {"schema": 1, "version": version, **inhalt}
+
+
+@pytest.mark.parametrize("anders", [{"verteilsystem": "Fussbodenheizung"}, {"hebelsatz": "viessmann_vicare"}])
+def test_the_cleanup_keeps_the_lever_set_lock(geraet_env, anders):
+    """G-1, Angriff (ck F-client-kern-47): das Aufraeumen nach "leer ohne sign_off" (_anlage_loeschen) loescht den
+    anlagengebundenen Zustand, aber nicht device/sicherheitssatz.json; ein neuer Dokumentspeicher lehnt ein anderes Paar
+    weiter ab, dasselbe Paar nimmt er an."""
+    konfiguration = konfiguration_aus_optionen(OPTIONS)  # vaillant_vrc720 x Heizkoerper
+    leer = {**konfiguration, "anlage": None, "profil": None, "hebelsatz": None, "verteilsystem": None, "bindung": None,
+            "raumfuehler": [], "tagestick": None, "abo": None, "bindungsparameter": None}
+    device_dir = config.DEVICE_DATA_DIR / "device"
+    store = DocumentStore(device_dir, host="ha", software_version=ADDON_VERSION)
+    assert store.empfangen("konfiguration", _dokument(konfiguration, 1)).uebernommen
+    assert store.empfangen("konfiguration", _dokument(leer, 2)).uebernommen
+    _entfernt_vorbereiten()
+    aufraeumen_markierung.markieren(config.AUFRAEUMEN_PATH, konfiguration)
+    assert aufraeumen_markierung.zurueckgesetzt(config.AUFRAEUMEN_PATH, konfiguration["anlage"])
+
+    main_module.aufraeumen(DeletingHa())
+    assert _anlage_geloescht() and not config.AUFRAEUMEN_PATH.exists()  # das Aufraeumen lief
+
+    store = DocumentStore(device_dir, host="ha", software_version=ADDON_VERSION)
+    ergebnis = store.empfangen("konfiguration", _dokument({**konfiguration, **anders}, 3))
+    assert (ergebnis.ok, ergebnis.grund) == (False, "hebelsatz_eingerastet")
+    assert store.empfangen("konfiguration", _dokument(konfiguration, 4)).uebernommen
 
 
 def test_no_marker_no_cleanup(geraet_env):

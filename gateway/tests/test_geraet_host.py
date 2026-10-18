@@ -7,20 +7,24 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
-from configs import konfiguration
+from configs import dokumente_schreiben, konfiguration
 from fakes import FakeBus
+from world import GatewayWorld
 
 from smartheat_core import dateien
 from smartheat_device import nachrichten, wire
+from smartheat_device.documents import DocumentStore
 from smartheat_device.geraet_host_basis import EV_RELOAD
 from smartheat_device.host import Anzeige
 from smartheat_gateway import geraet_host as gh
+from smartheat_gateway import runtime_main
 from smartheat_gateway.drivers import registry
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.triggers import EV_TARGET_INPUT
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime import dokument_config
+from smartheat_runtime.runtime import Runtime
 from smartheat_runtime.soll_speicher import SOURCE_PORTAL
 from smartheat_runtime.worker import RegulationWorker
 
@@ -192,6 +196,55 @@ def test_vergessen_removes_the_plant_state_but_keeps_device_and_simulation(welt)
     assert not welt.paths.runtime_dir.exists() and not welt.paths.inventur.exists()
     assert not (welt.paths.driver_secrets_dir / "vicare.json").exists()
     assert (welt.paths.device_dir / "konfiguration.json").exists() and (welt.paths.sim_dir / "plant.json").exists()
+
+
+def _dokument(inhalt: dict, version: int) -> dict:
+    return {"schema": 1, "version": version, **inhalt}
+
+
+@pytest.mark.parametrize("anders", [{"verteilsystem": "Fussbodenheizung"}, {"hebelsatz": "vaillant_vrc720"}])
+def test_vergessen_keeps_the_lever_set_lock(welt, anders):
+    """G-1, Angriff (ck F-client-kern-47): das Aufraeumen nach "leer ohne sign_off" (runtime_main._vergessen) loescht
+    den anlagengebundenen Zustand, aber nicht device/sicherheitssatz.json; ein neuer Dokumentspeicher lehnt ein anderes
+    Paar weiter ab, dasselbe Paar nimmt er an."""
+    store = DocumentStore(welt.paths.device_dir, host="gateway", software_version=GATEWAY_VERSION)
+    assert store.empfangen("konfiguration", _dokument(konfiguration(), 1)).uebernommen
+    assert store.empfangen("konfiguration", _dokument(LEER, 2)).uebernommen
+    dateien.schreiben_json(welt.paths.backup, {"x": 1}, modus=dateien.LESBAR)
+    assert runtime_main._vergessen(welt.paths)
+    assert not welt.paths.runtime_dir.exists()  # das Aufraeumen lief
+    store = DocumentStore(welt.paths.device_dir, host="gateway", software_version=GATEWAY_VERSION)
+    ergebnis = store.empfangen("konfiguration", _dokument(konfiguration(**anders), 3))
+    assert (ergebnis.ok, ergebnis.grund) == (False, "hebelsatz_eingerastet")
+    assert store.empfangen("konfiguration", _dokument(konfiguration(), 4)).uebernommen
+
+
+@pytest.fixture
+def world(data_dir, monkeypatch, clock):
+    world = GatewayWorld(data_dir, monkeypatch, clock)
+    yield world
+    world.close()
+
+
+def test_the_sign_off_ends_only_with_a_new_version_of_the_same_plant(world):
+    """5b-D2-7, Review Focus 2, ganzer Weg (Geraetekern, Dokumentspeicher, Host): abgemeldet bleibt bei erneuter
+    Zustellung derselben Version (kein Neustart); eine neue Version mit gleichem Inhalt hebt die Markierung auf, und der
+    Neustart regelt wieder."""
+    dokumente_schreiben(world.paths, konfiguration(), version=1)
+    dokument_config.abmelden(world.paths.abgemeldet, "test-tenant")
+    world.start_runtime()
+    world.connect()
+    assert world.status()["status"] == "abgemeldet"
+
+    world.konfiguration_senden(konfiguration(), 1)  # erneute Zustellung nach dem Neuverbinden
+    assert world.restarts == 1 and world.status()["status"] == "abgemeldet"
+    assert json.loads(world.paths.abgemeldet.read_text()) == {"anlage": "test-tenant"}
+
+    world.konfiguration_senden(konfiguration(), 2)
+    assert not world.paths.abgemeldet.exists()
+    assert world.restarts == 2 and isinstance(world.result, Runtime)
+    world.connect()
+    assert world.status()["status"] == "regelt" and world.status()["tenant_id"] == "test-tenant"
 
 
 def test_an_operation_goes_to_the_worker_as_target_input(welt):

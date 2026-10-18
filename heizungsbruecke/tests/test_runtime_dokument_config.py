@@ -172,6 +172,47 @@ def test_the_sign_off_marker_binds_to_the_installation_and_is_private(tmp_path):
     assert dc.abmelden(pfad, "andere") is True and not dc.abgemeldet(pfad, KONF)
 
 
+def test_the_sign_off_marker_is_lifted_only_for_its_own_installation(tmp_path):
+    """5b-D2-7: abmeldung_aufheben entfernt nur die Markierung der genannten Anlage."""
+    pfad = tmp_path / "runtime" / "abgemeldet.json"
+    assert dc.abmeldung_aufheben(pfad, "kunde3") is False  # keine Markierung
+    dc.abmelden(pfad, "kunde3")
+    assert dc.abmeldung_aufheben(pfad, "andere") is False
+    assert json.loads(pfad.read_text()) == {"anlage": "kunde3"}
+    assert dc.abmeldung_aufheben(pfad, "kunde3") is True
+    assert not pfad.exists() and not dc.abgemeldet(pfad, KONF)
+    pfad.write_text("{kaputt")
+    assert dc.abmeldung_aufheben(pfad, "kunde3") is False
+    assert pfad.read_text() == "{kaputt"
+
+
+def test_a_sign_off_marker_that_cannot_be_removed_stays_and_is_logged_without_path(tmp_path, monkeypatch, caplog):
+    pfad = tmp_path / "runtime" / "abgemeldet.json"
+    dc.abmelden(pfad, "kunde3")
+
+    def unlink(self, missing_ok=False):
+        raise PermissionError(13, "Permission denied", str(self))
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    with caplog.at_level("WARNING"):
+        assert dc.abmeldung_aufheben(pfad, "kunde3") is False
+    assert dc.abgemeldet(pfad, KONF)
+    assert "Abmelde-Markierung nicht entfernt (PermissionError)" in caplog.text and str(tmp_path) not in caplog.text
+
+
+def test_a_sign_off_marker_removed_meanwhile_is_not_lifted_and_not_logged(tmp_path, monkeypatch, caplog):
+    pfad = tmp_path / "runtime" / "abgemeldet.json"
+    dc.abmelden(pfad, "kunde3")
+
+    def unlink(self, missing_ok=False):
+        raise FileNotFoundError(2, "No such file or directory", str(self))
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    with caplog.at_level("WARNING"):
+        assert dc.abmeldung_aufheben(pfad, "kunde3") is False
+    assert caplog.text == ""
+
+
 def test_runtime_refuses_a_configuration_that_does_not_fit_the_lock(tmp_path):
     pfad = tmp_path / "sicherheitssatz.json"
     rastung.schreiben(pfad, rastung.Rastung("viessmann_vicare", "Fussbodenheizung"), "2026-10-14T00:00:00+00:00")
