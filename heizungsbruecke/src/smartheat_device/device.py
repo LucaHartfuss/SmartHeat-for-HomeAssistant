@@ -140,6 +140,7 @@ class Device:
         self._hello_fehler: str | None = None  # letzte Fehlerart beim Bauen von hello (je Art einmal loggen)
         self._status_fehler: str | None = None  # letzter Vertragsverstoss beim Bauen (je Text einmal loggen)
         self._wunsch_fehler: str | None = None  # dito beim Bauen von up/wish
+        self._publish_fehler: dict[str, str] = {}  # Topic -> letzter Text, mit dem der Link das Senden verweigerte
         self._ursprung_gewarnt: set[str] = set()  # nicht meldbare Ursprungswerte: je Name einmal loggen (Takt: 1 s)
         self._zurueckgehalten: dict[str, dict] = {}  # Dokument, dessen Pruefung vorlaeufig nicht moeglich war
         self._pruefung_at = 0.0
@@ -351,10 +352,15 @@ class Device:
         if link is None:
             return None
         try:
-            return link.publish(name, payload)
+            mid = link.publish(name, payload)
         except ValueError as error:
-            logger.error("%s nicht gesendet: %s", name, error)
+            # Der Takt versucht es erneut (Status, Wunsch, hello): je Topic und Text einmal loggen, nicht jede Sekunde
+            if self._publish_fehler.get(name) != str(error):
+                self._publish_fehler[name] = str(error)
+                logger.error("%s nicht gesendet: %s", name, error)
             return None
+        self._publish_fehler.pop(name, None)
+        return mid
 
     def _publish_nach_hello(self, name: str, payload: dict) -> int | None:
         """Laufzeit-Nachrichten (Snapshot, Telemetrie) erst nach hello (Spec 5b 5.1: hello zuerst)."""

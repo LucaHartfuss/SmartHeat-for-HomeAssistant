@@ -992,6 +992,10 @@ def test_ein_nicht_endlicher_wert_im_status_wird_nicht_gesendet_der_takt_lebt_we
     world.host.raum_wert = {"ist": float("nan"), "soll": 22.0, "soll_quelle": "portal", "ts": "t1"}
     world.device.schritt()
     assert len(world.link.of("up/status")) == anzahl and "up/status nicht gesendet" in caplog.text
+    for _ in range(5):    # der Takt versucht es jede Sekunde: genau eine Fehlerzeile, keine Flut
+        world.clock.now += 1
+        world.device.schritt()
+    assert caplog.text.count("up/status nicht gesendet") == 1 and len(world.link.of("up/status")) == anzahl
     world.clock.now += 60
     world.host.raum_wert = {"ist": None, "soll": 22.0, "soll_quelle": "portal", "ts": "t2"}
     world.device.schritt()
@@ -1088,3 +1092,18 @@ def test_host_errors_are_logged_without_their_message(tmp_path, caplog):
     assert "RuntimeError" in caplog.text and "test_device_device.py" in caplog.text
     assert "geheim" not in caplog.text and "Traceback" not in caplog.text
     assert all(record.exc_info is None for record in caplog.records)
+
+
+def test_nach_dem_wegfall_der_ursache_wird_ein_erneuter_fehler_wieder_geloggt(tmp_path, caplog):
+    """Die Drosselung des Logs gilt je Ursache: nach einem erfolgreichen Senden meldet ein neuer Fehler sich wieder."""
+    world = World(tmp_path)
+    world.verbinden()
+    for runde in range(2):
+        world.clock.now += 60
+        world.host.raum_wert = {"ist": float("nan"), "soll": 22.0, "soll_quelle": "portal", "ts": f"n{runde}"}
+        world.device.schritt()
+        world.device.schritt()
+        world.clock.now += 60
+        world.host.raum_wert = {"ist": 20.0, "soll": 22.0, "soll_quelle": "portal", "ts": f"g{runde}"}
+        world.device.schritt()
+    assert caplog.text.count("up/status nicht gesendet") == 2
