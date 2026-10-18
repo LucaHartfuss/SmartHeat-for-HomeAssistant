@@ -81,3 +81,22 @@ def test_discovery_entfernen_other_errors_raise(monkeypatch):
     monkeypatch.setattr(requests, "delete", lambda url, **kw: Response({}, status=500))
     with pytest.raises(requests.HTTPError):
         supervisor.SupervisorApi(token="t").discovery_entfernen("u-1")
+
+
+@pytest.mark.parametrize("fehler", [requests.Timeout("Bearer t"), requests.ConnectionError("Bearer t")])
+def test_a_timeout_or_a_broken_connection_raises_the_request_error(monkeypatch, fehler):
+    """Ein tatsaechliches Zeitlimit oder ein Verbindungsabbruch am requests-Rand: jeder Aufruf wirft die Ausnahme von
+    requests (keine erfundene Antwort, kein leeres Ergebnis); die Aufrufer werten sie aus (Uhr unbekannt, Discovery
+    nach der Pause erneut: test_geraet_host.py, test_discovery.py)."""
+    def werfen(url, **kw):
+        raise fehler
+
+    for methode in ("get", "post", "delete"):
+        monkeypatch.setattr(requests, methode, werfen)
+    api = supervisor.SupervisorApi(token="t")
+    with pytest.raises(type(fehler)):
+        api.host_info()
+    with pytest.raises(type(fehler)):
+        api.discovery_anmelden({"geraet_id": "shg-a", "zustand": "uebernommen"})
+    with pytest.raises(type(fehler)):
+        api.discovery_entfernen("u-1")

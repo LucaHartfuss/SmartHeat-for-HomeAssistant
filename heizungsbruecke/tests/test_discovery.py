@@ -414,3 +414,27 @@ def test_the_code_never_reaches_the_log(tmp_path, caplog):
     supervisor.fail_delete = True
     d.aktualisieren("shg-a", "uebernommen", None)
     assert caplog.records and CODE not in caplog.text
+
+
+def test_a_supervisor_timeout_is_retried_after_the_pause(tmp_path, monkeypatch, caplog):
+    """Echte SupervisorApi, Zeitlimit am requests-Rand: aktualisieren wirft nicht, im Log nur die Fehlerart; 59 s
+    spaeter kein neuer Versuch, nach 60 s geht die Meldung hinaus."""
+    http = SupervisorHttp()
+    versuche = []
+
+    def haengt(url, **kw):
+        versuche.append(url)
+        raise requests.Timeout("Bearer geheim")
+
+    monkeypatch.setattr(requests, "post", haengt)
+    clock = FakeClock()
+    d = discovery.Discovery(SupervisorApi(token="geheim"), tmp_path / "discovery.json", clock=clock)
+    d.aktualisieren("shg-a", "uebernommen", None)
+    assert len(versuche) == 1 and "Discovery nicht gemeldet (Timeout)" in caplog.text and "geheim" not in caplog.text
+    clock.advance(59)
+    d.aktualisieren("shg-a", "uebernommen", None)
+    assert len(versuche) == 1
+    monkeypatch.setattr(requests, "post", http.post)
+    clock.advance(1)
+    d.aktualisieren("shg-a", "uebernommen", None)
+    assert http.meldungen == {"u-1": {"geraet_id": "shg-a", "zustand": "uebernommen"}}

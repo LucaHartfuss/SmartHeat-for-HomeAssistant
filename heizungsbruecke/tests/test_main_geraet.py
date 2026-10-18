@@ -1,8 +1,10 @@
 """Spec 5c 1.1/1.2: Start ohne Optionen als Geraet (Geraetekern und Laufzeit in einem Prozess); Neustart erst nach
 sauberem Trennen; Aufraeumen nach dem Entfernen. Die frueheren Tests des Optionsmodus stehen noch in test_main.py
 (Task 10 ordnet sie ein)."""
+import errno
 import json
 import logging
+import os
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -523,6 +525,46 @@ def test_cleanup_keeps_helpers_it_could_not_delete_for_the_next_start(geraet_env
     main_module.aufraeumen(ha)
     assert ha.deleted == [("sensor.smartheat_aussen", "alt")]
     assert not config.DERIVED_SENSORS_PATH.exists() and not config.AUFRAEUMEN_PATH.exists()
+
+
+@pytest.mark.parametrize("fehler, art", [(errno.EACCES, "PermissionError"), (errno.EIO, "OSError")])
+def test_a_state_file_that_cannot_be_deleted_keeps_the_marker_and_the_start_goes_on(geraet_env, monkeypatch, caplog,
+                                                                                    fehler, art):
+    """Scheitert das Loeschen einer Zustandsdatei (Rechte, EIO; per monkeypatch, nie per chmod), wirft das Aufraeumen
+    nicht (der Geraetekern startet trotzdem, wie bei nicht loeschbaren Hilfssensoren): die Datei und die Markierung
+    bleiben fuer den naechsten Start, der uebrige Zustand ist weg; im Log stehen Datei und Fehlerart. Der naechste Start
+    loescht den Rest und die Markierung."""
+    _entfernt_vorbereiten()
+    echt = Path.unlink
+
+    def unlink(self, missing_ok=False):
+        if self == config.FAILSAFE_PATH:
+            raise OSError(fehler, os.strerror(fehler))
+        echt(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    main_module.aufraeumen(DeletingHa())  # wirft nicht
+    assert config.FAILSAFE_PATH.exists() and config.AUFRAEUMEN_PATH.exists()
+    assert not config.BACKUP_PATH.exists() and not config.ENTITLEMENT_PATH.exists() and not config.RUNTIME_DIR.exists()
+    assert f"{config.FAILSAFE_PATH.name} nicht geloescht ({art})" in caplog.text
+    monkeypatch.setattr(Path, "unlink", echt)
+    main_module.aufraeumen(DeletingHa())
+    assert _anlage_geloescht() and not config.AUFRAEUMEN_PATH.exists()
+
+
+def test_a_runtime_folder_that_cannot_be_removed_keeps_the_marker(geraet_env, monkeypatch, caplog):
+    """Laesst sich der Laufzeit-Ordner nicht ganz entfernen (EACCES), bleibt die Markierung: der naechste Start versucht
+    es erneut, statt den Rest des Ordners fuer immer liegen zu lassen."""
+    _entfernt_vorbereiten()
+    (config.RUNTIME_DIR / "soll.json").write_text("{}")
+
+    def rmtree(path, *args, **kwargs):
+        raise PermissionError(errno.EACCES, "verweigert")
+
+    monkeypatch.setattr(main_module.shutil, "rmtree", rmtree)
+    main_module.aufraeumen(DeletingHa())
+    assert (config.RUNTIME_DIR / "soll.json").exists() and config.AUFRAEUMEN_PATH.exists()
+    assert f"{config.RUNTIME_DIR.name} nicht geloescht (PermissionError)" in caplog.text
 
 
 def test_cleanup_waits_a_limited_time_for_home_assistant(geraet_env, monkeypatch):

@@ -1,12 +1,16 @@
 """Spec 5c 1.3, Stufe 3 S5 3.2: Konfigurationsdokument -> HaBindung; Rollentabellen; HA-Teil der lokalen Pruefung."""
 import json
+from unittest.mock import patch
 
 import bindung_beispiele
 import pytest
+import requests
 from bindung_beispiele import parameter
 from fakes import FakeHa
+from test_ha_api import _antwort, _HaWebSocket
 
 from heizungsbruecke import dokument
+from heizungsbruecke.ha_api import HomeAssistantApi
 from smartheat_core import config_check
 from smartheat_runtime import dokument_config
 from smartheat_runtime.dokument_config import ConfigError
@@ -317,6 +321,45 @@ def test_ha_still_starting_is_not_a_verdict_either():
     ha.is_reachable = lambda: False
     with pytest.raises(config_check.NichtPruefbar):
         dokument.zuordnung_pruefen(KONFIGURATION, ha)
+
+
+def test_a_hanging_ha_ends_the_check_at_the_first_timeout_without_a_verdict():
+    """Heutiges Verhalten, Restpunkt 5c-D-8 (d): haengt HA statt zu verweigern, wartet die Pruefung im Geraete-Thread
+    auf das Zeitlimit des ersten haengenden Aufrufs (10 s, Argument an requests) und endet dann mit NichtPruefbar, ohne
+    weitere Aufrufe. Echte HomeAssistantApi, das Haengen als requests.Timeout am requests-Rand."""
+    aufrufe = []
+
+    def haengt(url, **kw):
+        aufrufe.append((url.removeprefix("http://supervisor/core/api"), kw["timeout"]))
+        raise requests.Timeout("haengt")
+
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    with patch("heizungsbruecke.ha_api.requests.get", autospec=True, side_effect=haengt), \
+            _HaWebSocket().angeschlossen() as verbinden, pytest.raises(config_check.NichtPruefbar):
+        dokument.zuordnung_pruefen(KONFIGURATION, api)
+    assert aufrufe == [("/config", 10)] and verbinden.call_count == 0
+
+    aufrufe.clear()
+
+    def config_antwortet(url, **kw):
+        if url.endswith("/config"):
+            return _antwort({"state": "RUNNING"})
+        return haengt(url, **kw)
+
+    with patch("heizungsbruecke.ha_api.requests.get", autospec=True, side_effect=config_antwortet), \
+            _HaWebSocket(_ha().registry).angeschlossen(), pytest.raises(config_check.NichtPruefbar):
+        dokument.zuordnung_pruefen(KONFIGURATION, api)
+    assert aufrufe == [("/states/sensor.room_target", 10)]
+
+
+def test_an_entity_whose_integration_loads_after_running_is_refused_at_the_first_setup():
+    """Heutiges Verhalten, Restpunkt 5c-D-8 (e): HA laeuft (RUNNING), die Entity steht in der Registry, ihre
+    Integration hat aber noch keinen Zustand geliefert (/api/states 404): die erste Einrichtung wird abgelehnt
+    (unbekannt), nicht als NichtPruefbar zurueckgehalten."""
+    ha = _ha()
+    assert any(e["entity_id"] == "number.heat_limit" for e in ha.registry)
+    ha.missing.add("number.heat_limit")
+    assert dokument.zuordnung_pruefen(KONFIGURATION, ha) == {"feld": "heat_limit", "regel": "unbekannt"}
 
 
 def test_a_contract_violation_in_the_details_is_a_programming_error_not_a_missing_ha(monkeypatch):

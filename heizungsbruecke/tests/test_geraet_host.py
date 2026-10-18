@@ -4,6 +4,7 @@ import stat
 import time
 
 import pytest
+import requests
 from conftest import FakeClock
 from fakes import FakeHa
 from geraet_helpers import konfiguration_aus_optionen
@@ -11,6 +12,7 @@ from test_runtime import OPTIONS, env  # noqa: F401 - env ist eine Fixture
 
 from heizungsbruecke import config, discovery, geraet_host
 from heizungsbruecke.host import EV_RAUM, RAUM_SECONDS, HaHost
+from heizungsbruecke.supervisor import SupervisorApi
 from smartheat_core.config_check import NichtPruefbar
 from smartheat_device import inventory, nachrichten, wire
 from smartheat_device.commands import CommandRegister, Done, Failed, Waiting
@@ -151,6 +153,47 @@ def test_clock_error_logs_only_the_kind(tmp_path, monkeypatch, caplog):
     host, _, _ = _host(tmp_path, monkeypatch, Supervisor(error=OSError("Bearer geheim")))
     host.uhr_synchron()
     assert "OSError" in caplog.text and "geheim" not in caplog.text
+
+
+class _Antwort:
+    """HTTP-Antwort an der requests-Grenze fuer die echte SupervisorApi."""
+
+    def __init__(self, body, status=200):
+        self._body, self.status_code = body, status
+
+    def json(self):
+        return self._body
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(response=self)
+
+
+@pytest.mark.parametrize("fehler", [requests.Timeout("Bearer geheim"), requests.ConnectionError("Bearer geheim")])
+def test_a_supervisor_timeout_or_broken_connection_leaves_the_clock_unknown(tmp_path, monkeypatch, caplog, fehler):
+    """Echte SupervisorApi, Zeitlimit bzw. Verbindungsabbruch am requests-Rand: die Uhr ist unbekannt (None), im Log
+    nur die Fehlerart; nach der Minute fragt der Host erneut und uebernimmt die Antwort."""
+    def werfen(url, **kw):
+        raise fehler
+
+    monkeypatch.setattr(requests, "get", werfen)
+    host, _, clock = _host(tmp_path, monkeypatch, SupervisorApi(token="geheim"))
+    assert host.uhr_synchron() is None
+    assert f"Uhrzeit des Hosts unbekannt ({type(fehler).__name__})" in caplog.text and "geheim" not in caplog.text
+    monkeypatch.setattr(requests, "get", lambda url, **kw: _Antwort({"result": "ok", "data": {"dt_synchronized": True}}))
+    clock.advance(60)
+    assert host.uhr_synchron() is True
+
+
+def test_a_clock_answer_without_dt_synchronized_counts_as_not_synchronized(tmp_path, monkeypatch):
+    """Antwort des Supervisors ohne den Schluessel dt_synchronized (echte SupervisorApi): unbekannt (None), der
+    Geraetekern behandelt das wie nicht synchron. Gegenprobe: mit dem Schluessel True."""
+    monkeypatch.setattr(requests, "get", lambda url, **kw: _Antwort({"result": "ok", "data": {"timezone": "UTC"}}))
+    host, _, clock = _host(tmp_path, monkeypatch, SupervisorApi(token="t"))
+    assert host.uhr_synchron() is None
+    monkeypatch.setattr(requests, "get", lambda url, **kw: _Antwort({"result": "ok", "data": {"dt_synchronized": True}}))
+    clock.advance(60)
+    assert host.uhr_synchron() is True
 
 
 def test_software_is_ignored(tmp_path, monkeypatch):
@@ -432,6 +475,28 @@ def test_sign_off_marks_restarts_and_reports_the_restore_point(tmp_path, monkeyp
     host._neustart = False  # erneut zugestellt: dieselbe Markierung, kein zweiter Neustart
     register._handlers["sign_off"]({})
     assert not host._neustart
+
+
+def test_sign_off_ends_after_its_deadline_of_a_day(tmp_path, monkeypatch):
+    """Wartegrenze von sign_off 86 400 s (24 h) auf der Uhr des Hosts: zeigt der Status bis dahin nicht abgemeldet,
+    endet der Befehl nach der Frist mit keine_bestaetigung (auf der Frist noch offen, eine Sekunde danach beendet)."""
+    konf = konfiguration_aus_optionen(OPTIONS)
+    host, _, clock = _host(tmp_path, monkeypatch, device=Device(konf))
+    ergebnisse = []
+    register = CommandRegister(tmp_path, lambda body: ergebnisse.append(body) or True, clock=clock)
+    host.befehle_eintragen(register)
+    register.empfangen({"schema": 1, "command_id": "c-abmelden", "kind": "sign_off", "payload": {},
+                        "expires_at": "2027-01-15T09:00:00+00:00"})
+    clock.advance(86_400)
+    register.pruefen()
+    assert ergebnisse == []
+    clock.advance(1)
+    register.pruefen()
+    assert [(e["command_id"], e["ok"], e["error"]["grund"]) for e in ergebnisse] == [
+        ("c-abmelden", False, "keine_bestaetigung")]
+    host.runtime_status_event = {"status": STATUS_ABGEMELDET, "tenant_id": konf["anlage"], "grund": None}
+    register.pruefen()  # zu spaet: der Befehl ist beendet, kein zweites Ergebnis
+    assert len(ergebnisse) == 1
 
 
 def test_sign_off_without_setup_fails(tmp_path, monkeypatch):

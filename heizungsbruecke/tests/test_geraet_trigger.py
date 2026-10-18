@@ -577,6 +577,42 @@ def test_the_watch_retries_the_owed_alignment_until_it_succeeds(tmp_path):
     assert a.ha.writes == [(SOLL, 22.5)]
 
 
+def test_a_permanently_refused_alignment_stays_owed_with_a_warning_every_five_minutes(tmp_path, caplog):
+    """Heutiges Verhalten, Restpunkt 5c-D-8 (a): lehnt HA das Schreiben an die Soll-Entity dauerhaft ab, bleibt die
+    Angleichung offen; die Wache versucht sie im Takt des lokalen Checks (300 s) und warnt je Versuch einmal (299 s
+    nach einem Versuch nichts, nach 300 s der naechste). Kein Wunsch, der Speicher behaelt die Bedienung, das Thermostat
+    zeigt weiter den alten Wert."""
+    a = Aufbau(tmp_path)
+    _portal_waehrend_ha_down(a)  # erster gescheiterter Versuch beim Eintreffen der Bedienung
+
+    def warnungen():
+        return sum("Soll-Entity nicht angeglichen (RuntimeError)" in r.getMessage() for r in caplog.records)
+
+    assert warnungen() == 1
+    for runde in range(1, 7):  # 30 Minuten
+        a.clock.advance(299)
+        a.run()
+        assert warnungen() == runde
+        a.clock.advance(1)
+        a.run()
+        assert warnungen() == runde + 1
+    assert a.ha.writes == [] and a.ha.states[SOLL] == 21.0 and a.wuensche == [] and a.store.value == 22.5
+
+
+def test_a_value_turned_during_the_ha_pause_loses_against_the_newer_operation(tmp_path):
+    """Heutiges Verhalten, Restpunkt 5c-D-8 (b): waehrend HA nicht beschreibbar ist, kommt eine Bedienung des Portals
+    (22,5) und der Nutzer dreht das Thermostat auf 23; nach der Pause zeigt HA die 23, die offene Angleichung
+    schreibt 22,5 darueber, die Drehung wird kein Wunsch."""
+    a = Aufbau(tmp_path)
+    _portal_waehrend_ha_down(a)
+    a.ha.write_error = None
+    a.ha.states[SOLL] = 23.0
+    a.client._on_connected()
+    a.run()
+    assert a.ha.writes == [(SOLL, 22.5)] and a.ha.states[SOLL] == 22.5
+    assert a.wuensche == [] and a.store.value == 22.5
+
+
 def test_the_watch_retries_an_owed_alignment_also_while_connected(tmp_path, monkeypatch):
     a = Aufbau(tmp_path)
     monkeypatch.setattr(type(a.client), "connected", property(lambda self: True))

@@ -124,8 +124,9 @@ def _ha_bereit(ha_api) -> bool:
 
 def aufraeumen(ha_api) -> None:
     """Markierung aufraeumen.json vor dem Start des Geraetekerns (prozess.aufraeumen_beim_start); geloescht werden
-    Sicherung, Notbetriebs- und Abo-Zustand, Laufzeit-Ordner und die Hilfssensoren in HA. Bleiben Hilfssensoren uebrig
-    (HA nicht bereit oder Fehler), bleibt die Markierung fuer den naechsten Start."""
+    Sicherung, Notbetriebs- und Abo-Zustand, Laufzeit-Ordner und die Hilfssensoren in HA. Bleibt etwas uebrig
+    (HA nicht bereit, Fehler beim Loeschen eines Helfers oder einer Datei), bleibt die Markierung fuer den naechsten
+    Start; der Start geht weiter."""
     prozess.aufraeumen_beim_start(
         config.AUFRAEUMEN_PATH,
         lambda: DocumentStore(config.DEVICE_DATA_DIR / DEVICE_DIR, host=HaDeviceHost.host,
@@ -144,13 +145,22 @@ def _anlage_loeschen(ha_api) -> bool:
             fertig = False
             logger.warning("Home Assistant nicht bereit: Hilfssensoren werden beim naechsten Start entfernt")
     geloescht = False
-    for path in (config.BACKUP_PATH, config.FAILSAFE_PATH, config.ENTITLEMENT_PATH):
-        if path.exists():
-            path.unlink(missing_ok=True)
-            geloescht = True
-    if config.RUNTIME_DIR.exists():
-        shutil.rmtree(config.RUNTIME_DIR, ignore_errors=True)
-        geloescht = True
+
+    def datei_weg(path) -> None:
+        path.unlink(missing_ok=True)  # zwischen exists und unlink verschwunden: weg
+
+    for path, entfernen in ((config.BACKUP_PATH, datei_weg), (config.FAILSAFE_PATH, datei_weg),
+                            (config.ENTITLEMENT_PATH, datei_weg), (config.RUNTIME_DIR, shutil.rmtree)):
+        # Scheitert das Loeschen (EACCES, EIO), bleibt die Markierung fuer den naechsten Start; der Start geht weiter
+        # wie bei nicht loeschbaren Hilfssensoren. exists() steht mit im try (wirft bei EIO/EACCES im stat).
+        try:
+            if path.exists():
+                entfernen(path)
+                geloescht = True
+        except OSError as error:
+            fertig = False
+            logger.warning("%s nicht geloescht (%s), neuer Versuch beim naechsten Start", path.name,
+                           type(error).__name__)
     if geloescht:
         logger.info("Anlagengebundener Zustand geloescht (Add-on nicht mehr eingerichtet)")
     return fertig
