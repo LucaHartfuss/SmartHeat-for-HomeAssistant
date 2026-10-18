@@ -92,13 +92,13 @@ def finish_grace(rt: Runtime, *, always_restore: bool, final_notice: bool) -> bo
     return True
 
 
-def report_restore(notifier, ok: bool) -> None:
+def report_restore(notifier, ok: bool) -> bool:
     """T2-7: eine dauerhaft scheiternde Wiederherstellung am Fristende wird einmal gemeldet
-    (kritisch), die spaetere Rueckkehr ebenfalls. Gelingt sie gleich, bleibt es still."""
+    (kritisch), die spaetere Rueckkehr ebenfalls. Gelingt sie gleich, bleibt es still. True bei einem
+    Zustandswechsel: die Aufrufer loggen ERROR nur dann, nicht bei jedem zurueckgestellten Versuch (TP12b)."""
     if ok:
-        notifier.notify(RESTORE_KEY, STATE_OK, RESTORE_OK_MESSAGE, critical=True)
-    else:
-        notifier.notify(RESTORE_KEY, RESTORE_FAILED_STATE, RESTORE_FAILED_MESSAGE, critical=True)
+        return notifier.notify(RESTORE_KEY, STATE_OK, RESTORE_OK_MESSAGE, critical=True)
+    return notifier.notify(RESTORE_KEY, RESTORE_FAILED_STATE, RESTORE_FAILED_MESSAGE, critical=True)
 
 
 AUTH_REJECTED_QUERY_INTERVAL_SECONDS = 600.0
@@ -186,8 +186,9 @@ def check_grace_end(rt: Runtime) -> None:
         report_restore(rt.notifier, ok=True)
         _enter_idle(rt)
         return
-    report_restore(rt.notifier, ok=False)
-    logger.error(
+    # ERROR einmal je gescheiterter Wiederherstellung, danach (Schreibbudget stellt zurueck) nur debug (TP12b)
+    log = logger.error if report_restore(rt.notifier, ok=False) else logger.debug
+    log(
         "Abo-inaktiv-Frist abgelaufen, zuletzt gelernte Werte konnten nicht wiederhergestellt "
         "werden - Notbetrieb laeuft weiter, erneuter Versuch beim naechsten Check"
     )

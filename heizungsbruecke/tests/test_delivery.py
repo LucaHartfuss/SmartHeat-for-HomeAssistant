@@ -40,6 +40,7 @@ from smartheat_runtime.delivery import (
     RetryDue,
     ScheduleAckTimeout,
     ScheduleRetry,
+    StorageWritable,
     TickDue,
     WriteFailed,
     accepts_ack,
@@ -294,6 +295,24 @@ def test_read_invalid_sets_local_fault_notifies_and_retries_after_thirty_seconds
     assert state.datenfehler == DataFault(SOURCE_LOCAL, ("dat", "room_actual"))
     assert state.server_failures == 1  # nur eine Server-Antwort setzt zurueck
     assert actions == [Notify(NOTIFY_DATENFEHLER_LOCAL, ("dat", "room_actual")), ScheduleRetry("s1", 1, 30)]
+
+
+def test_data_retry_chain_runs_30_300_900_then_hourly_and_restarts_after_success():
+    """A5-K2: die volle Kette der Daten-Wiederholungen ueber sechs Fehlversuche, Obergrenze 3600 s; ein neuer Tick
+    nach der Antwort beginnt wieder mit 30 s."""
+    state, actions = _run(DeliveryState(), TickDue("s1", "daily"), ReadInvalid("s1", ("dat",)))
+    delays = [actions[-1].delay_s]
+    for _ in range(5):
+        state, _ = _run(state, RetryDue("s1", state.pending.gen))
+        state, actions = step(state, ReadInvalid("s1", ("dat",)))
+        delays.append(actions[-1].delay_s)
+
+    assert delays == [30, 300, 900, 3600, 3600, 3600]
+
+    state, _ = _run(state, RetryDue("s1", state.pending.gen), Published("s1"), Ack("s1", "ok"))
+    assert state.pending is None
+    state, actions = _run(state, TickDue("s2", "target_change"), ReadInvalid("s2", ("dat",)))
+    assert actions[-1] == ScheduleRetry("s2", 1, 30)
 
 
 def test_read_invalid_with_same_roles_does_not_notify_again():
@@ -808,3 +827,32 @@ def test_clear_stale_notbetrieb_ends_it_silently_without_open_tick():
 def test_clear_stale_notbetrieb_keeps_a_notbetrieb_with_open_tick():
     state, _ = _in_notbetrieb()
     assert step(state, ClearStaleNotbetrieb()) == (state, [])
+
+
+# --- TP12b (2): Datentraeger wieder beschreibbar ---
+
+def test_storage_writable_attempts_a_tick_waiting_on_a_storage_fault_at_once():
+    state, _ = _published()
+    state, _ = step(state, AnsweredLocalFault(seq="s1", roles=(ROLE_DATENTRAEGER,)))
+    waiting = state.pending
+    assert (waiting.phase, waiting.stage) == (PHASE_WAITING_RETRY, 1)
+
+    state, actions = step(state, StorageWritable())
+
+    assert actions == [Attempt("s1", "daily")]
+    assert state.pending == replace(waiting, phase=PHASE_SENDING, gen=waiting.gen + 1)
+    assert state.datenfehler == DataFault(SOURCE_LOCAL, (ROLE_DATENTRAEGER,))  # bis zur Antwort
+    assert step(state, RetryDue("s1", waiting.gen)) == (state, [])  # geplanter Retry laeuft ins Leere
+
+
+@pytest.mark.parametrize("events", [
+    (),                                                                                  # kein offener Tick
+    (TickDue("s1", "daily"), Published("s1")),                                         # awaiting_ack
+    (TickDue("s1", "daily"), ReadInvalid("s1", ("dat",))),                             # anderer lokaler Datenfehler
+    (TickDue("s1", "daily"), Published("s1"), Ack("s1", "rejected", "unplausibel")),  # Server-Ablehnung
+    (TickDue("s1", "daily"), Published("s1"), AckTimeout("s1", 1)),                    # Server-Kette
+])
+def test_storage_writable_leaves_every_other_wait_alone(events):
+    state, _ = _run(DeliveryState(), *events)
+
+    assert step(state, StorageWritable()) == (state, [])

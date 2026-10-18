@@ -300,6 +300,23 @@ def test_server_values_do_not_retrigger_a_successful_restore(make_store, clock):
     assert len(binding.restored) == 1
 
 
+def test_replacement_device_without_local_values_does_not_restore_the_server_aux_values(make_store, clock):
+    """Heutiges Verhalten, Restpunkt S3S3-Ersatz: ein Ersatzgeraet, das vor seinem ersten regulaeren Start abgemeldet
+    wird (kein lokal gemerkter Wert, kein Boost, Hebel auf dem Ursprungswert), stellt die Hilfswerte des Servers nicht
+    wieder her; die Anlage steht dabei auf einer anderen Betriebsart als der Server-Ursprungswert."""
+    pipeline, store, ha, binding = _setup(
+        make_store, clock, backup={"restore_point": {"curve": 0.6, "room_setpoint": 20.0, "heat_limit": 16.0}},
+        server=SERVER_ALL)
+    ha.states.update({"number.hk": 0.6, "number.swu": 16.0})
+    binding.aux = {**AUX, "mode_select": "hz_operationmode_automatic"}
+    assert store.state.aux_originals == {} and store.state.originals == {}
+
+    assert pipeline.restore_and_clear(always_restore=False) is True
+
+    assert ha.writes == []
+    assert binding.restored == []
+
+
 def test_server_values_do_not_retrigger_a_restore_of_local_aux_values(make_store, clock):
     """Wie oben mit lokal gemerkten Hilfswerten (die gewinnen); nach dem Leeren duerfen die Serverwerte das
     Zuruecksetzen nicht neu ausloesen."""

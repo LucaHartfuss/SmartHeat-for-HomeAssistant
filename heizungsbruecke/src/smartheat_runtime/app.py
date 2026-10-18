@@ -339,9 +339,10 @@ def _finish_at_start(rt: Runtime, clock) -> IdleBridge:
             abo.report_restore(rt.notifier, ok=True)
             status.update(grund=None)
             return
-        abo.report_restore(rt.notifier, ok=False)
+        # ERROR einmal je gescheiterter Wiederherstellung, danach (Schreibbudget stellt zurueck) nur debug (TP12b)
+        log = logger.error if abo.report_restore(rt.notifier, ok=False) else logger.debug
         status.update(grund=abo.RESTORE_FAILED_REASON)
-        logger.error(
+        log(
             "Abo-inaktiv-Frist abgelaufen, Boost-Werte konnten nicht zurueckgesetzt werden - "
             "erneuter Versuch in %s s", retry_seconds,
         )
@@ -464,6 +465,8 @@ def _on_health(rt: Runtime, event: Event) -> None:
         rt.store.flush()
     except StorageError as error:
         logger.warning("Datentraeger weiterhin nicht beschreibbar: %s", error)
+    else:
+        ticks.deliver(rt, delivery.StorageWritable())  # wartet ein Tick am Datentraeger, jetzt erneut (TP12b)
     if rt.store.state.abo_finished:
         return
     for check in (battery.check_batteries, room_sensors.check_room_sensors, enforce.check_manual_override):
@@ -724,6 +727,10 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
     abo_inactive = rt.store.state.abo_inactive_since is not None
     if not abo_inactive:
         rt.mqtt_client = mqtt_factory(rt.worker)
+    stale_notbetrieb = not abo_inactive and _is_stale_notbetrieb(rt)
+    if stale_notbetrieb:
+        # vor _prime: dessen lokaler Check startete sonst einen Notfall-Boost (TP12b)
+        _end_stale_notbetrieb(rt, beenden=abo_status == entitlement.ACTIVE)
 
     _prime(rt)
     melder()
@@ -741,22 +748,29 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
     else:
         # Offenen Tick aus failsafe_state.json sofort mit derselben seq erneut versuchen.
         ticks.deliver(rt, delivery.Boot())
-        _resolve_stale_notbetrieb(rt, abo_status)
+        if stale_notbetrieb:
+            ticks.start_probe_tick(rt, "Notbetrieb ohne offenen Tick beim Start")
     status.publish_if_changed()
     return rt
 
 
-def _resolve_stale_notbetrieb(rt: Runtime, abo_status: str) -> None:
-    """Notbetrieb ohne offenen Tick endet nie von selbst (Spec TP12b 1.2): im Betrieb hat er immer
-    einen Tick, dessen Ack ihn beendet. Bei aktivem Abo still beenden -- nach dem stillen seed wurde
-    er nie gemeldet, eine Entwarnung waere falsch --, in jedem Fall per Pruef-Tick klaeren."""
+def _is_stale_notbetrieb(rt: Runtime) -> bool:
+    """Notbetrieb ohne offenen Tick endet nie von selbst (Spec TP12b 1.2): im Betrieb hat er immer einen Tick, dessen
+    Ack ihn beendet. Er stammt aus dem Abo-inaktiv-Modus (oder einer failsafe_state.json von 0.15.0); der Start klaert
+    ihn in jedem Fall per Pruef-Tick."""
     state = rt.store.state.delivery
-    if not state.notbetrieb or state.pending is not None:
-        return
-    if abo_status == entitlement.ACTIVE:
+    return state.notbetrieb and state.pending is None
+
+
+def _end_stale_notbetrieb(rt: Runtime, *, beenden: bool) -> None:
+    """Im Abo-inaktiv-Modus meldet die Abo-Meldung, nicht "Notbetrieb aktiv" (seed_notices hat den Meldezustand still
+    uebernommen): den Meldezustand still auf ok, sonst entwarnte die Antwort auf den Pruef-Tick bei Abo-Status UNKNOWN
+    einen nie gemeldeten Notbetrieb (TP12b); eine vor dem Abo-inaktiv-Modus offene Meldung wird dabei zurueckgezogen.
+    `beenden` (Abo aktiv): den Notbetrieb selbst still beenden, und zwar vor dem ersten lokalen Check, sonst schriebe
+    der Notfall-Boost bis zum naechsten Check seine Werte (TP12b)."""
+    if beenden:
         ticks.deliver(rt, delivery.ClearStaleNotbetrieb())
-        rt.notifier.notify(
-            "notbetrieb", STATE_OK, delivery.notification_text(delivery.NOTIFY_NOTBETRIEB_OFF, (), {}, rt.texts),
-            critical=True, silent_ok=True,
-        )
-    ticks.start_probe_tick(rt, "Notbetrieb ohne offenen Tick beim Start")
+    rt.notifier.notify(
+        "notbetrieb", STATE_OK, delivery.notification_text(delivery.NOTIFY_NOTBETRIEB_OFF, (), {}, rt.texts),
+        critical=True, silent_ok=True,
+    )

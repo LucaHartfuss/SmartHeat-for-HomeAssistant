@@ -166,6 +166,11 @@ class MqttConnected:
     """Die Verbindung zum Broker steht (wieder)."""
 
 
+@dataclass(frozen=True)
+class StorageWritable:
+    """Der Datentraeger ist (wieder) beschreibbar (Takt EV_HEALTH nach StateStore.flush)."""
+
+
 # --- Aktionen ---
 
 @dataclass(frozen=True)
@@ -247,6 +252,8 @@ def step(state: DeliveryState, event) -> tuple[DeliveryState, list]:
         return _answered_local_fault(state, event)
     if isinstance(event, ClearStaleNotbetrieb):
         return _clear_stale_notbetrieb(state)
+    if isinstance(event, StorageWritable):
+        return _storage_writable(state)
     raise TypeError(f"Unbekanntes Zustell-Ereignis: {event!r}")
 
 
@@ -380,6 +387,17 @@ def _mqtt_connected(state):
     if not (server_wait or resend):
         return state, []
     new_pending = replace(pending, phase=PHASE_SENDING, gen=pending.gen + 1, unsent=False)
+    return replace(state, pending=new_pending), [Attempt(pending.seq, pending.trigger)]
+
+
+def _storage_writable(state):
+    """Wartet der offene Tick wegen eines Datentraeger-Datenfehlers auf seinen Daten-Retry (bis 3600 s), holt der
+    naechste Versuch die Antwort sofort (TP12b). Neue Generation, der geplante Retry laeuft ins Leere; die Stufe
+    bleibt. Jede andere Wartezeit bleibt."""
+    pending = state.pending
+    if pending is None or pending.phase != PHASE_WAITING_RETRY or not is_storage_fault(state.datenfehler):
+        return state, []
+    new_pending = replace(pending, phase=PHASE_SENDING, gen=pending.gen + 1)
     return replace(state, pending=new_pending), [Attempt(pending.seq, pending.trigger)]
 
 

@@ -670,7 +670,10 @@ class LeverPipeline:
         except Exception:
             live = None
         low, high = self.range_of(lever)
-        forced = switched and self._description.preparation_resets_setpoint
+        # O-TP12e-1: nach der eigenen Umstellung ist der Sollwert unbekannt, bis ein Schreiben gelang. Scheiterte der
+        # Startwert, erzwingt ihn auch die Wiederholung (die Zone ist dann schon umgestellt, switched ist False).
+        reset = switched or (self._prepared_at is not None and lever not in self._last_written)
+        forced = reset and self._description.preparation_resets_setpoint
         # Schon vorbereitet und ruhend (None) oder mit brauchbarem Wert: nichts schreiben, die naechste
         # Serverantwort setzt den Hebel.
         if not forced and (live is None or low <= live <= high):

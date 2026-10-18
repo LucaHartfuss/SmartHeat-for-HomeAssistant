@@ -2,7 +2,7 @@
 import pytest
 
 from smartheat_runtime.raum import RaumPublisher
-from smartheat_runtime.soll_speicher import DEFAULT_RAUM_SOLL, bedienung_start
+from smartheat_runtime.soll_speicher import DEFAULT_RAUM_SOLL, TargetStore, bedienung_start
 
 
 class _Store:
@@ -71,3 +71,22 @@ def test_startwert_nur_aus_einer_gueltigen_bedienung(inhalt, start):
 
 def test_der_standard_ist_20_grad():
     assert DEFAULT_RAUM_SOLL == 20.0
+
+
+def test_soll_quelle_im_raum_bleibt_bei_der_bestaetigung_desselben_werts(tmp_path, clock):
+    """Nr. 40 (Restpunkt 5c-W-12): der Raum fuer up/status meldet nach einer Bestaetigung des Servers mit demselben
+    Wert weiter die Quelle des Wunsches, erst ein anderer Wert des Servers meldet portal."""
+    store = TargetStore(tmp_path / "room_target.json", 20.0, clock, lambda: "ts")
+    abgelegt = []
+    raum = RaumPublisher(abgelegt.append, _Signals(), store, "sensor.raum", lambda: "ts")
+    store.apply_thermostat(21.5)
+    raum.publish()
+    assert abgelegt[-1]["soll_quelle"] == "thermostat"
+
+    store.apply_portal(21.5)
+    raum.publish()
+    assert (abgelegt[-1]["soll"], abgelegt[-1]["soll_quelle"]) == (21.5, "thermostat")
+
+    store.apply_portal(22.0)
+    raum.publish()
+    assert (abgelegt[-1]["soll"], abgelegt[-1]["soll_quelle"]) == (22.0, "portal")
