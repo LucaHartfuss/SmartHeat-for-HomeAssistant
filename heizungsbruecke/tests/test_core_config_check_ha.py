@@ -92,6 +92,32 @@ def test_structural_rules(changes, grund):
     assert ablehnung is not None and ablehnung.grund == grund
 
 
+def _mit_ref(feld: str, ref: str) -> dict:
+    """Konfiguration mit `ref` im Feld `feld` (Muster HA_REF, HA_RAUMFUEHLER, HA_BATTERIE, HA_DIENST)."""
+    if feld == "room_target":
+        return _ha(bindung={"rollen": {"room_target": ref}})
+    if feld == "raumfuehler":
+        return _ha(raumfuehler=[ref])
+    return _ha(bindung={feld: [ref]})
+
+
+@pytest.mark.parametrize(("feld", "gueltig"), [
+    ("room_target", "climate.wohnzimmer_thermostat::temperature"),        # HA_REF
+    ("raumfuehler", "sensor.wohnzimmer_thermostat_temperatur"),           # HA_RAUMFUEHLER
+    ("batterien", "sensor.wohnzimmer_thermostat_batterie"),               # HA_BATTERIE
+    ("benachrichtigung", "notify.mobile_app_handy"),                      # HA_DIENST
+])
+@pytest.mark.parametrize("anhang", ["\n", "\u202e", "\nWARNING  gefaelscht", " gefaelscht"],
+                         ids=["zeilenumbruch", "bidi_202e", "zweite_logzeile", "nachgestellter_text"])
+def test_a_reference_with_a_valid_prefix_and_anything_after_it_is_rejected(feld, gueltig, anhang):
+    """T6-Rest (Re-Review der Fix-Welle, Minor 1): die Muster gelten fuer die ganze Referenz (`fullmatch`). Ein gueltiger
+    Anfang mit Zeilenumbruch, Bidi-Steuerzeichen oder Text dahinter wird abgelehnt; deshalb stehen Entity-IDs der
+    Bindung ohne Escape im Log."""
+    assert _pruefen(_mit_ref(feld, gueltig)) is None  # Gegenprobe: ohne Anhang gueltig
+    assert _pruefen(_mit_ref(feld, gueltig + anhang)) == cc.Ablehnung(
+        cc.ROLLE_UNZULAESSIG, {"feld": feld, "regel": "format"})
+
+
 @pytest.mark.parametrize(("changes", "details"), [
     ({"bindung": {"extra": 1}}, {"feld": "bindung", "regel": "unbekannt"}),
     ({"bindung": {"kreis": {"plattform": "mypyllant", "config_entry": "e1", "anlage": "S", "nummer": "0", "extra": 1}}},
