@@ -4,9 +4,11 @@ eigene `max_examples`/`derandomize`. Die Profilwahl prueft je Fall ein eigener p
 Testdatei, die die Werte zusichert und die conftest.py dieses Ordners als Plugin laedt (`-p conftest`)."""
 import ast
 import os
+import re
 import subprocess
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -176,3 +178,30 @@ def test_check_sh_full_waehlt_das_profil_voll(tmp_path):
     assert _profil_beim_pytest(tmp_path, "--full", "--only", "test", profil="schnell") == ["voll"] * 4
     assert _profil_beim_pytest(tmp_path, "--only", "test", profil=None) == ["ungesetzt"] * 4
     assert _profil_beim_pytest(tmp_path, "--only", "test", profil="voll") == ["voll"] * 4
+
+
+def _nennt_hypothesis(anforderungen) -> list[str]:
+    return [a for a in anforderungen if re.match(r"\s*hypothesis\b", a, re.IGNORECASE)]
+
+
+def test_geladen_ist_die_version_des_hash_locks():
+    """Befund 6 (Abschlussreview T6-Rest): geladen ist genau die Version des Hash-Locks (Literal); zoege eine ungehashte
+    Installation eine andere Version nach, waere das rot."""
+    import hypothesis
+    assert hypothesis.__version__ == "6.170.1"
+    assert "hypothesis==6.170.1 \\\n" in (PAKET / "requirements-hypothesis.lock").read_text(encoding="utf-8")
+
+
+def test_dev_abhaengigkeiten_nennen_hypothesis_nicht():
+    """Befund 6: hypothesis kommt nur aus dem Hash-Lock; `[dev]` (ungehasht installiert) und die
+    uebrigen Extras von heizungsbruecke, gateway, gateway/host und gateway/release nennen es nicht."""
+    gruppen = {}
+    for pyproject in (PAKET, REPO / "gateway", REPO / "gateway" / "host", REPO / "gateway" / "release"):
+        projekt = tomllib.loads((pyproject / "pyproject.toml").read_text(encoding="utf-8")).get("project", {})
+        for gruppe, liste in projekt.get("optional-dependencies", {}).items():
+            gruppen[f"{pyproject.relative_to(REPO)}[{gruppe}]"] = _nennt_hypothesis(liste)
+    assert {"heizungsbruecke[dev]", "gateway[dev]"} <= set(gruppen)
+    assert gruppen == {gruppe: [] for gruppe in gruppen}
+    assert _nennt_hypothesis(["hypothesis>=6", "Hypothesis[cli]", " hypothesis==6.1"]) == [
+        "hypothesis>=6", "Hypothesis[cli]", " hypothesis==6.1"]
+    assert _nennt_hypothesis(["hypothesis-jsonschema", "pytest"]) == ["hypothesis-jsonschema"]
