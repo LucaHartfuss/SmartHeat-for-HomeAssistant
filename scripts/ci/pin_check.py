@@ -36,7 +36,7 @@ _PIP_REQUIREMENT_OPTION = re.compile(r"\s(?:-r|--requirement)(?:\s|=|$)")
 # `write-all`, an Job oder Datei) traegt nie die Markierung (Testoffensive T6, F-werkzeuge-54); der Check liest
 # zeilenweise und gilt fuer die ganze Datei.
 UNHASHED_MARKER = "pin-check: ungehasht"
-_WRITE_PERMISSION = re.compile(r"""\bcontents:\s*["']?write\b|\bpermissions:\s*["']?write-all\b""")
+_WRITE_PERMISSION = re.compile(r"""\bcontents["']?\s*:\s*["']?write\b|\bpermissions\s*:\s*["']?write-all\b""")
 _USES = re.compile(r"^\s*(?:-\s*)?uses:\s*[\"']?([^\s\"']+)[\"']?(.*)$")
 _IMAGE = re.compile(r"^\s*image:\s*[\"']?([^\s\"']+)")
 _NAME = r"[A-Za-z0-9][A-Za-z0-9._-]*"
@@ -99,11 +99,24 @@ def _check_dockerfile(repo: Path, path: Path) -> list[str]:
     return problems
 
 
+def _without_comment(line: str) -> str:
+    """Zeile ohne YAML-Kommentar: `#` beginnt ihn nur am Zeilenanfang oder nach Leerraum und ausserhalb von Anfuehrungszeichen."""
+    quote = ""
+    for index, char in enumerate(line):
+        if quote:
+            quote = "" if char == quote else quote
+        elif char in "\"'":
+            quote = char
+        elif char == "#" and (index == 0 or line[index - 1].isspace()):
+            return line[:index]
+    return line
+
+
 def _check_workflow(repo: Path, path: Path) -> list[str]:
     problems = []
     name = path.relative_to(repo)
     lines = path.read_text().splitlines()
-    writes = any(not line.lstrip().startswith("#") and _WRITE_PERMISSION.search(line) for line in lines)
+    writes = any(_WRITE_PERMISSION.search(_without_comment(line)) for line in lines)
     for line in lines:
         if writes and UNHASHED_MARKER in line:
             problems.append(f"{name}: Workflow mit Schreibrecht darf keine Markierung '{UNHASHED_MARKER}' tragen "
