@@ -3175,3 +3175,70 @@ def test_min_flow_is_not_written_to_an_unavailable_entity(env):
 
     assert [write for write in env.ha.writes if write[0] == "number.min_flow"] == []
     assert bridge.override.last_written("min_flow") is None
+
+
+# --- Testoffensive T8 (Mutationsprobe K2, ticks.py) ---
+
+def test_an_answer_with_a_foreign_seq_is_ignored_and_the_log_names_the_expected_seq(env, caplog):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[0]["seq"]
+
+    with caplog.at_level(logging.INFO, logger="smartheat_runtime.ticks"):
+        _answer(env, bridge, "fremd")
+
+    assert f"Setpoints-Antwort mit seq='fremd' ignoriert (erwartet: {seq!r})" in [r.getMessage() for r in caplog.records]
+    assert _delivery(bridge).pending.seq == seq
+
+
+def test_a_second_delivery_of_the_answer_without_an_open_tick_is_ignored(env, caplog):
+    """QoS 1 stellt eine Antwort auch doppelt zu; ohne offenen Tick ist sie bedeutungslos, kein Fehler."""
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[0]["seq"]
+    _answer(env, bridge, seq)
+    assert _delivery(bridge).pending is None
+
+    with caplog.at_level(logging.INFO):
+        _answer(env, bridge, seq)
+
+    assert f"Setpoints-Antwort mit seq={seq!r} ignoriert (erwartet: None)" in [r.getMessage() for r in caplog.records]
+    assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
+    assert _delivery(bridge).pending is None
+
+
+@pytest.mark.parametrize("reason", [5, {"grund": "x"}, ""], ids=["zahl", "objekt", "leer"])
+def test_a_rejection_whose_reason_is_no_text_is_reported_without_reason(env, reason):
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[0]["seq"]
+
+    _answer(env, bridge, seq, status="rejected", curve=None, shift=None, reason=reason)
+
+    assert env.ha.pushes == ["Heizungsbrücke: Server hat die Messwerte abgelehnt (ohne Begründung). Die Heizkurve bleibt "
+                             "unverändert."]
+    assert _delivery(bridge).datenfehler == DataFault("server", ("ohne Begründung",))
+
+
+def test_a_manual_override_changed_after_the_publish_survives_the_answer_to_the_previous_one(env, monkeypatch):
+    """Der Snapshot trug den gespeicherten Eingriff OVERRIDE; danach erkennt die Durchsetzung einen neuen Wert. Die
+    Antwort loescht nur genau den gesendeten Eintrag, der neue reist mit dem naechsten Tick."""
+    _quiet_backup(env, manual_override_pending=OVERRIDE)
+    _pruefintervall(monkeypatch, 5)
+    bridge = _start(env)
+    _settle(env, bridge)
+    _set_room_target(env, bridge, 20.5)
+    snapshot = _mqtt(env).snapshots[-1]
+    assert snapshot["manual_override"] == OVERRIDE
+
+    env.ha.states.update({"number.curve_current": 1.2, "number.shift_current": 24.5})
+    _advance(env, bridge, 5)
+    _advance(env, bridge, 5)  # zwei Runden mit Abweichung, der Tick ist noch offen
+    assert _backup(env)["manual_override_pending"]["levers"]["curve"] == 1.2
+
+    _answer(env, bridge, snapshot["seq"], curve=0.95, shift=23.0)
+
+    assert _backup(env)["manual_override_pending"]["levers"]["curve"] == 1.2

@@ -1,4 +1,5 @@
 """Durchsetzung (TP11, Spec 5.3)."""
+import dataclasses
 import logging
 from datetime import date, datetime
 
@@ -92,18 +93,20 @@ def _fixed_day(monkeypatch):
     monkeypatch.setattr(enforce, "_today", lambda: TODAY)
 
 
-def _rt(make_store, clock, ha, uptime=SETTLE + 1, store=None, manifest=MANIFEST, **point):
+def _rt(make_store, clock, ha, uptime=SETTLE + 1, store=None, manifest=MANIFEST, description=VAILLANT_MYPYLLANT,
+        **point):
     """Runtime mit `uptime` Sekunden Laufzeit seit dem Start (Default: Schonfrist nach dem Start
     vorbei, HA gilt ohne eigenes Schreiben als eingeschwungen). `store` wiederverwendet einen
     vorhandenen StateStore (Neustart-Simulation: derselbe backup.json-Pfad, frisch eingelesen)
-    statt den Wiederherstellungspunkt POINT (geaendert um `point`, None = fehlt) neu zu schreiben.
+    statt den Wiederherstellungspunkt POINT (geaendert um `point`, None = fehlt) neu zu schreiben. `description`:
+    Bindungsbeschreibung (Default Vaillant).
     Echte Teile (A5-25): Notifier mit Fake-Sink (`rt.kunde`: was beim Kunden ankommt), Worker, Pipeline."""
     if store is None:
         restore_point = {lever: value for lever, value in {**POINT, **point}.items() if value is not None}
         store = make_store(backup={"restore_point": restore_point})
     store.update(stable_target=20.5)
     kunde = FakeNotifySink()
-    override = LeverPipeline(store, HaPlantBinding(ha, manifest, VAILLANT_MYPYLLANT), SAFETY, clock=clock)
+    override = LeverPipeline(store, HaPlantBinding(ha, manifest, description), SAFETY, clock=clock)
     ha.clock = clock
     clock.advance(uptime)
     rt = Runtime(
@@ -669,3 +672,37 @@ def test_a_read_error_from_ha_is_logged_only_escaped(make_store, clock, caplog, 
     with caplog.at_level(logging.INFO, logger="smartheat_core.enforce"):
         _rounds(rt)
     assert zeile in logzeilen(caplog)
+
+
+@pytest.mark.parametrize(("live", "durchgesetzt"), [(0.925, False), (0.926, True)])
+def test_a_deviation_of_exactly_tolerance_plus_float_rest_is_no_deviation(make_store, clock, live, durchgesetzt):
+    """Testoffensive T8 (Mutationsprobe K2): die Grenze gehoert zur Toleranz. Die Toleranz der Steigung (knapp unter
+    0,025; der Server darf jede Toleranz bis zum Schritt senden) ist so gewaehlt, dass 0,925 genau Toleranz plus
+    Gleitkomma-Rest 1e-9 ueber dem Soll 0,9 liegt: keine Abweichung; 0,926 ist eine."""
+    toleranz = (0.925 - 0.9) - 1e-9
+    assert toleranz + 1e-9 == 0.925 - 0.9 and 0.0249 < toleranz < 0.025  # genau auf der Grenze, nicht ungefaehr
+    description = dataclasses.replace(
+        VAILLANT_MYPYLLANT, enforce_tolerance={**VAILLANT_MYPYLLANT.enforce_tolerance, "curve": toleranz})
+    ha = Ha(curve=live)
+    rt = _rt(make_store, clock, ha, description=description)
+    assert rt.override.expected_values()["curve"] == 0.9  # das Soll, gegen das die Grenze gerechnet ist
+    _rounds(rt)
+    assert (("number.curve", 0.9) in ha.writes) is durchgesetzt
+    assert (rt.store.state.manual_override is not None) is durchgesetzt
+
+
+def test_a_failed_write_back_within_the_retry_interval_sends_no_limit_message(make_store, clock):
+    """Testoffensive T8 (Mutationsprobe K2): der erste Rueckschreibversuch scheitert; die Runden in den naechsten
+    30 Minuten (Abstand der Versuche) schreiben nicht und melden auch kein Tageslimit -- erst 6 Versuche am Tag sind
+    das Limit."""
+    ha = Ha(curve=1.3)
+    ha.failing.add("number.curve")
+    rt = _rt(make_store, clock, ha)
+    _rounds(rt)
+    assert [entity for entity, _, _ in ha.attempts] == ["number.curve"]
+    for _ in range(5):  # 25 min im 5-min-Takt, unter den 30 min bis zum naechsten Versuch
+        clock.advance(300)
+        enforce.check_manual_override(rt)
+    assert [entity for entity, _, _ in ha.attempts] == ["number.curve"]
+    assert _pushes(rt) == []
+    assert _meldezustand(rt) == "ok"  # keine offene Meldung, auch kein Tageslimit

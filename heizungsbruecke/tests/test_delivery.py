@@ -298,8 +298,8 @@ def test_read_invalid_sets_local_fault_notifies_and_retries_after_thirty_seconds
 
 
 def test_data_retry_chain_runs_30_300_900_then_hourly_and_restarts_after_success():
-    """A5-K2: die volle Kette der Daten-Wiederholungen ueber sechs Fehlversuche, Obergrenze 3600 s; ein neuer Tick
-    nach der Antwort beginnt wieder mit 30 s."""
+    """A5-K2, erledigt mit T8: die volle Kette der Daten-Wiederholungen ueber sechs Fehlversuche, Obergrenze 3600 s;
+    ein neuer Tick nach der Antwort beginnt wieder mit 30 s."""
     state, actions = _run(DeliveryState(), TickDue("s1", "daily"), ReadInvalid("s1", ("dat",)))
     delays = [actions[-1].delay_s]
     for _ in range(5):
