@@ -3,7 +3,7 @@ import logging
 from unittest.mock import MagicMock
 
 import pytest
-from fakes import FailingServiceHa
+from fakes import FREMDTEXT, FREMDTEXT_IM_LOG, FailingServiceHa, logzeilen
 
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_sinks import HaNotifySink, notification_id
@@ -371,3 +371,114 @@ def test_clear_all_dismisses_open_notifications_and_forgets_states_without_push(
     assert dismissed == {"smartheat_notbetrieb", "smartheat_batterie_sensor_x"}
     ha_api.send_notification.assert_not_called()
     assert (store.state.notify_states, store.state.notify_messages) == ({}, {})
+
+
+@pytest.mark.parametrize(("state", "stufe"), [("inaktiv", logging.WARNING), (STATE_OK, logging.INFO)],
+                         ids=["warnung", "entwarnung"])
+def test_the_log_line_escapes_single_surrogates_from_server_text(make_store, ha_api, caplog, state, stufe):
+    """Testoffensive T6 (Fund aus dem Profil voll): eine Meldung kann Text vom Server tragen (Grund einer Ablehnung).
+    Ein einzelnes Surrogat braeche die UTF-8-Ausgabe des Logs (Logging error, Zeile verloren); die Logzeile schreibt
+    es als Escape, Push und gespeicherter Text bleiben unveraendert."""
+    store = make_store()
+    notifier = _notifier(store, ha_api)
+    if state == STATE_OK:
+        notifier.seed("server", "abgelehnt")
+    message = "Server hat die Messwerte abgelehnt (\ud800). Die Heizkurve bleibt unverändert."
+
+    with caplog.at_level(logging.INFO, logger="smartheat_runtime.notifier"):
+        assert notifier.notify("server", state, message, critical=False) is True
+
+    (zeile,) = [r for r in caplog.records if r.levelno == stufe]
+    assert zeile.getMessage() == "Server hat die Messwerte abgelehnt (\\ud800). Die Heizkurve bleibt unverändert."
+    zeile.getMessage().encode("utf-8")
+    assert [c.args for c in ha_api.send_notification.call_args_list] == [(service, message) for service in SERVICES]
+
+
+def test_the_log_line_escapes_control_characters_from_server_text(make_store, ha_api, caplog):
+    """Sicherheitscheck zu a9756e8: Zeilenumbruch, Wagenruecklauf, Tabulator und ANSI-Escape im Servertext taeuschen keine
+    eigene Logzeile vor; die Logzeile schreibt sie als Escape, der Push bekommt den Text unveraendert."""
+    notifier = _notifier(make_store(), ha_api)
+    message = "Server hat die Messwerte abgelehnt (x\r\nWARNING  gefaelscht\t\x1b[31m\x00). Die Heizkurve bleibt unverändert."
+
+    with caplog.at_level(logging.INFO, logger="smartheat_runtime.notifier"):
+        assert notifier.notify("server", "abgelehnt", message, critical=False) is True
+
+    (zeile,) = [r.getMessage() for r in caplog.records]
+    assert zeile == ("Server hat die Messwerte abgelehnt (x\\r\\nWARNING  gefaelscht\\t\\x1b[31m\\x00). "
+                     "Die Heizkurve bleibt unverändert.")
+    assert zeile.splitlines() == [zeile]
+    assert [c.args for c in ha_api.send_notification.call_args_list] == [(service, message) for service in SERVICES]
+
+
+class _ScheiternderSink:
+    """NotifySink-Fake, dessen Push bzw. Anzeige scheitert (Fehlerpfade des Notifiers)."""
+
+    def __init__(self, *, push_fehler: bool = False, show_fehler: bool = False) -> None:
+        self._push_fehler, self._show_fehler = push_fehler, show_fehler
+
+    def push(self, key: str, message: str) -> None:
+        if self._push_fehler:
+            raise RuntimeError("Push kaputt")
+
+    def show(self, key: str, message: str) -> None:
+        if self._show_fehler:
+            raise RuntimeError("HA weg")
+
+    def withdraw(self, key: str) -> None:
+        pass
+
+
+FREMDER_SCHLUESSEL = f"fehler:{FREMDTEXT}"  # HaHost.load: StartFailure(str(ConfigError)) traegt Text des Servers
+FREMDER_SCHLUESSEL_IM_LOG = f"fehler:{FREMDTEXT_IM_LOG}"
+
+
+def _kaputter_speicher(monkeypatch):
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
+
+
+def _raise_oserror(*args, **kwargs):
+    raise OSError("Datentraeger kaputt")
+
+
+def _seed_ohne_speicher(store, monkeypatch):
+    _kaputter_speicher(monkeypatch)
+    Notifier(store, _ScheiternderSink()).seed(FREMDER_SCHLUESSEL, "aktiv")
+    return "Meldezustand '{}' konnte nicht gespeichert werden"
+
+
+def _notify_ohne_speicher(store, monkeypatch):
+    _kaputter_speicher(monkeypatch)
+    Notifier(store, _ScheiternderSink()).notify(FREMDER_SCHLUESSEL, "aktiv", "Text", critical=True)
+    return "Meldezustand '{}' konnte nicht gespeichert werden, Meldung geht trotzdem raus"
+
+
+def _push_scheitert(store, monkeypatch):
+    Notifier(store, _ScheiternderSink(push_fehler=True)).notify(FREMDER_SCHLUESSEL, "aktiv", "Text", critical=False)
+    return "Push-Benachrichtigung '{}' konnte nicht gesendet werden"
+
+
+def _meldetext_ohne_speicher(store, monkeypatch):
+    notifier = Notifier(store, _ScheiternderSink())
+    notifier.notify(FREMDER_SCHLUESSEL, "aktiv", "alt", critical=True)
+    _kaputter_speicher(monkeypatch)
+    notifier.refresh_persistent(FREMDER_SCHLUESSEL, "neu")
+    return "Meldetext '{}' konnte nicht gespeichert werden"
+
+
+def _anzeige_scheitert(store, monkeypatch):
+    Notifier(store, _ScheiternderSink(show_fehler=True)).notify(FREMDER_SCHLUESSEL, "aktiv", "Text", critical=True)
+    return "Offene Meldung '{}' konnte nicht aktualisiert werden"
+
+
+@pytest.mark.parametrize("pfad", [_seed_ohne_speicher, _notify_ohne_speicher, _push_scheitert,
+                                  _meldetext_ohne_speicher, _anzeige_scheitert],
+                         ids=["seed", "notify_speicher", "push", "refresh_speicher", "anzeige"])
+def test_ein_meldeschluessel_mit_fremdem_text_steht_in_den_fehlerpfaden_nur_escaped_im_log(
+    make_store, monkeypatch, caplog, pfad,
+):
+    """T6-Rest, R-c: der Schluessel `fehler:<Text>` eines Startfehlers traegt Text des Servers (Konfigurationsdokument).
+    Scheitern Speichern, Push oder Anzeige, steht er in der Warnung nur als Escape (Zeilenumbruch, U+202E, U+061C)."""
+    store = make_store()
+    with caplog.at_level(logging.INFO, logger="smartheat_runtime.notifier"):
+        vorlage = pfad(store, monkeypatch)
+    assert vorlage.format(FREMDER_SCHLUESSEL_IM_LOG) in logzeilen(caplog)

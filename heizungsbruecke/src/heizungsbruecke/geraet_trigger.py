@@ -10,6 +10,7 @@ import time
 from typing import TypeGuard
 
 from heizungsbruecke.ha_trigger_client import HaTriggerClient
+from smartheat_core.logtext import lesbar
 from smartheat_runtime.debounce import ROOM_TARGET_DEBOUNCE_SECONDS
 from smartheat_runtime.dokument_config import ConfigError
 from smartheat_runtime.runtime import EV_LOCAL_CHECK, EV_SOURCE_CONNECTED
@@ -256,7 +257,8 @@ def build(manifest, ha_api, worker: RegulationWorker, store: TargetStore, soll_r
         alle OHNE_ZAHL_LOG_SECONDS; ohne den gemeldeten Inhalt."""
         jetzt = time.monotonic()
         if not ohne_zahl[0] and (ohne_zahl[1] is None or jetzt - ohne_zahl[1] >= OHNE_ZAHL_LOG_SECONDS):
-            logger.info("Soll-Entity %s meldet keinen Zahlenwert (etwa nicht verfuegbar), kein Bedienwunsch", soll_entity)
+            logger.info("Soll-Entity %s meldet keinen Zahlenwert (etwa nicht verfuegbar), kein Bedienwunsch",
+                        lesbar(str(soll_entity)))
             ohne_zahl[1] = jetzt
         ohne_zahl[0] = True
 

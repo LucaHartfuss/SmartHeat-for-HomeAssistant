@@ -95,8 +95,9 @@ def main() -> None:  # systemd-Einstieg
     # systemd beendet mit SIGTERM: als SystemExit abfangen, damit der Trigger im finally zurueckgesetzt wird.
     signal.signal(signal.SIGTERM, _terminate)
     led = Led(base)
-    led.take()
     try:
+        # take liegt im try: SIGTERM kann schon zwischen dem Schreiben von none und der Rueckkehr aus take eintreffen.
+        led.take()
         play(led, lambda: state_from_file(state_path), time.monotonic, time.sleep)
     finally:
         led.restore()

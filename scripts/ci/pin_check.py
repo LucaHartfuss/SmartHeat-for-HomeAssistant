@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Pin-Check (TP12e, AU-018, Spec 2026-09-30-tp12e-vertraege-tests-lieferkette-design.md Abschnitt 3):
 Jede Basis-Image-Angabe hat einen Digest, jede GitHub-Action eine 40-stellige SHA, jede Lock-Datei
-Hashes und passt zu ihrer pyproject.toml. In Workflows laeuft jedes pip install mit --require-hashes
+Hashes und passt zu ihrer pyproject.toml; requirements-hypothesis.lock (Testoffensive T6) ist exakt gepinnt und gehasht,
+ohne Abgleich mit pyproject.toml. In Workflows laeuft jedes pip install mit --require-hashes
 oder traegt die Markierung `# pin-check: ungehasht (<Grund>)` (Audit 4, A4-41). Nur Standardbibliothek; kanonisch in
 HomeAssistant_Dev_Root/tools/pin_check.py, identische Kopien in den Unter-Repos unter
 scripts/ci/pin_check.py (Root-check.sh Schritt "copies" prueft das).
@@ -21,6 +22,9 @@ DIGEST = re.compile(r"@sha256:[0-9a-f]{64}\b")
 ACTION_SHA = re.compile(r"@[0-9a-f]{40}$")
 HASH_OPTION = re.compile(r"--hash=sha256:[0-9a-f]{64}\b")
 LOCK_NAMES = ("requirements.txt", "requirements.lock")
+# Eigene Locks fuer einzelne Dev-Werkzeuge (Testoffensive T6: hypothesis, Installation mit --require-hashes --no-deps):
+# jeder Eintrag exakt gepinnt und gehasht, aber kein Abgleich mit pyproject.toml (dessen dependencies sind Laufzeit).
+HASH_LOCK_NAMES = ("requirements-hypothesis.lock",)
 # .devtools, backups und .remember sind Root-spezifische, per .gitignore ausgeschlossene Ordner.
 _SKIP_DIRS = {".git", ".venv", ".worktrees", "node_modules", "__pycache__", ".devtools", "backups", ".remember"}
 _FROM_LINE = re.compile(r"^\s*FROM(?:\s|$)", re.IGNORECASE)
@@ -28,8 +32,14 @@ _FROM = re.compile(r"^\s*FROM\s+(?:--\S+\s+)*(\S+)(?:\s+AS\s+(\S+))?\s*$", re.IG
 _PIP_INSTALL = re.compile(r"\bpip3?\s+install\b")
 _PIP_REQUIREMENT_OPTION = re.compile(r"\s(?:-r|--requirement)(?:\s|=|$)")
 # Workflows (Audit 4, A4-41): jedes pip install laeuft mit --require-hashes oder ist ausdruecklich markiert (CI-Jobs
-# ohne Schreibrecht, Testumgebungen mit Versionsbereichen). Release-Jobs mit Schreibrecht nehmen nie die Markierung.
+# ohne Schreibrecht, Testumgebungen mit Versionsbereichen). Ein Workflow mit Schreibrecht traegt nie die Markierung
+# (Testoffensive T6, F-werkzeuge-54; Ruling R-a der Fix-Welle): Schreibrecht ist jeder Bereich mit `write` (`contents`,
+# `packages`, `id-token`, ...) und `write-all`, an Job oder Datei, auch mit Schluessel oder Wert in Anfuehrungszeichen;
+# ein Workflow ohne `permissions:` auf oberster Ebene gilt als schreibend (ein Job ohne eigenes `permissions:` hat dann
+# das Standardrecht des Tokens, fail closed). Der Check liest zeilenweise und gilt fuer die ganze Datei.
 UNHASHED_MARKER = "pin-check: ungehasht"
+_WRITE_PERMISSION = re.compile(r"""["']?[\w-]+["']?\s*:\s*["']?write\b""")
+_TOP_LEVEL_PERMISSIONS = re.compile(r"""^["']?permissions["']?\s*:""")
 _USES = re.compile(r"^\s*(?:-\s*)?uses:\s*[\"']?([^\s\"']+)[\"']?(.*)$")
 _IMAGE = re.compile(r"^\s*image:\s*[\"']?([^\s\"']+)")
 _NAME = r"[A-Za-z0-9][A-Za-z0-9._-]*"
@@ -92,10 +102,36 @@ def _check_dockerfile(repo: Path, path: Path) -> list[str]:
     return problems
 
 
+def _without_comment(line: str) -> str:
+    """Zeile ohne YAML-Kommentar: `#` beginnt ihn nur am Zeilenanfang oder nach Leerraum und ausserhalb von
+    Anfuehrungszeichen; in einem doppelt quotierten String beendet `\\"` ihn nicht."""
+    quote = ""
+    escaped = False
+    for index, char in enumerate(line):
+        if escaped:
+            escaped = False
+        elif quote:
+            escaped = quote == '"' and char == "\\"
+            quote = "" if char == quote else quote
+        elif char in "\"'":
+            quote = char
+        elif char == "#" and (index == 0 or line[index - 1].isspace()):
+            return line[:index]
+    return line
+
+
 def _check_workflow(repo: Path, path: Path) -> list[str]:
     problems = []
     name = path.relative_to(repo)
-    for line in path.read_text().splitlines():
+    lines = path.read_text().splitlines()
+    code = [_without_comment(line) for line in lines]
+    top_level = any(_TOP_LEVEL_PERMISSIONS.match(line) for line in code)
+    writes = not top_level or any(_WRITE_PERMISSION.search(line) for line in code)
+    reason = "Schreibrecht" if top_level else "Schreibrecht (ohne permissions: auf oberster Ebene)"
+    for line in lines:
+        if writes and UNHASHED_MARKER in line:
+            problems.append(f"{name}: Workflow mit {reason} darf keine Markierung '{UNHASHED_MARKER}' tragen "
+                            "(pip install dort mit --require-hashes)")
         if (not line.lstrip().startswith("#") and _PIP_INSTALL.search(line)
                 and "--require-hashes" not in line and UNHASHED_MARKER not in line):
             problems.append(f"{name}: pip install ohne --require-hashes (oder Markierung '# {UNHASHED_MARKER} (Grund)')")
@@ -219,6 +255,11 @@ def _check_lock(repo: Path, path: Path) -> list[str]:
     return problems
 
 
+def _check_hash_lock(repo: Path, path: Path) -> list[str]:
+    _, problems = _parse_lock(path)
+    return [f"{path.relative_to(repo)}: {problem}" for problem in problems]
+
+
 def _checked(check: Callable[[Path, Path], list[str]], repo: Path, path: Path) -> list[str]:
     """Eine nicht lesbare Datei (kein UTF-8, kaputter Symlink, ...) ist ein Verstoss, kein Absturz."""
     try:
@@ -240,6 +281,8 @@ def check_repo(repo: Path) -> list[str]:
             problems += _checked(_check_compose, repo, path)
         elif path.name in LOCK_NAMES:
             problems += _checked(_check_lock, repo, path)
+        elif path.name in HASH_LOCK_NAMES:
+            problems += _checked(_check_hash_lock, repo, path)
     return problems
 
 

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from fakes import FREMDTEXT, FREMDTEXT_IM_LOG, logzeilen
 
 from smartheat_runtime import telemetry
 from smartheat_runtime.delivery import DataFault
@@ -569,3 +570,42 @@ def test_die_warnung_zur_fremden_einheit_kommt_einmal_je_wechsel(caplog):
     ha_api.get_unit.return_value = "MJ"  # erneuter Wechsel: neue Warnung
     telemetry.read_kpi_fields(manifest, ha_api, einheiten=einheiten)
     assert len(warnungen()) == 2
+
+
+def _regelfeld(ha_api):
+    ha_api.get_state.side_effect = RuntimeError(FREMDTEXT)
+    telemetry.read_regulation_fields(ChannelManifest(refs={"outdoor_temp": "sensor.aussen"}), ha_api, None)
+    return f"Regel-Telemetrie 'outdoor_temp' nicht lesbar, Feld wird weggelassen: {FREMDTEXT_IM_LOG}"
+
+
+def _kpi_wert(ha_api):
+    ha_api.get_state.side_effect = RuntimeError(FREMDTEXT)
+    telemetry.read_kpi_fields(ChannelManifest(refs={"flow_temperature": "sensor.vorlauf"}), ha_api)
+    return f"KPI-Sensor 'flow_temperature' nicht lesbar, Feld wird weggelassen: {FREMDTEXT_IM_LOG}"
+
+
+def _einheit_nicht_lesbar(ha_api):
+    ha_api.get_state.return_value = 2.0
+    ha_api.get_unit.side_effect = SourceUnavailable(FREMDTEXT)
+    telemetry.read_kpi_fields(ChannelManifest(refs={"energy_primary_heating": "sensor.gas"}), ha_api,
+                              einheiten={"primary_heating": "kWh"})
+    return f"KPI-Sensor 'energy_primary_heating' nicht lesbar, Feld wird weggelassen: {FREMDTEXT_IM_LOG}"
+
+
+def _fremde_einheit(ha_api):
+    ha_api.get_state.return_value = 2.0
+    ha_api.get_unit.return_value = FREMDTEXT
+    telemetry.read_kpi_fields(ChannelManifest(refs={"energy_primary_heating": "sensor.gas"}), ha_api,
+                              einheiten={"primary_heating": "kWh"})
+    return f"Energiekanal 'primary_heating' meldet '{FREMDTEXT_IM_LOG}' statt kWh und wird weggelassen"
+
+
+@pytest.mark.parametrize("pfad", [_regelfeld, _kpi_wert, _einheit_nicht_lesbar, _fremde_einheit],
+                         ids=["regelfeld", "kpi_wert", "einheit_nicht_lesbar", "fremde_einheit"])
+def test_fremder_text_aus_der_signalquelle_steht_nur_escaped_im_log(caplog, pfad):
+    """T6-Rest, R-c: der Fehlertext beim Lesen (Regelfeld, KPI-Wert, Einheit) und die gemeldete Einheit selbst kommen
+    aus HA bzw. vom lokalen Bus; in der Logzeile stehen sie nur als Escape (Zeilenumbruch, U+202E, U+061C)."""
+    ha_api = MagicMock(spec=SignalSource)
+    with caplog.at_level(logging.WARNING, logger="smartheat_runtime.telemetry"):
+        zeile = pfad(ha_api)
+    assert zeile in logzeilen(caplog)

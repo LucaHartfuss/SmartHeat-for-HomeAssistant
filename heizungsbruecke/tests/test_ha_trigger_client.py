@@ -581,3 +581,17 @@ def test_a_wrong_token_closes_logs_and_backs_off_without_rapid_reconnects(monkey
     assert len(fehler) == 7
     assert "falsch-geheim" not in caplog.text  # auf keiner Stufe (DEBUG bis ERROR)
     assert verbunden == []  # nie verbunden
+
+
+def test_log_lines_with_text_from_home_assistant_escape_control_characters(caplog):
+    """Fixrunde 1 zu T6-Rest Task 3: Text aus HA (Meldung von auth_invalid, Fehler von subscribe_trigger, Grund beim
+    Schliessen) steht im Log mit Escape auf einer Zeile."""
+    client = HaTriggerClient(ws_url="ws://x", token="t", triggers=[], on_trigger_event=_ignorieren)
+    fake_ws = MagicMock(spec=WebSocketApp)
+    with caplog.at_level(logging.WARNING, logger=ha_trigger_client.logger.name):
+        client._on_message(fake_ws, json.dumps({"type": "auth_invalid", "message": "x\nERROR    gefaelscht"}))
+        client._on_close(fake_ws, 1000, "y\r\nERROR    gefaelscht")
+    assert [r.getMessage() for r in caplog.records] == [
+        "HaTriggerClient: WS-Authentifizierung fehlgeschlagen: x\\nERROR    gefaelscht",
+        "HaTriggerClient: WS-Verbindung geschlossen (code=1000, msg=y\\r\\nERROR    gefaelscht)",
+    ]

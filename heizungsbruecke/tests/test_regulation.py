@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT
-from fakes import datei_stand, runtime_config
+from fakes import FREMDTEXT, FREMDTEXT_IM_LOG, datei_stand, logzeilen, runtime_config
 
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_binding import HaPlantBinding
@@ -385,3 +385,11 @@ def test_claim_due_tick_without_daily_trigger_time_claims_no_daily_tick(make_sto
 
     assert regulation.claim_due_tick(rt, datetime(2026, 9, 17, 12, 5)) is None
     assert rt.store.state.last_daily_trigger_date is None
+
+
+def test_an_unreadable_room_target_logs_the_error_text_from_ha_only_escaped(make_store, caplog):
+    """T6-Rest, R-c: der Fehlertext beim Lesen des Raum-Solls aus HA steht nur als Escape im Log."""
+    rt = _runtime(make_store(), room_target=21.0, states={"sensor.room_target": RuntimeError(FREMDTEXT)})
+    with caplog.at_level(logging.WARNING, logger="smartheat_runtime.regulation"):
+        regulation.refresh_stable_target(rt)
+    assert f"room_target nicht lesbar, Stable-Target-Cache bleibt bei 21.0: {FREMDTEXT_IM_LOG}" in logzeilen(caplog)

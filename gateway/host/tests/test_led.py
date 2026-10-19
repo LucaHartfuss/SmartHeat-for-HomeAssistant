@@ -166,3 +166,36 @@ def test_sigterm_ends_the_service_and_gives_the_trigger_back(tmp_path, monkeypat
     assert ende.value.code == 0
     assert gesehen == ["none"]  # Gegenprobe: waehrend des Betriebs war der Trigger uebernommen
     assert (led_dir / "trigger").read_text() == "mmc0"
+
+
+def test_sigterm_right_after_taking_the_trigger_still_gives_it_back(tmp_path, monkeypatch):
+    """Das Signal kann schon zwischen `take` und dem Eintritt in die Schleife eintreffen (systemd stoppt kurz nach dem
+    Start). Der Test erzwingt das: SIGTERM geht unmittelbar nach dem echten `take` an den eigenen Prozess, ohne
+    Schleife, Thread oder Wartezeit. Der Trigger muss trotzdem zurueckgegeben werden."""
+    led_dir = tmp_path / "ACT"
+    led_dir.mkdir()
+    (led_dir / "trigger").write_text("none [mmc0] heartbeat\n")
+    (led_dir / "brightness").write_text("0")
+    (tmp_path / "data").mkdir()
+    _state(tmp_path / "data", "startet")
+    monkeypatch.setenv("SHG_LED", str(led_dir))
+    monkeypatch.setenv("SHG_ROOT", str(tmp_path))
+    echtes_take = led.Led.take
+    gesehen: list[str] = []
+
+    def take_dann_sigterm(self) -> None:
+        echtes_take(self)
+        gesehen.append((led_dir / "trigger").read_text())
+        os.kill(os.getpid(), signal.SIGTERM)
+        time.sleep(1)  # das Signal wird hier im Hauptthread zugestellt (SystemExit), nicht erst nach dem Test
+
+    monkeypatch.setattr(led.Led, "take", take_dann_sigterm)
+    alt = signal.signal(signal.SIGTERM, lambda signum, frame: pytest.fail("main hat keinen SIGTERM-Handler gesetzt"))
+    try:
+        with pytest.raises(SystemExit) as ende:
+            led.main()
+    finally:
+        signal.signal(signal.SIGTERM, alt)
+    assert ende.value.code == 0
+    assert gesehen == ["none"]  # Gegenprobe: der Trigger war uebernommen, als das Signal kam
+    assert (led_dir / "trigger").read_text() == "mmc0"

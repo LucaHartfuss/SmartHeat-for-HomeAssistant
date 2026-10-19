@@ -1,6 +1,7 @@
 """Spec 5b 3.4: Befehle hoechstens einmal ausgefuehrt, Ergebnis vor dem Senden gespeichert, Gruende aus dem Vertrag;
 Befehl hinweis (jedes Geraet)."""
 import json
+import logging
 
 import pytest
 
@@ -353,6 +354,20 @@ def test_a_too_large_inventory_fails_intern(tmp_path):
     register.register("inventory", lambda payload: cmd.Done({}, inventur={"k": [1]}))
     register.empfangen(_command("inventory", payload={"stunden": 1}))
     assert sent.results == [_fail("intern")]
+
+
+def test_the_log_line_of_a_failed_inventory_escapes_the_command_id_of_the_server(tmp_path, caplog):
+    """Fixrunde 1 zu T6-Rest Task 3: die command_id kommt vom Server (bis 64 Zeichen, UTF-8-kodierbar, Steuerzeichen
+    erlaubt); im Log steht sie mit Escape auf einer Zeile, keine vorgetaeuschte zweite Logzeile."""
+    def too_large(command_id, daten):
+        raise ValueError("zu gross")
+
+    register = cmd.CommandRegister(tmp_path, Sent(), send_inventory=too_large)
+    register.register("inventory", lambda payload: cmd.Done({}, inventur={"k": [1]}))
+    with caplog.at_level(logging.ERROR, logger="smartheat_device.commands"):
+        register.empfangen(_command("inventory", "c1\r\nERROR    gefaelscht\x1b[31m", payload={"stunden": 1}))
+    (zeile,) = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Inventur zu Befehl")]
+    assert zeile == "Inventur zu Befehl c1\\r\\nERROR    gefaelscht\\x1b[31m nicht gesendet (ValueError)"
 
 
 def test_a_started_marker_is_on_disk_before_the_handler_runs(tmp_path):

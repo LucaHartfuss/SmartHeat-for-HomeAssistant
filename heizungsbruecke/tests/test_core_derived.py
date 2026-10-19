@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT, WEISHAUPT_MODBUS
-from fakes import FakeHa
+from fakes import FREMDTEXT, FREMDTEXT_IM_LOG, FakeHa, logzeilen
 
 from heizungsbruecke.ha_binding import HaPlantBinding
 from smartheat_core import derived
@@ -121,3 +121,20 @@ def test_lever_sets_without_min_flow_derive_nothing(make_store, clock):
     assert derived.expected(rt) is None
     derived.sync(rt)
     assert ha.writes == [] and store.state.min_flow_current is None
+
+
+class _FremdtextHa(FakeHa):
+    """Das Lesen des Mindestvorlaufs scheitert mit fremdem Text (Fehlertext der HA-API)."""
+
+    def get_state(self, entity_id):
+        if entity_id == "number.min_flow":
+            raise RuntimeError(FREMDTEXT)
+        return super().get_state(entity_id)
+
+
+def test_sync_logs_a_read_error_from_ha_only_escaped(make_store, clock, caplog):
+    """T6-Rest, R-c: der Fehlertext beim Lesen des Mindestvorlaufs steht nur als Escape im Log."""
+    rt = _rt(make_store, clock, 21.0, 21.0, ha=_FremdtextHa())
+    with caplog.at_level(logging.WARNING, logger="smartheat_core.derived"):
+        derived.sync(rt)
+    assert f"Mindestvorlauf nicht lesbar ({FREMDTEXT_IM_LOG}), wird neu geschrieben" in logzeilen(caplog)

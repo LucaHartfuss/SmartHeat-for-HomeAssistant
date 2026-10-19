@@ -11,6 +11,8 @@ from typing import Protocol
 import paho.mqtt.client as mqtt
 from paho.mqtt.enums import CallbackAPIVersion
 
+from smartheat_core.logtext import lesbar
+
 logger = logging.getLogger(__name__)
 
 Callback = Callable[[str, bytes, bool], None]
@@ -133,4 +135,4 @@ class LocalBus:
             try:
                 callback(message.topic, message.payload, bool(message.retain))
             except Exception:
-                logger.exception("Fehler beim Verarbeiten von %s", message.topic)
+                logger.exception("Fehler beim Verarbeiten von %s", lesbar(str(message.topic)))

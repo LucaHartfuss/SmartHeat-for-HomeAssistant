@@ -1,10 +1,11 @@
 """Batterieueberwachung (Spec TP6 3.5): Hysterese 20/25 %, binary_sensor, unavailable ohne Wechsel."""
+import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 import requests
-from fakes import runtime_config
+from fakes import FREMDTEXT, FREMDTEXT_IM_LOG, logzeilen, runtime_config
 
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_signals import HaSignalSource
@@ -139,3 +140,12 @@ def test_a_deleted_battery_entity_is_skipped_and_an_unreachable_ha_ends_the_roun
 
     assert rt.notifier.state("batterie:sensor.wz_battery") == STATE_LOW  # Runde abgebrochen, keine Entwarnung
     assert len(rt.ha_api.send_notification.call_args_list) == 1
+
+
+def test_an_unreachable_ha_logs_its_error_text_only_escaped(make_store, caplog):
+    """T6-Rest, R-c: der Fehlertext der HA-API (SourceUnavailable) steht nur als Escape im Log."""
+    rt = _rt(make_store, {"sensor.wz_battery": requests.ConnectionError(FREMDTEXT)})
+    with caplog.at_level(logging.WARNING, logger="smartheat_runtime.battery"):
+        check_batteries(rt)
+    assert (f"Batteriepruefung abgebrochen, {HA_TEXTS.source_unavailable_log}: {FREMDTEXT_IM_LOG}"
+            in logzeilen(caplog))

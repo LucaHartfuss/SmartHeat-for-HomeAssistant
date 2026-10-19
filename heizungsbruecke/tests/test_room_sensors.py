@@ -1,9 +1,10 @@
 """Einzelfuehler-Ausfall (Spec TP6 3.5, Praezisierung 5)."""
+import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import requests
-from fakes import runtime_config
+from fakes import FREMDTEXT, FREMDTEXT_IM_LOG, logzeilen, runtime_config
 
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_signals import HaSignalSource
@@ -226,3 +227,13 @@ def test_message_and_key_use_the_device_key_of_the_source(make_store):
 
     assert "raumfuehler:GERAET-sensor.b" in rt.store.state.notify_states
     assert _texts(rt) == ["SmartHeat: Raumfühler GERAET-sensor.b liefert keine Werte, Mittelwert aus 1 Fühler."]
+
+
+def test_an_unreachable_ha_logs_its_error_text_only_escaped(make_store, caplog):
+    """T6-Rest, R-c: der Fehlertext der HA-API (SourceUnavailable) steht nur als Escape im Log."""
+    values = {"sensor.a": requests.ConnectionError(FREMDTEXT), "sensor.b": 20.0}
+    rt = _rt(make_store, values, values.keys())
+    with caplog.at_level(logging.WARNING, logger="smartheat_runtime.room_sensors"):
+        check_room_sensors(rt)
+    assert (f"Raumfuehler-Pruefung abgebrochen, {HA_TEXTS.source_unavailable_log}: {FREMDTEXT_IM_LOG}"
+            in logzeilen(caplog))

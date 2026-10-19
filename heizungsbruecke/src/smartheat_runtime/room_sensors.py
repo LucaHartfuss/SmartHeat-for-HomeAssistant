@@ -9,6 +9,7 @@ Rueckkehr wird sofort gemeldet. Der Zaehler ist reine Laufzeit und beginnt nach 
 ein schon gemeldeter Ausfall bleibt dabei bestehen, bis der Fuehler wieder Werte liefert."""
 import logging
 
+from smartheat_core.logtext import lesbar
 from smartheat_runtime.notifier import STATE_OK
 from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
 from smartheat_runtime.ports import SignalNotFound, SourceUnavailable
@@ -42,7 +43,8 @@ def check_room_sensors(rt) -> None:
         except SignalNotFound:
             value = None
         except SourceUnavailable as error:
-            logger.warning("Raumfuehler-Pruefung abgebrochen, %s: %s", rt.texts.source_unavailable_log, error)
+            logger.warning("Raumfuehler-Pruefung abgebrochen, %s: %s", rt.texts.source_unavailable_log,
+                           lesbar(str(error)))
             return
         except (ValueError, KeyError, TypeError):
             value = None

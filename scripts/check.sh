@@ -40,6 +40,9 @@ docker_host_run() {
   elif [ "$FULL" = 1 ] && command -v flatpak-spawn >/dev/null 2>&1; then flatpak-spawn --host "$@"
   else echo "Docker nicht verfuegbar - Schritt nur mit --full (Sandbox) oder in CI"; return 1; fi
 }
+# Property-Tests (heizungsbruecke/tests): --full waehlt das Profil voll von hypothesis (500 Beispiele, zufaelliger
+# Seed; heizungsbruecke/tests/conftest.py), sonst gilt HYPOTHESIS_PROFILE aus der Umgebung oder schnell.
+if [ "$FULL" = 1 ]; then export HYPOTHESIS_PROFILE=voll; fi
 PY="${PYTHON:-python3}"
 # Dev-Root: in CI aus siblings.sh (DEV_ROOT), lokal der Ordner ueber dem Haupt-Checkout - auch aus einem
 # Worktree unter .devtools/wt/ (git-common-dir zeigt auf .git des Haupt-Checkouts; Audit 5, A5-08).

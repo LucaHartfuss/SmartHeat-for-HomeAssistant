@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from smartheat_core import dateien
+from smartheat_core.logtext import lesbar
 from smartheat_device import fehler, nachrichten, wire
 
 logger = logging.getLogger(__name__)
@@ -239,7 +240,7 @@ class CommandRegister:
         try:
             gesendet = self._send_inventory(command_id, done.inventur)
         except ValueError as error:
-            logger.error("Inventur zu Befehl %s nicht gesendet (%s)", command_id, type(error).__name__)
+            logger.error("Inventur zu Befehl %s nicht gesendet (%s)", lesbar(command_id), type(error).__name__)
             return Failed("intern")
         if gesendet:
             return Done(done.result)

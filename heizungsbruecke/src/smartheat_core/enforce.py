@@ -29,6 +29,7 @@ from datetime import date
 from typing import Any, Protocol
 
 from smartheat_core import derived, wallclock, write_budget
+from smartheat_core.logtext import lesbar
 from smartheat_core.pipeline import WriteBudgetExhausted
 from smartheat_core.zahlen import GLEITKOMMA_REST, ist_endliche_zahl
 
@@ -90,7 +91,7 @@ def _read(rt: EnforceRuntime, lever: str) -> float | None:
     try:
         value = rt.override.binding.read(lever)
     except Exception as error:
-        logger.info("Eingriff nicht pruefbar, %s nicht lesbar: %s", lever, error)
+        logger.info("Eingriff nicht pruefbar, %s nicht lesbar: %s", lever, lesbar(str(error)))
         return None
     return value if ist_endliche_zahl(value) else None
 
@@ -102,7 +103,7 @@ def _zone_not_manual(rt: EnforceRuntime) -> bool:
     try:
         return not binding.is_prepared()
     except Exception as error:
-        logger.info("Betriebsart der Zone nicht lesbar: %s", error)
+        logger.info("Betriebsart der Zone nicht lesbar: %s", lesbar(str(error)))
         return False
 
 

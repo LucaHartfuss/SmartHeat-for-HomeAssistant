@@ -11,7 +11,15 @@ from types import SimpleNamespace
 import geraet_helpers
 import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT
-from fakes import VIESSMANN_OPTIONEN, VIESSMANN_ZUSTAND, FakeHa, trigger_klasse
+from fakes import (
+    FREMDTEXT,
+    FREMDTEXT_IM_LOG,
+    VIESSMANN_OPTIONEN,
+    VIESSMANN_ZUSTAND,
+    FakeHa,
+    logzeilen,
+    trigger_klasse,
+)
 
 from heizungsbruecke import geraet_status
 from heizungsbruecke.derived_sensors import DerivedSensors
@@ -1029,6 +1037,19 @@ def test_skipped_answer_is_applied_like_ok(env):
     assert bridge.store.state.delivery.datenfehler is None
 
 
+def test_the_skipped_log_quotes_the_server_reason_encodable_and_on_one_line(env, caplog):
+    """Testoffensive T6: auch der Grund einer Antwort skipped kommt vom Server und steht mit repr im Log."""
+    bridge = _start(env)
+    _connect(env, bridge)
+    _ha_verbunden(env, bridge)
+    seq = _mqtt(env).snapshots[0]["seq"]
+    with caplog.at_level(logging.INFO, logger="smartheat_runtime.ticks"):
+        _answer(env, bridge, seq, status="skipped", curve=1.0, shift=20.5, reason="\ud800\nzweite")
+    (meldung,) = [r.getMessage() for r in caplog.records if "nicht gelernt" in r.getMessage()]
+    assert meldung == f"Server hat fuer seq={seq} nicht gelernt ('\\ud800\\nzweite'), Werte unveraendert uebernommen"
+    meldung.encode("utf-8")
+
+
 def test_dead_room_actual_holds_tick_and_reports_once(env, caplog):
     # Review Focus 1.
     _quiet_backup(env)
@@ -1107,6 +1128,43 @@ def test_rejected_answer_reports_server_fault_once_and_retries_same_seq(env):
     assert [s["seq"] for s in _mqtt(env).snapshots] == [seq, seq]
     assert len(env.ha.pushes) == 1
     assert _failsafe_file(env)["datenfehler"] == {"source": "server", "detail": [reason]}
+
+
+@pytest.mark.parametrize("reason", ["\ud800", "a\udfffb", "erste Zeile\nWARNING gefaelscht"],
+                         ids=["surrogat", "surrogat_im_text", "zeilenumbruch"])
+def test_the_warning_about_a_rejected_answer_quotes_the_server_reason_encodable_and_on_one_line(env, caplog, reason):
+    """Testoffensive T6 (Fund aus dem Profil voll): der Grund kommt vom Server. Die Warnung zitiert ihn mit repr: ein
+    einzelnes Surrogat brach sonst die UTF-8-Ausgabe des Logs (Logging error, Zeile verloren; unter xdist INTERNALERROR),
+    ein Zeilenumbruch faelschte eine zweite Logzeile."""
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[0]["seq"]
+
+    with caplog.at_level(logging.WARNING, logger="smartheat_runtime.ticks"):
+        _answer(env, bridge, seq, status="rejected", curve=None, shift=None, reason=reason)
+
+    (meldung,) = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Server hat Snapshot")]
+    assert meldung == f"Server hat Snapshot (seq={seq}) abgelehnt: {reason!r}"
+    meldung.encode("utf-8")  # wirft bei einem einzelnen Surrogat
+    assert "\n" not in meldung
+
+
+def test_the_warning_about_unwritable_server_values_has_the_error_text_from_ha_only_escaped(env, caplog):
+    """T6-Rest, R-c: scheitert das Schreiben der Serverwerte, traegt DeviceWriteError den Fehlertext von HA; in der
+    Warnung steht er nur als Escape (Zeilenumbruch, U+202E, U+061C)."""
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[0]["seq"]
+    env.ha.write_error = RuntimeError(FREMDTEXT)
+
+    with caplog.at_level(logging.WARNING, logger="smartheat_runtime.ticks"):
+        _answer(env, bridge, seq, curve=0.95, shift=23.0)
+
+    assert [zeile for zeile in logzeilen(caplog) if zeile.startswith(f"Serverwerte (seq={seq})")] == [
+        f"Serverwerte (seq={seq}) konnten nicht auf die Anlage geschrieben werden: "
+        f"curve (number.curve_current): {FREMDTEXT_IM_LOG}"]
 
 
 @pytest.mark.parametrize("answer", [

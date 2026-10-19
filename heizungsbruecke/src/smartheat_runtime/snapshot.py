@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from smartheat_core import wallclock
+from smartheat_core.logtext import lesbar
 from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_runtime.roles import ChannelManifest
 
@@ -39,7 +40,8 @@ def _read_role(manifest: ChannelManifest, signals, role: str, invalid: list[str]
     try:
         value = signals.get_state(entity_id)
     except Exception as error:
-        logger.warning("Sensor fuer Rolle '%s' (%s) liefert keinen gueltigen Wert: %s", role, entity_id, error)
+        logger.warning("Sensor fuer Rolle '%s' (%s) liefert keinen gueltigen Wert: %s", role, entity_id,
+                       lesbar(str(error)))
         invalid.append(role)
         return None
     if not ist_endliche_zahl(value):
@@ -65,7 +67,8 @@ def read_snapshot(manifest: ChannelManifest, signals, binding, known: Mapping[st
             try:
                 value = binding.read(lever)
             except Exception as error:
-                logger.warning("Hebel '%s' (%s) liefert keinen gueltigen Wert: %s", lever, binding.ref(lever), error)
+                logger.warning("Hebel '%s' (%s) liefert keinen gueltigen Wert: %s", lever, binding.ref(lever),
+                               lesbar(str(error)))
                 invalid.append(lever)
                 continue
         if not ist_endliche_zahl(value):
@@ -81,7 +84,8 @@ def read_snapshot(manifest: ChannelManifest, signals, binding, known: Mapping[st
         try:
             value = binding.read(lever)
         except Exception as error:
-            logger.warning("Nur lesbarer Hebel '%s' (%s) nicht lesbar, wird weggelassen: %s", lever, binding.ref(lever), error)
+            logger.warning("Nur lesbarer Hebel '%s' (%s) nicht lesbar, wird weggelassen: %s", lever, binding.ref(lever),
+                           lesbar(str(error)))
             continue
         if not ist_endliche_zahl(value):
             logger.warning("Nur lesbarer Hebel '%s' (%s) nicht endlich, wird weggelassen: %r", lever, binding.ref(lever), value)

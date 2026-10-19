@@ -15,6 +15,7 @@ erscheint im Log nur als Anzahl je Domaene."""
 import logging
 from collections import Counter
 
+from smartheat_core.logtext import lesbar
 from smartheat_device import fehler, wire
 from smartheat_device.nachrichten import pruefen
 
@@ -113,7 +114,7 @@ def inventur(ha_api, filter_: dict) -> dict:
                for d in ha_api.device_registry() if isinstance(d, dict) and d.get("id") in geraete_ids]
     if verworfen:
         logger.info("Inventur: %d Entities ausserhalb der Positivliste verworfen (%s)", sum(verworfen.values()),
-                    ", ".join(f"{domain}={anzahl}" for domain, anzahl in sorted(verworfen.items())))
+                    lesbar(", ".join(f"{domain}={anzahl}" for domain, anzahl in sorted(verworfen.items()))))
     dienste = sorted(f"{s['domain']}.{name}" for s in ha_api.get_services()
                      if isinstance(s, dict) and s.get("domain") == "notify"
                      for name in (s.get("services") or {})

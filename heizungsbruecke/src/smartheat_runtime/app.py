@@ -14,6 +14,7 @@ from typing import Protocol
 
 from smartheat_core import derived, enforce, wallclock, write_budget
 from smartheat_core.binding import PlantBinding
+from smartheat_core.logtext import lesbar
 from smartheat_core.pipeline import LeverPipeline, WriteBudgetExhausted
 from smartheat_core.safety import LocalSafety
 from smartheat_runtime import (
@@ -208,7 +209,7 @@ def _fail_start(notifier, status, clock, grund: str, key: str | None = None, *, 
     erneut, legt aber die offene Meldung neu an (in HA fehlt sie nach einem Host-Neustart). Danach
     Ruhezustand mit Neupruefung nach CONFIG_RECHECK_SECONDS. Laeuft ein Boost, nimmt der Start ihn ueber `parts`
     zurueck; geht das nicht, sagt die Meldung, dass die Boost-Werte noch auf der Anlage stehen (Audit 4, A4-10)."""
-    logger.error("FEHLER: %s", grund)
+    logger.error("FEHLER: %s", lesbar(grund))  # der Grund traegt Text der Konfiguration (Gateway: vom Server)
     message = CONFIG_ERROR_MESSAGE.format(grund=grund)
     if (store is not None and (store.state.boost_active or store.state.emergency_boost_active)
             and not _end_boosts(store, parts, clock)):

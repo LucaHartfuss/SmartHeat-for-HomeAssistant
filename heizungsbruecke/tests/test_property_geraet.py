@@ -1,9 +1,10 @@
 """Testoffensive T2 (Spec §4, §5, §12 Nr. 20): Property- und Angriffstests der Leser von Geraeteeingaben im Add-on
 (V1 und V1b): Bootstrap-Antwort, Dokumente, Befehle und die Serverantwort `handle_setpoints`. Spec §5 "kompromittierter
 Server": ein Server, der beliebige Bytes sendet, bringt weder den Geraete-Thread noch den Regel-Worker zum Stehen und
-bringt keinen Wert ausserhalb der lokalen Grenzen (Regel 4) auf die Anlage. Eigene Kopie der JSON-Strategie (die Repos
-teilen keine Testhilfen). `deadline=None`: ein Beispiel der Laufzeit-Tests startet eine ganze Laufzeit; die Zahl der
-Beispiele ist begrenzt (50, fester Seed, keine .hypothesis-Datenbank im Checkout)."""
+bringt keinen Wert ausserhalb der lokalen Grenzen (Regel 4) auf die Anlage. Strategien und Pfadhilfen aus
+strategien.py (eigene Kopie, die Repos teilen keine Testhilfen). Beispielzahl, Seed und Frist (keine: ein Beispiel der
+Laufzeit-Tests startet eine ganze Laufzeit) kommen aus den Profilen in conftest.py (schnell 50 mit festem Seed, voll
+500)."""
 import json
 import logging
 import math
@@ -15,8 +16,9 @@ import pytest
 from conftest import FakeClock
 from device_helpers import GeraeteCa, zertifikat_fuer
 from fakes import VIESSMANN_OPTIONEN, VIESSMANN_ZUSTAND, FakeHa, trigger_klasse
-from hypothesis import given, settings
+from hypothesis import given
 from hypothesis import strategies as st
+from strategien import JSON_WERT, SURROGATTEXT, WEG, ersetze, pfade
 from test_device_bootstrap import FakeResponse, FakeSession
 from test_device_commands import Sent, _command
 from test_device_documents import _bedienung, _konfiguration, _leer, _store
@@ -31,50 +33,12 @@ from smartheat_device import identity as identity_module
 from smartheat_device.tls import ALPN_443, IOT_PORTS
 from smartheat_runtime import entitlement
 
-EINSTELLUNG = settings(max_examples=50, derandomize=True, database=None, deadline=None)
-JSON_WERT = st.recursive(
-    st.none() | st.booleans() | st.integers() | st.floats(allow_nan=True, allow_infinity=True)
-    | st.text(max_size=300) | st.just(10**400) | st.sampled_from(["\ud800", "a\udfffb", "-----BEGIN CERTIFICATE-----\ud800"]),
-    lambda kinder: st.lists(kinder, max_size=5) | st.dictionaries(st.text(max_size=20), kinder, max_size=5),
-    max_leaves=30,
-)
-#: json.loads liefert aus "\ud800" ein einzelnes Surrogat; schreiben_json kodiert als UTF-8 (ensure_ascii=False)
-SURROGATTEXT = st.text(alphabet=st.sampled_from(["a", "é", "\ud800", "\udfff"]), min_size=1, max_size=8)
-
 
 @pytest.fixture(autouse=True)
 def _ohne_fsync(monkeypatch):
     """Durchsatz: je Beispiel entstehen ein Speicher und etliche Dateien; die Absturzsicherheit des atomaren Schreibens
     (fsync) pruefen test_core_dateien.py und die Geraete-Tests, nicht diese Datei."""
     monkeypatch.setattr(os, "fsync", lambda fd: None)
-
-
-def _pfade(wert, vorne=()):
-    """Alle Pfade (Schluessel/Indizes) in einer Vorlage, auch die inneren Ebenen."""
-    yield vorne
-    if isinstance(wert, dict):
-        for schluessel, kind in wert.items():
-            yield from _pfade(kind, (*vorne, schluessel))
-    elif isinstance(wert, list):
-        for index, kind in enumerate(wert):
-            yield from _pfade(kind, (*vorne, index))
-
-
-_WEG = object()  # an der Stelle entfernen statt ersetzen
-
-
-def _ersetze(wert, pfad, neu):
-    if not pfad:
-        return neu
-    kopie = json.loads(json.dumps(wert))
-    ziel = kopie
-    for schluessel in pfad[:-1]:
-        ziel = ziel[schluessel]
-    if neu is _WEG:
-        del ziel[pfad[-1]]
-    else:
-        ziel[pfad[-1]] = neu
-    return kopie
 
 
 def _nur_endliche_zahlen(wert) -> bool:
@@ -120,7 +84,6 @@ def _ablauf(verzeichnis, ident, client):
                                uhr_synchron=lambda: True, identity=lambda: ident, clock=lambda: 0.0)
 
 
-@EINSTELLUNG
 @given(JSON_WERT, st.sampled_from(STATUS))
 def test_beliebige_bootstrap_antwort_ergibt_nur_die_fehlerarten_des_bootstraps(ident, body, status):
     """Beliebiges JSON (Objekt und Nicht-Objekt, jeder Status) an register: nur Unavailable/Rejected/NotAuthenticated
@@ -134,7 +97,6 @@ def test_beliebige_bootstrap_antwort_ergibt_nur_die_fehlerarten_des_bootstraps(i
         pytest.fail("eine zufaellige Antwort darf keinen Zugang ergeben")
 
 
-@EINSTELLUNG
 @given(JSON_WERT, st.sampled_from(STATUS))
 def test_eine_beliebige_bootstrap_antwort_wird_nie_gespeichert(ident, body, status):
     with tempfile.TemporaryDirectory() as verzeichnis:
@@ -144,28 +106,26 @@ def test_eine_beliebige_bootstrap_antwort_wird_nie_gespeichert(ident, body, stat
 
 
 def _bootstrap_stellen(gut):
-    return [pfad for pfad in _pfade(gut) if pfad]
+    return [pfad for pfad in pfade(gut) if pfad]
 
 
-@EINSTELLUNG
 @given(st.integers(0, 6), JSON_WERT)
 def test_beliebiger_wert_an_einer_stelle_der_bootstrap_antwort_wird_abgelehnt_oder_gelesen(ident, gute_antwort, nr, wert):
     stellen = _bootstrap_stellen(gute_antwort)
     pfad = stellen[nr % len(stellen)]
     try:
-        antwort = _client(ident, FakeResponse(200, _ersetze(gute_antwort, pfad, wert))).register(**_register_args())
+        antwort = _client(ident, FakeResponse(200, ersetze(gute_antwort, pfad, wert))).register(**_register_args())
     except bootstrap.Unavailable:
         return
     _zugang_ist_vertragsgemaess(antwort)
 
 
-@EINSTELLUNG
 @given(st.integers(0, 6), JSON_WERT)
 def test_bootstrap_speichert_genau_dann_wenn_es_einen_zugang_gibt(ident, gute_antwort, nr, wert):
     stellen = _bootstrap_stellen(gute_antwort)
     pfad = stellen[nr % len(stellen)]
     with tempfile.TemporaryDirectory() as verzeichnis:
-        client = _client(ident, FakeResponse(200, _ersetze(gute_antwort, pfad, wert)))
+        client = _client(ident, FakeResponse(200, ersetze(gute_antwort, pfad, wert)))
         zugang = _ablauf(verzeichnis, ident, client).holen(rettung=False)
         gespeichert = sorted(datei.name for datei in Path(verzeichnis).iterdir())
         if zugang is None:
@@ -195,9 +155,9 @@ def test_jeder_sonderwert_an_jeder_stelle_der_bootstrap_antwort_wird_abgelehnt_o
     Antwort x jeder Sonderwert, fehlend eingeschlossen; Gegenprobe: mindestens ein Fall wird gelesen und einer abgelehnt."""
     gelesen = abgelehnt = 0
     for pfad in _bootstrap_stellen(gute_antwort):
-        for wert in [*SONDERWERTE, _WEG]:
+        for wert in [*SONDERWERTE, WEG]:
             try:
-                antwort = _client(ident, FakeResponse(200, _ersetze(gute_antwort, pfad, wert))).register(
+                antwort = _client(ident, FakeResponse(200, ersetze(gute_antwort, pfad, wert))).register(
                     **_register_args())
             except bootstrap.Unavailable:
                 abgelehnt += 1
@@ -205,7 +165,7 @@ def test_jeder_sonderwert_an_jeder_stelle_der_bootstrap_antwort_wird_abgelehnt_o
             _zugang_ist_vertragsgemaess(antwort)
             gelesen += 1
             with tempfile.TemporaryDirectory() as verzeichnis:  # und der ganze Ablauf: speichern wirft nicht
-                client = _client(ident, FakeResponse(200, _ersetze(gute_antwort, pfad, wert)))
+                client = _client(ident, FakeResponse(200, ersetze(gute_antwort, pfad, wert)))
                 assert _ablauf(verzeichnis, ident, client).holen(rettung=False) is not None or not any(
                     Path(verzeichnis).iterdir())
     assert gelesen > 0 and abgelehnt > 0
@@ -229,7 +189,7 @@ DOKUMENTE = [
     ("konfiguration_leer", "konfiguration", _leer(), KONFIG_OPTIONAL),
     ("bedienung", "bedienung", _bedienung(), ()),
 ]
-STELLEN = [(dokument, pfad) for dokument in DOKUMENTE for pfad in _pfade(dokument[2]) if pfad]
+STELLEN = [(dokument, pfad) for dokument in DOKUMENTE for pfad in pfade(dokument[2]) if pfad]
 
 
 def _ergebnis_ist_wohlgeformt(ergebnis):
@@ -241,7 +201,6 @@ def _ergebnis_ist_wohlgeformt(ergebnis):
     json.loads(json.dumps(ergebnis.payload(), allow_nan=False))
 
 
-@EINSTELLUNG
 @given(st.sampled_from(wire.DOKUMENTE), st.dictionaries(st.text(max_size=30), JSON_WERT, max_size=12),
        st.just(1) | JSON_WERT, st.just(1) | JSON_WERT)
 def test_beliebiges_dokument_wird_abgelehnt_oder_ignoriert_nie_eine_andere_ausnahme(art, rest, schema, version):
@@ -256,7 +215,6 @@ def test_beliebiges_dokument_wird_abgelehnt_oder_ignoriert_nie_eine_andere_ausna
         assert store.inhalt(art) is None and not (Path(verzeichnis) / "sicherheitssatz.json").exists()
 
 
-@EINSTELLUNG
 @given(st.sampled_from(DOKUMENTE), st.text(max_size=20), JSON_WERT)
 def test_fremdes_feld_in_einem_gueltigen_dokument_ist_ungueltig(dokument, feld, wert):
     _name, art, gut, optional = dokument
@@ -281,7 +239,6 @@ def test_gueltiges_dokument_ueberlebt_den_json_rundweg(tmp_path, dokument):
     assert direkt == ueber_json and direkt.ok and direkt.uebernommen  # Gegenprobe: die Vorlage selbst ist gueltig
 
 
-@EINSTELLUNG
 @given(st.sampled_from(STELLEN), JSON_WERT)
 def test_beliebiger_wert_an_einer_stelle_lehnt_ab_und_behaelt_das_vorige_dokument(stelle, wert):
     """Wert an jeder Stelle (auch innere Ebenen): nie eine andere Ausnahme; abgelehnt bleibt das vorige Dokument,
@@ -294,7 +251,7 @@ def test_beliebiger_wert_an_einer_stelle_lehnt_ab_und_behaelt_das_vorige_dokumen
         else:
             assert store.empfangen(art, {**gut, "version": 1}).uebernommen
         vorher = (store.version(art), store.inhalt(art))
-        neu = _ersetze({**gut, "version": 2}, pfad, wert)
+        neu = ersetze({**gut, "version": 2}, pfad, wert)
         ergebnis = store.empfangen(art, neu)
         if ergebnis is None:
             assert (store.version(art), store.inhalt(art)) == vorher
@@ -306,7 +263,6 @@ def test_beliebiger_wert_an_einer_stelle_lehnt_ab_und_behaelt_das_vorige_dokumen
             assert _store(Path(verzeichnis)).inhalt(art) == store.inhalt(art)
 
 
-@EINSTELLUNG
 @given(st.sampled_from(STELLEN))
 def test_fehlendes_feld_an_einer_stelle_lehnt_ab_oder_liest(stelle):
     (_name, art, gut, _optional), pfad = stelle
@@ -314,7 +270,7 @@ def test_fehlendes_feld_an_einer_stelle_lehnt_ab_oder_liest(stelle):
         store = _store(Path(verzeichnis))
         assert store.empfangen(art, gut).uebernommen  # das vorige gueltige Dokument
         vorher = (store.version(art), store.inhalt(art))
-        ergebnis = store.empfangen(art, _ersetze({**gut, "version": 2}, pfad, _WEG))
+        ergebnis = store.empfangen(art, ersetze({**gut, "version": 2}, pfad, WEG))
         if ergebnis is not None:
             _ergebnis_ist_wohlgeformt(ergebnis)
         if ergebnis is None or not ergebnis.ok:
@@ -343,7 +299,7 @@ def test_nicht_endliche_zahl_an_jeder_stelle_wird_abgelehnt_oder_nie_gespeichert
     prueft der Treiber ueber den Rueckruf des Hosts, den dieser Store hier nicht hat; Gateway-Host-Tests) und UNGEPRUEFT."""
     name, art, gut, _optional = dokument
     zaehler = 0
-    for pfad in _pfade(gut):
+    for pfad in pfade(gut):
         if not pfad or pfad[0] in ("version", "schema", *UNGEPRUEFT[name]) or pfad[:3] == ("bindung", "treiber", "parameter"):
             continue
         for zahl in _NICHT_ENDLICH:
@@ -354,13 +310,12 @@ def test_nicht_endliche_zahl_an_jeder_stelle_wird_abgelehnt_oder_nie_gespeichert
                 verzeichnis = tmp_path / f"d{zaehler}"
                 verzeichnis.mkdir()
                 store = _store(verzeichnis)
-                ergebnis = store.empfangen(art, _ersetze(gut, pfad, form(zahl)))
+                ergebnis = store.empfangen(art, ersetze(gut, pfad, form(zahl)))
                 if ergebnis is not None and ergebnis.ok:
                     assert _nur_endliche_zahlen(store.inhalt(art)), (pfad, zahl)
     assert zaehler > 0
 
 
-@EINSTELLUNG
 @given(st.sampled_from(STELLEN), SURROGATTEXT)
 def test_text_mit_einzelnem_surrogat_wird_abgelehnt_oder_ist_speicherbar(stelle, text):
     """json.loads liefert aus "\\ud800" ein einzelnes Surrogat, das sich nicht als UTF-8 speichern laesst: ein Dokument
@@ -368,7 +323,7 @@ def test_text_mit_einzelnem_surrogat_wird_abgelehnt_oder_ist_speicherbar(stelle,
     (_name, art, gut, _optional), pfad = stelle
     with tempfile.TemporaryDirectory() as verzeichnis:
         store = _store(Path(verzeichnis))
-        ergebnis = store.empfangen(art, _ersetze(gut, pfad, text))
+        ergebnis = store.empfangen(art, ersetze(gut, pfad, text))
         if ergebnis is not None and ergebnis.uebernommen:
             assert _store(Path(verzeichnis)).inhalt(art) == store.inhalt(art)
 
@@ -426,7 +381,6 @@ def _ergebnisse_sind_wohlgeformt(sent):
             assert ergebnis["error"]["grund"] in {g for kind in wire.COMMANDS for g in wire.command_errors(kind)}
 
 
-@EINSTELLUNG
 @given(st.dictionaries(st.sampled_from([*COMMAND_FELDER, "fremd"]), JSON_WERT, max_size=6))
 def test_beliebiger_befehl_fuehrt_nur_bei_gueltiger_form_einen_handler_aus(nachricht):
     with tempfile.TemporaryDirectory() as verzeichnis:
@@ -439,7 +393,6 @@ def test_beliebiger_befehl_fuehrt_nur_bei_gueltiger_form_einen_handler_aus(nachr
         _ergebnisse_sind_wohlgeformt(sent)
 
 
-@EINSTELLUNG
 @given(st.sampled_from(BEFEHLE), st.dictionaries(st.text(max_size=12), JSON_WERT, max_size=4), st.booleans())
 def test_befehl_mit_fremdem_feld_fuehrt_keinen_handler_aus(befehl, fremd, im_payload):
     kind, payload = befehl
@@ -471,7 +424,6 @@ def test_gueltiger_befehl_ueberlebt_den_json_rundweg(tmp_path, kind, payload):
     assert ergebnisse[0] == ergebnisse[1] and ergebnisse[0][0]["ok"] is True
 
 
-@EINSTELLUNG
 @given(st.sampled_from(BEFEHLE), SURROGATTEXT | st.text(max_size=100) | st.just("x" * 65))
 def test_command_id_beliebigen_textes_wird_abgelehnt_oder_ausgefuehrt_ohne_ausnahme(befehl, command_id):
     kind, payload = befehl
@@ -483,8 +435,7 @@ def test_command_id_beliebigen_textes_wird_abgelehnt_oder_ausgefuehrt_ohne_ausna
         _ergebnisse_sind_wohlgeformt(sent)
 
 
-@EINSTELLUNG
-@given(JSON_WERT, JSON_WERT, JSON_WERT | st.just(_WEG), st.sampled_from(["key", "stufe", "text"]))
+@given(JSON_WERT, JSON_WERT, JSON_WERT | st.just(WEG), st.sampled_from(["key", "stufe", "text"]))
 def test_hinweis_mit_beliebigen_werten_speichert_nur_gueltige_hinweise(schluessel, stufe, text, feld):
     """Der eingebaute Befehl hinweis (jedes Geraet): was ankommt, ist ein Hinweis aus dem Vertrag oder abgelehnt."""
     with tempfile.TemporaryDirectory() as verzeichnis:
@@ -492,8 +443,8 @@ def test_hinweis_mit_beliebigen_werten_speichert_nur_gueltige_hinweise(schluesse
         register = cmd.CommandRegister(Path(verzeichnis), sent)
         hinweise = cmd.Hinweise(Path(verzeichnis))
         register.register("hinweis", hinweise.handler)
-        payload = {"key": schluessel, "stufe": stufe, **({} if text is _WEG else {"text": text})}
-        payload[feld] = {"key": schluessel, "stufe": stufe, "text": None if text is _WEG else text}[feld]
+        payload = {"key": schluessel, "stufe": stufe, **({} if text is WEG else {"text": text})}
+        payload[feld] = {"key": schluessel, "stufe": stufe, "text": None if text is WEG else text}[feld]
         register.empfangen(_command("hinweis", payload=payload))
         _ergebnisse_sind_wohlgeformt(sent)
         for eintrag in hinweise.alle():
@@ -601,7 +552,6 @@ def test_beliebige_serverantwort_schreibt_nichts_ausserhalb_der_lokalen_grenzen_
     bereiche = LOCAL_SAFETY[(hebelsatz, OPTIONS["verteilsystem"])].ranges
     zaehler = {"geschrieben": 0, "angenommen": 0}
 
-    @EINSTELLUNG
     @given(_antwort(erwartet))
     def pruefen(antwort):
         with tempfile.TemporaryDirectory() as verzeichnis, pytest.MonkeyPatch.context() as mp:

@@ -34,6 +34,7 @@ from typing import TypeGuard
 from smartheat_core import write_budget
 from smartheat_core.binding import PlantBinding
 from smartheat_core.clamping import clamp, target_value
+from smartheat_core.logtext import lesbar
 from smartheat_core.safety import LocalSafety
 
 logger = logging.getLogger(__name__)
@@ -447,7 +448,7 @@ class LeverPipeline:
             if lever not in self._limits_unreadable:
                 self._limits_unreadable.add(lever)
                 logger.info("Wertebereich der Anlage fuer %s nicht lesbar (%s), letzter Wert bzw. lokale Grenzen",
-                            lever, error)
+                            lever, lesbar(str(error)))
             device = cached[1] if cached is not None else None
         else:
             self._limits_unreadable.discard(lever)
@@ -700,7 +701,7 @@ class LeverPipeline:
         try:
             live = self._binding.read(lever)
         except Exception as error:
-            logger.warning("%s beim ersten Start nicht lesbar: %s", lever, error)
+            logger.warning("%s beim ersten Start nicht lesbar: %s", lever, lesbar(str(error)))
             live = None
         seeded = None
         if live is not None and _is_finite_number(live):
@@ -742,13 +743,13 @@ class LeverPipeline:
             try:
                 self._store.update(restore_point=dict(point))
             except Exception as error:
-                logger.warning("Wiederherstellungspunkt nicht gespeichert (backup.json): %s", error)
+                logger.warning("Wiederherstellungspunkt nicht gespeichert (backup.json): %s", lesbar(str(error)))
                 return self._saved_fallback() if allow_saved_fallback else None
             return _POINT_CURRENT
         try:
             live = {lever: self._binding.read(lever) for lever in missing}
         except Exception as error:
-            logger.warning("Wiederherstellungspunkt nicht lesbar (%s): %s", ", ".join(missing), error)
+            logger.warning("Wiederherstellungspunkt nicht lesbar (%s): %s", ", ".join(missing), lesbar(str(error)))
             return None
         if not all(value is not None and _is_finite_number(value) for value in live.values()):
             logger.warning("Wiederherstellungspunkt ungueltig: %r", live)
@@ -774,7 +775,7 @@ class LeverPipeline:
         try:
             values = self._binding.read_aux()
         except Exception as error:
-            logger.warning("Ursprungswerte %s nicht lesbar, bleiben offen: %s", ", ".join(names), error)
+            logger.warning("Ursprungswerte %s nicht lesbar, bleiben offen: %s", ", ".join(names), lesbar(str(error)))
             return False
         missing = [name for name in names if name not in values]
         if missing:
@@ -813,7 +814,7 @@ class LeverPipeline:
             try:
                 live = self._binding.read(lever)
             except Exception as error:
-                logger.warning("%s beim Start nicht lesbar, Ursprungswert bleibt offen: %s", lever, error)
+                logger.warning("%s beim Start nicht lesbar, Ursprungswert bleibt offen: %s", lever, lesbar(str(error)))
                 continue
             if live is None or not _is_finite_number(live):
                 logger.warning("%s beim Start nicht numerisch (%r), Ursprungswert bleibt offen", lever, live)

@@ -13,6 +13,7 @@ abschalten: der Zustand wird weiter verfolgt und geloggt (Grundlage der Hinweise
 der Push entfaellt. Kritische Meldungen sind nie abschaltbar."""
 import logging
 
+from smartheat_core.logtext import lesbar
 from smartheat_runtime.ports import NotifySink
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,7 @@ class Notifier:
         try:
             self._store.update(notify_states={**self._store.state.notify_states, key: state})
         except Exception:
-            logger.exception("Meldezustand '%s' konnte nicht gespeichert werden", key)
+            logger.exception("Meldezustand '%s' konnte nicht gespeichert werden", lesbar(key))
 
     def notify(self, key: str, state: str, message: str, *, critical: bool, silent_ok: bool = False) -> bool:
         """True bei einem Zustandswechsel. Jeder Kanal ist best effort; ein Schreibfehler des
@@ -64,17 +65,21 @@ class Notifier:
         try:
             self._store.update(notify_states=states, notify_messages=messages)
         except Exception:
-            logger.exception("Meldezustand '%s' konnte nicht gespeichert werden, Meldung geht trotzdem raus", key)
+            logger.exception("Meldezustand '%s' konnte nicht gespeichert werden, Meldung geht trotzdem raus",
+                             lesbar(key))
+        # Die Meldung kann Text vom Server tragen (Grund einer Ablehnung): Steuerzeichen und Surrogate stehen in der
+        # Logzeile als Escape (logtext.lesbar, Testoffensive T6). Push und Speicher bekommen den Text unveraendert.
+        zeile = lesbar(message)
         if state == STATE_OK:
-            logger.info(message)
+            logger.info(zeile)
         else:
-            logger.warning(message)
+            logger.warning(zeile)
         muted = (not critical and category(key) in self._hints_off) or (silent_ok and state == STATE_OK)
         if not muted:
             try:
                 self._sink.push(key, message)
             except Exception:
-                logger.warning("Push-Benachrichtigung '%s' konnte nicht gesendet werden", key)
+                logger.warning("Push-Benachrichtigung '%s' konnte nicht gesendet werden", lesbar(key))
         if critical:
             self._update_persistent(key, state, message)
         return True
@@ -91,7 +96,7 @@ class Notifier:
             try:
                 self._store.update(notify_messages={**self._store.state.notify_messages, key: message})
             except Exception:
-                logger.exception("Meldetext '%s' konnte nicht gespeichert werden", key)
+                logger.exception("Meldetext '%s' konnte nicht gespeichert werden", lesbar(key))
         self._update_persistent(key, state, message)
 
     def republish_persistent(self) -> None:
@@ -124,4 +129,4 @@ class Notifier:
             else:
                 self._sink.show(key, message)
         except Exception:
-            logger.warning("Offene Meldung '%s' konnte nicht aktualisiert werden", key)
+            logger.warning("Offene Meldung '%s' konnte nicht aktualisiert werden", lesbar(key))

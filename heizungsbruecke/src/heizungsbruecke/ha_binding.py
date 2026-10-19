@@ -9,6 +9,7 @@ from collections.abc import Mapping, Sequence
 from typing import cast
 
 from smartheat_core.binding import BindingDescription
+from smartheat_core.logtext import lesbar
 from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_runtime.roles import LEVER_ROLES, ChannelManifest
 
@@ -64,7 +65,7 @@ class HaPlantBinding:
         try:
             live = self.read(lever)
         except Exception as error:
-            logger.warning("%s nicht lesbar (%s), verwende gespeicherten Wert %s", lever, error, fallback)
+            logger.warning("%s nicht lesbar (%s), verwende gespeicherten Wert %s", lever, lesbar(str(error)), fallback)
             return fallback
         return live if live is not None else fallback
 
@@ -91,7 +92,7 @@ class HaPlantBinding:
         try:
             low, high = (float(self._ha_api.get_attribute(entity_id, name)) for name in names)
         except (KeyError, ValueError, TypeError) as error:
-            logger.debug("Wertebereich von %s nicht lesbar: %s", entity_id, error)
+            logger.debug("Wertebereich von %s nicht lesbar: %s", lesbar(entity_id), lesbar(str(error)))
             return None
         if not (math.isfinite(low) and math.isfinite(high)) or low > high:
             return None
@@ -117,7 +118,7 @@ class HaPlantBinding:
             return False
         self._ha_api.set_hvac_mode(entity_id, MANUAL_HVAC_MODE)
         self.physical_writes += 1
-        logger.warning("Zone %s auf Manuell (%s) gestellt", entity_id, MANUAL_HVAC_MODE)
+        logger.warning("Zone %s auf Manuell (%s) gestellt", lesbar(entity_id), MANUAL_HVAC_MODE)
         return True
 
     def read_aux(self) -> dict[str, str | float]:
@@ -184,7 +185,7 @@ class WeishauptHaBinding(HaPlantBinding):
         self._ha_api.get_raw_state(entity_id)  # AU-016: nicht verfuegbare Entity wirft statt still 200
         self._ha_api.set_number_value(entity_id, value)
         self.physical_writes += 1
-        logger.info("%s (%s) auf %s gesetzt", role, entity_id, value)
+        logger.info("%s (%s) auf %s gesetzt", role, lesbar(entity_id), value)
 
     def _make_room_for_normal(self, value: float) -> None:
         if value > self._number("setpoint_comfort"):
@@ -214,7 +215,7 @@ class WeishauptHaBinding(HaPlantBinding):
             low, high = bereiche[weishaupt_scheme(mode, self._praefixe)]
             return low, high
         except (ValueError, KeyError) as error:
-            logger.debug("Bereich des Normal-Solls unbekannt: %s", error)
+            logger.debug("Bereich des Normal-Solls unbekannt: %s", lesbar(str(error)))
             return None
 
     def is_prepared(self) -> bool:
@@ -230,7 +231,7 @@ class WeishauptHaBinding(HaPlantBinding):
         target = weishaupt_scheme(self._mode(), self._praefixe) + WEISHAUPT_NORMAL
         self._ha_api.select_option(entity_id, target)
         self.physical_writes += 1
-        logger.warning("Betriebsart %s auf %s gestellt", entity_id, target)
+        logger.warning("Betriebsart %s auf %s gestellt", lesbar(entity_id), target)
         return True
 
     def read_aux(self) -> dict[str, str | float]:
@@ -269,7 +270,8 @@ class WeishauptHaBinding(HaPlantBinding):
         if current != target:
             self._ha_api.select_option(entity_id, target)
             self.physical_writes += 1
-            logger.warning("Betriebsart %s auf den Ursprungswert %s zurueckgestellt", entity_id, target)
+            logger.warning("Betriebsart %s auf den Ursprungswert %s zurueckgestellt", lesbar(entity_id),
+                           lesbar(str(target)))
 
 
 # Plan 3b, Viessmann (HA-Core vicare, Spec 1.3/5.4). HA bildet das ViCare-Programm "normal" auf das Preset "home" ab
@@ -303,7 +305,7 @@ class ViessmannHaBinding(HaPlantBinding):
         entity_id = self._manifest.refs["mode_select"]
         self._ha_api.set_preset_mode(entity_id, VIESSMANN_NORMAL_PRESET)
         self.physical_writes += 1
-        logger.warning("Heizprogramm %s auf %s gestellt", entity_id, VIESSMANN_NORMAL_PRESET)
+        logger.warning("Heizprogramm %s auf %s gestellt", lesbar(entity_id), VIESSMANN_NORMAL_PRESET)
         return True
 
     def read_aux(self) -> dict[str, str | float]:
@@ -322,7 +324,8 @@ class ViessmannHaBinding(HaPlantBinding):
         entity_id = self._manifest.refs["mode_select"]
         self._ha_api.set_preset_mode(entity_id, preset)
         self.physical_writes += 1
-        logger.warning("Heizprogramm %s auf den Ursprungswert %s zurueckgestellt", entity_id, preset)
+        logger.warning("Heizprogramm %s auf den Ursprungswert %s zurueckgestellt", lesbar(entity_id),
+                       lesbar(str(preset)))
 
 
 # Plan 3b: HA-Umsetzung je Hebelsatz und die Rollen, die das Binding zum Lesen/Schreiben/Zurueckstellen braucht.

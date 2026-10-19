@@ -93,6 +93,16 @@ def test_subscribe_racing_with_connect_is_not_lost():
     assert "shg/status" in stub.subscribed and "shg/notify/+" in stub.subscribed
 
 
+def test_the_log_line_of_a_failed_message_escapes_the_topic_from_the_local_bus(clock, caplog):
+    """Fixrunde 1 zu T6-Rest Task 3: das Topic kommt von einem Teilnehmer des lokalen Busses; im Log steht es mit
+    Escape auf einer Zeile."""
+    bus, stub = _local_bus()
+    ZigbeeMirror(bus, clock).start()
+    bus._on_message(stub, None, _Msg("zigbee2mqtt/0x\nERROR    gefaelscht", b"[" * 100000))
+    (zeile,) = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Fehler beim Verarbeiten")]
+    assert zeile == "Fehler beim Verarbeiten von zigbee2mqtt/0x\\nERROR    gefaelscht"
+
+
 class _Msg:
     def __init__(self, topic, payload=b"", retain=False):
         self.topic, self.payload, self.retain = topic, payload, retain

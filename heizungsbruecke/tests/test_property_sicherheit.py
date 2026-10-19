@@ -1,9 +1,9 @@
 """Testoffensive T4' Task 7 (Spec §5 "Kompromittierter Server", Regel 4): die lokalen Sicherheitswerte als Property-
 und Grenztests. Ein Server, der beliebige Hebelwerte, Schrittweiten und Konfigurationen sendet, und eine Anlage mit
 beliebigem Wertebereich bringen keinen Schreibwert ausserhalb der lokalen Grenzen. Die Grenzen stehen woertlich in
-test_regel4_werte.py (TABELLE, Nutzer-Freigaben), nie aus dem Code; Generatoren und Laufzeit-Umgebung kommen aus
-test_property_geraet.py. Findet ein Test hier einen Schreibwert ausserhalb der Grenze, ist das ein Stoppfall (Regel 4),
-kein Fix im Produktcode. `deadline=None`: ein Beispiel der Laufzeit-Tests startet eine ganze Laufzeit."""
+test_regel4_werte.py (TABELLE, Nutzer-Freigaben), nie aus dem Code; Generatoren kommen aus strategien.py, die
+Laufzeit-Umgebung aus test_property_geraet.py. Findet ein Test hier einen Schreibwert ausserhalb der Grenze, ist das ein Stoppfall (Regel 4),
+kein Fix im Produktcode. Beispielzahl, Seed und Frist kommen aus den Profilen in conftest.py."""
 import json
 import logging
 import math
@@ -14,21 +14,12 @@ from pathlib import Path
 import pytest
 from bindung_beispiele import BINDINGS, parameter
 from conftest import FakeClock
-from hypothesis import example, given, settings
+from hypothesis import example, given
 from hypothesis import strategies as st
+from strategien import JSON_WERT, WEG, ersetze, pfade
 from test_core_config_check import _konfiguration as gateway_konfiguration
 from test_core_config_check_ha import _ha as ha_konfiguration
-from test_property_geraet import (
-    _WEG,
-    JSON_WERT,
-    NICHT_NUMERISCH,
-    SAETZE,
-    _endlich,
-    _ersetze,
-    _Fehlerlog,
-    _frische_umgebung,
-    _pfade,
-)
+from test_property_geraet import NICHT_NUMERISCH, SAETZE, _endlich, _Fehlerlog, _frische_umgebung
 from test_regel4_werte import FBH, HK, TABELLE, TabellenAnlage
 from test_runtime import _ha_verbunden, _mqtt, _start
 
@@ -41,7 +32,6 @@ from smartheat_core.safety import LOCAL_SAFETY, check_invariants, resolve_local_
 from smartheat_device import fehler
 from smartheat_runtime.state import StateStore
 
-EINSTELLUNG = settings(max_examples=50, derandomize=True, database=None, deadline=None)
 HEBELSAETZE = ("vaillant_vrc720", "weishaupt_wwp", "weishaupt_wwp_basis", "viessmann_vicare")
 #: Eingaben an der float-Grenze und darueber hinaus (riesige Ganzzahlen aus JSON)
 RIESEN = [2**1100, -(2**1100), 2**1024, (2**53 - 1) * 2**971]
@@ -74,7 +64,6 @@ def test_resolve_local_safety_liefert_einen_satz_in_den_invarianten_oder_einen_f
     zaehler = {"unbekannt": 0}
     je_paar = dict.fromkeys(TABELLE, 0)
 
-    @EINSTELLUNG
     @given(st.sampled_from(HEBELSAETZE) | st.text(max_size=30), st.sampled_from((HK, FBH)) | JSON_WERT)
     def pruefen(hebelsatz, verteilsystem):
         try:
@@ -217,7 +206,6 @@ def test_kein_eingabewert_und_keine_schrittweite_ergibt_einen_schreibwert_ausser
     vaillant = ("vaillant_vrc720", HK)
     schritte = {"curve": 0.05, "room_setpoint": 0.5, "heat_limit": 0.1, "min_flow": 0.1}
 
-    @EINSTELLUNG
     @given(_satz_mit(WERT))
     # je Vorzeichen erzwungen (die Ziehung trifft +Inf sonst nicht): jeder Hebel +Inf bzw. -Inf
     @example((vaillant, schritte, dict.fromkeys(schritte, math.inf)))
@@ -273,7 +261,6 @@ def test_jeder_anlagenbereich_ergibt_einen_schreibbereich_innerhalb_der_lokalen_
     ohne Schnittmenge): range_of liegt in der lokalen Grenze, und jeder geschriebene Wert auch."""
     zaehler = {"geschrieben": 0, "nan": 0, "plus_inf": 0, "minus_inf": 0, "min_ueber_max": 0, "keiner": 0}
 
-    @EINSTELLUNG
     @given(st.sampled_from(sorted(TABELLE)).flatmap(lambda key: st.tuples(
         st.just(key), st.fixed_dictionaries({lever: ANLAGENBEREICH for lever in _hebel(key)}),
         st.fixed_dictionaries({lever: st.floats(-1e6, 1e6) | st.integers(-50, 50) for lever in _hebel(key)}))))
@@ -321,7 +308,6 @@ def test_serverantwort_mit_beliebigen_schrittweiten_und_anlagenbereichen_schreib
     alle = _hebel((hebelsatz, HK))
     zaehler = {"angenommen": 0, "geschrieben": 0}
 
-    @EINSTELLUNG
     @given(st.fixed_dictionaries({lever: SCHRITT for lever in alle}),
            st.fixed_dictionaries({entity: st.none() | st.tuples(ATTRIBUT, ATTRIBUT) for entity in sorted(entities)}),
            st.fixed_dictionaries({lever: st.floats(-60, 60) for lever in erwartet})
@@ -379,13 +365,12 @@ def test_pruefen_liefert_fuer_jede_eingabe_eine_ablehnung_des_vertrags_oder_none
     Felder, falsche Typen, NaN, ±Inf, 10**400, Unicode mit Surrogat; oder ein beliebiger JSON-Wert): pruefen wirft nie
     und liefert None oder eine Ablehnung mit Grund aus GRUENDE und details in der Form des Vertrags."""
     vorlage = VORLAGEN[host]
-    stellen = [pfad for pfad in _pfade(vorlage) if pfad]
+    stellen = [pfad for pfad in pfade(vorlage) if pfad]
     zaehler = {"abgelehnt": 0}
     assert cc.pruefen(vorlage, RASTUNGEN[host], host=host) is None  # Gegenprobe: die Vorlage selbst ist gueltig
 
-    @EINSTELLUNG
     @given(st.one_of(
-        st.tuples(st.sampled_from(stellen), JSON_WERT | st.just(_WEG)).map(lambda s: _ersetze(vorlage, *s)),
+        st.tuples(st.sampled_from(stellen), JSON_WERT | st.just(WEG)).map(lambda s: ersetze(vorlage, *s)),
         st.builds(lambda fremd: {**vorlage, **fremd}, st.dictionaries(st.text(max_size=12), JSON_WERT, max_size=3)),
         JSON_WERT), st.sampled_from([None, RASTUNGEN[host]]))
     def pruefen(neu, rastung):

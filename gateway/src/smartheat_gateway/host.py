@@ -10,6 +10,7 @@ import logging
 import time
 
 from smartheat_core import bindungsparameter, wallclock
+from smartheat_core.logtext import lesbar
 from smartheat_core.safety import resolve_local_safety
 from smartheat_gateway import config as gateway_config
 from smartheat_gateway.bus import Bus
@@ -124,7 +125,7 @@ class GatewayHost:
             driver = self._create_driver(gateway_config.bindung(self.konfiguration).driver_spec(), beschreibung)
             check_lever_set(driver, hebelsatz)
         except (ConfigError, KeyError, TypeError, ValueError) as error:
-            logger.error("Abmelden ohne Zuruecksetzen: %s (%s)", error, type(error).__name__)
+            logger.error("Abmelden ohne Zuruecksetzen: %s (%s)", lesbar(str(error)), type(error).__name__)
             return None
         self._activate(driver)
         return RestoreParts(driver, safety)
@@ -221,7 +222,7 @@ class GatewayHost:
         for ieee in dict.fromkeys(ieees):
             device = self.mirror.device(ieee)
             if device is None:
-                logger.warning("Zigbee-Geraet %s unbekannt, keine Batterie-Ueberwachung", ieee)
+                logger.warning("Zigbee-Geraet %s unbekannt, keine Batterie-Ueberwachung", lesbar(str(ieee)))
             elif CAP_BATTERY in device.faehigkeiten:
                 refs.append(BatteryRef(f"zigbee:{ieee}:battery", BATTERY_PERCENT))
             elif CAP_BATTERY_LOW in device.faehigkeiten:

@@ -638,6 +638,18 @@ def test_a_foreign_down_topic_reaches_nobody(tmp_path, caplog):
     assert caplog.text == ""
 
 
+def test_the_debug_line_of_a_foreign_topic_escapes_its_name(tmp_path, caplog):
+    """Fixrunde 1 zu T6-Rest Task 3: der Name eines unbekannten Topics kommt vom Broker; im DEBUG-Log steht er mit
+    Escape auf einer Zeile."""
+    world = World(tmp_path)
+    world.verbinden()
+    with caplog.at_level("DEBUG", logger=device.logger.name):
+        world.link.ereignis("nachricht", "down/x\nWARNING  gefaelscht\x1b[31m", b"{}")
+        world.device.schritt()
+    (zeile,) = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Topic ")]
+    assert zeile == "Topic down/x\\nWARNING  gefaelscht\\x1b[31m unbekannt, ignoriert (Spec 2.1)"
+
+
 # --- Befehle ---
 
 def test_commands_run_once_across_reconnects(tmp_path):

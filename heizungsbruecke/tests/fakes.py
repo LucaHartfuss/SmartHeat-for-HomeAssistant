@@ -14,6 +14,19 @@ from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime import entitlement
 from smartheat_runtime.runtime_config import RuntimeConfig
 
+# Text fremder Herkunft fuer die Logzeilen-Tests (T6-Rest, R-c: Fehlertext aus HA, Einheit, Meldeschluessel mit Text des
+# Servers): ein Zeilenumbruch mit Logkopf, das Bidi-Steuerzeichen U+202E und die ARABIC LETTER MARK U+061C. In der
+# Logzeile steht er nur als Escape (smartheat_core.logtext.lesbar).
+FREMDTEXT = "HA\nWARNING  gefaelscht ‮؜"
+FREMDTEXT_IM_LOG = "HA\\nWARNING  gefaelscht \\u202e\\u061c"
+
+
+def logzeilen(caplog) -> list[str]:
+    """Die Logzeilen aus caplog (ohne Traceback); keine traegt FREMDTEXT roh (Zeilenumbruch, U+202E, U+061C)."""
+    zeilen = [record.getMessage() for record in caplog.records]
+    assert [zeile for zeile in zeilen if "\n" in zeile or "‮" in zeile or "؜" in zeile] == []
+    return zeilen
+
 
 def runtime_config(**overrides) -> RuntimeConfig:
     """Gueltige RuntimeConfig fuer Tests, die einen Laufzeit-Kontext von Hand bauen (Plan SHG G1)."""

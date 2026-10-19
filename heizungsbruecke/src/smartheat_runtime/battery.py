@@ -5,6 +5,7 @@ unknown aendert nichts. Gemeldet wird nur beim Wechsel (notifier), nicht kritisc
 import logging
 import math
 
+from smartheat_core.logtext import lesbar
 from smartheat_runtime.notifier import STATE_OK
 from smartheat_runtime.ports import SignalNotFound, SourceUnavailable
 from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG
@@ -48,7 +49,7 @@ def check_batteries(rt) -> None:
             logger.info("Batterie-Entity %s nicht gefunden (404), wird uebersprungen", battery.ref)
             continue
         except SourceUnavailable as error:
-            logger.warning("Batteriepruefung abgebrochen, %s: %s", rt.texts.source_unavailable_log, error)
+            logger.warning("Batteriepruefung abgebrochen, %s: %s", rt.texts.source_unavailable_log, lesbar(str(error)))
             return
         except ValueError:
             continue
