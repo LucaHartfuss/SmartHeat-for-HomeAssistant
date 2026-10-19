@@ -283,7 +283,7 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
         _clear_sent_manual_override(rt)
         if status == delivery.STATUS_SKIPPED:
             logger.info(
-                "Server hat fuer seq=%s nicht gelernt (%s), Werte unveraendert uebernommen", seq, payload.get("reason"),
+                "Server hat fuer seq=%s nicht gelernt (%r), Werte unveraendert uebernommen", seq, payload.get("reason"),
             )
         try:
             rt.override.apply_server_values({lever: levers[lever] for lever in expected})
@@ -302,7 +302,9 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
     elif status == delivery.STATUS_REJECTED:
         reason = payload.get("reason")
         reason = reason if isinstance(reason, str) and reason else None
-        logger.warning("Server hat Snapshot (seq=%s) abgelehnt: %s", seq, reason)
+        # Grund vom Server mit repr: ein einzelnes Surrogat braeche die UTF-8-Ausgabe des Logs, ein Zeilenumbruch
+        # faelschte eine zweite Logzeile (Testoffensive T6).
+        logger.warning("Server hat Snapshot (seq=%s) abgelehnt: %r", seq, reason)
         deliver(rt, delivery.Ack(seq=seq, status=delivery.STATUS_REJECTED, reason=reason))
     else:
         reason = f"ungültige Serverantwort (status={status!r}, levers={levers!r}, erwartet: {', '.join(expected)})"

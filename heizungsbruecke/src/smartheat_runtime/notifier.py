@@ -65,10 +65,13 @@ class Notifier:
             self._store.update(notify_states=states, notify_messages=messages)
         except Exception:
             logger.exception("Meldezustand '%s' konnte nicht gespeichert werden, Meldung geht trotzdem raus", key)
+        # Die Meldung kann Text vom Server tragen (Grund einer Ablehnung): ein einzelnes Surrogat braeche die UTF-8-Ausgabe
+        # des Logs, die Logzeile schreibt es als Escape (Testoffensive T6). Push und Speicher bekommen den Text unveraendert.
+        zeile = message.encode("utf-8", "backslashreplace").decode("utf-8")
         if state == STATE_OK:
-            logger.info(message)
+            logger.info(zeile)
         else:
-            logger.warning(message)
+            logger.warning(zeile)
         muted = (not critical and category(key) in self._hints_off) or (silent_ok and state == STATE_OK)
         if not muted:
             try:

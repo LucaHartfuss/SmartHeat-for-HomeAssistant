@@ -371,3 +371,24 @@ def test_clear_all_dismisses_open_notifications_and_forgets_states_without_push(
     assert dismissed == {"smartheat_notbetrieb", "smartheat_batterie_sensor_x"}
     ha_api.send_notification.assert_not_called()
     assert (store.state.notify_states, store.state.notify_messages) == ({}, {})
+
+
+@pytest.mark.parametrize(("state", "stufe"), [("inaktiv", logging.WARNING), (STATE_OK, logging.INFO)],
+                         ids=["warnung", "entwarnung"])
+def test_the_log_line_escapes_single_surrogates_from_server_text(make_store, ha_api, caplog, state, stufe):
+    """Testoffensive T6 (Fund aus dem Profil voll): eine Meldung kann Text vom Server tragen (Grund einer Ablehnung).
+    Ein einzelnes Surrogat braeche die UTF-8-Ausgabe des Logs (Logging error, Zeile verloren); die Logzeile schreibt
+    es als Escape, Push und gespeicherter Text bleiben unveraendert."""
+    store = make_store()
+    notifier = _notifier(store, ha_api)
+    if state == STATE_OK:
+        notifier.seed("server", "abgelehnt")
+    message = "Server hat die Messwerte abgelehnt (\ud800). Die Heizkurve bleibt unverändert."
+
+    with caplog.at_level(logging.INFO, logger="smartheat_runtime.notifier"):
+        assert notifier.notify("server", state, message, critical=False) is True
+
+    (zeile,) = [r for r in caplog.records if r.levelno == stufe]
+    assert zeile.getMessage() == "Server hat die Messwerte abgelehnt (\\ud800). Die Heizkurve bleibt unverändert."
+    zeile.getMessage().encode("utf-8")
+    assert [c.args for c in ha_api.send_notification.call_args_list] == [(service, message) for service in SERVICES]
