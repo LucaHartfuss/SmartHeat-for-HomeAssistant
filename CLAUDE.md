@@ -44,9 +44,11 @@ Der Image-Bau selbst (`gateway/image/make_image.sh`) braucht einen arm64-Host un
 Ende zu Ende (Server, Broker, Fake-HA bzw. Gateway: Discovery, Einrichtung, Regelbetrieb, Wünsche, Entfernen) fährt der
 Dev-Root (`tools/e2e/run.sh`, Modi `gateway2`, `gateway2_vicare`, `ha2`; `scripts/check.sh --only e2e --full`).
 
-Direkter Aufruf: `cd heizungsbruecke && pip install -e ".[dev]" && pytest` (`pyproject.toml`: `pythonpath = ["src",
-"testhilfen"]`) bzw. `cd gateway && pip install -e ".[dev]" && pytest` (`pythonpath = ["src", "../heizungsbruecke/src",
-"../heizungsbruecke/testhilfen"]`); `gateway/host` und `gateway/release` setzen eigene Pfade in ihrer `pyproject.toml`.
+Direkter Aufruf: `cd heizungsbruecke && pip install --require-hashes --no-deps -r requirements-hypothesis.lock && pip
+install -e ".[dev]" && pytest` (`hypothesis` mit Hash-Pin, Profile über `HYPOTHESIS_PROFILE`, `--full` setzt `voll`;
+`pyproject.toml`: `pythonpath = ["src", "testhilfen"]`) bzw. `cd gateway && pip install -e ".[dev]" && pytest`
+(`pythonpath = ["src", "../heizungsbruecke/src", "../heizungsbruecke/testhilfen"]`); `gateway/host` und
+`gateway/release` setzen eigene Pfade in ihrer `pyproject.toml`.
 
 Release-Tags: `heizungsbruecke-vX.Y.Z` (`release.yml`), `gateway-vX.Y.Z` (`release-gateway.yml`), Suffix `-dryrun` =
 Probelauf. Ein Push nach `main` ist ein Release an alle Kunden-Pis, deren Supervisor den Default-Branch verfolgt.

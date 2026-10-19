@@ -1,8 +1,25 @@
+"""Gemeinsame Fixtures der Kern- und HA-Host-Tests.
+
+Profile von hypothesis (Testoffensive T6, Spec §12 Nr. 20; Root-Runbook Abschnitt 3): `schnell` (Standard, 50
+Beispiele, fester Seed) und `voll` (500 Beispiele, zufaelliger Seed, Blob zum Nachstellen eines Fehlers), gewaehlt per
+`HYPOTHESIS_PROFILE` (`scripts/check.sh --full` setzt `voll`). Ein unbekannter Name endet mit `InvalidArgument`. Keine
+Beispiel-Datenbank (`.hypothesis/` haelt nur Caches von hypothesis, per .gitignore ausgenommen), keine Frist
+(ein Beispiel der Laufzeit-Tests startet eine ganze Laufzeit). Einzelne Tests setzen keine eigenen Einstellungen
+(`tests/test_hypothesis_profile.py`)."""
+import os
+
 import pytest
+from hypothesis import HealthCheck, settings
 
 from smartheat_runtime import telemetry
 from smartheat_runtime.backup_store import save_backup
 from smartheat_runtime.state import StateStore
+
+settings.register_profile("schnell", max_examples=50, derandomize=True, database=None, deadline=None,
+                          suppress_health_check=[HealthCheck.too_slow])
+settings.register_profile("voll", parent=settings.get_profile("schnell"), max_examples=500, derandomize=False,
+                          print_blob=True)
+settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "schnell"))
 
 
 class FakeClock:

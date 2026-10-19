@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Pin-Check (TP12e, AU-018, Spec 2026-09-30-tp12e-vertraege-tests-lieferkette-design.md Abschnitt 3):
 Jede Basis-Image-Angabe hat einen Digest, jede GitHub-Action eine 40-stellige SHA, jede Lock-Datei
-Hashes und passt zu ihrer pyproject.toml. In Workflows laeuft jedes pip install mit --require-hashes
+Hashes und passt zu ihrer pyproject.toml; requirements-hypothesis.lock (Testoffensive T6) ist exakt gepinnt und gehasht,
+ohne Abgleich mit pyproject.toml. In Workflows laeuft jedes pip install mit --require-hashes
 oder traegt die Markierung `# pin-check: ungehasht (<Grund>)` (Audit 4, A4-41). Nur Standardbibliothek; kanonisch in
 HomeAssistant_Dev_Root/tools/pin_check.py, identische Kopien in den Unter-Repos unter
 scripts/ci/pin_check.py (Root-check.sh Schritt "copies" prueft das).
@@ -21,6 +22,9 @@ DIGEST = re.compile(r"@sha256:[0-9a-f]{64}\b")
 ACTION_SHA = re.compile(r"@[0-9a-f]{40}$")
 HASH_OPTION = re.compile(r"--hash=sha256:[0-9a-f]{64}\b")
 LOCK_NAMES = ("requirements.txt", "requirements.lock")
+# Eigene Locks fuer einzelne Dev-Werkzeuge (Testoffensive T6: hypothesis, Installation mit --require-hashes --no-deps):
+# jeder Eintrag exakt gepinnt und gehasht, aber kein Abgleich mit pyproject.toml (dessen dependencies sind Laufzeit).
+HASH_LOCK_NAMES = ("requirements-hypothesis.lock",)
 # .devtools, backups und .remember sind Root-spezifische, per .gitignore ausgeschlossene Ordner.
 _SKIP_DIRS = {".git", ".venv", ".worktrees", "node_modules", "__pycache__", ".devtools", "backups", ".remember"}
 _FROM_LINE = re.compile(r"^\s*FROM(?:\s|$)", re.IGNORECASE)
@@ -219,6 +223,11 @@ def _check_lock(repo: Path, path: Path) -> list[str]:
     return problems
 
 
+def _check_hash_lock(repo: Path, path: Path) -> list[str]:
+    _, problems = _parse_lock(path)
+    return [f"{path.relative_to(repo)}: {problem}" for problem in problems]
+
+
 def _checked(check: Callable[[Path, Path], list[str]], repo: Path, path: Path) -> list[str]:
     """Eine nicht lesbare Datei (kein UTF-8, kaputter Symlink, ...) ist ein Verstoss, kein Absturz."""
     try:
@@ -240,6 +249,8 @@ def check_repo(repo: Path) -> list[str]:
             problems += _checked(_check_compose, repo, path)
         elif path.name in LOCK_NAMES:
             problems += _checked(_check_lock, repo, path)
+        elif path.name in HASH_LOCK_NAMES:
+            problems += _checked(_check_hash_lock, repo, path)
     return problems
 
 
