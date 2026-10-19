@@ -7,6 +7,7 @@ from datetime import datetime
 from smartheat_core import wallclock
 from smartheat_core.boost import UNREADABLE_ROOM_CHECKS, comfort_boost_expired, decide_boost
 from smartheat_core.emergency_boost import decide_emergency_boost
+from smartheat_core.logtext import lesbar
 from smartheat_runtime.runtime import Runtime
 from smartheat_runtime.state import parse_since
 
@@ -28,7 +29,8 @@ def refresh_stable_target(rt: Runtime) -> None:
         value = read_room_target_live(rt)
     except Exception as error:
         logger.warning(
-            "room_target nicht lesbar, Stable-Target-Cache bleibt bei %s: %s", rt.store.state.stable_target, error,
+            "room_target nicht lesbar, Stable-Target-Cache bleibt bei %s: %s", rt.store.state.stable_target,
+            lesbar(str(error)),
         )
         return
     rt.store.update(stable_target=value)

@@ -5,6 +5,7 @@ import uuid
 from typing import TypeGuard
 
 from smartheat_core import wallclock
+from smartheat_core.logtext import lesbar
 from smartheat_core.pipeline import DeviceWriteError
 from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_runtime import abo, delivery, entitlement
@@ -288,7 +289,8 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
         try:
             rt.override.apply_server_values({lever: levers[lever] for lever in expected})
         except DeviceWriteError as error:
-            logger.warning("Serverwerte (seq=%s) konnten nicht auf die Anlage geschrieben werden: %s", seq, error)
+            logger.warning("Serverwerte (seq=%s) konnten nicht auf die Anlage geschrieben werden: %s", seq,
+                           lesbar(str(error)))
             deliver(rt, delivery.WriteFailed(seq=seq, detail=str(error)))
             return
         except StorageError as error:

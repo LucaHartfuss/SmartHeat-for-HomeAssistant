@@ -4,7 +4,7 @@ from datetime import date, datetime
 
 import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT
-from fakes import FakeNotifySink, runtime_config
+from fakes import FREMDTEXT, FREMDTEXT_IM_LOG, FakeNotifySink, logzeilen, runtime_config
 
 from heizungsbruecke.ha_binding import HaPlantBinding
 from smartheat_core import enforce, wallclock, write_budget
@@ -657,3 +657,15 @@ def test_kpi_takes_the_live_value_of_a_lever_without_setpoint(make_store, clock)
     rt = _rt(make_store, clock, Ha(curve=1.3, shift=22.0, reflects_writes=False), room_setpoint=None)
     _rounds(rt)
     assert rt.store.state.manual_override_pending["levers"]["room_setpoint"] == 22.0
+
+
+@pytest.mark.parametrize(("ha", "zeile"), [
+    (lambda: Ha(curve=RuntimeError(FREMDTEXT)), f"Eingriff nicht pruefbar, curve nicht lesbar: {FREMDTEXT_IM_LOG}"),
+    (lambda: Ha(mode=RuntimeError(FREMDTEXT)), f"Betriebsart der Zone nicht lesbar: {FREMDTEXT_IM_LOG}"),
+], ids=["hebel", "betriebsart"])
+def test_a_read_error_from_ha_is_logged_only_escaped(make_store, clock, caplog, ha, zeile):
+    """T6-Rest, R-c: der Fehlertext beim Lesen aus HA (Hebel, Betriebsart der Zone) steht nur als Escape im Log."""
+    rt = _rt(make_store, clock, ha())
+    with caplog.at_level(logging.INFO, logger="smartheat_core.enforce"):
+        _rounds(rt)
+    assert zeile in logzeilen(caplog)

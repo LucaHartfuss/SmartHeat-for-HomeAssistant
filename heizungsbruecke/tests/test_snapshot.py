@@ -1,8 +1,10 @@
+import logging
 from datetime import datetime
 from unittest.mock import MagicMock
 
 import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT, WEISHAUPT_MODBUS_BASIS
+from fakes import FREMDTEXT, FREMDTEXT_IM_LOG, logzeilen
 
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_binding import HaPlantBinding
@@ -235,3 +237,22 @@ def test_publish_snapshot_carries_readonly():
     payload = mqtt.publish_snapshot.call_args.args[0]
     assert payload["readonly"] == ["curve"]
     assert payload["levers"] == {"room_setpoint": 20.0, "curve": 0.75}
+
+
+@pytest.mark.parametrize(("entity", "basis", "zeile"), [
+    ("sensor.room_target", False,
+     "Sensor fuer Rolle 'room_target' (sensor.room_target) liefert keinen gueltigen Wert: "),
+    ("sensor.heat_limit", False, "Hebel 'heat_limit' (sensor.heat_limit) liefert keinen gueltigen Wert: "),
+    ("sensor.curve_current", True,
+     "Nur lesbarer Hebel 'curve' (sensor.curve_current) nicht lesbar, wird weggelassen: "),
+], ids=["rolle", "hebel", "nur_lesbar"])
+def test_a_read_error_text_from_ha_is_logged_only_escaped(caplog, entity, basis, zeile):
+    """T6-Rest, R-c: der Fehlertext beim Lesen aus HA (Rolle, Hebel, nur lesbarer Hebel) steht nur als Escape im Log."""
+    ha_api = MagicMock(spec=HomeAssistantApi)
+    ha_api.get_state.side_effect = _states_with({entity: RuntimeError(FREMDTEXT)})
+    with caplog.at_level(logging.WARNING, logger="smartheat_runtime.snapshot"):
+        if basis:
+            _basis_read(_basis_manifest(curve_current="sensor.curve_current"), ha_api)
+        else:
+            _read(_all_roles_manifest(), ha_api)
+    assert zeile + FREMDTEXT_IM_LOG in logzeilen(caplog)

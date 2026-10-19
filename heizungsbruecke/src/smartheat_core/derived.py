@@ -6,6 +6,7 @@ import logging
 from typing import Any, Protocol
 
 from smartheat_core.clamping import clamp, round_to_step
+from smartheat_core.logtext import lesbar
 from smartheat_core.zahlen import GLEITKOMMA_REST
 
 logger = logging.getLogger(__name__)
@@ -50,7 +51,7 @@ def sync(rt: DerivedRuntime) -> None:
         try:
             current = rt.override.binding.read("min_flow")
         except Exception as error:
-            logger.warning("Mindestvorlauf nicht lesbar (%s), wird neu geschrieben", error)
+            logger.warning("Mindestvorlauf nicht lesbar (%s), wird neu geschrieben", lesbar(str(error)))
             current = None
     if current is not None and abs(current - value) <= TOLERANCE + GLEITKOMMA_REST:
         rt.store.update(min_flow_current=value)

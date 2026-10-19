@@ -1,9 +1,11 @@
 """Hebel-Pipeline, Plan 3b: Ursprungswerte aller angefassten Hebel und Hilfs-Ursprungswerte (Betriebsart,
 Komfort-/Absenk-Soll) -- gemerkt vor dem ersten Schreiben, zurueckgestellt bei Abo-Ende und Abmelden (Spec 5.4)."""
+import logging
 import math
 
 import pytest
 from bindung_beispiele import WEISHAUPT_MODBUS
+from fakes import FREMDTEXT, FREMDTEXT_IM_LOG, logzeilen
 
 from heizungsbruecke.ha_binding import HaPlantBinding
 from smartheat_core.pipeline import DeviceWriteError, LeverPipeline
@@ -389,3 +391,13 @@ def test_the_aux_restore_counts_once_after_the_lever_writes(make_store, clock):
     assert pipeline.restore_and_clear(always_restore=False) is True
     assert binding.restored == [AUX]
     assert store.state.lifetime_writes == 7  # drei Hebel hin, drei zurueck, die Hilfswerte als ein Aufruf
+
+
+def test_unreadable_aux_values_log_the_foreign_error_text_only_escaped(make_store, clock, caplog):
+    """T6-Rest, R-c: der Fehlertext beim Lesen der Hilfswerte aus HA steht nur als Escape im Log."""
+    pipeline, _, _, binding = _setup(make_store, clock)
+    binding.aux_error = RuntimeError(FREMDTEXT)
+    with caplog.at_level(logging.WARNING, logger="smartheat_core.pipeline"):
+        pipeline.capture_originals()
+    assert (f"Ursprungswerte mode_select, setpoint_comfort, setpoint_setback nicht lesbar, bleiben offen: "
+            f"{FREMDTEXT_IM_LOG}") in logzeilen(caplog)

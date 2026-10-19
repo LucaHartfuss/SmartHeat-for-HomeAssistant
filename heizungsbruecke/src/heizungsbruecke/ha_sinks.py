@@ -5,6 +5,7 @@ sind Cross-Repo-Vertrag mit der Integration (Contract-Check (Vertrag V5))."""
 import logging
 import re
 
+from smartheat_core.logtext import lesbar
 from smartheat_device.host import MeldungSink
 
 logger = logging.getLogger(__name__)
@@ -28,7 +29,7 @@ class HaNotifySink:
             try:
                 self._ha_api.send_notification(service, message)
             except Exception:
-                logger.warning("Push-Benachrichtigung '%s' an %s konnte nicht gesendet werden", key, service)
+                logger.warning("Push-Benachrichtigung '%s' an %s konnte nicht gesendet werden", lesbar(key), service)
 
     def show(self, key: str, message: str) -> None:
         self._ha_api.create_persistent_notification(TITLE, message, notification_id(key))

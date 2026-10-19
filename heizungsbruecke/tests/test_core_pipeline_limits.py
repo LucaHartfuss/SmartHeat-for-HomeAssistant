@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT, WEISHAUPT_MODBUS
+from fakes import FREMDTEXT, FREMDTEXT_IM_LOG, logzeilen
 
 from heizungsbruecke.ha_binding import HaPlantBinding, WeishauptHaBinding
 from smartheat_core import derived, enforce
@@ -83,6 +84,15 @@ def test_an_unreadable_device_range_falls_back_to_the_local_limits(make_store, c
     pipeline, ha = _pipeline(make_store, clock, {"room_setpoint": RuntimeError("weg")})
     pipeline.apply_server_values({"room_setpoint": 16.5})
     assert ("number.normal", 16.5) in ha.writes
+
+
+def test_an_unreadable_device_range_logs_the_foreign_error_text_only_escaped(make_store, clock, caplog):
+    """T6-Rest, R-c: der Fehlertext beim Lesen des Anlagenbereichs aus HA steht nur als Escape im Log."""
+    pipeline, _ = _pipeline(make_store, clock, {"room_setpoint": RuntimeError(FREMDTEXT)})
+    with caplog.at_level(logging.INFO, logger="smartheat_core.pipeline"):
+        pipeline.apply_server_values({"room_setpoint": 16.5})
+    assert (f"Wertebereich der Anlage fuer room_setpoint nicht lesbar ({FREMDTEXT_IM_LOG}), letzter Wert bzw. lokale "
+            "Grenzen") in logzeilen(caplog)
 
 
 def test_expected_values_and_the_emergency_row_use_the_narrowed_range(make_store, clock):

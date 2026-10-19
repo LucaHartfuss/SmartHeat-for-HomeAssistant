@@ -3,7 +3,7 @@ import logging
 from unittest.mock import MagicMock
 
 import pytest
-from fakes import FailingServiceHa
+from fakes import FREMDTEXT, FREMDTEXT_IM_LOG, FailingServiceHa, logzeilen
 
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_sinks import HaNotifySink, notification_id
@@ -408,3 +408,77 @@ def test_the_log_line_escapes_control_characters_from_server_text(make_store, ha
                      "Die Heizkurve bleibt unverändert.")
     assert zeile.splitlines() == [zeile]
     assert [c.args for c in ha_api.send_notification.call_args_list] == [(service, message) for service in SERVICES]
+
+
+class _ScheiternderSink:
+    """NotifySink-Fake, dessen Push bzw. Anzeige scheitert (Fehlerpfade des Notifiers)."""
+
+    def __init__(self, *, push_fehler: bool = False, show_fehler: bool = False) -> None:
+        self._push_fehler, self._show_fehler = push_fehler, show_fehler
+
+    def push(self, key: str, message: str) -> None:
+        if self._push_fehler:
+            raise RuntimeError("Push kaputt")
+
+    def show(self, key: str, message: str) -> None:
+        if self._show_fehler:
+            raise RuntimeError("HA weg")
+
+    def withdraw(self, key: str) -> None:
+        pass
+
+
+FREMDER_SCHLUESSEL = f"fehler:{FREMDTEXT}"  # HaHost.load: StartFailure(str(ConfigError)) traegt Text des Servers
+FREMDER_SCHLUESSEL_IM_LOG = f"fehler:{FREMDTEXT_IM_LOG}"
+
+
+def _kaputter_speicher(monkeypatch):
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
+
+
+def _raise_oserror(*args, **kwargs):
+    raise OSError("Datentraeger kaputt")
+
+
+def _seed_ohne_speicher(store, monkeypatch):
+    _kaputter_speicher(monkeypatch)
+    Notifier(store, _ScheiternderSink()).seed(FREMDER_SCHLUESSEL, "aktiv")
+    return "Meldezustand '{}' konnte nicht gespeichert werden"
+
+
+def _notify_ohne_speicher(store, monkeypatch):
+    _kaputter_speicher(monkeypatch)
+    Notifier(store, _ScheiternderSink()).notify(FREMDER_SCHLUESSEL, "aktiv", "Text", critical=True)
+    return "Meldezustand '{}' konnte nicht gespeichert werden, Meldung geht trotzdem raus"
+
+
+def _push_scheitert(store, monkeypatch):
+    Notifier(store, _ScheiternderSink(push_fehler=True)).notify(FREMDER_SCHLUESSEL, "aktiv", "Text", critical=False)
+    return "Push-Benachrichtigung '{}' konnte nicht gesendet werden"
+
+
+def _meldetext_ohne_speicher(store, monkeypatch):
+    notifier = Notifier(store, _ScheiternderSink())
+    notifier.notify(FREMDER_SCHLUESSEL, "aktiv", "alt", critical=True)
+    _kaputter_speicher(monkeypatch)
+    notifier.refresh_persistent(FREMDER_SCHLUESSEL, "neu")
+    return "Meldetext '{}' konnte nicht gespeichert werden"
+
+
+def _anzeige_scheitert(store, monkeypatch):
+    Notifier(store, _ScheiternderSink(show_fehler=True)).notify(FREMDER_SCHLUESSEL, "aktiv", "Text", critical=True)
+    return "Offene Meldung '{}' konnte nicht aktualisiert werden"
+
+
+@pytest.mark.parametrize("pfad", [_seed_ohne_speicher, _notify_ohne_speicher, _push_scheitert,
+                                  _meldetext_ohne_speicher, _anzeige_scheitert],
+                         ids=["seed", "notify_speicher", "push", "refresh_speicher", "anzeige"])
+def test_ein_meldeschluessel_mit_fremdem_text_steht_in_den_fehlerpfaden_nur_escaped_im_log(
+    make_store, monkeypatch, caplog, pfad,
+):
+    """T6-Rest, R-c: der Schluessel `fehler:<Text>` eines Startfehlers traegt Text des Servers (Konfigurationsdokument).
+    Scheitern Speichern, Push oder Anzeige, steht er in der Warnung nur als Escape (Zeilenumbruch, U+202E, U+061C)."""
+    store = make_store()
+    with caplog.at_level(logging.INFO, logger="smartheat_runtime.notifier"):
+        vorlage = pfad(store, monkeypatch)
+    assert vorlage.format(FREMDER_SCHLUESSEL_IM_LOG) in logzeilen(caplog)

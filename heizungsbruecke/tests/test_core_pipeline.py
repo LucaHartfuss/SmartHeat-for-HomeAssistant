@@ -6,6 +6,7 @@ import math
 
 import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT
+from fakes import FREMDTEXT, FREMDTEXT_IM_LOG, logzeilen
 
 from heizungsbruecke.ha_binding import HaPlantBinding
 from smartheat_core.pipeline import DeviceWriteError, LeverPipeline
@@ -1302,3 +1303,50 @@ def test_missing_restore_point_during_a_boost_is_logged_only_when_something_is_m
     with caplog.at_level(logging.INFO, logger="smartheat_core.pipeline"):
         override.set_boosts(comfort=True, emergency=True)
     assert "Wiederherstellungspunkt fehlt (room_setpoint)" in caplog.text
+
+
+# --- T6-Rest, R-c: Fehlertext aus HA (bzw. des Datentraegers) nur als Escape im Log ---
+
+def _raise_fremd(*args, **kwargs):
+    raise OSError(FREMDTEXT)
+
+
+def _erster_start(make_store, monkeypatch):
+    override, _, _ = _setup(make_store, backup=dict(RESTORE_POINT), states={"number.curve": RuntimeError(FREMDTEXT)})
+    override.reseed_from_plant("curve")
+    return f"curve beim ersten Start nicht lesbar: {FREMDTEXT_IM_LOG}"
+
+
+def _punkt_nicht_speicherbar(make_store, monkeypatch):
+    override, _, _ = _setup(make_store, backup=dict(RESTORE_POINT))
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_fremd)
+    with pytest.raises(OSError):
+        override.apply_server_values(_server(1.0, 25.0, 15.0))
+    with pytest.raises(OSError):
+        override.set_boosts(comfort=False, emergency=True)
+    return f"Wiederherstellungspunkt nicht gespeichert (backup.json): backup.json nicht schreibbar: {FREMDTEXT_IM_LOG}"
+
+
+def _punkt_nicht_lesbar(make_store, monkeypatch):
+    override, _, _ = _setup(make_store, states={"number.curve": RuntimeError(FREMDTEXT)})
+    assert override.set_boosts(comfort=True, emergency=False) == (False, False)
+    return f"Wiederherstellungspunkt nicht lesbar (curve, room_setpoint): {FREMDTEXT_IM_LOG}"
+
+
+def _ursprungswert_nicht_lesbar(make_store, monkeypatch):
+    override, _, ha = _setup_g(make_store)
+    ha.read_errors["number.heat_limit"] = RuntimeError(FREMDTEXT)
+    override.capture_originals()
+    return f"heat_limit beim Start nicht lesbar, Ursprungswert bleibt offen: {FREMDTEXT_IM_LOG}"
+
+
+@pytest.mark.parametrize("pfad", [_erster_start, _punkt_nicht_speicherbar, _punkt_nicht_lesbar,
+                                  _ursprungswert_nicht_lesbar],
+                         ids=["reseed", "punkt_speichern", "punkt_lesen", "ursprungswert"])
+def test_a_foreign_error_text_is_logged_only_escaped(make_store, monkeypatch, caplog, pfad):
+    """T6-Rest, R-c: der Fehlertext beim Lesen aus HA (erster Start, Wiederherstellungspunkt vor dem Boost,
+    Ursprungswert) und beim Speichern des Wiederherstellungspunkts steht nur als Escape (Zeilenumbruch, U+202E, U+061C)
+    im Log."""
+    with caplog.at_level(logging.INFO, logger="smartheat_core.pipeline"):
+        zeile = pfad(make_store, monkeypatch)
+    assert zeile in logzeilen(caplog)

@@ -10,6 +10,7 @@ from smartheat_core import energy as energy_core
 from smartheat_core import wallclock
 from smartheat_core.binding import ENERGY_TOTAL
 from smartheat_core.bindungsparameter import ENERGIE_KANAELE
+from smartheat_core.logtext import lesbar
 from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_runtime.delivery import DataFault
 
@@ -112,7 +113,7 @@ def read_regulation_fields(manifest, signals, room_target: float | None) -> dict
         try:
             value = signals.get_state(entity_id)
         except Exception as exc:
-            logger.warning("Regel-Telemetrie '%s' nicht lesbar, Feld wird weggelassen: %s", role, exc)
+            logger.warning("Regel-Telemetrie '%s' nicht lesbar, Feld wird weggelassen: %s", role, lesbar(str(exc)))
             continue
         if ist_endliche_zahl(value):
             fields[role] = value
@@ -141,7 +142,7 @@ def read_kpi_fields(
                 raise ValueError(f"nicht-endlicher Wert {value!r}")
             return True, value
         except Exception as exc:
-            logger.warning("KPI-Sensor '%s' nicht lesbar, Feld wird weggelassen: %s", role, exc)
+            logger.warning("KPI-Sensor '%s' nicht lesbar, Feld wird weggelassen: %s", role, lesbar(str(exc)))
             return False, None
 
     for role in KPI_NUMERIC_ROLES:
@@ -170,14 +171,14 @@ def read_kpi_fields(
         except ValueError:
             gemeldet = ""  # Attribut fehlt oder ist leer (HA, Gateway): gilt als gemeldete Einheit "", warnt je Wechsel
         except Exception as exc:  # voruebergehend (Quelle nicht erreichbar, Referenz fehlt): wie jeder KPI-Sensor
-            logger.warning("KPI-Sensor '%s' nicht lesbar, Feld wird weggelassen: %s", role, exc)
+            logger.warning("KPI-Sensor '%s' nicht lesbar, Feld wird weggelassen: %s", role, lesbar(str(exc)))
             continue
         if gemeldet != erwartet:
             if _EINHEIT_GEWARNT.get(kanal) != gemeldet:
                 _EINHEIT_GEWARNT[kanal] = gemeldet
                 logger.warning(
                     "Energiekanal '%s' meldet %s statt %s und wird weggelassen",
-                    kanal, f"'{gemeldet}'" if gemeldet else "keine Einheit", erwartet,
+                    kanal, f"'{lesbar(gemeldet)}'" if gemeldet else "keine Einheit", erwartet,
                 )
             continue
         _EINHEIT_GEWARNT.pop(kanal, None)

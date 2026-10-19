@@ -11,7 +11,15 @@ from types import SimpleNamespace
 import geraet_helpers
 import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT
-from fakes import VIESSMANN_OPTIONEN, VIESSMANN_ZUSTAND, FakeHa, trigger_klasse
+from fakes import (
+    FREMDTEXT,
+    FREMDTEXT_IM_LOG,
+    VIESSMANN_OPTIONEN,
+    VIESSMANN_ZUSTAND,
+    FakeHa,
+    logzeilen,
+    trigger_klasse,
+)
 
 from heizungsbruecke import geraet_status
 from heizungsbruecke.derived_sensors import DerivedSensors
@@ -1140,6 +1148,23 @@ def test_the_warning_about_a_rejected_answer_quotes_the_server_reason_encodable_
     assert meldung == f"Server hat Snapshot (seq={seq}) abgelehnt: {reason!r}"
     meldung.encode("utf-8")  # wirft bei einem einzelnen Surrogat
     assert "\n" not in meldung
+
+
+def test_the_warning_about_unwritable_server_values_has_the_error_text_from_ha_only_escaped(env, caplog):
+    """T6-Rest, R-c: scheitert das Schreiben der Serverwerte, traegt DeviceWriteError den Fehlertext von HA; in der
+    Warnung steht er nur als Escape (Zeilenumbruch, U+202E, U+061C)."""
+    _quiet_backup(env)
+    bridge = _start(env)
+    _set_room_target(env, bridge, 20.5)
+    seq = _mqtt(env).snapshots[0]["seq"]
+    env.ha.write_error = RuntimeError(FREMDTEXT)
+
+    with caplog.at_level(logging.WARNING, logger="smartheat_runtime.ticks"):
+        _answer(env, bridge, seq, curve=0.95, shift=23.0)
+
+    assert [zeile for zeile in logzeilen(caplog) if zeile.startswith(f"Serverwerte (seq={seq})")] == [
+        f"Serverwerte (seq={seq}) konnten nicht auf die Anlage geschrieben werden: "
+        f"curve (number.curve_current): {FREMDTEXT_IM_LOG}"]
 
 
 @pytest.mark.parametrize("answer", [
