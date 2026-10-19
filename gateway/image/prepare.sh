@@ -4,7 +4,11 @@
 # und die Installer-Optionen. Geraete-API- und Portal-Adresse muessen ein eigener DNS-Name per https sein (own_url.sh,
 # Nutzer-Vorgabe 2026-10-07); geprueft wird das vor jeder anderen Arbeit.
 # Aufruf: prepare.sh --bundle ORDNER --stage ORDNER --device-api-url URL --portal-base-url URL [--pilot-ssh PUBKEY]
+#         [--release-pub DATEI]
 #   --stage: darf nicht existieren oder muss leer sein (wird nie geloescht).
+#   --release-pub: oeffentlicher minisign-Schluessel (Format wie host/release.pub), ersetzt im Installer-Baum genau
+#     installer/gateway/host/release.pub (fuer Labor-Images mit eigenem Schluessel); Standard ist host/release.pub.
+#     Nur von Hand fuer Labor-Images, kein Workflow setzt ihn (Test-Waechter in test_image_scripts.py).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 GW="$(cd "$HERE/.." && pwd)"
@@ -15,11 +19,13 @@ SHIPPED=(__init__.py paths.py version.py)
 SHIPPED_CORE=(__init__.py dateien.py)
 # shellcheck source=own_url.sh
 . "$HERE/own_url.sh"
+# shellcheck source=release_pub.sh
+. "$HERE/release_pub.sh"
 usage() { echo "FEHLER: $1" >&2; exit 2; }
-BUNDLE="" STAGE="" API_URL="" PORTAL_URL="" PILOT_KEY="" API_SET=0 PORTAL_SET=0
+BUNDLE="" STAGE="" API_URL="" PORTAL_URL="" PILOT_KEY="" RELEASE_PUB="" API_SET=0 PORTAL_SET=0 RELEASE_PUB_SET=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --bundle|--stage|--device-api-url|--portal-base-url|--pilot-ssh)
+    --bundle|--stage|--device-api-url|--portal-base-url|--pilot-ssh|--release-pub)
       [ $# -ge 2 ] || usage "$1 braucht einen Wert" ;;
   esac
   case "$1" in
@@ -28,6 +34,7 @@ while [ $# -gt 0 ]; do
     --device-api-url) API_URL="$2"; API_SET=1; shift ;;
     --portal-base-url) PORTAL_URL="$2"; PORTAL_SET=1; shift ;;
     --pilot-ssh) PILOT_KEY="$2"; shift ;;
+    --release-pub) RELEASE_PUB="$2"; RELEASE_PUB_SET=1; shift ;;
     *) usage "Unbekannte Option: $1" ;;
   esac
   shift
@@ -38,6 +45,7 @@ done
 shg_require_own_url --device-api-url "$API_URL"
 shg_require_own_url --portal-base-url "$PORTAL_URL"
 # 2. Uebrige Eingaben
+if [ "$RELEASE_PUB_SET" = 1 ]; then shg_release_pub_ok "$RELEASE_PUB" || usage "$shg_release_pub_hint"; fi
 if [ -n "$PILOT_KEY" ]; then
   [[ $PILOT_KEY =~ ^(ssh-[a-z0-9-]+|ecdsa-sha2-[a-z0-9-]+|sk-[a-z0-9@.-]+)\ [A-Za-z0-9+/]+=*(\ [^[:cntrl:]]*)?$ ]] \
     || usage "--pilot-ssh: genau ein oeffentlicher SSH-Schluessel in einer Zeile erwartet"
@@ -57,6 +65,7 @@ inst="$STAGE/installer/gateway"
 mkdir -p "$inst/src/smartheat_gateway" "$inst/src/smartheat_core" "$inst/image" "$STAGE/bundle" "$STAGE/images"
 cp -a "$GW/host" "$inst/host"
 rm -rf "$inst/host/tests"
+if [ "$RELEASE_PUB_SET" = 1 ]; then cp "$RELEASE_PUB" "$inst/host/release.pub"; fi
 find "$inst/host" -name __pycache__ -type d -prune -exec rm -rf {} +
 cp "$HERE/rootfs_checks.sh" "$HERE/own_url.sh" "$HERE/customize.sh" "$inst/image/"
 cp "$GW/VERSION" "$inst/VERSION"
