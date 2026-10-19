@@ -32,8 +32,11 @@ _FROM = re.compile(r"^\s*FROM\s+(?:--\S+\s+)*(\S+)(?:\s+AS\s+(\S+))?\s*$", re.IG
 _PIP_INSTALL = re.compile(r"\bpip3?\s+install\b")
 _PIP_REQUIREMENT_OPTION = re.compile(r"\s(?:-r|--requirement)(?:\s|=|$)")
 # Workflows (Audit 4, A4-41): jedes pip install laeuft mit --require-hashes oder ist ausdruecklich markiert (CI-Jobs
-# ohne Schreibrecht, Testumgebungen mit Versionsbereichen). Release-Jobs mit Schreibrecht nehmen nie die Markierung.
+# ohne Schreibrecht, Testumgebungen mit Versionsbereichen). Ein Workflow mit Schreibrecht (`contents: write` oder
+# `write-all`, an Job oder Datei) traegt nie die Markierung (Testoffensive T6, F-werkzeuge-54); der Check liest
+# zeilenweise und gilt fuer die ganze Datei.
 UNHASHED_MARKER = "pin-check: ungehasht"
+_WRITE_PERMISSION = re.compile(r"""\bcontents:\s*["']?write\b|\bpermissions:\s*["']?write-all\b""")
 _USES = re.compile(r"^\s*(?:-\s*)?uses:\s*[\"']?([^\s\"']+)[\"']?(.*)$")
 _IMAGE = re.compile(r"^\s*image:\s*[\"']?([^\s\"']+)")
 _NAME = r"[A-Za-z0-9][A-Za-z0-9._-]*"
@@ -99,7 +102,12 @@ def _check_dockerfile(repo: Path, path: Path) -> list[str]:
 def _check_workflow(repo: Path, path: Path) -> list[str]:
     problems = []
     name = path.relative_to(repo)
-    for line in path.read_text().splitlines():
+    lines = path.read_text().splitlines()
+    writes = any(not line.lstrip().startswith("#") and _WRITE_PERMISSION.search(line) for line in lines)
+    for line in lines:
+        if writes and UNHASHED_MARKER in line:
+            problems.append(f"{name}: Workflow mit Schreibrecht darf keine Markierung '{UNHASHED_MARKER}' tragen "
+                            "(pip install dort mit --require-hashes)")
         if (not line.lstrip().startswith("#") and _PIP_INSTALL.search(line)
                 and "--require-hashes" not in line and UNHASHED_MARKER not in line):
             problems.append(f"{name}: pip install ohne --require-hashes (oder Markierung '# {UNHASHED_MARKER} (Grund)')")
