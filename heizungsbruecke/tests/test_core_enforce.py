@@ -685,6 +685,7 @@ def test_a_deviation_of_exactly_tolerance_plus_float_rest_is_no_deviation(make_s
         VAILLANT_MYPYLLANT, enforce_tolerance={**VAILLANT_MYPYLLANT.enforce_tolerance, "curve": toleranz})
     ha = Ha(curve=live)
     rt = _rt(make_store, clock, ha, description=description)
+    assert rt.override.expected_values()["curve"] == 0.9  # das Soll, gegen das die Grenze gerechnet ist
     _rounds(rt)
     assert (("number.curve", 0.9) in ha.writes) is durchgesetzt
     assert (rt.store.state.manual_override is not None) is durchgesetzt
@@ -704,4 +705,4 @@ def test_a_failed_write_back_within_the_retry_interval_sends_no_limit_message(ma
         enforce.check_manual_override(rt)
     assert [entity for entity, _, _ in ha.attempts] == ["number.curve"]
     assert _pushes(rt) == []
-    assert _meldezustand(rt) != "limit:2026-10-03:Heizkurve"
+    assert _meldezustand(rt) == "ok"  # keine offene Meldung, auch kein Tageslimit
