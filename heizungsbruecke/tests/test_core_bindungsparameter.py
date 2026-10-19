@@ -399,3 +399,31 @@ def test_jeder_fehler_traegt_details_des_vertrags():
     with pytest.raises(Fehler) as info:
         beschreibung("erfunden", parameter("vaillant_vrc720"))
     assert info.value.details == {"feld": "hebelsatz", "regel": "unbekannt"}
+
+
+@pytest.mark.parametrize(("hebelsatz", "schutz", "details"), [
+    # Weishaupt: lokale Obergrenzen 10 am Tag, Hinweis ab 50000 -- die details nennen sie als max.
+    ("weishaupt_wwp", {"tag": 11, "lebensdauer_hinweis": 50000, "durchsetzen_tag": 6},
+     {"feld": "tag", "regel": "bereich", "max": 10}),
+    ("weishaupt_wwp", {"tag": 10, "lebensdauer_hinweis": 50001, "durchsetzen_tag": 6},
+     {"feld": "lebensdauer_hinweis", "regel": "bereich", "max": 50000}),
+    # Viessmann: keine lokale Obergrenze -- die details tragen kein max (auch nicht max=None).
+    ("viessmann_vicare", {"tag": 0, "lebensdauer_hinweis": None, "durchsetzen_tag": 4},
+     {"feld": "tag", "regel": "bereich"}),
+    ("viessmann_vicare", {"tag": None, "lebensdauer_hinweis": 0, "durchsetzen_tag": 4},
+     {"feld": "lebensdauer_hinweis", "regel": "bereich"}),
+], ids=["weishaupt-tag", "weishaupt-lebensdauer", "viessmann-tag", "viessmann-lebensdauer"])
+def test_schreibschutz_fehler_nennt_max_genau_bei_lokaler_obergrenze(hebelsatz, schutz, details):
+    """Testoffensive T8 (Mutationsprobe K2): die details an den Server nennen die lokale Obergrenze nur, wenn es eine
+    gibt."""
+    with pytest.raises(Fehler) as info:
+        beschreibung(hebelsatz, parameter(hebelsatz, schreibschutz=schutz))
+    assert info.value.details == details
+
+
+@pytest.mark.parametrize("wartezeit", [59, 7201])
+def test_wartezeit_fehler_nennt_min_60_und_max_7200(wartezeit):
+    """Testoffensive T8 (Mutationsprobe K2): die details an den Server tragen beide Grenzen der Wartezeit."""
+    with pytest.raises(Fehler) as info:
+        beschreibung("vaillant_vrc720", parameter("vaillant_vrc720", wartezeit_s=wartezeit))
+    assert info.value.details == {"feld": "wartezeit_s", "regel": "bereich", "min": 60, "max": 7200}
