@@ -102,6 +102,7 @@ def test_the_log_line_of_a_failed_message_escapes_the_topic_from_the_local_bus(c
     (zeile,) = [r.getMessage() for r in caplog.records if r.getMessage().startswith("Fehler beim Verarbeiten")]
     assert zeile == "Fehler beim Verarbeiten von zigbee2mqtt/0x\\nERROR    gefaelscht"
 
+
 class _Msg:
     def __init__(self, topic, payload=b"", retain=False):
         self.topic, self.payload, self.retain = topic, payload, retain
