@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import TypeVar
 
 from smartheat_core import config_check
+from smartheat_core.logtext import lesbar
 from smartheat_device import bootstrap, commands, fehler, identity, inventory, nachrichten, wire, wish
 from smartheat_device.documents import BEDIENUNG, KONFIGURATION, DocumentStore, angebot_aus
 from smartheat_device.host import Anzeige, DeviceHost
@@ -456,7 +457,7 @@ class Device:
 
     def _nachricht(self, name: str, raw: bytes) -> None:
         if name not in wire.DOWN_TOPICS:  # Spec 2.1: unbekannte Topics ignorieren, ohne die Nachricht zu lesen
-            logger.debug("Topic %s unbekannt, ignoriert (Spec 2.1)", name)
+            logger.debug("Topic %s unbekannt, ignoriert (Spec 2.1)", lesbar(name))
             return
         if len(raw) > wire.MAX_MESSAGE_BYTES:
             logger.warning("%s zu gross, verworfen", name)

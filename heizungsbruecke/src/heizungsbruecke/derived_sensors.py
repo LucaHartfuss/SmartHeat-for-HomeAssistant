@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from heizungsbruecke.helper_templates import outdoor_temperature_template, room_temperature_template
+from smartheat_core.logtext import lesbar
 from smartheat_runtime.backup_store import load_backup, save_backup
 
 logger = logging.getLogger(__name__)
@@ -86,7 +87,7 @@ def _ensure_entity(
     if existing_id and ha_api.entity_exists(existing_id):
         if not replaced:
             return existing_id, False
-        logger.info("Hilfs-Entity %s (%s) wird wegen geaenderter Quelle neu angelegt", existing_id, key)
+        logger.info("Hilfs-Entity %s (%s) wird wegen geaenderter Quelle neu angelegt", lesbar(str(existing_id)), key)
         ha_api.delete_helper(existing_id, tenant_id=tenant_id)
     entity_id = create_fn()
     tracking[key] = {"entity_id": entity_id} if source is None else {"entity_id": entity_id, "source": source}
@@ -121,10 +122,11 @@ def _remove_obsolete(ha_api, tracking: dict, state_path: Path, tenant_id: str) -
         except Exception as error:
             entry = tracking.get(key)  # kann kaputt sein (kein dict), dann nicht noch einmal werfen
             entity_id = entry.get("entity_id") if isinstance(entry, dict) else entry
-            logger.warning("Alter Hilfssensor %s (%s) konnte nicht entfernt werden: %s", entity_id, key, error)
+            logger.warning("Alter Hilfssensor %s (%s) konnte nicht entfernt werden: %s", lesbar(str(entity_id)), key,
+                           lesbar(str(error)))
             continue
         if removed is not None:
-            logger.info("Alter Hilfssensor %s (%s) entfernt", removed, key)
+            logger.info("Alter Hilfssensor %s (%s) entfernt", lesbar(str(removed)), key)
 
 
 def entfernen(ha_api, tenant_id: str, state_path: Path) -> bool:
@@ -150,9 +152,9 @@ def entfernen(ha_api, tenant_id: str, state_path: Path) -> bool:
             removed = _drop_unused(ha_api, tracking, key, state_path, tenant_id, delete=delete)
         except Exception as error:
             logger.warning("Hilfssensor %s (%s) nicht geloescht (%s), neuer Versuch beim naechsten Start",
-                           entry["entity_id"], key, type(error).__name__)
+                           lesbar(str(entry["entity_id"])), key, type(error).__name__)
             continue
-        logger.info("Hilfssensor %s (%s) geloescht", removed, key)
+        logger.info("Hilfssensor %s (%s) geloescht", lesbar(str(removed)), key)
     try:
         if tracking:
             save_backup(state_path, tracking)

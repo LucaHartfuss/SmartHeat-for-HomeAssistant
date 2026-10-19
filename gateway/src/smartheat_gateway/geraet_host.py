@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from smartheat_core import dateien
+from smartheat_core.logtext import lesbar
 from smartheat_device import fehler, nachrichten, wire
 from smartheat_device.commands import CommandRegister
 from smartheat_device.geraet_host_basis import GeraetHostBasis
@@ -130,7 +131,7 @@ def vergessen(paths: Paths) -> bool:
             registry.create(driver_id, {}, paths, writer=False).forget_credentials()
         except Exception as error:
             gescheitert = True
-            logger.error("Anmeldedaten von %s nicht geloescht (%s)", driver_id, type(error).__name__)
+            logger.error("Anmeldedaten von %s nicht geloescht (%s)", lesbar(str(driver_id)), type(error).__name__)
     # Erst backup.json, dann der (bis auf Neues) leere Ordner; jeder Schritt nur nach vollem Erfolg der vorigen.
     for path, wie in ((paths.backup, datei_weg), (paths.runtime_dir, shutil.rmtree)):
         if gescheitert:

@@ -6,6 +6,8 @@ from collections.abc import Callable
 
 import websocket
 
+from smartheat_core.logtext import lesbar
+
 logger = logging.getLogger(__name__)
 
 _RECONNECT_DELAYS_SECONDS = (1, 2, 5, 10, 20, 30)
@@ -111,7 +113,8 @@ class HaTriggerClient:
         if msg_type == "auth_required":
             ws.send(json.dumps({"type": "auth", "access_token": self._token}))
         elif msg_type == "auth_invalid":
-            logger.error("HaTriggerClient: WS-Authentifizierung fehlgeschlagen: %s", payload.get("message"))
+            logger.error("HaTriggerClient: WS-Authentifizierung fehlgeschlagen: %s",
+                         lesbar(str(payload.get("message"))))
             ws.close()
         elif msg_type == "auth_ok":
             self._authed = True
@@ -143,7 +146,7 @@ class HaTriggerClient:
                 except Exception:
                     logger.exception("HaTriggerClient: on_connected-Callback hat eine Ausnahme geworfen")
         else:
-            logger.error("HaTriggerClient: subscribe_trigger fehlgeschlagen: %s", payload.get("error"))
+            logger.error("HaTriggerClient: subscribe_trigger fehlgeschlagen: %s", lesbar(str(payload.get("error"))))
             ws.close()
 
     def _dispatch_event(self, payload: dict) -> None:
@@ -158,8 +161,9 @@ class HaTriggerClient:
             logger.exception("HaTriggerClient: on_trigger_event-Callback hat eine Ausnahme geworfen")
 
     def _on_close(self, ws, close_status_code, close_msg) -> None:
-        logger.warning("HaTriggerClient: WS-Verbindung geschlossen (code=%s, msg=%s)", close_status_code, close_msg)
+        logger.warning("HaTriggerClient: WS-Verbindung geschlossen (code=%s, msg=%s)", lesbar(str(close_status_code)),
+                       lesbar(str(close_msg)))
         self._connected.clear()
 
     def _on_error(self, ws, error) -> None:
-        logger.warning("HaTriggerClient: WS-Fehler: %s", error)
+        logger.warning("HaTriggerClient: WS-Fehler: %s", lesbar(str(error)))

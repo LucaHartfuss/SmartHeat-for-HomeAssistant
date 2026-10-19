@@ -22,6 +22,7 @@ from heizungsbruecke.ha_signals import SOLL_REF, GeraetSignale, HaSignalSource
 from heizungsbruecke.manifest import build_manifest, entity_ref
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core import wallclock
+from smartheat_core.logtext import lesbar
 from smartheat_runtime import aufraeumen, dokument_config
 from smartheat_runtime.app import Loaded, Notice, RestoreParts, StartFailure
 from smartheat_runtime.dokument_config import ConfigError
@@ -142,7 +143,7 @@ class HaHost:
             description = dokument_config.beschreibung(self._konfiguration)
             safety = dokument_config.sicherheit(self._konfiguration)
         except ConfigError as error:
-            logger.error("Abmelden ohne Zuruecksetzen: %s", error)
+            logger.error("Abmelden ohne Zuruecksetzen: %s", lesbar(str(error)))
             return None
         roles = [role for role in binding_roles(description) if b.rollen.get(role)]
         manifest = ChannelManifest(refs={role: entity_ref(role, b.rollen[role]) for role in roles})
@@ -285,7 +286,7 @@ def _retry_with_budget(ha_api, attempt, describe, *, identify=None):
                 key = identify(error) if identify is not None else grund
                 raise StartupError(grund, key) from error
             logger.warning("Start noch nicht moeglich (Versuch %s/%s): %s",
-                           used + 1, len(DERIVED_SENSORS_RETRY_DELAYS_SECONDS) + 1, error)
+                           used + 1, len(DERIVED_SENSORS_RETRY_DELAYS_SECONDS) + 1, lesbar(str(error)))
             time.sleep(DERIVED_SENSORS_RETRY_DELAYS_SECONDS[used])
             used += 1
 
@@ -335,13 +336,13 @@ def _check_timezone(ha_api) -> None:
     try:
         ha_time_zone = ha_api.get_config().get("time_zone")
     except Exception as error:
-        logger.warning("Zeitzone von Home Assistant konnte nicht abgefragt werden: %s", error)
+        logger.warning("Zeitzone von Home Assistant konnte nicht abgefragt werden: %s", lesbar(str(error)))
         return
     container_time_zone = os.environ.get("TZ") or str(wallclock.now().tzinfo)
     if ha_time_zone and ha_time_zone != container_time_zone:
         logger.warning(
             "Zeitzone weicht ab: Home Assistant '%s', Add-on-Container '%s' - taegliche "
-            "Zeitpunkte laufen in der Container-Zeit.", ha_time_zone, container_time_zone,
+            "Zeitpunkte laufen in der Container-Zeit.", lesbar(str(ha_time_zone)), container_time_zone,
         )
     else:
         logger.info("Zeitzone: %s", container_time_zone)

@@ -80,7 +80,6 @@ def test_verteilsystem_without_safety_values_is_a_configuration_error(env, caplo
     assert "Deckenheizung" in caplog.text
 
 
-
 def test_der_grund_eines_konfigurationsfehlers_steht_auf_einer_logzeile(env, caplog, sleeps):
     """Sicherheitscheck zu a9756e8: der Grund traegt Text der Konfiguration (beim Gateway vom Server). Steuerzeichen
     darin taeuschen keine eigene Logzeile vor: FEHLER-Zeile und Meldung schreiben sie als Escape."""
@@ -90,9 +89,11 @@ def test_der_grund_eines_konfigurationsfehlers_steht_auf_einer_logzeile(env, cap
     assert result.reason == "konfigurationsfehler"
     zeilen = [r.getMessage() for r in caplog.records if "Decke" in r.getMessage()]
     assert len(zeilen) >= 2  # FEHLER-Zeile der Laufzeit und Logzeile der Meldung
+    assert any(zeile.startswith("FEHLER: ") for zeile in zeilen)
     for zeile in zeilen:
         assert "Decke\\r\\nERROR    gefaelscht\\x1b[31m" in zeile
         assert zeile.splitlines() == [zeile]
+
 
 def test_alte_konfiguration_ohne_parameter_startet_nicht(env, caplog, sleeps):
     """Review Focus 1 (Spec Stufe 3 S4b 4.3): gespeicherte Konfiguration aus 1.0.0 ohne bindungsparameter:

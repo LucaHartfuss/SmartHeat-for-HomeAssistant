@@ -16,8 +16,8 @@ TESTS = Path(__file__).resolve().parent
 PAKET = TESTS.parent  # heizungsbruecke
 REPO = PAKET.parent
 PYTHONPATH = [TESTS, PAKET / "src", PAKET / "testhilfen"]  # wie pythonpath in pyproject.toml, dazu tests/
-# Untergrenze der gelesenen Dateien je Ordner (heute 116 *.py unter tests/ ohne conftest.py und 3 unter testhilfen/,
-# minus 5, mindestens 1): ein leerer oder verschobener Ordner ist rot.
+# Untergrenze der gelesenen Dateien je Ordner (heute 117 *.py unter tests/ ausser conftest.py, 111 = 116 bei der
+# Einfuehrung minus 5; 3 unter testhilfen/, mindestens 1): ein leerer oder verschobener Ordner ist rot.
 MINDESTENS_DATEIEN = {TESTS: 111, PAKET / "testhilfen": 1}
 
 
@@ -95,7 +95,9 @@ def test_diese_suite_laeuft_mit_dem_gewaehlten_profil():
 
 def eigene_einstellungen(quelltext: str) -> list[int]:
     """Zeilen mit einem Aufruf von hypothesis' `settings` (auch per Alias oder als `<modul>.settings`), der
-    `max_examples` oder `derandomize` setzt."""
+    `max_examples` oder `derandomize` setzt oder Schluessel per `**` uebergibt (nicht pruefbar), und jedes
+    `register_profile`/`load_profile` (ein Profil ausserhalb der obersten conftest.py ueberschriebe die Wahl des
+    ganzen Prozesses)."""
     baum = ast.parse(quelltext)
     namen = {"settings"}
     for knoten in ast.walk(baum):
@@ -108,7 +110,8 @@ def eigene_einstellungen(quelltext: str) -> list[int]:
         funktion = knoten.func
         ist_settings = (isinstance(funktion, ast.Name) and funktion.id in namen) or (
             isinstance(funktion, ast.Attribute) and funktion.attr == "settings")
-        if ist_settings and any(k.arg in ("max_examples", "derandomize") for k in knoten.keywords):
+        profil = isinstance(funktion, ast.Attribute) and funktion.attr in ("register_profile", "load_profile")
+        if profil or (ist_settings and any(k.arg in ("max_examples", "derandomize", None) for k in knoten.keywords)):
             zeilen.append(knoten.lineno)
     return zeilen
 
@@ -119,7 +122,12 @@ def eigene_einstellungen(quelltext: str) -> list[int]:
     "from hypothesis import settings as s\nE = s(max_examples=5)\n",
     "import hypothesis\nE = hypothesis.settings(max_examples=5)\n",
     "from hypothesis import settings\nE = settings(settings.default, derandomize=False)\n",
-], ids=["dekorator", "konstante", "alias", "modul", "mit_parent"])
+    "from hypothesis import settings\nsettings.register_profile('eigen', deadline=None)\n",
+    "from hypothesis import settings\nsettings.load_profile('voll')\n",
+    "import hypothesis\nhypothesis.settings.register_profile('eigen')\n",
+    "from hypothesis import settings\nE = settings(**{'max_examples': 5})\n",
+], ids=["dekorator", "konstante", "alias", "modul", "mit_parent", "register_profile", "load_profile",
+        "register_profile_modul", "schluessel_als_dict"])
 def test_waechter_erkennt_eigene_einstellungen(quelltext):
     assert eigene_einstellungen(quelltext) != []
 
