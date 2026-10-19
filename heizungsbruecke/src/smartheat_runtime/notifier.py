@@ -13,6 +13,7 @@ abschalten: der Zustand wird weiter verfolgt und geloggt (Grundlage der Hinweise
 der Push entfaellt. Kritische Meldungen sind nie abschaltbar."""
 import logging
 
+from smartheat_core.logtext import lesbar
 from smartheat_runtime.ports import NotifySink
 
 logger = logging.getLogger(__name__)
@@ -65,9 +66,9 @@ class Notifier:
             self._store.update(notify_states=states, notify_messages=messages)
         except Exception:
             logger.exception("Meldezustand '%s' konnte nicht gespeichert werden, Meldung geht trotzdem raus", key)
-        # Die Meldung kann Text vom Server tragen (Grund einer Ablehnung): ein einzelnes Surrogat braeche die UTF-8-Ausgabe
-        # des Logs, die Logzeile schreibt es als Escape (Testoffensive T6). Push und Speicher bekommen den Text unveraendert.
-        zeile = message.encode("utf-8", "backslashreplace").decode("utf-8")
+        # Die Meldung kann Text vom Server tragen (Grund einer Ablehnung): Steuerzeichen und Surrogate stehen in der
+        # Logzeile als Escape (logtext.lesbar, Testoffensive T6). Push und Speicher bekommen den Text unveraendert.
+        zeile = lesbar(message)
         if state == STATE_OK:
             logger.info(zeile)
         else:

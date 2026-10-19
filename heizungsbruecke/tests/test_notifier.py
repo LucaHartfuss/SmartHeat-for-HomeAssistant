@@ -392,3 +392,19 @@ def test_the_log_line_escapes_single_surrogates_from_server_text(make_store, ha_
     assert zeile.getMessage() == "Server hat die Messwerte abgelehnt (\\ud800). Die Heizkurve bleibt unverändert."
     zeile.getMessage().encode("utf-8")
     assert [c.args for c in ha_api.send_notification.call_args_list] == [(service, message) for service in SERVICES]
+
+
+def test_the_log_line_escapes_control_characters_from_server_text(make_store, ha_api, caplog):
+    """Sicherheitscheck zu a9756e8: Zeilenumbruch, Wagenruecklauf, Tabulator und ANSI-Escape im Servertext taeuschen keine
+    eigene Logzeile vor; die Logzeile schreibt sie als Escape, der Push bekommt den Text unveraendert."""
+    notifier = _notifier(make_store(), ha_api)
+    message = "Server hat die Messwerte abgelehnt (x\r\nWARNING  gefaelscht\t\x1b[31m\x00). Die Heizkurve bleibt unverändert."
+
+    with caplog.at_level(logging.INFO, logger="smartheat_runtime.notifier"):
+        assert notifier.notify("server", "abgelehnt", message, critical=False) is True
+
+    (zeile,) = [r.getMessage() for r in caplog.records]
+    assert zeile == ("Server hat die Messwerte abgelehnt (x\\r\\nWARNING  gefaelscht\\t\\x1b[31m\\x00). "
+                     "Die Heizkurve bleibt unverändert.")
+    assert zeile.splitlines() == [zeile]
+    assert [c.args for c in ha_api.send_notification.call_args_list] == [(service, message) for service in SERVICES]
