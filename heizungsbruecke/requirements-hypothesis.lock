@@ -2,7 +2,7 @@
 # PyPI (sdist und jedes Wheel, https://pypi.org/pypi/<name>/<version>/json, digests.sha256), damit jede Plattform passt.
 # sortedcontainers ist die einzige Abhaengigkeit von hypothesis (>=2.1.0,<3.0.0). Installation vor der ungehashten
 # Dev-Installation (pyproject.toml [dev] nennt hypothesis nicht):
-#    pip install --require-hashes --no-deps -r heizungsbruecke/requirements-hypothesis.lock
+#    pip install --require-hashes --no-deps --only-binary :all: -r heizungsbruecke/requirements-hypothesis.lock
 # Neue Version: Version und Hashes beider Eintraege aus der JSON-API von PyPI ersetzen.
 hypothesis==6.170.1 \
     --hash=sha256:0029ebe0254225c6ed09e8c9af72615a8aead8b9e0b9dbfe090f900091128bbe \
