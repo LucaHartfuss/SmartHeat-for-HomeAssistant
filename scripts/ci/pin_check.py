@@ -32,11 +32,14 @@ _FROM = re.compile(r"^\s*FROM\s+(?:--\S+\s+)*(\S+)(?:\s+AS\s+(\S+))?\s*$", re.IG
 _PIP_INSTALL = re.compile(r"\bpip3?\s+install\b")
 _PIP_REQUIREMENT_OPTION = re.compile(r"\s(?:-r|--requirement)(?:\s|=|$)")
 # Workflows (Audit 4, A4-41): jedes pip install laeuft mit --require-hashes oder ist ausdruecklich markiert (CI-Jobs
-# ohne Schreibrecht, Testumgebungen mit Versionsbereichen). Ein Workflow mit Schreibrecht (`contents: write` oder
-# `write-all`, an Job oder Datei) traegt nie die Markierung (Testoffensive T6, F-werkzeuge-54); der Check liest
-# zeilenweise und gilt fuer die ganze Datei.
+# ohne Schreibrecht, Testumgebungen mit Versionsbereichen). Ein Workflow mit Schreibrecht traegt nie die Markierung
+# (Testoffensive T6, F-werkzeuge-54; Ruling R-a der Fix-Welle): Schreibrecht ist jeder Bereich mit `write` (`contents`,
+# `packages`, `id-token`, ...) und `write-all`, an Job oder Datei, auch mit Schluessel oder Wert in Anfuehrungszeichen;
+# ein Workflow ohne `permissions:` auf oberster Ebene gilt als schreibend (ein Job ohne eigenes `permissions:` hat dann
+# das Standardrecht des Tokens, fail closed). Der Check liest zeilenweise und gilt fuer die ganze Datei.
 UNHASHED_MARKER = "pin-check: ungehasht"
-_WRITE_PERMISSION = re.compile(r"""\bcontents["']?\s*:\s*["']?write\b|\bpermissions\s*:\s*["']?write-all\b""")
+_WRITE_PERMISSION = re.compile(r"""["']?[\w-]+["']?\s*:\s*["']?write\b""")
+_TOP_LEVEL_PERMISSIONS = re.compile(r"""^["']?permissions["']?\s*:""")
 _USES = re.compile(r"^\s*(?:-\s*)?uses:\s*[\"']?([^\s\"']+)[\"']?(.*)$")
 _IMAGE = re.compile(r"^\s*image:\s*[\"']?([^\s\"']+)")
 _NAME = r"[A-Za-z0-9][A-Za-z0-9._-]*"
@@ -100,10 +103,15 @@ def _check_dockerfile(repo: Path, path: Path) -> list[str]:
 
 
 def _without_comment(line: str) -> str:
-    """Zeile ohne YAML-Kommentar: `#` beginnt ihn nur am Zeilenanfang oder nach Leerraum und ausserhalb von Anfuehrungszeichen."""
+    """Zeile ohne YAML-Kommentar: `#` beginnt ihn nur am Zeilenanfang oder nach Leerraum und ausserhalb von
+    Anfuehrungszeichen; in einem doppelt quotierten String beendet `\\"` ihn nicht."""
     quote = ""
+    escaped = False
     for index, char in enumerate(line):
-        if quote:
+        if escaped:
+            escaped = False
+        elif quote:
+            escaped = quote == '"' and char == "\\"
             quote = "" if char == quote else quote
         elif char in "\"'":
             quote = char
@@ -116,10 +124,13 @@ def _check_workflow(repo: Path, path: Path) -> list[str]:
     problems = []
     name = path.relative_to(repo)
     lines = path.read_text().splitlines()
-    writes = any(_WRITE_PERMISSION.search(_without_comment(line)) for line in lines)
+    code = [_without_comment(line) for line in lines]
+    top_level = any(_TOP_LEVEL_PERMISSIONS.match(line) for line in code)
+    writes = not top_level or any(_WRITE_PERMISSION.search(line) for line in code)
+    reason = "Schreibrecht" if top_level else "Schreibrecht (ohne permissions: auf oberster Ebene)"
     for line in lines:
         if writes and UNHASHED_MARKER in line:
-            problems.append(f"{name}: Workflow mit Schreibrecht darf keine Markierung '{UNHASHED_MARKER}' tragen "
+            problems.append(f"{name}: Workflow mit {reason} darf keine Markierung '{UNHASHED_MARKER}' tragen "
                             "(pip install dort mit --require-hashes)")
         if (not line.lstrip().startswith("#") and _PIP_INSTALL.search(line)
                 and "--require-hashes" not in line and UNHASHED_MARKER not in line):
