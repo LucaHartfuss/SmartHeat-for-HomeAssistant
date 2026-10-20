@@ -28,6 +28,7 @@ GOOD_USB_HOOK = (
     "copy_file config /etc/udev/rules.d/99-rpi-01-smartheat-usbboot.rules\n"
 )
 CONFIG_TXT = "boot/firmware/config.txt"
+ETH_DROPIN = "etc/systemd/network/01-eth0.network.d/10-smartheat-client-id.conf"
 # Ende der Vorlage von rpi-image-gen v2.8.0 plus der Block aus wlan_off.sh
 GOOD_CONFIG_TXT = (
     "dtparam=audio=on\n[pi4]\nenable_uart=1\n\n[all]\nuart_2ndstage=1\n\n"
@@ -233,6 +234,8 @@ def _good(root: Path, pilot: bool = False) -> Path:
         "etc/default/keyboard": 'XKBMODEL="pc105"\nXKBLAYOUT="de"\nXKBVARIANT=""\nXKBOPTIONS=""\n',
         # WLAN aus (wlan_off.sh): nur die Ethernet-Konfiguration, WLAN-Chip per Overlay abgeschaltet
         "etc/systemd/network/01-eth0.network": "[Match]\nName=eth0\n\n[Network]\nDHCP=yes\n",
+        # DHCPv4 mit der MAC als Client-ID (eth_dhcp.sh)
+        ETH_DROPIN: "# Kommentar\n[DHCPv4]\nClientIdentifier=mac\n",
         CONFIG_TXT: GOOD_CONFIG_TXT,
     }
     if pilot:
@@ -455,6 +458,24 @@ def test_wlan_off_variants_that_are_fine(tmp_path, fixit):
     fixit(root)
     result = _run(root)
     assert result.returncode == 0, result.stdout
+
+
+@pytest.mark.parametrize("breakit", [
+    lambda r: (r / ETH_DROPIN).unlink(),
+    lambda r: (r / ETH_DROPIN).write_text("[DHCPv4]\nClientIdentifier=duid\n"),
+    lambda r: (r / ETH_DROPIN).write_text("[DHCPv4]\n#ClientIdentifier=mac\n"),
+    lambda r: (r / ETH_DROPIN).write_text("[DHCPv6]\nClientIdentifier=mac\n"),
+    lambda r: (r / ETH_DROPIN).write_text("[DHCPv4]\nClientIdentifier=mac\nClientIdentifier=duid\n"),
+], ids=["missing", "duid", "commented", "wrong-section", "overridden"])
+def test_eth0_asks_dhcpv4_with_the_mac(tmp_path, breakit):
+    """Ohne MAC als Client-ID bekam das Gateway am Router des Labors kein IPv4 (H2, 2026-10-20): jede Abweichung im
+    Drop-in von eth_dhcp.sh laesst die Pruefung mit genau einer Meldung scheitern."""
+    root = _good(tmp_path)
+    assert _run(root).returncode == 0
+    breakit(root)
+    result = _run(root)
+    fails = [line for line in result.stdout.splitlines() if line.startswith("FAIL:")]
+    assert result.returncode != 0 and len(fails) == 1 and "Client-ID" in fails[0], result.stdout
 
 
 @pytest.mark.parametrize("url", ["https://accounts.hartfussha.org", "https://accounts.hartfussha.org/"])

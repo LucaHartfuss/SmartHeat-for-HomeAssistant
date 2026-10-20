@@ -2,6 +2,14 @@
 
 ## Unveröffentlicht
 
+- Der Updater nennt sich beim Abruf von Manifest und Bundle-Dateien `SmartHeat-Gateway-Updater/<Version>`. Den
+  Standard-User-Agent von Python sperrt die Browser-Integritätsprüfung von Cloudflare (HTTP 403, Fehler 1010), und das
+  Update scheiterte als „nicht ladbar“ (Labor 2026-10-20, H2).
+- Der SONOFF Dongle Plus MG24 (`10c4:ea60`, Produktname mit „MG24“) gilt als `ember`-Stick. Bisher ordnete die
+  udev-Regel ihn als `zstack` ein, und Zigbee2MQTT startete endlos neu (Labor 2026-10-20, H2).
+- Das Image fragt per DHCPv4 auf `eth0` mit der MAC als Client-ID (`eth_dhcp.sh`, Drop-in zu `01-eth0.network`;
+  `rootfs_checks.sh` prüft es). Mit dem Standard von systemd-networkd (Client-ID aus der DUID) bekam das Gateway am
+  Router des Labors nie eine IPv4-Adresse und damit keine Verbindung zum Server (Labor 2026-10-20, H2).
 - Treibergrenzen (Nutzer-Entscheidung 22): `poll_seconds` darf höchstens 86400 s sein (ViCare mindestens 120 s wie bisher,
   Simulation mindestens 1 s und nur eine Zahl, kein Wahrheitswert und kein Text); eine Token-Antwort der Viessmann-IAM mit
   `expires_in` kleiner oder gleich 0 gilt als unbrauchbare Antwort. Der Server prüft dieselben Grenzen bei der Erkennung.
