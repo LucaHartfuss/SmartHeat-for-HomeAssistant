@@ -166,8 +166,15 @@ class _SchemeCheckedRedirects(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
+#: Eigener User-Agent: die Browser-Integritaetspruefung von Cloudflare sperrt den Standard von urllib (Python-urllib,
+#: HTTP 403, Fehler 1010; Labor 2026-10-20). urllib setzt ihn auch auf dem Ziel einer Weiterleitung.
+USER_AGENT = f"SmartHeat-Gateway-Updater/{GATEWAY_VERSION}"
+
+
 def checked_opener(allow_http: bool) -> urllib.request.OpenerDirector:
-    return urllib.request.build_opener(_SchemeCheckedRedirects(allow_http))
+    opener = urllib.request.build_opener(_SchemeCheckedRedirects(allow_http))
+    opener.addheaders = [("User-Agent", USER_AGENT)]
+    return opener
 
 
 def fetch_url(url: str, max_bytes: int, allow_http: bool) -> bytes:

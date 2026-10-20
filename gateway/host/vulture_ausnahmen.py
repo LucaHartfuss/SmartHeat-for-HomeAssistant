@@ -4,3 +4,6 @@
 # --- Signalhandler: signal.signal ruft handler(signum, frame) ---
 _.signum  # smartheat_host/led.py _terminate
 _.frame  # smartheat_host/led.py _terminate
+
+# --- urllib liest OpenerDirector.addheaders bei jeder Anfrage (auch nach einer Weiterleitung) ---
+_.addheaders  # smartheat_host/updater.py checked_opener (eigener User-Agent)
