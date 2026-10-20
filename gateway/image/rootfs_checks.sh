@@ -151,6 +151,17 @@ elif ! awk '/^[[:space:]]*\[/ { sec = $0; gsub(/[[:space:]]/, "", sec); next }
   fail "dtoverlay=disable-wifi fehlt in config.txt (Abschnitt [all])"
 fi
 
+# DHCPv4 auf eth0 mit der MAC als Client-ID (eth_dhcp.sh; mit der DUID kam am Router des Labors kein Angebot): im
+# Drop-in gilt die letzte Zuweisung im Abschnitt [DHCPv4].
+ETH_DROPIN="$R/etc/systemd/network/01-eth0.network.d/10-smartheat-client-id.conf"
+client_id="$(awk '/^[[:space:]]*\[/ { sec = $0; gsub(/[[:space:]]/, "", sec); next }
+                  sec == "[DHCPv4]" && /^[[:space:]]*ClientIdentifier[[:space:]]*=/ {
+                    v = $0; sub(/^[^=]*=[[:space:]]*/, "", v); sub(/[[:space:]]+$/, "", v) }
+                  END { print v }' "$ETH_DROPIN" 2>/dev/null || true)"
+if [ "$client_id" != mac ]; then
+  fail "DHCPv4-Client-ID auf eth0 nicht mac (${ETH_DROPIN#"$R"}: ${client_id:-fehlt})"
+fi
+
 # Zeitzone: /etc/localtime zeigt (absolut oder relativ) auf die Zonendatei, die im Image liegt (tzdata); ein
 # vorhandenes /etc/timezone (trixie legt es nicht mehr an) muss dieselbe Zone nennen.
 tz_link="$(readlink "$R/etc/localtime" 2>/dev/null || true)"

@@ -2,6 +2,9 @@
 
 ## Unveröffentlicht
 
+- Das Image fragt per DHCPv4 auf `eth0` mit der MAC als Client-ID (`eth_dhcp.sh`, Drop-in zu `01-eth0.network`;
+  `rootfs_checks.sh` prüft es). Mit dem Standard von systemd-networkd (Client-ID aus der DUID) bekam das Gateway am
+  Router des Labors nie eine IPv4-Adresse und damit keine Verbindung zum Server (Labor 2026-10-20, H2).
 - Treibergrenzen (Nutzer-Entscheidung 22): `poll_seconds` darf höchstens 86400 s sein (ViCare mindestens 120 s wie bisher,
   Simulation mindestens 1 s und nur eine Zahl, kein Wahrheitswert und kein Text); eine Token-Antwort der Viessmann-IAM mit
   `expires_in` kleiner oder gleich 0 gilt als unbrauchbare Antwort. Der Server prüft dieselben Grenzen bei der Erkennung.

@@ -469,6 +469,40 @@ def test_wlan_off_fails_when_systemctl_fails(tmp_path):
     assert _wlan_off(tmp_path, _wlan_root(tmp_path), rc=1).returncode != 0
 
 
+def _eth_dhcp(root: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(["bash", str(IMAGE / "eth_dhcp.sh"), str(root)], capture_output=True, text=True, check=False)
+
+
+def test_eth_dhcp_asks_for_ipv4_with_the_mac_as_client_id(tmp_path):
+    """Labor 2026-10-20 (H2): mit dem Standard von systemd-networkd (Client-ID aus der DUID) bekam das Gateway am
+    Router des Labors nie ein DHCPv4-Angebot, mit der MAC als Client-ID sofort. Die Docker-Netze sind nur IPv4, ohne
+    IPv4-Adresse erreicht die Laufzeit den Server nicht."""
+    root = _wlan_root(tmp_path)
+    result = _eth_dhcp(root)
+    assert result.returncode == 0, result.stderr
+    dropin = root / "etc/systemd/network/01-eth0.network.d/10-smartheat-client-id.conf"
+    lines = [line for line in dropin.read_text().splitlines() if line and not line.startswith("#")]
+    assert lines == ["[DHCPv4]", "ClientIdentifier=mac"]
+    assert (root / "etc/systemd/network/01-eth0.network").read_text() == "[Match]\nName=eth0\n"  # unveraendert
+    text = dropin.read_text()
+    assert _eth_dhcp(root).returncode == 0 and dropin.read_text() == text  # ein zweiter Lauf aendert nichts
+
+
+def test_eth_dhcp_fails_without_the_eth0_network(tmp_path):
+    root = _wlan_root(tmp_path)
+    (root / "etc/systemd/network/01-eth0.network").unlink()
+    result = _eth_dhcp(root)
+    assert result.returncode != 0 and "01-eth0.network" in result.stderr
+    assert not (root / "etc/systemd/network/01-eth0.network.d").exists()
+
+
+def test_layer_runs_the_eth_dhcp_hook_before_customize():
+    layer = (IMAGE / "layer" / "smartheat-gateway.yaml").read_text()
+    assert '- bash "$SRCROOT/eth_dhcp.sh" "$1"' in layer
+    assert layer.index('- bash "$SRCROOT/eth_dhcp.sh"') < layer.index(
+        '- bash "$IGconf_shg_stage/installer/gateway/image/customize.sh"')
+
+
 def test_layer_runs_the_wlan_hook_before_customize():
     layer = (IMAGE / "layer" / "smartheat-gateway.yaml").read_text()
     assert '- bash "$SRCROOT/wlan_off.sh" "$1"' in layer
