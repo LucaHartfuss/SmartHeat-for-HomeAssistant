@@ -1,5 +1,6 @@
-"""Fake-Zigbee2MQTT (Spec SHG G2 7.2): bridge/state, bridge/devices, Messwerte, Thermostat-set, permit_join. Laeuft in
-Unit-Tests auf FakeBus und in compose.dev bzw. E2E als eigener Prozess auf dem lokalen Bus (main())."""
+"""Fake-Zigbee2MQTT (Spec SHG G2 7.2): bridge/state, bridge/devices, Messwerte, Thermostat-set, permit_join, Interview
+(bridge/event). Laeuft in Unit-Tests auf FakeBus und in compose.dev bzw. E2E als eigener Prozess auf dem lokalen Bus
+(main())."""
 import os
 import time
 
@@ -9,6 +10,18 @@ BASE = "zigbee2mqtt"
 _TEMPERATURE = {"type": "numeric", "name": "temperature", "property": "temperature", "access": 1, "unit": "°C"}
 _BATTERY = {"type": "numeric", "name": "battery", "property": "battery", "access": 1, "unit": "%"}
 _BATTERY_LOW = {"type": "binary", "name": "battery_low", "property": "battery_low", "access": 1}
+#: Aqara W100 wie Zigbee2MQTT 2.14 (Konverter lumi.ts, Auszug: die Felder, die das Gateway liest oder schreibt)
+_W100 = [
+    {"type": "binary", "name": "thermostat_mode", "property": "thermostat_mode", "access": 7,
+     "value_on": "ON", "value_off": "OFF"},
+    {"type": "climate", "features": [
+        {"name": "system_mode", "property": "system_mode", "access": 7, "values": ["off", "heat", "cool", "auto"]},
+        {"name": "occupied_heating_setpoint", "property": "occupied_heating_setpoint", "access": 7},
+        {"name": "local_temperature", "property": "local_temperature", "access": 5},
+    ]},
+    {"type": "binary", "name": "auto_hide_middle_line", "property": "auto_hide_middle_line", "access": 7},
+    _TEMPERATURE, _BATTERY,
+]
 
 
 class FakeZigbee2Mqtt:
@@ -18,6 +31,7 @@ class FakeZigbee2Mqtt:
         self._sleepy: set[str] = set()
         self._held: dict[str, float] = {}
         self.permit_join_requests: list[int] = []
+        self.set_requests: list[tuple[str, dict]] = []  # jede set-Nachricht (IEEE, Inhalt) in Reihenfolge
         bus.subscribe(f"{BASE}/bridge/request/permit_join", self._on_permit_join)
         bus.subscribe(f"{BASE}/+/set", self._on_set)
 
@@ -34,6 +48,17 @@ class FakeZigbee2Mqtt:
             {"name": "local_temperature", "property": "local_temperature", "access": 5},
         ]}
         self._add(ieee, "TRV-Test", "Test", [climate, _BATTERY_LOW])
+
+    def add_w100(self, ieee: str) -> None:
+        self._add(ieee, "TH-S04D", "Aqara", _W100)
+
+    def interview(self, ieee: str, status: str = "successful") -> None:
+        """bridge/event device_interview wie Zigbee2MQTT nach dem Koppeln (die Definition nur bei successful)."""
+        data = {"friendly_name": ieee, "ieee_address": ieee, "status": status}
+        if status == "successful":
+            device = next(item for item in self._devices if item["ieee_address"] == ieee)
+            data.update(supported=True, definition=device["definition"])
+        self._bus.publish(f"{BASE}/bridge/event", {"type": "device_interview", "data": data})
 
     def make_sleepy(self, ieee: str) -> None:
         """Das Geraet schlaeft: Schreibbefehle bleiben bis wake() liegen (batteriebetriebenes Thermostat)."""
@@ -66,6 +91,8 @@ class FakeZigbee2Mqtt:
     def _on_set(self, topic, payload, retain) -> None:
         ieee = topic.split("/")[1]
         body = decode(payload)
+        if isinstance(body, dict):
+            self.set_requests.append((ieee, body))
         if not (isinstance(body, dict) and "occupied_heating_setpoint" in body):
             return
         if ieee in self._sleepy:
