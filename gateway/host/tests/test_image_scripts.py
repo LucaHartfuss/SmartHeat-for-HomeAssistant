@@ -1,6 +1,7 @@
 """Image-Bau-Skripte (Plan G2b-2 Task 9) ohne Docker: prepare.sh und make_image.sh lehnen fremde Adressen (IP, AWS,
 http, Port, Pfad) ab, bevor sie etwas tun; prepare.sh legt mit einer Docker-Attrappe die Stage richtig an; Layer,
 Konfiguration und Installer passen zusammen (alle Pakete aus dem Layer, kein apt im chroot)."""
+import base64
 import os
 import re
 import stat
@@ -30,6 +31,9 @@ if [ "$1" = version ]; then echo arm64; exit 0; fi
 all="$*"; printf '%s\\n' "${all//$'\\n'/ }" >>"$SHG_FAKE_LOG"  # ein Aufruf = eine Zeile
 stage=""
 for arg in "$@"; do case "$arg" in *:/stage|*:/stage:ro) stage="${arg%%:/stage*}" ;; esac; done
+if [ -n "$stage" ] && [ "${*: -1}" = "/src/gateway/image/build.sh" ] && [ -n "${SHG_FAKE_RELEASE_COPY:-}" ]; then
+  cp "$stage/installer/gateway/host/release.pub" "$SHG_FAKE_RELEASE_COPY"  # was der Build als Schluessel sieht
+fi
 if [ -n "$stage" ] && [ "${*: -1}" != "/src/gateway/image/build.sh" ]; then
   n=0; seen=0
   for arg in "$@"; do
@@ -508,3 +512,119 @@ def test_layer_runs_the_wlan_hook_before_customize():
     assert '- bash "$SRCROOT/wlan_off.sh" "$1"' in layer
     assert layer.index('- bash "$SRCROOT/wlan_off.sh"') < layer.index(
         '- bash "$IGconf_shg_stage/installer/gateway/image/customize.sh"')
+
+
+def _minisign_pub(path: Path, seed: int = 7) -> Path:
+    """Oeffentlicher Schluessel im minisign-Format: 'Ed' + 8 Byte Schluessel-ID + 32 Byte Schluessel (42 Byte, 56
+    Zeichen Base64, beginnend mit RW)."""
+    raw = b"Ed" + bytes([seed]) * 8 + bytes([seed + 1]) * 32
+    path.write_text(f"untrusted comment: minisign public key {seed:02X}\n{base64.b64encode(raw).decode()}\n")
+    return path
+
+
+def _tree(root: Path) -> dict[str, bytes]:
+    return {str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
+
+
+_RELEASE_PUB = Path("installer/gateway/host/release.pub")
+
+
+def test_release_pub_defaults_to_the_shipped_key(tmp_path):
+    stage = tmp_path / "stage"
+    result = _script("prepare.sh", tmp_path, "--bundle", str(_bundle(tmp_path / "b")), "--stage", str(stage), *GOOD)
+    assert result.returncode == 0, result.stderr
+    assert (stage / _RELEASE_PUB).read_bytes() == (GW / "host" / "release.pub").read_bytes()
+
+
+def test_release_pub_option_replaces_only_that_file(tmp_path):
+    mine = _minisign_pub(tmp_path / "labor.pub")
+    bundle = _bundle(tmp_path / "b")
+    plain, labor = tmp_path / "plain", tmp_path / "labor"
+    assert _script("prepare.sh", tmp_path, "--bundle", str(bundle), "--stage", str(plain), *GOOD).returncode == 0
+    result = _script("prepare.sh", tmp_path, "--bundle", str(bundle), "--stage", str(labor), *GOOD,
+                     "--release-pub", str(mine))
+    assert result.returncode == 0, result.stderr
+    assert (labor / _RELEASE_PUB).read_bytes() == mine.read_bytes() != (plain / _RELEASE_PUB).read_bytes()
+    before, after = _tree(plain), _tree(labor)
+    before.pop(str(_RELEASE_PUB)), after.pop(str(_RELEASE_PUB))
+    assert after == before  # nichts sonst aendert sich (Installer, Bundle, Images, install.args)
+
+
+def _bad_release_pubs(tmp_path: Path) -> dict[str, Path]:
+    good = _minisign_pub(tmp_path / "gut.pub").read_text().splitlines()
+    cases = {
+        "fehlt": tmp_path / "gibt-es-nicht.pub",
+        "verzeichnis": tmp_path,
+        "leer": "",
+        "platzhalter": (GW / "host" / "release.pub"),
+        "eine-zeile": good[0] + "\n",
+        "nur-schluessel": good[1] + "\n",
+        "kommentar-falsch": "comment: x\n" + good[1] + "\n",
+        "schluessel-zu-kurz": good[0] + "\n" + good[1][:-4] + "\n",
+        "schluessel-zu-lang": good[0] + "\n" + good[1] + "AAAA\n",
+        "kein-ed": good[0] + "\n" + "RX" + good[1][2:] + "\n",
+        "kein-base64": good[0] + "\n" + good[1][:-1] + "!\n",
+        "drei-zeilen": "\n".join([*good, good[1]]) + "\n",
+        "schluessel-mit-leerzeichen": good[0] + "\n" + good[1] + " x\n",
+    }
+    out = {}
+    for name, value in cases.items():
+        if isinstance(value, Path):
+            out[name] = value
+        else:
+            out[name] = tmp_path / f"{name}.pub"
+            out[name].write_text(value)
+    return out
+
+
+@pytest.mark.parametrize("name", ["fehlt", "verzeichnis", "leer", "platzhalter", "eine-zeile", "nur-schluessel",
+                                  "kommentar-falsch", "schluessel-zu-kurz", "schluessel-zu-lang", "kein-ed",
+                                  "kein-base64", "drei-zeilen", "schluessel-mit-leerzeichen"])
+def test_release_pub_rejects_files_that_are_no_minisign_public_key(tmp_path, name):
+    bad = _bad_release_pubs(tmp_path)[name]
+    stage, out = tmp_path / "stage", tmp_path / "out"
+    result = _script("prepare.sh", tmp_path, "--bundle", str(_bundle(tmp_path / "b")), "--stage", str(stage), *GOOD,
+                     "--release-pub", str(bad))
+    assert result.returncode == 2 and "FEHLER: --release-pub:" in result.stderr, result.stderr
+    assert not stage.exists() and _docker_calls(tmp_path) == []
+    result = _script("make_image.sh", tmp_path, "--bundle", str(tmp_path / "b"), "--out", str(out), *GOOD,
+                     "--release-pub", str(bad))
+    assert result.returncode == 2 and "FEHLER: --release-pub:" in result.stderr, result.stderr
+    assert not out.exists() and _docker_calls(tmp_path) == []
+
+
+@pytest.mark.parametrize("script, args", [("prepare.sh", ["--stage", "s"]), ("make_image.sh", ["--out", "o"])])
+def test_release_pub_needs_a_value(tmp_path, script, args):
+    result = _script(script, tmp_path, "--bundle", str(_bundle(tmp_path / "b")), *args, *GOOD, "--release-pub")
+    assert result.returncode == 2 and "--release-pub braucht einen Wert" in result.stderr
+    assert _docker_calls(tmp_path) == []
+
+
+def test_make_image_passes_release_pub_to_prepare(tmp_path):
+    mine = _minisign_pub(tmp_path / "labor.pub")
+    seen = tmp_path / "seen.pub"
+    env_before = _env(tmp_path)
+    env_before["SHG_FAKE_RELEASE_COPY"] = str(seen)
+    result = subprocess.run(["bash", str(IMAGE / "make_image.sh"), "--bundle", str(_bundle(tmp_path / "b")), "--out",
+                             str(tmp_path / "out"), *GOOD, "--release-pub", str(mine)],
+                            capture_output=True, text=True, check=False, env=env_before)
+    assert result.returncode == 0, result.stderr
+    assert seen.read_bytes() == mine.read_bytes()
+
+
+def test_make_image_without_release_pub_ships_the_default_key(tmp_path):
+    seen = tmp_path / "seen.pub"
+    env = _env(tmp_path)
+    env["SHG_FAKE_RELEASE_COPY"] = str(seen)
+    result = subprocess.run(["bash", str(IMAGE / "make_image.sh"), "--bundle", str(_bundle(tmp_path / "b")), "--out",
+                             str(tmp_path / "out"), *GOOD], capture_output=True, text=True, check=False, env=env)
+    assert result.returncode == 0, result.stderr
+    assert seen.read_bytes() == (GW / "host" / "release.pub").read_bytes()
+
+
+def test_no_workflow_uses_release_pub():
+    """Waechter: --release-pub ist ein Schalter fuer Labor-Images von Hand; ein Workflow darf damit keinen Schluessel
+    fuer ein ausgeliefertes Image tauschen."""
+    workflows = sorted((REPO / ".github" / "workflows").glob("*.y*ml"))
+    assert workflows
+    assert [w.name for w in workflows if "--release-pub" in w.read_text()] == []
