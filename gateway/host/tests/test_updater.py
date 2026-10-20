@@ -1077,6 +1077,44 @@ def test_fetch_url_limits_size_and_reads_when_allowed(local_server):
         updater.fetch_url(local_server + "/file", 99, allow_http=True)
 
 
+@pytest.fixture
+def agent_server():
+    """Leitet /a auf /b weiter und merkt sich den User-Agent jeder Anfrage."""
+    seen: list[tuple[str, str | None]] = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.append((self.path, self.headers.get("User-Agent")))
+            if self.path == "/a":
+                self.send_response(302)
+                self.send_header("Location", "/b")
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ok")
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_port}", seen
+    server.shutdown()
+    server.server_close()
+    thread.join()
+
+
+def test_fetch_url_names_the_updater_as_user_agent_also_after_a_redirect(agent_server):
+    """Labor 2026-10-20 (H2): die Browser-Integritaetspruefung von Cloudflare sperrt den Standard-User-Agent von urllib
+    (Python-urllib, HTTP 403, Fehler 1010); der Updater nennt sich selbst, auch auf dem Ziel einer Weiterleitung."""
+    base, seen = agent_server
+    assert updater.fetch_url(base + "/a", 100, allow_http=True) == b"ok"
+    assert seen == [("/a", f"SmartHeat-Gateway-Updater/{GATEWAY_VERSION}"),
+                    ("/b", f"SmartHeat-Gateway-Updater/{GATEWAY_VERSION}")]
+
+
 def test_fetch_url_network_errors_are_fetch_errors():
     with pytest.raises(updater.FetchError):
         updater.fetch_url("http://127.0.0.1:1/x", 10, allow_http=True)
