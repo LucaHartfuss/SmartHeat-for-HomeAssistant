@@ -71,9 +71,11 @@ def test_eine_uebernommene_rolle_auf_einer_person_startet_nicht_und_legt_nichts_
 
 
 def test_gegenprobe_dieselbe_rolle_auf_einer_erlaubten_entity_startet(env, angelegt, sleeps):
-    env.ha.states["climate.programm"] = "auto"
-    loaded = _host(env, entity_operating_mode="climate.programm").load()
-    assert loaded.manifest.refs["operating_mode"] == "climate.programm"
+    env.ha.states["sensor.betriebsart_text"] = "auto"
+    for entity_id in ("sensor.betriebsart_text", "number.heat_limit"):  # die Plattform des Kreises liefert Einstellbares
+        env.ha.registry.append({"entity_id": entity_id, "platform": "mypyllant", "config_entry_id": "e1"})
+    loaded = _host(env, entity_operating_mode="sensor.betriebsart_text").load()
+    assert loaded.manifest.refs["operating_mode"] == "sensor.betriebsart_text"
     assert len(angelegt) == 1
 
 

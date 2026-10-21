@@ -18,7 +18,8 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from heizungsbruecke.inventur import ERLAUBTE_DOMAENEN, einstellbare_plattformen, entity_erlaubt
+from heizungsbruecke.inventur import einstellbare_plattformen, entity_erlaubt, entity_klasse
+from smartheat_core.bindungsparameter import ENERGIE_KANAELE
 from smartheat_core.config_check import NichtPruefbar
 from smartheat_core.levers import LEVER_SETS
 from smartheat_device import fehler
@@ -176,10 +177,52 @@ def _pflicht_refs(b: HaBindung) -> set[str]:
             *(ref for _, ref in _schreibziel_rollen(b))}
 
 
-#: Domaenen der Positivliste, die eine Entity ohne Zustand schon an ihrer ID bestehen laesst (Sensoren nur mit Zustand
-#: nach Klasse pruefbar, hier nur die Domaene); binary_sensor nur als Batterie.
-_DOMAENEN_ROLLE = ERLAUBTE_DOMAENEN | {"sensor"}
-_DOMAENEN_BATTERIE = frozenset({"sensor", "binary_sensor"})
+#: Klasse "beliebig, aber ohne Klasse nur von der Plattform des Kreises" (Lese-Rollen ohne feste Klasse).
+FREIE_KLASSE = "*"
+_TEMPERATUR = ("sensor", "temperature")
+_FREI = ("sensor", FREIE_KLASSE)
+#: Form je Feld der Bindung (A6-02 je Feld, Spec Rollen je Feld 2): erlaubte (Domaene, Geraeteklasse); Klasse None =
+#: Domaene ohne Klassenpruefung (climate, weather). Zusaetzlich zu inventur.entity_erlaubt. Schreibziele stehen nicht
+#: hier (sie halten SCHREIBREGELN und die Kreis-Plattform); jedes andere Feld ist nicht erlaubt (fail closed). Der Server
+#: fuehrt dieselben Regeln in einrichtung/ha_rollen.py, der Contract-Check vergleicht beide.
+ROLLEN_FORM: dict[str, tuple[tuple[str, str | None], ...]] = {
+    "room_target": (("climate", None), _TEMPERATUR),
+    "outdoor_temp": (("weather", None), _TEMPERATUR),
+    "flow_setpoint": (_TEMPERATUR,), "flow_temperature": (_TEMPERATUR,), "return_temperature": (_TEMPERATUR,),
+    "system_water_pressure": (("sensor", "pressure"),),
+    **{f"energy_{kanal}": (("sensor", "energy"),) for kanal in ENERGIE_KANAELE},
+    "operating_mode": (_FREI,), "efficiency_ratio": (_FREI,), "generator_hours": (_FREI,),
+    "generator_starts": (_FREI,), "generator_state": (_FREI,),
+    "raumfuehler": (_TEMPERATUR, ("climate", None)),
+    "batterien": (("sensor", "battery"), ("binary_sensor", "battery")),
+}
+#: Ein climate-Raumfuehler liefert seine Ist-Temperatur, nie das Soll.
+_KLIMA_IST = "::current_temperature"
+
+
+def _form_domaene(feld: str, ref: str) -> bool:
+    """Ohne Zustand: nur die Domaene aus der ID (und beim climate-Raumfuehler das Attribut) gegen die Form des Felds."""
+    domain = _entity(ref).partition(".")[0]
+    if feld == "raumfuehler" and domain == "climate" and not ref.endswith(_KLIMA_IST):
+        return False
+    return any(domain == erlaubt for erlaubt, _ in ROLLEN_FORM.get(feld, ()))
+
+
+def _form_erlaubt(feld: str, ref: str, registry_entry: Mapping, state: Mapping, kreis_plattform) -> bool:
+    """Mit Zustand: Domaene, Geraeteklasse und bei freier Klasse ohne Klasse die Plattform des Kreises."""
+    if not _form_domaene(feld, ref):
+        return False
+    domain = _entity(ref).partition(".")[0]
+    klasse = entity_klasse(registry_entry, state)
+    plattform = registry_entry.get("platform")
+    for erlaubt, verlangt in ROLLEN_FORM[feld]:
+        if erlaubt != domain:
+            continue
+        if verlangt is None or klasse == verlangt:
+            return True
+        if verlangt == FREIE_KLASSE and (klasse is not None or (plattform is not None and plattform == kreis_plattform)):
+            return True
+    return False
 
 
 def rollen_befund(b: HaBindung, ha_api) -> tuple[tuple[str, str] | None, list[tuple[str, str]]]:
@@ -196,16 +239,21 @@ def rollen_befund(b: HaBindung, ha_api) -> tuple[tuple[str, str] | None, list[tu
     einstellbar = einstellbare_plattformen({entity_id: entry for entity_id, entry in registry.items()
                                             if entity_id in states})
     pflicht = _pflicht_refs(b)
+    ziele = {v1_rolle(rolle) for rolle, _ in _schreibziel_rollen(b)}
     ohne_zustand: list[tuple[str, str]] = []
     for feld, ref in _refs(b):
         entity_id = _entity(ref)
+        schreibziel = feld in ziele
         if (state := states.get(entity_id)) is None:
             if ref in pflicht:
                 raise NichtPruefbar(feld)
-            if entity_id.partition(".")[0] not in (_DOMAENEN_BATTERIE if feld == "batterien" else _DOMAENEN_ROLLE):
+            if not _form_domaene(feld, ref):
                 return (feld, "nicht_erlaubt"), ohne_zustand
             ohne_zustand.append((feld, ref))
-        elif not entity_erlaubt(entity_id, registry.get(entity_id) or {}, state, einstellbar):
+            continue
+        eintrag = registry.get(entity_id) or {}
+        if not entity_erlaubt(entity_id, eintrag, state, einstellbar) or not (
+                schreibziel or _form_erlaubt(feld, ref, eintrag, state, b.kreis.get("plattform"))):
             return (feld, "nicht_erlaubt"), ohne_zustand
     return None, ohne_zustand
 
