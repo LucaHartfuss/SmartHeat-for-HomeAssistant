@@ -206,10 +206,10 @@ def test_port_falls_back_to_443_with_alpn_and_back(tls):
 
 
 def test_every_new_paho_client_counts_up_client_nr(tls):
-    """Das Geraet erkennt daran, dass mids (je Client ab 1) und unbestaetigte Nachrichten des alten Clients verloren sind."""
+    """Daran erkennt das Geraet, dass mids (je Client ab 1) und unbestaetigte Nachrichten des alten Clients weg sind."""
     link, clients, _ = _link(tls, alpn="x-amzn-mqtt-ca")
     nummer = link.client_nr
-    assert nummer == 1
+    assert nummer >= 1
     for _ in range(link_module.PORT_FALLBACK_FAILURES):
         clients[-1].fail(OSError("Netz"))
     link.port_wechseln_falls_noetig()
@@ -259,9 +259,19 @@ def test_no_fallback_without_alpn(tls):
 
 
 def test_puback_is_reported(tls):
-    _, clients, events = _link(tls)
+    link, clients, events = _link(tls)
     clients[-1].on_publish(clients[-1], None, 7, SimpleNamespace(is_failure=False), None)
-    assert events == [("gesendet", 7)]
+    assert events == [("gesendet", 7, link.client_nr)]  # die Nummer des sendenden Clients
+
+
+def test_puback_of_an_old_client_carries_the_number_of_that_client(tls):
+    link, clients, events = _link(tls, alpn="x-amzn-mqtt-ca")
+    alt, alte_nr = clients[0], link.client_nr
+    for _ in range(link_module.PORT_FALLBACK_FAILURES):
+        clients[-1].fail(OSError("Netz"))
+    link.port_wechseln_falls_noetig()
+    alt.on_publish(alt, None, 3, SimpleNamespace(is_failure=False), None)
+    assert events[-1] == ("gesendet", 3, alte_nr) and link.client_nr != alte_nr
 
 
 def test_stop_disconnects(tls):

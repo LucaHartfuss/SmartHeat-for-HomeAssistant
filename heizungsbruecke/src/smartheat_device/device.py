@@ -138,7 +138,7 @@ class Device:
             uhr_synchron=self._uhr_synchron, identity=lambda: self.identity, clock=clock)
         self.link: Link | None = None
         self._bereit = False  # verbunden und hello gesendet
-        self._client_stand: tuple[Link, int] | None = None  # (Link, client_nr) des letzten Takts
+        self._client_stand: int | None = None  # client_nr des Links im letzten Takt
         self._hello_offen = False  # verbunden, hello noch nicht gesendet (Takt versucht es erneut)
         self._rettung = False
         self._channel: RuntimeChannel | None = None
@@ -308,8 +308,10 @@ class Device:
             elif art == NACHRICHT:
                 self._nachricht(*daten)
             elif art == GESENDET:
-                self.wunsch_puffer.bestaetigt(daten[0])
-                self.befehle.inventur_bestaetigt(daten[0])
+                mid, client_nr = daten
+                if self.link is not None and client_nr == self.link.client_nr:  # nie das PUBACK eines alten Clients
+                    self.wunsch_puffer.bestaetigt(mid)
+                    self.befehle.inventur_bestaetigt(mid)
         elif quelle == "wunsch":
             self._wunsch(*item[1:])
         elif quelle == "eigene":
@@ -342,12 +344,11 @@ class Device:
 
     def _client_pruefen(self, link: Link) -> None:
         """Ein neuer paho-Client (Portwechsel, neuer Link) kennt die Nachrichten des alten nicht und zaehlt mids wieder
-        ab 1: ein PUBACK darf nie eine mid des alten Clients bestaetigen (Inventurteile, L4-02). Die Ereignisse des
-        alten Clients stehen vor VERBUNDEN in der Inbox, gesendet wird erst danach (_bereit)."""
-        vorher = self._client_stand
-        if vorher is not None and (vorher[0] is not link or vorher[1] != link.client_nr):
+        ab 1: offene Inventurteile gehen neu hinaus (L4-02). Dass kein PUBACK des alten Clients eine neue mid
+        bestaetigt, sichert die Client-Nummer im Ereignis GESENDET (_verarbeiten), nicht die Reihenfolge der Inbox."""
+        if self._client_stand is not None and self._client_stand != link.client_nr:
             self.befehle.inventur_neu_senden()
-        self._client_stand = (link, link.client_nr)
+        self._client_stand = link.client_nr
 
     def _register_args(self, faehigkeiten: dict | None = None) -> dict:
         """faehigkeiten: schon geprueft (_link_aufbauen), sonst ruft es den Host."""

@@ -10,6 +10,8 @@ gesperrten Zertifikat den TLS-Aufbau ab, AN-1) zaehlen; nach AUTH_FAILURES_FOR_R
 "anmeldung_scheitert" (Rettungsweg im Geraet). Netzfehler zaehlen dafuer nicht; nach PORT_FALLBACK_FAILURES Netzfehlern
 in Folge wechselt der Link zwischen dem Port des Bootstraps und 443 mit ALPN, wenn der Broker ALPN anbietet (AN-3).
 Alle paho-Rueckrufe melden nur Ereignisse; den Wechsel fuehrt das Geraet in seinem Thread aus."""
+import functools
+import itertools
 import json
 import logging
 import sys
@@ -36,6 +38,8 @@ from smartheat_device.tls import (
 )
 
 logger = logging.getLogger(__name__)
+#: Nummern der paho-Clients, ueber alle Links des Prozesses eindeutig (Ereignis GESENDET traegt sie, L4-02)
+_CLIENT_NUMMERN = itertools.count(1)
 
 AUTH_FAILURES_FOR_RESCUE = 3
 PORT_FALLBACK_FAILURES = 3
@@ -67,7 +71,8 @@ class Link:
         self._abgelehnt = False  # abgelehntes CONNACK schon gezaehlt; paho ruft danach on_disconnect
         self._wechsel = False
         self._client: Any = None
-        self.client_nr = 0  # zaehlt die paho-Clients dieses Links (mids beginnen je Client neu)
+        #: Nummer des aktuellen paho-Clients (modulweit eindeutig; mids beginnen je Client bei 1, GESENDET traegt sie)
+        self.client_nr = 0
 
     @property
     def connected(self) -> bool:
@@ -77,8 +82,9 @@ class Link:
     def start(self) -> None:
         """Wirft TransportConfigError, wenn Zertifikat, Schluessel oder CA nicht zusammenpassen."""
         self._connack = self._abgelehnt = False
-        self._client = self._neuer_client()
-        self.client_nr += 1
+        nummer = next(_CLIENT_NUMMERN)
+        self._client = self._neuer_client(nummer)
+        self.client_nr = nummer
         self._client.loop_start()
 
     def stop(self) -> None:
@@ -135,7 +141,7 @@ class Link:
         alpn = endpoint.alpn if self.port == PORT_443 else None
         return Descriptor(KIND_IOT_CORE, endpoint.host, self.port, alpn, endpoint.ca_pem, self.device_id)
 
-    def _neuer_client(self) -> Any:
+    def _neuer_client(self, nummer: int) -> Any:
         options = connect_options(self._descriptor(), Credential(
             CREDENTIAL_CERTIFICATE, certificate_pem=self._zugang.certificate_pem, private_key_pem=self._key))
         client = self._factory(self.device_id)
@@ -144,7 +150,7 @@ class Link:
         client.on_disconnect = self._on_disconnect
         client.on_connect_fail = self._on_connect_fail
         client.on_message = self._on_message
-        client.on_publish = self._on_publish
+        client.on_publish = functools.partial(self._on_publish, nummer)
         client.reconnect_delay_set(min_delay=1, max_delay=RECONNECT_MAX_DELAY_SECONDS)
         properties = Properties(PacketTypes.CONNECT)
         properties.SessionExpiryInterval = wire.SESSION_EXPIRY_SECONDS
@@ -221,5 +227,5 @@ class Link:
             return
         self._melden(NACHRICHT, parsed[1], bytes(message.payload))
 
-    def _on_publish(self, client, userdata, mid, reason_code, properties) -> None:
-        self._melden(GESENDET, mid)
+    def _on_publish(self, nummer, client, userdata, mid, reason_code, properties) -> None:
+        self._melden(GESENDET, mid, nummer)  # nummer: der Client, der gesendet hat (nicht der aktuelle)

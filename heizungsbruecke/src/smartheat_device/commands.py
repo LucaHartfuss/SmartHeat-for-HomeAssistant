@@ -38,8 +38,9 @@ DONE_KEEP = 500
 COMMAND_ID_MAX_CHARS = 64
 TIMEOUT_GRUND = "keine_bestaetigung"
 #: Wartezeit auf die Bestaetigung (PUBACK) aller Inventurteile; danach gehen die Teile noch einmal hoch (der Server
-#: fuegt ein Teil nur einmal ein), falls eine Bestaetigung ausblieb. Ein Wechsel des paho-Clients (Portwechsel, neuer
-#: Link) setzt die offenen Inventuren sofort auf "neu senden" (inventur_neu_senden): mids eines alten Clients gelten nie.
+#: fuegt ein Teil nur einmal ein), falls eine Bestaetigung ausblieb. Ein Wechsel des paho-Clients (Portwechsel,
+#: neuer Link) setzt die offenen Inventuren sofort auf "neu senden" (inventur_neu_senden); mids eines alten
+#: Clients gelten nie.
 INVENTUR_BESTAETIGUNG_SECONDS = 60.0
 #: Hoechstzahl der Sendungen einer Inventur (erste eingeschlossen). Danach endet der Befehl mit keine_bestaetigung.
 #: Eine feste Zahl, weil das Register expires_at bewusst nicht gegen die eigene Uhr prueft (Modul-Doku oben); drei
@@ -171,7 +172,8 @@ class CommandRegister:
     def inventur_neu_senden(self) -> None:
         """Der paho-Client wechselte (Portwechsel, neuer Link): seine unbestaetigten Nachrichten sind verloren, und ein
         neuer Client zaehlt mids wieder ab 1. Offene Inventuren gehen beim naechsten pruefen() noch einmal hoch."""
-        self._inventur_offen.clear()
+        for command_id in [cid for cid, offen in self._inventur_offen.items() if offen]:  # Bestaetigte bleiben
+            del self._inventur_offen[command_id]
 
     def pruefen(self) -> None:
         """Wartende Befehle (Takt des Geraets): fertig, gescheitert oder Frist abgelaufen."""
@@ -266,6 +268,7 @@ class CommandRegister:
             mids = self._send_inventory(command_id, done.inventur)
         except ValueError as error:
             logger.error("Inventur zu Befehl %s nicht gesendet (%s)", lesbar(command_id), type(error).__name__)
+            self._inventur_versuche.pop(command_id, None)
             return Failed("intern")
         if mids is None:
             self._pending[command_id] = (kind, Waiting(lambda: done, float("inf")))

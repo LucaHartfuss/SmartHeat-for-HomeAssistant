@@ -1,5 +1,6 @@
 """Spec 5b 5.1: das Geraet - Bootstrap, hello, Dokumente, Befehle, Bedienwunsch, Status, Meldungen, Rettungsweg,
 Laufzeit-Kanal. Link und Bootstrap-Server sind Fakes; die Wire-Formate sind die des Vertrags."""
+import itertools
 import json
 import math
 import queue
@@ -104,6 +105,9 @@ class FakeHost:
         self.anzeigen_liste.append(anzeige)
 
 
+_CLIENT_NUMMERN = itertools.count(1)
+
+
 class FakeLink:
     def __init__(self, device_id, zugang, key_pem, ereignis) -> None:
         self.device_id, self.zugang, self.key_pem, self.ereignis = device_id, zugang, key_pem, ereignis
@@ -115,7 +119,7 @@ class FakeLink:
 
     def start(self):
         self.started = True
-        self.client_nr += 1
+        self.client_nr = next(_CLIENT_NUMMERN)
 
     def stop(self):
         self.stopped, self.connected = True, False
@@ -133,9 +137,9 @@ class FakeLink:
     # --- Teststeuerung ---
 
     def neuer_client(self):
-        """Wie port_wechseln_falls_noetig: alter Client weg (mit seinen unbestaetigten Nachrichten), neuer Client, dessen
-        mids wieder bei 1 beginnen."""
-        self.client_nr += 1
+        """Wie port_wechseln_falls_noetig: alter Client weg (mit seinen unbestaetigten Nachrichten), neuer Client,
+        dessen mids wieder bei 1 beginnen."""
+        self.client_nr = next(_CLIENT_NUMMERN)
         self._mid_basis = len(self.sent)
         self.connected = False
         self.ereignis("getrennt")
@@ -147,6 +151,10 @@ class FakeLink:
     def trennen(self):
         self.connected = False
         self.ereignis("getrennt")
+
+    def gesendet(self, mid, client_nr=None):
+        """PUBACK des Brokers; wie der Link traegt das Ereignis die Nummer des Clients, der gesendet hat."""
+        self.ereignis("gesendet", mid, self.client_nr if client_nr is None else client_nr)
 
     def empfangen(self, name, body):
         self.ereignis("nachricht", name, json.dumps(body).encode())
@@ -694,7 +702,7 @@ def test_inventory_parts_go_up_before_the_result(tmp_path):
     assert world.link.of("up/inventory") == [{"schema": 1, "command_id": "c1", "teil": 1, "teile": 1,
                                               "daten": {"kandidaten": [1, 2]}}]
     assert world.link.of("up/result") == []  # erst nach dem PUBACK der Teile (L4-02)
-    world.link.ereignis("gesendet", world.link.topics().index("up/inventory") + 1)
+    world.link.gesendet(world.link.topics().index("up/inventory") + 1)
     world.device.schritt()
     names = world.link.topics()
     assert names.index("up/inventory") < names.index("up/result")
@@ -721,12 +729,34 @@ def test_ein_puback_des_neuen_clients_bestaetigt_keine_inventurteile_des_alten(t
     neue_mid = namen.index("up/inventory") + 1
     assert neue_mid == alte_mid  # die Nummer des alten Teils gehoert jetzt einer Nachricht des neuen Clients
     for mid in range(1, neue_mid):  # PUBACK aller anderen Nachrichten des neuen Clients (hello, Status ...)
-        world.link.ereignis("gesendet", mid)
+        world.link.gesendet(mid)
     world.device.schritt()
     assert world.link.of("up/result") == []
-    world.link.ereignis("gesendet", neue_mid)
+    world.link.gesendet(neue_mid)
     world.device.schritt()
     assert len(world.link.of("up/result")) == 1 and calls == [1]
+
+
+def test_ein_spaetes_puback_des_alten_clients_bestaetigt_nichts(tmp_path):
+    """Die Reihenfolge der Inbox garantiert es nicht: ein GESENDET des alten Clients kann nach dem Wechsel noch
+    eintreffen. Es traegt die alte Client-Nummer und wird verworfen, auch mit der mid der neu gesendeten Teile."""
+    host = FakeHost()
+    host.handlers = {"inventory": lambda payload: commands.Done({}, inventur={"kandidaten": [1]})}
+    world = World(tmp_path, host)
+    world.verbinden()
+    world.empfangen("down/command", _command("inventory", payload={"stunden": 1}))
+    alter_client = world.link.client_nr
+    world.link.neuer_client()
+    world.device.schritt()
+    world.link.verbinden()
+    world.device.schritt()
+    neue_mid = world.link.topics()[world.link._mid_basis:].index("up/inventory") + 1
+    world.link.gesendet(neue_mid, alter_client)
+    world.device.schritt()
+    assert world.link.of("up/result") == []
+    world.link.gesendet(neue_mid)
+    world.device.schritt()
+    assert len(world.link.of("up/result")) == 1
 
 
 def test_der_befehl_einer_inventur_endet_erst_nach_dem_puback_auch_ueber_ein_trennen(tmp_path):
@@ -745,7 +775,7 @@ def test_der_befehl_einer_inventur_endet_erst_nach_dem_puback_auch_ueber_ein_tre
     world.device.schritt()
     world.empfangen("down/command", _command("inventory", payload={"stunden": 1}))  # erneute Zustellung nach hello
     assert world.link.of("up/result") == [] and calls == [1]
-    world.link.ereignis("gesendet", mid)
+    world.link.gesendet(mid)
     world.device.schritt()
     assert len(world.link.of("up/result")) == 1 and calls == [1]
 
@@ -903,7 +933,7 @@ def test_a_wish_is_limited_applied_buffered_and_sent_after_hello(tmp_path):
     (sent,) = world.link.of("up/wish")
     assert (sent["basis_version"], sent["werte"], sent["roh"], sent["herkunft"], sent["durch"]) == (
         3, {"raum_soll": 15.0}, 14.0, "thermostat", "nutzer")
-    world.link.ereignis("gesendet", names.index("up/wish") + 1)
+    world.link.gesendet(names.index("up/wish") + 1)
     world.device.schritt()
     assert world.device.wunsch_puffer.wunsch is None
 
@@ -1823,7 +1853,7 @@ def test_an_inventory_finished_before_hello_goes_up_after_hello(tmp_path):
     world.device.schritt()
     assert [p["daten"] for p in world.link.of("up/inventory")] == [{"kandidaten": [1]}]
     assert world.link.of("up/result") == []  # erst nach dem PUBACK
-    world.link.ereignis("gesendet", world.link.topics().index("up/inventory") + 1)
+    world.link.gesendet(world.link.topics().index("up/inventory") + 1)
     world.device.schritt()
     assert [(r["command_id"], r["ok"]) for r in world.link.of("up/result")] == [("c1", True)]
 

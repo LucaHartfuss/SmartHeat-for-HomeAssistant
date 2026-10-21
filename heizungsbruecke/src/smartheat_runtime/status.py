@@ -95,7 +95,7 @@ def overall_status(flags: Flags, state, storage_failed: bool = False) -> str:
         return STATUS_ABO_BEENDET
     if state.abo_inactive_since is not None:
         return STATUS_ABO_INAKTIV
-    if state.delivery.notbetrieb and not (_veralteter_notbetrieb(state) and not flags.gestartet):
+    if state.delivery.notbetrieb and (flags.gestartet or not _veralteter_notbetrieb(state)):
         return STATUS_NOTBETRIEB
     if storage_failed or state.delivery.datenfehler is not None:
         return STATUS_DATENFEHLER

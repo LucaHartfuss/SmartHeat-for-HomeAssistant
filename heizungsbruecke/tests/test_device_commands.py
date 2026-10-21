@@ -422,6 +422,20 @@ def test_ein_wechsel_des_clients_laesst_die_teile_neu_hinaus_und_alte_mids_zaehl
     assert sent.results == [_ok(result={"n": 1})] and calls == [1]
 
 
+def test_ein_wechsel_des_clients_nach_dem_letzten_puback_sendet_nichts_neu(tmp_path):
+    """Alle Teile sind bestaetigt, das Ergebnis steht nur noch fuer den naechsten Takt aus: ein Client-Wechsel dazwischen
+    sendet nicht erneut und zaehlt keinen Versuch (sonst endete der Befehl nach drei Wechseln mit keine_bestaetigung)."""
+    sent, calls = Sent(), []
+    register = _inventur_register(tmp_path, sent, [[1, 2]], calls=calls)  # ein zweiter Versand wuerfe StopIteration
+    register.empfangen(_command("inventory", payload={"stunden": 1}))
+    register.inventur_bestaetigt(1)
+    register.inventur_bestaetigt(2)
+    for _ in range(cmd.INVENTUR_VERSUCHE_MAX + 1):
+        register.inventur_neu_senden()
+    register.pruefen()
+    assert sent.results == [_ok(result={"n": 1})] and calls == [1]
+
+
 def test_das_neusenden_der_inventur_endet_nach_drei_versuchen_mit_keine_bestaetigung(tmp_path):
     sent, clock, calls = Sent(), Clock(), []
     register = _inventur_register(tmp_path, sent, [[1], [2], [3], [4]], clock=clock, calls=calls)
