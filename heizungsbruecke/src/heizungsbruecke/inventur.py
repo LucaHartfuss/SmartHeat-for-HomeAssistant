@@ -14,6 +14,7 @@ herausgehen darf; ein kompromittierter Server kann so keine Schloesser, Personen
 erscheint im Log nur als Anzahl je Domaene."""
 import logging
 from collections import Counter
+from collections.abc import Mapping
 
 from smartheat_core.logtext import lesbar
 from smartheat_device import fehler, wire
@@ -68,6 +69,25 @@ def _erlaubt(domain: str, klasse, plattform: str, einstellbar: set[str]) -> bool
     return False
 
 
+def entity_erlaubt(entity_id: str, registry_entry: Mapping, state: Mapping, einstellbar: set[str]) -> bool:
+    """Besteht die Entity die lokale Positivliste (Inventur und jede Rolle des Dokuments, A6-02)? Die Klasse kommt aus
+    dem Registry-Eintrag, sonst aus dem Zustand (das echte HA liefert sie nur dort); `einstellbar` sind die Plattformen
+    aus einstellbare_plattformen."""
+    raw = state.get("attributes")
+    attributes: dict = raw if isinstance(raw, dict) else {}
+    return _erlaubt(entity_id.split(".", 1)[0], _klasse(dict(registry_entry), attributes),
+                    registry_entry.get("platform") or OHNE_REGISTRY, einstellbar)
+
+
+def einstellbare_plattformen(eintraege: Mapping[str, Mapping]) -> set[str]:
+    """Plattformen mit einer nicht deaktivierten Entity der Domaenen climate, number oder select (ohne Entities ohne
+    Registry-Eintrag). `eintraege` sind Registry-Eintraege je entity_id; wer nur Entities mit Zustand uebergibt,
+    zaehlt auch nur diese."""
+    return {plattform for entity_id, entry in eintraege.items()
+            if entity_id.split(".", 1)[0] in EINSTELLBARE_DOMAENEN and not entry.get("disabled_by")
+            and (plattform := entry.get("platform") or OHNE_REGISTRY) != OHNE_REGISTRY}
+
+
 def inventur(ha_api, filter_: dict) -> dict:
     """filter_ hat die Form aus filter_pruefen (der Befehl prueft vorher); danach greift die lokale Positivliste."""
     plattformen = set(filter_.get("plattformen") or [])
@@ -90,11 +110,10 @@ def inventur(ha_api, filter_: dict) -> dict:
         if not (plattform in plattformen or domain in domaenen or (domain, klasse) in klassen):
             continue
         treffer.append((entity_id, entry, state, domain, attributes, plattform, klasse))
-    einstellbar = {plattform for (_, _, _, domain, _, plattform, _) in treffer
-                   if domain in EINSTELLBARE_DOMAENEN and plattform != OHNE_REGISTRY}
+    einstellbar = einstellbare_plattformen({entity_id: entry for (entity_id, entry, *_) in treffer})
     entities, geraete_ids, verworfen = [], set(), Counter()
     for entity_id, entry, state, domain, attributes, plattform, klasse in treffer:
-        if not _erlaubt(domain, klasse, plattform, einstellbar):
+        if not entity_erlaubt(entity_id, entry, state, einstellbar):
             verworfen[domain] += 1
             continue
         if entry.get("device_id"):

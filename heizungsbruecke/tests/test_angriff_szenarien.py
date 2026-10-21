@@ -57,6 +57,11 @@ class Anlage:
         supervisor = FakeSupervisor()
         for entity in ("number.curve_current", "number.shift_current", "number.min_flow", "number.heat_limit"):
             env.ha.registry.append({"entity_id": entity, "platform": "mypyllant", "config_entry_id": "e1"})
+        # lokale Positivliste (A6-02): die Sensoren der Bindung tragen ihre Klasse im Zustand, wie im echten HA
+        for entity in ("sensor.room_actual", "sensor.room_target", "sensor.outdoor_temp", "sensor.flow_temperature",
+                       "sensor.flow_setpoint"):
+            env.ha.states[f"{entity}::device_class"] = "temperature"
+        env.ha.states["sensor.thermostat_battery::device_class"] = "battery"
         self.konfiguration = konfiguration_aus_optionen(OPTIONS)
         daten = tmp_path / "data"  # config.DEVICE_DATA_DIR der Fixture geraet_env
         # Einrichtung: der erste Prozess nimmt Konfiguration und Bedienung an (der Host fordert dafuer einen Neustart an)

@@ -40,7 +40,20 @@ def _ha():
                 "sensor.room_actual": ("zha", "e2", "d-tst"), "sensor.thermostat_battery": ("zha", "e2", "d-tst")}
     ha.registry = [{"entity_id": e, "platform": p, "config_entry_id": c, "device_id": d}
                    for e, (p, c, d) in registry.items()]
+    # echtes HA: config/entity_registry/list liefert keine device_class, sie steht im Zustand (A6-02)
+    ha.states.update({"sensor.thermostat_battery": 80.0, "sensor.thermostat_battery::device_class": "battery",
+                      "sensor.room_target::device_class": "temperature",
+                      "sensor.room_actual::device_class": "temperature"})
     return ha
+
+
+def _dazu(ha, entity_id, platform=None, klasse=None, wert=1.0):
+    """Entity mit Zustand (und Klasse nur im Zustand) in die Attrappe; ohne platform kein Registry-Eintrag."""
+    if platform is not None:
+        ha.registry.append({"entity_id": entity_id, "platform": platform, "config_entry_id": "e9", "device_id": None})
+    ha.states[entity_id] = wert
+    if klasse is not None:
+        ha.states[f"{entity_id}::device_class"] = klasse
 
 
 def _mit_rolle(rolle, ref):
@@ -250,6 +263,7 @@ def test_the_curve_is_a_write_target_too():
 def test_every_lever_of_the_binding_is_checked():
     konfiguration = _mit_rolle("level", "number.level")
     ha = _ha()
+    _dazu(ha, "number.level")
     ha.registry.append({"entity_id": "number.level", "platform": "template", "config_entry_id": None,
                         "device_id": None})
     assert dokument.zuordnung_pruefen(konfiguration, ha) == {"feld": "level", "regel": "nicht_erlaubt"}
@@ -446,3 +460,208 @@ def test_beschreibung_kommt_aus_der_gespeicherten_konfiguration():
     ohne = {**KONFIGURATION, "bindungsparameter": None}
     with pytest.raises(ConfigError):
         dokument_config.beschreibung(ohne)
+
+
+# --- A6-02: jede Rolle nur auf Entities der lokalen Positivliste (Probe FH-1) ---
+
+def _rollen(konfiguration, ha):
+    return dokument.rollen_pruefen(dokument.bindung(konfiguration), ha)
+
+
+def _batterie(ref):
+    return {**KONFIGURATION, "bindung": {**KONFIGURATION["bindung"], "batterien": [ref]}}
+
+
+def _fremde_domaenen(ha):
+    _dazu(ha, "person.luca", "person", wert="not_home")
+    _dazu(ha, "lock.haustuer", "kwikset", wert="unlocked")
+    _dazu(ha, "zone.home", wert="1")  # YAML-Zone ohne Registry-Eintrag
+    ha.states["zone.home::longitude"] = 9.18
+
+
+@pytest.mark.parametrize("rolle", ["outdoor_temp", "operating_mode", "generator_state"])
+@pytest.mark.parametrize("ref", ["zone.home::longitude", "person.luca", "lock.haustuer"])
+def test_fh1_lese_rollen_auf_fremde_entities_abgelehnt(rolle, ref):
+    """Probe FH-1: ein kompromittierter Server bindet Lese-Rollen an Standort, Person oder Schloss; die Telemetrie
+    schickte deren Zustand an den Server. Jetzt nicht_erlaubt, mit der Rolle (nie der Entity-ID) als Feld."""
+    ha = _ha()
+    _fremde_domaenen(ha)
+    konfiguration = _mit_rolle(rolle, ref)
+    assert dokument.zuordnung_pruefen(konfiguration, ha) == {"feld": rolle, "regel": "nicht_erlaubt"}
+    assert _rollen(konfiguration, ha) == (rolle, "nicht_erlaubt")
+
+
+def test_fh1_gegenprobe_dieselben_rollen_auf_erlaubten_entities():
+    ha = _ha()
+    _dazu(ha, "weather.haus")
+    _dazu(ha, "select.betriebsart", "mypyllant")
+    _dazu(ha, "climate.programm", "mypyllant")
+    konfiguration = _mit_rolle("outdoor_temp", "weather.haus::temperature")
+    for rolle, ref in (("mode_select", "select.betriebsart"), ("operating_mode", "climate.programm")):
+        konfiguration = _mit_rolle_in(rolle, ref, konfiguration)
+    assert _rollen(konfiguration, ha) is None
+
+
+def test_eine_kennzahl_ohne_klasse_braucht_die_plattform_mit_einstellbarem():
+    ha = _ha()
+    _dazu(ha, "sensor.vorlauf", "zha")  # zha liefert hier nur Sensoren: nichts Einstellbares
+    konfiguration = _mit_rolle("flow_temperature", "sensor.vorlauf")
+    assert dokument.zuordnung_pruefen(konfiguration, ha) == {"feld": "flow_temperature", "regel": "nicht_erlaubt"}
+    # derselbe Sensor auf der Kreis-Plattform (mypyllant hat number/climate): erlaubt
+    ha = _ha()
+    _dazu(ha, "sensor.vorlauf", "mypyllant")
+    assert dokument.zuordnung_pruefen(konfiguration, ha) is None
+
+
+def test_der_sensor_mit_klasse_nur_im_zustand_ist_erlaubt():
+    ha = _ha()
+    _dazu(ha, "sensor.vorlauf", "zha", klasse="temperature")
+    assert dokument.zuordnung_pruefen(_mit_rolle("flow_temperature", "sensor.vorlauf"), ha) is None
+    _dazu(ha, "sensor.zaehler", "zha", klasse="energy")
+    assert _rollen(_mit_rolle("energy_primary_heating", "sensor.zaehler"), ha) is None
+    assert all(entry.get("device_class") is None for entry in ha.registry)  # wie das echte HA
+
+
+def test_eine_sensor_klasse_ausserhalb_der_liste_zaehlt_nicht():
+    ha = _ha()
+    _dazu(ha, "sensor.licht", "zha", klasse="illuminance")
+    assert _rollen(_mit_rolle("flow_temperature", "sensor.licht"), ha) == ("flow_temperature", "nicht_erlaubt")
+
+
+@pytest.mark.parametrize(("klasse", "urteil"), [("door", ("batterien", "nicht_erlaubt")), ("battery", None)])
+def test_eine_batterie_als_binary_sensor_braucht_die_klasse_battery(klasse, urteil):
+    ha = _ha()
+    _dazu(ha, "binary_sensor.fenster", "zha", klasse=klasse)
+    assert _rollen(_batterie("binary_sensor.fenster"), ha) == urteil
+
+
+def test_der_raumfuehler_als_climate_attribut_ist_erlaubt_ein_schloss_nicht():
+    ha = _ha()
+    _fremde_domaenen(ha)
+    ok = {**KONFIGURATION, "raumfuehler": ["climate.zone::current_temperature"]}
+    assert _rollen(ok, ha) is None
+    schloss = {**KONFIGURATION, "raumfuehler": ["lock.haustuer"]}
+    assert _rollen(schloss, ha) == ("raumfuehler", "nicht_erlaubt")
+    assert dokument.zuordnung_pruefen(schloss, ha) == {"feld": "raumfuehler", "regel": "nicht_erlaubt"}
+
+
+@pytest.mark.parametrize("ref", ["input_number.wunsch", "lock.haustuer"])
+def test_die_soll_entity_nur_aus_der_positivliste(ref):
+    ha = _ha()
+    _dazu(ha, "input_number.wunsch", wert=21.0)
+    _fremde_domaenen(ha)
+    assert dokument.zuordnung_pruefen(_mit_rolle("room_target", ref), ha) == {
+        "feld": "room_target", "regel": "nicht_erlaubt"}
+
+
+def test_ein_gebundenes_climate_als_soll_entity_bleibt_erlaubt():
+    """Bewusst hingenommen (Spec 2): die Soll-Entity darf ein anderes climate im Haus sein."""
+    ha = _ha()
+    _dazu(ha, "climate.kinderzimmer", "tado")
+    assert _rollen(_mit_rolle("room_target", "climate.kinderzimmer::temperature"), ha) is None
+
+
+def test_ein_sensor_ohne_klasse_einer_fremd_plattform_mit_number_ist_als_batterie_erlaubt():
+    """Restrisiko (Spec 4, wie die Inventur): zha liefert hier irgendein number, damit gilt jeder zha-Sensor ohne
+    Klasse als einstellbar-Plattform und damit auch als Batterie."""
+    ha = _ha()
+    _dazu(ha, "sensor.irgendwas", "zha")
+    _dazu(ha, "number.zigbee_dimmer", "zha")
+    assert _rollen(_batterie("sensor.irgendwas"), ha) is None
+
+
+def test_die_einstellbare_plattform_zaehlt_nur_aus_aktiven_entities_mit_zustand():
+    ha = _ha()
+    _dazu(ha, "sensor.irgendwas", "zha")
+    ha.registry.append({"entity_id": "number.aus", "platform": "zha", "disabled_by": "user"})
+    ha.states["number.aus"] = 1.0
+    assert _rollen(_batterie("sensor.irgendwas"), ha) == ("batterien", "nicht_erlaubt")
+    ha = _ha()
+    _dazu(ha, "sensor.irgendwas", "zha")
+    ha.registry.append({"entity_id": "number.ohne_zustand", "platform": "zha"})  # kein Zustand: zaehlt nicht
+    assert _rollen(_batterie("sensor.irgendwas"), ha) == ("batterien", "nicht_erlaubt")
+
+
+def test_eine_gebundene_entity_ohne_zustand_ist_nicht_pruefbar():
+    ha = _ha()
+    del ha.states["sensor.thermostat_battery"]  # die Batterie aus KONFIGURATION hat keinen Zustand
+    with pytest.raises(config_check.NichtPruefbar):
+        _rollen(KONFIGURATION, ha)
+    with pytest.raises(config_check.NichtPruefbar):  # entity_exists sagt ja, der Zustand fehlt trotzdem
+        dokument.zuordnung_pruefen(KONFIGURATION, ha)
+
+
+def test_das_feld_ist_die_v1_rolle_in_der_reihenfolge_von_mit_ha():
+    ha = _ha()
+    _fremde_domaenen(ha)
+    konfiguration = _mit_rolle("curve", "lock.haustuer")
+    konfiguration = {**konfiguration, "raumfuehler": ["lock.haustuer"]}
+    assert _rollen(konfiguration, ha) == ("curve", "nicht_erlaubt")  # Rollen vor Raumfuehler
+    assert _rollen(_mit_rolle("room_target", "lock.haustuer"), ha) == ("room_target", "nicht_erlaubt")  # zuerst
+    assert dokument.zuordnung_pruefen(konfiguration, ha) == {"feld": "curve", "regel": "nicht_erlaubt"}
+
+
+def test_unbekannte_entity_bleibt_vor_der_positivliste_unbekannt():
+    ha = _ha()
+    _fremde_domaenen(ha)
+    ha.missing.add("number.heat_limit")
+    konfiguration = _mit_rolle("outdoor_temp", "lock.haustuer")
+    assert dokument.zuordnung_pruefen(konfiguration, ha) == {"feld": "heat_limit", "regel": "unbekannt"}
+
+
+def test_die_positivliste_greift_vor_den_schreibziel_regeln():
+    ha = _ha()
+    _fremd(ha, "number.heat_limit")  # Schreibziel einer Fremd-Plattform (nicht_erlaubt) ...
+    _fremde_domaenen(ha)
+    konfiguration = _mit_rolle("operating_mode", "lock.haustuer")  # ... und eine verbotene Lese-Rolle
+    assert dokument.zuordnung_pruefen(konfiguration, ha) == {"feld": "operating_mode", "regel": "nicht_erlaubt"}
+
+
+def _client1():
+    """Die echte Zuordnung von client1 (Pruefung 2026-10-21, a602_pruefen.py): Entity, Plattform, Klasse."""
+    def ent(entity_id, plattform, klasse=None, device="d-vaillant"):
+        return entity_id, plattform, klasse, device
+
+    rollen = {
+        "curve": ent("number.zuhause_circuit_0_heating_curve", "mypyllant"),
+        "energy_primary_heating": ent("sensor.zuhause_circuit_0_energy_primary_heating", "mypyllant", "energy"),
+        "energy_thermal_heating": ent("sensor.zuhause_circuit_0_energy_thermal_heating", "mypyllant", "energy"),
+        "flow_setpoint": ent("sensor.heizraum_zuhause_circuit_0_flow_temperature_setpoint", "mypyllant", "temperature"),
+        "flow_temperature": ent("sensor.zuhause_circuit_0_current_flow_temperature", "mypyllant", "temperature"),
+        "heat_limit": ent("number.zuhause_circuit_0_heat_demand_limited_by_outside_temperature", "mypyllant"),
+        "min_flow": ent("number.zuhause_circuit_0_min_flow_temperature_setpoint", "mypyllant"),
+        "outdoor_temp": ent("sensor.zuhause_outdoor_temperature", "mypyllant", "temperature"),
+        "room_setpoint": ent("climate.zuhause_zone_1_circuit_0_climate", "mypyllant"),
+        "system_water_pressure": ent("sensor.zuhause_system_water_pressure", "mypyllant", "pressure"),
+    }
+    soll = ent("climate.wohnzimmer_thermostat", "homematicip_local", device="d-wz")
+    fuehler = ent("sensor.wohnzimmer_thermostat_temperatur", "homematicip_local", "temperature", "d-wz")
+    batterie = ent("binary_sensor.wohnzimmer_thermostat_batterie", "homematicip_local", "battery", "d-wz")
+    ha = FakeHa()
+    ha.states.clear()
+    for entity_id, plattform, klasse, device in [*rollen.values(), soll, fuehler, batterie]:
+        ha.registry.append({"entity_id": entity_id, "platform": plattform, "config_entry_id": "e1" if
+                            plattform == "mypyllant" else "e2", "device_id": device})
+        ha.states[entity_id] = 21.0
+        if klasse:
+            ha.states[f"{entity_id}::device_class"] = klasse
+    ha.states[f"{soll[0]}::temperature"] = 21.0
+    konfiguration = {**KONFIGURATION, "raumfuehler": [fuehler[0]], "bindung": {
+        **KONFIGURATION["bindung"], "batterien": [batterie[0]],
+        "benachrichtigung": ["notify.mobile_app_lucas_iphone"],
+        "rollen": {"room_target": f"{soll[0]}::temperature", **{rolle: e[0] for rolle, e in rollen.items()}}}}
+    return konfiguration, ha
+
+
+def test_die_echte_zuordnung_von_client1_besteht():
+    konfiguration, ha = _client1()
+    assert _rollen(konfiguration, ha) is None
+    assert dokument.zuordnung_pruefen(konfiguration, ha) is None
+    assert config_check.ha_bindung_pruefen(konfiguration) is None
+
+
+def test_client1_mit_einer_verbotenen_rolle_wird_abgelehnt():
+    konfiguration, ha = _client1()
+    _fremde_domaenen(ha)
+    verboten = _mit_rolle_in("system_water_pressure", "person.luca", konfiguration)
+    assert dokument.zuordnung_pruefen(verboten, ha) == {"feld": "system_water_pressure", "regel": "nicht_erlaubt"}
