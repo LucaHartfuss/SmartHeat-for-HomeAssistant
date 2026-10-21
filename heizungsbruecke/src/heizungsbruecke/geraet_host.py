@@ -176,39 +176,45 @@ class HaDeviceHost(GeraetHostBasis):
 
         return Waiting(check, frist)
 
-    def _abmelden(self) -> str | None:
+    def _abmelden(self) -> tuple[str, bool] | None:
         """Gemeinsamer Schritt von sign_off und lokal_abmelden: Abmelde-Markierung fuer die Anlage setzen und bei einer
-        neuen Markierung neu starten (dieselbe Quelle wie konfiguration_uebernommen). Liefert die Anlage, None, wenn
-        das Geraet nicht eingerichtet ist (dann geschieht nichts). OSError der Markierung geht an den Aufrufer."""
+        neuen Markierung neu starten (dieselbe Quelle wie konfiguration_uebernommen). Liefert (Anlage, neu) mit neu =
+        Markierung eben gesetzt, None, wenn das Geraet nicht eingerichtet ist (dann geschieht nichts). OSError der
+        Markierung geht an den Aufrufer."""
         konfiguration = self.konfiguration()
         if not dokument_config.eingerichtet(konfiguration):
             return None
         assert konfiguration is not None
         anlage = konfiguration["anlage"]
-        if dokument_config.abmelden(self.abgemeldet_pfad(), anlage):
+        neu = dokument_config.abmelden(self.abgemeldet_pfad(), anlage)
+        if neu:
             self.neustart_anfordern()
-        return anlage
+        return anlage, neu
 
     def lokal_abmelden(self) -> None:
         """Der HA-Eintrag wurde geloescht (stdin-Befehl der Integration, L4-06 Variante C): wie sign_off ohne
-        Befehls-Ergebnis. Geraete-Thread (Device.im_geraete_thread), wirft nie; nicht eingerichtet: nichts zu tun."""
+        Befehls-Ergebnis. Geraete-Thread (Device.im_geraete_thread); nicht eingerichtet: nichts zu tun. Ein OSError der
+        Markierung wird zu einer WARNING mit der Fehlerart; jeden anderen Fehler faengt Device._sicher als ERROR."""
         try:
-            anlage = self._abmelden()
+            ergebnis = self._abmelden()
         except OSError as error:
             logger.warning("Lokales Abmelden gescheitert (%s)", type(error).__name__)
             return
-        if anlage is None:
+        if ergebnis is None:
             logger.info("HA-Eintrag geloescht: nicht eingerichtet, nichts abzumelden")
-        else:
+        elif ergebnis[1]:
             logger.info("HA-Eintrag geloescht: Geraet meldet sich ab")
+        else:
+            logger.info("HA-Eintrag geloescht: Geraet ist schon abgemeldet")
 
     def _sign_off(self, payload: dict) -> Outcome:
         """Abmelden (Spec TP7 3.3, 5b 4.5) wie beim Gateway: Markierung fuer die Anlage, dann startet die Laufzeit als
         "abgemeldet" neu und setzt die Anlage zurueck. Fertig, sobald der Status "abgemeldet" fuer diese Anlage zeigt;
         werte ist der Wiederherstellungspunkt danach."""
-        anlage = self._abmelden()
-        if anlage is None:
+        ergebnis = self._abmelden()
+        if ergebnis is None:
             return Failed("nicht_eingerichtet")
+        anlage = ergebnis[0]
 
         def check() -> Done | None:
             status = self.runtime_status_event

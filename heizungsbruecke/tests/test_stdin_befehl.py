@@ -47,7 +47,7 @@ def test_die_eigene_zeile_ohne_zeilenende_vor_eof_gilt(caplog):
     (b"entfernen  shg-aaaaaaaaaaaaaaaa\n", "unbekannt"),
     (b"entfernen shg-aaaaaaaaaaaaaaaa x\n", "unbekannt"),
     (b"entfernen shg-aaaaaaaaaaaaaaaa\r\n", "andere_geraete_id"),  # CR gehoert zur ID: nicht die eigene
-    (b"\n", "unbekannt"),
+    (b" \n", "unbekannt"),  # nur die exakt leere Zeile ist still, Leerzeichen nicht
     (b"\xff\xfeentfernen shg-aaaaaaaaaaaaaaaa\n", "kein_utf8"),
     (b"x" * 201 + b"\n", "zu_lang"),
     (b"x" * 200 + b"\n", "unbekannt"),  # Grenze: 200 Bytes sind noch eine Zeile
@@ -84,7 +84,21 @@ def test_nach_einer_zu_langen_zeile_gilt_die_naechste(caplog):
     assert "zu_lang" in warnungen[0].getMessage()
 
 
-def test_eine_zu_lange_zeile_bis_eof_verwirft_den_rest_still(caplog):
+def test_der_supervisor_haengt_ein_zeilenende_an_und_die_leerzeile_danach_ist_still(caplog):
+    """Supervisor write_stdin schreibt data + b"\\n" (supervisor/docker/app.py): auf der Leitung steht
+    `entfernen <id>\\n\\n`; die Leerzeile danach ist kein Befehl und keine WARNING wert."""
+    gerufen, warnungen = _lesen(caplog, b"entfernen shg-aaaaaaaaaaaaaaaa\n\n")
+    assert gerufen == 1
+    assert warnungen == []
+
+
+def test_eine_leerzeile_allein_ist_still(caplog):
+    gerufen, warnungen = _lesen(caplog, b"\n\n\n")
+    assert gerufen == 0
+    assert warnungen == []
+
+
+def test_eine_zu_lange_zeile_bis_eof_verwirft_den_rest_mit_einer_warnung(caplog):
     gerufen, warnungen = _lesen(caplog, b"x" * 700)
     assert gerufen == 0
     assert len(warnungen) == 1

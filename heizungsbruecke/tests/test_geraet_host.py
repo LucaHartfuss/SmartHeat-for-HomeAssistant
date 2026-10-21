@@ -555,6 +555,19 @@ def test_lokal_abmelden_meldet_den_erfolg_mit_info(tmp_path, monkeypatch, caplog
     assert "HA-Eintrag geloescht" in caplog.text
 
 
+def test_lokal_abmelden_bei_gesetzter_markierung_meldet_schon_abgemeldet(tmp_path, monkeypatch, caplog):
+    host, _, _ = _host(tmp_path, monkeypatch, device=Device(konfiguration_aus_optionen(OPTIONS)))
+    host.lokal_abmelden()
+    host._neustart = False
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger=geraet_host.logger.name):
+        host.lokal_abmelden()
+    meldungen = [r for r in caplog.records if r.name == geraet_host.logger.name]
+    assert [r.levelname for r in meldungen] == ["INFO"]
+    assert "schon abgemeldet" in meldungen[0].getMessage() and "meldet sich ab" not in meldungen[0].getMessage()
+    assert not host._neustart
+
+
 def test_eine_neue_konfiguration_derselben_anlage_hebt_die_lokale_abmeldung_auf(tmp_path, monkeypatch):
     konf = konfiguration_aus_optionen(OPTIONS)
     host, _, _ = _host(tmp_path, monkeypatch, device=Device(konf))

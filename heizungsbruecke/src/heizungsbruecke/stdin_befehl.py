@@ -55,6 +55,11 @@ def lesen(quelle: BinaryIO, geraet_id: str, entfernen: Callable[[], None]) -> No
             zeile = quelle.readline(ZEILE_MAX + 1)
             if not zeile:
                 return
+            if zeile == b"\n":
+                # Der Supervisor haengt beim Schreiben selbst ein Zeilenende an (supervisor/docker/app.py write_stdin:
+                # data + b"\n"): auf der Leitung steht `entfernen <id>\n\n`. Die exakt leere Zeile ist kein Befehl
+                # und bleibt still (Leerzeichen oder \r\n sind es nicht).
+                continue
             if zeile.endswith(b"\n"):
                 inhalt = zeile[:-1]
             elif len(zeile) > ZEILE_MAX:
