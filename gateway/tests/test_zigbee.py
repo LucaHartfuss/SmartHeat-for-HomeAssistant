@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import pytest
 from fake_z2m import FakeZigbee2Mqtt
 from fakes import FakeBus
@@ -110,6 +112,112 @@ def test_live_message_after_retained_counts(clock):
     bus.deliver("zigbee2mqtt/0xabc", {"temperature": 21.7})
     assert mirror.value("0xabc", "temperature") == 21.7
     assert mirror.last_seen("0xabc") == clock()
+
+
+WALL0 = 1_800_000_000.0  # Wanduhr der Testwelt bei clock() == 1000 (die Test-Uhr startet dort)
+
+
+def _replayed(clock, *, alter=None, last_seen=None):
+    """Neustart der Laufzeit: Zigbee2MQTT hat retained gemeldet (mit last_seen = alter Sekunden vor der Wanduhr, oder
+    dem rohen Wert `last_seen`), der Broker spielt beim Abonnieren des neuen Spiegels wieder."""
+    bus = FakeBus()
+    z2m = FakeZigbee2Mqtt(bus)
+    wall = WALL0
+    if alter is not None:
+        z2m.report(SENSOR, wall=wall - alter, temperature=21.5)
+    elif last_seen is not None:
+        z2m.report(SENSOR, last_seen=last_seen, temperature=21.5)
+    else:
+        z2m.report(SENSOR, temperature=21.5)
+    assert bus.retained[f"zigbee2mqtt/{SENSOR}"]  # retained gespeichert: der Spiegel bekommt es als Replay
+    mirror = ZigbeeMirror(bus, clock, wall=lambda: WALL0 + (clock() - 1000.0))
+    seen = []
+    mirror.on_device_message(lambda ieee, payload: seen.append(ieee))
+    mirror.start()
+    return mirror, seen
+
+
+def test_a_retained_value_with_a_recent_last_seen_counts_after_a_restart(clock):
+    mirror, seen = _replayed(clock, alter=600)
+    assert mirror.value(SENSOR, "temperature") == 21.5
+    assert mirror.last_seen(SENSOR) == clock() - 600  # Alter der Meldung, nicht der Empfang
+    assert seen == []  # keine Eingabe aus der Vergangenheit, kein Geraete-Hook
+    clock.advance(110 * 60)  # genau die 2 h Frist
+    assert mirror.value(SENSOR, "temperature") == 21.5
+    clock.advance(1)
+    with pytest.raises(ValueError, match="veraltet"):
+        mirror.value(SENSOR, "temperature")
+
+
+def test_a_retained_value_older_than_the_limit_is_not_fresh(clock):
+    mirror, seen = _replayed(clock, alter=3 * 3600)
+    assert mirror.payload(SENSOR)["temperature"] == 21.5  # gespeichert, nur nicht frisch
+    assert mirror.last_seen(SENSOR) is None
+    with pytest.raises(ValueError, match="noch nicht live"):
+        mirror.value(SENSOR, "temperature")
+    assert seen == []
+
+
+def test_the_limit_itself_is_fresh_and_one_second_more_is_not(clock):
+    assert _replayed(clock, alter=7200)[0].value(SENSOR, "temperature") == 21.5
+    with pytest.raises(ValueError, match="noch nicht live"):
+        _replayed(clock, alter=7201)[0].value(SENSOR, "temperature")
+
+
+@pytest.mark.parametrize("zukunft", [1, 3600, 10 * 86400])
+def test_a_last_seen_in_the_future_is_not_fresh(clock, zukunft):
+    # Uhr nach dem Boot noch nicht gestellt: die Wanduhr liegt hinter dem last_seen, nie ein negatives Alter
+    mirror, _ = _replayed(clock, alter=-zukunft)
+    assert mirror.last_seen(SENSOR) is None
+    with pytest.raises(ValueError, match="noch nicht live"):
+        mirror.value(SENSOR, "temperature")
+
+
+@pytest.mark.parametrize("roh", [
+    "kaputt", "", "2026-13-45T99:00:00+00:00", 1_799_999_000, True, ["x"],
+    "2027-01-15T08:00:00",  # ohne Zeitzone: nicht zu deuten
+])
+def test_a_missing_or_broken_last_seen_keeps_the_retained_value_not_fresh(clock, roh):
+    mirror, seen = _replayed(clock, last_seen=roh)
+    assert mirror.payload(SENSOR)["temperature"] == 21.5
+    assert mirror.last_seen(SENSOR) is None
+    with pytest.raises(ValueError, match="noch nicht live"):
+        mirror.value(SENSOR, "temperature")
+    assert seen == []
+
+
+def test_a_retained_value_without_last_seen_is_not_fresh(clock):
+    mirror, _ = _replayed(clock)
+    assert mirror.last_seen(SENSOR) is None
+    with pytest.raises(ValueError, match="noch nicht live"):
+        mirror.value(SENSOR, "temperature")
+
+
+def test_last_seen_with_another_utc_offset_is_converted(clock):
+    bus = FakeBus()
+    ts = "2027-01-15T09:50:00+01:00"  # = 08:50 UTC
+    bus.publish(f"zigbee2mqtt/{SENSOR}", {"temperature": 21.5, "last_seen": ts}, retain=True)
+    wall = datetime.fromisoformat("2027-01-15T09:00:00+00:00").timestamp()  # 10 min nach dem last_seen
+    mirror = ZigbeeMirror(bus, clock, wall=lambda: wall)
+    mirror.start()
+    assert mirror.last_seen(SENSOR) == clock() - 600
+
+
+def test_a_live_message_after_a_fresh_retained_one_replaces_the_stamp(clock):
+    mirror, seen = _replayed(clock, alter=600)
+    clock.advance(30)
+    mirror._bus.deliver(f"zigbee2mqtt/{SENSOR}", {"temperature": 22.0})
+    assert mirror.last_seen(SENSOR) == clock() and mirror.value(SENSOR, "temperature") == 22.0
+    assert seen == [SENSOR]
+
+
+def test_the_default_wall_clock_is_the_system_time(clock):
+    bus = FakeBus()
+    jetzt = datetime.now(UTC)
+    bus.publish(f"zigbee2mqtt/{SENSOR}", {"temperature": 21.5, "last_seen": jetzt.isoformat()}, retain=True)
+    mirror = ZigbeeMirror(bus, clock)
+    mirror.start()
+    assert mirror.value(SENSOR, "temperature") == 21.5
 
 
 def _state_of(mirror):

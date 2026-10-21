@@ -10,6 +10,7 @@ from fakes import FakeBus
 
 from smartheat_gateway.triggers import EV_TARGET_INPUT, BusTriggerSource, seconds_until
 from smartheat_gateway.zigbee import ZigbeeMirror
+from smartheat_runtime.debounce import ROOM_TARGET_DEBOUNCE_SECONDS
 from smartheat_runtime.runtime import EV_LOCAL_CHECK, EV_SOURCE_CONNECTED
 from smartheat_runtime.soll_eingang import FROSTSCHUTZ_BIS
 from smartheat_runtime.soll_speicher import TargetStore
@@ -649,3 +650,26 @@ def test_a_thermostat_without_a_profile_gets_no_thermostat_mode_and_exact_values
     welt.worker.post(Event(EV_TARGET_INPUT, {"value": 22.5, "source": "portal"}))
     welt.worker.run_pending()
     assert [body for ieee, body in welt.z2m.set_requests] == [{"occupied_heating_setpoint": 22.5}]
+
+
+def test_a_retained_w100_report_after_a_restart_is_no_wish_and_no_switching_off(mit_w100, clock):
+    # L4-17: retained Meldungen mit frischem last_seen gelten als Wert, bleiben aber ohne Hook (Broker-Replay)
+    welt = mit_w100
+    melden = {"occupied_heating_setpoint": 22, "system_mode": "off", "local_temperature": 20.0,
+              "last_seen": datetime.now(UTC).isoformat()}
+    welt.bus.deliver(f"zigbee2mqtt/{W100}", melden, retain=True)
+    welt.worker.run_pending()
+    clock.advance(ROOM_TARGET_DEBOUNCE_SECONDS + 1)
+    welt.worker.run_pending()
+    assert welt.mirror.value(W100, "system_mode") == "off"  # der Wert gilt (Spiegel), ...
+    assert welt.wuensche == [] and welt.aus == [] and welt.store.value == 20.5  # ... loest aber nichts aus
+    assert _w100_sets(welt) == MODUS_W100
+    # Gegenprobe: live ist das Soll 22 ein Wunsch, und dieselbe Meldung mit off schaltet aus
+    welt.bus.deliver(f"zigbee2mqtt/{W100}", {**melden, "system_mode": "heat"})
+    welt.worker.run_pending()
+    clock.advance(ROOM_TARGET_DEBOUNCE_SECONDS + 1)
+    welt.worker.run_pending()
+    assert welt.wuensche == [22]
+    welt.bus.deliver(f"zigbee2mqtt/{W100}", melden)
+    welt.worker.run_pending()
+    assert welt.aus == [(True, 22.0)]

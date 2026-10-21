@@ -3,6 +3,7 @@
 (main())."""
 import os
 import time
+from datetime import UTC, datetime
 
 from smartheat_gateway.bus import decode
 
@@ -80,7 +81,11 @@ class FakeZigbee2Mqtt:
         if ieee in self._held:
             self.report(ieee, occupied_heating_setpoint=self._held.pop(ieee), local_temperature=20.0)
 
-    def report(self, ieee: str, **values) -> None:
+    def report(self, ieee: str, *, wall: float | None = None, **values) -> None:
+        """Messwerte melden (retained wie Zigbee2MQTT mit device_options.retain); mit `wall` (Wanduhr der Testwelt in
+        Sekunden) traegt die Meldung last_seen als ISO 8601 mit Zeitzone wie advanced.last_seen: ISO_8601."""
+        if wall is not None:
+            values["last_seen"] = datetime.fromtimestamp(wall, UTC).isoformat()
         self._bus.publish(f"{BASE}/{ieee}", values, retain=True)
 
     def _add(self, ieee: str, model: str, vendor: str, exposes: list) -> None:
