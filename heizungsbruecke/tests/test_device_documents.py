@@ -578,7 +578,7 @@ def test_an_invalid_configuration_keeps_update_needed(tmp_path):
 
 def test_the_driver_check_of_the_host_is_used(tmp_path):
     store = docs.DocumentStore(tmp_path, host="gateway", software_version="0.6.0",
-                               treiber_pruefen=lambda bindung: "Heizkreis fehlt.")
+                               treiber_pruefen=lambda bindung: {"feld": "parameter", "regel": "fehlt"})
     assert store.empfangen("konfiguration", _konfiguration()).grund == "treiber_parameter"
 
 

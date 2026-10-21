@@ -24,7 +24,7 @@ KONFIGURATION = {
         "rollen": {"room_target": "sensor.room_target", "curve": "number.curve_current",
                    "room_setpoint": "climate.zone", "min_flow": "number.min_flow", "heat_limit": "number.heat_limit",
                    "outdoor_temp": "sensor.outdoor_temp"},
-        "batterien": ["sensor.thermostat_battery"], "benachrichtigung": ["notify.handy"], "hinweise_aus": [],
+        "batterien": ["sensor.thermostat_battery"], "benachrichtigung": ["notify.mobile_app_handy"], "hinweise_aus": [],
         "abfrage_s": 1800,
     },
     "bindungsparameter": bindung_beispiele.parameter("vaillant_vrc720"),
@@ -77,7 +77,7 @@ def test_bindung_traegt_die_ha_teile_des_dokuments(konfiguration):
                         "min_flow": "number.min_flow", "heat_limit": "number.heat_limit",
                         "outdoor_temp": "sensor.outdoor_temp"}
     assert b.raumfuehler == ("sensor.room_actual",) and b.batterien == ("sensor.thermostat_battery",)
-    assert b.benachrichtigung == ("notify.handy",) and b.hinweise_aus == ()
+    assert b.benachrichtigung == ("notify.mobile_app_handy",) and b.hinweise_aus == ()
     assert b.kreis == konfiguration["bindung"]["kreis"] and b.kreis is not konfiguration["bindung"]["kreis"]
     assert b.soll_entity == "sensor.room_target"
 

@@ -35,7 +35,7 @@ SAFETY = LocalSafety(
 BOTH_ROLES = {"curve_current": "number.curve", "shift_current": "number.shift"}
 
 
-def _runtime(tmp_path, store, entity_ids=BOTH_ROLES, notify_services=("notify.handy",), clock=None,
+def _runtime(tmp_path, store, entity_ids=BOTH_ROLES, notify_services=("notify.mobile_app_handy",), clock=None,
              abo_source=lambda: entitlement.UNKNOWN):
     """`abo_source` ist die Abo-Quelle des Konfigurationsdokuments (Rueckruf des Hosts, RuntimeConfig)."""
     manifest = ChannelManifest(refs=entity_ids)
@@ -71,7 +71,7 @@ def test_enter_inactive_activates_notbetrieb_stops_mqtt_and_notifies_all_channel
     assert load_backup(tmp_path / "failsafe_state.json") == {"failsafe_active": True, "datenfehler": None, "pending": None}
     rt.mqtt_client.stop.assert_called_once()
     expected = abo.inactive_message(ABO_NOW)
-    rt.ha_api.send_notification.assert_called_once_with("notify.handy", expected)
+    rt.ha_api.send_notification.assert_called_once_with("notify.mobile_app_handy", expected)
     rt.ha_api.create_persistent_notification.assert_called_once_with("SmartHeat", expected, "smartheat_abo")
 
 
@@ -141,7 +141,7 @@ def test_finish_grace_mid_boost_restores_learned_values_clamped(make_store, tmp_
     backup = load_backup(tmp_path / "backup.json")
     assert (backup["boost_active"], backup["emergency_boost_active"]) == (False, False)
     assert store.state.abo_finished is True
-    rt.ha_api.send_notification.assert_called_once_with("notify.handy", abo.ABO_ENDED_MESSAGE)
+    rt.ha_api.send_notification.assert_called_once_with("notify.mobile_app_handy", abo.ABO_ENDED_MESSAGE)
     rt.ha_api.create_persistent_notification.assert_called_once_with(
         "SmartHeat", abo.ABO_ENDED_MESSAGE, "smartheat_abo",
     )
@@ -212,7 +212,7 @@ def test_connection_failing_acts_only_on_a_clear_answer(make_store, tmp_path, st
 def test_connection_failing_rejected_notifies_like_an_auth_rejection(make_store, tmp_path):
     rt = _runtime(tmp_path, make_store(), abo_source=lambda: entitlement.REJECTED)
     abo.handle_connection_failing(rt)
-    rt.ha_api.send_notification.assert_called_once_with("notify.handy", HA_TEXTS.access_denied)
+    rt.ha_api.send_notification.assert_called_once_with("notify.mobile_app_handy", HA_TEXTS.access_denied)
     assert rt.auth_rejected_queried_at == rt.clock()
 
 

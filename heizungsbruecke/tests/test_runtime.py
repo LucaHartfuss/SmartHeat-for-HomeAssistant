@@ -46,7 +46,7 @@ OPTIONS = {
     "entity_min_flow": "number.min_flow",
     "entity_outdoor_temp": "sensor.outdoor_temp",
     "entity_heat_limit": "number.heat_limit",
-    "notify_services": ["notify.handy"],
+    "notify_services": ["notify.mobile_app_handy"],
 }
 
 DERIVED: dict[str, str] = {}

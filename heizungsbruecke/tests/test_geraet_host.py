@@ -569,7 +569,7 @@ def test_runtime_status_and_room(tmp_path, monkeypatch):
 def test_notify_sink_sends_to_the_given_services(tmp_path, monkeypatch):
     ha = FakeHa()
     host, _, _ = _host(tmp_path, monkeypatch, ha=ha)
-    host.notify_sink_fuer(["notify.handy"]).push("k", "Hallo")
+    host.notify_sink_fuer(["notify.mobile_app_handy"]).push("k", "Hallo")
     assert ha.pushes == ["Hallo"]
 
 
@@ -578,7 +578,7 @@ def test_runtime_messages_go_to_ha_and_to_the_device_core(tmp_path, monkeypatch)
     (MeldungSink) als up/notifications an den Geraetekern und weiter an HA (Push, persistent_notification)."""
     ha = FakeHa()
     host, device, _ = _host(tmp_path, monkeypatch, ha=ha)
-    sink = host.notify_sink_fuer(["notify.handy"])
+    sink = host.notify_sink_fuer(["notify.mobile_app_handy"])
     sink.show("notbetrieb", "Notbetrieb aktiv")
     sink.push("notbetrieb", "Notbetrieb aktiv")
     sink.push("batterie:sensor.x", "Batterie schwach")
@@ -616,7 +616,7 @@ def test_the_notifier_reports_a_critical_runtime_message_to_the_device_core(tmp_
     ha = FakeHa()
     host, device, _ = _host(tmp_path, monkeypatch, ha=ha)
     notifier = Notifier(StateStore(tmp_path / "backup.json", tmp_path / "failsafe.json"),
-                        host.notify_sink_fuer(["notify.handy"]))
+                        host.notify_sink_fuer(["notify.mobile_app_handy"]))
     notifier.notify("notbetrieb", "aktiv", "Notbetrieb aktiv", critical=True)
     notifier.notify("notbetrieb", "ok", "Notbetrieb beendet", critical=True)
     # Regeln des Gateways (MeldungSink): der Geraetekern sendet je key nur den letzten Stand (Upsert), am Ende geschlossen

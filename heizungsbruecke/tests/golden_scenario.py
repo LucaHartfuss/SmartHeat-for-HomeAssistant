@@ -51,7 +51,7 @@ OPTIONS = {
     "entity_heat_limit": "number.heat_limit",
     "entity_flow_temperature": "sensor.flow_temperature",
     "entity_flow_setpoint": "sensor.flow_setpoint",
-    "notify_services": ["notify.handy"],
+    "notify_services": ["notify.mobile_app_handy"],
 }
 STATES = {
     "climate.zone": "auto", "climate.zone::temperature": 22.0,
@@ -389,11 +389,15 @@ ERLAUBT = (
     "setup_id: Statusfeld entfaellt (Stufe 3 S7); in backup.json heisst das Feld tenant_id (= Anlage 'golden')",
     "addon_version: 0.36.0 -> 1.0.0 (ADDON_VERSION)",
     "write_budget: boost_start/emergency_start nach erfolgreichem Start (Fixrunde A, A6-01)",
+    "benachrichtigung: notify.mobile_app_* (Fixrunde A, A6-02)",
 )
 #: Schluessel im Schreibbudget (backup.json), die erst seit Fixrunde A auch nach einem erfolgreichen Start stehen.
 START_ZAEHLER = ("boost_start", "emergency_start")
 #: Was 0.36 aus den Optionen nahm und 1.0.0 aus dem Dokument bzw. der Version (ERLAUBT, letzte zwei Zeilen).
 ALT_ADDON_VERSION = "0.36.0"
+#: Der Benachrichtigungsdienst im Master von 0.36 und seit Fixrunde A (ERLAUBT "benachrichtigung"): nur noch Handy-Dienste.
+ALT_DIENST = "notify.handy"
+NEU_DIENST = "notify.mobile_app_handy"
 #: Felder, die Schema 3 dem Status-Ereignis hinzufuegt (ERLAUBT "status"); woertlich, nicht aus geraet_status gelesen.
 SCHEMA_3_GERAET_FELDER = ("geraet_id", "geraet_zustand", "server_verbunden", "raum_soll", "geraet_hinweise")
 
@@ -444,6 +448,8 @@ def normalisieren(record: list[dict], *, alt: bool) -> list[dict]:
         for w in schritt["wirkungen"]:
             if w[0] == "accounts" or w[:2] in (["mqtt", "loop_start"], ["mqtt", "stop"]):
                 continue
+            if alt and w[:2] == ["ha", "notify"] and w[2] == ALT_DIENST:
+                w = ["ha", "notify", NEU_DIENST, *w[3:]]
             if w[:2] == ["link", "up/snapshot"]:
                 w = ["mqtt", "snapshot", w[2]]
             elif w[0] == "link":

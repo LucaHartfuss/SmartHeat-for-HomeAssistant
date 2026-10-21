@@ -118,6 +118,39 @@ def test_a_reference_with_a_valid_prefix_and_anything_after_it_is_rejected(feld,
         cc.ROLLE_UNZULAESSIG, {"feld": feld, "regel": "format"})
 
 
+@pytest.mark.parametrize("attribut", ["longitude", "latitude", "hvac_action"])
+def test_a_reference_attribute_other_than_the_temperatures_is_rejected(attribut):
+    """A6-02: nach `::` nur temperature und current_temperature; der Befund nennt das Feld der Rolle, nie die Entity."""
+    ablehnung = _pruefen(_ha(bindung={"rollen": {"room_target": f"zone.home::{attribut}"}}))
+    assert ablehnung == cc.Ablehnung(cc.ROLLE_UNZULAESSIG, {"feld": "room_target", "regel": "format"})
+    assert "zone" not in repr(ablehnung)
+    ablehnung = _pruefen(_ha(bindung={"rollen": {"room_target": "climate.w::temperature",
+                                                 "curve": f"climate.c::{attribut}"}}))
+    assert ablehnung == cc.Ablehnung(cc.ROLLE_UNZULAESSIG, {"feld": "curve", "regel": "format"})
+
+
+@pytest.mark.parametrize("attribut", ["temperature", "current_temperature"])
+def test_the_two_temperature_attributes_are_accepted(attribut):
+    assert _pruefen(_ha(bindung={"rollen": {"room_target": f"climate.w::{attribut}"}})) is None
+
+
+@pytest.mark.parametrize("dienst", ["notify.email", "notify.telegram", "notify.handy", "notify.mobile_app_"])
+def test_a_notification_service_other_than_mobile_app_is_rejected(dienst):
+    ablehnung = _pruefen(_ha(bindung={"benachrichtigung": [dienst]}))
+    assert ablehnung == cc.Ablehnung(cc.ROLLE_UNZULAESSIG, {"feld": "benachrichtigung", "regel": "format"})
+    assert dienst not in repr(ablehnung)
+
+
+def test_a_mobile_app_notification_service_is_accepted():
+    assert _pruefen(_ha(bindung={"benachrichtigung": ["notify.mobile_app_x"]})) is None
+
+
+def test_ha_bindung_pruefen_is_the_public_structure_check():
+    assert cc.ha_bindung_pruefen(_ha()) is None
+    assert cc.ha_bindung_pruefen(_ha(bindung={"benachrichtigung": ["notify.email"]})) == cc.Ablehnung(
+        cc.ROLLE_UNZULAESSIG, {"feld": "benachrichtigung", "regel": "format"})
+
+
 @pytest.mark.parametrize(("changes", "details"), [
     ({"bindung": {"extra": 1}}, {"feld": "bindung", "regel": "unbekannt"}),
     ({"bindung": {"kreis": {"plattform": "mypyllant", "config_entry": "e1", "anlage": "S", "nummer": "0", "extra": 1}}},

@@ -381,7 +381,7 @@ def test_hinweise_batterien_und_meldedienste_kommen_aus_der_bindung(env):
     ha = _DiensteHa()
     host = HaHost(FakeGeraet(konfiguration_aus_optionen(options), ha=ha), ha, clock=env.clock)
     host.notify_sink.push("test", "Text")  # der Sink des Hosts schickt an die Meldedienste der Bindung
-    assert ha.dienste == [("notify.handy", "Text")]
+    assert ha.dienste == [("notify.mobile_app_handy", "Text")]
     assert host.boot_info().notify_hints_off == ("batterie",)
     runtime = host.load().config
     assert runtime.notify_hints_off == ("batterie",)
@@ -402,4 +402,4 @@ def test_while_the_reset_is_pending_the_messages_go_to_the_services_of_the_marke
     host = HaHost(FakeGeraet(leer, ha=ha), ha, clock=env.clock)
     assert host.boot_info().signed_off
     host.notify_sink.push("wiederherstellung", "Text")
-    assert ha.dienste == [("notify.handy", "Text")]
+    assert ha.dienste == [("notify.mobile_app_handy", "Text")]
