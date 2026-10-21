@@ -84,9 +84,12 @@ def run_local_check(rt: Runtime) -> None:
     comfort_set, _ = rt.override.set_boosts(comfort=comfort, emergency=emergency)
     _track_boost_since(rt, now, was_active)
 
-    # B5: wurde der Comfort-Start mangels Wiederherstellungspunkt abgelehnt, bleibt der alte
-    # Sollwert gemerkt, damit der naechste Check die Erhoehung erneut sieht.
-    remembered = state.last_room_target if comfort and not comfort_set else room_target
+    # B5: wurde der Comfort-Start mangels Wiederherstellungspunkt, wegen der Wartezeit oder eines Fehlers abgelehnt,
+    # bleibt der alte Sollwert gemerkt, damit der naechste Check die Erhoehung erneut sieht. Wegen der Tageszahl oder
+    # des Tageslimits abgelehnt gilt sie als verbraucht: sonst startete nach dem Tageswechsel ein Boost fuer eine
+    # Erhoehung vom Vortag (A6-01).
+    refused = comfort and not comfort_set and not rt.override.comfort_start_heute_gesperrt
+    remembered = state.last_room_target if refused else room_target
     rt.store.update_saved(last_room_target=remembered)
 
 

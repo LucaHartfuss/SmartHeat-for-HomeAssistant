@@ -21,10 +21,11 @@ Wert auf die lokalen Grenzen begrenzt und auf die Schrittweite der Anlage gerund
 
 Plan 3b: Jeder physische Schreibvorgang (binding.physical_writes; eine Schreibgruppe zaehlt einmal) zaehlt in das
 Tagesbudget TOTAL (nur mit BindingDescription.daily_write_limit) und in den Lebensdauerzaehler (nur mit
-lifetime_hint_at). Das Tagesbudget begrenzt Serverwerte, Durchsetzen, Vorbereitung und Mindestvorlauf; Boost-Start/-Ende
-und Wiederherstellung sind ausgenommen, zaehlen aber mit (Sicherheit und Rueckweg vor Schonung). Ein wegen des Budgets
-nicht geschriebener Serverwert bleibt im Wiederherstellungspunkt und in deferred_levers und wird mit write_deferred
-nachgeholt."""
+lifetime_hint_at). Das Tagesbudget begrenzt Serverwerte, Durchsetzen, Vorbereitung und Mindestvorlauf; ein Boost startet
+am Tageslimit nicht (A6-01), Boost-Ende und Wiederherstellung sind ausgenommen, zaehlen aber mit (der Rueckweg hat
+Vorrang vor der Schonung). Jeder Boost-Start zaehlt (Comfort: boost_start, Notfall: emergency_start; je hoechstens 6 am
+Tag, 30 min Abstand, A6-01/A6-34). Ein wegen des Budgets nicht geschriebener Serverwert bleibt im
+Wiederherstellungspunkt und in deferred_levers und wird mit write_deferred nachgeholt."""
 import logging
 import math
 import time
@@ -46,6 +47,11 @@ _ROW_EMERGENCY = "emergency"
 LIMITS_TTL_SECONDS = 300.0
 _ROW_COMFORT = "comfort"
 _ROW_RESTORE = "restore"
+# Gruende, aus denen ein Boost-Start abgelehnt wird; die ersten beiden gelten bis zum Tageswechsel.
+_REASON_DAILY_LIMIT = "tageslimit"
+_REASON_DAILY_COUNT = "tageszahl"
+_REASON_WAIT = "wartezeit"
+_REASONS_FOR_THE_DAY = (_REASON_DAILY_LIMIT, _REASON_DAILY_COUNT)
 _ROW_LOG = {
     _ROW_EMERGENCY: "Notfall-Boost aktiv: Sollwerte auf Maximalwerte gesetzt",
     _ROW_COMFORT: "Boost aktiv: Sollwerte auf Boost-Werte gesetzt",
@@ -66,6 +72,8 @@ BUDGET_MESSAGE = (
     "SmartHeat: Das Tageslimit von {limit} Schreibvorgängen an der Heizung ist erreicht. Neue Werte werden "
     "gespeichert und morgen geschrieben (Schonung des Gerätespeichers)."
 )
+# Ablehnung eines Boost-Starts am Tageslimit (gleicher Schluessel wie BUDGET_MESSAGE, eigener Satz).
+START_LIMIT_MESSAGE = "Das Tageslimit der Schreibvorgänge ist erreicht; ein Boost startet erst morgen wieder."
 LIFETIME_MESSAGE = (
     "SmartHeat: Bisher wurden {count} Werte in die Heizung geschrieben. Der Hersteller nennt eine Grenze von "
     "100.000 Schreibvorgängen auf Lebensdauer des Reglers; bitte den Fachbetrieb informieren."
@@ -136,6 +144,11 @@ class LeverPipeline:
         self._started_at = clock()
         # Zeitpunkt (clock) der letzten eigenen, erfolgreichen Vorbereitung (Zonen-Umstellung), nur Laufzeit.
         self._prepared_at: float | None = None
+        # True genau dann, wenn der letzte set_boosts-Aufruf einen wirklich startenden Comfort-Boost wegen der Tageszahl
+        # oder des Tageslimits abgelehnt hat: die Erhoehung ist dann verbraucht (regulation, B5).
+        self.comfort_start_heute_gesperrt = False
+        # Schon als INFO gemeldete Ablehnungen (Grund, Tag), nur Laufzeit; weitere Meldungen am Tag gehen auf DEBUG.
+        self._abgelehnt_gemeldet: set[tuple[str, str]] = set()
 
     @property
     def safety(self) -> LocalSafety:
@@ -159,9 +172,13 @@ class LeverPipeline:
     def set_boosts(self, comfort: bool, emergency: bool) -> tuple[bool, bool]:
         """Setzt die Boost-Flags und schreibt die Werte der neuen Sollwert-Zeile, falls sie sich aendert. Ein neu
         startender Boost braucht vorher einen gespeicherten Wiederherstellungspunkt, sonst wird er abgelehnt; ein
-        laufender Boost wird nie abgelehnt. Ein neuer Notfall-Boost darf zusaetzlich auf dem zuletzt gespeicherten,
-        aelteren Punkt starten, wenn der aktuelle nicht speicherbar ist (N6). Wirft das Schreiben, bleiben die Flags
-        unveraendert. Nach einem Fehlschlag bremst das Schreibbudget: dann bleiben die Flags ohne Schreiben stehen,
+        laufender Boost wird nie abgelehnt. Ein neu startender Boost braucht ausserdem Platz im Tageslimit der
+        Schreibvorgaenge (soweit es eines gibt) und in seinem Start-Zaehler (Comfort: boost_start, Notfall:
+        emergency_start; 6 am Tag, 30 min Abstand); sonst wird nur dieses Flag abgelehnt, das Ende des anderen Boosts
+        bleibt frei. Wurde ein Comfort-Start wegen Tageszahl oder Tageslimit abgelehnt, steht
+        comfort_start_heute_gesperrt auf True (die Erhoehung des Solls ist verbraucht). Ein neuer Notfall-Boost darf
+        zusaetzlich auf dem zuletzt gespeicherten, aelteren Punkt starten, wenn der aktuelle nicht speicherbar ist
+        (N6). Wirft das Schreiben, bleiben die Flags unveraendert. Nach einem Fehlschlag bremst das Schreibbudget: dann bleiben die Flags ohne Schreiben stehen,
         zurueckgegeben werden die bisherigen."""
         self.capture_originals()
         state = self._store.state
@@ -177,12 +194,26 @@ class LeverPipeline:
                     "Kein Wiederherstellungspunkt, Notfall-Boost ausgesetzt - naechster Check versucht es erneut"
                 )
                 emergency = False
+        self.comfort_start_heute_gesperrt = False
+        # Jeder wirklich startende Boost braucht das Tageslimit (soweit es eines gibt) und seinen Start-Zaehler; scheitert
+        # eine Pruefung, wird nur dieses Flag False (der Rueckweg des anderen bleibt frei), nichts wird gezaehlt.
+        if starting_emergency and emergency and self._start_refused(write_budget.EMERGENCY_START, "Notfall-Boost"):
+            emergency = False
+        if starting_comfort and comfort:
+            reason = self._start_refused(write_budget.BOOST_START, "Comfort-Boost")
+            if reason:
+                comfort = False
+                self.comfort_start_heute_gesperrt = reason in _REASONS_FOR_THE_DAY
         new_row = _row(comfort, emergency)
         if new_row != _row(state.boost_active, state.emergency_boost_active):
-            key, rule = (
-                (write_budget.BOOST_END, write_budget.RETURN_STAIRCASE) if new_row == _ROW_RESTORE
-                else (write_budget.BOOST_START, write_budget.RETRY_QUOTA)
-            )
+            if new_row == _ROW_RESTORE:
+                key, rule = write_budget.BOOST_END, write_budget.RETURN_STAIRCASE
+            elif new_row == _ROW_EMERGENCY:
+                key, rule = write_budget.EMERGENCY_START, write_budget.START_QUOTA
+            elif starting_comfort:
+                key, rule = write_budget.BOOST_START, write_budget.START_QUOTA
+            else:  # der Notfall-Boost endet, der Comfort-Boost laeuft weiter
+                key, rule = write_budget.BOOST_END, write_budget.RETURN_STAIRCASE
             if not write_budget.may_attempt(self._store, key, rule, self._clock()):
                 logger.info("Sollwert-Zeile '%s' zurueckgestellt: Schreibbudget nach einem Fehlschlag", new_row)
                 return state.boost_active, state.emergency_boost_active
@@ -191,13 +222,40 @@ class LeverPipeline:
         self._store.update(boost_active=comfort, emergency_boost_active=emergency)
         return comfort, emergency
 
+    def _start_refused(self, key: str, name: str) -> str | None:
+        """Grund (_REASON_*), warum ein jetzt startender Boost abgelehnt wird, sonst None: zuerst das Tageslimit der
+        Schreibvorgaenge (nur mit daily_write_limit), dann der Start-Zaehler des Boosts. Zaehlt nichts."""
+        day = write_budget.today()
+        if self.daily_budget_reached():
+            reason = _REASON_DAILY_LIMIT
+            self._notify_start_limit(day)
+        elif write_budget.may_attempt(self._store, key, write_budget.START_QUOTA, self._clock()):
+            return None
+        elif write_budget.count_today(write_budget.get(self._store, key), day) >= (write_budget.START_QUOTA.max_per_day or 0):
+            reason = _REASON_DAILY_COUNT
+        else:
+            reason = _REASON_WAIT
+        # Je Grund und Tag eine INFO-Zeile, die weiteren Pruefungen (jeder lokale Check) nur als DEBUG.
+        level = logging.DEBUG if (reason, day) in self._abgelehnt_gemeldet else logging.INFO
+        self._abgelehnt_gemeldet.add((reason, day))
+        logger.log(level, "%s-Start abgelehnt (%s) - naechster Check versucht es erneut", name, reason)
+        return reason
+
+    def _notify_start_limit(self, day: str) -> None:
+        if self._notify is None:
+            return
+        try:
+            self._notify(BUDGET_KEY, day, START_LIMIT_MESSAGE)
+        except Exception:
+            logger.exception("Hinweis zum Tageslimit fehlgeschlagen")
+
     def _budgeted_write(
         self, key: str, rule: write_budget.Rule, values: dict, *,
         aux: Mapping[str, str | float] | None = None, require_aux: bool = True,
     ) -> None:
-        """Boost-Start/-Ende und Wiederherstellung: vom Tagesbudget ausgenommen (exempt), zaehlen aber nach `rule`
-        im Schreibbudget mit. `aux`: Hilfs-Ursprungswerte, die nach den Hebeln zurueckgestellt werden (nur
-        Wiederherstellung)."""
+        """Boost-Start/-Ende und Wiederherstellung: vom Tagesbudget ausgenommen (exempt; ob ein Start am Tageslimit
+        beginnen darf, entscheidet vorher set_boosts), zaehlen aber nach `rule` im Schreibbudget mit. `aux`:
+        Hilfs-Ursprungswerte, die nach den Hebeln zurueckgestellt werden (nur Wiederherstellung)."""
         write_budget.before_attempt(self._store, key, rule, self._clock())
         try:
             self._write(values, exempt=True, require_aux=require_aux)

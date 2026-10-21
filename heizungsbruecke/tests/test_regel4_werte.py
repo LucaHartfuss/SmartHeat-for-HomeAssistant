@@ -10,7 +10,7 @@ import pytest
 from bindung_beispiele import BINDINGS
 
 from heizungsbruecke import ha_binding
-from smartheat_core import boost, emergency_boost
+from smartheat_core import boost, emergency_boost, write_budget
 from smartheat_core.clamping import round_to_step
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import LOCAL_SAFETY
@@ -229,3 +229,29 @@ def test_weishaupt_praefixe_lokale_positivliste():
     from smartheat_core.verfahren import VERFAHREN
 
     assert {k: v.praefixe_erlaubt for k, v in VERFAHREN.items()} == PRAEFIXE_ERLAUBT, R4
+
+
+#: Spec Fixrunde A Schreibschutz 3.1/3.2 (A6-01, A6-34): Boost-Starts je Art (Schluessel -> (jeder Versuch zaehlt,
+#: Mindestabstaende in Sekunden, hoechstens je Tag)). Comfort- und Notfall-Boost zaehlen getrennt.
+BOOST_KONTINGENT = {"boost_start": (True, (1800,), 6), "emergency_start": (True, (1800,), 6)}
+
+
+def test_boost_kontingent_regeln():
+    regel = write_budget.START_QUOTA
+    assert {key: (regel.every_attempt, regel.waits, regel.max_per_day) for key in BOOST_KONTINGENT} == BOOST_KONTINGENT, R4
+
+
+def test_boost_kontingent_schluessel():
+    assert {write_budget.BOOST_START, write_budget.EMERGENCY_START} == set(BOOST_KONTINGENT), R4
+
+
+@pytest.mark.parametrize(("schluessel", "comfort", "notfall"), [
+    ("boost_start", True, False), ("emergency_start", False, True),
+])
+def test_sechster_start_am_tag_sperrt_den_siebten(make_store, clock, monkeypatch, schluessel, comfort, notfall):
+    monkeypatch.setattr(write_budget, "today", lambda: "2026-10-03")
+    pipeline, anlage = _pipeline(make_store, clock, ("vaillant_vrc720", HK))
+    write_budget.put(pipeline._store, schluessel, {"day": "2026-10-03", "count": 6, "last": 0.0})
+    clock.advance(86400)  # der Abstand ist lange vorbei, nur die Tageszahl sperrt
+    assert pipeline.set_boosts(comfort=comfort, emergency=notfall) == (False, False), R4
+    assert anlage.writes == [], R4

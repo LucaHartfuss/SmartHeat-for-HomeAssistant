@@ -419,6 +419,9 @@ def test_100_kaputte_dokumente_und_antworten_im_wechsel_mit_ticks_aendern_die_ko
     assert len(anlage.snapshots()) - ticks_vorher >= 50
     # Schreibwerte nur in den Grenzen; die gueltigen Antworten wurden geschrieben und geklemmt
     assert _alle_schreibwerte_in_den_grenzen(env.ha) > schreibwerte_vorher
+    # Der Notfall-Boost startet hoechstens alle 30 min (A6-34): er lief mit, wenn mindestens ein Start gezaehlt ist
+    # (die Stichprobe am Rundenende trifft ihn nicht mehr, wenn sein einziger Start vor dem Notbetrieb liegt).
+    laeufe["notfall_boost"] += anlage.bridge.store.state.write_budget.get("emergency_start", {}).get("count", 0)
     assert all(anzahl > 0 for anzahl in laeufe.values()), laeufe  # Boost und Notbetrieb liefen mit (kein leeres Szenario)
     # zu niedrige Antwortwerte kamen als unterer Grenzwert an (den schreibt sonst nichts); die obere Seite deckt
     # _alle_schreibwerte_in_den_grenzen ab (der Comfort-Boost schreibt dort ohnehin das Maximum)

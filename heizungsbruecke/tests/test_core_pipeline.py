@@ -9,12 +9,14 @@ from bindung_beispiele import VAILLANT_MYPYLLANT
 from fakes import FREMDTEXT, FREMDTEXT_IM_LOG, logzeilen
 
 from heizungsbruecke.ha_binding import HaPlantBinding
+from smartheat_core import write_budget
 from smartheat_core.pipeline import DeviceWriteError, LeverPipeline
 from smartheat_core.safety import LocalSafety
 from smartheat_runtime.backup_store import load_backup
 from smartheat_runtime.roles import ChannelManifest
 
 SETTLE = VAILLANT_MYPYLLANT.settle_seconds
+DAY = "2026-10-03"
 # Bisherige Test-Optionen (boost 1.0/24.0, heat_limit_max 20) als LocalSafety.
 SAFETY = LocalSafety(
     ranges={"curve": (0.4, 1.5), "room_setpoint": (15.0, 25.0), "heat_limit": (5.0, 20.0), "min_flow": (20.0, 30.0)},
@@ -208,15 +210,16 @@ def test_restore_point_not_yet_on_the_card_blocks_a_new_boost(make_store, tmp_pa
     assert (backup["restore_point"]["curve"], backup["restore_point"]["room_setpoint"], backup["boost_active"]) == (0.7, 21.0, True)
 
 
-def test_unsaved_boost_flag_alone_does_not_block_a_new_boost(make_store, monkeypatch):
+def test_unsaved_boost_flag_alone_does_not_block_a_new_boost(make_store, clock, monkeypatch):
     # Steht der Wiederherstellungspunkt auf dem Datentraeger, blockiert ein nur im Speicher
     # stehendes Boost-Flag (Datentraeger kaputt) keinen neuen Boost.
-    override, _, ha = _setup(make_store, backup=dict(RESTORE_POINT))
+    override, _, ha = _setup(make_store, backup=dict(RESTORE_POINT), clock=clock)
     monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
     for comfort in (True, False):
         with pytest.raises(OSError):
             override.set_boosts(comfort=comfort, emergency=False)
 
+    clock.advance(1800)  # jeder Start zaehlt: der naechste fruehestens 30 min nach dem letzten
     with pytest.raises(OSError):
         override.set_boosts(comfort=True, emergency=False)
 
@@ -310,6 +313,181 @@ def test_unmapped_roles_are_neither_read_nor_written(make_store):
     # Wiederherstellungspunkt-Read plus ein Quota-Check-Read (_write_lever), beide nur curve.
     assert ha.reads == ["number.curve", "number.curve"]
     assert ha.writes == [("number.curve", 1.0)]
+
+
+# --- A6-01/A6-34: jeder Boost-Start zaehlt, Notfall-Boost mit eigenem Zaehler, der Rueckweg bleibt frei ---
+
+@pytest.fixture
+def tag(monkeypatch):
+    monkeypatch.setattr(write_budget, "today", lambda: DAY)
+
+
+def _starts(store, key):
+    return write_budget.count_today(write_budget.get(store, key), DAY)
+
+
+def _six(key):
+    return {"write_budget": {key: {"day": DAY, "count": 6}}}
+
+
+def test_a_successful_comfort_start_counts(make_store, clock, tag):
+    override, store, ha = _setup(make_store, backup=dict(RESTORE_POINT), clock=clock)
+
+    assert override.set_boosts(comfort=True, emergency=False) == (True, False)
+    assert _starts(store, write_budget.BOOST_START) == 1
+    assert override.set_boosts(comfort=False, emergency=False) == (False, False)
+    ha.events.clear()
+    clock.advance(1799)
+    assert override.set_boosts(comfort=True, emergency=False) == (False, False)
+    assert ha.writes == []
+    clock.advance(1)
+    assert override.set_boosts(comfort=True, emergency=False) == (True, False)
+    assert ha.writes == _written("comfort")
+    assert _starts(store, write_budget.BOOST_START) == 2
+
+
+def test_at_most_six_comfort_starts_a_day(make_store, clock, tag):
+    override, store, ha = _setup(make_store, backup=dict(RESTORE_POINT), clock=clock)
+
+    for _ in range(6):
+        assert override.set_boosts(comfort=True, emergency=False) == (True, False)
+        assert override.set_boosts(comfort=False, emergency=False) == (False, False)
+        clock.advance(1800)
+
+    assert len(ha.writes) == 6 * 4
+    assert ha.writes[-2:] == _written("restore")  # das 6. Ende ist geschrieben
+    assert override.set_boosts(comfort=True, emergency=False) == (False, False)
+    assert len(ha.writes) == 6 * 4
+    assert _starts(store, write_budget.BOOST_START) == 6
+
+
+def test_a_failed_comfort_start_counts_and_waits(make_store, clock, tag):
+    override, store, ha = _setup(make_store, backup=dict(RESTORE_POINT), clock=clock)
+    ha.write_error = RuntimeError("403 Quota Exceeded")
+
+    with pytest.raises(DeviceWriteError):
+        override.set_boosts(comfort=True, emergency=False)
+    assert _starts(store, write_budget.BOOST_START) == 1
+    clock.advance(1799)
+    assert override.set_boosts(comfort=True, emergency=False) == (False, False)
+    assert _starts(store, write_budget.BOOST_START) == 1  # der abgelehnte Versuch zaehlt nicht
+    ha.write_error = None
+    clock.advance(1)
+    assert override.set_boosts(comfort=True, emergency=False) == (True, False)
+    assert _starts(store, write_budget.BOOST_START) == 2
+
+
+def test_emergency_start_has_its_own_counter(make_store, clock, tag):
+    override, store, ha = _setup(make_store, backup={**RESTORE_POINT, **_six(write_budget.BOOST_START)}, clock=clock)
+
+    assert override.set_boosts(comfort=False, emergency=True) == (False, True)
+
+    assert ha.writes == _written("emergency")
+    assert _starts(store, write_budget.EMERGENCY_START) == 1
+    assert _starts(store, write_budget.BOOST_START) == 6
+
+
+def test_both_starting_together_count_only_the_emergency_start(make_store, clock, tag):
+    override, store, ha = _setup(make_store, backup=dict(RESTORE_POINT), clock=clock)
+
+    assert override.set_boosts(comfort=True, emergency=True) == (True, True)
+
+    assert ha.writes == _written("emergency")
+    assert _starts(store, write_budget.EMERGENCY_START) == 1
+    assert _starts(store, write_budget.BOOST_START) == 0
+
+
+def test_emergency_ending_while_comfort_runs_counts_no_start(make_store, clock, tag):
+    override, store, ha = _setup(
+        make_store, backup={**RESTORE_POINT, "boost_active": True, "emergency_boost_active": True}, clock=clock,
+    )
+    ha.write_error = RuntimeError("403 Quota Exceeded")
+
+    with pytest.raises(DeviceWriteError):
+        override.set_boosts(comfort=True, emergency=False)
+    # Ein Fehlschlag zaehlt auf der Rueckweg-Treppe (5 min), nicht als Start (30 min).
+    assert _starts(store, write_budget.BOOST_END) == 1
+    assert _starts(store, write_budget.BOOST_START) == 0 and _starts(store, write_budget.EMERGENCY_START) == 0
+    clock.advance(299)
+    assert override.set_boosts(comfort=True, emergency=False) == (True, True)
+    ha.write_error = None
+    clock.advance(1)
+    ha.events.clear()
+    assert override.set_boosts(comfort=True, emergency=False) == (True, False)
+
+    assert ha.writes == _written("comfort")
+    assert _starts(store, write_budget.BOOST_START) == 0 and _starts(store, write_budget.EMERGENCY_START) == 0
+
+
+def test_comfort_joining_a_running_emergency_writes_and_counts_nothing(make_store, clock, tag):
+    override, store, ha = _setup(
+        make_store, backup={**RESTORE_POINT, "emergency_boost_active": True}, clock=clock,
+    )
+
+    assert override.set_boosts(comfort=True, emergency=True) == (True, True)
+
+    assert ha.writes == []
+    assert _starts(store, write_budget.BOOST_START) == 0 and _starts(store, write_budget.EMERGENCY_START) == 0
+
+
+def test_a_refused_comfort_start_does_not_block_the_end_of_the_emergency_boost(make_store, clock, tag):
+    override, store, ha = _setup(
+        make_store, backup={**RESTORE_POINT, "emergency_boost_active": True, **_six(write_budget.BOOST_START)},
+        clock=clock,
+    )
+
+    assert override.set_boosts(comfort=True, emergency=False) == (False, False)
+
+    assert ha.writes == _written("restore")
+    assert _starts(store, write_budget.BOOST_START) == 6
+
+
+def test_a_refused_emergency_start_does_not_block_the_end_of_the_comfort_boost(make_store, clock, tag):
+    override, store, ha = _setup(
+        make_store, backup={**RESTORE_POINT, "boost_active": True, **_six(write_budget.EMERGENCY_START)}, clock=clock,
+    )
+
+    assert override.set_boosts(comfort=False, emergency=True) == (False, False)
+
+    assert ha.writes == _written("restore")
+    assert _starts(store, write_budget.EMERGENCY_START) == 6
+
+
+def test_both_starting_with_the_emergency_counter_exhausted_still_start_comfort(make_store, clock, tag):
+    override, store, ha = _setup(
+        make_store, backup={**RESTORE_POINT, **_six(write_budget.EMERGENCY_START)}, clock=clock,
+    )
+
+    assert override.set_boosts(comfort=True, emergency=True) == (True, False)
+
+    assert ha.writes == _written("comfort")
+    assert _starts(store, write_budget.BOOST_START) == 1
+    assert _starts(store, write_budget.EMERGENCY_START) == 6
+
+
+def test_flapping_operations_are_bounded_vaillant(make_store, clock, tag):
+    # FK-1: ein Server, der 50-mal 25/15 Grad wechselt, bekommt 6 Starts und 6 Enden, nicht 50.
+    override, store, ha = _setup(make_store, backup=dict(RESTORE_POINT), clock=clock)
+
+    for _ in range(50):
+        override.set_boosts(comfort=True, emergency=False)
+        override.set_boosts(comfort=False, emergency=False)
+        clock.advance(1800)
+
+    assert ha.writes.count(("number.curve", 1.0)) == 6
+    assert ha.writes.count(("number.curve", 0.9)) == 6
+    assert len(ha.writes) == 24
+
+
+def test_a_refusal_is_logged_once_and_not_written(make_store, clock, tag, caplog):
+    override, _, _ = _setup(make_store, backup={**RESTORE_POINT, **_six(write_budget.BOOST_START)}, clock=clock)
+
+    with caplog.at_level(logging.INFO):
+        for _ in range(3):
+            override.set_boosts(comfort=True, emergency=False)
+
+    assert override.comfort_start_heute_gesperrt is True
+    assert len([r for r in caplog.records if r.levelno == logging.INFO and "abgelehnt" in r.getMessage()]) == 1
 
 
 # --- apply_server_values ---
@@ -800,7 +978,7 @@ def test_failed_boost_end_is_retried_on_the_return_staircase(make_store, clock):
     assert "boost_end" not in store.state.write_budget
 
 
-def test_failed_boost_start_waits_30_minutes_and_a_success_costs_nothing(make_store, clock):
+def test_failed_boost_start_waits_30_minutes_and_a_success_counts_too(make_store, clock):
     override, _, ha = _setup(make_store, backup=dict(RESTORE_POINT), clock=clock)
     ha.write_error = RuntimeError("403 Quota Exceeded")
 
@@ -812,7 +990,9 @@ def test_failed_boost_start_waits_30_minutes_and_a_success_costs_nothing(make_st
     clock.advance(1)
     assert override.set_boosts(comfort=True, emergency=False) == (True, False)
     assert override.set_boosts(comfort=False, emergency=False) == (False, False)
-    assert override.set_boosts(comfort=True, emergency=False) == (True, False)  # zweiter Boost sofort
+    assert override.set_boosts(comfort=True, emergency=False) == (False, False)  # zweiter Boost erst nach 30 min
+    clock.advance(1800)
+    assert override.set_boosts(comfort=True, emergency=False) == (True, False)
 
 
 def test_failed_restore_is_retried_on_the_return_staircase(make_store, clock):

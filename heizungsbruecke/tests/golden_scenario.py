@@ -388,7 +388,10 @@ ERLAUBT = (
     "dateien: runtime/room_target.json und runtime/abgemeldet.json neu; Zugangsoptionen fehlen",
     "setup_id: Statusfeld entfaellt (Stufe 3 S7); in backup.json heisst das Feld tenant_id (= Anlage 'golden')",
     "addon_version: 0.36.0 -> 1.0.0 (ADDON_VERSION)",
+    "write_budget: boost_start/emergency_start nach erfolgreichem Start (Fixrunde A, A6-01)",
 )
+#: Schluessel im Schreibbudget (backup.json), die erst seit Fixrunde A auch nach einem erfolgreichen Start stehen.
+START_ZAEHLER = ("boost_start", "emergency_start")
 #: Was 0.36 aus den Optionen nahm und 1.0.0 aus dem Dokument bzw. der Version (ERLAUBT, letzte zwei Zeilen).
 ALT_ADDON_VERSION = "0.36.0"
 #: Felder, die Schema 3 dem Status-Ereignis hinzufuegt (ERLAUBT "status"); woertlich, nicht aus geraet_status gelesen.
@@ -414,11 +417,29 @@ def _neu_benannt(value, *, alt: bool):
     return value
 
 
+def _ohne_start_zaehler(value):
+    """Nur im neuen Master: die Start-Zaehler des Schreibbudgets (ERLAUBT "write_budget") entfernen, ein dadurch leeres
+    write_budget faellt weg (der alte Master hat dort keinen Schluessel)."""
+    if isinstance(value, dict):
+        result = {k: _ohne_start_zaehler(v) for k, v in value.items()}
+        budget = result.get("write_budget")
+        if isinstance(budget, dict):
+            rest = {k: v for k, v in budget.items() if k not in START_ZAEHLER}
+            if rest:
+                result["write_budget"] = rest
+            else:
+                del result["write_budget"]
+        return result
+    if isinstance(value, list):
+        return [_ohne_start_zaehler(v) for v in value]
+    return value
+
+
 def normalisieren(record: list[dict], *, alt: bool) -> list[dict]:
     """Bringt beide Master auf eine Form, in der nur noch fachliche Wirkungen stehen (ERLAUBT oben). alt: der Master von
     0.36 (setup_id und addon_version auf die Werte von 1.0.0 umgeschrieben)."""
     result = []
-    for schritt in _neu_benannt(record, alt=alt):
+    for schritt in _neu_benannt(record if alt else _ohne_start_zaehler(record), alt=alt):
         wirkungen = []
         for w in schritt["wirkungen"]:
             if w[0] == "accounts" or w[:2] in (["mqtt", "loop_start"], ["mqtt", "stop"]):

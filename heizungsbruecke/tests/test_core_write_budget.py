@@ -9,7 +9,7 @@ QUOTA = wb.enforce_rule(wb.MAX_PER_DAY)
 DAY = "2026-10-01"
 
 
-@pytest.mark.parametrize("rule", [QUOTA, wb.RETRY_QUOTA, wb.RETURN_STAIRCASE])
+@pytest.mark.parametrize("rule", [QUOTA, wb.RETRY_QUOTA, wb.START_QUOTA, wb.RETURN_STAIRCASE])
 def test_first_attempt_is_always_allowed(rule):
     assert wb.allowed(None, rule, 0.0, DAY) is True
 
@@ -26,7 +26,7 @@ def test_return_staircase_has_no_daily_limit():
     assert wb.allowed(entry, wb.RETURN_STAIRCASE, 1800.0, DAY) is True
 
 
-@pytest.mark.parametrize("rule", [QUOTA, wb.RETRY_QUOTA])
+@pytest.mark.parametrize("rule", [QUOTA, wb.RETRY_QUOTA, wb.START_QUOTA])
 def test_quota_rules_wait_30_minutes_and_stop_at_six_a_day(rule):
     assert wb.allowed({"day": DAY, "count": 1, "last": 0.0}, rule, 1799.0, DAY) is False
     assert wb.allowed({"day": DAY, "count": 1, "last": 0.0}, rule, 1800.0, DAY) is True
@@ -121,3 +121,18 @@ def test_an_explicit_day_is_used_for_counting(make_store):
 
 def test_enforce_rule_with_the_standard_limit_is_every_attempt_one_per_interval_six_per_day():
     assert (QUOTA.every_attempt, QUOTA.waits, QUOTA.max_per_day) == (True, (wb.INTERVAL_SECONDS,), 6)
+
+
+def test_start_quota_counts_every_attempt():
+    # A6-01: jeder Boost-Start zaehlt, auch ein erfolgreicher (Regel 4, Nutzer 2026-10-19).
+    assert wb.START_QUOTA.every_attempt is True
+    assert wb.START_QUOTA.waits == (1800,)
+    assert wb.START_QUOTA.max_per_day == 6
+
+
+def test_a_success_keeps_the_count_of_a_start_quota(make_store):
+    store = make_store()
+    wb.before_attempt(store, wb.BOOST_START, wb.START_QUOTA, 1.0)
+    wb.after_success(store, wb.BOOST_START, wb.START_QUOTA)
+    assert wb.count_today(wb.get(store, wb.BOOST_START), wb.today()) == 1
+    assert wb.EMERGENCY_START == "emergency_start"

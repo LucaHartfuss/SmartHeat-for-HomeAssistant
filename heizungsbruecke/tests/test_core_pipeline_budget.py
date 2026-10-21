@@ -1,13 +1,21 @@
 """Hebel-Pipeline, Plan 3b: physische Schreibvorgaenge, globales Tagesbudget (Weishaupt), Lebensdauerzaehler,
 Schreibgruppen (Viessmann), zurueckgestellte Serverwerte. Vaillant bleibt unberuehrt (test_core_pipeline.py)."""
 import dataclasses
+import logging
 
 import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT, VIESSMANN_VICARE_BINDING, WEISHAUPT_MODBUS
 
 from heizungsbruecke.ha_binding import HaPlantBinding
 from smartheat_core import write_budget
-from smartheat_core.pipeline import LIFETIME_KEY, DeviceWriteError, LeverPipeline, WriteBudgetExhausted
+from smartheat_core.pipeline import (
+    BUDGET_KEY,
+    LIFETIME_KEY,
+    START_LIMIT_MESSAGE,
+    DeviceWriteError,
+    LeverPipeline,
+    WriteBudgetExhausted,
+)
 from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime.backup_store import load_backup
 from smartheat_runtime.roles import ChannelManifest
@@ -131,19 +139,78 @@ def test_deferred_levers_survive_a_restart(make_store, clock, tmp_path):
     assert _total(reloaded) == 10  # Tagesstand uebersteht den Neustart
 
 
-@pytest.mark.parametrize("flags", [{"boost_active": True}, {"emergency_boost_active": True}])
-def test_boost_and_restore_ignore_the_limit_but_are_counted(make_store, clock, flags):
-    point = {"curve": 0.75, "room_setpoint": 20.0, "heat_limit": 18.0}
+POINT = {"curve": 0.75, "room_setpoint": 20.0, "heat_limit": 18.0}
+
+
+@pytest.mark.parametrize(("comfort", "emergency"), [(True, False), (False, True), (True, True)])
+def test_a_boost_does_not_start_at_the_daily_limit(make_store, clock, comfort, emergency):
+    notes = []
     pipeline, store, ha = _weishaupt(
-        make_store, clock,
-        backup={"restore_point": point, "write_budget": {write_budget.TOTAL: {"day": DAY, "count": 10}}},
+        make_store, clock, backup={"restore_point": POINT, "write_budget": AT_LIMIT},
+        notify=lambda *args: notes.append(args),
     )
-    pipeline.set_boosts(comfort="boost_active" in flags, emergency="emergency_boost_active" in flags)
-    assert ha.writes == [("number.hk", 1.0), ("number.normal", 25.0), ("number.swu", 23.0)]
+    assert pipeline.set_boosts(comfort=comfort, emergency=emergency) == (False, False)
+    assert ha.writes == []
+    assert write_budget.get(store, write_budget.BOOST_START) is None
+    assert write_budget.get(store, write_budget.EMERGENCY_START) is None
+    assert _total(store) == 10
+    assert {note[:3] for note in notes} == {(BUDGET_KEY, DAY, START_LIMIT_MESSAGE)}
+    assert pipeline.comfort_start_heute_gesperrt is comfort
+
+
+@pytest.mark.parametrize("flags", [{"boost_active": True}, {"emergency_boost_active": True}])
+def test_a_running_boost_ends_at_the_daily_limit(make_store, clock, flags):
+    pipeline, store, ha = _weishaupt(
+        make_store, clock, backup={"restore_point": POINT, "write_budget": AT_LIMIT, **flags},
+    )
+    ha.states.update({"number.hk": 1.0, "number.normal": 25.0, "number.swu": 23.0})  # die Anlage steht auf dem Boost
+    assert pipeline.set_boosts(comfort=False, emergency=False) == (False, False)
+    assert ha.writes == [("number.hk", 0.75), ("number.normal", 20.0), ("number.swu", 18.0)]
     assert _total(store) == 13
-    pipeline.set_boosts(comfort=False, emergency=False)
-    assert ha.writes[-3:] == [("number.hk", 0.75), ("number.normal", 20.0), ("number.swu", 18.0)]
-    assert _total(store) == 16
+    assert pipeline.comfort_start_heute_gesperrt is False
+
+
+def test_a_boost_starts_below_the_limit_and_can_cross_it(make_store, clock):
+    pipeline, store, ha = _weishaupt(
+        make_store, clock, backup={"restore_point": POINT, "write_budget": {write_budget.TOTAL: {"day": DAY, "count": 9}}},
+    )
+    assert pipeline.set_boosts(comfort=True, emergency=False) == (True, False)
+    assert ha.writes == [("number.hk", 1.0), ("number.normal", 25.0), ("number.swu", 23.0)]
+    assert _total(store) == 12
+    assert pipeline.comfort_start_heute_gesperrt is False
+
+
+def test_flapping_operations_are_bounded_weishaupt(make_store, clock):
+    # FK-1: Tageslimit 10, ein Boost schreibt 3 und sein Ende 3 Werte; nach zwei Starts ist das Limit erreicht.
+    pipeline, store, ha = _weishaupt(make_store, clock, backup={"restore_point": POINT})
+    for _ in range(50):
+        pipeline.set_boosts(comfort=True, emergency=False)
+        pipeline.set_boosts(comfort=False, emergency=False)
+        clock.advance(1800)
+    assert ha.writes.count(("number.hk", 1.0)) == 2
+    assert ha.writes.count(("number.hk", 0.75)) == 2
+    assert _total(store) == 12
+    assert pipeline.set_boosts(comfort=True, emergency=False) == (False, False)
+    assert pipeline.comfort_start_heute_gesperrt is True
+
+
+def _refusals(caplog):
+    return [r for r in caplog.records if r.levelno == logging.INFO and "abgelehnt" in r.getMessage()]
+
+
+def test_refusal_reason_is_logged_once_a_day(make_store, clock, monkeypatch, caplog):
+    pipeline, store, ha = _weishaupt(make_store, clock, backup={"restore_point": POINT, "write_budget": AT_LIMIT})
+    with caplog.at_level(logging.INFO):
+        for _ in range(3):
+            assert pipeline.set_boosts(comfort=True, emergency=False) == (False, False)
+        assert len(_refusals(caplog)) == 1
+        caplog.clear()
+        # Gegenprobe: am naechsten Tag (wieder am Limit) kommt die Zeile erneut, danach nicht mehr.
+        monkeypatch.setattr(write_budget, "today", lambda: NEXT_DAY)
+        write_budget.put(store, write_budget.TOTAL, {"day": NEXT_DAY, "count": 10, "last": 0.0})
+        for _ in range(3):
+            pipeline.set_boosts(comfort=True, emergency=False)
+        assert len(_refusals(caplog)) == 1
 
 
 def test_restore_and_clear_ignores_the_limit(make_store, clock):
@@ -345,7 +412,7 @@ def test_deferred_values_are_not_written_during_a_boost(make_store, clock, flags
     assert store.state.deferred_levers == ("curve",)
 
 
-def test_a_write_group_stops_at_the_daily_limit_but_a_boost_does_not(make_store, clock):
+def test_a_write_group_and_a_boost_start_stop_at_the_daily_limit(make_store, clock):
     counted = dataclasses.replace(VIESSMANN, daily_write_limit=10)
     pipeline, store, ha = _viessmann(make_store, clock, description=counted)
     store.update(write_budget=AT_LIMIT)
@@ -355,9 +422,9 @@ def test_a_write_group_stops_at_the_daily_limit_but_a_boost_does_not(make_store,
     with pytest.raises(WriteBudgetExhausted) as error:
         pipeline.write_levers(("level",))
     assert error.value.lever == "curve"  # die Gruppe meldet ihr erstes Mitglied
-    pipeline.set_boosts(comfort=True, emergency=False)  # vom Tagesbudget ausgenommen
-    assert ha.writes == [("number.slope", 1.4), ("number.shift", 3.0), ("number.normal", 25.0)]
-    assert _total(store) == 12  # Gruppe 1 + Programmtemperatur 1
+    assert pipeline.set_boosts(comfort=True, emergency=False) == (False, False)  # am Limit startet kein Boost
+    assert ha.writes == []
+    assert _total(store) == 10
 
 
 def test_a_failing_group_write_names_the_entity_of_the_first_member(make_store, clock):
