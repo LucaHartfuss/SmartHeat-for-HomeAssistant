@@ -90,15 +90,40 @@ def test_the_buffer_is_cleared_only_by_the_matching_puback(tmp_path):
     assert not (tmp_path / wish.WUNSCH_FILE).exists()
 
 
-def test_a_puback_with_an_error_code_sends_the_wish_again(tmp_path):
-    puffer = wish.WunschPuffer(tmp_path)
+class _Uhr:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_a_puback_with_an_error_code_sends_the_wish_again_only_after_60_seconds(tmp_path):
+    uhr = _Uhr()
+    puffer = wish.WunschPuffer(tmp_path, uhr)
     puffer.setzen(_wunsch())
     puffer.gesendet(5)
     assert not puffer.offen()
-    puffer.abgelehnt(6)  # fremde mid: nichts
+    puffer.abgelehnt(6)  # fremde mid: nichts, keine Sperre
     assert not puffer.offen()
     puffer.abgelehnt(5)
-    assert puffer.offen() and puffer.wunsch is not None  # noch nicht bestaetigt: geht erneut hinaus
+    assert puffer.wunsch is not None and not puffer.offen()  # nicht bestaetigt, aber gesperrt
+    uhr.now += wish.WUNSCH_NACH_ABLEHNUNG_SECONDS - 1
+    assert not puffer.offen()
+    uhr.now += 1
+    assert puffer.offen()  # nach 60 s geht er erneut hinaus
+
+
+def test_a_new_wish_and_a_lost_connection_lift_the_block_after_a_rejection(tmp_path):
+    uhr = _Uhr()
+    puffer = wish.WunschPuffer(tmp_path, uhr)
+    for aufheben in (lambda: puffer.setzen(_wunsch()), puffer.verbindung_verloren):
+        puffer.setzen(_wunsch())
+        puffer.gesendet(5)
+        puffer.abgelehnt(5)
+        assert not puffer.offen()
+        aufheben()
+        assert puffer.offen()
 
 
 def test_a_lost_connection_sends_again(tmp_path):

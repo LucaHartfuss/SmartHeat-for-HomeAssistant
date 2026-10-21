@@ -132,7 +132,7 @@ class Device:
         self.befehle.register("new_claim_code", self._new_claim_code)
         self.befehle.register("claim_state", self._claim_state)
         host.befehle_eintragen(self.befehle)
-        self.wunsch_puffer = wish.WunschPuffer(self._dir)
+        self.wunsch_puffer = wish.WunschPuffer(self._dir, clock)
         self._bootstrap = bootstrap.Bootstrap(
             self._dir, lambda: self._client_for(self.identity), register_args=self._register_args,
             uhr_synchron=self._uhr_synchron, identity=lambda: self.identity, clock=clock)

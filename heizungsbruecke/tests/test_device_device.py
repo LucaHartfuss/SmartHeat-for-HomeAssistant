@@ -12,7 +12,7 @@ from bindung_beispiele import parameter
 from device_helpers import GeraeteCa, zertifikat_fuer
 
 from smartheat_core import config_check, dateien
-from smartheat_device import bootstrap, commands, device, identity, wire
+from smartheat_device import bootstrap, commands, device, identity, wire, wish
 from smartheat_device.geraet_host_basis import EV_RELOAD, GeraetHostBasis
 from smartheat_runtime import aufraeumen
 from smartheat_runtime.runtime import EV_MQTT_CONNECTED, EV_SETPOINTS
@@ -969,7 +969,13 @@ def test_a_puback_with_an_error_code_does_not_confirm_the_wish(tmp_path):
     world.link.gesendet(mid, ok=False)
     world.device.schritt()
     assert world.device.wunsch_puffer.wunsch is not None
-    assert world.link.topics().count("up/wish") == 2  # geht im naechsten Takt erneut hinaus
+    assert world.link.topics().count("up/wish") == 1  # gesperrt, kein Sekundentakt
+    world.clock.now += wish.WUNSCH_NACH_ABLEHNUNG_SECONDS - 1
+    world.device.schritt()
+    assert world.link.topics().count("up/wish") == 1
+    world.clock.now += 1
+    world.device.schritt()
+    assert world.link.topics().count("up/wish") == 2  # nach 60 s erneut
     world.link.gesendet(len(world.link.sent))
     world.device.schritt()
     assert world.device.wunsch_puffer.wunsch is None
