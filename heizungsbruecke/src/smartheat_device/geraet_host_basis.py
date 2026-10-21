@@ -120,10 +120,14 @@ class GeraetHostBasis:
     def konfiguration_uebernommen(self, alt: dict | None, neu: dict) -> None:
         """Neustart bei laufzeitrelevanter Aenderung und wenn eine neue, nicht leere Konfiguration derselben Anlage die
         Abmelde-Markierung aufhebt (5b-D2-7: das Geraet folgt dem Server und verlaesst "abgemeldet"). Eine leere
-        Konfiguration oder eine andere Anlage laesst die Markierung stehen; dieselbe Version erneut ruft hier nicht."""
+        Konfiguration oder eine andere Anlage laesst die Markierung stehen; dieselbe Version erneut ruft hier nicht.
+        Kein Neustart, solange weder die alte noch die neue Konfiguration eingerichtet ist (L4-02): der Ruhezustand
+        "nicht eingerichtet" liest kein Laufzeitfeld, und die erste leere Konfiguration nach dem Erstkontakt risse
+        sonst einen laufenden Befehl mit."""
         aufgehoben = (dokument_config.eingerichtet(neu)
                       and dokument_config.abmeldung_aufheben(self.abgemeldet_pfad(), neu["anlage"]))
-        if aufgehoben or dokument_config.laufzeit_relevant(alt, neu):
+        einrichtung_beteiligt = dokument_config.eingerichtet(alt) or dokument_config.eingerichtet(neu)
+        if aufgehoben or (einrichtung_beteiligt and dokument_config.laufzeit_relevant(alt, neu)):
             self.neustart_anfordern()
 
     def bedienung_uebernommen(self, inhalt: dict) -> None:

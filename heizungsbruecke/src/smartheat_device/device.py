@@ -132,12 +132,13 @@ class Device:
         self.befehle.register("new_claim_code", self._new_claim_code)
         self.befehle.register("claim_state", self._claim_state)
         host.befehle_eintragen(self.befehle)
-        self.wunsch_puffer = wish.WunschPuffer(self._dir)
+        self.wunsch_puffer = wish.WunschPuffer(self._dir, clock)
         self._bootstrap = bootstrap.Bootstrap(
             self._dir, lambda: self._client_for(self.identity), register_args=self._register_args,
             uhr_synchron=self._uhr_synchron, identity=lambda: self.identity, clock=clock)
         self.link: Link | None = None
         self._bereit = False  # verbunden und hello gesendet
+        self._client_stand: int | None = None  # client_nr des Links im letzten Takt
         self._hello_offen = False  # verbunden, hello noch nicht gesendet (Takt versucht es erneut)
         self._rettung = False
         self._channel: RuntimeChannel | None = None
@@ -307,7 +308,13 @@ class Device:
             elif art == NACHRICHT:
                 self._nachricht(*daten)
             elif art == GESENDET:
-                self.wunsch_puffer.bestaetigt(daten[0])
+                mid, client_nr, ok = daten
+                if self.link is not None and client_nr == self.link.client_nr:  # nie das PUBACK eines alten Clients
+                    if ok:
+                        self.wunsch_puffer.bestaetigt(mid)
+                        self.befehle.inventur_bestaetigt(mid)
+                    else:  # Fehler-PUBACK: keine Bestaetigung; der Wunsch geht neu, Inventurteile nach der Frist
+                        self.wunsch_puffer.abgelehnt(mid)
         elif quelle == "wunsch":
             self._wunsch(*item[1:])
         elif quelle == "eigene":
@@ -325,6 +332,7 @@ class Device:
         link = self.link
         if link is not None:
             link.port_wechseln_falls_noetig()
+            self._client_pruefen(link)
             if link.connected:
                 self._last_ok = now
                 if self._hello_offen and not self._bereit:
@@ -336,6 +344,14 @@ class Device:
         self._status_senden(now, force=False)
         self._meldungen_senden(now)
         self._host_wert("anzeigen", self.host.anzeigen, self.anzeige())  # gescheitert: diese Anzeige entfaellt
+
+    def _client_pruefen(self, link: Link) -> None:
+        """Ein neuer paho-Client (Portwechsel, neuer Link) kennt die Nachrichten des alten nicht und zaehlt mids wieder
+        ab 1: offene Inventurteile gehen neu hinaus (L4-02). Dass kein PUBACK des alten Clients eine neue mid
+        bestaetigt, sichert die Client-Nummer im Ereignis GESENDET (_verarbeiten), nicht die Reihenfolge der Inbox."""
+        if self._client_stand is not None and self._client_stand != link.client_nr:
+            self.befehle.inventur_neu_senden()
+        self._client_stand = link.client_nr
 
     def _register_args(self, faehigkeiten: dict | None = None) -> dict:
         """faehigkeiten: schon geprueft (_link_aufbauen), sonst ruft es den Host."""
@@ -544,11 +560,13 @@ class Device:
     def _ergebnis_senden(self, body: dict) -> bool:
         return self._publish_nach_hello("up/result", body) is not None
 
-    def _inventur_senden(self, command_id: str, daten: dict) -> bool:
+    def _inventur_senden(self, command_id: str, daten: dict) -> list[int] | None:
+        """mids der gesendeten Teile; None, wenn (noch) nicht alle hinausgingen. Das Register wartet auf ihr PUBACK."""
         teile = inventory.nachrichten(command_id, daten)  # ValueError (zu gross) wertet das Register aus
         if not self._bereit:
-            return False
-        return all(self._publish("up/inventory", nachricht) is not None for nachricht in teile)
+            return None
+        mids = [self._publish("up/inventory", nachricht) for nachricht in teile]
+        return None if None in mids else [mid for mid in mids if mid is not None]
 
     def _claim_state(self, payload: dict) -> commands.Outcome:
         """Uebernahmestand vom Server (Spec 5c F1): Discovery, Seite und Zustand folgen im naechsten Takt. Gueltig ist

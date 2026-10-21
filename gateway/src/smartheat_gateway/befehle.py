@@ -63,6 +63,8 @@ class Kontext:
 
 Handler = Callable[[Kontext, dict], Outcome]
 HANDLERS: dict[str, Handler] = {}
+#: Arten, die nach einem Neustart bei erneuter Zustellung noch einmal laufen (CommandRegister.register, wiederholbar)
+WIEDERHOLBAR = frozenset({"sign_off", "inventory"})
 
 
 def _handler(kind: str):
@@ -78,8 +80,11 @@ def _handler(kind: str):
 def eintragen(register: CommandRegister, ctx: Kontext) -> None:
     for kind, function in HANDLERS.items():
         # sign_off ist idempotent (die Markierung setzt den Neustart nur einmal): nach dem Neustart laeuft es erneut,
-        # damit das Ergebnis kommt, sobald der Status "abgemeldet" zeigt (D1: wiederholbar).
-        register.register(kind, functools.partial(function, ctx), wiederholbar=kind == "sign_off")
+        # damit das Ergebnis kommt, sobald der Status "abgemeldet" zeigt (D1: wiederholbar). inventory liest nur und
+        # setzt die Messreihe aus der Datei fort: fiel ein Neustart in die Erkennung, laeuft sie bei der erneuten
+        # Zustellung noch einmal, statt mit "intern" zu enden (L4-02). Grenze: hoechstens eine Cloud-Abfrage je
+        # Neustart, solange der Server den Befehl zustellt (bis expires_at); eine Neustart-Schleife wiederholte sie.
+        register.register(kind, functools.partial(function, ctx), wiederholbar=kind in WIEDERHOLBAR)
 
 
 def fehler_uebersetzen(error: Exception) -> Failed | None:

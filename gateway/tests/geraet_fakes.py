@@ -1,6 +1,7 @@
 """Fakes fuer den Geraetekern in den Gateway-Tests (Plan 5b D2): Zugang von der Test-CA (fake_ca), Link ohne Netz, ein
 Bootstrap, der nie laufen darf (der Zugang liegt schon vor), und eine Geraetesicht ohne Geraetekern fuer Host-Tests.
 Gegenstuecke der Hilfen in heizungsbruecke/tests (D1), die hier nicht importierbar sind."""
+import itertools
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,15 +30,20 @@ class KeinBootstrap:
         raise AssertionError("Bootstrap darf in diesem Test nicht laufen")
 
 
+_CLIENT_NUMMERN = itertools.count(1)
+
+
 class FakeLink:
     def __init__(self, device_id, zugang, key_pem, ereignis) -> None:
         self.device_id, self.zugang, self.ereignis = device_id, zugang, ereignis
         self.connected = self.started = self.stopped = False
         self.sent: list[tuple[str, dict]] = []
         self.connect_failures = 0
+        self.client_nr = 0
 
     def start(self):
         self.started = True
+        self.client_nr = next(_CLIENT_NUMMERN)
 
     def stop(self):
         self.stopped, self.connected = True, False
@@ -47,6 +53,8 @@ class FakeLink:
             return None
         # allow_nan=False wie link.Link.publish: NaN/Inf gehen nie hinaus, json wirft ValueError (Device._publish faengt es)
         self.sent.append((name, json.loads(json.dumps(payload, allow_nan=False))))
+        if name == "up/inventory":  # PUBACK des Brokers: das Ergebnis der Inventur wartet darauf (L4-02)
+            self.ereignis("gesendet", len(self.sent), self.client_nr, True)
         return len(self.sent)
 
     def port_wechseln_falls_noetig(self):

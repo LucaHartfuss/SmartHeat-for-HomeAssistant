@@ -237,6 +237,22 @@ def die_erste_leere_konfiguration_markiert_nichts(w: Welt) -> None:
     assert not w.aufraeumen_pfad.exists()
 
 
+def die_erste_leere_konfiguration_startet_nicht_neu(w: Welt) -> None:
+    """L4-02 (c): leer nach keiner (Erstkontakt) und leer nach leer fordern keinen Neustart an; die erste eingerichtete
+    Konfiguration schon (Gegenprobe)."""
+    w.verbunden()
+    leer = {"anlage": None, "raumfuehler": []}  # wie vom Server: raumfuehler [] ist ungleich fehlend
+    w.host.konfiguration_uebernommen(None, leer)
+    w.host.konfiguration_uebernommen(leer, {**leer, "abo": "inaktiv"})
+    worker, seen = w.worker()
+    w.host.worker_binden(worker)
+    worker.run_pending()
+    assert seen == []
+    w.host.konfiguration_uebernommen(leer, dict(w.konfiguration))
+    worker.run_pending()
+    assert seen == [(w.reload_kind, None)]
+
+
 def eine_unerhebliche_aenderung_startet_nicht_neu(w: Welt) -> None:
     w.verbunden()
     alt = dict(w.konfiguration)
@@ -353,7 +369,8 @@ PRUEFUNGEN = (
     vorbereiten_leer_nach_eingerichtet_markiert_aufraeumen, vorbereiten_ohne_wechsel_auf_leer_markiert_nichts,
     vorbereiten_wirft_wenn_die_markierung_nicht_geschrieben_werden_kann,
     uebernommen_leer_nach_eingerichtet_startet_neu_ohne_markierung, die_erste_leere_konfiguration_markiert_nichts,
-    eine_unerhebliche_aenderung_startet_nicht_neu, eine_neue_konfiguration_derselben_anlage_hebt_die_abmeldung_auf,
+    die_erste_leere_konfiguration_startet_nicht_neu, eine_unerhebliche_aenderung_startet_nicht_neu,
+    eine_neue_konfiguration_derselben_anlage_hebt_die_abmeldung_auf,
     ein_sign_off_nach_der_neuen_konfiguration_meldet_wieder_ab,
     eine_leere_oder_fremde_konfiguration_laesst_die_abmeldung_stehen,
     ohne_eigene_abmeldung_startet_dieselbe_konfiguration_nicht_neu, wunsch_und_soll_quelle_gehen_an_das_geraet,

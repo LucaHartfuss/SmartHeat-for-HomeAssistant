@@ -73,10 +73,19 @@ class Flags:
 _STORAGE_FAULT_ROLES = (delivery.ROLE_DATENTRAEGER,)
 
 
+def _veralteter_notbetrieb(state) -> bool:
+    """Notbetrieb ohne offenen Tick stammt aus dem Abo-inaktiv-Modus; der Start beendet oder klaert ihn per Pruef-Tick
+    (app._is_stale_notbetrieb). Bis zum ersten abgeschlossenen Start zeigt der Status deshalb `startet` statt eines
+    kurzen `notbetrieb` (L4-09)."""
+    return state.delivery.notbetrieb and state.delivery.pending is None
+
+
 def overall_status(flags: Flags, state, storage_failed: bool = False) -> str:
     """Erster zutreffender Zustand (Spec TP7 3.1): Endzustaende und Abo gelten immer, danach
     Notbetrieb und Datenfehler (auch ein nicht beschreibbarer Datentraeger, TP12b), erst dann vor
-    dem ersten abgeschlossenen Start `startet` (sonst stuende ein Add-on, dessen Verbindung nie aufgebaut wird, im Notbetrieb dauerhaft auf `startet`)."""
+    dem ersten abgeschlossenen Start `startet` (sonst stuende ein Add-on, dessen Verbindung nie aufgebaut wird, im
+    Notbetrieb dauerhaft auf `startet`).
+    Ausnahme: ein veralteter Notbetrieb (ohne offenen Tick) zaehlt vor dem Start nicht als Notbetrieb."""
     if flags.abgemeldet:
         return STATUS_ABGEMELDET
     if flags.konfigurationsfehler:
@@ -87,7 +96,7 @@ def overall_status(flags: Flags, state, storage_failed: bool = False) -> str:
         return STATUS_ABO_BEENDET
     if state.abo_inactive_since is not None:
         return STATUS_ABO_INAKTIV
-    if state.delivery.notbetrieb:
+    if state.delivery.notbetrieb and (flags.gestartet or not _veralteter_notbetrieb(state)):
         return STATUS_NOTBETRIEB
     if storage_failed or state.delivery.datenfehler is not None:
         return STATUS_DATENFEHLER

@@ -732,6 +732,47 @@ def test_reactivated_abo_restart_ends_notbetrieb_silently_and_probes(env):
     assert env.ha.pushes == []
 
 
+def test_reaktiviertes_abo_veroeffentlicht_nie_notbetrieb(env):
+    """L4-09: der veraltete Notbetrieb des Abo-inaktiv-Modus (ohne offenen Tick) erscheint beim Neustart mit wieder
+    aktivem Abo in keiner Statusmeldung; der Status geht von `startet` zu `regelt`."""
+    _quiet_backup(env)
+    save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": True, "datenfehler": None, "pending": None})
+
+    _start(env)
+
+    assert _status_states(env) == ["startet", "regelt"]
+    assert [d["notbetrieb"] for k, d in env.ha.events if k == "smartheat_status"][-1] is False
+
+
+def test_offener_tick_aus_failsafe_state_zeigt_beim_start_notbetrieb(env):
+    """Gegenprobe zu L4-09: ein echter Notbetrieb (offener Tick in failsafe_state.json) bleibt ab der ersten Meldung
+    sichtbar."""
+    _quiet_backup(env)
+    save_backup(env.paths["FAILSAFE_PATH"], {
+        "failsafe_active": True, "datenfehler": None, "pending": {"seq": "alt-1", "trigger": "daily"},
+    })
+
+    _start(env)
+
+    assert _status_states(env)[0] == "notbetrieb"
+
+
+def test_inaktiv_dann_aktiv_pusht_genau_einmal(env):
+    """L4-09, Wache: Abo-inaktiv-Modus, dann Neustart mit wieder aktivem Abo; genau eine Meldung "Abo wieder aktiv",
+    keine zusaetzliche Notbetriebs-Meldung."""
+    _quiet_backup(env)
+    env.abo["status"] = entitlement.INACTIVE
+    _start(env)
+    inaktiv_pushes = list(env.ha.pushes)
+    assert len(inaktiv_pushes) == 1
+
+    env.abo["status"] = entitlement.ACTIVE
+    _start(env)
+
+    assert env.ha.pushes == [*inaktiv_pushes, abo.ABO_ACTIVE_MESSAGE]
+    assert _status_states(env)[-3:] == ["abo_inaktiv", "startet", "regelt"]
+
+
 def test_reactivated_abo_restart_writes_no_emergency_boost(env):
     """TP12b (1): nach dem Abo-inaktiv-Modus (Notbetrieb ohne offenen Tick) startet die Laufzeit mit wieder aktivem
     Abo; 1,5 K unter dem Soll (ueber der Einstiegsschwelle 1,0 K) darf kein kurzer Notfall-Boost auf die Anlage."""
@@ -780,6 +821,20 @@ def test_stale_notbetrieb_with_unknown_abo_stays_until_the_probe_is_answered_wit
     _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], curve=0.9, shift=22.0)
     assert _delivery(bridge).notbetrieb is False
     assert env.ha.pushes == []
+
+
+def test_stale_notbetrieb_with_unknown_abo_shows_notbetrieb_after_the_start_until_the_answer(env):
+    """L4-09: bei Abo-Status UNKNOWN bleibt der Notbetrieb nach dem abgeschlossenen Start sichtbar (ein Pruef-Tick ist
+    offen), bis die Antwort ihn beendet."""
+    _quiet_backup(env)
+    save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": True, "datenfehler": None, "pending": None})
+    env.abo["status"] = entitlement.UNKNOWN
+
+    bridge = _start(env)
+
+    assert _status_states(env) == ["startet", "notbetrieb"]
+    _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], curve=0.9, shift=22.0)
+    assert _status_states(env) == ["startet", "notbetrieb", "regelt"]
 
 
 def _reported_stale_notbetrieb(env):

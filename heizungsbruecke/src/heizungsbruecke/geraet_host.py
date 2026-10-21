@@ -107,7 +107,10 @@ class HaDeviceHost(GeraetHostBasis):
         return dokument.zuordnung_pruefen(konfiguration, self._ha, self.konfiguration())
 
     def befehle_eintragen(self, register: CommandRegister) -> None:
-        register.register("inventory", self._inventory)
+        # inventory liest nur: fiel ein Neustart in die Erkennung, laeuft sie bei der erneuten Zustellung noch einmal,
+        # statt mit "intern" zu enden (L4-02). Grenze: hoechstens eine Abfrage je Neustart, solange der Server den
+        # Befehl zustellt (bis expires_at); eine Neustart-Schleife wiederholte sie je Neustart.
+        register.register("inventory", self._inventory, wiederholbar=True)
         # sign_off ist idempotent (die Markierung setzt den Neustart nur einmal): nach dem Neustart laeuft es erneut,
         # damit das Ergebnis kommt, sobald der Status "abgemeldet" zeigt (D1: wiederholbar).
         register.register("sign_off", self._sign_off, wiederholbar=True)

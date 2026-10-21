@@ -5,7 +5,9 @@ und puffert ohne Verbindung nur den juengsten (<daten>/device/wunsch.json). Erle
 eine Trennung vorher schickt ihn nach dem naechsten hello erneut. Danach entscheidet der Server (Spec 3.3) und schickt
 die Bedienung zurueck, falls der Wunsch verliert."""
 import math
+import time
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,6 +16,9 @@ from smartheat_core import dateien
 from smartheat_device import nachrichten, wire
 
 WUNSCH_FILE = "wunsch.json"
+#: Nach einem PUBACK mit Fehlercode (typisch Drosselung, 0x97) geht der Wunsch fruehestens nach dieser Zeit erneut
+#: hinaus (monotone Uhr); ein neuer Wunsch und ein Verbindungsverlust heben die Sperre auf.
+WUNSCH_NACH_ABLEHNUNG_SECONDS = 60.0
 BEGRENZT_KEY = "wunsch_begrenzt"
 SOLL_QUELLE_AUS_KEY = "soll_quelle_aus"
 _QUELLE = {"thermostat": "Thermostat", "soll_entity": "Wunschtemperatur", "smartheat_entity": "Wunschtemperatur"}
@@ -106,17 +111,20 @@ def _laden(path: Path) -> Wunsch | None:
 class WunschPuffer:
     """Juengster ungesendeter Wunsch (persistiert) und die mid seines laufenden Sendens."""
 
-    def __init__(self, device_dir: Path) -> None:
+    def __init__(self, device_dir: Path, clock: Callable[[], float] = time.monotonic) -> None:
         self._path = device_dir / WUNSCH_FILE
+        self._clock = clock
         self.wunsch = _laden(self._path)
         self._mid: int | None = None
+        self._gesperrt_bis: float | None = None  # monotone Uhr, nach einem abgelehnten PUBACK
 
     def offen(self) -> bool:
-        """Zu senden: ein Wunsch liegt vor und ist nicht unterwegs."""
-        return self.wunsch is not None and self._mid is None
+        """Zu senden: ein Wunsch liegt vor, ist nicht unterwegs und nicht wegen einer Ablehnung gesperrt."""
+        return (self.wunsch is not None and self._mid is None
+                and (self._gesperrt_bis is None or self._clock() >= self._gesperrt_bis))
 
     def setzen(self, wunsch: Wunsch) -> None:
-        self.wunsch, self._mid = wunsch, None
+        self.wunsch, self._mid, self._gesperrt_bis = wunsch, None, None
         dateien.schreiben_json(self._path, asdict(wunsch), modus=dateien.PRIVAT)
 
     def gesendet(self, mid: int | None) -> None:
@@ -129,5 +137,12 @@ class WunschPuffer:
         self._path.unlink(missing_ok=True)
         return True
 
+    def abgelehnt(self, mid: int) -> None:
+        """Der Broker lehnte die Nachricht ab (PUBACK mit Fehlercode): der Wunsch ist nicht unterwegs, er geht nach
+        WUNSCH_NACH_ABLEHNUNG_SECONDS erneut hinaus (Drosselung nicht durch Sekundentakt verschaerfen)."""
+        if self._mid is not None and mid == self._mid:
+            self._mid = None
+            self._gesperrt_bis = self._clock() + WUNSCH_NACH_ABLEHNUNG_SECONDS
+
     def verbindung_verloren(self) -> None:
-        self._mid = None
+        self._mid, self._gesperrt_bis = None, None

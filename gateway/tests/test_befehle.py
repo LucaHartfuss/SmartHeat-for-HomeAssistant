@@ -330,6 +330,31 @@ def test_inventur_stunden_0_ist_die_erkennung_des_treibers(ctx):
     assert not ctx.paths.inventur.exists()  # keine Reihe angelegt
 
 
+def test_inventory_ist_wiederholbar(ctx, tmp_path, clock):
+    """L4-02 (a): fiel ein Neustart in die Erkennung (Marker "gestartet" im Journal), laeuft sie bei der erneuten
+    Zustellung noch einmal und endet mit ok statt mit "intern"; die Inventur geht vor dem Ergebnis hinaus."""
+    dateien.schreiben_json(tmp_path / "befehle" / "befehle.json", [["c1", None, None, None]], modus=dateien.PRIVAT)
+    sent: list[dict] = []
+    teile: list[dict] = []
+    reg = CommandRegister(tmp_path / "befehle", lambda body: sent.append(body) or True, clock=clock,
+                          send_inventory=lambda command_id, daten: teile.append(daten) or [1],
+                          uebersetzen=befehle.fehler_uebersetzen)
+    befehle.eintragen(reg, ctx)
+    befehl = {"schema": 1, "command_id": "c1", "kind": "inventory",
+              "payload": {"stunden": 0, "filter": {"treiber": "simulation"}}, "expires_at": "2027-01-01T00:00:00+00:00"}
+    reg.empfangen(befehl)
+    assert len(teile) == 1 and teile[0]["treiber"] == "simulation" and sent == []  # Ergebnis erst nach dem PUBACK
+    reg.inventur_bestaetigt(1)
+    reg.pruefen()
+    assert [(body["ok"], body["error"]) for body in sent] == [(True, None)]
+    reg.empfangen(befehl)  # Duplikat: aus dem Journal, die Erkennung (Cloud-Abfrage) laeuft nicht noch einmal
+    assert len(teile) == 1 and len(sent) == 2
+
+
+def test_nur_sign_off_und_inventory_sind_wiederholbar():
+    assert {"sign_off", "inventory"} == befehle.WIEDERHOLBAR
+
+
 @pytest.mark.parametrize("konf", [None, {"anlage": None}, "eingerichtet"])
 def test_inventur_stunden_0_geht_vor_und_nach_der_einrichtung(ctx, konf):
     if konf != "eingerichtet":
