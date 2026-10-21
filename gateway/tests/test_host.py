@@ -211,6 +211,76 @@ def test_waiting_for_devices_is_bounded_by_the_real_clock_not_the_injected_one(d
     assert 0.25 <= time.monotonic() - started < 5
 
 
+def _erzeugte_treiber(monkeypatch):
+    erzeugt = []
+    echt = registry.create
+
+    def zaehlend(*args, **kwargs):
+        erzeugt.append(args[0])
+        return echt(*args, **kwargs)
+
+    monkeypatch.setattr(registry, "create", zaehlend)
+    return erzeugt
+
+
+def _host_mit_z2m(data_dir, clock, konf, *, wait=0.1):
+    from fake_z2m import FakeZigbee2Mqtt
+
+    bus = FakeBus()
+    host = _host(Paths(data_dir), konf, clock, bus=bus, wait=wait)
+    z2m = FakeZigbee2Mqtt(bus)
+    z2m.add_sensor(SENSOR)
+    z2m.add_thermostat(THERMOSTAT)
+    return host, z2m
+
+
+def test_a_sensor_as_the_bound_thermostat_stops_the_start_before_any_driver_exists(data_dir, clock, monkeypatch, caplog):
+    erzeugt = _erzeugte_treiber(monkeypatch)
+    konf = konfiguration(bindung={**konfiguration()["bindung"], "thermostat": SENSOR})
+    host, _ = _host_mit_z2m(data_dir, clock, konf)
+    with pytest.raises(StartFailure) as fehler:
+        host.load()
+    assert fehler.value.key == "konfiguration" and "Thermostat" in fehler.value.grund
+    assert SENSOR not in fehler.value.grund and SENSOR not in caplog.text
+    assert erzeugt == [] and host.driver is None
+
+
+def test_the_counter_probe_starts_with_a_real_thermostat_and_creates_one_driver(data_dir, clock, monkeypatch):
+    erzeugt = _erzeugte_treiber(monkeypatch)
+    host, _ = _host_mit_z2m(data_dir, clock, konfiguration())
+    loaded = host.load()
+    assert erzeugt == ["simulation"] and host.driver is loaded.binding
+    assert {ref.ref for ref in loaded.config.battery_refs} == {
+        f"zigbee:{SENSOR}:battery", f"zigbee:{THERMOSTAT}:battery_low"}
+
+
+@pytest.mark.parametrize("ohne", ["unbekannt", "ohne_definition"])
+def test_a_thermostat_the_mirror_does_not_know_as_a_defined_device_starts_as_before(data_dir, clock, monkeypatch, ohne):
+    erzeugt = _erzeugte_treiber(monkeypatch)
+    fern = "0x00124b0000000077"
+    konf = konfiguration(bindung={**konfiguration()["bindung"], "thermostat": fern})
+    host, z2m = _host_mit_z2m(data_dir, clock, konf)
+    if ohne == "ohne_definition":
+        z2m.add_ohne_definition(fern)
+    host.load()
+    assert erzeugt == ["simulation"]
+
+
+def test_a_start_without_a_bound_thermostat_does_not_check_one(data_dir, clock, monkeypatch):
+    erzeugt = _erzeugte_treiber(monkeypatch)
+    konf = konfiguration(bindung={**konfiguration()["bindung"], "thermostat": None})
+    host, _ = _host_mit_z2m(data_dir, clock, konf)
+    host.load()
+    assert erzeugt == ["simulation"]
+
+
+def test_the_device_list_is_awaited_once_for_the_thermostat_check_and_the_batteries(data_dir, clock):
+    host = _host(Paths(data_dir), konfiguration(), clock, wait=0.3)
+    started = time.monotonic()
+    host.load()  # leeres bridge/devices: eine Wartezeit, nicht zwei
+    assert 0.25 <= time.monotonic() - started < 0.55
+
+
 def test_load_reports_the_plant_identity_of_the_driver(data_dir, clock):
     loaded = _host(Paths(data_dir), konfiguration(), clock).load()
     assert loaded.plant_id == registry.plant_id(

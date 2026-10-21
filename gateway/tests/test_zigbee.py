@@ -192,3 +192,33 @@ def test_what_the_bridge_state_makes_of_a_message(world, roh, online):
             mirror.value(SENSOR, "temperature")
     z2m.bridge(online=True)  # Gegenprobe: ein gueltiges online stellt den Spiegel wieder her
     assert mirror.online is True and mirror.value(SENSOR, "temperature") == 20.5
+
+
+def test_a_device_is_defined_only_with_exposes_and_a_completed_interview(world):
+    bus, z2m, mirror = world
+    assert mirror.device(SENSOR).definiert and mirror.device(THERMOSTAT).definiert
+    z2m.add_ohne_definition("0x00124b00000000a1")  # Interview laeuft (interview_completed false, keine Definition)
+    z2m.add_ohne_definition("0x00124b00000000a2", interview_completed=True)  # fertig, aber nicht unterstuetzt
+    for ieee in ("0x00124b00000000a1", "0x00124b00000000a2"):
+        geraet = mirror.device(ieee)
+        assert geraet is not None and not geraet.definiert and geraet.art == "sonstig" and geraet.model == ""
+
+
+def _eintrag(ieee, **changes):
+    exposes = [{"name": "temperature", "property": "temperature", "access": 1}]
+    return {"ieee_address": ieee, "type": "EndDevice", "definition": {"model": "S", "vendor": "V", "exposes": exposes},
+            **changes}
+
+
+def test_an_unfinished_interview_with_a_definition_is_not_defined(world):
+    bus, _, mirror = world
+    bus.publish("zigbee2mqtt/bridge/devices", [
+        _eintrag("0x00124b00000000b1", interview_completed=False),  # Definition da, Interview offen
+        _eintrag("0x00124b00000000b2", interview_completed=True),
+        _eintrag("0x00124b00000000b3"),  # Schluessel fehlt: Definition vorhanden gilt als fertig
+        {**_eintrag("0x00124b00000000b4"), "definition": {"model": "S", "vendor": "V"}},  # ohne exposes
+        {**_eintrag("0x00124b00000000b5"), "definition": {"model": "S", "vendor": "V", "exposes": "kaputt"}},
+    ])
+    gefunden = {device.ieee[-2:]: device.definiert for device in mirror.devices()}
+    assert gefunden == {"b1": False, "b2": True, "b3": True, "b4": False, "b5": False}
+    assert mirror.device("0x00124b00000000b1").art == "fuehler"  # die Faehigkeiten gelten wie bisher

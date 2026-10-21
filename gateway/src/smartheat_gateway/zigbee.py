@@ -30,6 +30,8 @@ class ZigbeeDevice:
     vendor: str
     faehigkeiten: frozenset[str]
     art: str  # fuehler | thermostat | sonstig
+    #: Definition mit exposes und abgeschlossenes Interview; sonst ist die Art nur geraten (A6-02).
+    definiert: bool = False
 
 
 def _features(exposes):
@@ -50,6 +52,11 @@ def capabilities(exposes) -> frozenset[str]:
         elif name == "occupied_heating_setpoint" and access & ACCESS_SET:
             found.add(CAP_SETPOINT_WRITABLE)
     return frozenset(found)
+
+
+def _definiert(item: dict, definition: dict) -> bool:
+    """Eine Definition mit exposes zaehlt, solange Zigbee2MQTT das Interview nicht ausdruecklich als offen meldet."""
+    return isinstance(definition.get("exposes"), list) and item.get("interview_completed") is not False
 
 
 def _art(faehigkeiten: frozenset[str]) -> str:
@@ -168,7 +175,8 @@ class ZigbeeMirror:
         for item in raw_devices:
             if not isinstance(item, dict) or item.get("type") == "Coordinator":
                 continue
-            definition = item.get("definition") or {}
+            definition = item.get("definition")
+            definition = definition if isinstance(definition, dict) else {}
             faehigkeiten = capabilities(definition.get("exposes"))
             ieee = str(item.get("ieee_address", ""))
             devices[ieee] = ZigbeeDevice(
@@ -177,6 +185,7 @@ class ZigbeeMirror:
                 str(definition.get("vendor", "")),
                 faehigkeiten,
                 _art(faehigkeiten),
+                _definiert(item, definition),
             )
         with self._lock:
             self._devices = devices

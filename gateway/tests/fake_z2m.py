@@ -52,6 +52,14 @@ class FakeZigbee2Mqtt:
     def add_w100(self, ieee: str) -> None:
         self._add(ieee, "TH-S04D", "Aqara", _W100)
 
+    def add_ohne_definition(self, ieee: str, interview_completed: bool = False) -> None:
+        """Geraet, das Zigbee2MQTT schon kennt, dessen Interview aber noch laeuft oder scheiterte: keine Definition."""
+        self._devices.append({
+            "ieee_address": ieee, "friendly_name": ieee, "type": "EndDevice", "definition": None,
+            "interview_completed": interview_completed,
+        })
+        self._bus.publish(f"{BASE}/bridge/devices", self._devices, retain=True)
+
     def interview(self, ieee: str, status: str = "successful") -> None:
         """bridge/event device_interview wie Zigbee2MQTT nach dem Koppeln (die Definition nur bei successful)."""
         data = {"friendly_name": ieee, "ieee_address": ieee, "status": status}
@@ -77,7 +85,7 @@ class FakeZigbee2Mqtt:
 
     def _add(self, ieee: str, model: str, vendor: str, exposes: list) -> None:
         self._devices.append({
-            "ieee_address": ieee, "friendly_name": ieee, "type": "EndDevice",
+            "ieee_address": ieee, "friendly_name": ieee, "type": "EndDevice", "interview_completed": True,
             "definition": {"model": model, "vendor": vendor, "exposes": exposes},
         })
         self._bus.publish(f"{BASE}/bridge/devices", self._devices, retain=True)
