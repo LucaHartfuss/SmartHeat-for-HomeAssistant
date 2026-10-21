@@ -165,6 +165,10 @@ class FakeHa:
             # Raum-Soll 21.0 -> kein Mindestvorlauf-Schreiben beim Start
             "number.min_flow": 21.0,
         }
+        # echtes HA: die Registry liefert keine device_class, sie steht im Zustand; die lokale Positivliste der Rollen
+        # (A6-02) liest sie dort
+        self.states.update({f"sensor.{name}::device_class": "temperature"
+                            for name in ("room_actual", "room_target", "outdoor_temp")})
         self.writes = []
         self.pushes = []
         self.persistent = []
@@ -256,15 +260,16 @@ class FakeHa:
 
     def get_states(self):
         self._online()
+        # wie das echte HA: jede Entity mit Wert oder Attributen hat einen Zustand; eine nicht lesbare (Exception als
+        # Wert) steht als "unavailable" da, eine nur ueber Attribute bekannte als "unknown" (A6-02: die Positivliste
+        # der Rollen verlangt einen Zustand je gebundener Entity)
         result = []
-        for key, value in self.states.items():
-            entity_id, _, attribute = key.partition("::")
-            if attribute or isinstance(value, Exception):
-                continue
+        for entity_id in dict.fromkeys(key.partition("::")[0] for key in self.states):
+            value = self.states.get(entity_id, "unknown")
             attributes = {k.partition("::")[2]: v for k, v in self.states.items()
                           if k.startswith(f"{entity_id}::") and not isinstance(v, Exception)}
-            result.append({"entity_id": entity_id, "state": str(value), "attributes": attributes,
-                           "last_updated": "2026-10-11T10:00:00+00:00"})
+            result.append({"entity_id": entity_id, "state": "unavailable" if isinstance(value, Exception) else str(value),
+                           "attributes": attributes, "last_updated": "2026-10-11T10:00:00+00:00"})
         return result
 
     def get_services(self):

@@ -232,16 +232,17 @@ def test_exempt_preparation_at_the_daily_limit_switches_and_counts(make_store, c
     assert _total(store) == 11 and store.state.lifetime_writes == 1
 
 
-def test_a_comfort_boost_at_the_daily_limit_prepares_writes_in_order_and_counts(make_store, clock, monkeypatch):
+def test_a_comfort_boost_below_the_daily_limit_is_written_completely(make_store, clock, monkeypatch):
     monkeypatch.setattr(write_budget, "today", lambda: DAY)
     ha = FakeHa()
-    pipeline, store = _pipeline(make_store, clock, ha, backup=AT_LIMIT)
+    below = {"write_budget": {write_budget.TOTAL: {"day": DAY, "count": 9}}}
+    pipeline, store = _pipeline(make_store, clock, ha, backup=below)
     assert pipeline.set_boosts(comfort=True, emergency=False) == (True, False)
     assert ha.calls == [
         ("select", "select.betriebsart", "hz_operationmode_normal"), ("number", "number.hk", 1.0),
         ("number", "number.komfort", 25.0), ("number", "number.normal", 25.0), ("number", "number.swu", 23.0),
     ]
-    assert _total(store) == 15
+    assert _total(store) == 14
 
 
 @pytest.mark.parametrize(("comfort", "emergency"), [(True, False), (False, True)])

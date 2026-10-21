@@ -30,7 +30,8 @@ class BindingDescription:
     Sollwert ist ein eigenes Register und bleibt).
     daily_write_limit: physische Schreibvorgaenge je Tag ueber alle Hebel (Weishaupt 10, EEPROM); None = kein
     globales Tagesbudget. enforce_per_day: Durchsetzungs-Versuche je Hebel(-gruppe) und Tag.
-    write_groups: Hebel, die zusammen geschrieben werden und als EIN Schreibvorgang zaehlen (Viessmann setCurve).
+    write_groups: Hebel, die zusammen geschrieben werden (Viessmann setCurve); gezaehlt wird je physischem Aufruf des
+    Bindings (A6-09).
     lifetime_hint_at: ab so vielen gezaehlten Schreibvorgaengen ein Hinweis (EEPROM-Lebensdauer); None = nicht zaehlen.
     aux_originals: Hilfswerte der Anlage, die vor dem ersten Schreiben gemerkt und beim Ende zurueckgestellt werden
     (Betriebsart, Komfort-/Absenk-Sollwert); ihre Namen sind Manifest-Rollen des Bindings.

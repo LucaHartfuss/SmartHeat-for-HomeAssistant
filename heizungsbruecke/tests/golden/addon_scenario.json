@@ -754,6 +754,13 @@
     "learned": {
      "curve": 1.0,
      "heat_limit": 16.0
+    },
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     }
     }
    },
    "failsafe_state.json": {
@@ -850,6 +857,13 @@
     "learned": {
      "curve": 1.0,
      "heat_limit": 16.0
+    },
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     }
     }
    },
    "failsafe_state.json": {
@@ -949,7 +963,7 @@
    [
     "ha",
     "notify",
-    "notify.handy",
+    "notify.mobile_app_handy",
     "Heizungsbrücke: Server antwortet nicht, Notbetrieb aktiv. Die Heizung wird bei Bedarf lokal abgesichert."
    ],
    [
@@ -1026,6 +1040,13 @@
     "learned": {
      "curve": 1.0,
      "heat_limit": 16.0
+    },
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     }
     }
    },
    "failsafe_state.json": {
@@ -1131,6 +1152,18 @@
     "learned": {
      "curve": 1.0,
      "heat_limit": 16.0
+    },
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     }
     }
    },
    "failsafe_state.json": {
@@ -1242,7 +1275,7 @@
    [
     "ha",
     "notify",
-    "notify.handy",
+    "notify.mobile_app_handy",
     "Heizungsbrücke: Serververbindung wiederhergestellt, Notbetrieb beendet."
    ],
    [
@@ -1311,6 +1344,18 @@
     "learned": {
      "curve": 1.0,
      "heat_limit": 16.0
+    },
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     }
     }
    },
    "failsafe_state.json": {
@@ -1337,7 +1382,7 @@
    [
     "ha",
     "notify",
-    "notify.handy",
+    "notify.mobile_app_handy",
     "Heizungsbrücke: Sensor(en) ohne gültigen Wert: room_actual (sensor.room_actual). Die Heizkurve bleibt unverändert, bis die Werte wieder verfügbar sind (z. B. Batterie prüfen)."
    ],
    [
@@ -1417,7 +1462,7 @@
    [
     "ha",
     "notify",
-    "notify.handy",
+    "notify.mobile_app_handy",
     "Heizungsbrücke: Messwerte wieder gültig, Heizkurve wird wieder angepasst."
    ],
    [
@@ -1486,6 +1531,18 @@
     "learned": {
      "curve": 1.0,
      "heat_limit": 16.0
+    },
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     }
     }
    },
    "failsafe_state.json": {
@@ -1568,7 +1625,7 @@
    [
     "ha",
     "notify",
-    "notify.handy",
+    "notify.mobile_app_handy",
     "Heizungsbrücke: Server hat die Messwerte abgelehnt (Testgrund). Die Heizkurve bleibt unverändert."
    ],
    [
@@ -1688,7 +1745,7 @@
    [
     "ha",
     "notify",
-    "notify.handy",
+    "notify.mobile_app_handy",
     "Heizungsbrücke: Messwerte wieder gültig, Heizkurve wird wieder angepasst."
    ],
    [
@@ -1757,6 +1814,18 @@
     "learned": {
      "curve": 1.0,
      "heat_limit": 16.0
+    },
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     }
     }
    },
    "failsafe_state.json": {
@@ -1846,7 +1915,7 @@
    [
     "ha",
     "notify",
-    "notify.handy",
+    "notify.mobile_app_handy",
     "Heizungsbrücke: Neue Heizkurve konnte nicht an die Anlage übertragen werden (curve (number.curve_current): Cloud nicht erreichbar). Wird automatisch erneut versucht."
    ],
    [
@@ -1932,7 +2001,7 @@
    [
     "ha",
     "notify",
-    "notify.handy",
+    "notify.mobile_app_handy",
     "Heizungsbrücke: Anlage wieder erreichbar, Heizkurve übertragen."
    ],
    [
@@ -2001,6 +2070,18 @@
     "learned": {
      "curve": 1.0,
      "heat_limit": 16.0
+    },
+    "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     }
     }
    },
    "failsafe_state.json": {
@@ -2504,7 +2585,7 @@
    [
     "ha",
     "notify",
-    "notify.handy",
+    "notify.mobile_app_handy",
     "SmartHeat: Die Heizungseinstellung wurde in der App verstellt (Heizkurve) und zurückgesetzt. Einstellungen bitte nur über das Raumthermostat."
    ],
    [
@@ -2684,6 +2765,16 @@
      "erkannt": "2026-01-15T12:53:00+01:00"
     },
     "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     },
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1,
@@ -2762,7 +2853,7 @@
    [
     "ha",
     "notify",
-    "notify.handy",
+    "notify.mobile_app_handy",
     "SmartHeat: Batterie von sensor.thermostat_battery ist schwach (15 %). Bitte bald wechseln."
    ],
    [
@@ -2841,6 +2932,16 @@
      "erkannt": "2026-01-15T12:53:00+01:00"
     },
     "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     },
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1,
@@ -3121,6 +3222,16 @@
      "erkannt": "2026-01-15T12:53:00+01:00"
     },
     "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1030.0
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1,
+      "last": 1090.0
+     },
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1,
@@ -3187,7 +3298,7 @@
    [
     "ha",
     "notify",
-    "notify.handy",
+    "notify.mobile_app_handy",
     "SmartHeat: Abo inaktiv. Die Heizung läuft noch bis 14.02.2026 im Notbetrieb weiter, danach bleiben die zuletzt gelernten Werte fest eingestellt."
    ],
    [
@@ -3281,6 +3392,14 @@
      "erkannt": "2026-01-15T12:53:00+01:00"
     },
     "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1
+     },
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1
@@ -3389,6 +3508,14 @@
      "erkannt": "2026-01-15T12:53:00+01:00"
     },
     "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1
+     },
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1
@@ -3536,6 +3663,14 @@
      "erkannt": "2026-01-15T12:53:00+01:00"
     },
     "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1
+     },
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1
@@ -3622,7 +3757,7 @@
    [
     "ha",
     "notify",
-    "notify.handy",
+    "notify.mobile_app_handy",
     "SmartHeat: Abo seit 30 Tagen inaktiv. Die Heizungssteuerung ist beendet, die zuletzt gelernten Werte bleiben eingestellt."
    ],
    [
@@ -3717,6 +3852,14 @@
      "erkannt": "2026-01-15T12:53:00+01:00"
     },
     "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1
+     },
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1
@@ -3868,6 +4011,14 @@
      "erkannt": "2026-01-15T12:53:00+01:00"
     },
     "write_budget": {
+     "boost_start": {
+      "day": "2026-01-15",
+      "count": 1
+     },
+     "emergency_start": {
+      "day": "2026-01-15",
+      "count": 1
+     },
      "enforce:curve": {
       "day": "2026-01-15",
       "count": 1

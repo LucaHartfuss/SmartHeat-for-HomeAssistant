@@ -499,6 +499,58 @@ def test_the_driver_check_and_commands(welt, tmp_path):
     assert {"sign_off", "inventory", "diagnostics"} <= register.kinds
 
 
+SIM_BINDUNG = {"treiber": {"id": "simulation", "parameter": {"lever_set": "viessmann_vicare", "heizkreis": 0}}}
+FUEHLER, THERMO, FERN = "0x00124b0000000001", "0x00124b0000000002", "0x00124b0000000099"
+
+
+def _z2m_dazu(welt):
+    from fake_z2m import FakeZigbee2Mqtt
+
+    bus = FakeBus()
+    welt.mirror = ZigbeeMirror(bus, welt.clock)
+    welt.mirror.start()
+    welt.host.mirror = welt.mirror
+    z2m = FakeZigbee2Mqtt(bus)
+    z2m.add_sensor(FUEHLER)
+    z2m.add_thermostat(THERMO)
+    z2m.add_ohne_definition(FERN)
+    return z2m
+
+
+def test_a_bound_thermostat_that_the_mirror_knows_as_a_sensor_is_refused(welt, caplog):
+    _z2m_dazu(welt)
+    with caplog.at_level("DEBUG"):
+        assert welt.host.treiber_pruefen({**SIM_BINDUNG, "thermostat": FUEHLER}) == {
+            "feld": "thermostat", "regel": "nicht_erlaubt"}
+    assert FUEHLER not in caplog.text
+
+
+def test_a_bound_thermostat_is_accepted_when_it_is_a_thermostat_unknown_undefined_or_not_bound(welt):
+    _z2m_dazu(welt)
+    assert welt.host.treiber_pruefen({**SIM_BINDUNG, "thermostat": THERMO}) is None
+    assert welt.host.treiber_pruefen({**SIM_BINDUNG, "thermostat": "0x00124b00000000ee"}) is None  # unbekannt
+    assert welt.host.treiber_pruefen({**SIM_BINDUNG, "thermostat": FERN}) is None  # kein definiertes Geraet
+    assert welt.host.treiber_pruefen({**SIM_BINDUNG, "thermostat": None}) is None
+    assert welt.host.treiber_pruefen(SIM_BINDUNG) is None
+
+
+def test_the_thermostat_check_comes_before_the_driver_check(welt):
+    _z2m_dazu(welt)
+    kaputt = {"treiber": {"id": "erfunden", "parameter": {}}, "thermostat": FUEHLER}
+    assert welt.host.treiber_pruefen(kaputt) == {"feld": "thermostat", "regel": "nicht_erlaubt"}
+    assert welt.host.treiber_pruefen({**kaputt, "thermostat": THERMO}) == {"feld": "id", "regel": "unbekannt"}
+
+
+def test_a_sensor_bound_as_thermostat_is_refused_by_the_config_check_as_rolle_unzulaessig(welt):
+    from smartheat_core import config_check
+
+    _z2m_dazu(welt)
+    neu = konfiguration(bindung={**SIM_BINDUNG, "thermostat": FUEHLER})
+    ablehnung = config_check.pruefen(neu, None, host=config_check.HOST_GATEWAY,
+                                     treiber_pruefen=welt.host.treiber_pruefen)
+    assert ablehnung is not None and ablehnung.grund == config_check.ROLLE_UNZULAESSIG
+
+
 def test_an_unexpected_driver_error_becomes_a_rejection(welt, caplog, monkeypatch):
     # Ein Fehler, den config.treiber_pruefen nicht kennt (hier ein OverflowError aus dem Treiber): Ablehnung statt keiner
     # Antwort; im Log nur der Typname, nie der Text oder die Parameter (Regel 6).

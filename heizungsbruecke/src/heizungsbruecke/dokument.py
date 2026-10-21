@@ -4,7 +4,9 @@ dem Soll-Speicher (SOLL_REF), die Soll-Entity ist nur Eingang und Anzeige. zuord
 lokalen Pruefung (config_check ruft ihn ueber DeviceHost.treiber_pruefen, Spec 5b 3.1): Pflicht-Entities und
 Schreibbarkeit je Hebelsatz, Entities vorhanden, Schreibziele (jeder Hebel der Bindung, nicht nur die Schreibregeln des
 Hebelsatzes) nur von Plattform und Config-Entry des Kreises (A4-11), Soll-Entity nicht am Geraet eines Schreibziels
-(A4-12). Ob outdoor_temp und die Kennzahl-Rollen passen, prueft der Server (ha_pruefung).
+(A4-12). Jede gebundene Entity (Soll-Entity, Rollen, Raumfuehler, Batterien) besteht ausserdem die lokale Positivliste
+der Inventur (rollen_pruefen, A6-02). Ob outdoor_temp und die Kennzahl-Rollen fachlich passen, prueft der Server
+(ha_pruefung).
 
 Ist HA nicht erreichbar oder faehrt gerade hoch, ist das kein Urteil: der Server stellt eine abgelehnte Version nicht
 erneut zu, ein Neustart des Hosts haette das Geraet sonst festgesetzt. zuordnung_pruefen wirft dann NichtPruefbar (das
@@ -16,6 +18,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from heizungsbruecke.inventur import ERLAUBTE_DOMAENEN, einstellbare_plattformen, entity_erlaubt
 from smartheat_core.config_check import NichtPruefbar
 from smartheat_core.levers import LEVER_SETS
 from smartheat_device import fehler
@@ -154,18 +157,77 @@ def lokal_pruefen(konfiguration) -> str | None:
     return befund.text if befund is not None else None
 
 
+def _refs(b: HaBindung) -> list[tuple[str, str]]:
+    """Alle gebundenen Referenzen als (Feld, Referenz) in der Reihenfolge der Pruefung; Feld ist die V1-Rolle bzw.
+    raumfuehler/batterien, nie die Entity. Ohne Soll-Entity entfaellt room_target (lokal_pruefen meldet sie als fehlend)."""
+    soll = [("room_target", b.soll_entity)] if b.soll_entity is not None else []
+    return [*soll, *((v1_rolle(rolle), ref) for rolle, ref in b.rollen.items()),
+            *(("raumfuehler", ref) for ref in b.raumfuehler), *(("batterien", ref) for ref in b.batterien)]
+
+
+def _pflicht_refs(b: HaBindung) -> set[str]:
+    """Die Referenzen, ohne die nichts laeuft und die von selbst wiederkommen: Soll-Entity, Pflichtrollen des Hebelsatzes
+    (dieselben wie host._wait_for_required_entities, plus Soll-Entity), Raumfuehler und jedes Schreibziel. Ein Schreibziel
+    darf nie fallen gelassen werden, auch eine optionale Hebelrolle nicht: sie gehoert zur Anlagenidentitaet
+    (roles.lever_refs_identity), ohne sie wuerde bind_to_tenant eine andere Anlage melden und alles Gebundene
+    zuruecksetzen. Fallen duerfen nur optionale Lese-Rollen und Batterien."""
+    return {*([b.soll_entity] if b.soll_entity is not None else []),
+            *(b.rollen[rolle] for rolle in PFLICHT_ROLLEN[b.hebelsatz] if rolle in b.rollen), *b.raumfuehler,
+            *(ref for _, ref in _schreibziel_rollen(b))}
+
+
+#: Domaenen der Positivliste, die eine Entity ohne Zustand schon an ihrer ID bestehen laesst (Sensoren nur mit Zustand
+#: nach Klasse pruefbar, hier nur die Domaene); binary_sensor nur als Batterie.
+_DOMAENEN_ROLLE = ERLAUBTE_DOMAENEN | {"sensor"}
+_DOMAENEN_BATTERIE = frozenset({"sensor", "binary_sensor"})
+
+
+def rollen_befund(b: HaBindung, ha_api) -> tuple[tuple[str, str] | None, list[tuple[str, str]]]:
+    """Lokale Positivliste fuer jede Rolle (A6-02, G-9): ((feld, "nicht_erlaubt") des ersten Verstosses oder None,
+    [(feld, ref) der erlaubten optionalen Lese-Rollen und Batterien ohne Zustand]). Soll-Entity, Rollen, Raumfuehler und
+    Batterien muessen die Positivliste der Inventur bestehen (inventur.entity_erlaubt); `::attribut` zaehlt die Entity
+    davor. Registry und Zustaende werden einmal geladen; die Plattformen mit Einstellbarem zaehlen aus allen aktiven
+    Registry-Eintraegen mit Zustand. Hat Soll-Entity, Pflichtrolle, Schreibziel (auch eine optionale Hebelrolle) oder Raumfuehler keinen Zustand, ist das kein
+    Urteil: NichtPruefbar(feld) (kommt von selbst wieder). Eine optionale Lese-Rolle oder Batterie ohne Zustand (geloescht,
+    umbenannt, deaktiviert) heilt nicht von selbst: ihre Domaene wird aus der ID geprueft, sie steht in der zweiten
+    Liste und wird nicht gelesen. Ohne Soll-Entity entfaellt room_target (lokal_pruefen meldet das)."""
+    registry = {e["entity_id"]: e for e in ha_api.entity_registry() if isinstance(e, Mapping) and "entity_id" in e}
+    states = {s["entity_id"]: s for s in ha_api.get_states() if isinstance(s, Mapping) and "entity_id" in s}
+    einstellbar = einstellbare_plattformen({entity_id: entry for entity_id, entry in registry.items()
+                                            if entity_id in states})
+    pflicht = _pflicht_refs(b)
+    ohne_zustand: list[tuple[str, str]] = []
+    for feld, ref in _refs(b):
+        entity_id = _entity(ref)
+        if (state := states.get(entity_id)) is None:
+            if ref in pflicht:
+                raise NichtPruefbar(feld)
+            if entity_id.partition(".")[0] not in (_DOMAENEN_BATTERIE if feld == "batterien" else _DOMAENEN_ROLLE):
+                return (feld, "nicht_erlaubt"), ohne_zustand
+            ohne_zustand.append((feld, ref))
+        elif not entity_erlaubt(entity_id, registry.get(entity_id) or {}, state, einstellbar):
+            return (feld, "nicht_erlaubt"), ohne_zustand
+    return None, ohne_zustand
+
+
+def rollen_pruefen(b: HaBindung, ha_api) -> tuple[str, str] | None:
+    """Das Urteil aus rollen_befund: (feld, "nicht_erlaubt") des ersten Verstosses oder None; wirft NichtPruefbar wie
+    dort."""
+    return rollen_befund(b, ha_api)[0]
+
+
 def _mit_ha(b: HaBindung, ha_api) -> tuple[str, str] | None:
     """Der Teil mit HA: (feld, regel) des ersten Verstosses oder None. Bildet keine details (fehler.details kann bei
     einem Programmierfehler ValueError werfen, der in zuordnung_pruefen nicht als „HA nicht erreichbar“ gelten darf)."""
     if not ha_api.is_reachable():  # faehrt HA hoch, fehlen die Entities der Integration noch (404): kein Urteil
         raise NichtPruefbar
     registry = {e.get("entity_id"): e for e in ha_api.entity_registry() if isinstance(e, Mapping)}
-    assert b.soll_entity is not None
-    refs = [("room_target", b.soll_entity), *((v1_rolle(rolle), ref) for rolle, ref in b.rollen.items()),
-            *(("raumfuehler", ref) for ref in b.raumfuehler), *(("batterien", ref) for ref in b.batterien)]
-    for feld, ref in refs:
+    for feld, ref in _refs(b):
         if not ha_api.entity_exists(_entity(ref)):
             return feld, "unbekannt"
+    if verstoss := rollen_pruefen(b, ha_api):
+        return verstoss
+    assert b.soll_entity is not None
     ziele = _schreibziel_rollen(b)
     for rolle, ref in ziele:
         entry = registry.get(_entity(ref)) or {}

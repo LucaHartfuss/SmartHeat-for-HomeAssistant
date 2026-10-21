@@ -45,6 +45,12 @@ def _iso(wall: float) -> str:
     return datetime.fromtimestamp(wall, UTC).isoformat()
 
 
+def thermostat_unzulaessig(mirror: ZigbeeMirror, ieee) -> bool:
+    """True, wenn der Spiegel `ieee` als definiertes Geraet kennt und es kein Thermostat ist."""
+    geraet = mirror.device(ieee) if isinstance(ieee, str) else None
+    return geraet is not None and geraet.definiert and geraet.art != "thermostat"
+
+
 class GeraetZustand:
     """Status (Status-Modell Schema 2) und Raum (ist, soll, soll_quelle, ts) der Laufzeit; None = keiner."""
 
@@ -210,7 +216,14 @@ class GatewayDeviceHost(GeraetHostBasis):
 
     def treiber_pruefen(self, bindung: dict) -> dict | None:
         """Jede unerwartete Ausnahme des Treibers (z. B. OverflowError) wird eine Ablehnung: sonst bekaeme die
-        Konfiguration keine Antwort und software_soll liefe nie (Review Focus 4). Nur der Typname, Regel 6."""
+        Konfiguration keine Antwort und software_soll liefe nie (Review Focus 4). Nur der Typname, Regel 6.
+
+        Davor das Thermostat (A6-02): kennt der Spiegel das gebundene Geraet als definiertes, das kein Thermostat ist,
+        gingen Soll-Schreibvorgaenge an einen Fuehler oder Schalter. Ein unbekanntes oder noch nicht definiertes Geraet
+        (Interview laeuft) lehnt nichts ab: der Server stellt eine abgelehnte Version nie erneut zu; der Start prueft
+        es noch einmal (host.load)."""
+        if thermostat_unzulaessig(self.mirror, bindung.get("thermostat") if isinstance(bindung, dict) else None):
+            return fehler.details("thermostat", "nicht_erlaubt")
         try:
             return gateway_config.treiber_pruefen(self.paths, bindung)
         except Exception as error:

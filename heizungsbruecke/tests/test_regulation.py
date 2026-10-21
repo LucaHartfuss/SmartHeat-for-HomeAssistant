@@ -11,6 +11,7 @@ from fakes import FREMDTEXT, FREMDTEXT_IM_LOG, datei_stand, logzeilen, runtime_c
 
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_binding import HaPlantBinding
+from smartheat_core import write_budget
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import LocalSafety
 from smartheat_runtime import regulation
@@ -32,7 +33,9 @@ COMFORT = [("number.curve", 0.5), ("number.shift", 2.0)]
 RESTORE = [("number.curve", 0.3), ("number.shift", 1.0)]
 
 
-def _runtime(store, *, room_actual=20.0, room_target=21.0, entity_ids=ENTITY_IDS, states=None, safety=SAFETY):
+def _runtime(
+    store, *, room_actual=20.0, room_target=21.0, entity_ids=ENTITY_IDS, states=None, safety=SAFETY, clock=None,
+):
     """`room_target` ist der Stable-Target-Cache (None = nicht befuellt); `states` ergaenzt die
     HA-Werte (eine Exception als Wert wird beim Lesen geworfen)."""
     values = {"sensor.room_actual": room_actual, **(states or {})}
@@ -52,7 +55,9 @@ def _runtime(store, *, room_actual=20.0, room_target=21.0, entity_ids=ENTITY_IDS
     return SimpleNamespace(
         manifest=manifest, signals=ha_api, ha_api=ha_api, config=runtime_config(), store=store,
         states=values,
-        override=LeverPipeline(store, HaPlantBinding(ha_api, manifest, VAILLANT_MYPYLLANT), safety),
+        override=LeverPipeline(
+            store, HaPlantBinding(ha_api, manifest, VAILLANT_MYPYLLANT), safety, **({} if clock is None else {"clock": clock}),
+        ),
     )
 
 
@@ -234,6 +239,51 @@ def test_refused_comfort_start_keeps_target_rise_pending(make_store, tmp_path):
     assert load_backup(tmp_path / "backup.json")["last_room_target"] == 20.0
 
     rt.states["number.curve"] = 0.9
+    regulation.run_local_check(rt)
+
+    assert _writes(rt) == COMFORT
+    assert load_backup(tmp_path / "backup.json")["last_room_target"] == 21.0
+
+
+DAY = "2026-10-03"
+NEXT_DAY = "2026-10-04"
+
+
+def test_a_comfort_start_refused_for_the_day_uses_up_the_increase(make_store, tmp_path, monkeypatch):
+    # A6-01: nach 6 Starts am Tag gilt die Erhoehung als verbraucht; sonst startete nach dem Tageswechsel ein
+    # Boost fuer eine Erhoehung vom Vortag.
+    monkeypatch.setattr(write_budget, "today", lambda: DAY)
+    store = make_store(backup={
+        "last_room_target": 20.0, **RESTORE_POINT, "write_budget": {write_budget.BOOST_START: {"day": DAY, "count": 6}},
+    })
+    rt = _runtime(store, room_actual=19.0, room_target=21.0)
+
+    regulation.run_local_check(rt)
+
+    assert _writes(rt) == []
+    assert rt.store.state.boost_active is False
+    assert load_backup(tmp_path / "backup.json")["last_room_target"] == 21.0
+
+    monkeypatch.setattr(write_budget, "today", lambda: NEXT_DAY)
+    regulation.run_local_check(rt)
+
+    assert _writes(rt) == []
+    assert rt.store.state.boost_active is False
+
+
+def test_a_comfort_start_refused_for_the_wait_keeps_the_increase(make_store, clock, tmp_path, monkeypatch):
+    # Gegenprobe: die 30 Minuten Abstand sind keine Tagesgrenze, der naechste Check holt den Start nach.
+    monkeypatch.setattr(write_budget, "today", lambda: DAY)
+    store = make_store(backup={"last_room_target": 20.0, **RESTORE_POINT})
+    rt = _runtime(store, room_actual=19.0, room_target=21.0, clock=clock)
+    write_budget.put(store, write_budget.BOOST_START, {"day": DAY, "count": 1, "last": clock.now})
+
+    regulation.run_local_check(rt)
+
+    assert _writes(rt) == []
+    assert load_backup(tmp_path / "backup.json")["last_room_target"] == 20.0
+
+    clock.advance(1800)
     regulation.run_local_check(rt)
 
     assert _writes(rt) == COMFORT

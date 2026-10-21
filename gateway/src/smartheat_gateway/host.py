@@ -15,7 +15,7 @@ from smartheat_core.safety import resolve_local_safety
 from smartheat_gateway import config as gateway_config
 from smartheat_gateway.bus import Bus
 from smartheat_gateway.drivers import registry
-from smartheat_gateway.geraet_host import GatewayDeviceHost
+from smartheat_gateway.geraet_host import GatewayDeviceHost, thermostat_unzulaessig
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.signals import REF_ROOM_MEAN, REF_ROOM_TARGET, GatewaySignalSource
 from smartheat_gateway.texts import SHG_TEXTS
@@ -140,6 +140,12 @@ class GatewayHost:
                 runtime.lever_set_id, self.konfiguration.get("bindungsparameter"))
         except ValueError as error:
             raise StartFailure(f"Konfiguration: {error}", KEY_CONFIG) from error
+        self._geraete_abwarten(self._zigbee_ieees(bindung))
+        if thermostat_unzulaessig(self.mirror, bindung.thermostat):
+            # Spec A6-02 3.4: vor dem Treiber; die IEEE-Adresse gehoert nicht in den Text (Regel 6).
+            raise StartFailure(
+                f"Konfiguration: Das gebundene Thermostat ist kein Thermostat – {dokument_config.RECONFIGURE_HINT}",
+                KEY_CONFIG)
         try:
             driver = self._create_driver(bindung.driver_spec(), beschreibung)
         except (KeyError, TypeError, ValueError) as error:
@@ -208,17 +214,25 @@ class GatewayHost:
             driver.start()  # Tests treiben die Abfrage selbst (poll_once)
         self.driver = driver
 
-    def _battery_refs(self, bindung: gateway_config.GatewayBindung) -> tuple[BatteryRef, ...]:
+    @staticmethod
+    def _zigbee_ieees(bindung: gateway_config.GatewayBindung) -> list[str]:
         ieees = [ref.split(":")[1] for ref in bindung.room_sensors if ref.startswith("zigbee:")]
         if bindung.thermostat:
             ieees.append(bindung.thermostat)
-        # Begrenzt ueber die echte monotone Uhr, nicht ueber die eingespeiste: ein leeres bridge/devices darf nie endlos
-        # warten (auch nicht mit einer stehenden Test-Uhr).
+        return ieees
+
+    def _geraete_abwarten(self, ieees: list[str]) -> None:
+        """Wartet (begrenzt) auf die Geraeteliste der Bruecke, wenn Zigbee-Geraete gebunden sind; load() ruft es einmal
+        vor Thermostat-Pruefung und Treiber, die Batterien lesen danach dieselbe Liste. Begrenzt ueber die echte
+        monotone Uhr, nicht ueber die eingespeiste: ein leeres bridge/devices darf nie endlos warten (auch nicht mit
+        einer stehenden Test-Uhr)."""
         deadline = time.monotonic() + self._devices_wait
         while ieees and not self.mirror.devices() and time.monotonic() < deadline:
             time.sleep(BATTERY_POLL_SECONDS)
+
+    def _battery_refs(self, bindung: gateway_config.GatewayBindung) -> tuple[BatteryRef, ...]:
         refs = []
-        for ieee in dict.fromkeys(ieees):
+        for ieee in dict.fromkeys(self._zigbee_ieees(bindung)):
             device = self.mirror.device(ieee)
             if device is None:
                 logger.warning("Zigbee-Geraet %s unbekannt, keine Batterie-Ueberwachung", lesbar(str(ieee)))

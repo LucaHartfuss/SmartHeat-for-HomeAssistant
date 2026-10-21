@@ -121,12 +121,50 @@ def test_wartezeit(wartezeit, gut):
     ("zurueck_optional", [], True), ("zurueck_optional", ["curve"], False), ("zurueck_optional", ["x"], False),
     ("nur_lesen", ["x"], False), ("schreibgruppen", {"a": ["curve", "heat_limit"]}, False),
     ("nur_lesen", ["level"], True), ("nur_lesen", ["curve"], False),
-    ("schreibgruppen", [["curve", "room_setpoint"]], True), ("schreibgruppen", [["curve"]], False),
+    ("schreibgruppen", [["curve", "room_setpoint"]], False), ("schreibgruppen", [["curve"]], False),
     ("schreibgruppen", [["curve", "heat_limit"], ["curve", "room_setpoint"]], False),
     ("zaehler", "total", True), ("zaehler", "monthly", False),
 ])
 def test_listen_und_zaehlerart(feld, wert, gut):
     assert gut == (_try(parameter("vaillant_vrc720", **{feld: wert})) is None)
+
+
+def test_vaillant_schreibgruppe_ist_nicht_erlaubt():
+    # A6-09: die Schreibgruppen sind eine lokale Positivliste (Verfahren.schreibgruppen_erlaubt), Vaillant hat keine
+    with pytest.raises(Fehler) as fehler:
+        beschreibung("vaillant_vrc720", parameter("vaillant_vrc720", schreibgruppen=[["curve", "room_setpoint"]]))
+    assert fehler.value.details == {"feld": "schreibgruppen", "regel": "nicht_erlaubt"}
+    assert str(fehler.value) == "Die Schreibgruppen der Bindungsparameter sind für diesen Hebelsatz nicht erlaubt."
+
+
+@pytest.mark.parametrize(("hebelsatz", "gruppen", "gut"), [
+    ("viessmann_vicare", [["curve", "level"]], True),
+    ("viessmann_vicare", [["level", "curve"]], True),  # Reihenfolge egal: Menge je Gruppe
+    ("viessmann_vicare", [], True),
+    ("viessmann_vicare", [["curve", "room_setpoint"]], False),
+    ("viessmann_vicare", [["curve", "level", "room_setpoint"]], False),  # weiter als die erlaubte Gruppe
+    ("weishaupt_wwp", [["curve", "heat_limit"]], False),
+    ("weishaupt_wwp", [], True),
+    ("weishaupt_wwp_basis", [], True),
+    ("vaillant_vrc720", [], True),
+])
+def test_schreibgruppen_nur_aus_der_positivliste(hebelsatz, gruppen, gut):
+    fehler = None
+    try:
+        beschreibung(hebelsatz, parameter(hebelsatz, schreibgruppen=gruppen))
+    except Fehler as error:
+        fehler = error
+    assert (fehler is None) == gut
+    if not gut:
+        assert fehler.details == {"feld": "schreibgruppen", "regel": "nicht_erlaubt"}
+
+
+@pytest.mark.parametrize("gruppen", [[["curve"]], [["curve", "level"], ["level", "room_setpoint"]]])
+def test_die_formpruefungen_der_schreibgruppen_kommen_vor_der_positivliste(gruppen):
+    # weniger als zwei Hebel bzw. ein Hebel in zwei Gruppen: "ungueltig", nicht "nicht_erlaubt"
+    with pytest.raises(Fehler) as fehler:
+        beschreibung("viessmann_vicare", parameter("viessmann_vicare", schreibgruppen=gruppen))
+    assert fehler.value.details == {"feld": "schreibgruppen", "regel": "ungueltig"}
 
 
 @pytest.mark.parametrize(("hebelsatz", "schutz", "gut"), [
@@ -369,6 +407,7 @@ _VERSTOESSE = {
     "wartezeit": _mit("vaillant_vrc720", wartezeit_s=59),
     "schreibgruppen_form": _mit("vaillant_vrc720", schreibgruppen={"a": ["curve", "heat_limit"]}),
     "schreibgruppen_regel": _mit("vaillant_vrc720", schreibgruppen=[["curve"]]),
+    "schreibgruppen_erlaubt": _mit("vaillant_vrc720", schreibgruppen=[["curve", "room_setpoint"]]),
     "zaehler": _mit("vaillant_vrc720", zaehler="monthly"),
     "zurueck_optional": _mit("vaillant_vrc720", zurueck=[], zurueck_optional=["heat_limit"]),
 }

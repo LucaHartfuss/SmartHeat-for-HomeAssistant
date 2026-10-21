@@ -46,7 +46,7 @@ OPTIONS = {
     "entity_min_flow": "number.min_flow",
     "entity_outdoor_temp": "sensor.outdoor_temp",
     "entity_heat_limit": "number.heat_limit",
-    "notify_services": ["notify.handy"],
+    "notify_services": ["notify.mobile_app_handy"],
 }
 
 DERIVED: dict[str, str] = {}
@@ -1648,7 +1648,7 @@ def test_local_check_after_abo_finished_does_nothing(env):
 
 def test_health_check_runs_at_start_and_every_local_check_interval(env):
     _quiet_backup(env)
-    env.ha.states["sensor.wz_battery"] = 15
+    env.ha.states.update({"sensor.wz_battery": 15, "sensor.wz_battery::device_class": "battery"})
     bridge = _start(env, battery_entities=["sensor.wz_battery"])
 
     assert any("Batterie von sensor.wz_battery" in text for text in env.ha.pushes)
@@ -3078,7 +3078,8 @@ def test_telemetry_is_not_published_without_connection(env):
 def test_vaillant_daily_energy_reaches_the_server_as_a_growing_sum(env):
     """Der Tageszaehler der Bindung (Vaillant: daily) geht als wachsende Summe hinaus (A4-49); die Waerme-Erkennung
     liegt beim Server (Audit 4 P-B)."""
-    env.ha.states.update({"sensor.waerme_heute": 8.0, "sensor.waerme_heute::unit_of_measurement": "kWh"})
+    env.ha.states.update({"sensor.waerme_heute": 8.0, "sensor.waerme_heute::unit_of_measurement": "kWh",
+                          "sensor.waerme_heute::device_class": "energy"})
     bridge = _start(env, entity_energy_thermal_heating="sensor.waerme_heute")
     assert _mqtt(env).telemetry[-1]["energy"] == {"thermal_heating": 8.0}
 
@@ -3091,7 +3092,8 @@ def test_vaillant_daily_energy_reaches_the_server_as_a_growing_sum(env):
 
 def test_vaillant_energy_in_a_foreign_unit_is_left_out(env, caplog):
     """Es gilt die erwartete Einheit der Bindung (Vaillant: kWh, Spec Stufe 3 S4b 5): ein Wh-Tageszaehler fehlt."""
-    env.ha.states.update({"sensor.waerme_heute": 8000.0, "sensor.waerme_heute::unit_of_measurement": "Wh"})
+    env.ha.states.update({"sensor.waerme_heute": 8000.0, "sensor.waerme_heute::unit_of_measurement": "Wh",
+                          "sensor.waerme_heute::device_class": "energy"})
     with caplog.at_level(logging.WARNING):
         _start(env, entity_energy_thermal_heating="sensor.waerme_heute")
 

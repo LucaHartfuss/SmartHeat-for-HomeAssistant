@@ -10,6 +10,7 @@ import logging
 from dataclasses import dataclass
 
 from smartheat_core import wallclock
+from smartheat_core.logtext import lesbar
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +27,11 @@ class Rule:
     max_per_day: int | None  # None: kein Tageslimit
 
 
-# Boost-Start und Zonenvorbereitung: nur Fehlschlaege, 1/30 min, 6/Tag. Ein Erfolg kostet nichts.
+# Zonenvorbereitung: nur Fehlschlaege, 1/30 min, 6/Tag. Ein Erfolg kostet nichts.
 RETRY_QUOTA = Rule(every_attempt=False, waits=(INTERVAL_SECONDS,), max_per_day=MAX_PER_DAY)
+# Boost-Start (Comfort und Notfall, je eigener Zaehler): jeder Start zaehlt, auch ein erfolgreicher (A6-01, Regel 4):
+# hoechstens 6 am Tag, mindestens 30 min Abstand.
+START_QUOTA = Rule(every_attempt=True, waits=(INTERVAL_SECONDS,), max_per_day=MAX_PER_DAY)
 # Rueckkehr zu den Regelwerten (Boost-Ende, Wiederherstellung): 5/15/30 min, dann alle 30 min, nie
 # endgueltig aufgeben.
 RETURN_STAIRCASE = Rule(every_attempt=False, waits=(300, 900, INTERVAL_SECONDS), max_per_day=None)
@@ -37,6 +41,7 @@ ENFORCE_PREFIX = "enforce:"
 TOTAL = "writes:total"
 ZONE_PREPARE = "zone_prepare"
 BOOST_START = "boost_start"
+EMERGENCY_START = "emergency_start"
 BOOST_END = "boost_end"
 RESTORE = "restore"
 
@@ -106,7 +111,7 @@ def put(store, key: str, entry: dict | None) -> None:
     try:
         store.update(write_budget=budget)
     except Exception as error:
-        logger.warning("Schreibbudget '%s' nicht gespeichert (%s), gilt bis zum Neustart", key, error)
+        logger.warning("Schreibbudget '%s' nicht gespeichert (%s), gilt bis zum Neustart", key, lesbar(str(error)))
 
 
 def may_attempt(store, key: str, rule: Rule, now: float) -> bool:

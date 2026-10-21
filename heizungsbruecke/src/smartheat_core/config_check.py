@@ -65,12 +65,14 @@ HA_ROLLEN = (
     "energy_thermal_heating", "energy_thermal_dhw", "energy_electrical_total",
 )
 HA_HINWEISE = ("raumfuehler", "batterie", "manueller_eingriff", "quellwechsel", "schreibbudget", "schreibzaehler")
-#: Referenzen wie die bisherigen entity_*-Optionen des Add-ons (entity_id oder entity_id::attribut); die Form je Rolle
-#: prueft der Host mit der Inventur, hier nur der Aufbau.
-HA_REF = re.compile(r"[a-z_]+\.[a-z0-9_]+(::[a-z_]+)?")
+#: Referenzen wie die bisherigen entity_*-Optionen des Add-ons (entity_id oder entity_id::attribut); als Attribut
+#: lesen und schreiben die Rollen nur die Temperaturen (A6-02: sonst liesse sich jedes Attribut einer Entity binden,
+#: etwa Laengen- und Breitengrad einer Zone). Die Form je Rolle prueft der Host mit der Inventur, hier nur der Aufbau.
+HA_REF = re.compile(r"[a-z_]+\.[a-z0-9_]+(::(temperature|current_temperature))?")
 HA_RAUMFUEHLER = re.compile(r"sensor\.[a-z0-9_]+|climate\.[a-z0-9_]+::current_temperature")
 HA_BATTERIE = re.compile(r"(sensor|binary_sensor)\.[a-z0-9_]+")
-HA_DIENST = re.compile(r"notify\.[a-z0-9_]+")
+#: Benachrichtigungsdienste: nur die Handy-Dienste der Companion-App (A6-02); notify.email, notify.telegram u. a. nicht.
+HA_DIENST = re.compile(r"notify\.mobile_app_[a-z0-9_]+")
 #: Abfrageintervall der Hersteller-Integration (Sekunden), Grenzen 10-3600 s (Teil von V1).
 ABFRAGE_S = (10, 3600)
 ANLAGE_MAX_CHARS = 64
@@ -86,7 +88,8 @@ TreiberPruefung = Callable[[dict], dict | None]
 class NichtPruefbar(Exception):
     """Der Treiber-Rueckruf kann jetzt nicht entscheiden (HA nicht erreichbar, faehrt hoch): weder uebernehmen noch
     ablehnen. Der Server stellt eine abgelehnte Version nie erneut zu; das Geraet haelt das Dokument deshalb zurueck
-    und prueft spaeter erneut (smartheat_device.device). Der Text gehoert nicht in Logs (Regel 6)."""
+    und prueft spaeter erneut (smartheat_device.device). Der Text gehoert nicht in Logs (Regel 6). Optional traegt die
+    Ausnahme das Feld (eine Rolle der Bindung, nie eine Entity), damit der Start einen lesbaren Text bilden kann."""
 
 
 @dataclass(frozen=True)
@@ -169,7 +172,8 @@ def _gateway_bindung(neu: Mapping) -> Ablehnung | None:
     return None
 
 
-def _ha_bindung(neu: Mapping) -> Ablehnung | None:
+def ha_bindung_pruefen(neu: Mapping) -> Ablehnung | None:
+    """Aufbau der HA-Bindung rein (ohne Rueckruf des Hosts), oeffentlich fuer die Pruefung beim Start des HA-Hosts."""
     bindung = neu["bindung"]
     if ablehnung := _fremd(bindung, (*HA_BINDUNG_FELDER, *HA_BINDUNG_OPTIONAL), "bindung"):
         return ablehnung
@@ -249,7 +253,7 @@ def _pruefen(neu: Mapping, rastung: Rastung | None, *, host: str,
     except BindungsparameterFehler as error:
         return Ablehnung(UNGUELTIG, error.details)
     if host == HOST_HA:
-        ablehnung = _ha_bindung(neu)
+        ablehnung = ha_bindung_pruefen(neu)
         if ablehnung is None and treiber_pruefen is not None and (details := treiber_pruefen(dict(neu))) is not None:
             ablehnung = Ablehnung(ROLLE_UNZULAESSIG, details)
         return ablehnung
@@ -259,5 +263,7 @@ def _pruefen(neu: Mapping, rastung: Rastung | None, *, host: str,
     if ablehnung is not None:
         return ablehnung
     if treiber_pruefen is not None and (details := treiber_pruefen(dict(neu["bindung"]))) is not None:
-        return Ablehnung(TREIBER_PARAMETER, details)
+        # Das gebundene Thermostat ist kein Thermostat (A6-02): eine Rolle, kein Treiberparameter (sonst liest der Kunde
+        # einen Text ueber den Treiber).
+        return Ablehnung(ROLLE_UNZULAESSIG if details.get("feld") == "thermostat" else TREIBER_PARAMETER, details)
     return None

@@ -164,6 +164,17 @@ def test_driver_parameters_are_checked_by_the_host():
     assert _pruefen(_konfiguration(), treiber_pruefen=lambda bindung: None) is None
 
 
+def test_a_thermostat_finding_of_the_driver_check_is_a_role_rejection():
+    """A6-02: das gebundene Thermostat ist kein Thermostat -> Rolle unzulaessig (kein Text ueber den Treiber); jeder
+    andere Befund des Treibers bleibt treiber_parameter."""
+    befund = {"feld": "thermostat", "regel": "nicht_erlaubt"}
+    assert _pruefen(_konfiguration(), treiber_pruefen=lambda bindung: befund) == cc.Ablehnung(
+        cc.ROLLE_UNZULAESSIG, befund)
+    andere = {"feld": "parameter", "regel": "nicht_erlaubt"}
+    assert _pruefen(_konfiguration(), treiber_pruefen=lambda bindung: andere) == cc.Ablehnung(
+        cc.TREIBER_PARAMETER, andere)
+
+
 def test_the_driver_is_asked_only_for_an_otherwise_valid_configuration():
     seen = []
     _pruefen(_konfiguration(raumfuehler=[SENSOR, SENSOR]), treiber_pruefen=lambda bindung: seen.append(1))

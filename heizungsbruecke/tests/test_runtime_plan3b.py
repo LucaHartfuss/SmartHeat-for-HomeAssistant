@@ -192,7 +192,7 @@ def test_zone_preparation_at_the_daily_limit_is_a_budget_stop_not_a_failed_attem
 
 def test_weishaupt_daily_energy_reaches_the_server_as_a_growing_sum(env):
     env.ha.states.update({**WEISHAUPT_STATES, "sensor.waerme_heute": 8.0})
-    env.ha.states["sensor.waerme_heute::unit_of_measurement"] = "kWh"
+    env.ha.states.update({"sensor.waerme_heute::unit_of_measurement": "kWh", "sensor.waerme_heute::device_class": "energy"})
     bridge = _start(env, **WEISHAUPT, entity_energy_thermal_heating="sensor.waerme_heute")
     assert _mqtt(env).telemetry[-1]["energy"] == {"thermal_heating": 8.0}
 
