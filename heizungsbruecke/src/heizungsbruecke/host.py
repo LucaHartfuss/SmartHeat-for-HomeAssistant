@@ -51,6 +51,8 @@ DERIVED_SENSORS_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60, 60, 60)
 #: Raum fuer up/status (wie das Gateway): Takt im Worker zusaetzlich zu jeder Soll-Aenderung.
 EV_RAUM = "ha_raum"
 RAUM_SECONDS = 30
+ENTITY_FEHLT_MESSAGE = ("SmartHeat: {feld}: zugeordnete Entity fehlt in Home Assistant und wird bis zum nächsten Start "
+                        "nicht gelesen.")
 SOURCE_CHANGE_MESSAGE = "SmartHeat: Die Quelle der Raum- oder Außentemperatur hat sich geändert."
 NOT_CONFIGURED_HINT = (
     "Add-on ist noch nicht eingerichtet -- bitte in Home Assistant unter Einstellungen -> Geraete & Dienste -> "
@@ -176,9 +178,12 @@ class HaHost:
             # A6-02: die Regeln des Annehmens gelten auch fuer eine schon uebernommene Konfiguration, und zwar vor den
             # Hilfssensoren (derived_sensors baut aus einer Rolle schon ein Template in HA).
             _bindung_pruefen(self._konfiguration)
-            _rollen_pruefen_mit_wiederholung(self._ha_api, b)
+            ohne_zustand = _rollen_pruefen_mit_wiederholung(self._ha_api, b)
             derived = _ensure_derived_sensors_with_retry(self._ha_api, b, runtime.tenant_id)
-            manifest = build_manifest({**b.rollen, "room_target": SOLL_REF}, derived.entity_ids, b.hebelsatz)
+            # optionale Rollen und Batterien ohne Zustand bleiben fuer diesen Lauf ungelesen (Spec 3.2 Nachtrag)
+            ungelesen = {ref for _, ref in ohne_zustand}
+            rollen = {rolle: ref for rolle, ref in b.rollen.items() if ref not in ungelesen}
+            manifest = build_manifest({**rollen, "room_target": SOLL_REF}, derived.entity_ids, b.hebelsatz)
             binding = binding_for(description, self._ha_api, manifest)
         except StartupError as error:
             raise StartFailure(str(error), error.key) from error
@@ -203,8 +208,10 @@ class HaHost:
             runtime, notify_hints_off=b.hinweise_aus,
             battery_refs=tuple(
                 BatteryRef(entity_id, BATTERY_LOW_FLAG if entity_id.startswith("binary_sensor.") else BATTERY_PERCENT)
-                for entity_id in b.batterien))
+                for entity_id in b.batterien if entity_id not in ungelesen))
         notices = (Notice("quellwechsel", derived.sources_fingerprint, SOURCE_CHANGE_MESSAGE),) if derived.replaced else ()
+        notices += tuple(Notice(f"entity_fehlt:{feld}", "fehlt", ENTITY_FEHLT_MESSAGE.format(feld=feld))
+                         for feld in dict.fromkeys(feld for feld, _ in ohne_zustand))
         return Loaded(config=runtime, manifest=manifest, binding=binding,
                       notices=notices)
 
@@ -334,15 +341,26 @@ def _bindung_pruefen(konfiguration) -> None:
         raise ConfigError(f"{feld}: Form der Zuordnung ungültig – {RECONFIGURE_HINT}")
 
 
-def _rollen_pruefen_mit_wiederholung(ha_api, b: dokument.HaBindung) -> None:
-    """Lokale Positivliste fuer jede Rolle (A6-02). Ein Urteil ist ein Konfigurationsfehler; nicht pruefbar (Entity ohne
-    Zustand, Registry oder Zustaende scheitern) wird wie fehlende Entities wiederholt, nach dem Budget StartupError."""
-    verstoss = _retry_with_budget(
-        ha_api, lambda: dokument.rollen_pruefen(b, ha_api),  # NichtPruefbar und Fehler der HA-API: erneut versuchen
-        lambda error: f"Rollen konnten nicht geprüft werden: {type(error).__name__}",
-        identify=lambda error: "rollen_nicht_pruefbar")
+def _rollen_pruefen_mit_wiederholung(ha_api, b: dokument.HaBindung) -> list[tuple[str, str]]:
+    """Lokale Positivliste fuer jede Rolle (A6-02). Ein Urteil ist ein Konfigurationsfehler; nicht pruefbar (HA nicht
+    RUNNING, Soll-Entity, Pflichtrolle oder Raumfuehler ohne Zustand, Registry oder Zustaende scheitern) wird wie
+    fehlende Entities wiederholt, nach dem Budget StartupError. Ergebnis: (Feld, Referenz) der optionalen Rollen und
+    Batterien ohne Zustand, die der Lauf nicht liest."""
+    def _versuch():
+        if not ha_api.is_reachable():  # faehrt HA hoch, fehlen Zustaende noch: kein Urteil
+            raise config_check.NichtPruefbar
+        return dokument.rollen_befund(b, ha_api)  # NichtPruefbar und Fehler der HA-API: erneut versuchen
+
+    def _describe(error):
+        if isinstance(error, config_check.NichtPruefbar) and error.args:
+            return f"{error.args[0]}: zugeordnete Entity fehlt in Home Assistant – {RECONFIGURE_HINT}"
+        return "Home Assistant lieferte Registry oder Zustände nicht"
+
+    verstoss, ohne_zustand = _retry_with_budget(
+        ha_api, _versuch, _describe, identify=lambda error: "rollen_nicht_pruefbar")
     if verstoss is not None:
         raise ConfigError(f"{verstoss[0]}: diese Entity darf SmartHeat nicht nutzen (lokale Positivliste)")
+    return ohne_zustand
 
 
 def _ensure_derived_sensors_with_retry(ha_api, b: dokument.HaBindung, tenant_id: str) -> DerivedSensors:

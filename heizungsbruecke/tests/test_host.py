@@ -76,15 +76,89 @@ def test_gegenprobe_dieselbe_rolle_auf_einer_erlaubten_entity_startet(env, angel
     assert len(angelegt) == 1
 
 
-def test_eine_rolle_ohne_zustand_wird_wiederholt_und_scheitert_mit_festem_schluessel(env, angelegt, sleeps):
-    """Optionale Rolle: die Entity existiert (entity_exists), hat aber keinen Zustand: nicht pruefbar, kein Urteil.
-    Wiederholung wie bei fehlenden Entities, nach dem Budget StartFailure mit stabilem Schluessel."""
-    host = _host(env, entity_operating_mode="climate.programm")
+def test_eine_pflichtrolle_ohne_zustand_wird_wiederholt_und_scheitert_mit_festem_schluessel(env, angelegt, sleeps):
+    """Realistischer Fall: die Entity fehlt (umbenannt, geloescht, deaktiviert) und entity_exists meldet sie trotzdem
+    noch. Eine Pflichtrolle ohne Zustand ist kein Urteil, sondern nicht pruefbar: Wiederholung wie bei fehlenden
+    Entities, nach dem Budget StartFailure mit stabilem Schluessel und lesbarem Text mit dem Feld (nie der Entity)."""
+    del env.ha.states["number.heat_limit"]
     with pytest.raises(StartFailure) as fehler:
-        host.load()
+        _host(env).load()
     assert fehler.value.key == "rollen_nicht_pruefbar"
+    assert fehler.value.grund == ("heat_limit: zugeordnete Entity fehlt in Home Assistant – "
+                                  "bitte SmartHeat neu konfigurieren")
     assert sleeps == list(DERIVED_SENSORS_RETRY_DELAYS_SECONDS)
     assert angelegt == []
+
+
+def test_ein_raumfuehler_ohne_zustand_ist_nicht_pruefbar(env, angelegt, sleeps):
+    del env.ha.states["sensor.room_actual"], env.ha.states["sensor.room_actual::device_class"]
+    with pytest.raises(StartFailure) as fehler:
+        _host(env).load()
+    assert fehler.value.key == "rollen_nicht_pruefbar" and fehler.value.grund.startswith("raumfuehler: ")
+
+
+def test_eine_optionale_rolle_ohne_zustand_startet_ungelesen_mit_hinweis(env, angelegt, sleeps):
+    """Spec 3.2 Nachtrag: die Entity heilt nicht von selbst; der Start wartet nicht, die Referenz fehlt in diesem Lauf im
+    Manifest, ein nicht kritischer Hinweis nennt das Feld (nie die Entity)."""
+    loaded = _host(env, entity_flow_temperature="sensor.vorlauf").load()
+    assert "flow_temperature" not in loaded.manifest.refs and sleeps == []
+    assert [(n.key, n.message) for n in loaded.notices] == [(
+        "entity_fehlt:flow_temperature",
+        "SmartHeat: flow_temperature: zugeordnete Entity fehlt in Home Assistant und wird bis zum nächsten Start "
+        "nicht gelesen.")]
+    assert "sensor.vorlauf" not in loaded.notices[0].message
+
+
+def test_gegenprobe_dieselbe_optionale_rolle_mit_zustand_bleibt_im_manifest(env, angelegt, sleeps):
+    env.ha.states.update({"sensor.vorlauf": 35.0, "sensor.vorlauf::device_class": "temperature"})
+    loaded = _host(env, entity_flow_temperature="sensor.vorlauf").load()
+    assert loaded.manifest.refs["flow_temperature"] == "sensor.vorlauf" and loaded.notices == ()
+
+
+def test_eine_batterie_ohne_zustand_wird_nicht_gelesen_und_gemeldet(env, angelegt, sleeps):
+    env.ha.states.update({"sensor.gut": 80, "sensor.gut::device_class": "battery"})
+    loaded = _host(env, battery_entities=["sensor.gut", "binary_sensor.weg_battery_low"]).load()
+    assert [ref.ref for ref in loaded.config.battery_refs] == ["sensor.gut"]
+    assert [n.key for n in loaded.notices] == ["entity_fehlt:batterien"]
+    assert "binary_sensor.weg_battery_low" not in loaded.notices[0].message
+
+
+@pytest.mark.parametrize("feld_option, ref", [("entity_operating_mode", "person.luca"),
+                                              ("entity_flow_temperature", "binary_sensor.tuer"),
+                                              ("entity_flow_temperature", "lock.haustuer")])
+def test_eine_optionale_rolle_ohne_zustand_aus_fremder_domaene_ist_ein_konfigurationsfehler(
+        env, angelegt, sleeps, feld_option, ref):
+    """Auch ohne Zustand zaehlt die Domaene aus der ID (kein Warten, kein Start mit einer Person oder einem Schloss)."""
+    with pytest.raises(StartFailure) as fehler:
+        _host(env, **{feld_option: ref}).load()
+    assert fehler.value.grund.endswith("diese Entity darf SmartHeat nicht nutzen (lokale Positivliste)")
+    assert ref not in fehler.value.grund and sleeps == [] and angelegt == []
+
+
+def test_vor_dem_laufenden_ha_gibt_es_kein_urteil(env, angelegt, sleeps, monkeypatch):
+    """Faehrt HA noch hoch (nicht RUNNING), fehlen Zustaende: ein Verstoss gilt erst, wenn HA erreichbar ist."""
+    env.ha.states["person.luca"] = "home"
+    erreichbar = {"ja": False}
+    pruefungen = []
+    echte_registry = env.ha.entity_registry
+
+    def registry():
+        pruefungen.append(erreichbar["ja"])
+        return echte_registry()
+
+    def is_reachable():
+        if not erreichbar["ja"] and len(pruefungen) == 0 and is_reachable.aufrufe >= 3:
+            erreichbar["ja"] = True
+        is_reachable.aufrufe += 1
+        return erreichbar["ja"]
+
+    is_reachable.aufrufe = 0
+    monkeypatch.setattr(env.ha, "entity_registry", registry)
+    monkeypatch.setattr(env.ha, "is_reachable", is_reachable)
+    with pytest.raises(StartFailure) as fehler:
+        _host(env, entity_operating_mode="person.luca").load()
+    assert pruefungen == [True]  # Registry erst gelesen, als HA lief
+    assert fehler.value.grund.startswith("operating_mode: diese Entity darf SmartHeat nicht nutzen")
 
 
 def test_wirft_die_registry_einmal_gelingt_der_zweite_versuch(env, angelegt, sleeps, monkeypatch):
@@ -117,7 +191,7 @@ def test_eine_alte_konfiguration_mit_notify_email_startet_nicht_und_die_senke_ke
         host = _host(env, Geraet(konfiguration))
     assert gesehen == [["notify.mobile_app_handy"]]
     meldungen = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("1" in m for m in meldungen) and not any("notify.email" in m for m in meldungen)
+    assert meldungen == ["1 Benachrichtigungsdienste der Konfiguration sind keine Handy-Dienste und werden nicht genutzt."]
     with pytest.raises(StartFailure) as fehler:
         host.load()
     assert "benachrichtigung" in fehler.value.grund and "notify.email" not in fehler.value.grund

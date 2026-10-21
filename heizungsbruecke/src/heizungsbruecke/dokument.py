@@ -18,7 +18,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from heizungsbruecke.inventur import einstellbare_plattformen, entity_erlaubt
+from heizungsbruecke.inventur import ERLAUBTE_DOMAENEN, einstellbare_plattformen, entity_erlaubt
 from smartheat_core.config_check import NichtPruefbar
 from smartheat_core.levers import LEVER_SETS
 from smartheat_device import fehler
@@ -165,24 +165,51 @@ def _refs(b: HaBindung) -> list[tuple[str, str]]:
             *(("raumfuehler", ref) for ref in b.raumfuehler), *(("batterien", ref) for ref in b.batterien)]
 
 
-def rollen_pruefen(b: HaBindung, ha_api) -> tuple[str, str] | None:
-    """Lokale Positivliste fuer jede Rolle (A6-02, G-9): Soll-Entity, Rollen, Raumfuehler und Batterien muessen die
-    Positivliste der Inventur bestehen (inventur.entity_erlaubt), sonst (feld, "nicht_erlaubt") des ersten Verstosses;
-    `::attribut` zaehlt die Entity davor. Registry und Zustaende werden einmal geladen; die Plattformen mit
-    Einstellbarem zaehlen aus allen aktiven Registry-Eintraegen mit Zustand. Hat eine gebundene Entity keinen Zustand,
-    ist das kein Urteil: NichtPruefbar. Ist keine Soll-Entity gebunden, entfaellt room_target (die Pflichtpruefung
-    lokal_pruefen meldet das, nicht diese Funktion)."""
+def _pflicht_refs(b: HaBindung) -> set[str]:
+    """Die Referenzen, ohne die nichts laeuft und die von selbst wiederkommen: Soll-Entity, Pflichtrollen des Hebelsatzes
+    und Raumfuehler (dieselben wie host._wait_for_required_entities, plus Soll-Entity)."""
+    return {*([b.soll_entity] if b.soll_entity is not None else []),
+            *(b.rollen[rolle] for rolle in PFLICHT_ROLLEN[b.hebelsatz] if rolle in b.rollen), *b.raumfuehler}
+
+
+#: Domaenen der Positivliste, die eine Entity ohne Zustand schon an ihrer ID bestehen laesst (Sensoren nur mit Zustand
+#: nach Klasse pruefbar, hier nur die Domaene); binary_sensor nur als Batterie.
+_DOMAENEN_ROLLE = ERLAUBTE_DOMAENEN | {"sensor"}
+_DOMAENEN_BATTERIE = frozenset({"sensor", "binary_sensor"})
+
+
+def rollen_befund(b: HaBindung, ha_api) -> tuple[tuple[str, str] | None, list[tuple[str, str]]]:
+    """Lokale Positivliste fuer jede Rolle (A6-02, G-9): ((feld, "nicht_erlaubt") des ersten Verstosses oder None,
+    [(feld, ref) der erlaubten optionalen Rollen und Batterien ohne Zustand]). Soll-Entity, Rollen, Raumfuehler und
+    Batterien muessen die Positivliste der Inventur bestehen (inventur.entity_erlaubt); `::attribut` zaehlt die Entity
+    davor. Registry und Zustaende werden einmal geladen; die Plattformen mit Einstellbarem zaehlen aus allen aktiven
+    Registry-Eintraegen mit Zustand. Hat Soll-Entity, Pflichtrolle oder Raumfuehler keinen Zustand, ist das kein
+    Urteil: NichtPruefbar(feld) (kommt von selbst wieder). Eine optionale Rolle oder Batterie ohne Zustand (geloescht,
+    umbenannt, deaktiviert) heilt nicht von selbst: ihre Domaene wird aus der ID geprueft, sie steht in der zweiten
+    Liste und wird nicht gelesen. Ohne Soll-Entity entfaellt room_target (lokal_pruefen meldet das)."""
     registry = {e["entity_id"]: e for e in ha_api.entity_registry() if isinstance(e, Mapping) and "entity_id" in e}
     states = {s["entity_id"]: s for s in ha_api.get_states() if isinstance(s, Mapping) and "entity_id" in s}
     einstellbar = einstellbare_plattformen({entity_id: entry for entity_id, entry in registry.items()
                                             if entity_id in states})
+    pflicht = _pflicht_refs(b)
+    ohne_zustand: list[tuple[str, str]] = []
     for feld, ref in _refs(b):
         entity_id = _entity(ref)
         if (state := states.get(entity_id)) is None:
-            raise NichtPruefbar
-        if not entity_erlaubt(entity_id, registry.get(entity_id) or {}, state, einstellbar):
-            return feld, "nicht_erlaubt"
-    return None
+            if ref in pflicht:
+                raise NichtPruefbar(feld)
+            if entity_id.partition(".")[0] not in (_DOMAENEN_BATTERIE if feld == "batterien" else _DOMAENEN_ROLLE):
+                return (feld, "nicht_erlaubt"), ohne_zustand
+            ohne_zustand.append((feld, ref))
+        elif not entity_erlaubt(entity_id, registry.get(entity_id) or {}, state, einstellbar):
+            return (feld, "nicht_erlaubt"), ohne_zustand
+    return None, ohne_zustand
+
+
+def rollen_pruefen(b: HaBindung, ha_api) -> tuple[str, str] | None:
+    """Das Urteil aus rollen_befund: (feld, "nicht_erlaubt") des ersten Verstosses oder None; wirft NichtPruefbar wie
+    dort."""
+    return rollen_befund(b, ha_api)[0]
 
 
 def _mit_ha(b: HaBindung, ha_api) -> tuple[str, str] | None:

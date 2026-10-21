@@ -88,7 +88,8 @@ TreiberPruefung = Callable[[dict], dict | None]
 class NichtPruefbar(Exception):
     """Der Treiber-Rueckruf kann jetzt nicht entscheiden (HA nicht erreichbar, faehrt hoch): weder uebernehmen noch
     ablehnen. Der Server stellt eine abgelehnte Version nie erneut zu; das Geraet haelt das Dokument deshalb zurueck
-    und prueft spaeter erneut (smartheat_device.device). Der Text gehoert nicht in Logs (Regel 6)."""
+    und prueft spaeter erneut (smartheat_device.device). Der Text gehoert nicht in Logs (Regel 6). Optional traegt die
+    Ausnahme das Feld (eine Rolle der Bindung, nie eine Entity), damit der Start einen lesbaren Text bilden kann."""
 
 
 @dataclass(frozen=True)

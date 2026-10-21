@@ -597,14 +597,47 @@ def test_die_einstellbare_plattform_zaehlt_nur_aus_aktiven_entities_mit_zustand(
     assert _rollen(_batterie("sensor.irgendwas"), ha) == ("batterien", "nicht_erlaubt")
 
 
-def test_eine_gebundene_entity_ohne_zustand_ist_nicht_pruefbar():
+def test_ein_raumfuehler_ohne_zustand_ist_nicht_pruefbar_mit_dem_feld():
     ha = _ha()
-    # die Batterie aus KONFIGURATION hat keinen Zustand
-    del ha.states["sensor.thermostat_battery"], ha.states["sensor.thermostat_battery::device_class"]
-    with pytest.raises(config_check.NichtPruefbar):
+    # der Raumfuehler aus KONFIGURATION hat keinen Zustand
+    del ha.states["sensor.room_actual"], ha.states["sensor.room_actual::device_class"]
+    with pytest.raises(config_check.NichtPruefbar) as fehler:
         _rollen(KONFIGURATION, ha)
+    assert fehler.value.args == ("raumfuehler",)
     with pytest.raises(config_check.NichtPruefbar):  # entity_exists sagt ja, der Zustand fehlt trotzdem
         dokument.zuordnung_pruefen(KONFIGURATION, ha)
+
+
+def test_eine_pflichtrolle_oder_die_soll_entity_ohne_zustand_ist_nicht_pruefbar():
+    ha = _ha()
+    del ha.states["number.min_flow"]
+    with pytest.raises(config_check.NichtPruefbar) as fehler:
+        _rollen(KONFIGURATION, ha)
+    assert fehler.value.args == ("min_flow",)
+    ha = _ha()
+    del ha.states["sensor.room_target"], ha.states["sensor.room_target::device_class"]
+    with pytest.raises(config_check.NichtPruefbar) as fehler:
+        _rollen(KONFIGURATION, ha)
+    assert fehler.value.args == ("room_target",)
+
+
+def test_eine_batterie_ohne_zustand_besteht_nach_der_domaene_und_steht_in_der_liste_ohne_zustand():
+    ha = _ha()
+    del ha.states["sensor.thermostat_battery"], ha.states["sensor.thermostat_battery::device_class"]
+    b = dokument.bindung(KONFIGURATION)
+    assert dokument.rollen_befund(b, ha) == (None, [("batterien", "sensor.thermostat_battery")])
+    assert _rollen(KONFIGURATION, ha) is None
+    assert dokument.rollen_befund(dokument.bindung(_batterie("binary_sensor.leer")), ha)[1] == [
+        ("batterien", "binary_sensor.leer")]  # binary_sensor als Batterie
+    assert _rollen(_batterie("lock.haustuer"), ha) == ("batterien", "nicht_erlaubt")
+
+
+def test_eine_optionale_rolle_ohne_zustand_wird_nach_der_domaene_der_id_beurteilt():
+    ha = _ha()
+    ok = _mit_rolle("flow_temperature", "sensor.vorlauf")
+    assert dokument.rollen_befund(dokument.bindung(ok), ha) == (None, [("flow_temperature", "sensor.vorlauf")])
+    for ref in ("person.luca", "binary_sensor.tuer", "lock.haustuer", "zone.home"):  # binary_sensor nur als Batterie
+        assert _rollen(_mit_rolle("flow_temperature", ref), ha) == ("flow_temperature", "nicht_erlaubt"), ref
 
 
 def test_das_feld_ist_die_v1_rolle_in_der_reihenfolge_von_mit_ha():
