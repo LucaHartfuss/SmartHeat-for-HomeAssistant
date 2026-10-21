@@ -1056,7 +1056,7 @@ def test_dead_room_actual_holds_tick_and_reports_once(env, caplog):
     bridge = _start(env)
     env.ha.states["sensor.room_actual"] = ValueError("could not convert string to float: 'unavailable'")
 
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.WARNING):
         _set_room_target(env, bridge, 20.5)
 
     assert _mqtt(env).snapshots == []
@@ -1064,7 +1064,7 @@ def test_dead_room_actual_holds_tick_and_reports_once(env, caplog):
         "Heizungsbrücke: Sensor(en) ohne gültigen Wert: room_actual (sensor.room_actual). Die Heizkurve "
         "bleibt unverändert, bis die Werte wieder verfügbar sind (z. B. Batterie prüfen)."
     ]
-    assert "lokalen Check" in caplog.text
+    assert "Lokaler Check:" in caplog.text
 
     _advance(env, bridge, 30)  # Retry, Fuehler weiter tot
 
@@ -1078,6 +1078,68 @@ def test_dead_room_actual_holds_tick_and_reports_once(env, caplog):
 
     assert "room_actual" not in snapshot and "room_actual" not in snapshot["levers"]
     assert env.ha.pushes[-1] == "Heizungsbrücke: Messwerte wieder gültig, Heizkurve wird wieder angepasst."
+
+
+def _lokaler_check_meldungen(caplog):
+    """Meldungen des Handlers fuer den lokalen Check und des Boot-Priming (nicht die der Tick-Zustellung)."""
+    return [r for r in caplog.records
+            if r.name == "smartheat_runtime.app" and r.getMessage().startswith("Lokaler Check:")]
+
+
+def test_unreadable_room_actual_logs_one_warning_without_traceback_until_the_next_good_check(env, caplog):
+    """L4-17: der unlesbare Raumfuehler ist ein erwarteter Datenfehler (der Tick meldet ihn dem Kunden), kein ERROR mit
+    Traceback je Check: eine WARNING, solange er anhaelt nur DEBUG, nach einem gueltigen Wert wieder eine WARNING."""
+    _quiet_backup(env)
+    bridge = _start(env)
+    env.ha.states["sensor.room_actual"] = ValueError("could not convert string to float: 'unavailable'")
+
+    with caplog.at_level(logging.DEBUG, logger="smartheat_runtime.app"):
+        for _ in range(3):
+            _trigger(env, bridge, "sensor.room_actual")
+        meldungen = _lokaler_check_meldungen(caplog)
+        assert [r.levelno for r in meldungen] == [logging.WARNING, logging.DEBUG, logging.DEBUG]
+        assert all(r.exc_info is None for r in meldungen)
+        assert "could not convert string to float: 'unavailable'" in meldungen[0].getMessage()
+        assert not [r for r in caplog.records if r.name == "smartheat_runtime.app" and r.levelno >= logging.ERROR]
+
+        env.ha.states["sensor.room_actual"] = 20.0
+        _trigger(env, bridge, "sensor.room_actual")  # gueltiger Check: danach gilt der naechste Fehler wieder als neu
+        assert len(_lokaler_check_meldungen(caplog)) == 3
+        env.ha.states["sensor.room_actual"] = ValueError("unavailable")
+        _trigger(env, bridge, "sensor.room_actual")
+        assert [r.levelno for r in _lokaler_check_meldungen(caplog)] == [
+            logging.WARNING, logging.DEBUG, logging.DEBUG, logging.WARNING]
+        assert not [r for r in caplog.records if r.name == "smartheat_runtime.app" and r.levelno >= logging.ERROR]
+
+
+def test_another_exception_in_the_local_check_stays_an_error_with_traceback(env, caplog):
+    _quiet_backup(env)
+    bridge = _start(env)
+    env.ha.states["sensor.room_actual"] = RuntimeError("HA-API-Hickup")
+
+    with caplog.at_level(logging.DEBUG, logger="smartheat_runtime.app"):
+        _trigger(env, bridge, "sensor.room_actual")
+
+    (fehler,) = [r for r in caplog.records if r.name == "smartheat_runtime.app" and r.levelno >= logging.ERROR]
+    assert fehler.getMessage().startswith("Fehler im lokalen Check") and fehler.exc_info is not None
+    assert _lokaler_check_meldungen(caplog) == []
+
+
+def test_unreadable_room_actual_at_boot_logs_one_warning_shared_with_the_following_checks(env, caplog):
+    """Das Boot-Priming und die Checks danach sehen denselben Ausfall: zusammen eine WARNING, kein ERROR."""
+    _quiet_backup(env)
+    env.ha.states["sensor.room_actual"] = ValueError("could not convert string to float: 'unavailable'")
+
+    with caplog.at_level(logging.DEBUG, logger="smartheat_runtime.app"):
+        bridge = _start(env)
+        _trigger(env, bridge, "sensor.room_actual")
+
+    meldungen = _lokaler_check_meldungen(caplog)
+    assert [r.levelno for r in meldungen][:2] == [logging.WARNING, logging.DEBUG]
+    assert logging.WARNING not in [r.levelno for r in meldungen[1:]]
+    assert all(r.exc_info is None for r in meldungen)
+    # (Die Telemetrie meldet denselben Fuehler an ihrer Stelle, nicht Gegenstand dieses Tests.)
+    assert not [r for r in caplog.records if r.name == "smartheat_runtime.app" and r.levelno >= logging.ERROR]
 
 
 def test_publish_error_does_not_break_retry_chain(env):

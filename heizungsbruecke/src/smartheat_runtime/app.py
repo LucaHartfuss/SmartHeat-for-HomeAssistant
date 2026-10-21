@@ -354,6 +354,26 @@ def _finish_at_start(rt: Runtime, clock) -> IdleBridge:
 
 # --- Handler des Regel-Workers ---
 
+def _run_local_check(rt: Runtime, fehler_text: str) -> None:
+    """regulation.run_local_check, Fehler gehen nie nach oben. Ein ValueError ist der erwartete Datenfehler (ein
+    Fuehler liefert keinen gueltigen Wert, L4-17): der Tick meldet ihn dem Kunden, hier genuegt eine WARNING ohne
+    Traceback, solange er anhaelt nur DEBUG, nach einem erfolgreichen Check wieder eine WARNING. Jede andere
+    Ausnahme ist ein Fehler im Code oder auf der Anlage und bleibt `logger.exception`."""
+    try:
+        regulation.run_local_check(rt)
+    except ValueError as error:
+        meldung = lesbar(str(error))
+        if rt.local_check_data_fault_logged:
+            logger.debug("Lokaler Check: %s", meldung)
+        else:
+            rt.local_check_data_fault_logged = True
+            logger.warning("Lokaler Check: %s", meldung)
+    except Exception:
+        logger.exception(fehler_text)
+    else:
+        rt.local_check_data_fault_logged = False
+
+
 def _on_local_check(rt: Runtime, event: Event) -> None:
     """Bei room_target_fired den Cache frisch lesen und den Mindestvorlauf nachfuehren, dann
     Boost-Logik, dann "Tick faellig?".
@@ -366,10 +386,7 @@ def _on_local_check(rt: Runtime, event: Event) -> None:
         derived.sync(rt)
     if not rt.zone_prepared:
         _prepare_zone(rt)
-    try:
-        regulation.run_local_check(rt)
-    except Exception:
-        logger.exception("Fehler im lokalen Check (Boost/Notfall-Boost), wird beim naechsten Ereignis erneut versucht")
+    _run_local_check(rt, "Fehler im lokalen Check (Boost/Notfall-Boost), wird beim naechsten Ereignis erneut versucht")
     try:
         trigger = regulation.claim_due_tick(rt, wallclock.now())
     except StorageError:
@@ -593,11 +610,7 @@ def _prime(rt: Runtime) -> None:
         _first_start(rt)
     _prepare_zone(rt)
     derived.sync(rt)
-    try:
-        regulation.run_local_check(rt)
-    except Exception:
-        logger.exception(
-            "Fehler beim initialen lokalen Check vor MQTT-Start, wird beim naechsten Ereignis erneut versucht")
+    _run_local_check(rt, "Fehler beim initialen lokalen Check vor MQTT-Start, wird beim naechsten Ereignis erneut versucht")
 
 
 def _first_start(rt: Runtime) -> None:

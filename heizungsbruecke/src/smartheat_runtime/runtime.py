@@ -85,5 +85,8 @@ class Runtime:
     # Gescheiterte Wiederherstellung am Fristende (abo.log_restore_failure): in diesem Prozess schon geloggt. Nicht
     # persistiert: nach einem Neustart erscheint die Zeile einmal als WARNING (TP12b).
     restore_failure_logged: bool = False
+    # Datenfehler (ValueError, ein Fuehler ohne gueltigen Wert) des lokalen Checks in diesem Prozess schon als WARNING
+    # geloggt, bis zum naechsten erfolgreichen Check (app._run_local_check, L4-17). Nicht persistiert.
+    local_check_data_fault_logged: bool = False
     # Kundentexte des Hosts (Spec SHG G2 2.1); Standard = HA-Texte.
     texts: HostTexts = HA_TEXTS
