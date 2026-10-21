@@ -3,6 +3,8 @@ import json
 import requests
 import websocket
 
+from smartheat_runtime.ports import SignalUngueltig
+
 # Plattformen der Helfer, die derived_sensors per Config-Flow anlegt (und nur die darf
 # delete_helper loeschen).
 HELPER_PLATFORMS = ("statistics", "template")
@@ -107,8 +109,10 @@ class HomeAssistantApi:
         raw = body["attributes"][attribute] if attribute else body["state"]
         try:
             return float(raw)
-        except OverflowError:  # JSON liefert beliebig grosse Ganzzahlen; wie jeder unbrauchbare Wert ein ValueError
-            raise ValueError(f"{entity_id} liegt ausserhalb des Zahlenbereichs") from None
+        except OverflowError:  # JSON liefert beliebig grosse Ganzzahlen; wie jeder unbrauchbare Wert ungueltig
+            raise SignalUngueltig(f"{entity_id} liegt ausserhalb des Zahlenbereichs") from None
+        except ValueError as error:  # "unavailable", "unknown", Text: der Fuehler liefert gerade keinen Wert
+            raise SignalUngueltig(str(error)) from error
 
     def get_raw_state(self, entity_id: str) -> str:
         """Returns the entity's state string as-is (no float cast), for text sensors
@@ -126,7 +130,7 @@ class HomeAssistantApi:
         response.raise_for_status()
         state = response.json()["state"]
         if state in ("unavailable", "unknown", ""):
-            raise ValueError(f"Entity {real_entity_id} hat keinen gueltigen Zustand: {state!r}")
+            raise SignalUngueltig(f"Entity {real_entity_id} hat keinen gueltigen Zustand: {state!r}")
         return state
 
     def get_config(self) -> dict:

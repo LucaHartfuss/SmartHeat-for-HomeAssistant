@@ -8,6 +8,13 @@ class SignalNotFound(LookupError):
     """Die Referenz gibt es bei der Quelle nicht (HA: HTTP 404). Ueberwachungen ueberspringen sie."""
 
 
+class SignalUngueltig(ValueError):
+    """Ein Signal liefert gerade keinen gueltigen Wert (nicht verfuegbar, keine Zahl, ausserhalb des Zahlenbereichs, kein
+    Fuehler gueltig) - erwartet, kein Programmfehler. Die Hosts werfen sie beim Lesen eines Werts; Programmier- und
+    Konfigurationsfehler bleiben ein einfacher ValueError. Unterklasse von ValueError: bestehende `except ValueError`
+    gelten weiter."""
+
+
 class SourceUnavailable(OSError):
     """Die Quelle antwortet nicht (HA nicht erreichbar, Zeitueberschreitung, andere HTTP-Fehler). Ueberwachungen beenden
     die Runde ohne Meldung."""
@@ -15,7 +22,7 @@ class SourceUnavailable(OSError):
 
 class SignalSource(Protocol):
     """Werte ueber hostspezifische Referenzen lesen (HA: Entity-ID bzw. `entity::attribut`). Ein ungueltiger Wert
-    (nicht verfuegbar, keine Zahl, Attribut fehlt) wirft ValueError, KeyError oder TypeError."""
+    (nicht verfuegbar, keine Zahl, Attribut fehlt) wirft SignalUngueltig (ein ValueError), KeyError oder TypeError."""
 
     def get_state(self, ref: str) -> float: ...
 

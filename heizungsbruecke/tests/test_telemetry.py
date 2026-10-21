@@ -10,7 +10,7 @@ from fakes import FREMDTEXT, FREMDTEXT_IM_LOG, logzeilen
 
 from smartheat_runtime import telemetry
 from smartheat_runtime.delivery import DataFault
-from smartheat_runtime.ports import MqttChannel, SignalSource, SourceUnavailable
+from smartheat_runtime.ports import MqttChannel, SignalSource, SignalUngueltig, SourceUnavailable
 from smartheat_runtime.roles import ChannelManifest
 
 
@@ -91,6 +91,48 @@ def test_ein_ausfall_von_room_actual_warnt_einmal_und_die_wiederaufnahme_meldet_
         assert takt(float("nan")) == 5  # ein neuer Ausfall warnt wieder
         assert len(zeilen(logging.WARNING)) == 2
     assert mqtt_client.publish_telemetry.call_args.args[0]["room_actual"] == 20.8
+
+
+def test_ein_ungueltiges_signal_warnt_einmal_ohne_traceback_bis_zum_naechsten_gelungenen_senden(caplog):
+    """L4-17: SignalUngueltig (Fuehler liefert keinen gueltigen Wert) ist erwartet: eine WARNING ohne Traceback, weitere
+    Takte nur DEBUG, nach gelungenem Senden wieder eine WARNING; kein ERROR."""
+    manifest = ChannelManifest(refs={"room_actual": "sensor.room_actual"})
+    ha_api = MagicMock(spec=SignalSource)
+    mqtt_client = MagicMock(spec=MqttChannel)
+
+    def takt(wert):
+        ha_api.get_state.side_effect = wert if isinstance(wert, Exception) else None
+        ha_api.get_state.return_value = wert
+        telemetry.run_telemetry_tick(manifest, ha_api, mqtt_client, boost_active=False, failsafe_active=False)
+
+    def zeilen(stufe):
+        return [r for r in caplog.records if r.levelno == stufe and r.name == "smartheat_runtime.telemetry"]
+
+    ungueltig = SignalUngueltig("could not convert string to float: 'unavailable'")
+    with caplog.at_level(logging.DEBUG, logger="smartheat_runtime.telemetry"):
+        for _ in range(3):
+            takt(ungueltig)
+        assert len(zeilen(logging.WARNING)) == 1 and len(zeilen(logging.DEBUG)) == 2
+        assert zeilen(logging.ERROR) == [] and zeilen(logging.WARNING)[0].exc_info is None
+        assert "could not convert string to float: 'unavailable'" in zeilen(logging.WARNING)[0].getMessage()
+        takt(20.5)
+        mqtt_client.publish_telemetry.assert_called_once()
+        takt(ungueltig)  # nach einem gelungenen Senden warnt ein neuer Ausfall wieder
+        assert len(zeilen(logging.WARNING)) == 2 and zeilen(logging.ERROR) == []
+
+
+@pytest.mark.parametrize("fehler", [ValueError("x"), RuntimeError("Hickup")])
+def test_ein_anderer_fehler_der_telemetrie_bleibt_ein_error_mit_traceback(fehler, caplog):
+    manifest = ChannelManifest(refs={"room_actual": "sensor.room_actual"})
+    ha_api = MagicMock(spec=SignalSource)
+    ha_api.get_state.side_effect = fehler
+    mqtt_client = MagicMock(spec=MqttChannel)
+
+    with caplog.at_level(logging.DEBUG, logger="smartheat_runtime.telemetry"):
+        telemetry.run_telemetry_tick(manifest, ha_api, mqtt_client, boost_active=False, failsafe_active=False)
+
+    (zeile,) = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert zeile.exc_info is not None and "Fehler beim Veroeffentlichen" in zeile.getMessage()
 
 
 def test_run_telemetry_tick_includes_configured_optional_kpi_fields():

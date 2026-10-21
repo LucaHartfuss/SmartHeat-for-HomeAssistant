@@ -32,7 +32,14 @@ from smartheat_runtime import (
 )
 from smartheat_runtime.delivery import ROLE_DATENTRAEGER, SOURCE_LOCAL, DataFault
 from smartheat_runtime.notifier import STATE_OK, Notifier
-from smartheat_runtime.ports import MqttChannel, NotifySink, SignalSource, StatusSink, TriggerSource
+from smartheat_runtime.ports import (
+    MqttChannel,
+    NotifySink,
+    SignalSource,
+    SignalUngueltig,
+    StatusSink,
+    TriggerSource,
+)
 from smartheat_runtime.roles import ChannelManifest
 from smartheat_runtime.runtime import (
     EV_ACK_TIMEOUT,
@@ -355,13 +362,13 @@ def _finish_at_start(rt: Runtime, clock) -> IdleBridge:
 # --- Handler des Regel-Workers ---
 
 def _run_local_check(rt: Runtime, fehler_text: str) -> None:
-    """regulation.run_local_check, Fehler gehen nie nach oben. Ein ValueError ist der erwartete Datenfehler (ein
+    """regulation.run_local_check, Fehler gehen nie nach oben. SignalUngueltig ist der erwartete Datenfehler (ein
     Fuehler liefert keinen gueltigen Wert, L4-17): der Tick meldet ihn dem Kunden, hier genuegt eine WARNING ohne
     Traceback, solange er anhaelt nur DEBUG, nach einem erfolgreichen Check wieder eine WARNING. Jede andere
     Ausnahme ist ein Fehler im Code oder auf der Anlage und bleibt `logger.exception`."""
     try:
         regulation.run_local_check(rt)
-    except ValueError as error:
+    except SignalUngueltig as error:
         meldung = lesbar(str(error))
         if rt.local_check_data_fault_logged:
             logger.debug("Lokaler Check: %s", meldung)

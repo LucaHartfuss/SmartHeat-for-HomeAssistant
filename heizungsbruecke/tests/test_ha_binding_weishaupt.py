@@ -8,6 +8,7 @@ from heizungsbruecke.ha_binding import WeishauptHaBinding, weishaupt_option, wei
 from smartheat_core import write_budget
 from smartheat_core.pipeline import DeviceWriteError, LeverPipeline, WriteBudgetExhausted
 from smartheat_core.safety import resolve_local_safety
+from smartheat_runtime.ports import SignalUngueltig
 from smartheat_runtime.roles import ChannelManifest
 
 MANIFEST = ChannelManifest(refs={
@@ -90,7 +91,7 @@ def test_a_failing_comfort_write_leaves_the_normal_setpoint_untouched():
 
 def test_an_unreadable_comfort_setpoint_is_a_write_error():
     ha = FakeHa(**{"number.komfort": float("nan")})
-    with pytest.raises(ValueError, match="setpoint_comfort"):
+    with pytest.raises(SignalUngueltig, match="setpoint_comfort"):  # erwartet ungueltig, kein Programmfehler (L4-17)
         _binding(ha).write("room_setpoint", 23.0)
     assert ha.calls == []
 

@@ -1,3 +1,4 @@
+import logging
 import stat
 
 import pytest
@@ -161,6 +162,29 @@ def test_retain_of_another_block_or_nesting_does_not_count(tmp_path):
     assert geschrieben
     assert path.read_text() == ("version: 4\nmqtt:\n  retain: true\ndevice_options:\n  retain: true\n"
                                 "  tief:\n    retain: true\n")
+
+
+@pytest.mark.parametrize("kopf", ["device_options: {}", "device_options: {retain: false}", "device_options: # Kommentar"])
+def test_a_device_options_form_that_cannot_be_healed_logs_a_warning_without_the_file_content(tmp_path, caplog, kopf):
+    """Review Task 1, Minor 1: kein stilles Nicht-Heilen; die Zeile nennt keinen Dateiinhalt."""
+    text = f"version: 4\n{kopf}\n  geheim: dateiinhalt\n"
+    with caplog.at_level(logging.WARNING, logger="smartheat_gateway.z2m_config"):
+        geschrieben, path = _geheilt(tmp_path, text)
+    assert not geschrieben and path.read_text() == text
+    (zeile,) = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert "nicht heilbar" in zeile and "von Hand" in zeile and "dateiinhalt" not in zeile
+
+
+@pytest.mark.parametrize("text", [
+    ALT,  # fehlender Block: heilbar
+    "version: 4\ndevice_options:\n  legacy: true\n",  # Block ohne retain: heilbar
+    "version: 4\ndevice_options:\n  retain: true\n",  # schon in Ordnung
+    "version: 4\ndevice_options: {retain: true}\n",  # Flow-Form, retain erkennbar schon true
+])
+def test_no_warning_when_the_form_is_healable_or_already_fine(tmp_path, caplog, text):
+    with caplog.at_level(logging.WARNING, logger="smartheat_gateway.z2m_config"):
+        _geheilt(tmp_path, text)
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
 
 
 def test_device_options_in_flow_style_and_unreadable_files_stay_alone(tmp_path):

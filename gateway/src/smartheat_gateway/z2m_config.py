@@ -6,10 +6,13 @@ Zigbee2MQTT 2.x kennt die Option nicht mehr, Koppeln ist nach dem Start immer au
 G2b pruefen). device_options.retain: true laesst Zigbee2MQTT Geraetewerte retained senden; nach einem Neustart der
 Laufzeit gelten sie ueber das last_seen (advanced.last_seen: ISO_8601) sofort, wenn sie juenger als die Frist sind
 (ZigbeeMirror, L4-17); bestehende Dateien heilt sync_device_options."""
+import logging
 import re
 from pathlib import Path
 
 from smartheat_core import dateien
+
+logger = logging.getLogger(__name__)
 
 TEMPLATE = """\
 version: 4
@@ -105,6 +108,7 @@ def sync_credentials(zigbee_dir: Path, username: str, password: str) -> bool:
     return changed
 
 
+_RETAIN_TRUE_IN_LINE = re.compile(r"retain: *[\"']?true\b", re.IGNORECASE)
 _RETAIN_LINE = re.compile(r"^(?P<indent> +)retain: *(?P<value>[^#]*?) *(?P<comment>#.*)?$")
 
 
@@ -120,8 +124,13 @@ def sync_device_options(zigbee_dir: Path) -> bool:
     except (OSError, ValueError):  # fehlt, Verzeichnis, keine Rechte, kein UTF-8: Datei bleibt unberuehrt
         return False
     start = next((i for i, line in enumerate(lines) if line.rstrip() == "device_options:"), None)
-    if start is None and any(line.startswith("device_options:") for line in lines):
-        return False  # andere Schreibweise (z.B. {retain: true}): nicht raten, ein zweiter Schluessel waere Unsinn
+    if start is None and (kopf := next((line for line in lines if line.startswith("device_options:")), None)):
+        # andere Schreibweise ({}, {retain: true}, Kommentar in der Kopfzeile): nicht raten, ein zweiter Schluessel waere
+        # Unsinn. Steht retain: true erkennbar schon da, ist nichts zu melden, sonst bliebe L4-17 unbemerkt offen.
+        if not _RETAIN_TRUE_IN_LINE.search(kopf):
+            logger.warning("Zigbee2MQTT configuration.yaml: device_options in einer Schreibweise, die nicht heilbar ist, "
+                           "retain fehlt moeglicherweise: retain: true unter device_options von Hand ergaenzen")
+        return False
     if start is None:
         if lines and not lines[-1].endswith("\n"):
             lines[-1] += "\n"

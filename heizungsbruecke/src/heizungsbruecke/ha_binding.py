@@ -11,6 +11,7 @@ from typing import cast
 from smartheat_core.binding import BindingDescription
 from smartheat_core.logtext import lesbar
 from smartheat_core.zahlen import ist_endliche_zahl
+from smartheat_runtime.ports import SignalUngueltig
 from smartheat_runtime.roles import LEVER_ROLES, ChannelManifest
 
 logger = logging.getLogger(__name__)
@@ -177,7 +178,7 @@ class WeishauptHaBinding(HaPlantBinding):
     def _number(self, role: str) -> float:
         value = self._ha_api.get_state(self._manifest.refs[role])
         if not ist_endliche_zahl(value):
-            raise ValueError(f"{role} liefert keinen endlichen Wert: {value!r}")
+            raise SignalUngueltig(f"{role} liefert keinen endlichen Wert: {value!r}")
         return value
 
     def _set_number(self, role: str, value: float) -> None:

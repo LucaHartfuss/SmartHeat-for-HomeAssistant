@@ -10,7 +10,7 @@ from fakes import HaWebSocket, ha_antwort
 
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_signals import HaSignalSource
-from smartheat_runtime.ports import SourceUnavailable
+from smartheat_runtime.ports import SignalUngueltig, SourceUnavailable
 
 FLOW_URL = "http://supervisor/core/api/config/config_entries/flow"
 
@@ -56,17 +56,19 @@ def test_get_raw_state_raises_on_ha_failure_states(bad_state):
     mock_response.json.return_value = {"state": bad_state}
     mock_response.raise_for_status.return_value = None
 
-    with patch("heizungsbruecke.ha_api.requests.get", autospec=True, return_value=mock_response), pytest.raises(ValueError):
+    with (patch("heizungsbruecke.ha_api.requests.get", autospec=True, return_value=mock_response),
+          pytest.raises(SignalUngueltig)):  # erwartet ungueltig (L4-17), kein Programmfehler
         api.get_raw_state("sensor.mode")
 
 
 def test_get_raw_state_rejects_attribute_reference_without_http_call():
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
 
-    with patch("heizungsbruecke.ha_api.requests.get", autospec=True) as mock_get, pytest.raises(ValueError):
+    with patch("heizungsbruecke.ha_api.requests.get", autospec=True) as mock_get, pytest.raises(ValueError) as caught:
         api.get_raw_state("climate.x::hvac_action")
 
     mock_get.assert_not_called()
+    assert not isinstance(caught.value, SignalUngueltig)  # Programmfehler, kein ungueltiger Wert
 
 
 def test_get_state_with_attribute_reference_reads_named_attribute():
@@ -98,7 +100,7 @@ def test_get_state_with_attribute_beyond_float_range_is_a_value_error(huge):
     mock_response.raise_for_status.return_value = None
 
     with (patch("heizungsbruecke.ha_api.requests.get", autospec=True, return_value=mock_response),
-          pytest.raises(ValueError)):
+          pytest.raises(SignalUngueltig)):
         api.get_state("climate.wohnzimmer_thermostat::temperature")
 
 
@@ -864,7 +866,7 @@ def test_get_state_without_a_number_is_a_value_error(zustand):
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
     with (
         patch("heizungsbruecke.ha_api.requests.get", autospec=True, return_value=ha_antwort({"state": zustand})),
-        pytest.raises(ValueError),
+        pytest.raises(SignalUngueltig, match=zustand),
     ):
         api.get_state("sensor.vorlauf")
 
