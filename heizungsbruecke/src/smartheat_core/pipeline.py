@@ -21,10 +21,10 @@ Wert auf die lokalen Grenzen begrenzt und auf die Schrittweite der Anlage gerund
 
 Plan 3b: Jeder physische Schreibvorgang (binding.physical_writes; eine Schreibgruppe zaehlt je physischem Aufruf,
 A6-09) zaehlt in das Tagesbudget TOTAL (nur mit BindingDescription.daily_write_limit) und in den Lebensdauerzaehler
-(nur mit lifetime_hint_at). Das Tagesbudget begrenzt Serverwerte, Durchsetzen, Vorbereitung und Mindestvorlauf; ein Boost startet
-am Tageslimit nicht (A6-01), Boost-Ende und Wiederherstellung sind ausgenommen, zaehlen aber mit (der Rueckweg hat
-Vorrang vor der Schonung). Jeder Boost-Start zaehlt (Comfort: boost_start, Notfall: emergency_start; je hoechstens 6 am
-Tag, 30 min Abstand, A6-01/A6-34). Ein wegen des Budgets nicht geschriebener Serverwert bleibt im
+(nur mit lifetime_hint_at). Das Tagesbudget begrenzt Serverwerte, Durchsetzen, Vorbereitung und Mindestvorlauf; ein
+Boost startet am Tageslimit nicht (A6-01), Boost-Ende und Wiederherstellung sind ausgenommen, zaehlen aber mit (der
+Rueckweg hat Vorrang vor der Schonung). Jeder Boost-Start zaehlt (Comfort: boost_start, Notfall: emergency_start; je
+hoechstens 6 am Tag, 30 min Abstand, A6-01/A6-34). Ein wegen des Budgets nicht geschriebener Serverwert bleibt im
 Wiederherstellungspunkt und in deferred_levers und wird mit write_deferred nachgeholt."""
 import logging
 import math
