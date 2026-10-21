@@ -90,7 +90,7 @@ services:
     <<: *hardening
     # Zigbee2MQTT 2.14.2 (Index-Digest, amd64 + arm64). Lauf mit Stick erst in G2b (Hardware-Gate).
     # Gleiche uid wie das Gateway-Image: der Init-Schritt schreibt configuration.yaml mit 0600, Zigbee2MQTT liest und
-    # ersetzt sie (GENERATE). Kein retain fuer Geraete (z2m_config).
+    # ersetzt sie (GENERATE). Geraetewerte retained (device_options.retain, z2m_config, L4-17).
     image: koenkk/zigbee2mqtt:2.14.2@sha256:addbfb08fcef2e4477de1535636118241e10d13e898fbe4d9faba8a4d7396311
     user: "1000:1000"
     group_add: [dialout]

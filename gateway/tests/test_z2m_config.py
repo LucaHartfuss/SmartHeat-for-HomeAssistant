@@ -167,12 +167,14 @@ def test_retain_of_another_block_or_nesting_does_not_count(tmp_path):
 @pytest.mark.parametrize("kopf", ["device_options: {}", "device_options: {retain: false}", "device_options: # Kommentar"])
 def test_a_device_options_form_that_cannot_be_healed_logs_a_warning_without_the_file_content(tmp_path, caplog, kopf):
     """Review Task 1, Minor 1: kein stilles Nicht-Heilen; die Zeile nennt keinen Dateiinhalt."""
-    text = f"version: 4\n{kopf}\n  geheim: dateiinhalt\n"
+    text = f"version: 4\n{kopf}\n  network_key: GEHEIM-MARKE-4711\n"
     with caplog.at_level(logging.WARNING, logger="smartheat_gateway.z2m_config"):
         geschrieben, path = _geheilt(tmp_path, text)
     assert not geschrieben and path.read_text() == text
     (zeile,) = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-    assert "nicht heilbar" in zeile and "von Hand" in zeile and "dateiinhalt" not in zeile
+    assert "nicht heilbar" in zeile and "von Hand" in zeile
+    assert "GEHEIM-MARKE-4711" in path.read_text()  # die Marke steht in der Datei, ...
+    assert all("GEHEIM-MARKE-4711" not in f"{r.getMessage()} {r.args}" for r in caplog.records)  # ... in keiner Logzeile
 
 
 @pytest.mark.parametrize("text", [
