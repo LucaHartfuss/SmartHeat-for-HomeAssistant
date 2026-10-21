@@ -1,12 +1,17 @@
 """Zigbee-Spiegel (Spec SHG G2 5): letzte Werte der Geraete aus Zigbee2MQTT mit Zeitstempel der MONOTONEN Uhr (die
 Wanduhr des Pi springt beim Boot, Plan G2a Review Focus 1), Faehigkeiten aus bridge/devices (exposes), Schreiben ans
 Thermostat, Koppeln, erfolgreiche Interviews (bridge/event) fuer die Thermostat-Pflege. Friendly Name = IEEE-Adresse.
-Callbacks laufen im Bus-Thread; der Spiegel haelt nur Daten. Retained Geraetemeldungen gelten bis zur ersten
-Live-Meldung als veraltet."""
+Callbacks laufen im Bus-Thread; der Spiegel haelt nur Daten. Retained Geraetemeldungen (Broker-Replay nach einem
+Neustart der Laufzeit) gelten nur, wenn sie das `last_seen` von Zigbee2MQTT (ISO 8601 mit Zeitzone) tragen und dessen
+Alter auf der Wanduhr zwischen 0 und max_age liegt (L4-17); sonst, auch bei einem `last_seen` in der Zukunft (Uhr
+nach dem Boot noch nicht gestellt), gelten sie bis zur ersten Live-Meldung als veraltet. Retained Meldungen loesen nie
+Geraete-Hooks aus."""
 import logging
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 
 from smartheat_gateway import topics
 from smartheat_gateway.bus import Bus, decode
@@ -68,9 +73,11 @@ def _art(faehigkeiten: frozenset[str]) -> str:
 
 
 class ZigbeeMirror:
-    def __init__(self, bus: Bus, clock: Callable[[], float], max_age: float = DEFAULT_MAX_AGE_SECONDS) -> None:
+    def __init__(self, bus: Bus, clock: Callable[[], float], max_age: float = DEFAULT_MAX_AGE_SECONDS,
+                 wall: Callable[[], float] = time.time) -> None:
         self._bus = bus
         self._clock = clock
+        self._wall = wall
         self._max_age = max_age
         self._lock = threading.Lock()
         self._online: bool | None = None
@@ -148,14 +155,31 @@ class ZigbeeMirror:
         elif parts[1:] == ["bridge", "event"] and not retain:
             self._on_bridge_event(body)
         elif len(parts) == 2 and parts[1] != "bridge" and isinstance(body, dict):
-            # Retained Meldungen (Broker-Replay beim Verbinden) sind beliebig alt: speichern, aber nicht frisch
-            # stempeln und keine Geraete-Hooks (Plan G2b-1 Praezisierung 13).
+            # Retained Meldungen (Broker-Replay beim Verbinden) sind beliebig alt: nur mit frischem last_seen stempeln
+            # (L4-17), sonst gespeichert, aber nicht frisch; keine Geraete-Hooks (Plan G2b-1 Praezisierung 13).
             with self._lock:
-                self._payloads[parts[1]] = (body, None if retain else self._clock())
+                self._payloads[parts[1]] = (body, self._retained_stamp(body) if retain else self._clock())
             if retain:
                 return
             for hook in self._hooks:
                 hook(parts[1], body)
+
+    def _retained_stamp(self, body: dict) -> float | None:
+        """Zeitstempel der monotonen Uhr fuer eine retained Meldung aus ihrem last_seen, None wenn sie nicht frisch ist
+        (fehlt, kein ISO mit Zeitzone, in der Zukunft, aelter als max_age)."""
+        raw = body.get("last_seen")
+        if not isinstance(raw, str):
+            return None
+        try:
+            moment = datetime.fromisoformat(raw)
+            if moment.tzinfo is None or moment.utcoffset() is None:
+                return None
+            age = self._wall() - moment.timestamp()
+        except (ValueError, OverflowError, OSError):
+            return None
+        if not 0 <= age <= self._max_age:
+            return None
+        return self._clock() - age
 
     def _on_bridge_event(self, body) -> None:
         if not isinstance(body, dict) or body.get("type") != "device_interview":

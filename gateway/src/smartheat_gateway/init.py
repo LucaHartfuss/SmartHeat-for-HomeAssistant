@@ -121,6 +121,8 @@ def ensure(bus_dir: Path, zigbee_dir: Path, data_dir: Path, adapter_name: str,
         written.append("zigbee2mqtt/configuration.yaml")
     elif z2m_config.sync_credentials(zigbee_dir, "zigbee2mqtt", passwords["zigbee2mqtt"]):
         written.append("zigbee2mqtt/configuration.yaml (Zugangsdaten)")
+    if z2m_config.sync_device_options(zigbee_dir):
+        written.append("zigbee2mqtt/configuration.yaml (retain)")
     for name in ("device",):
         path = data_dir / name
         if not path.is_dir():

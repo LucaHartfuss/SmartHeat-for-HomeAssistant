@@ -6,7 +6,7 @@ import re
 
 from smartheat_gateway.bus import Bus
 from smartheat_gateway.zigbee import ZigbeeMirror
-from smartheat_runtime.ports import SignalNotFound, SourceUnavailable
+from smartheat_runtime.ports import SignalNotFound, SignalUngueltig, SourceUnavailable
 from smartheat_runtime.room_mean import room_mean
 
 REF_ROOM_TARGET = "soll:room_target"
@@ -39,7 +39,7 @@ class GatewaySignalSource:
                     values.append(None)
             mean = room_mean(values)
             if mean is None:
-                raise ValueError("kein Raumfuehler liefert einen gueltigen Wert")
+                raise SignalUngueltig("kein Raumfuehler liefert einen gueltigen Wert")
             return mean
         if ref.startswith("treiber:"):
             if self._driver is None:
@@ -55,11 +55,11 @@ class GatewaySignalSource:
     def get_state(self, ref: str) -> float:
         value = self._raw(ref)
         if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"{ref} liefert keine Zahl: {value!r}")
+            raise SignalUngueltig(f"{ref} liefert keine Zahl: {value!r}")
         try:
             return float(value)
         except OverflowError:  # JSON liefert beliebig grosse Ganzzahlen
-            raise ValueError(f"{ref} liegt ausserhalb des Zahlenbereichs") from None
+            raise SignalUngueltig(f"{ref} liegt ausserhalb des Zahlenbereichs") from None
 
     def get_raw_state(self, ref: str) -> str:
         value = self._raw(ref)

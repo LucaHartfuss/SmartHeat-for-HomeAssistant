@@ -125,6 +125,28 @@ def test_new_zigbee2mqtt_password_reaches_its_configuration(tmp_path):
     assert 'password: "test-neu"' in (tmp_path / "zigbee2mqtt" / "configuration.yaml").read_text()
 
 
+def test_an_existing_configuration_without_retain_is_healed_and_reported(tmp_path):
+    """L4-17: Gateways mit alter Grundkonfiguration bekommen device_options.retain: true; ein zweiter Lauf schweigt."""
+    _run(tmp_path)
+    config = tmp_path / "zigbee2mqtt" / "configuration.yaml"
+    config.write_text(config.read_text().replace("device_options:\n  retain: true\n", ""))
+    assert "device_options" not in config.read_text()
+    assert _run(tmp_path) == ["zigbee2mqtt/configuration.yaml (retain)"]
+    assert "device_options:\n  retain: true\n" in config.read_text()
+    assert stat.S_IMODE(config.stat().st_mode) == 0o600
+    assert _run(tmp_path) == []
+
+
+def test_credentials_and_retain_are_both_healed_in_one_run(tmp_path):
+    _run(tmp_path)
+    config = tmp_path / "zigbee2mqtt" / "configuration.yaml"
+    config.write_text(config.read_text().replace("device_options:\n  retain: true\n", ""))
+    (tmp_path / "bus" / "credentials" / "zigbee2mqtt" / "bus.json").unlink()
+    written = _run(tmp_path, token=lambda n=32: "test-neu")
+    assert written[-2:] == ["zigbee2mqtt/configuration.yaml (Zugangsdaten)", "zigbee2mqtt/configuration.yaml (retain)"]
+    assert 'password: "test-neu"' in config.read_text() and "retain: true" in config.read_text()
+
+
 def test_mosquitto_verify():
     line = init.mosquitto_hash("test-pw")
     assert init.mosquitto_verify("test-pw", line) and not init.mosquitto_verify("test-anders", line)

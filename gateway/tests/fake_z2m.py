@@ -3,6 +3,7 @@
 (main())."""
 import os
 import time
+from datetime import UTC, datetime
 
 from smartheat_gateway.bus import decode
 
@@ -25,8 +26,11 @@ _W100 = [
 
 
 class FakeZigbee2Mqtt:
-    def __init__(self, bus) -> None:
+    def __init__(self, bus, wall=None) -> None:
+        """`wall`: Wanduhr (Sekunden); gesetzt, tragen alle Meldungen last_seen (E2E-Prozess: time.time), damit das
+        retained Replay nach einem Neustart der Laufzeit als frisch gilt (L4-17)."""
         self._bus = bus
+        self._wall = wall
         self._devices: list[dict] = []
         self._sleepy: set[str] = set()
         self._held: dict[str, float] = {}
@@ -80,7 +84,13 @@ class FakeZigbee2Mqtt:
         if ieee in self._held:
             self.report(ieee, occupied_heating_setpoint=self._held.pop(ieee), local_temperature=20.0)
 
-    def report(self, ieee: str, **values) -> None:
+    def report(self, ieee: str, *, wall: float | None = None, **values) -> None:
+        """Messwerte melden (retained wie Zigbee2MQTT mit device_options.retain); mit `wall` (Wanduhr der Testwelt in
+        Sekunden) traegt die Meldung last_seen als ISO 8601 mit Zeitzone wie advanced.last_seen: ISO_8601."""
+        if wall is None and self._wall is not None:
+            wall = self._wall()
+        if wall is not None:
+            values["last_seen"] = datetime.fromtimestamp(wall, UTC).isoformat()
         self._bus.publish(f"{BASE}/{ieee}", values, retain=True)
 
     def _add(self, ieee: str, model: str, vendor: str, exposes: list) -> None:
@@ -117,7 +127,7 @@ def main() -> None:  # laeuft im Container (E2E gateway2), getestet in test_fake
     )
     bus.start()
     bus.wait_connected()
-    z2m = FakeZigbee2Mqtt(bus)
+    z2m = FakeZigbee2Mqtt(bus, wall=time.time)  # last_seen wie Zigbee2MQTT: der retained-Pfad kommt in die E2E
     z2m.bridge(online=True)
     sensor = os.environ.get("FAKE_Z2M_SENSOR", "0x00124b0000000001")
     z2m.add_sensor(sensor)

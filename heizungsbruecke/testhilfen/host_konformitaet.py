@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from smartheat_core import dateien
 from smartheat_device.commands import CommandRegister
 from smartheat_runtime import dokument_config
+from smartheat_runtime.ports import SignalUngueltig
 from smartheat_runtime.soll_eingang import EV_TARGET_INPUT
 from smartheat_runtime.soll_speicher import SOURCE_PORTAL
 from smartheat_runtime.worker import RegulationWorker
@@ -59,6 +60,9 @@ class Welt:
     abgemeldet_pfad: Path  # wohin sign_off die Abmelde-Markierung schreibt (Host)
     konfiguration: dict  # eine eingerichtete Konfiguration des Hosts
     wunsch_herkunft: str  # herkunft, mit der host.wunsch(wert) den Geraetekern ruft
+    # Liest einen Fuehlerwert ueber die echte SignalSource des Hosts: der Fuehler meldet `roh` (Zahl oder Text wie
+    # "unavailable"), die Antwort ist get_state(Fuehler-Referenz) (Spec Fixrunde A SignalUngueltig 4).
+    fuehler_lesen: Callable[[float | str], float]
 
     def verbunden(self) -> KonformDevice:
         device = KonformDevice(dict(self.konfiguration))
@@ -322,6 +326,20 @@ def wunsch_und_soll_quelle_gehen_an_das_geraet(w: Welt) -> None:
     assert device.wuensche == [(30.0, w.wunsch_herkunft, None)] and device.aus == [(True, 21.0)]
 
 
+def ein_ungueltiger_fuehlerwert_wirft_signal_ungueltig(w: Welt) -> None:
+    """V2 (Port SignalSource): ein Fuehler ohne gueltigen Wert (nicht verfuegbar, unbekannt, Text) ist der erwartete
+    Lesefall SignalUngueltig, kein einfacher ValueError; die Laufzeit loggt ihn als WARNING statt ERROR (L4-17)."""
+    assert w.fuehler_lesen(21.5) == 21.5  # Gegenprobe: ein gueltiger Wert wird gelesen
+    for roh in ("unavailable", "unknown", "kein Wert"):
+        try:
+            w.fuehler_lesen(roh)
+        except SignalUngueltig:
+            continue
+        except Exception as error:
+            raise AssertionError(f"{roh!r}: {type(error).__name__} statt SignalUngueltig") from error
+        raise AssertionError(f"{roh!r} muss SignalUngueltig werfen")
+
+
 def host_und_version(w: Welt) -> None:
     assert w.host.host in ("ha", "gateway") and isinstance(w.host.version, str) and w.host.version
 
@@ -339,7 +357,7 @@ PRUEFUNGEN = (
     ein_sign_off_nach_der_neuen_konfiguration_meldet_wieder_ab,
     eine_leere_oder_fremde_konfiguration_laesst_die_abmeldung_stehen,
     ohne_eigene_abmeldung_startet_dieselbe_konfiguration_nicht_neu, wunsch_und_soll_quelle_gehen_an_das_geraet,
-    host_und_version,
+    ein_ungueltiger_fuehlerwert_wirft_signal_ungueltig, host_und_version,
 )
 
 
