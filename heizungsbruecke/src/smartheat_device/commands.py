@@ -16,7 +16,9 @@ erneut zugestellten Nachricht. Fertige Befehle beantwortet das Register auch dan
 
 Ein Handler liefert Done, Failed oder Waiting; wartende Befehle prueft pruefen() ohne zu blockieren. Done kann eine
 Inventur tragen: sie geht als up/inventory vor dem Ergebnis (Spec 3.4); ohne Verbindung wartet der Befehl, bis sie
-gesendet ist. Eingebaut, weil jedes Geraet ihn koennen muss: hinweis (Hinweise)."""
+gesendet ist, und das Ergebnis geht erst, wenn der Broker alle Teile bestaetigt hat (inventur_bestaetigt, PUBACK):
+ein Neustart davor laesst den Marker "gestartet" stehen, die (wiederholbare) Erkennung laeuft dann erneut (L4-02).
+Eingebaut, weil jedes Geraet ihn koennen muss: hinweis (Hinweise)."""
 import logging
 import time
 import traceback
@@ -35,6 +37,9 @@ HINWEISE_FILE = "hinweise.json"
 DONE_KEEP = 500
 COMMAND_ID_MAX_CHARS = 64
 TIMEOUT_GRUND = "keine_bestaetigung"
+#: Wartezeit auf die Bestaetigung (PUBACK) aller Inventurteile; danach gehen die Teile noch einmal hoch (der Server
+#: fuegt ein Teil nur einmal ein), falls eine Bestaetigung verloren ging (z. B. Wechsel des Ports mit neuem Client).
+INVENTUR_BESTAETIGUNG_SECONDS = 60.0
 HINWEIS_KEY_MAX_CHARS = 64
 HINWEIS_TEXT_MAX_CHARS = 1000
 #: Arten, deren Pflichtfelder die Phase bestimmt (Command.payload ist dort die Vereinigung aller Phasen,
@@ -104,7 +109,7 @@ class CommandRegister:
     """Register und Einmal-Ausfuehrung; alle Methoden laufen im Geraete-Thread."""
 
     def __init__(self, device_dir: Path, send_result: Callable[[dict], bool], *,
-                 send_inventory: Callable[[str, dict], bool] | None = None,
+                 send_inventory: Callable[[str, dict], list[int] | None] | None = None,
                  clock: Callable[[], float] = time.monotonic,
                  uebersetzen: Callable[[Exception], Failed | None] = lambda error: None) -> None:
         self._path = device_dir / STORE_FILE
@@ -113,6 +118,8 @@ class CommandRegister:
         self._handlers: dict[str, Handler] = {}
         self._wiederholbar: set[str] = set()
         self._pending: dict[str, tuple[str, Waiting]] = {}
+        #: je Befehl die mids der gesendeten Inventurteile, auf deren PUBACK das Ergebnis wartet
+        self._inventur_offen: dict[str, set[int]] = {}
         self._done = _load_done(self._path)
 
     def register(self, kind: str, handler: Handler, *, wiederholbar: bool = False) -> None:
@@ -149,6 +156,11 @@ class CommandRegister:
                 self._finish_or_wait(command_id, "", Failed("intern"))
             return
         self._finish_or_wait(command_id, kind, self._execute(command_id, kind, message))
+
+    def inventur_bestaetigt(self, mid: int) -> None:
+        """PUBACK des Brokers (Ereignis GESENDET des Links) fuer eine Nachricht; zaehlt nur fuer Inventurteile."""
+        for offen in self._inventur_offen.values():
+            offen.discard(mid)
 
     def pruefen(self) -> None:
         """Wartende Befehle (Takt des Geraets): fertig, gescheitert oder Frist abgelaufen."""
@@ -234,17 +246,34 @@ class CommandRegister:
         self._send_result(result_payload(command_id, ok, result, error))
 
     def _inventur_senden(self, command_id: str, kind: str, done: Done) -> Done | Failed | None:
+        """Gibt None zurueck, solange das Ergebnis nicht gesendet werden darf: ohne Verbindung (neuer Versuch im
+        Takt) und bis alle Teile bestaetigt sind. Erst dann folgt Done ohne Inventur, das Ergebnis geht hoch."""
         assert done.inventur is not None
         if self._send_inventory is None:
             return Failed("intern")
         try:
-            gesendet = self._send_inventory(command_id, done.inventur)
+            mids = self._send_inventory(command_id, done.inventur)
         except ValueError as error:
             logger.error("Inventur zu Befehl %s nicht gesendet (%s)", lesbar(command_id), type(error).__name__)
             return Failed("intern")
-        if gesendet:
+        if mids is None:
+            self._pending[command_id] = (kind, Waiting(lambda: done, float("inf")))
+            return None
+        if not mids:
             return Done(done.result)
-        self._pending[command_id] = (kind, Waiting(lambda: done, float("inf")))
+        offen = self._inventur_offen[command_id] = set(mids)
+        frist = self._clock() + INVENTUR_BESTAETIGUNG_SECONDS
+
+        def bestaetigt() -> Done | None:
+            if not offen:
+                self._inventur_offen.pop(command_id, None)
+                return Done(done.result)
+            if self._clock() >= frist:  # Bestaetigung verloren: die Teile gehen noch einmal hoch
+                self._inventur_offen.pop(command_id, None)
+                return done
+            return None
+
+        self._pending[command_id] = (kind, Waiting(bestaetigt, float("inf")))
         return None
 
     def _store(self, command_id: str, entry: Entry) -> None:

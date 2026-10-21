@@ -680,10 +680,35 @@ def test_inventory_parts_go_up_before_the_result(tmp_path):
     world = World(tmp_path, host)
     world.verbinden()
     world.empfangen("down/command", _command("inventory", payload={"stunden": 1}))
-    names = world.link.topics()
-    assert names.index("up/inventory") < names.index("up/result")
     assert world.link.of("up/inventory") == [{"schema": 1, "command_id": "c1", "teil": 1, "teile": 1,
                                               "daten": {"kandidaten": [1, 2]}}]
+    assert world.link.of("up/result") == []  # erst nach dem PUBACK der Teile (L4-02)
+    world.link.ereignis("gesendet", world.link.topics().index("up/inventory") + 1)
+    world.device.schritt()
+    names = world.link.topics()
+    assert names.index("up/inventory") < names.index("up/result")
+    assert world.link.of("up/result") == [commands.result_payload("c1", True, {}, None)]
+
+
+def test_der_befehl_einer_inventur_endet_erst_nach_dem_puback_auch_ueber_ein_trennen(tmp_path):
+    """Ein Trennen vor dem PUBACK laesst den Befehl stehen: kein Ergebnis, die Erkennung laeuft nicht noch einmal;
+    kommt das PUBACK nach dem Verbinden (paho sendet unbestaetigte QoS-1-Nachrichten erneut), geht das Ergebnis."""
+    calls = []
+    host = FakeHost()
+    host.handlers = {"inventory": lambda payload: calls.append(1) or commands.Done({}, inventur={"kandidaten": [1]})}
+    world = World(tmp_path, host)
+    world.verbinden()
+    world.empfangen("down/command", _command("inventory", payload={"stunden": 1}))
+    mid = world.link.topics().index("up/inventory") + 1
+    world.link.trennen()
+    world.device.schritt()
+    world.link.verbinden()
+    world.device.schritt()
+    world.empfangen("down/command", _command("inventory", payload={"stunden": 1}))  # erneute Zustellung nach hello
+    assert world.link.of("up/result") == [] and calls == [1]
+    world.link.ereignis("gesendet", mid)
+    world.device.schritt()
+    assert len(world.link.of("up/result")) == 1 and calls == [1]
 
 
 def test_an_inventory_outside_the_contract_fails_intern_without_a_value(tmp_path, caplog, monkeypatch):
@@ -1758,6 +1783,9 @@ def test_an_inventory_finished_before_hello_goes_up_after_hello(tmp_path):
     world.link.verbinden()
     world.device.schritt()
     assert [p["daten"] for p in world.link.of("up/inventory")] == [{"kandidaten": [1]}]
+    assert world.link.of("up/result") == []  # erst nach dem PUBACK
+    world.link.ereignis("gesendet", world.link.topics().index("up/inventory") + 1)
+    world.device.schritt()
     assert [(r["command_id"], r["ok"]) for r in world.link.of("up/result")] == [("c1", True)]
 
 

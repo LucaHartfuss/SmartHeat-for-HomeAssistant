@@ -214,6 +214,33 @@ def test_inventory_runs_in_the_background(tmp_path, monkeypatch):
     host.hintergrund.stop()
 
 
+def test_inventory_is_repeatable_after_a_restart(tmp_path, monkeypatch):
+    """L4-02 (a): Marker "gestartet" im Journal (Neustart fiel in die Erkennung): die erneute Zustellung fuehrt sie
+    noch einmal aus (kein "intern"), das Ergebnis geht erst nach dem PUBACK der Inventur; ein Duplikat danach laeuft
+    nicht noch einmal."""
+    ha = FakeHa()
+    ha.states = {"climate.wz": "heat"}
+    ha.registry = [{"entity_id": "climate.wz", "platform": "mypyllant"}]
+    host, _, clock = _host(tmp_path, monkeypatch, ha=ha)
+    (tmp_path / "befehle.json").write_text(json.dumps([["c1", None, None, None]]))
+    sent, teile = [], []
+    register = CommandRegister(tmp_path, lambda body: sent.append(body) or True, clock=clock,
+                               send_inventory=lambda command_id, daten: teile.append(daten) or [1])
+    host.befehle_eintragen(register)
+    befehl = {"schema": 1, "command_id": "c1", "kind": "inventory",
+              "payload": {"stunden": 0, "filter": {"plattformen": ["mypyllant"]}},
+              "expires_at": "2027-01-01T00:00:00+00:00"}
+    register.empfangen(befehl)
+    _warten(lambda: register.pruefen() or (teile or None))
+    assert [e["entity_id"] for e in teile[0]["entities"]] == ["climate.wz"] and sent == []
+    register.inventur_bestaetigt(1)
+    register.pruefen()
+    assert [(body["ok"], body["error"]) for body in sent] == [(True, None)]
+    register.empfangen(befehl)
+    assert len(teile) == 1 and len(sent) == 2
+    host.hintergrund.stop()
+
+
 def test_a_filter_with_ten_thousand_entries_is_not_limited_and_the_answer_stays_under_the_message_limit(
         tmp_path, monkeypatch):
     """Heutiges Verhalten (kompromittierter Server): die Laenge der Filterlisten ist nicht begrenzt, ein Filter mit je

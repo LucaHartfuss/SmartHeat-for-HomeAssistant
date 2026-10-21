@@ -308,6 +308,7 @@ class Device:
                 self._nachricht(*daten)
             elif art == GESENDET:
                 self.wunsch_puffer.bestaetigt(daten[0])
+                self.befehle.inventur_bestaetigt(daten[0])
         elif quelle == "wunsch":
             self._wunsch(*item[1:])
         elif quelle == "eigene":
@@ -544,11 +545,13 @@ class Device:
     def _ergebnis_senden(self, body: dict) -> bool:
         return self._publish_nach_hello("up/result", body) is not None
 
-    def _inventur_senden(self, command_id: str, daten: dict) -> bool:
+    def _inventur_senden(self, command_id: str, daten: dict) -> list[int] | None:
+        """mids der gesendeten Teile; None, wenn (noch) nicht alle hinausgingen. Das Register wartet auf ihr PUBACK."""
         teile = inventory.nachrichten(command_id, daten)  # ValueError (zu gross) wertet das Register aus
         if not self._bereit:
-            return False
-        return all(self._publish("up/inventory", nachricht) is not None for nachricht in teile)
+            return None
+        mids = [self._publish("up/inventory", nachricht) for nachricht in teile]
+        return None if None in mids else [mid for mid in mids if mid is not None]
 
     def _claim_state(self, payload: dict) -> commands.Outcome:
         """Uebernahmestand vom Server (Spec 5c F1): Discovery, Seite und Zustand folgen im naechsten Takt. Gueltig ist
