@@ -1,5 +1,7 @@
 """Spec 5c 1.3: das HA-Add-on als DeviceHost (Faehigkeiten, Uhr, Pruefung, Befehle, Dokumente, Wunsch, Raum)."""
+import io
 import json
+import logging
 import stat
 import time
 
@@ -10,7 +12,7 @@ from fakes import FakeHa, HttpAntwort, nachricht_bytes
 from geraet_helpers import konfiguration_aus_optionen
 from test_runtime import OPTIONS, env  # noqa: F401 - env ist eine Fixture
 
-from heizungsbruecke import config, discovery, geraet_host
+from heizungsbruecke import config, discovery, geraet_host, stdin_befehl
 from heizungsbruecke.host import EV_RAUM, RAUM_SECONDS, HaHost
 from heizungsbruecke.supervisor import SupervisorApi
 from smartheat_core.config_check import NichtPruefbar
@@ -18,6 +20,7 @@ from smartheat_device import inventory, nachrichten, wire
 from smartheat_device.commands import CommandRegister, Done, Failed, Waiting
 from smartheat_device.geraet_host_basis import EV_RELOAD
 from smartheat_device.host import Anzeige
+from smartheat_runtime import dokument_config
 from smartheat_runtime.soll_eingang import EV_TARGET_INPUT
 from smartheat_runtime.status import STATUS_ABGEMELDET
 from smartheat_runtime.worker import RegulationWorker
@@ -511,6 +514,79 @@ def test_sign_off_without_setup_fails(tmp_path, monkeypatch):
     host, _, _ = _host(tmp_path, monkeypatch)
     outcome = _register(host, tmp_path)._handlers["sign_off"]({})
     assert outcome == Failed("nicht_eingerichtet")
+
+
+# --- Lokales Abmelden ueber den stdin-Befehl (L4-06 Variante C) ---
+
+EIGEN = "shg-aaaaaaaaaaaaaaaa"
+
+
+def test_die_stdin_zeile_meldet_ab_und_startet_einmal_neu(tmp_path, monkeypatch):
+    """Echter Weg: stdin_befehl.lesen -> lokal_abmelden; die zweite gleiche Zeile startet nicht noch einmal neu (der
+    Worker ist schon gebunden, jede Anforderung stellte sofort ein EV_RELOAD ein)."""
+    konf = konfiguration_aus_optionen(OPTIONS)
+    host, _, clock = _host(tmp_path, monkeypatch, device=Device(konf))
+    worker = RegulationWorker(clock)
+    reloads = []
+    worker.register(EV_RELOAD, lambda event: reloads.append(event.kind))
+    host.worker_binden(worker)
+    zeile = f"entfernen {EIGEN}\n".encode()
+    stdin_befehl.lesen(io.BytesIO(zeile + zeile), EIGEN, host.lokal_abmelden)
+    assert json.loads(config.ABGEMELDET_PATH.read_text()) == {"anlage": konf["anlage"]}
+    assert stat.S_IMODE(config.ABGEMELDET_PATH.stat().st_mode) == 0o600
+    worker.run_pending()
+    assert reloads == [EV_RELOAD]
+
+
+def test_lokal_abmelden_ohne_einrichtung_tut_nichts(tmp_path, monkeypatch, caplog):
+    host, _, _ = _host(tmp_path, monkeypatch, device=Device(None))
+    with caplog.at_level(logging.INFO, logger=geraet_host.logger.name):
+        host.lokal_abmelden()
+    assert not config.ABGEMELDET_PATH.exists() and not host._neustart
+    assert [r.levelname for r in caplog.records if r.name == geraet_host.logger.name] == ["INFO"]
+    assert "nicht eingerichtet" in caplog.text
+
+
+def test_lokal_abmelden_meldet_den_erfolg_mit_info(tmp_path, monkeypatch, caplog):
+    host, _, _ = _host(tmp_path, monkeypatch, device=Device(konfiguration_aus_optionen(OPTIONS)))
+    with caplog.at_level(logging.INFO, logger=geraet_host.logger.name):
+        host.lokal_abmelden()
+    assert [r.levelname for r in caplog.records if r.name == geraet_host.logger.name] == ["INFO"]
+    assert "HA-Eintrag geloescht" in caplog.text
+
+
+def test_eine_neue_konfiguration_derselben_anlage_hebt_die_lokale_abmeldung_auf(tmp_path, monkeypatch):
+    konf = konfiguration_aus_optionen(OPTIONS)
+    host, _, _ = _host(tmp_path, monkeypatch, device=Device(konf))
+    host.lokal_abmelden()
+    assert config.ABGEMELDET_PATH.exists()
+    host._neustart = False
+    neu = {**konf, "version": 2}
+    assert dokument_config.eingerichtet(neu)
+    host.konfiguration_uebernommen(konf, neu)
+    assert not config.ABGEMELDET_PATH.exists() and host._neustart
+
+
+@pytest.mark.parametrize("ziel", ["abmelden", "schreiben"])
+def test_lokal_abmelden_wirft_nie(tmp_path, monkeypatch, caplog, ziel):
+    """Fehlerinjektion per monkeypatch (als root wirkt chmod nicht): genau eine WARNING mit der Fehlerart, ohne
+    Meldungstext und Pfad, kein Neustart."""
+    host, _, _ = _host(tmp_path, monkeypatch, device=Device(konfiguration_aus_optionen(OPTIONS)))
+
+    def kaputt(*args, **kwargs):
+        raise PermissionError(13, "geheim")
+
+    if ziel == "abmelden":
+        monkeypatch.setattr(dokument_config, "abmelden", kaputt)
+    else:
+        monkeypatch.setattr(dokument_config.dateien, "schreiben_json", kaputt)
+    with caplog.at_level(logging.INFO, logger=geraet_host.logger.name):
+        host.lokal_abmelden()
+    meldungen = [r for r in caplog.records if r.name == geraet_host.logger.name]
+    assert [r.levelname for r in meldungen] == ["WARNING"]
+    assert "PermissionError" in meldungen[0].getMessage()
+    assert "geheim" not in caplog.text and str(tmp_path) not in caplog.text
+    assert not host._neustart
 
 
 def test_diagnostics(tmp_path, monkeypatch):

@@ -2,6 +2,7 @@
 sauberem Trennen; Aufraeumen nach dem Entfernen. Die frueheren Tests des Optionsmodus stehen noch in test_main.py
 (Task 10 ordnet sie ein)."""
 import errno
+import io
 import json
 import logging
 import os
@@ -52,6 +53,10 @@ class FakeDevice:
         self.identity = SimpleNamespace(device_id=DEVICE_ID, claim_code=CLAIM_CODE)
         self.documents = SimpleNamespace(aktuell=lambda art: None)
         self.sent = []
+        self.aufgaben = []
+
+    def im_geraete_thread(self, aufgabe):
+        self.aufgaben.append(aufgabe)
 
     def konfiguration(self):
         return self.konf
@@ -437,6 +442,65 @@ def test_a_failing_document_store_during_cleanup_pauses_and_execs(geraet_env, mo
     assert config.AUFRAEUMEN_PATH.exists() and config.BACKUP_PATH.exists()
     assert _kein_geraetekern()
     assert "OSError" in caplog.text and "geheim" not in caplog.text
+
+
+# --- Lokaler stdin-Befehl (L4-06 Variante C) ---
+
+
+def test_stdin_anhaengen_reicht_die_eigene_id_und_lokal_abmelden_an(geraet_env):
+    device = FakeDevice()
+    geraet, _ = _verdrahtet(geraet_env, device)
+    quelle = io.BytesIO(f"entfernen {DEVICE_ID}\nentfernen shg-bbbbbbbbbbbbbbbb\n".encode())
+    main_module.stdin_anhaengen(geraet, device, quelle).join(timeout=2)
+    assert device.aufgaben == [geraet.lokal_abmelden]  # nur die eigene ID, die fremde Zeile nichts
+    quelle = io.BytesIO(b"entfernen shg-bbbbbbbbbbbbbbbb\n")
+    main_module.stdin_anhaengen(geraet, device, quelle).join(timeout=2)
+    assert device.aufgaben == [geraet.lokal_abmelden]
+
+
+def test_main_haengt_stdin_vor_laufen_an(geraet_env, monkeypatch):
+    order = []
+    _main_ohne_supervisor(geraet_env, monkeypatch, order)
+    quelle = io.BytesIO(b"")
+    angehaengt = []
+    monkeypatch.setattr(main_module, "stdin_quelle", lambda: quelle)
+    monkeypatch.setattr(main_module, "stdin_anhaengen",
+                        lambda geraet, device, q: order.append("stdin") or angehaengt.append((geraet, device, q)))
+    monkeypatch.setattr(main_module, "laufen", lambda *args: order.append("laufen"))
+    main_module.main()
+    assert order == ["signal", "stdin", "laufen"]
+    geraet, device, q = angehaengt[0]
+    assert q is quelle and isinstance(geraet, main_module.HaDeviceHost) and geraet.device is device
+
+
+def test_main_laeuft_ohne_stdin_weiter_wenn_fd_0_fehlt(geraet_env, monkeypatch):
+    order = []
+    _main_ohne_supervisor(geraet_env, monkeypatch, order)
+    monkeypatch.setattr(main_module, "stdin_quelle", lambda: None)
+    monkeypatch.setattr(main_module, "stdin_anhaengen", lambda *args: order.append("stdin"))
+    monkeypatch.setattr(main_module, "laufen", lambda *args: order.append("laufen"))
+    main_module.main()
+    assert order == ["signal", "laufen"]
+
+
+def test_stdin_quelle_ist_ungepuffert_auf_fd_0():
+    """Kein sys.stdin.buffer: ein darin blockierter Daemon-Thread haelt die Puffer-Sperre und bricht das Prozessende
+    ab (Fatal Python error, Exit 134); siehe test_stdin_befehl.py (Kindprozess)."""
+    quelle = main_module.stdin_quelle()
+    assert isinstance(quelle, io.FileIO)
+    assert quelle.fileno() == 0 and not quelle.closefd
+
+
+def test_stdin_quelle_ohne_fd_0_warnt_und_liefert_none(monkeypatch, caplog):
+    def kaputt(*args, **kwargs):
+        raise OSError(9, "geheim")
+
+    monkeypatch.setattr(main_module.io, "FileIO", kaputt)
+    with caplog.at_level(logging.WARNING, logger=main_module.logger.name):
+        assert main_module.stdin_quelle() is None
+    meldungen = [r for r in caplog.records if r.name == main_module.logger.name]
+    assert len(meldungen) == 1 and "OSError" in meldungen[0].getMessage()
+    assert "geheim" not in caplog.text
 
 
 def test_vorbereiten_wires_device_and_host_without_starting_the_device(geraet_env):

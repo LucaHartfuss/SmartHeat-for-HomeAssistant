@@ -220,6 +220,12 @@ class Device:
         self._inbox.put(("meldung", nachrichten.meldung(key=key, kategorie=category(key), kritisch=kritisch, text=text,
                                                         offen=offen, ts=_iso(self._wall()))))
 
+    def im_geraete_thread(self, aufgabe: Callable[[], None]) -> None:
+        """Eine Aufgabe des Hosts (z. B. lokales Abmelden ueber stdin, L4-06) im Geraete-Thread ausfuehren lassen: aus
+        jedem Thread aufrufbar, die Aufgabe laeuft in der Reihe der Ereignisse und nie nebenlaeufig zum Register. Eine
+        Ausnahme faengt _sicher (Fehlerart und Ort im Log)."""
+        self._inbox.put(("aufgabe", aufgabe))
+
     def ergebnis_software(self, version: str, ok: bool, grund: str | None = None) -> bool:
         """Ergebnis eines Updates (Spec 5.3: up/result mit dokument software, version = Software-Version). Nur nach
         hello; False = nicht gesendet (der Host versucht es spaeter erneut). Der Grund muss in SOFTWARE_ERRORS stehen;
@@ -321,6 +327,8 @@ class Device:
             self._eigene_meldung(item[1], item[2])
         elif quelle == "meldung":
             self._meldung_merken(item[1])
+        elif quelle == "aufgabe":
+            item[1]()
 
     def _takt(self) -> None:
         now = self._clock()

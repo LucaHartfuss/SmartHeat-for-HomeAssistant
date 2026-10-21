@@ -1934,3 +1934,22 @@ def test_a_blocked_device_does_not_recheck_a_held_configuration(tmp_path):
     world.device.schritt()
     assert world.host.aufrufe == 1 and world.host.konfigurationen == []
     assert world.device.documents.version("konfiguration") == 0
+
+
+# --- Aufgaben des Hosts im Geraete-Thread (L4-06 Variante C) ---
+
+def test_eine_aufgabe_laeuft_erst_im_geraete_thread_und_ein_fehler_haelt_ihn_nicht_auf(tmp_path, caplog):
+    world = World(tmp_path)
+    gelaufen = []
+
+    def kaputt():
+        raise OSError(13, "geheim")
+
+    world.device.im_geraete_thread(kaputt)
+    world.device.im_geraete_thread(lambda: gelaufen.append(threading.current_thread()))
+    assert gelaufen == []  # nur eingestellt, nicht aus dem aufrufenden Thread gelaufen
+    with caplog.at_level("ERROR", logger=device.logger.name):
+        world.device.schritt()
+    assert gelaufen == [threading.current_thread()]  # schritt() ist hier der Geraete-Thread
+    fehler = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
+    assert len(fehler) == 1 and "Fehler im Geraete-Thread (PermissionError)" in fehler[0] and "geheim" not in fehler[0]
