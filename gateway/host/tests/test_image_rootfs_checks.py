@@ -27,6 +27,7 @@ GOOD_USB_HOOK = (
     "#!/bin/sh\n. /usr/share/initramfs-tools/hook-functions\n"
     "copy_file config /etc/udev/rules.d/99-rpi-01-smartheat-usbboot.rules\n"
 )
+TOOLS = ("ss", "ip", "vcgencmd")
 CONFIG_TXT = "boot/firmware/config.txt"
 ETH_DROPIN = "etc/systemd/network/01-eth0.network.d/10-smartheat-client-id.conf"
 # Ende der Vorlage von rpi-image-gen v2.8.0 plus der Block aus wlan_off.sh
@@ -237,6 +238,10 @@ def _good(root: Path, pilot: bool = False) -> Path:
         # DHCPv4 mit der MAC als Client-ID (eth_dhcp.sh)
         ETH_DROPIN: "# Kommentar\n[DHCPv4]\nClientIdentifier=mac\n",
         CONFIG_TXT: GOOD_CONFIG_TXT,
+        # Diagnosewerkzeuge (L4-18): ss und ip aus iproute2, vcgencmd aus raspi-utils
+        "usr/bin/ss": "#!/bin/sh\n",
+        "usr/bin/ip": "#!/bin/sh\n",
+        "usr/bin/vcgencmd": "#!/bin/sh\n",
     }
     if pilot:
         files["root/.ssh/authorized_keys"] = "ssh-ed25519 AAAA test-key\n"
@@ -246,6 +251,8 @@ def _good(root: Path, pilot: bool = False) -> Path:
     (root / "var/lib/smartheat/data").mkdir(parents=True)
     (root / WANTS).mkdir(parents=True)
     (root / USB_HOOK).chmod(0o755)
+    for tool in TOOLS:
+        (root / "usr/bin" / tool).chmod(0o755)
     (root / "etc/systemd/system/iwd.service").symlink_to("/dev/null")
     (root / "etc/localtime").symlink_to("/usr/share/zoneinfo/Europe/Berlin")
     (root / "etc/default").mkdir(parents=True, exist_ok=True)
@@ -414,6 +421,43 @@ def test_timezone_and_locale_variants_that_are_fine(tmp_path, fixit):
     fixit(root)
     result = _run(root)
     assert result.returncode == 0, result.stdout
+
+
+@pytest.mark.parametrize("tool", TOOLS)
+def test_missing_diagnosis_tool_fails_with_its_name(tmp_path, tool):
+    """ss, ip und vcgencmd muessen im fertigen Image liegen (L4-18, Labor 2026-10-20): fehlt eines, genau eine
+    Meldung mit dem Namen."""
+    root = _good(tmp_path)
+    assert _run(root).returncode == 0
+    (root / "usr/bin" / tool).unlink()
+    result = _run(root)
+    fails = [line for line in result.stdout.splitlines() if line.startswith("FAIL:")]
+    assert result.returncode != 0 and len(fails) == 1 and tool in fails[0], result.stdout
+
+
+@pytest.mark.parametrize("tool", TOOLS)
+def test_diagnosis_tool_that_is_not_executable_fails(tmp_path, tool):
+    root = _good(tmp_path)
+    (root / "usr/bin" / tool).chmod(0o644)
+    result = _run(root)
+    assert result.returncode != 0 and tool in result.stdout, result.stdout
+
+
+@pytest.mark.parametrize("tool", ["ss", "ip"])
+def test_ss_and_ip_may_live_in_usr_sbin(tmp_path, tool):
+    root = _good(tmp_path)
+    (root / "usr/sbin").mkdir(parents=True)
+    (root / "usr/bin" / tool).rename(root / "usr/sbin" / tool)
+    result = _run(root)
+    assert result.returncode == 0, result.stdout
+
+
+def test_vcgencmd_in_usr_sbin_does_not_count(tmp_path):
+    root = _good(tmp_path)
+    (root / "usr/sbin").mkdir(parents=True)
+    (root / "usr/bin/vcgencmd").rename(root / "usr/sbin/vcgencmd")
+    result = _run(root)
+    assert result.returncode != 0 and "vcgencmd" in result.stdout, result.stdout
 
 
 IWD = "etc/systemd/system/iwd.service"

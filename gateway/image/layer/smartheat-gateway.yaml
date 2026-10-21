@@ -19,6 +19,8 @@
 # docker-cli ausdruecklich: unter trixie nur "Recommends" von docker.io, und rpi-image-gen installiert ohne Recommends.
 # openssh-server (Pilot-Image) bringt trixie-minbase mit. locales und tzdata fuer Locale und Zeitzone (Abschnitt locale
 # der Konfiguration): trixie-minbase laedt locale-base (debconf-Vorbelegung), aber nicht locale-gen.
+# iproute2 (ss, ip) und raspi-utils (vcgencmd, nur aus dem Raspberry-Pi-Archiv, das das Image einbindet; install.sh auf
+# einem fremden Debian verlangt es nicht) fuer die Diagnose am Geraet (L4-18); rootfs_checks.sh prueft alle drei.
 mmdebstrap:
   packages:
     - locales
@@ -31,6 +33,8 @@ mmdebstrap:
     - unattended-upgrades
     - nftables
     - ca-certificates
+    - iproute2
+    - raspi-utils
   customize-hooks:
     # Vor customize.sh (dessen rootfs_checks-Lauf prueft die Regel) und vor update-initramfs (runner customize).
     - bash "$SRCROOT/usbboot.sh" "$1"

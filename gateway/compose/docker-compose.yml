@@ -11,9 +11,12 @@ x-hardening: &hardening
   security_opt: ["no-new-privileges:true"]
   tmpfs: [/tmp]
   restart: unless-stopped
+  # Logs ins Journal des Hosts (L4-18): Groesse, Rotation und der Schreibtakt von journald.conf.d/smartheat.conf gelten
+  # auch hier, und ein Stromausfall laesst keine beschaedigte json-Datei zurueck, an der `docker logs` scheitert.
+  # Lesen: `docker logs <Dienst>` oder `journalctl CONTAINER_NAME=<Dienst>`.
   logging:
-    driver: json-file
-    options: {max-size: 10m, max-file: "3"}
+    driver: journald
+    options: {tag: "{{.Name}}"}
 
 x-gateway: &gateway
   <<: *hardening

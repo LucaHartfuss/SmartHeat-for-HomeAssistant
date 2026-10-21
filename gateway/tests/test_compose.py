@@ -27,7 +27,9 @@ def test_hardening_everywhere():
         assert service.get("cap_drop") == ["ALL"], name
         assert "no-new-privileges:true" in service.get("security_opt", []), name
         assert service.get("restart") == ("no" if name == "init" else "unless-stopped"), name
-        assert service["logging"]["options"] == {"max-size": "10m", "max-file": "3"}, name
+        # journald statt json-file (L4-18): ein Stromausfall laesst keine beschaedigte Logdatei zurueck, Groesse und
+        # Rotation regelt das Journal des Hosts; kein Dienst ueberschreibt den Anker mit einem eigenen Block.
+        assert service["logging"] == {"driver": "journald", "options": {"tag": "{{.Name}}"}}, name
 
 
 def test_one_gateway_container_besides_init():

@@ -16,10 +16,9 @@ x-hardening:
   - /tmp
   restart: unless-stopped
   logging:
-    driver: json-file
+    driver: journald
     options:
-      max-size: 10m
-      max-file: '3'
+      tag: '{{.Name}}'
 x-gateway:
   read_only: true
   cap_drop:
@@ -31,10 +30,9 @@ x-gateway:
   - /tmp
   restart: unless-stopped
   logging:
-    driver: json-file
+    driver: journald
     options:
-      max-size: 10m
-      max-file: '3'
+      tag: '{{.Name}}'
   build:
     context: ../../../..
     dockerfile: gateway/Dockerfile
@@ -53,10 +51,9 @@ services:
     - /tmp
     restart: 'no'
     logging:
-      driver: json-file
+      driver: journald
       options:
-        max-size: 10m
-        max-file: '3'
+        tag: '{{.Name}}'
     build:
       context: ../../../..
       dockerfile: gateway/Dockerfile
@@ -87,10 +84,9 @@ services:
     - /tmp
     restart: unless-stopped
     logging:
-      driver: json-file
+      driver: journald
       options:
-        max-size: 10m
-        max-file: '3'
+        tag: '{{.Name}}'
     build:
       context: ../../../..
       dockerfile: gateway/Dockerfile
@@ -141,10 +137,9 @@ services:
     - /tmp
     restart: unless-stopped
     logging:
-      driver: json-file
+      driver: journald
       options:
-        max-size: 10m
-        max-file: '3'
+        tag: '{{.Name}}'
     image: eclipse-mosquitto:2@sha256:38c0da4f2ef84284d47b3b3eeea1cb3bdeabe81ee10caf0cd5c5ff61ee3ea408
     user: 1000:1000
     networks:

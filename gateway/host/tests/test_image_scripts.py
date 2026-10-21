@@ -211,6 +211,24 @@ def test_layer_brings_every_package_install_sh_wants():
     assert wanted - _layer_packages() == set()
 
 
+def test_layer_brings_the_diagnosis_tools_but_install_sh_does_not_need_the_raspberry_pi_archive():
+    """L4-18: ss und ip (iproute2) braucht install.sh ebenso wie das Image; vcgencmd (raspi-utils) gibt es nur im
+    Raspberry-Pi-Archiv, das das Image einbindet: ein Debian-Host ohne dieses Archiv installiert ohne das Paket."""
+    install = (GW / "host" / "install.sh").read_text()
+    wanted = set(re.search(r"local wanted=\(([^)]*)\)", install).group(1).split())
+    wanted |= set(re.search(r"wanted\+=\((docker\.io[^)]*)\)", install).group(1).split())
+    assert "iproute2" in wanted
+    assert "raspi-utils" not in install
+    assert {"iproute2", "raspi-utils"} <= _layer_packages()
+
+
+def test_journal_syncs_every_30_seconds_and_is_persistent():
+    """L4-18: nach hartem Stromverlust fehlen hoechstens die letzten 30 s (Standard 5 min); die Groesse bleibt begrenzt."""
+    text = (GW / "host" / "journald.conf.d" / "smartheat.conf").read_text()
+    lines = [line.strip() for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    assert lines == ["[Journal]", "SystemMaxUse=200M", "SyncIntervalSec=30s", "Storage=persistent"]
+
+
 def test_config_layer_and_hook_fit_together():
     config = (IMAGE / "config" / "smartheat-gateway.yaml").read_text()
     layer = (IMAGE / "layer" / "smartheat-gateway.yaml").read_text()
