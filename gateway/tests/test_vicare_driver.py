@@ -111,7 +111,7 @@ def test_curve_and_level_are_written_as_one_group_without_reverting_the_first_me
     driver.write("curve", 1.1)
     driver.write("level", 3.0)
     assert [c["params"] for c in server.commands] == [{"shift": 0, "slope": 1.1}, {"shift": 3, "slope": 1.1}]
-    assert driver.physical_writes == 2  # die Pipeline zaehlt die Gruppe als einen Schreibvorgang (min(diff, 1))
+    assert driver.physical_writes == 2  # ohne write_group zaehlt die Pipeline beide Schreibvorgaenge (A6-09)
 
 
 def test_a_write_group_sends_one_setcurve_with_both_values(env):

@@ -231,6 +231,22 @@ def test_weishaupt_praefixe_lokale_positivliste():
     assert {k: v.praefixe_erlaubt for k, v in VERFAHREN.items()} == PRAEFIXE_ERLAUBT, R4
 
 
+#: Lokale Positivliste der Schreibgruppen (A6-09, Spec Fixrunde A 3.5): der Server darf nur Gruppen senden, die als
+#: Menge einer erlaubten gleichen; physische Schreibvorgaenge einer Gruppe zaehlen einzeln ins Budget.
+SCHREIBGRUPPEN_ERLAUBT = {
+    "vaillant_vrc720": (),
+    "weishaupt_wwp": (),
+    "weishaupt_wwp_basis": (),
+    "viessmann_vicare": (("curve", "level"),),
+}
+
+
+def test_schreibgruppen_lokale_positivliste():
+    from smartheat_core.verfahren import VERFAHREN
+
+    assert {k: v.schreibgruppen_erlaubt for k, v in VERFAHREN.items()} == SCHREIBGRUPPEN_ERLAUBT, R4
+
+
 #: Spec Fixrunde A Schreibschutz 3.1/3.2 (A6-01, A6-34): Boost-Starts je Art (Schluessel -> (jeder Versuch zaehlt,
 #: Mindestabstaende in Sekunden, hoechstens je Tag)). Comfort- und Notfall-Boost zaehlen getrennt.
 BOOST_KONTINGENT = {"boost_start": (True, (1800,), 6), "emergency_start": (True, (1800,), 6)}

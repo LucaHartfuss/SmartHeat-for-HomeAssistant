@@ -146,6 +146,10 @@ def beschreibung(hebelsatz: str, parameter) -> BindingDescription:
     ):
         raise Fehler("Jede Schreibgruppe der Bindungsparameter braucht mindestens zwei Hebel, und kein Hebel "
                      "steht in zwei Gruppen.", "schreibgruppen", "ungueltig")
+    erlaubt = {frozenset(g) for g in verfahren.schreibgruppen_erlaubt}  # A6-09: lokale Positivliste
+    if any(frozenset(g) not in erlaubt for g in schreibgruppen):
+        raise Fehler("Die Schreibgruppen der Bindungsparameter sind für diesen Hebelsatz nicht erlaubt.",
+                     "schreibgruppen", "nicht_erlaubt")
     if parameter["zaehler"] not in ZAEHLER:
         raise Fehler("Die Zählerart in den Bindungsparametern ist unbekannt.", "zaehler", "unbekannt")
     zurueck = _hebel(parameter["zurueck"], lever_set.levers, "zurueck")

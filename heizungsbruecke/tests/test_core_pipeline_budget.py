@@ -300,12 +300,13 @@ def test_an_unchanged_group_is_not_written(make_store, clock):
     assert ha.writes == [("number.normal", 21.0)]
 
 
-def test_a_group_counts_as_one_write(make_store, clock):
+def test_a_group_without_write_group_counts_each_physical_write(make_store, clock):
+    # A6-09: ohne write_group sind es zwei physische Schreibvorgaenge, und beide zaehlen (nicht min(diff, 1))
     counted = dataclasses.replace(VIESSMANN, daily_write_limit=10, lifetime_hint_at=50000)
     pipeline, store, ha = _viessmann(make_store, clock, description=counted)
     pipeline.apply_server_values({"curve": 1.2, "level": -2.0, "room_setpoint": 20.0})
     assert len(ha.writes) == 2
-    assert _total(store) == 1 and store.state.lifetime_writes == 1
+    assert _total(store) == 2 and store.state.lifetime_writes == 2
 
 
 def test_a_failing_second_half_rewrites_both_next_time(make_store, clock):
@@ -320,7 +321,7 @@ def test_a_failing_second_half_rewrites_both_next_time(make_store, clock):
     ha.failing.clear()
     pipeline.write_levers(("level",))  # Durchsetzen/naechster Versuch: die ganze Gruppe
     assert ha.writes[1:] == [("number.slope", 1.2), ("number.shift", -2.0)]
-    assert _total(store) == 2
+    assert _total(store) == 3
 
 
 def test_write_levers_expands_a_group_member_to_the_group(make_store, clock):

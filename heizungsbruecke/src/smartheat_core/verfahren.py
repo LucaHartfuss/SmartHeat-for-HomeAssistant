@@ -28,7 +28,10 @@ class Schreibschutz:
 class Verfahren:
     """schemata: Schluessel, die bindungsparameter.schemata fuer diesen Hebelsatz tragen muss. praefixe_erlaubt: lokale
     Positivliste der Optionsschema-Praefixe (Weishaupt); der Server darf nur eine Teilmenge senden, damit ein
-    fehlerhafter Server keine Optionsnamen fuer Vorbereitung und Hilfswerte bilden kann (Regel 4)."""
+    fehlerhafter Server keine Optionsnamen fuer Vorbereitung und Hilfswerte bilden kann (Regel 4).
+    schreibgruppen_erlaubt: lokale Positivliste der Schreibgruppen (A6-09); der Server darf je Gruppe nur dieselbe
+    Hebelmenge senden (Reihenfolge egal) oder keine, damit er keine weiten Gruppen bildet, die ungezaehlt viele
+    physische Schreibvorgaenge ausloesen (Regel 4)."""
 
     lever_set: LeverSet
     prepared_lever: str | None
@@ -39,6 +42,7 @@ class Verfahren:
     obergrenze: Schreibschutz
     schemata: tuple[str, ...] = ()
     praefixe_erlaubt: tuple[str, ...] = ()
+    schreibgruppen_erlaubt: tuple[tuple[str, ...], ...] = ()
 
 
 _WEISHAUPT_AUX = ("mode_select", "setpoint_comfort", "setpoint_setback")
@@ -64,5 +68,5 @@ VERFAHREN: dict[str, Verfahren] = {v.lever_set.id: v for v in (
     # Viessmann: Komfort-/Eco-Programm verlassen; Cloud-Kontingent: Durchsetzen hoechstens 4 am Tag.
     Verfahren(VIESSMANN_VICARE, "room_setpoint", False, ("mode_select",), {
         "curve": "Neigung der Heizkurve", "level": "Niveau der Heizkurve", "room_setpoint": "Raumtemperatur Normal",
-    }, "Heizprogramm", Schreibschutz(4, None, None)),
+    }, "Heizprogramm", Schreibschutz(4, None, None), schreibgruppen_erlaubt=(("curve", "level"),)),
 )}

@@ -19,9 +19,9 @@ Geschrieben wird nur bei tatsaechlicher Aenderung (Quota-Check, jeder Schreibvor
 Wert auf die lokalen Grenzen begrenzt und auf die Schrittweite der Anlage gerundet. Client-abgeleitete Hebel
 (Mindestvorlauf) gehoeren zu keiner Zeile, werden aber auch hier geschrieben (write_lever).
 
-Plan 3b: Jeder physische Schreibvorgang (binding.physical_writes; eine Schreibgruppe zaehlt einmal) zaehlt in das
-Tagesbudget TOTAL (nur mit BindingDescription.daily_write_limit) und in den Lebensdauerzaehler (nur mit
-lifetime_hint_at). Das Tagesbudget begrenzt Serverwerte, Durchsetzen, Vorbereitung und Mindestvorlauf; ein Boost startet
+Plan 3b: Jeder physische Schreibvorgang (binding.physical_writes; eine Schreibgruppe zaehlt je physischem Aufruf,
+A6-09) zaehlt in das Tagesbudget TOTAL (nur mit BindingDescription.daily_write_limit) und in den Lebensdauerzaehler
+(nur mit lifetime_hint_at). Das Tagesbudget begrenzt Serverwerte, Durchsetzen, Vorbereitung und Mindestvorlauf; ein Boost startet
 am Tageslimit nicht (A6-01), Boost-Ende und Wiederherstellung sind ausgenommen, zaehlen aber mit (der Rueckweg hat
 Vorrang vor der Schonung). Jeder Boost-Start zaehlt (Comfort: boost_start, Notfall: emergency_start; je hoechstens 6 am
 Tag, 30 min Abstand, A6-01/A6-34). Ein wegen des Budgets nicht geschriebener Serverwert bleibt im
@@ -541,7 +541,8 @@ class LeverPipeline:
 
     def _write_group(self, members: list[str], values: Mapping[str, float], *, exempt: bool) -> None:
         """Schreibgruppe (Viessmann setCurve): weicht ein Mitglied ab, werden alle geschrieben (Reihenfolge des
-        Hebelsatzes) und zaehlen als EIN Schreibvorgang. Scheitert ein spaeteres Mitglied, schreibt der naechste
+        Hebelsatzes) und zaehlen physisch (A6-09: ohne write_group je Mitglied ein Vorgang, mit write_group meldet der
+        Treiber einen Vorgang je Aufruf). Scheitert ein spaeteres Mitglied, schreibt der naechste
         Versuch wieder alle. Hat das Binding write_group (Viessmann-Treiber, Audit 4 A4-31), geht die ganze Gruppe in
         EINEM Aufruf hinaus: keine Zwischenstellung, ein Aufruf aus dem Kontingent; ein Fehler gilt dem ersten Mitglied.
         Die Buchfuehrung (letzter Schreibzeitpunkt und -wert) bleibt je Mitglied."""
@@ -570,7 +571,7 @@ class LeverPipeline:
                     self._last_write_at[lever] = self._clock()
                     self._last_written[lever] = target
         finally:
-            self._count_physical(min(self._binding.physical_writes - before, 1))
+            self._count_physical(self._binding.physical_writes - before)
 
     def _group(self, lever: str) -> tuple[str, ...]:
         return next((group for group in self._description.write_groups if lever in group), (lever,))
