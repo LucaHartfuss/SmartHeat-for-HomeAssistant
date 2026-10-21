@@ -43,6 +43,12 @@ def test_discovery_and_supervisor_api_without_host_network():
     assert data["startup"] == "services"
 
 
+def test_stdin_only_for_the_local_sign_off():
+    """L4-06: der Supervisor haelt stdin des Containers offen; darueber schickt die Integration den lokalen Befehl
+    `entfernen <geraet_id>` (stdin_befehl)."""
+    assert _load_config_yaml()["stdin"] is True
+
+
 def test_log_levels_match_the_entry_point():
     from heizungsbruecke.__main__ import LOG_LEVELS
     values = _load_config_yaml()["schema"]["log_level"].removeprefix("list(").removesuffix(")?").split("|")

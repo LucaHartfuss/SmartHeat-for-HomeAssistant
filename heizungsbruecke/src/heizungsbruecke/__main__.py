@@ -12,20 +12,28 @@ Supervisor ein sauber beendetes Add-on nicht zuverlaessig neu, deshalb exec. SIG
 endet ueber beenden ohne exec. Ein Fehler in den Schritten davor (_vorbereiten: Aufraeumen, Geraete-Host, Geraetekern)
 endet ueber prozess.starten in derselben 60-s-Pause und demselben exec (S3S6-Startabbruch).
 
+Lokaler Befehl (L4-06 Variante C, stdin_befehl): loescht der Nutzer den HA-Eintrag, schreibt die Integration `entfernen
+<geraet_id>` an das stdin des Add-ons (config.yaml stdin: true); ein Daemon-Thread liest fd 0 ungepuffert (nicht
+sys.stdin.buffer: ein darin blockierter Thread bricht das Prozessende ab) und stellt HaDeviceHost.lokal_abmelden in das
+Postfach des Geraetekerns (Device.im_geraete_thread). Das Geraet meldet sich dann wie bei sign_off ab.
+
 Nach dem Entfernen (aufraeumen.json) setzt der naechste Start die Anlage erst zurueck wie sign_off (Laufzeit im Modus
 abgemeldet mit der alten Konfiguration aus der Markierung) und startet danach neu; erst dieser Start loescht den
 anlagengebundenen Zustand und die Hilfssensoren, bevor der Geraetekern startet - aber nur, solange die gespeicherte
 Konfiguration noch leer ist (Spec Stufe 3 S3 Abschnitt 4)."""
+import io
 import json
 import logging
 import os
 import shutil
 import signal
 import sys
+import threading
 import time
 import urllib.parse
+from typing import BinaryIO
 
-from heizungsbruecke import config, derived_sensors
+from heizungsbruecke import config, derived_sensors, stdin_befehl
 from heizungsbruecke.discovery import Discovery
 from heizungsbruecke.geraet_host import HaDeviceHost
 from heizungsbruecke.geraet_status import GeraetStatus
@@ -217,6 +225,25 @@ def laufen(geraet: HaDeviceHost, device, ha_api, status: GeraetStatus, clock=tim
     prozess.laufen(device, geraet.hintergrund, lambda: start(geraet, device, ha_api, status, clock)[0], _exec)
 
 
+def stdin_quelle() -> BinaryIO | None:
+    """fd 0 ungepuffert (io.FileIO, schliesst fd 0 nie): ein Daemon-Thread, der in BufferedReader.readline auf einer
+    offenen Pipe blockiert, haelt die Puffer-Sperre; beim Prozessende (SIGTERM -> SystemExit, jeder Stopp und jedes
+    Update) bricht der Interpreter dann mit "Fatal Python error" (Exit 134) ab. Fehlt fd 0, gibt es den lokalen Befehl
+    nicht (eine WARNING mit der Fehlerart, None); das Add-on laeuft weiter."""
+    try:
+        return io.FileIO(0, "rb", closefd=False)
+    except OSError as error:
+        logger.warning("stdin nicht lesbar (%s): der lokale Befehl zum Abmelden entfaellt", type(error).__name__)
+        return None
+
+
+def stdin_anhaengen(geraet: HaDeviceHost, device, quelle: BinaryIO) -> threading.Thread:
+    """Lokalen Befehl `entfernen <eigene Geraete-ID>` aus quelle lesen; der Treffer meldet das Geraet im Geraete-Thread
+    ab (HaDeviceHost.lokal_abmelden ueber das Postfach, nie nebenlaeufig zum Befehlsregister)."""
+    return stdin_befehl.starten(quelle, device.identity.device_id,
+                                lambda: device.im_geraete_thread(geraet.lokal_abmelden))
+
+
 def _ruhen() -> None:
     """Ruhezustand ohne Geraetekern (ungueltige bootstrap_url): bis SIGTERM nichts tun, nie beenden."""
     while True:
@@ -252,6 +279,9 @@ def main() -> None:  # pragma: no cover - Add-on-Einstieg (Startfehler und Ruhez
     if teile is None:  # Startfehler: Pause und exec sind gelaufen (nur in Tests kehrt exec zurueck)
         return
     geraet, device, status = teile
+    quelle = stdin_quelle()
+    if quelle is not None:
+        stdin_anhaengen(geraet, device, quelle)
     laufen(geraet, device, ha_api, status)
 
 

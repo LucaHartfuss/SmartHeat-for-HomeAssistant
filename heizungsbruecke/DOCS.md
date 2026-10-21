@@ -105,6 +105,11 @@ löscht es den anlagengebundenen Zustand und die angelegten Hilfssensoren, solan
 ist Home Assistant dabei nicht bereit, holt ein späterer Start das Löschen der Hilfssensoren nach. Die Geräte-Identität
 bleibt, das Gerät kann neu eingerichtet werden. Zum endgültigen Entfernen das Add-on deinstallieren.
 
+Auch das Löschen des Eintrags „SmartHeat“ in Home Assistant meldet das Gerät ab, genau wie das Entfernen im Portal
+(die Integration schickt dem Add-on dazu den lokalen Befehl; er wirkt nur für die eigene Geräte-ID). Aus dem Konto
+entfernt es erst das Portal. Wurde der Eintrag versehentlich gelöscht, den Eintrag neu einrichten und danach
+„Neu konfigurieren → Zuordnung ändern“ wählen; sonst bleibt das Gerät „abgemeldet“.
+
 ## Verifizierte Architekturen
 
 Gebaut und getestet werden `aarch64` (Raspberry Pi 4/5, 64-bit) und `amd64`. Für SmartHeat ist ein 64-Bit-System
