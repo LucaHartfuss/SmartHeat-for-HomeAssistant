@@ -393,6 +393,7 @@ ERLAUBT = (
     "addon_version: 0.36.0 -> 1.0.0 (ADDON_VERSION)",
     "write_budget: boost_start/emergency_start nach erfolgreichem Start (Fixrunde A, A6-01)",
     "benachrichtigung: notify.mobile_app_* (Fixrunde A, A6-02)",
+    "status_start: Status 'startet' statt 'notbetrieb' beim Start mit veraltetem Notbetrieb (Fixrunde A, L4-09)",
 )
 #: Schluessel im Schreibbudget (backup.json), die erst seit Fixrunde A auch nach einem erfolgreichen Start stehen.
 START_ZAEHLER = ("boost_start", "emergency_start")
@@ -462,6 +463,8 @@ def normalisieren(record: list[dict], *, alt: bool) -> list[dict]:
                 # spaeter entfallenes Laufzeit-Feld faellt so als Unterschied auf.
                 weg = {"schema"} if alt else {"schema", *SCHEMA_3_GERAET_FELDER}
                 w = ["ha", "event", "smartheat_status", {k: v for k, v in w[3].items() if k not in weg}]
+                if not alt and w[3]["status"] == "startet" and w[3]["notbetrieb"] is True:
+                    w[3]["status"] = "notbetrieb"  # ERLAUBT "status_start": nur im neuen Master
             wirkungen.append(w)
         dateien = {name: inhalt for name, inhalt in schritt["dateien"].items()
                    if Path(name).name not in ("room_target.json", "abgemeldet.json", "discovery.json")}

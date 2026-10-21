@@ -11,7 +11,7 @@ from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core.levers import LEVER_SETS
 from smartheat_runtime import status
-from smartheat_runtime.delivery import DataFault, DeliveryState
+from smartheat_runtime.delivery import DataFault, DeliveryState, PendingTick
 from smartheat_runtime.state import BridgeState
 from smartheat_runtime.status import Flags, StatusReporter, build_event, overall_status
 
@@ -39,7 +39,8 @@ def test_runtime_schema_and_heartbeat():
     (Flags(), BridgeState(abo_inactive_since=SINCE, delivery=DeliveryState(notbetrieb=True)), "abo_inaktiv"),
     # Notbetrieb/Datenfehler vor dem ersten MQTT-Connect (Tunnel nie aufgebaut): sichtbar statt
     # "startet" (TP7-Gates 2026-09-29).
-    (Flags(), BridgeState(delivery=DeliveryState(notbetrieb=True)), "notbetrieb"),
+    (Flags(), BridgeState(delivery=DeliveryState(notbetrieb=True, pending=PendingTick(seq="s", trigger="daily"))),
+     "notbetrieb"),
     (Flags(), BridgeState(delivery=DeliveryState(datenfehler=DataFault("local", ("dat",)))), "datenfehler"),
     (Flags(), BridgeState(), "startet"),
     (Flags(gestartet=True), BridgeState(delivery=DeliveryState(
@@ -50,6 +51,21 @@ def test_runtime_schema_and_heartbeat():
 ])
 def test_overall_status_takes_the_first_matching_state(flags, state, expected):
     assert overall_status(flags, state) == expected
+
+
+def test_veralteter_notbetrieb_vor_dem_start_ist_startet():
+    """L4-09: Notbetrieb ohne offenen Tick stammt aus dem Abo-inaktiv-Modus (abo.enter_inactive) und ist beim Start
+    veraltet; bis zum ersten abgeschlossenen Start zeigt der Status `startet` statt eines kurzen `notbetrieb`. Ein echter
+    Notbetrieb hat einen offenen Tick und bleibt vor dem Start sichtbar; nach dem Start gilt der Notbetrieb immer."""
+    stale = BridgeState(delivery=DeliveryState(notbetrieb=True))
+    offen = BridgeState(delivery=DeliveryState(notbetrieb=True, pending=PendingTick(seq="s", trigger="daily")))
+    assert overall_status(Flags(), stale) == "startet"
+    assert overall_status(Flags(), offen) == "notbetrieb"
+    assert overall_status(Flags(gestartet=True), stale) == "notbetrieb"
+    assert overall_status(Flags(gestartet=True), offen) == "notbetrieb"
+    # ein Datenfehler bleibt auch vor dem Start sichtbar
+    fault = BridgeState(delivery=DeliveryState(notbetrieb=True, datenfehler=DataFault("local", ("dat",))))
+    assert overall_status(Flags(), fault) == "datenfehler"
 
 
 def test_event_carries_every_field():
