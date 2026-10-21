@@ -17,7 +17,7 @@ ACCESS = {"publish": ("write", "readwrite"), "subscribe": ("read", "readwrite")}
 # (Datei relativ zu smartheat_gateway, umgebende Funktion, publish|subscribe) -> Dienste, die diese Stelle ausfuehren
 CALLERS: dict[tuple[str, str, str], tuple[str, ...]] = {
     ("zigbee.py", "start", "subscribe"): ("runtime",),
-    ("zigbee.py", "write_setpoint", "publish"): ("runtime",),
+    ("zigbee.py", "set", "publish"): ("runtime",),
     ("zigbee.py", "permit_join", "publish"): ("runtime",),
 }
 

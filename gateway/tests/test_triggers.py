@@ -510,3 +510,142 @@ def test_back_on_after_two_operations_while_off_treats_the_shown_setpoint_as_sta
     clock.advance(10)
     welt.worker.run_pending()
     assert welt.wuensche == [] and welt.store.value == 22.0 and _setpoint_writes(welt) == [22.0]
+
+
+# --- Aqara W100 als gebundenes Thermostat (Fixrunde A, L4-22, Plan 2026-10-21-w100-thermostat) ---
+
+W100 = "0x54ef44100140eb34"  # Testwert in der IEEE-Form von Zigbee2MQTT
+MODUS_W100 = [{"thermostat_mode": "ON"}, {"auto_hide_middle_line": False}]
+
+
+@pytest.fixture
+def mit_w100(tmp_path, clock):
+    bus = FakeBus()
+    z2m = FakeZigbee2Mqtt(bus)
+    mirror = ZigbeeMirror(bus, clock)
+    mirror.start()
+    z2m.bridge(online=True)
+    z2m.add_sensor(SENSOR)
+    z2m.add_w100(W100)
+    worker = RegulationWorker(clock=clock)
+    welt = SimpleNamespace(bus=bus, z2m=z2m, mirror=mirror, worker=worker, wuensche=[], aus=[])
+    worker.register(EV_LOCAL_CHECK, lambda event: None)
+    worker.register(EV_SOURCE_CONNECTED, lambda event: None)
+
+    def wunsch(value):
+        welt.wuensche.append(value)
+        return min(25.0, max(15.0, math.floor(value * 2 + 0.5) / 2))
+
+    welt.store = TargetStore(tmp_path / "room_target.json", 20.5, clock, lambda: "ts")
+    welt.trigger = BusTriggerSource(bus, worker, mirror, welt.store, thermostat=W100, sensor_ieees=(SENSOR,),
+                                    daily_trigger_time=None, wunsch=wunsch, clock=clock,
+                                    soll_quelle_aus=lambda aus, wirksam: welt.aus.append((aus, wirksam)))
+    welt.trigger.start()
+    worker.run_pending()
+    return welt
+
+
+def _w100_sets(welt):
+    return [body for ieee, body in welt.z2m.set_requests if ieee == W100]
+
+
+def _w100_melden(welt, **werte):
+    welt.z2m.report(W100, **werte)
+    welt.worker.run_pending()
+
+
+def test_the_start_puts_the_w100_into_thermostat_mode_without_heat_or_a_setpoint(mit_w100):
+    # heat nur nach dem Koppeln: ein am Geraet ausgeschaltetes W100 bleibt beim Start aus (A6-14 bleibt Fixrunde B)
+    assert _w100_sets(mit_w100) == MODUS_W100
+
+
+def test_a_report_of_the_rounded_target_is_no_wish(mit_w100, clock):
+    welt = mit_w100
+    _w100_melden(welt, occupied_heating_setpoint=21, system_mode="heat", local_temperature=20.0)
+    clock.advance(10)
+    welt.worker.run_pending()
+    assert welt.wuensche == [] and (welt.store.value, welt.store.source) == (20.5, "portal")
+    _w100_melden(welt, occupied_heating_setpoint=22, system_mode="heat", local_temperature=20.0)  # Gegenprobe: ein Grad mehr
+    clock.advance(10)
+    welt.worker.run_pending()
+    assert welt.wuensche == [22.0] and welt.store.value == 22.0
+
+
+def test_a_report_below_the_rounded_target_is_a_wish(mit_w100, clock):
+    welt = mit_w100
+    _w100_melden(welt, occupied_heating_setpoint=20, system_mode="heat", local_temperature=20.0)
+    clock.advance(10)
+    welt.worker.run_pending()
+    assert welt.wuensche == [20.0] and welt.store.value == 20.0
+
+
+def test_writing_to_the_w100_rounds_half_up(mit_w100):
+    welt = mit_w100
+    welt.worker.post(Event(EV_TARGET_INPUT, {"value": 22.5, "source": "portal"}))
+    welt.worker.run_pending()
+    assert welt.store.value == 22.5 and _w100_sets(welt)[len(MODUS_W100):] == [{"occupied_heating_setpoint": 23.0}]
+
+
+def test_back_on_with_the_w100_showing_the_rounded_target_writes_nothing(mit_w100):
+    welt = mit_w100
+    _w100_melden(welt, system_mode="off", occupied_heating_setpoint=21)
+    _w100_melden(welt, system_mode="heat", occupied_heating_setpoint=21)
+    assert welt.aus == [(True, 20.5), (False, None)]
+    assert _w100_sets(welt) == MODUS_W100  # ohne Abbildung schriebe das Wiedereinschalten 21 erneut
+
+
+@pytest.mark.parametrize("fremd", ["cool", "auto"])
+def test_cool_or_auto_on_the_w100_is_switched_back_to_heat_at_most_once_a_minute(mit_w100, clock, fremd):
+    welt = mit_w100
+    _w100_melden(welt, system_mode=fremd)
+    assert _w100_sets(welt) == MODUS_W100 + [{"system_mode": "heat"}]
+    clock.advance(59)
+    _w100_melden(welt, system_mode=fremd)
+    assert _w100_sets(welt) == MODUS_W100 + [{"system_mode": "heat"}]
+    clock.advance(1)
+    _w100_melden(welt, system_mode=fremd)
+    assert _w100_sets(welt) == MODUS_W100 + [{"system_mode": "heat"}] * 2
+
+
+def test_off_on_the_w100_stays_off(mit_w100):
+    welt = mit_w100
+    _w100_melden(welt, system_mode="off")
+    assert welt.aus == [(True, 20.5)] and _w100_sets(welt) == MODUS_W100
+
+
+def test_a_button_action_means_the_w100_left_thermostat_mode(mit_w100, clock):
+    # Labor 2026-10-21: nach dem Neukoppeln senden die Tasten Aktionen, Z2M meldet weiter thermostat_mode ON
+    welt = mit_w100
+    _w100_melden(welt, action="W100_PMTSD_request")  # gehoert zum Thermostatmodus
+    assert _w100_sets(welt) == MODUS_W100
+    _w100_melden(welt, action="single_plus")
+    assert _w100_sets(welt) == MODUS_W100 * 2
+    clock.advance(30)
+    _w100_melden(welt, action="single_minus")
+    assert _w100_sets(welt) == MODUS_W100 * 2
+    clock.advance(30)
+    _w100_melden(welt, action="single_minus")
+    assert _w100_sets(welt) == MODUS_W100 * 3
+
+
+def test_pairing_the_bound_w100_again_sets_it_up_from_the_target_store(mit_w100, clock):
+    welt = mit_w100
+    welt.z2m.interview(W100)
+    welt.worker.run_pending()
+    assert _w100_sets(welt) == MODUS_W100 + MODUS_W100 + [{"occupied_heating_setpoint": 21.0}, {"system_mode": "heat"}]
+    # im Echo-Fenster: das alte Soll des Geraets (verspaetete Meldung), dann das Echo; ohne "off" dazwischen, das
+    # verwuerfe einen offenen Wunsch und verdeckte ein fehlendes Echo-Fenster
+    _w100_melden(welt, occupied_heating_setpoint=19, system_mode="heat")
+    _w100_melden(welt, occupied_heating_setpoint=21, system_mode="heat")
+    clock.advance(10)
+    welt.worker.run_pending()
+    assert welt.wuensche == [] and welt.store.value == 20.5
+
+
+def test_a_thermostat_without_a_profile_gets_no_thermostat_mode_and_exact_values(mit_geraet):
+    welt = mit_geraet
+    welt.z2m.report(THERMOSTAT, action="single_plus", system_mode="cool")
+    welt.worker.run_pending()
+    welt.worker.post(Event(EV_TARGET_INPUT, {"value": 22.5, "source": "portal"}))
+    welt.worker.run_pending()
+    assert [body for ieee, body in welt.z2m.set_requests] == [{"occupied_heating_setpoint": 22.5}]

@@ -179,14 +179,13 @@ class GatewayHost:
         source = BusTriggerSource(
             self._bus, worker, self.mirror, self._store, thermostat=bindung.thermostat, sensor_ieees=sensor_ieees,
             daily_trigger_time=self._runtime_config.daily_trigger_time, wunsch=self._geraet.wunsch,
-            soll_quelle_aus=self._geraet.soll_quelle_aus,
+            soll_quelle_aus=self._geraet.soll_quelle_aus, clock=self._clock,
+            # Spec 3.3: Thermostat, Portal und Geraet zeigen denselben Wert (einmal je Start; Echo-Fenster); die Quelle
+            # schreibt beim Start, nach Thermostatmodus und Anzeige (Profil), ein ganzzahliges Thermostat gerundet.
+            angleichen=self._bedienung_start is None and self._angleichen,
         )
         if self._bedienung_start is not None:
             worker.post(Event(EV_TARGET_INPUT, {"value": self._bedienung_start, "source": SOURCE_PORTAL}))
-        elif self._angleichen and bindung.thermostat is not None:
-            # Spec 3.3: Thermostat, Portal und Geraet zeigen denselben Wert (einmal je Start; Echo-Fenster).
-            self.mirror.write_setpoint(bindung.thermostat, self._store.value)
-            self._store.note_own_write()
         return source
 
     def _raum_changed(self) -> None:

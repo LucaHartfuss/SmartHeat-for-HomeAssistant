@@ -1,7 +1,8 @@
 """Zigbee-Spiegel (Spec SHG G2 5): letzte Werte der Geraete aus Zigbee2MQTT mit Zeitstempel der MONOTONEN Uhr (die
 Wanduhr des Pi springt beim Boot, Plan G2a Review Focus 1), Faehigkeiten aus bridge/devices (exposes), Schreiben ans
-Thermostat, Koppeln. Friendly Name = IEEE-Adresse. Callbacks laufen im Bus-Thread; der Spiegel haelt nur Daten.
-Retained Geraetemeldungen gelten bis zur ersten Live-Meldung als veraltet."""
+Thermostat, Koppeln, erfolgreiche Interviews (bridge/event) fuer die Thermostat-Pflege. Friendly Name = IEEE-Adresse.
+Callbacks laufen im Bus-Thread; der Spiegel haelt nur Daten. Retained Geraetemeldungen gelten bis zur ersten
+Live-Meldung als veraltet."""
 import logging
 import threading
 from collections.abc import Callable
@@ -9,6 +10,7 @@ from dataclasses import dataclass
 
 from smartheat_gateway import topics
 from smartheat_gateway.bus import Bus, decode
+from smartheat_gateway.thermostat_profil import ThermostatPflege
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +70,8 @@ class ZigbeeMirror:
         self._devices: dict[str, ZigbeeDevice] = {}
         self._payloads: dict[str, tuple[dict, float | None]] = {}
         self._hooks: list[Callable[[str, dict], None]] = []
+        self._interview_hooks: list[Callable[[str, str], None]] = []
+        self.pflege = ThermostatPflege(self)
 
     def start(self) -> None:
         self._bus.subscribe(f"{topics.Z2M_BASE}/#", self._on_message)
@@ -78,6 +82,10 @@ class ZigbeeMirror:
 
     def on_device_message(self, hook: Callable[[str, dict], None]) -> None:
         self._hooks.append(hook)
+
+    def on_interview(self, hook: Callable[[str, str], None]) -> None:
+        """hook(ieee, model) nach jedem erfolgreichen Interview (Koppeln, Neukoppeln)."""
+        self._interview_hooks.append(hook)
 
     def devices(self) -> list[ZigbeeDevice]:
         with self._lock:
@@ -114,7 +122,10 @@ class ZigbeeMirror:
         return payload[field]
 
     def write_setpoint(self, ieee: str, value: float) -> None:
-        self._bus.publish(f"{topics.Z2M_BASE}/{ieee}/set", {"occupied_heating_setpoint": value})
+        self.set(ieee, {"occupied_heating_setpoint": value})
+
+    def set(self, ieee: str, payload: dict) -> None:
+        self._bus.publish(f"{topics.Z2M_BASE}/{ieee}/set", payload)
 
     def permit_join(self, seconds: int) -> None:
         self._bus.publish(f"{topics.Z2M_BASE}/bridge/request/permit_join", {"time": int(seconds)})
@@ -127,6 +138,8 @@ class ZigbeeMirror:
             self._online = state == "online" if state is not None else None
         elif parts[1:] == ["bridge", "devices"] and isinstance(body, list):
             self._set_devices(body)
+        elif parts[1:] == ["bridge", "event"] and not retain:
+            self._on_bridge_event(body)
         elif len(parts) == 2 and parts[1] != "bridge" and isinstance(body, dict):
             # Retained Meldungen (Broker-Replay beim Verbinden) sind beliebig alt: speichern, aber nicht frisch
             # stempeln und keine Geraete-Hooks (Plan G2b-1 Praezisierung 13).
@@ -136,6 +149,19 @@ class ZigbeeMirror:
                 return
             for hook in self._hooks:
                 hook(parts[1], body)
+
+    def _on_bridge_event(self, body) -> None:
+        if not isinstance(body, dict) or body.get("type") != "device_interview":
+            return
+        data = body.get("data")
+        if not isinstance(data, dict) or data.get("status") != "successful":
+            return
+        definition = data.get("definition")
+        ieee, model = data.get("ieee_address"), definition.get("model") if isinstance(definition, dict) else None
+        if not isinstance(ieee, str) or not isinstance(model, str):
+            return
+        for hook in self._interview_hooks:
+            hook(ieee, model)
 
     def _set_devices(self, raw_devices: list) -> None:
         devices = {}
