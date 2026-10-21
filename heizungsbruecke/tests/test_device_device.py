@@ -110,9 +110,12 @@ class FakeLink:
         self.connected = self.started = self.stopped = False
         self.sent: list[tuple[str, dict]] = []
         self.connect_failures = 0
+        self.client_nr = 0
+        self._mid_basis = 0  # paho zaehlt mids je Client ab 1
 
     def start(self):
         self.started = True
+        self.client_nr += 1
 
     def stop(self):
         self.stopped, self.connected = True, False
@@ -122,12 +125,20 @@ class FakeLink:
             return None
         # wie der echte Link: nie NaN/Inf hinaus (Testoffensive T2, Nr. 17), json wirft dann ValueError
         self.sent.append((name, json.loads(json.dumps(payload, allow_nan=False))))
-        return len(self.sent)
+        return len(self.sent) - self._mid_basis
 
     def port_wechseln_falls_noetig(self):
         pass
 
     # --- Teststeuerung ---
+
+    def neuer_client(self):
+        """Wie port_wechseln_falls_noetig: alter Client weg (mit seinen unbestaetigten Nachrichten), neuer Client, dessen
+        mids wieder bei 1 beginnen."""
+        self.client_nr += 1
+        self._mid_basis = len(self.sent)
+        self.connected = False
+        self.ereignis("getrennt")
 
     def verbinden(self):
         self.connected = True
@@ -688,6 +699,34 @@ def test_inventory_parts_go_up_before_the_result(tmp_path):
     names = world.link.topics()
     assert names.index("up/inventory") < names.index("up/result")
     assert world.link.of("up/result") == [commands.result_payload("c1", True, {}, None)]
+
+
+def test_ein_puback_des_neuen_clients_bestaetigt_keine_inventurteile_des_alten(tmp_path):
+    """Portwechsel (neuer paho-Client, mids ab 1): die unbestaetigten Teile des alten Clients sind verloren. Ein PUBACK
+    des neuen Clients mit derselben Nummer darf sie nicht bestaetigen; die Teile gehen neu hinaus, das Ergebnis erst
+    nach deren PUBACK."""
+    calls = []
+    host = FakeHost()
+    host.handlers = {"inventory": lambda payload: calls.append(1) or commands.Done({}, inventur={"kandidaten": [1]})}
+    world = World(tmp_path, host)
+    world.verbinden()
+    world.empfangen("down/command", _command("inventory", payload={"stunden": 1}))
+    alte_mid = world.link.topics().index("up/inventory") + 1
+    world.link.neuer_client()
+    world.device.schritt()
+    world.link.verbinden()
+    world.device.schritt()
+    namen = world.link.topics()[world.link._mid_basis:]  # Nachrichten des neuen Clients, mid = Index + 1
+    assert namen.count("up/inventory") == 1  # die Teile gingen neu hinaus
+    neue_mid = namen.index("up/inventory") + 1
+    assert neue_mid == alte_mid  # die Nummer des alten Teils gehoert jetzt einer Nachricht des neuen Clients
+    for mid in range(1, neue_mid):  # PUBACK aller anderen Nachrichten des neuen Clients (hello, Status ...)
+        world.link.ereignis("gesendet", mid)
+    world.device.schritt()
+    assert world.link.of("up/result") == []
+    world.link.ereignis("gesendet", neue_mid)
+    world.device.schritt()
+    assert len(world.link.of("up/result")) == 1 and calls == [1]
 
 
 def test_der_befehl_einer_inventur_endet_erst_nach_dem_puback_auch_ueber_ein_trennen(tmp_path):

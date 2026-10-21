@@ -67,6 +67,7 @@ class Link:
         self._abgelehnt = False  # abgelehntes CONNACK schon gezaehlt; paho ruft danach on_disconnect
         self._wechsel = False
         self._client: Any = None
+        self.client_nr = 0  # zaehlt die paho-Clients dieses Links (mids beginnen je Client neu)
 
     @property
     def connected(self) -> bool:
@@ -77,6 +78,7 @@ class Link:
         """Wirft TransportConfigError, wenn Zertifikat, Schluessel oder CA nicht zusammenpassen."""
         self._connack = self._abgelehnt = False
         self._client = self._neuer_client()
+        self.client_nr += 1
         self._client.loop_start()
 
     def stop(self) -> None:

@@ -339,7 +339,8 @@ def test_inventory_data_goes_out_before_the_result(tmp_path):
 def test_an_inventory_waits_while_offline(tmp_path):
     sent, online, parts = Sent(), {"ok": False}, []
     register = cmd.CommandRegister(
-        tmp_path, sent, send_inventory=lambda command_id, daten: parts.append(command_id) or ([5] if online["ok"] else None))
+        tmp_path, sent,
+        send_inventory=lambda command_id, daten: parts.append(command_id) or ([5] if online["ok"] else None))
     register.register("inventory", lambda payload: cmd.Done({}, inventur={"k": [1]}))
     register.empfangen(_command("inventory", payload={"stunden": 1}))
     assert sent.results == [] and parts == ["c1"]
@@ -401,6 +402,41 @@ def test_eine_verlorene_bestaetigung_laesst_die_teile_noch_einmal_hoch_gehen(tmp
     register.inventur_bestaetigt(4)
     register.pruefen()
     assert sent.results == [_ok(result={"n": 1})] and calls == [1]
+
+
+def test_ein_wechsel_des_clients_laesst_die_teile_neu_hinaus_und_alte_mids_zaehlen_nicht(tmp_path):
+    """Ein neuer paho-Client zaehlt mids wieder ab 1: ein PUBACK mit der Nummer eines alten Teils bestaetigt nichts,
+    erst das PUBACK der neu gesendeten Teile."""
+    sent, calls = Sent(), []
+    register = _inventur_register(tmp_path, sent, [[1, 2], [1, 2]], calls=calls)
+    register.empfangen(_command("inventory", payload={"stunden": 1}))
+    register.inventur_bestaetigt(1)
+    register.inventur_neu_senden()
+    register.inventur_bestaetigt(2)  # PUBACK des neuen Clients (z. B. hello), zufaellig die Nummer des alten Teils 2
+    register.pruefen()  # die Teile gehen mit neuen mids [1, 2] hinaus
+    register.inventur_bestaetigt(1)
+    register.pruefen()
+    assert sent.results == []
+    register.inventur_bestaetigt(2)
+    register.pruefen()
+    assert sent.results == [_ok(result={"n": 1})] and calls == [1]
+
+
+def test_das_neusenden_der_inventur_endet_nach_drei_versuchen_mit_keine_bestaetigung(tmp_path):
+    sent, clock, calls = Sent(), Clock(), []
+    register = _inventur_register(tmp_path, sent, [[1], [2], [3], [4]], clock=clock, calls=calls)
+    register.empfangen(_command("inventory", payload={"stunden": 1}))
+    for _ in range(cmd.INVENTUR_VERSUCHE_MAX - 1):  # Versuch 1 und 2 laufen ab, jeweils folgt ein neuer Versand
+        clock.now += cmd.INVENTUR_BESTAETIGUNG_SECONDS
+        register.pruefen()
+        assert sent.results == []
+    clock.now += cmd.INVENTUR_BESTAETIGUNG_SECONDS  # Versuch 3 laeuft ab: Ende, kein vierter Versand
+    register.pruefen()
+    assert sent.results == [_fail(cmd.TIMEOUT_GRUND)] and calls == [1]
+    assert json.loads((tmp_path / cmd.STORE_FILE).read_text()) == [["c1", False, None, {"grund": cmd.TIMEOUT_GRUND}]]
+    clock.now += cmd.INVENTUR_BESTAETIGUNG_SECONDS
+    register.pruefen()
+    assert len(sent.results) == 1  # nichts mehr offen
 
 
 def test_wiederholbare_inventur_laeuft_nach_neustart_erneut_statt_intern(tmp_path):

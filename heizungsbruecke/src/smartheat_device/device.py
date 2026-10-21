@@ -138,6 +138,7 @@ class Device:
             uhr_synchron=self._uhr_synchron, identity=lambda: self.identity, clock=clock)
         self.link: Link | None = None
         self._bereit = False  # verbunden und hello gesendet
+        self._client_stand: tuple[Link, int] | None = None  # (Link, client_nr) des letzten Takts
         self._hello_offen = False  # verbunden, hello noch nicht gesendet (Takt versucht es erneut)
         self._rettung = False
         self._channel: RuntimeChannel | None = None
@@ -326,6 +327,7 @@ class Device:
         link = self.link
         if link is not None:
             link.port_wechseln_falls_noetig()
+            self._client_pruefen(link)
             if link.connected:
                 self._last_ok = now
                 if self._hello_offen and not self._bereit:
@@ -337,6 +339,15 @@ class Device:
         self._status_senden(now, force=False)
         self._meldungen_senden(now)
         self._host_wert("anzeigen", self.host.anzeigen, self.anzeige())  # gescheitert: diese Anzeige entfaellt
+
+    def _client_pruefen(self, link: Link) -> None:
+        """Ein neuer paho-Client (Portwechsel, neuer Link) kennt die Nachrichten des alten nicht und zaehlt mids wieder
+        ab 1: ein PUBACK darf nie eine mid des alten Clients bestaetigen (Inventurteile, L4-02). Die Ereignisse des
+        alten Clients stehen vor VERBUNDEN in der Inbox, gesendet wird erst danach (_bereit)."""
+        vorher = self._client_stand
+        if vorher is not None and (vorher[0] is not link or vorher[1] != link.client_nr):
+            self.befehle.inventur_neu_senden()
+        self._client_stand = (link, link.client_nr)
 
     def _register_args(self, faehigkeiten: dict | None = None) -> dict:
         """faehigkeiten: schon geprueft (_link_aufbauen), sonst ruft es den Host."""

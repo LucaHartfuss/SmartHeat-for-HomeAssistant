@@ -38,8 +38,13 @@ DONE_KEEP = 500
 COMMAND_ID_MAX_CHARS = 64
 TIMEOUT_GRUND = "keine_bestaetigung"
 #: Wartezeit auf die Bestaetigung (PUBACK) aller Inventurteile; danach gehen die Teile noch einmal hoch (der Server
-#: fuegt ein Teil nur einmal ein), falls eine Bestaetigung verloren ging (z. B. Wechsel des Ports mit neuem Client).
+#: fuegt ein Teil nur einmal ein), falls eine Bestaetigung ausblieb. Ein Wechsel des paho-Clients (Portwechsel, neuer
+#: Link) setzt die offenen Inventuren sofort auf "neu senden" (inventur_neu_senden): mids eines alten Clients gelten nie.
 INVENTUR_BESTAETIGUNG_SECONDS = 60.0
+#: Hoechstzahl der Sendungen einer Inventur (erste eingeschlossen). Danach endet der Befehl mit keine_bestaetigung.
+#: Eine feste Zahl, weil das Register expires_at bewusst nicht gegen die eigene Uhr prueft (Modul-Doku oben); drei
+#: Versuche decken einen kurzen Ausfall ab, ohne bei dauerhaft ausbleibendem PUBACK endlos weiterzusenden.
+INVENTUR_VERSUCHE_MAX = 3
 HINWEIS_KEY_MAX_CHARS = 64
 HINWEIS_TEXT_MAX_CHARS = 1000
 #: Arten, deren Pflichtfelder die Phase bestimmt (Command.payload ist dort die Vereinigung aller Phasen,
@@ -120,6 +125,7 @@ class CommandRegister:
         self._pending: dict[str, tuple[str, Waiting]] = {}
         #: je Befehl die mids der gesendeten Inventurteile, auf deren PUBACK das Ergebnis wartet
         self._inventur_offen: dict[str, set[int]] = {}
+        self._inventur_versuche: dict[str, int] = {}  # bisherige Sendungen je Befehl (INVENTUR_VERSUCHE_MAX)
         self._done = _load_done(self._path)
 
     def register(self, kind: str, handler: Handler, *, wiederholbar: bool = False) -> None:
@@ -161,6 +167,11 @@ class CommandRegister:
         """PUBACK des Brokers (Ereignis GESENDET des Links) fuer eine Nachricht; zaehlt nur fuer Inventurteile."""
         for offen in self._inventur_offen.values():
             offen.discard(mid)
+
+    def inventur_neu_senden(self) -> None:
+        """Der paho-Client wechselte (Portwechsel, neuer Link): seine unbestaetigten Nachrichten sind verloren, und ein
+        neuer Client zaehlt mids wieder ab 1. Offene Inventuren gehen beim naechsten pruefen() noch einmal hoch."""
+        self._inventur_offen.clear()
 
     def pruefen(self) -> None:
         """Wartende Befehle (Takt des Geraets): fertig, gescheitert oder Frist abgelaufen."""
@@ -261,17 +272,23 @@ class CommandRegister:
             return None
         if not mids:
             return Done(done.result)
-        offen = self._inventur_offen[command_id] = set(mids)
+        self._inventur_offen[command_id] = set(mids)
+        versuche = self._inventur_versuche[command_id] = self._inventur_versuche.get(command_id, 0) + 1
         frist = self._clock() + INVENTUR_BESTAETIGUNG_SECONDS
 
-        def bestaetigt() -> Done | None:
-            if not offen:
-                self._inventur_offen.pop(command_id, None)
+        def bestaetigt() -> Done | Failed | None:
+            offen = self._inventur_offen.get(command_id)  # None: der Client wechselte, neu senden
+            if offen is not None and not offen:
+                del self._inventur_offen[command_id]
+                self._inventur_versuche.pop(command_id, None)
                 return Done(done.result)
-            if self._clock() >= frist:  # Bestaetigung verloren: die Teile gehen noch einmal hoch
-                self._inventur_offen.pop(command_id, None)
-                return done
-            return None
+            if offen is not None and self._clock() < frist:
+                return None
+            self._inventur_offen.pop(command_id, None)  # Bestaetigung ausgeblieben oder Client gewechselt
+            if versuche >= INVENTUR_VERSUCHE_MAX:
+                self._inventur_versuche.pop(command_id, None)
+                return self._timed_out(kind)
+            return done  # die Teile gehen noch einmal hoch (_finish_or_wait -> _inventur_senden)
 
         self._pending[command_id] = (kind, Waiting(bestaetigt, float("inf")))
         return None

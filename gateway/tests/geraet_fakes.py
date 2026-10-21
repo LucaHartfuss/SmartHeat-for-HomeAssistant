@@ -35,9 +35,11 @@ class FakeLink:
         self.connected = self.started = self.stopped = False
         self.sent: list[tuple[str, dict]] = []
         self.connect_failures = 0
+        self.client_nr = 0
 
     def start(self):
         self.started = True
+        self.client_nr += 1
 
     def stop(self):
         self.stopped, self.connected = True, False
