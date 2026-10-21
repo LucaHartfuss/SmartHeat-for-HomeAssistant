@@ -261,7 +261,14 @@ def test_no_fallback_without_alpn(tls):
 def test_puback_is_reported(tls):
     link, clients, events = _link(tls)
     clients[-1].on_publish(clients[-1], None, 7, SimpleNamespace(is_failure=False), None)
-    assert events == [("gesendet", 7, link.client_nr)]  # die Nummer des sendenden Clients
+    assert events == [("gesendet", 7, link.client_nr, True)]  # die Nummer des sendenden Clients, Erfolg
+
+
+def test_puback_with_an_error_code_is_not_a_confirmation(tls):
+    """MQTT 5: der Broker kann ein PUBACK mit Fehlercode schicken (z. B. 0x97 Quota exceeded)."""
+    link, clients, events = _link(tls)
+    clients[-1].on_publish(clients[-1], None, 7, SimpleNamespace(is_failure=True), None)
+    assert events == [("gesendet", 7, link.client_nr, False)]
 
 
 def test_puback_of_an_old_client_carries_the_number_of_that_client(tls):
@@ -271,7 +278,7 @@ def test_puback_of_an_old_client_carries_the_number_of_that_client(tls):
         clients[-1].fail(OSError("Netz"))
     link.port_wechseln_falls_noetig()
     alt.on_publish(alt, None, 3, SimpleNamespace(is_failure=False), None)
-    assert events[-1] == ("gesendet", 3, alte_nr) and link.client_nr != alte_nr
+    assert events[-1] == ("gesendet", 3, alte_nr, True) and link.client_nr != alte_nr
 
 
 def test_stop_disconnects(tls):

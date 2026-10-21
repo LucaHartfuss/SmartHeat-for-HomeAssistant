@@ -308,10 +308,13 @@ class Device:
             elif art == NACHRICHT:
                 self._nachricht(*daten)
             elif art == GESENDET:
-                mid, client_nr = daten
+                mid, client_nr, ok = daten
                 if self.link is not None and client_nr == self.link.client_nr:  # nie das PUBACK eines alten Clients
-                    self.wunsch_puffer.bestaetigt(mid)
-                    self.befehle.inventur_bestaetigt(mid)
+                    if ok:
+                        self.wunsch_puffer.bestaetigt(mid)
+                        self.befehle.inventur_bestaetigt(mid)
+                    else:  # Fehler-PUBACK: keine Bestaetigung; der Wunsch geht neu, Inventurteile nach der Frist
+                        self.wunsch_puffer.abgelehnt(mid)
         elif quelle == "wunsch":
             self._wunsch(*item[1:])
         elif quelle == "eigene":

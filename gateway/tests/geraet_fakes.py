@@ -54,7 +54,7 @@ class FakeLink:
         # allow_nan=False wie link.Link.publish: NaN/Inf gehen nie hinaus, json wirft ValueError (Device._publish faengt es)
         self.sent.append((name, json.loads(json.dumps(payload, allow_nan=False))))
         if name == "up/inventory":  # PUBACK des Brokers: das Ergebnis der Inventur wartet darauf (L4-02)
-            self.ereignis("gesendet", len(self.sent), self.client_nr)
+            self.ereignis("gesendet", len(self.sent), self.client_nr, True)
         return len(self.sent)
 
     def port_wechseln_falls_noetig(self):

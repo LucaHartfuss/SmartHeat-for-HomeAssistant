@@ -157,7 +157,10 @@ class CommandRegister:
             ok, result, error = self._done[command_id]
             if ok is not None:
                 self._send_result(result_payload(command_id, ok, result, error))
-            elif kind in self._wiederholbar:  # gestartet, Neustart: idempotent, noch einmal ausfuehren
+            elif kind in self._wiederholbar:
+                # gestartet, Neustart: idempotent, noch einmal ausfuehren. Bewusste Grenze: je Neustart einmal, solange
+                # der Server den Befehl zustellt (bis expires_at); eine Neustart-Schleife wiederholt auch die
+                # Cloud-Abfrage einer Erkennung je Neustart (L4-02, Abschlussreview Nit 1).
                 self._finish_or_wait(command_id, kind, self._execute(command_id, kind, message))
             else:  # gestartet, Ergebnis unbekannt (Neustart): nicht noch einmal ausfuehren
                 self._finish_or_wait(command_id, "", Failed("intern"))
@@ -274,6 +277,7 @@ class CommandRegister:
             self._pending[command_id] = (kind, Waiting(lambda: done, float("inf")))
             return None
         if not mids:
+            self._inventur_versuche.pop(command_id, None)
             return Done(done.result)
         self._inventur_offen[command_id] = set(mids)
         versuche = self._inventur_versuche[command_id] = self._inventur_versuche.get(command_id, 0) + 1

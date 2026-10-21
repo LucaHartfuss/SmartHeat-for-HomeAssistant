@@ -468,7 +468,8 @@ def normalisieren(record: list[dict], *, alt: bool) -> list[dict]:
                 w = ["ha", "event", "smartheat_status", {k: v for k, v in w[3].items() if k not in weg}]
                 if (not alt and schritt["schritt"] in STATUS_START_SCHRITTE
                         and w[3]["status"] == "startet" and w[3]["notbetrieb"] is True):
-                    w[3]["status"] = "notbetrieb"  # ERLAUBT "status_start": nur im neuen Master, nur in diesen Schritten
+                    # ERLAUBT "status_start": nur im neuen Master, nur in diesen Schritten
+                    w[3]["status"] = "notbetrieb"
             wirkungen.append(w)
         dateien = {name: inhalt for name, inhalt in schritt["dateien"].items()
                    if Path(name).name not in ("room_target.json", "abgemeldet.json", "discovery.json")}

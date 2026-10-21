@@ -228,4 +228,7 @@ class Link:
         self._melden(NACHRICHT, parsed[1], bytes(message.payload))
 
     def _on_publish(self, nummer, client, userdata, mid, reason_code, properties) -> None:
-        self._melden(GESENDET, mid, nummer)  # nummer: der Client, der gesendet hat (nicht der aktuelle)
+        # nummer: der Client, der gesendet hat (nicht der aktuelle). ok: MQTT 5 liefert den Reason Code des PUBACK, ein
+        # Fehler (z. B. 0x97 Quota exceeded) ist keine Bestaetigung; unter 3.1.1 ist er immer Erfolg.
+        ok = not getattr(reason_code, "is_failure", False)
+        self._melden(GESENDET, mid, nummer, ok)

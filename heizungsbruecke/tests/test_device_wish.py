@@ -90,6 +90,17 @@ def test_the_buffer_is_cleared_only_by_the_matching_puback(tmp_path):
     assert not (tmp_path / wish.WUNSCH_FILE).exists()
 
 
+def test_a_puback_with_an_error_code_sends_the_wish_again(tmp_path):
+    puffer = wish.WunschPuffer(tmp_path)
+    puffer.setzen(_wunsch())
+    puffer.gesendet(5)
+    assert not puffer.offen()
+    puffer.abgelehnt(6)  # fremde mid: nichts
+    assert not puffer.offen()
+    puffer.abgelehnt(5)
+    assert puffer.offen() and puffer.wunsch is not None  # noch nicht bestaetigt: geht erneut hinaus
+
+
 def test_a_lost_connection_sends_again(tmp_path):
     puffer = wish.WunschPuffer(tmp_path)
     puffer.setzen(_wunsch())

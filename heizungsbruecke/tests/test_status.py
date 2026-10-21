@@ -55,8 +55,9 @@ def test_overall_status_takes_the_first_matching_state(flags, state, expected):
 
 def test_veralteter_notbetrieb_vor_dem_start_ist_startet():
     """L4-09: Notbetrieb ohne offenen Tick stammt aus dem Abo-inaktiv-Modus (abo.enter_inactive) und ist beim Start
-    veraltet; bis zum ersten abgeschlossenen Start zeigt der Status `startet` statt eines kurzen `notbetrieb`. Ein echter
-    Notbetrieb hat einen offenen Tick und bleibt vor dem Start sichtbar; nach dem Start gilt der Notbetrieb immer."""
+    veraltet; bis zum ersten abgeschlossenen Start zeigt der Status `startet` statt eines kurzen `notbetrieb`. Ein
+    echter Notbetrieb hat einen offenen Tick und bleibt vor dem Start sichtbar; nach dem Start gilt der Notbetrieb
+    immer."""
     stale = BridgeState(delivery=DeliveryState(notbetrieb=True))
     offen = BridgeState(delivery=DeliveryState(notbetrieb=True, pending=PendingTick(seq="s", trigger="daily")))
     assert overall_status(Flags(), stale) == "startet"

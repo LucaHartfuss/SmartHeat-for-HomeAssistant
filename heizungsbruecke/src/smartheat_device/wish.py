@@ -129,5 +129,10 @@ class WunschPuffer:
         self._path.unlink(missing_ok=True)
         return True
 
+    def abgelehnt(self, mid: int) -> None:
+        """Der Broker lehnte die Nachricht ab (PUBACK mit Fehlercode): der Wunsch ist nicht unterwegs, er geht neu."""
+        if self._mid is not None and mid == self._mid:
+            self._mid = None
+
     def verbindung_verloren(self) -> None:
         self._mid = None

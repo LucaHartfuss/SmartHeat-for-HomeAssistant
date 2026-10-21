@@ -152,9 +152,10 @@ class FakeLink:
         self.connected = False
         self.ereignis("getrennt")
 
-    def gesendet(self, mid, client_nr=None):
-        """PUBACK des Brokers; wie der Link traegt das Ereignis die Nummer des Clients, der gesendet hat."""
-        self.ereignis("gesendet", mid, self.client_nr if client_nr is None else client_nr)
+    def gesendet(self, mid, client_nr=None, ok=True):
+        """PUBACK des Brokers; wie der Link traegt das Ereignis die Nummer des Clients, der gesendet hat, und ob der
+        Reason Code ein Erfolg war."""
+        self.ereignis("gesendet", mid, self.client_nr if client_nr is None else client_nr, ok)
 
     def empfangen(self, name, body):
         self.ereignis("nachricht", name, json.dumps(body).encode())
@@ -759,6 +760,26 @@ def test_ein_spaetes_puback_des_alten_clients_bestaetigt_nichts(tmp_path):
     assert len(world.link.of("up/result")) == 1
 
 
+def test_ein_fehler_puback_bestaetigt_keinen_inventurteil_und_die_teile_gehen_nach_der_frist_neu_hinaus(tmp_path):
+    """MQTT 5: lehnt der Broker ein Teil per PUBACK ab (z. B. 0x97), fehlt es: kein Ergebnis, nach der Frist gehen die
+    Teile erneut hinaus, das Ergebnis folgt dem PUBACK des zweiten Versuchs."""
+    calls = []
+    host = FakeHost()
+    host.handlers = {"inventory": lambda payload: calls.append(1) or commands.Done({}, inventur={"kandidaten": [1]})}
+    world = World(tmp_path, host)
+    world.verbinden()
+    world.empfangen("down/command", _command("inventory", payload={"stunden": 1}))
+    world.link.gesendet(world.link.topics().index("up/inventory") + 1, ok=False)
+    world.device.schritt()
+    assert world.link.of("up/result") == [] and len(world.link.of("up/inventory")) == 1
+    world.clock.now += commands.INVENTUR_BESTAETIGUNG_SECONDS
+    world.device.schritt()
+    assert len(world.link.of("up/inventory")) == 2 and world.link.of("up/result") == []
+    world.link.gesendet(len(world.link.sent))
+    world.device.schritt()
+    assert len(world.link.of("up/result")) == 1 and calls == [1]
+
+
 def test_der_befehl_einer_inventur_endet_erst_nach_dem_puback_auch_ueber_ein_trennen(tmp_path):
     """Ein Trennen vor dem PUBACK laesst den Befehl stehen: kein Ergebnis, die Erkennung laeuft nicht noch einmal;
     kommt das PUBACK nach dem Verbinden (paho sendet unbestaetigte QoS-1-Nachrichten erneut), geht das Ergebnis."""
@@ -934,6 +955,22 @@ def test_a_wish_is_limited_applied_buffered_and_sent_after_hello(tmp_path):
     assert (sent["basis_version"], sent["werte"], sent["roh"], sent["herkunft"], sent["durch"]) == (
         3, {"raum_soll": 15.0}, 14.0, "thermostat", "nutzer")
     world.link.gesendet(names.index("up/wish") + 1)
+    world.device.schritt()
+    assert world.device.wunsch_puffer.wunsch is None
+
+
+def test_a_puback_with_an_error_code_does_not_confirm_the_wish(tmp_path):
+    world = World(tmp_path)
+    world.verbinden()
+    world.empfangen("down/operation", _bedienung(version=3, raum_soll=21.0))
+    world.device.wunsch(22.0, herkunft="thermostat")
+    world.device.schritt()
+    mid = world.link.topics().index("up/wish") + 1
+    world.link.gesendet(mid, ok=False)
+    world.device.schritt()
+    assert world.device.wunsch_puffer.wunsch is not None
+    assert world.link.topics().count("up/wish") == 2  # geht im naechsten Takt erneut hinaus
+    world.link.gesendet(len(world.link.sent))
     world.device.schritt()
     assert world.device.wunsch_puffer.wunsch is None
 

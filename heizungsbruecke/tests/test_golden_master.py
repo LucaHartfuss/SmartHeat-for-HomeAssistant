@@ -11,7 +11,8 @@ und in Task 2 des Plans Stufe 3 S8a-1 (raum_soll_wirksam entfaellt aus dem Snaps
 nicht neu erzeugt)
 und in Task 1 des Plans Fixrunde A Schreibschutz (A6-01: boost_start/emergency_start nach erfolgreichem Start)
 und in Task 1 des Plans Fixrunde A Rollen (A6-02: benachrichtigung notify.mobile_app_*)
-und in Task 4 des Plans Fixrunde A Geraetekern (L4-09: Status startet statt notbetrieb beim Start mit veraltetem Notbetrieb)."""
+und in Task 4 des Plans Fixrunde A Geraetekern (L4-09: Status startet statt notbetrieb beim Start mit veraltetem
+Notbetrieb)."""
 import json
 import os
 import time
