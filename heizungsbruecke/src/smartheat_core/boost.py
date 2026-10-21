@@ -15,10 +15,17 @@ def decide_boost(
 
     `previous_room_target=None` (erster Tick ueberhaupt, kein Vorwert bekannt) loest nie
     einen Trigger aus -- es gibt keine "Erhoehung" ohne Vorwert.
+
+    Der Start verlangt zusaetzlich, dass der Raum noch nicht angekommen ist
+    (`room_actual < room_target - arrival_threshold_k`, dieselbe Bedingung wie fuers
+    Weiterlaufen): bei warmem Raum gaebe es einen Schein-Start, der beim naechsten Check
+    endet und den echten Boost ueber das Startbudget (30 min Abstand) sperrt (A6-01).
     """
+    not_arrived = room_actual < room_target - arrival_threshold_k
     if boost_was_active:
-        return room_actual < room_target - arrival_threshold_k
-    return previous_room_target is not None and room_target > previous_room_target + _TARGET_RISE_EPSILON_K
+        return not_arrived
+    rose = previous_room_target is not None and room_target > previous_room_target + _TARGET_RISE_EPSILON_K
+    return rose and not_arrived
 
 
 # Audit 4, A4-09 (Nutzer-Entscheidung E2, Freigabe nach Regel 4 fuer genau diese Werte): der Comfort-Boost ist

@@ -290,6 +290,34 @@ def test_a_comfort_start_refused_for_the_wait_keeps_the_increase(make_store, clo
     assert load_backup(tmp_path / "backup.json")["last_room_target"] == 21.0
 
 
+def test_a_rise_with_a_warm_room_does_not_start_nor_count_and_does_not_block_a_real_boost(
+    make_store, clock, tmp_path, monkeypatch, caplog,
+):
+    """A6-01-Nachtrag (Regel 4): eine Erhoehung bei angekommenem Raum (>= Soll - 0,5 K) startet keinen Boost, zaehlt nicht
+    und schreibt nichts; eine echte Erhoehung bei kaltem Raum kurz danach startet ohne Wartezeit."""
+    monkeypatch.setattr(write_budget, "today", lambda: DAY)
+    store = make_store(backup={"last_room_target": 15.0, **RESTORE_POINT})
+    rt = _runtime(store, room_actual=20.0, room_target=18.0, clock=clock)
+
+    with caplog.at_level(logging.DEBUG):
+        regulation.run_local_check(rt)
+
+        assert _writes(rt) == []
+        assert rt.store.state.boost_active is False
+        assert write_budget.get(store, write_budget.BOOST_START) is None
+        assert load_backup(tmp_path / "backup.json")["last_room_target"] == 18.0
+
+        clock.advance(600)
+        rt.store.update(stable_target=22.0)
+        rt.states["sensor.room_actual"] = 20.5
+        regulation.run_local_check(rt)
+
+        assert _writes(rt) == COMFORT
+        assert rt.store.state.boost_active is True
+        assert write_budget.get(store, write_budget.BOOST_START)["count"] == 1
+        assert "wartezeit" not in caplog.text
+
+
 def test_check_after_abo_finished_writes_nothing(make_store, tmp_path):
     store = make_store(backup=dict(RESTORE_POINT), failsafe={"failsafe_active": True})
     rt = _runtime(store, room_actual=18.0, room_target=21.0)
