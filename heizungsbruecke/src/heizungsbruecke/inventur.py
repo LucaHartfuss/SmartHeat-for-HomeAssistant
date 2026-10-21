@@ -59,6 +59,12 @@ def _klasse(entry: dict, attributes: dict):
     return entry.get("device_class") or entry.get("original_device_class") or attributes.get("device_class")
 
 
+def entity_klasse(registry_entry: Mapping, state: Mapping):
+    """Geraeteklasse einer Entity (Registry-Eintrag, sonst Zustand) -- die eine Stelle, die sie ableitet (A6-02)."""
+    raw = state.get("attributes")
+    return _klasse(dict(registry_entry), raw if isinstance(raw, dict) else {})
+
+
 def _erlaubt(domain: str, klasse, plattform: str, einstellbar: set[str]) -> bool:
     if domain in ERLAUBTE_DOMAENEN:
         return True
@@ -73,9 +79,7 @@ def entity_erlaubt(entity_id: str, registry_entry: Mapping, state: Mapping, eins
     """Besteht die Entity die lokale Positivliste (Inventur und jede Rolle des Dokuments, A6-02)? Die Klasse kommt aus
     dem Registry-Eintrag, sonst aus dem Zustand (das echte HA liefert sie nur dort); `einstellbar` sind die Plattformen
     aus einstellbare_plattformen."""
-    raw = state.get("attributes")
-    attributes: dict = raw if isinstance(raw, dict) else {}
-    return _erlaubt(entity_id.split(".", 1)[0], _klasse(dict(registry_entry), attributes),
+    return _erlaubt(entity_id.split(".", 1)[0], entity_klasse(registry_entry, state),
                     registry_entry.get("platform") or OHNE_REGISTRY, einstellbar)
 
 
