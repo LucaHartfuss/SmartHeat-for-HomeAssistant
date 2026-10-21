@@ -101,7 +101,7 @@ docker_daemon_config() {
 }
 
 packages() {
-  local wanted=(python3 python3-cryptography unattended-upgrades nftables ca-certificates)  # CA: Updater-HTTPS, pull
+  local wanted=(python3 python3-cryptography unattended-upgrades nftables ca-certificates iproute2)  # CA: Updater-HTTPS, pull; iproute2: ss, ip (Diagnose)
   [ "$DOCKER" = 1 ] && wanted+=(docker.io docker-cli docker-compose)  # trixie: CLI ist nur "Recommends" von docker.io
   [ -z "$PILOT_KEY" ] || wanted+=(openssh-server)  # Pilotgeraete (sshd); ohne --pilot-ssh bleibt ssh aus
   local missing=() pkg

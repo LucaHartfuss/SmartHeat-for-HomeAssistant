@@ -3,7 +3,7 @@
 # dem Image eine geteilte Identitaet (machine-id, SSH-Hostschluessel, Geraeteschluessel, Bus-Zugangsdaten), ein
 # Passwort, ein Tunnel-Token oder im Serien-Image SSH bekaeme, wenn der Erststart ohne Pull nicht moeglich waere, wenn
 # WLAN an waere, Zeitzone oder Standard-Locale nicht den Vorgaben entsprechen oder die Geraete-API-/Portal-Adresse
-# kein eigener DNS-Name per https in der eigenen Zone ist (own_url.sh).
+# kein eigener DNS-Name per https in der eigenen Zone ist (own_url.sh) oder ss, ip, vcgencmd fehlen (Diagnose).
 # Aufruf: rootfs_checks.sh ROOTFS [--pilot] [--customize]
 #   --customize: Lauf im customize-Hook (customize.sh). Die machine-ids (systemd, dbus) bestehen dort noch;
 #                zurueckgesetzt werden sie erst beim Aufraeumen von mmdebstrap, geprueft dann im post-build-Hook
@@ -126,6 +126,20 @@ if [ ! -x "$USB_HOOK" ]; then
 elif ! grep -q '^[[:space:]]*copy_file config /etc/udev/rules.d/99-rpi-01-smartheat-usbboot.rules' "$USB_HOOK"; then
   fail "initramfs-Hook fuer den USB-Start nimmt die Regel nicht mit (copy_file fehlt)"
 fi
+
+# Diagnosewerkzeuge am Geraet (L4-18): ss und ip (iproute2) in usr/bin oder usr/sbin, vcgencmd (raspi-utils) in usr/bin.
+# Ein Link zaehlt (er kann auf den Build-Host-Pfaden "kaputt" zeigen), eine nicht ausfuehrbare Datei nicht.
+has_tool() {  # NAME VERZEICHNIS...
+  local name="$1" dir
+  shift
+  for dir in "$@"; do
+    if [ -L "$R/$dir/$name" ] || [ -x "$R/$dir/$name" ]; then return 0; fi
+  done
+  return 1
+}
+has_tool ss usr/bin usr/sbin || fail "ss fehlt im Image (Paket iproute2)"
+has_tool ip usr/bin usr/sbin || fail "ip fehlt im Image (Paket iproute2)"
+has_tool vcgencmd usr/bin || fail "vcgencmd fehlt im Image (Paket raspi-utils aus dem Raspberry-Pi-Archiv)"
 
 # Sicherheitsupdates aus dem Raspberry-Pi-Archiv moeglich
 grep -rqs "archive.raspberrypi.com" "$R/etc/apt/sources.list.d" "$R/etc/apt/sources.list" \
