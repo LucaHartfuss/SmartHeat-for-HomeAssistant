@@ -480,14 +480,74 @@ def test_flapping_operations_are_bounded_vaillant(make_store, clock, tag):
 
 
 def test_a_refusal_is_logged_once_and_not_written(make_store, clock, tag, caplog):
-    override, _, _ = _setup(make_store, backup={**RESTORE_POINT, **_six(write_budget.BOOST_START)}, clock=clock)
+    override, _, ha = _setup(make_store, backup={**RESTORE_POINT, **_six(write_budget.BOOST_START)}, clock=clock)
 
     with caplog.at_level(logging.INFO):
         for _ in range(3):
             override.set_boosts(comfort=True, emergency=False)
 
     assert override.comfort_start_heute_gesperrt is True
+    assert ha.writes == []
     assert len([r for r in caplog.records if r.levelno == logging.INFO and "abgelehnt" in r.getMessage()]) == 1
+
+
+def test_a_refusal_is_logged_once_per_boost_and_reason(make_store, clock, tag, caplog):
+    override, _, ha = _setup(
+        make_store,
+        backup={**RESTORE_POINT, "write_budget": {
+            write_budget.BOOST_START: {"day": DAY, "count": 6}, write_budget.EMERGENCY_START: {"day": DAY, "count": 6},
+        }},
+        clock=clock,
+    )
+
+    with caplog.at_level(logging.INFO):
+        for _ in range(3):
+            assert override.set_boosts(comfort=True, emergency=True) == (False, False)
+
+    zeilen = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO and "abgelehnt" in r.getMessage()]
+    assert len(zeilen) == 2
+    assert {zeile.split("-Start")[0] for zeile in zeilen} == {"Comfort-Boost", "Notfall-Boost"}
+    assert all("bis zum Tageswechsel gesperrt" in zeile for zeile in zeilen)
+    assert ha.writes == []
+
+
+def test_a_refusal_for_the_wait_says_when_the_next_check_tries_again(make_store, clock, tag, caplog):
+    override, _, _ = _setup(make_store, backup=dict(RESTORE_POINT), clock=clock)
+    override.set_boosts(comfort=True, emergency=False)
+    override.set_boosts(comfort=False, emergency=False)
+
+    with caplog.at_level(logging.INFO):
+        assert override.set_boosts(comfort=True, emergency=False) == (False, False)
+
+    assert override.comfort_start_heute_gesperrt is False
+    assert any("(wartezeit) - naechster Check nach Ablauf der Wartezeit" in r.getMessage() for r in caplog.records)
+
+
+def test_comfort_starting_while_the_emergency_boost_ends_counts_as_a_comfort_start(make_store, clock, tag):
+    override, store, ha = _setup(make_store, backup={**RESTORE_POINT, "emergency_boost_active": True}, clock=clock)
+    ha.write_error = RuntimeError("403 Quota Exceeded")
+
+    with pytest.raises(DeviceWriteError):
+        override.set_boosts(comfort=True, emergency=False)  # (F,T)->(T,F): Zeile comfort, ein Start
+    assert _starts(store, write_budget.BOOST_START) == 1
+    assert _starts(store, write_budget.EMERGENCY_START) == 0
+    assert _starts(store, write_budget.BOOST_END) == 0
+    # Schreibfehler: die Flags bleiben, der Rueckweg des naechsten Checks laeuft ueber BOOST_END (restore).
+    ha.write_error = None
+    ha.events.clear()
+    assert override.set_boosts(comfort=False, emergency=False) == (False, False)
+    assert ha.writes == _written("restore")
+    assert _starts(store, write_budget.BOOST_START) == 1
+
+
+def test_comfort_starting_while_the_emergency_boost_ends_writes_the_comfort_row(make_store, clock, tag):
+    override, store, ha = _setup(make_store, backup={**RESTORE_POINT, "emergency_boost_active": True}, clock=clock)
+
+    assert override.set_boosts(comfort=True, emergency=False) == (True, False)
+
+    assert ha.writes == _written("comfort")
+    assert _starts(store, write_budget.BOOST_START) == 1
+    assert _starts(store, write_budget.EMERGENCY_START) == 0
 
 
 # --- apply_server_values ---

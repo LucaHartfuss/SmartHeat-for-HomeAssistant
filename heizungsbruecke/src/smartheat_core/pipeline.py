@@ -147,8 +147,8 @@ class LeverPipeline:
         # True genau dann, wenn der letzte set_boosts-Aufruf einen wirklich startenden Comfort-Boost wegen der Tageszahl
         # oder des Tageslimits abgelehnt hat: die Erhoehung ist dann verbraucht (regulation, B5).
         self.comfort_start_heute_gesperrt = False
-        # Schon als INFO gemeldete Ablehnungen (Grund, Tag), nur Laufzeit; weitere Meldungen am Tag gehen auf DEBUG.
-        self._abgelehnt_gemeldet: set[tuple[str, str]] = set()
+        # Schon als INFO gemeldete Ablehnungen (Boost-Art, Grund, Tag), nur Laufzeit; weitere Meldungen gehen auf DEBUG.
+        self._abgelehnt_gemeldet: set[tuple[str, str, str]] = set()
 
     @property
     def safety(self) -> LocalSafety:
@@ -178,8 +178,9 @@ class LeverPipeline:
         bleibt frei. Wurde ein Comfort-Start wegen Tageszahl oder Tageslimit abgelehnt, steht
         comfort_start_heute_gesperrt auf True (die Erhoehung des Solls ist verbraucht). Ein neuer Notfall-Boost darf
         zusaetzlich auf dem zuletzt gespeicherten, aelteren Punkt starten, wenn der aktuelle nicht speicherbar ist
-        (N6). Wirft das Schreiben, bleiben die Flags unveraendert. Nach einem Fehlschlag bremst das Schreibbudget: dann bleiben die Flags ohne Schreiben stehen,
-        zurueckgegeben werden die bisherigen."""
+        (N6). Wirft das Schreiben, bleiben die Flags unveraendert. Nach einem Fehlschlag bremst das Schreibbudget:
+        dann bleiben die Flags ohne Schreiben stehen, zurueckgegeben werden die bisherigen."""
+        self.comfort_start_heute_gesperrt = False
         self.capture_originals()
         state = self._store.state
         starting_comfort = comfort and not state.boost_active
@@ -194,9 +195,9 @@ class LeverPipeline:
                     "Kein Wiederherstellungspunkt, Notfall-Boost ausgesetzt - naechster Check versucht es erneut"
                 )
                 emergency = False
-        self.comfort_start_heute_gesperrt = False
-        # Jeder wirklich startende Boost braucht das Tageslimit (soweit es eines gibt) und seinen Start-Zaehler; scheitert
-        # eine Pruefung, wird nur dieses Flag False (der Rueckweg des anderen bleibt frei), nichts wird gezaehlt.
+        # Jeder wirklich startende Boost braucht das Tageslimit (soweit es eines gibt) und seinen Start-Zaehler;
+        # scheitert eine Pruefung, wird nur dieses Flag False (der Rueckweg des anderen bleibt frei), nichts wird
+        # gezaehlt.
         if starting_emergency and emergency and self._start_refused(write_budget.EMERGENCY_START, "Notfall-Boost"):
             emergency = False
         if starting_comfort and comfort:
@@ -231,14 +232,19 @@ class LeverPipeline:
             self._notify_start_limit(day)
         elif write_budget.may_attempt(self._store, key, write_budget.START_QUOTA, self._clock()):
             return None
-        elif write_budget.count_today(write_budget.get(self._store, key), day) >= (write_budget.START_QUOTA.max_per_day or 0):
+        elif write_budget.count_today(write_budget.get(self._store, key), day) >= (
+            write_budget.START_QUOTA.max_per_day or 0
+        ):
             reason = _REASON_DAILY_COUNT
         else:
             reason = _REASON_WAIT
-        # Je Grund und Tag eine INFO-Zeile, die weiteren Pruefungen (jeder lokale Check) nur als DEBUG.
-        level = logging.DEBUG if (reason, day) in self._abgelehnt_gemeldet else logging.INFO
-        self._abgelehnt_gemeldet.add((reason, day))
-        logger.log(level, "%s-Start abgelehnt (%s) - naechster Check versucht es erneut", name, reason)
+        # Je Boost-Art, Grund und Tag eine INFO-Zeile, die weiteren Pruefungen (jeder lokale Check) nur als DEBUG.
+        meldung = (key, reason, day)
+        level = logging.DEBUG if meldung in self._abgelehnt_gemeldet else logging.INFO
+        self._abgelehnt_gemeldet.add(meldung)
+        folge = ("naechster Check nach Ablauf der Wartezeit" if reason == _REASON_WAIT
+                 else "bis zum Tageswechsel gesperrt")
+        logger.log(level, "%s-Start abgelehnt (%s) - %s", name, reason, folge)
         return reason
 
     def _notify_start_limit(self, day: str) -> None:
