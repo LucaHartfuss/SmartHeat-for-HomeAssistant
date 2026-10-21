@@ -162,8 +162,8 @@ class HaHost:
         try:
             # Pflichtrollen und Schreibregeln des Hebelsatzes zuerst: _wait_for_required_entities und die Hilfssensoren
             # indizieren die Rollen, ein fehlender Schluessel waere sonst ein KeyError statt eines Konfigurationsfehlers.
-            # Muster der Raumfuehler/Aussenquelle/Batterien/Handys und die Hinweise prueft config_check (Task 2) bzw. der
-            # Server, nicht der Host.
+            # Muster der Raumfuehler/Aussenquelle/Batterien/Handys und die Hinweise prueft der Server (config_check); die
+            # Positivliste und Formen der Rollen prueft der Host selbst weiter unten (_bindung_pruefen, A6-02).
             text = dokument.lokal_pruefen(self._konfiguration)
             if text:
                 raise ConfigError(text)
@@ -180,7 +180,7 @@ class HaHost:
             _bindung_pruefen(self._konfiguration)
             ohne_zustand = _rollen_pruefen_mit_wiederholung(self._ha_api, b)
             derived = _ensure_derived_sensors_with_retry(self._ha_api, b, runtime.tenant_id)
-            # optionale Rollen und Batterien ohne Zustand bleiben fuer diesen Lauf ungelesen (Spec 3.2 Nachtrag)
+            # optionale Lese-Rollen und Batterien ohne Zustand bleiben fuer diesen Lauf ungelesen (Spec 3.2 Nachtrag)
             ungelesen = {ref for _, ref in ohne_zustand}
             rollen = {rolle: ref for rolle, ref in b.rollen.items() if ref not in ungelesen}
             manifest = build_manifest({**rollen, "room_target": SOLL_REF}, derived.entity_ids, b.hebelsatz)
@@ -344,7 +344,7 @@ def _bindung_pruefen(konfiguration) -> None:
 def _rollen_pruefen_mit_wiederholung(ha_api, b: dokument.HaBindung) -> list[tuple[str, str]]:
     """Lokale Positivliste fuer jede Rolle (A6-02). Ein Urteil ist ein Konfigurationsfehler; nicht pruefbar (HA nicht
     RUNNING, Soll-Entity, Pflichtrolle oder Raumfuehler ohne Zustand, Registry oder Zustaende scheitern) wird wie
-    fehlende Entities wiederholt, nach dem Budget StartupError. Ergebnis: (Feld, Referenz) der optionalen Rollen und
+    fehlende Entities wiederholt, nach dem Budget StartupError. Ergebnis: (Feld, Referenz) der optionalen Lese-Rollen und
     Batterien ohne Zustand, die der Lauf nicht liest."""
     def _versuch():
         if not ha_api.is_reachable():  # faehrt HA hoch, fehlen Zustaende noch: kein Urteil

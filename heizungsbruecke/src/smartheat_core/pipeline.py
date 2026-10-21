@@ -72,8 +72,9 @@ BUDGET_MESSAGE = (
     "SmartHeat: Das Tageslimit von {limit} Schreibvorgängen an der Heizung ist erreicht. Neue Werte werden "
     "gespeichert und morgen geschrieben (Schonung des Gerätespeichers)."
 )
-# Ablehnung eines Boost-Starts am Tageslimit (gleicher Schluessel wie BUDGET_MESSAGE, eigener Satz).
-START_LIMIT_MESSAGE = "Das Tageslimit der Schreibvorgänge ist erreicht; ein Boost startet erst morgen wieder."
+# Ablehnung eines Boost-Starts am Tageslimit: gleicher Schluessel und Tag wie BUDGET_MESSAGE (nur ein Hinweis je Tag),
+# deshalb nennt dieser Text beide Folgen, egal welche Meldung zuerst kommt.
+START_LIMIT_MESSAGE = BUDGET_MESSAGE + " Ein Boost startet erst morgen wieder."
 LIFETIME_MESSAGE = (
     "SmartHeat: Bisher wurden {count} Werte in die Heizung geschrieben. Der Hersteller nennt eine Grenze von "
     "100.000 Schreibvorgängen auf Lebensdauer des Reglers; bitte den Fachbetrieb informieren."
@@ -241,6 +242,7 @@ class LeverPipeline:
         # Je Boost-Art, Grund und Tag eine INFO-Zeile, die weiteren Pruefungen (jeder lokale Check) nur als DEBUG.
         meldung = (key, reason, day)
         level = logging.DEBUG if meldung in self._abgelehnt_gemeldet else logging.INFO
+        self._abgelehnt_gemeldet = {m for m in self._abgelehnt_gemeldet if m[2] == day}  # Meldungen anderer Tage fallen weg
         self._abgelehnt_gemeldet.add(meldung)
         folge = ("naechster Check nach Ablauf der Wartezeit" if reason == _REASON_WAIT
                  else "bis zum Tageswechsel gesperrt")
@@ -251,7 +253,7 @@ class LeverPipeline:
         if self._notify is None:
             return
         try:
-            self._notify(BUDGET_KEY, day, START_LIMIT_MESSAGE)
+            self._notify(BUDGET_KEY, day, START_LIMIT_MESSAGE.format(limit=self._description.daily_write_limit))
         except Exception:
             logger.exception("Hinweis zum Tageslimit fehlgeschlagen")
 

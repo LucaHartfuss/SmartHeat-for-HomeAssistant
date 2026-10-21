@@ -154,8 +154,28 @@ def test_a_boost_does_not_start_at_the_daily_limit(make_store, clock, comfort, e
     assert write_budget.get(store, write_budget.BOOST_START) is None
     assert write_budget.get(store, write_budget.EMERGENCY_START) is None
     assert _total(store) == 10
-    assert {note[:3] for note in notes} == {(BUDGET_KEY, DAY, START_LIMIT_MESSAGE)}
+    assert {note[:3] for note in notes} == {(BUDGET_KEY, DAY, START_LIMIT_MESSAGE.format(limit=10))}
     assert pipeline.comfort_start_heute_gesperrt is comfort
+
+
+def test_the_start_refusal_text_covers_both_facts_of_the_shared_daily_notice(make_store, clock):
+    # Gleicher Schluessel und Tag wie BUDGET_MESSAGE: kommt der Boost-Hinweis zuerst, darf der Hinweis auf die
+    # verschobenen Werte nicht fehlen (und der Text hat wie alle Hinweise das Praefix).
+    notes = []
+    pipeline, _, _ = _weishaupt(
+        make_store, clock, backup={"restore_point": POINT, "write_budget": AT_LIMIT}, notify=lambda *args: notes.append(args))
+    pipeline.set_boosts(comfort=True, emergency=False)
+    text = notes[0][2]
+    assert text.startswith("SmartHeat: Das Tageslimit von 10 Schreibvorgängen")
+    assert "morgen geschrieben" in text and text.endswith("Ein Boost startet erst morgen wieder.")
+
+
+def test_refused_start_reports_of_other_days_are_dropped(make_store, clock):
+    pipeline, _, _ = _weishaupt(make_store, clock, backup={"restore_point": POINT, "write_budget": AT_LIMIT})
+    pipeline._abgelehnt_gemeldet.add(("comfort", "tageslimit", "2000-01-01"))
+    pipeline.set_boosts(comfort=True, emergency=False)
+    assert pipeline._abgelehnt_gemeldet
+    assert {m[2] for m in pipeline._abgelehnt_gemeldet} == {DAY}
 
 
 @pytest.mark.parametrize("flags", [{"boost_active": True}, {"emergency_boost_active": True}])

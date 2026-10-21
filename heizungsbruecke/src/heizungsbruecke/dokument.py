@@ -167,9 +167,13 @@ def _refs(b: HaBindung) -> list[tuple[str, str]]:
 
 def _pflicht_refs(b: HaBindung) -> set[str]:
     """Die Referenzen, ohne die nichts laeuft und die von selbst wiederkommen: Soll-Entity, Pflichtrollen des Hebelsatzes
-    und Raumfuehler (dieselben wie host._wait_for_required_entities, plus Soll-Entity)."""
+    (dieselben wie host._wait_for_required_entities, plus Soll-Entity), Raumfuehler und jedes Schreibziel. Ein Schreibziel
+    darf nie fallen gelassen werden, auch eine optionale Hebelrolle nicht: sie gehoert zur Anlagenidentitaet
+    (roles.lever_refs_identity), ohne sie wuerde bind_to_tenant eine andere Anlage melden und alles Gebundene
+    zuruecksetzen. Fallen duerfen nur optionale Lese-Rollen und Batterien."""
     return {*([b.soll_entity] if b.soll_entity is not None else []),
-            *(b.rollen[rolle] for rolle in PFLICHT_ROLLEN[b.hebelsatz] if rolle in b.rollen), *b.raumfuehler}
+            *(b.rollen[rolle] for rolle in PFLICHT_ROLLEN[b.hebelsatz] if rolle in b.rollen), *b.raumfuehler,
+            *(ref for _, ref in _schreibziel_rollen(b))}
 
 
 #: Domaenen der Positivliste, die eine Entity ohne Zustand schon an ihrer ID bestehen laesst (Sensoren nur mit Zustand
@@ -180,11 +184,11 @@ _DOMAENEN_BATTERIE = frozenset({"sensor", "binary_sensor"})
 
 def rollen_befund(b: HaBindung, ha_api) -> tuple[tuple[str, str] | None, list[tuple[str, str]]]:
     """Lokale Positivliste fuer jede Rolle (A6-02, G-9): ((feld, "nicht_erlaubt") des ersten Verstosses oder None,
-    [(feld, ref) der erlaubten optionalen Rollen und Batterien ohne Zustand]). Soll-Entity, Rollen, Raumfuehler und
+    [(feld, ref) der erlaubten optionalen Lese-Rollen und Batterien ohne Zustand]). Soll-Entity, Rollen, Raumfuehler und
     Batterien muessen die Positivliste der Inventur bestehen (inventur.entity_erlaubt); `::attribut` zaehlt die Entity
     davor. Registry und Zustaende werden einmal geladen; die Plattformen mit Einstellbarem zaehlen aus allen aktiven
-    Registry-Eintraegen mit Zustand. Hat Soll-Entity, Pflichtrolle oder Raumfuehler keinen Zustand, ist das kein
-    Urteil: NichtPruefbar(feld) (kommt von selbst wieder). Eine optionale Rolle oder Batterie ohne Zustand (geloescht,
+    Registry-Eintraegen mit Zustand. Hat Soll-Entity, Pflichtrolle, Schreibziel (auch eine optionale Hebelrolle) oder Raumfuehler keinen Zustand, ist das kein
+    Urteil: NichtPruefbar(feld) (kommt von selbst wieder). Eine optionale Lese-Rolle oder Batterie ohne Zustand (geloescht,
     umbenannt, deaktiviert) heilt nicht von selbst: ihre Domaene wird aus der ID geprueft, sie steht in der zweiten
     Liste und wird nicht gelesen. Ohne Soll-Entity entfaellt room_target (lokal_pruefen meldet das)."""
     registry = {e["entity_id"]: e for e in ha_api.entity_registry() if isinstance(e, Mapping) and "entity_id" in e}

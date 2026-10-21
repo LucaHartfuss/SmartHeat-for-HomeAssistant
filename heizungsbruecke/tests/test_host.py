@@ -11,6 +11,7 @@ from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.host import DERIVED_SENSORS_RETRY_DELAYS_SECONDS, HaHost
 from smartheat_runtime.app import IdleBridge, StartFailure
+from smartheat_runtime.roles import lever_refs_identity
 
 
 def test_boot_info_without_a_document_is_not_configured():
@@ -107,6 +108,51 @@ def test_eine_optionale_rolle_ohne_zustand_startet_ungelesen_mit_hinweis(env, an
         "SmartHeat: flow_temperature: zugeordnete Entity fehlt in Home Assistant und wird bis zum nächsten Start "
         "nicht gelesen.")]
     assert "sensor.vorlauf" not in loaded.notices[0].message
+
+
+BASIS_ZUSTAENDE = {
+    "number.curve_current": 0.75, "number.shift_current": 20.0, "select.betriebsart": "hz_operationmode_automatic",
+    "number.komfort": 22.0, "number.absenk": 18.0,
+}
+BASIS = {
+    "lever_set": "weishaupt_wwp_basis", "entity_curve_current": "number.curve_current",
+    "entity_shift_current": "number.shift_current", "entity_heat_limit": "", "entity_min_flow": "",
+    "entity_mode_select": "select.betriebsart", "entity_setpoint_comfort": "number.komfort",
+    "entity_setpoint_setback": "number.absenk",
+}
+
+
+@pytest.mark.parametrize("rolle_option", ["entity_heat_limit", "entity_curve_current"])
+def test_eine_optionale_hebelrolle_ohne_zustand_wird_nie_fallen_gelassen(env, angelegt, sleeps, rolle_option):
+    """Review Fixrunde A: eine Hebelrolle gehoert zur Anlagenidentitaet (lever_refs_identity). Fiele sie weg, meldete
+    bind_to_tenant eine andere Anlage und setzte Wiederherstellungspunkt, Originale und Schreibzaehler zurueck. Ein
+    Schreibziel ohne Zustand ist daher nicht pruefbar (Wiederholung, StartFailure), nie ungelesen."""
+    env.ha.states.update(BASIS_ZUSTAENDE)
+    with pytest.raises(StartFailure) as fehler:
+        _host(env, **{**BASIS, rolle_option: "number.swu"}).load()
+    assert fehler.value.key == "rollen_nicht_pruefbar"
+    assert fehler.value.grund.endswith("zugeordnete Entity fehlt in Home Assistant – bitte SmartHeat neu konfigurieren")
+    assert sleeps == list(DERIVED_SENSORS_RETRY_DELAYS_SECONDS) and angelegt == []
+
+
+def test_gegenprobe_eine_optionale_hebelrolle_mit_zustand_bleibt_im_manifest(env, angelegt, sleeps):
+    env.ha.states.update({**BASIS_ZUSTAENDE, "number.swu": 18.0})
+    loaded = _host(env, **{**BASIS, "entity_heat_limit": "number.swu"}).load()
+    assert loaded.manifest.refs["heat_limit"] == "number.swu" and sleeps == []
+
+
+def test_eine_fallen_gelassene_lese_rolle_aendert_die_anlagenidentitaet_nicht(env, angelegt, sleeps):
+    """Gegenprobe zur Hebelrolle: eine optionale Lese-Rolle (Energie) ohne Zustand startet, wird ungelesen gemeldet, und
+    die Kennung aus den Hebelreferenzen bleibt dieselbe wie mit Zustand."""
+    env.ha.states.update(BASIS_ZUSTAENDE)
+    ohne = _host(env, **BASIS, entity_energy_thermal_heating="sensor.waerme").load()
+    assert "energy_thermal_heating" not in ohne.manifest.refs and sleeps == []
+    assert [n.key for n in ohne.notices] == ["entity_fehlt:energy_thermal_heating"]
+    env.ha.states.update({"sensor.waerme": 8.0, "sensor.waerme::device_class": "energy",
+                          "sensor.waerme::unit_of_measurement": "kWh"})
+    mit = _host(env, **BASIS, entity_energy_thermal_heating="sensor.waerme").load()
+    assert mit.manifest.refs["energy_thermal_heating"] == "sensor.waerme"
+    assert lever_refs_identity(ohne.manifest) == lever_refs_identity(mit.manifest)
 
 
 def test_gegenprobe_dieselbe_optionale_rolle_mit_zustand_bleibt_im_manifest(env, angelegt, sleeps):
