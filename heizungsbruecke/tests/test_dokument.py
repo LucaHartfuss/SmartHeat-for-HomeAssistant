@@ -502,6 +502,21 @@ def test_fh1_gegenprobe_dieselben_rollen_auf_erlaubten_entities():
     assert _rollen(konfiguration, ha) is None
 
 
+def test_gegenprobe_climate_ist_auch_als_mode_select_erlaubt():
+    """Gegenprobe zur Domaenen-Positivliste: dieselbe climate-Entity ist als mode_select zulaessig wie als
+    operating_mode (die Positivliste kennt die Domaene, nicht die Rolle)."""
+    ha = _ha()
+    _dazu(ha, "climate.programm", "mypyllant")
+    assert _rollen(_mit_rolle("mode_select", "climate.programm"), ha) is None
+
+
+def test_ohne_soll_entity_entfaellt_room_target_statt_einer_assertion():
+    ha = _ha()
+    rollen = {k: v for k, v in KONFIGURATION["bindung"]["rollen"].items() if k != "room_target"}
+    konfiguration = {**KONFIGURATION, "bindung": {**KONFIGURATION["bindung"], "rollen": rollen}}
+    assert _rollen(konfiguration, ha) is None
+
+
 def test_eine_kennzahl_ohne_klasse_braucht_die_plattform_mit_einstellbarem():
     ha = _ha()
     _dazu(ha, "sensor.vorlauf", "zha")  # zha liefert hier nur Sensoren: nichts Einstellbares
@@ -584,7 +599,8 @@ def test_die_einstellbare_plattform_zaehlt_nur_aus_aktiven_entities_mit_zustand(
 
 def test_eine_gebundene_entity_ohne_zustand_ist_nicht_pruefbar():
     ha = _ha()
-    del ha.states["sensor.thermostat_battery"]  # die Batterie aus KONFIGURATION hat keinen Zustand
+    # die Batterie aus KONFIGURATION hat keinen Zustand
+    del ha.states["sensor.thermostat_battery"], ha.states["sensor.thermostat_battery::device_class"]
     with pytest.raises(config_check.NichtPruefbar):
         _rollen(KONFIGURATION, ha)
     with pytest.raises(config_check.NichtPruefbar):  # entity_exists sagt ja, der Zustand fehlt trotzdem

@@ -57,6 +57,9 @@ STATES = {
     "climate.zone": "auto", "climate.zone::temperature": 22.0,
     "sensor.flow_temperature": 35.0, "sensor.flow_setpoint": 35.0,
     "sensor.thermostat_battery": "80",
+    # echtes HA: die Klasse steht im Zustand (lokale Positivliste der Rollen, A6-02)
+    "sensor.flow_temperature::device_class": "temperature", "sensor.flow_setpoint::device_class": "temperature",
+    "sensor.thermostat_battery::device_class": "battery",
 }
 
 

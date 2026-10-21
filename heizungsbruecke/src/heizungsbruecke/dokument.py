@@ -159,9 +159,9 @@ def lokal_pruefen(konfiguration) -> str | None:
 
 def _refs(b: HaBindung) -> list[tuple[str, str]]:
     """Alle gebundenen Referenzen als (Feld, Referenz) in der Reihenfolge der Pruefung; Feld ist die V1-Rolle bzw.
-    raumfuehler/batterien, nie die Entity."""
-    assert b.soll_entity is not None
-    return [("room_target", b.soll_entity), *((v1_rolle(rolle), ref) for rolle, ref in b.rollen.items()),
+    raumfuehler/batterien, nie die Entity. Ohne Soll-Entity entfaellt room_target (lokal_pruefen meldet sie als fehlend)."""
+    soll = [("room_target", b.soll_entity)] if b.soll_entity is not None else []
+    return [*soll, *((v1_rolle(rolle), ref) for rolle, ref in b.rollen.items()),
             *(("raumfuehler", ref) for ref in b.raumfuehler), *(("batterien", ref) for ref in b.batterien)]
 
 
@@ -170,7 +170,8 @@ def rollen_pruefen(b: HaBindung, ha_api) -> tuple[str, str] | None:
     Positivliste der Inventur bestehen (inventur.entity_erlaubt), sonst (feld, "nicht_erlaubt") des ersten Verstosses;
     `::attribut` zaehlt die Entity davor. Registry und Zustaende werden einmal geladen; die Plattformen mit
     Einstellbarem zaehlen aus allen aktiven Registry-Eintraegen mit Zustand. Hat eine gebundene Entity keinen Zustand,
-    ist das kein Urteil: NichtPruefbar."""
+    ist das kein Urteil: NichtPruefbar. Ist keine Soll-Entity gebunden, entfaellt room_target (die Pflichtpruefung
+    lokal_pruefen meldet das, nicht diese Funktion)."""
     registry = {e["entity_id"]: e for e in ha_api.entity_registry() if isinstance(e, Mapping) and "entity_id" in e}
     states = {s["entity_id"]: s for s in ha_api.get_states() if isinstance(s, Mapping) and "entity_id" in s}
     einstellbar = einstellbare_plattformen({entity_id: entry for entity_id, entry in registry.items()

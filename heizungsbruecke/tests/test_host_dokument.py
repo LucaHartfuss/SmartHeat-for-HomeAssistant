@@ -379,6 +379,9 @@ def test_hinweise_batterien_und_meldedienste_kommen_aus_der_bindung(env):
     options = {**OPTIONS, "notify_hints_off": ["batterie"],
                "battery_entities": ["sensor.thermostat_battery", "binary_sensor.thermostat_battery_low"]}
     ha = _DiensteHa()
+    ha.states.update({"sensor.thermostat_battery": 80, "sensor.thermostat_battery::device_class": "battery",
+                      "binary_sensor.thermostat_battery_low": "off",
+                      "binary_sensor.thermostat_battery_low::device_class": "battery"})
     host = HaHost(FakeGeraet(konfiguration_aus_optionen(options), ha=ha), ha, clock=env.clock)
     host.notify_sink.push("test", "Text")  # der Sink des Hosts schickt an die Meldedienste der Bindung
     assert ha.dienste == [("notify.mobile_app_handy", "Text")]

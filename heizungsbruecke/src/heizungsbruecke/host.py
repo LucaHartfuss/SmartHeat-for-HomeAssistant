@@ -21,11 +21,11 @@ from heizungsbruecke.ha_binding import binding_for, binding_roles
 from heizungsbruecke.ha_signals import SOLL_REF, GeraetSignale, HaSignalSource
 from heizungsbruecke.manifest import build_manifest, entity_ref
 from heizungsbruecke.version import ADDON_VERSION
-from smartheat_core import wallclock
+from smartheat_core import config_check, wallclock
 from smartheat_core.logtext import lesbar
 from smartheat_runtime import aufraeumen, dokument_config
 from smartheat_runtime.app import Loaded, Notice, RestoreParts, StartFailure
-from smartheat_runtime.dokument_config import ConfigError
+from smartheat_runtime.dokument_config import RECONFIGURE_HINT, ConfigError
 from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
 from smartheat_runtime.ports import NotifySink, SignalSource, StatusSink, TriggerSource
 from smartheat_runtime.raum import RaumPublisher
@@ -96,7 +96,14 @@ class HaHost:
         self.signals: SignalSource = GeraetSignale(HaSignalSource(ha_api), lambda: self.store)
         self.status_sink: StatusSink = geraet.status_sink
         vorab = self._bindung_oder_none()
-        self.notify_sink: NotifySink = geraet.notify_sink_fuer(list(vorab.benachrichtigung) if vorab else [])
+        # A6-02: in die Senke nur Handy-Dienste (config_check.HA_DIENST); load lehnt die uebernommene Konfiguration mit
+        # anderen Diensten ab, ihre Fehlermeldung soll sie aber nicht erst erreichen. Im Log nur die Anzahl.
+        gebunden = vorab.benachrichtigung if vorab else []
+        dienste = [d for d in gebunden if config_check.HA_DIENST.fullmatch(d)]
+        if len(dienste) < len(gebunden):
+            logger.warning("%s Benachrichtigungsdienste der Konfiguration sind keine Handy-Dienste und werden nicht "
+                           "genutzt.", len(gebunden) - len(dienste))
+        self.notify_sink: NotifySink = geraet.notify_sink_fuer(dienste)
         self.texts: HostTexts = HA_TEXTS
 
     def _bindung_oder_none(self) -> dokument.HaBindung | None:
@@ -166,6 +173,10 @@ class HaHost:
             # Spec Stufe 3 S4b 4.3: ohne gueltige Bindungsparameter kein Start
             description = dokument_config.beschreibung(self._konfiguration)
             _wait_for_required_entities(self._ha_api, b)
+            # A6-02: die Regeln des Annehmens gelten auch fuer eine schon uebernommene Konfiguration, und zwar vor den
+            # Hilfssensoren (derived_sensors baut aus einer Rolle schon ein Template in HA).
+            _bindung_pruefen(self._konfiguration)
+            _rollen_pruefen_mit_wiederholung(self._ha_api, b)
             derived = _ensure_derived_sensors_with_retry(self._ha_api, b, runtime.tenant_id)
             manifest = build_manifest({**b.rollen, "room_target": SOLL_REF}, derived.entity_ids, b.hebelsatz)
             binding = binding_for(description, self._ha_api, manifest)
@@ -313,6 +324,25 @@ def _wait_for_required_entities(ha_api, b: dokument.HaBindung) -> None:
         return "entities_nicht_pruefbar"
 
     _retry_with_budget(ha_api, _check, _describe, identify=_identify)
+
+
+def _bindung_pruefen(konfiguration) -> None:
+    """Form der uebernommenen HA-Bindung (config_check): lokaler Text mit dem Feld, nie mit der Entity (Regel 6)."""
+    ablehnung = config_check.ha_bindung_pruefen(konfiguration)
+    if ablehnung is not None:
+        feld = (ablehnung.details or {}).get("feld", "bindung")
+        raise ConfigError(f"{feld}: Form der Zuordnung ungültig – {RECONFIGURE_HINT}")
+
+
+def _rollen_pruefen_mit_wiederholung(ha_api, b: dokument.HaBindung) -> None:
+    """Lokale Positivliste fuer jede Rolle (A6-02). Ein Urteil ist ein Konfigurationsfehler; nicht pruefbar (Entity ohne
+    Zustand, Registry oder Zustaende scheitern) wird wie fehlende Entities wiederholt, nach dem Budget StartupError."""
+    verstoss = _retry_with_budget(
+        ha_api, lambda: dokument.rollen_pruefen(b, ha_api),  # NichtPruefbar und Fehler der HA-API: erneut versuchen
+        lambda error: f"Rollen konnten nicht geprüft werden: {type(error).__name__}",
+        identify=lambda error: "rollen_nicht_pruefbar")
+    if verstoss is not None:
+        raise ConfigError(f"{verstoss[0]}: diese Entity darf SmartHeat nicht nutzen (lokale Positivliste)")
 
 
 def _ensure_derived_sensors_with_retry(ha_api, b: dokument.HaBindung, tenant_id: str) -> DerivedSensors:
