@@ -103,6 +103,40 @@ def test_kleinste_reale_erhoehung_startet_den_boost(vorher, nachher, boost):
                         boost_was_active=False, arrival_threshold_k=0.5) is boost
 
 
+@pytest.mark.parametrize(("raum_ist", "startet"), [
+    pytest.param(21.0, False, id="raum-gleich-soll"),
+    pytest.param(21.4, False, id="raum-ueber-soll"),
+    pytest.param(20.6, False, id="abstand-0.4"),
+    pytest.param(20.5, False, id="grenzwert-soll-minus-0.5"),
+    pytest.param(20.49, True, id="abstand-0.51"),
+    pytest.param(15.0, True, id="kalt"),
+])
+def test_comfort_boost_startet_nur_wenn_der_raum_noch_nicht_angekommen_ist(raum_ist, startet):
+    """A6-01-Nachtrag (Regel 4): eine Erhoehung startet den Boost nur bei Raum < Soll - Ankunftsschwelle; bei warmem Raum
+    gibt es keinen Schein-Start, der den echten Boost 30 min sperrte. Der Grenzwert genau Soll - 0,5 startet nicht."""
+    assert decide_boost(room_actual=raum_ist, room_target=21.0, previous_room_target=20.0,
+                        boost_was_active=False, arrival_threshold_k=0.5) is startet
+
+
+def test_start_und_weiterlaufen_nutzen_dieselbe_schwelle():
+    """Ohne und mit laufendem Boost entscheidet dieselbe Bedingung; nur die Erhoehung kommt zum Start hinzu."""
+    for raum_ist in (20.4, 20.5, 20.51, 21.0):
+        start = decide_boost(room_actual=raum_ist, room_target=21.0, previous_room_target=20.0,
+                             boost_was_active=False, arrival_threshold_k=0.5)
+        laeuft = decide_boost(room_actual=raum_ist, room_target=21.0, previous_room_target=21.0,
+                              boost_was_active=True, arrival_threshold_k=0.5)
+        assert start is laeuft
+
+
+def test_ein_laufender_boost_bleibt_bei_warmem_raum_nicht_aktiv_und_bei_kaltem_raum_aktiv():
+    """Laufender Boost unveraendert: die Erhoehung spielt keine Rolle, nur der Raum."""
+    kalt = decide_boost(room_actual=19.0, room_target=21.0, previous_room_target=21.0,
+                        boost_was_active=True, arrival_threshold_k=0.5)
+    warm = decide_boost(room_actual=21.0, room_target=21.0, previous_room_target=20.0,
+                        boost_was_active=True, arrival_threshold_k=0.5)
+    assert (kalt, warm) == (True, False)
+
+
 # --- Mutationsprobe Stufe 3 S3 (Task 11) ------------------------------------------------------------------------
 
 def test_a_rise_of_exactly_the_epsilon_does_not_start_the_boost():
