@@ -5,6 +5,8 @@ Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Re
 
 ## 1.1.0
 
+- `certifi` 2026.10.19 statt 2026.7.22 (Sicherheitsmeldung GHSA-6q48-6c7w-9gw2: kompromittierte emSign-Root-CAs im
+  Zertifikatsbündel; der Image-Scan meldete sie als CRITICAL).
 - Das Löschen des Eintrags „SmartHeat“ in Home Assistant meldet das Gerät jetzt ab (wie das Entfernen im Portal):
   Beenden eines laufenden Boosts, Hebel auf den ursprünglichen Wert, Portal zeigt „Abgemeldet“. Aus dem Konto entfernt
   es weiterhin erst das Portal. Dazu hört das Add-on auf einen lokalen Befehl der Integration (`stdin: true` in der
