@@ -1,5 +1,5 @@
 name: "Heizungsbruecke"
-version: "1.0.0"
+version: "1.1.0"
 slug: "heizungsbruecke"
 description: "SmartHeat-Gerät für Home Assistant: verbindet die Heizung über die SmartHeat-Integration mit dem SmartHeat-Dienst; Sicherheit, Boost und Notbetrieb bleiben lokal."
 url: "https://github.com/LucaHartfuss/SmartHeat-for-HomeAssistant"

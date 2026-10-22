@@ -13,6 +13,7 @@ from world import GatewayWorld
 from smartheat_core import dateien
 from smartheat_core.safety import resolve_local_safety
 from smartheat_gateway.drivers.simulation import START_LEVERS
+from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_runtime.app import IDLE_NOT_CONFIGURED, IdleBridge
 from smartheat_runtime.soll_speicher import ECHO_WINDOW_SECONDS
 
@@ -161,9 +162,11 @@ def test_a_configuration_below_the_minimum_version_still_reaches_the_updater(wor
     # Review Focus 4: update_noetig, aber die Soll-Software liegt fuer den Updater bereit.
     world.start_runtime()
     world.connect()
-    software = {"version": "0.7.0", "manifest_url": "https://x.test/m.json", "manifest_sha256": "a" * 64,
+    major, minor, _ = GATEWAY_VERSION.split(".")
+    hoeher = f"{major}.{int(minor) + 1}.0"  # immer ueber der eigenen Version, auch nach dem naechsten Versionssprung
+    software = {"version": hoeher, "manifest_url": "https://x.test/m.json", "manifest_sha256": "a" * 64,
                 "signature": "s"}
-    world.konfiguration_senden(konfiguration(mindest_software="0.7.0", software=software), 1)
+    world.konfiguration_senden(konfiguration(mindest_software=hoeher, software=software), 1)
     ergebnis = _ergebnis(world, dokument="konfiguration", version=1)
     assert ergebnis["ok"] is False and ergebnis["error"]["grund"] == "update_noetig"
     assert json.loads(world.paths.software_soll.read_text()) == software

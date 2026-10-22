@@ -3,7 +3,7 @@
 Wird im Update-Dialog des Supervisors angezeigt. Pro Version ein Abschnitt `## X.Y.Z`; der
 Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Release.
 
-## Unveröffentlicht
+## 1.1.0
 
 - Das Löschen des Eintrags „SmartHeat“ in Home Assistant meldet das Gerät jetzt ab (wie das Entfernen im Portal):
   Beenden eines laufenden Boosts, Hebel auf den ursprünglichen Wert, Portal zeigt „Abgemeldet“. Aus dem Konto entfernt

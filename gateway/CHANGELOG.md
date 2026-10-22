@@ -1,6 +1,6 @@
 # Changelog SmartHeat-Gateway
 
-## Unveröffentlicht
+## 0.7.0
 
 - Diagnose am Gerät (L4-18, Labor 2026-10-20): `iproute2` (`ss`, `ip`) ist im Image und wird von `install.sh` verlangt;
   `vcgencmd` kommt über `raspi-utils` im Image (Raspberry-Pi-Archiv, `rootfs_checks.sh` prüft alle drei; `install.sh` auf
