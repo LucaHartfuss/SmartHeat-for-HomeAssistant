@@ -159,6 +159,7 @@ class Device:
         self._host_fehler: set[tuple[str, str]] = set()  # (Rueckruf, Fehlerart) gescheiterter Host-Werte, schon geloggt
         self._zurueckgehalten: dict[str, dict] = {}  # Dokument, dessen Pruefung vorlaeufig nicht moeglich war
         self._pruefung_at = 0.0
+        self._speicher_gemeldet: set[str] = set()  # Arten, deren Zurueckhalten wegen OSError schon geloggt ist
         self._started_at = clock()
         self._last_ok: float | None = None
 
@@ -508,7 +509,8 @@ class Device:
         gescheiterter die anderen nicht verhindert (das Dokument ist dann schon gespeichert).
 
         Kann der Host jetzt nicht pruefen (config_check.NichtPruefbar, HA aus) oder scheitert seine Vorbereitung vor dem
-        Speichern (konfiguration_vorbereiten, Aufraeum-Markierung): weder Ergebnis noch Uebernahme. Der
+        Speichern (konfiguration_vorbereiten, Aufraeum-Markierung) oder der Datentraeger (OSError beim Speichern): weder
+        Ergebnis noch Uebernahme. Der
         Server stellt ein Dokument nur einmal je Verbindung zu und eine abgelehnte Version nie erneut; das Geraet haelt
         es deshalb zurueck und prueft alle PRUEFUNG_WIEDERHOLEN_SECONDS erneut. Eine neue Zustellung ersetzt es."""
         self._zurueckgehalten.pop(art, None)
@@ -521,6 +523,17 @@ class Device:
             self._zurueckgehalten[art] = body
             self._pruefung_at = self._clock() + PRUEFUNG_WIEDERHOLEN_SECONDS
             return
+        except OSError as error:
+            # Datentraeger beim Speichern (A6-10): wie NichtPruefbar zurueckhalten; je Zurueckhalten eine ERROR-Zeile
+            # (nur die Fehlerart, Regel 6), die Wiederholung alle 30 s bleibt still
+            if art not in self._speicher_gemeldet:
+                self._speicher_gemeldet.add(art)
+                logger.error("%s zurueckgehalten: Speichern gescheitert (%s), neuer Versuch in %s s", art,
+                             type(error).__name__, PRUEFUNG_WIEDERHOLEN_SECONDS)
+            self._zurueckgehalten[art] = body
+            self._pruefung_at = self._clock() + PRUEFUNG_WIEDERHOLEN_SECONDS
+            return
+        self._speicher_gemeldet.discard(art)
         if ergebnis is None:
             return
         self._publish("up/result", ergebnis.payload())

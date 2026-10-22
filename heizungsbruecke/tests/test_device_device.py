@@ -413,6 +413,43 @@ def test_an_unverifiable_configuration_is_neither_taken_nor_refused_and_is_check
     assert world.host.aufrufe == calls and len(world.link.of("up/result")) == 1  # erledigt, kein weiterer Versuch
 
 
+@pytest.mark.parametrize("datei", ["konfiguration.json", "dokumente.json"])
+def test_datentraegerfehler_beim_speichern_haelt_zurueck_und_wiederholt(tmp_path, monkeypatch, caplog, datei):
+    """A6-10: ein OSError beim Speichern (vor dem Dokument bzw. erst beim Zustand danach) verliert die Konfiguration nicht
+    bis zur naechsten Verbindung: das Geraet haelt sie zurueck (eine ERROR-Zeile, ohne Text) und gibt nach dem
+    Wiederholabstand das Ergebnis und die Uebernahme."""
+    from smartheat_device import documents
+    world = World(tmp_path)
+    world.verbinden()
+    world.empfangen("down/config", _konfiguration(version=1))
+    assert len(world.host.konfigurationen) == 1
+    echt, offen = dateien.schreiben_json, [True]
+
+    def schreiben(pfad, *args, **kwargs):
+        if pfad.name == datei and offen[0]:
+            offen[0] = False
+            raise OSError("Datentraeger voll: geheim")
+        return echt(pfad, *args, **kwargs)
+
+    monkeypatch.setattr(documents.dateien, "schreiben_json", schreiben)
+    results = len(world.link.of("up/result"))
+    world.empfangen("down/config", _konfiguration(version=2, tagestick="12:30"))
+    assert len(world.link.of("up/result")) == results and len(world.host.konfigurationen) == 1  # zurueckgehalten
+    zeilen = [r.getMessage() for r in caplog.records if r.levelname == "ERROR"]
+    assert len(zeilen) == 1 and "OSError" in zeilen[0] and "geheim" not in caplog.text
+    world.clock.now += device.PRUEFUNG_WIEDERHOLEN_SECONDS - 1
+    world.device.schritt()
+    assert len(world.link.of("up/result")) == results  # noch zu frueh
+    world.clock.now += 1
+    world.device.schritt()
+    assert world.link.of("up/result")[-1] == {"schema": 1, "dokument": "konfiguration", "version": 2, "ok": True}
+    assert world.device.documents.version("konfiguration") == 2 and len(world.host.konfigurationen) == 2
+    assert world.host.konfigurationen[-1][1]["tagestick"] == "12:30"
+    world.clock.now += 10 * device.PRUEFUNG_WIEDERHOLEN_SECONDS
+    world.device.schritt()
+    assert len(world.link.of("up/result")) == results + 1  # erledigt, kein weiterer Versuch
+
+
 def test_an_unverifiable_configuration_that_gets_refused_later_says_so_once(tmp_path):
     world = World(tmp_path, UnpruefbarHost())
     world.verbinden()

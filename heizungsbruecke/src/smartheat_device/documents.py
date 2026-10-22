@@ -19,6 +19,8 @@ abgelehnt, das Geraet haelt das Dokument zurueck und prueft spaeter erneut (devi
 vor dem Speichern einer geprueften Konfiguration scheitert (vor_speichern, der Host schreibt dort die
 Aufraeum-Markierung; Spec Testoffensive 12.6, Nr. 38): jede Ausnahme wird zu NichtPruefbar, eine ERROR-Zeile je
 Zurueckhalten (erst ein Ergebnis fuer eine Konfiguration, Annahme oder Ablehnung, beendet das Zurueckhalten).
+Scheitert das Speichern (OSError, auch dokumente.json nach dem Dokument), gilt die Uebernahme im Speicher nicht und der
+Fehler geht hoch; das Geraet haelt das Dokument zurueck, die Wiederholung gibt dasselbe Ergebnis (A6-10).
 Eine kaputte Datei (Stromausfall) gilt als "keine Version": hello meldet 0, der Server stellt neu zu.
 
 Software-Angebot (5b-D2-3): das Feld software jeder Konfiguration mit bekanntem Schema, die ein Ergebnis bekommt (auch
@@ -345,9 +347,19 @@ class DocumentStore:
             self._vorbereiten(inhalt)
         if art == KONFIGURATION and self._rastung is None and not config_check.ist_leer(inhalt):
             self._rastung = self._rasten(inhalt)  # vor dem Dokument (Spec 3.2): ein Absturz dazwischen schadet nicht
-        self._speichern(Dokument(art, version, inhalt))
-        self._abgelehnt.pop(art, None)
-        self._zustand_speichern()
+        vorher, abgelehnt = self._docs[art], self._abgelehnt.get(art)
+        try:
+            self._speichern(Dokument(art, version, inhalt))
+            self._abgelehnt.pop(art, None)
+            self._zustand_speichern()
+        except BaseException:
+            # A6-10: scheitert etwas nach dem Dokument (dokumente.json), gilt die Uebernahme im Speicher nicht, sonst
+            # gaebe die Wiederholung ein Duplikat (ok ohne uebernommen) und der Host erfuehre sie nie; die Wiederholung
+            # schreibt dieselbe Version gleich neu
+            self._docs[art] = vorher
+            if abgelehnt is not None:
+                self._abgelehnt[art] = abgelehnt
+            raise
         return Ergebnis(art, version, True, uebernommen=True)
 
     def _vorbereiten(self, inhalt: dict) -> None:

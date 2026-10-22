@@ -78,13 +78,40 @@ def _scheitert_fuer(monkeypatch, name: str) -> None:
 
 def test_an_abort_after_the_lock_leaves_the_lock_without_the_document(tmp_path, monkeypatch):
     """Spec 3.2: die Rastung steht vor dem Dokument; ein Abbruch dazwischen hinterlaesst die Rastung ohne Dokument
-    (der Server stellt neu zu, die Rastung passt dazu)."""
+    (das Geraet haelt die Konfiguration zurueck und wiederholt, device.py A6-10; die Rastung passt dazu). Der Speicher gibt
+    den OSError weiter."""
     _scheitert_fuer(monkeypatch, "konfiguration.json")
     with pytest.raises(OSError):
         _store(tmp_path).empfangen("konfiguration", _konfiguration())
     monkeypatch.undo()
     assert rastung.lesen(tmp_path / "sicherheitssatz.json") == rastung.Rastung("viessmann_vicare", "Heizkoerper")
     assert not (tmp_path / "konfiguration.json").exists() and _store(tmp_path).version("konfiguration") == 0
+
+
+def test_a_failed_state_file_after_the_document_is_retried_with_the_same_result(tmp_path, monkeypatch):
+    """A6-10: scheitert dokumente.json erst nach dem Dokument, gilt das Dokument im Speicher nicht als uebernommen: die
+    Wiederholung gibt dasselbe Ergebnis wie ein erster Versuch (uebernommen, Host erfaehrt es) und schreibt den Zustand."""
+    store = _store(tmp_path)
+    assert store.empfangen("konfiguration", _konfiguration(version=1)).uebernommen
+    _scheitert_fuer(monkeypatch, "dokumente.json")
+    with pytest.raises(OSError):
+        store.empfangen("konfiguration", _konfiguration(version=2, tagestick="12:30"))
+    assert store.version("konfiguration") == 1 and store.inhalt("konfiguration")["tagestick"] == "12:12"
+    monkeypatch.undo()
+    ergebnis = store.empfangen("konfiguration", _konfiguration(version=2, tagestick="12:30"))
+    assert (ergebnis.ok, ergebnis.uebernommen, ergebnis.version) == (True, True, 2)
+    assert json.loads((tmp_path / docs.ZUSTAND_DATEI).read_text())["abgelehnt"] == {}
+    assert _store(tmp_path).version("konfiguration") == 2
+
+
+def test_a_failed_state_file_restores_a_refusal_entry(tmp_path, monkeypatch):
+    store = _store(tmp_path)
+    assert store.empfangen("konfiguration", _konfiguration(version=1, abo="falsch")).ok is False
+    vorher = store.ablehnung("konfiguration")
+    _scheitert_fuer(monkeypatch, "dokumente.json")
+    with pytest.raises(OSError):
+        store.empfangen("konfiguration", _konfiguration(version=2))
+    assert store.ablehnung("konfiguration") == vorher and store.version("konfiguration") == 0
 
 
 def test_a_failed_folder_sync_after_the_lock_replace_still_locks_the_pair_in_this_process(tmp_path, monkeypatch):
