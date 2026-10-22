@@ -26,12 +26,13 @@ def _safety(heat_limit_max=20.0):
     )
 
 
-def _rt(ha, manifest, store, override=None, mqtt=None, clock=None):
-    """Laufzeit-Sicht von ticks._attempt mit echter Pipeline (Vaillant) und dem MQTT-Kanal als Port (A5-25)."""
+def _rt(ha, manifest, store, override=None, mqtt=None, clock=None, zone_prepared=True):
+    """Laufzeit-Sicht von ticks._attempt mit echter Pipeline (Vaillant) und dem MQTT-Kanal als Port (A5-25).
+    zone_prepared: die Zone wurde in diesem Prozess vorbereitet (Runtime.zone_prepared)."""
     if override is None:
         override = LeverPipeline(store, HaPlantBinding(ha, manifest, VAILLANT_MYPYLLANT), _safety(), clock=clock)
     return SimpleNamespace(manifest=manifest, signals=ha, mqtt_client=mqtt, store=store, override=override,
-                           manual_override_seq=None, manual_override_sent=None)
+                           manual_override_seq=None, manual_override_sent=None, zone_prepared=zone_prepared)
 
 
 @pytest.mark.parametrize("mqtt", [None, FakeMqttChannel(connected=False)], ids=["ohne-kanal", "getrennt"])
@@ -58,8 +59,9 @@ def test_snapshot_uses_restore_point_when_zone_is_off(make_store, clock, zone, e
 
 
 def test_ruhende_zone_beim_ersten_start_nimmt_das_raum_soll(make_store, clock):
-    """S3-3: Zone ruht (liest 0) und es gibt noch keinen Wiederherstellungspunkt (erster Start): der Snapshot meldet
-    das stabile Raum-Soll statt eines Datenfehlers; der Wiederherstellungspunkt bleibt leer (keine Schreibwirkung)."""
+    """S3-3: Zone vorbereitet, ruht (liest 0), und es gibt noch keinen Wiederherstellungspunkt (erster Start): der
+    Snapshot meldet das stabile Raum-Soll statt eines Datenfehlers; der Wiederherstellungspunkt bleibt leer (ihn
+    schreibt erst die Antwort des Servers)."""
     ha = FakeHa()
     ha.states["climate.zone::temperature"] = 0.0
     manifest = ChannelManifest(refs={"room_target": "sensor.room_target", "shift_current": "climate.zone::temperature"})
@@ -72,7 +74,23 @@ def test_ruhende_zone_beim_ersten_start_nimmt_das_raum_soll(make_store, clock):
     assert ticks._attempt(rt, "s1", "daily") == delivery.Published(seq="s1")
     assert [s["levers"] for s in mqtt.snapshots] == [{"room_setpoint": 21.0}]
     assert store.state.restore_point == {}
-    assert ha.writes == []
+
+
+def test_ruhende_nie_vorbereitete_zone_ohne_wiederherstellungspunkt_bleibt_ein_datenfehler(make_store, clock):
+    """S3-3, Gegenprobe (Schlussreview I-1): ist die Zone in diesem Prozess nie vorbereitet worden, gilt der
+    Rueckfall auf das Raum-Soll nicht; der Snapshot bleibt zurueckgehalten. Sonst stellte die Antwort des Servers
+    die Zone ausserhalb des Kontingents `zone_prepare` um."""
+    ha = FakeHa()
+    ha.states["climate.zone::temperature"] = 0.0
+    manifest = ChannelManifest(refs={"room_target": "sensor.room_target", "shift_current": "climate.zone::temperature"})
+    store = make_store()
+    store.update(stable_target=21.0)
+    mqtt = FakeMqttChannel()
+    rt = _rt(ha, manifest, store, mqtt=mqtt, clock=clock, zone_prepared=False)
+    clock.advance(SETTLE + 1)
+
+    assert ticks._attempt(rt, "s1", "daily") == delivery.ReadInvalid(seq="s1", roles=("room_setpoint",))
+    assert mqtt.snapshots == []
 
 
 def test_ruhende_zone_ohne_wiederherstellungspunkt_und_ohne_raum_soll_bleibt_ein_datenfehler(make_store, clock):

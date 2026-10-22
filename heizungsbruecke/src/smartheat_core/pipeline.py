@@ -295,7 +295,7 @@ class LeverPipeline:
                 "Serverwerte waehrend aktivem (Notfall-)Boost nur gespeichert, die Anlage bleibt auf den Boost-Werten.")
             return
         try:
-            self._write(clamped)
+            self._write(clamped, prepare_quota=True)
         except WriteBudgetExhausted:
             self._defer(clamped)
 
@@ -305,8 +305,13 @@ class LeverPipeline:
         Hebel nicht als Eingriff."""
         pending = [lever for lever in self._description.lever_set.levers
                    if lever in values and self._binding.has(lever)]
-        deferred = tuple(dict.fromkeys((*self._store.state.deferred_levers, *pending)))
         logger.warning("Tageslimit erreicht: %s erst nach dem Tageswechsel", ", ".join(pending))
+        self._add_deferred(pending)
+
+    def _add_deferred(self, levers) -> None:
+        deferred = tuple(dict.fromkeys((*self._store.state.deferred_levers, *levers)))
+        if deferred == self._store.state.deferred_levers:
+            return
         try:
             self._store.update(deferred_levers=deferred)
         except Exception as error:
@@ -320,13 +325,13 @@ class LeverPipeline:
             return
         values = self._row_values(_ROW_RESTORE)
         try:
-            self._write({lever: values[lever] for lever in deferred if lever in values})
+            held = self._write({lever: values[lever] for lever in deferred if lever in values}, prepare_quota=True)
         except WriteBudgetExhausted:
             return
         except Exception:
             logger.exception("Zurueckgestellte Serverwerte nicht geschrieben, naechster Versuch im naechsten Takt")
             return
-        self._clear_deferred(deferred)
+        self._clear_deferred(tuple(lever for lever in deferred if lever not in held))
 
     def restore_and_clear(self, always_restore: bool) -> bool:
         """Abo-Fristende/Abmelden: beide Boosts beenden und den Wiederherstellungspunkt schreiben (bei always_restore
@@ -568,16 +573,24 @@ class LeverPipeline:
     def _group(self, lever: str) -> tuple[str, ...]:
         return next((group for group in self._description.write_groups if lever in group), (lever,))
 
-    def _write(self, values: Mapping[str, float], *, exempt: bool = False, require_aux: bool = True) -> None:
+    def _write(
+        self, values: Mapping[str, float], *, exempt: bool = False, require_aux: bool = True,
+        prepare_quota: bool = False,
+    ) -> tuple[str, ...]:
         """Vorbereitung -> Hebel in der Reihenfolge des Hebelsatzes (Vaillant: Betriebsart -> Steigung ->
         Parallelverschiebung -> Heizgrenze), nur zugeordnete Hebel. Muss die Anlage fuer prepared_lever erst
         vorbereitet werden, geschieht das VOR dem ersten Hebel; macht die Vorbereitung den Sollwert unbrauchbar
         (preparation_resets_setpoint, Vaillant), wird prepared_lever danach ohne Quota-Check geschrieben (force), weil
         der Read garantiert noch den alten Sollwert zeigt. Schreibgruppen (write_groups) gehen zusammen. Vor dem
         prepared_lever muessen die Hilfs-Ursprungswerte gemerkt sein (require_aux; nur die Wiederherstellung schreibt
-        auch ohne und bereitet ein Binding mit Hilfswerten dabei nicht vor)."""
+        auch ohne und bereitet ein Binding mit Hilfswerten dabei nicht vor).
+        prepare_quota (Serverwerte, auch nachgeholte): die Vorbereitung teilt das Kontingent zone_prepare mit dem Start
+        und dem lokalen Check (_prepare_within_quota). Laesst es gerade keinen Versuch zu, bleibt prepared_lever samt
+        Schreibgruppe im Wiederherstellungspunkt und in deferred_levers (write_deferred holt ihn nach), die uebrigen
+        Hebel werden geschrieben. Gibt die so zurueckgestellten Hebel zurueck."""
         prepared_lever = self._description.prepared_lever
         switched = False
+        held: tuple[str, ...] = ()
         if prepared_lever is not None and prepared_lever in values and self._binding.has(prepared_lever):
             if require_aux:
                 self._require_aux(prepared_lever)
@@ -586,7 +599,14 @@ class LeverPipeline:
             # immer.
             # Vaillant (keine Hilfswerte) bereitet wie bisher vor.
             if self._binding.needs_preparation() and (require_aux or not self._description.aux_originals):
-                switched = self.ensure_prepared(exempt=exempt, require_aux=require_aux)
+                if not prepare_quota:
+                    switched = self.ensure_prepared(exempt=exempt, require_aux=require_aux)
+                elif (prepared := self._prepare_within_quota(exempt=exempt, require_aux=require_aux)) is None:
+                    held = self._group(prepared_lever)
+                    values = {lever: value for lever, value in values.items() if lever not in held}
+                    self._hold_back(held)
+                else:
+                    switched = prepared
         force_prepared = switched and self._description.preparation_resets_setpoint
         written: list[str] = []
         done: set[str] = set()
@@ -605,6 +625,37 @@ class LeverPipeline:
                 self._write_lever(lever, values[lever], force=force_prepared and lever == prepared_lever, exempt=exempt)
             written.extend(members)
         self._clear_deferred(written)
+        return held
+
+    def _prepare_within_quota(self, *, exempt: bool, require_aux: bool) -> bool | None:
+        """ensure_prepared im Kontingent zone_prepare (write_budget.RETRY_QUOTA: nach einem Fehlschlag hoechstens ein
+        Versuch je 30 min, 6 Fehlschlaege am Tag), das der Schreibweg der Serverwerte mit dem Start und dem lokalen
+        Check teilt (Schlussreview TP2, I-1/I-2): sonst stellte jede Antwort auf einen Snapshot und jede Wiederholung
+        der Datenkette eine nicht vorbereitbare Zone erneut um. Ein Erfolg setzt das Kontingent zurueck, das
+        Tagesbudget (WriteBudgetExhausted) zaehlt nicht als Fehlschlag. None: das Kontingent laesst gerade keinen
+        Versuch zu."""
+        key, rule = write_budget.ZONE_PREPARE, write_budget.RETRY_QUOTA
+        if not write_budget.may_attempt(self._store, key, rule, self._clock()):
+            return None
+        try:
+            switched = self.ensure_prepared(exempt=exempt, require_aux=require_aux)
+        except WriteBudgetExhausted:
+            raise
+        except Exception:
+            write_budget.after_failure(self._store, key, rule, self._clock())
+            raise
+        write_budget.after_success(self._store, key, rule)
+        return switched
+
+    def _hold_back(self, levers: tuple[str, ...]) -> None:
+        """prepared_lever (samt Schreibgruppe) zurueckstellen, bis das Kontingent zone_prepare wieder einen Versuch
+        zulaesst; gemeldet nur beim ersten Zurueckstellen."""
+        if not set(levers) <= set(self._store.state.deferred_levers):
+            logger.warning(
+                "Zone nicht vorbereitet, Kontingent der Vorbereitung erschoepft: %s erst beim naechsten erlaubten "
+                "Versuch", ", ".join(levers),
+            )
+        self._add_deferred(levers)
 
     def _clear_deferred(self, levers) -> None:
         deferred = self._store.state.deferred_levers

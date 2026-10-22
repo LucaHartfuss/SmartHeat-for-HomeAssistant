@@ -574,11 +574,12 @@ def test_failing_zone_preparation_is_retried_at_most_every_30_min_and_6_times_a_
     assert sum("Tageslimit" in record.getMessage() for record in caplog.records) == 1
 
 
-@pytest.mark.parametrize("zone", [0.0, 20.0], ids=["zone-ruht", "zone-heizt"])
-def test_a_not_yet_prepared_zone_is_not_enforced_and_gives_no_false_push(env, zone):
-    """Fix-Runde 1 (I-1, S3-3): solange die Zone nie vorbereitet war, gehoert das Umstellen allein dem Start und dem
-    lokalen Check (`zone_prepare`: 1 je 30 min, 6 am Tag). Die Durchsetzung stellt sie nicht zusaetzlich um und
-    meldet weder "in der App verstellt" noch "immer wieder verstellt"; der Snapshot geht trotzdem raus."""
+@pytest.mark.parametrize(("zone", "snapshots"), [(0.0, False), (20.0, True)], ids=["zone-ruht", "zone-heizt"])
+def test_a_not_yet_prepared_zone_is_not_enforced_and_gives_no_false_push(env, zone, snapshots):
+    """Fix-Runde 1 (I-1, S3-3): solange die Zone nie vorbereitet war, stellt die Durchsetzung sie nicht zusaetzlich
+    um (`zone_prepare`: 1 je 30 min, 6 am Tag) und meldet weder "in der App verstellt" noch "immer wieder
+    verstellt". Die ruhende, nie vorbereitete Zone meldet keinen Snapshot (Datenfehler bis zur Vorbereitung,
+    Schlussreview I-1), die heizende schon."""
     attempts = _failing_zone_preparation(env)
     env.ha.states["climate.zone::temperature"] = zone
     bridge = _start(env, entity_shift_current="climate.zone")
@@ -588,7 +589,51 @@ def test_a_not_yet_prepared_zone_is_not_enforced_and_gives_no_false_push(env, zo
     assert [later - attempts[0] for later in attempts] == [0, 1800, 3600, 5400, 7200, 9000]
     assert [push for push in env.ha.pushes if "Heizungseinstellung" in push] == []
     assert bridge.zone_prepared is False and bridge.store.state.manual_override is None
-    assert _mqtt(env).snapshots != []  # auch bei ruhender Zone (S3-3: Raum-Soll statt Datenfehler)
+    assert (_mqtt(env).snapshots != []) is snapshots
+
+
+def _answer_every_open_tick(env, bridge, answered: set) -> None:
+    """Der Server beantwortet jeden gesendeten Snapshot des offenen Ticks genau einmal je (seq, gen)."""
+    pending = bridge.store.state.delivery.pending
+    if pending is None or (pending.seq, pending.gen) in answered:
+        return
+    if any(snapshot["seq"] == pending.seq for snapshot in _mqtt(env).snapshots):
+        answered.add((pending.seq, pending.gen))
+        _answer(env, bridge, pending.seq)
+
+
+@pytest.mark.parametrize("zone", [0.0, 20.0], ids=["zone-ruht", "zone-heizt"])
+def test_answered_snapshots_do_not_switch_a_never_prepared_zone_outside_the_quota(env, zone):
+    """Schlussreview TP2 (I-1, I-2): auch wenn der Server jeden Snapshot beantwortet, stellt die Antwort eine nie
+    vorbereitete Zone nur im Kontingent `zone_prepare` um (1 je 30 min, 6 am Tag), das sie mit dem Start und dem
+    lokalen Check teilt. Vorher: 35 Versuche in 12 h (ruhende Zone seit S3-3, heizende schon davor)."""
+    attempts = _failing_zone_preparation(env)
+    env.ha.states["climate.zone::temperature"] = zone
+    bridge = _start(env, entity_shift_current="climate.zone")
+    answered: set = set()
+
+    for step in range(int(12 * 3600 / 30)):
+        _advance(env, bridge, 30)
+        if step % 10 == 0:
+            _trigger(env, bridge, "sensor.room_actual")  # lokaler Check alle 300 s
+        _answer_every_open_tick(env, bridge, answered)
+
+    assert len(attempts) == 6
+    assert all(later - earlier >= 1800 for earlier, later in zip(attempts, attempts[1:], strict=False))
+    assert (answered != set()) is (zone != 0.0)  # Gegenprobe: die heizende Zone bekommt Antworten
+
+
+def test_a_resting_zone_already_manual_reports_snapshots_on_a_fresh_install(env):
+    """S3-3: frische Installation (kein Wiederherstellungspunkt), Zone schon auf Manuell und ruhend: die Vorbereitung
+    gelingt ohne Umstellung, der Snapshot meldet das stabile Raum-Soll statt eines Datenfehlers."""
+    env.ha.states.update({"climate.zone": "heat_cool", "climate.zone::temperature": 0.0})
+    bridge = _start(env, entity_shift_current="climate.zone")
+
+    _local_checks(env, bridge, hours=1)
+
+    assert bridge.zone_prepared is True
+    assert ("climate.zone", "heat_cool") not in env.ha.writes
+    assert [snapshot["levers"]["room_setpoint"] for snapshot in _mqtt(env).snapshots][:1] == [21.0]
 
 
 def test_zone_preparation_stops_retrying_after_success(env):
@@ -881,7 +926,9 @@ def test_start_mit_altem_notbetrieb_abo_unbekannt_meldet_nach_timeouts(env):
     assert env.ha.pushes == [NOTBETRIEB_ON]
     assert bridge.notifier.state("notbetrieb") == "aktiv"
     assert _delivery(bridge).notbetrieb is True
-    _advance(env, bridge, 300)
+    _advance(env, bridge, 300)  # Retry bei 360 s
+    _advance(env, bridge, 30)  # dessen Ack-Timeout: der dritte Timeout in Folge
+    assert _delivery(bridge).server_failures == 3
     assert env.ha.pushes == [NOTBETRIEB_ON]  # weitere Timeouts melden nicht erneut
 
 

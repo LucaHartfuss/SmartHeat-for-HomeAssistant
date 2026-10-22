@@ -136,10 +136,14 @@ def _attempt(rt: Runtime, seq: str, trigger: str):
             known[lever] = last
         elif lever == binding.description.prepared_lever:
             # Ruhende Zone beim ersten Start: noch kein Wiederherstellungspunkt, dann gilt das stabile Raum-Soll
-            # (S3-3). Nur die Meldung; der Wiederherstellungspunkt selbst bleibt unberuehrt.
+            # (S3-3), aber nur bei vorbereiteter Zone (rt.zone_prepared). Sonst bliebe es beim Datenfehler wie vor
+            # S3-3: die Antwort auf den Snapshot schriebe die Serverwerte und stellte dabei die nie vorbereitete Zone
+            # um. Hier wird nur gemeldet, der Wiederherstellungspunkt bleibt unberuehrt; die Antwort schreibt ihn.
             state = rt.store.state
             fallback = state.restore_point.get(lever)
-            known[lever] = binding.read_or(lever, state.stable_target if fallback is None else fallback)
+            if fallback is None and rt.zone_prepared:
+                fallback = state.stable_target
+            known[lever] = binding.read_or(lever, fallback)
     read = read_snapshot(rt.manifest, rt.signals, binding, known)
     if read.invalid:
         logger.warning("Snapshot (seq=%s) zurueckgehalten, ungueltige Werte: %s", seq, ", ".join(read.invalid))

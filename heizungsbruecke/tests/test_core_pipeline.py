@@ -1590,3 +1590,112 @@ def test_a_foreign_error_text_is_logged_only_escaped(make_store, monkeypatch, ca
     with caplog.at_level(logging.INFO, logger="smartheat_core.pipeline"):
         zeile = pfad(make_store, monkeypatch)
     assert zeile in logzeilen(caplog)
+
+
+# --- Schlussreview TP2 (I-1, I-2): die Vorbereitung im Schreibweg der Serverwerte teilt das Kontingent zone_prepare ---
+
+SERVER = {"curve": 0.95, "room_setpoint": 23.0, "heat_limit": 16.0}
+
+
+def _quota_zone(make_store, clock, description=VAILLANT_MYPYLLANT, backup=None):
+    """Zone im Zeitprogramm (auto, heizt mit 20); das Umstellen auf Manuell scheitert, solange ha.zone_error gesetzt
+    ist. Gibt (Pipeline, Speicher, HA, Zeitpunkte der Umstellversuche) zurueck."""
+    manifest = ChannelManifest(refs={**MANIFEST.refs, "shift_current": "climate.zone::temperature"})
+    store = make_store(backup=backup)
+    ha = RecordingHa({"climate.zone": "auto", "climate.zone::temperature": 20.0})
+    ha.zone_error = RuntimeError("403 Quota Exceeded")
+    attempts = []
+
+    def _set_hvac_mode(entity, mode):
+        attempts.append(clock())
+        if ha.zone_error is not None:
+            raise ha.zone_error
+        ha.events.append(("hvac", entity, mode))
+        ha.states[entity] = mode
+
+    ha.set_hvac_mode = _set_hvac_mode
+    ha.get_raw_state = lambda entity: ha.states[entity]
+    ha.set_climate_temperature = lambda entity, value: ha.events.append(("write", entity, value))
+    override = LeverPipeline(store, HaPlantBinding(ha, manifest, description), SAFETY, clock=clock)
+    clock.advance(description.settle_seconds + 1)
+    return override, store, ha, attempts
+
+
+def _zone_prepare(store):
+    return write_budget.get(store, write_budget.ZONE_PREPARE)
+
+
+def test_server_values_switch_the_zone_only_within_the_zone_prepare_quota(make_store, clock, tag):
+    override, store, ha, attempts = _quota_zone(make_store, clock)
+    start = clock()
+
+    with pytest.raises(DeviceWriteError):
+        override.apply_server_values(SERVER)  # erster Versuch: frei, scheitert, zaehlt
+    assert attempts == [start] and _zone_prepare(store)["count"] == 1
+
+    clock.advance(60)
+    override.apply_server_values(SERVER)  # Kontingent: kein zweiter Versuch, die Steigung geht trotzdem
+    assert attempts == [start]
+    assert ha.writes == [("number.curve", 0.95)]
+    assert store.state.restore_point == {"curve": 0.95, "room_setpoint": 23.0, "heat_limit": 16.0}
+    assert store.state.deferred_levers == ("room_setpoint",)
+
+    override.write_deferred()  # nachholen, aber noch im Kontingent gesperrt
+    assert attempts == [start] and store.state.deferred_levers == ("room_setpoint",)
+
+    clock.advance(1800)
+    override.write_deferred()  # 30 min nach dem Fehlschlag: neuer Versuch, scheitert, bleibt zurueckgestellt
+    assert attempts == [start, start + 1860] and _zone_prepare(store)["count"] == 2
+    assert store.state.deferred_levers == ("room_setpoint",)
+
+    ha.zone_error = None
+    clock.advance(1800)
+    override.write_deferred()  # gelingt: Umstellung, Sollwert, Kontingent zurueckgesetzt
+    assert ha.events[-2:] == [("hvac", "climate.zone", "heat_cool"), ("write", "climate.zone", 23.0)]
+    assert store.state.deferred_levers == () and _zone_prepare(store) is None
+
+
+def test_six_failures_a_day_end_the_attempts_of_the_server_path(make_store, clock, tag):
+    override, store, _, attempts = _quota_zone(
+        make_store, clock, backup={"write_budget": {write_budget.ZONE_PREPARE: {"day": DAY, "count": 6}}},
+    )
+    override.apply_server_values(SERVER)
+    clock.advance(24 * 3600)  # gleicher Tag (tag), nur die monotone Uhr laeuft
+    override.write_deferred()
+    assert attempts == [] and store.state.deferred_levers == ("room_setpoint",)
+
+
+def test_the_hold_back_is_reported_once(make_store, clock, tag, caplog):
+    override, _, _, _ = _quota_zone(
+        make_store, clock, backup={"write_budget": {write_budget.ZONE_PREPARE: {"day": DAY, "count": 6}}},
+    )
+    with caplog.at_level(logging.WARNING, logger="smartheat_core.pipeline"):
+        override.apply_server_values(SERVER)
+        override.apply_server_values({**SERVER, "curve": 0.9})
+        override.write_deferred()
+    assert sum("Kontingent der Vorbereitung" in record.getMessage() for record in caplog.records) == 1
+
+
+def test_a_full_daily_budget_during_the_preparation_does_not_count_as_a_failure(make_store, clock, tag):
+    """Das Tagesbudget (daily_write_limit) haelt die Vorbereitung an, ohne dass die Anlage gescheitert ist: kein
+    Fehlschlag im Kontingent zone_prepare, alle Hebel bleiben zurueckgestellt."""
+    description = dataclasses.replace(VAILLANT_MYPYLLANT, daily_write_limit=5)
+    override, store, _, attempts = _quota_zone(
+        make_store, clock, description=description,
+        backup={"write_budget": {write_budget.TOTAL: {"day": DAY, "count": 5}}},
+    )
+    override.apply_server_values(SERVER)
+    assert attempts == [] and _zone_prepare(store) is None
+    assert store.state.deferred_levers == ("curve", "room_setpoint")
+
+
+def test_enforcing_the_zone_setpoint_keeps_its_own_quota(make_store, clock, tag):
+    """write_levers (Durchsetzen, eigenes Kontingent enforce:*) ist nicht an zone_prepare gebunden."""
+    override, store, _, attempts = _quota_zone(
+        make_store, clock,
+        backup={"restore_point": {"room_setpoint": 22.0},
+                "write_budget": {write_budget.ZONE_PREPARE: {"day": DAY, "count": 6}}},
+    )
+    with pytest.raises(DeviceWriteError):
+        override.write_levers(("room_setpoint",))
+    assert len(attempts) == 1 and _zone_prepare(store)["count"] == 6
