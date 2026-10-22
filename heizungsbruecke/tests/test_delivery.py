@@ -261,6 +261,24 @@ def test_timeout_during_notbetrieb_does_not_query_entitlement_again():
     assert [type(action) for action in actions] == [ScheduleRetry]
 
 
+def test_unbeantworteter_pruef_tick_im_stillen_notbetrieb_meldet():
+    """T4-Notbetrieb-Unbekannt: ein Notbetrieb ohne Meldung (Neustart mit altem Notbetrieb, Abo unbekannt) bleibt
+    still, bis zwei Ack-Timeouts des Pruef-Ticks den Server als stumm zeigen; dann geht "Notbetrieb aktiv" hinaus (der
+    Notifier meldet nur beim Zustandswechsel). Schwelle, Retry-Stufen und Abo-Abfrage bleiben wie zuvor."""
+    state, _ = _published("s1", notbetrieb=True)
+
+    state, actions = step(state, AckTimeout("s1", 1))
+    assert [type(action) for action in actions] == [ScheduleRetry]  # der erste Timeout meldet noch nicht
+
+    state, _ = _run(state, RetryDue("s1", 2), Published("s1"))
+    state, actions = step(state, AckTimeout("s1", state.pending.gen))
+
+    assert state.server_failures == 2
+    assert [type(action) for action in actions] == [Notify, ScheduleRetry]
+    assert actions[0] == Notify(NOTIFY_NOTBETRIEB_ON)
+    assert actions[1].delay_s == 300  # Retry-Stufe wie im Notbetrieb ueblich
+
+
 def test_late_ack_during_retry_wait_ends_tick_and_old_retry_becomes_stale():
     # Review Focus 3: Antwort des ersten Versuchs kommt kurz nach dem Ack-Timeout.
     state, _ = _published("s1")

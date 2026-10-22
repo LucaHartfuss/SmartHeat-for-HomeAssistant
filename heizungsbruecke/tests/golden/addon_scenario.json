@@ -127,20 +127,6 @@
     }
    ],
    [
-    "link",
-    "telemetry",
-    {
-     "room_actual": 20.0,
-     "boost_active": false,
-     "failsafe_active": false,
-     "ts": "2026-01-15T08:00:00+01:00",
-     "flow_temperature": 35.0,
-     "room_target": 21.0,
-     "outdoor_temp": 5.0,
-     "flow_setpoint": 35.0
-    }
-   ],
-   [
     "ha",
     "event",
     "smartheat_status",
@@ -174,6 +160,20 @@
      "server_verbunden": false,
      "raum_soll": 21.0,
      "geraet_hinweise": []
+    }
+   ],
+   [
+    "link",
+    "telemetry",
+    {
+     "room_actual": 20.0,
+     "boost_active": false,
+     "failsafe_active": false,
+     "ts": "2026-01-15T08:00:00+01:00",
+     "flow_temperature": 35.0,
+     "room_target": 21.0,
+     "outdoor_temp": 5.0,
+     "flow_setpoint": 35.0
     }
    ],
    [
@@ -3092,20 +3092,6 @@
     }
    ],
    [
-    "link",
-    "telemetry",
-    {
-     "room_actual": 21.5,
-     "boost_active": false,
-     "failsafe_active": false,
-     "ts": "2026-01-15T13:03:00+01:00",
-     "flow_temperature": 35.0,
-     "room_target": 20.5,
-     "outdoor_temp": 5.0,
-     "flow_setpoint": 35.0
-    }
-   ],
-   [
     "ha",
     "event",
     "smartheat_status",
@@ -3144,6 +3130,20 @@
      "server_verbunden": false,
      "raum_soll": 20.5,
      "geraet_hinweise": []
+    }
+   ],
+   [
+    "link",
+    "telemetry",
+    {
+     "room_actual": 21.5,
+     "boost_active": false,
+     "failsafe_active": false,
+     "ts": "2026-01-15T13:03:00+01:00",
+     "flow_temperature": 35.0,
+     "room_target": 20.5,
+     "outdoor_temp": 5.0,
+     "flow_setpoint": 35.0
     }
    ],
    [

@@ -3,13 +3,15 @@ from types import SimpleNamespace
 
 import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT
-from fakes import FakeHa, FakeMqttChannel
+from fakes import FakeHa, FakeMqttChannel, FakeNotifySink
 
 from heizungsbruecke.ha_binding import HaPlantBinding
 from smartheat_core.pipeline import DeviceWriteError, LeverPipeline
 from smartheat_core.safety import LocalSafety
 from smartheat_runtime import delivery, ticks
+from smartheat_runtime.notifier import Notifier
 from smartheat_runtime.roles import ChannelManifest
+from smartheat_runtime.texts import HA_TEXTS
 
 SETTLE = VAILLANT_MYPYLLANT.settle_seconds
 
@@ -159,3 +161,69 @@ def test_write_fault_detail_names_the_lever():
     assert str(error) == "room_setpoint (climate.zone::temperature): " + "x" * 200
     error = DeviceWriteError("heat_limit", "number.hl", RuntimeError("weg"))
     assert str(error) == "heat_limit (number.hl): weg"
+
+
+# --- Fremdtext aus der Serverantwort (A6-37) ---
+
+class _FakeWorker:
+    def schedule(self, delay_s, event):
+        return 0
+
+
+def _rt_mit_offenem_tick(make_store, clock):
+    """Laufzeit-Sicht von handle_setpoints: echte Pipeline, echter Notifier mit FakeNotifySink, offener Tick s1."""
+    manifest = ChannelManifest(refs={"room_target": "sensor.room_target", "shift_current": "number.shift_current"})
+    store = make_store(failsafe={"failsafe_active": False, "datenfehler": None,
+                                 "pending": {"seq": "s1", "trigger": "daily"}})
+    sink = FakeNotifySink()
+    rt = _rt(FakeHa(), manifest, store, clock=clock)
+    rt.notifier, rt.texts, rt.worker = Notifier(store, sink), HA_TEXTS, _FakeWorker()
+    return rt, sink
+
+
+def _server_grund(rt):
+    return rt.store.state.delivery.datenfehler.detail[0]
+
+
+def test_riesige_ungueltige_antwort_gibt_kurzen_grund(make_store, clock):
+    """A6-37: der Server liefert ungueltige `levers` von 130 KB; der Grund (Datenfehler, Push, Speicher, spaeter der
+    Stapel an den Server) bleibt bei 200 Zeichen, der Anfang mit dem Schluessel vor dem Doppelpunkt bleibt."""
+    rt, sink = _rt_mit_offenem_tick(make_store, clock)
+
+    ticks.handle_setpoints(rt, {"seq": "s1", "schema": 4, "status": "ok", "levers": {"curve": "x" * 130_000}})
+
+    grund = _server_grund(rt)
+    assert len(grund) <= 200
+    assert grund.startswith("ungültige Serverantwort (status='ok', levers=")
+    (_, meldung) = sink.pushes[-1]
+    assert len(meldung) < 400
+    assert len(rt.store.state.notify_messages["datenfehler"]) < 400
+
+
+def test_riesiges_unbekanntes_schema_gibt_kurzen_grund(make_store, clock):
+    rt, _ = _rt_mit_offenem_tick(make_store, clock)
+
+    ticks.handle_setpoints(rt, {"seq": "s1", "schema": "x" * 130_000})
+
+    assert len(_server_grund(rt)) <= 200
+
+
+def test_langer_ablehnungsgrund_wird_gekuerzt(make_store, clock):
+    rt, sink = _rt_mit_offenem_tick(make_store, clock)
+    reason = "unplausibler Wert für dat: " + "9" * 130_000
+
+    ticks.handle_setpoints(rt, {"seq": "s1", "schema": 4, "status": "rejected", "reason": reason})
+
+    grund = _server_grund(rt)
+    assert len(grund) <= 200
+    assert grund.startswith("unplausibler Wert für dat: 99")
+    assert len(sink.pushes[-1][1]) < 400
+
+
+def test_kurzer_ablehnungsgrund_bleibt_unveraendert(make_store, clock):
+    rt, _ = _rt_mit_offenem_tick(make_store, clock)
+    reason = "x" * 200
+
+    ticks.handle_setpoints(rt, {"seq": "s1", "schema": 4, "status": "rejected", "reason": reason})
+
+    assert _server_grund(rt) == reason

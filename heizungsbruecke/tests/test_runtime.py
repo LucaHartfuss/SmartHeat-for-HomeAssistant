@@ -837,6 +837,27 @@ def test_stale_notbetrieb_with_unknown_abo_shows_notbetrieb_after_the_start_unti
     assert _status_states(env) == ["startet", "notbetrieb", "regelt"]
 
 
+def test_start_mit_altem_notbetrieb_abo_unbekannt_meldet_nach_timeouts(env):
+    """T4-Notbetrieb-Unbekannt: der alte Notbetrieb war nie gemeldet (Meldezustand ok, kein Text); bleibt der Pruef-Tick
+    bei unbekanntem Abo zweimal unbeantwortet, erscheint "Notbetrieb aktiv" (Push und offene Meldung), der Notbetrieb
+    laeuft weiter."""
+    _quiet_backup(env)
+    save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": True, "datenfehler": None, "pending": None})
+    env.abo["status"] = entitlement.UNKNOWN
+    bridge = _start(env)
+    assert env.ha.pushes == []
+
+    _advance(env, bridge, 30)
+    assert env.ha.pushes == []  # ein Timeout genuegt noch nicht
+    _advance(env, bridge, 30)
+
+    assert env.ha.pushes == [NOTBETRIEB_ON]
+    assert bridge.notifier.state("notbetrieb") == "aktiv"
+    assert _delivery(bridge).notbetrieb is True
+    _advance(env, bridge, 300)
+    assert env.ha.pushes == [NOTBETRIEB_ON]  # weitere Timeouts melden nicht erneut
+
+
 def _reported_stale_notbetrieb(env):
     """Notbetrieb ohne offenen Tick, dessen "Notbetrieb aktiv" vor dem Abo-inaktiv-Modus erschienen ist (Meldezustand
     und Text in backup.json), Start mit Abo-Status UNKNOWN."""
@@ -2578,7 +2599,7 @@ def test_sign_off_failed_restore_notifies_with_the_restore_values(env):
 
     _start_bridge(env, abgemeldet=True)
 
-    message = app.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Kurve 0,9, Parallelverschiebung 22")
+    message = app.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Heizkurve 0,9, Wunschtemperatur der Zone 22")
     assert env.ha.pushes == [message]
     assert ("smartheat_wiederherstellung", message) in env.ha.persistent
     assert "smartheat_notbetrieb" in env.ha.dismissed
@@ -2586,7 +2607,7 @@ def test_sign_off_failed_restore_notifies_with_the_restore_values(env):
 
 
 def test_sign_off_failed_restore_after_a_restart_renews_the_notification_without_push(env):
-    message = app.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Kurve 0,9, Parallelverschiebung 22")
+    message = app.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Heizkurve 0,9, Wunschtemperatur der Zone 22")
     _quiet_backup(
         env, boost_active=True,
         notify_states={"wiederherstellung": "fehlgeschlagen"}, notify_messages={"wiederherstellung": message},
@@ -2618,7 +2639,7 @@ def test_sign_off_with_invalid_configuration_during_a_boost_asks_for_manual_valu
 
     _start_bridge(env, abgemeldet=True, verteilsystem="Unbekannt")
 
-    message = app.SIGN_OFF_NOT_RESTORED_MESSAGE.format(werte="Kurve 0,9, Parallelverschiebung 22")
+    message = app.SIGN_OFF_NOT_RESTORED_MESSAGE.format(werte="Heizkurve 0,9, Raum-Soll 22")
     assert env.ha.pushes == [message]
     assert ("smartheat_wiederherstellung", message) in env.ha.persistent
 
@@ -2733,7 +2754,7 @@ def test_reset_fails_keeps_state_across_restart(env, monkeypatch):
     assert _backup(env)["boost_active"] is True
     assert _last_event(env)["status"] == "abgemeldet"
     assert _last_event(env)["grund"] == app.SIGN_OFF_RESTORE_FAILED.format(seconds=300)
-    message = app.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Kurve 0,9, Parallelverschiebung 22")
+    message = app.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Heizkurve 0,9, Wunschtemperatur der Zone 22")
     assert ("smartheat_wiederherstellung", message) in env.ha.persistent
 
     env.ha.write_error = None

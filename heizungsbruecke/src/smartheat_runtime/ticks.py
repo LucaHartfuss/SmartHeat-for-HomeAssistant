@@ -19,6 +19,17 @@ logger = logging.getLogger(__name__)
 
 _SETPOINT_STATUSES_WITH_VALUES = (delivery.STATUS_OK, delivery.STATUS_SKIPPED)
 
+# Fremdtext aus der Serverantwort (Grund einer Ablehnung, Beschreibung einer ungueltigen Antwort) geht in Datenfehler,
+# Push, offene Meldung, Speicher und den Statusstapel an den Server (A6-37): hoechstens so viele Zeichen.
+FREMDTEXT_MAX_CHARS = 200
+
+
+def _kuerzen(text: str) -> str:
+    """`text` auf FREMDTEXT_MAX_CHARS Zeichen (der Anfang bleibt, ein gekuerzter Text endet auf "…")."""
+    if len(text) <= FREMDTEXT_MAX_CHARS:
+        return text
+    return text[:FREMDTEXT_MAX_CHARS - 1] + "…"
+
 
 _LEARNED_KEYS = frozenset({"curve", "heat_limit"})
 
@@ -272,7 +283,7 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
         # Nur Schema 4 wird verstanden; alles andere zaehlt wie eine ungueltige Antwort (Datenfehler
         # vom Server, sofort sichtbar) statt still verworfen zu werden und erst ueber den
         # Ack-Timeout im Notbetrieb zu enden.
-        reason = f"ungültige Serverantwort (unbekanntes Schema {schema!r})"
+        reason = _kuerzen(f"ungültige Serverantwort (unbekanntes Schema {schema!r})")
         logger.warning("Setpoints-Antwort (seq=%s): %s - nichts geschrieben", seq, reason)
         deliver(rt, delivery.Ack(seq=seq, status=delivery.STATUS_REJECTED, reason=reason))
         return
@@ -303,12 +314,14 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
         deliver(rt, delivery.Ack(seq=seq, status=status))
     elif status == delivery.STATUS_REJECTED:
         reason = payload.get("reason")
-        reason = reason if isinstance(reason, str) and reason else None
+        reason = _kuerzen(reason) if isinstance(reason, str) and reason else None
         # Grund vom Server mit repr: ein einzelnes Surrogat braeche die UTF-8-Ausgabe des Logs, ein Zeilenumbruch
         # faelschte eine zweite Logzeile (Testoffensive T6).
         logger.warning("Server hat Snapshot (seq=%s) abgelehnt: %r", seq, reason)
         deliver(rt, delivery.Ack(seq=seq, status=delivery.STATUS_REJECTED, reason=reason))
     else:
-        reason = f"ungültige Serverantwort (status={status!r}, levers={levers!r}, erwartet: {', '.join(expected)})"
+        reason = _kuerzen(
+            f"ungültige Serverantwort (status={status!r}, levers={levers!r}, erwartet: {', '.join(expected)})"
+        )
         logger.warning("Setpoints-Antwort (seq=%s): %s - nichts geschrieben", seq, reason)
         deliver(rt, delivery.Ack(seq=seq, status=delivery.STATUS_REJECTED, reason=reason))
