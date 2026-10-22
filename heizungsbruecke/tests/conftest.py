@@ -16,7 +16,7 @@ from smartheat_runtime.backup_store import save_backup
 from smartheat_runtime.state import StateStore
 
 settings.register_profile("schnell", max_examples=50, derandomize=True, database=None, deadline=None,
-                          suppress_health_check=[HealthCheck.too_slow])
+                          suppress_health_check=[HealthCheck.too_slow], print_blob=False)  # sonst in der CI True
 settings.register_profile("voll", parent=settings.get_profile("schnell"), max_examples=500, derandomize=False,
                           print_blob=True)
 settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "schnell"))
