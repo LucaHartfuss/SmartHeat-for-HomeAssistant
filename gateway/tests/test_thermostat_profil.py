@@ -7,12 +7,16 @@ from smartheat_gateway.thermostat_profil import profil
 from smartheat_gateway.zigbee import ZigbeeMirror
 
 W100 = "0x54ef44100140eb34"  # Testwert in der IEEE-Form von Zigbee2MQTT
-EINRICHTUNG_W100 = [
+W101 = "0x54ef44100140eb35"
+MODUS_W100 = [
     (W100, {"thermostat_mode": "ON"}),
     (W100, {"auto_hide_middle_line": False}),
+]
+SOLL_UND_HEIZEN_W100 = [
     (W100, {"occupied_heating_setpoint": 20.0}),
     (W100, {"system_mode": "heat"}),
 ]
+EINRICHTUNG_W100 = MODUS_W100 + SOLL_UND_HEIZEN_W100
 
 
 @pytest.fixture
@@ -27,12 +31,68 @@ def welt(clock):
     return bus, z2m, mirror
 
 
-def test_a_paired_w100_becomes_a_thermostat_with_one_key_per_message(welt):
-    # Labor 2026-10-21: Z2M setzt beim Koppeln thermostat_mode OFF; mehrere Schluessel in einer Nachricht ueberschreiben
-    # sich im Konverter, also je Schluessel eine Nachricht, das Soll vor heat (sonst gilt das Werks-Soll 15 als Wunsch)
+def test_a_paired_w100_gets_its_mode_at_once_and_setpoint_and_heat_once_it_reports_the_mode_on(welt):
+    # Labor 2026-10-22 (L4-30): der Konverter lumi verwirft Soll und system_mode, solange der zwischengespeicherte
+    # thermostat_mode nicht ON ist, und ON steht dort erst, wenn das Geraet es gemeldet hat. Je Schluessel eine
+    # Nachricht (Labor 2026-10-21), das Soll vor heat (sonst gilt das Werks-Soll 15 als Wunsch)
     _, z2m, _ = welt
     z2m.interview(W100)
+    assert z2m.set_requests == MODUS_W100  # kein Soll, kein system_mode, ...
+    z2m.report(W100, thermostat_mode="ON", system_mode="off", occupied_heating_setpoint=15)
+    assert z2m.set_requests == EINRICHTUNG_W100  # ... erst nach der Meldung, genau einmal, Soll vor heat
+    assert z2m.verworfen == []
+
+
+def test_a_w100_whose_state_already_knows_the_mode_on_is_set_up_at_once(welt):
+    # Gegenprobe zum Labor-Befund: beim Neukoppeln kannte der Zustand ON schon, alles wurde uebernommen
+    _, z2m, _ = welt
+    z2m.report(W100, thermostat_mode="ON")
+    z2m.interview(W100)
+    assert z2m.set_requests == EINRICHTUNG_W100 and z2m.verworfen == []
+
+
+def test_a_report_without_the_mode_on_sends_nothing_more_and_a_later_one_with_on_does(welt):
+    _, z2m, _ = welt
+    z2m.interview(W100)
+    z2m.report(W100, thermostat_mode="OFF", system_mode="off")
+    z2m.report(W100, battery=90)  # eine Meldung ganz ohne thermostat_mode (Zigbee2MQTT haelt den alten Zustand)
+    z2m.report(THERMOSTAT, thermostat_mode="ON")  # ein anderes Geraet zaehlt nicht
+    assert z2m.set_requests == MODUS_W100
+    z2m.report(W100, thermostat_mode="ON")
     assert z2m.set_requests == EINRICHTUNG_W100
+
+
+def test_setpoint_and_heat_are_sent_only_once(welt):
+    _, z2m, _ = welt
+    z2m.interview(W100)
+    z2m.report(W100, thermostat_mode="ON")
+    z2m.report(W100, thermostat_mode="ON", battery=80)
+    z2m.report(W100, system_mode="off")  # am Geraet ausgeschaltet: bleibt aus (A6-14)
+    assert z2m.set_requests == EINRICHTUNG_W100
+
+
+def test_pairing_again_before_the_mode_is_reported_keeps_one_open_rest(welt):
+    _, z2m, _ = welt
+    z2m.interview(W100)
+    z2m.interview(W100)
+    assert z2m.set_requests == MODUS_W100 * 2
+    z2m.report(W100, thermostat_mode="ON")
+    assert z2m.set_requests == MODUS_W100 * 2 + SOLL_UND_HEIZEN_W100
+
+
+def test_each_device_has_its_own_open_rest(welt):
+    # je IEEE ein offener Rest: der eines Geraets hindert das andere nicht
+    _, z2m, _ = welt
+    z2m.add_w100(W101)
+    z2m.interview(W100)
+    z2m.interview(W101)
+    z2m.report(W101, thermostat_mode="ON")
+    assert z2m.set_requests == MODUS_W100 + [(W101, {"thermostat_mode": "ON"}),
+                                              (W101, {"auto_hide_middle_line": False}),
+                                              (W101, {"occupied_heating_setpoint": 20.0}),
+                                              (W101, {"system_mode": "heat"})]
+    z2m.report(W100, thermostat_mode="ON")
+    assert z2m.set_requests[-2:] == SOLL_UND_HEIZEN_W100
 
 
 def test_a_thermostat_without_a_profile_is_left_alone(welt):
@@ -47,6 +107,7 @@ def test_an_unfinished_interview_sets_nothing(welt, status):
     z2m.interview(W100, status=status)
     assert z2m.set_requests == []
     z2m.interview(W100)  # Gegenprobe: dasselbe Geraet nach erfolgreichem Interview
+    z2m.report(W100, thermostat_mode="ON")
     assert z2m.set_requests == EINRICHTUNG_W100
 
 
@@ -75,6 +136,7 @@ def test_the_bound_thermostat_is_set_up_by_its_binding_not_with_the_default(welt
     assert aufrufe == ["laufzeit"] and z2m.set_requests == []
     mirror.pflege.loesen(W100)
     z2m.interview(W100)
+    z2m.report(W100, thermostat_mode="ON")
     assert aufrufe == ["laufzeit"] and z2m.set_requests == EINRICHTUNG_W100
 
 
@@ -88,6 +150,7 @@ def test_a_new_binding_replaces_the_previous_one(welt):
     assert aufrufe == ["neu"]
     mirror.pflege.binden(THERMOSTAT, lambda: aufrufe.append("anderes"))
     z2m.interview(W100)  # nicht mehr gebunden: Vorgabe
+    z2m.report(W100, thermostat_mode="ON")
     assert aufrufe == ["neu"] and z2m.set_requests == EINRICHTUNG_W100
 
 
@@ -98,6 +161,14 @@ def test_releasing_another_device_keeps_the_binding(welt):
     mirror.pflege.loesen(THERMOSTAT)
     z2m.interview(W100)
     assert aufrufe == ["laufzeit"] and z2m.set_requests == []
+
+
+def test_releasing_the_device_drops_its_open_rest(welt):
+    _, z2m, mirror = welt
+    z2m.interview(W100)
+    mirror.pflege.loesen(W100)
+    z2m.report(W100, thermostat_mode="ON")
+    assert z2m.set_requests == MODUS_W100
 
 
 def test_profiles_exist_only_for_known_models():

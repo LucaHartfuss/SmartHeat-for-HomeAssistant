@@ -633,7 +633,11 @@ def test_pairing_the_bound_w100_again_sets_it_up_from_the_target_store(mit_w100,
     welt = mit_w100
     welt.z2m.interview(W100)
     welt.worker.run_pending()
+    # Labor 2026-10-22 (L4-30): zuerst nur der Modus; Soll und heat erst, wenn das Geraet thermostat_mode ON meldet
+    assert _w100_sets(welt) == MODUS_W100 + MODUS_W100 and welt.z2m.verworfen == []
+    _w100_melden(welt, thermostat_mode="ON")
     assert _w100_sets(welt) == MODUS_W100 + MODUS_W100 + [{"occupied_heating_setpoint": 21.0}, {"system_mode": "heat"}]
+    assert welt.z2m.verworfen == []
     # im Echo-Fenster: das alte Soll des Geraets (verspaetete Meldung), dann das Echo; ohne "off" dazwischen, das
     # verwuerfe einen offenen Wunsch und verdeckte ein fehlendes Echo-Fenster
     _w100_melden(welt, occupied_heating_setpoint=19, system_mode="heat")
@@ -641,6 +645,41 @@ def test_pairing_the_bound_w100_again_sets_it_up_from_the_target_store(mit_w100,
     clock.advance(10)
     welt.worker.run_pending()
     assert welt.wuensche == [] and welt.store.value == 20.5
+
+
+def test_pairing_the_bound_w100_again_with_the_mode_already_on_sets_it_up_at_once(mit_w100):
+    welt = mit_w100
+    _w100_melden(welt, thermostat_mode="ON")
+    welt.z2m.interview(W100)
+    welt.worker.run_pending()
+    assert _w100_sets(welt) == MODUS_W100 * 2 + [{"occupied_heating_setpoint": 21.0}, {"system_mode": "heat"}]
+    assert welt.z2m.verworfen == []
+
+
+def test_the_bound_w100_gets_the_target_of_the_moment_the_mode_is_reported(mit_w100):
+    welt = mit_w100
+    welt.z2m.interview(W100)
+    welt.worker.run_pending()
+    welt.worker.post(Event(EV_TARGET_INPUT, {"value": 22.5, "source": "portal"}))  # Wunsch, bevor ON gemeldet ist
+    welt.worker.run_pending()
+    assert welt.store.value == 22.5
+    _w100_melden(welt, thermostat_mode="ON")
+    assert _w100_sets(welt)[-2:] == [{"occupied_heating_setpoint": 23.0}, {"system_mode": "heat"}]
+    assert welt.z2m.verworfen == [(W100, "occupied_heating_setpoint")]  # nur das Soll von vor ON, nichts danach
+
+
+def test_the_bound_w100_gets_setpoint_and_heat_only_after_a_report_with_the_mode_on_and_only_once(mit_w100):
+    welt = mit_w100
+    welt.z2m.interview(W100)
+    welt.worker.run_pending()
+    _w100_melden(welt, thermostat_mode="OFF", system_mode="off")
+    assert _w100_sets(welt) == MODUS_W100 * 2
+    _w100_melden(welt, thermostat_mode="ON")
+    nach_on = _w100_sets(welt)
+    assert nach_on == MODUS_W100 * 2 + [{"occupied_heating_setpoint": 21.0}, {"system_mode": "heat"}]
+    _w100_melden(welt, thermostat_mode="ON", battery=80)
+    _w100_melden(welt, system_mode="off")
+    assert _w100_sets(welt) == nach_on
 
 
 def test_a_thermostat_without_a_profile_gets_no_thermostat_mode_and_exact_values(mit_geraet):
