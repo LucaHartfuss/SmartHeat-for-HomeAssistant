@@ -23,11 +23,15 @@ PYTHONPATH = [TESTS, PAKET / "src", PAKET / "testhilfen"]  # wie pythonpath in p
 MINDESTENS_DATEIEN = {TESTS: 111, PAKET / "testhilfen": 1}
 
 
-def _lauf(tmp_path: Path, profil: str | None, testtext: str) -> subprocess.CompletedProcess:
+def _lauf(tmp_path: Path, profil: str | None, testtext: str, *, ci: bool = False) -> subprocess.CompletedProcess:
     (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")  # kein ini der Umgebung, rootdir = tmp_path
     (tmp_path / "test_profilwerte.py").write_text(testtext, encoding="utf-8")
     env = {**os.environ, "PYTHONPATH": os.pathsep.join(str(p) for p in PYTHONPATH)}
     env.pop("HYPOTHESIS_PROFILE", None)
+    for name in ("CI", "TF_BUILD", "GITHUB_ACTIONS"):  # hypothesis waehlt in einer CI-Umgebung eigene Vorgaben
+        env.pop(name, None)
+    if ci:
+        env["CI"] = "true"
     if profil is not None:
         env["HYPOTHESIS_PROFILE"] = profil
     return subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "conftest",
@@ -69,6 +73,14 @@ def test_ohne_umgebung_gilt_das_profil_schnell(tmp_path):
 
 def test_profil_voll_hat_500_zufaellige_beispiele_mit_blob(tmp_path):
     ergebnis = _lauf(tmp_path, "voll", _VOLL)
+    assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
+    assert "1 passed" in ergebnis.stdout
+
+
+@pytest.mark.parametrize(("profil", "testtext"), [(None, _SCHNELL), ("voll", _VOLL)], ids=["schnell", "voll"])
+def test_die_profile_gelten_auch_in_einer_ci_umgebung(tmp_path, profil, testtext):
+    """Mit `CI` gesetzt (GitHub Actions) gelten dieselben Werte wie lokal: hypothesis setzt dort sonst `print_blob`."""
+    ergebnis = _lauf(tmp_path, profil, testtext, ci=True)
     assert ergebnis.returncode == 0, ergebnis.stdout + ergebnis.stderr
     assert "1 passed" in ergebnis.stdout
 
