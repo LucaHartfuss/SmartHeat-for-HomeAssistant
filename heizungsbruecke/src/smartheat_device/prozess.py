@@ -154,8 +154,9 @@ def aufraeumen_beim_start(pfad: Path, gespeichert: Callable[[], object], loesche
     anlagengebundenen Zustand, und die Markierung geht erst, wenn er fertig meldet. gespeichert() liest die
     gespeicherte Konfiguration nur, wenn es eine Markierung gibt. Rueckgabe: die einmal gelesene Markierung, wenn das
     Zuruecksetzen aussteht, sonst None; der Host reicht sie an GeraetHostBasis.start_markierung weiter, die Laufzeit liest
-    die Datei nicht ein zweites Mal (T4-Markierung-Zweitlesen). Das gilt, weil jeder Neustart einen frischen Prozess
-    beginnt (HA: exec, Gateway: Exit 0 und Compose): die Markierung wird nie in einem laufenden Prozess veralten."""
+    die Datei nicht ein zweites Mal (T4-Markierung-Zweitlesen). Das gilt, weil eine spaeter geschriebene Markierung
+    immer mit einer Neustart-Anforderung kommt (konfiguration_uebernommen) und jeder Neustart einen frischen Prozess
+    beginnt (HA: exec, Gateway: Exit 0 und Compose): der naechste Prozess liest sie."""
     try:
         if not pfad.exists():
             return None

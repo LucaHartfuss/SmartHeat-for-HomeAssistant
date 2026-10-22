@@ -63,8 +63,9 @@ class GeraetHostBasis:
     def __init__(self) -> None:
         self.device = None  # smartheat_device.device.Device, nach dem Anlegen per verbinden()
         #: Die beim Start einmal gelesene Aufraeum-Markierung, wenn das Zuruecksetzen aussteht
-        #: (prozess.aufraeumen_beim_start); der Host setzt sie vor dem Start der Laufzeit. Jeder Neustart beginnt einen
-        #: frischen Prozess, sie veraltet im Lauf nie.
+        #: (prozess.aufraeumen_beim_start); der Host setzt sie vor dem Start der Laufzeit. Eine spaeter geschriebene
+        #: Markierung kommt immer mit einer Neustart-Anforderung (konfiguration_uebernommen), der naechste Prozess
+        #: liest sie.
         self.start_markierung: aufraeumen.Markierung | None = None
         self.letzte_anzeige: Anzeige | None = None
         #: blockierende Host-Aufrufe der Befehle neben dem Geraete-Thread; prozess.beenden stoppt ihn
