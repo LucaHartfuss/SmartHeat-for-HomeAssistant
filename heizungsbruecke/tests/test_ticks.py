@@ -57,6 +57,52 @@ def test_snapshot_uses_restore_point_when_zone_is_off(make_store, clock, zone, e
     assert [s["levers"] for s in mqtt.snapshots] == [{"room_setpoint": expected}]
 
 
+def test_ruhende_zone_beim_ersten_start_nimmt_das_raum_soll(make_store, clock):
+    """S3-3: Zone ruht (liest 0) und es gibt noch keinen Wiederherstellungspunkt (erster Start): der Snapshot meldet
+    das stabile Raum-Soll statt eines Datenfehlers; der Wiederherstellungspunkt bleibt leer (keine Schreibwirkung)."""
+    ha = FakeHa()
+    ha.states["climate.zone::temperature"] = 0.0
+    manifest = ChannelManifest(refs={"room_target": "sensor.room_target", "shift_current": "climate.zone::temperature"})
+    store = make_store()
+    store.update(stable_target=21.0)
+    mqtt = FakeMqttChannel()
+    rt = _rt(ha, manifest, store, mqtt=mqtt, clock=clock)
+    clock.advance(SETTLE + 1)
+
+    assert ticks._attempt(rt, "s1", "daily") == delivery.Published(seq="s1")
+    assert [s["levers"] for s in mqtt.snapshots] == [{"room_setpoint": 21.0}]
+    assert store.state.restore_point == {}
+    assert ha.writes == []
+
+
+def test_ruhende_zone_ohne_wiederherstellungspunkt_und_ohne_raum_soll_bleibt_ein_datenfehler(make_store, clock):
+    """S3-3, Gegenprobe: ohne stabiles Raum-Soll gibt es nichts zu melden, der Snapshot wird zurueckgehalten."""
+    ha = FakeHa()
+    ha.states["climate.zone::temperature"] = 0.0
+    manifest = ChannelManifest(refs={"room_target": "sensor.room_target", "shift_current": "climate.zone::temperature"})
+    mqtt = FakeMqttChannel()
+    rt = _rt(ha, manifest, make_store(), mqtt=mqtt, clock=clock)
+    clock.advance(SETTLE + 1)
+
+    assert ticks._attempt(rt, "s1", "daily") == delivery.ReadInvalid(seq="s1", roles=("room_setpoint",))
+    assert mqtt.snapshots == []
+
+
+def test_ruhende_zone_bevorzugt_den_wiederherstellungspunkt_vor_dem_raum_soll(make_store, clock):
+    """S3-3, Gegenprobe: der Rueckfall auf das Raum-Soll gilt nur ohne Wiederherstellungspunkt."""
+    ha = FakeHa()
+    ha.states["climate.zone::temperature"] = 0.0
+    manifest = ChannelManifest(refs={"room_target": "sensor.room_target", "shift_current": "climate.zone::temperature"})
+    store = make_store(backup={"restore_point": {"room_setpoint": 19.0}})
+    store.update(stable_target=21.0)
+    mqtt = FakeMqttChannel()
+    rt = _rt(ha, manifest, store, mqtt=mqtt, clock=clock)
+    clock.advance(SETTLE + 1)
+
+    assert ticks._attempt(rt, "s1", "daily") == delivery.Published(seq="s1")
+    assert [s["levers"] for s in mqtt.snapshots] == [{"room_setpoint": 19.0}]
+
+
 class _StaleZoneHa:
     """mypyllant nach dem Umstellen auf Manuell: HA zeigt bis zum naechsten Poll weiter den Sollwert
     des Zeitprogramms, eigene Schreibvorgaenge erscheinen noch nicht."""
