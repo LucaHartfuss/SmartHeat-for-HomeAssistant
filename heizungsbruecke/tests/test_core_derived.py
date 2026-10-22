@@ -1,5 +1,6 @@
 """Mindestvorlauf = Raum-Soll (derived.py) ueber die echte Hebel-Pipeline und das HA-Binding auf Fake-HA (A5-25): die
 Zusicherungen stehen an den Schreibvorgaengen in HA und am Zustand (min_flow_current)."""
+import dataclasses
 import logging
 from types import SimpleNamespace
 
@@ -31,7 +32,7 @@ class _LesefehlerHa(FakeHa):
         return super().get_state(entity_id)
 
 
-def _rt(make_store, clock, target, live, *, settled=True, ha=None):
+def _rt(make_store, clock, target, live, *, settled=True, ha=None, safety=SAFETY):
     """Laufzeit-Sicht von derived (store, override) mit echtem StateStore und echter LeverPipeline; `live` ist der
     Mindestvorlauf in HA (eine Exception wird beim Lesen geworfen). settled=False: kurz nach dem Start, die Pipeline
     hat noch nicht eingeschwungen."""
@@ -39,7 +40,7 @@ def _rt(make_store, clock, target, live, *, settled=True, ha=None):
     store.update(stable_target=target)
     ha = ha or FakeHa()
     ha.states["number.min_flow"] = live
-    pipeline = LeverPipeline(store, HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT), SAFETY, clock=clock)
+    pipeline = LeverPipeline(store, HaPlantBinding(ha, MANIFEST, VAILLANT_MYPYLLANT), safety, clock=clock)
     if settled:
         clock.advance(SETTLE + 1)
     return SimpleNamespace(store=store, override=pipeline, ha=ha)
@@ -49,6 +50,18 @@ def test_expected_is_room_target_clamped_and_rounded(make_store, clock):
     assert derived.expected(_rt(make_store, clock, 20.46, 20.0)) == 20.5
     assert derived.expected(_rt(make_store, clock, 18.0, 20.0)) == 20.0
     assert derived.expected(_rt(make_store, clock, None, 20.0)) is None
+
+
+def test_erwarteter_mindestvorlauf_bleibt_in_den_grenzen(make_store, clock):
+    """A6-32: untere Grenze neben dem Raster (20,25 bei Schritt 0,1): der erwartete Wert ist die Grenze wie geschrieben,
+    nicht der auf 20,2 gerundete Wert unter ihr; die Anlage auf 20,25 gilt als in Ordnung, es wird nichts geschrieben."""
+    sicherheit = dataclasses.replace(SAFETY, ranges={**SAFETY.ranges, "min_flow": (20.25, 30.0)})
+    rt = _rt(make_store, clock, 20.0, 20.25, safety=sicherheit)
+    assert VAILLANT_MYPYLLANT.steps["min_flow"] == 0.1
+    assert derived.expected(rt) == 20.25
+    derived.sync(rt)
+    assert rt.ha.writes == []
+    assert rt.store.state.min_flow_current == 20.25
 
 
 @pytest.mark.parametrize("live", [21.0, 20.95, 21.05], ids=["gleich", "0,05-darunter", "0,05-darueber"])

@@ -5,7 +5,7 @@ nur das Lesen ist lokal), also beim Start und nach einer Soll-Aenderung."""
 import logging
 from typing import Any, Protocol
 
-from smartheat_core.clamping import clamp, round_to_step
+from smartheat_core.clamping import target_value
 from smartheat_core.logtext import lesbar
 from smartheat_core.zahlen import GLEITKOMMA_REST
 
@@ -31,7 +31,7 @@ def expected(rt: DerivedRuntime) -> float | None:
     if target is None:
         return None
     low, high = rt.override.range_of("min_flow")
-    return round_to_step(clamp(target, low, high), rt.override.binding.description.steps["min_flow"])
+    return target_value(target, low, high, rt.override.binding.description.steps["min_flow"])
 
 
 def sync(rt: DerivedRuntime) -> None:
