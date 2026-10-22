@@ -564,6 +564,23 @@ def test_failing_zone_preparation_is_retried_at_most_every_30_min_and_6_times_a_
     assert sum("Tageslimit" in record.getMessage() for record in caplog.records) == 1
 
 
+@pytest.mark.parametrize("zone", [0.0, 20.0], ids=["zone-ruht", "zone-heizt"])
+def test_a_not_yet_prepared_zone_is_not_enforced_and_gives_no_false_push(env, zone):
+    """Fix-Runde 1 (I-1, S3-3): solange die Zone nie vorbereitet war, gehoert das Umstellen allein dem Start und dem
+    lokalen Check (`zone_prepare`: 1 je 30 min, 6 am Tag). Die Durchsetzung stellt sie nicht zusaetzlich um und
+    meldet weder "in der App verstellt" noch "immer wieder verstellt"; der Snapshot geht trotzdem raus."""
+    attempts = _failing_zone_preparation(env)
+    env.ha.states["climate.zone::temperature"] = zone
+    bridge = _start(env, entity_shift_current="climate.zone")
+
+    _local_checks(env, bridge, hours=12)
+
+    assert [later - attempts[0] for later in attempts] == [0, 1800, 3600, 5400, 7200, 9000]
+    assert [push for push in env.ha.pushes if "Heizungseinstellung" in push] == []
+    assert bridge.zone_prepared is False and bridge.store.state.manual_override is None
+    assert _mqtt(env).snapshots != []  # auch bei ruhender Zone (S3-3: Raum-Soll statt Datenfehler)
+
+
 def test_zone_preparation_stops_retrying_after_success(env):
     attempts = _failing_zone_preparation(env, failures=2)
     bridge = _start(env, entity_shift_current="climate.zone")

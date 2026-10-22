@@ -38,12 +38,14 @@ logger = logging.getLogger(__name__)
 
 class EnforceRuntime(Protocol):
     """Was Durchsetzen braucht: Zustand (store), Hebel-Pipeline mit Binding (override), Meldungen (notifier:
-    notify(key, state, message, critical, silent_ok=False)), monotone Uhr (clock)."""
+    notify(key, state, message, critical, silent_ok=False)), monotone Uhr (clock), zone_prepared (die Zone war in diesem
+    Prozess schon einmal erfolgreich vorbereitet; vorher gehoert das Umstellen allein dem Start und dem lokalen Check)."""
 
     store: Any
     override: Any
     notifier: Any
     clock: Callable[[], float]
+    zone_prepared: bool
 
 
 KEY = "manueller_eingriff"
@@ -130,7 +132,7 @@ def _deviations(rt: EnforceRuntime) -> tuple[dict, dict, set]:
             deviating[lever] = live
         else:
             pending.add(lever)
-    if _zone_not_manual(rt):
+    if rt.zone_prepared and _zone_not_manual(rt):
         if rt.override.settled(rt.override.binding.description.prepared_lever):
             deviating[ZONE_MODE] = 0.0
         else:
