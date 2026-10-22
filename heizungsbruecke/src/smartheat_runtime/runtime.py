@@ -79,6 +79,10 @@ class Runtime:
     # Start (Plan-Praezisierung 11): Zone auf Manuell mit brauchbarer Parallelverschiebung. Bis es
     # einmal geklappt hat, versucht es jeder lokale Check erneut. Nicht persistiert.
     zone_prepared: bool = False
+    # Comfort-Boost (A6-35 a): Stand der monotonen Uhr (clock) beim Start des Boosts in diesem Prozess, None ohne
+    # Boost oder bei einem Boost aus einem frueheren Lauf. Die 4-h-Grenze zaehlt auch hier, falls die Wanduhr
+    # zurueckspringt. Nicht persistiert.
+    boost_mono_start: float | None = None
     # Verbindungswaechter (TP12b, AU-033): seit wann (clock) die MQTT-Verbindung ununterbrochen
     # fehlt, None bei Verbindung. Nicht persistiert.
     mqtt_down_since: float | None = None

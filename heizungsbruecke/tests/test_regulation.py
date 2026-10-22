@@ -1,7 +1,8 @@
 """Lokaler Check und "Tick faellig?" (regulation.py) mit echtem StateStore und Hebel-Pipeline."""
 import dataclasses
 import logging
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -11,7 +12,7 @@ from fakes import FREMDTEXT, FREMDTEXT_IM_LOG, datei_stand, logzeilen, runtime_c
 
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_binding import HaPlantBinding
-from smartheat_core import write_budget
+from smartheat_core import wallclock, write_budget
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import LocalSafety
 from smartheat_runtime import regulation
@@ -54,7 +55,7 @@ def _runtime(
         store.update(stable_target=room_target)
     return SimpleNamespace(
         manifest=manifest, signals=ha_api, ha_api=ha_api, config=runtime_config(), store=store,
-        states=values,
+        states=values, clock=clock or time.monotonic, boost_mono_start=None,
         override=LeverPipeline(
             store, HaPlantBinding(ha_api, manifest, VAILLANT_MYPYLLANT), safety, **({} if clock is None else {"clock": clock}),
         ),
@@ -154,6 +155,48 @@ def test_comfort_boost_ends_on_arrival_and_restores(make_store, tmp_path):
 
     assert _writes(rt) == RESTORE
     assert load_backup(tmp_path / "backup.json")["boost_active"] is False
+
+
+def test_boost_endet_nach_4h_monoton_auch_wenn_die_wanduhr_zurueckspringt(make_store, clock, monkeypatch):
+    """A6-35 a: die Wanduhr springt nach dem Start zurueck, sodass sie erst 1 h Boost zeigt; die monotone Uhr zaehlt
+    die 4 h und beendet den Boost (vorher lief er weiter, bis die Wanduhr wieder aufgeholt hatte)."""
+    beginn = datetime(2026, 10, 8, 6, 0).astimezone()
+    wand = {"t": beginn}
+    monkeypatch.setattr(wallclock, "_now", lambda: wand["t"])
+    rt = _runtime(make_store(backup={"last_room_target": 20.0, **RESTORE_POINT}), room_actual=19.0, room_target=21.0,
+                  clock=clock)
+    regulation.run_local_check(rt)
+    assert rt.store.state.boost_active and _writes(rt) == COMFORT
+
+    clock.advance(4 * 3600 - 1)
+    wand["t"] = beginn + timedelta(hours=1)
+    regulation.run_local_check(rt)
+    assert rt.store.state.boost_active and _writes(rt) == COMFORT  # Gegenprobe: eine Sekunde vor der Grenze
+
+    clock.advance(1)
+    regulation.run_local_check(rt)
+    assert not rt.store.state.boost_active and rt.store.state.boost_since is None
+    assert _writes(rt) == COMFORT + RESTORE
+
+
+def test_ein_neuer_boost_zaehlt_die_4h_ab_seinem_eigenen_start(make_store, clock):
+    """A6-35 a, Gegenprobe: der monotone Start eines beendeten Boosts wird geloescht; ein spaeterer Boost wird nicht
+    nach dem alten Start beendet."""
+    rt = _runtime(make_store(backup={"last_room_target": 20.0, **RESTORE_POINT}), room_actual=19.0, room_target=21.0,
+                  clock=clock)
+    regulation.run_local_check(rt)
+    rt.states["sensor.room_actual"] = 20.8  # angekommen: der erste Boost endet
+    regulation.run_local_check(rt)
+    assert not rt.store.state.boost_active and rt.boost_mono_start is None
+
+    clock.advance(5 * 3600)
+    rt.states["sensor.room_actual"] = 19.0
+    rt.store.update(stable_target=22.0)
+    regulation.run_local_check(rt)
+    assert rt.store.state.boost_active
+    clock.advance(3600)
+    regulation.run_local_check(rt)
+    assert rt.store.state.boost_active
 
 
 def test_steady_state_check_does_not_write_backup(make_store, tmp_path):

@@ -163,3 +163,28 @@ def test_comfort_boost_expires_exactly_at_the_maximum_duration(dauer, abgelaufen
 
 def test_an_unknown_start_never_expires():
     assert comfort_boost_expired(None, _BEGINN) is False
+
+
+def test_boost_seit_in_der_zukunft_ist_abgelaufen():
+    """A6-35 a: liegt der Beginn nach der Wanduhr (Uhr zurueckgesprungen), ist die Dauer nicht mehr bekannt: der Boost
+    endet lieber frueher als gar nicht."""
+    assert comfort_boost_expired(_BEGINN + timedelta(seconds=1), _BEGINN) is True
+    assert comfort_boost_expired(_BEGINN, _BEGINN) is False  # Gegenprobe: gleicher Zeitpunkt ist die Dauer 0
+
+
+@pytest.mark.parametrize(("mono_seit", "abgelaufen"), [
+    (0.0, False),
+    (COMFORT_BOOST_MAX_SECONDS - 1, False),
+    (COMFORT_BOOST_MAX_SECONDS, True),  # genau 4 h auf der monotonen Uhr: abgelaufen (>=)
+    (COMFORT_BOOST_MAX_SECONDS + 1, True),
+])
+def test_boost_endet_auch_nach_4h_auf_der_monotonen_uhr(mono_seit, abgelaufen):
+    """A6-35 a: die Wanduhr zeigt erst eine Stunde (zurueckgesprungen), die monotone Uhr zaehlt die Hoechstdauer."""
+    assert comfort_boost_expired(_BEGINN, _BEGINN + timedelta(hours=1), mono_seit) is abgelaufen
+
+
+def test_die_monotone_dauer_ist_unabhaengig_vom_wanduhrbeginn():
+    """Ein Boost aus einem frueheren Lauf hat keinen Beginn (None); die monotone Uhr des Prozesses zaehlt trotzdem."""
+    assert comfort_boost_expired(None, _BEGINN, COMFORT_BOOST_MAX_SECONDS) is True
+    assert comfort_boost_expired(None, _BEGINN, 60.0) is False
+    assert comfort_boost_expired(None, _BEGINN, None) is False

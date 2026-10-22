@@ -34,6 +34,14 @@ COMFORT_BOOST_MAX_SECONDS = 4 * 3600
 UNREADABLE_ROOM_CHECKS = 3
 
 
-def comfort_boost_expired(since, now) -> bool:
-    """since: Beginn des laufenden Comfort-Boosts (aware datetime) oder None (unbekannt: nicht abgelaufen)."""
-    return since is not None and (now - since).total_seconds() >= COMFORT_BOOST_MAX_SECONDS
+def comfort_boost_expired(since, now, mono_seit: float | None = None) -> bool:
+    """since: Beginn des laufenden Comfort-Boosts (aware datetime) oder None (unbekannt: nicht abgelaufen).
+    mono_seit: Sekunden auf der monotonen Prozessuhr seit dem Start in diesem Prozess oder None (Start in einem
+    frueheren Lauf). Der Boost endet auch, wenn die Wanduhr ihn in der Zukunft beginnen laesst (Uhr zurueckgesprungen,
+    A6-35 a) oder die monotone Uhr die Hoechstdauer zaehlt: nie spaeter als bisher, hoechstens frueher."""
+    if mono_seit is not None and mono_seit >= COMFORT_BOOST_MAX_SECONDS:
+        return True
+    if since is None:
+        return False
+    dauer = (now - since).total_seconds()
+    return dauer < 0 or dauer >= COMFORT_BOOST_MAX_SECONDS
