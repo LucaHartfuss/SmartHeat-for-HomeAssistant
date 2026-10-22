@@ -20,6 +20,7 @@ from smartheat_core.safety import LocalSafety
 from smartheat_runtime import (
     abo,
     aufraeumen,
+    aussentemperatur,
     battery,
     datentraeger,
     delivery,
@@ -504,7 +505,8 @@ def _on_health(rt: Runtime, event: Event) -> None:
         ticks.deliver(rt, delivery.StorageWritable())  # wartet ein Tick am Datentraeger, jetzt erneut (TP12b)
     if rt.store.state.abo_finished:
         return
-    for check in (battery.check_batteries, room_sensors.check_room_sensors, enforce.check_manual_override):
+    for check in (battery.check_batteries, room_sensors.check_room_sensors, aussentemperatur.check,
+                  enforce.check_manual_override):
         try:
             check(rt)
         except Exception:

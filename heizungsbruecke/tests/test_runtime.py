@@ -27,7 +27,17 @@ from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core.enforce import RETRY_SECONDS
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_device.laufzeit import RuntimeChannel
-from smartheat_runtime import abo, app, aufraeumen, backup_store, datentraeger, dokument_config, entitlement, ticks
+from smartheat_runtime import (
+    abo,
+    app,
+    aufraeumen,
+    aussentemperatur,
+    backup_store,
+    datentraeger,
+    dokument_config,
+    entitlement,
+    ticks,
+)
 from smartheat_runtime.backup_store import load_backup, save_backup
 from smartheat_runtime.delivery import DataFault, DeliveryState
 from smartheat_runtime.ports import SignalUngueltig
@@ -3075,8 +3085,9 @@ def test_repaired_disk_reaches_the_delivery_in_the_next_health_tick(env, monkeyp
 
 
 def test_permanently_missing_outdoor_temperature_is_no_data_fault_and_telemetry_omits_it(env):
-    """Heutiges Verhalten, Restpunkt R3-1: faellt eine Pflicht-Rolle dauerhaft aus (client1 2026-10-07: Aussentemperatur
-    37 min unavailable), entsteht ohne Tick kein Datenfehler, und die Telemetrie laesst das Feld still weg."""
+    """R3-1: faellt die Aussentemperatur dauerhaft aus (client1 2026-10-07: 37 min unavailable), entsteht ohne Tick kein
+    Datenfehler, und die Telemetrie laesst das Feld weg; der Kunde bekommt genau eine Meldung (aussentemperatur), die
+    Rueckkehr entwarnt."""
     _quiet_backup(env)
     bridge = _start(env)
     _connect(env, bridge)
@@ -3092,6 +3103,14 @@ def test_permanently_missing_outdoor_temperature_is_no_data_fault_and_telemetry_
     assert all("outdoor_temp" not in p and "datenfehler" not in p for p in payloads)
     assert _delivery(bridge).datenfehler is None
     assert (_last_event(env)["status"], _last_event(env)["datenfehler"]) == ("regelt", None)
+    assert bridge.notifier.state("aussentemperatur") == "ausgefallen"
+    assert [push for push in env.ha.pushes if "Außentemperatur" in push] == [aussentemperatur.FAILED_MESSAGE]
+
+    env.ha.states["sensor.outdoor_temp"] = 6.0
+    _advance(env, bridge, 300)
+
+    assert bridge.notifier.state("aussentemperatur") == "ok"
+    assert env.ha.pushes[-1] == aussentemperatur.OK_MESSAGE
 
 
 def test_telemetry_reports_the_unwritable_disk_as_local_data_fault(env, monkeypatch):

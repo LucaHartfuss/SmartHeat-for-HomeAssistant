@@ -86,6 +86,8 @@ class BridgeState:
     min_flow_current: float | None = None
     # Aufeinanderfolgende EV_HEALTH-Runden ohne gueltigen Wert je Raumfuehler (room_sensors.py).
     room_sensor_misses: dict = field(default_factory=dict)
+    # Aufeinanderfolgende EV_HEALTH-Runden ohne gueltige Aussentemperatur (aussentemperatur.py).
+    outdoor_misses: int = 0
     # Aufeinanderfolgende EV_HEALTH-Runden mit Abweichung von Kurve/Parallelverschiebung
     # (enforce.py).
     manual_override_misses: int = 0
