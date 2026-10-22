@@ -273,3 +273,23 @@ def test_kurzer_ablehnungsgrund_bleibt_unveraendert(make_store, clock):
     ticks.handle_setpoints(rt, {"seq": "s1", "schema": 4, "status": "rejected", "reason": reason})
 
     assert _server_grund(rt) == reason
+
+
+def test_gekuerzter_ablehnungsgrund_hat_genau_die_grenze_und_endet_auf_auslassung(make_store, clock):
+    """Mutationsprobe TP2: die Kuerzung nimmt 199 Zeichen vom Anfang und haengt "…" an, zusammen genau 200."""
+    rt, _ = _rt_mit_offenem_tick(make_store, clock)
+    reason = "".join(chr(ord("a") + i % 26) for i in range(1000))
+
+    ticks.handle_setpoints(rt, {"seq": "s1", "schema": 4, "status": "rejected", "reason": reason})
+
+    grund = _server_grund(rt)
+    assert len(grund) == ticks.FREMDTEXT_MAX_CHARS == 200
+    assert grund == reason[:199] + "…"
+
+
+def test_ablehnungsgrund_mit_201_zeichen_wird_gekuerzt_einer_mit_200_nicht(make_store, clock):
+    rt, _ = _rt_mit_offenem_tick(make_store, clock)
+
+    ticks.handle_setpoints(rt, {"seq": "s1", "schema": 4, "status": "rejected", "reason": "y" * 201})
+
+    assert _server_grund(rt) == "y" * 199 + "…"
