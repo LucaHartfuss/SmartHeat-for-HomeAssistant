@@ -41,6 +41,7 @@ from smartheat_gateway.paths import Paths, from_env
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime import app
+from smartheat_runtime.aufraeumen import Markierung
 from smartheat_runtime.runtime import Runtime
 from smartheat_runtime.status import STATUS_STARTET
 from smartheat_runtime.worker import Event
@@ -63,10 +64,12 @@ def _touch_alive() -> None:
         _alive_file().touch()
 
 
-def aufraeumen(paths: Paths) -> None:
+def aufraeumen(paths: Paths) -> Markierung | None:
     """Markierung aufraeumen.json vor dem Start des Geraetekerns (prozess.aufraeumen_beim_start): noch nichts schreibt,
-    und ein driver_login direkt nach hello kann nicht mit dem Loeschen kollidieren. Geloescht wird mit vergessen."""
-    prozess.aufraeumen_beim_start(
+    und ein driver_login direkt nach hello kann nicht mit dem Loeschen kollidieren. Geloescht wird mit vergessen.
+    Rueckgabe: die Markierung, wenn das Zuruecksetzen aussteht (_vorbereiten reicht sie an
+    GatewayDeviceHost.start_markierung; die Laufzeit liest sie nicht erneut)."""
+    return prozess.aufraeumen_beim_start(
         paths.aufraeumen,
         lambda: DocumentStore(paths.device_dir, host=GatewayDeviceHost.host,
                               software_version=GATEWAY_VERSION, rasten=False).inhalt(KONFIGURATION),
@@ -166,8 +169,9 @@ def _terminate(signum, frame) -> None:
 def _vorbereiten(paths: Paths, mirror: ZigbeeMirror,
                  angelegt: Callable[[GatewayDeviceHost], None]) -> tuple[GatewayDeviceHost, Device]:
     """Die Host-Schritte vor laufen; angelegt bekommt den Geraete-Host, sobald es ihn gibt (fuer vor_der_pause)."""
-    aufraeumen(paths)  # vor dem Geraetekern: kein Rennen mit driver_login oder inventory nach hello
+    ausstehend = aufraeumen(paths)  # vor dem Geraetekern: kein Rennen mit driver_login oder inventory nach hello
     geraet = GatewayDeviceHost(paths, mirror, host_dir=Path(os.environ.get("SHG_HOST_DIR", "/host")))
+    geraet.start_markierung = ausstehend
     angelegt(geraet)
     device = Device(geraet, paths.data, os.environ["SHG_DEVICE_API_URL"], befehl_fehler=befehle.fehler_uebersetzen)
     geraet.verbinden(device)

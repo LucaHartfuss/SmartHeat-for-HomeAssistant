@@ -130,12 +130,13 @@ def _ha_bereit(ha_api) -> bool:
     return True
 
 
-def aufraeumen(ha_api) -> None:
+def aufraeumen(ha_api) -> markierung.Markierung | None:
     """Markierung aufraeumen.json vor dem Start des Geraetekerns (prozess.aufraeumen_beim_start); geloescht werden
     Sicherung, Notbetriebs- und Abo-Zustand, Laufzeit-Ordner und die Hilfssensoren in HA. Bleibt etwas uebrig
     (HA nicht bereit, Fehler beim Loeschen eines Helfers oder einer Datei), bleibt die Markierung fuer den naechsten
-    Start; der Start geht weiter."""
-    prozess.aufraeumen_beim_start(
+    Start; der Start geht weiter. Rueckgabe: die Markierung, wenn das Zuruecksetzen aussteht (_vorbereiten reicht sie an
+    HaDeviceHost.start_markierung; die Laufzeit liest sie nicht erneut)."""
+    return prozess.aufraeumen_beim_start(
         config.AUFRAEUMEN_PATH,
         lambda: DocumentStore(config.DEVICE_DATA_DIR / DEVICE_DIR, host=HaDeviceHost.host,
                               software_version=ADDON_VERSION, rasten=False).inhalt(KONFIGURATION),
@@ -256,8 +257,9 @@ def _terminate(signum, frame) -> None:
 
 def _vorbereiten(ha_api, supervisor, url: str) -> tuple[HaDeviceHost, Device, GeraetStatus]:
     """Die Host-Schritte vor laufen; eine Ausnahme darin endet ueber prozess.starten in Pause und exec."""
-    aufraeumen(ha_api)  # vor dem Geraetekern: noch schreibt nichts in den anlagengebundenen Zustand
+    ausstehend = aufraeumen(ha_api)  # vor dem Geraetekern: noch schreibt nichts in den anlagengebundenen Zustand
     geraet = HaDeviceHost(ha_api, supervisor)
+    geraet.start_markierung = ausstehend
     device = Device(geraet, config.DEVICE_DATA_DIR, url)
     status = verdrahten(geraet, device, ha_api, supervisor)
     return geraet, device, status

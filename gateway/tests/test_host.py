@@ -38,12 +38,18 @@ def world(data_dir, monkeypatch, clock):
     world.close()
 
 
-def _host(paths, konf, clock, *, bus=None, wait=0.1):
+def _host(paths, konf, clock, *, bus=None, wait=0.1, start_markierung=None):
     bus = bus or FakeBus()
     mirror = ZigbeeMirror(bus, clock)
     mirror.start()
-    return GatewayHost(paths, bus, mirror, geraet_fuer(paths, mirror, konf), clock=clock, devices_wait_seconds=wait,
-                       driver_threads=False)
+    return GatewayHost(paths, bus, mirror, geraet_fuer(paths, mirror, konf, start_markierung=start_markierung),
+                       clock=clock, devices_wait_seconds=wait, driver_threads=False)
+
+
+def _offene_markierung(paths, alt):
+    """Wie der Start: die Markierung nach einer leeren Konfiguration schreiben und einmal lesen."""
+    aufraeumen.markieren(paths.aufraeumen, alt)
+    return aufraeumen.entscheiden(paths.aufraeumen, {"anlage": None})[1]
 
 
 def test_not_configured_is_idle(world):
@@ -131,8 +137,8 @@ def test_sign_off_with_a_matching_plant_restores_with_the_driver(data_dir, clock
 def test_empty_configuration_with_pending_reset_boots_signed_off_with_the_old_one(data_dir, clock):
     """Spec Stufe 3 S3 Abschnitt 4: die Laufzeit setzt mit der Konfiguration der Aufraeum-Markierung zurueck."""
     paths = Paths(data_dir)
-    aufraeumen.markieren(paths.aufraeumen, konfiguration())
-    host = _host(paths, {**konfiguration(), "anlage": None}, clock)
+    host = _host(paths, {**konfiguration(), "anlage": None}, clock,
+                 start_markierung=_offene_markierung(paths, konfiguration()))
     boot = host.boot_info()
     assert boot.signed_off and not boot.configured and boot.tenant_id == "test-tenant"
     assert boot.aufraeumen_path == paths.aufraeumen
@@ -323,16 +329,16 @@ def test_ursprungswerte_server_reads_the_current_configuration_fresh(data_dir, c
 def test_ursprungswerte_server_falls_back_to_the_marker_while_the_reset_is_pending(data_dir, clock):
     paths = Paths(data_dir)
     alt = {**konfiguration(), "ursprungswerte": {"heat_limit": 16.0}}
-    aufraeumen.markieren(paths.aufraeumen, alt)
-    host = _host(paths, {**alt, "anlage": None, "ursprungswerte": {}}, clock)
+    host = _host(paths, {**alt, "anlage": None, "ursprungswerte": {}}, clock,
+                 start_markierung=_offene_markierung(paths, alt))
     assert host.ursprungswerte_server() == {"heat_limit": 16.0}
 
 
 def test_ursprungswerte_server_ignores_a_new_setup_while_the_reset_is_pending(data_dir, clock):
     paths = Paths(data_dir)
     alt = {**konfiguration(), "ursprungswerte": {"heat_limit": 16.0}}
-    aufraeumen.markieren(paths.aufraeumen, alt)
-    host = _host(paths, {**alt, "anlage": None, "ursprungswerte": {}}, clock)
+    host = _host(paths, {**alt, "anlage": None, "ursprungswerte": {}}, clock,
+                 start_markierung=_offene_markierung(paths, alt))
     host._geraet.device.konf = {**alt, "anlage": "andere-anlage", "ursprungswerte": {"heat_limit": 12.0}}
     assert host.ursprungswerte_server() == {"heat_limit": 16.0}
 

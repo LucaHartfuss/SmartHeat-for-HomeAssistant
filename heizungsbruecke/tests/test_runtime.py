@@ -2763,7 +2763,7 @@ def test_empty_configuration_without_sign_off_restores_then_restarts_once(env, m
     assert neustarts == [1]
     pfad = env.paths["AUFRAEUMEN_PATH"]
     assert aufraeumen.lesen(pfad).zurueckgesetzt
-    assert aufraeumen.entscheiden(pfad, {"anlage": None}) == aufraeumen.LOESCHEN
+    assert aufraeumen.entscheiden(pfad, {"anlage": None})[0] == aufraeumen.LOESCHEN
 
 
 def test_reset_fails_keeps_state_across_restart(env, monkeypatch):
@@ -2777,7 +2777,7 @@ def test_reset_fails_keeps_state_across_restart(env, monkeypatch):
     bridge.worker.run_pending()
 
     pfad = env.paths["AUFRAEUMEN_PATH"]
-    assert neustarts == [] and aufraeumen.entscheiden(pfad, {"anlage": None}) == aufraeumen.ZURUECKSETZEN
+    assert neustarts == [] and aufraeumen.entscheiden(pfad, {"anlage": None})[0] == aufraeumen.ZURUECKSETZEN
     assert _backup(env)["boost_active"] is True
     assert _last_event(env)["status"] == "abgemeldet"
     assert _last_event(env)["grund"] == app.SIGN_OFF_RESTORE_FAILED.format(seconds=300)
@@ -2819,7 +2819,7 @@ def test_an_unwritable_marker_after_the_reset_keeps_the_state_and_does_not_resta
 
     assert bridge.reason == "abgemeldet" and neustarts == []
     assert env.ha.writes == [("number.curve_current", 0.9), ("number.shift_current", 22.0)]
-    assert aufraeumen.entscheiden(env.paths["AUFRAEUMEN_PATH"], {"anlage": None}) == aufraeumen.ZURUECKSETZEN
+    assert aufraeumen.entscheiden(env.paths["AUFRAEUMEN_PATH"], {"anlage": None})[0] == aufraeumen.ZURUECKSETZEN
     assert "OSError" in caplog.text
 
 

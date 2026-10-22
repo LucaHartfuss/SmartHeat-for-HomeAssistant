@@ -146,31 +146,35 @@ def _pause(vor_pause: Callable[[], None] | None, sleep: Callable[[float], None] 
 
 
 def aufraeumen_beim_start(pfad: Path, gespeichert: Callable[[], object], loeschen: Callable[[], bool], *,
-                          wer: str) -> None:
+                          wer: str) -> markierung.Markierung | None:
     """Markierung aufraeumen.json vor dem Start des Geraetekerns auswerten (Spec Stufe 3 S3 Abschnitt 4), beide Hosts:
     wieder eingerichtet -> Markierung weg, Zustand bleibt; Zuruecksetzen steht aus -> nichts loeschen (die Laufzeit
     setzt mit der Konfiguration der Markierung zurueck und startet danach neu); Markierung unlesbar (EIO, EACCES) ->
     nichts loeschen, der Start geht weiter, der naechste versucht es erneut (S3S3-Marker); sonst loescht der Host den
     anlagengebundenen Zustand, und die Markierung geht erst, wenn er fertig meldet. gespeichert() liest die
-    gespeicherte Konfiguration nur, wenn es eine Markierung gibt."""
+    gespeicherte Konfiguration nur, wenn es eine Markierung gibt. Rueckgabe: die einmal gelesene Markierung, wenn das
+    Zuruecksetzen aussteht, sonst None; der Host reicht sie an GeraetHostBasis.start_markierung weiter, die Laufzeit liest
+    die Datei nicht ein zweites Mal (T4-Markierung-Zweitlesen). Das gilt, weil jeder Neustart einen frischen Prozess
+    beginnt (HA: exec, Gateway: Exit 0 und Compose): die Markierung wird nie in einem laufenden Prozess veralten."""
     try:
         if not pfad.exists():
-            return
+            return None
     except OSError as error:  # Path.exists wirft bei EIO/EACCES im stat: Markierung bleibt, nichts wird geloescht
         logger.warning("%s nicht pruefbar (%s): Markierung bleibt, nichts wird geloescht", pfad.name,
                        type(error).__name__)
-        return
-    entscheidung = markierung.entscheiden(pfad, gespeichert())
+        return None
+    entscheidung, gelesen = markierung.entscheiden(pfad, gespeichert())
     if entscheidung == markierung.KEINE:  # zwischendurch verschwunden
-        return
+        return None
     if entscheidung == markierung.BEHALTEN:  # unlesbar: nichts loeschen, der naechste Start versucht es erneut
-        return
+        return None
     if entscheidung == markierung.VERWERFEN:
         logger.info("Aufraeumen entfaellt: %s ist inzwischen neu eingerichtet", wer)
         pfad.unlink(missing_ok=True)
-        return
+        return None
     if entscheidung == markierung.ZURUECKSETZEN:
         logger.info("Anlage wird vor dem Aufraeumen zurueckgesetzt")
-        return
+        return gelesen
     if loeschen():
         pfad.unlink(missing_ok=True)
+    return None

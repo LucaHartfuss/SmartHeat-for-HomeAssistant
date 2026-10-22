@@ -109,8 +109,10 @@ class FakeDeviceSicht:
         self.stopped = True
 
 
-def geraet_fuer(paths, mirror, konf, bedienung=None, *, dirty=False, clock=None) -> GatewayDeviceHost:
+def geraet_fuer(paths, mirror, konf, bedienung=None, *, dirty=False, clock=None,
+                start_markierung=None) -> GatewayDeviceHost:
     geraet = GatewayDeviceHost(paths, mirror, host_dir=paths.data.parent / "host",
                                **({"clock": clock} if clock is not None else {}))
     geraet.verbinden(FakeDeviceSicht(konf, bedienung, dirty))
+    geraet.start_markierung = start_markierung  # die beim Start gelesene Aufraeum-Markierung (aufraeumen.entscheiden)
     return geraet

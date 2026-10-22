@@ -22,19 +22,16 @@ from heizungsbruecke.discovery import Discovery
 from heizungsbruecke.geraet_status import GeraetStatus
 from heizungsbruecke.ha_sinks import GeraetUndHaSink, HaNotifySink
 from heizungsbruecke.version import ADDON_VERSION
-from smartheat_core import dateien
 from smartheat_device import fehler, nachrichten, wire
 from smartheat_device.commands import CommandRegister, Done, Failed, Outcome, Waiting
-from smartheat_device.geraet_host_basis import GeraetHostBasis
+from smartheat_device.geraet_host_basis import SIGN_OFF_WAIT_SECONDS, GeraetHostBasis, abmeldung_abwarten
 from smartheat_device.host import Anzeige
 from smartheat_runtime import dokument_config
-from smartheat_runtime.status import STATUS_ABGEMELDET
 
 logger = logging.getLogger(__name__)
 
 UHR_CACHE_SECONDS = 60
 INVENTUR_SECONDS = 120
-SIGN_OFF_WAIT_SECONDS = 24 * 3600
 _FREMD = ("zigbee_permit_join", "zigbee_devices", "driver_login")
 
 
@@ -216,13 +213,8 @@ class HaDeviceHost(GeraetHostBasis):
             return Failed("nicht_eingerichtet")
         anlage = ergebnis[0]
 
-        def check() -> Done | None:
-            status = self.runtime_status_event
-            if not status or status.get("status") != STATUS_ABGEMELDET or status.get("tenant_id") != anlage:
-                return None
-            return Done({"zurueckgesetzt": status.get("grund") is None, "werte": _restore_values()})
-
-        return Waiting(check, self._clock() + SIGN_OFF_WAIT_SECONDS)
+        return abmeldung_abwarten(anlage, lambda: self.runtime_status_event, config.BACKUP_PATH,
+                                  self._clock() + SIGN_OFF_WAIT_SECONDS)
 
     def _diagnostics(self, payload: dict) -> Done:
         anzeige = self.letzte_anzeige
@@ -231,9 +223,3 @@ class HaDeviceHost(GeraetHostBasis):
                      "eingerichtet": anzeige.eingerichtet if anzeige else False,
                      "server_ok": anzeige.server_ok if anzeige else False, "laufzeit": status.get("status"),
                      "uhr_synchron": self._uhr[1] if self._uhr else None})
-
-
-def _restore_values() -> dict:
-    backup = dateien.lesen_json(config.BACKUP_PATH)
-    point = backup.get("restore_point") if isinstance(backup, dict) else None
-    return dict(point) if isinstance(point, dict) else {}
