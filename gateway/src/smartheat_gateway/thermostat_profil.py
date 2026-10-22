@@ -4,7 +4,10 @@ Konverter lumi.ts: Zigbee2MQTT setzt beim Koppeln thermostat_mode OFF und meldet
 mehrere Schluessel in einer set-Nachricht ueberschreiben sich (jeder rechnet vom alten Zustand), also je Schluessel
 eine Nachricht; das Geraet holt Soll und Modus selbst aus dem Zustand von Zigbee2MQTT; es zeigt und meldet nur ganze
 Grad. Die Pflege laeuft im Bus-Thread und liest den Soll-Speicher nie: das gebundene Thermostat richtet die Laufzeit
-ueber ihre Bindung im Worker ein, jedes andere bekommt DEFAULT_RAUM_SOLL."""
+ueber ihre Bindung im Worker ein, jedes andere bekommt DEFAULT_RAUM_SOLL. Soll und heizen gehen erst hinaus, wenn das
+Geraet thermostat_mode ON gemeldet hat (Labor 2026-10-22, L4-30): der Konverter verwirft beide, solange sein
+zwischengespeicherter Zustand nicht ON ist, und ON steht dort erst nach der Meldung des Geraets; bis dahin merkt sich
+die Pflege je Geraet einen offenen Rest, ohne Timer und ohne Wiederholung."""
 import logging
 import math
 import threading
@@ -16,8 +19,12 @@ from smartheat_runtime.soll_speicher import DEFAULT_RAUM_SOLL
 
 logger = logging.getLogger(__name__)
 
+MODUS_AN = "ON"  # thermostat_mode des W100 im Thermostatmodus
+
 
 class _Spiegel(Protocol):
+    def payload(self, ieee: str) -> dict: ...
+    def on_device_message(self, hook: Callable[[str, dict], None]) -> None: ...
     def set(self, ieee: str, payload: dict) -> None: ...
     def write_setpoint(self, ieee: str, value: float) -> None: ...
     def on_interview(self, hook: Callable[[str, str], None]) -> None: ...
@@ -56,9 +63,8 @@ def modus_setzen(mirror: _Spiegel, ieee: str, p: ThermostatProfil) -> None:
         mirror.set(ieee, payload)
 
 
-def einrichten(mirror: _Spiegel, ieee: str, p: ThermostatProfil, soll: float) -> None:
-    """Nach dem Koppeln: Modus, Anzeige, Soll, heizen, in dieser Reihenfolge und je eine Nachricht."""
-    modus_setzen(mirror, ieee, p)
+def soll_und_heizen(mirror: _Spiegel, ieee: str, p: ThermostatProfil, soll: float) -> None:
+    """Soll, dann heizen, je eine Nachricht; der Aufrufer sorgt dafuer, dass das Geraet thermostat_mode ON gemeldet hat."""
     mirror.write_setpoint(ieee, p.anzeige(soll))
     mirror.set(ieee, p.heizen)
 
@@ -71,7 +77,9 @@ class ThermostatPflege:
         self._mirror = mirror
         self._lock = threading.Lock()
         self._gebunden: tuple[str, Callable[[], None]] | None = None
+        self._offen: dict[str, Callable[[], None]] = {}  # je Geraet hoechstens ein Rest: Soll und heizen nach ON
         mirror.on_interview(self._on_interview)
+        mirror.on_device_message(self._on_geraet)
 
     def binden(self, ieee: str, einrichten_lassen: Callable[[], None]) -> None:
         with self._lock:
@@ -81,6 +89,27 @@ class ThermostatPflege:
         with self._lock:
             if self._gebunden is not None and self._gebunden[0] == ieee:
                 self._gebunden = None
+            self._offen.pop(ieee, None)
+
+    def einrichten(self, ieee: str, p: ThermostatProfil, abschluss: Callable[[], None]) -> None:
+        """Nach dem Koppeln: Thermostatmodus und Anzeige sofort (je eine Nachricht), danach abschluss() (Soll, heizen)
+        sobald das Geraet thermostat_mode ON gemeldet hat, sofort, wenn der Spiegel ON schon kennt. abschluss laeuft im
+        Bus-Thread oder im Thread des Aufrufers; ein neuer Aufruf fuer dasselbe Geraet ersetzt den offenen Rest."""
+        modus_setzen(self._mirror, ieee, p)
+        with self._lock:  # erst merken, dann pruefen: eine ON-Meldung dazwischen findet den Rest oder wird gesehen
+            self._offen[ieee] = abschluss
+        if self._mirror.payload(ieee).get("thermostat_mode") == MODUS_AN:
+            self._ausfuehren(ieee)
+
+    def _ausfuehren(self, ieee: str) -> None:
+        with self._lock:
+            abschluss = self._offen.pop(ieee, None)
+        if abschluss is not None:
+            abschluss()
+
+    def _on_geraet(self, ieee: str, payload: dict) -> None:
+        if payload.get("thermostat_mode") == MODUS_AN:
+            self._ausfuehren(ieee)
 
     def _on_interview(self, ieee: str, model: str) -> None:
         p = profil(model)
@@ -92,4 +121,4 @@ class ThermostatPflege:
             gebunden[1]()
             return
         logger.info("Thermostat %s (%s) gekoppelt: als Thermostat eingestellt", ieee, model)
-        einrichten(self._mirror, ieee, p, DEFAULT_RAUM_SOLL)
+        self.einrichten(ieee, p, lambda: soll_und_heizen(self._mirror, ieee, p, DEFAULT_RAUM_SOLL))

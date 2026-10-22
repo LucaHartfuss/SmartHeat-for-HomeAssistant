@@ -5,10 +5,10 @@ Entprellen, Wunsch, Rueckschreiben, Soll-Quelle aus/wieder an) ist hostneutral u
 smartheat_runtime.soll_eingang (SollEingang); das Thermostat ist ihre SollQuelle (_ZigbeeQuelle). Hier bleiben die
 Zigbee-Meldungen, die Tagestick-Zeit und der Verbindungs-Trigger. Fuehler-Aenderungen posten EV_LOCAL_CHECK(False); die
 Tagestick-Zeit ebenfalls (wie der Zeit-Trigger in HA). Ein Thermostat mit Profil (thermostat_profil, Aqara W100) bekommt
-beim Start Thermostatmodus und Anzeige, nach erneutem Koppeln die ganze Einrichtung aus dem Soll-Speicher (im Worker);
-ein fremder Modus (cool, auto) geht zurueck auf heat, eine fremde Aktion setzt Modus und Anzeige neu (je hoechstens
-alle PFLEGE_ABSTAND_S); ein ganzzahliges Thermostat bekommt das Soll gerundet, und seine Meldung des gerundeten Solls
-gilt im Worker als das geltende Soll."""
+beim Start Thermostatmodus und Anzeige, nach erneutem Koppeln die Einrichtung (Modus sofort; Soll aus dem
+Soll-Speicher und heizen im Worker, sobald das Thermostat thermostat_mode ON gemeldet hat); ein fremder Modus (cool, auto) geht zurueck auf heat, eine fremde Aktion setzt Modus und Anzeige neu
+(je hoechstens alle PFLEGE_ABSTAND_S); ein ganzzahliges Thermostat bekommt das Soll gerundet, und seine Meldung des
+gerundeten Solls gilt im Worker als das geltende Soll."""
 import logging
 import os
 from collections.abc import Callable
@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from smartheat_core import wallclock
 from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_gateway.bus import Bus
-from smartheat_gateway.thermostat_profil import ThermostatProfil, einrichten, modus_setzen, profil
+from smartheat_gateway.thermostat_profil import ThermostatProfil, modus_setzen, profil, soll_und_heizen
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime.debounce import ROOM_TARGET_DEBOUNCE_SECONDS
 from smartheat_runtime.runtime import EV_LOCAL_CHECK, EV_SOURCE_CONNECTED
@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 EV_DAILY = "shg_daily"
 EV_ZIGBEE_SOLL = "shg_zigbee_soll"  # Meldung eines ganzzahligen Thermostats, wird im Worker abgebildet
 EV_THERMOSTAT_EINRICHTEN = "shg_thermostat_einrichten"  # gebundenes Thermostat neu gekoppelt
+EV_THERMOSTAT_SOLL = "shg_thermostat_soll"  # ... und hat thermostat_mode ON gemeldet: Soll und heizen
 PFLEGE_ABSTAND_S = 60.0
 
 
@@ -109,6 +110,7 @@ class BusTriggerSource:
         worker.register(EV_DAILY, self._on_daily)
         worker.register(EV_ZIGBEE_SOLL, self._on_zigbee_soll)
         worker.register(EV_THERMOSTAT_EINRICHTEN, self._on_einrichten)
+        worker.register(EV_THERMOSTAT_SOLL, self._on_thermostat_soll)
 
     @property
     def connected(self) -> bool:
@@ -182,7 +184,16 @@ class BusTriggerSource:
         if p is None:
             return
         logger.info("Thermostat %s neu gekoppelt: als Thermostat eingestellt", self._thermostat)
-        einrichten(self._mirror, self._thermostat, p, self._store.value)
+        # Modus sofort; Soll und heizen erst nach der Meldung thermostat_mode ON (L4-30), dann mit dem Soll von dann
+        self._mirror.pflege.einrichten(self._thermostat, p,
+                                       lambda: self._worker.post(Event(EV_THERMOSTAT_SOLL)))
+
+    def _on_thermostat_soll(self, event: Event) -> None:
+        assert self._quelle is not None and self._thermostat is not None
+        p = self._quelle.profil()
+        if p is None:
+            return
+        soll_und_heizen(self._mirror, self._thermostat, p, self._store.value)
         self._store.note_own_write()
 
     def _on_daily(self, event: Event) -> None:

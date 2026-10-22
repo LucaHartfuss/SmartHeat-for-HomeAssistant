@@ -23,6 +23,9 @@ _W100 = [
     {"type": "binary", "name": "auto_hide_middle_line", "property": "auto_hide_middle_line", "access": 7},
     _TEMPERATURE, _BATTERY,
 ]
+#: Was der Konverter lumi (2.14.2) verwirft, solange der zwischengespeicherte thermostat_mode nicht ON ist
+#: ("Ignoring ... command - thermostat_mode is not ON"); der Modus selbst und die Anzeige gehen immer durch
+_NUR_MIT_MODUS_ON = ("occupied_heating_setpoint", "system_mode")
 
 
 class FakeZigbee2Mqtt:
@@ -34,6 +37,11 @@ class FakeZigbee2Mqtt:
         self._devices: list[dict] = []
         self._sleepy: set[str] = set()
         self._held: dict[str, float] = {}
+        #: Zwischengespeicherter Zustand je W100 (Zigbee2MQTT-Konverter lumi): er waechst nur durch Meldungen des
+        #: Geraets, nie durch set-Nachrichten
+        self._zustand: dict[str, dict] = {}
+        #: (IEEE, Schluessel) der set-Nachrichten, die der Konverter verwarf (_NUR_MIT_MODUS_ON)
+        self.verworfen: list[tuple[str, str]] = []
         self.permit_join_requests: list[int] = []
         self.set_requests: list[tuple[str, dict]] = []  # jede set-Nachricht (IEEE, Inhalt) in Reihenfolge
         bus.subscribe(f"{BASE}/bridge/request/permit_join", self._on_permit_join)
@@ -54,6 +62,7 @@ class FakeZigbee2Mqtt:
         self._add(ieee, "TRV-Test", "Test", [climate, _BATTERY_LOW])
 
     def add_w100(self, ieee: str) -> None:
+        self._zustand[ieee] = {}
         self._add(ieee, "TH-S04D", "Aqara", _W100)
 
     def add_ohne_definition(self, ieee: str, interview_completed: bool = False) -> None:
@@ -91,6 +100,9 @@ class FakeZigbee2Mqtt:
             wall = self._wall()
         if wall is not None:
             values["last_seen"] = datetime.fromtimestamp(wall, UTC).isoformat()
+        if ieee in self._zustand:  # Zigbee2MQTT veroeffentlicht den ganzen Zustand, nicht nur das Gemeldete
+            self._zustand[ieee].update(values)
+            values = dict(self._zustand[ieee])
         self._bus.publish(f"{BASE}/{ieee}", values, retain=True)
 
     def _add(self, ieee: str, model: str, vendor: str, exposes: list) -> None:
@@ -111,6 +123,10 @@ class FakeZigbee2Mqtt:
         body = decode(payload)
         if isinstance(body, dict):
             self.set_requests.append((ieee, body))
+            if ieee in self._zustand and self._zustand[ieee].get("thermostat_mode") != "ON":
+                # Konverter lumi: Soll und system_mode nur bei gemeldetem ON
+                self.verworfen += [(ieee, key) for key in body if key in _NUR_MIT_MODUS_ON]
+                body = {key: value for key, value in body.items() if key not in _NUR_MIT_MODUS_ON}
         if not (isinstance(body, dict) and "occupied_heating_setpoint" in body):
             return
         if ieee in self._sleepy:
