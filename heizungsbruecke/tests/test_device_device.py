@@ -1790,6 +1790,37 @@ def test_after_a_reconnect_the_status_follows_hello_at_once(tmp_path):
     assert world.link.topics()[-2:] == ["up/hello", "up/status"]
 
 
+def test_status_nach_hello_kommt_nach_gescheitertem_rueckruf(tmp_path):
+    """T4-Hello-Status: scheitert ein Rueckruf beim erzwungenen Status nach hello, geht der Status im naechsten Takt
+    hinaus, auch ohne inhaltliche Aenderung und binnen 10 s nach dem letzten (sonst saehe der Server ihn nicht)."""
+    world = World(tmp_path, WerfenderHost())
+    world.verbinden()
+    assert len(world.link.of("up/status")) == 1
+    world.link.trennen()
+    world.host.werfen.add("runtime_status")
+    world.link.verbinden()
+    world.device.schritt()  # hello geht hinaus, der erzwungene Status scheitert
+    assert world.link.topics()[-1] == "up/hello"
+    world.host.werfen.clear()
+    world.clock.now += 1
+    world.device.schritt()
+    assert world.link.topics()[-2:] == ["up/hello", "up/status"]
+    world.clock.now += 1
+    world.device.schritt()  # der Merker ist nach dem gesendeten Status zurueck: unveraendert gibt es keinen weiteren
+    assert world.link.topics()[-2:] == ["up/hello", "up/status"]
+
+
+def test_ein_dauerhaft_werfendes_raum_laesst_den_status_nach_hello_aus(tmp_path):
+    """V2: kein erfundener Raum; der Merker bleibt, bis ein Status wirklich gesendet ist."""
+    world = World(tmp_path, WerfenderHost("raum"))
+    world.verbinden()
+    _fuenf_takte(world)
+    assert world.link.of("up/status") == []
+    world.host.werfen.clear()
+    world.device.schritt()
+    assert len(world.link.of("up/status")) == 1
+
+
 def test_after_the_rescue_the_new_link_sends_nothing_before_hello_and_no_second_certificate(tmp_path):
     world = World(tmp_path)
     world.verbinden()

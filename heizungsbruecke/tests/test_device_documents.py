@@ -11,6 +11,7 @@ from bindung_beispiele import parameter
 from smartheat_core import config_check, dateien, rastung
 from smartheat_device import documents as docs
 from smartheat_device import wire
+from smartheat_runtime import soll_speicher
 
 SENSOR = "zigbee:0x00124b0000000001:temperature"
 
@@ -594,10 +595,17 @@ def test_minimum_software_compares_numerically(eigene, mindest, unter):
 
 @pytest.mark.parametrize("value, ok", [
     (15, True), (25, True), (20.5, True), (14.5, False), (25.5, False), (20.25, False), (True, False), (None, False),
-    ("20", False), (math.nan, False), (math.inf, False), (10**400, False),
+    ("20", False), (math.nan, False), (math.inf, False), (10**400, False), (14.99, False), (25.01, False),
+    (21.3, False), (0, False), (-1, False), (1e308, False), (-math.inf, False), (False, False),
 ])
 def test_operating_range(value, ok):
-    assert docs.im_bedienbereich(value) is ok
+    assert soll_speicher.im_bedienbereich(value) is ok  # die eine Funktion, die documents.py benutzt (5c-D-10)
+
+
+def test_the_steps_inside_the_operating_range_are_exactly_the_half_kelvin_ones():
+    for step in range(0, 101):
+        value = 15 + step * 0.1
+        assert soll_speicher.im_bedienbereich(value) is (step % 5 == 0)
 
 
 def test_an_operation_is_checked_against_the_operating_range(tmp_path):

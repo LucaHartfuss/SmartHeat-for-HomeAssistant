@@ -8,8 +8,9 @@ meldet sie das geltende Soll, aendert sich nichts (auch nicht die Quelle); ebens
 bestaetigt (Nr. 40). Ein offener Schreibbefehl (PENDING_SECONDS) verwirft verspaetete Meldungen des alten Werts, bis
 die Quelle den geschriebenen Wert meldet; jeder andere Wert gilt als Eingabe an der Quelle (Plan G2b-2 Task 4).
 
-Die Laufzeit importiert smartheat_device nicht (tests/test_runtime_purity.py); der Bedienbereich
-steht deshalb hier (Gleichheit mit smartheat_device.documents.im_bedienbereich sichert test_soll_speicher.py)."""
+Die Laufzeit importiert smartheat_device nicht (tests/test_runtime_purity.py); der Bedienbereich steht deshalb hier
+und der Geraetekern (documents.py) nutzt diese Funktion (5c-D-10); die Gleichheit der Grenzen mit dem Vertrag
+(smartheat_device.wire.RAUM_SOLL_*) sichert test_soll_speicher.py."""
 import logging
 from collections.abc import Callable, Mapping
 from pathlib import Path

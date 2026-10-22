@@ -147,6 +147,9 @@ class Device:
         self._meldungen_at: float | None = None
         self._status: dict | None = None
         self._status_at: float | None = None
+        #: Nach hello muss ein Status hinaus (T4-Hello-Status); gescheitert der Rueckruf dabei, bleibt der Merker, bis
+        #: einer gesendet ist (sonst unterdrueckten Gleichheit und Mindestabstand ihn im naechsten Takt).
+        self._status_erzwingen = False
         self._hello_fehler: str | None = None  # letzte Fehlerart beim Bauen von hello (je Art einmal loggen)
         self._status_fehler: str | None = None  # letzter Vertragsverstoss beim Bauen (je Text einmal loggen)
         self._wunsch_fehler: str | None = None  # dito beim Bauen von up/wish
@@ -348,7 +351,7 @@ class Device:
             self._zurueckgehaltene_pruefen(now)
         self.befehle.pruefen()
         self._wunsch_senden()
-        self._status_senden(now, force=False)
+        self._status_senden(now, force=self._status_erzwingen)
         self._meldungen_senden(now)
         self._host_wert("anzeigen", self.host.anzeigen, self.anzeige())  # gescheitert: diese Anzeige entfaellt
 
@@ -470,6 +473,7 @@ class Device:
         self._bereit = True
         now = self._clock()
         self._last_ok = now
+        self._status_erzwingen = True
         self._status_senden(now, force=True)
         self._wunsch_senden()
         self._meldungen_neu.update(self._meldungen)
@@ -715,3 +719,4 @@ class Device:
                 return
         if self._publish("up/status", body) is not None:
             self._status, self._status_at = vergleich, now
+            self._status_erzwingen = False
