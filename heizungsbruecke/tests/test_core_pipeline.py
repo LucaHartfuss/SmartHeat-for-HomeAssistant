@@ -1699,3 +1699,39 @@ def test_enforcing_the_zone_setpoint_keeps_its_own_quota(make_store, clock, tag)
     with pytest.raises(DeviceWriteError):
         override.write_levers(("room_setpoint",))
     assert len(attempts) == 1 and _zone_prepare(store)["count"] == 6
+
+
+def test_an_already_manual_zone_gets_the_server_setpoint_at_once_despite_a_blocked_quota(make_store, clock, tag):
+    """Controller-Ruling Fix-Welle: sperrt das Kontingent zone_prepare nach frueheren Fehlschlaegen, die Zone steht aber
+    schon auf Manuell, braucht es keine Vorbereitung: die Wunschtemperatur geht sofort, ohne Umstellversuch."""
+    override, store, ha, attempts = _quota_zone(
+        make_store, clock, backup={"write_budget": {write_budget.ZONE_PREPARE: {"day": DAY, "count": 6}}},
+    )
+    ha.states["climate.zone"] = "heat_cool"
+
+    override.apply_server_values(SERVER)
+
+    assert attempts == []
+    assert ("climate.zone", 23.0) in ha.writes and ("number.curve", 0.95) in ha.writes
+    assert store.state.deferred_levers == ()
+    assert _zone_prepare(store)["count"] == 6  # keine Aenderung am Kontingent
+
+
+def test_an_unreadable_zone_mode_with_a_blocked_quota_holds_the_setpoint_back(make_store, clock, tag):
+    override, store, ha, attempts = _quota_zone(
+        make_store, clock, backup={"write_budget": {write_budget.ZONE_PREPARE: {"day": DAY, "count": 6}}},
+    )
+
+    lesbar = ha.get_raw_state
+
+    def _zone_unlesbar(entity):
+        if entity == "climate.zone":
+            raise ValueError(f"Entity {entity} hat keinen gueltigen Zustand: 'unavailable'")
+        return lesbar(entity)
+
+    ha.get_raw_state = _zone_unlesbar
+
+    override.apply_server_values(SERVER)
+
+    assert attempts == [] and ("climate.zone", 23.0) not in ha.writes
+    assert store.state.deferred_levers == ("room_setpoint",)

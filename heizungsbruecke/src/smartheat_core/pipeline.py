@@ -585,9 +585,10 @@ class LeverPipeline:
         prepared_lever muessen die Hilfs-Ursprungswerte gemerkt sein (require_aux; nur die Wiederherstellung schreibt
         auch ohne und bereitet ein Binding mit Hilfswerten dabei nicht vor).
         prepare_quota (Serverwerte, auch nachgeholte): die Vorbereitung teilt das Kontingent zone_prepare mit dem Start
-        und dem lokalen Check (_prepare_within_quota). Laesst es gerade keinen Versuch zu, bleibt prepared_lever samt
-        Schreibgruppe im Wiederherstellungspunkt und in deferred_levers (write_deferred holt ihn nach), die uebrigen
-        Hebel werden geschrieben. Gibt die so zurueckgestellten Hebel zurueck."""
+        und dem lokalen Check (_prepare_within_quota). Laesst es gerade keinen Versuch zu und steht die Anlage nicht
+        schon vorbereitet, bleibt prepared_lever samt Schreibgruppe im Wiederherstellungspunkt und in deferred_levers
+        (write_deferred holt ihn nach), die uebrigen Hebel werden geschrieben. Gibt die so zurueckgestellten Hebel
+        zurueck."""
         prepared_lever = self._description.prepared_lever
         switched = False
         held: tuple[str, ...] = ()
@@ -632,11 +633,20 @@ class LeverPipeline:
         Versuch je 30 min, 6 Fehlschlaege am Tag), das der Schreibweg der Serverwerte mit dem Start und dem lokalen
         Check teilt (Schlussreview TP2, I-1/I-2): sonst stellte jede Antwort auf einen Snapshot und jede Wiederholung
         der Datenkette eine nicht vorbereitbare Zone erneut um. Ein Erfolg setzt das Kontingent zurueck, das
-        Tagesbudget (WriteBudgetExhausted) zaehlt nicht als Fehlschlag. None: das Kontingent laesst gerade keinen
-        Versuch zu."""
+        Tagesbudget (WriteBudgetExhausted) zaehlt nicht als Fehlschlag. Sperrt das Kontingent, entscheidet ein Lesen
+        der Betriebsart (is_prepared, kein Schreiben): steht die Anlage schon vorbereitet, gilt das wie eine
+        Vorbereitung ohne Umstellung (False, Kontingent unveraendert). None: eine Vorbereitung waere noetig (oder die
+        Betriebsart ist nicht lesbar), das Kontingent laesst aber gerade keinen Versuch zu."""
         key, rule = write_budget.ZONE_PREPARE, write_budget.RETRY_QUOTA
         if not write_budget.may_attempt(self._store, key, rule, self._clock()):
-            return None
+            try:
+                prepared = self._binding.is_prepared()
+            except Exception as error:
+                logger.info(
+                    "Betriebsart nicht lesbar (%s), Vorbereitung bleibt im Kontingent gesperrt", lesbar(str(error)),
+                )
+                return None
+            return False if prepared else None
         try:
             switched = self.ensure_prepared(exempt=exempt, require_aux=require_aux)
         except WriteBudgetExhausted:
