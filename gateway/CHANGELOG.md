@@ -2,6 +2,8 @@
 
 ## 0.7.0
 
+- `certifi` 2026.10.19 statt 2026.7.22 (Sicherheitsmeldung GHSA-6q48-6c7w-9gw2: kompromittierte emSign-Root-CAs im
+  Zertifikatsbündel; der Image-Scan meldete sie als CRITICAL).
 - Diagnose am Gerät (L4-18, Labor 2026-10-20): `iproute2` (`ss`, `ip`) ist im Image und wird von `install.sh` verlangt;
   `vcgencmd` kommt über `raspi-utils` im Image (Raspberry-Pi-Archiv, `rootfs_checks.sh` prüft alle drei; `install.sh` auf
   einem fremden Debian verlangt es nicht). Das Journal schreibt alle 30 s (`SyncIntervalSec=30s`, `Storage=persistent`
