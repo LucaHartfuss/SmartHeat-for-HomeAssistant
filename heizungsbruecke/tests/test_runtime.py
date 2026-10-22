@@ -540,9 +540,13 @@ class _QuotaZoneHa(FakeHa):
         super().set_hvac_mode(entity_id, mode)
 
 
-def _failing_zone_preparation(env, failures=None):
+def _failing_zone_preparation(env, monkeypatch, failures=None):
     """Die Vorbereitung der Zone (climate.zone) scheitert an HA; gibt die Versuchszeitpunkte zurueck. Danach mit
-    `_start(env, entity_shift_current="climate.zone")` starten."""
+    `_start(env, entity_shift_current="climate.zone")` starten. Die Durchsetzung ist ausgeschaltet: mit dem
+    Rueckfall auf das Raum-Soll (S3-3) ist der Snapshot der ruhenden Zone gueltig, und die Durchsetzung stellt die
+    Zone in ihrem eigenen Kontingent (enforce:zone_mode) zusaetzlich um; hier zaehlt nur die Wiederholung des
+    lokalen Checks (zone_prepare)."""
+    monkeypatch.setattr(app.enforce, "check_manual_override", lambda rt: None)
     env.ha = _QuotaZoneHa(env.clock, failures)
     return env.ha.attempts
 
@@ -553,8 +557,8 @@ def _local_checks(env, bridge, hours):
         _trigger(env, bridge, "sensor.room_actual")
 
 
-def test_failing_zone_preparation_is_retried_at_most_every_30_min_and_6_times_a_day(env, caplog):
-    attempts = _failing_zone_preparation(env)
+def test_failing_zone_preparation_is_retried_at_most_every_30_min_and_6_times_a_day(env, caplog, monkeypatch):
+    attempts = _failing_zone_preparation(env, monkeypatch)
     bridge = _start(env, entity_shift_current="climate.zone")
 
     with caplog.at_level(logging.WARNING, logger="smartheat_runtime.app"):
@@ -564,8 +568,8 @@ def test_failing_zone_preparation_is_retried_at_most_every_30_min_and_6_times_a_
     assert sum("Tageslimit" in record.getMessage() for record in caplog.records) == 1
 
 
-def test_zone_preparation_stops_retrying_after_success(env):
-    attempts = _failing_zone_preparation(env, failures=2)
+def test_zone_preparation_stops_retrying_after_success(env, monkeypatch):
+    attempts = _failing_zone_preparation(env, monkeypatch, failures=2)
     bridge = _start(env, entity_shift_current="climate.zone")
 
     _local_checks(env, bridge, hours=6)
