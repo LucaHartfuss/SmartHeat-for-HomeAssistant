@@ -15,7 +15,6 @@ GRACE_PERIOD = timedelta(days=30)
 ACTIVE = "active"
 INACTIVE = "inactive"
 UNKNOWN = "unknown"
-REJECTED = "rejected"
 
 
 def query(config: RuntimeConfig) -> str:

@@ -7,8 +7,6 @@ from smartheat_runtime.texts import HA_TEXTS, HostTexts
 
 def test_ha_defaults_are_the_previous_texts():
     assert HA_TEXTS.delivery_prefix == "Heizungsbrücke"
-    assert "SmartHeat-Integration neu anmelden" in HA_TEXTS.relogin_log_rejected
-    assert "%s" in HA_TEXTS.relogin_log_status
     assert HA_TEXTS.source_unavailable_log == "Home Assistant nicht erreichbar"
 
 

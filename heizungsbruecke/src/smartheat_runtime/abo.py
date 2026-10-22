@@ -15,17 +15,11 @@ ABO_ENDED_MESSAGE = (
     "die zuletzt gelernten Werte bleiben eingestellt."
 )
 ABO_ACTIVE_MESSAGE = "SmartHeat: Abo wieder aktiv, die Heizungssteuerung läuft wieder normal."
-ACCESS_OK_MESSAGE = "SmartHeat: Die Zugangsdaten werden wieder angenommen, die Heizungssteuerung läuft wieder normal."
-ACCESS_DENIED_REASON = "Zugangsdaten vom Server abgelehnt"
 RESTORE_KEY = "wiederherstellung"
 RESTORE_FAILED_STATE = "fehlgeschlagen"
 RESTORE_FAILED_MESSAGE = "SmartHeat: Zurücksetzen auf die zuletzt gelernten Werte scheitert. Bitte die Anlage prüfen."
 RESTORE_OK_MESSAGE = "SmartHeat: Die zuletzt gelernten Werte sind wieder eingestellt."
 RESTORE_FAILED_REASON = "Zurücksetzen auf die zuletzt gelernten Werte scheitert"
-# Nur fuer den Log (silent_ok): kein Push, die Ablehnung ist mit dem Abo-inaktiv-Wechsel erledigt.
-_ZUGANG_RESOLVED_BY_INACTIVE_MESSAGE = (
-    "SmartHeat: Zugangsdaten-Hinweis durch den Wechsel in den Abo-inaktiv-Modus aufgehoben."
-)
 
 
 def inactive_message(inactive_since: datetime) -> str:
@@ -40,10 +34,7 @@ def enter_inactive(rt: Runtime, now: datetime) -> None:
     """Notbetrieb an (persistiert), Kanal des Geraetekerns gestoppt, keine Snapshots/Telemetrie mehr. Gemeldet
     wird nur beim erstmaligen Setzen von inactive_since, nicht bei jedem Neustart.
     `mqtt_client.stop()` schaltet den Kanal der Laufzeit ab (smartheat_device.laufzeit.RuntimeChannel nimmt keine
-    Ereignisse mehr an); den Link betreibt weiter das Geraet. Eine vorher gesetzte "zugang_abgelehnt" (eine Ablehnung bei noch
-    unklarem Abo-Status vor dieser eindeutig inaktiven) wird aufgeloest: sonst haengt der
-    falsche Rat ("neu anmelden") die ganze Kulanzfrist, und der Grund wuerde sogar noch im
-    abo_beendet-Event am Fristende auftauchen."""
+    Ereignisse mehr an); den Link betreibt weiter das Geraet."""
     state = rt.store.state
     if state.abo_inactive_since is not None:
         return
@@ -63,11 +54,6 @@ def enter_inactive(rt: Runtime, now: datetime) -> None:
             rt.mqtt_client.stop()
         except Exception:
             logger.exception("MQTT-Verbindung konnte nicht sauber beendet werden")
-    status = rt.status
-    assert status is not None  # beim Boot gesetzt
-    if status.flags.zugang_abgelehnt:
-        status.update(zugang_abgelehnt=False, grund=None)
-    rt.notifier.notify("zugang", STATE_OK, _ZUGANG_RESOLVED_BY_INACTIVE_MESSAGE, critical=True, silent_ok=True)
     if newly_set:
         rt.notifier.notify("abo", "inaktiv", inactive_message(since), critical=True)
     else:
@@ -119,52 +105,13 @@ AUTH_REJECTED_QUERY_INTERVAL_SECONDS = 600.0
 CONNECT_FAILURES_BEFORE_STATUS_QUERY = 3
 
 
-def handle_auth_rejected(rt: Runtime) -> None:
-    """Ereignis EV_AUTH_REJECTED (abgelehnte Anmeldung). Im Geraete-Pfad postet niemand es mehr (S1b-2); die
-    Abo-Abfrage (`entitlement.query`) liest nur das Konfigurationsdokument. Nur ein eindeutiges "inactive" wechselt in den Abo-inaktiv-Modus, sonst "zugang_abgelehnt". T2-12: solange
-    zugang_abgelehnt steht, hoechstens alle 600 s eine Abfrage, ERROR nur beim ersten Mal und bei geaendertem
-    Ergebnis. Im Abo-inaktiv-Modus wird nicht mehr gefragt."""
-    if rt.store.state.abo_inactive_since is not None:
-        return
-    status_reporter = rt.status
-    assert status_reporter is not None  # beim Boot gesetzt
-    now = rt.clock()
-    last = rt.auth_rejected_queried_at
-    if status_reporter.flags.zugang_abgelehnt and last is not None and now - last < AUTH_REJECTED_QUERY_INTERVAL_SECONDS:
-        logger.debug("MQTT-Anmeldung erneut abgelehnt, Abo-Status wird erst nach %.0f s wieder abgefragt",
-                     AUTH_REJECTED_QUERY_INTERVAL_SECONDS)
-        return
-    status = entitlement.query(rt.config)
-    rt.auth_rejected_queried_at = now
-    if status == entitlement.INACTIVE:
-        enter_inactive(rt, wallclock.now())
-        return
-    _report_rejection(rt, status)
-
-
-def _report_rejection(rt: Runtime, status: str) -> None:
-    """Meldung einer abgelehnten Anmeldung (Status != inactive): Log (ERROR nur bei geaendertem
-    Ergebnis), Status-Flag und Benachrichtigung."""
-    status_reporter = rt.status
-    assert status_reporter is not None  # beim Boot gesetzt
-    log = logger.error if status != rt.auth_rejected_last_status else logger.debug
-    rt.auth_rejected_last_status = status
-    if status == entitlement.REJECTED:
-        log(rt.texts.relogin_log_rejected)
-    else:
-        log(rt.texts.relogin_log_status, status)
-    status_reporter.update(zugang_abgelehnt=True, grund=ACCESS_DENIED_REASON)
-    rt.notifier.notify("zugang", "abgelehnt", rt.texts.access_denied, critical=True)
-
-
 def handle_connection_failing(rt: Runtime) -> None:
     """Spec AWS-IoT 5.1: Bei IoT Core endet ein gesperrtes Zertifikat vermutlich im TLS-Aufbau statt mit
     CONNACK 134/135 (AN-1). Fehlt die Verbindung lange und scheitern die Versuche wiederholt
     (app._on_connection_check), liest das Add-on deshalb den Abo-Status aus dem Konfigurationsdokument,
-    gedrosselt wie nach einer abgelehnten Anmeldung. Nur ein eindeutiges Ergebnis wirkt: inactive ->
+    gedrosselt (AUTH_REJECTED_QUERY_INTERVAL_SECONDS). Nur ein eindeutiges Ergebnis wirkt: inactive ->
     Abo-inaktiv-Modus; active und unknown aendern nichts (normaler Ausfall, den Notbetrieb und Pruef-Tick
-    abdecken). Der Zweig rejected ist im Geraete-Pfad unerreichbar (S1b-2): `dokument_config.abo_status`
-    kennt nur aktiv und inaktiv."""
+    abdecken)."""
     if rt.store.state.abo_inactive_since is not None:
         return
     now = rt.clock()
@@ -175,9 +122,6 @@ def handle_connection_failing(rt: Runtime) -> None:
     status = entitlement.query(rt.config)
     if status == entitlement.INACTIVE:
         enter_inactive(rt, wallclock.now())
-    elif status == entitlement.REJECTED:
-        rt.auth_rejected_queried_at = now
-        _report_rejection(rt, status)
     else:
         logger.warning("MQTT-Verbindung fehlt seit Langem, Abo-Status ist '%s' - Verbindung pruefen.", status)
 

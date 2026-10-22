@@ -23,7 +23,6 @@ if TYPE_CHECKING:
 
 EV_LOCAL_CHECK = "local_check"
 EV_SETPOINTS = "setpoints"
-EV_AUTH_REJECTED = "auth_rejected"
 EV_ACK_TIMEOUT = "ack_timeout"
 EV_RETRY_DUE = "retry_due"
 EV_WATCHDOG = "watchdog"
@@ -67,12 +66,8 @@ class Runtime:
     # geaenderten Eintrag sonst stillschweigend verwerfen (KPI-Verlust). Ein zwischenzeitlich neu
     # erkannter Eingriff reist deshalb erst mit der naechsten seq.
     manual_override_seq: str | None = None
-    # Monotone Uhr des Workers (Tests: FakeClock). Fuer die Drosselung in abo.handle_auth_rejected.
+    # Monotone Uhr des Workers (Tests: FakeClock). Fuer die Drosselung in abo.handle_connection_failing.
     clock: Callable[[], float] = time.monotonic
-    # T2-12: Zeitpunkt und Ergebnis der letzten Abo-Abfrage nach einer abgelehnten MQTT-Anmeldung;
-    # ein erfolgreicher Connect setzt beides zurueck. Nicht persistiert.
-    auth_rejected_queried_at: float | None = None
-    auth_rejected_last_status: str | None = None
     # Transportneutrale Abo-Erkennung (Spec AWS-IoT 5.1): letzte /status-Abfrage nach langem,
     # wiederholtem Verbindungsfehler; ein erfolgreicher Connect setzt sie zurueck. Nicht persistiert.
     connection_failing_queried_at: float | None = None

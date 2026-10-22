@@ -29,11 +29,9 @@ def test_runtime_schema_and_heartbeat():
 
 
 @pytest.mark.parametrize("flags,state,expected", [
-    (Flags(abgemeldet=True, konfigurationsfehler=True, zugang_abgelehnt=True, abo_beendet=True, gestartet=True),
+    (Flags(abgemeldet=True, konfigurationsfehler=True, abo_beendet=True, gestartet=True),
      BridgeState(delivery=DeliveryState(notbetrieb=True)), "abgemeldet"),
-    (Flags(konfigurationsfehler=True, zugang_abgelehnt=True, abo_beendet=True), BridgeState(), "konfigurationsfehler"),
-    (Flags(zugang_abgelehnt=True, abo_beendet=True), BridgeState(), "zugang_abgelehnt"),
-    (Flags(zugang_abgelehnt=True, gestartet=True), BridgeState(abo_inactive_since=SINCE), "abo_inaktiv"),
+    (Flags(konfigurationsfehler=True, abo_beendet=True), BridgeState(), "konfigurationsfehler"),
     (Flags(abo_beendet=True), BridgeState(), "abo_beendet"),
     (Flags(), BridgeState(abo_finished=True, abo_inactive_since=SINCE), "abo_beendet"),
     (Flags(), BridgeState(abo_inactive_since=SINCE, delivery=DeliveryState(notbetrieb=True)), "abo_inaktiv"),

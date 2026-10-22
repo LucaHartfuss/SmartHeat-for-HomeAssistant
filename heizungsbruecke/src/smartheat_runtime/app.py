@@ -45,7 +45,6 @@ from smartheat_runtime.roles import ChannelManifest
 from smartheat_runtime.runtime import (
     EV_ACK_TIMEOUT,
     EV_AUFRAEUMEN,
-    EV_AUTH_REJECTED,
     EV_CONNECTION_CHECK,
     EV_GRACE_CHECK,
     EV_HEALTH,
@@ -430,10 +429,6 @@ def _on_retry_due(rt: Runtime, event: Event) -> None:
     ticks.deliver(rt, delivery.RetryDue(seq=event.data["seq"], gen=event.data["gen"]))
 
 
-def _on_auth_rejected(rt: Runtime, event: Event) -> None:
-    abo.handle_auth_rejected(rt)
-
-
 def _on_watchdog(rt: Runtime, event: Event) -> None:
     """Fallback bei getrenntem Trigger-Eingang: Cache frisch (ohne Entprellung) lesen, dann
     lokaler Check. Bei verbundenem Trigger-Client passiert nichts."""
@@ -514,18 +509,12 @@ def _on_health(rt: Runtime, event: Event) -> None:
 
 
 def _on_mqtt_connected(rt: Runtime, event: Event) -> None:
-    """Der erste Connect schliesst den Start ab (Status regelt); jeder Connect hebt eine
-    abgelehnte Anmeldung auf."""
+    """Der erste Connect schliesst den Start ab (Status regelt)."""
     status = rt.status
     assert status is not None  # beim Boot gesetzt
-    rt.auth_rejected_queried_at = None
-    rt.auth_rejected_last_status = None
     rt.connection_failing_queried_at = None
-    if status.flags.zugang_abgelehnt:
-        status.update(zugang_abgelehnt=False, grund=None, gestartet=True)
-    elif not status.flags.gestartet:
+    if not status.flags.gestartet:
         status.update(gestartet=True)
-    rt.notifier.notify("zugang", STATE_OK, abo.ACCESS_OK_MESSAGE, critical=True)
     ticks.deliver(rt, delivery.MqttConnected())
 
 
@@ -556,7 +545,6 @@ def _register_handlers(rt: Runtime, melder: Callable[[], None]) -> None:
     handlers = {
         EV_LOCAL_CHECK: _on_local_check,
         EV_SETPOINTS: _on_setpoints,
-        EV_AUTH_REJECTED: _on_auth_rejected,
         EV_ACK_TIMEOUT: _on_ack_timeout,
         EV_RETRY_DUE: _on_retry_due,
         EV_MQTT_CONNECTED: _on_mqtt_connected,
