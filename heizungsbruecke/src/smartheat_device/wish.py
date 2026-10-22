@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from smartheat_core import dateien
+from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_device import nachrichten, wire
 
 WUNSCH_FILE = "wunsch.json"
@@ -26,13 +27,9 @@ _QUELLE = {"thermostat": "Thermostat", "soll_entity": "Wunschtemperatur", "smart
 
 def begrenzen(wert) -> tuple[float, float | None]:
     """(begrenzter Wert, roh) - roh ist der gestellte Wert, wenn Bereich oder Rundung ihn veraendert haben."""
-    if isinstance(wert, bool) or not isinstance(wert, (int, float)):
+    if isinstance(wert, bool) or not isinstance(wert, int | float):
         raise ValueError("Wunsch ist keine Zahl")
-    try:
-        endlich = math.isfinite(wert)
-    except OverflowError:
-        endlich = False
-    if not endlich:
+    if not ist_endliche_zahl(wert):
         raise ValueError("Wunsch ist keine endliche Zahl")
     # erst in den Bereich, dann runden: riesige endliche Werte laufen so nicht in einen Ueberlauf (die Grenzen liegen
     # auf dem Raster, das Ergebnis ist dasselbe wie Runden und dann Begrenzen)

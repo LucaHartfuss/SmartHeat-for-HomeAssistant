@@ -16,7 +16,6 @@ up/notifications gebuendelt hoechstens alle MELDUNGEN_MIN_SECONDS (Drossel des D
 S2)."""
 import json
 import logging
-import math
 import queue
 import threading
 import time
@@ -28,6 +27,7 @@ from typing import TypeVar
 
 from smartheat_core import config_check
 from smartheat_core.logtext import lesbar
+from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_device import bootstrap, commands, fehler, identity, inventory, nachrichten, wire, wish
 from smartheat_device.documents import BEDIENUNG, KONFIGURATION, DocumentStore, angebot_aus
 from smartheat_device.host import Anzeige, DeviceHost
@@ -91,8 +91,7 @@ def _ursprungswert_ok(wert) -> bool:
     if isinstance(wert, bool):
         return False
     if isinstance(wert, int | float):
-        # Betrag zuerst: math.isfinite wirft bei riesigen int (OverflowError); NaN faellt beim Vergleich durch.
-        return abs(wert) <= wire.URSPRUNG_WERT_MAX and math.isfinite(wert)
+        return ist_endliche_zahl(wert) and abs(wert) <= wire.URSPRUNG_WERT_MAX
     return isinstance(wert, str) and 0 < len(wert) <= wire.URSPRUNG_HEBEL_MAX_CHARS
 
 

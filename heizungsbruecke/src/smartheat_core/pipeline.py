@@ -27,16 +27,15 @@ Rueckweg hat Vorrang vor der Schonung). Jeder Boost-Start zaehlt (Comfort: boost
 hoechstens 6 am Tag, 30 min Abstand, A6-01/A6-34). Ein wegen des Budgets nicht geschriebener Serverwert bleibt im
 Wiederherstellungspunkt und in deferred_levers und wird mit write_deferred nachgeholt."""
 import logging
-import math
 import time
 from collections.abc import Callable, Mapping
-from typing import TypeGuard
 
 from smartheat_core import write_budget
 from smartheat_core.binding import PlantBinding
 from smartheat_core.clamping import clamp, target_value
 from smartheat_core.logtext import lesbar
 from smartheat_core.safety import LocalSafety
+from smartheat_core.zahlen import ist_endliche_zahl
 
 logger = logging.getLogger(__name__)
 
@@ -104,15 +103,6 @@ def _row(comfort: bool, emergency: bool) -> str:
     if comfort:
         return _ROW_COMFORT
     return _ROW_RESTORE
-
-
-def _is_finite_number(value) -> TypeGuard[float]:
-    if not isinstance(value, (int, float)) or isinstance(value, bool):
-        return False
-    try:
-        return math.isfinite(value)
-    except OverflowError:  # riesige int (z. B. 10**400) passen in keinen float
-        return False
 
 
 class LeverPipeline:
@@ -354,7 +344,7 @@ class LeverPipeline:
             if not self._binding.has(lever):
                 continue
             vom_server = server.get(lever)
-            original = vom_server if _is_finite_number(vom_server) else state.originals.get(lever)
+            original = vom_server if ist_endliche_zahl(vom_server) else state.originals.get(lever)
             current = state.restore_point.get(lever)
             if original is None:
                 if current is not None:
@@ -424,7 +414,7 @@ class LeverPipeline:
         darf keine unbekannte Betriebsart setzen)."""
         if name in AUX_SETPOINT_ROLES:
             bereich = self._safety.ranges.get("room_setpoint")
-            return bereich is not None and _is_finite_number(wert) and bereich[0] <= wert <= bereich[1]
+            return bereich is not None and ist_endliche_zahl(wert) and bereich[0] <= wert <= bereich[1]
         return isinstance(wert, str) and self._binding.aux_zulaessig(name, wert)
 
     def _row_values(self, row: str) -> dict:
@@ -459,7 +449,7 @@ class LeverPipeline:
         if current is None:
             last_written = self._last_written.get(lever)
             return last_written is not None and abs(last_written - target) <= step / 2
-        if not _is_finite_number(current) or abs(current - target) > step / 2:
+        if not ist_endliche_zahl(current) or abs(current - target) > step / 2:
             return False
         if self.settled(lever):
             return True
@@ -771,7 +761,7 @@ class LeverPipeline:
             logger.warning("%s beim ersten Start nicht lesbar: %s", lever, lesbar(str(error)))
             live = None
         seeded = None
-        if live is not None and _is_finite_number(live):
+        if live is not None and ist_endliche_zahl(live):
             seeded = target_value(live, *self.range_of(lever), self._description.steps[lever])
         logger.warning(
             "Erster Start: Wiederherstellungswert von %s %s -> %s (Anlagenwert)",
@@ -818,7 +808,7 @@ class LeverPipeline:
         except Exception as error:
             logger.warning("Wiederherstellungspunkt nicht lesbar (%s): %s", ", ".join(missing), lesbar(str(error)))
             return None
-        if not all(value is not None and _is_finite_number(value) for value in live.values()):
+        if not all(value is not None and ist_endliche_zahl(value) for value in live.values()):
             logger.warning("Wiederherstellungspunkt ungueltig: %r", live)
             return None
         self._store.update(restore_point={**point, **live})
@@ -883,7 +873,7 @@ class LeverPipeline:
             except Exception as error:
                 logger.warning("%s beim Start nicht lesbar, Ursprungswert bleibt offen: %s", lever, lesbar(str(error)))
                 continue
-            if live is None or not _is_finite_number(live):
+            if live is None or not ist_endliche_zahl(live):
                 logger.warning("%s beim Start nicht numerisch (%r), Ursprungswert bleibt offen", lever, live)
                 continue
             self._store.update(originals={**state.originals, lever: live})
