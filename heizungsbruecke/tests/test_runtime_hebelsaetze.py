@@ -1,4 +1,4 @@
-"""Betrieb mit den Bindings aus Plan 3b ueber _start_bridge (Harness aus test_runtime.py, Geraete-Pfad): der
+"""Betrieb mit den Bindings aus Plan 3b ueber _start_bridge (Harness aus runtime_helpers.py, Geraete-Pfad): der
 Hebelsatz des Konfigurationsdokuments waehlt Binding und lokale Sicherheit; fehlende Pflicht-Rollen sind ein
 Konfigurationsfehler; Vaillant bleibt unveraendert (alle Tests in test_runtime.py)."""
 import logging

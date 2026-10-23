@@ -2,8 +2,8 @@
 und Grenztests. Ein Server, der beliebige Hebelwerte, Schrittweiten und Konfigurationen sendet, und eine Anlage mit
 beliebigem Wertebereich bringen keinen Schreibwert ausserhalb der lokalen Grenzen. Die Grenzen stehen woertlich in
 test_regel4_werte.py (TABELLE, Nutzer-Freigaben), nie aus dem Code; Generatoren kommen aus strategien.py, die
-Laufzeit-Umgebung aus test_property_geraet.py. Findet ein Test hier einen Schreibwert ausserhalb der Grenze, ist das ein Stoppfall (Regel 4),
-kein Fix im Produktcode. Beispielzahl, Seed und Frist kommen aus den Profilen in conftest.py."""
+Laufzeit-Umgebung aus runtime_helpers.py. Findet ein Test hier einen Schreibwert ausserhalb der Grenze, ist das ein
+Stoppfall (Regel 4), kein Fix im Produktcode. Beispielzahl, Seed und Frist kommen aus den Profilen in conftest.py."""
 import json
 import logging
 import math

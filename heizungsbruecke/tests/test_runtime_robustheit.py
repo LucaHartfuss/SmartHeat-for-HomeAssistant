@@ -2,7 +2,7 @@
 Aenderung am Produktionscode. Ein mit xfail(strict=True) markierter Test beschreibt das
 erwartete Verhalten und belegt, dass der heutige Code es NICHT zeigt.
 
-Nutzt das Harness aus test_runtime.py (Fake-HA mit sofort sichtbaren Schreibwerten, Fake-MQTT,
+Nutzt das Harness aus runtime_helpers.py (Fake-HA mit sofort sichtbaren Schreibwerten, Fake-MQTT,
 Fake-Uhr)."""
 from datetime import date, timedelta
 

@@ -3,7 +3,7 @@ sehr viele Befehle oder lauter kaputte Dokumente und Antworten sendet, waehrend 
 Geraete-Thread noch den Regel-Worker zum Stehen und keinen Wert ausserhalb der lokalen Grenzen auf die Anlage (Regel 4).
 
 Aufbau wie produktiv, nur ohne Netz und ohne Threads: der echte Geraetekern (`smartheat_device.device.Device` mit dem
-Fake-Link aus test_device_device.py), der echte HA-Host (`HaDeviceHost`, `__main__.verdrahten` und `__main__.start`)
+Fake-Link aus device_helpers.py), der echte HA-Host (`HaDeviceHost`, `__main__.verdrahten` und `__main__.start`)
 und die echte Laufzeit (`HaHost`, Regel-Worker, Pipeline) auf Fake-HA und Fake-Uhr. Ein Durchlauf ist eine Runde:
 Nachrichten in die Inbox des Geraets, `Device.schritt()` (Geraete-Thread: Nachrichten und ein Takt), `run_pending()`
 (Regel-Worker), dann die Uhr vor. Die Anlage startet wie nach einem Neustart des Add-ons mit gespeicherten Dokumenten

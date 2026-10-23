@@ -13,7 +13,6 @@ from types import SimpleNamespace
 import pytest
 from fakes import FakeClock, FakeHa, trigger_klasse
 from hypothesis import HealthCheck, settings
-from runtime_helpers import DERIVED
 
 import heizungsbruecke.__main__ as main_module
 from heizungsbruecke import config
@@ -21,6 +20,10 @@ from heizungsbruecke.derived_sensors import DerivedSensors
 from smartheat_runtime import entitlement, telemetry
 from smartheat_runtime.backup_store import save_backup
 from smartheat_runtime.state import StateStore
+
+# Die Hilfsmodule sind keine Testdateien: ohne diese Anmeldung (vor ihrem ersten Import) zeigt pytest bei einem
+# fehlgeschlagenen assert in ihnen keine Zwischenwerte. Deshalb steht der Import von runtime_helpers unten in `env`.
+pytest.register_assert_rewrite("runtime_helpers", "geraet_helpers", "device_helpers")
 
 settings.register_profile("schnell", max_examples=50, derandomize=True, database=None, deadline=None,
                           suppress_health_check=[HealthCheck.too_slow], print_blob=False)  # sonst in der CI True
@@ -72,6 +75,8 @@ def env(tmp_path, monkeypatch, clock):
                         ("ABGEMELDET_PATH", runtime_dir / "abgemeldet.json")):
         paths[name] = value
         monkeypatch.setattr(f"heizungsbruecke.config.{name}", value)
+    from runtime_helpers import DERIVED
+
     env_derived = {"replaced": ()}
     monkeypatch.setattr(
         "heizungsbruecke.derived_sensors.ensure_all",
