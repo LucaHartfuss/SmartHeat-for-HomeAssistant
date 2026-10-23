@@ -15,6 +15,7 @@ erneut zu, ein Neustart des Hosts haette das Geraet sonst festgesetzt. zuordnung
 Geraet haelt das Dokument zurueck und prueft spaeter erneut). Bleiben Bindung, Raumfuehler und Hebelsatz gegenueber der
 uebernommenen Konfiguration gleich (z. B. nur das Abo oder der Tagestick aendert sich), entfaellt der HA-Teil.
 Ablehnungen sind details (Rollen, nie Entity-IDs; Spec Stufe 3 S5 6.1), nur lokal_pruefen liefert den lokalen Text."""
+import json
 import logging
 import re
 from collections.abc import Mapping
@@ -120,6 +121,17 @@ def bindung(konfiguration) -> HaBindung:
         kreis=dict(_mapping(raw.get("kreis"))))
 
 
+#: Was den Heizkreis bestimmt (A6-36): ohne config_entry, eine Neuanlage der Integration bleibt dieselbe Anlage.
+KREIS_KENNUNG = ("plattform", "anlage", "nummer")
+
+
+def anlagen_kennung(b: HaBindung) -> str:
+    """Anlagen-Kennung des HA-Hosts (Loaded.plant_id, A6-36): der Heizkreis als JSON. Eine umbenannte oder neu
+    zugeordnete Hebel-Entity desselben Kreises bleibt dieselbe Anlage (bis 1.1.0 waren es die Hebel-Referenzen,
+    roles.lever_refs_identity; app.start uebernimmt einen solchen Bestand einmal)."""
+    return json.dumps({key: b.kreis.get(key) for key in KREIS_KENNUNG}, sort_keys=True)
+
+
 def _entity(ref: str) -> str:
     return ref.partition("::")[0]
 
@@ -181,9 +193,10 @@ def _refs(b: HaBindung) -> list[tuple[str, str]]:
 def _pflicht_refs(b: HaBindung) -> set[str]:
     """Die Referenzen, ohne die nichts laeuft und die von selbst wiederkommen: Soll-Entity, Pflichtrollen des Hebelsatzes
     (dieselben wie host._wait_for_required_entities, plus Soll-Entity), Raumfuehler und jedes Schreibziel. Ein Schreibziel
-    darf nie fallen gelassen werden, auch eine optionale Hebelrolle nicht: sie gehoert zur Anlagenidentitaet
-    (roles.lever_refs_identity), ohne sie wuerde bind_to_tenant eine andere Anlage melden und alles Gebundene
-    zuruecksetzen. Fallen duerfen nur optionale Lese-Rollen und Batterien."""
+    darf nie fallen gelassen werden, auch eine optionale Hebelrolle nicht (ohne Zustand: nicht pruefbar, Wiederholung):
+    bis zum Rueckbau der Uebernahme (A6-36-Uebernahme) gehoert sie zur frueheren Anlagen-Kennung
+    (roles.lever_refs_identity, app.start), ohne sie verwuerfe bind_to_tenant einen Bestand von 1.1.0. Fallen duerfen
+    nur optionale Lese-Rollen und Batterien."""
     return {*([b.soll_entity] if b.soll_entity is not None else []),
             *(b.rollen[rolle] for rolle in PFLICHT_ROLLEN[b.hebelsatz] if rolle in b.rollen), *b.raumfuehler,
             *(ref for _, ref in _schreibziel_rollen(b))}

@@ -60,7 +60,7 @@ class ChannelManifest:
 
 
 def lever_refs_identity(manifest: "ChannelManifest") -> str:
-    """Anlagen-Kennung aus den Referenzen der Hebel (HA: die beschriebenen Entities); Hosts mit gleichbleibenden
-    Referenzen (Gateway) liefern eine eigene (Loaded.plant_id)."""
+    """Die fruehere Anlagen-Kennung des HA-Hosts (bis 1.1.0) aus den Referenzen der Hebel; heute nur noch fuer die
+    einmalige Uebernahme in app.start (bind_to_tenant frueher=, A6-36). Faellt mit A6-36-Uebernahme weg."""
     return json.dumps({lever: manifest.refs[role] for lever, role in sorted(LEVER_ROLES.items())
                        if role in manifest.refs}, sort_keys=True)

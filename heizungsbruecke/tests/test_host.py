@@ -1,4 +1,5 @@
 """HA-Host der Laufzeit (Plan SHG G1, Praezisierung 6) im Geraete-Pfad: Konfiguration aus dem Konfigurationsdokument."""
+import dataclasses
 import logging
 from unittest.mock import MagicMock
 
@@ -7,6 +8,7 @@ from fakes import FakeHa, schreibziel_eintrag
 from geraet_helpers import FakeGeraet, konfiguration_aus_optionen
 from runtime_helpers import OPTIONS, _start_bridge
 
+from heizungsbruecke import dokument
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.host import DERIVED_SENSORS_RETRY_DELAYS_SECONDS, HaHost
@@ -59,6 +61,27 @@ def angelegt(env, monkeypatch):
 def _host(env, geraet=None, **overrides):
     geraet = geraet or FakeGeraet(konfiguration_aus_optionen({**OPTIONS, **overrides}))
     return HaHost(geraet, env.ha)
+
+
+#: Kennung des Kreises der Test-Dokumente (geraet_helpers.konfiguration_aus_optionen), woertlich.
+KREIS_KENNUNG = '{"anlage": "S", "nummer": "0", "plattform": "mypyllant"}'
+
+
+def test_anlagen_kennung_kommt_aus_dem_kreis(env, angelegt, sleeps):
+    """A6-36: die Anlage ist der Heizkreis (plattform, anlage, nummer), nicht die Entity-IDs der Hebel. Eine umbenannte
+    Hebel-Entity bleibt dieselbe Anlage; der Config-Entry zaehlt nicht (Neuanlage der Integration = dieselbe Anlage)."""
+    loaded = _host(env).load()
+    assert loaded.plant_id == KREIS_KENNUNG
+    env.ha.states["number.heat_limit_neu"] = 16.0
+    env.ha.registry.append(schreibziel_eintrag("number.heat_limit_neu", "mypyllant"))
+    umbenannt = _host(env, entity_heat_limit="number.heat_limit_neu").load()
+    assert umbenannt.manifest.refs["heat_limit"] == "number.heat_limit_neu"
+    assert lever_refs_identity(umbenannt.manifest) != lever_refs_identity(loaded.manifest)  # Gegenprobe: bis 1.1.0 neu
+    assert umbenannt.plant_id == KREIS_KENNUNG
+    b = dokument.bindung(konfiguration_aus_optionen(OPTIONS))
+    assert dokument.anlagen_kennung(dataclasses.replace(b, kreis={**b.kreis, "config_entry": "e-neu"})) == KREIS_KENNUNG
+    for feld, wert in (("plattform", "vicare"), ("anlage", "T"), ("nummer", "1")):
+        assert dokument.anlagen_kennung(dataclasses.replace(b, kreis={**b.kreis, feld: wert})) != KREIS_KENNUNG, feld
 
 
 def test_eine_uebernommene_rolle_auf_einer_person_startet_nicht_und_legt_nichts_an(env, angelegt, sleeps):
@@ -137,9 +160,10 @@ def _basis(env, zustaende):
 
 @pytest.mark.parametrize("rolle_option", ["entity_heat_limit", "entity_curve_current"])
 def test_eine_optionale_hebelrolle_ohne_zustand_wird_nie_fallen_gelassen(env, angelegt, sleeps, rolle_option):
-    """Review Fixrunde A: eine Hebelrolle gehoert zur Anlagenidentitaet (lever_refs_identity). Fiele sie weg, meldete
-    bind_to_tenant eine andere Anlage und setzte Wiederherstellungspunkt, Originale und Schreibzaehler zurueck. Ein
-    Schreibziel ohne Zustand ist daher nicht pruefbar (Wiederholung, StartFailure), nie ungelesen."""
+    """Review Fixrunde A: eine Hebelrolle ist ein Schreibziel und gehoert bis zum Rueckbau der Uebernahme
+    (A6-36-Uebernahme) zur frueheren Kennung (lever_refs_identity). Fiele sie weg, verwarf bind_to_tenant einen Bestand
+    von 1.1.0 samt Wiederherstellungspunkt, Originalen und Schreibzaehlern. Ein Schreibziel ohne Zustand ist daher nicht
+    pruefbar (Wiederholung, StartFailure), nie ungelesen."""
     _basis(env, BASIS_ZUSTAENDE)
     with pytest.raises(StartFailure) as fehler:
         _host(env, **{**BASIS, rolle_option: "number.swu"}).load()
@@ -156,7 +180,7 @@ def test_gegenprobe_eine_optionale_hebelrolle_mit_zustand_bleibt_im_manifest(env
 
 def test_eine_fallen_gelassene_lese_rolle_aendert_die_anlagenidentitaet_nicht(env, angelegt, sleeps):
     """Gegenprobe zur Hebelrolle: eine optionale Lese-Rolle (Energie) ohne Zustand startet, wird ungelesen gemeldet, und
-    die Kennung aus den Hebelreferenzen bleibt dieselbe wie mit Zustand."""
+    die Kennung (aus dem Kreis, A6-36) wie die fruehere aus den Hebelreferenzen bleibt dieselbe wie mit Zustand."""
     _basis(env, BASIS_ZUSTAENDE)
     ohne = _host(env, **BASIS, entity_energy_thermal_heating="sensor.waerme").load()
     assert "energy_thermal_heating" not in ohne.manifest.refs and sleeps == []
@@ -165,7 +189,7 @@ def test_eine_fallen_gelassene_lese_rolle_aendert_die_anlagenidentitaet_nicht(en
                           "sensor.waerme::unit_of_measurement": "kWh"})
     mit = _host(env, **BASIS, entity_energy_thermal_heating="sensor.waerme").load()
     assert mit.manifest.refs["energy_thermal_heating"] == "sensor.waerme"
-    assert lever_refs_identity(ohne.manifest) == lever_refs_identity(mit.manifest)
+    assert lever_refs_identity(ohne.manifest) == lever_refs_identity(mit.manifest) and ohne.plant_id == mit.plant_id
 
 
 def test_gegenprobe_dieselbe_optionale_rolle_mit_zustand_bleibt_im_manifest(env, angelegt, sleeps):

@@ -395,6 +395,7 @@ ERLAUBT = (
     "status_start: Status 'startet' statt 'notbetrieb' beim Start mit veraltetem Notbetrieb (Fixrunde A, L4-09)",
     "telemetrie_reihenfolge: die Telemetrie steht in einem Schritt nach den schon eingestellten Ereignissen statt davor "
     "(Fixrunde B, A2-13: wartende Queue-Eintraege vor faelligen Planeintraegen); Inhalt gleich",
+    "plant_id: in backup.json die Kennung des Heizkreises statt der Hebel-Referenzen (Fixrunde B, A6-36)",
 )
 #: Die Schritte, in denen die Laufzeit mit veraltetem Notbetrieb neu startet (ERLAUBT "status_start"); nur dort
 #: normalisiert normalisieren() "startet" + notbetrieb zu "notbetrieb".
@@ -406,13 +407,18 @@ ALT_ADDON_VERSION = "0.36.0"
 #: Der Benachrichtigungsdienst im Master von 0.36 und seit Fixrunde A (ERLAUBT "benachrichtigung"): nur noch Handy-Dienste.
 ALT_DIENST = "notify.handy"
 NEU_DIENST = "notify.mobile_app_handy"
+#: Anlagen-Kennung in backup.json (ERLAUBT "plant_id"): im Master von 0.36 aus den Hebel-Referenzen, seit A6-36 aus dem
+#: Kreis des Dokuments (geraet_helpers.konfiguration_aus_optionen); woertlich, nicht aus dem Code gelesen.
+ALT_KENNUNG = ('{"curve": "number.curve_current", "heat_limit": "number.heat_limit", "min_flow": "number.min_flow", '
+               '"room_setpoint": "climate.zone::temperature"}')
+NEU_KENNUNG = '{"anlage": "S", "nummer": "0", "plattform": "mypyllant"}'
 #: Felder, die Schema 3 dem Status-Ereignis hinzufuegt (ERLAUBT "status"); woertlich, nicht aus geraet_status gelesen.
 SCHEMA_3_GERAET_FELDER = ("geraet_id", "geraet_zustand", "server_verbunden", "raum_soll", "geraet_hinweise")
 
 
 def _neu_benannt(value, *, alt: bool):
     """Nur im Master von 0.36: setup_id entfaellt (in backup.json, erkennbar an plant_id: -> tenant_id = Anlage),
-    addon_version -> aktuelle Version (rekursiv)."""
+    addon_version -> aktuelle Version, plant_id ALT_KENNUNG -> NEU_KENNUNG (rekursiv)."""
     if not alt:
         return value
     if isinstance(value, dict):
@@ -423,6 +429,8 @@ def _neu_benannt(value, *, alt: bool):
                 result["tenant_id"] = OPTIONS["tenant_id"]
         if result.get("addon_version") == ALT_ADDON_VERSION:
             result["addon_version"] = ADDON_VERSION
+        if result.get("plant_id") == ALT_KENNUNG:
+            result["plant_id"] = NEU_KENNUNG
         return result
     if isinstance(value, list):
         return [_neu_benannt(v, alt=alt) for v in value]

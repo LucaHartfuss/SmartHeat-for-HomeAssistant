@@ -1,7 +1,9 @@
 """Laufzeit-Host des Gateways ab 0.6.0 (Spec SHG G2 3.1, Spec 5b Plan D2 Task 5): Start aus dem Konfigurationsdokument,
 Startfehler mit stabilem Schluessel, Hebelsatz, Abmelden, Manifest nach der ersten Abfrage, Batterien, Anlagen-Kennung."""
+import json
 import logging
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import bindung_beispiele
@@ -25,9 +27,10 @@ from smartheat_gateway.paths import Paths
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime import aufraeumen
 from smartheat_runtime.app import IDLE_NOT_CONFIGURED, IdleBridge, RestoreParts, StartFailure
-from smartheat_runtime.roles import ManifestError
+from smartheat_runtime.roles import ManifestError, lever_refs_identity
 from smartheat_runtime.runtime import Runtime
 from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG, BATTERY_PERCENT, BatteryRef
+from smartheat_runtime.state import StateStore, bind_to_tenant
 
 VICARE = {"id": "vicare_cloud", "parameter": {"installation_id": 2012345, "gateway_serial": "7637415000000001",
                                                "device_id": "0", "heizkreis": 0, "poll_seconds": 300.0}}
@@ -307,6 +310,19 @@ def test_load_reports_the_plant_identity_of_the_driver(data_dir, clock):
     loaded = _host(Paths(data_dir), konfiguration(), clock).load()
     assert loaded.plant_id == registry.plant_id(
         {"id": "simulation", "parameter": {"lever_set": "viessmann_vicare", "heizkreis": 0}})
+
+
+def test_die_uebernahme_der_frueheren_ha_kennung_greift_beim_gateway_nie(data_dir, clock):
+    """A6-36: app.start reicht frueher=lever_refs_identity(manifest) auch beim Gateway weiter. Seine Kennung traegt den
+    Schluessel "id", den kein Hebel hat: frueher ist nie gleich, ein Bestand einer anderen Anlage wird weiter verworfen."""
+    loaded = _host(Paths(data_dir), konfiguration(), clock).load()
+    frueher = lever_refs_identity(loaded.manifest)
+    assert frueher != loaded.plant_id and "id" in json.loads(loaded.plant_id) and "id" not in json.loads(frueher)
+    store = StateStore(Path(data_dir) / "backup.json", Path(data_dir) / "failsafe_state.json")
+    store.update(tenant_id="t1", plant_id=registry.plant_id({"id": "simulation", "parameter": {"heizkreis": 1}}),
+                 originals={"curve": 1.4})
+    assert bind_to_tenant(store, "t1", loaded.plant_id, frueher=frueher) == "andere_anlage"
+    assert store.state.originals == {}
 
 
 def test_manifest_requires_the_roles_of_the_lever_set(data_dir, clock):

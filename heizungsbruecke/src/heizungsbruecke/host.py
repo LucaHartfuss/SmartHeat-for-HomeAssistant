@@ -217,7 +217,7 @@ class HaHost:
             Notice(f"entity_fehlt:{feld}", "fehlt", ENTITY_FEHLT_MESSAGE.format(feld=feld)) if feld in fehlend
             else Notice(f"entity_fehlt:{feld}", STATE_OK, ENTITY_DA_MESSAGE.format(feld=feld))
             for feld in dokument.optionale_felder(b))
-        return Loaded(config=runtime, manifest=manifest, binding=binding,
+        return Loaded(config=runtime, manifest=manifest, binding=binding, plant_id=dokument.anlagen_kennung(b),
                       notices=notices)
 
     def trigger_source(self, manifest: ChannelManifest, worker: RegulationWorker) -> TriggerSource:
