@@ -2,6 +2,7 @@
 Startfehler mit stabilem Schluessel, Hebelsatz, Abmelden, Manifest nach der ersten Abfrage, Batterien, Anlagen-Kennung."""
 import logging
 import time
+from types import SimpleNamespace
 
 import bindung_beispiele
 import pytest
@@ -14,6 +15,7 @@ from world import GatewayWorld
 
 from smartheat_core import dateien, rastung
 from smartheat_gateway import config as gateway_config
+from smartheat_gateway import host as host_modul
 from smartheat_gateway.drivers import registry
 from smartheat_gateway.drivers.base import DriverError
 from smartheat_gateway.drivers.registry import create
@@ -280,11 +282,25 @@ def test_a_start_without_a_bound_thermostat_does_not_check_one(data_dir, clock, 
     assert erzeugt == ["simulation"]
 
 
-def test_the_device_list_is_awaited_once_for_the_thermostat_check_and_the_batteries(data_dir, clock):
+def _fake_uhr(monkeypatch):
+    """Ersetzt `time` im Host durch eine Uhr, die nur `sleep` vorstellt: die Pausen stehen in der Liste, die Wartezeit
+    laeuft nicht in Wanduhrzeit."""
+    jetzt = [0.0]
+    pausen = []
+
+    def sleep(sekunden):
+        pausen.append(sekunden)
+        jetzt[0] += sekunden
+
+    monkeypatch.setattr(host_modul, "time", SimpleNamespace(monotonic=lambda: jetzt[0], sleep=sleep))
+    return pausen
+
+
+def test_the_device_list_is_awaited_once_for_the_thermostat_check_and_the_batteries(data_dir, clock, monkeypatch):
+    pausen = _fake_uhr(monkeypatch)
     host = _host(Paths(data_dir), konfiguration(), clock, wait=0.3)
-    started = time.monotonic()
-    host.load()  # leeres bridge/devices: eine Wartezeit, nicht zwei
-    assert 0.25 <= time.monotonic() - started < 0.55
+    host.load()  # leeres bridge/devices: eine Wartezeit (0.3 s in Pausen zu 0.2 s), nicht zwei
+    assert pausen == [host_modul.BATTERY_POLL_SECONDS] * 2 == [0.2, 0.2]
 
 
 def test_load_reports_the_plant_identity_of_the_driver(data_dir, clock):

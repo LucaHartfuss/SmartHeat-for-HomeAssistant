@@ -1,10 +1,9 @@
 """Kontingent-Waechter (Spec SHG G2 4.2): Zaehler je Treiber in /data/quota/<treiber>.json, gemeinsam fuer die Befehle
-des Geraetekerns und die Laufzeit ueber flock (bis 0.5.0 zwei Prozesse, ab 0.6.0 zwei Threads). Gleitendes Fenster
-ueber die WANDUHR (die monotone Uhr ist je Prozess verschieden); Eintraege aus der Zukunft (Uhrsprung beim Boot)
-verfallen mit dem Fenster."""
-import fcntl
+des Geraetekerns und die Laufzeit (zwei Waechter auf derselben Datei in einem Prozess, geschuetzt durch ein Lock je
+Pfad). Gleitendes Fenster ueber die WANDUHR; Eintraege aus der Zukunft (Uhrsprung zurueck) zaehlen auf `now` begrenzt
+bis zum Ende des Fensters weiter."""
 import json
-import os
+import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -24,10 +23,20 @@ class QuotaExhausted(RuntimeError):
     pass
 
 
+_LOCKS: dict[Path, threading.Lock] = {}
+_LOCKS_LOCK = threading.Lock()
+
+
+def _lock_for(path: Path) -> threading.Lock:
+    """Ein Lock je Datei, gemeinsam fuer alle Waechter des Prozesses auf diesem Pfad."""
+    with _LOCKS_LOCK:
+        return _LOCKS.setdefault(path.absolute(), threading.Lock())
+
+
 class QuotaGuard:
     def __init__(self, path: Path, spec: QuotaSpec, now: Callable[[], float] = time.time) -> None:
         self._path = path
-        self._lock_path = path.with_suffix(".lock")
+        self._lock = _lock_for(path)
         self._spec = spec
         self._now = now
 
@@ -36,10 +45,6 @@ class QuotaGuard:
             if self._is_exhausted(state):
                 raise QuotaExhausted(f"Kontingent erschöpft ({len(state['aufrufe'])}/{self._spec.hard_limit})")
             state["aufrufe"].append(self._now())
-
-    def used(self) -> int:
-        with self._locked() as state:
-            return len(state["aufrufe"])
 
     def exhausted(self) -> bool:
         with self._locked() as state:
@@ -55,12 +60,10 @@ class QuotaGuard:
 
     @contextmanager
     def _locked(self) -> Iterator[dict]:
-        """Zustand unter exklusivem flock. Gespeichert wird nach Erfolg und nach QuotaExhausted (der bereinigte
+        """Zustand unter dem Lock der Datei. Gespeichert wird nach Erfolg und nach QuotaExhausted (der bereinigte
         Zustand); der Lock wird immer freigegeben."""
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(self._lock_path, os.O_RDWR | os.O_CREAT, 0o644)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
+        with self._lock:
             state = self._load()
             try:
                 yield state
@@ -68,8 +71,6 @@ class QuotaGuard:
                 self._save(state)
                 raise
             self._save(state)
-        finally:
-            os.close(fd)  # gibt auch den flock frei
 
     def _load(self) -> dict:
         try:
@@ -79,7 +80,7 @@ class QuotaGuard:
         if not isinstance(raw, dict):
             raw = {}
         now, window = self._now(), self._spec.window_seconds
-        calls = [ts for ts in raw.get("aufrufe", []) if isinstance(ts, int | float) and now - window < ts <= now + 1]
+        calls = [min(ts, now) for ts in raw.get("aufrufe", []) if isinstance(ts, int | float) and now - window < ts]
         blocked = raw.get("gesperrt_bis")
         return {"aufrufe": calls, "gesperrt_bis": blocked if isinstance(blocked, int | float) else None}
 

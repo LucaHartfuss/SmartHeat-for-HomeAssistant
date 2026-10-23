@@ -1,5 +1,7 @@
-import multiprocessing
+import json
 import os
+import threading
+import time
 from unittest import mock
 
 import pytest
@@ -14,6 +16,11 @@ def make_guard(tmp_path):
     return QuotaGuard(tmp_path / "quota" / "q.json", SPEC, now=lambda: 1000.0)
 
 
+def zaehler(guard):
+    """Zahl der Aufrufe, die die Datei fuehrt (der Waechter selbst bietet keine Zaehlung)."""
+    return len(json.loads(guard._path.read_text())["aufrufe"])
+
+
 def test_window_and_hard_limit(tmp_path):
     now = [1000.0]
     guard = QuotaGuard(tmp_path / "q.json", SPEC, now=lambda: now[0])
@@ -23,8 +30,8 @@ def test_window_and_hard_limit(tmp_path):
     with pytest.raises(QuotaExhausted):
         guard.take()
     now[0] += 101
-    assert guard.used() == 0
     guard.take()
+    assert zaehler(guard) == 1  # die vier alten Eintraege sind mit dem Fenster verfallen
 
 
 def test_rate_limit_blocks_until_the_window_is_free(tmp_path):
@@ -36,21 +43,33 @@ def test_rate_limit_blocks_until_the_window_is_free(tmp_path):
     assert not guard.exhausted()
 
 
-def _take_many(path, count):
-    guard = QuotaGuard(path, QuotaSpec(hard_limit=1000, window_seconds=3600))
-    for _ in range(count):
-        guard.take()
+def test_two_guards_in_two_threads_share_one_counter(tmp_path, monkeypatch):
+    """Befehle des Geraetekerns und Laufzeit bauen je einen Waechter auf derselben Datei (Spec SHG G2 4.2); in einem
+    Prozess schuetzt sie ein Lock je Pfad. Das Laden mit einer Pause von 1 ms macht den Wettlauf des Lesens und
+    Schreibens sicher sichtbar."""
+    laden = QuotaGuard._load
 
+    def langsam(self):
+        state = laden(self)
+        time.sleep(0.001)
+        return state
 
-def test_two_processes_share_one_counter(tmp_path):
+    monkeypatch.setattr(QuotaGuard, "_load", langsam)
     path = tmp_path / "q.json"
-    workers = [multiprocessing.Process(target=_take_many, args=(path, 50)) for _ in range(2)]
-    for worker in workers:
-        worker.start()
-    for worker in workers:
-        worker.join(30)
-    assert [worker.exitcode for worker in workers] == [0, 0]
-    assert QuotaGuard(path, SPEC).used() == 100
+    spec = QuotaSpec(hard_limit=1000, window_seconds=3600)
+
+    def nehmen():
+        guard = QuotaGuard(path, spec)
+        for _ in range(50):
+            guard.take()
+
+    threads = [threading.Thread(target=nehmen) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+    assert not any(thread.is_alive() for thread in threads)
+    assert zaehler(QuotaGuard(path, spec)) == 100
 
 
 def test_save_goes_through_the_atomic_writer(tmp_path, monkeypatch):
@@ -66,7 +85,9 @@ def test_corrupt_or_foreign_file_counts_as_empty(tmp_path):
     guard._path.parent.mkdir(parents=True, exist_ok=True)
     for content in ("{kaputt", "[1, 2]", ""):
         guard._path.write_text(content)
-        assert guard.used() == 0
+        assert not guard.exhausted()
+        guard.take()
+        assert zaehler(guard) == 1  # die Datei ist wieder heil und fuehrt nur den neuen Aufruf
 
 
 def test_a_forward_clock_jump_at_boot_lets_old_calls_expire_early_but_never_blocks(tmp_path):
@@ -76,16 +97,28 @@ def test_a_forward_clock_jump_at_boot_lets_old_calls_expire_early_but_never_bloc
         guard.take()
     assert guard.exhausted()
     now[0] += 90_000  # Sprung nach vorn (Pi ohne Echtzeituhr, NTP stellt die Uhr)
-    assert not guard.exhausted() and guard.used() == 0
+    assert not guard.exhausted()
+    guard.take()
+    assert zaehler(guard) == 1  # die fuenf alten Eintraege sind verfallen
 
 
-def test_a_backward_clock_jump_drops_calls_from_the_future_at_once(tmp_path):
+def test_a_backward_clock_jump_keeps_counting_until_the_window_ends(tmp_path):
+    """Eintraege aus der Zukunft (Uhr springt zurueck) zaehlen ab dem Sprung weiter: auf `now` begrenzt, laufen sie
+    mit dem Fenster ab. Ein Verwerfen liesse das Kontingent nach jedem Uhrsprung frei."""
     now = [1_000_000.0]
     guard = QuotaGuard(tmp_path / "q.json", QuotaSpec(5, 86400), now=lambda: now[0])
     for _ in range(5):
         guard.take()
     now[0] -= 3 * 86400  # Sprung zurueck: die Eintraege liegen jetzt in der Zukunft
-    assert guard.used() == 0  # quota._load behaelt nur now - window < ts <= now + 1 (Praezisierung 8)
+    assert guard.exhausted()
+    with pytest.raises(QuotaExhausted):
+        guard.take()
+    now[0] += 86399  # fast ein Fenster nach dem Sprung: noch gezaehlt
+    assert guard.exhausted()
+    now[0] += 2  # Fenster plus eine Sekunde nach dem Sprung: frei
+    assert not guard.exhausted()
+    guard.take()
+    assert zaehler(guard) == 1
 
 
 @pytest.mark.parametrize("abbruch", ["fsync", "replace"])
@@ -100,12 +133,12 @@ def test_the_counter_survives_a_crash_while_saving(tmp_path, monkeypatch, abbruc
     vorher = guard._path.read_bytes()
     # Die Attrappen an os.fsync/os.replace (autospec) sind die Dateisystem-Grenze (Nr. 23): sie spielen den Ausfall des
     # Systems nach; geprueft wird die Wirkung auf die Datei, nicht der Aufruf.
-    assert guard.used() == 2
+    assert zaehler(guard) == 2
     with monkeypatch.context() as patch:
         patch.setattr(os, abbruch, mock.create_autospec(getattr(os, abbruch), side_effect=OSError(5, "Abbruch")))
         with pytest.raises(OSError, match="Abbruch"):
             guard.take()
     assert guard._path.read_bytes() == vorher
-    assert make_guard(tmp_path).used() == 2  # frische Instanz liest die alte Datei
+    assert zaehler(make_guard(tmp_path)) == 2  # frische Instanz liest die alte Datei
     guard.take()  # Gegenprobe: ohne Abbruch zaehlt es wieder, die Sperre haengt nicht
-    assert make_guard(tmp_path).used() == 3
+    assert zaehler(make_guard(tmp_path)) == 3

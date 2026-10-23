@@ -183,7 +183,7 @@ def test_a_stale_cache_raises_value_error_and_under_an_exhausted_quota_quota_exh
     clock.advance(3 * 300 + 1)
     with pytest.raises(ValueError):
         driver.read("curve")
-    for _ in range(1200 - driver._guard.used()):  # der Abruf der Fixture zaehlt schon mit
+    for _ in range(1200 - len(driver._guard._load()["aufrufe"])):  # der Abruf der Fixture zaehlt schon mit
         driver._guard.take()
     with pytest.raises(QuotaExhausted):
         driver.read("curve")

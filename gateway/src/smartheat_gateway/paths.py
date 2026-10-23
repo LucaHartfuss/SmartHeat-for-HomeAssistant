@@ -1,8 +1,8 @@
 """Dateien unter /data (Spec SHG G2 6.1, Spec 5b Plan D2). Ein Schreiber je Datei: Geraetekern = device/ (Identitaet,
 Zertifikat, Dokumente, Befehle); Laufzeit = runtime/, agent_state.json (LED, Name aus 0.5.0), inventur.json,
 aufraeumen.json, software_soll.json, software_quittung.json, secrets/drivers/ (Treiber-Anmeldungen); Host-Updater =
-software_meldungen.json; quota/ unter flock. Bis 0.5.0 lagen hier noch runtime_config.json, secrets/runtime.json und
-agent/ des Agenten; 0.6.0 liest sie nicht mehr."""
+software_meldungen.json; quota/ unter einem Lock je Pfad im Prozess. Bis 0.5.0 lagen hier noch runtime_config.json,
+secrets/runtime.json und agent/ des Agenten; 0.6.0 liest sie nicht mehr."""
 import os
 from dataclasses import dataclass
 from pathlib import Path
