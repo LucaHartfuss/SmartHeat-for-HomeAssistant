@@ -207,17 +207,6 @@ class HomeAssistantApi:
             raise ValueError(f"Entity {entity_id} hat kein Attribut {attribute!r}")
         return str(value)
 
-    def delete_input_number(self, entity_id: str) -> None:
-        """Loescht einen input_number-Helfer (TP11: Tag-/Nachtmittel entfallen). Nur input_number.*
-        mit dem Objekt-Teil-Praefix `smartheat_` (wie delete_helper() bei den Config-Entry-Helfern:
-        nie ein fremder Helfer), per WS-Kommando input_number/delete mit dem Objekt-Teil der Entity-ID."""
-        domain, _, object_id = entity_id.partition(".")
-        if domain != "input_number" or not object_id:
-            raise RuntimeError(f"'{entity_id}' ist kein input_number-Helfer, wird nicht geloescht")
-        if not object_id.startswith("smartheat_"):
-            raise RuntimeError(f"'{entity_id}' ist kein SmartHeat-Hilfssensor, wird nicht geloescht")
-        self._call_ws_command({"type": "input_number/delete", "input_number_id": object_id})
-
     def create_template_sensor(self, name: str, template: str) -> str:
         """Legt einen Template-Sensor (Temperatur in °C) per Config-Entry-Flow `template` an:
         erst der Menue-Schritt `sensor`, dann das Formular mit Name, Template, Einheit,
@@ -237,8 +226,7 @@ class HomeAssistantApi:
         return self._find_entity_by_config_entry(result["result"]["entry_id"])
 
     def delete_helper(self, entity_id: str, tenant_id: str | None = None) -> None:
-        """Loescht den Config-Entry eines per Config-Flow angelegten Helfers (Template- oder
-        Statistik-Sensor). input_number-Helfer loescht delete_input_number.
+        """Loescht den Config-Entry eines per Config-Flow angelegten Helfers (Template-Sensor).
 
         Nur Entities der Plattformen HELPER_PLATFORMS: die Entity-ID stammt aus
         derived_sensors.json. Ist die Datei kaputt, von einer anderen Installation oder die ID

@@ -35,11 +35,6 @@ BACKUP_FIELDS = (
     + ("write_budget",) + _PLAN3B_FIELDS
 )
 _OMITTED_WHEN_EMPTY = _TEXT_MAP_FIELDS + _LEVER_MAP_FIELDS + ("write_budget",) + _PLAN3B_FIELDS
-# Audit 4 P-B: Schluessel, die Add-on 0.35.0 noch schrieb und die seit 0.36.0 ohne Bedeutung sind; sie werden beim Laden
-# verworfen statt als unbekannte Schluessel weitergeschrieben.
-# Stufe 3 S7 (A5-63): setup_id (immer = tenant_id) heisst jetzt tenant_id; _parse_backup uebernimmt den alten Wert, der
-# Schluessel verschwindet beim naechsten Schreiben.
-_DROPPED_KEYS = ("waerme_fehlt_seit", "setup_id")
 
 
 @dataclass(frozen=True)
@@ -137,7 +132,8 @@ def _is_aux(value) -> bool:
 def _is_energy_entry(value) -> bool:
     """Zustand je Energiekanal; ein Eintrag ohne Einheit (aus 1.0.0) bleibt lesbar und beginnt in normalize neu."""
     return (isinstance(value, dict) and set(value) in ({"raw", "sum"}, {"raw", "sum", "einheit"})
-            and ist_endliche_zahl(value["raw"]) and ist_endliche_zahl(value["sum"]) and isinstance(value.get("einheit", ""), str))
+            and ist_endliche_zahl(value["raw"]) and ist_endliche_zahl(value["sum"])
+            and isinstance(value.get("einheit", ""), str))
 
 
 def _parse_budget(raw) -> dict | None:
@@ -162,8 +158,6 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
     """Liest die bekannten Felder tolerant: ein Feld mit falschem Typ faellt auf seinen
     Standardwert zurueck, die anderen bleiben. Unbekannte Schluessel werden unveraendert
     mitgefuehrt (spaetere Versionen; Felder bis 0.29.0 seit Audit 4 P-E ebenso)."""
-    if "setup_id" in raw and "tenant_id" not in raw:  # bis Stufe 3 S7 hiess das Feld setup_id (immer = tenant_id)
-        raw = {**raw, "tenant_id": raw["setup_id"]}
     values = {}
 
     def _invalid(key):
@@ -223,7 +217,7 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
         else:
             values["write_budget"] = budget
     _parse_plan3b(raw, values, _invalid)
-    extra = {key: value for key, value in raw.items() if key not in BACKUP_FIELDS and key not in _DROPPED_KEYS}
+    extra = {key: value for key, value in raw.items() if key not in BACKUP_FIELDS}
     return values, extra
 
 

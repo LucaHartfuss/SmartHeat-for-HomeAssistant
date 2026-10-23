@@ -576,7 +576,7 @@ def test_delete_helper_refuses_config_entries_of_other_integrations(platform):
 
 @pytest.mark.parametrize("entity_id", ["sensor.fremder_helfer", "sensor.", "smartheat_t1_dart"])
 def test_delete_helper_refuses_entities_without_smartheat_prefix(entity_id):
-    """Wie delete_input_number: nur Entities mit dem Objekt-Teil-Praefix `smartheat_`, auch wenn
+    """Nur Entities mit dem Objekt-Teil-Praefix `smartheat_`, auch wenn
     eine fremde Entity zufaellig auf der Plattform template/statistics liegt."""
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
     ha_ws = HaWebSocket([{"entity_id": entity_id, "config_entry_id": "e_fremd", "platform": "template"}])
@@ -679,36 +679,6 @@ def test_set_hvac_mode_posts_correct_payload():
         json={"entity_id": "climate.zone_1", "hvac_mode": "heat_cool"},
         timeout=(10, 60),
     )
-
-
-def test_delete_input_number_sends_ws_command():
-    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
-    ha_ws = HaWebSocket(None)
-    with ha_ws.angeschlossen():
-        api.delete_input_number("input_number.smartheat_x_tagesmittel")
-
-    assert ha_ws.urls == ["ws://supervisor/core/api/websocket"]
-    assert ha_ws.kommandos == [{"id": 1, "type": "input_number/delete", "input_number_id": "smartheat_x_tagesmittel"}]
-
-
-def test_delete_input_number_refuses_non_input_number_entities():
-    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
-    ha_ws = HaWebSocket(None)
-    with ha_ws.angeschlossen(), pytest.raises(RuntimeError):
-        api.delete_input_number("sensor.smartheat_x_tagesmittel")
-
-    assert ha_ws.urls == []
-
-
-def test_delete_input_number_refuses_entities_without_smartheat_prefix():
-    """Wie delete_helper(): nur SmartHeat-eigene Helfer werden geloescht, kein fremder
-    input_number-Helfer wird versehentlich getroffen."""
-    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
-    ha_ws = HaWebSocket(None)
-    with ha_ws.angeschlossen(), pytest.raises(RuntimeError, match="kein SmartHeat-Hilfssensor"):
-        api.delete_input_number("input_number.fremder_helfer")
-
-    assert ha_ws.urls == []
 
 
 def test_delete_helper_deletes_a_renamed_helper_by_its_config_entry_title():

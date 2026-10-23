@@ -1,12 +1,10 @@
 """Hilfs-Entities der Bruecke. Der Raumtemperatur-Template-Sensor ist die Rolle room_actual (Mittel
 aller gueltigen Raumfuehler), bei einer weather-Quelle ein Aussentemperatur-Template die Rolle
-outdoor_temp. Seit TP11 bildet der Server alle Mittelwerte aus der Telemetrie; die frueheren
-Statistik- und Tag-/Nacht-Helfer raeumt ensure_all beim Start weg.
+outdoor_temp. Der Server bildet alle Mittelwerte aus der Telemetrie.
 
-Jeder Helfer merkt sich die Quelle, auf der er angelegt wurde (derived_sensors.json). Weicht sie
-ab oder ist sie unbekannt (Bestand vor TP6), wird er geloescht und neu angelegt; die Entity-ID
-bleibt dabei gleich (slugify(name), gegen echtes HA geprueft)."""
-import functools
+Jeder Helfer merkt sich die Quelle, auf der er angelegt wurde (derived_sensors.json). Fehlt sie oder
+weicht sie ab, wird er geloescht und neu angelegt; die Entity-ID bleibt dabei gleich (slugify(name),
+gegen echtes HA geprueft)."""
 import hashlib
 import json
 import logging
@@ -19,10 +17,8 @@ from smartheat_runtime.backup_store import load_backup, save_backup
 
 logger = logging.getLogger(__name__)
 
-# TP11: Tracking-Schluessel der frueheren Helfer (DAT/DART, Raum-Mittel, 24-h-Minimum als
-# Statistik-Helfer, Tag-/Nachtmittel als input_number).
-OBSOLETE_STATISTICS = ("room_12h_avg", "dart", "dat", "outdoor_min_24h")
-OBSOLETE_INPUT_NUMBERS = ("room_day_avg", "room_night_avg")
+# Tracking-Schluessel der Helfer, die dieses Add-on anlegt; jeder andere Eintrag ist ein Altrest.
+TRACKING_KEYS = ("room_temperature", "outdoor_temperature")
 
 
 @dataclass(frozen=True)
@@ -34,7 +30,9 @@ class DerivedSensors:
     sources_fingerprint: str
 
 
-def ensure_all(ha_api, tenant_id: str, room_sensors: list[str], outdoor_source: str, state_path: Path) -> DerivedSensors:
+def ensure_all(
+    ha_api, tenant_id: str, room_sensors: list[str], outdoor_source: str, state_path: Path,
+) -> DerivedSensors:
     tracking = load_backup(state_path)
     replaced: list[str] = []
     sources: dict[str, str] = {}
@@ -66,7 +64,6 @@ def ensure_all(ha_api, tenant_id: str, room_sensors: list[str], outdoor_source: 
         )
     else:
         _drop_unused(ha_api, tracking, "outdoor_temperature", state_path, tenant_id)
-    _remove_obsolete(ha_api, tracking, state_path, tenant_id)
 
     fingerprint = hashlib.sha256(json.dumps(sources, sort_keys=True).encode()).hexdigest()[:12]
     return DerivedSensors(entity_ids=result, replaced=tuple(replaced), sources_fingerprint=fingerprint)
@@ -95,45 +92,27 @@ def _ensure_entity(
     return entity_id, replaced
 
 
-def _drop_unused(ha_api, tracking: dict, key: str, state_path: Path, tenant_id: str, delete=None) -> str | None:
-    """Ein nicht mehr gebrauchter Helfer (Template-Helfer bei weather -> sensor, TP11-Altbestand)
-    wird entfernt, erst in HA, dann aus dem Tracking. `delete` loescht in HA (Standard:
-    ha_api.delete_helper mit dem Tenant fuer die Titelpruefung). Gibt die entfernte Entity-ID zurueck, None ohne Tracking-Eintrag.
-    Wirft, wenn das Loeschen scheitert; der Eintrag bleibt dann stehen."""
+def _drop_unused(ha_api, tracking: dict, key: str, state_path: Path, tenant_id: str) -> str | None:
+    """Ein nicht mehr gebrauchter Helfer (Template-Helfer bei weather -> sensor) wird entfernt, erst in HA
+    (ha_api.delete_helper mit dem Tenant fuer die Titelpruefung), dann aus dem Tracking. Gibt die entfernte
+    Entity-ID zurueck, None ohne Tracking-Eintrag. Wirft, wenn das Loeschen scheitert; der Eintrag bleibt dann
+    stehen."""
     existing_id = tracking.get(key, {}).get("entity_id")
     if existing_id is None:
         return None
     if ha_api.entity_exists(existing_id):
-        (delete or functools.partial(ha_api.delete_helper, tenant_id=tenant_id))(existing_id)
+        ha_api.delete_helper(existing_id, tenant_id=tenant_id)
     del tracking[key]
     save_backup(state_path, tracking)
     return existing_id
-
-
-def _remove_obsolete(ha_api, tracking: dict, state_path: Path, tenant_id: str) -> None:
-    """TP11: DAT/DART, Raum-Mittel, 24-h-Minimum und Tag-/Nachtmittel werden nicht mehr gebraucht.
-    Ein Fehler beim Loeschen ist kein Startfehler; der Eintrag bleibt dann fuer den naechsten Start.
-    Umbenannte Helfer erkennt delete_helper am Titel mit dem Tenant (B-TP11-1)."""
-    delete_helper = functools.partial(ha_api.delete_helper, tenant_id=tenant_id)
-    for key in OBSOLETE_STATISTICS + OBSOLETE_INPUT_NUMBERS:
-        delete = ha_api.delete_input_number if key in OBSOLETE_INPUT_NUMBERS else delete_helper
-        try:
-            removed = _drop_unused(ha_api, tracking, key, state_path, tenant_id, delete=delete)
-        except Exception as error:
-            entry = tracking.get(key)  # kann kaputt sein (kein dict), dann nicht noch einmal werfen
-            entity_id = entry.get("entity_id") if isinstance(entry, dict) else entry
-            logger.warning("Alter Hilfssensor %s (%s) konnte nicht entfernt werden: %s", lesbar(str(entity_id)), key,
-                           lesbar(str(error)))
-            continue
-        if removed is not None:
-            logger.info("Alter Hilfssensor %s (%s) entfernt", lesbar(str(removed)), key)
 
 
 def entfernen(ha_api, tenant_id: str, state_path: Path) -> bool:
     """Alle vom Add-on angelegten Hilfssensoren loeschen (Entfernen der Anlage, Spec 5c, A4-07): je Helfer erst in HA,
     dann aus dem Tracking (wie _drop_unused). Wirft nie. Ein nicht loeschbarer Helfer (HA antwortet nicht, Fehler)
     bleibt im Tracking fuer den naechsten Versuch, ins Log kommt nur die Fehlerart. Kaputte Eintraege ohne Entity-ID
-    fallen weg. True, wenn kein Helfer mehr uebrig ist; dann ist auch die Datei weg."""
+    und Eintraege fremder Schluessel (Altreste frueherer Versionen) fallen ohne Loeschversuch weg. True, wenn kein
+    Helfer mehr uebrig ist; dann ist auch die Datei weg."""
     try:
         tracking = load_backup(state_path)
     except (OSError, ValueError) as error:
@@ -141,15 +120,13 @@ def entfernen(ha_api, tenant_id: str, state_path: Path) -> bool:
         tracking = {}
     if not isinstance(tracking, dict):
         tracking = {}
-    delete_helper = functools.partial(ha_api.delete_helper, tenant_id=tenant_id)
     for key in list(tracking):
         entry = tracking[key]
-        if not isinstance(entry, dict) or not isinstance(entry.get("entity_id"), str):
+        if key not in TRACKING_KEYS or not isinstance(entry, dict) or not isinstance(entry.get("entity_id"), str):
             del tracking[key]
             continue
-        delete = ha_api.delete_input_number if key in OBSOLETE_INPUT_NUMBERS else delete_helper
         try:
-            removed = _drop_unused(ha_api, tracking, key, state_path, tenant_id, delete=delete)
+            removed = _drop_unused(ha_api, tracking, key, state_path, tenant_id)
         except Exception as error:
             logger.warning("Hilfssensor %s (%s) nicht geloescht (%s), neuer Versuch beim naechsten Start",
                            lesbar(str(entry["entity_id"])), key, type(error).__name__)
