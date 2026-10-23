@@ -46,7 +46,7 @@ PAARE = [
     ("FakeGeraet.kanal", FakeGeraet.kanal, Device.laufzeit_kanal),  # mqtt_factory von app.start
     ("FakeGeraet.neustart", FakeGeraet.neustart, prozess.neustart_der_laufzeit),  # neustart von app.start
     ("FakeGeraet.publish", FakeGeraet.publish, StatusSink.publish),  # status_sink ohne HA
-    # Link der Laufzeit (Spione in test_runtime.py)
+    # Link der Laufzeit (Spione in runtime_helpers.py)
     ("loop_start_aufzeichnen", loop_start_aufzeichnen([], lambda: None), RuntimeChannel.loop_start),
     ("verbindung_aus", verbindung_aus({"up": True}), RuntimeChannel.is_connected),
     # Grenz-Adapter zum HA-WebSocket (Controller-Ruling Task 10): Fake-Trigger-Client der Laufzeit-, Property- und

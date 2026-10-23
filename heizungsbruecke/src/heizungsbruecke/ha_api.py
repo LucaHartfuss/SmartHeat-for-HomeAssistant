@@ -6,8 +6,8 @@ import websocket
 from smartheat_runtime.ports import SignalUngueltig
 
 # Plattformen der Helfer, die derived_sensors per Config-Flow anlegt (und nur die darf
-# delete_helper loeschen).
-HELPER_PLATFORMS = ("statistics", "template")
+# delete_helper loeschen): seit TP11 nur noch Template-Sensoren.
+HELPER_PLATFORMS = ("template",)
 # `state` in GET /api/config, sobald HA fertig gestartet ist (homeassistant.core.CoreState).
 HA_STATE_RUNNING = "RUNNING"
 # (Verbindungs-, Lese-Timeout) fuer Anlagen-Schreibaufrufe: HA beantwortet einen REST-Service-
@@ -210,8 +210,7 @@ class HomeAssistantApi:
     def create_template_sensor(self, name: str, template: str) -> str:
         """Legt einen Template-Sensor (Temperatur in °C) per Config-Entry-Flow `template` an:
         erst der Menue-Schritt `sensor`, dann das Formular mit Name, Template, Einheit,
-        Device- und State-Class. Die Entity-ID entsteht aus slugify(name), wie bei den
-        Statistik-Helfern. Gegen einen echten HA-Container verifiziert
+        Device- und State-Class. Die Entity-ID entsteht aus slugify(name). Gegen einen echten HA-Container verifiziert
         (tests/test_ha_api_real_ha_integration.py)."""
         fields = {
             "next_step_id": "sensor",

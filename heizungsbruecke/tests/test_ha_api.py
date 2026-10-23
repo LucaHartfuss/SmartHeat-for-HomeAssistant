@@ -527,12 +527,11 @@ def test_create_template_sensor_runs_template_flow_with_temperature_fields():
     assert ha_ws.kommandos == [{"id": 1, "type": "config/entity_registry/list"}]
 
 
-@pytest.mark.parametrize("platform", ["statistics", "template"])
-def test_delete_helper_deletes_the_config_entry_of_the_entity(platform):
+def test_delete_helper_deletes_the_config_entry_of_the_entity():
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
     registry = [
         {"entity_id": "sensor.other", "config_entry_id": "e1", "platform": "mypyllant"},
-        {"entity_id": "sensor.smartheat_t1_dart", "config_entry_id": "e2", "platform": platform},
+        {"entity_id": "sensor.smartheat_t1_dart", "config_entry_id": "e2", "platform": "template"},
     ]
     mock_response = Mock(spec=requests.Response)
     mock_response.raise_for_status.return_value = None
@@ -577,7 +576,7 @@ def test_delete_helper_refuses_config_entries_of_other_integrations(platform):
 @pytest.mark.parametrize("entity_id", ["sensor.fremder_helfer", "sensor.", "smartheat_t1_dart"])
 def test_delete_helper_refuses_entities_without_smartheat_prefix(entity_id):
     """Nur Entities mit dem Objekt-Teil-Praefix `smartheat_`, auch wenn
-    eine fremde Entity zufaellig auf der Plattform template/statistics liegt."""
+    eine fremde Entity zufaellig auf der Plattform template liegt."""
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
     ha_ws = HaWebSocket([{"entity_id": entity_id, "config_entry_id": "e_fremd", "platform": "template"}])
     with (
@@ -681,10 +680,26 @@ def test_set_hvac_mode_posts_correct_payload():
     )
 
 
+@pytest.mark.parametrize("platform", ["statistics", "mypyllant"])
+def test_delete_helper_refuses_every_platform_but_template(platform):
+    """Das Add-on legt nur Template-Helfer an: auch ein Config-Entry der Plattform statistics mit SmartHeat-Namen wird
+    nicht geloescht."""
+    api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
+    registry = [{"entity_id": "sensor.smartheat_t1_dart", "config_entry_id": "e2", "platform": platform}]
+    with (
+        HaWebSocket(registry).angeschlossen(),
+        patch("heizungsbruecke.ha_api.requests.delete", autospec=True) as mock_delete,
+        pytest.raises(RuntimeError, match="kein SmartHeat-Hilfssensor"),
+    ):
+        api.delete_helper("sensor.smartheat_t1_dart")
+
+    mock_delete.assert_not_called()
+
+
 def test_delete_helper_deletes_a_renamed_helper_by_its_config_entry_title():
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
     registry = [{"entity_id": "sensor.heizraum_zuhause_smartheat_t1_dat", "config_entry_id": "e2",
-                 "platform": "statistics"}]
+                 "platform": "template"}]
     entries = [{"entry_id": "e1", "title": "Zuhause"}, {"entry_id": "e2", "title": "SmartHeat t1 DAT"}]
     mock_response = Mock(spec=requests.Response)
     mock_response.raise_for_status.return_value = None
@@ -703,7 +718,7 @@ def test_delete_helper_deletes_a_renamed_helper_by_its_config_entry_title():
 @pytest.mark.parametrize("title", ["Wohnzimmer Statistik", "SmartHeat t2 DAT", "SmartHeat t1", None])
 def test_delete_helper_refuses_a_renamed_helper_with_a_foreign_title(title):
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")
-    registry = [{"entity_id": "sensor.umbenannt", "config_entry_id": "e2", "platform": "statistics"}]
+    registry = [{"entity_id": "sensor.umbenannt", "config_entry_id": "e2", "platform": "template"}]
     entries = [] if title is None else [{"entry_id": "e2", "title": title}]
     with (
         HaWebSocket(registry, entries).angeschlossen(),
