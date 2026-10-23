@@ -322,8 +322,7 @@ def _paths(tmp_path, monkeypatch):
 def _host(tmp_path, monkeypatch, supervisor=None, device=None, ha=None):
     _paths(tmp_path, monkeypatch)
     clock = FakeClock()
-    host = geraet_host.HaDeviceHost(ha or FakeHa(), supervisor or Supervisor(), clock=clock,
-                                    wall=lambda: 1_800_000_000)
+    host = geraet_host.HaDeviceHost(ha or FakeHa(), supervisor or Supervisor(), clock=clock)
     device = device or Device()
     host.verbinden(device)
     return host, device, clock

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Lokale und CI-Pruefung (docs/ci-cd-runbook.md). Aufruf: scripts/check.sh [--full] [--only SCHRITT]
-# Docker-Schritte: im Add-on laeuft "docker" nur mit --full oder --only docker; in HomeAssistantPapa
-# braucht "config" immer Docker. Docker wird direkt genutzt, wenn verfuegbar (CI); in der
-# VS-Code-Sandbox nur mit --full ueber flatpak-spawn --host (daher lokal: --only docker --full).
+# Docker-Schritte: im Add-on laeuft "docker" nur mit --full oder --only docker. Docker wird direkt genutzt,
+# wenn verfuegbar (CI); in der VS-Code-Sandbox nur mit --full ueber flatpak-spawn --host (daher lokal:
+# --only docker --full).
 # Ein unbekannter Schrittname bei --only bricht mit Exit 2 ab (gueltige Namen: check_only-Aufruf unten).
 set -uo pipefail
 cd "$(dirname "$0")/.."
