@@ -1,4 +1,4 @@
-"""Raum und Startwert, beide Hosts (Spec Stufe 3 S6 4.2/4.3)."""
+"""Raum und Startwert, beide Hosts."""
 import pytest
 
 from smartheat_runtime.raum import RaumPublisher
@@ -43,7 +43,7 @@ class _FesterStore:
 
 @pytest.mark.parametrize("wert", _NICHT_ENDLICH, ids=_IDS)
 def test_ein_nicht_endliches_ist_wird_zu_none_die_uebrigen_felder_bleiben(wert):
-    """Testoffensive T2, Nr. 17 (Review Focus 2): ein Fuehler mit NaN/Inf legt den Raum nicht lahm, nur ist faellt weg."""
+    """Ein Fuehler mit NaN/Inf legt den Raum nicht lahm, nur ist faellt weg."""
     class Signals:
         def get_state(self, ref):
             return wert
@@ -74,7 +74,7 @@ def test_der_standard_ist_20_grad():
 
 
 def test_soll_quelle_im_raum_bleibt_bei_der_bestaetigung_desselben_werts(tmp_path, clock):
-    """Nr. 40 (Restpunkt 5c-W-12): der Raum fuer up/status meldet nach einer Bestaetigung des Servers mit demselben
+    """Der Raum fuer up/status meldet nach einer Bestaetigung des Servers mit demselben
     Wert weiter die Quelle des Wunsches, erst ein anderer Wert des Servers meldet portal."""
     store = TargetStore(tmp_path / "room_target.json", 20.0, clock, lambda: "ts")
     abgelegt = []

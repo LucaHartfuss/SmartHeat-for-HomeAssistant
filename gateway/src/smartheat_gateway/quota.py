@@ -1,4 +1,4 @@
-"""Kontingent-Waechter (Spec SHG G2 4.2): Zaehler je Treiber in /data/quota/<treiber>.json, gemeinsam fuer die Befehle
+"""Kontingent-Waechter: Zaehler je Treiber in /data/quota/<treiber>.json, gemeinsam fuer die Befehle
 des Geraetekerns und die Laufzeit (zwei Waechter auf derselben Datei in einem Prozess, geschuetzt durch ein Lock je
 Pfad). Gleitendes Fenster ueber die WANDUHR; Eintraege aus der Zukunft (Uhrsprung zurueck) zaehlen auf `now` begrenzt
 bis zum Ende des Fensters weiter; die Sperre nach HTTP 429 (`gesperrt_bis`) gilt hoechstens ein Fenster ab jetzt."""
@@ -89,5 +89,5 @@ class QuotaGuard:
 
     def _save(self, state: dict) -> None:
         # Atomar mit fsync (smartheat_core.dateien): nach einem Stromausfall nie eine halbe Datei, die als leer gilt und das
-        # Kontingent zuruecksetzt (Plan G2b-1, Restpunkt 8). Welche Uhr das Fenster zaehlt, entscheidet G4.
+        # Kontingent zuruecksetzt. Welche Uhr das Fenster zaehlt, entscheidet G4.
         dateien.schreiben_json(self._path, state, modus=dateien.LESBAR)

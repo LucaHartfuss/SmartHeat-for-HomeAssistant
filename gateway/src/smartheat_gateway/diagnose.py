@@ -1,9 +1,9 @@
-"""Diagnoseseite (Spec SHG G2 6.5, Spec 5b 5.3, Plan D2): nur lesend, ohne Login, ohne Geheimnisse, statisches HTML ohne
+"""Diagnoseseite: nur lesend, ohne Login, ohne Geheimnisse, statisches HTML ohne
 JavaScript, Selbstaktualisierung alle 10 s. Zeigt den Zustand des Geraetekerns (wie die LED), Hinweise des Dienstes
 (Befehl hinweis), eigene Meldungen (Wunsch begrenzt, Soll-Quelle aus), eine abgelehnte Konfiguration und, solange das
-Gateway nicht uebernommen ist (Anzeige.code_zeigen, Spec 5c F1), QR-Code (segno, SVG) und Uebernahme-Code - nur lokal.
+Gateway nicht uebernommen ist (Anzeige.code_zeigen), QR-Code (segno, SVG) und Uebernahme-Code - nur lokal.
 Den Uebernahmestand meldet der Server (claim_state, new_claim_code); bis dahin gilt der Stand des Bootstraps. /healthz
-fuer den Updater (G2b).
+fuer den Updater.
 
 Schutz gegen DNS-Rebinding: jede Route antwortet nur, wenn der Host-Header eine IP-Adresse, `localhost` oder ein Name
 aus SHG_DIAG_HOSTNAMES (kommagetrennt) ist; sonst 403 ohne Inhalt. Sonst koennte eine fremde Webseite ueber einen auf
@@ -41,7 +41,7 @@ def seite(geraet, device) -> dict:
     """Auszug fuer die lokale Seite: geraet_host.snapshot() plus Uebernahme-Code (nur hier, nur im LAN)."""
     data = geraet.snapshot()
     anzeige = geraet.letzte_anzeige
-    zeigen = anzeige is not None and anzeige.code_zeigen  # Spec 5c F1: wie die HA-Discovery
+    zeigen = anzeige is not None and anzeige.code_zeigen  # Wie die HA-Discovery
     data["code"] = device.identity.claim_code if device is not None and zeigen else None
     return data
 
@@ -81,7 +81,7 @@ def host_allowed(header: str | None, hostnames: frozenset[str]) -> bool:
 
 
 def client_allowed(address: str) -> bool:
-    """Nur Loopback, private Netze (inkl. IPv6-ULA) und Link-Local (Audit 4, A4-37): der veroeffentlichte Docker-Port
+    """Nur Loopback, private Netze (inkl. IPv6-ULA) und Link-Local: der veroeffentlichte Docker-Port
     umgeht die input-Kette der Firewall, die Seite zeigt vor der Uebernahme den Uebernahme-Code."""
     try:
         ip = ipaddress.ip_address(address.split("%", 1)[0])

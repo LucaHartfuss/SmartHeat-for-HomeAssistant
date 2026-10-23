@@ -1,4 +1,4 @@
-"""Lokaler Befehl der Integration ueber das stdin des Add-ons (L4-06 Variante C, Spec 2.2): loescht der Nutzer den
+"""Lokaler Befehl der Integration ueber das stdin des Add-ons: loescht der Nutzer den
 HA-Eintrag, schreibt die Integration `entfernen <geraet_id>` an das Add-on; das Geraet meldet sich dann wie bei
 sign_off ab. Erlaubt ist genau diese eine Form mit der eigenen Geraete-ID; jede andere Zeile (fremde ID, unbekannt,
 zu lang, kein UTF-8) endet in genau einer WARNING mit dem Grund, nie mit dem Zeileninhalt (der Absender ist nicht

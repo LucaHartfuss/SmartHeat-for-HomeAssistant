@@ -1,4 +1,4 @@
-"""Testoffensive T4' Task 8 (Spec §5 "Kompromittierter Server"): Angriffsszenarien ueber die ganze Kette. Ein Server, der
+"""Kompromittierter Server: Angriffsszenarien ueber die ganze Kette. Ein Server, der
 sehr viele Befehle oder lauter kaputte Dokumente und Antworten sendet, waehrend die Laufzeit regelt, bringt weder den
 Geraete-Thread noch den Regel-Worker zum Stehen und keinen Wert ausserhalb der lokalen Grenzen auf die Anlage (Regel 4).
 
@@ -55,7 +55,7 @@ class Anlage:
         supervisor = FakeSupervisor()
         for entity in ("number.curve_current", "number.shift_current", "number.min_flow", "number.heat_limit"):
             env.ha.registry.append({"entity_id": entity, "platform": "mypyllant", "config_entry_id": "e1"})
-        # lokale Positivliste (A6-02): die Sensoren der Bindung tragen ihre Klasse im Zustand, wie im echten HA
+        # lokale Positivliste: die Sensoren der Bindung tragen ihre Klasse im Zustand, wie im echten HA
         for entity in ("sensor.room_actual", "sensor.room_target", "sensor.outdoor_temp", "sensor.flow_temperature",
                        "sensor.flow_setpoint"):
             env.ha.states[f"{entity}::device_class"] = "temperature"
@@ -422,7 +422,7 @@ def test_100_kaputte_dokumente_und_antworten_im_wechsel_mit_ticks_aendern_die_ko
     assert len(anlage.snapshots()) - ticks_vorher >= 50
     # Schreibwerte nur in den Grenzen; die gueltigen Antworten wurden geschrieben und geklemmt
     assert _alle_schreibwerte_in_den_grenzen(env.ha) > schreibwerte_vorher
-    # Der Notfall-Boost startet hoechstens alle 30 min (A6-34): die Stichprobe am Rundenende trifft ihn nicht mehr, weil
+    # Der Notfall-Boost startet hoechstens alle 30 min: die Stichprobe am Rundenende trifft ihn nicht mehr, weil
     # sein einziger Start in eine Runde ohne Notbetrieb am Rundenende faellt. Er lief mit, wenn sein Start gezaehlt ist,
     # die Notfall-Zeile geschrieben wurde (Log) und die Maximalwerte in den Schreibvorgaengen stehen.
     emergency_start = anlage.bridge.store.state.write_budget.get("emergency_start", {}).get("count", 0)

@@ -1,4 +1,4 @@
-"""Grenzen des Host-Pakets (Spec G2b-1 2.1): Standardbibliothek, cryptography und genau diese Gateway-Module."""
+"""Grenzen des Host-Pakets: Standardbibliothek, cryptography und genau diese Gateway-Module."""
 import ast
 import re
 import sys
@@ -7,9 +7,9 @@ from pathlib import Path
 HOST = Path(__file__).resolve().parents[1]
 SRC = HOST.parent / "src" / "smartheat_gateway"
 ALLOWED_GATEWAY = {"smartheat_gateway", "smartheat_gateway.paths", "smartheat_gateway.version"}
-# Dateien, die install.sh aus gateway/src mit ablegt (Plan G2b-1 Praezisierung 10; ab 0.6.0 ohne agent/, Plan 5b D2).
+# Dateien, die install.sh aus gateway/src mit ablegt.
 SHIPPED = ["__init__.py", "paths.py", "version.py"]
-#: Dateien aus heizungsbruecke/src/smartheat_core, die install.sh mit ablegt (Stufe 3 S6, S3S3-Host: ein Schreibweg)
+#: Dateien aus heizungsbruecke/src/smartheat_core, die install.sh mit ablegt (ein Schreibweg)
 SHIPPED_CORE = ["__init__.py", "dateien.py"]
 CORE = HOST.parent.parent / "heizungsbruecke" / "src" / "smartheat_core"
 ALLOWED_CORE = {"smartheat_core", "smartheat_core.dateien"}

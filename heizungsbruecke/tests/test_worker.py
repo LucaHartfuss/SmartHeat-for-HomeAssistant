@@ -29,7 +29,7 @@ def test_posted_event_is_dispatched_to_its_handler(clock):
 
 
 def test_waiting_queue_entries_run_before_due_schedule_entries(clock):
-    # A2-13: je Runde erst die beim Rundenbeginn wartenden Queue-Eintraege, dann die faelligen Planeintraege.
+    # Je Runde erst die beim Rundenbeginn wartenden Queue-Eintraege, dann die faelligen Planeintraege.
     worker, seen = _recording_worker(clock, "planned", "queued")
     worker.post(Event("queued"))
     worker.schedule(0, Event("planned"))
@@ -40,7 +40,7 @@ def test_waiting_queue_entries_run_before_due_schedule_entries(clock):
 
 
 def test_eingestellte_antwort_geht_faelligem_timeout_vor(clock):
-    """A2-13: eine Antwort, die schon wartet, wird vor dem Ack-Timeout verarbeitet, der erst waehrend eines langen
+    """Eine Antwort, die schon wartet, wird vor dem Ack-Timeout verarbeitet, der erst waehrend eines langen
     Handlers faellig wurde (sonst verfiele der Tick trotz eingetroffener Antwort)."""
     worker, seen = _recording_worker(clock, "answer", "timeout")
 
@@ -59,7 +59,7 @@ def test_eingestellte_antwort_geht_faelligem_timeout_vor(clock):
 
 
 def test_faelliger_eintrag_verhungert_nicht(clock):
-    """A2-13: ein Handler, der sich selbst immer wieder einstellt, haelt faellige Planeintraege nicht auf."""
+    """Ein Handler, der sich selbst immer wieder einstellt, haelt faellige Planeintraege nicht auf."""
     worker, seen = _recording_worker(clock, "planned")
     posts = {"n": 0}
 
@@ -131,7 +131,7 @@ def test_coalescing_starts_fresh_after_dispatch(clock):
 
 
 def test_coalescing_from_many_threads_yields_single_event(clock):
-    # Review Focus 5: eine room_actual-Flut aus dem WS-Thread plus ein room_target-Trigger.
+    # Eine room_actual-Flut aus dem WS-Thread plus ein room_target-Trigger.
     worker, seen = _recording_worker(clock, "local_check")
 
     def flood(fired):

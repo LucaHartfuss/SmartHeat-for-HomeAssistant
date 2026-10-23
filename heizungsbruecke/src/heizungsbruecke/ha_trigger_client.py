@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 _RECONNECT_DELAYS_SECONDS = (1, 2, 5, 10, 20, 30)
 
-# AU-035: eine halb offene WS-Verbindung (Router, NAT) wuerde sonst nie bemerkt; die lokalen Checks
+# Eine halb offene WS-Verbindung (Router, NAT) wuerde sonst nie bemerkt; die lokalen Checks
 # stuenden still, waehrend das Lebenszeichen weiter "ok" sendet. Ohne Pong nach dem Timeout schliesst
 # websocket-client die Verbindung, der Reconnect laeuft wie bei jedem Abriss.
 WS_PING_INTERVAL_SECONDS = 30

@@ -1,4 +1,4 @@
-"""Stufe 3 S8a-2 (A5-16, Audit 5 p5-ci): Vertragspruefungen, die nur Module des Add-ons (Kern, Laufzeit, HA-Host,
+"""Vertragspruefungen, die nur Module des Add-ons (Kern, Laufzeit, HA-Host,
 Geraetekern) lesen. Frueher Checks des Contract-Checks im Dev-Root (tools/contract_check.py): ganz Check 42, dazu der
 Add-on-Teil von 4, 30 und 56; was dort ueber Repo-Grenzen geht, bleibt im Contract-Check. Je Pruefung eine Funktion
 `_probleme_<nr>` auf den Modulen, ein Test auf den echten Modulen und Gegenproben, die zeigen, dass sie rot werden kann;
@@ -32,7 +32,7 @@ def _mit(module, **overrides):
 
 
 def _probleme_4(wire, laufzeit_rolle, roles) -> list[str]:
-    """Spec 5c: jede Rolle der HA-Bindung (wire.HA_ROLLEN) bildet das Add-on (dokument.laufzeit_rolle) auf eine Rolle
+    """Jede Rolle der HA-Bindung (wire.HA_ROLLEN) bildet das Add-on (dokument.laufzeit_rolle) auf eine Rolle
     der Laufzeit (roles.ALL_ROLES) ab. Das Hebel-Vokabular Server = Kern prueft weiter der Contract-Check 4."""
     all_roles = set(roles.ALL_ROLES)
     return [f"Rolle {rolle} -> {laufzeit_rolle(rolle)!r} ist keine Laufzeit-Rolle (roles.ALL_ROLES)"
@@ -80,7 +80,7 @@ def _returned_string_constants(function) -> set[str]:
 
 
 def _probleme_30(claim_due_tick, delivery, ticks) -> list[str]:
-    """TP12e (AU-022): claim_due_tick und der Start-Tick (ticks.PROBE_TRIGGER) liefern nur Trigger der Zustellung
+    """claim_due_tick und der Start-Tick (ticks.PROBE_TRIGGER) liefern nur Trigger der Zustellung
     (delivery.TRIGGERS). Dass delivery.TRIGGERS gleich den Triggern des Servers ist (V1b), prueft weiter der
     Contract-Check 30; Drift = der Server lernt nie, und kein Alarm schlaegt an."""
     triggers = set(delivery.TRIGGERS)
@@ -130,7 +130,7 @@ def test_check_30_meldet_einen_unbekannten_start_trigger():
 
 
 def _probleme_42(roles, levers, wire) -> list[str]:
-    """Plan 3c, Spec 5c: Jeder Hebel des Kerns (smartheat_core.levers.LEVERS) hat eine Laufzeit-Rolle
+    """Jeder Hebel des Kerns (smartheat_core.levers.LEVERS) hat eine Laufzeit-Rolle
     (roles.LEVER_ROLES, ueber die das Add-on die HA-Bindung abbildet), diese Rolle kennt die Laufzeit (ALL_ROLES), und
     jeder Hebel ist eine Rolle der HA-Bindung im Vertrag des Add-ons (smartheat_device.wire.HA_ROLLEN)."""
     lever_roles = roles.LEVER_ROLES
@@ -170,7 +170,6 @@ def test_check_42_meldet_einen_hebel_ausserhalb_des_vertrags():
 
 
 def test_check_56_der_zustand_vor_der_uebernahme_ist_ein_zustand_des_vertrags():
-    """Spec 5c 1.1: Die Discovery meldet den Code nur im Zustand discovery.NICHT_UEBERNOMMEN; der ist ein Zustand des
-    Geraetevertrags (wire.ZUSTAENDE). Bis Stufe 3 S8a-2 im Contract-Check, dort zusammen mit der Kopie der Integration,
-    die sie nicht liest (A5-85)."""
+    """Die Discovery meldet den Code nur im Zustand discovery.NICHT_UEBERNOMMEN; der ist ein Zustand des
+    Geraetevertrags (wire.ZUSTAENDE)."""
     assert discovery.NICHT_UEBERNOMMEN in wire.ZUSTAENDE

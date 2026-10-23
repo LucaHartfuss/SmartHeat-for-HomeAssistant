@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# Regel fuer Geraete-API- und Portal-Adresse im Gateway-Image (Plan G2b-2 Task 9, Nutzer-Vorgabe 2026-10-07): nur
+# Regel fuer Geraete-API- und Portal-Adresse im Gateway-Image (Nutzer-Vorgabe 2026-10-07): nur
 # https://<eigener DNS-Name>[/] in einer eigenen Zone (SHG_OWN_ZONES: der Zonenname selbst oder ein Name darunter;
 # Allowlist, Nutzer-Vorgabe 2026-10-07) - nur ASCII, keine IP-Adresse (v4/v6), kein Name ohne Punkt, keine AWS-Adresse
 # (amazonaws.com/.cn, awsapprunner.com, amazonlightsail.com, amazoncognito.com, awsapps.com, cloudfront.net, .aws, ...),

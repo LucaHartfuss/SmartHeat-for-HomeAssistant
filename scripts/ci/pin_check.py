@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Pin-Check (TP12e, AU-018, Spec 2026-09-30-tp12e-vertraege-tests-lieferkette-design.md Abschnitt 3):
+"""Pin-Check (docs/archiv/superpowers/specs/2026-09-30-tp12e-vertraege-tests-lieferkette-design.md Abschnitt 3):
 Jede Basis-Image-Angabe hat einen Digest, jede GitHub-Action eine 40-stellige SHA, jede Lock-Datei
-Hashes und passt zu ihrer pyproject.toml; requirements-hypothesis.lock (Testoffensive T6) ist exakt gepinnt und gehasht,
+Hashes und passt zu ihrer pyproject.toml; requirements-hypothesis.lock ist exakt gepinnt und gehasht,
 ohne Abgleich mit pyproject.toml. In Workflows und Dockerfiles laeuft jedes pip install mit --require-hashes
-oder traegt die Markierung `# pin-check: ungehasht (<Grund>)` (Audit 4, A4-41; Fixrunde B, A6-18). Jedes `image:` und
+oder traegt die Markierung `# pin-check: ungehasht (<Grund>)`. Jedes `image:` und
 `container:` (Workflows, Compose-Dateien) hat einen Digest. Nur Standardbibliothek; kanonisch in
 HomeAssistant_Dev_Root/tools/pin_check.py, identische Kopien in den Unter-Repos unter
 scripts/ci/pin_check.py (Root-check.sh Schritt "copies" prueft das).
@@ -23,11 +23,11 @@ DIGEST = re.compile(r"@sha256:[0-9a-f]{64}\b")
 ACTION_SHA = re.compile(r"@[0-9a-f]{40}$")
 HASH_OPTION = re.compile(r"--hash=sha256:[0-9a-f]{64}\b")
 LOCK_NAMES = ("requirements.txt", "requirements.lock")
-# Eigene Locks fuer einzelne Dev-Werkzeuge (Testoffensive T6: hypothesis, Installation mit --require-hashes --no-deps):
+# Eigene Locks fuer einzelne Dev-Werkzeuge (hypothesis, Installation mit --require-hashes --no-deps):
 # jeder Eintrag exakt gepinnt und gehasht, aber kein Abgleich mit pyproject.toml (dessen dependencies sind Laufzeit).
 HASH_LOCK_NAMES = ("requirements-hypothesis.lock",)
 # .devtools, backups und .remember sind Root-spezifische, per .gitignore ausgeschlossene Ordner. docs/archiv/ des
-# Repos ist abgeschlossen (A6-18: das archivierte probe_5c-Dockerfile ohne Hashes wird nie gebaut) und wird uebersprungen.
+# Repos ist abgeschlossen (das archivierte probe_5c-Dockerfile ohne Hashes wird nie gebaut) und wird uebersprungen.
 _SKIP_DIRS = {".git", ".venv", ".worktrees", "node_modules", "__pycache__", ".devtools", "backups", ".remember"}
 _ARCHIVE = ("docs", "archiv")
 DOCKERFILE_NAMES = ("Dockerfile*", "*.Dockerfile", "Containerfile*")
@@ -35,9 +35,9 @@ COMPOSE_NAMES = ("docker-compose*.y*ml", "compose*.y*ml")
 _FROM_LINE = re.compile(r"^\s*FROM(?:\s|$)", re.IGNORECASE)
 _FROM = re.compile(r"^\s*FROM\s+(?:--\S+\s+)*(\S+)(?:\s+AS\s+(\S+))?\s*$", re.IGNORECASE)
 _PIP_INSTALL = re.compile(r"\bpip3?\s+install\b")
-# Workflows (Audit 4, A4-41): jedes pip install laeuft mit --require-hashes oder ist ausdruecklich markiert (CI-Jobs
+# Workflows: jedes pip install laeuft mit --require-hashes oder ist ausdruecklich markiert (CI-Jobs
 # ohne Schreibrecht, Testumgebungen mit Versionsbereichen). Ein Workflow mit Schreibrecht traegt nie die Markierung
-# (Testoffensive T6, F-werkzeuge-54; Ruling R-a der Fix-Welle): Schreibrecht ist jeder Bereich mit `write` (`contents`,
+# (F-werkzeuge-54): Schreibrecht ist jeder Bereich mit `write` (`contents`,
 # `packages`, `id-token`, ...) und `write-all`, an Job oder Datei, auch mit Schluessel oder Wert in Anfuehrungszeichen;
 # ein Workflow ohne `permissions:` auf oberster Ebene gilt als schreibend (ein Job ohne eigenes `permissions:` hat dann
 # das Standardrecht des Tokens, fail closed). Der Check liest zeilenweise und gilt fuer die ganze Datei.

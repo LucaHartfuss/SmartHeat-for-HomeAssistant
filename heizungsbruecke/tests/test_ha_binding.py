@@ -190,7 +190,7 @@ def test_is_climate():
     assert is_climate(ZONE) and not is_climate("number.x")
 
 
-# --- Plan 3b: Binding je Hebelsatz ---
+# --- Binding je Hebelsatz ---
 
 @pytest.mark.parametrize(("lever_set", "cls"), [
     (None, "HaPlantBinding"), ("weishaupt_wwp", "WeishauptHaBinding"), ("weishaupt_wwp_basis", "WeishauptHaBinding"),

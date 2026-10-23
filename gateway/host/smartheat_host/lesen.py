@@ -1,4 +1,4 @@
-"""Begrenztes, sicheres Lesen von Dateien, die ein Container schreiben kann (Plan 5b D2, Sicherheit): die Host-Dienste
+"""Begrenztes, sicheres Lesen von Dateien, die ein Container schreiben kann (Sicherheit): die Host-Dienste
 laufen als root, ${SHG_ROOT}/data gehoert dem Container-Benutzer (uid 1000). Eine untergeschobene Datei darf weder per
 Symlink auf Fremdes zeigen (O_NOFOLLOW), noch den Dienst an einer FIFO festhalten (O_NONBLOCK, nur regulaere Dateien),
 noch den Speicher fuellen (hoechstens `cap` Bytes). Jeder Fehler ist ein OSError (UnsichereDatei fuer die Faelle,

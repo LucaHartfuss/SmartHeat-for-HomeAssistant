@@ -1,4 +1,4 @@
-"""Testoffensive T4' Task 7 (Spec §5 "Kompromittierter Server", Regel 4): die lokalen Sicherheitswerte als Property-
+"""Kompromittierter Server, Regel 4: die lokalen Sicherheitswerte als Property-
 und Grenztests. Ein Server, der beliebige Hebelwerte, Schrittweiten und Konfigurationen sendet, und eine Anlage mit
 beliebigem Wertebereich bringen keinen Schreibwert ausserhalb der lokalen Grenzen. Die Grenzen stehen woertlich in
 test_regel4_werte.py (TABELLE, Nutzer-Freigaben), nie aus dem Code; Generatoren kommen aus strategien.py, die

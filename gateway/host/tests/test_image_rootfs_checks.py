@@ -1,4 +1,4 @@
-"""rootfs_checks.sh (Plan G2b-2 Task 9) an einem nachgebauten Root-Dateisystem: ein gutes besteht, jede einzelne
+"""rootfs_checks.sh an einem nachgebauten Root-Dateisystem: ein gutes besteht, jede einzelne
 Verletzung (geteilte Identitaet, Passwort, SSH im Serien-Image, Tunnel-Token, fehlende Archive, fremde
 Geraete-API-Adresse) laesst es scheitern. Dazu die Adress-Regel own_url.sh (Nutzer-Vorgabe 2026-10-07: eigener
 DNS-Name per https in der eigenen Zone hartfussha.org, keine IP-Adresse, keine AWS-Adresse) direkt."""
@@ -238,7 +238,7 @@ def _good(root: Path, pilot: bool = False) -> Path:
         # DHCPv4 mit der MAC als Client-ID (eth_dhcp.sh)
         ETH_DROPIN: "# Kommentar\n[DHCPv4]\nClientIdentifier=mac\n",
         CONFIG_TXT: GOOD_CONFIG_TXT,
-        # Diagnosewerkzeuge (L4-18): ss und ip aus iproute2, vcgencmd aus raspi-utils
+        # Diagnosewerkzeuge: ss und ip aus iproute2, vcgencmd aus raspi-utils
         "usr/bin/ss": "#!/bin/sh\n",
         "usr/bin/ip": "#!/bin/sh\n",
         "usr/bin/vcgencmd": "#!/bin/sh\n",
@@ -425,7 +425,7 @@ def test_timezone_and_locale_variants_that_are_fine(tmp_path, fixit):
 
 @pytest.mark.parametrize("tool", TOOLS)
 def test_missing_diagnosis_tool_fails_with_its_name(tmp_path, tool):
-    """ss, ip und vcgencmd muessen im fertigen Image liegen (L4-18, Labor 2026-10-20): fehlt eines, genau eine
+    """ss, ip und vcgencmd muessen im fertigen Image liegen (Labor 2026-10-20): fehlt eines, genau eine
     Meldung mit dem Namen."""
     root = _good(tmp_path)
     assert _run(root).returncode == 0

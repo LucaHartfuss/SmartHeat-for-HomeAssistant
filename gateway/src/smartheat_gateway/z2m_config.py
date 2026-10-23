@@ -1,12 +1,10 @@
-"""Grundkonfiguration von Zigbee2MQTT 2.x (Spec SHG G2 5), einmal geschrieben, wenn configuration.yaml fehlt;
-danach gehoert die Datei Zigbee2MQTT (es ersetzt GENERATE selbst); nur user/password im Block mqtt: (sync_credentials,
-Plan G2b-2) und adapter im Block serial: nach einem Stick-Tausch (sync_adapter, A6-15) gleicht der Init-Schritt
-danach noch an. Schreiber ist der Init-Schritt (init.py), nicht mehr
-der Agent. Die Datei enthaelt die Zugangsdaten von Zigbee2MQTT am lokalen Bus (0600). permit_join steht nicht darin:
-Zigbee2MQTT 2.x kennt die Option nicht mehr, Koppeln ist nach dem Start immer aus (Plan G2a; gegen das echte Image in
-G2b pruefen). device_options.retain: true laesst Zigbee2MQTT Geraetewerte retained senden; nach einem Neustart der
+"""Grundkonfiguration von Zigbee2MQTT 2.x, einmal geschrieben, wenn configuration.yaml fehlt;
+danach gehoert die Datei Zigbee2MQTT (es ersetzt GENERATE selbst); nur user/password im Block mqtt: (sync_credentials)
+und adapter im Block serial: nach einem Stick-Tausch (sync_adapter) gleicht der Init-Schritt
+danach noch an. Schreiber ist der Init-Schritt (init.py). Die Datei enthaelt die Zugangsdaten von Zigbee2MQTT am lokalen Bus (0600). permit_join steht nicht darin:
+Zigbee2MQTT 2.x kennt die Option nicht mehr, Koppeln ist nach dem Start immer aus. device_options.retain: true laesst Zigbee2MQTT Geraetewerte retained senden; nach einem Neustart der
 Laufzeit gelten sie ueber das last_seen (advanced.last_seen: ISO_8601) sofort, wenn sie juenger als die Frist sind
-(ZigbeeMirror, L4-17); bestehende Dateien heilt sync_device_options."""
+(ZigbeeMirror); bestehende Dateien heilt sync_device_options."""
 import logging
 import re
 from pathlib import Path
@@ -68,7 +66,7 @@ def _unquote(value: str) -> str:
 
 
 def sync_credentials(zigbee_dir: Path, username: str, password: str) -> bool:
-    """Gleicht user/password im Block mqtt: an die Zugangsdaten des Init-Schritts an (Plan G2b-2 Task 3): nach einem
+    """Gleicht user/password im Block mqtt: an die Zugangsdaten des Init-Schritts an: nach einem
     Schluesseltausch oder einer zurueckgespielten Sicherung verbaende sich Zigbee2MQTT sonst nie. Aendert nur diese
     zwei Zeilen der ersten Einrueckungsebene (Netzschluessel und alles andere bleiben, wie Zigbee2MQTT sie geschrieben
     hat); ohne erkennbaren Block mqtt: bleibt die Datei unberuehrt. True, wenn geschrieben wurde."""
@@ -113,7 +111,7 @@ _ADAPTER_LINE = re.compile(r"^(?P<indent> +)adapter: *(?P<value>[^#]*?) *(?P<com
 
 
 def sync_adapter(zigbee_dir: Path, adapter: str) -> bool:
-    """Gleicht serial.adapter an den Stick an (A6-15): nach einem Stick-Tausch (zstack <-> ember) meldete die Datei
+    """Gleicht serial.adapter an den Stick an: nach einem Stick-Tausch (zstack <-> ember) meldete die Datei
     sonst weiter den alten Adapter, und Zigbee2MQTT startete nicht. Aendert nur diese eine Zeile der ersten
     Einrueckungsebene des Blocks serial: (Kommentar am Zeilenende bleibt, fehlt sie, kommt sie direkt unter serial:);
     ohne erkennbaren Block serial: bleibt die Datei unberuehrt. True, wenn geschrieben wurde."""
@@ -152,7 +150,7 @@ _RETAIN_LINE = re.compile(r"^(?P<indent> +)retain: *(?P<value>[^#]*?) *(?P<comme
 
 
 def sync_device_options(zigbee_dir: Path) -> bool:
-    """Stellt device_options.retain: true sicher (L4-17): ohne die Zeile sendet Zigbee2MQTT keine retained Geraetewerte,
+    """Stellt device_options.retain: true sicher: ohne die Zeile sendet Zigbee2MQTT keine retained Geraetewerte,
     und nach einem Neustart der Laufzeit fehlte jeder Fuehlerwert bis zur naechsten Meldung. Fehlt der Block, kommt er
     ans Dateiende; steht er schon in der ersten Einrueckungsebene, wird nur die Zeile retain ergaenzt bzw. von false
     auf true gesetzt. Alles andere (Kommentare, Netzschluessel, andere Optionen) bleibt unberuehrt. True, wenn
@@ -165,7 +163,7 @@ def sync_device_options(zigbee_dir: Path) -> bool:
     start = next((i for i, line in enumerate(lines) if line.rstrip() == "device_options:"), None)
     if start is None and (kopf := next((line for line in lines if line.startswith("device_options:")), None)):
         # andere Schreibweise ({}, {retain: true}, Kommentar in der Kopfzeile): nicht raten, ein zweiter Schluessel waere
-        # Unsinn. Steht retain: true erkennbar schon da, ist nichts zu melden, sonst bliebe L4-17 unbemerkt offen.
+        # Unsinn. Steht retain: true erkennbar schon da, ist nichts zu melden, sonst bliebe die Abweichung unbemerkt offen.
         if not _RETAIN_TRUE_IN_LINE.search(kopf):
             logger.warning("Zigbee2MQTT configuration.yaml: device_options in einer Schreibweise, die nicht heilbar ist, "
                            "retain fehlt moeglicherweise: retain: true unter device_options von Hand ergaenzen")

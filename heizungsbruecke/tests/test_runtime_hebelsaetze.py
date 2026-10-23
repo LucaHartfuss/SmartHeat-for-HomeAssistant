@@ -1,4 +1,4 @@
-"""Betrieb mit den Bindings aus Plan 3b ueber _start_bridge (Harness aus runtime_helpers.py, Geraete-Pfad): der
+"""Betrieb mit den Bindings ueber _start_bridge (Harness aus runtime_helpers.py, Geraete-Pfad): der
 Hebelsatz des Konfigurationsdokuments waehlt Binding und lokale Sicherheit; fehlende Pflicht-Rollen sind ein
 Konfigurationsfehler; Vaillant bleibt unveraendert (alle Tests in test_runtime.py)."""
 import logging
@@ -194,7 +194,7 @@ def test_weishaupt_daily_energy_reaches_the_server_as_a_growing_sum(env):
     assert _backup(env)["energy_state"] == {"thermal_heating": {"raw": 0.5, "sum": 8.5, "einheit": "kWh"}}
 
 
-# --- A6-36: Anlagen-Kennung aus dem Kreis (Laufzeit) ---
+# --- Anlagen-Kennung aus dem Kreis (Laufzeit) ---
 
 #: Kennung, die Add-on 1.1.0 fuer OPTIONS schrieb (roles.lever_refs_identity der Hebel-Referenzen), woertlich.
 KENNUNG_1_1_0 = ('{"curve": "number.curve_current", "heat_limit": "number.heat_limit", "min_flow": "number.min_flow", '
@@ -210,7 +210,7 @@ def _uebernahmen(caplog) -> list[str]:
 
 
 def test_umbenannte_hebel_entity_behaelt_die_ursprungswerte(env):
-    """A6-36: eine umbenannte Hebel-Entity (derselbe Kreis) ist dieselbe Anlage. Bis 1.1.0 aenderte sie die Kennung,
+    """Eine umbenannte Hebel-Entity (derselbe Kreis) ist dieselbe Anlage. Bis 1.1.0 aenderte sie die Kennung,
     bind_to_tenant verwarf die Ursprungswerte, und der Start nahm die schon geregelten Werte als neue Ursprungswerte."""
     bridge = _start(env)
     snapshot = _first_snapshot(env, bridge)

@@ -55,7 +55,7 @@ def test_one_dead_sensor_keeps_the_mean_none_is_invalid(world):
     z2m.report(SENSOR, temperature=20.0)
     assert source.get_state(REF_ROOM_MEAN) == 20.0
     z2m.bridge(online=False)
-    with pytest.raises(SignalUngueltig):  # erwartet ungueltig (L4-17), kein Programmfehler
+    with pytest.raises(SignalUngueltig):  # erwartet ungueltig, kein Programmfehler
         source.get_state(REF_ROOM_MEAN)
 
 

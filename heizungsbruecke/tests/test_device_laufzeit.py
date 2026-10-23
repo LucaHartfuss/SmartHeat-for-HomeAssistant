@@ -1,4 +1,4 @@
-"""Spec 5b 5.1/5.2: Tick und Telemetrie der Laufzeit ueber den Link des Geraets (RuntimeChannel)."""
+"""Tick und Telemetrie der Laufzeit ueber den Link des Geraets (RuntimeChannel)."""
 from smartheat_device.laufzeit import RuntimeChannel
 from smartheat_runtime.runtime import EV_MQTT_CONNECTED, EV_SETPOINTS
 from smartheat_runtime.worker import RegulationWorker

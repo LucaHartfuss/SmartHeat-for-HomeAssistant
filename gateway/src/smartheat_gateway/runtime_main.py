@@ -1,5 +1,5 @@
-"""Einstieg des Gateways (Spec 5b 5.3, Plan D2): ein Prozess fuer Geraetekern (smartheat_device, eigener Thread) und
-Laufzeit (smartheat_runtime, Regel-Worker im Hauptthread). Agent-Container, HTTPS-Polling und Tunnel entfallen; Tick
+"""Einstieg des Gateways: ein Prozess fuer Geraetekern (smartheat_device, eigener Thread) und
+Laufzeit (smartheat_runtime, Regel-Worker im Hauptthread). Tick
 und Telemetrie laufen ueber den Link des Geraets (mqtt_factory).
 
 Neustart und Ende teilen sich beide Hosts in smartheat_device.prozess: eine laufzeitrelevante neue Konfiguration oder
@@ -7,19 +7,19 @@ sign_off fordert den Neustart an (EV_RELOAD), ebenso die Neustarts der Laufzeit 
 prozess.neustart_der_laufzeit aus app.start: Neupruefung im Ruhezustand Konfigurationsfehler, Abo am Fristende wieder
 aktiv, Neustart nach dem Zuruecksetzen). Der Worker endet mit prozess.Neustart, beenden trennt zuerst den Link sauber
 (MQTT-DISCONNECT; sonst meldet IoT Core DUPLICATE_CLIENTID, wenn der neue Prozess verbindet, und der Dienst saehe nach
-drei Aenderungen eine Kopie, Spec 4.2), laesst den Geraete-Thread sein laufendes Ereignis abschliessen, und main kehrt
+drei Aenderungen eine Kopie), laesst den Geraete-Thread sein laufendes Ereignis abschliessen, und main kehrt
 zurueck: Exit 0, Compose startet neu.
 Nach einem unerwarteten Fehler der Laufzeit trennt das Gateway ebenso, meldet sich ungesund (vor_der_pause), wartet
 60 s und startet dann neu; ebenso nach einem Fehler in den Schritten davor (vorbereiten: Aufraeumen, Geraete-Host,
-Geraetekern, Diagnoseserver; S3S6-Startabbruch). SIGTERM (docker stop) endet ueber beenden ohne Neustart. Jeder Start
+Geraetekern, Diagnoseserver). SIGTERM (docker stop) endet ueber beenden ohne Neustart. Jeder Start
 reicht das gemerkte Software-Angebot erneut an den Updater (software_soll_nachholen).
 
 Nach dem Entfernen (Markierung aufraeumen.json) setzt der naechste Start die Anlage erst zurueck wie sign_off (Laufzeit
 im Modus abgemeldet mit der alten Konfiguration aus der Markierung, die Treiber-Anmeldung braucht es dafuer noch) und
-startet danach neu; erst dieser Start loescht den anlagengebundenen Zustand (A4-07, Spec Stufe 3 S3 Abschnitt 4), bevor
+startet danach neu; erst dieser Start loescht den anlagengebundenen Zustand, bevor
 der Geraetekern startet - aber nur, solange die gespeicherte Konfiguration noch leer ist: kam vor dem Neustart schon
 eine neue Einrichtung, bleibt ihre frische Treiber-Anmeldung. Die Konfigurationswache haelt nur noch das Lebenszeichen
-fuer den Compose-Health-Check frisch (G2 7.2)."""
+fuer den Compose-Health-Check frisch."""
 import contextlib
 import logging
 import os
@@ -56,7 +56,7 @@ DIAG_PORT = 8080  # Port der Diagnoseseite im Container; die Compose-Datei veroe
 
 
 def _alive_file() -> Path:
-    """Lebenszeichen fuer den Health-Check von Compose (G2 7.2): die Wache beruehrt es alle 30 s."""
+    """Lebenszeichen fuer den Health-Check von Compose: die Wache beruehrt es alle 30 s."""
     return Path(os.environ.get("SHG_ALIVE_FILE", "/tmp/shg-runtime-alive"))
 
 
@@ -82,10 +82,10 @@ def _vergessen(paths: Paths) -> bool:
 
 
 def software_soll_nachholen(geraet: GatewayDeviceHost, device: Device) -> None:
-    """Das gemerkte Software-Angebot (DocumentStore.software_angebot, 5b-D2-3) erneut an den Updater (idempotent),
+    """Das gemerkte Software-Angebot (DocumentStore.software_angebot) erneut an den Updater (idempotent),
     bevor der Geraete-Thread laeuft: ein Neustart (EV_RELOAD aus konfiguration_uebernommen) oder ein verlorener
     Schreibvorgang kann software_soll.json fehlen lassen, und der Server stellt eine bestaetigte oder abgelehnte Version
-    nicht erneut zu (Review Focus 4). Gemerkt ist das zuletzt gueltige Angebot, auch aus einer abgelehnten
+    nicht erneut zu. Gemerkt ist das zuletzt gueltige Angebot, auch aus einer abgelehnten
     Konfiguration; ein zurueckgezogenes (software null) geht als null weiter (der Updater liest es als "kein Angebot"),
     damit keine zurueckgezogene Version aus einer alten software_soll.json installiert wird. Ohne gemerktes Angebot
     (dokumente.json ohne software_angebot) wird der Updater nicht gerufen."""
@@ -142,8 +142,8 @@ def _starten(paths: Paths, bus, mirror: ZigbeeMirror, geraet: GatewayDeviceHost,
 
 
 def vor_der_pause(geraet: GatewayDeviceHost | None) -> None:
-    """Rueckruf vor_pause fuer prozess.laufen und prozess.starten (Abschlussreview S6 I-2, S3S6-Startabbruch): nach
-    einem unerwarteten Fehler meldet sich das Gateway fuer die 60-s-Pause ungesund, damit der Updater (G2 8.4) ein
+    """Rueckruf vor_pause fuer prozess.laufen und prozess.starten: nach
+    einem unerwarteten Fehler meldet sich das Gateway fuer die 60-s-Pause ungesund, damit der Updater ein
     Update, dessen Laufzeit gleich nach dem Start wirft, zurueckrollt. Der Prozess bleibt in der Pause oben: das
     Lebenszeichen waere frisch (Compose-Health-Check "healthy"; im Start nur ohne tmpfs auf /tmp aus dem vorigen Lauf
     im selben Container, Compose legt /tmp als tmpfs an), und /healthz hinge nur an server_ok aus dem letzten Takt des
@@ -187,7 +187,7 @@ def _vorbereiten(paths: Paths, mirror: ZigbeeMirror,
 
 def vorbereiten(paths: Paths, mirror: ZigbeeMirror) -> tuple[GatewayDeviceHost, Device] | None:
     """prozess.starten mit _vorbereiten, Exit 0 als Neustart und vor_der_pause: ein Fehler vor laufen (Aufraeumen,
-    DocumentStore, Geraete-Host, Diagnoseport) endet ungesund in der 60-s-Pause, dann None (S3S6-Startabbruch)."""
+    DocumentStore, Geraete-Host, Diagnoseport) endet ungesund in der 60-s-Pause, dann None."""
     angelegt: list[GatewayDeviceHost] = []
     return prozess.starten(lambda: _vorbereiten(paths, mirror, angelegt.append), lambda: None,
                            vor_pause=lambda: vor_der_pause(angelegt[0] if angelegt else None))

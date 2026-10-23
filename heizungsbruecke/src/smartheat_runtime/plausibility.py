@@ -1,4 +1,4 @@
-"""Physikalische Plausibilitaetsgrenzen (Spec TP6, Abschnitt 4 und 8). Muessen mit
+"""Physikalische Plausibilitaetsgrenzen. Muessen mit
 heizungsserver regelung/messages.py::PLAUSIBLE_RANGES (room_target/outdoor_temp) uebereinstimmen; den Lesebereich des
 Raum-Solls der Anlage (room_setpoint) deckt `ha_binding` ab. tools/contract_check.py prueft das (Vertrag V1b); die
 Integration prueft seit 1.0.0 keine Werte mehr."""

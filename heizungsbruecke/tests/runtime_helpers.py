@@ -1,4 +1,4 @@
-"""Gemeinsame Hilfen der Laufzeit-Tests (Fixrunde B TP4, A6-90; vorher in test_runtime.py): Start der Laufzeit auf dem
+"""Gemeinsame Hilfen der Laufzeit-Tests: Start der Laufzeit auf dem
 Konfigurationsdokument aus OPTIONS (geraet_helpers.start_bridge) mit Fake-Uhr (tests/conftest.py), Fake-HA,
 Fake-Trigger-Client und dem Link einer Geraete-Attrappe, dazu die Handgriffe der Szenarien (Trigger, Antworten, Uhr
 vorstellen). Die Fixture `env` steht in conftest.py. Hier stehen die Stellen, die Interna der Bruecke kennen; die
@@ -69,7 +69,7 @@ _OMIT = object()
 
 
 class _Link:
-    """Sicht der Tests auf den Link der Laufzeit (bis 0.36 ein eigener MQTT-Client): gesendete Snapshots und
+    """Sicht der Tests auf den Link der Laufzeit: gesendete Snapshots und
     Telemetrie, Antworten des Servers ueber channel.setpoints, Verbindung des Links."""
 
     def __init__(self, geraet) -> None:
@@ -237,7 +237,7 @@ def _set_room_target(env, bridge, value):
 
 def _ha_verbunden(env, bridge):
     """Der HA-Trigger-Client ist (wieder) verbunden: Soll-Entity lesen, lokaler Check mit frischem Raum-Soll (so kommt
-    nach dem Start der erste Tick; bis 0.36 tat das auch ein Bericht der Soll-Entity ohne Aenderung), voller Status."""
+    nach dem Start der erste Tick), voller Status."""
     env.trigger_clients[-1].kwargs["on_connected"]()
     bridge.worker.run_pending()
 

@@ -1,4 +1,4 @@
-"""Wanduhr des Clients (Spec SHG 3.2, Plan-Praezisierung 1)."""
+"""Wanduhr des Clients."""
 import re
 from datetime import datetime
 from pathlib import Path

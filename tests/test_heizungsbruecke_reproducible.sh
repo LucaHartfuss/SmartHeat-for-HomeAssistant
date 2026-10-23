@@ -1,5 +1,5 @@
 #!/bin/bash
-# Zwei Builds ohne Cache liefern dieselbe Paketliste, und sie entspricht der Lock-Datei (TP12e, AU-018).
+# Zwei Builds ohne Cache liefern dieselbe Paketliste, und sie entspricht der Lock-Datei.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ADDON_DIR="$HERE/../heizungsbruecke"

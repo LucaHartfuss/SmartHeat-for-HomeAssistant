@@ -1,4 +1,4 @@
-"""HA-Host der Laufzeit (Spec SHG 3.3, Spec 5c 1.3): Konfiguration aus dem Konfigurationsdokument des Geraetekerns,
+"""HA-Host der Laufzeit: Konfiguration aus dem Konfigurationsdokument des Geraetekerns,
 Warten auf Home Assistant, Hilfs-Entities, Hersteller-Bindings und Trigger ueber HA; der Raum-Soll kommt aus dem
 Soll-Speicher. Die Laufzeit selbst (Start, Handler, Ruhezustand, Abmelden) liegt hostneutral in smartheat_runtime.app.
 
@@ -46,7 +46,7 @@ from smartheat_runtime.worker import Event, RegulationWorker
 # Das Add-on startet mit `startup: services`, evtl. vor HA Core. Solange HA nicht antwortet,
 # wird unbegrenzt gewartet (B10). Erst bei erreichbarem HA zaehlt das Budget fuer fehlende
 # Entities und nicht anlegbare Hilfs-Entities (~4 min, Cloud-Integrationen laden spaet);
-# danach ist es ein Startfehler (Spec TP6 3.6).
+# danach ist es ein Startfehler.
 HA_REACHABILITY_DELAYS_SECONDS = (5, 10, 20, 40, 60)
 DERIVED_SENSORS_RETRY_DELAYS_SECONDS = (5, 10, 20, 40, 60, 60, 60)
 #: Raum fuer up/status (wie das Gateway): Takt im Worker zusaetzlich zu jeder Soll-Aenderung.
@@ -65,7 +65,7 @@ logger = logging.getLogger(__name__)
 
 
 class StartupError(Exception):
-    """Startfehler bei erreichbarem HA nach Ablauf des Budgets (Spec TP6 3.6). `key` ist die
+    """Startfehler bei erreichbarem HA nach Ablauf des Budgets. `key` ist die
     stabile Identitaet des Fehlers fuer den Meldezustand: der Fehlertext enthaelt oft
     laufzeitabhaengige Details (Flow-ID von HA, Objektadressen), die bei jedem Neustart anders
     waeren und sonst jedes Mal eine neue Meldung ausloesten."""
@@ -80,13 +80,13 @@ class _MissingEntities(Exception):
 
 
 class HaHost:
-    """Host der Laufzeit im HA-Add-on ab 1.0.0 (Spec 5c 1.3): Konfiguration aus dem Konfigurationsdokument des
+    """Host der Laufzeit im HA-Add-on: Konfiguration aus dem Konfigurationsdokument des
     Geraetekerns (geraet), Signale ueber die HA-API mit dem Soll-Speicher als Raum-Soll, Hersteller-Bindings und
-    Hilfssensoren wie bisher (Bindung aus dokument.bindung), Trigger ueber den HA-WebSocket."""
+    Hilfssensoren (Bindung aus dokument.bindung), Trigger ueber den HA-WebSocket."""
 
     def __init__(self, geraet, ha_api, *, clock=time.monotonic) -> None:
         self._geraet, self._ha_api, self._clock = geraet, ha_api, clock
-        # Spec Stufe 3 S3 Abschnitt 4: steht nach einer leeren Konfiguration das Zuruecksetzen aus, laeuft die Laufzeit
+        # Steht nach einer leeren Konfiguration das Zuruecksetzen aus, laeuft die Laufzeit
         # mit der alten Konfiguration aus der Aufraeum-Markierung im Modus abgemeldet.
         self._konfiguration, self._leer_abmelden = geraet.laufzeit_konfiguration()
         self._bindung: dokument.HaBindung | None = None
@@ -99,7 +99,7 @@ class HaHost:
         self.signals: SignalSource = GeraetSignale(HaSignalSource(ha_api), lambda: self.store)
         self.status_sink: StatusSink = geraet.status_sink
         vorab = self._bindung_oder_none()
-        # A6-02: in die Senke nur Handy-Dienste (config_check.HA_DIENST); load lehnt die uebernommene Konfiguration mit
+        # In die Senke nur Handy-Dienste (config_check.HA_DIENST); load lehnt die uebernommene Konfiguration mit
         # anderen Diensten ab, ihre Fehlermeldung soll sie aber nicht erst erreichen. Im Log nur die Anzahl.
         gebunden = vorab.benachrichtigung if vorab else []
         dienste = [d for d in gebunden if config_check.HA_DIENST.fullmatch(d)]
@@ -160,7 +160,7 @@ class HaHost:
             # Hilfssensoren indizieren die Rollen, ein fehlender Schluessel waere sonst ein KeyError statt eines
             # Konfigurationsfehlers. Muster der Raumfuehler/Aussenquelle/Batterien/Handys und die Hinweise prueft der
             # Server (config_check); die Positivliste und Formen der Rollen prueft der Host selbst weiter unten
-            # (_bindung_pruefen, A6-02).
+            # (_bindung_pruefen).
             text = dokument.lokal_pruefen(self._konfiguration)
             if text:
                 raise ConfigError(text)
@@ -169,16 +169,16 @@ class HaHost:
             runtime = dokument_config.runtime_config(
                 self._konfiguration, rastung_pfad=config.RASTUNG_PATH, entitlement_path=config.ENTITLEMENT_PATH,
                 abo_source=self._geraet.abo_status)
-            # Spec Stufe 3 S4b 4.3: ohne gueltige Bindungsparameter kein Start
+            # Ohne gueltige Bindungsparameter kein Start
             description = dokument_config.beschreibung(self._konfiguration)
             _wait_for_required_entities(self._ha_api, b)
-            # A6-02, L4-27: die Regeln des Annehmens (Positivliste, Form je Feld, Schreibziele) gelten auch fuer eine
+            # Die Regeln des Annehmens (Positivliste, Form je Feld, Schreibziele) gelten auch fuer eine
             # schon uebernommene Konfiguration, und zwar vor den Hilfssensoren (derived_sensors baut aus einer Rolle
             # schon ein Template in HA) und vor jedem Schreiben.
             _bindung_pruefen(self._konfiguration)
             ohne_zustand = _rollen_pruefen_mit_wiederholung(self._ha_api, b)
             derived = _ensure_derived_sensors_with_retry(self._ha_api, b, runtime.tenant_id)
-            # optionale Lese-Rollen und Batterien ohne Zustand bleiben fuer diesen Lauf ungelesen (Spec 3.2 Nachtrag)
+            # optionale Lese-Rollen und Batterien ohne Zustand bleiben fuer diesen Lauf ungelesen
             ungelesen = {ref for _, ref in ohne_zustand}
             rollen = {rolle: ref for rolle, ref in b.rollen.items() if ref not in ungelesen}
             manifest = build_manifest({**rollen, "room_target": SOLL_REF}, derived.entity_ids, b.hebelsatz)
@@ -199,7 +199,7 @@ class HaHost:
                                  on_change=self._raum_changed)
         self._angleichen = bedient is not None and not dirty
         if self._angleichen and self.store.value != start_value:
-            self.store.apply_portal(start_value)  # Bedienung kam waehrend eines Neustarts (Spec 5b 3.3)
+            self.store.apply_portal(start_value)  # Bedienung kam waehrend eines Neustarts
         self.raum = RaumPublisher(self._geraet.raum_merken, self.signals, self.store, manifest.refs.get("room_actual"),
                                   lambda: wallclock.now().isoformat())
         runtime = dataclasses.replace(
@@ -211,7 +211,7 @@ class HaHost:
         if derived.replaced:
             notices = (Notice("quellwechsel", derived.sources_fingerprint, SOURCE_CHANGE_MESSAGE),)
         fehlend = {feld for feld, _ in ohne_zustand}
-        # L4-25: jedes gebundene optionale Feld meldet seinen Zustand; mit Zustand entwarnt der Melder einen offenen
+        # Jedes gebundene optionale Feld meldet seinen Zustand; mit Zustand entwarnt der Melder einen offenen
         # Hinweis (und nur diesen), sonst bliebe „fehlt“ nach der Rueckkehr stehen und ein erneutes Fehlen schwiege.
         notices += tuple(
             Notice(f"entity_fehlt:{feld}", "fehlt", ENTITY_FEHLT_MESSAGE.format(feld=feld)) if feld in fehlend
@@ -221,7 +221,7 @@ class HaHost:
                       notices=notices)
 
     def trigger_source(self, manifest: ChannelManifest, worker: RegulationWorker) -> TriggerSource:
-        assert self._bindung is not None and self._runtime is not None and self.store is not None  # load() lief vorher
+        assert self._bindung is not None and self._runtime is not None and self.store is not None  # load() lief zuvor
         geraet = self._geraet
         # eine Soll-Quelle fuer Start und Betrieb: scheitert das Angleichen beim Start, holt der Trigger es nach
         quelle = HaSollQuelle(self._ha_api, self.soll_entity) if self.soll_entity else None
@@ -244,9 +244,9 @@ class HaHost:
         return client
 
     def _soll_entity_angleichen(self, quelle: HaSollQuelle) -> None:
-        """Spec 5c 1.3 "Bedienung angleichen" beim Start (Gateway: _angleichen): Thermostat, HA und Portal zeigen
+        """"Bedienung angleichen" beim Start (Gateway: _angleichen): Thermostat, HA und Portal zeigen
         denselben Wert. Nur wenn die Entity etwas anderes zeigt und nicht aus ist (HVAC off oder Frostschutz-Stellung
-        bis FROSTSCHUTZ_BIS = Soll-Quelle aus: keine Bedienung an die Quelle, Spec 5b 3.2; beim Wiedereinschalten
+        bis FROSTSCHUTZ_BIS = Soll-Quelle aus: keine Bedienung an die Quelle; beim Wiedereinschalten
         gleicht der Soll-Eingang an). Danach gilt das Echo-Fenster; der
         zuletzt gezeigte Wert zaehlt als veraltet. Scheitert das Schreiben, holt der Trigger es beim Verbinden nach
         (quelle.angleichen_offen, geraet_trigger.build). Laeuft im Hauptthread vor dem Worker und vor dem
@@ -264,7 +264,7 @@ class HaHost:
         if angezeigt == self.store.value:
             return
         if angezeigt is not None and angezeigt <= FROSTSCHUTZ_BIS:
-            return  # Frostschutz-Stellung ist ebenfalls "Soll-Quelle aus" (Spec 5b 3.2, SollEingang)
+            return  # Frostschutz-Stellung ist ebenfalls "Soll-Quelle aus" (SollEingang)
         if quelle.schreiben(self.store.value):
             self.store.note_own_write(veraltet=angezeigt)
 
@@ -347,8 +347,8 @@ def _bindung_pruefen(konfiguration) -> None:
 
 
 def _rollen_pruefen_mit_wiederholung(ha_api, b: dokument.HaBindung) -> list[tuple[str, str]]:
-    """Lokale Positivliste fuer jede Rolle (A6-02) und die Regeln der Schreibziele (dokument.schreibziele_befund:
-    Plattform des Hebelsatzes, ein Config-Entry, Soll-Entity nicht am Geraet eines Schreibziels; L4-27, A5-70). Ein
+    """Lokale Positivliste fuer jede Rolle und die Regeln der Schreibziele (dokument.schreibziele_befund:
+    Plattform des Hebelsatzes, ein Config-Entry, Soll-Entity nicht am Geraet eines Schreibziels). Ein
     Urteil ist ein Konfigurationsfehler; nicht pruefbar (HA nicht RUNNING, Soll-Entity, Pflichtrolle, Schreibziel oder
     Raumfuehler ohne Zustand, Schreibziel ohne Registry-Eintrag, Registry oder Zustaende scheitern) wird wie fehlende
     Entities wiederholt, nach dem Budget StartupError. Ergebnis: (Feld, Referenz) der optionalen Lese-Rollen und

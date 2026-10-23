@@ -1,4 +1,4 @@
-"""SignalSource des Gateways (Spec SHG G2 3.2): zigbee:<ieee>:<feld> aus dem Zigbee-Spiegel, soll:room_target aus
+"""SignalSource des Gateways: zigbee:<ieee>:<feld> aus dem Zigbee-Spiegel, soll:room_target aus
 dem Soll-Speicher, treiber:<rolle> aus dem Cache des Treibers, raum:mittel = Raummittel (room_mean) ueber die
 Referenzraum-Fuehler. Ungueltige Werte werfen ValueError/KeyError wie beim HA-Host; ein getrennter lokaler Bus wirft
 SourceUnavailable; eine unbekannte Referenz SignalNotFound. Gelesen wird nur im Worker-Thread."""
@@ -64,11 +64,11 @@ class GatewaySignalSource:
     def get_raw_state(self, ref: str) -> str:
         value = self._raw(ref)
         if isinstance(value, bool):
-            return "on" if value else "off"  # wie HA binary_sensor (Plan G2a Review Focus 2)
+            return "on" if value else "off"  # wie HA binary_sensor
         return str(value)
 
     def get_unit(self, ref: str) -> str:
-        """Das Gateway hat keine Energiekanaele (Spec Stufe 3 S4b 5) und damit keine Einheit hinter einer Referenz."""
+        """Das Gateway hat keine Energiekanaele und damit keine Einheit hinter einer Referenz."""
         raise ValueError("Gateway-Signale haben keine Einheit")
 
     def device_key(self, ref: str) -> str:

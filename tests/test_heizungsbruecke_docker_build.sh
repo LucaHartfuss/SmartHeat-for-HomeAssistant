@@ -6,7 +6,7 @@ FAIL=0
 IMAGE_TAG="heizungsbruecke-test:local"
 CONTAINER_NAME="heizungsbruecke-docker-build-test"
 # Eigener Arbeitsordner (nicht TMPDIR: das erbten docker und seine Kinder), bei jedem Ende aufgeraeumt, auch beim
-# Abbruch; ein Container eines frueheren, abgebrochenen Laufs blockiert den Namen nicht (A6-49).
+# Abbruch; ein Container eines frueheren, abgebrochenen Laufs blockiert den Namen nicht.
 WORK="$(mktemp -d)"
 cleanup() {
   docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1
@@ -22,7 +22,7 @@ echo "PASS: docker build erfolgreich"
 DATA_DIR="$WORK/data"
 mkdir -p "$DATA_DIR"
 
-# Ab 1.0.0 (Spec 5c) gibt es nur noch Start-Optionen; eingerichtet wird ueber das Konfigurationsdokument.
+# Ab 1.0.0 gibt es nur noch Start-Optionen; eingerichtet wird ueber das Konfigurationsdokument.
 cat > "$DATA_DIR/options.json" <<JSON
 {"log_level":"info"}
 JSON

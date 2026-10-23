@@ -1,4 +1,4 @@
-"""Mindestvorlauftemperatur = Raum-Soll des Kunden (TP11; client-abgeleiteter Hebel min_flow, Spec 3.3). Die
+"""Mindestvorlauftemperatur = Raum-Soll des Kunden (client-abgeleiteter Hebel min_flow). Die
 Mindestvorlauftemperatur ist bei Vaillant eine Untergrenze, keine Parallelverschiebung; sie wird lokal nachgefuehrt, der
 Server kennt sie nicht. Geschrieben wird nur bei Abweichung vom Live-Wert (bei mypyllant ein Cloud-Aufruf;
 nur das Lesen ist lokal), also beim Start und nach einer Soll-Aenderung."""
@@ -24,7 +24,7 @@ TOLERANCE = 0.05  # genau TOLERANCE schreibt nicht (zahlen.GLEITKOMMA_REST)
 
 def expected(rt: DerivedRuntime) -> float | None:
     """Sollwert des Mindestvorlaufs; None ohne Raum-Soll oder wenn der Hebelsatz keinen Mindestvorlauf ableitet
-    (Plan 3b: Weishaupt, Viessmann)."""
+    (Weishaupt, Viessmann)."""
     if "min_flow" not in rt.override.binding.description.lever_set.client_derived:
         return None
     target = rt.store.state.stable_target

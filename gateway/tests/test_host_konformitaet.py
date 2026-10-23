@@ -1,4 +1,4 @@
-"""V2-Konformitaet des Gateway-Hosts (heizungsbruecke/testhilfen/host_konformitaet.py; Spec Stufe 3 S6 4.1)."""
+"""V2-Konformitaet des Gateway-Hosts (heizungsbruecke/testhilfen/host_konformitaet.py)."""
 import pytest
 from configs import SENSOR, konfiguration
 from fake_z2m import FakeZigbee2Mqtt

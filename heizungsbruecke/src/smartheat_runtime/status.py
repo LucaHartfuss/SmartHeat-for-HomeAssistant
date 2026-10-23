@@ -1,4 +1,4 @@
-"""Status-Modell Schema 2 (Spec TP7 1.1, 3.1); der Host sendet es ueber seinen StatusSink, beim HA-Host als
+"""Status-Modell Schema 2; der Host sendet es ueber seinen StatusSink, beim HA-Host als
 Ereignis `smartheat_status` an die SmartHeat-Integration. Gesendet wird der volle Status: nach jedem
 Worker-Ereignis, wenn sich der Inhalt geaendert hat, bei jedem (Wieder-)Verbinden des WS-Trigger-Clients und
 als Lebenszeichen alle HEARTBEAT_SECONDS. Die Integration haelt daraus ihre Entities; bleibt das Lebenszeichen
@@ -75,13 +75,13 @@ _STORAGE_FAULT_ROLES = (delivery.ROLE_DATENTRAEGER,)
 def _veralteter_notbetrieb(state) -> bool:
     """Notbetrieb ohne offenen Tick stammt aus dem Abo-inaktiv-Modus; der Start beendet oder klaert ihn per Pruef-Tick
     (app._is_stale_notbetrieb). Bis zum ersten abgeschlossenen Start zeigt der Status deshalb `startet` statt eines
-    kurzen `notbetrieb` (L4-09)."""
+    kurzen `notbetrieb`."""
     return state.delivery.notbetrieb and state.delivery.pending is None
 
 
 def overall_status(flags: Flags, state, storage_failed: bool = False) -> str:
-    """Erster zutreffender Zustand (Spec TP7 3.1): Endzustaende und Abo gelten immer, danach
-    Notbetrieb und Datenfehler (auch ein nicht beschreibbarer Datentraeger, TP12b), erst dann vor
+    """Erster zutreffender Zustand: Endzustaende und Abo gelten immer, danach
+    Notbetrieb und Datenfehler (auch ein nicht beschreibbarer Datentraeger), erst dann vor
     dem ersten abgeschlossenen Start `startet` (sonst stuende ein Add-on, dessen Verbindung nie aufgebaut wird, im
     Notbetrieb dauerhaft auf `startet`).
     Ausnahme: ein veralteter Notbetrieb (ohne offenen Tick) zaehlt vor dem Start nicht als Notbetrieb."""
@@ -138,7 +138,7 @@ def _open_keys(state, prefix: str, value: str) -> list[str]:
 
 def _zahl(value) -> float | None:
     """Eine nicht endliche Zahl (NaN, Inf, Ganzzahl ausserhalb des float-Bereichs) geht nie in den Status, sondern als
-    None des Feldes (Testoffensive T2, Nr. 17): ein Laufzeitwert legt das Ereignis und damit up/status nicht lahm."""
+    None des Feldes: ein Laufzeitwert legt das Ereignis und damit up/status nicht lahm."""
     return value if ist_endliche_zahl(value) else None
 
 

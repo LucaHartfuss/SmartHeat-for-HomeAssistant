@@ -23,7 +23,7 @@ step() {
   echo "=== $name ==="
   if "$@"; then echo "--- $name: OK"; else echo "--- $name: FEHLER"; FAILED+=("$name"); fi
 }
-# Schritt, der ohne --full nicht laeuft (A6-45): die Ausgabe nennt ihn, statt ihn still auszulassen; bei --only
+# Schritt, der ohne --full nicht laeuft: die Ausgabe nennt ihn, statt ihn still auszulassen; bei --only
 # (der Nutzer hat gewaehlt) bleibt es still.
 SKIPPED=()
 skipped() {
@@ -55,11 +55,11 @@ docker_host_run() {
 if [ "$FULL" = 1 ]; then export HYPOTHESIS_PROFILE=voll; fi
 PY="${PYTHON:-python3}"
 # Dev-Root: in CI aus siblings.sh (DEV_ROOT), lokal der Ordner ueber dem Haupt-Checkout - auch aus einem
-# Worktree unter .devtools/wt/ (git-common-dir zeigt auf .git des Haupt-Checkouts; Audit 5, A5-08).
+# Worktree unter .devtools/wt/ (git-common-dir zeigt auf .git des Haupt-Checkouts).
 DEV="${DEV_ROOT:-$(cd "$(git rev-parse --git-common-dir)/../.." && pwd)}"
 pyright_in() { (cd "$1" && "$PY" -m ruff check . && "$PY" -m pyright --pythonpath "$("$PY" -c 'import sys; print(sys.executable)')"); }
-# Toter Code (Stufe 3 S8b, A5-87): je Paket mit seinen Ausnahmen (vulture_ausnahmen.py, jede Zeile begruendet;
-# Vertragsnamen nur mit Leser auf der Gegenseite der Kopie, S3S8b-Vertragsleser). Kern und Gateway in einem Lauf: das
+# Toter Code: je Paket mit seinen Ausnahmen (vulture_ausnahmen.py, jede Zeile begruendet;
+# Vertragsnamen nur mit Leser auf der Gegenseite der Kopie). Kern und Gateway in einem Lauf: das
 # Gateway baut auf dem Kern auf, der Kern ruft dessen Treiber- und Host-Methoden ueber Protocols, das Gateway liest
 # Vertragsnamen des Kerns.
 # Grenze: vulture vergleicht nur Namen. Ein gleich geschriebener Name im anderen Paket verdeckt toten Code (Beispiele
@@ -74,8 +74,8 @@ toter_code() {
 }
 lint() { pyright_in heizungsbruecke && pyright_in gateway && pyright_in gateway/host && pyright_in gateway/release && toter_code \
   && "$PY" scripts/ci/pin_check.py --repo "$PWD"; }
-# Kern- und HA-Host-Tests (heizungsbruecke/tests), Gateway-Tests, Host-Dienste des Gateways (Spec SHG 9.1, G2b-1 10),
-# Bundle-Bau (G2b-1 7). Alle vier laufen, auch wenn einer rot ist (A6-46; wie tools/check_all.sh).
+# Kern- und HA-Host-Tests (heizungsbruecke/tests), Gateway-Tests, Host-Dienste des Gateways,
+# Bundle-Bau. Alle vier laufen, auch wenn einer rot ist (wie tools/check_all.sh).
 tests() {
   local rc=0 teil
   for teil in heizungsbruecke gateway gateway/host gateway/release; do

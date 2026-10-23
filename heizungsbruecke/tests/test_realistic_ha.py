@@ -59,7 +59,7 @@ def _curve_calls(ha):
 
 
 def test_answer_for_an_unavailable_entity_writes_nothing_and_is_retried(env, lagging):
-    # AU-016: HA wuerde den Aufruf still mit 200 ueberspringen; das Add-on darf den Wert nicht fuer geschrieben halten.
+    # HA wuerde den Aufruf still mit 200 ueberspringen; das Add-on darf den Wert nicht fuer geschrieben halten.
     _quiet_backup(env)
     bridge = _start(env)
     _connect(env, bridge)
@@ -82,7 +82,7 @@ def test_answer_for_an_unavailable_entity_writes_nothing_and_is_retried(env, lag
 
 
 def test_failing_boost_end_does_not_hammer_the_quota(env, lagging):
-    # AU-015: sieben lokale Checks in sieben Minuten duerfen hoechstens zwei Cloud-Versuche ausloesen
+    # Sieben lokale Checks in sieben Minuten duerfen hoechstens zwei Cloud-Versuche ausloesen
     # (sofort und nach 300 s, Rueckkehr-Staffel 5/15/30 min). Das Boost-Ende kommt ueber die Ankunftsschwelle
     # (Raum 21.6 bei Soll 22.0, wie test_runtime::test_restart_during_comfort_boost_continues_and_ends_on_arrival);
     # min_flow steht schon auf dem Raum-Soll, damit jeder Versuch ein Boost-Ende-Versuch ist.

@@ -27,7 +27,7 @@ def _safety(heat_limit_max=20.0):
 
 
 def _rt(ha, manifest, store, override=None, mqtt=None, clock=None, zone_prepared=True):
-    """Laufzeit-Sicht von ticks._attempt mit echter Pipeline (Vaillant) und dem MQTT-Kanal als Port (A5-25).
+    """Laufzeit-Sicht von ticks._attempt mit echter Pipeline (Vaillant) und dem MQTT-Kanal als Port.
     zone_prepared: die Zone wurde in diesem Prozess vorbereitet (Runtime.zone_prepared)."""
     if override is None:
         override = LeverPipeline(store, HaPlantBinding(ha, manifest, VAILLANT_MYPYLLANT), _safety(), clock=clock)
@@ -59,7 +59,7 @@ def test_snapshot_uses_restore_point_when_zone_is_off(make_store, clock, zone, e
 
 
 def test_ruhende_zone_beim_ersten_start_nimmt_das_raum_soll(make_store, clock):
-    """S3-3: Zone vorbereitet, ruht (liest 0), und es gibt noch keinen Wiederherstellungspunkt (erster Start): der
+    """Zone vorbereitet, ruht (liest 0), und es gibt noch keinen Wiederherstellungspunkt (erster Start): der
     Snapshot meldet das stabile Raum-Soll statt eines Datenfehlers; der Wiederherstellungspunkt bleibt leer (ihn
     schreibt erst die Antwort des Servers)."""
     ha = FakeHa()
@@ -77,7 +77,7 @@ def test_ruhende_zone_beim_ersten_start_nimmt_das_raum_soll(make_store, clock):
 
 
 def test_ruhende_nie_vorbereitete_zone_ohne_wiederherstellungspunkt_bleibt_ein_datenfehler(make_store, clock):
-    """S3-3, Gegenprobe (Schlussreview I-1): ist die Zone in diesem Prozess nie vorbereitet worden, gilt der
+    """Gegenprobe: ist die Zone in diesem Prozess nie vorbereitet worden, gilt der
     Rueckfall auf das Raum-Soll nicht; der Snapshot bleibt zurueckgehalten. Sonst stellte die Antwort des Servers
     die Zone ausserhalb des Kontingents `zone_prepare` um."""
     ha = FakeHa()
@@ -94,7 +94,7 @@ def test_ruhende_nie_vorbereitete_zone_ohne_wiederherstellungspunkt_bleibt_ein_d
 
 
 def test_ruhende_zone_ohne_wiederherstellungspunkt_und_ohne_raum_soll_bleibt_ein_datenfehler(make_store, clock):
-    """S3-3, Gegenprobe: ohne stabiles Raum-Soll gibt es nichts zu melden, der Snapshot wird zurueckgehalten."""
+    """Gegenprobe: ohne stabiles Raum-Soll gibt es nichts zu melden, der Snapshot wird zurueckgehalten."""
     ha = FakeHa()
     ha.states["climate.zone::temperature"] = 0.0
     manifest = ChannelManifest(refs={"room_target": "sensor.room_target", "shift_current": "climate.zone::temperature"})
@@ -107,7 +107,7 @@ def test_ruhende_zone_ohne_wiederherstellungspunkt_und_ohne_raum_soll_bleibt_ein
 
 
 def test_ruhende_zone_bevorzugt_den_wiederherstellungspunkt_vor_dem_raum_soll(make_store, clock):
-    """S3-3, Gegenprobe: der Rueckfall auf das Raum-Soll gilt nur ohne Wiederherstellungspunkt."""
+    """Gegenprobe: der Rueckfall auf das Raum-Soll gilt nur ohne Wiederherstellungspunkt."""
     ha = FakeHa()
     ha.states["climate.zone::temperature"] = 0.0
     manifest = ChannelManifest(refs={"room_target": "sensor.room_target", "shift_current": "climate.zone::temperature"})
@@ -144,7 +144,7 @@ class _StaleZoneHa:
 
 
 def test_first_start_snapshot_reports_the_written_start_shift_not_the_stale_zone(make_store, clock):
-    # Re-Review: _prime schreibt die Startverschiebung (21.0), der erzwungene Tick geht Sekunden spaeter
+    # _prime schreibt die Startverschiebung (21.0), der erzwungene Tick geht Sekunden spaeter
     # raus. Der Live-Read zeigt noch 18.0 aus dem Zeitprogramm; der Server-Erstkontakt wuerde 18
     # uebernehmen und mit seiner Antwort die 21 ueberschreiben.
     manifest = ChannelManifest(refs={
@@ -189,7 +189,7 @@ class _LaggingPlantHa:
 
 
 def test_snapshot_reports_all_own_writes_until_settled_then_the_live_values(make_store, clock):
-    # Audit 3, A3-02: der Tagestick vergleicht curve/heat_limit mit den zuletzt gesendeten Werten
+    # Der Tagestick vergleicht curve/heat_limit mit den zuletzt gesendeten Werten
     # ("Anlage folgt nicht"). Kurz nach einem eigenen Schreiben zeigt HA noch die alten Werte; ohne diese Regel
     # zaehlte eine Soll-Absenkung kurz vor dem Tagestick als Abweichung. Einschwingzeit Vaillant: 2100 s.
     manifest = ChannelManifest(refs={
@@ -217,8 +217,7 @@ def test_snapshot_reports_all_own_writes_until_settled_then_the_live_values(make
 
 
 def test_write_fault_detail_names_the_lever():
-    # Ersetzt test_write_fault_detail_keeps_the_role_names_of_the_customer_text (Controller-Ruling Task 10, Spec
-    # P2-3): Datenfehler nennen Hebel; der Detailtext ist der von DeviceWriteError ("curve (number.x): Ursache").
+    # Datenfehler nennen Hebel; der Detailtext ist der von DeviceWriteError ("curve (number.x): Ursache").
     error = DeviceWriteError("curve", "number.curve", RuntimeError("myVAILLANT-Cloud nicht erreichbar"))
     assert str(error) == "curve (number.curve): myVAILLANT-Cloud nicht erreichbar"
     error = DeviceWriteError("room_setpoint", "climate.zone::temperature", RuntimeError("x" * 300))
@@ -227,7 +226,7 @@ def test_write_fault_detail_names_the_lever():
     assert str(error) == "heat_limit (number.hl): weg"
 
 
-# --- Fremdtext aus der Serverantwort (A6-37) ---
+# --- Fremdtext aus der Serverantwort ---
 
 class _FakeWorker:
     def schedule(self, delay_s, event):
@@ -250,7 +249,7 @@ def _server_grund(rt):
 
 
 def test_riesige_ungueltige_antwort_gibt_kurzen_grund(make_store, clock):
-    """A6-37: der Server liefert ungueltige `levers` von 130 KB; der Grund (Datenfehler, Push, Speicher, spaeter der
+    """Der Server liefert ungueltige `levers` von 130 KB; der Grund (Datenfehler, Push, Speicher, spaeter der
     Stapel an den Server) bleibt bei 200 Zeichen, der Anfang mit dem Schluessel vor dem Doppelpunkt bleibt."""
     rt, sink = _rt_mit_offenem_tick(make_store, clock)
 
@@ -294,7 +293,7 @@ def test_kurzer_ablehnungsgrund_bleibt_unveraendert(make_store, clock):
 
 
 def test_gekuerzter_ablehnungsgrund_hat_genau_die_grenze_und_endet_auf_auslassung(make_store, clock):
-    """Mutationsprobe TP2: die Kuerzung nimmt 199 Zeichen vom Anfang und haengt "…" an, zusammen genau 200."""
+    """Die Kuerzung nimmt 199 Zeichen vom Anfang und haengt "…" an, zusammen genau 200."""
     rt, _ = _rt_mit_offenem_tick(make_store, clock)
     reason = "".join(chr(ord("a") + i % 26) for i in range(1000))
 

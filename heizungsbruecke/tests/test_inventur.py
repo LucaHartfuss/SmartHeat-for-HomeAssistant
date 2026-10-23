@@ -1,4 +1,4 @@
-"""Spec 5c 1.3 (G-9): Inventur nur nach Filter, Felder nach dem Vertrag; der Server liest sie (ha_inventur.lesen)."""
+"""G-9: Inventur nur nach Filter, Felder nach dem Vertrag; der Server liest sie (ha_inventur.lesen)."""
 import logging
 import math
 import re
@@ -239,7 +239,7 @@ WEIT = {"plattformen": ["mypyllant", "mobile_app", "nuki", "zha"], "domaenen": [
 
 
 def _ha_weit():
-    """Ein Server-Filter, der mehr verlangt als die Positivliste erlaubt (A5-30)."""
+    """Ein Server-Filter, der mehr verlangt als die Positivliste erlaubt."""
     ha = _ha()
     ha.states.update({
         "sensor.mypyllant_betriebsart": "heating",  # ohne Klasse, Plattform liefert number.curve
@@ -293,7 +293,7 @@ def test_der_normale_filter_verliert_nichts():
     assert ids == {"number.curve", "climate.wz", "sensor.t"}
 
 
-# --- Randfaelle der Positivliste und der Eingaben (Abschlussreview Stufe 3 S5a, Mutationsprobe) ---
+# --- Randfaelle der Positivliste und der Eingaben (Mutationsprobe) ---
 
 
 class _RohHa(FakeHa):

@@ -1,4 +1,4 @@
-"""Spec 5b 3 und 5.1: Dokumentspeicher des Geraets und atomares Schreiben (Plan D1 Task 3)."""
+"""Dokumentspeicher des Geraets und atomares Schreiben."""
 import json
 import logging
 import math
@@ -17,7 +17,7 @@ from smartheat_runtime import soll_speicher
 # --- Konfiguration ---
 
 def test_a_empty_configuration_does_not_release_the_lock(tmp_path):
-    """A5-06 (SI-1): leer und danach ein anderes Verteilsystem loeste das Einrasten. Jetzt bleibt die Rastung."""
+    """Leer und danach ein anderes Verteilsystem loeste das Einrasten. Jetzt bleibt die Rastung."""
     store = _store(tmp_path)
     store.empfangen("konfiguration", _konfiguration(version=1, verteilsystem="Fussbodenheizung"))
     assert store.empfangen("konfiguration", _leer(version=2)).uebernommen
@@ -48,8 +48,8 @@ def _scheitert_fuer(monkeypatch, name: str) -> None:
 
 
 def test_an_abort_after_the_lock_leaves_the_lock_without_the_document(tmp_path, monkeypatch):
-    """Spec 3.2: die Rastung steht vor dem Dokument; ein Abbruch dazwischen hinterlaesst die Rastung ohne Dokument
-    (das Geraet haelt die Konfiguration zurueck und wiederholt, device.py A6-10; die Rastung passt dazu). Der Speicher gibt
+    """Die Rastung steht vor dem Dokument; ein Abbruch dazwischen hinterlaesst die Rastung ohne Dokument
+    (das Geraet haelt die Konfiguration zurueck und wiederholt, device.py; die Rastung passt dazu). Der Speicher gibt
     den OSError weiter."""
     _scheitert_fuer(monkeypatch, "konfiguration.json")
     with pytest.raises(OSError):
@@ -60,7 +60,7 @@ def test_an_abort_after_the_lock_leaves_the_lock_without_the_document(tmp_path, 
 
 
 def test_a_failed_state_file_after_the_document_is_retried_with_the_same_result(tmp_path, monkeypatch):
-    """A6-10: scheitert dokumente.json erst nach dem Dokument, gilt das Dokument im Speicher nicht als uebernommen: die
+    """Scheitert dokumente.json erst nach dem Dokument, gilt das Dokument im Speicher nicht als uebernommen: die
     Wiederholung gibt dasselbe Ergebnis wie ein erster Versuch (uebernommen, Host erfaehrt es) und schreibt den Zustand."""
     store = _store(tmp_path)
     assert store.empfangen("konfiguration", _konfiguration(version=1)).uebernommen
@@ -86,7 +86,7 @@ def test_a_failed_state_file_restores_a_refusal_entry(tmp_path, monkeypatch):
 
 
 def test_a_failed_folder_sync_after_the_lock_replace_still_locks_the_pair_in_this_process(tmp_path, monkeypatch):
-    """S3S3-Reste: os.replace gelang, der fsync des Ordners warf. Die Rastung steht auf dem Datentraeger, also muss
+    """os.replace gelang, der fsync des Ordners warf. Die Rastung steht auf dem Datentraeger, also muss
     derselbe Prozess sie kennen: ein anderes Paar wird abgelehnt, das gleiche angenommen."""
     store = _store(tmp_path)
     echt = dateien.os.fsync
@@ -107,7 +107,7 @@ def test_a_failed_folder_sync_after_the_lock_replace_still_locks_the_pair_in_thi
 
 
 def test_a_read_only_store_neither_writes_nor_creates_the_lock(tmp_path):
-    """S3S3-Reste: die Nur-Lese-Verwendungen (Aufraeumen beim Start) rasten nicht nach, auch nicht bei gespeicherter
+    """Die Nur-Lese-Verwendungen (Aufraeumen beim Start) rasten nicht nach, auch nicht bei gespeicherter
     Konfiguration ohne Rastung; sie lesen nur."""
     _store(tmp_path).empfangen("konfiguration", _konfiguration())
     (tmp_path / "sicherheitssatz.json").unlink()
@@ -359,7 +359,7 @@ def test_the_target_software_must_have_exactly_the_contract_fields(tmp_path, sof
     assert ergebnis.details["feld"] == "software" and ergebnis.details["regel"] == regel
 
 
-# --- Gemerktes Software-Angebot (5b-D2-3, Review Focus 5) ---
+# --- Gemerktes Software-Angebot ---
 
 SOFTWARE_NEU = {**SOFTWARE, "version": "0.7.1"}
 ANGEBOT, ANGEBOT_NEU, ZURUECKGEZOGEN = docs.Angebot(SOFTWARE), docs.Angebot(SOFTWARE_NEU), docs.Angebot(None)
@@ -459,7 +459,7 @@ def test_a_held_back_configuration_remembers_no_offer(tmp_path):
     ({"software_angebot": "0.7.0"}, None),
 ])
 def test_only_a_stored_key_in_the_contract_form_is_a_remembered_offer(tmp_path, gespeichert, erwartet):
-    """Kein Kompatibilitaetspfad: ein dokumente.json ohne den Schluessel (Stand vor 5b-D2-3) oder mit einem Wert
+    """Kein Kompatibilitaetspfad: ein dokumente.json ohne den Schluessel oder mit einem Wert
     ausserhalb des Vertrags heisst nichts gemerkt; null heisst zurueckgezogen gemerkt."""
     (tmp_path / docs.ZUSTAND_DATEI).write_text(json.dumps(gespeichert))
     assert _store(tmp_path).software_angebot() == erwartet
@@ -597,7 +597,7 @@ def test_minimum_software_compares_numerically(eigene, mindest, unter):
     (21.3, False), (0, False), (-1, False), (1e308, False), (-math.inf, False), (False, False),
 ])
 def test_operating_range(value, ok):
-    assert soll_speicher.im_bedienbereich(value) is ok  # die eine Funktion, die documents.py benutzt (5c-D-10)
+    assert soll_speicher.im_bedienbereich(value) is ok  # die eine Funktion, die documents.py benutzt
 
 
 def test_the_steps_inside_the_operating_range_are_exactly_the_half_kelvin_ones():
@@ -646,8 +646,7 @@ def test_documents_are_the_contract_documents():
                                           ("bedienung", _bedienung(ts="\udfff"))])
 def test_a_document_with_a_lone_surrogate_is_rejected_and_nothing_is_stored(tmp_path, art, inhalt):
     """json.loads liefert aus "\\ud800" ein einzelnes Surrogat; schreiben_json koennte es nicht kodieren. Statt einer
-    Ausnahme aus empfangen() (ohne Antwort an den Server) gibt es eine Ablehnung `ungueltig` (Testoffensive T2,
-    Task 13)."""
+    Ausnahme aus empfangen() (ohne Antwort an den Server) gibt es eine Ablehnung `ungueltig`."""
     store = _store(tmp_path)
     ergebnis = store.empfangen(art, inhalt)
     assert (ergebnis.ok, ergebnis.grund, ergebnis.details) == (False, "ungueltig", None)
@@ -655,7 +654,7 @@ def test_a_document_with_a_lone_surrogate_is_rejected_and_nothing_is_stored(tmp_
     assert store.empfangen(art, _konfiguration() if art == "konfiguration" else _bedienung()).uebernommen  # Gegenprobe
 
 
-# --- Vorbereitung vor dem Speichern (Spec Testoffensive 12.6, Nr. 38: Aufraeum-Markierung) ---
+# --- Vorbereitung vor dem Speichern (Nr. 38: Aufraeum-Markierung) ---
 
 def _ohne_huelle(body: dict) -> dict:
     return {key: value for key, value in body.items() if key not in ("schema", "version")}
@@ -682,7 +681,7 @@ def test_the_preparation_gets_old_and_new_before_the_configuration_is_written(tm
 
 @pytest.mark.parametrize("fehler", [OSError("/data/aufraeumen.json"), RuntimeError("unerwartet")])
 def test_a_failing_preparation_holds_the_configuration_back_and_stores_nothing(tmp_path, fehler):
-    """Nr. 38: scheitert die Vorbereitung (OSError beim Schreiben der Markierung, aber auch jede andere Ausnahme), ist
+    """Scheitert die Vorbereitung (OSError beim Schreiben der Markierung, aber auch jede andere Ausnahme), ist
     die Konfiguration nicht pruefbar: nichts gespeichert, nichts abgelehnt, das Geraet haelt sie zurueck (device.py)."""
     def vorbereiten(alt, neu):
         if not neu.get("anlage"):
@@ -749,7 +748,7 @@ def test_operations_rejections_and_duplicates_skip_the_preparation(tmp_path):
 
 @pytest.mark.parametrize("dazwischen", ["abgelehnt", "angenommen", "duplikat"])
 def test_after_a_result_for_another_configuration_a_new_failure_is_logged_again(tmp_path, caplog, dazwischen):
-    """Nr. 38: ein Ergebnis fuer eine Konfiguration (Ablehnung, Annahme einer anderen, Duplikat der gespeicherten)
+    """Ein Ergebnis fuer eine Konfiguration (Ablehnung, Annahme einer anderen, Duplikat der gespeicherten)
     beendet das Zurueckhalten; scheitert danach eine neue Zustellung, ist das ein neues Zurueckhalten mit eigener
     ERROR-Zeile."""
     def vorbereiten(alt, neu):

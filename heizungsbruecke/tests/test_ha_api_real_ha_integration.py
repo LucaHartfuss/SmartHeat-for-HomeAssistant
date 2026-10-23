@@ -33,7 +33,7 @@ pytestmark = pytest.mark.skipif(
     reason="Startet einen echten HA-Core-Container per Docker; nur mit RUN_REAL_HA_TESTS=1 aktiv.",
 )
 
-# CI pinnt bei Push-Laeufen die client1-Version, der taegliche Lauf nimmt stable (Spec 2.2).
+# CI pinnt bei Push-Laeufen die client1-Version, der taegliche Lauf nimmt stable.
 HA_IMAGE = os.environ.get("HA_IMAGE", "ghcr.io/home-assistant/home-assistant:stable")
 HA_PORT = 18213
 
@@ -90,7 +90,7 @@ def _complete_onboarding(base_url: str) -> str:
        (homeassistant/components/config/core.py), der keine REST-Entsprechung hat.
        Deshalb bleibt zone.home nach dem Onboarding bei den Defaults
        latitude=0/longitude=0/radius=100 stehen, unabhaengig davon, was man an
-       core_config schickt. Fuer Task 1 reicht das: der Zweck dieses Tests ist zu
+       core_config schickt. Hier reicht das: der Zweck dieses Tests ist zu
        beweisen, dass get_state() mit api_prefix="/api" gegen eine echte,
        fertig onboardete HA-Instanz funktioniert -- nicht, das core_config-Verhalten
        im Detail zu spezifizieren. Falls eine spaetere Aufgabe echte Config-Werte
@@ -99,7 +99,7 @@ def _complete_onboarding(base_url: str) -> str:
        Body) fehlte im Entwurf komplett. Ohne ihn bleibt der Onboarding-Datensatz
        dauerhaft auf `done: False` fuer diesen Schritt stehen (sichtbar in
        `GET /api/onboarding`), auch wenn alle anderen Schritte erledigt sind. Fuer
-       eine als "fertig onboardet" gedachte Fixture fuer Task 2/3 wird er hier mit
+       eine als "fertig onboardet" gedachte Fixture wird er hier mit
        abgeschlossen.
     3. `client_id` beim Token-Request und Feldnamen/-typen bei den Requests
        (`auth_code`, `access_token`) entsprachen bereits dem Entwurf und mussten
@@ -223,7 +223,7 @@ def _raw(api, entity_id: str) -> str | None:
 def _set_state(api, entity_id: str, state: str, attributes: dict) -> None:
     """Setzt eine Test-Fixture-Entity per rohem REST-POST.
 
-    HomeAssistantApi kennt seit Task 7 (B4, Wegfall der Status-Entity) kein set_state()
+    HomeAssistantApi kennt seit dem Wegfall der Status-Entity kein set_state()
     mehr -- das Add-on selbst braucht die Methode nicht mehr. Diese Tests hier simulieren
     aber weiterhin Sensor-/Wetter-Quellen fuer die Template-Sensor-Tests unten, dafuer
     reicht ein lokaler Roundtrip auf denselben Endpunkt, den get_state()/create_*
@@ -239,7 +239,7 @@ def _set_state(api, entity_id: str, state: str, attributes: dict) -> None:
 
 
 def test_room_template_sensor_averages_valid_sources_and_is_unknown_without(real_ha):
-    """Spec TP6 3.2/6: Mittelwert mit einem toten und einem unplausiblen Fuehler; alle tot ->
+    """Mittelwert mit einem toten und einem unplausiblen Fuehler; alle tot ->
     unknown (nicht "None" als Text, nicht 0)."""
     base_url, token = real_ha
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
@@ -276,7 +276,7 @@ def test_outdoor_template_sensor_reads_weather_temperature(real_ha):
 
 
 def test_deleted_and_recreated_helpers_keep_their_entity_id(real_ha):
-    """Spec TP6 3.3: ein Quellwechsel loescht den Helfer und legt ihn neu an. Die Entity-ID muss
+    """Ein Quellwechsel loescht den Helfer und legt ihn neu an. Die Entity-ID muss
     gleich bleiben (kein _2), sonst zeigen Dashboards und Recorder-Historie ins Leere."""
     base_url, token = real_ha
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
@@ -287,7 +287,7 @@ def test_deleted_and_recreated_helpers_keep_their_entity_id(real_ha):
 
 
 def test_fire_event_reaches_the_event_bus(real_ha):
-    """Spec TP7 1.1: das Status-Event kommt ueber POST /api/events am Bus an (die Integration hoert
+    """Das Status-Event kommt ueber POST /api/events am Bus an (die Integration hoert
     dort mit hass.bus.async_listen)."""
     base_url, token = real_ha
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
@@ -327,7 +327,7 @@ def test_is_reachable_once_real_ha_reports_running(real_ha):
 
 
 def test_tp12b_write_refuses_an_unavailable_number(real_ha):
-    """TP12b, AU-016: HA ueberspringt eine nicht verfuegbare Entity im Service-Aufruf still;
+    """HA ueberspringt eine nicht verfuegbare Entity im Service-Aufruf still;
     HaPlantBinding.write prueft deshalb vorher den Zustand und schreibt nicht."""
     base_url, token = real_ha
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")
@@ -343,7 +343,7 @@ def test_tp12b_write_refuses_an_unavailable_number(real_ha):
 
 
 def test_tp12b_renamed_helper_keeps_its_title_and_is_deleted_by_it(real_ha):
-    """TP12b, B-TP11-1: HA benennt Entity-IDs um (z. B. mit Bereichs-Praefix); der Titel des
+    """HA benennt Entity-IDs um (z. B. mit Bereichs-Praefix); der Titel des
     Config-Entry bleibt. delete_helper erkennt den Helfer daran."""
     base_url, token = real_ha
     api = HomeAssistantApi(base_url=base_url, token=token, api_prefix="/api")

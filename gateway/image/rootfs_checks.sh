@@ -1,5 +1,5 @@
 #!/bin/bash
-# Pruefungen am Root-Dateisystem des Gateway-Images (Plan G2b-2 Task 9): bricht den Image-Bau ab, wenn ein Geraet aus
+# Pruefungen am Root-Dateisystem des Gateway-Images: bricht den Image-Bau ab, wenn ein Geraet aus
 # dem Image eine geteilte Identitaet (machine-id, SSH-Hostschluessel, Geraeteschluessel, Bus-Zugangsdaten), ein
 # Passwort, ein Tunnel-Token oder im Serien-Image SSH bekaeme, wenn der Erststart ohne Pull nicht moeglich waere, wenn
 # WLAN an waere, Zeitzone oder Standard-Locale nicht den Vorgaben entsprechen oder die Geraete-API-/Portal-Adresse
@@ -127,7 +127,7 @@ elif ! grep -q '^[[:space:]]*copy_file config /etc/udev/rules.d/99-rpi-01-smarth
   fail "initramfs-Hook fuer den USB-Start nimmt die Regel nicht mit (copy_file fehlt)"
 fi
 
-# Diagnosewerkzeuge am Geraet (L4-18): ss und ip (iproute2) in usr/bin oder usr/sbin, vcgencmd (raspi-utils) in usr/bin.
+# Diagnosewerkzeuge am Geraet: ss und ip (iproute2) in usr/bin oder usr/sbin, vcgencmd (raspi-utils) in usr/bin.
 # Ein Link zaehlt (er kann auf den Build-Host-Pfaden "kaputt" zeigen), eine nicht ausfuehrbare Datei nicht.
 has_tool() {  # NAME VERZEICHNIS...
   local name="$1" dir

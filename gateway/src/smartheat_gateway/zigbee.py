@@ -1,9 +1,9 @@
-"""Zigbee-Spiegel (Spec SHG G2 5): letzte Werte der Geraete aus Zigbee2MQTT mit Zeitstempel der MONOTONEN Uhr (die
+"""Zigbee-Spiegel: letzte Werte der Geraete aus Zigbee2MQTT mit Zeitstempel der MONOTONEN Uhr (die
 Wanduhr des Pi springt beim Boot, Plan G2a Review Focus 1), Faehigkeiten aus bridge/devices (exposes), Schreiben ans
 Thermostat, Koppeln, erfolgreiche Interviews (bridge/event) fuer die Thermostat-Pflege. Friendly Name = IEEE-Adresse.
 Callbacks laufen im Bus-Thread; der Spiegel haelt nur Daten. Retained Geraetemeldungen (Broker-Replay nach einem
 Neustart der Laufzeit) gelten nur, wenn sie das `last_seen` von Zigbee2MQTT (ISO 8601 mit Zeitzone) tragen und dessen
-Alter auf der Wanduhr zwischen 0 und max_age liegt (L4-17); sonst, auch bei einem `last_seen` in der Zukunft (Uhr
+Alter auf der Wanduhr zwischen 0 und max_age liegt; sonst, auch bei einem `last_seen` in der Zukunft (Uhr
 nach dem Boot noch nicht gestellt), gelten sie bis zur ersten Live-Meldung als veraltet. Retained Meldungen loesen nie
 Geraete-Hooks aus."""
 import contextlib
@@ -36,7 +36,7 @@ class ZigbeeDevice:
     vendor: str
     faehigkeiten: frozenset[str]
     art: str  # fuehler | thermostat | sonstig
-    #: Definition mit exposes und abgeschlossenes Interview; sonst ist die Art nur geraten (A6-02).
+    #: Definition mit exposes und abgeschlossenes Interview; sonst ist die Art nur geraten.
     definiert: bool = False
 
 
@@ -161,8 +161,8 @@ class ZigbeeMirror:
         elif parts[1:] == ["bridge", "event"] and not retain:
             self._on_bridge_event(body)
         elif len(parts) == 2 and parts[1] != "bridge" and isinstance(body, dict):
-            # Retained Meldungen (Broker-Replay beim Verbinden) sind beliebig alt: nur mit frischem last_seen stempeln
-            # (L4-17), sonst gespeichert, aber nicht frisch; keine Geraete-Hooks (Plan G2b-1 Praezisierung 13).
+            # Retained Meldungen (Broker-Replay beim Verbinden) sind beliebig alt: nur mit frischem last_seen stempeln,
+            # sonst gespeichert, aber nicht frisch; keine Geraete-Hooks.
             with self._lock:
                 self._payloads[parts[1]] = (body, self._retained_stamp(body) if retain else self._clock())
             if retain:

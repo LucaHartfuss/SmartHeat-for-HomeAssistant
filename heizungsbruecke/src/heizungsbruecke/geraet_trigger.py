@@ -1,5 +1,5 @@
-"""HA-Trigger im Geraete-Pfad (Spec 5c 1.3, Vertrag smartheat_runtime.ports.TriggerSource): ein subscribe_trigger auf
-die Soll-Entity (mit for: 10 s, wie bis 0.36), ihren HVAC-Modus (Climate), das Raumfuehler-Mittel, das Ereignis
+"""HA-Trigger im Geraete-Pfad (Vertrag smartheat_runtime.ports.TriggerSource): ein subscribe_trigger auf
+die Soll-Entity (mit for: 10 s), ihren HVAC-Modus (Climate), das Raumfuehler-Mittel, das Ereignis
 smartheat_wunsch der Integration und den Tagestick. Der WS-Thread stellt nur Ereignisse in den Worker ein; dort
 entscheidet der Soll-Eingang (smartheat_runtime.soll_eingang, entprellen 0 s): Wunsch mit Herkunft (soll_entity bzw.
 smartheat_entity) und durch (nutzer/automation aus dem HA-Kontext), Thermostat aus/Frostschutz, Angleichen der
@@ -96,7 +96,7 @@ class HaSollQuelle:
     """Die Soll-Entity als Soll-Quelle (SollQuelle): schreibbar nur als Climate-Entity (Attribut temperature).
     angleichen_offen: das letzte Schreiben an die Climate-Entity ist gescheitert (HA Core startet, HA lehnt ab), die
     Entity zeigt also nicht das geltende Soll; bis zum naechsten gelungenen Schreiben holt build() die Angleichung nach,
-    statt einen gezeigten Wert als Eingabe zu nehmen (Final-Review I1). Nur Worker-Thread (und der Start davor)."""
+    statt einen gezeigten Wert als Eingabe zu nehmen. Nur Worker-Thread (und der Start davor)."""
 
     def __init__(self, ha_api, soll_ref: str) -> None:
         self._ha, self._ref = ha_api, soll_ref
@@ -133,8 +133,8 @@ def build(manifest, ha_api, worker: RegulationWorker, store: TargetStore, soll_r
     nie wieder. Deshalb liest EV_SOLL_NACHLESEN die Entity kurz nach dem Fenster einmal erneut und gibt den Wert
     durch denselben Weg (Pending-/Stale-Logik entscheidet). Bei jeder (Re-)Verbindung liest EV_SOLL_LESEN Modus und Soll
     (Aenderungen waehrend der Trennung, Thermostat schon aus beim Start). Solange der WebSocket getrennt ist, liest
-    EV_SOLL_WACHE im Takt des lokalen Checks dasselbe (bis 0.36 las der Watchdog den Raum-Soll direkt aus HA; jetzt kommt
-    er nur ueber den Soll-Eingang in den Soll-Speicher). Nur HA; das Gateway bleibt unberuehrt.
+    EV_SOLL_WACHE im Takt des lokalen Checks dasselbe (der Raum-Soll kommt nur ueber den Soll-Eingang in den Soll-Speicher, nie
+    direkt aus HA). Nur HA; das Gateway bleibt unberuehrt.
 
     Gescheiterte Angleichung (quelle.angleichen_offen: Bedienung vom Server, Angleichen beim Start, Zurueckschreiben
     eines Wunschs): jeder gezeigte Wert (Bericht, Nachlesen, Lesen beim Verbinden und in der Wache; die Wache liest dann
@@ -192,7 +192,7 @@ def build(manifest, ha_api, worker: RegulationWorker, store: TargetStore, soll_r
             eingabe(wert, durch)
             return
         if eingang.aus or wert <= FROSTSCHUTZ_BIS:  # Soll-Quelle aus: wie bisher, der Soll-Eingang gleicht beim
-            quelle.angleichen_offen = False  # Wiedereinschalten an; Frostschutz bleibt unangetastet (Spec 5b 3.2)
+            quelle.angleichen_offen = False  # Wiedereinschalten an; Frostschutz bleibt unangetastet
             eingabe(wert, durch)
             return
         if wert == store.value:  # zeigt das Soll doch (HA hat es trotz Fehler uebernommen)

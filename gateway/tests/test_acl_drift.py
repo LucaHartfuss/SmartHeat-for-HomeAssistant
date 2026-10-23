@@ -1,4 +1,4 @@
-"""Drift-Test ACL <-> Bus-Aufrufe (Plan G2b-2 Task 1, Roadmap-Restpunkt G2b-1): Jede publish/subscribe-Stelle im
+"""Drift-Test ACL <-> Bus-Aufrufe (Roadmap-Restpunkt G2b-1): Jede publish/subscribe-Stelle im
 Gateway-Code ist einem Dienst zugeordnet (CALLERS), und die ACL aus init.py erlaubt sie diesem Dienst nach den
 Mosquitto-Regeln. Eine neue Bus-Stelle ohne Eintrag in CALLERS oder ein Topic ausserhalb der ACL laesst den Test
 scheitern."""

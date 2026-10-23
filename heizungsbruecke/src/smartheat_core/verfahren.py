@@ -1,4 +1,4 @@
-"""Lokaler Teil der Bindung je Hebelsatz (G-7; Spec Stufe 3 S4b Abschnitt 3): die Felder des Schreibverfahrens
+"""Lokaler Teil der Bindung je Hebelsatz (G-7): die Felder des Schreibverfahrens
 (Vorbereitung, Hilfswerte), die Anzeigetexte (bis G-6, Schritt 5) und die Obergrenzen des Schreibschutzes. Der Rest
 der Bindung kommt mit der Konfiguration (smartheat_core.bindungsparameter). Die Obergrenzen schuetzen die Anlage vor
 einem fehlerhaften Server (EEPROM, Cloud-Kontingent): er darf nur gleich oder strenger senden. Werte unveraendert aus
@@ -29,7 +29,7 @@ class Verfahren:
     """schemata: Schluessel, die bindungsparameter.schemata fuer diesen Hebelsatz tragen muss. praefixe_erlaubt: lokale
     Positivliste der Optionsschema-Praefixe (Weishaupt); der Server darf nur eine Teilmenge senden, damit ein
     fehlerhafter Server keine Optionsnamen fuer Vorbereitung und Hilfswerte bilden kann (Regel 4).
-    schreibgruppen_erlaubt: lokale Positivliste der Schreibgruppen (A6-09); der Server darf je Gruppe nur dieselbe
+    schreibgruppen_erlaubt: lokale Positivliste der Schreibgruppen; der Server darf je Gruppe nur dieselbe
     Hebelmenge senden (Reihenfolge egal) oder keine, damit er keine weiten Gruppen bildet, die ungezaehlt viele
     physische Schreibvorgaenge ausloesen (Regel 4)."""
 

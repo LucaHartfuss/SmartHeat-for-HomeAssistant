@@ -10,7 +10,7 @@ env:
   SELF: SmartHeat-for-HomeAssistant
 jobs:
   ci:
-    # Volle Stufe (Docker, Real-HA-Container-Tests); der Push-Lauf faehrt nur die Standardstufe (Spec Nr. 30).
+    # Volle Stufe (Docker, Real-HA-Container-Tests); der Push-Lauf faehrt nur die Standardstufe.
     uses: ./.github/workflows/ci.yml
     with:
       stufe: voll
@@ -35,7 +35,7 @@ jobs:
         env:
           CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
         run: bash scripts/ci/siblings.sh "$RUNNER_TEMP/dev" "$SELF" "$GITHUB_WORKSPACE" "$GITHUB_REF_NAME"
-      # release_gate.py braucht nur PyYAML; dieser Job hat Schreibrecht, daher nur mit Hashes (Audit 4, A4-41).
+      # release_gate.py braucht nur PyYAML; dieser Job hat Schreibrecht, daher nur mit Hashes.
       - run: pip install --require-hashes --no-deps -r "$DEV_ROOT/tools/release/requirements.txt"
       - name: Freigabe pruefen
         id: gate

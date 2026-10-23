@@ -1,10 +1,9 @@
-"""Identitaet des Geraets (Spec 5b 1, aus gateway agent/identity.py): Signierschluessel ECDSA P-256 (Geraete-ID und
+"""Identitaet des Geraets: Signierschluessel ECDSA P-256 (Geraete-ID und
 signierte Bootstrap-Anfragen), eigener TLS-Schluessel fuer das MQTT-Zertifikat (CSR mit CN = Geraete-ID) und
-Uebernahme-Code (12 Zeichen Base32, 60 Bit), alle unter <daten>/device/ (0600, gleiche Dateinamen wie der Gateway-Agent
-bis 0.5.0). Den Verschluesselungsschluessel enc_key.pem erzeugt das Geraet seit Stufe 3 S8a-1 nicht mehr (P3); eine
+Uebernahme-Code (12 Zeichen Base32, 60 Bit), alle unter <daten>/device/ (0600). Den Verschluesselungsschluessel enc_key.pem erzeugt das Geraet nicht; eine
 vorhandene Datei bleibt liegen und wird nicht gelesen. Geraete-ID = shg- + die ersten 16
 Zeichen von Base32(SHA-256(DER-SPKI)) in Kleinbuchstaben (unveraendert). boot_id: neu je Prozessstart (Erkennung doppelt
-laufender Geraete, Spec 4.2). Schluessel und Code erscheinen nie in einem Log (Regel 6)."""
+laufender Geraete). Schluessel und Code erscheinen nie in einem Log (Regel 6)."""
 import base64
 import hashlib
 import secrets

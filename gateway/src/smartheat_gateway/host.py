@@ -1,11 +1,11 @@
-"""Laufzeit-Host des Gateways (Spec SHG G2 3.1; Spec 5b 5.2/5.3, Plan D2): Konfiguration aus dem Konfigurationsdokument
+"""Laufzeit-Host des Gateways: Konfiguration aus dem Konfigurationsdokument
 des Geraetekerns, Signale aus Zigbee, Soll-Speicher und Treiber, Status und Meldungen ueber den Gateway-Host des
 Geraetekerns (geraet_host: im Prozess bzw. als up/notifications), Anlage ueber den Treiber, Trigger ueber den lokalen
 Bus. Die Laufzeit selbst ist smartheat_runtime.app (identisch mit dem HA-Add-on). Die Konfiguration gilt fuer die
 Lebenszeit des Prozesses; eine laufzeitrelevante neue startet ihn neu (runtime_main). Die Bedienung gibt den Startwert
 des Soll-Speichers; weicht ein gespeicherter Wert ab (Bedienung kam waehrend eines Neustarts), gilt die Bedienung, ausser
 ein lokaler Wunsch ist noch offen (dirty). Die Bedienung beim Start gilt sofort im Soll-Speicher und geht wie das
-Angleichen ans Thermostat (BusTriggerSource: erst bei bekanntem Zustand, der nicht aus ist, A6-14)."""
+Angleichen ans Thermostat (BusTriggerSource: erst bei bekanntem Zustand, der nicht aus ist)."""
 import dataclasses
 import logging
 import time
@@ -37,7 +37,7 @@ from smartheat_runtime.worker import RegulationWorker
 
 logger = logging.getLogger(__name__)
 
-# Stabile Fehlerklassen fuer den Meldezustand (G2 3.1): bei gleicher Klasse pusht dieselbe Meldung nicht neu.
+# Stabile Fehlerklassen fuer den Meldezustand: bei gleicher Klasse pusht dieselbe Meldung nicht neu.
 KEY_CONFIG = "konfiguration"
 KEY_MANIFEST = "manifest"
 KEY_DRIVER = "treiber"
@@ -72,7 +72,7 @@ class GatewayHost:
         self._geraet = geraet
         self._devices_wait = devices_wait_seconds
         self._driver_threads = driver_threads
-        # Spec Stufe 3 S3 Abschnitt 4: steht nach einer leeren Konfiguration das Zuruecksetzen aus, laeuft die Laufzeit
+        # Steht nach einer leeren Konfiguration das Zuruecksetzen aus, laeuft die Laufzeit
         # mit der alten Konfiguration aus der Aufraeum-Markierung im Modus abgemeldet (Treiber-Anmeldung noch da).
         self.konfiguration: dict
         self.konfiguration, self._leer_abmelden = geraet.laufzeit_konfiguration()
@@ -138,7 +138,7 @@ class GatewayHost:
             raise StartFailure(f"Konfiguration: {error}", KEY_CONFIG) from error
         self._geraete_abwarten(self._zigbee_ieees(bindung))
         if thermostat_unzulaessig(self.mirror, bindung.thermostat):
-            # Spec A6-02 3.4: vor dem Treiber; die IEEE-Adresse gehoert nicht in den Text (Regel 6).
+            # Vor dem Treiber; die IEEE-Adresse gehoert nicht in den Text (Regel 6).
             raise StartFailure(
                 f"Konfiguration: Das gebundene Thermostat ist kein Thermostat – {dokument_config.RECONFIGURE_HINT}",
                 KEY_CONFIG)
@@ -151,7 +151,7 @@ class GatewayHost:
             check_lever_set(driver, runtime.lever_set_id)
         except ConfigError as error:
             raise StartFailure(str(error), KEY_CONFIG) from error
-        self._activate(driver)  # erste Abfrage vor dem Manifest: optionale Signale stehen dann im Cache (A4-32)
+        self._activate(driver)  # erste Abfrage vor dem Manifest: optionale Signale stehen dann im Cache
         try:
             manifest = build_manifest(driver)
         except ManifestError as error:
@@ -187,9 +187,9 @@ class GatewayHost:
             self._bus, worker, self.mirror, self._store, thermostat=bindung.thermostat, sensor_ieees=sensor_ieees,
             daily_trigger_time=self._runtime_config.daily_trigger_time, wunsch=self._geraet.wunsch,
             soll_quelle_aus=self._geraet.soll_quelle_aus, clock=self._clock,
-            # Spec 3.3: Thermostat, Portal und Geraet zeigen denselben Wert (einmal je Start; Echo-Fenster); die Quelle
+            # Thermostat, Portal und Geraet zeigen denselben Wert (einmal je Start; Echo-Fenster); die Quelle
             # schreibt beim Start, nach Thermostatmodus und Anzeige (Profil), ein ganzzahliges Thermostat gerundet, und
-            # nur bei bekanntem Zustand, der nicht aus ist (A6-14; ohne bekannten Zustand mit der ersten Meldung).
+            # nur bei bekanntem Zustand, der nicht aus ist (ohne bekannten Zustand mit der ersten Meldung).
             angleichen=self._angleichen,
         )
 

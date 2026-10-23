@@ -1,9 +1,9 @@
-"""Status-Ereignis des HA-Add-ons ab 1.0.0 (Spec 5c 1.1/1.3): smartheat_status Schema 3 = der Laufzeit-Status (Schema 2,
+"""Status-Ereignis des HA-Add-ons: smartheat_status Schema 3 = der Laufzeit-Status (Schema 2,
 smartheat_runtime.status, unveraendert fuer Gateway und up/status) plus Geraet (ID, Zustand, Verbindung), wirksamer
 Raum-Soll (Soll-Speicher) und Hinweise fuer die Reparatur-Hinweise der Integration. Nie der Uebernahme-Code (der steht
 nur in der Discovery): ins Ereignis kommen nur die benannten Felder, nie ein ganzes Objekt der Quellen. Gesendet bei
 jedem Ereignis der Laufzeit (auch dem Lebenszeichen alle 300 s) und bei einer inhaltlichen Aenderung der Anzeige.
-Felder sind Cross-Repo-Vertrag mit der Integration (Contract-Check, Plan W)."""
+Felder sind Cross-Repo-Vertrag mit der Integration (Contract-Check)."""
 import logging
 import threading
 import time

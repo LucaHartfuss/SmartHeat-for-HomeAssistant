@@ -1,4 +1,4 @@
-"""Hebel-Pipeline, Plan 3b: physische Schreibvorgaenge, globales Tagesbudget (Weishaupt), Lebensdauerzaehler,
+"""Hebel-Pipeline: physische Schreibvorgaenge, globales Tagesbudget (Weishaupt), Lebensdauerzaehler,
 Schreibgruppen (Viessmann), zurueckgestellte Serverwerte. Vaillant bleibt unberuehrt (test_core_pipeline.py)."""
 import dataclasses
 import logging
@@ -201,7 +201,7 @@ def test_a_boost_starts_below_the_limit_and_can_cross_it(make_store, clock):
 
 
 def test_flapping_operations_are_bounded_weishaupt(make_store, clock):
-    # FK-1: Tageslimit 10, ein Boost schreibt 3 und sein Ende 3 Werte; nach zwei Starts ist das Limit erreicht.
+    # Tageslimit 10, ein Boost schreibt 3 und sein Ende 3 Werte; nach zwei Starts ist das Limit erreicht.
     pipeline, store, ha = _weishaupt(make_store, clock, backup={"restore_point": POINT})
     for _ in range(50):
         pipeline.set_boosts(comfort=True, emergency=False)
@@ -321,7 +321,7 @@ def test_an_unchanged_group_is_not_written(make_store, clock):
 
 
 def test_a_group_without_write_group_counts_each_physical_write(make_store, clock):
-    # A6-09: ohne write_group sind es zwei physische Schreibvorgaenge, und beide zaehlen (nicht min(diff, 1))
+    # Ohne write_group sind es zwei physische Schreibvorgaenge, und beide zaehlen (nicht min(diff, 1))
     counted = dataclasses.replace(VIESSMANN, daily_write_limit=10, lifetime_hint_at=50000)
     pipeline, store, ha = _viessmann(make_store, clock, description=counted)
     pipeline.apply_server_values({"curve": 1.2, "level": -2.0, "room_setpoint": 20.0})
@@ -359,7 +359,7 @@ def test_vaillant_binding_counts_physical_writes_too():
 
 
 class GroupBinding(HaPlantBinding):
-    """Binding mit optionaler Gruppenschreibung (Audit 4, A4-31): ein physischer Aufruf fuer alle Mitglieder."""
+    """Binding mit optionaler Gruppenschreibung: ein physischer Aufruf fuer alle Mitglieder."""
 
     def __init__(self, ha, manifest, description):
         super().__init__(ha, manifest, description)
@@ -388,7 +388,7 @@ def _group_pipeline(make_store, clock, description=VIESSMANN):
 
 
 def test_a_binding_with_write_group_gets_one_call_with_all_targets(make_store, clock):
-    # Audit 4, A4-31: Gruppenschreibung statt zwei Einzelschreibvorgaengen
+    # Gruppenschreibung statt zwei Einzelschreibvorgaengen
     counted = dataclasses.replace(VIESSMANN, daily_write_limit=10, lifetime_hint_at=50000)
     pipeline, binding, store = _group_pipeline(make_store, clock, counted)
     pipeline.apply_server_values({"curve": 1.2, "level": -2.0, "room_setpoint": 20.0})
@@ -409,7 +409,7 @@ def test_a_failing_group_write_names_the_first_member_and_counts_nothing(make_st
     assert _total(store) == 0
 
 
-# --- Mutationsprobe Stufe 3 S4b (A5-22 Rest): Tagesbudget, Zaehlung, Lebensdauer-Hinweis ---
+# --- Mutationsprobe: Tagesbudget, Zaehlung, Lebensdauer-Hinweis ---
 
 AT_LIMIT = {write_budget.TOTAL: {"day": DAY, "count": 10}}
 

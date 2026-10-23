@@ -1,4 +1,4 @@
-"""Spec 5c 1.1: Supervisor-Discovery mit Geraete-ID, Zustand und (nur nicht uebernommen) Uebernahme-Code."""
+"""Supervisor-Discovery mit Geraete-ID, Zustand und (nur nicht uebernommen) Uebernahme-Code."""
 import json
 import logging
 
@@ -144,7 +144,7 @@ def test_a_changed_announcement_is_sent_at_once_even_during_the_pause(tmp_path):
 
 
 def test_two_alternately_failing_announcements_are_both_throttled(tmp_path):
-    """5c-D-9 Teil 2: die Drossel merkt sich jede gescheiterte Meldung, nicht nur die letzte. Wechselt die Anzeige jede
+    """Die Drossel merkt sich jede gescheiterte Meldung, nicht nur die letzte. Wechselt die Anzeige jede
     Sekunde zwischen zwei Meldungen, wird jede hoechstens einmal je 60 s versucht (59 s nichts, nach 60 s erneut)."""
     supervisor = Supervisor()
     supervisor.fail = True
@@ -223,7 +223,7 @@ class _Absturz(BaseException):
 
 
 def test_a_crash_between_post_and_saving_the_uuid_leaves_no_entry_with_the_code(tmp_path, monkeypatch):
-    """5c-D-9 Teil 1: stuerzt der Prozess nach dem POST ab, bevor die UUID gespeichert ist, meldet der naechste Start
+    """Stuerzt der Prozess nach dem POST ab, bevor die UUID gespeichert ist, meldet der naechste Start
     sofort; der Supervisor ersetzt die Meldung unter derselben UUID, nach der Uebernahme steht kein Code mehr im
     Supervisor und keine zweite Meldung."""
     http = SupervisorHttp()
@@ -279,7 +279,7 @@ def test_a_stale_uuid_does_not_block_the_ones_behind_it(tmp_path):
 
 
 def test_an_unremovable_uuid_is_never_given_up_and_retried_with_a_growing_pause(tmp_path, caplog):
-    """5c-D-9 Teil 3: keine Aufgabe nach 10 Fehlversuchen; der Abstand waechst je Fehlversuch (60, 120, 240, 480, 960,
+    """Keine Aufgabe nach 10 Fehlversuchen; der Abstand waechst je Fehlversuch (60, 120, 240, 480, 960,
     1920 s) bis hoechstens 3600 s. Je Versuch eine Logzeile, nie "aufgegeben"."""
     supervisor = Supervisor()
     supervisor.stale = {"alt-1"}

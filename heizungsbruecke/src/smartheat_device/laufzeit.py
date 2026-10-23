@@ -1,6 +1,6 @@
-"""Die Laufzeit (smartheat_runtime) auf dem Link des Geraets (Spec 5b 5.1/5.2, Weichenstellung 2): Tick und Telemetrie
+"""Die Laufzeit (smartheat_runtime) auf dem Link des Geraets (Weichenstellung 2): Tick und Telemetrie
 gehen ueber dieselbe MQTT-Verbindung wie Dokumente und Befehle, die Antwort down/setpoints kommt ueber den Link zurueck.
-Der Snapshot geht unveraendert hoch (raum_soll_wirksam entfiel mit Stufe 3 S8a-1, A5-43: im Modus manuell war es nur
+Der Snapshot geht unveraendert hoch (ein Feld raum_soll_wirksam gibt es nicht: im Modus manuell waere es nur
 room_target). stop() (Abo inaktiv, Ruhezustand der Laufzeit) schaltet nur die
 Laufzeit stumm; der Link bleibt, Dokumente und Befehle laufen weiter. Die paho-Thread-Regel gilt: Ereignisse gehen nur
 per post in den Regel-Worker."""

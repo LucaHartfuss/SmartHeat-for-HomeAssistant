@@ -1,8 +1,8 @@
-"""Gleichlauf der Port-Fakes an der V2-Grenze (A5-25, Controller-Ruling Task 9): die Fakes des Geraetekerns, des
+"""Gleichlauf der Port-Fakes an der V2-Grenze: die Fakes des Geraetekerns, des
 Geraete-Hosts und des Links (RuntimeChannel) in den Host- und Laufzeit-Tests duerfen festhalten, was ihnen uebergeben
 wird, muessen aber dieselbe Signatur haben wie die echte Klasse (Name, Art und Vorgabe jedes Parameters). Aendert sich
 die echte Methode, wird dieser Test rot, statt dass die Fakes still eine alte Schnittstelle weiter bedienen. Dazu der
-Fake-Trigger-Client als Fake des Grenz-Adapters zum HA-WebSocket (Controller-Ruling Task 10)."""
+Fake-Trigger-Client als Fake des Grenz-Adapters zum HA-WebSocket."""
 import inspect
 
 import pytest
@@ -49,7 +49,7 @@ PAARE = [
     # Link der Laufzeit (Spione in runtime_helpers.py)
     ("loop_start_aufzeichnen", loop_start_aufzeichnen([], lambda: None), RuntimeChannel.loop_start),
     ("verbindung_aus", verbindung_aus({"up": True}), RuntimeChannel.is_connected),
-    # Grenz-Adapter zum HA-WebSocket (Controller-Ruling Task 10): Fake-Trigger-Client der Laufzeit-, Property- und
+    # Grenz-Adapter zum HA-WebSocket: Fake-Trigger-Client der Laufzeit-, Property- und
     # Szenario-Tests (geraet_trigger.HaTriggerClient per monkeypatch ersetzt)
     *((f"{fake.__name__}.{name}", getattr(fake, name), getattr(HaTriggerClient, name))
       for fake in (FakeTriggerClient, RecordingTrigger) for name in ("__init__", "start", "stop")),

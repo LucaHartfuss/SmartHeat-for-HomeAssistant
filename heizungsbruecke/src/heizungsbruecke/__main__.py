@@ -1,4 +1,4 @@
-"""Einstieg des Add-ons ab 1.0.0 (Spec 5c 1.1/1.2): ein Prozess aus Geraetekern (smartheat_device, eigener Thread) und
+"""Einstieg des Add-ons: ein Prozess aus Geraetekern (smartheat_device, eigener Thread) und
 Laufzeit (smartheat_runtime, Regel-Worker im Hauptthread), wie das Gateway. Optionen nur zum Starten (bootstrap_url,
 log_level); Konfiguration und Bedienung kommen als Soll-Dokumente. Status-Ereignis (Schema 3), Discovery und
 Uebernahme-Code haengt verdrahten() an den Geraete-Host; der Geraete-Thread meldet sie in jedem Takt (anzeigen), auch
@@ -10,9 +10,9 @@ prozess.Neustart - die Laufzeit ueber den Rueckruf prozess.neustart_der_laufzeit
 Link sauber, erst danach os.execv in _exec). Anders als das Gateway (Compose startet nach Exit 0 neu) startet der
 Supervisor ein sauber beendetes Add-on nicht zuverlaessig neu, deshalb exec. SIGTERM (Supervisor stoppt das Add-on)
 endet ueber beenden ohne exec. Ein Fehler in den Schritten davor (_vorbereiten: Aufraeumen, Geraete-Host, Geraetekern)
-endet ueber prozess.starten in derselben 60-s-Pause und demselben exec (S3S6-Startabbruch).
+endet ueber prozess.starten in derselben 60-s-Pause und demselben exec.
 
-Lokaler Befehl (L4-06 Variante C, stdin_befehl): loescht der Nutzer den HA-Eintrag, schreibt die Integration `entfernen
+Lokaler Befehl (stdin_befehl): loescht der Nutzer den HA-Eintrag, schreibt die Integration `entfernen
 <geraet_id>` an das stdin des Add-ons (config.yaml stdin: true); ein Daemon-Thread liest fd 0 ungepuffert (nicht
 sys.stdin.buffer: ein darin blockierter Thread bricht das Prozessende ab) und stellt HaDeviceHost.lokal_abmelden in das
 Postfach des Geraetekerns (Device.im_geraete_thread). Das Geraet meldet sich dann wie bei sign_off ab.
@@ -20,7 +20,7 @@ Postfach des Geraetekerns (Device.im_geraete_thread). Das Geraet meldet sich dan
 Nach dem Entfernen (aufraeumen.json) setzt der naechste Start die Anlage erst zurueck wie sign_off (Laufzeit im Modus
 abgemeldet mit der alten Konfiguration aus der Markierung) und startet danach neu; erst dieser Start loescht den
 anlagengebundenen Zustand und die Hilfssensoren, bevor der Geraetekern startet - aber nur, solange die gespeicherte
-Konfiguration noch leer ist (Spec Stufe 3 S3 Abschnitt 4)."""
+Konfiguration noch leer ist."""
 import io
 import json
 import logging

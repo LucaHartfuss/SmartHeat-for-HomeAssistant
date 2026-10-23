@@ -1,4 +1,4 @@
-"""Lebenszyklus des Geraeteprozesses, beide Hosts (Spec Stufe 3 S6 4.2/4.3). Die Host-Einstiege pruefen
+"""Lebenszyklus des Geraeteprozesses, beide Hosts. Die Host-Einstiege pruefen
 test_main_geraet.py (HA) und gateway/tests/test_runtime_main.py."""
 import errno
 import logging
@@ -121,7 +121,7 @@ def test_beenden_laesst_das_laufende_ereignis_des_geraete_threads_fertig_werden(
 
 
 def test_beenden_stoppt_auch_einen_link_den_der_letzte_takt_nach_dem_ersten_stop_oeffnete():
-    """Restpunkt 5b-D2-4: Device.run fuehrt nach stop() noch einen Takt aus."""
+    """Device.run fuehrt nach stop() noch einen Takt aus."""
     gestoppt = threading.Event()
     device = SimpleNamespace(link=SimpleNamespace(stopped=False))
 
@@ -265,7 +265,7 @@ def test_ohne_eigene_pause_nimmt_laufen_time_sleep_zur_laufzeit(monkeypatch):
     assert ("pause", 60.0) in order and order[-1] == "neustart"
 
 
-# --- starten: die Host-Schritte vor laufen (S3S6-Startabbruch) ---
+# --- starten: die Host-Schritte vor laufen ---
 
 @pytest.mark.parametrize("fehler", [OSError(errno.EROFS, "geheim"), RuntimeError("geheim")], ids=["oserror", "runtime"])
 def test_ein_fehler_im_start_pausiert_60_s_und_startet_neu(caplog, fehler):
@@ -324,7 +324,7 @@ def test_ein_scheiternder_rueckruf_vor_der_pause_im_start_laesst_pause_und_neust
 
 
 def test_sigterm_in_der_startpause_endet_ohne_neustart():
-    """Review Focus 3: ein SIGTERM (SystemExit) in der Pause nach einem Startfehler beendet wie in laufen."""
+    """Ein SIGTERM (SystemExit) in der Pause nach einem Startfehler beendet wie in laufen."""
     order = []
 
     def pause(seconds):
@@ -466,7 +466,7 @@ def test_ausstehendes_zuruecksetzen_loescht_nichts(tmp_path):
 
 
 def test_ausstehendes_zuruecksetzen_gibt_die_gelesene_markierung_zurueck(tmp_path):
-    """T4-Markierung-Zweitlesen: die Laufzeit bekommt die beim Start einmal gelesene Markierung, nur dann."""
+    """Die Laufzeit bekommt die beim Start einmal gelesene Markierung, nur dann."""
     pfad = tmp_path / "aufraeumen.json"
     markierung.markieren(pfad, ALT)
     assert prozess.aufraeumen_beim_start(

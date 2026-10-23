@@ -17,7 +17,7 @@ def test_decide_boost_inactive_on_first_ever_tick_no_previous_target():
 
 def test_decide_boost_inactive_when_target_unchanged_even_if_room_cold():
     # Kernverhalten der Neudefinition: Kaelte OHNE Zielwert-Erhoehung loest KEIN
-    # Boost mehr aus (Design-Spec Phase 5, Punkt 15 -- bewusst entfernte
+    # Boost mehr aus (bewusst entfernte
     # Sicherheitsnetz-Eigenschaft).
     decision = decide_boost(
         room_actual=15.0, room_target=20.0, previous_room_target=20.0,
@@ -98,7 +98,7 @@ def test_decide_boost_stays_active_across_a_second_target_raise():
     (20.5, 20.0, False),    # Senkung
 ])
 def test_kleinste_reale_erhoehung_startet_den_boost(vorher, nachher, boost):
-    """A5-07."""
+    """Auch die kleinste reale Erhoehung der Wunschtemperatur startet den Boost."""
     assert decide_boost(room_actual=20.0, room_target=nachher, previous_room_target=vorher,
                         boost_was_active=False, arrival_threshold_k=0.5) is boost
 
@@ -112,7 +112,7 @@ def test_kleinste_reale_erhoehung_startet_den_boost(vorher, nachher, boost):
     pytest.param(15.0, True, id="kalt"),
 ])
 def test_comfort_boost_startet_nur_wenn_der_raum_noch_nicht_angekommen_ist(raum_ist, startet):
-    """A6-01-Nachtrag (Regel 4): eine Erhoehung startet den Boost nur bei Raum < Soll - Ankunftsschwelle; bei warmem Raum
+    """Regel 4: eine Erhoehung startet den Boost nur bei Raum < Soll - Ankunftsschwelle; bei warmem Raum
     gibt es keinen Schein-Start, der den echten Boost 30 min sperrte. Der Grenzwert genau Soll - 0,5 startet nicht."""
     assert decide_boost(room_actual=raum_ist, room_target=21.0, previous_room_target=20.0,
                         boost_was_active=False, arrival_threshold_k=0.5) is startet
@@ -137,7 +137,7 @@ def test_ein_laufender_boost_bleibt_bei_warmem_raum_nicht_aktiv_und_bei_kaltem_r
     assert (kalt, warm) == (True, False)
 
 
-# --- Mutationsprobe Stufe 3 S3 (Task 11) ------------------------------------------------------------------------
+# --- Mutationsprobe ------------------------------------------------------------------------
 
 def test_a_rise_of_exactly_the_epsilon_does_not_start_the_boost():
     """Mutationsprobe (Mutant 8): die Schwelle gilt strikt (>), eine Erhoehung genau um den Epsilon-Wert startet nichts."""
@@ -166,7 +166,7 @@ def test_an_unknown_start_never_expires():
 
 
 def test_boost_seit_in_der_zukunft_ist_abgelaufen():
-    """A6-35 a: liegt der Beginn nach der Wanduhr (Uhr zurueckgesprungen), ist die Dauer nicht mehr bekannt: der Boost
+    """Liegt der Beginn nach der Wanduhr (Uhr zurueckgesprungen), ist die Dauer nicht mehr bekannt: der Boost
     endet lieber frueher als gar nicht."""
     assert comfort_boost_expired(_BEGINN + timedelta(seconds=1), _BEGINN) is True
     assert comfort_boost_expired(_BEGINN, _BEGINN) is False  # Gegenprobe: gleicher Zeitpunkt ist die Dauer 0
@@ -179,7 +179,7 @@ def test_boost_seit_in_der_zukunft_ist_abgelaufen():
     (COMFORT_BOOST_MAX_SECONDS + 1, True),
 ])
 def test_boost_endet_auch_nach_4h_auf_der_monotonen_uhr(mono_seit, abgelaufen):
-    """A6-35 a: die Wanduhr zeigt erst eine Stunde (zurueckgesprungen), die monotone Uhr zaehlt die Hoechstdauer."""
+    """Die Wanduhr zeigt erst eine Stunde (zurueckgesprungen), die monotone Uhr zaehlt die Hoechstdauer."""
     assert comfort_boost_expired(_BEGINN, _BEGINN + timedelta(hours=1), mono_seit) is abgelaufen
 
 

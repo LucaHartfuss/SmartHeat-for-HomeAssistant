@@ -127,7 +127,7 @@ def test_target_raise_starts_comfort_boost(make_store, tmp_path):
 
 
 def test_thermostat_step_of_half_a_kelvin_starts_comfort_boost(make_store, tmp_path):
-    """A5-07."""
+    """Ein Thermostatschritt von 0,5 K startet den Comfort-Boost."""
     rt = _runtime(make_store(backup={"last_room_target": 20.5, **RESTORE_POINT}), room_actual=20.0, room_target=21.0)
 
     regulation.run_local_check(rt)
@@ -136,7 +136,7 @@ def test_thermostat_step_of_half_a_kelvin_starts_comfort_boost(make_store, tmp_p
 
 
 def test_floor_heating_never_starts_comfort_boost_on_a_rise(make_store, tmp_path):
-    """A5-07: ohne Comfort-Boost-Zeile (Fussbodenheizung) startet auch eine echte Erhoehung keinen Boost."""
+    """Ohne Comfort-Boost-Zeile (Fussbodenheizung) startet auch eine echte Erhoehung keinen Boost."""
     fbh = dataclasses.replace(SAFETY, comfort_boost={})
     rt = _runtime(make_store(backup={"last_room_target": 20.0, **RESTORE_POINT}), room_actual=18.0, room_target=22.0,
                   safety=fbh)
@@ -158,7 +158,7 @@ def test_comfort_boost_ends_on_arrival_and_restores(make_store, tmp_path):
 
 
 def test_boost_endet_nach_4h_monoton_auch_wenn_die_wanduhr_zurueckspringt(make_store, clock, monkeypatch):
-    """A6-35 a: die Wanduhr springt nach dem Start zurueck, sodass sie erst 1 h Boost zeigt; die monotone Uhr zaehlt
+    """Die Wanduhr springt nach dem Start zurueck, sodass sie erst 1 h Boost zeigt; die monotone Uhr zaehlt
     die 4 h und beendet den Boost (vorher lief er weiter, bis die Wanduhr wieder aufgeholt hatte)."""
     beginn = datetime(2026, 10, 8, 6, 0).astimezone()
     wand = {"t": beginn}
@@ -180,7 +180,7 @@ def test_boost_endet_nach_4h_monoton_auch_wenn_die_wanduhr_zurueckspringt(make_s
 
 
 def test_ein_neuer_boost_zaehlt_die_4h_ab_seinem_eigenen_start(make_store, clock):
-    """A6-35 a, Gegenprobe: der monotone Start eines beendeten Boosts wird geloescht; ein spaeterer Boost wird nicht
+    """Gegenprobe: der monotone Start eines beendeten Boosts wird geloescht; ein spaeterer Boost wird nicht
     nach dem alten Start beendet."""
     rt = _runtime(make_store(backup={"last_room_target": 20.0, **RESTORE_POINT}), room_actual=19.0, room_target=21.0,
                   clock=clock)
@@ -293,7 +293,7 @@ NEXT_DAY = "2026-10-04"
 
 
 def test_a_comfort_start_refused_for_the_day_uses_up_the_increase(make_store, tmp_path, monkeypatch):
-    # A6-01: nach 6 Starts am Tag gilt die Erhoehung als verbraucht; sonst startete nach dem Tageswechsel ein
+    # Nach 6 Starts am Tag gilt die Erhoehung als verbraucht; sonst startete nach dem Tageswechsel ein
     # Boost fuer eine Erhoehung vom Vortag.
     monkeypatch.setattr(write_budget, "today", lambda: DAY)
     store = make_store(backup={
@@ -336,7 +336,7 @@ def test_a_comfort_start_refused_for_the_wait_keeps_the_increase(make_store, clo
 def test_a_rise_with_a_warm_room_does_not_start_nor_count_and_does_not_block_a_real_boost(
     make_store, clock, tmp_path, monkeypatch, caplog,
 ):
-    """A6-01-Nachtrag (Regel 4): eine Erhoehung bei angekommenem Raum (>= Soll - 0,5 K) startet keinen Boost, zaehlt nicht
+    """Regel 4: eine Erhoehung bei angekommenem Raum (>= Soll - 0,5 K) startet keinen Boost, zaehlt nicht
     und schreibt nichts; eine echte Erhoehung bei kaltem Raum kurz danach startet ohne Wartezeit."""
     monkeypatch.setattr(write_budget, "today", lambda: DAY)
     store = make_store(backup={"last_room_target": 15.0, **RESTORE_POINT})
@@ -446,7 +446,7 @@ def test_claim_due_tick_is_claimed_again_after_a_failed_booking(make_store, tmp_
 
 @pytest.mark.parametrize("abo_inactive,room_target,now", [
     (True, 20.5, datetime(2026, 9, 17, 12, 5)),
-    (False, None, datetime(2026, 9, 17, 9, 0)),  # ohne Soll nur der faellige Tagestick (TP12b)
+    (False, None, datetime(2026, 9, 17, 9, 0)),  # ohne Soll nur der faellige Tagestick
 ])
 def test_claim_due_tick_needs_active_abo_and_without_target_a_due_daily_tick(make_store, abo_inactive, room_target, now):
     store = make_store(backup={"last_published_target_rt": 21.0})
@@ -458,7 +458,7 @@ def test_claim_due_tick_needs_active_abo_and_without_target_a_due_daily_tick(mak
 
 
 def test_claim_due_tick_without_cached_target_still_claims_the_due_daily_tick(make_store, tmp_path):
-    # AU-013: der Versuch liest live und meldet das tote Thermostat als Datenfehler.
+    # Der Versuch liest live und meldet das tote Thermostat als Datenfehler.
     rt = _runtime(make_store(backup={"last_published_target_rt": 21.0}), room_target=None)
 
     assert regulation.claim_due_tick(rt, datetime(2026, 9, 17, 12, 5)) == "daily"
@@ -483,7 +483,7 @@ def test_failed_save_keeps_the_previous_target_in_memory(make_store, monkeypatch
     assert rt.store.state.last_room_target == 21.0
 
 
-# --- Mutationsprobe Stufe 3 S4b (A5-22 Rest) ---
+# --- Mutationsprobe ---
 
 @pytest.mark.parametrize("entity_ids", [
     {"room_target": "sensor.room_target", **{k: v for k, v in ENTITY_IDS.items() if not k.startswith("room_")}},
@@ -509,7 +509,7 @@ def test_claim_due_tick_without_daily_trigger_time_claims_no_daily_tick(make_sto
 
 
 def test_an_unreadable_room_target_logs_the_error_text_from_ha_only_escaped(make_store, caplog):
-    """T6-Rest, R-c: der Fehlertext beim Lesen des Raum-Solls aus HA steht nur als Escape im Log."""
+    """Der Fehlertext beim Lesen des Raum-Solls aus HA steht nur als Escape im Log."""
     rt = _runtime(make_store(), room_target=21.0, states={"sensor.room_target": RuntimeError(FREMDTEXT)})
     with caplog.at_level(logging.WARNING, logger="smartheat_runtime.regulation"):
         regulation.refresh_stable_target(rt)

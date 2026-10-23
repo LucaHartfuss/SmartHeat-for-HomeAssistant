@@ -1,4 +1,4 @@
-"""Spec Stufe 3 S4b: Gateway-Treiber nutzen die Beschreibung aus der Konfiguration; ohne Konfiguration (Erkennung,
+"""Gateway-Treiber nutzen die Beschreibung aus der Konfiguration; ohne Konfiguration (Erkennung,
 Inventur, Vergessen) haben sie keine."""
 import pytest
 from bindung_beispiele import PARAMETER, VIESSMANN_VICARE_BINDING

@@ -1,6 +1,6 @@
-"""Hilfen fuer die Tests des Geraetekerns (Plan 5b D1): Test-CA, die CSRs des Geraets signiert (wie die lokale Test-CA
-des Servers, S1 Task 6), dazu die Attrappen und Eingaben, die mehrere Testdateien teilen (Fixrunde B TP4, A6-90; vorher
-in test_device_device.py, test_device_bootstrap.py, test_device_commands.py und test_device_documents.py): die Welt des
+"""Hilfen fuer die Tests des Geraetekerns: Test-CA, die CSRs des Geraets signiert (wie die lokale Test-CA
+des Servers), dazu die Attrappen und Eingaben, die mehrere Testdateien teilen (von test_device_device.py,
+test_device_bootstrap.py, test_device_commands.py und test_device_documents.py gemeinsam genutzt): die Welt des
 Geraets (World), Bootstrap-Antworten, Befehle, Dokumente. Plain-Import (`from device_helpers import ...`), tests/ hat
 kein __init__.py."""
 import datetime
@@ -154,7 +154,7 @@ class FakeLink:
     def publish(self, name, payload):
         if not self.connected:
             return None
-        # wie der echte Link: nie NaN/Inf hinaus (Testoffensive T2, Nr. 17), json wirft dann ValueError
+        # wie der echte Link: nie NaN/Inf hinaus, json wirft dann ValueError
         self.sent.append((name, json.loads(json.dumps(payload, allow_nan=False))))
         return len(self.sent) - self._mid_basis
 

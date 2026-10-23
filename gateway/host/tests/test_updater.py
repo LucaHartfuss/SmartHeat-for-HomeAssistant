@@ -280,7 +280,7 @@ def test_manifest_changed_after_signing_is_refused_even_with_a_matching_sha(tmp_
     assert signed.updater.run_once() == "aktualisiert"
 
 
-MANIFEST_LIMIT = 65536  # Byte, Spec G2b-1 (64 KiB)
+MANIFEST_LIMIT = 65536  # Byte (64 KiB)
 FILE_LIMIT = 1048576  # Byte (1 MiB)
 
 
@@ -370,7 +370,7 @@ def _host_files(root: Path):
 @pytest.mark.parametrize("replace", [False, True])
 def test_an_offer_that_names_other_files_is_refused_and_touches_nothing_outside_the_bundle_store(
         tmp_path, extra, replace):
-    """F-gateway-host-43: ein Angebot kann Host-Dienste nicht ersetzen (5b-D2-1: das geht nur mit neuem Image oder
+    """Ein Angebot kann Host-Dienste nicht ersetzen (das geht nur mit neuem Image oder
     Installer). Das signierte Manifest darf genau docker-compose.yml und mosquitto.conf nennen; jeder andere Name
     (Pfad aus dem Bundle heraus, absolut, URL), zusaetzlich oder an Stelle einer der beiden, wird abgelehnt, bevor eine
     Datei abgerufen wird. Dass ein gelungenes Update ausserhalb der Bundle-Ablage nichts schreibt, zeigt der Folgetest."""
@@ -655,7 +655,7 @@ def test_state_without_a_usable_in_progress_entry_is_cleaned(tmp_path):
     assert updater.State.load(path).in_progress is None
 
 
-# --- Umgebung statt Bundle: Server nicht erreichbar, Stick fehlt (Final-Review FW-1, FW-2) ---
+# --- Umgebung statt Bundle: Server nicht erreichbar, Stick fehlt ---
 
 
 def _offline_until(world, seconds, healthy_from=None):
@@ -834,7 +834,7 @@ def test_a_missing_device_in_a_multiline_flow_list_is_not_noticed(tmp_path):
     assert ("up", "0.3.0") in world.compose.calls
 
 
-# --- Felder von desired (FW-5, FW-6) ---
+# --- Felder von desired ---
 
 
 @pytest.mark.parametrize("answer", [{"version": 3}, {"version": None}, {"version": ["0.3.0"]}, {"manifest_url": "x"}])
@@ -870,7 +870,7 @@ def test_manifest_sha_is_compared_case_insensitively(tmp_path):
     assert world.updater.run_once() == "aktualisiert"
 
 
-# --- Bundle-Ordner (FW-9, Spec 2.2) ---
+# --- Bundle-Ordner ---
 
 
 def test_bundle_dir_keeps_manifest_and_signature(tmp_path):
@@ -1156,7 +1156,7 @@ def trickling_server():
 
 
 def test_fetch_ends_after_the_total_deadline_of_a_trickling_server(monkeypatch, trickling_server):
-    """A6-13: der Socket-Timeout (30 s) gilt je Leseoperation; ein Server, der ein Byte je 0,2 s schickt, hielt den Abruf
+    """Der Socket-Timeout (30 s) gilt je Leseoperation; ein Server, der ein Byte je 0,2 s schickt, hielt den Abruf
     und damit den ganzen Updater beliebig lange fest. Die Gesamtfrist (hier 0,5 s statt 300 s) beendet ihn mit FetchError."""
     monkeypatch.setattr(updater, "ABRUF_GESAMT_SECONDS", 0.5)
     started = time.monotonic()
@@ -1169,7 +1169,7 @@ def test_fetch_ends_after_the_total_deadline_of_a_trickling_server(monkeypatch, 
 
 
 def test_the_total_deadline_is_300_seconds_on_the_monotonic_clock_and_covers_every_read(monkeypatch):
-    """A6-13: Grenze der Frist ohne Warten: eine eingespeiste Uhr springt bei jedem Lesen um 100 s. Drei Lesevorgaenge
+    """Grenze der Frist ohne Warten: eine eingespeiste Uhr springt bei jedem Lesen um 100 s. Drei Lesevorgaenge
     (bis 299 s nach dem Start) genuegen, der vierte (400 s) nicht. Attrappe an der Grenze, dem Opener von urllib."""
     assert updater.ABRUF_GESAMT_SECONDS == 300
     now = [1000.0]
@@ -1206,7 +1206,7 @@ def test_the_total_deadline_is_300_seconds_on_the_monotonic_clock_and_covers_eve
     ("64:ff9b:1:ffff:ffff:ffff:ffff:ffff", False),
 ])
 def test_only_global_addresses_are_allowed(address, public):
-    """A6-38: Gegenadressen, die ins LAN, auf den eigenen Rechner oder in Sonderbereiche zeigen, sind nicht erlaubt; eine
+    """Gegenadressen, die ins LAN, auf den eigenen Rechner oder in Sonderbereiche zeigen, sind nicht erlaubt; eine
     IPv4-Adresse in IPv6-Schreibweise zaehlt wie die IPv4-Adresse (auch dann, wenn die Python-Version sie selbst anders
     einstuft); Unlesbares gilt als nicht erlaubt."""
     assert updater.is_public_address(address) is public
@@ -1244,7 +1244,7 @@ def byte_counter():
 
 
 def test_fetch_never_sends_a_byte_to_a_local_address(byte_counter):
-    """A6-38: ein Angebot (Manifest-URL) aus einem kompromittierten Server darf keinen Abruf ins LAN des Kunden oder an
+    """Ein Angebot (Manifest-URL) aus einem kompromittierten Server darf keinen Abruf ins LAN des Kunden oder an
     den eigenen Rechner ausloesen. Geprueft wird die Gegenadresse des verbundenen Sockets, vor dem TLS-Handshake: der
     lokale Server sieht null Bytes (nicht einmal ein ClientHello), der Abruf ist ein FetchError."""
     port, received, thread = byte_counter
@@ -1255,7 +1255,7 @@ def test_fetch_never_sends_a_byte_to_a_local_address(byte_counter):
 
 
 def test_with_the_test_switch_the_address_is_not_checked(byte_counter):
-    """Gegenprobe zu A6-38: `allow_http` (nur Tests, Labor) schaltet die Pruefung ab; dann geht das ClientHello an den
+    """Gegenprobe: `allow_http` (nur Tests, Labor) schaltet die Pruefung ab; dann geht das ClientHello an den
     lokalen Server (der Abruf scheitert danach am fehlenden TLS, auch als FetchError, aber erst nach dem Senden)."""
     port, received, thread = byte_counter
     with pytest.raises(updater.FetchError) as error:
@@ -1287,7 +1287,7 @@ class _FakeSocket:
     (("8.8.8.8", 443), True), (("2003::1", 443, 0, 0), True),
 ])
 def test_every_connection_is_checked_on_the_connected_socket(monkeypatch, peer, allowed):
-    """A6-38: die Pruefung sitzt an `_create_connection` der Verbindung und sieht den tatsaechlich verbundenen Socket
+    """Die Pruefung sitzt an `_create_connection` der Verbindung und sieht den tatsaechlich verbundenen Socket
     (nicht den Namen aus der URL, der beim Aufloesen auf eine andere Adresse zeigen kann). Jede Verbindung des Openers hat
     sie, auch die zu einem Weiterleitungsziel (urllib baut je Anfrage eine neue). Attrappe an der Grenze:
     `socket.create_connection`. Kann der Peer nicht bestimmt werden (None, Unix-Socket), gilt er als nicht erlaubt."""
@@ -1316,7 +1316,7 @@ def test_every_connection_is_checked_on_the_connected_socket(monkeypatch, peer, 
     (("8.8.8.8", 443), ("2003:1:2:3::5", 40000, 0, 0), True),
 ])
 def test_the_gateway_itself_and_its_own_ipv6_prefix_are_not_targets(monkeypatch, peer, own, allowed):
-    """A6-38 (Review I-1): im IPv6-Netz haben der Router, LAN-Geraete und der Rechner selbst globale Adressen aus demselben
+    """Im IPv6-Netz haben der Router, LAN-Geraete und der Rechner selbst globale Adressen aus demselben
     /64; `is_global` laesst sie durch. Abgelehnt wird deshalb zusaetzlich die eigene Adresse des Sockets und, bei IPv6,
     alles im /64 der eigenen Adresse. Nicht abgedeckt: Geraete in anderen IPv6-Praefixen des Kundennetzes (andere /64) mit
     globaler Adresse; sie bleiben erreichbar (siehe gateway-host.md, Bekannte Grenzen)."""
@@ -1333,7 +1333,7 @@ def test_the_gateway_itself_and_its_own_ipv6_prefix_are_not_targets(monkeypatch,
 
 
 def test_environment_proxies_are_ignored(monkeypatch):
-    """A6-38: ein Proxy aus der Umgebung (https_proxy) wuerde die Verbindung zum Proxy statt zum Ziel aufbauen: die
+    """Ein Proxy aus der Umgebung (https_proxy) wuerde die Verbindung zum Proxy statt zum Ziel aufbauen: die
     Pruefung saehe nur dessen Adresse, der Proxy loeste das Ziel selbst auf. Der Updater ruft immer direkt. Netzfrei:
     `socket.create_connection` (Grenze) zeichnet die Verbindungsziele auf und scheitert; es darf nur das Ziel vorkommen,
     nie der Proxy (ohne diese Regel kaeme zuerst `127.0.0.1:3128`)."""
@@ -1351,7 +1351,7 @@ def test_environment_proxies_are_ignored(monkeypatch):
     assert attempts == [("release.example.test", 443)]
 
 
-# --- Gesamtfrist auch fuer Verbindung, TLS, Kopfzeilen und Weiterleitungen (Security-Nachtrag zu A6-13) ---
+# --- Gesamtfrist auch fuer Verbindung, TLS, Kopfzeilen und Weiterleitungen ---
 
 class _StepClock:
     """Eingespeiste monotone Uhr: `now` setzt der Test."""
@@ -1697,7 +1697,7 @@ def test_the_report_queue_holds_20_entries_and_the_oldest_falls_out(tmp_path):
 
 
 def test_a_full_disk_while_installing_is_provisional_and_logged(tmp_path, monkeypatch, caplog):
-    """A6-39: `store.install` scheitert mit ENOSPC (Datentraeger voll). Der Durchlauf endet "vorlaeufig" (naechster Durchlauf
+    """`store.install` scheitert mit ENOSPC (Datentraeger voll). Der Durchlauf endet "vorlaeufig" (naechster Durchlauf
     versucht es erneut), der Fehler steht mit seinem Namen im ERROR-Log, Zustand und Compose bleiben unberuehrt: nichts
     wurde gezogen oder umgeschaltet."""
     world = World(tmp_path)
@@ -1719,7 +1719,7 @@ def test_a_full_disk_while_installing_is_provisional_and_logged(tmp_path, monkey
 
 
 def test_a_failing_state_file_in_recover_is_logged_and_does_not_raise(tmp_path, monkeypatch, caplog):
-    """A6-39: auch `recover()` (Start des Dienstes) wirft bei einem Dateifehler nicht: der Dienst kaeme sonst nie hoch."""
+    """Auch `recover()` (Start des Dienstes) wirft bei einem Dateifehler nicht: der Dienst kaeme sonst nie hoch."""
     world = World(tmp_path)
     _interrupted(world, previous="0.2.0")
     world.store.install("0.3.0", {"docker-compose.yml": COMPOSE, "mosquitto.conf": MOSQ})
@@ -1737,7 +1737,7 @@ def test_a_failing_state_file_in_recover_is_logged_and_does_not_raise(tmp_path, 
 
 
 def _main_environment(monkeypatch, root: Path, *, offer=None) -> updater.Einstellungen:
-    """Nur `SHG_ROOT` ist Umgebung (A6-87); alles andere reicht der Test als `Einstellungen` an `main` (Rueckgabe)."""
+    """Nur `SHG_ROOT` ist Umgebung; alles andere reicht der Test als `Einstellungen` an `main` (Rueckgabe)."""
     (root / "data").mkdir(parents=True, exist_ok=True)
     if offer is not None:
         (root / "data" / "software_soll.json").write_text(json.dumps(offer))
@@ -1787,7 +1787,7 @@ def test_main_waits_120_seconds_then_runs_every_900_plus_up_to_300_seconds(tmp_p
 
 
 def test_main_keeps_running_after_an_unexpected_error(tmp_path, monkeypatch, caplog):
-    """A6-39: ein unerwarteter Fehler in einem Durchlauf beendet den Dienst nicht (er laeuft sonst erst nach `RestartSec`
+    """Ein unerwarteter Fehler in einem Durchlauf beendet den Dienst nicht (er laeuft sonst erst nach `RestartSec`
     neu, mit 120 s Wartezeit); er wird mit seiner Spur geloggt, nach der ueblichen Pause kommt der naechste Durchlauf.
     Der Fehler kommt aus `run_once`, der Grenze zum Rest des Dienstes."""
     settings = _main_environment(monkeypatch, tmp_path)
@@ -1868,7 +1868,7 @@ def test_main_once_recovers_runs_once_and_does_not_wait(tmp_path, monkeypatch, c
     (False, "abgelehnt"),
 ])
 def test_main_accepts_an_http_offer_only_with_allow_http_in_the_settings(tmp_path, monkeypatch, capsys, allow, outcome):
-    """F-gateway-host-01, A6-87: der Produktivwert ist "aus"; nur `Einstellungen(allow_http=True)` schaltet http frei
+    """Der Produktivwert ist "aus"; nur `Einstellungen(allow_http=True)` schaltet http frei
     (Tests, Labor)."""
     offer = {"version": "0.3.0", "manifest_url": "http://127.0.0.1:1/manifest.json", "manifest_sha256": "a" * 64,
              "signature": "x"}
@@ -1885,7 +1885,7 @@ def test_main_accepts_an_http_offer_only_with_allow_http_in_the_settings(tmp_pat
 
 @pytest.mark.parametrize("value", ["1", "true", "0", ""])
 def test_main_ignores_every_environment_switch_of_the_old_names(tmp_path, monkeypatch, capsys, site, value):
-    """A6-87: `SHG_UPDATER_ALLOW_HTTP`, `SHG_UPDATER_HEALTH_URL`, `SHG_UPDATER_HEALTH_SECONDS`, `SHG_RELEASE_PUB` und
+    """`SHG_UPDATER_ALLOW_HTTP`, `SHG_UPDATER_HEALTH_URL`, `SHG_UPDATER_HEALTH_SECONDS`, `SHG_RELEASE_PUB` und
     `SHG_COMPOSE_PROJECT` gelten nicht mehr: in einer Umgebung, die sie setzt (etwa einer gateway.env mit
     `SHG_UPDATER_ALLOW_HTTP=1`), bleibt http abgelehnt, das Projekt `smartheat`, der Schluessel der Einstellungen."""
     offer = {"version": "0.3.0", "manifest_url": site.url + "/0.3.0/manifest.json", "manifest_sha256": "a" * 64,
@@ -1903,7 +1903,7 @@ def test_main_ignores_every_environment_switch_of_the_old_names(tmp_path, monkey
 
 
 def test_the_default_settings_are_the_production_values():
-    """A6-87: die Standardwerte von `Einstellungen` sind die des Geraets (install.sh: Schluessel unter /opt/smartheat/host,
+    """Die Standardwerte von `Einstellungen` sind die des Geraets (install.sh: Schluessel unter /opt/smartheat/host,
     Projekt `smartheat`, Gesundheitsseite des Gateways auf Port 80); http bleibt aus."""
     assert updater.Einstellungen() == updater.Einstellungen(
         release_pub=Path("/opt/smartheat/host/release.pub"), allow_http=False, health_url="http://127.0.0.1/healthz",
@@ -2129,7 +2129,7 @@ def test_downgrade_reason_is_in_the_fixed_list():
 
 
 def test_der_updater_meldet_nur_gruende_aus_reasons():
-    """A5-85: Jeder Grund, den der Updater an _Refused, _reject, _rollback oder _queue gibt, ist ein Name aus REASONS
+    """Jeder Grund, den der Updater an _Refused, _reject, _rollback oder _queue gibt, ist ein Name aus REASONS
     oder ein durchgereichter Wert, nie ein Literal; so meldet er nur Gruende, die test_vertrag_im_host.py gegen den
     Vertrag prueft. Ausnahme: _queue meldet das Ergebnis "ok" mit leerem Grund."""
     tree = ast.parse(Path(updater.__file__).read_text(encoding="utf-8"))
@@ -2162,7 +2162,7 @@ def test_der_updater_meldet_nur_gruende_aus_reasons():
 
 
 def test_reachability_is_the_broker_not_the_bundle(tmp_path):
-    # Review Focus 5: das neue Bundle ist ungesund, der Broker erreichbar -> nach der Frist zurueck und abgelehnt;
+    # Das neue Bundle ist ungesund, der Broker erreichbar -> nach der Frist zurueck und abgelehnt;
     # ist der Broker nicht erreichbar, ruht die Frist und die Version wird nicht abgelehnt.
     world = World(tmp_path, healthy=False)
     assert world.updater.run_once() == "zurueckgerollt"

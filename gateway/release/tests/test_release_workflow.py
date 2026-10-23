@@ -1,4 +1,4 @@
-"""Lieferkette des Gateway-Releases (Final-Review FW-3, FW-4, FW-7): Release-Werkzeug nur aus der Hash-Lock-Datei,
+"""Lieferkette des Gateway-Releases: Release-Werkzeug nur aus der Hash-Lock-Datei,
 Signier-Job prueft per Neubau, Artefakt ueberlebt das Warten auf die Freigabe."""
 import re
 from pathlib import Path
@@ -105,7 +105,7 @@ def test_image_job_runs_only_after_a_real_signing_and_never_in_dryrun():
 
 
 def test_sign_job_takes_version_title_and_notes_from_the_tag_not_from_build():
-    # Audit 4, A4-36 (GW-9): build fuehrt Fremdcode aus; seine Ausgaben duerfen Version, Titel und Notizen nicht setzen.
+    # Build fuehrt Fremdcode aus; seine Ausgaben duerfen Version, Titel und Notizen nicht setzen.
     jobs = _jobs()
     sign_steps = yaml.safe_dump(jobs["sign"]["steps"])
     assert "needs.build.outputs" not in sign_steps

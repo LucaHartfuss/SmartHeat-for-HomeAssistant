@@ -1,5 +1,5 @@
 #!/bin/bash
-# Stage fuer den Image-Bau (Plan G2b-2 Task 9), laeuft auf dem Build-Host (braucht Docker und python3): Installer-Baum
+# Stage fuer den Image-Bau, laeuft auf dem Build-Host (braucht Docker und python3): Installer-Baum
 # (ohne Tests), signiertes Bundle, Container-Images als OCI-Archive (export_images.sh mit skopeo im Debian-13-Container)
 # und die Installer-Optionen. Geraete-API- und Portal-Adresse muessen ein eigener DNS-Name per https sein (own_url.sh,
 # Nutzer-Vorgabe 2026-10-07); geprueft wird das vor jeder anderen Arbeit.

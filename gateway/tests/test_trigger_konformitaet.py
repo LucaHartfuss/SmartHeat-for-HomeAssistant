@@ -1,4 +1,4 @@
-"""Ereignisvertrag der Gateway-Trigger-Quelle (heizungsbruecke/testhilfen/trigger_konformitaet.py; Spec S6 4.1)."""
+"""Ereignisvertrag der Gateway-Trigger-Quelle (heizungsbruecke/testhilfen/trigger_konformitaet.py)."""
 from datetime import datetime
 from zoneinfo import ZoneInfo
 

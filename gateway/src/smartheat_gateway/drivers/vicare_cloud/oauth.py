@@ -1,4 +1,4 @@
-"""Anmeldung bei Viessmann per OAuth2 mit PKCE (Spec SHG G4 1.4, Variante A). Der Server sieht nur den kurzlebigen Code;
+"""Anmeldung bei Viessmann per OAuth2 mit PKCE (Variante A). Der Server sieht nur den kurzlebigen Code;
 Verifier, Access- und Refresh-Token liegen nur in der privaten Datei des Geraets. Erneuert wird unter flock und mit
 Nachlesen: das Refresh-Token rotiert, ein zweiter Leser (Befehl des Geraetekerns bei der Erkennung, Laufzeit im Takt;
 je ein eigener flock) darf nie mit dem alten erneuern. Ein abgelehntes Refresh-Token (invalid_grant) loescht die Tokens
@@ -157,7 +157,7 @@ class TokenStore:
                                         "refresh_token": data["refresh_token"]},
                                        revoked_only=True)
             if body is None:
-                # Audit 4, A4-33: ein vorbereiteter PKCE-Zustand bleibt, die laufende Anmeldung im Portal gelingt noch
+                # Ein vorbereiteter PKCE-Zustand bleibt, die laufende Anmeldung im Portal gelingt noch
                 kept = {"pending": data["pending"]} if isinstance(data.get("pending"), dict) else {}
                 self._save({"client_id": data.get("client_id"), "abgelaufen": True, **kept})
                 raise NotLoggedIn("Die Anmeldung bei Viessmann ist abgelaufen.")

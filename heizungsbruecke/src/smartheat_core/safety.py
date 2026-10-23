@@ -1,4 +1,4 @@
-"""Lokale Sicherheitswerte je (Hebelsatz x Verteilsystem) (Spec 5.3, Regel 4). Bleiben bewusst auf dem Client und
+"""Lokale Sicherheitswerte je (Hebelsatz x Verteilsystem) (Regel 4). Bleiben bewusst auf dem Client und
 kommen nie vom Server. Jedes Profil des Servers hat hier eine Zeile, und seine Server-Bereiche liegen innerhalb
 (Contract-Check, Vertrag V4); die Verteilsysteme spiegeln VERTEILSYSTEME_MIT_LOKALEN_SICHERHEITSWERTEN im Server (je
 Seite gepinnt: tests/test_core_safety.py, Server tests/generic/test_profiles.py). Fehlen Werte, verweigert der Client
@@ -12,7 +12,7 @@ from smartheat_core.levers import LEVER_SETS
 @dataclass(frozen=True)
 class LocalSafety:
     """ranges: Bereich je Hebel des Hebelsatzes einschliesslich der client-abgeleiteten (Mindestvorlauf).
-    comfort_boost: Comfort-Boost-Werte je Hebel; leer = kein Comfort-Boost (Fussbodenheizung, Spec 6.3).
+    comfort_boost: Comfort-Boost-Werte je Hebel; leer = kein Comfort-Boost (Fussbodenheizung).
     emergency_boost_levers: der Notfall-Boost setzt diese Hebel auf ihr lokales Maximum.
     arrival_threshold_k: Ankunftsschwelle des Comfort-Boosts und Austrittsschwelle des Notfall-Boosts -- nicht die
     Ausloese-Schwelle (der Comfort-Boost startet nur bei einer Erhoehung des Raum-Solls, boost.decide_boost)."""
@@ -34,8 +34,8 @@ LOCAL_SAFETY: dict[tuple[str, str], LocalSafety] = {
         emergency_boost_levers=("curve", "room_setpoint", "heat_limit"),
         arrival_threshold_k=0.5,
     ),
-    # Plan 3b, Regel 4 (Nutzer-Freigabe 2026-10-02, Spec 6.2): Heizkoerper fuer die neuen Hebelsaetze; Comfort-Boost auf
-    # die lokalen Maxima aller gesendeten Hebel. Ankunftsschwelle 0,5 K wie Vaillant (Annahme, nicht in Spec 6.2).
+    # Regel 4 (Nutzer-Freigabe 2026-10-02): Heizkoerper fuer die neuen Hebelsaetze; Comfort-Boost auf
+    # die lokalen Maxima aller gesendeten Hebel. Ankunftsschwelle 0,5 K wie Vaillant (Annahme).
     ("weishaupt_wwp", "Heizkoerper"): LocalSafety(
         ranges={"curve": (0.30, 1.00), "room_setpoint": (16.0, 25.0), "heat_limit": (5.0, 23.0)},
         comfort_boost={"curve": 1.00, "room_setpoint": 25.0, "heat_limit": 23.0},
@@ -54,7 +54,7 @@ LOCAL_SAFETY: dict[tuple[str, str], LocalSafety] = {
         emergency_boost_levers=("curve", "level", "room_setpoint"),
         arrival_threshold_k=0.5,
     ),
-    # Plan 3b, Regel 4 (Nutzer-Freigabe 2026-10-02, Spec 6.3): Fussbodenheizung -- alle Hebel am lokalen Maximum ergeben
+    # Regel 4 (Nutzer-Freigabe 2026-10-02): Fussbodenheizung -- alle Hebel am lokalen Maximum ergeben
     # bei -15 °C hoechstens 45 °C Vorlauf; kein Comfort-Boost (Estrich), der Notfall-Boost setzt alle gesendeten Hebel
     # auf ihr lokales Maximum. Mindestvorlauf (nur Vaillant) 20-30 wie bei Heizkoerpern. Die Profile bleiben inaktiv.
     ("vaillant_vrc720", "Fussbodenheizung"): LocalSafety(

@@ -1,4 +1,4 @@
-"""Der ViCare-Client zaehlt jeden Aufruf, behandelt 401/429/503 und kennt die Kommandos der Spec."""
+"""Der ViCare-Client zaehlt jeden Aufruf, behandelt 401/429/503 und kennt die Kommandos der ViCare-API."""
 import logging
 import time
 

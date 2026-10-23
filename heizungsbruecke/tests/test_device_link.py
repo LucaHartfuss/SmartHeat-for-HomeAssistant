@@ -1,4 +1,4 @@
-"""Spec 5b 5.1: die eine MQTT-Verbindung - MQTT 5 mit persistenter Session (AN-9), Abo down/# (AN-6), Anmeldefehler
+"""Die eine MQTT-Verbindung - MQTT 5 mit persistenter Session (AN-9), Abo down/# (AN-6), Anmeldefehler
 fuer den Rettungsweg (AN-1), Rueckfall auf 443 mit ALPN (AN-3)."""
 import ssl
 from types import SimpleNamespace
@@ -155,7 +155,7 @@ def test_publish_refuses_foreign_topics_and_oversized_messages(tls):
 
 @pytest.mark.parametrize("wert", [float("nan"), float("inf"), float("-inf")])
 def test_publish_sendet_nie_eine_nicht_endliche_zahl(tls, wert):
-    """Testoffensive T2, Nr. 17: allow_nan=False ist der letzte Riegel; der Aufrufer (Device._publish) faengt ValueError."""
+    """allow_nan=False ist der letzte Riegel; der Aufrufer (Device._publish) faengt ValueError."""
     link, clients, _ = _link(tls)
     clients[-1].connack()
     with pytest.raises(ValueError):
@@ -298,7 +298,7 @@ def test_a_key_that_does_not_match_the_certificate_is_a_config_error(tls):
 
 
 def test_a_rejected_connack_followed_by_disconnect_counts_once(tls):
-    """Echtes paho: auf ein abgelehntes CONNACK folgt on_disconnect (Ruling 8)."""
+    """Echtes paho: auf ein abgelehntes CONNACK folgt on_disconnect."""
     link, clients, events = _link(tls)
     client = clients[-1]
     client.connack(failure=True)

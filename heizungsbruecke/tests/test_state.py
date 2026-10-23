@@ -8,7 +8,7 @@ from smartheat_runtime.backup_store import load_backup, save_backup
 from smartheat_runtime.delivery import SOURCE_LOCAL, DataFault, DeliveryState, PendingTick
 from smartheat_runtime.state import BridgeState, StateStore, StorageError, _is_override
 
-# Vollstaendige backup.json, wie 0.16.0 sie schreibt (vor TP11: die Parallelverschiebung hiess
+# Vollstaendige backup.json, wie 0.16.0 sie schreibt (die Parallelverschiebung hiess
 # noch "offset_current", target_history gab es noch als aktiv gefuehrtes Feld).
 V016_BACKUP = {
     "curve_current": 0.95, "offset_current": 23.0, "boost_active": True, "emergency_boost_active": False,
@@ -59,7 +59,7 @@ def test_reads_files_written_by_0_16_0(make_store):
 
 
 def test_pre_tp11_backup_keeps_unknown_keys_and_drops_the_old_override(make_store, tmp_path, caplog):
-    # Ein Backup von vor TP11: offset_current/target_history sind keine erkannten Felder mehr, der
+    # Ein aelteres Backup: offset_current/target_history sind keine erkannten Felder mehr, der
     # alte manual_override (Schluessel "offset" statt "shift") ist ungueltig. Alles davon darf beim
     # Laden weder abstuerzen noch stillschweigend verschwinden.
     old_backup = {
@@ -85,7 +85,7 @@ def test_pre_tp11_backup_keeps_unknown_keys_and_drops_the_old_override(make_stor
 def test_unknown_top_level_key_survives_a_save_so_a_rollback_keeps_write_budget(make_store, tmp_path):
     # Rollback von 0.25.0 auf 0.24.0: dort ist write_budget ein unbekannter Schluessel. Ein Parser
     # mit dieser Semantik (unbekannt -> extra, beim Speichern zurueckgeschrieben) verliert den
-    # Zaehler nicht; hier am Beispiel eines Schluessels, den der Parser nicht kennt (Spec 5.1).
+    # Zaehler nicht; hier am Beispiel eines Schluessels, den der Parser nicht kennt.
     budget = {"boost": {"day": "2026-09-30", "count": 2}}
     store = make_store(backup={"restore_point": {"curve": 0.95}, "write_budget": budget, "kommt_spaeter": {"a": 1}})
 
@@ -144,7 +144,7 @@ def test_failsafe_file_without_object_is_warned_and_ignored(make_store, tmp_path
     ("last_published_target_rt", {}), ("last_daily_trigger_date", 20260926),
 ])
 def test_field_with_wrong_type_falls_back_only_for_that_field(make_store, caplog, key, value):
-    # Ohne den alten Schluessel curve_current: neben restore_point gaelte er als neuerer Wert (Rueckweg, Ruling Task 8).
+    # Ohne den alten Schluessel curve_current: neben restore_point gaelte er als neuerer Wert (Rueckweg).
     base = {k: v for k, v in V016_BACKUP.items() if key != "restore_point" or k != "curve_current"}
     with caplog.at_level(logging.WARNING):
         store = make_store(backup={**base, key: value})
@@ -228,8 +228,7 @@ def test_update_writes_backup_with_unknown_keys_and_without_unset_fields(make_st
 
 
 def test_written_backup_has_a_restore_point_only_once_one_is_set(make_store, tmp_path):
-    # Bis 0.29.0 fuer den Rueckweg auf 0.16.0 (`"curve_current" in backup`); seit Plan 2 (P2-4) gilt dasselbe fuer
-    # restore_point: ein leerer Punkt wird nicht geschrieben, und alte Rollen-Schluessel nie.
+    # Ein leerer Punkt (restore_point) wird nicht geschrieben, und alte Rollen-Schluessel nie.
     store = make_store()
 
     store.update(last_room_target=21.0)
@@ -293,7 +292,7 @@ def test_backup_write_failure_keeps_memory_raises_and_is_retried(make_store, tmp
 
 
 def test_is_saved_reports_only_fields_whose_save_is_still_missing(make_store, monkeypatch):
-    # Seit Plan 2 ist der Wiederherstellungspunkt EIN Feld (restore_point) statt je Rolle eines.
+    # Der Wiederherstellungspunkt ist EIN Feld (restore_point), nicht je Rolle eines.
     store = make_store(backup=CURRENT_BACKUP)
     assert store.is_saved("restore_point", "last_room_target", "boost_active")
 
@@ -524,7 +523,7 @@ def test_integer_beyond_float_range_in_backup_is_invalid_not_an_error(make_store
 
 @pytest.mark.parametrize("raw", [5, "abc", "2026-10-08T06:00:00"])
 def test_an_invalid_boost_since_falls_back_to_none(make_store, caplog, raw):
-    # Audit 4 P-C2 Endpruefung: wie waerme_fehlt_seit nur ein ISO-Zeitpunkt mit Zeitzone
+    # Wie waerme_fehlt_seit nur ein ISO-Zeitpunkt mit Zeitzone
     with caplog.at_level(logging.WARNING):
         store = make_store({"boost_since": raw})
     assert store.state.boost_since is None
@@ -537,7 +536,7 @@ def test_a_timezone_aware_boost_since_loads(make_store):
 
 
 def test_fields_from_029_are_no_longer_interpreted_but_kept(make_store, tmp_path, caplog):
-    # Audit 4 P-E (E11): client1 laeuft seit Release 2 auf >= 0.30 (Gate in Task 0). Eine zurueckgespielte alte
+    # Eine zurueckgespielte alte
     # backup.json startet trotzdem; ihre Felder werden mitgefuehrt, aber nicht mehr umgedeutet.
     old = {"curve_current": 1.2, "shift_current": 18.0, "heat_limit": 16.0, "heat_limit_original": 15.0,
            "write_budget": {"enforce:curve_current": {"day": "2026-10-08", "count": 1}}}

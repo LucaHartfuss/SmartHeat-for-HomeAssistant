@@ -9,7 +9,7 @@ HINTERGRUND_NAME = "befehle-hintergrund"
 
 
 class Hintergrund:
-    """Ein Arbeits-Thread fuer blockierende Aufrufe (der Reihe nach, wie bis 0.5.0 im Agenten). Daemon: ein
+    """Ein Arbeits-Thread fuer blockierende Aufrufe (der Reihe nach). Daemon: ein
     laufender Aufruf haelt das Prozessende (Neustart, SIGTERM) nie auf; ThreadPoolExecutor wartet beim Beenden auf
     seine Threads. Der Thread startet beim ersten Aufruf. stop() bricht wartende Aufrufe ab; ein laufender endet
     selbst (Zeitgrenzen der Treiber bzw. der HA-API), sein Ergebnis liest niemand mehr."""

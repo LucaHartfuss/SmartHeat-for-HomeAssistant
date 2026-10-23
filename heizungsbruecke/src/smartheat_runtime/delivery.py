@@ -29,7 +29,7 @@ STATUS_REJECTED = "rejected"
 SOURCE_LOCAL = "local"
 SOURCE_SERVER = "server"
 SOURCE_WRITE = "write"
-# Rolle des lokalen Datenfehlers "Datentraeger nicht beschreibbar" (TP12b). Vorhandene Vertragswerte:
+# Rolle des lokalen Datenfehlers "Datentraeger nicht beschreibbar". Vorhandene Vertragswerte:
 # im Status-Event {"art": "lokal", "rollen": ["datentraeger"]}.
 ROLE_DATENTRAEGER = "datentraeger"
 
@@ -155,8 +155,8 @@ class WriteFailed:
 
 @dataclass(frozen=True)
 class AnsweredLocalFault:
-    """Der Server hat geantwortet, die Antwort liess sich lokal nicht uebernehmen (TP12b, AU-012:
-    Wiederherstellungspunkt nicht speicherbar). Zaehlt wie eine Antwort: kein Notbetrieb."""
+    """Der Server hat geantwortet, die Antwort liess sich lokal nicht uebernehmen (Wiederherstellungspunkt
+    nicht speicherbar). Zaehlt wie eine Antwort: kein Notbetrieb."""
     seq: str
     roles: tuple[str, ...]
 
@@ -217,7 +217,7 @@ class EndEmergencyBoost:
 @dataclass(frozen=True)
 class ClearStaleNotbetrieb:
     """Start mit aktivem Abo: Notbetrieb ohne offenen Tick (nach dem Abo-inaktiv-Modus oder aus
-    einer failsafe_state.json von 0.15.0) kann nie von selbst enden. Still beenden (TP12b, AU-014);
+    einer failsafe_state.json von 0.15.0) kann nie von selbst enden. Still beenden;
     ein Pruef-Tick klaert danach den Server."""
 
 
@@ -392,7 +392,7 @@ def _mqtt_connected(state):
 
 def _storage_writable(state):
     """Wartet der offene Tick wegen eines Datentraeger-Datenfehlers auf seinen Daten-Retry (bis 3600 s), holt der
-    naechste Versuch die Antwort sofort (TP12b). Neue Generation, der geplante Retry laeuft ins Leere; die Stufe
+    naechste Versuch die Antwort sofort. Neue Generation, der geplante Retry laeuft ins Leere; die Stufe
     bleibt. Jede andere Wartezeit bleibt."""
     pending = state.pending
     if pending is None or pending.phase != PHASE_WAITING_RETRY or not is_storage_fault(state.datenfehler):

@@ -1,4 +1,4 @@
-"""Spec 5b 3.4 (Plan D2 Task 2): Befehle des Gateways im Befehlsregister des Geraetekerns. Einmal-Ausfuehrung und
+"""Befehle des Gateways im Befehlsregister des Geraetekerns. Einmal-Ausfuehrung und
 Gruende-Pruefung testet D1; hier die Handler und die Uebersetzung der Treiber-Fehler."""
 import errno
 import json
@@ -71,7 +71,7 @@ def _run(register, kind, payload, command_id="c1"):
 
 @pytest.mark.parametrize("kind", sorted(befehle.HANDLERS))
 def test_kein_handler_meldet_einen_text(ctx, register, kind):
-    """Spec Stufe 3 S5 8: jeder Fehler eines Gateway-Befehls traegt nur grund und details aus dem Vertrag."""
+    """Jeder Fehler eines Gateway-Befehls traegt nur grund und details aus dem Vertrag."""
     ctx.umgebung.konf = None  # nicht eingerichtet: inventory stunden >= 1 und sign_off scheitern
     nutzlasten = [{}, {"seconds": -1}, {"stunden": 0}, {"stunden": 1}, {"stunden": 0, "filter": {"treiber": "erfunden"}},
                   {"phase": "x"}, {"phase": "begin", "driver_id": "simulation"}]
@@ -335,7 +335,7 @@ def test_inventur_stunden_0_ist_die_erkennung_des_treibers(ctx):
 
 
 def test_inventory_ist_wiederholbar(ctx, tmp_path, clock):
-    """L4-02 (a): fiel ein Neustart in die Erkennung (Marker "gestartet" im Journal), laeuft sie bei der erneuten
+    """Fiel ein Neustart in die Erkennung (Marker "gestartet" im Journal), laeuft sie bei der erneuten
     Zustellung noch einmal und endet mit ok statt mit "intern"; die Inventur geht vor dem Ergebnis hinaus."""
     dateien.schreiben_json(tmp_path / "befehle" / "befehle.json", [["c1", None, None, None]], modus=dateien.PRIVAT)
     sent: list[dict] = []
@@ -760,8 +760,8 @@ def test_an_inventory_whose_samples_are_all_rate_limited_reports_the_quota_at_th
     assert result.grund in wire.command_errors("inventory")
 
 
-# --- Blockierende Treiber-Aufrufe (Cloud-HTTP) laufen neben dem Geraete-Thread (Review D2, Important 1) ---
-# Bis 0.5.0 liefen Anmeldung, Probe und Inventur im Agenten-Prozess. Im Geraete-Thread wuerde ein Aufruf mit Token-
+# --- Blockierende Treiber-Aufrufe (Cloud-HTTP) laufen neben dem Geraete-Thread ---
+# Im Geraete-Thread wuerde ein Aufruf mit Token-
 # Erneuerung und 401-Wiederholung (bis 80 s) down/setpoints, Dokumente und hello aufhalten; die Laufzeit liefe nach
 # zwei Ack-Timeouts (je 30 s) in den Notbetrieb.
 

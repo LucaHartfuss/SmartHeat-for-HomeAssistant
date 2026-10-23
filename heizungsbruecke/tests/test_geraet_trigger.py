@@ -1,4 +1,4 @@
-"""Spec 5c 1.3: Bedienwunsch aus Soll-Entity und Ereignis smartheat_wunsch, Thermostat aus, Angleichen ohne Echo."""
+"""Bedienwunsch aus Soll-Entity und Ereignis smartheat_wunsch, Thermostat aus, Angleichen ohne Echo."""
 import json
 import logging
 from pathlib import Path
@@ -521,7 +521,7 @@ def test_an_unavailable_target_entity_is_logged_once_without_its_content(tmp_pat
     assert not any("unavailable" in z or "unknown" in z for z in zeilen)
 
 
-# --- Gescheiterte Angleichung (Final-Review I1): nachholen statt den alten Wert als Wunsch zu nehmen ---
+# --- Gescheiterte Angleichung: nachholen statt den alten Wert als Wunsch zu nehmen ---
 
 def _portal_waehrend_ha_down(a, wert=22.5):
     a.ha.write_error = RuntimeError("HA Core startet")
@@ -531,8 +531,8 @@ def _portal_waehrend_ha_down(a, wert=22.5):
 
 
 def test_a_portal_operation_whose_alignment_failed_survives_the_reconnect(tmp_path):
-    """Reproduktion des Final-Reviews: Speicher 21, Portal 22.5 waehrend HA neu startet, das Lesen beim Verbinden sieht
-    21. Vorher: Speicher wieder 21 und ein Wunsch (21.0, soll_entity). Jetzt: die Angleichung wird nachgeholt."""
+    """Speicher 21, Portal 22.5 waehrend HA neu startet, das Lesen beim Verbinden sieht
+    21. Die Angleichung wird nachgeholt, statt dass der Speicher wieder 21 zeigt und ein Wunsch (21.0, soll_entity) entsteht."""
     a = Aufbau(tmp_path)
     _portal_waehrend_ha_down(a)
     a.ha.write_error = None
@@ -577,7 +577,7 @@ def test_the_watch_retries_the_owed_alignment_until_it_succeeds(tmp_path):
 
 
 def test_a_permanently_refused_alignment_stays_owed_with_a_warning_every_five_minutes(tmp_path, caplog):
-    """Heutiges Verhalten, Restpunkt 5c-D-8 (a): lehnt HA das Schreiben an die Soll-Entity dauerhaft ab, bleibt die
+    """Heutiges Verhalten (offene-punkte.md 5c-D-8 (a)): lehnt HA das Schreiben an die Soll-Entity dauerhaft ab, bleibt die
     Angleichung offen; die Wache versucht sie im Takt des lokalen Checks (300 s) und warnt je Versuch einmal (299 s
     nach einem Versuch nichts, nach 300 s der naechste). Kein Wunsch, der Speicher behaelt die Bedienung, das Thermostat
     zeigt weiter den alten Wert."""
@@ -599,7 +599,7 @@ def test_a_permanently_refused_alignment_stays_owed_with_a_warning_every_five_mi
 
 
 def test_a_value_turned_during_the_ha_pause_loses_against_the_newer_operation(tmp_path):
-    """Heutiges Verhalten, Restpunkt 5c-D-8 (b): waehrend HA nicht beschreibbar ist, kommt eine Bedienung des Portals
+    """Heutiges Verhalten (offene-punkte.md 5c-D-8 (b)): waehrend HA nicht beschreibbar ist, kommt eine Bedienung des Portals
     (22,5) und der Nutzer dreht das Thermostat auf 23; nach der Pause zeigt HA die 23, die offene Angleichung
     schreibt 22,5 darueber, die Drehung wird kein Wunsch."""
     a = Aufbau(tmp_path)
@@ -659,7 +659,7 @@ def test_an_owed_alignment_is_not_written_to_a_thermostat_that_is_off_and_follow
 
 
 def test_an_owed_alignment_leaves_a_thermostat_in_frost_protection_alone(tmp_path):
-    """Frostschutz-Stellung (bis 7 °C) ist Soll-Quelle aus (Spec 5b 3.2): auch eine geschuldete Angleichung dreht den
+    """Frostschutz-Stellung (bis 7 °C) ist Soll-Quelle aus: auch eine geschuldete Angleichung dreht den
     bewusst heruntergestellten Heizkoerper nicht wieder hoch."""
     a = Aufbau(tmp_path)
     _portal_waehrend_ha_down(a)

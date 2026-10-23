@@ -57,11 +57,11 @@ for unit in updater led hoststatus; do
 done
 grep -q '^DefaultDependencies=no$' /etc/systemd/system/smartheat-firewall.service || fail "Firewall-Unit ohne DefaultDependencies=no"
 grep -q '^After=nftables.service$' /etc/systemd/system/smartheat-firewall.service || fail "Firewall-Unit nicht nach nftables.service"
-# A6-87: der Test-Einstieg des Updaters (schaltet allow_http ein) gehoert nicht auf das Geraet.
+# Der Test-Einstieg des Updaters (schaltet allow_http ein) gehoert nicht auf das Geraet.
 [ -z "$(find /opt/smartheat /var/lib/smartheat -name 'updater_testlauf*' 2>/dev/null)" ] || fail "updater_testlauf.py ist auf dem Geraet installiert"
 [ -f /etc/ssh/sshd_config.d/00-smartheat.conf ] || fail "sshd-Drop-in 00-smartheat.conf fehlt"
 [ ! -e /etc/ssh/sshd_config.d/smartheat.conf ] || fail "alter sshd-Drop-in smartheat.conf nicht entfernt"
-# Sicherheitsupdates (Plan G2b-2 Task 6): Debian-Security und das Raspberry-Pi-Archiv (Kernel, Firmware), sonst nichts;
+# Sicherheitsupdates: Debian-Security und das Raspberry-Pi-Archiv (Kernel, Firmware), sonst nichts;
 # kein automatischer Neustart.
 patterns="$(apt-config dump | grep 'Unattended-Upgrade::Origins-Pattern::')"
 # shellcheck disable=SC2016  # ${distro_codename} bleibt in der apt-Konfiguration woertlich stehen
@@ -149,8 +149,8 @@ ln -sf /etc/systemd/system/smartheat-cycle.service /etc/systemd/system/multi-use
 cycle_check smartheat-cycle.service >/tmp/cycle2.log
 grep -qi 'ordering cycle' /tmp/cycle2.log || { cat /tmp/cycle2.log; fail "Zyklus-Test erkennt das Gegenbeispiel nicht"; }
 # Aktivierung mit Attrappen fuer systemctl, udevadm, docker und dpkg-query (der Container hat weder systemd noch Docker):
-# das laufende Bundle startet nur ohne offenen Updater-Auftrag und mit allen Geraeten aus devices: (Final-Review FW-2,
-# FW-10); fehlt eines, sagt der Installer das klar, statt an `docker compose up` abzubrechen.
+# das laufende Bundle startet nur ohne offenen Updater-Auftrag und mit allen Geraeten aus devices:;
+# fehlt eines, sagt der Installer das klar, statt an `docker compose up` abzubrechen.
 STUBS=/tmp/stubs
 mkdir -p "$STUBS"
 for cmd in systemctl udevadm docker; do
@@ -187,7 +187,7 @@ json.dump(state, open(path, "w"))' "$ACT_ROOT/updater/state.json"
 activate_run "mit offenem Updater-Auftrag"
 grep -q "Updater-Auftrag fuer 0.3.0 offen" /tmp/act.log || { cat /tmp/act.log; fail "offener Auftrag: keine Meldung"; }
 compose_started && fail "offener Updater-Auftrag: compose up trotzdem aufgerufen"
-# Image-Bau (Plan G2b-2 Task 7): --image aktiviert offline, startet nichts.
+# Image-Bau: --image aktiviert offline, startet nichts.
 # Vorher die Symlinks des Zyklustests (oben) entfernen, sonst wuerde ein "aktiviert" von dort stammen.
 rm -f /etc/systemd/system/multi-user.target.wants/smartheat-*.service /etc/systemd/system/multi-user.target.d/*.conf \
   /etc/systemd/system/smartheat-cycle.service
@@ -201,7 +201,7 @@ done
   && fail "firstboot mit --image --no-docker aktiviert"
 grep -q '^ConditionDirectoryNotEmpty=/var/lib/smartheat/images$' /etc/systemd/system/smartheat-firstboot.service \
   || fail "Firstboot-Bedingung fehlt oder @ROOT@ nicht ersetzt"
-# Docker-Speicherweg (Plan G2b-2 Task 7): daemon.json liegt VOR der Installation von docker.io, eine abweichende
+# Docker-Speicherweg: daemon.json liegt VOR der Installation von docker.io, eine abweichende
 # bestehende Datei bricht ab und bleibt unberuehrt, identischer Inhalt ist ein No-op.
 ORD_STUBS=/tmp/stubs-order
 mkdir -p "$ORD_STUBS"

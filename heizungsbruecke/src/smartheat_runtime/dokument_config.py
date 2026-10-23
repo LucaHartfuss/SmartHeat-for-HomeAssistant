@@ -1,12 +1,12 @@
-"""Laufzeit aus dem Konfigurationsdokument (Spec 5b 5.2, Plan D1): sobald ein Host smartheat_device nutzt (Gateway ab
+"""Laufzeit aus dem Konfigurationsdokument: sobald ein Host smartheat_device nutzt (Gateway ab
 0.6.0, HA-Add-on ab 5c), liest die Laufzeit Anlage, Hebelsatz, Verteilsystem, Raumfuehler, Tagestick und Abo aus dem
 Konfigurationsdokument statt aus Optionen; kurze Intervalle gibt es nur fuer die E2E aus der Umgebung
-(SMARTHEAT_E2E_INTERVALLE, Stufe 3 S8a-1 P2). Transport und Zugang haelt der Geraetekern (eine
-MQTT-Verbindung), der Abo-Status steht im Dokument (Plan S1, Praezisierung abo; die 30-Tage-Frist bleibt lokal).
-Die Anlage bindet den lokalen Zustand (A4-08) ueber tenant_id: eine andere Anlage beginnt mit leerem Zustand, eine
+(SMARTHEAT_E2E_INTERVALLE). Transport und Zugang haelt der Geraetekern (eine
+MQTT-Verbindung), der Abo-Status steht im Dokument (die 30-Tage-Frist bleibt lokal).
+Die Anlage bindet den lokalen Zustand ueber tenant_id: eine andere Anlage beginnt mit leerem Zustand, eine
 neue Konfiguration derselben Anlage nicht. Feldnamen = smartheat_device.wire.KONFIGURATION_FIELDS (die Laufzeit
 importiert den Geraetekern nicht; ein Test haelt beide gleich). Die Bindung (Treiber, Thermostat) liest der Host.
-Dazu ConfigError, Bindungsbeschreibung und Sicherheitswerte (bis Stufe 3 S5 in options.py)."""
+Dazu ConfigError, Bindungsbeschreibung und Sicherheitswerte."""
 import json
 import logging
 import os
@@ -25,7 +25,7 @@ from smartheat_runtime.windows import validate_daily_trigger_time
 FELDER = ("anlage", "profil", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo",
           "bindungsparameter")
 #: Aendert sich eines davon, startet der Host die Laufzeit neu (software, mindest_software und profil nicht). Die
-#: Bindungsparameter (Spec Stufe 3 S4b) gehoeren dazu: Schritte, Toleranzen, Wartezeit und Schreibschutz kommen nur von dort.
+#: Bindungsparameter gehoeren dazu: Schritte, Toleranzen, Wartezeit und Schreibschutz kommen nur von dort.
 LAUFZEIT_FELDER = ("anlage", "hebelsatz", "verteilsystem", "bindung", "raumfuehler", "tagestick", "abo",
                    "bindungsparameter")
 ABO = {"aktiv": entitlement.ACTIVE, "inaktiv": entitlement.INACTIVE}
@@ -53,7 +53,7 @@ def _hebelsatz(konfiguration) -> str:
 
 
 def beschreibung(konfiguration) -> BindingDescription:
-    """Wirksame Binding-Beschreibung aus Hebelsatz und Bindungsparametern (Spec Stufe 3 S4b); keine Ersatztabelle."""
+    """Wirksame Binding-Beschreibung aus Hebelsatz und Bindungsparametern; keine Ersatztabelle."""
     hebelsatz = _hebelsatz(konfiguration)
     try:
         return _beschreibung(hebelsatz, konfiguration.get("bindungsparameter"))
@@ -76,7 +76,7 @@ def eingerichtet(konfiguration) -> bool:
 
 
 def ursprungswerte(konfiguration) -> dict:
-    """Feld ursprungswerte der Konfiguration (vom Server gespiegelt, Spec Stufe 3 S2 6.1); {} ohne gueltiges Feld."""
+    """Feld ursprungswerte der Konfiguration (vom Server gespiegelt); {} ohne gueltiges Feld."""
     werte = konfiguration.get("ursprungswerte") if isinstance(konfiguration, Mapping) else None
     return dict(werte) if isinstance(werte, Mapping) else {}
 
@@ -88,7 +88,7 @@ def abo_status(konfiguration) -> str:
 
 
 def _e2e_intervalle() -> dict:
-    """Nur fuer die E2E (Plan S8a-1 P2; frueher das Dokumentfeld intervalle): JSON-Objekt mit pruefung_s/telemetrie_s
+    """Nur fuer die E2E (kein Dokumentfeld): JSON-Objekt mit pruefung_s/telemetrie_s
     in den Grenzen von config_check.INTERVALLE; sonst {} (Standardwerte), Log ohne Wert."""
     roh = os.environ.get(E2E_INTERVALLE_ENV)
     if not roh:
@@ -123,7 +123,7 @@ def boot_info(konfiguration, *, abgemeldet: bool, client_version: str, backup_pa
 
 
 def rastung_pruefen(konfiguration, rastung_pfad: Path) -> None:
-    """Zweite Linie (Spec Stufe 3 S3 3.3): die Laufzeit startet bzw. setzt nur zurueck, wenn die Konfiguration zur
+    """Zweite Linie: die Laufzeit startet bzw. setzt nur zurueck, wenn die Konfiguration zur
     Rastung passt; der Dokumentspeicher hat das schon geprueft, das hier deckt einen Fehler dort ab. Wirft ConfigError."""
     if not rastung.passt(rastung.lesen(rastung_pfad), konfiguration if isinstance(konfiguration, Mapping) else {}):
         raise ConfigError(f"Konfiguration: {rastung.TEXT}")
@@ -179,7 +179,7 @@ def abmelden(pfad: Path, anlage: str) -> bool:
 
 
 def abmeldung_aufheben(pfad: Path, anlage: str) -> bool:
-    """Neue, nicht leere Konfiguration derselben Anlage (Spec Testoffensive 12.7, 5b-D2-7): das Geraet folgt dem
+    """Neue, nicht leere Konfiguration derselben Anlage: das Geraet folgt dem
     Server, die Abmelde-Markierung verfaellt. True, wenn sie entfernt wurde; ein OSError laesst sie stehen (Warnung mit
     Fehlerart, ohne Pfad)."""
     marker = dateien.lesen_json(pfad)

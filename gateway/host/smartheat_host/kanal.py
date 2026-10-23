@@ -1,5 +1,4 @@
-"""Lokaler Kanal des Updaters (Spec 5b 5.3, Plan D2): ersetzt die signierten HTTPS-Anfragen an die Geraete-API
-(device_api, bis 0.5.0). Die Laufzeit (Geraetekern) schreibt die Soll-Software aus dem Konfigurationsdokument nach
+"""Lokaler Kanal des Updaters: ersetzt die signierten HTTPS-Anfragen an die Geraete-API. Die Laufzeit (Geraetekern) schreibt die Soll-Software aus dem Konfigurationsdokument nach
 data/software_soll.json; der Updater schreibt seine Ergebnisse nach data/software_meldungen.json (fortlaufende seq, die
 letzten MELDUNGEN_MAX), die Laufzeit sendet sie als up/result (dokument "software") und quittiert die zuletzt gesendete
 seq in data/software_quittung.json. Je Datei genau ein Schreiber.

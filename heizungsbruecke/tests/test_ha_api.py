@@ -57,7 +57,7 @@ def test_get_raw_state_raises_on_ha_failure_states(bad_state):
     mock_response.raise_for_status.return_value = None
 
     with (patch("heizungsbruecke.ha_api.requests.get", autospec=True, return_value=mock_response),
-          pytest.raises(SignalUngueltig)):  # erwartet ungueltig (L4-17), kein Programmfehler
+          pytest.raises(SignalUngueltig)):  # erwartet ungueltig, kein Programmfehler
         api.get_raw_state("sensor.mode")
 
 
@@ -730,7 +730,7 @@ def test_delete_helper_refuses_a_renamed_helper_with_a_foreign_title(title):
     mock_delete.assert_not_called()
 
 
-# --- Plan 3b: Weishaupt-Betriebsart und Viessmann-Heizprogramm ---
+# --- Weishaupt-Betriebsart und Viessmann-Heizprogramm ---
 
 def test_select_option_posts_correct_payload():
     api = HomeAssistantApi(base_url="http://supervisor", token="test-token")

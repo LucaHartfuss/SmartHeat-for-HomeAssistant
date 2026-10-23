@@ -1,4 +1,4 @@
-"""Mindestvorlauf = Raum-Soll (derived.py) ueber die echte Hebel-Pipeline und das HA-Binding auf Fake-HA (A5-25): die
+"""Mindestvorlauf = Raum-Soll (derived.py) ueber die echte Hebel-Pipeline und das HA-Binding auf Fake-HA: die
 Zusicherungen stehen an den Schreibvorgaengen in HA und am Zustand (min_flow_current)."""
 import dataclasses
 import logging
@@ -14,7 +14,7 @@ from smartheat_core.pipeline import LeverPipeline
 from smartheat_core.safety import LocalSafety
 from smartheat_runtime.roles import ChannelManifest
 
-# Bereich des Mindestvorlaufs wie bisher (min_flow_min/min_flow_max 20/30), jetzt aus LocalSafety.
+# Bereich des Mindestvorlaufs (min_flow_min/min_flow_max 20/30) aus LocalSafety.
 SAFETY = LocalSafety(
     ranges={"curve": (0.4, 1.5), "room_setpoint": (15.0, 25.0), "heat_limit": (5.0, 23.0), "min_flow": (20.0, 30.0)},
     comfort_boost={}, emergency_boost_levers=(), arrival_threshold_k=0.5,
@@ -53,7 +53,7 @@ def test_expected_is_room_target_clamped_and_rounded(make_store, clock):
 
 
 def test_erwarteter_mindestvorlauf_bleibt_in_den_grenzen(make_store, clock):
-    """A6-32: untere Grenze neben dem Raster (20,25 bei Schritt 0,1): der erwartete Wert ist die Grenze wie geschrieben,
+    """Untere Grenze neben dem Raster (20,25 bei Schritt 0,1): der erwartete Wert ist die Grenze wie geschrieben,
     nicht der auf 20,2 gerundete Wert unter ihr; die Anlage auf 20,25 gilt als in Ordnung, es wird nichts geschrieben."""
     sicherheit = dataclasses.replace(SAFETY, ranges={**SAFETY.ranges, "min_flow": (20.25, 30.0)})
     rt = _rt(make_store, clock, 20.0, 20.25, safety=sicherheit)
@@ -124,7 +124,7 @@ def test_unsettled_sync_without_own_write_since_start_compares_with_ha(make_stor
 
 
 def test_lever_sets_without_min_flow_derive_nothing(make_store, clock):
-    """Plan 3b: Weishaupt/Viessmann haben keinen Mindestvorlauf (kein min_flow in client_derived, kein Bereich)."""
+    """Weishaupt/Viessmann haben keinen Mindestvorlauf (kein min_flow in client_derived, kein Bereich)."""
     store = make_store()
     store.update(stable_target=20.5)
     ha = FakeHa()
@@ -146,7 +146,7 @@ class _FremdtextHa(FakeHa):
 
 
 def test_sync_logs_a_read_error_from_ha_only_escaped(make_store, clock, caplog):
-    """T6-Rest, R-c: der Fehlertext beim Lesen des Mindestvorlaufs steht nur als Escape im Log."""
+    """Der Fehlertext beim Lesen des Mindestvorlaufs steht nur als Escape im Log."""
     rt = _rt(make_store, clock, 21.0, 21.0, ha=_FremdtextHa())
     with caplog.at_level(logging.WARNING, logger="smartheat_core.derived"):
         derived.sync(rt)

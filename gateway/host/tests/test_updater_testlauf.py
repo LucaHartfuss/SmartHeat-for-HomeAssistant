@@ -1,4 +1,4 @@
-"""A6-87: der Einstieg des Docker-Tests reicht seine Werte als `Einstellungen` an `updater.main`; nur er schaltet
+"""Der Einstieg des Docker-Tests reicht seine Werte als `Einstellungen` an `updater.main`; nur er schaltet
 `allow_http` ein."""
 from pathlib import Path
 

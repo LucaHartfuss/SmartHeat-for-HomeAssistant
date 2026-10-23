@@ -1,4 +1,4 @@
-"""L4-06 Variante C (Spec 2.2): der lokale stdin-Befehl der Integration. Genau eine Zeile mit der eigenen Geraete-ID
+"""Der lokale stdin-Befehl der Integration. Genau eine Zeile mit der eigenen Geraete-ID
 ruft den Rueckruf; jede andere Zeile endet in genau einer WARNING ohne Zeileninhalt. Zeilen stehen woertlich im Test,
 nicht aus den Konstanten des Moduls."""
 import io

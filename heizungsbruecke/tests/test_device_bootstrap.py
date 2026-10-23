@@ -1,4 +1,4 @@
-"""Spec 5b 1: HTTPS-Bootstrap mit CSR, Rettungsweg, "gesperrt" nur bei 401 auf beides und synchroner Uhr."""
+"""HTTPS-Bootstrap mit CSR, Rettungsweg, "gesperrt" nur bei 401 auf beides und synchroner Uhr."""
 import base64
 import json
 
@@ -56,7 +56,7 @@ def test_register_sends_a_signed_body_with_csr(ident, ca):
 
 @pytest.mark.parametrize("wert", [float("nan"), float("inf"), float("-inf")])
 def test_der_bootstrap_sendet_nie_eine_nicht_endliche_zahl(ident, ca, wert):
-    """Testoffensive T2, Nr. 17: allow_nan=False; Bootstrap.holen faengt die Ausnahme (Backoff), die Anfrage geht nie raus."""
+    """allow_nan=False; Bootstrap.holen faengt die Ausnahme (Backoff), die Anfrage geht nie raus."""
     session = FakeSession(FakeResponse(200, _body(ident, ca)))
     with pytest.raises(ValueError):
         _client(ident, session).register(**{**ARGS, "capabilities": {"drivers": [], "zigbee": wert}})
@@ -360,7 +360,7 @@ def test_a_certificate_for_another_key_is_not_stored(tmp_path, ident, ca):
 
 
 def test_broker_host_und_vertrauensanker_kommen_ohne_pinning_aus_der_bootstrap_antwort(tmp_path, ident, ca):
-    """Heutiges Verhalten, Restpunkt A5-61 (vor dem ersten fremden Kunden): das Geraet hat keinen eigenen Anker. Ein
+    """Heutiges Verhalten (offene Grenze, offene-punkte.md A5-61, vor dem ersten fremden Kunden): das Geraet hat keinen eigenen Anker. Ein
     beliebiger Broker-Host und eine fremde CA aus der Bootstrap-Antwort werden uebernommen und gespeichert. Kommt das
     Pinning, kehrt sich diese Zusicherung um."""
     fremde_ca = GeraeteCa("fremde-ca")
@@ -408,7 +408,7 @@ def test_an_unusable_access_counts_as_a_failure_with_backoff(tmp_path, ident, ca
 ])
 def test_a_response_with_a_lone_surrogate_is_unusable_and_backs_off(tmp_path, ident, ca, feld, wert):
     """speichern() koennte ein einzelnes Surrogat (json.loads aus "\\ud800") nicht schreiben: UnicodeEncodeError
-    ausserhalb des try in holen, kein Backoff, register in jedem Takt (Testoffensive T2, Task 13, Fix-Runde 1)."""
+    ausserhalb des try in holen, kein Backoff, register in jedem Takt."""
     antwort = {**_body(ident, ca), feld: wert}
     with pytest.raises(bootstrap.Unavailable):
         _client(ident, FakeSession(FakeResponse(200, antwort))).register(**ARGS)

@@ -1,6 +1,6 @@
-"""Geraete-Pfad fuer die Add-on-Tests (Spec 5c): alte Test-Optionen als Konfigurationsdokument, Attrappe des
+"""Geraete-Pfad fuer die Add-on-Tests: alte Test-Optionen als Konfigurationsdokument, Attrappe des
 Geraete-Hosts und Start der Laufzeit ueber den Link (RuntimeChannel). So laufen die bestehenden Laufzeit-Tests mit
-ihren Optionen weiter, nur der Weg der Einstellungen ist neu. Dazu (Fixrunde B TP4, A6-90; vorher in
+ihren Optionen weiter, nur der Weg der Einstellungen ist neu. Dazu (gemeinsam fuer
 test_main_geraet.py, test_geraet_host.py und test_core_config_check*.py): die Attrappen des Geraete-Hosts im
 Add-on-Prozess (FakeDevice, FakeSupervisor, Device, _host) und Beispieldokumente der Konfigurationspruefung
 (gateway_konfiguration, ha_konfiguration)."""
@@ -23,7 +23,7 @@ from smartheat_runtime import app, aufraeumen, dokument_config, entitlement
 from smartheat_runtime.roles import LEVER_ROLES
 
 _HEBEL = {f"entity_{role}": lever for lever, role in LEVER_ROLES.items()}
-#: Plattform des Kreises je Hebelsatz in den Test-Dokumenten (L4-27/A5-70; als Literal, test_dokument haelt
+#: Plattform des Kreises je Hebelsatz in den Test-Dokumenten (als Literal, test_dokument haelt
 #: dokument.SCHREIB_PLATTFORM fest); fakes.FakeHa traegt die Schreibziele mit ihr und fakes.KONFIG_EINTRAG ein.
 KREIS_PLATTFORM = {"vaillant_vrc720": "mypyllant", "weishaupt_wwp": "weishaupt_modbus",
                    "weishaupt_wwp_basis": "weishaupt_modbus", "viessmann_vicare": "vicare"}
@@ -68,7 +68,7 @@ class Sent:
     def publish(self, name, payload):
         if self.publish_error is not None and name == "up/snapshot":
             raise self.publish_error
-        payload = json.loads(json.dumps(payload, allow_nan=False))  # wie der echte Link (Testoffensive T2, Nr. 17)
+        payload = json.loads(json.dumps(payload, allow_nan=False))  # wie der echte Link
         self.messages.append((name, payload))
         if self._log is not None:
             self._log.append(["link", name, json.loads(json.dumps(payload))])
@@ -90,14 +90,14 @@ class _NullSink:
 
 
 class FakeGeraet:
-    """Attrappe des Geraete-Hosts (Task 6): haelt Konfiguration, Bedienung, Abo, gesammelte Wuensche und Status.
+    """Attrappe des Geraete-Hosts: haelt Konfiguration, Bedienung, Abo, gesammelte Wuensche und Status.
 
     abo: Status oder eine Funktion, die ihn liefert (die Laufzeit liest ihn bei jeder Abo-Pruefung frisch; so kann ein
     Test den Status mitten im Lauf wechseln). Mit ha laufen die Status-Ereignisse wie produktiv ueber GeraetStatus
     (Schema 3, smartheat_status an ha.fire_event; ohne Anzeige des Geraete-Threads); das unveraenderte
     Laufzeit-Ereignis steht in status. Jeder Link der Laufzeit steht in channels, der letzte in channel; log zeichnet
     die Nachrichten des Links als ["link", <topic>, payload] auf (Golden Master). neustart ist der Rueckruf des Hosts
-    fuer app.start (Spec Stufe 3 S6 4.2) und zaehlt in neustarts."""
+    fuer app.start und zaehlt in neustarts."""
 
     #: Sicht der Laufzeit auf den Start (laufzeit_konfiguration, ursprungswerte_server) wie im echten Geraete-Host
     laufzeit_konfiguration = GeraetHostBasis.laufzeit_konfiguration
@@ -108,7 +108,7 @@ class FakeGeraet:
         self._konfiguration, self._bedienung, self._dirty, self._abo = konfiguration, bedienung, dirty, abo
         self.start_markierung = start_markierung  # die beim Start gelesene Aufraeum-Markierung (aufraeumen.entscheiden)
         self.wuensche, self.aus, self.status = [], [], []
-        self.gemeldet: list[dict] = []  # Ursprungswerte, die die Laufzeit dem Host gab (Spec Stufe 3 S3 5.1)
+        self.gemeldet: list[dict] = []  # Ursprungswerte, die die Laufzeit dem Host gab
         self.raum = None
         self.sent = Sent(log)
         self.channel = None
@@ -168,11 +168,11 @@ def start_bridge(env, *, options, abo=entitlement.ACTIVE, abgemeldet=False, bedi
     Ohne bedienung ist die Bedienung des Servers der Wert, den die Soll-Entity gerade zeigt (wie nach einem Wunsch,
     den der Server als Bedienung zurueckgibt). abgemeldet setzt die Abmelde-Markierung (Befehl sign_off).
     leer_mit_markierung: die gespeicherte Konfiguration ist leer, die Aufraeum-Markierung haelt die Konfiguration aus den
-    Optionen (Spec Stufe 3 S3 Abschnitt 4; wie nach HaDeviceHost.konfiguration_uebernommen). Eine schon vorhandene
+    Optionen (wie nach HaDeviceHost.konfiguration_uebernommen). Eine schon vorhandene
     Markierung bleibt unveraendert (Neustart mit demselben Stand).
     verbunden=False: der Link ist beim Start der Laufzeit noch nicht verbunden (der Test meldet die Verbindung spaeter,
     channel.verbunden).
-    ursprungswerte: Feld `ursprungswerte` der Konfiguration (Spec Stufe 3 S3 5.2).
+    ursprungswerte: Feld `ursprungswerte` der Konfiguration.
     neustart: Rueckruf des Hosts fuer app.start; ohne ihn zaehlt geraet.neustarts die Neustarts."""
     options = {**options, **option_overrides}
     konfiguration = konfiguration_aus_optionen(options)

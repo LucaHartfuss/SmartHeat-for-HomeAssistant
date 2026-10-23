@@ -1,4 +1,4 @@
-"""Simulations-Treiber (Spec SHG G2 4.3): fuer E2E, Labor und Gleichheitstests; nie im Kundenkatalog (G3 3.3).
+"""Simulations-Treiber: fuer E2E, Labor und Gleichheitstests; nie im Kundenkatalog.
 Anlagenzustand in /data/sim/plant.json (schreibt nur die Laufzeit, writer=True), Fehlerinjektion in
 /data/sim/control.json (bei jeder Abfrage gelesen). Hausmodell bewusst einfach, nicht physikalisch."""
 import logging
@@ -69,8 +69,8 @@ class SimulationDriver:
     kind = KIND_LOCAL
     login_kind = None
     LEVER_SETS = tuple(SIM_SCHRITTE)
-    # Audit 4, A4-08: Parameter, die die Anlage bestimmen (registry.plant_id).
-    # Achtung (Audit 4, A4-08): Eine Aenderung aendert die plant_id jeder Installation; beim Update gilt das als andere Anlage und setzt den anlagenbezogenen Zustand zurueck.
+    # Parameter, die die Anlage bestimmen (registry.plant_id).
+    # Achtung: Eine Aenderung aendert die plant_id jeder Installation; beim Update gilt das als andere Anlage und setzt den anlagenbezogenen Zustand zurueck.
     IDENTITY_PARAMETERS = ("lever_set", "heizkreis")
 
     def __init__(
@@ -93,15 +93,15 @@ class SimulationDriver:
         self._cache_at: float | None = None
         self._room = float(self._p["raum_start"])
         self._last_model: float | None = None
-        self._hours = 1000.0  # Betriebsstunden des simulierten Erzeugers (Audit 4 P-B)
+        self._hours = 1000.0  # Betriebsstunden des simulierten Erzeugers
         self._random = random.Random(self._p["seed"])
-        self._lock = threading.RLock()  # Thread-Vertrag wie die Cloud-Treiber (Plan G4 Praezisierung 9)
+        self._lock = threading.RLock()  # Thread-Vertrag wie die Cloud-Treiber
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
     @property
     def description(self) -> BindingDescription:
-        """Beschreibung aus der Konfiguration (Spec Stufe 3 S4b); Befehle ohne Konfiguration (Erkennung, Inventur,
+        """Beschreibung aus der Konfiguration; Befehle ohne Konfiguration (Erkennung, Inventur,
         Vergessen) duerfen sie nicht brauchen."""
         if self._description is None:
             raise RuntimeError("Treiber ohne Konfiguration")
@@ -162,7 +162,7 @@ class SimulationDriver:
         dt = max(now - self._last_model, 0.0) if self._last_model is not None else 0.0
         if self._last_model is not None:
             self._room += (equilibrium - self._room) * (1 - math.exp(-dt / TAU_SECONDS))
-        # Audit 4 P-B: ohne Liefer-Signal lernt der Server nicht (E5); `keine_waerme` in der Steuerdatei bildet einen
+        # Ohne Liefer-Signal lernt der Server nicht; `keine_waerme` in der Steuerdatei bildet einen
         # Waermeausfall nach.
         delivers = not control.get("keine_waerme")
         if delivers:
@@ -298,7 +298,7 @@ class SimulationDriver:
         raise DriverError("login_nicht_noetig")
 
     def erkennung(self) -> dict:
-        """Inventur stunden 0 (Spec Stufe 3 S5 5.1): zwei Heizkreise als Features, einer mit schreibbarer Heizkurve."""
+        """Inventur stunden 0: zwei Heizkreise als Features, einer mit schreibbarer Heizkurve."""
         if self._control().get("token_expired"):
             raise DriverError("nicht_angemeldet")
         plant = self._plant()

@@ -1,4 +1,4 @@
-# Overlay fuer den Dev-Rechner (Spec SHG G2 7.2; Fake-Bootstrap und Fake-Broker ab Plan 5b D2 Task 10):
+# Overlay fuer den Dev-Rechner (Fake-Bootstrap und Fake-Broker):
 # Fake-Zigbee2MQTT statt Zigbee2MQTT (kein Stick), Fake-Bootstrap und Fake-Broker statt Server, Diagnoseseite auf
 # 127.0.0.1:8080, Steuer-Routen des Fake-Bootstraps auf 127.0.0.1:18090. Der Fake-Bootstrap signiert den CSR mit der
 # Test-CA und nennt den Fake-Broker (Mosquitto mit TLS und Client-Zertifikat, ACL wie die Geraete-Policy). Test-PKI

@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 class StorageError(OSError):
     """backup.json oder failsafe_state.json liess sich nicht schreiben (Datentraeger voll oder
-    schreibgeschuetzt, TP12b/AU-005). Unterklasse von OSError: Aufrufer, die OSError erwarten,
+    schreibgeschuetzt). Unterklasse von OSError: Aufrufer, die OSError erwarten,
     bleiben gueltig."""
 
 _NUMBER_FIELDS = ("last_room_target", "last_published_target_rt")
@@ -26,8 +26,8 @@ _TEXT_FIELDS = ("last_daily_trigger_date", "last_ack_at", "boost_since", "tenant
 _TEXT_MAP_FIELDS = ("notify_states", "notify_messages")
 _LEVER_MAP_FIELDS = ("restore_point", "originals", "learned")
 _OVERRIDE_FIELDS = ("manual_override", "manual_override_pending")
-# Plan 3b: Lebensdauerzaehler, zurueckgestellte Serverwerte, Hilfs-Ursprungswerte, Energie-Normalisierung. Fehlen sie in
-# backup.json (bis 0.30.0), gilt der Standardwert; leer bzw. 0 werden sie nicht geschrieben (eine bestehende backup.json
+# Lebensdauerzaehler, zurueckgestellte Serverwerte, Hilfs-Ursprungswerte, Energie-Normalisierung. Fehlen sie in
+# backup.json, gilt der Standardwert; leer bzw. 0 werden sie nicht geschrieben (eine bestehende backup.json
 # bleibt gleich).
 _PLAN3B_FIELDS = ("lifetime_writes", "deferred_levers", "aux_originals", "energy_state")
 BACKUP_FIELDS = (
@@ -39,25 +39,25 @@ _OMITTED_WHEN_EMPTY = _TEXT_MAP_FIELDS + _LEVER_MAP_FIELDS + ("write_budget",) +
 
 @dataclass(frozen=True)
 class BridgeState:
-    # Wiederherstellungspunkt je Hebel (Plan 2 P2-4): zuletzt vom Server bestaetigt oder vor dem ersten Boost von der
+    # Wiederherstellungspunkt je Hebel: zuletzt vom Server bestaetigt oder vor dem ersten Boost von der
     # Anlage gesichert. Darauf setzt jedes Boost-Ende zurueck.
     restore_point: dict = field(default_factory=dict)
-    # Ursprungswerte je Hebel vor dem ersten eigenen Schreiben (P2-5; Vaillant: nur die Heizgrenze): Abo-Ende und
+    # Ursprungswerte je Hebel vor dem ersten eigenen Schreiben (Vaillant: nur die Heizgrenze): Abo-Ende und
     # Abmelden stellen sie wieder her.
     originals: dict = field(default_factory=dict)
-    # Plan 3c: Lernwerte der letzten gueltigen Serverantwort (learned: {"curve": c, "heat_limit": G}), nur Anzeige im
+    # Lernwerte der letzten gueltigen Serverantwort (learned: {"curve": c, "heat_limit": G}), nur Anzeige im
     # Statusereignis.
     learned: dict = field(default_factory=dict)
     boost_active: bool = False
     emergency_boost_active: bool = False
-    # Audit 4, A4-09: Beginn des laufenden Comfort-Boosts (ISO), fuer die Hoechstdauer; None ohne Boost.
+    # Beginn des laufenden Comfort-Boosts (ISO), fuer die Hoechstdauer; None ohne Boost.
     boost_since: str | None = None
-    # Aufeinanderfolgende lokale Checks ohne lesbaren Raumwert (nur Laufzeit, A4-09).
+    # Aufeinanderfolgende lokale Checks ohne lesbaren Raumwert (nur Laufzeit).
     room_actual_misses: int = 0
     last_room_target: float | None = None
     last_published_target_rt: float | None = None
     last_daily_trigger_date: str | None = None
-    # Audit 4, A4-08: Einrichtung (tenant_id) und Anlage, zu denen der Zustand gehoert (bind_to_tenant).
+    # Einrichtung (tenant_id) und Anlage, zu denen der Zustand gehoert (bind_to_tenant).
     tenant_id: str | None = None
     plant_id: str | None = None
     delivery: DeliveryState = field(default_factory=DeliveryState)
@@ -88,18 +88,18 @@ class BridgeState:
     manual_override_misses: int = 0
     abo_inactive_since: datetime | None = None
     abo_finished: bool = False
-    # Schreibbudget je Schluessel (write_budget.py, TP12b): Durchsetzung, Zonenvorbereitung,
+    # Schreibbudget je Schluessel (write_budget.py): Durchsetzung, Zonenvorbereitung,
     # Boost-Start/-Ende, Wiederherstellung. In backup.json; "last" nur zur Laufzeit gueltig.
     write_budget: dict = field(default_factory=dict)
-    # Plan 3b: erfolgreiche physische Schreibvorgaenge seit der Einrichtung (nur Bindings mit lifetime_hint_at, EEPROM).
+    # Erfolgreiche physische Schreibvorgaenge seit der Einrichtung (nur Bindings mit lifetime_hint_at, EEPROM).
     lifetime_writes: int = 0
-    # Plan 3b: Hebel, deren Serverwert wegen des Tagesbudgets noch nicht geschrieben ist (LeverPipeline.write_deferred);
+    # Hebel, deren Serverwert wegen des Tagesbudgets noch nicht geschrieben ist (LeverPipeline.write_deferred);
     # Durchsetzen wertet sie nicht als Eingriff.
     deferred_levers: tuple[str, ...] = ()
-    # Plan 3b: Hilfs-Ursprungswerte (BindingDescription.aux_originals) vor dem ersten eigenen Schreiben, z. B.
+    # Hilfs-Ursprungswerte (BindingDescription.aux_originals) vor dem ersten eigenen Schreiben, z. B.
     # {"mode_select": "Automatik", "setpoint_comfort": 22.0}; Abo-Ende und Abmelden stellen sie zurueck.
     aux_originals: dict = field(default_factory=dict)
-    # Plan 3b: Energie-Normalisierung je Kanal {"raw": letzter Rohwert, "sum": monotone Summe} (nur Tageszaehler).
+    # Energie-Normalisierung je Kanal {"raw": letzter Rohwert, "sum": monotone Summe} (nur Tageszaehler).
     energy_state: dict = field(default_factory=dict)
 
 
@@ -157,7 +157,7 @@ def _parse_budget(raw) -> dict | None:
 def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
     """Liest die bekannten Felder tolerant: ein Feld mit falschem Typ faellt auf seinen
     Standardwert zurueck, die anderen bleiben. Unbekannte Schluessel werden unveraendert
-    mitgefuehrt (spaetere Versionen; Felder bis 0.29.0 seit Audit 4 P-E ebenso)."""
+    mitgefuehrt (spaetere Versionen ebenso)."""
     values = {}
 
     def _invalid(key):
@@ -180,7 +180,7 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
     for key in _TEXT_FIELDS:
         if raw.get(key) is None:
             continue
-        # boost_since: nur ein ISO-Zeitpunkt mit Zeitzone ist gueltig, alles andere "kein Flag" (Audit 4 P-C2, sonst
+        # boost_since: nur ein ISO-Zeitpunkt mit Zeitzone ist gueltig, alles andere "kein Flag" (sonst
         # bricht der lokale Check bei jedem Lauf ab).
         valid = isinstance(raw[key], str) and (key != "boost_since" or parse_since(raw[key]) is not None)
         if valid:
@@ -222,7 +222,7 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
 
 
 def _parse_plan3b(raw: dict, values: dict, invalid) -> None:
-    """Felder aus Plan 3b, tolerant wie die uebrigen: falscher Typ -> Standardwert (Warnung)."""
+    """Felder der Hersteller-Bindings, tolerant wie die uebrigen: falscher Typ -> Standardwert (Warnung)."""
     checks = {
         "lifetime_writes": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
         "deferred_levers": lambda v: isinstance(v, list) and all(isinstance(item, str) for item in v),
@@ -292,7 +292,7 @@ class StateStore:
     @property
     def storage_failed(self) -> bool:
         """True, solange backup.json oder failsafe_state.json nicht geschrieben werden konnte
-        (TP12b, AU-005). Lebt nur im Speicher: ein kaputter Datentraeger kann sich nicht merken,
+        (AU-005). Lebt nur im Speicher: ein kaputter Datentraeger kann sich nicht merken,
         dass er kaputt ist."""
         return self._backup_dirty or self._failsafe_dirty
 
@@ -387,7 +387,7 @@ class StateStore:
         return from_persisted(raw)
 
 
-# Audit 4, A4-08 (Nutzer-Entscheidung E3): was zur Anlage gehoert (bei einer anderen Anlage verworfen) und was zur
+# Nutzer-Entscheidung: was zur Anlage gehoert (bei einer anderen Anlage verworfen) und was zur
 # Einrichtung (bei jeder neuen Einrichtung zurueckgesetzt: Erstkontakt-Tick, frische Zustellung).
 _PLANT_BOUND = (
     "restore_point", "originals", "aux_originals", "learned", "boost_active", "emergency_boost_active", "boost_since",
@@ -397,17 +397,17 @@ _PLANT_BOUND = (
 _SETUP_BOUND = ("last_published_target_rt", "last_daily_trigger_date")
 
 
-#: INFO der einmaligen Uebernahme (A6-36), woertlich im Ablaufbuch FB-Kennung-Live.
+#: INFO der einmaligen Uebernahme, woertlich im Ablaufbuch FB-Kennung-Live.
 UEBERNAHME_TEXT = "Anlagen-Kennung aus dem Heizkreis übernommen"
 
 
 def bind_to_tenant(store: "StateStore", tenant_id: str | None, plant_id: str, *, frueher: str | None = None) -> str:
-    """Bindet den Zustand an Einrichtung und Anlage. Ein Bestand ohne Bindung (bis Add-on 0.34.0) gilt als gebunden
-    (nichts verwerfen, Review Focus 1). Andere Anlage: anlagenbezogene Felder auf den Standardwert. Neue Einrichtung
+    """Bindet den Zustand an Einrichtung und Anlage. Ein Bestand ohne Bindung gilt als gebunden
+    (nichts verwerfen). Andere Anlage: anlagenbezogene Felder auf den Standardwert. Neue Einrichtung
     derselben Anlage: Ursprungswerte bleiben, nur Tick-Buchung und Zustellung beginnen neu.
-    frueher (A6-36, einmalige Uebernahme, Rueckbau A6-36-Uebernahme): die Kennung, die ein frueherer Stand fuer dieselbe
+    frueher (einmalige Uebernahme, Rueckbau: offene-punkte.md A6-36-Uebernahme): die Kennung, die ein frueherer Stand fuer dieselbe
     Anlage schrieb (HA bis 1.1.0: roles.lever_refs_identity). Steht genau sie in backup.json, ist es dieselbe Anlage:
-    die Kennung wird umgeschrieben, nichts verworfen, danach der Vergleich der Einrichtung wie bisher ("uebernommen"
+    die Kennung wird umgeschrieben, nichts verworfen, danach der Vergleich der Einrichtung ("uebernommen"
     bzw. "neue_einrichtung"; die INFO erst nach dem gelungenen Schreiben); ein Schreibfehler laesst backup.json auf der
     frueheren Kennung (naechster Start erneut, ohne INFO in diesem)."""
     state, defaults = store.state, BridgeState()

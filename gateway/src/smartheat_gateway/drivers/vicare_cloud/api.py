@@ -1,5 +1,5 @@
-"""Duenner Client fuer die ViCare-REST-API (Spec SHG G4 1.1, Plan G4 Praezisierung 1). Jeder Aufruf der Viessmann-API
-zaehlt gegen das Kontingent (G2 4.2); IAM-Aufrufe (Token) nicht. Endpunkte wie PyViCare (Referenz). In Logs und
+"""Duenner Client fuer die ViCare-REST-API. Jeder Aufruf der Viessmann-API
+zaehlt gegen das Kontingent; IAM-Aufrufe (Token) nicht. Endpunkte wie PyViCare (Referenz). In Logs und
 Fehlertexten stehen nie Token, Antwortinhalte oder Seriennummern (Regel 6)."""
 import logging
 import math

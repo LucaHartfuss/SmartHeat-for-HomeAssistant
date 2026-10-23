@@ -1,4 +1,4 @@
-"""Feature-Lesehilfen des Treibers und die Kuerzung fuer die Erkennung (Spec G4 3, Stufe 3 S5b). Die Klassifikation in
+"""Feature-Lesehilfen des Treibers und die Kuerzung fuer die Erkennung. Die Klassifikation in
 Kandidaten und die Matrix der Aufzeichnungen liegen auf dem Server (tests/test_gateway_erkennung.py)."""
 import json
 
@@ -43,7 +43,7 @@ def good_features(*, slope_step=0.1, with_normal=True, with_curve_command=True, 
 
 
 def test_generator_signals_from_the_burner_features():
-    # Audit 4 P-B (W-1): Liefer-Signale aus den Brenner-Features
+    # Liefer-Signale aus den Brenner-Features
     index = caps.by_name([
         {"feature": "heating.burners.0", "properties": {"active": {"type": "boolean", "value": True}}},
         {"feature": "heating.burners.0.statistics",
@@ -70,7 +70,7 @@ def test_generator_signals_ignore_garbage_and_missing_features():
     assert caps.generator_signals({}) == {} and caps.mode_signal({}, 0) is None
 
 
-# --- Erkennung (Stufe 3 S5b): gekuerzte Features und Hebelstand fuer die Inventur ---
+# --- Erkennung: gekuerzte Features und Hebelstand fuer die Inventur ---
 
 
 def test_gekuerzt_keeps_only_name_properties_and_command_params_and_drops_uris():

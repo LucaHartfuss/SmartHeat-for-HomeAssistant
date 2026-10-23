@@ -1,4 +1,4 @@
-"""Pruefer fuer minisign-Signaturen (Spec SHG G2b-1 7): Ed25519, Format des Programms minisign (Signatur ueber die
+"""Pruefer fuer minisign-Signaturen: Ed25519, Format des Programms minisign (Signatur ueber die
 Datei 'Ed' oder ueber ihren BLAKE2b-512-Hash 'ED', dazu die globale Signatur ueber Signatur + vertrauenswuerdigen
 Kommentar). Nur Standardbibliothek und cryptography (python3-cryptography auf dem Pi)."""
 import base64

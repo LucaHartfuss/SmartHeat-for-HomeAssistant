@@ -1,7 +1,7 @@
-# Release-Werkzeug des Gateways (Spec SHG G2b-1 7): baut das Bundle aus der Compose-Datei. Laeuft nur im Release-Workflow
+# Release-Werkzeug des Gateways: baut das Bundle aus der Compose-Datei. Laeuft nur im Release-Workflow
 # und in Tests, nicht auf dem Geraet.
 # [project] beschreibt nur die Abhaengigkeiten fuer die Lock-Datei requirements.txt (pip install --require-hashes in
-# release-gateway.yml, Final-Review FW-3); das Werkzeug selbst wird nie installiert. Versionen wie in
+# release-gateway.yml); das Werkzeug selbst wird nie installiert. Versionen wie in
 # gateway/requirements.txt (cryptography, cffi, pycparser) und release.yml (pyyaml), geprueft von tests/test_lock.py.
 [project]
 name = "smartheat-gateway-release"

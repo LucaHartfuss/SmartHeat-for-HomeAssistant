@@ -1,4 +1,4 @@
-"""Gemeinsamer Teil der Geraete-Hosts (Spec Stufe 3 S6 4.2); das Verhalten beider Hosts prueft
+"""Gemeinsamer Teil der Geraete-Hosts; das Verhalten beider Hosts prueft
 test_host_konformitaet.py, hier nur, was ohne Host gilt."""
 import threading
 from pathlib import Path
@@ -73,7 +73,7 @@ def _angefordert(host: _Host) -> bool:
 
 
 def test_leere_konfiguration_nach_keiner_startet_nicht_neu(tmp_path):
-    """L4-02 (c): im Ruhezustand "nicht eingerichtet" liest die Laufzeit kein Laufzeitfeld; ein Neustart risse den
+    """Im Ruhezustand "nicht eingerichtet" liest die Laufzeit kein Laufzeitfeld; ein Neustart risse den
     Befehl mit, der gleich nach dem Erstkontakt laeuft. Auch leer nach leer mit anderem Laufzeitfeld nicht."""
     assert dokument_config.laufzeit_relevant(None, LEER)  # ohne (c) ginge der Neustart hinaus
     host = _Host(tmp_path / "a.json")
@@ -102,7 +102,7 @@ def test_leer_nach_leer_hebt_die_abmeldung_nicht_auf_und_startet_nicht_neu(tmp_p
     assert _angefordert(host) and not host.abgemeldet_pfad().exists()
 
 
-# --- Start der Laufzeit: Konfiguration und Ursprungswerte (A6-60, T4-Markierung-Zweitlesen) ---
+# --- Start der Laufzeit: Konfiguration und Ursprungswerte ---
 
 ALT = {**EINGERICHTET, "ursprungswerte": {"heat_limit": 16.0}}
 OFFEN = aufraeumen.Markierung("t1", ALT, False)

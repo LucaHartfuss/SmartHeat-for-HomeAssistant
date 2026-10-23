@@ -106,11 +106,11 @@ def test_failing_boost_end_write_follows_the_return_staircase(env):
         _advance(env, bridge, 60)
         _trigger(env, bridge, "sensor.room_actual")
 
-    assert attempts == [0.9, 0.9]  # Rueckkehr-Staffel: sofort, dann fruehestens nach 300 s (vorher: 6)
+    assert attempts == [0.9, 0.9]  # Rueckkehr-Staffel: sofort, dann fruehestens nach 300 s
 
 
 def test_old_manual_override_format_is_dropped_by_the_first_backup_write(tmp_path):
-    """AUDIT, Neubewertung B-TP11-3: das alte Format ({curve, offset, erkannt}) wird beim Laden
+    """Das alte Format ({curve, offset, erkannt}) wird beim Laden
     verworfen (WARNING) und verschwindet mit dem ersten Schreiben von backup.json aus der Datei;
     die WARNINGs enden damit nach dem ersten Schreibanlass von selbst."""
     old = {"curve": 1.5, "offset": 20.0, "erkannt": "2026-09-28T10:00:00+02:00"}

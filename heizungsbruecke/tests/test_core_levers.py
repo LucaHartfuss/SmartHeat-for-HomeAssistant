@@ -18,7 +18,7 @@ def test_vocabulary_and_vaillant_lever_set():
 
 
 def test_new_lever_sets_mirror_the_server():
-    """Plan 3b: gleiche IDs, Hebel und Reihenfolge wie heizungsserver.regelung.hersteller.plants (Contract-Checks,
+    """Gleiche IDs, Hebel und Reihenfolge wie heizungsserver.regelung.hersteller.plants (Contract-Checks,
     Vertrag V1 und V4)."""
     assert LeverSet("weishaupt_wwp", ("curve", "room_setpoint", "heat_limit")) == WEISHAUPT_WWP
     assert LeverSet("weishaupt_wwp_basis", ("room_setpoint",)) == WEISHAUPT_WWP_BASIS

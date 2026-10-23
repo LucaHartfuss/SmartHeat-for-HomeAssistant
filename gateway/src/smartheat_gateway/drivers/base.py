@@ -1,4 +1,4 @@
-"""Treiber-Protokoll (Spec SHG G2 4.1): ein Treiber IST ein PlantBinding aus smartheat_core mit derselben
+"""Treiber-Protokoll: ein Treiber IST ein PlantBinding aus smartheat_core mit derselben
 BindingDescription wie der HA-Pfad, plus Signale, Abfrage-Thread, Login, Erkennung und Inventur. Lesen kommt aus dem Cache;
 aelter als CACHE_MAX_POLLS x poll_seconds (monotone Uhr) -> ValueError, die Datenfehler-Logik der Laufzeit greift."""
 from collections.abc import Mapping
@@ -22,7 +22,7 @@ CACHE_MAX_POLLS = 3
 
 
 #: Lokaler Text je Vertragsgrund fuer die Meldung einer DriverError (Log, Meldungen des Geraets, z. B. ein Schreibfehler
-#: bei abgelaufener Anmeldung). Er geht nie an den Server: dorthin gehen nur grund und details (Spec Stufe 3 S5 6.2/6.3).
+#: bei abgelaufener Anmeldung). Er geht nie an den Server: dorthin gehen nur grund und details.
 DRIVER_ERROR_TEXTE = {
     "nicht_angemeldet": "Die Anmeldung beim Hersteller ist abgelaufen. Bitte im SmartHeat-Portal die Anmeldung erneuern.",
     "anlage_nicht_erreichbar": "Die Anlage oder die Hersteller-Cloud ist nicht erreichbar.",
@@ -49,7 +49,7 @@ def erkennung_daten(treiber: str, anlagen: list[dict], features: list[dict]) -> 
 class DriverError(RuntimeError):
     """Fehler mit Vertragsgrund (smartheat_device/wire.py; gemeldet vom Geraetekern ueber die Befehle driver_login und
     inventory): nicht_angemeldet, anlage_nicht_erreichbar, login_fehlgeschlagen, login_nicht_noetig,
-    treiber_unbekannt. Zum Server gehen nur grund und details (den Text bildet der Server, Spec Stufe 3 S5 6.2); die
+    treiber_unbekannt. Zum Server gehen nur grund und details (den Text bildet der Server); die
     Meldung der Ausnahme ist ein lokaler Text (DRIVER_ERROR_TEXTE) fuer Log und lokale Meldungen (6.3)."""
 
     def __init__(self, grund: str, details: dict | None = None) -> None:

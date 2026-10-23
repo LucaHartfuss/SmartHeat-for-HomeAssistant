@@ -1,4 +1,4 @@
-"""Kundentexte vom Host (Spec SHG G2 2.1): die HA-Standardwerte sind die bisherigen Texte (wortgleich)."""
+"""Kundentexte vom Host: die HA-Standardwerte sind die bisherigen Texte (wortgleich)."""
 from dataclasses import fields
 
 from smartheat_runtime import delivery
