@@ -56,7 +56,6 @@ def test_the_diagnostic_port_is_published_on_ipv4_only():
     Firewall-Regel `tcp dport 80 accept` gaelte dann auch fuer IPv6. Mit `0.0.0.0` als Host-Adresse lauscht nur IPv4."""
     ports = _services()["runtime"]["ports"]
     assert ports == ["0.0.0.0:80:8080"]
-    assert all(port.startswith("0.0.0.0:") for port in ports)
 
 
 def test_only_the_runtime_publishes_a_port_and_only_80_to_8080():

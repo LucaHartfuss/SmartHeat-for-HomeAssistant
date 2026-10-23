@@ -57,6 +57,8 @@ for unit in updater led hoststatus; do
 done
 grep -q '^DefaultDependencies=no$' /etc/systemd/system/smartheat-firewall.service || fail "Firewall-Unit ohne DefaultDependencies=no"
 grep -q '^After=nftables.service$' /etc/systemd/system/smartheat-firewall.service || fail "Firewall-Unit nicht nach nftables.service"
+# A6-87: der Test-Einstieg des Updaters (schaltet allow_http ein) gehoert nicht auf das Geraet.
+[ -z "$(find /opt/smartheat /var/lib/smartheat -name 'updater_testlauf*' 2>/dev/null)" ] || fail "updater_testlauf.py ist auf dem Geraet installiert"
 [ -f /etc/ssh/sshd_config.d/00-smartheat.conf ] || fail "sshd-Drop-in 00-smartheat.conf fehlt"
 [ ! -e /etc/ssh/sshd_config.d/smartheat.conf ] || fail "alter sshd-Drop-in smartheat.conf nicht entfernt"
 # Sicherheitsupdates (Plan G2b-2 Task 6): Debian-Security und das Raspberry-Pi-Archiv (Kernel, Firmware), sonst nichts;
