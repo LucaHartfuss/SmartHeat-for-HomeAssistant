@@ -11,6 +11,7 @@ from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.host import DERIVED_SENSORS_RETRY_DELAYS_SECONDS, HaHost
 from smartheat_runtime.app import IdleBridge, StartFailure
+from smartheat_runtime.notifier import STATE_OK
 from smartheat_runtime.roles import lever_refs_identity
 
 
@@ -160,7 +161,8 @@ def test_eine_fallen_gelassene_lese_rolle_aendert_die_anlagenidentitaet_nicht(en
 def test_gegenprobe_dieselbe_optionale_rolle_mit_zustand_bleibt_im_manifest(env, angelegt, sleeps):
     env.ha.states.update({"sensor.vorlauf": 35.0, "sensor.vorlauf::device_class": "temperature"})
     loaded = _host(env, entity_flow_temperature="sensor.vorlauf").load()
-    assert loaded.manifest.refs["flow_temperature"] == "sensor.vorlauf" and loaded.notices == ()
+    assert loaded.manifest.refs["flow_temperature"] == "sensor.vorlauf"
+    assert [(n.key, n.state) for n in loaded.notices] == [("entity_fehlt:flow_temperature", STATE_OK)]  # nur Entwarnung
 
 
 def test_eine_batterie_ohne_zustand_wird_nicht_gelesen_und_gemeldet(env, angelegt, sleeps):
@@ -169,6 +171,22 @@ def test_eine_batterie_ohne_zustand_wird_nicht_gelesen_und_gemeldet(env, angeleg
     assert [ref.ref for ref in loaded.config.battery_refs] == ["sensor.gut"]
     assert [n.key for n in loaded.notices] == ["entity_fehlt:batterien"]
     assert "binary_sensor.weg_battery_low" not in loaded.notices[0].message
+
+
+def test_entity_fehlt_meldet_nach_rueckkehr_und_erneutem_fehlen_wieder(env, sleeps):
+    """L4-25: kehrt die Entity zurueck, entwarnt der Start den Hinweis; fehlt sie spaeter erneut, kommt er wieder.
+    Ohne die Entwarnung bliebe der Zustand „fehlt“ offen und der Melder schwiege beim zweiten Mal."""
+    def fehlt_meldungen():
+        return [push for push in env.ha.pushes if "zugeordnete Entity fehlt" in push]
+
+    _start_bridge(env, entity_flow_temperature="sensor.vorlauf")  # Zustand fehlt
+    assert len(fehlt_meldungen()) == 1
+    env.ha.states.update({"sensor.vorlauf": 35.0, "sensor.vorlauf::device_class": "temperature"})
+    _start_bridge(env, entity_flow_temperature="sensor.vorlauf")  # da: Entwarnung
+    assert len(fehlt_meldungen()) == 1 and "wieder vorhanden" in env.ha.pushes[-1]
+    del env.ha.states["sensor.vorlauf"], env.ha.states["sensor.vorlauf::device_class"]
+    _start_bridge(env, entity_flow_temperature="sensor.vorlauf")  # fehlt wieder
+    assert len(fehlt_meldungen()) == 2
 
 
 @pytest.mark.parametrize("feld_option, ref", [("entity_operating_mode", "person.luca"),

@@ -177,6 +177,13 @@ def _pflicht_refs(b: HaBindung) -> set[str]:
             *(ref for _, ref in _schreibziel_rollen(b))}
 
 
+def optionale_felder(b: HaBindung) -> list[str]:
+    """Die Felder der gebundenen optionalen Lese-Rollen und Batterien (ohne Wiederholung, in der Reihenfolge der
+    Pruefung): die einzigen, die ohne Zustand ungelesen bleiben duerfen (siehe _pflicht_refs)."""
+    pflicht = _pflicht_refs(b)
+    return list(dict.fromkeys(feld for feld, ref in _refs(b) if ref not in pflicht))
+
+
 #: Klasse "beliebig, aber ohne Klasse nur von der Plattform des Kreises" (Lese-Rollen ohne feste Klasse).
 FREIE_KLASSE = "*"
 _TEMPERATUR = ("sensor", "temperature")
@@ -299,7 +306,8 @@ def _unveraendert(konfiguration, akzeptiert) -> bool:
 def zuordnung_pruefen(konfiguration, ha_api, akzeptiert=None) -> dict | None:
     """None = in Ordnung; sonst details (Grund rolle_unzulaessig, Spec Stufe 3 S5 6.1). `akzeptiert` ist die
     uebernommene Konfiguration (None, wenn es keine gibt). Wirft NichtPruefbar, wenn HA gerade nicht antwortet (siehe
-    oben), sonst nie."""
+    oben). Ein anderer Fehler im Teil ohne HA ausser dem ConfigError der Bindung wird nicht gefangen (Programmfehler,
+    bleibt sichtbar); das Dokument kommt dann bei der naechsten Verbindung erneut."""
     try:
         b = bindung(konfiguration)
     except ConfigError:
