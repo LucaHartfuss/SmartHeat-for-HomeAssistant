@@ -112,7 +112,7 @@ def test_fruehere_kennung_derselben_anlage_wird_uebernommen(tmp_path, caplog):
 
 
 def test_uebernahme_mit_neuer_einrichtung_behaelt_die_ursprungswerte(tmp_path):
-    """Kennung uebernommen, danach der Vergleich der Einrichtung wie bisher: neue tenant_id -> Tick und Zustellung neu."""
+    """Kennung uebernommen, danach der Vergleich der Einrichtung wie bisher: neue tenant_id: Tick und Zustellung neu."""
     store = _store(tmp_path, BESTAND_1_1_0)
     store.set_delivery(DeliveryState(server_failures=2))
     assert bind_to_tenant(store, "s2", KREIS, frueher=FRUEHER) == "neue_einrichtung"
@@ -143,17 +143,36 @@ def test_die_uebernahme_greift_nur_beim_bestand_mit_frueherer_kennung(tmp_path):
     assert store.state.originals == {} and store.state.boost_active is False
 
 
-def test_uebernahme_bei_schreibfehler_behaelt_alles_und_versucht_es_beim_naechsten_start(tmp_path, monkeypatch):
+def test_uebernahme_bei_schreibfehler_behaelt_alles_und_versucht_es_beim_naechsten_start(
+        tmp_path, monkeypatch, caplog):
+    """Die Uebernahmezeile steht erst nach dem gelungenen Schreiben: beim Schreibfehler fehlt sie, der naechste Start
+    schreibt sie genau einmal."""
     store = _store(tmp_path, BESTAND_1_1_0)
     def kaputt(*args, **kwargs):
         raise OSError("Datentraeger kaputt")
 
     monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", kaputt)
-    with pytest.raises(StorageError):
+    with caplog.at_level(logging.INFO, logger="smartheat_runtime.state"), pytest.raises(StorageError):
         bind_to_tenant(store, "s1", KREIS, frueher=FRUEHER)
     assert store.state.plant_id == KREIS and store.state.originals == OLD["originals"]
     assert load_backup(tmp_path / "backup.json")["plant_id"] == FRUEHER
+    assert "Anlagen-Kennung aus dem Heizkreis übernommen" not in caplog.text
     monkeypatch.undo()
     neu = StateStore(tmp_path / "backup.json", tmp_path / "failsafe_state.json")
-    assert bind_to_tenant(neu, "s1", KREIS, frueher=FRUEHER) == "uebernommen"
+    with caplog.at_level(logging.INFO, logger="smartheat_runtime.state"):
+        assert bind_to_tenant(neu, "s1", KREIS, frueher=FRUEHER) == "uebernommen"
     assert neu.state.originals == OLD["originals"]
+    assert caplog.text.count("Anlagen-Kennung aus dem Heizkreis übernommen") == 1
+
+
+def test_uebernahme_mit_neuer_einrichtung_bei_schreibfehler_ohne_uebernahmezeile(tmp_path, monkeypatch, caplog):
+    store = _store(tmp_path, BESTAND_1_1_0)
+
+    def kaputt(*args, **kwargs):
+        raise OSError("Datentraeger kaputt")
+
+    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", kaputt)
+    with caplog.at_level(logging.INFO, logger="smartheat_runtime.state"), pytest.raises(StorageError):
+        bind_to_tenant(store, "s2", KREIS, frueher=FRUEHER)
+    assert "Anlagen-Kennung aus dem Heizkreis übernommen" not in caplog.text
+    assert load_backup(tmp_path / "backup.json")["plant_id"] == FRUEHER

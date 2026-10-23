@@ -397,6 +397,10 @@ _PLANT_BOUND = (
 _SETUP_BOUND = ("last_published_target_rt", "last_daily_trigger_date")
 
 
+#: INFO der einmaligen Uebernahme (A6-36), woertlich im Ablaufbuch FB-Kennung-Live.
+UEBERNAHME_TEXT = "Anlagen-Kennung aus dem Heizkreis übernommen"
+
+
 def bind_to_tenant(store: "StateStore", tenant_id: str | None, plant_id: str, *, frueher: str | None = None) -> str:
     """Bindet den Zustand an Einrichtung und Anlage. Ein Bestand ohne Bindung (bis Add-on 0.34.0) gilt als gebunden
     (nichts verwerfen, Review Focus 1). Andere Anlage: anlagenbezogene Felder auf den Standardwert. Neue Einrichtung
@@ -404,7 +408,8 @@ def bind_to_tenant(store: "StateStore", tenant_id: str | None, plant_id: str, *,
     frueher (A6-36, einmalige Uebernahme, Rueckbau A6-36-Uebernahme): die Kennung, die ein frueherer Stand fuer dieselbe
     Anlage schrieb (HA bis 1.1.0: roles.lever_refs_identity). Steht genau sie in backup.json, ist es dieselbe Anlage:
     die Kennung wird umgeschrieben, nichts verworfen, danach der Vergleich der Einrichtung wie bisher ("uebernommen"
-    bzw. "neue_einrichtung"); ein Schreibfehler laesst backup.json auf der frueheren Kennung (naechster Start erneut)."""
+    bzw. "neue_einrichtung"; die INFO erst nach dem gelungenen Schreiben); ein Schreibfehler laesst backup.json auf der
+    frueheren Kennung (naechster Start erneut, ohne INFO in diesem)."""
     state, defaults = store.state, BridgeState()
     if state.tenant_id is None and state.plant_id is None:
         store.update(tenant_id=tenant_id, plant_id=plant_id)
@@ -416,15 +421,16 @@ def bind_to_tenant(store: "StateStore", tenant_id: str | None, plant_id: str, *,
         store.update(**{key: getattr(defaults, key) for key in _PLANT_BOUND + _SETUP_BOUND},
                      tenant_id=tenant_id, plant_id=plant_id)
         return "andere_anlage"
-    uebernommen = state.plant_id != plant_id
-    if uebernommen:
-        logger.info("Anlagen-Kennung aus dem Heizkreis übernommen")
+    uebernommen = state.plant_id != plant_id  # die Zeile erst nach dem gelungenen Schreiben: sie steht genau einmal
     if state.tenant_id != tenant_id:
         logger.info("Neue Einrichtung derselben Anlage: Ursprungswerte bleiben, Erstkontakt-Tick folgt")
         store.set_delivery(DeliveryState())
         store.update(**{key: getattr(defaults, key) for key in _SETUP_BOUND}, tenant_id=tenant_id, plant_id=plant_id)
+        if uebernommen:
+            logger.info(UEBERNAHME_TEXT)
         return "neue_einrichtung"
     if uebernommen:
         store.update(plant_id=plant_id)
+        logger.info(UEBERNAHME_TEXT)
         return "uebernommen"
     return "unveraendert"

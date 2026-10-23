@@ -122,6 +122,10 @@ def bindung(konfiguration) -> HaBindung:
 
 
 #: Was den Heizkreis bestimmt (A6-36): ohne config_entry, eine Neuanlage der Integration bleibt dieselbe Anlage.
+# Achtung (A6-36): Felder und Format bestimmen die plant_id jeder HA-Installation. anlage und nummer leitet der
+# Server ab (einrichtung/ha_erkennung.py, _normalize: Praefix der unique_id; Kreismuster des Katalogs); aendert er die
+# Ableitung, gilt beim naechsten Speichern im Assistenten jede HA-Anlage als andere Anlage, bind_to_tenant verwirft
+# Ursprungswerte, Wiederherstellungspunkt und Energiesummen (Restpunkt A6-36-Format).
 KREIS_KENNUNG = ("plattform", "anlage", "nummer")
 
 
