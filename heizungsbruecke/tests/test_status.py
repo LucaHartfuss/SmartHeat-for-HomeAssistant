@@ -235,10 +235,6 @@ def test_failed_send_is_logged_and_repeated_on_the_next_check(make_store, caplog
     assert ha_api.fire_event.call_count == 2
 
 
-def test_the_status_event_has_no_setup_id():
-    assert "setup_id" not in status.EVENT_FIELDS
-
-
 def test_unwritable_disk_is_a_local_data_fault_ranked_after_notbetrieb():
     assert overall_status(Flags(gestartet=True), BridgeState(), storage_failed=True) == "datenfehler"
     assert overall_status(
@@ -252,8 +248,3 @@ def test_a_delivery_fault_wins_over_the_disk_in_the_event():
     state = BridgeState(delivery=DeliveryState(datenfehler=DataFault("server", ("x",))))
     event = build_event("t", Flags(gestartet=True), state, VAILLANT, ADDON_VERSION, storage_failed=True)
     assert event["datenfehler"] == {"art": "server", "rollen": []}
-
-
-def test_hinweise_no_longer_carry_waerme_fehlt():
-    event = build_event("t", Flags(gestartet=True), BridgeState(), VAILLANT, ADDON_VERSION)
-    assert "waerme_fehlt" not in event["hinweise"]

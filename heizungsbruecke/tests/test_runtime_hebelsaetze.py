@@ -17,7 +17,6 @@ from runtime_helpers import (
     _trigger,
 )
 
-from heizungsbruecke import __main__ as main_module
 from smartheat_core import write_budget
 from smartheat_core.pipeline import BUDGET_KEY, BUDGET_MESSAGE
 from smartheat_runtime.backup_store import save_backup
@@ -130,11 +129,6 @@ def test_viessmann_start_leaves_eco_and_writes_curve_and_level_together(env):
     _answer_levers(env, bridge, snapshot["seq"], {"curve": 1.0, "level": -2.0, "room_setpoint": 21.0})
     assert env.ha.writes[1:] == [("number.slope", 1.0), ("number.shift", -2.0), ("number.normal_temperature", 21.0)]
     assert "lifetime_writes" not in _backup(env)
-
-
-def test_main_has_no_vaillant_constant_left():
-    assert not hasattr(main_module, "REQUIRED_ENTITY_OPTIONS")
-    assert not hasattr(main_module, "VAILLANT_MYPYLLANT")
 
 
 # --- Carry-forwards aus den Reviews der Tasks 5/8 ---

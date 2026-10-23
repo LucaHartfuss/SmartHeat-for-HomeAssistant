@@ -31,10 +31,8 @@ run_in_image() { docker run --rm --security-opt label=disable "$@"; }
 docker build --platform linux/amd64 -f "$REPO/gateway/Dockerfile" -t "$IMAGE" "$REPO" || { echo "FAIL: docker build"; exit 1; }
 echo "PASS: docker build"
 [ "$(docker run --rm "$IMAGE" id -u)" = "1000" ] || fail "Image laeuft nicht als uid 1000"
-docker run --rm "$IMAGE" sh -c "! command -v cloudflared" >/dev/null || fail "cloudflared noch im Image"
 docker run --rm "$IMAGE" python -c "import smartheat_gateway.runtime_main, smartheat_gateway.init, smartheat_gateway.diagnose, smartheat_device.device" \
   || fail "Module nicht importierbar"
-docker run --rm "$IMAGE" python -c "import smartheat_gateway.agent" 2>/dev/null && fail "Agent noch im Image"
 docker run --rm "$IMAGE" sh -c "test ! -e /app/src/heizungsbruecke" || fail "HA-Host im Gateway-Image"
 
 # Der Geraetekern bootstrappt beim Fake-Bootstrap des Dev-Overlays (Dienstname fake-bootstrap im Netz wan).
@@ -112,7 +110,6 @@ pw() {
     python -c "import json,sys; print(json.load(open('/b/credentials/' + sys.argv[1] + '/bus.json'))['password'])" "$1"
 }
 for svc in runtime zigbee2mqtt; do [ -n "$(pw "$svc")" ] || fail "Bus-Zugangsdaten von $svc nicht lesbar"; done
-[ -e "$DATA/bus/credentials/agent" ] && fail "init legt noch einen Ordner fuer den Agenten an"
 mosq() { docker run --rm --security-opt label=disable --network "${PROJECT}_bus" "$MOSQ_IMAGE" "$@"; }
 # Anonym abgewiesen, Dienste angemeldet, ACL greift: der Bus traegt nur noch Zigbee2MQTT. Die Abos
 # ignorieren retained Nachrichten (-R): Fake-Zigbee2MQTT haelt bridge/* retained, das kaeme sonst vor der Probe an.

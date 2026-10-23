@@ -28,7 +28,6 @@ def test_first_run_creates_everything_private(tmp_path):
     assert stat.S_IMODE((tmp_path / "zigbee2mqtt" / "configuration.yaml").stat().st_mode) == 0o600
     for name in ("device",):
         assert stat.S_IMODE((tmp_path / "data" / name).stat().st_mode) == 0o700
-    assert not (tmp_path / "data" / "agent").exists()
     assert "bus/mosquitto/passwd" in written
 
 

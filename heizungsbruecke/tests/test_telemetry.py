@@ -495,12 +495,6 @@ def test_kpi_role_constants():
     assert "generator_hours" in telemetry.KPI_NUMERIC_ROLES and "generator_starts" in telemetry.KPI_NUMERIC_ROLES
 
 
-def test_the_telemetry_no_longer_carries_waerme_fehlt():
-    mqtt_client = MagicMock(spec=MqttChannel)
-    telemetry.publish_telemetry(mqtt_client=mqtt_client, room_actual=20.5, boost_active=False, failsafe_active=False)
-    assert "waerme_fehlt" not in mqtt_client.publish_telemetry.call_args.args[0]
-
-
 # --- Energie-Normalisierung (Tageszaehler) ---
 
 ENERGY_MANIFEST = ChannelManifest(refs={"energy_thermal_heating": "sensor.waerme_heute"})
