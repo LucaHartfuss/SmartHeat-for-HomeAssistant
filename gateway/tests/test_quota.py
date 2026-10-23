@@ -121,6 +121,45 @@ def test_a_backward_clock_jump_keeps_counting_until_the_window_ends(tmp_path):
     assert zaehler(guard) == 1
 
 
+def _datei_schreiben(guard, inhalt):
+    guard._path.parent.mkdir(parents=True, exist_ok=True)
+    guard._path.write_text(json.dumps(inhalt))
+
+
+@pytest.mark.parametrize("zukunft", [10**12, 10**18, float("inf")])
+def test_a_huge_future_entry_blocks_at_most_one_window(tmp_path, zukunft):
+    """Ein kaputter oder riesiger Zeitstempel in der Zaehlerliste zaehlt wie ein Eintrag von `now`: hoechstens ein
+    Fenster lang, nie dauerhaft."""
+    now = [1_000_000.0]
+    guard = QuotaGuard(tmp_path / "q.json", QuotaSpec(5, 86400), now=lambda: now[0])
+    _datei_schreiben(guard, {"aufrufe": [zukunft] * 5, "gesperrt_bis": None})
+    assert guard.exhausted()
+    assert json.loads(guard._path.read_text())["aufrufe"] == [now[0]] * 5  # der gekappte Wert ist gespeichert
+    now[0] += 86401
+    assert not guard.exhausted()
+
+
+@pytest.mark.parametrize("gesperrt_bis", [10**12, 10**18, float("inf")])
+def test_a_huge_block_time_blocks_at_most_one_window(tmp_path, gesperrt_bis):
+    """`gesperrt_bis` (429) ist auf `now + Fenster` begrenzt: ein Uhrsprung zurueck oder ein kaputter Wert sperrt nie
+    laenger als ein Fenster, auch nicht bis die Datei geloescht wird."""
+    now = [1_000_000.0]
+    guard = QuotaGuard(tmp_path / "q.json", SPEC, now=lambda: now[0])
+    _datei_schreiben(guard, {"aufrufe": [], "gesperrt_bis": gesperrt_bis})
+    assert guard.exhausted()
+    assert json.loads(guard._path.read_text())["gesperrt_bis"] == now[0] + SPEC.window_seconds
+    now[0] += SPEC.window_seconds - 1
+    assert guard.exhausted()
+    now[0] += 2
+    assert not guard.exhausted()
+
+
+def test_a_block_time_that_is_not_a_number_is_ignored(tmp_path):
+    guard = make_guard(tmp_path)
+    _datei_schreiben(guard, {"aufrufe": [], "gesperrt_bis": float("nan")})
+    assert not guard.exhausted()
+
+
 @pytest.mark.parametrize("abbruch", ["fsync", "replace"])
 def test_the_counter_survives_a_crash_while_saving(tmp_path, monkeypatch, abbruch):
     """Atomar mit fsync (Plan G2b-1, Restpunkt 8): bricht das Schreiben ab (Stromausfall, volle Platte), bleibt die alte Datei

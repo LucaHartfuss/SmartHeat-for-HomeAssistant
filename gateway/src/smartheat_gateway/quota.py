@@ -1,8 +1,9 @@
 """Kontingent-Waechter (Spec SHG G2 4.2): Zaehler je Treiber in /data/quota/<treiber>.json, gemeinsam fuer die Befehle
 des Geraetekerns und die Laufzeit (zwei Waechter auf derselben Datei in einem Prozess, geschuetzt durch ein Lock je
 Pfad). Gleitendes Fenster ueber die WANDUHR; Eintraege aus der Zukunft (Uhrsprung zurueck) zaehlen auf `now` begrenzt
-bis zum Ende des Fensters weiter."""
+bis zum Ende des Fensters weiter; die Sperre nach HTTP 429 (`gesperrt_bis`) gilt hoechstens ein Fenster ab jetzt."""
 import json
+import math
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -82,7 +83,9 @@ class QuotaGuard:
         now, window = self._now(), self._spec.window_seconds
         calls = [min(ts, now) for ts in raw.get("aufrufe", []) if isinstance(ts, int | float) and now - window < ts]
         blocked = raw.get("gesperrt_bis")
-        return {"aufrufe": calls, "gesperrt_bis": blocked if isinstance(blocked, int | float) else None}
+        # Rate-Limit-Sperre hoechstens ein Fenster ab jetzt (Uhrsprung zurueck, kaputter Wert); keine Zahl: keine Sperre
+        blocked = None if not isinstance(blocked, int | float) or math.isnan(blocked) else min(blocked, now + window)
+        return {"aufrufe": calls, "gesperrt_bis": blocked}
 
     def _save(self, state: dict) -> None:
         # Atomar mit fsync (smartheat_core.dateien): nach einem Stromausfall nie eine halbe Datei, die als leer gilt und das
