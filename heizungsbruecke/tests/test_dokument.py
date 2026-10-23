@@ -332,7 +332,6 @@ def test_ha_unreachable_is_not_a_verdict():
 def test_ha_still_starting_is_not_a_verdict_either():
     """Waehrend HA hochfaehrt fehlen die Entities der Hersteller-Integration noch (404): kein Ablehnungsgrund."""
     ha = _ha()
-    ha.config = {"state": "NOT_RUNNING"}
     ha.is_reachable = lambda: False
     with pytest.raises(config_check.NichtPruefbar):
         dokument.zuordnung_pruefen(KONFIGURATION, ha)
