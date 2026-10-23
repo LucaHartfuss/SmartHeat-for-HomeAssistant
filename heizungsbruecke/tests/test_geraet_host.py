@@ -7,10 +7,9 @@ import time
 
 import pytest
 import requests
-from conftest import FakeClock
 from fakes import FakeHa, HttpAntwort, nachricht_bytes
-from geraet_helpers import konfiguration_aus_optionen
-from test_runtime import OPTIONS, env  # noqa: F401 - env ist eine Fixture
+from geraet_helpers import Device, Supervisor, _host, _register, konfiguration_aus_optionen
+from runtime_helpers import OPTIONS
 
 from heizungsbruecke import config, discovery, geraet_host, stdin_befehl
 from heizungsbruecke.host import EV_RAUM, RAUM_SECONDS, HaHost
@@ -24,83 +23,6 @@ from smartheat_runtime import dokument_config
 from smartheat_runtime.soll_eingang import EV_TARGET_INPUT
 from smartheat_runtime.status import STATUS_ABGEMELDET
 from smartheat_runtime.worker import RegulationWorker
-
-
-class Supervisor:
-    """Grenze Supervisor-HTTP: host_info (Uhr) und die Discovery-Meldungen (gemeldet, in Reihenfolge)."""
-
-    def __init__(self, info=None, error=None):
-        self.info, self.error, self.calls = info or {"dt_synchronized": True}, error, 0
-        self.gemeldet: list[dict] = []
-
-    def host_info(self):
-        self.calls += 1
-        if self.error:
-            raise self.error
-        return self.info
-
-    def discovery_anmelden(self, config_):
-        self.gemeldet.append(dict(config_))
-        return f"uuid-{len(self.gemeldet)}"
-
-    def discovery_entfernen(self, uuid):
-        pass
-
-
-class Doc:
-    def __init__(self, dirty):
-        self.dirty = dirty
-
-
-class Device:
-    def __init__(self, konf=None, bed=None, dirty=False):
-        self.wuensche, self.aus, self.konf, self.bed, self.dirty = [], [], konf, bed, dirty
-        self.meldungen = []
-        self.documents = self
-
-    def wunsch(self, wert, *, herkunft, durch=None):
-        self.wuensche.append((wert, herkunft, durch))
-        return min(max(float(wert), 15.0), 25.0)
-
-    def soll_quelle_aus(self, aus, wirksam=None):
-        self.aus.append((aus, wirksam))
-
-    def konfiguration(self):
-        return self.konf
-
-    def bedienung(self):
-        return self.bed
-
-    def aktuell(self, art):
-        return Doc(self.dirty) if art == "bedienung" and self.bed is not None else None
-
-    def abo_status(self):
-        return "aktiv"
-
-    def meldung(self, key, text, *, offen, kritisch=True):
-        self.meldungen.append((key, text, offen, kritisch))
-
-
-def _paths(tmp_path, monkeypatch):
-    for name in ("RUNTIME_DIR", "ABGEMELDET_PATH", "AUFRAEUMEN_PATH", "ROOM_TARGET_PATH", "BACKUP_PATH",
-                 "RASTUNG_PATH"):
-        monkeypatch.setattr(config, name, tmp_path / getattr(config, name).name)
-
-
-def _host(tmp_path, monkeypatch, supervisor=None, device=None, ha=None):
-    _paths(tmp_path, monkeypatch)
-    clock = FakeClock()
-    host = geraet_host.HaDeviceHost(ha or FakeHa(), supervisor or Supervisor(), clock=clock,
-                                    wall=lambda: 1_800_000_000)
-    device = device or Device()
-    host.verbinden(device)
-    return host, device, clock
-
-
-def _register(host, tmp_path):
-    register = CommandRegister(tmp_path, lambda body: True)
-    host.befehle_eintragen(register)
-    return register
 
 
 def _warten(pruefen, schritte=200):

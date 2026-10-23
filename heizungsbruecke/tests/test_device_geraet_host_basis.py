@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from conftest import FakeClock
+from fakes import FakeClock
 
 from smartheat_core import dateien
 from smartheat_device.commands import Done

@@ -42,7 +42,7 @@ def runtime_config(**overrides) -> RuntimeConfig:
 
 
 # Hebelsatz mit `level` (Viessmann) fuer die Laufzeit-Tests: Optionen des Add-ons und Ausgangszustand der Fake-HA
-# (Eingaben; test_runtime.py und test_runtime_plan3b.py)
+# (Eingaben; test_runtime.py und test_runtime_hebelsaetze.py)
 VIESSMANN_OPTIONEN = {
     "lever_set": "viessmann_vicare", "entity_curve_current": "number.slope", "entity_level_current": "number.shift",
     "entity_shift_current": "number.normal_temperature", "entity_mode_select": "climate.heizkreis",
@@ -300,7 +300,7 @@ class LaggingFakeHa(FakeHa):
     `mode_lag_seconds`; ein Service-Aufruf an eine nicht verfuegbare Entity ist ein wirkungsloses 200
     (HA ueberspringt sie still, AU-016); waehrend einer Quota-Sperre scheitert jeder Aufruf mit 403
     und zaehlt in `quota_attempts` (AU-015). `set_hvac_mode` respektiert `write_error` wie die
-    Schreibaufrufe. `clock` ist die monotone Test-Uhr (conftest.FakeClock)."""
+    Schreibaufrufe. `clock` ist die monotone Test-Uhr (FakeClock)."""
 
     def __init__(self, clock, *, lag_seconds: float = 1800.0, mode_lag_seconds: float = 600.0) -> None:
         super().__init__()
@@ -356,6 +356,19 @@ class LaggingFakeHa(FakeHa):
     def get_attribute(self, entity_id, attribute):
         self._settle()
         return super().get_attribute(entity_id, attribute)
+
+
+class FakeClock:
+    """Monotone Test-Uhr fuer RegulationWorker: steht still, bis ein Test sie vorstellt."""
+
+    def __init__(self, start: float = 1000.0) -> None:
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
 
 
 class WallClock:

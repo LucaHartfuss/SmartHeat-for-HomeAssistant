@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 
 import pytest
-from conftest import FakeClock
+from fakes import FakeClock
 
 from smartheat_runtime.runtime import EV_LOCAL_CHECK
 from smartheat_runtime.soll_eingang import EV_SOLL_MODUS, EV_TARGET_INPUT, SollEingang

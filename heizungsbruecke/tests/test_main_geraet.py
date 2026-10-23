@@ -11,8 +11,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from geraet_helpers import konfiguration_aus_optionen
-from test_runtime import OPTIONS, _quiet_backup, env  # noqa: F401 - env ist eine Fixture
+from geraet_helpers import CLAIM_CODE, DEVICE_ID, FakeDevice, FakeSupervisor, FakeThread, konfiguration_aus_optionen
+from runtime_helpers import OPTIONS, _quiet_backup
 
 import heizungsbruecke.__main__ as main_module
 from heizungsbruecke import config
@@ -21,93 +21,17 @@ from smartheat_core import dateien, rastung
 from smartheat_device import prozess
 from smartheat_device.documents import DocumentStore
 from smartheat_device.host import Anzeige
-from smartheat_device.laufzeit import RuntimeChannel
-from smartheat_runtime import app, dokument_config
+from smartheat_runtime import app
 from smartheat_runtime import aufraeumen as aufraeumen_markierung
 from smartheat_runtime.backup_store import save_backup
 from smartheat_runtime.delivery import SOURCE_LOCAL, DataFault, DeliveryState, PendingTick
 from smartheat_runtime.runtime import Runtime
 from smartheat_runtime.state import StateStore, bind_to_tenant
 
-DEVICE_ID = "shg-aaaaaaaaaaaaaaaa"
-CLAIM_CODE = "ABCDEFGHIJKL"
-
-
-class FakeThread:
-    def __init__(self, order):
-        self._order = order
-
-    def join(self, timeout=None):
-        self._order.append("join")
-
-    def is_alive(self):
-        return False
-
-
-class FakeDevice:
-    """Sicht des Geraetekerns, die HaDeviceHost, HaHost und main brauchen; protokolliert start/stop."""
-
-    def __init__(self, konfiguration=None, bedienung=None, order=None):
-        self.konf, self.bed = konfiguration, bedienung
-        self.order = order if order is not None else []
-        self.identity = SimpleNamespace(device_id=DEVICE_ID, claim_code=CLAIM_CODE)
-        self.documents = SimpleNamespace(aktuell=lambda art: None)
-        self.sent = []
-        self.aufgaben = []
-
-    def im_geraete_thread(self, aufgabe):
-        self.aufgaben.append(aufgabe)
-
-    def konfiguration(self):
-        return self.konf
-
-    def bedienung(self):
-        return self.bed
-
-    def abo_status(self):
-        return dokument_config.abo_status(self.konf)
-
-    def start(self):
-        self.order.append("start")
-        return FakeThread(self.order)
-
-    def stop(self):
-        self.order.append("stop")
-
-    def laufzeit_kanal(self, worker):
-        return RuntimeChannel(lambda name, payload: self.sent.append(name) or len(self.sent), lambda: True,
-                              lambda: 0).binden(worker)
-
-
-class FakeSupervisor:
-    def __init__(self):
-        self.gemeldet = []
-
-    def host_info(self):
-        return {"dt_synchronized": True}
-
-    def discovery_anmelden(self, config_):
-        self.gemeldet.append(dict(config_))
-        return f"uuid-{len(self.gemeldet)}"
-
-    def discovery_entfernen(self, uuid):
-        pass
-
 
 def _anzeige(zustand="nicht_uebernommen", *, eingerichtet=False):
     return Anzeige(zustand=zustand, server_ok=True, device_state="nicht_uebernommen", eingerichtet=eingerichtet,
                    hinweise=(), meldungen=(), konfiguration_abgelehnt=None)
-
-
-@pytest.fixture
-def geraet_env(env, tmp_path, monkeypatch):  # noqa: F811 - env ist die Fixture aus test_runtime
-    """env plus Datenordner des Geraets."""
-    monkeypatch.setattr(config, "DEVICE_DATA_DIR", tmp_path / "data")
-    # wo der Dokumentspeicher die Rastung schreibt (device/sicherheitssatz.json), liest sie die Laufzeit
-    monkeypatch.setattr(config, "RASTUNG_PATH", tmp_path / "data" / "device" / "sicherheitssatz.json")
-    monkeypatch.setattr(config, "OPTIONS_PATH", tmp_path / "options.json")
-    monkeypatch.setattr(main_module.status_holder, "host", None)
-    return env
 
 
 def _verdrahtet(env, device, supervisor=None, *, markierung=None):

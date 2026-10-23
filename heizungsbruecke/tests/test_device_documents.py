@@ -7,41 +7,12 @@ import stat
 
 import pytest
 from bindung_beispiele import parameter
+from device_helpers import SENSOR, _bedienung, _konfiguration, _leer, _store
 
 from smartheat_core import config_check, dateien, rastung
 from smartheat_device import documents as docs
 from smartheat_device import wire
 from smartheat_runtime import soll_speicher
-
-SENSOR = "zigbee:0x00124b0000000001:temperature"
-
-
-def _konfiguration(version=1, **changes):
-    inhalt = {
-        "anlage": "kunde3", "profil": "viessmann_gastherme_heizkoerper", "hebelsatz": "viessmann_vicare",
-        "verteilsystem": "Heizkoerper",
-        "bindung": {"treiber": {"id": "simulation", "parameter": {"heizkreis": 0}}, "thermostat": None},
-        "raumfuehler": [SENSOR], "tagestick": "12:12", "abo": "aktiv", "mindest_software": "0.6.0", "software": None,
-        "bindungsparameter": parameter("viessmann_vicare"),
-    }
-    inhalt.update(changes)
-    return {"schema": 1, "version": version, **inhalt}
-
-
-def _leer(version=1, mindest="0.6.0"):
-    return {"schema": 1, "version": version, "anlage": None, "profil": None, "hebelsatz": None, "verteilsystem": None,
-            "bindung": None, "raumfuehler": [], "tagestick": None, "abo": None, "mindest_software": mindest,
-            "software": None, "bindungsparameter": None}
-
-
-def _bedienung(version=1, raum_soll=21.0, **changes):
-    return {"schema": 1, "version": version, "modus": "manuell", "raum_soll": raum_soll, "quelle": "portal",
-            "ts": "2027-01-15T08:00:00+00:00", **changes}
-
-
-def _store(tmp_path, version="0.6.0"):
-    return docs.DocumentStore(tmp_path, host="gateway", software_version=version)
-
 
 # --- Konfiguration ---
 

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from bindung_beispiele import BINDINGS, VAILLANT_MYPYLLANT
-from test_runtime import _start_bridge, env  # noqa: F401 - env ist eine Fixture
+from runtime_helpers import _start_bridge
 
 from smartheat_runtime import app
 from smartheat_runtime.backup_store import load_backup, save_backup

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from fakes import FakeHa
 from geraet_helpers import FakeGeraet, konfiguration_aus_optionen
-from test_runtime import OPTIONS, _start_bridge, env  # noqa: F401  (Fixture)
+from runtime_helpers import OPTIONS, _start_bridge
 
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.ha_api import HomeAssistantApi

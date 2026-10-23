@@ -4,7 +4,9 @@ Konfigurationsfehler; Vaillant bleibt unveraendert (alle Tests in test_runtime.p
 import logging
 
 from fakes import VIESSMANN_OPTIONEN, VIESSMANN_ZUSTAND
-from test_runtime import (
+from runtime_helpers import (
+    WEISHAUPT,
+    WEISHAUPT_STATES,
     _advance,
     _backup,
     _ha_verbunden,
@@ -13,23 +15,12 @@ from test_runtime import (
     _start,
     _start_bridge,
     _trigger,
-    env,  # noqa: F401  (registriert die Fixture `env`)
 )
 
 from heizungsbruecke import __main__ as main_module
 from smartheat_core import write_budget
 from smartheat_core.pipeline import BUDGET_KEY, BUDGET_MESSAGE
 from smartheat_runtime.backup_store import save_backup
-
-WEISHAUPT = {
-    "lever_set": "weishaupt_wwp", "entity_curve_current": "number.hk", "entity_shift_current": "number.normal",
-    "entity_heat_limit": "number.swu", "entity_mode_select": "select.betriebsart",
-    "entity_setpoint_comfort": "number.komfort", "entity_setpoint_setback": "number.absenk", "entity_min_flow": "",
-}
-WEISHAUPT_STATES = {
-    "number.hk": 0.75, "number.normal": 20.0, "number.swu": 18.0, "select.betriebsart": "hz_operationmode_automatic",
-    "number.komfort": 22.0, "number.absenk": 18.0,
-}
 
 
 def _first_snapshot(env, bridge):

@@ -7,12 +7,11 @@ import inspect
 
 import pytest
 from fakes import FakeTriggerClient, trigger_klasse
-from geraet_helpers import FakeGeraet
+from geraet_helpers import Device as HostTestDevice
+from geraet_helpers import FakeDevice, FakeGeraet
 from golden_scenario import RecordingTrigger
 from host_konformitaet import KonformDevice
-from test_geraet_host import Device as HostTestDevice
-from test_main_geraet import FakeDevice
-from test_runtime import loop_start_aufzeichnen, verbindung_aus
+from runtime_helpers import loop_start_aufzeichnen, verbindung_aus
 
 from heizungsbruecke.geraet_host import HaDeviceHost
 from heizungsbruecke.ha_trigger_client import HaTriggerClient
@@ -34,8 +33,8 @@ def _form(funktion) -> list[tuple[str, object, object]]:
 DEVICE_SICHT = ("wunsch", "soll_quelle_aus", "konfiguration", "bedienung", "abo_status", "meldung")
 PAARE = [
     # Geraetekern, wie ihn HaDeviceHost und die Konformitaetssuite sehen
-    *((f"test_geraet_host.Device.{name}", getattr(HostTestDevice, name), getattr(Device, name)) for name in DEVICE_SICHT),
-    ("test_geraet_host.Device.aktuell", HostTestDevice.aktuell, DocumentStore.aktuell),  # documents = self
+    *((f"geraet_helpers.Device.{name}", getattr(HostTestDevice, name), getattr(Device, name)) for name in DEVICE_SICHT),
+    ("geraet_helpers.Device.aktuell", HostTestDevice.aktuell, DocumentStore.aktuell),  # documents = self
     *((f"KonformDevice.{name}", getattr(KonformDevice, name), getattr(Device, name)) for name in DEVICE_SICHT),
     # Geraetekern, wie ihn main (laufen, verdrahten) sieht
     *((f"FakeDevice.{name}", getattr(FakeDevice, name), getattr(Device, name))

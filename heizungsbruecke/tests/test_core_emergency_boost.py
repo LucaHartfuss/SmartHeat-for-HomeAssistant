@@ -1,5 +1,5 @@
 import pytest
-from geraet_helpers import ankunftsschwelle_der_laufzeit
+from runtime_helpers import ankunftsschwelle_der_laufzeit
 
 from smartheat_core.emergency_boost import decide_emergency_boost
 

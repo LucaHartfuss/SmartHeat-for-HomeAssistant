@@ -26,17 +26,6 @@ ignore = ["E501"]
 [tool.ruff.lint.per-file-ignores]
 # vulture-Whitelist-Format: nackte Ausdruecke auf dem undefinierten Namen _ (scripts/check.sh, Schritt lint).
 "vulture_ausnahmen.py" = ["B018", "F821"]
-# Fixture `env` aus test_runtime importiert (pytest registriert sie unter dem Attributnamen).
-"tests/test_audit_robustheit.py" = ["F811"]
-"tests/test_host.py" = ["F811"]
-"tests/test_realistic_ha.py" = ["F811"]
-"tests/test_runtime_plan3b.py" = ["F811"]
-"tests/test_runtime_geraetepfad.py" = ["F811"]
-"tests/test_host_dokument.py" = ["F811"]
-"tests/test_geraet_host.py" = ["F811"]
-"tests/test_main_geraet.py" = ["F811"]
-"tests/test_main.py" = ["F811"]
-"tests/test_app_config_error_boost.py" = ["F811"]
 
 [tool.pyright]
 include = ["src"]

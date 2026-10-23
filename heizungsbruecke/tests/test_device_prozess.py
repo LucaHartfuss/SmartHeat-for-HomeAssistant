@@ -6,7 +6,7 @@ import threading
 from types import SimpleNamespace
 
 import pytest
-from conftest import FakeClock
+from fakes import FakeClock
 
 from smartheat_device import prozess
 from smartheat_device.geraet_host_basis import EV_RELOAD

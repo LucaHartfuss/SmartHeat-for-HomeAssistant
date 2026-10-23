@@ -3,11 +3,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from conftest import FakeClock
-from fakes import FakeHa, ha_antwort
+from fakes import FakeClock, FakeHa, ha_antwort
 from geraet_helpers import konfiguration_aus_optionen
 from host_konformitaet import Welt, parameter
-from test_runtime import OPTIONS
+from runtime_helpers import OPTIONS
 
 from heizungsbruecke import config, geraet_host
 from heizungsbruecke.ha_api import HomeAssistantApi

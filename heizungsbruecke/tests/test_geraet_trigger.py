@@ -7,8 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import websocket
-from conftest import FakeClock
-from fakes import FakeHa
+from fakes import FakeClock, FakeHa
 
 from heizungsbruecke import geraet_trigger, ha_trigger_client
 from heizungsbruecke.ha_api import HomeAssistantApi

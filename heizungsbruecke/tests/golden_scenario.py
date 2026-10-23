@@ -20,8 +20,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import geraet_helpers
-from conftest import FakeClock
-from fakes import FakeHa, FakeTriggerClient, trigger_klasse
+from fakes import FakeClock, FakeHa, FakeTriggerClient, trigger_klasse
 
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.version import ADDON_VERSION

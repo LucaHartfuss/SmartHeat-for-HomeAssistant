@@ -4,19 +4,10 @@ import json
 import logging
 
 import pytest
+from device_helpers import Sent, _command
 
 from smartheat_device import commands as cmd
 from smartheat_device import fehler, nachrichten, wire
-
-
-class Sent:
-    def __init__(self, ok: bool = True) -> None:
-        self.results: list[dict] = []
-        self.ok = ok
-
-    def __call__(self, body: dict) -> bool:
-        self.results.append(body)
-        return self.ok
 
 
 class Clock:
@@ -25,11 +16,6 @@ class Clock:
 
     def __call__(self) -> float:
         return self.now
-
-
-def _command(kind="diagnostics", command_id="c1", payload=None):
-    return {"schema": 1, "command_id": command_id, "kind": kind, "payload": {} if payload is None else payload,
-            "expires_at": "2027-01-15T09:00:00+00:00"}
 
 
 def _ok(command_id="c1", result=None):

@@ -1,12 +1,12 @@
 """Betrieb der Laufzeit ueber den Regel-Worker (Design-Spec 2026-09-26) im Geraete-Pfad (Spec 5c 1.3): Boot,
 Tick-Zustellung, Datenfehler, Notbetrieb, lokale Checks und Abo-Pfade. Getrieben ueber _start_bridge (Laufzeit auf dem
-Konfigurationsdokument aus OPTIONS, geraet_helpers.start_bridge) mit Fake-Uhr (tests/conftest.py), Fake-HA,
-Fake-Trigger-Client und dem Link einer Geraete-Attrappe (FakeGeraet) statt eines eigenen MQTT-Clients."""
+Konfigurationsdokument aus OPTIONS, geraet_helpers.start_bridge; Hilfen in runtime_helpers.py) mit der Fixture `env`
+(tests/conftest.py: Fake-Uhr, Fake-HA, Fake-Trigger-Client) und dem Link einer Geraete-Attrappe (FakeGeraet) statt
+eines eigenen MQTT-Clients."""
 import dataclasses
 import json
 import logging
 from datetime import date, datetime, timedelta
-from types import SimpleNamespace
 
 import geraet_helpers
 import pytest
@@ -18,11 +18,32 @@ from fakes import (
     VIESSMANN_ZUSTAND,
     FakeHa,
     logzeilen,
-    trigger_klasse,
+)
+from runtime_helpers import (
+    _OMIT,
+    OPTIONS,
+    _advance,
+    _answer,
+    _backup,
+    _break_backup_writes,
+    _connect,
+    _delivery,
+    _failsafe_file,
+    _ha_verbunden,
+    _last_event,
+    _links,
+    _mqtt,
+    _quiet_backup,
+    _raise_oserror,
+    _set_room_target,
+    _start,
+    _start_bridge,
+    _trigger,
+    loop_start_aufzeichnen,
+    verbindung_aus,
 )
 
 from heizungsbruecke import geraet_status
-from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core.enforce import RETRY_SECONDS
 from smartheat_core.pipeline import LeverPipeline
@@ -41,182 +62,19 @@ from smartheat_runtime import (
 from smartheat_runtime.backup_store import load_backup, save_backup
 from smartheat_runtime.delivery import DataFault, DeliveryState
 from smartheat_runtime.ports import SignalUngueltig
-from smartheat_runtime.runtime import Runtime
 from smartheat_runtime.texts import HA_TEXTS
 
 SETTLE = VAILLANT_MYPYLLANT.settle_seconds
 
-OPTIONS = {
-    "tenant_id": "test_tenant",
-    "verteilsystem": "Heizkoerper",  # Clamps 0.4-1.5 / 15-25 (Mindestvorlauf 20-30), Boost 1.5/25
-    "daily_trigger_time": "12:00",  # Tagestick 12:00
-    "room_sensors": ["sensor.room_actual"],
-    "entity_room_target": "sensor.room_target",
-    "entity_curve_current": "number.curve_current",
-    "entity_shift_current": "number.shift_current",
-    "entity_min_flow": "number.min_flow",
-    "entity_outdoor_temp": "sensor.outdoor_temp",
-    "entity_heat_limit": "number.heat_limit",
-    "notify_services": ["notify.mobile_app_handy"],
-}
-
-DERIVED: dict[str, str] = {}
-
 NOTBETRIEB_ON = "Heizungsbrücke: Server antwortet nicht, Notbetrieb aktiv. Die Heizung wird bei Bedarf lokal abgesichert."
 
 
-_OMIT = object()
-
-
-class _Link:
-    """Sicht der Tests auf den Link der Laufzeit (bis 0.36 ein eigener MQTT-Client): gesendete Snapshots und
-    Telemetrie, Antworten des Servers ueber channel.setpoints, Verbindung des Links."""
-
-    def __init__(self, geraet) -> None:
-        self._geraet = geraet
-
-    @property
-    def snapshots(self):
-        return self._geraet.sent.of("up/snapshot")
-
-    @property
-    def telemetry(self):
-        return self._geraet.sent.of("telemetry")
-
-    @property
-    def connected(self):
-        return self._geraet.sent.connected
-
-    @connected.setter
-    def connected(self, value):
-        self._geraet.sent.connected = value
-
-    @property
-    def connect_failures(self):
-        return self._geraet.sent.failures
-
-    @connect_failures.setter
-    def connect_failures(self, value):
-        self._geraet.sent.failures = value
-
-    @property
-    def publish_error(self):
-        return self._geraet.sent.publish_error
-
-    @publish_error.setter
-    def publish_error(self, value):
-        self._geraet.sent.publish_error = value
-
-    @property
-    def stopped(self):
-        return self._geraet.channel._stopped
-
-    def verbunden(self):
-        """Der Link des Geraets ist (wieder) verbunden (Geraete-Thread)."""
-        self._geraet.channel.verbunden()
-
-    def answer(self, seq, status="ok", curve=0.95, shift=23.0, reason=None, schema=4, heat_limit=16.0, levers=None):
-        """Server-Antwort (Schema 4) ueber den Link einspeisen. levers=None baut die Hebel aus curve/shift/heat_limit
-        (ein Wert _OMIT laesst den Hebel weg); schema=_OMIT bzw. levers=_OMIT: Feld fehlt."""
-        if levers is None:
-            levers = {
-                name: value for name, value in (("curve", curve), ("room_setpoint", shift), ("heat_limit", heat_limit))
-                if value is not _OMIT
-            }
-        payload = {
-            "schema": schema, "seq": seq, "ts": "x", "status": status, "reason": reason, "levers": levers,
-            "learned": {"curve": 1.0, "heat_limit": 16.0},
-        }
-        if schema is _OMIT:
-            del payload["schema"]
-        if levers is _OMIT:
-            del payload["levers"]
-        self._geraet.channel.setpoints(payload)
-
-    def answer_raw(self, seq, **fields):
-        payload = {"schema": 4, "seq": seq, "ts": "x", "status": "ok", "reason": None,
-                   "levers": {"curve": 0.95, "room_setpoint": 23.0, "heat_limit": 16.0}, "learned": None, **fields}
-        self._geraet.channel.setpoints(payload)
-
-
-@pytest.fixture
-def env(tmp_path, monkeypatch, clock):
-    paths = {}
-    for name in ("BACKUP_PATH", "FAILSAFE_PATH", "ENTITLEMENT_PATH", "DERIVED_SENSORS_PATH", "AUFRAEUMEN_PATH",
-                 "RASTUNG_PATH"):
-        paths[name] = tmp_path / f"{name.lower()}.json"
-        monkeypatch.setattr(f"heizungsbruecke.config.{name}", paths[name])
-    runtime_dir = tmp_path / "runtime"
-    for name, value in (("RUNTIME_DIR", runtime_dir), ("ROOM_TARGET_PATH", runtime_dir / "room_target.json"),
-                        ("ABGEMELDET_PATH", runtime_dir / "abgemeldet.json")):
-        paths[name] = value
-        monkeypatch.setattr(f"heizungsbruecke.config.{name}", value)
-    env_derived = {"replaced": ()}
-    monkeypatch.setattr(
-        "heizungsbruecke.derived_sensors.ensure_all",
-        lambda **kwargs: DerivedSensors({**DERIVED, "room_actual": "sensor.room_actual"}, env_derived["replaced"], "fp1"),
-    )
-    # Abo-Status des Konfigurationsdokuments: die Laufzeit liest ihn bei jeder Abo-Pruefung (Boot, Tick-Zustellung,
-    # Fristende) frisch; queries zaehlt diese Pruefungen.
-    abo_state = {"status": entitlement.ACTIVE, "queries": 0}
-    trigger_clients = []
-    monkeypatch.setattr("heizungsbruecke.geraet_trigger.HaTriggerClient", trigger_klasse(trigger_clients))
-    return SimpleNamespace(
-        clock=clock, paths=paths, abo=abo_state, ha=FakeHa(), trigger_clients=trigger_clients, derived=env_derived,
-        geraet=None,
-    )
-
-
-# --- Port-Fakes am Link (RuntimeChannel); ihre Signaturen bindet test_fake_gleichlauf.py an die echte Klasse ---
-
-def loop_start_aufzeichnen(order, wert):
-    """Ersatz fuer RuntimeChannel.loop_start: haelt beim MQTT-Start `wert()` in order fest (Reihenfolge am Port)."""
-    def loop_start(self):
-        order.append(wert())
-    return loop_start
-
-
-def verbindung_aus(link):
-    """Ersatz fuer RuntimeChannel.is_connected: die Verbindung des Links steht in link["up"]."""
-    def is_connected(self):
-        return link["up"]
-    return is_connected
-
-
-# --- Harness ---
-# Einzige Stellen dieser Datei, die Interna der Bruecke kennen. Der Umbau (TP5, Spec 5c) passt nur
-# diesen Abschnitt und die Fixture `env` an; die Szenarien darunter pruefen nur die
-# Aussensicht: HA-Writes, Pushes, Nachrichten des Links, Dateiinhalte.
+# --- Hilfen nur dieser Datei (die geteilten Hilfen stehen in runtime_helpers.py) ---
 
 ABO_ENDED = (
     "SmartHeat: Abo seit 30 Tagen inaktiv. Die Heizungssteuerung ist beendet, "
     "die zuletzt gelernten Werte bleiben eingestellt."
 )
-
-
-def _abo_status(env):
-    env.abo["queries"] += 1
-    if isinstance(env.abo["status"], Exception):  # die Abo-Quelle wirft unerwartet
-        raise env.abo["status"]
-    return env.abo["status"]
-
-
-def _start_bridge(env, **option_overrides):
-    bridge, env.geraet = geraet_helpers.start_bridge(env, abo=lambda: _abo_status(env), **option_overrides)
-    return bridge
-
-
-def _links(env):
-    """Die Links, die die Laufzeit seit dem letzten Start gebunden hat (leer: ohne Verbindung zum Server)."""
-    return env.geraet.channels if env.geraet is not None else []
-
-
-def _is_running(bridge) -> bool:
-    return isinstance(bridge, Runtime)
-
-
-def _delivery(bridge):
-    return bridge.store.state.delivery
 
 
 def _awaiting_ack(bridge) -> bool:
@@ -246,14 +104,6 @@ def _override_comfort_boost(bridge, **values) -> None:
     bridge.override._safety = dataclasses.replace(safety, comfort_boost={**safety.comfort_boost, **values})
 
 
-def _raise_oserror(*args, **kwargs):
-    raise OSError("Datentraeger kaputt")
-
-
-def _break_backup_writes(monkeypatch) -> None:
-    monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
-
-
 def _fail_next_snapshot_read(monkeypatch, error: Exception) -> None:
     original = ticks.read_snapshot
     failures = [error]
@@ -266,22 +116,6 @@ def _fail_next_snapshot_read(monkeypatch, error: Exception) -> None:
     monkeypatch.setattr("smartheat_runtime.ticks.read_snapshot", _flaky)
 
 
-def _quiet_backup(env, **extra):
-    """Backup, bei dem beim Start weder ein Tick faellig ist noch ein Boost startet."""
-    save_backup(env.paths["BACKUP_PATH"], {
-        "last_room_target": 21.0, "last_published_target_rt": 21.0,
-        "last_daily_trigger_date": datetime.now().date().isoformat(),
-        "restore_point": {"curve": 0.9, "room_setpoint": 22.0}, **extra,
-    })
-
-
-def _start(env, **option_overrides):
-    bridge = _start_bridge(env, **option_overrides)
-    assert _is_running(bridge)
-    bridge.worker.run_pending()
-    return bridge
-
-
 def _pruefintervall(monkeypatch, sekunden):
     """Kurzes Pruefintervall wie in der E2E (Plan S8a-1 P2: Umgebung des Geraets, nicht das Konfigurationsdokument)."""
     monkeypatch.setenv(dokument_config.E2E_INTERVALLE_ENV, json.dumps({"pruefung_s": sekunden}))
@@ -290,51 +124,6 @@ def _pruefintervall(monkeypatch, sekunden):
 def _regulation_writes(env):
     """Schreibvorgaenge ohne den Mindestvorlauf, der jeder Raum-Soll-Aenderung folgt (min_flow.py)."""
     return [write for write in env.ha.writes if write[0] != "number.min_flow"]
-
-
-def _mqtt(env):
-    return _Link(env.geraet)
-
-
-def _backup(env):
-    return load_backup(env.paths["BACKUP_PATH"])
-
-
-def _failsafe_file(env):
-    return load_backup(env.paths["FAILSAFE_PATH"])
-
-
-def _trigger(env, bridge, entity_id):
-    """HA meldet eine Zustandsaenderung (to_state mit dem Wert aus env.ha.states). Die Soll-Entity geht als Eingabe der
-    Soll-Quelle in den Soll-Eingang (Entprellung 0 s: den for: 10 s hat der HA-Trigger schon), alles andere ist ein
-    lokaler Check."""
-    value = env.ha.states.get(entity_id)
-    env.trigger_clients[-1].kwargs["on_trigger_event"]({
-        "platform": "state", "entity_id": entity_id, "attribute": None,
-        "to_state": {"state": value if isinstance(value, int | float | str) else "unavailable"}})
-    bridge.worker.run_pending()
-
-
-def _set_room_target(env, bridge, value):
-    env.ha.states["sensor.room_target"] = value
-    _trigger(env, bridge, "sensor.room_target")
-
-
-def _ha_verbunden(env, bridge):
-    """Der HA-Trigger-Client ist (wieder) verbunden: Soll-Entity lesen, lokaler Check mit frischem Raum-Soll (so kommt
-    nach dem Start der erste Tick; bis 0.36 tat das auch ein Bericht der Soll-Entity ohne Aenderung), voller Status."""
-    env.trigger_clients[-1].kwargs["on_connected"]()
-    bridge.worker.run_pending()
-
-
-def _advance(env, bridge, seconds):
-    env.clock.advance(seconds)
-    bridge.worker.run_pending()
-
-
-def _answer(env, bridge, seq, **kwargs):
-    _mqtt(env).answer(seq, **kwargs)
-    bridge.worker.run_pending()
 
 
 # --- Boot ---
@@ -1034,15 +823,6 @@ def _status_states(env):
     und Aenderungen anderer Felder senden denselben Zustand erneut)."""
     states = [data["status"] for kind, data in env.ha.events if kind == "smartheat_status"]
     return [state for i, state in enumerate(states) if i == 0 or states[i - 1] != state]
-
-
-def _last_event(env):
-    return [data for kind, data in env.ha.events if kind == "smartheat_status"][-1]
-
-
-def _connect(env, bridge):
-    _mqtt(env).verbunden()
-    bridge.worker.run_pending()
 
 
 def test_status_goes_from_startet_to_regelt_when_mqtt_connects(env):
