@@ -246,13 +246,18 @@ def driver_login(ctx: Kontext, payload: dict) -> Outcome:
     return _im_hintergrund(ctx, "driver_login", anmelden)
 
 
-def forget_inventory(paths: Paths) -> None:
-    """Proben gehoeren zur Anlage der Einrichtung; nach Abmelden oder Aufraeumen nie in einer neuen Inventur. Wirft nie."""
+def forget_inventory(paths: Paths) -> bool:
+    """Proben gehoeren zur Anlage der Einrichtung; nach Abmelden oder Aufraeumen nie in einer neuen Inventur. Wirft nie;
+    False, wenn eine Datei liegen blieb (eine Fehlerzeile je Datei, der Aufrufer loggt nicht noch einmal)."""
+    geloescht = True
     for path in (paths.inventur, paths.inventur.with_name(paths.inventur.name + ".tmp")):
         try:
             path.unlink(missing_ok=True)
         except OSError as error:
-            logger.error("Inventur-Proben nicht gelöscht (%s)", type(error).__name__)
+            geloescht = False
+            logger.error("%s nicht geloescht (%s), neuer Versuch beim naechsten Start", path.name,
+                         type(error).__name__)
+    return geloescht
 
 
 def _erkennung(ctx: Kontext, payload: dict) -> Outcome:

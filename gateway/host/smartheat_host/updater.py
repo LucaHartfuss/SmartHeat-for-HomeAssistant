@@ -3,7 +3,8 @@ Konfigurationsdokuments, von der Laufzeit nach data/software_soll.json geschrieb
 (https, SHA-256, minisign gegen release.pub, Version, min_updater_version) und Bundle-Dateien, schaltet per Compose um,
 wartet bis zu 10 min auf "gesund" und rollt sonst auf das vorige Bundle zurueck. Nur streng neuere Versionen werden
 geladen (Downgrade-Schutz, Grund version_zu_alt; der Betreiber gibt fuer einen Rueckweg der Flotte den alten Stand als
-neue Version heraus). Fristen ueber die monotone Uhr (die Wanduhr springt beim Boot).
+neue Version heraus). Fristen ueber die monotone Uhr (die Wanduhr springt beim Boot); ein Abruf hat zusaetzlich eine
+Gesamtfrist (ABRUF_GESAMT_SECONDS) und geht nur an oeffentliche Adressen (is_public_address).
 Zustand in updater/state.json (atomar, 0644), Format:
 
     {"current": str|null, "previous": str|null, "rejected": [str],
@@ -33,12 +34,17 @@ Umgebung ist kein Fehler des Bundles (Final-Review FW-1/FW-2):
   geschrieben werden kann (Datentraeger), wird zu Beginn des naechsten Durchlaufs vor allem anderen erneut gesendet, in
   Reihenfolge (mindestens einmal: ein Stromausfall zwischen Senden und Speichern sendet doppelt). Die Laufzeit sendet
   jede Meldung als up/result (dokument software) genau einmal je seq (smartheat_host.kanal)."""
+import errno
+import functools
 import hashlib
 import http.client
+import ipaddress
 import json
 import logging
 import os
 import random
+import socket
+import ssl
 import sys
 import time
 import urllib.error
@@ -76,6 +82,9 @@ PERIOD_SECONDS = 900
 JITTER_SECONDS = 300
 FIRST_DELAY_SECONDS = 120
 MAX_MANIFEST_BYTES = 65536
+ABRUF_GESAMT_SECONDS = 300  # Gesamtfrist eines Abrufs (A6-13)
+ABRUF_BLOCK_BYTES = 8192
+SOCKET_TIMEOUT_SECONDS = 30  # je Leseoperation, hoechstens der Rest der Gesamtfrist
 MAX_FILE_BYTES = 1048576
 MAX_REJECTED = 20
 MAX_PENDING_REPORTS = 20
@@ -151,19 +160,54 @@ def _scheme_allowed(url: str, allow_http: bool) -> bool:
     return scheme == "https" or (allow_http and scheme == "http")
 
 
+class _DeadlineExceeded(FetchError):
+    pass
+
+
+class _Deadline:
+    """Gesamtfrist eines Abrufs (A6-13) auf der eingespeisten monotonen Uhr. Sie gilt fuer alles, was zum Abruf gehoert:
+    Verbindungsaufbau, TLS-Handshake, Kopfzeilen, jede Weiterleitung und den Koerper. Der Socket-Timeout wird vor jeder
+    Leseoperation auf den Rest der Frist (hoechstens SOCKET_TIMEOUT_SECONDS) gesetzt; ein Server, der langsam tropft, kommt
+    so nirgends an der Frist vorbei."""
+
+    def __init__(self, clock: Callable[[], float]) -> None:
+        self._clock = clock
+        self._end = clock() + ABRUF_GESAMT_SECONDS
+
+    def expired(self) -> bool:
+        return self._clock() >= self._end
+
+    def check(self) -> None:
+        self.socket_timeout()
+
+    def socket_timeout(self) -> float:
+        left = self._end - self._clock()
+        if left <= 0:
+            raise _DeadlineExceeded(f"Gesamtfrist von {ABRUF_GESAMT_SECONDS:g} s ueberschritten")
+        return min(SOCKET_TIMEOUT_SECONDS, left)
+
+
 class _SchemeCheckedRedirects(urllib.request.HTTPRedirectHandler):
     """urllib folgt auch einer Weiterleitung von https auf http. Ein Ziel, dessen Schema nicht erlaubt ist, wird abgelehnt,
-    bevor es angefragt wird (ein kompromittierter Server soll keinen Abruf ins LAN des Kunden ausloesen)."""
+    bevor es angefragt wird (ein kompromittierter Server soll keinen Abruf ins LAN des Kunden ausloesen). Ist die
+    Gesamtfrist des Abrufs abgelaufen, folgt der Handler auch einem erlaubten Ziel nicht mehr."""
 
-    def __init__(self, allow_http: bool) -> None:
+    def __init__(self, allow_http: bool, deadline: _Deadline | None = None) -> None:
         super().__init__()
-        self._allow_http = allow_http
+        self._allow_http, self._deadline = allow_http, deadline
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        if not _scheme_allowed(newurl, self._allow_http):
+        try:
+            if self._deadline is not None:
+                self._deadline.check()
+            if not _scheme_allowed(newurl, self._allow_http):
+                raise FetchError(f"{req.full_url}: {_REDIRECT_REFUSED}")
+        except FetchError:
             fp.close()  # urllib schliesst die 302-Antwort erst nach einem erfolgreichen redirect_request
-            raise FetchError(f"{req.full_url}: {_REDIRECT_REFUSED}")
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+            raise
+        follow_up = super().redirect_request(req, fp, code, msg, headers, newurl)
+        fp.close()  # urllib liest den Koerper der 302-Antwort sonst ohne Grenze (`fp.read()`); geschlossen liefert er b""
+        return follow_up
 
 
 #: Eigener User-Agent: die Browser-Integritaetspruefung von Cloudflare sperrt den Standard von urllib (Python-urllib,
@@ -171,27 +215,198 @@ class _SchemeCheckedRedirects(urllib.request.HTTPRedirectHandler):
 USER_AGENT = f"SmartHeat-Gateway-Updater/{GATEWAY_VERSION}"
 
 
-def checked_opener(allow_http: bool) -> urllib.request.OpenerDirector:
-    opener = urllib.request.build_opener(_SchemeCheckedRedirects(allow_http))
+_NAT64_WELL_KNOWN = ipaddress.ip_network("64:ff9b::/96")  # RFC 6052: IPv4 in den letzten 32 Bit
+_NAT64_LOCAL_USE = ipaddress.ip_network("64:ff9b:1::/48")  # RFC 8215: Praefixlaenge /32 bis /96 waehlt der Betreiber
+
+
+def _address(text: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """Adresse ohne Scope-Kennung (fe80::1%eth0); eine IPv4-Adresse in IPv6-Schreibweise (`::ffff:a.b.c.d`) als IPv4.
+    Wirft ValueError bei Unlesbarem."""
+    address = ipaddress.ip_address(text.split("%", 1)[0])
+    mapped = getattr(address, "ipv4_mapped", None)
+    return address if mapped is None else mapped
+
+
+def is_public_address(text: str) -> bool:
+    """Ist das eine global erreichbare Adresse (`is_global`)? Nicht: RFC 1918, Loopback, Link-Local, CGNAT, ULA und
+    andere Sonderbereiche. Eine IPv4-Adresse in IPv6-Schreibweise (`::ffff:a.b.c.d`) zaehlt wie die IPv4-Adresse,
+    unabhaengig davon, wie die Python-Version sie selbst einstuft; bei NAT64-Adressen des festen Praefixes `64:ff9b::/96`
+    entscheidet die eingebettete IPv4-Adresse (eine globale bleibt erlaubt, IPv6-Netze ohne IPv4 brauchen das). Das
+    betreiberlokale Praefix `64:ff9b:1::/48` ist immer abgelehnt: seine Praefixlaenge (und damit die Lage der IPv4-Adresse)
+    waehlt der Betreiber, ein Raten waere ein Auslegungsunterschied zum Uebersetzer.
+    Unlesbares gilt als nicht erlaubt. Das allein deckt NICHT ab: globale IPv6-Adressen des eigenen Netzes (Router, Geraete
+    im eigenen /64, der Rechner selbst; dafuer `is_own_network`) und Geraete in anderen IPv6-Praefixen des Kundennetzes
+    mit globaler Adresse."""
+    try:
+        address = _address(text)
+    except ValueError:
+        return False
+    if address.version == 6:
+        packed = address.packed
+        if address in _NAT64_WELL_KNOWN:
+            return ipaddress.IPv4Address(packed[12:]).is_global
+        if address in _NAT64_LOCAL_USE:
+            return False
+    return address.is_global
+
+
+def is_own_network(peer: str, own: str) -> bool:
+    """Liegt die Gegenadresse bei der eigenen Adresse des Sockets? Gleiche Adresse (auch IPv4 gegen gemappt) oder bei
+    IPv6 im selben /64 (SLAAC: Router, LAN-Geraete und der Rechner selbst teilen sich das Praefix einer globalen
+    Adresse, die `is_global` durchlaesst). Unlesbares gilt als eigenes Netz (fail closed)."""
+    try:
+        theirs, mine = _address(peer), _address(own)
+    except ValueError:
+        return True
+    if theirs == mine:
+        return True
+    return theirs.version == 6 and mine.version == 6 and theirs in ipaddress.ip_network(f"{mine}/64", strict=False)
+
+
+class _DeadlineSocket(socket.socket):
+    """Klartext-Socket (nur http, also nur Tests), der vor jedem Lesen den Timeout auf den Rest der Gesamtfrist
+    setzt. Uebernimmt die Verbindung des uebergebenen Sockets."""
+
+    def __init__(self, sock: socket.socket, deadline: _Deadline) -> None:
+        super().__init__(sock.family, sock.type, sock.proto, fileno=sock.detach())
+        self._deadline = deadline
+        self.settimeout(deadline.socket_timeout())
+
+    def recv_into(self, buffer, nbytes=0, flags=0):
+        self.settimeout(self._deadline.socket_timeout())
+        return super().recv_into(buffer, nbytes, flags)
+
+
+def _tls_context(deadline: _Deadline) -> ssl.SSLContext:
+    """Standardkontext (Zertifikat- und Namenspruefung) mit einem Socket, der vor jedem Lesen den Timeout auf den Rest der
+    Gesamtfrist setzt (wie `_DeadlineSocket`, nach dem TLS-Handshake)."""
+
+    class DeadlineSSLSocket(ssl.SSLSocket):
+        def recv_into(self, buffer, nbytes=None, flags=0):
+            self.settimeout(deadline.socket_timeout())
+            return super().recv_into(buffer, nbytes, flags)
+
+    context = ssl.create_default_context()
+    context.set_alpn_protocols(["http/1.1"])  # wie der Standardkontext von http.client
+    context.sslsocket_class = DeadlineSSLSocket
+    return context
+
+
+def _guard_connection(connection: http.client.HTTPConnection, deadline: _Deadline, *, public_only: bool,
+                      plain: bool) -> None:
+    """Haengt an `_create_connection` der Verbindung (Instanzattribut von http.client, sonst `socket.create_connection`):
+    - Verbindungsaufbau mit dem Rest der Gesamtfrist als Timeout (eine abgelaufene Frist baut keine Verbindung auf);
+    - public_only (A6-38): Gegenadresse des verbundenen Sockets nur oeffentlich (`is_public_address`) und nicht die eigene
+      Adresse oder das eigene IPv6-/64 (`is_own_network`), geprueft nach dem TCP-Aufbau und vor dem TLS-Handshake: der
+      TCP-Handshake erreicht auch eine abgelehnte Adresse, Nutzdaten (ClientHello, Anfrage) gehen nicht hin, der Socket wird
+      vor dem Fehler geschlossen. Geprueft wird die Adresse des Sockets, nicht der Name aus der URL: der Name kann beim
+      Aufloesen auf jede Adresse zeigen. Der Verbindungsaufbau hat den Rest der Frist als Timeout je aufgeloester
+      Adresse (`socket.create_connection` setzt ihn fuer jede neu);
+    - plain: Klartext-Socket mit Frist je Leseoperation (bei https setzt der TLS-Kontext sie)."""
+    connect = vars(connection)["_create_connection"]  # fehlt es in einer anderen Python-Version, scheitert das laut
+
+    def create(address, timeout=None, source_address=None):
+        sock = connect(address, deadline.socket_timeout(), source_address)
+        if public_only:
+            try:
+                peer, own = sock.getpeername(), sock.getsockname()
+                found = peer[0] if isinstance(peer, tuple) and peer else ""
+                mine = own[0] if isinstance(own, tuple) and own else ""
+                public = isinstance(found, str) and is_public_address(found) and not is_own_network(found, mine)
+            except OSError:
+                found, public = "", False
+            if not public:
+                sock.close()
+                raise FetchError(f"{connection.host}: Gegenadresse {found or 'unbekannt'} nicht oeffentlich")
+        return _DeadlineSocket(sock, deadline) if plain else sock
+
+    vars(connection)["_create_connection"] = create
+
+
+class _FetchHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, *args, deadline: _Deadline, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        _guard_connection(self, deadline, public_only=False, plain=True)
+
+
+class _FetchHTTPSConnection(http.client.HTTPSConnection):
+    def __init__(self, *args, deadline: _Deadline, public_only: bool, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        _guard_connection(self, deadline, public_only=public_only, plain=False)
+
+
+class _FetchHTTPHandler(urllib.request.HTTPHandler):
+    """Nur mit `allow_http` im Opener (nur Tests): http mit Gesamtfrist."""
+
+    def __init__(self, deadline: _Deadline) -> None:
+        super().__init__()
+        self._deadline = deadline
+
+    def http_open(self, req):
+        return self.do_open(functools.partial(_FetchHTTPConnection, deadline=self._deadline), req)
+
+
+class _FetchHTTPSHandler(urllib.request.HTTPSHandler):
+    """urllib baut je Anfrage (auch je Weiterleitung) eine neue Verbindung ueber diesen Handler: Gesamtfrist und
+    Adresspruefung gelten fuer jede."""
+
+    def __init__(self, deadline: _Deadline, public_only: bool) -> None:
+        super().__init__()
+        self._deadline, self._public_only, self._tls = deadline, public_only, _tls_context(deadline)
+
+    def https_open(self, req):
+        connection = functools.partial(_FetchHTTPSConnection, deadline=self._deadline, public_only=self._public_only)
+        return self.do_open(connection, req, context=self._tls)
+
+
+def checked_opener(allow_http: bool, deadline: _Deadline | None = None) -> urllib.request.OpenerDirector:
+    """Opener des Updaters: Weiterleitungen nur auf erlaubte Schemata, alles innerhalb der Gesamtfrist, https nur zu
+    oeffentlichen Adressen (mit `allow_http`, nur Tests, ohne diese Pruefung), nie ueber einen Proxy aus der
+    Umgebung (ein Proxy liesse die Pruefung nur dessen Adresse sehen und das Ziel von ihm aufloesen)."""
+    deadline = deadline or _Deadline(time.monotonic)
+    handlers: list = [_SchemeCheckedRedirects(allow_http, deadline), urllib.request.ProxyHandler({}),
+                      _FetchHTTPSHandler(deadline, public_only=not allow_http)]
+    if allow_http:
+        handlers.append(_FetchHTTPHandler(deadline))
+    opener = urllib.request.build_opener(*handlers)
     opener.addheaders = [("User-Agent", USER_AGENT)]
     return opener
 
 
-def fetch_url(url: str, max_bytes: int, allow_http: bool) -> bytes:
+def fetch_url(url: str, max_bytes: int, allow_http: bool, clock: Callable[[], float] = time.monotonic) -> bytes:
+    """Holt `url` (hoechstens `max_bytes`) in hoechstens ABRUF_GESAMT_SECONDS insgesamt (A6-13, monotone Uhr): Verbindung,
+    TLS, Kopfzeilen, Weiterleitungen und Koerper laufen auf derselben Frist (`_Deadline`); gelesen wird in Bloecken.
+    Grenzen: das Aufloesen des Namens (getaddrinfo) hat keine eigene Frist; der Verbindungsaufbau hat den Rest der Frist
+    (hoechstens 30 s) als Timeout je aufgeloester Adresse, bei vielen toten Adressen also mehrfach."""
     if not _scheme_allowed(url, allow_http):
         raise FetchError(f"nur https erlaubt: {url}")
+    deadline = _Deadline(clock)
     try:
-        with checked_opener(allow_http).open(url, timeout=30) as response:
+        with checked_opener(allow_http, deadline).open(url, timeout=SOCKET_TIMEOUT_SECONDS) as response:
             # zweite Sicherung: die Adresse, von der der Inhalt kam, gilt wie die angefragte; der Inhalt wird danach
             # zusaetzlich nur nach SHA-256 und Signatur angenommen
             if not _scheme_allowed(response.geturl(), allow_http):
                 raise FetchError(f"{url}: {_REDIRECT_REFUSED}")
-            data = response.read(max_bytes + 1)
+            blocks: list[bytes] = []
+            size = 0
+            while size <= max_bytes:
+                deadline.check()
+                block = response.read1(min(ABRUF_BLOCK_BYTES, max_bytes + 1 - size))  # read1: kein Warten auf einen vollen Block
+                if not block:
+                    break
+                blocks.append(block)
+                size += len(block)
+    except _DeadlineExceeded as error:
+        raise FetchError(f"{url}: {error}") from None
+    except FetchError:
+        raise
     except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as error:
-        raise FetchError(f"{url}: {type(error).__name__}") from None
-    if len(data) > max_bytes:
+        # ein Socket-Timeout am Ende der Frist ist die Frist (der Rest der Frist war der Timeout)
+        detail = "Gesamtfrist ueberschritten" if deadline.expired() else type(error).__name__
+        raise FetchError(f"{url}: {detail}") from None
+    if size > max_bytes:
         raise FetchError(f"{url}: zu gross")
-    return data
+    return b"".join(blocks)
 
 
 def fetch_health(url: str) -> dict | None:
@@ -255,6 +470,30 @@ class Updater:
     # --- Ablauf ---
 
     def recover(self) -> None:
+        """Nach einem Neustart: siehe `_recover`; ein Dateifehler wird geloggt und beendet den Aufruf (A6-39)."""
+        try:
+            self._recover()
+        except OSError as error:
+            self._file_error("recover", error)
+
+    def run_once(self) -> str:
+        """Ein Durchlauf (Ergebnis: aktuell, vorlaeufig, abgelehnt, aktualisiert, zurueckgerollt). Ein Dateifehler
+        (Datentraeger voll oder schreibgeschuetzt, Zustandsdatei) ist kein Fehler des Bundles (A6-39): ERROR mit dem
+        Namen des Fehlers, Ergebnis "vorlaeufig"; der Zustand bleibt, wie die letzte erfolgreiche Speicherung ihn liess
+        (ein unterbrochenes Update setzt recover() im naechsten Durchlauf fort)."""
+        try:
+            return self._run_once()
+        except OSError as error:
+            self._file_error("run_once", error)
+            return "vorlaeufig"
+
+    @staticmethod
+    def _file_error(where: str, error: OSError) -> None:
+        name = errno.errorcode.get(error.errno or 0, type(error).__name__)
+        logger.error("%s: Dateifehler %s (%s), Durchlauf vorlaeufig, naechster Durchlauf versucht es erneut", where, name,
+                     error.strerror or error)
+
+    def _recover(self) -> None:
         """Nach einem Neustart: ein unterbrochenes Update zu Ende bringen oder zuruecknehmen. Nach einem Stromausfall
         laufen eventuell noch die alten Container (restart: unless-stopped) und wirken gesund; deshalb wird das neue
         Bundle erst erneut hochgefahren (up ist idempotent), bevor die Gesundheit zaehlt."""
@@ -282,7 +521,7 @@ class Updater:
             return
         self._settle(state, version)
 
-    def run_once(self) -> str:
+    def _run_once(self) -> str:
         if State.load(self._state_path).in_progress:  # offener Auftrag (z. B. gescheiterter Rueckweg) zuerst
             self.recover()  # sendet zuerst die offenen Meldungen
             if State.load(self._state_path).in_progress:
@@ -497,30 +736,47 @@ class Updater:
         return True
 
 
-def main(argv: list[str] | None = None) -> None:
+@dataclass(frozen=True)
+class Einstellungen:
+    """Eingaenge von `main`, ausser `SHG_ROOT` (A6-87). Die Standardwerte sind die des Geraets (install.sh); der Dienst
+    ruft `main` ohne Einstellungen, `allow_http` ist dort aus und aus der Umgebung nicht einzuschalten. Nur Tests reichen
+    eigene Werte durch (`host/tests/updater_testlauf.py` fuer den Docker-Test; sie ist auf keinem Geraet installiert)."""
+    release_pub: Path = Path("/opt/smartheat/host/release.pub")
+    allow_http: bool = False
+    health_url: str = "http://127.0.0.1/healthz"
+    health_seconds: float = HEALTH_SECONDS
+    compose_project: str = bundles.COMPOSE_PROJECT
+
+
+def main(argv: list[str] | None = None, *, einstellungen: Einstellungen | None = None) -> None:
     logging.basicConfig(level=logging.INFO)
     args = sys.argv[1:] if argv is None else argv
+    settings = Einstellungen() if einstellungen is None else einstellungen
     root = Path(os.environ.get("SHG_ROOT", "/var/lib/smartheat"))
-    allow_http = os.environ.get("SHG_UPDATER_ALLOW_HTTP") == "1"
-    health_url = os.environ.get("SHG_UPDATER_HEALTH_URL", "http://127.0.0.1/healthz")
-    public_key_text = Path(os.environ.get("SHG_RELEASE_PUB", "/opt/smartheat/host/release.pub")).read_text()
+    public_key_text = settings.release_pub.read_text()
 
     store = bundles.BundleStore(root)
-    compose = bundles.ComposeRunner(root, project=os.environ.get("SHG_COMPOSE_PROJECT", "smartheat"))
+    compose = bundles.ComposeRunner(root, project=settings.compose_project)
     run = Updater(
         kanal=kanal.LokalerKanal(root / "data"), store=store, compose=compose,
-        fetch=lambda url, limit: fetch_url(url, limit, allow_http), public_key_text=public_key_text,
+        fetch=lambda url, limit: fetch_url(url, limit, settings.allow_http), public_key_text=public_key_text,
         state_path=root / "updater" / "state.json", version=GATEWAY_VERSION,
-        health=lambda version: health_ok(fetch_health(health_url), compose.health(version)), allow_http=allow_http,
-        health_seconds=float(os.environ.get("SHG_UPDATER_HEALTH_SECONDS", HEALTH_SECONDS)),
+        health=lambda version: health_ok(fetch_health(settings.health_url), compose.health(version)),
+        allow_http=settings.allow_http, health_seconds=settings.health_seconds,
     )
-    run.recover()
+    try:
+        run.recover()
+    except Exception:  # Fangnetz wie in der Schleife: kein Neustart-Kreis, der Durchlauf kommt trotzdem
+        logger.exception("Wiederaufnahme beim Start mit unerwartetem Fehler abgebrochen")
     if "--once" in args:
         print(run.run_once())
         return
     time.sleep(FIRST_DELAY_SECONDS)
     while True:
-        logger.info("Durchlauf: %s", run.run_once())
+        try:
+            logger.info("Durchlauf: %s", run.run_once())
+        except Exception:  # Fangnetz (A6-39): ein unerwarteter Fehler beendet den Dienst nicht, der naechste Durchlauf folgt
+            logger.exception("Durchlauf mit unerwartetem Fehler abgebrochen")
         time.sleep(PERIOD_SECONDS + random.uniform(0, JITTER_SECONDS))
 
 

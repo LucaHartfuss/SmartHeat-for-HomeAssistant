@@ -81,11 +81,48 @@ def test_a_passwd_from_0_5_0_with_the_agent_user_is_rebuilt(tmp_path):
     assert not any(line.startswith("agent:") for line in passwd.read_text().splitlines())
 
 
-def test_adapter_from_the_host_file(tmp_path, monkeypatch):
+def test_adapter_from_the_host_file(tmp_path, monkeypatch, caplog):
     (tmp_path / "host").mkdir()
     (tmp_path / "host" / "zigbee_adapter").write_text("zstack\n")
-    assert init.adapter(tmp_path / "host", default="ember") == "zstack"
-    assert init.adapter(tmp_path / "nichtda", default="ember") == "ember"
+    assert init.adapter(tmp_path / "host") == "zstack"
+    assert init.adapter(tmp_path / "nichtda") is None  # ohne Datei kein Abgleich (A6-15)
+    (tmp_path / "host" / "zigbee_adapter").write_text("\n")
+    assert init.adapter(tmp_path / "host") is None
+    assert caplog.records == []  # leer ist kein Fehler
+    (tmp_path / "host" / "zigbee_adapter").write_text("zstack\nschlecht: 1\n")  # kein Name eines Adapters
+    assert init.adapter(tmp_path / "host") is None
+    assert "kein Adaptername" in caplog.text and "schlecht" not in caplog.text
+
+
+def _run_mit_adapter(tmp_path, adapter_name):
+    return init.ensure(tmp_path / "bus", tmp_path / "zigbee2mqtt", tmp_path / "data", adapter_name,
+                       token=lambda n=32: "test-pw")
+
+
+def test_a_stick_swap_changes_the_adapter(tmp_path):
+    """A6-15: ein anderer Stick (Host-Datei zigbee_adapter) aendert nach dem ersten Schreiben nur serial.adapter."""
+    _run_mit_adapter(tmp_path, "zstack")
+    config = tmp_path / "zigbee2mqtt" / "configuration.yaml"
+    vorher = config.read_text()
+    assert _run_mit_adapter(tmp_path, "ember") == ["zigbee2mqtt/configuration.yaml (Adapter)"]
+    assert config.read_text() == vorher.replace("adapter: zstack", "adapter: ember")
+    assert stat.S_IMODE(config.stat().st_mode) == 0o600
+    assert _run_mit_adapter(tmp_path, "ember") == []  # zweiter Lauf schweigt
+
+
+def test_without_the_host_file_the_adapter_stays(tmp_path):
+    """Ohne Host-Datei (None) bleibt der Adapter einer bestehenden Konfiguration; der Standard gilt nur beim ersten
+    Schreiben."""
+    _run_mit_adapter(tmp_path, "zstack")
+    config = tmp_path / "zigbee2mqtt" / "configuration.yaml"
+    vorher = config.read_text()
+    assert _run_mit_adapter(tmp_path, None) == []
+    assert config.read_text() == vorher
+    erste = tmp_path / "neu"
+    init.ensure(erste / "bus", erste / "zigbee2mqtt", erste / "data", None, token=lambda n=32: "test-pw")
+    assert "  adapter: ember\n" in (erste / "zigbee2mqtt" / "configuration.yaml").read_text()
+    init.ensure(erste / "bus2", erste / "z2", erste / "data", None, token=lambda n=32: "test-pw", default_adapter="zstack")
+    assert "  adapter: zstack\n" in (erste / "z2" / "configuration.yaml").read_text()
 
 
 def test_unreadable_credentials_are_replaced_and_passwd_follows(tmp_path):

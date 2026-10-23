@@ -34,7 +34,7 @@ from smartheat_device.device import Device
 from smartheat_device.documents import KONFIGURATION, DocumentStore
 from smartheat_gateway import befehle, diagnose
 from smartheat_gateway import geraet_host as geraet_host_module
-from smartheat_gateway.bus import LocalBus, credentials_from_env
+from smartheat_gateway.bus import BUS_PORT, LocalBus, credentials_from_env
 from smartheat_gateway.geraet_host import GatewayDeviceHost
 from smartheat_gateway.host import GatewayHost
 from smartheat_gateway.paths import Paths, from_env
@@ -52,6 +52,7 @@ EV_CONFIG_WATCH = "shg_config_watch"
 EV_RAUM = "shg_raum"
 CONFIG_WATCH_SECONDS = 30
 RAUM_SECONDS = 30
+DIAG_PORT = 8080  # Port der Diagnoseseite im Container; die Compose-Datei veroeffentlicht ihn als 0.0.0.0:80
 
 
 def _alive_file() -> Path:
@@ -177,7 +178,7 @@ def _vorbereiten(paths: Paths, mirror: ZigbeeMirror,
     geraet.verbinden(device)
     portal = os.environ.get("SHG_PORTAL_BASE_URL", "")
     diagnose.start_server(
-        int(os.environ.get("SHG_DIAG_PORT", "8080")), lambda: diagnose.seite(geraet, device),
+        DIAG_PORT, lambda: diagnose.seite(geraet, device),
         lambda: diagnose.qr_url(portal, device), diagnose.parse_hostnames(os.environ.get("SHG_DIAG_HOSTNAMES", "")),
     )
     software_soll_nachholen(geraet, device)  # vor dem Geraete-Thread: kein Rennen mit einer neuen Konfiguration
@@ -198,7 +199,7 @@ def main() -> None:  # pragma: no cover - Container-Einstieg
     # Bus, Spiegel und Zugangsdaten bewusst vor prozess.starten: ein Fehler hier endet ohne Pause (Compose-Backoff;
     # noch kein Geraetekern, IoT Core unberuehrt)
     paths = from_env()
-    bus = LocalBus(os.environ.get("SHG_BUS_HOST", "mosquitto"), int(os.environ.get("SHG_BUS_PORT", "1883")),
+    bus = LocalBus(os.environ.get("SHG_BUS_HOST", "mosquitto"), BUS_PORT,
                    "shg-runtime", credentials=credentials_from_env())
     mirror = ZigbeeMirror(bus, time.monotonic)
     mirror.start()

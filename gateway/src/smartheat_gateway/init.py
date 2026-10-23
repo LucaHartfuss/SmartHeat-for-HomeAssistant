@@ -3,8 +3,10 @@ fehlt: zufaellige Passwoerter je Dienst am lokalen Bus, Mosquitto-Passwortdatei 
 Zigbee2MQTT-Grundkonfiguration mit Zugangsdaten und den Ordner data/device (0700, Geraetekern; ab 0.6.0 ohne Agent
 und Masken). Heilt ausserdem Drift (Plan G2b-2): eine Passwortdatei, die nicht zu den Zugangsdateien passt (auch eine
 aus 0.5.0 mit dem Benutzer agent), wird neu aufgebaut, und die Zugangsdaten in einer bestehenden Zigbee2MQTT-
-Konfiguration werden angeglichen. Idempotent: ein zweiter Lauf schreibt nichts. Ein Schreiber je Datei: bus/ und
-configuration.yaml (ganz nur wenn sie fehlt, sonst nur user/password) gehoeren diesem Schritt. Passwoerter erscheinen
+Konfiguration werden angeglichen, ebenso der Zigbee-Adapter nach einem Stick-Tausch (Host-Datei zigbee_adapter,
+A6-15; wirkt mit dem naechsten Lauf dieses Schritts, das heisst `install.sh` erneut). Idempotent: ein zweiter Lauf
+schreibt nichts. Ein Schreiber je Datei: bus/ und configuration.yaml (ganz nur wenn sie fehlt, sonst nur
+user/password und serial.adapter) gehoeren diesem Schritt. Passwoerter erscheinen
 nie im Log (nur Dateinamen)."""
 import base64
 import hashlib
@@ -12,6 +14,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import secrets
 from collections.abc import Callable
 from pathlib import Path
@@ -22,6 +25,8 @@ from smartheat_gateway import z2m_config
 logger = logging.getLogger(__name__)
 
 SERVICES = ("runtime", "zigbee2mqtt")
+DEFAULT_ADAPTER = "ember"
+_ADAPTER_NAME = re.compile(r"[a-z0-9_]+")  # Zigbee2MQTT-Adapter: zstack, ember, deconz, ...; kein Text fuer die Datei
 ITERATIONS = 101
 SALT_BYTES = 12
 MAX_VERIFY_ITERATIONS = 1_000_000  # Obergrenze beim Pruefen: ein feindlicher Eintrag soll nicht ewig rechnen
@@ -79,12 +84,18 @@ def _acl_matches(path: Path) -> bool:
         return False
 
 
-def adapter(host_dir: Path, default: str) -> str:
+def adapter(host_dir: Path) -> str | None:
+    """Adapter des eingesteckten Sticks aus der Host-Datei zigbee_adapter (schreibt die udev-Regel). None ohne Datei,
+    ohne Inhalt oder bei einem Inhalt, der kein Adaptername ist: dann gleicht der Init-Schritt nichts an."""
     try:
         value = (host_dir / "zigbee_adapter").read_text().strip()
-    except OSError:
-        return default
-    return value or default
+    except (OSError, ValueError):
+        return None
+    if _ADAPTER_NAME.fullmatch(value) is None:
+        if value:
+            logger.warning("Host-Datei zigbee_adapter: kein Adaptername, der Adapter wird nicht angeglichen")
+        return None
+    return value
 
 
 def _credentials(bus_dir: Path, token: Callable[..., str], written: list[str]) -> tuple[dict[str, str], bool]:
@@ -105,8 +116,9 @@ def _credentials(bus_dir: Path, token: Callable[..., str], written: list[str]) -
     return passwords, created
 
 
-def ensure(bus_dir: Path, zigbee_dir: Path, data_dir: Path, adapter_name: str,
-           token: Callable[..., str] = secrets.token_urlsafe) -> list[str]:
+def ensure(bus_dir: Path, zigbee_dir: Path, data_dir: Path, adapter_name: str | None,
+           token: Callable[..., str] = secrets.token_urlsafe, default_adapter: str = DEFAULT_ADAPTER) -> list[str]:
+    """`adapter_name` None (keine Host-Datei): kein Abgleich, `default_adapter` gilt nur beim ersten Schreiben."""
     written: list[str] = []
     passwords, created = _credentials(bus_dir, token, written)
     passwd = bus_dir / "mosquitto" / "passwd"
@@ -117,10 +129,12 @@ def ensure(bus_dir: Path, zigbee_dir: Path, data_dir: Path, adapter_name: str,
     if not _acl_matches(acl):
         dateien.schreiben_text(acl, render_acl(), modus=dateien.PRIVAT)
         written.append("bus/mosquitto/acl")
-    if z2m_config.ensure(zigbee_dir, adapter_name, "zigbee2mqtt", passwords["zigbee2mqtt"]):
+    if z2m_config.ensure(zigbee_dir, adapter_name or default_adapter, "zigbee2mqtt", passwords["zigbee2mqtt"]):
         written.append("zigbee2mqtt/configuration.yaml")
     elif z2m_config.sync_credentials(zigbee_dir, "zigbee2mqtt", passwords["zigbee2mqtt"]):
         written.append("zigbee2mqtt/configuration.yaml (Zugangsdaten)")
+    if adapter_name is not None and z2m_config.sync_adapter(zigbee_dir, adapter_name):
+        written.append("zigbee2mqtt/configuration.yaml (Adapter)")
     if z2m_config.sync_device_options(zigbee_dir):
         written.append("zigbee2mqtt/configuration.yaml (retain)")
     for name in ("device",):
@@ -137,7 +151,8 @@ def main() -> None:  # pragma: no cover - Container-Einstieg
     written = ensure(
         Path(os.environ.get("SHG_BUS_DIR", "/bus")), Path(os.environ.get("SHG_ZIGBEE_DIR", "/zigbee2mqtt")),
         Path(os.environ.get("SHG_DATA_DIR", "/data")),
-        adapter(Path(os.environ.get("SHG_HOST_DIR", "/host")), os.environ.get("ZIGBEE_ADAPTER", "ember")),
+        adapter(Path(os.environ.get("SHG_HOST_DIR", "/host"))),
+        default_adapter=os.environ.get("ZIGBEE_ADAPTER", DEFAULT_ADAPTER),
     )
     logger.info("Init: %s", ", ".join(written) if written else "nichts zu tun")
 

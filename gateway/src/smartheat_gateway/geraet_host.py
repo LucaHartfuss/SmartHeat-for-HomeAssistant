@@ -127,9 +127,8 @@ def vergessen(paths: Paths) -> bool:
                        type(error).__name__)
     for path in eintraege:
         entfernen(path, eintrag_weg)
-    befehle.forget_inventory(paths)
-    for path in (paths.inventur, paths.inventur.with_name(paths.inventur.name + ".tmp")):
-        entfernen(path, datei_weg)  # noch da (forget_inventory gescheitert): zweiter Versuch, sonst Teil-Scheitern
+    if not befehle.forget_inventory(paths):  # loggt selbst, eine Zeile je Datei
+        gescheitert = True
     for driver_id, driver_type in registry.DRIVERS.items():
         if driver_type.kind != KIND_CLOUD:
             continue

@@ -36,10 +36,6 @@ services:
     command: ["python", "-m", "smartheat_gateway.init"]
     network_mode: none
     environment:
-      SHG_BUS_DIR: /bus
-      SHG_ZIGBEE_DIR: /zigbee2mqtt
-      SHG_DATA_DIR: /data
-      SHG_HOST_DIR: /host
       ZIGBEE_ADAPTER: ${ZIGBEE_ADAPTER:-ember}
     volumes:
       - ${SHG_ROOT:-/var/lib/smartheat}/bus:/bus
@@ -51,7 +47,9 @@ services:
     <<: *gateway
     command: ["python", "-m", "smartheat_gateway.runtime_main"]
     networks: [bus, wan]
-    ports: ["80:8080"]
+    # Nur IPv4 (Audit 4, P-C2 b): ohne Host-Adresse lauscht docker-proxy auch auf [::]:80; die Diagnoseseite soll
+    # ausschliesslich im IPv4-LAN antworten (Firewall: host/nftables.conf).
+    ports: ["0.0.0.0:80:8080"]
     # Beim Ende trennt der Prozess den Link sauber (MQTT-DISCONNECT) und wartet bis zu 10 s auf den Geraete-Thread
     # (runtime_main.JOIN_SECONDS); Dockers Standard-Frist von 10 s kaeme mit SIGKILL zuvor.
     stop_grace_period: 20s
@@ -61,8 +59,6 @@ services:
     environment:
       SHG_BUS_HOST: mosquitto
       SHG_BUS_CREDENTIALS: /run/shg-bus/bus.json
-      SHG_DATA_DIR: /data
-      SHG_HOST_DIR: /host
       SHG_DEVICE_API_URL: ${SHG_DEVICE_API_URL:?SHG_DEVICE_API_URL fehlt}
       SHG_PORTAL_BASE_URL: ${SHG_PORTAL_BASE_URL:-}
       SHG_DIAG_HOSTNAMES: ${SHG_DIAG_HOSTNAMES:-}

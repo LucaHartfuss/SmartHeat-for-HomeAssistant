@@ -88,7 +88,7 @@ def _terminate(signum, frame) -> None:  # pragma: no cover - Signalhandler
 
 
 def main() -> None:  # systemd-Einstieg
-    base = Path(os.environ["SHG_LED"]) if os.environ.get("SHG_LED") else find_led()
+    base = find_led()
     if base is None:
         raise SystemExit("Keine LED gefunden (/sys/class/leds/ACT oder led0)")
     state_path = Path(os.environ.get("SHG_ROOT", "/var/lib/smartheat")) / "data" / "agent_state.json"

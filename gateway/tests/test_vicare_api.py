@@ -73,7 +73,7 @@ def test_every_api_call_counts_against_the_quota_and_the_hard_limit_stops_the_cl
     client.installations()
     client.features(*IDS)
     client.features(*IDS)
-    assert guard.used() == 3
+    assert len(guard._load()["aufrufe"]) == 3
     with pytest.raises(QuotaExhausted):
         client.features(*IDS)
     assert len(server.calls) == 3  # der vierte Aufruf hat die API nie erreicht
@@ -146,7 +146,7 @@ def test_a_revoked_access_token_is_renewed_once_and_the_call_is_repeated(world):
     server.access.clear()  # serverseitig widerrufen, das Refresh-Token gilt noch
     assert client.features(*IDS)
     assert server.tokens_issued == 2
-    assert guard.used() == 2  # beide HTTP-Aufrufe zaehlen (der abgelehnte und die Wiederholung)
+    assert len(guard._load()["aufrufe"]) == 2  # beide HTTP-Aufrufe zaehlen (der abgelehnte und die Wiederholung)
 
 
 def test_a_second_401_after_the_renewal_is_not_authenticated_without_a_third_call(world):
@@ -178,7 +178,7 @@ def test_a_missing_login_is_not_authenticated_and_costs_no_quota(world):
     tokens.forget()
     with pytest.raises(vicare.NotAuthenticated):
         client.features(*IDS)
-    assert guard.used() == 0 and server.calls == []
+    assert len(guard._load()["aufrufe"]) == 0 and server.calls == []
 
 
 def test_a_network_error_is_unreachable_and_hides_the_url(world):
