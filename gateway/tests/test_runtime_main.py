@@ -399,6 +399,21 @@ def test_a_newer_operation_replaces_the_stored_target_at_start(world, erste):
     assert _thermostat_writes(world) == [22.5] and world.host._store.value == 22.5
 
 
+def test_a_raise_of_the_wish_at_start_triggers_the_boost(world):
+    """Nachtrag Re-Review Task 4: eine Erhoehung der Bedienung waehrend des Neustarts (20 -> 22,5) loest den Boost aus,
+    nicht nur das Angleichen des Thermostats: der Stable-Target-Cache haelt noch 20, das Soll im Speicher ist 22,5."""
+    world.z2m.report(THERMOSTAT, system_mode="heat", occupied_heating_setpoint=20.0, local_temperature=20.0)
+    dokumente_schreiben(world.paths, konfiguration(), bedienung(20.0))
+    world.start_runtime()
+    world.run()
+    assert world.host._store.value == 20.0 and not world.result.store.state.boost_active  # Gegenprobe: erster Start
+    dokumente_schreiben(world.paths, konfiguration(), bedienung(22.5))
+    _neustart(world)
+    world.run()
+    assert world.result.store.state.boost_active
+    assert world.host._store.value == 22.5 and _thermostat_writes(world).count(22.5) == 1
+
+
 def test_an_unexpected_error_reports_the_gateway_unhealthy_during_the_pause(world, monkeypatch):
     """Abschlussreview S6 I-2: in der 60-s-Pause nach einem unerwarteten Fehler ist das Lebenszeichen weg (der
     Compose-Health-Check scheitert) und /healthz meldet die Laufzeit "startet" (health_ok des Updaters lehnt ab). Sonst
