@@ -193,8 +193,8 @@ def test_an_unknown_host_is_rejected():
 
 
 def test_lever_set_lock_applies_to_home_assistant_too():
-    ablehnung = _geprueft(ha_konfiguration(hebelsatz="viessmann_vicare"), Rastung(ha_konfiguration()["hebelsatz"], ha_konfiguration()["verteilsystem"]),
-                            host=cc.HOST_HA)
+    rastung = Rastung(ha_konfiguration()["hebelsatz"], ha_konfiguration()["verteilsystem"])
+    ablehnung = _geprueft(ha_konfiguration(hebelsatz="viessmann_vicare"), rastung, host=cc.HOST_HA)
     assert ablehnung.grund == cc.HEBELSATZ_EINGERASTET
 
 

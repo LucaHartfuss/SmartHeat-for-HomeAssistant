@@ -68,7 +68,8 @@ def test_interval_bounds():
 
 @pytest.mark.parametrize("hebelsatz, verteilsystem", [("unbekannt", "Heizkoerper"), ("viessmann_vicare", "Kachelofen")])
 def test_missing_local_safety_values(hebelsatz, verteilsystem):
-    assert _pruefen(gateway_konfiguration(hebelsatz=hebelsatz, verteilsystem=verteilsystem)).grund == cc.SICHERHEITSWERTE_FEHLEN
+    ablehnung = _pruefen(gateway_konfiguration(hebelsatz=hebelsatz, verteilsystem=verteilsystem))
+    assert ablehnung.grund == cc.SICHERHEITSWERTE_FEHLEN
 
 
 def test_floor_heating_has_safety_values():
@@ -128,7 +129,8 @@ def test_a_foreign_or_missing_gateway_binding_field_is_a_role_rejection(bindung,
 
 
 def test_without_thermostat():
-    assert _pruefen(gateway_konfiguration(bindung={"treiber": {"id": "simulation", "parameter": {}}, "thermostat": None})) is None
+    bindung = {"treiber": {"id": "simulation", "parameter": {}}, "thermostat": None}
+    assert _pruefen(gateway_konfiguration(bindung=bindung)) is None
 
 
 def test_a_room_sensor_twice_is_a_double_assignment():

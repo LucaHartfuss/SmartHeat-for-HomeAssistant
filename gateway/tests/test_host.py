@@ -314,7 +314,8 @@ def test_load_reports_the_plant_identity_of_the_driver(data_dir, clock):
 
 def test_die_uebernahme_der_frueheren_ha_kennung_greift_beim_gateway_nie(data_dir, clock):
     """A6-36: app.start reicht frueher=lever_refs_identity(manifest) auch beim Gateway weiter. Seine Kennung traegt den
-    Schluessel "id", den kein Hebel hat: frueher ist nie gleich, ein Bestand einer anderen Anlage wird weiter verworfen."""
+    Schluessel "id", den kein Hebel hat: frueher ist nie gleich, ein Bestand einer anderen Anlage wird weiter
+    verworfen."""
     loaded = _host(Paths(data_dir), konfiguration(), clock).load()
     frueher = lever_refs_identity(loaded.manifest)
     assert frueher != loaded.plant_id and "id" in json.loads(loaded.plant_id) and "id" not in json.loads(frueher)

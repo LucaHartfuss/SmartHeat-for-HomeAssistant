@@ -159,7 +159,8 @@ def datei_stand(path: Path) -> tuple[int, int, bytes] | None:
 #: runtime_helpers.OPTIONS und climate.zone, Weishaupt WEISHAUPT, Viessmann VIESSMANN_OPTIONEN). KONFIG_EINTRAG ist das
 #: Config-Entry je Plattform, das auch der Kreis der Test-Dokumente nennt (geraet_helpers.konfiguration_aus_optionen).
 SCHREIBZIELE = {
-    "mypyllant": ("number.curve_current", "number.shift_current", "number.heat_limit", "number.min_flow", "climate.zone"),
+    "mypyllant": ("number.curve_current", "number.shift_current", "number.heat_limit", "number.min_flow",
+                  "climate.zone"),
     "weishaupt_modbus": ("number.hk", "number.normal", "number.swu", "select.betriebsart", "number.komfort",
                          "number.absenk"),
     "vicare": ("number.slope", "number.shift", "number.normal_temperature", "climate.heizkreis"),
@@ -194,9 +195,10 @@ class FakeHa:
         self.dismissed = []
         self.events = []
         self.write_error = None
-        # Zuordnungspruefung (Spec 5c 1.3): Entity-/Geraete-Registry, Dienste, in HA unbekannte Entities, HA nicht erreichbar.
-        # Die Schreibziele der Tests stehen in der Registry (SCHREIBZIELE); ohne Eintrag waere ein Schreibziel beim Start
-        # nicht pruefbar. Ein Eintrag ohne Zustand zaehlt fuer die Positivliste nicht (einstellbare_plattformen).
+        # Zuordnungspruefung (Spec 5c 1.3): Entity-/Geraete-Registry, Dienste, in HA unbekannte Entities, HA nicht
+        # erreichbar. Die Schreibziele der Tests stehen in der Registry (SCHREIBZIELE); ohne Eintrag waere ein
+        # Schreibziel beim Start nicht pruefbar. Ein Eintrag ohne Zustand zaehlt fuer die Positivliste nicht
+        # (einstellbare_plattformen).
         self.registry: list[dict] = [schreibziel_eintrag(entity_id, plattform)
                                      for plattform, entity_ids in SCHREIBZIELE.items() for entity_id in entity_ids]
         self.devices: list[dict] = []

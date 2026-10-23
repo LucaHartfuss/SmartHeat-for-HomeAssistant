@@ -7,8 +7,8 @@ besteht die lokale Positivliste der Inventur (rollen_pruefen, A6-02), dann die S
 Schreibziele (jeder Hebel der Bindung, nicht nur die Schreibregeln des Hebelsatzes, A4-11) kommen nur von der lokal je
 Hebelsatz festgelegten Plattform (SCHREIB_PLATTFORM, A5-70) und alle aus einem Config-Entry (dem des Kreises, wenn er
 eines nennt); die Soll-Entity ist kein Schreibziel und nicht an dessen Geraet (A4-12). Dieselben Regeln gelten beim Start
-fuer die uebernommene Konfiguration (rollen_befund mit beim_start=True, L4-27). Ob outdoor_temp und die Kennzahl-Rollen fachlich passen,
-prueft der Server (ha_pruefung).
+fuer die uebernommene Konfiguration (rollen_befund mit beim_start=True, L4-27). Ob outdoor_temp und die
+Kennzahl-Rollen fachlich passen, prueft der Server (ha_pruefung).
 
 Ist HA nicht erreichbar oder faehrt gerade hoch, ist das kein Urteil: der Server stellt eine abgelehnte Version nicht
 erneut zu, ein Neustart des Hosts haette das Geraet sonst festgesetzt. zuordnung_pruefen wirft dann NichtPruefbar (das
@@ -219,8 +219,8 @@ _TEMPERATUR = ("sensor", "temperature")
 _FREI = ("sensor", FREIE_KLASSE)
 #: Form je Feld der Bindung (A6-02 je Feld, Spec Rollen je Feld 2): erlaubte (Domaene, Geraeteklasse); Klasse None =
 #: Domaene ohne Klassenpruefung (climate, weather). Zusaetzlich zu inventur.entity_erlaubt. Schreibziele stehen nicht
-#: hier (sie halten SCHREIBREGELN und schreibziele_befund); jedes andere Feld ist nicht erlaubt (fail closed). Der Server
-#: fuehrt dieselben Regeln in einrichtung/ha_rollen.py, der Contract-Check vergleicht beide.
+#: hier (sie halten SCHREIBREGELN und schreibziele_befund); jedes andere Feld ist nicht erlaubt (fail closed). Der
+#: Server fuehrt dieselben Regeln in einrichtung/ha_rollen.py, der Contract-Check vergleicht beide.
 ROLLEN_FORM: dict[str, tuple[tuple[str, str | None], ...]] = {
     "room_target": (("climate", None), _TEMPERATUR),
     "outdoor_temp": (("weather", None), _TEMPERATUR),
@@ -257,7 +257,9 @@ def _form_erlaubt(feld: str, ref: str, registry_entry: Mapping, state: Mapping, 
             continue
         if verlangt is None or klasse == verlangt:
             return True
-        if verlangt == FREIE_KLASSE and (klasse is not None or (plattform is not None and plattform == schreib_plattform)):
+        if verlangt == FREIE_KLASSE and (
+            klasse is not None or (plattform is not None and plattform == schreib_plattform)
+        ):
             return True
     return False
 
@@ -273,7 +275,8 @@ def schreibziele_befund(b: HaBindung, registry: Mapping[str, Mapping], *, beim_s
     eines nennt, sonst dem des ersten Schreibziels; ohne Config-Entry nicht erlaubt); die Soll-Entity ist kein
     Schreibziel und nicht an dessen Geraet. `registry` ist die Entity-Registry je entity_id. Ein Schreibziel ohne
     Registry-Eintrag: beim Uebernehmen (beim_start=False) nicht_erlaubt wie bisher, beim Start kein Urteil, sondern
-    NichtPruefbar(feld, OHNE_REGISTRY) (Wiederholung, fail closed). Keyword ohne Standard: jeder Aufrufer entscheidet."""
+    NichtPruefbar(feld, OHNE_REGISTRY) (Wiederholung, fail closed). Keyword ohne Standard: jeder Aufrufer
+    entscheidet."""
     plattform = SCHREIB_PLATTFORM[b.hebelsatz]
     if b.kreis.get("plattform") != plattform:
         return "plattform", "nicht_erlaubt"

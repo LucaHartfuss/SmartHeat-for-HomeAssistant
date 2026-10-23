@@ -19,7 +19,8 @@ from smartheat_runtime.backup_store import save_backup
 from smartheat_runtime.state import StateStore
 
 # Die Hilfsmodule sind keine Testdateien: ohne diese Anmeldung (vor ihrem ersten Import) zeigt pytest bei einem
-# fehlgeschlagenen assert in ihnen keine Zwischenwerte. Deshalb stehen die Importe von fakes und runtime_helpers unten in den Fixtures.
+# fehlgeschlagenen assert in ihnen keine Zwischenwerte. Deshalb stehen die Importe von fakes und runtime_helpers
+# unten in den Fixtures.
 pytest.register_assert_rewrite(
     "runtime_helpers", "geraet_helpers", "device_helpers", "fakes", "host_konformitaet", "trigger_konformitaet",
 )

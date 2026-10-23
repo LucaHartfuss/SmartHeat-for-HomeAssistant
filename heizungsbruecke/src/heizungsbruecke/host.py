@@ -362,8 +362,8 @@ def _rollen_pruefen_mit_wiederholung(ha_api, b: dokument.HaBindung) -> list[tupl
 
     def _describe(error):
         if isinstance(error, config_check.NichtPruefbar) and error.args[1:] == (dokument.OHNE_REGISTRY,):
-            return (f"{error.args[0]}: Entity ohne Eintrag in der Entity-Registry von Home Assistant (lokale Positivliste "
-                    "nicht prüfbar)")
+            return (f"{error.args[0]}: Entity ohne Eintrag in der Entity-Registry von Home Assistant "
+                    "(lokale Positivliste nicht prüfbar)")
         if isinstance(error, config_check.NichtPruefbar) and error.args:
             return f"{error.args[0]}: zugeordnete Entity fehlt in Home Assistant – {RECONFIGURE_HINT}"
         return "Home Assistant lieferte Registry oder Zustände nicht"

@@ -39,7 +39,8 @@ def konfiguration_aus_optionen(options: dict) -> dict:
             rollen[_HEBEL.get(key, key.removeprefix("entity_"))] = value
     hebelsatz = options.get("lever_set") or "vaillant_vrc720"  # ein unbekannter bleibt im Dokument, Parameter: Vaillant
     plattform = KREIS_PLATTFORM.get(hebelsatz, "mypyllant")  # ein unbekannter Hebelsatz scheitert schon an bindung
-    bindung = {"kreis": {"plattform": plattform, "config_entry": KONFIG_EINTRAG[plattform], "anlage": "S", "nummer": "0"},
+    kreis = {"plattform": plattform, "config_entry": KONFIG_EINTRAG[plattform], "anlage": "S", "nummer": "0"}
+    bindung = {"kreis": kreis,
                "rollen": rollen, "batterien": list(options.get("battery_entities", [])),
                "benachrichtigung": list(options.get("notify_services", [])),
                "hinweise_aus": list(options.get("notify_hints_off", []))}

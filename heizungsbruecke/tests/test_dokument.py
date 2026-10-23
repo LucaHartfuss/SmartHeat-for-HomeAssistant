@@ -116,6 +116,14 @@ def test_leere_und_falsche_teile_des_dokuments_sind_leer_statt_ein_fehler():
     assert b.raumfuehler == ("sensor.a",)
 
 
+@pytest.mark.parametrize("soll", [5, True, ["sensor.x"], {"a": 1}, "", None])
+def test_eine_soll_entity_ohne_nichtleeren_text_ist_keine(soll):
+    """Mutationsprobe dokument.py (TP4): nur ein nicht leerer Text ist eine Soll-Entity; `or` statt `and` liesse jeden
+    wahren Nicht-Text (5, True, Liste, Dict) und den leeren Text durch."""
+    b = dokument.bindung({"hebelsatz": "vaillant_vrc720", "bindung": {"rollen": {"room_target": soll}}})
+    assert b.soll_entity is None
+
+
 def test_tabellen_decken_dieselben_hebelsaetze():
     assert set(dokument.PFLICHT_ROLLEN) == set(dokument.SCHREIBREGELN)
     for hebelsatz, rollen in dokument.PFLICHT_ROLLEN.items():
@@ -238,6 +246,37 @@ def test_missing_required_role():
     del rollen["heat_limit"]
     konfiguration = {**KONFIGURATION, "bindung": {**KONFIGURATION["bindung"], "rollen": rollen}}
     assert dokument.zuordnung_pruefen(konfiguration, _ha()) == {"feld": "heat_limit", "regel": "fehlt"}
+
+
+class _RohListen:
+    """Dieselbe Attrappe, aber mit zusaetzlichen Rohelementen in den Listen der Registry und der Zustaende, wie sie
+    ein fremdes oder neueres HA liefern koennte."""
+
+    def __init__(self, ha, registry_dazu, states_dazu):
+        self._ha, self._registry, self._states = ha, registry_dazu, states_dazu
+
+    def entity_registry(self):
+        return [*self._ha.entity_registry(), *self._registry]
+
+    def get_states(self):
+        return [*self._ha.get_states(), *self._states]
+
+
+_ROHELEMENTE = [None, 5, "entity_id", ["entity_id"], {}, {"platform": "x"}, {"state": "1"}]
+
+
+def test_elemente_ohne_entity_id_in_den_listen_von_ha_werden_uebergangen():
+    """Mutationsprobe dokument.py (TP4): ein Element, das kein Mapping mit `entity_id` ist (None, Zahl, Text oder Liste,
+    die den Schluesselnamen enthalten, Dict ohne ihn), faellt aus Registry und Zustaenden heraus, statt die Pruefung
+    mit TypeError/KeyError abzubrechen (`or` statt `and`)."""
+    b = dokument.bindung(KONFIGURATION)
+    sauber = dokument.rollen_befund(b, _ha(), beim_start=False)
+    assert sauber == (None, [])
+    roh = _RohListen(_ha(), _ROHELEMENTE, _ROHELEMENTE)
+    assert dokument.rollen_befund(b, roh, beim_start=False) == sauber
+    # nur die Registry bzw. nur die Zustaende (je Zeile eine eigene Wirkung)
+    assert dokument.rollen_befund(b, _RohListen(_ha(), _ROHELEMENTE, []), beim_start=False) == sauber
+    assert dokument.rollen_befund(b, _RohListen(_ha(), [], _ROHELEMENTE), beim_start=False) == sauber
 
 
 def test_unknown_entity_is_refused():
