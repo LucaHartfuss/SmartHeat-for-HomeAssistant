@@ -62,9 +62,8 @@ Probelauf. Ein Push nach `main` ist ein Release an alle Kunden-Pis, deren Superv
   (Pflichtfelder der `config.yaml` und Startweg: `../docs/module/ha-host.md`). Eine ungültige `bootstrap_url` oder eine
   kaputte `options.json` lässt das Add-on **ruhen**, nie auf die Produktion ausweichen. Die Option nimmt nur `https`;
   `http` geht nur über die Umgebung `SMARTHEAT_BOOTSTRAP_URL` (E2E und Tests, im Add-on nicht setzbar).
-- **Golden-Master** (`heizungsbruecke/tests/test_golden_master.py`, `heizungsbruecke/tests/golden/addon_scenario.json`
-  und `addon_scenario_0_36.json`) nie neu erzeugen, ohne dass ein Plan es verlangt: ändert er sich, ist der Code falsch,
-  nicht die Datei.
+- **Golden-Master** (`heizungsbruecke/tests/test_golden_master.py`, `heizungsbruecke/tests/golden/addon_scenario.json`)
+  nie neu erzeugen, ohne dass ein Plan es verlangt: ändert er sich, ist der Code falsch, nicht die Datei.
 - **Verträge:** `heizungsbruecke/src/smartheat_device/wire.py` und `../tools/contracts/geraet_v1.json` nur gemeinsam
   ändern (V1, `../docs/module/README.md`); `python3 ../tools/contract_check.py` vor jedem Release grün (Liste:
   `--liste`). Verträge mit der Integration: Status-Ereignis Schema 3 (`geraet_status.EVENT_FIELDS`), Felder der

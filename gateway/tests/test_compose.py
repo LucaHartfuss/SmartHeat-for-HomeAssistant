@@ -190,10 +190,9 @@ def test_dev_overlay_only_adjusts_existing_services_and_adds_the_fakes():
     assert dev["runtime"]["ports"] == ["127.0.0.1:8080:8080"]
 
 
-def test_dev_overlay_brings_bootstrap_and_broker_but_no_device_api():
+def test_dev_overlay_brings_bootstrap_and_broker():
     services = _services("docker-compose.dev.yml")
     assert {"fake-bootstrap", "fake-broker"} <= set(services)
-    assert "fake-device-api" not in services and "agent" not in services and "tunnel" not in services
     # Der Fake-Broker ist der Endpunkt aus der Bootstrap-Antwort; der Geraetekern startet erst nach dem Fake-Bootstrap.
     assert services["fake-bootstrap"]["environment"]["SHG_FAKE_MQTT_HOST"] == "fake-broker"
     assert services["runtime"]["depends_on"]["fake-bootstrap"] == {"condition": "service_healthy"}

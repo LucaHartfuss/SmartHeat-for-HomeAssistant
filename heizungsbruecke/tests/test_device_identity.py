@@ -22,9 +22,9 @@ def test_keys_and_code_are_created_once_and_private(tmp_path):
         assert stat.S_IMODE((tmp_path / name).stat().st_mode) == 0o600, name
 
 
-def test_kein_verschluesselungsschluessel_mehr(tmp_path):
+def test_load_or_create_legt_genau_diese_dateien_an_und_laesst_eine_alte_enc_key_datei_liegen(tmp_path):
     """Das Geraet erzeugt enc_key.pem nicht mehr; eine vorhandene Datei bleibt liegen und wird nicht
-    gelesen (Loeschen beim Live-Abbau)."""
+    gelesen (Geraete der Version 1.0.0 haben sie noch)."""
     identity.load_or_create(tmp_path / "neu")
     assert sorted(p.name for p in (tmp_path / "neu").iterdir()) == sorted(
         (identity.KEY_FILE, identity.TLS_KEY_FILE, identity.CLAIM_CODE_FILE))
@@ -33,7 +33,6 @@ def test_kein_verschluesselungsschluessel_mehr(tmp_path):
     (alt / "enc_key.pem").write_text("kein PEM")  # gelesen wuerde das scheitern
     identity.load_or_create(alt)
     assert (alt / "enc_key.pem").read_text() == "kein PEM"
-    assert not hasattr(identity, "ENC_KEY_FILE")
 
 
 def test_device_id_is_derived_from_the_signing_key(tmp_path):

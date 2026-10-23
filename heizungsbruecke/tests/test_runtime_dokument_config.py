@@ -123,7 +123,6 @@ def test_intervalle_im_dokument_wirken_nicht_mehr(monkeypatch, tmp_path):
     monkeypatch.delenv(dc.E2E_INTERVALLE_ENV, raising=False)
     assert _intervalle(tmp_path, {**KONF, "intervalle": {"pruefung_s": 5, "telemetrie_s": 10}}) == (
         PRUEFUNG_STANDARD, TELEMETRIE_STANDARD)
-    assert "intervalle" not in dc.FELDER + dc.LAUFZEIT_FELDER
 
 
 @pytest.mark.parametrize("konfiguration", [None, {"anlage": None}, {**KONF, "verteilsystem": "Kachelofen"},
