@@ -1735,3 +1735,16 @@ def test_an_unreadable_zone_mode_with_a_blocked_quota_holds_the_setpoint_back(ma
 
     assert attempts == [] and ("climate.zone", 23.0) not in ha.writes
     assert store.state.deferred_levers == ("room_setpoint",)
+
+
+def test_an_already_manual_zone_on_the_server_setpoint_is_not_written_again(make_store, clock, tag):
+    """Die schon vorbereitete Zone gilt als nicht umgestellt: steht die Wunschtemperatur schon auf dem Serverwert, spart
+    der Quota-Check den Schreibvorgang (ein erzwungenes Schreiben gaebe es nur direkt nach einer eigenen Umstellung)."""
+    override, _, ha, attempts = _quota_zone(
+        make_store, clock, backup={"write_budget": {write_budget.ZONE_PREPARE: {"day": DAY, "count": 6}}},
+    )
+    ha.states.update({"climate.zone": "heat_cool", "climate.zone::temperature": 23.0})
+
+    override.apply_server_values(SERVER)
+
+    assert attempts == [] and ha.writes == [("number.curve", 0.95)]
