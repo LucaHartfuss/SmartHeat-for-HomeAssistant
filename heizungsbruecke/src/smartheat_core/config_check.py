@@ -1,4 +1,4 @@
-"""Lokale Pruefung einer Konfiguration vor dem Uebernehmen (Spec 5b 3.1, Weichenstellung 1), rein: nur
+"""Lokale Pruefung einer Konfiguration vor dem Uebernehmen (Weichenstellung 1), rein: nur
 Standardbibliothek und smartheat_core. Regeln in dieser Reihenfolge: (1) Aufbau und Wertebereiche, (2) Hebelsatz und
 Verteilsystem haben lokale Sicherheitswerte (safety.py), (3) eingerastet: Hebelsatz und Verteilsystem muessen zur Rastung
 des Geraets passen (smartheat_core.rastung); eine leere Konfiguration loest sie nicht, (3a) Bindungsparameter gegen die
@@ -6,7 +6,7 @@ lokalen Grenzen (smartheat_core.bindungsparameter), (4) erlaubte Referenzen je R
 der Treiber (Rueckruf des Hosts, zuletzt; Gateway: die Bindung, HA: Aufbau der Bindung rein, Entities und Schreibziele ueber den
 Rueckruf des Hosts mit der ganzen Konfiguration). Eine leere Konfiguration (anlage None) heisst "nicht eingerichtet" und ist
 immer gueltig; sie aendert die Rastung nicht. Die Gruende sind Dokument-Fehlergruende des Vertrags (smartheat_device.wire.DOKUMENT_ERRORS). Ablehnungen
-tragen Grund und details (Feld, Regel, Zahlen; Spec Stufe 3 S5 6.1), den Text bildet der Server. Sicherheitsgrenzen, Boost und Notbetrieb liest diese Pruefung nur
+tragen Grund und details (Feld, Regel, Zahlen), den Text bildet der Server. Sicherheitsgrenzen, Boost und Notbetrieb liest diese Pruefung nur
 (G-1, Regel 4). V1 ist strikt (R10): fremde Felder in Bindung, Treiber und Kreis lehnt diese Pruefung ab; die
 oberste Ebene der Konfiguration, die Software und die Bedienung prueft smartheat_device.documents gegen den
 Vertrag."""
@@ -38,9 +38,9 @@ ABO_WERTE = ("aktiv", "inaktiv")  # Kopie aus wire.ABO (test_core_vertrag_pin.py
 GATEWAY_RAUMFUEHLER = re.compile(r"zigbee:0x[0-9a-f]{16}:(temperature|local_temperature)|treiber:room_temperature")
 IEEE = re.compile(r"0x[0-9a-f]{16}")
 TAGESTICK = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
-#: Intervalle (nur E2E, Umgebung SMARTHEAT_E2E_INTERVALLE, smartheat_runtime.dokument_config; seit Stufe 3 S8a-1 kein
-#: Dokumentfeld mehr); die Grenzen stehen nur hier, die Laufzeit uebernimmt jeden Wert darin (ein Test startet sie an
-#: beiden Grenzen). Obergrenze Telemetrie (Regel 4, TP12e, AU-022): der Server wertet Luecken ab
+#: Intervalle (nur E2E, Umgebung SMARTHEAT_E2E_INTERVALLE, smartheat_runtime.dokument_config; kein
+#: Dokumentfeld); die Grenzen stehen nur hier, die Laufzeit uebernimmt jeden Wert darin (ein Test startet sie an
+#: beiden Grenzen). Obergrenze Telemetrie (Regel 4): der Server wertet Luecken ab
 #: samples.MAX_GAP (15 min) als Pause; 600 s lassen Reserve (Contract-Check (Vertrag Domaene): <= 0,8 x
 #: MAX_GAP).
 PRUEFUNG_S = (1, 3600)
@@ -66,12 +66,12 @@ HA_ROLLEN = (
 )
 HA_HINWEISE = ("raumfuehler", "batterie", "manueller_eingriff", "quellwechsel", "schreibbudget", "schreibzaehler")
 #: Referenzen wie die bisherigen entity_*-Optionen des Add-ons (entity_id oder entity_id::attribut); als Attribut
-#: lesen und schreiben die Rollen nur die Temperaturen (A6-02: sonst liesse sich jedes Attribut einer Entity binden,
+#: lesen und schreiben die Rollen nur die Temperaturen (sonst liesse sich jedes Attribut einer Entity binden,
 #: etwa Laengen- und Breitengrad einer Zone). Die Form je Rolle prueft der Host mit der Inventur, hier nur der Aufbau.
 HA_REF = re.compile(r"[a-z_]+\.[a-z0-9_]+(::(temperature|current_temperature))?")
 HA_RAUMFUEHLER = re.compile(r"sensor\.[a-z0-9_]+|climate\.[a-z0-9_]+::current_temperature")
 HA_BATTERIE = re.compile(r"(sensor|binary_sensor)\.[a-z0-9_]+")
-#: Benachrichtigungsdienste: nur die Handy-Dienste der Companion-App (A6-02); notify.email, notify.telegram u. a. nicht.
+#: Benachrichtigungsdienste: nur die Handy-Dienste der Companion-App; notify.email, notify.telegram u. a. nicht.
 HA_DIENST = re.compile(r"notify\.mobile_app_[a-z0-9_]+")
 #: Abfrageintervall der Hersteller-Integration (Sekunden), Grenzen 10-3600 s (Teil von V1).
 ABFRAGE_S = (10, 3600)
@@ -94,7 +94,7 @@ class NichtPruefbar(Exception):
 
 @dataclass(frozen=True)
 class Ablehnung:
-    """Grund aus wire.DOKUMENT_ERRORS und details (wire.DETAIL_FIELDS); keine Texte (Spec Stufe 3 S5 6.2)."""
+    """Grund aus wire.DOKUMENT_ERRORS und details (wire.DETAIL_FIELDS); keine Texte."""
     grund: str
     details: dict | None = None
 
@@ -105,7 +105,7 @@ def befund(feld: str | None = None, regel: str | None = None, **zahlen: float) -
 
 
 def ist_leer(inhalt) -> bool:
-    """Leere Konfiguration (Spec 3.1): `anlage` fehlt oder ist None."""
+    """Leere Konfiguration: `anlage` fehlt oder ist None."""
     return isinstance(inhalt, Mapping) and inhalt.get("anlage") is None
 
 
@@ -263,7 +263,7 @@ def _pruefen(neu: Mapping, rastung: Rastung | None, *, host: str,
     if ablehnung is not None:
         return ablehnung
     if treiber_pruefen is not None and (details := treiber_pruefen(dict(neu["bindung"]))) is not None:
-        # Das gebundene Thermostat ist kein Thermostat (A6-02): eine Rolle, kein Treiberparameter (sonst liest der Kunde
+        # Das gebundene Thermostat ist kein Thermostat: eine Rolle, kein Treiberparameter (sonst liest der Kunde
         # einen Text ueber den Treiber).
         return Ablehnung(ROLLE_UNZULAESSIG if details.get("feld") == "thermostat" else TREIBER_PARAMETER, details)
     return None

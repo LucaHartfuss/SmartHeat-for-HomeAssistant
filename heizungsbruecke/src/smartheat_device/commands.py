@@ -1,10 +1,10 @@
-"""Befehle (Spec 5b 3.4): Register, in das der Host seine Befehle eintraegt, und Einmal-Ausfuehrung (Muster des
-Gateway-Agenten bis 0.5.0). Ein Befehl wird hoechstens einmal ausgefuehrt; sein Ergebnis steht vor dem Senden in
+"""Befehle: Register, in das der Host seine Befehle eintraegt, und Einmal-Ausfuehrung.
+Ein Befehl wird hoechstens einmal ausgefuehrt; sein Ergebnis steht vor dem Senden in
 <daten>/device/befehle.json (Liste [command_id, ok, result, error], letzte DONE_KEEP, aelteste zuerst) und geht bei
 einem Duplikat (erneute Zustellung nach hello, auch ueber einen Neustart) erneut hoch; der Server behaelt das erste.
 Ueber den Ablauf entscheidet nur der Server (expires_at wird nicht gegen die eigene Uhr geprueft). Jeder gemeldete
 Grund steht in der Liste des Befehls (wire.command_errors), sonst geht `intern` hoch und die Fehlerart ins Log.
-Fehler tragen Grund und details, keine Texte (Spec Stufe 3 S5 6.2): den Text bildet der Server.
+Fehler tragen Grund und details, keine Texte: den Text bildet der Server.
 
 Hoechstens einmal gilt auch ueber einen Neustart: bevor ein Handler laeuft, steht in derselben Liste ein Marker
 "gestartet" ([command_id, null, null, null]). Kommt eine so markierte command_id nach einem Neustart erneut (weder
@@ -15,9 +15,9 @@ Neustart selbst ausloest), laeuft nach einem Neustart bei erneuter Zustellung no
 erneut zugestellten Nachricht. Fertige Befehle beantwortet das Register auch dann aus dem Speicher.
 
 Ein Handler liefert Done, Failed oder Waiting; wartende Befehle prueft pruefen() ohne zu blockieren. Done kann eine
-Inventur tragen: sie geht als up/inventory vor dem Ergebnis (Spec 3.4); ohne Verbindung wartet der Befehl, bis sie
+Inventur tragen: sie geht als up/inventory vor dem Ergebnis; ohne Verbindung wartet der Befehl, bis sie
 gesendet ist, und das Ergebnis geht erst, wenn der Broker alle Teile bestaetigt hat (inventur_bestaetigt, PUBACK):
-ein Neustart davor laesst den Marker "gestartet" stehen, die (wiederholbare) Erkennung laeuft dann erneut (L4-02).
+ein Neustart davor laesst den Marker "gestartet" stehen, die (wiederholbare) Erkennung laeuft dann erneut.
 Eingebaut, weil jedes Geraet ihn koennen muss: hinweis (Hinweise)."""
 import logging
 import time
@@ -47,7 +47,7 @@ INVENTUR_BESTAETIGUNG_SECONDS = 60.0
 #: Versuche decken einen kurzen Ausfall ab, ohne bei dauerhaft ausbleibendem PUBACK endlos weiterzusenden.
 INVENTUR_VERSUCHE_MAX = 3
 HINWEIS_KEY_MAX_CHARS = 64
-#: Obergrenze fuer verschiedene Hinweis-Schluessel (A6-31): der Server sendet nur die Meldungen aus wire.MELDUNGEN (5),
+#: Obergrenze fuer verschiedene Hinweis-Schluessel: der Server sendet nur die Meldungen aus wire.MELDUNGEN (5),
 #: die Datei bleibt so auch bei einem boesartigen Server klein. Ueberschreiben und Loeschen gehen immer.
 HINWEIS_MAX_SCHLUESSEL = 32
 HINWEIS_TEXT_MAX_CHARS = 1000
@@ -59,7 +59,7 @@ PHASENBEFEHLE = ("driver_login",)
 @dataclass(frozen=True)
 class Done:
     result: dict
-    inventur: dict | None = None  # Spec 3.4: geht als up/inventory vor dem Ergebnis
+    inventur: dict | None = None  # Geht als up/inventory vor dem Ergebnis
 
 
 @dataclass(frozen=True)
@@ -163,7 +163,7 @@ class CommandRegister:
             elif kind in self._wiederholbar:
                 # gestartet, Neustart: idempotent, noch einmal ausfuehren. Bewusste Grenze: je Neustart einmal, solange
                 # der Server den Befehl zustellt (bis expires_at); eine Neustart-Schleife wiederholt auch die
-                # Cloud-Abfrage einer Erkennung je Neustart (L4-02, Abschlussreview Nit 1).
+                # Cloud-Abfrage einer Erkennung je Neustart.
                 self._finish_or_wait(command_id, kind, self._execute(command_id, kind, message))
             else:  # gestartet, Ergebnis unbekannt (Neustart): nicht noch einmal ausfuehren
                 self._finish_or_wait(command_id, "", Failed("intern"))
@@ -317,7 +317,7 @@ def _valid_hint(key, value) -> bool:
 
 
 class Hinweise:
-    """Befehl hinweis (Spec 3.4): der Server setzt oder loescht einen Hinweis am Geraet (key, stufe, text; leerer Text
+    """Befehl hinweis: der Server setzt oder loescht einen Hinweis am Geraet (key, stufe, text; leerer Text
     = loeschen), z. B. geraet_doppelt. Anzeigen macht der Host (Gateway: Seite, HA: Reparatur-Hinweis, 5c)."""
 
     def __init__(self, device_dir: Path) -> None:

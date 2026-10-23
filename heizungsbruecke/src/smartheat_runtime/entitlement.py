@@ -1,4 +1,4 @@
-"""Abo-Status des Tenants (aus dem Konfigurationsdokument, Spec 5b 5.2) und die 30-Tage-Frist des Abo-inaktiv-Modus.
+"""Abo-Status des Tenants (aus dem Konfigurationsdokument) und die 30-Tage-Frist des Abo-inaktiv-Modus.
 Die Frist wird in /data/entitlement_state.json persistiert, damit sie Add-on-Neustarts ueberlebt."""
 import json
 import logging
@@ -18,7 +18,7 @@ UNKNOWN = "unknown"
 
 
 def query(config: RuntimeConfig) -> str:
-    """Der Abo-Status aus dem Konfigurationsdokument (abo_source, Spec 5b 5.2), nie ein Abruf beim Server."""
+    """Der Abo-Status aus dem Konfigurationsdokument (abo_source), nie ein Abruf beim Server."""
     return config.abo_source()
 
 

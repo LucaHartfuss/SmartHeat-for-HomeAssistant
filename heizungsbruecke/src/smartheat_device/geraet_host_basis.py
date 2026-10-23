@@ -1,15 +1,15 @@
-"""Gemeinsamer Teil der Geraete-Hosts (Audit 5 A5-26; Spec Stufe 3 S6 4.2): Bindung des Regel-Workers, Nachstellen von
+"""Gemeinsamer Teil der Geraete-Hosts: Bindung des Regel-Workers, Nachstellen von
 Neustart und Bedienung, die vor dem Binden kamen, gemerkte Ursprungswerte, die Sicht der Laufzeit auf die
-Soll-Dokumente, Bedienwunsch, Aufraeum-Markierung und das Aufheben der Abmelde-Markierung (5b-D2-7). HaDeviceHost und
+Soll-Dokumente, Bedienwunsch, Aufraeum-Markierung und das Aufheben der Abmelde-Markierung. HaDeviceHost und
 GatewayDeviceHost erben davon und liefern nur ihre Hostteile (Faehigkeiten, Uhr, Treiberpruefung, Befehle, Anzeige,
-Software, Pfade der Markierungen). Ebenfalls hier, weil beide Hosts es gleich brauchen (A6-60): die Konfiguration der
+Software, Pfade der Markierungen). Ebenfalls hier, weil beide Hosts es gleich brauchen: die Konfiguration der
 Laufzeit beim Start (laufzeit_konfiguration, aus der beim Start einmal gelesenen Aufraeum-Markierung), die Ursprungswerte
 des Servers (ursprungswerte_server: die Markierung hat Vorrang vor einer neuen Einrichtung) und das Warten von sign_off
 auf den Status "abgemeldet" (abmeldung_abwarten, wiederherstellungspunkt, SIGN_OFF_WAIT_SECONDS). Rueckrufe des
 Geraetekerns laufen im Geraete-Thread, worker_binden im Hauptthread; die Sperre trennt beide. Kein Rueckruf wirft (V2,
 Konformitaetssuite testhilfen/host_konformitaet.py) ausser konfiguration_vorbereiten: scheitert dort das Schreiben der
 Markierung (vor dem Speichern), geht der OSError an den Dokumentspeicher, und das Geraet haelt das Dokument zurueck
-(Spec Testoffensive 12.6, Nr. 38)."""
+(Nr. 38)."""
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -136,7 +136,7 @@ class GeraetHostBasis:
         return self.device.bedienung(), bool(doc is not None and doc.dirty)
 
     def laufzeit_konfiguration(self) -> tuple[dict, bool]:
-        """(Konfiguration fuer die Laufzeit, im Modus abgemeldet starten?), Spec Stufe 3 S3 Abschnitt 4. Steht nach einer
+        """(Konfiguration fuer die Laufzeit, im Modus abgemeldet starten?). Steht nach einer
         leeren Konfiguration das Zuruecksetzen aus (start_markierung) und ist die gespeicherte Konfiguration noch nicht
         eingerichtet, die alte Konfiguration aus der Markierung; sonst die gespeicherte (leer: {})."""
         gespeichert = self.konfiguration()
@@ -174,13 +174,13 @@ class GeraetHostBasis:
     def konfiguration_vorbereiten(self, alt: dict | None, neu: dict) -> None:
         if dokument_config.eingerichtet(alt) and not dokument_config.eingerichtet(neu):
             assert alt is not None
-            aufraeumen.markieren(self.aufraeumen_pfad(), alt)  # vor dem Speichern (Spec S3 4, Testoffensive 12.6)
+            aufraeumen.markieren(self.aufraeumen_pfad(), alt)  # vor dem Speichern
 
     def konfiguration_uebernommen(self, alt: dict | None, neu: dict) -> None:
         """Neustart bei laufzeitrelevanter Aenderung und wenn eine neue, nicht leere Konfiguration derselben Anlage die
-        Abmelde-Markierung aufhebt (5b-D2-7: das Geraet folgt dem Server und verlaesst "abgemeldet"). Eine leere
+        Abmelde-Markierung aufhebt (das Geraet folgt dem Server und verlaesst "abgemeldet"). Eine leere
         Konfiguration oder eine andere Anlage laesst die Markierung stehen; dieselbe Version erneut ruft hier nicht.
-        Kein Neustart, solange weder die alte noch die neue Konfiguration eingerichtet ist (L4-02): der Ruhezustand
+        Kein Neustart, solange weder die alte noch die neue Konfiguration eingerichtet ist: der Ruhezustand
         "nicht eingerichtet" liest kein Laufzeitfeld, und die erste leere Konfiguration nach dem Erstkontakt risse
         sonst einen laufenden Befehl mit."""
         aufgehoben = (dokument_config.eingerichtet(neu)

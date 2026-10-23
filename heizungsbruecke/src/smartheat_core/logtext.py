@@ -1,4 +1,4 @@
-"""Text fremder Herkunft fuer eine Logzeile (Testoffensive T6): Servertext (Grund einer Ablehnung) oder Text aus dem
+"""Text fremder Herkunft fuer eine Logzeile: Servertext (Grund einer Ablehnung) oder Text aus dem
 Konfigurationsdokument darf keine eigene Logzeile vortaeuschen und die UTF-8-Ausgabe des Logs nicht brechen.
 Steuerzeichen (U+0000-U+001F, U+007F-U+009F), die Zeilentrenner U+2028/U+2029, die Bidi-Steuerzeichen U+061C,
 U+200E/U+200F, U+202A-U+202E und U+2066-U+2069 (ordnen die Darstellung einer Zeile um), einzelne Surrogate und der

@@ -1,4 +1,4 @@
-"""Rastung des Sicherheitssatzes (G-1; Spec Stufe 3 S3 Abschnitt 3): Hebelsatz x Verteilsystem der ersten
+"""Rastung des Sicherheitssatzes (G-1): Hebelsatz x Verteilsystem der ersten
 eingerichteten Konfiguration, im Geraeteordner neben der Identitaet (device/sicherheitssatz.json). Kein Dokument des
 Servers loest sie, auch keine leere Konfiguration; sie geht nur mit den Geraetedaten (Add-on neu installieren, Gateway
 neu aufsetzen). Eine kaputte oder manipulierte Datei (auch ein Symlink) sperrt: UNBEKANNT passt zu keiner Konfiguration

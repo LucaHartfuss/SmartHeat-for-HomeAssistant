@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 _SETPOINT_STATUSES_WITH_VALUES = (delivery.STATUS_OK, delivery.STATUS_SKIPPED)
 
 # Fremdtext aus der Serverantwort (Grund einer Ablehnung, Beschreibung einer ungueltigen Antwort) geht in Datenfehler,
-# Push, offene Meldung, Speicher und den Statusstapel an den Server (A6-37): hoechstens so viele Zeichen.
+# Push, offene Meldung, Speicher und den Statusstapel an den Server: hoechstens so viele Zeichen.
 FREMDTEXT_MAX_CHARS = 200
 
 
@@ -35,7 +35,7 @@ _LEARNED_KEYS = frozenset({"curve", "heat_limit"})
 
 
 def _store_learned(rt: Runtime, learned) -> None:
-    """Lernwerte der Antwort fuer das Statusereignis (Plan 3c). Nur Anzeige: ungueltige Werte werden geloggt und
+    """Lernwerte der Antwort fuer das Statusereignis. Nur Anzeige: ungueltige Werte werden geloggt und
     ignoriert, ein Speicherfehler bricht die Antwort nicht ab (der Regelpfad ist schon durch)."""
     if not (
         isinstance(learned, dict) and learned and set(learned) <= _LEARNED_KEYS
@@ -53,7 +53,7 @@ def start_tick(rt: Runtime, trigger: str) -> None:
     deliver(rt, delivery.TickDue(seq=str(uuid.uuid4()), trigger=trigger))
 
 
-# Pruef-Tick (TP12b, Spec 1): der Server lernt nur auf "daily"; ein target_change bei unveraendertem
+# Pruef-Tick: der Server lernt nur auf "daily"; ein target_change bei unveraendertem
 # Soll ergibt Vorsteuerung null und dieselben Werte.
 PROBE_TRIGGER = "target_change"
 
@@ -125,7 +125,7 @@ def _attempt(rt: Runtime, seq: str, trigger: str):
     # mypyllant noch die alten Werte; der Server protokolliert beim Erstkontakt die gemeldeten Werte und
     # vergleicht sie an jedem Tagestick mit seinen zuletzt gesendeten ("Anlage folgt nicht"). Wie
     # derived.sync: bis LeverPipeline.settled gilt fuer jeden geschriebenen Hebel der eigene letzte Schreibwert
-    # (Audit 3, A3-02: auch Steigung und Heizgrenze, nicht nur die Parallelverschiebung). Der vorbereitete Hebel
+    # (auch Steigung und Heizgrenze, nicht nur die Parallelverschiebung). Der vorbereitete Hebel
     # (Vaillant: Wunschtemperatur der Zone) faellt sonst bei ruhender Zone auf den Wiederherstellungspunkt zurueck.
     pipeline = rt.override
     binding = pipeline.binding
@@ -136,8 +136,8 @@ def _attempt(rt: Runtime, seq: str, trigger: str):
             known[lever] = last
         elif lever == binding.description.prepared_lever:
             # Ruhende Zone beim ersten Start: noch kein Wiederherstellungspunkt, dann gilt das stabile Raum-Soll
-            # (S3-3), aber nur bei vorbereiteter Zone (rt.zone_prepared). Sonst bliebe es beim Datenfehler wie vor
-            # S3-3: die Antwort auf den Snapshot schriebe die Serverwerte und stellte dabei die nie vorbereitete Zone
+            #, aber nur bei vorbereiteter Zone (rt.zone_prepared). Sonst bliebe es beim Datenfehler wie vor
+            # Die Antwort auf den Snapshot schriebe die Serverwerte und stellte dabei die nie vorbereitete Zone
             # um. Hier wird nur gemeldet, der Wiederherstellungspunkt bleibt unberuehrt; die Antwort schreibt ihn.
             state = rt.store.state
             fallback = state.restore_point.get(lever)
@@ -324,7 +324,7 @@ def handle_setpoints(rt: Runtime, payload: dict) -> None:
         reason = payload.get("reason")
         reason = _kuerzen(reason) if isinstance(reason, str) and reason else None
         # Grund vom Server mit repr: ein einzelnes Surrogat braeche die UTF-8-Ausgabe des Logs, ein Zeilenumbruch
-        # faelschte eine zweite Logzeile (Testoffensive T6).
+        # faelschte eine zweite Logzeile.
         logger.warning("Server hat Snapshot (seq=%s) abgelehnt: %r", seq, reason)
         deliver(rt, delivery.Ack(seq=seq, status=delivery.STATUS_REJECTED, reason=reason))
     else:

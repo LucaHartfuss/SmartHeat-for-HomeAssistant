@@ -1,13 +1,13 @@
-"""Supervisor-Discovery des Add-ons (Spec 5c 1.1): meldet der HA-Instanz Geraete-ID, Uebernahmestand (gesperrt bei
+"""Supervisor-Discovery des Add-ons: meldet der HA-Instanz Geraete-ID, Uebernahmestand (gesperrt bei
 Sperre) und - solange das Geraet nicht uebernommen ist - den Uebernahme-Code; HA startet daraufhin den Assistenten der
 Integration (async_step_hassio). Die Daten bleiben in der Instanz (Supervisor <-> Core). Belegt durch die Probe auf
-einer echten HA-OS-Instanz (W Teil A, 2026-10-12, Spec 5c §8): die Meldung startet den Flow der Integration aus
+einer echten HA-OS-Instanz (W Teil A, 2026-10-12): die Meldung startet den Flow der Integration aus
 custom_components; der Supervisor haelt eine Meldung je Add-on und Dienst und ersetzt sie bei einem neuen POST unter
 derselben UUID.
 
 Neu gemeldet wird nur bei einer Aenderung; vergibt der Supervisor dabei eine neue UUID (die alte Meldung war verloren),
 wird die vorige (auch die eines frueheren Prozesses, UUID in discovery.json) danach entfernt - gelingt das nicht,
-bleibt sie vorgemerkt und wird erneut versucht, nie aufgegeben (5c-D-9): der Abstand waechst je Fehlversuch von
+bleibt sie vorgemerkt und wird erneut versucht, nie aufgegeben: der Abstand waechst je Fehlversuch von
 RETRY_SECONDS bis ENTFERNEN_MAX_SECONDS, damit kein alter Code im Supervisor stehen bleibt (hoechstens VERALTET_MAX
 vorgemerkt). Wirft nie. Eine gescheiterte Meldung wird fruehestens nach RETRY_SECONDS wiederholt (der Aufruf kommt im
 Sekundentakt des Geraets; der Supervisor wird nicht bestuermt, das Log nicht gefuellt); die Drossel merkt sich jede

@@ -1,13 +1,13 @@
-"""Dokumentspeicher des Geraets (Spec 5b 3 und 5.1); geschrieben wird ueber smartheat_core.dateien.
+"""Dokumentspeicher des Geraets; geschrieben wird ueber smartheat_core.dateien.
 
 Konfiguration und Bedienung liegen je in einer Datei mit Version und Inhalt (ohne schema/version des Vertrags).
 Uebernommen wird jede Version, die von der eigenen abweicht, auch eine kleinere (ein aus dem Backup zurueckgespielter
-Server, Plan S1); dieselbe Version nur, solange die Bedienung "dirty" ist (lokaler Bedienwunsch seit der letzten
-uebernommenen Bedienung, Spec 3.3: der Server schickt eine verlierende Bedienung mit gleicher Version zurueck).
+Server); dieselbe Version nur, solange die Bedienung "dirty" ist (lokaler Bedienwunsch seit der letzten
+uebernommenen Bedienung: der Server schickt eine verlierende Bedienung mit gleicher Version zurueck).
 Abgelehnt wird mit einem Grund aus wire.DOKUMENT_ERRORS und details; die vorige Version bleibt, die Ablehnung steht in
 dokumente.json.
 
-Mindestversion (Spec 2.1): liegt die eigene Software unter mindest_software, wird die Konfiguration mit update_noetig
+Mindestversion: liegt die eigene Software unter mindest_software, wird die Konfiguration mit update_noetig
 abgelehnt (das Geraet regelt mit der alten weiter); eine leere Konfiguration (anlage None, "nicht eingerichtet") wird
 immer uebernommen. update_noetig gilt auch nach einem Dokument mit unbekanntem schema und uebersteht Neustarts. Der
 Server schickt eine abgelehnte Version nicht erneut; gespeichert wird daher der Anlass (die mindest_software der
@@ -17,13 +17,13 @@ setzt den Anlass neu; eine wegen fehlender oder fremder Felder abgelehnte laesst
 Wirft der Treiber-Rueckruf config_check.NichtPruefbar (HA aus), laeuft empfangen durch: nichts wird gespeichert oder
 abgelehnt, das Geraet haelt das Dokument zurueck und prueft spaeter erneut (device.py). Ebenso, wenn die Vorbereitung
 vor dem Speichern einer geprueften Konfiguration scheitert (vor_speichern, der Host schreibt dort die
-Aufraeum-Markierung; Spec Testoffensive 12.6, Nr. 38): jede Ausnahme wird zu NichtPruefbar, eine ERROR-Zeile je
+Aufraeum-Markierung): jede Ausnahme wird zu NichtPruefbar, eine ERROR-Zeile je
 Zurueckhalten (erst ein Ergebnis fuer eine Konfiguration, Annahme oder Ablehnung, beendet das Zurueckhalten).
 Scheitert das Speichern (OSError, auch dokumente.json nach dem Dokument), gilt die Uebernahme im Speicher nicht und der
-Fehler geht hoch; das Geraet haelt das Dokument zurueck, die Wiederholung gibt dasselbe Ergebnis (A6-10).
+Fehler geht hoch; das Geraet haelt das Dokument zurueck, die Wiederholung gibt dasselbe Ergebnis.
 Eine kaputte Datei (Stromausfall) gilt als "keine Version": hello meldet 0, der Server stellt neu zu.
 
-Software-Angebot (5b-D2-3): das Feld software jeder Konfiguration mit bekanntem Schema, die ein Ergebnis bekommt (auch
+Software-Angebot: das Feld software jeder Konfiguration mit bekanntem Schema, die ein Ergebnis bekommt (auch
 eine abgelehnte oder erneut zugestellte), steht in dokumente.json (software_angebot), sofern es die Vertragsform hat
 (angebot_aus, software_pruefen, R15). null ist ein gemerktes zurueckgezogenes Angebot (Angebot(None)), nicht "nichts
 gemerkt": der Updater soll nach einem verlorenen Schreibvorgang keine zurueckgezogene Version installieren. Ein
@@ -31,7 +31,7 @@ ungueltiges oder fehlendes Feld laesst das gemerkte Angebot stehen. Das ist dass
 uebergibt; software_soll_nachholen des Gateways bietet es nach einem Neustart erneut an. Fehlt der Schluessel in
 dokumente.json oder hat sein Wert nicht die Vertragsform, ist nichts gemerkt (kein Kompatibilitaetspfad).
 
-Rastung (Spec Stufe 3 S3 Abschnitt 3, A5-06): Hebelsatz x Verteilsystem der ersten eingerichteten Konfiguration stehen
+Rastung: Hebelsatz x Verteilsystem der ersten eingerichteten Konfiguration stehen
 in sicherheitssatz.json; kein Dokument loest sie, auch keine leere Konfiguration. Sie wird vor dem Speichern der
 Konfiguration geschrieben. Fehlt die Datei bei gespeicherter eingerichteter Konfiguration (Stand vor dieser Version),
 rastet der Start (nicht in der Nur-Lese-Verwendung, rasten=False). Scheitert das Schreiben erst nach dem Ersetzen (fsync
@@ -227,7 +227,7 @@ class DocumentStore:
         return self._rastung
 
     def _rastung_laden(self) -> Rastung | None:
-        """Spec 3.3: fehlt die Datei und ist die gespeicherte Konfiguration eingerichtet, gilt deren Paar (Regel "erste
+        """Fehlt die Datei und ist die gespeicherte Konfiguration eingerichtet, gilt deren Paar (Regel "erste
         eingerichtete Konfiguration", z. B. client1 beim ersten Start mit dieser Version). Eine vorhandene, auch
         kaputte Datei wird nie ueberschrieben."""
         gelesen = rastung.lesen(self._rastung_pfad)
@@ -292,11 +292,11 @@ class DocumentStore:
 
     def software_angebot(self) -> Angebot | None:
         """Zuletzt gueltiges Software-Angebot (Kopie; Angebot(None) = zurueckgezogen), None = nichts gemerkt
-        (Moduldocstring, 5b-D2-3)."""
+        (Moduldocstring)."""
         return copy.deepcopy(self._software_angebot)
 
     def mark_dirty(self) -> None:
-        """Lokaler Bedienwunsch (Spec 3.3): die naechste Bedienung wird auch mit gleicher Version uebernommen."""
+        """Lokaler Bedienwunsch: die naechste Bedienung wird auch mit gleicher Version uebernommen."""
         with self._lock:
             doc = self._docs[BEDIENUNG]
             if doc is not None and not doc.dirty:
@@ -346,14 +346,14 @@ class DocumentStore:
         if art == KONFIGURATION:
             self._vorbereiten(inhalt)
         if art == KONFIGURATION and self._rastung is None and not config_check.ist_leer(inhalt):
-            self._rastung = self._rasten(inhalt)  # vor dem Dokument (Spec 3.2): ein Absturz dazwischen schadet nicht
+            self._rastung = self._rasten(inhalt)  # vor dem Dokument: ein Absturz dazwischen schadet nicht
         vorher, abgelehnt = self._docs[art], self._abgelehnt.get(art)
         try:
             self._speichern(Dokument(art, version, inhalt))
             self._abgelehnt.pop(art, None)
             self._zustand_speichern()
         except BaseException:
-            # A6-10: scheitert etwas nach dem Dokument (dokumente.json), gilt die Uebernahme im Speicher nicht, sonst
+            # Scheitert etwas nach dem Dokument (dokumente.json), gilt die Uebernahme im Speicher nicht, sonst
             # gaebe die Wiederholung ein Duplikat (ok ohne uebernommen) und der Host erfuehre sie nie; die Wiederholung
             # schreibt dieselbe Version gleich neu
             self._docs[art] = vorher

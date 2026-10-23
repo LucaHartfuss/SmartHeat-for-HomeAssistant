@@ -67,7 +67,7 @@ def run_local_check(rt: Runtime) -> None:
     if expired:
         logger.info("Comfort-Boost endet nach der Hoechstdauer (seit %s)", state.boost_since)
     safety = rt.override.safety
-    # Ohne Comfort-Boost-Werte (z. B. Fussbodenheizung, Spec 6.3) gibt es keinen Comfort-Boost.
+    # Ohne Comfort-Boost-Werte (z. B. Fussbodenheizung) gibt es keinen Comfort-Boost.
     comfort = not expired and bool(safety.comfort_boost) and decide_boost(
         room_actual=room_actual,
         room_target=room_target,
@@ -88,7 +88,7 @@ def run_local_check(rt: Runtime) -> None:
     # B5: wurde der Comfort-Start mangels Wiederherstellungspunkt, wegen der Wartezeit oder eines Fehlers abgelehnt,
     # bleibt der alte Sollwert gemerkt, damit der naechste Check die Erhoehung erneut sieht. Wegen der Tageszahl oder
     # des Tageslimits abgelehnt gilt sie als verbraucht: sonst startete nach dem Tageswechsel ein Boost fuer eine
-    # Erhoehung vom Vortag (A6-01).
+    # Erhoehung vom Vortag.
     refused = comfort and not comfort_set and not rt.override.comfort_start_heute_gesperrt
     remembered = state.last_room_target if refused else room_target
     rt.store.update_saved(last_room_target=remembered)
@@ -99,7 +99,7 @@ def _track_boost_since(rt: Runtime, now: datetime, was_active: bool) -> None:
     uebrig gebliebener alter Zeitstempel wird ueberschrieben; ein laufender Boost behaelt seinen Zeitstempel, ein
     vor dem Update persistierter (ohne oder mit unlesbarem Zeitstempel) laeuft ab jetzt. update() statt
     update_saved(): bei einem Schreibfehler bleibt der Wert im Speicher, die 4-h-Grenze greift trotzdem. Dazu der
-    Stand der monotonen Uhr beim Start in diesem Prozess (A6-35 a); ein Boost aus einem frueheren Lauf hat ihn nicht."""
+    Stand der monotonen Uhr beim Start in diesem Prozess; ein Boost aus einem frueheren Lauf hat ihn nicht."""
     state = rt.store.state
     if not state.boost_active:
         since = None
@@ -115,7 +115,7 @@ def _track_boost_since(rt: Runtime, now: datetime, was_active: bool) -> None:
 
 
 def _count_unreadable_room(rt: Runtime) -> None:
-    """Audit 4, A4-09: nach UNREADABLE_ROOM_CHECKS unlesbaren Raumwerten in Folge endet ein laufender Comfort-Boost
+    """Nach UNREADABLE_ROOM_CHECKS unlesbaren Raumwerten in Folge endet ein laufender Comfort-Boost
     (Rueckkehr auf den Wiederherstellungspunkt); der Notfall-Boost bleibt, wie er ist."""
     misses = rt.store.state.room_actual_misses + 1
     rt.store.update(room_actual_misses=misses)
@@ -133,7 +133,7 @@ def claim_due_tick(rt: Runtime, now: datetime) -> str | None:
     Entstehen, nicht beim Publish: ein zurueckgehaltener Tick erzeugt keine Duplikate, seine
     Wiederholungen laufen ueber die Zustellung. Ohne Stable-Target-Cache (Thermostat beim Start
     nicht lesbar) gibt es nur einen faelligen Tagestick; dessen Versuch liest live und meldet den
-    Fuehler als Datenfehler (AU-013)."""
+    Fuehler als Datenfehler."""
     state = rt.store.state
     if state.abo_inactive_since is not None:
         return None

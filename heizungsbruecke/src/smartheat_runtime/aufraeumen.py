@@ -1,15 +1,15 @@
-"""Leer heisst abmelden (Audit 5, A5-23; Spec Stufe 3 S3 Abschnitt 4), beide Hosts gleich. Beim Wechsel von eingerichtet
+"""Leer heisst abmelden, beide Hosts gleich. Beim Wechsel von eingerichtet
 auf leer schreibt der Host die Markierung aufraeumen.json mit der alten Konfiguration und startet neu. Der naechste
 Start setzt mit ihr zurueck wie sign_off (Laufzeit im Modus abgemeldet); gelingt das, wird die Markierung
 `zurueckgesetzt`, der Prozess startet neu, und erst dann loescht der Host den anlagengebundenen Zustand. So kann kein
 Server-Pfad (device release, ersetzen, _fail) die Anlage auf SmartHeat-Werten zuruecklassen. Ohne gespeicherte
-Konfiguration (Markierung aus 1.0.0, kaputt) wird geloescht wie bisher. Ist die Markierung da, aber nicht lesbar (EIO,
-EACCES; auch ihr Vorhandensein ist dann nicht feststellbar), bleibt sie, und nichts wird geloescht (BEHALTEN, S3S3-
-Marker): ein Lesefehler ist keine fehlende Konfiguration, der naechste Start versucht es erneut.
+Konfiguration (Markierung kaputt) wird geloescht. Ist die Markierung da, aber nicht lesbar (EIO,
+EACCES; auch ihr Vorhandensein ist dann nicht feststellbar), bleibt sie, und nichts wird geloescht (BEHALTEN):
+ein Lesefehler ist keine fehlende Konfiguration, der naechste Start versucht es erneut.
 
-Bedrohungsmodell (Spec 2): die Markierung schreibt das Geraet selbst aus seiner gespeicherten, schon geprueften
+Bedrohungsmodell: die Markierung schreibt das Geraet selbst aus seiner gespeicherten, schon geprueften
 Konfiguration; der Server liefert hier nichts. Nennt die Konfiguration der Markierung eine andere Anlage als die
-Markierung, gilt sie als fehlend (loeschen wie bisher), und die Laufzeit prueft sie vor dem Zuruecksetzen ohnehin gegen
+Markierung, gilt sie als fehlend (loeschen), und die Laufzeit prueft sie vor dem Zuruecksetzen ohnehin gegen
 die Rastung (sign_off_parts)."""
 import json
 import logging
@@ -68,11 +68,11 @@ def _auswerten(name: str, inhalt: bytes) -> Markierung | None:
 def entscheiden(pfad: Path, gespeichert) -> tuple[str, Markierung | None]:
     """Vor dem Start des Geraetekerns: (Entscheidung, Markierung). Entscheidung ist KEINE, VERWERFEN (wieder
     eingerichtet, Zustand bleibt), ZURUECKSETZEN (Markierung bleibt, die Laufzeit setzt zurueck), LOESCHEN (Zustand und
-    Markierung weg) oder BEHALTEN (Markierung unlesbar: nichts loeschen). Die Markierung wird genau einmal gelesen
-    (S3S6-Reste 3): verschwunden heisst KEINE, ein Lesefehler BEHALTEN; ein zweites Lesen koennte einen
+    Markierung weg) oder BEHALTEN (Markierung unlesbar: nichts loeschen). Die Markierung wird genau einmal gelesen:
+    verschwunden heisst KEINE, ein Lesefehler BEHALTEN; ein zweites Lesen koennte einen
     voruebergehenden Fehler sonst als kaputte Markierung (LOESCHEN) werten. Nur bei ZURUECKSETZEN kommt die gelesene
     Markierung (mit Konfiguration, nicht zurueckgesetzt) mit zurueck: der Host reicht sie an die Laufzeit weiter
-    (GeraetHostBasis.start_markierung), statt die Datei ein zweites Mal zu lesen (T4-Markierung-Zweitlesen); sonst None."""
+    (GeraetHostBasis.start_markierung), statt die Datei ein zweites Mal zu lesen; sonst None."""
     try:
         da = pfad.exists()  # wirft bei EIO/EACCES im stat (nur fehlende Datei ergibt False)
     except OSError as error:

@@ -1,4 +1,4 @@
-"""SignalSource ueber die HA-REST-API (Spec SHG 3.2): Referenzen sind Entity-IDs bzw. `entity::attribut`
+"""SignalSource ueber die HA-REST-API: Referenzen sind Entity-IDs bzw. `entity::attribut`
 (ha_api.get_state). Uebersetzt die requests-Fehler in die Fehler des Ports; ungueltige Werte bleiben ValueError/
 KeyError/TypeError."""
 from collections.abc import Callable
@@ -30,7 +30,7 @@ class HaSignalSource:
 
 
 class GeraetSignale:
-    """SignalSource des Geraete-Pfads (Spec 5c 1.3): der Raum-Soll (SOLL_REF) kommt aus dem Soll-Speicher, alles
+    """SignalSource des Geraete-Pfads: der Raum-Soll (SOLL_REF) kommt aus dem Soll-Speicher, alles
     andere aus HA. store_getter liefert None, solange der Host nicht geladen hat."""
 
     def __init__(self, ha_signals: HaSignalSource, store_getter: Callable[[], TargetStore | None]) -> None:

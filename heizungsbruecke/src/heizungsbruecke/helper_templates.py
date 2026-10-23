@@ -1,4 +1,4 @@
-"""Template-Texte fuer die Template-Hilfssensoren (Spec TP6, 3.2). Eine Quelle ist `sensor.x`
+"""Template-Texte fuer die Template-Hilfssensoren. Eine Quelle ist `sensor.x`
 oder `entity::attribut` (Add-on-Konvention, siehe ha_api.get_state). Ungueltige oder
 unplausible Werte zaehlen nicht; ohne gueltigen Wert rendert das Template `none`, der Sensor
 steht dann auf `unknown` und der Tick meldet einen lokalen Datenfehler."""

@@ -1,4 +1,4 @@
-"""Die eine MQTT-Verbindung des Geraets (Spec 5b 5.1, Weichenstellung 2): MQTT 5, Client-ID = Geraete-ID (= Thing),
+"""Die eine MQTT-Verbindung des Geraets (Weichenstellung 2): MQTT 5, Client-ID = Geraete-ID (= Thing),
 persistente Session (clean_start=False, Ablauf 3600 s, AN-9), TLS mit dem Geraete-Zertifikat aus dem Bootstrap ueber
 smartheat_device.tls (derselbe TLS-Weg wie im Add-on). Nach jedem Verbinden abonniert der Link genau den Filter
 down/# (AN-6) und meldet "verbunden" (das Geraet schickt dann hello). Nachrichten auf fremden Topics und retained
@@ -38,7 +38,7 @@ from smartheat_device.tls import (
 )
 
 logger = logging.getLogger(__name__)
-#: Nummern der paho-Clients, ueber alle Links des Prozesses eindeutig (Ereignis GESENDET traegt sie, L4-02)
+#: Nummern der paho-Clients, ueber alle Links des Prozesses eindeutig (Ereignis GESENDET traegt sie)
 _CLIENT_NUMMERN = itertools.count(1)
 
 AUTH_FAILURES_FOR_RESCUE = 3
@@ -99,7 +99,7 @@ class Link:
     def publish(self, name: str, payload: dict) -> int | None:
         if name not in wire.UP_TOPICS:
             raise ValueError(f"{name} ist kein Topic des Geraets")
-        # allow_nan=False: nie NaN/Inf hinaus (Testoffensive T2, Nr. 17); json wirft dann ValueError (Text ohne Werte), den
+        # allow_nan=False: nie NaN/Inf hinaus; json wirft dann ValueError (Text ohne Werte), den
         # der einzige Aufrufer Device._publish faengt. Die Bausteine setzen nicht endliche Zahlen schon vorher zu None.
         raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()
         if len(raw) > wire.MAX_MESSAGE_BYTES:

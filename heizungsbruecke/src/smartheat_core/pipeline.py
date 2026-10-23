@@ -1,4 +1,4 @@
-"""Hebel-Pipeline (Hersteller-Abstraktion, Spec 5.2, Plan 2 P2-1/P2-2/P2-5; Nachfolger von heizungsbruecke/override.py):
+"""Hebel-Pipeline (Hersteller-Abstraktion):
 welche Hebelwerte auf der Anlage stehen sollen, und das Schreiben dorthin ueber das Binding. Rein: Anlage (Binding),
 Speicher (store) und Uhr kommen von aussen.
 
@@ -7,11 +7,11 @@ Sollwert-Zeile (Vorrang von oben nach unten):
     Comfort-Boost aktiv -> LocalSafety.comfort_boost (*)
     sonst               -> Wiederherstellungspunkt restore_point (nur vorhandene Hebel)
     (*) ein Hebel aus BindingDescription.optional_restore nur, wenn der Wiederherstellungspunkt einen Wert fuer ihn
-        hat; sonst bleibt er waehrend des Boosts unangetastet (Vaillant: Heizgrenze, TP12h -- ohne Punkt koennte das
+        hat; sonst bleibt er waehrend des Boosts unangetastet (Vaillant: Heizgrenze -- ohne Punkt koennte das
         Boost-Ende sie nicht zuruecknehmen).
 
-Ursprungswerte (P2-5): die Hebel aus BindingDescription.restore_originals merkt capture_originals vor dem ersten eigenen
-Schreiben; restore_and_clear (Abo-Ende, Abmelden) stellt sie wieder her. Plan 3b: zusaetzlich die Hilfswerte aus
+Ursprungswerte: die Hebel aus BindingDescription.restore_originals merkt capture_originals vor dem ersten eigenen
+Schreiben; restore_and_clear (Abo-Ende, Abmelden) stellt sie wieder her. Zusaetzlich die Hilfswerte aus
 BindingDescription.aux_originals (Betriebsart, Komfort-/Absenk-Soll), gemerkt vor der ersten Vorbereitung bzw. dem
 ersten Schreiben des prepared_lever und nach den Hebeln zurueckgestellt.
 
@@ -19,12 +19,12 @@ Geschrieben wird nur bei tatsaechlicher Aenderung (Quota-Check, jeder Schreibvor
 Wert auf die lokalen Grenzen begrenzt und auf die Schrittweite der Anlage gerundet. Client-abgeleitete Hebel
 (Mindestvorlauf) gehoeren zu keiner Zeile, werden aber auch hier geschrieben (write_lever).
 
-Plan 3b: Jeder physische Schreibvorgang (binding.physical_writes; eine Schreibgruppe zaehlt je physischem Aufruf,
-A6-09) zaehlt in das Tagesbudget TOTAL (nur mit BindingDescription.daily_write_limit) und in den Lebensdauerzaehler
+Jeder physische Schreibvorgang (binding.physical_writes; eine Schreibgruppe zaehlt je physischem Aufruf)
+zaehlt in das Tagesbudget TOTAL (nur mit BindingDescription.daily_write_limit) und in den Lebensdauerzaehler
 (nur mit lifetime_hint_at). Das Tagesbudget begrenzt Serverwerte, Durchsetzen, Vorbereitung und Mindestvorlauf; ein
-Boost startet am Tageslimit nicht (A6-01), Boost-Ende und Wiederherstellung sind ausgenommen, zaehlen aber mit (der
+Boost startet am Tageslimit nicht, Boost-Ende und Wiederherstellung sind ausgenommen, zaehlen aber mit (der
 Rueckweg hat Vorrang vor der Schonung). Jeder Boost-Start zaehlt (Comfort: boost_start, Notfall: emergency_start; je
-hoechstens 6 am Tag, 30 min Abstand, A6-01/A6-34). Ein wegen des Budgets nicht geschriebener Serverwert bleibt im
+hoechstens 6 am Tag, 30 min Abstand). Ein wegen des Budgets nicht geschriebener Serverwert bleibt im
 Wiederherstellungspunkt und in deferred_levers und wird mit write_deferred nachgeholt."""
 import logging
 import time
@@ -63,7 +63,7 @@ _POINT_CURRENT = "current"
 _POINT_SAVED = "saved"
 
 
-# Plan 3b: Meldeschluessel der nicht kritischen Hinweise (abschaltbar, Plan 3c).
+# Meldeschluessel der nicht kritischen Hinweise (abschaltbar).
 BUDGET_KEY = "schreibbudget"
 LIFETIME_KEY = "schreibzaehler"
 LIFETIME_STEP = 10000
@@ -123,7 +123,7 @@ class LeverPipeline:
         self._narrowing_logged: dict[str, tuple[float, float]] = {}
         # Nicht kritischer Hinweis (Schluessel, Zustand, Text); im Add-on Notifier.notify(..., critical=False).
         self._notify = notify
-        # Ursprungswerte der Anlage auf dem Server (Spec Stufe 3 S3 5.2, 5b-W-4); frisch bei jedem Zuruecksetzen
+        # Ursprungswerte der Anlage auf dem Server; frisch bei jedem Zuruecksetzen
         # gelesen.
         self._server_originals = server_originals
         # Zeitpunkt (clock) und Wert des letzten erfolgreichen eigenen Schreibens je Hebel, nur Laufzeit: Durchsetzen
@@ -338,9 +338,9 @@ class LeverPipeline:
         auch ohne laufenden Boost). Die Hebel aus restore_originals gehen auf ihren Ursprungswert, auch ohne laufenden
         Boost, wenn der Wiederherstellungspunkt davon abweicht; ist der Ursprungswert unbekannt, bleibt der Hebel auf
         dem Wiederherstellungspunkt (Log). False, wenn das Schreiben scheitert: die Flags bleiben, der Aufrufer
-        versucht es erneut. Scheitert danach nur das Speichern, gilt die Wiederherstellung als erfolgt. Plan 3b: danach
-        die Hilfs-Ursprungswerte (aux_originals), die anschliessend geleert werden. Hilfswerte des Servers (Spec Stufe 3
-        S3 5.2) gelten nur, wenn ohnehin zurueckgesetzt wird; ausloesen koennen sie es nicht."""
+        versucht es erneut. Scheitert danach nur das Speichern, gilt die Wiederherstellung als erfolgt. Danach
+        die Hilfs-Ursprungswerte (aux_originals), die anschliessend geleert werden. Hilfswerte des Servers
+        gelten nur, wenn ohnehin zurueckgesetzt wird; ausloesen koennen sie es nicht."""
         state = self._store.state
         server = self._server_snapshot()
         originals: dict[str, float] = {}
@@ -414,7 +414,7 @@ class LeverPipeline:
         return werte if isinstance(werte, Mapping) else {}
 
     def _aux_vom_server(self, name: str, wert) -> bool:
-        """Spec 5.2: Zahl nur fuer die Sollwert-Rollen (Komfort-/Absenk-Soll) und nur im lokalen Bereich von
+        """Zahl nur fuer die Sollwert-Rollen (Komfort-/Absenk-Soll) und nur im lokalen Bereich von
         room_setpoint, Text nur fuer die uebrigen Rollen und nur, wenn das Binding ihn kennt (ein fehlerhafter Server
         darf keine unbekannte Betriebsart setzen)."""
         if name in AUX_SETPOINT_ROLES:
@@ -435,7 +435,7 @@ class LeverPipeline:
         if row == _ROW_COMFORT:
             return {lever: value for lever, value in self._safety.comfort_boost.items() if included(lever)}
         # Reihenfolge des Hebelsatzes, nicht die Einfuegereihenfolge des Punkts: Durchsetzen geht expected_values
-        # der Reihe nach durch (wie bis 0.29.0: Steigung, Wunschtemperatur, Heizgrenze).
+        # der Reihe nach durch (Steigung, Wunschtemperatur, Heizgrenze).
         return {
             lever: point[lever] for lever in self._description.lever_set.levers if point.get(lever) is not None
         }
@@ -445,7 +445,7 @@ class LeverPipeline:
         Ziel liegen; haben WIR den Hebel innerhalb von settle_seconds selbst geschrieben, muss zusaetzlich unser
         letzter Schreibwert schon dem Ziel entsprechen (A -> B -> A, waehrend die Anlage noch B zeigt). Ein Lesefehler
         oder ein nicht auswertbarer Read heisst "schreiben". Meldet die Anlage keinen Sollwert (None, ruhende Zone),
-        zaehlt nur der eigene letzte Schreibwert seit dem Start (B-TP11-2)."""
+        zaehlt nur der eigene letzte Schreibwert seit dem Start."""
         try:
             current = self._binding.read(lever)
         except Exception:
@@ -538,9 +538,9 @@ class LeverPipeline:
 
     def _write_group(self, members: list[str], values: Mapping[str, float], *, exempt: bool) -> None:
         """Schreibgruppe (Viessmann setCurve): weicht ein Mitglied ab, werden alle geschrieben (Reihenfolge des
-        Hebelsatzes) und zaehlen physisch (A6-09: ohne write_group je Mitglied ein Vorgang, mit write_group meldet der
+        Hebelsatzes) und zaehlen physisch (ohne write_group je Mitglied ein Vorgang, mit write_group meldet der
         Treiber einen Vorgang je Aufruf). Scheitert ein spaeteres Mitglied, schreibt der naechste
-        Versuch wieder alle. Hat das Binding write_group (Viessmann-Treiber, Audit 4 A4-31), geht die ganze Gruppe in
+        Versuch wieder alle. Hat das Binding write_group (Viessmann-Treiber), geht die ganze Gruppe in
         EINEM Aufruf hinaus: keine Zwischenstellung, ein Aufruf aus dem Kontingent; ein Fehler gilt dem ersten Mitglied.
         Die Buchfuehrung (letzter Schreibzeitpunkt und -wert) bleibt je Mitglied."""
         targets = {lever: self._target(lever, values[lever]) for lever in members}
@@ -598,7 +598,7 @@ class LeverPipeline:
             # Ohne Pflicht zu Hilfswerten (nur die Wiederherstellung) nicht vorbereiten, wenn das Binding Hilfswerte
             # hat: die Betriebsart geht ueber restore_aux zurueck, ohne gemerkte Werte bliebe eine Umstellung fuer
             # immer.
-            # Vaillant (keine Hilfswerte) bereitet wie bisher vor.
+            # Vaillant (keine Hilfswerte) bereitet nur vor.
             if self._binding.needs_preparation() and (require_aux or not self._description.aux_originals):
                 if not prepare_quota:
                     switched = self.ensure_prepared(exempt=exempt, require_aux=require_aux)
@@ -631,7 +631,7 @@ class LeverPipeline:
     def _prepare_within_quota(self, *, exempt: bool, require_aux: bool) -> bool | None:
         """ensure_prepared im Kontingent zone_prepare (write_budget.RETRY_QUOTA: nach einem Fehlschlag hoechstens ein
         Versuch je 30 min, 6 Fehlschlaege am Tag), das der Schreibweg der Serverwerte mit dem Start und dem lokalen
-        Check teilt (Schlussreview TP2, I-1/I-2): sonst stellte jede Antwort auf einen Snapshot und jede Wiederholung
+        Check teilt (I-1/I-2): sonst stellte jede Antwort auf einen Snapshot und jede Wiederholung
         der Datenkette eine nicht vorbereitbare Zone erneut um. Ein Erfolg setzt das Kontingent zurueck, das
         Tagesbudget (WriteBudgetExhausted) zaehlt nicht als Fehlschlag. Sperrt das Kontingent, entscheidet ein Lesen
         der Betriebsart (is_prepared, kein Schreiben): steht die Anlage schon vorbereitet, gilt das wie eine
@@ -777,7 +777,7 @@ class LeverPipeline:
         return switched
 
     def prepare_start(self, start_value: float | None) -> None:
-        """Start (Plan-Praezisierung 11, TP11): Anlage vorbereiten; meldet prepared_lever danach keinen brauchbaren
+        """Start: Anlage vorbereiten; meldet prepared_lever danach keinen brauchbaren
         Wert oder wurde gerade umgestellt, den Startwert schreiben und als Wiederherstellungspunkt speichern.
         Startwert: gespeicherter Punkt, sonst `start_value` (Raum-Soll). Wirft DeviceWriteError."""
         lever = self._description.prepared_lever
@@ -789,7 +789,7 @@ class LeverPipeline:
         except Exception:
             live = None
         low, high = self.range_of(lever)
-        # O-TP12e-1: nach der eigenen Umstellung ist der Sollwert unbekannt, bis ein Schreiben gelang. Scheiterte der
+        # Nach der eigenen Umstellung ist der Sollwert unbekannt, bis ein Schreiben gelang. Scheiterte der
         # Startwert, erzwingt ihn auch die Wiederholung (die Zone ist dann schon umgestellt, switched ist False).
         reset = switched or (self._prepared_at is not None and lever not in self._last_written)
         forced = reset and self._description.preparation_resets_setpoint
@@ -806,7 +806,7 @@ class LeverPipeline:
         logger.warning("Startwert fuer %s geschrieben: %s", lever, written)
 
     def reseed_from_plant(self, lever: str) -> None:
-        """Erster Start ohne gespeicherten prepared_lever (Neuinstallation, Update von vor TP11): ein vorhandener
+        """Erster Start ohne gespeicherten prepared_lever (Neuinstallation, Update von einer aelteren Version): ein vorhandener
         Wiederherstellungswert dieses Hebels stammt aus einer aelteren Regelung und wuerde sonst per Durchsetzen oder
         Boost-Ende geschrieben. Deshalb den Live-Wert (begrenzt, gerundet) uebernehmen; nicht lesbar: verwerfen.
         Waehrend eines Boosts steht die Anlage auf Boost-Werten: dann bleibt der Punkt. Wirft nur beim Speichern."""
@@ -877,9 +877,9 @@ class LeverPipeline:
         return _POINT_CURRENT
 
     def capture_originals(self) -> None:
-        """Die Hebel aus restore_originals vor dem ersten eigenen Schreiben als Ursprungswert merken (TP12h, P2-5). Nur
+        """Die Hebel aus restore_originals vor dem ersten eigenen Schreiben als Ursprungswert merken. Nur
         einmal und nur solange es fuer den Hebel noch keinen Wiederherstellungswert gibt (sonst waere der Live-Wert
-        schon ein gelernter). Ein Lesefehler ist kein Fehler: der naechste Aufruf versucht es erneut. Plan 3b: danach
+        schon ein gelernter). Ein Lesefehler ist kein Fehler: der naechste Aufruf versucht es erneut. Danach
         die Hilfs-Ursprungswerte (_capture_aux)."""
         self._capture_lever_originals()
         self._capture_aux()
@@ -919,7 +919,7 @@ class LeverPipeline:
             self._count_physical(self._binding.physical_writes - before)
 
     def _capture_lever_originals(self) -> None:
-        """Die Hebel aus restore_originals vor dem ersten eigenen Schreiben als Ursprungswert merken (TP12h, P2-5). Nur
+        """Die Hebel aus restore_originals vor dem ersten eigenen Schreiben als Ursprungswert merken. Nur
         einmal und nur solange es fuer den Hebel noch keinen Wiederherstellungswert gibt (sonst waere der Live-Wert
         schon ein gelernter). Ein Lesefehler ist kein Fehler: der naechste Aufruf versucht es erneut."""
         for lever in self._description.restore_originals:

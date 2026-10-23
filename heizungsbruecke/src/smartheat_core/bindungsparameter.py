@@ -1,8 +1,8 @@
 """Bindungsparameter aus der Konfiguration pruefen und mit dem lokalen Verfahrensteil zur wirksamen
-BindingDescription verbinden (G-7; Spec Stufe 3 S4b Abschnitte 3 und 4.2). Rein: nur Standardbibliothek und
+BindingDescription verbinden (G-7). Rein: nur Standardbibliothek und
 smartheat_core. Feldnamen = smartheat_device.wire (BINDUNGSPARAMETER_FIELDS, SCHREIBSCHUTZ_FIELDS, ZAEHLER,
 ENERGIE_EINHEITEN); ein Test haelt sie gleich, der Kern importiert den Geraetekern nicht. Jeder Fehler ist ein
-`Fehler` (ValueError) mit lokalem Text und details fuer den Server (Spec Stufe 3 S5 6.1); es gibt keine Ersatztabelle
+`Fehler` (ValueError) mit lokalem Text und details fuer den Server; es gibt keine Ersatztabelle
 (Nutzer-Entscheidung 2026-10-15)."""
 from collections.abc import Mapping
 from typing import TypeGuard
@@ -16,7 +16,7 @@ FELDER = ("schritte", "toleranzen", "wartezeit_s", "schreibgruppen", "zurueck", 
           "zaehler", "schreibschutz", "schemata", "energie")
 SCHREIBSCHUTZ_FELDER = ("tag", "lebensdauer_hinweis", "durchsetzen_tag")
 ZAEHLER = (ENERGY_TOTAL, ENERGY_DAILY)
-#: Einheit -> (Zieleinheit, Faktor): gesendet wird in kWh bzw. m³ (Spec 5).
+#: Einheit -> (Zieleinheit, Faktor): gesendet wird in kWh bzw. m³.
 EINHEITEN = {"Wh": ("kWh", 0.001), "kWh": ("kWh", 1.0), "m³": ("m³", 1.0)}
 #: Energiekanaele = Energierollen ohne "energy_" (Telemetrie, Server generic_energy_log).
 ENERGIE_KANAELE = ("electrical_heating", "electrical_dhw", "primary_heating", "primary_dhw", "thermal_heating",
@@ -27,7 +27,7 @@ WARTEZEIT_S = (60, 7200)
 
 class Fehler(ValueError):
     """Verstoss gegen die lokalen Grenzen der Bindungsparameter: der Text ist lokal (Start, Log), details gehen an den
-    Server (Spec Stufe 3 S5 6.1; Feldnamen aus wire.PRUEF_FELDER)."""
+    Server (Feldnamen aus wire.PRUEF_FELDER)."""
 
     def __init__(self, text: str, feld: str, regel: str, **zahlen: float) -> None:
         super().__init__(text)
@@ -137,7 +137,7 @@ def beschreibung(hebelsatz: str, parameter) -> BindingDescription:
     ):
         raise Fehler("Jede Schreibgruppe der Bindungsparameter braucht mindestens zwei Hebel, und kein Hebel "
                      "steht in zwei Gruppen.", "schreibgruppen", "ungueltig")
-    erlaubt = {frozenset(g) for g in verfahren.schreibgruppen_erlaubt}  # A6-09: lokale Positivliste
+    erlaubt = {frozenset(g) for g in verfahren.schreibgruppen_erlaubt}  # Lokale Positivliste
     if any(frozenset(g) not in erlaubt for g in schreibgruppen):
         raise Fehler("Die Schreibgruppen der Bindungsparameter sind für diesen Hebelsatz nicht erlaubt.",
                      "schreibgruppen", "nicht_erlaubt")

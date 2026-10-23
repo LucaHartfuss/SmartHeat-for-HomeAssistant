@@ -1,4 +1,4 @@
-"""Tagestick-Zeit aus dem Konfigurationsdokument (TP11: Tag-/Nachtfenster entfallen)."""
+"""Tagestick-Zeit aus dem Konfigurationsdokument (es gibt keine Tag-/Nachtfenster)."""
 import re
 
 _HHMM_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")

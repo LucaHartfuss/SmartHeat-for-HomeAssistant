@@ -1,4 +1,4 @@
-"""Lebenszyklus des Geraeteprozesses (Audit 5 A5-26; Spec Stufe 3 S6 4.2/4.3), fuer beide Hosts gleich: Geraete-Thread
+"""Lebenszyklus des Geraeteprozesses, fuer beide Hosts gleich: Geraete-Thread
 und Laufzeit bis zum Ende des Prozesses, ein Weg fuer jeden Neustart, sauberes Trennen vor jedem Ende, Aufraeumen beim
 Start. Der Host liefert nur, wie er die Laufzeit startet und wie er neu startet: HA per exec (der Supervisor startet ein
 sauber beendetes Add-on nicht zuverlaessig neu), das Gateway mit Exit 0 (Compose startet neu).
@@ -6,13 +6,13 @@ sauber beendetes Add-on nicht zuverlaessig neu), das Gateway mit Exit 0 (Compose
 - Neustart (EV_RELOAD aus dem Geraete-Host; neustart_der_laufzeit, der Rueckruf, den beide Hosts app.start uebergeben:
   Abo am Fristende wieder aktiv, Neupruefung im Konfigurationsfehler, Neustart nach dem Zuruecksetzen): der Worker endet
   mit Neustart; beenden trennt zuerst den Link (MQTT-DISCONNECT; sonst meldet IoT Core DUPLICATE_CLIENTID, wenn der
-  neue Prozess verbindet), dann der Neustart des Hosts. Globales wird dafuer nicht ueberschrieben (Spec 4.2).
+  neue Prozess verbindet), dann der Neustart des Hosts. Globales wird dafuer nicht ueberschrieben.
 - Unerwarteter Fehler im Start der Laufzeit oder im Worker: Fehlerart ins Log, beenden, FEHLER_PAUSE_SECONDS Pause,
-  dann derselbe Neustart (keine schnelle Schleife gegen IoT Core; bis Stufe 3 S6 hatte das Gateway keine Pause). Vor
+  dann derselbe Neustart (keine schnelle Schleife gegen IoT Core). Vor
   der Pause ruft laufen den optionalen Rueckruf vor_pause des Hosts: das Gateway meldet sich darin ungesund, damit der
-  Updater ein Update, dessen Laufzeit gleich nach dem Start wirft, weiter zurueckrollt (Abschlussreview S6 I-2); HA
+  Updater ein Update, dessen Laufzeit gleich nach dem Start wirft, weiter zurueckrollt; HA
   hat keinen. Ein Fehler in den Host-Schritten davor (Aufraeumen, Geraete-Host, Geraetekern) endet ueber starten in
-  derselben Pause und demselben Neustart (S3S6-Startabbruch).
+  derselben Pause und demselben Neustart.
 - SIGTERM (SystemExit): beenden, kein Neustart; auch waehrend der Pause."""
 import logging
 import threading
@@ -45,7 +45,7 @@ def _neustart(anlass: str) -> None:
 
 
 def neustart_der_laufzeit() -> None:
-    """Der Rueckruf neustart fuer app.start (Spec Stufe 3 S6 4.2), beide Hosts: Abo am Fristende wieder aktiv,
+    """Der Rueckruf neustart fuer app.start, beide Hosts: Abo am Fristende wieder aktiv,
     Neupruefung im Ruhezustand Konfigurationsfehler, Neustart nach dem Zuruecksetzen. Wirft Neustart; laufen trennt dann
     sauber und ruft den Neustart des Hosts. Den Anlass loggt die Laufzeit an der Aufrufstelle (abo.check_grace_end,
     app._idle, app._nach_zuruecksetzen) unmittelbar davor."""
@@ -76,7 +76,7 @@ def _warten(thread: threading.Thread, join_seconds: float) -> None:
 def beenden(device, thread: threading.Thread | None, hintergrund, *, join_seconds: float = JOIN_SECONDS) -> None:
     """Ende des Prozesses (Neustart, SIGTERM, Fehler): erst den Geraetekern stoppen (sauberes Trennen) und wartende
     Host-Aufrufe der Befehle abbrechen, dann den Geraete-Thread sein laufendes Ereignis abschliessen lassen (z. B.
-    software_soll nach konfiguration_uebernommen). Device.run beginnt nach stop() keinen Takt mehr (5b-D2-4); das zweite
+    software_soll nach konfiguration_uebernommen). Device.run beginnt nach stop() keinen Takt mehr; das zweite
     stop() bleibt als zweite Linie: ein Takt, der beim ersten stop() schon lief, koennte mit einem Port-Rueckfall oder
     einer Rettung einen neuen Link geoeffnet haben. Wirft nie: jeder Schritt einzeln, ins Log nur die Fehlerart."""
     _schritt("Geraetekern stoppen", device.stop)
@@ -120,7 +120,7 @@ def starten[T](vorbereiten: Callable[[], T], neustart: Callable[[], None], *,
                vor_pause: Callable[[], None] | None = None, sleep: Callable[[float], None] | None = None) -> T | None:
     """Die Host-Schritte vor laufen (aufraeumen_beim_start, Geraete-Host, Geraetekern, Verdrahtung): ihr Ergebnis, oder
     nach einer Ausnahme darin dieselbe Folge wie nach einem unerwarteten Fehler in laufen (Fehlerart ins Log,
-    vor_pause, FEHLER_PAUSE_SECONDS Pause, neustart()) und None (S3S6-Startabbruch). Getrennt wird nichts: der
+    vor_pause, FEHLER_PAUSE_SECONDS Pause, neustart()) und None. Getrennt wird nichts: der
     Geraete-Thread laeuft erst in laufen. SIGTERM (SystemExit) geht durch, auch in der Pause, ohne Neustart."""
     try:
         return vorbereiten()
@@ -147,14 +147,14 @@ def _pause(vor_pause: Callable[[], None] | None, sleep: Callable[[float], None] 
 
 def aufraeumen_beim_start(pfad: Path, gespeichert: Callable[[], object], loeschen: Callable[[], bool], *,
                           wer: str) -> markierung.Markierung | None:
-    """Markierung aufraeumen.json vor dem Start des Geraetekerns auswerten (Spec Stufe 3 S3 Abschnitt 4), beide Hosts:
+    """Markierung aufraeumen.json vor dem Start des Geraetekerns auswerten, beide Hosts:
     wieder eingerichtet -> Markierung weg, Zustand bleibt; Zuruecksetzen steht aus -> nichts loeschen (die Laufzeit
     setzt mit der Konfiguration der Markierung zurueck und startet danach neu); Markierung unlesbar (EIO, EACCES) ->
-    nichts loeschen, der Start geht weiter, der naechste versucht es erneut (S3S3-Marker); sonst loescht der Host den
+    nichts loeschen, der Start geht weiter, der naechste versucht es erneut; sonst loescht der Host den
     anlagengebundenen Zustand, und die Markierung geht erst, wenn er fertig meldet. gespeichert() liest die
     gespeicherte Konfiguration nur, wenn es eine Markierung gibt. Rueckgabe: die einmal gelesene Markierung, wenn das
     Zuruecksetzen aussteht, sonst None; der Host reicht sie an GeraetHostBasis.start_markierung weiter, die Laufzeit liest
-    die Datei nicht ein zweites Mal (T4-Markierung-Zweitlesen). Das gilt, weil eine spaeter geschriebene Markierung
+    die Datei nicht ein zweites Mal. Das gilt, weil eine spaeter geschriebene Markierung
     immer mit einer Neustart-Anforderung kommt (konfiguration_uebernommen) und jeder Neustart einen frischen Prozess
     beginnt (HA: exec, Gateway: Exit 0 und Compose): der naechste Prozess liest sie."""
     try:

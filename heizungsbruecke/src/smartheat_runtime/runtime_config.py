@@ -1,5 +1,5 @@
-"""Hostneutrale, gepruefte Konfiguration der Laufzeit (Spec SHG 3.3). Beide Hosts (HA-Add-on und Gateway) fuellen sie
-ueber den Geraetekern aus dem Konfigurationsdokument des Servers (dokument_config.runtime_config, Spec 5b 5.2)."""
+"""Hostneutrale, gepruefte Konfiguration der Laufzeit. Beide Hosts (HA-Add-on und Gateway) fuellen sie
+ueber den Geraetekern aus dem Konfigurationsdokument des Servers (dokument_config.runtime_config)."""
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,7 +13,7 @@ BATTERY_LOW_FLAG = "niedrig_flag"
 
 @dataclass(frozen=True)
 class BatteryRef:
-    """Batterie-Signal eines Fuehlers/Thermostats (Spec SHG G2 2.2): `art` legt der Host fest (HA: aus dem Praefix
+    """Batterie-Signal eines Fuehlers/Thermostats: `art` legt der Host fest (HA: aus dem Praefix
     binary_sensor., Gateway: aus den Zigbee-Faehigkeiten); die Laufzeit liest kein Praefix."""
     ref: str
     art: str  # BATTERY_PERCENT oder BATTERY_LOW_FLAG
@@ -21,7 +21,7 @@ class BatteryRef:
 
 @dataclass(frozen=True)
 class BootInfo:
-    """Was vor der Konfigurationspruefung feststeht (Plan SHG G1, Praezisierung 3): Status und Meldungen arbeiten schon,
+    """Was vor der Konfigurationspruefung feststeht (Praezisierung 3): Status und Meldungen arbeiten schon,
     bevor die Konfiguration geprueft ist. Der Host liest es tolerant und wirft nie."""
     configured: bool
     signed_off: bool
@@ -32,7 +32,7 @@ class BootInfo:
     local_check_interval: float
     backup_path: Path
     failsafe_path: Path
-    # Spec Stufe 3 S3 Abschnitt 4: Aufraeum-Markierung des Hosts; nach gelungenem Zuruecksetzen erledigt die Laufzeit
+    # Aufraeum-Markierung des Hosts; nach gelungenem Zuruecksetzen erledigt die Laufzeit
     # sie und startet neu (None: der Host hat keine).
     aufraeumen_path: Path | None = None
 
@@ -51,6 +51,6 @@ class RuntimeConfig:
     battery_refs: tuple[BatteryRef, ...]
     # Datei der Abo-inaktiv-Frist (entitlement.py).
     entitlement_path: Path
-    # Spec 5b (Plan D1): Abo-Status aus dem Konfigurationsdokument (entitlement.ACTIVE/INACTIVE/UNKNOWN). Die MQTT-
+    # Abo-Status aus dem Konfigurationsdokument (entitlement.ACTIVE/INACTIVE/UNKNOWN). Die MQTT-
     # Verbindung haelt smartheat_device (app.start mqtt_factory), die Laufzeit fragt keinen Server selbst.
     abo_source: Callable[[], str]

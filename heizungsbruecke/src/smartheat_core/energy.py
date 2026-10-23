@@ -1,10 +1,10 @@
-"""Energie-Normalisierung (Hersteller-Abstraktion Spec 6.5, Plan 3b). Der Server rechnet mit monoton wachsenden
-Zaehlerstaenden je Kanal (generic_energy_log.cumulative_value). Alle derzeitigen Bindings (Vaillant/myVAILLANT seit
-Audit 4 A4-49, Weishaupt, Viessmann) liefern Tageszaehler ("daily", Rueckgang auf 0 um Mitternacht): daraus fuehrt der
+"""Energie-Normalisierung (Hersteller-Abstraktion). Der Server rechnet mit monoton wachsenden
+Zaehlerstaenden je Kanal (generic_energy_log.cumulative_value). Alle derzeitigen Bindings (Vaillant/myVAILLANT,
+Weishaupt, Viessmann) liefern Tageszaehler ("daily", Rueckgang auf 0 um Mitternacht): daraus fuehrt der
 Kern je Kanal eine monoton wachsende Summe. Fuer einen Hersteller mit durchlaufender Summe bleibt "total" (Werte
 unveraendert durchgereicht, kein Zustand).
 
-Einheit (Spec Stufe 3 S4b 5, A5-11): die Werte kommen in der Zieleinheit des Kanals an (telemetry rechnet Wh in kWh um).
+Einheit: die Werte kommen in der Zieleinheit des Kanals an (telemetry rechnet Wh in kWh um).
 Der Zustand traegt sie je Kanal mit; ein Zustand mit anderer oder ohne Einheit (aus 1.0.0: Wh ohne Einheit) beginnt neu,
 Summen verschiedener Einheiten laufen nie ineinander.
 
@@ -22,13 +22,13 @@ from smartheat_core.binding import ENERGY_DAILY, ENERGY_TOTAL
 from smartheat_core.bindungsparameter import EINHEITEN
 
 # Annahme bis zur Inventur: ein Tageszaehler faellt um Mitternacht auf (nahe) 0, Messrauschen ist viel kleiner.
-# Grenze: myVAILLANT aktualisiert die Energiesensoren nur beim Neuladen der Integration (Audit 4 P-B, D-5); setzt ein
+# Grenze: myVAILLANT aktualisiert die Energiesensoren nur beim Neuladen der Integration ; setzt ein
 # Neuladen den Zaehler mitten am Tag zurueck, kann die Summe Verbrauch des Tages vor dem Neuladen unterzaehlen.
 RESET_FRACTION = 0.5
 
 
 def umrechnen(wert: float, einheit: str) -> tuple[float, str]:
-    """(Wert in der Zieleinheit, Zieleinheit): Wh -> kWh, kWh und m³ unveraendert (Spec Stufe 3 S4b 5). KeyError bei
+    """(Wert in der Zieleinheit, Zieleinheit): Wh -> kWh, kWh und m³ unveraendert. KeyError bei
     einer fremden Einheit."""
     ziel, faktor = EINHEITEN[einheit]
     return wert * faktor, ziel

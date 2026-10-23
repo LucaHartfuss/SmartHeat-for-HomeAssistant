@@ -34,14 +34,14 @@ EV_MQTT_CONNECTED = "mqtt_connected"
 EV_SOURCE_CONNECTED = "source_connected"
 EV_HEARTBEAT = "heartbeat"
 EV_RECHECK = "recheck"
-# Spec Stufe 3 S3 Abschnitt 4: nach dem Zuruecksetzen einer leeren Konfiguration neu starten (app._nach_zuruecksetzen).
+# Nach dem Zuruecksetzen einer leeren Konfiguration neu starten (app._nach_zuruecksetzen).
 EV_AUFRAEUMEN = "aufraeumen"
 
 
 @dataclass
 class Runtime:
     """Wird nur im Worker-Thread benutzt. Zustand liegt ausschliesslich in `store`, Schreiben
-    auf die Anlage ausschliesslich ueber `override` (die Hebel-Pipeline; der Name stammt aus der Zeit vor Plan 2)."""
+    auf die Anlage ausschliesslich ueber `override` (die Hebel-Pipeline)."""
     manifest: ChannelManifest
     signals: SignalSource
     config: RuntimeConfig
@@ -49,7 +49,7 @@ class Runtime:
     store: StateStore
     override: LeverPipeline
     notifier: Notifier
-    # Neustart des Hosts (Spec Stufe 3 S6 4.2), Rueckruf aus app.start; ruft nur der Worker-Thread
+    # Neustart des Hosts, Rueckruf aus app.start; ruft nur der Worker-Thread
     # (abo.check_grace_end).
     neustart: Callable[[], None]
     mqtt_client: MqttChannel | None = None
@@ -68,25 +68,25 @@ class Runtime:
     manual_override_seq: str | None = None
     # Monotone Uhr des Workers (Tests: FakeClock). Fuer die Drosselung in abo.handle_connection_failing.
     clock: Callable[[], float] = time.monotonic
-    # Transportneutrale Abo-Erkennung (Spec AWS-IoT 5.1): letzte /status-Abfrage nach langem,
+    # Transportneutrale Abo-Erkennung: letzte /status-Abfrage nach langem,
     # wiederholtem Verbindungsfehler; ein erfolgreicher Connect setzt sie zurueck. Nicht persistiert.
     connection_failing_queried_at: float | None = None
-    # Start (Plan-Praezisierung 11): Zone auf Manuell mit brauchbarer Parallelverschiebung. Bis es
+    # Start: Zone auf Manuell mit brauchbarer Parallelverschiebung. Bis es
     # einmal geklappt hat, versucht es jeder lokale Check erneut. Nicht persistiert.
     zone_prepared: bool = False
-    # Comfort-Boost (A6-35 a): Stand der monotonen Uhr (clock) beim Start des Boosts in diesem Prozess, None bei einem
+    # Comfort-Boost: Stand der monotonen Uhr (clock) beim Start des Boosts in diesem Prozess, None bei einem
     # Boost aus einem frueheren Lauf. Gilt nur bei aktivem Boost: ein Boost-Ende ueber die Pipeline laesst den Wert
     # stehen, jeder neue Start ueberschreibt ihn. Die 4-h-Grenze zaehlt auch hier, falls die Wanduhr zurueckspringt.
     # Nicht persistiert.
     boost_mono_start: float | None = None
-    # Verbindungswaechter (TP12b, AU-033): seit wann (clock) die MQTT-Verbindung ununterbrochen
+    # Verbindungswaechter: seit wann (clock) die MQTT-Verbindung ununterbrochen
     # fehlt, None bei Verbindung. Nicht persistiert.
     mqtt_down_since: float | None = None
     # Gescheiterte Wiederherstellung am Fristende (abo.log_restore_failure): in diesem Prozess schon geloggt. Nicht
-    # persistiert: nach einem Neustart erscheint die Zeile einmal als WARNING (TP12b).
+    # persistiert: nach einem Neustart erscheint die Zeile einmal als WARNING.
     restore_failure_logged: bool = False
     # Datenfehler (SignalUngueltig, ein Fuehler ohne gueltigen Wert) des lokalen Checks in diesem Prozess schon als WARNING
-    # geloggt, bis zum naechsten erfolgreichen Check (app._run_local_check, L4-17). Nicht persistiert.
+    # geloggt, bis zum naechsten erfolgreichen Check (app._run_local_check). Nicht persistiert.
     local_check_data_fault_logged: bool = False
-    # Kundentexte des Hosts (Spec SHG G2 2.1); Standard = HA-Texte.
+    # Kundentexte des Hosts; Standard = HA-Texte.
     texts: HostTexts = HA_TEXTS

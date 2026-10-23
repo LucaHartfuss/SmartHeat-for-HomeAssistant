@@ -1,17 +1,16 @@
-"""Das Geraet (Spec 5b 5.1): verbindet Identitaet, Bootstrap, Link, Dokumente, Befehle, Bedienwunsch und Inventur und
+"""Das Geraet: verbindet Identitaet, Bootstrap, Link, Dokumente, Befehle, Bedienwunsch und Inventur und
 laeuft in einem eigenen Thread (run). paho, Host und Laufzeit stellen nur Ereignisse in die Warteschlange; nur dieser
 Thread aendert Zustand und ruft den Host.
 
 Ablauf: Identitaet laden; ohne Zugang registrieren (Backoff); Link starten. Nach jedem Verbinden zuerst hello (schemata,
-Versionen, Faehigkeiten, boot_id, uhr_synchron, bekannter Uebernahmestand; claim_state und new_claim_code setzen ihn,
-Spec 5c F1), dann Status, gepufferter Wunsch und offene Meldungen. Host-Rueckrufe des Takts laufen ueber _host_wert
-(5b-D1-4: ein werfender Rueckruf verschiebt Registrierung bzw. hello, laesst up/status dieses Takts aus (runtime_status,
+Versionen, Faehigkeiten, boot_id, uhr_synchron, bekannter Uebernahmestand; claim_state und new_claim_code setzen ihn), dann Status, gepufferter Wunsch und offene Meldungen. Host-Rueckrufe des Takts laufen ueber _host_wert
+(ein werfender Rueckruf verschiebt Registrierung bzw. hello, laesst up/status dieses Takts aus (runtime_status,
 raum), gilt bei uhr_synchron als None und bei ursprungswerte als {}, die Anzeige entfaellt; je Rueckruf und Fehlerart
 eine Logzeile). Dokumente gehen an den Dokumentspeicher, das Ergebnis als up/result, das Uebernommene an den Host;
 das Software-Angebot jeder Konfiguration mit bekanntem Schema (documents.angebot_aus) geht an den Host, auch wenn die
-Konfiguration abgelehnt wurde (Plan-Praezisierung). Befehle gehen an das Register, down/setpoints an die Laufzeit.
+Konfiguration abgelehnt wurde. Befehle gehen an das Register, down/setpoints an die Laufzeit.
 Drei Anmeldefehler in Folge am Broker -> Rettungsweg (bootstrap.Bootstrap); gesperrt -> Link aus, neuer Versuch nach
-6 h. up/status nur bei inhaltlicher Aenderung (ohne Zeitstempel, A4-35), hoechstens alle STATUS_MIN_SECONDS;
+6 h. up/status nur bei inhaltlicher Aenderung (ohne Zeitstempel), hoechstens alle STATUS_MIN_SECONDS;
 up/notifications gebuendelt hoechstens alle MELDUNGEN_MIN_SECONDS (Drossel des Dienstes: 20 Nachrichten/min, Plan
 S2)."""
 import json
@@ -46,7 +45,7 @@ MELDUNGEN_MIN_SECONDS = 10
 MELDUNGEN_JE_NACHRICHT = 50
 SERVER_DOWN_SECONDS = 300
 PRUEFUNG_WIEDERHOLEN_SECONDS = 30
-#: Lokaler Hinweis bei einer abgelehnten Konfiguration (Spec Stufe 3 S5 6.3, Entscheidung E2 A): den Text der Ablehnung
+#: Lokaler Hinweis bei einer abgelehnten Konfiguration (Entscheidung E2 A): den Text der Ablehnung
 #: bildet der Server, das Geraet nennt nur den Code.
 ABLEHNUNG_ANZEIGE = "Die Einrichtung wurde abgelehnt (Code {grund}). Die Begründung zeigt der Einrichtungsassistent."
 #: Down-Topic eines Dokuments -> Dokumentart (wire.DOKUMENT_TOPICS umgekehrt)
@@ -100,7 +99,7 @@ def _ursprungsname_ok(name) -> bool:
 
 
 def _vergleichbar(body: dict) -> dict:
-    """Status ohne Zeitstempel (A4-35: raum traegt bei jeder Veroeffentlichung einen frischen ts)."""
+    """Status ohne Zeitstempel (raum traegt bei jeder Veroeffentlichung einen frischen ts)."""
     raum = body.get("raum")
     return {**body, "raum": {k: v for k, v in raum.items() if k != "ts"} if isinstance(raum, dict) else raum}
 
@@ -147,7 +146,7 @@ class Device:
         self._meldungen_at: float | None = None
         self._status: dict | None = None
         self._status_at: float | None = None
-        #: Nach hello muss ein Status hinaus (T4-Hello-Status); gescheitert der Rueckruf dabei, bleibt der Merker, bis
+        #: Nach hello muss ein Status hinaus ; gescheitert der Rueckruf dabei, bleibt der Merker, bis
         #: einer gesendet ist (sonst unterdrueckten Gleichheit und Mindestabstand ihn im naechsten Takt).
         self._status_erzwingen = False
         self._hello_fehler: str | None = None  # letzte Fehlerart beim Bauen von hello (je Art einmal loggen)
@@ -182,7 +181,7 @@ class Device:
                 item = self._inbox.get(timeout=TICK_SECONDS)
             except queue.Empty:
                 item = None
-            if self._stop.is_set():  # 5b-D2-4: nach stop() kein Takt mehr (er koennte einen neuen Link oeffnen)
+            if self._stop.is_set():  # Nach stop() kein Takt mehr (er koennte einen neuen Link oeffnen)
                 break
             self._sicher(item)
 
@@ -213,7 +212,7 @@ class Device:
         return begrenzt
 
     def soll_quelle_aus(self, aus: bool, wirksam: float | None = None) -> None:
-        """Soll-Quelle aus (Thermostat aus/Frostschutz, Spec 3.2): kein Wunsch, nur die Meldung soll_quelle_aus. Ohne
+        """Soll-Quelle aus (Thermostat aus/Frostschutz): kein Wunsch, nur die Meldung soll_quelle_aus. Ohne
         wirksames Soll bleibt sie offen, nur ohne Wert im Text; schliessen kann sie nur aus=False."""
         text = wish.soll_quelle_aus_text(wirksam) if aus else None
         self._inbox.put(("eigene", wish.SOLL_QUELLE_AUS_KEY, text))
@@ -224,13 +223,13 @@ class Device:
                                                         offen=offen, ts=_iso(self._wall()))))
 
     def im_geraete_thread(self, aufgabe: Callable[[], None]) -> None:
-        """Eine Aufgabe des Hosts (z. B. lokales Abmelden ueber stdin, L4-06) im Geraete-Thread ausfuehren lassen: aus
+        """Eine Aufgabe des Hosts (z. B. lokales Abmelden ueber stdin) im Geraete-Thread ausfuehren lassen: aus
         jedem Thread aufrufbar, die Aufgabe laeuft in der Reihe der Ereignisse und nie nebenlaeufig zum Register. Eine
         Ausnahme faengt _sicher (Fehlerart und Ort im Log)."""
         self._inbox.put(("aufgabe", aufgabe))
 
     def ergebnis_software(self, version: str, ok: bool, grund: str | None = None) -> bool:
-        """Ergebnis eines Updates (Spec 5.3: up/result mit dokument software, version = Software-Version). Nur nach
+        """Ergebnis eines Updates (up/result mit dokument software, version = Software-Version). Nur nach
         hello; False = nicht gesendet (der Host versucht es spaeter erneut). Der Grund muss in SOFTWARE_ERRORS stehen;
         den Text bildet der Server."""
         if not ok and grund not in wire.SOFTWARE_ERRORS:
@@ -243,7 +242,7 @@ class Device:
         return self._publish_nach_hello("up/result", body) is not None
 
     def laufzeit_kanal(self, worker: RegulationWorker) -> RuntimeChannel:
-        """mqtt_factory fuer app.start (Spec 5b 5.2): Tick und Telemetrie ueber den Link."""
+        """mqtt_factory fuer app.start: Tick und Telemetrie ueber den Link."""
         channel = RuntimeChannel(self._publish_nach_hello,
                                  lambda: self._bereit and (link := self.link) is not None and link.connected,
                                  lambda: link.connect_failures if (link := self.link) is not None else 0)
@@ -358,7 +357,7 @@ class Device:
 
     def _client_pruefen(self, link: Link) -> None:
         """Ein neuer paho-Client (Portwechsel, neuer Link) kennt die Nachrichten des alten nicht und zaehlt mids wieder
-        ab 1: offene Inventurteile gehen neu hinaus (L4-02). Dass kein PUBACK des alten Clients eine neue mid
+        ab 1: offene Inventurteile gehen neu hinaus. Dass kein PUBACK des alten Clients eine neue mid
         bestaetigt, sichert die Client-Nummer im Ereignis GESENDET (_verarbeiten), nicht die Reihenfolge der Inbox."""
         if self._client_stand is not None and self._client_stand != link.client_nr:
             self.befehle.inventur_neu_senden()
@@ -424,7 +423,7 @@ class Device:
         return mid
 
     def _publish_nach_hello(self, name: str, payload: dict) -> int | None:
-        """Laufzeit-Nachrichten (Snapshot, Telemetrie) erst nach hello (Spec 5b 5.1: hello zuerst)."""
+        """Laufzeit-Nachrichten (Snapshot, Telemetrie) erst nach hello (hello zuerst)."""
         return self._publish(name, payload) if self._bereit else None
 
     def _hello(self) -> dict | None:
@@ -432,7 +431,7 @@ class Device:
         faehigkeiten, gescheitert = self._host_wert("faehigkeiten", self.host.faehigkeiten)
         if gescheitert:
             return None
-        # device_state: Spec 5c F1, der Server gleicht ab
+        # device_state: der Server gleicht ab
         return nachrichten.hello(
             konfiguration_version=self.documents.version(KONFIGURATION),
             bedienung_version=self.documents.version(BEDIENUNG), software_version=self.host.version,
@@ -484,7 +483,7 @@ class Device:
             self._channel.verbunden()
 
     def _nachricht(self, name: str, raw: bytes) -> None:
-        if name not in wire.DOWN_TOPICS:  # Spec 2.1: unbekannte Topics ignorieren, ohne die Nachricht zu lesen
+        if name not in wire.DOWN_TOPICS:  # Unbekannte Topics ignorieren, ohne die Nachricht zu lesen
             logger.debug("Topic %s unbekannt, ignoriert (Spec 2.1)", lesbar(name))
             return
         if len(raw) > wire.MAX_MESSAGE_BYTES:
@@ -524,7 +523,7 @@ class Device:
             self._pruefung_at = self._clock() + PRUEFUNG_WIEDERHOLEN_SECONDS
             return
         except OSError as error:
-            # Datentraeger beim Speichern (A6-10): wie NichtPruefbar zurueckhalten; je Zurueckhalten eine ERROR-Zeile
+            # Datentraeger beim Speichern: wie NichtPruefbar zurueckhalten; je Zurueckhalten eine ERROR-Zeile
             # (nur die Fehlerart, Regel 6), die Wiederholung alle 30 s bleibt still
             if art not in self._speicher_gemeldet:
                 self._speicher_gemeldet.add(art)
@@ -566,7 +565,7 @@ class Device:
             logger.error("Host-Rueckruf %s gescheitert (%s)%s", name, type(error).__name__, commands.fehlerort(error))
 
     def _host_wert(self, name: str, rueckruf: Callable[..., _T], *args) -> tuple[_T | None, bool]:
-        """Host-Rueckruf im Takt (5b-D1-4): (Wert, gescheitert). Gescheitert loggt je Rueckruf und Fehlerart einmal
+        """Host-Rueckruf im Takt: (Wert, gescheitert). Gescheitert loggt je Rueckruf und Fehlerart einmal
         (der Takt ruft jede Sekunde, Regel 6: nur Art und Ort); nach einem Erfolg meldet sich ein neuer Fehler wieder.
         Was ein gescheiterter Rueckruf bedeutet, entscheidet die Aufrufstelle (nie ein erfundener Wert zum Server)."""
         try:
@@ -593,10 +592,9 @@ class Device:
         return None if None in mids else [mid for mid in mids if mid is not None]
 
     def _claim_state(self, payload: dict) -> commands.Outcome:
-        """Uebernahmestand vom Server (Spec 5c F1): Discovery, Seite und Zustand folgen im naechsten Takt. Gueltig ist
+        """Uebernahmestand vom Server: Discovery, Seite und Zustand folgen im naechsten Takt. Gueltig ist
         nur uebernommen: frei wird das Geraet nur ueber new_claim_code mit neuem Code (der Server sendet claim_state
-        nie anders); nicht_uebernommen zeigte hier den alten Code wieder, den der vorige Besitzer kennt (Final-Review
-        F-3)."""
+        nie anders); nicht_uebernommen zeigte hier den alten Code wieder, den der vorige Besitzer kennt."""
         state = payload.get("device_state")
         if state != "uebernommen":
             return commands.Failed("ungueltige_nutzlast", fehler.details("device_state", "unbekannt"))
@@ -604,7 +602,7 @@ class Device:
         return commands.Done({})
 
     def _new_claim_code(self, payload: dict) -> commands.Outcome:
-        """Neuer Uebernahme-Code (Spec 3.4): erst beim Server melden (register mit neuem Code-Hash; der Server
+        """Neuer Uebernahme-Code: erst beim Server melden (register mit neuem Code-Hash; der Server
         uebernimmt ihn nur fuer ein nicht uebernommenes Geraet), dann speichern."""
         code = identity.new_claim_code()
         kandidat = replace(self.identity, claim_code=code)
@@ -677,7 +675,7 @@ class Device:
                 del self._meldungen_neu[item["key"]]
 
     def _ursprungswerte_neu(self) -> dict:
-        """Spec Stufe 3 S3 5.1: nur Namen, die in der Konfiguration (ursprungswerte, vom Server gespiegelt) fehlen, in
+        """Nur Namen, die in der Konfiguration (ursprungswerte, vom Server gespiegelt) fehlen, in
         den Grenzen von V1; was nicht passt, geht nicht hinaus (Log ohne Wert)."""
         konfiguration = self.konfiguration() or {}
         bekannt = konfiguration.get("ursprungswerte")

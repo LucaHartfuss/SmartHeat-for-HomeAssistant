@@ -1,4 +1,4 @@
-"""Entprellung der Wunschtemperatur (Spec SHG G2 2.4): eine Aenderung gilt erst nach ROOM_TARGET_DEBOUNCE_SECONDS
+"""Entprellung der Wunschtemperatur: eine Aenderung gilt erst nach ROOM_TARGET_DEBOUNCE_SECONDS
 Stabilitaet. Der HA-Host entprellt ueber `for:` im WebSocket-Trigger (gleiches Fenster), das Gateway mit Debouncer."""
 from collections.abc import Callable
 

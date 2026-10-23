@@ -1,4 +1,4 @@
-"""Ports des hostneutralen Kerns (Spec SHG 3.2): die einzigen Stellen, an denen die Laufzeit die Aussenwelt beruehrt.
+"""Ports des hostneutralen Kerns: die einzigen Stellen, an denen die Laufzeit die Aussenwelt beruehrt.
 Die Anlage ist smartheat_core.binding.PlantBinding, die Wanduhr smartheat_core.wallclock; die monotone Uhr wird als
 Callable[[], float] uebergeben."""
 from typing import Protocol
@@ -61,7 +61,7 @@ class NotifySink(Protocol):
 
 
 class TriggerSource(Protocol):
-    """Trigger-Eingang (Spec SHG G2 2.4), Ereignisvertrag fuer jeden Host:
+    """Trigger-Eingang, Ereignisvertrag fuer jeden Host:
     - Aenderung der Wunschtemperatur: erst nach ROOM_TARGET_DEBOUNCE_SECONDS (debounce.py) Stabilitaet
       EV_LOCAL_CHECK(room_target_fired=True);
     - jede andere zugeordnete Signalaenderung: EV_LOCAL_CHECK(room_target_fired=False) (post_coalesced);
@@ -80,7 +80,7 @@ class TriggerSource(Protocol):
 class MqttChannel(Protocol):
     """MQTT-Verbindung der Laufzeit: Snapshot und Telemetrie hoch, Setpoints herunter. Die Laufzeit haelt keine eigene
     Verbindung; app.start bekommt sie vom Host (mqtt_factory): smartheat_device.laufzeit.RuntimeChannel auf dem Link des
-    Geraets (Spec 5b 5.2)."""
+    Geraets."""
 
     @property
     def connect_failures(self) -> int: ...
