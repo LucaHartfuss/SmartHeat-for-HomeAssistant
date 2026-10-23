@@ -3,7 +3,6 @@ import errno
 import hashlib
 import http.server
 import importlib
-import ipaddress
 import json
 import os
 import random
@@ -1193,21 +1192,17 @@ def test_the_total_deadline_is_300_seconds_on_the_monotonic_clock_and_covers_eve
     assert updater.fetch_url("https://release.example.test/x", 100, allow_http=False, clock=lambda: now[0]) == b"abc"
 
 
-def _nat64_local(v4: str) -> str:
-    """Adresse im Praefix 64:ff9b:1::/48 (RFC 8215) mit eingebetteter IPv4-Adresse nach RFC 6052 (/48: Bits 48 bis 63, dann
-    das u-Oktett, dann Bits 72 bis 87)."""
-    octets = ipaddress.ip_address(v4).packed
-    return str(ipaddress.IPv6Address(bytes.fromhex("0064ff9b0001") + octets[:2] + b"\x00" + octets[2:] + bytes(5)))
-
-
 @pytest.mark.parametrize(("address", "public"), [
     ("192.168.178.1", False), ("fd00::1", False), ("169.254.1.1", False), ("100.64.0.1", False),
     ("::ffff:127.0.0.1", False), ("127.0.0.1", False), ("10.0.0.1", False), ("172.18.0.1", False), ("::1", False),
     ("fe80::1%eth0", False), ("::ffff:192.168.178.1", False), ("nicht-eine-adresse", False), ("", False),
     ("8.8.8.8", True), ("2003::1", True), ("::ffff:8.8.8.8", True),
-    # NAT64 (RFC 6052): entscheidend ist die eingebettete IPv4-Adresse, nicht das Praefix
+    # NAT64 (RFC 6052, 64:ff9b::/96): entscheidend ist die eingebettete IPv4-Adresse in den letzten 32 Bit
     ("64:ff9b::c0a8:b201", False), ("64:ff9b::7f00:1", False), ("64:ff9b::808:808", True),
-    (_nat64_local("192.168.178.1"), False), (_nat64_local("127.0.0.1"), False), (_nat64_local("8.8.8.8"), True),
+    # betreiberlokales Praefix 64:ff9b:1::/48: immer abgelehnt, die Praefixlaenge waehlt der Betreiber; auch dort, wo die
+    # Lesart als /48 (8.8.8.8 in Bits 48-63 und 72-87) oder als /96 (letzte 32 Bit) eine globale Adresse ergaebe
+    ("64:ff9b:1:808:0:808:0:0", False), ("64:ff9b:1::808:808", False), ("64:ff9b:1::c0a8:b201", False),
+    ("64:ff9b:1:ffff:ffff:ffff:ffff:ffff", False),
 ])
 def test_only_global_addresses_are_allowed(address, public):
     """A6-38: Gegenadressen, die ins LAN, auf den eigenen Rechner oder in Sonderbereiche zeigen, sind nicht erlaubt; eine

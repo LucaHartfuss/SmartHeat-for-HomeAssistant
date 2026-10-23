@@ -215,8 +215,8 @@ class _SchemeCheckedRedirects(urllib.request.HTTPRedirectHandler):
 USER_AGENT = f"SmartHeat-Gateway-Updater/{GATEWAY_VERSION}"
 
 
-_NAT64_WELL_KNOWN = ipaddress.ip_network("64:ff9b::/96")  # RFC 6052
-_NAT64_LOCAL_USE = ipaddress.ip_network("64:ff9b:1::/48")  # RFC 8215
+_NAT64_WELL_KNOWN = ipaddress.ip_network("64:ff9b::/96")  # RFC 6052: IPv4 in den letzten 32 Bit
+_NAT64_LOCAL_USE = ipaddress.ip_network("64:ff9b:1::/48")  # RFC 8215: Praefixlaenge /32 bis /96 waehlt der Betreiber
 
 
 def _address(text: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
@@ -230,8 +230,10 @@ def _address(text: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
 def is_public_address(text: str) -> bool:
     """Ist das eine global erreichbare Adresse (`is_global`)? Nicht: RFC 1918, Loopback, Link-Local, CGNAT, ULA und
     andere Sonderbereiche. Eine IPv4-Adresse in IPv6-Schreibweise (`::ffff:a.b.c.d`) zaehlt wie die IPv4-Adresse,
-    unabhaengig davon, wie die Python-Version sie selbst einstuft; bei NAT64-Adressen (`64:ff9b::/96`, `64:ff9b:1::/48`)
-    entscheidet die eingebettete IPv4-Adresse (eine globale bleibt erlaubt, IPv6-Netze ohne IPv4 brauchen das).
+    unabhaengig davon, wie die Python-Version sie selbst einstuft; bei NAT64-Adressen des festen Praefixes `64:ff9b::/96`
+    entscheidet die eingebettete IPv4-Adresse (eine globale bleibt erlaubt, IPv6-Netze ohne IPv4 brauchen das). Das
+    betreiberlokale Praefix `64:ff9b:1::/48` ist immer abgelehnt: seine Praefixlaenge (und damit die Lage der IPv4-Adresse)
+    waehlt der Betreiber, ein Raten waere ein Auslegungsunterschied zum Uebersetzer.
     Unlesbares gilt als nicht erlaubt. Das allein deckt NICHT ab: globale IPv6-Adressen des eigenen Netzes (Router, Geraete
     im eigenen /64, der Rechner selbst; dafuer `is_own_network`) und Geraete in anderen IPv6-Praefixen des Kundennetzes
     mit globaler Adresse."""
@@ -243,8 +245,8 @@ def is_public_address(text: str) -> bool:
         packed = address.packed
         if address in _NAT64_WELL_KNOWN:
             return ipaddress.IPv4Address(packed[12:]).is_global
-        if address in _NAT64_LOCAL_USE:  # RFC 6052 fuer /48: IPv4 in Bits 48 bis 63 und 72 bis 87 (u-Oktett dazwischen)
-            return ipaddress.IPv4Address(packed[6:8] + packed[9:11]).is_global
+        if address in _NAT64_LOCAL_USE:
+            return False
     return address.is_global
 
 
