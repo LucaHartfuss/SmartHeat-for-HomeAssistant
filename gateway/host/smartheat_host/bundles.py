@@ -20,6 +20,12 @@ _PINNED_IMAGE = re.compile(r"[^\s@]+@sha256:[0-9a-f]{64}")
 _BUILD = re.compile(r"^\s*build:", re.MULTILINE)
 _DEVICES_KEY = re.compile(r"^(\s*)devices:\s*(.*?)\s*$")
 _LIST_ITEM = re.compile(r"^(\s*)-\s+(.*?)\s*$")
+#: Frist je docker-Aufruf in Sekunden (A6-13): ohne sie hielte ein haengender Aufruf (Netz weg mitten im pull, Daemon
+#: blockiert) den ganzen Updater endlos fest. pull ist lang (mehrere Images ueber eine langsame Leitung), ps kurz.
+PULL_TIMEOUT_SECONDS = 900
+UP_TIMEOUT_SECONDS = 300
+PS_TIMEOUT_SECONDS = 60
+IMAGE_TIMEOUT_SECONDS = 120
 
 
 class ManifestError(Exception):
@@ -163,25 +169,28 @@ class ComposeRunner:
         return ["docker", "compose", "-p", self._project, "--env-file", str(self._root / "host" / "gateway.env"),
                 "-f", str(compose), *args]
 
-    def _compose(self, version: str, *args: str) -> None:
+    def _compose(self, version: str, *args: str, timeout: float) -> None:
         try:
-            result = self._run(self._command(version, *args), capture_output=True, text=True, check=False)
+            result = self._run(self._command(version, *args), capture_output=True, text=True, check=False,
+                               timeout=timeout)
         except OSError as error:
             raise ComposeError(f"{' '.join(args)}: {type(error).__name__}") from None
+        except subprocess.TimeoutExpired:  # subprocess.run beendet den Prozess selbst
+            raise ComposeError(f"{' '.join(args)}: Frist von {timeout:g} s ueberschritten") from None
         if result.returncode != 0:
             raise ComposeError(f"{' '.join(args)}: {(result.stderr or result.stdout).strip()[-500:]}")
 
     def pull(self, version: str) -> None:
-        self._compose(version, "pull")
+        self._compose(version, "pull", timeout=PULL_TIMEOUT_SECONDS)
 
     def up(self, version: str) -> None:
-        self._compose(version, "up", "-d", "--remove-orphans")
+        self._compose(version, "up", "-d", "--remove-orphans", timeout=UP_TIMEOUT_SECONDS)
 
     def health(self, version: str) -> dict[str, str]:
         try:
             result = self._run(self._command(version, "ps", "--format", "json"),
-                               capture_output=True, text=True, check=False)
-        except OSError:
+                               capture_output=True, text=True, check=False, timeout=PS_TIMEOUT_SECONDS)
+        except (OSError, subprocess.TimeoutExpired):
             return {}
         if result.returncode != 0:
             return {}
@@ -200,9 +209,10 @@ class ComposeRunner:
         repositories = {image_repository(ref) for ref in keep}
         try:
             listed = self._run(["docker", "image", "ls", "--digests", "--format", "{{.Repository}}@{{.Digest}}"],
-                               capture_output=True, text=True, check=False)
+                               capture_output=True, text=True, check=False, timeout=IMAGE_TIMEOUT_SECONDS)
             for ref in (listed.stdout or "").split():
                 if image_repository(ref) in repositories and ref not in kept and "@sha256:" in ref:
-                    self._run(["docker", "image", "rm", ref], capture_output=True, text=True, check=False)
-        except OSError:
+                    self._run(["docker", "image", "rm", ref], capture_output=True, text=True, check=False,
+                              timeout=IMAGE_TIMEOUT_SECONDS)
+        except (OSError, subprocess.TimeoutExpired):  # Aufraeumen ist Beiwerk: abbrechen, nicht scheitern
             return

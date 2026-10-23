@@ -1,10 +1,12 @@
 import ast
+import errno
 import hashlib
 import http.server
 import importlib
 import json
 import os
 import random
+import socket
 import stat
 import subprocess
 import threading
@@ -913,7 +915,7 @@ def _redirected_response(final_url: str, body: bytes = b"inhalt"):
     response = create_autospec(http.client.HTTPResponse, instance=True)
     response.__enter__.return_value = response
     response.geturl.return_value = final_url
-    response.read.return_value = body
+    response.read1.side_effect = [body, b""]  # der Abruf liest mit read1 in Bloecken bis zum Ende
     return response
 
 
@@ -932,7 +934,7 @@ def test_fetch_refuses_an_answer_from_a_scheme_that_is_not_allowed_without_readi
     monkeypatch.setattr(urllib.request, "build_opener", create_autospec(urllib.request.build_opener, return_value=opener))
     with pytest.raises(updater.FetchError, match="Weiterleitung auf ein Schema"):
         updater.fetch_url("https://release.example.test/x", 100, allow_http=allow_http)
-    response.read.assert_not_called()
+    response.read1.assert_not_called()
     # Gegenproben: eine Antwort von https wird gelesen; http nur mit dem Schalter (Labor)
     opener.open.return_value = _redirected_response("https://cdn.example.test/x")
     assert updater.fetch_url("https://release.example.test/x", 100, allow_http=False) == b"inhalt"
@@ -1120,6 +1122,195 @@ def test_fetch_url_network_errors_are_fetch_errors():
         updater.fetch_url("http://127.0.0.1:1/x", 10, allow_http=True)
 
 
+@pytest.fixture
+def trickling_server():
+    """Lokaler HTTP-Server, der eine Antwort von 15 Bytes mit einem Byte je 0,2 s ausliefert (insgesamt 3 s): jede
+    einzelne Leseoperation kommt weit vor der Zeitgrenze des Sockets zurueck, nur die Summe ist lang."""
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Length", "15")
+            self.end_headers()
+            for _ in range(15):
+                try:
+                    self.wfile.write(b"x")
+                    self.wfile.flush()
+                except OSError:  # der Abrufer hat aufgegeben
+                    return
+                time.sleep(0.2)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.daemon_threads = True
+    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_port}/m"
+    server.shutdown()
+    server.server_close()
+    thread.join()
+
+
+def test_fetch_ends_after_the_total_deadline_of_a_trickling_server(monkeypatch, trickling_server):
+    """A6-13: der Socket-Timeout (30 s) gilt je Leseoperation; ein Server, der ein Byte je 0,2 s schickt, hielt den Abruf
+    und damit den ganzen Updater beliebig lange fest. Die Gesamtfrist (hier 0,5 s statt 300 s) beendet ihn mit FetchError."""
+    monkeypatch.setattr(updater, "ABRUF_GESAMT_SECONDS", 0.5)
+    started = time.monotonic()
+    with pytest.raises(updater.FetchError, match="Gesamtfrist"):
+        updater.fetch_url(trickling_server, 100, allow_http=True)
+    assert time.monotonic() - started < 2
+    # Gegenprobe: dieselbe Antwort kommt mit der ueblichen Frist vollstaendig an
+    monkeypatch.setattr(updater, "ABRUF_GESAMT_SECONDS", 300)
+    assert updater.fetch_url(trickling_server, 100, allow_http=True) == b"x" * 15
+
+
+def test_the_total_deadline_is_300_seconds_on_the_monotonic_clock_and_covers_every_read(monkeypatch):
+    """A6-13: Grenze der Frist ohne Warten: eine eingespeiste Uhr springt bei jedem Lesen um 100 s. Drei Lesevorgaenge
+    (bis 299 s nach dem Start) genuegen, der vierte (400 s) nicht. Attrappe an der Grenze, dem Opener von urllib."""
+    assert updater.ABRUF_GESAMT_SECONDS == 300
+    now = [1000.0]
+    chunks = iter([b"a", b"b", b"c", b"d", b"e"])
+
+    def read1(size):
+        now[0] += 100
+        return next(chunks, b"")
+
+    response = _redirected_response("https://release.example.test/x")
+    response.read1.side_effect = read1
+    opener = create_autospec(urllib.request.OpenerDirector, instance=True)
+    opener.open.return_value = response
+    monkeypatch.setattr(urllib.request, "build_opener", create_autospec(urllib.request.build_opener, return_value=opener))
+    with pytest.raises(updater.FetchError, match="Gesamtfrist"):
+        updater.fetch_url("https://release.example.test/x", 100, allow_http=False, clock=lambda: now[0])
+    assert now[0] == 1300.0  # nach dem Lesen bei +300 s (Frist erreicht) ist Schluss, kein weiteres Lesen
+    # Gegenprobe: bei +299 s ist die Frist noch nicht erreicht
+    now[0], chunks = 1000.0, iter([b"abc"])
+    response.read1.side_effect = lambda size: (now.__setitem__(0, now[0] + 299), next(chunks, b""))[1]
+    assert updater.fetch_url("https://release.example.test/x", 100, allow_http=False, clock=lambda: now[0]) == b"abc"
+
+
+@pytest.mark.parametrize(("address", "public"), [
+    ("192.168.178.1", False), ("fd00::1", False), ("169.254.1.1", False), ("100.64.0.1", False),
+    ("::ffff:127.0.0.1", False), ("127.0.0.1", False), ("10.0.0.1", False), ("172.18.0.1", False), ("::1", False),
+    ("fe80::1%eth0", False), ("::ffff:192.168.178.1", False), ("nicht-eine-adresse", False), ("", False),
+    ("8.8.8.8", True), ("2003::1", True), ("::ffff:8.8.8.8", True),
+])
+def test_only_global_addresses_are_allowed(address, public):
+    """A6-38: Gegenadressen, die ins LAN, auf den eigenen Rechner oder in Sonderbereiche zeigen, sind nicht erlaubt; eine
+    IPv4-Adresse in IPv6-Schreibweise zaehlt wie die IPv4-Adresse (auch dann, wenn die Python-Version sie selbst anders
+    einstuft); Unlesbares gilt als nicht erlaubt."""
+    assert updater.is_public_address(address) is public
+
+
+@pytest.fixture
+def byte_counter():
+    """TCP-Server auf 127.0.0.1 (kein TLS): liest hoechstens einen Block der Gegenseite und merkt sich die Zahl der Bytes
+    (0, wenn sie auflegt, ohne etwas gesendet zu haben), schliesst dann."""
+    received: list[int] = []
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+
+    def serve():
+        try:
+            connection, _ = listener.accept()
+        except OSError:
+            return
+        with connection:
+            connection.settimeout(5)
+            try:
+                received.append(len(connection.recv(4096)))
+            except OSError:
+                received.append(-1)
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    port = listener.getsockname()[1]
+    yield port, received, thread
+    if thread.is_alive():  # niemand hat sich verbunden: accept() mit einer Verbindung entlassen
+        socket.create_connection(("127.0.0.1", port), timeout=2).close()
+    thread.join()
+    listener.close()
+
+
+def test_fetch_never_sends_a_byte_to_a_local_address(byte_counter):
+    """A6-38: ein Angebot (Manifest-URL) aus einem kompromittierten Server darf keinen Abruf ins LAN des Kunden oder an
+    den eigenen Rechner ausloesen. Geprueft wird die Gegenadresse des verbundenen Sockets, vor dem TLS-Handshake: der
+    lokale Server sieht null Bytes (nicht einmal ein ClientHello), der Abruf ist ein FetchError."""
+    port, received, thread = byte_counter
+    with pytest.raises(updater.FetchError, match="nicht oeffentlich"):
+        updater.fetch_url(f"https://127.0.0.1:{port}/m", 100, allow_http=False)
+    thread.join(timeout=5)
+    assert received == [0]
+
+
+def test_with_the_test_switch_the_address_is_not_checked(byte_counter):
+    """Gegenprobe zu A6-38: `allow_http` (nur Tests, Labor) schaltet die Pruefung ab; dann geht das ClientHello an den
+    lokalen Server (der Abruf scheitert danach am fehlenden TLS, auch als FetchError, aber erst nach dem Senden)."""
+    port, received, thread = byte_counter
+    with pytest.raises(updater.FetchError) as error:
+        updater.fetch_url(f"https://127.0.0.1:{port}/m", 100, allow_http=True)
+    thread.join(timeout=5)
+    assert received[0] > 0 and "nicht oeffentlich" not in str(error.value)
+
+
+class _FakeSocket:
+    def __init__(self, peer):
+        self.peer, self.closed, self.sent = peer, False, b""
+
+    def getpeername(self):
+        return self.peer
+
+    def sendall(self, data):
+        self.sent += data
+
+    def close(self):
+        self.closed = True
+
+
+@pytest.mark.parametrize(("peer", "allowed"), [
+    (("192.168.178.1", 443), False), (("fd00::1", 443, 0, 0), False), (("::ffff:127.0.0.1", 443, 0, 0), False),
+    (("169.254.1.1", 443), False), (("100.64.0.1", 443), False), ("/run/socket", False), (None, False),
+    (("8.8.8.8", 443), True), (("2003::1", 443, 0, 0), True),
+])
+def test_every_connection_is_checked_on_the_connected_socket(monkeypatch, peer, allowed):
+    """A6-38: die Pruefung sitzt an `_create_connection` der Verbindung und sieht den tatsaechlich verbundenen Socket
+    (nicht den Namen aus der URL, der beim Aufloesen auf eine andere Adresse zeigen kann). Jede Verbindung des Openers hat
+    sie, auch die zu einem Weiterleitungsziel (urllib baut je Anfrage eine neue). Attrappe an der Grenze:
+    `socket.create_connection`. Kann der Peer nicht bestimmt werden (None, Unix-Socket), gilt er als nicht erlaubt."""
+    fake = _FakeSocket(peer)
+    monkeypatch.setattr(socket, "create_connection", lambda *args, **kwargs: fake)
+    connection = updater._PublicOnlyHTTPSConnection("release.example.test", 443, timeout=5)
+    if allowed:
+        assert connection._create_connection(("release.example.test", 443), 5, None) is fake and not fake.closed
+    else:
+        with pytest.raises(updater.FetchError, match="nicht oeffentlich"):
+            connection._create_connection(("release.example.test", 443), 5, None)
+        assert fake.closed and fake.sent == b""
+
+
+def test_the_opener_checks_https_connections_only_without_the_test_switch():
+    """A6-38: die Handler des Openers: mit der Pruefung fuer https; mit `allow_http` (Tests) ohne."""
+    def https_handlers(allow_http):
+        return [handler for handler in updater.checked_opener(allow_http).handlers
+                if isinstance(handler, updater._PublicOnlyHTTPSHandler)]
+
+    assert len(https_handlers(False)) == 1 and https_handlers(True) == []
+
+
+def test_environment_proxies_are_ignored(monkeypatch, byte_counter):
+    """A6-38: ein Proxy aus der Umgebung (https_proxy) wuerde die Verbindung zum Proxy statt zum Ziel aufbauen: die
+    Pruefung saehe nur dessen Adresse, der Proxy loeste das Ziel selbst auf. Der Updater ruft immer direkt. Der Proxy
+    ist hier der lokale Zaehler; das Ziel ist nicht aufloesbar (.test), der Abruf scheitert, der Proxy sieht nichts."""
+    port, received, thread = byte_counter
+    monkeypatch.setenv("https_proxy", f"http://127.0.0.1:{port}")
+    monkeypatch.setenv("HTTPS_PROXY", f"http://127.0.0.1:{port}")
+    with pytest.raises(updater.FetchError):
+        updater.fetch_url("https://kein-host.invalid/m", 100, allow_http=False)
+    assert received == []  # der Zaehler hat nie eine Verbindung angenommen
+
+
 def test_fetch_health(local_server):
     assert updater.fetch_health(local_server + "/healthz") == {"server_ok": True, "runtime_status": None}
     assert updater.fetch_health("http://127.0.0.1:1/healthz") is None
@@ -1257,6 +1448,46 @@ def test_the_report_queue_holds_20_entries_and_the_oldest_falls_out(tmp_path):
     assert world.state().pending_reports == []
 
 
+def test_a_full_disk_while_installing_is_provisional_and_logged(tmp_path, monkeypatch, caplog):
+    """A6-39: `store.install` scheitert mit ENOSPC (Datentraeger voll). Der Durchlauf endet "vorlaeufig" (naechster Durchlauf
+    versucht es erneut), der Fehler steht mit seinem Namen im ERROR-Log, Zustand und Compose bleiben unberuehrt: nichts
+    wurde gezogen oder umgeschaltet."""
+    world = World(tmp_path)
+    before = world.state_path.read_bytes()
+
+    def full(version, files):
+        raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+
+    monkeypatch.setattr(world.store, "install", full)
+    with caplog.at_level("INFO"):
+        assert world.updater.run_once() == "vorlaeufig"
+    errors = [record for record in caplog.records if record.levelname == "ERROR"]
+    assert len(errors) == 1 and "ENOSPC" in errors[0].getMessage()
+    assert world.state_path.read_bytes() == before and world.compose.calls == []
+    assert world.api.results == []  # nichts gemeldet: kein Fehler des Bundles
+    # Gegenprobe: ist der Platz wieder da, laeuft derselbe Updater das Update durch
+    monkeypatch.undo()
+    assert world.updater.run_once() == "aktualisiert"
+
+
+def test_a_failing_state_file_in_recover_is_logged_and_does_not_raise(tmp_path, monkeypatch, caplog):
+    """A6-39: auch `recover()` (Start des Dienstes) wirft bei einem Dateifehler nicht: der Dienst kaeme sonst nie hoch."""
+    world = World(tmp_path)
+    _interrupted(world, previous="0.2.0")
+    world.store.install("0.3.0", {"docker-compose.yml": COMPOSE, "mosquitto.conf": MOSQ})
+
+    def full(self, path):
+        raise OSError(errno.EIO, "Ein-/Ausgabefehler")
+
+    monkeypatch.setattr(updater.State, "save", full)
+    with caplog.at_level("INFO"):
+        world.updater.recover()  # wirft nicht
+    assert any(record.levelname == "ERROR" and "EIO" in record.getMessage() for record in caplog.records)
+    monkeypatch.undo()
+    world.updater.recover()  # der naechste Start macht es zu Ende
+    assert world.state().current == "0.3.0" and world.state().in_progress is None
+
+
 def _main_environment(monkeypatch, root: Path, *, offer=None, allow_http=None):
     (root / "data").mkdir(parents=True, exist_ok=True)
     if offer is not None:
@@ -1309,6 +1540,37 @@ def test_main_waits_120_seconds_then_runs_every_900_plus_up_to_300_seconds(tmp_p
         updater.main([])
     assert events == ["recover", "warten:120.0", "durchlauf:vorlaeufig", "warten:1200.0",
                       "durchlauf:vorlaeufig", "warten:900.0", "durchlauf:vorlaeufig", "warten:1050.0"]
+
+
+def test_main_keeps_running_after_an_unexpected_error(tmp_path, monkeypatch, caplog):
+    """A6-39: ein unerwarteter Fehler in einem Durchlauf beendet den Dienst nicht (er laeuft sonst erst nach `RestartSec`
+    neu, mit 120 s Wartezeit); er wird mit seiner Spur geloggt, nach der ueblichen Pause kommt der naechste Durchlauf.
+    Der Fehler kommt aus `run_once`, der Grenze zum Rest des Dienstes."""
+    _main_environment(monkeypatch, tmp_path)
+    calls = []
+
+    def run_once(self):
+        calls.append("durchlauf")
+        if len(calls) == 1:
+            raise RuntimeError("unerwartet")
+        return "aktuell"
+
+    waits = []
+
+    def sleep(seconds):
+        waits.append(float(seconds))
+        if len(waits) == 3:
+            raise _Stop
+
+    monkeypatch.setattr(updater.Updater, "run_once", run_once)
+    monkeypatch.setattr(time, "sleep", create_autospec(time.sleep, side_effect=sleep))
+    monkeypatch.setattr(random, "uniform", create_autospec(random.uniform, return_value=0))
+    with caplog.at_level("INFO"), pytest.raises(_Stop):
+        updater.main([])
+    assert calls == ["durchlauf", "durchlauf"] and waits == [120.0, 900.0, 900.0]
+    logged = [record for record in caplog.records if record.levelname == "ERROR" and record.exc_info]
+    assert len(logged) == 1 and logged[0].exc_info[0] is RuntimeError
+    assert "Durchlauf: aktuell" in caplog.text
 
 
 def test_main_keeps_the_state_and_the_data_under_shg_root(tmp_path, monkeypatch, capsys):

@@ -7,3 +7,6 @@ _.frame  # smartheat_host/led.py _terminate
 
 # --- urllib liest OpenerDirector.addheaders bei jeder Anfrage (auch nach einer Weiterleitung) ---
 _.addheaders  # smartheat_host/updater.py checked_opener (eigener User-Agent)
+
+# --- urllib ruft <schema>_open des Handlers fuer jede https-Anfrage (auch fuer ein Weiterleitungsziel) ---
+_.https_open  # smartheat_host/updater.py _PublicOnlyHTTPSHandler (A6-38)

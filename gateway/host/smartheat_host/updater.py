@@ -3,7 +3,8 @@ Konfigurationsdokuments, von der Laufzeit nach data/software_soll.json geschrieb
 (https, SHA-256, minisign gegen release.pub, Version, min_updater_version) und Bundle-Dateien, schaltet per Compose um,
 wartet bis zu 10 min auf "gesund" und rollt sonst auf das vorige Bundle zurueck. Nur streng neuere Versionen werden
 geladen (Downgrade-Schutz, Grund version_zu_alt; der Betreiber gibt fuer einen Rueckweg der Flotte den alten Stand als
-neue Version heraus). Fristen ueber die monotone Uhr (die Wanduhr springt beim Boot).
+neue Version heraus). Fristen ueber die monotone Uhr (die Wanduhr springt beim Boot); ein Abruf hat zusaetzlich eine
+Gesamtfrist (ABRUF_GESAMT_SECONDS) und geht nur an oeffentliche Adressen (is_public_address).
 Zustand in updater/state.json (atomar, 0644), Format:
 
     {"current": str|null, "previous": str|null, "rejected": [str],
@@ -33,8 +34,10 @@ Umgebung ist kein Fehler des Bundles (Final-Review FW-1/FW-2):
   geschrieben werden kann (Datentraeger), wird zu Beginn des naechsten Durchlaufs vor allem anderen erneut gesendet, in
   Reihenfolge (mindestens einmal: ein Stromausfall zwischen Senden und Speichern sendet doppelt). Die Laufzeit sendet
   jede Meldung als up/result (dokument software) genau einmal je seq (smartheat_host.kanal)."""
+import errno
 import hashlib
 import http.client
+import ipaddress
 import json
 import logging
 import os
@@ -76,6 +79,8 @@ PERIOD_SECONDS = 900
 JITTER_SECONDS = 300
 FIRST_DELAY_SECONDS = 120
 MAX_MANIFEST_BYTES = 65536
+ABRUF_GESAMT_SECONDS = 300  # Gesamtfrist eines Abrufs (A6-13); der Socket-Timeout (30 s) gilt nur je Leseoperation
+ABRUF_BLOCK_BYTES = 8192
 MAX_FILE_BYTES = 1048576
 MAX_REJECTED = 20
 MAX_PENDING_REPORTS = 20
@@ -171,27 +176,92 @@ class _SchemeCheckedRedirects(urllib.request.HTTPRedirectHandler):
 USER_AGENT = f"SmartHeat-Gateway-Updater/{GATEWAY_VERSION}"
 
 
+def is_public_address(text: str) -> bool:
+    """Darf der Updater mit dieser Gegenadresse sprechen? Nur global erreichbare Adressen (`is_global`): nicht das LAN des
+    Kunden, nicht der eigene Rechner, nicht Link-Local, CGNAT und Sonderbereiche. Eine IPv4-Adresse in IPv6-Schreibweise
+    (`::ffff:a.b.c.d`) zaehlt wie die IPv4-Adresse, unabhaengig davon, wie die Python-Version sie selbst einstuft.
+    Unlesbares gilt als nicht erlaubt."""
+    try:
+        address = ipaddress.ip_address(text.split("%", 1)[0])  # ohne Scope-Kennung (fe80::1%eth0)
+    except ValueError:
+        return False
+    mapped = getattr(address, "ipv4_mapped", None)
+    return (address if mapped is None else mapped).is_global
+
+
+class _PublicOnlyHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS-Verbindung, die nur an eine oeffentliche Adresse verbindet (A6-38). Geprueft wird die Gegenadresse des
+    verbundenen Sockets, nicht der Name aus der URL: der Name kann beim Aufloesen auf jede Adresse zeigen (jede
+    aufgeloeste Adresse, die `socket.create_connection` versucht, aber auch ein DNS-Eintrag mit LAN-Adresse). Die Pruefung
+    liegt nach dem TCP-Aufbau und vor dem TLS-Handshake: zur falschen Adresse geht kein Byte Nutzdaten. Der Socket wird
+    geschlossen, bevor der Fehler aufsteigt."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        connect = self._create_connection  # Instanzattribut von http.client (socket.create_connection)
+
+        def create_checked(*connect_args, **connect_kwargs):
+            sock = connect(*connect_args, **connect_kwargs)
+            try:
+                peer = sock.getpeername()
+                address = peer[0] if isinstance(peer, tuple) and peer else ""
+                public = isinstance(address, str) and is_public_address(address)
+            except OSError:
+                address, public = "", False
+            if not public:
+                sock.close()
+                raise FetchError(f"{self.host}: Gegenadresse {address or 'unbekannt'} nicht oeffentlich")
+            return sock
+
+        self._create_connection = create_checked
+
+
+class _PublicOnlyHTTPSHandler(urllib.request.HTTPSHandler):
+    """urllib baut je Anfrage (auch je Weiterleitung) eine neue Verbindung ueber diesen Handler."""
+
+    def https_open(self, req):
+        return self.do_open(_PublicOnlyHTTPSConnection, req)
+
+
 def checked_opener(allow_http: bool) -> urllib.request.OpenerDirector:
-    opener = urllib.request.build_opener(_SchemeCheckedRedirects(allow_http))
+    """Opener des Updaters: Weiterleitungen nur auf erlaubte Schemata, https nur zu oeffentlichen Adressen (mit
+    `allow_http`, nur Tests und Labor, ohne diese Pruefung), nie ueber einen Proxy aus der Umgebung (ein Proxy liesse
+    die Pruefung nur dessen Adresse sehen und das Ziel von ihm aufloesen)."""
+    handlers: list = [_SchemeCheckedRedirects(allow_http), urllib.request.ProxyHandler({})]
+    if not allow_http:
+        handlers.append(_PublicOnlyHTTPSHandler())
+    opener = urllib.request.build_opener(*handlers)
     opener.addheaders = [("User-Agent", USER_AGENT)]
     return opener
 
 
-def fetch_url(url: str, max_bytes: int, allow_http: bool) -> bytes:
+def fetch_url(url: str, max_bytes: int, allow_http: bool, clock: Callable[[], float] = time.monotonic) -> bytes:
+    """Holt `url` (hoechstens `max_bytes`), in ABRUF_GESAMT_SECONDS insgesamt (A6-13): gelesen wird in Bloecken, nach
+    jedem Block wird die Frist geprueft (monotone Uhr). Der Socket-Timeout begrenzt nur die einzelne Leseoperation."""
     if not _scheme_allowed(url, allow_http):
         raise FetchError(f"nur https erlaubt: {url}")
+    deadline = clock() + ABRUF_GESAMT_SECONDS
     try:
         with checked_opener(allow_http).open(url, timeout=30) as response:
             # zweite Sicherung: die Adresse, von der der Inhalt kam, gilt wie die angefragte; der Inhalt wird danach
             # zusaetzlich nur nach SHA-256 und Signatur angenommen
             if not _scheme_allowed(response.geturl(), allow_http):
                 raise FetchError(f"{url}: {_REDIRECT_REFUSED}")
-            data = response.read(max_bytes + 1)
+            blocks: list[bytes] = []
+            size = 0
+            while size <= max_bytes:
+                if clock() >= deadline:
+                    raise FetchError(f"{url}: Gesamtfrist von {ABRUF_GESAMT_SECONDS} s ueberschritten")
+                block = response.read1(min(ABRUF_BLOCK_BYTES, max_bytes + 1 - size))  # read1: kein Warten auf einen vollen Block
+                if not block:
+                    break
+                blocks.append(block)
+                size += len(block)
     except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as error:
         raise FetchError(f"{url}: {type(error).__name__}") from None
-    if len(data) > max_bytes:
+    if size > max_bytes:
         raise FetchError(f"{url}: zu gross")
-    return data
+    return b"".join(blocks)
 
 
 def fetch_health(url: str) -> dict | None:
@@ -255,6 +325,30 @@ class Updater:
     # --- Ablauf ---
 
     def recover(self) -> None:
+        """Nach einem Neustart: siehe `_recover`; ein Dateifehler wird geloggt und beendet den Aufruf (A6-39)."""
+        try:
+            self._recover()
+        except OSError as error:
+            self._file_error("recover", error)
+
+    def run_once(self) -> str:
+        """Ein Durchlauf (Ergebnis: aktuell, vorlaeufig, abgelehnt, aktualisiert, zurueckgerollt). Ein Dateifehler
+        (Datentraeger voll oder schreibgeschuetzt, Zustandsdatei) ist kein Fehler des Bundles (A6-39): ERROR mit dem
+        Namen des Fehlers, Ergebnis "vorlaeufig"; der Zustand bleibt, wie die letzte erfolgreiche Speicherung ihn liess
+        (ein unterbrochenes Update setzt recover() im naechsten Durchlauf fort)."""
+        try:
+            return self._run_once()
+        except OSError as error:
+            self._file_error("run_once", error)
+            return "vorlaeufig"
+
+    @staticmethod
+    def _file_error(where: str, error: OSError) -> None:
+        name = errno.errorcode.get(error.errno or 0, type(error).__name__)
+        logger.error("%s: Dateifehler %s (%s), Durchlauf vorlaeufig, naechster Durchlauf versucht es erneut", where, name,
+                     error.strerror or error)
+
+    def _recover(self) -> None:
         """Nach einem Neustart: ein unterbrochenes Update zu Ende bringen oder zuruecknehmen. Nach einem Stromausfall
         laufen eventuell noch die alten Container (restart: unless-stopped) und wirken gesund; deshalb wird das neue
         Bundle erst erneut hochgefahren (up ist idempotent), bevor die Gesundheit zaehlt."""
@@ -282,7 +376,7 @@ class Updater:
             return
         self._settle(state, version)
 
-    def run_once(self) -> str:
+    def _run_once(self) -> str:
         if State.load(self._state_path).in_progress:  # offener Auftrag (z. B. gescheiterter Rueckweg) zuerst
             self.recover()  # sendet zuerst die offenen Meldungen
             if State.load(self._state_path).in_progress:
@@ -520,7 +614,10 @@ def main(argv: list[str] | None = None) -> None:
         return
     time.sleep(FIRST_DELAY_SECONDS)
     while True:
-        logger.info("Durchlauf: %s", run.run_once())
+        try:
+            logger.info("Durchlauf: %s", run.run_once())
+        except Exception:  # Fangnetz (A6-39): ein unerwarteter Fehler beendet den Dienst nicht, der naechste Durchlauf folgt
+            logger.exception("Durchlauf mit unerwartetem Fehler abgebrochen")
         time.sleep(PERIOD_SECONDS + random.uniform(0, JITTER_SECONDS))
 
 

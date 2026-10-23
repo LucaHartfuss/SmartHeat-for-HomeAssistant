@@ -1,4 +1,5 @@
 import json
+import subprocess
 
 import pytest
 
@@ -200,3 +201,66 @@ def test_store_keeps_manifest_and_signature(tmp_path):
 class _Done:
     def __init__(self, returncode, stdout):
         self.returncode, self.stdout, self.stderr = returncode, stdout, ""
+
+
+def test_compose_calls_have_a_timeout_and_a_timeout_is_a_compose_error(tmp_path):
+    """A6-13: ein haengender `docker`-Aufruf (Netz weg mitten im `pull`, Daemon blockiert) hielt den Updater endlos fest.
+    Jeder Aufruf traegt eine Frist; laeuft sie ab (Attrappe `run` wirft TimeoutExpired, wie `subprocess.run`), ist es ein
+    ComposeError, bei `ps` eine leere Antwort."""
+    seen = []
+
+    def hanging(cmd, **kw):
+        seen.append((cmd[cmd.index("-f") + 2:], kw.get("timeout")))  # Teil nach der Compose-Datei
+        raise subprocess.TimeoutExpired(cmd, kw.get("timeout"))
+
+    runner = bundles.ComposeRunner(tmp_path, run=hanging)
+    with pytest.raises(bundles.ComposeError, match="pull"):
+        runner.pull("0.3.0")
+    with pytest.raises(bundles.ComposeError, match="up"):
+        runner.up("0.3.0")
+    assert runner.health("0.3.0") == {}
+    assert seen == [(["pull"], 900), (["up", "-d", "--remove-orphans"], 300), (["ps", "--format", "json"], 60)]
+
+
+def test_a_successful_compose_call_passes_its_timeout_to_run_too(tmp_path):
+    """Gegenprobe zu A6-13: auch ohne Ablauf geht die Frist an `run` (sonst waere sie ohne Wirkung)."""
+    seen = []
+
+    def run(cmd, **kw):
+        seen.append(kw.get("timeout"))
+        return _Done(0, "[]")
+
+    runner = bundles.ComposeRunner(tmp_path, run=run)
+    runner.pull("0.3.0")
+    runner.up("0.3.0")
+    runner.health("0.3.0")
+    assert seen == [900, 300, 60]
+
+
+def test_prune_calls_have_a_timeout_and_a_timeout_stops_the_clean_up_quietly(tmp_path):
+    """A6-13: `image ls` und `image rm` tragen je 120 s; ein Ablauf bricht das Aufraeumen ab wie ein fehlendes docker
+    (OSError): kein Fehler, nichts weiter geloescht. Aufraeumen ist Beiwerk, das Update ist dann schon gesund."""
+    keep = {"ghcr.io/x/gw@sha256:" + "a" * 64}
+    listed = "\n".join(["ghcr.io/x/gw@sha256:" + "f" * 64, "ghcr.io/x/gw@sha256:" + "e" * 64])
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append((cmd[:3], kw.get("timeout")))
+        return _Done(0, listed if cmd[:3] == ["docker", "image", "ls"] else "")
+
+    bundles.ComposeRunner(tmp_path, run=run).prune(keep)
+    assert calls == [(["docker", "image", "ls"], 120), (["docker", "image", "rm"], 120), (["docker", "image", "rm"], 120)]
+
+    for hanging_command in (["docker", "image", "ls"], ["docker", "image", "rm"]):
+        seen = []
+
+        def hanging(cmd, hanging_command=hanging_command, seen=seen, **kw):
+            seen.append(cmd[:3])
+            if cmd[:3] == hanging_command:
+                raise subprocess.TimeoutExpired(cmd, kw.get("timeout"))
+            return _Done(0, listed)
+
+        bundles.ComposeRunner(tmp_path, run=hanging).prune(keep)  # wirft nicht
+        # beim haengenden `rm` endet das Aufraeumen nach dem ersten Versuch, das zweite Image bleibt
+        assert seen == ([["docker", "image", "ls"]] if hanging_command[2] == "ls"
+                        else [["docker", "image", "ls"], ["docker", "image", "rm"]])
