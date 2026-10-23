@@ -19,7 +19,7 @@ from minisign_helper import keypair, sign  # noqa: E402
 
 VERSIONS = ("0.9.1", "0.9.2", "0.9.3")  # 0.9.3: Laufzeit wirft im laufenden Prozess -> ungesund -> Rueckweg
 # 0.9.3: der Regel-Worker wirft 10 s nach dem Start (Geraetekern verbunden, Lebenszeichen frisch); prozess.laufen
-# trennt, pausiert 60 s und startet neu. In der Pause muss sich das Gateway ungesund melden (Abschlussreview S6 I-2),
+# trennt, pausiert 60 s und startet neu. In der Pause muss sich das Gateway ungesund melden,
 # sonst behielte der Updater das Update. Die Datei data/testfehler belegt dem Testskript, dass dieser Weg lief.
 BROKEN_RUNTIME = ("import time; from smartheat_runtime.worker import RegulationWorker; "
                   "RegulationWorker.run = lambda self: "

@@ -1,4 +1,4 @@
-"""Einzelfuehler-Ausfall (Spec TP6 3.5, Praezisierung 5)."""
+"""Einzelfuehler-Ausfall."""
 import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -230,7 +230,7 @@ def test_message_and_key_use_the_device_key_of_the_source(make_store):
 
 
 def test_an_unreachable_ha_logs_its_error_text_only_escaped(make_store, caplog):
-    """T6-Rest, R-c: der Fehlertext der HA-API (SourceUnavailable) steht nur als Escape im Log."""
+    """Der Fehlertext der HA-API (SourceUnavailable) steht nur als Escape im Log."""
     values = {"sensor.a": requests.ConnectionError(FREMDTEXT), "sensor.b": 20.0}
     rt = _rt(make_store, values, values.keys())
     with caplog.at_level(logging.WARNING, logger="smartheat_runtime.room_sensors"):

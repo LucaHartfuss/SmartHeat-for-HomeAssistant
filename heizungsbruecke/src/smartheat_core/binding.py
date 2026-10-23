@@ -1,7 +1,7 @@
-"""Binding-Schnittstelle (Spec 5.4, Plan 2 P2-2): wie ein Client die Hebel einer Anlage liest und schreibt. Die
+"""Binding-Schnittstelle: wie ein Client die Hebel einer Anlage liest und schreibt. Die
 Beschreibung (BindingDescription) ist reine Daten; die Umsetzung (PlantBinding) liegt beim Client (heute
 heizungsbruecke.ha_binding ueber Home Assistant, spaeter direkt im SmartHeat-Gateway).
-Die Werte kommen mit der Konfiguration (smartheat_core.bindungsparameter, Spec Stufe 3 S4b); der lokale Teil steht in
+Die Werte kommen mit der Konfiguration (smartheat_core.bindungsparameter); der lokale Teil steht in
 smartheat_core.verfahren."""
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -19,27 +19,27 @@ class BindingDescription:
     """steps: Schrittweite der Anlage je Hebel (inkl. client-abgeleiteter); enforce_tolerance: Abweichung, ab der
     Durchsetzen schreibt; settle_seconds: so lange nach einem eigenen Schreiben kann die Anlage noch den alten Wert
     zeigen (Hersteller-Cloud); restore_originals: Hebel, die beim Ende der Regelung auf ihren Ursprungswert
-    zurueckgehen (P2-5); optional_restore: Hebel, die im Wiederherstellungspunkt fehlen duerfen -- ohne Wert bleiben
+    zurueckgehen; optional_restore: Hebel, die im Wiederherstellungspunkt fehlen duerfen -- ohne Wert bleiben
     sie waehrend eines Boosts unangetastet und sind fuer den gespeicherten Rueckfallpunkt nicht noetig;
     prepared_lever: Hebel, dessen Schreiben eine vorbereitete Anlage braucht (Vaillant: Zone auf Manuell);
     labels/preparation_label: Anzeigenamen in Kundenmeldungen.
 
-    Plan 3b (Standardwerte = Vaillant, unveraendert):
+    Standardwerte = Vaillant (unveraendert):
     preparation_resets_setpoint: True, wenn die Vorbereitung den Sollwert des prepared_lever unbrauchbar macht und er
     danach ohne Quota-Check geschrieben werden muss (Vaillant: Zonen-Umschaltung); False bei Weishaupt/Viessmann (der
     Sollwert ist ein eigenes Register und bleibt).
     daily_write_limit: physische Schreibvorgaenge je Tag ueber alle Hebel (Weishaupt 10, EEPROM); None = kein
     globales Tagesbudget. enforce_per_day: Durchsetzungs-Versuche je Hebel(-gruppe) und Tag.
     write_groups: Hebel, die zusammen geschrieben werden (Viessmann setCurve); gezaehlt wird je physischem Aufruf des
-    Bindings (A6-09).
+    Bindings.
     lifetime_hint_at: ab so vielen gezaehlten Schreibvorgaengen ein Hinweis (EEPROM-Lebensdauer); None = nicht zaehlen.
     aux_originals: Hilfswerte der Anlage, die vor dem ersten Schreiben gemerkt und beim Ende zurueckgestellt werden
     (Betriebsart, Komfort-/Absenk-Sollwert); ihre Namen sind Manifest-Rollen des Bindings.
     energy_counters: ENERGY_TOTAL (monoton wachsende Zaehler) oder ENERGY_DAILY (Tageszaehler, Mitternacht = 0).
     readonly_levers: Hebel ausserhalb des Hebelsatzes, die nur gelesen und im Snapshot als `readonly` gemeldet werden
-    (Weishaupt-Basis: Steigung fuer die eingefrorene Steigung des Servers, Spec 3.3/2).
+    (Weishaupt-Basis: Steigung fuer die eingefrorene Steigung des Servers).
     schemata: Optionsschemata des Verfahrens vom Server (Weishaupt: praefixe, normal_bereich);
-    energie: Kanal -> erwartete Einheit (Spec Stufe 3 S4b 5), ein Kanal ohne Eintrag wird nicht gesendet."""
+    energie: Kanal -> erwartete Einheit, ein Kanal ohne Eintrag wird nicht gesendet."""
 
     lever_set: LeverSet
     steps: Mapping[str, float]
@@ -103,7 +103,7 @@ class PlantBinding(Protocol):
     write schreibt den schon begrenzten und gerundeten Wert und wirft, wenn er nicht ankommen kann. Die Vorbereitung
     (prepare) stellt die Anlage so, dass prepared_lever wirkt; True heisst "gerade umgestellt".
 
-    Plan 3b: physical_writes zaehlt jeden erfolgreichen physischen Schreibvorgang des Bindings (auch Hilfswerte und
+    physical_writes zaehlt jeden erfolgreichen physischen Schreibvorgang des Bindings (auch Hilfswerte und
     Vorbereitung; die Pipeline liest die Differenz, Tagesbudget und Lebensdauer). read_aux liefert die Hilfswerte aus
     description.aux_originals (wirft bei Lesefehlern), restore_aux stellt sie in sicherer Reihenfolge zurueck und
     schreibt nur abweichende; `levers` sind die gerade zurueckgestellten Hebel-Zielwerte (der Read kann ihnen noch
@@ -127,6 +127,6 @@ class PlantBinding(Protocol):
     def limits(self, lever: str) -> tuple[float, float] | None: ...
 
     def aux_zulaessig(self, name: str, wert: str) -> bool:
-        """Spec Stufe 3 S3 5.2: nimmt das Binding diesen Text als Hilfswert der Rolle an? Nur fuer Werte vom Server
+        """Nimmt das Binding diesen Text als Hilfswert der Rolle an? Nur fuer Werte vom Server
         (ein fehlerhafter Server darf keine unbekannte Betriebsart setzen); Zahlen prueft die Pipeline."""
         ...

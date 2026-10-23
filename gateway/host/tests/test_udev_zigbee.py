@@ -1,4 +1,4 @@
-"""udev-Regel fuer den Zigbee-Stick (host/udev/99-smartheat-zigbee.rules, Spec G2 8.2): jeder bekannte Stick trifft
+"""udev-Regel fuer den Zigbee-Stick (host/udev/99-smartheat-zigbee.rules): jeder bekannte Stick trifft
 genau eine Regel, und die schreibt die richtige Adapterart fuer den Init-Schritt. Die Regel wird hier mit einem kleinen
 Abgleich nach udev-Art gelesen (Glob, Alternativen mit |, == und !=); die Syntax selbst prueft udevadm verify in
 install_checks.sh."""

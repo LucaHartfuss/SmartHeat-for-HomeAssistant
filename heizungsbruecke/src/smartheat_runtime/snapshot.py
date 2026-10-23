@@ -1,4 +1,4 @@
-"""Snapshot fuer den Server (Schema 4, Hersteller-Abstraktion Spec 4.1, Plan 2 P2-8): Raum-Soll und die Hebel des
+"""Snapshot fuer den Server (Schema 4, Hersteller-Abstraktion): Raum-Soll und die Hebel des
 Hebelsatzes lesen, pruefen und als eine Nachricht publizieren."""
 import logging
 from collections.abc import Mapping
@@ -28,7 +28,7 @@ class SnapshotRead:
     room_target: float | None
     levers: dict[str, float]
     invalid: tuple[str, ...]
-    # Plan 3b: gelesene, aber nicht schreibbare Hebel (BindingDescription.readonly_levers), stehen auch in `levers`.
+    # Gelesene, aber nicht schreibbare Hebel (BindingDescription.readonly_levers), stehen auch in `levers`.
     readonly: tuple[str, ...] = ()
 
 
@@ -53,7 +53,7 @@ def _read_role(manifest: ChannelManifest, signals, role: str, invalid: list[str]
 
 def read_snapshot(manifest: ChannelManifest, signals, binding, known: Mapping[str, float | None]) -> SnapshotRead:
     """Liest jeden Hebel des Hebelsatzes und das Raum-Soll; prueft room_actual. `known` traegt Hebelwerte, die nicht
-    gelesen werden (eigener Schreibwert kurz nach dem Schreiben, A3-02; Wiederherstellungspunkt bei ruhender Zone).
+    gelesen werden (eigener Schreibwert kurz nach dem Schreiben, Wiederherstellungspunkt bei ruhender Zone).
     Ungueltig heisst: Lesen wirft oder der Wert ist nicht endlich. Meldet selbst nichts: das macht die Zustellung
     einmal pro Fehlerbeginn."""
     invalid: list[str] = []
@@ -80,7 +80,7 @@ def read_snapshot(manifest: ChannelManifest, signals, binding, known: Mapping[st
     for lever in binding.description.readonly_levers:
         if not binding.has(lever):
             continue
-        # Nur gelesen (Spec 3.3/2, eingefrorene Steigung): ein Lesefehler ist kein Datenfehler, der Hebel fehlt dann.
+        # Nur gelesen (eingefrorene Steigung): ein Lesefehler ist kein Datenfehler, der Hebel fehlt dann.
         try:
             value = binding.read(lever)
         except Exception as error:
@@ -104,7 +104,7 @@ def publish_snapshot(
     manual_override: dict | None = None, readonly: tuple[str, ...] = (),
 ) -> None:
     """Eine Nachricht auf up/snapshot (Schema 4); manual_override nur, wenn einer ansteht. `readonly` nennt die nur
-    gelesenen Hebel (Plan 3b, Weishaupt-Basis: Steigung), sonst leer."""
+    gelesenen Hebel (Weishaupt-Basis: Steigung), sonst leer."""
     payload = {
         "schema": SNAPSHOT_SCHEMA_VERSION,
         "seq": seq,

@@ -1,4 +1,4 @@
-"""Fake-ViCare (Spec SHG G4 3): IAM-Token-Endpunkt und die Teile der ViCare-API, die vicare_cloud braucht, auf stdlib
+"""Fake-ViCare: IAM-Token-Endpunkt und die Teile der ViCare-API, die vicare_cloud braucht, auf stdlib
 http.server. Steuerung ueber POST /__control. Nur fuer Tests und die E2E; kein Anspruch auf Vollstaendigkeit."""
 import copy
 import json

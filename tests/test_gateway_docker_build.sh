@@ -1,9 +1,9 @@
 #!/bin/bash
-# Gateway-Image bauen (amd64), Grundpruefung des Images und Compose-Lauf mit dem Dev-Overlay (Spec SHG G2 7.4, ab
-# 0.6.0 Spec 5b 5.3, Plan 5b D2 Task 10): ein Gateway-Container runtime (Geraetekern, Laufzeit, Diagnoseseite). Der
+# Gateway-Image bauen (amd64), Grundpruefung des Images und Compose-Lauf mit dem Dev-Overlay:
+# ein Gateway-Container runtime (Geraetekern, Laufzeit, Diagnoseseite). Der
 # Geraetekern bootstrappt beim Fake-Bootstrap (Test-CA signiert den CSR) und verbindet mit dem Fake-Broker (TLS,
 # Client-Zertifikat, ACL wie die Geraete-Policy), up/hello kommt dort an; Seite und /healthz antworten mit
-# Serverkontakt und Zustand "wartet_auf_einrichtung", ohne Uebernahme-Code (uebernommen, Spec 5c F1); die Laufzeit
+# Serverkontakt und Zustand "wartet_auf_einrichtung", ohne Uebernahme-Code (uebernommen); die Laufzeit
 # ruht "nicht eingerichtet".
 # Zigbee2MQTT (gleiche uid wie das Gateway) darf die vom Init-Schritt geschriebene configuration.yaml lesen und
 # ersetzen; der lokale Bus verlangt Anmeldung, die ACL laesst nur Zigbee2MQTT-Topics zu; runtime schreibt data/device
@@ -72,7 +72,7 @@ device_id="$(curl -fsS http://127.0.0.1:18090/_e2e/state \
 [ -n "$device_id" ] || fail "Fake-Bootstrap kennt keine Geraete-ID"
 # Verbunden mit dem Fake-Broker: /healthz meldet Serverkontakt; uebernommen, aber ohne Konfiguration wartet das Gateway
 # auf die Einrichtung, die Laufzeit ruht (nicht eingerichtet) und die Seite zeigt keinen Uebernahme-Code mehr
-# (Anzeige.code_zeigen, Spec 5c F1).
+# (Anzeige.code_zeigen).
 ok=0
 for _ in $(seq 1 30); do
   curl -fsS http://127.0.0.1:8080/healthz 2>/dev/null | grep -q '"server_ok": true' && { ok=1; break; }; sleep 2
@@ -114,7 +114,7 @@ pw() {
 for svc in runtime zigbee2mqtt; do [ -n "$(pw "$svc")" ] || fail "Bus-Zugangsdaten von $svc nicht lesbar"; done
 [ -e "$DATA/bus/credentials/agent" ] && fail "init legt noch einen Ordner fuer den Agenten an"
 mosq() { docker run --rm --security-opt label=disable --network "${PROJECT}_bus" "$MOSQ_IMAGE" "$@"; }
-# Anonym abgewiesen, Dienste angemeldet, ACL greift: der Bus traegt nur noch Zigbee2MQTT (Spec 5b 5.3). Die Abos
+# Anonym abgewiesen, Dienste angemeldet, ACL greift: der Bus traegt nur noch Zigbee2MQTT. Die Abos
 # ignorieren retained Nachrichten (-R): Fake-Zigbee2MQTT haelt bridge/* retained, das kaeme sonst vor der Probe an.
 mosq mosquitto_pub -h mosquitto -t zigbee2mqtt/x/set -m x 2>/dev/null && fail "anonymer Zugriff auf den Bus moeglich"
 # runtime darf Thermostate setzen und die Bruecke anfragen, zigbee2mqtt liest beides (Gegenprobe der ACL).
@@ -147,7 +147,7 @@ puback() {
 for topic in zigbee2mqtt/bridge/state zigbee2mqtt/bridge/devices smartheat/x; do
   [ "$(puback "$topic")" = "135" ] || fail "runtime darf auf $topic veroeffentlichen (PUBACK nicht 135)"
 done
-# Der Geraetekern im Container runtime schreibt data/device (ab 0.6.0 keine tmpfs-Masken mehr).
+# Der Geraetekern im Container runtime schreibt data/device (keine tmpfs-Masken).
 "${COMPOSE[@]}" exec -T runtime sh -c 'test -d /data/device && test -w /data/device' \
   || fail "runtime kann /data/device nicht schreiben"
 cid=$("${COMPOSE[@]}" ps -q runtime)
@@ -155,7 +155,7 @@ docker inspect -f '{{range .Mounts}}{{if eq .Type "tmpfs"}}{{.Destination}}{{"\n
   && fail "runtime: tmpfs-Maske unter /data"
 # Stopp-Frist ueber runtime_main.JOIN_SECONDS (10 s): sauberes Trennen vor SIGKILL.
 [ "$(docker inspect -f '{{.Config.StopTimeout}}' "$cid")" = "20" ] || fail "runtime: stop_grace_period nicht 20 s"
-# Review Focus 1: docker stop -> SIGTERM -> sauberes MQTT-DISCONNECT. Mosquitto 2.1 schreibt dann "Client <id>
+# Docker stop -> SIGTERM -> sauberes MQTT-DISCONNECT. Mosquitto 2.1 schreibt dann "Client <id>
 # [<adresse>] disconnected."; bei einem Abbruch "... closed its connection." bzw. "... has exceeded timeout". Gezaehlt
 # wird ab hier (der Neustart oben hat schon eine Trennung protokolliert).
 broker_log() { "${COMPOSE[@]}" logs --no-color fake-broker 2>/dev/null; }

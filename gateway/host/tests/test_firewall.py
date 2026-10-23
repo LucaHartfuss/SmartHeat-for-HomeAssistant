@@ -1,4 +1,4 @@
-"""Firewall des Gateways (host/nftables.conf, Spec G2b-1 6): die Datei wird als Regeln der Kette `input` gelesen (ohne
+"""Firewall des Gateways (host/nftables.conf): die Datei wird als Regeln der Kette `input` gelesen (ohne
 Kommentare), nicht als Stichwortsuche. Das ist Konfigurationstext: der Test belegt "so konfiguriert"; ob die Regeln auf
 dem Pi wirken und syntaktisch gueltig sind (`nft -c`), prueft nur der Docker-Lauf `install_checks.sh` bzw. das Labor.
 
@@ -13,7 +13,7 @@ HOST = Path(__file__).resolve().parents[1]
 NFTABLES = HOST / "nftables.conf"
 INSTALL = HOST / "install.sh"
 
-# Genau die vorgesehene Menge (Spec G2b-1 6), als Literal, normalisiert (einfache Leerzeichen).
+# Genau die vorgesehene Menge, als Literal, normalisiert (einfache Leerzeichen).
 ERLAUBT = {
     "iif lo accept",
     "ct state established,related accept",

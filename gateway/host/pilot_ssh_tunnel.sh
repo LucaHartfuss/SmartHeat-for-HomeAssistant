@@ -1,5 +1,5 @@
 #!/bin/bash
-# Pilot-SSH-Tunnel des SmartHeat-Gateways (Plan G2b-2 Task 8): eigener Cloudflare-Tunnel nur fuer SSH, als Host-Dienst
+# Pilot-SSH-Tunnel des SmartHeat-Gateways: eigener Cloudflare-Tunnel nur fuer SSH, als Host-Dienst
 # ausserhalb von Docker (Rettungsweg, wenn Docker oder der Updater haengen). Nur fuer Pilotgeraete mit install.sh
 # --pilot-ssh. Der oeffentliche Hostname (ssh://localhost:22) und die Access-Policy werden in Cloudflare angelegt
 # (Runbook); hierher kommt nur das Token des Tunnels, als Datei, nie als Argument.

@@ -1,4 +1,4 @@
-"""Hilfs-Entities (Spec TP6 3.2/3.3): Template-Sensoren, Neuanlage bei Quellwechsel und Entfernen der Anlage."""
+"""Hilfs-Entities: Template-Sensoren, Neuanlage bei Quellwechsel und Entfernen der Anlage."""
 import logging
 from unittest.mock import MagicMock
 
@@ -173,7 +173,7 @@ def test_source_change_is_still_reported_when_create_failed_after_delete(tmp_pat
     }
 
 
-# --- Entfernen der Anlage (Spec 5c, A4-07): alle Helfer weg, nicht loeschbare bleiben fuer den naechsten Versuch ---
+# --- Entfernen der Anlage: alle Helfer weg, nicht loeschbare bleiben fuer den naechsten Versuch ---
 
 
 def _tracking_with_old_helpers(tmp_path):

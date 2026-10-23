@@ -4,16 +4,25 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ADDON_DIR="$HERE/../heizungsbruecke"
 FAIL=0
 IMAGE_TAG="heizungsbruecke-test:local"
+CONTAINER_NAME="heizungsbruecke-docker-build-test"
+# Eigener Arbeitsordner (nicht TMPDIR: das erbten docker und seine Kinder), bei jedem Ende aufgeraeumt, auch beim
+# Abbruch; ein Container eines frueheren, abgebrochenen Laufs blockiert den Namen nicht.
+WORK="$(mktemp -d)"
+cleanup() {
+  docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1
+  rm -rf "$WORK"
+}
+trap cleanup EXIT
+docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1
 
 echo "--- docker build ---"
 docker build --platform linux/amd64 -t "$IMAGE_TAG" "$ADDON_DIR" || { echo "FAIL: docker build"; exit 1; }
 echo "PASS: docker build erfolgreich"
 
-TMPDIR="$(mktemp -d)"
-DATA_DIR="$TMPDIR/data"
+DATA_DIR="$WORK/data"
 mkdir -p "$DATA_DIR"
 
-# Ab 1.0.0 (Spec 5c) gibt es nur noch Start-Optionen; eingerichtet wird ueber das Konfigurationsdokument.
+# Ab 1.0.0 gibt es nur noch Start-Optionen; eingerichtet wird ueber das Konfigurationsdokument.
 cat > "$DATA_DIR/options.json" <<JSON
 {"log_level":"info"}
 JSON
@@ -25,9 +34,8 @@ else
 fi
 
 echo "--- container run ohne Konfigurationsdokument (nicht eingerichtet) ---"
-CONTAINER_NAME="heizungsbruecke-docker-build-test"
 # Kein --rm hier: der Container soll nach dem Beenden absichtlich noch existieren, damit
-# "docker logs" danach noch greifen kann (Cleanup passiert explizit am Skriptende).
+# "docker logs" danach noch greifen kann (Cleanup passiert im EXIT-Trap oben).
 MSYS_NO_PATHCONV=1 docker run -d --name "$CONTAINER_NAME" \
   -e SUPERVISOR_TOKEN=test-token \
   -e SMARTHEAT_BOOTSTRAP_URL=http://127.0.0.1:9 \
@@ -83,6 +91,4 @@ fi
 # Es gibt keinen Ingress-Wizard und keinen Flask-Server mehr, also auch nichts mehr auf
 # Port 8099 zu erreichen -- der fruehere "GET / liefert 200"-Check entfaellt ersatzlos.
 
-docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1
-rm -rf "$TMPDIR"
 exit $FAIL

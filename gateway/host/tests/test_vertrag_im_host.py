@@ -1,6 +1,4 @@
-"""Stufe 3 S8a-2 (A5-16, Audit 5 p5-ci): Vertragspruefung der Host-Dienste des Gateways, frueher Check 47 des
-Contract-Checks im Dev-Root (tools/contract_check.py). Der Check las updater.py als Text gegen SOFTWARE_ERRORS des
-Servers; hier gegen die Kopie im Geraetekern (smartheat_device.wire), die zeichengleich zum Server bleibt
+"""Vertragspruefung der Host-Dienste des Gateways gegen die Kopie im Geraetekern (smartheat_device.wire), die zeichengleich zum Server bleibt
 (test_device_wire.py::test_the_copy_is_literal und Contract-Check 49). Der Test importiert den Updater, und der
 importiert smartheat_core, smartheat_gateway und smartheat_host; er braucht also den Quellbaum des Gateways, nicht nur
 die Standardbibliothek."""
@@ -12,7 +10,7 @@ from smartheat_host import updater
 
 
 def _probleme_47(updater, software_errors) -> list[str]:
-    """G3-Restpunkt, Spec 5b 5.3: Die Gruende des Gateway-Updaters (REASONS und der Rueckweg ohne Ablehnung
+    """Die Gruende des Gateway-Updaters (REASONS und der Rueckweg ohne Ablehnung
     RETRY_REASON) sind Gruende des Vertrags (SOFTWARE_ERRORS); die Laufzeit meldet sie als up/result (dokument
     software)."""
     allowed = set(software_errors)

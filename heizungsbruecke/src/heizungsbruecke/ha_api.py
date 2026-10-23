@@ -6,7 +6,7 @@ import websocket
 from smartheat_runtime.ports import SignalUngueltig
 
 # Plattformen der Helfer, die derived_sensors per Config-Flow anlegt (und nur die darf
-# delete_helper loeschen): seit TP11 nur noch Template-Sensoren.
+# delete_helper loeschen): nur Template-Sensoren.
 HELPER_PLATFORMS = ("template",)
 # `state` in GET /api/config, sobald HA fertig gestartet ist (homeassistant.core.CoreState).
 HA_STATE_RUNNING = "RUNNING"
@@ -72,7 +72,7 @@ class HomeAssistantApi:
 
     def ws_command(self, command: dict):
         """Ein WebSocket-Kommando mit kurzlebiger Verbindung (wie _call_ws_command, oeffentlich fuer Inventur und
-        Pruefung, Spec 5c 1.3)."""
+        Pruefung)."""
         return self._call_ws_command(command)
 
     def entity_registry(self) -> list[dict]:
@@ -154,7 +154,7 @@ class HomeAssistantApi:
         response.raise_for_status()
 
     def set_climate_temperature(self, entity_id: str, value: float) -> None:
-        """Wunschtemperatur einer Climate-Entity (TP11: Parallelverschiebung = Zonen-Sollwert).
+        """Wunschtemperatur einer Climate-Entity (Parallelverschiebung = Zonen-Sollwert).
         Bei mypyllant im Modus "Manuell" dauerhaft (set_manual_mode_setpoint)."""
         response = requests.post(
             f"{self._base_url}{self._api_prefix}/services/climate/set_temperature",
@@ -174,7 +174,7 @@ class HomeAssistantApi:
         response.raise_for_status()
 
     def select_option(self, entity_id: str, option: str) -> None:
-        """Option einer select-Entity waehlen (Plan 3b, Weishaupt-Betriebsart)."""
+        """Option einer select-Entity waehlen (Weishaupt-Betriebsart)."""
         response = requests.post(
             f"{self._base_url}{self._api_prefix}/services/select/select_option",
             headers=self._headers,
@@ -184,7 +184,7 @@ class HomeAssistantApi:
         response.raise_for_status()
 
     def set_preset_mode(self, entity_id: str, preset: str) -> None:
-        """Preset einer Climate-Entity setzen (Plan 3b, Viessmann-Heizprogramm)."""
+        """Preset einer Climate-Entity setzen (Viessmann-Heizprogramm)."""
         response = requests.post(
             f"{self._base_url}{self._api_prefix}/services/climate/set_preset_mode",
             headers=self._headers,
@@ -194,7 +194,7 @@ class HomeAssistantApi:
         response.raise_for_status()
 
     def get_attribute(self, entity_id: str, attribute: str) -> str:
-        """Ein Attribut als Text (Plan 3b, z. B. preset_mode); ein fehlendes oder leeres Attribut wirft ValueError wie
+        """Ein Attribut als Text (z. B. preset_mode); ein fehlendes oder leeres Attribut wirft ValueError wie
         get_raw_state bei unavailable/unknown."""
         response = requests.get(
             f"{self._base_url}{self._api_prefix}/states/{entity_id}",
@@ -233,7 +233,7 @@ class HomeAssistantApi:
         Integration (z.B. mypyllant) geloescht -- nicht rueckgaengig zu machen. Dann wirft es,
         ohne etwas zu loeschen. Zusaetzlich muss der Helfer als SmartHeat-eigen erkennbar sein:
         am Objekt-Teil-Praefix `smartheat_` oder -- bei einer von HA/dem Nutzer umbenannten
-        Entity-ID (B-TP11-1, TP12b) -- am Titel des Config-Entry `SmartHeat {tenant_id} ...`, den
+        Entity-ID -- am Titel des Config-Entry `SmartHeat {tenant_id} ...`, den
         das Add-on beim Anlegen vergibt und den HA beim Umbenennen der Entity nicht aendert."""
         object_id = entity_id.partition(".")[2]
         prefixed = object_id.startswith("smartheat_")
@@ -351,7 +351,7 @@ class HomeAssistantApi:
 
     def fire_event(self, event_type: str, data: dict) -> None:
         """Feuert ein Ereignis auf dem HA-Event-Bus (POST /api/events/<typ>): Status-Kanal zur
-        SmartHeat-Integration (Spec TP7 1.1). Wirft wie send_notification; abfangen ist Sache des
+        SmartHeat-Integration. Wirft wie send_notification; abfangen ist Sache des
         Aufrufers."""
         response = requests.post(
             f"{self._base_url}{self._api_prefix}/events/{event_type}",

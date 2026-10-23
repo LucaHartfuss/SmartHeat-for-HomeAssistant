@@ -1,8 +1,8 @@
-"""ClientApp (Spec SHG 3.3): Start, Handler des Regel-Workers, Ruhezustand und Abmelden, fuer jeden Host gleich.
+"""ClientApp: Start, Handler des Regel-Workers, Ruhezustand und Abmelden, fuer jeden Host gleich.
 
 Alle Regelungsereignisse laufen nacheinander im Hauptthread (RegulationWorker). Der Client beendet sich nie absichtlich:
-die Restart-Policy des Hosts (Supervisor-Watchdog bzw. Container) wuerde auch einen sauberen Exit 0 neu starten
-(Spec TP7). Endzustaende sind ein Ruhezustand, in dem nur noch das Lebenszeichen laeuft. Was hostspezifisch ist
+die Restart-Policy des Hosts (Supervisor-Watchdog bzw. Container) wuerde auch einen sauberen Exit 0 neu starten.
+Endzustaende sind ein Ruhezustand, in dem nur noch das Lebenszeichen laeuft. Was hostspezifisch ist
 (Warten auf HA, Optionen, Hilfs-Entities, Bindings, Trigger), liefert der Host ueber das Protokoll Host."""
 import functools
 import logging
@@ -75,7 +75,7 @@ from smartheat_runtime.worker import Event, RegulationWorker
 # Im Konfigurationsfehler prueft ein frischer Prozess nach dieser Zeit erneut (z. B. eine spaet
 # geladene Integration); der persistierte Meldezustand verhindert eine Wiederholungsmeldung.
 CONFIG_RECHECK_SECONDS = 900
-# Verbindungswaechter (TP12b, AU-033): so lange ohne MQTT-Verbindung und ohne offenen Tick, dann
+# Verbindungswaechter: so lange ohne MQTT-Verbindung und ohne offenen Tick, dann
 # klaert ein Pruef-Tick den Server (Notbetrieb ueber dessen Ack-Timeouts). Kurze Abrisse des
 # Verbindungsabrisse bleiben darunter.
 CONNECTION_LOSS_PROBE_SECONDS = 900
@@ -126,7 +126,7 @@ class Loaded:
     config: RuntimeConfig
     manifest: ChannelManifest
     binding: PlantBinding
-    # Audit 4, A4-08: Anlagen-Kennung des Hosts (HA: der Heizkreis, A6-36; Gateway: Treiber und Parameter).
+    # Anlagen-Kennung des Hosts (HA: der Heizkreis, Gateway: Treiber und Parameter).
     plant_id: str
     notices: tuple[Notice, ...] = ()
 
@@ -139,7 +139,7 @@ class RestoreParts:
 
 
 class Host(Protocol):
-    """Was ein Host der Laufzeit liefert (Spec SHG 3.2). Alle Aufrufe laufen im Hauptthread vor worker.run()."""
+    """Was ein Host der Laufzeit liefert. Alle Aufrufe laufen im Hauptthread vor worker.run()."""
 
     signals: SignalSource
     status_sink: StatusSink
@@ -157,7 +157,7 @@ class Host(Protocol):
         ...
 
     def ursprungswerte_melden(self, werte: dict) -> None:
-        """Gemerkte Ursprungswerte fuer up/status (Spec Stufe 3 S3 5.1); im Hauptthread, wirft nie."""
+        """Gemerkte Ursprungswerte fuer up/status; im Hauptthread, wirft nie."""
         ...
 
     def ursprungswerte_server(self) -> Mapping[str, object]:
@@ -174,13 +174,13 @@ class Host(Protocol):
 
 @dataclass
 class IdleBridge:
-    """Ruhezustand beim Start (Spec TP7 3.2): keine Regelung, kein MQTT, keine Trigger, kein
+    """Ruhezustand beim Start: keine Regelung, kein MQTT, keine Trigger, kein
     Schreiben auf die Anlage (ausser dem Zuruecksetzen beim Abmelden/Fristende). Es laeuft nur der
     Worker mit dem Lebenszeichen, sofern es einen Status-Kanal gibt."""
     worker: RegulationWorker
     status: StatusReporter | None
     reason: str  # IDLE_NOT_CONFIGURED oder ein Status-Wert
-    # Neustart des Hosts (Spec Stufe 3 S6 4.2), Rueckruf aus start; ruft nur der Worker-Thread (Neupruefung im
+    # Neustart des Hosts, Rueckruf aus start; ruft nur der Worker-Thread (Neupruefung im
     # Konfigurationsfehler, Neustart nach dem Zuruecksetzen).
     neustart: Callable[[], None]
 
@@ -214,7 +214,7 @@ def _fail_start(notifier, status, clock, grund: str, key: str | None = None, *, 
     Status tragen den ausfuehrlichen Grund. Derselbe Fehler wie beim letzten Start pusht nicht
     erneut, legt aber die offene Meldung neu an (in HA fehlt sie nach einem Host-Neustart). Danach
     Ruhezustand mit Neupruefung nach CONFIG_RECHECK_SECONDS. Laeuft ein Boost, nimmt der Start ihn ueber `parts`
-    zurueck; geht das nicht, sagt die Meldung, dass die Boost-Werte noch auf der Anlage stehen (Audit 4, A4-10)."""
+    zurueck; geht das nicht, sagt die Meldung, dass die Boost-Werte noch auf der Anlage stehen."""
     logger.error("FEHLER: %s", lesbar(grund))  # der Grund traegt Text der Konfiguration (Gateway: vom Server)
     message = CONFIG_ERROR_MESSAGE.format(grund=grund)
     if (store is not None and (store.state.boost_active or store.state.emergency_boost_active)
@@ -241,7 +241,7 @@ def _end_boosts(store, parts: RestoreParts | None, clock) -> bool:
 
 
 def _nach_zuruecksetzen(bridge: IdleBridge, pfad: Path | None, anlage: str) -> None:
-    """Spec Stufe 3 S3 Abschnitt 4: war das ein Zuruecksetzen nach einer leeren Konfiguration, die Markierung erledigen
+    """War das ein Zuruecksetzen nach einer leeren Konfiguration, die Markierung erledigen
     und neu starten; der Start danach loescht dann den anlagengebundenen Zustand. Ueber ein Ereignis wie jeder Neustart
     der Laufzeit: der Rueckruf des Hosts (bridge.neustart) laeuft erst im Worker, nachdem start zurueckgekehrt ist und
     der Host den Worker gebunden hat. Laesst sich die Markierung nicht schreiben, kein Neustart: ohne `zurueckgesetzt`
@@ -266,8 +266,8 @@ def _nach_zuruecksetzen(bridge: IdleBridge, pfad: Path | None, anlage: str) -> N
 def _sign_off(parts: RestoreParts | None, store, notifier, status, clock, retry_seconds: float, *,
               neustart: Callable[[], None], aufraeumen_path: Path | None = None, anlage: str,
               server_originals: Callable[[], Mapping[str, object]] | None = None) -> IdleBridge:
-    """Abmelden (Spec TP7 3.3, die Integration bzw. das Portal entfernt den Client) und leer heisst abmelden (Spec Stufe
-    3 S3 Abschnitt 4): laufenden Boost auf den Wiederherstellungspunkt zuruecknehmen, alle Meldungen entfernen, dann
+    """Abmelden (die Integration bzw. das Portal entfernt den Client) und leer heisst abmelden:
+    laufenden Boost auf den Wiederherstellungspunkt zuruecknehmen, alle Meldungen entfernen, dann
     Ruhezustand `abgemeldet`. Scheitert es, wird es im Takt retry_seconds erneut versucht; der Status bleibt
     `abgemeldet` mit Grund. Gelingt es und steht eine Aufraeum-Markierung dieser Anlage offen, folgt ein Neustart
     (_nach_zuruecksetzen); scheitert es, bleibt sie offen und ein Neustart dazwischen versucht es erneut."""
@@ -276,7 +276,7 @@ def _sign_off(parts: RestoreParts | None, store, notifier, status, clock, retry_
     boosting = store.state.boost_active or store.state.emergency_boost_active
     restored = restorer is not None and restorer.restore_and_clear(always_restore=False)
     # Die Meldung zum Zuruecksetzen bleibt: nach dem Entfernen ist sie der einzige Hinweis, dass
-    # die Anlage noch auf Boost-Werten steht (TP7-Gates 2026-09-29).
+    # die Anlage noch auf Boost-Werten steht.
     notifier.clear_all(keep=(abo.RESTORE_KEY,))
     if restorer is None:
         grund = SIGN_OFF_INVALID_CONFIG
@@ -308,7 +308,7 @@ def _sign_off(parts: RestoreParts | None, store, notifier, status, clock, retry_
 
 
 def _hint(notifier, key: str, state: str, message: str) -> None:
-    """Nicht kritischer Hinweis der Hebel-Pipeline (Plan 3b: Tageslimit, Lebensdauerzaehler)."""
+    """Nicht kritischer Hinweis der Hebel-Pipeline (Tageslimit, Lebensdauerzaehler)."""
     notifier.notify(key, state, message, critical=False)
 
 
@@ -326,8 +326,8 @@ _NEUTRALE_NAMEN = {"curve": "Heizkurve", "level": "Niveau", "room_setpoint": "Ra
 
 
 def _restore_values_text(state, description: BindingDescription | None, *, abmelden: bool) -> str:
-    """Die Werte, die der Kunde von Hand einstellen soll: jeder Hebel des Hebelsatzes mit seinem Anzeigenamen
-    (A6-11). Beim Abmelden gehen die Hebel aus restore_originals auf ihren Ursprungswert zurueck (restore_and_clear),
+    """Die Werte, die der Kunde von Hand einstellen soll: jeder Hebel des Hebelsatzes mit seinem Anzeigenamen.
+    Beim Abmelden gehen die Hebel aus restore_originals auf ihren Ursprungswert zurueck (restore_and_clear),
     alle anderen und jeder Fall ausser dem Abmelden auf den Wiederherstellungspunkt; fehlt der Wert dort, gilt der
     Ursprungswert. Ohne Beschreibung stehen die Werte des Wiederherstellungspunkts unter neutralen Namen."""
     if description is None:
@@ -343,9 +343,9 @@ def _restore_values_text(state, description: BindingDescription | None, *, abmel
 
 
 def _finish_at_start(rt: Runtime, clock) -> IdleBridge:
-    """Abo-Frist beim Start schon abgelaufen (Spec TP7 3.2): laufende Boosts zuruecknehmen (nicht
+    """Abo-Frist beim Start schon abgelaufen: laufende Boosts zuruecknehmen (nicht
     mit Boost-Werten liegen bleiben), dann Ruhezustand `abo_beendet`. Scheitert das
-    Zuruecksetzen, meldet der notifier das einmal (T2-7), und es wird im Takt
+    Zuruecksetzen, meldet der notifier das einmal, und es wird im Takt
     local_check_interval im Worker erneut versucht."""
     status = rt.status
     assert status is not None  # beim Boot gesetzt
@@ -374,7 +374,7 @@ def _finish_at_start(rt: Runtime, clock) -> IdleBridge:
 
 def _run_local_check(rt: Runtime, fehler_text: str) -> None:
     """regulation.run_local_check, Fehler gehen nie nach oben. SignalUngueltig ist der erwartete Datenfehler (ein
-    Fuehler liefert keinen gueltigen Wert, L4-17): der Tick meldet ihn dem Kunden, hier genuegt eine WARNING ohne
+    Fuehler liefert keinen gueltigen Wert): der Tick meldet ihn dem Kunden, hier genuegt eine WARNING ohne
     Traceback, solange er anhaelt nur DEBUG, nach einem erfolgreichen Check wieder eine WARNING. Jede andere
     Ausnahme ist ein Fehler im Code oder auf der Anlage und bleibt `logger.exception`."""
     try:
@@ -437,7 +437,7 @@ def _on_watchdog(rt: Runtime, event: Event) -> None:
 
 
 def _on_connection_check(rt: Runtime, event: Event) -> None:
-    """Verbindungswaechter (Spec TP12b 1.1): ohne offenen Tick gibt es keinen Zustellversuch und
+    """Verbindungswaechter: ohne offenen Tick gibt es keinen Zustellversuch und
     damit nie einen Notbetrieb. Fehlt die Verbindung CONNECTION_LOSS_PROBE_SECONDS am Stueck, legt er
     deshalb einen Pruef-Tick an; das Ack nach dem Wiederverbinden beendet den Notbetrieb regulaer."""
     rt.worker.schedule(rt.config.local_check_interval, Event(EV_CONNECTION_CHECK))
@@ -465,7 +465,7 @@ def _on_telemetry(rt: Runtime, event: Event) -> None:
     if state.abo_inactive_since is not None or rt.mqtt_client is None:
         return
     if not rt.mqtt_client.is_connected():
-        # Ohne Verbindung nicht publizieren (AU-035): paho staute die Nachrichten unbegrenzt. Der
+        # Ohne Verbindung nicht publizieren: paho staute die Nachrichten unbegrenzt. Der
         # Server erkennt die Luecke ueber MAX_GAP.
         logger.debug("Telemetrie uebersprungen, keine MQTT-Verbindung")
         return
@@ -487,8 +487,8 @@ def _on_grace_check(rt: Runtime, event: Event) -> None:
 
 
 def _on_health(rt: Runtime, event: Event) -> None:
-    """Batterien, einzelne Raumfuehler (Spec TP6 3.5) und manuelle Eingriffe an Steigung,
-    Parallelverschiebung, Mindestvorlauf und Zonen-Betriebsart (Durchsetzung, TP11). Eigener
+    """Batterien, einzelne Raumfuehler und manuelle Eingriffe an Steigung,
+    Parallelverschiebung, Mindestvorlauf und Zonen-Betriebsart (Durchsetzung). Eigener
     Zeitplaneintrag: der lokale Check laeuft seit den eventgetriebenen Triggern nur auf Ereignisse."""
     rt.worker.schedule(rt.config.local_check_interval, Event(EV_HEALTH))
     try:
@@ -496,7 +496,7 @@ def _on_health(rt: Runtime, event: Event) -> None:
     except StorageError as error:
         logger.warning("Datentraeger weiterhin nicht beschreibbar: %s", error)
     else:
-        ticks.deliver(rt, delivery.StorageWritable())  # wartet ein Tick am Datentraeger, jetzt erneut (TP12b)
+        ticks.deliver(rt, delivery.StorageWritable())  # wartet ein Tick am Datentraeger, jetzt erneut
     if rt.store.state.abo_finished:
         return
     for check in (battery.check_batteries, room_sensors.check_room_sensors, aussentemperatur.check,
@@ -561,7 +561,7 @@ def _register_handlers(rt: Runtime, melder: Callable[[], None]) -> None:
 
 
 def _after_each(rt: Runtime, melder: Callable[[], None]) -> None:
-    """Nach jedem Worker-Ereignis: Datentraeger-Meldung (TP12b), dann das Status-Event, falls es
+    """Nach jedem Worker-Ereignis: Datentraeger-Meldung, dann das Status-Event, falls es
     sich geaendert hat. Dazu die Ursprungswerte an den Host (der Worker kennt nur einen Rueckruf)."""
     try:
         datentraeger.report(rt.store, rt.notifier, rt.texts)
@@ -601,7 +601,7 @@ def _prime(rt: Runtime) -> None:
     Tick erzwingen (_first_start), Zone auf Manuell mit brauchbarer Parallelverschiebung (vor dem
     ersten Snapshot, Plan-Praezisierung 11), Mindestvorlauf = Raum-Soll, dann Boost-Flags aus
     echten Sensorwerten. Persistierte Boosts laufen weiter und enden regulaer ueber ihre Schwellen
-    (N1). Der Ursprungswert der Heizgrenze wird vor dem ersten eigenen Schreiben gemerkt (TP12h).
+    (N1). Der Ursprungswert der Heizgrenze wird vor dem ersten eigenen Schreiben gemerkt.
     Scheitert ein Schritt, laufen die uebrigen trotzdem."""
     try:
         rt.override.capture_originals()
@@ -665,7 +665,7 @@ def _prepare_zone(rt: Runtime) -> None:
     try:
         rt.override.prepare_start(rt.store.state.stable_target)
     except WriteBudgetExhausted as error:
-        # Plan 3b (Weishaupt): Tagesbudget erreicht, kein Fehlschlag der Anlage -- nichts im Kontingent: RETRY_QUOTA
+        # Weishaupt: Tagesbudget erreicht, kein Fehlschlag der Anlage -- nichts im Kontingent: RETRY_QUOTA
         # zaehlt nur Fehlschlaege (every_attempt False; before_attempt zaehlt also nicht), und after_failure ruft
         # dieser Zweig nicht auf. Haette die Regel every_attempt, zaehlte before_attempt diesen Versuch schon mit. Der
         # naechste lokale Check (spaetestens am naechsten Tag) versucht es erneut; den Hinweis gibt die Pipeline.
@@ -683,9 +683,9 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
           mqtt_factory: Callable[[RegulationWorker], MqttChannel],
           neustart: Callable[[], None]) -> Runtime | IdleBridge:
     """Gibt den gestarteten Laufzeit-Kontext zurueck oder den Ruhezustand, wenn gar nicht erst geregelt wird: nicht
-    eingerichtet, abgemeldet, Konfigurationsfehler, Abo-Frist abgeschlossen. mqtt_factory (Pflicht, Spec 5b 5.2): die
-    Laufzeit nutzt die Verbindung des Geraets; einen eigenen MQTT-Client gibt es nicht. neustart (Pflicht, Spec Stufe 3
-    S6 4.2): der Neustart des Hosts; die Laufzeit ruft ihn nur im Worker-Thread (Abo am Fristende wieder aktiv,
+    eingerichtet, abgemeldet, Konfigurationsfehler, Abo-Frist abgeschlossen. mqtt_factory (Pflicht): die
+    Laufzeit nutzt die Verbindung des Geraets; einen eigenen MQTT-Client gibt es nicht. neustart (Pflicht):
+    der Neustart des Hosts; die Laufzeit ruft ihn nur im Worker-Thread (Abo am Fristende wieder aktiv,
     Neupruefung im Konfigurationsfehler, Neustart nach dem Zuruecksetzen)."""
     boot = host.boot_info()
     if not boot.signed_off and not boot.configured:
@@ -713,9 +713,9 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
     for notice in loaded.notices:
         notifier.notify(notice.key, notice.state, notice.message, critical=False)
     config = loaded.config
-    # Audit 4, A4-08: Zustand an Einrichtung und Anlage binden, bevor irgendetwas daraus gelesen wird. A6-36: ein
-    # Bestand mit der Kennung aus den Hebel-Referenzen (HA bis 1.1.0) ist dieselbe Anlage (einmalige Uebernahme,
-    # Rueckbau A6-36-Uebernahme); beim Gateway ist sie nie gleich (seine Kennung hat den Schluessel "id", kein Hebel
+    # Zustand an Einrichtung und Anlage binden, bevor irgendetwas daraus gelesen wird. Ein Bestand
+    # mit der Kennung aus den Hebel-Referenzen (HA bis 1.1.0) ist dieselbe Anlage (einmalige Uebernahme,
+    # Rueckbau: offene-punkte.md A6-36-Uebernahme); beim Gateway ist sie nie gleich (seine Kennung hat den Schluessel "id", kein Hebel
     # heisst so).
     try:
         bind_to_tenant(store, boot.tenant_id, loaded.plant_id, frueher=roles.lever_refs_identity(loaded.manifest))
@@ -752,7 +752,7 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
         rt.mqtt_client = mqtt_factory(rt.worker)
     stale_notbetrieb = not abo_inactive and _is_stale_notbetrieb(rt)
     if stale_notbetrieb:
-        # vor _prime: dessen lokaler Check startete sonst einen Notfall-Boost (TP12b)
+        # vor _prime: dessen lokaler Check startete sonst einen Notfall-Boost
         _end_stale_notbetrieb(rt, beenden=abo_status == entitlement.ACTIVE)
 
     _prime(rt)
@@ -778,7 +778,7 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
 
 
 def _is_stale_notbetrieb(rt: Runtime) -> bool:
-    """Notbetrieb ohne offenen Tick endet nie von selbst (Spec TP12b 1.2): im Betrieb hat er immer einen Tick, dessen
+    """Notbetrieb ohne offenen Tick endet nie von selbst: im Betrieb hat er immer einen Tick, dessen
     Ack ihn beendet. Er stammt aus dem Abo-inaktiv-Modus (oder einer failsafe_state.json von 0.15.0); der Start klaert
     ihn in jedem Fall per Pruef-Tick."""
     state = rt.store.state.delivery
@@ -787,10 +787,10 @@ def _is_stale_notbetrieb(rt: Runtime) -> bool:
 
 def _end_stale_notbetrieb(rt: Runtime, *, beenden: bool) -> None:
     """`beenden` (Abo aktiv): den Notbetrieb still beenden, und zwar vor dem ersten lokalen Check, sonst schriebe der
-    Notfall-Boost bis zum naechsten Check seine Werte (TP12b); die Meldung geht still auf ok, wie bisher. Sonst (Abo
+    Notfall-Boost bis zum naechsten Check seine Werte; die Meldung geht still auf ok. Sonst (Abo
     unbekannt) laeuft der Notbetrieb weiter: eine gemeldete Meldung bleibt stehen und entwarnt mit der Antwort. Nur ein
     nie erschienener Notbetrieb (seed_notices hat den Zustand des Abo-inaktiv-Modus ohne Text uebernommen, dort meldet
-    die Abo-Meldung) geht still auf ok, sonst entwarnte die Antwort ihn mit "Notbetrieb beendet" (TP12b)."""
+    die Abo-Meldung) geht still auf ok, sonst entwarnte die Antwort ihn mit "Notbetrieb beendet"."""
     if beenden:
         ticks.deliver(rt, delivery.ClearStaleNotbetrieb())
     elif "notbetrieb" in rt.store.state.notify_messages:

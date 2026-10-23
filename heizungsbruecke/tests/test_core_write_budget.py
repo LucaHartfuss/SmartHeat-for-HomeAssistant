@@ -1,10 +1,10 @@
-"""Schreibbudget fuer Cloud-Schreibvorgaenge (TP12b, Spec 3.1)."""
+"""Schreibbudget fuer Cloud-Schreibvorgaenge."""
 import pytest
 from fakes import datei_stand
 
 from smartheat_core import write_budget as wb
 
-# Durchsetzen mit dem Standard-Tageslimit (frueher write_budget.QUOTA).
+# Durchsetzen mit dem Standard-Tageslimit.
 QUOTA = wb.enforce_rule(wb.MAX_PER_DAY)
 DAY = "2026-10-01"
 
@@ -124,7 +124,7 @@ def test_enforce_rule_with_the_standard_limit_is_every_attempt_one_per_interval_
 
 
 def test_start_quota_counts_every_attempt():
-    # A6-01: jeder Boost-Start zaehlt, auch ein erfolgreicher (Regel 4, Nutzer 2026-10-19).
+    # Jeder Boost-Start zaehlt, auch ein erfolgreicher (Regel 4, Nutzer 2026-10-19).
     assert wb.START_QUOTA.every_attempt is True
     assert wb.START_QUOTA.waits == (1800,)
     assert wb.START_QUOTA.max_per_day == 6

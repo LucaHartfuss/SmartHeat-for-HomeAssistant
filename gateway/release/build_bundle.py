@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bundle-Bau (Spec G2b-1 7): aus der Gateway-Compose (build:) die Bundle-Compose mit dem Image-Digest fuer die
+"""Bundle-Bau: aus der Gateway-Compose (build:) die Bundle-Compose mit dem Image-Digest fuer die
 Gateway-Dienste; Mosquitto und Zigbee2MQTT behalten ihre gepinnten Digests. Manifest mit Version,
 min_updater_version, SHA-256 der Dateien und Images. Geprueft mit denselben Funktionen wie auf dem Geraet."""
 import argparse
@@ -14,7 +14,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "host"))  # Aufruf als Skript ohne PYTHONPATH
 from smartheat_host import bundles  # noqa: E402
 
-MIN_UPDATER_VERSION = "0.2.0"  # steigt nur, wenn sich das Manifest-Format aendert (Plan G2b-1 Praezisierung 9)
+MIN_UPDATER_VERSION = "0.2.0"  # steigt nur, wenn sich das Manifest-Format aendert
 GATEWAY_SERVICES = ("init", "runtime")
 _PINNED = re.compile(r"[^\s@]+@sha256:[0-9a-f]{64}")
 _HEADER = "# SmartHeat-Gateway-Bundle (erzeugt von gateway/release/build_bundle.py, nicht von Hand aendern)\n"

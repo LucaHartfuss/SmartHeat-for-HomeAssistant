@@ -1,4 +1,4 @@
-"""Bundles des Updaters (Spec G2b-1 2.2, 4): Manifest, Pruefung der Compose-Datei, Ablage unter bundles/<version>/
+"""Bundles des Updaters: Manifest, Pruefung der Compose-Datei, Ablage unter bundles/<version>/
 und Compose-Aufrufe. Ein Bundle = Compose-Datei (nur Images mit Digest) + mosquitto.conf; im Bundle-Ordner liegen
 zusaetzlich manifest.json und manifest.json.minisig (Nachweis, was signiert war; exists() verlangt sie nicht, damit
 aeltere Ordner gueltig bleiben)."""
@@ -20,7 +20,7 @@ _PINNED_IMAGE = re.compile(r"[^\s@]+@sha256:[0-9a-f]{64}")
 _BUILD = re.compile(r"^\s*build:", re.MULTILINE)
 _DEVICES_KEY = re.compile(r"^(\s*)devices:\s*(.*?)\s*$")
 _LIST_ITEM = re.compile(r"^(\s*)-\s+(.*?)\s*$")
-#: Frist je docker-Aufruf in Sekunden (A6-13): ohne sie hielte ein haengender Aufruf (Netz weg mitten im pull, Daemon
+#: Frist je docker-Aufruf in Sekunden: ohne sie hielte ein haengender Aufruf (Netz weg mitten im pull, Daemon
 #: blockiert) den ganzen Updater endlos fest. pull ist lang (mehrere Images ueber eine langsame
 #: Leitung; ein Image von rund 210 MB braucht bei 2 Mbit/s etwa 850 s, fertige Schichten bleiben beim naechsten Versuch), ps kurz.
 PULL_TIMEOUT_SECONDS = 900

@@ -1,4 +1,4 @@
-"""P4 (Spec Stufe 3 S8a-1): der Kern (smartheat_core) importiert nichts, auch nicht den Vertrag smartheat_device.wire.
+"""P4: der Kern (smartheat_core) importiert nichts, auch nicht den Vertrag smartheat_device.wire.
 Seine Kopien der Vertragslisten sind deshalb hier gepinnt, jede gleich ihrem Gegenstueck in wire.py. Die Pins stehen als
 `_VERTRAG_GEPINNT_<NAME> = (wire.<NAME>, <Kopie>)` auf Modulebene (der Leser-Test in test_device_wire.py erkennt sie
 daran als gepinnt, nicht als gelesen) und werden danach verglichen. Eine neue Kopie im Kern braucht hier einen Pin.

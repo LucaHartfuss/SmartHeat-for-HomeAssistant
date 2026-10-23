@@ -1,4 +1,4 @@
-"""Compose-Datei nach Spec SHG G2 7.2, ab 0.6.0 Spec 5b 5.3 (statisch geprueft; der Lauf steckt in
+"""Compose-Datei (statisch geprueft; der Lauf steckt in
 tests/test_gateway_docker_build.sh)."""
 import ast
 import re
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-PUBLISHED_PORT = "0.0.0.0:80:8080"  # nur IPv4 (Audit 4, P-C2 b)
+PUBLISHED_PORT = "0.0.0.0:80:8080"  # nur IPv4 (P-C2 b)
 GATEWAY = Path(__file__).resolve().parents[1]
 COMPOSE = GATEWAY / "compose"
 
@@ -28,7 +28,7 @@ def test_hardening_everywhere():
         assert service.get("cap_drop") == ["ALL"], name
         assert "no-new-privileges:true" in service.get("security_opt", []), name
         assert service.get("restart") == ("no" if name == "init" else "unless-stopped"), name
-        # journald statt json-file (L4-18): ein Stromausfall laesst keine beschaedigte Logdatei zurueck, Groesse und
+        # journald statt json-file: ein Stromausfall laesst keine beschaedigte Logdatei zurueck, Groesse und
         # Rotation regelt das Journal des Hosts; kein Dienst ueberschreibt den Anker mit einem eigenen Block.
         assert service["logging"] == {"driver": "journald", "options": {"tag": "{{.Name}}"}}, name
 
@@ -52,7 +52,7 @@ def test_networks_ports_and_mounts():
 
 
 def test_the_diagnostic_port_is_published_on_ipv4_only():
-    """Audit 4, P-C2 (b): ohne Host-Adresse veroeffentlicht Docker den Port auch auf `[::]:80` (docker-proxy), die
+    """Ohne Host-Adresse veroeffentlicht Docker den Port auch auf `[::]:80` (docker-proxy), die
     Firewall-Regel `tcp dport 80 accept` gaelte dann auch fuer IPv6. Mit `0.0.0.0` als Host-Adresse lauscht nur IPv4."""
     ports = _services()["runtime"]["ports"]
     assert ports == ["0.0.0.0:80:8080"]
@@ -86,13 +86,13 @@ def test_runtime_environment_and_healthcheck():
     env = runtime["environment"]
     assert env["SHG_DEVICE_API_URL"] == "${SHG_DEVICE_API_URL:?SHG_DEVICE_API_URL fehlt}"
     assert env["SHG_DIAG_HOSTNAMES"] == "${SHG_DIAG_HOSTNAMES:-}"
-    assert {"SHG_HOST_DIR", "SHG_DATA_DIR"}.isdisjoint(env)  # A6-87: die Ordner sind die Standardwerte des Codes (/host, /data)
+    assert {"SHG_HOST_DIR", "SHG_DATA_DIR"}.isdisjoint(env)  # Die Ordner sind die Standardwerte des Codes (/host, /data)
     assert "SHG_BUS_LOST_EXIT_SECONDS" not in env  # Netz-Wache entfaellt mit dem Tunnel
     test = " ".join(runtime["healthcheck"]["test"])
     from smartheat_gateway import runtime_main
 
     assert f"http://127.0.0.1:{runtime_main.DIAG_PORT}/healthz" in test and "/tmp/shg-runtime-alive" in test
-    assert PUBLISHED_PORT.endswith(f":{runtime_main.DIAG_PORT}")  # A6-87: DIAG_PORT ist der Container-Port der Compose-Datei
+    assert PUBLISHED_PORT.endswith(f":{runtime_main.DIAG_PORT}")  # DIAG_PORT ist der Container-Port der Compose-Datei
 
 
 def test_runtime_stops_only_after_the_device_thread_has_disconnected():
@@ -128,7 +128,7 @@ def test_init_has_no_network_and_writes_bus_zigbee_and_data():
     assert "networks" not in init and "ports" not in init
     targets = [_container_target(volume) for volume in init["volumes"]]
     assert targets == ["/bus", "/zigbee2mqtt", "/data", "/host"]
-    assert set(init["environment"]) == {"ZIGBEE_ADAPTER"}  # A6-87: die Ordner sind die Standardwerte von init.py
+    assert set(init["environment"]) == {"ZIGBEE_ADAPTER"}  # Die Ordner sind die Standardwerte von init.py
 
 
 def test_runtime_gets_only_its_own_bus_credentials_and_sees_the_device_keys():

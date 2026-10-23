@@ -1,4 +1,4 @@
-"""Hebel-Vokabular und Hebelsaetze (Spec 2). Gegenstueck: heizungsserver.regelung.hersteller.plants
+"""Hebel-Vokabular und Hebelsaetze. Gegenstueck: heizungsserver.regelung.hersteller.plants
 (Contract-Check (Vertrag V1))."""
 from dataclasses import dataclass
 
@@ -27,7 +27,7 @@ class LeverSet:
 
 VAILLANT_VRC720 = LeverSet("vaillant_vrc720", ("curve", "room_setpoint", "heat_limit"), ("min_flow",))
 
-# Hersteller-Abstraktion Plan 3b: gleiche IDs und Hebel wie heizungsserver.regelung.hersteller.plants (Contract-Checks,
+# Hersteller-Abstraktion: gleiche IDs und Hebel wie heizungsserver.regelung.hersteller.plants (Contract-Checks,
 # Vertrag V1 und V4).
 WEISHAUPT_WWP = LeverSet("weishaupt_wwp", ("curve", "room_setpoint", "heat_limit"))
 WEISHAUPT_WWP_BASIS = LeverSet("weishaupt_wwp_basis", ("room_setpoint",))

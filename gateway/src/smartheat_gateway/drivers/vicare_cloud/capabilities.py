@@ -1,5 +1,5 @@
 """Features einer Viessmann-Anlage lesen (Bereiche und Schrittweiten aus den Kommando-Constraints) und fuer die
-Erkennung auf dem Server kuerzen (Spec Stufe 3 S5 5.1). Rein, ohne I/O, ohne Modellverzweigung: alles kommt aus den
+Erkennung auf dem Server kuerzen. Rein, ohne I/O, ohne Modellverzweigung: alles kommt aus den
 Features; die Klassifikation in Kandidaten macht der Server (einrichtung/gateway_erkennung.py). Features haben von der
 Cloud keinen garantierten Typ, alles wird defensiv gelesen."""
 import re
@@ -24,7 +24,7 @@ SIGNAL_FEATURES: dict[str, tuple[str, str]] = {
     "flow_temperature": ("heating.circuits.{n}.sensors.temperature.supply", "value"),
     "room_temperature": ("heating.circuits.{n}.sensors.temperature.room", "value"),
 }
-# Liefer-Signale (Audit 4 P-B, W-1): Rolle -> Kandidaten (Feature, Eigenschaft), der erste mit Zahl gilt. Brenner 0
+# Liefer-Signale: Rolle -> Kandidaten (Feature, Eigenschaft), der erste mit Zahl gilt. Brenner 0
 # (Gastherme) vor Verdichter 0 (Waermepumpe); aus PyViCare abgeleitet, an einer echten Anlage erst im G4-Pilot geprueft
 # (ungeprueft).
 GENERATOR_FEATURES: dict[str, tuple[tuple[str, str], ...]] = {
@@ -96,7 +96,7 @@ def command_range(feature: dict | None, command: str, param: str) -> tuple[float
 
 def lever_ranges(index: dict[str, dict], n: int) -> dict[str, tuple[float, float, float] | None]:
     """(min, max, stepping) je Hebel aus den Kommando-Constraints des Heizkreises n; gemeinsam fuer die Sicherheitswarnungen
-    der Erkennung (`hebelstand`) und den Wertebereich des Treibers (PlantBinding.limits, Plan G4 Praezisierung 13)."""
+    der Erkennung (`hebelstand`) und den Wertebereich des Treibers (PlantBinding.limits)."""
     curve, normal = index.get(CURVE.format(n=n)), index.get(NORMAL.format(n=n))
     return {"curve": command_range(curve, "setCurve", "slope"), "level": command_range(curve, "setCurve", "shift"),
             "room_setpoint": command_range(normal, "setTemperature", "targetTemperature")}

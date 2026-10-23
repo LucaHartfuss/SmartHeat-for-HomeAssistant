@@ -1,5 +1,5 @@
 #!/bin/bash
-# Image-Scan (Audit 5 A5-28; Spec Stufe 3 S6 4.5): Add-on-Image, Gateway-Image und die Fremd-Images aus
+# Image-Scan: Add-on-Image, Gateway-Image und die Fremd-Images aus
 # gateway/compose/docker-compose.yml mit trivy. Rot bei Schwachstellen der Schwere CRITICAL, fuer die es einen Fix gibt.
 # Ausnahmen: .trivyignore (je ID eine Kommentarzeile mit Begruendung darueber). Braucht Docker und Netz
 # (Schwachstellen-Datenbank); ohne Netz scheitert der Schritt, er wird nie still uebersprungen. Nur mit --full.

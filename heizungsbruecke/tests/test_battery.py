@@ -1,4 +1,4 @@
-"""Batterieueberwachung (Spec TP6 3.5): Hysterese 20/25 %, binary_sensor, unavailable ohne Wechsel."""
+"""Batterieueberwachung: Hysterese 20/25 %, binary_sensor, unavailable ohne Wechsel."""
 import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -143,7 +143,7 @@ def test_a_deleted_battery_entity_is_skipped_and_an_unreachable_ha_ends_the_roun
 
 
 def test_an_unreachable_ha_logs_its_error_text_only_escaped(make_store, caplog):
-    """T6-Rest, R-c: der Fehlertext der HA-API (SourceUnavailable) steht nur als Escape im Log."""
+    """Der Fehlertext der HA-API (SourceUnavailable) steht nur als Escape im Log."""
     rt = _rt(make_store, {"sensor.wz_battery": requests.ConnectionError(FREMDTEXT)})
     with caplog.at_level(logging.WARNING, logger="smartheat_runtime.battery"):
         check_batteries(rt)

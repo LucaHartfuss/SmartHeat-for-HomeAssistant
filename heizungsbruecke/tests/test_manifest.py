@@ -4,7 +4,7 @@ from bindung_beispiele import VAILLANT_MYPYLLANT
 from heizungsbruecke.manifest import build_manifest, entity_ref
 from smartheat_runtime.roles import ManifestError
 
-# room_actual kommt immer aus derived_sensors (Raumtemperatur-Template, Spec TP6 3.2).
+# room_actual kommt immer aus derived_sensors (Raumtemperatur-Template).
 ROOM_ACTUAL = {"room_actual": "sensor.smartheat_t1_raumtemperatur"}
 
 BASE = {
@@ -40,7 +40,7 @@ def test_build_manifest_includes_optional_role_when_present():
 
 
 def test_build_manifest_missing_profile_required_role_raises():
-    # entity_min_flow fehlt -- ist Pflicht (TP11).
+    # entity_min_flow fehlt -- ist Pflicht.
     options = {key: value for key, value in BASE.items() if key != "min_flow"}
 
     with pytest.raises(ManifestError, match="min_flow"):

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Pruefung fuer --release-pub (Labor-Images, Plan Labor und K7 Task 4), von prepare.sh und make_image.sh eingebunden
+# Pruefung fuer --release-pub (Labor-Images), von prepare.sh und make_image.sh eingebunden
 # (nicht im Installer-Baum): eine vorhandene Datei mit einem oeffentlichen minisign-Schluessel, genau wie ihn
 # gateway/host/smartheat_host/minisign.py (load_public_key) liest - Zeile "untrusted comment: ..." und Base64 von 42
 # Byte ("Ed" + Schluessel-ID + Schluessel), also 56 Zeichen, die mit RW beginnen. Gibt 0 zurueck oder 1; der Aufrufer

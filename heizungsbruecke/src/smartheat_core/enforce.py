@@ -1,8 +1,8 @@
-"""Durchsetzen statt Melden (TP11, Spec 5.3). Weicht die Anlage vom Sollstand ab -- Steigung,
+"""Durchsetzen statt Melden. Weicht die Anlage vom Sollstand ab -- Steigung,
 Parallelverschiebung, Heizgrenze (Zeilen der Hebel-Pipeline), Mindestvorlauf (= Raum-Soll, derived.py) oder die
 Zonen-Betriebsart --, hat jemand in der App oder in HA verstellt: SmartHeat schreibt den Sollstand
 zurueck, meldet den Eingriff einmal (nicht kritisch, abschaltbar) und schickt die Werte aller Hebel des
-Hebelsatzes als KPI mit dem naechsten Snapshot (Plan-Praezisierung 6).
+Hebelsatzes als KPI mit dem naechsten Snapshot.
 
 Erst nach DETECTION_ROUNDS Runden in Folge und nie innerhalb von settle_seconds des Bindings
 nach einem eigenen Schreiben dieses Hebels oder nach dem Start (mypyllant fragt die
@@ -18,7 +18,7 @@ Rueckschreiben nicht oder scheitert es teilweise, bleibt es bei dieser einen Mel
 sperrt bei zu vielen Aufrufen ~2 h): je Hebel hoechstens ein Schreibversuch (auch ein gescheiterter)
 pro RETRY_SECONDS und BindingDescription.enforce_per_day am Tag (Vaillant write_budget.MAX_PER_DAY, Viessmann 4; eine
 Schreibgruppe wie Viessmann curve+level teilt ein Kontingent); danach bis zum naechsten Tag nur noch eine
-Limit-Meldung. Plan 3b: Ist das Tagesbudget der Pipeline erreicht (Weishaupt), wird weder geschrieben noch gezaehlt;
+Limit-Meldung. Ist das Tagesbudget der Pipeline erreicht (Weishaupt), wird weder geschrieben noch gezaehlt;
 wegen des Budgets zurueckgestellte Serverwerte (deferred_levers) sind offen, kein Eingriff, und werden zu Beginn jeder
 Pruefung still nachgeholt (LeverPipeline.write_deferred). Ein offener Datenfehler pausiert die
 Pruefung (die Anlage kann nach einem gescheiterten Schreiben legitim auf alten Werten stehen).
@@ -54,13 +54,13 @@ STATE_OK = "ok"
 DETECTION_ROUNDS = 2
 RETRY_SECONDS = write_budget.INTERVAL_SECONDS
 # Toleranzen (Abweichung, ab der durchgesetzt wird) und Anzeigenamen je Hebel: BindingDescription.enforce_tolerance
-# bzw. labels (Vaillant: smartheat_core.bindungsparameter, Spec Stufe 3 S4b). Spec 5.3 nennt fuer die Steigung 0,01; die
+# bzw. labels (Vaillant: smartheat_core.bindungsparameter). Fuer die Steigung waere 0,01 naheliegend; die
 # Anlage stellt sie aber nur in Schritten von 0,05 dar, und der Quota-Check (LeverPipeline._matches_the_device)
 # ueberspringt ein Schreiben innerhalb eines halben Schritts. Mit 0,01 wuerde ein (theoretischer) Zwischenwert als
 # Eingriff erkannt, aber nie geschrieben und trotzdem gezaehlt/gemeldet. Deshalb gilt der halbe Anlagenschritt
 # (0,025): jede Abweichung um mindestens einen Anlagenschritt wird wie mit 0,01 erkannt, und jede erkannte
 # Abweichung fuehrt zu einem echten Schreibvorgang. Wunschtemperatur (0,25 = halber Schritt 0,5) und Mindestvorlauf
-# (0,05 = halber Schritt 0,1, A5-64) folgen derselben Regel. Die Heizgrenze (Anlagenschritt 0,1) nimmt wie die
+# (0,05 = halber Schritt 0,1) folgen derselben Regel. Die Heizgrenze (Anlagenschritt 0,1) nimmt wie die
 # Steigung den halben Anlagenschritt, 0,05.
 ZONE_MODE = "zone_mode"
 MESSAGE = (
@@ -83,7 +83,7 @@ def _set_misses(rt: EnforceRuntime, misses: int) -> None:
 
 
 def _labels(rt: EnforceRuntime) -> dict:
-    """Anzeigenamen je Hebel und fuer die Betriebsart (Kundentext, wortgleich bis 0.29.0)."""
+    """Anzeigenamen je Hebel und fuer die Betriebsart (Kundentext)."""
     description = rt.override.binding.description
     return {**description.labels, ZONE_MODE: description.preparation_label}
 
@@ -123,7 +123,7 @@ def _deviations(rt: EnforceRuntime) -> tuple[dict, dict, set]:
     prepared = rt.override.binding.description.prepared_lever
     unprepared = not rt.zone_prepared and _zone_not_manual(rt)
     deviating: dict = {}
-    pending: set = set(rt.store.state.deferred_levers)  # Plan 3b: Serverwert wegen Tagesbudget noch offen
+    pending: set = set(rt.store.state.deferred_levers)  # Serverwert wegen Tagesbudget noch offen
     for lever, value in expected.items():
         if lever == prepared and unprepared:
             # Vor der ersten Vorbereitung gehoert die Zone dem Start: das Schreiben des prepared_lever stellt sie um.
@@ -146,7 +146,7 @@ def _deviations(rt: EnforceRuntime) -> tuple[dict, dict, set]:
 
 
 def _group(rt: EnforceRuntime, lever: str) -> tuple[str, ...]:
-    """Schreibgruppe des Hebels (Plan 3b, Viessmann curve+level), sonst nur der Hebel selbst."""
+    """Schreibgruppe des Hebels (Viessmann curve+level), sonst nur der Hebel selbst."""
     groups = rt.override.binding.description.write_groups
     return next((group for group in groups if lever in group), (lever,))
 
@@ -194,7 +194,7 @@ def _restore(rt: EnforceRuntime, expected: dict, deviating: dict) -> tuple[list[
     prepared = rt.override.binding.description.prepared_lever
     written, at_limit = [], []
     if rt.override.daily_budget_reached():
-        # Plan 3b (Weishaupt): Tagesbudget erreicht -- nichts schreiben und nichts zaehlen. Hier kein Hinweis zum
+        # Weishaupt: Tagesbudget erreicht -- nichts schreiben und nichts zaehlen. Hier kein Hinweis zum
         # Tageslimit: den gibt die Pipeline, sobald sie einen Schreibvorgang am Limit abweist (Serverwerte,
         # Vorbereitung, Mindestvorlauf); der naechste Takt nach dem Tageswechsel setzt zurueck.
         logger.info("Eingriff nicht zurueckgesetzt: Tagesbudget der Schreibvorgaenge erreicht")
@@ -211,7 +211,7 @@ def _restore(rt: EnforceRuntime, expected: dict, deviating: dict) -> tuple[list[
                 at_limit.append(lever)
             continue
         if rt.override.daily_budget_reached():
-            # Plan 3b: ein frueherer Hebel dieses Takts hat das Tagesbudget aufgebraucht -- wie oben weder schreiben
+            # Ein frueherer Hebel dieses Takts hat das Tagesbudget aufgebraucht -- wie oben weder schreiben
             # noch zaehlen.
             logger.info("Eingriff an %s nicht zurueckgesetzt: Tagesbudget der Schreibvorgaenge erreicht", lever)
             break
@@ -280,7 +280,7 @@ def _record(rt: EnforceRuntime, expected: dict, deviating: dict) -> dict:
     entries = {**known, **deviating}
     now = wallclock.now().isoformat(timespec="seconds")
     pending = state.manual_override_pending
-    # Alle zugeordneten Hebel des Hebelsatzes (Plan-Praezisierung 6), wie Snapshot und Sollwerte (expected_values).
+    # Alle zugeordneten Hebel des Hebelsatzes, wie Snapshot und Sollwerte (expected_values).
     binding = rt.override.binding
     levers = [lever for lever in binding.description.lever_set.levers if binding.has(lever)]
     kpi_levers = {lever: _kpi_value(rt, lever, entries, expected, pending) for lever in levers}

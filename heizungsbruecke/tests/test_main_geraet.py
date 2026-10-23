@@ -1,6 +1,5 @@
-"""Spec 5c 1.1/1.2: Start ohne Optionen als Geraet (Geraetekern und Laufzeit in einem Prozess); Neustart erst nach
-sauberem Trennen; Aufraeumen nach dem Entfernen. Die frueheren Tests des Optionsmodus stehen noch in test_main.py
-(Task 10 ordnet sie ein)."""
+"""Start ohne Optionen als Geraet (Geraetekern und Laufzeit in einem Prozess); Neustart erst nach
+sauberem Trennen; Aufraeumen nach dem Entfernen."""
 import errno
 import io
 import json
@@ -230,7 +229,7 @@ def test_exec_starts_the_same_command_again(monkeypatch):
     assert calls == [(main_module.sys.executable, [main_module.sys.executable, "-m", "heizungsbruecke"])]
 
 
-# --- Neustart und Ende (Review Focus 4) ---
+# --- Neustart und Ende ---
 
 
 def test_reload_disconnects_before_exec(geraet_env, monkeypatch):
@@ -305,7 +304,7 @@ def test_an_unexpected_start_error_restarts_after_a_pause(geraet_env, monkeypatc
     assert "KeyError" in caplog.text and "geheim" not in caplog.text
 
 
-# --- Fehler vor laufen (S3S6-Startabbruch) ---
+# --- Fehler vor laufen ---
 
 
 def _main_ohne_supervisor(geraet_env, monkeypatch, order):
@@ -328,7 +327,7 @@ def _kein_geraetekern():
 
 def test_an_unwritable_data_dir_during_cleanup_pauses_and_execs(geraet_env, monkeypatch, caplog):
     """Die Markierung einer neuen Einrichtung (VERWERFEN) laesst sich in einem nicht beschreibbaren Datenordner nicht
-    loeschen: bis S3S6-Startabbruch endete main dann mit dem Traceback (der Supervisor startet das Add-on nicht
+    loeschen: frueher endete main dann mit dem Traceback (der Supervisor startet das Add-on nicht
     zuverlaessig neu); jetzt ERROR mit Fehlerart, 60 s Pause, exec."""
     order = []
     _main_ohne_supervisor(geraet_env, monkeypatch, order)
@@ -370,7 +369,7 @@ def test_a_failing_document_store_during_cleanup_pauses_and_execs(geraet_env, mo
     assert "OSError" in caplog.text and "geheim" not in caplog.text
 
 
-# --- Lokaler stdin-Befehl (L4-06 Variante C) ---
+# --- Lokaler stdin-Befehl ---
 
 
 def test_stdin_anhaengen_reicht_die_eigene_id_und_lokal_abmelden_an(geraet_env):
@@ -438,7 +437,7 @@ def test_vorbereiten_wires_device_and_host_without_starting_the_device(geraet_en
 
 
 def test_vorbereiten_reicht_die_ausstehende_markierung_an_den_geraete_host(geraet_env):
-    """T4-Markierung-Zweitlesen: das Aufraeumen liest die Markierung einmal; steht das Zuruecksetzen aus, bekommt sie der
+    """Das Aufraeumen liest die Markierung einmal; steht das Zuruecksetzen aus, bekommt sie der
     Geraete-Host als start_markierung (die Laufzeit liest die Datei nicht erneut)."""
     aufraeumen_markierung.markieren(config.AUFRAEUMEN_PATH, ALTE)
     geraet, _, _ = main_module._vorbereiten(geraet_env.ha, FakeSupervisor(), "https://labor.example.test")
@@ -505,7 +504,7 @@ def test_cleanup_keeps_a_new_setup(geraet_env):
 
 
 def test_cleanup_reads_the_stored_configuration_without_writing_the_lock(geraet_env):
-    """S3S3-Reste: das Aufraeumen beim Start ist Nur-Lese-Aufbau; eine gespeicherte eingerichtete Konfiguration ohne
+    """Das Aufraeumen beim Start ist Nur-Lese-Aufbau; eine gespeicherte eingerichtete Konfiguration ohne
     Rastung (Stand vor dieser Version) rastet erst der Geraetekern, nicht das Aufraeumen."""
     _entfernt_vorbereiten()
     neue = {"anlage": "neu", "hebelsatz": "vaillant_vrc720", "verteilsystem": "Heizkoerper"}
@@ -647,7 +646,7 @@ ALTE = {"anlage": "alt", "hebelsatz": "vaillant_vrc720", "verteilsystem": "Heizk
 
 
 def test_cleanup_waits_while_the_reset_is_pending(geraet_env):
-    """Spec Stufe 3 S3 Abschnitt 4: die Laufzeit setzt mit der Konfiguration der Markierung erst zurueck; bis dahin
+    """Die Laufzeit setzt mit der Konfiguration der Markierung erst zurueck; bis dahin
     bleiben Zustand, Hilfssensoren und Markierung."""
     _entfernt_vorbereiten()
     aufraeumen_markierung.markieren(config.AUFRAEUMEN_PATH, ALTE)
@@ -668,7 +667,7 @@ def test_cleanup_after_the_reset_deletes_everything(geraet_env):
 
 
 def test_a_new_setup_before_the_reset_discards_the_marker_and_keeps_the_state(geraet_env):
-    """Review Focus 3: derselbe Anlagenzustand lebt weiter."""
+    """Derselbe Anlagenzustand lebt weiter."""
     _entfernt_vorbereiten()
     aufraeumen_markierung.markieren(config.AUFRAEUMEN_PATH, ALTE)
     dateien.schreiben_json(config.DEVICE_DATA_DIR / "device" / "konfiguration.json",
@@ -680,7 +679,7 @@ def test_a_new_setup_before_the_reset_discards_the_marker_and_keeps_the_state(ge
 
 
 def test_an_empty_configuration_resets_then_restarts_and_the_next_start_cleans_up(geraet_env):
-    """Spec Stufe 3 S3 Abschnitt 4 im Ablauf von main: leer ohne sign_off bei laufendem Boost -> der Start setzt mit der
+    """Im Ablauf von main: leer ohne sign_off bei laufendem Boost -> der Start setzt mit der
     Konfiguration der Markierung zurueck, der Worker endet mit Neustart, erst der naechste Start loescht."""
     konfiguration = konfiguration_aus_optionen(OPTIONS)
     _quiet_backup(geraet_env, boost_active=True)

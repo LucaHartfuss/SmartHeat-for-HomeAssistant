@@ -1,10 +1,9 @@
-"""Init-Schritt des Gateways (Spec G2b-1 Abschnitt 3): einmaliger Compose-Dienst vor allen anderen. Erzeugt, was
+"""Init-Schritt des Gateways: einmaliger Compose-Dienst vor allen anderen. Erzeugt, was
 fehlt: zufaellige Passwoerter je Dienst am lokalen Bus, Mosquitto-Passwortdatei ($7$, PBKDF2-SHA512) und ACL, die
-Zigbee2MQTT-Grundkonfiguration mit Zugangsdaten und den Ordner data/device (0700, Geraetekern; ab 0.6.0 ohne Agent
-und Masken). Heilt ausserdem Drift (Plan G2b-2): eine Passwortdatei, die nicht zu den Zugangsdateien passt (auch eine
-aus 0.5.0 mit dem Benutzer agent), wird neu aufgebaut, und die Zugangsdaten in einer bestehenden Zigbee2MQTT-
-Konfiguration werden angeglichen, ebenso der Zigbee-Adapter nach einem Stick-Tausch (Host-Datei zigbee_adapter,
-A6-15; wirkt mit dem naechsten Lauf dieses Schritts, das heisst `install.sh` erneut). Idempotent: ein zweiter Lauf
+Zigbee2MQTT-Grundkonfiguration mit Zugangsdaten und den Ordner data/device (0700, Geraetekern). Heilt ausserdem Drift:
+eine Passwortdatei, die nicht zu den Zugangsdateien passt, wird neu aufgebaut, und die Zugangsdaten in einer bestehenden
+Zigbee2MQTT-Konfiguration werden angeglichen, ebenso der Zigbee-Adapter nach einem Stick-Tausch (Host-Datei zigbee_adapter,
+wirkt mit dem naechsten Lauf dieses Schritts, das heisst `install.sh` erneut). Idempotent: ein zweiter Lauf
 schreibt nichts. Ein Schreiber je Datei: bus/ und configuration.yaml (ganz nur wenn sie fehlt, sonst nur
 user/password und serial.adapter) gehoeren diesem Schritt. Passwoerter erscheinen
 nie im Log (nur Dateinamen)."""
@@ -31,7 +30,7 @@ ITERATIONS = 101
 SALT_BYTES = 12
 MAX_VERIFY_ITERATIONS = 1_000_000  # Obergrenze beim Pruefen: ein feindlicher Eintrag soll nicht ewig rechnen
 ACL_RULES: dict[str, tuple[tuple[str, str], ...]] = {
-    # Ab 0.6.0 (Spec 5b 5.3) traegt der lokale Bus nur noch Zigbee2MQTT; Status, Raum und Meldungen bleiben im Prozess.
+    # Ab 0.6.0 traegt der lokale Bus nur noch Zigbee2MQTT; Status, Raum und Meldungen bleiben im Prozess.
     "runtime": (
         ("read", "zigbee2mqtt/#"), ("write", "zigbee2mqtt/+/set"), ("write", "zigbee2mqtt/bridge/request/#"),
     ),

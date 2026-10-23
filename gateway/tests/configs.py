@@ -24,7 +24,7 @@ def konfiguration(**changes) -> dict:
 
 
 def leer() -> dict:
-    """Leere Konfiguration (Spec 5b 3.1, wie device_config.leer() des Servers): kein Geraet eingerichtet."""
+    """Leere Konfiguration (wie device_config.leer() des Servers): kein Geraet eingerichtet."""
     return {**konfiguration(), "anlage": None, "profil": None, "hebelsatz": None, "verteilsystem": None,
             "bindung": None, "tagestick": None, "abo": None, "raumfuehler": [], "bindungsparameter": None}
 
@@ -34,7 +34,7 @@ def bedienung(raum_soll: float = 20.0) -> dict:
 
 
 def dokumente_schreiben(paths, konfiguration=None, bedienung=None, *, version: int = 1) -> None:
-    """Dokumente direkt im Format des Dokumentspeichers ablegen (wie nach einer Uebernahme, D1 Task 3)."""
+    """Dokumente direkt im Format des Dokumentspeichers ablegen (wie nach einer Uebernahme)."""
     for name, inhalt in (("konfiguration.json", konfiguration), ("bedienung.json", bedienung)):
         if inhalt is not None:
             dateien.schreiben_json(paths.device_dir / name, {"version": version, "inhalt": inhalt, "dirty": False},

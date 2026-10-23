@@ -1,4 +1,4 @@
-"""Durchsetzen je Binding (Plan 3b): Viessmann 4 Versuche am Tag und eine Schreibgruppe curve+level, Weishaupt
+"""Durchsetzen je Binding: Viessmann 4 Versuche am Tag und eine Schreibgruppe curve+level, Weishaupt
 Tagesbudget und zurueckgestellte Serverwerte. Vaillant: test_core_enforce.py (unveraendert)."""
 import dataclasses
 from datetime import date
@@ -53,7 +53,7 @@ def _rt(make_store, clock, description, manifest, states, point, backup=None):
     store = make_store(backup={"restore_point": point, **(backup or {})})
     ha = Ha(states)
     safety = resolve_local_safety(description.lever_set.id, "Heizkoerper")
-    kunde = FakeNotifySink()  # echter Notifier, der Sink haelt fest, was beim Kunden ankommt (A5-25)
+    kunde = FakeNotifySink()  # echter Notifier, der Sink haelt fest, was beim Kunden ankommt
     override = LeverPipeline(store, HaPlantBinding(ha, manifest, description), safety, clock=clock)
     clock.advance(description.settle_seconds + 1)
     rt = Runtime(manifest=manifest, signals=ha, config=runtime_config(), worker=RegulationWorker(clock), store=store,

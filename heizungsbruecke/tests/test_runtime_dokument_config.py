@@ -1,4 +1,4 @@
-"""Spec 5b 5.2: Laufzeit aus dem Konfigurationsdokument (Plan D1 Task 9): BootInfo, RuntimeConfig ohne Transport,
+"""Laufzeit aus dem Konfigurationsdokument: BootInfo, RuntimeConfig ohne Transport,
 Abo aus dem Dokument, Neustart nur bei laufzeitrelevanten Aenderungen."""
 import dataclasses
 import json
@@ -87,7 +87,7 @@ def _intervalle(tmp_path, konfiguration=KONF):
     ('[1, 2]', (PRUEFUNG_STANDARD, TELEMETRIE_STANDARD)), ('kaputt', (PRUEFUNG_STANDARD, TELEMETRIE_STANDARD)),
 ])
 def test_intervalle_nur_aus_der_e2e_umgebung_mit_den_grenzen(monkeypatch, tmp_path, roh, erwartet):
-    """Plan S8a-1 P2, Review Focus 3: SMARTHEAT_E2E_INTERVALLE (JSON-Objekt) in den Grenzen von config_check.INTERVALLE;
+    """SMARTHEAT_E2E_INTERVALLE (JSON-Objekt) in den Grenzen von config_check.INTERVALLE;
     sonst gelten die Standardwerte, ohne Teiluebernahme, und kein Start scheitert."""
     if roh is None:
         monkeypatch.delenv(dc.E2E_INTERVALLE_ENV, raising=False)
@@ -106,7 +106,7 @@ def test_ein_ungueltiges_e2e_objekt_gilt_ganz_nicht(monkeypatch, tmp_path, caplo
 
 
 def test_ein_ungueltiger_wert_wird_je_aufruf_nur_einmal_geloggt(monkeypatch, tmp_path, caplog):
-    """Review-Minor S8a-1: die Umgebungsvariable wird je runtime_config bzw. boot_info einmal gelesen, nicht je Feld."""
+    """Die Umgebungsvariable wird je runtime_config bzw. boot_info einmal gelesen, nicht je Feld."""
     monkeypatch.setenv(dc.E2E_INTERVALLE_ENV, '{"pruefung_s": 0}')
 
     def warnungen(aufruf):
@@ -119,7 +119,7 @@ def test_ein_ungueltiger_wert_wird_je_aufruf_nur_einmal_geloggt(monkeypatch, tmp
 
 
 def test_intervalle_im_dokument_wirken_nicht_mehr(monkeypatch, tmp_path):
-    """Plan S8a-1 P2: intervalle ist kein Dokumentfeld mehr; ein Server, der es noch schickt, aendert nichts."""
+    """Intervalle ist kein Dokumentfeld mehr; ein Server, der es noch schickt, aendert nichts."""
     monkeypatch.delenv(dc.E2E_INTERVALLE_ENV, raising=False)
     assert _intervalle(tmp_path, {**KONF, "intervalle": {"pruefung_s": 5, "telemetrie_s": 10}}) == (
         PRUEFUNG_STANDARD, TELEMETRIE_STANDARD)
@@ -182,7 +182,7 @@ def test_the_sign_off_marker_binds_to_the_installation_and_is_private(tmp_path):
 
 
 def test_the_sign_off_marker_is_lifted_only_for_its_own_installation(tmp_path):
-    """5b-D2-7: abmeldung_aufheben entfernt nur die Markierung der genannten Anlage."""
+    """abmeldung_aufheben entfernt nur die Markierung der genannten Anlage."""
     pfad = tmp_path / "runtime" / "abgemeldet.json"
     assert dc.abmeldung_aufheben(pfad, "kunde3") is False  # keine Markierung
     dc.abmelden(pfad, "kunde3")
@@ -269,7 +269,7 @@ def test_ursprungswerte_of_the_document():
 
 
 def test_arriving_originals_do_not_restart_the_runtime():
-    """Spec 5.2: ursprungswerte steht nicht in LAUFZEIT_FELDER, ihr Eintreffen startet die Laufzeit nicht neu."""
+    """Ursprungswerte steht nicht in LAUFZEIT_FELDER, ihr Eintreffen startet die Laufzeit nicht neu."""
     assert "ursprungswerte" not in dc.LAUFZEIT_FELDER
     assert dc.laufzeit_relevant(KONF, {**KONF, "ursprungswerte": {"heat_limit": 16.0}}) is False
 
@@ -305,8 +305,8 @@ def test_sicherheit_mit_unbekanntem_verteilsystem_ist_ein_konfigurationsfehler()
 
 @pytest.mark.parametrize("key", sorted(INTERVALLE))
 def test_jedes_angenommene_intervall_startet(key, monkeypatch, tmp_path):
-    """Spec Stufe 3 S5 3.2: die Grenzen stehen nur in config_check; die Laufzeit uebernimmt jeden Wert an beiden
-    Grenzen (seit Plan S8a-1 P2 aus SMARTHEAT_E2E_INTERVALLE), einen knapp ausserhalb nicht."""
+    """Die Grenzen stehen nur in config_check; die Laufzeit uebernimmt jeden Wert an beiden
+    Grenzen (aus SMARTHEAT_E2E_INTERVALLE), einen knapp ausserhalb nicht."""
     low, high = INTERVALLE[key]
     feld = {"pruefung_s": "local_check_interval", "telemetrie_s": "telemetry_interval"}[key]
     standard = {"pruefung_s": PRUEFUNG_STANDARD, "telemetrie_s": TELEMETRIE_STANDARD}[key]
@@ -317,7 +317,7 @@ def test_jedes_angenommene_intervall_startet(key, monkeypatch, tmp_path):
         assert getattr(runtime, feld) == erwartet, wert
 
 
-# --- Sicherheitswerte und Bindungsparameter aus dem Dokument (frueher in test_config.py des HA-Hosts) ---
+# --- Sicherheitswerte und Bindungsparameter aus dem Dokument ---
 
 VAILLANT = {"hebelsatz": "vaillant_vrc720", "verteilsystem": "Heizkoerper"}
 
@@ -356,7 +356,7 @@ def test_the_document_carries_the_local_safety_values():
     assert safety.ranges["heat_limit"] == (5.0, 23.0)
     assert safety.arrival_threshold_k == 0.5
     assert (safety.comfort_boost["curve"], safety.comfort_boost["room_setpoint"]) == (1.5, 25.0)
-    assert safety.comfort_boost["heat_limit"] == 23.0  # bis 0.29.0: Boost-Heizgrenze = heat_limit_max
+    assert safety.comfort_boost["heat_limit"] == 23.0  # Boost-Heizgrenze aus LocalSafety
 
 
 def test_weishaupt_has_its_own_safety_values():

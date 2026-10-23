@@ -1,4 +1,4 @@
-"""Hostneutrales Rollen-Vokabular (Spec SHG 3.3): welche Signale und Hebel die Laufzeit kennt und welche je Hebelsatz
+"""Hostneutrales Rollen-Vokabular: welche Signale und Hebel die Laufzeit kennt und welche je Hebelsatz
 Pflicht sind. ChannelManifest bildet Rolle -> Referenz der SignalSource ab (HA: Entity-ID bzw. entity::attribut)."""
 import json
 from dataclasses import dataclass
@@ -6,14 +6,14 @@ from dataclasses import dataclass
 ALL_ROLES = (
     "room_actual", "room_target", "curve_current", "shift_current", "min_flow",
     "outdoor_temp", "heat_limit", "flow_setpoint",
-    # Plan 3b: Niveau (Viessmann), Betriebsart/Heizprogramm und Hilfs-Sollwerte (Weishaupt). Vor flow_temperature, weil
+    # Niveau (Viessmann), Betriebsart/Heizprogramm und Hilfs-Sollwerte (Weishaupt). Vor flow_temperature, weil
     # test_config_yaml die KPI-Rollen ab dort zaehlt.
     "level_current", "mode_select", "setpoint_comfort", "setpoint_setback",
     "flow_temperature", "return_temperature", "operating_mode", "system_water_pressure",
     "efficiency_ratio", "energy_electrical_heating", "energy_electrical_dhw",
     "energy_primary_heating", "energy_primary_dhw", "energy_thermal_heating", "energy_thermal_dhw",
     "energy_electrical_total",
-    # Audit 4 P-B: Liefer-Signale des Waermeerzeugers, optional
+    # Liefer-Signale des Waermeerzeugers, optional
     "generator_hours", "generator_starts", "generator_state",
 )
 
@@ -24,15 +24,15 @@ REQUIRED_ROLES = (
 )
 
 # Rollen der Hebel im Manifest ("shift_current" ist der historische Rollenname der Parallelverschiebung).
-# Achtung (A6-36): Seit A6-36 haengt die plant_id nicht mehr an LEVER_ROLES, aber die einmalige Uebernahme
-# (lever_refs_identity als frueher): eine Aenderung vor dem Rueckbau (A6-36-Uebernahme) bricht sie, ein Bestand von
+# Achtung: Die plant_id haengt nicht an LEVER_ROLES, aber die einmalige Uebernahme
+# (lever_refs_identity als frueher): eine Aenderung vor dem Rueckbau (offene-punkte.md A6-36-Uebernahme) bricht sie, ein Bestand von
 # 1.1.0 gilt beim Update als andere Anlage und verliert den anlagenbezogenen Zustand.
 LEVER_ROLES = {
     "curve": "curve_current", "room_setpoint": "shift_current", "level": "level_current", "heat_limit": "heat_limit",
     "min_flow": "min_flow",
 }
 
-# Plan 3b: Pflicht-Rollen je Hebelsatz (Spec 5.5 "Pflicht je Hebelsatz"); Vaillant = REQUIRED_ROLES. Bei
+# Pflicht-Rollen je Hebelsatz; Vaillant = REQUIRED_ROLES. Bei
 # weishaupt_wwp_basis sind curve_current/heat_limit optional (curve_current nur lesend, Snapshot readonly).
 REQUIRED_ROLES_BY_LEVER_SET: dict[str, tuple[str, ...]] = {
     "vaillant_vrc720": REQUIRED_ROLES,
@@ -63,6 +63,6 @@ class ChannelManifest:
 
 def lever_refs_identity(manifest: "ChannelManifest") -> str:
     """Die fruehere Anlagen-Kennung des HA-Hosts (bis 1.1.0) aus den Referenzen der Hebel; heute nur noch fuer die
-    einmalige Uebernahme in app.start (bind_to_tenant frueher=, A6-36). Faellt mit A6-36-Uebernahme weg."""
+    einmalige Uebernahme in app.start (bind_to_tenant frueher=). Faellt mit offene-punkte.md A6-36-Uebernahme weg."""
     return json.dumps({lever: manifest.refs[role] for lever, role in sorted(LEVER_ROLES.items())
                        if role in manifest.refs}, sort_keys=True)

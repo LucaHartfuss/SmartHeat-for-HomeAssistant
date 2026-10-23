@@ -1,5 +1,5 @@
-"""Hebel-Pipeline (smartheat_core/pipeline.py, Nachfolger von override.py): Sollwert-Zeilen und Schreiben ueber das
-Binding. Portiert aus tests/test_override.py; geprueft werden dieselben Werte und Schreibfolgen."""
+"""Hebel-Pipeline (smartheat_core/pipeline.py): Sollwert-Zeilen und Schreiben ueber das
+Binding."""
 import dataclasses
 import logging
 import math
@@ -33,7 +33,7 @@ RESTORE_POINT = {"restore_point": POINT}
 # einem eigenen Schreibvorgang bis zum naechsten Poll, bis ~30 min, noch den vorherigen Wert zeigen).
 RESTORE_POINT_STATES = {"number.curve": 0.9, "number.shift": 22.0}
 VALUES = {"restore": (0.9, 22.0), "comfort": (1.0, 24.0), "emergency": (1.5, 25.0)}
-# Sollwert-Regel der Spec: (comfort, emergency) -> Zeile
+# Sollwert-Regel: (comfort, emergency) -> Zeile
 ROW = {(False, False): "restore", (True, False): "comfort", (False, True): "emergency", (True, True): "emergency"}
 
 
@@ -85,7 +85,7 @@ def _setup(make_store, backup=None, states=None, manifest=MANIFEST, clock=None, 
 
 
 def _server(curve, shift, heat_limit):
-    """Serverantwort in Hebel-Form (bisher apply_server_values(curve, shift, heat_limit))."""
+    """Serverantwort in Hebel-Form (curve, shift, heat_limit)."""
     return {"curve": curve, "room_setpoint": shift, "heat_limit": heat_limit}
 
 
@@ -261,7 +261,7 @@ def test_write_failure_leaves_flags_unchanged(make_store, tmp_path):
 
 
 def test_flag_save_failure_after_device_write_keeps_memory_consistent(make_store, tmp_path, monkeypatch):
-    # Review Focus 1: Datentraeger schreibt nicht, nachdem die Anlage schon auf Boost-Werten steht.
+    # Datentraeger schreibt nicht, nachdem die Anlage schon auf Boost-Werten steht.
     override, store, ha = _setup(make_store, backup=dict(RESTORE_POINT))
     monkeypatch.setattr("smartheat_runtime.backup_store.save_backup", _raise_oserror)
 
@@ -315,7 +315,7 @@ def test_unmapped_roles_are_neither_read_nor_written(make_store):
     assert ha.writes == [("number.curve", 1.0)]
 
 
-# --- A6-01/A6-34: jeder Boost-Start zaehlt, Notfall-Boost mit eigenem Zaehler, der Rueckweg bleibt frei ---
+# --- Jeder Boost-Start zaehlt, Notfall-Boost mit eigenem Zaehler, der Rueckweg bleibt frei ---
 
 @pytest.fixture
 def tag(monkeypatch):
@@ -466,7 +466,7 @@ def test_both_starting_with_the_emergency_counter_exhausted_still_start_comfort(
 
 
 def test_flapping_operations_are_bounded_vaillant(make_store, clock, tag):
-    # FK-1: ein Server, der 50-mal 25/15 Grad wechselt, bekommt 6 Starts und 6 Enden, nicht 50.
+    # Ein Server, der 50-mal 25/15 Grad wechselt, bekommt 6 Starts und 6 Enden, nicht 50.
     override, store, ha = _setup(make_store, backup=dict(RESTORE_POINT), clock=clock)
 
     for _ in range(50):
@@ -567,7 +567,7 @@ def test_server_values_are_clamped_stored_and_written(make_store, tmp_path, capl
 
 @pytest.mark.parametrize("flags", [{"boost_active": True}, {"emergency_boost_active": True}])
 def test_server_values_during_boost_are_only_stored(make_store, flags):
-    # Review Focus 3: kein Schreibversuch, also auch kein Fehler bei gestoerter Anlage.
+    # Kein Schreibversuch, also auch kein Fehler bei gestoerter Anlage.
     override, store, ha = _setup(make_store, backup={**RESTORE_POINT, **flags})
     ha.write_error = RuntimeError("myVAILLANT-Cloud nicht erreichbar")
 
@@ -699,7 +699,7 @@ def test_emergency_boost_without_any_saved_point_is_still_refused(make_store, mo
     assert store.state.emergency_boost_active is False
 
 
-# --- expected_values / write_levers / write_lever(min_flow) / prepare_start (Task 11) ---
+# --- expected_values / write_levers / write_lever(min_flow) / prepare_start ---
 
 def test_expected_values_follow_the_row(make_store):
     override, store, _ = _setup(make_store, backup=RESTORE_POINT)
@@ -858,7 +858,7 @@ def test_prepare_start_writes_the_start_value_even_if_the_stale_auto_setpoint_al
 
 
 def test_prepare_start_switches_the_mode_exactly_once(make_store):
-    # Ruling #3: der Startwert-Schreibvorgang (ensure_mode=False) darf keinen zweiten
+    # Der Startwert-Schreibvorgang (ensure_mode=False) darf keinen zweiten
     # set_hvac_mode ausloesen.
     manifest = ChannelManifest(refs={**MANIFEST.refs, "shift_current": "climate.zone::temperature"})
     store = make_store(backup={"restore_point": {"curve": 0.9}})
@@ -891,7 +891,7 @@ def test_write_forces_the_shift_write_when_the_zone_had_to_be_switched(make_stor
 
 
 def test_write_switches_mode_before_writing_curve_and_shift_for_a_climate_zone(make_store):
-    # Ruling #11a (Spec 5.2 "Betriebsart -> Steigung -> Parallelverschiebung"): Modus-Wechsel vor
+    # Reihenfolge "Betriebsart -> Steigung -> Parallelverschiebung": Modus-Wechsel vor
     # der Kurve, die Parallelverschiebung zuletzt.
     manifest = ChannelManifest(refs={**MANIFEST.refs, "shift_current": "climate.zone::temperature"})
     store = make_store(backup={"restore_point": {"curve": 0.9, "room_setpoint": 10.0}})
@@ -911,7 +911,7 @@ def test_write_switches_mode_before_writing_curve_and_shift_for_a_climate_zone(m
     ]
 
 
-# --- Schonfrist-Details (Task-11-Nacharbeit) ---
+# --- Schonfrist-Details ---
 
 def _zone_setup(make_store, clock, states):
     manifest = ChannelManifest(refs={**MANIFEST.refs, "shift_current": "climate.zone::temperature"})
@@ -986,7 +986,7 @@ def test_after_the_settle_window_of_uptime_a_matching_ha_read_is_trusted(make_st
 
 
 def test_settled_counts_from_the_start_and_from_each_own_write(make_store, clock):
-    # Eine Regel fuer Quota-Check und Durchsetzung (manual_override.py): HA gilt fuer einen Hebel als
+    # Eine Regel fuer Quota-Check und Durchsetzung: HA gilt fuer einen Hebel als
     # eingeschwungen, wenn das letzte eigene Schreiben -- sonst der Start -- laenger als
     # SETTLE zurueckliegt.
     store = make_store()
@@ -1002,7 +1002,7 @@ def test_settled_counts_from_the_start_and_from_each_own_write(make_store, clock
     assert override.settled("min_flow") is True
 
 
-# --- TP12b: Schreibbudget (AU-015) ---
+# --- Schreibbudget ---
 
 def _count_write_attempts(ha):
     attempts = []
@@ -1084,7 +1084,7 @@ def test_unavailable_entity_is_not_written_and_not_remembered(make_store, clock)
     assert override.last_written("curve") is None
 
 
-# --- TP12b: inaktive Zone (B-TP11-2) ---
+# --- Inaktive Zone ---
 
 ZONE_MANIFEST = ChannelManifest(refs={**MANIFEST.refs, "shift_current": "climate.zone::temperature"})
 
@@ -1126,7 +1126,7 @@ def test_prepare_start_leaves_a_manual_but_inactive_zone_alone(make_store, clock
     assert [event for event in ha.events if event[0] == "hvac"] == []
 
 
-# --- TP12h: Heizgrenze als dritte Rolle ---
+# --- Heizgrenze als dritte Rolle ---
 
 MANIFEST_G = ChannelManifest(refs={
     "curve_current": "number.curve", "shift_current": "number.shift", "min_flow": "number.min_flow",
@@ -1241,7 +1241,7 @@ def test_capture_is_skipped_when_a_restore_point_of_the_heat_limit_exists(make_s
 @pytest.mark.parametrize("flags", [{"boost_active": True}, {"emergency_boost_active": True}])
 def test_capture_during_a_boost_without_heat_limit_point_takes_the_live_value(make_store, flags):
     # Boost-Zeilen schreiben G nur mit Wiederherstellungspunkt der Heizgrenze: ohne ihn hat kein
-    # Boost G angefasst, der Live-Wert ist der Ursprungswert (z. B. Boost aus der Version vor TP12h).
+    # Boost G angefasst, der Live-Wert ist der Ursprungswert (z. B. ein Boost aelterer Version).
     override, store, ha = _setup_g(make_store, backup={**RESTORE_POINT, **flags})
     override.capture_originals()
     assert store.state.originals.get("heat_limit") == 15.0
@@ -1404,7 +1404,7 @@ def test_restore_and_clear_ignores_the_original_without_mapped_heat_limit(make_s
     assert store.state.restore_point.get("heat_limit") == 18.0
 
 
-# --- Review Task 7: Boost ohne Wiederherstellungspunkt der Heizgrenze laesst G in Ruhe ---
+# --- Boost ohne Wiederherstellungspunkt der Heizgrenze laesst G in Ruhe ---
 
 def test_row_change_during_a_carried_over_boost_without_heat_limit_point_leaves_g_alone(make_store):
     # Nach dem Update laeuft ein Boost aus der alten Version (kein G-Wiederherstellungspunkt); ein
@@ -1460,7 +1460,7 @@ def test_boost_from_idle_still_saves_g_first_and_writes_the_maximum(make_store):
     assert _heat_writes(ha) == [20.0, 15.0]
 
 
-# --- Mutationsprobe Stufe 3 S4b (A5-22 Rest): Klemmung, Vorbereitung, Bereich beim Start, Neubesetzung ---
+# --- Mutationsprobe: Klemmung, Vorbereitung, Bereich beim Start, Neubesetzung ---
 
 def test_server_values_inside_the_limits_log_no_clamping(make_store, caplog):
     override, _, _ = _setup(make_store)
@@ -1545,7 +1545,7 @@ def test_missing_restore_point_during_a_boost_is_logged_only_when_something_is_m
     assert "Wiederherstellungspunkt fehlt (room_setpoint)" in caplog.text
 
 
-# --- T6-Rest, R-c: Fehlertext aus HA (bzw. des Datentraegers) nur als Escape im Log ---
+# --- Fehlertext aus HA (bzw. des Datentraegers) nur als Escape im Log ---
 
 def _raise_fremd(*args, **kwargs):
     raise OSError(FREMDTEXT)
@@ -1584,7 +1584,7 @@ def _ursprungswert_nicht_lesbar(make_store, monkeypatch):
                                   _ursprungswert_nicht_lesbar],
                          ids=["reseed", "punkt_speichern", "punkt_lesen", "ursprungswert"])
 def test_a_foreign_error_text_is_logged_only_escaped(make_store, monkeypatch, caplog, pfad):
-    """T6-Rest, R-c: der Fehlertext beim Lesen aus HA (erster Start, Wiederherstellungspunkt vor dem Boost,
+    """Der Fehlertext beim Lesen aus HA (erster Start, Wiederherstellungspunkt vor dem Boost,
     Ursprungswert) und beim Speichern des Wiederherstellungspunkts steht nur als Escape (Zeilenumbruch, U+202E, U+061C)
     im Log."""
     with caplog.at_level(logging.INFO, logger="smartheat_core.pipeline"):
@@ -1592,7 +1592,7 @@ def test_a_foreign_error_text_is_logged_only_escaped(make_store, monkeypatch, ca
     assert zeile in logzeilen(caplog)
 
 
-# --- Schlussreview TP2 (I-1, I-2): die Vorbereitung im Schreibweg der Serverwerte teilt das Kontingent zone_prepare ---
+# --- Die Vorbereitung im Schreibweg der Serverwerte teilt das Kontingent zone_prepare ---
 
 SERVER = {"curve": 0.95, "room_setpoint": 23.0, "heat_limit": 16.0}
 
@@ -1702,7 +1702,7 @@ def test_enforcing_the_zone_setpoint_keeps_its_own_quota(make_store, clock, tag)
 
 
 def test_an_already_manual_zone_gets_the_server_setpoint_at_once_despite_a_blocked_quota(make_store, clock, tag):
-    """Controller-Ruling Fix-Welle: sperrt das Kontingent zone_prepare nach frueheren Fehlschlaegen, die Zone steht aber
+    """Sperrt das Kontingent zone_prepare nach frueheren Fehlschlaegen, die Zone steht aber
     schon auf Manuell, braucht es keine Vorbereitung: die Wunschtemperatur geht sofort, ohne Umstellversuch."""
     override, store, ha, attempts = _quota_zone(
         make_store, clock, backup={"write_budget": {write_budget.ZONE_PREPARE: {"day": DAY, "count": 6}}},

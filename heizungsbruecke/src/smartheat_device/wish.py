@@ -1,8 +1,8 @@
-"""Bedienwunsch (Spec 5b 3.2/3.3): ein lokal gestellter Sollwert wirkt sofort lokal (der Host wendet den begrenzten Wert
+"""Bedienwunsch: ein lokal gestellter Sollwert wirkt sofort lokal (der Host wendet den begrenzten Wert
 an, Boost wie heute). Das Geraet begrenzt ihn auf den Bedienbereich 15-25 °C und rundet kaufmaennisch auf 0,5 K (keine
-Sicherheitsgrenze, Spec 3.2), schickt ihn als up/wish mit der Version der Bedienung, auf der es steht (basis_version),
+Sicherheitsgrenze), schickt ihn als up/wish mit der Version der Bedienung, auf der es steht (basis_version),
 und puffert ohne Verbindung nur den juengsten (<daten>/device/wunsch.json). Erledigt ist er mit dem PUBACK des Brokers;
-eine Trennung vorher schickt ihn nach dem naechsten hello erneut. Danach entscheidet der Server (Spec 3.3) und schickt
+eine Trennung vorher schickt ihn nach dem naechsten hello erneut. Danach entscheidet der Server und schickt
 die Bedienung zurueck, falls der Wunsch verliert."""
 import math
 import time
@@ -48,7 +48,7 @@ def begrenzt_text(roh: float, begrenzt: float, herkunft: str | None) -> str:
 
 
 def soll_quelle_aus_text(wirksam: float | None) -> str:
-    """Ohne wirksames Soll (unbekannt) nennt der Text keinen Wert; die Meldung bleibt trotzdem offen (5b-D1-4)."""
+    """Ohne wirksames Soll (unbekannt) nennt der Text keinen Wert; die Meldung bleibt trotzdem offen."""
     regelt = "SmartHeat regelt weiter" if wirksam is None else f"SmartHeat regelt weiter auf {_zahl(wirksam)} °C"
     return f"Thermostat ist aus, {regelt}; Heizung aus über die Sommersperre bzw. im Portal"
 
@@ -77,7 +77,7 @@ class Wunsch:
 
 def pruefen_herkunft(herkunft: str | None, durch: str | None) -> None:
     """ValueError, wenn herkunft oder durch kein Vertragswert ist (None = nicht angegeben). Device.wunsch prueft so
-    schon im aufrufenden Thread, wie bei einer nicht endlichen Zahl (5b-D1-4)."""
+    schon im aufrufenden Thread, wie bei einer nicht endlichen Zahl."""
     if herkunft is not None and herkunft not in wire.HERKUNFT:
         raise ValueError("herkunft unbekannt")
     if durch is not None and durch not in wire.DURCH:

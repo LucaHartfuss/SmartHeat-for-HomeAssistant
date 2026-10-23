@@ -108,7 +108,7 @@ def _drop_unused(ha_api, tracking: dict, key: str, state_path: Path, tenant_id: 
 
 
 def entfernen(ha_api, tenant_id: str, state_path: Path) -> bool:
-    """Alle vom Add-on angelegten Hilfssensoren loeschen (Entfernen der Anlage, Spec 5c, A4-07): je Helfer erst in HA,
+    """Alle vom Add-on angelegten Hilfssensoren loeschen (Entfernen der Anlage): je Helfer erst in HA,
     dann aus dem Tracking (wie _drop_unused). Wirft nie. Ein nicht loeschbarer Helfer (HA antwortet nicht, Fehler)
     bleibt im Tracking fuer den naechsten Versuch, ins Log kommt nur die Fehlerart. Kaputte Eintraege ohne Entity-ID
     und Eintraege fremder Schluessel (Altreste frueherer Versionen) fallen ohne Loeschversuch weg. True, wenn kein

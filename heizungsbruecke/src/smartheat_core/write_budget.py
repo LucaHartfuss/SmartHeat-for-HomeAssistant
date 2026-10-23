@@ -1,4 +1,4 @@
-"""Schreibbudget fuer Cloud-Schreibvorgaenge (TP12b, Spec 3.1; AU-015). Die Hersteller-Cloud
+"""Schreibbudget fuer Cloud-Schreibvorgaenge. Die Hersteller-Cloud
 (myVAILLANT) sperrt bei zu vielen Aufrufen ~2 h; ein gescheiterter Schreibvorgang darf deshalb nie
 in jedem lokalen Check wiederholt werden.
 
@@ -29,7 +29,7 @@ class Rule:
 
 # Zonenvorbereitung: nur Fehlschlaege, 1/30 min, 6/Tag. Ein Erfolg kostet nichts.
 RETRY_QUOTA = Rule(every_attempt=False, waits=(INTERVAL_SECONDS,), max_per_day=MAX_PER_DAY)
-# Boost-Start (Comfort und Notfall, je eigener Zaehler): jeder Start zaehlt, auch ein erfolgreicher (A6-01, Regel 4):
+# Boost-Start (Comfort und Notfall, je eigener Zaehler): jeder Start zaehlt, auch ein erfolgreicher (Regel 4):
 # hoechstens 6 am Tag, mindestens 30 min Abstand.
 START_QUOTA = Rule(every_attempt=True, waits=(INTERVAL_SECONDS,), max_per_day=MAX_PER_DAY)
 # Rueckkehr zu den Regelwerten (Boost-Ende, Wiederherstellung): 5/15/30 min, dann alle 30 min, nie
@@ -37,7 +37,7 @@ START_QUOTA = Rule(every_attempt=True, waits=(INTERVAL_SECONDS,), max_per_day=MA
 RETURN_STAIRCASE = Rule(every_attempt=False, waits=(300, 900, INTERVAL_SECONDS), max_per_day=None)
 
 ENFORCE_PREFIX = "enforce:"
-# Plan 3b: physische Schreibvorgaenge des Tages ueber alle Hebel (BindingDescription.daily_write_limit, Weishaupt).
+# Physische Schreibvorgaenge des Tages ueber alle Hebel (BindingDescription.daily_write_limit, Weishaupt).
 TOTAL = "writes:total"
 ZONE_PREPARE = "zone_prepare"
 BOOST_START = "boost_start"

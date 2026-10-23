@@ -1,4 +1,4 @@
-"""Template-Texte der Hilfssensoren (Spec TP6 3.2), gerendert mit reinem Jinja2 plus
+"""Template-Texte der Hilfssensoren, gerendert mit reinem Jinja2 plus
 nachgebauten HA-Funktionen states()/state_attr(). Das echte HA-Verhalten (none -> unknown)
 prueft tests/test_ha_api_real_ha_integration.py."""
 import pytest

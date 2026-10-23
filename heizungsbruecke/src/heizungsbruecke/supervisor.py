@@ -1,4 +1,4 @@
-"""Supervisor-API des Add-ons (Spec 5c 1.1/1.3): Host-Informationen (Uhr per NTP synchron) und Discovery (Task 8).
+"""Supervisor-API des Add-ons: Host-Informationen (Uhr per NTP synchron) und Discovery.
 Braucht hassio_api: true in config.yaml; die Rolle default darf /host/info, /discovery ist fuer jedes Add-on offen,
 das den Dienst in config.yaml erklaert. Logs nennen nie das Token (Regel 6)."""
 import requests

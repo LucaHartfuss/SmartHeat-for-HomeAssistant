@@ -1,4 +1,4 @@
-"""Spec 5b 3.1: lokale Pruefung der Konfiguration, jede Regel mit Positiv- und Negativfall (Spec 5b 9)."""
+"""Lokale Pruefung der Konfiguration, jede Regel mit Positiv- und Negativfall."""
 import pytest
 from bindung_beispiele import parameter
 from device_helpers import SENSOR
@@ -153,7 +153,7 @@ def test_driver_parameters_are_checked_by_the_host():
 
 
 def test_a_thermostat_finding_of_the_driver_check_is_a_role_rejection():
-    """A6-02: das gebundene Thermostat ist kein Thermostat -> Rolle unzulaessig (kein Text ueber den Treiber); jeder
+    """Das gebundene Thermostat ist kein Thermostat -> Rolle unzulaessig (kein Text ueber den Treiber); jeder
     andere Befund des Treibers bleibt treiber_parameter."""
     befund = {"feld": "thermostat", "regel": "nicht_erlaubt"}
     assert _pruefen(gateway_konfiguration(), treiber_pruefen=lambda bindung: befund) == cc.Ablehnung(
@@ -214,7 +214,7 @@ def test_leere_konfiguration_braucht_keine_bindungsparameter():
 
 
 def test_rastung_wird_vor_den_bindungsparametern_geprueft():
-    """Ein fremder Hebelsatz bleibt hebelsatz_eingerastet, auch ohne Parameter (Rastung zuerst, Spec 4.2)."""
+    """Ein fremder Hebelsatz bleibt hebelsatz_eingerastet, auch ohne Parameter (Rastung zuerst)."""
     neu = gateway_konfiguration(hebelsatz="weishaupt_wwp", bindungsparameter=None)
     assert _pruefen(neu, LOCK) == cc.Ablehnung(cc.HEBELSATZ_EINGERASTET)
 

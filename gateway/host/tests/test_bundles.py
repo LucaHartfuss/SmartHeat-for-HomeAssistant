@@ -204,7 +204,7 @@ class _Done:
 
 
 def test_compose_calls_have_a_timeout_and_a_timeout_is_a_compose_error(tmp_path):
-    """A6-13: ein haengender `docker`-Aufruf (Netz weg mitten im `pull`, Daemon blockiert) hielt den Updater endlos fest.
+    """Ein haengender `docker`-Aufruf (Netz weg mitten im `pull`, Daemon blockiert) hielt den Updater endlos fest.
     Jeder Aufruf traegt eine Frist; laeuft sie ab (Attrappe `run` wirft TimeoutExpired, wie `subprocess.run`), ist es ein
     ComposeError, bei `ps` eine leere Antwort."""
     seen = []
@@ -223,7 +223,7 @@ def test_compose_calls_have_a_timeout_and_a_timeout_is_a_compose_error(tmp_path)
 
 
 def test_a_successful_compose_call_passes_its_timeout_to_run_too(tmp_path):
-    """Gegenprobe zu A6-13: auch ohne Ablauf geht die Frist an `run` (sonst waere sie ohne Wirkung)."""
+    """Gegenprobe: auch ohne Ablauf geht die Frist an `run` (sonst waere sie ohne Wirkung)."""
     seen = []
 
     def run(cmd, **kw):
@@ -238,7 +238,7 @@ def test_a_successful_compose_call_passes_its_timeout_to_run_too(tmp_path):
 
 
 def test_prune_calls_have_a_timeout_and_a_timeout_stops_the_clean_up_quietly(tmp_path):
-    """A6-13: `image ls` und `image rm` tragen je 120 s; ein Ablauf bricht das Aufraeumen ab wie ein fehlendes docker
+    """`image ls` und `image rm` tragen je 120 s; ein Ablauf bricht das Aufraeumen ab wie ein fehlendes docker
     (OSError): kein Fehler, nichts weiter geloescht. Aufraeumen ist Beiwerk, das Update ist dann schon gesund."""
     keep = {"ghcr.io/x/gw@sha256:" + "a" * 64}
     listed = "\n".join(["ghcr.io/x/gw@sha256:" + "f" * 64, "ghcr.io/x/gw@sha256:" + "e" * 64])

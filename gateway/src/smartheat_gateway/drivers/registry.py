@@ -1,4 +1,4 @@
-"""Treiber-Registry (Spec SHG G2 4.1). Die Server-Seite (G3 shg_catalog) nennt dieselben IDs (Contract-Check)."""
+"""Treiber-Registry. Die Server-Seite (G3 shg_catalog) nennt dieselben IDs (Contract-Check)."""
 import json
 import time
 
@@ -22,7 +22,7 @@ def create(
     description: BindingDescription | None = None, **extra,
 ) -> Driver:
     """writer=True nur in der Laufzeit (ein Schreiber je Datei); die Befehle des Geraetekerns lesen. description: die
-    Bindungsbeschreibung aus der Konfiguration (Spec Stufe 3 S4b); Erkennung, Inventur und Vergessen laufen ohne.
+    Bindungsbeschreibung aus der Konfiguration; Erkennung, Inventur und Vergessen laufen ohne.
     KeyError bei unbekannter ID."""
     return DRIVERS[driver_id](parameter, paths, clock=clock, writer=writer, description=description, **extra)
 

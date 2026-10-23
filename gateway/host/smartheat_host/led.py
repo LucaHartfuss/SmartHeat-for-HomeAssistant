@@ -1,4 +1,4 @@
-"""LED des Gateways (Spec G2b-1 5, G2 8.5): spielt je Zustand des Geraetekerns (wire.ZUSTAENDE, Spec 5b 5.3) ein Muster
+"""LED des Gateways: spielt je Zustand des Geraetekerns (wire.ZUSTAENDE) ein Muster
 auf der ACT-LED. Zustand aus data/agent_state.json (die Laufzeit schreibt mindestens alle 60 s; der Name stammt aus
 0.5.0); aelter als 5 min oder unlesbar = stoerung. Die Schluessel von PATTERNS sind genau die Zustaende des
 Geraetekerns."""
@@ -20,7 +20,7 @@ PATTERNS: dict[str, tuple[tuple[bool, float], ...]] = {
     "keine_verbindung": ((True, 0.5), (False, 0.5)),
     "regelt": ((True, 1.0),),
     "stoerung": ((True, _PULSE), (False, _PULSE)) * 2 + ((True, _PULSE), (False, 2.0 - 5 * _PULSE)),
-    # Spec 5b 5.3: gesperrt = lang an, kurz aus (dauerhaft, Support noetig); update_noetig = zwei lange Pulse.
+    # Gesperrt = lang an, kurz aus (dauerhaft, Support noetig); update_noetig = zwei lange Pulse.
     "gesperrt": ((True, 1.7), (False, 0.3)),
     "update_noetig": ((True, 0.6), (False, 0.2), (True, 0.6), (False, 0.6)),
 }

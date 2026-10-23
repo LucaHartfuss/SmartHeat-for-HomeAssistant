@@ -23,8 +23,18 @@ step() {
   echo "=== $name ==="
   if "$@"; then echo "--- $name: OK"; else echo "--- $name: FEHLER"; FAILED+=("$name"); fi
 }
+# Schritt, der ohne --full nicht laeuft: die Ausgabe nennt ihn, statt ihn still auszulassen; bei --only
+# (der Nutzer hat gewaehlt) bleibt es still.
+SKIPPED=()
+skipped() {
+  if [ -n "$ONLY" ]; then return 0; fi
+  echo "--- $1: uebersprungen (nur mit --full)"; SKIPPED+=("$1")
+}
 finish() {
-  if [ ${#FAILED[@]} -eq 0 ]; then echo "=== ALLES GRUEN ==="; exit 0; fi
+  if [ ${#FAILED[@]} -eq 0 ]; then
+    if [ ${#SKIPPED[@]} -eq 0 ]; then echo "=== ALLES GRUEN ==="; else echo "=== ALLES GRUEN (ohne: ${SKIPPED[*]}) ==="; fi
+    exit 0
+  fi
   echo "=== FEHLER in: ${FAILED[*]} ==="; exit 1
 }
 # Bricht ab, wenn --only keinen der uebergebenen (gueltigen) Schrittnamen nennt.
@@ -45,11 +55,11 @@ docker_host_run() {
 if [ "$FULL" = 1 ]; then export HYPOTHESIS_PROFILE=voll; fi
 PY="${PYTHON:-python3}"
 # Dev-Root: in CI aus siblings.sh (DEV_ROOT), lokal der Ordner ueber dem Haupt-Checkout - auch aus einem
-# Worktree unter .devtools/wt/ (git-common-dir zeigt auf .git des Haupt-Checkouts; Audit 5, A5-08).
+# Worktree unter .devtools/wt/ (git-common-dir zeigt auf .git des Haupt-Checkouts).
 DEV="${DEV_ROOT:-$(cd "$(git rev-parse --git-common-dir)/../.." && pwd)}"
 pyright_in() { (cd "$1" && "$PY" -m ruff check . && "$PY" -m pyright --pythonpath "$("$PY" -c 'import sys; print(sys.executable)')"); }
-# Toter Code (Stufe 3 S8b, A5-87): je Paket mit seinen Ausnahmen (vulture_ausnahmen.py, jede Zeile begruendet;
-# Vertragsnamen nur mit Leser auf der Gegenseite der Kopie, S3S8b-Vertragsleser). Kern und Gateway in einem Lauf: das
+# Toter Code: je Paket mit seinen Ausnahmen (vulture_ausnahmen.py, jede Zeile begruendet;
+# Vertragsnamen nur mit Leser auf der Gegenseite der Kopie). Kern und Gateway in einem Lauf: das
 # Gateway baut auf dem Kern auf, der Kern ruft dessen Treiber- und Host-Methoden ueber Protocols, das Gateway liest
 # Vertragsnamen des Kerns.
 # Grenze: vulture vergleicht nur Namen. Ein gleich geschriebener Name im anderen Paket verdeckt toten Code (Beispiele
@@ -64,10 +74,15 @@ toter_code() {
 }
 lint() { pyright_in heizungsbruecke && pyright_in gateway && pyright_in gateway/host && pyright_in gateway/release && toter_code \
   && "$PY" scripts/ci/pin_check.py --repo "$PWD"; }
-# Kern- und HA-Host-Tests (heizungsbruecke/tests), Gateway-Tests, Host-Dienste des Gateways (Spec SHG 9.1, G2b-1 10),
-# Bundle-Bau (G2b-1 7).
-tests() { (cd heizungsbruecke && "$PY" -m pytest -q) && (cd gateway && "$PY" -m pytest -q) && (cd gateway/host && "$PY" -m pytest -q) \
-  && (cd gateway/release && "$PY" -m pytest -q); }
+# Kern- und HA-Host-Tests (heizungsbruecke/tests), Gateway-Tests, Host-Dienste des Gateways,
+# Bundle-Bau. Alle vier laufen, auch wenn einer rot ist (wie tools/check_all.sh).
+tests() {
+  local rc=0 teil
+  for teil in heizungsbruecke gateway gateway/host gateway/release; do
+    (cd "$teil" && "$PY" -m pytest -q) || rc=1
+  done
+  return $rc
+}
 # Das eigene Repo ist dieser Checkout (auch ein Worktree), die Nachbarn kommen aus dem Dev-Root.
 contract() { "$PY" "$DEV/tools/contract_check.py" --addon "$PWD"; }
 docker_tests() {
@@ -84,5 +99,5 @@ check_only lint test contract docker
 step lint lint
 step test tests
 step contract contract
-if [ "$FULL" = 1 ] || [ "$ONLY" = docker ]; then step docker docker_tests; fi
+if [ "$FULL" = 1 ] || [ "$ONLY" = docker ]; then step docker docker_tests; else skipped docker; fi
 finish

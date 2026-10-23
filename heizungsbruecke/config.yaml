@@ -11,9 +11,9 @@ homeassistant_api: true
 hassio_api: true
 discovery:
   - smartheat
-# L4-06: lokaler Befehl der Integration, nur `entfernen <geraet_id>` (stdin_befehl.py)
+# Lokaler Befehl der Integration, nur `entfernen <geraet_id>` (stdin_befehl.py)
 stdin: true
-# Ab 1.0.0 (Spec 5c 1.2) nur Optionen zum Starten: bootstrap_url (Standard: Produktions-URL der Accounts-API, nur fuer
+# Nur Optionen zum Starten: bootstrap_url (Standard: Produktions-URL der Accounts-API, nur fuer
 # Labor und Tests setzen) und log_level. Zuordnung, Zugang und Intervalle kommen als Konfigurationsdokument vom Server;
 # die Integration schreibt keine Optionen. bootstrap_url nur https; http nur ueber die Umgebung
 # SMARTHEAT_BOOTSTRAP_URL (E2E).

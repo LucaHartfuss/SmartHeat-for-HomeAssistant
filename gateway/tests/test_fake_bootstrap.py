@@ -1,4 +1,4 @@
-"""Plan 5b D2 Task 10: Fake-Bootstrap fuer die Docker-Pruefungen (signiert CSRs, nennt den Fake-Broker)."""
+"""Fake-Bootstrap fuer die Docker-Pruefungen (signiert CSRs, nennt den Fake-Broker)."""
 import json
 import subprocess
 import urllib.error

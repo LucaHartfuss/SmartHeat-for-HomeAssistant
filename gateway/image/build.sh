@@ -1,5 +1,5 @@
 #!/bin/bash
-# Baut das Image mit rpi-image-gen (Plan G2b-2 Task 9). Laeuft IN einem privilegierten debian:trixie-Container
+# Baut das Image mit rpi-image-gen. Laeuft IN einem privilegierten debian:trixie-Container
 # (linux/arm64, make_image.sh) mit /src (Repo, nur lesend), /stage (prepare.sh, nur lesend) und /out. rpi-image-gen
 # per Commit gepinnt (v2.8.0). Aufbau laut v2.8.0: -S = Quellbaum mit config/ und layer/ (hier gateway/image), -B =
 # Arbeitsordner (muss existieren), Ergebnis von deploy.sh: <B>/deploy-<IGconf_artefact_version>/<Image-Name>.img.zst.

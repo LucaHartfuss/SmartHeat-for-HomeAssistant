@@ -1,6 +1,6 @@
-# Ausnahmen fuer vulture (scripts/check.sh, Schritt lint; Stufe 3 S8b, A5-87, K4), Whitelist-Format von vulture.
+# Ausnahmen fuer vulture (scripts/check.sh, Schritt lint), Whitelist-Format von vulture.
 # vulture zaehlt jeden Namen hier als benutzt. Jede Zeile nennt den Grund; keine Zeile ohne Grund. Vertragsnamen nur,
-# wenn der Leser auf der Gegenseite der woertlichen Kopie liegt (S3S8b-Vertragsleser, Testoffensive T2). Neue Ausnahme
+# wenn der Leser auf der Gegenseite der woertlichen Kopie liegt. Neue Ausnahme
 # nur mit Grund, sonst den toten Code loeschen.
 # Gilt fuer heizungsbruecke/src (HA-Host, Kern, Laufzeit, Geraetekern, Transport); der Lauf nimmt gateway/src mit, weil
 # das Gateway auf demselben Kern aufbaut.

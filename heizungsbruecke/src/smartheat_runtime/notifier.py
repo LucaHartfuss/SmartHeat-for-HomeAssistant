@@ -1,4 +1,4 @@
-"""Meldungen an den Kunden (Spec TP6, 3.4): Push (HA: an alle konfigurierten Notify-Dienste), bei
+"""Meldungen an den Kunden: Push (HA: an alle konfigurierten Notify-Dienste), bei
 kritischen Anlaessen zusaetzlich eine offene Meldung (HA: persistent_notification), die beim
 Rueckwechsel auf "ok" wieder verschwindet. Gemeldet wird nur bei einem Zustandswechsel je Schluessel. Der Zustand liegt
 in BridgeState.notify_states (backup.json) und uebersteht Neustarts: kein Meldungssturm, wenn das
@@ -68,7 +68,7 @@ class Notifier:
             logger.exception("Meldezustand '%s' konnte nicht gespeichert werden, Meldung geht trotzdem raus",
                              lesbar(key))
         # Die Meldung kann Text vom Server tragen (Grund einer Ablehnung): Steuerzeichen und Surrogate stehen in der
-        # Logzeile als Escape (logtext.lesbar, Testoffensive T6). Push und Speicher bekommen den Text unveraendert.
+        # Logzeile als Escape (logtext.lesbar). Push und Speicher bekommen den Text unveraendert.
         zeile = lesbar(message)
         if state == STATE_OK:
             logger.info(zeile)
@@ -109,7 +109,7 @@ class Notifier:
                 self._update_persistent(key, state, messages[key])
 
     def clear_all(self, keep=()) -> None:
-        """Abmelden (Spec TP7 3.3): alle offenen HA-Benachrichtigungen ausser `keep` entfernen und
+        """Abmelden: alle offenen HA-Benachrichtigungen ausser `keep` entfernen und
         ihre Meldezustaende leeren, ohne Push."""
         states = self._store.state.notify_states
         for key, state in states.items():

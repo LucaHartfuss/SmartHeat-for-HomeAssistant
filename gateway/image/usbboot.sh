@@ -1,5 +1,5 @@
 #!/bin/bash
-# customize-Hook des Layers smartheat-gateway: Start von der SSD am USB (Plan G2b-2 Task 9, CI-Spike 2026-10-07).
+# customize-Hook des Layers smartheat-gateway: Start von der SSD am USB (CI-Spike 2026-10-07).
 # Das Image-Layout image-rpios von rpi-image-gen v2.8.0 setzt root=/dev/disk/by-slot/system (cmdline.txt) und
 # by-slot/{system,boot} in etc/fstab. Die Links legt die Regel 99-rpi-05-image.rules nur fuer Partitionen mit
 # RPI_ONBOOTDEV=1 an, und das setzt rpi-storage-binder (99-rpi-00-bootdev.rules, rpi-bootdev-tag) nur fuer SD/eMMC

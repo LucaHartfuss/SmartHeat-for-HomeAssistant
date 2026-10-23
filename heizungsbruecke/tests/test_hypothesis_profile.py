@@ -1,4 +1,4 @@
-"""Profile von hypothesis (Testoffensive T6, Spec §12 Nr. 20): `heizungsbruecke/tests/conftest.py` registriert
+"""Profile von hypothesis: `heizungsbruecke/tests/conftest.py` registriert
 `schnell` (Standard) und `voll` und waehlt per `HYPOTHESIS_PROFILE`; kein Test unter `tests/` und `testhilfen/` setzt
 eigene `max_examples`/`derandomize`. Die Profilwahl prueft je Fall ein eigener pytest-Prozess mit einer kleinen
 Testdatei, die die Werte zusichert und die conftest.py dieses Ordners als Plugin laedt (`-p conftest`)."""
@@ -197,7 +197,7 @@ def _nennt_hypothesis(anforderungen) -> list[str]:
 
 
 def test_geladen_ist_die_version_des_hash_locks():
-    """Befund 6 (Abschlussreview T6-Rest): geladen ist genau die Version des Hash-Locks (Literal); zoege eine ungehashte
+    """Geladen ist genau die Version des Hash-Locks (Literal); zoege eine ungehashte
     Installation eine andere Version nach, waere das rot."""
     import hypothesis
     assert hypothesis.__version__ == "6.170.1"
@@ -205,7 +205,7 @@ def test_geladen_ist_die_version_des_hash_locks():
 
 
 def test_dev_abhaengigkeiten_nennen_hypothesis_nicht():
-    """Befund 6: hypothesis kommt nur aus dem Hash-Lock; `[dev]` (ungehasht installiert) und die
+    """Hypothesis kommt nur aus dem Hash-Lock; `[dev]` (ungehasht installiert) und die
     uebrigen Extras von heizungsbruecke, gateway, gateway/host und gateway/release nennen es nicht."""
     gruppen = {}
     for pyproject in (PAKET, REPO / "gateway", REPO / "gateway" / "host", REPO / "gateway" / "release"):

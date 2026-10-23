@@ -1,4 +1,4 @@
-"""Init-Schritt (Plan G2b-1 Task 7, Spec G2b-1 3)."""
+"""Init-Schritt."""
 import base64
 import hashlib
 import json
@@ -85,7 +85,7 @@ def test_adapter_from_the_host_file(tmp_path, monkeypatch, caplog):
     (tmp_path / "host").mkdir()
     (tmp_path / "host" / "zigbee_adapter").write_text("zstack\n")
     assert init.adapter(tmp_path / "host") == "zstack"
-    assert init.adapter(tmp_path / "nichtda") is None  # ohne Datei kein Abgleich (A6-15)
+    assert init.adapter(tmp_path / "nichtda") is None  # ohne Datei kein Abgleich
     (tmp_path / "host" / "zigbee_adapter").write_text("\n")
     assert init.adapter(tmp_path / "host") is None
     assert caplog.records == []  # leer ist kein Fehler
@@ -100,7 +100,7 @@ def _run_mit_adapter(tmp_path, adapter_name):
 
 
 def test_a_stick_swap_changes_the_adapter(tmp_path):
-    """A6-15: ein anderer Stick (Host-Datei zigbee_adapter) aendert nach dem ersten Schreiben nur serial.adapter."""
+    """Ein anderer Stick (Host-Datei zigbee_adapter) aendert nach dem ersten Schreiben nur serial.adapter."""
     _run_mit_adapter(tmp_path, "zstack")
     config = tmp_path / "zigbee2mqtt" / "configuration.yaml"
     vorher = config.read_text()
@@ -134,7 +134,7 @@ def test_unreadable_credentials_are_replaced_and_passwd_follows(tmp_path):
 
 
 def test_stale_passwd_is_rebuilt(tmp_path):
-    """Zurueckgespielte Sicherung: bus/passwd passt nicht mehr zu den Zugangsdateien (Plan G2b-2 Task 3)."""
+    """Zurueckgespielte Sicherung: bus/passwd passt nicht mehr zu den Zugangsdateien."""
     _run(tmp_path)
     passwd = tmp_path / "bus" / "mosquitto" / "passwd"
     passwd.write_text("".join(f"{s}:{init.mosquitto_hash('test-veraltet')}\n" for s in init.SERVICES))
@@ -163,7 +163,7 @@ def test_new_zigbee2mqtt_password_reaches_its_configuration(tmp_path):
 
 
 def test_an_existing_configuration_without_retain_is_healed_and_reported(tmp_path):
-    """L4-17: Gateways mit alter Grundkonfiguration bekommen device_options.retain: true; ein zweiter Lauf schweigt."""
+    """Gateways mit alter Grundkonfiguration bekommen device_options.retain: true; ein zweiter Lauf schweigt."""
     _run(tmp_path)
     config = tmp_path / "zigbee2mqtt" / "configuration.yaml"
     config.write_text(config.read_text().replace("device_options:\n  retain: true\n", ""))

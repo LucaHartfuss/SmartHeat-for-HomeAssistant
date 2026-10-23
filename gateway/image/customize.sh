@@ -1,5 +1,5 @@
 #!/bin/bash
-# customize-Hook des Layers smartheat-gateway (Plan G2b-2 Task 9). $1 = Root-Dateisystem, $2 = Stage von prepare.sh.
+# customize-Hook des Layers smartheat-gateway. $1 = Root-Dateisystem, $2 = Stage von prepare.sh.
 # Legt den Installer-Baum, die Container-Image-Archive und das signierte Bundle ins Image, fuehrt install.sh --image im
 # chroot aus und prueft das Ergebnis (rootfs_checks.sh --customize; der volle Lauf folgt in post-build.sh, nachdem
 # mmdebstrap aufgeraeumt hat). Keine Netzzugriffe aus dem chroot noetig (Pakete kommen aus dem Layer). Der Layer steht

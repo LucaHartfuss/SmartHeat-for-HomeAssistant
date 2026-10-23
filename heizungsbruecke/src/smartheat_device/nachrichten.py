@@ -1,4 +1,4 @@
-"""Bausteine der Geraetenachrichten (Audit 5 A5-34; Spec Stufe 3 S8 Abschnitt 6; Plan S8a-1 P1): jede Nachricht des
+"""Bausteine der Geraetenachrichten: jede Nachricht des
 Geraets entsteht hier und hat genau die Felder des Vertrags (wire.py). Eine Abweichung ist ein Programmierfehler:
 Vertragsfehler (ein ValueError) mit Nachricht und Feldnamen, nie mit Werten (Regel 6); die Aufrufer im
 Geraete-Thread loggen nur die Fehlerart. tools/contract_check.py ruft dieselben Bausteine fuer die Round-Trips mit

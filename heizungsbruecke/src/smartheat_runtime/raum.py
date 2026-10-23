@@ -1,9 +1,9 @@
-"""Raum fuer up/status (Spec 5b 3.3, Spec 5c 3; Audit 5 A5-26): {ist, soll, soll_quelle, ts} aus dem Raumfuehler-Mittel
+"""Raum fuer up/status: {ist, soll, soll_quelle, ts} aus dem Raumfuehler-Mittel
 und dem Soll-Speicher, fuer beide Hosts. Im Worker-Thread bei jeder Soll-Aenderung und im 30-s-Takt; abgelegt ueber den
 Rueckruf des Hosts (HA: HaDeviceHost.raum_merken, Gateway: GeraetZustand.raum). Der Zeitstempel ist der Zeitpunkt der
-Veroeffentlichung (der Geraetekern vergleicht ohne ihn, A4-35). Ein nicht lesbarer Fuehler ergibt ist=None und nie
+Veroeffentlichung (der Geraetekern vergleicht ohne ihn). Ein nicht lesbarer Fuehler ergibt ist=None und nie
 einen Fehler im Worker (der Takt darf nicht abreissen). Eine nicht endliche Zahl (NaN, Inf, Ganzzahl ausserhalb des
-float-Bereichs) in ist oder soll wird feldweise zu None (Testoffensive T2, Nr. 17): sie legt den Status nicht lahm."""
+float-Bereichs) in ist oder soll wird feldweise zu None: sie legt den Status nicht lahm."""
 from collections.abc import Callable
 
 from smartheat_core.zahlen import ist_endliche_zahl

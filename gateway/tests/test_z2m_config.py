@@ -16,7 +16,7 @@ def test_written_once_and_never_again(tmp_path):
                  "log_level: warning"):
         assert line in text
     assert "permit_join" not in text
-    # Zigbee2MQTT sendet Geraetewerte retained; der Spiegel wertet sie ueber last_seen (L4-17)
+    # Zigbee2MQTT sendet Geraetewerte retained; der Spiegel wertet sie ueber last_seen
     assert "\ndevice_options:\n  retain: true\nadvanced:\n" in text
     assert yaml.safe_load(text)["device_options"] == {"retain": True}
     (tmp_path / "configuration.yaml").write_text("geaendert von Zigbee2MQTT")
@@ -166,7 +166,7 @@ def test_retain_of_another_block_or_nesting_does_not_count(tmp_path):
 
 @pytest.mark.parametrize("kopf", ["device_options: {}", "device_options: {retain: false}", "device_options: # Kommentar"])
 def test_a_device_options_form_that_cannot_be_healed_logs_a_warning_without_the_file_content(tmp_path, caplog, kopf):
-    """Review Task 1, Minor 1: kein stilles Nicht-Heilen; die Zeile nennt keinen Dateiinhalt."""
+    """Kein stilles Nicht-Heilen; die Zeile nennt keinen Dateiinhalt."""
     text = f"version: 4\n{kopf}\n  network_key: GEHEIM-MARKE-4711\n"
     with caplog.at_level(logging.WARNING, logger="smartheat_gateway.z2m_config"):
         geschrieben, path = _geheilt(tmp_path, text)
@@ -202,7 +202,7 @@ def test_device_options_in_flow_style_and_unreadable_files_stay_alone(tmp_path):
 
 
 def test_sync_adapter_follows_a_stick_swap(tmp_path):
-    """A6-15: nach einem Stick-Tausch (zstack -> ember) aendert sich nur serial.adapter; der zweite Aufruf schweigt."""
+    """Nach einem Stick-Tausch (zstack -> ember) aendert sich nur serial.adapter; der zweite Aufruf schweigt."""
     ensure(tmp_path, "zstack", "zigbee2mqtt", "test-pw")
     path = tmp_path / "configuration.yaml"
     path.chmod(0o644)

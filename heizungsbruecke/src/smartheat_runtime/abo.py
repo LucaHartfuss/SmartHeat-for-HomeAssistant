@@ -79,9 +79,9 @@ def finish_grace(rt: Runtime, *, always_restore: bool, final_notice: bool) -> bo
 
 
 def report_restore(notifier, ok: bool) -> bool:
-    """T2-7: eine dauerhaft scheiternde Wiederherstellung am Fristende wird einmal gemeldet
+    """Eine dauerhaft scheiternde Wiederherstellung am Fristende wird einmal gemeldet
     (kritisch), die spaetere Rueckkehr ebenfalls. Gelingt sie gleich, bleibt es still. True bei einem
-    Zustandswechsel: die Aufrufer loggen ERROR nur dann, nicht bei jedem zurueckgestellten Versuch (TP12b)."""
+    Zustandswechsel: die Aufrufer loggen ERROR nur dann, nicht bei jedem zurueckgestellten Versuch."""
     if ok:
         return notifier.notify(RESTORE_KEY, STATE_OK, RESTORE_OK_MESSAGE, critical=True)
     return notifier.notify(RESTORE_KEY, RESTORE_FAILED_STATE, RESTORE_FAILED_MESSAGE, critical=True)
@@ -89,7 +89,7 @@ def report_restore(notifier, ok: bool) -> bool:
 
 def log_restore_failure(rt: Runtime, message: str, *args) -> None:
     """Gescheiterte bzw. vom Schreibbudget zurueckgestellte Wiederherstellung am Fristende melden (report_restore) und
-    loggen, hoechstens einmal je Episode sichtbar (TP12b): ERROR beim Wechsel des Meldezustands, WARNING beim ersten
+    loggen, hoechstens einmal je Episode sichtbar: ERROR beim Wechsel des Meldezustands, WARNING beim ersten
     Versuch dieses Prozesses, wenn der Zustand schon vor dem Neustart stand, danach im Takt nur DEBUG."""
     if report_restore(rt.notifier, ok=False):
         log = logger.error
@@ -106,8 +106,8 @@ CONNECT_FAILURES_BEFORE_STATUS_QUERY = 3
 
 
 def handle_connection_failing(rt: Runtime) -> None:
-    """Spec AWS-IoT 5.1: Bei IoT Core endet ein gesperrtes Zertifikat vermutlich im TLS-Aufbau statt mit
-    CONNACK 134/135 (AN-1). Fehlt die Verbindung lange und scheitern die Versuche wiederholt
+    """Bei IoT Core endet ein gesperrtes Zertifikat vermutlich im TLS-Aufbau statt mit
+    CONNACK 134/135. Fehlt die Verbindung lange und scheitern die Versuche wiederholt
     (app._on_connection_check), liest das Add-on deshalb den Abo-Status aus dem Konfigurationsdokument,
     gedrosselt (AUTH_REJECTED_QUERY_INTERVAL_SECONDS). Nur ein eindeutiges Ergebnis wirkt: inactive ->
     Abo-inaktiv-Modus; active und unknown aendern nichts (normaler Ausfall, den Notbetrieb und Pruef-Tick
@@ -152,7 +152,7 @@ def check_grace_end(rt: Runtime) -> None:
 
 
 def _enter_idle(rt: Runtime) -> None:
-    """Ruhezustand im Betrieb (Spec TP7 3.2): MQTT und Trigger stoppen; ab jetzt laufen alle
+    """Ruhezustand im Betrieb: MQTT und Trigger stoppen; ab jetzt laufen alle
     Handler ausser dem Lebenszeichen leer (app._unless_idle). Kein Exit."""
     rt.idle = True
     for client in (rt.mqtt_client, rt.trigger_client):

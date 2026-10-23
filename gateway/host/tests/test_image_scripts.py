@@ -1,4 +1,4 @@
-"""Image-Bau-Skripte (Plan G2b-2 Task 9) ohne Docker: prepare.sh und make_image.sh lehnen fremde Adressen (IP, AWS,
+"""Image-Bau-Skripte ohne Docker: prepare.sh und make_image.sh lehnen fremde Adressen (IP, AWS,
 http, Port, Pfad) ab, bevor sie etwas tun; prepare.sh legt mit einer Docker-Attrappe die Stage richtig an; Layer,
 Konfiguration und Installer passen zusammen (alle Pakete aus dem Layer, kein apt im chroot)."""
 import base64
@@ -212,7 +212,7 @@ def test_layer_brings_every_package_install_sh_wants():
 
 
 def test_layer_brings_the_diagnosis_tools_but_install_sh_does_not_need_the_raspberry_pi_archive():
-    """L4-18: ss und ip (iproute2) braucht install.sh ebenso wie das Image; vcgencmd (raspi-utils) gibt es nur im
+    """Ss und ip (iproute2) braucht install.sh ebenso wie das Image; vcgencmd (raspi-utils) gibt es nur im
     Raspberry-Pi-Archiv, das das Image einbindet: ein Debian-Host ohne dieses Archiv installiert ohne das Paket."""
     install = (GW / "host" / "install.sh").read_text()
     wanted = set(re.search(r"local wanted=\(([^)]*)\)", install).group(1).split())
@@ -223,7 +223,7 @@ def test_layer_brings_the_diagnosis_tools_but_install_sh_does_not_need_the_raspb
 
 
 def test_journal_syncs_every_30_seconds_and_is_persistent():
-    """L4-18: nach hartem Stromverlust fehlen hoechstens die letzten 30 s (Standard 5 min); die Groesse bleibt begrenzt."""
+    """Nach hartem Stromverlust fehlen hoechstens die letzten 30 s (Standard 5 min); die Groesse bleibt begrenzt."""
     text = (GW / "host" / "journald.conf.d" / "smartheat.conf").read_text()
     lines = [line.strip() for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")]
     assert lines == ["[Journal]", "SystemMaxUse=200M", "SyncIntervalSec=30s", "Storage=persistent"]

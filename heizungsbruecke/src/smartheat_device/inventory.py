@@ -1,7 +1,7 @@
-"""Inventur senden (Spec 5b 2 und 3.4): der Host liefert die Daten (Kandidaten je Rolle, Gateway: Treiber-Ergebnis
+"""Inventur senden: der Host liefert die Daten (Kandidaten je Rolle, Gateway: Treiber-Ergebnis
 und Zigbee-Fuehler), das Paket teilt sie in Nachrichten unter der Nachrichtengrenze (AN-10: 120 KB, Reserve fuer den
 Umschlag). Listen werden in Reihenfolge ueber die Teile verteilt, alles andere steht im ersten Teil: der Dienst haengt
-Listen in Teil-Reihenfolge aneinander, sonst gilt der erste Teil (Plan S2). Hoechstens TEILE_MAX Teile.
+Listen in Teil-Reihenfolge aneinander, sonst gilt der erste Teil. Hoechstens TEILE_MAX Teile.
 Gemessen wird kompakt mit ensure_ascii=False (UTF-8-Bytes); der Sender muss genau so serialisieren
 (json.dumps(payload, separators=(",", ":"), ensure_ascii=False)), sonst gilt die Grenze nicht."""
 import json

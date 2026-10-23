@@ -1,4 +1,4 @@
-"""Spec 5c 1.1/1.3: Status-Ereignis Schema 3 (Laufzeit-Status Schema 2 plus Geraet, wirksamer Soll, Hinweise)."""
+"""Status-Ereignis Schema 3 (Laufzeit-Status Schema 2 plus Geraet, wirksamer Soll, Hinweise)."""
 import logging
 import threading
 import time
@@ -180,7 +180,7 @@ def test_threads_do_not_interleave_events():
 
 
 def test_runtime_event_kept_for_sign_off_completes_the_command(tmp_path, monkeypatch):
-    """Verdrahtung wie in Task 9: laufzeit_merken legt das Laufzeit-Ereignis im Host ab, sign_off wartet darauf."""
+    """Verdrahtung: laufzeit_merken legt das Laufzeit-Ereignis im Host ab, sign_off wartet darauf."""
     konf = konfiguration_aus_optionen(OPTIONS)
     ha = FakeHa()
     host, _, _ = _host(tmp_path, monkeypatch, device=Device(konf), ha=ha)
@@ -198,7 +198,7 @@ def test_runtime_event_kept_for_sign_off_completes_the_command(tmp_path, monkeyp
     assert isinstance(outcome.check(), Done)
 
 
-# --- HA nicht erreichbar: Wiederholung mit Pause, eine Log-Zeile je Ausfall (Final-Review I2) ---
+# --- HA nicht erreichbar: Wiederholung mit Pause, eine Log-Zeile je Ausfall ---
 
 
 class _DownHa(FakeHa):

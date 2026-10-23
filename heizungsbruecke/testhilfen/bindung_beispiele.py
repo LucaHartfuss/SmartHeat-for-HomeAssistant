@@ -1,4 +1,4 @@
-"""Testhilfe (Spec Stufe 3 S4b): die Bindungsparameter, die der Server heute je Hebelsatz sendet, und die daraus
+"""Testhilfe: die Bindungsparameter, die der Server heute je Hebelsatz sendet, und die daraus
 gebauten Beschreibungen unter den frueheren Namen aus smartheat_core.binding. Nur fuer Tests -- das Geraet hat keine
 Ersatztabelle. Dieselben Werte haelt der Server-Test tests/test_bindungen.py; ein Contract-Check (Vertrag V4) baut sie
 als Rundweg."""

@@ -1,4 +1,4 @@
-"""Audit 4, A4-10 (GK-4): Konfigurationsfehler bei laufendem Boost (Geraete-Pfad: Konfigurationsdokument mit
+"""Konfigurationsfehler bei laufendem Boost (Geraete-Pfad: Konfigurationsdokument mit
 ungueltigem Tagestick)."""
 from types import SimpleNamespace
 
@@ -40,7 +40,7 @@ def test_a_config_error_without_restore_says_the_boost_values_remain(env, monkey
 
 
 def test_config_error_boost_message_without_description_uses_neutral_names(env, monkeypatch):
-    """A6-11 am Ablauf: ohne Beschreibung der Anlage nennt die Meldung zum Konfigurationsfehler alle Werte des
+    """Am Ablauf: ohne Beschreibung der Anlage nennt die Meldung zum Konfigurationsfehler alle Werte des
     Wiederherstellungspunkts unter neutralen Namen, auch die Heizgrenze."""
     _boost(env)
     monkeypatch.setattr("heizungsbruecke.host.HaHost.sign_off_parts", lambda self: None)
@@ -61,7 +61,7 @@ _WERTE = SimpleNamespace(restore_point={"curve": 0.9, "room_setpoint": 22.0, "le
     ("weishaupt_wwp", "Heizkennlinie 0,9, Raumsolltemperatur Normal 22, Sommer-Winter-Umschaltung 16"),
 ])
 def test_meldung_nennt_jeden_hebel_des_hebelsatzes(hebelsatz, erwartet):
-    """A6-11: die Werte zum Von-Hand-Einstellen tragen den Anzeigenamen jedes Hebels des Hebelsatzes (Viessmann: das
+    """Die Werte zum Von-Hand-Einstellen tragen den Anzeigenamen jedes Hebels des Hebelsatzes (Viessmann: das
     Niveau, Vaillant und Weishaupt: die Heizgrenze), nicht fest Kurve und Parallelverschiebung."""
     text = app._restore_values_text(_WERTE, BINDINGS[hebelsatz], abmelden=False)
 
@@ -69,7 +69,7 @@ def test_meldung_nennt_jeden_hebel_des_hebelsatzes(hebelsatz, erwartet):
 
 
 def test_abmeldung_nennt_den_ursprung_der_heizgrenze():
-    """A6-11: beim Abmelden geht die Heizgrenze (restore_originals) auf ihren Ursprungswert zurueck; die Meldung nennt
+    """Beim Abmelden geht die Heizgrenze (restore_originals) auf ihren Ursprungswert zurueck; die Meldung nennt
     ihn, nicht den gelernten Wert. Ohne Abmelden (Konfigurationsfehler) und fuer Hebel ausserhalb von restore_originals
     zaehlt der Wiederherstellungspunkt; fehlt der dort, der Ursprungswert."""
     state = SimpleNamespace(restore_point={"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 16.0},
@@ -90,7 +90,7 @@ def test_abmeldung_nennt_den_ursprung_der_heizgrenze():
 
 
 def test_ohne_beschreibung_nennen_neutrale_namen_die_werte_des_wiederherstellungspunkts():
-    """A6-11: Konfiguration ungueltig (keine Beschreibung): neutrale Namen, Werte des Wiederherstellungspunkts, auch
+    """Konfiguration ungueltig (keine Beschreibung): neutrale Namen, Werte des Wiederherstellungspunkts, auch
     beim Abmelden."""
     state = SimpleNamespace(restore_point={"curve": 0.9, "level": 3.0, "room_setpoint": 22.0, "heat_limit": 16.0},
                             originals={"heat_limit": 18.0})

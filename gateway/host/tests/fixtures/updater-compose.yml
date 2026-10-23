@@ -1,4 +1,4 @@
-# Nur fuer tests/test_gateway_updater.sh (Plan G2b-1 Task 15; ab 0.6.0 Plan 5b D2).
+# Nur fuer tests/test_gateway_updater.sh.
 # Abgeleitet von gateway/compose/docker-compose.yml: ohne zigbee2mqtt, Netz wan extern (shg-upd-wan, dort laufen der
 # Fake-Bootstrap shg-upd-bootstrap, der Fake-Broker und der Updater-Container), runtime ohne ports. Der Bundle-Bau
 # (gateway/host/tests/fixtures/make_test_bundles.py) ersetzt build: der Gateway-Dienste durch das Image mit Digest.

@@ -1,5 +1,5 @@
 name: Release Gateway
-# Tag gateway-vX.Y.Z (Spec SHG G2b-1 7, Plan-Praezisierung 8). Zwei Jobs, damit der Signierschluessel nie neben
+# Tag gateway-vX.Y.Z. Zwei Jobs, damit der Signierschluessel nie neben
 # Fremdcode laeuft (Dockerfile-Schritte, Basis-Images, pip, Repo-Skripte):
 #   build: CI -> Freigabe -> Image multi-arch -> Bundle; KEINE Environment, KEINE Secrets. -dryrun: lokale Registry
 #          (Workflow-Dienst), Wegwerf-Schluessel mit Passwort, derselbe Signier-Code wie der echte Release; kein Push
@@ -24,7 +24,7 @@ env:
   IMAGE: ghcr.io/lucahartfuss/smartheat-gateway
 jobs:
   ci:
-    # Volle Stufe (Docker, Real-HA-Container-Tests); der Push-Lauf faehrt nur die Standardstufe (Spec Nr. 30).
+    # Volle Stufe (Docker, Real-HA-Container-Tests); der Push-Lauf faehrt nur die Standardstufe.
     uses: ./.github/workflows/ci.yml
     with:
       stufe: voll
@@ -149,7 +149,7 @@ jobs:
     # Er fuehrt nur Skripte aus dem getaggten Commit aus; das Bundle aus dem Artefakt ist Daten: sign_bundle.sh baut es
     # mit build_bundle.py aus diesem Checkout und dem Gateway-Digest aus dem Manifest neu und signiert nur bei
     # byte-gleichem Ergebnis (verify_bundle.py; Python-Schritte ohne die Secrets im Environment).
-    # Version, Titel und Notizen aus Tag und Checkout, nie aus Ausgaben von build (A4-36): build fuehrt Fremdcode aus.
+    # Version, Titel und Notizen aus Tag und Checkout, nie aus Ausgaben von build: build fuehrt Fremdcode aus.
     environment: release
     permissions:
       contents: write
@@ -204,8 +204,8 @@ jobs:
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "$TITLE" --notes-file "$RUNNER_TEMP/notes.md" \
             "$bundle/docker-compose.yml" "$bundle/mosquitto.conf" "$bundle/manifest.json" "$bundle/manifest.json.minisig"
   image:
-    # Basis-Image (Plan G2b-2 Task 10): nur nach dem echten Signieren (nie im -dryrun, siehe Kopfkommentar); ohne
-    # Repo-Variable SHG_PORTAL_BASE_URL (Portal-Hostname, G3) uebersprungen. Keine Secrets, nur Leserechte. Die Repo-Variable
+    # Basis-Image: nur nach dem echten Signieren (nie im -dryrun, siehe Kopfkommentar); ohne
+    # Repo-Variable SHG_PORTAL_BASE_URL (Portal-Hostname) uebersprungen. Keine Secrets, nur Leserechte. Die Repo-Variable
     # SHG_DEVICE_API_URL wird nur durchgereicht; image-gateway.yml prueft sie vor dem Bau (eigener DNS-Name).
     needs: [build, sign]
     if: >-

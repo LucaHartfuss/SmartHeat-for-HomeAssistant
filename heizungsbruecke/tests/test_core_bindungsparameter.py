@@ -1,4 +1,4 @@
-"""Spec Stufe 3 S4b 4.2: Pruefung der Bindungsparameter; jede Regel knapp gueltig und knapp ungueltig."""
+"""Pruefung der Bindungsparameter; jede Regel knapp gueltig und knapp ungueltig."""
 import dataclasses
 import math
 
@@ -130,7 +130,7 @@ def test_listen_und_zaehlerart(feld, wert, gut):
 
 
 def test_vaillant_schreibgruppe_ist_nicht_erlaubt():
-    # A6-09: die Schreibgruppen sind eine lokale Positivliste (Verfahren.schreibgruppen_erlaubt), Vaillant hat keine
+    # Die Schreibgruppen sind eine lokale Positivliste (Verfahren.schreibgruppen_erlaubt), Vaillant hat keine
     with pytest.raises(Fehler) as fehler:
         beschreibung("vaillant_vrc720", parameter("vaillant_vrc720", schreibgruppen=[["curve", "room_setpoint"]]))
     assert fehler.value.details == {"feld": "schreibgruppen", "regel": "nicht_erlaubt"}
@@ -272,7 +272,7 @@ def _vaillant_durchsetzen(durchsetzen_tag):
 
 
 def test_vaillant_durchsetzen_tag_6_auf_der_lokalen_obergrenze_wird_angenommen():
-    """Lokale Obergrenze des Vaillant-Schreibschutzes: 6 Durchsetzungen je Tag (Spec Stufe 3 S4b 4.2)."""
+    """Lokale Obergrenze des Vaillant-Schreibschutzes: 6 Durchsetzungen je Tag."""
     assert _vaillant_durchsetzen(6).enforce_per_day == 6
 
 
@@ -318,12 +318,12 @@ def test_fehlertexte_nicht_doppelt_verpackt():
     ({"readonly_levers": ("slope",)}, "readonly_levers"),
 ])
 def test_description_is_validated(change, match):
-    """Die Invarianten von BindingDescription (vorher in test_core_binding.py)."""
+    """Die Invarianten von BindingDescription."""
     with pytest.raises(ValueError, match=match):
         dataclasses.replace(VAILLANT_MYPYLLANT, **change)
 
 
-# --- Mutationsprobe Stufe 3 S4b (A5-22 Rest): Grenzen als feste Zahlen, Fehlertexte je Pruefung ---
+# --- Mutationsprobe: Grenzen als feste Zahlen, Fehlertexte je Pruefung ---
 
 @pytest.mark.parametrize(("schritt", "gut"), [(5.0, True), (5.0001, False), (5.25, False)])
 def test_schrittweite_hoechstens_5_als_zahl(schritt, gut):
@@ -453,7 +453,7 @@ def test_jeder_fehler_traegt_details_des_vertrags():
      {"feld": "lebensdauer_hinweis", "regel": "bereich"}),
 ], ids=["weishaupt-tag", "weishaupt-lebensdauer", "viessmann-tag", "viessmann-lebensdauer"])
 def test_schreibschutz_fehler_nennt_max_genau_bei_lokaler_obergrenze(hebelsatz, schutz, details):
-    """Testoffensive T8 (Mutationsprobe K2): die details an den Server nennen die lokale Obergrenze nur, wenn es eine
+    """Die details an den Server nennen die lokale Obergrenze nur, wenn es eine
     gibt."""
     with pytest.raises(Fehler) as info:
         beschreibung(hebelsatz, parameter(hebelsatz, schreibschutz=schutz))
@@ -462,7 +462,7 @@ def test_schreibschutz_fehler_nennt_max_genau_bei_lokaler_obergrenze(hebelsatz, 
 
 @pytest.mark.parametrize("wartezeit", [59, 7201])
 def test_wartezeit_fehler_nennt_min_60_und_max_7200(wartezeit):
-    """Testoffensive T8 (Mutationsprobe K2): die details an den Server tragen beide Grenzen der Wartezeit."""
+    """Die details an den Server tragen beide Grenzen der Wartezeit."""
     with pytest.raises(Fehler) as info:
         beschreibung("vaillant_vrc720", parameter("vaillant_vrc720", wartezeit_s=wartezeit))
     assert info.value.details == {"feld": "wartezeit_s", "regel": "bereich", "min": 60, "max": 7200}

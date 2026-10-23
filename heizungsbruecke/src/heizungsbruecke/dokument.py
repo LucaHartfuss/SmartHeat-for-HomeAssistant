@@ -1,20 +1,20 @@
-"""Konfigurationsdokument des HA-Add-ons (Spec 5c 1.3, Stufe 3 S5 3.2): `bindung` liest die HA-Bindung direkt (Rollen
+"""Konfigurationsdokument des HA-Add-ons: `bindung` liest die HA-Bindung direkt (Rollen
 der Laufzeit, Raumfuehler, Batterien, Handys, Hinweise); kein Zwischenformat mehr. Der Raum-Soll der Regelung kommt aus
 dem Soll-Speicher (SOLL_REF), die Soll-Entity ist nur Eingang und Anzeige. zuordnung_pruefen ist der HA-Teil der
-lokalen Pruefung (config_check ruft ihn ueber DeviceHost.treiber_pruefen, Spec 5b 3.1): Pflicht-Entities und
+lokalen Pruefung (config_check ruft ihn ueber DeviceHost.treiber_pruefen): Pflicht-Entities und
 Schreibbarkeit je Hebelsatz, Entities vorhanden, jede gebundene Entity (Soll-Entity, Rollen, Raumfuehler, Batterien)
-besteht die lokale Positivliste der Inventur (rollen_pruefen, A6-02), dann die Schreibziele (schreibziele_befund).
-Schreibziele (jeder Hebel der Bindung, nicht nur die Schreibregeln des Hebelsatzes, A4-11) kommen nur von der lokal je
-Hebelsatz festgelegten Plattform (SCHREIB_PLATTFORM, A5-70) und alle aus einem Config-Entry (dem des Kreises, wenn er
-eines nennt); die Soll-Entity ist kein Schreibziel und nicht an dessen Geraet (A4-12). Dieselben Regeln gelten beim Start
-fuer die uebernommene Konfiguration (rollen_befund mit beim_start=True, L4-27). Ob outdoor_temp und die
+besteht die lokale Positivliste der Inventur (rollen_pruefen), dann die Schreibziele (schreibziele_befund).
+Schreibziele (jeder Hebel der Bindung, nicht nur die Schreibregeln des Hebelsatzes) kommen nur von der lokal je
+Hebelsatz festgelegten Plattform (SCHREIB_PLATTFORM) und alle aus einem Config-Entry (dem des Kreises, wenn er
+eines nennt); die Soll-Entity ist kein Schreibziel und nicht an dessen Geraet. Dieselben Regeln gelten beim Start
+fuer die uebernommene Konfiguration (rollen_befund mit beim_start=True). Ob outdoor_temp und die
 Kennzahl-Rollen fachlich passen, prueft der Server (ha_pruefung).
 
 Ist HA nicht erreichbar oder faehrt gerade hoch, ist das kein Urteil: der Server stellt eine abgelehnte Version nicht
 erneut zu, ein Neustart des Hosts haette das Geraet sonst festgesetzt. zuordnung_pruefen wirft dann NichtPruefbar (das
 Geraet haelt das Dokument zurueck und prueft spaeter erneut). Bleiben Bindung, Raumfuehler und Hebelsatz gegenueber der
 uebernommenen Konfiguration gleich (z. B. nur das Abo oder der Tagestick aendert sich), entfaellt der HA-Teil.
-Ablehnungen sind details (Rollen, nie Entity-IDs; Spec Stufe 3 S5 6.1), nur lokal_pruefen liefert den lokalen Text."""
+Ablehnungen sind details (Rollen, nie Entity-IDs), nur lokal_pruefen liefert den lokalen Text."""
 import json
 import logging
 import re
@@ -44,7 +44,7 @@ PFLICHT_ROLLEN: dict[str, tuple[str, ...]] = {
     "weishaupt_wwp_basis": ("shift_current", "outdoor_temp", "mode_select", "setpoint_comfort", "setpoint_setback"),
     "viessmann_vicare": ("curve_current", "level_current", "shift_current", "outdoor_temp", "mode_select"),
 }
-#: Plattform der Schreibziele je Hebelsatz (A5-70, Regel 4, Nutzer-Entscheidung E5 2026-10-22): lokal verankert, der
+#: Plattform der Schreibziele je Hebelsatz (Regel 4, Nutzer-Entscheidung 2026-10-22): lokal verankert, der
 #: Kreis des Dokuments (kreis.plattform) muss sie nennen, sonst lehnt das Geraet ab (plattform/nicht_erlaubt); auch die
 #: Lese-Rollen ohne Klasse haengen an ihr (_form_erlaubt). Schluessel wie PFLICHT_ROLLEN; ein Contract-Check haelt die
 #: Tabelle gegen den Katalog des Servers.
@@ -55,7 +55,7 @@ SCHREIB_PLATTFORM: dict[str, str] = {
     "viessmann_vicare": "vicare",
 }
 _NUMBER = (re.compile(r"number\.[a-z0-9_]+"), "eine number.*-Entity")
-#: Schreibbarkeit je Hebelsatz (Spec 5.6 "schreibbar"): HaPlantBinding.write kennt nur climate.set_temperature und
+#: Schreibbarkeit je Hebelsatz ("schreibbar"): HaPlantBinding.write kennt nur climate.set_temperature und
 #: number.set_value; Weishaupt-Betriebsart ist ein select, das Viessmann-Heizprogramm eine climate-Entity.
 SCHREIBREGELN: dict[str, dict[str, tuple[re.Pattern, str]]] = {
     "vaillant_vrc720": {
@@ -121,17 +121,17 @@ def bindung(konfiguration) -> HaBindung:
         kreis=dict(_mapping(raw.get("kreis"))))
 
 
-#: Was den Heizkreis bestimmt (A6-36): ohne config_entry, eine Neuanlage der Integration bleibt dieselbe Anlage.
-# Achtung (A6-36): Felder und Format bestimmen die plant_id jeder HA-Installation. anlage und nummer leitet der
+#: Was den Heizkreis bestimmt: ohne config_entry, eine Neuanlage der Integration bleibt dieselbe Anlage.
+# Achtung: Felder und Format bestimmen die plant_id jeder HA-Installation. anlage und nummer leitet der
 # Server ab (einrichtung/ha_erkennung.py, _normalize: Praefix der unique_id; Kreismuster des Katalogs); aendert er die
 # Ableitung, gilt beim naechsten Speichern im Assistenten jede HA-Anlage als andere Anlage, bind_to_tenant verwirft
-# Ursprungswerte, Wiederherstellungspunkt und Energiesummen (Restpunkt A6-36-Format).
+# Ursprungswerte, Wiederherstellungspunkt und Energiesummen (offene-punkte.md A6-36-Format).
 KREIS_KENNUNG = ("plattform", "anlage", "nummer")
 
 
 def anlagen_kennung(b: HaBindung) -> str:
-    """Anlagen-Kennung des HA-Hosts (Loaded.plant_id, A6-36): der Heizkreis als JSON. Eine umbenannte oder neu
-    zugeordnete Hebel-Entity desselben Kreises bleibt dieselbe Anlage (bis 1.1.0 waren es die Hebel-Referenzen,
+    """Anlagen-Kennung des HA-Hosts (Loaded.plant_id): der Heizkreis als JSON. Eine umbenannte oder neu
+    zugeordnete Hebel-Entity desselben Kreises bleibt dieselbe Anlage (frueher waren es die Hebel-Referenzen,
     roles.lever_refs_identity; app.start uebernimmt einen solchen Bestand einmal)."""
     return json.dumps({key: b.kreis.get(key) for key in KREIS_KENNUNG}, sort_keys=True)
 
@@ -151,7 +151,7 @@ def v1_rolle(rolle: str) -> str:
 @dataclass(frozen=True)
 class Befund:
     """HA-Pruefung: details fuer den Server (config_check, V1) und der lokale Text fuer den Konfigurationsfehler beim
-    Start (lokal_pruefen, Spec Stufe 3 S5 6.3). details nennen Rollen, nie Entity-IDs (Regel 6)."""
+    Start (lokal_pruefen). details nennen Rollen, nie Entity-IDs (Regel 6)."""
     details: dict
     text: str
 
@@ -198,7 +198,7 @@ def _pflicht_refs(b: HaBindung) -> set[str]:
     """Die Referenzen, ohne die nichts laeuft und die von selbst wiederkommen: Soll-Entity, Pflichtrollen des Hebelsatzes
     (dieselben wie host._wait_for_required_entities, plus Soll-Entity), Raumfuehler und jedes Schreibziel. Ein Schreibziel
     darf nie fallen gelassen werden, auch eine optionale Hebelrolle nicht (ohne Zustand: nicht pruefbar, Wiederholung):
-    bis zum Rueckbau der Uebernahme (A6-36-Uebernahme) gehoert sie zur frueheren Anlagen-Kennung
+    bis zum Rueckbau der Uebernahme (offene-punkte.md A6-36-Uebernahme) gehoert sie zur frueheren Anlagen-Kennung
     (roles.lever_refs_identity, app.start), ohne sie verwuerfe bind_to_tenant einen Bestand von 1.1.0. Fallen duerfen
     nur optionale Lese-Rollen und Batterien."""
     return {*([b.soll_entity] if b.soll_entity is not None else []),
@@ -217,7 +217,7 @@ def optionale_felder(b: HaBindung) -> list[str]:
 FREIE_KLASSE = "*"
 _TEMPERATUR = ("sensor", "temperature")
 _FREI = ("sensor", FREIE_KLASSE)
-#: Form je Feld der Bindung (A6-02 je Feld, Spec Rollen je Feld 2): erlaubte (Domaene, Geraeteklasse); Klasse None =
+#: Form je Feld der Bindung: erlaubte (Domaene, Geraeteklasse); Klasse None =
 #: Domaene ohne Klassenpruefung (climate, weather). Zusaetzlich zu inventur.entity_erlaubt. Schreibziele stehen nicht
 #: hier (sie halten SCHREIBREGELN und schreibziele_befund); jedes andere Feld ist nicht erlaubt (fail closed). Der
 #: Server fuehrt dieselben Regeln in einrichtung/ha_rollen.py, der Contract-Check vergleicht beide.
@@ -269,7 +269,7 @@ OHNE_REGISTRY = "registry"
 
 
 def schreibziele_befund(b: HaBindung, registry: Mapping[str, Mapping], *, beim_start: bool) -> tuple[str, str] | None:
-    """Die Regeln der Schreibziele (A4-11, A4-12, A5-70, L4-27; Regel 4, E5): (feld, "nicht_erlaubt") des ersten
+    """Die Regeln der Schreibziele (Regel 4): (feld, "nicht_erlaubt") des ersten
     Verstosses oder None. Der Kreis nennt die Plattform des Hebelsatzes (SCHREIB_PLATTFORM, sonst Feld plattform); jedes
     Schreibziel (_schreibziel_rollen) kommt von dieser Plattform, alle aus einem Config-Entry (dem des Kreises, wenn er
     eines nennt, sonst dem des ersten Schreibziels; ohne Config-Entry nicht erlaubt); die Soll-Entity ist kein
@@ -304,7 +304,7 @@ def schreibziele_befund(b: HaBindung, registry: Mapping[str, Mapping], *, beim_s
 
 
 def rollen_befund(b: HaBindung, ha_api, *, beim_start: bool) -> tuple[tuple[str, str] | None, list[tuple[str, str]]]:
-    """Lokale Positivliste fuer jede Rolle (A6-02, G-9) und die Regeln der Schreibziele (schreibziele_befund, L4-27):
+    """Lokale Positivliste fuer jede Rolle (G-9) und die Regeln der Schreibziele (schreibziele_befund):
     ((feld, "nicht_erlaubt") des ersten Verstosses oder None, [(feld, ref) der erlaubten optionalen Lese-Rollen und
     Batterien ohne Zustand]). Soll-Entity, Rollen, Raumfuehler und Batterien muessen die Positivliste der Inventur
     bestehen (inventur.entity_erlaubt); `::attribut` zaehlt die Entity davor. Registry und Zustaende werden einmal
@@ -362,7 +362,7 @@ def _unveraendert(konfiguration, akzeptiert) -> bool:
 
 
 def zuordnung_pruefen(konfiguration, ha_api, akzeptiert=None) -> dict | None:
-    """None = in Ordnung; sonst details (Grund rolle_unzulaessig, Spec Stufe 3 S5 6.1). `akzeptiert` ist die
+    """None = in Ordnung; sonst details (Grund rolle_unzulaessig). `akzeptiert` ist die
     uebernommene Konfiguration (None, wenn es keine gibt). Wirft NichtPruefbar, wenn HA gerade nicht antwortet (siehe
     oben). Ein anderer Fehler im Teil ohne HA ausser dem ConfigError der Bindung wird nicht gefangen (Programmfehler,
     bleibt sichtbar); das Dokument kommt dann bei der naechsten Verbindung erneut."""

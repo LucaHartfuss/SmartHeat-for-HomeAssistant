@@ -1,4 +1,4 @@
-"""vicare_cloud als PlantBinding (Spec G4 1.2) gegen den Fake-ViCare-Server."""
+"""vicare_cloud als PlantBinding gegen den Fake-ViCare-Server."""
 import json
 import threading
 
@@ -44,7 +44,7 @@ def env(tmp_path, clock, monkeypatch):
 
 
 def test_parameters_are_checked_by_the_driver(tmp_path):
-    # Audit 4, A4-34 (GW-7)
+    # Parameter ausserhalb der Grenzen oder vom falschen Typ werden abgelehnt
     for bad in ({"poll_seconds": 0}, {"poll_seconds": -5}, {"poll_seconds": 60}, {"poll_seconds": True},
                 {"poll_seconds": "300"}, {"installation_id": "x"}, {"installation_id": True}, {"heizkreis": -1},
                 {"gateway_serial": ""}, {"device_id": 0}):
@@ -106,16 +106,16 @@ def test_reads_come_from_the_cache_without_a_new_api_call(env):
 
 
 def test_curve_and_level_are_written_as_one_group_without_reverting_the_first_member(env):
-    """Praezisierung 6: der zweite setCurve nimmt die eben geschriebene Steigung, nicht die aus dem alten Cache."""
+    """Der zweite setCurve nimmt die eben geschriebene Steigung, nicht die aus dem alten Cache."""
     server, driver, paths, clock = env
     driver.write("curve", 1.1)
     driver.write("level", 3.0)
     assert [c["params"] for c in server.commands] == [{"shift": 0, "slope": 1.1}, {"shift": 3, "slope": 1.1}]
-    assert driver.physical_writes == 2  # ohne write_group zaehlt die Pipeline beide Schreibvorgaenge (A6-09)
+    assert driver.physical_writes == 2  # ohne write_group zaehlt die Pipeline beide Schreibvorgaenge
 
 
 def test_a_write_group_sends_one_setcurve_with_both_values(env):
-    # Audit 4, A4-31 (GW-4): keine Zwischenstellung mit dem alten Partnerwert, ein Aufruf aus dem Kontingent
+    # Keine Zwischenstellung mit dem alten Partnerwert, ein Aufruf aus dem Kontingent
     server, driver, paths, clock = env
     driver.write_group({"curve": 1.2, "level": 1.0})
     assert [c["params"] for c in server.commands] == [{"shift": 1, "slope": 1.2}] and driver.physical_writes == 1
@@ -204,7 +204,7 @@ def test_the_cache_is_fresh_up_to_exactly_three_poll_intervals(env, alter_s, fri
 
 
 def test_an_expired_login_is_not_logged_in_and_writes_nothing(env):
-    """Review Focus 1: kein Schreibvorgang, Datenfehler (Lesen wirft), Portal-Knopf 'Anmeldung erneuern' existiert."""
+    """Kein Schreibvorgang, Datenfehler (Lesen wirft), Portal-Knopf 'Anmeldung erneuern' existiert."""
     server, driver, paths, clock = env
     server.control({"reset": True})  # der Fake kennt die Tokens nicht mehr
     driver.poll_once()               # 401 -> Erneuerung abgelehnt -> die Anmeldung gilt als abgelaufen
@@ -212,7 +212,7 @@ def test_an_expired_login_is_not_logged_in_and_writes_nothing(env):
     with pytest.raises(DriverError) as error:
         driver.write("curve", 1.2)
     assert error.value.grund == "nicht_angemeldet" and driver.physical_writes == 0 and server.commands == []
-    # Lokale Meldung (Spec Stufe 3 S5 6.3): der Kunde liest einen deutschen Satz, nie den nackten Code.
+    # Lokale Meldung: der Kunde liest einen deutschen Satz, nie den nackten Code.
     schreibfehler = DeviceWriteError("curve", "treiber:curve", error.value)
     text = delivery.notification_text(delivery.NOTIFY_DATENFEHLER_WRITE, (str(schreibfehler),), {})
     assert "Anmeldung" in text and "erneuern" in text and "nicht_angemeldet" not in text
@@ -293,7 +293,7 @@ def test_erkennung_mit_offline_cloud_und_abgelaufener_anmeldung_nutzt_die_vertra
 
 
 def test_limits_come_from_the_command_constraints_of_the_plant(env):
-    """Praezisierung 13 (Client2-Bereitschaft): dieselben Grenzen, die die Probe in `hebel` meldet; ohne Constraint None."""
+    """Dieselben Grenzen, die die Probe in `hebel` meldet; ohne Constraint None."""
     server, driver, paths, clock = env
     assert driver.limits("curve") == (0.2, 3.5)
     assert driver.limits("level") == (-13.0, 40.0)
@@ -333,11 +333,11 @@ def test_poll_and_reads_from_many_threads_do_not_corrupt_the_cache(env):
     assert errors == []
 
 
-# --- Ergaenzungen (Review Focus 1, 3, 7; Anmeldephasen; Ueberlagerung) ---
+# --- Ergaenzungen (Anmeldephasen, Ueberlagerung) ---
 
 
 def test_quota_exhausted_mid_write_group_keeps_the_cloud_value_as_the_one_to_read(env):
-    """Review Focus 3: der erste setCurve geht durch, der zweite scheitert an der 429-Sperre; danach schreibt nichts
+    """Der erste setCurve geht durch, der zweite scheitert an der 429-Sperre; danach schreibt nichts
     mehr, und read() zeigt weiter den Wert der Cloud, nie die halbe Gruppe (kein Zwischenzustand als Ursprungswert)."""
     server, driver, paths, clock = env
     driver.write("curve", 1.1)
@@ -454,7 +454,7 @@ class _Installations:
 
 
 def test_erkennung_mehrerer_installationen_gibt_eine_anlage_je_heizgeraet(tmp_path, clock):
-    """Review Focus 7: getrennte Anlagen mit eigener Kennung und eigenem Index; ein Geraet ohne Heizung zaehlt nicht."""
+    """Getrennte Anlagen mit eigener Kennung und eigenem Index; ein Geraet ohne Heizung zaehlt nicht."""
     api = _Installations(good_features())
     driver = ViCareCloudDriver({}, Paths(tmp_path), clock=clock, api=api)  # type: ignore[arg-type]
     daten = driver.erkennung()
@@ -530,7 +530,7 @@ def test_inventory_sample_without_parameters_finds_the_heating_device(env):
     assert driver.inventory_sample()["werte"]["level_current"] == 0
 
 
-# --- Fix-Runde 1: Programmwechsel als Ueberlagerung mit Zeitstempel (nachlaufende Cloud) ---
+# --- Programmwechsel als Ueberlagerung mit Zeitstempel (nachlaufende Cloud) ---
 
 
 def _activate_eco(server):
@@ -594,7 +594,7 @@ def test_after_prepare_any_non_foreign_program_of_the_cloud_confirms(env):
 
 
 def test_delivery_signals_are_reported_when_the_cloud_has_the_features(env):
-    # Audit 4 P-B (W-1): Betriebsstunden, Starts, Brennerstatus und Betriebsart als Signale
+    # Betriebsstunden, Starts, Brennerstatus und Betriebsart als Signale
     server, driver, paths, clock = env
     assert not {"generator_hours", "generator_starts", "generator_state", "operating_mode"} & set(driver.signals())
     for feature in server.features["0"]:

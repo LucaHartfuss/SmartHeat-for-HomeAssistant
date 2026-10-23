@@ -1,4 +1,4 @@
-"""Spec Stufe 3 S4b 3: lokaler Verfahrensteil je Hebelsatz."""
+"""Lokaler Verfahrensteil je Hebelsatz."""
 from smartheat_core.levers import LEVER_SETS
 from smartheat_core.safety import LOCAL_SAFETY
 from smartheat_core.verfahren import VERFAHREN

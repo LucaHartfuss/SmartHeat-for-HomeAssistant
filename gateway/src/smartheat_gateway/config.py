@@ -1,4 +1,4 @@
-"""Konfiguration des Gateways als Dokument vom Server (Spec 5b 3.1/5.2, Plan D2): die Laufzeit-Konfiguration liest
+"""Konfiguration des Gateways als Dokument vom Server: die Laufzeit-Konfiguration liest
 smartheat_runtime.dokument_config, die Bindung (Treiber, Thermostat, Raumfuehler) dieses Modul. Dazu die Pruefung der
 Treiberparameter fuer config_check, der Startwert des Soll-Speichers und die Abmelde-Markierung (sign_off)."""
 import logging
@@ -32,7 +32,7 @@ class GatewayBindung:
 
 
 def bindung(konfiguration) -> GatewayBindung:
-    """Bindung des Gateways aus dem Konfigurationsdokument (Spec 5b 3.1): bindung.treiber, bindung.thermostat,
+    """Bindung des Gateways aus dem Konfigurationsdokument: bindung.treiber, bindung.thermostat,
     raumfuehler. Wirft ConfigError (StartFailure beim Start); config_check hat das Dokument beim Uebernehmen geprueft."""
     raw = konfiguration.get("bindung") if isinstance(konfiguration, Mapping) else None
     treiber = raw.get("treiber") if isinstance(raw, Mapping) else None

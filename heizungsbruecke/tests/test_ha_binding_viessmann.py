@@ -1,4 +1,4 @@
-"""HA-Binding Viessmann (Plan 3b, HA-Core vicare): Heizprogramm als Vorbereitung, Hilfs-Ursprungswert, mit der Pipeline
+"""HA-Binding Viessmann (HA-Core vicare): Heizprogramm als Vorbereitung, Hilfs-Ursprungswert, mit der Pipeline
 Neigung und Niveau als eine Schreibgruppe."""
 import pytest
 from bindung_beispiele import VIESSMANN_VICARE_BINDING
@@ -103,7 +103,7 @@ def test_with_the_pipeline_curve_and_level_go_together_after_leaving_eco(make_st
 
 def test_a_restore_without_auxiliary_originals_leaves_the_users_program(make_store, clock):
     # Hilfswert nie gemerkt (Backup ohne aux_originals), der Nutzer hat inzwischen Komfort aktiv und die Neigung weicht
-    # vom Ursprungswert ab: die Neigungsgruppe wird zurueckgeschrieben, das Heizprogramm bleibt beim Nutzer (Review Task 8).
+    # vom Ursprungswert ab: die Neigungsgruppe wird zurueckgeschrieben, das Heizprogramm bleibt beim Nutzer.
     ha = FakeHa("comfort", **{"number.slope": 1.3})
     store = make_store(backup={
         "restore_point": {"curve": 1.3, "level": 0.0, "room_setpoint": 20.0},

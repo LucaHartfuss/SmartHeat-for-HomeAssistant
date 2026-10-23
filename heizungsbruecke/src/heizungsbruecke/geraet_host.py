@@ -1,14 +1,14 @@
-"""Das HA-Add-on als Host des Geraetekerns (Spec 5c 1.3): liefert Faehigkeiten (keine Treiber, kein Zigbee, kein
+"""Das HA-Add-on als Host des Geraetekerns: liefert Faehigkeiten (keine Treiber, kein Zigbee, kein
 updater), Uhr aus dem Supervisor, den HA-Teil der Konfigurationspruefung, die Befehle (inventory, sign_off,
 diagnostics; HA-fremde Befehle nicht_unterstuetzt) und nimmt Konfiguration und Bedienung entgegen. Alle Rueckrufe laufen
 im Geraete-Thread und werfen nicht (ausser NichtPruefbar aus treiber_pruefen, siehe dokument.zuordnung_pruefen, und
 einem OSError der Markierung aus konfiguration_vorbereiten, siehe geraet_host_basis). Eine laufzeitrelevante neue
 Konfiguration fordert einen Neustart an (geraet_host_basis.EV_RELOAD im Regel-Worker), ebenso eine neue, nicht leere
-Konfiguration derselben Anlage, die die Abmelde-Markierung aufhebt (5b-D2-7); der Wechsel von eingerichtet auf leer
-markiert das Aufraeumen vor dem Speichern (A4-07).
+Konfiguration derselben Anlage, die die Abmelde-Markierung aufhebt; der Wechsel von eingerichtet auf leer
+markiert das Aufraeumen vor dem Speichern.
 Eine neue Bedienung geht als Soll-Eingang (portal) an den Worker, der Soll-Eingang schreibt sie in den Soll-Speicher und
 gleicht die Soll-Entity an; kommt sie vor dem Binden, stellt worker_binden die letzte nach. Status
-(runtime_status_event, Task 7) und Raum (raum_merken, HaHost) legt der Worker-Thread hier ab, der Geraete-Thread liest
+(runtime_status_event) und Raum (raum_merken, HaHost) legt der Worker-Thread hier ab, der Geraete-Thread liest
 sie fuer up/status. Meldungen der Laufzeit gehen wie beim Gateway (MeldungSink) als up/notifications an den Server und
 zusaetzlich an HA (notify_sink_fuer). anzeigen meldet Geraete-ID, Uebernahmestand und Code an die Supervisor-Discovery
 (discovery.Discovery)."""
@@ -50,7 +50,7 @@ class HaDeviceHost(GeraetHostBasis):
         self.status_sink: GeraetStatus | None = None  # StatusSink der Laufzeit und Anzeige (__main__.verdrahten)
         self.discovery: Discovery | None = None  # Supervisor-Meldung (__main__.verdrahten)
         self.claim_code: Callable[[], str | None] = lambda: None  # Uebernahme-Code des Geraets (__main__.verdrahten)
-        self.runtime_status_event: dict | None = None  # letztes Status-Ereignis der Laufzeit (Task 7: laufzeit_merken)
+        self.runtime_status_event: dict | None = None  # letztes Status-Ereignis der Laufzeit (laufzeit_merken)
         self._raum: dict | None = None
         self._uhr: tuple[float, bool | None] | None = None
 
@@ -63,7 +63,7 @@ class HaDeviceHost(GeraetHostBasis):
     # --- Sicht der Laufzeit (HaHost) ---
 
     def notify_sink_fuer(self, services: list[str]) -> GeraetUndHaSink:
-        """Meldungen der Laufzeit an den Geraetekern (Portal, Betreiber-Alarm geraetemeldung; Spec 5c 3: HA-Geraete wie
+        """Meldungen der Laufzeit an den Geraetekern (Portal, Betreiber-Alarm geraetemeldung; HA-Geraete wie
         Gateways) und an HA (Notify-Dienste, persistent_notification)."""
         return GeraetUndHaSink(self.notify_sink, HaNotifySink(self._ha, services))
 
@@ -102,7 +102,7 @@ class HaDeviceHost(GeraetHostBasis):
 
     def befehle_eintragen(self, register: CommandRegister) -> None:
         # inventory liest nur: fiel ein Neustart in die Erkennung, laeuft sie bei der erneuten Zustellung noch einmal,
-        # statt mit "intern" zu enden (L4-02). Grenze: hoechstens eine Abfrage je Neustart, solange der Server den
+        # statt mit "intern" zu enden. Grenze: hoechstens eine Abfrage je Neustart, solange der Server den
         # Befehl zustellt (bis expires_at); eine Neustart-Schleife wiederholte sie je Neustart.
         register.register("inventory", self._inventory, wiederholbar=True)
         # sign_off ist idempotent (die Markierung setzt den Neustart nur einmal): nach dem Neustart laeuft es erneut,
@@ -113,7 +113,7 @@ class HaDeviceHost(GeraetHostBasis):
             register.register(kind, _nicht_unterstuetzt)
 
     def software_soll(self, software: dict | None) -> None:
-        """HA-Add-ons aktualisiert der Supervisor; die Faehigkeit updater fehlt (Spec 5c 1.3)."""
+        """HA-Add-ons aktualisiert der Supervisor; die Faehigkeit updater fehlt."""
 
     def runtime_status(self) -> dict | None:
         return self.runtime_status_event
@@ -142,7 +142,7 @@ class HaDeviceHost(GeraetHostBasis):
     # --- Befehle ---
 
     def _inventory(self, payload: dict) -> Outcome:
-        """Momentaufnahme nach dem Filter des Servers (stunden 0, Spec 5c 1.3) im Hintergrund: die HA-API (Registry per
+        """Momentaufnahme nach dem Filter des Servers (stunden 0) im Hintergrund: die HA-API (Registry per
         WebSocket, Zustaende, Dienste) haelt den Geraete-Thread nie auf. Antwortet HA bis INVENTUR_SECONDS nicht, endet
         der Befehl mit ha_nicht_erreichbar. Nur die Fehlerart ins Log, nie Inhalte (Regel 6). Verletzt die Inventur
         den Vertrag (Vertragsfehler: nur Feldnamen), endet der Befehl mit intern."""
@@ -186,7 +186,7 @@ class HaDeviceHost(GeraetHostBasis):
         return anlage, neu
 
     def lokal_abmelden(self) -> None:
-        """Der HA-Eintrag wurde geloescht (stdin-Befehl der Integration, L4-06 Variante C): wie sign_off ohne
+        """Der HA-Eintrag wurde geloescht (stdin-Befehl der Integration): wie sign_off ohne
         Befehls-Ergebnis. Geraete-Thread (Device.im_geraete_thread); nicht eingerichtet: nichts zu tun. Ein OSError der
         Markierung wird zu einer WARNING mit der Fehlerart; jeden anderen Fehler faengt Device._sicher als ERROR."""
         try:
@@ -202,7 +202,7 @@ class HaDeviceHost(GeraetHostBasis):
             logger.info("HA-Eintrag geloescht: Geraet ist schon abgemeldet")
 
     def _sign_off(self, payload: dict) -> Outcome:
-        """Abmelden (Spec TP7 3.3, 5b 4.5) wie beim Gateway: Markierung fuer die Anlage, dann startet die Laufzeit als
+        """Abmelden (5b 4.5) wie beim Gateway: Markierung fuer die Anlage, dann startet die Laufzeit als
         "abgemeldet" neu und setzt die Anlage zurueck. Fertig, sobald der Status "abgemeldet" fuer diese Anlage zeigt;
         werte ist der Wiederherstellungspunkt danach."""
         ergebnis = self._abmelden()

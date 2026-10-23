@@ -1,4 +1,4 @@
-"""Spec 5b 2/3.4: Inventur in Teilen unter der Nachrichtengrenze (AN-10: 120 KB)."""
+"""Inventur in Teilen unter der Nachrichtengrenze (AN-10: 120 KB)."""
 import json
 import time
 
@@ -13,7 +13,7 @@ def _gesendet(message) -> int:
 
 
 def _server_merge(parts):
-    """Zusammenfuehren wie der Dienst (Plan S2 Task 5, geraete/inventur.merge)."""
+    """Zusammenfuehren wie der Dienst (geraete/inventur.merge)."""
     merged = {}
     for part in parts:
         for key, value in part.items():

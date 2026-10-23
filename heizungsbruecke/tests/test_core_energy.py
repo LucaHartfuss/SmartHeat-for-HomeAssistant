@@ -1,4 +1,4 @@
-"""Energie-Normalisierung (Plan 3b, Spec 6.5): Tageszaehler -> monoton wachsende Summe; Summenzaehler unveraendert."""
+"""Energie-Normalisierung: Tageszaehler -> monoton wachsende Summe; Summenzaehler unveraendert."""
 import pytest
 
 from smartheat_core.energy import RESET_FRACTION, normalize, umrechnen
@@ -70,7 +70,7 @@ def test_umrechnen():
 
 
 def test_einheitenwechsel_beginnt_die_summe_neu():
-    """Spec 5: der Zustand aus 1.0.0 (Wh, ohne Einheit) laeuft nicht in kWh weiter."""
+    """Der Zustand aus 1.0.0 (Wh, ohne Einheit) laeuft nicht in kWh weiter."""
     alt = {"primary_heating": {"raw": 5000.0, "sum": 1_234_567.0}}
     out, state = normalize("daily", alt, {"primary_heating": 5.0}, {"primary_heating": "kWh"})
     assert out == {"primary_heating": 5.0}
@@ -79,7 +79,7 @@ def test_einheitenwechsel_beginnt_die_summe_neu():
     assert out == {"primary_heating": 7.0} and state["primary_heating"]["einheit"] == "m³"
 
 
-# --- Mutationsprobe Stufe 3 S4b (A5-22 Rest) ---
+# --- Mutationsprobe ---
 
 def test_genau_die_haelfte_ist_rauschen_keine_ruecksetzung():
     sent, state = _run([8.0, 4.0])

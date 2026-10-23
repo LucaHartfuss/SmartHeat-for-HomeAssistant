@@ -1,4 +1,4 @@
-"""Status-Kanal des Add-ons (Spec TP7 1.1, 3.1)."""
+"""Status-Kanal des Add-ons."""
 import json
 import logging
 from datetime import UTC, datetime
@@ -36,7 +36,7 @@ def test_runtime_schema_and_heartbeat():
     (Flags(), BridgeState(abo_finished=True, abo_inactive_since=SINCE), "abo_beendet"),
     (Flags(), BridgeState(abo_inactive_since=SINCE, delivery=DeliveryState(notbetrieb=True)), "abo_inaktiv"),
     # Notbetrieb/Datenfehler vor dem ersten MQTT-Connect (Tunnel nie aufgebaut): sichtbar statt
-    # "startet" (TP7-Gates 2026-09-29).
+    # "startet".
     (Flags(), BridgeState(delivery=DeliveryState(notbetrieb=True, pending=PendingTick(seq="s", trigger="daily"))),
      "notbetrieb"),
     (Flags(), BridgeState(delivery=DeliveryState(datenfehler=DataFault("local", ("dat",)))), "datenfehler"),
@@ -52,7 +52,7 @@ def test_overall_status_takes_the_first_matching_state(flags, state, expected):
 
 
 def test_veralteter_notbetrieb_vor_dem_start_ist_startet():
-    """L4-09: Notbetrieb ohne offenen Tick stammt aus dem Abo-inaktiv-Modus (abo.enter_inactive) und ist beim Start
+    """Notbetrieb ohne offenen Tick stammt aus dem Abo-inaktiv-Modus (abo.enter_inactive) und ist beim Start
     veraltet; bis zum ersten abgeschlossenen Start zeigt der Status `startet` statt eines kurzen `notbetrieb`. Ein
     echter Notbetrieb hat einen offenen Tick und bleibt vor dem Start sichtbar; nach dem Start gilt der Notbetrieb
     immer."""
@@ -143,7 +143,7 @@ def test_event_without_learned_values_reports_none(make_store):
 @pytest.mark.parametrize("wert", [float("nan"), float("inf"), float("-inf"), 10**400],
                          ids=["nan", "inf", "-inf", "riesig"])
 def test_nicht_endliche_laufzeitwerte_stehen_nie_im_status(make_store, wert):
-    """Testoffensive T2, Nr. 17 (Review Focus 2): ein NaN-Hebel legt den Status nicht lahm; das Feld wird None."""
+    """Ein NaN-Hebel legt den Status nicht lahm; das Feld wird None."""
     store = make_store()
     store.update(restore_point={"curve": wert, "room_setpoint": 21.0, "heat_limit": 16.0},
                  learned={"curve": wert, "heat_limit": 16.2}, min_flow_current=wert,

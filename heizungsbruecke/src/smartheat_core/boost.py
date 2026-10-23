@@ -19,7 +19,7 @@ def decide_boost(
     Der Start verlangt zusaetzlich, dass der Raum noch nicht angekommen ist
     (`room_actual < room_target - arrival_threshold_k`, dieselbe Bedingung wie fuers
     Weiterlaufen): bei warmem Raum gaebe es einen Schein-Start, der beim naechsten Check
-    endet und den echten Boost ueber das Startbudget (30 min Abstand) sperrt (A6-01).
+    endet und den echten Boost ueber das Startbudget (30 min Abstand) sperrt.
     """
     not_arrived = room_actual < room_target - arrival_threshold_k
     if boost_was_active:
@@ -28,8 +28,8 @@ def decide_boost(
     return rose and not_arrived
 
 
-# Audit 4, A4-09 (Nutzer-Entscheidung E2, Freigabe nach Regel 4 fuer genau diese Werte): der Comfort-Boost ist
-# "kurzzeitig" (FR-3) -- er endet spaetestens nach 4 h und wenn der Raumfuehler dreimal in Folge nicht lesbar ist.
+# Nutzer-Entscheidung, Freigabe nach Regel 4 fuer genau diese Werte: der Comfort-Boost ist
+# "kurzzeitig" -- er endet spaetestens nach 4 h und wenn der Raumfuehler dreimal in Folge nicht lesbar ist.
 COMFORT_BOOST_MAX_SECONDS = 4 * 3600
 UNREADABLE_ROOM_CHECKS = 3
 
@@ -37,8 +37,8 @@ UNREADABLE_ROOM_CHECKS = 3
 def comfort_boost_expired(since, now, mono_seit: float | None = None) -> bool:
     """since: Beginn des laufenden Comfort-Boosts (aware datetime) oder None (unbekannt: nicht abgelaufen).
     mono_seit: Sekunden auf der monotonen Prozessuhr seit dem Start in diesem Prozess oder None (Start in einem
-    frueheren Lauf). Der Boost endet auch, wenn die Wanduhr ihn in der Zukunft beginnen laesst (Uhr zurueckgesprungen,
-    A6-35 a) oder die monotone Uhr die Hoechstdauer zaehlt: nie spaeter als bisher, hoechstens frueher."""
+    frueheren Lauf). Der Boost endet auch, wenn die Wanduhr ihn in der Zukunft beginnen laesst (Uhr zurueckgesprungen)
+    oder die monotone Uhr die Hoechstdauer zaehlt: nie spaeter als die Wanduhr allein, hoechstens frueher."""
     if mono_seit is not None and mono_seit >= COMFORT_BOOST_MAX_SECONDS:
         return True
     if since is None:

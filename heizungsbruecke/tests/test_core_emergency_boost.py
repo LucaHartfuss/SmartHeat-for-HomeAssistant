@@ -62,7 +62,7 @@ def test_notfall_boost_endet_an_der_echten_austrittsschwelle(tmp_path, raum_ist,
 
 def test_decide_emergency_boost_retriggers_after_a_prior_exit():
     # Solange Notbetrieb laeuft, kann der Zyklus (Ausloesen -> Erreichen -> erneutes
-    # Auskuehlen -> erneutes Ausloesen) beliebig oft wiederholen (Design-Spec 2026-09-23).
+    # Auskuehlen -> erneutes Ausloesen) beliebig oft wiederholen.
     first = decide_emergency_boost(
         room_actual=19.6, room_target=20.0, emergency_was_active=True,
         exit_threshold_k=0.4,

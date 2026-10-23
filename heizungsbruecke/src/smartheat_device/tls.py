@@ -1,6 +1,5 @@
-"""TLS-Weg des Geraete-Links zu AWS IoT Core (Spec AWS-IoT 2.4, 4.2, 5.1; Audit 5 A5-57, bis Stufe 3 S6 das Paket
-smartheat_transport): Deskriptor und Zugangsdaten, SSL-Kontext mit der CA aus dem Bootstrap, Client-Zertifikat und ALPN
-bei Port 443, Einordnung von Verbindungsfehlern. paho bekommt den Kontext ueber apply(); dieses Modul importiert paho
+"""TLS-Weg des Geraete-Links zu AWS IoT Core: Deskriptor und Zugangsdaten, SSL-Kontext mit der CA aus dem Bootstrap,
+Client-Zertifikat und ALPN bei Port 443, Einordnung von Verbindungsfehlern. paho bekommt den Kontext ueber apply(); dieses Modul importiert paho
 nicht. Den Deskriptor baut link.py aus dem Bootstrap-Zugang."""
 import os
 import socket
@@ -98,7 +97,7 @@ def apply(client, options: ConnectOptions) -> None:
 
 def classify_connect_error(error: BaseException | None) -> str:
     """TLS (Zertifikat abgelehnt, Handshake abgebrochen -- vermutlich auch ein gesperrtes
-    Zertifikat, Spec AN-1) vs. Netzwerk (Broker nicht erreichbar). ssl.SSLError ist eine
+    Zertifikat) vs. Netzwerk (Broker nicht erreichbar). ssl.SSLError ist eine
     OSError-Unterklasse und wird deshalb zuerst geprueft."""
     if isinstance(error, ssl.SSLError):
         return CONNECT_ERROR_TLS

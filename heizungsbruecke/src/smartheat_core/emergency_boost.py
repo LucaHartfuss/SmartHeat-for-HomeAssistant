@@ -7,9 +7,8 @@ def decide_emergency_boost(
     emergency_was_active: bool,
     exit_threshold_k: float,
 ) -> bool:
-    """Reine Hysterese-Logik (die des Comfort-Boosts VOR dessen funktionaler
-    Neudefinition am 2026-09-15) -- bewusst nur ausgewertet, waehrend Notbetrieb
-    aktiv ist (regulation.run_local_check), nicht mehr generell wie damals.
+    """Reine Hysterese-Logik des Notbetriebs -- bewusst nur ausgewertet, waehrend Notbetrieb
+    aktiv ist (regulation.run_local_check), nicht generell.
 
     Trigger (inaktiv -> aktiv): der Raum ist mehr als EMERGENCY_TRIGGER_K (1.0 K) unter
     dem Sollwert. Exit (aktiv -> inaktiv): der Raum hat sich bis auf `exit_threshold_k`

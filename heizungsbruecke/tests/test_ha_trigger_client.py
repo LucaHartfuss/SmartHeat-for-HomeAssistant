@@ -237,7 +237,7 @@ def test_callback_exception_does_not_crash_the_dispatch_thread():
 
 
 def test_stop_closes_the_current_websocket_connection():
-    """Regression test for the real-HA-Core finding (Task 4, 2026-09-22): stop() must
+    """Regression test for the real-HA-Core finding (2026-09-22): stop() must
     not just set an internal flag -- it must actively close the current connection, or
     `connected` can stay True indefinitely against a real, healthy socket that only
     unblocks run_forever() on an actual disconnect. The fake `run_forever()` here
@@ -273,7 +273,7 @@ def test_stop_closes_the_current_websocket_connection():
 
 @pytest.mark.ws
 def test_on_connected_callback_fires_when_subscribe_result_succeeds():
-    """Re-Review final-review-report.md: der einzig verlaessliche Hook-Punkt fuer einen
+    """Der einzig verlaessliche Hook-Punkt fuer einen
     Reconnect/Erstverbindung ist `_handle_subscribe_result`, nicht ein von aussen per
     Watchdog-Takt abgefragtes `connected` -- das haette bei einem kurzen Ausfall
     zwischen zwei Ticks nie einen Uebergang gesehen. Dieser Test prueft direkt an der
@@ -584,7 +584,7 @@ def test_a_wrong_token_closes_logs_and_backs_off_without_rapid_reconnects(monkey
 
 
 def test_log_lines_with_text_from_home_assistant_escape_control_characters(caplog):
-    """Fixrunde 1 zu T6-Rest Task 3: Text aus HA (Meldung von auth_invalid, Fehler von subscribe_trigger, Grund beim
+    """Text aus HA (Meldung von auth_invalid, Fehler von subscribe_trigger, Grund beim
     Schliessen) steht im Log mit Escape auf einer Zeile."""
     client = HaTriggerClient(ws_url="ws://x", token="t", triggers=[], on_trigger_event=_ignorieren)
     fake_ws = MagicMock(spec=WebSocketApp)

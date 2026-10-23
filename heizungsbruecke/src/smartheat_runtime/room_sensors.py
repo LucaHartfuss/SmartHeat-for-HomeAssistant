@@ -1,4 +1,4 @@
-"""Einzelfuehler-Ueberwachung (Spec TP6 3.5). Faellt ein Raumfuehler aus, rechnet das
+"""Einzelfuehler-Ueberwachung. Faellt ein Raumfuehler aus, rechnet das
 Raumtemperatur-Template mit den uebrigen weiter; der Kunde bekommt einen Hinweis. Mit nur einem
 Fuehler ist dessen Ausfall der lokale Datenfehler auf room_actual (kritisch, delivery) und wird
 hier nicht doppelt gemeldet. Gueltig heisst wie im Template: Zahl im Bereich ROOM_TEMP_RANGE.

@@ -1,4 +1,4 @@
-"""HaSignalSource uebersetzt die Fehler der HA-REST-API in die Fehler des Ports (Plan SHG G1, Praezisierung 2)."""
+"""HaSignalSource uebersetzt die Fehler der HA-REST-API in die Fehler des Ports."""
 import pytest
 import requests
 

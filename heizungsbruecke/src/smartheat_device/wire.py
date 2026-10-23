@@ -1,10 +1,10 @@
-"""Vertrag Geraet <-> Server (Spec 5b Abschnitte 1-3): HTTPS-Bootstrap und MQTT. Woertliche Kopie des Vertragsteils von
+"""Vertrag Geraet <-> Server: HTTPS-Bootstrap und MQTT. Woertliche Kopie des Vertragsteils von
 heizungsserver/geraete/device_protocol.py (alles ab `SCHEMA = 1` bis einschliesslich `command_errors`; die Importe stehen je
-Seite selbst); tools/contract_check.py im Dev-Root vergleicht beide mit tools/contracts/geraet_v1.json (Plan 5b-W).
+Seite selbst); tools/contract_check.py im Dev-Root vergleicht beide mit tools/contracts/geraet_v1.json.
 Aenderungen nur an allen drei Stellen zugleich. Die Server-Regeln unter dem Vertragsteil (Aushandeln, Ablauf,
 Mindestversion je Host) gibt es nur auf dem Server.
 
-Versionsregeln (Stufe 3 S8a-1, ersetzt Spec 2.1): V1 wird auf beiden Seiten strikt geprueft; ein fehlendes oder
+Versionsregeln: V1 wird auf beiden Seiten strikt geprueft; ein fehlendes oder
 fremdes Feld und ein falscher Typ werden abgelehnt. Ein neues Feld Server -> Geraet gibt es deshalb erst nach einem
 Geraete-Update, ein neues Feld Geraet -> Server zuerst auf dem Server (als *_OPTIONAL mit der Bedeutung bei Fehlen im
 Kommentar). Ausnahme ist das Tick-Drahtformat (Snapshot- und Telemetrie-Leser des Servers, Antwort down/setpoints im

@@ -1,4 +1,4 @@
-"""Fake-Zigbee2MQTT (Spec SHG G2 7.2): bridge/state, bridge/devices, Messwerte, Thermostat-set, permit_join, Interview
+"""Fake-Zigbee2MQTT: bridge/state, bridge/devices, Messwerte, Thermostat-set, permit_join, Interview
 (bridge/event). Laeuft in Unit-Tests auf FakeBus und in compose.dev bzw. E2E als eigener Prozess auf dem lokalen Bus
 (main())."""
 import os
@@ -31,7 +31,7 @@ _NUR_MIT_MODUS_ON = ("occupied_heating_setpoint", "system_mode")
 class FakeZigbee2Mqtt:
     def __init__(self, bus, wall=None) -> None:
         """`wall`: Wanduhr (Sekunden); gesetzt, tragen alle Meldungen last_seen (E2E-Prozess: time.time), damit das
-        retained Replay nach einem Neustart der Laufzeit als frisch gilt (L4-17)."""
+        retained Replay nach einem Neustart der Laufzeit als frisch gilt."""
         self._bus = bus
         self._wall = wall
         self._devices: list[dict] = []
@@ -148,7 +148,7 @@ def main() -> None:  # laeuft im Container (E2E gateway2), getestet in test_fake
     sensor = os.environ.get("FAKE_Z2M_SENSOR", "0x00124b0000000001")
     z2m.add_sensor(sensor)
     temperature = float(os.environ.get("FAKE_Z2M_TEMPERATURE", "20.0"))
-    thermostat = os.environ.get("FAKE_Z2M_THERMOSTAT")  # E2E gateway2: Bedienwunsch am Thermostat (Plan 5b W)
+    thermostat = os.environ.get("FAKE_Z2M_THERMOSTAT")  # E2E gateway2: Bedienwunsch am Thermostat
     if thermostat:
         z2m.add_thermostat(thermostat)
         z2m.report(thermostat, occupied_heating_setpoint=20.0, local_temperature=temperature, battery_low=False)

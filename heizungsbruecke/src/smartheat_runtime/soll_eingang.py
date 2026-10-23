@@ -1,4 +1,4 @@
-"""Soll-Eingang (Spec 5b 3.2/3.3, Spec 5c 1.3), hostneutral: Bedienung vom Server (portal), Eingabe an der Soll-Quelle
+"""Soll-Eingang, hostneutral: Bedienung vom Server (portal), Eingabe an der Soll-Quelle
 (thermostat; HA: Soll-Entity) und lokale Eingabe (lokal; HA: Ereignis smartheat_wunsch) gehen als EV_TARGET_INPUT in den
 Worker. Der Soll-Speicher schreibt, der Debouncer beendet die Eingabe (Gateway 10 s; HA 0 s, dort entprellt der
 HA-Trigger mit for: 10 s). Erst dann geht ein Wunsch einmal an den Geraetekern (begrenzt auf den Bedienbereich); der
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 EV_TARGET_INPUT = "shg_target_input"
 EV_SOLL_MODUS = "shg_soll_modus"
 DEBOUNCE_KIND = "shg_target_debounce"
-#: Spec 5b 3.2: ein Soll bis zu diesem Wert ist die Frostschutz-Stellung der Soll-Quelle, kein Bedienwunsch.
+#: Ein Soll bis zu diesem Wert ist die Frostschutz-Stellung der Soll-Quelle, kein Bedienwunsch.
 FROSTSCHUTZ_BIS = 7.0
 MODUS_AUS = "off"
 
@@ -75,7 +75,7 @@ class SollEingang:
             self._aus.discard(grund)
         if bool(self._aus) != vorher:
             if self._aus:
-                self._wunsch_verwerfen()  # Soll-Quelle aus ist kein Wunsch (Spec 5b 3.2): auch ein offener nicht
+                self._wunsch_verwerfen()  # Soll-Quelle aus ist kein Wunsch: auch ein offener nicht
             self._soll_quelle_aus(bool(self._aus), self._store.value if self._aus else None)
         if grund == "modus" and war_aus and not self._aus:
             self._wieder_an()
@@ -132,7 +132,7 @@ class SollEingang:
                 return
             if not is_plausible(value, ROOM_TEMP_RANGE):
                 # Unbrauchbar (nicht endlich, Text, bool, None, ueber dem Raumbereich): aendert die Frostschutz-Stellung
-                # nicht, ist kein Wunsch (Fund M4 aus T5'); vorher hob ein einziger solcher Wert die Stellung auf.
+                # nicht, ist kein Wunsch; ein einziger solcher Wert hebt die Stellung nicht auf.
                 self._unbrauchbar_melden(value)
                 return
             self._unbrauchbar_gemeldet.clear()

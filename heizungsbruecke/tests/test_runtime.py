@@ -1,4 +1,4 @@
-"""Betrieb der Laufzeit ueber den Regel-Worker (Design-Spec 2026-09-26) im Geraete-Pfad (Spec 5c 1.3): Boot,
+"""Betrieb der Laufzeit ueber den Regel-Worker im Geraete-Pfad: Boot,
 Tick-Zustellung, Datenfehler, Notbetrieb, lokale Checks und Abo-Pfade. Getrieben ueber _start_bridge (Laufzeit auf dem
 Konfigurationsdokument aus OPTIONS, geraet_helpers.start_bridge; Hilfen in runtime_helpers.py) mit der Fixture `env`
 (tests/conftest.py: Fake-Uhr, Fake-HA, Fake-Trigger-Client) und dem Link einer Geraete-Attrappe (FakeGeraet) statt
@@ -98,8 +98,7 @@ def _mark_abo_finished(bridge) -> None:
 
 
 def _override_comfort_boost(bridge, **values) -> None:
-    """Comfort-Boost-Werte je Hebel abweichend von LocalSafety setzen (bis 0.29.0 ueber die Optionen
-    boost_curve_value/boost_shift_value), damit die Tests Comfort- und Notfall-Zeile unterscheiden."""
+    """Comfort-Boost-Werte je Hebel abweichend von LocalSafety setzen, damit die Tests Comfort- und Notfall-Zeile unterscheiden."""
     safety = bridge.override.safety
     bridge.override._safety = dataclasses.replace(safety, comfort_boost={**safety.comfort_boost, **values})
 
@@ -117,19 +116,19 @@ def _fail_next_snapshot_read(monkeypatch, error: Exception) -> None:
 
 
 def _pruefintervall(monkeypatch, sekunden):
-    """Kurzes Pruefintervall wie in der E2E (Plan S8a-1 P2: Umgebung des Geraets, nicht das Konfigurationsdokument)."""
+    """Kurzes Pruefintervall wie in der E2E (Umgebung des Geraets, nicht das Konfigurationsdokument)."""
     monkeypatch.setenv(dokument_config.E2E_INTERVALLE_ENV, json.dumps({"pruefung_s": sekunden}))
 
 
 def _regulation_writes(env):
-    """Schreibvorgaenge ohne den Mindestvorlauf, der jeder Raum-Soll-Aenderung folgt (min_flow.py)."""
+    """Schreibvorgaenge ohne den Mindestvorlauf, der jeder Raum-Soll-Aenderung folgt (smartheat_core/derived.py)."""
     return [write for write in env.ha.writes if write[0] != "number.min_flow"]
 
 
 # --- Boot ---
 
 def test_start_captures_the_heat_limit_original_before_any_write(env):
-    """TP12h: der Start merkt den Ursprungswert der Heizgrenze, auch wenn danach nichts geschrieben wird."""
+    """Der Start merkt den Ursprungswert der Heizgrenze, auch wenn danach nichts geschrieben wird."""
     _quiet_backup(env)
     _start(env)
     assert env.ha.writes == []
@@ -185,7 +184,7 @@ def test_start_runs_priming_check_before_mqtt_loop_start(env, monkeypatch):
 
 
 def test_boot_prepares_zone_before_first_snapshot(env, monkeypatch):
-    # Plan-Praezisierung 11: Zone meldet 0 (heizt gerade nicht) und steht nicht auf Manuell.
+    # Zone meldet 0 (heizt gerade nicht) und steht nicht auf Manuell.
     env.ha.states.update({"climate.zone": "auto", "climate.zone::temperature": 0.0})
     order = []
     monkeypatch.setattr(RuntimeChannel, "loop_start", loop_start_aufzeichnen(order, lambda: list(env.ha.writes)))
@@ -210,9 +209,9 @@ def test_boot_keeps_a_usable_zone_shift(env):
 
 
 def _backup_before_tp11(env, **extra):
-    """backup.json von 0.23.0: Wiederherstellungspunkt nur mit Steigung (am Anschlag), keine
-    Parallelverschiebung; beim Start waere sonst kein Tick faellig. Im Schema ab 0.30.0 (restore_point mit Hebel
-    curve); die Altmigration der Rollen-Schluessel bis 0.29.0 entfiel mit Audit 4 P-E."""
+    """backup.json einer aelteren Version: Wiederherstellungspunkt nur mit Steigung (am Anschlag), keine
+    Parallelverschiebung; beim Start waere sonst kein Tick faellig. Im Schema mit restore_point (Hebel
+    curve); eine Migration der alten Rollen-Schluessel gibt es nicht."""
     backup = {
         "last_room_target": 21.0, "last_published_target_rt": 21.0,
         "last_daily_trigger_date": datetime.now().date().isoformat(),
@@ -303,7 +302,7 @@ def test_zone_preparation_failed_at_start_is_retried_on_the_next_local_check(env
 
 
 def test_zone_preparation_retried_after_the_own_switch_still_writes_the_start_value(env):
-    """O-TP12e-1: der erste Versuch stellt die Zone auf Manuell, das Schreiben des Startwerts scheitert. Die
+    """Der erste Versuch stellt die Zone auf Manuell, das Schreiben des Startwerts scheitert. Die
     Wiederholung nach 1800 s liegt im Fenster nach dem eigenen Wechsel (2100 s, keine zweite Umstellung) und die
     Zone meldet noch 0: der Startwert wird trotzdem geschrieben, nicht uebersprungen."""
     env.ha.states.update({"climate.zone": "auto", "climate.zone::temperature": 0.0})
@@ -365,7 +364,7 @@ def test_failing_zone_preparation_is_retried_at_most_every_30_min_and_6_times_a_
 
 @pytest.mark.parametrize(("zone", "snapshots"), [(0.0, False), (20.0, True)], ids=["zone-ruht", "zone-heizt"])
 def test_a_not_yet_prepared_zone_is_not_enforced_and_gives_no_false_push(env, zone, snapshots):
-    """Fix-Runde 1 (I-1, S3-3): solange die Zone nie vorbereitet war, stellt die Durchsetzung sie nicht zusaetzlich
+    """Solange die Zone nie vorbereitet war, stellt die Durchsetzung sie nicht zusaetzlich
     um (`zone_prepare`: 1 je 30 min, 6 am Tag) und meldet weder "in der App verstellt" noch "immer wieder
     verstellt". Die ruhende, nie vorbereitete Zone meldet keinen Snapshot (Datenfehler bis zur Vorbereitung,
     Schlussreview I-1), die heizende schon."""
@@ -393,9 +392,9 @@ def _answer_every_open_tick(env, bridge, answered: set) -> None:
 
 @pytest.mark.parametrize("zone", [0.0, 20.0], ids=["zone-ruht", "zone-heizt"])
 def test_answered_snapshots_do_not_switch_a_never_prepared_zone_outside_the_quota(env, zone):
-    """Schlussreview TP2 (I-1, I-2): auch wenn der Server jeden Snapshot beantwortet, stellt die Antwort eine nie
+    """Auch wenn der Server jeden Snapshot beantwortet, stellt die Antwort eine nie
     vorbereitete Zone nur im Kontingent `zone_prepare` um (1 je 30 min, 6 am Tag), das sie mit dem Start und dem
-    lokalen Check teilt. Vorher: 35 Versuche in 12 h (ruhende Zone seit S3-3, heizende schon davor)."""
+    lokalen Check teilt. Ohne das Kontingent waeren es 35 Versuche in 12 h."""
     attempts = _failing_zone_preparation(env)
     env.ha.states["climate.zone::temperature"] = zone
     bridge = _start(env, entity_shift_current="climate.zone")
@@ -413,7 +412,7 @@ def test_answered_snapshots_do_not_switch_a_never_prepared_zone_outside_the_quot
 
 
 def test_a_resting_zone_already_manual_reports_snapshots_on_a_fresh_install(env):
-    """S3-3: frische Installation (kein Wiederherstellungspunkt), Zone schon auf Manuell und ruhend: die Vorbereitung
+    """Frische Installation (kein Wiederherstellungspunkt), Zone schon auf Manuell und ruhend: die Vorbereitung
     gelingt ohne Umstellung, der Snapshot meldet das stabile Raum-Soll statt eines Datenfehlers."""
     env.ha.states.update({"climate.zone": "heat_cool", "climate.zone::temperature": 0.0})
     bridge = _start(env, entity_shift_current="climate.zone")
@@ -522,7 +521,7 @@ def test_priming_failure_keeps_boost_flags_and_the_next_check_restores(env):
 
 
 def test_restart_after_notbetrieb_ended_restores_device_during_priming(env):
-    # Final-Review C1, Szenario A.
+    # Szenario A.
     _quiet_backup(env, emergency_boost_active=True, boost_active=False)
     save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": False})
     env.ha.states.update({"number.curve_current": 1.5, "number.shift_current": 25.0, "sensor.room_actual": 19.8})
@@ -534,9 +533,9 @@ def test_restart_after_notbetrieb_ended_restores_device_during_priming(env):
 
 
 def test_restart_during_notbetrieb_continues_emergency_hysteresis(env):
-    # Final-Review C1, Szenario B/C: 0.8 K unter Soll liegt zwischen Exit- (0.5) und Einstiegsschwelle (1.0). Ein
+    # Szenario B/C: 0.8 K unter Soll liegt zwischen Exit- (0.5) und Einstiegsschwelle (1.0). Ein
     # Notbetrieb im Betrieb hat immer einen offenen Tick (ohne ihn stammt er aus dem Abo-inaktiv-Modus und endet bei
-    # aktivem Abo vor dem ersten Check, TP12b).
+    # aktivem Abo vor dem ersten Check).
     _quiet_backup(env, emergency_boost_active=True)
     save_backup(env.paths["FAILSAFE_PATH"], {
         "failsafe_active": True, "datenfehler": None, "pending": {"seq": "alt-1", "trigger": "daily"},
@@ -594,7 +593,7 @@ def test_reactivated_abo_restart_ends_notbetrieb_silently_and_probes(env):
 
 
 def test_reaktiviertes_abo_veroeffentlicht_nie_notbetrieb(env):
-    """L4-09: der veraltete Notbetrieb des Abo-inaktiv-Modus (ohne offenen Tick) erscheint beim Neustart mit wieder
+    """Der veraltete Notbetrieb des Abo-inaktiv-Modus (ohne offenen Tick) erscheint beim Neustart mit wieder
     aktivem Abo in keiner Statusmeldung; der Status geht von `startet` zu `regelt`."""
     _quiet_backup(env)
     save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": True, "datenfehler": None, "pending": None})
@@ -606,7 +605,7 @@ def test_reaktiviertes_abo_veroeffentlicht_nie_notbetrieb(env):
 
 
 def test_offener_tick_aus_failsafe_state_zeigt_beim_start_notbetrieb(env):
-    """Gegenprobe zu L4-09: ein echter Notbetrieb (offener Tick in failsafe_state.json) bleibt ab der ersten Meldung
+    """Gegenprobe: ein echter Notbetrieb (offener Tick in failsafe_state.json) bleibt ab der ersten Meldung
     sichtbar."""
     _quiet_backup(env)
     save_backup(env.paths["FAILSAFE_PATH"], {
@@ -619,7 +618,7 @@ def test_offener_tick_aus_failsafe_state_zeigt_beim_start_notbetrieb(env):
 
 
 def test_inaktiv_dann_aktiv_pusht_genau_einmal(env):
-    """L4-09, Wache: Abo-inaktiv-Modus, dann Neustart mit wieder aktivem Abo; genau eine Meldung "Abo wieder aktiv",
+    """Wache: Abo-inaktiv-Modus, dann Neustart mit wieder aktivem Abo; genau eine Meldung "Abo wieder aktiv",
     keine zusaetzliche Notbetriebs-Meldung."""
     _quiet_backup(env)
     env.abo["status"] = entitlement.INACTIVE
@@ -635,7 +634,7 @@ def test_inaktiv_dann_aktiv_pusht_genau_einmal(env):
 
 
 def test_reactivated_abo_restart_writes_no_emergency_boost(env):
-    """TP12b (1): nach dem Abo-inaktiv-Modus (Notbetrieb ohne offenen Tick) startet die Laufzeit mit wieder aktivem
+    """Nach dem Abo-inaktiv-Modus (Notbetrieb ohne offenen Tick) startet die Laufzeit mit wieder aktivem
     Abo; 1,5 K unter dem Soll (ueber der Einstiegsschwelle 1,0 K) darf kein kurzer Notfall-Boost auf die Anlage."""
     _quiet_backup(env)
     save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": True, "datenfehler": None, "pending": None})
@@ -652,7 +651,7 @@ def test_reactivated_abo_restart_writes_no_emergency_boost(env):
 
 
 def test_reactivated_abo_restart_ends_a_running_emergency_boost_during_priming(env, monkeypatch):
-    """TP12b (1), Fix-Runde 1: lief im Abo-inaktiv-Modus schon ein Notfall-Boost (Anlage auf 1,5/25), endet er beim
+    """Lief im Abo-inaktiv-Modus schon ein Notfall-Boost (Anlage auf 1,5/25), endet er beim
     Neustart mit aktivem Abo schon im Priming und der Wiederherstellungspunkt wird geschrieben, obwohl der Raum 1,5 K
     unter dem Soll liegt (die Hysterese gilt nur im Notbetrieb)."""
     _quiet_backup(env, emergency_boost_active=True)
@@ -670,7 +669,7 @@ def test_reactivated_abo_restart_ends_a_running_emergency_boost_during_priming(e
 
 
 def test_stale_notbetrieb_with_unknown_abo_stays_until_the_probe_is_answered_without_an_end_push(env):
-    """TP12b (3): der Notbetrieb aus dem Abo-inaktiv-Modus wurde nie als Notbetrieb gemeldet (dort meldet die
+    """Der Notbetrieb aus dem Abo-inaktiv-Modus wurde nie als Notbetrieb gemeldet (dort meldet die
     Abo-Meldung); bei Abo-Status UNKNOWN bleibt er bis zur Antwort, die ihn ohne "Notbetrieb beendet" beendet."""
     _quiet_backup(env)
     save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": True, "datenfehler": None, "pending": None})
@@ -685,7 +684,7 @@ def test_stale_notbetrieb_with_unknown_abo_stays_until_the_probe_is_answered_wit
 
 
 def test_stale_notbetrieb_with_unknown_abo_shows_notbetrieb_after_the_start_until_the_answer(env):
-    """L4-09: bei Abo-Status UNKNOWN bleibt der Notbetrieb nach dem abgeschlossenen Start sichtbar (ein Pruef-Tick ist
+    """Bei Abo-Status UNKNOWN bleibt der Notbetrieb nach dem abgeschlossenen Start sichtbar (ein Pruef-Tick ist
     offen), bis die Antwort ihn beendet."""
     _quiet_backup(env)
     save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": True, "datenfehler": None, "pending": None})
@@ -699,7 +698,7 @@ def test_stale_notbetrieb_with_unknown_abo_shows_notbetrieb_after_the_start_unti
 
 
 def test_start_mit_altem_notbetrieb_abo_unbekannt_meldet_nach_timeouts(env):
-    """T4-Notbetrieb-Unbekannt: der alte Notbetrieb war nie gemeldet (Meldezustand ok, kein Text); bleibt der Pruef-Tick
+    """Der alte Notbetrieb war nie gemeldet (Meldezustand ok, kein Text); bleibt der Pruef-Tick
     bei unbekanntem Abo zweimal unbeantwortet, erscheint "Notbetrieb aktiv" (Push und offene Meldung), der Notbetrieb
     laeuft weiter."""
     _quiet_backup(env)
@@ -731,7 +730,7 @@ def _reported_stale_notbetrieb(env):
 
 
 def test_reported_stale_notbetrieb_keeps_its_notification_while_the_probe_stays_unanswered(env):
-    # TP12b (3), Fix-Runde 1 (a): die gemeldete Meldung bleibt stehen, solange der Notbetrieb laeuft.
+    # Die gemeldete Meldung bleibt stehen, solange der Notbetrieb laeuft.
     bridge = _reported_stale_notbetrieb(env)
     _advance(env, bridge, 30)
     _advance(env, bridge, 30)  # zwei Ack-Timeouts ohne Antwort
@@ -743,7 +742,7 @@ def test_reported_stale_notbetrieb_keeps_its_notification_while_the_probe_stays_
 
 
 def test_reported_stale_notbetrieb_ends_with_one_end_push_on_the_answer(env):
-    # TP12b (3), Fix-Runde 1 (b): wie vor Task 6 entwarnt die Antwort einmal.
+    # Die Antwort entwarnt einmal.
     bridge = _reported_stale_notbetrieb(env)
     _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], curve=0.9, shift=22.0)
 
@@ -816,7 +815,7 @@ def test_source_change_is_announced_once_and_not_critical(env):
     assert not any(entry[0] == "smartheat_quellwechsel" for entry in env.ha.persistent)
 
 
-# --- Status-Event (Spec TP7 1.1, 3.1) ---
+# --- Status-Event ---
 
 def _status_states(env):
     """Folge der Gesamtzustaende, aufeinanderfolgende Wiederholungen zusammengefasst (Lebenszeichen
@@ -848,7 +847,7 @@ def test_status_is_abo_inaktiv_right_after_start_without_mqtt(env):
 
 
 def test_status_carries_the_plant_of_the_document_as_tenant_id_only(env):
-    # Spec 5c 1.3 (dokument_config): tenant_id = Anlage; setup_id entfiel mit Stufe 3 S7 (A5-63).
+    # dokument_config: tenant_id = Anlage; eine setup_id gibt es nicht.
     _quiet_backup(env)
     _start(env)
 
@@ -969,7 +968,7 @@ def test_skipped_answer_is_applied_like_ok(env):
 
 
 def test_the_skipped_log_quotes_the_server_reason_encodable_and_on_one_line(env, caplog):
-    """Testoffensive T6: auch der Grund einer Antwort skipped kommt vom Server und steht mit repr im Log."""
+    """Auch der Grund einer Antwort skipped kommt vom Server und steht mit repr im Log."""
     bridge = _start(env)
     _connect(env, bridge)
     _ha_verbunden(env, bridge)
@@ -1018,7 +1017,7 @@ def _lokaler_check_meldungen(caplog):
 
 
 def test_unreadable_room_actual_logs_one_warning_without_traceback_until_the_next_good_check(env, caplog):
-    """L4-17: der unlesbare Raumfuehler ist ein erwarteter Datenfehler (der Tick meldet ihn dem Kunden), kein ERROR mit
+    """Der unlesbare Raumfuehler ist ein erwarteter Datenfehler (der Tick meldet ihn dem Kunden), kein ERROR mit
     Traceback je Check: eine WARNING, solange er anhaelt nur DEBUG, nach einem gueltigen Wert wieder eine WARNING."""
     _quiet_backup(env)
     bridge = _start(env)
@@ -1091,7 +1090,7 @@ def test_publish_error_does_not_break_retry_chain(env):
 
 
 def test_unexpected_attempt_error_does_not_break_retry_chain(env, monkeypatch):
-    # Review Focus 2: auch ein unerwarteter Fehler im attempt speist ein Ereignis zurueck.
+    # Auch ein unerwarteter Fehler im attempt speist ein Ereignis zurueck.
     _quiet_backup(env)
     bridge = _start(env)
     _fail_next_snapshot_read(monkeypatch, RuntimeError("unerwartet"))
@@ -1128,7 +1127,7 @@ def test_rejected_answer_reports_server_fault_once_and_retries_same_seq(env):
 @pytest.mark.parametrize("reason", ["\ud800", "a\udfffb", "erste Zeile\nWARNING gefaelscht"],
                          ids=["surrogat", "surrogat_im_text", "zeilenumbruch"])
 def test_the_warning_about_a_rejected_answer_quotes_the_server_reason_encodable_and_on_one_line(env, caplog, reason):
-    """Testoffensive T6 (Fund aus dem Profil voll): der Grund kommt vom Server. Die Warnung zitiert ihn mit repr: ein
+    """Der Grund kommt vom Server. Die Warnung zitiert ihn mit repr: ein
     einzelnes Surrogat brach sonst die UTF-8-Ausgabe des Logs (Logging error, Zeile verloren; unter xdist INTERNALERROR),
     ein Zeilenumbruch faelschte eine zweite Logzeile."""
     _quiet_backup(env)
@@ -1146,7 +1145,7 @@ def test_the_warning_about_a_rejected_answer_quotes_the_server_reason_encodable_
 
 
 def test_the_warning_about_unwritable_server_values_has_the_error_text_from_ha_only_escaped(env, caplog):
-    """T6-Rest, R-c: scheitert das Schreiben der Serverwerte, traegt DeviceWriteError den Fehlertext von HA; in der
+    """Scheitert das Schreiben der Serverwerte, traegt DeviceWriteError den Fehlertext von HA; in der
     Warnung steht er nur als Escape (Zeilenumbruch, U+202E, U+061C)."""
     _quiet_backup(env)
     bridge = _start(env)
@@ -1617,7 +1616,7 @@ def test_watchdog_runs_local_check_only_while_ws_disconnected(env):
 
 
 def test_local_check_keeps_cached_target_when_room_target_unreadable(env):
-    # Spec 5c 1.3: die Regelung liest den Raum-Soll aus dem Soll-Speicher, nie aus der Entity; ein Bericht ohne Zahl
+    # Die Regelung liest den Raum-Soll aus dem Soll-Speicher, nie aus der Entity; ein Bericht ohne Zahl
     # (unavailable) ist keine Eingabe. Bis 0.36 las der lokale Check die Entity und loggte "room_target nicht lesbar".
     _quiet_backup(env)
     bridge = _start(env)
@@ -1753,7 +1752,7 @@ def test_inactive_after_grace_idles_as_abo_beendet_without_writes(env, monkeypat
 
 
 def test_closing_start_retries_a_failed_restore_and_reports_it_once(env, monkeypatch):
-    # T2-7 im Startpfad; die Wiederholung laeuft im Worker, das Lebenszeichen weiter.
+    # Im Startpfad; die Wiederholung laeuft im Worker, das Lebenszeichen weiter.
     _quiet_backup(env, emergency_boost_active=True)
     env.abo["status"] = entitlement.INACTIVE
     entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
@@ -1902,7 +1901,7 @@ _RESTORE_FAILED_BEFORE = {"notify_states": {"wiederherstellung": "fehlgeschlagen
 
 
 def test_grace_end_with_a_deferred_restore_logs_one_error_not_one_per_check(env, monkeypatch, caplog):
-    """TP12b (4): scheitert die Wiederherstellung am Fristende, stellt das Schreibbudget (Rueckkehr-Staffel 300, 900,
+    """Scheitert die Wiederherstellung am Fristende, stellt das Schreibbudget (Rueckkehr-Staffel 300, 900,
     1800 s) die folgenden Versuche zurueck; der Takt (300 s) loggt das nicht jedes Mal als ERROR, sondern einmal je
     gescheiterter Wiederherstellung (wie die Meldung)."""
     with caplog.at_level(logging.DEBUG):
@@ -1923,7 +1922,7 @@ def test_grace_end_with_a_deferred_restore_logs_one_error_not_one_per_check(env,
 
 
 def test_grace_end_with_a_deferred_restore_after_a_restart_logs_one_warning(env, monkeypatch, caplog):
-    # TP12b (4), Fix-Runde 1: nach einem Neustart steht der Meldezustand schon; die Episode bleibt einmal sichtbar
+    # Nach einem Neustart steht der Meldezustand schon; die Episode bleibt einmal sichtbar
     # (WARNING, im INFO-Log), ohne neuen Push und ohne ERROR je Takt.
     with caplog.at_level(logging.DEBUG):
         bridge = _grace_end_during_runtime_with_failing_restore(env, monkeypatch, **_RESTORE_FAILED_BEFORE)
@@ -1936,7 +1935,7 @@ def test_grace_end_with_a_deferred_restore_after_a_restart_logs_one_warning(env,
 
 
 def test_closing_start_with_a_deferred_restore_logs_one_error_not_one_per_retry(env, monkeypatch, caplog):
-    # TP12b (4) im Startpfad (_finish_at_start): Takt 300 s, Rueckkehr-Staffel stellt zurueck.
+    # Im Startpfad (_finish_at_start): Takt 300 s, Rueckkehr-Staffel stellt zurueck.
     with caplog.at_level(logging.DEBUG):
         bridge = _closing_start_with_failing_restore(env, monkeypatch)
         for _ in range(12):
@@ -1948,7 +1947,7 @@ def test_closing_start_with_a_deferred_restore_logs_one_error_not_one_per_retry(
 
 
 def test_closing_start_with_a_deferred_restore_after_a_restart_logs_one_warning(env, monkeypatch, caplog):
-    # TP12b (4), Fix-Runde 1, Startpfad.
+    # Startpfad.
     with caplog.at_level(logging.DEBUG):
         bridge = _closing_start_with_failing_restore(env, monkeypatch, **_RESTORE_FAILED_BEFORE)
         for _ in range(12):
@@ -1985,7 +1984,7 @@ def test_inactive_after_grace_restores_leftover_boost_once(env, monkeypatch):
 
 
 def test_the_end_of_the_subscription_restores_the_server_original(env, monkeypatch):
-    """Spec Stufe 3 S3 5.2: auch die normale Laufzeit-Pipeline (Abschluss-Start, Fristende) kennt die Ursprungswerte."""
+    """Auch die normale Laufzeit-Pipeline (Abschluss-Start, Fristende) kennt die Ursprungswerte."""
     _quiet_backup(env, emergency_boost_active=True, restore_point={"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 18.0})
     env.abo["status"] = entitlement.INACTIVE
     entitlement.mark_inactive(env.paths["ENTITLEMENT_PATH"], datetime.now().astimezone())
@@ -2009,14 +2008,14 @@ def _start_just_before_grace_end(env, monkeypatch):
 
 
 def test_grace_end_with_reactivated_abo_restarts_instead_of_restoring(env, monkeypatch, caplog):
-    # T2-5: kein faelschliches Zuruecksetzen am Fristende, wenn das Abo wieder aktiv ist.
+    # Kein faelschliches Zuruecksetzen am Fristende, wenn das Abo wieder aktiv ist.
     bridge, neustarts = _start_just_before_grace_end(env, monkeypatch)
     env.abo["status"] = entitlement.ACTIVE
 
     with caplog.at_level(logging.INFO):
         bridge.worker.run_pending()
 
-    assert neustarts == [1]  # der Rueckruf neustart des Hosts (Spec Stufe 3 S6 4.2)
+    assert neustarts == [1]  # der Rueckruf neustart des Hosts
     assert "Abo wieder aktiv, Neustart im Normalbetrieb" in caplog.text  # der Anlass je Ursache im Log
     assert not env.paths["ENTITLEMENT_PATH"].exists()
     assert (env.ha.states["number.curve_current"], env.ha.states["number.shift_current"]) == (1.5, 25.0)
@@ -2035,7 +2034,7 @@ def test_grace_end_finishes_when_abo_not_active(env, monkeypatch, status):
 
 
 def test_grace_end_idles_even_if_saving_flags_fails(env, monkeypatch):
-    # T2-8: Werte stehen schon auf dem Geraet -> Wiederherstellung gilt als erfolgt, Ruhezustand.
+    # Werte stehen schon auf dem Geraet -> Wiederherstellung gilt als erfolgt, Ruhezustand.
     bridge, _ = _start_just_before_grace_end(env, monkeypatch)
 
     _break_backup_writes(monkeypatch)
@@ -2045,7 +2044,7 @@ def test_grace_end_idles_even_if_saving_flags_fails(env, monkeypatch):
     assert (env.ha.states["number.curve_current"], env.ha.states["number.shift_current"]) == (0.9, 22.0)
 
 
-# --- Sicherheitsnetz TP5: Boost-Vorrang, Serverwerte waehrend Boosts, Abo-Fristende, Neustart ---
+# --- Sicherheitsnetz: Boost-Vorrang, Serverwerte waehrend Boosts, Abo-Fristende, Neustart ---
 
 def test_emergency_start_during_comfort_boost_writes_max_values_and_both_end_together(env):
     _quiet_backup(env)
@@ -2214,7 +2213,7 @@ def test_notbetrieb_end_with_unwritable_device_restores_on_next_check(env):
     assert _backup(env)["emergency_boost_active"] is True
 
     env.ha.write_error = None
-    env.clock.advance(300)  # Rueckkehr-Staffel: erster Retry nach 300 s (TP12b: gestaffelt)
+    env.clock.advance(300)  # Rueckkehr-Staffel: erster Retry nach 300 s (gestaffelt)
     _trigger(env, bridge, "sensor.room_actual")
 
     assert (env.ha.states["number.curve_current"], env.ha.states["number.shift_current"]) == (0.95, 23.0)
@@ -2222,7 +2221,7 @@ def test_notbetrieb_end_with_unwritable_device_restores_on_next_check(env):
 
 
 def test_deferred_comfort_start_is_started_by_a_later_check(env):
-    # Review Focus 4: B5 haelt das alte Soll, der naechste erlaubte Check startet den Boost.
+    # B5 haelt das alte Soll, der naechste erlaubte Check startet den Boost.
     _quiet_backup(env)
     bridge = _start(env)
     env.ha.write_error = RuntimeError("403 Quota Exceeded")
@@ -2240,7 +2239,7 @@ def test_deferred_comfort_start_is_started_by_a_later_check(env):
 
 
 def test_answer_during_boost_with_unwritable_device_is_acked(env):
-    # Review Focus 3: waehrend eines Boosts wird nichts geschrieben, also gibt es keinen Schreibfehler.
+    # Waehrend eines Boosts wird nichts geschrieben, also gibt es keinen Schreibfehler.
     _quiet_backup(env)
     bridge = _start(env)
     _set_room_target(env, bridge, 22.0)
@@ -2270,7 +2269,7 @@ def test_duplicate_rejected_answer_does_not_skip_a_retry_stage(env):
 
 # --- F1: Anlage nicht beschreibbar ---
 
-# Datenfehler nennen Hebel (Controller-Ruling Task 10, Spec P2-3); bis 0.29.0 "curve_current (...)".
+# Datenfehler nennen Hebel (nicht die Rollen-Namen).
 WRITE_DETAIL = "curve (number.curve_current): myVAILLANT-Cloud nicht erreichbar"
 WRITE_FAULT = (
     f"Heizungsbrücke: Neue Heizkurve konnte nicht an die Anlage übertragen werden ({WRITE_DETAIL}). "
@@ -2288,7 +2287,7 @@ def test_unwritable_device_is_reported_once_and_retried_without_notbetrieb(env):
     _answer(env, bridge, seq)
     _advance(env, bridge, 30)  # Retry nach 30 s, gleiche seq
     _answer(env, bridge, seq)  # Anlage weiter nicht beschreibbar
-    _advance(env, bridge, 30)  # frueher: zweiter Ack-Timeout -> Notbetrieb
+    _advance(env, bridge, 30)  # kein zweiter Ack-Timeout -> kein Notbetrieb
 
     assert _delivery(bridge).notbetrieb is False
     assert env.ha.pushes == [WRITE_FAULT]
@@ -2363,7 +2362,7 @@ def test_open_tick_at_start_is_sent_on_connect_without_waiting_for_the_ack_timeo
     assert _delivery(bridge).server_failures == 0
 
 
-# --- Lebenszeichen und Abmelden (Spec TP7 1.1, 3.3) ---
+# --- Lebenszeichen und Abmelden ---
 
 def test_heartbeat_sends_the_full_status_every_300_s(env):
     _quiet_backup(env)
@@ -2377,7 +2376,7 @@ def test_heartbeat_sends_the_full_status_every_300_s(env):
 
 
 def test_sign_off_during_emergency_boost_restores_clears_and_idles(env):
-    """Review Focus 4 (Add-on-Seite): Integration entfernt -> Anlage auf den
+    """Integration entfernt -> Anlage auf den
     Wiederherstellungspunkt, alle Meldungen weg, kein Push, keine Regelung mehr."""
     _quiet_backup(
         env, emergency_boost_active=True,
@@ -2436,8 +2435,7 @@ def test_sign_off_with_invalid_configuration_does_not_write(env):
 
 
 def test_sign_off_during_a_comfort_boost_restores_the_learned_values(env):
-    """Abmelden mit laufendem Comfort-Boost (bis 0.36 zusaetzlich ohne MQTT-Zugangsdaten, die die Integration beim
-    Entfernen leerte; im Geraete-Pfad haelt der Geraetekern den Zugang): die zuletzt gelernten Werte gehen auf die
+    """Abmelden mit laufendem Comfort-Boost (im Geraete-Pfad haelt der Geraetekern den Zugang): die zuletzt gelernten Werte gehen auf die
     Anlage."""
     _quiet_backup(env, boost_active=True)
 
@@ -2506,7 +2504,7 @@ def test_sign_off_with_invalid_configuration_without_boost_stays_silent(env):
     assert env.ha.pushes == []
 
 
-# --- Ursprungswerte des Servers (Spec Stufe 3 S3 5.2, 5b-W-4) ---
+# --- Ursprungswerte des Servers ---
 
 
 def test_sign_off_restores_the_heat_limit_to_the_server_original(env):
@@ -2572,11 +2570,11 @@ def test_the_server_originals_are_clamped_to_the_local_limits_at_sign_off(env):
     assert ("number.heat_limit", 23.0) in env.ha.writes  # Vaillant x Heizkoerper: Heizgrenze bis 23
 
 
-# --- Leer heisst abmelden (Spec Stufe 3 S3 Abschnitt 4, A5-23) ---
+# --- Leer heisst abmelden ---
 
 
 def test_empty_configuration_without_sign_off_restores_then_restarts_once(env, monkeypatch):
-    """A5-23: leer ohne sign_off bei laufendem Comfort-Boost: zuruecksetzen mit der Konfiguration aus der Markierung,
+    """Leer ohne sign_off bei laufendem Comfort-Boost: zuruecksetzen mit der Konfiguration aus der Markierung,
     danach Markierung erledigt und genau ein Neustart (der Start davor loescht den Zustand)."""
     _quiet_backup(env, boost_active=True)
     neustarts = []
@@ -2594,7 +2592,7 @@ def test_empty_configuration_without_sign_off_restores_then_restarts_once(env, m
 
 
 def test_reset_fails_keeps_state_across_restart(env, monkeypatch):
-    """Review Focus 2: scheitert das Zuruecksetzen, bleibt die Markierung offen, kein Neustart, kritische Meldung; der
+    """Scheitert das Zuruecksetzen, bleibt die Markierung offen, kein Neustart, kritische Meldung; der
     naechste Start (Neustart des Add-ons) versucht es mit demselben Zustand erneut."""
     _quiet_backup(env, boost_active=True)
     env.ha.write_error = RuntimeError("Cloud weg")
@@ -2658,7 +2656,7 @@ def test_normal_sign_off_without_marker_does_not_restart(env, monkeypatch):
     assert neustarts == []
 
 
-# --- Durchsetzung: zurueckgesetzter Eingriff reist als KPI mit (TP11, Spec 5.3) ---
+# --- Durchsetzung: zurueckgesetzter Eingriff reist als KPI mit ---
 
 OVERRIDE = {"levers": {"curve": 1.3, "room_setpoint": 24.5, "heat_limit": 16.0}, "erkannt": "2026-10-01T08:00:00+02:00"}
 
@@ -2677,7 +2675,7 @@ def test_manual_override_travels_with_the_next_snapshot_and_is_cleared_after_the
     _advance(env, bridge, 300)
     _advance(env, bridge, 300)  # zwei Runden mit Abweichung
 
-    # Heizgrenze ohne Wiederherstellungspunkt: Live-Wert der Anlage (Rueckfallkette, Plan-Praezisierung 6).
+    # Heizgrenze ohne Wiederherstellungspunkt: Live-Wert der Anlage (Rueckfallkette).
     assert _backup(env)["manual_override_pending"]["levers"] == {"curve": 1.3, "room_setpoint": 24.5, "heat_limit": 16.0}
     assert _last_event(env)["hinweise"]["manueller_eingriff"]["hebel"]["curve"] == 1.3
     assert _regulation_writes(env) == [("number.curve_current", 0.9), ("number.shift_current", 22.0)]  # zurueckgesetzt
@@ -2713,7 +2711,7 @@ def test_rejected_answer_keeps_the_pending_manual_override(env):
 
 
 def test_manual_override_detected_during_an_open_tick_survives_a_same_seq_retry(env, monkeypatch):
-    """Fix Runde 1, Befund 2: der Server verarbeitet eine bereits gesehene seq idempotent aus
+    """Der Server verarbeitet eine bereits gesehene seq idempotent aus
     dem Cache (regelung/tick.py). Ein zwischen dem ersten Publish und einem Retry derselben seq
     neu erkannter Eingriff darf nicht mit dem Retry reisen -- der Server saehe ihn dann nie,
     waehrend die (verspaetete) Antwort ihn beim Client trotzdem als erledigt loeschen wuerde
@@ -2741,7 +2739,7 @@ def test_manual_override_detected_during_an_open_tick_survives_a_same_seq_retry(
 
 
 def test_manual_override_detected_while_a_tick_is_open_survives_its_answer(env, monkeypatch):
-    """Fix Runde 1, Befund 3c: ein zwischen Publish und Antwort neu erkannter Eingriff (noch ohne
+    """Ein zwischen Publish und Antwort neu erkannter Eingriff (noch ohne
     Retry) darf die Antwort auf den urspruenglichen, eingriffslosen Versuch nicht loeschen
     (sent=None schuetzt ihn ueber die Praezisierung-4-Pruefung in _clear_sent_manual_override)."""
     _quiet_backup(env)
@@ -2761,9 +2759,8 @@ def test_manual_override_detected_while_a_tick_is_open_survives_its_answer(env, 
 
 
 def test_ok_answer_clears_the_pending_manual_override_even_if_the_write_then_fails(env):
-    """Fix Runde 1, Befund 3a: Praezisierung 4 gilt auch dann, wenn das anschliessende Schreiben
-    auf die Anlage scheitert -- die vorhandenen DeviceWriteError-Tests setzten bisher nie
-    manual_override_pending, die Abdeckung fehlte."""
+    """Eine ok-Antwort loescht das offene manual_override_pending auch dann, wenn das anschliessende
+    Schreiben auf die Anlage scheitert (die anderen DeviceWriteError-Tests setzen es nie)."""
     _quiet_backup(env, manual_override_pending=OVERRIDE)
     bridge = _start(env)
     _set_room_target(env, bridge, 20.5)
@@ -2777,8 +2774,7 @@ def test_ok_answer_clears_the_pending_manual_override_even_if_the_write_then_fai
 
 
 def test_skipped_answer_clears_the_pending_manual_override(env):
-    """Fix Runde 1, Befund 3b: skipped (Schema 3, nicht gelernt) zaehlt wie ok als Antwort mit Werten
-    (Praezisierung 4)."""
+    """Skipped (Schema 3, nicht gelernt) zaehlt wie ok als Antwort mit Werten."""
     _quiet_backup(env, manual_override_pending=OVERRIDE)
     bridge = _start(env)
     _set_room_target(env, bridge, 20.5)
@@ -2790,7 +2786,7 @@ def test_skipped_answer_clears_the_pending_manual_override(env):
 
 
 def test_a_failed_publish_does_not_pin_a_manual_override(env):
-    """Fix Runde 1, Befund 3d: ein Publish-Fehler pinnt nichts -- der naechste erfolgreiche
+    """Ein Publish-Fehler pinnt nichts -- der naechste erfolgreiche
     Versuch derselben seq liest den aktuellen Stand frisch."""
     _quiet_backup(env, manual_override_pending=OVERRIDE)
     bridge = _start(env)
@@ -2808,7 +2804,7 @@ def test_a_failed_publish_does_not_pin_a_manual_override(env):
     assert bridge.manual_override_sent == OVERRIDE
 
 
-# --- TP12b: Datentraeger nicht beschreibbar ---
+# --- Datentraeger nicht beschreibbar ---
 
 def test_unwritable_disk_is_reported_once_and_cleared_after_repair(env, monkeypatch):
     _quiet_backup(env)
@@ -2878,7 +2874,7 @@ def test_pure_disk_fault_cycle_adds_no_data_fault_push(env, monkeypatch):
 
 
 def test_repaired_disk_reaches_the_delivery_in_the_next_health_tick(env, monkeypatch):
-    """TP12b (2): die Antwort scheitert vier Mal am Datentraeger (Daten-Wiederholungen 30, 300, 900 s, danach wartet
+    """Die Antwort scheitert vier Mal am Datentraeger (Daten-Wiederholungen 30, 300, 900 s, danach wartet
     der Tick 3600 s). Nach der Reparatur holt der naechste Takt EV_HEALTH (300 s, Pruefintervall) die Antwort, nicht
     erst der Daten-Retry bis zu 60 min spaeter."""
     _quiet_backup(env)
@@ -2967,7 +2963,7 @@ def test_unwritable_disk_on_answer_reports_one_message_and_writes_nothing(env, m
     assert env.ha.writes == writes_before
 
 
-# --- TP12b: Pruef-Tick und Soll beim Start ---
+# --- Pruef-Tick und Soll beim Start ---
 
 def test_probe_tick_sends_target_change_without_booking_the_target(env):
     _quiet_backup(env)
@@ -2981,8 +2977,8 @@ def test_probe_tick_sends_target_change_without_booking_the_target(env):
 
 
 def test_unreadable_room_target_entity_at_start_does_not_hold_the_due_daily_tick(env):
-    # Spec 5c 1.3: der Raum-Soll kommt aus dem Soll-Speicher (Start aus der Bedienung des Servers), eine beim Start
-    # unlesbare Soll-Entity ist kein Datenfehler mehr (bis 0.36: lokaler Datenfehler room_target, Tick gehalten).
+    # Der Raum-Soll kommt aus dem Soll-Speicher (Start aus der Bedienung des Servers), eine beim Start
+    # unlesbare Soll-Entity ist kein Datenfehler (kein lokaler Datenfehler room_target, der Tick wird nicht gehalten).
     yesterday = (date.today() - timedelta(days=1)).isoformat()
     _quiet_backup(env, last_daily_trigger_date=yesterday)
     env.ha.states["sensor.room_target"] = ValueError("could not convert string to float: 'unavailable'")
@@ -2996,7 +2992,7 @@ def test_unreadable_room_target_entity_at_start_does_not_hold_the_due_daily_tick
     assert [(s["trigger"], s["room_target"]) for s in _mqtt(env).snapshots] == [("daily", 21.0)]
 
 
-# --- TP12b: Verbindungswaechter (AU-033) ---
+# --- Verbindungswaechter ---
 
 NOTBETRIEB_OFF = "Heizungsbrücke: Serververbindung wiederhergestellt, Notbetrieb beendet."
 
@@ -3080,8 +3076,8 @@ def test_telemetry_is_not_published_without_connection(env):
 
 
 def test_vaillant_daily_energy_reaches_the_server_as_a_growing_sum(env):
-    """Der Tageszaehler der Bindung (Vaillant: daily) geht als wachsende Summe hinaus (A4-49); die Waerme-Erkennung
-    liegt beim Server (Audit 4 P-B)."""
+    """Der Tageszaehler der Bindung (Vaillant: daily) geht als wachsende Summe hinaus; die Waerme-Erkennung
+    liegt beim Server."""
     env.ha.states.update({"sensor.waerme_heute": 8.0, "sensor.waerme_heute::unit_of_measurement": "kWh",
                           "sensor.waerme_heute::device_class": "energy"})
     bridge = _start(env, entity_energy_thermal_heating="sensor.waerme_heute")
@@ -3095,7 +3091,7 @@ def test_vaillant_daily_energy_reaches_the_server_as_a_growing_sum(env):
 
 
 def test_vaillant_energy_in_a_foreign_unit_is_left_out(env, caplog):
-    """Es gilt die erwartete Einheit der Bindung (Vaillant: kWh, Spec Stufe 3 S4b 5): ein Wh-Tageszaehler fehlt."""
+    """Es gilt die erwartete Einheit der Bindung (Vaillant: kWh): ein Wh-Tageszaehler fehlt."""
     env.ha.states.update({"sensor.waerme_heute": 8000.0, "sensor.waerme_heute::unit_of_measurement": "Wh",
                           "sensor.waerme_heute::device_class": "energy"})
     with caplog.at_level(logging.WARNING):
@@ -3183,7 +3179,7 @@ def test_min_flow_is_not_written_to_an_unavailable_entity(env):
     assert bridge.override.last_written("min_flow") is None
 
 
-# --- Testoffensive T8 (Mutationsprobe K2, ticks.py) ---
+# --- Mutationsprobe (ticks.py) ---
 
 def test_an_answer_with_a_foreign_seq_is_ignored_and_the_log_names_the_expected_seq(env, caplog):
     _quiet_backup(env)

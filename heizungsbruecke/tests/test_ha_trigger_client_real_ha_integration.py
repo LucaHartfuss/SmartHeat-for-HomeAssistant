@@ -25,7 +25,7 @@ pytestmark = pytest.mark.skipif(
     reason="Startet einen echten HA-Core-Container per Docker; nur mit RUN_REAL_HA_TESTS=1 aktiv.",
 )
 
-# CI pinnt bei Push-Laeufen die client1-Version, der taegliche Lauf nimmt stable (Spec 2.2).
+# CI pinnt bei Push-Laeufen die client1-Version, der taegliche Lauf nimmt stable.
 HA_IMAGE = os.environ.get("HA_IMAGE", "ghcr.io/home-assistant/home-assistant:stable")
 HA_PORT = 18220  # anderer Port als test_ha_api_real_ha_integration.py (18213), falls beide je gleichzeitig laufen
 

@@ -1,4 +1,4 @@
-"""fake_z2m.main meldet auf Wunsch ein Thermostat (E2E gateway2, Plan 5b W Task 5)."""
+"""fake_z2m.main meldet auf Wunsch ein Thermostat (E2E gateway2)."""
 import fake_z2m
 import pytest
 from fakes import FakeBus
@@ -16,7 +16,7 @@ def test_main_adds_a_thermostat_when_asked(monkeypatch):
 
 
 def test_main_connects_to_the_bus_port_whatever_the_environment_says(monkeypatch):
-    """A6-87: der Port ist `bus.BUS_PORT`; `SHG_BUS_PORT` aus der Umgebung gilt nicht mehr."""
+    """Der Port ist `bus.BUS_PORT`; `SHG_BUS_PORT` aus der Umgebung gilt nicht mehr."""
     from smartheat_gateway import bus
     monkeypatch.setenv("SHG_BUS_PORT", "1")
     monkeypatch.delenv("SHG_BUS_HOST", raising=False)

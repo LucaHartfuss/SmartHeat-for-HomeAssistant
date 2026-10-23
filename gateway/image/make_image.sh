@@ -1,5 +1,5 @@
 #!/bin/bash
-# Gateway-Image bauen (Plan G2b-2 Task 9): prepare.sh auf dem Host, dann build.sh in einem privilegierten
+# Gateway-Image bauen: prepare.sh auf dem Host, dann build.sh in einem privilegierten
 # debian:trixie-Container fuer linux/arm64 (auf einem arm64-Host nativ, sonst ueber QEMU-binfmt, von rpi-image-gen
 # nicht offiziell unterstuetzt). Geraete-API- und Portal-Adresse: eigener DNS-Name per https (own_url.sh), geprueft vor
 # jeder anderen Arbeit.

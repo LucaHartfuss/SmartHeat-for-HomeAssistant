@@ -1,4 +1,4 @@
-"""Zuordnung der delivery-Meldungen zu Meldeschluesseln (Spec TP6 3.4, Praezisierung 2)."""
+"""Zuordnung der delivery-Meldungen zu Meldeschluesseln."""
 from unittest.mock import MagicMock
 
 import pytest

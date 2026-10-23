@@ -131,7 +131,7 @@ def test_unsafe_state_files_are_stoerung_and_never_block(tmp_path, plant):
 
 
 def test_main_takes_the_led_from_find_led_and_not_from_the_environment(tmp_path, monkeypatch):
-    """A6-87: `SHG_LED` aus der Umgebung gilt nicht mehr; ohne LED nach `find_led` endet der Dienst mit der Meldung, ohne
+    """`SHG_LED` aus der Umgebung gilt nicht mehr; ohne LED nach `find_led` endet der Dienst mit der Meldung, ohne
     den Trigger der genannten Datei anzufassen."""
     led_dir = tmp_path / "ACT"
     led_dir.mkdir()

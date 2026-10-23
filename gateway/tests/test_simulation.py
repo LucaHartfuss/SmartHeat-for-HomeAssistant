@@ -165,7 +165,7 @@ def test_reader_instance_does_not_create_the_plant_file(paths, clock):
 
 
 def test_generator_hours_rise_and_stand_still_without_heat(paths, clock):
-    # Audit 4 P-B: ohne Liefer-Signal lernt der Server nicht (E5); keine_waerme bildet einen Waermeausfall nach
+    # Ohne Liefer-Signal lernt der Server nicht; keine_waerme bildet einen Waermeausfall nach
     driver = _sim(paths, clock)
     assert "generator_hours" in driver.signals()
     first = driver.read_signal("generator_hours")

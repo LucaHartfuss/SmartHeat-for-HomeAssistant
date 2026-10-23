@@ -1,5 +1,5 @@
 #!/bin/bash
-# Gemeinsame Hilfen der Gateway-Docker-Pruefungen (Plan 5b D2 Task 10): Test-PKI, Fake-Broker (Mosquitto mit TLS und
+# Gemeinsame Hilfen der Gateway-Docker-Pruefungen: Test-PKI, Fake-Broker (Mosquitto mit TLS und
 # Client-Zertifikat, ACL wie die Geraete-Policy) und die Dienst-Rolle (CN dienst), die Dokumente sendet und Ergebnisse
 # liest. Wird per "source" eingebunden; erwartet MOSQ_IMAGE und BROKER (Container- bzw. Dienstname des Fake-Brokers,
 # zugleich SAN des Broker-Zertifikats). Die Test-PKI entsteht je Lauf neu im Datenordner des Tests und wird nie
@@ -29,7 +29,7 @@ make_pki() {
   chmod 0700 "$dir" && chmod 0600 "$dir"/*.pem "$dir"/*.key
 }
 
-# broker_conf DIR: mosquitto.conf und acl fuer den Fake-Broker (Geraete-Policy, Spec 5b 4.1; Dienst darf alles).
+# broker_conf DIR: mosquitto.conf und acl fuer den Fake-Broker (Geraete-Policy, Dienst darf alles).
 broker_conf() {
   local dir=$1
   cat >"$dir/mosquitto.conf" <<'EOF' || return 1

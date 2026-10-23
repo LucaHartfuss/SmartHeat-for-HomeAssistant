@@ -1,16 +1,16 @@
-"""Trigger-Eingang des Gateways (Spec SHG G2 3.4, Vertrag smartheat_runtime.ports.TriggerSource; Spec 5b 3.2/3.3,
-Plan D2). Bus-Thread: stellt nur Ereignisse ein. Soll-Eingang: die Bedienung vom Server (GatewayDeviceHost, Quelle
+"""Trigger-Eingang des Gateways (Vertrag smartheat_runtime.ports.TriggerSource).
+Bus-Thread: stellt nur Ereignisse ein. Soll-Eingang: die Bedienung vom Server (GatewayDeviceHost, Quelle
 portal) und das Thermostat ueber Zigbee gehen als EV_TARGET_INPUT in den Worker; die Soll-Logik (Soll-Speicher,
 Entprellen, Wunsch, Rueckschreiben, Soll-Quelle aus/wieder an) ist hostneutral und liegt in
 smartheat_runtime.soll_eingang (SollEingang); das Thermostat ist ihre SollQuelle (_ZigbeeQuelle). Hier bleiben die
 Zigbee-Meldungen, die Tagestick-Zeit und der Verbindungs-Trigger. Fuehler-Aenderungen posten EV_LOCAL_CHECK(False); die
 Tagestick-Zeit ebenfalls (wie der Zeit-Trigger in HA). Nichts, was ueber die Soll-Quelle geht (Angleichen beim Start,
 Bedienung des Servers, Rueckschreiben eines Wunschs, wieder an), erreicht ein Thermostat, dessen letzter bekannter
-Zustand (auch retained, jedes Alter) aus oder Frostschutz zeigt (A6-14, Nutzer-Entscheidung E5). Beim Start gilt
+Zustand (auch retained, jedes Alter) aus oder Frostschutz zeigt (Nutzer-Entscheidung). Beim Start gilt
 dieser Zustand fuer "aus" des Soll-Eingangs, nie als Wunsch; das Angleichen laeuft danach im Worker (EV_ANGLEICHEN),
 ohne bekannten Zustand erst mit der ersten Live-Meldung, vor deren Ereignissen. Ein Thermostat mit Profil
 (thermostat_profil, Aqara W100) bekommt beim Start Thermostatmodus und Anzeige, das Angleichen erst nach gemeldetem
-thermostat_mode ON (L4-30); nach erneutem Koppeln die Einrichtung (Modus sofort; Soll aus dem Soll-Speicher und heizen
+thermostat_mode ON; nach erneutem Koppeln die Einrichtung (Modus sofort; Soll aus dem Soll-Speicher und heizen
 im Worker, sobald das Thermostat thermostat_mode ON gemeldet hat, auch wenn es aus ist: sonst heizte ein neu gekoppeltes
 W100 nie); ein fremder Modus (cool, auto) geht zurueck auf heat, eine fremde Aktion setzt Modus und Anzeige neu
 (je hoechstens alle PFLEGE_ABSTAND_S); ein ganzzahliges Thermostat bekommt das Soll gerundet, und seine Meldung des
@@ -40,7 +40,7 @@ EV_DAILY = "shg_daily"
 EV_ZIGBEE_SOLL = "shg_zigbee_soll"  # Meldung eines ganzzahligen Thermostats, wird im Worker abgebildet
 EV_THERMOSTAT_EINRICHTEN = "shg_thermostat_einrichten"  # gebundenes Thermostat neu gekoppelt
 EV_THERMOSTAT_SOLL = "shg_thermostat_soll"  # ... und hat thermostat_mode ON gemeldet: Soll und heizen
-EV_ANGLEICHEN = "shg_angleichen"  # Angleichen beim Start (Spec 3.3), sobald der Zustand des Thermostats bekannt ist
+EV_ANGLEICHEN = "shg_angleichen"  # Angleichen beim Start, sobald der Zustand des Thermostats bekannt ist
 PFLEGE_ABSTAND_S = 60.0
 
 
@@ -58,7 +58,7 @@ def local_zone(now: datetime | None = None) -> tzinfo:
 
 def seconds_until(daily_time: str, now: datetime, zone: tzinfo | None = None) -> float:
     """Sekunden bis zur naechsten Tageszeit HH:MM in der Ortszeit der Zone; rechnet ueber UTC, damit der Wechsel
-    Sommer-/Winterzeit stimmt (Plan G2b-1, Restpunkt 6). Immer groesser 0: zur ersten Ortszeit der Tageszeit (in der
+    Sommer-/Winterzeit stimmt. Immer groesser 0: zur ersten Ortszeit der Tageszeit (in der
     doppelten Stunde der Rueckstellung feuert der Tick nur beim ersten Durchlauf), danach erst am Folgetag."""
     zone = zone or local_zone(now)
     hour, minute = (int(part) for part in daily_time.split(":")[:2])
@@ -88,7 +88,7 @@ class _ZigbeeQuelle:
 
     def aus(self) -> bool:
         """Der letzte bekannte Zustand (auch retained, jedes Alter) zeigt system_mode off oder ein Soll bis
-        FROSTSCHUTZ_BIS (A6-14)."""
+        FROSTSCHUTZ_BIS."""
         payload = self._mirror.payload(self._ieee)
         soll = payload.get("occupied_heating_setpoint")
         return payload.get("system_mode") == MODUS_AUS or (ist_endliche_zahl(soll) and soll <= FROSTSCHUTZ_BIS)
@@ -118,8 +118,8 @@ class BusTriggerSource:
                  now=wallclock.now, wunsch: Callable[[float], float] = lambda value: value,
                  soll_quelle_aus: Callable[[bool, float | None], None] = lambda aus, wirksam: None,
                  angleichen: bool = False, clock: Callable[[], float] = monotonic) -> None:
-        """angleichen: beim Start das geltende Soll ans Thermostat (Spec 3.3), nach Thermostatmodus und Anzeige, sobald
-        der Zustand bekannt und nicht aus ist (A6-14), ein Thermostat mit Profil nach gemeldetem ON (L4-30)."""
+        """angleichen: beim Start das geltende Soll ans Thermostat, nach Thermostatmodus und Anzeige, sobald
+        der Zustand bekannt und nicht aus ist, ein Thermostat mit Profil nach gemeldetem ON."""
         self._bus, self._worker, self._mirror, self._store = bus, worker, mirror, store
         self._thermostat = thermostat
         self._sensor_ieees = frozenset(sensor_ieees)
@@ -236,7 +236,7 @@ class BusTriggerSource:
         if p is None:
             return
         logger.info("Thermostat %s neu gekoppelt: als Thermostat eingestellt", self._thermostat)
-        # Modus sofort; Soll und heizen erst nach der Meldung thermostat_mode ON (L4-30), dann mit dem Soll von dann
+        # Modus sofort; Soll und heizen erst nach der Meldung thermostat_mode ON, dann mit dem Soll von dann
         self._mirror.pflege.einrichten(self._thermostat, p,
                                        lambda: self._worker.post(Event(EV_THERMOSTAT_SOLL)))
 

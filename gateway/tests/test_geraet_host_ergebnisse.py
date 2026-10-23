@@ -1,4 +1,4 @@
-"""Software-Ergebnisse und LED-Datei des GatewayDeviceHost (Testoffensive T5', Task 8, Teil A): was die Software-Bruecke
+"""Software-Ergebnisse und LED-Datei des GatewayDeviceHost: was die Software-Bruecke
 aus software_meldungen.json macht (Grund, uebergangene Eintraege) und wann die LED-Datei neu geschrieben wird. Eigene
 Datei, weil test_geraet_host.py mit dem Umbau von T4' wechselt. Die Ergebnisse gehen ueber das echte Geraet (Device,
 eigener Client-Kern, keine Grenze) auf einen Fake-Link und werden als up/result gelesen: das Geraet lehnt einen Grund

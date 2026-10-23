@@ -262,7 +262,7 @@ def test_timeout_during_notbetrieb_does_not_query_entitlement_again():
 
 
 def test_unbeantworteter_pruef_tick_im_stillen_notbetrieb_meldet():
-    """T4-Notbetrieb-Unbekannt: ein Notbetrieb ohne Meldung (Neustart mit altem Notbetrieb, Abo unbekannt) bleibt
+    """Ein Notbetrieb ohne Meldung (Neustart mit altem Notbetrieb, Abo unbekannt) bleibt
     still, bis zwei Ack-Timeouts des Pruef-Ticks den Server als stumm zeigen; dann geht "Notbetrieb aktiv" hinaus (der
     Notifier meldet nur beim Zustandswechsel). Schwelle, Retry-Stufen und Abo-Abfrage bleiben wie zuvor."""
     state, _ = _published("s1", notbetrieb=True)
@@ -280,7 +280,7 @@ def test_unbeantworteter_pruef_tick_im_stillen_notbetrieb_meldet():
 
 
 def test_late_ack_during_retry_wait_ends_tick_and_old_retry_becomes_stale():
-    # Review Focus 3: Antwort des ersten Versuchs kommt kurz nach dem Ack-Timeout.
+    # Antwort des ersten Versuchs kommt kurz nach dem Ack-Timeout.
     state, _ = _published("s1")
     state, _ = step(state, AckTimeout("s1", 1))
 
@@ -686,7 +686,7 @@ def test_old_file_with_only_failsafe_active_is_read():
     {"datenfehler": {"source": "local", "detail": [1]}},
 ])
 def test_garbage_persisted_content_falls_back_to_defaults(raw):
-    # Review Focus 4: kaputte/fremde Datei darf den Start nie verhindern.
+    # kaputte/fremde Datei darf den Start nie verhindern.
     assert from_persisted(raw) == DeliveryState()
 
 
@@ -803,7 +803,7 @@ def test_retry_origin_and_unsent_are_not_persisted():
     }
 
 
-# --- TP12b: Antwort da, lokal nicht speicherbar (AU-012) ---
+# --- Antwort da, lokal nicht speicherbar ---
 
 def test_answered_local_fault_counts_as_answer_without_notification():
     state, _ = _published(server_failures=1)
@@ -847,7 +847,7 @@ def test_clear_stale_notbetrieb_keeps_a_notbetrieb_with_open_tick():
     assert step(state, ClearStaleNotbetrieb()) == (state, [])
 
 
-# --- TP12b (2): Datentraeger wieder beschreibbar ---
+# --- Datentraeger wieder beschreibbar ---
 
 def test_storage_writable_attempts_a_tick_waiting_on_a_storage_fault_at_once():
     state, _ = _published()

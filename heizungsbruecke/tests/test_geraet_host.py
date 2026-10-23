@@ -1,4 +1,4 @@
-"""Spec 5c 1.3: das HA-Add-on als DeviceHost (Faehigkeiten, Uhr, Pruefung, Befehle, Dokumente, Wunsch, Raum)."""
+"""Das HA-Add-on als DeviceHost (Faehigkeiten, Uhr, Pruefung, Befehle, Dokumente, Wunsch, Raum)."""
 import io
 import json
 import logging
@@ -140,7 +140,7 @@ def test_inventory_runs_in_the_background(tmp_path, monkeypatch):
 
 
 def test_inventory_is_repeatable_after_a_restart(tmp_path, monkeypatch):
-    """L4-02 (a): Marker "gestartet" im Journal (Neustart fiel in die Erkennung): die erneute Zustellung fuehrt sie
+    """Marker "gestartet" im Journal (Neustart fiel in die Erkennung): die erneute Zustellung fuehrt sie
     noch einmal aus (kein "intern"), das Ergebnis geht erst nach dem PUBACK der Inventur; ein Duplikat danach laeuft
     nicht noch einmal."""
     ha = FakeHa()
@@ -312,7 +312,7 @@ def test_in_the_idle_state_operations_do_not_reach_the_worker(tmp_path, monkeypa
 
 
 def test_configuration_change_requests_a_restart_and_empty_marks_cleanup(tmp_path, monkeypatch):
-    """Die Markierung schreibt konfiguration_vorbereiten (vor dem Speichern, Nr. 38), den Neustart fordert
+    """Die Markierung schreibt konfiguration_vorbereiten (vor dem Speichern), den Neustart fordert
     konfiguration_uebernommen an."""
     host, _, clock = _host(tmp_path, monkeypatch)
     alt = konfiguration_aus_optionen(OPTIONS)
@@ -331,7 +331,7 @@ def test_configuration_change_requests_a_restart_and_empty_marks_cleanup(tmp_pat
 
 
 def test_new_binding_parameters_restart_the_runtime(tmp_path, monkeypatch):
-    """Spec Stufe 3 S4b 4.3: Konfiguration ohne Parameter -> mit Parametern startet die Laufzeit neu; gleiche nicht."""
+    """Konfiguration ohne Parameter -> mit Parametern startet die Laufzeit neu; gleiche nicht."""
     host, _, _ = _host(tmp_path, monkeypatch)
     alt = {**konfiguration_aus_optionen(OPTIONS), "bindungsparameter": None}
     neu = konfiguration_aus_optionen(OPTIONS)
@@ -438,7 +438,7 @@ def test_sign_off_without_setup_fails(tmp_path, monkeypatch):
     assert outcome == Failed("nicht_eingerichtet")
 
 
-# --- Lokales Abmelden ueber den stdin-Befehl (L4-06 Variante C) ---
+# --- Lokales Abmelden ueber den stdin-Befehl ---
 
 EIGEN = "shg-aaaaaaaaaaaaaaaa"
 
@@ -562,7 +562,7 @@ class _KaputteDiscovery:
 
 
 def test_display_reports_to_the_discovery_with_the_code_only_while_it_may_be_shown(tmp_path, monkeypatch):
-    """Spec 5c 1.1/F1: Code nur, solange das Geraet nicht uebernommen ist (Anzeige.code_zeigen); die echte Discovery
+    """Code nur, solange das Geraet nicht uebernommen ist (Anzeige.code_zeigen); die echte Discovery
     meldet an den Supervisor (Grenze)."""
     supervisor = Supervisor()
     host, device, clock = _host(tmp_path, monkeypatch, supervisor)
@@ -612,7 +612,7 @@ def test_notify_sink_sends_to_the_given_services(tmp_path, monkeypatch):
 
 
 def test_runtime_messages_go_to_ha_and_to_the_device_core(tmp_path, monkeypatch):
-    """Spec 5c 3 (Portal zeigt HA-Geraete wie Gateways, mit Hinweisen): Meldungen der Laufzeit gehen wie beim Gateway
+    """Portal zeigt HA-Geraete wie Gateways, mit Hinweisen: Meldungen der Laufzeit gehen wie beim Gateway
     (MeldungSink) als up/notifications an den Geraetekern und weiter an HA (Push, persistent_notification)."""
     ha = FakeHa()
     host, device, _ = _host(tmp_path, monkeypatch, ha=ha)

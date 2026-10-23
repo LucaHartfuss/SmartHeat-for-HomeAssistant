@@ -1,4 +1,4 @@
-"""Persistenz Plan 3b: neue backup.json-Felder mit Standardwerten, ohne Migration (Review Focus: backup.json von 0.30.0
+"""Persistenz: neue backup.json-Felder mit Standardwerten, ohne Migration (backup.json von 0.30.0
 laedt ohne Wertverlust und bleibt beim Schreiben gleich)."""
 import json
 import logging

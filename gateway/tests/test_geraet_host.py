@@ -1,4 +1,4 @@
-"""Spec 5b 5.1/5.3 (Plan D2 Task 3): der Gateway als Host des Geraetekerns - Faehigkeiten, Uhr, Status und Raum im
+"""Der Gateway als Host des Geraetekerns - Faehigkeiten, Uhr, Status und Raum im
 Prozess, Meldungen, Neustart bei neuer Konfiguration, Aufraeumen nach dem Entfernen, Software-Bruecke, LED-Datei."""
 import errno
 import json
@@ -172,7 +172,7 @@ def test_a_restart_requested_before_the_worker_exists_is_posted_on_binding(welt)
 
 
 def test_an_empty_configuration_after_a_setup_marks_the_cleanup(welt):
-    """Die Markierung schreibt konfiguration_vorbereiten (vor dem Speichern, Nr. 38), den Neustart fordert
+    """Die Markierung schreibt konfiguration_vorbereiten (vor dem Speichern), den Neustart fordert
     konfiguration_uebernommen an."""
     welt.host.konfiguration_vorbereiten(konfiguration(), LEER)
     assert json.loads(welt.paths.aufraeumen.read_text()) == {
@@ -256,7 +256,7 @@ def _alles_weg(paths) -> bool:
 @pytest.mark.parametrize("fehler, art", [(errno.EACCES, "PermissionError"), (errno.EIO, "OSError")])
 def test_a_state_file_that_cannot_be_deleted_keeps_the_marker_and_the_binding_and_the_start_goes_on(
         world, monkeypatch, caplog, fehler, art):
-    """Wie im Add-on (Task 11): scheitert das Loeschen einer Zustandsdatei, startet das Gateway trotzdem; die Datei,
+    """Wie im Add-on: scheitert das Loeschen einer Zustandsdatei, startet das Gateway trotzdem; die Datei,
     die Markierung und runtime/backup.json (der Bindungsanker, zuletzt und nur nach allem anderen geloescht) bleiben,
     der uebrige Zustand ist weg, im Log Datei und Fehlerart, keine Erfolgsmeldung. Der naechste Start loescht den Rest
     samt Markierung. Die Rastung bleibt in jedem Fall (G-1)."""
@@ -365,7 +365,7 @@ def world(data_dir, monkeypatch, clock):
 
 
 def test_the_sign_off_ends_only_with_a_new_version_of_the_same_plant(world):
-    """5b-D2-7, Review Focus 2, ganzer Weg (Geraetekern, Dokumentspeicher, Host): abgemeldet bleibt bei erneuter
+    """Ganzer Weg (Geraetekern, Dokumentspeicher, Host): abgemeldet bleibt bei erneuter
     Zustellung derselben Version (kein Neustart); eine neue Version mit gleichem Inhalt hebt die Markierung auf, und der
     Neustart regelt wieder."""
     dokumente_schreiben(world.paths, konfiguration(), version=1)
@@ -394,7 +394,7 @@ def test_an_operation_goes_to_the_worker_as_target_input(welt):
 
 
 def test_an_operation_before_the_worker_exists_is_posted_on_binding(welt):
-    # main(): der Geraete-Thread laeuft vor dem Worker; eine Bedienung gleich nach hello geht nicht verloren (Spec 3.3)
+    # main(): der Geraete-Thread laeuft vor dem Worker; eine Bedienung gleich nach hello geht nicht verloren
     welt.host.bedienung_uebernommen({"modus": "manuell", "raum_soll": 21.0})
     welt.host.bedienung_uebernommen({"modus": "manuell", "raum_soll": 22.5})
     welt.host.worker_binden(welt.worker)

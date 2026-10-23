@@ -1,4 +1,4 @@
-"""Spec Stufe 3 S3 Abschnitt 4: leer heisst abmelden."""
+"""Leer heisst abmelden."""
 import errno
 import json
 import os
@@ -61,7 +61,7 @@ def test_new_setup_before_reset_discards_marker(tmp_path):
 
 
 def test_a_new_setup_of_another_plant_discards_the_open_marker_and_keeps_the_state(tmp_path):
-    """S3S3-Reste: auch eine andere Anlage als die der Markierung beendet das Abmelden; nichts wird geloescht."""
+    """Auch eine andere Anlage als die der Markierung beendet das Abmelden; nichts wird geloescht."""
     pfad = tmp_path / "aufraeumen.json"
     aufraeumen.markieren(pfad, ALT)
     andere = {**ALT, "anlage": "kunde2"}
@@ -87,7 +87,7 @@ def test_marker_whose_configuration_names_another_plant_is_ignored(tmp_path):
 
 @pytest.mark.parametrize("code", [errno.EIO, errno.EACCES])
 def test_an_unreadable_marker_is_kept_and_nothing_is_deleted(tmp_path, monkeypatch, caplog, code):
-    """S3S3-Marker: vorhanden, aber unlesbar -> behalten und loggen, nie wie eine fehlende werten."""
+    """Vorhanden, aber unlesbar -> behalten und loggen, nie wie eine fehlende werten."""
     pfad = tmp_path / "aufraeumen.json"
     aufraeumen.markieren(pfad, ALT)
     echt = Path.read_bytes
@@ -150,7 +150,7 @@ def test_a_marker_whose_existence_cannot_be_determined_is_kept(tmp_path, monkeyp
 
 def test_a_marker_that_vanishes_between_exists_and_reading_counts_as_missing(tmp_path, monkeypatch):
     """Rennen: exists() sah die Markierung, das Lesen nicht mehr (FileNotFoundError). Das ist kein Lesefehler (nicht
-    BEHALTEN) und auch keine kaputte Markierung (nicht LOESCHEN), sondern keine: KEINE (S3S6-Reste 3)."""
+    BEHALTEN) und auch keine kaputte Markierung (nicht LOESCHEN), sondern keine: KEINE."""
     pfad = tmp_path / "aufraeumen.json"
     aufraeumen.markieren(pfad, ALT)
 
@@ -186,7 +186,7 @@ def _lesezaehler(monkeypatch, pfad, *, text_fehler=None):
 
 
 def test_entscheiden_reads_the_marker_exactly_once(tmp_path, monkeypatch):
-    """S3S6-Reste 3: ein vorubergehender EIO beim zweiten Lesen ergab LOESCHEN (die Markierung galt als kaputt), obwohl
+    """Ein vorubergehender EIO beim zweiten Lesen ergab LOESCHEN (die Markierung galt als kaputt), obwohl
     das erste Lesen sie fand. entscheiden liest einmal und wertet die gelesenen Bytes aus."""
     pfad = tmp_path / "aufraeumen.json"
     aufraeumen.markieren(pfad, ALT)
@@ -236,7 +236,7 @@ def test_entscheiden_and_lesen_decode_the_marker_alike(tmp_path, kodierung):
 
 
 def test_eio_beim_zweiten_lesen_setzt_trotzdem_zurueck(tmp_path, monkeypatch):
-    """T4-Markierung-Zweitlesen: die Markierung wird beim Start einmal gelesen und weitergereicht. Scheitert ein
+    """Die Markierung wird beim Start einmal gelesen und weitergereicht. Scheitert ein
     weiteres Lesen der Datei (EIO), startet die Laufzeit trotzdem im Modus abgemeldet mit der Konfiguration der
     Markierung (vorher lief sie dann ohne Zuruecksetzen bis zum naechsten Start)."""
     pfad = tmp_path / "aufraeumen.json"

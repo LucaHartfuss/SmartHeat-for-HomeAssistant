@@ -1,4 +1,4 @@
-"""Spec 5c 1.3 / 5b 5.2: HaHost liest das Konfigurationsdokument; der Raum-Soll kommt aus dem Soll-Speicher."""
+"""HaHost liest das Konfigurationsdokument; der Raum-Soll kommt aus dem Soll-Speicher."""
 import json
 
 import pytest
@@ -56,7 +56,7 @@ def _offene_markierung(alt):
 
 
 def test_empty_configuration_with_pending_reset_boots_signed_off_with_the_old_one(env):
-    """Spec Stufe 3 S3 Abschnitt 4: die Laufzeit setzt mit der Konfiguration der Aufraeum-Markierung zurueck."""
+    """Die Laufzeit setzt mit der Konfiguration der Aufraeum-Markierung zurueck."""
     konfiguration = konfiguration_aus_optionen(OPTIONS)
     host = HaHost(FakeGeraet({**konfiguration, "anlage": None}, start_markierung=_offene_markierung(konfiguration)),
                   env.ha, clock=env.clock)
@@ -155,7 +155,7 @@ def test_the_operation_is_written_to_the_entity_at_start_and_not_turned_into_a_w
 
 
 def test_a_thermostat_change_during_the_addon_pause_is_overwritten_at_start(env):
-    """Heutiges Verhalten, Restpunkt 5c-D-8 (c): waehrend das Add-on stand, drehte der Nutzer das Thermostat auf 23;
+    """Heutiges Verhalten (offene-punkte.md 5c-D-8 (c)): waehrend das Add-on stand, drehte der Nutzer das Thermostat auf 23;
     gespeichert und Bedienung sind gleich (21,5, nicht dirty): der Start schreibt 21,5 an die Entity, das erste Lesen
     (noch 23) wird kein Wunsch."""
     host, geraet, worker, client = _climate_start(env, angezeigt=23.0, bedienung={"raum_soll": 21.5},
@@ -166,7 +166,7 @@ def test_a_thermostat_change_during_the_addon_pause_is_overwritten_at_start(env)
 
 
 def test_a_failed_start_alignment_is_done_again_on_connect(env):
-    """Final-Review I1: scheitert das Angleichen beim Start (HA lehnt ab), holt das erste Verbinden es nach, statt den
+    """Scheitert das Angleichen beim Start (HA lehnt ab), holt das erste Verbinden es nach, statt den
     alten Wert der Entity als Wunsch zu nehmen."""
     env.ha.write_error = RuntimeError("HA lehnt ab")
     host, geraet, worker, client = _climate_start(env, angezeigt=19.0, bedienung={"raum_soll": 21.5})
@@ -199,7 +199,7 @@ def test_an_entity_that_already_shows_the_target_is_not_written(env):
 
 
 def test_a_switched_off_thermostat_is_not_written(env):
-    """Soll-Quelle aus (Spec 5b 3.2): keine Bedienung an die Quelle; beim Wiedereinschalten gleicht der Soll-Eingang an."""
+    """Soll-Quelle aus: keine Bedienung an die Quelle; beim Wiedereinschalten gleicht der Soll-Eingang an."""
     host, geraet, worker, client = _climate_start(env, angezeigt=19.0, bedienung={"raum_soll": 21.5}, modus="off")
     assert env.ha.writes == [] and host.store.echo_rest() == 0
     _erstes_lesen(env, worker, client, angezeigt=19.0)
@@ -207,7 +207,7 @@ def test_a_switched_off_thermostat_is_not_written(env):
 
 
 def test_a_thermostat_in_frost_protection_is_not_written(env):
-    """Ein Soll bis FROSTSCHUTZ_BIS (7 °C) ist die Frostschutz-Stellung (Spec 5b 3.2): ein Neustart dreht den bewusst
+    """Ein Soll bis FROSTSCHUTZ_BIS (7 °C) ist die Frostschutz-Stellung: ein Neustart dreht den bewusst
     auf 5 °C gestellten Heizkoerper nicht wieder hoch."""
     host, geraet, worker, client = _climate_start(env, angezeigt=5.0, bedienung={"raum_soll": 21.5})
     assert env.ha.writes == [] and host.store.echo_rest() == 0
@@ -240,7 +240,7 @@ def test_an_unknown_lever_set_fails_the_start(env):
 
 
 def test_without_binding_parameters_the_start_fails_and_with_them_it_runs(env):
-    """Spec Stufe 3 S4b 4.3: eine gespeicherte Konfiguration ohne Parameter startet nicht (Konfigurationsfehler statt
+    """Eine gespeicherte Konfiguration ohne Parameter startet nicht (Konfigurationsfehler statt
     Absturz); sobald die Konfiguration mit Parametern kommt, laeuft der Start."""
     ohne = konfiguration_aus_optionen({**OPTIONS, "bindungsparameter": None})
     with pytest.raises(StartFailure, match="Bindungsparameter"):
@@ -250,7 +250,7 @@ def test_without_binding_parameters_the_start_fails_and_with_them_it_runs(env):
 
 
 def test_sign_off_without_binding_parameters_does_not_reset_and_logs_it(env, caplog):
-    """Spec Stufe 3 S4b 8: Abmelden ohne Bindungsparameter setzt nicht zurueck (kein Schreiben an HA) und loggt den
+    """Abmelden ohne Bindungsparameter setzt nicht zurueck (kein Schreiben an HA) und loggt den
     Grund; Gegenstueck zum Gateway (gateway/tests/test_host.py)."""
     ohne = konfiguration_aus_optionen({**OPTIONS, "bindungsparameter": None})
     config.ABGEMELDET_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -354,7 +354,7 @@ def host_mit_klima_zone(env):
 
 
 def test_abmelden_stellt_dieselben_rollen_zurueck_wie_der_hebelsatz(host_mit_klima_zone):
-    """Spec Stufe 3 S5 Review: sign_off_parts nach dem Umbau, auch fuer eine climate-Zone (::temperature)."""
+    """sign_off_parts nach dem Umbau, auch fuer eine climate-Zone (::temperature)."""
     parts = host_mit_klima_zone.sign_off_parts()
     assert parts is not None
     binding = parts.binding

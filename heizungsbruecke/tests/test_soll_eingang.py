@@ -1,4 +1,4 @@
-"""Spec 5c 1.3 / 5b 3.2-3.3: Soll-Eingang hostneutral (Gateway und HA-Add-on)."""
+"""Soll-Eingang hostneutral (Gateway und HA-Add-on)."""
 import logging
 from pathlib import Path
 
@@ -80,7 +80,7 @@ def test_hvac_off_then_on_restores_the_display(tmp_path):
 
 @pytest.mark.parametrize("mode", [None, 0, False], ids=["null", "zahl", "bool"])
 def test_ein_modus_ohne_text_aendert_nichts(tmp_path, mode):
-    """Review TP3 (Fixrunde B, fail closed): `system_mode: null` (Zigbee2MQTT) oder ein anderer Nicht-Text ist keine
+    """Fail closed: `system_mode: null` (Zigbee2MQTT) oder ein anderer Nicht-Text ist keine
     Aussage ueber den Modus. Er schaltet die Soll-Quelle weder an (kein „wieder an“, kein Schreiben an die Quelle)
     noch aus."""
     a = Aufbau(tmp_path)
@@ -221,7 +221,7 @@ class AblehnenderAufbau(Aufbau):
 
 
 def test_a_wish_the_device_refuses_keeps_the_entered_value_without_write_back(tmp_path):
-    """Device.wunsch lehnt mit ValueError ab (keine endliche Zahl, herkunft oder durch kein Vertragswert, 5b-D1-4):
+    """Device.wunsch lehnt mit ValueError ab (keine endliche Zahl, herkunft oder durch kein Vertragswert):
     der Soll-Eingang faengt das, der eingegebene Wert gilt lokal, nichts wird an die Quelle zurueckgeschrieben, und
     die lokale Pruefung laeuft."""
     a = AblehnenderAufbau(tmp_path)
@@ -234,7 +234,7 @@ def test_a_wish_the_device_refuses_keeps_the_entered_value_without_write_back(tm
 def test_portal_confirming_an_open_thermostat_wish_with_the_same_value_keeps_the_wish(tmp_path):
     """Nr. 40 im Soll-Eingang: bestaetigt der Server waehrend der Entprellung genau den Wert des offenen
     Thermostat-Wunschs, aendert sich nichts (apply_portal ohne Wirkung); der Wunsch geht nach der Entprellung einmal an
-    den Geraetekern (bis Task 6 verwarf die Bestaetigung ihn als Bedienung des Servers). Eine Bestaetigung danach loest
+    den Geraetekern (die Bestaetigung verwirft ihn nicht als Bedienung des Servers). Eine Bestaetigung danach loest
     keinen weiteren Wunsch aus."""
     a = Aufbau(tmp_path, entprellen_s=10.0)
     a.post(22.0, SOURCE_THERMOSTAT, herkunft="soll_entity", durch="nutzer")

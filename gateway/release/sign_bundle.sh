@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Signiert manifest.json eines Bundles mit minisign und prueft die Signatur mit dem Code des Geraets
-# (smartheat_host.minisign). Ein Skript fuer den echten Release und den -dryrun (Spec G2b-1 7), damit der Probelauf
+# (smartheat_host.minisign). Ein Skript fuer den echten Release und den -dryrun, damit der Probelauf
 # denselben Pruef-, Signier- und Pruefweg geht. Vor dem Signieren baut verify_bundle.py das Bundle aus diesem Checkout
 # (dem Tag) mit dem Gateway-Digest aus dem Manifest neu und vergleicht byte-genau; images.gateway muss aus
 # ghcr.io/lucahartfuss/smartheat-gateway stammen (--dryrun: aus der Job-Registry localhost:5000/smartheat-gateway).

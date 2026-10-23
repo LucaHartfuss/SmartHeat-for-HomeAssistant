@@ -1,4 +1,4 @@
-"""Gleichheitstest (Spec G4 3): dasselbe Szenario ueber ViessmannHaBinding (Fake-HA) und vicare_cloud (Fake-ViCare)
+"""Gleichheitstest: dasselbe Szenario ueber ViessmannHaBinding (Fake-HA) und vicare_cloud (Fake-ViCare)
 ergibt dieselben Hebelentscheidungen, Schreibzaehlungen und zurueckgestellten Ursprungswerte."""
 import importlib.util
 from pathlib import Path
@@ -45,8 +45,8 @@ class HaWorld:
         self.binding = ViessmannHaBinding(self.ha, MANIFEST, BINDING)
 
     def calls(self, log):
-        """Physische Aufrufe: der HA-Pfad schreibt zwei number-Entities je Schreibgruppe, der Treiber nur ein setCurve
-        (Audit 4, A4-31); gleichgesetzt wird die Gruppe als EIN Aufruf (so zaehlt sie auch die Pipeline)."""
+        """Physische Aufrufe: der HA-Pfad schreibt zwei number-Entities je Schreibgruppe, der Treiber nur ein setCurve;
+        gleichgesetzt wird die Gruppe als EIN Aufruf (so zaehlt sie auch die Pipeline)."""
         return self.binding.physical_writes - curve_pairs(log)
 
     def log(self):
@@ -98,7 +98,7 @@ class CloudWorld:
 
         def write_group(values):
             real_group(values)
-            self.curve_writes.append("gruppe")  # Audit 4, A4-31: ein setCurve fuer beide Mitglieder
+            self.curve_writes.append("gruppe")  # Ein setCurve fuer beide Mitglieder
 
         self.driver.write_group = write_group
 
@@ -112,7 +112,7 @@ class CloudWorld:
                 # genau ein setCurve je Hebelschreibvorgang, in der Reihenfolge der Aufrufe
                 lever = writes.pop(0)
                 if lever == "gruppe":
-                    # Gruppenschreibung (A4-31): der HA-Pfad schreibt dieselben zwei Hebel nacheinander (curve, level)
+                    # Gruppenschreibung: der HA-Pfad schreibt dieselben zwei Hebel nacheinander (curve, level)
                     entries.append(("hebel", "curve", command["params"]["slope"]))
                     entries.append(("hebel", "level", float(command["params"]["shift"])))
                     continue
@@ -139,7 +139,7 @@ def scenario(world, store, clock):
     """Start mit Vorbereitung (aus Eco bzw. Normalprogramm), Tagestick mit neuer Kurve, Abmelden mit Zuruecksetzen.
 
     Nicht abgedeckt (Backlog): das Durchsetzen nach einem Eingriff von aussen (es gibt hier keinen) und der
-    Komfort-Boost aus Spec G4 3."""
+    Komfort-Boost."""
     pipeline = LeverPipeline(store, world.binding, SAFETY, clock=clock)
     clock.advance(BINDING.settle_seconds + 1)
     pipeline.apply_server_values({"curve": 1.1, "level": 2.0, "room_setpoint": 21.0})

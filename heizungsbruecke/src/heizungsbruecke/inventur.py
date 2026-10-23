@@ -1,4 +1,4 @@
-"""Inventur des HA-Hosts (Spec 5c 1.3, G-9): nur Entities, die der Filter des Servers nennt (Plattformen der
+"""Inventur des HA-Hosts (G-9): nur Entities, die der Filter des Servers nennt (Plattformen der
 Hersteller-Integrationen, Domaenen, Domaene/Geraeteklasse), mit den Feldern des Vertrags; Geraete nur, soweit eine
 gewaehlte Entity daran haengt; Handys nur mit den genannten Praefixen. Kein Herstellerwissen. Deaktivierte Entities
 fehlen; Entities ohne Registry-Eintrag (YAML, Template ohne unique_id) zaehlen nur ueber Domaene bzw. Geraeteklasse.
@@ -9,7 +9,7 @@ Gegenprobe in tests/test_inventur.py): `name` ist der Name der Integration (orig
 Kreise erkennt, nicht der vom Nutzer vergebene. config/entity_registry/list liefert keine device_class; dann zaehlt
 das Attribut des Zustands. Inhalte der Inventur gehoeren nie in Logs (Regel 6).
 
-Positivliste (Spec Stufe 3 S5 3.1, A5-30): nach dem Filter des Servers prueft der Host lokal, was ueberhaupt
+Positivliste: nach dem Filter des Servers prueft der Host lokal, was ueberhaupt
 herausgehen darf; ein kompromittierter Server kann so keine Schloesser, Personen oder Standorte abziehen. Verworfenes
 erscheint im Log nur als Anzahl je Domaene."""
 import logging
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 OHNE_REGISTRY = "ohne_registry"
 
-#: Lokale Positivliste (Spec Stufe 3 S5 3.1, A5-30): was der Server-Filter darueber hinaus verlangt, faellt weg. Keine
+#: Lokale Positivliste: was der Server-Filter darueber hinaus verlangt, faellt weg. Keine
 #: Plattformliste (G-7): ein Sensor ohne passende Klasse bleibt nur, wenn seine Plattform etwas Einstellbares liefert.
 ERLAUBTE_DOMAENEN = frozenset({"climate", "number", "select", "weather"})
 ERLAUBTE_BINAER_KLASSEN = frozenset({"battery"})
@@ -60,7 +60,7 @@ def _klasse(entry: dict, attributes: dict):
 
 
 def entity_klasse(registry_entry: Mapping, state: Mapping):
-    """Geraeteklasse einer Entity (Registry-Eintrag, sonst Zustand) -- die eine Stelle, die sie ableitet (A6-02)."""
+    """Geraeteklasse einer Entity (Registry-Eintrag, sonst Zustand) -- die eine Stelle, die sie ableitet."""
     raw = state.get("attributes")
     return _klasse(dict(registry_entry), raw if isinstance(raw, dict) else {})
 
@@ -76,7 +76,7 @@ def _erlaubt(domain: str, klasse, plattform: str, einstellbar: set[str]) -> bool
 
 
 def entity_erlaubt(entity_id: str, registry_entry: Mapping, state: Mapping, einstellbar: set[str]) -> bool:
-    """Besteht die Entity die lokale Positivliste (Inventur und jede Rolle des Dokuments, A6-02)? Die Klasse kommt aus
+    """Besteht die Entity die lokale Positivliste (Inventur und jede Rolle des Dokuments)? Die Klasse kommt aus
     dem Registry-Eintrag, sonst aus dem Zustand (das echte HA liefert sie nur dort); `einstellbar` sind die Plattformen
     aus einstellbare_plattformen."""
     return _erlaubt(entity_id.split(".", 1)[0], entity_klasse(registry_entry, state),

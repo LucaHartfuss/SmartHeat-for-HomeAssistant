@@ -1,5 +1,4 @@
-"""Start, Startfehler und Start-Hilfen des HA-Hosts im Geraete-Pfad (bis 0.36 ueber __main__._start_bridge mit
-options.json): Konfigurationsfehler mit Ruhezustand, Neupruefung und Meldezustand, Warten auf HA, Budget fuer fehlende
+"""Start, Startfehler und Start-Hilfen des HA-Hosts im Geraete-Pfad: Konfigurationsfehler mit Ruhezustand, Neupruefung und Meldezustand, Warten auf HA, Budget fuer fehlende
 Entities und Hilfssensoren, Zeitzone. Die hostneutralen Handler der Laufzeit (Telemetrie, _prime, Verbindungswaechter)
 stehen mit der echten Laufzeit in test_runtime.py, der Einstieg main() in test_main_geraet.py."""
 import logging
@@ -96,7 +95,7 @@ def test_der_grund_eines_konfigurationsfehlers_steht_auf_einer_logzeile(env, cap
 
 
 def test_alte_konfiguration_ohne_parameter_startet_nicht(env, caplog, sleeps):
-    """Review Focus 1 (Spec Stufe 3 S4b 4.3): gespeicherte Konfiguration aus 1.0.0 ohne bindungsparameter:
+    """Gespeicherte Konfiguration aus 1.0.0 ohne bindungsparameter:
     Konfigurationsfehler statt Absturz, nichts wird geschrieben."""
     with caplog.at_level(logging.ERROR):
         result = _start_bridge(env, bindungsparameter=None)
@@ -115,8 +114,8 @@ def test_invalid_daily_trigger_time_is_a_configuration_error(env, caplog, sleeps
 
 
 def test_configuration_error_idles_with_heartbeat_and_rechecks_without_second_push(env, sleeps):
-    """Review Focus 1: kein Exit (Watchdog-Karussell), Lebenszeichen, nach 900 s Neupruefung per Neustart des Hosts
-    (Rueckruf neustart, Spec Stufe 3 S6 4.2), derselbe Fehler meldet nicht erneut. Bis 0.36 ausgeloest von veralteten
+    """Kein Exit (Watchdog-Karussell), Lebenszeichen, nach 900 s Neupruefung per Neustart des Hosts
+    (Rueckruf neustart), derselbe Fehler meldet nicht erneut. Bis 0.36 ausgeloest von veralteten
     Optionen, jetzt von einem ungueltigen Dokument."""
     neustarts = []
 
@@ -149,7 +148,7 @@ def test_repeated_start_error_does_not_push_again(env, sleeps):
 
 
 def test_repeated_helper_failure_with_changing_error_text_does_not_push_again(env, monkeypatch, sleeps):
-    """Review Focus 4: HA vergibt je Lauf eine neue Flow-ID; der Meldezustand darf daran nicht
+    """HA vergibt je Lauf eine neue Flow-ID; der Meldezustand darf daran nicht
     haengen, sonst meldet jeder Neustart erneut."""
     run = {"flow_id": ""}
 
@@ -217,7 +216,7 @@ def test_retry_with_budget_raises_startup_error_after_budget_when_ha_is_reachabl
 
 
 def test_unreachable_ha_never_becomes_a_start_error(sleeps):
-    """Review Focus 3: solange HA nicht antwortet (hier 30 Pruefungen lang, weit ueber dem
+    """Solange HA nicht antwortet (hier 30 Pruefungen lang, weit ueber dem
     Budget von 7 Versuchen), zaehlt das Budget nicht."""
     ha = {"down_checks": 30}
 

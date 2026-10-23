@@ -1,4 +1,4 @@
-"""Drift-Test (Plan G2b-2 Task 2, Roadmap-Restpunkt G2b-1): Die Compose-Fixture des Updater-Integrationstests folgt
+"""Drift-Test (Roadmap-Restpunkt G2b-1): Die Compose-Fixture des Updater-Integrationstests folgt
 gateway/compose/docker-compose.yml bis auf die im Kopf der Fixture genannten Abweichungen. Aendert sich die echte
 Compose-Datei, scheitert dieser Test, bis die Fixture nachgezogen ist."""
 import copy

@@ -1,4 +1,4 @@
-# Ausnahmen fuer vulture (scripts/check.sh, Schritt lint; Stufe 3 S8b, A5-87, K4), Whitelist-Format von vulture.
+# Ausnahmen fuer vulture (scripts/check.sh, Schritt lint, K4), Whitelist-Format von vulture.
 # vulture zaehlt jeden Namen hier als benutzt. Jede Zeile nennt den Grund; keine Zeile ohne Grund. Der Lauf nimmt
 # heizungsbruecke/src mit (der Kern ruft die Treiber- und Host-Methoden des Gateways ueber seine Protocols) und deren
 # Ausnahmen (heizungsbruecke/vulture_ausnahmen.py).

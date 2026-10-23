@@ -1,5 +1,5 @@
 name: Gateway-Image
-# Basis-Image des SmartHeat-Gateways (Plan G2b-2 Task 10): rpi-image-gen auf einem ARM-Runner in einem privilegierten
+# Basis-Image des SmartHeat-Gateways: rpi-image-gen auf einem ARM-Runner in einem privilegierten
 # debian:trixie-Container (gateway/image/make_image.sh). Nur Leserechte, keine Secrets. Aufruf aus release-gateway.yml
 # (Serien-Image ohne SSH) oder von Hand aus einem veroeffentlichten Release (z. B. Pilot-Image mit SSH-Schluessel).
 # Geraete-API- und Portal-Adresse muessen ein https-DNS-Name in der eigenen Zone sein (keine IP, keine AWS-Adresse); die

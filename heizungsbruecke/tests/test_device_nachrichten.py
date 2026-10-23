@@ -1,4 +1,4 @@
-"""Bausteine der Geraetenachrichten (Plan S8a-1 P1): jede Nachricht hat genau die Felder des Vertrags."""
+"""Bausteine der Geraetenachrichten: jede Nachricht hat genau die Felder des Vertrags."""
 import pytest
 
 from smartheat_device import commands, nachrichten, wire
@@ -100,7 +100,7 @@ def test_ergebnis_dokument_mit_fehler():
 
 
 def test_befehls_ergebnis_hat_genau_die_pflichtfelder_des_befehls():
-    # Bruchtest (K2): Literal aus der Spec
+    # Bruchtest: Literal statt Konstante
     body = commands.result_payload("c" * 32, True, {"devices": []}, None)
     assert set(body) == {"schema", "ok", "result", "error", "command_id"}
 

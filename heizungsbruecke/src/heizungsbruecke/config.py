@@ -17,6 +17,6 @@ ROOM_TARGET_PATH = RUNTIME_DIR / "room_target.json"
 ABGEMELDET_PATH = RUNTIME_DIR / "abgemeldet.json"
 AUFRAEUMEN_PATH = DATA_DIR / "aufraeumen.json"
 DEVICE_DATA_DIR = DATA_DIR
-# Rastung des Sicherheitssatzes (Spec Stufe 3 S3 3.3): gleich smartheat_device.device.DEVICE_DIR / smartheat_core.rastung.DATEI
+# Rastung des Sicherheitssatzes: gleich smartheat_device.device.DEVICE_DIR / smartheat_core.rastung.DATEI
 # (ein Test haelt das gleich); die Laufzeit liest sie, der Dokumentspeicher des Geraetekerns schreibt sie.
 RASTUNG_PATH = DEVICE_DATA_DIR / "device" / "sicherheitssatz.json"

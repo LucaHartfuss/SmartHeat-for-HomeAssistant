@@ -1,5 +1,5 @@
-# SmartHeat-Gateway (Spec SHG G2 7.2; ab 0.6.0 Spec 5b 5.3): ein Gateway-Container `runtime` (Geraetekern, Laufzeit,
-# Diagnoseseite), dazu Mosquitto als lokaler Bus fuer Zigbee2MQTT. Agent und Tunnel entfallen; der Draht zum Server ist
+# SmartHeat-Gateway: ein Gateway-Container `runtime` (Geraetekern, Laufzeit,
+# Diagnoseseite), dazu Mosquitto als lokaler Bus fuer Zigbee2MQTT. Der Draht zum Server ist
 # MQTT ueber TLS aus dem Container `runtime`. Gateway-Dienste bauen lokal (build:); der Bundle-Bau ersetzt das durch
 # image: ...@sha256. Host-Ordner unter ${SHG_ROOT:-/var/lib/smartheat}. Start auf dem Geraet:
 #   docker compose -f gateway/compose/docker-compose.yml up -d
@@ -11,7 +11,7 @@ x-hardening: &hardening
   security_opt: ["no-new-privileges:true"]
   tmpfs: [/tmp]
   restart: unless-stopped
-  # Logs ins Journal des Hosts (L4-18): Groesse, Rotation und der Schreibtakt von journald.conf.d/smartheat.conf gelten
+  # Logs ins Journal des Hosts: Groesse, Rotation und der Schreibtakt von journald.conf.d/smartheat.conf gelten
   # auch hier, und ein Stromausfall laesst keine beschaedigte json-Datei zurueck, an der `docker logs` scheitert.
   # Lesen: `docker logs <Dienst>` oder `journalctl CONTAINER_NAME=<Dienst>`.
   logging:
@@ -28,7 +28,7 @@ x-after-init: &after-init
   init: {condition: service_completed_successfully}
 
 services:
-  # Einmaliger Schritt vor allen anderen (Spec G2b-1 3): schreibt Bus-Zugangsdaten, Passwortdatei, ACL, die
+  # Einmaliger Schritt vor allen anderen: schreibt Bus-Zugangsdaten, Passwortdatei, ACL, die
   # Zigbee2MQTT-Grundkonfiguration und legt data/device an. Ohne Netz.
   init:
     <<: *gateway
@@ -47,7 +47,7 @@ services:
     <<: *gateway
     command: ["python", "-m", "smartheat_gateway.runtime_main"]
     networks: [bus, wan]
-    # Nur IPv4 (Audit 4, P-C2 b): ohne Host-Adresse lauscht docker-proxy auch auf [::]:80; die Diagnoseseite soll
+    # Nur IPv4 (P-C2 b): ohne Host-Adresse lauscht docker-proxy auch auf [::]:80; die Diagnoseseite soll
     # ausschliesslich im IPv4-LAN antworten (Firewall: host/nftables.conf).
     ports: ["0.0.0.0:80:8080"]
     # Beim Ende trennt der Prozess den Link sauber (MQTT-DISCONNECT) und wartet bis zu 10 s auf den Geraete-Thread
@@ -89,7 +89,7 @@ services:
     <<: *hardening
     # Zigbee2MQTT 2.14.2 (Index-Digest, amd64 + arm64). Lauf mit Stick erst in G2b (Hardware-Gate).
     # Gleiche uid wie das Gateway-Image: der Init-Schritt schreibt configuration.yaml mit 0600, Zigbee2MQTT liest und
-    # ersetzt sie (GENERATE). Geraetewerte retained (device_options.retain, z2m_config, L4-17).
+    # ersetzt sie (GENERATE). Geraetewerte retained (device_options.retain, z2m_config).
     image: koenkk/zigbee2mqtt:2.14.2@sha256:addbfb08fcef2e4477de1535636118241e10d13e898fbe4d9faba8a4d7396311
     user: "1000:1000"
     group_add: [dialout]

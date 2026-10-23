@@ -1,4 +1,4 @@
-"""Spec Stufe 3 S5 6.1: details der Fehler an den Server, nur in der Form des Vertrags."""
+"""Details der Fehler an den Server, nur in der Form des Vertrags."""
 import math
 
 import pytest

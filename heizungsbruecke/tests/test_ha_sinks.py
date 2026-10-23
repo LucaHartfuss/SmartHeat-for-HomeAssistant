@@ -1,4 +1,4 @@
-"""HA-Sinks fuer Status und Meldungen (Plan SHG G1, Praezisierungen 4, 5)."""
+"""HA-Sinks fuer Status und Meldungen."""
 import logging
 
 from fakes import FREMDTEXT, FREMDTEXT_IM_LOG, FailingServiceHa, FakeHa, logzeilen
@@ -23,7 +23,7 @@ def test_show_and_withdraw_use_the_stable_notification_id():
 
 
 def test_a_failing_push_logs_a_key_with_foreign_text_only_escaped(caplog):
-    """T6-Rest, R-c: der Schluessel `fehler:<Text>` traegt Text des Servers; scheitert ein Notify-Dienst, steht er in
+    """Der Schluessel `fehler:<Text>` traegt Text des Servers; scheitert ein Notify-Dienst, steht er in
     der Warnung nur als Escape."""
     with caplog.at_level(logging.WARNING, logger="heizungsbruecke.ha_sinks"):
         HaNotifySink(FailingServiceHa(), ["notify.kaputt"]).push(f"fehler:{FREMDTEXT}", "Text")

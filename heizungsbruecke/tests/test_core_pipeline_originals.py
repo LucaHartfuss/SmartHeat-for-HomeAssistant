@@ -1,5 +1,5 @@
-"""Hebel-Pipeline, Plan 3b: Ursprungswerte aller angefassten Hebel und Hilfs-Ursprungswerte (Betriebsart,
-Komfort-/Absenk-Soll) -- gemerkt vor dem ersten Schreiben, zurueckgestellt bei Abo-Ende und Abmelden (Spec 5.4)."""
+"""Hebel-Pipeline: Ursprungswerte aller angefassten Hebel und Hilfs-Ursprungswerte (Betriebsart,
+Komfort-/Absenk-Soll) -- gemerkt vor dem ersten Schreiben, zurueckgestellt bei Abo-Ende und Abmelden."""
 import logging
 import math
 
@@ -36,7 +36,7 @@ class Ha:
 
 
 class AuxBinding(HaPlantBinding):
-    """HaPlantBinding mit Hilfswerten wie das Weishaupt-Binding (Task 7), ohne Betriebsart-Umschaltung."""
+    """HaPlantBinding mit Hilfswerten wie das Weishaupt-Binding, ohne Betriebsart-Umschaltung."""
 
     def __init__(self, ha):
         super().__init__(ha, MANIFEST, WEISHAUPT_MODBUS)
@@ -175,10 +175,10 @@ def test_a_successful_restore_clears_the_aux_values_and_is_not_repeated(make_sto
     assert store.state.aux_originals == {**AUX, "mode_select": "Komfort"}
 
 
-# --- Spec Stufe 3 S3 5.2 (5b-W-4): Ursprungswerte des Servers ---------------------------------------------------------
+# --- Ursprungswerte des Servers ---------------------------------------------------------
 
 def test_server_originals_win_for_levers(make_store, clock):
-    """5b-W-4: nach einem Ersetzen hat das neue Geraet SmartHeat-Werte als Ursprung gemerkt; der erste Wert der Anlage
+    """Nach einem Ersetzen hat das neue Geraet SmartHeat-Werte als Ursprung gemerkt; der erste Wert der Anlage
     liegt auf dem Server und gilt."""
     pipeline, store, ha, binding = _setup(
         make_store, clock,
@@ -303,7 +303,7 @@ def test_server_values_do_not_retrigger_a_successful_restore(make_store, clock):
 
 
 def test_replacement_device_without_local_values_does_not_restore_the_server_aux_values(make_store, clock):
-    """Heutiges Verhalten, Restpunkt S3S3-Ersatz: ein Ersatzgeraet, das vor seinem ersten regulaeren Start abgemeldet
+    """Heutiges Verhalten: ein Ersatzgeraet, das vor seinem ersten regulaeren Start abgemeldet
     wird (kein lokal gemerkter Wert, kein Boost, Hebel auf dem Ursprungswert), stellt die Hilfswerte des Servers nicht
     wieder her; die Anlage steht dabei auf einer anderen Betriebsart als der Server-Ursprungswert."""
     pipeline, store, ha, binding = _setup(
@@ -350,7 +350,7 @@ def test_server_lever_values_do_not_retrigger_a_successful_restore(make_store, c
     assert binding.restored == []
 
 
-# --- Mutationsprobe Stufe 3 S4b (A5-22 Rest): halber Schritt beim Ursprungswert, Bereich der Hilfswerte, Zaehlung ---
+# --- Mutationsprobe: halber Schritt beim Ursprungswert, Bereich der Hilfswerte, Zaehlung ---
 
 @pytest.mark.parametrize(("learned", "after"), [
     (18.25, 18.25),  # genau ein halber Schritt (0,5 / 2) neben dem Ursprungswert: gilt als gleich, kein Zuruecksetzen
@@ -394,7 +394,7 @@ def test_the_aux_restore_counts_once_after_the_lever_writes(make_store, clock):
 
 
 def test_unreadable_aux_values_log_the_foreign_error_text_only_escaped(make_store, clock, caplog):
-    """T6-Rest, R-c: der Fehlertext beim Lesen der Hilfswerte aus HA steht nur als Escape im Log."""
+    """Der Fehlertext beim Lesen der Hilfswerte aus HA steht nur als Escape im Log."""
     pipeline, _, _, binding = _setup(make_store, clock)
     binding.aux_error = RuntimeError(FREMDTEXT)
     with caplog.at_level(logging.WARNING, logger="smartheat_core.pipeline"):

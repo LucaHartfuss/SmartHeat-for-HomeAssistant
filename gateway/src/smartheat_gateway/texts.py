@@ -1,4 +1,4 @@
-"""Kundentexte des Gateways (Spec SHG G2 2.1); Gegenstueck zu HA_TEXTS."""
+"""Kundentexte des Gateways; Gegenstueck zu HA_TEXTS."""
 from smartheat_runtime.texts import HostTexts
 
 SHG_TEXTS = HostTexts(

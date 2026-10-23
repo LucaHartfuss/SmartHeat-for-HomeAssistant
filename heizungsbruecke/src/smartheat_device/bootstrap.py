@@ -1,10 +1,10 @@
-"""HTTPS-Bootstrap (Spec 5b 1): register mit CSR liefert Zertifikat, Broker-Endpunkt und Broker-CA, certificate ist
+"""HTTPS-Bootstrap: register mit CSR liefert Zertifikat, Broker-Endpunkt und Broker-CA, certificate ist
 Rettungsweg und Erneuerung. Signiert wie der Vertrag G3 (SHG1, 300-s-Fenster). Der Server antwortet bei jedem
 Anmeldefehler gleich (401), auch fuer ein gesperrtes Geraet: das Geraet wertet "401 auf certificate und register" als
-gesperrt (Plan S1) und versucht es nach GESPERRT_SECONDS erneut, aber nur bei synchroner Uhr. Ohne synchrone Uhr (Pi
+gesperrt und versucht es nach GESPERRT_SECONDS erneut, aber nur bei synchroner Uhr. Ohne synchrone Uhr (Pi
 ohne Echtzeituhr nach einem Stromausfall) liegt der Zeitstempel womoeglich ausserhalb des Fensters: dann kein Urteil,
-sondern ein Versuch nach Backoff (Plan-Praezisierung). Zertifikat, Endpunkt und Uebernahmestatus liegen unter
-<daten>/device/; der Broker-CA wird vertraut, weil sie ueber die HTTPS-Verbindung kam (Plan S1). Ein Zertifikat, das
+sondern ein Versuch nach Backoff. Zertifikat, Endpunkt und Uebernahmestatus liegen unter
+<daten>/device/; der Broker-CA wird vertraut, weil sie ueber die HTTPS-Verbindung kam. Ein Zertifikat, das
 nicht zum eigenen TLS-Schluessel passt, wird nie gespeichert. Logs nennen Route und Status, nie Inhalte (Regel 6)."""
 import json
 import logging
@@ -39,7 +39,7 @@ class BootstrapError(Exception):
 
 
 class NotAuthenticated(BootstrapError):
-    """401: Anmeldefehler, Zeitstempel ausserhalb des Fensters oder gesperrt (fuer alle gleich, Spec 1)."""
+    """401: Anmeldefehler, Zeitstempel ausserhalb des Fensters oder gesperrt (fuer alle gleich)."""
 
 
 class Unavailable(BootstrapError):
@@ -85,7 +85,7 @@ def _antwort(body) -> Antwort:
 
 
 class BootstrapClient:
-    """Signierte Anfragen an register und certificate (Signatur wie die Polling-API, G3 2.1)."""
+    """Signierte Anfragen an register und certificate (Signatur wie die Polling-API)."""
 
     def __init__(self, base_url: str, ident: identity_module.Identity, *, session=None,
                  now: Callable[[], float] = time.time, timeout: float = TIMEOUT_SECONDS) -> None:
@@ -103,7 +103,7 @@ class BootstrapClient:
     def _request(self, route: str, body: dict):
         method, template = wire.ROUTES[route]
         path = template.format(device_id=self._ident.device_id)
-        # allow_nan=False (Testoffensive T2, Nr. 17) und MAX_BODY_BYTES (V1): ein ValueError faengt Bootstrap.holen
+        # allow_nan=False und MAX_BODY_BYTES (V1): ein ValueError faengt Bootstrap.holen
         # (Backoff) bzw. der Befehls-Handler (_new_claim_code, commands._guarded); gesendet wird dann nichts
         data = json.dumps(body, separators=(",", ":"), sort_keys=True, allow_nan=False).encode()
         if len(data) > wire.MAX_BODY_BYTES:
