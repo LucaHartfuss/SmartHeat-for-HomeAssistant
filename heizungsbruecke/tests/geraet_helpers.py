@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import bindung_beispiele
 from bindung_beispiele import parameter
 from device_helpers import SENSOR
-from fakes import FakeClock, FakeHa
+from fakes import KONFIG_EINTRAG, FakeClock, FakeHa
 
 from heizungsbruecke import config, geraet_host
 from heizungsbruecke.geraet_status import GeraetStatus
@@ -23,6 +23,10 @@ from smartheat_runtime import app, aufraeumen, dokument_config, entitlement
 from smartheat_runtime.roles import LEVER_ROLES
 
 _HEBEL = {f"entity_{role}": lever for lever, role in LEVER_ROLES.items()}
+#: Plattform des Kreises je Hebelsatz in den Test-Dokumenten (L4-27/A5-70; als Literal, test_dokument haelt
+#: dokument.SCHREIB_PLATTFORM fest); fakes.FakeHa traegt die Schreibziele mit ihr und fakes.KONFIG_EINTRAG ein.
+KREIS_PLATTFORM = {"vaillant_vrc720": "mypyllant", "weishaupt_wwp": "weishaupt_modbus",
+                   "weishaupt_wwp_basis": "weishaupt_modbus", "viessmann_vicare": "vicare"}
 GERAET_ID = "shg-0000000000000001"
 
 
@@ -33,11 +37,12 @@ def konfiguration_aus_optionen(options: dict) -> dict:
     for key, value in options.items():
         if key.startswith("entity_") and key != "entity_room_target" and value:
             rollen[_HEBEL.get(key, key.removeprefix("entity_"))] = value
-    bindung = {"kreis": {"plattform": "mypyllant", "config_entry": "e1", "anlage": "S", "nummer": "0"},
+    hebelsatz = options.get("lever_set") or "vaillant_vrc720"  # ein unbekannter bleibt im Dokument, Parameter: Vaillant
+    plattform = KREIS_PLATTFORM.get(hebelsatz, "mypyllant")  # ein unbekannter Hebelsatz scheitert schon an bindung
+    bindung = {"kreis": {"plattform": plattform, "config_entry": KONFIG_EINTRAG[plattform], "anlage": "S", "nummer": "0"},
                "rollen": rollen, "batterien": list(options.get("battery_entities", [])),
                "benachrichtigung": list(options.get("notify_services", [])),
                "hinweise_aus": list(options.get("notify_hints_off", []))}
-    hebelsatz = options.get("lever_set") or "vaillant_vrc720"  # ein unbekannter bleibt im Dokument, Parameter: Vaillant
     konfiguration = {
         "anlage": options["tenant_id"], "profil": "vaillant_gastherme_heizkoerper",
         "hebelsatz": hebelsatz, "verteilsystem": options.get("verteilsystem"),

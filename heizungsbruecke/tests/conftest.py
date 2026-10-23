@@ -8,15 +8,13 @@ Beispiel-Datenbank (`.hypothesis/` haelt nur Caches von hypothesis, per .gitigno
 (ein Beispiel der Laufzeit-Tests startet eine ganze Laufzeit). Einzelne Tests setzen keine eigenen Einstellungen
 (`tests/test_hypothesis_profile.py`)."""
 import os
-from types import SimpleNamespace
 
 import pytest
 from hypothesis import HealthCheck, settings
 
 import heizungsbruecke.__main__ as main_module
 from heizungsbruecke import config
-from heizungsbruecke.derived_sensors import DerivedSensors
-from smartheat_runtime import entitlement, telemetry
+from smartheat_runtime import telemetry
 from smartheat_runtime.backup_store import save_backup
 from smartheat_runtime.state import StateStore
 
@@ -66,35 +64,11 @@ def make_store(tmp_path):
 
 @pytest.fixture
 def env(tmp_path, monkeypatch, clock):
-    """Umgebung der Laufzeit-Tests (Dateipfade in tmp_path, Fake-HA, Fake-Trigger-Client, Abo-Status); gestartet wird
-    mit runtime_helpers._start_bridge bzw. _start."""
-    paths = {}
-    for name in ("BACKUP_PATH", "FAILSAFE_PATH", "ENTITLEMENT_PATH", "DERIVED_SENSORS_PATH", "AUFRAEUMEN_PATH",
-                 "RASTUNG_PATH"):
-        paths[name] = tmp_path / f"{name.lower()}.json"
-        monkeypatch.setattr(f"heizungsbruecke.config.{name}", paths[name])
-    runtime_dir = tmp_path / "runtime"
-    for name, value in (("RUNTIME_DIR", runtime_dir), ("ROOM_TARGET_PATH", runtime_dir / "room_target.json"),
-                        ("ABGEMELDET_PATH", runtime_dir / "abgemeldet.json")):
-        paths[name] = value
-        monkeypatch.setattr(f"heizungsbruecke.config.{name}", value)
-    from fakes import FakeHa, trigger_klasse
-    from runtime_helpers import DERIVED
+    """Umgebung der Laufzeit-Tests (runtime_helpers._frische_umgebung in tmp_path); gestartet wird mit
+    runtime_helpers._start_bridge bzw. _start."""
+    from runtime_helpers import _frische_umgebung
 
-    env_derived = {"replaced": ()}
-    monkeypatch.setattr(
-        "heizungsbruecke.derived_sensors.ensure_all",
-        lambda **kwargs: DerivedSensors({**DERIVED, "room_actual": "sensor.room_actual"}, env_derived["replaced"], "fp1"),
-    )
-    # Abo-Status des Konfigurationsdokuments: die Laufzeit liest ihn bei jeder Abo-Pruefung (Boot, Tick-Zustellung,
-    # Fristende) frisch; queries zaehlt diese Pruefungen.
-    abo_state = {"status": entitlement.ACTIVE, "queries": 0}
-    trigger_clients = []
-    monkeypatch.setattr("heizungsbruecke.geraet_trigger.HaTriggerClient", trigger_klasse(trigger_clients))
-    return SimpleNamespace(
-        clock=clock, paths=paths, abo=abo_state, ha=FakeHa(), trigger_clients=trigger_clients, derived=env_derived,
-        geraet=None,
-    )
+    return _frische_umgebung(tmp_path, monkeypatch, clock)
 
 
 @pytest.fixture

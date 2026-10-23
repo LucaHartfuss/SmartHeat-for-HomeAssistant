@@ -172,8 +172,9 @@ class HaHost:
             # Spec Stufe 3 S4b 4.3: ohne gueltige Bindungsparameter kein Start
             description = dokument_config.beschreibung(self._konfiguration)
             _wait_for_required_entities(self._ha_api, b)
-            # A6-02: die Regeln des Annehmens gelten auch fuer eine schon uebernommene Konfiguration, und zwar vor den
-            # Hilfssensoren (derived_sensors baut aus einer Rolle schon ein Template in HA).
+            # A6-02, L4-27: die Regeln des Annehmens (Positivliste, Form je Feld, Schreibziele) gelten auch fuer eine
+            # schon uebernommene Konfiguration, und zwar vor den Hilfssensoren (derived_sensors baut aus einer Rolle
+            # schon ein Template in HA) und vor jedem Schreiben.
             _bindung_pruefen(self._konfiguration)
             ohne_zustand = _rollen_pruefen_mit_wiederholung(self._ha_api, b)
             derived = _ensure_derived_sensors_with_retry(self._ha_api, b, runtime.tenant_id)
@@ -346,10 +347,13 @@ def _bindung_pruefen(konfiguration) -> None:
 
 
 def _rollen_pruefen_mit_wiederholung(ha_api, b: dokument.HaBindung) -> list[tuple[str, str]]:
-    """Lokale Positivliste fuer jede Rolle (A6-02). Ein Urteil ist ein Konfigurationsfehler; nicht pruefbar (HA nicht
-    RUNNING, Soll-Entity, Pflichtrolle oder Raumfuehler ohne Zustand, Registry oder Zustaende scheitern) wird wie
-    fehlende Entities wiederholt, nach dem Budget StartupError. Ergebnis: (Feld, Referenz) der optionalen Lese-Rollen
-    und Batterien ohne Zustand, die der Lauf nicht liest."""
+    """Lokale Positivliste fuer jede Rolle (A6-02) und die Regeln der Schreibziele (dokument.schreibziele_befund:
+    Plattform des Hebelsatzes, ein Config-Entry, Soll-Entity nicht am Geraet eines Schreibziels; L4-27, A5-70). Ein
+    Urteil ist ein Konfigurationsfehler; nicht pruefbar (HA nicht RUNNING, Soll-Entity, Pflichtrolle, Schreibziel oder
+    Raumfuehler ohne Zustand, Schreibziel ohne Registry-Eintrag, Registry oder Zustaende scheitern) wird wie fehlende
+    Entities wiederholt, nach dem Budget StartupError. Ergebnis: (Feld, Referenz) der optionalen Lese-Rollen und
+    Batterien ohne Zustand, die der Lauf nicht liest. Das Zuruecksetzen beim Abmelden (sign_off_parts) prueft die
+    Schreibziele nicht erneut: die Rueckkehr zu den Ursprungswerten ist die sichere Richtung."""
     def _versuch():
         if not ha_api.is_reachable():  # faehrt HA hoch, fehlen Zustaende noch: kein Urteil
             raise config_check.NichtPruefbar

@@ -3,7 +3,7 @@ import logging
 from unittest.mock import MagicMock
 
 import pytest
-from fakes import FakeHa
+from fakes import FakeHa, schreibziel_eintrag
 from geraet_helpers import FakeGeraet, konfiguration_aus_optionen
 from runtime_helpers import OPTIONS, _start_bridge
 
@@ -125,12 +125,21 @@ BASIS = {
 }
 
 
+def _basis(env, zustaende):
+    """Zustaende des Hebelsatzes weishaupt_wwp_basis; seine Heizkurve und Normaltemperatur sind hier
+    number.curve_current und number.shift_current, also Schreibziele von weishaupt_modbus (statt mypyllant)."""
+    env.ha.states.update(zustaende)
+    env.ha.registry = [schreibziel_eintrag(e["entity_id"], "weishaupt_modbus")
+                       if e["entity_id"] in ("number.curve_current", "number.shift_current") else e
+                       for e in env.ha.registry]
+
+
 @pytest.mark.parametrize("rolle_option", ["entity_heat_limit", "entity_curve_current"])
 def test_eine_optionale_hebelrolle_ohne_zustand_wird_nie_fallen_gelassen(env, angelegt, sleeps, rolle_option):
     """Review Fixrunde A: eine Hebelrolle gehoert zur Anlagenidentitaet (lever_refs_identity). Fiele sie weg, meldete
     bind_to_tenant eine andere Anlage und setzte Wiederherstellungspunkt, Originale und Schreibzaehler zurueck. Ein
     Schreibziel ohne Zustand ist daher nicht pruefbar (Wiederholung, StartFailure), nie ungelesen."""
-    env.ha.states.update(BASIS_ZUSTAENDE)
+    _basis(env, BASIS_ZUSTAENDE)
     with pytest.raises(StartFailure) as fehler:
         _host(env, **{**BASIS, rolle_option: "number.swu"}).load()
     assert fehler.value.key == "rollen_nicht_pruefbar"
@@ -139,7 +148,7 @@ def test_eine_optionale_hebelrolle_ohne_zustand_wird_nie_fallen_gelassen(env, an
 
 
 def test_gegenprobe_eine_optionale_hebelrolle_mit_zustand_bleibt_im_manifest(env, angelegt, sleeps):
-    env.ha.states.update({**BASIS_ZUSTAENDE, "number.swu": 18.0})
+    _basis(env, {**BASIS_ZUSTAENDE, "number.swu": 18.0})
     loaded = _host(env, **{**BASIS, "entity_heat_limit": "number.swu"}).load()
     assert loaded.manifest.refs["heat_limit"] == "number.swu" and sleeps == []
 
@@ -147,7 +156,7 @@ def test_gegenprobe_eine_optionale_hebelrolle_mit_zustand_bleibt_im_manifest(env
 def test_eine_fallen_gelassene_lese_rolle_aendert_die_anlagenidentitaet_nicht(env, angelegt, sleeps):
     """Gegenprobe zur Hebelrolle: eine optionale Lese-Rolle (Energie) ohne Zustand startet, wird ungelesen gemeldet, und
     die Kennung aus den Hebelreferenzen bleibt dieselbe wie mit Zustand."""
-    env.ha.states.update(BASIS_ZUSTAENDE)
+    _basis(env, BASIS_ZUSTAENDE)
     ohne = _host(env, **BASIS, entity_energy_thermal_heating="sensor.waerme").load()
     assert "energy_thermal_heating" not in ohne.manifest.refs and sleeps == []
     assert [n.key for n in ohne.notices] == ["entity_fehlt:energy_thermal_heating"]
@@ -284,3 +293,100 @@ def test_ein_attribut_ausser_der_temperatur_startet_nicht(env, angelegt, sleeps)
         _host(env, entity_operating_mode="climate.zone::hvac_action").load()
     assert fehler.value.grund.startswith("operating_mode: ") and "hvac_action" not in fehler.value.grund
     assert angelegt == []
+
+
+
+# --- L4-27/A5-70 (E5): Schreibziele lokal verankert, auch fuer die uebernommene Konfiguration beim Start ---
+
+SCHREIBZIELE = ("number.curve_current", "number.shift_current", "number.min_flow", "number.heat_limit")
+THERME = {"platform": "mypyllant", "config_entry_id": "e1", "device_id": "d-therme"}
+
+
+def _registry(env, eintraege=None):
+    """Registry wie bei client1 (Schreibziele aus OPTIONS: mypyllant, ein Config-Entry, ein Geraet der Therme), dazu
+    `eintraege` (Entity -> Felder; None = kein Eintrag)."""
+    neu = {**dict.fromkeys(SCHREIBZIELE, THERME), **(eintraege or {})}
+    env.ha.registry = [e for e in env.ha.registry if e["entity_id"] not in neu] + [
+        {"entity_id": entity_id, **felder} for entity_id, felder in neu.items() if felder is not None]
+
+
+def _startet_nicht(env, angelegt, sleeps, grund):
+    """Konfigurationsfehler: load wirft ohne Wiederholung, nichts angelegt; die Laufzeit ruht ohne zu schreiben."""
+    with pytest.raises(StartFailure) as fehler:
+        _host(env).load()
+    assert fehler.value.grund == grund
+    assert angelegt == [] and sleeps == []
+    bridge = _start_bridge(env)
+    assert isinstance(bridge, IdleBridge) and bridge.reason == "konfigurationsfehler"
+    assert env.ha.writes == []
+
+
+def test_uebernommenes_schreibziel_fremder_plattform_startet_nicht(env, angelegt, sleeps):
+    """L4-27: eine schon uebernommene Konfiguration, deren Heizgrenze heute eine Entity einer anderen Integration ist
+    (etwa nach einer Umbelegung in HA), regelt nicht und schreibt nichts."""
+    _registry(env, {"number.heat_limit": {**THERME, "platform": "template"}})
+    _startet_nicht(env, angelegt, sleeps,
+                   "heat_limit: diese Entity darf SmartHeat nicht nutzen (lokale Positivliste)")
+
+
+def test_schreibziel_anderer_config_entry_startet_nicht(env, angelegt, sleeps):
+    _registry(env, {"number.min_flow": {**THERME, "config_entry_id": "e2"}})
+    _startet_nicht(env, angelegt, sleeps, "min_flow: diese Entity darf SmartHeat nicht nutzen (lokale Positivliste)")
+
+
+def test_soll_entity_am_geraet_eines_schreibziels_startet_nicht(env, angelegt, sleeps):
+    _registry(env, {"sensor.room_target": THERME})
+    _startet_nicht(env, angelegt, sleeps,
+                   "room_target: diese Entity darf SmartHeat nicht nutzen (lokale Positivliste)")
+
+
+def test_ein_kreis_fremder_plattform_startet_nicht(env, angelegt, sleeps):
+    """A5-70: die Plattform steht lokal je Hebelsatz; ein Dokument mit einer anderen Kreis-Plattform (passend zu
+    Schreibzielen von shelly) startet nicht, statt der Plattform des Servers zu folgen."""
+    shelly = {"platform": "shelly", "config_entry_id": "e-shelly", "device_id": "d-shelly"}
+    _registry(env, dict.fromkeys(SCHREIBZIELE, shelly))
+    konfiguration = konfiguration_aus_optionen(OPTIONS)
+    konfiguration["bindung"]["kreis"] = {**konfiguration["bindung"]["kreis"], "plattform": "shelly",
+                                         "config_entry": "e-shelly"}
+    with pytest.raises(StartFailure) as fehler:
+        HaHost(FakeGeraet(konfiguration), env.ha).load()
+    assert fehler.value.grund == "plattform: diese Entity darf SmartHeat nicht nutzen (lokale Positivliste)"
+    assert angelegt == [] and sleeps == []
+
+
+def test_passende_schreibziele_starten(env, angelegt, sleeps):
+    """Gegenprobe wie client1: alle Schreibziele von mypyllant aus einem Config-Entry, die Soll-Entity an einem anderen
+    Geraet (Thermostat im Wohnzimmer) einer anderen Integration."""
+    _registry(env, {"sensor.room_target": {"platform": "homematicip_local", "config_entry_id": "e2",
+                                           "device_id": "d-wz"}})
+    loaded = _host(env).load()
+    hebel = {loaded.manifest.refs[rolle] for rolle in ("curve_current", "shift_current", "min_flow", "heat_limit")}
+    assert hebel == set(SCHREIBZIELE)
+    assert len(angelegt) == 1 and sleeps == []
+
+
+def test_ein_schreibziel_ohne_registry_eintrag_wird_wiederholt_und_endet_als_startfehler(env, angelegt, sleeps):
+    """Ohne Registry-Eintrag ist ein Schreibziel nicht pruefbar (kein Urteil): Wiederholung wie bei fehlenden
+    Zustaenden, nach dem Budget der Startfehler rollen_nicht_pruefbar mit dem Feld (nie der Entity)."""
+    _registry(env, {"number.shift_current": None})
+    with pytest.raises(StartFailure) as fehler:
+        _host(env).load()
+    assert fehler.value.key == "rollen_nicht_pruefbar" and fehler.value.grund.startswith("room_setpoint: ")
+    assert "number.shift_current" not in fehler.value.grund
+    assert sleeps == list(DERIVED_SENSORS_RETRY_DELAYS_SECONDS) and angelegt == []
+
+
+def test_ein_spaeter_eingetragenes_schreibziel_startet_im_zweiten_versuch(env, angelegt, sleeps, monkeypatch):
+    _registry(env, {"number.shift_current": None})
+    echte_registry = env.ha.entity_registry
+    aufrufe = []
+
+    def registry():
+        aufrufe.append(1)
+        if len(aufrufe) == 2:
+            _registry(env)
+        return echte_registry()
+
+    monkeypatch.setattr(env.ha, "entity_registry", registry)
+    _host(env).load()
+    assert len(aufrufe) == 2 and sleeps == [DERIVED_SENSORS_RETRY_DELAYS_SECONDS[0]] and len(angelegt) == 1

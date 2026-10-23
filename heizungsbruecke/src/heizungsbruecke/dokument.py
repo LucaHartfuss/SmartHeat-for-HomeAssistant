@@ -2,11 +2,13 @@
 der Laufzeit, Raumfuehler, Batterien, Handys, Hinweise); kein Zwischenformat mehr. Der Raum-Soll der Regelung kommt aus
 dem Soll-Speicher (SOLL_REF), die Soll-Entity ist nur Eingang und Anzeige. zuordnung_pruefen ist der HA-Teil der
 lokalen Pruefung (config_check ruft ihn ueber DeviceHost.treiber_pruefen, Spec 5b 3.1): Pflicht-Entities und
-Schreibbarkeit je Hebelsatz, Entities vorhanden, Schreibziele (jeder Hebel der Bindung, nicht nur die Schreibregeln des
-Hebelsatzes) nur von Plattform und Config-Entry des Kreises (A4-11), Soll-Entity nicht am Geraet eines Schreibziels
-(A4-12). Jede gebundene Entity (Soll-Entity, Rollen, Raumfuehler, Batterien) besteht ausserdem die lokale Positivliste
-der Inventur (rollen_pruefen, A6-02). Ob outdoor_temp und die Kennzahl-Rollen fachlich passen, prueft der Server
-(ha_pruefung).
+Schreibbarkeit je Hebelsatz, Entities vorhanden, jede gebundene Entity (Soll-Entity, Rollen, Raumfuehler, Batterien)
+besteht die lokale Positivliste der Inventur (rollen_pruefen, A6-02), dann die Schreibziele (schreibziele_befund).
+Schreibziele (jeder Hebel der Bindung, nicht nur die Schreibregeln des Hebelsatzes, A4-11) kommen nur von der lokal je
+Hebelsatz festgelegten Plattform (SCHREIB_PLATTFORM, A5-70) und alle aus einem Config-Entry (dem des Kreises, wenn er
+eines nennt); die Soll-Entity ist kein Schreibziel und nicht an dessen Geraet (A4-12). Dieselben Regeln gelten beim Start
+fuer die uebernommene Konfiguration (rollen_befund, L4-27). Ob outdoor_temp und die Kennzahl-Rollen fachlich passen,
+prueft der Server (ha_pruefung).
 
 Ist HA nicht erreichbar oder faehrt gerade hoch, ist das kein Urteil: der Server stellt eine abgelehnte Version nicht
 erneut zu, ein Neustart des Hosts haette das Geraet sonst festgesetzt. zuordnung_pruefen wirft dann NichtPruefbar (das
@@ -40,6 +42,16 @@ PFLICHT_ROLLEN: dict[str, tuple[str, ...]] = {
                       "setpoint_comfort", "setpoint_setback"),
     "weishaupt_wwp_basis": ("shift_current", "outdoor_temp", "mode_select", "setpoint_comfort", "setpoint_setback"),
     "viessmann_vicare": ("curve_current", "level_current", "shift_current", "outdoor_temp", "mode_select"),
+}
+#: Plattform der Schreibziele je Hebelsatz (A5-70, Regel 4, Nutzer-Entscheidung E5 2026-10-22): lokal verankert, der
+#: Kreis des Dokuments (kreis.plattform) muss sie nennen, sonst lehnt das Geraet ab (plattform/nicht_erlaubt); auch die
+#: Lese-Rollen ohne Klasse haengen an ihr (_form_erlaubt). Schluessel wie PFLICHT_ROLLEN; ein Contract-Check haelt die
+#: Tabelle gegen den Katalog des Servers.
+SCHREIB_PLATTFORM: dict[str, str] = {
+    "vaillant_vrc720": "mypyllant",
+    "weishaupt_wwp": "weishaupt_modbus",
+    "weishaupt_wwp_basis": "weishaupt_modbus",
+    "viessmann_vicare": "vicare",
 }
 _NUMBER = (re.compile(r"number\.[a-z0-9_]+"), "eine number.*-Entity")
 #: Schreibbarkeit je Hebelsatz (Spec 5.6 "schreibbar"): HaPlantBinding.write kennt nur climate.set_temperature und
@@ -184,13 +196,13 @@ def optionale_felder(b: HaBindung) -> list[str]:
     return list(dict.fromkeys(feld for feld, ref in _refs(b) if ref not in pflicht))
 
 
-#: Klasse "beliebig, aber ohne Klasse nur von der Plattform des Kreises" (Lese-Rollen ohne feste Klasse).
+#: Klasse "beliebig, aber ohne Klasse nur von der Plattform des Hebelsatzes" (Lese-Rollen ohne feste Klasse).
 FREIE_KLASSE = "*"
 _TEMPERATUR = ("sensor", "temperature")
 _FREI = ("sensor", FREIE_KLASSE)
 #: Form je Feld der Bindung (A6-02 je Feld, Spec Rollen je Feld 2): erlaubte (Domaene, Geraeteklasse); Klasse None =
 #: Domaene ohne Klassenpruefung (climate, weather). Zusaetzlich zu inventur.entity_erlaubt. Schreibziele stehen nicht
-#: hier (sie halten SCHREIBREGELN und die Kreis-Plattform); jedes andere Feld ist nicht erlaubt (fail closed). Der Server
+#: hier (sie halten SCHREIBREGELN und schreibziele_befund); jedes andere Feld ist nicht erlaubt (fail closed). Der Server
 #: fuehrt dieselben Regeln in einrichtung/ha_rollen.py, der Contract-Check vergleicht beide.
 ROLLEN_FORM: dict[str, tuple[tuple[str, str | None], ...]] = {
     "room_target": (("climate", None), _TEMPERATUR),
@@ -215,8 +227,9 @@ def _form_domaene(feld: str, ref: str) -> bool:
     return any(domain == erlaubt for erlaubt, _ in ROLLEN_FORM.get(feld, ()))
 
 
-def _form_erlaubt(feld: str, ref: str, registry_entry: Mapping, state: Mapping, kreis_plattform) -> bool:
-    """Mit Zustand: Domaene, Geraeteklasse und bei freier Klasse ohne Klasse die Plattform des Kreises."""
+def _form_erlaubt(feld: str, ref: str, registry_entry: Mapping, state: Mapping, schreib_plattform: str) -> bool:
+    """Mit Zustand: Domaene, Geraeteklasse und bei freier Klasse ohne Klasse die Plattform des Hebelsatzes
+    (SCHREIB_PLATTFORM, nicht kreis.plattform des Servers)."""
     if not _form_domaene(feld, ref):
         return False
     domain = _entity(ref).partition(".")[0]
@@ -227,20 +240,53 @@ def _form_erlaubt(feld: str, ref: str, registry_entry: Mapping, state: Mapping, 
             continue
         if verlangt is None or klasse == verlangt:
             return True
-        if verlangt == FREIE_KLASSE and (klasse is not None or (plattform is not None and plattform == kreis_plattform)):
+        if verlangt == FREIE_KLASSE and (klasse is not None or (plattform is not None and plattform == schreib_plattform)):
             return True
     return False
 
 
+def schreibziele_befund(b: HaBindung, registry: Mapping[str, Mapping]) -> tuple[str, str] | None:
+    """Die Regeln der Schreibziele (A4-11, A4-12, A5-70, L4-27; Regel 4, E5): (feld, "nicht_erlaubt") des ersten
+    Verstosses oder None. Der Kreis nennt die Plattform des Hebelsatzes (SCHREIB_PLATTFORM, sonst Feld plattform); jedes
+    Schreibziel (_schreibziel_rollen) kommt von dieser Plattform, alle aus einem Config-Entry (dem des Kreises, wenn er
+    eines nennt, sonst dem des ersten Schreibziels; ohne Config-Entry nicht erlaubt); die Soll-Entity ist kein
+    Schreibziel und nicht an dessen Geraet. `registry` ist die Entity-Registry je entity_id. Ein Schreibziel ohne
+    Registry-Eintrag ist kein Urteil: NichtPruefbar(feld) (Wiederholung beim Start, fail closed)."""
+    plattform = SCHREIB_PLATTFORM[b.hebelsatz]
+    if b.kreis.get("plattform") != plattform:
+        return "plattform", "nicht_erlaubt"
+    config_entry = b.kreis.get("config_entry")
+    ziele = _schreibziel_rollen(b)
+    geraete: set[str | None] = set()
+    for rolle, ref in ziele:
+        eintrag = registry.get(_entity(ref))
+        if eintrag is None:
+            raise NichtPruefbar(v1_rolle(rolle))
+        eigenes = eintrag.get("config_entry_id")
+        if eintrag.get("platform") != plattform or not isinstance(eigenes, str) or not eigenes or (
+                config_entry is not None and eigenes != config_entry):
+            return v1_rolle(rolle), "nicht_erlaubt"
+        config_entry = eigenes  # ohne Config-Entry im Kreis bindet das erste Schreibziel alle weiteren
+        geraete.add(eintrag.get("device_id"))
+    if b.soll_entity is not None:
+        soll_geraet = (registry.get(_entity(b.soll_entity)) or {}).get("device_id")
+        if _entity(b.soll_entity) in {_entity(ref) for _, ref in ziele} or (
+                soll_geraet is not None and soll_geraet in geraete):
+            return "room_target", "nicht_erlaubt"
+    return None
+
+
 def rollen_befund(b: HaBindung, ha_api) -> tuple[tuple[str, str] | None, list[tuple[str, str]]]:
-    """Lokale Positivliste fuer jede Rolle (A6-02, G-9): ((feld, "nicht_erlaubt") des ersten Verstosses oder None,
-    [(feld, ref) der erlaubten optionalen Lese-Rollen und Batterien ohne Zustand]). Soll-Entity, Rollen, Raumfuehler und
-    Batterien muessen die Positivliste der Inventur bestehen (inventur.entity_erlaubt); `::attribut` zaehlt die Entity
-    davor. Registry und Zustaende werden einmal geladen; die Plattformen mit Einstellbarem zaehlen aus allen aktiven
-    Registry-Eintraegen mit Zustand. Hat Soll-Entity, Pflichtrolle, Schreibziel (auch eine optionale Hebelrolle) oder Raumfuehler keinen Zustand, ist das kein
-    Urteil: NichtPruefbar(feld) (kommt von selbst wieder). Eine optionale Lese-Rolle oder Batterie ohne Zustand (geloescht,
-    umbenannt, deaktiviert) heilt nicht von selbst: ihre Domaene wird aus der ID geprueft, sie steht in der zweiten
-    Liste und wird nicht gelesen. Ohne Soll-Entity entfaellt room_target (lokal_pruefen meldet das)."""
+    """Lokale Positivliste fuer jede Rolle (A6-02, G-9) und die Regeln der Schreibziele (schreibziele_befund, L4-27):
+    ((feld, "nicht_erlaubt") des ersten Verstosses oder None, [(feld, ref) der erlaubten optionalen Lese-Rollen und
+    Batterien ohne Zustand]). Soll-Entity, Rollen, Raumfuehler und Batterien muessen die Positivliste der Inventur
+    bestehen (inventur.entity_erlaubt); `::attribut` zaehlt die Entity davor. Registry und Zustaende werden einmal
+    geladen; die Plattformen mit Einstellbarem zaehlen aus allen aktiven Registry-Eintraegen mit Zustand. Hat
+    Soll-Entity, Pflichtrolle, Schreibziel (auch eine optionale Hebelrolle) oder Raumfuehler keinen Zustand, oder ein
+    Schreibziel keinen Registry-Eintrag, ist das kein Urteil: NichtPruefbar(feld) (kommt von selbst wieder). Eine
+    optionale Lese-Rolle oder Batterie ohne Zustand (geloescht, umbenannt, deaktiviert) heilt nicht von selbst: ihre
+    Domaene wird aus der ID geprueft, sie steht in der zweiten Liste und wird nicht gelesen. Ohne Soll-Entity entfaellt
+    room_target (lokal_pruefen meldet das). Die Schreibziel-Regeln folgen nach der Positivliste aller Felder."""
     registry = {e["entity_id"]: e for e in ha_api.entity_registry() if isinstance(e, Mapping) and "entity_id" in e}
     states = {s["entity_id"]: s for s in ha_api.get_states() if isinstance(s, Mapping) and "entity_id" in s}
     einstellbar = einstellbare_plattformen({entity_id: entry for entity_id, entry in registry.items()
@@ -260,9 +306,9 @@ def rollen_befund(b: HaBindung, ha_api) -> tuple[tuple[str, str] | None, list[tu
             continue
         eintrag = registry.get(entity_id) or {}
         if not entity_erlaubt(entity_id, eintrag, state, einstellbar) or not (
-                schreibziel or _form_erlaubt(feld, ref, eintrag, state, b.kreis.get("plattform"))):
+                schreibziel or _form_erlaubt(feld, ref, eintrag, state, SCHREIB_PLATTFORM[b.hebelsatz])):
             return (feld, "nicht_erlaubt"), ohne_zustand
-    return None, ohne_zustand
+    return schreibziele_befund(b, registry), ohne_zustand
 
 
 def rollen_pruefen(b: HaBindung, ha_api) -> tuple[str, str] | None:
@@ -276,26 +322,10 @@ def _mit_ha(b: HaBindung, ha_api) -> tuple[str, str] | None:
     einem Programmierfehler ValueError werfen, der in zuordnung_pruefen nicht als „HA nicht erreichbar“ gelten darf)."""
     if not ha_api.is_reachable():  # faehrt HA hoch, fehlen die Entities der Integration noch (404): kein Urteil
         raise NichtPruefbar
-    registry = {e.get("entity_id"): e for e in ha_api.entity_registry() if isinstance(e, Mapping)}
     for feld, ref in _refs(b):
         if not ha_api.entity_exists(_entity(ref)):
             return feld, "unbekannt"
-    if verstoss := rollen_pruefen(b, ha_api):
-        return verstoss
-    assert b.soll_entity is not None
-    ziele = _schreibziel_rollen(b)
-    for rolle, ref in ziele:
-        entry = registry.get(_entity(ref)) or {}
-        # Kreis ohne Config-Entry (Feld fehlt): nur die Plattform bindet
-        if entry.get("platform") != b.kreis.get("plattform") or (
-                b.kreis.get("config_entry") is not None and entry.get("config_entry_id") != b.kreis["config_entry"]):
-            return v1_rolle(rolle), "nicht_erlaubt"
-    soll_entry = registry.get(_entity(b.soll_entity)) or {}
-    geraete = {(registry.get(_entity(ref)) or {}).get("device_id") for _, ref in ziele} - {None}
-    if _entity(b.soll_entity) in {_entity(ref) for _, ref in ziele} or (
-            soll_entry.get("device_id") is not None and soll_entry.get("device_id") in geraete):
-        return "room_target", "nicht_erlaubt"
-    return None
+    return rollen_pruefen(b, ha_api)  # Positivliste, dann die Schreibziele (wie beim Start)
 
 
 def _unveraendert(konfiguration, akzeptiert) -> bool:

@@ -262,7 +262,10 @@ def _connect(env, bridge):
 
 
 def _frische_umgebung(verzeichnis: Path, mp, clock):
-    """Wie die Fixture `env` (conftest.py), aber ohne Fixture (hypothesis: ein Beispiel = eine Umgebung)."""
+    """Umgebung der Laufzeit-Tests (Dateipfade in verzeichnis, Fake-HA, Fake-Trigger-Client, Abo-Status), gestartet mit
+    _start_bridge bzw. _start. Die einzige Quelle: die Fixture `env` (conftest.py) baut sich hiermit, hypothesis ruft
+    sie je Beispiel direkt (ein Beispiel = eine Umgebung). `derived["replaced"]` setzt der Test fuer einen Quellwechsel
+    der Hilfssensoren; `abo["queries"]` zaehlt die Abo-Pruefungen der Laufzeit (Boot, Tick-Zustellung, Fristende)."""
     paths = {}
     for name in ("BACKUP_PATH", "FAILSAFE_PATH", "ENTITLEMENT_PATH", "DERIVED_SENSORS_PATH", "AUFRAEUMEN_PATH",
                  "RASTUNG_PATH"):
@@ -273,12 +276,14 @@ def _frische_umgebung(verzeichnis: Path, mp, clock):
                        ("ABGEMELDET_PATH", laufzeit / "abgemeldet.json")):
         paths[name] = wert
         mp.setattr(f"heizungsbruecke.config.{name}", wert)
+    derived = {"replaced": ()}
     mp.setattr("heizungsbruecke.derived_sensors.ensure_all",
-               lambda **kwargs: DerivedSensors({"room_actual": "sensor.room_actual"}, (), "fp1"))
+               lambda **kwargs: DerivedSensors({**DERIVED, "room_actual": "sensor.room_actual"}, derived["replaced"],
+                                               "fp1"))
     trigger = []
     mp.setattr("heizungsbruecke.geraet_trigger.HaTriggerClient", trigger_klasse(trigger))
     return SimpleNamespace(clock=clock, paths=paths, abo={"status": entitlement.ACTIVE, "queries": 0},
-                           ha=FakeHa(), trigger_clients=trigger, derived={"replaced": ()}, geraet=None)
+                           ha=FakeHa(), trigger_clients=trigger, derived=derived, geraet=None)
 
 
 def _endlich(wert) -> bool:

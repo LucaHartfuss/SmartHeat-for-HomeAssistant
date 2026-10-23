@@ -154,6 +154,27 @@ def datei_stand(path: Path) -> tuple[int, int, bytes] | None:
     return stat.st_ino, stat.st_mtime_ns, inhalt
 
 
+#: Registry der Schreibziele, die die Tests binden (L4-27/A5-70: Schreibziele nur von der Plattform des Hebelsatzes,
+#: alle aus einem Config-Entry): je Plattform (dokument.SCHREIB_PLATTFORM) die Entities der Test-Optionen (Vaillant
+#: runtime_helpers.OPTIONS und climate.zone, Weishaupt WEISHAUPT, Viessmann VIESSMANN_OPTIONEN). KONFIG_EINTRAG ist das
+#: Config-Entry je Plattform, das auch der Kreis der Test-Dokumente nennt (geraet_helpers.konfiguration_aus_optionen).
+SCHREIBZIELE = {
+    "mypyllant": ("number.curve_current", "number.shift_current", "number.heat_limit", "number.min_flow", "climate.zone"),
+    "weishaupt_modbus": ("number.hk", "number.normal", "number.swu", "select.betriebsart", "number.komfort",
+                         "number.absenk"),
+    "vicare": ("number.slope", "number.shift", "number.normal_temperature", "climate.heizkreis"),
+}
+KONFIG_EINTRAG = {"mypyllant": "e1", "weishaupt_modbus": "e-weishaupt", "vicare": "e-vicare"}
+
+
+def schreibziel_eintrag(entity_id: str, plattform: str) -> dict:
+    """Registry-Eintrag eines Schreibziels wie im echten HA (Plattform, Config-Entry, Geraet des Waermeerzeugers)."""
+    return {"entity_id": entity_id, "platform": plattform, "config_entry_id": KONFIG_EINTRAG[plattform],
+            "device_id": f"d-{plattform}"}
+
+
+
+
 class FakeHa:
     token = "tok"
 
@@ -175,8 +196,11 @@ class FakeHa:
         self.dismissed = []
         self.events = []
         self.write_error = None
-        # Zuordnungspruefung (Spec 5c 1.3): Entity-/Geraete-Registry, Dienste, in HA unbekannte Entities, HA nicht erreichbar
-        self.registry: list[dict] = []
+        # Zuordnungspruefung (Spec 5c 1.3): Entity-/Geraete-Registry, Dienste, in HA unbekannte Entities, HA nicht erreichbar.
+        # Die Schreibziele der Tests stehen in der Registry (SCHREIBZIELE); ohne Eintrag waere ein Schreibziel beim Start
+        # nicht pruefbar. Ein Eintrag ohne Zustand zaehlt fuer die Positivliste nicht (einstellbare_plattformen).
+        self.registry: list[dict] = [schreibziel_eintrag(entity_id, plattform)
+                                     for plattform, entity_ids in SCHREIBZIELE.items() for entity_id in entity_ids]
         self.devices: list[dict] = []
         self.services: list[dict] = []
         self.missing: set[str] = set()
