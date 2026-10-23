@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Baut in CI das Dev-Root-Layout auf: Root-Repo (tools/) + Nachbar-Repos, damit
-# tools/contract_check.py und tools/release_gate.py wie lokal laufen (Spec 2.3).
+# tools/contract_check.py und tools/release_gate.py wie lokal laufen.
 # Kanonisch in HomeAssistant_Dev_Root/tools/ci/siblings.sh; identische Kopien liegen in den
 # Unter-Repos unter scripts/ci/siblings.sh (Root-check.sh Schritt "copies" prueft das).
 #
