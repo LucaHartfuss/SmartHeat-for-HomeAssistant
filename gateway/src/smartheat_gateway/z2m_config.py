@@ -1,6 +1,7 @@
 """Grundkonfiguration von Zigbee2MQTT 2.x (Spec SHG G2 5), einmal geschrieben, wenn configuration.yaml fehlt;
-danach gehoert die Datei Zigbee2MQTT (es ersetzt GENERATE selbst); nur user/password im Block mqtt: gleicht der
-Init-Schritt danach noch an (sync_credentials, Plan G2b-2). Schreiber ist der Init-Schritt (init.py), nicht mehr
+danach gehoert die Datei Zigbee2MQTT (es ersetzt GENERATE selbst); nur user/password im Block mqtt: (sync_credentials,
+Plan G2b-2) und adapter im Block serial: nach einem Stick-Tausch (sync_adapter, A6-15) gleicht der Init-Schritt
+danach noch an. Schreiber ist der Init-Schritt (init.py), nicht mehr
 der Agent. Die Datei enthaelt die Zugangsdaten von Zigbee2MQTT am lokalen Bus (0600). permit_join steht nicht darin:
 Zigbee2MQTT 2.x kennt die Option nicht mehr, Koppeln ist nach dem Start immer aus (Plan G2a; gegen das echte Image in
 G2b pruefen). device_options.retain: true laesst Zigbee2MQTT Geraetewerte retained senden; nach einem Neustart der
@@ -106,6 +107,44 @@ def sync_credentials(zigbee_dir: Path, username: str, password: str) -> bool:
     if changed:
         dateien.schreiben_text(path, "".join(lines), modus=dateien.PRIVAT)
     return changed
+
+
+_ADAPTER_LINE = re.compile(r"^(?P<indent> +)adapter: *(?P<value>[^#]*?) *(?P<comment>#.*)?$")
+
+
+def sync_adapter(zigbee_dir: Path, adapter: str) -> bool:
+    """Gleicht serial.adapter an den Stick an (A6-15): nach einem Stick-Tausch (zstack <-> ember) meldete die Datei
+    sonst weiter den alten Adapter, und Zigbee2MQTT startete nicht. Aendert nur diese eine Zeile der ersten
+    Einrueckungsebene des Blocks serial: (Kommentar am Zeilenende bleibt, fehlt sie, kommt sie direkt unter serial:);
+    ohne erkennbaren Block serial: bleibt die Datei unberuehrt. True, wenn geschrieben wurde."""
+    path = zigbee_dir / "configuration.yaml"
+    try:
+        lines = path.read_text().splitlines(keepends=True)
+    except (OSError, ValueError):  # fehlt, Verzeichnis, keine Rechte, kein UTF-8: Datei bleibt unberuehrt
+        return False
+    start = next((i for i, line in enumerate(lines) if line.rstrip() == "serial:"), None)
+    if start is None:
+        return False
+    end = next((i for i in range(start + 1, len(lines)) if _is_content(lines[i]) and not lines[i].startswith(" ")),
+               len(lines))
+    body = [i for i in range(start + 1, end) if _is_content(lines[i])]
+    if not body:
+        return False
+    first = lines[body[0]]
+    indent = first[: len(first) - len(first.lstrip(" "))]
+    for i in body:
+        match = _ADAPTER_LINE.match(lines[i].rstrip("\n"))
+        if match is None or match["indent"] != indent:
+            continue
+        if _unquote(match["value"]) == adapter:
+            return False
+        comment = f" {match['comment']}" if match["comment"] else ""
+        lines[i] = f"{indent}adapter: {adapter}{comment}\n"
+        break
+    else:
+        lines.insert(start + 1, f"{indent}adapter: {adapter}\n")
+    dateien.schreiben_text(path, "".join(lines), modus=dateien.PRIVAT)
+    return True
 
 
 _RETAIN_TRUE_IN_LINE = re.compile(r"retain: *[\"']?true\b", re.IGNORECASE)
