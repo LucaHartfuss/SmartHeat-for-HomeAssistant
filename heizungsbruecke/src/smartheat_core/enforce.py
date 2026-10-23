@@ -13,8 +13,8 @@ eingeschwungene Abweichung ist "offen": sie wird weder durchgesetzt noch als Rue
 Ein Eingriff (manual_override: KPI-Werte "levers", "rollen" = verstellte Werte je Hebel, "signatur",
 "gemeldet") laeuft bis zur Rueckkehr; nur ein neuer Hebel oder ein neuer Wert erweitert ihn. Gemeldet
 wird er genau einmal, und erst wenn tatsaechlich zurueckgeschrieben wurde -- uebernimmt die Anlage das
-Rueckschreiben nicht oder scheitert es teilweise, bleibt es bei dieser einen Meldung
-(Plan-Praezisierung "Durchsetzungs-Meldung"). Kontingent-Schutz der Hersteller-Cloud (myVAILLANT
+Rueckschreiben nicht oder scheitert es teilweise, bleibt es bei dieser einen Meldung.
+Kontingent-Schutz der Hersteller-Cloud (myVAILLANT
 sperrt bei zu vielen Aufrufen ~2 h): je Hebel hoechstens ein Schreibversuch (auch ein gescheiterter)
 pro RETRY_SECONDS und BindingDescription.enforce_per_day am Tag (Vaillant write_budget.MAX_PER_DAY, Viessmann 4; eine
 Schreibgruppe wie Viessmann curve+level teilt ein Kontingent); danach bis zum naechsten Tag nur noch eine
@@ -114,7 +114,8 @@ def _deviations(rt: EnforceRuntime) -> tuple[dict, dict, set]:
     der Hebel ist aber noch nicht eingeschwungen (LeverPipeline.settled: eigenes Schreiben oder Start vor
     weniger als settle_seconds, HA hinkt vermutlich nach): weder durchsetzen noch als
     Rueckkehr werten. Die Betriebsart haengt am prepared_lever des Bindings (dessen Schreiben stellt die
-    Zone um); solange die Zone nie vorbereitet wurde (rt.zone_prepared False), ist der prepared_lever offen."""
+    Zone um); solange die Zone nie vorbereitet wurde (rt.zone_prepared False), ist eine Abweichung des
+    prepared_lever offen."""
     tolerance = rt.override.binding.description.enforce_tolerance
     expected = rt.override.expected_values()
     wanted_min_flow = derived.expected(rt)
@@ -125,15 +126,15 @@ def _deviations(rt: EnforceRuntime) -> tuple[dict, dict, set]:
     deviating: dict = {}
     pending: set = set(rt.store.state.deferred_levers)  # Serverwert wegen Tagesbudget noch offen
     for lever, value in expected.items():
-        if lever == prepared and unprepared:
-            # Vor der ersten Vorbereitung gehoert die Zone dem Start: das Schreiben des prepared_lever stellt sie um.
-            pending.add(lever)
         if lever in pending:
             continue
         live = _read(rt, lever)
         if live is None or abs(live - value) <= tolerance[lever] + GLEITKOMMA_REST:
             continue
-        if rt.override.settled(lever):
+        if lever == prepared and unprepared:
+            # Vor der ersten Vorbereitung gehoert die Zone dem Start: das Schreiben des prepared_lever stellt sie um.
+            pending.add(lever)
+        elif rt.override.settled(lever):
             deviating[lever] = live
         else:
             pending.add(lever)
