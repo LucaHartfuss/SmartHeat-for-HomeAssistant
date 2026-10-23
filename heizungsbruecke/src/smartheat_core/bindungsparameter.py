@@ -4,13 +4,13 @@ smartheat_core. Feldnamen = smartheat_device.wire (BINDUNGSPARAMETER_FIELDS, SCH
 ENERGIE_EINHEITEN); ein Test haelt sie gleich, der Kern importiert den Geraetekern nicht. Jeder Fehler ist ein
 `Fehler` (ValueError) mit lokalem Text und details fuer den Server (Spec Stufe 3 S5 6.1); es gibt keine Ersatztabelle
 (Nutzer-Entscheidung 2026-10-15)."""
-import math
 from collections.abc import Mapping
 from typing import TypeGuard
 
 from smartheat_core.binding import ENERGY_DAILY, ENERGY_TOTAL, BindingDescription
 from smartheat_core.levers import LEVERS
 from smartheat_core.verfahren import VERFAHREN, Schreibschutz, Verfahren
+from smartheat_core.zahlen import ist_endliche_zahl
 
 FELDER = ("schritte", "toleranzen", "wartezeit_s", "schreibgruppen", "zurueck", "zurueck_optional", "nur_lesen",
           "zaehler", "schreibschutz", "schemata", "energie")
@@ -34,15 +34,6 @@ class Fehler(ValueError):
         self.details = {"feld": feld, "regel": regel, **zahlen}
 
 
-def _zahl(value) -> bool:
-    if not isinstance(value, int | float) or isinstance(value, bool):
-        return False
-    try:
-        return math.isfinite(value)
-    except OverflowError:  # JSON liefert beliebig grosse Ganzzahlen
-        return False
-
-
 def _ganz(value) -> TypeGuard[int]:
     return isinstance(value, int) and not isinstance(value, bool)
 
@@ -55,7 +46,7 @@ def _hebel(value, erlaubt, feld: str) -> tuple[str, ...]:
 
 
 def _zahlen_je_hebel(value, hebel, feld: str) -> dict[str, float]:
-    if not isinstance(value, Mapping) or set(value) != set(hebel) or not all(_zahl(v) for v in value.values()):
+    if not isinstance(value, Mapping) or set(value) != set(hebel) or not all(ist_endliche_zahl(v) for v in value.values()):
         raise Fehler(f"Das Feld {feld} der Bindungsparameter passt nicht zum Hebelsatz.", feld, "ungueltig")
     return {lever: float(v) for lever, v in value.items()}
 
@@ -98,7 +89,7 @@ def _schemata(value, verfahren: Verfahren) -> dict:
         raise Fehler("Das Feld schemata.praefixe der Bindungsparameter nennt ein Schema, das dieses Gerät "
                      "nicht kennt.", "schemata", "ungueltig")
     if not isinstance(bereiche, Mapping) or set(bereiche) != set(praefixe) or not all(
-            isinstance(b, list) and len(b) == 2 and all(_zahl(x) for x in b) and b[0] <= b[1] for b in bereiche.values()):
+            isinstance(b, list) and len(b) == 2 and all(ist_endliche_zahl(x) for x in b) and b[0] <= b[1] for b in bereiche.values()):
         raise Fehler("Das Feld schemata.normal_bereich der Bindungsparameter ist ungültig.", "schemata", "ungueltig")
     return {"praefixe": tuple(praefixe), "normal_bereich": {p: (float(b[0]), float(b[1])) for p, b in bereiche.items()}}
 
@@ -134,7 +125,7 @@ def beschreibung(hebelsatz: str, parameter) -> BindingDescription:
             raise Fehler(f"Die Toleranz für {lever} in den Bindungsparametern muss größer 0 und höchstens die "
                          "Schrittweite sein.", "toleranzen", "bereich", max=schritte[lever])
     wartezeit = parameter["wartezeit_s"]
-    if not (_zahl(wartezeit) and WARTEZEIT_S[0] <= wartezeit <= WARTEZEIT_S[1]):
+    if not (ist_endliche_zahl(wartezeit) and WARTEZEIT_S[0] <= wartezeit <= WARTEZEIT_S[1]):
         raise Fehler(f"Die Wartezeit in den Bindungsparametern muss zwischen {WARTEZEIT_S[0]} und {WARTEZEIT_S[1]} "
                      "Sekunden liegen.", "wartezeit_s", "bereich", min=WARTEZEIT_S[0], max=WARTEZEIT_S[1])
     gruppen = parameter["schreibgruppen"]

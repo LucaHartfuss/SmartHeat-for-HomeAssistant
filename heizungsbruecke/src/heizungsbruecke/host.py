@@ -23,7 +23,7 @@ from heizungsbruecke.manifest import build_manifest, entity_ref
 from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core import config_check, wallclock
 from smartheat_core.logtext import lesbar
-from smartheat_runtime import aufraeumen, dokument_config
+from smartheat_runtime import dokument_config
 from smartheat_runtime.app import Loaded, Notice, RestoreParts, StartFailure
 from smartheat_runtime.dokument_config import RECONFIGURE_HINT, ConfigError
 from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
@@ -86,8 +86,7 @@ class HaHost:
         self._geraet, self._ha_api, self._clock = geraet, ha_api, clock
         # Spec Stufe 3 S3 Abschnitt 4: steht nach einer leeren Konfiguration das Zuruecksetzen aus, laeuft die Laufzeit
         # mit der alten Konfiguration aus der Aufraeum-Markierung im Modus abgemeldet.
-        self._konfiguration, self._leer_abmelden = aufraeumen.laufzeit_konfiguration(
-            geraet.konfiguration(), config.AUFRAEUMEN_PATH)
+        self._konfiguration, self._leer_abmelden = geraet.laufzeit_konfiguration()
         self._bindung: dokument.HaBindung | None = None
         self._runtime: RuntimeConfig | None = None
         self.store: TargetStore | None = None
@@ -137,12 +136,7 @@ class HaHost:
         self._geraet.ursprungswerte_merken(werte)
 
     def ursprungswerte_server(self) -> dict:
-        """Steht das Zuruecksetzen nach einer leeren Konfiguration aus, gelten die Werte der Markierung -- auch wenn
-        inzwischen eine neue Einrichtung (womoeglich einer anderen Anlage) eingetroffen ist; sonst die aktuelle."""
-        if self._leer_abmelden:
-            return dokument_config.ursprungswerte(self._konfiguration)
-        aktuell = self._geraet.konfiguration()
-        return dokument_config.ursprungswerte(aktuell if dokument_config.eingerichtet(aktuell) else self._konfiguration)
+        return self._geraet.ursprungswerte_server(self._konfiguration, self._leer_abmelden)
 
     def sign_off_parts(self) -> RestoreParts | None:
         """Es wird kein Hilfssensor angelegt: fuer das Zuruecksetzen reichen die Hebel und die Clamps."""

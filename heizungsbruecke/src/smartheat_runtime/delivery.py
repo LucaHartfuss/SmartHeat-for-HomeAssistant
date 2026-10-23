@@ -411,6 +411,11 @@ def _ack_timeout(state, event):
         querying = replace(pending, phase=PHASE_QUERYING_ENTITLEMENT)
         return replace(state, pending=querying), [QueryEntitlement(pending.seq)]
     new_state, retry = _retry(state, SERVER_RETRY_DELAYS_SECONDS, ORIGIN_SERVER)
+    if state.server_failures == NOTBETRIEB_AFTER_SERVER_FAILURES and state.notbetrieb:
+        # Stiller Notbetrieb (Neustart mit altem Notbetrieb, Abo unbekannt): der Pruef-Tick bleibt zweimal
+        # unbeantwortet, der Server schweigt also wirklich. Der Notifier meldet nur beim Zustandswechsel, eine
+        # schon offene Meldung bleibt still; der Notbetrieb im Betrieb hat die Schwelle beim Eintritt ueberschritten.
+        return new_state, [Notify(NOTIFY_NOTBETRIEB_ON), retry]
     return new_state, [retry]
 
 

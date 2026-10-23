@@ -77,30 +77,44 @@ class RegulationWorker:
 
     def run(self) -> NoReturn:
         """Verarbeitet Ereignisse, bis der Prozess beendet wird (das Add-on beendet sich seit
-        0.20.0 nie selbst, Endzustaende sind ein Ruhezustand). Faellige Planeintraege gehen neuen
-        Queue-Eintraegen vor."""
+        0.20.0 nie selbst, Endzustaende sind ein Ruhezustand). Je Runde gehen erst die beim Rundenbeginn
+        wartenden Queue-Eintraege, dann die faelligen Planeintraege; eine eingetroffene Antwort geht so einem
+        Timeout vor, der erst waehrend eines langen Handlers faellig wurde, und keine der beiden Seiten
+        haelt die andere auf. Ohne Arbeit wartet die Runde auf den naechsten Queue-Eintrag oder Planeintrag."""
         while True:
-            event = self._pop_due()
-            if event is None:
-                try:
-                    item = self._queue.get(timeout=self._seconds_until_next_due())
-                except queue.Empty:
-                    continue
-                event = self._resolve(item)
-            self._dispatch(event)
+            if self._run_round():
+                continue
+            try:
+                item = self._queue.get(timeout=self._seconds_until_next_due())
+            except queue.Empty:
+                continue
+            self._dispatch(self._resolve(item))
 
     def run_pending(self) -> None:
         """Verarbeitet alles, was jetzt faellig bzw. eingestellt ist, ohne zu blockieren
         (Test-Einstieg mit Fake-Uhr)."""
-        while True:
-            event = self._pop_due()
-            if event is None:
-                try:
-                    item = self._queue.get_nowait()
-                except queue.Empty:
-                    return
-                event = self._resolve(item)
+        while self._run_round():
+            pass
+
+    def _run_round(self) -> bool:
+        """Eine Runde: die beim Beginn wartenden Queue-Eintraege (`qsize()`), danach die dann faelligen
+        Planeintraege. Was ein Handler neu einstellt oder plant, kommt erst in der naechsten Runde. True, wenn
+        etwas verarbeitet wurde."""
+        ran = False
+        for _ in range(self._queue.qsize()):
+            try:
+                item = self._queue.get_nowait()
+            except queue.Empty:
+                break
+            self._dispatch(self._resolve(item))
+            ran = True
+        due = []
+        while (event := self._pop_due()) is not None:
+            due.append(event)
+        for event in due:
             self._dispatch(event)
+            ran = True
+        return ran
 
     def _pop_due(self) -> Event | None:
         if self._schedule and self._schedule[0][0] <= self._clock():

@@ -62,7 +62,8 @@ def run_local_check(rt: Runtime) -> None:
     now = wallclock.now()
     # Nicht lesbarer oder zeitzonenloser Zeitstempel = unbekannt (wie ein Boost vor dem Update), nie ein Abbruch.
     since = parse_since(state.boost_since)
-    expired = state.boost_active and comfort_boost_expired(since, now)
+    mono_seit = None if rt.boost_mono_start is None else rt.clock() - rt.boost_mono_start
+    expired = state.boost_active and comfort_boost_expired(since, now, mono_seit)
     if expired:
         logger.info("Comfort-Boost endet nach der Hoechstdauer (seit %s)", state.boost_since)
     safety = rt.override.safety
@@ -97,12 +98,16 @@ def _track_boost_since(rt: Runtime, now: datetime, was_active: bool) -> None:
     """Beginn des Comfort-Boosts merken bzw. loeschen. Startet der Boost jetzt (vorher inaktiv), gilt `now` und ein
     uebrig gebliebener alter Zeitstempel wird ueberschrieben; ein laufender Boost behaelt seinen Zeitstempel, ein
     vor dem Update persistierter (ohne oder mit unlesbarem Zeitstempel) laeuft ab jetzt. update() statt
-    update_saved(): bei einem Schreibfehler bleibt der Wert im Speicher, die 4-h-Grenze greift trotzdem."""
+    update_saved(): bei einem Schreibfehler bleibt der Wert im Speicher, die 4-h-Grenze greift trotzdem. Dazu der
+    Stand der monotonen Uhr beim Start in diesem Prozess (A6-35 a); ein Boost aus einem frueheren Lauf hat ihn nicht."""
     state = rt.store.state
     if not state.boost_active:
         since = None
+        rt.boost_mono_start = None
     elif not was_active or parse_since(state.boost_since) is None:
         since = now.isoformat()
+        if not was_active:
+            rt.boost_mono_start = rt.clock()
     else:
         since = state.boost_since
     if since != state.boost_since:

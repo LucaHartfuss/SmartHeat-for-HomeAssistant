@@ -110,8 +110,10 @@ def geraet_env(env, tmp_path, monkeypatch):  # noqa: F811 - env ist die Fixture 
     return env
 
 
-def _verdrahtet(env, device, supervisor=None):
+def _verdrahtet(env, device, supervisor=None, *, markierung=None):
+    """markierung: Rueckgabe von main_module.aufraeumen (wie _vorbereiten sie an den Geraete-Host reicht)."""
     geraet = main_module.HaDeviceHost(env.ha, supervisor or FakeSupervisor())
+    geraet.start_markierung = markierung
     status = main_module.verdrahten(geraet, device, env.ha, supervisor or FakeSupervisor())
     return geraet, status
 
@@ -508,6 +510,16 @@ def test_vorbereiten_wires_device_and_host_without_starting_the_device(geraet_en
     geraet, device, status = main_module._vorbereiten(geraet_env.ha, FakeSupervisor(), "https://labor.example.test")
     assert geraet.device is device and device.host is geraet and geraet.status_sink is status
     assert geraet.claim_code() == device.identity.claim_code
+    assert geraet.start_markierung is None  # keine Markierung: nichts zurueckzusetzen
+
+
+def test_vorbereiten_reicht_die_ausstehende_markierung_an_den_geraete_host(geraet_env):
+    """T4-Markierung-Zweitlesen: das Aufraeumen liest die Markierung einmal; steht das Zuruecksetzen aus, bekommt sie der
+    Geraete-Host als start_markierung (die Laufzeit liest die Datei nicht erneut)."""
+    aufraeumen_markierung.markieren(config.AUFRAEUMEN_PATH, ALTE)
+    geraet, _, _ = main_module._vorbereiten(geraet_env.ha, FakeSupervisor(), "https://labor.example.test")
+    assert geraet.start_markierung == aufraeumen_markierung.Markierung("alt", ALTE, False)
+    assert config.AUFRAEUMEN_PATH.exists()  # nichts geloescht, das Zuruecksetzen steht aus
 
 
 # --- Aufraeumen nach dem Entfernen ---
@@ -753,9 +765,9 @@ def test_an_empty_configuration_resets_then_restarts_and_the_next_start_cleans_u
     device = FakeDevice({**konfiguration, "anlage": None})
     ha = DeletingHa()
 
-    main_module.aufraeumen(ha)
+    markierung = main_module.aufraeumen(ha)
     assert config.BACKUP_PATH.exists() and ha.deleted == []
-    geraet, status = _verdrahtet(geraet_env, device)
+    geraet, status = _verdrahtet(geraet_env, device, markierung=markierung)
     result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
     assert isinstance(result, app.IdleBridge) and result.reason == "abgemeldet"
     assert geraet_env.ha.writes == [("number.curve_current", 0.9), ("number.shift_current", 22.0)]
@@ -789,8 +801,8 @@ def test_a_marker_that_does_not_fit_the_lock_stays_on_reset_and_nothing_is_delet
     ha = DeletingHa()
 
     for _ in range(2):  # zweiter Durchgang: Neustart des Add-ons mit demselben Stand
-        main_module.aufraeumen(ha)
-        geraet, status = _verdrahtet(geraet_env, device)
+        markierung = main_module.aufraeumen(ha)
+        geraet, status = _verdrahtet(geraet_env, device, markierung=markierung)
         result, _ = main_module.start(geraet, device, geraet_env.ha, status, geraet_env.clock)
         assert isinstance(result, app.IdleBridge) and result.reason == "abgemeldet"
         geraet_env.clock.advance(3 * 300)

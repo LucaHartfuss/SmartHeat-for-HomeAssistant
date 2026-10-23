@@ -13,13 +13,14 @@ from pathlib import Path
 from typing import Protocol
 
 from smartheat_core import derived, enforce, wallclock, write_budget
-from smartheat_core.binding import PlantBinding
+from smartheat_core.binding import BindingDescription, PlantBinding
 from smartheat_core.logtext import lesbar
 from smartheat_core.pipeline import LeverPipeline, WriteBudgetExhausted
 from smartheat_core.safety import LocalSafety
 from smartheat_runtime import (
     abo,
     aufraeumen,
+    aussentemperatur,
     battery,
     datentraeger,
     delivery,
@@ -44,7 +45,6 @@ from smartheat_runtime.roles import ChannelManifest
 from smartheat_runtime.runtime import (
     EV_ACK_TIMEOUT,
     EV_AUFRAEUMEN,
-    EV_AUTH_REJECTED,
     EV_CONNECTION_CHECK,
     EV_GRACE_CHECK,
     EV_HEALTH,
@@ -220,7 +220,9 @@ def _fail_start(notifier, status, clock, grund: str, key: str | None = None, *, 
     message = CONFIG_ERROR_MESSAGE.format(grund=grund)
     if (store is not None and (store.state.boost_active or store.state.emergency_boost_active)
             and not _end_boosts(store, parts, clock)):
-        message = CONFIG_ERROR_BOOST_MESSAGE.format(grund=grund, werte=_restore_values_text(store.state))
+        description = None if parts is None else parts.binding.description
+        message = CONFIG_ERROR_BOOST_MESSAGE.format(
+            grund=grund, werte=_restore_values_text(store.state, description, abmelden=False))
     if not notifier.notify("konfiguration", f"fehler:{grund if key is None else key}", message, critical=True):
         notifier.refresh_persistent("konfiguration", message)
     status.update(konfigurationsfehler=True, grund=grund)
@@ -280,13 +282,14 @@ def _sign_off(parts: RestoreParts | None, store, notifier, status, clock, retry_
     if restorer is None:
         grund = SIGN_OFF_INVALID_CONFIG
         if boosting:
-            _report_sign_off_restore(notifier, SIGN_OFF_NOT_RESTORED_MESSAGE, store.state)
+            _report_sign_off_restore(notifier, SIGN_OFF_NOT_RESTORED_MESSAGE, store.state, None)
     elif restored:
         grund = None
         abo.report_restore(notifier, ok=True)
     else:
         grund = SIGN_OFF_RESTORE_FAILED.format(seconds=retry_seconds)
-        _report_sign_off_restore(notifier, SIGN_OFF_RESTORE_FAILED_MESSAGE, store.state)
+        assert parts is not None  # restorer entsteht nur mit parts
+        _report_sign_off_restore(notifier, SIGN_OFF_RESTORE_FAILED_MESSAGE, store.state, parts.binding.description)
     status.update(abgemeldet=True, grund=grund)
     bridge = _idle(clock, status, STATUS_ABGEMELDET, neustart=neustart)
     if restored:
@@ -310,24 +313,33 @@ def _hint(notifier, key: str, state: str, message: str) -> None:
     notifier.notify(key, state, message, critical=False)
 
 
-def _report_sign_off_restore(notifier, template: str, state) -> None:
+def _report_sign_off_restore(notifier, template: str, state, description: BindingDescription | None) -> None:
     """Kritische Meldung mit den Werten des Wiederherstellungspunkts, einmal mit Push; bei jedem
     weiteren Start (Neustart, Zuruecksetzen scheitert weiter) nur die offene Meldung neu, die der
     Host (HA) nicht speichert."""
-    message = template.format(werte=_restore_values_text(state))
+    message = template.format(werte=_restore_values_text(state, description, abmelden=True))
     if not notifier.notify(abo.RESTORE_KEY, abo.RESTORE_FAILED_STATE, message, critical=True):
         notifier.refresh_persistent(abo.RESTORE_KEY, message)
 
 
-def _restore_values_text(state) -> str:
-    parts = [
-        f"{label} {value:g}".replace(".", ",")
-        for label, value in (
-            ("Kurve", state.restore_point.get("curve")),
-            ("Parallelverschiebung", state.restore_point.get("room_setpoint")),
-        )
-        if value is not None
-    ]
+# Ohne Beschreibung (Konfiguration ungueltig) kennt die Meldung die Anzeigenamen der Anlage nicht.
+_NEUTRALE_NAMEN = {"curve": "Heizkurve", "level": "Niveau", "room_setpoint": "Raum-Soll", "heat_limit": "Heizgrenze"}
+
+
+def _restore_values_text(state, description: BindingDescription | None, *, abmelden: bool) -> str:
+    """Die Werte, die der Kunde von Hand einstellen soll: jeder Hebel des Hebelsatzes mit seinem Anzeigenamen
+    (A6-11). Beim Abmelden gehen die Hebel aus restore_originals auf ihren Ursprungswert zurueck (restore_and_clear),
+    alle anderen und jeder Fall ausser dem Abmelden auf den Wiederherstellungspunkt; fehlt der Wert dort, gilt der
+    Ursprungswert. Ohne Beschreibung stehen die Werte des Wiederherstellungspunkts unter neutralen Namen."""
+    if description is None:
+        labelled = [(_NEUTRALE_NAMEN[lever], state.restore_point.get(lever)) for lever in _NEUTRALE_NAMEN]
+    else:
+        labelled = []
+        for lever in description.lever_set.levers:
+            point, original = state.restore_point.get(lever), state.originals.get(lever)
+            value = original if abmelden and lever in description.restore_originals and original is not None else point
+            labelled.append((description.labels[lever], value if value is not None else original))
+    parts = [f"{label} {value:g}".replace(".", ",") for label, value in labelled if value is not None]
     return ", ".join(parts) if parts else "Werte unbekannt"
 
 
@@ -417,10 +429,6 @@ def _on_retry_due(rt: Runtime, event: Event) -> None:
     ticks.deliver(rt, delivery.RetryDue(seq=event.data["seq"], gen=event.data["gen"]))
 
 
-def _on_auth_rejected(rt: Runtime, event: Event) -> None:
-    abo.handle_auth_rejected(rt)
-
-
 def _on_watchdog(rt: Runtime, event: Event) -> None:
     """Fallback bei getrenntem Trigger-Eingang: Cache frisch (ohne Entprellung) lesen, dann
     lokaler Check. Bei verbundenem Trigger-Client passiert nichts."""
@@ -492,7 +500,8 @@ def _on_health(rt: Runtime, event: Event) -> None:
         ticks.deliver(rt, delivery.StorageWritable())  # wartet ein Tick am Datentraeger, jetzt erneut (TP12b)
     if rt.store.state.abo_finished:
         return
-    for check in (battery.check_batteries, room_sensors.check_room_sensors, enforce.check_manual_override):
+    for check in (battery.check_batteries, room_sensors.check_room_sensors, aussentemperatur.check,
+                  enforce.check_manual_override):
         try:
             check(rt)
         except Exception:
@@ -500,18 +509,12 @@ def _on_health(rt: Runtime, event: Event) -> None:
 
 
 def _on_mqtt_connected(rt: Runtime, event: Event) -> None:
-    """Der erste Connect schliesst den Start ab (Status regelt); jeder Connect hebt eine
-    abgelehnte Anmeldung auf."""
+    """Der erste Connect schliesst den Start ab (Status regelt)."""
     status = rt.status
     assert status is not None  # beim Boot gesetzt
-    rt.auth_rejected_queried_at = None
-    rt.auth_rejected_last_status = None
     rt.connection_failing_queried_at = None
-    if status.flags.zugang_abgelehnt:
-        status.update(zugang_abgelehnt=False, grund=None, gestartet=True)
-    elif not status.flags.gestartet:
+    if not status.flags.gestartet:
         status.update(gestartet=True)
-    rt.notifier.notify("zugang", STATE_OK, abo.ACCESS_OK_MESSAGE, critical=True)
     ticks.deliver(rt, delivery.MqttConnected())
 
 
@@ -542,7 +545,6 @@ def _register_handlers(rt: Runtime, melder: Callable[[], None]) -> None:
     handlers = {
         EV_LOCAL_CHECK: _on_local_check,
         EV_SETPOINTS: _on_setpoints,
-        EV_AUTH_REJECTED: _on_auth_rejected,
         EV_ACK_TIMEOUT: _on_ack_timeout,
         EV_RETRY_DUE: _on_retry_due,
         EV_MQTT_CONNECTED: _on_mqtt_connected,

@@ -285,7 +285,7 @@ _FORMEN = [lambda zahl: zahl, lambda zahl: [zahl], lambda zahl: {"x": zahl}, lam
 
 #: Felder, die der Leser nicht auf Typ und Zahl prueft (Befund Task 13, niedrig, Restpunkt TO-client-kern-T8): `mindest_software`
 #: und `ts` liest im Geraet keine Stelle als Zahl; `ursprungswerte` liest nur die Pipeline und filtert dort jede nicht
-#: endliche Zahl (`_is_finite_number`, Rueckweg auf den lokalen Wert) und klemmt auf die lokalen Grenzen. Eine leere Konfiguration ist "immer gueltig" (nur `anlage` None zaehlt):
+#: endliche Zahl (`ist_endliche_zahl`, Rueckweg auf den lokalen Wert) und klemmt auf die lokalen Grenzen. Eine leere Konfiguration ist "immer gueltig" (nur `anlage` None zaehlt):
 #: sie fehlt in dieser Aufzaehlung ganz.
 UNGEPRUEFT = {"konfiguration": ("mindest_software", "ursprungswerte"),
               "konfiguration_mit_ursprung": ("mindest_software", "ursprungswerte"), "bedienung": ("ts",)}

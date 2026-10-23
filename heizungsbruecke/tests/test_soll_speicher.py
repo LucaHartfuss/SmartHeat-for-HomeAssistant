@@ -4,15 +4,17 @@ import stat
 
 import pytest
 
-from smartheat_device import documents
+from smartheat_device import wire
 from smartheat_runtime.soll_speicher import (
+    BEDIENBEREICH_MAX,
+    BEDIENBEREICH_MIN,
+    BEDIENBEREICH_STEP,
     ECHO_WINDOW_SECONDS,
     PENDING_SECONDS,
     SOURCE_LOKAL,
     SOURCE_PORTAL,
     SOURCE_THERMOSTAT,
     TargetStore,
-    im_bedienbereich,
     is_valid_portal_target,
 )
 
@@ -168,13 +170,11 @@ def test_a_limited_wish_keeps_the_thermostat_as_source(tmp_path, clock):
     assert not store.begrenzen(15.0)
 
 
-@pytest.mark.parametrize("value", [
-    15, 15.0, 25, 25.0, 21.5, 14.99, 25.01, 14.5, 25.5, 21.3, 0, -1, 1e308, 10**400, True, False, None, "21", [21.0],
-    float("nan"), float("inf"), float("-inf"), *[15 + step * 0.1 for step in range(0, 101)],
-])
-def test_bedienbereich_equals_the_device_rule(value):
-    """Die Laufzeit importiert smartheat_device nicht (Reinheit): die lokale Kopie muss dieselbe Regel sein."""
-    assert im_bedienbereich(value) is documents.im_bedienbereich(value)
+def test_bedienbereich_gleich_dem_vertrag():
+    """Der Bedienbereich der Laufzeit ist der des Vertrags (smartheat_device.wire, Spec 5b 3.2); documents.py prueft mit
+    derselben Funktion (5c-D-10), es gibt keine zweite Kopie mehr."""
+    assert (wire.RAUM_SOLL_MIN, wire.RAUM_SOLL_MAX, wire.RAUM_SOLL_STEP) == (
+        BEDIENBEREICH_MIN, BEDIENBEREICH_MAX, BEDIENBEREICH_STEP)
 
 
 def test_lokal_applies_at_once_without_echo_check(tmp_path, clock):

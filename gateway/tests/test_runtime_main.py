@@ -507,6 +507,18 @@ def test_vorbereiten_returns_host_and_device_with_the_diagnosis_page_up(world, v
     assert vor_dem_start.pausen == [] and vor_dem_start.alive.exists()
 
 
+def test_vorbereiten_reicht_die_ausstehende_markierung_an_den_geraete_host(world, vor_dem_start, monkeypatch):
+    """T4-Markierung-Zweitlesen: das Aufraeumen liest die Markierung einmal; steht das Zuruecksetzen aus, bekommt sie der
+    Geraete-Host als start_markierung (die Laufzeit liest die Datei nicht erneut); sonst bleibt sie leer."""
+    monkeypatch.setattr(runtime_main.diagnose, "start_server", lambda *args: None)
+    geraet, _ = runtime_main.vorbereiten(world.paths, vor_dem_start.mirror)
+    assert geraet.start_markierung is None
+    aufraeumen.markieren(world.paths.aufraeumen, konfiguration())
+    geraet, _ = runtime_main.vorbereiten(world.paths, vor_dem_start.mirror)
+    assert geraet.start_markierung == aufraeumen.Markierung("test-tenant", konfiguration(), False)
+    assert world.paths.aufraeumen.exists()  # nichts geloescht, das Zuruecksetzen steht aus
+
+
 def test_sigterm_ends_with_exit_0():
     with pytest.raises(SystemExit) as stop:
         runtime_main._terminate(15, None)

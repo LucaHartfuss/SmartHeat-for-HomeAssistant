@@ -2,21 +2,12 @@
 aus wire.DETAIL_FIELDS -- feld aus wire.PRUEF_FELDER, regel aus wire.PRUEF_REGELN, die uebrigen endliche Zahlen. Den
 Text bildet der Server (geraete/texte.py); lokale Anzeigen (Meldungen, Diagnoseseite, Log) haben eigene Texte."""
 import json
-import math
 from collections.abc import Iterable
 
+from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_device import wire
 
 ZAHLEN = tuple(key for key in wire.DETAIL_FIELDS if key not in ("feld", "regel"))
-
-
-def _zahl(value) -> bool:
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        return False
-    try:
-        return math.isfinite(value)
-    except OverflowError:
-        return False
 
 
 def kodierbar(wert) -> bool:
@@ -39,7 +30,7 @@ def gueltig(details) -> bool:
     feld, regel = details.get("feld"), details.get("regel")
     return ((feld is None or (isinstance(feld, str) and feld in wire.PRUEF_FELDER))
             and (regel is None or (isinstance(regel, str) and regel in wire.PRUEF_REGELN))
-            and all(_zahl(details[key]) for key in ZAHLEN if key in details))
+            and all(ist_endliche_zahl(details[key]) for key in ZAHLEN if key in details))
 
 
 def details(feld: str | None = None, regel: str | None = None, **zahlen: float) -> dict:

@@ -49,11 +49,17 @@ def test_sign_off_marker_starts_signed_off(env, tmp_path):
     assert boot.signed_off and not boot.configured
 
 
+def _offene_markierung(alt):
+    """Wie der Start: die Markierung nach einer leeren Konfiguration schreiben und einmal lesen (prozess.aufraeumen_beim_start)."""
+    aufraeumen.markieren(config.AUFRAEUMEN_PATH, alt)
+    return aufraeumen.entscheiden(config.AUFRAEUMEN_PATH, {"anlage": None})[1]
+
+
 def test_empty_configuration_with_pending_reset_boots_signed_off_with_the_old_one(env):
     """Spec Stufe 3 S3 Abschnitt 4: die Laufzeit setzt mit der Konfiguration der Aufraeum-Markierung zurueck."""
     konfiguration = konfiguration_aus_optionen(OPTIONS)
-    aufraeumen.markieren(config.AUFRAEUMEN_PATH, konfiguration)
-    host = HaHost(FakeGeraet({**konfiguration, "anlage": None}), env.ha, clock=env.clock)
+    host = HaHost(FakeGeraet({**konfiguration, "anlage": None}, start_markierung=_offene_markierung(konfiguration)),
+                  env.ha, clock=env.clock)
     boot = host.boot_info()
     assert boot.signed_off and not boot.configured and boot.tenant_id == konfiguration["anlage"]
     assert boot.aufraeumen_path == config.AUFRAEUMEN_PATH
@@ -64,7 +70,10 @@ def test_empty_configuration_after_the_reset_boots_not_configured(env):
     konfiguration = konfiguration_aus_optionen(OPTIONS)
     aufraeumen.markieren(config.AUFRAEUMEN_PATH, konfiguration)
     aufraeumen.zurueckgesetzt(config.AUFRAEUMEN_PATH, konfiguration["anlage"])
-    boot = HaHost(FakeGeraet({**konfiguration, "anlage": None}), env.ha, clock=env.clock).boot_info()
+    markierung = aufraeumen.entscheiden(config.AUFRAEUMEN_PATH, {"anlage": None})[1]
+    assert markierung is None  # erledigt: der Start loescht, es gibt nichts zurueckzusetzen
+    boot = HaHost(FakeGeraet({**konfiguration, "anlage": None}, start_markierung=markierung), env.ha,
+                  clock=env.clock).boot_info()
     assert not boot.signed_off and not boot.configured
 
 
@@ -322,8 +331,8 @@ def test_ursprungswerte_server_reads_the_current_configuration_fresh(env):
 
 def test_ursprungswerte_server_falls_back_to_the_marker_while_the_reset_is_pending(env):
     konfiguration = {**konfiguration_aus_optionen(OPTIONS), "ursprungswerte": {"heat_limit": 16.0}}
-    aufraeumen.markieren(config.AUFRAEUMEN_PATH, konfiguration)
-    host = HaHost(FakeGeraet({**konfiguration, "anlage": None, "ursprungswerte": {}}), env.ha, clock=env.clock)
+    host = HaHost(FakeGeraet({**konfiguration, "anlage": None, "ursprungswerte": {}},
+                             start_markierung=_offene_markierung(konfiguration)), env.ha, clock=env.clock)
     assert host.ursprungswerte_server() == {"heat_limit": 16.0}
 
 
@@ -331,8 +340,7 @@ def test_ursprungswerte_server_ignores_a_new_setup_while_the_reset_is_pending(en
     """Minor 3: eine neue Einrichtung (andere Anlage) trifft ein, bevor das Zuruecksetzen gelang: die Werte der alten
     Anlage aus der Markierung gelten weiter."""
     alt = {**konfiguration_aus_optionen(OPTIONS), "ursprungswerte": {"heat_limit": 16.0}}
-    aufraeumen.markieren(config.AUFRAEUMEN_PATH, alt)
-    geraet = FakeGeraet({**alt, "anlage": None, "ursprungswerte": {}})
+    geraet = FakeGeraet({**alt, "anlage": None, "ursprungswerte": {}}, start_markierung=_offene_markierung(alt))
     host = HaHost(geraet, env.ha, clock=env.clock)
     geraet._konfiguration = {**alt, "anlage": "andere_anlage", "ursprungswerte": {"heat_limit": 12.0}}
     assert host.ursprungswerte_server() == {"heat_limit": 16.0}
@@ -401,8 +409,7 @@ def test_while_the_reset_is_pending_the_messages_go_to_the_services_of_the_marke
     ha = _DiensteHa()
     HaHost(FakeGeraet(leer, ha=ha), ha, clock=env.clock).notify_sink.push("wiederherstellung", "Text")
     assert ha.dienste == []
-    aufraeumen.markieren(config.AUFRAEUMEN_PATH, konfiguration)
-    host = HaHost(FakeGeraet(leer, ha=ha), ha, clock=env.clock)
+    host = HaHost(FakeGeraet(leer, ha=ha, start_markierung=_offene_markierung(konfiguration)), ha, clock=env.clock)
     assert host.boot_info().signed_off
     host.notify_sink.push("wiederherstellung", "Text")
     assert ha.dienste == [("notify.mobile_app_handy", "Text")]

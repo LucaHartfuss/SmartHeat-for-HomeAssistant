@@ -61,7 +61,6 @@ class Flags:
     """Laufzeit-Merkmale des Gesamtzustands, die nicht in BridgeState stehen."""
     abgemeldet: bool = False
     konfigurationsfehler: bool = False
-    zugang_abgelehnt: bool = False
     # Abschluss-Start, dessen Zuruecksetzen noch scheitert (abo_finished ist dann noch False).
     abo_beendet: bool = False
     # Erster Start abgeschlossen: MQTT verbunden bzw. im Abo-inaktiv-Modus hochgefahren.
@@ -90,8 +89,6 @@ def overall_status(flags: Flags, state, storage_failed: bool = False) -> str:
         return STATUS_ABGEMELDET
     if flags.konfigurationsfehler:
         return STATUS_KONFIGURATIONSFEHLER
-    if flags.zugang_abgelehnt and state.abo_inactive_since is None:
-        return STATUS_ZUGANG_ABGELEHNT
     if flags.abo_beendet or state.abo_finished:
         return STATUS_ABO_BEENDET
     if state.abo_inactive_since is not None:

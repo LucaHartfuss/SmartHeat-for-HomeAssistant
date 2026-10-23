@@ -24,6 +24,7 @@ from smartheat_core import dateien
 from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_device import fehler, wire
 from smartheat_device.commands import CommandRegister, Done, Failed, InvalidPayload, Outcome, Waiting
+from smartheat_device.geraet_host_basis import SIGN_OFF_WAIT_SECONDS, abmeldung_abwarten
 from smartheat_device.hintergrund import (  # noqa: F401  (HINTERGRUND_NAME: Rueck-Import fuer tests/test_befehle.py)
     HINTERGRUND_NAME,
     Hintergrund,
@@ -37,13 +38,11 @@ from smartheat_gateway.quota import QuotaExhausted
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime import dokument_config
 from smartheat_runtime.dokument_config import ConfigError
-from smartheat_runtime.status import STATUS_ABGEMELDET
 
 logger = logging.getLogger(__name__)
 
 INVENTORY_EVERY_SECONDS = 900
 ERKENNUNG_SECONDS = 120
-SIGN_OFF_WAIT_SECONDS = 24 * 3600
 ZIGBEE_VALUE_FIELDS = ("temperature", "local_temperature", "occupied_heating_setpoint", "humidity")
 MAX_WERT_EBENEN = 32  # tiefer verschachtelte Werte der Zigbee-Geraeteliste fallen weg (Testoffensive T5', Task 4)
 
@@ -358,12 +357,6 @@ def diagnostics(ctx: Kontext, payload: dict) -> Outcome:
     return Done(ctx.diagnostics())
 
 
-def _restore_values(ctx: Kontext) -> dict:
-    backup = dateien.lesen_json(ctx.paths.backup)
-    point = backup.get("restore_point") if isinstance(backup, dict) else None
-    return dict(point) if isinstance(point, dict) else {}
-
-
 @_handler("sign_off")
 def sign_off(ctx: Kontext, payload: dict) -> Outcome:
     """Abmelden (Spec TP7 3.3, 5b 4.5): Markierung fuer die Anlage, dann startet die Laufzeit als "abgemeldet" neu und
@@ -379,10 +372,4 @@ def sign_off(ctx: Kontext, payload: dict) -> Outcome:
     if gateway_config.abmelden(ctx.paths, anlage):
         ctx.neustart()
 
-    def check() -> Done | Failed | None:
-        status = ctx.runtime_status()
-        if not status or status.get("status") != STATUS_ABGEMELDET or status.get("tenant_id") != anlage:
-            return None
-        return Done({"zurueckgesetzt": status.get("grund") is None, "werte": _restore_values(ctx)})
-
-    return Waiting(check, ctx.clock() + SIGN_OFF_WAIT_SECONDS)
+    return abmeldung_abwarten(anlage, ctx.runtime_status, ctx.paths.backup, ctx.clock() + SIGN_OFF_WAIT_SECONDS)

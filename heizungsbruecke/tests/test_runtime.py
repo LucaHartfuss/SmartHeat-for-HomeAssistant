@@ -27,7 +27,17 @@ from heizungsbruecke.version import ADDON_VERSION
 from smartheat_core.enforce import RETRY_SECONDS
 from smartheat_core.pipeline import LeverPipeline
 from smartheat_device.laufzeit import RuntimeChannel
-from smartheat_runtime import abo, app, aufraeumen, backup_store, datentraeger, dokument_config, entitlement, ticks
+from smartheat_runtime import (
+    abo,
+    app,
+    aufraeumen,
+    aussentemperatur,
+    backup_store,
+    datentraeger,
+    dokument_config,
+    entitlement,
+    ticks,
+)
 from smartheat_runtime.backup_store import load_backup, save_backup
 from smartheat_runtime.delivery import DataFault, DeliveryState
 from smartheat_runtime.ports import SignalUngueltig
@@ -564,6 +574,68 @@ def test_failing_zone_preparation_is_retried_at_most_every_30_min_and_6_times_a_
     assert sum("Tageslimit" in record.getMessage() for record in caplog.records) == 1
 
 
+@pytest.mark.parametrize(("zone", "snapshots"), [(0.0, False), (20.0, True)], ids=["zone-ruht", "zone-heizt"])
+def test_a_not_yet_prepared_zone_is_not_enforced_and_gives_no_false_push(env, zone, snapshots):
+    """Fix-Runde 1 (I-1, S3-3): solange die Zone nie vorbereitet war, stellt die Durchsetzung sie nicht zusaetzlich
+    um (`zone_prepare`: 1 je 30 min, 6 am Tag) und meldet weder "in der App verstellt" noch "immer wieder
+    verstellt". Die ruhende, nie vorbereitete Zone meldet keinen Snapshot (Datenfehler bis zur Vorbereitung,
+    Schlussreview I-1), die heizende schon."""
+    attempts = _failing_zone_preparation(env)
+    env.ha.states["climate.zone::temperature"] = zone
+    bridge = _start(env, entity_shift_current="climate.zone")
+
+    _local_checks(env, bridge, hours=12)
+
+    assert [later - attempts[0] for later in attempts] == [0, 1800, 3600, 5400, 7200, 9000]
+    assert [push for push in env.ha.pushes if "Heizungseinstellung" in push] == []
+    assert bridge.zone_prepared is False and bridge.store.state.manual_override is None
+    assert (_mqtt(env).snapshots != []) is snapshots
+
+
+def _answer_every_open_tick(env, bridge, answered: set) -> None:
+    """Der Server beantwortet jeden gesendeten Snapshot des offenen Ticks genau einmal je (seq, gen)."""
+    pending = bridge.store.state.delivery.pending
+    if pending is None or (pending.seq, pending.gen) in answered:
+        return
+    if any(snapshot["seq"] == pending.seq for snapshot in _mqtt(env).snapshots):
+        answered.add((pending.seq, pending.gen))
+        _answer(env, bridge, pending.seq)
+
+
+@pytest.mark.parametrize("zone", [0.0, 20.0], ids=["zone-ruht", "zone-heizt"])
+def test_answered_snapshots_do_not_switch_a_never_prepared_zone_outside_the_quota(env, zone):
+    """Schlussreview TP2 (I-1, I-2): auch wenn der Server jeden Snapshot beantwortet, stellt die Antwort eine nie
+    vorbereitete Zone nur im Kontingent `zone_prepare` um (1 je 30 min, 6 am Tag), das sie mit dem Start und dem
+    lokalen Check teilt. Vorher: 35 Versuche in 12 h (ruhende Zone seit S3-3, heizende schon davor)."""
+    attempts = _failing_zone_preparation(env)
+    env.ha.states["climate.zone::temperature"] = zone
+    bridge = _start(env, entity_shift_current="climate.zone")
+    answered: set = set()
+
+    for step in range(int(12 * 3600 / 30)):
+        _advance(env, bridge, 30)
+        if step % 10 == 0:
+            _trigger(env, bridge, "sensor.room_actual")  # lokaler Check alle 300 s
+        _answer_every_open_tick(env, bridge, answered)
+
+    assert len(attempts) == 6
+    assert all(later - earlier >= 1800 for earlier, later in zip(attempts, attempts[1:], strict=False))
+    assert (answered != set()) is (zone != 0.0)  # Gegenprobe: die heizende Zone bekommt Antworten
+
+
+def test_a_resting_zone_already_manual_reports_snapshots_on_a_fresh_install(env):
+    """S3-3: frische Installation (kein Wiederherstellungspunkt), Zone schon auf Manuell und ruhend: die Vorbereitung
+    gelingt ohne Umstellung, der Snapshot meldet das stabile Raum-Soll statt eines Datenfehlers."""
+    env.ha.states.update({"climate.zone": "heat_cool", "climate.zone::temperature": 0.0})
+    bridge = _start(env, entity_shift_current="climate.zone")
+
+    _local_checks(env, bridge, hours=1)
+
+    assert bridge.zone_prepared is True
+    assert ("climate.zone", "heat_cool") not in env.ha.writes
+    assert [snapshot["levers"]["room_setpoint"] for snapshot in _mqtt(env).snapshots][:1] == [21.0]
+
+
 def test_zone_preparation_stops_retrying_after_success(env):
     attempts = _failing_zone_preparation(env, failures=2)
     bridge = _start(env, entity_shift_current="climate.zone")
@@ -835,6 +907,29 @@ def test_stale_notbetrieb_with_unknown_abo_shows_notbetrieb_after_the_start_unti
     assert _status_states(env) == ["startet", "notbetrieb"]
     _answer(env, bridge, _mqtt(env).snapshots[0]["seq"], curve=0.9, shift=22.0)
     assert _status_states(env) == ["startet", "notbetrieb", "regelt"]
+
+
+def test_start_mit_altem_notbetrieb_abo_unbekannt_meldet_nach_timeouts(env):
+    """T4-Notbetrieb-Unbekannt: der alte Notbetrieb war nie gemeldet (Meldezustand ok, kein Text); bleibt der Pruef-Tick
+    bei unbekanntem Abo zweimal unbeantwortet, erscheint "Notbetrieb aktiv" (Push und offene Meldung), der Notbetrieb
+    laeuft weiter."""
+    _quiet_backup(env)
+    save_backup(env.paths["FAILSAFE_PATH"], {"failsafe_active": True, "datenfehler": None, "pending": None})
+    env.abo["status"] = entitlement.UNKNOWN
+    bridge = _start(env)
+    assert env.ha.pushes == []
+
+    _advance(env, bridge, 30)
+    assert env.ha.pushes == []  # ein Timeout genuegt noch nicht
+    _advance(env, bridge, 30)
+
+    assert env.ha.pushes == [NOTBETRIEB_ON]
+    assert bridge.notifier.state("notbetrieb") == "aktiv"
+    assert _delivery(bridge).notbetrieb is True
+    _advance(env, bridge, 300)  # Retry bei 360 s
+    _advance(env, bridge, 30)  # dessen Ack-Timeout: der dritte Timeout in Folge
+    assert _delivery(bridge).server_failures == 3
+    assert env.ha.pushes == [NOTBETRIEB_ON]  # weitere Timeouts melden nicht erneut
 
 
 def _reported_stale_notbetrieb(env):
@@ -2578,7 +2673,7 @@ def test_sign_off_failed_restore_notifies_with_the_restore_values(env):
 
     _start_bridge(env, abgemeldet=True)
 
-    message = app.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Kurve 0,9, Parallelverschiebung 22")
+    message = app.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Heizkurve 0,9, Wunschtemperatur der Zone 22")
     assert env.ha.pushes == [message]
     assert ("smartheat_wiederherstellung", message) in env.ha.persistent
     assert "smartheat_notbetrieb" in env.ha.dismissed
@@ -2586,7 +2681,7 @@ def test_sign_off_failed_restore_notifies_with_the_restore_values(env):
 
 
 def test_sign_off_failed_restore_after_a_restart_renews_the_notification_without_push(env):
-    message = app.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Kurve 0,9, Parallelverschiebung 22")
+    message = app.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Heizkurve 0,9, Wunschtemperatur der Zone 22")
     _quiet_backup(
         env, boost_active=True,
         notify_states={"wiederherstellung": "fehlgeschlagen"}, notify_messages={"wiederherstellung": message},
@@ -2618,7 +2713,7 @@ def test_sign_off_with_invalid_configuration_during_a_boost_asks_for_manual_valu
 
     _start_bridge(env, abgemeldet=True, verteilsystem="Unbekannt")
 
-    message = app.SIGN_OFF_NOT_RESTORED_MESSAGE.format(werte="Kurve 0,9, Parallelverschiebung 22")
+    message = app.SIGN_OFF_NOT_RESTORED_MESSAGE.format(werte="Heizkurve 0,9, Raum-Soll 22")
     assert env.ha.pushes == [message]
     assert ("smartheat_wiederherstellung", message) in env.ha.persistent
 
@@ -2715,7 +2810,7 @@ def test_empty_configuration_without_sign_off_restores_then_restarts_once(env, m
     assert neustarts == [1]
     pfad = env.paths["AUFRAEUMEN_PATH"]
     assert aufraeumen.lesen(pfad).zurueckgesetzt
-    assert aufraeumen.entscheiden(pfad, {"anlage": None}) == aufraeumen.LOESCHEN
+    assert aufraeumen.entscheiden(pfad, {"anlage": None})[0] == aufraeumen.LOESCHEN
 
 
 def test_reset_fails_keeps_state_across_restart(env, monkeypatch):
@@ -2729,11 +2824,11 @@ def test_reset_fails_keeps_state_across_restart(env, monkeypatch):
     bridge.worker.run_pending()
 
     pfad = env.paths["AUFRAEUMEN_PATH"]
-    assert neustarts == [] and aufraeumen.entscheiden(pfad, {"anlage": None}) == aufraeumen.ZURUECKSETZEN
+    assert neustarts == [] and aufraeumen.entscheiden(pfad, {"anlage": None})[0] == aufraeumen.ZURUECKSETZEN
     assert _backup(env)["boost_active"] is True
     assert _last_event(env)["status"] == "abgemeldet"
     assert _last_event(env)["grund"] == app.SIGN_OFF_RESTORE_FAILED.format(seconds=300)
-    message = app.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Kurve 0,9, Parallelverschiebung 22")
+    message = app.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Heizkurve 0,9, Wunschtemperatur der Zone 22")
     assert ("smartheat_wiederherstellung", message) in env.ha.persistent
 
     env.ha.write_error = None
@@ -2771,7 +2866,7 @@ def test_an_unwritable_marker_after_the_reset_keeps_the_state_and_does_not_resta
 
     assert bridge.reason == "abgemeldet" and neustarts == []
     assert env.ha.writes == [("number.curve_current", 0.9), ("number.shift_current", 22.0)]
-    assert aufraeumen.entscheiden(env.paths["AUFRAEUMEN_PATH"], {"anlage": None}) == aufraeumen.ZURUECKSETZEN
+    assert aufraeumen.entscheiden(env.paths["AUFRAEUMEN_PATH"], {"anlage": None})[0] == aufraeumen.ZURUECKSETZEN
     assert "OSError" in caplog.text
 
 
@@ -3037,8 +3132,9 @@ def test_repaired_disk_reaches_the_delivery_in_the_next_health_tick(env, monkeyp
 
 
 def test_permanently_missing_outdoor_temperature_is_no_data_fault_and_telemetry_omits_it(env):
-    """Heutiges Verhalten, Restpunkt R3-1: faellt eine Pflicht-Rolle dauerhaft aus (client1 2026-10-07: Aussentemperatur
-    37 min unavailable), entsteht ohne Tick kein Datenfehler, und die Telemetrie laesst das Feld still weg."""
+    """R3-1: faellt die Aussentemperatur dauerhaft aus (client1 2026-10-07: 37 min unavailable), entsteht ohne Tick kein
+    Datenfehler, und die Telemetrie laesst das Feld weg; der Kunde bekommt genau eine Meldung (aussentemperatur), die
+    Rueckkehr entwarnt."""
     _quiet_backup(env)
     bridge = _start(env)
     _connect(env, bridge)
@@ -3054,6 +3150,14 @@ def test_permanently_missing_outdoor_temperature_is_no_data_fault_and_telemetry_
     assert all("outdoor_temp" not in p and "datenfehler" not in p for p in payloads)
     assert _delivery(bridge).datenfehler is None
     assert (_last_event(env)["status"], _last_event(env)["datenfehler"]) == ("regelt", None)
+    assert bridge.notifier.state("aussentemperatur") == "ausgefallen"
+    assert [push for push in env.ha.pushes if "Außentemperatur" in push] == [aussentemperatur.FAILED_MESSAGE]
+
+    env.ha.states["sensor.outdoor_temp"] = 6.0
+    _advance(env, bridge, 300)
+
+    assert bridge.notifier.state("aussentemperatur") == "ok"
+    assert env.ha.pushes[-1] == aussentemperatur.OK_MESSAGE
 
 
 def test_telemetry_reports_the_unwritable_disk_as_local_data_fault(env, monkeypatch):

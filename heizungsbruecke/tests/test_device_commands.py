@@ -634,6 +634,26 @@ def test_invalid_hints_are_refused(tmp_path, payload):
     assert error.value.details["feld"] in ("key", "stufe", "text")
 
 
+def test_hinweis_ueber_der_obergrenze_wird_abgelehnt(tmp_path):
+    """A6-31: ein neuer Schluessel nur bis 32; Ueberschreiben und Loeschen gehen weiter, die Datei
+    bleibt bei der Ablehnung unveraendert (der Server sendet nur die fuenf wire.MELDUNGEN, keine gueltige Eingabe faellt)."""
+    hinweise = cmd.Hinweise(tmp_path)
+    for nr in range(32):
+        hinweise.handler({"key": f"k{nr}", "stufe": "info", "text": "t"})
+    vorher = (tmp_path / cmd.HINWEISE_FILE).read_bytes()
+    with pytest.raises(cmd.InvalidPayload) as error:
+        hinweise.handler({"key": "zu_viel", "stufe": "info", "text": "t"})
+    assert error.value.details["feld"] == "key" and error.value.details["regel"] == "ungueltig"
+    assert (tmp_path / cmd.HINWEISE_FILE).read_bytes() == vorher and len(hinweise.alle()) == 32
+    hinweise.handler({"key": "k0", "stufe": "kritisch", "text": "neu"})  # Ueberschreiben geht
+    assert {"key": "k0", "stufe": "kritisch", "text": "neu"} in hinweise.alle()
+    hinweise.handler({"key": "unbekannt", "stufe": "info", "text": ""})  # Loeschen eines fehlenden Schluessels geht
+    hinweise.handler({"key": "k1", "stufe": "info", "text": ""})
+    assert len(hinweise.alle()) == 32 - 1
+    hinweise.handler({"key": "zu_viel", "stufe": "info", "text": "t"})  # wieder Platz
+    assert len(hinweise.alle()) == 32
+
+
 def test_the_hint_command_through_the_register(tmp_path):
     sent = Sent()
     register = cmd.CommandRegister(tmp_path, sent)

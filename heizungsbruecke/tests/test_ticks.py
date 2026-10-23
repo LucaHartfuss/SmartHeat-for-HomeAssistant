@@ -3,13 +3,15 @@ from types import SimpleNamespace
 
 import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT
-from fakes import FakeHa, FakeMqttChannel
+from fakes import FakeHa, FakeMqttChannel, FakeNotifySink
 
 from heizungsbruecke.ha_binding import HaPlantBinding
 from smartheat_core.pipeline import DeviceWriteError, LeverPipeline
 from smartheat_core.safety import LocalSafety
 from smartheat_runtime import delivery, ticks
+from smartheat_runtime.notifier import Notifier
 from smartheat_runtime.roles import ChannelManifest
+from smartheat_runtime.texts import HA_TEXTS
 
 SETTLE = VAILLANT_MYPYLLANT.settle_seconds
 
@@ -24,12 +26,13 @@ def _safety(heat_limit_max=20.0):
     )
 
 
-def _rt(ha, manifest, store, override=None, mqtt=None, clock=None):
-    """Laufzeit-Sicht von ticks._attempt mit echter Pipeline (Vaillant) und dem MQTT-Kanal als Port (A5-25)."""
+def _rt(ha, manifest, store, override=None, mqtt=None, clock=None, zone_prepared=True):
+    """Laufzeit-Sicht von ticks._attempt mit echter Pipeline (Vaillant) und dem MQTT-Kanal als Port (A5-25).
+    zone_prepared: die Zone wurde in diesem Prozess vorbereitet (Runtime.zone_prepared)."""
     if override is None:
         override = LeverPipeline(store, HaPlantBinding(ha, manifest, VAILLANT_MYPYLLANT), _safety(), clock=clock)
     return SimpleNamespace(manifest=manifest, signals=ha, mqtt_client=mqtt, store=store, override=override,
-                           manual_override_seq=None, manual_override_sent=None)
+                           manual_override_seq=None, manual_override_sent=None, zone_prepared=zone_prepared)
 
 
 @pytest.mark.parametrize("mqtt", [None, FakeMqttChannel(connected=False)], ids=["ohne-kanal", "getrennt"])
@@ -53,6 +56,69 @@ def test_snapshot_uses_restore_point_when_zone_is_off(make_store, clock, zone, e
 
     assert ticks._attempt(rt, "s1", "daily") == delivery.Published(seq="s1")
     assert [s["levers"] for s in mqtt.snapshots] == [{"room_setpoint": expected}]
+
+
+def test_ruhende_zone_beim_ersten_start_nimmt_das_raum_soll(make_store, clock):
+    """S3-3: Zone vorbereitet, ruht (liest 0), und es gibt noch keinen Wiederherstellungspunkt (erster Start): der
+    Snapshot meldet das stabile Raum-Soll statt eines Datenfehlers; der Wiederherstellungspunkt bleibt leer (ihn
+    schreibt erst die Antwort des Servers)."""
+    ha = FakeHa()
+    ha.states["climate.zone::temperature"] = 0.0
+    manifest = ChannelManifest(refs={"room_target": "sensor.room_target", "shift_current": "climate.zone::temperature"})
+    store = make_store()
+    store.update(stable_target=21.0)
+    mqtt = FakeMqttChannel()
+    rt = _rt(ha, manifest, store, mqtt=mqtt, clock=clock)
+    clock.advance(SETTLE + 1)
+
+    assert ticks._attempt(rt, "s1", "daily") == delivery.Published(seq="s1")
+    assert [s["levers"] for s in mqtt.snapshots] == [{"room_setpoint": 21.0}]
+    assert store.state.restore_point == {}
+
+
+def test_ruhende_nie_vorbereitete_zone_ohne_wiederherstellungspunkt_bleibt_ein_datenfehler(make_store, clock):
+    """S3-3, Gegenprobe (Schlussreview I-1): ist die Zone in diesem Prozess nie vorbereitet worden, gilt der
+    Rueckfall auf das Raum-Soll nicht; der Snapshot bleibt zurueckgehalten. Sonst stellte die Antwort des Servers
+    die Zone ausserhalb des Kontingents `zone_prepare` um."""
+    ha = FakeHa()
+    ha.states["climate.zone::temperature"] = 0.0
+    manifest = ChannelManifest(refs={"room_target": "sensor.room_target", "shift_current": "climate.zone::temperature"})
+    store = make_store()
+    store.update(stable_target=21.0)
+    mqtt = FakeMqttChannel()
+    rt = _rt(ha, manifest, store, mqtt=mqtt, clock=clock, zone_prepared=False)
+    clock.advance(SETTLE + 1)
+
+    assert ticks._attempt(rt, "s1", "daily") == delivery.ReadInvalid(seq="s1", roles=("room_setpoint",))
+    assert mqtt.snapshots == []
+
+
+def test_ruhende_zone_ohne_wiederherstellungspunkt_und_ohne_raum_soll_bleibt_ein_datenfehler(make_store, clock):
+    """S3-3, Gegenprobe: ohne stabiles Raum-Soll gibt es nichts zu melden, der Snapshot wird zurueckgehalten."""
+    ha = FakeHa()
+    ha.states["climate.zone::temperature"] = 0.0
+    manifest = ChannelManifest(refs={"room_target": "sensor.room_target", "shift_current": "climate.zone::temperature"})
+    mqtt = FakeMqttChannel()
+    rt = _rt(ha, manifest, make_store(), mqtt=mqtt, clock=clock)
+    clock.advance(SETTLE + 1)
+
+    assert ticks._attempt(rt, "s1", "daily") == delivery.ReadInvalid(seq="s1", roles=("room_setpoint",))
+    assert mqtt.snapshots == []
+
+
+def test_ruhende_zone_bevorzugt_den_wiederherstellungspunkt_vor_dem_raum_soll(make_store, clock):
+    """S3-3, Gegenprobe: der Rueckfall auf das Raum-Soll gilt nur ohne Wiederherstellungspunkt."""
+    ha = FakeHa()
+    ha.states["climate.zone::temperature"] = 0.0
+    manifest = ChannelManifest(refs={"room_target": "sensor.room_target", "shift_current": "climate.zone::temperature"})
+    store = make_store(backup={"restore_point": {"room_setpoint": 19.0}})
+    store.update(stable_target=21.0)
+    mqtt = FakeMqttChannel()
+    rt = _rt(ha, manifest, store, mqtt=mqtt, clock=clock)
+    clock.advance(SETTLE + 1)
+
+    assert ticks._attempt(rt, "s1", "daily") == delivery.Published(seq="s1")
+    assert [s["levers"] for s in mqtt.snapshots] == [{"room_setpoint": 19.0}]
 
 
 class _StaleZoneHa:
@@ -159,3 +225,89 @@ def test_write_fault_detail_names_the_lever():
     assert str(error) == "room_setpoint (climate.zone::temperature): " + "x" * 200
     error = DeviceWriteError("heat_limit", "number.hl", RuntimeError("weg"))
     assert str(error) == "heat_limit (number.hl): weg"
+
+
+# --- Fremdtext aus der Serverantwort (A6-37) ---
+
+class _FakeWorker:
+    def schedule(self, delay_s, event):
+        return 0
+
+
+def _rt_mit_offenem_tick(make_store, clock):
+    """Laufzeit-Sicht von handle_setpoints: echte Pipeline, echter Notifier mit FakeNotifySink, offener Tick s1."""
+    manifest = ChannelManifest(refs={"room_target": "sensor.room_target", "shift_current": "number.shift_current"})
+    store = make_store(failsafe={"failsafe_active": False, "datenfehler": None,
+                                 "pending": {"seq": "s1", "trigger": "daily"}})
+    sink = FakeNotifySink()
+    rt = _rt(FakeHa(), manifest, store, clock=clock)
+    rt.notifier, rt.texts, rt.worker = Notifier(store, sink), HA_TEXTS, _FakeWorker()
+    return rt, sink
+
+
+def _server_grund(rt):
+    return rt.store.state.delivery.datenfehler.detail[0]
+
+
+def test_riesige_ungueltige_antwort_gibt_kurzen_grund(make_store, clock):
+    """A6-37: der Server liefert ungueltige `levers` von 130 KB; der Grund (Datenfehler, Push, Speicher, spaeter der
+    Stapel an den Server) bleibt bei 200 Zeichen, der Anfang mit dem Schluessel vor dem Doppelpunkt bleibt."""
+    rt, sink = _rt_mit_offenem_tick(make_store, clock)
+
+    ticks.handle_setpoints(rt, {"seq": "s1", "schema": 4, "status": "ok", "levers": {"curve": "x" * 130_000}})
+
+    grund = _server_grund(rt)
+    assert len(grund) <= 200
+    assert grund.startswith("ungültige Serverantwort (status='ok', levers=")
+    (_, meldung) = sink.pushes[-1]
+    assert len(meldung) < 400
+    assert len(rt.store.state.notify_messages["datenfehler"]) < 400
+
+
+def test_riesiges_unbekanntes_schema_gibt_kurzen_grund(make_store, clock):
+    rt, _ = _rt_mit_offenem_tick(make_store, clock)
+
+    ticks.handle_setpoints(rt, {"seq": "s1", "schema": "x" * 130_000})
+
+    assert len(_server_grund(rt)) <= 200
+
+
+def test_langer_ablehnungsgrund_wird_gekuerzt(make_store, clock):
+    rt, sink = _rt_mit_offenem_tick(make_store, clock)
+    reason = "unplausibler Wert für dat: " + "9" * 130_000
+
+    ticks.handle_setpoints(rt, {"seq": "s1", "schema": 4, "status": "rejected", "reason": reason})
+
+    grund = _server_grund(rt)
+    assert len(grund) <= 200
+    assert grund.startswith("unplausibler Wert für dat: 99")
+    assert len(sink.pushes[-1][1]) < 400
+
+
+def test_kurzer_ablehnungsgrund_bleibt_unveraendert(make_store, clock):
+    rt, _ = _rt_mit_offenem_tick(make_store, clock)
+    reason = "x" * 200
+
+    ticks.handle_setpoints(rt, {"seq": "s1", "schema": 4, "status": "rejected", "reason": reason})
+
+    assert _server_grund(rt) == reason
+
+
+def test_gekuerzter_ablehnungsgrund_hat_genau_die_grenze_und_endet_auf_auslassung(make_store, clock):
+    """Mutationsprobe TP2: die Kuerzung nimmt 199 Zeichen vom Anfang und haengt "…" an, zusammen genau 200."""
+    rt, _ = _rt_mit_offenem_tick(make_store, clock)
+    reason = "".join(chr(ord("a") + i % 26) for i in range(1000))
+
+    ticks.handle_setpoints(rt, {"seq": "s1", "schema": 4, "status": "rejected", "reason": reason})
+
+    grund = _server_grund(rt)
+    assert len(grund) == ticks.FREMDTEXT_MAX_CHARS == 200
+    assert grund == reason[:199] + "…"
+
+
+def test_ablehnungsgrund_mit_201_zeichen_wird_gekuerzt_einer_mit_200_nicht(make_store, clock):
+    rt, _ = _rt_mit_offenem_tick(make_store, clock)
+
+    ticks.handle_setpoints(rt, {"seq": "s1", "schema": 4, "status": "rejected", "reason": "y" * 201})
+
+    assert _server_grund(rt) == "y" * 199 + "…"

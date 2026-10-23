@@ -66,10 +66,11 @@ class GatewayWorld:
         return self.wall.now().timestamp()
 
     def start_runtime(self):
-        runtime_main.aufraeumen(self.paths)  # wie main(): bevor der Geraetekern startet
+        ausstehend = runtime_main.aufraeumen(self.paths)  # wie main(): bevor der Geraetekern startet
         mirror = ZigbeeMirror(self.bus, self.clock)
         mirror.start()
         self.geraet = GatewayDeviceHost(self.paths, mirror, host_dir=self.host_dir, clock=self.clock, wall=self._wall)
+        self.geraet.start_markierung = ausstehend
         self._geraete.append(self.geraet)
         self.device = Device(self.geraet, self.paths.data, "https://accounts.example.test", clock=self.clock,
                              wall=self._wall, bootstrap_client=lambda ident: KeinBootstrap(), link_factory=self._link,

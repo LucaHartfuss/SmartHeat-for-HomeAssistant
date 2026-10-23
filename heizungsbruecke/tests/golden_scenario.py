@@ -394,6 +394,8 @@ ERLAUBT = (
     "write_budget: boost_start/emergency_start nach erfolgreichem Start (Fixrunde A, A6-01)",
     "benachrichtigung: notify.mobile_app_* (Fixrunde A, A6-02)",
     "status_start: Status 'startet' statt 'notbetrieb' beim Start mit veraltetem Notbetrieb (Fixrunde A, L4-09)",
+    "telemetrie_reihenfolge: die Telemetrie steht in einem Schritt nach den schon eingestellten Ereignissen statt davor "
+    "(Fixrunde B, A2-13: wartende Queue-Eintraege vor faelligen Planeintraegen); Inhalt gleich",
 )
 #: Die Schritte, in denen die Laufzeit mit veraltetem Notbetrieb neu startet (ERLAUBT "status_start"); nur dort
 #: normalisiert normalisieren() "startet" + notbetrieb zu "notbetrieb".
@@ -471,6 +473,9 @@ def normalisieren(record: list[dict], *, alt: bool) -> list[dict]:
                     # ERLAUBT "status_start": nur im neuen Master, nur in diesen Schritten
                     w[3]["status"] = "notbetrieb"
             wirkungen.append(w)
+        # ERLAUBT "telemetrie_reihenfolge": die Telemetrie eines Schritts steht in beiden Mastern am Ende des Schritts
+        wirkungen = [w for w in wirkungen if w[:2] != ["mqtt", "telemetry"]] + [
+            w for w in wirkungen if w[:2] == ["mqtt", "telemetry"]]
         dateien = {name: inhalt for name, inhalt in schritt["dateien"].items()
                    if Path(name).name not in ("room_target.json", "abgemeldet.json", "discovery.json")}
         result.append({"schritt": schritt["schritt"], "wirkungen": wirkungen, "dateien": dateien})

@@ -47,6 +47,9 @@ INVENTUR_BESTAETIGUNG_SECONDS = 60.0
 #: Versuche decken einen kurzen Ausfall ab, ohne bei dauerhaft ausbleibendem PUBACK endlos weiterzusenden.
 INVENTUR_VERSUCHE_MAX = 3
 HINWEIS_KEY_MAX_CHARS = 64
+#: Obergrenze fuer verschiedene Hinweis-Schluessel (A6-31): der Server sendet nur die Meldungen aus wire.MELDUNGEN (5),
+#: die Datei bleibt so auch bei einem boesartigen Server klein. Ueberschreiben und Loeschen gehen immer.
+HINWEIS_MAX_SCHLUESSEL = 32
 HINWEIS_TEXT_MAX_CHARS = 1000
 #: Arten, deren Pflichtfelder die Phase bestimmt (Command.payload ist dort die Vereinigung aller Phasen,
 #: wire.DRIVER_LOGIN_PHASES): die Annahme prueft nur fremde Felder, die Phasenregel steht im Handler des Hosts.
@@ -332,6 +335,8 @@ class Hinweise:
         if not isinstance(text, str) or len(text) > HINWEIS_TEXT_MAX_CHARS:
             raise InvalidPayload("text", "ungueltig")
         if text:
+            if key not in self._items and len(self._items) >= HINWEIS_MAX_SCHLUESSEL:
+                raise InvalidPayload("key", "ungueltig")
             self._items[key] = {"stufe": stufe, "text": text}
         else:
             self._items.pop(key, None)

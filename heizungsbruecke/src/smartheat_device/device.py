@@ -16,7 +16,6 @@ up/notifications gebuendelt hoechstens alle MELDUNGEN_MIN_SECONDS (Drossel des D
 S2)."""
 import json
 import logging
-import math
 import queue
 import threading
 import time
@@ -28,6 +27,7 @@ from typing import TypeVar
 
 from smartheat_core import config_check
 from smartheat_core.logtext import lesbar
+from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_device import bootstrap, commands, fehler, identity, inventory, nachrichten, wire, wish
 from smartheat_device.documents import BEDIENUNG, KONFIGURATION, DocumentStore, angebot_aus
 from smartheat_device.host import Anzeige, DeviceHost
@@ -91,8 +91,7 @@ def _ursprungswert_ok(wert) -> bool:
     if isinstance(wert, bool):
         return False
     if isinstance(wert, int | float):
-        # Betrag zuerst: math.isfinite wirft bei riesigen int (OverflowError); NaN faellt beim Vergleich durch.
-        return abs(wert) <= wire.URSPRUNG_WERT_MAX and math.isfinite(wert)
+        return ist_endliche_zahl(wert) and abs(wert) <= wire.URSPRUNG_WERT_MAX
     return isinstance(wert, str) and 0 < len(wert) <= wire.URSPRUNG_HEBEL_MAX_CHARS
 
 
@@ -148,6 +147,9 @@ class Device:
         self._meldungen_at: float | None = None
         self._status: dict | None = None
         self._status_at: float | None = None
+        #: Nach hello muss ein Status hinaus (T4-Hello-Status); gescheitert der Rueckruf dabei, bleibt der Merker, bis
+        #: einer gesendet ist (sonst unterdrueckten Gleichheit und Mindestabstand ihn im naechsten Takt).
+        self._status_erzwingen = False
         self._hello_fehler: str | None = None  # letzte Fehlerart beim Bauen von hello (je Art einmal loggen)
         self._status_fehler: str | None = None  # letzter Vertragsverstoss beim Bauen (je Text einmal loggen)
         self._wunsch_fehler: str | None = None  # dito beim Bauen von up/wish
@@ -157,6 +159,7 @@ class Device:
         self._host_fehler: set[tuple[str, str]] = set()  # (Rueckruf, Fehlerart) gescheiterter Host-Werte, schon geloggt
         self._zurueckgehalten: dict[str, dict] = {}  # Dokument, dessen Pruefung vorlaeufig nicht moeglich war
         self._pruefung_at = 0.0
+        self._speicher_gemeldet: set[str] = set()  # Arten, deren Zurueckhalten wegen OSError schon geloggt ist
         self._started_at = clock()
         self._last_ok: float | None = None
 
@@ -349,7 +352,7 @@ class Device:
             self._zurueckgehaltene_pruefen(now)
         self.befehle.pruefen()
         self._wunsch_senden()
-        self._status_senden(now, force=False)
+        self._status_senden(now, force=self._status_erzwingen)
         self._meldungen_senden(now)
         self._host_wert("anzeigen", self.host.anzeigen, self.anzeige())  # gescheitert: diese Anzeige entfaellt
 
@@ -471,6 +474,7 @@ class Device:
         self._bereit = True
         now = self._clock()
         self._last_ok = now
+        self._status_erzwingen = True
         self._status_senden(now, force=True)
         self._wunsch_senden()
         self._meldungen_neu.update(self._meldungen)
@@ -505,7 +509,8 @@ class Device:
         gescheiterter die anderen nicht verhindert (das Dokument ist dann schon gespeichert).
 
         Kann der Host jetzt nicht pruefen (config_check.NichtPruefbar, HA aus) oder scheitert seine Vorbereitung vor dem
-        Speichern (konfiguration_vorbereiten, Aufraeum-Markierung): weder Ergebnis noch Uebernahme. Der
+        Speichern (konfiguration_vorbereiten, Aufraeum-Markierung) oder der Datentraeger (OSError beim Speichern): weder
+        Ergebnis noch Uebernahme. Der
         Server stellt ein Dokument nur einmal je Verbindung zu und eine abgelehnte Version nie erneut; das Geraet haelt
         es deshalb zurueck und prueft alle PRUEFUNG_WIEDERHOLEN_SECONDS erneut. Eine neue Zustellung ersetzt es."""
         self._zurueckgehalten.pop(art, None)
@@ -518,6 +523,17 @@ class Device:
             self._zurueckgehalten[art] = body
             self._pruefung_at = self._clock() + PRUEFUNG_WIEDERHOLEN_SECONDS
             return
+        except OSError as error:
+            # Datentraeger beim Speichern (A6-10): wie NichtPruefbar zurueckhalten; je Zurueckhalten eine ERROR-Zeile
+            # (nur die Fehlerart, Regel 6), die Wiederholung alle 30 s bleibt still
+            if art not in self._speicher_gemeldet:
+                self._speicher_gemeldet.add(art)
+                logger.error("%s zurueckgehalten: Speichern gescheitert (%s), neuer Versuch in %s s", art,
+                             type(error).__name__, PRUEFUNG_WIEDERHOLEN_SECONDS)
+            self._zurueckgehalten[art] = body
+            self._pruefung_at = self._clock() + PRUEFUNG_WIEDERHOLEN_SECONDS
+            return
+        self._speicher_gemeldet.discard(art)
         if ergebnis is None:
             return
         self._publish("up/result", ergebnis.payload())
@@ -716,3 +732,4 @@ class Device:
                 return
         if self._publish("up/status", body) is not None:
             self._status, self._status_at = vergleich, now
+            self._status_erzwingen = False

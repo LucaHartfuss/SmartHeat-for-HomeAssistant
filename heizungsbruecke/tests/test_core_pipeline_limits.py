@@ -227,7 +227,7 @@ def test_min_flow_expected_and_written_use_the_narrowed_range_and_enforce_sees_n
     pipeline = LeverPipeline(store, MinFlowLimited(ha, VAILLANT_MANIFEST, VAILLANT_MYPYLLANT), VAILLANT_SAFETY, clock=clock)
     store.update(stable_target=28.0)
     clock.advance(VAILLANT_MYPYLLANT.settle_seconds + 1)
-    runtime = SimpleNamespace(store=store, override=pipeline)
+    runtime = SimpleNamespace(store=store, override=pipeline, zone_prepared=True)
     assert derived.expected(runtime) == 24.0
     derived.sync(runtime)
     assert ha.states["number.mf"] == 24.0

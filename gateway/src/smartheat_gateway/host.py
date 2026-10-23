@@ -22,7 +22,7 @@ from smartheat_gateway.texts import SHG_TEXTS
 from smartheat_gateway.triggers import EV_TARGET_INPUT, BusTriggerSource
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_gateway.zigbee import CAP_BATTERY, CAP_BATTERY_LOW, ZigbeeMirror
-from smartheat_runtime import aufraeumen, dokument_config
+from smartheat_runtime import dokument_config
 from smartheat_runtime.app import Loaded, RestoreParts, StartFailure
 from smartheat_runtime.dokument_config import ConfigError
 from smartheat_runtime.ports import NotifySink, SignalSource, StatusSink, TriggerSource
@@ -73,8 +73,7 @@ class GatewayHost:
         # Spec Stufe 3 S3 Abschnitt 4: steht nach einer leeren Konfiguration das Zuruecksetzen aus, laeuft die Laufzeit
         # mit der alten Konfiguration aus der Aufraeum-Markierung im Modus abgemeldet (Treiber-Anmeldung noch da).
         self.konfiguration: dict
-        self.konfiguration, self._leer_abmelden = aufraeumen.laufzeit_konfiguration(
-            geraet.konfiguration(), paths.aufraeumen)
+        self.konfiguration, self._leer_abmelden = geraet.laufzeit_konfiguration()
         self.mirror = mirror
         self._signals = GatewaySignalSource(bus, mirror)
         self.signals: SignalSource = self._signals
@@ -107,12 +106,7 @@ class GatewayHost:
         self._geraet.ursprungswerte_merken(werte)
 
     def ursprungswerte_server(self) -> dict:
-        """Steht das Zuruecksetzen nach einer leeren Konfiguration aus, gelten die Werte der Markierung -- auch wenn
-        inzwischen eine neue Einrichtung (womoeglich einer anderen Anlage) eingetroffen ist; sonst die aktuelle."""
-        if self._leer_abmelden:
-            return dokument_config.ursprungswerte(self.konfiguration)
-        aktuell = self._geraet.konfiguration()
-        return dokument_config.ursprungswerte(aktuell if dokument_config.eingerichtet(aktuell) else self.konfiguration)
+        return self._geraet.ursprungswerte_server(self.konfiguration, self._leer_abmelden)
 
     def sign_off_parts(self) -> RestoreParts | None:
         hebelsatz = self.konfiguration.get("hebelsatz")

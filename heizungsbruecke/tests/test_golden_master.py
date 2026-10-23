@@ -12,7 +12,9 @@ nicht neu erzeugt)
 und in Task 1 des Plans Fixrunde A Schreibschutz (A6-01: boost_start/emergency_start nach erfolgreichem Start)
 und in Task 1 des Plans Fixrunde A Rollen (A6-02: benachrichtigung notify.mobile_app_*)
 und in Task 4 des Plans Fixrunde A Geraetekern (L4-09: Status startet statt notbetrieb beim Start mit veraltetem
-Notbetrieb)."""
+Notbetrieb)
+und in Task 3 des Plans Fixrunde B TP2 (A2-13: die Telemetrie steht im Schritt nach den schon eingestellten
+Ereignissen; nur die Reihenfolge, per GOLDEN_UPDATE=1)."""
 import json
 import os
 import time

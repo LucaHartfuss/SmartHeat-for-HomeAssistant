@@ -114,6 +114,7 @@ def _rt(make_store, clock, ha, uptime=SETTLE + 1, store=None, manifest=MANIFEST,
         override=override, notifier=Notifier(store, kunde), neustart=lambda: None, clock=clock,
     )
     rt.kunde = kunde  # type: ignore[attr-defined]  # nur Test: Sicht auf den Sink
+    rt.zone_prepared = True  # die Zone war schon vorbereitet; ohne das setzt die Durchsetzung die Betriebsart nicht durch
     return rt
 
 
@@ -243,6 +244,19 @@ def test_min_flow_deviation_is_written_back(make_store, clock):
     rt = _rt(make_store, clock, Ha(min_flow=25.0))
     _rounds(rt)
     assert rt.signals.writes == [("number.mf", 20.5)]
+
+
+def test_a_zone_that_was_never_prepared_is_no_zone_mode_deviation(make_store, clock):
+    """Fix-Runde 1 (I-1): vor der ersten erfolgreichen Vorbereitung gehoert die Betriebsart dem Start und dem lokalen
+    Check (Kontingent `zone_prepare`); die Durchsetzung schaltet nicht um, zaehlt nicht und meldet nichts."""
+    rt = _rt(make_store, clock, Ha(mode="auto"))
+    rt.zone_prepared = False
+    _rounds(rt, 4)
+    assert rt.signals.writes == [] and rt.signals.attempts == []
+    assert rt.store.state.manual_override is None and _pushes(rt) == []
+    rt.zone_prepared = True  # Gegenprobe: nach der Vorbereitung wird dieselbe Abweichung durchgesetzt
+    _rounds(rt)
+    assert ("climate.zone", "heat_cool") in rt.signals.writes
 
 
 def test_zone_zero_is_no_deviation(make_store, clock):

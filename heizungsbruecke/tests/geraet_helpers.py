@@ -8,6 +8,7 @@ import bindung_beispiele
 from heizungsbruecke.geraet_status import GeraetStatus
 from heizungsbruecke.ha_sinks import HaNotifySink
 from heizungsbruecke.host import HaHost
+from smartheat_device.geraet_host_basis import GeraetHostBasis
 from smartheat_device.laufzeit import RuntimeChannel
 from smartheat_runtime import app, aufraeumen, dokument_config, entitlement
 from smartheat_runtime.roles import LEVER_ROLES
@@ -83,8 +84,14 @@ class FakeGeraet:
     die Nachrichten des Links als ["link", <topic>, payload] auf (Golden Master). neustart ist der Rueckruf des Hosts
     fuer app.start (Spec Stufe 3 S6 4.2) und zaehlt in neustarts."""
 
-    def __init__(self, konfiguration, *, bedienung=None, dirty=False, abo=entitlement.ACTIVE, ha=None, log=None):
+    #: Sicht der Laufzeit auf den Start (laufzeit_konfiguration, ursprungswerte_server) wie im echten Geraete-Host
+    laufzeit_konfiguration = GeraetHostBasis.laufzeit_konfiguration
+    ursprungswerte_server = GeraetHostBasis.ursprungswerte_server
+
+    def __init__(self, konfiguration, *, bedienung=None, dirty=False, abo=entitlement.ACTIVE, ha=None, log=None,
+                 start_markierung=None):
         self._konfiguration, self._bedienung, self._dirty, self._abo = konfiguration, bedienung, dirty, abo
+        self.start_markierung = start_markierung  # die beim Start gelesene Aufraeum-Markierung (aufraeumen.entscheiden)
         self.wuensche, self.aus, self.status = [], [], []
         self.gemeldet: list[dict] = []  # Ursprungswerte, die die Laufzeit dem Host gab (Spec Stufe 3 S3 5.1)
         self.raum = None
@@ -162,14 +169,18 @@ def start_bridge(env, *, abo=entitlement.ACTIVE, abgemeldet=False, bedienung=Non
         konfiguration = {**konfiguration, "ursprungswerte": ursprungswerte}
     if abgemeldet:
         dokument_config.abmelden(config.ABGEMELDET_PATH, konfiguration["anlage"])
+    start_markierung = None
     if leer_mit_markierung:
         if not config.AUFRAEUMEN_PATH.exists():
             aufraeumen.markieren(config.AUFRAEUMEN_PATH, konfiguration)
         konfiguration = {**konfiguration, "anlage": None}
+        # wie prozess.aufraeumen_beim_start beim Start des Prozesses: die Markierung einmal lesen und weiterreichen
+        start_markierung = aufraeumen.entscheiden(config.AUFRAEUMEN_PATH, konfiguration)[1]
     if bedienung is None:
         angezeigt = env.ha.states.get(options["entity_room_target"], 21.0)
         bedienung = {"raum_soll": angezeigt if isinstance(angezeigt, int | float) else 21.0}
-    geraet = FakeGeraet(konfiguration, abo=abo, ha=env.ha, bedienung=bedienung, log=log)
+    geraet = FakeGeraet(konfiguration, abo=abo, ha=env.ha, bedienung=bedienung, log=log,
+                        start_markierung=start_markierung)
     geraet.sent.connected = verbunden
     geraet.host = HaHost(geraet, env.ha, clock=env.clock)
     bridge = app.start(geraet.host, env.clock, mqtt_factory=geraet.kanal,

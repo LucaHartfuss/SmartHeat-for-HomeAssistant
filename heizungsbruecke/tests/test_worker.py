@@ -28,14 +28,55 @@ def test_posted_event_is_dispatched_to_its_handler(clock):
     assert seen == [Event("a", {"x": 1})]
 
 
-def test_due_schedule_entries_run_before_queued_events(clock):
+def test_waiting_queue_entries_run_before_due_schedule_entries(clock):
+    # A2-13: je Runde erst die beim Rundenbeginn wartenden Queue-Eintraege, dann die faelligen Planeintraege.
     worker, seen = _recording_worker(clock, "planned", "queued")
     worker.post(Event("queued"))
     worker.schedule(0, Event("planned"))
 
     worker.run_pending()
 
-    assert _kinds(seen) == ["planned", "queued"]
+    assert _kinds(seen) == ["queued", "planned"]
+
+
+def test_eingestellte_antwort_geht_faelligem_timeout_vor(clock):
+    """A2-13: eine Antwort, die schon wartet, wird vor dem Ack-Timeout verarbeitet, der erst waehrend eines langen
+    Handlers faellig wurde (sonst verfiele der Tick trotz eingetroffener Antwort)."""
+    worker, seen = _recording_worker(clock, "answer", "timeout")
+
+    def slow(event):
+        seen.append(event)
+        clock.advance(60)
+
+    worker.register("slow", slow)
+    worker.schedule(30, Event("timeout"))
+    worker.post(Event("slow"))
+    worker.post(Event("answer"))
+
+    worker.run_pending()
+
+    assert _kinds(seen) == ["slow", "answer", "timeout"]
+
+
+def test_faelliger_eintrag_verhungert_nicht(clock):
+    """A2-13: ein Handler, der sich selbst immer wieder einstellt, haelt faellige Planeintraege nicht auf."""
+    worker, seen = _recording_worker(clock, "planned")
+    posts = {"n": 0}
+
+    def selfish(event):
+        seen.append(event)
+        if posts["n"] < 100:
+            posts["n"] += 1
+            worker.post(Event("selfish"))
+
+    worker.register("selfish", selfish)
+    worker.post(Event("selfish"))
+    worker.schedule(0, Event("planned"))
+
+    worker.run_pending()
+
+    assert _kinds(seen).index("planned") == 1
+    assert _kinds(seen).count("selfish") == 101
 
 
 def test_schedule_entry_waits_until_due(clock):

@@ -23,7 +23,6 @@ if TYPE_CHECKING:
 
 EV_LOCAL_CHECK = "local_check"
 EV_SETPOINTS = "setpoints"
-EV_AUTH_REJECTED = "auth_rejected"
 EV_ACK_TIMEOUT = "ack_timeout"
 EV_RETRY_DUE = "retry_due"
 EV_WATCHDOG = "watchdog"
@@ -67,18 +66,19 @@ class Runtime:
     # geaenderten Eintrag sonst stillschweigend verwerfen (KPI-Verlust). Ein zwischenzeitlich neu
     # erkannter Eingriff reist deshalb erst mit der naechsten seq.
     manual_override_seq: str | None = None
-    # Monotone Uhr des Workers (Tests: FakeClock). Fuer die Drosselung in abo.handle_auth_rejected.
+    # Monotone Uhr des Workers (Tests: FakeClock). Fuer die Drosselung in abo.handle_connection_failing.
     clock: Callable[[], float] = time.monotonic
-    # T2-12: Zeitpunkt und Ergebnis der letzten Abo-Abfrage nach einer abgelehnten MQTT-Anmeldung;
-    # ein erfolgreicher Connect setzt beides zurueck. Nicht persistiert.
-    auth_rejected_queried_at: float | None = None
-    auth_rejected_last_status: str | None = None
     # Transportneutrale Abo-Erkennung (Spec AWS-IoT 5.1): letzte /status-Abfrage nach langem,
     # wiederholtem Verbindungsfehler; ein erfolgreicher Connect setzt sie zurueck. Nicht persistiert.
     connection_failing_queried_at: float | None = None
     # Start (Plan-Praezisierung 11): Zone auf Manuell mit brauchbarer Parallelverschiebung. Bis es
     # einmal geklappt hat, versucht es jeder lokale Check erneut. Nicht persistiert.
     zone_prepared: bool = False
+    # Comfort-Boost (A6-35 a): Stand der monotonen Uhr (clock) beim Start des Boosts in diesem Prozess, None bei einem
+    # Boost aus einem frueheren Lauf. Gilt nur bei aktivem Boost: ein Boost-Ende ueber die Pipeline laesst den Wert
+    # stehen, jeder neue Start ueberschreibt ihn. Die 4-h-Grenze zaehlt auch hier, falls die Wanduhr zurueckspringt.
+    # Nicht persistiert.
+    boost_mono_start: float | None = None
     # Verbindungswaechter (TP12b, AU-033): seit wann (clock) die MQTT-Verbindung ununterbrochen
     # fehlt, None bei Verbindung. Nicht persistiert.
     mqtt_down_since: float | None = None

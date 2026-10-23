@@ -65,43 +65,36 @@ def _auswerten(name: str, inhalt: bytes) -> Markierung | None:
     return Markierung(roh["anlage"], konfiguration if passend else None, roh.get("zurueckgesetzt") is True)
 
 
-def entscheiden(pfad: Path, gespeichert) -> str:
-    """Vor dem Start des Geraetekerns: KEINE, VERWERFEN (wieder eingerichtet, Zustand bleibt), ZURUECKSETZEN (Markierung
-    bleibt, die Laufzeit setzt zurueck), LOESCHEN (Zustand und Markierung weg) oder BEHALTEN (Markierung unlesbar:
-    nichts loeschen). Die Markierung wird genau einmal gelesen (S3S6-Reste 3): verschwunden heisst KEINE, ein Lesefehler
-    BEHALTEN; ein zweites Lesen koennte einen voruebergehenden Fehler sonst als kaputte Markierung (LOESCHEN) werten."""
+def entscheiden(pfad: Path, gespeichert) -> tuple[str, Markierung | None]:
+    """Vor dem Start des Geraetekerns: (Entscheidung, Markierung). Entscheidung ist KEINE, VERWERFEN (wieder
+    eingerichtet, Zustand bleibt), ZURUECKSETZEN (Markierung bleibt, die Laufzeit setzt zurueck), LOESCHEN (Zustand und
+    Markierung weg) oder BEHALTEN (Markierung unlesbar: nichts loeschen). Die Markierung wird genau einmal gelesen
+    (S3S6-Reste 3): verschwunden heisst KEINE, ein Lesefehler BEHALTEN; ein zweites Lesen koennte einen
+    voruebergehenden Fehler sonst als kaputte Markierung (LOESCHEN) werten. Nur bei ZURUECKSETZEN kommt die gelesene
+    Markierung (mit Konfiguration, nicht zurueckgesetzt) mit zurueck: der Host reicht sie an die Laufzeit weiter
+    (GeraetHostBasis.start_markierung), statt die Datei ein zweites Mal zu lesen (T4-Markierung-Zweitlesen); sonst None."""
     try:
         da = pfad.exists()  # wirft bei EIO/EACCES im stat (nur fehlende Datei ergibt False)
     except OSError as error:
         logger.warning("%s nicht pruefbar (%s): Markierung bleibt, nichts wird geloescht", pfad.name,
                        type(error).__name__)
-        return BEHALTEN
+        return BEHALTEN, None
     if not da:
-        return KEINE
+        return KEINE, None
     if eingerichtet(gespeichert):
-        return VERWERFEN
+        return VERWERFEN, None
     try:
         inhalt = pfad.read_bytes()
     except FileNotFoundError:  # zwischen exists und dem Lesen verschwunden
-        return KEINE
+        return KEINE, None
     except OSError as error:
         logger.warning("%s nicht lesbar (%s): Markierung bleibt, nichts wird geloescht", pfad.name,
                        type(error).__name__)
-        return BEHALTEN
+        return BEHALTEN, None
     markierung = _auswerten(pfad.name, inhalt)
     if markierung is None or markierung.konfiguration is None or markierung.zurueckgesetzt:
-        return LOESCHEN
-    return ZURUECKSETZEN
-
-
-def laufzeit_konfiguration(gespeichert, pfad: Path) -> tuple[dict, bool]:
-    """(Konfiguration fuer die Laufzeit, im Modus abgemeldet starten?). Steht das Zuruecksetzen aus, die alte
-    Konfiguration aus der Markierung; sonst die gespeicherte (leer: {})."""
-    if not eingerichtet(gespeichert):
-        markierung = lesen(pfad)
-        if markierung is not None and markierung.konfiguration is not None and not markierung.zurueckgesetzt:
-            return dict(markierung.konfiguration), True
-    return dict(gespeichert or {}), False
+        return LOESCHEN, None
+    return ZURUECKSETZEN, markierung
 
 
 def zurueckgesetzt(pfad: Path, anlage: str) -> bool:

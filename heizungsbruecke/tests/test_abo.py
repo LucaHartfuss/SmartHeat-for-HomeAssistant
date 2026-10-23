@@ -49,8 +49,7 @@ def _runtime(tmp_path, store, entity_ids=BOTH_ROLES, notify_services=("notify.mo
         status=StatusReporter(
             HaEventSink(ha_api), OPTIONS["tenant_id"], store, LEVER_SETS["vaillant_vrc720"], ADDON_VERSION,
         ),
-        clock=clock or FakeClock(), auth_rejected_queried_at=None, auth_rejected_last_status=None,
-        connection_failing_queried_at=None, texts=HA_TEXTS,
+        clock=clock or FakeClock(), connection_failing_queried_at=None, texts=HA_TEXTS,
     )
 
 
@@ -193,30 +192,21 @@ def test_finish_grace_without_forced_restore_and_without_flags_writes_nothing(ma
     assert "Frist" in caplog.text
 
 
-@pytest.mark.parametrize("status, expect_inactive, expect_rejected", [
-    (entitlement.INACTIVE, True, False),
-    (entitlement.REJECTED, False, True),
-    (entitlement.ACTIVE, False, False),
-    (entitlement.UNKNOWN, False, False),
+@pytest.mark.parametrize("status, expect_inactive", [
+    (entitlement.INACTIVE, True),
+    (entitlement.ACTIVE, False),
+    (entitlement.UNKNOWN, False),
 ])
-def test_connection_failing_acts_only_on_a_clear_answer(make_store, tmp_path, status, expect_inactive, expect_rejected):
+def test_connection_failing_acts_only_on_a_clear_answer(make_store, tmp_path, status, expect_inactive):
     rt = _runtime(tmp_path, make_store(), abo_source=lambda: status)
     abo.handle_connection_failing(rt)
     assert (rt.store.state.abo_inactive_since is not None) is expect_inactive
-    assert rt.status.flags.zugang_abgelehnt is expect_rejected
     if status in (entitlement.ACTIVE, entitlement.UNKNOWN):  # normaler Ausfall: keine Meldung an den Kunden
         rt.ha_api.send_notification.assert_not_called()
         rt.ha_api.create_persistent_notification.assert_not_called()
 
 
-def test_connection_failing_rejected_notifies_like_an_auth_rejection(make_store, tmp_path):
-    rt = _runtime(tmp_path, make_store(), abo_source=lambda: entitlement.REJECTED)
-    abo.handle_connection_failing(rt)
-    rt.ha_api.send_notification.assert_called_once_with("notify.mobile_app_handy", HA_TEXTS.access_denied)
-    assert rt.auth_rejected_queried_at == rt.clock()
-
-
-def test_connection_failing_is_throttled_like_auth_rejection(make_store, tmp_path):
+def test_connection_failing_is_throttled(make_store, tmp_path):
     queries = []  # Abfragen der Abo-Quelle (Rueckruf des Hosts)
     rt = _runtime(tmp_path, make_store(), abo_source=lambda: queries.append(1) or entitlement.UNKNOWN)
     abo.handle_connection_failing(rt)
