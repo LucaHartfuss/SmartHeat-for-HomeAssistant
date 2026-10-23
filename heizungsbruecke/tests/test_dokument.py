@@ -50,9 +50,11 @@ def _ha():
 
 
 def _dazu(ha, entity_id, platform=None, klasse=None, wert=1.0):
-    """Entity mit Zustand (und Klasse nur im Zustand) in die Attrappe; ohne platform kein Registry-Eintrag."""
+    """Entity mit Zustand (und Klasse nur im Zustand) in die Attrappe; ohne platform kein Registry-Eintrag. Eine Entity
+    von mypyllant gehoert zum Config-Entry des Kreises (e1), jede andere zu e9."""
     if platform is not None:
-        ha.registry.append({"entity_id": entity_id, "platform": platform, "config_entry_id": "e9", "device_id": None})
+        ha.registry.append({"entity_id": entity_id, "platform": platform,
+                            "config_entry_id": "e1" if platform == "mypyllant" else "e9", "device_id": None})
     ha.states[entity_id] = wert
     if klasse is not None:
         ha.states[f"{entity_id}::device_class"] = klasse
@@ -112,6 +114,14 @@ def test_leere_und_falsche_teile_des_dokuments_sind_leer_statt_ein_fehler():
                           "raumfuehler": ["sensor.a", 3]})
     assert b.rollen == {} and b.soll_entity is None and b.batterien == () and b.kreis == {}
     assert b.raumfuehler == ("sensor.a",)
+
+
+@pytest.mark.parametrize("soll", [5, True, ["sensor.x"], {"a": 1}, "", None])
+def test_eine_soll_entity_ohne_nichtleeren_text_ist_keine(soll):
+    """Mutationsprobe dokument.py (TP4): nur ein nicht leerer Text ist eine Soll-Entity; `or` statt `and` liesse jeden
+    wahren Nicht-Text (5, True, Liste, Dict) und den leeren Text durch."""
+    b = dokument.bindung({"hebelsatz": "vaillant_vrc720", "bindung": {"rollen": {"room_target": soll}}})
+    assert b.soll_entity is None
 
 
 def test_tabellen_decken_dieselben_hebelsaetze():
@@ -238,6 +248,37 @@ def test_missing_required_role():
     assert dokument.zuordnung_pruefen(konfiguration, _ha()) == {"feld": "heat_limit", "regel": "fehlt"}
 
 
+class _RohListen:
+    """Dieselbe Attrappe, aber mit zusaetzlichen Rohelementen in den Listen der Registry und der Zustaende, wie sie
+    ein fremdes oder neueres HA liefern koennte."""
+
+    def __init__(self, ha, registry_dazu, states_dazu):
+        self._ha, self._registry, self._states = ha, registry_dazu, states_dazu
+
+    def entity_registry(self):
+        return [*self._ha.entity_registry(), *self._registry]
+
+    def get_states(self):
+        return [*self._ha.get_states(), *self._states]
+
+
+_ROHELEMENTE = [None, 5, "entity_id", ["entity_id"], {}, {"platform": "x"}, {"state": "1"}]
+
+
+def test_elemente_ohne_entity_id_in_den_listen_von_ha_werden_uebergangen():
+    """Mutationsprobe dokument.py (TP4): ein Element, das kein Mapping mit `entity_id` ist (None, Zahl, Text oder Liste,
+    die den Schluesselnamen enthalten, Dict ohne ihn), faellt aus Registry und Zustaenden heraus, statt die Pruefung
+    mit TypeError/KeyError abzubrechen (`or` statt `and`)."""
+    b = dokument.bindung(KONFIGURATION)
+    sauber = dokument.rollen_befund(b, _ha(), beim_start=False)
+    assert sauber == (None, [])
+    roh = _RohListen(_ha(), _ROHELEMENTE, _ROHELEMENTE)
+    assert dokument.rollen_befund(b, roh, beim_start=False) == sauber
+    # nur die Registry bzw. nur die Zustaende (je Zeile eine eigene Wirkung)
+    assert dokument.rollen_befund(b, _RohListen(_ha(), _ROHELEMENTE, []), beim_start=False) == sauber
+    assert dokument.rollen_befund(b, _RohListen(_ha(), [], _ROHELEMENTE), beim_start=False) == sauber
+
+
 def test_unknown_entity_is_refused():
     ha = _ha()
     ha.missing.add("number.heat_limit")
@@ -271,34 +312,79 @@ def test_every_lever_of_the_binding_is_checked():
     assert dokument.zuordnung_pruefen(konfiguration, ha) == {"feld": "level", "regel": "nicht_erlaubt"}
 
 
-def test_a_circuit_without_config_entry_checks_only_the_platform():
-    kreis = {k: v for k, v in KONFIGURATION["bindung"]["kreis"].items() if k != "config_entry"}
-    konfiguration = {**KONFIGURATION, "bindung": {**KONFIGURATION["bindung"], "kreis": kreis}}
+def _ohne_config_entry(konfiguration=KONFIGURATION):
+    kreis = {k: v for k, v in konfiguration["bindung"]["kreis"].items() if k != "config_entry"}
+    return {**konfiguration, "bindung": {**konfiguration["bindung"], "kreis": kreis}}
+
+
+def test_schreibziele_aus_zwei_config_entries_werden_abgelehnt():
+    """A5-70 (E5): alle Schreibziele aus einem Config-Entry, auch wenn der Kreis keines nennt (sonst koennte ein Server
+    die Hebel auf zwei Anlagen derselben Integration verteilen). Gegenprobe: alle aus e1 besteht; eine fremde Plattform
+    scheitert weiter."""
+    konfiguration = _ohne_config_entry()
     assert dokument.zuordnung_pruefen(konfiguration, _ha()) is None
+    ha = _ha()
+    ha.registry = [{**e, "config_entry_id": "e2"} if e["entity_id"] == "number.heat_limit" else e for e in ha.registry]
+    assert dokument.zuordnung_pruefen(konfiguration, ha) == {"feld": "heat_limit", "regel": "nicht_erlaubt"}
+    assert _start_rollen(konfiguration, ha) == ("heat_limit", "nicht_erlaubt")  # auch beim Start
     ha = _ha()
     _fremd(ha, "number.heat_limit")
     assert dokument.zuordnung_pruefen(konfiguration, ha) == {"feld": "heat_limit", "regel": "nicht_erlaubt"}
 
 
-def test_the_platform_of_the_write_targets_comes_from_the_server_document():
-    """Heutiges Verhalten, Restpunkt A5-70 (Regel 4: eine lokale Positivliste der Plattformen nur mit Go des Nutzers):
-    nennt ein kompromittierter Server als Kreis die Plattform einer beliebigen anderen Integration (hier shelly, ein
-    fremdes Geraet), nimmt die Pruefung die number-Entities dieser Plattform als Schreibziele an. Gegenprobe: dieselbe
-    Bindung mit dem echten Kreis (mypyllant) wird abgelehnt."""
+@pytest.mark.parametrize("ohne", [None, "", 5])
+def test_ein_schreibziel_ohne_config_entry_ist_nicht_erlaubt(ohne):
+    """Auch das erste Schreibziel (room_setpoint, climate.zone) braucht ein echtes Config-Entry, wenn der Kreis keines
+    nennt: ohne (None, leer, keine Zeichenkette) bindet es die anderen nicht, das Urteil faellt auf dieses Feld."""
+    ha = _ha()
+    ha.registry = [{**e, "config_entry_id": ohne} if e["entity_id"] == "climate.zone" else e for e in ha.registry]
+    assert dokument.zuordnung_pruefen(_ohne_config_entry(), ha) == {"feld": "room_setpoint", "regel": "nicht_erlaubt"}
+
+
+def test_kreis_mit_fremder_plattform_wird_abgelehnt():
+    """A5-70 (E5): die Plattform der Schreibziele steht lokal je Hebelsatz (SCHREIB_PLATTFORM). Nennt ein
+    kompromittierter Server als Kreis die Plattform einer anderen Integration (hier shelly, ein fremdes Geraet, dessen
+    number-Entities die Schreibziele sind), lehnt das Geraet ab, statt der Plattform des Servers zu folgen. Gegenprobe:
+    dieselbe Bindung mit dem echten Kreis scheitert an den Schreibzielen."""
     fremd = {"number.curve_current", "climate.zone", "number.min_flow", "number.heat_limit", "sensor.outdoor_temp"}
     ha = _ha()
     ha.registry = [{**e, "platform": "shelly", "config_entry_id": "e-shelly", "device_id": "d-shelly"}
                    if e["entity_id"] in fremd else e for e in ha.registry]
-    assert dokument.zuordnung_pruefen(KONFIGURATION, ha) == {"feld": "room_setpoint", "regel": "nicht_erlaubt"}
     kreis = {**KONFIGURATION["bindung"]["kreis"], "plattform": "shelly", "config_entry": "e-shelly"}
     vom_server = {**KONFIGURATION, "bindung": {**KONFIGURATION["bindung"], "kreis": kreis}}
-    assert dokument.zuordnung_pruefen(vom_server, ha) is None
+    assert dokument.zuordnung_pruefen(vom_server, ha) == {"feld": "plattform", "regel": "nicht_erlaubt"}
+    assert _rollen(vom_server, ha) == ("plattform", "nicht_erlaubt")
+    assert dokument.zuordnung_pruefen(KONFIGURATION, ha) == {"feld": "room_setpoint", "regel": "nicht_erlaubt"}
+    # auch mit Schreibzielen der richtigen Plattform: eine andere Kreis-Plattform wird abgelehnt
+    assert dokument.zuordnung_pruefen(vom_server, _ha()) == {"feld": "plattform", "regel": "nicht_erlaubt"}
+
+
+def test_jeder_hebelsatz_hat_eine_schreibplattform():
+    """Die Tabelle als Literal (Regel 4, E5): je Hebelsatz genau die Plattform seiner Integration."""
+    assert dokument.SCHREIB_PLATTFORM == {
+        "vaillant_vrc720": "mypyllant", "weishaupt_wwp": "weishaupt_modbus", "weishaupt_wwp_basis": "weishaupt_modbus",
+        "viessmann_vicare": "vicare"}
+    assert set(dokument.SCHREIB_PLATTFORM) == set(dokument.PFLICHT_ROLLEN)
+
+
+def test_ein_schreibziel_ohne_registry_eintrag_wird_uebernommen_abgelehnt_und_ist_beim_start_nicht_pruefbar():
+    """Ohne Registry-Eintrag gibt es weder Plattform noch Config-Entry. Beim Uebernehmen wie bisher eine Ablehnung
+    (nicht_erlaubt; sonst hielte das Geraet das Dokument endlos zurueck); beim Start kein Urteil, sondern
+    NichtPruefbar(feld, "registry") (Wiederholung, danach Startfehler rollen_nicht_pruefbar mit eigenem Text)."""
+    ha = _ha()
+    ha.registry = [e for e in ha.registry if e["entity_id"] != "number.min_flow"]
+    assert dokument.zuordnung_pruefen(KONFIGURATION, ha) == {"feld": "min_flow", "regel": "nicht_erlaubt"}
+    assert _rollen(KONFIGURATION, ha) == ("min_flow", "nicht_erlaubt")
+    with pytest.raises(config_check.NichtPruefbar) as fehler:
+        _start_rollen(KONFIGURATION, ha)
+    assert fehler.value.args == ("min_flow", "registry")
 
 
 def test_soll_entity_on_the_device_of_a_write_target_is_refused():
     ha = _ha()
     ha.registry = [{**e, "device_id": "d-therme"} if e["entity_id"] == "sensor.room_target" else e for e in ha.registry]
     assert dokument.zuordnung_pruefen(KONFIGURATION, ha) == {"feld": "room_target", "regel": "nicht_erlaubt"}
+    assert _start_rollen(KONFIGURATION, ha) == ("room_target", "nicht_erlaubt")  # auch beim Start
 
 
 @pytest.mark.parametrize("room_target, shift", [
@@ -332,7 +418,6 @@ def test_ha_unreachable_is_not_a_verdict():
 def test_ha_still_starting_is_not_a_verdict_either():
     """Waehrend HA hochfaehrt fehlen die Entities der Hersteller-Integration noch (404): kein Ablehnungsgrund."""
     ha = _ha()
-    ha.config = {"state": "NOT_RUNNING"}
     ha.is_reachable = lambda: False
     with pytest.raises(config_check.NichtPruefbar):
         dokument.zuordnung_pruefen(KONFIGURATION, ha)
@@ -470,6 +555,11 @@ def _rollen(konfiguration, ha):
     return dokument.rollen_pruefen(dokument.bindung(konfiguration), ha)
 
 
+def _start_rollen(konfiguration, ha):
+    """Das Urteil wie beim Start (host._rollen_pruefen_mit_wiederholung)."""
+    return dokument.rollen_befund(dokument.bindung(konfiguration), ha, beim_start=True)[0]
+
+
 def _batterie(ref):
     return {**KONFIGURATION, "bindung": {**KONFIGURATION["bindung"], "batterien": [ref]}}
 
@@ -519,7 +609,7 @@ def test_ohne_soll_entity_entfaellt_room_target_statt_einer_assertion():
     assert _rollen(konfiguration, ha) is None
 
 
-def test_eine_kennzahl_ohne_klasse_braucht_die_plattform_des_kreises():
+def test_eine_kennzahl_ohne_klasse_braucht_die_plattform_des_hebelsatzes():
     ha = _ha()
     _dazu(ha, "sensor.modus", "zha")  # zha liefert hier nur Sensoren: nichts Einstellbares
     konfiguration = _mit_rolle("operating_mode", "sensor.modus")
@@ -528,6 +618,27 @@ def test_eine_kennzahl_ohne_klasse_braucht_die_plattform_des_kreises():
     ha = _ha()
     _dazu(ha, "sensor.modus", "mypyllant")
     assert dokument.zuordnung_pruefen(konfiguration, ha) is None
+
+
+def _mit_kreis_plattform(konfiguration, plattform):
+    kreis = {**konfiguration["bindung"]["kreis"], "plattform": plattform}
+    return {**konfiguration, "bindung": {**konfiguration["bindung"], "kreis": kreis}}
+
+
+def test_sensor_ohne_klasse_nur_von_der_plattform_des_hebelsatzes():
+    """A5-70 (E5): die freie Lese-Rolle ohne Klasse haengt an SCHREIB_PLATTFORM, nicht an kreis.plattform des Servers.
+    Nennt der Kreis zha (dort liegt auch etwas Einstellbares), bleibt ein zha-Sensor ohne Klasse verboten -- das Urteil
+    gilt dem Feld, vor der Pruefung der Kreis-Plattform. Gegenprobe: ein mypyllant-Sensor ohne Klasse besteht die Form
+    (dann scheitert erst die Kreis-Plattform)."""
+    ha = _ha()
+    _dazu(ha, "sensor.modus", "zha")
+    _dazu(ha, "number.zigbee_dimmer", "zha")
+    zha_kreis = _mit_kreis_plattform(_mit_rolle("operating_mode", "sensor.modus"), "zha")
+    assert _rollen(zha_kreis, ha) == ("operating_mode", "nicht_erlaubt")
+    ha = _ha()
+    _dazu(ha, "sensor.modus", "mypyllant")
+    assert _rollen(zha_kreis, ha) == ("plattform", "nicht_erlaubt")
+    assert _rollen(_mit_rolle("operating_mode", "sensor.modus"), ha) is None
 
 
 def test_der_sensor_mit_klasse_nur_im_zustand_ist_erlaubt():
@@ -629,9 +740,9 @@ def test_eine_batterie_ohne_zustand_besteht_nach_der_domaene_und_steht_in_der_li
     ha = _ha()
     del ha.states["sensor.thermostat_battery"], ha.states["sensor.thermostat_battery::device_class"]
     b = dokument.bindung(KONFIGURATION)
-    assert dokument.rollen_befund(b, ha) == (None, [("batterien", "sensor.thermostat_battery")])
+    assert dokument.rollen_befund(b, ha, beim_start=True) == (None, [("batterien", "sensor.thermostat_battery")])
     assert _rollen(KONFIGURATION, ha) is None
-    assert dokument.rollen_befund(dokument.bindung(_batterie("binary_sensor.leer")), ha)[1] == [
+    assert dokument.rollen_befund(dokument.bindung(_batterie("binary_sensor.leer")), ha, beim_start=True)[1] == [
         ("batterien", "binary_sensor.leer")]  # binary_sensor als Batterie
     assert _rollen(_batterie("lock.haustuer"), ha) == ("batterien", "nicht_erlaubt")
 
@@ -639,7 +750,8 @@ def test_eine_batterie_ohne_zustand_besteht_nach_der_domaene_und_steht_in_der_li
 def test_eine_optionale_rolle_ohne_zustand_wird_nach_der_domaene_der_id_beurteilt():
     ha = _ha()
     ok = _mit_rolle("flow_temperature", "sensor.vorlauf")
-    assert dokument.rollen_befund(dokument.bindung(ok), ha) == (None, [("flow_temperature", "sensor.vorlauf")])
+    assert dokument.rollen_befund(dokument.bindung(ok), ha, beim_start=True) == (
+        None, [("flow_temperature", "sensor.vorlauf")])
     for ref in ("person.luca", "binary_sensor.tuer", "lock.haustuer", "zone.home"):  # binary_sensor nur als Batterie
         assert _rollen(_mit_rolle("flow_temperature", ref), ha) == ("flow_temperature", "nicht_erlaubt"), ref
 
@@ -830,10 +942,12 @@ def test_ohne_zustand_zaehlt_je_feld_nur_die_domaene_aus_der_id(feld):
                                 "lock.x", "person.x") if ref not in erlaubt]
     for ref in erlaubt:
         konfiguration = _batterie(ref) if feld == "batterien" else _mit_rolle(feld, ref)
-        assert dokument.rollen_befund(dokument.bindung(konfiguration), ha) == (None, [(feld, ref)]), ref
+        befund = dokument.rollen_befund(dokument.bindung(konfiguration), ha, beim_start=True)
+        assert befund == (None, [(feld, ref)]), ref
     for ref in verboten:
         konfiguration = _batterie(ref) if feld == "batterien" else _mit_rolle(feld, ref)
-        assert dokument.rollen_befund(dokument.bindung(konfiguration), ha)[0] == (feld, "nicht_erlaubt"), ref
+        befund = dokument.rollen_befund(dokument.bindung(konfiguration), ha, beim_start=True)
+        assert befund[0] == (feld, "nicht_erlaubt"), ref
 
 
 def test_ohne_zustand_raumfuehler_climate_nur_mit_dem_attribut_ist_nicht_pruefbar():

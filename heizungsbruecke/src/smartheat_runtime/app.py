@@ -126,10 +126,9 @@ class Loaded:
     config: RuntimeConfig
     manifest: ChannelManifest
     binding: PlantBinding
+    # Audit 4, A4-08: Anlagen-Kennung des Hosts (HA: der Heizkreis, A6-36; Gateway: Treiber und Parameter).
+    plant_id: str
     notices: tuple[Notice, ...] = ()
-    # Audit 4, A4-08: Anlagen-Kennung des Hosts; None = aus den Hebel-Referenzen des Manifests
-    # (roles.lever_refs_identity).
-    plant_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -714,9 +713,12 @@ def start(host: Host, clock: Callable[[], float] = time.monotonic, *,
     for notice in loaded.notices:
         notifier.notify(notice.key, notice.state, notice.message, critical=False)
     config = loaded.config
-    # Audit 4, A4-08: Zustand an Einrichtung und Anlage binden, bevor irgendetwas daraus gelesen wird.
+    # Audit 4, A4-08: Zustand an Einrichtung und Anlage binden, bevor irgendetwas daraus gelesen wird. A6-36: ein
+    # Bestand mit der Kennung aus den Hebel-Referenzen (HA bis 1.1.0) ist dieselbe Anlage (einmalige Uebernahme,
+    # Rueckbau A6-36-Uebernahme); beim Gateway ist sie nie gleich (seine Kennung hat den Schluessel "id", kein Hebel
+    # heisst so).
     try:
-        bind_to_tenant(store, boot.tenant_id, loaded.plant_id or roles.lever_refs_identity(loaded.manifest))
+        bind_to_tenant(store, boot.tenant_id, loaded.plant_id, frueher=roles.lever_refs_identity(loaded.manifest))
     except StorageError:
         logger.warning(
             "Bindung an Einrichtung und Anlage nicht gespeichert, gilt bis zum naechsten Schreiben", exc_info=True)

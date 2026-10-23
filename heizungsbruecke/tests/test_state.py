@@ -501,14 +501,6 @@ def test_empty_write_budget_is_not_written(make_store, tmp_path):
     assert "write_budget" not in load_backup(tmp_path / "backup.json")
 
 
-def test_a_035_backup_with_waerme_fehlt_seit_still_loads(make_store, tmp_path):
-    # Add-on 0.35.0 schrieb waerme_fehlt_seit; 0.36.0 ignoriert den Schluessel und schreibt ihn nicht mehr.
-    store = make_store({"waerme_fehlt_seit": "2026-10-07T08:00:00+02:00"})
-    assert not hasattr(store.state, "waerme_fehlt_seit")
-    store.update(last_ack_at="2026-10-09T10:00:00+02:00")
-    assert "waerme_fehlt_seit" not in json.loads((tmp_path / "backup.json").read_text())
-
-
 def test_heat_limit_fields_round_trip_through_backup(make_store):
     store = make_store(backup={"restore_point": {"heat_limit": 16.0}, "originals": {"heat_limit": 15.0}})
     assert (store.state.restore_point.get("heat_limit"), store.state.originals.get("heat_limit")) == (16.0, 15.0)

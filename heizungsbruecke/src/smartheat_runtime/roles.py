@@ -24,7 +24,9 @@ REQUIRED_ROLES = (
 )
 
 # Rollen der Hebel im Manifest ("shift_current" ist der historische Rollenname der Parallelverschiebung).
-# Achtung (Audit 4, A4-08): Eine Aenderung aendert die plant_id jeder Installation; beim Update gilt das als andere Anlage und setzt den anlagenbezogenen Zustand zurueck.
+# Achtung (A6-36): Seit A6-36 haengt die plant_id nicht mehr an LEVER_ROLES, aber die einmalige Uebernahme
+# (lever_refs_identity als frueher): eine Aenderung vor dem Rueckbau (A6-36-Uebernahme) bricht sie, ein Bestand von
+# 1.1.0 gilt beim Update als andere Anlage und verliert den anlagenbezogenen Zustand.
 LEVER_ROLES = {
     "curve": "curve_current", "room_setpoint": "shift_current", "level": "level_current", "heat_limit": "heat_limit",
     "min_flow": "min_flow",
@@ -60,7 +62,7 @@ class ChannelManifest:
 
 
 def lever_refs_identity(manifest: "ChannelManifest") -> str:
-    """Anlagen-Kennung aus den Referenzen der Hebel (HA: die beschriebenen Entities); Hosts mit gleichbleibenden
-    Referenzen (Gateway) liefern eine eigene (Loaded.plant_id)."""
+    """Die fruehere Anlagen-Kennung des HA-Hosts (bis 1.1.0) aus den Referenzen der Hebel; heute nur noch fuer die
+    einmalige Uebernahme in app.start (bind_to_tenant frueher=, A6-36). Faellt mit A6-36-Uebernahme weg."""
     return json.dumps({lever: manifest.refs[role] for lever, role in sorted(LEVER_ROLES.items())
                        if role in manifest.refs}, sort_keys=True)

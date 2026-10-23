@@ -2,11 +2,11 @@
 Aenderung am Produktionscode. Ein mit xfail(strict=True) markierter Test beschreibt das
 erwartete Verhalten und belegt, dass der heutige Code es NICHT zeigt.
 
-Nutzt das Harness aus test_runtime.py (Fake-HA mit sofort sichtbaren Schreibwerten, Fake-MQTT,
+Nutzt das Harness aus runtime_helpers.py (Fake-HA mit sofort sichtbaren Schreibwerten, Fake-MQTT,
 Fake-Uhr)."""
 from datetime import date, timedelta
 
-from test_runtime import (
+from runtime_helpers import (
     _advance,
     _answer,
     _break_backup_writes,
@@ -16,7 +16,6 @@ from test_runtime import (
     _set_room_target,
     _start,
     _trigger,
-    env,  # noqa: F401  (registriert die Fixture `env`)
 )
 
 from smartheat_runtime import entitlement

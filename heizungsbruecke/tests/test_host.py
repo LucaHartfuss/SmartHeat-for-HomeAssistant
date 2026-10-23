@@ -1,16 +1,20 @@
 """HA-Host der Laufzeit (Plan SHG G1, Praezisierung 6) im Geraete-Pfad: Konfiguration aus dem Konfigurationsdokument."""
+import dataclasses
 import logging
 from unittest.mock import MagicMock
 
 import pytest
-from fakes import FakeHa
+from fakes import FakeHa, schreibziel_eintrag
 from geraet_helpers import FakeGeraet, konfiguration_aus_optionen
-from test_runtime import OPTIONS, _start_bridge, env  # noqa: F401  (Fixture)
+from runtime_helpers import OPTIONS, _start_bridge
 
+from heizungsbruecke import dokument
 from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.host import DERIVED_SENSORS_RETRY_DELAYS_SECONDS, HaHost
 from smartheat_runtime.app import IdleBridge, StartFailure
+from smartheat_runtime.backup_store import load_backup, save_backup
+from smartheat_runtime.notifier import STATE_OK
 from smartheat_runtime.roles import lever_refs_identity
 
 
@@ -57,6 +61,27 @@ def angelegt(env, monkeypatch):
 def _host(env, geraet=None, **overrides):
     geraet = geraet or FakeGeraet(konfiguration_aus_optionen({**OPTIONS, **overrides}))
     return HaHost(geraet, env.ha)
+
+
+#: Kennung des Kreises der Test-Dokumente (geraet_helpers.konfiguration_aus_optionen), woertlich.
+KREIS_KENNUNG = '{"anlage": "S", "nummer": "0", "plattform": "mypyllant"}'
+
+
+def test_anlagen_kennung_kommt_aus_dem_kreis(env, angelegt, sleeps):
+    """A6-36: die Anlage ist der Heizkreis (plattform, anlage, nummer), nicht die Entity-IDs der Hebel. Eine umbenannte
+    Hebel-Entity bleibt dieselbe Anlage; der Config-Entry zaehlt nicht (Neuanlage der Integration = dieselbe Anlage)."""
+    loaded = _host(env).load()
+    assert loaded.plant_id == KREIS_KENNUNG
+    env.ha.states["number.heat_limit_neu"] = 16.0
+    env.ha.registry.append(schreibziel_eintrag("number.heat_limit_neu", "mypyllant"))
+    umbenannt = _host(env, entity_heat_limit="number.heat_limit_neu").load()
+    assert umbenannt.manifest.refs["heat_limit"] == "number.heat_limit_neu"
+    assert lever_refs_identity(umbenannt.manifest) != lever_refs_identity(loaded.manifest)  # Gegenprobe: bis 1.1.0 neu
+    assert umbenannt.plant_id == KREIS_KENNUNG
+    b = dokument.bindung(konfiguration_aus_optionen(OPTIONS))
+    assert dokument.anlagen_kennung(dataclasses.replace(b, kreis={**b.kreis, "config_entry": "e-neu"})) == KREIS_KENNUNG
+    for feld, wert in (("plattform", "vicare"), ("anlage", "T"), ("nummer", "1")):
+        assert dokument.anlagen_kennung(dataclasses.replace(b, kreis={**b.kreis, feld: wert})) != KREIS_KENNUNG, feld
 
 
 def test_eine_uebernommene_rolle_auf_einer_person_startet_nicht_und_legt_nichts_an(env, angelegt, sleeps):
@@ -124,12 +149,22 @@ BASIS = {
 }
 
 
+def _basis(env, zustaende):
+    """Zustaende des Hebelsatzes weishaupt_wwp_basis; seine Heizkurve und Normaltemperatur sind hier
+    number.curve_current und number.shift_current, also Schreibziele von weishaupt_modbus (statt mypyllant)."""
+    env.ha.states.update(zustaende)
+    env.ha.registry = [schreibziel_eintrag(e["entity_id"], "weishaupt_modbus")
+                       if e["entity_id"] in ("number.curve_current", "number.shift_current") else e
+                       for e in env.ha.registry]
+
+
 @pytest.mark.parametrize("rolle_option", ["entity_heat_limit", "entity_curve_current"])
 def test_eine_optionale_hebelrolle_ohne_zustand_wird_nie_fallen_gelassen(env, angelegt, sleeps, rolle_option):
-    """Review Fixrunde A: eine Hebelrolle gehoert zur Anlagenidentitaet (lever_refs_identity). Fiele sie weg, meldete
-    bind_to_tenant eine andere Anlage und setzte Wiederherstellungspunkt, Originale und Schreibzaehler zurueck. Ein
-    Schreibziel ohne Zustand ist daher nicht pruefbar (Wiederholung, StartFailure), nie ungelesen."""
-    env.ha.states.update(BASIS_ZUSTAENDE)
+    """Review Fixrunde A: eine Hebelrolle ist ein Schreibziel und gehoert bis zum Rueckbau der Uebernahme
+    (A6-36-Uebernahme) zur frueheren Kennung (lever_refs_identity). Fiele sie weg, verwarf bind_to_tenant einen Bestand
+    von 1.1.0 samt Wiederherstellungspunkt, Originalen und Schreibzaehlern. Ein Schreibziel ohne Zustand ist daher nicht
+    pruefbar (Wiederholung, StartFailure), nie ungelesen."""
+    _basis(env, BASIS_ZUSTAENDE)
     with pytest.raises(StartFailure) as fehler:
         _host(env, **{**BASIS, rolle_option: "number.swu"}).load()
     assert fehler.value.key == "rollen_nicht_pruefbar"
@@ -138,15 +173,15 @@ def test_eine_optionale_hebelrolle_ohne_zustand_wird_nie_fallen_gelassen(env, an
 
 
 def test_gegenprobe_eine_optionale_hebelrolle_mit_zustand_bleibt_im_manifest(env, angelegt, sleeps):
-    env.ha.states.update({**BASIS_ZUSTAENDE, "number.swu": 18.0})
+    _basis(env, {**BASIS_ZUSTAENDE, "number.swu": 18.0})
     loaded = _host(env, **{**BASIS, "entity_heat_limit": "number.swu"}).load()
     assert loaded.manifest.refs["heat_limit"] == "number.swu" and sleeps == []
 
 
 def test_eine_fallen_gelassene_lese_rolle_aendert_die_anlagenidentitaet_nicht(env, angelegt, sleeps):
     """Gegenprobe zur Hebelrolle: eine optionale Lese-Rolle (Energie) ohne Zustand startet, wird ungelesen gemeldet, und
-    die Kennung aus den Hebelreferenzen bleibt dieselbe wie mit Zustand."""
-    env.ha.states.update(BASIS_ZUSTAENDE)
+    die Kennung (aus dem Kreis, A6-36) wie die fruehere aus den Hebelreferenzen bleibt dieselbe wie mit Zustand."""
+    _basis(env, BASIS_ZUSTAENDE)
     ohne = _host(env, **BASIS, entity_energy_thermal_heating="sensor.waerme").load()
     assert "energy_thermal_heating" not in ohne.manifest.refs and sleeps == []
     assert [n.key for n in ohne.notices] == ["entity_fehlt:energy_thermal_heating"]
@@ -154,13 +189,14 @@ def test_eine_fallen_gelassene_lese_rolle_aendert_die_anlagenidentitaet_nicht(en
                           "sensor.waerme::unit_of_measurement": "kWh"})
     mit = _host(env, **BASIS, entity_energy_thermal_heating="sensor.waerme").load()
     assert mit.manifest.refs["energy_thermal_heating"] == "sensor.waerme"
-    assert lever_refs_identity(ohne.manifest) == lever_refs_identity(mit.manifest)
+    assert lever_refs_identity(ohne.manifest) == lever_refs_identity(mit.manifest) and ohne.plant_id == mit.plant_id
 
 
 def test_gegenprobe_dieselbe_optionale_rolle_mit_zustand_bleibt_im_manifest(env, angelegt, sleeps):
     env.ha.states.update({"sensor.vorlauf": 35.0, "sensor.vorlauf::device_class": "temperature"})
     loaded = _host(env, entity_flow_temperature="sensor.vorlauf").load()
-    assert loaded.manifest.refs["flow_temperature"] == "sensor.vorlauf" and loaded.notices == ()
+    assert loaded.manifest.refs["flow_temperature"] == "sensor.vorlauf"
+    assert [(n.key, n.state) for n in loaded.notices] == [("entity_fehlt:flow_temperature", STATE_OK)]  # nur Entwarnung
 
 
 def test_eine_batterie_ohne_zustand_wird_nicht_gelesen_und_gemeldet(env, angelegt, sleeps):
@@ -169,6 +205,22 @@ def test_eine_batterie_ohne_zustand_wird_nicht_gelesen_und_gemeldet(env, angeleg
     assert [ref.ref for ref in loaded.config.battery_refs] == ["sensor.gut"]
     assert [n.key for n in loaded.notices] == ["entity_fehlt:batterien"]
     assert "binary_sensor.weg_battery_low" not in loaded.notices[0].message
+
+
+def test_entity_fehlt_meldet_nach_rueckkehr_und_erneutem_fehlen_wieder(env, sleeps):
+    """L4-25: kehrt die Entity zurueck, entwarnt der Start den Hinweis; fehlt sie spaeter erneut, kommt er wieder.
+    Ohne die Entwarnung bliebe der Zustand „fehlt“ offen und der Melder schwiege beim zweiten Mal."""
+    def fehlt_meldungen():
+        return [push for push in env.ha.pushes if "zugeordnete Entity fehlt" in push]
+
+    _start_bridge(env, entity_flow_temperature="sensor.vorlauf")  # Zustand fehlt
+    assert len(fehlt_meldungen()) == 1
+    env.ha.states.update({"sensor.vorlauf": 35.0, "sensor.vorlauf::device_class": "temperature"})
+    _start_bridge(env, entity_flow_temperature="sensor.vorlauf")  # da: Entwarnung
+    assert len(fehlt_meldungen()) == 1 and "wieder vorhanden" in env.ha.pushes[-1]
+    del env.ha.states["sensor.vorlauf"], env.ha.states["sensor.vorlauf::device_class"]
+    _start_bridge(env, entity_flow_temperature="sensor.vorlauf")  # fehlt wieder
+    assert len(fehlt_meldungen()) == 2
 
 
 @pytest.mark.parametrize("feld_option, ref", [("entity_operating_mode", "person.luca"),
@@ -266,3 +318,119 @@ def test_ein_attribut_ausser_der_temperatur_startet_nicht(env, angelegt, sleeps)
         _host(env, entity_operating_mode="climate.zone::hvac_action").load()
     assert fehler.value.grund.startswith("operating_mode: ") and "hvac_action" not in fehler.value.grund
     assert angelegt == []
+
+
+# --- L4-27/A5-70 (E5): Schreibziele lokal verankert, auch fuer die uebernommene Konfiguration beim Start ---
+
+SCHREIBZIELE = ("number.curve_current", "number.shift_current", "number.min_flow", "number.heat_limit")
+THERME = {"platform": "mypyllant", "config_entry_id": "e1", "device_id": "d-therme"}
+
+
+def _registry(env, eintraege=None):
+    """Registry wie bei client1 (Schreibziele aus OPTIONS: mypyllant, ein Config-Entry, ein Geraet der Therme), dazu
+    `eintraege` (Entity -> Felder; None = kein Eintrag)."""
+    neu = {**dict.fromkeys(SCHREIBZIELE, THERME), **(eintraege or {})}
+    env.ha.registry = [e for e in env.ha.registry if e["entity_id"] not in neu] + [
+        {"entity_id": entity_id, **felder} for entity_id, felder in neu.items() if felder is not None]
+
+
+def _startet_nicht(env, angelegt, sleeps, grund):
+    """Konfigurationsfehler: load wirft ohne Wiederholung, nichts angelegt; die Laufzeit ruht ohne zu schreiben."""
+    with pytest.raises(StartFailure) as fehler:
+        _host(env).load()
+    assert fehler.value.grund == grund
+    assert angelegt == [] and sleeps == []
+    bridge = _start_bridge(env)
+    assert isinstance(bridge, IdleBridge) and bridge.reason == "konfigurationsfehler"
+    assert env.ha.writes == []
+
+
+def test_uebernommenes_schreibziel_fremder_plattform_startet_nicht(env, angelegt, sleeps):
+    """L4-27: eine schon uebernommene Konfiguration, deren Heizgrenze heute eine Entity einer anderen Integration ist
+    (etwa nach einer Umbelegung in HA), regelt nicht und schreibt nichts."""
+    _registry(env, {"number.heat_limit": {**THERME, "platform": "template"}})
+    _startet_nicht(env, angelegt, sleeps,
+                   "heat_limit: diese Entity darf SmartHeat nicht nutzen (lokale Positivliste)")
+
+
+def test_schreibziel_anderer_config_entry_startet_nicht(env, angelegt, sleeps):
+    _registry(env, {"number.min_flow": {**THERME, "config_entry_id": "e2"}})
+    _startet_nicht(env, angelegt, sleeps, "min_flow: diese Entity darf SmartHeat nicht nutzen (lokale Positivliste)")
+
+
+def test_soll_entity_am_geraet_eines_schreibziels_startet_nicht(env, angelegt, sleeps):
+    _registry(env, {"sensor.room_target": THERME})
+    _startet_nicht(env, angelegt, sleeps,
+                   "room_target: diese Entity darf SmartHeat nicht nutzen (lokale Positivliste)")
+
+
+def test_ein_kreis_fremder_plattform_startet_nicht(env, angelegt, sleeps):
+    """A5-70: die Plattform steht lokal je Hebelsatz; ein Dokument mit einer anderen Kreis-Plattform (passend zu
+    Schreibzielen von shelly) startet nicht, statt der Plattform des Servers zu folgen."""
+    shelly = {"platform": "shelly", "config_entry_id": "e-shelly", "device_id": "d-shelly"}
+    _registry(env, dict.fromkeys(SCHREIBZIELE, shelly))
+    konfiguration = konfiguration_aus_optionen(OPTIONS)
+    konfiguration["bindung"]["kreis"] = {**konfiguration["bindung"]["kreis"], "plattform": "shelly",
+                                         "config_entry": "e-shelly"}
+    with pytest.raises(StartFailure) as fehler:
+        HaHost(FakeGeraet(konfiguration), env.ha).load()
+    assert fehler.value.grund == "plattform: diese Entity darf SmartHeat nicht nutzen (lokale Positivliste)"
+    assert angelegt == [] and sleeps == []
+
+
+def test_passende_schreibziele_starten(env, angelegt, sleeps):
+    """Gegenprobe wie client1: alle Schreibziele von mypyllant aus einem Config-Entry, die Soll-Entity an einem anderen
+    Geraet (Thermostat im Wohnzimmer) einer anderen Integration."""
+    _registry(env, {"sensor.room_target": {"platform": "homematicip_local", "config_entry_id": "e2",
+                                           "device_id": "d-wz"}})
+    loaded = _host(env).load()
+    hebel = {loaded.manifest.refs[rolle] for rolle in ("curve_current", "shift_current", "min_flow", "heat_limit")}
+    assert hebel == set(SCHREIBZIELE)
+    assert len(angelegt) == 1 and sleeps == []
+
+
+def test_ein_schreibziel_ohne_registry_eintrag_wird_wiederholt_und_endet_als_startfehler(env, angelegt, sleeps):
+    """Ohne Registry-Eintrag ist ein Schreibziel nicht pruefbar (kein Urteil): Wiederholung wie bei fehlenden
+    Zustaenden, nach dem Budget der Startfehler rollen_nicht_pruefbar mit dem Feld (nie der Entity)."""
+    _registry(env, {"number.shift_current": None})
+    with pytest.raises(StartFailure) as fehler:
+        _host(env).load()
+    assert fehler.value.key == "rollen_nicht_pruefbar"
+    assert fehler.value.grund == ("room_setpoint: Entity ohne Eintrag in der Entity-Registry von Home Assistant "
+                                  "(lokale Positivliste nicht prüfbar)")
+    assert sleeps == list(DERIVED_SENSORS_RETRY_DELAYS_SECONDS) and angelegt == []
+
+
+def test_ein_spaeter_eingetragenes_schreibziel_startet_im_zweiten_versuch(env, angelegt, sleeps, monkeypatch):
+    _registry(env, {"number.shift_current": None})
+    echte_registry = env.ha.entity_registry
+    aufrufe = []
+
+    def registry():
+        aufrufe.append(1)
+        if len(aufrufe) == 2:
+            _registry(env)
+        return echte_registry()
+
+    monkeypatch.setattr(env.ha, "entity_registry", registry)
+    _host(env).load()
+    assert len(aufrufe) == 2 and sleeps == [DERIVED_SENSORS_RETRY_DELAYS_SECONDS[0]] and len(angelegt) == 1
+
+
+def test_ein_verstoss_beim_start_mit_laufendem_boost_schreibt_nur_einmal_die_ruecknahme(env):
+    """Entscheidung 1 (Fixrunde B TP4): verletzt ein Schreibziel beim Start die Regeln, waehrend ein Boost laeuft, nimmt
+    der Konfigurationsfehler den Boost zurueck (sign_off_parts, ohne erneute Schreibziel-Pruefung): genau die Werte des
+    Wiederherstellungspunkts, auch auf das verletzende Schreibziel, einmal; danach schreibt keine Neupruefung mehr."""
+    save_backup(env.paths["BACKUP_PATH"], {
+        "boost_active": True, "restore_point": {"curve": 1.0, "room_setpoint": 20.0, "heat_limit": 16.0}})
+    _registry(env, {"number.heat_limit": {**THERME, "platform": "template"}})
+
+    bridge = _start_bridge(env)
+
+    assert isinstance(bridge, IdleBridge) and bridge.reason == "konfigurationsfehler"
+    assert sorted(env.ha.writes) == [("number.curve_current", 1.0), ("number.heat_limit", 16.0),
+                                     ("number.shift_current", 20.0)]
+    assert not load_backup(env.paths["BACKUP_PATH"]).get("boost_active")
+    geschrieben = list(env.ha.writes)
+    assert _start_bridge(env).reason == "konfigurationsfehler"  # Neupruefung (wieder load)
+    assert env.ha.writes == geschrieben

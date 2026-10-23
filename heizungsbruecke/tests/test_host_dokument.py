@@ -4,7 +4,7 @@ import json
 import pytest
 from fakes import FakeHa
 from geraet_helpers import FakeGeraet, konfiguration_aus_optionen
-from test_runtime import OPTIONS, env  # noqa: F401 - env ist eine Fixture
+from runtime_helpers import OPTIONS
 
 from heizungsbruecke import config
 from heizungsbruecke.ha_signals import SOLL_REF
@@ -41,7 +41,7 @@ def test_without_document_the_host_waits_unconfigured(env):
     assert not boot.configured and not boot.signed_off
 
 
-def test_sign_off_marker_starts_signed_off(env, tmp_path):
+def test_sign_off_marker_starts_signed_off(env):
     konfiguration = konfiguration_aus_optionen(OPTIONS)
     config.ABGEMELDET_PATH.parent.mkdir(parents=True, exist_ok=True)
     config.ABGEMELDET_PATH.write_text(json.dumps({"anlage": konfiguration["anlage"]}))

@@ -6,7 +6,7 @@ import pytest
 import requests
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
-from device_helpers import GeraeteCa, csr_passt, zertifikat_fuer
+from device_helpers import FakeResponse, FakeSession, GeraeteCa, csr_passt, zertifikat_fuer
 
 from smartheat_device import bootstrap, identity, nachrichten, wire
 
@@ -14,29 +14,6 @@ NOW = 1_800_000_000
 BASE = "https://accounts.example.test"
 CAPS = {"drivers": ["simulation"], "zigbee": True}
 ARGS = {"version": "0.6.0", "host": "gateway", "capabilities": CAPS}
-
-
-class FakeResponse:
-    def __init__(self, status: int, body=None) -> None:
-        self.status_code = status
-        self._body = body
-
-    def json(self):
-        if self._body is None:
-            raise ValueError("kein JSON")
-        return self._body
-
-
-class FakeSession:
-    def __init__(self, *answers) -> None:
-        self.answers, self.calls = list(answers), []
-
-    def request(self, method, url, data=None, headers=None, timeout=None):
-        self.calls.append((method, url, data, headers, timeout))
-        answer = self.answers.pop(0)
-        if isinstance(answer, Exception):
-            raise answer
-        return answer
 
 
 @pytest.fixture

@@ -44,10 +44,7 @@ class HaDeviceHost(GeraetHostBasis):
     version = ADDON_VERSION
     wunsch_herkunft = "soll_entity"
 
-    def __init__(self, ha_api, supervisor, *, clock: Callable[[], float] = time.monotonic,
-                 wall: Callable[[], float] = time.time) -> None:
-        # wall: Teil der Schnittstelle (wie GatewayDeviceHost), hier ungenutzt: der HA-Host braucht keine Wanduhr (den
-        # Zeitstempel des Raums setzt HaHost aus smartheat_core.wallclock), deshalb nicht gespeichert.
+    def __init__(self, ha_api, supervisor, *, clock: Callable[[], float] = time.monotonic) -> None:
         super().__init__()
         self._ha, self._supervisor, self._clock = ha_api, supervisor, clock
         self.status_sink: GeraetStatus | None = None  # StatusSink der Laufzeit und Anzeige (__main__.verdrahten)

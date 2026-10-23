@@ -1,4 +1,4 @@
-from conftest import FakeClock
+from fakes import FakeClock
 
 from smartheat_runtime.debounce import ROOM_TARGET_DEBOUNCE_SECONDS, Debouncer
 from smartheat_runtime.worker import RegulationWorker

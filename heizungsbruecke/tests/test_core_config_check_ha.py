@@ -1,28 +1,10 @@
 """Spec 5c 1.3 / 5b 3.1: lokale Pruefung einer HA-Konfiguration (Aufbau rein, HA-Teil ueber den Rueckruf)."""
 import pytest
-from bindung_beispiele import parameter
+from geraet_helpers import ha_konfiguration
 
 from smartheat_core import config_check as cc
 from smartheat_core.rastung import Rastung
 from smartheat_device import fehler, wire
-
-
-def _ha(**changes) -> dict:
-    base = {
-        "anlage": "zuhause2", "profil": "vaillant_gastherme_heizkoerper", "hebelsatz": "vaillant_vrc720",
-        "verteilsystem": "Heizkoerper", "tagestick": "12:07", "abo": "aktiv",
-        "bindungsparameter": parameter("vaillant_vrc720"), "raumfuehler": ["sensor.wohnzimmer_thermostat_temperatur"],
-        "bindung": {
-            "kreis": {"plattform": "mypyllant", "config_entry": "e1", "anlage": "S", "nummer": "0"},
-            "rollen": {"room_target": "climate.wohnzimmer_thermostat::temperature",
-                       "curve": "number.zuhause_circuit_0_heating_curve",
-                       "room_setpoint": "climate.zuhause_zone_1_circuit_0_climate"},
-            "batterien": ["sensor.wohnzimmer_thermostat_batterie"], "benachrichtigung": ["notify.mobile_app_handy"],
-            "hinweise_aus": ["batterie"], "abfrage_s": 1800,
-        },
-    }
-    bindung = {**base["bindung"], **changes.pop("bindung", {})}
-    return {**base, **changes, "bindung": bindung}
 
 
 def _geprueft(*args, **kwargs):
@@ -43,19 +25,19 @@ def test_the_poll_interval_bounds():
 
 def test_valid_ha_configuration_passes_and_the_host_sees_all_of_it():
     seen = []
-    assert _geprueft(_ha(), None, host=cc.HOST_HA, treiber_pruefen=lambda k: seen.append(k)) is None
+    assert _geprueft(ha_konfiguration(), None, host=cc.HOST_HA, treiber_pruefen=lambda k: seen.append(k)) is None
     assert seen[0]["raumfuehler"] == ["sensor.wohnzimmer_thermostat_temperatur"] and "bindung" in seen[0]
 
 
 def test_host_details_become_role_rejection():
     details = {"feld": "heat_limit", "regel": "unbekannt"}
-    ablehnung = _geprueft(_ha(), None, host=cc.HOST_HA, treiber_pruefen=lambda k: details)
+    ablehnung = _geprueft(ha_konfiguration(), None, host=cc.HOST_HA, treiber_pruefen=lambda k: details)
     assert ablehnung == cc.Ablehnung(cc.ROLLE_UNZULAESSIG, details)
 
 
 def test_the_host_is_asked_only_for_a_structurally_valid_configuration():
     seen = []
-    assert _geprueft(_ha(raumfuehler=["switch.licht"]), None, host=cc.HOST_HA,
+    assert _geprueft(ha_konfiguration(raumfuehler=["switch.licht"]), None, host=cc.HOST_HA,
                       treiber_pruefen=lambda k: seen.append(k)).grund == cc.ROLLE_UNZULAESSIG
     assert seen == []
 
@@ -88,17 +70,17 @@ def test_the_host_is_asked_only_for_a_structurally_valid_configuration():
     ({"bindung": {"abfrage_s": 60.5}}, cc.UNGUELTIG),
 ])
 def test_structural_rules(changes, grund):
-    ablehnung = _pruefen(_ha(**changes))
+    ablehnung = _pruefen(ha_konfiguration(**changes))
     assert ablehnung is not None and ablehnung.grund == grund
 
 
 def _mit_ref(feld: str, ref: str) -> dict:
     """Konfiguration mit `ref` im Feld `feld` (Muster HA_REF, HA_RAUMFUEHLER, HA_BATTERIE, HA_DIENST)."""
     if feld == "room_target":
-        return _ha(bindung={"rollen": {"room_target": ref}})
+        return ha_konfiguration(bindung={"rollen": {"room_target": ref}})
     if feld == "raumfuehler":
-        return _ha(raumfuehler=[ref])
-    return _ha(bindung={feld: [ref]})
+        return ha_konfiguration(raumfuehler=[ref])
+    return ha_konfiguration(bindung={feld: [ref]})
 
 
 @pytest.mark.parametrize(("feld", "gueltig"), [
@@ -121,33 +103,33 @@ def test_a_reference_with_a_valid_prefix_and_anything_after_it_is_rejected(feld,
 @pytest.mark.parametrize("attribut", ["longitude", "latitude", "hvac_action"])
 def test_a_reference_attribute_other_than_the_temperatures_is_rejected(attribut):
     """A6-02: nach `::` nur temperature und current_temperature; der Befund nennt das Feld der Rolle, nie die Entity."""
-    ablehnung = _pruefen(_ha(bindung={"rollen": {"room_target": f"zone.home::{attribut}"}}))
+    ablehnung = _pruefen(ha_konfiguration(bindung={"rollen": {"room_target": f"zone.home::{attribut}"}}))
     assert ablehnung == cc.Ablehnung(cc.ROLLE_UNZULAESSIG, {"feld": "room_target", "regel": "format"})
     assert "zone" not in repr(ablehnung)
-    ablehnung = _pruefen(_ha(bindung={"rollen": {"room_target": "climate.w::temperature",
+    ablehnung = _pruefen(ha_konfiguration(bindung={"rollen": {"room_target": "climate.w::temperature",
                                                  "curve": f"climate.c::{attribut}"}}))
     assert ablehnung == cc.Ablehnung(cc.ROLLE_UNZULAESSIG, {"feld": "curve", "regel": "format"})
 
 
 @pytest.mark.parametrize("attribut", ["temperature", "current_temperature"])
 def test_the_two_temperature_attributes_are_accepted(attribut):
-    assert _pruefen(_ha(bindung={"rollen": {"room_target": f"climate.w::{attribut}"}})) is None
+    assert _pruefen(ha_konfiguration(bindung={"rollen": {"room_target": f"climate.w::{attribut}"}})) is None
 
 
 @pytest.mark.parametrize("dienst", ["notify.email", "notify.telegram", "notify.handy", "notify.mobile_app_"])
 def test_a_notification_service_other_than_mobile_app_is_rejected(dienst):
-    ablehnung = _pruefen(_ha(bindung={"benachrichtigung": [dienst]}))
+    ablehnung = _pruefen(ha_konfiguration(bindung={"benachrichtigung": [dienst]}))
     assert ablehnung == cc.Ablehnung(cc.ROLLE_UNZULAESSIG, {"feld": "benachrichtigung", "regel": "format"})
     assert dienst not in repr(ablehnung)
 
 
 def test_a_mobile_app_notification_service_is_accepted():
-    assert _pruefen(_ha(bindung={"benachrichtigung": ["notify.mobile_app_x"]})) is None
+    assert _pruefen(ha_konfiguration(bindung={"benachrichtigung": ["notify.mobile_app_x"]})) is None
 
 
 def test_ha_bindung_pruefen_is_the_public_structure_check():
-    assert cc.ha_bindung_pruefen(_ha()) is None
-    assert cc.ha_bindung_pruefen(_ha(bindung={"benachrichtigung": ["notify.email"]})) == cc.Ablehnung(
+    assert cc.ha_bindung_pruefen(ha_konfiguration()) is None
+    assert cc.ha_bindung_pruefen(ha_konfiguration(bindung={"benachrichtigung": ["notify.email"]})) == cc.Ablehnung(
         cc.ROLLE_UNZULAESSIG, {"feld": "benachrichtigung", "regel": "format"})
 
 
@@ -158,11 +140,11 @@ def test_ha_bindung_pruefen_is_the_public_structure_check():
 ])
 def test_a_foreign_field_in_the_ha_binding_is_a_role_rejection(changes, details):
     """V1 ist auf beiden Seiten strikt (Nutzer-Entscheidung 2026-10-16); der fremde Name geht nicht hoch."""
-    assert _pruefen(_ha(**changes)) == cc.Ablehnung(cc.ROLLE_UNZULAESSIG, details)
+    assert _pruefen(ha_konfiguration(**changes)) == cc.Ablehnung(cc.ROLLE_UNZULAESSIG, details)
 
 
 def test_incomplete_binding_is_a_role_rejection():
-    konfiguration = _ha()
+    konfiguration = ha_konfiguration()
     del konfiguration["bindung"]["batterien"]
     assert _pruefen(konfiguration).grund == cc.ROLLE_UNZULAESSIG
 
@@ -174,11 +156,11 @@ def test_incomplete_binding_is_a_role_rejection():
     {"hinweise_aus": list(wire.HA_HINWEISE)}, {"einheiten": {"energy_electrical_total": "kWh"}},
 ])
 def test_accepted_binding_variants(bindung):
-    assert _pruefen(_ha(bindung=bindung)) is None
+    assert _pruefen(ha_konfiguration(bindung=bindung)) is None
 
 
 def test_a_missing_poll_interval_is_the_default_of_the_lever_set():
-    konfiguration = _ha()
+    konfiguration = ha_konfiguration()
     del konfiguration["bindung"]["abfrage_s"]
     assert _pruefen(konfiguration) is None
 
@@ -193,26 +175,26 @@ def test_a_missing_poll_interval_is_the_default_of_the_lever_set():
     ({"room_target": "climate.w::temperature", "outdoor_temp": "weather.home", "level": "number.l"}, ["sensor.a"]),
 ])
 def test_every_reference_form_of_the_server_is_accepted(rollen, raumfuehler):
-    assert _pruefen(_ha(bindung={"rollen": rollen}, raumfuehler=raumfuehler)) is None
+    assert _pruefen(ha_konfiguration(bindung={"rollen": rollen}, raumfuehler=raumfuehler)) is None
 
 
 def test_every_contract_role_is_accepted():
     rollen = {"room_target": "climate.w::temperature"}
     rollen.update({rolle: f"sensor.{rolle}" for rolle in wire.HA_ROLLEN if rolle != "room_target"})
-    assert _pruefen(_ha(bindung={"rollen": rollen})) is None
+    assert _pruefen(ha_konfiguration(bindung={"rollen": rollen})) is None
 
 
 def test_gateway_rules_are_unchanged():
-    assert _geprueft(_ha(), None, host=cc.HOST_GATEWAY).grund == cc.ROLLE_UNZULAESSIG
+    assert _geprueft(ha_konfiguration(), None, host=cc.HOST_GATEWAY).grund == cc.ROLLE_UNZULAESSIG
 
 
 def test_an_unknown_host_is_rejected():
-    assert _geprueft(_ha(), None, host="mars") == cc.Ablehnung(cc.ROLLE_UNZULAESSIG)
+    assert _geprueft(ha_konfiguration(), None, host="mars") == cc.Ablehnung(cc.ROLLE_UNZULAESSIG)
 
 
 def test_lever_set_lock_applies_to_home_assistant_too():
-    ablehnung = _geprueft(_ha(hebelsatz="viessmann_vicare"), Rastung(_ha()["hebelsatz"], _ha()["verteilsystem"]),
-                            host=cc.HOST_HA)
+    rastung = Rastung(ha_konfiguration()["hebelsatz"], ha_konfiguration()["verteilsystem"])
+    ablehnung = _geprueft(ha_konfiguration(hebelsatz="viessmann_vicare"), rastung, host=cc.HOST_HA)
     assert ablehnung.grund == cc.HEBELSATZ_EINGERASTET
 
 
@@ -227,7 +209,7 @@ _KREIS = {"plattform": "mypyllant", "anlage": "S", "nummer": "0"}
     {**_KREIS, "nummer": 0},
 ])
 def test_kaputter_kreis_wird_abgelehnt(kreis):
-    ablehnung = _pruefen(_ha(bindung={"kreis": kreis}))
+    ablehnung = _pruefen(ha_konfiguration(bindung={"kreis": kreis}))
     assert ablehnung is not None and ablehnung.grund == cc.ROLLE_UNZULAESSIG
 
 
@@ -237,16 +219,16 @@ def test_jedes_pflichtfeld_des_kreises_fehlt_oder_ist_leer(feld, wert):
     kreis = {k: v for k, v in _KREIS.items() if k != feld}
     if wert == "":
         kreis[feld] = wert
-    ablehnung = _pruefen(_ha(bindung={"kreis": kreis}))
+    ablehnung = _pruefen(ha_konfiguration(bindung={"kreis": kreis}))
     assert ablehnung is not None and ablehnung.grund == cc.ROLLE_UNZULAESSIG
 
 
 def test_config_entry_ist_das_einzige_optionale_feld_des_kreises():
-    assert _pruefen(_ha(bindung={"kreis": {**_KREIS, "config_entry": "e1"}})) is None
-    assert _pruefen(_ha(bindung={"kreis": dict(_KREIS)})) is None
-    assert _pruefen(_ha(bindung={"kreis": {**_KREIS, "fremd": "x"}})) == cc.Ablehnung(
+    assert _pruefen(ha_konfiguration(bindung={"kreis": {**_KREIS, "config_entry": "e1"}})) is None
+    assert _pruefen(ha_konfiguration(bindung={"kreis": dict(_KREIS)})) is None
+    assert _pruefen(ha_konfiguration(bindung={"kreis": {**_KREIS, "fremd": "x"}})) == cc.Ablehnung(
         "rolle_unzulaessig", {"feld": "kreis", "regel": "unbekannt"})
 
 
 def test_kreis_ohne_config_entry_wird_angenommen():
-    assert _pruefen(_ha(bindung={"kreis": dict(_KREIS)})) is None
+    assert _pruefen(ha_konfiguration(bindung={"kreis": dict(_KREIS)})) is None

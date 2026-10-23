@@ -1,7 +1,8 @@
 """Spec 5b 5.2 / 5c 1.3: die Laufzeit im Geraete-Pfad mit dem HA-Testaufbau (Fake-HA): Konfiguration ohne Transport,
 Abo aus dem Konfigurationsdokument, Tick und Antwort ueber den Link des Geraets (RuntimeChannel) statt ueber einen
 eigenen MQTT-Client."""
-from test_runtime import _failsafe_file, _links, _set_room_target, _start_bridge, env  # noqa: F401 - env: Fixture
+
+from runtime_helpers import _failsafe_file, _links, _set_room_target, _start_bridge
 
 from smartheat_runtime import entitlement
 from smartheat_runtime.runtime import Runtime

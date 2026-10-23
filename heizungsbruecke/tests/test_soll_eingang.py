@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 
 import pytest
-from conftest import FakeClock
+from fakes import FakeClock
 
 from smartheat_runtime.runtime import EV_LOCAL_CHECK
 from smartheat_runtime.soll_eingang import EV_SOLL_MODUS, EV_TARGET_INPUT, SollEingang
@@ -76,6 +76,23 @@ def test_hvac_off_then_on_restores_the_display(tmp_path):
     a.worker.post(Event(EV_SOLL_MODUS, {"mode": "heat"}))
     a.worker.run_pending()
     assert a.quelle.geschrieben == [23.0] and a.aus[-1] == (False, None)
+
+
+@pytest.mark.parametrize("mode", [None, 0, False], ids=["null", "zahl", "bool"])
+def test_ein_modus_ohne_text_aendert_nichts(tmp_path, mode):
+    """Review TP3 (Fixrunde B, fail closed): `system_mode: null` (Zigbee2MQTT) oder ein anderer Nicht-Text ist keine
+    Aussage ueber den Modus. Er schaltet die Soll-Quelle weder an (kein „wieder an“, kein Schreiben an die Quelle)
+    noch aus."""
+    a = Aufbau(tmp_path)
+    _modus(a, "off")
+    a.post(23.0, SOURCE_PORTAL)
+    a.quelle.wert = 21.0
+    _modus(a, mode)
+    assert a.eingang.aus and a.quelle.geschrieben == [] and a.aus == [(True, 21.0)]
+    _modus(a, "heat")  # Gegenprobe: ein Text-Modus schaltet wieder an
+    assert not a.eingang.aus and a.quelle.geschrieben == [23.0] and a.aus[-1] == (False, None)
+    _modus(a, mode)  # an bleibt an
+    assert not a.eingang.aus and a.aus[-1] == (False, None) and len(a.aus) == 2
 
 
 def test_ha_source_echo_is_not_a_wish(tmp_path):

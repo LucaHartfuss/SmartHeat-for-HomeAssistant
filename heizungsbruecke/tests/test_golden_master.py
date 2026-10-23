@@ -14,7 +14,9 @@ und in Task 1 des Plans Fixrunde A Rollen (A6-02: benachrichtigung notify.mobile
 und in Task 4 des Plans Fixrunde A Geraetekern (L4-09: Status startet statt notbetrieb beim Start mit veraltetem
 Notbetrieb)
 und in Task 3 des Plans Fixrunde B TP2 (A2-13: die Telemetrie steht im Schritt nach den schon eingestellten
-Ereignissen; nur die Reihenfolge, per GOLDEN_UPDATE=1)."""
+Ereignissen; nur die Reihenfolge, per GOLDEN_UPDATE=1)
+und in Task 4 des Plans Fixrunde B TP4 (A6-36: plant_id in backup.json ist die Kennung des Heizkreises statt der
+Hebel-Referenzen; nur diese Zeilen, per GOLDEN_UPDATE=1)."""
 import json
 import os
 import time

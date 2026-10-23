@@ -4,8 +4,7 @@ import logging
 
 import pytest
 import requests
-from conftest import FakeClock
-from fakes import HttpAntwort, datei_stand
+from fakes import FakeClock, HttpAntwort, datei_stand
 
 from heizungsbruecke import discovery
 from heizungsbruecke.supervisor import SupervisorApi

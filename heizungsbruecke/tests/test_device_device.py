@@ -1,6 +1,5 @@
 """Spec 5b 5.1: das Geraet - Bootstrap, hello, Dokumente, Befehle, Bedienwunsch, Status, Meldungen, Rettungsweg,
 Laufzeit-Kanal. Link und Bootstrap-Server sind Fakes; die Wire-Formate sind die des Vertrags."""
-import itertools
 import json
 import math
 import queue
@@ -9,7 +8,7 @@ import time
 
 import pytest
 from bindung_beispiele import parameter
-from device_helpers import GeraeteCa, zertifikat_fuer
+from device_helpers import SENSOR, WALL, FakeHost, FakeLink, World
 
 from smartheat_core import config_check, dateien
 from smartheat_device import bootstrap, commands, device, identity, wire, wish
@@ -18,8 +17,6 @@ from smartheat_runtime import aufraeumen
 from smartheat_runtime.runtime import EV_MQTT_CONNECTED, EV_SETPOINTS
 from smartheat_runtime.worker import RegulationWorker
 
-WALL = 1_800_000_000.0
-SENSOR = "zigbee:0x00124b0000000001:temperature"
 SOFTWARE = {"version": "0.6.1", "manifest_url": "https://example.test/m.json", "manifest_sha256": "a" * 64,
             "signature": "sig"}
 
@@ -44,189 +41,6 @@ def _bedienung(version=3, raum_soll=21.0):
 def _command(kind="diagnostics", command_id="c1", payload=None):
     return {"schema": 1, "command_id": command_id, "kind": kind, "payload": payload or {},
             "expires_at": "2027-01-15T09:00:00+00:00"}
-
-
-class Clock:
-    def __init__(self) -> None:
-        self.now = 1000.0
-
-    def __call__(self) -> float:
-        return self.now
-
-
-class FakeHost:
-    host = "gateway"
-
-    def __init__(self, version="0.6.0") -> None:
-        self.version = version
-        self.synchron: bool | None = True
-        self.konfigurationen, self.bedienungen, self.software, self.anzeigen_liste = [], [], [], []
-        self.status: dict | None = {"status": "regelt"}
-        self.raum_wert: dict | None = {"ist": 20.0, "soll": 21.0, "soll_quelle": "portal", "ts": "t0"}
-        self.treiber_details: dict | None = None
-        self.handlers: dict = {}
-        self.ursprung: dict = {}
-
-    def ursprungswerte(self):
-        return dict(self.ursprung)
-
-    def faehigkeiten(self):
-        return {"drivers": ["simulation"], "zigbee": True, "updater": True}
-
-    def uhr_synchron(self):
-        return self.synchron
-
-    def treiber_pruefen(self, bindung):
-        return self.treiber_details
-
-    def befehle_eintragen(self, register):
-        for kind, handler in self.handlers.items():
-            register.register(kind, handler)
-
-    def konfiguration_vorbereiten(self, alt, neu):
-        pass
-
-    def konfiguration_uebernommen(self, alt, neu):
-        self.konfigurationen.append((alt, neu))
-
-    def bedienung_uebernommen(self, inhalt):
-        self.bedienungen.append(inhalt)
-
-    def software_soll(self, software):
-        self.software.append(software)
-
-    def runtime_status(self):
-        return self.status
-
-    def raum(self):
-        return self.raum_wert
-
-    def anzeigen(self, anzeige):
-        self.anzeigen_liste.append(anzeige)
-
-
-_CLIENT_NUMMERN = itertools.count(1)
-
-
-class FakeLink:
-    def __init__(self, device_id, zugang, key_pem, ereignis) -> None:
-        self.device_id, self.zugang, self.key_pem, self.ereignis = device_id, zugang, key_pem, ereignis
-        self.connected = self.started = self.stopped = False
-        self.sent: list[tuple[str, dict]] = []
-        self.connect_failures = 0
-        self.client_nr = 0
-        self._mid_basis = 0  # paho zaehlt mids je Client ab 1
-
-    def start(self):
-        self.started = True
-        self.client_nr = next(_CLIENT_NUMMERN)
-
-    def stop(self):
-        self.stopped, self.connected = True, False
-
-    def publish(self, name, payload):
-        if not self.connected:
-            return None
-        # wie der echte Link: nie NaN/Inf hinaus (Testoffensive T2, Nr. 17), json wirft dann ValueError
-        self.sent.append((name, json.loads(json.dumps(payload, allow_nan=False))))
-        return len(self.sent) - self._mid_basis
-
-    def port_wechseln_falls_noetig(self):
-        pass
-
-    # --- Teststeuerung ---
-
-    def neuer_client(self):
-        """Wie port_wechseln_falls_noetig: alter Client weg (mit seinen unbestaetigten Nachrichten), neuer Client,
-        dessen mids wieder bei 1 beginnen."""
-        self.client_nr = next(_CLIENT_NUMMERN)
-        self._mid_basis = len(self.sent)
-        self.connected = False
-        self.ereignis("getrennt")
-
-    def verbinden(self):
-        self.connected = True
-        self.ereignis("verbunden")
-
-    def trennen(self):
-        self.connected = False
-        self.ereignis("getrennt")
-
-    def gesendet(self, mid, client_nr=None, ok=True):
-        """PUBACK des Brokers; wie der Link traegt das Ereignis die Nummer des Clients, der gesendet hat, und ob der
-        Reason Code ein Erfolg war."""
-        self.ereignis("gesendet", mid, self.client_nr if client_nr is None else client_nr, ok)
-
-    def empfangen(self, name, body):
-        self.ereignis("nachricht", name, json.dumps(body).encode())
-
-    def topics(self):
-        return [name for name, _ in self.sent]
-
-    def of(self, name):
-        return [payload for topic, payload in self.sent if topic == name]
-
-
-class ScriptedBootstrap:
-    def __init__(self) -> None:
-        self.script: dict[str, list] = {"register": [], "certificate": []}
-        self.calls, self.idents = [], []
-
-    def register(self, **kwargs):
-        self.calls.append(("register", kwargs))
-        return self._next("register")
-
-    def certificate(self):
-        self.calls.append(("certificate", None))
-        return self._next("certificate")
-
-    def _next(self, route):
-        answer = self.script[route].pop(0)
-        if isinstance(answer, Exception):
-            raise answer
-        return answer
-
-
-class World:
-    def __init__(self, tmp_path, host=None, *, access=True) -> None:
-        self.dir = tmp_path / device.DEVICE_DIR
-        self.host = host or FakeHost()
-        self.ca = GeraeteCa()
-        self.clock = Clock()
-        self.links: list[FakeLink] = []
-        self.client = ScriptedBootstrap()
-        ident = identity.load_or_create(self.dir)
-        self.zugang = self.neuer_zugang(ident)
-        if access:
-            bootstrap.speichern(self.dir, bootstrap.Antwort("uebernommen", self.zugang))
-
-        def client_for(ident):
-            self.client.idents.append(ident)
-            return self.client
-
-        self.device = device.Device(self.host, tmp_path, "https://accounts.example.test", clock=self.clock,
-                                    wall=lambda: WALL, bootstrap_client=client_for, link_factory=self._link)
-
-    def neuer_zugang(self, ident=None):
-        ident = ident or self.device.identity
-        return bootstrap.Zugang(zertifikat_fuer(ident, self.ca), bootstrap.Endpoint("mqtt.e2e.test", 8883, self.ca.pem))
-
-    def _link(self, *args):
-        self.links.append(FakeLink(*args))
-        return self.links[-1]
-
-    @property
-    def link(self) -> FakeLink:
-        return self.links[-1]
-
-    def verbinden(self):
-        self.device.schritt()
-        self.link.verbinden()
-        self.device.schritt()
-
-    def empfangen(self, name, body):
-        self.link.empfangen(name, body)
-        self.device.schritt()
 
 
 # --- Ursprungswerte im Status (Spec Stufe 3 S3 5.1, G-4) ---

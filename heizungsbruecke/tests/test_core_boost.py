@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from geraet_helpers import ankunftsschwelle_der_laufzeit
+from runtime_helpers import ankunftsschwelle_der_laufzeit
 
 from smartheat_core import boost
 from smartheat_core.boost import COMFORT_BOOST_MAX_SECONDS, comfort_boost_expired, decide_boost

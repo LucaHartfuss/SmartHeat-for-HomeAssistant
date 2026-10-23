@@ -13,25 +13,39 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from conftest import FakeClock
-from device_helpers import GeraeteCa, zertifikat_fuer
-from fakes import VIESSMANN_OPTIONEN, VIESSMANN_ZUSTAND, FakeHa, trigger_klasse
+from device_helpers import (
+    FakeResponse,
+    FakeSession,
+    GeraeteCa,
+    Sent,
+    _bedienung,
+    _command,
+    _konfiguration,
+    _leer,
+    _store,
+    zertifikat_fuer,
+)
+from fakes import FakeClock
 from hypothesis import given
 from hypothesis import strategies as st
+from runtime_helpers import (
+    NICHT_NUMERISCH,
+    OPTIONS,
+    SAETZE,
+    _endlich,
+    _Fehlerlog,
+    _frische_umgebung,
+    _ha_verbunden,
+    _mqtt,
+    _start,
+)
 from strategien import JSON_WERT, SURROGATTEXT, WEG, ersetze, pfade
-from test_device_bootstrap import FakeResponse, FakeSession
-from test_device_commands import Sent, _command
-from test_device_documents import _bedienung, _konfiguration, _leer, _store
-from test_runtime import OPTIONS, _ha_verbunden, _mqtt, _start
-from test_runtime_plan3b import WEISHAUPT, WEISHAUPT_STATES
 
-from heizungsbruecke.derived_sensors import DerivedSensors
 from smartheat_core.safety import LOCAL_SAFETY
 from smartheat_device import bootstrap, wire
 from smartheat_device import commands as cmd
 from smartheat_device import identity as identity_module
 from smartheat_device.tls import ALPN_443, IOT_PORTS
-from smartheat_runtime import entitlement
 
 
 @pytest.fixture(autouse=True)
@@ -456,44 +470,7 @@ def test_hinweis_mit_beliebigen_werten_speichert_nur_gueltige_hinweise(schluesse
 
 # --- Serverantwort down/setpoints (V1b, ticks.handle_setpoints) ---
 
-#: Entity -> Hebel (Bereich in LocalSafety.ranges) je Hebelsatz der Laufzeit-Tests; Werte der Auswahl- und Textentities
-#: sind keine Zahlen und stehen nicht in der Tabelle
-SAETZE = {
-    "vaillant_vrc720": (
-        {}, {}, {"number.curve_current": "curve", "number.shift_current": "room_setpoint",
-                 "number.heat_limit": "heat_limit", "number.min_flow": "min_flow"}),
-    "viessmann_vicare": (
-        VIESSMANN_OPTIONEN, VIESSMANN_ZUSTAND, {"number.slope": "curve", "number.shift": "level",
-                                                "number.normal_temperature": "room_setpoint"}),
-    "weishaupt_wwp": (
-        WEISHAUPT, WEISHAUPT_STATES, {"number.hk": "curve", "number.normal": "room_setpoint",
-                                      "number.komfort": "room_setpoint", "number.absenk": "room_setpoint",
-                                      "number.swu": "heat_limit"}),
-}
-#: Ziele ohne Zahl (Auswahl- und Betriebsart-Entities): jedes andere Ziel muss in der Zuordnung stehen
-NICHT_NUMERISCH = {"select.betriebsart", "climate.heizkreis::preset_mode"}
 ALLE_HEBEL = ["curve", "room_setpoint", "level", "heat_limit", "min_flow"]
-
-
-def _frische_umgebung(verzeichnis: Path, mp):
-    """Wie die Fixture `env` in test_runtime.py, aber ohne Fixture (hypothesis: ein Beispiel = eine Umgebung)."""
-    paths = {}
-    for name in ("BACKUP_PATH", "FAILSAFE_PATH", "ENTITLEMENT_PATH", "DERIVED_SENSORS_PATH", "AUFRAEUMEN_PATH",
-                 "RASTUNG_PATH"):
-        paths[name] = verzeichnis / f"{name.lower()}.json"
-        mp.setattr(f"heizungsbruecke.config.{name}", paths[name])
-    laufzeit = verzeichnis / "runtime"
-    for name, wert in (("RUNTIME_DIR", laufzeit), ("ROOM_TARGET_PATH", laufzeit / "room_target.json"),
-                       ("ABGEMELDET_PATH", laufzeit / "abgemeldet.json")):
-        paths[name] = wert
-        mp.setattr(f"heizungsbruecke.config.{name}", wert)
-    mp.setattr("heizungsbruecke.derived_sensors.ensure_all",
-               lambda **kwargs: DerivedSensors({"room_actual": "sensor.room_actual"}, (), "fp1"))
-    trigger = []
-    mp.setattr("heizungsbruecke.geraet_trigger.HaTriggerClient", trigger_klasse(trigger))
-    from types import SimpleNamespace
-    return SimpleNamespace(clock=FakeClock(), paths=paths, abo={"status": entitlement.ACTIVE, "queries": 0},
-                           ha=FakeHa(), trigger_clients=trigger, derived={"replaced": ()}, geraet=None)
 
 
 _ZAHL = st.floats(allow_nan=False, allow_infinity=False) | st.integers(-10**30, 10**30)
@@ -525,26 +502,6 @@ def _antwort(erwartet):
     )
 
 
-def _endlich(wert) -> bool:
-    if isinstance(wert, bool) or not isinstance(wert, int | float):
-        return False
-    try:
-        return math.isfinite(float(wert))
-    except OverflowError:
-        return False  # riesige Ganzzahl
-
-
-class _Fehlerlog(logging.Handler):
-    """Fehler des Regel-Workers (der Worker faengt Ausnahmen ab und loggt sie; ein Fehler dort ist ein Fund)."""
-
-    def __init__(self):
-        super().__init__(logging.ERROR)
-        self.eintraege = []
-
-    def emit(self, record):
-        self.eintraege.append(record.getMessage())
-
-
 @pytest.mark.parametrize("hebelsatz", sorted(SAETZE))
 def test_beliebige_serverantwort_schreibt_nichts_ausserhalb_der_lokalen_grenzen_und_laesst_den_worker_laufen(hebelsatz):
     optionen, zustand, entities = SAETZE[hebelsatz]
@@ -555,7 +512,7 @@ def test_beliebige_serverantwort_schreibt_nichts_ausserhalb_der_lokalen_grenzen_
     @given(_antwort(erwartet))
     def pruefen(antwort):
         with tempfile.TemporaryDirectory() as verzeichnis, pytest.MonkeyPatch.context() as mp:
-            env = _frische_umgebung(Path(verzeichnis), mp)
+            env = _frische_umgebung(Path(verzeichnis), mp, FakeClock())
             env.ha.states.update(zustand)
             bridge = _start(env, **optionen)
             _ha_verbunden(env, bridge)

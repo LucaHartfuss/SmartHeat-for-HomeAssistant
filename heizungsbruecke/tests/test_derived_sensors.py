@@ -1,5 +1,4 @@
-"""Hilfs-Entities (Spec TP6 3.2/3.3): Template-Sensoren, Neuanlage bei Quellwechsel und (TP11)
-das Wegraeumen der frueheren Statistik- und Tag-/Nacht-Helfer."""
+"""Hilfs-Entities (Spec TP6 3.2/3.3): Template-Sensoren, Neuanlage bei Quellwechsel und Entfernen der Anlage."""
 import logging
 from unittest.mock import MagicMock
 
@@ -38,7 +37,6 @@ def test_fresh_install_creates_only_the_room_template(tmp_path):
     assert result.entity_ids == {"room_actual": ROOM_ID}
     assert result.replaced == ()
     ha_api.delete_helper.assert_not_called()
-    ha_api.delete_input_number.assert_not_called()
     assert load_backup(tmp_path / "d.json") == {"room_temperature": {"entity_id": ROOM_ID, "source": ROOM_TEMPLATE}}
 
 
@@ -95,9 +93,9 @@ def test_changed_weather_source_recreates_the_outdoor_template(tmp_path):
 
 
 def test_a_helper_without_a_remembered_source_is_recreated_and_reported(tmp_path):
-    """Heutiges Verhalten (Uebergangscode „Bestand vor TP6“, Altlast fuer Audit 6): ein Helfer, dessen Eintrag keine
-    Quelle kennt, gilt als Quellwechsel: er wird geloescht und neu angelegt, die Quelle danach gemerkt, und der Wechsel
-    zaehlt als ersetzt (Meldung „quellwechsel“). Gegenprobe: mit gemerkter gleicher Quelle bleibt er."""
+    """Ein Helfer, dessen Eintrag keine Quelle kennt, gilt als Quellwechsel: er wird geloescht und neu angelegt, die
+    Quelle danach gemerkt, und der Wechsel zaehlt als ersetzt (Meldung „quellwechsel“). Gegenprobe: mit gemerkter
+    gleicher Quelle bleibt er."""
     save_backup(tmp_path / "d.json", {"room_temperature": {"entity_id": ROOM_ID}})
     ha_api = _ha_api(existing={ROOM_ID})
 
@@ -175,97 +173,12 @@ def test_source_change_is_still_reported_when_create_failed_after_delete(tmp_pat
     }
 
 
-# --- TP11: fruehere Statistik- und Tag-/Nacht-Helfer werden weggeraeumt ---
-
-OBSOLETE_TRACKING = {
-    "room_temperature": {"entity_id": ROOM_ID, "source": ROOM_TEMPLATE},
-    "room_12h_avg": {"entity_id": "sensor.smartheat_t1_raumtemp_3h_mittel", "source": ROOM_ID},
-    "dart": {"entity_id": "sensor.smartheat_t1_dart", "source": ROOM_ID},
-    "dat": {"entity_id": "sensor.smartheat_t1_dat", "source": "sensor.aussen"},
-    "outdoor_min_24h": {"entity_id": "sensor.smartheat_t1_aussentemp_24h_minimum", "source": "sensor.aussen"},
-    "room_day_avg": {"entity_id": "input_number.smartheat_t1_raumtemp_tagesmittel"},
-    "room_night_avg": {"entity_id": "input_number.smartheat_t1_raumtemp_nachtmittel"},
-}
-
-
-def test_obsolete_helpers_are_removed(tmp_path):
-    state_path = tmp_path / "d.json"
-    save_backup(state_path, OBSOLETE_TRACKING)
-    ha_api = _ha_api({entry["entity_id"] for entry in OBSOLETE_TRACKING.values()})
-
-    result = _run(ha_api, state_path)
-
-    assert {c.args[0] for c in ha_api.delete_helper.call_args_list} == {
-        "sensor.smartheat_t1_raumtemp_3h_mittel", "sensor.smartheat_t1_dart", "sensor.smartheat_t1_dat",
-        "sensor.smartheat_t1_aussentemp_24h_minimum",
-    }
-    assert {c.args[0] for c in ha_api.delete_input_number.call_args_list} == {
-        "input_number.smartheat_t1_raumtemp_tagesmittel", "input_number.smartheat_t1_raumtemp_nachtmittel",
-    }
-    assert load_backup(state_path) == {"room_temperature": OBSOLETE_TRACKING["room_temperature"]}
-    assert result.entity_ids == {"room_actual": ROOM_ID}
-    assert result.replaced == ()
-
-
-def test_obsolete_helper_already_gone_is_only_dropped_from_tracking(tmp_path):
-    state_path = tmp_path / "d.json"
-    save_backup(state_path, {"dart": OBSOLETE_TRACKING["dart"], "room_day_avg": OBSOLETE_TRACKING["room_day_avg"]})
-    ha_api = _ha_api()
-
-    _run(ha_api, state_path)
-
-    ha_api.delete_helper.assert_not_called()
-    ha_api.delete_input_number.assert_not_called()
-    assert "dart" not in load_backup(state_path) and "room_day_avg" not in load_backup(state_path)
-
-
-def test_failing_cleanup_is_not_a_start_error(tmp_path, caplog):
-    state_path = tmp_path / "d.json"
-    save_backup(state_path, {"dat": OBSOLETE_TRACKING["dat"], "room_night_avg": OBSOLETE_TRACKING["room_night_avg"]})
-    ha_api = _ha_api({"sensor.smartheat_t1_dat", "input_number.smartheat_t1_raumtemp_nachtmittel"})
-    ha_api.delete_helper.side_effect = RuntimeError("kein Config-Entry")
-
-    with caplog.at_level(logging.WARNING):
-        result = _run(ha_api, state_path)
-
-    assert "room_actual" in result.entity_ids
-    ha_api.delete_input_number.assert_called_once_with("input_number.smartheat_t1_raumtemp_nachtmittel")
-    tracking = load_backup(state_path)
-    assert tracking["dat"] == OBSOLETE_TRACKING["dat"]  # naechster Start versucht es erneut
-    assert "room_night_avg" not in tracking
-    assert "sensor.smartheat_t1_dat" in caplog.text
-
-
-def test_broken_tracking_entry_of_an_obsolete_helper_is_not_a_start_error(tmp_path, caplog):
-    state_path = tmp_path / "d.json"
-    save_backup(state_path, {"dart": "kaputt", "room_day_avg": OBSOLETE_TRACKING["room_day_avg"]})
-    ha_api = _ha_api({"input_number.smartheat_t1_raumtemp_tagesmittel"})
-
-    with caplog.at_level(logging.WARNING):
-        result = _run(ha_api, state_path)
-
-    assert result.entity_ids == {"room_actual": ROOM_ID}
-    ha_api.delete_input_number.assert_called_once_with("input_number.smartheat_t1_raumtemp_tagesmittel")
-    assert "dart" in caplog.text
-
-
-def test_obsolete_helpers_are_deleted_with_the_tenant_for_the_title_check(tmp_path):
-    state_path = tmp_path / "d.json"
-    renamed = "sensor.heizraum_zuhause_smartheat_t1_dat"
-    save_backup(state_path, {"dat": {"entity_id": renamed, "source": "sensor.aussen"}})
-    ha_api = _ha_api({renamed})
-
-    _run(ha_api, state_path)
-
-    ha_api.delete_helper.assert_called_once_with(renamed, tenant_id="t1")
-
-
 # --- Entfernen der Anlage (Spec 5c, A4-07): alle Helfer weg, nicht loeschbare bleiben fuer den naechsten Versuch ---
 
 
 def _tracking_with_old_helpers(tmp_path):
     tracking, _ = _tracking_after_fresh_run(tmp_path, outdoor="weather.forecast_home")
-    tracking["room_day_avg"] = {"entity_id": "input_number.smartheat_t1_tagesmittel"}
+    tracking["room_day_avg"] = {"entity_id": "input_number.smartheat_t1_tagesmittel"}  # Altrest einer frueheren Version
     save_backup(tmp_path / "d.json", tracking)
     return tracking
 
@@ -278,7 +191,27 @@ def test_removing_deletes_every_helper_and_the_list(tmp_path):
 
     assert sorted(call.args[0] for call in ha_api.delete_helper.call_args_list) == [OUTDOOR_ID, ROOM_ID]
     assert all(call.kwargs == {"tenant_id": "t1"} for call in ha_api.delete_helper.call_args_list)
-    ha_api.delete_input_number.assert_called_once_with("input_number.smartheat_t1_tagesmittel")
+    assert not (tmp_path / "d.json").exists()
+
+
+def test_entfernen_verwirft_unbekannte_eintraege_ohne_loeschversuch(tmp_path):
+    """Ein Altrest unter einem fremden Schluessel (frueherer Helfer) wird nicht in HA geloescht, auch wenn die Entity
+    existiert; er haelt die Aufraeum-Markierung nicht fest, selbst wenn ein Loeschversuch scheitern wuerde."""
+    tracking = _tracking_with_old_helpers(tmp_path)
+    altrest = "sensor.smartheat_t1_dart"
+    tracking["dart"] = {"entity_id": altrest, "source": ROOM_ID}
+    save_backup(tmp_path / "d.json", tracking)
+    ha_api = _ha_api({entry["entity_id"] for entry in tracking.values()})
+
+    def delete_helper(entity_id, tenant_id):
+        if entity_id == altrest:
+            raise RuntimeError("kein Config-Entry")
+
+    ha_api.delete_helper.side_effect = delete_helper
+
+    assert entfernen(ha_api, "t1", tmp_path / "d.json") is True
+
+    assert altrest not in [call.args[0] for call in ha_api.delete_helper.call_args_list]
     assert not (tmp_path / "d.json").exists()
 
 

@@ -26,6 +26,7 @@ from smartheat_core.logtext import lesbar
 from smartheat_runtime import dokument_config
 from smartheat_runtime.app import Loaded, Notice, RestoreParts, StartFailure
 from smartheat_runtime.dokument_config import RECONFIGURE_HINT, ConfigError
+from smartheat_runtime.notifier import STATE_OK
 from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
 from smartheat_runtime.ports import NotifySink, SignalSource, StatusSink, TriggerSource
 from smartheat_runtime.raum import RaumPublisher
@@ -53,6 +54,7 @@ EV_RAUM = "ha_raum"
 RAUM_SECONDS = 30
 ENTITY_FEHLT_MESSAGE = ("SmartHeat: {feld}: zugeordnete Entity fehlt in Home Assistant und wird bis zum nächsten Start "
                         "nicht gelesen.")
+ENTITY_DA_MESSAGE = "SmartHeat: {feld}: zugeordnete Entity ist in Home Assistant wieder vorhanden und wird gelesen."
 SOURCE_CHANGE_MESSAGE = "SmartHeat: Die Quelle der Raum- oder Außentemperatur hat sich geändert."
 NOT_CONFIGURED_HINT = (
     "Add-on ist noch nicht eingerichtet -- bitte in Home Assistant unter Einstellungen -> Geraete & Dienste -> "
@@ -154,10 +156,11 @@ class HaHost:
 
     def load(self) -> Loaded:
         try:
-            # Pflichtrollen und Schreibregeln des Hebelsatzes zuerst: _wait_for_required_entities und die Hilfssensoren
-            # indizieren die Rollen, ein fehlender Schluessel waere sonst ein KeyError statt eines Konfigurationsfehlers.
-            # Muster der Raumfuehler/Aussenquelle/Batterien/Handys und die Hinweise prueft der Server (config_check); die
-            # Positivliste und Formen der Rollen prueft der Host selbst weiter unten (_bindung_pruefen, A6-02).
+            # Pflichtrollen und Schreibregeln des Hebelsatzes zuerst: _wait_for_required_entities und die
+            # Hilfssensoren indizieren die Rollen, ein fehlender Schluessel waere sonst ein KeyError statt eines
+            # Konfigurationsfehlers. Muster der Raumfuehler/Aussenquelle/Batterien/Handys und die Hinweise prueft der
+            # Server (config_check); die Positivliste und Formen der Rollen prueft der Host selbst weiter unten
+            # (_bindung_pruefen, A6-02).
             text = dokument.lokal_pruefen(self._konfiguration)
             if text:
                 raise ConfigError(text)
@@ -169,8 +172,9 @@ class HaHost:
             # Spec Stufe 3 S4b 4.3: ohne gueltige Bindungsparameter kein Start
             description = dokument_config.beschreibung(self._konfiguration)
             _wait_for_required_entities(self._ha_api, b)
-            # A6-02: die Regeln des Annehmens gelten auch fuer eine schon uebernommene Konfiguration, und zwar vor den
-            # Hilfssensoren (derived_sensors baut aus einer Rolle schon ein Template in HA).
+            # A6-02, L4-27: die Regeln des Annehmens (Positivliste, Form je Feld, Schreibziele) gelten auch fuer eine
+            # schon uebernommene Konfiguration, und zwar vor den Hilfssensoren (derived_sensors baut aus einer Rolle
+            # schon ein Template in HA) und vor jedem Schreiben.
             _bindung_pruefen(self._konfiguration)
             ohne_zustand = _rollen_pruefen_mit_wiederholung(self._ha_api, b)
             derived = _ensure_derived_sensors_with_retry(self._ha_api, b, runtime.tenant_id)
@@ -203,10 +207,17 @@ class HaHost:
             battery_refs=tuple(
                 BatteryRef(entity_id, BATTERY_LOW_FLAG if entity_id.startswith("binary_sensor.") else BATTERY_PERCENT)
                 for entity_id in b.batterien if entity_id not in ungelesen))
-        notices = (Notice("quellwechsel", derived.sources_fingerprint, SOURCE_CHANGE_MESSAGE),) if derived.replaced else ()
-        notices += tuple(Notice(f"entity_fehlt:{feld}", "fehlt", ENTITY_FEHLT_MESSAGE.format(feld=feld))
-                         for feld in dict.fromkeys(feld for feld, _ in ohne_zustand))
-        return Loaded(config=runtime, manifest=manifest, binding=binding,
+        notices: tuple[Notice, ...] = ()
+        if derived.replaced:
+            notices = (Notice("quellwechsel", derived.sources_fingerprint, SOURCE_CHANGE_MESSAGE),)
+        fehlend = {feld for feld, _ in ohne_zustand}
+        # L4-25: jedes gebundene optionale Feld meldet seinen Zustand; mit Zustand entwarnt der Melder einen offenen
+        # Hinweis (und nur diesen), sonst bliebe „fehlt“ nach der Rueckkehr stehen und ein erneutes Fehlen schwiege.
+        notices += tuple(
+            Notice(f"entity_fehlt:{feld}", "fehlt", ENTITY_FEHLT_MESSAGE.format(feld=feld)) if feld in fehlend
+            else Notice(f"entity_fehlt:{feld}", STATE_OK, ENTITY_DA_MESSAGE.format(feld=feld))
+            for feld in dokument.optionale_felder(b))
+        return Loaded(config=runtime, manifest=manifest, binding=binding, plant_id=dokument.anlagen_kennung(b),
                       notices=notices)
 
     def trigger_source(self, manifest: ChannelManifest, worker: RegulationWorker) -> TriggerSource:
@@ -234,9 +245,9 @@ class HaHost:
 
     def _soll_entity_angleichen(self, quelle: HaSollQuelle) -> None:
         """Spec 5c 1.3 "Bedienung angleichen" beim Start (Gateway: _angleichen): Thermostat, HA und Portal zeigen
-        denselben Wert. Nur wenn die Entity etwas anderes zeigt und nicht aus ist (HVAC off oder Frostschutz-Stellung bis
-        FROSTSCHUTZ_BIS = Soll-Quelle aus: keine Bedienung an die Quelle, Spec 5b 3.2; beim Wiedereinschalten gleicht
-        der Soll-Eingang an). Danach gilt das Echo-Fenster; der
+        denselben Wert. Nur wenn die Entity etwas anderes zeigt und nicht aus ist (HVAC off oder Frostschutz-Stellung
+        bis FROSTSCHUTZ_BIS = Soll-Quelle aus: keine Bedienung an die Quelle, Spec 5b 3.2; beim Wiedereinschalten
+        gleicht der Soll-Eingang an). Danach gilt das Echo-Fenster; der
         zuletzt gezeigte Wert zaehlt als veraltet. Scheitert das Schreiben, holt der Trigger es beim Verbinden nach
         (quelle.angleichen_offen, geraet_trigger.build). Laeuft im Hauptthread vor dem Worker und vor dem
         Trigger-Client."""
@@ -336,16 +347,23 @@ def _bindung_pruefen(konfiguration) -> None:
 
 
 def _rollen_pruefen_mit_wiederholung(ha_api, b: dokument.HaBindung) -> list[tuple[str, str]]:
-    """Lokale Positivliste fuer jede Rolle (A6-02). Ein Urteil ist ein Konfigurationsfehler; nicht pruefbar (HA nicht
-    RUNNING, Soll-Entity, Pflichtrolle oder Raumfuehler ohne Zustand, Registry oder Zustaende scheitern) wird wie
-    fehlende Entities wiederholt, nach dem Budget StartupError. Ergebnis: (Feld, Referenz) der optionalen Lese-Rollen und
-    Batterien ohne Zustand, die der Lauf nicht liest."""
+    """Lokale Positivliste fuer jede Rolle (A6-02) und die Regeln der Schreibziele (dokument.schreibziele_befund:
+    Plattform des Hebelsatzes, ein Config-Entry, Soll-Entity nicht am Geraet eines Schreibziels; L4-27, A5-70). Ein
+    Urteil ist ein Konfigurationsfehler; nicht pruefbar (HA nicht RUNNING, Soll-Entity, Pflichtrolle, Schreibziel oder
+    Raumfuehler ohne Zustand, Schreibziel ohne Registry-Eintrag, Registry oder Zustaende scheitern) wird wie fehlende
+    Entities wiederholt, nach dem Budget StartupError. Ergebnis: (Feld, Referenz) der optionalen Lese-Rollen und
+    Batterien ohne Zustand, die der Lauf nicht liest. Das Zuruecksetzen ueber sign_off_parts (beim Abmelden und beim
+    Startfehler mit laufendem Boost) prueft die Schreibziele nicht erneut: die Rueckkehr zu den Ursprungswerten bzw. zum
+    Wiederherstellungspunkt ist die sichere Richtung."""
     def _versuch():
         if not ha_api.is_reachable():  # faehrt HA hoch, fehlen Zustaende noch: kein Urteil
             raise config_check.NichtPruefbar
-        return dokument.rollen_befund(b, ha_api)  # NichtPruefbar und Fehler der HA-API: erneut versuchen
+        return dokument.rollen_befund(b, ha_api, beim_start=True)  # NichtPruefbar, Fehler der HA-API: erneut versuchen
 
     def _describe(error):
+        if isinstance(error, config_check.NichtPruefbar) and error.args[1:] == (dokument.OHNE_REGISTRY,):
+            return (f"{error.args[0]}: Entity ohne Eintrag in der Entity-Registry von Home Assistant "
+                    "(lokale Positivliste nicht prüfbar)")
         if isinstance(error, config_check.NichtPruefbar) and error.args:
             return f"{error.args[0]}: zugeordnete Entity fehlt in Home Assistant – {RECONFIGURE_HINT}"
         return "Home Assistant lieferte Registry oder Zustände nicht"

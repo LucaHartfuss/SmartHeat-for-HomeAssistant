@@ -1,4 +1,5 @@
-"""Gemeinsame Fixtures der Kern- und HA-Host-Tests.
+"""Gemeinsame Fixtures der Kern- und HA-Host-Tests: `clock`, `make_store`, `env` (Laufzeit-Tests; Hilfen in
+runtime_helpers.py) und `geraet_env` (env plus Datenordner des Geraets; Start-Tests in test_main_geraet.py).
 
 Profile von hypothesis (Testoffensive T6, Spec §12 Nr. 20; Root-Runbook Abschnitt 3): `schnell` (Standard, 50
 Beispiele, fester Seed) und `voll` (500 Beispiele, zufaelliger Seed, Blob zum Nachstellen eines Fehlers), gewaehlt per
@@ -11,28 +12,24 @@ import os
 import pytest
 from hypothesis import HealthCheck, settings
 
+import heizungsbruecke.__main__ as main_module
+from heizungsbruecke import config
 from smartheat_runtime import telemetry
 from smartheat_runtime.backup_store import save_backup
 from smartheat_runtime.state import StateStore
+
+# Die Hilfsmodule sind keine Testdateien: ohne diese Anmeldung (vor ihrem ersten Import) zeigt pytest bei einem
+# fehlgeschlagenen assert in ihnen keine Zwischenwerte. Deshalb stehen die Importe von fakes und runtime_helpers
+# unten in den Fixtures.
+pytest.register_assert_rewrite(
+    "runtime_helpers", "geraet_helpers", "device_helpers", "fakes", "host_konformitaet", "trigger_konformitaet",
+)
 
 settings.register_profile("schnell", max_examples=50, derandomize=True, database=None, deadline=None,
                           suppress_health_check=[HealthCheck.too_slow], print_blob=False)  # sonst in der CI True
 settings.register_profile("voll", parent=settings.get_profile("schnell"), max_examples=500, derandomize=False,
                           print_blob=True)
 settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "schnell"))
-
-
-class FakeClock:
-    """Monotone Test-Uhr fuer RegulationWorker: steht still, bis ein Test sie vorstellt."""
-
-    def __init__(self, start: float = 1000.0) -> None:
-        self.now = start
-
-    def __call__(self) -> float:
-        return self.now
-
-    def advance(self, seconds: float) -> None:
-        self.now += seconds
 
 
 @pytest.fixture(autouse=True)
@@ -48,6 +45,8 @@ def _telemetrie_warnzustand_zuruecksetzen():
 
 @pytest.fixture
 def clock():
+    from fakes import FakeClock
+
     return FakeClock()
 
 
@@ -62,3 +61,23 @@ def make_store(tmp_path):
             save_backup(tmp_path / "failsafe_state.json", failsafe)
         return StateStore(tmp_path / "backup.json", tmp_path / "failsafe_state.json")
     return _make
+
+
+@pytest.fixture
+def env(tmp_path, monkeypatch, clock):
+    """Umgebung der Laufzeit-Tests (runtime_helpers._frische_umgebung in tmp_path); gestartet wird mit
+    runtime_helpers._start_bridge bzw. _start."""
+    from runtime_helpers import _frische_umgebung
+
+    return _frische_umgebung(tmp_path, monkeypatch, clock)
+
+
+@pytest.fixture
+def geraet_env(env, tmp_path, monkeypatch):
+    """env plus Datenordner des Geraets."""
+    monkeypatch.setattr(config, "DEVICE_DATA_DIR", tmp_path / "data")
+    # wo der Dokumentspeicher die Rastung schreibt (device/sicherheitssatz.json), liest sie die Laufzeit
+    monkeypatch.setattr(config, "RASTUNG_PATH", tmp_path / "data" / "device" / "sicherheitssatz.json")
+    monkeypatch.setattr(config, "OPTIONS_PATH", tmp_path / "options.json")
+    monkeypatch.setattr(main_module.status_holder, "host", None)
+    return env

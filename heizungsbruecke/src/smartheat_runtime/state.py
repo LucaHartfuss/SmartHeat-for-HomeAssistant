@@ -35,11 +35,6 @@ BACKUP_FIELDS = (
     + ("write_budget",) + _PLAN3B_FIELDS
 )
 _OMITTED_WHEN_EMPTY = _TEXT_MAP_FIELDS + _LEVER_MAP_FIELDS + ("write_budget",) + _PLAN3B_FIELDS
-# Audit 4 P-B: Schluessel, die Add-on 0.35.0 noch schrieb und die seit 0.36.0 ohne Bedeutung sind; sie werden beim Laden
-# verworfen statt als unbekannte Schluessel weitergeschrieben.
-# Stufe 3 S7 (A5-63): setup_id (immer = tenant_id) heisst jetzt tenant_id; _parse_backup uebernimmt den alten Wert, der
-# Schluessel verschwindet beim naechsten Schreiben.
-_DROPPED_KEYS = ("waerme_fehlt_seit", "setup_id")
 
 
 @dataclass(frozen=True)
@@ -137,7 +132,8 @@ def _is_aux(value) -> bool:
 def _is_energy_entry(value) -> bool:
     """Zustand je Energiekanal; ein Eintrag ohne Einheit (aus 1.0.0) bleibt lesbar und beginnt in normalize neu."""
     return (isinstance(value, dict) and set(value) in ({"raw", "sum"}, {"raw", "sum", "einheit"})
-            and ist_endliche_zahl(value["raw"]) and ist_endliche_zahl(value["sum"]) and isinstance(value.get("einheit", ""), str))
+            and ist_endliche_zahl(value["raw"]) and ist_endliche_zahl(value["sum"])
+            and isinstance(value.get("einheit", ""), str))
 
 
 def _parse_budget(raw) -> dict | None:
@@ -162,8 +158,6 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
     """Liest die bekannten Felder tolerant: ein Feld mit falschem Typ faellt auf seinen
     Standardwert zurueck, die anderen bleiben. Unbekannte Schluessel werden unveraendert
     mitgefuehrt (spaetere Versionen; Felder bis 0.29.0 seit Audit 4 P-E ebenso)."""
-    if "setup_id" in raw and "tenant_id" not in raw:  # bis Stufe 3 S7 hiess das Feld setup_id (immer = tenant_id)
-        raw = {**raw, "tenant_id": raw["setup_id"]}
     values = {}
 
     def _invalid(key):
@@ -223,7 +217,7 @@ def _parse_backup(raw: dict, path: Path) -> tuple[dict, dict]:
         else:
             values["write_budget"] = budget
     _parse_plan3b(raw, values, _invalid)
-    extra = {key: value for key, value in raw.items() if key not in BACKUP_FIELDS and key not in _DROPPED_KEYS}
+    extra = {key: value for key, value in raw.items() if key not in BACKUP_FIELDS}
     return values, extra
 
 
@@ -403,24 +397,40 @@ _PLANT_BOUND = (
 _SETUP_BOUND = ("last_published_target_rt", "last_daily_trigger_date")
 
 
-def bind_to_tenant(store: "StateStore", tenant_id: str | None, plant_id: str) -> str:
+#: INFO der einmaligen Uebernahme (A6-36), woertlich im Ablaufbuch FB-Kennung-Live.
+UEBERNAHME_TEXT = "Anlagen-Kennung aus dem Heizkreis übernommen"
+
+
+def bind_to_tenant(store: "StateStore", tenant_id: str | None, plant_id: str, *, frueher: str | None = None) -> str:
     """Bindet den Zustand an Einrichtung und Anlage. Ein Bestand ohne Bindung (bis Add-on 0.34.0) gilt als gebunden
     (nichts verwerfen, Review Focus 1). Andere Anlage: anlagenbezogene Felder auf den Standardwert. Neue Einrichtung
-    derselben Anlage: Ursprungswerte bleiben, nur Tick-Buchung und Zustellung beginnen neu."""
+    derselben Anlage: Ursprungswerte bleiben, nur Tick-Buchung und Zustellung beginnen neu.
+    frueher (A6-36, einmalige Uebernahme, Rueckbau A6-36-Uebernahme): die Kennung, die ein frueherer Stand fuer dieselbe
+    Anlage schrieb (HA bis 1.1.0: roles.lever_refs_identity). Steht genau sie in backup.json, ist es dieselbe Anlage:
+    die Kennung wird umgeschrieben, nichts verworfen, danach der Vergleich der Einrichtung wie bisher ("uebernommen"
+    bzw. "neue_einrichtung"; die INFO erst nach dem gelungenen Schreiben); ein Schreibfehler laesst backup.json auf der
+    frueheren Kennung (naechster Start erneut, ohne INFO in diesem)."""
     state, defaults = store.state, BridgeState()
     if state.tenant_id is None and state.plant_id is None:
         store.update(tenant_id=tenant_id, plant_id=plant_id)
         return "bestand"
-    if state.plant_id != plant_id:
+    if state.plant_id != plant_id and (frueher is None or state.plant_id != frueher):
         logger.warning("Andere Anlage als in backup.json: anlagenbezogener Zustand wird verworfen")
         # Zustellung zuerst: set_delivery wirft nicht, update bei einem Schreibfehler (StorageError) schon
         store.set_delivery(DeliveryState())
         store.update(**{key: getattr(defaults, key) for key in _PLANT_BOUND + _SETUP_BOUND},
                      tenant_id=tenant_id, plant_id=plant_id)
         return "andere_anlage"
+    uebernommen = state.plant_id != plant_id  # die Zeile erst nach dem gelungenen Schreiben: sie steht genau einmal
     if state.tenant_id != tenant_id:
         logger.info("Neue Einrichtung derselben Anlage: Ursprungswerte bleiben, Erstkontakt-Tick folgt")
         store.set_delivery(DeliveryState())
-        store.update(**{key: getattr(defaults, key) for key in _SETUP_BOUND}, tenant_id=tenant_id)
+        store.update(**{key: getattr(defaults, key) for key in _SETUP_BOUND}, tenant_id=tenant_id, plant_id=plant_id)
+        if uebernommen:
+            logger.info(UEBERNAHME_TEXT)
         return "neue_einrichtung"
+    if uebernommen:
+        store.update(plant_id=plant_id)
+        logger.info(UEBERNAHME_TEXT)
+        return "uebernommen"
     return "unveraendert"

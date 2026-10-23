@@ -1,7 +1,6 @@
 """Ereignisvertrag der HA-Trigger-Quelle (testhilfen/trigger_konformitaet.py; Spec Stufe 3 S6 4.1)."""
 import pytest
-from conftest import FakeClock
-from fakes import FakeHa
+from fakes import FakeClock, FakeHa
 from trigger_konformitaet import PRUEFUNGEN, TriggerWelt, beobachten
 
 from heizungsbruecke import geraet_trigger

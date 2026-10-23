@@ -7,7 +7,7 @@ from smartheat_runtime.plausibility import ROOM_TEMP_RANGE, is_plausible
 
 
 def room_mean(values: Iterable[object]) -> float | None:
-    valid = [float(value) for value in values if is_plausible(value, ROOM_TEMP_RANGE)]  # type: ignore[arg-type]
+    valid = [float(value) for value in values if is_plausible(value, ROOM_TEMP_RANGE)]
     if not valid:
         return None
     return round(sum(valid) / len(valid), 2)

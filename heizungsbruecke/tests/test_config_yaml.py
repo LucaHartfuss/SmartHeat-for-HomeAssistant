@@ -1,6 +1,7 @@
 """config.yaml ab 1.0.0 (Spec 5c 1.1/1.2): nur Optionen zum Starten, Supervisor-Discovery, kein Optionsmodus mehr. Die
 Pruefungen der frueheren Rollen-, Zugangs- und Intervall-Optionen entfallen mit dem Optionsmodus."""
 import ast
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,13 @@ def _load_config_yaml() -> dict:
 
 def test_addon_version_constant_matches_config_yaml():
     assert _load_config_yaml()["version"] == ADDON_VERSION
+
+
+def test_pyproject_liest_die_version_aus_version_py():
+    """A6-91 (b): keine zweite, veraltende Versionsangabe; setuptools holt sie aus ADDON_VERSION."""
+    pyproject = tomllib.loads((CONFIG_YAML_PATH.parent / "pyproject.toml").read_text())
+    assert "version" not in pyproject["project"] and pyproject["project"]["dynamic"] == ["version"]
+    assert pyproject["tool"]["setuptools"]["dynamic"]["version"] == {"attr": "heizungsbruecke.version.ADDON_VERSION"}
 
 
 def test_slug_and_architectures():

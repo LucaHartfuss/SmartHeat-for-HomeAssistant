@@ -3,11 +3,9 @@ import logging
 import threading
 import time
 
-from conftest import FakeClock
-from fakes import FakeHa
-from geraet_helpers import konfiguration_aus_optionen
-from test_geraet_host import Device, _host, _register
-from test_runtime import OPTIONS
+from fakes import FakeClock, FakeHa
+from geraet_helpers import Device, _host, _register, konfiguration_aus_optionen
+from runtime_helpers import OPTIONS
 
 from heizungsbruecke import geraet_status
 from smartheat_device.commands import Done, Waiting

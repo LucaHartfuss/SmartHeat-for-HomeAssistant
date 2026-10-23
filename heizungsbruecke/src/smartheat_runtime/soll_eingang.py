@@ -98,7 +98,12 @@ class SollEingang:
         self._vor_wunsch = None
 
     def _on_mode(self, event: Event) -> None:
-        self._setze_aus("modus", event.data.get("mode") == MODUS_AUS)
+        """Ein Modus ohne Text (Zigbee2MQTT `system_mode: null`) ist keine Aussage: er schaltet weder an noch aus (fail
+        closed; sonst loeste er nach „aus“ ein „wieder an“ aus)."""
+        mode = event.data.get("mode")
+        if not isinstance(mode, str):
+            return
+        self._setze_aus("modus", mode == MODUS_AUS)
 
     def _on_target_input(self, event: Event) -> None:
         value, source = event.data["value"], event.data["source"]

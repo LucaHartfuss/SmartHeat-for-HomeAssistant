@@ -6,8 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from bindung_beispiele import VAILLANT_MYPYLLANT
-from conftest import FakeClock
-from fakes import HaEventSink, runtime_config
+from fakes import FakeClock, HaEventSink, runtime_config
 
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.ha_binding import HaPlantBinding
