@@ -292,8 +292,8 @@ def test_write_target_of_another_platform_is_refused():
 
 
 def test_the_curve_is_a_write_target_too():
-    """Die Heizkurve ist bei vaillant_vrc720 kein Teil von SCHREIBREGELN, wird aber jeden Takt geschrieben
-   : ein number.* der Plattform template darf sie nicht sein."""
+    """Die Heizkurve ist bei vaillant_vrc720 kein Teil von SCHREIBREGELN, wird aber jeden Takt geschrieben:
+    ein number.* der Plattform template darf sie nicht sein."""
     ha = _ha()
     _fremd(ha, "number.curve_current")
     assert dokument.zuordnung_pruefen(KONFIGURATION, ha) == {"feld": "curve", "regel": "nicht_erlaubt"}
