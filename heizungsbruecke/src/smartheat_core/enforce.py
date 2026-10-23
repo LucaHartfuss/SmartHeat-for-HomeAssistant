@@ -114,15 +114,20 @@ def _deviations(rt: EnforceRuntime) -> tuple[dict, dict, set]:
     der Hebel ist aber noch nicht eingeschwungen (LeverPipeline.settled: eigenes Schreiben oder Start vor
     weniger als settle_seconds, HA hinkt vermutlich nach): weder durchsetzen noch als
     Rueckkehr werten. Die Betriebsart haengt am prepared_lever des Bindings (dessen Schreiben stellt die
-    Zone um)."""
+    Zone um); solange die Zone nie vorbereitet wurde (rt.zone_prepared False), ist der prepared_lever offen."""
     tolerance = rt.override.binding.description.enforce_tolerance
     expected = rt.override.expected_values()
     wanted_min_flow = derived.expected(rt)
     if wanted_min_flow is not None and rt.override.binding.has("min_flow"):
         expected["min_flow"] = wanted_min_flow
+    prepared = rt.override.binding.description.prepared_lever
+    unprepared = not rt.zone_prepared and _zone_not_manual(rt)
     deviating: dict = {}
     pending: set = set(rt.store.state.deferred_levers)  # Plan 3b: Serverwert wegen Tagesbudget noch offen
     for lever, value in expected.items():
+        if lever == prepared and unprepared:
+            # Vor der ersten Vorbereitung gehoert die Zone dem Start: das Schreiben des prepared_lever stellt sie um.
+            pending.add(lever)
         if lever in pending:
             continue
         live = _read(rt, lever)

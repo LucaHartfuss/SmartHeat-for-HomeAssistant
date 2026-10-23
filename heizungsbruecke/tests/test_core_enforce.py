@@ -259,6 +259,20 @@ def test_a_zone_that_was_never_prepared_is_no_zone_mode_deviation(make_store, cl
     assert ("climate.zone", "heat_cool") in rt.signals.writes
 
 
+def test_a_zone_that_was_never_prepared_is_no_room_setpoint_deviation(make_store, clock):
+    """Abnahme BR-KK-1: auch der vorbereitete Hebel gehoert vor der ersten Vorbereitung dem Start. Die Zone im Zeitprogramm
+    liest ihr eigenes Soll (19,0), der Wiederherstellungspunkt hat 21,0: kein Eingriff, denn das Schreiben von
+    room_setpoint stellt die Zone selbst um (ensure_prepared), am Kontingent `zone_prepare` vorbei."""
+    rt = _rt(make_store, clock, Ha(mode="auto", shift=19.0))
+    rt.zone_prepared = False
+    _rounds(rt, 4)
+    assert rt.signals.writes == [] and rt.signals.attempts == []
+    assert rt.store.state.manual_override is None and _pushes(rt) == []
+    rt.zone_prepared = True  # Gegenprobe: nach der Vorbereitung wird die Umstellung ueber die Betriebsart durchgesetzt
+    _rounds(rt)
+    assert rt.signals.writes == [("climate.zone", "heat_cool"), ("climate.zone", 21.0)]
+
+
 def test_zone_zero_is_no_deviation(make_store, clock):
     rt = _rt(make_store, clock, Ha(shift=0.0))
     _rounds(rt)
