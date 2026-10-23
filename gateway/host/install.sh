@@ -1,11 +1,11 @@
 #!/bin/bash
-# Host-Installer des SmartHeat-Gateways (Spec SHG G2 8.2, G2b-1 6): idempotent, eine Quelle fuer das Image (G2b-2,
+# Host-Installer des SmartHeat-Gateways: idempotent, eine Quelle fuer das Image (G2b-2,
 # chroot mit --image) und fuer Bastler auf frischem Raspberry Pi OS Lite 64 bit (Debian 13 trixie).
 # Aufruf: install.sh --device-api-url URL [--portal-base-url URL] [--diag-hostnames NAMEN] [--timezone ZONE]
 #                    [--bundle ORDNER] [--pilot-ssh PUBKEY] [--root PFAD] [--no-docker] [--no-activate] [--image]
 # ACHTUNG: Ohne --pilot-ssh bleibt Port 22 in der Firewall zu und ssh wird deaktiviert (laufende Sitzungen bestehen bis
 # zu ihrem Ende weiter, neue sind nicht mehr moeglich). --bundle: Ordner mit docker-compose.yml, mosquitto.conf,
-# manifest.json und (optional) manifest.json.minisig. --image: Image-Bau im chroot (Plan G2b-2): wie --no-activate,
+# manifest.json und (optional) manifest.json.minisig. --image: Image-Bau im chroot: wie --no-activate,
 # aktiviert die Units aber offline (systemctl enable, nichts startet; der erste Boot startet smartheat-firstboot).
 # Pilotgeraete in fremden Netzen: zusaetzlich pilot_ssh_tunnel.sh (eigener Cloudflare-Tunnel fuer SSH, ausserhalb von
 # Docker). Solange er eingerichtet ist, bricht install.sh ohne --pilot-ssh ab (Schutz vor dem Aussperren).
@@ -33,7 +33,7 @@ done
 [ -n "$API_URL" ] || { echo "--device-api-url fehlt" >&2; exit 2; }
 ROOT="${ROOT%/}"
 [ -n "$ROOT" ] || { echo "--root darf nicht / sein" >&2; exit 2; }
-# Schutz vor dem Aussperren (Plan G2b-2 Task 8): ohne --pilot-ssh wuerde ssh abgeschaltet - bei einem Pilotgeraet in
+# Schutz vor dem Aussperren: ohne --pilot-ssh wuerde ssh abgeschaltet - bei einem Pilotgeraet in
 # einem fremden LAN waere es dann nicht mehr erreichbar. Erst pilot_ssh_tunnel.sh remove, dann ohne --pilot-ssh.
 if [ -z "$PILOT_KEY" ] && [ -f /etc/smartheat/pilot-ssh-tunnel.env ]; then
   echo "FEHLER: Pilot-SSH-Tunnel ist eingerichtet; install.sh nur mit --pilot-ssh aufrufen" \
@@ -84,7 +84,7 @@ dir() {  # Ordner $1 mit Modus $2 und Eigentuemer $3
 }
 subst() { sed -e "s|@ROOT@|$ROOT|g" "$1"; }
 
-# Speicherweg von Docker (containerd-Snapshotter, Erststart ohne Pull, G2b-2 Task 7). MUSS vor der Installation von
+# Speicherweg von Docker (containerd-Snapshotter, Erststart ohne Pull). MUSS vor der Installation von
 # docker.io stehen: dockerd legt seinen Speicher beim ersten Start an, ein spaeter umgestellter Speicher versteckt
 # alles, was vorher im klassischen angelegt wurde. Bestehende Installationen mit klassischem Speicher werden nicht
 # unterstuetzt (das Gateway-Image und frische Raspberry-Pi-OS-Installationen haben noch keinen). Eine abweichende
@@ -120,7 +120,7 @@ layout() {
   dir "$ROOT" 0755 0:0
   dir "$ROOT/data" 0755 1000:1000          # die Laufzeit liest/schreibt als uid 1000 (G2a-Restpunkt)
   # Bind-Quellen vor dem ersten Start mit uid 1000 anlegen: fehlende Quellen legte Docker als root an, der Init-Schritt
-  # (uid 1000) koennte dann nichts schreiben (Plan-Praezisierung 4).
+  # (uid 1000) koennte dann nichts schreiben.
   for path in zigbee2mqtt bus bus/mosquitto bus/credentials bus/credentials/runtime \
               bus/credentials/zigbee2mqtt; do dir "$ROOT/$path" 0700 1000:1000; done
   dir "$ROOT/host" 0755 0:0
@@ -141,7 +141,7 @@ host_package() {
   for rel in __init__.py paths.py version.py; do
     put "$OPT/smartheat_gateway/$rel" 0644 0:0 <"$GW/src/smartheat_gateway/$rel"
   done
-  # Ein Schreibweg fuer Container und Host (Stufe 3 S6, S3S3-Host): smartheat_core/dateien.py (nur Standardbibliothek).
+  # Ein Schreibweg fuer Container und Host: smartheat_core/dateien.py (nur Standardbibliothek).
   # Im Repo liegt es unter heizungsbruecke/src, in der Stage von prepare.sh unter gateway/src.
   local core="$GW/src/smartheat_core"
   [ -d "$core" ] || core="$GW/../heizungsbruecke/src/smartheat_core"
@@ -186,7 +186,7 @@ first_bundle() {
   for name in docker-compose.yml mosquitto.conf manifest.json; do
     put "$ROOT/bundles/$version/$name" 0644 0:0 <"$BUNDLE/$name"
   done
-  # Signatur des Manifests (Spec 2.2) - ein Release-Bundle hat sie, Test-Fixtures nicht.
+  # Signatur des Manifests - ein Release-Bundle hat sie, Test-Fixtures nicht.
   if [ -f "$BUNDLE/manifest.json.minisig" ]; then
     put "$ROOT/bundles/$version/manifest.json.minisig" 0644 0:0 <"$BUNDLE/manifest.json.minisig"
   fi

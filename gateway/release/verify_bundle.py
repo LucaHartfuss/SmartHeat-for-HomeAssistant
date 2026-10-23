@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prueft ein Bundle vor dem Signieren (Spec G2b-1 7, Final-Review FW-4): Das Bundle kommt als Artefakt aus dem
+"""Prueft ein Bundle vor dem Signieren: Das Bundle kommt als Artefakt aus dem
 Build-Job und ist Daten, nicht vertrauenswuerdig. Signiert wird nur, was der getaggte Commit definiert: genau die
 Dateien manifest.json, docker-compose.yml und mosquitto.conf, Manifest-Version gleich Release-Version, SHA-256 der
 Dateien wie im Manifest, images.gateway aus dem erwarteten Repository mit Digest - und ein Neubau mit build_bundle.py

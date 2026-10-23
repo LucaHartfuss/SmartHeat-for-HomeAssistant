@@ -2,7 +2,7 @@
 # X-Env-Layer-Name: smartheat-gateway
 # X-Env-Layer-Category: app
 # X-Env-Layer-Desc: SmartHeat-Gateway: Host-Installer im chroot (install.sh --image), Container-Images fuer den
-#  Erststart ohne Pull, Pruefung des fertigen Root-Dateisystems (Plan G2b-2 Task 9).
+#  Erststart ohne Pull, Pruefung des fertigen Root-Dateisystems.
 # X-Env-Layer-Version: 1.0.0
 # X-Env-Layer-Requires: trixie-minbase
 #
@@ -20,7 +20,7 @@
 # openssh-server (Pilot-Image) bringt trixie-minbase mit. locales und tzdata fuer Locale und Zeitzone (Abschnitt locale
 # der Konfiguration): trixie-minbase laedt locale-base (debconf-Vorbelegung), aber nicht locale-gen.
 # iproute2 (ss, ip) und raspi-utils (vcgencmd, nur aus dem Raspberry-Pi-Archiv, das das Image einbindet; install.sh auf
-# einem fremden Debian verlangt es nicht) fuer die Diagnose am Geraet (L4-18); rootfs_checks.sh prueft alle drei.
+# einem fremden Debian verlangt es nicht) fuer die Diagnose am Geraet; rootfs_checks.sh prueft alle drei.
 mmdebstrap:
   packages:
     - locales

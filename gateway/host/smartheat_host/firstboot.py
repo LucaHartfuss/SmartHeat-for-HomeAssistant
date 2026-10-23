@@ -1,4 +1,4 @@
-"""Erststart eines Gateway-Images (Plan G2b-2 Task 7): laedt die im Image abgelegten Container-Images
+"""Erststart eines Gateway-Images: laedt die im Image abgelegten Container-Images
 (images/*.tar, docker load, kein Pull), startet das laufende Bundle (updater/state.json "current") und loescht danach
 die Archive. Die Unit smartheat-firstboot laeuft nur, solange images/ nicht leer ist (ConditionDirectoryNotEmpty).
 Fehlt ein Geraet aus devices: (Zigbee-Stick), endet sie mit EXIT_RETRY, bevor etwas geladen wird, und systemd versucht

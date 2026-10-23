@@ -1,4 +1,4 @@
-"""Hoststatus (Spec G2b-1 5, Plan-Praezisierung 1): schreibt alle 60 s SHG_ROOT/host/status.json mit Netz (Default-
+"""Hoststatus: schreibt alle 60 s SHG_ROOT/host/status.json mit Netz (Default-
 Route), DNS (Host der Geraete-API aufloesbar), Zeitsynchronisation und Zeitstempel - die Felder, die die
 Diagnoseseite im Container runtime liest (HOST_FIELDS: netz, dns, zeit_synchron)."""
 import os

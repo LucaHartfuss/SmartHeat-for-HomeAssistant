@@ -1,14 +1,14 @@
-"""Thermostat-Profile (Fixrunde A, L4-22, Plan 2026-10-21-w100-thermostat): was ein Zigbee-Modell nach dem Koppeln
+"""Thermostat-Profile: was ein Zigbee-Modell nach dem Koppeln
 braucht, um als Thermostat zu arbeiten, und wie es das Soll zeigt. Aqara W100 (TH-S04D), Labor 2026-10-21 und
 Konverter lumi.ts: Zigbee2MQTT setzt beim Koppeln thermostat_mode OFF und meldet danach weiter den alten Zustand;
 mehrere Schluessel in einer set-Nachricht ueberschreiben sich (jeder rechnet vom alten Zustand), also je Schluessel
 eine Nachricht; das Geraet holt Soll und Modus selbst aus dem Zustand von Zigbee2MQTT; es zeigt und meldet nur ganze
 Grad. Die Pflege laeuft im Bus-Thread und liest den Soll-Speicher nie: das gebundene Thermostat richtet die Laufzeit
 ueber ihre Bindung im Worker ein, jedes andere bekommt DEFAULT_RAUM_SOLL. Soll und heizen gehen erst hinaus, wenn das
-Geraet thermostat_mode ON gemeldet hat (Labor 2026-10-22, L4-30): der Konverter verwirft beide, solange sein
+Geraet thermostat_mode ON gemeldet hat (Labor 2026-10-22): der Konverter verwirft beide, solange sein
 zwischengespeicherter Zustand nicht ON ist, und ON steht dort erst nach der Meldung des Geraets; bis dahin merkt sich
 die Pflege je Geraet einen offenen Rest, ohne Timer und ohne Wiederholung. Dasselbe Warten auf ON (nach_an) nutzt das
-Angleichen beim Start; eine Bindung uebernimmt den offenen Rest einer ungebundenen Kopplung (L4-30)."""
+Angleichen beim Start; eine Bindung uebernimmt den offenen Rest einer ungebundenen Kopplung."""
 import logging
 import math
 import threading
@@ -85,7 +85,7 @@ class ThermostatPflege:
 
     def binden(self, ieee: str, einrichten_lassen: Callable[[], None]) -> None:
         """Wartet das Geraet noch auf ON mit dem Rest einer ungebundenen Kopplung (Soll DEFAULT_RAUM_SOLL), uebernimmt
-        die Bindung die Einrichtung (L4-30): der Rest faellt weg, einrichten_lassen() laeuft sofort (im Thread des
+        die Bindung die Einrichtung: der Rest faellt weg, einrichten_lassen() laeuft sofort (im Thread des
         Aufrufers) und richtet mit dem Soll aus dem Soll-Speicher ein. Jeder andere offene Rest bleibt."""
         with self._lock:
             self._gebunden = (ieee, einrichten_lassen)

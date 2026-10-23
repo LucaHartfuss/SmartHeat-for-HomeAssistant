@@ -1,6 +1,6 @@
-"""Treiber `vicare_cloud` (Spec SHG G4 1): Viessmann-ViCare-Cloud als PlantBinding mit derselben BindingDescription wie
+"""Treiber `vicare_cloud`: Viessmann-ViCare-Cloud als PlantBinding mit derselben BindingDescription wie
 der HA-Pfad. Lesen kommt aus dem Cache (Abfrage alle 300 s); alle oeffentlichen Methoden sind thread-sicher ueber einen
-RLock fuer Cache und Ueberlagerung, Netzaufrufe laufen ausserhalb der Sperre (Plan G4 Praezisierung 9).
+RLock fuer Cache und Ueberlagerung, Netzaufrufe laufen ausserhalb der Sperre.
 
 Neigung und Niveau gehen ueber dasselbe Kommando setCurve: der zweite Aufruf einer Schreibgruppe nimmt den eben
 geschriebenen Wert des ersten Mitglieds aus der Ueberlagerung, nie den alten Cache (Praezisierung 6). read() zeigt wie
@@ -38,7 +38,7 @@ QUOTA_TEXT = "Das Abfragekontingent bei Viessmann ist erschöpft."
 # Rollen, die signals() immer meldet (Pflichtrollen des Hebelsatzes ohne den Raum); die uebrigen nur, wenn vorhanden.
 ALWAYS_SIGNALS = ("curve_current", "level_current", "shift_current", "mode_select", "outdoor_temp")
 CURVE_LEVERS = ("curve", "level")
-MIN_POLL_SECONDS = 120.0  # Abfrage + Inventur + Schreiben bleiben unter dem Tageskontingent (Audit 4, A4-34)
+MIN_POLL_SECONDS = 120.0  # Abfrage + Inventur + Schreiben bleiben unter dem Tageskontingent
 MAX_POLL_SECONDS = 86400.0  # Entscheidung 22: ein Tag; Event.wait(1e300) wirft OverflowError, der Abfrage-Thread stirbt
 
 
@@ -63,8 +63,8 @@ class ViCareCloudDriver:
     kind = KIND_CLOUD
     login_kind = LOGIN_OAUTH
     LEVER_SETS = (caps.LEVER_SET,)
-    # Audit 4, A4-08: Parameter, die die Anlage bestimmen (registry.plant_id).
-    # Achtung (Audit 4, A4-08): Eine Aenderung aendert die plant_id jeder Installation; beim Update gilt das als andere Anlage und setzt den anlagenbezogenen Zustand zurueck.
+    # Parameter, die die Anlage bestimmen (registry.plant_id).
+    # Achtung: Eine Aenderung aendert die plant_id jeder Installation; beim Update gilt das als andere Anlage und setzt den anlagenbezogenen Zustand zurueck.
     IDENTITY_PARAMETERS = ("installation_id", "gateway_serial", "device_id", "heizkreis")
 
     def __init__(self, parameter: dict, paths: Paths, *, clock=time.monotonic, writer: bool = False,
@@ -91,7 +91,7 @@ class ViCareCloudDriver:
         self._overlay_at: dict[str, float] = {}
         # Eigener Programmwechsel (prepare/restore_aux) mit Zeitpunkt: gilt ueber jedem neuen Cache, bis ein Abruf ihn
         # bestaetigt oder settle_seconds vergangen sind; sonst wuerde eine nachlaufende Cloud das Ursprungsprogramm
-        # des Kunden verlieren oder ueberschreiben (Fix-Runde 1 Task 6).
+        # des Kunden verlieren oder ueberschreiben.
         self._mode_overlay: tuple[str, float] | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -100,7 +100,7 @@ class ViCareCloudDriver:
 
     @property
     def description(self) -> BindingDescription:
-        """Beschreibung aus der Konfiguration (Spec Stufe 3 S4b); Befehle ohne Konfiguration (Erkennung, Inventur,
+        """Beschreibung aus der Konfiguration; Befehle ohne Konfiguration (Erkennung, Inventur,
         Vergessen) duerfen sie nicht brauchen."""
         if self._description is None:
             raise RuntimeError("Treiber ohne Konfiguration")
@@ -185,7 +185,7 @@ class ViCareCloudDriver:
 
     def _extract(self, features) -> tuple[dict[str, float | str], dict[str, tuple[float, float] | None]]:
         """Cache und Wertebereiche aus einer Feature-Liste, jedes Mal neu aufgebaut (nie mit dem alten zusammengefuehrt):
-        fehlt ein Feature nach einem Firmware-Update, fehlt die Rolle, und read() wirft (Review Focus 5)."""
+        fehlt ein Feature nach einem Firmware-Update, fehlt die Rolle, und read() wirft."""
         index, n = caps.by_name(features), self._n
         curve, normal = index.get(caps.CURVE.format(n=n)), index.get(caps.NORMAL.format(n=n))
         cache: dict[str, float | str] = {}
@@ -284,7 +284,7 @@ class ViCareCloudDriver:
             self.physical_writes += 1
 
     def write_group(self, values: Mapping[str, float]) -> None:
-        """Steigung und Niveau in EINEM setCurve (Audit 4, A4-31): keine Zwischenstellung mit dem alten Partnerwert,
+        """Steigung und Niveau in EINEM setCurve: keine Zwischenstellung mit dem alten Partnerwert,
         ein Aufruf aus dem Kontingent. Die Pipeline nutzt diese optionale Methode fuer die Schreibgruppe."""
         if set(values) != set(CURVE_LEVERS):
             raise ValueError(f"Schreibgruppe {sorted(values)} ist nicht {list(CURVE_LEVERS)}")
@@ -377,7 +377,7 @@ class ViCareCloudDriver:
             raise self._fail(error) from error
 
     def erkennung(self) -> dict:
-        """Inventur stunden 0 (Spec Stufe 3 S5 5.1): rohe, gekuerzte Features je Heizgeraet; Sicherheitswarnungen je
+        """Inventur stunden 0: rohe, gekuerzte Features je Heizgeraet; Sicherheitswarnungen je
         Heizkreis mit den lokalen Werten (G-1). Die Klassifikation macht der Server."""
         anlagen, features = [], []
         for nummer, device in enumerate(self._heating_devices()):

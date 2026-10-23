@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Abschnitt "## <Version>" aus einem CHANGELOG fuer die Release-Notizen des Signier-Jobs (Audit 4, A4-36): der Job
+"""Abschnitt "## <Version>" aus einem CHANGELOG fuer die Release-Notizen des Signier-Jobs: der Job
 nimmt Notizen aus dem eigenen, getaggten Checkout statt aus dem Artefakt des Build-Jobs. Gleiche Regel wie
 changelog_section in tools/release_gate.py (Dev-Root), hier ohne Abhaengigkeit auf das Root-Repo.
 

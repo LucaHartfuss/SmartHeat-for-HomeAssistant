@@ -1,4 +1,4 @@
-# SmartHeat-Gateway-Image (Plan G2b-2 Task 9), rpi-image-gen v2.8.0 (Commit 262d4df, gepinnt in build.sh). Aufbau
+# SmartHeat-Gateway-Image, rpi-image-gen v2.8.0 (Commit 262d4df, gepinnt in build.sh). Aufbau
 # wie das mitgelieferte config/trixie-minbase.yaml, Geraet Raspberry Pi 4 mit SSD am USB. /stage stellt build.sh
 # bereit (Inhalt von prepare.sh).
 device:

@@ -1,5 +1,5 @@
-"""Updater des Gateways (Spec G2b-1 4, G2 8.4): liest alle 15 min die Soll-Version (Feld `software` des
-Konfigurationsdokuments, von der Laufzeit nach data/software_soll.json geschrieben, Spec 5b 5.3), laedt und prueft Manifest
+"""Updater des Gateways: liest alle 15 min die Soll-Version (Feld `software` des
+Konfigurationsdokuments, von der Laufzeit nach data/software_soll.json geschrieben), laedt und prueft Manifest
 (https, SHA-256, minisign gegen release.pub, Version, min_updater_version) und Bundle-Dateien, schaltet per Compose um,
 wartet bis zu 10 min auf "gesund" und rollt sonst auf das vorige Bundle zurueck. Nur streng neuere Versionen werden
 geladen (Downgrade-Schutz, Grund version_zu_alt; der Betreiber gibt fuer einen Rueckweg der Flotte den alten Stand als
@@ -21,7 +21,7 @@ rejected gilt nur im Kontext rejected_context (Version des Updaters und Schluess
 "placeholder"): aendert sich eines von beiden, wird rejected geleert (ein neuer Updater oder der echte Schluessel
 darf es neu versuchen).
 
-Umgebung ist kein Fehler des Bundles (Final-Review FW-1/FW-2):
+Umgebung ist kein Fehler des Bundles:
 - Die Gesundheitsfrist ruht, solange der Host den Broker nicht erreicht (je Takt eine TCP-Verbindung zu host:port aus
   data/device/endpoint.json; fehlt die Datei, gilt er als nicht erreichbar) - nach einem Stromausfall im ganzen Haus
   kommt der Router oft erst nach dem Pi. Hoechstens HEALTH_CAP_SECONDS insgesamt; ist der Server dann noch immer nicht
@@ -65,8 +65,7 @@ logger = logging.getLogger(__name__)
 #: Version wird erneut versucht (G3-Restpunkt; der Server zeigt ihn dem Betreiber als "wird erneut versucht").
 RETRY_REASON = "server_unerreichbar"
 #: Gruende einer Ablehnung oder eines Rueckwegs (wire.SOFTWARE_ERRORS des Vertrags, test_vertrag_im_host.py). Der
-#: Updater meldet nur diese Namen, nie ein Literal (A5-85,
-#: test_updater.py::test_der_updater_meldet_nur_gruende_aus_reasons).
+#: Updater meldet nur diese Namen, nie ein Literal (test_updater.py::test_der_updater_meldet_nur_gruende_aus_reasons).
 MANIFEST_UNGUELTIG = "manifest_ungueltig"
 SIGNATUR_UNGUELTIG = "signatur_ungueltig"
 UPDATER_ZU_ALT = "updater_zu_alt"
@@ -82,7 +81,7 @@ PERIOD_SECONDS = 900
 JITTER_SECONDS = 300
 FIRST_DELAY_SECONDS = 120
 MAX_MANIFEST_BYTES = 65536
-ABRUF_GESAMT_SECONDS = 300  # Gesamtfrist eines Abrufs (A6-13)
+ABRUF_GESAMT_SECONDS = 300  # Gesamtfrist eines Abrufs
 ABRUF_BLOCK_BYTES = 8192
 SOCKET_TIMEOUT_SECONDS = 30  # je Leseoperation, hoechstens der Rest der Gesamtfrist
 MAX_FILE_BYTES = 1048576
@@ -90,7 +89,7 @@ MAX_REJECTED = 20
 MAX_PENDING_REPORTS = 20
 OFFER_KEYS = ("manifest_url", "manifest_sha256", "signature")
 _HEALTHY, _UNHEALTHY, _UNREACHABLE = "gesund", "ungesund", "unerreichbar"
-REQUIRED_HEALTHY = ("runtime",)  # bis 0.5.0 auch "agent"; der Agent geht in der Laufzeit auf
+REQUIRED_HEALTHY = ("runtime",)
 
 
 class FetchError(Exception):
@@ -165,7 +164,7 @@ class _DeadlineExceeded(FetchError):
 
 
 class _Deadline:
-    """Gesamtfrist eines Abrufs (A6-13) auf der eingespeisten monotonen Uhr. Sie gilt fuer alles, was zum Abruf gehoert:
+    """Gesamtfrist eines Abrufs auf der eingespeisten monotonen Uhr. Sie gilt fuer alles, was zum Abruf gehoert:
     Verbindungsaufbau, TLS-Handshake, Kopfzeilen, jede Weiterleitung und den Koerper. Der Socket-Timeout wird vor jeder
     Leseoperation auf den Rest der Frist (hoechstens SOCKET_TIMEOUT_SECONDS) gesetzt; ein Server, der langsam tropft, kommt
     so nirgends an der Frist vorbei."""
@@ -296,7 +295,7 @@ def _guard_connection(connection: http.client.HTTPConnection, deadline: _Deadlin
                       plain: bool) -> None:
     """Haengt an `_create_connection` der Verbindung (Instanzattribut von http.client, sonst `socket.create_connection`):
     - Verbindungsaufbau mit dem Rest der Gesamtfrist als Timeout (eine abgelaufene Frist baut keine Verbindung auf);
-    - public_only (A6-38): Gegenadresse des verbundenen Sockets nur oeffentlich (`is_public_address`) und nicht die eigene
+    - public_only: Gegenadresse des verbundenen Sockets nur oeffentlich (`is_public_address`) und nicht die eigene
       Adresse oder das eigene IPv6-/64 (`is_own_network`), geprueft nach dem TCP-Aufbau und vor dem TLS-Handshake: der
       TCP-Handshake erreicht auch eine abgelehnte Adresse, Nutzdaten (ClientHello, Anfrage) gehen nicht hin, der Socket wird
       vor dem Fehler geschlossen. Geprueft wird die Adresse des Sockets, nicht der Name aus der URL: der Name kann beim
@@ -374,7 +373,7 @@ def checked_opener(allow_http: bool, deadline: _Deadline | None = None) -> urlli
 
 
 def fetch_url(url: str, max_bytes: int, allow_http: bool, clock: Callable[[], float] = time.monotonic) -> bytes:
-    """Holt `url` (hoechstens `max_bytes`) in hoechstens ABRUF_GESAMT_SECONDS insgesamt (A6-13, monotone Uhr): Verbindung,
+    """Holt `url` (hoechstens `max_bytes`) in hoechstens ABRUF_GESAMT_SECONDS insgesamt (monotone Uhr): Verbindung,
     TLS, Kopfzeilen, Weiterleitungen und Koerper laufen auf derselben Frist (`_Deadline`); gelesen wird in Bloecken.
     Grenzen: das Aufloesen des Namens (getaddrinfo) hat keine eigene Frist; der Verbindungsaufbau hat den Rest der Frist
     (hoechstens 30 s) als Timeout je aufgeloester Adresse, bei vielen toten Adressen also mehrfach."""
@@ -419,7 +418,7 @@ def fetch_health(url: str) -> dict | None:
 
 
 def health_ok(data: dict | None, containers: dict[str, str]) -> bool:
-    """Gesund (G2 8.4, Plan G2b-1 Praezisierung 2): Serverkontakt laut /healthz, Laufzeit nicht im Zustand "startet"
+    """Gesund: Serverkontakt laut /healthz, Laufzeit nicht im Zustand "startet"
     und der Compose-Healthcheck der Laufzeit meldet "healthy". Der Healthcheck der Laufzeit (Lebenszeichen
     der Konfigurationswache) unterscheidet eine ruhende ("nicht eingerichtet": Status abgeraeumt, runtime_status None)
     von einer abstuerzenden Laufzeit."""
@@ -437,7 +436,7 @@ def _key_identity(public_key_text: str) -> str:
 
 
 def _older_or_equal(version: str, current: str | None) -> bool:
-    """Downgrade-Schutz (Plan G2b-2 Task 5): nur streng neuere Soll-Versionen. Der eigene Rueckweg (_rollback auf
+    """Downgrade-Schutz: nur streng neuere Soll-Versionen. Der eigene Rueckweg (_rollback auf
     previous) ist davon unberuehrt; unlesbare Versionen entscheidet die Manifest-Pruefung."""
     if current is None:
         return False
@@ -470,7 +469,7 @@ class Updater:
     # --- Ablauf ---
 
     def recover(self) -> None:
-        """Nach einem Neustart: siehe `_recover`; ein Dateifehler wird geloggt und beendet den Aufruf (A6-39)."""
+        """Nach einem Neustart: siehe `_recover`; ein Dateifehler wird geloggt und beendet den Aufruf."""
         try:
             self._recover()
         except OSError as error:
@@ -478,7 +477,7 @@ class Updater:
 
     def run_once(self) -> str:
         """Ein Durchlauf (Ergebnis: aktuell, vorlaeufig, abgelehnt, aktualisiert, zurueckgerollt). Ein Dateifehler
-        (Datentraeger voll oder schreibgeschuetzt, Zustandsdatei) ist kein Fehler des Bundles (A6-39): ERROR mit dem
+        (Datentraeger voll oder schreibgeschuetzt, Zustandsdatei) ist kein Fehler des Bundles: ERROR mit dem
         Namen des Fehlers, Ergebnis "vorlaeufig"; der Zustand bleibt, wie die letzte erfolgreiche Speicherung ihn liess
         (ein unterbrochenes Update setzt recover() im naechsten Durchlauf fort)."""
         try:
@@ -738,7 +737,7 @@ class Updater:
 
 @dataclass(frozen=True)
 class Einstellungen:
-    """Eingaenge von `main`, ausser `SHG_ROOT` (A6-87). Die Standardwerte sind die des Geraets (install.sh); der Dienst
+    """Eingaenge von `main`, ausser `SHG_ROOT`. Die Standardwerte sind die des Geraets (install.sh); der Dienst
     ruft `main` ohne Einstellungen, `allow_http` ist dort aus und aus der Umgebung nicht einzuschalten. Nur Tests reichen
     eigene Werte durch (`host/tests/updater_testlauf.py` fuer den Docker-Test; sie ist auf keinem Geraet installiert)."""
     release_pub: Path = Path("/opt/smartheat/host/release.pub")
@@ -775,7 +774,7 @@ def main(argv: list[str] | None = None, *, einstellungen: Einstellungen | None =
     while True:
         try:
             logger.info("Durchlauf: %s", run.run_once())
-        except Exception:  # Fangnetz (A6-39): ein unerwarteter Fehler beendet den Dienst nicht, der naechste Durchlauf folgt
+        except Exception:  # Fangnetz: ein unerwarteter Fehler beendet den Dienst nicht, der naechste Durchlauf folgt
             logger.exception("Durchlauf mit unerwartetem Fehler abgebrochen")
         time.sleep(PERIOD_SECONDS + random.uniform(0, JITTER_SECONDS))
 

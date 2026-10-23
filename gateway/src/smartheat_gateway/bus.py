@@ -1,4 +1,4 @@
-"""Lokaler Bus (Spec SHG G2 6.1): kleine paho-Huelle fuer die Laufzeit (ab 0.6.0 nur Zigbee2MQTT), getrennt von
+"""Lokaler Bus: kleine paho-Huelle fuer die Laufzeit (nur Zigbee2MQTT), getrennt von
 der MQTT-Verbindung zum Server (Geraetekern). Callbacks laufen im paho-Thread und duerfen nur Daten ablegen bzw.
 Ereignisse in den Worker stellen. Abos werden bei jedem (Wieder-)Verbinden erneuert."""
 import json
@@ -49,7 +49,7 @@ class Bus(Protocol):
 
 
 def credentials_from_env() -> tuple[str, str] | None:
-    """Zugangsdaten des Dienstes am lokalen Bus (Plan G2b-1 Task 7): Datei aus SHG_BUS_CREDENTIALS, geschrieben vom
+    """Zugangsdaten des Dienstes am lokalen Bus: Datei aus SHG_BUS_CREDENTIALS, geschrieben vom
     Init-Schritt. Ohne Variable anonym (Tests). Gesetzt, aber unlesbar: Fehler, damit Compose den Dienst neu startet
     statt ihn anonym (und damit abgewiesen) laufen zu lassen."""
     path = os.environ.get("SHG_BUS_CREDENTIALS")

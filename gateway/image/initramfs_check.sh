@@ -1,7 +1,6 @@
 #!/bin/bash
-# Prueft im fertigen Root-Dateisystem, dass die USB-Startregel (usbboot.sh) wirklich in der initramfs liegt (Plan
-# G2b-2 Task 9, CI-Spike 2026-10-07): ohne sie fehlen beim Start vom USB die by-slot-Links und der Start bliebe in der
-# initramfs haengen. Getrennt von rootfs_checks.sh, weil lsinitramfs nur im Root-Dateisystem selbst laeuft (chroot)
+# Prueft im fertigen Root-Dateisystem, dass die USB-Startregel (usbboot.sh) wirklich in der initramfs liegt: ohne sie
+# fehlen beim Start vom USB die by-slot-Links und der Start bliebe in der initramfs haengen. Getrennt von rootfs_checks.sh, weil lsinitramfs nur im Root-Dateisystem selbst laeuft (chroot)
 # und rootfs_checks.sh auf einem blossen entpackten Root-Dateisystem laufen muss (Tests). Nur im post-build-Hook.
 # Aufruf: initramfs_check.sh ROOTFS
 # Pruefobjekte: /boot/firmware/initramfs* (was der Pi startet, rpi-image-gen v2.8.0: initramfs8) und /boot/initrd.img-*

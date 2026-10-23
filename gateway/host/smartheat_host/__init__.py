@@ -1,1 +1,1 @@
-"""Host-Dienste des SmartHeat-Gateways (Spec SHG G2b-1): Updater, LED, Hoststatus."""
+"""Host-Dienste des SmartHeat-Gateways: Updater, LED, Hoststatus."""
