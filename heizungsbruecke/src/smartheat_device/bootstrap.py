@@ -85,7 +85,7 @@ def _antwort(body) -> Antwort:
 
 
 class BootstrapClient:
-    """Signierte Anfragen an register und certificate (Signatur wie die Polling-API, G3 2.1)."""
+    """Signierte Anfragen an register und certificate (Signatur wie die Polling-API)."""
 
     def __init__(self, base_url: str, ident: identity_module.Identity, *, session=None,
                  now: Callable[[], float] = time.time, timeout: float = TIMEOUT_SECONDS) -> None:

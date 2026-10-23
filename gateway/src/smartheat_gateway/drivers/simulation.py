@@ -93,7 +93,7 @@ class SimulationDriver:
         self._cache_at: float | None = None
         self._room = float(self._p["raum_start"])
         self._last_model: float | None = None
-        self._hours = 1000.0  # Betriebsstunden des simulierten Erzeugers (Audit 4 P-B)
+        self._hours = 1000.0  # Betriebsstunden des simulierten Erzeugers
         self._random = random.Random(self._p["seed"])
         self._lock = threading.RLock()  # Thread-Vertrag wie die Cloud-Treiber
         self._stop = threading.Event()

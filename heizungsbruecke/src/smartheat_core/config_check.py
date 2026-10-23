@@ -34,7 +34,7 @@ GRUENDE = (UNGUELTIG, HEBELSATZ_EINGERASTET, SICHERHEITSWERTE_FEHLEN, ROLLE_UNZU
 HOST_GATEWAY = "gateway"
 HOST_HA = "ha"
 ABO_WERTE = ("aktiv", "inaktiv")  # Kopie aus wire.ABO (test_core_vertrag_pin.py)
-#: Gateway: Raumfuehler aus Zigbee (Temperatur bzw. Isttemperatur eines Thermostats) oder vom Treiber (SHG G2 3.2).
+#: Gateway: Raumfuehler aus Zigbee (Temperatur bzw. Isttemperatur eines Thermostats) oder vom Treiber.
 GATEWAY_RAUMFUEHLER = re.compile(r"zigbee:0x[0-9a-f]{16}:(temperature|local_temperature)|treiber:room_temperature")
 IEEE = re.compile(r"0x[0-9a-f]{16}")
 TAGESTICK = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
