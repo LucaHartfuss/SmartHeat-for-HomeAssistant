@@ -7,3 +7,8 @@ _.frame  # smartheat_host/led.py _terminate
 
 # --- urllib liest OpenerDirector.addheaders bei jeder Anfrage (auch nach einer Weiterleitung) ---
 _.addheaders  # smartheat_host/updater.py checked_opener (eigener User-Agent)
+
+# --- urllib ruft <schema>_open des Handlers fuer jede Anfrage (auch fuer ein Weiterleitungsziel) ---
+_.https_open  # smartheat_host/updater.py _FetchHTTPSHandler (A6-38)
+_.http_open  # smartheat_host/updater.py _FetchHTTPHandler (nur mit allow_http)
+_.recv_into  # smartheat_host/updater.py _DeadlineSocket, DeadlineSSLSocket (Frist je Leseoperation, A6-13): SocketIO ruft es

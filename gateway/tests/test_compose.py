@@ -6,6 +6,7 @@ from pathlib import Path
 
 import yaml
 
+PUBLISHED_PORT = "0.0.0.0:80:8080"  # nur IPv4 (Audit 4, P-C2 b)
 GATEWAY = Path(__file__).resolve().parents[1]
 COMPOSE = GATEWAY / "compose"
 
@@ -41,7 +42,7 @@ def test_networks_ports_and_mounts():
     assert services["mosquitto"]["networks"] == ["bus"] and "ports" not in services["mosquitto"]
     assert services["zigbee2mqtt"]["networks"] == ["bus"]
     runtime = services["runtime"]
-    assert runtime["networks"] == ["bus", "wan"] and runtime["ports"] == ["80:8080"]
+    assert runtime["networks"] == ["bus", "wan"] and runtime["ports"] == [PUBLISHED_PORT]
     assert "network_mode" not in runtime
     targets = [_container_target(v) for v in runtime["volumes"]]
     assert targets == ["/data", "/host", "/run/shg-bus"]
@@ -50,13 +51,20 @@ def test_networks_ports_and_mounts():
     assert networks["bus"]["internal"] is True
 
 
+def test_the_diagnostic_port_is_published_on_ipv4_only():
+    """Audit 4, P-C2 (b): ohne Host-Adresse veroeffentlicht Docker den Port auch auf `[::]:80` (docker-proxy), die
+    Firewall-Regel `tcp dport 80 accept` gaelte dann auch fuer IPv6. Mit `0.0.0.0` als Host-Adresse lauscht nur IPv4."""
+    ports = _services()["runtime"]["ports"]
+    assert ports == ["0.0.0.0:80:8080"]
+
+
 def test_only_the_runtime_publishes_a_port_and_only_80_to_8080():
     """Docker-Ports laufen per DNAT an der input-Kette der Firewall vorbei: ueber alle Dienste der Compose-Datei (nicht
-    nur die bekannten) hat nur `runtime` `ports`, genau `80:8080`; Mosquitto, Zigbee2MQTT und init veroeffentlichen
+    nur die bekannten) hat nur `runtime` `ports`, genau `0.0.0.0:80:8080`; Mosquitto, Zigbee2MQTT und init veroeffentlichen
     nichts."""
     services = _services()
     assert {name for name, service in services.items() if "ports" in service} == {"runtime"}
-    assert services["runtime"]["ports"] == ["80:8080"]
+    assert services["runtime"]["ports"] == [PUBLISHED_PORT]
     assert {"init", "mosquitto", "zigbee2mqtt"} <= set(services)
 
 
@@ -78,10 +86,13 @@ def test_runtime_environment_and_healthcheck():
     env = runtime["environment"]
     assert env["SHG_DEVICE_API_URL"] == "${SHG_DEVICE_API_URL:?SHG_DEVICE_API_URL fehlt}"
     assert env["SHG_DIAG_HOSTNAMES"] == "${SHG_DIAG_HOSTNAMES:-}"
-    assert env["SHG_HOST_DIR"] == "/host" and env["SHG_DATA_DIR"] == "/data"
+    assert {"SHG_HOST_DIR", "SHG_DATA_DIR"}.isdisjoint(env)  # A6-87: die Ordner sind die Standardwerte des Codes (/host, /data)
     assert "SHG_BUS_LOST_EXIT_SECONDS" not in env  # Netz-Wache entfaellt mit dem Tunnel
     test = " ".join(runtime["healthcheck"]["test"])
-    assert "http://127.0.0.1:8080/healthz" in test and "/tmp/shg-runtime-alive" in test
+    from smartheat_gateway import runtime_main
+
+    assert f"http://127.0.0.1:{runtime_main.DIAG_PORT}/healthz" in test and "/tmp/shg-runtime-alive" in test
+    assert PUBLISHED_PORT.endswith(f":{runtime_main.DIAG_PORT}")  # A6-87: DIAG_PORT ist der Container-Port der Compose-Datei
 
 
 def test_runtime_stops_only_after_the_device_thread_has_disconnected():
@@ -117,6 +128,7 @@ def test_init_has_no_network_and_writes_bus_zigbee_and_data():
     assert "networks" not in init and "ports" not in init
     targets = [_container_target(volume) for volume in init["volumes"]]
     assert targets == ["/bus", "/zigbee2mqtt", "/data", "/host"]
+    assert set(init["environment"]) == {"ZIGBEE_ADAPTER"}  # A6-87: die Ordner sind die Standardwerte von init.py
 
 
 def test_runtime_gets_only_its_own_bus_credentials_and_sees_the_device_keys():

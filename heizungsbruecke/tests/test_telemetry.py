@@ -121,6 +121,35 @@ def test_ein_ungueltiges_signal_warnt_einmal_ohne_traceback_bis_zum_naechsten_ge
         assert len(zeilen(logging.WARNING)) == 2 and zeilen(logging.ERROR) == []
 
 
+def test_an_unavailable_source_warns_once_without_traceback(caplog):
+    """L4-17 Rest: SourceUnavailable (lokaler Bus getrennt, HA nicht erreichbar) ist erwartet: je Ausfall eine WARNING
+    ohne Traceback, weitere Takte nur DEBUG, nach gelungenem Senden warnt ein neuer Ausfall wieder; kein ERROR."""
+    manifest = ChannelManifest(refs={"room_actual": "sensor.room_actual"})
+    ha_api = MagicMock(spec=SignalSource)
+    mqtt_client = MagicMock(spec=MqttChannel)
+
+    def takt(wert):
+        ha_api.get_state.side_effect = wert if isinstance(wert, Exception) else None
+        ha_api.get_state.return_value = wert
+        telemetry.run_telemetry_tick(manifest, ha_api, mqtt_client, boost_active=False, failsafe_active=False)
+
+    def zeilen(stufe):
+        return [r for r in caplog.records if r.levelno == stufe and r.name == "smartheat_runtime.telemetry"]
+
+    getrennt = SourceUnavailable("lokaler Bus getrennt")
+    with caplog.at_level(logging.DEBUG, logger="smartheat_runtime.telemetry"):
+        takt(getrennt)
+        takt(getrennt)
+        assert len(zeilen(logging.WARNING)) == 1 and len(zeilen(logging.DEBUG)) == 1
+        assert zeilen(logging.ERROR) == [] and zeilen(logging.WARNING)[0].exc_info is None
+        assert "lokaler Bus getrennt" in zeilen(logging.WARNING)[0].getMessage()
+        mqtt_client.publish_telemetry.assert_not_called()
+        takt(20.5)  # Gegenprobe: die Wiederaufnahme sendet wieder
+        mqtt_client.publish_telemetry.assert_called_once()
+        takt(getrennt)  # nach einem gelungenen Senden warnt ein neuer Ausfall wieder
+        assert len(zeilen(logging.WARNING)) == 2 and zeilen(logging.ERROR) == []
+
+
 @pytest.mark.parametrize("fehler", [ValueError("x"), RuntimeError("Hickup")])
 def test_ein_anderer_fehler_der_telemetrie_bleibt_ein_error_mit_traceback(fehler, caplog):
     manifest = ChannelManifest(refs={"room_actual": "sensor.room_actual"})

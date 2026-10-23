@@ -130,6 +130,22 @@ def test_unsafe_state_files_are_stoerung_and_never_block(tmp_path, plant):
     assert led.state_from_file(path) == "stoerung"
 
 
+def test_main_takes_the_led_from_find_led_and_not_from_the_environment(tmp_path, monkeypatch):
+    """A6-87: `SHG_LED` aus der Umgebung gilt nicht mehr; ohne LED nach `find_led` endet der Dienst mit der Meldung, ohne
+    den Trigger der genannten Datei anzufassen."""
+    led_dir = tmp_path / "ACT"
+    led_dir.mkdir()
+    (led_dir / "trigger").write_text("none [mmc0] heartbeat\n")
+    monkeypatch.setenv("SHG_LED", str(led_dir))
+    monkeypatch.setenv("SHG_ROOT", str(tmp_path))
+    monkeypatch.setattr(led, "find_led", lambda: None)
+    monkeypatch.setattr(led, "play", lambda *args: pytest.fail("main hat die LED aus der Umgebung genommen"))
+    with pytest.raises(SystemExit) as ende:
+        led.main()
+    assert "Keine LED gefunden" in str(ende.value.code)
+    assert (led_dir / "trigger").read_text() == "none [mmc0] heartbeat\n"
+
+
 def test_sigterm_ends_the_service_and_gives_the_trigger_back(tmp_path, monkeypatch):
     """`main` wie von systemd gestartet: die LED laeuft mit Trigger `none`; SIGTERM beendet mit Code 0, der vorherige
     Trigger (`mmc0`) steht wieder in der Datei. Das Signal geht an den eigenen Prozess; der Test setzt vorher einen
@@ -140,7 +156,7 @@ def test_sigterm_ends_the_service_and_gives_the_trigger_back(tmp_path, monkeypat
     (led_dir / "brightness").write_text("0")
     (tmp_path / "data").mkdir()
     _state(tmp_path / "data", "startet")
-    monkeypatch.setenv("SHG_LED", str(led_dir))
+    monkeypatch.setattr(led, "find_led", lambda: led_dir)
     monkeypatch.setenv("SHG_ROOT", str(tmp_path))
     gesehen: list[str] = []
 
@@ -178,7 +194,7 @@ def test_sigterm_right_after_taking_the_trigger_still_gives_it_back(tmp_path, mo
     (led_dir / "brightness").write_text("0")
     (tmp_path / "data").mkdir()
     _state(tmp_path / "data", "startet")
-    monkeypatch.setenv("SHG_LED", str(led_dir))
+    monkeypatch.setattr(led, "find_led", lambda: led_dir)
     monkeypatch.setenv("SHG_ROOT", str(tmp_path))
     echtes_take = led.Led.take
     gesehen: list[str] = []

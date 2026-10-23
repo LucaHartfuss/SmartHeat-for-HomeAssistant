@@ -4,7 +4,7 @@ import stat
 import pytest
 import yaml
 
-from smartheat_gateway.z2m_config import ensure, render, sync_credentials, sync_device_options
+from smartheat_gateway.z2m_config import ensure, render, sync_adapter, sync_credentials, sync_device_options
 
 
 def test_written_once_and_never_again(tmp_path):
@@ -199,3 +199,51 @@ def test_device_options_in_flow_style_and_unreadable_files_stay_alone(tmp_path):
     path.unlink()
     path.mkdir()  # Verzeichnis statt Datei
     assert not sync_device_options(tmp_path)
+
+
+def test_sync_adapter_follows_a_stick_swap(tmp_path):
+    """A6-15: nach einem Stick-Tausch (zstack -> ember) aendert sich nur serial.adapter; der zweite Aufruf schweigt."""
+    ensure(tmp_path, "zstack", "zigbee2mqtt", "test-pw")
+    path = tmp_path / "configuration.yaml"
+    path.chmod(0o644)
+    # So schreibt Zigbee2MQTT die Datei nach dem Ersetzen von GENERATE: Schluessel als Liste, Kommentar am Wert.
+    text = path.read_text().replace("network_key: GENERATE", "network_key:\n    - 1\n    - 2").replace(
+        "adapter: zstack", "adapter: zstack # Stick")
+    path.write_text(text)
+    assert sync_adapter(tmp_path, "ember")
+    assert path.read_text() == text.replace("adapter: zstack # Stick", "adapter: ember # Stick")  # Rest bytegleich
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert not sync_adapter(tmp_path, "ember")  # zweiter Lauf: nichts zu tun
+    assert yaml.safe_load(path.read_text())["serial"] == {"port": "/dev/zigbee", "adapter": "ember"}
+
+
+def test_sync_adapter_inserts_a_missing_line_and_leaves_unknown_files_alone(tmp_path):
+    path = tmp_path / "configuration.yaml"
+    path.write_text("serial:\n  port: /dev/zigbee\nmqtt:\n  adapter: nicht-meins\n")
+    assert sync_adapter(tmp_path, "ember")
+    assert path.read_text() == "serial:\n  adapter: ember\n  port: /dev/zigbee\nmqtt:\n  adapter: nicht-meins\n"
+    path.write_text("mqtt:\n  adapter: nicht-meins\n")  # kein Block serial: nichts raten
+    assert not sync_adapter(tmp_path, "ember")
+    assert path.read_text() == "mqtt:\n  adapter: nicht-meins\n"
+    path.write_text("ganz anderes Format\n")
+    assert not sync_adapter(tmp_path, "ember") and path.read_text() == "ganz anderes Format\n"
+    assert not sync_adapter(tmp_path / "fehlt", "ember")
+
+
+def test_sync_adapter_ignores_nested_keys_and_quoted_values(tmp_path):
+    path = tmp_path / "configuration.yaml"
+    path.write_text('serial:\n  port: /dev/zigbee\n  tief:\n    adapter: zstack\n  adapter: "ember"\nadvanced:\n  x: 1\n')
+    assert not sync_adapter(tmp_path, "ember")  # in Anfuehrungszeichen gleich: nichts zu tun, Verschachteltes zaehlt nicht
+    assert sync_adapter(tmp_path, "zstack")
+    assert path.read_text() == ('serial:\n  port: /dev/zigbee\n  tief:\n    adapter: zstack\n  adapter: zstack\n'
+                                "advanced:\n  x: 1\n")
+
+
+def test_sync_adapter_leaves_undecodable_or_unreadable_files_alone(tmp_path):
+    path = tmp_path / "configuration.yaml"
+    path.write_bytes(b"serial:\n  adapter: \xff\xfe\n")
+    assert not sync_adapter(tmp_path, "ember")
+    assert path.read_bytes() == b"serial:\n  adapter: \xff\xfe\n"
+    path.unlink()
+    path.mkdir()  # Verzeichnis statt Datei
+    assert not sync_adapter(tmp_path, "ember")

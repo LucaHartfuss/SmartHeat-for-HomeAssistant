@@ -23,9 +23,5 @@ _.log_message  # smartheat_gateway/diagnose.py: ueberschreibt das Zugriffslog (s
 _.signum  # smartheat_gateway/runtime_main.py _terminate
 _.frame  # smartheat_gateway/runtime_main.py _terminate
 
-# --- Testeinstiege mit Namen ---
-_.used  # smartheat_gateway/quota.py QuotaGuard.used: Zahl der Aufrufe im Fenster, nur Tests lesen sie (die
-#         Variable used in heizungsbruecke/host.py ist ein anderer Name, gleich geschrieben)
-
 # --- Objekt mit Wirkung im Konstruktor ---
 _._eingang  # smartheat_gateway/triggers.py: der SollEingang registriert sich beim Worker; das Attribut haelt ihn

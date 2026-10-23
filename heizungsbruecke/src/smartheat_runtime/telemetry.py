@@ -13,7 +13,7 @@ from smartheat_core.bindungsparameter import ENERGIE_KANAELE
 from smartheat_core.logtext import lesbar
 from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_runtime.delivery import DataFault
-from smartheat_runtime.ports import SignalUngueltig
+from smartheat_runtime.ports import SignalUngueltig, SourceUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,7 @@ _EINHEIT_GEWARNT: dict[str, str] = {}
 #: weitere Takte nur DEBUG, eine INFO-Zeile bei der Wiederaufnahme (Testoffensive T4').
 _AUSFALL_GEWARNT: set[str] = set()
 _UNGUELTIG = "signal_ungueltig"  # Schluessel in _AUSFALL_GEWARNT: ein Signal der Telemetrie war ungueltig
+_QUELLE_WEG = "quelle_nicht_erreichbar"  # Schluessel in _AUSFALL_GEWARNT: die Signalquelle antwortete nicht
 
 # Regel-Telemetrie fuer den Regelkern (TP11). Gegenstueck: heizungsserver
 # regelung/history.TELEMETRY_REGULATION_FIELDS (Contract-Check (Vertrag V1b)).
@@ -47,6 +48,16 @@ REGULATION_FIELDS = ("room_target", "outdoor_temp", "flow_setpoint")
 #: Anstehender Datenfehler fuer den Health-Check des Servers (nur solange einer besteht).
 #: Feldname und Quellen prueft ein Contract-Check (Vertrag V1b) gegen heizungsserver.regelung.history.
 DATENFEHLER_KEY = "datenfehler"
+
+
+def _warne_einmal(schluessel: str, error: Exception) -> None:
+    """Erwarteter Ausfall eines Tick-Signals: eine WARNING ohne Traceback je Ausfall, weitere Takte DEBUG."""
+    if schluessel in _AUSFALL_GEWARNT:
+        logger.debug("Telemetrie nicht gesendet: %s", lesbar(str(error)))
+    else:
+        _AUSFALL_GEWARNT.add(schluessel)
+        logger.warning("Telemetrie nicht gesendet: %s; weitere Takte nur im DEBUG-Log bis zur Wiederaufnahme",
+                       lesbar(str(error)))
 
 
 def run_telemetry_tick(
@@ -81,16 +92,14 @@ def run_telemetry_tick(
         if "room_actual" in _AUSFALL_GEWARNT:  # erst nach dem gelungenen Senden
             _AUSFALL_GEWARNT.discard("room_actual")
             logger.info("Telemetrie wieder aufgenommen: room_actual ist wieder eine endliche Zahl")
-        _AUSFALL_GEWARNT.discard(_UNGUELTIG)
+        _AUSFALL_GEWARNT.difference_update((_UNGUELTIG, _QUELLE_WEG))
     except SignalUngueltig as error:
         # Erwartet (L4-17): der Fuehler liefert gerade keinen gueltigen Wert; der Tick meldet es dem Kunden. Eine
         # WARNING ohne Traceback bis zum naechsten gelungenen Senden, danach nur DEBUG.
-        if _UNGUELTIG in _AUSFALL_GEWARNT:
-            logger.debug("Telemetrie nicht gesendet: %s", lesbar(str(error)))
-        else:
-            _AUSFALL_GEWARNT.add(_UNGUELTIG)
-            logger.warning("Telemetrie nicht gesendet: %s; weitere Takte nur im DEBUG-Log bis zur Wiederaufnahme",
-                           lesbar(str(error)))
+        _warne_einmal(_UNGUELTIG, error)
+    except SourceUnavailable as error:
+        # Ebenso erwartet (L4-17 Rest): die Quelle antwortet nicht (HA nicht erreichbar, lokaler Bus getrennt).
+        _warne_einmal(_QUELLE_WEG, error)
     except Exception:
         logger.exception("Fehler beim Veroeffentlichen der KPI-Telemetrie, wird beim naechsten Tick erneut versucht")
 

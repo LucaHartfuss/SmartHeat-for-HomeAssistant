@@ -14,6 +14,7 @@ from world import GatewayWorld
 from smartheat_core import dateien
 from smartheat_device import prozess
 from smartheat_gateway import runtime_main
+from smartheat_gateway.bus import BUS_PORT
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime import app, aufraeumen
@@ -358,19 +359,60 @@ def test_room_is_refreshed_every_tick(world):
 
 
 def test_the_operation_is_applied_and_the_thermostat_aligned_at_start(world):
+    # das Thermostat hat vor dem Start gemeldet (retained): bekannter Zustand, an (A6-14)
+    world.z2m.report(THERMOSTAT, system_mode="heat", occupied_heating_setpoint=20.0, local_temperature=20.0)
     dokumente_schreiben(world.paths, konfiguration(), bedienung(22.0))
     world.start_runtime()
     world.run()
     assert world.host._store.value == 22.0 and _thermostat_writes(world) == [22.0]
 
 
-def test_a_newer_operation_replaces_the_stored_target_at_start(world):
+def test_without_a_known_thermostat_state_the_start_aligns_with_its_first_report(world):
+    """A6-14: ohne bekannten Zustand (noch nie gemeldet, Mosquitto ohne retained Werte) wartet das Angleichen auf die
+    erste Live-Meldung des Thermostats."""
+    dokumente_schreiben(world.paths, konfiguration(), bedienung(22.0))
+    world.start_runtime()
+    world.run()
+    assert world.host._store.value == 22.0 and _thermostat_writes(world) == []
+    world.z2m.report(THERMOSTAT, system_mode="heat", occupied_heating_setpoint=20.0, local_temperature=20.0)
+    world.run()
+    assert _thermostat_writes(world) == [22.0]
+
+
+@pytest.mark.parametrize("erste", [None, "heat", "off"], ids=["keine Meldung", "an", "aus"])
+def test_a_newer_operation_replaces_the_stored_target_at_start(world, erste):
+    """Gespeichert 20, Bedienung 22,5 (kam waehrend des Neustarts, nicht dirty): sie gilt sofort im Soll-Speicher.
+    Ohne bekannten Zustand des Thermostats geht sie erst mit seiner ersten Live-Meldung hinaus, wie das Angleichen
+    (A6-14, Fix-Runde 1 I-1); meldet es aus, erst mit "wieder an"."""
     dateien.schreiben_json(world.paths.room_target, {"value": 20.0, "source": "portal", "ts": "t"},
                            modus=dateien.LESBAR)
     dokumente_schreiben(world.paths, konfiguration(), bedienung(22.5))
     world.start_runtime()
     world.run()
-    assert world.host._store.value == 22.5 and 22.5 in _thermostat_writes(world)
+    assert world.host._store.value == 22.5 and _thermostat_writes(world) == []
+    if erste is None:
+        return
+    world.z2m.report(THERMOSTAT, system_mode=erste, occupied_heating_setpoint=20.0, local_temperature=20.0)
+    world.run()
+    assert _thermostat_writes(world) == ([22.5] if erste == "heat" else [])
+    world.z2m.report(THERMOSTAT, system_mode="heat", occupied_heating_setpoint=20.0, local_temperature=20.0)
+    world.advance(30)  # nach der Entprellung: das gemeldete 20 ist kein Wunsch
+    assert _thermostat_writes(world) == [22.5] and world.host._store.value == 22.5
+
+
+def test_a_raise_of_the_wish_at_start_triggers_the_boost(world):
+    """Nachtrag Re-Review Task 4: eine Erhoehung der Bedienung waehrend des Neustarts (20 -> 22,5) loest den Boost aus,
+    nicht nur das Angleichen des Thermostats: der Stable-Target-Cache haelt noch 20, das Soll im Speicher ist 22,5."""
+    world.z2m.report(THERMOSTAT, system_mode="heat", occupied_heating_setpoint=20.0, local_temperature=20.0)
+    dokumente_schreiben(world.paths, konfiguration(), bedienung(20.0))
+    world.start_runtime()
+    world.run()
+    assert world.host._store.value == 20.0 and not world.result.store.state.boost_active  # Gegenprobe: erster Start
+    dokumente_schreiben(world.paths, konfiguration(), bedienung(22.5))
+    _neustart(world)
+    world.run()
+    assert world.result.store.state.boost_active
+    assert world.host._store.value == 22.5 and _thermostat_writes(world).count(22.5) == 1
 
 
 def test_an_unexpected_error_reports_the_gateway_unhealthy_during_the_pause(world, monkeypatch):
@@ -426,7 +468,7 @@ def vor_dem_start(world, monkeypatch):
     es)."""
     monkeypatch.setenv("SHG_HOST_DIR", str(world.host_dir))
     monkeypatch.setenv("SHG_DEVICE_API_URL", "https://accounts.example.test")
-    monkeypatch.setenv("SHG_DIAG_PORT", "0")
+    monkeypatch.setattr(runtime_main, "DIAG_PORT", 0)  # A6-87: eine Konstante, kein Umgebungsschalter
     pausen = []
     monkeypatch.setattr(prozess.time, "sleep", pausen.append)
     alive = world.paths.data / "alive"
@@ -505,6 +547,38 @@ def test_vorbereiten_returns_host_and_device_with_the_diagnosis_page_up(world, v
             s.shutdown()
             s.server_close()
     assert vor_dem_start.pausen == [] and vor_dem_start.alive.exists()
+
+
+def test_the_diagnosis_page_listens_on_diag_port_whatever_the_environment_says(world, vor_dem_start, monkeypatch):
+    """A6-87: der Port ist `runtime_main.DIAG_PORT`; `SHG_DIAG_PORT` aus der Umgebung gilt nicht mehr."""
+    monkeypatch.setenv("SHG_DIAG_PORT", "1")
+    ports = []
+    monkeypatch.setattr(runtime_main.diagnose, "start_server", lambda port, *args: ports.append(port))
+    runtime_main.vorbereiten(world.paths, vor_dem_start.mirror)
+    assert ports == [runtime_main.DIAG_PORT] == [0]
+
+
+def test_main_connects_to_the_local_bus_on_the_bus_port_whatever_the_environment_says(monkeypatch):
+    """A6-87: der Port des lokalen Busses ist `bus.BUS_PORT` (1883, Mosquitto in der Compose-Datei); `SHG_BUS_PORT` aus
+    der Umgebung gilt nicht mehr."""
+    monkeypatch.setenv("SHG_BUS_PORT", "1")
+    monkeypatch.delenv("SHG_BUS_HOST", raising=False)
+    monkeypatch.delenv("SHG_BUS_CREDENTIALS", raising=False)
+    monkeypatch.setattr(runtime_main.signal, "signal", lambda *args: None)
+    seen = []
+
+    def local_bus(host, port, *args, **kwargs):
+        seen.append((host, port))
+        raise _Stopp
+
+    monkeypatch.setattr(runtime_main, "LocalBus", local_bus)
+    with pytest.raises(_Stopp):
+        runtime_main.main()
+    assert seen == [("mosquitto", BUS_PORT)] and BUS_PORT == 1883
+
+
+class _Stopp(Exception):
+    pass
 
 
 def test_vorbereiten_reicht_die_ausstehende_markierung_an_den_geraete_host(world, vor_dem_start, monkeypatch):

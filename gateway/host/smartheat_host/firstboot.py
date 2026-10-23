@@ -63,7 +63,7 @@ def run(root: Path, compose, load: Callable[[Path], None] = docker_load,
 def main() -> None:  # pragma: no cover - systemd-Einstieg
     logging.basicConfig(level=logging.INFO)
     root = Path(os.environ.get("SHG_ROOT", "/var/lib/smartheat"))
-    compose = bundles.ComposeRunner(root, project=os.environ.get("SHG_COMPOSE_PROJECT", "smartheat"))
+    compose = bundles.ComposeRunner(root)
     try:
         code = run(root, compose)
     except (LoadError, bundles.ComposeError, OSError) as error:

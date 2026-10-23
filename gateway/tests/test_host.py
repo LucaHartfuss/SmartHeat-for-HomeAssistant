@@ -2,6 +2,7 @@
 Startfehler mit stabilem Schluessel, Hebelsatz, Abmelden, Manifest nach der ersten Abfrage, Batterien, Anlagen-Kennung."""
 import logging
 import time
+from types import SimpleNamespace
 
 import bindung_beispiele
 import pytest
@@ -14,6 +15,7 @@ from world import GatewayWorld
 
 from smartheat_core import dateien, rastung
 from smartheat_gateway import config as gateway_config
+from smartheat_gateway import host as host_modul
 from smartheat_gateway.drivers import registry
 from smartheat_gateway.drivers.base import DriverError
 from smartheat_gateway.drivers.registry import create
@@ -280,11 +282,25 @@ def test_a_start_without_a_bound_thermostat_does_not_check_one(data_dir, clock, 
     assert erzeugt == ["simulation"]
 
 
-def test_the_device_list_is_awaited_once_for_the_thermostat_check_and_the_batteries(data_dir, clock):
+def _fake_uhr(monkeypatch):
+    """Ersetzt `time` im Host durch eine Uhr, die nur `sleep` vorstellt: die Pausen stehen in der Liste, die Wartezeit
+    laeuft nicht in Wanduhrzeit."""
+    jetzt = [0.0]
+    pausen = []
+
+    def sleep(sekunden):
+        pausen.append(sekunden)
+        jetzt[0] += sekunden
+
+    monkeypatch.setattr(host_modul, "time", SimpleNamespace(monotonic=lambda: jetzt[0], sleep=sleep))
+    return pausen
+
+
+def test_the_device_list_is_awaited_once_for_the_thermostat_check_and_the_batteries(data_dir, clock, monkeypatch):
+    pausen = _fake_uhr(monkeypatch)
     host = _host(Paths(data_dir), konfiguration(), clock, wait=0.3)
-    started = time.monotonic()
-    host.load()  # leeres bridge/devices: eine Wartezeit, nicht zwei
-    assert 0.25 <= time.monotonic() - started < 0.55
+    host.load()  # leeres bridge/devices: eine Wartezeit (0.3 s in Pausen zu 0.2 s), nicht zwei
+    assert pausen == [host_modul.BATTERY_POLL_SECONDS] * 2 == [0.2, 0.2]
 
 
 def test_load_reports_the_plant_identity_of_the_driver(data_dir, clock):
@@ -386,12 +402,37 @@ def _thermostat_writes(world):
             if topic == f"zigbee2mqtt/{THERMOSTAT}/set"]
 
 
+def _thermostat_an(world, **zustand):
+    """Das Thermostat meldet vor dem Start (retained wie Zigbee2MQTT): sein letzter bekannter Zustand."""
+    world.z2m.report(THERMOSTAT, **{"system_mode": "heat", "occupied_heating_setpoint": 20.0,
+                                    "local_temperature": 20.0, **zustand})
+
+
+@pytest.mark.parametrize("gespeichert", [20.0, 22.5], ids=["Bedienung beim Start", "Angleichen beim Start"])
+@pytest.mark.parametrize("zustand", [{"system_mode": "off"}, {"occupied_heating_setpoint": 5.0}],
+                         ids=["aus", "Frostschutz"])
+def test_the_start_writes_nothing_to_a_thermostat_whose_last_known_state_is_off(world, gespeichert, zustand):
+    """A6-14 (FH-3): Bedienung 22,5 ohne offene lokale Aenderung; das Thermostat hat vor dem Neustart aus bzw. die
+    Frostschutz-Stellung gemeldet. Weder die Bedienung des Servers beim Start noch das Angleichen erreicht es; die
+    Bedienung gilt im Speicher."""
+    _thermostat_an(world, **zustand)
+    dateien.schreiben_json(world.paths.room_target, {"value": gespeichert, "source": "portal", "ts": "t"},
+                           modus=dateien.LESBAR)
+    dokumente_schreiben(world.paths, konfiguration())
+    dateien.schreiben_json(world.paths.device_dir / "bedienung.json",
+                           {"version": 1, "inhalt": bedienung(22.5), "dirty": False}, modus=dateien.PRIVAT)
+    world.start_runtime()
+    world.run()
+    assert world.host._store.value == 22.5 and _thermostat_writes(world) == []
+
+
 @pytest.mark.parametrize(("dirty", "soll", "schreibt"), [(False, 22.5, [22.5]), (True, 20.0, [])],
                          ids=["Bedienung gilt und gleicht das Thermostat an", "offene lokale Aenderung gilt vor"])
 def test_an_open_local_change_keeps_the_start_from_aligning_the_thermostat(world, dirty, soll, schreibt):
     """Die Bedienung des Servers (22,5) weicht vom gespeicherten Soll (20,0) ab. Ohne offene lokale Aenderung gilt sie
     und das Thermostat wird beim Start angeglichen; mit offener Aenderung (dirty) bleibt das lokale Soll, nichts geht
-    ans Thermostat."""
+    ans Thermostat. Das Thermostat hat vor dem Start gemeldet (bekannter Zustand, an; A6-14)."""
+    _thermostat_an(world)
     dateien.schreiben_json(world.paths.room_target, {"value": 20.0, "source": "portal", "ts": "t"}, modus=dateien.LESBAR)
     dokumente_schreiben(world.paths, konfiguration())
     dateien.schreiben_json(world.paths.device_dir / "bedienung.json",
@@ -424,7 +465,8 @@ def test_a_sensor_value_that_is_not_plausible_never_becomes_the_room_temperature
 def test_the_operation_equal_to_the_stored_target_aligns_the_thermostat_only_without_an_open_local_change(
         world, dirty, schreibt):
     """Der zweite Pfad des Angleichens: die Bedienung des Servers entspricht schon dem gespeicherten Soll (kein
-    Portal-Ereignis), das Thermostat bekommt es direkt, ausser eine lokale Aenderung ist offen."""
+    Portal-Ereignis), das Thermostat bekommt es direkt, ausser eine lokale Aenderung ist offen. Bekannter Zustand: an."""
+    _thermostat_an(world)
     dateien.schreiben_json(world.paths.room_target, {"value": 22.5, "source": "portal", "ts": "t"}, modus=dateien.LESBAR)
     dokumente_schreiben(world.paths, konfiguration())
     dateien.schreiben_json(world.paths.device_dir / "bedienung.json",
@@ -434,11 +476,36 @@ def test_the_operation_equal_to_the_stored_target_aligns_the_thermostat_only_wit
     assert world.host._store.value == 22.5 and _thermostat_writes(world) == schreibt
 
 
-def test_the_start_puts_a_bound_w100_into_thermostat_mode_and_aligns_it_rounded(world):
-    """Fixrunde A, L4-22: Thermostatmodus und Anzeige vor dem Soll (der Konverter verwirft ein Soll, solange Zigbee2MQTT
-    den Modus fuer OFF haelt), das Soll ganzzahlig kaufmaennisch gerundet (22,5 -> 23), kein heat beim Start."""
+def test_an_operation_at_start_reaches_a_bound_w100_only_after_it_reports_on(world):
+    """Fix-Runde 1 (I-1, L4-30): gespeichert 20, Bedienung 22,5; das W100 hat retained thermostat_mode OFF gemeldet. Die
+    Bedienung gilt sofort im Speicher, ans Geraet geht sie erst nach der Meldung ON, genau einmal gerundet, ohne heat."""
     w100 = "0x54ef44100140eb34"  # Testwert
     world.z2m.add_w100(w100)
+    world.z2m.report(w100, thermostat_mode="OFF", system_mode="heat", occupied_heating_setpoint=20,
+                     local_temperature=20.0)
+    dateien.schreiben_json(world.paths.room_target, {"value": 20.0, "source": "portal", "ts": "t"}, modus=dateien.LESBAR)
+    bindung = {**konfiguration()["bindung"], "thermostat": w100}
+    dokumente_schreiben(world.paths, konfiguration(bindung=bindung))
+    dateien.schreiben_json(world.paths.device_dir / "bedienung.json",
+                           {"version": 1, "inhalt": bedienung(22.5), "dirty": False}, modus=dateien.PRIVAT)
+    world.start_runtime()
+    world.run()
+    modus = [{"thermostat_mode": "ON"}, {"auto_hide_middle_line": False}]
+    assert world.host._store.value == 22.5
+    assert [body for ieee, body in world.z2m.set_requests if ieee == w100] == modus
+    world.z2m.report(w100, thermostat_mode="ON")
+    world.run()
+    assert [body for ieee, body in world.z2m.set_requests if ieee == w100] == modus + [{"occupied_heating_setpoint": 23.0}]
+    assert world.z2m.verworfen == []
+
+
+def test_the_start_puts_a_bound_w100_into_thermostat_mode_and_aligns_it_rounded(world):
+    """Fixrunde A, L4-22: Thermostatmodus und Anzeige vor dem Soll (der Konverter verwirft ein Soll, solange Zigbee2MQTT
+    den Modus fuer OFF haelt), das Soll ganzzahlig kaufmaennisch gerundet (22,5 -> 23), kein heat beim Start. Das W100
+    hat vor dem Start thermostat_mode ON und heat gemeldet (L4-30, A6-14)."""
+    w100 = "0x54ef44100140eb34"  # Testwert
+    world.z2m.add_w100(w100)
+    world.z2m.report(w100, thermostat_mode="ON", system_mode="heat", occupied_heating_setpoint=20, local_temperature=20.0)
     dateien.schreiben_json(world.paths.room_target, {"value": 22.5, "source": "portal", "ts": "t"}, modus=dateien.LESBAR)
     bindung = {**konfiguration()["bindung"], "thermostat": w100}
     dokumente_schreiben(world.paths, konfiguration(bindung=bindung))

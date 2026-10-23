@@ -63,10 +63,6 @@ services:
     - smartheat_gateway.init
     network_mode: none
     environment:
-      SHG_BUS_DIR: /bus
-      SHG_ZIGBEE_DIR: /zigbee2mqtt
-      SHG_DATA_DIR: /data
-      SHG_HOST_DIR: /host
       ZIGBEE_ADAPTER: ${ZIGBEE_ADAPTER:-ember}
     volumes:
     - ${SHG_ROOT:-/var/lib/smartheat}/bus:/bus
@@ -106,8 +102,6 @@ services:
     environment:
       SHG_BUS_HOST: mosquitto
       SHG_BUS_CREDENTIALS: /run/shg-bus/bus.json
-      SHG_DATA_DIR: /data
-      SHG_HOST_DIR: /host
       SHG_DEVICE_API_URL: http://shg-upd-bootstrap:8090
       SHG_PORTAL_BASE_URL: ${SHG_PORTAL_BASE_URL:-}
       SHG_DIAG_HOSTNAMES: ${SHG_DIAG_HOSTNAMES:-}

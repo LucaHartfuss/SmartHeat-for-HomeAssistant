@@ -1,9 +1,13 @@
 """Spec 5b 3.4 (Plan D2 Task 2): Befehle des Gateways im Befehlsregister des Geraetekerns. Einmal-Ausfuehrung und
 Gruende-Pruefung testet D1; hier die Handler und die Uebersetzung der Treiber-Fehler."""
+import errno
 import json
+import logging
 import math
+import os
 import threading
 import time
+from pathlib import Path
 
 import pytest
 from configs import SENSOR, THERMOSTAT, bedienung, dokumente_schreiben, konfiguration
@@ -590,13 +594,35 @@ def test_two_live_commands_for_the_same_series_sample_each_boundary_once(vicare_
     assert done[0].inventur["proben"] == done[1].inventur["proben"] and len(done[0].inventur["proben"]) == 3
 
 
+def test_forgetting_the_inventory_reports_whether_it_is_gone(tmp_path, monkeypatch, caplog):
+    """forget_inventory meldet Erfolg als True, ein Teil-Scheitern als False mit genau einer Fehlerzeile je Datei."""
+    paths = Paths(tmp_path)
+    paths.inventur.parent.mkdir(parents=True, exist_ok=True)
+    paths.inventur.write_text("{}")
+    assert befehle.forget_inventory(paths) is True and not paths.inventur.exists()
+    assert befehle.forget_inventory(paths) is True  # nichts da: auch Erfolg
+    paths.inventur.write_text("{}")
+    echt = Path.unlink
+
+    def unlink(self, missing_ok=False):
+        if self == paths.inventur:
+            raise OSError(errno.EIO, os.strerror(errno.EIO))
+        echt(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    with caplog.at_level(logging.INFO):
+        assert befehle.forget_inventory(paths) is False
+    assert paths.inventur.exists()
+    assert [r.levelno for r in caplog.records if "inventur.json" in r.getMessage()] == [logging.ERROR]
+
+
 def test_a_pending_inventory_does_not_recreate_its_series_after_the_setup_was_removed(vicare_kontext):
     ctx, server, clock = vicare_kontext
     outcome = befehle.inventory(ctx, {"stunden": 2})
     clock.advance(900)
     ctx.wall = lambda: 1_000_000 + clock()
     assert outcome.check() is None and len(json.loads(ctx.paths.inventur.read_text())["samples"]) == 1
-    befehle.forget_inventory(ctx.paths)  # Abmelden oder Neueinrichtung
+    assert befehle.forget_inventory(ctx.paths) is True  # Abmelden oder Neueinrichtung
     used = server_calls(server)
     clock.advance(900)
     ctx.wall = lambda: 1_000_000 + clock()

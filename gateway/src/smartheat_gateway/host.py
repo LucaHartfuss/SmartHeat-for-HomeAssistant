@@ -4,7 +4,8 @@ Geraetekerns (geraet_host: im Prozess bzw. als up/notifications), Anlage ueber d
 Bus. Die Laufzeit selbst ist smartheat_runtime.app (identisch mit dem HA-Add-on). Die Konfiguration gilt fuer die
 Lebenszeit des Prozesses; eine laufzeitrelevante neue startet ihn neu (runtime_main). Die Bedienung gibt den Startwert
 des Soll-Speichers; weicht ein gespeicherter Wert ab (Bedienung kam waehrend eines Neustarts), gilt die Bedienung, ausser
-ein lokaler Wunsch ist noch offen (dirty)."""
+ein lokaler Wunsch ist noch offen (dirty). Die Bedienung beim Start gilt sofort im Soll-Speicher und geht wie das
+Angleichen ans Thermostat (BusTriggerSource: erst bei bekanntem Zustand, der nicht aus ist, A6-14)."""
 import dataclasses
 import logging
 import time
@@ -19,7 +20,7 @@ from smartheat_gateway.geraet_host import GatewayDeviceHost, thermostat_unzulaes
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.signals import REF_ROOM_MEAN, REF_ROOM_TARGET, GatewaySignalSource
 from smartheat_gateway.texts import SHG_TEXTS
-from smartheat_gateway.triggers import EV_TARGET_INPUT, BusTriggerSource
+from smartheat_gateway.triggers import BusTriggerSource
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_gateway.zigbee import CAP_BATTERY, CAP_BATTERY_LOW, ZigbeeMirror
 from smartheat_runtime import dokument_config
@@ -28,10 +29,11 @@ from smartheat_runtime.dokument_config import ConfigError
 from smartheat_runtime.ports import NotifySink, SignalSource, StatusSink, TriggerSource
 from smartheat_runtime.raum import RaumPublisher
 from smartheat_runtime.roles import ALL_ROLES, REQUIRED_ROLES_BY_LEVER_SET, ChannelManifest, ManifestError
+from smartheat_runtime.runtime import EV_LOCAL_CHECK
 from smartheat_runtime.runtime_config import BATTERY_LOW_FLAG, BATTERY_PERCENT, BatteryRef, BootInfo
-from smartheat_runtime.soll_speicher import DEFAULT_RAUM_SOLL, SOURCE_PORTAL, TargetStore, bedienung_start
+from smartheat_runtime.soll_speicher import DEFAULT_RAUM_SOLL, TargetStore, bedienung_start
 from smartheat_runtime.texts import HostTexts
-from smartheat_runtime.worker import Event, RegulationWorker
+from smartheat_runtime.worker import RegulationWorker
 
 logger = logging.getLogger(__name__)
 
@@ -176,17 +178,20 @@ class GatewayHost:
         assert self._store is not None and self._bindung is not None and self._runtime_config is not None
         bindung = self._bindung
         sensor_ieees = tuple(ref.split(":")[1] for ref in bindung.room_sensors if ref.startswith("zigbee:"))
-        source = BusTriggerSource(
+        if self._bedienung_start is not None:
+            # Erst hier (nach _prime): der Stable-Target-Cache haelt noch das alte Soll, eine Erhoehung loest den Boost
+            # aus. Der Raum-Check wie nach dem Entprellen einer Bedienung; ans Thermostat geht sie mit dem Angleichen.
+            self._store.apply_portal(self._bedienung_start)
+            worker.post_coalesced(EV_LOCAL_CHECK, room_target_fired=True)
+        return BusTriggerSource(
             self._bus, worker, self.mirror, self._store, thermostat=bindung.thermostat, sensor_ieees=sensor_ieees,
             daily_trigger_time=self._runtime_config.daily_trigger_time, wunsch=self._geraet.wunsch,
             soll_quelle_aus=self._geraet.soll_quelle_aus, clock=self._clock,
             # Spec 3.3: Thermostat, Portal und Geraet zeigen denselben Wert (einmal je Start; Echo-Fenster); die Quelle
-            # schreibt beim Start, nach Thermostatmodus und Anzeige (Profil), ein ganzzahliges Thermostat gerundet.
-            angleichen=self._bedienung_start is None and self._angleichen,
+            # schreibt beim Start, nach Thermostatmodus und Anzeige (Profil), ein ganzzahliges Thermostat gerundet, und
+            # nur bei bekanntem Zustand, der nicht aus ist (A6-14; ohne bekannten Zustand mit der ersten Meldung).
+            angleichen=self._angleichen,
         )
-        if self._bedienung_start is not None:
-            worker.post(Event(EV_TARGET_INPUT, {"value": self._bedienung_start, "source": SOURCE_PORTAL}))
-        return source
 
     def _raum_changed(self) -> None:
         if self.raum is not None:

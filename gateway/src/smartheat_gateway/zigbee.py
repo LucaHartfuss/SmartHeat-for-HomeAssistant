@@ -6,6 +6,7 @@ Neustart der Laufzeit) gelten nur, wenn sie das `last_seen` von Zigbee2MQTT (ISO
 Alter auf der Wanduhr zwischen 0 und max_age liegt (L4-17); sonst, auch bei einem `last_seen` in der Zukunft (Uhr
 nach dem Boot noch nicht gestellt), gelten sie bis zur ersten Live-Meldung als veraltet. Retained Meldungen loesen nie
 Geraete-Hooks aus."""
+import contextlib
 import logging
 import threading
 import time
@@ -97,6 +98,11 @@ class ZigbeeMirror:
     def on_device_message(self, hook: Callable[[str, dict], None]) -> None:
         self._hooks.append(hook)
 
+    def off_device_message(self, hook: Callable[[str, dict], None]) -> None:
+        """Meldet einen Haken ab (stop einer Trigger-Quelle); ein unbekannter Haken ist kein Fehler."""
+        with contextlib.suppress(ValueError):
+            self._hooks.remove(hook)
+
     def on_interview(self, hook: Callable[[str, str], None]) -> None:
         """hook(ieee, model) nach jedem erfolgreichen Interview (Koppeln, Neukoppeln)."""
         self._interview_hooks.append(hook)
@@ -161,7 +167,7 @@ class ZigbeeMirror:
                 self._payloads[parts[1]] = (body, self._retained_stamp(body) if retain else self._clock())
             if retain:
                 return
-            for hook in self._hooks:
+            for hook in tuple(self._hooks):  # ein Haken darf sich beim Aufruf abmelden
                 hook(parts[1], body)
 
     def _retained_stamp(self, body: dict) -> float | None:

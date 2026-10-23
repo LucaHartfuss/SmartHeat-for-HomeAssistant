@@ -34,7 +34,7 @@ def test_render_keeps_variables_and_string_values():
     assert services["init"]["restart"] == "no"  # String, kein YAML-1.1-Bool
     assert isinstance(services["init"]["restart"], str)
     assert services["init"]["network_mode"] == "none"
-    assert services["runtime"]["ports"] == ["80:8080"]
+    assert services["runtime"]["ports"] == ["0.0.0.0:80:8080"]
     assert services["mosquitto"]["user"] == "1000:1000"
     assert set(GATEWAY_SERVICES) == {"init", "runtime"}
 

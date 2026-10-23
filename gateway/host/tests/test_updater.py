@@ -1,10 +1,14 @@
 import ast
+import dataclasses
+import errno
 import hashlib
 import http.server
 import importlib
 import json
 import os
 import random
+import socket
+import ssl
 import stat
 import subprocess
 import threading
@@ -913,7 +917,7 @@ def _redirected_response(final_url: str, body: bytes = b"inhalt"):
     response = create_autospec(http.client.HTTPResponse, instance=True)
     response.__enter__.return_value = response
     response.geturl.return_value = final_url
-    response.read.return_value = body
+    response.read1.side_effect = [body, b""]  # der Abruf liest mit read1 in Bloecken bis zum Ende
     return response
 
 
@@ -932,7 +936,7 @@ def test_fetch_refuses_an_answer_from_a_scheme_that_is_not_allowed_without_readi
     monkeypatch.setattr(urllib.request, "build_opener", create_autospec(urllib.request.build_opener, return_value=opener))
     with pytest.raises(updater.FetchError, match="Weiterleitung auf ein Schema"):
         updater.fetch_url("https://release.example.test/x", 100, allow_http=allow_http)
-    response.read.assert_not_called()
+    response.read1.assert_not_called()
     # Gegenproben: eine Antwort von https wird gelesen; http nur mit dem Schalter (Labor)
     opener.open.return_value = _redirected_response("https://cdn.example.test/x")
     assert updater.fetch_url("https://release.example.test/x", 100, allow_http=False) == b"inhalt"
@@ -1010,10 +1014,10 @@ def test_a_refused_redirect_closes_the_answer_that_carried_it():
     with pytest.raises(updater.FetchError, match="Weiterleitung auf ein Schema"):
         handler.redirect_request(request, refused, 302, "Found", {}, "http://evil.test/x")
     assert refused.closed == 1
-    # Gegenprobe: ein erlaubtes Ziel liefert die Folgeanfrage, die Antwort schliesst dann urllib selbst (nicht der Handler)
+    # Gegenprobe: ein erlaubtes Ziel liefert die Folgeanfrage; die Antwort wird auch dann geschlossen (ungelesen, M-1)
     followed = Antwort()
     follow_up = handler.redirect_request(request, followed, 302, "Found", {}, "https://cdn.example.test/x")
-    assert follow_up.full_url == "https://cdn.example.test/x" and followed.closed == 0
+    assert follow_up.full_url == "https://cdn.example.test/x" and followed.closed == 1
 
 
 @pytest.fixture
@@ -1118,6 +1122,441 @@ def test_fetch_url_names_the_updater_as_user_agent_also_after_a_redirect(agent_s
 def test_fetch_url_network_errors_are_fetch_errors():
     with pytest.raises(updater.FetchError):
         updater.fetch_url("http://127.0.0.1:1/x", 10, allow_http=True)
+
+
+@pytest.fixture
+def trickling_server():
+    """Lokaler HTTP-Server, der eine Antwort von 15 Bytes (Pfad /m) mit einem Byte je 0,2 s ausliefert (insgesamt 3 s): jede
+    einzelne Leseoperation kommt weit vor der Zeitgrenze des Sockets zurueck, nur die Summe ist lang."""
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            count = 3 if self.path == "/kurz" else 15  # /kurz: kurze Gegenprobe (0,6 s)
+            self.send_response(200)
+            self.send_header("Content-Length", str(count))
+            self.end_headers()
+            for _ in range(count):
+                try:
+                    self.wfile.write(b"x")
+                    self.wfile.flush()
+                except OSError:  # der Abrufer hat aufgegeben
+                    return
+                time.sleep(0.2)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.daemon_threads = True
+    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_port}/m"
+    server.shutdown()
+    server.server_close()
+    thread.join()
+
+
+def test_fetch_ends_after_the_total_deadline_of_a_trickling_server(monkeypatch, trickling_server):
+    """A6-13: der Socket-Timeout (30 s) gilt je Leseoperation; ein Server, der ein Byte je 0,2 s schickt, hielt den Abruf
+    und damit den ganzen Updater beliebig lange fest. Die Gesamtfrist (hier 0,5 s statt 300 s) beendet ihn mit FetchError."""
+    monkeypatch.setattr(updater, "ABRUF_GESAMT_SECONDS", 0.5)
+    started = time.monotonic()
+    with pytest.raises(updater.FetchError, match="Gesamtfrist"):
+        updater.fetch_url(trickling_server, 100, allow_http=True)
+    assert time.monotonic() - started < 2
+    # Gegenprobe: eine kurze tropfende Antwort kommt mit der ueblichen Frist vollstaendig an
+    monkeypatch.setattr(updater, "ABRUF_GESAMT_SECONDS", 300)
+    assert updater.fetch_url(trickling_server.replace("/m", "/kurz"), 100, allow_http=True) == b"xxx"
+
+
+def test_the_total_deadline_is_300_seconds_on_the_monotonic_clock_and_covers_every_read(monkeypatch):
+    """A6-13: Grenze der Frist ohne Warten: eine eingespeiste Uhr springt bei jedem Lesen um 100 s. Drei Lesevorgaenge
+    (bis 299 s nach dem Start) genuegen, der vierte (400 s) nicht. Attrappe an der Grenze, dem Opener von urllib."""
+    assert updater.ABRUF_GESAMT_SECONDS == 300
+    now = [1000.0]
+    chunks = iter([b"a", b"b", b"c", b"d", b"e"])
+
+    def read1(size):
+        now[0] += 100
+        return next(chunks, b"")
+
+    response = _redirected_response("https://release.example.test/x")
+    response.read1.side_effect = read1
+    opener = create_autospec(urllib.request.OpenerDirector, instance=True)
+    opener.open.return_value = response
+    monkeypatch.setattr(urllib.request, "build_opener", create_autospec(urllib.request.build_opener, return_value=opener))
+    with pytest.raises(updater.FetchError, match="Gesamtfrist"):
+        updater.fetch_url("https://release.example.test/x", 100, allow_http=False, clock=lambda: now[0])
+    assert now[0] == 1300.0  # nach dem Lesen bei +300 s (Frist erreicht) ist Schluss, kein weiteres Lesen
+    # Gegenprobe: bei +299 s ist die Frist noch nicht erreicht
+    now[0], chunks = 1000.0, iter([b"abc"])
+    response.read1.side_effect = lambda size: (now.__setitem__(0, now[0] + 299), next(chunks, b""))[1]
+    assert updater.fetch_url("https://release.example.test/x", 100, allow_http=False, clock=lambda: now[0]) == b"abc"
+
+
+@pytest.mark.parametrize(("address", "public"), [
+    ("192.168.178.1", False), ("fd00::1", False), ("169.254.1.1", False), ("100.64.0.1", False),
+    ("::ffff:127.0.0.1", False), ("127.0.0.1", False), ("10.0.0.1", False), ("172.18.0.1", False), ("::1", False),
+    ("fe80::1%eth0", False), ("::ffff:192.168.178.1", False), ("nicht-eine-adresse", False), ("", False),
+    ("8.8.8.8", True), ("2003::1", True), ("::ffff:8.8.8.8", True),
+    # NAT64 (RFC 6052, 64:ff9b::/96): entscheidend ist die eingebettete IPv4-Adresse in den letzten 32 Bit
+    ("64:ff9b::c0a8:b201", False), ("64:ff9b::7f00:1", False), ("64:ff9b::808:808", True),
+    # betreiberlokales Praefix 64:ff9b:1::/48: immer abgelehnt, die Praefixlaenge waehlt der Betreiber; auch dort, wo die
+    # Lesart als /48 (8.8.8.8 in Bits 48-63 und 72-87) oder als /96 (letzte 32 Bit) eine globale Adresse ergaebe
+    ("64:ff9b:1:808:0:808:0:0", False), ("64:ff9b:1::808:808", False), ("64:ff9b:1::c0a8:b201", False),
+    ("64:ff9b:1:ffff:ffff:ffff:ffff:ffff", False),
+])
+def test_only_global_addresses_are_allowed(address, public):
+    """A6-38: Gegenadressen, die ins LAN, auf den eigenen Rechner oder in Sonderbereiche zeigen, sind nicht erlaubt; eine
+    IPv4-Adresse in IPv6-Schreibweise zaehlt wie die IPv4-Adresse (auch dann, wenn die Python-Version sie selbst anders
+    einstuft); Unlesbares gilt als nicht erlaubt."""
+    assert updater.is_public_address(address) is public
+
+
+@pytest.fixture
+def byte_counter():
+    """TCP-Server auf 127.0.0.1 (kein TLS): liest hoechstens einen Block der Gegenseite und merkt sich die Zahl der Bytes
+    (0, wenn sie auflegt, ohne etwas gesendet zu haben), schliesst dann."""
+    received: list[int] = []
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+
+    def serve():
+        try:
+            connection, _ = listener.accept()
+        except OSError:
+            return
+        with connection:
+            connection.settimeout(5)
+            try:
+                received.append(len(connection.recv(4096)))
+            except OSError:
+                received.append(-1)
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    port = listener.getsockname()[1]
+    yield port, received, thread
+    if thread.is_alive():  # niemand hat sich verbunden: accept() mit einer Verbindung entlassen
+        socket.create_connection(("127.0.0.1", port), timeout=2).close()
+    thread.join()
+    listener.close()
+
+
+def test_fetch_never_sends_a_byte_to_a_local_address(byte_counter):
+    """A6-38: ein Angebot (Manifest-URL) aus einem kompromittierten Server darf keinen Abruf ins LAN des Kunden oder an
+    den eigenen Rechner ausloesen. Geprueft wird die Gegenadresse des verbundenen Sockets, vor dem TLS-Handshake: der
+    lokale Server sieht null Bytes (nicht einmal ein ClientHello), der Abruf ist ein FetchError."""
+    port, received, thread = byte_counter
+    with pytest.raises(updater.FetchError, match="nicht oeffentlich"):
+        updater.fetch_url(f"https://127.0.0.1:{port}/m", 100, allow_http=False)
+    thread.join(timeout=5)
+    assert received == [0]
+
+
+def test_with_the_test_switch_the_address_is_not_checked(byte_counter):
+    """Gegenprobe zu A6-38: `allow_http` (nur Tests, Labor) schaltet die Pruefung ab; dann geht das ClientHello an den
+    lokalen Server (der Abruf scheitert danach am fehlenden TLS, auch als FetchError, aber erst nach dem Senden)."""
+    port, received, thread = byte_counter
+    with pytest.raises(updater.FetchError) as error:
+        updater.fetch_url(f"https://127.0.0.1:{port}/m", 100, allow_http=True)
+    thread.join(timeout=5)
+    assert received[0] > 0 and "nicht oeffentlich" not in str(error.value)
+
+
+class _FakeSocket:
+    def __init__(self, peer, own=("203.0.113.9", 40000)):
+        self.peer, self.own, self.closed, self.sent = peer, own, False, b""
+
+    def getpeername(self):
+        return self.peer
+
+    def getsockname(self):
+        return self.own
+
+    def sendall(self, data):
+        self.sent += data
+
+    def close(self):
+        self.closed = True
+
+
+@pytest.mark.parametrize(("peer", "allowed"), [
+    (("192.168.178.1", 443), False), (("fd00::1", 443, 0, 0), False), (("::ffff:127.0.0.1", 443, 0, 0), False),
+    (("169.254.1.1", 443), False), (("100.64.0.1", 443), False), ("/run/socket", False), (None, False),
+    (("8.8.8.8", 443), True), (("2003::1", 443, 0, 0), True),
+])
+def test_every_connection_is_checked_on_the_connected_socket(monkeypatch, peer, allowed):
+    """A6-38: die Pruefung sitzt an `_create_connection` der Verbindung und sieht den tatsaechlich verbundenen Socket
+    (nicht den Namen aus der URL, der beim Aufloesen auf eine andere Adresse zeigen kann). Jede Verbindung des Openers hat
+    sie, auch die zu einem Weiterleitungsziel (urllib baut je Anfrage eine neue). Attrappe an der Grenze:
+    `socket.create_connection`. Kann der Peer nicht bestimmt werden (None, Unix-Socket), gilt er als nicht erlaubt."""
+    fake = _FakeSocket(peer)
+    monkeypatch.setattr(socket, "create_connection", lambda *args, **kwargs: fake)
+    connection = updater._FetchHTTPSConnection("release.example.test", 443, timeout=5,
+                                                 deadline=updater._Deadline(time.monotonic), public_only=True)
+    if allowed:
+        assert connection._create_connection(("release.example.test", 443), 5, None) is fake and not fake.closed
+    else:
+        with pytest.raises(updater.FetchError, match="nicht oeffentlich"):
+            connection._create_connection(("release.example.test", 443), 5, None)
+        assert fake.closed and fake.sent == b""
+
+
+@pytest.mark.parametrize(("peer", "own", "allowed"), [
+    (("2003:1:2:3::5", 443, 0, 0), ("2003:1:2:3::5", 40000, 0, 0), False),  # der Rechner selbst
+    (("2003:1:2:3::1", 443, 0, 0), ("2003:1:2:3:aaaa::9", 40000, 0, 0), False),  # gleiches /64 (Router, LAN-Geraet)
+    (("2003:1:2:3:ffff:ffff:ffff:ffff", 443, 0, 0), ("2003:1:2:3::9", 40000, 0, 0), False),  # Rand des /64
+    (("8.8.8.8", 443), ("8.8.8.8", 40000), False),  # die eigene IPv4-Adresse
+    (("::ffff:8.8.4.4", 443, 0, 0), ("8.8.4.4", 40000), False),  # gemappt gegen IPv4
+    (("8.8.4.4", 443), ("::ffff:8.8.4.4", 40000, 0, 0), False),  # IPv4 gegen gemappt
+    (("2003:1:2:4::1", 443, 0, 0), ("2003:1:2:3::5", 40000, 0, 0), True),  # fremdes /64: erlaubt
+    (("2003:1:2:3::1", 443, 0, 0), ("2003:1:2:2:ffff::5", 40000, 0, 0), True),  # Nachbar-/64
+    (("8.8.8.8", 443), ("8.8.4.4", 40000), True),  # IPv4: nur die eigene Adresse, kein Netz
+    (("8.8.8.8", 443), ("2003:1:2:3::5", 40000, 0, 0), True),
+])
+def test_the_gateway_itself_and_its_own_ipv6_prefix_are_not_targets(monkeypatch, peer, own, allowed):
+    """A6-38 (Review I-1): im IPv6-Netz haben der Router, LAN-Geraete und der Rechner selbst globale Adressen aus demselben
+    /64; `is_global` laesst sie durch. Abgelehnt wird deshalb zusaetzlich die eigene Adresse des Sockets und, bei IPv6,
+    alles im /64 der eigenen Adresse. Nicht abgedeckt: Geraete in anderen IPv6-Praefixen des Kundennetzes (andere /64) mit
+    globaler Adresse; sie bleiben erreichbar (siehe gateway-host.md, Bekannte Grenzen)."""
+    fake = _FakeSocket(peer, own)
+    monkeypatch.setattr(socket, "create_connection", lambda *args, **kwargs: fake)
+    connection = updater._FetchHTTPSConnection("release.example.test", 443, timeout=5,
+                                                 deadline=updater._Deadline(time.monotonic), public_only=True)
+    if allowed:
+        assert connection._create_connection(("release.example.test", 443), 5, None) is fake and not fake.closed
+    else:
+        with pytest.raises(updater.FetchError, match="nicht oeffentlich"):
+            connection._create_connection(("release.example.test", 443), 5, None)
+        assert fake.closed and fake.sent == b""
+
+
+def test_environment_proxies_are_ignored(monkeypatch):
+    """A6-38: ein Proxy aus der Umgebung (https_proxy) wuerde die Verbindung zum Proxy statt zum Ziel aufbauen: die
+    Pruefung saehe nur dessen Adresse, der Proxy loeste das Ziel selbst auf. Der Updater ruft immer direkt. Netzfrei:
+    `socket.create_connection` (Grenze) zeichnet die Verbindungsziele auf und scheitert; es darf nur das Ziel vorkommen,
+    nie der Proxy (ohne diese Regel kaeme zuerst `127.0.0.1:3128`)."""
+    attempts = []
+
+    def refuse(address, *args, **kwargs):
+        attempts.append(address)
+        raise ConnectionRefusedError
+
+    monkeypatch.setattr(socket, "create_connection", refuse)
+    monkeypatch.setenv("https_proxy", "http://127.0.0.1:3128")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:3128")
+    with pytest.raises(updater.FetchError):
+        updater.fetch_url("https://release.example.test/m", 100, allow_http=False)
+    assert attempts == [("release.example.test", 443)]
+
+
+# --- Gesamtfrist auch fuer Verbindung, TLS, Kopfzeilen und Weiterleitungen (Security-Nachtrag zu A6-13) ---
+
+class _StepClock:
+    """Eingespeiste monotone Uhr: `now` setzt der Test."""
+
+    def __init__(self, now=0.0):
+        self.now = now
+
+    def __call__(self):
+        return self.now
+
+
+class _Gone:
+    closed = 0
+
+    def close(self):
+        self.closed += 1
+
+
+def test_a_redirect_after_the_total_deadline_is_refused_and_one_before_it_is_followed():
+    """Die Gesamtfrist gilt auch fuer Weiterleitungen: ein Ziel, das erst nach Ablauf der Frist erreichbar waere, wird
+    nicht angefragt (die 302-Antwort wird geschlossen). Gegenprobe: knapp vor der Frist folgt der Handler."""
+    clock = _StepClock()
+    deadline = updater._Deadline(clock)
+    handler = updater._SchemeCheckedRedirects(allow_http=False, deadline=deadline)
+    request = urllib.request.Request("https://release.example.test/x")
+    clock.now = 299.0
+    followed = _Gone()
+    assert handler.redirect_request(request, followed, 302, "Found", {}, "https://cdn.example.test/x").full_url == \
+        "https://cdn.example.test/x"
+    assert followed.closed == 1  # auch bei einem erlaubten Ziel wird der Koerper der 302-Antwort nie gelesen
+    clock.now = 300.0
+    refused = _Gone()
+    with pytest.raises(updater.FetchError, match="Gesamtfrist"):
+        handler.redirect_request(request, refused, 302, "Found", {}, "https://cdn.example.test/x")
+    assert refused.closed == 1
+
+
+def test_an_expired_deadline_opens_no_connection(byte_counter):
+    """Eine Weiterleitung oder ein Abruf nach Ablauf der Frist baut keine Verbindung mehr auf: die Uhr springt nach dem
+    Anlegen der Frist ueber 300 s, der lokale Server sieht nie eine Verbindung (der Test entlaesst ihn selbst)."""
+    port, received, thread = byte_counter
+    ticks = iter([0.0])
+    clock = lambda: next(ticks, 1000.0)  # noqa: E731 - erster Aufruf legt die Frist an, jeder weitere liegt dahinter
+    with pytest.raises(updater.FetchError, match="Gesamtfrist"):
+        updater.fetch_url(f"http://127.0.0.1:{port}/m", 100, allow_http=True, clock=clock)
+    assert received == []
+
+
+@pytest.fixture
+def slow_header_server():
+    """Startet einen Server auf 127.0.0.1, der jede Verbindung mit `handle(connection)` bedient (optional mit TLS).
+    Gibt `(url_base, start)` zurueck."""
+    servers = []
+
+    def start(handle, context=None):
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        stop = threading.Event()
+
+        def serve():
+            listener.settimeout(0.1)
+            while not stop.is_set():
+                try:
+                    connection, _ = listener.accept()
+                except OSError:
+                    continue
+                try:
+                    connection.settimeout(5)
+                    if context is not None:
+                        connection = context.wrap_socket(connection, server_side=True)
+                    connection.recv(4096)  # die Anfrage
+                    handle(connection)
+                except OSError:
+                    pass
+                finally:
+                    connection.close()
+
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+        servers.append((listener, stop, thread))
+        return listener.getsockname()[1]
+
+    yield start
+    for listener, stop, thread in servers:
+        stop.set()
+        thread.join()
+        listener.close()
+
+
+def _drip_headers(connection):
+    """Statuszeile sofort, dann ein Zeichen einer Kopfzeile je 0,2 s, nie das Ende der Kopfzeilen (1,6 s)."""
+    connection.sendall(b"HTTP/1.1 200 OK\r\nX-Langsam: ")
+    for _ in range(8):
+        time.sleep(0.2)
+        connection.sendall(b"x")
+
+
+def test_a_server_that_drips_its_headers_is_bounded_by_the_total_deadline(monkeypatch, slow_header_server):
+    """Kopfzeilen, die Zeichen fuer Zeichen kommen, hielten den Abruf fest (jede Leseoperation blieb unter dem Timeout):
+    der Socket-Timeout steht vor jedem Lesen auf dem Rest der Gesamtfrist (hier 0,5 s). Klartext-http nur mit dem
+    Schalter der Tests."""
+    port = slow_header_server(_drip_headers)
+    monkeypatch.setattr(updater, "ABRUF_GESAMT_SECONDS", 0.5)
+    started = time.monotonic()
+    with pytest.raises(updater.FetchError, match="Gesamtfrist"):
+        updater.fetch_url(f"http://127.0.0.1:{port}/m", 100, allow_http=True)
+    assert time.monotonic() - started < 2
+
+
+def test_a_server_that_never_answers_is_bounded_by_the_total_deadline(monkeypatch, slow_header_server):
+    """Verbindung steht, die Antwort bleibt aus: nach dem Rest der Gesamtfrist (0,5 s), nicht nach 30 s."""
+    port = slow_header_server(lambda connection: time.sleep(1.5))
+    monkeypatch.setattr(updater, "ABRUF_GESAMT_SECONDS", 0.5)
+    started = time.monotonic()
+    with pytest.raises(updater.FetchError, match="Gesamtfrist"):
+        updater.fetch_url(f"http://127.0.0.1:{port}/m", 100, allow_http=True)
+    assert time.monotonic() - started < 2
+
+
+def test_a_redirect_answer_is_closed_unread_so_its_endless_body_costs_nothing(monkeypatch, slow_header_server):
+    """Review M-1: urllib liest nach einer Weiterleitung den Koerper der 302-Antwort ohne Grenze (`fp.read()`). Ein Host, der
+    ihn endlos tropfen laesst, hielte den Abruf bis zur Gesamtfrist fest und sammelte Speicher. Der Handler schliesst die
+    Antwort nach dem Bau der Folgeanfrage: der Koerper wird nie gelesen, das Ziel kommt sofort."""
+    target_port = slow_header_server(lambda connection: connection.sendall(
+        b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nziel"))
+
+    def endless_redirect(connection):
+        connection.sendall(b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:%d/z\r\nContent-Length: 100000\r\n\r\n"
+                           % target_port)
+        for _ in range(15):  # tropft 3 s
+            time.sleep(0.2)
+            connection.sendall(b"x")
+
+    start_port = slow_header_server(endless_redirect)
+    started = time.monotonic()
+    assert updater.fetch_url(f"http://127.0.0.1:{start_port}/a", 100, allow_http=True) == b"ziel"
+    assert time.monotonic() - started < 1.5
+
+
+@pytest.fixture
+def tls_server(tmp_path, monkeypatch, slow_header_server):
+    """Lokaler TLS-Server (selbstsigniertes Zertifikat fuer 127.0.0.1, vom Client fuer diesen Test als Vertrauensanker
+    geladen; die Adresspruefungen gelten hier als bestanden, Server und Client liegen auf Loopback): der echte Weg von
+    `fetch_url` ueber https, mit Kontext, Socket-Klasse mit Frist und Adresspruefung."""
+    import datetime
+    import ipaddress
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")])
+    now = datetime.datetime.now(datetime.UTC)
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+            .serial_number(x509.random_serial_number()).not_valid_before(now - datetime.timedelta(days=1))
+            .not_valid_after(now + datetime.timedelta(days=1))
+            .add_extension(x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]), False)
+            .sign(key, hashes.SHA256()))
+    cert_file, key_file = tmp_path / "cert.pem", tmp_path / "key.pem"
+    cert_file.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    key_file.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                           serialization.NoEncryption()))
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(cert_file, key_file)
+    real = ssl.create_default_context
+    monkeypatch.setattr(ssl, "create_default_context", lambda *args, **kwargs: real(cafile=str(cert_file)))
+    monkeypatch.setattr(updater, "is_public_address", lambda address: True)
+    monkeypatch.setattr(updater, "is_own_network", lambda peer, own: False)  # Server und Client liegen beide auf Loopback
+    return lambda handle: slow_header_server(handle, context)
+
+
+def test_fetch_url_reads_over_tls_from_a_server_with_a_trusted_certificate(tls_server):
+    """Der echte https-Weg (Kontext, Pruefung der Gegenadresse, Socket mit Frist) liefert den Koerper."""
+    port = tls_server(lambda connection: connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhallo"))
+    assert updater.fetch_url(f"https://127.0.0.1:{port}/m", 100, allow_http=False) == b"hallo"
+
+
+def test_a_tls_server_that_drips_its_headers_is_bounded_by_the_total_deadline(monkeypatch, tls_server):
+    """Wie bei http, auf dem Weg, den der Betrieb nutzt: der TLS-Socket setzt den Timeout vor jedem Lesen."""
+    port = tls_server(_drip_headers)
+    monkeypatch.setattr(updater, "ABRUF_GESAMT_SECONDS", 0.5)
+    started = time.monotonic()
+    with pytest.raises(updater.FetchError, match="Gesamtfrist"):
+        updater.fetch_url(f"https://127.0.0.1:{port}/m", 100, allow_http=False)
+    assert time.monotonic() - started < 2
+
+
+def test_a_tls_handshake_that_stalls_is_bounded_by_the_total_deadline(monkeypatch):
+    """Der Server nimmt die Verbindung an und schweigt (kein ServerHello): der Handshake endet mit der Gesamtfrist."""
+    monkeypatch.setattr(updater, "is_public_address", lambda address: True)
+    monkeypatch.setattr(updater, "is_own_network", lambda peer, own: False)
+    monkeypatch.setattr(updater, "ABRUF_GESAMT_SECONDS", 0.5)
+    silent = socket.socket()
+    silent.bind(("127.0.0.1", 0))
+    silent.listen()
+    try:
+        started = time.monotonic()
+        with pytest.raises(updater.FetchError, match="Gesamtfrist"):
+            updater.fetch_url(f"https://127.0.0.1:{silent.getsockname()[1]}/m", 100, allow_http=False)
+        assert time.monotonic() - started < 2
+    finally:
+        silent.close()
 
 
 def test_fetch_health(local_server):
@@ -1257,18 +1696,54 @@ def test_the_report_queue_holds_20_entries_and_the_oldest_falls_out(tmp_path):
     assert world.state().pending_reports == []
 
 
-def _main_environment(monkeypatch, root: Path, *, offer=None, allow_http=None):
+def test_a_full_disk_while_installing_is_provisional_and_logged(tmp_path, monkeypatch, caplog):
+    """A6-39: `store.install` scheitert mit ENOSPC (Datentraeger voll). Der Durchlauf endet "vorlaeufig" (naechster Durchlauf
+    versucht es erneut), der Fehler steht mit seinem Namen im ERROR-Log, Zustand und Compose bleiben unberuehrt: nichts
+    wurde gezogen oder umgeschaltet."""
+    world = World(tmp_path)
+    before = world.state_path.read_bytes()
+
+    def full(version, files):
+        raise OSError(errno.ENOSPC, os.strerror(errno.ENOSPC))
+
+    monkeypatch.setattr(world.store, "install", full)
+    with caplog.at_level("INFO"):
+        assert world.updater.run_once() == "vorlaeufig"
+    errors = [record for record in caplog.records if record.levelname == "ERROR"]
+    assert len(errors) == 1 and "ENOSPC" in errors[0].getMessage()
+    assert world.state_path.read_bytes() == before and world.compose.calls == []
+    assert world.api.results == []  # nichts gemeldet: kein Fehler des Bundles
+    # Gegenprobe: ist der Platz wieder da, laeuft derselbe Updater das Update durch
+    monkeypatch.undo()
+    assert world.updater.run_once() == "aktualisiert"
+
+
+def test_a_failing_state_file_in_recover_is_logged_and_does_not_raise(tmp_path, monkeypatch, caplog):
+    """A6-39: auch `recover()` (Start des Dienstes) wirft bei einem Dateifehler nicht: der Dienst kaeme sonst nie hoch."""
+    world = World(tmp_path)
+    _interrupted(world, previous="0.2.0")
+    world.store.install("0.3.0", {"docker-compose.yml": COMPOSE, "mosquitto.conf": MOSQ})
+
+    def full(self, path):
+        raise OSError(errno.EIO, "Ein-/Ausgabefehler")
+
+    monkeypatch.setattr(updater.State, "save", full)
+    with caplog.at_level("INFO"):
+        world.updater.recover()  # wirft nicht
+    assert any(record.levelname == "ERROR" and "EIO" in record.getMessage() for record in caplog.records)
+    monkeypatch.undo()
+    world.updater.recover()  # der naechste Start macht es zu Ende
+    assert world.state().current == "0.3.0" and world.state().in_progress is None
+
+
+def _main_environment(monkeypatch, root: Path, *, offer=None) -> updater.Einstellungen:
+    """Nur `SHG_ROOT` ist Umgebung (A6-87); alles andere reicht der Test als `Einstellungen` an `main` (Rueckgabe)."""
     (root / "data").mkdir(parents=True, exist_ok=True)
     if offer is not None:
         (root / "data" / "software_soll.json").write_text(json.dumps(offer))
     (root / "release.pub").write_text("untrusted comment: x\nAAAA\n")
     monkeypatch.setenv("SHG_ROOT", str(root))
-    monkeypatch.setenv("SHG_RELEASE_PUB", str(root / "release.pub"))
-    for name in ("SHG_UPDATER_ALLOW_HTTP", "SHG_UPDATER_HEALTH_URL", "SHG_UPDATER_HEALTH_SECONDS",
-                 "SHG_COMPOSE_PROJECT"):
-        monkeypatch.delenv(name, raising=False)
-    if allow_http is not None:
-        monkeypatch.setenv("SHG_UPDATER_ALLOW_HTTP", allow_http)
+    return updater.Einstellungen(release_pub=root / "release.pub")
 
 
 class _Stop(Exception):
@@ -1279,7 +1754,7 @@ def test_main_waits_120_seconds_then_runs_every_900_plus_up_to_300_seconds(tmp_p
     """F-gateway-host-01: Takt des Dienstes. Echte `Updater`, echter lokaler Kanal (ohne Soll-Datei: "vorlaeufig");
     Uhr (`time.sleep`) und Zufall (`random.uniform`) sind die Grenze: die Folge der Ereignisse und der Wartezeiten ist
     das Ergebnis. Der Zufall liefert erst die obere, dann die untere Schranke seines Bereichs."""
-    _main_environment(monkeypatch, tmp_path)
+    settings = _main_environment(monkeypatch, tmp_path)
     events = []
     real_recover, real_run_once = updater.Updater.recover, updater.Updater.run_once
 
@@ -1306,42 +1781,99 @@ def test_main_waits_120_seconds_then_runs_every_900_plus_up_to_300_seconds(tmp_p
     monkeypatch.setattr(time, "sleep", create_autospec(time.sleep, side_effect=sleep))
     monkeypatch.setattr(random, "uniform", create_autospec(random.uniform, side_effect=lambda a, b: next(bounds)(a, b)))
     with pytest.raises(_Stop):
-        updater.main([])
+        updater.main([], einstellungen=settings)
     assert events == ["recover", "warten:120.0", "durchlauf:vorlaeufig", "warten:1200.0",
                       "durchlauf:vorlaeufig", "warten:900.0", "durchlauf:vorlaeufig", "warten:1050.0"]
+
+
+def test_main_keeps_running_after_an_unexpected_error(tmp_path, monkeypatch, caplog):
+    """A6-39: ein unerwarteter Fehler in einem Durchlauf beendet den Dienst nicht (er laeuft sonst erst nach `RestartSec`
+    neu, mit 120 s Wartezeit); er wird mit seiner Spur geloggt, nach der ueblichen Pause kommt der naechste Durchlauf.
+    Der Fehler kommt aus `run_once`, der Grenze zum Rest des Dienstes."""
+    settings = _main_environment(monkeypatch, tmp_path)
+    calls = []
+
+    def run_once(self):
+        calls.append("durchlauf")
+        if len(calls) == 1:
+            raise RuntimeError("unerwartet")
+        return "aktuell"
+
+    waits = []
+
+    def sleep(seconds):
+        waits.append(float(seconds))
+        if len(waits) == 3:
+            raise _Stop
+
+    monkeypatch.setattr(updater.Updater, "run_once", run_once)
+    monkeypatch.setattr(time, "sleep", create_autospec(time.sleep, side_effect=sleep))
+    monkeypatch.setattr(random, "uniform", create_autospec(random.uniform, return_value=0))
+    with caplog.at_level("INFO"), pytest.raises(_Stop):
+        updater.main([], einstellungen=settings)
+    assert calls == ["durchlauf", "durchlauf"] and waits == [120.0, 900.0, 900.0]
+    logged = [record for record in caplog.records if record.levelname == "ERROR" and record.exc_info]
+    assert len(logged) == 1 and logged[0].exc_info[0] is RuntimeError
+    assert "Durchlauf: aktuell" in caplog.text
+
+
+def test_main_keeps_running_when_the_recovery_at_start_fails_unexpectedly(tmp_path, monkeypatch, caplog):
+    """Review M-5: `recover()` beim Start liegt unter demselben Fangnetz wie der Durchlauf; sonst startet systemd den Dienst
+    bei einem dauerhaften Fehler alle 30 s neu (mit `compose up` in jedem `recover`), ohne je einen Durchlauf zu machen."""
+    settings = _main_environment(monkeypatch, tmp_path)
+
+    def recover(self):
+        raise RuntimeError("kaputt beim Start")
+
+    waits = []
+
+    def sleep(seconds):
+        waits.append(float(seconds))
+        if len(waits) == 2:
+            raise _Stop
+
+    monkeypatch.setattr(updater.Updater, "recover", recover)
+    monkeypatch.setattr(time, "sleep", create_autospec(time.sleep, side_effect=sleep))
+    monkeypatch.setattr(random, "uniform", create_autospec(random.uniform, return_value=0))
+    with caplog.at_level("INFO"), pytest.raises(_Stop):
+        updater.main([], einstellungen=settings)
+    assert waits == [120.0, 900.0] and "Durchlauf: vorlaeufig" in caplog.text
+    logged = [record for record in caplog.records if record.levelname == "ERROR" and record.exc_info]
+    assert len(logged) == 1 and logged[0].exc_info[0] is RuntimeError
 
 
 def test_main_keeps_the_state_and_the_data_under_shg_root(tmp_path, monkeypatch, capsys):
     """F-gateway-host-01: `SHG_ROOT` ist die Wurzel von Zustand (`updater/state.json`), Soll- und Meldungsdatei (`data/`)."""
     offer = {"version": "0.3.0", "manifest_url": "http://127.0.0.1:1/manifest.json", "manifest_sha256": "a" * 64,
              "signature": "x"}
-    _main_environment(monkeypatch, tmp_path, offer=offer)
-    updater.main(["--once"])
+    settings = _main_environment(monkeypatch, tmp_path, offer=offer)
+    updater.main(["--once"], einstellungen=settings)
     assert capsys.readouterr().out == "abgelehnt\n"
     assert json.loads((tmp_path / "updater" / "state.json").read_text())["rejected"] == ["0.3.0"]
     assert json.loads((tmp_path / "data" / "software_meldungen.json").read_text())["meldungen"][0]["version"] == "0.3.0"
 
 
 def test_main_once_recovers_runs_once_and_does_not_wait(tmp_path, monkeypatch, capsys):
-    _main_environment(monkeypatch, tmp_path)
+    settings = _main_environment(monkeypatch, tmp_path)
     events = []
     real_recover = updater.Updater.recover
     monkeypatch.setattr(updater.Updater, "recover", lambda self: (events.append("recover"), real_recover(self)))
     monkeypatch.setattr(time, "sleep", create_autospec(time.sleep, side_effect=_Stop))
-    updater.main(["--once"])
+    updater.main(["--once"], einstellungen=settings)
     assert events == ["recover"] and capsys.readouterr().out == "vorlaeufig\n"
 
 
 @pytest.mark.parametrize(("allow", "outcome"), [
-    ("1", "vorlaeufig"),  # http erlaubt: der Abruf wird versucht (Port 1: keine Verbindung)
-    (None, "abgelehnt"), ("0", "abgelehnt"), ("", "abgelehnt"), ("true", "abgelehnt"), ("yes", "abgelehnt"),
+    (True, "vorlaeufig"),  # http erlaubt: der Abruf wird versucht (Port 1: keine Verbindung)
+    (False, "abgelehnt"),
 ])
-def test_main_accepts_an_http_offer_only_with_the_switch_set_to_1(tmp_path, monkeypatch, capsys, allow, outcome):
-    """F-gateway-host-01: der Produktivwert ist "aus"; nur genau "1" schaltet http frei (Labor)."""
+def test_main_accepts_an_http_offer_only_with_allow_http_in_the_settings(tmp_path, monkeypatch, capsys, allow, outcome):
+    """F-gateway-host-01, A6-87: der Produktivwert ist "aus"; nur `Einstellungen(allow_http=True)` schaltet http frei
+    (Tests, Labor)."""
     offer = {"version": "0.3.0", "manifest_url": "http://127.0.0.1:1/manifest.json", "manifest_sha256": "a" * 64,
              "signature": "x"}
-    _main_environment(monkeypatch, tmp_path, offer=offer, allow_http=allow)
-    updater.main(["--once"])
+    settings = _main_environment(monkeypatch, tmp_path, offer=offer)
+    updater.main(["--once"], einstellungen=dataclasses.replace(settings, allow_http=allow))
     assert capsys.readouterr().out == outcome + "\n"
     reports = tmp_path / "data" / "software_meldungen.json"
     if outcome == "abgelehnt":  # die http-Adresse wurde ohne Abruf abgelehnt und gemeldet
@@ -1349,6 +1881,35 @@ def test_main_accepts_an_http_offer_only_with_the_switch_set_to_1(tmp_path, monk
             ("0.3.0", "manifest_ungueltig")]
     else:  # der Abruf scheiterte am Netz: vorlaeufig, nichts gemeldet
         assert not reports.exists()
+
+
+@pytest.mark.parametrize("value", ["1", "true", "0", ""])
+def test_main_ignores_every_environment_switch_of_the_old_names(tmp_path, monkeypatch, capsys, site, value):
+    """A6-87: `SHG_UPDATER_ALLOW_HTTP`, `SHG_UPDATER_HEALTH_URL`, `SHG_UPDATER_HEALTH_SECONDS`, `SHG_RELEASE_PUB` und
+    `SHG_COMPOSE_PROJECT` gelten nicht mehr: in einer Umgebung, die sie setzt (etwa einer gateway.env mit
+    `SHG_UPDATER_ALLOW_HTTP=1`), bleibt http abgelehnt, das Projekt `smartheat`, der Schluessel der Einstellungen."""
+    offer = {"version": "0.3.0", "manifest_url": site.url + "/0.3.0/manifest.json", "manifest_sha256": "a" * 64,
+             "signature": "x"}
+    settings = _main_environment(monkeypatch, tmp_path, offer=offer)
+    monkeypatch.setenv("SHG_UPDATER_ALLOW_HTTP", value)
+    monkeypatch.setenv("SHG_UPDATER_HEALTH_URL", site.url + "/gesundheit")
+    monkeypatch.setenv("SHG_UPDATER_HEALTH_SECONDS", "0.05")
+    monkeypatch.setenv("SHG_RELEASE_PUB", str(tmp_path / "gibt-es-nicht.pub"))
+    monkeypatch.setenv("SHG_COMPOSE_PROJECT", "anders")
+    updater.main(["--once"], einstellungen=settings)  # liest release.pub aus den Einstellungen, sonst FileNotFoundError
+    assert capsys.readouterr().out == "abgelehnt\n" and site.hits == []
+    reports = json.loads((tmp_path / "data" / "software_meldungen.json").read_text())["meldungen"]
+    assert [(m["version"], m["reason"]) for m in reports] == [("0.3.0", "manifest_ungueltig")]
+
+
+def test_the_default_settings_are_the_production_values():
+    """A6-87: die Standardwerte von `Einstellungen` sind die des Geraets (install.sh: Schluessel unter /opt/smartheat/host,
+    Projekt `smartheat`, Gesundheitsseite des Gateways auf Port 80); http bleibt aus."""
+    assert updater.Einstellungen() == updater.Einstellungen(
+        release_pub=Path("/opt/smartheat/host/release.pub"), allow_http=False, health_url="http://127.0.0.1/healthz",
+        health_seconds=600, compose_project="smartheat")
+    assert updater.Einstellungen().health_seconds == updater.HEALTH_SECONDS == 600
+    assert updater.Einstellungen().compose_project == bundles.COMPOSE_PROJECT
 
 
 class _Site:
@@ -1420,9 +1981,9 @@ UNHEALTHY_BODY = json.dumps({"server_ok": False, "runtime_status": None}).encode
 
 def _main_update(monkeypatch, root, site, *, signed_by_other_key=False, release_pub_of_other_key=False,
                  health_path="/healthz", health_body=HEALTHY_BODY, project=None, health_seconds=None,
-                 min_updater_version="0.1.0"):
+                 min_updater_version="0.1.0") -> updater.Einstellungen:
     """Bereitet einen echten `main --once` vor: ein signiertes Bundle 0.3.0 auf dem lokalen Server, das Angebot in
-    `data/software_soll.json`, `release.pub`, ein erreichbarer Broker (der Server selbst) und die Umgebung."""
+    `data/software_soll.json`, `release.pub`, ein erreichbarer Broker (der Server selbst) und die Einstellungen (Rueckgabe)."""
     secret, key_id, public = keypair()
     other_secret, other_id, other_public = keypair()
     files = {"docker-compose.yml": COMPOSE, "mosquitto.conf": MOSQ}
@@ -1434,24 +1995,25 @@ def _main_update(monkeypatch, root, site, *, signed_by_other_key=False, release_
                         health_path: health_body})
     offer = {"version": "0.3.0", "manifest_url": site.url + "/0.3.0/manifest.json", "signature": signature,
              "manifest_sha256": hashlib.sha256(raw).hexdigest()}
-    _main_environment(monkeypatch, root, offer=offer, allow_http="1")
+    settings = _main_environment(monkeypatch, root, offer=offer)
     (root / "release.pub").write_text(other_public if release_pub_of_other_key else public)
     (root / "data" / "device").mkdir()
     (root / "data" / "device" / "endpoint.json").write_text(json.dumps({"host": "127.0.0.1", "port": site.port}))
-    monkeypatch.setenv("SHG_UPDATER_HEALTH_URL", site.url + health_path)
+    settings = dataclasses.replace(settings, allow_http=True, health_url=site.url + health_path)
     if project is not None:
-        monkeypatch.setenv("SHG_COMPOSE_PROJECT", project)
+        settings = dataclasses.replace(settings, compose_project=project)
     if health_seconds is not None:
-        monkeypatch.setenv("SHG_UPDATER_HEALTH_SECONDS", health_seconds)
+        settings = dataclasses.replace(settings, health_seconds=health_seconds)
+    return settings
 
 
 @pytest.mark.parametrize(("release_pub_of_other_key", "outcome"), [(False, "aktualisiert"), (True, "abgelehnt")])
-def test_main_verifies_the_bundle_with_the_key_of_shg_release_pub(
+def test_main_verifies_the_bundle_with_the_key_of_the_release_pub_setting(
         tmp_path, monkeypatch, capsys, site, docker, fast_sleep, release_pub_of_other_key, outcome):
-    """`SHG_RELEASE_PUB` nennt den Schluessel: ein Bundle, das ein anderer Schluessel signiert hat (hier: die Datei traegt
+    """`Einstellungen.release_pub` nennt den Schluessel: ein Bundle, das ein anderer Schluessel signiert hat (hier: die Datei traegt
     einen anderen oeffentlichen Schluessel), wird abgelehnt und nie gestartet, mit dem richtigen angenommen."""
-    _main_update(monkeypatch, tmp_path, site, release_pub_of_other_key=release_pub_of_other_key)
-    updater.main(["--once"])
+    settings = _main_update(monkeypatch, tmp_path, site, release_pub_of_other_key=release_pub_of_other_key)
+    updater.main(["--once"], einstellungen=settings)
     assert capsys.readouterr().out == outcome + "\n"
     started = [call for call in docker.calls if "up" in call]
     reports = json.loads((tmp_path / "data" / "software_meldungen.json").read_text())["meldungen"]
@@ -1470,8 +2032,8 @@ def test_main_runs_the_updater_with_the_gateway_version_as_its_own(
     mit einem festen kleinen Wert faellt in je einer der beiden Zeilen auf."""
     major, minor, patch = (int(part) for part in GATEWAY_VERSION.split("."))
     verlangt = f"{major}.{minor}.{patch + 1}" if hoeher else GATEWAY_VERSION
-    _main_update(monkeypatch, tmp_path, site, min_updater_version=verlangt)
-    updater.main(["--once"])
+    settings = _main_update(monkeypatch, tmp_path, site, min_updater_version=verlangt)
+    updater.main(["--once"], einstellungen=settings)
     assert capsys.readouterr().out == outcome + "\n"
     started = [call for call in docker.calls if "up" in call]
     reports = json.loads((tmp_path / "data" / "software_meldungen.json").read_text())["meldungen"]
@@ -1482,21 +2044,21 @@ def test_main_runs_the_updater_with_the_gateway_version_as_its_own(
 
 
 @pytest.mark.parametrize(("project", "expected"), [("testprojekt", "testprojekt"), (None, "smartheat")])
-def test_main_passes_shg_compose_project_to_every_docker_compose_call(
+def test_main_passes_the_compose_project_setting_to_every_docker_compose_call(
         tmp_path, monkeypatch, capsys, site, docker, fast_sleep, project, expected):
-    _main_update(monkeypatch, tmp_path, site, project=project)
-    updater.main(["--once"])
+    settings = _main_update(monkeypatch, tmp_path, site, project=project)
+    updater.main(["--once"], einstellungen=settings)
     assert capsys.readouterr().out == "aktualisiert\n"
     compose_calls = [call for call in docker.calls if call[:2] == ["docker", "compose"]]
     assert {call[call.index("-p") + 1] for call in compose_calls} == {expected}
     assert {word for call in compose_calls for word in call if word in ("pull", "up", "ps")} == {"pull", "up", "ps"}
 
 
-def test_main_asks_exactly_the_address_of_shg_updater_health_url(
+def test_main_asks_exactly_the_address_of_the_health_url_setting(
         tmp_path, monkeypatch, capsys, site, docker, fast_sleep):
-    _main_update(monkeypatch, tmp_path, site, health_path="/gesundheit")
+    settings = _main_update(monkeypatch, tmp_path, site, health_path="/gesundheit")
     site.routes["/healthz"] = UNHEALTHY_BODY  # die Standardadresse waere ungesund: sie darf nicht gefragt werden
-    updater.main(["--once"])
+    updater.main(["--once"], einstellungen=settings)
     assert capsys.readouterr().out == "aktualisiert\n"
     assert "/gesundheit" in site.hits and "/healthz" not in site.hits
 
@@ -1517,14 +2079,15 @@ def fast_sleep(monkeypatch, reload_updater):
     return calls
 
 
-def test_main_ends_the_health_wait_after_shg_updater_health_seconds(
+def test_main_ends_the_health_wait_after_the_health_seconds_setting(
         tmp_path, monkeypatch, capsys, site, docker, fast_sleep):
     """Ein Bundle, das nie gesund wird: mit 0,05 s Frist endet das Warten und `main` rollt zurueck (Grund `ungesund`),
     nachdem die Frist auf der monotonen Uhr verstrichen ist; mit dem Standard von 600 s bricht die Fixture `fast_sleep`
     nach 300 Takten ab. Die Zahl der Takte haengt von der Last ab und wird nicht zugesichert."""
-    _main_update(monkeypatch, tmp_path, site, health_path="/gesundheit", health_body=UNHEALTHY_BODY, health_seconds="0.05")
+    settings = _main_update(monkeypatch, tmp_path, site, health_path="/gesundheit", health_body=UNHEALTHY_BODY,
+                            health_seconds=0.05)
     started = time.monotonic()
-    updater.main(["--once"])
+    updater.main(["--once"], einstellungen=settings)
     assert time.monotonic() - started >= 0.05
     assert capsys.readouterr().out == "zurueckgerollt\n"
     reports = json.loads((tmp_path / "data" / "software_meldungen.json").read_text())["meldungen"]
@@ -1534,9 +2097,9 @@ def test_main_ends_the_health_wait_after_shg_updater_health_seconds(
 def test_main_waits_longer_for_a_bundle_that_turns_healthy_when_the_deadline_is_long(
         tmp_path, monkeypatch, capsys, site, docker, fast_sleep):
     """Gegenprobe zum vorigen Test: dasselbe Bundle, ab der vierten Anfrage gesund, mit 1000 s Frist: aktualisiert."""
-    _main_update(monkeypatch, tmp_path, site, health_path="/gesundheit", health_seconds="1000")
+    settings = _main_update(monkeypatch, tmp_path, site, health_path="/gesundheit", health_seconds=1000)
     site.routes["/gesundheit"] = lambda: HEALTHY_BODY if site.hits.count("/gesundheit") >= 4 else UNHEALTHY_BODY
-    updater.main(["--once"])
+    updater.main(["--once"], einstellungen=settings)
     assert capsys.readouterr().out == "aktualisiert\n" and len(fast_sleep) == 3
 
 
