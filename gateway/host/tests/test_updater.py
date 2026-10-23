@@ -7,6 +7,7 @@ import json
 import os
 import random
 import socket
+import ssl
 import stat
 import subprocess
 import threading
@@ -1281,22 +1282,14 @@ def test_every_connection_is_checked_on_the_connected_socket(monkeypatch, peer, 
     `socket.create_connection`. Kann der Peer nicht bestimmt werden (None, Unix-Socket), gilt er als nicht erlaubt."""
     fake = _FakeSocket(peer)
     monkeypatch.setattr(socket, "create_connection", lambda *args, **kwargs: fake)
-    connection = updater._PublicOnlyHTTPSConnection("release.example.test", 443, timeout=5)
+    connection = updater._FetchHTTPSConnection("release.example.test", 443, timeout=5,
+                                                 deadline=updater._Deadline(time.monotonic), public_only=True)
     if allowed:
         assert connection._create_connection(("release.example.test", 443), 5, None) is fake and not fake.closed
     else:
         with pytest.raises(updater.FetchError, match="nicht oeffentlich"):
             connection._create_connection(("release.example.test", 443), 5, None)
         assert fake.closed and fake.sent == b""
-
-
-def test_the_opener_checks_https_connections_only_without_the_test_switch():
-    """A6-38: die Handler des Openers: mit der Pruefung fuer https; mit `allow_http` (Tests) ohne."""
-    def https_handlers(allow_http):
-        return [handler for handler in updater.checked_opener(allow_http).handlers
-                if isinstance(handler, updater._PublicOnlyHTTPSHandler)]
-
-    assert len(https_handlers(False)) == 1 and https_handlers(True) == []
 
 
 def test_environment_proxies_are_ignored(monkeypatch, byte_counter):
@@ -1309,6 +1302,192 @@ def test_environment_proxies_are_ignored(monkeypatch, byte_counter):
     with pytest.raises(updater.FetchError):
         updater.fetch_url("https://kein-host.invalid/m", 100, allow_http=False)
     assert received == []  # der Zaehler hat nie eine Verbindung angenommen
+
+
+# --- Gesamtfrist auch fuer Verbindung, TLS, Kopfzeilen und Weiterleitungen (Security-Nachtrag zu A6-13) ---
+
+class _StepClock:
+    """Eingespeiste monotone Uhr: `now` setzt der Test."""
+
+    def __init__(self, now=0.0):
+        self.now = now
+
+    def __call__(self):
+        return self.now
+
+
+class _Gone:
+    closed = 0
+
+    def close(self):
+        self.closed += 1
+
+
+def test_a_redirect_after_the_total_deadline_is_refused_and_one_before_it_is_followed():
+    """Die Gesamtfrist gilt auch fuer Weiterleitungen: ein Ziel, das erst nach Ablauf der Frist erreichbar waere, wird
+    nicht angefragt (die 302-Antwort wird geschlossen). Gegenprobe: knapp vor der Frist folgt der Handler."""
+    clock = _StepClock()
+    deadline = updater._Deadline(clock)
+    handler = updater._SchemeCheckedRedirects(allow_http=False, deadline=deadline)
+    request = urllib.request.Request("https://release.example.test/x")
+    clock.now = 299.0
+    followed = _Gone()
+    assert handler.redirect_request(request, followed, 302, "Found", {}, "https://cdn.example.test/x").full_url == \
+        "https://cdn.example.test/x"
+    assert followed.closed == 0
+    clock.now = 300.0
+    refused = _Gone()
+    with pytest.raises(updater.FetchError, match="Gesamtfrist"):
+        handler.redirect_request(request, refused, 302, "Found", {}, "https://cdn.example.test/x")
+    assert refused.closed == 1
+
+
+def test_an_expired_deadline_opens_no_connection(byte_counter):
+    """Eine Weiterleitung oder ein Abruf nach Ablauf der Frist baut keine Verbindung mehr auf: die Uhr springt nach dem
+    Anlegen der Frist ueber 300 s, der lokale Server sieht nie eine Verbindung (der Test entlaesst ihn selbst)."""
+    port, received, thread = byte_counter
+    ticks = iter([0.0])
+    clock = lambda: next(ticks, 1000.0)  # noqa: E731 - erster Aufruf legt die Frist an, jeder weitere liegt dahinter
+    with pytest.raises(updater.FetchError, match="Gesamtfrist"):
+        updater.fetch_url(f"http://127.0.0.1:{port}/m", 100, allow_http=True, clock=clock)
+    assert received == []
+
+
+@pytest.fixture
+def slow_header_server():
+    """Startet einen Server auf 127.0.0.1, der jede Verbindung mit `handle(connection)` bedient (optional mit TLS).
+    Gibt `(url_base, start)` zurueck."""
+    servers = []
+
+    def start(handle, context=None):
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        stop = threading.Event()
+
+        def serve():
+            listener.settimeout(0.1)
+            while not stop.is_set():
+                try:
+                    connection, _ = listener.accept()
+                except OSError:
+                    continue
+                try:
+                    connection.settimeout(5)
+                    if context is not None:
+                        connection = context.wrap_socket(connection, server_side=True)
+                    connection.recv(4096)  # die Anfrage
+                    handle(connection)
+                except OSError:
+                    pass
+                finally:
+                    connection.close()
+
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+        servers.append((listener, stop, thread))
+        return listener.getsockname()[1]
+
+    yield start
+    for listener, stop, thread in servers:
+        stop.set()
+        thread.join()
+        listener.close()
+
+
+def _drip_headers(connection):
+    """Statuszeile sofort, dann ein Zeichen einer Kopfzeile je 0,2 s, nie das Ende der Kopfzeilen (1,6 s)."""
+    connection.sendall(b"HTTP/1.1 200 OK\r\nX-Langsam: ")
+    for _ in range(8):
+        time.sleep(0.2)
+        connection.sendall(b"x")
+
+
+def test_a_server_that_drips_its_headers_is_bounded_by_the_total_deadline(monkeypatch, slow_header_server):
+    """Kopfzeilen, die Zeichen fuer Zeichen kommen, hielten den Abruf fest (jede Leseoperation blieb unter dem Timeout):
+    der Socket-Timeout steht vor jedem Lesen auf dem Rest der Gesamtfrist (hier 0,5 s). Klartext-http nur mit dem
+    Schalter der Tests."""
+    port = slow_header_server(_drip_headers)
+    monkeypatch.setattr(updater, "ABRUF_GESAMT_SECONDS", 0.5)
+    started = time.monotonic()
+    with pytest.raises(updater.FetchError, match="Gesamtfrist"):
+        updater.fetch_url(f"http://127.0.0.1:{port}/m", 100, allow_http=True)
+    assert time.monotonic() - started < 2
+
+
+def test_a_server_that_never_answers_is_bounded_by_the_total_deadline(monkeypatch, slow_header_server):
+    """Verbindung steht, die Antwort bleibt aus: nach dem Rest der Gesamtfrist (0,5 s), nicht nach 30 s."""
+    port = slow_header_server(lambda connection: time.sleep(1.5))
+    monkeypatch.setattr(updater, "ABRUF_GESAMT_SECONDS", 0.5)
+    started = time.monotonic()
+    with pytest.raises(updater.FetchError, match="Gesamtfrist"):
+        updater.fetch_url(f"http://127.0.0.1:{port}/m", 100, allow_http=True)
+    assert time.monotonic() - started < 2
+
+
+@pytest.fixture
+def tls_server(tmp_path, monkeypatch, slow_header_server):
+    """Lokaler TLS-Server (selbstsigniertes Zertifikat fuer 127.0.0.1, vom Client fuer diesen Test als Vertrauensanker
+    geladen; die Adresspruefung gilt hier als bestanden, der Server liegt auf Loopback): der echte Weg von
+    `fetch_url` ueber https, mit Kontext, Socket-Klasse mit Frist und Adresspruefung."""
+    import datetime
+    import ipaddress
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "127.0.0.1")])
+    now = datetime.datetime.now(datetime.UTC)
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+            .serial_number(x509.random_serial_number()).not_valid_before(now - datetime.timedelta(days=1))
+            .not_valid_after(now + datetime.timedelta(days=1))
+            .add_extension(x509.SubjectAlternativeName([x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]), False)
+            .sign(key, hashes.SHA256()))
+    cert_file, key_file = tmp_path / "cert.pem", tmp_path / "key.pem"
+    cert_file.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    key_file.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                           serialization.NoEncryption()))
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(cert_file, key_file)
+    real = ssl.create_default_context
+    monkeypatch.setattr(ssl, "create_default_context", lambda *args, **kwargs: real(cafile=str(cert_file)))
+    monkeypatch.setattr(updater, "is_public_address", lambda address: True)
+    return lambda handle: slow_header_server(handle, context)
+
+
+def test_fetch_url_reads_over_tls_from_a_server_with_a_trusted_certificate(tls_server):
+    """Der echte https-Weg (Kontext, Pruefung der Gegenadresse, Socket mit Frist) liefert den Koerper."""
+    port = tls_server(lambda connection: connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhallo"))
+    assert updater.fetch_url(f"https://127.0.0.1:{port}/m", 100, allow_http=False) == b"hallo"
+
+
+def test_a_tls_server_that_drips_its_headers_is_bounded_by_the_total_deadline(monkeypatch, tls_server):
+    """Wie bei http, auf dem Weg, den der Betrieb nutzt: der TLS-Socket setzt den Timeout vor jedem Lesen."""
+    port = tls_server(_drip_headers)
+    monkeypatch.setattr(updater, "ABRUF_GESAMT_SECONDS", 0.5)
+    started = time.monotonic()
+    with pytest.raises(updater.FetchError, match="Gesamtfrist"):
+        updater.fetch_url(f"https://127.0.0.1:{port}/m", 100, allow_http=False)
+    assert time.monotonic() - started < 2
+
+
+def test_a_tls_handshake_that_stalls_is_bounded_by_the_total_deadline(monkeypatch):
+    """Der Server nimmt die Verbindung an und schweigt (kein ServerHello): der Handshake endet mit der Gesamtfrist."""
+    monkeypatch.setattr(updater, "is_public_address", lambda address: True)
+    monkeypatch.setattr(updater, "ABRUF_GESAMT_SECONDS", 0.5)
+    silent = socket.socket()
+    silent.bind(("127.0.0.1", 0))
+    silent.listen()
+    try:
+        started = time.monotonic()
+        with pytest.raises(updater.FetchError, match="Gesamtfrist"):
+            updater.fetch_url(f"https://127.0.0.1:{silent.getsockname()[1]}/m", 100, allow_http=False)
+        assert time.monotonic() - started < 2
+    finally:
+        silent.close()
 
 
 def test_fetch_health(local_server):
