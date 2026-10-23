@@ -264,7 +264,7 @@ def is_own_network(peer: str, own: str) -> bool:
 
 
 class _DeadlineSocket(socket.socket):
-    """Klartext-Socket (nur http, also nur Tests und Labor), der vor jedem Lesen den Timeout auf den Rest der Gesamtfrist
+    """Klartext-Socket (nur http, also nur Tests), der vor jedem Lesen den Timeout auf den Rest der Gesamtfrist
     setzt. Uebernimmt die Verbindung des uebergebenen Sockets."""
 
     def __init__(self, sock: socket.socket, deadline: _Deadline) -> None:
@@ -336,7 +336,7 @@ class _FetchHTTPSConnection(http.client.HTTPSConnection):
 
 
 class _FetchHTTPHandler(urllib.request.HTTPHandler):
-    """Nur mit `allow_http` im Opener (Tests, Labor): http mit Gesamtfrist."""
+    """Nur mit `allow_http` im Opener (nur Tests): http mit Gesamtfrist."""
 
     def __init__(self, deadline: _Deadline) -> None:
         super().__init__()
@@ -361,7 +361,7 @@ class _FetchHTTPSHandler(urllib.request.HTTPSHandler):
 
 def checked_opener(allow_http: bool, deadline: _Deadline | None = None) -> urllib.request.OpenerDirector:
     """Opener des Updaters: Weiterleitungen nur auf erlaubte Schemata, alles innerhalb der Gesamtfrist, https nur zu
-    oeffentlichen Adressen (mit `allow_http`, nur Tests und Labor, ohne diese Pruefung), nie ueber einen Proxy aus der
+    oeffentlichen Adressen (mit `allow_http`, nur Tests, ohne diese Pruefung), nie ueber einen Proxy aus der
     Umgebung (ein Proxy liesse die Pruefung nur dessen Adresse sehen und das Ziel von ihm aufloesen)."""
     deadline = deadline or _Deadline(time.monotonic)
     handlers: list = [_SchemeCheckedRedirects(allow_http, deadline), urllib.request.ProxyHandler({}),
@@ -739,8 +739,8 @@ class Updater:
 @dataclass(frozen=True)
 class Einstellungen:
     """Eingaenge von `main`, ausser `SHG_ROOT` (A6-87). Die Standardwerte sind die des Geraets (install.sh); der Dienst
-    ruft `main` ohne Einstellungen, `allow_http` ist dort aus und aus der Umgebung nicht einzuschalten. Nur Tests und das
-    Labor reichen eigene Werte durch (`host/tests/updater_testlauf.py` fuer den Docker-Test)."""
+    ruft `main` ohne Einstellungen, `allow_http` ist dort aus und aus der Umgebung nicht einzuschalten. Nur Tests reichen
+    eigene Werte durch (`host/tests/updater_testlauf.py` fuer den Docker-Test; sie ist auf keinem Geraet installiert)."""
     release_pub: Path = Path("/opt/smartheat/host/release.pub")
     allow_http: bool = False
     health_url: str = "http://127.0.0.1/healthz"

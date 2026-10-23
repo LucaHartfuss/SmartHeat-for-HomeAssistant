@@ -9,7 +9,7 @@ from configs import SENSOR, THERMOSTAT
 from fake_z2m import FakeZigbee2Mqtt
 from fakes import FakeBus
 
-from smartheat_gateway.triggers import EV_TARGET_INPUT, BusTriggerSource, seconds_until
+from smartheat_gateway.triggers import EV_TARGET_INPUT, BusTriggerSource, local_zone, seconds_until
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime.debounce import ROOM_TARGET_DEBOUNCE_SECONDS
 from smartheat_runtime.runtime import EV_LOCAL_CHECK, EV_SOURCE_CONNECTED
@@ -50,6 +50,44 @@ def test_connect_posts_the_contract(world):
     bus.connect()
     worker.run_pending()
     assert ("check", True) in checks and ("connected", None) in checks
+
+
+def _quelle_am_bus(tmp_path, clock, *, verbunden):
+    bus = FakeBus()
+    if not verbunden:
+        bus.disconnect()
+    mirror = ZigbeeMirror(bus, clock)
+    worker = RegulationWorker(clock=clock)
+    checks = []
+    worker.register(EV_LOCAL_CHECK, lambda event: checks.append(("check", event.data.get("room_target_fired"))))
+    worker.register(EV_SOURCE_CONNECTED, lambda event: checks.append(("connected", None)))
+    store = TargetStore(tmp_path / "room_target.json", 20.0, clock, lambda: "ts")
+    trigger = BusTriggerSource(bus, worker, mirror, store, thermostat=None, sensor_ieees=(), daily_trigger_time=None)
+    return bus, trigger, worker, checks
+
+
+def test_start_on_a_connected_bus_posts_the_contract_at_once(tmp_path, clock):
+    _, trigger, worker, checks = _quelle_am_bus(tmp_path, clock, verbunden=True)
+    trigger.start()
+    worker.run_pending()
+    assert ("check", True) in checks and ("connected", None) in checks
+
+
+def test_start_on_a_disconnected_bus_posts_nothing_until_it_connects(tmp_path, clock):
+    bus, trigger, worker, checks = _quelle_am_bus(tmp_path, clock, verbunden=False)
+    trigger.start()
+    worker.run_pending()
+    assert checks == []
+    bus.connect()
+    worker.run_pending()
+    assert ("check", True) in checks and ("connected", None) in checks
+
+
+def test_connected_follows_the_bus(tmp_path, clock):
+    bus, trigger, _, _ = _quelle_am_bus(tmp_path, clock, verbunden=True)
+    assert trigger.connected is True
+    bus.disconnect()
+    assert trigger.connected is False
 
 
 def test_sensor_change_posts_an_undebounced_check(world):
@@ -147,6 +185,31 @@ def test_daily_tick_zone_comes_from_tz(monkeypatch):
     monkeypatch.setenv("TZ", "Europe/Berlin")
     now = datetime(2026, 10, 24, 12, 12, tzinfo=timezone(timedelta(hours=2)))
     assert seconds_until("12:12", now) == 25 * 3600
+
+
+def test_the_zone_of_the_daily_tick_comes_from_tz_not_from_the_machine(monkeypatch):
+    # Asia/Tokyo hat nie Sommerzeit und liegt weit von jeder Zeitzone des Rechners: nur die Zone aus TZ gibt 3600
+    monkeypatch.setenv("TZ", "Asia/Tokyo")
+    now = datetime(2026, 7, 1, 10, 0, tzinfo=UTC)  # in Tokyo 19:00
+    assert local_zone(now) == ZoneInfo("Asia/Tokyo")
+    assert seconds_until("20:00", now) == 3600
+
+
+def test_without_tz_the_zone_is_the_offset_of_now_else_utc(monkeypatch):
+    monkeypatch.delenv("TZ", raising=False)
+    indien = timezone(timedelta(hours=5, minutes=30))
+    now = datetime(2026, 7, 1, 10, 0, tzinfo=indien)
+    assert local_zone(now) is indien
+    assert seconds_until("12:00", now) == 2 * 3600  # Ortszeit des Offsets, nicht die des Rechners
+    assert local_zone() is UTC
+    assert local_zone(datetime(2026, 7, 1, 10, 0)) is UTC  # naive Zeit ohne Offset
+
+
+@pytest.mark.parametrize("name", ["Nicht/Vorhanden", "../etc/passwd"])
+def test_an_unknown_tz_name_falls_back_to_the_offset_of_now(monkeypatch, name):
+    monkeypatch.setenv("TZ", name)
+    indien = timezone(timedelta(hours=5, minutes=30))
+    assert local_zone(datetime(2026, 7, 1, 10, 0, tzinfo=indien)) is indien
 
 
 @pytest.mark.parametrize(("tageszeit", "jetzt", "erwartet_s"), [
@@ -749,6 +812,31 @@ def test_a_stopped_trigger_source_posts_nothing(tmp_path, clock):
     erster_worker.run_pending()
     zweiter_worker.run_pending()
     assert erste_checks == ["erste"] and zweite_checks == ["zweite"]
+
+
+def test_a_stopped_trigger_source_lets_go_of_the_bound_w100(mit_w100):
+    """stop meldet das Thermostat bei der Pflege ab (L4-24): ein erneutes Koppeln danach richtet es nicht mehr mit dem
+    Soll-Speicher der gestoppten Quelle ein."""
+    welt = mit_w100
+    welt.store.apply_portal(23.0)  # ein Soll im Speicher, das von der Vorgabe (20) unterscheidbar ist
+    welt.trigger.stop()
+    welt.z2m.interview(W100)
+    _w100_melden(welt, thermostat_mode="ON")
+    # nicht mehr gebunden: die Vorgabe der Pflege (20), nicht das Soll aus dem Speicher der gestoppten Quelle
+    assert welt.store.value == 23.0
+    assert _w100_sets(welt) == MODUS_W100 * 2 + [{"occupied_heating_setpoint": 20.0}, {"system_mode": "heat"}]
+
+
+def test_a_w100_showing_the_rounded_target_lifts_the_frost_position(mit_w100, caplog):
+    """Die Anzeige des gerundeten Solls gilt als das geltende Soll (nicht als unbrauchbarer Wert): sie hebt die
+    Frostschutz-Stellung auf, wie jede brauchbare Meldung."""
+    welt = mit_w100
+    _w100_melden(welt, occupied_heating_setpoint=5, system_mode="heat")
+    assert welt.aus == [(True, 20.5)]
+    with caplog.at_level("DEBUG"):
+        _w100_melden(welt, occupied_heating_setpoint=21, system_mode="heat")  # 21 ist die Anzeige von 20.5
+    assert welt.aus == [(True, 20.5), (False, None)]
+    assert not [r for r in caplog.records if r.levelname in ("WARNING", "ERROR")]
 
 
 # --- Start: letzter bekannter Zustand, "aus" und Frostschutz (Fixrunde B, A6-14, L4-30; Nutzer-Entscheidung E5) ---
