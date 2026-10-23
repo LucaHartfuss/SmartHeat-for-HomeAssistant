@@ -712,3 +712,38 @@ def test_a_retained_w100_report_after_a_restart_is_no_wish_and_no_switching_off(
     welt.bus.deliver(f"zigbee2mqtt/{W100}", melden)
     welt.worker.run_pending()
     assert welt.aus == [(True, 22.0)]
+
+
+def test_a_stopped_trigger_source_posts_nothing(tmp_path, clock):
+    """Zwei Quellen nacheinander am selben Spiegel (Neustart der Laufzeit im Prozess): nach stop der ersten landet eine
+    Zigbee-Meldung nur noch im Worker der zweiten, der Haken der ersten ist abgemeldet (L4-24)."""
+    bus = FakeBus()
+    z2m = FakeZigbee2Mqtt(bus)
+    mirror = ZigbeeMirror(bus, clock)
+    mirror.start()
+    z2m.bridge(online=True)
+    z2m.add_sensor(SENSOR)
+
+    def quelle(name):
+        worker = RegulationWorker(clock=clock)
+        checks = []
+        worker.register(EV_LOCAL_CHECK, lambda event: checks.append(name))
+        worker.register(EV_SOURCE_CONNECTED, lambda event: None)
+        store = TargetStore(tmp_path / f"room_target_{name}.json", 20.0, clock, lambda: "ts")
+        source = BusTriggerSource(bus, worker, mirror, store, thermostat=None, sensor_ieees=(SENSOR,),
+                                  daily_trigger_time=None)
+        source.start()
+        worker.run_pending()
+        checks.clear()
+        return source, worker, checks
+
+    erste, erster_worker, erste_checks = quelle("erste")
+    z2m.report(SENSOR, temperature=20.1)
+    erster_worker.run_pending()
+    assert erste_checks == ["erste"]  # Gegenprobe: solange sie laeuft, bekommt die erste Quelle die Meldung
+    erste.stop()
+    zweite, zweiter_worker, zweite_checks = quelle("zweite")
+    z2m.report(SENSOR, temperature=20.4)
+    erster_worker.run_pending()
+    zweiter_worker.run_pending()
+    assert erste_checks == ["erste"] and zweite_checks == ["zweite"]

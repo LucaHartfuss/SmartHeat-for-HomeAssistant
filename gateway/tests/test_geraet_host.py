@@ -293,6 +293,11 @@ def test_leftover_inventory_or_driver_login_keeps_the_marker_and_the_binding(wel
     assert not welt.paths.failsafe.exists() and not welt.paths.entitlement.exists()
     assert not welt.paths.room_target.exists() and not welt.paths.abgemeldet.exists()
     assert "Anlagengebundener Zustand geloescht" not in caplog.text
+    if pfad == "inventur":
+        # Zwei Aufrufe (vergessen, aufraeumen), je Aufruf genau eine Zeile zur Datei: bisher ERROR und WARNING
+        fehler = [r for r in caplog.records if r.levelno >= logging.WARNING]
+        assert [r.levelno for r in fehler] == [logging.ERROR] * 2, [r.getMessage() for r in fehler]
+        assert all(ziel.name in r.getMessage() for r in fehler)
     monkeypatch.setattr(Path, "unlink", echt)
     with caplog.at_level(logging.INFO):
         runtime_main.aufraeumen(welt.paths)
