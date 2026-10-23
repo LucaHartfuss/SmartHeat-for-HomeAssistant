@@ -7,7 +7,7 @@ besteht die lokale Positivliste der Inventur (rollen_pruefen, A6-02), dann die S
 Schreibziele (jeder Hebel der Bindung, nicht nur die Schreibregeln des Hebelsatzes, A4-11) kommen nur von der lokal je
 Hebelsatz festgelegten Plattform (SCHREIB_PLATTFORM, A5-70) und alle aus einem Config-Entry (dem des Kreises, wenn er
 eines nennt); die Soll-Entity ist kein Schreibziel und nicht an dessen Geraet (A4-12). Dieselben Regeln gelten beim Start
-fuer die uebernommene Konfiguration (rollen_befund, L4-27). Ob outdoor_temp und die Kennzahl-Rollen fachlich passen,
+fuer die uebernommene Konfiguration (rollen_befund mit beim_start=True, L4-27). Ob outdoor_temp und die Kennzahl-Rollen fachlich passen,
 prueft der Server (ha_pruefung).
 
 Ist HA nicht erreichbar oder faehrt gerade hoch, ist das kein Urteil: der Server stellt eine abgelehnte Version nicht
@@ -245,13 +245,18 @@ def _form_erlaubt(feld: str, ref: str, registry_entry: Mapping, state: Mapping, 
     return False
 
 
-def schreibziele_befund(b: HaBindung, registry: Mapping[str, Mapping]) -> tuple[str, str] | None:
+#: Zweites Argument von NichtPruefbar, wenn einem Schreibziel beim Start der Registry-Eintrag fehlt (eigener Starttext).
+OHNE_REGISTRY = "registry"
+
+
+def schreibziele_befund(b: HaBindung, registry: Mapping[str, Mapping], *, beim_start: bool) -> tuple[str, str] | None:
     """Die Regeln der Schreibziele (A4-11, A4-12, A5-70, L4-27; Regel 4, E5): (feld, "nicht_erlaubt") des ersten
     Verstosses oder None. Der Kreis nennt die Plattform des Hebelsatzes (SCHREIB_PLATTFORM, sonst Feld plattform); jedes
     Schreibziel (_schreibziel_rollen) kommt von dieser Plattform, alle aus einem Config-Entry (dem des Kreises, wenn er
     eines nennt, sonst dem des ersten Schreibziels; ohne Config-Entry nicht erlaubt); die Soll-Entity ist kein
     Schreibziel und nicht an dessen Geraet. `registry` ist die Entity-Registry je entity_id. Ein Schreibziel ohne
-    Registry-Eintrag ist kein Urteil: NichtPruefbar(feld) (Wiederholung beim Start, fail closed)."""
+    Registry-Eintrag: beim Uebernehmen (beim_start=False) nicht_erlaubt wie bisher, beim Start kein Urteil, sondern
+    NichtPruefbar(feld, OHNE_REGISTRY) (Wiederholung, fail closed). Keyword ohne Standard: jeder Aufrufer entscheidet."""
     plattform = SCHREIB_PLATTFORM[b.hebelsatz]
     if b.kreis.get("plattform") != plattform:
         return "plattform", "nicht_erlaubt"
@@ -261,7 +266,9 @@ def schreibziele_befund(b: HaBindung, registry: Mapping[str, Mapping]) -> tuple[
     for rolle, ref in ziele:
         eintrag = registry.get(_entity(ref))
         if eintrag is None:
-            raise NichtPruefbar(v1_rolle(rolle))
+            if beim_start:
+                raise NichtPruefbar(v1_rolle(rolle), OHNE_REGISTRY)
+            return v1_rolle(rolle), "nicht_erlaubt"
         eigenes = eintrag.get("config_entry_id")
         if eintrag.get("platform") != plattform or not isinstance(eigenes, str) or not eigenes or (
                 config_entry is not None and eigenes != config_entry):
@@ -276,14 +283,15 @@ def schreibziele_befund(b: HaBindung, registry: Mapping[str, Mapping]) -> tuple[
     return None
 
 
-def rollen_befund(b: HaBindung, ha_api) -> tuple[tuple[str, str] | None, list[tuple[str, str]]]:
+def rollen_befund(b: HaBindung, ha_api, *, beim_start: bool) -> tuple[tuple[str, str] | None, list[tuple[str, str]]]:
     """Lokale Positivliste fuer jede Rolle (A6-02, G-9) und die Regeln der Schreibziele (schreibziele_befund, L4-27):
     ((feld, "nicht_erlaubt") des ersten Verstosses oder None, [(feld, ref) der erlaubten optionalen Lese-Rollen und
     Batterien ohne Zustand]). Soll-Entity, Rollen, Raumfuehler und Batterien muessen die Positivliste der Inventur
     bestehen (inventur.entity_erlaubt); `::attribut` zaehlt die Entity davor. Registry und Zustaende werden einmal
     geladen; die Plattformen mit Einstellbarem zaehlen aus allen aktiven Registry-Eintraegen mit Zustand. Hat
-    Soll-Entity, Pflichtrolle, Schreibziel (auch eine optionale Hebelrolle) oder Raumfuehler keinen Zustand, oder ein
-    Schreibziel keinen Registry-Eintrag, ist das kein Urteil: NichtPruefbar(feld) (kommt von selbst wieder). Eine
+    Soll-Entity, Pflichtrolle, Schreibziel (auch eine optionale Hebelrolle) oder Raumfuehler keinen Zustand, ist das
+    kein Urteil: NichtPruefbar(feld) (kommt von selbst wieder); einem Schreibziel ohne Registry-Eintrag geht es nur beim
+    Start so (beim_start, schreibziele_befund), beim Uebernehmen ist es nicht_erlaubt. Eine
     optionale Lese-Rolle oder Batterie ohne Zustand (geloescht, umbenannt, deaktiviert) heilt nicht von selbst: ihre
     Domaene wird aus der ID geprueft, sie steht in der zweiten Liste und wird nicht gelesen. Ohne Soll-Entity entfaellt
     room_target (lokal_pruefen meldet das). Die Schreibziel-Regeln folgen nach der Positivliste aller Felder."""
@@ -308,13 +316,13 @@ def rollen_befund(b: HaBindung, ha_api) -> tuple[tuple[str, str] | None, list[tu
         if not entity_erlaubt(entity_id, eintrag, state, einstellbar) or not (
                 schreibziel or _form_erlaubt(feld, ref, eintrag, state, SCHREIB_PLATTFORM[b.hebelsatz])):
             return (feld, "nicht_erlaubt"), ohne_zustand
-    return schreibziele_befund(b, registry), ohne_zustand
+    return schreibziele_befund(b, registry, beim_start=beim_start), ohne_zustand
 
 
 def rollen_pruefen(b: HaBindung, ha_api) -> tuple[str, str] | None:
-    """Das Urteil aus rollen_befund: (feld, "nicht_erlaubt") des ersten Verstosses oder None; wirft NichtPruefbar wie
-    dort."""
-    return rollen_befund(b, ha_api)[0]
+    """Das Urteil aus rollen_befund beim Uebernehmen (beim_start=False): (feld, "nicht_erlaubt") des ersten Verstosses
+    oder None; wirft NichtPruefbar wie dort."""
+    return rollen_befund(b, ha_api, beim_start=False)[0]
 
 
 def _mit_ha(b: HaBindung, ha_api) -> tuple[str, str] | None:

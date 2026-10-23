@@ -287,7 +287,7 @@ def test_schreibziele_aus_zwei_config_entries_werden_abgelehnt():
     ha = _ha()
     ha.registry = [{**e, "config_entry_id": "e2"} if e["entity_id"] == "number.heat_limit" else e for e in ha.registry]
     assert dokument.zuordnung_pruefen(konfiguration, ha) == {"feld": "heat_limit", "regel": "nicht_erlaubt"}
-    assert _rollen(konfiguration, ha) == ("heat_limit", "nicht_erlaubt")  # auch beim Start (rollen_befund)
+    assert _start_rollen(konfiguration, ha) == ("heat_limit", "nicht_erlaubt")  # auch beim Start
     ha = _ha()
     _fremd(ha, "number.heat_limit")
     assert dokument.zuordnung_pruefen(konfiguration, ha) == {"feld": "heat_limit", "regel": "nicht_erlaubt"}
@@ -328,23 +328,24 @@ def test_jeder_hebelsatz_hat_eine_schreibplattform():
     assert set(dokument.SCHREIB_PLATTFORM) == set(dokument.PFLICHT_ROLLEN)
 
 
-def test_ein_schreibziel_ohne_registry_eintrag_ist_nicht_pruefbar():
-    """Ohne Registry-Eintrag gibt es weder Plattform noch Config-Entry: kein Urteil, sondern NichtPruefbar mit dem Feld
-    (beim Start: Wiederholung, danach Startfehler rollen_nicht_pruefbar)."""
+def test_ein_schreibziel_ohne_registry_eintrag_wird_uebernommen_abgelehnt_und_ist_beim_start_nicht_pruefbar():
+    """Ohne Registry-Eintrag gibt es weder Plattform noch Config-Entry. Beim Uebernehmen wie bisher eine Ablehnung
+    (nicht_erlaubt; sonst hielte das Geraet das Dokument endlos zurueck); beim Start kein Urteil, sondern
+    NichtPruefbar(feld, "registry") (Wiederholung, danach Startfehler rollen_nicht_pruefbar mit eigenem Text)."""
     ha = _ha()
     ha.registry = [e for e in ha.registry if e["entity_id"] != "number.min_flow"]
+    assert dokument.zuordnung_pruefen(KONFIGURATION, ha) == {"feld": "min_flow", "regel": "nicht_erlaubt"}
+    assert _rollen(KONFIGURATION, ha) == ("min_flow", "nicht_erlaubt")
     with pytest.raises(config_check.NichtPruefbar) as fehler:
-        _rollen(KONFIGURATION, ha)
-    assert fehler.value.args == ("min_flow",)
-    with pytest.raises(config_check.NichtPruefbar):
-        dokument.zuordnung_pruefen(KONFIGURATION, ha)
+        _start_rollen(KONFIGURATION, ha)
+    assert fehler.value.args == ("min_flow", "registry")
 
 
 def test_soll_entity_on_the_device_of_a_write_target_is_refused():
     ha = _ha()
     ha.registry = [{**e, "device_id": "d-therme"} if e["entity_id"] == "sensor.room_target" else e for e in ha.registry]
     assert dokument.zuordnung_pruefen(KONFIGURATION, ha) == {"feld": "room_target", "regel": "nicht_erlaubt"}
-    assert _rollen(KONFIGURATION, ha) == ("room_target", "nicht_erlaubt")  # auch beim Start (rollen_befund)
+    assert _start_rollen(KONFIGURATION, ha) == ("room_target", "nicht_erlaubt")  # auch beim Start
 
 
 @pytest.mark.parametrize("room_target, shift", [
@@ -515,6 +516,11 @@ def _rollen(konfiguration, ha):
     return dokument.rollen_pruefen(dokument.bindung(konfiguration), ha)
 
 
+def _start_rollen(konfiguration, ha):
+    """Das Urteil wie beim Start (host._rollen_pruefen_mit_wiederholung)."""
+    return dokument.rollen_befund(dokument.bindung(konfiguration), ha, beim_start=True)[0]
+
+
 def _batterie(ref):
     return {**KONFIGURATION, "bindung": {**KONFIGURATION["bindung"], "batterien": [ref]}}
 
@@ -564,7 +570,7 @@ def test_ohne_soll_entity_entfaellt_room_target_statt_einer_assertion():
     assert _rollen(konfiguration, ha) is None
 
 
-def test_eine_kennzahl_ohne_klasse_braucht_die_plattform_des_kreises():
+def test_eine_kennzahl_ohne_klasse_braucht_die_plattform_des_hebelsatzes():
     ha = _ha()
     _dazu(ha, "sensor.modus", "zha")  # zha liefert hier nur Sensoren: nichts Einstellbares
     konfiguration = _mit_rolle("operating_mode", "sensor.modus")
@@ -695,9 +701,9 @@ def test_eine_batterie_ohne_zustand_besteht_nach_der_domaene_und_steht_in_der_li
     ha = _ha()
     del ha.states["sensor.thermostat_battery"], ha.states["sensor.thermostat_battery::device_class"]
     b = dokument.bindung(KONFIGURATION)
-    assert dokument.rollen_befund(b, ha) == (None, [("batterien", "sensor.thermostat_battery")])
+    assert dokument.rollen_befund(b, ha, beim_start=True) == (None, [("batterien", "sensor.thermostat_battery")])
     assert _rollen(KONFIGURATION, ha) is None
-    assert dokument.rollen_befund(dokument.bindung(_batterie("binary_sensor.leer")), ha)[1] == [
+    assert dokument.rollen_befund(dokument.bindung(_batterie("binary_sensor.leer")), ha, beim_start=True)[1] == [
         ("batterien", "binary_sensor.leer")]  # binary_sensor als Batterie
     assert _rollen(_batterie("lock.haustuer"), ha) == ("batterien", "nicht_erlaubt")
 
@@ -705,7 +711,8 @@ def test_eine_batterie_ohne_zustand_besteht_nach_der_domaene_und_steht_in_der_li
 def test_eine_optionale_rolle_ohne_zustand_wird_nach_der_domaene_der_id_beurteilt():
     ha = _ha()
     ok = _mit_rolle("flow_temperature", "sensor.vorlauf")
-    assert dokument.rollen_befund(dokument.bindung(ok), ha) == (None, [("flow_temperature", "sensor.vorlauf")])
+    assert dokument.rollen_befund(dokument.bindung(ok), ha, beim_start=True) == (
+        None, [("flow_temperature", "sensor.vorlauf")])
     for ref in ("person.luca", "binary_sensor.tuer", "lock.haustuer", "zone.home"):  # binary_sensor nur als Batterie
         assert _rollen(_mit_rolle("flow_temperature", ref), ha) == ("flow_temperature", "nicht_erlaubt"), ref
 
@@ -896,10 +903,12 @@ def test_ohne_zustand_zaehlt_je_feld_nur_die_domaene_aus_der_id(feld):
                                 "lock.x", "person.x") if ref not in erlaubt]
     for ref in erlaubt:
         konfiguration = _batterie(ref) if feld == "batterien" else _mit_rolle(feld, ref)
-        assert dokument.rollen_befund(dokument.bindung(konfiguration), ha) == (None, [(feld, ref)]), ref
+        befund = dokument.rollen_befund(dokument.bindung(konfiguration), ha, beim_start=True)
+        assert befund == (None, [(feld, ref)]), ref
     for ref in verboten:
         konfiguration = _batterie(ref) if feld == "batterien" else _mit_rolle(feld, ref)
-        assert dokument.rollen_befund(dokument.bindung(konfiguration), ha)[0] == (feld, "nicht_erlaubt"), ref
+        befund = dokument.rollen_befund(dokument.bindung(konfiguration), ha, beim_start=True)
+        assert befund[0] == (feld, "nicht_erlaubt"), ref
 
 
 def test_ohne_zustand_raumfuehler_climate_nur_mit_dem_attribut_ist_nicht_pruefbar():

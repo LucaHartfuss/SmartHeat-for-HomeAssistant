@@ -352,14 +352,18 @@ def _rollen_pruefen_mit_wiederholung(ha_api, b: dokument.HaBindung) -> list[tupl
     Urteil ist ein Konfigurationsfehler; nicht pruefbar (HA nicht RUNNING, Soll-Entity, Pflichtrolle, Schreibziel oder
     Raumfuehler ohne Zustand, Schreibziel ohne Registry-Eintrag, Registry oder Zustaende scheitern) wird wie fehlende
     Entities wiederholt, nach dem Budget StartupError. Ergebnis: (Feld, Referenz) der optionalen Lese-Rollen und
-    Batterien ohne Zustand, die der Lauf nicht liest. Das Zuruecksetzen beim Abmelden (sign_off_parts) prueft die
-    Schreibziele nicht erneut: die Rueckkehr zu den Ursprungswerten ist die sichere Richtung."""
+    Batterien ohne Zustand, die der Lauf nicht liest. Das Zuruecksetzen ueber sign_off_parts (beim Abmelden und beim
+    Startfehler mit laufendem Boost) prueft die Schreibziele nicht erneut: die Rueckkehr zu den Ursprungswerten bzw. zum
+    Wiederherstellungspunkt ist die sichere Richtung."""
     def _versuch():
         if not ha_api.is_reachable():  # faehrt HA hoch, fehlen Zustaende noch: kein Urteil
             raise config_check.NichtPruefbar
-        return dokument.rollen_befund(b, ha_api)  # NichtPruefbar und Fehler der HA-API: erneut versuchen
+        return dokument.rollen_befund(b, ha_api, beim_start=True)  # NichtPruefbar, Fehler der HA-API: erneut versuchen
 
     def _describe(error):
+        if isinstance(error, config_check.NichtPruefbar) and error.args[1:] == (dokument.OHNE_REGISTRY,):
+            return (f"{error.args[0]}: Entity ohne Eintrag in der Entity-Registry von Home Assistant (lokale Positivliste "
+                    "nicht prüfbar)")
         if isinstance(error, config_check.NichtPruefbar) and error.args:
             return f"{error.args[0]}: zugeordnete Entity fehlt in Home Assistant – {RECONFIGURE_HINT}"
         return "Home Assistant lieferte Registry oder Zustände nicht"

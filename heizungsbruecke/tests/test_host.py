@@ -11,6 +11,7 @@ from heizungsbruecke.derived_sensors import DerivedSensors
 from heizungsbruecke.ha_api import HomeAssistantApi
 from heizungsbruecke.host import DERIVED_SENSORS_RETRY_DELAYS_SECONDS, HaHost
 from smartheat_runtime.app import IdleBridge, StartFailure
+from smartheat_runtime.backup_store import load_backup, save_backup
 from smartheat_runtime.notifier import STATE_OK
 from smartheat_runtime.roles import lever_refs_identity
 
@@ -295,7 +296,6 @@ def test_ein_attribut_ausser_der_temperatur_startet_nicht(env, angelegt, sleeps)
     assert angelegt == []
 
 
-
 # --- L4-27/A5-70 (E5): Schreibziele lokal verankert, auch fuer die uebernommene Konfiguration beim Start ---
 
 SCHREIBZIELE = ("number.curve_current", "number.shift_current", "number.min_flow", "number.heat_limit")
@@ -371,8 +371,9 @@ def test_ein_schreibziel_ohne_registry_eintrag_wird_wiederholt_und_endet_als_sta
     _registry(env, {"number.shift_current": None})
     with pytest.raises(StartFailure) as fehler:
         _host(env).load()
-    assert fehler.value.key == "rollen_nicht_pruefbar" and fehler.value.grund.startswith("room_setpoint: ")
-    assert "number.shift_current" not in fehler.value.grund
+    assert fehler.value.key == "rollen_nicht_pruefbar"
+    assert fehler.value.grund == ("room_setpoint: Entity ohne Eintrag in der Entity-Registry von Home Assistant "
+                                  "(lokale Positivliste nicht prüfbar)")
     assert sleeps == list(DERIVED_SENSORS_RETRY_DELAYS_SECONDS) and angelegt == []
 
 
@@ -390,3 +391,22 @@ def test_ein_spaeter_eingetragenes_schreibziel_startet_im_zweiten_versuch(env, a
     monkeypatch.setattr(env.ha, "entity_registry", registry)
     _host(env).load()
     assert len(aufrufe) == 2 and sleeps == [DERIVED_SENSORS_RETRY_DELAYS_SECONDS[0]] and len(angelegt) == 1
+
+
+def test_ein_verstoss_beim_start_mit_laufendem_boost_schreibt_nur_einmal_die_ruecknahme(env):
+    """Entscheidung 1 (Fixrunde B TP4): verletzt ein Schreibziel beim Start die Regeln, waehrend ein Boost laeuft, nimmt
+    der Konfigurationsfehler den Boost zurueck (sign_off_parts, ohne erneute Schreibziel-Pruefung): genau die Werte des
+    Wiederherstellungspunkts, auch auf das verletzende Schreibziel, einmal; danach schreibt keine Neupruefung mehr."""
+    save_backup(env.paths["BACKUP_PATH"], {
+        "boost_active": True, "restore_point": {"curve": 1.0, "room_setpoint": 20.0, "heat_limit": 16.0}})
+    _registry(env, {"number.heat_limit": {**THERME, "platform": "template"}})
+
+    bridge = _start_bridge(env)
+
+    assert isinstance(bridge, IdleBridge) and bridge.reason == "konfigurationsfehler"
+    assert sorted(env.ha.writes) == [("number.curve_current", 1.0), ("number.heat_limit", 16.0),
+                                     ("number.shift_current", 20.0)]
+    assert not load_backup(env.paths["BACKUP_PATH"]).get("boost_active")
+    geschrieben = list(env.ha.writes)
+    assert _start_bridge(env).reason == "konfigurationsfehler"  # Neupruefung (wieder load)
+    assert env.ha.writes == geschrieben

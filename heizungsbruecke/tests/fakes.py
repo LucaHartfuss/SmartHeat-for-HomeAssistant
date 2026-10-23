@@ -173,8 +173,6 @@ def schreibziel_eintrag(entity_id: str, plattform: str) -> dict:
             "device_id": f"d-{plattform}"}
 
 
-
-
 class FakeHa:
     token = "tok"
 
