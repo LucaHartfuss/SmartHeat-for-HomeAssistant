@@ -736,22 +736,33 @@ class Updater:
         return True
 
 
-def main(argv: list[str] | None = None) -> None:
+@dataclass(frozen=True)
+class Einstellungen:
+    """Eingaenge von `main`, ausser `SHG_ROOT` (A6-87). Die Standardwerte sind die des Geraets (install.sh); der Dienst
+    ruft `main` ohne Einstellungen, `allow_http` ist dort aus und aus der Umgebung nicht einzuschalten. Nur Tests und das
+    Labor reichen eigene Werte durch (`host/tests/updater_testlauf.py` fuer den Docker-Test)."""
+    release_pub: Path = Path("/opt/smartheat/host/release.pub")
+    allow_http: bool = False
+    health_url: str = "http://127.0.0.1/healthz"
+    health_seconds: float = HEALTH_SECONDS
+    compose_project: str = bundles.COMPOSE_PROJECT
+
+
+def main(argv: list[str] | None = None, *, einstellungen: Einstellungen | None = None) -> None:
     logging.basicConfig(level=logging.INFO)
     args = sys.argv[1:] if argv is None else argv
+    settings = Einstellungen() if einstellungen is None else einstellungen
     root = Path(os.environ.get("SHG_ROOT", "/var/lib/smartheat"))
-    allow_http = os.environ.get("SHG_UPDATER_ALLOW_HTTP") == "1"
-    health_url = os.environ.get("SHG_UPDATER_HEALTH_URL", "http://127.0.0.1/healthz")
-    public_key_text = Path(os.environ.get("SHG_RELEASE_PUB", "/opt/smartheat/host/release.pub")).read_text()
+    public_key_text = settings.release_pub.read_text()
 
     store = bundles.BundleStore(root)
-    compose = bundles.ComposeRunner(root, project=os.environ.get("SHG_COMPOSE_PROJECT", "smartheat"))
+    compose = bundles.ComposeRunner(root, project=settings.compose_project)
     run = Updater(
         kanal=kanal.LokalerKanal(root / "data"), store=store, compose=compose,
-        fetch=lambda url, limit: fetch_url(url, limit, allow_http), public_key_text=public_key_text,
+        fetch=lambda url, limit: fetch_url(url, limit, settings.allow_http), public_key_text=public_key_text,
         state_path=root / "updater" / "state.json", version=GATEWAY_VERSION,
-        health=lambda version: health_ok(fetch_health(health_url), compose.health(version)), allow_http=allow_http,
-        health_seconds=float(os.environ.get("SHG_UPDATER_HEALTH_SECONDS", HEALTH_SECONDS)),
+        health=lambda version: health_ok(fetch_health(settings.health_url), compose.health(version)),
+        allow_http=settings.allow_http, health_seconds=settings.health_seconds,
     )
     try:
         run.recover()

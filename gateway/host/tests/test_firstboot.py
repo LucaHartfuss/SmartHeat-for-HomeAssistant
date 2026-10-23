@@ -81,6 +81,20 @@ def test_main_maps_failures_to_exit_code_1(root, monkeypatch):
     assert stop.value.code == 1
 
 
+def test_main_starts_the_bundle_in_the_project_smartheat_whatever_the_environment_says(root, monkeypatch):
+    """A6-87: der Projektname ist `bundles.COMPOSE_PROJECT` (install.sh startet mit `-p smartheat`); `SHG_COMPOSE_PROJECT`
+    aus der Umgebung gilt nicht mehr."""
+    monkeypatch.setenv("SHG_ROOT", str(root))
+    monkeypatch.setenv("SHG_COMPOSE_PROJECT", "anders")
+    seen = []
+    monkeypatch.setattr(firstboot, "run", lambda wurzel, compose: seen.append(compose) or 0)
+    with pytest.raises(SystemExit) as stop:
+        firstboot.main()
+    assert stop.value.code == 0
+    command = seen[0]._command("0.3.0")
+    assert command[command.index("-p") + 1] == bundles.COMPOSE_PROJECT == "smartheat"
+
+
 def test_updater_job_opened_while_loading_wins_over_the_start(root):
     compose = FakeCompose()
 

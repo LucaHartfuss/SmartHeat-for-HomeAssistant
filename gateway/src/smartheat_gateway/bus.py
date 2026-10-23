@@ -16,6 +16,7 @@ from smartheat_core.logtext import lesbar
 logger = logging.getLogger(__name__)
 
 Callback = Callable[[str, bytes, bool], None]
+BUS_PORT = 1883  # Mosquitto in der Compose-Datei und mqtt://mosquitto:1883 in der Zigbee2MQTT-Konfiguration
 
 
 def decode(payload: bytes) -> object | None:

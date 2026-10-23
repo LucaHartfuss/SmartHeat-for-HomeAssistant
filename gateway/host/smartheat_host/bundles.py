@@ -161,8 +161,11 @@ class BundleStore:
         return target
 
 
+COMPOSE_PROJECT = "smartheat"  # Projektname von install.sh (`docker compose -p smartheat`), Updater und Erststart
+
+
 class ComposeRunner:
-    def __init__(self, root: Path, project: str = "smartheat", run=subprocess.run) -> None:
+    def __init__(self, root: Path, project: str = COMPOSE_PROJECT, run=subprocess.run) -> None:
         self._root, self._project, self._run = root, project, run
 
     def _command(self, version: str, *args: str) -> list[str]:

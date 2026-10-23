@@ -1,4 +1,5 @@
 import ast
+import dataclasses
 import errno
 import hashlib
 import http.server
@@ -1735,18 +1736,14 @@ def test_a_failing_state_file_in_recover_is_logged_and_does_not_raise(tmp_path, 
     assert world.state().current == "0.3.0" and world.state().in_progress is None
 
 
-def _main_environment(monkeypatch, root: Path, *, offer=None, allow_http=None):
+def _main_environment(monkeypatch, root: Path, *, offer=None) -> updater.Einstellungen:
+    """Nur `SHG_ROOT` ist Umgebung (A6-87); alles andere reicht der Test als `Einstellungen` an `main` (Rueckgabe)."""
     (root / "data").mkdir(parents=True, exist_ok=True)
     if offer is not None:
         (root / "data" / "software_soll.json").write_text(json.dumps(offer))
     (root / "release.pub").write_text("untrusted comment: x\nAAAA\n")
     monkeypatch.setenv("SHG_ROOT", str(root))
-    monkeypatch.setenv("SHG_RELEASE_PUB", str(root / "release.pub"))
-    for name in ("SHG_UPDATER_ALLOW_HTTP", "SHG_UPDATER_HEALTH_URL", "SHG_UPDATER_HEALTH_SECONDS",
-                 "SHG_COMPOSE_PROJECT"):
-        monkeypatch.delenv(name, raising=False)
-    if allow_http is not None:
-        monkeypatch.setenv("SHG_UPDATER_ALLOW_HTTP", allow_http)
+    return updater.Einstellungen(release_pub=root / "release.pub")
 
 
 class _Stop(Exception):
@@ -1757,7 +1754,7 @@ def test_main_waits_120_seconds_then_runs_every_900_plus_up_to_300_seconds(tmp_p
     """F-gateway-host-01: Takt des Dienstes. Echte `Updater`, echter lokaler Kanal (ohne Soll-Datei: "vorlaeufig");
     Uhr (`time.sleep`) und Zufall (`random.uniform`) sind die Grenze: die Folge der Ereignisse und der Wartezeiten ist
     das Ergebnis. Der Zufall liefert erst die obere, dann die untere Schranke seines Bereichs."""
-    _main_environment(monkeypatch, tmp_path)
+    settings = _main_environment(monkeypatch, tmp_path)
     events = []
     real_recover, real_run_once = updater.Updater.recover, updater.Updater.run_once
 
@@ -1784,7 +1781,7 @@ def test_main_waits_120_seconds_then_runs_every_900_plus_up_to_300_seconds(tmp_p
     monkeypatch.setattr(time, "sleep", create_autospec(time.sleep, side_effect=sleep))
     monkeypatch.setattr(random, "uniform", create_autospec(random.uniform, side_effect=lambda a, b: next(bounds)(a, b)))
     with pytest.raises(_Stop):
-        updater.main([])
+        updater.main([], einstellungen=settings)
     assert events == ["recover", "warten:120.0", "durchlauf:vorlaeufig", "warten:1200.0",
                       "durchlauf:vorlaeufig", "warten:900.0", "durchlauf:vorlaeufig", "warten:1050.0"]
 
@@ -1793,7 +1790,7 @@ def test_main_keeps_running_after_an_unexpected_error(tmp_path, monkeypatch, cap
     """A6-39: ein unerwarteter Fehler in einem Durchlauf beendet den Dienst nicht (er laeuft sonst erst nach `RestartSec`
     neu, mit 120 s Wartezeit); er wird mit seiner Spur geloggt, nach der ueblichen Pause kommt der naechste Durchlauf.
     Der Fehler kommt aus `run_once`, der Grenze zum Rest des Dienstes."""
-    _main_environment(monkeypatch, tmp_path)
+    settings = _main_environment(monkeypatch, tmp_path)
     calls = []
 
     def run_once(self):
@@ -1813,7 +1810,7 @@ def test_main_keeps_running_after_an_unexpected_error(tmp_path, monkeypatch, cap
     monkeypatch.setattr(time, "sleep", create_autospec(time.sleep, side_effect=sleep))
     monkeypatch.setattr(random, "uniform", create_autospec(random.uniform, return_value=0))
     with caplog.at_level("INFO"), pytest.raises(_Stop):
-        updater.main([])
+        updater.main([], einstellungen=settings)
     assert calls == ["durchlauf", "durchlauf"] and waits == [120.0, 900.0, 900.0]
     logged = [record for record in caplog.records if record.levelname == "ERROR" and record.exc_info]
     assert len(logged) == 1 and logged[0].exc_info[0] is RuntimeError
@@ -1823,7 +1820,7 @@ def test_main_keeps_running_after_an_unexpected_error(tmp_path, monkeypatch, cap
 def test_main_keeps_running_when_the_recovery_at_start_fails_unexpectedly(tmp_path, monkeypatch, caplog):
     """Review M-5: `recover()` beim Start liegt unter demselben Fangnetz wie der Durchlauf; sonst startet systemd den Dienst
     bei einem dauerhaften Fehler alle 30 s neu (mit `compose up` in jedem `recover`), ohne je einen Durchlauf zu machen."""
-    _main_environment(monkeypatch, tmp_path)
+    settings = _main_environment(monkeypatch, tmp_path)
 
     def recover(self):
         raise RuntimeError("kaputt beim Start")
@@ -1839,7 +1836,7 @@ def test_main_keeps_running_when_the_recovery_at_start_fails_unexpectedly(tmp_pa
     monkeypatch.setattr(time, "sleep", create_autospec(time.sleep, side_effect=sleep))
     monkeypatch.setattr(random, "uniform", create_autospec(random.uniform, return_value=0))
     with caplog.at_level("INFO"), pytest.raises(_Stop):
-        updater.main([])
+        updater.main([], einstellungen=settings)
     assert waits == [120.0, 900.0] and "Durchlauf: vorlaeufig" in caplog.text
     logged = [record for record in caplog.records if record.levelname == "ERROR" and record.exc_info]
     assert len(logged) == 1 and logged[0].exc_info[0] is RuntimeError
@@ -1849,33 +1846,34 @@ def test_main_keeps_the_state_and_the_data_under_shg_root(tmp_path, monkeypatch,
     """F-gateway-host-01: `SHG_ROOT` ist die Wurzel von Zustand (`updater/state.json`), Soll- und Meldungsdatei (`data/`)."""
     offer = {"version": "0.3.0", "manifest_url": "http://127.0.0.1:1/manifest.json", "manifest_sha256": "a" * 64,
              "signature": "x"}
-    _main_environment(monkeypatch, tmp_path, offer=offer)
-    updater.main(["--once"])
+    settings = _main_environment(monkeypatch, tmp_path, offer=offer)
+    updater.main(["--once"], einstellungen=settings)
     assert capsys.readouterr().out == "abgelehnt\n"
     assert json.loads((tmp_path / "updater" / "state.json").read_text())["rejected"] == ["0.3.0"]
     assert json.loads((tmp_path / "data" / "software_meldungen.json").read_text())["meldungen"][0]["version"] == "0.3.0"
 
 
 def test_main_once_recovers_runs_once_and_does_not_wait(tmp_path, monkeypatch, capsys):
-    _main_environment(monkeypatch, tmp_path)
+    settings = _main_environment(monkeypatch, tmp_path)
     events = []
     real_recover = updater.Updater.recover
     monkeypatch.setattr(updater.Updater, "recover", lambda self: (events.append("recover"), real_recover(self)))
     monkeypatch.setattr(time, "sleep", create_autospec(time.sleep, side_effect=_Stop))
-    updater.main(["--once"])
+    updater.main(["--once"], einstellungen=settings)
     assert events == ["recover"] and capsys.readouterr().out == "vorlaeufig\n"
 
 
 @pytest.mark.parametrize(("allow", "outcome"), [
-    ("1", "vorlaeufig"),  # http erlaubt: der Abruf wird versucht (Port 1: keine Verbindung)
-    (None, "abgelehnt"), ("0", "abgelehnt"), ("", "abgelehnt"), ("true", "abgelehnt"), ("yes", "abgelehnt"),
+    (True, "vorlaeufig"),  # http erlaubt: der Abruf wird versucht (Port 1: keine Verbindung)
+    (False, "abgelehnt"),
 ])
-def test_main_accepts_an_http_offer_only_with_the_switch_set_to_1(tmp_path, monkeypatch, capsys, allow, outcome):
-    """F-gateway-host-01: der Produktivwert ist "aus"; nur genau "1" schaltet http frei (Labor)."""
+def test_main_accepts_an_http_offer_only_with_allow_http_in_the_settings(tmp_path, monkeypatch, capsys, allow, outcome):
+    """F-gateway-host-01, A6-87: der Produktivwert ist "aus"; nur `Einstellungen(allow_http=True)` schaltet http frei
+    (Tests, Labor)."""
     offer = {"version": "0.3.0", "manifest_url": "http://127.0.0.1:1/manifest.json", "manifest_sha256": "a" * 64,
              "signature": "x"}
-    _main_environment(monkeypatch, tmp_path, offer=offer, allow_http=allow)
-    updater.main(["--once"])
+    settings = _main_environment(monkeypatch, tmp_path, offer=offer)
+    updater.main(["--once"], einstellungen=dataclasses.replace(settings, allow_http=allow))
     assert capsys.readouterr().out == outcome + "\n"
     reports = tmp_path / "data" / "software_meldungen.json"
     if outcome == "abgelehnt":  # die http-Adresse wurde ohne Abruf abgelehnt und gemeldet
@@ -1883,6 +1881,35 @@ def test_main_accepts_an_http_offer_only_with_the_switch_set_to_1(tmp_path, monk
             ("0.3.0", "manifest_ungueltig")]
     else:  # der Abruf scheiterte am Netz: vorlaeufig, nichts gemeldet
         assert not reports.exists()
+
+
+@pytest.mark.parametrize("value", ["1", "true", "0", ""])
+def test_main_ignores_every_environment_switch_of_the_old_names(tmp_path, monkeypatch, capsys, site, value):
+    """A6-87: `SHG_UPDATER_ALLOW_HTTP`, `SHG_UPDATER_HEALTH_URL`, `SHG_UPDATER_HEALTH_SECONDS`, `SHG_RELEASE_PUB` und
+    `SHG_COMPOSE_PROJECT` gelten nicht mehr: in einer Umgebung, die sie setzt (etwa einer gateway.env mit
+    `SHG_UPDATER_ALLOW_HTTP=1`), bleibt http abgelehnt, das Projekt `smartheat`, der Schluessel der Einstellungen."""
+    offer = {"version": "0.3.0", "manifest_url": site.url + "/0.3.0/manifest.json", "manifest_sha256": "a" * 64,
+             "signature": "x"}
+    settings = _main_environment(monkeypatch, tmp_path, offer=offer)
+    monkeypatch.setenv("SHG_UPDATER_ALLOW_HTTP", value)
+    monkeypatch.setenv("SHG_UPDATER_HEALTH_URL", site.url + "/gesundheit")
+    monkeypatch.setenv("SHG_UPDATER_HEALTH_SECONDS", "0.05")
+    monkeypatch.setenv("SHG_RELEASE_PUB", str(tmp_path / "gibt-es-nicht.pub"))
+    monkeypatch.setenv("SHG_COMPOSE_PROJECT", "anders")
+    updater.main(["--once"], einstellungen=settings)  # liest release.pub aus den Einstellungen, sonst FileNotFoundError
+    assert capsys.readouterr().out == "abgelehnt\n" and site.hits == []
+    reports = json.loads((tmp_path / "data" / "software_meldungen.json").read_text())["meldungen"]
+    assert [(m["version"], m["reason"]) for m in reports] == [("0.3.0", "manifest_ungueltig")]
+
+
+def test_the_default_settings_are_the_production_values():
+    """A6-87: die Standardwerte von `Einstellungen` sind die des Geraets (install.sh: Schluessel unter /opt/smartheat/host,
+    Projekt `smartheat`, Gesundheitsseite des Gateways auf Port 80); http bleibt aus."""
+    assert updater.Einstellungen() == updater.Einstellungen(
+        release_pub=Path("/opt/smartheat/host/release.pub"), allow_http=False, health_url="http://127.0.0.1/healthz",
+        health_seconds=600, compose_project="smartheat")
+    assert updater.Einstellungen().health_seconds == updater.HEALTH_SECONDS == 600
+    assert updater.Einstellungen().compose_project == bundles.COMPOSE_PROJECT
 
 
 class _Site:
@@ -1954,9 +1981,9 @@ UNHEALTHY_BODY = json.dumps({"server_ok": False, "runtime_status": None}).encode
 
 def _main_update(monkeypatch, root, site, *, signed_by_other_key=False, release_pub_of_other_key=False,
                  health_path="/healthz", health_body=HEALTHY_BODY, project=None, health_seconds=None,
-                 min_updater_version="0.1.0"):
+                 min_updater_version="0.1.0") -> updater.Einstellungen:
     """Bereitet einen echten `main --once` vor: ein signiertes Bundle 0.3.0 auf dem lokalen Server, das Angebot in
-    `data/software_soll.json`, `release.pub`, ein erreichbarer Broker (der Server selbst) und die Umgebung."""
+    `data/software_soll.json`, `release.pub`, ein erreichbarer Broker (der Server selbst) und die Einstellungen (Rueckgabe)."""
     secret, key_id, public = keypair()
     other_secret, other_id, other_public = keypair()
     files = {"docker-compose.yml": COMPOSE, "mosquitto.conf": MOSQ}
@@ -1968,24 +1995,25 @@ def _main_update(monkeypatch, root, site, *, signed_by_other_key=False, release_
                         health_path: health_body})
     offer = {"version": "0.3.0", "manifest_url": site.url + "/0.3.0/manifest.json", "signature": signature,
              "manifest_sha256": hashlib.sha256(raw).hexdigest()}
-    _main_environment(monkeypatch, root, offer=offer, allow_http="1")
+    settings = _main_environment(monkeypatch, root, offer=offer)
     (root / "release.pub").write_text(other_public if release_pub_of_other_key else public)
     (root / "data" / "device").mkdir()
     (root / "data" / "device" / "endpoint.json").write_text(json.dumps({"host": "127.0.0.1", "port": site.port}))
-    monkeypatch.setenv("SHG_UPDATER_HEALTH_URL", site.url + health_path)
+    settings = dataclasses.replace(settings, allow_http=True, health_url=site.url + health_path)
     if project is not None:
-        monkeypatch.setenv("SHG_COMPOSE_PROJECT", project)
+        settings = dataclasses.replace(settings, compose_project=project)
     if health_seconds is not None:
-        monkeypatch.setenv("SHG_UPDATER_HEALTH_SECONDS", health_seconds)
+        settings = dataclasses.replace(settings, health_seconds=health_seconds)
+    return settings
 
 
 @pytest.mark.parametrize(("release_pub_of_other_key", "outcome"), [(False, "aktualisiert"), (True, "abgelehnt")])
-def test_main_verifies_the_bundle_with_the_key_of_shg_release_pub(
+def test_main_verifies_the_bundle_with_the_key_of_the_release_pub_setting(
         tmp_path, monkeypatch, capsys, site, docker, fast_sleep, release_pub_of_other_key, outcome):
-    """`SHG_RELEASE_PUB` nennt den Schluessel: ein Bundle, das ein anderer Schluessel signiert hat (hier: die Datei traegt
+    """`Einstellungen.release_pub` nennt den Schluessel: ein Bundle, das ein anderer Schluessel signiert hat (hier: die Datei traegt
     einen anderen oeffentlichen Schluessel), wird abgelehnt und nie gestartet, mit dem richtigen angenommen."""
-    _main_update(monkeypatch, tmp_path, site, release_pub_of_other_key=release_pub_of_other_key)
-    updater.main(["--once"])
+    settings = _main_update(monkeypatch, tmp_path, site, release_pub_of_other_key=release_pub_of_other_key)
+    updater.main(["--once"], einstellungen=settings)
     assert capsys.readouterr().out == outcome + "\n"
     started = [call for call in docker.calls if "up" in call]
     reports = json.loads((tmp_path / "data" / "software_meldungen.json").read_text())["meldungen"]
@@ -2004,8 +2032,8 @@ def test_main_runs_the_updater_with_the_gateway_version_as_its_own(
     mit einem festen kleinen Wert faellt in je einer der beiden Zeilen auf."""
     major, minor, patch = (int(part) for part in GATEWAY_VERSION.split("."))
     verlangt = f"{major}.{minor}.{patch + 1}" if hoeher else GATEWAY_VERSION
-    _main_update(monkeypatch, tmp_path, site, min_updater_version=verlangt)
-    updater.main(["--once"])
+    settings = _main_update(monkeypatch, tmp_path, site, min_updater_version=verlangt)
+    updater.main(["--once"], einstellungen=settings)
     assert capsys.readouterr().out == outcome + "\n"
     started = [call for call in docker.calls if "up" in call]
     reports = json.loads((tmp_path / "data" / "software_meldungen.json").read_text())["meldungen"]
@@ -2016,21 +2044,21 @@ def test_main_runs_the_updater_with_the_gateway_version_as_its_own(
 
 
 @pytest.mark.parametrize(("project", "expected"), [("testprojekt", "testprojekt"), (None, "smartheat")])
-def test_main_passes_shg_compose_project_to_every_docker_compose_call(
+def test_main_passes_the_compose_project_setting_to_every_docker_compose_call(
         tmp_path, monkeypatch, capsys, site, docker, fast_sleep, project, expected):
-    _main_update(monkeypatch, tmp_path, site, project=project)
-    updater.main(["--once"])
+    settings = _main_update(monkeypatch, tmp_path, site, project=project)
+    updater.main(["--once"], einstellungen=settings)
     assert capsys.readouterr().out == "aktualisiert\n"
     compose_calls = [call for call in docker.calls if call[:2] == ["docker", "compose"]]
     assert {call[call.index("-p") + 1] for call in compose_calls} == {expected}
     assert {word for call in compose_calls for word in call if word in ("pull", "up", "ps")} == {"pull", "up", "ps"}
 
 
-def test_main_asks_exactly_the_address_of_shg_updater_health_url(
+def test_main_asks_exactly_the_address_of_the_health_url_setting(
         tmp_path, monkeypatch, capsys, site, docker, fast_sleep):
-    _main_update(monkeypatch, tmp_path, site, health_path="/gesundheit")
+    settings = _main_update(monkeypatch, tmp_path, site, health_path="/gesundheit")
     site.routes["/healthz"] = UNHEALTHY_BODY  # die Standardadresse waere ungesund: sie darf nicht gefragt werden
-    updater.main(["--once"])
+    updater.main(["--once"], einstellungen=settings)
     assert capsys.readouterr().out == "aktualisiert\n"
     assert "/gesundheit" in site.hits and "/healthz" not in site.hits
 
@@ -2051,14 +2079,15 @@ def fast_sleep(monkeypatch, reload_updater):
     return calls
 
 
-def test_main_ends_the_health_wait_after_shg_updater_health_seconds(
+def test_main_ends_the_health_wait_after_the_health_seconds_setting(
         tmp_path, monkeypatch, capsys, site, docker, fast_sleep):
     """Ein Bundle, das nie gesund wird: mit 0,05 s Frist endet das Warten und `main` rollt zurueck (Grund `ungesund`),
     nachdem die Frist auf der monotonen Uhr verstrichen ist; mit dem Standard von 600 s bricht die Fixture `fast_sleep`
     nach 300 Takten ab. Die Zahl der Takte haengt von der Last ab und wird nicht zugesichert."""
-    _main_update(monkeypatch, tmp_path, site, health_path="/gesundheit", health_body=UNHEALTHY_BODY, health_seconds="0.05")
+    settings = _main_update(monkeypatch, tmp_path, site, health_path="/gesundheit", health_body=UNHEALTHY_BODY,
+                            health_seconds=0.05)
     started = time.monotonic()
-    updater.main(["--once"])
+    updater.main(["--once"], einstellungen=settings)
     assert time.monotonic() - started >= 0.05
     assert capsys.readouterr().out == "zurueckgerollt\n"
     reports = json.loads((tmp_path / "data" / "software_meldungen.json").read_text())["meldungen"]
@@ -2068,9 +2097,9 @@ def test_main_ends_the_health_wait_after_shg_updater_health_seconds(
 def test_main_waits_longer_for_a_bundle_that_turns_healthy_when_the_deadline_is_long(
         tmp_path, monkeypatch, capsys, site, docker, fast_sleep):
     """Gegenprobe zum vorigen Test: dasselbe Bundle, ab der vierten Anfrage gesund, mit 1000 s Frist: aktualisiert."""
-    _main_update(monkeypatch, tmp_path, site, health_path="/gesundheit", health_seconds="1000")
+    settings = _main_update(monkeypatch, tmp_path, site, health_path="/gesundheit", health_seconds=1000)
     site.routes["/gesundheit"] = lambda: HEALTHY_BODY if site.hits.count("/gesundheit") >= 4 else UNHEALTHY_BODY
-    updater.main(["--once"])
+    updater.main(["--once"], einstellungen=settings)
     assert capsys.readouterr().out == "aktualisiert\n" and len(fast_sleep) == 3
 
 

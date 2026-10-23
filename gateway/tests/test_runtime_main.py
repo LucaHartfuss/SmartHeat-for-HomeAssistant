@@ -14,6 +14,7 @@ from world import GatewayWorld
 from smartheat_core import dateien
 from smartheat_device import prozess
 from smartheat_gateway import runtime_main
+from smartheat_gateway.bus import BUS_PORT
 from smartheat_gateway.paths import Paths
 from smartheat_gateway.zigbee import ZigbeeMirror
 from smartheat_runtime import app, aufraeumen
@@ -467,7 +468,7 @@ def vor_dem_start(world, monkeypatch):
     es)."""
     monkeypatch.setenv("SHG_HOST_DIR", str(world.host_dir))
     monkeypatch.setenv("SHG_DEVICE_API_URL", "https://accounts.example.test")
-    monkeypatch.setenv("SHG_DIAG_PORT", "0")
+    monkeypatch.setattr(runtime_main, "DIAG_PORT", 0)  # A6-87: eine Konstante, kein Umgebungsschalter
     pausen = []
     monkeypatch.setattr(prozess.time, "sleep", pausen.append)
     alive = world.paths.data / "alive"
@@ -546,6 +547,38 @@ def test_vorbereiten_returns_host_and_device_with_the_diagnosis_page_up(world, v
             s.shutdown()
             s.server_close()
     assert vor_dem_start.pausen == [] and vor_dem_start.alive.exists()
+
+
+def test_the_diagnosis_page_listens_on_diag_port_whatever_the_environment_says(world, vor_dem_start, monkeypatch):
+    """A6-87: der Port ist `runtime_main.DIAG_PORT`; `SHG_DIAG_PORT` aus der Umgebung gilt nicht mehr."""
+    monkeypatch.setenv("SHG_DIAG_PORT", "1")
+    ports = []
+    monkeypatch.setattr(runtime_main.diagnose, "start_server", lambda port, *args: ports.append(port))
+    runtime_main.vorbereiten(world.paths, vor_dem_start.mirror)
+    assert ports == [runtime_main.DIAG_PORT] == [0]
+
+
+def test_main_connects_to_the_local_bus_on_the_bus_port_whatever_the_environment_says(monkeypatch):
+    """A6-87: der Port des lokalen Busses ist `bus.BUS_PORT` (1883, Mosquitto in der Compose-Datei); `SHG_BUS_PORT` aus
+    der Umgebung gilt nicht mehr."""
+    monkeypatch.setenv("SHG_BUS_PORT", "1")
+    monkeypatch.delenv("SHG_BUS_HOST", raising=False)
+    monkeypatch.delenv("SHG_BUS_CREDENTIALS", raising=False)
+    monkeypatch.setattr(runtime_main.signal, "signal", lambda *args: None)
+    seen = []
+
+    def local_bus(host, port, *args, **kwargs):
+        seen.append((host, port))
+        raise _Stopp
+
+    monkeypatch.setattr(runtime_main, "LocalBus", local_bus)
+    with pytest.raises(_Stopp):
+        runtime_main.main()
+    assert seen == [("mosquitto", BUS_PORT)] and BUS_PORT == 1883
+
+
+class _Stopp(Exception):
+    pass
 
 
 def test_vorbereiten_reicht_die_ausstehende_markierung_an_den_geraete_host(world, vor_dem_start, monkeypatch):

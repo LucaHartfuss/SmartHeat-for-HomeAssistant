@@ -4,7 +4,8 @@
 # make_test_bundles.py), der Fake-Bootstrap als Release-Host
 # (/_e2e/files) und Bootstrap des Geraetekerns, der Fake-Broker als Weg der Soll-Version (Konfigurationsdokument mit
 # software, gesendet in der Rolle des Dienstes; die Laufzeit schreibt es nach data/software_soll.json) und der echte
-# Updater (python3 -m smartheat_host.updater --once) in einem Debian-13-Container, der docker compose ueber den
+# Updater (host/tests/updater_testlauf.py: smartheat_host.updater.main --once mit eigenen Einstellungen, A6-87) in einem
+# Debian-13-Container, der docker compose ueber den
 # Docker-Socket des Hosts steuert. Geprueft: 0.9.1 -> 0.9.2 gelingt, 0.9.3 wird zurueckgerollt, ein manipuliertes
 # Manifest (Signatur einer anderen Version) wird abgelehnt, ohne Container anzufassen (Review Focus 1 und 2). Die
 # Meldungen des Updaters (data/software_meldungen.json) kommen als up/result mit dokument "software" am Fake-Broker an.
@@ -182,9 +183,8 @@ updater() {
     -v "$CORE/__init__.py:/core/smartheat_core/__init__.py:ro" \
     -v "$CORE/dateien.py:/core/smartheat_core/dateien.py:ro" \
     -e PYTHONPATH=/gw/host:/gw/src:/core -e SHG_ROOT="$DATA" \
-    -e SHG_UPDATER_ALLOW_HTTP=1 -e SHG_UPDATER_HEALTH_URL=http://runtime:8080/healthz -e SHG_UPDATER_HEALTH_SECONDS=180 \
-    -e SHG_COMPOSE_PROJECT="$PROJECT" -e SHG_RELEASE_PUB="$DATA/release/test.pub" \
-    "$UPDATER_IMAGE" python3 -m smartheat_host.updater --once
+    "$UPDATER_IMAGE" python3 /gw/host/tests/updater_testlauf.py --release-pub "$DATA/release/test.pub" \
+    --health-url http://runtime:8080/healthz --health-seconds 180 --compose-project "$PROJECT" --once
 }
 expect_word() {  # $1 erwartetes Ergebnis, $2 Version; Log des Updaters (stderr) nur bei Abweichung
   # Ergebniswort nur aus stdout: docker run kopiert stdout und stderr getrennt, ihre Reihenfolge ist nicht garantiert.
