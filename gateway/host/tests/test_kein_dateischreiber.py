@@ -1,4 +1,4 @@
-"""Waechter (Restpunkt S3S6-Reste 2): das Host-Paket hat keinen eigenen Datei-Schreiber. Der einzige atomare Schreibweg
+"""Waechter: das Host-Paket hat keinen eigenen Datei-Schreiber. Der einzige atomare Schreibweg
 ist smartheat_core.dateien (install.sh legt ihn mit ab, test_boundaries.py); eine zweite Kopie liefe auseinander
 (Rechte, fsync, .tmp). Gesucht wird textuell (auch in Kommentaren), Ausnahmen stehen mit Begruendung in AUSNAHMEN."""
 import re

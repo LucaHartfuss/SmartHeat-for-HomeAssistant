@@ -13,7 +13,7 @@ from smartheat_runtime.roles import ChannelManifest
 from smartheat_runtime.snapshot import SnapshotRead, publish_snapshot, read_snapshot
 
 LEVERS = ("curve", "room_setpoint", "heat_limit")
-# Rollen der Manifest-Entities je Hebel (Add-on-Optionen unveraendert, P2-3).
+# Rollen der Manifest-Entities je Hebel (Add-on-Optionen unveraendert).
 LEVER_ENTITIES = {"curve": "sensor.curve_current", "room_setpoint": "sensor.shift_current",
                   "heat_limit": "sensor.heat_limit"}
 
@@ -107,7 +107,7 @@ def test_read_snapshot_skips_unmapped_levers_without_marking_them_invalid():
 
 
 def test_read_snapshot_never_sends_notifications():
-    # T2-13: Meldungen kommen nur noch aus der Zustellung (einmal pro Fehlerbeginn).
+    # Meldungen kommen nur noch aus der Zustellung (einmal pro Fehlerbeginn).
     ha_api = MagicMock(spec=HomeAssistantApi)
     ha_api.get_state.side_effect = ValueError("unavailable")
 
@@ -160,7 +160,7 @@ def test_snapshot_carries_a_manual_override_only_when_given():
     }
 
 
-# --- Hebel aus `known` (TP11: room_setpoint kommt von HaPlantBinding.read_or, nicht von einem Live-Read der
+# --- Hebel aus `known` (room_setpoint kommt von HaPlantBinding.read_or, nicht von einem Live-Read der
 # Zone) ---
 
 MANIFEST = ChannelManifest(refs={
@@ -193,7 +193,7 @@ def test_missing_known_lever_is_invalid():
     assert read.invalid == ("room_setpoint",)
 
 
-# --- Plan 3b: nur lesbare Hebel (Weishaupt-Basis) ---
+# --- Nur lesbare Hebel (Weishaupt-Basis) ---
 
 def _basis_manifest(**extra):
     return ChannelManifest(refs={
@@ -247,7 +247,7 @@ def test_publish_snapshot_carries_readonly():
      "Nur lesbarer Hebel 'curve' (sensor.curve_current) nicht lesbar, wird weggelassen: "),
 ], ids=["rolle", "hebel", "nur_lesbar"])
 def test_a_read_error_text_from_ha_is_logged_only_escaped(caplog, entity, basis, zeile):
-    """T6-Rest, R-c: der Fehlertext beim Lesen aus HA (Rolle, Hebel, nur lesbarer Hebel) steht nur als Escape im Log."""
+    """Der Fehlertext beim Lesen aus HA (Rolle, Hebel, nur lesbarer Hebel) steht nur als Escape im Log."""
     ha_api = MagicMock(spec=HomeAssistantApi)
     ha_api.get_state.side_effect = _states_with({entity: RuntimeError(FREMDTEXT)})
     with caplog.at_level(logging.WARNING, logger="smartheat_runtime.snapshot"):

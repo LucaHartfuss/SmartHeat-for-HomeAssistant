@@ -47,7 +47,7 @@ def test_run_telemetry_tick_reads_room_actual_and_publishes():
 
 @pytest.mark.parametrize("wert", [float("nan"), float("inf"), float("-inf")])
 def test_run_telemetry_tick_sendet_kein_nicht_endliches_room_actual(wert, caplog):
-    """Testoffensive T2, Nr. 17: room_actual ist Pflicht der Telemetrie (der Server lehnt sie sonst ab); ein
+    """room_actual ist Pflicht der Telemetrie (der Server lehnt sie sonst ab); ein
     nicht endlicher Wert wird nicht gesendet (Warnung), der naechste Tick liest erneut."""
     manifest = ChannelManifest(refs={"room_actual": "sensor.room_actual"})
     ha_api = MagicMock(spec=SignalSource)
@@ -94,7 +94,7 @@ def test_ein_ausfall_von_room_actual_warnt_einmal_und_die_wiederaufnahme_meldet_
 
 
 def test_ein_ungueltiges_signal_warnt_einmal_ohne_traceback_bis_zum_naechsten_gelungenen_senden(caplog):
-    """L4-17: SignalUngueltig (Fuehler liefert keinen gueltigen Wert) ist erwartet: eine WARNING ohne Traceback, weitere
+    """SignalUngueltig (Fuehler liefert keinen gueltigen Wert) ist erwartet: eine WARNING ohne Traceback, weitere
     Takte nur DEBUG, nach gelungenem Senden wieder eine WARNING; kein ERROR."""
     manifest = ChannelManifest(refs={"room_actual": "sensor.room_actual"})
     ha_api = MagicMock(spec=SignalSource)
@@ -122,7 +122,7 @@ def test_ein_ungueltiges_signal_warnt_einmal_ohne_traceback_bis_zum_naechsten_ge
 
 
 def test_an_unavailable_source_warns_once_without_traceback(caplog):
-    """L4-17 Rest: SourceUnavailable (lokaler Bus getrennt, HA nicht erreichbar) ist erwartet: je Ausfall eine WARNING
+    """SourceUnavailable (lokaler Bus getrennt, HA nicht erreichbar) ist erwartet: je Ausfall eine WARNING
     ohne Traceback, weitere Takte nur DEBUG, nach gelungenem Senden warnt ein neuer Ausfall wieder; kein ERROR."""
     manifest = ChannelManifest(refs={"room_actual": "sensor.room_actual"})
     ha_api = MagicMock(spec=SignalSource)
@@ -501,7 +501,7 @@ def test_the_telemetry_no_longer_carries_waerme_fehlt():
     assert "waerme_fehlt" not in mqtt_client.publish_telemetry.call_args.args[0]
 
 
-# --- Plan 3b: Energie-Normalisierung (Tageszaehler) ---
+# --- Energie-Normalisierung (Tageszaehler) ---
 
 ENERGY_MANIFEST = ChannelManifest(refs={"energy_thermal_heating": "sensor.waerme_heute"})
 KWH = {"thermal_heating": "kWh"}
@@ -563,7 +563,7 @@ def test_total_counters_get_no_normalizer():
     assert telemetry.energy_normalizer(object(), "total") is None
 
 
-# --- Spec Stufe 3 S4b 5 (A5-11): Energie nur mit der erwarteten Einheit ---
+# --- Energie nur mit der erwarteten Einheit ---
 
 def test_energie_in_wh_wird_als_kwh_gesendet():
     manifest = ChannelManifest(refs={"energy_primary_heating": "sensor.gas"})
@@ -674,7 +674,7 @@ def _fremde_einheit(ha_api):
 @pytest.mark.parametrize("pfad", [_regelfeld, _kpi_wert, _einheit_nicht_lesbar, _fremde_einheit],
                          ids=["regelfeld", "kpi_wert", "einheit_nicht_lesbar", "fremde_einheit"])
 def test_fremder_text_aus_der_signalquelle_steht_nur_escaped_im_log(caplog, pfad):
-    """T6-Rest, R-c: der Fehlertext beim Lesen (Regelfeld, KPI-Wert, Einheit) und die gemeldete Einheit selbst kommen
+    """Der Fehlertext beim Lesen (Regelfeld, KPI-Wert, Einheit) und die gemeldete Einheit selbst kommen
     aus HA bzw. vom lokalen Bus; in der Logzeile stehen sie nur als Escape (Zeilenumbruch, U+202E, U+061C)."""
     ha_api = MagicMock(spec=SignalSource)
     with caplog.at_level(logging.WARNING, logger="smartheat_runtime.telemetry"):

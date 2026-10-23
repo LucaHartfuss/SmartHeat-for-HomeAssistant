@@ -1,7 +1,7 @@
 """Gemeinsame Fixtures der Kern- und HA-Host-Tests: `clock`, `make_store`, `env` (Laufzeit-Tests; Hilfen in
 runtime_helpers.py) und `geraet_env` (env plus Datenordner des Geraets; Start-Tests in test_main_geraet.py).
 
-Profile von hypothesis (Testoffensive T6, Spec §12 Nr. 20; Root-Runbook Abschnitt 3): `schnell` (Standard, 50
+Profile von hypothesis (Root-Runbook Abschnitt 3): `schnell` (Standard, 50
 Beispiele, fester Seed) und `voll` (500 Beispiele, zufaelliger Seed, Blob zum Nachstellen eines Fehlers), gewaehlt per
 `HYPOTHESIS_PROFILE` (`scripts/check.sh --full` setzt `voll`). Ein unbekannter Name endet mit `InvalidArgument`. Keine
 Beispiel-Datenbank (`.hypothesis/` haelt nur Caches von hypothesis, per .gitignore ausgenommen), keine Frist

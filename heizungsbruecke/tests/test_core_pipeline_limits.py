@@ -87,7 +87,7 @@ def test_an_unreadable_device_range_falls_back_to_the_local_limits(make_store, c
 
 
 def test_an_unreadable_device_range_logs_the_foreign_error_text_only_escaped(make_store, clock, caplog):
-    """T6-Rest, R-c: der Fehlertext beim Lesen des Anlagenbereichs aus HA steht nur als Escape im Log."""
+    """Der Fehlertext beim Lesen des Anlagenbereichs aus HA steht nur als Escape im Log."""
     pipeline, _ = _pipeline(make_store, clock, {"room_setpoint": RuntimeError(FREMDTEXT)})
     with caplog.at_level(logging.INFO, logger="smartheat_core.pipeline"):
         pipeline.apply_server_values({"room_setpoint": 16.5})
@@ -275,7 +275,7 @@ def _weishaupt_pipeline(make_store, clock, bereich):
 
 
 def test_weishaupt_bereich_vom_server_verengt_nur(make_store, clock):
-    """Review Focus 5: ein weiter Normal-Bereich vom Server erweitert die lokalen Grenzen nicht (range_of)."""
+    """Ein weiter Normal-Bereich vom Server erweitert die lokalen Grenzen nicht (range_of)."""
     pipeline = _weishaupt_pipeline(make_store, clock, (5.0, 40.0))
     assert pipeline.range_of("room_setpoint") == (16.0, 25.0)
 
@@ -287,7 +287,7 @@ def test_weishaupt_bereich_vom_server_verengt(make_store, clock):
 
 @pytest.mark.parametrize("wert", [0.0, 0.31, 0.99, 3.0])
 def test_grosser_schritt_bleibt_in_den_lokalen_grenzen(make_store, clock, wert):
-    """Review Focus 3: Schritt 5 vom Server; clamping.target_value klemmt nach dem Runden."""
+    """Schritt 5 vom Server; clamping.target_value klemmt nach dem Runden."""
     binding = LimitedBinding(Ha(), {})
     binding.description = dataclasses.replace(WEISHAUPT_MODBUS, steps={**WEISHAUPT_MODBUS.steps, "curve": 5.0})
     pipeline = LeverPipeline(make_store(), binding, SAFETY, clock=clock)
@@ -307,7 +307,7 @@ def test_runden_ueber_das_maximum_wird_wieder_geklemmt(make_store, clock, wert, 
     assert pipeline._target("curve", wert) == ziel
 
 
-# --- Mutationsprobe Stufe 3 S4b (A5-22 Rest): Gueltigkeit des Bereichs, Beruehrungspunkt, halber Schritt ---
+# --- Mutationsprobe: Gueltigkeit des Bereichs, Beruehrungspunkt, halber Schritt ---
 
 def test_the_device_range_is_read_again_after_exactly_300_seconds(make_store, clock):
     assert LIMITS_TTL_SECONDS == 300.0

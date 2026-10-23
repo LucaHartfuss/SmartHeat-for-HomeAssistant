@@ -32,7 +32,7 @@ def welt(clock):
 
 
 def test_a_paired_w100_gets_its_mode_at_once_and_setpoint_and_heat_once_it_reports_the_mode_on(welt):
-    # Labor 2026-10-22 (L4-30): der Konverter lumi verwirft Soll und system_mode, solange der zwischengespeicherte
+    # Labor 2026-10-22: der Konverter lumi verwirft Soll und system_mode, solange der zwischengespeicherte
     # thermostat_mode nicht ON ist, und ON steht dort erst, wenn das Geraet es gemeldet hat. Je Schluessel eine
     # Nachricht (Labor 2026-10-21), das Soll vor heat (sonst gilt das Werks-Soll 15 als Wunsch)
     _, z2m, _ = welt
@@ -67,7 +67,7 @@ def test_setpoint_and_heat_are_sent_only_once(welt):
     z2m.interview(W100)
     z2m.report(W100, thermostat_mode="ON")
     z2m.report(W100, thermostat_mode="ON", battery=80)
-    z2m.report(W100, system_mode="off")  # am Geraet ausgeschaltet: bleibt aus (A6-14)
+    z2m.report(W100, system_mode="off")  # am Geraet ausgeschaltet: bleibt aus
     assert z2m.set_requests == EINRICHTUNG_W100
 
 
@@ -141,7 +141,7 @@ def test_the_bound_thermostat_is_set_up_by_its_binding_not_with_the_default(welt
 
 
 def test_a_new_binding_replaces_the_previous_one(welt):
-    # die Laufzeit startet nach jeder Konfigurationsaenderung neu (L4-17): es gilt nur die juengste Bindung
+    # die Laufzeit startet nach jeder Konfigurationsaenderung neu: es gilt nur die juengste Bindung
     _, z2m, mirror = welt
     aufrufe = []
     mirror.pflege.binden(W100, lambda: aufrufe.append("alt"))
@@ -172,7 +172,7 @@ def test_releasing_the_device_drops_its_open_rest(welt):
 
 
 def test_binding_before_the_on_report_gives_the_wish_not_20(welt):
-    """L4-30 (1): ungebunden gekoppelt (Rest mit DEFAULT_RAUM_SOLL), dann gebunden, bevor das Geraet ON meldet: die
+    """Ungebunden gekoppelt (Rest mit DEFAULT_RAUM_SOLL), dann gebunden, bevor das Geraet ON meldet: die
     Bindung uebernimmt die Einrichtung, das Geraet bekommt das Soll aus dem Soll-Speicher (22,5 -> 23), nicht 20."""
     _, z2m, mirror = welt
     p = profil("TH-S04D")

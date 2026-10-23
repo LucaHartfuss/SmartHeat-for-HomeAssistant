@@ -1,4 +1,4 @@
-"""Durchsetzung (TP11, Spec 5.3)."""
+"""Durchsetzung."""
 import dataclasses
 import logging
 from datetime import date, datetime
@@ -100,7 +100,7 @@ def _rt(make_store, clock, ha, uptime=SETTLE + 1, store=None, manifest=MANIFEST,
     vorhandenen StateStore (Neustart-Simulation: derselbe backup.json-Pfad, frisch eingelesen)
     statt den Wiederherstellungspunkt POINT (geaendert um `point`, None = fehlt) neu zu schreiben. `description`:
     Bindungsbeschreibung (Default Vaillant).
-    Echte Teile (A5-25): Notifier mit Fake-Sink (`rt.kunde`: was beim Kunden ankommt), Worker, Pipeline."""
+    Echte Teile: Notifier mit Fake-Sink (`rt.kunde`: was beim Kunden ankommt), Worker, Pipeline."""
     if store is None:
         restore_point = {lever: value for lever, value in {**POINT, **point}.items() if value is not None}
         store = make_store(backup={"restore_point": restore_point})
@@ -216,7 +216,7 @@ def test_zone_mode_is_restored_and_shift_rewritten(make_store, clock):
 
 
 def test_zone_mode_restore_switches_the_mode_exactly_once(make_store, clock):
-    # Ruling #3: write_levers schaltet die Zone selbst um, kein zweites set_hvac_mode davor.
+    # write_levers schaltet die Zone selbst um, kein zweites set_hvac_mode davor.
     # Zone und Wert verstellt, HA hinkt nach: Betriebsart und Parallelverschiebung sind EIN
     # Rueckschreiben (sonst schaltete der zweite Schreibvorgang auf dem veralteten "auto" erneut).
     rt = _rt(make_store, clock, Ha(mode="auto", shift=18.0, reflects_writes=False))
@@ -247,7 +247,7 @@ def test_min_flow_deviation_is_written_back(make_store, clock):
 
 
 def test_a_zone_that_was_never_prepared_is_no_zone_mode_deviation(make_store, clock):
-    """Fix-Runde 1 (I-1): vor der ersten erfolgreichen Vorbereitung gehoert die Betriebsart dem Start und dem lokalen
+    """Vor der ersten erfolgreichen Vorbereitung gehoert die Betriebsart dem Start und dem lokalen
     Check (Kontingent `zone_prepare`); die Durchsetzung schaltet nicht um, zaehlt nicht und meldet nichts."""
     rt = _rt(make_store, clock, Ha(mode="auto"))
     rt.zone_prepared = False
@@ -317,7 +317,7 @@ def test_after_a_restart_enforcement_waits_for_the_settle_window(make_store, clo
 
 
 def test_enforcement_rate_limited_per_day(make_store, clock, monkeypatch):
-    # Review Focus 2: mypyllant uebernimmt das Rueckschreiben nicht -- hoechstens
+    # Mypyllant uebernimmt das Rueckschreiben nicht -- hoechstens
     # MAX_PER_DAY Schreibvorgaenge, genau eine Eingriffs- und eine Limit-Meldung.
     rt = _rt(make_store, clock, Ha(curve=1.3, reflects_writes=False))
     for _ in range(20):
@@ -365,7 +365,7 @@ def test_retry_interval_between_writes(make_store, clock):
 @pytest.mark.parametrize(("ago", "allowed"), [(enforce.RETRY_SECONDS - 1, False),
                                               (enforce.RETRY_SECONDS + 1, True)])
 def test_may_write_respects_the_retry_interval(make_store, clock, ago, allowed):
-    # Ruling #9: RETRY_SECONDS direkt pruefen (im Ablauf wird es von der Schonfrist verdeckt).
+    # RETRY_SECONDS direkt pruefen (im Ablauf wird es von der Schonfrist verdeckt).
     rt = _rt(make_store, clock, Ha())
     rt.store.update(write_budget={"enforce:curve": {"day": TODAY.isoformat(), "count": 1, "last": clock() - ago}})
     assert enforce._may_write(rt, "curve") is allowed
@@ -529,7 +529,7 @@ def test_curve_tolerance_is_half_a_plant_step(make_store, clock):
 
 
 def test_without_room_target_the_min_flow_is_skipped_and_the_rest_enforced(make_store, clock):
-    """A5-24 (a): beim ersten Start ohne Raum-Soll liefert derived.expected None."""
+    """Beim ersten Start ohne Raum-Soll liefert derived.expected None."""
     ha = Ha(curve=1.3, min_flow=25.0)
     rt = _rt(make_store, clock, ha)
     rt.store.update(stable_target=None)
@@ -538,7 +538,7 @@ def test_without_room_target_the_min_flow_is_skipped_and_the_rest_enforced(make_
 
 
 def test_a_second_change_during_an_open_intervention_extends_it(make_store, clock):
-    """A5-24 (b): neuer Hebel waehrend eines noch nicht zurueckgekehrten Eingriffs -> neue Signatur, neue Meldung,
+    """Neuer Hebel waehrend eines noch nicht zurueckgekehrten Eingriffs -> neue Signatur, neue Meldung,
     KPI zusammengefuehrt."""
     ha = Ha(curve=1.2, reflects_writes=False)
     rt = _rt(make_store, clock, ha)
@@ -555,7 +555,7 @@ def test_a_second_change_during_an_open_intervention_extends_it(make_store, cloc
 
 
 def test_after_a_data_fault_detection_needs_two_rounds_again(make_store, clock):
-    """A5-24 (c)."""
+    """Nach einem Datenfehler braucht die Erkennung wieder zwei Runden."""
     ha = Ha(curve=1.3)
     rt = _rt(make_store, clock, ha)
     enforce.check_manual_override(rt)  # Runde 1 von 2
@@ -573,7 +573,7 @@ def test_after_a_data_fault_detection_needs_two_rounds_again(make_store, clock):
     ("auto", 21.0, "Betriebsart der Zone"),
 ])
 def test_message_names_mode_and_setpoint_correctly(make_store, clock, mode, shift, was):
-    """A5-24 (d), Mutanten 71-73."""
+    """Die Meldung nennt Betriebsart und Sollwert richtig."""
     ha = Ha(mode=mode, shift=shift)
     rt = _rt(make_store, clock, ha)
     _rounds(rt)
@@ -581,7 +581,7 @@ def test_message_names_mode_and_setpoint_correctly(make_store, clock, mode, shif
 
 
 def test_limit_message_is_not_critical(make_store, clock):
-    """A5-24 (d), Mutant 123."""
+    """Die Limit-Meldung ist nicht kritisch."""
     ha = Ha(curve=1.3)
     rt = _rt(make_store, clock, ha)
     rt.store.update(write_budget={"enforce:curve": {"day": TODAY.isoformat(), "count": 6, "last": 0.0}})
@@ -592,7 +592,7 @@ def test_limit_message_is_not_critical(make_store, clock):
 
 @pytest.mark.parametrize(("live", "durchgesetzt"), [(20.6, True), (20.4, True), (20.55, False), (20.5, False)])
 def test_min_flow_deviation_of_one_plant_step_is_enforced(make_store, clock, live, durchgesetzt):
-    """A5-64: Toleranz = halber Anlagenschritt (0,05) wie bei allen Hebeln; Soll = Raum-Soll 20,5."""
+    """Toleranz = halber Anlagenschritt (0,05) wie bei allen Hebeln; Soll = Raum-Soll 20,5."""
     ha = Ha(min_flow=live)
     rt = _rt(make_store, clock, ha)
     _rounds(rt)
@@ -605,7 +605,7 @@ def test_state_ok_matches_the_notifier():
     assert STATE_OK == NOTIFIER_OK
 
 
-# --- Mutationsprobe Stufe 3 S3 (Task 11) ------------------------------------------------------------------------
+# --- Mutationsprobe ------------------------------------------------------------------------
 
 def test_today_is_the_wallclock_day(monkeypatch):
     """Mutationsprobe (Mutant 2): _today() liefert den Tag der Wanduhr, nicht None."""
@@ -681,7 +681,7 @@ def test_kpi_takes_the_live_value_of_a_lever_without_setpoint(make_store, clock)
     (lambda: Ha(mode=RuntimeError(FREMDTEXT)), f"Betriebsart der Zone nicht lesbar: {FREMDTEXT_IM_LOG}"),
 ], ids=["hebel", "betriebsart"])
 def test_a_read_error_from_ha_is_logged_only_escaped(make_store, clock, caplog, ha, zeile):
-    """T6-Rest, R-c: der Fehlertext beim Lesen aus HA (Hebel, Betriebsart der Zone) steht nur als Escape im Log."""
+    """Der Fehlertext beim Lesen aus HA (Hebel, Betriebsart der Zone) steht nur als Escape im Log."""
     rt = _rt(make_store, clock, ha())
     with caplog.at_level(logging.INFO, logger="smartheat_core.enforce"):
         _rounds(rt)
@@ -690,7 +690,7 @@ def test_a_read_error_from_ha_is_logged_only_escaped(make_store, clock, caplog, 
 
 @pytest.mark.parametrize(("live", "durchgesetzt"), [(0.925, False), (0.926, True)])
 def test_a_deviation_of_exactly_tolerance_plus_float_rest_is_no_deviation(make_store, clock, live, durchgesetzt):
-    """Testoffensive T8 (Mutationsprobe K2): die Grenze gehoert zur Toleranz. Die Toleranz der Steigung (knapp unter
+    """Die Grenze gehoert zur Toleranz. Die Toleranz der Steigung (knapp unter
     0,025; der Server darf jede Toleranz bis zum Schritt senden) ist so gewaehlt, dass 0,925 genau Toleranz plus
     Gleitkomma-Rest 1e-9 ueber dem Soll 0,9 liegt: keine Abweichung; 0,926 ist eine."""
     toleranz = (0.925 - 0.9) - 1e-9
@@ -706,7 +706,7 @@ def test_a_deviation_of_exactly_tolerance_plus_float_rest_is_no_deviation(make_s
 
 
 def test_a_failed_write_back_within_the_retry_interval_sends_no_limit_message(make_store, clock):
-    """Testoffensive T8 (Mutationsprobe K2): der erste Rueckschreibversuch scheitert; die Runden in den naechsten
+    """Der erste Rueckschreibversuch scheitert; die Runden in den naechsten
     30 Minuten (Abstand der Versuche) schreiben nicht und melden auch kein Tageslimit -- erst 6 Versuche am Tag sind
     das Limit."""
     ha = Ha(curve=1.3)

@@ -1,13 +1,13 @@
 #!/bin/bash
-# Updater-Integrationstest (Spec G2b-1 10, Plan G2b-1 Task 15; ab Gateway 0.6.0 Plan 5b D2 Task 10): echte lokale
+# Updater-Integrationstest: echte lokale
 # Registry, drei signierte Test-Bundles (0.9.1 gesund, 0.9.2 gesund, 0.9.3: die Laufzeit wirft im laufenden Prozess,
 # make_test_bundles.py), der Fake-Bootstrap als Release-Host
 # (/_e2e/files) und Bootstrap des Geraetekerns, der Fake-Broker als Weg der Soll-Version (Konfigurationsdokument mit
 # software, gesendet in der Rolle des Dienstes; die Laufzeit schreibt es nach data/software_soll.json) und der echte
-# Updater (host/tests/updater_testlauf.py: smartheat_host.updater.main --once mit eigenen Einstellungen, A6-87) in einem
+# Updater (host/tests/updater_testlauf.py: smartheat_host.updater.main --once mit eigenen Einstellungen) in einem
 # Debian-13-Container, der docker compose ueber den
 # Docker-Socket des Hosts steuert. Geprueft: 0.9.1 -> 0.9.2 gelingt, 0.9.3 wird zurueckgerollt, ein manipuliertes
-# Manifest (Signatur einer anderen Version) wird abgelehnt, ohne Container anzufassen (Review Focus 1 und 2). Die
+# Manifest (Signatur einer anderen Version) wird abgelehnt, ohne Container anzufassen. Die
 # Meldungen des Updaters (data/software_meldungen.json) kommen als up/result mit dokument "software" am Fake-Broker an.
 # Laufzeit rund 6 min: die Healthchecks (30 s) und die Gesundheitsfrist (180 s) im Rueckweg-Fall.
 set -u
@@ -257,14 +257,14 @@ echo "    0.9.2: $((SECONDS - start)) s"
 state_is 's["current"] == "0.9.2" and s["previous"] == "0.9.1" and s["in_progress"] is None and s["pending_reports"] == []' \
   || fail "state.json nach 0.9.2: $(cat "$DATA/updater/state.json")"
 reported 0.9.2 ok "" || fail "update_result ok fuer 0.9.2 fehlt"
-for name in docker-compose.yml mosquitto.conf manifest.json manifest.json.minisig; do  # Spec 2.2
+for name in docker-compose.yml mosquitto.conf manifest.json manifest.json.minisig; do
   cmp -s "$DATA/release/0.9.2/$name" "$DATA/bundles/0.9.2/$name" || fail "Bundle 0.9.2: $name fehlt oder weicht ab"
 done
 stage_done "Update auf 0.9.2"
 echo "PASS: Update 0.9.1 -> 0.9.2"
 
 # 9. 0.9.3 (Regel-Worker wirft 10 s nach dem Start, danach 60 s Pause im Prozess): Rueckweg auf 0.9.2. Die Pause
-# darf dem Updater kein gesundes Gateway zeigen (Abschlussreview S6 I-2).
+# darf dem Updater kein gesundes Gateway zeigen.
 set_desired 0.9.3
 start=$SECONDS
 expect_word zurueckgerollt 0.9.3

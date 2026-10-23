@@ -1,4 +1,4 @@
-"""Meldungen mit Zustandsentprellung (notifier.py, Spec TP6 3.4)."""
+"""Meldungen mit Zustandsentprellung (notifier.py)."""
 import logging
 from unittest.mock import MagicMock
 
@@ -376,7 +376,7 @@ def test_clear_all_dismisses_open_notifications_and_forgets_states_without_push(
 @pytest.mark.parametrize(("state", "stufe"), [("inaktiv", logging.WARNING), (STATE_OK, logging.INFO)],
                          ids=["warnung", "entwarnung"])
 def test_the_log_line_escapes_single_surrogates_from_server_text(make_store, ha_api, caplog, state, stufe):
-    """Testoffensive T6 (Fund aus dem Profil voll): eine Meldung kann Text vom Server tragen (Grund einer Ablehnung).
+    """Eine Meldung kann Text vom Server tragen (Grund einer Ablehnung).
     Ein einzelnes Surrogat braeche die UTF-8-Ausgabe des Logs (Logging error, Zeile verloren); die Logzeile schreibt
     es als Escape, Push und gespeicherter Text bleiben unveraendert."""
     store = make_store()
@@ -476,7 +476,7 @@ def _anzeige_scheitert(store, monkeypatch):
 def test_ein_meldeschluessel_mit_fremdem_text_steht_in_den_fehlerpfaden_nur_escaped_im_log(
     make_store, monkeypatch, caplog, pfad,
 ):
-    """T6-Rest, R-c: der Schluessel `fehler:<Text>` eines Startfehlers traegt Text des Servers (Konfigurationsdokument).
+    """Der Schluessel `fehler:<Text>` eines Startfehlers traegt Text des Servers (Konfigurationsdokument).
     Scheitern Speichern, Push oder Anzeige, steht er in der Warnung nur als Escape (Zeilenumbruch, U+202E, U+061C)."""
     store = make_store()
     with caplog.at_level(logging.INFO, logger="smartheat_runtime.notifier"):

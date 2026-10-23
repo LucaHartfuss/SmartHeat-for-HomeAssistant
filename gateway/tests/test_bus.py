@@ -40,7 +40,7 @@ def test_deeply_nested_json_raises_recursion_error_in_decode_and_the_bus_catches
 
 
 def test_decode_reads_the_non_finite_numbers_that_python_json_accepts():
-    """Festgehalten (Testoffensive T5', F-gateway-host-26): json.loads liest NaN, Infinity und 1e999 als float, `decode`
+    """Festgehalten: json.loads liest NaN, Infinity und 1e999 als float, `decode`
     prueft nichts davon. Die Pruefung liegt bei den Lesern (signals.py, room_mean); das Verhalten beschreibt
     test_signals.py."""
     assert math.isnan(decode(b'{"temperature": NaN}')["temperature"])
@@ -94,7 +94,7 @@ def test_subscribe_racing_with_connect_is_not_lost():
 
 
 def test_the_log_line_of_a_failed_message_escapes_the_topic_from_the_local_bus(clock, caplog):
-    """Fixrunde 1 zu T6-Rest Task 3: das Topic kommt von einem Teilnehmer des lokalen Busses; im Log steht es mit
+    """Das Topic kommt von einem Teilnehmer des lokalen Busses; im Log steht es mit
     Escape auf einer Zeile."""
     bus, stub = _local_bus()
     ZigbeeMirror(bus, clock).start()

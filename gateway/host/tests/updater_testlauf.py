@@ -1,4 +1,4 @@
-"""Einstieg des Updaters fuer den Docker-Test (tests/test_gateway_updater.sh, A6-87): derselbe `smartheat_host.updater.main`
+"""Einstieg des Updaters fuer den Docker-Test (tests/test_gateway_updater.sh): derselbe `smartheat_host.updater.main`
 wie auf dem Geraet, aber mit eigenen `Einstellungen` (http erlaubt, Gesundheitsseite im Test-Netz, eigener Schluessel,
 eigenes Compose-Projekt). Nur hier ist `allow_http` einzuschalten: der Dienst (`python3 -m smartheat_host.updater`)
 ruft `main` ohne Einstellungen und liest keine Umgebungsvariable dafuer; `install.sh` kopiert nur `smartheat_host/*.py`,

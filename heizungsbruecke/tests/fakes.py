@@ -14,7 +14,7 @@ from smartheat_core.safety import resolve_local_safety
 from smartheat_runtime import entitlement
 from smartheat_runtime.runtime_config import RuntimeConfig
 
-# Text fremder Herkunft fuer die Logzeilen-Tests (T6-Rest, R-c: Fehlertext aus HA, Einheit, Meldeschluessel mit Text des
+# Text fremder Herkunft fuer die Logzeilen-Tests (Fehlertext aus HA, Einheit, Meldeschluessel mit Text des
 # Servers): ein Zeilenumbruch mit Logkopf, das Bidi-Steuerzeichen U+202E und die ARABIC LETTER MARK U+061C. In der
 # Logzeile steht er nur als Escape (smartheat_core.logtext.lesbar).
 FREMDTEXT = "HA\nWARNING  gefaelscht ‮؜"
@@ -29,7 +29,7 @@ def logzeilen(caplog) -> list[str]:
 
 
 def runtime_config(**overrides) -> RuntimeConfig:
-    """Gueltige RuntimeConfig fuer Tests, die einen Laufzeit-Kontext von Hand bauen (Plan SHG G1)."""
+    """Gueltige RuntimeConfig fuer Tests, die einen Laufzeit-Kontext von Hand bauen."""
     values = {
         "tenant_id": "test_tenant", "lever_set_id": "vaillant_vrc720",
         "local_safety": resolve_local_safety("vaillant_vrc720", "Heizkoerper"),
@@ -65,7 +65,7 @@ class HaEventSink:
 
 
 class FakeNotifySink:
-    """NotifySink der Laufzeit-Tests (Grenze zum Kunden, A5-25): der echte Notifier entscheidet ueber Entprellung,
+    """NotifySink der Laufzeit-Tests (Grenze zum Kunden): der echte Notifier entscheidet ueber Entprellung,
     Hinweis-Schalter und offene Meldungen; der Sink haelt nur fest, was beim Kunden ankommt."""
 
     def __init__(self) -> None:
@@ -113,8 +113,8 @@ class FakeMqttChannel:
 
 
 class FakeTriggerClient:
-    """Fake des Grenz-Adapters zum HA-WebSocket (`heizungsbruecke.geraet_trigger.HaTriggerClient`, Controller-Ruling
-    Task 10): verbindet nichts, haelt die Konstruktor-Argumente in `kwargs` fest (die Tests rufen daraus
+    """Fake des Grenz-Adapters zum HA-WebSocket (`heizungsbruecke.geraet_trigger.HaTriggerClient`):
+    verbindet nichts, haelt die Konstruktor-Argumente in `kwargs` fest (die Tests rufen daraus
     `on_trigger_event`/`on_connected`). Konstruktor, `start` und `stop` haben die Signatur des echten Clients
     (test_fake_gleichlauf.py). Einsetzen per `monkeypatch.setattr(..., trigger_klasse(ablage))`: jede Umgebung bekommt
     eine eigene Unterklasse, deren Instanzen in `ablage` landen."""
@@ -145,7 +145,7 @@ def datei_stand(path: Path) -> tuple[int, int, bytes] | None:
     """Stand einer Datei auf dem Datentraeger (Inode, Aenderungszeit in ns, Inhalt), None ohne Datei. Jedes Schreiben
     geht atomar ueber eine neue Datei (dateien.schreiben, os.replace) und aendert die Inode; der Inhalt ist mit dabei,
     damit eine wiederverwendete Inode bei gleicher Aenderungszeit kein "ungeschrieben" vortaeuscht. Gleicher Stand
-    heisst: die Datei wurde nicht geschrieben (Wirkung auf dem Datentraeger statt eines Spions auf dem Store, A5-25)."""
+    heisst: die Datei wurde nicht geschrieben (Wirkung auf dem Datentraeger statt eines Spions auf dem Store)."""
     try:
         stat = path.stat()
         inhalt = path.read_bytes()
@@ -154,7 +154,7 @@ def datei_stand(path: Path) -> tuple[int, int, bytes] | None:
     return stat.st_ino, stat.st_mtime_ns, inhalt
 
 
-#: Registry der Schreibziele, die die Tests binden (L4-27/A5-70: Schreibziele nur von der Plattform des Hebelsatzes,
+#: Registry der Schreibziele, die die Tests binden (Schreibziele nur von der Plattform des Hebelsatzes,
 #: alle aus einem Config-Entry): je Plattform (dokument.SCHREIB_PLATTFORM) die Entities der Test-Optionen (Vaillant
 #: runtime_helpers.OPTIONS und climate.zone, Weishaupt WEISHAUPT, Viessmann VIESSMANN_OPTIONEN). KONFIG_EINTRAG ist das
 #: Config-Entry je Plattform, das auch der Kreis der Test-Dokumente nennt (geraet_helpers.konfiguration_aus_optionen).
@@ -186,7 +186,7 @@ class FakeHa:
             "number.min_flow": 21.0,
         }
         # echtes HA: die Registry liefert keine device_class, sie steht im Zustand; die lokale Positivliste der Rollen
-        # (A6-02) liest sie dort
+        # liest sie dort
         self.states.update({f"sensor.{name}::device_class": "temperature"
                             for name in ("room_actual", "room_target", "outdoor_temp")})
         self.writes = []
@@ -195,7 +195,7 @@ class FakeHa:
         self.dismissed = []
         self.events = []
         self.write_error = None
-        # Zuordnungspruefung (Spec 5c 1.3): Entity-/Geraete-Registry, Dienste, in HA unbekannte Entities, HA nicht
+        # Zuordnungspruefung: Entity-/Geraete-Registry, Dienste, in HA unbekannte Entities, HA nicht
         # erreichbar. Die Schreibziele der Tests stehen in der Registry (SCHREIBZIELE); ohne Eintrag waere ein
         # Schreibziel beim Start nicht pruefbar. Ein Eintrag ohne Zustand zaehlt fuer die Positivliste nicht
         # (einstellbare_plattformen).
@@ -285,7 +285,7 @@ class FakeHa:
     def get_states(self):
         self._online()
         # wie das echte HA: jede Entity mit Wert oder Attributen hat einen Zustand; eine nicht lesbare (Exception als
-        # Wert) steht als "unavailable" da, eine nur ueber Attribute bekannte als "unknown" (A6-02: die Positivliste
+        # Wert) steht als "unavailable" da, eine nur ueber Attribute bekannte als "unknown" (die Positivliste
         # der Rollen verlangt einen Zustand je gebundener Entity)
         result = []
         for entity_id in dict.fromkeys(key.partition("::")[0] for key in self.states):
@@ -310,7 +310,7 @@ class FakeHa:
 
 
 class FailingServiceHa(FakeHa):
-    """Der Notify-Dienst `notify.kaputt` wirft, alle anderen gehen durch (Plan SHG G1, Review-Fokus 5)."""
+    """Der Notify-Dienst `notify.kaputt` wirft, alle anderen gehen durch (Review-Fokus 5)."""
 
     def send_notification(self, service, message):
         if service == "notify.kaputt":
@@ -319,11 +319,11 @@ class FailingServiceHa(FakeHa):
 
 
 class LaggingFakeHa(FakeHa):
-    """HA/mypyllant-Modell (TP12e, AU-023): ein geschriebener Wert ist erst nach `lag_seconds` lesbar
+    """HA/mypyllant-Modell: ein geschriebener Wert ist erst nach `lag_seconds` lesbar
     (mypyllant pollt die Hersteller-Cloud bis ca. 30 min spaeter), ein Moduswechsel wirkt nach
     `mode_lag_seconds`; ein Service-Aufruf an eine nicht verfuegbare Entity ist ein wirkungsloses 200
-    (HA ueberspringt sie still, AU-016); waehrend einer Quota-Sperre scheitert jeder Aufruf mit 403
-    und zaehlt in `quota_attempts` (AU-015). `set_hvac_mode` respektiert `write_error` wie die
+    (HA ueberspringt sie still); waehrend einer Quota-Sperre scheitert jeder Aufruf mit 403
+    und zaehlt in `quota_attempts`. `set_hvac_mode` respektiert `write_error` wie die
     Schreibaufrufe. `clock` ist die monotone Test-Uhr (FakeClock)."""
 
     def __init__(self, clock, *, lag_seconds: float = 1800.0, mode_lag_seconds: float = 600.0) -> None:

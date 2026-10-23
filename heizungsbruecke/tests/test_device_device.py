@@ -1,4 +1,4 @@
-"""Spec 5b 5.1: das Geraet - Bootstrap, hello, Dokumente, Befehle, Bedienwunsch, Status, Meldungen, Rettungsweg,
+"""Das Geraet - Bootstrap, hello, Dokumente, Befehle, Bedienwunsch, Status, Meldungen, Rettungsweg,
 Laufzeit-Kanal. Link und Bootstrap-Server sind Fakes; die Wire-Formate sind die des Vertrags."""
 import json
 import math
@@ -43,7 +43,7 @@ def _command(kind="diagnostics", command_id="c1", payload=None):
             "expires_at": "2027-01-15T09:00:00+00:00"}
 
 
-# --- Ursprungswerte im Status (Spec Stufe 3 S3 5.1, G-4) ---
+# --- Ursprungswerte im Status (G-4) ---
 
 def test_status_carries_only_originals_the_server_does_not_know(tmp_path):
     world = World(tmp_path)
@@ -82,7 +82,7 @@ def test_status_respects_v1_limits(tmp_path):
 
 
 def test_ursprungswert_genau_auf_der_grenze_von_1e12(tmp_path):
-    """URSPRUNG_WERT_MAX = 1e12 als Literal aus der Spec (nicht ueber die Konstante): beide Vorzeichen gehen hinaus,
+    """URSPRUNG_WERT_MAX = 1e12 als Literal (nicht ueber die Konstante): beide Vorzeichen gehen hinaus,
     ein Hauch darueber nicht."""
     assert wire.URSPRUNG_WERT_MAX == 1e12
     world = World(tmp_path)
@@ -180,7 +180,7 @@ def test_a_rejected_configuration_keeps_the_old_one_and_tells_the_display(tmp_pa
 
 
 def test_a_rejection_from_before_5c_shows_the_local_hint_with_the_code_and_reports_no_text(tmp_path):
-    """dokumente.json von vor 5c traegt einen Text an Stelle 2: der lokale Hinweis nennt nur den Code (Spec 6.3, E2 A)."""
+    """dokumente.json von vor 5c traegt einen Text an Stelle 2: der lokale Hinweis nennt nur den Code (E2 A)."""
     (tmp_path / device.DEVICE_DIR).mkdir(parents=True)
     (tmp_path / device.DEVICE_DIR / "dokumente.json").write_text(json.dumps(
         {"update_anlass": None, "abgelehnt": {"konfiguration": [3, "ungueltig", "Alter Gerätetext"]}}))
@@ -203,7 +203,7 @@ class UnpruefbarHost(FakeHost):
 
 
 def test_an_unverifiable_configuration_is_neither_taken_nor_refused_and_is_checked_again_later(tmp_path):
-    """Spec 5c 1.3: HA nicht erreichbar -> keine Ablehnung (der Server stellt eine abgelehnte Version nicht erneut zu),
+    """HA nicht erreichbar -> keine Ablehnung (der Server stellt eine abgelehnte Version nicht erneut zu),
     das Geraet haelt das Dokument zurueck und prueft nach dem Wiederholabstand erneut, ohne neue Zustellung."""
     world = World(tmp_path, UnpruefbarHost())
     world.verbinden()
@@ -229,7 +229,7 @@ def test_an_unverifiable_configuration_is_neither_taken_nor_refused_and_is_check
 
 @pytest.mark.parametrize("datei", ["konfiguration.json", "dokumente.json"])
 def test_datentraegerfehler_beim_speichern_haelt_zurueck_und_wiederholt(tmp_path, monkeypatch, caplog, datei):
-    """A6-10: ein OSError beim Speichern (vor dem Dokument bzw. erst beim Zustand danach) verliert die Konfiguration nicht
+    """Ein OSError beim Speichern (vor dem Dokument bzw. erst beim Zustand danach) verliert die Konfiguration nicht
     bis zur naechsten Verbindung: das Geraet haelt sie zurueck (eine ERROR-Zeile, ohne Text) und gibt nach dem
     Wiederholabstand das Ergebnis und die Uebernahme."""
     from smartheat_device import documents
@@ -328,7 +328,7 @@ class BasisHost(GeraetHostBasis, FakeHost):
 
 def test_a_failing_cleanup_marker_holds_the_empty_configuration_back_until_it_can_be_written(tmp_path, monkeypatch,
                                                                                                caplog):
-    """Review Focus 1 (Spec Testoffensive 12.6, Nr. 38): laesst sich die Aufraeum-Markierung nicht schreiben, bleibt die
+    """Laesst sich die Aufraeum-Markierung nicht schreiben, bleibt die
     alte Konfiguration gespeichert (die Laufzeit regelt mit ihr weiter), kein up/result, keine Markierung, kein
     Neustart;
     eine ERROR-Zeile je Zurueckhalten. Ist der Ordner wieder beschreibbar, uebernimmt die Wiederholung nach 30 s,
@@ -462,7 +462,7 @@ def test_unknown_topics_and_broken_messages_are_ignored(tmp_path):
 
 @pytest.mark.parametrize("name", wire.DOWN_TOPICS)
 def test_every_contract_down_topic_reaches_exactly_its_receiver_and_takes_effect(tmp_path, name):
-    """ck F-client-kern-43: je Down-Topic des Vertrags die Wirkung genau eines Empfaengers (gespeichertes Dokument,
+    """Je Down-Topic des Vertrags die Wirkung genau eines Empfaengers (gespeichertes Dokument,
     Befehlsergebnis, EV_SETPOINTS ueber den echten Laufzeit-Kanal); die anderen bleiben unberuehrt. Ein neues Topic
     ohne Eintrag in `koerper` scheitert hier mit KeyError."""
     world = World(tmp_path)
@@ -510,7 +510,7 @@ def test_a_foreign_down_topic_reaches_nobody(tmp_path, caplog):
 
 
 def test_the_debug_line_of_a_foreign_topic_escapes_its_name(tmp_path, caplog):
-    """Fixrunde 1 zu T6-Rest Task 3: der Name eines unbekannten Topics kommt vom Broker; im DEBUG-Log steht er mit
+    """Der Name eines unbekannten Topics kommt vom Broker; im DEBUG-Log steht er mit
     Escape auf einer Zeile."""
     world = World(tmp_path)
     world.verbinden()
@@ -553,7 +553,7 @@ def test_inventory_parts_go_up_before_the_result(tmp_path):
     world.empfangen("down/command", _command("inventory", payload={"stunden": 1}))
     assert world.link.of("up/inventory") == [{"schema": 1, "command_id": "c1", "teil": 1, "teile": 1,
                                               "daten": {"kandidaten": [1, 2]}}]
-    assert world.link.of("up/result") == []  # erst nach dem PUBACK der Teile (L4-02)
+    assert world.link.of("up/result") == []  # erst nach dem PUBACK der Teile
     world.link.gesendet(world.link.topics().index("up/inventory") + 1)
     world.device.schritt()
     names = world.link.topics()
@@ -745,7 +745,7 @@ def test_hello_reports_the_claim_state_the_device_knows(tmp_path):
 
 
 def test_claim_state_hides_the_code_and_waits_for_setup(tmp_path):
-    """Spec 5c 1.1/F1: nach der Uebernahme ohne Code melden; der Zustand wird wartet_auf_einrichtung."""
+    """Nach der Uebernahme ohne Code melden; der Zustand wird wartet_auf_einrichtung."""
     world = World(tmp_path, access=False)
     world.client.script["register"] = [bootstrap.Antwort("nicht_uebernommen", world.zugang)]
     world.verbinden()
@@ -759,7 +759,7 @@ def test_claim_state_hides_the_code_and_waits_for_setup(tmp_path):
 
 @pytest.mark.parametrize("value", ["gesperrt", "nicht_uebernommen"])
 def test_claim_state_accepts_only_uebernommen(tmp_path, value):
-    """Final-Review F-3: frei wird ein Geraet nur ueber new_claim_code (neuer Code); claim_state nicht_uebernommen
+    """Frei wird ein Geraet nur ueber new_claim_code (neuer Code); claim_state nicht_uebernommen
     zeigte sonst nach einer Uebernahme den alten Code wieder an."""
     world = World(tmp_path, access=False)
     world.client.script["register"] = [bootstrap.Antwort("nicht_uebernommen", world.zugang)]
@@ -888,7 +888,7 @@ def test_setpoint_source_off_is_shown_and_cleared(tmp_path):
 
 @pytest.mark.parametrize("herkunft, durch", [("app", None), (None, "katze"), ("app", "katze")])
 def test_a_wish_with_an_unknown_origin_or_actor_is_refused_in_the_calling_thread(tmp_path, herkunft, durch):
-    """5b-D1-4: wie eine nicht endliche Zahl schon im aufrufenden Thread (der Host wendet den Wert sonst an, als waere
+    """Wie eine nicht endliche Zahl schon im aufrufenden Thread (der Host wendet den Wert sonst an, als waere
     er angenommen); nichts kommt in die Inbox, kein up/wish."""
     world = World(tmp_path)
     world.verbinden()
@@ -916,7 +916,7 @@ def test_refused_wishes_are_logged_once_per_reason_without_the_value(tmp_path, c
 
 
 def test_setpoint_source_off_without_a_value_keeps_the_message_open(tmp_path):
-    """5b-D1-4: soll_quelle_aus(True) ohne wirksames Soll schliesst die Meldung nicht, sie bleibt offen (Text ohne
+    """soll_quelle_aus(True) ohne wirksames Soll schliesst die Meldung nicht, sie bleibt offen (Text ohne
     Wert); erst soll_quelle_aus(False) schliesst sie."""
     ohne_wert = "Thermostat ist aus, SmartHeat regelt weiter; Heizung aus über die Sommersperre bzw. im Portal"
     world = World(tmp_path)
@@ -1009,7 +1009,7 @@ def test_three_auth_failures_take_the_rescue_path_and_reconnect_with_a_new_certi
 
 
 def test_a_blocked_device_never_shows_the_claim_code(tmp_path):
-    """Die Sperre steht nur im Speicher; device_state bleibt auf der Platte nicht_uebernommen (Spec 5c F1)."""
+    """Die Sperre steht nur im Speicher; device_state bleibt auf der Platte nicht_uebernommen."""
     world = World(tmp_path, access=False)
     world.client.script["register"] = [bootstrap.Antwort("nicht_uebernommen", world.zugang),
                                        bootstrap.NotAuthenticated("r")]
@@ -1138,7 +1138,7 @@ def test_a_failing_capabilities_callback_sends_hello_on_a_later_tick(tmp_path, c
 
 
 class WerfenderHost(FakeHost):
-    """Host, dessen Rueckrufe in `werfen` bei jedem Aufruf werfen (5b-D1-4, Review Focus 4); der Text ist geheim."""
+    """Host, dessen Rueckrufe in `werfen` bei jedem Aufruf werfen; der Text ist geheim."""
 
     def __init__(self, *werfen: str) -> None:
         super().__init__()
@@ -1344,7 +1344,7 @@ def test_a_status_outside_the_contract_is_not_sent_and_the_next_valid_one_is(tmp
 
 
 def test_ein_nicht_endlicher_wert_im_status_wird_nicht_gesendet_der_takt_lebt_weiter(tmp_path, caplog):
-    """Testoffensive T2, Nr. 17: allow_nan=False des Links ist der letzte Riegel; Device._publish faengt den ValueError
+    """allow_nan=False des Links ist der letzte Riegel; Device._publish faengt den ValueError
     (Text ohne Werte), sendet nichts und der naechste gueltige Status geht hinaus."""
     world = World(tmp_path)
     world.verbinden()
@@ -1432,7 +1432,7 @@ def test_no_connection_for_five_minutes_shows_no_connection(tmp_path):
 
 
 def test_the_device_counts_no_connection_only_after_more_than_300_seconds(tmp_path):
-    """ck F-client-kern-46: Grenze als Literal (Spec: laenger als 300 s), genau auf der Grenze und eins daneben."""
+    """Grenze als Literal (laenger als 300 s), genau auf der Grenze und eins daneben."""
     world = World(tmp_path)
     world.device.schritt()
     world.clock.now += 300
@@ -1454,7 +1454,7 @@ class WartendeInbox(queue.Queue):
 
 
 def test_a_stop_while_waiting_for_the_inbox_runs_no_further_tick(tmp_path, monkeypatch):
-    """5b-D2-4: stop() waehrend run auf die Inbox wartet; das naechste Ereignis weckt den Thread, aber es folgt kein
+    """stop() waehrend run auf die Inbox wartet; das naechste Ereignis weckt den Thread, aber es folgt kein
     Takt mehr (er koennte nach dem DISCONNECT einen neuen Link oeffnen), und run endet."""
     monkeypatch.setattr(device, "TICK_SECONDS", 30.0)  # kein Takt durch Zeitablauf, solange der Test laeuft
     world = World(tmp_path)
@@ -1509,10 +1509,10 @@ def test_nach_dem_wegfall_der_ursache_wird_ein_erneuter_fehler_wieder_geloggt(tm
     assert caplog.text.count("up/status nicht gesendet") == 2
 
 
-# --- Mutationsprobe T4' (Task 12): Grenzen und Zustaende des Takts ---
+# --- Mutationsprobe T4': Grenzen und Zustaende des Takts ---
 
 def test_the_device_thread_waits_one_second_per_tick_and_is_a_daemon(tmp_path):
-    """Der Takt wartet hoechstens 1 s auf ein Ereignis (Literal aus der Spec, nicht TICK_SECONDS); der Geraete-Thread
+    """Der Takt wartet hoechstens 1 s auf ein Ereignis (Literal, nicht TICK_SECONDS); der Geraete-Thread
     haelt das Prozessende nicht auf."""
     world = World(tmp_path)
     timeouts = []
@@ -1642,7 +1642,7 @@ def test_after_a_reconnect_the_status_follows_hello_at_once(tmp_path):
 
 
 def test_status_nach_hello_kommt_nach_gescheitertem_rueckruf(tmp_path):
-    """T4-Hello-Status: scheitert ein Rueckruf beim erzwungenen Status nach hello, geht der Status im naechsten Takt
+    """Scheitert ein Rueckruf beim erzwungenen Status nach hello, geht der Status im naechsten Takt
     hinaus, auch ohne inhaltliche Aenderung und binnen 10 s nach dem letzten (sonst saehe der Server ihn nicht)."""
     world = World(tmp_path, WerfenderHost())
     world.verbinden()
@@ -1818,7 +1818,7 @@ def test_a_blocked_device_does_not_recheck_a_held_configuration(tmp_path):
     assert world.device.documents.version("konfiguration") == 0
 
 
-# --- Aufgaben des Hosts im Geraete-Thread (L4-06 Variante C) ---
+# --- Aufgaben des Hosts im Geraete-Thread ---
 
 def test_eine_aufgabe_laeuft_erst_im_geraete_thread_und_ein_fehler_haelt_ihn_nicht_auf(tmp_path, caplog):
     world = World(tmp_path)

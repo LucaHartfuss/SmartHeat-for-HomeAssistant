@@ -1,14 +1,14 @@
-"""Golden-Master des ganzen Add-ons (Spec SHG 3.4 Punkt 1). Ein fester Szenario-Lauf mit Fake-HA, dem Link einer
+"""Golden-Master des ganzen Add-ons. Ein fester Szenario-Lauf mit Fake-HA, dem Link einer
 Geraete-Attrappe (geraet_helpers.FakeGeraet) und fester Uhr zeichnet jede Aussenwirkung auf: schreibende HA-Aufrufe,
 Push- und HA-Benachrichtigungen, HA-Ereignisse, Nachrichten des Links, Start/Stopp des Trigger-Clients,
 Prozess-Neustarts und nach jedem Schritt den Inhalt aller Dateien im Datenverzeichnis. Lesende HA-Aufrufe und Logs
 zaehlen nicht.
 
-Erzeugt auf dem Stand vor G1 (GOLDEN_UPDATE=1), mit 1.0.0 (Spec 5c, Plan D Task 10) einmal neu im Geraete-Pfad: die
+Erzeugt auf dem Stand vor G1 (GOLDEN_UPDATE=1), mit 1.0.0 einmal neu im Geraete-Pfad: die
 Laufzeit startet auf dem Konfigurationsdokument aus OPTIONS, das Abo kommt aus dem Dokument, Snapshots und Telemetrie
 gehen ueber den Link. Der Master von 0.36 bleibt als addon_scenario_0_36.json; normalisieren() haelt fest, dass sich
 beide nur in den ERLAUBT genannten Punkten unterscheiden. TRIGGER_CLIENT und install_wall_clock sind die Patch-Ziele;
-den Prozess-Neustart zeichnet der Rueckruf neustart auf, den start_process app.start uebergibt (Spec Stufe 3 S6 4.2)."""
+den Prozess-Neustart zeichnet der Rueckruf neustart auf, den start_process app.start uebergibt."""
 import copy
 import itertools
 import json
@@ -56,7 +56,7 @@ STATES = {
     "climate.zone": "auto", "climate.zone::temperature": 22.0,
     "sensor.flow_temperature": 35.0, "sensor.flow_setpoint": 35.0,
     "sensor.thermostat_battery": "80",
-    # echtes HA: die Klasse steht im Zustand (lokale Positivliste der Rollen, A6-02)
+    # echtes HA: die Klasse steht im Zustand (lokale Positivliste der Rollen)
     "sensor.flow_temperature::device_class": "temperature", "sensor.flow_setpoint::device_class": "temperature",
     "sensor.thermostat_battery::device_class": "battery",
 }
@@ -380,7 +380,7 @@ def run_scenario(tmp_path, monkeypatch) -> list[dict]:
     return w.record
 
 
-#: Spec 5c 5: erlaubte Unterschiede zwischen dem Master von 0.36 und 1.0.0, einzeln; alles andere ist ein Fehler.
+#: Erlaubte Unterschiede zwischen dem Master von 0.36 und 1.0.0, einzeln; alles andere ist ein Fehler.
 ERLAUBT = (
     "abo_abfrage: ['accounts', 'status', …] fehlt (Abo aus dem Konfigurationsdokument)",
     "mqtt_client: ['mqtt', 'loop_start'|'stop'] fehlt (Link des Geraetekerns)",
@@ -400,14 +400,14 @@ ERLAUBT = (
 #: Die Schritte, in denen die Laufzeit mit veraltetem Notbetrieb neu startet (ERLAUBT "status_start"); nur dort
 #: normalisiert normalisieren() "startet" + notbetrieb zu "notbetrieb".
 STATUS_START_SCHRITTE = ("abo_erneut_inaktiv", "abmelden")
-#: Schluessel im Schreibbudget (backup.json), die erst seit Fixrunde A auch nach einem erfolgreichen Start stehen.
+#: Schluessel im Schreibbudget (backup.json), die auch nach einem erfolgreichen Start stehen.
 START_ZAEHLER = ("boost_start", "emergency_start")
 #: Was 0.36 aus den Optionen nahm und 1.0.0 aus dem Dokument bzw. der Version (ERLAUBT, letzte zwei Zeilen).
 ALT_ADDON_VERSION = "0.36.0"
-#: Der Benachrichtigungsdienst im Master von 0.36 und seit Fixrunde A (ERLAUBT "benachrichtigung"): nur noch Handy-Dienste.
+#: Der Benachrichtigungsdienst im Master von 0.36 und im Geraete-Pfad (ERLAUBT "benachrichtigung"): nur noch Handy-Dienste.
 ALT_DIENST = "notify.handy"
 NEU_DIENST = "notify.mobile_app_handy"
-#: Anlagen-Kennung in backup.json (ERLAUBT "plant_id"): im Master von 0.36 aus den Hebel-Referenzen, seit A6-36 aus dem
+#: Anlagen-Kennung in backup.json (ERLAUBT "plant_id"): im Master von 0.36 aus den Hebel-Referenzen, im Geraete-Pfad aus dem
 #: Kreis des Dokuments (geraet_helpers.konfiguration_aus_optionen); woertlich, nicht aus dem Code gelesen.
 ALT_KENNUNG = ('{"curve": "number.curve_current", "heat_limit": "number.heat_limit", "min_flow": "number.min_flow", '
                '"room_setpoint": "climate.zone::temperature"}')
@@ -497,6 +497,6 @@ _VERSION_RE = re.compile(r'"addon_version": "[^"]+"')
 
 
 def render_ohne_version(record: list[dict]) -> str:
-    """A5-65: die Versionsnummer ist kein Verhalten; ohne sie muss der Master nicht bei jedem Release neu geschrieben
+    """Die Versionsnummer ist kein Verhalten; ohne sie muss der Master nicht bei jedem Release neu geschrieben
     werden."""
     return _VERSION_RE.sub('"addon_version": "<version>"', render(record))

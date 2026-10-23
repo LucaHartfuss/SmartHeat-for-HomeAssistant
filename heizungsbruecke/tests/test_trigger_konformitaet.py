@@ -1,4 +1,4 @@
-"""Ereignisvertrag der HA-Trigger-Quelle (testhilfen/trigger_konformitaet.py; Spec Stufe 3 S6 4.1)."""
+"""Ereignisvertrag der HA-Trigger-Quelle (testhilfen/trigger_konformitaet.py)."""
 import pytest
 from fakes import FakeClock, FakeHa
 from trigger_konformitaet import PRUEFUNGEN, TriggerWelt, beobachten

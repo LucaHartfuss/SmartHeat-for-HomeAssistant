@@ -44,7 +44,7 @@ def test_rate_limit_blocks_until_the_window_is_free(tmp_path):
 
 
 def test_two_guards_in_two_threads_share_one_counter(tmp_path, monkeypatch):
-    """Befehle des Geraetekerns und Laufzeit bauen je einen Waechter auf derselben Datei (Spec SHG G2 4.2); in einem
+    """Befehle des Geraetekerns und Laufzeit bauen je einen Waechter auf derselben Datei; in einem
     Prozess schuetzt sie ein Lock je Pfad. Das Laden mit einer Pause von 1 ms macht den Wettlauf des Lesens und
     Schreibens sicher sichtbar."""
     laden = QuotaGuard._load
@@ -162,7 +162,7 @@ def test_a_block_time_that_is_not_a_number_is_ignored(tmp_path):
 
 @pytest.mark.parametrize("abbruch", ["fsync", "replace"])
 def test_the_counter_survives_a_crash_while_saving(tmp_path, monkeypatch, abbruch):
-    """Atomar mit fsync (Plan G2b-1, Restpunkt 8): bricht das Schreiben ab (Stromausfall, volle Platte), bleibt die alte Datei
+    """Atomar mit fsync (Restpunkt 8): bricht das Schreiben ab (Stromausfall, volle Platte), bleibt die alte Datei
     unveraendert lesbar, der Zaehler also bei zwei Aufrufen; der Abbruch erreicht den Aufrufer, danach zaehlt der naechste
     Aufruf normal weiter (die Sperre ist freigegeben, ein Rest der Zwischendatei stoert nicht). Bricht schon der fsync der
     Zwischendatei ab, ist sie noch nicht an ihren Platz getreten: erst fsync, dann replace."""
@@ -170,7 +170,7 @@ def test_the_counter_survives_a_crash_while_saving(tmp_path, monkeypatch, abbruc
     guard.take()
     guard.take()
     vorher = guard._path.read_bytes()
-    # Die Attrappen an os.fsync/os.replace (autospec) sind die Dateisystem-Grenze (Nr. 23): sie spielen den Ausfall des
+    # Die Attrappen an os.fsync/os.replace (autospec) sind die Dateisystem-Grenze: sie spielen den Ausfall des
     # Systems nach; geprueft wird die Wirkung auf die Datei, nicht der Aufruf.
     assert zaehler(guard) == 2
     with monkeypatch.context() as patch:

@@ -1,4 +1,4 @@
-"""A5-60: ein atomarer Schreibweg fuer Kern, Laufzeit, Geraetekern und Gateway."""
+"""Ein atomarer Schreibweg fuer Kern, Laufzeit, Geraetekern und Gateway."""
 import json
 import os
 import stat
@@ -57,7 +57,7 @@ def test_read_json_treats_missing_and_broken_files_as_none(tmp_path):
 @pytest.mark.parametrize("ausfall", ["write", "replace"])
 def test_a_failure_while_writing_or_replacing_leaves_no_temp_file_and_the_target_unchanged(tmp_path, monkeypatch,
                                                                                          ausfall):
-    """S3S3-Reste: die urspruengliche Ausnahme geht durch, die Temp-Datei bleibt nicht liegen, das Ziel ist das alte."""
+    """Die urspruengliche Ausnahme geht durch, die Temp-Datei bleibt nicht liegen, das Ziel ist das alte."""
     ziel = tmp_path / "x.json"
     dateien.schreiben_text(ziel, "alt", modus=dateien.PRIVAT)
 

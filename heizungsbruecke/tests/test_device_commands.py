@@ -1,4 +1,4 @@
-"""Spec 5b 3.4: Befehle hoechstens einmal ausgefuehrt, Ergebnis vor dem Senden gespeichert, Gruende aus dem Vertrag;
+"""Befehle hoechstens einmal ausgefuehrt, Ergebnis vor dem Senden gespeichert, Gruende aus dem Vertrag;
 Befehl hinweis (jedes Geraet)."""
 import json
 import logging
@@ -241,7 +241,7 @@ def test_exceptions_become_reasons(tmp_path):
 
 
 def test_kein_ergebnis_traegt_einen_text(tmp_path):
-    """Spec Stufe 3 S5 8: jeder Fehlerweg des Registers meldet nur Felder aus ERROR_FIELDS."""
+    """Jeder Fehlerweg des Registers meldet nur Felder aus ERROR_FIELDS."""
     def zu_gross(command_id, daten):
         raise ValueError("zu gross")
 
@@ -316,7 +316,7 @@ def test_inventory_data_goes_out_before_the_result(tmp_path):
         send_inventory=lambda command_id, daten: order.append(("inventur", command_id, daten)) or [7])
     register.register("inventory", lambda payload: cmd.Done({}, inventur={"k": [1]}))
     register.empfangen(_command("inventory", payload={"stunden": 1}))
-    assert order == [("inventur", "c1", {"k": [1]})]  # das Ergebnis erst nach dem PUBACK (L4-02)
+    assert order == [("inventur", "c1", {"k": [1]})]  # das Ergebnis erst nach dem PUBACK
     register.inventur_bestaetigt(7)
     register.pruefen()
     assert order == [("inventur", "c1", {"k": [1]}), ("result", "c1")]
@@ -350,7 +350,7 @@ def _inventur_register(tmp_path, sent, mids, *, clock=None, calls=None, wiederho
 
 
 def test_ergebnis_der_inventur_erst_nach_puback_der_teile(tmp_path):
-    """L4-02 (b): Ergebnis und Journal erst, wenn jedes Inventurteil bestaetigt ist; bis dahin steht der Marker."""
+    """Ergebnis und Journal erst, wenn jedes Inventurteil bestaetigt ist; bis dahin steht der Marker."""
     sent, calls = Sent(), []
     register = _inventur_register(tmp_path, sent, [[1, 2, 3]], calls=calls)
     register.empfangen(_command("inventory", payload={"stunden": 1}))
@@ -441,7 +441,7 @@ def test_das_neusenden_der_inventur_endet_nach_drei_versuchen_mit_keine_bestaeti
 
 
 def test_wiederholbare_inventur_laeuft_nach_neustart_erneut_statt_intern(tmp_path):
-    """L4-02 (a): der Neustart fiel in die Erkennung (Marker, kein Ergebnis); die erneute Zustellung fuehrt sie noch
+    """Der Neustart fiel in die Erkennung (Marker, kein Ergebnis); die erneute Zustellung fuehrt sie noch
     einmal aus, das Ergebnis ist ok, die Inventur geht hinaus. Ein weiteres Duplikat laeuft nicht noch einmal."""
     sent, calls = Sent(), []
     erste = _inventur_register(tmp_path, sent, [None], calls=calls)  # offline: die Erkennung ist gelaufen, nichts weg
@@ -478,7 +478,7 @@ def test_a_too_large_inventory_fails_intern(tmp_path):
 
 
 def test_the_log_line_of_a_failed_inventory_escapes_the_command_id_of_the_server(tmp_path, caplog):
-    """Fixrunde 1 zu T6-Rest Task 3: die command_id kommt vom Server (bis 64 Zeichen, UTF-8-kodierbar, Steuerzeichen
+    """Die command_id kommt vom Server (bis 64 Zeichen, UTF-8-kodierbar, Steuerzeichen
     erlaubt); im Log steht sie mit Escape auf einer Zeile, keine vorgetaeuschte zweite Logzeile."""
     def too_large(command_id, daten):
         raise ValueError("zu gross")
@@ -621,7 +621,7 @@ def test_invalid_hints_are_refused(tmp_path, payload):
 
 
 def test_hinweis_ueber_der_obergrenze_wird_abgelehnt(tmp_path):
-    """A6-31: ein neuer Schluessel nur bis 32; Ueberschreiben und Loeschen gehen weiter, die Datei
+    """Ein neuer Schluessel nur bis 32; Ueberschreiben und Loeschen gehen weiter, die Datei
     bleibt bei der Ablehnung unveraendert (der Server sendet nur die fuenf wire.MELDUNGEN, keine gueltige Eingabe faellt)."""
     hinweise = cmd.Hinweise(tmp_path)
     for nr in range(32):
@@ -650,7 +650,7 @@ def test_the_hint_command_through_the_register(tmp_path):
 
 def test_a_command_id_with_a_lone_surrogate_is_dropped_like_an_invalid_one(tmp_path):
     """Das Ergebnis steht unter der command_id in befehle.json: ein einzelnes Surrogat liesse sich nicht speichern
-    (UnicodeEncodeError aus empfangen). Es gilt wie jede ungueltige ID (Testoffensive T2, Task 13)."""
+    (UnicodeEncodeError aus empfangen). Es gilt wie jede ungueltige ID."""
     sent, calls = Sent(), []
     register = cmd.CommandRegister(tmp_path, sent)
     register.register("diagnostics", lambda payload: calls.append(payload) or cmd.Done({}))
@@ -662,7 +662,7 @@ def test_a_command_id_with_a_lone_surrogate_is_dropped_like_an_invalid_one(tmp_p
 
 def test_a_hint_with_a_lone_surrogate_is_refused_and_does_not_poison_the_stored_hints(tmp_path):
     """Der Befehl hinweis legte den Hinweis erst in den Speicher und scheiterte dann beim Schreiben; jeder spaetere Hinweis
-    scheiterte mit (Testoffensive T2, Task 13)."""
+    scheiterte mit."""
     sent = Sent()
     register, hinweise = cmd.CommandRegister(tmp_path, sent), cmd.Hinweise(tmp_path)
     register.register("hinweis", hinweise.handler)

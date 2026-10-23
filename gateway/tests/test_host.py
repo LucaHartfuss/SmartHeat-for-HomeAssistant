@@ -1,4 +1,4 @@
-"""Laufzeit-Host des Gateways ab 0.6.0 (Spec SHG G2 3.1, Spec 5b Plan D2 Task 5): Start aus dem Konfigurationsdokument,
+"""Laufzeit-Host des Gateways: Start aus dem Konfigurationsdokument,
 Startfehler mit stabilem Schluessel, Hebelsatz, Abmelden, Manifest nach der ersten Abfrage, Batterien, Anlagen-Kennung."""
 import json
 import logging
@@ -140,7 +140,7 @@ def test_sign_off_with_a_matching_plant_restores_with_the_driver(data_dir, clock
 
 
 def test_empty_configuration_with_pending_reset_boots_signed_off_with_the_old_one(data_dir, clock):
-    """Spec Stufe 3 S3 Abschnitt 4: die Laufzeit setzt mit der Konfiguration der Aufraeum-Markierung zurueck."""
+    """Die Laufzeit setzt mit der Konfiguration der Aufraeum-Markierung zurueck."""
     paths = Paths(data_dir)
     host = _host(paths, {**konfiguration(), "anlage": None}, clock,
                  start_markierung=_offene_markierung(paths, konfiguration()))
@@ -313,7 +313,7 @@ def test_load_reports_the_plant_identity_of_the_driver(data_dir, clock):
 
 
 def test_die_uebernahme_der_frueheren_ha_kennung_greift_beim_gateway_nie(data_dir, clock):
-    """A6-36: app.start reicht frueher=lever_refs_identity(manifest) auch beim Gateway weiter. Seine Kennung traegt den
+    """app.start reicht frueher=lever_refs_identity(manifest) auch beim Gateway weiter. Seine Kennung traegt den
     Schluessel "id", den kein Hebel hat: frueher ist nie gleich, ein Bestand einer anderen Anlage wird weiter
     verworfen."""
     loaded = _host(Paths(data_dir), konfiguration(), clock).load()
@@ -352,7 +352,7 @@ def test_gateway_texts_never_name_home_assistant():
 
 
 def test_ursprungswerte_server_reads_the_current_configuration_fresh(data_dir, clock):
-    """Spec Stufe 3 S3 5.2: frisch aus dem Dokument; trifft ein, ohne dass die Laufzeit neu startet."""
+    """Frisch aus dem Dokument; trifft ein, ohne dass die Laufzeit neu startet."""
     host = _host(Paths(data_dir), {**konfiguration(), "ursprungswerte": {"heat_limit": 16.0}}, clock)
     assert host.ursprungswerte_server() == {"heat_limit": 16.0}
     host._geraet.device.konf = {**konfiguration(), "ursprungswerte": {"heat_limit": 15.0}}
@@ -429,7 +429,7 @@ def _thermostat_an(world, **zustand):
 @pytest.mark.parametrize("zustand", [{"system_mode": "off"}, {"occupied_heating_setpoint": 5.0}],
                          ids=["aus", "Frostschutz"])
 def test_the_start_writes_nothing_to_a_thermostat_whose_last_known_state_is_off(world, gespeichert, zustand):
-    """A6-14 (FH-3): Bedienung 22,5 ohne offene lokale Aenderung; das Thermostat hat vor dem Neustart aus bzw. die
+    """Bedienung 22,5 ohne offene lokale Aenderung; das Thermostat hat vor dem Neustart aus bzw. die
     Frostschutz-Stellung gemeldet. Weder die Bedienung des Servers beim Start noch das Angleichen erreicht es; die
     Bedienung gilt im Speicher."""
     _thermostat_an(world, **zustand)
@@ -448,7 +448,7 @@ def test_the_start_writes_nothing_to_a_thermostat_whose_last_known_state_is_off(
 def test_an_open_local_change_keeps_the_start_from_aligning_the_thermostat(world, dirty, soll, schreibt):
     """Die Bedienung des Servers (22,5) weicht vom gespeicherten Soll (20,0) ab. Ohne offene lokale Aenderung gilt sie
     und das Thermostat wird beim Start angeglichen; mit offener Aenderung (dirty) bleibt das lokale Soll, nichts geht
-    ans Thermostat. Das Thermostat hat vor dem Start gemeldet (bekannter Zustand, an; A6-14)."""
+    ans Thermostat. Das Thermostat hat vor dem Start gemeldet (bekannter Zustand, an)."""
     _thermostat_an(world)
     dateien.schreiben_json(world.paths.room_target, {"value": 20.0, "source": "portal", "ts": "t"}, modus=dateien.LESBAR)
     dokumente_schreiben(world.paths, konfiguration())
@@ -494,7 +494,7 @@ def test_the_operation_equal_to_the_stored_target_aligns_the_thermostat_only_wit
 
 
 def test_an_operation_at_start_reaches_a_bound_w100_only_after_it_reports_on(world):
-    """Fix-Runde 1 (I-1, L4-30): gespeichert 20, Bedienung 22,5; das W100 hat retained thermostat_mode OFF gemeldet. Die
+    """Gespeichert 20, Bedienung 22,5; das W100 hat retained thermostat_mode OFF gemeldet. Die
     Bedienung gilt sofort im Speicher, ans Geraet geht sie erst nach der Meldung ON, genau einmal gerundet, ohne heat."""
     w100 = "0x54ef44100140eb34"  # Testwert
     world.z2m.add_w100(w100)
@@ -517,9 +517,9 @@ def test_an_operation_at_start_reaches_a_bound_w100_only_after_it_reports_on(wor
 
 
 def test_the_start_puts_a_bound_w100_into_thermostat_mode_and_aligns_it_rounded(world):
-    """Fixrunde A, L4-22: Thermostatmodus und Anzeige vor dem Soll (der Konverter verwirft ein Soll, solange Zigbee2MQTT
+    """Thermostatmodus und Anzeige vor dem Soll (der Konverter verwirft ein Soll, solange Zigbee2MQTT
     den Modus fuer OFF haelt), das Soll ganzzahlig kaufmaennisch gerundet (22,5 -> 23), kein heat beim Start. Das W100
-    hat vor dem Start thermostat_mode ON und heat gemeldet (L4-30, A6-14)."""
+    hat vor dem Start thermostat_mode ON und heat gemeldet."""
     w100 = "0x54ef44100140eb34"  # Testwert
     world.z2m.add_w100(w100)
     world.z2m.report(w100, thermostat_mode="ON", system_mode="heat", occupied_heating_setpoint=20, local_temperature=20.0)

@@ -1,4 +1,4 @@
-"""Grenzen des Gateways (Spec SHG G2 1, Uebersicht 2.1 Punkt 4)."""
+"""Grenzen des Gateways (Uebersicht 2.1 Punkt 4)."""
 import re
 from pathlib import Path
 

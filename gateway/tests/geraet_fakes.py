@@ -1,4 +1,4 @@
-"""Fakes fuer den Geraetekern in den Gateway-Tests (Plan 5b D2): Zugang von der Test-CA (fake_ca), Link ohne Netz, ein
+"""Fakes fuer den Geraetekern in den Gateway-Tests: Zugang von der Test-CA (fake_ca), Link ohne Netz, ein
 Bootstrap, der nie laufen darf (der Zugang liegt schon vor), und eine Geraetesicht ohne Geraetekern fuer Host-Tests.
 Gegenstuecke der Hilfen in heizungsbruecke/tests (D1), die hier nicht importierbar sind."""
 import itertools
@@ -53,7 +53,7 @@ class FakeLink:
             return None
         # allow_nan=False wie link.Link.publish: NaN/Inf gehen nie hinaus, json wirft ValueError (Device._publish faengt es)
         self.sent.append((name, json.loads(json.dumps(payload, allow_nan=False))))
-        if name == "up/inventory":  # PUBACK des Brokers: das Ergebnis der Inventur wartet darauf (L4-02)
+        if name == "up/inventory":  # PUBACK des Brokers: das Ergebnis der Inventur wartet darauf
             self.ereignis("gesendet", len(self.sent), self.client_nr, True)
         return len(self.sent)
 

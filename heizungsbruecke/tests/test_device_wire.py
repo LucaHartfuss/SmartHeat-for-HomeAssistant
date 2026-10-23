@@ -1,5 +1,5 @@
-"""Plan 5b D1 Task 1: Vertragskopie smartheat_device/wire.py (Spec 5b 2). Die Gleichheit mit dem Server prueft
-zusaetzlich der Contract-Check im Dev-Root (Plan 5b-W Teil A)."""
+"""Vertragskopie smartheat_device/wire.py. Die Gleichheit mit dem Server prueft
+zusaetzlich der Contract-Check im Dev-Root."""
 import ast
 import hashlib
 import os
@@ -20,7 +20,7 @@ MARKER = "# --- Server-Regeln (nicht im Vertrag) ---"
 
 def vertragsteil(text: str) -> str:
     """Quelltext ab der ersten Anweisung nach Modul-Docstring und Importen bis vor MARKER bzw. bis zum Ende, ohne
-    Leerzeilen am Rand. Dieselbe Regel nutzt tools/contract_check.py (Plan 5b-W Teil A)."""
+    Leerzeilen am Rand. Dieselbe Regel nutzt tools/contract_check.py."""
     body = ast.parse(text).body
     if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
         body = body[1:]
@@ -82,7 +82,7 @@ _PIN_PRAEFIX = "_VERTRAG_GEPINNT"
 # V1-Konstanten, die nur der Server braucht; jede Zeile mit Grund. Kein Eintrag ohne Grund.
 NUR_SERVER: set[str] = {
     "MAX_CLOCK_SKEW_SECONDS",  # nur der Server prueft das Zeitfenster der Signatur
-    "UNAUTHENTICATED_ERROR",  # Text der 401-Antwort; das Geraet wertet nur den Status 401 (Spec 1: immer gleich)
+    "UNAUTHENTICATED_ERROR",  # Text der 401-Antwort; das Geraet wertet nur den Status 401 (immer gleich)
 }
 NUR_GEPINNT_GERAET: set[str] = {  # Kopien im Kern (smartheat_core darf nichts importieren), nur gepinnt (P4)
     "ABO",  # config_check.ABO_WERTE

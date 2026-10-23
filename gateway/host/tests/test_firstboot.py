@@ -82,7 +82,7 @@ def test_main_maps_failures_to_exit_code_1(root, monkeypatch):
 
 
 def test_main_starts_the_bundle_in_the_project_smartheat_whatever_the_environment_says(root, monkeypatch):
-    """A6-87: der Projektname ist `bundles.COMPOSE_PROJECT` (install.sh startet mit `-p smartheat`); `SHG_COMPOSE_PROJECT`
+    """Der Projektname ist `bundles.COMPOSE_PROJECT` (install.sh startet mit `-p smartheat`); `SHG_COMPOSE_PROJECT`
     aus der Umgebung gilt nicht mehr."""
     monkeypatch.setenv("SHG_ROOT", str(root))
     monkeypatch.setenv("SHG_COMPOSE_PROJECT", "anders")

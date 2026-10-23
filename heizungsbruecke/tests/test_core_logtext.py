@@ -1,4 +1,4 @@
-"""smartheat_core.logtext.lesbar (Testoffensive T6, Sicherheitscheck zu a9756e8): Text fremder Herkunft (Server,
+"""smartheat_core.logtext.lesbar (Sicherheitscheck zu a9756e8): Text fremder Herkunft (Server,
 Konfigurationsdokument) steht im Log auf einer Zeile und UTF-8-kodierbar. Steuerzeichen, Zeilentrenner,
 Bidi-Steuerzeichen, Surrogate und der Backslash werden als Escape geschrieben, alles andere bleibt."""
 import pytest

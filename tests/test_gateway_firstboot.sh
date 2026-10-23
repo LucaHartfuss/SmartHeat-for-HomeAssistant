@@ -1,5 +1,5 @@
 #!/bin/bash
-# Erststart ohne Pull (Plan G2b-2 Task 7): Images werden wie im Image-Bau exportiert (gateway/image/export_images.sh),
+# Erststart ohne Pull: Images werden wie im Image-Bau exportiert (gateway/image/export_images.sh),
 # in einem Debian-13-Docker OHNE Netz geladen, und Compose startet einen Dienst, der das Image per Index-Digest nennt.
 # Speicher des Ziel-Dockers wie auf dem Geraet: mit gateway/host/docker-daemon.json, falls vorhanden, sonst klassisch.
 # SHG_TARGET_DAEMON=<datei> ueberschreibt daemon.json (fuer Vergleichslaeufe mit anderem Speicherweg).

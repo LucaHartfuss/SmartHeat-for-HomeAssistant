@@ -1,4 +1,4 @@
-"""Spec 5c 1.3: Uhr aus den Host-Informationen des Supervisors; Discovery-Aufrufe."""
+"""Uhr aus den Host-Informationen des Supervisors; Discovery-Aufrufe."""
 import pytest
 import requests
 from fakes import HttpAntwort

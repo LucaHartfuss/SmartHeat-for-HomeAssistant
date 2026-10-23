@@ -1,4 +1,4 @@
-"""Plan 5b D2 Task 1: Bindung, Laufzeit-Konfiguration, Treiberpruefung, Start-Soll und Abmelde-Markierung aus dem
+"""Bindung, Laufzeit-Konfiguration, Treiberpruefung, Start-Soll und Abmelde-Markierung aus dem
 Konfigurationsdokument."""
 from pathlib import Path
 
@@ -35,7 +35,7 @@ def test_unusable_bindings_are_config_errors(change):
 
 def test_an_ieee_address_in_capitals_is_refused_as_thermostat_and_as_sensor():
     """Zigbee2MQTT meldet Kleinbuchstaben (`0x00124b...`); die Regex kennt nur diese. Eine Adresse mit Grossbuchstaben
-    waere ein anderer Schluessel im Spiegel und fiele dort nie auf ein Geraet (Festhalten, Testoffensive T5')."""
+    waere ein anderer Schluessel im Spiegel und fiele dort nie auf ein Geraet (Festhalten)."""
     gross = THERMOSTAT.upper().replace("0X", "0x")  # 0x00124B0000000002
     assert gross != THERMOSTAT and gross.startswith("0x")
     klein_ok = config.bindung(konfiguration())  # Gegenprobe: die Kleinbuchstaben-Form wird angenommen
@@ -123,7 +123,7 @@ def test_the_empty_configuration_and_the_test_configuration_are_accepted_by_the_
 
 
 def test_rastung_path_is_where_the_document_store_writes_the_lock(tmp_path):
-    """Die zweite Linie (Spec Stufe 3 S3 3.3) liest die Datei, die der Dokumentspeicher des Geraetekerns schreibt."""
+    """Die zweite Linie liest die Datei, die der Dokumentspeicher des Geraetekerns schreibt."""
     paths = Paths(tmp_path)
     assert paths.rastung == paths.device_dir / rastung.DATEI
     store = DocumentStore(paths.device_dir, host="gateway", software_version=GATEWAY_VERSION,

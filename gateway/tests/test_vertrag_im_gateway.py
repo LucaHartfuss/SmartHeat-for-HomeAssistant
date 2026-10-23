@@ -1,4 +1,4 @@
-"""Stufe 3 S8a-2 (A5-16, Audit 5 p5-ci): Vertragspruefungen, die nur Module des Gateways und des Geraetekerns lesen.
+"""Vertragspruefungen, die nur Module des Gateways und des Geraetekerns lesen.
 Frueher Teile der Checks 52 und 53 des Contract-Checks im Dev-Root (tools/contract_check.py); was dort ueber
 Repo-Grenzen geht (Einstellschritte der Simulation gegen den Rundweg des Servers, Entdeckung und Kennung gegen die
 Erkennung des Servers), bleibt im Contract-Check. Je Pruefung eine Funktion `_probleme_<nr>`, ein Test auf den echten
@@ -34,7 +34,7 @@ def world(data_dir, monkeypatch, clock):
 
 
 def _probleme_52(handlers, kern, commands) -> list[str]:
-    """Spec 5b 5.3/9: Jeder Befehl des Vertrags (wire.COMMANDS) hat im Gateway genau einen Handler, im Gateway
+    """Jeder Befehl des Vertrags (wire.COMMANDS) hat im Gateway genau einen Handler, im Gateway
     (befehle.HANDLERS) oder im Geraetekern; keiner ist doppelt, keiner unbekannt."""
     handled = [*handlers, *kern]
     problems = []
@@ -97,7 +97,7 @@ def driver_parameter_names(drivers) -> dict[str, tuple[str, ...]]:
 
 
 def _probleme_53(drivers) -> list[str]:
-    """Spec 5b 7, 5b-S1-15: Geraetedokumente tragen keine Geheimnisse. Die Parameternamen der Gateway-Treiber
+    """Geraetedokumente tragen keine Geheimnisse. Die Parameternamen der Gateway-Treiber
     (driver_parameter_names) klingen nicht nach Token, Secret, Passwort, Zugangsdaten oder Schluessel."""
     return [f"{source}: Parametername {name!r} klingt nach einem Geheimnis (Geraetedokumente bleiben frei davon)"
             for source, names in driver_parameter_names(drivers).items() for name in names if looks_secret(name)]

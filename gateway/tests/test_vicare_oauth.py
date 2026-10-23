@@ -1,4 +1,4 @@
-"""PKCE-Anmeldung und Token-Erneuerung (Spec G4 1.4, Review Focus 1 und 2)."""
+"""PKCE-Anmeldung und Token-Erneuerung."""
 import base64
 import hashlib
 import json
@@ -106,7 +106,7 @@ def test_the_access_token_is_renewed_shortly_before_it_expires(fake, tmp_path):
 
 
 def test_two_processes_renewing_at_once_share_one_refresh(fake, tmp_path):
-    """Review Focus 2: das Refresh-Token rotiert, der zweite Erneuerer muss das neue lesen."""
+    """Das Refresh-Token rotiert, der zweite Erneuerer muss das neue lesen."""
     server, base = fake
     now = [2_000_000.0]
     server._clock = lambda: now[0]
@@ -284,7 +284,7 @@ def test_a_refresh_during_a_new_login_keeps_the_pending_login_alive(fake, tmp_pa
 
 
 def test_a_pending_login_survives_a_revoked_refresh_token(tmp_path):
-    """Audit 4, A4-33: bemerkt die Laufzeit das widerrufene Refresh-Token (invalid_grant), waehrend der Kunde im Portal
+    """Bemerkt die Laufzeit das widerrufene Refresh-Token (invalid_grant), waehrend der Kunde im Portal
     die erneute Anmeldung vorbereitet hat, darf 'abgelaufen' den PKCE-Zustand nicht loeschen; finish gelingt."""
     class Resp:
         def __init__(self, status, body):

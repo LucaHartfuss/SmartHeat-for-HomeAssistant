@@ -1,4 +1,4 @@
-"""Spec 5c 1.3 / 5b 3.1: lokale Pruefung einer HA-Konfiguration (Aufbau rein, HA-Teil ueber den Rueckruf)."""
+"""Lokale Pruefung einer HA-Konfiguration (Aufbau rein, HA-Teil ueber den Rueckruf)."""
 import pytest
 from geraet_helpers import ha_konfiguration
 
@@ -92,7 +92,7 @@ def _mit_ref(feld: str, ref: str) -> dict:
 @pytest.mark.parametrize("anhang", ["\n", "\u202e", "\nWARNING  gefaelscht", " gefaelscht"],
                          ids=["zeilenumbruch", "bidi_202e", "zweite_logzeile", "nachgestellter_text"])
 def test_a_reference_with_a_valid_prefix_and_anything_after_it_is_rejected(feld, gueltig, anhang):
-    """T6-Rest (Re-Review der Fix-Welle, Minor 1): die Muster gelten fuer die ganze Referenz (`fullmatch`). Ein gueltiger
+    """Die Muster gelten fuer die ganze Referenz (`fullmatch`). Ein gueltiger
     Anfang mit Zeilenumbruch, Bidi-Steuerzeichen oder Text dahinter wird abgelehnt; deshalb stehen Entity-IDs der
     Bindung ohne Escape im Log."""
     assert _pruefen(_mit_ref(feld, gueltig)) is None  # Gegenprobe: ohne Anhang gueltig
@@ -102,7 +102,7 @@ def test_a_reference_with_a_valid_prefix_and_anything_after_it_is_rejected(feld,
 
 @pytest.mark.parametrize("attribut", ["longitude", "latitude", "hvac_action"])
 def test_a_reference_attribute_other_than_the_temperatures_is_rejected(attribut):
-    """A6-02: nach `::` nur temperature und current_temperature; der Befund nennt das Feld der Rolle, nie die Entity."""
+    """Nach `::` nur temperature und current_temperature; der Befund nennt das Feld der Rolle, nie die Entity."""
     ablehnung = _pruefen(ha_konfiguration(bindung={"rollen": {"room_target": f"zone.home::{attribut}"}}))
     assert ablehnung == cc.Ablehnung(cc.ROLLE_UNZULAESSIG, {"feld": "room_target", "regel": "format"})
     assert "zone" not in repr(ablehnung)

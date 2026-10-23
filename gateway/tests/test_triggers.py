@@ -446,7 +446,7 @@ def test_thermostat_off_cancels_a_pending_wish(mit_geraet, clock):
     assert welt.aus == [(True, 20.0)] and welt.store.value == 20.0
 
 
-# --- Wiedereinschalten (Review D2, Important 2; Restpunkt 5b-D2-11) ---
+# --- Wiedereinschalten ---
 # Zigbee2MQTT laeuft mit cache_state: true, jede Meldung traegt den vollen Zustand, auch das alte Soll.
 
 
@@ -577,7 +577,7 @@ def test_back_on_after_two_operations_while_off_treats_the_shown_setpoint_as_sta
     assert welt.wuensche == [] and welt.store.value == 22.0 and _setpoint_writes(welt) == [22.0]
 
 
-# --- Aqara W100 als gebundenes Thermostat (Fixrunde A, L4-22, Plan 2026-10-21-w100-thermostat) ---
+# --- Aqara W100 als gebundenes Thermostat ---
 
 W100 = "0x54ef44100140eb34"  # Testwert in der IEEE-Form von Zigbee2MQTT
 MODUS_W100 = [{"thermostat_mode": "ON"}, {"auto_hide_middle_line": False}]
@@ -621,7 +621,7 @@ def _w100_melden(welt, **werte):
 
 def test_the_start_puts_the_w100_into_thermostat_mode_without_heat_or_a_setpoint(mit_w100):
     # heat nur nach dem Koppeln: ein am Geraet ausgeschaltetes W100 bleibt beim Start aus; ohne bekannten Zustand
-    # gleicht der Start nicht an (A6-14, L4-30: erst nach gemeldetem ON)
+    # gleicht der Start nicht an (erst nach gemeldetem ON)
     assert _w100_sets(mit_w100) == MODUS_W100
 
 
@@ -698,7 +698,7 @@ def test_pairing_the_bound_w100_again_sets_it_up_from_the_target_store(mit_w100,
     welt = mit_w100
     welt.z2m.interview(W100)
     welt.worker.run_pending()
-    # Labor 2026-10-22 (L4-30): zuerst nur der Modus; Soll und heat erst, wenn das Geraet thermostat_mode ON meldet
+    # Labor 2026-10-22: zuerst nur der Modus; Soll und heat erst, wenn das Geraet thermostat_mode ON meldet
     assert _w100_sets(welt) == MODUS_W100 + MODUS_W100 and welt.z2m.verworfen == []
     _w100_melden(welt, thermostat_mode="ON")
     assert _w100_sets(welt) == MODUS_W100 + MODUS_W100 + [{"occupied_heating_setpoint": 21.0}, {"system_mode": "heat"}]
@@ -757,7 +757,7 @@ def test_a_thermostat_without_a_profile_gets_no_thermostat_mode_and_exact_values
 
 
 def test_a_retained_w100_report_after_a_restart_is_no_wish_and_no_switching_off(mit_w100, clock):
-    # L4-17: retained Meldungen mit frischem last_seen gelten als Wert, bleiben aber ohne Hook (Broker-Replay)
+    # Retained Meldungen mit frischem last_seen gelten als Wert, bleiben aber ohne Hook (Broker-Replay)
     welt = mit_w100
     melden = {"occupied_heating_setpoint": 22, "system_mode": "off", "local_temperature": 20.0,
               "last_seen": datetime.now(UTC).isoformat()}
@@ -781,7 +781,7 @@ def test_a_retained_w100_report_after_a_restart_is_no_wish_and_no_switching_off(
 
 def test_a_stopped_trigger_source_posts_nothing(tmp_path, clock):
     """Zwei Quellen nacheinander am selben Spiegel (Neustart der Laufzeit im Prozess): nach stop der ersten landet eine
-    Zigbee-Meldung nur noch im Worker der zweiten, der Haken der ersten ist abgemeldet (L4-24)."""
+    Zigbee-Meldung nur noch im Worker der zweiten, der Haken der ersten ist abgemeldet."""
     bus = FakeBus()
     z2m = FakeZigbee2Mqtt(bus)
     mirror = ZigbeeMirror(bus, clock)
@@ -815,7 +815,7 @@ def test_a_stopped_trigger_source_posts_nothing(tmp_path, clock):
 
 
 def test_a_stopped_trigger_source_lets_go_of_the_bound_w100(mit_w100):
-    """stop meldet das Thermostat bei der Pflege ab (L4-24): ein erneutes Koppeln danach richtet es nicht mehr mit dem
+    """stop meldet das Thermostat bei der Pflege ab: ein erneutes Koppeln danach richtet es nicht mehr mit dem
     Soll-Speicher der gestoppten Quelle ein."""
     welt = mit_w100
     welt.store.apply_portal(23.0)  # ein Soll im Speicher, das von der Vorgabe (20) unterscheidbar ist
@@ -839,7 +839,7 @@ def test_a_w100_showing_the_rounded_target_lifts_the_frost_position(mit_w100, ca
     assert not [r for r in caplog.records if r.levelname in ("WARNING", "ERROR")]
 
 
-# --- Start: letzter bekannter Zustand, "aus" und Frostschutz (Fixrunde B, A6-14, L4-30; Nutzer-Entscheidung E5) ---
+# --- Start: letzter bekannter Zustand, "aus" und Frostschutz (Nutzer-Entscheidung E5) ---
 
 ALTER = {"frisch": 0.0, "drei Stunden alt": 3 * 3600.0, "ohne last_seen": None}
 
@@ -847,7 +847,7 @@ ALTER = {"frisch": 0.0, "drei Stunden alt": 3 * 3600.0, "ohne last_seen": None}
 def _neustart(tmp_path, clock, *, zustand=None, alter=0.0, w100=False, soll=22.0, schlaeft=False):
     """Prozessstart wie nach einem Neustart: Zigbee2MQTT hat den Zustand des Thermostats vorher retained gemeldet
     (Broker-Replay beim Abonnieren, keine Hooks); alter None = Meldung ohne last_seen. Danach die Laufzeit mit
-    Angleichen beim Start (Spec 3.3)."""
+    Angleichen beim Start."""
     bus = FakeBus()
     z2m = FakeZigbee2Mqtt(bus)
     z2m.bridge(online=True)
@@ -889,7 +889,7 @@ def _sollwerte(welt):
                                      {"system_mode": "heat", "occupied_heating_setpoint": FROSTSCHUTZ_BIS}],
                          ids=["aus", "Frostschutz 5", "Frostschutz 7"])
 def test_start_does_not_align_a_thermostat_that_is_off(tmp_path, clock, zustand, alter):
-    """A6-14: der letzte bekannte Zustand gilt beim Start fuer "aus" (auch retained, jedes Alter), nie als Wunsch."""
+    """Der letzte bekannte Zustand gilt beim Start fuer "aus" (auch retained, jedes Alter), nie als Wunsch."""
     welt = _neustart(tmp_path, clock, zustand={**zustand, "local_temperature": 20.0}, alter=alter)
     clock.advance(ROOM_TARGET_DEBOUNCE_SECONDS + 1)
     welt.worker.run_pending()
@@ -899,7 +899,7 @@ def test_start_does_not_align_a_thermostat_that_is_off(tmp_path, clock, zustand,
 
 @pytest.mark.parametrize("alter", ALTER.values(), ids=ALTER.keys())
 def test_start_aligns_a_thermostat_whose_last_known_state_is_on(tmp_path, clock, alter):
-    # Gegenprobe zu A6-14: bekannter Zustand an (auch Soll knapp ueber FROSTSCHUTZ_BIS) -> Angleichen beim Start
+    # Gegenprobe: bekannter Zustand an (auch Soll knapp ueber FROSTSCHUTZ_BIS) -> Angleichen beim Start
     welt = _neustart(tmp_path, clock, zustand={"system_mode": "heat", "occupied_heating_setpoint": 7.5,
                                                 "local_temperature": 20.0}, alter=alter)
     assert _sollwerte(welt) == [22.0] and welt.aus == []
@@ -963,7 +963,7 @@ def test_an_operation_after_a_restart_with_the_thermostat_off_waits_for_it_to_be
                          ids=["aus", "Frostschutz 7"])
 def test_nothing_reaches_a_thermostat_whose_last_known_state_is_off_even_unseen_by_the_input(mit_geraet, clock,
                                                                                              zustand):
-    """Pruefung vor jedem Schreiben (A6-14): der retained Zustand "aus" kam erst nach dem Start (Broker-Replay ohne
+    """Pruefung vor jedem Schreiben: der retained Zustand "aus" kam erst nach dem Start (Broker-Replay ohne
     Hook, der Soll-Eingang weiss nichts davon); die Bedienung des Servers wird gespeichert, aber nicht geschrieben, und
     oeffnet kein Echo-Fenster (schreiben gibt False)."""
     welt = mit_geraet
@@ -978,7 +978,7 @@ def test_nothing_reaches_a_thermostat_whose_last_known_state_is_off_even_unseen_
 
 
 def test_start_aligns_a_w100_only_after_it_reports_on(tmp_path, clock):
-    """L4-30 (2): der Konverter lumi verwirft ein Soll, solange er thermostat_mode nicht als ON kennt; das Angleichen
+    """Der Konverter lumi verwirft ein Soll, solange er thermostat_mode nicht als ON kennt; das Angleichen
     beim Start wartet auf die Meldung ON und schreibt dann genau ein Soll (gerundet), ohne heat."""
     welt = _neustart(tmp_path, clock, w100=True, soll=22.5,
                      zustand={"thermostat_mode": "OFF", "system_mode": "heat", "occupied_heating_setpoint": 20})
@@ -1008,7 +1008,7 @@ def test_start_does_not_align_a_w100_that_is_off_even_after_it_reports_on(tmp_pa
 
 
 def test_start_does_not_align_when_only_the_input_still_knows_frost(tmp_path, clock):
-    """Fix-Runde 1 (I-2): der Start kennt die Frostschutz-Stellung aus dem retained Zustand; die ON-Meldung traegt ein
+    """Der Start kennt die Frostschutz-Stellung aus dem retained Zustand; die ON-Meldung traegt ein
     unbrauchbares Soll (null). Der Spiegel zeigt dann nicht mehr Frost, der Soll-Eingang haelt sie (ein unbrauchbarer Wert
     beendet sie nicht): das Angleichen folgt dem Soll-Eingang und schreibt nichts."""
     welt = _neustart(tmp_path, clock, w100=True, soll=22.5,
@@ -1024,7 +1024,7 @@ def test_start_does_not_align_when_only_the_input_still_knows_frost(tmp_path, cl
                                          {"system_mode": None}, {"system_mode": 0}],
                          ids=["Soll null", "Soll Text", "Modus null", "Modus Zahl"])
 def test_a_state_without_a_usable_mode_or_setpoint_is_not_known(tmp_path, clock, unbrauchbar):
-    """Fix-Runde 1 (M-1): bekannt ist ein Zustand nur mit einem Modus (Text) oder einem endlichen Soll; sonst wartet das
+    """Bekannt ist ein Zustand nur mit einem Modus (Text) oder einem endlichen Soll; sonst wartet das
     Angleichen auf die erste brauchbare Meldung (fail closed)."""
     welt = _neustart(tmp_path, clock, zustand={**unbrauchbar, "local_temperature": 20.0})
     assert _sollwerte(welt) == []
@@ -1042,7 +1042,7 @@ def test_a_state_without_a_usable_mode_or_setpoint_is_not_known(tmp_path, clock,
                                      {"system_mode": "heat", "occupied_heating_setpoint": "x"}],
                          ids=["auto", "cool", "heat mit Soll null", "heat mit Soll Text"])
 def test_the_write_check_blocks_only_off_and_frost(tmp_path, clock, zustand):
-    # Fix-Runde 1 (M-5): nur system_mode "off" oder ein endliches Soll bis 7 °C blockt; jeder andere Modus und ein
+    # Nur system_mode "off" oder ein endliches Soll bis 7 °C blockt; jeder andere Modus und ein
     # unbrauchbares Soll nicht
     welt = _neustart(tmp_path, clock, zustand={**zustand, "local_temperature": 20.0})
     assert _sollwerte(welt) == [22.0] and welt.aus == []

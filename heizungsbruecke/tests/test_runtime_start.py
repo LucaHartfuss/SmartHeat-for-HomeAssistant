@@ -1,4 +1,4 @@
-"""Start der Laufzeit ohne eigene MQTT-Verbindung und ohne Abo-Abfrage (Phase 1 S1b, 5c-D-1): der Geraetekern haelt die
+"""Start der Laufzeit ohne eigene MQTT-Verbindung und ohne Abo-Abfrage: der Geraetekern haelt die
 Verbindung (mqtt_factory ist Pflicht), den Abo-Status liefert das Konfigurationsdokument (abo_source ist Pflicht)."""
 import dataclasses
 import inspect

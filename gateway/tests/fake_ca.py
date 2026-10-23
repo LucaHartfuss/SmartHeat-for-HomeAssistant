@@ -1,4 +1,4 @@
-"""Test-CA der Gateway-Tests (Plan 5b D2): signiert Geraete-CSRs (CN = Geraete-ID, clientAuth). Eine Stelle fuer die
+"""Test-CA der Gateway-Tests: signiert Geraete-CSRs (CN = Geraete-ID, clientAuth). Eine Stelle fuer die
 Unit-Tests (geraet_fakes, world) und den Fake-Bootstrap der Docker-Pruefungen, der sie im Container ohne die uebrigen
 Test-Hilfen importiert; daher nur cryptography. Neu erzeugt (Unit-Tests) oder aus ca.pem/ca.key eines Ordners geladen
 (Test-PKI der Docker-Pruefungen, tests/gateway_lib.sh make_pki; je Lauf neu, nie eingecheckt)."""

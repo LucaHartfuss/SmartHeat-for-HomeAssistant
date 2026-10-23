@@ -1,4 +1,4 @@
-"""HA-Host der Laufzeit (Plan SHG G1, Praezisierung 6) im Geraete-Pfad: Konfiguration aus dem Konfigurationsdokument."""
+"""HA-Host der Laufzeit (Praezisierung 6) im Geraete-Pfad: Konfiguration aus dem Konfigurationsdokument."""
 import dataclasses
 import logging
 from unittest.mock import MagicMock
@@ -35,7 +35,7 @@ def test_sign_off_parts_are_none_for_a_broken_configuration():
     assert HaHost(geraet, FakeHa()).sign_off_parts() is None
 
 
-# --- A6-02: Positivliste und Formen auch fuer die uebernommene Konfiguration beim Start ---
+# --- Positivliste und Formen auch fuer die uebernommene Konfiguration beim Start ---
 
 @pytest.fixture
 def sleeps(monkeypatch):
@@ -68,7 +68,7 @@ KREIS_KENNUNG = '{"anlage": "S", "nummer": "0", "plattform": "mypyllant"}'
 
 
 def test_anlagen_kennung_kommt_aus_dem_kreis(env, angelegt, sleeps):
-    """A6-36: die Anlage ist der Heizkreis (plattform, anlage, nummer), nicht die Entity-IDs der Hebel. Eine umbenannte
+    """Die Anlage ist der Heizkreis (plattform, anlage, nummer), nicht die Entity-IDs der Hebel. Eine umbenannte
     Hebel-Entity bleibt dieselbe Anlage; der Config-Entry zaehlt nicht (Neuanlage der Integration = dieselbe Anlage)."""
     loaded = _host(env).load()
     assert loaded.plant_id == KREIS_KENNUNG
@@ -126,7 +126,7 @@ def test_ein_raumfuehler_ohne_zustand_ist_nicht_pruefbar(env, angelegt, sleeps):
 
 
 def test_eine_optionale_rolle_ohne_zustand_startet_ungelesen_mit_hinweis(env, angelegt, sleeps):
-    """Spec 3.2 Nachtrag: die Entity heilt nicht von selbst; der Start wartet nicht, die Referenz fehlt in diesem Lauf im
+    """Die Entity heilt nicht von selbst; der Start wartet nicht, die Referenz fehlt in diesem Lauf im
     Manifest, ein nicht kritischer Hinweis nennt das Feld (nie die Entity)."""
     loaded = _host(env, entity_flow_temperature="sensor.vorlauf").load()
     assert "flow_temperature" not in loaded.manifest.refs and sleeps == []
@@ -160,8 +160,8 @@ def _basis(env, zustaende):
 
 @pytest.mark.parametrize("rolle_option", ["entity_heat_limit", "entity_curve_current"])
 def test_eine_optionale_hebelrolle_ohne_zustand_wird_nie_fallen_gelassen(env, angelegt, sleeps, rolle_option):
-    """Review Fixrunde A: eine Hebelrolle ist ein Schreibziel und gehoert bis zum Rueckbau der Uebernahme
-    (A6-36-Uebernahme) zur frueheren Kennung (lever_refs_identity). Fiele sie weg, verwarf bind_to_tenant einen Bestand
+    """Eine Hebelrolle ist ein Schreibziel und gehoert bis zum Rueckbau der Uebernahme
+    (offene-punkte.md A6-36-Uebernahme) zur frueheren Kennung (lever_refs_identity). Fiele sie weg, verwarf bind_to_tenant einen Bestand
     von 1.1.0 samt Wiederherstellungspunkt, Originalen und Schreibzaehlern. Ein Schreibziel ohne Zustand ist daher nicht
     pruefbar (Wiederholung, StartFailure), nie ungelesen."""
     _basis(env, BASIS_ZUSTAENDE)
@@ -180,7 +180,7 @@ def test_gegenprobe_eine_optionale_hebelrolle_mit_zustand_bleibt_im_manifest(env
 
 def test_eine_fallen_gelassene_lese_rolle_aendert_die_anlagenidentitaet_nicht(env, angelegt, sleeps):
     """Gegenprobe zur Hebelrolle: eine optionale Lese-Rolle (Energie) ohne Zustand startet, wird ungelesen gemeldet, und
-    die Kennung (aus dem Kreis, A6-36) wie die fruehere aus den Hebelreferenzen bleibt dieselbe wie mit Zustand."""
+    die Kennung (aus dem Kreis) wie die fruehere aus den Hebelreferenzen bleibt dieselbe wie mit Zustand."""
     _basis(env, BASIS_ZUSTAENDE)
     ohne = _host(env, **BASIS, entity_energy_thermal_heating="sensor.waerme").load()
     assert "energy_thermal_heating" not in ohne.manifest.refs and sleeps == []
@@ -208,7 +208,7 @@ def test_eine_batterie_ohne_zustand_wird_nicht_gelesen_und_gemeldet(env, angeleg
 
 
 def test_entity_fehlt_meldet_nach_rueckkehr_und_erneutem_fehlen_wieder(env, sleeps):
-    """L4-25: kehrt die Entity zurueck, entwarnt der Start den Hinweis; fehlt sie spaeter erneut, kommt er wieder.
+    """Kehrt die Entity zurueck, entwarnt der Start den Hinweis; fehlt sie spaeter erneut, kommt er wieder.
     Ohne die Entwarnung bliebe der Zustand „fehlt“ offen und der Melder schwiege beim zweiten Mal."""
     def fehlt_meldungen():
         return [push for push in env.ha.pushes if "zugeordnete Entity fehlt" in push]
@@ -320,7 +320,7 @@ def test_ein_attribut_ausser_der_temperatur_startet_nicht(env, angelegt, sleeps)
     assert angelegt == []
 
 
-# --- L4-27/A5-70 (E5): Schreibziele lokal verankert, auch fuer die uebernommene Konfiguration beim Start ---
+# --- Schreibziele lokal verankert, auch fuer die uebernommene Konfiguration beim Start ---
 
 SCHREIBZIELE = ("number.curve_current", "number.shift_current", "number.min_flow", "number.heat_limit")
 THERME = {"platform": "mypyllant", "config_entry_id": "e1", "device_id": "d-therme"}
@@ -346,7 +346,7 @@ def _startet_nicht(env, angelegt, sleeps, grund):
 
 
 def test_uebernommenes_schreibziel_fremder_plattform_startet_nicht(env, angelegt, sleeps):
-    """L4-27: eine schon uebernommene Konfiguration, deren Heizgrenze heute eine Entity einer anderen Integration ist
+    """Eine schon uebernommene Konfiguration, deren Heizgrenze heute eine Entity einer anderen Integration ist
     (etwa nach einer Umbelegung in HA), regelt nicht und schreibt nichts."""
     _registry(env, {"number.heat_limit": {**THERME, "platform": "template"}})
     _startet_nicht(env, angelegt, sleeps,
@@ -365,7 +365,7 @@ def test_soll_entity_am_geraet_eines_schreibziels_startet_nicht(env, angelegt, s
 
 
 def test_ein_kreis_fremder_plattform_startet_nicht(env, angelegt, sleeps):
-    """A5-70: die Plattform steht lokal je Hebelsatz; ein Dokument mit einer anderen Kreis-Plattform (passend zu
+    """Die Plattform steht lokal je Hebelsatz; ein Dokument mit einer anderen Kreis-Plattform (passend zu
     Schreibzielen von shelly) startet nicht, statt der Plattform des Servers zu folgen."""
     shelly = {"platform": "shelly", "config_entry_id": "e-shelly", "device_id": "d-shelly"}
     _registry(env, dict.fromkeys(SCHREIBZIELE, shelly))
@@ -418,7 +418,7 @@ def test_ein_spaeter_eingetragenes_schreibziel_startet_im_zweiten_versuch(env, a
 
 
 def test_ein_verstoss_beim_start_mit_laufendem_boost_schreibt_nur_einmal_die_ruecknahme(env):
-    """Entscheidung 1 (Fixrunde B TP4): verletzt ein Schreibziel beim Start die Regeln, waehrend ein Boost laeuft, nimmt
+    """Entscheidung 1: verletzt ein Schreibziel beim Start die Regeln, waehrend ein Boost laeuft, nimmt
     der Konfigurationsfehler den Boost zurueck (sign_off_parts, ohne erneute Schreibziel-Pruefung): genau die Werte des
     Wiederherstellungspunkts, auch auf das verletzende Schreibziel, einmal; danach schreibt keine Neupruefung mehr."""
     save_backup(env.paths["BACKUP_PATH"], {

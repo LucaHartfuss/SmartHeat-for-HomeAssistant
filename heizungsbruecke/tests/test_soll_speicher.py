@@ -171,8 +171,8 @@ def test_a_limited_wish_keeps_the_thermostat_as_source(tmp_path, clock):
 
 
 def test_bedienbereich_gleich_dem_vertrag():
-    """Der Bedienbereich der Laufzeit ist der des Vertrags (smartheat_device.wire, Spec 5b 3.2); documents.py prueft mit
-    derselben Funktion (5c-D-10), es gibt keine zweite Kopie mehr."""
+    """Der Bedienbereich der Laufzeit ist der des Vertrags (smartheat_device.wire); documents.py prueft mit
+    derselben Funktion, es gibt keine zweite Kopie mehr."""
     assert (wire.RAUM_SOLL_MIN, wire.RAUM_SOLL_MAX, wire.RAUM_SOLL_STEP) == (
         BEDIENBEREICH_MIN, BEDIENBEREICH_MAX, BEDIENBEREICH_STEP)
 
@@ -208,7 +208,7 @@ def test_echo_rest_counts_down_the_window_after_an_own_write(tmp_path, clock):
 
 
 def test_portal_confirming_the_same_value_keeps_the_source(tmp_path, clock):
-    """Nr. 40 (Restpunkt 5c-W-12): bestaetigt der Server mit apply_portal den geltenden Wert, bleibt die Soll-Quelle;
+    """Bestaetigt der Server mit apply_portal den geltenden Wert, bleibt die Soll-Quelle;
     nur ein anderer Wert setzt sie auf portal."""
     changes = []
     store = _store(tmp_path, clock, changes=changes)

@@ -1,4 +1,4 @@
-"""Audit 4, A4-09 (GK-1), Nutzer-Entscheidung E2: Comfort-Boost hoechstens 4 h, Ende nach 3 unlesbaren Raumwerten."""
+"""Nutzer-Entscheidung E2: Comfort-Boost hoechstens 4 h, Ende nach 3 unlesbaren Raumwerten."""
 import contextlib
 import logging
 import time
@@ -76,7 +76,7 @@ def test_comfort_boost_ends_after_three_unreadable_room_values(tmp_path, clock):
     rt = _rt(tmp_path, values)
     regulation.run_local_check(rt)
     values["sensor.room_actual"] = ValueError("could not convert string to float: 'unknown'")
-    for _ in range(2):  # Review Focus 4: ein- oder zweimal unlesbar beendet nichts
+    for _ in range(2):  # ein- oder zweimal unlesbar beendet nichts
         with pytest.raises(ValueError):
             regulation.run_local_check(rt)
     assert rt.store.state.boost_active
@@ -86,7 +86,7 @@ def test_comfort_boost_ends_after_three_unreadable_room_values(tmp_path, clock):
 
 
 def test_a_boost_persisted_before_the_update_runs_four_hours_from_the_first_check(tmp_path, clock):
-    # Review Focus 3: boost_active ohne boost_since (Stand vor dem Update)
+    # boost_active ohne boost_since (Stand vor dem Update)
     values = {"sensor.room_actual": 19.0, "number.curve": 1.5, "number.shift": 25.0, "number.heat_limit": 23.0}
     rt = _rt(tmp_path, values, {"last_room_target": 21.0, "boost_active": True,
                                 "restore_point": {"curve": 1.0, "room_setpoint": 20.0, "heat_limit": 16.0}})
@@ -96,7 +96,7 @@ def test_a_boost_persisted_before_the_update_runs_four_hours_from_the_first_chec
 
 @pytest.mark.parametrize("raw", ["2026-10-08T06:00:00", "kaputt"])
 def test_a_naive_or_corrupt_boost_since_in_memory_does_not_kill_the_local_check(tmp_path, clock, raw):
-    # Audit 4 P-C2 Endpruefung: ein nicht lesbarer Zeitstempel gilt als "unbekannt" (wie ein Boost vor dem Update)
+    # Endpruefung: ein nicht lesbarer Zeitstempel gilt als "unbekannt" (wie ein Boost vor dem Update)
     values = {"sensor.room_actual": 19.0, "number.curve": 1.5, "number.shift": 25.0, "number.heat_limit": 23.0}
     rt = _rt(tmp_path, values, {"last_room_target": 21.0, "boost_active": True,
                                 "restore_point": {"curve": 1.0, "room_setpoint": 20.0, "heat_limit": 16.0}})
@@ -109,7 +109,7 @@ def test_a_naive_or_corrupt_boost_since_in_memory_does_not_kill_the_local_check(
 
 
 def test_a_stale_boost_since_does_not_shorten_a_new_comfort_boost(tmp_path, clock):
-    # Audit 4 P-C2 Endpruefung: boost_since blieb nach einem Ende ausserhalb des lokalen Checks stehen
+    # Endpruefung: boost_since blieb nach einem Ende ausserhalb des lokalen Checks stehen
     values = {"sensor.room_actual": 19.0, "number.curve": 1.0, "number.shift": 20.0, "number.heat_limit": 16.0}
     stale = (START - timedelta(hours=10)).isoformat()
     rt = _rt(tmp_path, values, {"last_room_target": 20.0, "boost_active": False, "boost_since": stale,
@@ -127,7 +127,7 @@ def test_a_stale_boost_since_does_not_shorten_a_new_comfort_boost(tmp_path, cloc
 
 
 def test_boost_since_stays_in_memory_when_the_backup_cannot_be_written(tmp_path, clock, monkeypatch):
-    # Audit 4 P-C2 Endpruefung: voller/schreibgeschuetzter Datentraeger darf die 4-h-Grenze nicht aushebeln
+    # Endpruefung: voller/schreibgeschuetzter Datentraeger darf die 4-h-Grenze nicht aushebeln
     values = {"sensor.room_actual": 19.0, "number.curve": 1.5, "number.shift": 25.0, "number.heat_limit": 23.0}
     rt = _rt(tmp_path, values, {"last_room_target": 21.0, "boost_active": True,
                                 "restore_point": {"curve": 1.0, "room_setpoint": 20.0, "heat_limit": 16.0}})
@@ -142,7 +142,7 @@ def test_boost_since_stays_in_memory_when_the_backup_cannot_be_written(tmp_path,
     assert rt.store.storage_failed
 
 
-# --- Mutationsprobe Stufe 3 S4b (A5-22 Rest) ---
+# --- Mutationsprobe ---
 
 def test_a_readable_room_value_resets_the_unreadable_count(tmp_path, clock):
     # "in Folge": ein lesbarer Wert dazwischen beginnt die Zaehlung neu.

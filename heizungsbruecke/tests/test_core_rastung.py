@@ -1,4 +1,4 @@
-"""Spec Stufe 3 S3 Abschnitt 3: Rastung des Sicherheitssatzes; eine kaputte Datei sperrt."""
+"""Rastung des Sicherheitssatzes; eine kaputte Datei sperrt."""
 import contextlib
 import json
 import os
@@ -90,7 +90,7 @@ def test_the_lock_file_is_read_up_to_a_hard_size_limit(tmp_path, groesse, gesper
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="keine FIFOs auf dieser Plattform")
 def test_a_fifo_as_the_lock_file_does_not_block_and_counts_as_broken(tmp_path):
-    """S3S3-Reste: open auf eine FIFO ohne Schreiber haengt ohne O_NONBLOCK; sie gilt als kaputt (jede eingerichtete
+    """Open auf eine FIFO ohne Schreiber haengt ohne O_NONBLOCK; sie gilt als kaputt (jede eingerichtete
     Konfiguration abgelehnt). Daemon-Thread, damit die Suite auch bei einem Rueckfall nie haengt."""
     pfad = tmp_path / rastung.DATEI
     os.mkfifo(pfad)

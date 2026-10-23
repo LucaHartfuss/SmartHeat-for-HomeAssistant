@@ -1,4 +1,4 @@
-"""HA-Binding Weishaupt (Plan 3b, weishaupt_modbus): Betriebsart "Normal" (Uebersetzungsschluessel) als Vorbereitung,
+"""HA-Binding Weishaupt (weishaupt_modbus): Betriebsart "Normal" (Uebersetzungsschluessel) als Vorbereitung,
 Reihenfolge Komfort/Normal/Absenk, Hilfs-Ursprungswerte, physische Schreibvorgaenge; mit der Pipeline: Fehlschlag mitten in der
 Reihenfolge und Wiederherstellung."""
 import pytest
@@ -91,7 +91,7 @@ def test_a_failing_comfort_write_leaves_the_normal_setpoint_untouched():
 
 def test_an_unreadable_comfort_setpoint_is_a_write_error():
     ha = FakeHa(**{"number.komfort": float("nan")})
-    with pytest.raises(SignalUngueltig, match="setpoint_comfort"):  # erwartet ungueltig, kein Programmfehler (L4-17)
+    with pytest.raises(SignalUngueltig, match="setpoint_comfort"):  # erwartet ungueltig, kein Programmfehler
         _binding(ha).write("room_setpoint", 23.0)
     assert ha.calls == []
 
@@ -248,7 +248,7 @@ def test_a_comfort_boost_below_the_daily_limit_is_written_completely(make_store,
 
 @pytest.mark.parametrize(("comfort", "emergency"), [(True, False), (False, True)])
 def test_unreadable_auxiliary_values_block_a_boost_that_writes_the_room_setpoint(make_store, clock, comfort, emergency):
-    # Plan-Praezisierung 10: ohne gemerkte Hilfs-Ursprungswerte kein Schreiben des Normal-Solls und keine Umstellung der
+    # Ohne gemerkte Hilfs-Ursprungswerte kein Schreiben des Normal-Solls und keine Umstellung der
     # Betriebsart; weil die Vorbereitung vor dem ersten Hebel kommt, schreibt der Boost gar nichts.
     ha = FakeHa(**{"number.komfort": float("nan")})
     pipeline, store = _pipeline(make_store, clock, ha)
@@ -266,7 +266,7 @@ def test_unreadable_auxiliary_values_block_a_boost_that_writes_the_room_setpoint
     assert ha.calls[0] == ("select", "select.betriebsart", "hz_operationmode_normal")
 
 
-# --- Wiederherstellung ohne gemerkte Hilfswerte stellt die Betriebsart nicht um (Review Task 8) ---
+# --- Wiederherstellung ohne gemerkte Hilfswerte stellt die Betriebsart nicht um ---
 
 def test_a_second_restore_after_a_successful_one_neither_switches_nor_writes(make_store, clock):
     ha = FakeHa()
@@ -303,7 +303,7 @@ def test_regular_writes_still_prepare_the_operating_mode(make_store, clock):
     assert ha.calls == [("select", "select.betriebsart", "hz_operationmode_normal"), ("number", "number.normal", 21.0)]
 
 
-# --- Wiederherstellung mit Abfrageverzug: Komfort/Absenk gegen das Ziel des Normal-Solls begrenzen (Final-Review) ---
+# --- Wiederherstellung mit Abfrageverzug: Komfort/Absenk gegen das Ziel des Normal-Solls begrenzen ---
 
 class LaggingHa(FakeHa):
     """weishaupt_modbus fragt zyklisch ab: ein geschriebener Zahlenwert ist erst nach `poll()` in HA lesbar."""
@@ -447,7 +447,7 @@ def test_aux_zulaessig_accepts_only_known_modes_of_the_known_schemes(name, wert,
     assert _binding(FakeHa()).aux_zulaessig(name, wert) is ok
 
 
-# --- Mutationsprobe Stufe 3 S4b (A5-22 Rest): Vorbereitung verlangt die Hilfswerte und zaehlt einmal ---
+# --- Vorbereitung verlangt die Hilfswerte und zaehlt einmal ---
 
 def test_preparation_without_readable_auxiliary_values_does_not_switch_the_mode(make_store, clock):
     # Durchsetzen (ensure_prepared) und der Start (prepare_start) rufen die Vorbereitung mit den Voreinstellungen auf:
@@ -473,7 +473,7 @@ def test_a_preparation_after_an_earlier_write_counts_once(make_store, clock, mon
 
 
 def test_restore_aux_does_not_check_the_mode_against_the_known_modes():
-    """Heutiges Verhalten, Restpunkt S3S4b-2: der lokal gelesene Ursprungswert der Betriebsart wird beim Zurueckstellen
+    """Heutiges Verhalten: der lokal gelesene Ursprungswert der Betriebsart wird beim Zurueckstellen
     nicht gegen WEISHAUPT_MODES geprueft; ein unbekannter Modus im bekannten Schema geht an HA (HA lehnt eine unbekannte
     Option ab). Gegenprobe: dieselbe Option gilt als Hilfswert vom Server nicht als zulaessig."""
     ha = FakeHa(**{"select.betriebsart": "hz_operationmode_normal"})

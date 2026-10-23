@@ -1,6 +1,6 @@
-"""Testoffensive T2 (Spec §4, §5, §12 Nr. 20): Property- und Angriffstests der Leser von Geraeteeingaben im Add-on
-(V1 und V1b): Bootstrap-Antwort, Dokumente, Befehle und die Serverantwort `handle_setpoints`. Spec §5 "kompromittierter
-Server": ein Server, der beliebige Bytes sendet, bringt weder den Geraete-Thread noch den Regel-Worker zum Stehen und
+"""Property- und Angriffstests der Leser von Geraeteeingaben im Add-on
+(V1 und V1b): Bootstrap-Antwort, Dokumente, Befehle und die Serverantwort `handle_setpoints`. Kompromittierter
+Server: ein Server, der beliebige Bytes sendet, bringt weder den Geraete-Thread noch den Regel-Worker zum Stehen und
 bringt keinen Wert ausserhalb der lokalen Grenzen (Regel 4) auf die Anlage. Strategien und Pfadhilfen aus
 strategien.py (eigene Kopie, die Repos teilen keine Testhilfen). Beispielzahl, Seed und Frist (keine: ein Beispiel der
 Laufzeit-Tests startet eine ganze Laufzeit) kommen aus den Profilen in conftest.py (schnell 50 mit festem Seed, voll
@@ -196,7 +196,7 @@ def test_die_gute_bootstrap_antwort_wird_gelesen_und_gespeichert(ident, gute_ant
 
 # --- Dokumente (V1, DocumentStore.empfangen) ---
 
-KONFIG_OPTIONAL = ("ursprungswerte",)  # Namen der Spec, nicht wire.KONFIGURATION_OPTIONAL
+KONFIG_OPTIONAL = ("ursprungswerte",)  # Namen aus dem Vertrag als Literal, nicht wire.KONFIGURATION_OPTIONAL
 DOKUMENTE = [
     ("konfiguration", "konfiguration", _konfiguration(), KONFIG_OPTIONAL),
     ("konfiguration_mit_ursprung", "konfiguration", _konfiguration(ursprungswerte={"heat_limit": 18.0}), KONFIG_OPTIONAL),
@@ -297,7 +297,7 @@ _NICHT_ENDLICH = [float("nan"), float("inf"), float("-inf"), 10**400, -(10**400)
 _FORMEN = [lambda zahl: zahl, lambda zahl: [zahl], lambda zahl: {"x": zahl}, lambda zahl: {"x": [zahl]}]
 
 
-#: Felder, die der Leser nicht auf Typ und Zahl prueft (Befund Task 13, niedrig, Restpunkt TO-client-kern-T8): `mindest_software`
+#: Felder, die der Leser nicht auf Typ und Zahl prueft (offene-punkte.md TO-client-kern-T8): `mindest_software`
 #: und `ts` liest im Geraet keine Stelle als Zahl; `ursprungswerte` liest nur die Pipeline und filtert dort jede nicht
 #: endliche Zahl (`ist_endliche_zahl`, Rueckweg auf den lokalen Wert) und klemmt auf die lokalen Grenzen. Eine leere Konfiguration ist "immer gueltig" (nur `anlage` None zaehlt):
 #: sie fehlt in dieser Aufzaehlung ganz.
@@ -344,7 +344,7 @@ def test_text_mit_einzelnem_surrogat_wird_abgelehnt_oder_ist_speicherbar(stelle,
 
 # --- Befehle (V1, CommandRegister.empfangen) ---
 
-COMMAND_FELDER = ("schema", "command_id", "kind", "payload", "expires_at")  # Namen der Spec, nicht der Konstante
+COMMAND_FELDER = ("schema", "command_id", "kind", "payload", "expires_at")  # Namen aus dem Vertrag als Literal, nicht der Konstante
 BEFEHLE = [
     ("diagnostics", {}), ("hinweis", {"key": "k", "stufe": "info", "text": "t"}), ("sign_off", {}),
     ("zigbee_permit_join", {"seconds": 30}), ("claim_state", {"device_state": "uebernommen"}),

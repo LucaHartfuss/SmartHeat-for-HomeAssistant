@@ -1,4 +1,4 @@
-"""Audit 4, A4-08 (GK-3, GW-2), Nutzer-Entscheidung E3."""
+"""Zustand an Einrichtung und Anlage binden (Nutzer-Entscheidung E3)."""
 
 import logging
 
@@ -20,7 +20,7 @@ def _store(tmp_path, backup):
 
 
 def test_existing_state_without_binding_is_kept(tmp_path):
-    # Review Focus 1: Update von client1
+    # Update von client1
     store = _store(tmp_path, OLD)
     assert bind_to_tenant(store, "s1", "anlage-a") == "bestand"
     assert store.state.restore_point == OLD["restore_point"] and store.state.last_published_target_rt == 21.0
@@ -73,7 +73,7 @@ def test_ein_bestand_mit_anlage_aber_ohne_einrichtung_ist_eine_neue_einrichtung(
     assert store.state.last_published_target_rt is None and store.state.last_daily_trigger_date is None
 
 
-# --- A6-36: Anlagen-Kennung aus dem Kreis; einmalige Uebernahme der frueheren Kennung (Hebel-Referenzen bis 1.1.0) ---
+# --- Anlagen-Kennung aus dem Kreis; einmalige Uebernahme der frueheren Kennung (Hebel-Referenzen bis 1.1.0) ---
 
 #: Wie Add-on 1.1.0 die Kennung schrieb (roles.lever_refs_identity), woertlich; und die neue aus dem Kreis.
 FRUEHER = ('{"curve": "number.curve_current", "heat_limit": "number.heat_limit", "min_flow": "number.min_flow", '

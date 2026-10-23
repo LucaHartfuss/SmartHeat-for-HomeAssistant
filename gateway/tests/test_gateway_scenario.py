@@ -1,4 +1,4 @@
-"""Gateway-Szenario ab 0.6.0 (Spec SHG G2 7.3, Spec 5b 5.3): uebernommen, nicht eingerichtet -> Konfiguration ->
+"""Gateway-Szenario: uebernommen, nicht eingerichtet -> Konfiguration ->
 regelt -> Bedienung 22 °C -> Comfort-Boost -> Thermostat-Wunsch 14 °C (begrenzt 15) -> zwei Ack-Timeouts ->
 Notbetrieb -> Rueckkehr -> sign_off mit Zuruecksetzen -> leere Konfiguration -> aufgeraeumt -> neu eingerichtet
 (die Treiber-Anmeldung davor bleibt). Feste Uhr, FakeBus als lokaler Broker, Fake-Link (der Test spielt den Dienst),
@@ -135,9 +135,9 @@ def test_gateway_scenario(world):
     assert {lever: ergebnis["result"]["werte"].get(lever) for lever in URSPRUNG} == URSPRUNG
     assert {lever: _plant(world)[lever] for lever in URSPRUNG} == URSPRUNG
 
-    # 8. leere Konfiguration (entfernt, erst nach dem sign_off-Ergebnis, Spec 5b 5) -> Neustart -> der Start setzt mit
+    # 8. leere Konfiguration (entfernt, erst nach dem sign_off-Ergebnis) -> Neustart -> der Start setzt mit
     # der Konfiguration der Markierung zurueck (nach dem sign_off nichts mehr zu tun) -> zweiter Neustart -> dieser
-    # Start raeumt auf (Spec Stufe 3 S3 Abschnitt 4)
+    # Start raeumt auf
     dateien.schreiben_json(world.paths.driver_secrets_dir / "vicare.json", {"refresh_token": "test-token"}, modus=dateien.LESBAR)
     world.konfiguration_senden(leer(), 2)
     assert _ergebnis(world, dokument="konfiguration", version=2)["ok"] is True
@@ -147,7 +147,7 @@ def test_gateway_scenario(world):
     world.connect()
     assert world.status() is None and world.geraet.zustand.raum is None
     assert _led(world) == "wartet_auf_einrichtung"
-    assert world.device.identity.claim_code == code_vorher  # Identitaet bleibt (der Server gibt frei, Plan S2)
+    assert world.device.identity.claim_code == code_vorher  # Identitaet bleibt (der Server gibt frei)
 
     # 9. neu einrichten: eine Treiber-Anmeldung im Assistenten vor der Einrichtung ueberlebt deren Neustart
     dateien.schreiben_json(world.paths.driver_secrets_dir / "vicare.json", {"refresh_token": "test-token"}, modus=dateien.LESBAR)
@@ -159,7 +159,7 @@ def test_gateway_scenario(world):
 
 
 def test_a_configuration_below_the_minimum_version_still_reaches_the_updater(world):
-    # Review Focus 4: update_noetig, aber die Soll-Software liegt fuer den Updater bereit.
+    # update_noetig, aber die Soll-Software liegt fuer den Updater bereit.
     world.start_runtime()
     world.connect()
     major, minor, _ = GATEWAY_VERSION.split(".")
@@ -174,7 +174,7 @@ def test_a_configuration_below_the_minimum_version_still_reaches_the_updater(wor
 
 
 def test_alte_konfiguration_ohne_parameter_startet_nicht(world, caplog):
-    """Review Focus 1 (Spec Stufe 3 S4b 4.3): eine gespeicherte Konfiguration ohne bindungsparameter endet im
+    """Eine gespeicherte Konfiguration ohne bindungsparameter endet im
     Konfigurationsfehler (Ruhezustand); der Treiber wird nicht gebaut."""
     dokumente_schreiben(world.paths, konfiguration(bindungsparameter=None))
     with caplog.at_level("ERROR"):

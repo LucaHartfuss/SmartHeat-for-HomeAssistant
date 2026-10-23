@@ -1,6 +1,5 @@
-"""Plan 5b D2 Task 6: Diagnoseseite auf dem Geraetekern - Zustand statt Uebernahmestatus, Hinweise, eigene Meldungen,
-abgelehnte Konfiguration, QR-Code nur solange nicht eingerichtet. Schutz gegen DNS-Rebinding und fremde Clients wie
-bis 0.5.0 (Tests unten unveraendert portiert)."""
+"""Diagnoseseite auf dem Geraetekern - Zustand statt Uebernahmestatus, Hinweise, eigene Meldungen,
+abgelehnte Konfiguration, QR-Code nur solange nicht eingerichtet. Schutz gegen DNS-Rebinding und fremde Clients."""
 import http.client
 import json
 import socket
@@ -162,7 +161,7 @@ def _get(port: int, path: str, host: str) -> tuple[int, bytes, http.client.HTTPM
     ("8.8.8.8", False), ("2a00:1450:4001::1", False), ("::ffff:8.8.8.8", False), ("kaputt", False),
 ])
 def test_only_local_clients_may_see_the_page(address, allowed):
-    # Audit 4, A4-37 (GW-10), Nutzer-Entscheidung E12; Review Focus 5
+    # Nutzer-Entscheidung E12
     assert diagnostics.client_allowed(address) is allowed
 
 

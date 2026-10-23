@@ -1,4 +1,4 @@
-"""Treiber-Konformitaet (Spec SHG G2 7.3): jeder Treiber der Registry erfuellt PlantBinding mit derselben
+"""Treiber-Konformitaet: jeder Treiber der Registry erfuellt PlantBinding mit derselben
 BindingDescription wie der HA-Pfad, liefert die Pflicht-Rollen seines Hebelsatzes und eine Erkennung nach dem
 Vertrag. G4 ergaenzt PARAMETERS um seine Treiber."""
 import pytest

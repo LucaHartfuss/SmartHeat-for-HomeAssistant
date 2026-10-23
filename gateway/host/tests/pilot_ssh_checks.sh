@@ -1,5 +1,5 @@
 #!/bin/bash
-# Laeuft IM Debian-Container (tests/test_gateway_install.sh) nach install_checks.sh: Pilot-SSH-Tunnel (Plan G2b-2 Task 8)
+# Laeuft IM Debian-Container (tests/test_gateway_install.sh) nach install_checks.sh: Pilot-SSH-Tunnel
 # mit einem Attrappen-.deb (eigene Pin-Datei in einer Kopie des Installer-Baums) und Schutz vor dem Aussperren.
 set -u
 FAIL=0
@@ -19,7 +19,7 @@ printf 'test-token-AAAAAAAAAAAAAAAAAAAAAAAAAAAA\n' >/tmp/token
 TUNNEL=("$COPY/host/pilot_ssh_tunnel.sh")
 
 # 0. Die Pin-Datei im Repo hat fuer beide Architekturen einen SHA-256 und eine Version. Sie ist die einzige Quelle
-# der cloudflared-Version (das Add-on cloudflared_access_mqtt als zweite Referenz ist entfernt, Phase 1 S1b).
+# der cloudflared-Version (das Add-on cloudflared_access_mqtt als zweite Referenz ist entfernt).
 for a in arm64 amd64; do
   grep -Eq "^SHA256_$a=[0-9a-f]{64}$" /src/gateway/host/cloudflared.pin || fail "Pin SHA256_$a fehlt oder ist kein SHA-256"
 done

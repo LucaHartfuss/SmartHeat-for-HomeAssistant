@@ -1,5 +1,4 @@
-"""Szenario vicare_cloud mit der Gateway-Laufzeit (Plan G4 Task 7, Review Focus 1; ab 0.6.0 auf dem Geraetekern, Plan
-5b D2): die Anmeldung laeuft ab."""
+"""Szenario vicare_cloud mit der Gateway-Laufzeit (auf dem Geraetekern): die Anmeldung laeuft ab."""
 import pytest
 from configs import SENSOR, THERMOSTAT, konfiguration
 from fake_vicare.server import GOOD_CODE, FakeVicare

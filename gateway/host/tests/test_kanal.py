@@ -1,4 +1,4 @@
-"""Plan 5b D2 Task 7: lokaler Kanal des Updaters (Soll-Software aus der Laufzeit, Ergebnisse an die Laufzeit,
+"""Lokaler Kanal des Updaters (Soll-Software aus der Laufzeit, Ergebnisse an die Laufzeit,
 Erreichbarkeit des Brokers)."""
 import json
 import os
@@ -87,7 +87,7 @@ def test_reachable_means_a_tcp_connection_to_the_broker(tmp_path):
 
 
 def test_reachable_uses_a_real_tcp_connection_by_default(tmp_path):
-    """Ohne Attrappe: ein lauschender Port ist erreichbar, ein geschlossener nicht (Review Focus 5)."""
+    """Ohne Attrappe: ein lauschender Port ist erreichbar, ein geschlossener nicht."""
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         listener.listen(1)

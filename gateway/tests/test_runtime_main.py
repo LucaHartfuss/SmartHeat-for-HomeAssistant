@@ -1,4 +1,4 @@
-"""Plan 5b D2 Task 5: ein Prozess aus Geraetekern und Laufzeit - Neustart bei neuer Konfiguration mit sauberem
+"""Ein Prozess aus Geraetekern und Laufzeit - Neustart bei neuer Konfiguration mit sauberem
 Trennen, Aufraeumen nach dem Entfernen, Raum im Prozess, Bedienung beim Start, Lebenszeichen."""
 import json
 import urllib.request
@@ -172,7 +172,7 @@ def _offenes_zuruecksetzen(world):
 
 
 def test_the_cleanup_waits_while_the_reset_is_pending(world):
-    """Spec Stufe 3 S3 Abschnitt 4: vor dem Zuruecksetzen bleiben Laufzeit-Ordner, Treiber-Anmeldung (das Zuruecksetzen
+    """Vor dem Zuruecksetzen bleiben Laufzeit-Ordner, Treiber-Anmeldung (das Zuruecksetzen
     braucht sie) und Markierung."""
     _offenes_zuruecksetzen(world)
     runtime_main.aufraeumen(world.paths)
@@ -182,7 +182,7 @@ def test_the_cleanup_waits_while_the_reset_is_pending(world):
 
 
 def test_the_cleanup_reads_the_stored_configuration_without_writing_the_lock(world):
-    """S3S3-Reste: Nur-Lese-Aufbau; die Rastung einer gespeicherten Konfiguration ohne Rastung schreibt erst der
+    """Nur-Lese-Aufbau; die Rastung einer gespeicherten Konfiguration ohne Rastung schreibt erst der
     Geraetekern."""
     aufraeumen.markieren(world.paths.aufraeumen, konfiguration())
     dokumente_schreiben(world.paths, konfiguration(anlage="neue-anlage"))
@@ -255,7 +255,7 @@ def _soll_software(world):
 
 
 def test_the_offer_of_a_rejected_configuration_is_replayed_after_a_restart(world):
-    """5b-D2-3 (Review Focus 5): software_soll.json ging verloren (Neustart vor dem Schreiben, Stromausfall); der Server
+    """software_soll.json ging verloren (Neustart vor dem Schreiben, Stromausfall); der Server
     stellt die abgelehnte Version nicht erneut zu, der naechste Start bietet genau das gemerkte Angebot an."""
     world.start_runtime()
     world.connect()
@@ -269,7 +269,7 @@ def test_the_offer_of_a_rejected_configuration_is_replayed_after_a_restart(world
 def test_a_write_error_while_replaying_the_offer_is_logged_and_the_start_goes_on(world, monkeypatch, caplog):
     """F-gateway-host-31: scheitert das Schreiben von software_soll.json beim Nachholen (Datentraeger voll, nur lesbar),
     loggt der Start den Fehler nur mit seiner Art und laeuft weiter; der naechste Start holt das Angebot nach.
-    Die Attrappe sitzt an der Dateisystem-Grenze (dateien.schreiben_json, Nr. 23)."""
+    Die Attrappe sitzt an der Dateisystem-Grenze (dateien.schreiben_json)."""
     world.start_runtime()
     world.connect()
     world.konfiguration_senden(konfiguration(mindest_software="9.0.0", software=SOFTWARE), 1)
@@ -327,7 +327,7 @@ def test_a_withdrawn_offer_is_replayed_as_null(world):
 
 def test_a_stored_configuration_without_a_remembered_offer_is_not_replayed(world):
     """Kein Kompatibilitaetspfad: eine gespeicherte Konfiguration mit software, aber ohne software_angebot in
-    dokumente.json (Stand vor 5b-D2-3), ruft den Updater beim Start nicht."""
+    dokumente.json, ruft den Updater beim Start nicht."""
     dokumente_schreiben(world.paths, konfiguration(software=SOFTWARE))
     world.start_runtime()
     assert _soll_software(world) == "fehlt"
@@ -359,7 +359,7 @@ def test_room_is_refreshed_every_tick(world):
 
 
 def test_the_operation_is_applied_and_the_thermostat_aligned_at_start(world):
-    # das Thermostat hat vor dem Start gemeldet (retained): bekannter Zustand, an (A6-14)
+    # das Thermostat hat vor dem Start gemeldet (retained): bekannter Zustand, an
     world.z2m.report(THERMOSTAT, system_mode="heat", occupied_heating_setpoint=20.0, local_temperature=20.0)
     dokumente_schreiben(world.paths, konfiguration(), bedienung(22.0))
     world.start_runtime()
@@ -368,7 +368,7 @@ def test_the_operation_is_applied_and_the_thermostat_aligned_at_start(world):
 
 
 def test_without_a_known_thermostat_state_the_start_aligns_with_its_first_report(world):
-    """A6-14: ohne bekannten Zustand (noch nie gemeldet, Mosquitto ohne retained Werte) wartet das Angleichen auf die
+    """Ohne bekannten Zustand (noch nie gemeldet, Mosquitto ohne retained Werte) wartet das Angleichen auf die
     erste Live-Meldung des Thermostats."""
     dokumente_schreiben(world.paths, konfiguration(), bedienung(22.0))
     world.start_runtime()
@@ -383,7 +383,7 @@ def test_without_a_known_thermostat_state_the_start_aligns_with_its_first_report
 def test_a_newer_operation_replaces_the_stored_target_at_start(world, erste):
     """Gespeichert 20, Bedienung 22,5 (kam waehrend des Neustarts, nicht dirty): sie gilt sofort im Soll-Speicher.
     Ohne bekannten Zustand des Thermostats geht sie erst mit seiner ersten Live-Meldung hinaus, wie das Angleichen
-    (A6-14, Fix-Runde 1 I-1); meldet es aus, erst mit "wieder an"."""
+    (Fix-Runde 1 I-1); meldet es aus, erst mit "wieder an"."""
     dateien.schreiben_json(world.paths.room_target, {"value": 20.0, "source": "portal", "ts": "t"},
                            modus=dateien.LESBAR)
     dokumente_schreiben(world.paths, konfiguration(), bedienung(22.5))
@@ -401,7 +401,7 @@ def test_a_newer_operation_replaces_the_stored_target_at_start(world, erste):
 
 
 def test_a_raise_of_the_wish_at_start_triggers_the_boost(world):
-    """Nachtrag Re-Review Task 4: eine Erhoehung der Bedienung waehrend des Neustarts (20 -> 22,5) loest den Boost aus,
+    """Eine Erhoehung der Bedienung waehrend des Neustarts (20 -> 22,5) loest den Boost aus,
     nicht nur das Angleichen des Thermostats: der Stable-Target-Cache haelt noch 20, das Soll im Speicher ist 22,5."""
     world.z2m.report(THERMOSTAT, system_mode="heat", occupied_heating_setpoint=20.0, local_temperature=20.0)
     dokumente_schreiben(world.paths, konfiguration(), bedienung(20.0))
@@ -458,7 +458,7 @@ def test_before_the_pause_a_missing_alive_file_is_no_error(world, monkeypatch):
     assert geraet.zustand.status == {"status": "startet"}
 
 
-# --- Fehler vor laufen (S3S6-Startabbruch) ---
+# --- Fehler vor laufen ---
 
 
 @pytest.fixture
@@ -468,7 +468,7 @@ def vor_dem_start(world, monkeypatch):
     es)."""
     monkeypatch.setenv("SHG_HOST_DIR", str(world.host_dir))
     monkeypatch.setenv("SHG_DEVICE_API_URL", "https://accounts.example.test")
-    monkeypatch.setattr(runtime_main, "DIAG_PORT", 0)  # A6-87: eine Konstante, kein Umgebungsschalter
+    monkeypatch.setattr(runtime_main, "DIAG_PORT", 0)  # Eine Konstante, kein Umgebungsschalter
     pausen = []
     monkeypatch.setattr(prozess.time, "sleep", pausen.append)
     alive = world.paths.data / "alive"
@@ -478,7 +478,7 @@ def vor_dem_start(world, monkeypatch):
 
 def test_an_unwritable_data_dir_during_cleanup_pauses_unhealthy_and_exits(world, vor_dem_start, monkeypatch, caplog):
     """Die Markierung einer neuen Einrichtung (VERWERFEN) laesst sich im nicht beschreibbaren Datenordner nicht
-    loeschen. Bis S3S6-Startabbruch endete das Gateway dann mit dem Traceback (Compose startete schnell neu); jetzt
+    loeschen. Es endet nicht mit dem Traceback (Compose startete sonst schnell neu); stattdessen
     ERROR mit Fehlerart, Lebenszeichen weg (Compose-Health-Check und health_ok scheitern; /healthz antwortet ohne
     Diagnoseserver gar nicht), 60 s Pause, None (main endet mit Exit 0, Compose startet neu)."""
     dateien.schreiben_json(world.paths.aufraeumen, {"anlage": "test-tenant"}, modus=dateien.LESBAR)
@@ -550,7 +550,7 @@ def test_vorbereiten_returns_host_and_device_with_the_diagnosis_page_up(world, v
 
 
 def test_the_diagnosis_page_listens_on_diag_port_whatever_the_environment_says(world, vor_dem_start, monkeypatch):
-    """A6-87: der Port ist `runtime_main.DIAG_PORT`; `SHG_DIAG_PORT` aus der Umgebung gilt nicht mehr."""
+    """Der Port ist `runtime_main.DIAG_PORT`; `SHG_DIAG_PORT` aus der Umgebung gilt nicht mehr."""
     monkeypatch.setenv("SHG_DIAG_PORT", "1")
     ports = []
     monkeypatch.setattr(runtime_main.diagnose, "start_server", lambda port, *args: ports.append(port))
@@ -559,7 +559,7 @@ def test_the_diagnosis_page_listens_on_diag_port_whatever_the_environment_says(w
 
 
 def test_main_connects_to_the_local_bus_on_the_bus_port_whatever_the_environment_says(monkeypatch):
-    """A6-87: der Port des lokalen Busses ist `bus.BUS_PORT` (1883, Mosquitto in der Compose-Datei); `SHG_BUS_PORT` aus
+    """Der Port des lokalen Busses ist `bus.BUS_PORT` (1883, Mosquitto in der Compose-Datei); `SHG_BUS_PORT` aus
     der Umgebung gilt nicht mehr."""
     monkeypatch.setenv("SHG_BUS_PORT", "1")
     monkeypatch.delenv("SHG_BUS_HOST", raising=False)
@@ -582,7 +582,7 @@ class _Stopp(Exception):
 
 
 def test_vorbereiten_reicht_die_ausstehende_markierung_an_den_geraete_host(world, vor_dem_start, monkeypatch):
-    """T4-Markierung-Zweitlesen: das Aufraeumen liest die Markierung einmal; steht das Zuruecksetzen aus, bekommt sie der
+    """Das Aufraeumen liest die Markierung einmal; steht das Zuruecksetzen aus, bekommt sie der
     Geraete-Host als start_markierung (die Laufzeit liest die Datei nicht erneut); sonst bleibt sie leer."""
     monkeypatch.setattr(runtime_main.diagnose, "start_server", lambda *args: None)
     geraet, _ = runtime_main.vorbereiten(world.paths, vor_dem_start.mirror)
@@ -600,7 +600,7 @@ def test_sigterm_ends_with_exit_0():
 
 
 def test_an_operation_without_a_valid_target_does_not_align_the_thermostat_at_start(world):
-    """Spec Stufe 3 S6 4.3 (c): wie der HA-Host gleicht das Gateway nur mit einem gueltigen raum_soll an; sonst gilt
+    """Wie der HA-Host gleicht das Gateway nur mit einem gueltigen raum_soll an; sonst gilt
     der Standard, und das Thermostat bleibt unberuehrt."""
     dokumente_schreiben(world.paths, konfiguration(), {**bedienung(), "raum_soll": 30.0})
     world.start_runtime()

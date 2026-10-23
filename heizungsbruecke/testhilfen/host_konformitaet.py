@@ -1,8 +1,8 @@
-"""Konformitaet der Geraete-Hosts (V2; Audit 5 A5-58; Spec Stufe 3 S6 4.1): dieselben Pruefungen fuer HaDeviceHost und
+"""Konformitaet der Geraete-Hosts (V2): dieselben Pruefungen fuer HaDeviceHost und
 GatewayDeviceHost. Jeder Host baut eine Welt (Fixture in seiner Testdatei); die Pruefungen kennen nur die gemeinsame
 Sicht: Binden des Workers, Nachstellen von Neustart und Bedienung, Ursprungswerte, Dokumentsicht, Aufraeum-Markierung,
-Abmelde-Markierung (verfaellt mit einer neuen Konfiguration derselben Anlage, 5b-D2-7), Bedienwunsch. Rueckrufe des
-Geraetekerns werfen nie, bis auf konfiguration_vorbereiten (vor dem Speichern, Spec Testoffensive 12.6, Nr. 38): laesst
+Abmelde-Markierung (verfaellt mit einer neuen Konfiguration derselben Anlage), Bedienwunsch. Rueckrufe des
+Geraetekerns werfen nie, bis auf konfiguration_vorbereiten (vor dem Speichern): laesst
 sich die Markierung nicht schreiben, geht der OSError an den Geraetekern, der das Dokument zurueckhaelt."""
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -61,7 +61,7 @@ class Welt:
     konfiguration: dict  # eine eingerichtete Konfiguration des Hosts
     wunsch_herkunft: str  # herkunft, mit der host.wunsch(wert) den Geraetekern ruft
     # Liest einen Fuehlerwert ueber die echte SignalSource des Hosts: der Fuehler meldet `roh` (Zahl oder Text wie
-    # "unavailable"), die Antwort ist get_state(Fuehler-Referenz) (Spec Fixrunde A SignalUngueltig 4).
+    # "unavailable"), die Antwort ist get_state(Fuehler-Referenz).
     fuehler_lesen: Callable[[float | str], float]
 
     def verbunden(self) -> KonformDevice:
@@ -155,7 +155,7 @@ def neustart_vor_dem_binden_kommt_beim_binden(w: Welt) -> None:
 
 
 def im_ruhezustand_kommt_ein_neustart_vor_dem_binden_beim_binden(w: Welt) -> None:
-    """Die Ersteinrichtung im Ruhezustand haengt daran (S3S6-Reste 1): soll_eingang=False haelt nur die Bedienung
+    """Die Ersteinrichtung im Ruhezustand haengt daran: soll_eingang=False haelt nur die Bedienung
     zurueck, nie die Neustart-Anforderung."""
     w.verbunden()
     w.host.neustart_anfordern()
@@ -238,7 +238,7 @@ def die_erste_leere_konfiguration_markiert_nichts(w: Welt) -> None:
 
 
 def die_erste_leere_konfiguration_startet_nicht_neu(w: Welt) -> None:
-    """L4-02 (c): leer nach keiner (Erstkontakt) und leer nach leer fordern keinen Neustart an; die erste eingerichtete
+    """Leer nach keiner (Erstkontakt) und leer nach leer fordern keinen Neustart an; die erste eingerichtete
     Konfiguration schon (Gegenprobe)."""
     w.verbunden()
     leer = {"anlage": None, "raumfuehler": []}  # wie vom Server: raumfuehler [] ist ungleich fehlend
@@ -269,7 +269,7 @@ def _abmelden(w: Welt, anlage: str) -> None:
 
 
 def eine_neue_konfiguration_derselben_anlage_hebt_die_abmeldung_auf(w: Welt) -> None:
-    """5b-D2-7 (Spec Testoffensive 12.7): das Geraet folgt dem Server. Auch ohne laufzeitrelevante Aenderung (gleicher
+    """Das Geraet folgt dem Server. Auch ohne laufzeitrelevante Aenderung (gleicher
     Inhalt in neuer Version, nur das Profil anders) faellt die Markierung, und der Neustart verlaesst "abgemeldet"."""
     w.verbunden()
     alt = dict(w.konfiguration)
@@ -344,7 +344,7 @@ def wunsch_und_soll_quelle_gehen_an_das_geraet(w: Welt) -> None:
 
 def ein_ungueltiger_fuehlerwert_wirft_signal_ungueltig(w: Welt) -> None:
     """V2 (Port SignalSource): ein Fuehler ohne gueltigen Wert (nicht verfuegbar, unbekannt, Text) ist der erwartete
-    Lesefall SignalUngueltig, kein einfacher ValueError; die Laufzeit loggt ihn als WARNING statt ERROR (L4-17)."""
+    Lesefall SignalUngueltig, kein einfacher ValueError; die Laufzeit loggt ihn als WARNING statt ERROR."""
     assert w.fuehler_lesen(21.5) == 21.5  # Gegenprobe: ein gueltiger Wert wird gelesen
     for roh in ("unavailable", "unknown", "kein Wert"):
         try:

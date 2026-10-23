@@ -1,5 +1,5 @@
 #!/bin/bash
-# Host-Installer im Debian-13-Container pruefen (Spec G2b-1 6/10). Plattform: SHG_INSTALL_PLATFORM (Standard
+# Host-Installer im Debian-13-Container pruefen. Plattform: SHG_INSTALL_PLATFORM (Standard
 # linux/amd64; die CI faehrt zusaetzlich linux/arm64 per QEMU). Docker-Pakete laesst der Test aus (--no-docker).
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"

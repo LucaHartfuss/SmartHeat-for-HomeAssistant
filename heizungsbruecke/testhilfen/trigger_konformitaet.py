@@ -1,4 +1,4 @@
-"""Ereignisvertrag der Trigger-Quellen (smartheat_runtime/ports.py TriggerSource; Audit 5 A5-58; Spec Stufe 3 S6 4.1),
+"""Ereignisvertrag der Trigger-Quellen (smartheat_runtime/ports.py TriggerSource),
 fuer beide Hosts: (Wieder-)Verbindung -> EV_LOCAL_CHECK(room_target_fired=True) und EV_SOURCE_CONNECTED; Meldung eines
 zugeordneten Raumfuehlers -> EV_LOCAL_CHECK(room_target_fired=False), eine Flut ergibt einen Check; Tagestick ->
 EV_LOCAL_CHECK(room_target_fired=False). Die Entprellung der Wunschtemperatur (10 s) gehoert nicht dazu: HA entprellt im

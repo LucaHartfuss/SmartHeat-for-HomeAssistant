@@ -1,4 +1,4 @@
-"""Spec 5b 3.2/3.3: Bedienwunsch begrenzen, runden, mit basis_version senden, puffern bis zum PUBACK."""
+"""Bedienwunsch begrenzen, runden, mit basis_version senden, puffern bis zum PUBACK."""
 import json
 import math
 

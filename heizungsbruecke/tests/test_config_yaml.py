@@ -1,5 +1,4 @@
-"""config.yaml ab 1.0.0 (Spec 5c 1.1/1.2): nur Optionen zum Starten, Supervisor-Discovery, kein Optionsmodus mehr. Die
-Pruefungen der frueheren Rollen-, Zugangs- und Intervall-Optionen entfallen mit dem Optionsmodus."""
+"""config.yaml: nur Optionen zum Starten, Supervisor-Discovery, kein Optionsmodus."""
 import ast
 import tomllib
 from pathlib import Path
@@ -21,7 +20,7 @@ def test_addon_version_constant_matches_config_yaml():
 
 
 def test_pyproject_liest_die_version_aus_version_py():
-    """A6-91 (b): keine zweite, veraltende Versionsangabe; setuptools holt sie aus ADDON_VERSION."""
+    """Keine zweite, veraltende Versionsangabe; setuptools holt sie aus ADDON_VERSION."""
     pyproject = tomllib.loads((CONFIG_YAML_PATH.parent / "pyproject.toml").read_text())
     assert "version" not in pyproject["project"] and pyproject["project"]["dynamic"] == ["version"]
     assert pyproject["tool"]["setuptools"]["dynamic"]["version"] == {"attr": "heizungsbruecke.version.ADDON_VERSION"}
@@ -52,7 +51,7 @@ def test_discovery_and_supervisor_api_without_host_network():
 
 
 def test_stdin_only_for_the_local_sign_off():
-    """L4-06: der Supervisor haelt stdin des Containers offen; darueber schickt die Integration den lokalen Befehl
+    """Der Supervisor haelt stdin des Containers offen; darueber schickt die Integration den lokalen Befehl
     `entfernen <geraet_id>` (stdin_befehl)."""
     assert _load_config_yaml()["stdin"] is True
 

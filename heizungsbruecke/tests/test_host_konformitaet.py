@@ -1,4 +1,4 @@
-"""V2-Konformitaet des HA-Hosts (testhilfen/host_konformitaet.py; Spec Stufe 3 S6 4.1)."""
+"""V2-Konformitaet des HA-Hosts (testhilfen/host_konformitaet.py)."""
 from types import SimpleNamespace
 from unittest.mock import patch
 

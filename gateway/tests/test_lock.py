@@ -1,4 +1,4 @@
-"""Gleiche Versionen gemeinsamer Abhaengigkeiten wie das Add-on (Spec SHG G2 7.1)."""
+"""Gleiche Versionen gemeinsamer Abhaengigkeiten wie das Add-on."""
 import re
 from pathlib import Path
 

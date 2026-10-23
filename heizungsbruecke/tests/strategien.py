@@ -1,4 +1,4 @@
-"""Gemeinsame Strategien und Pfadhilfen der Property-Tests (Testoffensive T6, Zusatz T2-Abschluss; eigene Kopie, die
+"""Gemeinsame Strategien und Pfadhilfen der Property-Tests (eigene Kopie, die
 Repos teilen keine Testhilfen): beliebige JSON-Werte und Texte, die Stellen einer Vorlage und das Ersetzen oder
 Entfernen an einer Stelle. Texte enthalten auch einzelne Surrogate (json.loads liefert sie aus "\\ud800"-Escapes).
 Einstellungen (Beispielzahl, Seed) kommen aus den Profilen in conftest.py."""

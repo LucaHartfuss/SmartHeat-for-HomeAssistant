@@ -1,4 +1,4 @@
-"""Fake-Bootstrap fuer die Docker-Pruefungen des Gateways (Plan 5b D2 Task 10): register und certificate (Routen aus
+"""Fake-Bootstrap fuer die Docker-Pruefungen des Gateways: register und certificate (Routen aus
 wire.ROUTES) signieren den CSR mit der Test-CA aus ca_dir (ca.pem, ca.key; fake_ca) und nennen den Fake-Broker als
 Endpunkt; die Antwort traegt genau die Felder aus wire.BOOTSTRAP_RESPONSE. Der Fake dient ausserdem als Release-Host
 des Updater-Tests (/_e2e/files). Signaturen prueft er nicht (D1-Unit-Tests, echter Server in W Teil B). Steuer-Routen

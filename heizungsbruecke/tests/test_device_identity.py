@@ -1,4 +1,4 @@
-"""Spec 5b 1: Identitaet des Geraets (aus gateway agent/identity.py) mit TLS-Schluessel und CSR."""
+"""Identitaet des Geraets (aus gateway agent/identity.py) mit TLS-Schluessel und CSR."""
 import base64
 import hashlib
 import inspect
@@ -23,7 +23,7 @@ def test_keys_and_code_are_created_once_and_private(tmp_path):
 
 
 def test_kein_verschluesselungsschluessel_mehr(tmp_path):
-    """Plan S8a-1 P3: das Geraet erzeugt enc_key.pem nicht mehr; eine vorhandene Datei bleibt liegen und wird nicht
+    """Das Geraet erzeugt enc_key.pem nicht mehr; eine vorhandene Datei bleibt liegen und wird nicht
     gelesen (Loeschen beim Live-Abbau)."""
     identity.load_or_create(tmp_path / "neu")
     assert sorted(p.name for p in (tmp_path / "neu").iterdir()) == sorted(

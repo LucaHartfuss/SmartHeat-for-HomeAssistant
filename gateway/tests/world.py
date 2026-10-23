@@ -1,4 +1,4 @@
-"""Bausteine fuer Laufzeit- und Szenariotests des Gateways ab 0.6.0 (Plan 5b D2): Geraetekern mit Fake-Link (der Zugang
+"""Bausteine fuer Laufzeit- und Szenariotests des Gateways: Geraetekern mit Fake-Link (der Zugang
 liegt schon vor, kein Bootstrap), Gateway-Host, Laufzeit. Ein gewollter Neustart (prozess.Neustart) baut wie Compose
 einen neuen Prozess (neuer Zigbee-Spiegel, Geraetekern, Link und Laufzeit) auf denselben Dateien; der neue Link ist erst
 nach connect() verbunden. start_runtime folgt runtime_main.main(): erst das Aufraeumen, dann der Geraetekern."""
@@ -81,7 +81,7 @@ class GatewayWorld:
         self.result, self.host = runtime_main.start(self.paths, self.bus, mirror, self.geraet, self.device,
                                                     clock=self.clock, driver_threads=False)
         self.restarts += 1
-        # Der Fuehler meldet live (retained Werte aus dem Broker-Replay gelten nicht als frisch, Plan G2b-1).
+        # Der Fuehler meldet live (retained Werte aus dem Broker-Replay gelten nicht als frisch).
         self.z2m.report(SENSOR, temperature=20.0, battery=90)
         return self.result
 

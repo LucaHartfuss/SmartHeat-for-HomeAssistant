@@ -1,6 +1,6 @@
-"""Geraetekern (Spec 5b 5.1): wire.py ist reine Standardbibliothek. Ab Teilprojekt 5c ist das HA-Add-on ein Geraet:
-heizungsbruecke nutzt den Geraetekern (Geraete-Host geraet_host.py, Spec 5c 1.3). Die uebrigen Importgrenzen
-(Drittpakete je Datei, kein Host im Kern) stehen in test_modulgrenzen.py (Audit 5 A5-59)."""
+"""Geraetekern: wire.py ist reine Standardbibliothek. Ab Teilprojekt 5c ist das HA-Add-on ein Geraet:
+heizungsbruecke nutzt den Geraetekern (Geraete-Host geraet_host.py). Die uebrigen Importgrenzen
+(Drittpakete je Datei, kein Host im Kern) stehen in test_modulgrenzen.py."""
 import ast
 import sys
 from pathlib import Path
