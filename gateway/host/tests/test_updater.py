@@ -3,6 +3,7 @@ import errno
 import hashlib
 import http.server
 import importlib
+import ipaddress
 import json
 import os
 import random
@@ -1013,10 +1014,10 @@ def test_a_refused_redirect_closes_the_answer_that_carried_it():
     with pytest.raises(updater.FetchError, match="Weiterleitung auf ein Schema"):
         handler.redirect_request(request, refused, 302, "Found", {}, "http://evil.test/x")
     assert refused.closed == 1
-    # Gegenprobe: ein erlaubtes Ziel liefert die Folgeanfrage, die Antwort schliesst dann urllib selbst (nicht der Handler)
+    # Gegenprobe: ein erlaubtes Ziel liefert die Folgeanfrage; die Antwort wird auch dann geschlossen (ungelesen, M-1)
     followed = Antwort()
     follow_up = handler.redirect_request(request, followed, 302, "Found", {}, "https://cdn.example.test/x")
-    assert follow_up.full_url == "https://cdn.example.test/x" and followed.closed == 0
+    assert follow_up.full_url == "https://cdn.example.test/x" and followed.closed == 1
 
 
 @pytest.fixture
@@ -1125,14 +1126,15 @@ def test_fetch_url_network_errors_are_fetch_errors():
 
 @pytest.fixture
 def trickling_server():
-    """Lokaler HTTP-Server, der eine Antwort von 15 Bytes mit einem Byte je 0,2 s ausliefert (insgesamt 3 s): jede
+    """Lokaler HTTP-Server, der eine Antwort von 15 Bytes (Pfad /m) mit einem Byte je 0,2 s ausliefert (insgesamt 3 s): jede
     einzelne Leseoperation kommt weit vor der Zeitgrenze des Sockets zurueck, nur die Summe ist lang."""
     class Handler(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
+            count = 3 if self.path == "/kurz" else 15  # /kurz: kurze Gegenprobe (0,6 s)
             self.send_response(200)
-            self.send_header("Content-Length", "15")
+            self.send_header("Content-Length", str(count))
             self.end_headers()
-            for _ in range(15):
+            for _ in range(count):
                 try:
                     self.wfile.write(b"x")
                     self.wfile.flush()
@@ -1161,9 +1163,9 @@ def test_fetch_ends_after_the_total_deadline_of_a_trickling_server(monkeypatch, 
     with pytest.raises(updater.FetchError, match="Gesamtfrist"):
         updater.fetch_url(trickling_server, 100, allow_http=True)
     assert time.monotonic() - started < 2
-    # Gegenprobe: dieselbe Antwort kommt mit der ueblichen Frist vollstaendig an
+    # Gegenprobe: eine kurze tropfende Antwort kommt mit der ueblichen Frist vollstaendig an
     monkeypatch.setattr(updater, "ABRUF_GESAMT_SECONDS", 300)
-    assert updater.fetch_url(trickling_server, 100, allow_http=True) == b"x" * 15
+    assert updater.fetch_url(trickling_server.replace("/m", "/kurz"), 100, allow_http=True) == b"xxx"
 
 
 def test_the_total_deadline_is_300_seconds_on_the_monotonic_clock_and_covers_every_read(monkeypatch):
@@ -1191,11 +1193,21 @@ def test_the_total_deadline_is_300_seconds_on_the_monotonic_clock_and_covers_eve
     assert updater.fetch_url("https://release.example.test/x", 100, allow_http=False, clock=lambda: now[0]) == b"abc"
 
 
+def _nat64_local(v4: str) -> str:
+    """Adresse im Praefix 64:ff9b:1::/48 (RFC 8215) mit eingebetteter IPv4-Adresse nach RFC 6052 (/48: Bits 48 bis 63, dann
+    das u-Oktett, dann Bits 72 bis 87)."""
+    octets = ipaddress.ip_address(v4).packed
+    return str(ipaddress.IPv6Address(bytes.fromhex("0064ff9b0001") + octets[:2] + b"\x00" + octets[2:] + bytes(5)))
+
+
 @pytest.mark.parametrize(("address", "public"), [
     ("192.168.178.1", False), ("fd00::1", False), ("169.254.1.1", False), ("100.64.0.1", False),
     ("::ffff:127.0.0.1", False), ("127.0.0.1", False), ("10.0.0.1", False), ("172.18.0.1", False), ("::1", False),
     ("fe80::1%eth0", False), ("::ffff:192.168.178.1", False), ("nicht-eine-adresse", False), ("", False),
     ("8.8.8.8", True), ("2003::1", True), ("::ffff:8.8.8.8", True),
+    # NAT64 (RFC 6052): entscheidend ist die eingebettete IPv4-Adresse, nicht das Praefix
+    ("64:ff9b::c0a8:b201", False), ("64:ff9b::7f00:1", False), ("64:ff9b::808:808", True),
+    (_nat64_local("192.168.178.1"), False), (_nat64_local("127.0.0.1"), False), (_nat64_local("8.8.8.8"), True),
 ])
 def test_only_global_addresses_are_allowed(address, public):
     """A6-38: Gegenadressen, die ins LAN, auf den eigenen Rechner oder in Sonderbereiche zeigen, sind nicht erlaubt; eine
@@ -1257,11 +1269,14 @@ def test_with_the_test_switch_the_address_is_not_checked(byte_counter):
 
 
 class _FakeSocket:
-    def __init__(self, peer):
-        self.peer, self.closed, self.sent = peer, False, b""
+    def __init__(self, peer, own=("203.0.113.9", 40000)):
+        self.peer, self.own, self.closed, self.sent = peer, own, False, b""
 
     def getpeername(self):
         return self.peer
+
+    def getsockname(self):
+        return self.own
 
     def sendall(self, data):
         self.sent += data
@@ -1292,16 +1307,52 @@ def test_every_connection_is_checked_on_the_connected_socket(monkeypatch, peer, 
         assert fake.closed and fake.sent == b""
 
 
-def test_environment_proxies_are_ignored(monkeypatch, byte_counter):
+@pytest.mark.parametrize(("peer", "own", "allowed"), [
+    (("2003:1:2:3::5", 443, 0, 0), ("2003:1:2:3::5", 40000, 0, 0), False),  # der Rechner selbst
+    (("2003:1:2:3::1", 443, 0, 0), ("2003:1:2:3:aaaa::9", 40000, 0, 0), False),  # gleiches /64 (Router, LAN-Geraet)
+    (("2003:1:2:3:ffff:ffff:ffff:ffff", 443, 0, 0), ("2003:1:2:3::9", 40000, 0, 0), False),  # Rand des /64
+    (("8.8.8.8", 443), ("8.8.8.8", 40000), False),  # die eigene IPv4-Adresse
+    (("::ffff:8.8.4.4", 443, 0, 0), ("8.8.4.4", 40000), False),  # gemappt gegen IPv4
+    (("8.8.4.4", 443), ("::ffff:8.8.4.4", 40000, 0, 0), False),  # IPv4 gegen gemappt
+    (("2003:1:2:4::1", 443, 0, 0), ("2003:1:2:3::5", 40000, 0, 0), True),  # fremdes /64: erlaubt
+    (("2003:1:2:3::1", 443, 0, 0), ("2003:1:2:2:ffff::5", 40000, 0, 0), True),  # Nachbar-/64
+    (("8.8.8.8", 443), ("8.8.4.4", 40000), True),  # IPv4: nur die eigene Adresse, kein Netz
+    (("8.8.8.8", 443), ("2003:1:2:3::5", 40000, 0, 0), True),
+])
+def test_the_gateway_itself_and_its_own_ipv6_prefix_are_not_targets(monkeypatch, peer, own, allowed):
+    """A6-38 (Review I-1): im IPv6-Netz haben der Router, LAN-Geraete und der Rechner selbst globale Adressen aus demselben
+    /64; `is_global` laesst sie durch. Abgelehnt wird deshalb zusaetzlich die eigene Adresse des Sockets und, bei IPv6,
+    alles im /64 der eigenen Adresse. Nicht abgedeckt: Geraete in anderen IPv6-Praefixen des Kundennetzes (andere /64) mit
+    globaler Adresse; sie bleiben erreichbar (siehe gateway-host.md, Bekannte Grenzen)."""
+    fake = _FakeSocket(peer, own)
+    monkeypatch.setattr(socket, "create_connection", lambda *args, **kwargs: fake)
+    connection = updater._FetchHTTPSConnection("release.example.test", 443, timeout=5,
+                                                 deadline=updater._Deadline(time.monotonic), public_only=True)
+    if allowed:
+        assert connection._create_connection(("release.example.test", 443), 5, None) is fake and not fake.closed
+    else:
+        with pytest.raises(updater.FetchError, match="nicht oeffentlich"):
+            connection._create_connection(("release.example.test", 443), 5, None)
+        assert fake.closed and fake.sent == b""
+
+
+def test_environment_proxies_are_ignored(monkeypatch):
     """A6-38: ein Proxy aus der Umgebung (https_proxy) wuerde die Verbindung zum Proxy statt zum Ziel aufbauen: die
-    Pruefung saehe nur dessen Adresse, der Proxy loeste das Ziel selbst auf. Der Updater ruft immer direkt. Der Proxy
-    ist hier der lokale Zaehler; das Ziel ist nicht aufloesbar (.test), der Abruf scheitert, der Proxy sieht nichts."""
-    port, received, thread = byte_counter
-    monkeypatch.setenv("https_proxy", f"http://127.0.0.1:{port}")
-    monkeypatch.setenv("HTTPS_PROXY", f"http://127.0.0.1:{port}")
+    Pruefung saehe nur dessen Adresse, der Proxy loeste das Ziel selbst auf. Der Updater ruft immer direkt. Netzfrei:
+    `socket.create_connection` (Grenze) zeichnet die Verbindungsziele auf und scheitert; es darf nur das Ziel vorkommen,
+    nie der Proxy (ohne diese Regel kaeme zuerst `127.0.0.1:3128`)."""
+    attempts = []
+
+    def refuse(address, *args, **kwargs):
+        attempts.append(address)
+        raise ConnectionRefusedError
+
+    monkeypatch.setattr(socket, "create_connection", refuse)
+    monkeypatch.setenv("https_proxy", "http://127.0.0.1:3128")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:3128")
     with pytest.raises(updater.FetchError):
-        updater.fetch_url("https://kein-host.invalid/m", 100, allow_http=False)
-    assert received == []  # der Zaehler hat nie eine Verbindung angenommen
+        updater.fetch_url("https://release.example.test/m", 100, allow_http=False)
+    assert attempts == [("release.example.test", 443)]
 
 
 # --- Gesamtfrist auch fuer Verbindung, TLS, Kopfzeilen und Weiterleitungen (Security-Nachtrag zu A6-13) ---
@@ -1334,7 +1385,7 @@ def test_a_redirect_after_the_total_deadline_is_refused_and_one_before_it_is_fol
     followed = _Gone()
     assert handler.redirect_request(request, followed, 302, "Found", {}, "https://cdn.example.test/x").full_url == \
         "https://cdn.example.test/x"
-    assert followed.closed == 0
+    assert followed.closed == 1  # auch bei einem erlaubten Ziel wird der Koerper der 302-Antwort nie gelesen
     clock.now = 300.0
     refused = _Gone()
     with pytest.raises(updater.FetchError, match="Gesamtfrist"):
@@ -1425,10 +1476,30 @@ def test_a_server_that_never_answers_is_bounded_by_the_total_deadline(monkeypatc
     assert time.monotonic() - started < 2
 
 
+def test_a_redirect_answer_is_closed_unread_so_its_endless_body_costs_nothing(monkeypatch, slow_header_server):
+    """Review M-1: urllib liest nach einer Weiterleitung den Koerper der 302-Antwort ohne Grenze (`fp.read()`). Ein Host, der
+    ihn endlos tropfen laesst, hielte den Abruf bis zur Gesamtfrist fest und sammelte Speicher. Der Handler schliesst die
+    Antwort nach dem Bau der Folgeanfrage: der Koerper wird nie gelesen, das Ziel kommt sofort."""
+    target_port = slow_header_server(lambda connection: connection.sendall(
+        b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nziel"))
+
+    def endless_redirect(connection):
+        connection.sendall(b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:%d/z\r\nContent-Length: 100000\r\n\r\n"
+                           % target_port)
+        for _ in range(15):  # tropft 3 s
+            time.sleep(0.2)
+            connection.sendall(b"x")
+
+    start_port = slow_header_server(endless_redirect)
+    started = time.monotonic()
+    assert updater.fetch_url(f"http://127.0.0.1:{start_port}/a", 100, allow_http=True) == b"ziel"
+    assert time.monotonic() - started < 1.5
+
+
 @pytest.fixture
 def tls_server(tmp_path, monkeypatch, slow_header_server):
     """Lokaler TLS-Server (selbstsigniertes Zertifikat fuer 127.0.0.1, vom Client fuer diesen Test als Vertrauensanker
-    geladen; die Adresspruefung gilt hier als bestanden, der Server liegt auf Loopback): der echte Weg von
+    geladen; die Adresspruefungen gelten hier als bestanden, Server und Client liegen auf Loopback): der echte Weg von
     `fetch_url` ueber https, mit Kontext, Socket-Klasse mit Frist und Adresspruefung."""
     import datetime
     import ipaddress
@@ -1455,6 +1526,7 @@ def tls_server(tmp_path, monkeypatch, slow_header_server):
     real = ssl.create_default_context
     monkeypatch.setattr(ssl, "create_default_context", lambda *args, **kwargs: real(cafile=str(cert_file)))
     monkeypatch.setattr(updater, "is_public_address", lambda address: True)
+    monkeypatch.setattr(updater, "is_own_network", lambda peer, own: False)  # Server und Client liegen beide auf Loopback
     return lambda handle: slow_header_server(handle, context)
 
 
@@ -1477,6 +1549,7 @@ def test_a_tls_server_that_drips_its_headers_is_bounded_by_the_total_deadline(mo
 def test_a_tls_handshake_that_stalls_is_bounded_by_the_total_deadline(monkeypatch):
     """Der Server nimmt die Verbindung an und schweigt (kein ServerHello): der Handshake endet mit der Gesamtfrist."""
     monkeypatch.setattr(updater, "is_public_address", lambda address: True)
+    monkeypatch.setattr(updater, "is_own_network", lambda peer, own: False)
     monkeypatch.setattr(updater, "ABRUF_GESAMT_SECONDS", 0.5)
     silent = socket.socket()
     silent.bind(("127.0.0.1", 0))
@@ -1750,6 +1823,31 @@ def test_main_keeps_running_after_an_unexpected_error(tmp_path, monkeypatch, cap
     logged = [record for record in caplog.records if record.levelname == "ERROR" and record.exc_info]
     assert len(logged) == 1 and logged[0].exc_info[0] is RuntimeError
     assert "Durchlauf: aktuell" in caplog.text
+
+
+def test_main_keeps_running_when_the_recovery_at_start_fails_unexpectedly(tmp_path, monkeypatch, caplog):
+    """Review M-5: `recover()` beim Start liegt unter demselben Fangnetz wie der Durchlauf; sonst startet systemd den Dienst
+    bei einem dauerhaften Fehler alle 30 s neu (mit `compose up` in jedem `recover`), ohne je einen Durchlauf zu machen."""
+    _main_environment(monkeypatch, tmp_path)
+
+    def recover(self):
+        raise RuntimeError("kaputt beim Start")
+
+    waits = []
+
+    def sleep(seconds):
+        waits.append(float(seconds))
+        if len(waits) == 2:
+            raise _Stop
+
+    monkeypatch.setattr(updater.Updater, "recover", recover)
+    monkeypatch.setattr(time, "sleep", create_autospec(time.sleep, side_effect=sleep))
+    monkeypatch.setattr(random, "uniform", create_autospec(random.uniform, return_value=0))
+    with caplog.at_level("INFO"), pytest.raises(_Stop):
+        updater.main([])
+    assert waits == [120.0, 900.0] and "Durchlauf: vorlaeufig" in caplog.text
+    logged = [record for record in caplog.records if record.levelname == "ERROR" and record.exc_info]
+    assert len(logged) == 1 and logged[0].exc_info[0] is RuntimeError
 
 
 def test_main_keeps_the_state_and_the_data_under_shg_root(tmp_path, monkeypatch, capsys):

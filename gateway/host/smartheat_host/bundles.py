@@ -21,7 +21,8 @@ _BUILD = re.compile(r"^\s*build:", re.MULTILINE)
 _DEVICES_KEY = re.compile(r"^(\s*)devices:\s*(.*?)\s*$")
 _LIST_ITEM = re.compile(r"^(\s*)-\s+(.*?)\s*$")
 #: Frist je docker-Aufruf in Sekunden (A6-13): ohne sie hielte ein haengender Aufruf (Netz weg mitten im pull, Daemon
-#: blockiert) den ganzen Updater endlos fest. pull ist lang (mehrere Images ueber eine langsame Leitung), ps kurz.
+#: blockiert) den ganzen Updater endlos fest. pull ist lang (mehrere Images ueber eine langsame
+#: Leitung; ein Image von rund 210 MB braucht bei 2 Mbit/s etwa 850 s, fertige Schichten bleiben beim naechsten Versuch), ps kurz.
 PULL_TIMEOUT_SECONDS = 900
 UP_TIMEOUT_SECONDS = 300
 PS_TIMEOUT_SECONDS = 60

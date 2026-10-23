@@ -205,7 +205,9 @@ class _SchemeCheckedRedirects(urllib.request.HTTPRedirectHandler):
         except FetchError:
             fp.close()  # urllib schliesst die 302-Antwort erst nach einem erfolgreichen redirect_request
             raise
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        follow_up = super().redirect_request(req, fp, code, msg, headers, newurl)
+        fp.close()  # urllib liest den Koerper der 302-Antwort sonst ohne Grenze (`fp.read()`); geschlossen liefert er b""
+        return follow_up
 
 
 #: Eigener User-Agent: die Browser-Integritaetspruefung von Cloudflare sperrt den Standard von urllib (Python-urllib,
@@ -213,17 +215,50 @@ class _SchemeCheckedRedirects(urllib.request.HTTPRedirectHandler):
 USER_AGENT = f"SmartHeat-Gateway-Updater/{GATEWAY_VERSION}"
 
 
+_NAT64_WELL_KNOWN = ipaddress.ip_network("64:ff9b::/96")  # RFC 6052
+_NAT64_LOCAL_USE = ipaddress.ip_network("64:ff9b:1::/48")  # RFC 8215
+
+
+def _address(text: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """Adresse ohne Scope-Kennung (fe80::1%eth0); eine IPv4-Adresse in IPv6-Schreibweise (`::ffff:a.b.c.d`) als IPv4.
+    Wirft ValueError bei Unlesbarem."""
+    address = ipaddress.ip_address(text.split("%", 1)[0])
+    mapped = getattr(address, "ipv4_mapped", None)
+    return address if mapped is None else mapped
+
+
 def is_public_address(text: str) -> bool:
-    """Darf der Updater mit dieser Gegenadresse sprechen? Nur global erreichbare Adressen (`is_global`): nicht das LAN des
-    Kunden, nicht der eigene Rechner, nicht Link-Local, CGNAT und Sonderbereiche. Eine IPv4-Adresse in IPv6-Schreibweise
-    (`::ffff:a.b.c.d`) zaehlt wie die IPv4-Adresse, unabhaengig davon, wie die Python-Version sie selbst einstuft.
-    Unlesbares gilt als nicht erlaubt."""
+    """Ist das eine global erreichbare Adresse (`is_global`)? Nicht: RFC 1918, Loopback, Link-Local, CGNAT, ULA und
+    andere Sonderbereiche. Eine IPv4-Adresse in IPv6-Schreibweise (`::ffff:a.b.c.d`) zaehlt wie die IPv4-Adresse,
+    unabhaengig davon, wie die Python-Version sie selbst einstuft; bei NAT64-Adressen (`64:ff9b::/96`, `64:ff9b:1::/48`)
+    entscheidet die eingebettete IPv4-Adresse (eine globale bleibt erlaubt, IPv6-Netze ohne IPv4 brauchen das).
+    Unlesbares gilt als nicht erlaubt. Das allein deckt NICHT ab: globale IPv6-Adressen des eigenen Netzes (Router, Geraete
+    im eigenen /64, der Rechner selbst; dafuer `is_own_network`) und Geraete in anderen IPv6-Praefixen des Kundennetzes
+    mit globaler Adresse."""
     try:
-        address = ipaddress.ip_address(text.split("%", 1)[0])  # ohne Scope-Kennung (fe80::1%eth0)
+        address = _address(text)
     except ValueError:
         return False
-    mapped = getattr(address, "ipv4_mapped", None)
-    return (address if mapped is None else mapped).is_global
+    if address.version == 6:
+        packed = address.packed
+        if address in _NAT64_WELL_KNOWN:
+            return ipaddress.IPv4Address(packed[12:]).is_global
+        if address in _NAT64_LOCAL_USE:  # RFC 6052 fuer /48: IPv4 in Bits 48 bis 63 und 72 bis 87 (u-Oktett dazwischen)
+            return ipaddress.IPv4Address(packed[6:8] + packed[9:11]).is_global
+    return address.is_global
+
+
+def is_own_network(peer: str, own: str) -> bool:
+    """Liegt die Gegenadresse bei der eigenen Adresse des Sockets? Gleiche Adresse (auch IPv4 gegen gemappt) oder bei
+    IPv6 im selben /64 (SLAAC: Router, LAN-Geraete und der Rechner selbst teilen sich das Praefix einer globalen
+    Adresse, die `is_global` durchlaesst). Unlesbares gilt als eigenes Netz (fail closed)."""
+    try:
+        theirs, mine = _address(peer), _address(own)
+    except ValueError:
+        return True
+    if theirs == mine:
+        return True
+    return theirs.version == 6 and mine.version == 6 and theirs in ipaddress.ip_network(f"{mine}/64", strict=False)
 
 
 class _DeadlineSocket(socket.socket):
@@ -259,9 +294,12 @@ def _guard_connection(connection: http.client.HTTPConnection, deadline: _Deadlin
                       plain: bool) -> None:
     """Haengt an `_create_connection` der Verbindung (Instanzattribut von http.client, sonst `socket.create_connection`):
     - Verbindungsaufbau mit dem Rest der Gesamtfrist als Timeout (eine abgelaufene Frist baut keine Verbindung auf);
-    - public_only (A6-38): Gegenadresse des verbundenen Sockets nur oeffentlich, geprueft nach dem TCP-Aufbau und vor
-      dem TLS-Handshake: zur falschen Adresse geht kein Byte, der Socket wird vor dem Fehler geschlossen. Geprueft wird die
-      Adresse des Sockets, nicht der Name aus der URL: der Name kann beim Aufloesen auf jede Adresse zeigen;
+    - public_only (A6-38): Gegenadresse des verbundenen Sockets nur oeffentlich (`is_public_address`) und nicht die eigene
+      Adresse oder das eigene IPv6-/64 (`is_own_network`), geprueft nach dem TCP-Aufbau und vor dem TLS-Handshake: der
+      TCP-Handshake erreicht auch eine abgelehnte Adresse, Nutzdaten (ClientHello, Anfrage) gehen nicht hin, der Socket wird
+      vor dem Fehler geschlossen. Geprueft wird die Adresse des Sockets, nicht der Name aus der URL: der Name kann beim
+      Aufloesen auf jede Adresse zeigen. Der Verbindungsaufbau hat den Rest der Frist als Timeout je aufgeloester
+      Adresse (`socket.create_connection` setzt ihn fuer jede neu);
     - plain: Klartext-Socket mit Frist je Leseoperation (bei https setzt der TLS-Kontext sie)."""
     connect = vars(connection)["_create_connection"]  # fehlt es in einer anderen Python-Version, scheitert das laut
 
@@ -269,9 +307,10 @@ def _guard_connection(connection: http.client.HTTPConnection, deadline: _Deadlin
         sock = connect(address, deadline.socket_timeout(), source_address)
         if public_only:
             try:
-                peer = sock.getpeername()
+                peer, own = sock.getpeername(), sock.getsockname()
                 found = peer[0] if isinstance(peer, tuple) and peer else ""
-                public = isinstance(found, str) and is_public_address(found)
+                mine = own[0] if isinstance(own, tuple) and own else ""
+                public = isinstance(found, str) and is_public_address(found) and not is_own_network(found, mine)
             except OSError:
                 found, public = "", False
             if not public:
@@ -335,7 +374,8 @@ def checked_opener(allow_http: bool, deadline: _Deadline | None = None) -> urlli
 def fetch_url(url: str, max_bytes: int, allow_http: bool, clock: Callable[[], float] = time.monotonic) -> bytes:
     """Holt `url` (hoechstens `max_bytes`) in hoechstens ABRUF_GESAMT_SECONDS insgesamt (A6-13, monotone Uhr): Verbindung,
     TLS, Kopfzeilen, Weiterleitungen und Koerper laufen auf derselben Frist (`_Deadline`); gelesen wird in Bloecken.
-    Grenze: das Aufloesen des Namens (getaddrinfo) hat keine eigene Frist."""
+    Grenzen: das Aufloesen des Namens (getaddrinfo) hat keine eigene Frist; der Verbindungsaufbau hat den Rest der Frist
+    (hoechstens 30 s) als Timeout je aufgeloester Adresse, bei vielen toten Adressen also mehrfach."""
     if not _scheme_allowed(url, allow_http):
         raise FetchError(f"nur https erlaubt: {url}")
     deadline = _Deadline(clock)
@@ -711,7 +751,10 @@ def main(argv: list[str] | None = None) -> None:
         health=lambda version: health_ok(fetch_health(health_url), compose.health(version)), allow_http=allow_http,
         health_seconds=float(os.environ.get("SHG_UPDATER_HEALTH_SECONDS", HEALTH_SECONDS)),
     )
-    run.recover()
+    try:
+        run.recover()
+    except Exception:  # Fangnetz wie in der Schleife: kein Neustart-Kreis, der Durchlauf kommt trotzdem
+        logger.exception("Wiederaufnahme beim Start mit unerwartetem Fehler abgebrochen")
     if "--once" in args:
         print(run.run_once())
         return
