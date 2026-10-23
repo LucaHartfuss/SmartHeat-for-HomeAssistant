@@ -27,7 +27,10 @@ scripts/check.sh          # lint (mit vulture), test, contract (--only <schritt>
 scripts/check.sh --full   # zusätzlich der Schritt docker (Liste: docker_tests in scripts/check.sh)
 ```
 
-`scripts/check.sh` prüft und testet `heizungsbruecke/`, `gateway/`, `gateway/host/` **und** `gateway/release/`. Toter
+`scripts/check.sh` prüft und testet `heizungsbruecke/`, `gateway/`, `gateway/host/` **und** `gateway/release/` (alle vier
+pytest-Läufe auch bei einem roten; ohne `--full` steht `docker` als „uebersprungen“ in der Ausgabe, der Schlusssatz
+heißt `ALLES GRUEN (ohne: docker)`). Das Skript und `tests/test_heizungsbruecke_docker_build.sh` prüft
+`tools/tests/test_addon_skripte.py` im Dev-Root. Toter
 Code (vulture, `vulture_ausnahmen.py`): `../docs/ci-cd-runbook.md` §3; Image-Scan
 (`tests/test_image_scan.sh`, `.trivyignore`, Volume `smartheat-trivy-cache`): §12. Die übrigen Docker-Skripte
 (Shell-Tests im Repo-Root unter `tests/`):

@@ -2,8 +2,9 @@
 """Pin-Check (TP12e, AU-018, Spec 2026-09-30-tp12e-vertraege-tests-lieferkette-design.md Abschnitt 3):
 Jede Basis-Image-Angabe hat einen Digest, jede GitHub-Action eine 40-stellige SHA, jede Lock-Datei
 Hashes und passt zu ihrer pyproject.toml; requirements-hypothesis.lock (Testoffensive T6) ist exakt gepinnt und gehasht,
-ohne Abgleich mit pyproject.toml. In Workflows laeuft jedes pip install mit --require-hashes
-oder traegt die Markierung `# pin-check: ungehasht (<Grund>)` (Audit 4, A4-41). Nur Standardbibliothek; kanonisch in
+ohne Abgleich mit pyproject.toml. In Workflows und Dockerfiles laeuft jedes pip install mit --require-hashes
+oder traegt die Markierung `# pin-check: ungehasht (<Grund>)` (Audit 4, A4-41; Fixrunde B, A6-18). Jedes `image:` und
+`container:` (Workflows, Compose-Dateien) hat einen Digest. Nur Standardbibliothek; kanonisch in
 HomeAssistant_Dev_Root/tools/pin_check.py, identische Kopien in den Unter-Repos unter
 scripts/ci/pin_check.py (Root-check.sh Schritt "copies" prueft das).
 
@@ -25,12 +26,15 @@ LOCK_NAMES = ("requirements.txt", "requirements.lock")
 # Eigene Locks fuer einzelne Dev-Werkzeuge (Testoffensive T6: hypothesis, Installation mit --require-hashes --no-deps):
 # jeder Eintrag exakt gepinnt und gehasht, aber kein Abgleich mit pyproject.toml (dessen dependencies sind Laufzeit).
 HASH_LOCK_NAMES = ("requirements-hypothesis.lock",)
-# .devtools, backups und .remember sind Root-spezifische, per .gitignore ausgeschlossene Ordner.
+# .devtools, backups und .remember sind Root-spezifische, per .gitignore ausgeschlossene Ordner. docs/archiv/ des
+# Repos ist abgeschlossen (A6-18: das archivierte probe_5c-Dockerfile ohne Hashes wird nie gebaut) und wird uebersprungen.
 _SKIP_DIRS = {".git", ".venv", ".worktrees", "node_modules", "__pycache__", ".devtools", "backups", ".remember"}
+_ARCHIVE = ("docs", "archiv")
+DOCKERFILE_NAMES = ("Dockerfile*", "*.Dockerfile", "Containerfile*")
+COMPOSE_NAMES = ("docker-compose*.y*ml", "compose*.y*ml")
 _FROM_LINE = re.compile(r"^\s*FROM(?:\s|$)", re.IGNORECASE)
 _FROM = re.compile(r"^\s*FROM\s+(?:--\S+\s+)*(\S+)(?:\s+AS\s+(\S+))?\s*$", re.IGNORECASE)
 _PIP_INSTALL = re.compile(r"\bpip3?\s+install\b")
-_PIP_REQUIREMENT_OPTION = re.compile(r"\s(?:-r|--requirement)(?:\s|=|$)")
 # Workflows (Audit 4, A4-41): jedes pip install laeuft mit --require-hashes oder ist ausdruecklich markiert (CI-Jobs
 # ohne Schreibrecht, Testumgebungen mit Versionsbereichen). Ein Workflow mit Schreibrecht traegt nie die Markierung
 # (Testoffensive T6, F-werkzeuge-54; Ruling R-a der Fix-Welle): Schreibrecht ist jeder Bereich mit `write` (`contents`,
@@ -38,10 +42,14 @@ _PIP_REQUIREMENT_OPTION = re.compile(r"\s(?:-r|--requirement)(?:\s|=|$)")
 # ein Workflow ohne `permissions:` auf oberster Ebene gilt als schreibend (ein Job ohne eigenes `permissions:` hat dann
 # das Standardrecht des Tokens, fail closed). Der Check liest zeilenweise und gilt fuer die ganze Datei.
 UNHASHED_MARKER = "pin-check: ungehasht"
+_PIP_WITHOUT_HASHES = f"pip install ohne --require-hashes (oder Markierung '# {UNHASHED_MARKER} (Grund)')"
 _WRITE_PERMISSION = re.compile(r"""["']?[\w-]+["']?\s*:\s*["']?write\b""")
 _TOP_LEVEL_PERMISSIONS = re.compile(r"""^["']?permissions["']?\s*:""")
 _USES = re.compile(r"^\s*(?:-\s*)?uses:\s*[\"']?([^\s\"']+)[\"']?(.*)$")
-_IMAGE = re.compile(r"^\s*image:\s*[\"']?([^\s\"']+)")
+# `image:` und `container:` als Schluessel am Zeilenanfang (auch als Listenelement) oder in einem Flow-Mapping
+# (`container: {image: x, ...}`); ohne Wert (Job namens `image:`, Mapping folgt) kein Treffer. Ein Wert, der mit `{`
+# beginnt, ist ein Flow-Mapping und wird ueber seinen eigenen `image:`-Schluessel gefunden.
+_IMAGE = re.compile(r"""(?:^\s*(?:-\s*)?(?:image|container)|[{,]\s*image)\s*:\s*(?:["']([^"']+)["']|(?!\{)([^\s,}"']+))""")
 _NAME = r"[A-Za-z0-9][A-Za-z0-9._-]*"
 _REQUIREMENT = re.compile(rf"^({_NAME})(?:\[[^\]]*\])?==([^\s;\\]+)")
 _LOCK_ENTRY = re.compile(rf"^({_NAME})")
@@ -58,6 +66,7 @@ def _walk(repo: Path) -> Iterator[Path]:
         here = Path(directory)
         subdirs[:] = sorted(
             sub for sub in subdirs if sub not in _SKIP_DIRS and not (here / sub / ".git").exists()
+            and (here / sub).relative_to(repo).parts != _ARCHIVE
         )
         for name in sorted(names):
             yield here / name
@@ -97,8 +106,8 @@ def _check_dockerfile(repo: Path, path: Path) -> list[str]:
                 problems.append(f"{name}: FROM {image} ohne @sha256-Digest")
             if alias:
                 stages.add(alias.lower())
-        if _PIP_INSTALL.search(line) and _PIP_REQUIREMENT_OPTION.search(line) and "--require-hashes" not in line:
-            problems.append(f"{name}: pip install -r ohne --require-hashes")
+        if _PIP_INSTALL.search(line) and "--require-hashes" not in line and UNHASHED_MARKER not in line:
+            problems.append(f"{name}: {_PIP_WITHOUT_HASHES}")
     return problems
 
 
@@ -134,7 +143,8 @@ def _check_workflow(repo: Path, path: Path) -> list[str]:
                             "(pip install dort mit --require-hashes)")
         if (not line.lstrip().startswith("#") and _PIP_INSTALL.search(line)
                 and "--require-hashes" not in line and UNHASHED_MARKER not in line):
-            problems.append(f"{name}: pip install ohne --require-hashes (oder Markierung '# {UNHASHED_MARKER} (Grund)')")
+            problems.append(f"{name}: {_PIP_WITHOUT_HASHES}")
+        problems += _image_problems(name, line)
         match = _USES.match(line)
         if match is None or match.group(1).startswith("./"):
             continue
@@ -146,13 +156,21 @@ def _check_workflow(repo: Path, path: Path) -> list[str]:
     return problems
 
 
+def _image_problems(name: Path, line: str) -> list[str]:
+    """Verstoesse einer Zeile gegen die Digest-Regel fuer `image:`/`container:` (Workflows, Compose-Dateien)."""
+    problems = []
+    for match in _IMAGE.finditer(_without_comment(line)):
+        image = match.group(1) or match.group(2)
+        if DIGEST.search(image) is None:
+            problems.append(f"{name}: image: {image} ohne @sha256-Digest")
+    return problems
+
+
 def _check_compose(repo: Path, path: Path) -> list[str]:
     name = path.relative_to(repo)
     problems = []
     for line in path.read_text().splitlines():
-        match = _IMAGE.match(line)
-        if match is not None and DIGEST.search(match.group(1)) is None:
-            problems.append(f"{name}: image: {match.group(1)} ohne @sha256-Digest")
+        problems += _image_problems(name, line)
     return problems
 
 
@@ -273,11 +291,11 @@ def check_repo(repo: Path) -> list[str]:
         return [f"{repo}: kein Verzeichnis"]
     problems: list[str] = []
     for path in _walk(repo):
-        if fnmatch.fnmatch(path.name, "Dockerfile*"):
+        if any(fnmatch.fnmatch(path.name, pattern) for pattern in DOCKERFILE_NAMES):
             problems += _checked(_check_dockerfile, repo, path)
         elif path.suffix in (".yml", ".yaml") and path.parent.parts[-2:] == (".github", "workflows"):
             problems += _checked(_check_workflow, repo, path)
-        elif fnmatch.fnmatch(path.name, "docker-compose*.y*ml"):
+        elif any(fnmatch.fnmatch(path.name, pattern) for pattern in COMPOSE_NAMES):
             problems += _checked(_check_compose, repo, path)
         elif path.name in LOCK_NAMES:
             problems += _checked(_check_lock, repo, path)
