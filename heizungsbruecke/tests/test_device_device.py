@@ -180,7 +180,7 @@ def test_a_rejected_configuration_keeps_the_old_one_and_tells_the_display(tmp_pa
 
 
 def test_a_rejection_from_before_5c_shows_the_local_hint_with_the_code_and_reports_no_text(tmp_path):
-    """dokumente.json von vor 5c traegt einen Text an Stelle 2: der lokale Hinweis nennt nur den Code (E2 A)."""
+    """dokumente.json von vor 5c traegt einen Text an Stelle 2: der lokale Hinweis nennt nur den Code."""
     (tmp_path / device.DEVICE_DIR).mkdir(parents=True)
     (tmp_path / device.DEVICE_DIR / "dokumente.json").write_text(json.dumps(
         {"update_anlass": None, "abgelehnt": {"konfiguration": [3, "ungueltig", "Alter Gerätetext"]}}))

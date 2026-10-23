@@ -1,4 +1,4 @@
-"""HA-Host der Laufzeit (Praezisierung 6) im Geraete-Pfad: Konfiguration aus dem Konfigurationsdokument."""
+"""HA-Host der Laufzeit im Geraete-Pfad: Konfiguration aus dem Konfigurationsdokument."""
 import dataclasses
 import logging
 from unittest.mock import MagicMock

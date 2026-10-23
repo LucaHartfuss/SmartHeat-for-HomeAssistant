@@ -162,7 +162,7 @@ def test_a_block_time_that_is_not_a_number_is_ignored(tmp_path):
 
 @pytest.mark.parametrize("abbruch", ["fsync", "replace"])
 def test_the_counter_survives_a_crash_while_saving(tmp_path, monkeypatch, abbruch):
-    """Atomar mit fsync (Restpunkt 8): bricht das Schreiben ab (Stromausfall, volle Platte), bleibt die alte Datei
+    """Atomar mit fsync: bricht das Schreiben ab (Stromausfall, volle Platte), bleibt die alte Datei
     unveraendert lesbar, der Zaehler also bei zwei Aufrufen; der Abbruch erreicht den Aufrufer, danach zaehlt der naechste
     Aufruf normal weiter (die Sperre ist freigegeben, ein Rest der Zwischendatei stoert nicht). Bricht schon der fsync der
     Zwischendatei ab, ist sie noch nicht an ihren Platz getreten: erst fsync, dann replace."""

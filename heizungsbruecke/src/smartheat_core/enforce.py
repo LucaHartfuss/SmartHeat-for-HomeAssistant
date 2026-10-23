@@ -60,7 +60,7 @@ RETRY_SECONDS = write_budget.INTERVAL_SECONDS
 # Eingriff erkannt, aber nie geschrieben und trotzdem gezaehlt/gemeldet. Deshalb gilt der halbe Anlagenschritt
 # (0,025): jede Abweichung um mindestens einen Anlagenschritt wird wie mit 0,01 erkannt, und jede erkannte
 # Abweichung fuehrt zu einem echten Schreibvorgang. Wunschtemperatur (0,25 = halber Schritt 0,5) und Mindestvorlauf
-# (05 = halber Schritt 0) folgen derselben Regel. Die Heizgrenze (Anlagenschritt 0,1) nimmt wie die
+# (0,05 = halber Schritt 0,1) folgen derselben Regel. Die Heizgrenze (Anlagenschritt 0,1) nimmt wie die
 # Steigung den halben Anlagenschritt, 0,05.
 ZONE_MODE = "zone_mode"
 MESSAGE = (

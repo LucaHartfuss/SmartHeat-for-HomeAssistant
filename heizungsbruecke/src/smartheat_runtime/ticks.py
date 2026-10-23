@@ -135,10 +135,10 @@ def _attempt(rt: Runtime, seq: str, trigger: str):
         if not pipeline.settled(lever) and last is not None:
             known[lever] = last
         elif lever == binding.description.prepared_lever:
-            # Ruhende Zone beim ersten Start: noch kein Wiederherstellungspunkt, dann gilt das stabile Raum-Soll
-            #, aber nur bei vorbereiteter Zone (rt.zone_prepared). Sonst bliebe es beim Datenfehler wie vor
-            # Die Antwort auf den Snapshot schriebe die Serverwerte und stellte dabei die nie vorbereitete Zone
-            # um. Hier wird nur gemeldet, der Wiederherstellungspunkt bleibt unberuehrt; die Antwort schreibt ihn.
+            # Ruhende Zone beim ersten Start: noch kein Wiederherstellungspunkt, dann gilt das stabile Raum-Soll,
+            # aber nur bei vorbereiteter Zone (rt.zone_prepared). Sonst bliebe es beim Datenfehler, und die Antwort
+            # auf den Snapshot schriebe die Serverwerte und stellte dabei die nie vorbereitete Zone um. Hier wird
+            # nur gemeldet, der Wiederherstellungspunkt bleibt unberuehrt; die Antwort schreibt ihn.
             state = rt.store.state
             fallback = state.restore_point.get(lever)
             if fallback is None and rt.zone_prepared:

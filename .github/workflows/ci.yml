@@ -170,7 +170,7 @@ jobs:
           HeizungssteuerungServer SmartHeat-Integration
       - run: pip install -r "$DEV_ROOT/tools/requirements-dev.txt"  # pin-check: ungehasht (CI ohne Schreibrecht)
       - run: PYTHON=python bash scripts/check.sh --only contract
-  # Scan der Lock-Dateien aller Repos auf bekannte Schwachstellen : nur im geplanten Lauf, hier im
+  # Scan der Lock-Dateien aller Repos auf bekannte Schwachstellen: nur im geplanten Lauf, hier im
   # oeffentlichen Repo (keine Minuten). Der Server-Lock kommt ueber den Dev-Root; Ausnahmen mit Grund in
   # tools/pip_audit_ausnahmen.txt des Root-Repos.
   audit:

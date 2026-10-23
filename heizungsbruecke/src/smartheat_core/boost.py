@@ -28,7 +28,7 @@ def decide_boost(
     return rose and not_arrived
 
 
-# Nutzer-Entscheidung E2, Freigabe nach Regel 4 fuer genau diese Werte: der Comfort-Boost ist
+# Nutzer-Entscheidung, Freigabe nach Regel 4 fuer genau diese Werte: der Comfort-Boost ist
 # "kurzzeitig" -- er endet spaetestens nach 4 h und wenn der Raumfuehler dreimal in Folge nicht lesbar ist.
 COMFORT_BOOST_MAX_SECONDS = 4 * 3600
 UNREADABLE_ROOM_CHECKS = 3

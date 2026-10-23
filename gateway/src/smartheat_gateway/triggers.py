@@ -6,7 +6,7 @@ smartheat_runtime.soll_eingang (SollEingang); das Thermostat ist ihre SollQuelle
 Zigbee-Meldungen, die Tagestick-Zeit und der Verbindungs-Trigger. Fuehler-Aenderungen posten EV_LOCAL_CHECK(False); die
 Tagestick-Zeit ebenfalls (wie der Zeit-Trigger in HA). Nichts, was ueber die Soll-Quelle geht (Angleichen beim Start,
 Bedienung des Servers, Rueckschreiben eines Wunschs, wieder an), erreicht ein Thermostat, dessen letzter bekannter
-Zustand (auch retained, jedes Alter) aus oder Frostschutz zeigt (Nutzer-Entscheidung E5). Beim Start gilt
+Zustand (auch retained, jedes Alter) aus oder Frostschutz zeigt (Nutzer-Entscheidung). Beim Start gilt
 dieser Zustand fuer "aus" des Soll-Eingangs, nie als Wunsch; das Angleichen laeuft danach im Worker (EV_ANGLEICHEN),
 ohne bekannten Zustand erst mit der ersten Live-Meldung, vor deren Ereignissen. Ein Thermostat mit Profil
 (thermostat_profil, Aqara W100) bekommt beim Start Thermostatmodus und Anzeige, das Angleichen erst nach gemeldetem
@@ -58,7 +58,7 @@ def local_zone(now: datetime | None = None) -> tzinfo:
 
 def seconds_until(daily_time: str, now: datetime, zone: tzinfo | None = None) -> float:
     """Sekunden bis zur naechsten Tageszeit HH:MM in der Ortszeit der Zone; rechnet ueber UTC, damit der Wechsel
-    Sommer-/Winterzeit stimmt (Restpunkt 6). Immer groesser 0: zur ersten Ortszeit der Tageszeit (in der
+    Sommer-/Winterzeit stimmt. Immer groesser 0: zur ersten Ortszeit der Tageszeit (in der
     doppelten Stunde der Rueckstellung feuert der Tick nur beim ersten Durchlauf), danach erst am Folgetag."""
     zone = zone or local_zone(now)
     hour, minute = (int(part) for part in daily_time.split(":")[:2])

@@ -1,4 +1,4 @@
-"""Grenzen des Gateways (Uebersicht 2.1 Punkt 4)."""
+"""Grenzen des Gateways."""
 import re
 from pathlib import Path
 

@@ -4,7 +4,7 @@
 #   export_images.sh PLATTFORM ZIELORDNER REF...
 # Je REF entsteht ZIELORDNER/NN.tar (OCI-Archiv des GANZEN Multi-Arch-Index samt Digests, skopeo copy --all
 # --preserve-digests). Der Docker des Geraets (Speicherweg containerd, gateway/host/docker-daemon.json) loest daraus
-# spaeter name@sha256:<Index-Digest> ohne Netz auf . PLATTFORM ist fuer die Aufrufer
+# spaeter name@sha256:<Index-Digest> ohne Netz auf. PLATTFORM ist fuer die Aufrufer
 # gleichfoermig und hier ohne Wirkung: das Archiv enthaelt alle Plattformen.
 set -euo pipefail
 out=$2; shift 2

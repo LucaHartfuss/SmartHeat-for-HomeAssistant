@@ -1,4 +1,4 @@
-"""Nutzer-Entscheidung E2: Comfort-Boost hoechstens 4 h, Ende nach 3 unlesbaren Raumwerten."""
+"""Comfort-Boost hoechstens 4 h, Ende nach 3 unlesbaren Raumwerten (Nutzer-Entscheidung)."""
 import contextlib
 import logging
 import time

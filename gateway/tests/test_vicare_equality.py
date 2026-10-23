@@ -45,8 +45,8 @@ class HaWorld:
         self.binding = ViessmannHaBinding(self.ha, MANIFEST, BINDING)
 
     def calls(self, log):
-        """Physische Aufrufe: der HA-Pfad schreibt zwei number-Entities je Schreibgruppe, der Treiber nur ein setCurve
-        ; gleichgesetzt wird die Gruppe als EIN Aufruf (so zaehlt sie auch die Pipeline)."""
+        """Physische Aufrufe: der HA-Pfad schreibt zwei number-Entities je Schreibgruppe, der Treiber nur ein setCurve;
+        gleichgesetzt wird die Gruppe als EIN Aufruf (so zaehlt sie auch die Pipeline)."""
         return self.binding.physical_writes - curve_pairs(log)
 
     def log(self):

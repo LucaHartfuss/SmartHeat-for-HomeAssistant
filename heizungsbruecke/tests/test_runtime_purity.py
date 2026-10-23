@@ -1,4 +1,4 @@
-"""Hostneutraler Kern (2.1 Punkt 4): In smartheat_core und smartheat_runtime steht keine
+"""Hostneutraler Kern: In smartheat_core und smartheat_runtime steht keine
 Tenant-ID. Die Importgrenzen stehen in test_modulgrenzen.py."""
 import re
 from pathlib import Path

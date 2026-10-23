@@ -44,7 +44,7 @@ PFLICHT_ROLLEN: dict[str, tuple[str, ...]] = {
     "weishaupt_wwp_basis": ("shift_current", "outdoor_temp", "mode_select", "setpoint_comfort", "setpoint_setback"),
     "viessmann_vicare": ("curve_current", "level_current", "shift_current", "outdoor_temp", "mode_select"),
 }
-#: Plattform der Schreibziele je Hebelsatz (Regel 4, Nutzer-Entscheidung E5 2026-10-22): lokal verankert, der
+#: Plattform der Schreibziele je Hebelsatz (Regel 4, Nutzer-Entscheidung 2026-10-22): lokal verankert, der
 #: Kreis des Dokuments (kreis.plattform) muss sie nennen, sonst lehnt das Geraet ab (plattform/nicht_erlaubt); auch die
 #: Lese-Rollen ohne Klasse haengen an ihr (_form_erlaubt). Schluessel wie PFLICHT_ROLLEN; ein Contract-Check haelt die
 #: Tabelle gegen den Katalog des Servers.
@@ -269,7 +269,7 @@ OHNE_REGISTRY = "registry"
 
 
 def schreibziele_befund(b: HaBindung, registry: Mapping[str, Mapping], *, beim_start: bool) -> tuple[str, str] | None:
-    """Die Regeln der Schreibziele (Regel 4, E5): (feld, "nicht_erlaubt") des ersten
+    """Die Regeln der Schreibziele (Regel 4): (feld, "nicht_erlaubt") des ersten
     Verstosses oder None. Der Kreis nennt die Plattform des Hebelsatzes (SCHREIB_PLATTFORM, sonst Feld plattform); jedes
     Schreibziel (_schreibziel_rollen) kommt von dieser Plattform, alle aus einem Config-Entry (dem des Kreises, wenn er
     eines nennt, sonst dem des ersten Schreibziels; ohne Config-Entry nicht erlaubt); die Soll-Entity ist kein

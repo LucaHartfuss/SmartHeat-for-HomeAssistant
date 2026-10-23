@@ -1,8 +1,8 @@
 """ClientApp: Start, Handler des Regel-Workers, Ruhezustand und Abmelden, fuer jeden Host gleich.
 
 Alle Regelungsereignisse laufen nacheinander im Hauptthread (RegulationWorker). Der Client beendet sich nie absichtlich:
-die Restart-Policy des Hosts (Supervisor-Watchdog bzw. Container) wuerde auch einen sauberen Exit 0 neu starten
-. Endzustaende sind ein Ruhezustand, in dem nur noch das Lebenszeichen laeuft. Was hostspezifisch ist
+die Restart-Policy des Hosts (Supervisor-Watchdog bzw. Container) wuerde auch einen sauberen Exit 0 neu starten.
+Endzustaende sind ein Ruhezustand, in dem nur noch das Lebenszeichen laeuft. Was hostspezifisch ist
 (Warten auf HA, Optionen, Hilfs-Entities, Bindings, Trigger), liefert der Host ueber das Protokoll Host."""
 import functools
 import logging
@@ -326,8 +326,8 @@ _NEUTRALE_NAMEN = {"curve": "Heizkurve", "level": "Niveau", "room_setpoint": "Ra
 
 
 def _restore_values_text(state, description: BindingDescription | None, *, abmelden: bool) -> str:
-    """Die Werte, die der Kunde von Hand einstellen soll: jeder Hebel des Hebelsatzes mit seinem Anzeigenamen
-   . Beim Abmelden gehen die Hebel aus restore_originals auf ihren Ursprungswert zurueck (restore_and_clear),
+    """Die Werte, die der Kunde von Hand einstellen soll: jeder Hebel des Hebelsatzes mit seinem Anzeigenamen.
+    Beim Abmelden gehen die Hebel aus restore_originals auf ihren Ursprungswert zurueck (restore_and_clear),
     alle anderen und jeder Fall ausser dem Abmelden auf den Wiederherstellungspunkt; fehlt der Wert dort, gilt der
     Ursprungswert. Ohne Beschreibung stehen die Werte des Wiederherstellungspunkts unter neutralen Namen."""
     if description is None:

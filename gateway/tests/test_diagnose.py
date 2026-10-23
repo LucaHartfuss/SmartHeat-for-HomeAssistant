@@ -161,7 +161,7 @@ def _get(port: int, path: str, host: str) -> tuple[int, bytes, http.client.HTTPM
     ("8.8.8.8", False), ("2a00:1450:4001::1", False), ("::ffff:8.8.8.8", False), ("kaputt", False),
 ])
 def test_only_local_clients_may_see_the_page(address, allowed):
-    # Nutzer-Entscheidung E12
+    # Nur lokale Clients sehen die Seite (Nutzer-Entscheidung).
     assert diagnostics.client_allowed(address) is allowed
 
 

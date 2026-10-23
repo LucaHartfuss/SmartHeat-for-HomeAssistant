@@ -839,7 +839,7 @@ def test_a_w100_showing_the_rounded_target_lifts_the_frost_position(mit_w100, ca
     assert not [r for r in caplog.records if r.levelname in ("WARNING", "ERROR")]
 
 
-# --- Start: letzter bekannter Zustand, "aus" und Frostschutz (Nutzer-Entscheidung E5) ---
+# --- Start: letzter bekannter Zustand, "aus" und Frostschutz (Nutzer-Entscheidung) ---
 
 ALTER = {"frisch": 0.0, "drei Stunden alt": 3 * 3600.0, "ohne last_seen": None}
 

@@ -1,4 +1,4 @@
-"""Einzelfuehler-Ausfall (Praezisierung 5)."""
+"""Einzelfuehler-Ausfall."""
 import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock

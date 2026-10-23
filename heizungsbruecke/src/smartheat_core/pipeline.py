@@ -598,7 +598,7 @@ class LeverPipeline:
             # Ohne Pflicht zu Hilfswerten (nur die Wiederherstellung) nicht vorbereiten, wenn das Binding Hilfswerte
             # hat: die Betriebsart geht ueber restore_aux zurueck, ohne gemerkte Werte bliebe eine Umstellung fuer
             # immer.
-            # Vaillant (keine Hilfswerte) bereitet nur vor.
+            # Vaillant (keine Hilfswerte) bereitet immer vor.
             if self._binding.needs_preparation() and (require_aux or not self._description.aux_originals):
                 if not prepare_quota:
                     switched = self.ensure_prepared(exempt=exempt, require_aux=require_aux)
@@ -631,7 +631,7 @@ class LeverPipeline:
     def _prepare_within_quota(self, *, exempt: bool, require_aux: bool) -> bool | None:
         """ensure_prepared im Kontingent zone_prepare (write_budget.RETRY_QUOTA: nach einem Fehlschlag hoechstens ein
         Versuch je 30 min, 6 Fehlschlaege am Tag), das der Schreibweg der Serverwerte mit dem Start und dem lokalen
-        Check teilt (I-1/I-2): sonst stellte jede Antwort auf einen Snapshot und jede Wiederholung
+        Check teilt: sonst stellte jede Antwort auf einen Snapshot und jede Wiederholung
         der Datenkette eine nicht vorbereitbare Zone erneut um. Ein Erfolg setzt das Kontingent zurueck, das
         Tagesbudget (WriteBudgetExhausted) zaehlt nicht als Fehlschlag. Sperrt das Kontingent, entscheidet ein Lesen
         der Betriebsart (is_prepared, kein Schreiben): steht die Anlage schon vorbereitet, gilt das wie eine

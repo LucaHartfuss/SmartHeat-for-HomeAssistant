@@ -2,7 +2,7 @@
 0.6.0, HA-Add-on ab 5c), liest die Laufzeit Anlage, Hebelsatz, Verteilsystem, Raumfuehler, Tagestick und Abo aus dem
 Konfigurationsdokument statt aus Optionen; kurze Intervalle gibt es nur fuer die E2E aus der Umgebung
 (SMARTHEAT_E2E_INTERVALLE). Transport und Zugang haelt der Geraetekern (eine
-MQTT-Verbindung), der Abo-Status steht im Dokument (Praezisierung abo, die 30-Tage-Frist bleibt lokal).
+MQTT-Verbindung), der Abo-Status steht im Dokument (die 30-Tage-Frist bleibt lokal).
 Die Anlage bindet den lokalen Zustand ueber tenant_id: eine andere Anlage beginnt mit leerem Zustand, eine
 neue Konfiguration derselben Anlage nicht. Feldnamen = smartheat_device.wire.KONFIGURATION_FIELDS (die Laufzeit
 importiert den Geraetekern nicht; ein Test haelt beide gleich). Die Bindung (Treiber, Thermostat) liest der Host.

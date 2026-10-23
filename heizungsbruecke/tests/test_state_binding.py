@@ -1,4 +1,4 @@
-"""Zustand an Einrichtung und Anlage binden (Nutzer-Entscheidung E3)."""
+"""Zustand an Einrichtung und Anlage binden (Nutzer-Entscheidung)."""
 
 import logging
 

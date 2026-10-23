@@ -162,7 +162,7 @@ class SimulationDriver:
         dt = max(now - self._last_model, 0.0) if self._last_model is not None else 0.0
         if self._last_model is not None:
             self._room += (equilibrium - self._room) * (1 - math.exp(-dt / TAU_SECONDS))
-        # Ohne Liefer-Signal lernt der Server nicht (E5); `keine_waerme` in der Steuerdatei bildet einen
+        # Ohne Liefer-Signal lernt der Server nicht; `keine_waerme` in der Steuerdatei bildet einen
         # Waermeausfall nach.
         delivers = not control.get("keine_waerme")
         if delivers:

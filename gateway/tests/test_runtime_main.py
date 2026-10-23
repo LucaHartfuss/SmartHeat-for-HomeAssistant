@@ -382,8 +382,8 @@ def test_without_a_known_thermostat_state_the_start_aligns_with_its_first_report
 @pytest.mark.parametrize("erste", [None, "heat", "off"], ids=["keine Meldung", "an", "aus"])
 def test_a_newer_operation_replaces_the_stored_target_at_start(world, erste):
     """Gespeichert 20, Bedienung 22,5 (kam waehrend des Neustarts, nicht dirty): sie gilt sofort im Soll-Speicher.
-    Ohne bekannten Zustand des Thermostats geht sie erst mit seiner ersten Live-Meldung hinaus, wie das Angleichen
-    (Fix-Runde 1 I-1); meldet es aus, erst mit "wieder an"."""
+    Ohne bekannten Zustand des Thermostats geht sie erst mit seiner ersten Live-Meldung hinaus, wie das Angleichen;
+    meldet es aus, erst mit "wieder an"."""
     dateien.schreiben_json(world.paths.room_target, {"value": 20.0, "source": "portal", "ts": "t"},
                            modus=dateien.LESBAR)
     dokumente_schreiben(world.paths, konfiguration(), bedienung(22.5))

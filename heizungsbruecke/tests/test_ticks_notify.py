@@ -1,4 +1,4 @@
-"""Zuordnung der delivery-Meldungen zu Meldeschluesseln (Praezisierung 2)."""
+"""Zuordnung der delivery-Meldungen zu Meldeschluesseln."""
 from unittest.mock import MagicMock
 
 import pytest

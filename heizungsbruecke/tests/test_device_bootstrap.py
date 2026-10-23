@@ -408,7 +408,7 @@ def test_an_unusable_access_counts_as_a_failure_with_backoff(tmp_path, ident, ca
 ])
 def test_a_response_with_a_lone_surrogate_is_unusable_and_backs_off(tmp_path, ident, ca, feld, wert):
     """speichern() koennte ein einzelnes Surrogat (json.loads aus "\\ud800") nicht schreiben: UnicodeEncodeError
-    ausserhalb des try in holen, kein Backoff, register in jedem Takt (Fix-Runde 1)."""
+    ausserhalb des try in holen, kein Backoff, register in jedem Takt."""
     antwort = {**_body(ident, ca), feld: wert}
     with pytest.raises(bootstrap.Unavailable):
         _client(ident, FakeSession(FakeResponse(200, antwort))).register(**ARGS)

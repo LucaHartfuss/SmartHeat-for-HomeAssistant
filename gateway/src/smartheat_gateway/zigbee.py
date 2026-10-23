@@ -161,8 +161,8 @@ class ZigbeeMirror:
         elif parts[1:] == ["bridge", "event"] and not retain:
             self._on_bridge_event(body)
         elif len(parts) == 2 and parts[1] != "bridge" and isinstance(body, dict):
-            # Retained Meldungen (Broker-Replay beim Verbinden) sind beliebig alt: nur mit frischem last_seen stempeln
-            #, sonst gespeichert, aber nicht frisch; keine Geraete-Hooks.
+            # Retained Meldungen (Broker-Replay beim Verbinden) sind beliebig alt: nur mit frischem last_seen stempeln,
+            # sonst gespeichert, aber nicht frisch; keine Geraete-Hooks.
             with self._lock:
                 self._payloads[parts[1]] = (body, self._retained_stamp(body) if retain else self._clock())
             if retain:

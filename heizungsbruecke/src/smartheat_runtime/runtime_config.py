@@ -21,7 +21,7 @@ class BatteryRef:
 
 @dataclass(frozen=True)
 class BootInfo:
-    """Was vor der Konfigurationspruefung feststeht (Praezisierung 3): Status und Meldungen arbeiten schon,
+    """Was vor der Konfigurationspruefung feststeht: Status und Meldungen arbeiten schon,
     bevor die Konfiguration geprueft ist. Der Host liest es tolerant und wirft nie."""
     configured: bool
     signed_off: bool

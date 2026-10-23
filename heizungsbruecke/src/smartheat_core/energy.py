@@ -22,7 +22,7 @@ from smartheat_core.binding import ENERGY_DAILY, ENERGY_TOTAL
 from smartheat_core.bindungsparameter import EINHEITEN
 
 # Annahme bis zur Inventur: ein Tageszaehler faellt um Mitternacht auf (nahe) 0, Messrauschen ist viel kleiner.
-# Grenze: myVAILLANT aktualisiert die Energiesensoren nur beim Neuladen der Integration ; setzt ein
+# Grenze: myVAILLANT aktualisiert die Energiesensoren nur beim Neuladen der Integration; setzt ein
 # Neuladen den Zaehler mitten am Tag zurueck, kann die Summe Verbrauch des Tages vor dem Neuladen unterzaehlen.
 RESET_FRACTION = 0.5
 

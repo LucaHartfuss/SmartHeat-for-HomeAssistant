@@ -387,7 +387,7 @@ class StateStore:
         return from_persisted(raw)
 
 
-# Nutzer-Entscheidung E3: was zur Anlage gehoert (bei einer anderen Anlage verworfen) und was zur
+# Nutzer-Entscheidung: was zur Anlage gehoert (bei einer anderen Anlage verworfen) und was zur
 # Einrichtung (bei jeder neuen Einrichtung zurueckgesetzt: Erstkontakt-Tick, frische Zustellung).
 _PLANT_BOUND = (
     "restore_point", "originals", "aux_originals", "learned", "boost_active", "emergency_boost_active", "boost_since",

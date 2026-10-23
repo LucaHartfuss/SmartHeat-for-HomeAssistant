@@ -132,7 +132,7 @@ class SollEingang:
                 return
             if not is_plausible(value, ROOM_TEMP_RANGE):
                 # Unbrauchbar (nicht endlich, Text, bool, None, ueber dem Raumbereich): aendert die Frostschutz-Stellung
-                # nicht, ist kein Wunsch ; ein einziger solcher Wert hebt die Stellung nicht auf.
+                # nicht, ist kein Wunsch; ein einziger solcher Wert hebt die Stellung nicht auf.
                 self._unbrauchbar_melden(value)
                 return
             self._unbrauchbar_gemeldet.clear()

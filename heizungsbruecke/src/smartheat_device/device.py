@@ -45,7 +45,7 @@ MELDUNGEN_MIN_SECONDS = 10
 MELDUNGEN_JE_NACHRICHT = 50
 SERVER_DOWN_SECONDS = 300
 PRUEFUNG_WIEDERHOLEN_SECONDS = 30
-#: Lokaler Hinweis bei einer abgelehnten Konfiguration (Entscheidung E2 A): den Text der Ablehnung
+#: Lokaler Hinweis bei einer abgelehnten Konfiguration (Entscheidung des Nutzers): den Text der Ablehnung
 #: bildet der Server, das Geraet nennt nur den Code.
 ABLEHNUNG_ANZEIGE = "Die Einrichtung wurde abgelehnt (Code {grund}). Die Begründung zeigt der Einrichtungsassistent."
 #: Down-Topic eines Dokuments -> Dokumentart (wire.DOKUMENT_TOPICS umgekehrt)
@@ -146,7 +146,7 @@ class Device:
         self._meldungen_at: float | None = None
         self._status: dict | None = None
         self._status_at: float | None = None
-        #: Nach hello muss ein Status hinaus ; gescheitert der Rueckruf dabei, bleibt der Merker, bis
+        #: Nach hello muss ein Status hinaus; gescheitert der Rueckruf dabei, bleibt der Merker, bis
         #: einer gesendet ist (sonst unterdrueckten Gleichheit und Mindestabstand ihn im naechsten Takt).
         self._status_erzwingen = False
         self._hello_fehler: str | None = None  # letzte Fehlerart beim Bauen von hello (je Art einmal loggen)
