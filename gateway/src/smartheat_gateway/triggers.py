@@ -70,8 +70,9 @@ def seconds_until(daily_time: str, now: datetime, zone: tzinfo | None = None) ->
 
 
 def _zustand_bekannt(payload: dict) -> bool:
-    """Zeigt die Meldung des Thermostats, ob es aus ist (Modus oder Soll)?"""
-    return "system_mode" in payload or "occupied_heating_setpoint" in payload
+    """Zeigt die Meldung des Thermostats brauchbar, ob es aus ist: ein Modus (Text) oder ein endliches Soll. Ein null-,
+    Text- oder fehlendes Feld macht den Zustand nicht bekannt (fail closed: das Angleichen wartet weiter)."""
+    return isinstance(payload.get("system_mode"), str) or ist_endliche_zahl(payload.get("occupied_heating_setpoint"))
 
 
 class _ZigbeeQuelle:

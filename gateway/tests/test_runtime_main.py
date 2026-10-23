@@ -378,13 +378,25 @@ def test_without_a_known_thermostat_state_the_start_aligns_with_its_first_report
     assert _thermostat_writes(world) == [22.0]
 
 
-def test_a_newer_operation_replaces_the_stored_target_at_start(world):
+@pytest.mark.parametrize("erste", [None, "heat", "off"], ids=["keine Meldung", "an", "aus"])
+def test_a_newer_operation_replaces_the_stored_target_at_start(world, erste):
+    """Gespeichert 20, Bedienung 22,5 (kam waehrend des Neustarts, nicht dirty): sie gilt sofort im Soll-Speicher.
+    Ohne bekannten Zustand des Thermostats geht sie erst mit seiner ersten Live-Meldung hinaus, wie das Angleichen
+    (A6-14, Fix-Runde 1 I-1); meldet es aus, erst mit "wieder an"."""
     dateien.schreiben_json(world.paths.room_target, {"value": 20.0, "source": "portal", "ts": "t"},
                            modus=dateien.LESBAR)
     dokumente_schreiben(world.paths, konfiguration(), bedienung(22.5))
     world.start_runtime()
     world.run()
-    assert world.host._store.value == 22.5 and 22.5 in _thermostat_writes(world)
+    assert world.host._store.value == 22.5 and _thermostat_writes(world) == []
+    if erste is None:
+        return
+    world.z2m.report(THERMOSTAT, system_mode=erste, occupied_heating_setpoint=20.0, local_temperature=20.0)
+    world.run()
+    assert _thermostat_writes(world) == ([22.5] if erste == "heat" else [])
+    world.z2m.report(THERMOSTAT, system_mode="heat", occupied_heating_setpoint=20.0, local_temperature=20.0)
+    world.advance(30)  # nach der Entprellung: das gemeldete 20 ist kein Wunsch
+    assert _thermostat_writes(world) == [22.5] and world.host._store.value == 22.5
 
 
 def test_an_unexpected_error_reports_the_gateway_unhealthy_during_the_pause(world, monkeypatch):

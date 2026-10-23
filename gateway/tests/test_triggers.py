@@ -917,3 +917,44 @@ def test_start_does_not_align_a_w100_that_is_off_even_after_it_reports_on(tmp_pa
     welt.z2m.report(W100, thermostat_mode="ON")
     welt.worker.run_pending()
     assert _w100_sets(welt) == MODUS_W100 and welt.aus == [(True, 22.0)]
+
+
+def test_start_does_not_align_when_only_the_input_still_knows_frost(tmp_path, clock):
+    """Fix-Runde 1 (I-2): der Start kennt die Frostschutz-Stellung aus dem retained Zustand; die ON-Meldung traegt ein
+    unbrauchbares Soll (null). Der Spiegel zeigt dann nicht mehr Frost, der Soll-Eingang haelt sie (ein unbrauchbarer Wert
+    beendet sie nicht): das Angleichen folgt dem Soll-Eingang und schreibt nichts."""
+    welt = _neustart(tmp_path, clock, w100=True, soll=22.5,
+                     zustand={"thermostat_mode": "OFF", "system_mode": "heat", "occupied_heating_setpoint": 5})
+    welt.z2m.report(W100, thermostat_mode="ON", occupied_heating_setpoint=None)
+    welt.worker.run_pending()
+    clock.advance(ROOM_TARGET_DEBOUNCE_SECONDS + 1)
+    welt.worker.run_pending()
+    assert _w100_sets(welt) == MODUS_W100 and welt.aus == [(True, 22.5)]
+
+
+@pytest.mark.parametrize("unbrauchbar", [{"occupied_heating_setpoint": None}, {"occupied_heating_setpoint": "x"},
+                                         {"system_mode": None}, {"system_mode": 0}],
+                         ids=["Soll null", "Soll Text", "Modus null", "Modus Zahl"])
+def test_a_state_without_a_usable_mode_or_setpoint_is_not_known(tmp_path, clock, unbrauchbar):
+    """Fix-Runde 1 (M-1): bekannt ist ein Zustand nur mit einem Modus (Text) oder einem endlichen Soll; sonst wartet das
+    Angleichen auf die erste brauchbare Meldung (fail closed)."""
+    welt = _neustart(tmp_path, clock, zustand={**unbrauchbar, "local_temperature": 20.0})
+    assert _sollwerte(welt) == []
+    welt.z2m.report(THERMOSTAT, local_temperature=20.0, **unbrauchbar)
+    welt.worker.run_pending()
+    assert _sollwerte(welt) == []
+    welt.z2m.report(THERMOSTAT, system_mode="heat", occupied_heating_setpoint=20.0, local_temperature=20.0)
+    welt.worker.run_pending()
+    assert _sollwerte(welt) == [22.0]
+
+
+@pytest.mark.parametrize("zustand", [{"system_mode": "auto", "occupied_heating_setpoint": 20.0},
+                                     {"system_mode": "cool", "occupied_heating_setpoint": 20.0},
+                                     {"system_mode": "heat", "occupied_heating_setpoint": None},
+                                     {"system_mode": "heat", "occupied_heating_setpoint": "x"}],
+                         ids=["auto", "cool", "heat mit Soll null", "heat mit Soll Text"])
+def test_the_write_check_blocks_only_off_and_frost(tmp_path, clock, zustand):
+    # Fix-Runde 1 (M-5): nur system_mode "off" oder ein endliches Soll bis 7 °C blockt; jeder andere Modus und ein
+    # unbrauchbares Soll nicht
+    welt = _neustart(tmp_path, clock, zustand={**zustand, "local_temperature": 20.0})
+    assert _sollwerte(welt) == [22.0] and welt.aus == []

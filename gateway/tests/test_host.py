@@ -476,6 +476,29 @@ def test_the_operation_equal_to_the_stored_target_aligns_the_thermostat_only_wit
     assert world.host._store.value == 22.5 and _thermostat_writes(world) == schreibt
 
 
+def test_an_operation_at_start_reaches_a_bound_w100_only_after_it_reports_on(world):
+    """Fix-Runde 1 (I-1, L4-30): gespeichert 20, Bedienung 22,5; das W100 hat retained thermostat_mode OFF gemeldet. Die
+    Bedienung gilt sofort im Speicher, ans Geraet geht sie erst nach der Meldung ON, genau einmal gerundet, ohne heat."""
+    w100 = "0x54ef44100140eb34"  # Testwert
+    world.z2m.add_w100(w100)
+    world.z2m.report(w100, thermostat_mode="OFF", system_mode="heat", occupied_heating_setpoint=20,
+                     local_temperature=20.0)
+    dateien.schreiben_json(world.paths.room_target, {"value": 20.0, "source": "portal", "ts": "t"}, modus=dateien.LESBAR)
+    bindung = {**konfiguration()["bindung"], "thermostat": w100}
+    dokumente_schreiben(world.paths, konfiguration(bindung=bindung))
+    dateien.schreiben_json(world.paths.device_dir / "bedienung.json",
+                           {"version": 1, "inhalt": bedienung(22.5), "dirty": False}, modus=dateien.PRIVAT)
+    world.start_runtime()
+    world.run()
+    modus = [{"thermostat_mode": "ON"}, {"auto_hide_middle_line": False}]
+    assert world.host._store.value == 22.5
+    assert [body for ieee, body in world.z2m.set_requests if ieee == w100] == modus
+    world.z2m.report(w100, thermostat_mode="ON")
+    world.run()
+    assert [body for ieee, body in world.z2m.set_requests if ieee == w100] == modus + [{"occupied_heating_setpoint": 23.0}]
+    assert world.z2m.verworfen == []
+
+
 def test_the_start_puts_a_bound_w100_into_thermostat_mode_and_aligns_it_rounded(world):
     """Fixrunde A, L4-22: Thermostatmodus und Anzeige vor dem Soll (der Konverter verwirft ein Soll, solange Zigbee2MQTT
     den Modus fuer OFF haelt), das Soll ganzzahlig kaufmaennisch gerundet (22,5 -> 23), kein heat beim Start. Das W100
