@@ -1,4 +1,5 @@
 import math
+import time
 from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -556,7 +557,8 @@ def _w100_melden(welt, **werte):
 
 
 def test_the_start_puts_the_w100_into_thermostat_mode_without_heat_or_a_setpoint(mit_w100):
-    # heat nur nach dem Koppeln: ein am Geraet ausgeschaltetes W100 bleibt beim Start aus (A6-14 bleibt Fixrunde B)
+    # heat nur nach dem Koppeln: ein am Geraet ausgeschaltetes W100 bleibt beim Start aus; ohne bekannten Zustand
+    # gleicht der Start nicht an (A6-14, L4-30: erst nach gemeldetem ON)
     assert _w100_sets(mit_w100) == MODUS_W100
 
 
@@ -747,3 +749,171 @@ def test_a_stopped_trigger_source_posts_nothing(tmp_path, clock):
     erster_worker.run_pending()
     zweiter_worker.run_pending()
     assert erste_checks == ["erste"] and zweite_checks == ["zweite"]
+
+
+# --- Start: letzter bekannter Zustand, "aus" und Frostschutz (Fixrunde B, A6-14, L4-30; Nutzer-Entscheidung E5) ---
+
+ALTER = {"frisch": 0.0, "drei Stunden alt": 3 * 3600.0, "ohne last_seen": None}
+
+
+def _neustart(tmp_path, clock, *, zustand=None, alter=0.0, w100=False, soll=22.0, schlaeft=False):
+    """Prozessstart wie nach einem Neustart: Zigbee2MQTT hat den Zustand des Thermostats vorher retained gemeldet
+    (Broker-Replay beim Abonnieren, keine Hooks); alter None = Meldung ohne last_seen. Danach die Laufzeit mit
+    Angleichen beim Start (Spec 3.3)."""
+    bus = FakeBus()
+    z2m = FakeZigbee2Mqtt(bus)
+    z2m.bridge(online=True)
+    z2m.add_sensor(SENSOR)
+    ieee = W100 if w100 else THERMOSTAT
+    (z2m.add_w100 if w100 else z2m.add_thermostat)(ieee)
+    if schlaeft:
+        z2m.make_sleepy(ieee)
+    if zustand is not None:
+        z2m.report(ieee, wall=None if alter is None else time.time() - alter, **zustand)
+    mirror = ZigbeeMirror(bus, clock)
+    mirror.start()  # FakeBus spielt die retained Meldungen mit retain=True zu
+    worker = RegulationWorker(clock=clock)
+    welt = SimpleNamespace(bus=bus, z2m=z2m, mirror=mirror, worker=worker, ieee=ieee, wuensche=[], aus=[])
+    worker.register(EV_LOCAL_CHECK, lambda event: None)
+    worker.register(EV_SOURCE_CONNECTED, lambda event: None)
+
+    def wunsch(value):
+        welt.wuensche.append(value)
+        return min(25.0, max(15.0, value))
+
+    welt.store = TargetStore(tmp_path / "room_target.json", soll, clock, lambda: "ts")
+    welt.trigger = BusTriggerSource(bus, worker, mirror, welt.store, thermostat=ieee, sensor_ieees=(SENSOR,),
+                                    daily_trigger_time=None, wunsch=wunsch, clock=clock, angleichen=True,
+                                    soll_quelle_aus=lambda aus, wirksam: welt.aus.append((aus, wirksam)))
+    welt.trigger.start()
+    worker.run_pending()
+    return welt
+
+
+def _sollwerte(welt):
+    return [body["occupied_heating_setpoint"] for ieee, body in welt.z2m.set_requests
+            if ieee == welt.ieee and "occupied_heating_setpoint" in body]
+
+
+@pytest.mark.parametrize("alter", ALTER.values(), ids=ALTER.keys())
+@pytest.mark.parametrize("zustand", [{"system_mode": "off", "occupied_heating_setpoint": 20.0},
+                                     {"system_mode": "heat", "occupied_heating_setpoint": 5.0},
+                                     {"system_mode": "heat", "occupied_heating_setpoint": FROSTSCHUTZ_BIS}],
+                         ids=["aus", "Frostschutz 5", "Frostschutz 7"])
+def test_start_does_not_align_a_thermostat_that_is_off(tmp_path, clock, zustand, alter):
+    """A6-14: der letzte bekannte Zustand gilt beim Start fuer "aus" (auch retained, jedes Alter), nie als Wunsch."""
+    welt = _neustart(tmp_path, clock, zustand={**zustand, "local_temperature": 20.0}, alter=alter)
+    clock.advance(ROOM_TARGET_DEBOUNCE_SECONDS + 1)
+    welt.worker.run_pending()
+    assert _sollwerte(welt) == [] and welt.aus == [(True, 22.0)]
+    assert welt.wuensche == [] and (welt.store.value, welt.store.source) == (22.0, "portal")
+
+
+@pytest.mark.parametrize("alter", ALTER.values(), ids=ALTER.keys())
+def test_start_aligns_a_thermostat_whose_last_known_state_is_on(tmp_path, clock, alter):
+    # Gegenprobe zu A6-14: bekannter Zustand an (auch Soll knapp ueber FROSTSCHUTZ_BIS) -> Angleichen beim Start
+    welt = _neustart(tmp_path, clock, zustand={"system_mode": "heat", "occupied_heating_setpoint": 7.5,
+                                                "local_temperature": 20.0}, alter=alter)
+    assert _sollwerte(welt) == [22.0] and welt.aus == []
+    clock.advance(ROOM_TARGET_DEBOUNCE_SECONDS + 1)
+    welt.worker.run_pending()
+    assert welt.wuensche == [] and welt.store.value == 22.0
+
+
+def test_start_without_a_known_state_aligns_with_the_first_report(tmp_path, clock):
+    """Ohne bekannten Zustand gleicht der Start erst mit der ersten Live-Meldung an, vor deren Ereignissen: das
+    gemeldete Soll 19 faellt ins Echo-Fenster und ist kein Wunsch."""
+    welt = _neustart(tmp_path, clock, schlaeft=True)
+    assert _sollwerte(welt) == []
+    welt.z2m.report(THERMOSTAT, system_mode="heat", occupied_heating_setpoint=19.0, local_temperature=20.0)
+    welt.worker.run_pending()
+    clock.advance(ROOM_TARGET_DEBOUNCE_SECONDS + 1)
+    welt.worker.run_pending()
+    assert _sollwerte(welt) == [22.0] and welt.wuensche == [] and welt.store.value == 22.0
+    clock.advance(120)  # nach dem Echo-Fenster: Routinemeldung, das schlafende Thermostat hat noch nicht uebernommen
+    welt.z2m.report(THERMOSTAT, system_mode="heat", occupied_heating_setpoint=19.0, local_temperature=20.0)
+    welt.worker.run_pending()
+    clock.advance(ROOM_TARGET_DEBOUNCE_SECONDS + 1)
+    welt.worker.run_pending()
+    assert _sollwerte(welt) == [22.0]  # nur einmal je Start
+    assert welt.wuensche == [] and welt.store.value == 22.0  # das angezeigte 19 gilt als alter Wert (veraltet)
+
+
+@pytest.mark.parametrize("meldung", [{"system_mode": "off", "occupied_heating_setpoint": 19.0},
+                                     {"system_mode": "heat", "occupied_heating_setpoint": 5.0}],
+                         ids=["aus", "Frostschutz"])
+def test_start_without_a_known_state_writes_nothing_if_the_first_report_is_off(tmp_path, clock, meldung):
+    welt = _neustart(tmp_path, clock)
+    welt.z2m.report(THERMOSTAT, local_temperature=20.0, **meldung)
+    welt.worker.run_pending()
+    clock.advance(ROOM_TARGET_DEBOUNCE_SECONDS + 1)
+    welt.worker.run_pending()
+    assert _sollwerte(welt) == [] and welt.aus == [(True, 22.0)] and welt.wuensche == []
+    welt.z2m.report(THERMOSTAT, system_mode="heat", occupied_heating_setpoint=19.0, local_temperature=20.0)
+    welt.worker.run_pending()
+    # Gegenprobe: wieder an (bzw. Frostschutz durch Drehen verlassen) wie im laufenden Betrieb
+    assert _sollwerte(welt) == ([22.0] if meldung["system_mode"] == "off" else [])
+
+
+def test_an_operation_after_a_restart_with_the_thermostat_off_waits_for_it_to_be_on(tmp_path, clock):
+    """Eine Bedienung waehrend "aus" (bekannt aus dem retained Zustand) wird gespeichert und mit "wieder an"
+    geschrieben."""
+    welt = _neustart(tmp_path, clock, zustand={"system_mode": "off", "occupied_heating_setpoint": 20.0,
+                                                "local_temperature": 20.0}, alter=None)
+    welt.worker.post(Event(EV_TARGET_INPUT, {"value": 23.0, "source": "portal"}))
+    welt.worker.run_pending()
+    assert welt.store.value == 23.0 and _sollwerte(welt) == []
+    welt.z2m.report(THERMOSTAT, system_mode="heat", occupied_heating_setpoint=20.0, local_temperature=20.0)
+    welt.worker.run_pending()
+    clock.advance(ROOM_TARGET_DEBOUNCE_SECONDS + 1)
+    welt.worker.run_pending()
+    assert _sollwerte(welt) == [23.0] and welt.wuensche == [] and welt.store.value == 23.0
+
+
+@pytest.mark.parametrize("zustand", [{"system_mode": "off", "occupied_heating_setpoint": 20.0},
+                                     {"system_mode": "heat", "occupied_heating_setpoint": FROSTSCHUTZ_BIS}],
+                         ids=["aus", "Frostschutz 7"])
+def test_nothing_reaches_a_thermostat_whose_last_known_state_is_off_even_unseen_by_the_input(mit_geraet, clock,
+                                                                                             zustand):
+    """Pruefung vor jedem Schreiben (A6-14): der retained Zustand "aus" kam erst nach dem Start (Broker-Replay ohne
+    Hook, der Soll-Eingang weiss nichts davon); die Bedienung des Servers wird gespeichert, aber nicht geschrieben, und
+    oeffnet kein Echo-Fenster (schreiben gibt False)."""
+    welt = mit_geraet
+    welt.bus.deliver(f"zigbee2mqtt/{THERMOSTAT}", zustand, retain=True)
+    welt.worker.post(Event(EV_TARGET_INPUT, {"value": 23.0, "source": "portal"}))
+    welt.worker.run_pending()
+    assert welt.store.value == 23.0 and _setpoint_writes(welt) == [] and welt.store.echo_rest() == 0.0
+    welt.z2m.report(THERMOSTAT, system_mode="heat", occupied_heating_setpoint=20.0, local_temperature=20.0)
+    welt.worker.post(Event(EV_TARGET_INPUT, {"value": 22.0, "source": "portal"}))
+    welt.worker.run_pending()
+    assert _setpoint_writes(welt) == [22.0]  # Gegenprobe: an -> geschrieben
+
+
+def test_start_aligns_a_w100_only_after_it_reports_on(tmp_path, clock):
+    """L4-30 (2): der Konverter lumi verwirft ein Soll, solange er thermostat_mode nicht als ON kennt; das Angleichen
+    beim Start wartet auf die Meldung ON und schreibt dann genau ein Soll (gerundet), ohne heat."""
+    welt = _neustart(tmp_path, clock, w100=True, soll=22.5,
+                     zustand={"thermostat_mode": "OFF", "system_mode": "heat", "occupied_heating_setpoint": 20})
+    assert _w100_sets(welt) == MODUS_W100
+    welt.z2m.report(W100, thermostat_mode="ON")
+    welt.worker.run_pending()
+    welt.z2m.report(W100, thermostat_mode="ON", battery=80)
+    welt.worker.run_pending()
+    clock.advance(ROOM_TARGET_DEBOUNCE_SECONDS + 1)
+    welt.worker.run_pending()
+    assert _w100_sets(welt) == MODUS_W100 + [{"occupied_heating_setpoint": 23.0}]
+    assert welt.z2m.verworfen == [] and welt.wuensche == [] and welt.store.value == 22.5
+
+
+def test_start_aligns_a_w100_at_once_if_its_known_state_is_on(tmp_path, clock):
+    welt = _neustart(tmp_path, clock, w100=True, soll=22.5,
+                     zustand={"thermostat_mode": "ON", "system_mode": "heat", "occupied_heating_setpoint": 20})
+    assert _w100_sets(welt) == MODUS_W100 + [{"occupied_heating_setpoint": 23.0}] and welt.z2m.verworfen == []
+
+
+def test_start_does_not_align_a_w100_that_is_off_even_after_it_reports_on(tmp_path, clock):
+    welt = _neustart(tmp_path, clock, w100=True,
+                     zustand={"thermostat_mode": "OFF", "system_mode": "off", "occupied_heating_setpoint": 20})
+    welt.z2m.report(W100, thermostat_mode="ON")
+    welt.worker.run_pending()
+    assert _w100_sets(welt) == MODUS_W100 and welt.aus == [(True, 22.0)]

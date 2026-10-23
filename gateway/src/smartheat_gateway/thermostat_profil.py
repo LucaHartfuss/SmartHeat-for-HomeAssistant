@@ -7,7 +7,8 @@ Grad. Die Pflege laeuft im Bus-Thread und liest den Soll-Speicher nie: das gebun
 ueber ihre Bindung im Worker ein, jedes andere bekommt DEFAULT_RAUM_SOLL. Soll und heizen gehen erst hinaus, wenn das
 Geraet thermostat_mode ON gemeldet hat (Labor 2026-10-22, L4-30): der Konverter verwirft beide, solange sein
 zwischengespeicherter Zustand nicht ON ist, und ON steht dort erst nach der Meldung des Geraets; bis dahin merkt sich
-die Pflege je Geraet einen offenen Rest, ohne Timer und ohne Wiederholung."""
+die Pflege je Geraet einen offenen Rest, ohne Timer und ohne Wiederholung. Dasselbe Warten auf ON (nach_an) nutzt das
+Angleichen beim Start; eine Bindung uebernimmt den offenen Rest einer ungebundenen Kopplung (L4-30)."""
 import logging
 import math
 import threading
@@ -77,13 +78,23 @@ class ThermostatPflege:
         self._mirror = mirror
         self._lock = threading.Lock()
         self._gebunden: tuple[str, Callable[[], None]] | None = None
-        self._offen: dict[str, Callable[[], None]] = {}  # je Geraet hoechstens ein Rest: Soll und heizen nach ON
+        #: je Geraet hoechstens ein Rest, der nach ON laeuft, und ob er aus einer ungebundenen Kopplung stammt
+        self._offen: dict[str, tuple[Callable[[], None], bool]] = {}
         mirror.on_interview(self._on_interview)
         mirror.on_device_message(self._on_geraet)
 
     def binden(self, ieee: str, einrichten_lassen: Callable[[], None]) -> None:
+        """Wartet das Geraet noch auf ON mit dem Rest einer ungebundenen Kopplung (Soll DEFAULT_RAUM_SOLL), uebernimmt
+        die Bindung die Einrichtung (L4-30): der Rest faellt weg, einrichten_lassen() laeuft sofort (im Thread des
+        Aufrufers) und richtet mit dem Soll aus dem Soll-Speicher ein. Jeder andere offene Rest bleibt."""
         with self._lock:
             self._gebunden = (ieee, einrichten_lassen)
+            rest = self._offen.get(ieee)
+            uebernehmen = rest is not None and rest[1]
+            if uebernehmen:
+                del self._offen[ieee]
+        if uebernehmen:
+            einrichten_lassen()
 
     def loesen(self, ieee: str) -> None:
         with self._lock:
@@ -93,19 +104,30 @@ class ThermostatPflege:
 
     def einrichten(self, ieee: str, p: ThermostatProfil, abschluss: Callable[[], None]) -> None:
         """Nach dem Koppeln: Thermostatmodus und Anzeige sofort (je eine Nachricht), danach abschluss() (Soll, heizen)
-        sobald das Geraet thermostat_mode ON gemeldet hat, sofort, wenn der Spiegel ON schon kennt. abschluss laeuft im
-        Bus-Thread oder im Thread des Aufrufers; ein neuer Aufruf fuer dasselbe Geraet ersetzt den offenen Rest."""
+        wie bei nach_an."""
+        self._einrichten(ieee, p, abschluss, ungebunden=False)
+
+    def nach_an(self, ieee: str, abschluss: Callable[[], None]) -> None:
+        """abschluss() sobald das Geraet thermostat_mode ON gemeldet hat, sofort, wenn der Spiegel ON schon kennt (auch
+        aus einer retained Meldung: sie ist der Zustand von Zigbee2MQTT). abschluss laeuft im Bus-Thread oder im Thread
+        des Aufrufers, genau einmal; ein neuer Aufruf fuer dasselbe Geraet ersetzt den offenen Rest."""
+        self._merken(ieee, abschluss, ungebunden=False)
+
+    def _einrichten(self, ieee: str, p: ThermostatProfil, abschluss: Callable[[], None], *, ungebunden: bool) -> None:
         modus_setzen(self._mirror, ieee, p)
+        self._merken(ieee, abschluss, ungebunden=ungebunden)
+
+    def _merken(self, ieee: str, abschluss: Callable[[], None], *, ungebunden: bool) -> None:
         with self._lock:  # erst merken, dann pruefen: eine ON-Meldung dazwischen findet den Rest oder wird gesehen
-            self._offen[ieee] = abschluss
+            self._offen[ieee] = (abschluss, ungebunden)
         if self._mirror.payload(ieee).get("thermostat_mode") == MODUS_AN:
             self._ausfuehren(ieee)
 
     def _ausfuehren(self, ieee: str) -> None:
         with self._lock:
-            abschluss = self._offen.pop(ieee, None)
-        if abschluss is not None:
-            abschluss()
+            rest = self._offen.pop(ieee, None)
+        if rest is not None:
+            rest[0]()
 
     def _on_geraet(self, ieee: str, payload: dict) -> None:
         if payload.get("thermostat_mode") == MODUS_AN:
@@ -121,4 +143,4 @@ class ThermostatPflege:
             gebunden[1]()
             return
         logger.info("Thermostat %s (%s) gekoppelt: als Thermostat eingestellt", ieee, model)
-        self.einrichten(ieee, p, lambda: soll_und_heizen(self._mirror, ieee, p, DEFAULT_RAUM_SOLL))
+        self._einrichten(ieee, p, lambda: soll_und_heizen(self._mirror, ieee, p, DEFAULT_RAUM_SOLL), ungebunden=True)

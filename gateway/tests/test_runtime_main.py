@@ -358,10 +358,24 @@ def test_room_is_refreshed_every_tick(world):
 
 
 def test_the_operation_is_applied_and_the_thermostat_aligned_at_start(world):
+    # das Thermostat hat vor dem Start gemeldet (retained): bekannter Zustand, an (A6-14)
+    world.z2m.report(THERMOSTAT, system_mode="heat", occupied_heating_setpoint=20.0, local_temperature=20.0)
     dokumente_schreiben(world.paths, konfiguration(), bedienung(22.0))
     world.start_runtime()
     world.run()
     assert world.host._store.value == 22.0 and _thermostat_writes(world) == [22.0]
+
+
+def test_without_a_known_thermostat_state_the_start_aligns_with_its_first_report(world):
+    """A6-14: ohne bekannten Zustand (noch nie gemeldet, Mosquitto ohne retained Werte) wartet das Angleichen auf die
+    erste Live-Meldung des Thermostats."""
+    dokumente_schreiben(world.paths, konfiguration(), bedienung(22.0))
+    world.start_runtime()
+    world.run()
+    assert world.host._store.value == 22.0 and _thermostat_writes(world) == []
+    world.z2m.report(THERMOSTAT, system_mode="heat", occupied_heating_setpoint=20.0, local_temperature=20.0)
+    world.run()
+    assert _thermostat_writes(world) == [22.0]
 
 
 def test_a_newer_operation_replaces_the_stored_target_at_start(world):

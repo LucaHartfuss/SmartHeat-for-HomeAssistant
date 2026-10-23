@@ -3,7 +3,7 @@ from configs import THERMOSTAT
 from fake_z2m import FakeZigbee2Mqtt
 from fakes import FakeBus
 
-from smartheat_gateway.thermostat_profil import profil
+from smartheat_gateway.thermostat_profil import profil, soll_und_heizen
 from smartheat_gateway.zigbee import ZigbeeMirror
 
 W100 = "0x54ef44100140eb34"  # Testwert in der IEEE-Form von Zigbee2MQTT
@@ -169,6 +169,43 @@ def test_releasing_the_device_drops_its_open_rest(welt):
     mirror.pflege.loesen(W100)
     z2m.report(W100, thermostat_mode="ON")
     assert z2m.set_requests == MODUS_W100
+
+
+def test_binding_before_the_on_report_gives_the_wish_not_20(welt):
+    """L4-30 (1): ungebunden gekoppelt (Rest mit DEFAULT_RAUM_SOLL), dann gebunden, bevor das Geraet ON meldet: die
+    Bindung uebernimmt die Einrichtung, das Geraet bekommt das Soll aus dem Soll-Speicher (22,5 -> 23), nicht 20."""
+    _, z2m, mirror = welt
+    p = profil("TH-S04D")
+    z2m.interview(W100)
+    aufrufe = []
+
+    def einrichten_lassen():  # wie die Laufzeit: Einrichtung im Worker mit dem Soll aus dem Speicher
+        aufrufe.append("laufzeit")
+        mirror.pflege.einrichten(W100, p, lambda: soll_und_heizen(mirror, W100, p, 22.5))
+
+    mirror.pflege.binden(W100, einrichten_lassen)
+    z2m.report(W100, thermostat_mode="ON")
+    assert [body for _, body in z2m.set_requests if "occupied_heating_setpoint" in body] == [
+        {"occupied_heating_setpoint": 23.0}]
+    assert z2m.set_requests == MODUS_W100 * 2 + [(W100, {"occupied_heating_setpoint": 23.0}),
+                                                  (W100, {"system_mode": "heat"})]
+    assert aufrufe == ["laufzeit"] and z2m.verworfen == []
+    mirror.pflege.binden(W100, einrichten_lassen)  # Gegenprobe: ohne offenen Rest richtet das Binden nichts ein
+    assert aufrufe == ["laufzeit"]
+
+
+def test_after_on_runs_at_once_if_the_mode_on_is_known_and_otherwise_with_the_report(welt):
+    _, z2m, mirror = welt
+    aufrufe = []
+    mirror.pflege.nach_an(W100, lambda: aufrufe.append("an"))
+    z2m.report(W100, thermostat_mode="OFF")
+    mirror.pflege.binden(W100, lambda: aufrufe.append("einrichten"))  # kein Rest einer Kopplung: Binden richtet nicht ein
+    assert aufrufe == [] and z2m.set_requests == []  # nur warten, nichts senden
+    z2m.report(W100, thermostat_mode="ON")
+    z2m.report(W100, thermostat_mode="ON")
+    assert aufrufe == ["an"]
+    mirror.pflege.nach_an(W100, lambda: aufrufe.append("sofort"))
+    assert aufrufe == ["an", "sofort"]
 
 
 def test_profiles_exist_only_for_known_models():
