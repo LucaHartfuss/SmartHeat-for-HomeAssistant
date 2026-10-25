@@ -348,14 +348,12 @@ class LeverPipeline:
         for lever in self._description.restore_originals:
             if not self._binding.has(lever):
                 continue
-            vom_server = server.get(lever)
-            original = vom_server if ist_endliche_zahl(vom_server) else state.originals.get(lever)
+            original = self._ursprungswert(lever, server)
             current = state.restore_point.get(lever)
             if original is None:
                 if current is not None:
                     logger.warning("Ursprungswert von %s unbekannt: bleibt auf dem gelernten Wert", lever)
                 continue
-            original = self._target(lever, original)
             originals[lever] = original
             if current is not None and abs(current - original) > self._description.steps[lever] / 2:
                 differs = True
@@ -402,6 +400,21 @@ class LeverPipeline:
             logger.exception(
                 "Zuletzt gelernte Werte wiederhergestellt, Boost-Flags konnten aber nicht gespeichert werden")
         return True
+
+    def _ursprungswert(self, lever: str, server: Mapping[str, object]) -> float | None:
+        """Der Wert, auf den `restore_and_clear` den Hebel zuruecksetzt: Ursprungswert des Servers, sonst der lokale,
+        auf Schritt und lokale Grenzen gebracht; None, wenn keiner bekannt ist."""
+        vom_server = server.get(lever)
+        original = vom_server if ist_endliche_zahl(vom_server) else self._store.state.originals.get(lever)
+        return None if original is None else self._target(lever, original)
+
+    def sign_off_values(self) -> dict[str, float]:
+        """Die Werte, auf die `restore_and_clear` die Hebel aus restore_originals zuruecksetzt (nur die mit bekanntem
+        Ursprungswert); die Meldung beim gescheiterten Abmelden nennt sie dem Kunden zum Von-Hand-Einstellen."""
+        server = self._server_snapshot()
+        werte = {lever: self._ursprungswert(lever, server) for lever in self._description.restore_originals
+                 if self._binding.has(lever)}
+        return {lever: wert for lever, wert in werte.items() if wert is not None}
 
     def _server_snapshot(self) -> Mapping[str, object]:
         if self._server_originals is None:

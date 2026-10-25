@@ -63,29 +63,29 @@ _WERTE = SimpleNamespace(restore_point={"curve": 0.9, "room_setpoint": 22.0, "le
 def test_meldung_nennt_jeden_hebel_des_hebelsatzes(hebelsatz, erwartet):
     """Die Werte zum Von-Hand-Einstellen tragen den Anzeigenamen jedes Hebels des Hebelsatzes (Viessmann: das
     Niveau, Vaillant und Weishaupt: die Heizgrenze), nicht fest Kurve und Parallelverschiebung."""
-    text = app._restore_values_text(_WERTE, BINDINGS[hebelsatz], abmelden=False)
+    text = app._restore_values_text(_WERTE, BINDINGS[hebelsatz])
 
     assert text == erwartet
 
 
 def test_abmeldung_nennt_den_ursprung_der_heizgrenze():
     """Beim Abmelden geht die Heizgrenze (restore_originals) auf ihren Ursprungswert zurueck; die Meldung nennt
-    ihn, nicht den gelernten Wert. Ohne Abmelden (Konfigurationsfehler) und fuer Hebel ausserhalb von restore_originals
-    zaehlt der Wiederherstellungspunkt; fehlt der dort, der Ursprungswert."""
+    ihn (`originals`), nicht den gelernten Wert. Ohne `originals` (Konfigurationsfehler) und fuer Hebel ausserhalb von
+    `originals` zaehlt der Wiederherstellungspunkt; fehlt der dort, der lokale Ursprungswert."""
     state = SimpleNamespace(restore_point={"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 16.0},
                             originals={"heat_limit": 18.0, "curve": 1.2})
     description = VAILLANT_MYPYLLANT
 
-    assert app._restore_values_text(state, description, abmelden=True) == (
+    assert app._restore_values_text(state, description, originals={"heat_limit": 18.0}) == (
         "Heizkurve 0,9, Wunschtemperatur der Zone 22, Heizgrenze 18")
-    assert app._restore_values_text(state, description, abmelden=False) == (
+    assert app._restore_values_text(state, description) == (
         "Heizkurve 0,9, Wunschtemperatur der Zone 22, Heizgrenze 16")
     ohne_punkt = SimpleNamespace(restore_point={"curve": 0.9, "room_setpoint": 22.0}, originals={"heat_limit": 18.0})
-    assert app._restore_values_text(ohne_punkt, description, abmelden=False) == (
+    assert app._restore_values_text(ohne_punkt, description) == (
         "Heizkurve 0,9, Wunschtemperatur der Zone 22, Heizgrenze 18")
-    # restore_originals-Hebel ohne Ursprungswert: der Wiederherstellungspunkt bleibt maßgeblich
+    # restore_originals-Hebel ohne Ursprungswert (leeres `originals`): der Wiederherstellungspunkt bleibt maßgeblich
     assert app._restore_values_text(
-        SimpleNamespace(restore_point=state.restore_point, originals={}), description, abmelden=True,
+        SimpleNamespace(restore_point=state.restore_point, originals={}), description, originals={},
     ) == "Heizkurve 0,9, Wunschtemperatur der Zone 22, Heizgrenze 16"
 
 
@@ -95,6 +95,6 @@ def test_ohne_beschreibung_nennen_neutrale_namen_die_werte_des_wiederherstellung
     state = SimpleNamespace(restore_point={"curve": 0.9, "level": 3.0, "room_setpoint": 22.0, "heat_limit": 16.0},
                             originals={"heat_limit": 18.0})
 
-    assert app._restore_values_text(state, None, abmelden=True) == "Heizkurve 0,9, Niveau 3, Raum-Soll 22, Heizgrenze 16"
-    assert app._restore_values_text(SimpleNamespace(restore_point={}, originals={}), None, abmelden=False) == (
+    assert app._restore_values_text(state, None, originals={"heat_limit": 18.0}) == "Heizkurve 0,9, Niveau 3, Raum-Soll 22, Heizgrenze 16"
+    assert app._restore_values_text(SimpleNamespace(restore_point={}, originals={}), None) == (
         "Werte unbekannt")

@@ -221,7 +221,7 @@ def _fail_start(notifier, status, clock, grund: str, key: str | None = None, *, 
             and not _end_boosts(store, parts, clock)):
         description = None if parts is None else parts.binding.description
         message = CONFIG_ERROR_BOOST_MESSAGE.format(
-            grund=grund, werte=_restore_values_text(store.state, description, abmelden=False))
+            grund=grund, werte=_restore_values_text(store.state, description))
     if not notifier.notify("konfiguration", f"fehler:{grund if key is None else key}", message, critical=True):
         notifier.refresh_persistent("konfiguration", message)
     status.update(konfigurationsfehler=True, grund=grund)
@@ -281,14 +281,15 @@ def _sign_off(parts: RestoreParts | None, store, notifier, status, clock, retry_
     if restorer is None:
         grund = SIGN_OFF_INVALID_CONFIG
         if boosting:
-            _report_sign_off_restore(notifier, SIGN_OFF_NOT_RESTORED_MESSAGE, store.state, None)
+            _report_sign_off_restore(notifier, SIGN_OFF_NOT_RESTORED_MESSAGE, store.state, None, None)
     elif restored:
         grund = None
         abo.report_restore(notifier, ok=True)
     else:
         grund = SIGN_OFF_RESTORE_FAILED.format(seconds=retry_seconds)
         assert parts is not None  # restorer entsteht nur mit parts
-        _report_sign_off_restore(notifier, SIGN_OFF_RESTORE_FAILED_MESSAGE, store.state, parts.binding.description)
+        _report_sign_off_restore(notifier, SIGN_OFF_RESTORE_FAILED_MESSAGE, store.state, parts.binding.description,
+                                 restorer.sign_off_values())
     status.update(abgemeldet=True, grund=grund)
     bridge = _idle(clock, status, STATUS_ABGEMELDET, neustart=neustart)
     if restored:
@@ -312,11 +313,12 @@ def _hint(notifier, key: str, state: str, message: str) -> None:
     notifier.notify(key, state, message, critical=False)
 
 
-def _report_sign_off_restore(notifier, template: str, state, description: BindingDescription | None) -> None:
+def _report_sign_off_restore(notifier, template: str, state, description: BindingDescription | None,
+                             originals: Mapping[str, float] | None) -> None:
     """Kritische Meldung mit den Werten des Wiederherstellungspunkts, einmal mit Push; bei jedem
     weiteren Start (Neustart, Zuruecksetzen scheitert weiter) nur die offene Meldung neu, die der
     Host (HA) nicht speichert."""
-    message = template.format(werte=_restore_values_text(state, description, abmelden=True))
+    message = template.format(werte=_restore_values_text(state, description, originals=originals))
     if not notifier.notify(abo.RESTORE_KEY, abo.RESTORE_FAILED_STATE, message, critical=True):
         notifier.refresh_persistent(abo.RESTORE_KEY, message)
 
@@ -325,19 +327,25 @@ def _report_sign_off_restore(notifier, template: str, state, description: Bindin
 _NEUTRALE_NAMEN = {"curve": "Heizkurve", "level": "Niveau", "room_setpoint": "Raum-Soll", "heat_limit": "Heizgrenze"}
 
 
-def _restore_values_text(state, description: BindingDescription | None, *, abmelden: bool) -> str:
+def _restore_values_text(state, description: BindingDescription | None, *,
+                         originals: Mapping[str, float] | None = None) -> str:
     """Die Werte, die der Kunde von Hand einstellen soll: jeder Hebel des Hebelsatzes mit seinem Anzeigenamen.
-    Beim Abmelden gehen die Hebel aus restore_originals auf ihren Ursprungswert zurueck (restore_and_clear),
-    alle anderen und jeder Fall ausser dem Abmelden auf den Wiederherstellungspunkt; fehlt der Wert dort, gilt der
-    Ursprungswert. Ohne Beschreibung stehen die Werte des Wiederherstellungspunkts unter neutralen Namen."""
+    `originals` sind die Werte, auf die das Abmelden die Hebel aus restore_originals zuruecksetzt
+    (`LeverPipeline.sign_off_values`: Ursprungswert des Servers vor dem lokalen, auf die lokalen Grenzen gebracht);
+    alle anderen Hebel und jeder Fall ohne `originals` (Konfigurationsfehler) gehen auf den Wiederherstellungspunkt;
+    fehlt der Wert dort, gilt der lokale Ursprungswert. Ohne Beschreibung stehen die Werte des Wiederherstellungspunkts
+    unter neutralen Namen."""
     if description is None:
         labelled = [(_NEUTRALE_NAMEN[lever], state.restore_point.get(lever)) for lever in _NEUTRALE_NAMEN]
     else:
         labelled = []
         for lever in description.lever_set.levers:
-            point, original = state.restore_point.get(lever), state.originals.get(lever)
-            value = original if abmelden and lever in description.restore_originals and original is not None else point
-            labelled.append((description.labels[lever], value if value is not None else original))
+            value = None if originals is None else originals.get(lever)
+            if value is None:
+                value = state.restore_point.get(lever)
+            if value is None:
+                value = state.originals.get(lever)
+            labelled.append((description.labels[lever], value))
     parts = [f"{label} {value:g}".replace(".", ",") for label, value in labelled if value is not None]
     return ", ".join(parts) if parts else "Werte unbekannt"
 

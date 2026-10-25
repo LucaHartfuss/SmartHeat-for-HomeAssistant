@@ -2458,6 +2458,21 @@ def test_sign_off_failed_restore_notifies_with_the_restore_values(env):
     assert _backup(env)["notify_states"] == {"wiederherstellung": "fehlgeschlagen"}
 
 
+@pytest.mark.parametrize(("vom_server", "heizgrenze"), [(16.0, "16"), (99.0, "23")])
+def test_sign_off_failed_restore_names_the_server_originals_that_it_would_have_written(env, vom_server, heizgrenze):
+    """BR-KK-2: der Kunde soll von Hand dasselbe einstellen, das SmartHeat geschrieben haette: der Ursprungswert des
+    Servers (auf die lokalen Grenzen gebracht, hier Heizgrenze bis 23), nicht der lokale (17)."""
+    _quiet_backup(env, boost_active=True, originals={"heat_limit": 17.0},
+                  restore_point={"curve": 0.9, "room_setpoint": 22.0, "heat_limit": 18.0})
+    env.ha.write_error = RuntimeError("Cloud weg")
+
+    _start_bridge(env, abgemeldet=True, ursprungswerte={"heat_limit": vom_server})
+
+    message = app.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(
+        werte=f"Heizkurve 0,9, Wunschtemperatur der Zone 22, Heizgrenze {heizgrenze}")
+    assert env.ha.pushes == [message]
+
+
 def test_sign_off_failed_restore_after_a_restart_renews_the_notification_without_push(env):
     message = app.SIGN_OFF_RESTORE_FAILED_MESSAGE.format(werte="Heizkurve 0,9, Wunschtemperatur der Zone 22")
     _quiet_backup(

@@ -190,6 +190,24 @@ def test_server_originals_win_for_levers(make_store, clock):
     assert store.state.restore_point == {"curve": 0.6, "room_setpoint": 20.0, "heat_limit": 16.0}
 
 
+def test_sign_off_values_are_the_values_restore_and_clear_writes(make_store, clock):
+    """Die Meldung beim gescheiterten Abmelden nennt dem Kunden, was zurueckgeschrieben wird (BR-KK-2): Server vor
+    lokal, auf die lokalen Grenzen gebracht, Hebel ohne bekannten Ursprungswert fehlen."""
+    pipeline, store, ha, binding = _setup(
+        make_store, clock,
+        backup={"originals": {"curve": 0.7, "room_setpoint": 21.0}, "restore_point": {"curve": 0.9}},
+        server={"curve": 0.6, "heat_limit": 1e9})
+    werte = pipeline.sign_off_values()
+    assert werte == {"curve": 0.6, "room_setpoint": 21.0, "heat_limit": 23.0}
+    assert pipeline.restore_and_clear(always_restore=True)
+    assert (ha.states["number.hk"], ha.states["number.normal"], ha.states["number.swu"]) == (0.6, 21.0, 23.0)
+
+
+def test_sign_off_values_leave_out_a_lever_without_any_original(make_store, clock):
+    pipeline, store, ha, binding = _setup(make_store, clock, backup={"originals": {"curve": 0.7}})
+    assert pipeline.sign_off_values() == {"curve": 0.7}
+
+
 @pytest.mark.parametrize("unsinn", ["0.6", math.nan, math.inf, True, None, [1], 10**400, -(10**400)])
 def test_unusable_server_lever_value_falls_back_to_the_local_original(make_store, clock, unsinn):
     pipeline, store, ha, binding = _setup(
