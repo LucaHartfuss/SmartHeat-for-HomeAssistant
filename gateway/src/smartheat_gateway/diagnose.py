@@ -9,6 +9,7 @@ Schutz gegen DNS-Rebinding: jede Route antwortet nur, wenn der Host-Header eine 
 aus SHG_DIAG_HOSTNAMES (kommagetrennt) ist; sonst 403 ohne Inhalt. Sonst koennte eine fremde Webseite ueber einen auf
 die LAN-Adresse umgebogenen Namen den Uebernahme-Code im Browser eines Besuchers lesen. Der Befehl `diagnostics`
 liefert geraet_host.snapshot() OHNE Uebernahme-Code."""
+import contextlib
 import html
 import ipaddress
 import json
@@ -181,10 +182,8 @@ def start_server(
             super().finish()
 
         def _abbrechen(self):
-            try:
+            with contextlib.suppress(OSError):  # schon geschlossen
                 self.connection.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass  # schon geschlossen
 
         def log_message(self, *args):
             pass
