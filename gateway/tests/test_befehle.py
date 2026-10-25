@@ -18,6 +18,7 @@ from world import GatewayWorld
 from smartheat_core import dateien
 from smartheat_device import fehler, wire
 from smartheat_device.commands import CommandRegister, Done, Failed, Waiting
+from smartheat_device.hintergrund import HINTERGRUND_NAME
 from smartheat_gateway import befehle
 from smartheat_gateway.drivers.base import DriverError
 from smartheat_gateway.drivers.simulation import SimulationDriver
@@ -921,7 +922,7 @@ def test_the_background_thread_is_a_daemon_and_stop_cancels_queued_calls():
 
     erster = hintergrund.submit(erster_aufruf)
     zweiter = hintergrund.submit(lambda: "nie")
-    threads = [t for t in threading.enumerate() if t.name.startswith(befehle.HINTERGRUND_NAME)]
+    threads = [t for t in threading.enumerate() if t.name.startswith(HINTERGRUND_NAME)]
     assert threads and all(t.daemon for t in threads)  # haelt das Prozessende nie auf
     # Erst stoppen, wenn der erste Aufruf laeuft: sonst bricht stop() auch ihn als wartend ab (CI-Runner langsamer)
     assert gestartet.wait(2.0)

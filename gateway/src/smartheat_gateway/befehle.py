@@ -25,10 +25,7 @@ from smartheat_core.zahlen import ist_endliche_zahl
 from smartheat_device import fehler, wire
 from smartheat_device.commands import CommandRegister, Done, Failed, InvalidPayload, Outcome, Waiting
 from smartheat_device.geraet_host_basis import SIGN_OFF_WAIT_SECONDS, abmeldung_abwarten
-from smartheat_device.hintergrund import (  # noqa: F401  (HINTERGRUND_NAME: Rueck-Import fuer tests/test_befehle.py)
-    HINTERGRUND_NAME,
-    Hintergrund,
-)
+from smartheat_device.hintergrund import Hintergrund
 from smartheat_device.nachrichten import Vertragsfehler, pruefen
 from smartheat_gateway import config as gateway_config
 from smartheat_gateway.drivers import registry
