@@ -42,6 +42,9 @@ KEY_CONFIG = "konfiguration"
 KEY_MANIFEST = "manifest"
 KEY_DRIVER = "treiber"
 BATTERY_POLL_SECONDS = 0.2
+# Nach einem Stromausfall startet Zigbee2MQTT erst mit Node-Anwendung und Stick (Pi 4: 15 bis 30 s) und der Broker hat
+# keine retained Nachrichten; die Wartezeit endet mit dem ersten bridge/devices, laeuft also nur bei offline-Z2M voll ab.
+DEVICES_WAIT_SECONDS = 60.0
 
 NOT_CONFIGURED_HINT = "Gateway ist noch nicht eingerichtet - die Einrichtung laeuft im SmartHeat-Portal."
 
@@ -67,7 +70,7 @@ def check_lever_set(driver, lever_set_id: str) -> None:
 
 class GatewayHost:
     def __init__(self, paths: Paths, bus: Bus, mirror: ZigbeeMirror, geraet: GatewayDeviceHost, *,
-                 clock=time.monotonic, devices_wait_seconds: float = 10.0, driver_threads: bool = True) -> None:
+                 clock=time.monotonic, devices_wait_seconds: float = DEVICES_WAIT_SECONDS, driver_threads: bool = True) -> None:
         self._paths, self._bus, self._clock = paths, bus, clock
         self._geraet = geraet
         self._devices_wait = devices_wait_seconds

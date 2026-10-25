@@ -31,6 +31,10 @@
 - Der Tagestick (`seconds_until`) feuert bei der Rückstellung der Uhr (Winterzeit, doppelte Stunde) nur einmal zur ersten
   Ortszeit der Tageszeit; bisher rechnete er in der zweiten Stunde mit einer negativen Wartezeit und feuerte bis zu eine
   Stunde lang dauernd.
+- Die Laufzeit wartet beim Start bis zu 60 s (bisher 10 s) auf die Geräteliste von Zigbee2MQTT. Nach einem Stromausfall
+  veröffentlicht Zigbee2MQTT sie erst nach Node-Start und Stick; mit 10 s fehlte danach die Batterie-Überwachung bis zum
+  nächsten Neustart der Laufzeit, und ein W100 galt als Thermostat ohne Profil (BR-GW-1). Die Wartezeit endet mit der
+  ersten Liste; nur bei abgeschaltetem Zigbee2MQTT läuft sie voll ab.
 - Jede Nachricht des Geräts entsteht über eine Stelle, die sie gegen den Vertrag prüft (`smartheat_device/nachrichten.py`),
   und das Gerät liest jede Vertragskonstante an der Stelle, die sie braucht (Stufe 3 S8a-1, A5-34). V1 gilt jetzt auf
   beiden Seiten strikt: Konfiguration, Bedienung und Befehle mit fehlendem oder fremdem Feld lehnt das Gerät ab. Der
