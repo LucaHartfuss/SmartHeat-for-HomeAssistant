@@ -13,7 +13,8 @@ x-hardening: &hardening
   restart: unless-stopped
   # Logs ins Journal des Hosts: Groesse, Rotation und der Schreibtakt von journald.conf.d/smartheat.conf gelten
   # auch hier, und ein Stromausfall laesst keine beschaedigte json-Datei zurueck, an der `docker logs` scheitert.
-  # Lesen: `docker logs <Dienst>` oder `journalctl CONTAINER_NAME=<Dienst>`.
+  # Lesen: Compose (Projekt smartheat) benennt die Container `smartheat-<Dienst>-1`, und `tag` ist dieser Name:
+  # `docker compose -p smartheat logs <Dienst>` oder `journalctl CONTAINER_NAME=smartheat-<Dienst>-1`.
   logging:
     driver: journald
     options: {tag: "{{.Name}}"}

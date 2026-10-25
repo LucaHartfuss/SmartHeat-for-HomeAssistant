@@ -8,9 +8,10 @@
   `vcgencmd` kommt über `raspi-utils` im Image (Raspberry-Pi-Archiv, `rootfs_checks.sh` prüft alle drei; `install.sh` auf
   einem fremden Debian verlangt es nicht). Das Journal schreibt alle 30 s (`SyncIntervalSec=30s`, `Storage=persistent`
   in `journald.conf.d/smartheat.conf`), nach hartem Stromverlust fehlen höchstens die letzten 30 s. Die Container
-  loggen über den Treiber `journald` (`tag` = Dienstname) statt `json-file`: `docker logs` scheitert nicht mehr an einer
+  loggen über den Treiber `journald` (`tag` = Containername `smartheat-<Dienst>-1`) statt `json-file`: `docker logs` scheitert nicht mehr an einer
   beschädigten Logdatei, und Größe und Rotation gelten für Host und Container gemeinsam. Mit dem nächsten Bundle werden
-  die Container neu erzeugt (`compose up -d`). Lesen: `docker logs <Dienst>` oder `journalctl CONTAINER_NAME=<Dienst>`.
+  die Container neu erzeugt (`compose up -d`). Lesen: `docker compose -p smartheat logs <Dienst>` oder
+  `journalctl CONTAINER_NAME=smartheat-<Dienst>-1`.
 - Der Updater nennt sich beim Abruf von Manifest und Bundle-Dateien `SmartHeat-Gateway-Updater/<Version>`. Den
   Standard-User-Agent von Python sperrt die Browser-Integritätsprüfung von Cloudflare (HTTP 403, Fehler 1010), und das
   Update scheiterte als „nicht ladbar“ (Labor 2026-10-20, H2).
