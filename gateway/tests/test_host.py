@@ -44,11 +44,13 @@ def world(data_dir, monkeypatch, clock):
 
 
 def _host(paths, konf, clock, *, bus=None, wait=0.1, start_markierung=None):
+    """`wait=None`: die Standard-Wartezeit des Hosts."""
     bus = bus or FakeBus()
     mirror = ZigbeeMirror(bus, clock)
     mirror.start()
+    wartezeit = {} if wait is None else {"devices_wait_seconds": wait}
     return GatewayHost(paths, bus, mirror, geraet_fuer(paths, mirror, konf, start_markierung=start_markierung),
-                       clock=clock, devices_wait_seconds=wait, driver_threads=False)
+                       clock=clock, driver_threads=False, **wartezeit)
 
 
 def _offene_markierung(paths, alt):
@@ -285,15 +287,19 @@ def test_a_start_without_a_bound_thermostat_does_not_check_one(data_dir, clock, 
     assert erzeugt == ["simulation"]
 
 
-def _fake_uhr(monkeypatch):
+def _fake_uhr(monkeypatch, *, bei=None):
     """Ersetzt `time` im Host durch eine Uhr, die nur `sleep` vorstellt: die Pausen stehen in der Liste, die Wartezeit
-    laeuft nicht in Wanduhrzeit."""
+    laeuft nicht in Wanduhrzeit. `bei=(sekunden, funktion)` ruft die Funktion einmal, sobald die Uhr so weit ist."""
     jetzt = [0.0]
     pausen = []
+    offen = [bei]
 
     def sleep(sekunden):
         pausen.append(sekunden)
         jetzt[0] += sekunden
+        if offen[0] and jetzt[0] >= offen[0][0]:
+            funktion, offen[0] = offen[0][1], None
+            funktion()
 
     monkeypatch.setattr(host_modul, "time", SimpleNamespace(monotonic=lambda: jetzt[0], sleep=sleep))
     return pausen
@@ -304,6 +310,25 @@ def test_the_device_list_is_awaited_once_for_the_thermostat_check_and_the_batter
     host = _host(Paths(data_dir), konfiguration(), clock, wait=0.3)
     host.load()  # leeres bridge/devices: eine Wartezeit (0.3 s in Pausen zu 0.2 s), nicht zwei
     assert pausen == [host_modul.BATTERY_POLL_SECONDS] * 2 == [0.2, 0.2]
+
+
+def test_a_device_list_that_arrives_after_a_cold_boot_still_gives_the_battery_monitoring(data_dir, clock, monkeypatch):
+    """Nach einem Stromausfall veroeffentlicht Zigbee2MQTT bridge/devices erst nach Node-Start und Stick (Pi 4:
+    15 bis 30 s); die Batterien werden nur beim Laden aufgeloest und spaeter nie nachgezogen (BR-GW-1)."""
+    from fake_z2m import FakeZigbee2Mqtt
+
+    bus = FakeBus()
+    host = _host(Paths(data_dir), konfiguration(), clock, bus=bus, wait=None)
+
+    def z2m_kommt():
+        z2m = FakeZigbee2Mqtt(bus)
+        z2m.add_sensor(SENSOR)
+        z2m.add_thermostat(THERMOSTAT)
+
+    _fake_uhr(monkeypatch, bei=(35.0, z2m_kommt))
+    loaded = host.load()
+    assert {ref.ref for ref in loaded.config.battery_refs} == {
+        f"zigbee:{SENSOR}:battery", f"zigbee:{THERMOSTAT}:battery_low"}
 
 
 def test_load_reports_the_plant_identity_of_the_driver(data_dir, clock):

@@ -141,10 +141,6 @@ class CommandRegister:
         if wiederholbar:
             self._wiederholbar.add(kind)
 
-    @property
-    def kinds(self) -> frozenset[str]:
-        return frozenset(self._handlers)
-
     def empfangen(self, message: dict) -> None:
         """down/command: einmal ausfuehren; ein Duplikat wiederholt nur das gespeicherte Ergebnis."""
         command_id = message.get("command_id")

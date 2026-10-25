@@ -1,5 +1,6 @@
 """Grenzen des Gateways."""
 import re
+import tomllib
 from pathlib import Path
 
 GW = Path(__file__).resolve().parents[1]
@@ -28,3 +29,10 @@ def test_version_file_matches_the_code():
     from smartheat_gateway.version import GATEWAY_VERSION
     assert (GW / "VERSION").read_text().strip() == GATEWAY_VERSION
     assert f"## {GATEWAY_VERSION}" in (GW / "CHANGELOG.md").read_text()
+
+
+def test_pyproject_reads_the_version_from_version_py():
+    """Eine zweite, statische Versionsnummer in pyproject.toml wuerde unbemerkt von GATEWAY_VERSION abweichen."""
+    pyproject = tomllib.loads((GW / "pyproject.toml").read_text())
+    assert "version" not in pyproject["project"] and pyproject["project"]["dynamic"] == ["version"]
+    assert pyproject["tool"]["setuptools"]["dynamic"]["version"] == {"attr": "smartheat_gateway.version.GATEWAY_VERSION"}

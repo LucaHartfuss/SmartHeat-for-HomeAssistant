@@ -82,6 +82,9 @@ printf '%s' "$healthz" | grep -q '"zustand": "wartet_auf_einrichtung"' \
 # Ruhezustand ohne Konfiguration: kein Laufzeitstatus (runtime_main.attach), Hinweis im Log (host.NOT_CONFIGURED_HINT).
 printf '%s' "$healthz" | grep -q '"runtime_status": null' || fail "/healthz: Laufzeit ruht nicht ($healthz)"
 "${COMPOSE[@]}" logs runtime 2>/dev/null | grep -q "noch nicht eingerichtet" || fail "Laufzeit nicht im Ruhezustand"
+# Gesundheitsserver (Compose-Healthcheck und Updater): nur /healthz, eigener Port, auf dem Loopback des Hosts veroeffentlicht.
+[ "$(curl -fsS http://127.0.0.1:8081/healthz 2>/dev/null)" = "$healthz" ] || fail "Gesundheitsserver auf 8081 antwortet anders als /healthz"
+[ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/ 2>/dev/null)" = 404 ] || fail "Gesundheitsserver zeigt mehr als /healthz"
 page="$(curl -fsS http://127.0.0.1:8080/ 2>/dev/null)"
 printf '%s' "$page" | grep -q "SmartHeat-Gateway" || fail "Diagnoseseite antwortet nicht"
 ! printf '%s' "$page" | grep -q "Übernahme-Code" || fail "Diagnoseseite zeigt nach der Uebernahme den Code"

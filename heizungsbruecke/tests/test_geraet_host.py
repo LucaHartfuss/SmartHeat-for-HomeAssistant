@@ -7,6 +7,7 @@ import time
 
 import pytest
 import requests
+from befehle_sicht import registrierte_befehle
 from fakes import FakeHa, HttpAntwort, nachricht_bytes
 from geraet_helpers import Device, Supervisor, _host, _register, konfiguration_aus_optionen
 from runtime_helpers import OPTIONS
@@ -116,7 +117,7 @@ def test_software_is_ignored(tmp_path, monkeypatch):
 def test_foreign_commands_are_not_supported(tmp_path, monkeypatch):
     host, _, _ = _host(tmp_path, monkeypatch)
     register = _register(host, tmp_path)
-    assert {"inventory", "sign_off", "diagnostics", "zigbee_permit_join", "zigbee_devices", "driver_login"} <= register.kinds
+    assert {"inventory", "sign_off", "diagnostics", "zigbee_permit_join", "zigbee_devices", "driver_login"} <= registrierte_befehle(register)
     for kind in ("zigbee_permit_join", "zigbee_devices", "driver_login"):
         outcome = register._handlers[kind]({"driver_id": "x"})
         assert outcome == Failed("nicht_unterstuetzt")

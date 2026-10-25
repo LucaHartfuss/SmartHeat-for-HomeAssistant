@@ -3,6 +3,12 @@
 Wird im Update-Dialog des Supervisors angezeigt. Pro Version ein Abschnitt `## X.Y.Z`; der
 Release-Workflow übernimmt den Abschnitt der releasten Version in das GitHub-Release.
 
+## Unveröffentlicht
+
+- Scheitert beim Abmelden das Zurücksetzen der Heizung, nennt die Meldung jetzt die Werte, die SmartHeat selbst
+  geschrieben hätte (Ursprungswert des Servers, auf die lokalen Grenzen gebracht), nicht den lokalen Ursprungswert.
+  Geschrieben wird unverändert dasselbe.
+
 ## 1.1.0
 
 - `certifi` 2026.10.19 statt 2026.7.22 (Sicherheitsmeldung GHSA-6q48-6c7w-9gw2: kompromittierte emSign-Root-CAs im

@@ -53,6 +53,9 @@ EV_RAUM = "shg_raum"
 CONFIG_WATCH_SECONDS = 30
 RAUM_SECONDS = 30
 DIAG_PORT = 8080  # Port der Diagnoseseite im Container; die Compose-Datei veroeffentlicht ihn als 0.0.0.0:80
+# Port nur fuer /healthz (Compose-Healthcheck im Container, Updater am Host); die Compose-Datei veroeffentlicht ihn nur
+# als 127.0.0.1:8081. Eigener Server: Verbindungen aus dem LAN auf Port 80 nehmen ihm keine Plaetze weg (S-10).
+HEALTH_PORT = 8081
 
 
 def _alive_file() -> Path:
@@ -177,10 +180,11 @@ def _vorbereiten(paths: Paths, mirror: ZigbeeMirror,
     device = Device(geraet, paths.data, os.environ["SHG_DEVICE_API_URL"], befehl_fehler=befehle.fehler_uebersetzen)
     geraet.verbinden(device)
     portal = os.environ.get("SHG_PORTAL_BASE_URL", "")
-    diagnose.start_server(
-        DIAG_PORT, lambda: diagnose.seite(geraet, device),
-        lambda: diagnose.qr_url(portal, device), diagnose.parse_hostnames(os.environ.get("SHG_DIAG_HOSTNAMES", "")),
-    )
+    hostnames = diagnose.parse_hostnames(os.environ.get("SHG_DIAG_HOSTNAMES", ""))
+    diagnose.start_server(DIAG_PORT, lambda: diagnose.seite(geraet, device), lambda: diagnose.qr_url(portal, device),
+                          hostnames)
+    # Dieselben erlaubten Host-Namen: der Docker-Test des Updaters fragt den Dienst `runtime` im Test-Netz.
+    diagnose.start_server(HEALTH_PORT, lambda: diagnose.seite(geraet, device), lambda: None, hostnames, nur_health=True)
     software_soll_nachholen(geraet, device)  # vor dem Geraete-Thread: kein Rennen mit einer neuen Konfiguration
     return geraet, device
 

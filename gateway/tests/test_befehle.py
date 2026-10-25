@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 import pytest
+from befehle_sicht import registrierte_befehle
 from configs import SENSOR, THERMOSTAT, bedienung, dokumente_schreiben, konfiguration
 from fake_z2m import FakeZigbee2Mqtt
 from fakes import FakeBus, SofortHintergrund
@@ -18,6 +19,7 @@ from world import GatewayWorld
 from smartheat_core import dateien
 from smartheat_device import fehler, wire
 from smartheat_device.commands import CommandRegister, Done, Failed, Waiting
+from smartheat_device.hintergrund import HINTERGRUND_NAME
 from smartheat_gateway import befehle
 from smartheat_gateway.drivers.base import DriverError
 from smartheat_gateway.drivers.simulation import SimulationDriver
@@ -103,7 +105,7 @@ def test_unbekannte_phase_und_fehlender_treiber_nennen_feld_und_regel(register):
 def test_the_gateway_registers_exactly_its_commands(register):
     assert set(befehle.HANDLERS) == {"zigbee_permit_join", "zigbee_devices", "driver_login",
                                      "inventory", "diagnostics", "sign_off"}
-    assert set(befehle.HANDLERS) <= set(wire.COMMANDS) and set(befehle.HANDLERS) <= register.kinds
+    assert set(befehle.HANDLERS) <= set(wire.COMMANDS) and set(befehle.HANDLERS) <= registrierte_befehle(register)
 
 
 def test_bad_payloads(register):
@@ -921,7 +923,7 @@ def test_the_background_thread_is_a_daemon_and_stop_cancels_queued_calls():
 
     erster = hintergrund.submit(erster_aufruf)
     zweiter = hintergrund.submit(lambda: "nie")
-    threads = [t for t in threading.enumerate() if t.name.startswith(befehle.HINTERGRUND_NAME)]
+    threads = [t for t in threading.enumerate() if t.name.startswith(HINTERGRUND_NAME)]
     assert threads and all(t.daemon for t in threads)  # haelt das Prozessende nie auf
     # Erst stoppen, wenn der erste Aufruf laeuft: sonst bricht stop() auch ihn als wartend ab (CI-Runner langsamer)
     assert gestartet.wait(2.0)

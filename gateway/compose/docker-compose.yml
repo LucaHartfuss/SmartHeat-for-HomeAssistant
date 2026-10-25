@@ -13,7 +13,8 @@ x-hardening: &hardening
   restart: unless-stopped
   # Logs ins Journal des Hosts: Groesse, Rotation und der Schreibtakt von journald.conf.d/smartheat.conf gelten
   # auch hier, und ein Stromausfall laesst keine beschaedigte json-Datei zurueck, an der `docker logs` scheitert.
-  # Lesen: `docker logs <Dienst>` oder `journalctl CONTAINER_NAME=<Dienst>`.
+  # Lesen: Compose (Projekt smartheat) benennt die Container `smartheat-<Dienst>-1`, und `tag` ist dieser Name:
+  # `docker compose -p smartheat logs <Dienst>` oder `journalctl CONTAINER_NAME=smartheat-<Dienst>-1`.
   logging:
     driver: journald
     options: {tag: "{{.Name}}"}
@@ -49,7 +50,8 @@ services:
     networks: [bus, wan]
     # Nur IPv4 (P-C2 b): ohne Host-Adresse lauscht docker-proxy auch auf [::]:80; die Diagnoseseite soll
     # ausschliesslich im IPv4-LAN antworten (Firewall: host/nftables.conf).
-    ports: ["0.0.0.0:80:8080"]
+    # 8081 nur fuer /healthz und nur auf dem Loopback des Hosts (Updater); der Healthcheck im Container nimmt denselben Port.
+    ports: ["0.0.0.0:80:8080", "127.0.0.1:8081:8081"]
     # Beim Ende trennt der Prozess den Link sauber (MQTT-DISCONNECT) und wartet bis zu 10 s auf den Geraete-Thread
     # (runtime_main.JOIN_SECONDS); Dockers Standard-Frist von 10 s kaeme mit SIGKILL zuvor.
     stop_grace_period: 20s
@@ -69,7 +71,7 @@ services:
       - ${SHG_ROOT:-/var/lib/smartheat}/bus/credentials/runtime:/run/shg-bus:ro
     healthcheck:
       # Seite antwortet (Host 127.0.0.1: fremde Host-Namen bekommen 403) und der Regel-Worker lebt (Wache alle 30 s).
-      test: ["CMD", "python", "-c", "import os,sys,time,urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3); sys.exit(time.time() - os.path.getmtime('/tmp/shg-runtime-alive') > 120)"]
+      test: ["CMD", "python", "-c", "import os,sys,time,urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz', timeout=3); sys.exit(time.time() - os.path.getmtime('/tmp/shg-runtime-alive') > 120)"]
       interval: 30s
       timeout: 5s
       retries: 3

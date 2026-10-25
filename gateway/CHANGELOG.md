@@ -8,9 +8,10 @@
   `vcgencmd` kommt über `raspi-utils` im Image (Raspberry-Pi-Archiv, `rootfs_checks.sh` prüft alle drei; `install.sh` auf
   einem fremden Debian verlangt es nicht). Das Journal schreibt alle 30 s (`SyncIntervalSec=30s`, `Storage=persistent`
   in `journald.conf.d/smartheat.conf`), nach hartem Stromverlust fehlen höchstens die letzten 30 s. Die Container
-  loggen über den Treiber `journald` (`tag` = Dienstname) statt `json-file`: `docker logs` scheitert nicht mehr an einer
+  loggen über den Treiber `journald` (`tag` = Containername `smartheat-<Dienst>-1`) statt `json-file`: `docker logs` scheitert nicht mehr an einer
   beschädigten Logdatei, und Größe und Rotation gelten für Host und Container gemeinsam. Mit dem nächsten Bundle werden
-  die Container neu erzeugt (`compose up -d`). Lesen: `docker logs <Dienst>` oder `journalctl CONTAINER_NAME=<Dienst>`.
+  die Container neu erzeugt (`compose up -d`). Lesen: `docker compose -p smartheat logs <Dienst>` oder
+  `journalctl CONTAINER_NAME=smartheat-<Dienst>-1`.
 - Der Updater nennt sich beim Abruf von Manifest und Bundle-Dateien `SmartHeat-Gateway-Updater/<Version>`. Den
   Standard-User-Agent von Python sperrt die Browser-Integritätsprüfung von Cloudflare (HTTP 403, Fehler 1010), und das
   Update scheiterte als „nicht ladbar“ (Labor 2026-10-20, H2).
@@ -31,6 +32,22 @@
 - Der Tagestick (`seconds_until`) feuert bei der Rückstellung der Uhr (Winterzeit, doppelte Stunde) nur einmal zur ersten
   Ortszeit der Tageszeit; bisher rechnete er in der zweiten Stunde mit einer negativen Wartezeit und feuerte bis zu eine
   Stunde lang dauernd.
+- Die Laufzeit wartet beim Start bis zu 60 s (bisher 10 s) auf die Geräteliste von Zigbee2MQTT. Nach einem Stromausfall
+  veröffentlicht Zigbee2MQTT sie erst nach Node-Start und Stick; mit 10 s fehlte danach die Batterie-Überwachung bis zum
+  nächsten Neustart der Laufzeit, und ein W100 galt als Thermostat ohne Profil (BR-GW-1). Die Wartezeit endet mit der
+  ersten Liste; nur bei abgeschaltetem Zigbee2MQTT läuft sie voll ab.
+- Die Diagnoseseite schließt jede Verbindung nach spätestens 10 s (auch bei tröpfelnden Anfragen) und bedient höchstens
+  64 Verbindungen gleichzeitig; weitere werden sofort geschlossen. Bisher konnte ein Gerät im LAN mit stummen
+  Verbindungen Fäden und Speicher des Prozesses füllen (BR-GW-3).
+- Compose-Healthcheck und Updater fragen einen eigenen Gesundheitsserver (nur `/healthz`, Port 8081 im Container, nur auf
+  `127.0.0.1:8081` des Hosts veröffentlicht, eigene Plätze) statt der Diagnoseseite auf Port 80. Belegt ein Gerät im LAN
+  alle Plätze der Diagnoseseite, bleiben dem Gesundheitsserver seine. Mit Docker vor Version 28 kann ein Gast im selben
+  Netz veröffentlichte Ports trotzdem über direktes Routing auf das Container-Netz erreichen (die Firewall des Hosts
+  sieht weitergeleiteten Verkehr nicht); das bleibt offen bis zur Härtung der Host-Firewall und einer Probe am Gerät.
+  Der Updater fragt `http://127.0.0.1:8081/healthz`; `/healthz` auf Port 80 bleibt für die Diagnose.
+- Scheitert beim Abmelden das Zurücksetzen der Heizung, nennt die Meldung die Werte, die das Gateway selbst geschrieben
+  hätte (Ursprungswert des Servers, auf die lokalen Grenzen gebracht), nicht den lokalen Ursprungswert (BR-KK-2, Client-Kern
+  für beide Hosts).
 - Jede Nachricht des Geräts entsteht über eine Stelle, die sie gegen den Vertrag prüft (`smartheat_device/nachrichten.py`),
   und das Gerät liest jede Vertragskonstante an der Stelle, die sie braucht (Stufe 3 S8a-1, A5-34). V1 gilt jetzt auf
   beiden Seiten strikt: Konfiguration, Bedienung und Befehle mit fehlendem oder fremdem Feld lehnt das Gerät ab. Der
