@@ -168,7 +168,8 @@ def start_server(
 ) -> ThreadingHTTPServer:
     """`nur_health`: der Gesundheitsserver fuer Compose-Healthcheck und Updater antwortet nur auf /healthz (kein HTML,
     kein Uebernahme-Code). Er hat eigene Plaetze und Fristen; die Compose-Datei veroeffentlicht ihn nur auf dem
-    Loopback des Hosts, damit ein Gast im LAN die Plaetze der Diagnoseseite fuellen kann, ohne ihn zu erreichen."""
+    Loopback des Hosts: die Plaetze der Diagnoseseite zu fuellen nimmt ihm keine (S-10). Ob ein Gast im selben Netz ihn
+    mit Docker vor Version 28 ueber direktes Routing trotzdem erreicht, ist offen (gateway-host.md, Bekannte Grenzen)."""
     allowed = frozenset(hostnames)
     frist = VERBINDUNG_FRIST_SECONDS
 
