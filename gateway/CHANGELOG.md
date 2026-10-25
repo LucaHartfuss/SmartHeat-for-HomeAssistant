@@ -36,6 +36,9 @@
   veröffentlicht Zigbee2MQTT sie erst nach Node-Start und Stick; mit 10 s fehlte danach die Batterie-Überwachung bis zum
   nächsten Neustart der Laufzeit, und ein W100 galt als Thermostat ohne Profil (BR-GW-1). Die Wartezeit endet mit der
   ersten Liste; nur bei abgeschaltetem Zigbee2MQTT läuft sie voll ab.
+- Die Diagnoseseite schließt jede Verbindung nach spätestens 10 s (auch bei tröpfelnden Anfragen) und bedient höchstens
+  64 Verbindungen gleichzeitig; weitere werden sofort geschlossen. Bisher konnte ein Gerät im LAN mit stummen
+  Verbindungen Fäden und Speicher des Prozesses füllen (BR-GW-3).
 - Jede Nachricht des Geräts entsteht über eine Stelle, die sie gegen den Vertrag prüft (`smartheat_device/nachrichten.py`),
   und das Gerät liest jede Vertragskonstante an der Stelle, die sie braucht (Stufe 3 S8a-1, A5-34). V1 gilt jetzt auf
   beiden Seiten strikt: Konfiguration, Bedienung und Befehle mit fehlendem oder fremdem Feld lehnt das Gerät ab. Der

@@ -337,3 +337,67 @@ def test_fifty_simultaneous_requests_are_all_answered():
         barriere.abort()
         server.shutdown()
         server.server_close()
+
+
+# --- Obergrenzen: Verbindungsfrist und gleichzeitige Verbindungen (BR-GW-3) ---
+
+
+@pytest.fixture
+def kurze_grenzen(monkeypatch):
+    """Kurze Frist und kleine Obergrenze, damit die Tests nicht Sekunden warten; Server auf 127.0.0.1 mit eigenem Port."""
+    monkeypatch.setattr(diagnostics, "VERBINDUNG_FRIST_SECONDS", 0.5)
+    monkeypatch.setattr(diagnostics, "MAX_VERBINDUNGEN", 3)
+    server = start_server(0, lambda: SNAPSHOT, lambda: None)
+    sockets: list[socket.socket] = []
+    try:
+        yield SimpleNamespace(port=server.server_address[1], sockets=sockets)
+    finally:
+        for offen in sockets:
+            offen.close()
+        server.shutdown()
+        server.server_close()
+
+
+def _geschlossen(verbindung: socket.socket, frist: float) -> bool:
+    """Wahr, wenn der Server die Verbindung binnen `frist` schliesst (recv liefert b'')."""
+    verbindung.settimeout(frist)
+    try:
+        return verbindung.recv(1) == b""
+    except TimeoutError:
+        return False
+    except ConnectionError:
+        return True
+
+
+def test_a_silent_connection_is_closed_after_the_connection_deadline(kurze_grenzen):
+    stumm = socket.create_connection(("127.0.0.1", kurze_grenzen.port), timeout=5)
+    kurze_grenzen.sockets.append(stumm)
+    assert _geschlossen(stumm, 3)
+
+
+def test_a_connection_that_drips_the_header_is_closed_after_the_deadline_too(kurze_grenzen):
+    """Ein Byte alle 0,2 s hielte jede Leseoperation einzeln unter der Frist: sie gilt fuer die ganze Verbindung."""
+    tropf = socket.create_connection(("127.0.0.1", kurze_grenzen.port), timeout=5)
+    kurze_grenzen.sockets.append(tropf)
+    beginn = time.monotonic()
+    try:
+        for byte in b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\nX-Langsam: " + b"a" * 100:
+            tropf.sendall(bytes([byte]))
+            time.sleep(0.2)
+            if time.monotonic() - beginn > 4:
+                break
+    except OSError:
+        pass  # der Server hat geschlossen
+    assert time.monotonic() - beginn < 3
+
+
+def test_connections_over_the_limit_are_closed_at_once_and_a_freed_slot_serves_again(kurze_grenzen):
+    belegt = [socket.create_connection(("127.0.0.1", kurze_grenzen.port), timeout=5) for _ in range(3)]
+    kurze_grenzen.sockets.extend(belegt)
+    time.sleep(0.1)  # die drei Verbindungen sind im Server angenommen
+    zuviel = socket.create_connection(("127.0.0.1", kurze_grenzen.port), timeout=5)
+    kurze_grenzen.sockets.append(zuviel)
+    assert _geschlossen(zuviel, 0.4)  # vor Ablauf der Frist von 0,5 s der belegten Verbindungen
+    # Gegenprobe: nach Ablauf der Frist sind die Plaetze frei, eine Anfrage wird beantwortet
+    assert all(_geschlossen(verbindung, 3) for verbindung in belegt)
+    assert _anfrage(kurze_grenzen.port, "GET", "/healthz")[0] == 200

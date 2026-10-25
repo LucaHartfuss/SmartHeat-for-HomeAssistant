@@ -13,6 +13,7 @@ import html
 import ipaddress
 import json
 import logging
+import socket
 import threading
 from collections.abc import Callable, Iterable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,6 +24,8 @@ import segno
 logger = logging.getLogger(__name__)
 
 REFRESH_SECONDS = 10
+VERBINDUNG_FRIST_SECONDS = 10.0  # Lebensdauer einer Verbindung, auch wenn der Client tropft (Angreifer im LAN)
+MAX_VERBINDUNGEN = 64  # gleichzeitig bediente Verbindungen; weitere werden sofort geschlossen
 ZUSTAND_TEXTE = {
     "startet": "Das Gateway startet.",
     "nicht_uebernommen": "Das Gateway ist noch keinem Konto zugeordnet. Bitte im Portal übernehmen.",
@@ -133,12 +136,56 @@ def render_html(data: dict, qr_url: str | None) -> str:
     )
 
 
+class _BegrenzterServer(ThreadingHTTPServer):
+    """Ein Faden je Verbindung, aber hoechstens `maximum` gleichzeitig; jede weitere Verbindung wird sofort
+    geschlossen, statt Speicher und Faeden des Prozesses zu belegen, der auch den Geraetekern traegt."""
+
+    def __init__(self, adresse, handler, maximum: int) -> None:
+        self._plaetze = threading.BoundedSemaphore(maximum)
+        super().__init__(adresse, handler)
+
+    def process_request(self, request, client_address):
+        if not self._plaetze.acquire(blocking=False):
+            self.shutdown_request(request)
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._plaetze.release()
+            raise
+
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._plaetze.release()
+
+
 def start_server(
     port: int, snapshot_fn: Callable[[], dict], qr_url_fn: Callable[[], str | None], hostnames: Iterable[str] = (),
 ) -> ThreadingHTTPServer:
     allowed = frozenset(hostnames)
+    frist = VERBINDUNG_FRIST_SECONDS
 
     class Handler(BaseHTTPRequestHandler):
+        timeout = frist  # je Leseoperation; die Uhr in setup/finish begrenzt die ganze Verbindung
+
+        def setup(self):
+            super().setup()
+            self._uhr = threading.Timer(frist, self._abbrechen)
+            self._uhr.daemon = True
+            self._uhr.start()
+
+        def finish(self):
+            self._uhr.cancel()
+            super().finish()
+
+        def _abbrechen(self):
+            try:
+                self.connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass  # schon geschlossen
+
         def log_message(self, *args):
             pass
 
@@ -170,6 +217,6 @@ def start_server(
             body = render_html(data, qr_url_fn() if data.get("code") else None)
             self._answer(200, body.encode(), "text/html; charset=utf-8")
 
-    server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+    server = _BegrenzterServer(("0.0.0.0", port), Handler, MAX_VERBINDUNGEN)
     threading.Thread(target=server.serve_forever, name="diagnose", daemon=True).start()
     return server
