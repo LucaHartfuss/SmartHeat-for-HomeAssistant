@@ -742,7 +742,7 @@ class Einstellungen:
     eigene Werte durch (`host/tests/updater_testlauf.py` fuer den Docker-Test; sie ist auf keinem Geraet installiert)."""
     release_pub: Path = Path("/opt/smartheat/host/release.pub")
     allow_http: bool = False
-    health_url: str = "http://127.0.0.1/healthz"
+    health_url: str = "http://127.0.0.1:8081/healthz"
     health_seconds: float = HEALTH_SECONDS
     compose_project: str = bundles.COMPOSE_PROJECT
 

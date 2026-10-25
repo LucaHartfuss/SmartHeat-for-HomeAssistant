@@ -164,7 +164,11 @@ class _BegrenzterServer(ThreadingHTTPServer):
 
 def start_server(
     port: int, snapshot_fn: Callable[[], dict], qr_url_fn: Callable[[], str | None], hostnames: Iterable[str] = (),
+    *, nur_health: bool = False,
 ) -> ThreadingHTTPServer:
+    """`nur_health`: der Gesundheitsserver fuer Compose-Healthcheck und Updater antwortet nur auf /healthz (kein HTML,
+    kein Uebernahme-Code). Er hat eigene Plaetze und Fristen; die Compose-Datei veroeffentlicht ihn nur auf dem
+    Loopback des Hosts, damit ein Gast im LAN die Plaetze der Diagnoseseite fuellen kann, ohne ihn zu erreichen."""
     allowed = frozenset(hostnames)
     frist = VERBINDUNG_FRIST_SECONDS
 
@@ -204,7 +208,7 @@ def start_server(
             if not host_allowed(self.headers.get("Host"), allowed):
                 self._answer(403)
                 return
-            if self.path not in ("/", "/healthz"):
+            if self.path not in (("/healthz",) if nur_health else ("/", "/healthz")):
                 self._answer(404)
                 return
             data = snapshot_fn()

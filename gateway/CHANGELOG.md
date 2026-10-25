@@ -39,6 +39,13 @@
 - Die Diagnoseseite schließt jede Verbindung nach spätestens 10 s (auch bei tröpfelnden Anfragen) und bedient höchstens
   64 Verbindungen gleichzeitig; weitere werden sofort geschlossen. Bisher konnte ein Gerät im LAN mit stummen
   Verbindungen Fäden und Speicher des Prozesses füllen (BR-GW-3).
+- Compose-Healthcheck und Updater fragen einen eigenen Gesundheitsserver (nur `/healthz`, Port 8081 im Container, nur auf
+  `127.0.0.1:8081` des Hosts veröffentlicht) statt der Diagnoseseite auf Port 80. Ein Gerät im LAN, das alle Plätze der
+  Diagnoseseite belegt, kann so weder den Healthcheck noch die Gesundheitsprüfung eines Updates (Rollback als „ungesund“)
+  stören. Der Updater fragt `http://127.0.0.1:8081/healthz`; `/healthz` auf Port 80 bleibt für die Diagnose.
+- Scheitert beim Abmelden das Zurücksetzen der Heizung, nennt die Meldung die Werte, die das Gateway selbst geschrieben
+  hätte (Ursprungswert des Servers, auf die lokalen Grenzen gebracht), nicht den lokalen Ursprungswert (BR-KK-2, Client-Kern
+  für beide Hosts).
 - Jede Nachricht des Geräts entsteht über eine Stelle, die sie gegen den Vertrag prüft (`smartheat_device/nachrichten.py`),
   und das Gerät liest jede Vertragskonstante an der Stelle, die sie braucht (Stufe 3 S8a-1, A5-34). V1 gilt jetzt auf
   beiden Seiten strikt: Konfiguration, Bedienung und Befehle mit fehlendem oder fremdem Feld lehnt das Gerät ab. Der

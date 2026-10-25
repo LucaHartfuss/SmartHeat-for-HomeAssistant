@@ -469,6 +469,7 @@ def vor_dem_start(world, monkeypatch):
     monkeypatch.setenv("SHG_HOST_DIR", str(world.host_dir))
     monkeypatch.setenv("SHG_DEVICE_API_URL", "https://accounts.example.test")
     monkeypatch.setattr(runtime_main, "DIAG_PORT", 0)  # Eine Konstante, kein Umgebungsschalter
+    monkeypatch.setattr(runtime_main, "HEALTH_PORT", 0)
     pausen = []
     monkeypatch.setattr(prozess.time, "sleep", pausen.append)
     alive = world.paths.data / "alive"
@@ -519,7 +520,7 @@ def test_a_start_error_after_the_device_host_reports_the_runtime_starting(world,
     "startet" (health_ok des Updaters lehnt ab), falls die Seite antwortet; das Lebenszeichen ist weg."""
     seiten = []
 
-    def belegt(port, snapshot_fn, *args):
+    def belegt(port, snapshot_fn, *args, **kwargs):
         seiten.append(snapshot_fn)
         raise OSError(98, "Address already in use")
 
@@ -535,13 +536,21 @@ def test_vorbereiten_returns_host_and_device_with_the_diagnosis_page_up(world, v
     bleibt (erst die Wache in laufen erneuert es)."""
     server = []
     echt = runtime_main.diagnose.start_server
-    monkeypatch.setattr(runtime_main.diagnose, "start_server", lambda *args: server.append(echt(*args)) or server[-1])
+    monkeypatch.setattr(runtime_main.diagnose, "start_server",
+                        lambda *args, **kwargs: server.append(echt(*args, **kwargs)) or server[-1])
     try:
         geraet, device = runtime_main.vorbereiten(world.paths, vor_dem_start.mirror)
         assert geraet.device is device and device.host is geraet
         port = server[0].server_address[1]
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=5) as antwort:
             assert json.loads(antwort.read())["server_ok"] is False  # Geraete-Thread laeuft noch nicht
+        health_port = server[1].server_address[1]  # der zweite Server ist der Gesundheitsserver (nur /healthz)
+        assert health_port != port
+        with urllib.request.urlopen(f"http://127.0.0.1:{health_port}/healthz", timeout=5) as antwort:
+            assert json.loads(antwort.read())["server_ok"] is False
+        with pytest.raises(urllib.error.HTTPError) as fehler:
+            urllib.request.urlopen(f"http://127.0.0.1:{health_port}/", timeout=5)
+        assert fehler.value.code == 404
     finally:
         for s in server:
             s.shutdown()
@@ -553,9 +562,12 @@ def test_the_diagnosis_page_listens_on_diag_port_whatever_the_environment_says(w
     """Der Port ist `runtime_main.DIAG_PORT`; `SHG_DIAG_PORT` aus der Umgebung gilt nicht mehr."""
     monkeypatch.setenv("SHG_DIAG_PORT", "1")
     ports = []
-    monkeypatch.setattr(runtime_main.diagnose, "start_server", lambda port, *args: ports.append(port))
+    monkeypatch.setattr(runtime_main.diagnose, "start_server",
+                        lambda port, *args, **kwargs: ports.append((port, kwargs.get("nur_health", False))))
+    monkeypatch.setattr(runtime_main, "DIAG_PORT", 11)
+    monkeypatch.setattr(runtime_main, "HEALTH_PORT", 22)
     runtime_main.vorbereiten(world.paths, vor_dem_start.mirror)
-    assert ports == [runtime_main.DIAG_PORT] == [0]
+    assert ports == [(11, False), (22, True)]
 
 
 def test_main_connects_to_the_local_bus_on_the_bus_port_whatever_the_environment_says(monkeypatch):
@@ -584,7 +596,7 @@ class _Stopp(Exception):
 def test_vorbereiten_reicht_die_ausstehende_markierung_an_den_geraete_host(world, vor_dem_start, monkeypatch):
     """Das Aufraeumen liest die Markierung einmal; steht das Zuruecksetzen aus, bekommt sie der
     Geraete-Host als start_markierung (die Laufzeit liest die Datei nicht erneut); sonst bleibt sie leer."""
-    monkeypatch.setattr(runtime_main.diagnose, "start_server", lambda *args: None)
+    monkeypatch.setattr(runtime_main.diagnose, "start_server", lambda *args, **kwargs: None)
     geraet, _ = runtime_main.vorbereiten(world.paths, vor_dem_start.mirror)
     assert geraet.start_markierung is None
     aufraeumen.markieren(world.paths.aufraeumen, konfiguration())

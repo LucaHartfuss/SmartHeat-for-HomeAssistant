@@ -343,19 +343,32 @@ def test_fifty_simultaneous_requests_are_all_answered():
 
 
 @pytest.fixture
-def kurze_grenzen(monkeypatch):
-    """Kurze Frist und kleine Obergrenze, damit die Tests nicht Sekunden warten; Server auf 127.0.0.1 mit eigenem Port."""
-    monkeypatch.setattr(diagnostics, "VERBINDUNG_FRIST_SECONDS", 0.5)
-    monkeypatch.setattr(diagnostics, "MAX_VERBINDUNGEN", 3)
-    server = start_server(0, lambda: SNAPSHOT, lambda: None)
+def server_mit_grenzen(monkeypatch):
+    """Fabrik: Server auf 127.0.0.1 mit eigenem Port, kleiner Verbindungsfrist und kleiner Obergrenze, damit die Tests
+    nicht Sekunden warten. `nur_health` startet den Gesundheitsserver."""
+    gestartet: list = []
     sockets: list[socket.socket] = []
+
+    def starten(frist: float, maximum: int, *, nur_health: bool = False):
+        monkeypatch.setattr(diagnostics, "VERBINDUNG_FRIST_SECONDS", frist)
+        monkeypatch.setattr(diagnostics, "MAX_VERBINDUNGEN", maximum)
+        server = start_server(0, lambda: SNAPSHOT, lambda: None, nur_health=nur_health)
+        gestartet.append(server)
+        return SimpleNamespace(port=server.server_address[1], sockets=sockets)
+
     try:
-        yield SimpleNamespace(port=server.server_address[1], sockets=sockets)
+        yield starten
     finally:
         for offen in sockets:
             offen.close()
-        server.shutdown()
-        server.server_close()
+        for server in gestartet:
+            server.shutdown()
+            server.server_close()
+
+
+@pytest.fixture
+def kurze_grenzen(server_mit_grenzen):
+    return server_mit_grenzen(0.5, 3)
 
 
 def _geschlossen(verbindung: socket.socket, frist: float) -> bool:
@@ -391,13 +404,35 @@ def test_a_connection_that_drips_the_header_is_closed_after_the_deadline_too(kur
     assert time.monotonic() - beginn < 3
 
 
-def test_connections_over_the_limit_are_closed_at_once_and_a_freed_slot_serves_again(kurze_grenzen):
-    belegt = [socket.create_connection(("127.0.0.1", kurze_grenzen.port), timeout=5) for _ in range(3)]
-    kurze_grenzen.sockets.extend(belegt)
+def test_connections_over_the_limit_are_closed_at_once_and_a_freed_slot_serves_again(server_mit_grenzen):
+    server = server_mit_grenzen(2.0, 3)  # grosse Frist: der Test haengt nicht an der Geschwindigkeit des Runners
+    belegt = [socket.create_connection(("127.0.0.1", server.port), timeout=5) for _ in range(3)]
+    server.sockets.extend(belegt)
     time.sleep(0.1)  # die drei Verbindungen sind im Server angenommen
-    zuviel = socket.create_connection(("127.0.0.1", kurze_grenzen.port), timeout=5)
-    kurze_grenzen.sockets.append(zuviel)
-    assert _geschlossen(zuviel, 0.4)  # vor Ablauf der Frist von 0,5 s der belegten Verbindungen
+    zuviel = socket.create_connection(("127.0.0.1", server.port), timeout=5)
+    server.sockets.append(zuviel)
+    assert _geschlossen(zuviel, 1.0)  # vor Ablauf der Frist von 2 s der belegten Verbindungen
     # Gegenprobe: nach Ablauf der Frist sind die Plaetze frei, eine Anfrage wird beantwortet
-    assert all(_geschlossen(verbindung, 3) for verbindung in belegt)
-    assert _anfrage(kurze_grenzen.port, "GET", "/healthz")[0] == 200
+    assert all(_geschlossen(verbindung, 5) for verbindung in belegt)
+    assert _anfrage(server.port, "GET", "/healthz")[0] == 200
+
+
+def test_the_health_server_answers_while_every_place_of_the_diagnostic_page_is_taken(server_mit_grenzen):
+    """S-10: ein Gast im LAN fuellt die Plaetze der Diagnoseseite (Port 80). Compose-Healthcheck und Updater fragen den
+    Gesundheitsserver mit eigenen Plaetzen (nur auf dem Loopback des Hosts veroeffentlicht) und bekommen weiter 200."""
+    diagnose = server_mit_grenzen(5.0, 3)
+    health = server_mit_grenzen(5.0, 3, nur_health=True)
+    belegt = [socket.create_connection(("127.0.0.1", diagnose.port), timeout=5) for _ in range(3)]
+    diagnose.sockets.extend(belegt)
+    time.sleep(0.1)
+    zuviel = socket.create_connection(("127.0.0.1", diagnose.port), timeout=5)
+    diagnose.sockets.append(zuviel)
+    assert _geschlossen(zuviel, 1.0)  # die Plaetze der Diagnoseseite sind erschoepft (Gegenprobe)
+    status, antwort = _anfrage(health.port, "GET", "/healthz", timeout=2)
+    assert status == 200 and json.loads(antwort)["server_ok"] is True
+
+
+@pytest.mark.parametrize("path", ["/", "/x", "/index.html"])
+def test_the_health_server_serves_nothing_but_healthz(server_mit_grenzen, path):
+    health = server_mit_grenzen(5.0, 3, nur_health=True)
+    assert _anfrage(health.port, "GET", path) == (404, b"")

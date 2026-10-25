@@ -1904,9 +1904,9 @@ def test_main_ignores_every_environment_switch_of_the_old_names(tmp_path, monkey
 
 def test_the_default_settings_are_the_production_values():
     """Die Standardwerte von `Einstellungen` sind die des Geraets (install.sh: Schluessel unter /opt/smartheat/host,
-    Projekt `smartheat`, Gesundheitsseite des Gateways auf Port 80); http bleibt aus."""
+    Projekt `smartheat`, Gesundheitsserver des Gateways auf 127.0.0.1:8081, nicht die Diagnoseseite auf Port 80); http bleibt aus."""
     assert updater.Einstellungen() == updater.Einstellungen(
-        release_pub=Path("/opt/smartheat/host/release.pub"), allow_http=False, health_url="http://127.0.0.1/healthz",
+        release_pub=Path("/opt/smartheat/host/release.pub"), allow_http=False, health_url="http://127.0.0.1:8081/healthz",
         health_seconds=600, compose_project="smartheat")
     assert updater.Einstellungen().health_seconds == updater.HEALTH_SECONDS == 600
     assert updater.Einstellungen().compose_project == bundles.COMPOSE_PROJECT

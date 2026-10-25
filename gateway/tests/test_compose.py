@@ -7,6 +7,7 @@ from pathlib import Path
 import yaml
 
 PUBLISHED_PORT = "0.0.0.0:80:8080"  # nur IPv4 (P-C2 b)
+HEALTH_PUBLISHED_PORT = "127.0.0.1:8081:8081"  # nur /healthz, nur Loopback des Hosts (S-10)
 GATEWAY = Path(__file__).resolve().parents[1]
 COMPOSE = GATEWAY / "compose"
 
@@ -42,7 +43,7 @@ def test_networks_ports_and_mounts():
     assert services["mosquitto"]["networks"] == ["bus"] and "ports" not in services["mosquitto"]
     assert services["zigbee2mqtt"]["networks"] == ["bus"]
     runtime = services["runtime"]
-    assert runtime["networks"] == ["bus", "wan"] and runtime["ports"] == [PUBLISHED_PORT]
+    assert runtime["networks"] == ["bus", "wan"] and runtime["ports"] == [PUBLISHED_PORT, HEALTH_PUBLISHED_PORT]
     assert "network_mode" not in runtime
     targets = [_container_target(v) for v in runtime["volumes"]]
     assert targets == ["/data", "/host", "/run/shg-bus"]
@@ -55,16 +56,16 @@ def test_the_diagnostic_port_is_published_on_ipv4_only():
     """Ohne Host-Adresse veroeffentlicht Docker den Port auch auf `[::]:80` (docker-proxy), die
     Firewall-Regel `tcp dport 80 accept` gaelte dann auch fuer IPv6. Mit `0.0.0.0` als Host-Adresse lauscht nur IPv4."""
     ports = _services()["runtime"]["ports"]
-    assert ports == ["0.0.0.0:80:8080"]
+    assert ports == ["0.0.0.0:80:8080", "127.0.0.1:8081:8081"]
 
 
 def test_only_the_runtime_publishes_a_port_and_only_80_to_8080():
     """Docker-Ports laufen per DNAT an der input-Kette der Firewall vorbei: ueber alle Dienste der Compose-Datei (nicht
     nur die bekannten) hat nur `runtime` `ports`, genau `0.0.0.0:80:8080`; Mosquitto, Zigbee2MQTT und init veroeffentlichen
-    nichts."""
+    nichts. Dazu `127.0.0.1:8081:8081` (nur /healthz, nur Loopback des Hosts)."""
     services = _services()
     assert {name for name, service in services.items() if "ports" in service} == {"runtime"}
-    assert services["runtime"]["ports"] == [PUBLISHED_PORT]
+    assert services["runtime"]["ports"] == [PUBLISHED_PORT, HEALTH_PUBLISHED_PORT]
     assert {"init", "mosquitto", "zigbee2mqtt"} <= set(services)
 
 
@@ -91,8 +92,11 @@ def test_runtime_environment_and_healthcheck():
     test = " ".join(runtime["healthcheck"]["test"])
     from smartheat_gateway import runtime_main
 
-    assert f"http://127.0.0.1:{runtime_main.DIAG_PORT}/healthz" in test and "/tmp/shg-runtime-alive" in test
+    # Der Healthcheck fragt den eigenen Gesundheitsserver, nicht die Diagnoseseite, deren Plaetze das LAN fuellen kann
+    assert f"http://127.0.0.1:{runtime_main.HEALTH_PORT}/healthz" in test and "/tmp/shg-runtime-alive" in test
     assert PUBLISHED_PORT.endswith(f":{runtime_main.DIAG_PORT}")  # DIAG_PORT ist der Container-Port der Compose-Datei
+    assert f"127.0.0.1:{runtime_main.HEALTH_PORT}:{runtime_main.HEALTH_PORT}" == HEALTH_PUBLISHED_PORT
+    assert runtime_main.HEALTH_PORT != runtime_main.DIAG_PORT
 
 
 def test_runtime_stops_only_after_the_device_thread_has_disconnected():
@@ -187,7 +191,7 @@ def test_the_image_carries_every_package_the_gateway_imports():
 def test_dev_overlay_only_adjusts_existing_services_and_adds_the_fakes():
     dev = _services("docker-compose.dev.yml")
     assert set(dev) - set(_services()) == {"fake-zigbee2mqtt", "fake-bootstrap", "fake-broker"}
-    assert dev["runtime"]["ports"] == ["127.0.0.1:8080:8080"]
+    assert dev["runtime"]["ports"] == ["127.0.0.1:8080:8080", "127.0.0.1:8081:8081"]
 
 
 def test_dev_overlay_brings_bootstrap_and_broker():
