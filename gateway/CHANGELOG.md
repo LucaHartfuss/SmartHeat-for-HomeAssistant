@@ -40,9 +40,11 @@
   64 Verbindungen gleichzeitig; weitere werden sofort geschlossen. Bisher konnte ein Gerät im LAN mit stummen
   Verbindungen Fäden und Speicher des Prozesses füllen (BR-GW-3).
 - Compose-Healthcheck und Updater fragen einen eigenen Gesundheitsserver (nur `/healthz`, Port 8081 im Container, nur auf
-  `127.0.0.1:8081` des Hosts veröffentlicht) statt der Diagnoseseite auf Port 80. Ein Gerät im LAN, das alle Plätze der
-  Diagnoseseite belegt, kann so weder den Healthcheck noch die Gesundheitsprüfung eines Updates (Rollback als „ungesund“)
-  stören. Der Updater fragt `http://127.0.0.1:8081/healthz`; `/healthz` auf Port 80 bleibt für die Diagnose.
+  `127.0.0.1:8081` des Hosts veröffentlicht, eigene Plätze) statt der Diagnoseseite auf Port 80. Belegt ein Gerät im LAN
+  alle Plätze der Diagnoseseite, bleiben dem Gesundheitsserver seine. Mit Docker vor Version 28 kann ein Gast im selben
+  Netz veröffentlichte Ports trotzdem über direktes Routing auf das Container-Netz erreichen (die Firewall des Hosts
+  sieht weitergeleiteten Verkehr nicht); das bleibt offen bis zur Härtung der Host-Firewall und einer Probe am Gerät.
+  Der Updater fragt `http://127.0.0.1:8081/healthz`; `/healthz` auf Port 80 bleibt für die Diagnose.
 - Scheitert beim Abmelden das Zurücksetzen der Heizung, nennt die Meldung die Werte, die das Gateway selbst geschrieben
   hätte (Ursprungswert des Servers, auf die lokalen Grenzen gebracht), nicht den lokalen Ursprungswert (BR-KK-2, Client-Kern
   für beide Hosts).
