@@ -243,7 +243,7 @@ def test_a_symlinked_device_dir_is_unreachable_without_connecting(tmp_path):
 
 def test_results_are_read_by_the_device_host_exactly_as_written(tmp_path):
     """Vertrag Updater -> Laufzeit: GatewayDeviceHost liest, was LokalerKanal schreibt (seq, version, result, reason)."""
-    from test_geraet_host import Welt
+    from geraet_welt import Welt
 
     clock = [1000.0]
     welt = Welt(tmp_path, lambda: clock[0])
