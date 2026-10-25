@@ -180,11 +180,11 @@ def _vorbereiten(paths: Paths, mirror: ZigbeeMirror,
     device = Device(geraet, paths.data, os.environ["SHG_DEVICE_API_URL"], befehl_fehler=befehle.fehler_uebersetzen)
     geraet.verbinden(device)
     portal = os.environ.get("SHG_PORTAL_BASE_URL", "")
-    diagnose.start_server(
-        DIAG_PORT, lambda: diagnose.seite(geraet, device),
-        lambda: diagnose.qr_url(portal, device), diagnose.parse_hostnames(os.environ.get("SHG_DIAG_HOSTNAMES", "")),
-    )
-    diagnose.start_server(HEALTH_PORT, lambda: diagnose.seite(geraet, device), lambda: None, nur_health=True)
+    hostnames = diagnose.parse_hostnames(os.environ.get("SHG_DIAG_HOSTNAMES", ""))
+    diagnose.start_server(DIAG_PORT, lambda: diagnose.seite(geraet, device), lambda: diagnose.qr_url(portal, device),
+                          hostnames)
+    # Dieselben erlaubten Host-Namen: der Docker-Test des Updaters fragt den Dienst `runtime` im Test-Netz.
+    diagnose.start_server(HEALTH_PORT, lambda: diagnose.seite(geraet, device), lambda: None, hostnames, nur_health=True)
     software_soll_nachholen(geraet, device)  # vor dem Geraete-Thread: kein Rennen mit einer neuen Konfiguration
     return geraet, device
 

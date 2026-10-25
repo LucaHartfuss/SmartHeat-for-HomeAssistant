@@ -558,6 +558,30 @@ def test_vorbereiten_returns_host_and_device_with_the_diagnosis_page_up(world, v
     assert vor_dem_start.pausen == [] and vor_dem_start.alive.exists()
 
 
+def test_the_health_server_accepts_the_host_names_of_the_environment_too(world, vor_dem_start, monkeypatch):
+    """Der Docker-Test des Updaters fragt den Gesundheitsserver unter dem Dienstnamen (SHG_DIAG_HOSTNAMES=runtime)."""
+    monkeypatch.setenv("SHG_DIAG_HOSTNAMES", "runtime")
+    server = []
+    echt = runtime_main.diagnose.start_server
+    monkeypatch.setattr(runtime_main.diagnose, "start_server",
+                        lambda *args, **kwargs: server.append(echt(*args, **kwargs)) or server[-1])
+    try:
+        runtime_main.vorbereiten(world.paths, vor_dem_start.mirror)
+        port = server[1].server_address[1]
+        for host, erwartet in (("runtime", 200), ("fremd.example", 403)):
+            anfrage = urllib.request.Request(f"http://127.0.0.1:{port}/healthz", headers={"Host": host})
+            try:
+                with urllib.request.urlopen(anfrage, timeout=5) as antwort:
+                    status = antwort.status
+            except urllib.error.HTTPError as fehler:
+                status = fehler.code
+            assert status == erwartet, host
+    finally:
+        for s in server:
+            s.shutdown()
+            s.server_close()
+
+
 def test_the_diagnosis_page_listens_on_diag_port_whatever_the_environment_says(world, vor_dem_start, monkeypatch):
     """Der Port ist `runtime_main.DIAG_PORT`; `SHG_DIAG_PORT` aus der Umgebung gilt nicht mehr."""
     monkeypatch.setenv("SHG_DIAG_PORT", "1")
