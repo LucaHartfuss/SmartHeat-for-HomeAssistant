@@ -21,7 +21,6 @@ _.userdata  # smartheat_device/link.py: Parameter der paho-Callback-Signatur
 # --- Testeinstiege mit Namen (Tests und Szenarien treiben den Code ohne Threads) ---
 _.schritt  # smartheat_device/device.py Device.schritt: ein Durchlauf ohne Warten (gateway/tests/world.py, Szenarien)
 _.run_pending  # smartheat_runtime/worker.py RegulationWorker.run_pending: Takt mit Fake-Uhr (Tests im Add-on und Gateway)
-_.kinds  # smartheat_device/commands.py CommandRegister.kinds: registrierte Befehlsarten (test_geraet_host, test_befehle)
 
 # --- Vertragskopie V1 (smartheat_device/wire.py, woertlich wie geraete/device_protocol.py des Servers): Leser im Server ---
 _.MAX_CLOCK_SKEW_SECONDS  # Server: geraete/device_auth.py (Zeitfenster der Signatur); Geraet wertet nur den Status 401

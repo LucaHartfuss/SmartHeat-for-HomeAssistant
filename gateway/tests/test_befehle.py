@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 import pytest
+from befehle_sicht import registrierte_befehle
 from configs import SENSOR, THERMOSTAT, bedienung, dokumente_schreiben, konfiguration
 from fake_z2m import FakeZigbee2Mqtt
 from fakes import FakeBus, SofortHintergrund
@@ -104,7 +105,7 @@ def test_unbekannte_phase_und_fehlender_treiber_nennen_feld_und_regel(register):
 def test_the_gateway_registers_exactly_its_commands(register):
     assert set(befehle.HANDLERS) == {"zigbee_permit_join", "zigbee_devices", "driver_login",
                                      "inventory", "diagnostics", "sign_off"}
-    assert set(befehle.HANDLERS) <= set(wire.COMMANDS) and set(befehle.HANDLERS) <= register.kinds
+    assert set(befehle.HANDLERS) <= set(wire.COMMANDS) and set(befehle.HANDLERS) <= registrierte_befehle(register)
 
 
 def test_bad_payloads(register):

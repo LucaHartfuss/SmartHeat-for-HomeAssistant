@@ -13,6 +13,7 @@ import sys
 from types import SimpleNamespace
 
 import pytest
+from befehle_sicht import registrierte_befehle
 from world import GatewayWorld
 
 from smartheat_device import wire
@@ -57,7 +58,7 @@ def test_check_52_das_laufende_gateway_traegt_jeden_befehl_ein(world):
     """Die Liste GERAETEKERN_BEFEHLE stimmt: Geraetekern und Gateway zusammen tragen genau die Befehle des Vertrags
     ein."""
     world.start_runtime()
-    assert world.device.befehle.kinds == set(wire.COMMANDS)
+    assert registrierte_befehle(world.device.befehle) == set(wire.COMMANDS)
 
 
 def test_check_52_meldet_einen_befehl_ohne_handler():

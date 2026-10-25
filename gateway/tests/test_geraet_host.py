@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from befehle_sicht import registrierte_befehle
 from configs import dokumente_schreiben, konfiguration
 from fakes import FakeBus
 from geraet_welt import WALL, FakeDevice, Welt
@@ -443,7 +444,7 @@ def test_the_driver_check_and_commands(welt, tmp_path):
 
     register = CommandRegister(tmp_path / "reg", lambda body: True)
     welt.host.befehle_eintragen(register)
-    assert {"sign_off", "inventory", "diagnostics"} <= register.kinds
+    assert {"sign_off", "inventory", "diagnostics"} <= registrierte_befehle(register)
 
 
 SIM_BINDUNG = {"treiber": {"id": "simulation", "parameter": {"lever_set": "viessmann_vicare", "heizkreis": 0}}}
