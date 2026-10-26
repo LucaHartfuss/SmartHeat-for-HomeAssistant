@@ -19,11 +19,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Die Muster stehen als Bytes-Ausdruecke, damit auch Binaerdateien (Schluesseldateien, Archive) gelesen werden. Der
-# minisign-Kopf steht in zwei Literalen, damit diese Datei sich nicht selbst findet.
+# Die Muster stehen als Bytes-Ausdruecke, damit auch Binaerdateien (Schluesseldateien, Archive) gelesen werden.
+# `PRIVATE KEY( BLOCK)?` deckt auch PGP ("BEGIN PGP PRIVATE KEY BLOCK"). Der minisign-Kopf der Geheimschluessel
+# (verschluesselt und unverschluesselt) beginnt mit "untrusted comment: minisign"; das Praefix gehoert zum Muster, weil
+# die oeffentlichen Signaturdateien "untrusted comment: signature from minisign secret key" tragen und kein Fund sind.
 MUSTER: tuple[tuple[str, re.Pattern[bytes]], ...] = (
-    ("privater Schluessel", re.compile(rb"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
-    ("minisign-Geheimschluessel", re.compile(b"untrusted comment: minisign " b"encrypted secret key")),
+    ("privater Schluessel", re.compile(rb"-----BEGIN [A-Z ]*PRIVATE KEY( BLOCK)?-----")),
+    ("minisign-Geheimschluessel", re.compile(rb"untrusted comment: minisign (?:encrypted )?secret key")),
     ("AWS-Zugangskennung", re.compile(rb"AKIA[0-9A-Z]{16}")),
     ("GitHub-Token", re.compile(rb"gh[pousr]_[A-Za-z0-9]{36}")),
     ("GitHub-Token (fein)", re.compile(rb"github_pat_[A-Za-z0-9_]{22,}")),
@@ -62,7 +64,7 @@ def _dateien(repo: Path) -> list[str]:
 
 def _fund_zeilen(repo: Path, name: str) -> list[tuple[int, str]]:
     pfad = repo / name
-    if not pfad.is_file():  # versioniert, aber im Arbeitsbaum geloescht; Ordner (Submodul)
+    if pfad.is_symlink() or not pfad.is_file():  # Symlink (Ziel gehoert nicht zum Repo); geloescht; Ordner (Submodul)
         return []
     try:
         inhalt = pfad.read_bytes()
