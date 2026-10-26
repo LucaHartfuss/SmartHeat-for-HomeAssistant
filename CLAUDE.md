@@ -70,7 +70,7 @@ Probelauf. Ein Push nach `main` ist ein Release an alle Kunden-Pis, deren Superv
   Supervisor-Discovery (`discovery.FIELDS`), Ereignis `smartheat_wunsch`.
 - **`gateway/` ist kein Add-on** (keine `config.yaml`): Image aus der Repo-Wurzel
   (`docker build -f gateway/Dockerfile .`), eigener Release-Workflow; ohne echten Schlüssel in
-  `gateway/host/release.pub` lehnt das Gate echte `gateway-v*`-Tags ab. Änderungen in
+  `gateway/host/release-roots.pem` lehnt das Gate echte `gateway-v*`-Tags ab. Änderungen in
   `smartheat_core`/`smartheat_runtime` wirken auf beide Clienttypen.
 - **Startfehler** melden mit stabilem Schlüssel `fehler:<key>`, der Grund steht nur im Feld `grund`. Schlüssel,
   Zertifikate, Übernahme-Code, Supervisor-Token und Inventur-Inhalte stehen nie in Log, Status-Ereignis oder

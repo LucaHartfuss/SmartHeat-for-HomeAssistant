@@ -14,6 +14,12 @@
   Docker `smartheat-gateway@<Index-Digest>` kennt (sonst `manifest_ungueltig`); danach wird das Archiv geloescht. Ist
   das Image schon da, wird nichts geholt. Die Compose-Datei nennt es mit `pull_policy: never`; `check_compose` erlaubt
   `never` nur fuer genau dieses Image. Der Rueckweg braucht kein Netz: `prune` behaelt das Image der vorigen Version.
+- Das Release wird am Betreiberrechner gebaut, signiert und per `scp` in die eigene Ablage geladen
+  (`gateway/release/release_lokal.sh`, Schluessel auf einem Hardware-Token). Die CI baut und signiert nichts mehr: der
+  Workflow `release-gateway.yml` prueft nur (volle CI, Probelauf mit Wegwerf-Kette, Tag-Signatur, Gate) und rueckt `main`
+  per Fast-Forward vor; das Release auf GitHub ist eine Notiz ohne Dateien. Der Workflow `image-gateway.yml` und
+  `release.pub` entfallen (das Werks-Image baut kuenftig ebenfalls der Betreiber lokal). Das Gate prueft
+  `gateway/host/release-roots.pem` auf den Platzhalter.
 - `min_updater_version` der Bundles ist 0.8.0 (neues Manifest-Format, aeltere Updater lehnen es als `updater_zu_alt` ab).
   Der Erststart laedt mit demselben `docker load` mit Frist (`bundles.docker_load`).
 

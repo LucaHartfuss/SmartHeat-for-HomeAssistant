@@ -8,7 +8,7 @@
 #   --schluessel  PEM-Datei (Test-Kette) oder pkcs11:-URI des Release-Schluessels (signieren.py; die PIN gehoert nicht in
 #                 die URI, siehe signieren.py).
 #   --zertifikat  das Release-Zertifikat (PEM, von ca.py ausstellen).
-#   --roots       Schluesselbund, gegen den die Signatur sofort geprueft wird (Standard: gateway/host/release.pub, der
+#   --roots       Schluesselbund, gegen den die Signatur sofort geprueft wird (Standard: gateway/host/release-roots.pem, der
 #                 Schluesselbund im Geraete-Image).
 #   --aus DIR     Arbeitsordner (Standard: neuer Ordner unter $TMPDIR; er bleibt, ausser bei --probe oder einem Fehler).
 #                 Darin liegen image.oci.tar (Ausgabe von buildx) und <VERSION>/ (das Bundle samt manifest.json.sig).
@@ -51,7 +51,7 @@ done
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
-roots="${roots:-$repo/gateway/host/release.pub}"
+roots="${roots:-$repo/gateway/host/release-roots.pem}"
 py() { "${PYTHON:-python3}" "$@"; }
 tag="gateway-v$version"
 

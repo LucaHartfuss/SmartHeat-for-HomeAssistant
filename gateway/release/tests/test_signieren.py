@@ -196,7 +196,7 @@ def test_cli_ohne_manifest_oder_mit_platzhalter_roots_scheitert(kette_dir, tmp_p
     leer = tmp_path / "leer"
     leer.mkdir()
     assert _cli(kette_dir, leer).returncode == 1
-    platzhalter = tmp_path / "release.pub"
+    platzhalter = tmp_path / "release-roots.pem"
     platzhalter.write_text("SMARTHEAT-PLATZHALTER\n")
     ergebnis = _cli(kette_dir, bundle, roots=platzhalter)
     assert ergebnis.returncode == 1 and not (bundle / "manifest.json.sig").exists()
