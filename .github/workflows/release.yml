@@ -8,6 +8,7 @@ concurrency:
 env:
   KIND: addon
   SELF: SmartHeat-for-HomeAssistant
+  REGISTRY: ghcr.io/lucahartfuss
 jobs:
   ci:
     # Volle Stufe (Docker, Real-HA-Container-Tests); der Push-Lauf faehrt nur die Standardstufe.
@@ -17,9 +18,63 @@ jobs:
     secrets: inherit
     permissions:
       contents: read
-  release:
+  image:
+    # Baut das Add-on als fertiges Image je Architektur und pusht es nach GHCR (ghcr.io/lucahartfuss/<arch>-
+    # heizungsbruecke:<version>, config.yaml `image:`); der Supervisor zieht es, statt selbst zu bauen. Nur dieser Job
+    # hat `packages: write`; ohne CROSS_REPO_TOKEN, ohne Root-Code, ohne pip. Im Probelauf (-dryrun) wird nur gebaut.
     needs: ci
-    # Nur dieser Job schreibt (main per Fast-Forward, GitHub-Release).
+    environment: release
+    permissions:
+      contents: read
+      packages: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Zweite Linie neben dem Tag-Ruleset (Pflicht-Signatur): SSH-Signatur des Tags gegen .github/allowed_signers aus
+      # origin/main. Vor allem anderen, auch vor dem Token-Schritt; die Pruefung kommt bewusst aus diesem Repo, nicht aus
+      # dem Root-Repo (siblings.sh klont Root an einem Branch, der wie der Tag heisst).
+      - name: Signatur des Tags pruefen
+        run: bash scripts/ci/tag_pruefen.sh "$GITHUB_REF_NAME" "$GITHUB_SHA"
+      - name: Version aus dem Tag und config.yaml
+        id: ver
+        run: |
+          [[ $GITHUB_REF_NAME =~ ^heizungsbruecke-v([0-9]+\.[0-9]+\.[0-9]+)(-dryrun)?$ ]] \
+            || { echo "::error::Tag $GITHUB_REF_NAME ist keine Add-on-Version"; exit 1; }
+          version="${BASH_REMATCH[1]}"
+          [ "$version" = "$(sed -n 's/^version: "\(.*\)"$/\1/p' heizungsbruecke/config.yaml)" ] \
+            || { echo "::error::Tag $version passt nicht zur Version in heizungsbruecke/config.yaml"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "dryrun=$([ -n "${BASH_REMATCH[2]}" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Anmelden bei ghcr.io
+        if: steps.ver.outputs.dryrun == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: docker login ghcr.io --username "$ACTOR" --password-stdin <<< "$GH_TOKEN"
+      - name: Image bauen und pushen (im Probelauf nur bauen)
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          DRYRUN: ${{ steps.ver.outputs.dryrun }}
+        run: |
+          push=(--push)
+          if [ "$DRYRUN" = true ]; then push=(); fi
+          for paar in aarch64:linux/arm64 amd64:linux/amd64; do
+            arch="${paar%%:*}"
+            docker buildx build --platform "${paar#*:}" --sbom=true "${push[@]}" \
+              --build-arg BUILD_VERSION="$VERSION" --build-arg BUILD_ARCH="$arch" \
+              --tag "$REGISTRY/$arch-heizungsbruecke:$VERSION" heizungsbruecke
+          done
+  release:
+    needs: image
+    # Schreibt main per Fast-Forward und legt das GitHub-Release an. Das Environment `release` haelt den Lauf bis zur
+    # Freigabe des Reviewers an (Runbook H-1).
+    environment: release
     permissions:
       contents: write
     runs-on: ubuntu-24.04
@@ -28,6 +83,11 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
+      # Zweite Linie neben dem Tag-Ruleset (Pflicht-Signatur): SSH-Signatur des Tags gegen .github/allowed_signers aus
+      # origin/main. Vor allem anderen, auch vor dem Token-Schritt; die Pruefung kommt bewusst aus diesem Repo, nicht aus
+      # dem Root-Repo (siblings.sh klont Root an einem Branch, der wie der Tag heisst).
+      - name: Signatur des Tags pruefen
+        run: bash scripts/ci/tag_pruefen.sh "$GITHUB_REF_NAME" "$GITHUB_SHA"
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"

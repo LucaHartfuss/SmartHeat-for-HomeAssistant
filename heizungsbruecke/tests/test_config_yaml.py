@@ -1,5 +1,6 @@
 """config.yaml: nur Optionen zum Starten, Supervisor-Discovery, kein Optionsmodus."""
 import ast
+import re
 import tomllib
 from pathlib import Path
 
@@ -63,6 +64,28 @@ def test_log_levels_match_the_entry_point():
 
 
 DOCKERFILE_PATH = Path(__file__).resolve().parents[1] / "Dockerfile"
+
+
+def test_image_folgt_dem_schema_und_tag_der_version():
+    """Der Supervisor zieht das vorgebaute Image ghcr.io/lucahartfuss/<arch>-heizungsbruecke:<version> (`image:` mit
+    {arch}, Tag = `version` aus config.yaml) und baut nicht selbst; release.yml pusht genau diese Namen."""
+    data = _load_config_yaml()
+    assert data["image"] == "ghcr.io/lucahartfuss/{arch}-heizungsbruecke"
+    release = (CONFIG_YAML_PATH.parents[1] / ".github" / "workflows" / "release.yml").read_text()
+    assert "ghcr.io/lucahartfuss" in release and "-heizungsbruecke" in release
+    assert data["arch"] == ["aarch64", "amd64"] and all(arch in release for arch in data["arch"])
+
+
+def test_dockerfile_traegt_die_ha_labels_mit_version_und_architektur_aus_build_args():
+    """Konvention des Supervisors (BUILD_VERSION, BUILD_ARCH): io.hass.version, io.hass.type, io.hass.arch."""
+    dockerfile = DOCKERFILE_PATH.read_text()
+    assert re.search(r"^ARG BUILD_VERSION\b", dockerfile, flags=re.M)
+    assert re.search(r"^ARG BUILD_ARCH\b", dockerfile, flags=re.M)
+    labels = dict(re.findall(r'(io\.hass\.\w+)="([^"]*)"', dockerfile))
+    assert labels == {"io.hass.version": "${BUILD_VERSION}", "io.hass.type": "addon", "io.hass.arch": "${BUILD_ARCH}"}
+    # Die ARGs stehen vor LABEL und nach dem letzten FROM (ein ARG vor FROM gilt nicht in der Stufe).
+    assert dockerfile.index("ARG BUILD_VERSION") > dockerfile.index("FROM ")
+    assert dockerfile.index("ARG BUILD_ARCH") < dockerfile.index("LABEL ")
 SRC_PATH = Path(__file__).resolve().parents[1] / "src"
 
 
