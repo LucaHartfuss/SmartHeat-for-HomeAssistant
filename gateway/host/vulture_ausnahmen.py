@@ -12,3 +12,6 @@ _.addheaders  # smartheat_host/updater.py checked_opener (eigener User-Agent)
 _.https_open  # smartheat_host/updater.py _FetchHTTPSHandler
 _.http_open  # smartheat_host/updater.py _FetchHTTPHandler (nur mit allow_http)
 _.recv_into  # smartheat_host/updater.py _DeadlineSocket, DeadlineSSLSocket (Frist je Leseoperation): SocketIO ruft es
+
+# --- Kennung des Schluesselbunds: Aufrufer (Updater, Statusmeldung) kommen mit den Folge-Tasks von AP-04; getestet ---
+_.roots_identity  # smartheat_host/kette.py roots_identity (tests/test_kette.py)
