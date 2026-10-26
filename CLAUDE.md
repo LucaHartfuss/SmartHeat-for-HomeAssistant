@@ -40,7 +40,7 @@ Code (vulture, `vulture_ausnahmen.py`): `../docs/ci-cd-runbook.md` §3; Image-Sc
 | `test_heizungsbruecke_docker_build.sh`, `test_heizungsbruecke_reproducible.sh` | Add-on-Image bauen (Start ohne Server mit `SMARTHEAT_BOOTSTRAP_URL=http://127.0.0.1:9`, Ruhezustand) und reproduzierbar |
 | `test_gateway_docker_build.sh` | Gateway-Image (lokal nur amd64) und Compose-Lauf mit Dev-Overlay: Bootstrap gegen einen Fake, MQTT gegen einen Fake-Broker mit Client-Zertifikat, Fälschungsproben, sauberes Trennen, Bus-Anmeldung und ACL; statisch prüft `gateway/tests/test_compose.py` |
 | `test_gateway_install.sh` | Host-Installer zweimal in `debian:trixie`, Plattform per `SHG_INSTALL_PLATFORM` (arm64 nur in der CI, Job `install-arm64`) |
-| `test_gateway_updater.sh` | Updater gegen eine lokale Registry mit drei signierten Test-Bundles, Soll-Version als Konfigurationsdokument über den Fake-Broker, Rückweg und Manipulation; rund 6 min, steuert Compose über den Docker-Socket des Hosts |
+| `test_gateway_updater.sh` | Updater mit drei signierten Test-Bundles, je ein eigenes Image als OCI-Archiv (Laden, Start ohne Pull, Rückweg auf das Image der vorigen Version), Dateiserver als Release-Host, Soll-Version als Konfigurationsdokument über den Fake-Broker, Rückweg und Manipulation; rund 7 min, braucht den containerd-Speicher, steuert Compose über den Docker-Socket des Hosts |
 | `test_gateway_firstboot.sh` | Export wie im Image-Bau, Laden ohne Netz in einem Docker mit containerd-Speicher, Start per Index-Digest |
 
 Der Image-Bau selbst (`gateway/image/make_image.sh`) braucht einen arm64-Host und gehört nicht zu `check.sh`.
@@ -54,7 +54,9 @@ Profile über `HYPOTHESIS_PROFILE`, `--full` setzt `voll`; `pyproject.toml`: `py
 "../heizungsbruecke/testhilfen"]`); `gateway/host` und `gateway/release` setzen eigene Pfade in ihrer `pyproject.toml`.
 
 Release-Tags: `heizungsbruecke-vX.Y.Z` (`release.yml`), `gateway-vX.Y.Z` (`release-gateway.yml`), Suffix `-dryrun` =
-Probelauf. Ein Push nach `main` ist ein Release an alle Kunden-Pis, deren Supervisor den Default-Branch verfolgt.
+Probelauf. Echte Tags sind **signiert** (`git tag -s`, SSH-Signatur; Pflicht-Signatur im Tag-Ruleset, zweite Linie
+`scripts/ci/tag_pruefen.sh` gegen `.github/allowed_signers` auf `main`) und laufen in der Environment `release` (Freigabe
+von Hand). Ein Push nach `main` ist ein Release an alle Kunden-Pis, deren Supervisor den Default-Branch verfolgt.
 
 ## Regeln und Fallen
 
@@ -69,9 +71,21 @@ Probelauf. Ein Push nach `main` ist ein Release an alle Kunden-Pis, deren Superv
   `--liste`). Verträge mit der Integration: Status-Ereignis Schema 3 (`geraet_status.EVENT_FIELDS`), Felder der
   Supervisor-Discovery (`discovery.FIELDS`), Ereignis `smartheat_wunsch`.
 - **`gateway/` ist kein Add-on** (keine `config.yaml`): Image aus der Repo-Wurzel
-  (`docker build -f gateway/Dockerfile .`), eigener Release-Workflow; ohne echten Schlüssel in
-  `gateway/host/release.pub` lehnt das Gate echte `gateway-v*`-Tags ab. Änderungen in
+  (`docker build -f gateway/Dockerfile .`), eigener Release-Workflow; ohne echte Root in
+  `gateway/host/release-roots.pem` lehnt das Gate echte `gateway-v*`-Tags ab. Änderungen in
   `smartheat_core`/`smartheat_runtime` wirken auf beide Clienttypen.
+- **Gateway-Release** baut und signiert der Betreiber an seinem Rechner (`gateway/release/release_lokal.sh`, Aufruf und
+  Voraussetzungen: `../docs/ci-cd-runbook.md` §13); die CI (`release-gateway.yml`: `ci`, `probe`, `gate`, `main`) prüft nur,
+  baut im Job `probe` mit einer Wegwerf-Kette und lädt nichts hoch. In allen Release-Workflows läuft Code aus dem Root-Repo
+  nur im Job `gate` (Leserecht); die Jobs mit Schreibrecht führen keinen Root-Code aus (`../docs/ci-cd-runbook.md` §4).
+  Kein Signierschlüssel, keine Zertifikatsdatei mit Schlüssel und kein `.env` im Repo (Geheimnis-Scan, `scripts/ci/geheimnis_scan.py`).
+- **Add-on-Release:** `release.yml` (Jobs `ci`, `gate`, `image`, `release`) baut das Image je Architektur und pusht es nach
+  GHCR (`ghcr.io/lucahartfuss/<arch>-heizungsbruecke:<version>`, `image:` in der `config.yaml`; nie auf ein vorhandenes Tag);
+  der Supervisor zieht es und baut nicht selbst. Rechte und Sandbox: `heizungsbruecke/config.yaml` nur mit den vier
+  Rechten der Liste (`homeassistant_api`, `hassio_api`, `discovery`, `stdin`; Grund je Recht in `../docs/module/ha-host.md`, „Rechte und
+  AppArmor“) und `heizungsbruecke/apparmor.txt`; beides sichert `heizungsbruecke/tests/test_config_yaml.py`. Ein neues
+  Recht oder eine neue Schreibstelle außerhalb von `/data` und `/tmp` braucht erst eine Entscheidung und den Eintrag in
+  beiden.
 - **Startfehler** melden mit stabilem Schlüssel `fehler:<key>`, der Grund steht nur im Feld `grund`. Schlüssel,
   Zertifikate, Übernahme-Code, Supervisor-Token und Inventur-Inhalte stehen nie in Log, Status-Ereignis oder
   Diagnose (Regel 6); der Übernahme-Code geht nur in die Discovery (bleibt in der HA-Instanz), ins Log kommt bei
@@ -99,3 +113,7 @@ Probelauf. Ein Push nach `main` ist ein Release an alle Kunden-Pis, deren Superv
   ```
 
   Danach `scripts/check.sh --only docker --full`; den Drift-Check übernimmt `scripts/ci/pin_check.py`.
+- **Weitere Locks:** `gateway/requirements.txt` (Gateway-Image), `gateway/release/requirements.txt` (Werkzeuge des
+  Betreiberrechners und Job `probe`; gleiche Versionen wie die Gateway-Lock-Datei) und die Dev- und Audit-Locks des Roots
+  (`../tools/requirements-dev.txt`, `requirements-audit.txt`, Job `lint` und `audit`) – alle mit Hashes, installiert nur mit
+  `--require-hashes`. Erneuern, Python-Version und Gegenprobe: `../docs/ci-cd-runbook.md` §12.

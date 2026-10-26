@@ -1,12 +1,11 @@
 """Erststart eines Gateway-Images: laedt die im Image abgelegten Container-Images
-(images/*.tar, docker load, kein Pull), startet das laufende Bundle (updater/state.json "current") und loescht danach
+(images/*.tar, bundles.docker_load mit Frist, kein Pull), startet das laufende Bundle (updater/state.json "current") und loescht danach
 die Archive. Die Unit smartheat-firstboot laeuft nur, solange images/ nicht leer ist (ConditionDirectoryNotEmpty).
 Fehlt ein Geraet aus devices: (Zigbee-Stick), endet sie mit EXIT_RETRY, bevor etwas geladen wird, und systemd versucht
 es nach 30 s erneut. Ein offener Updater-Auftrag (in_progress, auch erst waehrend des Ladens eroeffnet) oder ein
 Bundle-Wechsel gehoert dem Updater: dann nur laden, nicht starten."""
 import logging
 import os
-import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -17,20 +16,7 @@ logger = logging.getLogger(__name__)
 EXIT_RETRY = 75
 
 
-class LoadError(Exception):
-    pass
-
-
-def docker_load(archive: Path) -> None:
-    try:
-        result = subprocess.run(["docker", "load", "-i", str(archive)], capture_output=True, text=True, check=False)
-    except OSError as error:
-        raise LoadError(f"{archive.name}: {type(error).__name__}") from None
-    if result.returncode != 0:
-        raise LoadError(f"{archive.name}: {(result.stderr or result.stdout).strip()[-300:]}")
-
-
-def run(root: Path, compose, load: Callable[[Path], None] = docker_load,
+def run(root: Path, compose, load: Callable[[Path], None] = bundles.docker_load,
         path_exists: Callable[[str], bool] = os.path.exists) -> int:
     archives = sorted((root / "images").glob("*.tar"))
     if not archives:
@@ -66,7 +52,7 @@ def main() -> None:  # pragma: no cover - systemd-Einstieg
     compose = bundles.ComposeRunner(root)
     try:
         code = run(root, compose)
-    except (LoadError, bundles.ComposeError, OSError) as error:
+    except (bundles.LoadError, bundles.ComposeError, OSError) as error:
         logger.error("Erststart gescheitert: %s", error)
         code = 1
     sys.exit(code)

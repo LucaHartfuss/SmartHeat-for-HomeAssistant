@@ -26,11 +26,18 @@ MUSTER = {
 #: (Datei, Art) -> (Anzahl, Begruendung). Jede weitere Fundstelle derselben Art in derselben Datei ist neu und rot.
 AUSNAHMEN = {
     ("bundles.py", "open schreibend"): (
-        1, "BundleStore.install (um Zeile 147): schreibt die Dateien eines Bundles in einen temporaeren Ordner, "
+        1, "BundleStore.install (um Zeile 260): schreibt die Dateien eines Bundles in einen temporaeren Ordner, "
            "fsync je Datei; dateien.schreiben ersetzt einzelne Dateien, kein ganzes Verzeichnis"),
     ("bundles.py", "os.replace"): (
-        1, "BundleStore.install (um Zeile 153): atomarer Tausch des ganzen Bundle-Verzeichnisses, nicht ueber "
+        1, "BundleStore.install (um Zeile 266): atomarer Tausch des ganzen Bundle-Verzeichnisses, nicht ueber "
            "dateien.schreiben abbildbar"),
+    ("updater.py", "open schreibend"): (
+        1, "_open_teil (um Zeile 514): das Archiv des Images (bis 512 MiB) wird in Bloecken nach <ziel>.part gestreamt, "
+           "dateien.schreiben nimmt nur Bytes im Speicher; fsync am Ende von fetch_url_to_file"),
+    ("updater.py", "os.replace"): (
+        2, "fetch_url_to_file (um Zeile 599): <ziel>.part wird erst nach vollstaendigem Abruf zu <ziel>; "
+           "_hole_archiv (um Zeile 919): ein zu kurz beendeter Abruf wird wieder zum .part, das der naechste Durchlauf "
+           "fortsetzt; beide innerhalb von archive/, nie unter bundles/"),
     ("led.py", "write_text"): (
         3, "Led.take/set/restore (um Zeilen 58-65): sysfs-Attribute (trigger, brightness) werden direkt beschrieben; "
            "ein Tausch per .tmp und os.replace ist dort nicht moeglich"),

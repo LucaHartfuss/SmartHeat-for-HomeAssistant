@@ -5,7 +5,7 @@
 #                    [--bundle ORDNER] [--pilot-ssh PUBKEY] [--root PFAD] [--no-docker] [--no-activate] [--image]
 # ACHTUNG: Ohne --pilot-ssh bleibt Port 22 in der Firewall zu und ssh wird deaktiviert (laufende Sitzungen bestehen bis
 # zu ihrem Ende weiter, neue sind nicht mehr moeglich). --bundle: Ordner mit docker-compose.yml, mosquitto.conf,
-# manifest.json und (optional) manifest.json.minisig. --image: Image-Bau im chroot: wie --no-activate,
+# manifest.json und (optional) manifest.json.sig. --image: Image-Bau im chroot: wie --no-activate,
 # aktiviert die Units aber offline (systemctl enable, nichts startet; der erste Boot startet smartheat-firstboot).
 # Pilotgeraete in fremden Netzen: zusaetzlich pilot_ssh_tunnel.sh (eigener Cloudflare-Tunnel fuer SSH, ausserhalb von
 # Docker). Solange er eingerichtet ist, bricht install.sh ohne --pilot-ssh ab (Schutz vor dem Aussperren).
@@ -148,7 +148,7 @@ host_package() {
   for rel in __init__.py dateien.py; do
     put "$OPT/smartheat_core/$rel" 0644 0:0 <"$core/$rel"
   done
-  put "$OPT/release.pub" 0644 0:0 <"$HERE/release.pub"
+  put "$OPT/release-roots.pem" 0644 0:0 <"$HERE/release-roots.pem"
   put "$OPT/VERSION" 0644 0:0 <"$GW/VERSION"
 }
 
@@ -187,12 +187,25 @@ first_bundle() {
     put "$ROOT/bundles/$version/$name" 0644 0:0 <"$BUNDLE/$name"
   done
   # Signatur des Manifests - ein Release-Bundle hat sie, Test-Fixtures nicht.
-  if [ -f "$BUNDLE/manifest.json.minisig" ]; then
-    put "$ROOT/bundles/$version/manifest.json.minisig" 0644 0:0 <"$BUNDLE/manifest.json.minisig"
+  if [ -f "$BUNDLE/manifest.json.sig" ]; then
+    put "$ROOT/bundles/$version/manifest.json.sig" 0644 0:0 <"$BUNDLE/manifest.json.sig"
   fi
   if [ ! -f "$ROOT/updater/state.json" ]; then
-    put "$ROOT/updater/state.json" 0644 0:0 < <(printf \
-      '{"current": "%s", "in_progress": null, "previous": null, "rejected": []}' "$version")
+    # Untergrenze fuer Release-Zertifikate (Widerruf, FR-25): notBefore des Zertifikats im mitgelieferten Bundle. Ohne sie
+    # nahme der erste Update auch ein aelteres, vor dem Erstbundle ausgestelltes (gestohlenes) Zertifikat an.
+    local grenze=""
+    if [ -f "$BUNDLE/manifest.json.sig" ]; then
+      grenze="$(python3 -c 'import json, sys
+from cryptography import x509
+text = json.load(open(sys.argv[1]))["zertifikat"]
+print(x509.load_pem_x509_certificate(text.encode()).not_valid_before_utc.isoformat())' "$BUNDLE/manifest.json.sig")" \
+        || { echo "FEHLER: $BUNDLE/manifest.json.sig traegt kein lesbares Zertifikat (notBefore fuer die Untergrenze)" >&2; exit 1; }
+    fi
+    put "$ROOT/updater/state.json" 0644 0:0 < <(python3 -c 'import json, sys
+state = {"current": sys.argv[1], "in_progress": None, "previous": None, "rejected": []}
+if sys.argv[2]:
+    state["zertifikat_untergrenze"] = sys.argv[2]
+print(json.dumps(state), end="")' "$version" "$grenze")
   fi
 }
 

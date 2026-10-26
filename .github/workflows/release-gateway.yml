@@ -1,17 +1,20 @@
 name: Release Gateway
-# Tag gateway-vX.Y.Z. Zwei Jobs, damit der Signierschluessel nie neben
-# Fremdcode laeuft (Dockerfile-Schritte, Basis-Images, pip, Repo-Skripte):
-#   build: CI -> Freigabe -> Image multi-arch -> Bundle; KEINE Environment, KEINE Secrets. -dryrun: lokale Registry
-#          (Workflow-Dienst), Wegwerf-Schluessel mit Passwort, derselbe Signier-Code wie der echte Release; kein Push
-#          nach ghcr, kein Release, main bleibt.
-#   sign:  nur beim echten Release; Environment "release" mit den Secrets; prueft das Bundle per Neubau aus dem Tag
-#          (gateway/release/verify_bundle.py ueber sign_bundle.sh), signiert, prueft die Signatur, zieht main per
-#          Fast-Forward nach und legt das GitHub-Release an.
-# image/attach-image: Basis-Image nach Plan G2b-2 (Job image ohne Secrets, attach-image nur gh release upload). Nur beim
-#          echten Release: der -dryrun baut das Image NICHT (sein Bundle verweist auf die Job-Registry localhost:5000, die
-#          nur im Job build existiert). Der Bau wird vom echten Release und von Hand per workflow_dispatch von
-#          image-gateway.yml geuebt; die Adress-Regel (own_url.sh) prueft schon der Job build, damit auch der Probelauf sie sieht.
-# Python-Pakete beider Jobs nur aus der Hash-Lock-Datei gateway/release/requirements.txt (--require-hashes).
+# Tag gateway-vX.Y.Z. Das Gateway-Release wird am Betreiberrechner gebaut, signiert und per scp in die eigene Ablage
+# geladen (gateway/release/release_lokal.sh, Runbook Gateway-Release); die CI baut und signiert nichts fuer ein Release
+# und hat kein Signier-Secret. Sie prueft nur; Rechte und Code sind getrennt (Abschlussreview AP-04, I-1):
+#   ci:    volle Stufe (Docker, Real-HA-Container-Tests).
+#   probe: Probelauf mit release_lokal.sh --probe und einer Wegwerf-Kette (ca.py test-kette): Image bauen, Bundle bauen
+#          und per Neubau pruefen, signieren, Signatur pruefen; kein Upload. Fuehrt Repo-Code aus, daher nur Leserecht,
+#          keine Environment, keine Secrets. Laeuft bei echten und bei -dryrun-Tags gleich.
+#   gate:  Leserecht, keine Environment. Prueft die Freigabe (Tag-Signatur, tools/release_gate.py) und fuehrt dafuer Code
+#          aus dem privaten Root-Repo aus (siblings.sh, CROSS_REPO_TOKEN). Ohne Schreibtoken. Ausgaben: dryrun, title und
+#          die Release-Notiz als Artefakt (reine Daten).
+#   main:  nach gate und probe, hinter der Freigabe der Environment "release" (Pflicht-Reviewer, Runbook H-1); contents:
+#          write, kein Root-Code, kein CROSS_REPO_TOKEN. Prueft die Signatur des Tags mit dem eigenen Skript, die Ausgaben
+#          des Gates per Regex, rueckt main per Fast-Forward vor und legt die Release-Notiz ohne Dateien an. Im -dryrun
+#          bleibt main. Der Checkout behaelt den Token nicht (persist-credentials: false).
+# Ein Werks-Image gibt es in der CI nicht mehr (Nutzer-Entscheidung FR-26: der Bau kommt lokal, AP-05a).
+# Python-Pakete nur aus Hash-Lock-Dateien (--require-hashes).
 on:
   push:
     tags: ["gateway-v*"]
@@ -21,7 +24,6 @@ concurrency:
 env:
   KIND: gateway
   SELF: SmartHeat-for-HomeAssistant
-  IMAGE: ghcr.io/lucahartfuss/smartheat-gateway
 jobs:
   ci:
     # Volle Stufe (Docker, Real-HA-Container-Tests); der Push-Lauf faehrt nur die Standardstufe.
@@ -31,45 +33,58 @@ jobs:
     secrets: inherit
     permissions:
       contents: read
-  build:
+  probe:
     needs: ci
-    # Kein "environment:" und keine Signier-Secrets in diesem Job.
+    # Kein "environment:" und keine Secrets in diesem Job.
     permissions:
       contents: read
-      packages: write
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      # build_bundle.py braucht PyYAML; ca.py, signieren.py und smartheat_host.kette cryptography.
+      - run: pip install --require-hashes -r gateway/release/requirements.txt
+      - name: Version aus dem Tag
+        id: version
+        run: |
+          [[ $GITHUB_REF_NAME =~ ^gateway-v([0-9]+\.[0-9]+\.[0-9]+)(-dryrun)?$ ]] \
+            || { echo "::error::Tag $GITHUB_REF_NAME ist keine Gateway-Version"; exit 1; }
+          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Probelauf - Bundle bauen, mit Wegwerf-Kette signieren und pruefen
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python gateway/release/ca.py test-kette --aus "$RUNNER_TEMP/kette"
+          bash gateway/release/release_lokal.sh "$VERSION" --probe --schluessel "$RUNNER_TEMP/kette/release.key" \
+            --zertifikat "$RUNNER_TEMP/kette/release.crt" --roots "$RUNNER_TEMP/kette/root.crt" \
+            --aus "$RUNNER_TEMP/out"
+  gate:
+    needs: ci
+    # Kein "environment:" und kein Schreibrecht: dieser Job fuehrt Root-Code aus (siblings.sh, release_gate.py).
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       dryrun: ${{ steps.gate.outputs.dryrun }}
       title: ${{ steps.gate.outputs.title }}
-      version: ${{ steps.version.outputs.version }}
-    services:
-      # Nur fuer -dryrun genutzt (localhost:5000); Multi-Arch-Index-Digest wie in tests/test_gateway_updater.sh.
-      registry:
-        image: registry:2@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373
-        ports: ["5000:5000"]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Image-Adressen pruefen (eigene Zone, keine IP, keine AWS-Adresse)
-        env:
-          API_URL: ${{ vars.SHG_DEVICE_API_URL || 'https://accounts.hartfussha.org' }}
-          PORTAL_URL: ${{ vars.SHG_PORTAL_BASE_URL }}
-        run: |
-          source gateway/image/own_url.sh
-          bad=0
-          for name in API_URL PORTAL_URL; do
-            if [ "$name" = PORTAL_URL ] && [ -z "$PORTAL_URL" ]; then continue; fi
-            if why="$(shg_own_url_problem "${!name}")"; then
-              echo "$name ist zulaessig"
-            else
-              echo "::error::$name ist ungueltig: $why. Erlaubt ist nur $(shg_own_url_hint) (Repo-Variable SHG_DEVICE_API_URL / SHG_PORTAL_BASE_URL pruefen)."
-              bad=1
-            fi
-          done
-          exit "$bad"
+      # Zweite Linie neben dem Tag-Ruleset (Pflicht-Signatur): SSH-Signatur des Tags gegen .github/allowed_signers aus
+      # origin/main. Vor allem anderen; die Pruefung kommt bewusst aus diesem Repo, nicht aus dem Root-Repo (siblings.sh
+      # klont Root an einem Branch, der wie der Tag heisst).
+      - name: Signatur des Tags pruefen
+        run: bash scripts/ci/tag_pruefen.sh "$GITHUB_REF_NAME" "$GITHUB_SHA"
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
@@ -77,175 +92,75 @@ jobs:
         env:
           CROSS_REPO_TOKEN: ${{ secrets.CROSS_REPO_TOKEN }}
         run: bash scripts/ci/siblings.sh "$RUNNER_TEMP/dev" "$SELF" "$GITHUB_WORKSPACE" "$GITHUB_REF_NAME"
-      # release_gate.py braucht PyYAML; build_bundle.py und smartheat_host.minisign zusaetzlich cryptography.
-      - run: pip install --require-hashes -r gateway/release/requirements.txt
-      - run: mkdir -p "$RUNNER_TEMP/out"
+      # release_gate.py braucht nur PyYAML, installiert aus dem Hash-Lock.
+      - run: pip install --require-hashes --no-deps -r "$DEV_ROOT/tools/release/requirements.txt"
       - name: Freigabe pruefen
         id: gate
         run: >-
           python "$DEV_ROOT/tools/release_gate.py" --kind "$KIND" --repo "$GITHUB_WORKSPACE"
-          --tag "$GITHUB_REF_NAME" --sha "$GITHUB_SHA" --main-ref origin/main --notes-out "$RUNNER_TEMP/out/notes.md"
-      - name: Version aus dem Tag
-        id: version
-        run: |
-          v="${GITHUB_REF_NAME#gateway-v}"
-          echo "version=${v%-dryrun}" >> "$GITHUB_OUTPUT"
-      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+          --tag "$GITHUB_REF_NAME" --sha "$GITHUB_SHA" --main-ref origin/main --notes-out "$RUNNER_TEMP/notes.md"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          # Host-Netz, damit der Builder die Job-Registry unter localhost:5000 erreicht (nur -dryrun).
-          driver-opts: network=host
-      - name: Bei ghcr anmelden
-        if: steps.gate.outputs.dryrun == 'false'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_ACTOR: ${{ github.actor }}
-        run: echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
-      - name: Image bauen und pushen
-        id: image
-        env:
-          DRYRUN: ${{ steps.gate.outputs.dryrun }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          target="$IMAGE"
-          [ "$DRYRUN" = true ] && target="localhost:5000/smartheat-gateway"
-          docker buildx build --platform linux/amd64,linux/arm64 -f gateway/Dockerfile --push \
-            -t "$target:$VERSION" --metadata-file "$RUNNER_TEMP/meta.json" .
-          digest="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["containerimage.digest"])' \
-            "$RUNNER_TEMP/meta.json")"
-          echo "ref=$target@$digest" >> "$GITHUB_OUTPUT"
-      - name: Bundle bauen
-        env:
-          REF: ${{ steps.image.outputs.ref }}
-          VERSION: ${{ steps.version.outputs.version }}
-          PYTHONPATH: gateway/host:gateway/src
-        run: >-
-          python gateway/release/build_bundle.py
-          --compose gateway/compose/docker-compose.yml --mosquitto-conf gateway/compose/mosquitto.conf
-          --image "$REF" --version "$VERSION" --out "$RUNNER_TEMP/out/bundle"
-      - name: Probelauf - Bundle mit Wegwerf-Schluessel signieren und pruefen
-        if: steps.gate.outputs.dryrun == 'true'
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq minisign
-          bash gateway/release/sign_bundle.sh "$RUNNER_TEMP/out/bundle" "$VERSION" "$RUNNER_TEMP/test.pub" --dryrun
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: gateway-bundle
-          path: ${{ runner.temp }}/out
+          name: release-notiz
+          path: ${{ runner.temp }}/notes.md
           if-no-files-found: error
-          # Der Job sign wartet auf die Freigabe der Environment "release" (Pflicht-Reviewer).
-          retention-days: 7
-      - name: Probelauf-Hinweis
-        if: steps.gate.outputs.dryrun == 'true'
-        run: >-
-          echo "::notice::Probelauf gruen - kein Push nach ghcr, kein Release, main unveraendert.
-          Tag jetzt loeschen (Runbook 'Probelauf')."
-  sign:
-    needs: build
-    if: needs.build.outputs.dryrun == 'false'
-    # Nur dieser Job sieht die Signier-Secrets (Environment "release") und schreibt (main per Fast-Forward, Release).
-    # Er fuehrt nur Skripte aus dem getaggten Commit aus; das Bundle aus dem Artefakt ist Daten: sign_bundle.sh baut es
-    # mit build_bundle.py aus diesem Checkout und dem Gateway-Digest aus dem Manifest neu und signiert nur bei
-    # byte-gleichem Ergebnis (verify_bundle.py; Python-Schritte ohne die Secrets im Environment).
-    # Version, Titel und Notizen aus Tag und Checkout, nie aus Ausgaben von build: build fuehrt Fremdcode aus.
+          retention-days: 1
+  main:
+    needs: [gate, probe]
+    # Schreibt main per Fast-Forward und legt die Release-Notiz an. Das Environment `release` haelt den Lauf bis zur
+    # Freigabe des Reviewers an (Runbook H-1). Kein Root-Code, kein CROSS_REPO_TOKEN: das Gate lief im Job `gate`.
     environment: release
     permissions:
       contents: write
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    outputs:
-      version: ${{ steps.tag.outputs.version }}
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+          persist-credentials: false
+      # Zweite Linie neben dem Tag-Ruleset (Pflicht-Signatur): SSH-Signatur des Tags gegen .github/allowed_signers aus
+      # origin/main. Vor allem anderen, auch vor dem Token-Schritt; das Skript kommt aus diesem Repo.
+      - name: Signatur des Tags pruefen
+        run: bash scripts/ci/tag_pruefen.sh "$GITHUB_REF_NAME" "$GITHUB_SHA"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          python-version: "3.12"
-      - name: Version, Titel und Notizen aus dem Tag (nicht aus dem Job build, Audit 4 A4-36)
-        id: tag
-        run: |
-          v="${GITHUB_REF_NAME#gateway-v}"
-          [[ $v =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Tag $GITHUB_REF_NAME ist keine Gateway-Version"; exit 1; }
-          [ "$v" = "$(tr -d '[:space:]' < gateway/VERSION)" ] || { echo "::error::Tag $v passt nicht zu gateway/VERSION"; exit 1; }
-          python3 gateway/release/changelog_section.py gateway/CHANGELOG.md "$v" > "$RUNNER_TEMP/notes.md"
-          echo "version=$v" >> "$GITHUB_OUTPUT"
-      - run: pip install --require-hashes -r gateway/release/requirements.txt
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq minisign
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: gateway-bundle
-          path: ${{ runner.temp }}/out
-      - name: Bundle per Neubau pruefen, signieren und gegen release.pub verifizieren
+          name: release-notiz
+          path: ${{ runner.temp }}/ergebnis
+      # Die Ausgaben des Gates sind Daten aus Root-Code: nur bekannte Formen, dryrun muss zum Tag passen (ein
+      # -dryrun-Tag schreibt nie, auch wenn das Gate etwas anderes meldet).
+      - name: Ausgaben des Gates pruefen
+        id: gate
         env:
-          VERSION: ${{ steps.tag.outputs.version }}
-          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
-          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
-        run: bash gateway/release/sign_bundle.sh "$RUNNER_TEMP/out/bundle" "$VERSION" gateway/host/release.pub
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: gateway-bundle-signed
-          path: ${{ runner.temp }}/out
-          if-no-files-found: error
-          retention-days: 7
+          DRYRUN: ${{ needs.gate.outputs.dryrun }}
+          TITLE: ${{ needs.gate.outputs.title }}
+        run: |
+          [[ $DRYRUN =~ ^(true|false)$ ]] || { echo "::error::Gate meldet dryrun=$DRYRUN"; exit 1; }
+          form='^[A-Za-z0-9._ -]{1,80}$'
+          [[ $TITLE =~ $form ]] || { echo "::error::Gate meldet einen unzulaessigen Titel"; exit 1; }
+          erwartet=false
+          if [[ $GITHUB_REF_NAME == *-dryrun ]]; then erwartet=true; fi
+          [ "$DRYRUN" = "$erwartet" ] || { echo "::error::Gate meldet dryrun=$DRYRUN, der Tag $GITHUB_REF_NAME verlangt $erwartet"; exit 1; }
+          [ -f "$RUNNER_TEMP/ergebnis/notes.md" ] && [ ! -L "$RUNNER_TEMP/ergebnis/notes.md" ] \
+            || { echo "::error::Release-Notiz fehlt"; exit 1; }
+          echo "dryrun=$DRYRUN" >> "$GITHUB_OUTPUT"
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+      # Der Token steht nur in den beiden folgenden Schritten.
       - name: main per Fast-Forward nachziehen
-        run: git push origin "$GITHUB_SHA:refs/heads/main"
-      - name: GitHub-Release anlegen
+        if: steps.gate.outputs.dryrun == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
-          TITLE: gateway ${{ steps.tag.outputs.version }}
+        run: git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA:refs/heads/main"
+      - name: GitHub-Release anlegen (Notiz ohne Dateien)
+        if: steps.gate.outputs.dryrun == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: ${{ steps.gate.outputs.title }}
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             echo "Release $GITHUB_REF_NAME existiert bereits"; exit 0
           fi
-          bundle="$RUNNER_TEMP/out/bundle"
-          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$TITLE" --notes-file "$RUNNER_TEMP/notes.md" \
-            "$bundle/docker-compose.yml" "$bundle/mosquitto.conf" "$bundle/manifest.json" "$bundle/manifest.json.minisig"
-  image:
-    # Basis-Image: nur nach dem echten Signieren (nie im -dryrun, siehe Kopfkommentar); ohne
-    # Repo-Variable SHG_PORTAL_BASE_URL (Portal-Hostname) uebersprungen. Keine Secrets, nur Leserechte. Die Repo-Variable
-    # SHG_DEVICE_API_URL wird nur durchgereicht; image-gateway.yml prueft sie vor dem Bau (eigener DNS-Name).
-    needs: [build, sign]
-    if: >-
-      ${{ !cancelled() && needs.build.result == 'success' && vars.SHG_PORTAL_BASE_URL != '' &&
-      needs.sign.result == 'success' }}
-    permissions:
-      contents: read
-    uses: ./.github/workflows/image-gateway.yml
-    with:
-      artifact: gateway-bundle-signed
-      device_api_url: ${{ vars.SHG_DEVICE_API_URL || 'https://accounts.hartfussha.org' }}
-      portal_base_url: ${{ vars.SHG_PORTAL_BASE_URL }}
-  attach-image:
-    # Haengt das Image an das GitHub-Release (nur echtes Release); fuehrt keinen Repo-Code aus.
-    needs: [build, sign, image]
-    if: ${{ needs.build.outputs.dryrun == 'false' && needs.image.result == 'success' }}
-    permissions:
-      contents: write
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: gateway-image
-          path: ${{ runner.temp }}/image
-      - name: Image an das Release haengen
-        # Das Artefakt stammt aus dem Job image (Fremdcode beim Bau): nur genau die zwei erwarteten Dateien, nichts sonst,
-        # und --clobber gilt nur fuer genau diese zwei Namen (nie fuer signierte Release-Assets).
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.sign.outputs.version }}
-        run: |
-          [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Version ungueltig"; exit 1; }
-          dir="$RUNNER_TEMP/image"
-          img="smartheat-gateway-$VERSION.img.zst"
-          sum="$img.sha256"
-          expected="$(printf '%s\n%s\n' "$img" "$sum" | sort)"
-          actual="$(cd "$dir" && find . -mindepth 1 -printf '%P\n' | sort)"
-          if [ "$actual" != "$expected" ] || [ ! -f "$dir/$img" ] || [ -L "$dir/$img" ] || [ ! -f "$dir/$sum" ] || [ -L "$dir/$sum" ]; then
-            echo "::error::Image-Artefakt enthaelt nicht genau $img und $sum"
-            exit 1
-          fi
-          gh release upload "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" "$dir/$img" "$dir/$sum" --clobber
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "$TITLE" --notes-file "$RUNNER_TEMP/ergebnis/notes.md"
+      - name: Probelauf-Hinweis
+        if: steps.gate.outputs.dryrun == 'true'
+        run: echo "::notice::Probelauf gruen - main unveraendert, kein Release. Tag jetzt loeschen (Runbook 'Probelauf')."

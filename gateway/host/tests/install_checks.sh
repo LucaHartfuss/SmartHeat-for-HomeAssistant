@@ -20,11 +20,28 @@ nft_syntax_check() {  # $1 = Fehlermeldung
   echo "$out"; fail "$1"
 }
 SRC=/src/gateway/host
-# Release-Bundles bringen manifest.json.minisig mit, die Fixture nicht: die Laeufe mit Pilot-SSH nutzen eine Kopie mit
+# Release-Bundles bringen manifest.json.sig mit, die Fixture nicht: die Laeufe mit Pilot-SSH nutzen eine Kopie mit
 # Signatur, die ohne Pilot-SSH die Fixture selbst (Signatur optional).
 SIGNED_BUNDLE=/tmp/bundle-signed
 cp -r "$SRC/tests/fixtures/bundle" "$SIGNED_BUNDLE"
-printf 'untrusted comment: signature from minisign secret key\ntest-signatur\n' >"$SIGNED_BUNDLE/manifest.json.minisig"
+# Signaturtext mit einem echten Zertifikat (notBefore 2026-03-01): install.sh setzt daraus die Untergrenze (M-2). Die
+# Signatur selbst prueft der Installer nicht, der Updater tut es.
+python3 - "$SIGNED_BUNDLE/manifest.json.sig" <<'PYEOF'
+import json, sys
+from datetime import UTC, datetime, timedelta
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+key = ec.generate_private_key(ec.SECP256R1())
+name = x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, "Test Release")])
+von = datetime(2026, 3, 1, tzinfo=UTC)
+cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+        .serial_number(x509.random_serial_number()).not_valid_before(von).not_valid_after(von + timedelta(days=90))
+        .sign(key, hashes.SHA256()))
+text = {"format": "smartheat-kette-1", "zertifikat": cert.public_bytes(serialization.Encoding.PEM).decode(),
+        "signatur": "AA=="}
+open(sys.argv[1], "w").write(json.dumps(text))
+PYEOF
 ARGS=(--no-docker --no-activate --device-api-url https://api.example.test --root /var/lib/smartheat
       --bundle "$SIGNED_BUNDLE" --pilot-ssh "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAItest test-key")
 # Aelterer Installer-Stand: smartheat.conf (statt 00-smartheat.conf) muss beim Lauf verschwinden.
@@ -78,7 +95,7 @@ grep -q "/var/lib/smartheat/host/zigbee_adapter" /etc/udev/rules.d/99-smartheat-
 [ "$(stat -c '%u:%g' /var/lib/smartheat/data)" = "1000:1000" ] || fail "data gehoert nicht uid 1000"
 grep -q '^SHG_DEVICE_API_URL=https://api.example.test$' /var/lib/smartheat/host/gateway.env || fail "gateway.env"
 grep -q '"current": "0.2.0"' /var/lib/smartheat/updater/state.json || fail "erstes Bundle nicht als current"
-for name in docker-compose.yml mosquitto.conf manifest.json manifest.json.minisig; do
+for name in docker-compose.yml mosquitto.conf manifest.json manifest.json.sig; do
   cmp -s "$SIGNED_BUNDLE/$name" "/var/lib/smartheat/bundles/0.2.0/$name" || fail "Bundle-Ordner ohne $name (Spec 2.2)"
 done
 dpkg-query -W -f='${Status}' ca-certificates 2>/dev/null | grep -q "install ok installed" \
@@ -86,7 +103,7 @@ dpkg-query -W -f='${Status}' ca-certificates 2>/dev/null | grep -q "install ok i
 grep -q "WARNUNG: ohne --pilot-ssh" /tmp/run1.log && fail "SSH-Warnung trotz --pilot-ssh"
 [ "$(stat -c '%a' /root/.ssh/authorized_keys)" = "600" ] || fail "authorized_keys"
 PYTHONPATH=/opt/smartheat/host python3 -c "import smartheat_host.updater, smartheat_host.led, \
-  smartheat_host.hoststatus, smartheat_host.minisign, smartheat_core.dateien" \
+  smartheat_host.hoststatus, smartheat_host.kette, smartheat_core.dateien" \
   || fail "Host-Dienste mit dem System-Python nicht importierbar"
 PYTHONPATH=/opt/smartheat/host python3 -c "
 from pathlib import Path
@@ -94,14 +111,29 @@ from smartheat_host import updater
 state = updater.State.load(Path('/var/lib/smartheat/updater/state.json'))
 assert state.current == '0.2.0' and state.previous is None and state.rejected == [] and state.in_progress is None, state" \
   || fail "state.json laesst sich nicht mit updater.State.load lesen"
+# M-2: das Erstbundle setzt die Untergrenze aus dem notBefore seines Zertifikats; ohne Signatur (Fixture) bleibt sie leer.
 PYTHONPATH=/opt/smartheat/host python3 -c "
-from smartheat_host import minisign
+from pathlib import Path
+from smartheat_host import updater
+state = updater.State.load(Path('/var/lib/smartheat/updater/state.json'))
+assert state.zertifikat_untergrenze == '2026-03-01T00:00:00+00:00', state.zertifikat_untergrenze" \
+  || fail "state.json ohne zertifikat_untergrenze aus dem Zertifikat des Erstbundles"
+# Eine Signatur ohne lesbares Zertifikat bricht den Installer laut ab und legt keinen Zustand an.
+BAD_BUNDLE=/tmp/bundle-badsig
+cp -r "$SRC/tests/fixtures/bundle" "$BAD_BUNDLE"
+printf '{"format": "smartheat-kette-1", "test": true}\n' >"$BAD_BUNDLE/manifest.json.sig"
+if bash "$SRC/install.sh" --no-docker --no-activate --device-api-url https://api.example.test --root /var/lib/smartheat-bad \
+     --bundle "$BAD_BUNDLE" >/tmp/bad.log 2>&1; then fail "Signatur ohne Zertifikat: Installer lief durch"; fi
+grep -q "kein lesbares Zertifikat" /tmp/bad.log || { cat /tmp/bad.log; fail "Signatur ohne Zertifikat: keine klare Meldung"; }
+[ ! -e /var/lib/smartheat-bad/updater/state.json ] || fail "Signatur ohne Zertifikat: state.json angelegt"
+PYTHONPATH=/opt/smartheat/host python3 -c "
+from smartheat_host import kette
 try:
-    minisign.load_public_key(open('/opt/smartheat/host/release.pub').read())
-except minisign.SignatureError as error:
+    kette.load_roots(open('/opt/smartheat/host/release-roots.pem').read())
+except kette.SignatureError as error:
     assert 'Platzhalter' in str(error)
 else:
-    raise SystemExit('Platzhalter nicht erkannt')" || fail "release.pub-Platzhalter"
+    raise SystemExit('Platzhalter nicht erkannt')" || fail "release-roots.pem-Platzhalter"
 # Ohne --pilot-ssh: Drop-in weg, kein Port 22 in der Firewall; danach ist ein weiterer Lauf wieder ein No-op.
 ARGS_NOPILOT=(--no-docker --no-activate --device-api-url https://api.example.test --root /var/lib/smartheat
               --bundle "$SRC/tests/fixtures/bundle")

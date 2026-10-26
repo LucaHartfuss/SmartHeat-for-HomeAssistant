@@ -1,5 +1,35 @@
 # Changelog SmartHeat-Gateway
 
+## 0.8.0
+
+- Signierte Auslieferung (AP-04): Der Updater prueft das Manifest mit einer X.509-Kette (`release-roots.pem`,
+  Release-Zertifikat mit `codeSigning`, ECDSA P-256) statt mit minisign, versucht ein Update nur mit synchroner Uhr
+  (`wartet_auf_zeit`, sonst ohne Abruf und ohne Ablehnung) und lehnt Zertifikate ab, die aelter sind als das juengste
+  angenommene (Widerruf eines gestohlenen Schluessels). `rejected` fuehrt `<Version>@<SHA-256 ueber Fingerabdruck des
+  Release-Zertifikats + manifest_sha256>`: eine mit einem anderen Zertifikat neu signierte Fassung oder ein anderes
+  Manifest derselben Version wird wieder versucht, anderer Leerraum im Signaturtext oder die zweite ECDSA-Form
+  (s -> n - s) ergeben keine neue Kennung. `install.sh` setzt die Zertifikat-Untergrenze beim Anlegen von `state.json`
+  aus dem `notBefore` des Zertifikats im mitgelieferten Bundle (eine Signatur ohne lesbares Zertifikat bricht den
+  Installer ab). Die Signaturdatei heisst `manifest.json.sig`.
+- Das eigene Image kommt als OCI-Archiv im Bundle (Manifest-Feld `archiv`: `gateway-image.oci.tar`, SHA-256, Groesse bis
+  512 MiB, Name `smartheat-gateway`, Index-Digest) statt aus GHCR. Der Updater holt es nach der Kettenpruefung (Frist
+  60 s plus Groesse bei mindestens 2 Mbit/s, Fortsetzen nach einem Abbruch per HTTP-Range, Ablage unter
+  `archive/<Version>.oci.tar`), prueft Groesse und SHA-256, laedt es mit `docker load` (Frist 600 s) und verlangt, dass der
+  Docker `smartheat-gateway@<Index-Digest>` kennt (sonst `manifest_ungueltig`); danach wird das Archiv geloescht. Ist
+  das Image schon da, wird nichts geholt. Die Compose-Datei nennt es mit `pull_policy: never`; `check_compose` erlaubt
+  `never` nur fuer genau dieses Image. Der Rueckweg braucht kein Netz: `prune` behaelt das Image der vorigen Version.
+- Das Release wird am Betreiberrechner gebaut, signiert und per `scp` in die eigene Ablage geladen
+  (`gateway/release/release_lokal.sh`, Schluessel auf einem Hardware-Token). Das Skript prueft den Tag gegen
+  `.github/allowed_signers` aus `origin/main` (nicht aus dem Checkout), erzeugt das CycloneDX-SBOM des Archivs neben dem
+  Bundle (gepinnter syft-Container) und lehnt mit `--probe` einen `pkcs11:`-Schluessel und den Standard-Schluesselbund ab.
+  Die CI baut und signiert nichts mehr: der Workflow `release-gateway.yml` prueft nur (volle CI, Probelauf mit
+  Wegwerf-Kette, Gate in einem eigenen Job ohne Schreibrecht, Tag-Signatur) und rueckt `main` per Fast-Forward vor, ohne im
+  Job mit Schreibrecht Code aus dem Root-Repo auszufuehren; das Release auf GitHub ist eine Notiz ohne Dateien. Der Workflow `image-gateway.yml` und
+  `release.pub` entfallen (das Werks-Image baut kuenftig ebenfalls der Betreiber lokal). Das Gate prueft
+  `gateway/host/release-roots.pem` auf den Platzhalter.
+- `min_updater_version` der Bundles ist 0.8.0 (neues Manifest-Format, aeltere Updater lehnen es als `updater_zu_alt` ab).
+  Der Erststart laedt mit demselben `docker load` mit Frist (`bundles.docker_load`).
+
 ## 0.7.0
 
 - `certifi` 2026.10.19 statt 2026.7.22 (Sicherheitsmeldung GHSA-6q48-6c7w-9gw2: kompromittierte emSign-Root-CAs im

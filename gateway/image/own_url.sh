@@ -7,8 +7,8 @@
 # .lan, localhost, Reverse-DNS), keine Zugangsdaten (@), kein Port, kein Pfad, keine Query. So zeigt jedes Geraet auf
 # einen Namen, den wir selbst umziehen koennen (AWS-Umzug ohne neues Image). Die Denylist bleibt neben der Allowlist
 # bestehen (Tiefenverteidigung, z. B. x.amazonaws.com.<eigene Zone>). Einzige Quelle der Regel: per source eingebunden
-# von prepare.sh, make_image.sh, rootfs_checks.sh und den Fail-fast-Schritten von image-gateway.yml und
-# release-gateway.yml. Unabhaengig von der Locale des Aufrufers (LC_ALL=C nur in der Funktion): unter UTF-8-Locales
+# von prepare.sh, make_image.sh, rootfs_checks.sh und den Fail-fast-Schritten der Image-Werkzeuge (AP-05a) und
+# der Release-Pruefung. Unabhaengig von der Locale des Aufrufers (LC_ALL=C nur in der Funktion): unter UTF-8-Locales
 # traefen Bereiche wie [a-z] sonst auch Nicht-ASCII (Vollbreite, Umlaute).
 
 # Eigene DNS-Zonen (klein geschrieben, ohne Punkt am Ende). Einzige Stelle fuer die Allowlist.

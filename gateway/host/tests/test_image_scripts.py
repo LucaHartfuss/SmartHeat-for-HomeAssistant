@@ -1,7 +1,6 @@
 """Image-Bau-Skripte ohne Docker: prepare.sh und make_image.sh lehnen fremde Adressen (IP, AWS,
 http, Port, Pfad) ab, bevor sie etwas tun; prepare.sh legt mit einer Docker-Attrappe die Stage richtig an; Layer,
 Konfiguration und Installer passen zusammen (alle Pakete aus dem Layer, kein apt im chroot)."""
-import base64
 import os
 import re
 import stat
@@ -10,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from kette_helper import root, roots_pem
 from test_boundaries import SHIPPED, SHIPPED_CORE, TENANT_ID
 
 GW = Path(__file__).resolve().parents[2]
@@ -32,7 +32,7 @@ all="$*"; printf '%s\\n' "${all//$'\\n'/ }" >>"$SHG_FAKE_LOG"  # ein Aufruf = ei
 stage=""
 for arg in "$@"; do case "$arg" in *:/stage|*:/stage:ro) stage="${arg%%:/stage*}" ;; esac; done
 if [ -n "$stage" ] && [ "${*: -1}" = "/src/gateway/image/build.sh" ] && [ -n "${SHG_FAKE_RELEASE_COPY:-}" ]; then
-  cp "$stage/installer/gateway/host/release.pub" "$SHG_FAKE_RELEASE_COPY"  # was der Build als Schluessel sieht
+  cp "$stage/installer/gateway/host/release-roots.pem" "$SHG_FAKE_RELEASE_COPY"  # was der Build als Schluesselbund sieht
 fi
 if [ -n "$stage" ] && [ "${*: -1}" != "/src/gateway/image/build.sh" ]; then
   n=0; seen=0
@@ -53,7 +53,7 @@ def _bundle(path: Path) -> Path:
     (path / "docker-compose.yml").write_text(compose)
     (path / "mosquitto.conf").write_text("listener 1883\n")
     (path / "manifest.json").write_text('{"version": "0.3.0"}\n')
-    (path / "manifest.json.minisig").write_text("sig\n")
+    (path / "manifest.json.sig").write_text("sig\n")
     return path
 
 
@@ -135,9 +135,9 @@ def test_prepare_refuses_a_stage_that_is_not_empty(tmp_path):
 
 def test_prepare_rejects_an_incomplete_bundle(tmp_path):
     bundle = _bundle(tmp_path / "b")
-    (bundle / "manifest.json.minisig").unlink()
+    (bundle / "manifest.json.sig").unlink()
     result = _script("prepare.sh", tmp_path, "--bundle", str(bundle), "--stage", str(tmp_path / "s"), *GOOD)
-    assert result.returncode == 2 and "manifest.json.minisig" in result.stderr
+    assert result.returncode == 2 and "manifest.json.sig" in result.stderr
 
 
 @pytest.mark.parametrize("pilot", [False, True])
@@ -159,7 +159,7 @@ def test_prepare_builds_the_stage(tmp_path, pilot):
             (installer / "src" / "smartheat_core").rglob("*") if p.is_file()}
     assert core == set(SHIPPED_CORE)
     assert (installer / "VERSION").read_text() == (GW / "VERSION").read_text()
-    for name in ("docker-compose.yml", "mosquitto.conf", "manifest.json", "manifest.json.minisig"):
+    for name in ("docker-compose.yml", "mosquitto.conf", "manifest.json", "manifest.json.sig"):
         assert (stage / "bundle" / name).is_file(), name
     # jedes Image genau einmal exportiert (init und runtime teilen sich das Gateway-Image)
     assert sorted(p.read_text() for p in (stage / "images").glob("*.tar")) == sorted([GATEWAY, MOSQ])
@@ -532,11 +532,9 @@ def test_layer_runs_the_wlan_hook_before_customize():
         '- bash "$IGconf_shg_stage/installer/gateway/image/customize.sh"')
 
 
-def _minisign_pub(path: Path, seed: int = 7) -> Path:
-    """Oeffentlicher Schluessel im minisign-Format: 'Ed' + 8 Byte Schluessel-ID + 32 Byte Schluessel (42 Byte, 56
-    Zeichen Base64, beginnend mit RW)."""
-    raw = b"Ed" + bytes([seed]) * 8 + bytes([seed + 1]) * 32
-    path.write_text(f"untrusted comment: minisign public key {seed:02X}\n{base64.b64encode(raw).decode()}\n")
+def _roots_pem(path: Path, *namen: str) -> Path:
+    """Schluesselbund (PEM) mit je einer selbstsignierten Root je Name (Standard: eine)."""
+    path.write_text(roots_pem(*(root(cn=name)[1] for name in namen or ("Labor Root",))))
     return path
 
 
@@ -544,105 +542,117 @@ def _tree(root: Path) -> dict[str, bytes]:
     return {str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
 
 
-_RELEASE_PUB = Path("installer/gateway/host/release.pub")
+_RELEASE_ROOTS = Path("installer/gateway/host/release-roots.pem")
 
 
-def test_release_pub_defaults_to_the_shipped_key(tmp_path):
+def test_release_roots_defaults_to_the_shipped_bundle(tmp_path):
     stage = tmp_path / "stage"
     result = _script("prepare.sh", tmp_path, "--bundle", str(_bundle(tmp_path / "b")), "--stage", str(stage), *GOOD)
     assert result.returncode == 0, result.stderr
-    assert (stage / _RELEASE_PUB).read_bytes() == (GW / "host" / "release.pub").read_bytes()
+    assert (stage / _RELEASE_ROOTS).read_bytes() == (GW / "host" / "release-roots.pem").read_bytes()
 
 
-def test_release_pub_option_replaces_only_that_file(tmp_path):
-    mine = _minisign_pub(tmp_path / "labor.pub")
+def test_release_roots_option_replaces_only_that_file(tmp_path):
+    mine = _roots_pem(tmp_path / "labor.pem")
     bundle = _bundle(tmp_path / "b")
     plain, labor = tmp_path / "plain", tmp_path / "labor"
     assert _script("prepare.sh", tmp_path, "--bundle", str(bundle), "--stage", str(plain), *GOOD).returncode == 0
     result = _script("prepare.sh", tmp_path, "--bundle", str(bundle), "--stage", str(labor), *GOOD,
-                     "--release-pub", str(mine))
+                     "--release-roots", str(mine))
     assert result.returncode == 0, result.stderr
-    assert (labor / _RELEASE_PUB).read_bytes() == mine.read_bytes() != (plain / _RELEASE_PUB).read_bytes()
+    assert (labor / _RELEASE_ROOTS).read_bytes() == mine.read_bytes() != (plain / _RELEASE_ROOTS).read_bytes()
     before, after = _tree(plain), _tree(labor)
-    before.pop(str(_RELEASE_PUB)), after.pop(str(_RELEASE_PUB))
+    before.pop(str(_RELEASE_ROOTS)), after.pop(str(_RELEASE_ROOTS))
     assert after == before  # nichts sonst aendert sich (Installer, Bundle, Images, install.args)
 
 
-def _bad_release_pubs(tmp_path: Path) -> dict[str, Path]:
-    good = _minisign_pub(tmp_path / "gut.pub").read_text().splitlines()
+def test_release_roots_option_takes_a_bundle_of_several_roots(tmp_path):
+    mine = _roots_pem(tmp_path / "zwei.pem", "Erste Root", "Zweite Root")
+    result = _script("prepare.sh", tmp_path, "--bundle", str(_bundle(tmp_path / "b")), "--stage",
+                     str(tmp_path / "stage"), *GOOD, "--release-roots", str(mine))
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "stage" / _RELEASE_ROOTS).read_bytes() == mine.read_bytes()
+
+
+def _bad_release_roots(tmp_path: Path) -> dict[str, Path]:
+    good = _roots_pem(tmp_path / "gut.pem").read_text()
+    body = good.splitlines()[1]
     cases = {
-        "fehlt": tmp_path / "gibt-es-nicht.pub",
+        "fehlt": tmp_path / "gibt-es-nicht.pem",
         "verzeichnis": tmp_path,
         "leer": "",
-        "platzhalter": (GW / "host" / "release.pub"),
-        "eine-zeile": good[0] + "\n",
-        "nur-schluessel": good[1] + "\n",
-        "kommentar-falsch": "comment: x\n" + good[1] + "\n",
-        "schluessel-zu-kurz": good[0] + "\n" + good[1][:-4] + "\n",
-        "schluessel-zu-lang": good[0] + "\n" + good[1] + "AAAA\n",
-        "kein-ed": good[0] + "\n" + "RX" + good[1][2:] + "\n",
-        "kein-base64": good[0] + "\n" + good[1][:-1] + "!\n",
-        "drei-zeilen": "\n".join([*good, good[1]]) + "\n",
-        "schluessel-mit-leerzeichen": good[0] + "\n" + good[1] + " x\n",
+        "nur-leerzeilen": "\n\n",
+        "platzhalter": (GW / "host" / "release-roots.pem"),
+        "minisign-schluessel": "untrusted comment: minisign public key\nRWQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n",
+        "privater-schluessel": good.replace("CERTIFICATE", "PRIVATE " + "KEY"),  # Armor eines Schluessels statt Zertifikat
+        "begin-ohne-end": good.replace("-----END CERTIFICATE-----\n", ""),
+        "end-ohne-begin": good.replace("-----BEGIN CERTIFICATE-----\n", ""),
+        "leerer-koerper": "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n",
+        "kein-base64": good.replace(body, body[:-3] + "!!!"),
+        "text-davor": "Root von Hand\n" + good,
+        "text-danach": good + "Ende\n",
+        "verschachtelt": good.replace("-----END CERTIFICATE-----\n", "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n"),
+        "zweites-ohne-ende": good + good.splitlines()[0] + "\n" + body + "\n",
     }
     out = {}
     for name, value in cases.items():
         if isinstance(value, Path):
             out[name] = value
         else:
-            out[name] = tmp_path / f"{name}.pub"
+            out[name] = tmp_path / f"{name}.pem"
             out[name].write_text(value)
     return out
 
 
-@pytest.mark.parametrize("name", ["fehlt", "verzeichnis", "leer", "platzhalter", "eine-zeile", "nur-schluessel",
-                                  "kommentar-falsch", "schluessel-zu-kurz", "schluessel-zu-lang", "kein-ed",
-                                  "kein-base64", "drei-zeilen", "schluessel-mit-leerzeichen"])
-def test_release_pub_rejects_files_that_are_no_minisign_public_key(tmp_path, name):
-    bad = _bad_release_pubs(tmp_path)[name]
+@pytest.mark.parametrize("name", ["fehlt", "verzeichnis", "leer", "nur-leerzeilen", "platzhalter",
+                                  "minisign-schluessel", "privater-schluessel", "begin-ohne-end", "end-ohne-begin",
+                                  "leerer-koerper", "kein-base64", "text-davor", "text-danach", "verschachtelt",
+                                  "zweites-ohne-ende"])
+def test_release_roots_rejects_files_that_are_no_certificate_bundle(tmp_path, name):
+    bad = _bad_release_roots(tmp_path)[name]
     stage, out = tmp_path / "stage", tmp_path / "out"
     result = _script("prepare.sh", tmp_path, "--bundle", str(_bundle(tmp_path / "b")), "--stage", str(stage), *GOOD,
-                     "--release-pub", str(bad))
-    assert result.returncode == 2 and "FEHLER: --release-pub:" in result.stderr, result.stderr
+                     "--release-roots", str(bad))
+    assert result.returncode == 2 and "FEHLER: --release-roots:" in result.stderr, result.stderr
     assert not stage.exists() and _docker_calls(tmp_path) == []
     result = _script("make_image.sh", tmp_path, "--bundle", str(tmp_path / "b"), "--out", str(out), *GOOD,
-                     "--release-pub", str(bad))
-    assert result.returncode == 2 and "FEHLER: --release-pub:" in result.stderr, result.stderr
+                     "--release-roots", str(bad))
+    assert result.returncode == 2 and "FEHLER: --release-roots:" in result.stderr, result.stderr
     assert not out.exists() and _docker_calls(tmp_path) == []
 
 
 @pytest.mark.parametrize("script, args", [("prepare.sh", ["--stage", "s"]), ("make_image.sh", ["--out", "o"])])
-def test_release_pub_needs_a_value(tmp_path, script, args):
-    result = _script(script, tmp_path, "--bundle", str(_bundle(tmp_path / "b")), *args, *GOOD, "--release-pub")
-    assert result.returncode == 2 and "--release-pub braucht einen Wert" in result.stderr
+def test_release_roots_needs_a_value(tmp_path, script, args):
+    result = _script(script, tmp_path, "--bundle", str(_bundle(tmp_path / "b")), *args, *GOOD, "--release-roots")
+    assert result.returncode == 2 and "--release-roots braucht einen Wert" in result.stderr
     assert _docker_calls(tmp_path) == []
 
 
-def test_make_image_passes_release_pub_to_prepare(tmp_path):
-    mine = _minisign_pub(tmp_path / "labor.pub")
-    seen = tmp_path / "seen.pub"
+def test_make_image_passes_release_roots_to_prepare(tmp_path):
+    mine = _roots_pem(tmp_path / "labor.pem")
+    seen = tmp_path / "seen.pem"
     env_before = _env(tmp_path)
     env_before["SHG_FAKE_RELEASE_COPY"] = str(seen)
     result = subprocess.run(["bash", str(IMAGE / "make_image.sh"), "--bundle", str(_bundle(tmp_path / "b")), "--out",
-                             str(tmp_path / "out"), *GOOD, "--release-pub", str(mine)],
+                             str(tmp_path / "out"), *GOOD, "--release-roots", str(mine)],
                             capture_output=True, text=True, check=False, env=env_before)
     assert result.returncode == 0, result.stderr
     assert seen.read_bytes() == mine.read_bytes()
 
 
-def test_make_image_without_release_pub_ships_the_default_key(tmp_path):
-    seen = tmp_path / "seen.pub"
+def test_make_image_without_release_roots_ships_the_default_bundle(tmp_path):
+    seen = tmp_path / "seen.pem"
     env = _env(tmp_path)
     env["SHG_FAKE_RELEASE_COPY"] = str(seen)
     result = subprocess.run(["bash", str(IMAGE / "make_image.sh"), "--bundle", str(_bundle(tmp_path / "b")), "--out",
                              str(tmp_path / "out"), *GOOD], capture_output=True, text=True, check=False, env=env)
     assert result.returncode == 0, result.stderr
-    assert seen.read_bytes() == (GW / "host" / "release.pub").read_bytes()
+    assert seen.read_bytes() == (GW / "host" / "release-roots.pem").read_bytes()
 
 
-def test_no_workflow_uses_release_pub():
-    """Waechter: --release-pub ist ein Schalter fuer Labor-Images von Hand; ein Workflow darf damit keinen Schluessel
-    fuer ein ausgeliefertes Image tauschen."""
+def test_no_workflow_uses_release_roots():
+    """Waechter: --release-roots ist ein Schalter fuer Labor-Images von Hand; ein Workflow darf damit keinen
+    Schluesselbund fuer ein ausgeliefertes Image tauschen."""
     workflows = sorted((REPO / ".github" / "workflows").glob("*.y*ml"))
     assert workflows
-    assert [w.name for w in workflows if "--release-pub" in w.read_text()] == []
+    assert [w.name for w in workflows if "--release-roots" in w.read_text()] == []

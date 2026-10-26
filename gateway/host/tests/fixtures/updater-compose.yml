@@ -1,7 +1,8 @@
 # Nur fuer tests/test_gateway_updater.sh.
 # Abgeleitet von gateway/compose/docker-compose.yml: ohne zigbee2mqtt, Netz wan extern (shg-upd-wan, dort laufen der
 # Fake-Bootstrap shg-upd-bootstrap, der Fake-Broker und der Updater-Container), runtime ohne ports. Der Bundle-Bau
-# (gateway/host/tests/fixtures/make_test_bundles.py) ersetzt build: der Gateway-Dienste durch das Image mit Digest.
+# (gateway/host/tests/fixtures/make_test_bundles.py) ersetzt build: der Gateway-Dienste durch das Image aus dem Archiv
+# (smartheat-gateway@<Index-Digest>, pull_policy: never).
 # security_opt label:disable: auf SELinux-Hosts (Fedora) duerfen die Container die Bind-Mounts sonst nicht lesen
 # (wie docker-compose.dev.yml); ohne SELinux wirkungslos. Ausgeschrieben (ohne Anker) erzeugt mit as_fixture aus
 # host/tests/test_fixture_drift.py.

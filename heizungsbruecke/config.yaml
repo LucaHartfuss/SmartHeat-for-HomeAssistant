@@ -6,6 +6,9 @@ url: "https://github.com/LucaHartfuss/SmartHeat-for-HomeAssistant"
 arch:
   - aarch64
   - amd64
+# Vorgebautes Image (release.yml, Job image): der Supervisor zieht ghcr.io/lucahartfuss/<arch>-heizungsbruecke:<version>
+# statt lokal zu bauen. Das Paket muss oeffentlich sein (Runbook H-1).
+image: "ghcr.io/lucahartfuss/{arch}-heizungsbruecke"
 startup: services
 homeassistant_api: true
 hassio_api: true

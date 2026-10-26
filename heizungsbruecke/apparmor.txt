@@ -1,0 +1,80 @@
+#include <tunables/global>
+
+# AppArmor-Profil des Add-ons Heizungsbruecke (AP-04, SG-17). Der Supervisor laedt es beim Start des Add-ons und setzt
+# den Profilnamen selbst. Alles, was nicht erlaubt ist, ist verboten; die deny-Zeilen unten halten die Sperren fest,
+# die spaetere Erlaubnisse nicht aufweichen duerfen. Pfade und Gruende: docs/module/ha-host.md, "Rechte und AppArmor".
+# Noch nicht auf HA OS geladen (Restpunkt AP-04-AppArmor-Labor): Verweigerungen stehen dort im Kernel-Log.
+profile heizungsbruecke flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # Netz, nur ausgehend: HTTPS zur Accounts-API, MQTT ueber TLS zu IoT Core (Port 8883 oder 443), Supervisor-API
+  # (http://supervisor), DNS (UDP und TCP), socketpair des MQTT-Clients (unix). Kein rohes Netz, kein Horchen auf Ports.
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+  network unix stream,
+  network unix dgram,
+
+  # SIGTERM des Supervisors (Add-on stoppen); das Add-on selbst sendet keine Signale.
+  signal (receive),
+
+  # Programm und Bibliotheken des Images (python:3.12-alpine): lesen und laden, nie schreiben. Ausgefuehrt wird nur
+  # der Python-Interpreter, das Add-on startet keine weiteren Programme.
+  /usr/local/bin/python3* ix,
+  /usr/local/** r,
+  /usr/local/lib/** mr,
+  /lib/** mr,
+  /usr/lib/** mr,
+
+  # Der Quelltext des Add-ons: nur lesbar (WORKDIR /app).
+  /app/** r,
+
+  # Der Datenordner des Add-ons (Optionen vom Supervisor, Geraeteidentitaet, Laufzeitdateien, Sicherungen): lesen und
+  # schreiben. smartheat_core/dateien.py schreibt dort atomar: Datei anlegen, fsync, os.replace, fsync des Ordners.
+  /data/ rw,
+  /data/** rw,
+
+  # Das Zertifikat und der Schluessel der Geraeteidentitaet gehen fuer load_cert_chain kurz in ein privates
+  # Verzeichnis unter /tmp (smartheat_device/tls.py, danach geloescht).
+  /tmp/ rw,
+  /tmp/** rw,
+
+  # Namensaufloesung, Zertifikatsspeicher, Zeitzonen und die Zusatzdateien von Python und OpenSSL: nur lesbar.
+  /etc/resolv.conf r,
+  /etc/hosts r,
+  /etc/host.conf r,
+  /etc/nsswitch.conf r,
+  /etc/services r,
+  /etc/protocols r,
+  /etc/passwd r,
+  /etc/group r,
+  /etc/localtime r,
+  /etc/ssl/** r,
+  /etc/ca-certificates/** r,
+  /usr/share/ca-certificates/** r,
+  /usr/share/zoneinfo/** r,
+
+  # Geraetedateien und Prozessinfos, die Python und OpenSSL lesen.
+  /dev/null rw,
+  /dev/urandom r,
+  /dev/random r,
+  owner /proc/@{pid}/** r,
+  /proc/sys/crypto/fips_enabled r,
+
+  # Ausdrueckliche Sperren (Capabilities sind ohne eigene Erlaubnis ohnehin alle gesperrt).
+  deny ptrace,
+  deny mount,
+  deny umount,
+  deny pivot_root,
+  deny network raw,
+  deny network packet,
+  deny /app/** wl,
+  deny /usr/** wl,
+  deny /proc/sys/** w,
+  deny /proc/sysrq-trigger rwklx,
+  deny /proc/kcore rwklx,
+  deny /sys/** wl,
+  deny /data/** x,
+  deny /tmp/** x,
+}
