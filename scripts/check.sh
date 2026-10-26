@@ -73,7 +73,7 @@ toter_code() {
   && vulture_in gateway/release build_bundle.py verify_bundle.py changelog_section.py vulture_ausnahmen.py
 }
 lint() { pyright_in heizungsbruecke && pyright_in gateway && pyright_in gateway/host && pyright_in gateway/release && toter_code \
-  && "$PY" scripts/ci/pin_check.py --repo "$PWD"; }
+  && "$PY" scripts/ci/pin_check.py --repo "$PWD" && "$PY" scripts/ci/geheimnis_scan.py --repo "$PWD"; }
 # Kern- und HA-Host-Tests (heizungsbruecke/tests), Gateway-Tests, Host-Dienste des Gateways,
 # Bundle-Bau. Alle vier laufen, auch wenn einer rot ist (wie tools/check_all.sh).
 tests() {
