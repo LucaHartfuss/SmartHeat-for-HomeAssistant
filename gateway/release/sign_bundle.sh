@@ -2,8 +2,8 @@
 # Signiert manifest.json eines Bundles mit minisign und prueft die Signatur mit dem Code des Geraets
 # (smartheat_host.minisign). Ein Skript fuer den echten Release und den -dryrun, damit der Probelauf
 # denselben Pruef-, Signier- und Pruefweg geht. Vor dem Signieren baut verify_bundle.py das Bundle aus diesem Checkout
-# (dem Tag) mit dem Gateway-Digest aus dem Manifest neu und vergleicht byte-genau; images.gateway muss aus
-# ghcr.io/lucahartfuss/smartheat-gateway stammen (--dryrun: aus der Job-Registry localhost:5000/smartheat-gateway).
+# (dem Tag) mit dem Archiv des Bundles neu und vergleicht byte-genau; Archiv-SHA-256 und Index-Digest muessen zum
+# Manifest passen.
 #
 # Aufruf:  sign_bundle.sh BUNDLE_DIR VERSION PUBLIC_KEY [--dryrun]
 #   echt:    Schluessel aus $MINISIGN_SECRET_KEY (Base64 der Schluesseldatei) und $MINISIGN_PASSWORD; PUBLIC_KEY ist
@@ -26,12 +26,10 @@ if [ -n "$mode" ] && [ "$mode" != "--dryrun" ]; then
 fi
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PYTHONPATH="$here/../host:$here/../src"
-image_repo="ghcr.io/lucahartfuss/smartheat-gateway"
-[ "$mode" = "--dryrun" ] && image_repo="localhost:5000/smartheat-gateway"
 py() { env -u MINISIGN_SECRET_KEY -u MINISIGN_PASSWORD "${PYTHON:-python}" "$@"; }
 rm -f "$bundle/manifest.json.minisig"
 # Vor dem Signieren: das Bundle kommt aus einem anderen Job (Artefakt) und ist Daten, nicht vertrauenswuerdig.
-py "$here/verify_bundle.py" "$bundle" "$version" --image-repo "$image_repo"
+py "$here/verify_bundle.py" "$bundle" "$version"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 key="$work/release.key"

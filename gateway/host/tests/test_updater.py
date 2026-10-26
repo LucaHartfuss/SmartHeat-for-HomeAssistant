@@ -25,7 +25,14 @@ from kette_helper import root as neue_root
 from smartheat_gateway.version import GATEWAY_VERSION
 from smartheat_host import bundles, hoststatus, kanal, kette, updater
 
-COMPOSE = ("services:\n  runtime:\n    image: ghcr.io/x/gw@sha256:" + "a" * 64 + "\n").encode()
+ARCHIV_INHALT = b"oci-archiv-der-tests" * 50  # Inhalt egal: der Updater prueft Groesse und SHA-256, docker load ist eine Attrappe
+ARCHIV_DIGEST = "sha256:" + "d" * 64
+IMAGE = "smartheat-gateway@" + ARCHIV_DIGEST  # das Image des Bundles 0.3.0, kommt aus dem Archiv
+ALTES_IMAGE = "smartheat-gateway@sha256:" + "a" * 64  # das Image des laufenden Bundles 0.2.0, schon geladen
+ARCHIV = {"datei": bundles.ARCHIVE_NAME, "sha256": hashlib.sha256(ARCHIV_INHALT).hexdigest(),
+          "bytes": len(ARCHIV_INHALT), "name": "smartheat-gateway", "digest": ARCHIV_DIGEST}
+COMPOSE = f"services:\n  runtime:\n    image: {IMAGE}\n    pull_policy: never\n".encode()
+ALTE_COMPOSE = f"services:\n  runtime:\n    image: {ALTES_IMAGE}\n    pull_policy: never\n".encode()
 MOSQ = b"listener 1883\n"
 BASE = "https://release.example.test/0.3.0/"
 JETZT = datetime(2026, 6, 1, 12, tzinfo=UTC)  # die synchrone Uhr der Tests
@@ -58,17 +65,27 @@ class FakeKanal:
 
 
 class FakeCompose:
+    """`images`: was der Docker des Geraets kennt (name@digest); `events` haelt die Reihenfolge von has_image, pull und up
+    (die World haengt Abruf und Laden des Archivs an dieselbe Liste)."""
+
     def __init__(self, fail_up=(), fail_pull=False):
         self.calls, self.fail_up, self.fail_pull = [], set(fail_up), fail_pull
         self.on_up = None
+        self.images, self.events = {ALTES_IMAGE}, []
+
+    def has_image(self, ref):
+        self.events.append(("has_image", ref, ref in self.images))
+        return ref in self.images
 
     def pull(self, version):
         self.calls.append(("pull", version))
+        self.events.append(("pull", version))
         if self.fail_pull:
             raise bundles.ComposeError("kein Netz")
 
     def up(self, version):
         self.calls.append(("up", version))
+        self.events.append(("up", version))
         if self.on_up:
             self.on_up(version)
         if version in self.fail_up:
@@ -89,18 +106,23 @@ class World:
         files = {"docker-compose.yml": compose, "mosquitto.conf": MOSQ}
         manifest = {"version": "0.3.0", "min_updater_version": "0.2.0",
                     "files": {n: hashlib.sha256(d).hexdigest() for n, d in files.items()},
-                    "images": {"gateway": "ghcr.io/x/gw@sha256:" + "a" * 64}}
+                    "images": {"gateway": IMAGE}, "archiv": dict(ARCHIV)}
         manifest.update(manifest_over or {})
         raw = json.dumps(manifest).encode()
-        self.served = {BASE + "manifest.json": raw, **{BASE + n: d for n, d in files.items()}}
+        self.served = {BASE + "manifest.json": raw, **{BASE + n: d for n, d in files.items()},
+                       BASE + bundles.ARCHIVE_NAME: ARCHIV_INHALT}
         if tamper:
             self.served[BASE + "docker-compose.yml"] = compose + b"#x\n"
         self.api = FakeKanal({"version": "0.3.0", "manifest_url": url,
                             "manifest_sha256": hashlib.sha256(raw).hexdigest(),
                             "signature": self.sign(raw)})
         self.compose = FakeCompose(fail_up, fail_pull)
+        self.events = self.compose.events  # Abruf und Laden des Archivs stehen in derselben Reihenfolge
+        self.archive_fetches, self.loaded = [], []
+        self.fetch_breaks_after = None  # Byte, nach dem der Abruf des Archivs abbricht (Rest bleibt fuer den naechsten)
+        self.load_error, self.load_adds_image = None, True
         self.store = bundles.BundleStore(tmp_path)
-        self.store.install("0.2.0", {"docker-compose.yml": COMPOSE, "mosquitto.conf": MOSQ})  # laufendes Bundle
+        self.store.install("0.2.0", {"docker-compose.yml": ALTE_COMPOSE, "mosquitto.conf": MOSQ})  # laufendes Bundle
         self.state_path = tmp_path / "updater" / "state.json"
         updater.State(current="0.2.0").save(self.state_path)
         self.healthy = healthy
@@ -130,8 +152,8 @@ class World:
     def rebuild(self, *, version="0.2.0", roots_text=None):
         """Neuer Updater ueber derselben Zustandsdatei (Neustart, neue Host-Version, neuer Schluesselbund)."""
         return updater.Updater(
-            kanal=self.api, store=self.store, compose=self.compose, fetch=self.fetch,
-            roots_text=roots_text or self.roots, uhr=lambda: self.now, state_path=self.state_path, version=version,
+            kanal=self.api, store=self.store, compose=self.compose, fetch=self.fetch, fetch_datei=self.fetch_datei,
+            docker_load=self.docker_load, roots_text=roots_text or self.roots, uhr=lambda: self.now, state_path=self.state_path, version=version,
             health=lambda version: self.healthy, clock=lambda: self.clock[0], sleep=self.sleep, **self.extra,
         )
 
@@ -143,6 +165,36 @@ class World:
         if len(self.served[url]) > max_bytes:
             raise updater.FetchError(f"{url}: zu gross")
         return self.served[url]
+
+    def fetch_datei(self, url, max_bytes, ziel, frist):
+        """Wie `fetch_url_to_file`: schreibt nach `ziel` und gibt die SHA-256 zurueck; eine Antwort ueber `max_bytes` ist
+        TooLarge. Bricht der Abruf ab (`fetch_breaks_after`), bleibt der Anfang als `ziel.part` liegen, ein weiterer Abruf
+        setzt dahinter fort (wie das Original)."""
+        self.events.append(("fetch_datei", url))
+        self.archive_fetches.append((url, max_bytes, ziel, frist))
+        if url not in self.served:
+            raise updater.FetchError(url)
+        data = self.served[url]
+        if len(data) > max_bytes:
+            raise updater.TooLarge(f"{url}: zu gross")
+        part = ziel.with_name(ziel.name + ".part")
+        if self.fetch_breaks_after is not None:
+            part.write_bytes(data[:self.fetch_breaks_after])
+            self.fetch_breaks_after = None
+            raise updater.FetchError(f"{url}: abgebrochen")
+        resumed = part.read_bytes() if part.exists() else b""
+        ziel.write_bytes(resumed + data[len(resumed):])
+        part.unlink(missing_ok=True)
+        return hashlib.sha256(ziel.read_bytes()).hexdigest()
+
+    def docker_load(self, pfad):
+        self.events.append(("docker_load", pfad.name))
+        assert pfad.is_file()
+        self.loaded.append((pfad.name, pfad.read_bytes()))
+        if self.load_error:
+            raise bundles.LoadError(f"{pfad.name}: {self.load_error}")
+        if self.load_adds_image:
+            self.compose.images.add(IMAGE)
 
     def sleep(self, seconds):
         self.clock[0] += seconds
@@ -159,7 +211,7 @@ def test_healthy_update(tmp_path):
     assert world.api.results == [("0.3.0", "ok", "")]
     assert ("pull", "0.3.0") in world.compose.calls and ("up", "0.3.0") in world.compose.calls
     assert world.store.exists("0.3.0")
-    assert world.compose.calls[-1] == ("prune", frozenset({"ghcr.io/x/gw@sha256:" + "a" * 64}))
+    assert world.compose.calls[-1] == ("prune", frozenset({IMAGE, ALTES_IMAGE}))  # auch das Image der vorigen Version
 
 
 def test_state_file_is_world_readable_and_survives_load(tmp_path):
@@ -250,7 +302,7 @@ def test_http_manifest_is_loaded_when_allowed(tmp_path):
     url = "http://release.example.test/0.3.0/manifest.json"
     world = World(tmp_path, url=url)
     world.served[url] = world.served[BASE + "manifest.json"]
-    for name in bundles.MANIFEST_FILES:
+    for name in (*bundles.MANIFEST_FILES, bundles.ARCHIVE_NAME):
         world.served["http://release.example.test/0.3.0/" + name] = world.served[BASE + name]
     world.updater._allow_http = True
     assert world.updater.run_once() == "aktualisiert"
@@ -1966,6 +2018,7 @@ def test_the_health_deadline_follows_the_monotonic_clock_not_the_wall_clock(tmp_
         monotonic[0] += seconds
 
     short = updater.Updater(kanal=world.api, store=world.store, compose=world.compose, fetch=world.fetch,
+                            fetch_datei=world.fetch_datei, docker_load=world.docker_load,
                             roots_text=world.roots, uhr=lambda: world.now, state_path=world.state_path, version="0.2.0",
                             health=lambda version: False, sleep=sleep, health_seconds=30)  # Standard-Uhr
     assert short.run_once() == "zurueckgerollt"
@@ -2314,15 +2367,20 @@ def docker(monkeypatch):
     class Docker:
         calls: list = []
         runtime_health = "healthy"
+        loaded = False  # nach `docker load` kennt der Docker das neue Image
 
     def run(command, **kwargs):
         Docker.calls.append(list(command))
         stdout = ""
         if "ps" in command:
             stdout = json.dumps([{"Service": "runtime", "Health": Docker.runtime_health}])
-        return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+        if command[:2] == ["docker", "load"]:
+            Docker.loaded = True
+        returncode = 1 if command[:3] == ["docker", "image", "inspect"] and not Docker.loaded else 0
+        return subprocess.CompletedProcess(command, returncode, stdout=stdout, stderr="")
 
     Docker.calls = []
+    Docker.loaded = False
     monkeypatch.setattr(subprocess, "run", create_autospec(subprocess.run, side_effect=run))
     importlib.reload(bundles)
     yield Docker
@@ -2347,10 +2405,10 @@ def _main_update(monkeypatch, root, site, *, signed_by_other_root=False, release
     files = {"docker-compose.yml": COMPOSE, "mosquitto.conf": MOSQ}
     raw = json.dumps({"version": "0.3.0", "min_updater_version": min_updater_version,
                       "files": {name: hashlib.sha256(data).hexdigest() for name, data in files.items()},
-                      "images": {"gateway": "ghcr.io/x/gw@sha256:" + "a" * 64}}).encode()
+                      "images": {"gateway": IMAGE}, "archiv": dict(ARCHIV)}).encode()
     signature = signiere(*signer, raw)
     site.routes.update({"/0.3.0/manifest.json": raw, **{f"/0.3.0/{name}": data for name, data in files.items()},
-                        health_path: health_body})
+                        "/0.3.0/" + bundles.ARCHIVE_NAME: ARCHIV_INHALT, health_path: health_body})
     offer = {"version": "0.3.0", "manifest_url": site.url + "/0.3.0/manifest.json", "signature": signature,
              "manifest_sha256": hashlib.sha256(raw).hexdigest()}
     settings = _main_environment(monkeypatch, root, offer=offer)
@@ -2536,3 +2594,448 @@ def test_reachability_is_the_broker_not_the_bundle(tmp_path):
 def test_only_the_runtime_container_must_be_healthy():
     assert updater.REQUIRED_HEALTHY == ("runtime",)
     assert updater.health_ok({"server_ok": True, "runtime_status": "regelt"}, {"runtime": "healthy"})
+
+
+# --- Eigenes Image als OCI-Archiv im Bundle -----------------------------------------------------------------------
+
+def _archiv_ordner(world) -> Path:
+    return world.store.root / "archive"
+
+
+def _event_namen(world):
+    return [event[0] for event in world.events]
+
+
+def test_update_holt_laedt_und_startet_das_archiv_vor_pull_und_up(tmp_path):
+    """Reihenfolge nach der Kettenpruefung: Image fehlt, Archiv holen, laden, Image da, dann pull (nur Registries) und up."""
+    world = World(tmp_path)
+    assert world.updater.run_once() == "aktualisiert"
+    namen = _event_namen(world)
+    assert namen[:5] == ["has_image", "fetch_datei", "docker_load", "has_image", "pull"] and namen[5] == "up"
+    assert world.events[0][1:] == (IMAGE, False) and world.events[3][1:] == (IMAGE, True)
+    url, max_bytes, ziel, _ = world.archive_fetches[0]
+    assert url == BASE + bundles.ARCHIVE_NAME  # neben dem Manifest
+    assert max_bytes == len(ARCHIV_INHALT) and ziel == world.store.archive_path("0.3.0")
+    assert world.loaded == [("0.3.0.oci.tar", ARCHIV_INHALT)]
+    assert list(_archiv_ordner(world).iterdir()) == []  # nach dem Laden geloescht, auch kein .part
+    assert world.store.dir("0.3.0").is_dir() and not (world.store.dir("0.3.0") / bundles.ARCHIVE_NAME).exists()
+    assert IMAGE in world.compose.images and ALTES_IMAGE in world.compose.images
+
+
+def test_ist_das_image_schon_da_wird_das_archiv_nicht_geholt(tmp_path):
+    """Nach einem gescheiterten pull (oder einem anderen Abbruch) ist das Image geladen: kein zweiter Abruf von rund 200 MB."""
+    world = World(tmp_path, fail_pull=True)
+    assert world.updater.run_once() == "vorlaeufig"
+    assert len(world.archive_fetches) == 1 and IMAGE in world.compose.images
+    world.compose.fail_pull = False
+    assert world.updater.run_once() == "aktualisiert"
+    assert len(world.archive_fetches) == 1 and len(world.loaded) == 1  # kein weiterer Abruf, kein weiteres Laden
+
+
+def test_archiv_mit_falscher_pruefsumme_wird_abgelehnt(tmp_path):
+    """Gleiche Groesse, ein Byte anders: der Server (oder der Weg) liefert ein anderes Archiv als signiert."""
+    world = World(tmp_path)
+    falsch = bytearray(ARCHIV_INHALT)
+    falsch[7] ^= 1
+    world.served[BASE + bundles.ARCHIVE_NAME] = bytes(falsch)
+    assert world.updater.run_once() == "abgelehnt"
+    assert world.api.results == [("0.3.0", "rollback", "manifest_ungueltig")]
+    assert world.loaded == [] and not any(call[0] in ("pull", "up") for call in world.compose.calls)
+    assert list(_archiv_ordner(world).iterdir()) == []  # das falsche Archiv bleibt nicht liegen
+    assert not world.store.exists("0.3.0") and not world.store.dir("0.3.0").exists()
+    state = world.state()
+    assert (state.current, state.in_progress) == ("0.2.0", None) and state.rejected == [world.abgelehnt()]
+    assert IMAGE not in world.compose.images
+    # Gegenprobe: mit dem richtigen Archiv geht dasselbe Angebot durch
+    (tmp_path / "zwei").mkdir()
+    assert World(tmp_path / "zwei").updater.run_once() == "aktualisiert"
+
+
+def test_archiv_ueber_der_grenze_wird_abgelehnt_ohne_rest(tmp_path):
+    """(a) Das Manifest nennt mehr als MAX_ARCHIVE_BYTES: abgelehnt, bevor irgendeine Datei oder das Archiv geholt wird.
+    (b) Der Server liefert mehr, als das Manifest nennt: TooLarge, abgelehnt, nichts bleibt in archive/ liegen."""
+    zu_gross = dict(ARCHIV, bytes=bundles.MAX_ARCHIVE_BYTES + 1)
+    world = World(tmp_path, manifest_over={"archiv": zu_gross})
+    assert world.updater.run_once() == "abgelehnt"
+    assert world.api.results == [("0.3.0", "rollback", "manifest_ungueltig")]
+    assert world.fetched == [BASE + "manifest.json"] and world.archive_fetches == []
+    _assert_nothing_installed(world)
+    (tmp_path / "zwei").mkdir()
+    zwei = World(tmp_path / "zwei", manifest_over={"archiv": dict(ARCHIV, bytes=len(ARCHIV_INHALT) - 10)})
+    assert zwei.updater.run_once() == "abgelehnt"
+    assert zwei.api.results == [("0.3.0", "rollback", "manifest_ungueltig")]
+    assert zwei.loaded == [] and list(_archiv_ordner(zwei).iterdir()) == []
+    assert not any(call[0] in ("pull", "up") for call in zwei.compose.calls)
+    assert zwei.state().rejected == [zwei.abgelehnt()]
+
+
+def test_frist_waechst_mit_der_groesse():
+    """Frist des Archivabrufs: 60 s plus Groesse bei mindestens 2 Mbit/s (250000 Byte/s)."""
+    assert updater.MIN_RATE_BYTES_PER_S == 250000
+    assert updater.archiv_frist(0) == 60
+    assert updater.archiv_frist(250000) == 61
+    assert updater.archiv_frist(10 * 250000) == 70
+    assert updater.archiv_frist(bundles.MAX_ARCHIVE_BYTES) == 60 + 536870912 / 250000  # rund 36,8 Minuten
+    assert updater.archiv_frist(2_000_000) > updater.archiv_frist(1_000_000) > updater.ABRUF_GESAMT_SECONDS - 300
+
+
+def test_der_updater_uebergibt_dem_abruf_die_frist_seiner_groesse(tmp_path):
+    world = World(tmp_path)
+    assert world.updater.run_once() == "aktualisiert"
+    assert world.archive_fetches[0][3] == 60 + len(ARCHIV_INHALT) / 250000
+    (tmp_path / "gross").mkdir()
+    gross = World(tmp_path / "gross", manifest_over={"archiv": dict(ARCHIV, bytes=200_000_000)})
+    gross.served[BASE + bundles.ARCHIVE_NAME] = b""  # die Antwort ist egal: die Attrappe liefert FetchError/TooLarge
+    gross.updater.run_once()
+    assert gross.archive_fetches[0][1:2] == (200_000_000,) and gross.archive_fetches[0][3] == 60 + 800
+
+
+def test_abgebrochener_abruf_wird_beim_naechsten_durchlauf_fortgesetzt(tmp_path):
+    """Updater-Seite: ein abgebrochener Abruf ist `vorlaeufig` (keine Ablehnung, nichts installiert, kein Stack-Wechsel);
+    der Anfang bleibt als .part liegen, und der naechste Durchlauf setzt dahinter fort. (Die Range-Anfrage selbst:
+    test_fetch_url_to_file_setzt_einen_abgebrochenen_abruf_per_range_fort.)"""
+    world = World(tmp_path)
+    world.fetch_breaks_after = 100
+    assert world.updater.run_once() == "vorlaeufig"
+    teil = world.store.archive_path("0.3.0").with_name("0.3.0.oci.tar.part")
+    assert teil.read_bytes() == ARCHIV_INHALT[:100] and not world.store.archive_path("0.3.0").exists()
+    state = world.state()
+    assert (state.current, state.rejected, state.in_progress) == ("0.2.0", [], None) and world.api.results == []
+    assert not any(call[0] in ("pull", "up") for call in world.compose.calls) and not world.store.exists("0.3.0")
+    assert world.updater.run_once() == "aktualisiert"
+    assert len(world.archive_fetches) == 2 and world.loaded == [("0.3.0.oci.tar", ARCHIV_INHALT)]
+    assert list(_archiv_ordner(world).iterdir()) == []
+
+
+def test_nach_dem_fortsetzen_mit_falscher_pruefsumme_wird_neu_geladen_statt_abgelehnt(tmp_path):
+    """Ein altes .part aus einem anderen Angebot derselben Version (neu signiert) ergibt beim Fortsetzen ein falsches
+    Ganzes: das ist kein Fehler des Angebots. Der Rest wird verworfen, `vorlaeufig`, der naechste Durchlauf laedt neu."""
+    world = World(tmp_path)
+    _archiv_ordner(world).mkdir()
+    teil = _archiv_ordner(world) / "0.3.0.oci.tar.part"
+    teil.write_bytes(b"Rest aus einem anderen Angebot")
+    assert world.updater.run_once() == "vorlaeufig"
+    assert list(_archiv_ordner(world).iterdir()) == [] and world.state().rejected == [] and world.api.results == []
+    assert world.loaded == []
+    assert world.updater.run_once() == "aktualisiert"
+    assert world.loaded == [("0.3.0.oci.tar", ARCHIV_INHALT)]
+
+
+def test_ein_zu_kurzes_archiv_ohne_laengenangabe_wird_als_teil_fortgesetzt(tmp_path):
+    """Der Server beendet den Strom ohne Content-Length vor der Zeit: der Abruf gilt als fertig, die Datei ist aber
+    kleiner als signiert. Das ist ein Abbruch (`vorlaeufig`), das Stueck wird .part und der naechste Durchlauf setzt fort."""
+    world = World(tmp_path)
+    original = world.fetch_datei
+
+    def kurz(url, max_bytes, ziel, frist):
+        world.served[url] = ARCHIV_INHALT[:80]
+        try:
+            return original(url, max_bytes, ziel, frist)
+        finally:
+            world.served[url] = ARCHIV_INHALT
+
+    world.updater._fetch_datei = kurz
+    assert world.updater.run_once() == "vorlaeufig"
+    teil = world.store.archive_path("0.3.0").with_name("0.3.0.oci.tar.part")
+    assert teil.read_bytes() == ARCHIV_INHALT[:80] and not world.store.archive_path("0.3.0").exists()
+    assert world.state().rejected == [] and world.loaded == []
+    world.updater._fetch_datei = world.fetch_datei
+    assert world.updater.run_once() == "aktualisiert"
+
+
+def test_fehlendes_image_nach_dem_laden_wird_abgelehnt_und_stack_bleibt(tmp_path):
+    """`docker load` gelingt, kennt das Image `smartheat-gateway@<Digest>` aber nicht (Archiv mit anderem Index-Digest als
+    im Manifest): manifest_ungueltig, nichts installiert, weder pull noch up, das laufende Bundle bleibt."""
+    world = World(tmp_path)
+    world.load_adds_image = False
+    assert world.updater.run_once() == "abgelehnt"
+    assert world.api.results == [("0.3.0", "rollback", "manifest_ungueltig")]
+    assert len(world.loaded) == 1 and not any(call[0] in ("pull", "up") for call in world.compose.calls)
+    assert world.compose.calls == []
+    assert not world.store.exists("0.3.0") and not world.store.dir("0.3.0").exists()
+    assert list(_archiv_ordner(world).iterdir()) == []
+    state = world.state()
+    assert (state.current, state.in_progress, state.rejected) == ("0.2.0", None, [world.abgelehnt()])
+
+
+def test_docker_load_scheitert_vorlaeufig_und_das_archiv_bleibt_fuer_den_naechsten_durchlauf(tmp_path):
+    """Datentraeger voll oder Daemon beschaeftigt ist kein Fehler des Angebots: `vorlaeufig`, nichts abgelehnt; das schon
+    geprueft geholte Archiv bleibt liegen, der naechste Durchlauf laedt es ohne zweiten Abruf."""
+    world = World(tmp_path)
+    world.load_error = "no space left on device"
+    assert world.updater.run_once() == "vorlaeufig"
+    assert world.state().rejected == [] and world.api.results == [] and world.compose.calls == []
+    assert world.store.archive_path("0.3.0").read_bytes() == ARCHIV_INHALT and not world.store.exists("0.3.0")
+    world.load_error = None
+    assert world.updater.run_once() == "aktualisiert"
+    assert len(world.archive_fetches) == 1 and len(world.loaded) == 2  # kein zweiter Abruf, zweiter Ladeversuch
+    assert list(_archiv_ordner(world).iterdir()) == []
+
+
+def test_ein_liegengebliebenes_archiv_mit_falscher_pruefsumme_wird_neu_geholt(tmp_path):
+    world = World(tmp_path)
+    _archiv_ordner(world).mkdir()
+    world.store.archive_path("0.3.0").write_bytes(b"halb")
+    assert world.updater.run_once() == "aktualisiert"
+    assert len(world.archive_fetches) == 1 and world.loaded == [("0.3.0.oci.tar", ARCHIV_INHALT)]
+
+
+def test_ein_liegengebliebenes_archiv_wird_geloescht_wenn_das_image_schon_da_ist(tmp_path):
+    world = World(tmp_path, fail_pull=True)
+    world.fetch_breaks_after = None
+    assert world.updater.run_once() == "vorlaeufig"  # geladen, Archiv geloescht, pull scheitert
+    _archiv_ordner(world).mkdir(exist_ok=True)
+    world.store.archive_path("0.3.0").write_bytes(b"Rest")
+    world.compose.fail_pull = False
+    assert world.updater.run_once() == "aktualisiert"
+    assert len(world.archive_fetches) == 1 and list(_archiv_ordner(world).iterdir()) == []
+
+
+def test_archive_frueherer_versionen_werden_vor_dem_abruf_aufgeraeumt(tmp_path):
+    world = World(tmp_path)
+    _archiv_ordner(world).mkdir()
+    for name in ("0.1.0.oci.tar", "0.2.5.oci.tar.part", "rest"):
+        (_archiv_ordner(world) / name).write_bytes(b"x" * 10)
+    assert world.updater.run_once() == "aktualisiert"
+    assert list(_archiv_ordner(world).iterdir()) == []
+
+
+def test_ein_archiv_wird_nur_abgerufen_wenn_das_geraet_bereit_ist(tmp_path):
+    """Fehlt der Zigbee-Stick, wartet das Update ('vorlaeufig'), und die rund 200 MB werden nicht umsonst geholt."""
+    world = World(tmp_path)
+    compose = (COMPOSE.decode() + "  zigbee2mqtt:\n    image: koenkk/z2m@sha256:" + "b" * 64 +
+               "\n    devices: [\"/dev/ttyACM9:/dev/zigbee\"]\n").encode()
+    world.served[BASE + "docker-compose.yml"] = compose
+    manifest = json.loads(world.served[BASE + "manifest.json"])
+    manifest["files"]["docker-compose.yml"] = hashlib.sha256(compose).hexdigest()
+    _serve_manifest(world, json.dumps(manifest).encode())
+    world.updater._path_exists = lambda path: False
+    assert world.updater.run_once() == "vorlaeufig"
+    assert world.archive_fetches == [] and world.events == [] and world.loaded == []
+    world.updater._path_exists = lambda path: True
+    assert world.updater.run_once() == "aktualisiert"
+
+
+def test_compose_mit_dem_archivimage_ohne_never_wird_abgelehnt(tmp_path):
+    """Auf dem Geraet gilt check_compose mit dem Archiv des Manifests: `compose pull` fragte sonst docker.io nach dem
+    eigenen Image."""
+    compose = f"services:\n  runtime:\n    image: {IMAGE}\n".encode()
+    world = World(tmp_path, compose=compose)
+    assert world.updater.run_once() == "abgelehnt"
+    assert world.api.results == [("0.3.0", "rollback", "manifest_ungueltig")]
+    assert world.archive_fetches == []  # abgelehnt, bevor das Archiv geholt wird
+    _assert_nothing_installed(world)
+
+
+def test_der_rueckweg_nach_einem_ungesunden_update_startet_die_vorige_version_mit_ihrem_image(tmp_path):
+    """Image der vorigen Version bleibt (prune behaelt es), der Rueckweg braucht kein Netz und kein Laden."""
+    world = World(tmp_path, healthy=False)
+    assert world.updater.run_once() == "zurueckgerollt"
+    assert world.compose.calls[-1] == ("up", "0.2.0")
+    assert ALTES_IMAGE in world.compose.images
+    assert len(world.loaded) == 1  # geladen wurde nur das neue Image
+    assert not any(call[0] == "prune" for call in world.compose.calls)  # bei einem Rueckweg wird nichts geloescht
+
+
+# --- fetch_url_to_file: Teilabruf, Grenzen, Frist -------------------------------------------------------------------
+
+class _RangeServer:
+    """Lokaler HTTP-Server fuer eine Datei `body` unter /archiv: antwortet auf `Range: bytes=N-` mit 206 und
+    Content-Range (ranges=False: ignoriert Range und antwortet mit 200). `cut_after`: die erste Antwort bricht nach so
+    vielen Bytes ab (Content-Length bleibt die volle). `length=False`: Antwort ohne Content-Length (HTTP/1.0, Ende durch
+    Schliessen). `requests` haelt jeden Range-Kopf (None ohne)."""
+
+    def __init__(self, body: bytes, *, ranges=True, cut_after=None, length=True, advertised=None, drip=0.0,
+                 wrong_start=False):
+        self.body, self.requests = body, []
+        owner = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                header = self.headers.get("Range")
+                owner.requests.append(header)
+                start = int(header.split("=")[1].rstrip("-")) if header and ranges else 0
+                total = len(owner.body)
+                if header and ranges and start >= total:
+                    self.send_response(416)
+                    self.send_header("Content-Range", f"bytes */{total}")
+                    self.end_headers()
+                    return
+                chunk = owner.body[start:]
+                self.send_response(206 if header and ranges else 200)
+                if header and ranges:
+                    shown = 0 if wrong_start else start  # Beginn der Teilantwort passt nicht zur Anfrage
+                    self.send_header("Content-Range", f"bytes {shown}-{total - 1}/{total}")
+                if length:
+                    self.send_header("Content-Length", str(advertised if advertised is not None else len(chunk)))
+                self.end_headers()
+                send = chunk[:cut_after] if cut_after is not None and len(owner.requests) == 1 else chunk
+                try:
+                    if drip:
+                        for index in range(len(send)):
+                            self.wfile.write(send[index:index + 1])
+                            self.wfile.flush()
+                            time.sleep(drip)
+                    else:
+                        self.wfile.write(send)
+                except OSError:  # der Abrufer hat aufgegeben
+                    return
+
+            def log_message(self, *args):
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server.daemon_threads = True
+        self.url = f"http://127.0.0.1:{self.server.server_port}/archiv"
+        self.thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
+        self.thread.start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+
+
+@pytest.fixture
+def range_server():
+    servers = []
+
+    def make(body, **kwargs):
+        servers.append(_RangeServer(body, **kwargs))
+        return servers[-1]
+
+    yield make
+    for server in servers:
+        server.close()
+
+
+BODY = bytes(range(256)) * 400  # 102400 Byte
+
+
+def _teil(ziel: Path) -> Path:
+    return ziel.with_name(ziel.name + ".part")
+
+
+def test_fetch_url_to_file_schreibt_die_datei_und_gibt_die_pruefsumme_zurueck(tmp_path, range_server):
+    server = range_server(BODY)
+    ziel = tmp_path / "archive" / "a.oci.tar"
+    ziel.parent.mkdir()
+    sha = updater.fetch_url_to_file(server.url, len(BODY), True, ziel, 30)
+    assert sha == hashlib.sha256(BODY).hexdigest() and ziel.read_bytes() == BODY
+    assert not _teil(ziel).exists() and server.requests == [None]  # ohne .part kein Range-Kopf
+
+
+def test_fetch_url_to_file_setzt_einen_abgebrochenen_abruf_per_range_fort(tmp_path, range_server):
+    """Die Leitung bricht nach 30000 Byte ab: FetchError, der Anfang bleibt als .part (kein Umbenennen), der naechste Abruf
+    fragt `Range: bytes=30000-` und haengt an; die Pruefsumme gilt dem ganzen Inhalt."""
+    server = range_server(BODY, cut_after=30000)
+    ziel = tmp_path / "a.oci.tar"
+    with pytest.raises(updater.FetchError, match="abgebrochen"):
+        updater.fetch_url_to_file(server.url, len(BODY), True, ziel, 30)
+    assert _teil(ziel).read_bytes() == BODY[:30000] and not ziel.exists()
+    sha = updater.fetch_url_to_file(server.url, len(BODY), True, ziel, 30)
+    assert server.requests == [None, "bytes=30000-"]
+    assert sha == hashlib.sha256(BODY).hexdigest() and ziel.read_bytes() == BODY and not _teil(ziel).exists()
+
+
+def test_fetch_url_to_file_beginnt_neu_wenn_der_server_range_ignoriert(tmp_path, range_server):
+    server = range_server(BODY, ranges=False)
+    ziel = tmp_path / "a.oci.tar"
+    _teil(ziel).write_bytes(b"alter Anfang")
+    sha = updater.fetch_url_to_file(server.url, len(BODY), True, ziel, 30)
+    assert server.requests == ["bytes=12-"]  # gefragt wurde, geantwortet 200: von vorn
+    assert ziel.read_bytes() == BODY and sha == hashlib.sha256(BODY).hexdigest()
+
+
+def test_fetch_url_to_file_verwirft_eine_teilantwort_mit_falschem_beginn(tmp_path, range_server):
+    """206, aber Content-Range beginnt nicht bei der Groesse des .part: angehaengt entstuende ein falsches Ganzes."""
+    server = range_server(BODY, wrong_start=True)
+    ziel = tmp_path / "a.oci.tar"
+    _teil(ziel).write_bytes(BODY[:1000])
+    with pytest.raises(updater.FetchError, match="beginnt nicht"):
+        updater.fetch_url_to_file(server.url, len(BODY), True, ziel, 30)
+    assert not _teil(ziel).exists() and not ziel.exists()
+
+
+def test_fetch_url_to_file_schliesst_ein_vollstaendiges_part_ohne_erneuten_abruf_ab(tmp_path, range_server):
+    """Stromausfall zwischen dem letzten Byte und dem Umbenennen: der Server antwortet 416 (nichts mehr zu liefern)."""
+    server = range_server(BODY)
+    ziel = tmp_path / "a.oci.tar"
+    _teil(ziel).write_bytes(BODY)
+    sha = updater.fetch_url_to_file(server.url, len(BODY), True, ziel, 30)
+    assert server.requests == [f"bytes={len(BODY)}-"]
+    assert ziel.read_bytes() == BODY and sha == hashlib.sha256(BODY).hexdigest() and not _teil(ziel).exists()
+
+
+def test_fetch_url_to_file_verwirft_ein_part_das_der_server_nicht_fortsetzen_kann(tmp_path, range_server):
+    """416 mit anderer Gesamtgroesse: das .part passt nicht zur Datei auf dem Server. Es wird verworfen, der Abruf scheitert
+    (FetchError), der naechste Durchlauf beginnt neu."""
+    server = range_server(BODY[:1000])
+    ziel = tmp_path / "a.oci.tar"
+    _teil(ziel).write_bytes(b"x" * 5000)
+    with pytest.raises(updater.FetchError):
+        updater.fetch_url_to_file(server.url, len(BODY), True, ziel, 30)
+    assert not _teil(ziel).exists() and not ziel.exists()
+
+
+def test_fetch_url_to_file_lehnt_ab_was_ueber_der_grenze_liegt_und_laesst_nichts_zurueck(tmp_path, range_server):
+    ziel = tmp_path / "a.oci.tar"
+    # laut Content-Length
+    server = range_server(BODY)
+    with pytest.raises(updater.TooLarge):
+        updater.fetch_url_to_file(server.url, len(BODY) - 1, True, ziel, 30)
+    assert not _teil(ziel).exists() and not ziel.exists()
+    # ohne Content-Length: erst beim Lesen zu merken
+    ohne_laenge = range_server(BODY, length=False)
+    with pytest.raises(updater.TooLarge):
+        updater.fetch_url_to_file(ohne_laenge.url, 50000, True, ziel, 30)
+    assert not _teil(ziel).exists() and not ziel.exists()
+    # ein altes .part ueber der Grenze wird verworfen, der Abruf beginnt von vorn (kein Range-Kopf)
+    klein = range_server(BODY[:1500])
+    _teil(ziel).write_bytes(b"x" * 2000)
+    sha = updater.fetch_url_to_file(klein.url, 1500, True, ziel, 30)
+    assert sha == hashlib.sha256(BODY[:1500]).hexdigest() and klein.requests == [None] and ziel.read_bytes() == BODY[:1500]
+
+
+def test_fetch_url_to_file_ohne_laengenangabe_gilt_das_ende_des_stroms_als_fertig(tmp_path, range_server):
+    server = range_server(BODY, length=False)
+    ziel = tmp_path / "a.oci.tar"
+    sha = updater.fetch_url_to_file(server.url, len(BODY), True, ziel, 30)
+    assert ziel.read_bytes() == BODY and sha == hashlib.sha256(BODY).hexdigest()
+
+
+def test_fetch_url_to_file_nimmt_http_nur_mit_allow_http_an(tmp_path, range_server):
+    server = range_server(BODY)
+    ziel = tmp_path / "a.oci.tar"
+    with pytest.raises(updater.FetchError, match="https"):
+        updater.fetch_url_to_file(server.url, len(BODY), False, ziel, 30)
+    assert server.requests == [] and not ziel.exists() and not _teil(ziel).exists()
+
+
+def test_fetch_url_to_file_frist_beendet_einen_tropfenden_abruf_und_laesst_den_anfang_liegen(tmp_path, range_server):
+    """Die Frist (hier 0,6 s statt 60 s plus Groesse) gilt fuer den ganzen Abruf; was bis dahin kam, bleibt als .part."""
+    server = range_server(b"x" * 100, drip=0.05)
+    ziel = tmp_path / "a.oci.tar"
+    started = time.monotonic()
+    with pytest.raises(updater.FetchError, match="Gesamtfrist"):
+        updater.fetch_url_to_file(server.url, 100, True, ziel, 0.6)
+    assert time.monotonic() - started < 3
+    assert 0 < _teil(ziel).stat().st_size < 100 and not ziel.exists()
+
+
+def test_fetch_url_to_file_frist_ist_nicht_die_gesamtfrist_der_kleinen_dateien(tmp_path, monkeypatch, range_server):
+    """ABRUF_GESAMT_SECONDS (300 s) gilt fuer Manifest und Dateien; das Archiv hat seine eigene Frist."""
+    server = range_server(b"x" * 100, drip=0.01)
+    monkeypatch.setattr(updater, "ABRUF_GESAMT_SECONDS", 0.2)
+    ziel = tmp_path / "a.oci.tar"
+    assert updater.fetch_url_to_file(server.url, 100, True, ziel, 30) == hashlib.sha256(b"x" * 100).hexdigest()
+    with pytest.raises(updater.FetchError, match="Gesamtfrist"):
+        updater.fetch_url(server.url, 100, allow_http=True)  # Gegenprobe: die kleine Frist wirkt weiter
+
+
+def test_fetch_url_to_file_netzfehler_sind_fetch_errors_und_das_part_bleibt(tmp_path):
+    ziel = tmp_path / "a.oci.tar"
+    _teil(ziel).write_bytes(b"abc")
+    with pytest.raises(updater.FetchError):
+        updater.fetch_url_to_file("http://127.0.0.1:1/x", 10, True, ziel, 5)
+    assert _teil(ziel).read_bytes() == b"abc" and not ziel.exists()

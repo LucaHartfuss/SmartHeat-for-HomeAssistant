@@ -40,7 +40,7 @@ Code (vulture, `vulture_ausnahmen.py`): `../docs/ci-cd-runbook.md` §3; Image-Sc
 | `test_heizungsbruecke_docker_build.sh`, `test_heizungsbruecke_reproducible.sh` | Add-on-Image bauen (Start ohne Server mit `SMARTHEAT_BOOTSTRAP_URL=http://127.0.0.1:9`, Ruhezustand) und reproduzierbar |
 | `test_gateway_docker_build.sh` | Gateway-Image (lokal nur amd64) und Compose-Lauf mit Dev-Overlay: Bootstrap gegen einen Fake, MQTT gegen einen Fake-Broker mit Client-Zertifikat, Fälschungsproben, sauberes Trennen, Bus-Anmeldung und ACL; statisch prüft `gateway/tests/test_compose.py` |
 | `test_gateway_install.sh` | Host-Installer zweimal in `debian:trixie`, Plattform per `SHG_INSTALL_PLATFORM` (arm64 nur in der CI, Job `install-arm64`) |
-| `test_gateway_updater.sh` | Updater gegen eine lokale Registry mit drei signierten Test-Bundles, Soll-Version als Konfigurationsdokument über den Fake-Broker, Rückweg und Manipulation; rund 6 min, steuert Compose über den Docker-Socket des Hosts |
+| `test_gateway_updater.sh` | Updater mit drei signierten Test-Bundles, je ein eigenes Image als OCI-Archiv (Laden, Start ohne Pull, Rückweg auf das Image der vorigen Version), Dateiserver als Release-Host, Soll-Version als Konfigurationsdokument über den Fake-Broker, Rückweg und Manipulation; rund 7 min, braucht den containerd-Speicher, steuert Compose über den Docker-Socket des Hosts |
 | `test_gateway_firstboot.sh` | Export wie im Image-Bau, Laden ohne Netz in einem Docker mit containerd-Speicher, Start per Index-Digest |
 
 Der Image-Bau selbst (`gateway/image/make_image.sh`) braucht einen arm64-Host und gehört nicht zu `check.sh`.

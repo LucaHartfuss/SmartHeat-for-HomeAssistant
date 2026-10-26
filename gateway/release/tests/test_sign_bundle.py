@@ -6,12 +6,11 @@ import sys
 from pathlib import Path
 
 import pytest
+from oci_helper import make_oci_archive
 
 from build_bundle import build
 
 GW = Path(__file__).resolve().parents[2]
-IMAGE = "localhost:5000/smartheat-gateway@sha256:" + "a" * 64  # -dryrun: Job-Registry
-RELEASE_IMAGE = "ghcr.io/lucahartfuss/smartheat-gateway@sha256:" + "a" * 64  # echter Release
 SCRIPT = Path(__file__).resolve().parents[1] / "sign_bundle.sh"
 pytestmark = pytest.mark.skipif(shutil.which("minisign") is None, reason="minisign nicht installiert (CI-Job test)")
 
@@ -25,21 +24,23 @@ def _run(bundle: Path, pub: Path, tmp: Path, *args: str, **env: str):
                           capture_output=True, text=True, check=False)
 
 
-def _build(tmp_path, image, compose=GW / "compose" / "docker-compose.yml"):
+def _build(tmp_path, compose=GW / "compose" / "docker-compose.yml"):
+    archive = tmp_path / "image.oci.tar"
+    make_oci_archive(archive)
     out = tmp_path / "bundle"
-    build(compose, GW / "compose" / "mosquitto.conf", image, "0.2.0", out)
+    build(compose, GW / "compose" / "mosquitto.conf", archive, "0.2.0", out)
     (tmp_path / "work").mkdir(exist_ok=True)
     return out
 
 
 @pytest.fixture
 def bundle(tmp_path):
-    return _build(tmp_path, IMAGE)
+    return _build(tmp_path)
 
 
 @pytest.fixture
 def release_bundle(tmp_path):
-    return _build(tmp_path, RELEASE_IMAGE)
+    return _build(tmp_path)
 
 
 def _secret(tmp_path):
@@ -110,20 +111,13 @@ def test_extra_files_and_other_versions_are_not_signed(bundle, tmp_path):
     assert wrong.returncode != 0 and "passt nicht zur Release-Version" in wrong.stderr
 
 
-def test_real_release_refuses_an_image_from_the_dryrun_registry(bundle, tmp_path):
-    secret, pub = _secret(tmp_path)
-    result = _run(bundle, pub, tmp_path / "work", MINISIGN_SECRET_KEY=secret, MINISIGN_PASSWORD="test-pw")
-    assert result.returncode != 0 and "images.gateway" in result.stderr
-    assert not (bundle / "manifest.json.minisig").exists()
-
-
 @pytest.mark.parametrize("mode", ["dryrun", "release"])
 def test_self_consistent_bundle_from_a_foreign_compose_is_not_signed(tmp_path, mode):
     """Kompromittierter Build-Job: Compose mit privileged, Manifest passt dazu - der Neubau aus dem Tag faellt ab."""
     source = tmp_path / "evil-compose.yml"
     source.write_text((GW / "compose" / "docker-compose.yml").read_text().replace(
         "    devices:", "    privileged: true\n    devices:", 1))
-    bundle = _build(tmp_path, IMAGE if mode == "dryrun" else RELEASE_IMAGE, compose=source)
+    bundle = _build(tmp_path, compose=source)
     if mode == "dryrun":
         result = _run(bundle, tmp_path / "t.pub", tmp_path / "work", "--dryrun")
     else:

@@ -83,6 +83,14 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: ${{ env.CHECKOUT_REF }}
+      # Der Updater-Test laedt OCI-Archive und startet name@<Index-Digest> ohne Pull: das loest nur der containerd-Speicher auf,
+      # den auch das Geraet nutzt (gateway/host/docker-daemon.json).
+      - if: inputs.stufe == 'voll'
+        name: Docker mit containerd-Speicher wie das Geraet
+        run: |
+          echo '{"features": {"containerd-snapshotter": true}}' | sudo tee /etc/docker/daemon.json >/dev/null
+          sudo systemctl restart docker
+          docker info --format '{{.DriverStatus}}' | grep -q io.containerd.snapshotter
       - if: inputs.stufe == 'voll'
         run: bash scripts/check.sh --only docker
       - if: inputs.stufe != 'voll'

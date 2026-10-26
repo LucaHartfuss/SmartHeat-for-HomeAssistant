@@ -1,5 +1,22 @@
 # Changelog SmartHeat-Gateway
 
+## 0.8.0
+
+- Signierte Auslieferung (AP-04): Der Updater prueft das Manifest mit einer X.509-Kette (`release-roots.pem`,
+  Release-Zertifikat mit `codeSigning`, ECDSA P-256) statt mit minisign, versucht ein Update nur mit synchroner Uhr
+  (`wartet_auf_zeit`, sonst ohne Abruf und ohne Ablehnung) und lehnt Zertifikate ab, die aelter sind als das juengste
+  angenommene (Widerruf eines gestohlenen Schluessels). `rejected` fuehrt `<Version>@<SHA-256 der Signatur>`: eine neu
+  signierte Fassung derselben Version wird wieder versucht. Die Signaturdatei heisst `manifest.json.sig`.
+- Das eigene Image kommt als OCI-Archiv im Bundle (Manifest-Feld `archiv`: `gateway-image.oci.tar`, SHA-256, Groesse bis
+  512 MiB, Name `smartheat-gateway`, Index-Digest) statt aus GHCR. Der Updater holt es nach der Kettenpruefung (Frist
+  60 s plus Groesse bei mindestens 2 Mbit/s, Fortsetzen nach einem Abbruch per HTTP-Range, Ablage unter
+  `archive/<Version>.oci.tar`), prueft Groesse und SHA-256, laedt es mit `docker load` (Frist 600 s) und verlangt, dass der
+  Docker `smartheat-gateway@<Index-Digest>` kennt (sonst `manifest_ungueltig`); danach wird das Archiv geloescht. Ist
+  das Image schon da, wird nichts geholt. Die Compose-Datei nennt es mit `pull_policy: never`; `check_compose` erlaubt
+  `never` nur fuer genau dieses Image. Der Rueckweg braucht kein Netz: `prune` behaelt das Image der vorigen Version.
+- `min_updater_version` der Bundles ist 0.8.0 (neues Manifest-Format, aeltere Updater lehnen es als `updater_zu_alt` ab).
+  Der Erststart laedt mit demselben `docker load` mit Frist (`bundles.docker_load`).
+
 ## 0.7.0
 
 - `certifi` 2026.10.19 statt 2026.7.22 (Sicherheitsmeldung GHSA-6q48-6c7w-9gw2: kompromittierte emSign-Root-CAs im

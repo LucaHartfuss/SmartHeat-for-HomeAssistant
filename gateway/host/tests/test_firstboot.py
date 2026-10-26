@@ -1,3 +1,6 @@
+import inspect
+import subprocess
+
 import pytest
 
 from smartheat_host import bundles, firstboot, updater
@@ -62,9 +65,9 @@ def test_partial_load_keeps_all_archives_and_starts_nothing(root):
 
     def second_breaks(path):
         if path.name == "02.tar":
-            raise firstboot.LoadError(path.name)
+            raise bundles.LoadError(path.name)
         loaded.append(path.name)
-    with pytest.raises(firstboot.LoadError):
+    with pytest.raises(bundles.LoadError):
         firstboot.run(root, compose, load=second_breaks, path_exists=lambda p: True)
     assert loaded == ["01.tar"] and compose.ups == []
     assert sorted(path.name for path in (root / "images").iterdir()) == ["01.tar", "02.tar"]
@@ -74,7 +77,7 @@ def test_main_maps_failures_to_exit_code_1(root, monkeypatch):
     monkeypatch.setenv("SHG_ROOT", str(root))
 
     def broken(*args, **kwargs):
-        raise firstboot.LoadError("boom")
+        raise bundles.LoadError("boom")
     monkeypatch.setattr(firstboot, "run", broken)
     with pytest.raises(SystemExit) as stop:
         firstboot.main()
@@ -116,12 +119,30 @@ def test_current_switched_while_loading_is_not_started_again(root):
 
 def test_failures_keep_the_archives_for_the_next_try(root):
     def broken(path):
-        raise firstboot.LoadError(path.name)
-    with pytest.raises(firstboot.LoadError):
+        raise bundles.LoadError(path.name)
+    with pytest.raises(bundles.LoadError):
         firstboot.run(root, FakeCompose(), load=broken, path_exists=lambda p: True)
     with pytest.raises(bundles.ComposeError):
         firstboot.run(root, FakeCompose(fail=True), load=lambda p: None, path_exists=lambda p: True)
     assert len(list((root / "images").iterdir())) == 2
+
+
+def test_the_first_start_loads_with_the_docker_load_of_the_bundles_module(root):
+    """Ein `docker load` mit Frist fuer den Erststart und den Updater (bundles.docker_load); firstboot hat keine eigene."""
+    assert inspect.signature(firstboot.run).parameters["load"].default is bundles.docker_load
+    assert not hasattr(firstboot, "docker_load") and not hasattr(firstboot, "LoadError")
+
+
+def test_a_hanging_docker_load_fails_the_first_start_and_keeps_the_archives(root, monkeypatch):
+    def hanging(cmd, **kw):
+        assert kw["timeout"] == bundles.LOAD_TIMEOUT_SECONDS == 600
+        raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+
+    monkeypatch.setattr(bundles.subprocess, "run", hanging)
+    compose = FakeCompose()
+    with pytest.raises(bundles.LoadError, match="Frist"):
+        firstboot.run(root, compose, path_exists=lambda p: True)
+    assert compose.ups == [] and len(list((root / "images").iterdir())) == 2
 
 
 def test_nothing_to_do_without_archives(tmp_path):

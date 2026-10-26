@@ -1,10 +1,16 @@
 """Updater des Gateways: liest alle 15 min die Soll-Version (Feld `software` des
 Konfigurationsdokuments, von der Laufzeit nach data/software_soll.json geschrieben), laedt und prueft Manifest
 (https, SHA-256, X.509-Kette gegen release-roots.pem (kette.py), Version, min_updater_version) und Bundle-Dateien,
-schaltet per Compose um, wartet bis zu 10 min auf "gesund" und rollt sonst auf das vorige Bundle zurueck. Nur streng neuere Versionen werden
+holt das eigene Image als OCI-Archiv (Manifest-Feld `archiv`), laedt es mit `docker load` und prueft, dass der Docker
+`smartheat-gateway@<Index-Digest>` kennt, schaltet per Compose um (das eigene Image hat `pull_policy: never`, `compose pull`
+holt nur Images aus Registries), wartet bis zu 10 min auf "gesund" und rollt sonst auf das vorige Bundle zurueck. Nur streng neuere Versionen werden
 geladen (Downgrade-Schutz, Grund version_zu_alt; der Betreiber gibt fuer einen Rueckweg der Flotte den alten Stand als
 neue Version heraus). Fristen ueber die monotone Uhr (die Wanduhr springt beim Boot); ein Abruf hat zusaetzlich eine
-Gesamtfrist (ABRUF_GESAMT_SECONDS) und geht nur an oeffentliche Adressen (is_public_address).
+Gesamtfrist (ABRUF_GESAMT_SECONDS) und geht nur an oeffentliche Adressen (is_public_address). Das Archiv (bis
+bundles.MAX_ARCHIVE_BYTES) hat eine eigene Frist (archiv_frist: 60 s plus Groesse bei mindestens MIN_RATE_BYTES_PER_S),
+liegt bis zum Laden unter archive/<version>.oci.tar und wird nach einem Abbruch per HTTP-Range fortgesetzt
+(fetch_url_to_file; der Anfang bleibt als .part liegen). Ist das Image schon geladen (etwa nach einem gescheiterten pull),
+wird das Archiv nicht noch einmal geholt.
 Zustand in updater/state.json (atomar, 0644), Format:
 
     {"current": str|null, "previous": str|null, "rejected": [str],
@@ -52,6 +58,7 @@ import json
 import logging
 import os
 import random
+import re
 import socket
 import ssl
 import sys
@@ -96,6 +103,9 @@ ABRUF_GESAMT_SECONDS = 300  # Gesamtfrist eines Abrufs
 ABRUF_BLOCK_BYTES = 8192
 SOCKET_TIMEOUT_SECONDS = 30  # je Leseoperation, hoechstens der Rest der Gesamtfrist
 MAX_FILE_BYTES = 1048576
+MIN_RATE_BYTES_PER_S = 250000  # 2 Mbit/s: so langsam darf die Leitung des Kunden hoechstens sein, damit das Archiv fertig wird
+ARCHIV_GRUNDFRIST_SECONDS = 60
+ARCHIV_BLOCK_BYTES = 65536
 MAX_REJECTED = 20
 MAX_PENDING_REPORTS = 20
 OFFER_KEYS = ("manifest_url", "manifest_sha256", "signature")
@@ -209,19 +219,25 @@ def _scheme_allowed(url: str, allow_http: bool) -> bool:
     return scheme == "https" or (allow_http and scheme == "http")
 
 
+class TooLarge(FetchError):
+    """Der Server liefert mehr, als erlaubt ist (Content-Length oder gelesene Bytes ueber der Grenze)."""
+
+
 class _DeadlineExceeded(FetchError):
     pass
 
 
 class _Deadline:
-    """Gesamtfrist eines Abrufs auf der eingespeisten monotonen Uhr. Sie gilt fuer alles, was zum Abruf gehoert:
+    """Gesamtfrist eines Abrufs auf der eingespeisten monotonen Uhr (Standard ABRUF_GESAMT_SECONDS, fuer das Archiv die
+    laengere `total`). Sie gilt fuer alles, was zum Abruf gehoert:
     Verbindungsaufbau, TLS-Handshake, Kopfzeilen, jede Weiterleitung und den Koerper. Der Socket-Timeout wird vor jeder
     Leseoperation auf den Rest der Frist (hoechstens SOCKET_TIMEOUT_SECONDS) gesetzt; ein Server, der langsam tropft, kommt
     so nirgends an der Frist vorbei."""
 
-    def __init__(self, clock: Callable[[], float]) -> None:
+    def __init__(self, clock: Callable[[], float], total: float | None = None) -> None:
         self._clock = clock
-        self._end = clock() + ABRUF_GESAMT_SECONDS
+        self._total = ABRUF_GESAMT_SECONDS if total is None else total
+        self._end = clock() + self._total
 
     def expired(self) -> bool:
         return self._clock() >= self._end
@@ -232,7 +248,7 @@ class _Deadline:
     def socket_timeout(self) -> float:
         left = self._end - self._clock()
         if left <= 0:
-            raise _DeadlineExceeded(f"Gesamtfrist von {ABRUF_GESAMT_SECONDS:g} s ueberschritten")
+            raise _DeadlineExceeded(f"Gesamtfrist von {self._total:g} s ueberschritten")
         return min(SOCKET_TIMEOUT_SECONDS, left)
 
 
@@ -458,6 +474,132 @@ def fetch_url(url: str, max_bytes: int, allow_http: bool, clock: Callable[[], fl
     return b"".join(blocks)
 
 
+def archiv_frist(size: int) -> float:
+    """Frist des Archivabrufs in Sekunden: ARCHIV_GRUNDFRIST_SECONDS plus die Zeit fuer `size` Byte bei
+    MIN_RATE_BYTES_PER_S. Langsamer als 2 Mbit/s wird ein Archiv nie fertig; der Abruf setzt dann in jedem Durchlauf fort."""
+    return ARCHIV_GRUNDFRIST_SECONDS + size / MIN_RATE_BYTES_PER_S
+
+
+_CONTENT_RANGE = re.compile(r"bytes (\d+)-(\d+)/(\d+|\*)")
+_CONTENT_RANGE_UNSATISFIED = re.compile(r"bytes \*/(\d+)")
+
+
+def _hash_file(path: Path):
+    """SHA-256-Objekt ueber den Inhalt der Datei (in Bloecken: ein Archiv passt nicht in den Speicher eines Pi)."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        while block := handle.read(ARCHIV_BLOCK_BYTES):
+            digest.update(block)
+    return digest
+
+
+def _file_sha256(path: Path) -> str:
+    return _hash_file(path).hexdigest()
+
+
+class _DiskError(Exception):
+    """Ein Fehler der Platte (OSError) mitten im Abruf: er soll nicht als Netzfehler gelten (URLError ist selbst ein
+    OSError), sondern unveraendert nach oben, wo run_once ihn als Dateifehler meldet."""
+
+
+def _disk(operation, *args):
+    try:
+        return operation(*args)
+    except OSError as error:
+        raise _DiskError(error) from None
+
+
+def _open_teil(teil: Path, anhaengen: bool):
+    """Oeffnet `ziel.part` zum Schreiben: ans Ende (Fortsetzen) oder neu."""
+    return open(teil, "ab" if anhaengen else "wb")
+
+
+def fetch_url_to_file(url: str, max_bytes: int, allow_http: bool, ziel: Path, frist: float,
+                      clock: Callable[[], float] = time.monotonic) -> str:
+    """Holt `url` (hoechstens `max_bytes`) nach `ziel` in hoechstens `frist` Sekunden und gibt die SHA-256 (Hex) der Datei
+    zurueck. Gleiche Grenzen wie fetch_url (Schema, oeffentliche Adresse, Weiterleitungen, Frist ueber Verbindung, TLS,
+    Kopfzeilen und Koerper), aber auf die Platte: Geschrieben wird in `ziel.part`, umbenannt erst nach vollstaendigem
+    Abruf (laut Content-Length bzw. Content-Range; ohne Laengenangabe gilt das Ende des Stroms, die Groesse prueft der
+    Aufrufer). Nach einem Abbruch (Netz, Frist) bleibt `ziel.part` liegen, und der naechste Aufruf setzt per
+    `Range: bytes=<Groesse>-` dahinter fort; antwortet der Server mit 200 statt 206, beginnt der Abruf von vorn, ein
+    `.part` ueber `max_bytes` wird verworfen, ebenso eines, zu dem der Server nichts sagen kann (416 mit anderer Groesse).
+    Eine Antwort ueber `max_bytes` ist TooLarge und hinterlaesst nichts. Wirft FetchError (nie ein anderer Fehler der
+    Antwort); Fehler beim Schreiben der Platte sind OSError."""
+    if not _scheme_allowed(url, allow_http):
+        raise FetchError(f"nur https erlaubt: {url}")
+    teil = ziel.with_name(ziel.name + ".part")
+    deadline = _Deadline(clock, frist)
+    try:
+        have = teil.stat().st_size
+    except FileNotFoundError:
+        have = 0
+    if have > max_bytes:
+        teil.unlink()
+        have = 0
+    request = urllib.request.Request(url)
+    if have:
+        request.add_header("Range", f"bytes={have}-")
+    digest = hashlib.sha256()
+    try:
+        with checked_opener(allow_http, deadline).open(request, timeout=SOCKET_TIMEOUT_SECONDS) as response:
+            if not _scheme_allowed(response.geturl(), allow_http):
+                raise FetchError(f"{url}: {_REDIRECT_REFUSED}")
+            written, total = 0, None
+            length = response.headers.get("Content-Length", "")
+            if have and response.status == 206:
+                match = _CONTENT_RANGE.fullmatch(response.headers.get("Content-Range", ""))
+                if match is None or int(match.group(1)) != have:
+                    teil.unlink(missing_ok=True)
+                    raise FetchError(f"{url}: Teilantwort beginnt nicht bei {have}")
+                written = have
+                total = int(match.group(3)) if match.group(3) != "*" else None
+                digest = _disk(_hash_file, teil)
+            elif length.isdigit():
+                total = int(length)
+            if total is not None and total > max_bytes:
+                raise TooLarge(f"{url}: zu gross")
+            out = _disk(_open_teil, teil, bool(written))
+            try:
+                while True:
+                    deadline.check()
+                    block = response.read1(ARCHIV_BLOCK_BYTES)
+                    if not block:
+                        break
+                    written += len(block)
+                    if written > max_bytes:
+                        raise TooLarge(f"{url}: zu gross")
+                    _disk(out.write, block)
+                    digest.update(block)
+                _disk(out.flush)
+                _disk(os.fsync, out.fileno())
+            finally:
+                _disk(out.close)
+            if total is not None and written != total:
+                raise FetchError(f"{url}: abgebrochen nach {written} von {total} Byte")
+    except TooLarge:
+        teil.unlink(missing_ok=True)
+        raise
+    except urllib.error.HTTPError as error:
+        match = _CONTENT_RANGE_UNSATISFIED.fullmatch(error.headers.get("Content-Range", "")) if error.code == 416 else None
+        if match is None or not have:
+            raise FetchError(f"{url}: HTTP {error.code}") from None
+        if int(match.group(1)) != have:  # das .part gehoert nicht zu dieser Datei
+            teil.unlink(missing_ok=True)
+            raise FetchError(f"{url}: Teilabruf passt nicht zur Datei") from None
+        digest = _hash_file(teil)  # das .part ist schon vollstaendig (Abbruch vor dem Umbenennen); OSError geht nach oben
+    except _DiskError as error:
+        raise error.args[0] from None
+    except _DeadlineExceeded as error:
+        raise FetchError(f"{url}: {error}") from None
+    except FetchError:
+        raise
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as error:
+        detail = "Gesamtfrist ueberschritten" if deadline.expired() else type(error).__name__
+        raise FetchError(f"{url}: {detail}") from None
+    os.replace(teil, ziel)
+    return digest.hexdigest()
+
+
 def fetch_health(url: str) -> dict | None:
     try:
         with urllib.request.urlopen(url, timeout=5) as response:
@@ -513,14 +655,27 @@ def _older_or_equal(version: str, current: str | None) -> bool:
         return False
 
 
+@dataclass(frozen=True)
+class _Paket:
+    """Was der Updater nach der Kettenpruefung in der Hand hat: die Bundle-Dateien samt Manifest und Signatur (alles fuer
+    bundles/<version>/), das Release-Zertifikat, das gepruefte Manifest und die Adresse, neben der das Archiv liegt."""
+    files: dict[str, bytes]
+    zertifikat: x509.Certificate
+    manifest: bundles.Manifest
+    basis_url: str
+
+
 class Updater:
     def __init__(self, *, kanal: kanal.LokalerKanal, store: bundles.BundleStore, compose,
-                 fetch: Callable[[str, int], bytes], roots_text: str, uhr: Callable[[], datetime | None],
+                 fetch: Callable[[str, int], bytes], fetch_datei: Callable[[str, int, Path, float], str],
+                 roots_text: str, uhr: Callable[[], datetime | None],
                  state_path: Path, version: str, health: Callable[[str], bool],
+                 docker_load: Callable[[Path], None] = bundles.docker_load,
                  clock: Callable[[], float] = time.monotonic,
                  sleep: Callable[[float], None] = time.sleep, allow_http: bool = False,
                  health_seconds: float = HEALTH_SECONDS, path_exists: Callable[[str], bool] = os.path.exists) -> None:
         self._kanal, self._store, self._compose, self._fetch = kanal, store, compose, fetch
+        self._fetch_datei, self._docker_load = fetch_datei, docker_load
         self._uhr, self._state_path, self._version = uhr, state_path, version
         self._health, self._clock, self._sleep, self._allow_http = health, clock, sleep, allow_http
         self._health_seconds, self._path_exists = health_seconds, path_exists
@@ -627,19 +782,24 @@ class Updater:
             self._reject(state, version, VERSION_ZU_ALT, signatur)
             return "abgelehnt"
         try:
-            files, zertifikat = self._download(desired, version, jetzt, untergrenze)
+            paket = self._download(desired, version, jetzt, untergrenze)
+            missing = self._missing_devices(paket.files["docker-compose.yml"].decode("utf-8"))
+            if missing:  # z. B. Zigbee-Stick abgezogen: up und Rueckweg scheiterten beide, kein Fehler des Bundles
+                logger.warning("Bundle %s wartet: Geraet fehlt (%s), naechster Durchlauf", version, ", ".join(missing))
+                return "vorlaeufig"  # vor dem Archiv: die rund 200 MB nicht umsonst holen
+            self._image_bereitstellen(paket, version)
         except FetchError as error:
             logger.warning("Bundle %s nicht ladbar (%s), naechster Durchlauf", version, error)
+            return "vorlaeufig"
+        except bundles.LoadError as error:  # Datentraeger voll, Daemon beschaeftigt: kein Fehler des Angebots
+            logger.error("Image von %s nicht geladen (%s), naechster Durchlauf", version, error)
             return "vorlaeufig"
         except _Refused as refused:
             logger.error("Bundle %s abgelehnt: %s", version, refused)
             self._reject(state, version, refused.reason, signatur)
             return "abgelehnt"
-        missing = self._missing_devices(files["docker-compose.yml"].decode("utf-8"))
-        if missing:  # z. B. Zigbee-Stick abgezogen: up und Rueckweg scheiterten beide, kein Fehler des Bundles
-            logger.warning("Bundle %s wartet: Geraet fehlt (%s), naechster Durchlauf", version, ", ".join(missing))
-            return "vorlaeufig"
-        self._store.install(version, files)  # erst nach allen Pruefungen, atomar
+        zertifikat = paket.zertifikat
+        self._store.install(version, paket.files)  # erst nach allen Pruefungen, atomar
         try:
             self._compose.pull(version)
         except bundles.ComposeError as error:
@@ -672,10 +832,10 @@ class Updater:
 
     # --- Schritte ---
 
-    def _download(self, desired: dict, version: str, jetzt: datetime,
-                  untergrenze: datetime | None) -> tuple[dict[str, bytes], x509.Certificate]:
-        """Prueft und laedt; liefert die Bundle-Dateien plus Manifest und Signatur (alles fuer bundles/<version>/) und das
-        Release-Zertifikat, mit dem das Manifest signiert ist."""
+    def _download(self, desired: dict, version: str, jetzt: datetime, untergrenze: datetime | None) -> _Paket:
+        """Prueft und laedt; liefert die Bundle-Dateien plus Manifest und Signatur (alles fuer bundles/<version>/), das
+        Release-Zertifikat, mit dem das Manifest signiert ist, das gepruefte Manifest und seine Adresse. Das Archiv des
+        Images holt erst `_image_bereitstellen`."""
         url, expected_sha, signature = (desired.get(key) for key in OFFER_KEYS)
         if not isinstance(url, str):
             raise _Refused(MANIFEST_UNGUELTIG, "Manifest-URL fehlt oder ist kein Text")
@@ -715,12 +875,55 @@ class Updater:
                 raise _Refused(MANIFEST_UNGUELTIG, f"SHA-256 von {name} passt nicht")
             files[name] = data
         try:
-            bundles.check_compose(files["docker-compose.yml"].decode("utf-8"))
+            bundles.check_compose(files["docker-compose.yml"].decode("utf-8"), manifest.archiv)
         except (bundles.ManifestError, UnicodeDecodeError) as error:
             raise _Refused(MANIFEST_UNGUELTIG, str(error)) from None
         files[bundles.MANIFEST_NAME] = raw
         files[bundles.SIGNATURE_NAME] = signature.encode()
-        return files, zertifikat
+        return _Paket(files, zertifikat, manifest, url)
+
+    def _image_bereitstellen(self, paket: _Paket, version: str) -> None:
+        """Sorgt dafuer, dass der Docker des Geraets das eigene Image `smartheat-gateway@<Index-Digest>` kennt: ist es schon
+        da (etwa nach einem gescheiterten pull), ist nichts zu holen. Sonst Archiv holen (Frist nach Groesse, Fortsetzen
+        nach Abbruch), gegen das signierte Manifest pruefen (Groesse, SHA-256), mit `docker load` laden und pruefen, dass
+        das Image nun da ist (sonst MANIFEST_UNGUELTIG: das Archiv enthaelt nicht das signierte Image); das Archiv wird
+        danach geloescht. Ein Fehler des Ladens (LoadError) laesst das gepruefte Archiv fuer den naechsten Durchlauf liegen."""
+        archiv = paket.manifest.archiv
+        if self._compose.has_image(archiv.ref):
+            logger.info("Image %s ist schon geladen, das Archiv wird nicht geholt", archiv.ref)
+            self._store.clean_archives(None)  # ein liegengebliebenes Archiv wird nicht mehr gebraucht
+            return
+        self._store.clean_archives(version)  # Reste frueherer Versionen
+        pfad = self._store.archive_path(version)
+        pfad.parent.mkdir(parents=True, exist_ok=True)
+        if pfad.is_file() and (pfad.stat().st_size != archiv.bytes or _file_sha256(pfad) != archiv.sha256):
+            pfad.unlink()  # ein Rest, der nicht zum jetzigen Angebot gehoert
+        if not pfad.is_file():
+            self._hole_archiv(urllib.parse.urljoin(paket.basis_url, archiv.datei), archiv, pfad)
+        self._docker_load(pfad)
+        if not self._compose.has_image(archiv.ref):
+            pfad.unlink(missing_ok=True)
+            raise _Refused(MANIFEST_UNGUELTIG, f"Image {archiv.ref} fehlt nach dem Laden des Archivs")
+        pfad.unlink()
+
+    def _hole_archiv(self, url: str, archiv: bundles.Archiv, pfad: Path) -> None:
+        teil = pfad.with_name(pfad.name + ".part")
+        fortgesetzt = teil.exists()
+        try:
+            sha = self._fetch_datei(url, archiv.bytes, pfad, archiv_frist(archiv.bytes))
+        except TooLarge:
+            teil.unlink(missing_ok=True)
+            pfad.unlink(missing_ok=True)
+            raise _Refused(MANIFEST_UNGUELTIG, f"Archiv ist groesser als im Manifest ({archiv.bytes} Byte)") from None
+        size = pfad.stat().st_size
+        if size < archiv.bytes:  # Strom ohne Laengenangabe endete vor der Zeit: das Stueck ist der Anfang fuer den Rest
+            os.replace(pfad, teil)
+            raise FetchError(f"{url}: nur {size} von {archiv.bytes} Byte")
+        if size != archiv.bytes or sha != archiv.sha256:
+            pfad.unlink(missing_ok=True)
+            if fortgesetzt:  # der Anfang stammte vielleicht aus einem anderen Angebot: neu laden statt ablehnen
+                raise FetchError(f"{url}: Pruefsumme nach dem Fortsetzen falsch, der Abruf beginnt neu")
+            raise _Refused(MANIFEST_UNGUELTIG, "SHA-256 oder Groesse des Archivs passt nicht")
 
     def _missing_devices(self, compose_text: str) -> list[str]:
         return [path for path in bundles.compose_devices(compose_text) if not self._path_exists(path)]
@@ -858,7 +1061,9 @@ def main(argv: list[str] | None = None, *, einstellungen: Einstellungen | None =
     compose = bundles.ComposeRunner(root, project=settings.compose_project)
     run = Updater(
         kanal=kanal.LokalerKanal(root / "data"), store=store, compose=compose,
-        fetch=lambda url, limit: fetch_url(url, limit, settings.allow_http), roots_text=roots_text,
+        fetch=lambda url, limit: fetch_url(url, limit, settings.allow_http),
+        fetch_datei=lambda url, limit, ziel, frist: fetch_url_to_file(url, limit, settings.allow_http, ziel, frist),
+        roots_text=roots_text,
         uhr=lambda: zeit_aus_status(root / "host" / "status.json"),
         state_path=root / "updater" / "state.json", version=GATEWAY_VERSION,
         health=lambda version: health_ok(fetch_health(settings.health_url), compose.health(version)),

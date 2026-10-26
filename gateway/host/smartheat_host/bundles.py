@@ -1,7 +1,9 @@
 """Bundles des Updaters: Manifest, Pruefung der Compose-Datei, Ablage unter bundles/<version>/
 und Compose-Aufrufe. Ein Bundle = Compose-Datei (nur Images mit Digest) + mosquitto.conf; im Bundle-Ordner liegen
 zusaetzlich manifest.json und manifest.json.sig (Nachweis, was signiert war; exists() verlangt sie nicht, damit
-aeltere Ordner gueltig bleiben)."""
+aeltere Ordner gueltig bleiben). Das eigene Container-Image kommt als OCI-Archiv neben dem Bundle (Manifest-Feld
+`archiv`, Ablage archive/<version>.oci.tar ausserhalb von bundles/, das install() loescht): das Geraet laedt es mit
+`docker load` und startet es ueber `smartheat-gateway@<Index-Digest>` mit `pull_policy: never`, ohne Registry."""
 import json
 import os
 import re
@@ -13,8 +15,12 @@ from pathlib import Path
 MANIFEST_FILES = ("docker-compose.yml", "mosquitto.conf")
 MANIFEST_NAME = "manifest.json"
 SIGNATURE_NAME = "manifest.json.sig"
+ARCHIVE_NAME = "gateway-image.oci.tar"  # Dateiname des Archivs im Bundle der Betreiber und im Manifest
+ARCHIVE_IMAGE = "smartheat-gateway"  # Name des eigenen Images (Teil von name@digest in der Compose-Datei)
+MAX_ARCHIVE_BYTES = 536870912  # 512 MiB
 _VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 _SHA = re.compile(r"[0-9a-f]{64}")
+_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 _IMAGE = re.compile(r"^\s*image:\s*(.*?)\s*$", re.MULTILINE)
 _PINNED_IMAGE = re.compile(r"[^\s@]+@sha256:[0-9a-f]{64}")
 _BUILD = re.compile(r"^\s*build:", re.MULTILINE)
@@ -27,6 +33,7 @@ PULL_TIMEOUT_SECONDS = 900
 UP_TIMEOUT_SECONDS = 300
 PS_TIMEOUT_SECONDS = 60
 IMAGE_TIMEOUT_SECONDS = 120
+LOAD_TIMEOUT_SECONDS = 600  # docker load: ein Archiv von rund 200 MB entpackt auf einem Pi 4 in ein bis drei Minuten
 
 
 class ManifestError(Exception):
@@ -37,12 +44,33 @@ class ComposeError(Exception):
     pass
 
 
+class LoadError(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class Archiv:
+    """Das OCI-Archiv des eigenen Images laut Manifest: Datei im Bundle-Ordner des Anbieters, SHA-256 und Groesse der
+    Datei, Name des Images und Digest des Image-Index im Archiv (`sha256:<64 Hex>`)."""
+    datei: str
+    sha256: str
+    bytes: int
+    name: str
+    digest: str
+
+    @property
+    def ref(self) -> str:
+        """Wie die Compose-Datei das Image nennt."""
+        return f"{self.name}@{self.digest}"
+
+
 @dataclass(frozen=True)
 class Manifest:
     version: str
     min_updater_version: str
     files: dict[str, str]
     images: dict[str, str]
+    archiv: Archiv
 
 
 def parse_version(text) -> tuple[int, int, int]:
@@ -56,8 +84,8 @@ def parse_version(text) -> tuple[int, int, int]:
 def parse_manifest(raw: bytes) -> Manifest:
     try:
         data = json.loads(raw)
-        version, minimum, files, images = (
-            data["version"], data["min_updater_version"], data["files"], data["images"],
+        version, minimum, files, images, archiv = (
+            data["version"], data["min_updater_version"], data["files"], data["images"], data["archiv"],
         )
     except (ValueError, KeyError, TypeError):
         raise ManifestError("Manifest unlesbar oder unvollstaendig") from None
@@ -69,7 +97,25 @@ def parse_manifest(raw: bytes) -> Manifest:
         raise ManifestError("Manifest: SHA-256 der Dateien ungueltig")
     if not isinstance(images, dict) or not all(isinstance(ref, str) and "@sha256:" in ref for ref in images.values()):
         raise ManifestError("Manifest: Images ohne Digest")
-    return Manifest(version, minimum, dict(files), dict(images))
+    return Manifest(version, minimum, dict(files), dict(images), _parse_archiv(archiv))
+
+
+def _parse_archiv(value) -> Archiv:
+    keys = ("datei", "sha256", "bytes", "name", "digest")
+    if not isinstance(value, dict) or set(value) != set(keys):
+        raise ManifestError(f"Manifest: archiv muss genau {', '.join(keys)} nennen")
+    datei, sha, size, name, digest = (value[key] for key in keys)
+    if datei != ARCHIVE_NAME:
+        raise ManifestError(f"Manifest: archiv.datei muss {ARCHIVE_NAME} sein")
+    if not (isinstance(sha, str) and _SHA.fullmatch(sha)):
+        raise ManifestError("Manifest: SHA-256 des Archivs ungueltig")
+    if not (isinstance(size, int) and not isinstance(size, bool) and 0 < size <= MAX_ARCHIVE_BYTES):
+        raise ManifestError(f"Manifest: archiv.bytes muss zwischen 1 und {MAX_ARCHIVE_BYTES} liegen")
+    if name != ARCHIVE_IMAGE:
+        raise ManifestError(f"Manifest: archiv.name muss {ARCHIVE_IMAGE} sein")
+    if not (isinstance(digest, str) and _DIGEST.fullmatch(digest)):
+        raise ManifestError("Manifest: archiv.digest muss sha256:<64 Hex> sein")
+    return Archiv(datei, sha, size, name, digest)
 
 
 def compose_images(text: str) -> list[str]:
@@ -125,12 +171,57 @@ def image_repository(ref: str) -> str:
     return head + slash + last.split(":", 1)[0]
 
 
-def check_compose(text: str) -> None:
+def compose_services(text: str) -> dict[str, dict[str, str]]:
+    """Je Dienst die Werte von `image` und `pull_policy` (nur Schluessel auf der ersten Ebene eines Dienstes, ohne
+    Anfuehrungszeichen und Zeilenkommentar), ohne yaml wie compose_devices. Erkannt wird die Blockform, die Bundle-Bau
+    und Compose-Datei erzeugen; ein Dienst in Flussform (`name: {image: x}`) hat keine Werte."""
+    services: dict[str, dict[str, str]] = {}
+    in_services, service_indent, key_indent, current = False, None, None, None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent == 0:
+            in_services, service_indent, key_indent, current = _strip_comment(stripped) == "services:", None, None, None
+            continue
+        if not in_services:
+            continue
+        if service_indent is None:
+            service_indent = indent
+        if indent == service_indent:
+            name = _strip_comment(stripped)
+            current = name[:-1].strip() if name.endswith(":") else None
+            key_indent = None
+            if current is not None:
+                services[current] = {}
+            continue
+        if current is None or indent < service_indent:
+            continue
+        if key_indent is None:
+            key_indent = indent
+        key, separator, value = stripped.partition(":")
+        if indent == key_indent and separator and key in ("image", "pull_policy"):
+            services[current][key] = _strip_comment(value).strip("\"'")
+    return services
+
+
+def check_compose(text: str, archiv: Archiv) -> None:
+    """Jedes Image mit Digest, kein build:. Das eigene Image (`name@digest` des Archivs) kommt nur aus dem Archiv und
+    steht darum mit `pull_policy: never` in der Datei (compose pull fragte sonst docker.io); umgekehrt ist `never`
+    nur fuer dieses Image erlaubt."""
     images = compose_images(text)
     if not images or not all(_PINNED_IMAGE.fullmatch(image) for image in images):
         raise ManifestError("Compose-Datei: jedes Image braucht einen Digest")
     if _BUILD.search(text):
         raise ManifestError("Compose-Datei: build: ist im Bundle verboten")
+    for name, service in compose_services(text).items():
+        image, never = service.get("image", ""), service.get("pull_policy") == "never"
+        own = image_repository(image) == archiv.name
+        if never and image != archiv.ref:
+            raise ManifestError(f"Compose-Datei: Dienst {name}: pull_policy never nur fuer {archiv.ref}")
+        if own and not (never and image == archiv.ref):
+            raise ManifestError(f"Compose-Datei: Dienst {name}: {archiv.name} nur als {archiv.ref} mit pull_policy never")
 
 
 class BundleStore:
@@ -142,6 +233,21 @@ class BundleStore:
 
     def exists(self, version: str) -> bool:
         return all((self.dir(version) / name).is_file() for name in MANIFEST_FILES)
+
+    def archive_path(self, version: str) -> Path:
+        """Ablage des Image-Archivs bis zum Laden; neben bundles/, weil install() den Ordner einer Version loescht."""
+        return self.root / "archive" / f"{version}.oci.tar"
+
+    def clean_archives(self, version: str | None) -> None:
+        """Entfernt alle Dateien in archive/ ausser dem Archiv (und seiner .part-Datei) der Version, die gerade geholt
+        wird (`None`: alle): Reste frueherer, nie fertig gewordener Versionen fuellten sonst den Datentraeger."""
+        keep = set() if version is None else {self.archive_path(version).name, self.archive_path(version).name + ".part"}
+        folder = self.root / "archive"
+        if not folder.is_dir():
+            return
+        for path in folder.iterdir():
+            if path.is_file() and path.name not in keep:
+                path.unlink()
 
     def install(self, version: str, files: dict[str, bytes]) -> Path:
         """Schreibt erst in einen temporaeren Ordner (fsync je Datei), dann ein Rename: ein halbes Bundle bleibt nie
@@ -159,6 +265,20 @@ class BundleStore:
             shutil.rmtree(target)
         os.replace(tmp, target)
         return target
+
+
+def docker_load(archive: Path, timeout: float = LOAD_TIMEOUT_SECONDS) -> None:
+    """Laedt ein OCI-Archiv in den Docker des Geraets (containerd-Speicher, docker-daemon.json): kein Netz, kein Pull.
+    Das Archiv benennt sein Image selbst (Annotation io.containerd.image.name, build_bundle.py)."""
+    try:
+        result = subprocess.run(["docker", "load", "-i", str(archive)], capture_output=True, text=True, check=False,
+                                timeout=timeout)
+    except OSError as error:
+        raise LoadError(f"{archive.name}: {type(error).__name__}") from None
+    except subprocess.TimeoutExpired:  # subprocess.run beendet den Prozess selbst
+        raise LoadError(f"{archive.name}: Frist von {timeout:g} s ueberschritten") from None
+    if result.returncode != 0:
+        raise LoadError(f"{archive.name}: {(result.stderr or result.stdout).strip()[-300:]}")
 
 
 COMPOSE_PROJECT = "smartheat"  # Projektname von install.sh (`docker compose -p smartheat`), Updater und Erststart
@@ -205,6 +325,15 @@ class ComposeRunner:
             return {}
         return {row.get("Service", ""): row.get("Health", "")
                 for row in rows if isinstance(row, dict) and row.get("Health")}
+
+    def has_image(self, ref: str) -> bool:
+        """Kennt der Docker des Geraets das Image `ref` (name@digest)? Ein Fehler oder eine abgelaufene Frist gilt als nein."""
+        try:
+            result = self._run(["docker", "image", "inspect", ref], capture_output=True, text=True, check=False,
+                               timeout=IMAGE_TIMEOUT_SECONDS)
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return result.returncode == 0
 
     def prune(self, keep: set[str]) -> None:
         """Loescht Images der Repositories aus `keep`, deren Digest nicht in `keep` steht. Verglichen wird ohne Tag

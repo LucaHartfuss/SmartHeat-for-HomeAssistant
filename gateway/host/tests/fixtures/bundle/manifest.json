@@ -1,10 +1,17 @@
 {
+  "archiv": {
+    "bytes": 1048576,
+    "datei": "gateway-image.oci.tar",
+    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "name": "smartheat-gateway",
+    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
   "files": {
-    "docker-compose.yml": "9c7f73953695f62e42a9caf8e0cd9eda0a032451e01a83e866e7b90cf60a66ac",
-    "mosquitto.conf": "aef80cf30a30c7ba5791585230f68a944967d0bf5177540c6208965be9dfac2d"
+    "docker-compose.yml": "fefab0edc66b8f8759efd79b61bc09417799f98a985a320b135a04f33a0fee23",
+    "mosquitto.conf": "36ccefec33ba79178463319ce0de96e4f12fd0815f2501d2fc45987e2146f120"
   },
   "images": {
-    "gateway": "ghcr.io/lucahartfuss/smartheat-gateway@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    "gateway": "smartheat-gateway@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   },
   "min_updater_version": "0.2.0",
   "version": "0.2.0"
